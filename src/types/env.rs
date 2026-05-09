@@ -1079,6 +1079,17 @@ impl ValueEnv {
             && self.builtins.contains_key(name)
     }
 
+    /// Apply meta-variable substitution to all top-level value bindings.
+    /// Called when check_function clears meta_subst so that cross-item metas
+    /// (e.g. from `x := Dict.new()`) are propagated before the substitution
+    /// map is dropped.
+    pub fn zonk_values(&mut self, meta_subst: &std::collections::HashMap<u32, MonoType>) {
+        use crate::types::ty::zonk_ty;
+        for ty in self.values.values_mut() {
+            *ty = zonk_ty(ty, meta_subst);
+        }
+    }
+
     /// Update a function signature (used after inferring return type)
     pub fn update_function(&mut self, sig: FunctionSignature) {
         self.functions.insert(sig.name.clone(), sig);

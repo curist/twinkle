@@ -3164,12 +3164,24 @@ pub fn check(module: Module, env: ResolvedEnv) CheckResult {
   cur_diags: Vector<Diagnostic> = []
 
   // Pass 1: top-level statements/lets.
-  // This makes top-level bindings available to all functions regardless of source order.
+  // This makes top-level bindings available to all functions regardless of
+  // source order. For unannotated lets, diagnostics are suppressed because
+  // function return types may not be inferred yet (ret = None defaults to
+  // Void). Pass 3 re-checks these with full type information.
   for item in module.items {
     case item {
       .Stmt(stmt) => {
         r := case stmt {
-          .Let(ls) => check_let(ls, ctx, cur_diags),
+          .Let(ls) => {
+            case ls.ty {
+              .Some(_) => check_let(ls, ctx, cur_diags),
+              .None => {
+                // Suppress diagnostics — re-checked in Pass 3
+                trial := check_let(ls, ctx, [])
+                .{ ctx: trial.ctx, diags: cur_diags }
+              },
+            }
+          },
           _ => check_top_level_stmt(stmt, ctx, cur_diags),
         }
         ctx = r.ctx
@@ -3180,6 +3192,7 @@ pub fn check(module: Module, env: ResolvedEnv) CheckResult {
   }
 
   // Pass 2: function bodies.
+  diags_before_pass2 := cur_diags.len()
   for item in module.items {
     case item {
       .Function(decl) => {
@@ -3188,6 +3201,56 @@ pub fn check(module: Module, env: ResolvedEnv) CheckResult {
         cur_diags = r.diags
       },
       _ => {},
+    }
+  }
+
+  // Pass 3: re-check unannotated top-level lets.
+  // Now that all function return types are inferred, re-synthesize these
+  // bindings to get correct types and report real errors.
+  any_type_updated := false
+  for item in module.items {
+    case item {
+      .Stmt(.Let(ls)) => {
+        case ls.ty {
+          .None => {
+            r := check_let(ls, ctx, cur_diags)
+            // Check if the type changed from Pass 1
+            case lookup_local(r.ctx, ls.name) {
+              .Some(new_ty) => {
+                case lookup_local(ctx, ls.name) {
+                  .Some(old_ty) => {
+                    if old_ty != new_ty {
+                      any_type_updated = true
+                    }
+                  },
+                  .None => { any_type_updated = true },
+                }
+              },
+              .None => {},
+            }
+            ctx = r.ctx
+            cur_diags = r.diags
+          },
+          _ => {},
+        }
+      },
+      _ => {},
+    }
+  }
+
+  // Pass 4: if any top-level let type was corrected in Pass 3, re-check
+  // functions that may have seen stale types.
+  if any_type_updated and cur_diags.len() > diags_before_pass2 {
+    cur_diags = cur_diags.slice(0, diags_before_pass2)
+    for item in module.items {
+      case item {
+        .Function(decl) => {
+          r := check_function(decl, ctx, cur_diags)
+          ctx = r.ctx
+          cur_diags = r.diags
+        },
+        _ => {},
+      }
     }
   }
 

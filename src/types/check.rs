@@ -13,7 +13,7 @@ use crate::syntax::ast::{
     StringPart, Type as AstType, UnOp,
 };
 use crate::syntax::span::Span;
-use std::collections::{HashMap, HashSet};
+use std::collections::{HashMap, HashSet, VecDeque};
 
 /// Bidirectional type checker
 ///
@@ -102,99 +102,108 @@ impl TypeChecker {
             pending_meta_let_bindings: Vec::new(),
         };
 
-        // Pass 1: Check all top-level lets and add to ValueEnv
-        // This makes them available to all functions
-        for item in &ast.items {
-            if let Item::Stmt(stmt) = item {
-                if let Stmt::Let {
-                    pattern,
-                    ty,
-                    value,
-                    is_pub,
-                    span,
-                    ..
-                } = stmt
-                {
-                    // Only simple identifier patterns for top-level lets
-                    if let Pattern::Ident(name, _) = pattern {
-                        if *is_pub {
-                            checker.pub_bindings.insert(name.clone());
-                        }
-                        // Determine the expected type.
-                        // Even when checking fails, keep a binding to avoid
-                        // noisy follow-up "undefined variable" diagnostics.
-                        let value_ty = if let Some(ann_ty) = ty {
-                            // Type annotation provided - check mode
-                            let expected = match checker.resolve_type(ann_ty) {
-                                Ok(t) => t,
-                                Err(()) => {
-                                    let recovery_ty = checker.fresh_meta();
-                                    checker.value_env.add_value(name.clone(), recovery_ty);
-                                    continue;
-                                }
-                            };
-                            if checker.check_expr(value, &expected).is_err() {
-                                checker.value_env.add_value(name.clone(), expected);
-                                continue;
-                            }
-                            expected
-                        } else {
-                            // No annotation - synthesis mode
-                            let t = match checker.synth_expr(value) {
-                                Ok(t) => t,
-                                Err(()) => {
-                                    let recovery_ty = checker.fresh_meta();
-                                    checker.value_env.add_value(name.clone(), recovery_ty);
-                                    continue;
-                                }
-                            };
-                            let t = checker.zonk(&t);
-                            if contains_meta(&t) {
-                                if matches!(&t, MonoType::Dict(_, _) | MonoType::Vector(_)) {
-                                    // Defer: type args may be resolved by subsequent top-level stmts
-                                    checker
-                                        .pending_meta_let_bindings
-                                        .push((name.clone(), value.span));
-                                    checker.value_env.add_value(name.clone(), t);
-                                    continue;
-                                }
-                                checker.errors.push(TypeError::AmbiguousType {
-                                    name: name.clone(),
-                                    span: value.span,
-                                    note: "type cannot be inferred; add a type annotation"
-                                        .to_string(),
-                                });
-                                let recovery_ty = checker.fresh_meta();
-                                checker.value_env.add_value(name.clone(), recovery_ty);
-                                continue;
-                            }
-                            t
-                        };
+        // Build dependency graph and topologically sort top-level items.
+        // This ensures each binding is checked after everything it depends on,
+        // eliminating the need for multi-pass re-checking.
+        let order = topo_sort_top_level(ast, &checker.value_env);
 
-                        // Add to ValueEnv so it's accessible from functions
-                        checker.value_env.add_value(name.clone(), value_ty);
+        for idx in order {
+            match &ast.items[idx] {
+                Item::TypeDecl(_) | Item::Import(_) | Item::ExternFunction(_) => {
+                    // Already handled by resolver
+                }
+                Item::Function(decl) => {
+                    checker.check_function(decl);
+                }
+                Item::Stmt(stmt) => {
+                    if let Stmt::Let {
+                        pattern,
+                        ty,
+                        value,
+                        is_pub,
+                        span,
+                        ..
+                    } = stmt
+                    {
+                        // Only simple identifier patterns for top-level lets
+                        if let Pattern::Ident(name, _) = pattern {
+                            if *is_pub {
+                                checker.pub_bindings.insert(name.clone());
+                            }
+                            // Determine the expected type.
+                            // Even when checking fails, keep a binding to avoid
+                            // noisy follow-up "undefined variable" diagnostics.
+                            let value_ty = if let Some(ann_ty) = ty {
+                                // Type annotation provided - check mode
+                                let expected = match checker.resolve_type(ann_ty) {
+                                    Ok(t) => t,
+                                    Err(()) => {
+                                        let recovery_ty = checker.fresh_meta();
+                                        checker.value_env.add_value(name.clone(), recovery_ty);
+                                        continue;
+                                    }
+                                };
+                                if checker.check_expr(value, &expected).is_err() {
+                                    checker.value_env.add_value(name.clone(), expected);
+                                    continue;
+                                }
+                                expected
+                            } else {
+                                // No annotation - synthesis mode
+                                let t = match checker.synth_expr(value) {
+                                    Ok(t) => t,
+                                    Err(()) => {
+                                        let recovery_ty = checker.fresh_meta();
+                                        checker.value_env.add_value(name.clone(), recovery_ty);
+                                        continue;
+                                    }
+                                };
+                                let t = checker.zonk(&t);
+                                if contains_meta(&t) {
+                                    if matches!(&t, MonoType::Dict(_, _) | MonoType::Vector(_)) {
+                                        // Defer: type args may be resolved by subsequent items
+                                        checker
+                                            .pending_meta_let_bindings
+                                            .push((name.clone(), value.span));
+                                        checker.value_env.add_value(name.clone(), t);
+                                        continue;
+                                    }
+                                    checker.errors.push(TypeError::AmbiguousType {
+                                        name: name.clone(),
+                                        span: value.span,
+                                        note: "type cannot be inferred; add a type annotation"
+                                            .to_string(),
+                                    });
+                                    let recovery_ty = checker.fresh_meta();
+                                    checker.value_env.add_value(name.clone(), recovery_ty);
+                                    continue;
+                                }
+                                t
+                            };
+
+                            checker.value_env.add_value(name.clone(), value_ty);
+                        } else {
+                            checker.errors.push(TypeError::UnsupportedFeature {
+                                feature: "pattern matching in top-level let bindings",
+                                span: *span,
+                                note: "Only simple identifiers are supported for top-level lets"
+                                    .to_string(),
+                            });
+                        }
                     } else {
-                        checker.errors.push(TypeError::UnsupportedFeature {
-                            feature: "pattern matching in top-level let bindings",
-                            span: *span,
-                            note: "Only simple identifiers are supported for top-level lets"
-                                .to_string(),
-                        });
+                        // For loops and other side-effectful statements at top-level
+                        checker.check_top_level_stmt(stmt);
                     }
-                } else {
-                    // For loops and other side-effectful statements at top-level
-                    checker.check_top_level_stmt(stmt);
                 }
             }
         }
 
         // Drain top-level deferred collection meta-bindings.
-        // Subsequent top-level stmts (processed above) may have resolved the MetaVars;
-        // any that remain unsolved are genuinely ambiguous.
+        // Any Dict/Vector whose element types are still unsolved MetaVars
+        // after all items have been checked is genuinely ambiguous.
         {
             let entries: Vec<_> = checker.pending_meta_let_bindings.drain(..).collect();
             for (name, span) in entries {
-                // Top-level lets go into value_env, not local_env.
                 let ty = checker.value_env.lookup(&name);
                 if let Some(ty) = ty {
                     let ty = checker.zonk(&ty);
@@ -211,28 +220,10 @@ impl TypeChecker {
             }
         }
 
-        // Pass 2: Type-check all functions
-        // Functions can now reference top-level lets
-        for item in &ast.items {
-            match item {
-                Item::TypeDecl(_) | Item::Import(_) => {
-                    // Already handled by resolver
-                }
-                Item::Function(decl) => {
-                    checker.check_function(decl);
-                }
-                Item::ExternFunction(_) => {
-                    // No body to type-check; signature already resolved
-                }
-                Item::Stmt(_) => {
-                    // Already checked in Pass 1
-                }
-            }
-        }
-
         // Final zonk: resolve any MetaVars from top-level stmt checking
         let meta_subst = std::mem::take(&mut checker.meta_subst);
         checker.type_map.zonk(&meta_subst);
+        checker.value_env.zonk_values(&meta_subst);
 
         if checker.errors.is_empty() {
             Ok(TypedModule {
@@ -337,9 +328,11 @@ impl TypeChecker {
             }
         }
 
-        // Zonk all TypeMap entries for this function, then clear per-function state
+        // Zonk TypeMap entries and propagate resolved metas to value_env so
+        // that top-level bindings retain correct types when meta_subst is cleared.
         let meta_subst = std::mem::take(&mut self.meta_subst);
         self.type_map.zonk(&meta_subst);
+        self.value_env.zonk_values(&meta_subst);
 
         // Clean up
         self.current_function_ret = None;
@@ -3848,6 +3841,306 @@ fn expr_as_dotted_name(expr: &Expr) -> Option<String> {
         }
         _ => None,
     }
+}
+
+// ---------------------------------------------------------------------------
+// Dependency-ordered top-level checking
+// ---------------------------------------------------------------------------
+
+/// Collect all free identifier references from an expression.
+/// `locals` tracks names bound in enclosing scopes (excluded from results).
+fn collect_expr_refs(expr: &Expr, locals: &HashSet<String>, out: &mut HashSet<String>) {
+    match &expr.kind {
+        ExprKind::Literal(_) => {}
+        ExprKind::Ident(name) => {
+            if !locals.contains(name.as_str()) {
+                out.insert(name.clone());
+            }
+        }
+        ExprKind::Binary { left, right, .. } => {
+            collect_expr_refs(left, locals, out);
+            collect_expr_refs(right, locals, out);
+        }
+        ExprKind::Unary { expr: e, .. } => {
+            collect_expr_refs(e, locals, out);
+        }
+        ExprKind::Call { callee, args } => {
+            collect_expr_refs(callee, locals, out);
+            for arg in args {
+                collect_expr_refs(arg, locals, out);
+            }
+        }
+        ExprKind::FieldAccess { base, .. } => {
+            collect_expr_refs(base, locals, out);
+        }
+        ExprKind::Index { base, index } => {
+            collect_expr_refs(base, locals, out);
+            collect_expr_refs(index, locals, out);
+        }
+        ExprKind::If {
+            cond,
+            then_branch,
+            else_branch,
+        } => {
+            collect_expr_refs(cond, locals, out);
+            collect_expr_refs(then_branch, locals, out);
+            if let Some(e) = else_branch {
+                collect_expr_refs(e, locals, out);
+            }
+        }
+        ExprKind::Case { scrutinee, arms } => {
+            collect_expr_refs(scrutinee, locals, out);
+            for arm in arms {
+                let mut arm_locals = locals.clone();
+                collect_pattern_names(&arm.pattern, &mut arm_locals);
+                collect_expr_refs(&arm.body, &arm_locals, out);
+            }
+        }
+        ExprKind::Block(block) => {
+            collect_block_refs(block, locals, out);
+        }
+        ExprKind::Array { elements } => {
+            for e in elements {
+                collect_expr_refs(e, locals, out);
+            }
+        }
+        ExprKind::RecordLit { fields, .. } => {
+            for (_, value) in fields {
+                collect_expr_refs(value, locals, out);
+            }
+        }
+        ExprKind::VariantLit { fields, .. } => {
+            for f in fields {
+                collect_expr_refs(f, locals, out);
+            }
+        }
+        ExprKind::Function(fn_expr) => {
+            let mut fn_locals = locals.clone();
+            for param in &fn_expr.params {
+                fn_locals.insert(param.name.clone());
+            }
+            collect_expr_refs(&fn_expr.body, &fn_locals, out);
+        }
+        ExprKind::Collect {
+            pattern,
+            index_pattern,
+            iter,
+            body,
+        } => {
+            collect_expr_refs(iter, locals, out);
+            let mut collect_locals = locals.clone();
+            collect_pattern_names(pattern, &mut collect_locals);
+            if let Some(ip) = index_pattern {
+                collect_pattern_names(ip, &mut collect_locals);
+            }
+            collect_expr_refs(body, &collect_locals, out);
+        }
+        ExprKind::CollectWhile { cond, body } => {
+            collect_expr_refs(cond, locals, out);
+            collect_expr_refs(body, locals, out);
+        }
+        ExprKind::Try { expr: e } => {
+            collect_expr_refs(e, locals, out);
+        }
+        ExprKind::StringInterpolation { parts } => {
+            for part in parts {
+                if let StringPart::Interpolation(e) = part {
+                    collect_expr_refs(e, locals, out);
+                }
+            }
+        }
+    }
+}
+
+fn collect_block_refs(block: &Block, locals: &HashSet<String>, out: &mut HashSet<String>) {
+    let mut block_locals = locals.clone();
+    for stmt in &block.stmts {
+        collect_stmt_refs(stmt, &block_locals, out);
+        // Let bindings introduce locals that shadow top-level names
+        if let Stmt::Let { pattern, .. } = stmt {
+            collect_pattern_names(pattern, &mut block_locals);
+        }
+    }
+}
+
+fn collect_stmt_refs(stmt: &Stmt, locals: &HashSet<String>, out: &mut HashSet<String>) {
+    match stmt {
+        Stmt::Let { value, .. } => {
+            collect_expr_refs(value, locals, out);
+        }
+        Stmt::Expr(e) => {
+            collect_expr_refs(e, locals, out);
+        }
+        Stmt::For {
+            pattern,
+            index_pattern,
+            iter,
+            body,
+            ..
+        } => {
+            collect_expr_refs(iter, locals, out);
+            let mut for_locals = locals.clone();
+            collect_pattern_names(pattern, &mut for_locals);
+            if let Some(ip) = index_pattern {
+                collect_pattern_names(ip, &mut for_locals);
+            }
+            collect_block_refs(body, &for_locals, out);
+        }
+        Stmt::ForCond { cond, body, .. } => {
+            collect_expr_refs(cond, locals, out);
+            collect_block_refs(body, locals, out);
+        }
+        Stmt::Break { value, .. } => {
+            if let Some(v) = value {
+                collect_expr_refs(v, locals, out);
+            }
+        }
+        Stmt::Continue { .. } => {}
+        Stmt::Return { value, .. } => {
+            if let Some(v) = value {
+                collect_expr_refs(v, locals, out);
+            }
+        }
+        Stmt::Defer { expr, .. } => {
+            collect_expr_refs(expr, locals, out);
+        }
+    }
+}
+
+fn collect_pattern_names(pattern: &Pattern, names: &mut HashSet<String>) {
+    match pattern {
+        Pattern::Ident(name, _) => {
+            names.insert(name.clone());
+        }
+        Pattern::Variant { fields, .. } => {
+            for f in fields {
+                collect_pattern_names(f, names);
+            }
+        }
+        Pattern::Wildcard(_) | Pattern::Literal(_, _) => {}
+    }
+}
+
+/// Topologically sort top-level items by their value-level dependencies.
+///
+/// Returns indices into `ast.items` in an order where each item is checked
+/// after everything it depends on.  Items with no dependency relationship
+/// preserve their original source order (stable Kahn's with FIFO queue).
+///
+/// Only items whose types need inference create real dependencies:
+/// - Unannotated functions (return type inferred from body)
+/// - Top-level let bindings (type determined by checking)
+///
+/// Fully-annotated functions have no incoming edges — their signatures are
+/// already registered by the resolver, so referencing them doesn't require
+/// waiting for their bodies to be checked.
+fn topo_sort_top_level(ast: &SourceFile, _value_env: &ValueEnv) -> Vec<usize> {
+    // Collect the set of top-level names and which items define them.
+    let mut name_to_idx: HashMap<&str, usize> = HashMap::new();
+    let mut needs_inference: HashSet<&str> = HashSet::new();
+
+    for (idx, item) in ast.items.iter().enumerate() {
+        match item {
+            Item::Function(decl) => {
+                name_to_idx.insert(&decl.name, idx);
+                if decl.return_type.is_none() {
+                    needs_inference.insert(&decl.name);
+                }
+            }
+            Item::Stmt(Stmt::Let {
+                pattern: Pattern::Ident(name, _),
+                ..
+            }) => {
+                name_to_idx.insert(name.as_str(), idx);
+                // All lets need checking before their types are known
+                needs_inference.insert(name.as_str());
+            }
+            _ => {}
+        }
+    }
+
+    // Build dependency edges: item_index → set of item_indices it depends on.
+    let n = ast.items.len();
+    let mut deps: Vec<HashSet<usize>> = vec![HashSet::new(); n];
+    let locals = HashSet::new(); // no enclosing scope at top level
+
+    for (idx, item) in ast.items.iter().enumerate() {
+        let mut refs = HashSet::new();
+        match item {
+            Item::Function(decl) => {
+                let mut fn_locals = locals.clone();
+                for param in &decl.params {
+                    fn_locals.insert(param.name.clone());
+                }
+                collect_block_refs(&decl.body, &fn_locals, &mut refs);
+            }
+            Item::Stmt(Stmt::Let { value, .. }) => {
+                collect_expr_refs(value, &locals, &mut refs);
+            }
+            Item::Stmt(stmt) => {
+                collect_stmt_refs(stmt, &locals, &mut refs);
+            }
+            _ => continue,
+        }
+
+        // Convert name references to item indices, filtering to only
+        // real dependencies (items that need inference before use).
+        for name in &refs {
+            if let Some(&dep_idx) = name_to_idx.get(name.as_str()) {
+                if dep_idx != idx && needs_inference.contains(name.as_str()) {
+                    deps[idx].insert(dep_idx);
+                }
+            }
+        }
+    }
+
+    // Kahn's algorithm with FIFO queue for source-order stability.
+    let mut in_degree: Vec<usize> = vec![0; n];
+    let mut reverse: Vec<Vec<usize>> = vec![Vec::new(); n];
+    let mut checkable: Vec<bool> = vec![false; n];
+
+    for (idx, item) in ast.items.iter().enumerate() {
+        match item {
+            Item::Function(_) | Item::Stmt(_) => {
+                checkable[idx] = true;
+                in_degree[idx] = deps[idx].len();
+                for &dep in &deps[idx] {
+                    reverse[dep].push(idx);
+                }
+            }
+            _ => {}
+        }
+    }
+
+    let mut queue: VecDeque<usize> = VecDeque::new();
+    for idx in 0..n {
+        if checkable[idx] && in_degree[idx] == 0 {
+            queue.push_back(idx);
+        }
+    }
+
+    let mut result: Vec<usize> = Vec::with_capacity(n);
+    while let Some(idx) = queue.pop_front() {
+        result.push(idx);
+        for &dependent in &reverse[idx] {
+            in_degree[dependent] -= 1;
+            if in_degree[dependent] == 0 {
+                queue.push_back(dependent);
+            }
+        }
+    }
+
+    // Any remaining items are in dependency cycles.  Append them in source
+    // order — the checker will still produce correct errors for genuine
+    // circular type dependencies (e.g. mutually recursive unannotated functions
+    // will see Void return types, same as before).
+    for idx in 0..n {
+        if checkable[idx] && in_degree[idx] > 0 {
+            result.push(idx);
+        }
+    }
+
+    result
 }
 
 #[cfg(test)]

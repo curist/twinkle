@@ -135,4 +135,19 @@ pub fn suite() runner.Suite {
       }
       assert.is_true(has_mismatch)
     })
+    .test("infer return type from body when annotation omitted", fn() {
+      src := "fn make() { 42 }\nfn use_it() Int { make() }"
+      r := try check_ok(src)
+      .Ok({})
+    })
+    .test("inferred return type used in method chain", fn() {
+      src := "type Foo = .{ x: Int }\nfn make() { Foo.{ x: 1 } }\nfn get() Int { make().x }"
+      r := try check_ok(src)
+      .Ok({})
+    })
+    .test("inferred return type used in top-level binding", fn() {
+      src := "fn make() { 42 }\nx := make()\nfn use_it() Int { x }"
+      r := try check_ok(src)
+      .Ok({})
+    })
 }
