@@ -114,8 +114,9 @@ pub fn lower_stmts(ctx: LowerCtx, stmts: Vector<Stmt>, idx: Int, tail: Expr?, bl
         case rs.value {
           .Some(val_expr) => {
             r := lower_expr_fn(ctx, val_expr)
+            // `return {}` in a void function: treat as bare return
             .{
-              expr: .{ kind: .Return(.Some(r.expr)), ty: .Void, span: rs.span },
+              expr: .{ kind: .Return(if r.expr.ty == .Void { .None } else { .Some(r.expr) }), ty: .Void, span: rs.span },
               ctx: r.ctx,
             }
           },

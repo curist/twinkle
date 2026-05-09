@@ -7,6 +7,7 @@ use compiler.checker
 use compiler.ast
 use compiler.core_ir
 use compiler.core_linker
+use compiler.core_linker.dce
 use compiler.lower_core
 use compiler.monomorphize
 use compiler.builtins.{make_builtin_registry}
@@ -1293,7 +1294,7 @@ pub fn suite() runner.Suite {
       func_map[99] = fallback
       func_table: Dict<String, core_ir.FuncId> = Dict.new()
       func_table["int_to_string"] = core_ir.FuncId.{ id: 42 }
-      refs := core_linker.collect_func_refs(body, builtin_env(), func_table, func_map)
+      refs := dce.collect_func_refs(body, builtin_env(), func_table, func_map)
       try assert.int_eq(refs.len(), 1)
       try assert.int_eq(refs[0], 42)
       .Ok({})
@@ -1316,7 +1317,7 @@ pub fn suite() runner.Suite {
       func_map: Dict<Int, core_ir.FunctionDef> = Dict.new()
       func_map[42] = target
       func_table: Dict<String, core_ir.FuncId> = Dict.new()
-      refs := core_linker.collect_func_refs(body, builtin_env(), func_table, func_map)
+      refs := dce.collect_func_refs(body, builtin_env(), func_table, func_map)
       try assert.int_eq(refs.len(), 1)
       try assert.int_eq(refs[0], 42)
       .Ok({})

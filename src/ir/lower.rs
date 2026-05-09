@@ -849,7 +849,15 @@ impl Lowerer {
                 span: ret_span,
             } => {
                 let val = match value {
-                    Some(v) => Some(Box::new(self.lower_expr(v)?)),
+                    Some(v) => {
+                        let lowered = self.lower_expr(v)?;
+                        // `return {}` in a void function: treat as bare return
+                        if lowered.ty == MonoType::Void {
+                            None
+                        } else {
+                            Some(Box::new(lowered))
+                        }
+                    }
                     None => None,
                 };
                 Some(CoreExpr {

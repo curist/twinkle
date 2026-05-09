@@ -1,0 +1,245 @@
+// Dead code elimination for the linker.
+//
+// BFS-based reachability analysis starting from init + entry functions.
+// Collects FuncId references from expression trees and resolves contract
+// calls to their concrete implementations.
+
+use compiler.core_ir.{CoreExpr, FunctionDef, FuncId}
+
+use compiler.resolver.{MonoType, ResolvedEnv}
+use compiler.contracts.{BuiltinContract}
+use .contract_resolve.{exact_contract_ref}
+
+pub type BfsState = .{
+  queue: Vector<Int>,
+  reachable: Dict<Int, Bool>,
+}
+
+pub type ReachabilityIndex = .{
+  funcs_by_id: Dict<Int, FunctionDef>,
+  fallback_methods: Dict<String, Vector<Int>>,
+}
+
+/// Compute the set of reachable FuncIds starting from init + entry functions.
+pub fn compute_reachable(functions: Vector<FunctionDef>, init_id: FuncId?, entry_func_ids: Vector<Int>, env: ResolvedEnv, func_table: Dict<String, FuncId>) Dict<Int, Bool> {
+  index := build_reachability_index(functions)
+
+  reachable: Dict<Int, Bool> = Dict.new()
+  queue: Vector<Int> = []
+
+  // Seed with init function
+  case init_id {
+    .Some(id) => {
+      queue = queue.append(id.id)
+      reachable[id.id] = true
+    },
+    .None => {},
+  }
+
+  // Seed with entry module functions
+  for fid in entry_func_ids {
+    if !reachable.has(fid) {
+      reachable[fid] = true
+      queue = queue.append(fid)
+    }
+  }
+
+  // BFS: find all reachable functions
+  bfs_result := bfs_reachable(index, queue, reachable, env, func_table)
+  bfs_result.reachable
+}
+
+/// Collect all FuncId references from an expression tree.
+pub fn collect_func_refs(expr: CoreExpr, env: ResolvedEnv, func_table: Dict<String, FuncId>, func_map: Dict<Int, FunctionDef>) Vector<Int> {
+  functions: Vector<FunctionDef> = []
+  for fid in func_map.keys() {
+    case func_map[fid] {
+      .Some(func) => { functions = functions.append(func) },
+      .None => {},
+    }
+  }
+  collect_func_refs_indexed(expr, env, func_table, build_reachability_index(functions))
+}
+
+fn bfs_reachable(index: ReachabilityIndex, queue: Vector<Int>, reachable: Dict<Int, Bool>, env: ResolvedEnv, func_table: Dict<String, FuncId>) BfsState {
+  state := BfsState.{ queue, reachable }
+  qi := 0
+  for qi < state.queue.len() {
+    fid := state.queue[qi]
+    qi = qi + 1
+    refs := get_body_refs(index, fid, env, func_table)
+    state = add_refs(state, refs)
+  }
+  state
+}
+
+fn maybe_add_ref(state: BfsState, ref_id: Int) BfsState {
+  if state.reachable.has(ref_id) {
+    return state
+  }
+  new_reachable := state.reachable
+  new_reachable[ref_id] = true
+  BfsState.{
+    queue: state.queue.append(ref_id),
+    reachable: new_reachable,
+  }
+}
+
+fn add_refs(state: BfsState, refs: Vector<Int>) BfsState {
+  refs.fold(state, maybe_add_ref)
+}
+
+pub fn build_reachability_index(functions: Vector<FunctionDef>) ReachabilityIndex {
+  funcs_by_id: Dict<Int, FunctionDef> = Dict.new()
+  fallback_methods: Dict<String, Vector<Int>> = Dict.new()
+  for f in functions {
+    funcs_by_id[f.func_id.id] = f
+    for method_name in fallback_method_names_for_func(f.name) {
+      existing := case fallback_methods[method_name] {
+        .Some(ids) => ids,
+        .None => [],
+      }
+      fallback_methods[method_name] = append_unique_int(existing, f.func_id.id)
+    }
+  }
+  .{ funcs_by_id, fallback_methods }
+}
+
+fn append_unique_int(items: Vector<Int>, value: Int) Vector<Int> {
+  for item in items {
+    if item == value { return items }
+  }
+  items.append(value)
+}
+
+fn append_unique_str(items: Vector<String>, value: String) Vector<String> {
+  for item in items {
+    if item == value { return items }
+  }
+  items.append(value)
+}
+
+fn fallback_method_names_for_func(fn_name: String) Vector<String> {
+  names: Vector<String> = [fn_name]
+  i := 0
+  for i < fn_name.len() {
+    if fn_name[i].to_int() == 46 and i + 1 < fn_name.len() {
+      names = append_unique_str(names, fn_name.slice(i + 1, fn_name.len()))
+    }
+    i = i + 1
+  }
+  names
+}
+
+fn get_body_refs(index: ReachabilityIndex, fid: Int, env: ResolvedEnv, func_table: Dict<String, FuncId>) Vector<Int> {
+  case index.funcs_by_id[fid] {
+    .Some(func) => collect_func_refs_indexed(func.body, env, func_table, index),
+    .None => [],
+  }
+}
+
+fn fallback_contract_refs(method_name: String, index: ReachabilityIndex) Vector<Int> {
+  case index.fallback_methods[method_name] {
+    .Some(refs) => refs,
+    .None => [],
+  }
+}
+
+// Contract calls should normally resolve through the typed receiver and linked
+// function table. The fallback index is intentionally conservative: it keeps
+// method-shaped functions reachable when older lowering/linking paths have not
+// preserved enough exact target information yet.
+fn contract_call_refs(contract: BuiltinContract, method_name: String, receiver_ty: MonoType, env: ResolvedEnv, func_table: Dict<String, FuncId>, index: ReachabilityIndex) Vector<Int> {
+  case exact_contract_ref(contract, receiver_ty, method_name, env, func_table) {
+    .Some(fid) => [fid.id],
+    .None => fallback_contract_refs(method_name, index),
+  }
+}
+
+fn collect_func_refs_indexed(expr: CoreExpr, env: ResolvedEnv, func_table: Dict<String, FuncId>, index: ReachabilityIndex) Vector<Int> {
+  refs: Vector<Int> = []
+  collect_func_refs_into(expr, refs, env, func_table, index)
+}
+
+fn collect_func_refs_into(expr: CoreExpr, refs: Vector<Int>, env: ResolvedEnv, func_table: Dict<String, FuncId>, index: ReachabilityIndex) Vector<Int> {
+  case expr.kind {
+    .LitInt(_) => refs,
+    .LitFloat(_) => refs,
+    .LitBool(_) => refs,
+    .LitStr(_) => refs,
+    .LitVoid => refs,
+    .Local(_) => refs,
+    .GlobalLocal(_) => refs,
+
+    .GlobalFunc(id) => refs.append(id.id),
+
+    .Let(_, value, body) => {
+      r := collect_func_refs_into(value, refs, env, func_table, index)
+      collect_func_refs_into(body, r, env, func_table, index)
+    },
+    .Assign(_, value) => collect_func_refs_into(value, refs, env, func_table, index),
+
+    .BinOp(_, lhs, rhs) => {
+      r := collect_func_refs_into(lhs, refs, env, func_table, index)
+      collect_func_refs_into(rhs, r, env, func_table, index)
+    },
+    .UnOp(_, operand) => collect_func_refs_into(operand, refs, env, func_table, index),
+
+    .Call(callee, args) => {
+      r := collect_func_refs_into(callee, refs, env, func_table, index)
+      collect_func_refs_list(args, r, env, func_table, index)
+    },
+    .ContractCall(contract, method_name, receiver, args) => {
+      r := contract_call_refs(contract, method_name, receiver.ty, env, func_table, index)
+        .fold(refs, fn(out, id) { out.append(id) })
+      r = collect_func_refs_into(receiver, r, env, func_table, index)
+      collect_func_refs_list(args, r, env, func_table, index)
+    },
+    .MakeClosure(func_id, _) => refs.append(func_id.id),
+
+    .If(cond, then_br, else_br) => {
+      r := collect_func_refs_into(cond, refs, env, func_table, index)
+      r = collect_func_refs_into(then_br, r, env, func_table, index)
+      collect_func_refs_into(else_br, r, env, func_table, index)
+    },
+    .Match(scrutinee, arms) => {
+      arms.fold(collect_func_refs_into(scrutinee, refs, env, func_table, index), fn(r, arm) {
+        collect_func_refs_into(arm.body, r, env, func_table, index)
+      })
+    },
+    .Loop(body) => collect_func_refs_into(body, refs, env, func_table, index),
+    .Break(val) => {
+      case val {
+        .Some(v) => collect_func_refs_into(v, refs, env, func_table, index),
+        .None => refs,
+      }
+    },
+    .Continue => refs,
+    .Return(val) => {
+      case val {
+        .Some(v) => collect_func_refs_into(v, refs, env, func_table, index),
+        .None => refs,
+      }
+    },
+    .Defer(body) => collect_func_refs_into(body, refs, env, func_table, index),
+
+    .Record(_, fields) => {
+      fields.fold(refs, fn(r, fi) { collect_func_refs_into(fi.value, r, env, func_table, index) })
+    },
+    .RecordGet(rec, _) => collect_func_refs_into(rec, refs, env, func_table, index),
+    .RecordUpdate(rec, _, value) => {
+      r := collect_func_refs_into(rec, refs, env, func_table, index)
+      collect_func_refs_into(value, r, env, func_table, index)
+    },
+    .Variant(_, _, args) => collect_func_refs_list(args, refs, env, func_table, index),
+    .ArrayLit(elems) => collect_func_refs_list(elems, refs, env, func_table, index),
+    .Index(arr, idx) => {
+      r := collect_func_refs_into(arr, refs, env, func_table, index)
+      collect_func_refs_into(idx, r, env, func_table, index)
+    },
+  }
+}
+
+fn collect_func_refs_list(exprs: Vector<CoreExpr>, refs: Vector<Int>, env: ResolvedEnv, func_table: Dict<String, FuncId>, index: ReachabilityIndex) Vector<Int> {
+  exprs.fold(refs, fn(r, e) { collect_func_refs_into(e, r, env, func_table, index) })
+}

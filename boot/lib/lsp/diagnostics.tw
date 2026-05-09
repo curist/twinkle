@@ -9,6 +9,7 @@ use lib.json
 use lib.lsp.protocol
 use lib.source.diagnostic as source_diag
 use lib.text.line_index
+use .range.{range_to_json}
 
 pub fn publish_diagnostics(
   uri: String,
@@ -53,19 +54,6 @@ fn diagnostic_range(index: line_index.LineIndex, d: query_diagnostics.Diagnostic
   }
 }
 
-fn range_to_json(range: line_index.TextRange) json.Json {
-  json.object([
-    json.kv("start", position_to_json(range.start)),
-    json.kv("end", position_to_json(range.end)),
-  ])
-}
-
-fn position_to_json(pos: line_index.Position) json.Json {
-  json.object([
-    json.kv("line", .Int(pos.line)),
-    json.kv("character", .Int(pos.character)),
-  ])
-}
 
 fn severity_to_lsp(severity: source_diag.Severity) Int {
   case severity {

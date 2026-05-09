@@ -5,27 +5,13 @@
 
 use lib.json
 use lib.text.line_index
+use .range.{byte_range_to_lsp_range}
 
 /// Build a TextEdit JSON object.
 pub fn text_edit(range: json.Json, new_text: String) json.Json {
   json.object([
     json.kv("range", range),
     json.kv("newText", .Str(new_text)),
-  ])
-}
-
-/// Build a range JSON object from byte offsets using line index.
-pub fn byte_range_to_lsp_range(index: line_index.LineIndex, start: Int, end: Int) json.Json {
-  range := line_index.byte_range_to_range(index, start, end, .Utf16)
-  json.object([
-    json.kv("start", json.object([
-      json.kv("line", .Int(range.start.line)),
-      json.kv("character", .Int(range.start.character)),
-    ])),
-    json.kv("end", json.object([
-      json.kv("line", .Int(range.end.line)),
-      json.kv("character", .Int(range.end.character)),
-    ])),
   ])
 }
 

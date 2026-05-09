@@ -1,0 +1,108 @@
+// Unused import fix logic.
+//
+// Extracts unused-import edits from analysis diagnostics and applies them
+// to source files on disk.
+
+use @std.fs
+use lib.json
+use compiler.query.analyze
+
+pub type ImportFix = .{
+  use_start: Int,
+  use_end: Int,
+  replacement: String,
+}
+
+pub type ApplyResult = .{
+  path: String,
+  count: Int,
+}
+
+/// Extract unused-import fixes from analysis diagnostics, grouped by file path.
+pub fn collect_fixes(diagnostics: Vector<analyze.AnalysisDiag>) Dict<String, Vector<ImportFix>> {
+  edits_by_file: Dict<String, Vector<ImportFix>> = Dict.new()
+  for d in diagnostics {
+    case d.data {
+      .Some(data) => {
+        kind := case json.decode(data, json.field("kind", json.string())) {
+          .Ok(k) => k,
+          .Err(_) => { continue },
+        }
+        if kind != "unused_import" { continue }
+        use_start := case json.decode(data, json.field("use_start", json.int())) {
+          .Ok(s) => s,
+          .Err(_) => { continue },
+        }
+        use_end := case json.decode(data, json.field("use_end", json.int())) {
+          .Ok(e) => e,
+          .Err(_) => { continue },
+        }
+        replacement := case json.decode(data, json.field("replacement", json.string())) {
+          .Ok(r) => r,
+          .Err(_) => { continue },
+        }
+
+        fix := ImportFix.{ use_start, use_end, replacement }
+        file_path := d.identity.path
+        case edits_by_file[file_path] {
+          .Some(existing) => {
+            // Dedup by span — multiple unused names in the same use stmt share the same edit
+            found := false
+            for e in existing {
+              if e.use_start == fix.use_start and e.use_end == fix.use_end {
+                found = true
+                break
+              }
+            }
+            if !found {
+              edits_by_file[file_path] = existing.append(fix)
+            }
+          },
+          .None => { edits_by_file[file_path] = [fix] },
+        }
+      },
+      .None => {},
+    }
+  }
+  edits_by_file
+}
+
+/// Apply fixes to source files on disk. Returns list of results.
+pub fn apply_fixes(edits_by_file: Dict<String, Vector<ImportFix>>) Vector<ApplyResult> {
+  results: Vector<ApplyResult> = []
+  for file_path in edits_by_file.keys() {
+    fixes := case edits_by_file[file_path] {
+      .Some(f) => f,
+      .None => { continue },
+    }
+
+    source := case fs.read_text(file_path) {
+      .Ok(text) => text,
+      .Err(_) => {
+        eprintln("warning: could not read '${file_path}', skipping")
+        continue
+      },
+    }
+
+    // Sort edits by use_start descending so we can apply from end to start
+    // without invalidating earlier byte offsets
+    sorted := fixes.sort_by(fn(a: ImportFix, b: ImportFix) Order {
+      if b.use_start < a.use_start { .Lt } else if b.use_start > a.use_start { .Gt } else { .Eq }
+    })
+
+    result := source
+    for fix in sorted {
+      before := result.slice(0, fix.use_start)
+      after := result.slice(fix.use_end, result.len())
+      result = before.concat(fix.replacement).concat(after)
+    }
+
+    case fs.write_text(file_path, result) {
+      .Ok(_) => {
+        results = results.append(ApplyResult.{ path: file_path, count: fixes.len() })
+      },
+      .Err(_) => eprintln("error: could not write '${file_path}'"),
+    }
+  }
+  results
+}

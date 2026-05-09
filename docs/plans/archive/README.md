@@ -58,6 +58,7 @@ Related historical context outside this folder:
 | [boot-backend-verifier-refactor.md](boot-backend-verifier-refactor.md) | Split backend verification into slot, expression, and shared-helper modules with explicit basic/full verification levels |
 | [boot-frontend-query-refactor.md](boot-frontend-query-refactor.md) | Split frontend analysis around module interfaces, dependency-interface fingerprints, and lower-churn import environment construction |
 | [boot-phase-file-decomposition.md](boot-phase-file-decomposition.md) | Decomposed the core lowerer and Wasm emitter into focused helper modules while preserving public entrypoints; parser split remains intentionally conservative and checker decomposition deferred |
+| [boot-compiler-cleanup.md](boot-compiler-cleanup.md) | Six independent cleanup tasks: extract fix_unused_imports, break up core_linker, deduplicate LSP JSON helpers, fix quadratic workspace diagnostics, shared AST offset walker for hover/definition, fix method_function_name dispatch |
 
 ---
 

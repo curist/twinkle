@@ -243,27 +243,40 @@ fn publish_workspace_diagnostics(state: State) Step {
     query_diagnostics.DocumentInput.{ uri: doc.uri, text: doc.text, version: doc.version }
   }
 
+  // Group open docs by project root so we run one analysis per project
+  // instead of one per open document.
+  by_project: Dict<String, Vector<document_store.Document>> = Dict.new()
+  for doc in open_docs {
+    root := project_root_for_document(doc.identity.path)
+    existing := case by_project[root] {
+      .Some(ds) => ds,
+      .None => [],
+    }
+    by_project[root] = existing.append(doc)
+  }
+
   cur_cache := state.query_cache
   outgoing: Vector<json.Json> = []
   published: Dict<String, Bool> = Dict.new()
 
-  for doc in open_docs {
-    if published.has(doc.identity.uri) {
-      continue
+  for root in by_project.keys() {
+    docs := case by_project[root] {
+      .Some(ds) => ds,
+      .None => { continue },
     }
 
+    // Use first doc as entry — analysis walks all deps anyway.
+    // Track which open-doc URIs are covered by this analysis.
+    entry := docs[0]
     result := query_diagnostics.analyze_workspace(cur_cache, .{
-      entry_uri: doc.uri,
-      project_root: project_root_for_document(doc.identity.path),
+      entry_uri: entry.uri,
+      project_root: root,
       open_documents: overlay_docs,
     })
     cur_cache = result.cache
 
     for group in result.diagnostics_by_uri {
-      // Only publish groups that have diagnostics or belong to the current entry.
-      // Empty placeholder groups for unrelated open docs should not prevent
-      // those docs from being analyzed as their own entry later.
-      if group.diagnostics.len() == 0 and group.uri != doc.identity.uri {
+      if group.diagnostics.len() == 0 and group.uri != entry.identity.uri {
         continue
       }
       case document_by_identity_uri(state.documents, group.uri) {
@@ -274,6 +287,36 @@ fn publish_workspace_diagnostics(state: State) Step {
           }
         },
         .None => {},
+      }
+    }
+
+    // If any open docs in this project weren't covered, analyze them
+    // as separate entries to catch disjoint dependency graphs.
+    for doc in docs {
+      if published.has(doc.identity.uri) {
+        continue
+      }
+
+      extra := query_diagnostics.analyze_workspace(cur_cache, .{
+        entry_uri: doc.uri,
+        project_root: root,
+        open_documents: overlay_docs,
+      })
+      cur_cache = extra.cache
+
+      for group in extra.diagnostics_by_uri {
+        if group.diagnostics.len() == 0 and group.uri != doc.identity.uri {
+          continue
+        }
+        case document_by_identity_uri(state.documents, group.uri) {
+          .Some(group_doc) => {
+            if !published.has(group.uri) {
+              outgoing = outgoing.append(lsp_diagnostics.publish_diagnostics(group_doc.uri, group_doc.version, group_doc.index, group.diagnostics))
+              published[group.uri] = true
+            }
+          },
+          .None => {},
+        }
       }
     }
   }

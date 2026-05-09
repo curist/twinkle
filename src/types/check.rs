@@ -27,6 +27,8 @@ pub struct TypeChecker {
 
     // Track current function's return type for return statement checking
     current_function_ret: Option<MonoType>,
+    // Whether we're inside any function body (true even when ret type is inferred)
+    in_function: bool,
 
     // Module aliases (for cross-module call resolution)
     module_aliases: HashSet<String>,
@@ -88,6 +90,7 @@ impl TypeChecker {
             errors: Vec::new(),
             type_map: TypeMap::new(),
             current_function_ret: None,
+            in_function: false,
             module_aliases,
             type_var_scope: Vec::new(),
             current_type_param_bounds: HashMap::new(),
@@ -296,7 +299,9 @@ impl TypeChecker {
         }
 
         // Set current function return type
+        let saved_in_function = self.in_function;
         self.current_function_ret = sig.ret.clone();
+        self.in_function = true;
 
         // Type-check the function body
         // The body is a Block, which should evaluate to the return type
@@ -338,6 +343,7 @@ impl TypeChecker {
 
         // Clean up
         self.current_function_ret = None;
+        self.in_function = saved_in_function;
         self.local_env.pop_scope();
         self.type_var_scope = saved_type_vars;
         self.current_type_param_bounds = saved_type_param_bounds;
@@ -552,7 +558,9 @@ impl TypeChecker {
             self.local_env.bind(p.name.clone(), ty.clone());
         }
         let saved = self.current_function_ret.take();
+        let saved_in_function = self.in_function;
         self.current_function_ret = expected_ret.clone();
+        self.in_function = true;
 
         let body_ty = match &expected_ret {
             Some(exp) => {
@@ -564,6 +572,7 @@ impl TypeChecker {
 
         self.local_env.pop_scope();
         self.current_function_ret = saved;
+        self.in_function = saved_in_function;
 
         Ok(MonoType::Function {
             params: param_types,
@@ -1039,10 +1048,13 @@ impl TypeChecker {
                         self.local_env.bind(p.name.clone(), ty.clone());
                     }
                     let saved = self.current_function_ret.take();
+                    let saved_in_function = self.in_function;
                     self.current_function_ret = Some(ret_ty.clone());
+                    self.in_function = true;
                     let result = self.check_expr(&fe.body, &ret_ty);
                     self.local_env.pop_scope();
                     self.current_function_ret = saved;
+                    self.in_function = saved_in_function;
                     result
                 } else {
                     let actual = self.synth_expr(expr)?;
@@ -2051,6 +2063,13 @@ impl TypeChecker {
                             }
                         } else if self.unify(&MonoType::Void, &ret_ty, *span).is_err() {
                             had_error = true;
+                        }
+                    } else if self.in_function {
+                        // Inside a function with inferred return type.
+                        // Bare return is valid (implies void); return-with-value
+                        // is synthesized for type-mapping.
+                        if let Some(val) = value {
+                            let _ = self.synth_expr(val);
                         }
                     } else {
                         self.errors.push(TypeError::UnsupportedFeature {

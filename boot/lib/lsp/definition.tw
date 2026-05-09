@@ -5,6 +5,7 @@
 use compiler.query.definition as query_definition
 use lib.json
 use lib.text.line_index
+use .range.{range_to_json}
 
 pub fn definition_response(index: line_index.LineIndex, result: query_definition.DefinitionResult) json.Json {
   range := line_index.byte_range_to_range(index, result.span.start, result.span.end, .Utf16)
@@ -14,16 +15,3 @@ pub fn definition_response(index: line_index.LineIndex, result: query_definition
   ])
 }
 
-fn range_to_json(range: line_index.TextRange) json.Json {
-  json.object([
-    json.kv("start", position_to_json(range.start)),
-    json.kv("end", position_to_json(range.end)),
-  ])
-}
-
-fn position_to_json(pos: line_index.Position) json.Json {
-  json.object([
-    json.kv("line", .Int(pos.line)),
-    json.kv("character", .Int(pos.character)),
-  ])
-}

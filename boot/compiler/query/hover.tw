@@ -1,11 +1,11 @@
 // Hover query: find the type of the expression at a given byte offset.
 
-use compiler.ast.{Item, Block, Stmt, Expr, RecordEntry, CollectExpr, FunctionDecl, TypeDecl, TypeExpr, TypePath, TypeDef, Pattern}
-
+use compiler.ast.{Item, Block, Stmt, Expr, FunctionDecl, TypeDecl, TypeExpr, TypePath, TypeDef, Pattern}
 use compiler.checker.{CheckResult}
 use compiler.resolver.{ResolvedEnv, MonoType, FunctionSig, TypeId, ResolvedTypeParam, ResolvedVariant, ty_to_string_env}
 
 use compiler.query.semantic.{SemanticSnapshot}
+use compiler.query.ast_walk.{NodeContext, find_node_in_block, find_node_in_expr, find_node_in_stmt}
 use lib.source.span
 
 pub type HoverResult = .{
@@ -71,9 +71,18 @@ pub fn hover(snap: SemanticSnapshot, byte_offset: Int, source: String) HoverResu
             }
           }
         },
-        _ => case hover_stmt(stmt, byte_offset, typed, parsed.module.items, source) {
-          .Some(r) => { return .Some(r) },
-          .None => {},
+        _ => {
+          case hover_stmt_special(stmt, byte_offset, typed) {
+            .Some(r) => { return .Some(r) },
+            .None => {},
+          }
+          case find_node_in_stmt(stmt, byte_offset) {
+            .Some(ctx) => case hover_for_node(ctx, byte_offset, typed, parsed.module.items, source) {
+              .Some(r) => { return .Some(r) },
+              .None => {},
+            },
+            .None => {},
+          }
         },
       },
       _ => {},
@@ -165,6 +174,273 @@ fn sig_to_string(env: ResolvedEnv, sig: FunctionSig) String {
   }
   "fn(${parts.join(", ")}) ${ret}"
 }
+
+// ── Shared walker integration ──────────────────────────────────────
+
+fn hover_block(block: Block, offset: Int, typed: CheckResult, items: Vector<Item>, source: String) HoverResult? {
+  // Check stmt-level specials first (let names, for patterns/indices)
+  for stmt in block.stmts {
+    case hover_stmt_special(stmt, offset, typed) {
+      .Some(r) => { return .Some(r) },
+      .None => {},
+    }
+  }
+  // Shared walker for expr-level
+  case find_node_in_block(block, offset) {
+    .Some(ctx) => hover_for_node(ctx, offset, typed, items, source),
+    .None => .None,
+  }
+}
+
+fn hover_stmt_special(stmt: Stmt, offset: Int, typed: CheckResult) HoverResult? {
+  case stmt {
+    .Let(ls) => {
+      if !ls.span.contains(offset) { return .None }
+      if ls.name_span.contains(offset) {
+        case typed.type_map[ls.value.id] {
+          .Some(ty) => { return .Some(.{ content: ty_to_string_env(typed.env, ty), span: ls.name_span }) },
+          .None => {},
+        }
+      }
+      case ls.ty {
+        .Some(t) => case hover_type_expr(t, offset, typed) {
+          .Some(r) => { return .Some(r) },
+          .None => {},
+        },
+        .None => {},
+      }
+      .None
+    },
+    .For(fs) => {
+      if !fs.span.contains(offset) { return .None }
+      case fs.pattern_span {
+        .Some(ps) => if ps.contains(offset) {
+          case fs.iter {
+            .Some(iter) => case typed.type_map[iter.id] {
+              .Some(ty) => { return .Some(.{ content: ty_to_string_env(typed.env, iter_element_type(ty)), span: ps }) },
+              .None => {},
+            },
+            .None => {},
+          }
+        },
+        .None => {},
+      }
+      case fs.index_span {
+        .Some(is) => if is.contains(offset) {
+          return .Some(.{ content: ty_to_string_env(typed.env, .Int), span: is })
+        },
+        .None => {},
+      }
+      .None
+    },
+    _ => .None,
+  }
+}
+
+fn hover_expr(expr: Expr, offset: Int, typed: CheckResult, items: Vector<Item>, source: String) HoverResult? {
+  case find_node_in_expr(expr, offset) {
+    .Some(ctx) => hover_for_node(ctx, offset, typed, items, source),
+    .None => .None,
+  }
+}
+
+fn hover_for_node(ctx: NodeContext, offset: Int, typed: CheckResult, items: Vector<Item>, source: String) HoverResult? {
+  case ctx {
+    .ExprNode(expr) => {
+      case expr.kind {
+        .Ident(name) => case typed.env.lookup_function(name) {
+          .Some(sig) => {
+            content := append_doc(sig_to_string(typed.env, sig), first_doc(sig.doc, find_func_doc(name, items, source)))
+            .Some(HoverResult.{ content, span: expr.span })
+          },
+          .None => expr_type(expr, typed),
+        },
+        .Closure(params, _, _) => {
+          // Check closure parameter names
+          case typed.type_map[expr.id] {
+            .Some(.Function(param_types, _)) => {
+              for p, i in params {
+                if p.name_span.contains(offset) and i < param_types.len() {
+                  return .Some(.{ content: ty_to_string_env(typed.env, param_types[i]), span: p.name_span })
+                }
+              }
+            },
+            _ => {},
+          }
+          for p in params {
+            case p.ty {
+              .Some(t) => case hover_type_expr(t, offset, typed) {
+                .Some(r) => { return .Some(r) },
+                .None => {},
+              },
+              .None => {},
+            }
+          }
+          expr_type(expr, typed)
+        },
+        .Variant(name, _) => {
+          name_span := variant_pattern_name_span(expr.span, name)
+          if name_span.contains(offset) {
+            case typed.type_map[expr.id] {
+              .Some(ty) => case variant_hover_for_type(typed.env, ty, name, name_span) {
+                .Some(r) => { return .Some(r) },
+                .None => {},
+              },
+              .None => {},
+            }
+          }
+          expr_type(expr, typed)
+        },
+        _ => expr_type(expr, typed),
+      }
+    },
+    .FieldAccess(expr, field, base) => {
+      field_span := span.Span.{ file_id: expr.span.file_id, start: expr.span.end - field.len(), end: expr.span.end }
+      case hover_recorded_method(expr.id, base, field_span, typed) {
+        .Some(r) => .Some(r),
+        .None => case hover_method(base, field, field_span, typed) {
+          .Some(r) => .Some(r),
+          .None => expr_type(expr, typed),
+        },
+      }
+    },
+    .PatternNode(pat, scrutinee) => {
+      case scrutinee {
+        .Some(s) => case typed.type_map[s.id] {
+          .Some(scrutinee_ty) => hover_pattern(pat, offset, scrutinee_ty, typed),
+          .None => .None,
+        },
+        .None => .None,
+      }
+    },
+  }
+}
+
+// ── Hover helpers ──────────────────────────────────────────────────
+
+fn expr_type(expr: Expr, typed: CheckResult) HoverResult? {
+  case typed.type_map[expr.id] {
+    .Some(ty) => {
+      content := ty_to_string_env(typed.env, ty)
+      .Some(HoverResult.{ content, span: expr.span })
+    },
+    .None => .None,
+  }
+}
+
+fn hover_recorded_method(callee_id: Int, base: Expr, method_span: span.Span, typed: CheckResult) HoverResult? {
+  meta := case typed.method_calls[callee_id] {
+    .Some(info) => info,
+    .None => { return .None },
+  }
+  if meta.func_name == "" {
+    return .None
+  }
+  sig := case typed.env.lookup_registered_function(meta.func_name) {
+    .Some(found) => found,
+    .None => { return .None },
+  }
+  display_sig := if meta.has_receiver { instantiate_receiver_sig(sig, base, typed) } else { sig }
+  .Some(HoverResult.{ content: append_doc(sig_to_string(typed.env, display_sig), sig.doc), span: method_span })
+}
+
+fn hover_method(base: Expr, method: String, method_span: span.Span, typed: CheckResult) HoverResult? {
+  case typed.type_map[base.id] {
+    .Some(base_ty) => case variant_hover_for_type(typed.env, base_ty, method, method_span) {
+      .Some(r) => { return .Some(r) },
+      .None => {},
+    },
+    .None => {},
+  }
+  case method_function_name(base, method, typed) {
+    .Some(func_name) => case typed.env.lookup_registered_function(func_name) {
+      .Some(sig) => {
+        display_sig := instantiate_receiver_sig(sig, base, typed)
+        .Some(HoverResult.{ content: append_doc(sig_to_string(typed.env, display_sig), sig.doc), span: method_span })
+      },
+      .None => .None,
+    },
+    .None => .None,
+  }
+}
+
+fn method_function_name(base: Expr, method: String, typed: CheckResult) String? {
+  case typed.type_map[base.id] {
+    .Some(.Named(tid, _)) => case typed.env.lookup_type_method(tid, method) {
+      .Some(func_name) => { return .Some(func_name) },
+      .None => {},
+    },
+    .Some(.Vector(_)) => case typed.env.lookup_method("Vector", method) {
+      .Some(func_name) => { return .Some(func_name) },
+      .None => {},
+    },
+    .Some(.Dict(_, _)) => case typed.env.lookup_method("Dict", method) {
+      .Some(func_name) => { return .Some(func_name) },
+      .None => {},
+    },
+    .Some(.String) => case typed.env.lookup_method("String", method) {
+      .Some(func_name) => { return .Some(func_name) },
+      .None => {},
+    },
+    .Some(.Int) => case typed.env.lookup_method("Int", method) {
+      .Some(func_name) => { return .Some(func_name) },
+      .None => {},
+    },
+    .Some(.Float) => case typed.env.lookup_method("Float", method) {
+      .Some(func_name) => { return .Some(func_name) },
+      .None => {},
+    },
+    .Some(.Bool) => case typed.env.lookup_method("Bool", method) {
+      .Some(func_name) => { return .Some(func_name) },
+      .None => {},
+    },
+    .Some(.Byte) => case typed.env.lookup_method("Byte", method) {
+      .Some(func_name) => { return .Some(func_name) },
+      .None => {},
+    },
+    .Some(.Optional(_)) => case typed.env.lookup_method("Option", method) {
+      .Some(func_name) => { return .Some(func_name) },
+      .None => {},
+    },
+    .Some(.Result(_, _)) => case typed.env.lookup_method("Result", method) {
+      .Some(func_name) => { return .Some(func_name) },
+      .None => {},
+    },
+    _ => {},
+  }
+
+  case base.kind {
+    .Ident(type_name) => typed.env.lookup_method(type_name, method),
+    _ => .None,
+  }
+}
+
+fn instantiate_receiver_sig(sig: FunctionSig, base: Expr, typed: CheckResult) FunctionSig {
+  args: Vector<MonoType> = case typed.type_map[base.id] {
+    .Some(.Named(_, type_args)) => type_args,
+    .Some(.Vector(inner)) => [inner],
+    .Some(.Dict(k, v)) => [k, v],
+    .Some(.Optional(inner)) => [inner],
+    .Some(.Result(ok, err)) => [ok, err],
+    _ => [],
+  }
+  params := collect p in sig.params { substitute_type_params(p, sig.type_params, args) }
+  ret: MonoType? = case sig.ret {
+    .Some(r) => .Some(substitute_type_params(r, sig.type_params, args)),
+    .None => .None,
+  }
+  FunctionSig.{
+    name: sig.name,
+    type_params: sig.type_params,
+    param_names: sig.param_names,
+    params,
+    ret,
+    doc: sig.doc,
+    extern_module: sig.extern_module,
+  }
+}
+
+// ── Type expression hover ──────────────────────────────────────────
 
 fn hover_type_def(def: TypeDef, offset: Int, typed: CheckResult) HoverResult? {
   case def {
@@ -271,354 +547,125 @@ fn hover_type_path(path: TypePath, offset: Int, typed: CheckResult) HoverResult?
   .Some(.{ content: name, span: path.span })
 }
 
-fn hover_block(block: Block, offset: Int, typed: CheckResult, items: Vector<Item>, source: String) HoverResult? {
-  for stmt in block.stmts {
-    case hover_stmt(stmt, offset, typed, items, source) {
-      .Some(r) => { return .Some(r) },
-      .None => {},
-    }
-  }
-  case block.tail {
-    .Some(expr) => hover_expr(expr, offset, typed, items, source),
-    .None => .None,
-  }
-}
+// ── Pattern hover ──────────────────────────────────────────────────
 
-fn hover_stmt(stmt: Stmt, offset: Int, typed: CheckResult, items: Vector<Item>, source: String) HoverResult? {
-  case stmt {
-    .Let(ls) => {
-      if ls.span.contains(offset) {
-        if ls.name_span.contains(offset) {
-          case typed.type_map[ls.value.id] {
-            .Some(ty) => { return .Some(.{ content: ty_to_string_env(typed.env, ty), span: ls.name_span }) },
-            .None => {},
-          }
-        }
-        return hover_expr(ls.value, offset, typed, items, source)
-      }
-      .None
-    },
-    .For(fs) => {
-      case fs.pattern_span {
-        .Some(ps) => if ps.contains(offset) {
-          case fs.iter {
-            .Some(iter) => case typed.type_map[iter.id] {
-              .Some(ty) => { return .Some(.{ content: ty_to_string_env(typed.env, iter_element_type(ty)), span: ps }) },
-              .None => {},
-            },
-            .None => {},
-          }
-        },
-        .None => {},
-      }
-      case fs.index_span {
-        .Some(is) => if is.contains(offset) {
-          return .Some(.{ content: ty_to_string_env(typed.env, .Int), span: is })
-        },
-        .None => {},
-      }
-      case fs.iter {
-        .Some(iter) => case hover_expr(iter, offset, typed, items, source) {
-          .Some(r) => { return .Some(r) },
-          .None => {},
-        },
-        .None => {},
-      }
-      case fs.condition {
-        .Some(cond) => case hover_expr(cond, offset, typed, items, source) {
-          .Some(r) => { return .Some(r) },
-          .None => {},
-        },
-        .None => {},
-      }
-      hover_block(fs.body, offset, typed, items, source)
-    },
-    .Return(rs) => case rs.value {
-      .Some(expr) => hover_expr(expr, offset, typed, items, source),
-      .None => .None,
-    },
-    .Break(bs) => case bs.value {
-      .Some(expr) => hover_expr(expr, offset, typed, items, source),
-      .None => .None,
-    },
-    .Defer(ds) => hover_expr(ds.expr, offset, typed, items, source),
-    .Expr(es) => {
-      if es.span.contains(offset) {
-        return hover_expr(es.expr, offset, typed, items, source)
-      }
-      .None
-    },
+fn hover_pattern(pat: Pattern, offset: Int, expected: MonoType, typed: CheckResult) HoverResult? {
+  if !pat.span.contains(offset) { return .None }
+  case pat.kind {
+    .Ident(_) => .Some(.{ content: ty_to_string_env(typed.env, expected), span: pat.span }),
+    .Variant(name, subs) => hover_variant_pattern_parts(pat, name, subs, offset, expected, typed),
+    .QualifiedVariant(_, name, subs) => hover_variant_pattern_parts(pat, name, subs, offset, expected, typed),
     _ => .None,
   }
 }
 
-fn hover_expr(expr: Expr, offset: Int, typed: CheckResult, items: Vector<Item>, source: String) HoverResult? {
-  if !expr.span.contains(offset) {
-    return .None
-  }
-
-  // Try to find a deeper child match first.
-  case hover_expr_children(expr, offset, typed, items, source) {
-    .Some(r) => .Some(r),
-    .None => {
-      // For identifiers, prefer the resolved FunctionSig (includes param names)
-      // over the raw MonoType from the type map.
-      case expr.kind {
-        .Ident(name) => case typed.env.lookup_function(name) {
-          .Some(sig) => {
-            content := append_doc(sig_to_string(typed.env, sig), first_doc(sig.doc, find_func_doc(name, items, source)))
-            .Some(HoverResult.{ content, span: expr.span })
-          },
-          .None => expr_type(expr, typed),
-        },
-        _ => expr_type(expr, typed),
-      }
-    },
-  }
-}
-
-fn expr_type(expr: Expr, typed: CheckResult) HoverResult? {
-  case typed.type_map[expr.id] {
-    .Some(ty) => {
-      content := ty_to_string_env(typed.env, ty)
-      .Some(HoverResult.{ content, span: expr.span })
-    },
-    .None => .None,
-  }
-}
-
-fn hover_expr_children(expr: Expr, offset: Int, typed: CheckResult, items: Vector<Item>, source: String) HoverResult? {
-  case expr.kind {
-    .Unary(_, inner) => hover_expr(inner, offset, typed, items, source),
-    .Binary(_, lhs, rhs) => {
-      case hover_expr(lhs, offset, typed, items, source) {
-        .Some(r) => .Some(r),
-        .None => hover_expr(rhs, offset, typed, items, source),
-      }
-    },
-    .Call(callee, args) => {
-      case hover_expr(callee, offset, typed, items, source) {
-        .Some(r) => .Some(r),
-        .None => hover_exprs(args, offset, typed, items, source),
-      }
-    },
-    .Field(base, field) => {
-      // If cursor is on the field/method name, try to resolve the method signature.
-      field_start := expr.span.end - field.len()
-      if offset >= field_start and offset < expr.span.end {
-        field_span := span.Span.{ file_id: expr.span.file_id, start: field_start, end: expr.span.end }
-        case hover_recorded_method(expr.id, base, field_span, typed) {
-          .Some(r) => { return .Some(r) },
-          .None => {},
-        }
-        case hover_method(base, field, field_span, typed) {
-          .Some(r) => { return .Some(r) },
-          .None => {},
-        }
-      }
-      hover_expr(base, offset, typed, items, source)
-    },
-    .Index(base, idx) => {
-      case hover_expr(base, offset, typed, items, source) {
-        .Some(r) => .Some(r),
-        .None => hover_expr(idx, offset, typed, items, source),
-      }
-    },
-    .BlockExpr(block) => hover_block(block, offset, typed, items, source),
-    .If(cond, then_block, else_expr) => {
-      case hover_expr(cond, offset, typed, items, source) {
-        .Some(r) => .Some(r),
-        .None => case hover_block(then_block, offset, typed, items, source) {
-          .Some(r) => .Some(r),
-          .None => case else_expr {
-            .Some(e) => hover_expr(e, offset, typed, items, source),
-            .None => .None,
-          },
-        },
-      }
-    },
-    .Case(scrutinee, arms) => {
-      case hover_expr(scrutinee, offset, typed, items, source) {
-        .Some(r) => .Some(r),
-        .None => {
-          for arm in arms {
-            if arm.span.contains(offset) {
-              case typed.type_map[scrutinee.id] {
-                .Some(scrutinee_ty) => case hover_pattern(arm.pattern, offset, scrutinee_ty, typed) {
-                  .Some(r) => { return .Some(r) },
-                  .None => {},
-                },
-                .None => {},
-              }
-              case hover_expr(arm.expr, offset, typed, items, source) {
-                .Some(r) => { return .Some(r) },
-                .None => {},
-              }
-            }
-          }
-          .None
-        },
-      }
-    },
-    .Array(elems) => hover_exprs(elems, offset, typed, items, source),
-    .Record(entries) => hover_record_entries(entries, offset, typed, items, source),
-    .NamedRecord(_, entries) => hover_record_entries(entries, offset, typed, items, source),
-    .Variant(name, fields) => {
-      name_span := variant_pattern_name_span(expr.span, name)
+fn hover_variant_pattern_parts(pat: Pattern, name: String, subs: Vector<Pattern>, offset: Int, expected: MonoType, typed: CheckResult) HoverResult? {
+  name_span := variant_pattern_name_span(pat.span, name)
+  field_types: Vector<MonoType> = []
+  case variant_info_for_type(typed.env, expected, name) {
+    .Some(info) => {
+      field_types = info.fields
       if name_span.contains(offset) {
-        case typed.type_map[expr.id] {
-          .Some(ty) => case variant_hover_for_type(typed.env, ty, name, name_span) {
-            .Some(r) => { return .Some(r) },
-            .None => {},
-          },
-          .None => {},
-        }
+        return .Some(.{ content: info.content, span: name_span })
       }
-      hover_exprs(fields, offset, typed, items, source)
-    },
-    .Closure(params, _, body) => {
-      // Check closure parameter names
-      case typed.type_map[expr.id] {
-        .Some(.Function(param_types, _)) => {
-          for p, i in params {
-            if p.name_span.contains(offset) and i < param_types.len() {
-              return .Some(.{ content: ty_to_string_env(typed.env, param_types[i]), span: p.name_span })
-            }
-          }
-        },
-        _ => {},
-      }
-      for p in params {
-        case p.ty {
-          .Some(t) => case hover_type_expr(t, offset, typed) {
-            .Some(r) => { return .Some(r) },
-            .None => {},
-          },
-          .None => {},
-        }
-      }
-      hover_block(body, offset, typed, items, source)
-    },
-    .Collect(col) => hover_collect(col, offset, typed, items, source),
-    .StringInterp(parts) => {
-      for part in parts {
-        case part {
-          .Interpolation(e) => case hover_expr(e, offset, typed, items, source) {
-            .Some(r) => { return .Some(r) },
-            .None => {},
-          },
-          _ => {},
-        }
-      }
-      .None
-    },
-    _ => .None,
-  }
-}
-
-fn hover_recorded_method(callee_id: Int, base: Expr, method_span: span.Span, typed: CheckResult) HoverResult? {
-  meta := case typed.method_calls[callee_id] {
-    .Some(info) => info,
-    .None => { return .None },
-  }
-  if meta.func_name == "" {
-    return .None
-  }
-  sig := case typed.env.lookup_registered_function(meta.func_name) {
-    .Some(found) => found,
-    .None => { return .None },
-  }
-  display_sig := if meta.has_receiver { instantiate_receiver_sig(sig, base, typed) } else { sig }
-  .Some(HoverResult.{ content: append_doc(sig_to_string(typed.env, display_sig), sig.doc), span: method_span })
-}
-
-fn hover_method(base: Expr, method: String, method_span: span.Span, typed: CheckResult) HoverResult? {
-  case typed.type_map[base.id] {
-    .Some(base_ty) => case variant_hover_for_type(typed.env, base_ty, method, method_span) {
-      .Some(r) => { return .Some(r) },
-      .None => {},
     },
     .None => {},
   }
-  case method_function_name(base, method, typed) {
-    .Some(func_name) => case typed.env.lookup_registered_function(func_name) {
-      .Some(sig) => {
-        display_sig := instantiate_receiver_sig(sig, base, typed)
-        .Some(HoverResult.{ content: append_doc(sig_to_string(typed.env, display_sig), sig.doc), span: method_span })
-      },
-      .None => .None,
-    },
+  for p, i in subs {
+    if i < field_types.len() {
+      case hover_pattern(p, offset, field_types[i], typed) {
+        .Some(r) => { return .Some(r) },
+        .None => {},
+      }
+    }
+  }
+  .None
+}
+
+fn variant_pattern_name_span(pat_span: span.Span, name: String) span.Span {
+  start := pat_span.start + 1
+  .{ file_id: pat_span.file_id, start, end: start + name.len() }
+}
+
+// ── Variant info ───────────────────────────────────────────────────
+
+type VariantInfo = .{
+  content: String,
+  fields: Vector<MonoType>,
+}
+
+fn variant_hover_for_type(env: ResolvedEnv, ty: MonoType, variant_name: String, hover_span: span.Span) HoverResult? {
+  case variant_info_for_type(env, ty, variant_name) {
+    .Some(info) => .Some(.{ content: info.content, span: hover_span }),
     .None => .None,
   }
 }
 
-fn method_function_name(base: Expr, method: String, typed: CheckResult) String? {
-  case typed.type_map[base.id] {
-    .Some(.Named(tid, _)) => case typed.env.lookup_type_method(tid, method) {
-      .Some(func_name) => { return .Some(func_name) },
-      .None => {},
+fn variant_info_for_type(env: ResolvedEnv, ty: MonoType, variant_name: String) VariantInfo? {
+  case ty {
+    .Named(tid, args) => variant_info_for_named(env, tid, args, variant_name),
+    .Optional(inner) => {
+      variants := [
+        ResolvedVariant.{ name: "None", fields: [] },
+        ResolvedVariant.{ name: "Some", fields: [inner] },
+      ]
+      variant_info_from_variants(env, "Option", [], [], variants, variant_name)
     },
-    .Some(.Vector(_)) => case typed.env.lookup_method("Vector", method) {
-      .Some(func_name) => { return .Some(func_name) },
-      .None => {},
+    .Result(ok, err) => {
+      variants := [
+        ResolvedVariant.{ name: "Ok", fields: [ok] },
+        ResolvedVariant.{ name: "Err", fields: [err] },
+      ]
+      variant_info_from_variants(env, "Result", [], [], variants, variant_name)
     },
-    .Some(.Dict(_, _)) => case typed.env.lookup_method("Dict", method) {
-      .Some(func_name) => { return .Some(func_name) },
-      .None => {},
-    },
-    .Some(.String) => case typed.env.lookup_method("String", method) {
-      .Some(func_name) => { return .Some(func_name) },
-      .None => {},
-    },
-    .Some(.Int) => case typed.env.lookup_method("Int", method) {
-      .Some(func_name) => { return .Some(func_name) },
-      .None => {},
-    },
-    .Some(.Float) => case typed.env.lookup_method("Float", method) {
-      .Some(func_name) => { return .Some(func_name) },
-      .None => {},
-    },
-    .Some(.Bool) => case typed.env.lookup_method("Bool", method) {
-      .Some(func_name) => { return .Some(func_name) },
-      .None => {},
-    },
-    .Some(.Byte) => case typed.env.lookup_method("Byte", method) {
-      .Some(func_name) => { return .Some(func_name) },
-      .None => {},
-    },
-    _ => {},
-  }
-
-  case base.kind {
-    .Ident(type_name) => typed.env.lookup_method(type_name, method),
     _ => .None,
   }
 }
 
-fn instantiate_receiver_sig(sig: FunctionSig, base: Expr, typed: CheckResult) FunctionSig {
-  args: Vector<MonoType> = case typed.type_map[base.id] {
-    .Some(.Named(_, type_args)) => type_args,
-    .Some(.Vector(inner)) => [inner],
-    .Some(.Dict(k, v)) => [k, v],
-    .Some(.Optional(inner)) => [inner],
-    .Some(.Result(ok, err)) => [ok, err],
-    _ => [],
+fn variant_info_for_named(env: ResolvedEnv, tid: TypeId, args: Vector<MonoType>, variant_name: String) VariantInfo? {
+  def := case env.lookup_type_def(tid) {
+    .Some(d) => d,
+    .None => { return .None },
   }
-  params := collect p in sig.params { substitute_type_params(p, sig.type_params, args) }
-  ret: MonoType? = case sig.ret {
-    .Some(r) => .Some(substitute_type_params(r, sig.type_params, args)),
-    .None => .None,
-  }
-  FunctionSig.{
-    name: sig.name,
-    type_params: sig.type_params,
-    param_names: sig.param_names,
-    params,
-    ret,
-    doc: sig.doc,
-    extern_module: sig.extern_module,
+  case def {
+    .Sum(type_name, params, variants) => variant_info_from_variants(env, type_name, params, args, variants, variant_name),
+    _ => .None,
   }
 }
+
+fn variant_info_from_variants(env: ResolvedEnv, type_name: String, params: Vector<ResolvedTypeParam>, args: Vector<MonoType>, variants: Vector<ResolvedVariant>, variant_name: String) VariantInfo? {
+  for v in variants {
+    if v.name == variant_name {
+      field_types := collect f in v.fields { substitute_type_params(f, params, args) }
+      fields := collect f in field_types { ty_to_string_env(env, f) }
+      suffix := if fields.len() == 0 { "" } else { "(${fields.join(", ")})" }
+      return .Some(.{ content: "${type_name}.${v.name}${suffix}", fields: field_types })
+    }
+  }
+  .None
+}
+
+fn substitute_type_params(ty: MonoType, params: Vector<ResolvedTypeParam>, args: Vector<MonoType>) MonoType {
+  case ty {
+    .Var(name) => {
+      for i in 0..params.len() {
+        if params[i].name == name and i < args.len() {
+          return args[i]
+        }
+      }
+      ty
+    },
+    .Named(tid, inner_args) => .Named(tid, collect a in inner_args { substitute_type_params(a, params, args) }),
+    .Vector(inner) => .Vector(substitute_type_params(inner, params, args)),
+    .Dict(k, v) => .Dict(substitute_type_params(k, params, args), substitute_type_params(v, params, args)),
+    .Function(fn_params, ret) => .Function(collect p in fn_params { substitute_type_params(p, params, args) }, substitute_type_params(ret, params, args)),
+    .Optional(inner) => .Optional(substitute_type_params(inner, params, args)),
+    .Result(ok, err) => .Result(substitute_type_params(ok, params, args), substitute_type_params(err, params, args)),
+    _ => ty,
+  }
+}
+
+// ── Doc comment helpers ────────────────────────────────────────────
 
 fn extract_doc_comment(source: String, decl_start: Int) String? {
   // Walk backwards from decl_start to find /// comment lines.
@@ -702,159 +749,4 @@ fn iter_element_type(ty: MonoType) MonoType {
     },
     _ => ty,
   }
-}
-
-fn hover_pattern(pat: Pattern, offset: Int, expected: MonoType, typed: CheckResult) HoverResult? {
-  if !pat.span.contains(offset) { return .None }
-  case pat.kind {
-    .Ident(_) => .Some(.{ content: ty_to_string_env(typed.env, expected), span: pat.span }),
-    .Variant(name, subs) => hover_variant_pattern_parts(pat, name, subs, offset, expected, typed),
-    .QualifiedVariant(_, name, subs) => hover_variant_pattern_parts(pat, name, subs, offset, expected, typed),
-    _ => .None,
-  }
-}
-
-fn hover_variant_pattern_parts(pat: Pattern, name: String, subs: Vector<Pattern>, offset: Int, expected: MonoType, typed: CheckResult) HoverResult? {
-  name_span := variant_pattern_name_span(pat.span, name)
-  field_types: Vector<MonoType> = []
-  case variant_info_for_type(typed.env, expected, name) {
-    .Some(info) => {
-      field_types = info.fields
-      if name_span.contains(offset) {
-        return .Some(.{ content: info.content, span: name_span })
-      }
-    },
-    .None => {},
-  }
-  for p, i in subs {
-    if i < field_types.len() {
-      case hover_pattern(p, offset, field_types[i], typed) {
-        .Some(r) => { return .Some(r) },
-        .None => {},
-      }
-    }
-  }
-  .None
-}
-
-fn variant_pattern_name_span(pat_span: span.Span, name: String) span.Span {
-  start := pat_span.start + 1
-  .{ file_id: pat_span.file_id, start, end: start + name.len() }
-}
-
-type VariantInfo = .{
-  content: String,
-  fields: Vector<MonoType>,
-}
-
-fn variant_hover_for_type(env: ResolvedEnv, ty: MonoType, variant_name: String, hover_span: span.Span) HoverResult? {
-  case variant_info_for_type(env, ty, variant_name) {
-    .Some(info) => .Some(.{ content: info.content, span: hover_span }),
-    .None => .None,
-  }
-}
-
-fn variant_info_for_type(env: ResolvedEnv, ty: MonoType, variant_name: String) VariantInfo? {
-  case ty {
-    .Named(tid, args) => variant_info_for_named(env, tid, args, variant_name),
-    .Optional(inner) => {
-      variants := [
-        ResolvedVariant.{ name: "None", fields: [] },
-        ResolvedVariant.{ name: "Some", fields: [inner] },
-      ]
-      variant_info_from_variants(env, "Option", [], [], variants, variant_name)
-    },
-    .Result(ok, err) => {
-      variants := [
-        ResolvedVariant.{ name: "Ok", fields: [ok] },
-        ResolvedVariant.{ name: "Err", fields: [err] },
-      ]
-      variant_info_from_variants(env, "Result", [], [], variants, variant_name)
-    },
-    _ => .None,
-  }
-}
-
-fn variant_info_for_named(env: ResolvedEnv, tid: TypeId, args: Vector<MonoType>, variant_name: String) VariantInfo? {
-  def := case env.lookup_type_def(tid) {
-    .Some(d) => d,
-    .None => { return .None },
-  }
-  case def {
-    .Sum(type_name, params, variants) => variant_info_from_variants(env, type_name, params, args, variants, variant_name),
-    _ => .None,
-  }
-}
-
-fn variant_info_from_variants(env: ResolvedEnv, type_name: String, params: Vector<ResolvedTypeParam>, args: Vector<MonoType>, variants: Vector<ResolvedVariant>, variant_name: String) VariantInfo? {
-  for v in variants {
-    if v.name == variant_name {
-      field_types := collect f in v.fields { substitute_type_params(f, params, args) }
-      fields := collect f in field_types { ty_to_string_env(env, f) }
-      suffix := if fields.len() == 0 { "" } else { "(${fields.join(", ")})" }
-      return .Some(.{ content: "${type_name}.${v.name}${suffix}", fields: field_types })
-    }
-  }
-  .None
-}
-
-fn substitute_type_params(ty: MonoType, params: Vector<ResolvedTypeParam>, args: Vector<MonoType>) MonoType {
-  case ty {
-    .Var(name) => {
-      for i in 0..params.len() {
-        if params[i].name == name and i < args.len() {
-          return args[i]
-        }
-      }
-      ty
-    },
-    .Named(tid, inner_args) => .Named(tid, collect a in inner_args { substitute_type_params(a, params, args) }),
-    .Vector(inner) => .Vector(substitute_type_params(inner, params, args)),
-    .Dict(k, v) => .Dict(substitute_type_params(k, params, args), substitute_type_params(v, params, args)),
-    .Function(fn_params, ret) => .Function(collect p in fn_params { substitute_type_params(p, params, args) }, substitute_type_params(ret, params, args)),
-    .Optional(inner) => .Optional(substitute_type_params(inner, params, args)),
-    .Result(ok, err) => .Result(substitute_type_params(ok, params, args), substitute_type_params(err, params, args)),
-    _ => ty,
-  }
-}
-
-fn hover_exprs(exprs: Vector<Expr>, offset: Int, typed: CheckResult, items: Vector<Item>, source: String) HoverResult? {
-  for e in exprs {
-    case hover_expr(e, offset, typed, items, source) {
-      .Some(r) => { return .Some(r) },
-      .None => {},
-    }
-  }
-  .None
-}
-
-fn hover_record_entries(entries: Vector<RecordEntry>, offset: Int, typed: CheckResult, items: Vector<Item>, source: String) HoverResult? {
-  for entry in entries {
-    case entry.value {
-      .Some(e) => case hover_expr(e, offset, typed, items, source) {
-        .Some(r) => { return .Some(r) },
-        .None => {},
-      },
-      .None => {},
-    }
-  }
-  .None
-}
-
-fn hover_collect(col: CollectExpr, offset: Int, typed: CheckResult, items: Vector<Item>, source: String) HoverResult? {
-  case col.iter {
-    .Some(iter) => case hover_expr(iter, offset, typed, items, source) {
-      .Some(r) => { return .Some(r) },
-      .None => {},
-    },
-    .None => {},
-  }
-  case col.condition {
-    .Some(cond) => case hover_expr(cond, offset, typed, items, source) {
-      .Some(r) => { return .Some(r) },
-      .None => {},
-    },
-    .None => {},
-  }
-  hover_block(col.body, offset, typed, items, source)
 }
