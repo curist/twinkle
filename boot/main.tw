@@ -16,14 +16,7 @@ use lib.lsp.server_core
 use compiler.parser
 use compiler.pipeline
 use compiler.ir_print
-use lib.module.loader
-use compiler.base_env.{builtin_env}
-use compiler.imports
-use compiler.query.analyze
-use compiler.query.cache as query_cache
-use lib.source.identity
-use lib.source.overlay
-use compiler.fix_unused_imports as fix
+use compiler.fix_unused_imports.{fix_unused_imports}
 
 fn file_command(name: String, help: String) Command {
   command.make(name, help).add_required_positional("file", "Path to the .tw source file")
@@ -421,27 +414,6 @@ fn run_build_command(parsed: ParseResult) {
       },
     }
   }
-}
-
-// prefer to move this whole thing into compiler.fix_unused_imports 
-fn fix_unused_imports(file: String) {
-  dir := path.dirname(file)
-  project_root := loader.find_project_root(dir)
-  canonical_roots := imports.make_canonical_roots(project_root)
-  canonical_entry := imports.canonical_module_path(file, canonical_roots)
-
-  base_env := builtin_env()
-  entry_id := identity.from_path(canonical_entry)
-  a_state := analyze.new_state(base_env, query_cache.empty(), overlay.empty(), project_root)
-  a_result := analyze.analyze_module(entry_id, "__entry", base_env, a_state, [])
-
-  edits := fix.collect_fixes(a_result.diagnostics)
-  if edits.len() == 0 {
-    println("No unused imports found.")
-    return {}
-  }
-  results := fix.apply_fixes(edits)
-  for r in results { println("Fixed: ${r.path} (${r.count} edit(s))") }
 }
 
 fn build_command_plan(parsed: ParseResult) CommandPlan!String {
