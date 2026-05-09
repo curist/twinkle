@@ -1522,7 +1522,7 @@ fn resolve_function_decl(env: ResolvedEnv, decl: FunctionDecl) ResolveResult {
     param_names: param_names,
     params: param_types,
     ret: ret_ty,
-    doc: .None,
+    doc: decl.doc,
     extern_module: .None,
   })
 

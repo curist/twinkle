@@ -75,6 +75,7 @@ pub fn reverse<A>(xs: Vector<A>) Vector<A> {
   out
 }
 
+/// Convert a vector to its string representation, e.g. "[1, 2, 3]".
 pub fn to_string<T: Stringify>(xs: Vector<T>) String {
   parts: Vector<String> = collect x in xs { x.to_string() }
   "[${parts.join(", ")}]"

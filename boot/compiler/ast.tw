@@ -60,6 +60,7 @@ pub type FunctionDecl = .{
   return_type: TypeExpr?,
   body: Block,
   span: span.Span,
+  doc: String?,
 }
 
 pub type ExternFunctionDecl = .{
@@ -77,6 +78,7 @@ pub type TypeDecl = .{
   type_params: Vector<TypeParam>,
   def: TypeDef,
   span: span.Span,
+  doc: String?,
 }
 
 pub type TypeDef = {

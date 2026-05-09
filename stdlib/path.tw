@@ -1,7 +1,9 @@
+/// Return true if path starts with "/".
 pub fn is_absolute(path: String) Bool {
   String.len(path) > 0 and String.slice(path, 0, 1) == "/"
 }
 
+/// Join two path segments with "/".
 pub fn join(base: String, part: String) String {
   if base == "" { return part }
   if part == "" { return base }
@@ -20,6 +22,7 @@ pub fn join(base: String, part: String) String {
   }
 }
 
+/// Join multiple path segments with "/".
 pub fn join_all(parts: Vector<String>) String {
   if parts.len() == 0 { return "" }
 
@@ -32,6 +35,8 @@ pub fn join_all(parts: Vector<String>) String {
   out
 }
 
+/// Return the directory component of a path.
+/// "a/b/c" → "a/b", "/" → "/", "file" → ".".
 pub fn dirname(path: String) String {
   n := String.len(path)
   if n == 0 { return "." }
@@ -47,6 +52,8 @@ pub fn dirname(path: String) String {
   "."
 }
 
+/// Return the filename component of a path.
+/// "a/b/c.txt" → "c.txt".
 pub fn basename(path: String) String {
   n := String.len(path)
   if n == 0 { return "" }
@@ -61,6 +68,8 @@ pub fn basename(path: String) String {
   path
 }
 
+/// Return the filename without its extension.
+/// "a/b/c.txt" → "c".
 pub fn stem(path: String) String {
   name := basename(path)
   n := String.len(name)
@@ -75,6 +84,8 @@ pub fn stem(path: String) String {
   name
 }
 
+/// Return the file extension including the dot.
+/// "a/b/c.txt" → ".txt", "noext" → "".
 pub fn extension(path: String) String {
   name := basename(path)
   n := String.len(name)
@@ -89,6 +100,8 @@ pub fn extension(path: String) String {
   ""
 }
 
+/// Canonicalize a path by resolving "." and ".." segments.
+/// "a/b/../c" → "a/c".
 pub fn normalize(path: String) String {
   abs := is_absolute(path)
   n := String.len(path)

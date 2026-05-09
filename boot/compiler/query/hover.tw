@@ -718,11 +718,14 @@ fn first_doc(a: String?, b: String?) String? {
 
 fn builtin_type_doc(name: String) String? {
   case name {
-    "Option" => .Some("Optional value: None or Some(T)."),
-    "Result" => .Some("Recoverable result: Ok(T) or Err(E)."),
+    "Option" => .Some("Optional value: None or Some(T). Shorthand: `T?`."),
+    "Result" => .Some("Recoverable result: Ok(T) or Err(E). Shorthand: `T!E`."),
     "Cell" => .Some("Mutable reference cell."),
-    "Range" => .Some("Integer range used by for loops and range()."),
+    "Range" => .Some("Integer range with start, end, and step. Iterable in `for` loops."),
     "Iterator" => .Some("Lazy sequence of values."),
+    "IterItem" => .Some("A single iterator step: the yielded value and the rest of the iterator."),
+    "UnfoldStep" => .Some("Step result for Iterator.unfold: Done or Yield(value, next_state)."),
+    "Order" => .Some("Comparison result: Lt, Eq, or Gt. Used by sort_by and comparators."),
     _ => .None,
   }
 }

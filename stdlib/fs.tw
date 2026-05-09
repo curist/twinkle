@@ -1,9 +1,13 @@
+/// File system error type.
 pub type FsError = { NotFound, PermissionDenied, InvalidUtf8, Other(String) }
 
+/// Kind of directory entry.
 pub type EntryKind = { File, Dir, Other }
 
+/// A directory entry with name and kind.
 pub type DirEntry = .{ name: String, kind: EntryKind }
 
+/// Read raw file bytes from path.
 pub fn read_bytes(path: String) Vector<Byte>!FsError {
   case __host_read_file(path) {
     .Ok(bytes) => .Ok(bytes),
@@ -11,6 +15,7 @@ pub fn read_bytes(path: String) Vector<Byte>!FsError {
   }
 }
 
+/// Read a file as UTF-8 text.
 pub fn read_text(path: String) String!FsError {
   bytes := try read_bytes(path)
   case String.from_utf8(bytes) {
@@ -19,21 +24,25 @@ pub fn read_text(path: String) String!FsError {
   }
 }
 
+/// Write a string to a file.
 pub fn write_text(path: String, content: String) !FsError {
   __host_write_file(path, content)
   .Ok({})
 }
 
+/// Write raw bytes to a file.
 pub fn write_bytes(path: String, bytes: Vector<Byte>) !FsError {
   __host_write_bytes(path, bytes)
   .Ok({})
 }
 
+/// Create a directory and any missing parents.
 pub fn mkdirp(path: String) !FsError {
   __host_mkdirp(path)
   .Ok({})
 }
 
+/// List entries in a directory.
 pub fn list_dir(path: String) Vector<DirEntry>!FsError {
   if !__host_exists(path) {
     return .Err(FsError.NotFound)
@@ -46,6 +55,7 @@ pub fn list_dir(path: String) Vector<DirEntry>!FsError {
   .Ok(entries)
 }
 
+/// Return true if path exists on the filesystem.
 pub fn exists(path: String) Bool {
   __host_exists(path)
 }
