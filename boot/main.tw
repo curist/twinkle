@@ -1,119 +1,52 @@
 use @std.proc
-use @std.fs
-use @std.io
-use @std.path
 use lib.argparse.app
-use lib.argparse.app.{App, ParseResult}
+use lib.argparse.app.{ParseResult}
+use lib.argparse.argv.{normalize_argv}
 use lib.argparse.command
-use lib.argparse.command.{Command}
-use lib.source.registry
-use lib.source.registry.{FileRegistry}
-use lib.source.diagnostic.{Severity, Diagnostic}
-use lib.json
-use lib.lsp.framing
-use lib.lsp.protocol
-use lib.lsp.server_core
-use compiler.parser
-use compiler.pipeline
-use compiler.ir_print
-use compiler.fix_unused_imports.{fix_unused_imports}
+use commands.common.{get_positional, exit_usage_error}
+use commands.parse.{run_parse_command}
+use commands.check.{run_check_command}
+use commands.ir.{run_ir_command}
+use commands.build.{run_build_command, resolve_build_output}
+use commands.run.{run_command_impl}
+use commands.lsp.{run_lsp_command}
 
-fn file_command(name: String, help: String) Command {
+fn file_command(name: String, help: String) {
   command.make(name, help).add_required_positional("file", "Path to the .tw source file")
 }
 
-fn parse_cmd() Command {
-  file_command("parse", "Parse source and print diagnostics")
-}
+parse_cmd := file_command("parse", "Parse source and print diagnostics")
 
-fn check_cmd() Command {
-  file_command("check", "Type-check source")
-    .add_flag("fix-unused-imports", "Automatically remove unused imports")
-}
+check_cmd := file_command("check", "Type-check source")
+  .add_flag("fix-unused-imports", "Automatically remove unused imports")
 
-fn ir_cmd() Command {
-  file_command("ir", "Compile and print boot compiler IR")
-    .add_flag("core", "Print lowered Core IR")
-    .add_flag("mono", "Print monomorphized Core IR")
-    .add_flag("anf", "Print unoptimized ANF IR")
-    .add_flag("opt", "Print optimized ANF IR")
-    .add_flag("wat", "Print final linked WAT")
-    .add_flag("all", "Print all available IR stages")
-}
+ir_cmd := file_command("ir", "Compile and print boot compiler IR")
+  .add_flag("core", "Print lowered Core IR")
+  .add_flag("mono", "Print monomorphized Core IR")
+  .add_flag("anf", "Print unoptimized ANF IR")
+  .add_flag("opt", "Print optimized ANF IR")
+  .add_flag("wat", "Print final linked WAT")
+  .add_flag("all", "Print all available IR stages")
 
-fn run_cmd() Command {
-  file_command("run", "Run program")
-    .add_short_flag("interpreter", "i", "Run with interpreter backend")
-}
+run_cmd := file_command("run", "Run program")
+  .add_short_flag("interpreter", "i", "Run with interpreter backend")
 
-fn build_cmd() Command {
-  file_command("build", "Compile to linked WAT or Wasm")
-    .add_short_option("output", "o", "Output path (.wat or .wasm)")
-}
+build_cmd := file_command("build", "Compile to linked WAT or Wasm")
+  .add_short_option("output", "o", "Output path (.wat or .wasm)")
 
-fn lsp_cmd() Command {
-  command.make("lsp", "Start the Language Server Protocol server")
-}
+lsp_cmd := command.make("lsp", "Start the Language Server Protocol server")
 
-fn twk_app() App {
-  app.make("twk", "Twinkle bootstrap compiler (self-hosting skeleton)").add_commands([
-    parse_cmd(),
-    check_cmd(),
-    ir_cmd(),
-    run_cmd(),
-    build_cmd(),
-    lsp_cmd(),
-  ])
-}
+cli := app.make("twk", "Twinkle bootstrap compiler (self-hosting skeleton)").add_commands([
+  parse_cmd,
+  check_cmd,
+  ir_cmd,
+  run_cmd,
+  build_cmd,
+  lsp_cmd,
+])
 
 fn usage_hint() String {
   "Usage: twk <command> [options]\nRun 'twk --help' or 'twk <command> --help'."
-}
-
-fn is_program_path(s: String) Bool {
-  s.ends_with(".tw") or s.ends_with(".wat") or s.ends_with(".wasm")
-}
-
-// Normalize host argv across interpreter and wasm runners:
-// - Interpreter currently exposes host CLI argv:
-//   [".../twk", "run", "-i?", "<program>.tw", ...user_args]
-// - Wasm runner currently exposes:
-//   ["<program>.tw"]
-// We normalize both into logical tool argv:
-//   ["twk", ...user_args]
-fn normalize_argv(raw: Vector<String>) Vector<String> {
-  if raw.len() == 0 {
-    return ["twk"]
-  }
-
-  prog_idx: Int? = .None
-  i := 0
-  for i < raw.len() {
-    if is_program_path(raw[i]) {
-      prog_idx = .Some(i)
-      break
-    }
-    i = i + 1
-  }
-
-  case prog_idx {
-    .Some(idx) => {
-      if idx + 1 < raw.len() {
-        ["twk"].concat(raw.slice(idx + 1, raw.len()))
-      } else {
-        ["twk"]
-      }
-    },
-    .None => raw,
-  }
-}
-
-fn get_positional(parsed: ParseResult, idx: Int, name: String) String!String {
-  if idx < parsed.positional.len() {
-    .Ok(parsed.positional[idx])
-  } else {
-    .Err("missing required positional argument '${name}'")
-  }
 }
 
 type CommandPlan = .{ cmd: String, detail: String }
@@ -129,291 +62,6 @@ fn not_implemented(cmd: String, detail: String) {
     eprintln(detail)
   }
   proc.exit(1)
-}
-
-fn exit_usage_error(msg: String) {
-  hint := usage_hint()
-  if msg == hint {
-    eprintln(hint)
-  } else {
-    eprintln(msg)
-    eprintln("")
-    eprintln(hint)
-  }
-  proc.exit(2)
-}
-
-fn fs_error_message(err: fs.FsError) String {
-  case err {
-    .NotFound => "file not found",
-    .PermissionDenied => "permission denied",
-    .InvalidUtf8 => "input is not valid UTF-8",
-    .Other(msg) => msg,
-  }
-}
-
-fn severity_name(sev: Severity) String {
-  case sev {
-    .Error => "error",
-    .Warning => "warning",
-    .Hint => "hint",
-    .Info => "info",
-  }
-}
-
-fn diagnostics_have_errors(diags: Vector<Diagnostic>) Bool {
-  has_error := false
-  for d in diags {
-    if d.severity == .Error {
-      has_error = true
-      break
-    }
-  }
-  has_error
-}
-
-fn print_diagnostic(path: String, reg: FileRegistry, d: Diagnostic) {
-  case registry.line_col(reg, d.span) {
-    .Some(pos) => {
-      eprintln("${path}:${pos.line}:${pos.column}: ${severity_name(d.severity)}: ${d.message}")
-    },
-    .None => {
-      eprintln("${path}:${d.span.start}: ${severity_name(d.severity)}: ${d.message}")
-    },
-  }
-}
-
-fn run_parse_command(parsed: ParseResult) {
-  file := case get_positional(parsed, 0, "file") {
-    .Ok(path) => path,
-    .Err(msg) => { exit_usage_error(msg) },
-  }
-
-  source := case fs.read_text(file) {
-    .Ok(text) => text,
-    .Err(err) => {
-      eprintln("error: failed to read '${file}': ${fs_error_message(err)}")
-      proc.exit(1)
-    },
-  }
-
-  reg := registry.empty()
-  added := registry.add_file(reg, file, source)
-  parsed_mod := parser.parse(source, added.file_id)
-  item_count := parsed_mod.value.items.len()
-  diag_count := parsed_mod.diagnostics.len()
-
-  println("parsed ${item_count} top-level item(s) with ${diag_count} diagnostic(s)")
-  for d in parsed_mod.diagnostics {
-    print_diagnostic(file, reg, d)
-  }
-
-  if diagnostics_have_errors(parsed_mod.diagnostics) {
-    proc.exit(1)
-  }
-}
-
-fn has_any_ir_flag(parsed: ParseResult) Bool {
-  app.has_flag(parsed, "core")
-  or app.has_flag(parsed, "mono")
-  or app.has_flag(parsed, "anf")
-  or app.has_flag(parsed, "opt")
-  or app.has_flag(parsed, "wat")
-    or app.has_flag(parsed, "all")
-}
-
-fn should_show_ir(parsed: ParseResult, name: String) Bool {
-  if app.has_flag(parsed, "all") {
-    return true
-  }
-  if has_any_ir_flag(parsed) {
-    return app.has_flag(parsed, name)
-  }
-  name == "opt"
-}
-
-fn print_ir_stage(title: String, body: String, first: Bool) Bool {
-  if !first {
-    println("")
-  }
-  println("// ── ${title} ─────────────────────────────────────────────────────────")
-  print(body)
-  false
-}
-
-fn run_ir_command(parsed: ParseResult) {
-  file := case get_positional(parsed, 0, "file") {
-    .Ok(path) => path,
-    .Err(msg) => { exit_usage_error(msg) },
-  }
-
-  artifacts := case pipeline.compile_entry_path(file) {
-    .Ok(result) => result,
-    .Err(msg) => {
-      eprintln(msg)
-      proc.exit(1)
-    },
-  }
-
-  first := true
-  if should_show_ir(parsed, "core") {
-    first = print_ir_stage("Core IR", ir_print.render_core_module(artifacts.core), first)
-  }
-  if should_show_ir(parsed, "mono") {
-    first = print_ir_stage("Monomorphized Core IR", ir_print.render_core_module(artifacts.mono), first)
-  }
-  if should_show_ir(parsed, "anf") {
-    first = print_ir_stage("ANF IR", ir_print.render_anf_module(artifacts.env, artifacts.anf), first)
-  }
-  if should_show_ir(parsed, "opt") {
-    first = print_ir_stage("Optimized ANF IR", ir_print.render_anf_module(artifacts.env, artifacts.opt), first)
-  }
-  if should_show_ir(parsed, "wat") {
-    first = print_ir_stage("Linked WAT", pipeline.emit_wat(artifacts), first)
-  }
-}
-
-fn run_check_command(parsed: ParseResult) {
-  file := case get_positional(parsed, 0, "file") {
-    .Ok(path) => path,
-    .Err(msg) => { exit_usage_error(msg) },
-  }
-
-  if app.has_flag(parsed, "fix-unused-imports") {
-    fix_unused_imports(file)
-  } else {
-    case pipeline.check_entry_path(file) {
-      .Ok(_) => {
-        println("Type checking succeeded: ${file}")
-      },
-      .Err(msg) => {
-        eprintln(msg)
-        proc.exit(1)
-      },
-    }
-  }
-}
-
-fn default_build_output(file: String) String {
-  dir := path.dirname(file)
-  stem := path.stem(file)
-  if dir == "." {
-    "${stem}.wat"
-  } else {
-    path.join(dir, "${stem}.wat")
-  }
-}
-
-fn resolve_build_output(parsed: ParseResult, file: String) String!String {
-  out := case app.get_option(parsed, "output") {
-    .Some(path) => path,
-    .None => default_build_output(file),
-  }
-  ext := path.extension(out)
-  if ext != ".wat" and ext != ".wasm" {
-    return .Err("boot build only supports .wat or .wasm outputs")
-  }
-  .Ok(out)
-}
-
-fn run_lsp_command(_parsed: ParseResult) {
-  // Streaming transport: read stdin incrementally, decode as many complete
-  // frames as are available, and write byte-exact framed responses to stdout.
-  state := server_core.initial_state()
-  buffer: Vector<Byte> = []
-
-  for !state.should_exit {
-    chunk := io.read_stdin_chunk(4096)
-    if chunk.len() == 0 {
-      break
-    }
-    buffer = buffer.concat(chunk)
-
-    for true {
-      decoded := case framing.try_decode_frame_bytes(buffer) {
-        .Ok(result) => result,
-        .Err(msg) => {
-          eprintln("error: invalid LSP frame: ${msg}")
-          proc.exit(1)
-        },
-      }
-
-      case decoded {
-        .NeedMoreBytes => { break },
-        .DecodedBytes(frame, rest) => {
-          message := case protocol.parse_message(frame.body) {
-            .Ok(msg) => msg,
-            .Err(msg) => {
-              eprintln("error: invalid JSON-RPC message: ${msg}")
-              proc.exit(1)
-            },
-          }
-          step := server_core.handle_message(state, message)
-          state = step.state
-          for out in step.outgoing {
-            io.write_stdout_text(framing.encode_message(json.stringify(out)))
-          }
-          buffer = rest
-          if state.should_exit {
-            break
-          }
-        },
-      }
-    }
-  }
-
-  if state.should_exit and !state.shutdown_requested {
-    proc.exit(1)
-  }
-}
-
-fn run_build_command(parsed: ParseResult) {
-  file := case get_positional(parsed, 0, "file") {
-    .Ok(path) => path,
-    .Err(msg) => { exit_usage_error(msg) },
-  }
-
-  out := case resolve_build_output(parsed, file) {
-    .Ok(path) => path,
-    .Err(msg) => {
-      eprintln(msg)
-      proc.exit(1)
-    },
-  }
-
-  artifacts := case pipeline.compile_entry_path(file) {
-    .Ok(result) => result,
-    .Err(msg) => {
-      eprintln(msg)
-      proc.exit(1)
-    },
-  }
-
-  ext := path.extension(out)
-  if ext == ".wasm" {
-    bytes := pipeline.emit_wasm(artifacts)
-    case fs.write_bytes(out, bytes) {
-      .Ok(_) => {
-        println("WASM output: ${out}")
-      },
-      .Err(err) => {
-        eprintln("error: failed to write '${out}': ${fs_error_message(err)}")
-        proc.exit(1)
-      },
-    }
-  } else {
-    wat := pipeline.emit_wat(artifacts)
-
-    case fs.write_text(out, wat) {
-      .Ok(_) => {
-        println("WAT output: ${out}")
-      },
-      .Err(err) => {
-        eprintln("error: failed to write '${out}': ${fs_error_message(err)}")
-        proc.exit(1)
-      },
-    }
-  }
 }
 
 fn build_command_plan(parsed: ParseResult) CommandPlan!String {
@@ -465,46 +113,15 @@ fn run_command(parsed: ParseResult) {
   }
 }
 
-fn run_command_impl(parsed: ParseResult, file: String) {
-  if app.has_flag(parsed, "interpreter") {
-    eprintln("error: boot run does not support --interpreter yet")
-    proc.exit(1)
-  }
+argv := normalize_argv(proc.args())
 
-  artifacts := case pipeline.compile_entry_path(file) {
-    .Ok(result) => result,
-    .Err(msg) => {
-      eprintln(msg)
-      proc.exit(1)
-    },
-  }
-
-  wasm_bytes := pipeline.emit_wasm(artifacts)
-  user_args := if parsed.positional.len() > 1 {
-    parsed.positional.slice(1, parsed.positional.len())
-  } else {
-    []
-  }
-  argv := [file].concat(user_args)
-  exit_code := proc.run_wasm(wasm_bytes, argv)
-  if exit_code != 0 {
-    proc.exit(exit_code)
-  }
+case app.parse(cli, argv) {
+  .Ok(parsed) => run_command(parsed),
+  .Err(err) => {
+    case err {
+      .HelpRequested(msg) => println(msg),
+      _ => exit_usage_error(app.error_message(err)),
+    }
+  },
 }
 
-fn main() {
-  cli := twk_app()
-  argv := normalize_argv(proc.args())
-
-  case app.parse(cli, argv) {
-    .Ok(parsed) => run_command(parsed),
-    .Err(err) => {
-      case err {
-        .HelpRequested(msg) => println(msg),
-        _ => exit_usage_error(app.error_message(err)),
-      }
-    },
-  }
-}
-
-main()

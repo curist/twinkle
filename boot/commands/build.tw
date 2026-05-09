@@ -1,0 +1,80 @@
+// Build command: compile to linked WAT or Wasm.
+
+use @std.proc
+use @std.fs
+use @std.path
+use lib.argparse.app
+use lib.argparse.app.{ParseResult}
+use compiler.pipeline
+use commands.common.{get_positional, exit_usage_error, fs_error_message}
+
+fn default_build_output(file: String) String {
+  dir := path.dirname(file)
+  stem := path.stem(file)
+  if dir == "." {
+    "${stem}.wat"
+  } else {
+    path.join(dir, "${stem}.wat")
+  }
+}
+
+pub fn resolve_build_output(parsed: ParseResult, file: String) String!String {
+  out := case app.get_option(parsed, "output") {
+    .Some(path) => path,
+    .None => default_build_output(file),
+  }
+  ext := path.extension(out)
+  if ext != ".wat" and ext != ".wasm" {
+    return .Err("boot build only supports .wat or .wasm outputs")
+  }
+  .Ok(out)
+}
+
+pub fn run_build_command(parsed: ParseResult) {
+  file := case get_positional(parsed, 0, "file") {
+    .Ok(path) => path,
+    .Err(msg) => { exit_usage_error(msg) },
+  }
+
+  out := case resolve_build_output(parsed, file) {
+    .Ok(path) => path,
+    .Err(msg) => {
+      eprintln(msg)
+      proc.exit(1)
+    },
+  }
+
+  artifacts := case pipeline.compile_entry_path(file) {
+    .Ok(result) => result,
+    .Err(msg) => {
+      eprintln(msg)
+      proc.exit(1)
+    },
+  }
+
+  ext := path.extension(out)
+  if ext == ".wasm" {
+    bytes := pipeline.emit_wasm(artifacts)
+    case fs.write_bytes(out, bytes) {
+      .Ok(_) => {
+        println("WASM output: ${out}")
+      },
+      .Err(err) => {
+        eprintln("error: failed to write '${out}': ${fs_error_message(err)}")
+        proc.exit(1)
+      },
+    }
+  } else {
+    wat := pipeline.emit_wat(artifacts)
+
+    case fs.write_text(out, wat) {
+      .Ok(_) => {
+        println("WAT output: ${out}")
+      },
+      .Err(err) => {
+        eprintln("error: failed to write '${out}': ${fs_error_message(err)}")
+        proc.exit(1)
+      },
+    }
+  }
+}

@@ -1,0 +1,33 @@
+// Run command: compile and execute via Wasm backend.
+
+use @std.proc
+use lib.argparse.app
+use lib.argparse.app.{ParseResult}
+use compiler.pipeline
+
+pub fn run_command_impl(parsed: ParseResult, file: String) {
+  if app.has_flag(parsed, "interpreter") {
+    eprintln("error: boot run does not support --interpreter yet")
+    proc.exit(1)
+  }
+
+  artifacts := case pipeline.compile_entry_path(file) {
+    .Ok(result) => result,
+    .Err(msg) => {
+      eprintln(msg)
+      proc.exit(1)
+    },
+  }
+
+  wasm_bytes := pipeline.emit_wasm(artifacts)
+  user_args := if parsed.positional.len() > 1 {
+    parsed.positional.slice(1, parsed.positional.len())
+  } else {
+    []
+  }
+  argv := [file].concat(user_args)
+  exit_code := proc.run_wasm(wasm_bytes, argv)
+  if exit_code != 0 {
+    proc.exit(exit_code)
+  }
+}

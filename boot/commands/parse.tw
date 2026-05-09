@@ -1,0 +1,38 @@
+// Parse command: parse source and print diagnostics.
+
+use @std.proc
+use @std.fs
+use lib.argparse.app.{ParseResult}
+use lib.source.registry
+use compiler.parser
+use commands.common.{get_positional, exit_usage_error, fs_error_message, print_diagnostic, diagnostics_have_errors}
+
+pub fn run_parse_command(parsed: ParseResult) {
+  file := case get_positional(parsed, 0, "file") {
+    .Ok(path) => path,
+    .Err(msg) => { exit_usage_error(msg) },
+  }
+
+  source := case fs.read_text(file) {
+    .Ok(text) => text,
+    .Err(err) => {
+      eprintln("error: failed to read '${file}': ${fs_error_message(err)}")
+      proc.exit(1)
+    },
+  }
+
+  reg := registry.empty()
+  added := registry.add_file(reg, file, source)
+  parsed_mod := parser.parse(source, added.file_id)
+  item_count := parsed_mod.value.items.len()
+  diag_count := parsed_mod.diagnostics.len()
+
+  println("parsed ${item_count} top-level item(s) with ${diag_count} diagnostic(s)")
+  for d in parsed_mod.diagnostics {
+    print_diagnostic(file, reg, d)
+  }
+
+  if diagnostics_have_errors(parsed_mod.diagnostics) {
+    proc.exit(1)
+  }
+}

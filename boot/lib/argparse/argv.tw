@@ -1,0 +1,41 @@
+// Argv normalization for the twk CLI.
+
+fn is_program_path(s: String) Bool {
+  s.ends_with(".tw") or s.ends_with(".wat") or s.ends_with(".wasm")
+}
+
+/// Normalize host argv across interpreter and wasm runners.
+///
+/// - Interpreter currently exposes host CLI argv:
+///   `[".../twk", "run", "-i?", "<program>.tw", ...user_args]`
+/// - Wasm runner currently exposes:
+///   `["<program>.tw"]`
+///
+/// We normalize both into logical tool argv:
+///   `["twk", ...user_args]`
+pub fn normalize_argv(raw: Vector<String>) Vector<String> {
+  if raw.len() == 0 {
+    return ["twk"]
+  }
+
+  prog_idx: Int? = .None
+  i := 0
+  for i < raw.len() {
+    if is_program_path(raw[i]) {
+      prog_idx = .Some(i)
+      break
+    }
+    i = i + 1
+  }
+
+  case prog_idx {
+    .Some(idx) => {
+      if idx + 1 < raw.len() {
+        ["twk"].concat(raw.slice(idx + 1, raw.len()))
+      } else {
+        ["twk"]
+      }
+    },
+    .None => raw,
+  }
+}

@@ -1,0 +1,68 @@
+// IR command: compile and print IR stages.
+
+use @std.proc
+use lib.argparse.app
+use lib.argparse.app.{ParseResult}
+use compiler.pipeline
+use compiler.ir_print
+use commands.common.{get_positional, exit_usage_error}
+
+fn has_any_ir_flag(parsed: ParseResult) Bool {
+  app.has_flag(parsed, "core")
+  or app.has_flag(parsed, "mono")
+  or app.has_flag(parsed, "anf")
+  or app.has_flag(parsed, "opt")
+  or app.has_flag(parsed, "wat")
+    or app.has_flag(parsed, "all")
+}
+
+fn should_show_ir(parsed: ParseResult, name: String) Bool {
+  if app.has_flag(parsed, "all") {
+    return true
+  }
+  if has_any_ir_flag(parsed) {
+    return app.has_flag(parsed, name)
+  }
+  name == "opt"
+}
+
+fn print_ir_stage(title: String, body: String, first: Bool) Bool {
+  if !first {
+    println("")
+  }
+  println("// ── ${title} ─────────────────────────────────────────────────────────")
+  print(body)
+  false
+}
+
+pub fn run_ir_command(parsed: ParseResult) {
+  file := case get_positional(parsed, 0, "file") {
+    .Ok(path) => path,
+    .Err(msg) => { exit_usage_error(msg) },
+  }
+
+  artifacts := case pipeline.compile_entry_path(file) {
+    .Ok(result) => result,
+    .Err(msg) => {
+      eprintln(msg)
+      proc.exit(1)
+    },
+  }
+
+  first := true
+  if should_show_ir(parsed, "core") {
+    first = print_ir_stage("Core IR", ir_print.render_core_module(artifacts.core), first)
+  }
+  if should_show_ir(parsed, "mono") {
+    first = print_ir_stage("Monomorphized Core IR", ir_print.render_core_module(artifacts.mono), first)
+  }
+  if should_show_ir(parsed, "anf") {
+    first = print_ir_stage("ANF IR", ir_print.render_anf_module(artifacts.env, artifacts.anf), first)
+  }
+  if should_show_ir(parsed, "opt") {
+    first = print_ir_stage("Optimized ANF IR", ir_print.render_anf_module(artifacts.env, artifacts.opt), first)
+  }
+  if should_show_ir(parsed, "wat") {
+    first = print_ir_stage("Linked WAT", pipeline.emit_wat(artifacts), first)
+  }
+}

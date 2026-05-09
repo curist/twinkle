@@ -1,0 +1,72 @@
+// Shared helpers for CLI commands.
+
+use @std.proc
+use @std.fs
+use lib.argparse.app.{ParseResult}
+use lib.source.registry
+use lib.source.registry.{FileRegistry}
+use lib.source.diagnostic.{Severity, Diagnostic}
+
+pub fn usage_hint() String {
+  "Usage: twk <command> [options]\nRun 'twk --help' or 'twk <command> --help'."
+}
+
+pub fn get_positional(parsed: ParseResult, idx: Int, name: String) String!String {
+  if idx < parsed.positional.len() {
+    .Ok(parsed.positional[idx])
+  } else {
+    .Err("missing required positional argument '${name}'")
+  }
+}
+
+pub fn exit_usage_error(msg: String) {
+  hint := usage_hint()
+  if msg == hint {
+    eprintln(hint)
+  } else {
+    eprintln(msg)
+    eprintln("")
+    eprintln(hint)
+  }
+  proc.exit(2)
+}
+
+pub fn fs_error_message(err: fs.FsError) String {
+  case err {
+    .NotFound => "file not found",
+    .PermissionDenied => "permission denied",
+    .InvalidUtf8 => "input is not valid UTF-8",
+    .Other(msg) => msg,
+  }
+}
+
+pub fn severity_name(sev: Severity) String {
+  case sev {
+    .Error => "error",
+    .Warning => "warning",
+    .Hint => "hint",
+    .Info => "info",
+  }
+}
+
+pub fn diagnostics_have_errors(diags: Vector<Diagnostic>) Bool {
+  has_error := false
+  for d in diags {
+    if d.severity == .Error {
+      has_error = true
+      break
+    }
+  }
+  has_error
+}
+
+pub fn print_diagnostic(path: String, reg: FileRegistry, d: Diagnostic) {
+  case registry.line_col(reg, d.span) {
+    .Some(pos) => {
+      eprintln("${path}:${pos.line}:${pos.column}: ${severity_name(d.severity)}: ${d.message}")
+    },
+    .None => {
+      eprintln("${path}:${d.span.start}: ${severity_name(d.severity)}: ${d.message}")
+    },
+  }
+}
