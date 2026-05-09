@@ -11,7 +11,7 @@ fn exports_for(source: String) ModuleExports {
   env := base_env.builtin_env()
   resolved := env.resolve(parsed.value)
   checked := checker.check(parsed.value, resolved.env)
-  extract_exports_for_module(checked.env, parsed.value, "test")
+  extract_exports_for_module(checked.env, parsed.value, "test", checked.pub_values)
 }
 
 pub fn suite() runner.Suite {

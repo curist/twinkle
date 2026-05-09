@@ -9,7 +9,7 @@ use lib.source.diagnostic.{Diagnostic}
 use .ast.{Module, Block, Expr}
 use .resolver.{FunctionOrigin}
 use .checker.{CheckResult}
-use .core_ir.{CoreExpr, CoreModule, FunctionDef, LocalId, FuncId}
+use .core_ir.{CoreExpr, CoreModule, FunctionDef, LocalId, FuncId, ExternalValueRef}
 use .builtins.{BuiltinRegistry}
 use .lower_core.helpers.{void_expr}
 use .lower_core.operators.{lower_binary, lower_unary}
@@ -36,6 +36,9 @@ pub type LowerResult = .{
   diagnostics: Vector<Diagnostic>,
   func_table: Dict<String, FuncId>,
   imported_func_origins: Dict<Int, FunctionOrigin>,
+  next_global_local_id: Int,
+  pub_value_globals: Dict<String, LocalId>,
+  imported_value_origins: Dict<Int, ExternalValueRef>,
 }
 
 // ── Expression lowering ─────────────────────────────────────────────
@@ -212,6 +215,7 @@ pub fn lower_module(module: Module, check_result: CheckResult, builtins: Builtin
   // Keep the IDs in source order so __init__ can bind names sequentially and
   // support top-level shadowing (e.g. `x := ...; ...; x := ...`).
   module_let_globals: Vector<LocalId> = []
+  pub_value_globals: Dict<String, LocalId> = Dict.new()
   for item in module.items {
     case item {
       .Stmt(stmt) => {
@@ -221,11 +225,45 @@ pub fn lower_module(module: Module, check_result: CheckResult, builtins: Builtin
             ctx.next_global = ctx.next_global + 1
             ctx.module_globals[ls.name] = gid
             module_let_globals = module_let_globals.append(gid)
+            if ls.is_pub {
+              pub_value_globals[ls.name] = gid
+            }
           },
           _ => {},
         }
       },
       _ => {},
+    }
+  }
+
+  // Allocate phantom GlobalLocal IDs for imported module-level values.
+  // These are resolved to their target module's actual IDs by the linker.
+  // Deduplicate by canonical origin so that qualified ("mod.val") and
+  // unqualified ("val") aliases share a single phantom ID.
+  defined_global_count := ctx.next_global
+  imported_value_origins: Dict<Int, ExternalValueRef> = Dict.new()
+  value_origin_cache: Dict<String, LocalId> = Dict.new()
+  for name in ctx.env.value_origins.keys() {
+    case ctx.env.value_origins[name] {
+      .Some(origin) => {
+        origin_key := "${origin.module_path}\x00${origin.func_name}"
+        case value_origin_cache[origin_key] {
+          .Some(existing_gid) => {
+            ctx.module_globals[name] = existing_gid
+          },
+          .None => {
+            gid := LocalId.{ id: ctx.next_global }
+            ctx.next_global = ctx.next_global + 1
+            ctx.module_globals[name] = gid
+            value_origin_cache[origin_key] = gid
+            imported_value_origins[gid.id] = ExternalValueRef.{
+              module_path: origin.module_path,
+              value_name: origin.func_name,
+            }
+          },
+        }
+      },
+      .None => {},
     }
   }
 
@@ -269,7 +307,16 @@ pub fn lower_module(module: Module, check_result: CheckResult, builtins: Builtin
   // Lower module-level statements into __init__. Rebuild the module-global
   // name environment as we walk so expressions see the latest preceding
   // top-level binding, not the final binding from the pre-pass.
-  ctx.module_globals = Dict.new()
+  // Preserve imported value phantom entries so cross-module value access
+  // works in top-level init code.
+  imported_globals: Dict<String, LocalId> = Dict.new()
+  for name in ctx.env.value_origins.keys() {
+    case ctx.module_globals[name] {
+      .Some(gid) => { imported_globals[name] = gid },
+      .None => {},
+    }
+  }
+  ctx.module_globals = imported_globals
   module_let_index := 0
   init_stmts: Vector<CoreExpr> = []
   has_init := false
@@ -376,5 +423,8 @@ pub fn lower_module(module: Module, check_result: CheckResult, builtins: Builtin
     diagnostics: ctx.errors,
     func_table: ctx.func_table,
     imported_func_origins: ctx.imported_func_origins,
+    next_global_local_id: defined_global_count,
+    pub_value_globals,
+    imported_value_origins,
   }
 }

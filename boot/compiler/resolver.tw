@@ -113,12 +113,18 @@ pub type ExportedFunction = .{
   origin: FunctionOrigin?,
 }
 
+pub type ExportedValue = .{
+  name: String,
+  ty: MonoType,
+}
+
 pub type ModuleExports = .{
   visible_types: Vector<ExportedType>,
   support_types: Vector<ExportedType>,
   functions: Vector<ExportedFunction>,
   support_functions: Vector<ExportedFunction>,
   methods: Dict<String, Vector<MethodEntry>>,
+  values: Vector<ExportedValue>,
 }
 
 // ── Resolved Environment ────────────────────────────────────────────
@@ -149,6 +155,8 @@ pub type ResolvedEnv = .{
   type_id_index: Dict<Int, Int>,
   func_index: Dict<String, Int>,
   extern_namespaces: Dict<String, Bool>,
+  value_bindings: Dict<String, MonoType>,
+  value_origins: Dict<String, FunctionOrigin>,
 }
 
 pub fn empty_env() ResolvedEnv {
@@ -166,6 +174,8 @@ pub fn empty_env() ResolvedEnv {
     type_id_index: Dict.new(),
     func_index: Dict.new(),
     extern_namespaces: Dict.new(),
+    value_bindings: Dict.new(),
+    value_origins: Dict.new(),
   }
 }
 
@@ -636,10 +646,10 @@ fn exported_type_origin(env: ResolvedEnv, tid: TypeId, module_key: String, name:
 // ── Public API ──────────────────────────────────────────────────────
 
 pub fn extract_exports(env: ResolvedEnv, module: Module) ModuleExports {
-  extract_exports_for_module(env, module, "")
+  extract_exports_for_module(env, module, "", Dict.new())
 }
 
-pub fn extract_exports_for_module(env: ResolvedEnv, module: Module, module_key: String) ModuleExports {
+pub fn extract_exports_for_module(env: ResolvedEnv, module: Module, module_key: String, pub_values: Dict<String, MonoType>) ModuleExports {
   visible_types: Vector<ExportedType> = []
   support_types: Vector<ExportedType> = []
   exported_functions: Vector<ExportedFunction> = []
@@ -745,6 +755,7 @@ pub fn extract_exports_for_module(env: ResolvedEnv, module: Module, module_key: 
       functions: exported_functions,
       support_functions,
       methods: Dict.new(),
+      values: [],
     }) {
       entries: Vector<MethodEntry> = case env.lookup_type_methods(exported.entry.id) {
         .Some(found) => found,
@@ -819,7 +830,25 @@ pub fn extract_exports_for_module(env: ResolvedEnv, module: Module, module_key: 
     }
   }
 
-  ModuleExports.{ visible_types, support_types, functions: exported_functions, support_functions, methods: exported_methods }
+  // Collect pub value exports.
+  exported_values: Vector<ExportedValue> = []
+  for item in module.items {
+    case item {
+      .Stmt(.Let(ls)) => {
+        if ls.is_pub {
+          case pub_values[ls.name] {
+            .Some(ty) => {
+              exported_values = exported_values.append(ExportedValue.{ name: ls.name, ty })
+            },
+            .None => {},
+          }
+        }
+      },
+      _ => {},
+    }
+  }
+
+  ModuleExports.{ visible_types, support_types, functions: exported_functions, support_functions, methods: exported_methods, values: exported_values }
 }
 
 fn merge_exported_type(env: ResolvedEnv, exported: ExportedType, target_name: String, type_ids: Dict<Int, TypeId>, bind_name: Bool) ResolvedEnv {
@@ -938,6 +967,13 @@ pub fn merge_module_exports(env: ResolvedEnv, alias: String, module_path: String
     methods = register_methods(methods, alias, module_entries)
   }
 
+  // Register imported values.
+  for v in exports.values {
+    qualified := qualify_name(alias, v.name)
+    cur.value_bindings[qualified] = v.ty
+    cur.value_origins[qualified] = FunctionOrigin.{ module_path, func_name: v.name }
+  }
+
   cur.with_methods(methods)
 }
 
@@ -947,23 +983,44 @@ pub fn merge_module_exports(env: ResolvedEnv, alias: String, module_path: String
 fn merge_selective_via_registration(env: ResolvedEnv, alias: String, module_path: String, exports: ModuleExports, items: Vector<ImportItem>) ResolvedEnv {
   reg := register_imported_interface_types(env, alias, alias, exports, false)
   cur := register_imported_functions(reg.env, alias, module_path, exports, reg.type_ids, false)
+  // Register exported values under qualified names so selective import can find them.
+  for v in exports.values {
+    qualified := qualify_name(alias, v.name)
+    cur.value_bindings[qualified] = v.ty
+    cur.value_origins[qualified] = FunctionOrigin.{ module_path, func_name: v.name }
+  }
   methods := cur.methods
   methods_by_type := cur.methods_by_type
 
   for item in items {
     case item {
       .Value(value_item) => {
-        exported := case visible_export_function(exports, value_item.name) {
-          .Some(found) => found,
-          .None => { continue },
-        }
-        source_name := qualify_name(alias, exported.name)
         binding_name := import_binding_name(value_item.name, value_item.alias)
-        case lookup_registered_function(cur, source_name) {
-          .Some(_) => {
-            cur = cur.bind_function(binding_name, source_name)
+        // Try function first, then value binding.
+        case visible_export_function(exports, value_item.name) {
+          .Some(exported) => {
+            source_name := qualify_name(alias, exported.name)
+            case lookup_registered_function(cur, source_name) {
+              .Some(_) => {
+                cur = cur.bind_function(binding_name, source_name)
+              },
+              .None => {},
+            }
           },
-          .None => {},
+          .None => {
+            // Check for an exported value.
+            qualified := qualify_name(alias, value_item.name)
+            case cur.value_bindings[qualified] {
+              .Some(ty) => {
+                cur.value_bindings[binding_name] = ty
+                case cur.value_origins[qualified] {
+                  .Some(origin) => { cur.value_origins[binding_name] = origin },
+                  .None => {},
+                }
+              },
+              .None => {},
+            }
+          },
         }
       },
       .Type(type_item) => {

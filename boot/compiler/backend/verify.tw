@@ -83,26 +83,22 @@ pub fn verify_prepared_module_with_level(
   .Ok({})
 }
 
-// Build a LocalId → MonoType map for all module globals from the init function's slot map.
+// Build a LocalId → MonoType map for all module globals from init functions' slot maps.
 // AGlobalLocal atoms in non-init functions reference locals declared in __init__.
+// After linking, multiple per-module __init__ functions exist alongside
+// __combined_init__, so we collect globals from all of them.
 fn build_module_globals(prepared: PreparedModule) Dict<Int, MonoType> {
   out: Dict<Int, MonoType> = Dict.new()
-  case prepared.anf.init_func_id {
-    .None => out,
-    .Some(init_fid) => {
-      for pf in prepared.funcs {
-        if pf.func_id.id == init_fid.id {
-          for sid_int in pf.slots.keys() {
-            case pf.slots[sid_int] {
-              .Some(info) => { out[info.source_local.id] = info.mono },
-              .None => {},
-            }
-          }
-          return out
+  for pf in prepared.funcs {
+    if pf.name == "__init__" or pf.name == "__combined_init__" {
+      for sid_int in pf.slots.keys() {
+        case pf.slots[sid_int] {
+          .Some(info) => { out[info.source_local.id] = info.mono },
+          .None => {},
         }
       }
-      out
-    },
+    }
   }
+  out
 }
 

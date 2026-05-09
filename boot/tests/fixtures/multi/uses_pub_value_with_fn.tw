@@ -1,0 +1,7 @@
+// Access both pub values and functions from the same module.
+
+use .pub_value_lib
+
+fn main() Int {
+  pub_value_lib.double(pub_value_lib.answer)
+}

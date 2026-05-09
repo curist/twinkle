@@ -1202,6 +1202,9 @@ pub fn suite() runner.Suite {
         external_refs: Dict.new(),
         extern_imports: Dict.new(),
         builtin_count: 0,
+        value_exports: Dict.new(),
+        value_refs: Dict.new(),
+        defined_global_count: 0,
       }
       global_ids: Dict<String, Dict<String, Int>> = Dict.new()
       mod_globals: Dict<String, Int> = Dict.new()
@@ -1249,6 +1252,9 @@ pub fn suite() runner.Suite {
         external_refs: ext_refs,
         extern_imports: Dict.new(),
         builtin_count: 0,
+        value_exports: Dict.new(),
+        value_refs: Dict.new(),
+        defined_global_count: 0,
       }
       global_ids: Dict<String, Dict<String, Int>> = Dict.new()
       main_globals: Dict<String, Int> = Dict.new()

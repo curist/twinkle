@@ -107,7 +107,19 @@ pub fn lower_field(ctx: LowerCtx, full_expr: Expr, base_expr: Expr, field_name: 
             .None => {},
           }
         },
-        .None => {},
+        .None => {
+          // Check for an imported module-level value binding.
+          qualified := "${name}.${field_name}"
+          case ctx.module_globals[qualified] {
+            .Some(gid) => {
+              return .{
+                expr: .{ kind: .GlobalLocal(gid), ty, span: s },
+                ctx,
+              }
+            },
+            .None => {},
+          }
+        },
       }
     },
     .None => {},

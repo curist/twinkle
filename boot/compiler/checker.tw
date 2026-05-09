@@ -47,6 +47,7 @@ pub type CheckResult = .{
   env: ResolvedEnv,
   diagnostics: Vector<Diagnostic>,
   method_calls: Dict<Int, MethodCallInfo>,
+  pub_values: Dict<String, MonoType>,
 }
 
 // ── Context helpers ─────────────────────────────────────────────────
@@ -891,11 +892,17 @@ fn synth_ident(name: String, s: Span, ctx: InferCtx, diags: Vector<Diagnostic>) 
           .{ ty, ctx: inst.ctx, diags }
         },
         .None => {
-          m := fresh_meta(ctx)
-          .{
-            ty: m.ty,
-            ctx: m.ctx,
-            diags: diags.append(diag.error(s, "undefined variable: ${name}")),
+          // Try imported value binding (selective import of pub let)
+          case ctx.env.value_bindings[name] {
+            .Some(ty) => .{ ty, ctx, diags },
+            .None => {
+              m := fresh_meta(ctx)
+              .{
+                ty: m.ty,
+                ctx: m.ctx,
+                diags: diags.append(diag.error(s, "undefined variable: ${name}")),
+              }
+            },
           }
         },
       }
@@ -1153,7 +1160,13 @@ fn try_synth_module_qualified_value(type_name: String, method_name: String, ctx:
       qualified := "${type_name}.${method_name}"
       case ctx.env.lookup_function(qualified) {
         .Some(_) => qualified,
-        .None => { return .None },
+        .None => {
+          // Check for an imported module-level value binding.
+          case ctx.env.value_bindings[qualified] {
+            .Some(ty) => { return .Some(.{ ty, ctx, diags }) },
+            .None => { return .None },
+          }
+        },
       }
     },
   }
@@ -3286,11 +3299,24 @@ pub fn check(module: Module, env: ResolvedEnv) CheckResult {
     }
   }
 
+  // Collect pub value types from module-level scope.
+  pub_values: Dict<String, MonoType> = Dict.new()
+  if ctx.locals.len() > 0 {
+    module_scope := ctx.locals[0]
+    for name in ctx.pub_names.keys() {
+      case module_scope[name] {
+        .Some(ty) => { pub_values[name] = zonk(ty, ctx.subst) },
+        .None => {},
+      }
+    }
+  }
+
   .{
     type_map: final_map,
     expr_spans: ctx.expr_spans,
     env: ctx.env,
     diagnostics: cur_diags,
     method_calls: ctx.method_calls,
+    pub_values,
   }
 }

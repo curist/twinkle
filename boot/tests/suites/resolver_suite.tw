@@ -1335,6 +1335,7 @@ pub fn suite() runner.Suite {
         functions: [resolver.ExportedFunction.{ name: "expose", sig, source_name: "expose", origin: .None }],
         support_functions: [],
         methods: Dict.new(),
+        values: [],
       }
 
       env := resolver.empty_env().merge_module_exports("mod", "", exports)
@@ -1395,7 +1396,7 @@ pub fn suite() runner.Suite {
       src := "pub type Diagnostic = .{ message: String }\npub fn error(message: String) Diagnostic { Diagnostic.{ message } }"
       parsed := parser.parse(src, 0)
       r := resolver.empty_env().resolve(parsed.value)
-      exports := resolver.extract_exports_for_module(r.env, parsed.value, "test://diagnostic")
+      exports := resolver.extract_exports_for_module(r.env, parsed.value, "test://diagnostic", Dict.new())
 
       items: Vector<ast.ImportItem> = [
         .Type(ast.ImportTypeItem.{ name: "Diagnostic", alias: .None, span: span.Span.{ file_id: 0, start: 0, end: 0 } }),
@@ -1416,7 +1417,7 @@ pub fn suite() runner.Suite {
       src := "pub type Diagnostic = .{ message: String }\npub fn error(message: String) Diagnostic { Diagnostic.{ message } }"
       parsed := parser.parse(src, 0)
       r := resolver.empty_env().resolve(parsed.value)
-      exports := resolver.extract_exports_for_module(r.env, parsed.value, "test://diagnostic")
+      exports := resolver.extract_exports_for_module(r.env, parsed.value, "test://diagnostic", Dict.new())
 
       env := resolver.empty_env()
       env = env.merge_module_exports("diag_a", "", exports)
@@ -1719,6 +1720,7 @@ pub fn suite() runner.Suite {
         }],
         support_functions: [],
         methods: Dict.new(),
+        values: [],
       }
 
       env := resolver.empty_env().merge_module_exports("bridge", "test/b.tw", exports)
@@ -1751,6 +1753,7 @@ pub fn suite() runner.Suite {
           origin: .Some(.{ module_path: "test/support.tw", func_name: "helper" }),
         }],
         methods: Dict.new(),
+        values: [],
       }
 
       env := resolver.empty_env().merge_module_exports("support_mod", "test/bridge.tw", exports)

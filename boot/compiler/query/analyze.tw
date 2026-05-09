@@ -353,7 +353,7 @@ fn publish_interface(
   deps_hash: Int,
 ) AnalysisState {
   cur := capture_local_types(state, checked.env, canonical, local_type_start)
-  exports := extract_exports_for_module(checked.env, parsed.module, canonical)
+  exports := extract_exports_for_module(checked.env, parsed.module, canonical, checked.pub_values)
   interface := make_module_interface(canonical, exports, cur.shared_type_origins)
   cur.exports[canonical] = exports
   cur.interfaces[canonical] = interface

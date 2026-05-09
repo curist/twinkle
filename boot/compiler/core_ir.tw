@@ -127,10 +127,19 @@ pub type CompiledModule = .{
   external_refs: Dict<Int, ExternalRef>,
   extern_imports: Dict<Int, ExternImport>,
   builtin_count: Int,
+  value_exports: Dict<String, Int>,
+  value_refs: Dict<Int, ExternalValueRef>,
+  defined_global_count: Int,
 }
 
 /// Tracks where a phantom FuncId (imported function) lives.
 pub type ExternalRef = .{
   module_path: String,
   func_name: String,
+}
+
+/// Tracks where a phantom GlobalLocal (imported value) lives.
+pub type ExternalValueRef = .{
+  module_path: String,
+  value_name: String,
 }

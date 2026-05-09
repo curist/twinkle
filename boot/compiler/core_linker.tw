@@ -32,32 +32,37 @@ pub fn link(
   }
 
   // Step 1: Assign globally unique FuncIds to all defined functions.
-  //         Build (module_path, func_name) → global_FuncId mapping.
   next_global := builtin_count
-  global_ids: Dict<String, Dict<String, Int>> = Dict.new()  // path → (name → global_id)
-  defined_ids: Dict<String, Dict<Int, Int>> = Dict.new()    // path → (local FuncId → global FuncId)
+  global_ids: Dict<String, Dict<String, Int>> = Dict.new()
+  defined_ids: Dict<String, Dict<Int, Int>> = Dict.new()
+
   for m in modules {
     name_to_id: Dict<String, Int> = Dict.new()
     local_to_global: Dict<Int, Int> = Dict.new()
+
     for f in m.core.functions {
       local_to_global[f.func_id.id] = next_global
-      // Keep named lookup for external refs. Hoisted lambdas may share names
-      // like "__lambda", but external refs only target named exports.
       name_to_id[f.name] = next_global
       next_global = next_global + 1
     }
+
     global_ids[m.path] = name_to_id
     defined_ids[m.path] = local_to_global
   }
+
+  // Assign globally unique FuncIds to extern imports too.
+  // Important: these IDs are stored in defined_ids and must be reused later.
   for m in modules {
     local_to_global := case defined_ids[m.path] {
       .Some(ids) => ids,
       .None => Dict.new(),
     }
+
     for local_id in m.extern_imports.keys() {
       local_to_global[local_id] = next_global
       next_global = next_global + 1
     }
+
     defined_ids[m.path] = local_to_global
   }
 
@@ -69,8 +74,38 @@ pub fn link(
     }
   }
 
-  // Step 3: Build per-module remap tables, rewrite functions, and preserve
-  // a linked name → FuncId table for downstream passes like monomorphization.
+  // Step 2b: Assign globally unique GlobalLocal IDs for module-level values.
+  next_global_local := 0
+  global_value_ids: Dict<String, Dict<String, Int>> = Dict.new()
+  defined_global_ids: Dict<String, Dict<Int, Int>> = Dict.new()
+
+  for m in modules {
+    local_to_global: Dict<Int, Int> = Dict.new()
+
+    for i in 0..m.defined_global_count {
+      local_to_global[i] = next_global_local
+      next_global_local = next_global_local + 1
+    }
+
+    defined_global_ids[m.path] = local_to_global
+
+    name_to_id: Dict<String, Int> = Dict.new()
+    for name in m.value_exports.keys() {
+      case m.value_exports[name] {
+        .Some(local_id) => {
+          case local_to_global[local_id] {
+            .Some(gid) => { name_to_id[name] = gid },
+            .None => error("link: value export points at missing local GlobalLocal"),
+          }
+        },
+        .None => {},
+      }
+    }
+
+    global_value_ids[m.path] = name_to_id
+  }
+
+  // Step 3: Build remap tables, rewrite functions, and preserve linked name table.
   all_functions: Vector<FunctionDef> = []
   linked_func_table: Dict<String, FuncId> = Dict.new()
   linked_extern_imports: Dict<Int, ExternImport> = Dict.new()
@@ -79,59 +114,74 @@ pub fn link(
   entry_func_ids: Vector<Int> = []
 
   for m in modules {
-    remap: Dict<Int, Int> = Dict.new()
-
-    // Map defined functions: local FuncId → global FuncId.
-    // Use original FuncIds, not names, because hoisted lambdas share names.
-    mod_defined: Dict<Int, Int> = case defined_ids[m.path] {
+    // This remap already includes:
+    // - local defined FuncIds → global FuncIds
+    // - local extern-import FuncIds → global FuncIds
+    remap: Dict<Int, Int> = case defined_ids[m.path] {
       .Some(g) => g,
       .None => Dict.new(),
     }
-    for f in m.core.functions {
-      case mod_defined[f.func_id.id] {
-        .Some(gid) => { remap[f.func_id.id] = gid },
-        .None => {},
-      }
-    }
 
+    // Preserve extern imports using the already-assigned global IDs.
+    // Do not allocate IDs here; Step 1 is the only owner of FuncId allocation.
     for local_id in m.extern_imports.keys() {
       global_id := case remap[local_id] {
         .Some(gid) => gid,
-        .None => {
-          gid := next_global
-          next_global = next_global + 1
-          remap[local_id] = gid
-          gid
-        },
+        .None => error("link: missing global FuncId for extern import"),
       }
+
       case m.extern_imports[local_id] {
         .Some(ext) => { linked_extern_imports[global_id] = ext },
-        .None => {},
+        .None => error("link: extern import key missing import payload"),
       }
     }
 
-    // Map external refs: phantom FuncId → target's global FuncId
-    ext_keys := m.external_refs.keys()
-    for local_id in ext_keys {
+    // Map external refs: phantom FuncId → target's global FuncId.
+    for local_id in m.external_refs.keys() {
       case m.external_refs[local_id] {
         .Some(ext) => {
-          case global_ids[ext.module_path] {
-            .Some(target_globals) => {
-              case target_globals[ext.func_name] {
-                .Some(gid) => { remap[local_id] = gid },
-                .None => {},
-              }
-            },
-            .None => {},
+          target_globals := case global_ids[ext.module_path] {
+            .Some(ids) => ids,
+            .None => error("link: external ref points at missing module"),
           }
+
+          gid := case target_globals[ext.func_name] {
+            .Some(id) => id,
+            .None => error("link: external ref points at missing function"),
+          }
+
+          remap[local_id] = gid
         },
-        .None => {},
+        .None => error("link: external ref key missing ref payload"),
+      }
+    }
+
+    // Build GlobalLocal remap: defined globals + imported value refs.
+    global_remap: Dict<Int, Int> = case defined_global_ids[m.path] {
+      .Some(g) => g,
+      .None => Dict.new(),
+    }
+
+    for phantom_id in m.value_refs.keys() {
+      case m.value_refs[phantom_id] {
+        .Some(vref) => {
+          target_values := case global_value_ids[vref.module_path] {
+            .Some(values) => values,
+            .None => error("link: value ref points at missing module"),
+          }
+
+          gid := case target_values[vref.value_name] {
+            .Some(id) => id,
+            .None => error("link: value ref points at missing value"),
+          }
+
+          global_remap[phantom_id] = gid
+        },
+        .None => error("link: value ref key missing ref payload"),
       }
     }
 
     // Preserve the module's visible name table with remapped global FuncIds.
-    // Later modules overwrite earlier ones, which matches dependency order
-    // and lets the entry module's bindings win on conflicts.
     for name in m.func_table.keys() {
       case m.func_table[name] {
         .Some(fid) => {
@@ -141,30 +191,32 @@ pub fn link(
       }
     }
 
-    // Remap and collect functions
+    // Remap and collect functions.
     for f in m.core.functions {
       remapped_id := remap_func_id(f.func_id, remap)
+
       all_functions = all_functions.append(.{
         func_id: remapped_id,
         name: f.name,
         params: f.params,
-        body: remap_expr(f.body, remap),
+        body: remap_expr(f.body, remap, global_remap),
         return_ty: f.return_ty,
       })
     }
 
-    // Track entry module's function IDs for DCE roots
+    // Track entry module function IDs for DCE roots.
     if m.path == entry_path {
       for f in m.core.functions {
         entry_func_ids = entry_func_ids.append(remap_func_id(f.func_id, remap).id)
       }
     }
 
-    // Track init functions
+    // Track init functions.
     case m.core.init_func_id {
       .Some(init_id) => {
         remapped_init := remap_func_id(init_id, remap)
         all_init_ids = all_init_ids.append(remapped_init)
+
         if m.path == entry_path {
           entry_init = .Some(remapped_init)
         }
@@ -177,11 +229,15 @@ pub fn link(
   combined_init := build_combined_init(all_init_ids, next_global)
   linked_functions := all_functions.concat(combined_init.functions)
 
-  // Step 5: Dead code elimination — keep only reachable functions.
-  // Without this, unreachable prelude functions with generic types cause
-  // downstream passes (monomorphize, lower_anf) to trip on unresolved types.
-  // Roots: combined init + all entry module functions (the user's code).
-  reachable := compute_reachable(linked_functions, combined_init.init_func_id, entry_func_ids, entry_env, linked_func_table)
+  // Step 5: Dead code elimination.
+  reachable := compute_reachable(
+    linked_functions,
+    combined_init.init_func_id,
+    entry_func_ids,
+    entry_env,
+    linked_func_table,
+  )
+
   live_functions: Vector<FunctionDef> = []
   for f in linked_functions {
     if reachable.has(f.func_id.id) {
@@ -201,12 +257,23 @@ pub fn link(
     }
   }
 
+  // Filter extern imports after DCE so dead modules do not leak dead imports.
+  live_extern_imports: Dict<Int, ExternImport> = Dict.new()
+  for id in linked_extern_imports.keys() {
+    if reachable.has(id) {
+      case linked_extern_imports[id] {
+        .Some(ext) => { live_extern_imports[id] = ext },
+        .None => {},
+      }
+    }
+  }
+
   CoreModule.{
     functions: live_functions,
     type_env: entry_env,
     init_func_id: combined_init.init_func_id,
     func_table: live_func_table,
-    extern_imports: linked_extern_imports,
+    extern_imports: live_extern_imports,
   }
 }
 
@@ -345,7 +412,14 @@ fn remap_func_id(id: FuncId, remap: Dict<Int, Int>) FuncId {
   }
 }
 
-fn remap_expr(expr: CoreExpr, remap: Dict<Int, Int>) CoreExpr {
+fn remap_local_id(id: LocalId, global_remap: Dict<Int, Int>) LocalId {
+  case global_remap[id.id] {
+    .Some(new_id) => LocalId.{ id: new_id },
+    .None => id,
+  }
+}
+
+fn remap_expr(expr: CoreExpr, remap: Dict<Int, Int>, global_remap: Dict<Int, Int>) CoreExpr {
   new_kind: CoreExprKind = case expr.kind {
     .LitInt(_) => expr.kind,
     .LitFloat(_) => expr.kind,
@@ -353,74 +427,77 @@ fn remap_expr(expr: CoreExpr, remap: Dict<Int, Int>) CoreExpr {
     .LitStr(_) => expr.kind,
     .LitVoid => expr.kind,
     .Local(_) => expr.kind,
-    .GlobalLocal(_) => expr.kind,
+    .GlobalLocal(id) => .GlobalLocal(remap_local_id(id, global_remap)),
 
     .GlobalFunc(id) => .GlobalFunc(remap_func_id(id, remap)),
 
     .Let(local, value, body) => {
-      .Let(local, remap_expr(value, remap), remap_expr(body, remap))
+      .Let(local, remap_expr(value, remap, global_remap), remap_expr(body, remap, global_remap))
     },
-    .Assign(local, value) => .Assign(local, remap_expr(value, remap)),
+    .Assign(local, value) => {
+      .Assign(remap_local_id(local, global_remap), remap_expr(value, remap, global_remap))
+    },
 
-    .BinOp(op, lhs, rhs) => .BinOp(op, remap_expr(lhs, remap), remap_expr(rhs, remap)),
-    .UnOp(op, operand) => .UnOp(op, remap_expr(operand, remap)),
+    .BinOp(op, lhs, rhs) => .BinOp(op, remap_expr(lhs, remap, global_remap), remap_expr(rhs, remap, global_remap)),
+    .UnOp(op, operand) => .UnOp(op, remap_expr(operand, remap, global_remap)),
 
     .Call(callee, args) => {
-      .Call(remap_expr(callee, remap), remap_exprs(args, remap))
+      .Call(remap_expr(callee, remap, global_remap), remap_exprs(args, remap, global_remap))
     },
     .ContractCall(contract, method_name, receiver, args) => {
-      .ContractCall(contract, method_name, remap_expr(receiver, remap), remap_exprs(args, remap))
+      .ContractCall(contract, method_name, remap_expr(receiver, remap, global_remap), remap_exprs(args, remap, global_remap))
     },
     .MakeClosure(func_id, captures) => {
-      .MakeClosure(remap_func_id(func_id, remap), captures)
+      remapped_captures := collect c in captures { remap_local_id(c, global_remap) }
+      .MakeClosure(remap_func_id(func_id, remap), remapped_captures)
     },
 
     .If(cond, then_br, else_br) => {
-      .If(remap_expr(cond, remap), remap_expr(then_br, remap), remap_expr(else_br, remap))
+      .If(remap_expr(cond, remap, global_remap), remap_expr(then_br, remap, global_remap), remap_expr(else_br, remap, global_remap))
     },
     .Match(scrutinee, arms) => {
       new_arms := collect arm in arms {
-        MatchArm.{ pattern: arm.pattern, body: remap_expr(arm.body, remap) }
+        MatchArm.{ pattern: arm.pattern, body: remap_expr(arm.body, remap, global_remap) }
       }
-      .Match(remap_expr(scrutinee, remap), new_arms)
+      .Match(remap_expr(scrutinee, remap, global_remap), new_arms)
     },
-    .Loop(body) => .Loop(remap_expr(body, remap)),
+    .Loop(body) => .Loop(remap_expr(body, remap, global_remap)),
     .Break(val) => {
       case val {
-        .Some(v) => .Break(.Some(remap_expr(v, remap))),
+        .Some(v) => .Break(.Some(remap_expr(v, remap, global_remap))),
         .None => expr.kind,
       }
     },
     .Continue => expr.kind,
     .Return(val) => {
       case val {
-        .Some(v) => .Return(.Some(remap_expr(v, remap))),
+        .Some(v) => .Return(.Some(remap_expr(v, remap, global_remap))),
         .None => expr.kind,
       }
     },
-    .Defer(body) => .Defer(remap_expr(body, remap)),
+    .Defer(body) => .Defer(remap_expr(body, remap, global_remap)),
 
     .Record(type_id, fields) => {
       new_fields := collect fi in fields {
-        FieldInit.{ field: fi.field, value: remap_expr(fi.value, remap) }
+        FieldInit.{ field: fi.field, value: remap_expr(fi.value, remap, global_remap) }
       }
       .Record(type_id, new_fields)
     },
-    .RecordGet(rec, field) => .RecordGet(remap_expr(rec, remap), field),
+    .RecordGet(rec, field) => .RecordGet(remap_expr(rec, remap, global_remap), field),
     .RecordUpdate(rec, field, value) => {
-      .RecordUpdate(remap_expr(rec, remap), field, remap_expr(value, remap))
+      .RecordUpdate(remap_expr(rec, remap, global_remap), field, remap_expr(value, remap, global_remap))
     },
     .Variant(type_id, variant_id, args) => {
-      .Variant(type_id, variant_id, remap_exprs(args, remap))
+      .Variant(type_id, variant_id, remap_exprs(args, remap, global_remap))
     },
-    .ArrayLit(elems) => .ArrayLit(remap_exprs(elems, remap)),
-    .Index(arr, idx) => .Index(remap_expr(arr, remap), remap_expr(idx, remap)),
+    .ArrayLit(elems) => .ArrayLit(remap_exprs(elems, remap, global_remap)),
+    .Index(arr, idx) => .Index(remap_expr(arr, remap, global_remap), remap_expr(idx, remap, global_remap)),
   }
   CoreExpr.{ kind: new_kind, ty: expr.ty, span: expr.span }
 }
 
-fn remap_exprs(exprs: Vector<CoreExpr>, remap: Dict<Int, Int>) Vector<CoreExpr> {
-  collect e in exprs { remap_expr(e, remap) }
+fn remap_exprs(exprs: Vector<CoreExpr>, remap: Dict<Int, Int>, global_remap: Dict<Int, Int>) Vector<CoreExpr> {
+  collect e in exprs { remap_expr(e, remap, global_remap) }
 }
 
 // ── Helpers ─────────────────────────────────────────────────────────

@@ -279,4 +279,38 @@ pub fn suite() runner.Suite {
         .Err(msg) => .Err("expected selective+qualified convergence, got: ${msg}"),
       }
     })
+
+    // ── Cross-module pub values ────────────────────────────────────────
+
+    .test("qualified access to cross-module pub value compiles", fn() {
+      result := module_compiler.compile_entry("${dir}/uses_pub_value.tw")
+      case result {
+        .Ok(_) => .Ok({}),
+        .Err(msg) => .Err("expected pub value access to compile, got: ${msg}"),
+      }
+    })
+
+    .test("selective import of cross-module pub value compiles", fn() {
+      result := module_compiler.compile_entry("${dir}/uses_pub_value_selective.tw")
+      case result {
+        .Ok(_) => .Ok({}),
+        .Err(msg) => .Err("expected selective pub value import to compile, got: ${msg}"),
+      }
+    })
+
+    .test("pub value accessed in top-level init code compiles", fn() {
+      result := module_compiler.compile_entry("${dir}/uses_pub_value_toplevel.tw")
+      case result {
+        .Ok(_) => .Ok({}),
+        .Err(msg) => .Err("expected top-level pub value access to compile, got: ${msg}"),
+      }
+    })
+
+    .test("pub value and function from same module both accessible", fn() {
+      result := module_compiler.compile_entry("${dir}/uses_pub_value_with_fn.tw")
+      case result {
+        .Ok(_) => .Ok({}),
+        .Err(msg) => .Err("expected mixed pub value+function access to compile, got: ${msg}"),
+      }
+    })
 }
