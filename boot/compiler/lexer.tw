@@ -455,3 +455,46 @@ pub fn lex(source: String, file_id: Int) StageResult<Vector<Token>> {
   out = out.append(tokens.eof(file_id, n, saw_newline))
   diagnostic.stage_result(out, diagnostics_out)
 }
+
+/// Lex source and inject a CursorHole token at the given byte offset.
+/// The cursor hole is a zero-width token that acts as a syntactic fence
+/// during completion-mode parsing.
+pub fn lex_with_cursor(source: String, file_id: Int, cursor_offset: Int) StageResult<Vector<Token>> {
+  lexed := lex(source, file_id)
+  result: Vector<Token> = []
+  inserted := false
+
+  for tk in lexed.value {
+    // Insert cursor hole before the first token that starts at or after the cursor
+    if !inserted and tk.span.start >= cursor_offset {
+      result = result.append(tokens.make(
+        .CursorHole, "", span.new(file_id, cursor_offset, cursor_offset), tk.preceded_by_newline,
+      ))
+      inserted = true
+    }
+    // If cursor falls inside this token (e.g., mid-identifier), split:
+    // emit cursor hole just before this token
+    if !inserted and tk.span.start < cursor_offset and tk.span.end > cursor_offset {
+      result = result.append(tokens.make(
+        .CursorHole, "", span.new(file_id, cursor_offset, cursor_offset), tk.preceded_by_newline,
+      ))
+      inserted = true
+    }
+    result = result.append(tk)
+  }
+
+  if !inserted {
+    // Cursor is at the very end — insert before Eof
+    n := result.len()
+    if n > 0 {
+      eof_tok := result[n - 1]
+      result = result.slice(0, n - 1)
+      result = result.append(tokens.make(
+        .CursorHole, "", span.new(file_id, cursor_offset, cursor_offset), eof_tok.preceded_by_newline,
+      ))
+      result = result.append(eof_tok)
+    }
+  }
+
+  diagnostic.stage_result(result, lexed.diagnostics)
+}

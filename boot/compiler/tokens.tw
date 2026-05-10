@@ -65,6 +65,7 @@ pub type TokenKind = {
   Caret,
   LtLt,
   Tilde,
+  CursorHole,
   Eof,
   Error,
 }
@@ -150,6 +151,7 @@ pub fn name(kind: TokenKind) String {
     .Caret => "^",
     .LtLt => "<<",
     .Tilde => "~",
+    .CursorHole => "<cursor>",
     .Eof => "end of file",
     .Error => "error token",
   }

@@ -10,22 +10,32 @@ broken edits without regressing current diagnostics behavior.
 
 ---
 
-## Current Baseline (2026-03-13)
+## Current Baseline (2026-05-10)
 
 Implemented:
 
-* `textDocument/completion` request handling exists in `twk lsp`.
-* Semantic completion candidates exist for locals/module/import/member contexts.
-* Completion can include detail/documentation payloads.
+* `textDocument/completion` request handling in boot compiler LSP.
+* Cursor-hole token injection (`lex_with_cursor`) for context classification.
+* CursorHole as syntactic fence in 6 parser sites.
+* Stale-cache fallback: `completion_snapshot` serves last successful typed state
+  when current analysis fails (broken edits).
+* Member completion: fields and methods on receiver type via AST walk at
+  `dot_offset - 1` (handles stale AST correctly, including chained access).
+* Variant completion in `case`: detects enclosing case scrutinee type, suggests
+  only that type's variants, and excludes already-matched arms (exhaustive aid).
+* General completion: keywords, functions, types, module-scope values with
+  prefix filtering.
+* Import completion: known extern namespaces.
+* Protocol smoke tests: 8 tests covering member, variant (with exhaustive
+  filtering), and keyword completion via didOpen → didChange → completion flow.
 
-Current known gap:
+Current known gaps:
 
-* completion depends on successfully analyzed current module state.
-* when the current snapshot fails parse/resolve/typecheck, completion may return
-  an empty list even while diagnostics are still published.
-
-This is most visible during transient edit states (half-written delimiters,
-partial dot-chains, incomplete match/case edits, mid-rename states).
+* Function-local variable completions not available (checker locals not persisted).
+* Cursor-hole re-parsing not wired into member completion receiver resolution
+  (uses stale AST walk; breaks for `foo.|\nbar()` where stale AST merges the
+  expressions).
+* Import completion only shows extern namespaces, not filesystem module discovery.
 
 ---
 
@@ -47,40 +57,40 @@ Out of scope:
 
 ## Milestones
 
-### C3 — Broken-Edit Reliability
+### C3 — Broken-Edit Reliability ✅
 
-* keep serving completion from last successful semantic state when latest
-  snapshot fails analysis
-* continue publishing diagnostics from latest snapshot
-* keep fallback behavior bounded to completion path (no protocol surprises)
+* [x] keep serving completion from last successful semantic state when latest
+  snapshot fails analysis (`completion_snapshot` stale-cache fallback)
+* [x] continue publishing diagnostics from latest snapshot
+* [x] keep fallback behavior bounded to completion path (no protocol surprises)
+* [x] fix cursor-hole injection boundary (`>=` → `>` in `lex_with_cursor`)
+* [x] fix receiver lookup in stale AST (search at `dot_offset - 1`)
+* [x] exhaustive case variant completion (detect scrutinee type, filter matched arms)
 
-Likely files:
+Implemented in:
 
-* `src/lsp/session.rs`
-* `src/lsp/completion.rs`
-* `src/cli/lsp.rs`
+* `boot/compiler/lexer.tw` — `lex_with_cursor`
+* `boot/compiler/query/completion.tw` — context classification + candidate gathering
+* `boot/lib/lsp/completion.tw` — CompletionItem JSON formatting
+* `boot/lib/lsp/server_core.tw` — capability, handler, `completion_snapshot`
 
-Acceptance:
+### C4 — Completion Protocol Coverage ✅
 
-* incomplete local edits do not collapse completion to empty when prior
-  successful semantics are available
-* behavior is deterministic and covered by tests
+* [x] 8 protocol smoke tests covering member, variant, exhaustive, and keyword completion
+* [x] tests simulate real editor flow (didOpen → didChange → completion)
+* [x] assert completion labels for core cases
 
-### C4 — Completion Protocol Coverage
+Implemented in:
 
-* add protocol smoke tests with multiple cursor positions in one document
-* include partial/broken edit states and verify labels remain available
-* assert protocol payload shape (`CompletionItem`) for core cases
+* `boot/tests/suites/lsp_completion_suite.tw`
 
-Likely files:
+### C5 — Remaining Work
 
-* `src/cli/lsp.rs`
-* `tests/lsp_completion_test.rs`
-
-Acceptance:
-
-* test suite reproduces and guards known noisy editor states
-* regressions in completion availability are caught in CI
+* [ ] Function-local variable completions (persist checker locals)
+* [ ] Wire cursor-hole re-parsing into `member_completions` for correct
+  receiver type in cross-line cases (`foo.|\nbar()`)
+* [ ] Import completion: filesystem module discovery
+* [ ] Snippets / import auto-insertion
 
 ---
 

@@ -338,6 +338,11 @@ fn parse_expr_list_ctx(c: Cursor, end_kind: TokenKind, error_msg: String, contex
   exprs: Vector<Expr> = []
 
   for c.pos < c.tokens.len() and c.kind() != end_kind {
+    if c.kind() == .CursorHole {
+      c = c.advance()
+      break
+    }
+
     parsed := case context {
       .Some(ctx) => parse_expr_in(c, ctx),
       .None => parse_expr_bp(c, 0),
@@ -848,6 +853,13 @@ fn parse_use(c: Cursor) ItemParse {
     c = c.advance()
   }
 
+  // Cursor hole where module name is expected: produce partial use with empty path
+  if c.kind() == .CursorHole {
+    c = c.advance()
+    use_span := start_span.merge(c.span())
+    return .{ value: .Use(.{ path: [], alias: .None, items: .None, is_stdlib, is_relative, span: use_span }), cursor: c, diagnostics: diagnostics_out }
+  }
+
   if c.kind() != .Ident {
     diagnostics_out = diagnostics_out.append(diagnostic.error(
       start_span,
@@ -867,6 +879,13 @@ fn parse_use(c: Cursor) ItemParse {
     c = c.advance()
     path = path.append(c.text())
     c = c.advance()
+  }
+
+  // Cursor hole after dot in use path: stop with partial path
+  if c.kind() == .Dot and c.at(1).kind() == .CursorHole {
+    c = c.at(2)
+    use_span := start_span.merge(c.span())
+    return .{ value: .Use(.{ path, alias: .None, items: .None, is_stdlib, is_relative, span: use_span }), cursor: c, diagnostics: diagnostics_out }
   }
 
   if c.kind() == .Dot and c.at(1).kind() != .LBrace {
@@ -1351,6 +1370,12 @@ fn parse_pattern(c: Cursor) PatternParse {
   if k == .Dot {
     dot_span := c.span()
     c = c.advance()
+    // Cursor hole after dot in pattern: produce empty variant pattern
+    if c.kind() == .CursorHole {
+      c = c.advance()
+      patt := Pattern.{ kind: .Variant("", []), span: c.span_from(start_pos) }
+      return .{ value: patt, cursor: c, diagnostics: diagnostics_out }
+    }
     if c.kind() != .Ident {
       diagnostics_out = diagnostics_out.append(diagnostic.error(
         c.span(),
@@ -1741,6 +1766,14 @@ fn parse_prefix(c: Cursor) ExprParse {
       .{ value: expr, cursor: c.advance(), diagnostics: diagnostics_out }
     },
     .Dot => {
+      if c.at(1).kind() == .CursorHole {
+        // Cursor hole after dot in prefix position: variant completion hole
+        start_pos := c.pos
+        c = c.at(2)
+        expr := Expr.{ id: c.alloc_expr_id(), kind: .Variant("", []), span: c.span_from(start_pos) }
+        return .{ value: expr, cursor: c, diagnostics: diagnostics_out }
+      }
+
       if c.at(1).kind() == .LBrace {
         return parse_record_literal(c, c.pos, c.at(1))
       }
@@ -1838,6 +1871,11 @@ fn parse_prefix(c: Cursor) ExprParse {
     .Continue => diag_statement_in_expression(c, "continue"),
     .Defer    => diag_statement_in_expression(c, "defer"),
     .For      => diag_statement_in_expression(c, "for"),
+    .CursorHole => {
+      // Cursor hole in expression position: produce placeholder without diagnostics
+      expr := error_expr(c.span())
+      .{ value: expr, cursor: c.advance(), diagnostics: diagnostics_out }
+    },
     _ => {
       diagnostics_out = diagnostics_out.append(diagnostic.error(
         c.span(),
@@ -2010,6 +2048,15 @@ fn parse_postfix(c: Cursor, base: Expr) ExprParse {
     }
 
     if k == .Dot {
+      // Cursor hole right after dot: produce Field(expr, "") and stop.
+      // This prevents consuming tokens after the cursor as part of this access.
+      if c.at(1).kind() == .CursorHole {
+        new_span := expr.span.merge(c.at(1).span())
+        expr = Expr.{ id: c.alloc_expr_id(), kind: .Field(expr, ""), span: new_span }
+        c = c.at(2)
+        break
+      }
+
       if c.at(1).kind() == .LBrace {
         parsed_record := parse_record_literal(c, c.pos, c.at(1))
         diagnostics_out = diagnostics_out.concat(parsed_record.diagnostics)
@@ -2081,7 +2128,7 @@ fn parse_expr_bp(c: Cursor, min_bp: Int) ExprParse {
     k := c.kind()
 
     // Hard stop tokens in expression context.
-    if k == .Eof or k == .RParen or k == .RBracket or k == .RBrace or k == .Comma or k == .Semi or k == .FatArrow {
+    if k == .Eof or k == .RParen or k == .RBracket or k == .RBrace or k == .Comma or k == .Semi or k == .FatArrow or k == .CursorHole {
       break
     }
 

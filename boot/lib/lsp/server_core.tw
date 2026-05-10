@@ -5,7 +5,9 @@
 
 use @std.fs
 use @std.path
+use compiler.imports
 use compiler.query.cache as query_cache
+use compiler.query.completion as query_completion
 use compiler.query.diagnostics as query_diagnostics
 use compiler.query.definition as query_definition
 use compiler.query.hover as query_hover
@@ -14,6 +16,7 @@ use lib.json
 use lib.module.loader
 use lib.source.identity
 use lib.lsp.code_action as lsp_code_action
+use lib.lsp.completion as lsp_completion
 use lib.lsp.diagnostics as lsp_diagnostics
 use lib.lsp.document_store
 use lib.lsp.definition as lsp_definition
@@ -62,6 +65,9 @@ fn handle_request(state: State, req: protocol.Request) Step {
           json.kv("textDocumentSync", .Int(1)),
           json.kv("hoverProvider", .Bool(true)),
           json.kv("definitionProvider", .Bool(true)),
+          json.kv("completionProvider", json.object([
+            json.kv("triggerCharacters", json.array([.Str(".")])),
+          ])),
           json.kv("codeActionProvider", .Bool(true)),
         ])),
         json.kv("serverInfo", json.object([
@@ -72,6 +78,7 @@ fn handle_request(state: State, req: protocol.Request) Step {
     },
     "textDocument/hover" => handle_hover(state, req),
     "textDocument/definition" => handle_definition(state, req),
+    "textDocument/completion" => handle_completion(state, req),
     "textDocument/codeAction" => handle_code_action(state, req),
     "shutdown" => {
       state.shutdown_requested = true
@@ -150,6 +157,33 @@ fn workspace_snapshot(state: State, doc: document_store.Document) semantic.Seman
   }
 }
 
+fn completion_snapshot(state: State, doc: document_store.Document) semantic.SemanticSnapshot {
+  // Try cached snapshot first (fast path — nothing changed)
+  input := workspace_input(state, doc)
+  case semantic.snapshot_workspace_from_cache(state.query_cache, input) {
+    .Some(snap) => { return snap },
+    .None => {},
+  }
+  // Run full analysis
+  snap := semantic.snapshot_workspace(state.query_cache, input)
+  // If typed is available, use it directly
+  case snap.typed {
+    .Some(_) => { return snap },
+    .None => {},
+  }
+  // Typed failed — try to recover stale typed/resolved from cache
+  id := case identity.from_file_uri(doc.uri) {
+    .Ok(parsed) => parsed,
+    .Err(_) => identity.from_path(doc.uri),
+  }
+  canonical := imports.canonical_module_path(id.path, imports.make_canonical_roots(input.project_root))
+  snap.typed = query_cache.latest_typed(snap.cache, canonical)
+  if snap.resolved == .None {
+    snap.resolved = query_cache.latest_resolved(snap.cache, canonical)
+  }
+  snap
+}
+
 fn workspace_input(state: State, doc: document_store.Document) query_diagnostics.WorkspaceInput {
   open_docs := state.documents.docs.values()
   overlay_docs := collect d in open_docs {
@@ -212,6 +246,28 @@ fn handle_definition(state: State, req: protocol.Request) Step {
       }
     },
     .Err(_) => .{ state, outgoing: [protocol.success_response(req.id, .Null)] },
+  }
+}
+
+fn handle_completion(state: State, req: protocol.Request) Step {
+  case params.decode_completion(req.params) {
+    .Ok(comp_params) => {
+      uri := comp_params.text_document.uri
+      case document_store.get(state.documents, uri) {
+        .Some(doc) => {
+          offset := case line_index.position_to_byte_offset(doc.index, .{ line: comp_params.position.line, character: comp_params.position.character }, .Utf16) {
+            .Some(o) => o,
+            .None => { return .{ state, outgoing: [protocol.success_response(req.id, json.array([]))] } },
+          }
+          snap := completion_snapshot(state, doc)
+          state.query_cache = snap.cache
+          items := query_completion.complete(snap, offset, doc.text)
+          .{ state, outgoing: [protocol.success_response(req.id, lsp_completion.completion_response(items))] }
+        },
+        .None => .{ state, outgoing: [protocol.success_response(req.id, json.array([]))] },
+      }
+    },
+    .Err(_) => .{ state, outgoing: [protocol.success_response(req.id, json.array([]))] },
   }
 }
 

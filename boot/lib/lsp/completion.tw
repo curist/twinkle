@@ -1,0 +1,41 @@
+// LSP completion response adapter.
+//
+// Converts internal CompletionItem records into LSP CompletionItem JSON.
+
+use lib.json
+
+/// LSP CompletionItemKind numeric values.
+// 1=Text, 2=Method, 3=Function, 5=Field, 6=Variable,
+// 7=Class(type), 13=Enum, 14=Keyword, 20=EnumMember(variant)
+
+pub type CompletionItem = .{
+  label: String,
+  kind: Int,
+  detail: String?,
+  documentation: String?,
+}
+
+pub fn completion_response(items: Vector<CompletionItem>) json.Json {
+  json.array(collect item in items { item_to_json(item) })
+}
+
+fn item_to_json(item: CompletionItem) json.Json {
+  fields: Vector<json.Field> = [
+    json.kv("label", .Str(item.label)),
+    json.kv("kind", .Int(item.kind)),
+  ]
+  case item.detail {
+    .Some(d) => { fields = fields.append(json.kv("detail", .Str(d))) },
+    .None => {},
+  }
+  case item.documentation {
+    .Some(doc) => {
+      fields = fields.append(json.kv("documentation", json.object([
+        json.kv("kind", .Str("markdown")),
+        json.kv("value", .Str(doc)),
+      ])))
+    },
+    .None => {},
+  }
+  json.object(fields)
+}
