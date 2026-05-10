@@ -41,6 +41,8 @@ npx tree-sitter build --wasm  # requires Docker; rebuilds tree-sitter-twinkle.wa
 Commit `grammar.js`, the regenerated `src/` files, and `tree-sitter-twinkle.wasm` together.
 The wasm is tracked in git so CI doesn't need Docker.
 
+**Important:** Never run `tree-sitter test` from the agent. When tree-sitter work is done, ask the human to run the tests manually.
+
 ### Test
 ```bash
 cargo test --release                # Rust test suite

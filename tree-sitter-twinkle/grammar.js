@@ -569,7 +569,7 @@ module.exports = grammar({
       '"',
     ),
 
-    string_content: $ => token.immediate(/[^\n"\\$]+/),
+    string_content: $ => token.immediate(prec(1, /[^\n"\\$]+/)),
 
     escape_sequence: $ => token.immediate(seq(
       '\\',
