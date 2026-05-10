@@ -6,7 +6,7 @@ use @std.path
 use lib.argparse.app
 use lib.argparse.app.{ParseResult}
 use compiler.pipeline
-use commands.common.{get_positional, exit_usage_error, fs_error_message}
+use commands.common.{get_positional, exit_usage_error, fs_error_message, print_warnings}
 
 fn default_build_output(file: String) String {
   dir := path.dirname(file)
@@ -51,6 +51,7 @@ pub fn run_build_command(parsed: ParseResult) {
       proc.exit(1)
     },
   }
+  print_warnings(artifacts.warnings)
 
   ext := path.extension(out)
   if ext == ".wasm" {

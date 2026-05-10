@@ -5,7 +5,9 @@ use @std.fs
 use lib.argparse.app.{ParseResult}
 use lib.source.registry
 use lib.source.registry.{FileRegistry}
-use lib.source.diagnostic.{Severity, Diagnostic}
+use lib.source.span
+use lib.source.diagnostic.{Severity, Diagnostic, format_source_diagnostics}
+use compiler.query.analyze
 
 pub fn usage_hint() String {
   "Usage: twk <command> [options]\nRun 'twk --help' or 'twk <command> --help'."
@@ -68,5 +70,21 @@ pub fn print_diagnostic(path: String, reg: FileRegistry, d: Diagnostic) {
     .None => {
       eprintln("${path}:${d.span.start}: ${severity_name(d.severity)}: ${d.message}")
     },
+  }
+}
+
+/// Print structured analysis diagnostics (typically warnings) to stderr.
+pub fn print_warnings(warnings: Vector<analyze.AnalysisDiag>) {
+  for d in warnings {
+    source := case fs.read_text(d.identity.path) {
+      .Ok(text) => text,
+      .Err(_) => "",
+    }
+    raw_span := case d.span {
+      .Some(s) => span.new(0, s.start, s.end),
+      .None => span.new(0, 0, 0),
+    }
+    raw := [Diagnostic.{ span: raw_span, severity: d.severity, message: d.message, related: [] }]
+    eprintln(format_source_diagnostics(d.identity.path, source, raw))
   }
 }

@@ -7,6 +7,7 @@ use compiler.resolver.{ResolvedEnv}
 use compiler.builtins.{BuiltinRegistry}
 use compiler.core_ir.{CoreModule}
 use compiler.anf.{AnfModule}
+use compiler.query.analyze.{AnalysisDiag}
 
 pub type PipelineArtifacts = .{
   env: ResolvedEnv,
@@ -15,4 +16,5 @@ pub type PipelineArtifacts = .{
   mono: CoreModule,
   anf: AnfModule,
   opt: AnfModule,
+  warnings: Vector<AnalysisDiag>,
 }

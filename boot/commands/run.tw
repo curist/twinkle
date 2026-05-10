@@ -4,6 +4,7 @@ use @std.proc
 use lib.argparse.app
 use lib.argparse.app.{ParseResult}
 use compiler.pipeline
+use commands.common.{print_warnings}
 
 pub fn run_command_impl(parsed: ParseResult, file: String) {
   if app.has_flag(parsed, "interpreter") {
@@ -18,6 +19,7 @@ pub fn run_command_impl(parsed: ParseResult, file: String) {
       proc.exit(1)
     },
   }
+  print_warnings(artifacts.warnings)
 
   wasm_bytes := pipeline.emit_wasm(artifacts)
   user_args := if parsed.positional.len() > 1 {

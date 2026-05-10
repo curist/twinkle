@@ -5,7 +5,7 @@ use lib.argparse.app
 use lib.argparse.app.{ParseResult}
 use compiler.pipeline
 use compiler.ir_print
-use commands.common.{get_positional, exit_usage_error}
+use commands.common.{get_positional, exit_usage_error, print_warnings}
 
 fn has_any_ir_flag(parsed: ParseResult) Bool {
   app.has_flag(parsed, "core")
@@ -48,6 +48,7 @@ pub fn run_ir_command(parsed: ParseResult) {
       proc.exit(1)
     },
   }
+  print_warnings(artifacts.warnings)
 
   first := true
   if should_show_ir(parsed, "core") {

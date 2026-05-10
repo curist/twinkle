@@ -59,19 +59,11 @@ pub fn compile_entry(entry_path: String) Result<PipelineArtifacts, String> {
     return .Err("analysis failed")
   }
 
-  // Emit unused import warnings from analysis diagnostics
+  // Collect warnings from analysis diagnostics (returned in result).
+  compile_warnings: Vector<analyze.AnalysisDiag> = []
   for d in a_result.diagnostics {
     if d.severity != .Warning { continue }
-    source := case fs.read_text(d.identity.path) {
-      .Ok(text) => text,
-      .Err(_) => "",
-    }
-    raw_span := case d.span {
-      .Some(s) => span.new(0, s.start, s.end),
-      .None => span.new(0, 0, 0),
-    }
-    raw := [Diagnostic.{ span: raw_span, severity: d.severity, message: d.message, related: [] }]
-    eprintln(format_source_diagnostics(d.identity.path, source, raw))
+    compile_warnings = compile_warnings.append(d)
   }
 
   // Phase 2: Lower each analyzed module to Core IR
@@ -187,6 +179,7 @@ pub fn compile_entry(entry_path: String) Result<PipelineArtifacts, String> {
     mono,
     anf,
     opt,
+    warnings: compile_warnings,
   })
 }
 

@@ -187,7 +187,7 @@ pub fn link(
         .Some(fid) => {
           linked_func_table[name] = remap_func_id(fid, remap)
         },
-        .None => {},
+        .None => error("link: func_table key '${name}' missing during iteration"),
       }
     }
 
@@ -253,7 +253,7 @@ pub fn link(
           live_func_table[name] = fid
         }
       },
-      .None => {},
+      .None => error("link: linked_func_table key '${name}' missing during DCE filtering"),
     }
   }
 
@@ -263,7 +263,7 @@ pub fn link(
     if reachable.has(id) {
       case linked_extern_imports[id] {
         .Some(ext) => { live_extern_imports[id] = ext },
-        .None => {},
+        .None => error("link: linked_extern_imports key ${id} missing during DCE filtering"),
       }
     }
   }
