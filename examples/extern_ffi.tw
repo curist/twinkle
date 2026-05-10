@@ -31,6 +31,6 @@ console.log("floor(2.7) = ${Math.floor(2.7)}")
 console.log("ceil(2.3) = ${Math.ceil(2.3)}")
 
 // Mix extern and built-in functions
-for i in range_from(1, 6) {
+for i in 1..6 {
   console.log("sqrt(${i}) = ${Math.sqrt(i.to_float())}")
 }

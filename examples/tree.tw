@@ -1,11 +1,13 @@
 type Tree<T> = {
   Empty,
+  Leaf(T),
   Node(T, Tree<T>, Tree<T>),
 }
 
 fn sum(t: Tree<Int>) Int {
   case t {
     .Empty => 0,
+    .Leaf(val) => val,
     .Node(val, left, right) => val + sum(left) + sum(right),
   }
 }
@@ -13,6 +15,7 @@ fn sum(t: Tree<Int>) Int {
 fn depth<T>(t: Tree<T>) Int {
   case t {
     .Empty => 0,
+    .Leaf(_) => 1,
     .Node(_, left, right) => {
       l := depth(left)
       r := depth(right)
@@ -24,6 +27,7 @@ fn depth<T>(t: Tree<T>) Int {
 fn count<T>(t: Tree<T>) Int {
   case t {
     .Empty => 0,
+    .Leaf(_) => 1,
     .Node(_, left, right) => 1 + count(left) + count(right),
   }
 }
@@ -34,6 +38,7 @@ fn render_branch<T: Stringify>(t: Tree<T>, prefix: String, is_tail: Bool) String
 
   case t {
     .Empty => "${prefix}${connector}∅",
+    .Leaf(value) => "${prefix}${connector}${value}",
     .Node(value, left, right) => {
       "${prefix}${connector}${value}\n${render_branch(left, child_prefix, false)}\n${render_branch(right, child_prefix, true)}"
     },
@@ -43,6 +48,7 @@ fn render_branch<T: Stringify>(t: Tree<T>, prefix: String, is_tail: Bool) String
 fn to_string<T: Stringify>(t: Tree<T>) String {
   case t {
     .Empty => "∅",
+    .Leaf(value) => "${value}",
     .Node(value, left, right) => {
       "${value}\n${render_branch(left, "", false)}\n${render_branch(right, "", true)}"
     },
@@ -52,6 +58,7 @@ fn to_string<T: Stringify>(t: Tree<T>) String {
 fn contains(t: Tree<Int>, target: Int) Bool {
   case t {
     .Empty => false,
+    .Leaf(val) => { val == target },
     .Node(val, left, right) => {
       if val == target {
         true
@@ -68,16 +75,10 @@ fn main() {
   //                3     8
   //               / \   /
   //              1   4 7
-  empty: Tree<Int> = Tree.Empty
+
   tree := Tree.Node(5,
-    .Node(3,
-      .Node(1, empty, empty),
-      .Node(4, empty, empty)
-    ),
-    .Node(8,
-      .Node(7, empty, empty),
-      empty
-    )
+    .Node(3, .Leaf(1), .Leaf(4)),
+    .Node(8, .Leaf(7), .Empty)
   )
 
   println("Tree:\n${tree}")
