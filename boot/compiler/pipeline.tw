@@ -1,53 +1,133 @@
-use compiler.parser
-use compiler.checker
-use compiler.lower_core
 use compiler.monomorphize
 use compiler.lower_anf
 use compiler.opt.pipeline.{optimize_module}
 use compiler.builtins.{make_builtin_registry}
+use compiler.core_ir.{CompiledModule, ExternalRef, ExternalValueRef}
 use compiler.artifacts.{PipelineArtifacts, CompileError}
+use compiler.imports
 use compiler.base_env.{builtin_env}
 use compiler.module_compiler
+use compiler.core_linker
+use compiler.query.analyze
+use compiler.query.cache as query_cache
+use compiler.query.stage_runner
 use compiler.codegen.codegen.{codegen, codegen_wasm}
-use lib.source.diagnostic.{format_source_diagnostics}
+use lib.source.identity
+use lib.source.overlay
+use lib.source.diagnostic.{Diagnostic, format_source_diagnostics}
 
+/// Compile a source string through the full pipeline.
+///
+/// Uses the same analyze_module path as compile_entry, with an overlay-backed
+/// virtual source so the real pipeline is exercised even in tests.
 pub fn compile_source(src: String) Result<PipelineArtifacts, String> {
-  input_name := "<input>"
-  parsed := parser.parse(src, 0)
-  if parsed.diagnostics.len() > 0 {
-    return .Err("parse:\n${format_source_diagnostics(input_name, src, parsed.diagnostics)}")
-  }
+  virtual_path := "/__virtual__/input.tw"
+  virtual_id := identity.from_path(virtual_path)
 
-  resolved := builtin_env().resolve(parsed.value)
-  if resolved.diagnostics.len() > 0 {
-    return .Err("resolve:\n${format_source_diagnostics(input_name, src, resolved.diagnostics)}")
-  }
-
-  check_result := checker.check(parsed.value, resolved.env)
-  if check_result.diagnostics.len() > 0 {
-    return .Err("check:\n${format_source_diagnostics(input_name, src, check_result.diagnostics)}")
-  }
+  // Put the source in an overlay so analyze_module finds it without disk access.
+  ov := overlay.empty().put(overlay.OverlayDocument.{
+    identity: virtual_id,
+    text: src,
+    version: .None,
+  })
 
   builtins := make_builtin_registry()
-  lowered := lower_core.lower_module(parsed.value, check_result, builtins)
-  if lowered.diagnostics.len() > 0 {
-    return .Err("lower_core:\n${format_source_diagnostics(input_name, src, lowered.diagnostics)}")
+  base_env := builtin_env()
+
+  // Phase 1: Frontend analysis (parse → resolve → typecheck)
+  a_state := analyze.new_state(base_env, query_cache.empty(), ov, "/__virtual__")
+  a_result := analyze.analyze_module(virtual_id, "__input", base_env, a_state, [])
+
+  if !a_result.ok {
+    return .Err(format_analysis_diags_inline(src, a_result.diagnostics))
   }
 
-  core := lowered.module
+  // Phase 2: Lower to Core IR
+  cur_cache := a_result.state.cache
+  canonical := imports.canonical_module_path(virtual_path, a_result.state.canonical_roots)
+  parsed := case query_cache.latest_parsed(cur_cache, canonical) {
+    .Some(p) => p,
+    .None => { return .Err("internal: missing parsed cache") },
+  }
+  typed := case query_cache.latest_typed(cur_cache, canonical) {
+    .Some(t) => t,
+    .None => { return .Err("internal: missing typed cache") },
+  }
+  runner := case a_result.state.module_runners[canonical] {
+    .Some(r) => r,
+    .None => { return .Err("internal: missing runner") },
+  }
+
+  lowered_out := stage_runner.lower(runner, cur_cache, parsed, typed, builtins)
+  lowered := lowered_out.value
+  if lowered.diagnostics.len() > 0 {
+    return .Err(format_source_diagnostics("<input>", src, lowered.diagnostics))
+  }
+
+  // Build CompiledModule for linker
+  external_refs: Dict<Int, ExternalRef> = Dict.new()
+  value_exports: Dict<String, Int> = Dict.new()
+  value_refs: Dict<Int, ExternalValueRef> = Dict.new()
+
+  compiled_module := CompiledModule.{
+    path: canonical,
+    core: lowered.module,
+    func_table: lowered.func_table,
+    external_refs,
+    extern_imports: lowered.module.extern_imports,
+    builtin_count: builtins.next_id,
+    value_exports,
+    value_refs,
+    defined_global_count: lowered.next_global_local_id,
+  }
+
+  // Phase 3: Link, monomorphize, ANF lower, optimize
+  core := core_linker.link([compiled_module], canonical, a_result.env, builtins.next_id)
   mono := monomorphize.monomorphize(core)
   anf := lower_anf.lower_module(mono)
   opt := optimize_module(anf)
 
+  // Collect warnings
+  warnings: Vector<analyze.AnalysisDiag> = []
+  for d in a_result.diagnostics {
+    if d.severity != .Warning { continue }
+    warnings = warnings.append(d)
+  }
+
   .Ok(PipelineArtifacts.{
-    env: resolved.env,
-    builtins: builtins,
-    core: core,
-    mono: mono,
-    anf: anf,
-    opt: opt,
-    warnings: [],
+    env: a_result.env,
+    builtins,
+    core,
+    mono,
+    anf,
+    opt,
+    warnings,
   })
+}
+
+/// Format analysis diagnostics using the in-memory source (for virtual paths).
+fn format_analysis_diags_inline(src: String, diags: Vector<analyze.AnalysisDiag>) String {
+  if diags.len() == 0 { return "compilation failed" }
+  out := ""
+  input_name := "<input>"
+  for d,i in diags {
+    if i > 0 { out = "${out}\n" }
+    part := format_one_diag(input_name, src, d)
+    out = "${out}${part}"
+  }
+  out
+}
+
+fn format_one_diag(input_name: String, src: String, d: analyze.AnalysisDiag) String {
+  case d.span {
+    .Some(sp) => {
+      diag: Diagnostic = .{ span: sp, message: d.message, severity: d.severity, related: [] }
+      format_source_diagnostics(input_name, src, [diag])
+    },
+    .None => {
+      "${d.stage}: ${d.message}"
+    },
+  }
 }
 
 pub fn compile_entry_path(path: String) Result<PipelineArtifacts, CompileError> {

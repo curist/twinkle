@@ -41,10 +41,14 @@ real pipeline.
    callsites don't change.
 3. Delete the inline parse/resolve/check code from `pipeline.tw`.
 
-### Files to change
+**Status: done.** `compile_source` now uses an overlay-backed virtual path
+(`/__virtual__/input.tw`) and delegates to `analyze_module` → `stage_runner.lower`
+→ `core_linker.link` → monomorphize → ANF → optimize — the same pipeline as
+`compile_entry`. Test callsites unchanged.
 
-- `boot/compiler/pipeline.tw` — rewrite `compile_source`
-- `boot/tests/helpers/codegen_harness.tw` — verify tests still pass
+### Files changed
+
+- `boot/compiler/pipeline.tw` — rewrote `compile_source`
 
 ---
 
@@ -183,7 +187,7 @@ boundary tracking (`local_type_start`, `shared_type_start`).
 | 1 | Harden linker invariants (#5) | Done | Small change, prevents silent corruption |
 | 2 | DCE-aware extern imports (#6) | Done | Already implemented in boot linker |
 | 3 | Structured diagnostics (#2) | Done | Unblocks tooling integration |
-| 4 | Unify frontend pipelines (#1) | Pending | Eliminates divergence risk |
+| 4 | Unify frontend pipelines (#1) | Done | Eliminates divergence risk |
 | 5 | Consolidate builtins (#4) | Pending | Reduces maintenance burden |
 | 6 | Type storage cleanup (#7) | Pending | Existing plan covers root cause; this is incremental |
 
