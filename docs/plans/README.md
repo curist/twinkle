@@ -38,7 +38,6 @@ Self-hosting is complete. Historical design and status docs live in
 
 | Area | Description | Status | Details |
 |------|-------------|--------|---------|
-| Architecture cleanup | Consolidate ownership boundaries, harden invariants, unify pipelines | Planned | [architecture-cleanup.md](architecture-cleanup.md) |
 | Boot compiler layout | Reorganize `boot/compiler/` into focused subdirectories with stable end-state names | Planned | [boot-compiler-layout-reorg.md](boot-compiler-layout-reorg.md) |
 | Boot performance | Track current compiler bottlenecks and optimization wins | In Progress | [boot-compiler-perf.md](boot-compiler-perf.md) |
 | Nested variant lowering | Investigate the remaining nested variant-pattern lowering hazard | In Progress | [boot-nested-variant-pattern-lowering.md](boot-nested-variant-pattern-lowering.md) |
