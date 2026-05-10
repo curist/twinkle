@@ -12,6 +12,7 @@ use compiler.query.analyze
 use compiler.query.cache as query_cache
 use compiler.query.stage_runner
 use compiler.codegen.codegen.{codegen, codegen_wasm}
+use lib.module.loader
 use lib.source.identity
 use lib.source.overlay
 use lib.source.diagnostic.{Diagnostic, format_source_diagnostics}
@@ -33,9 +34,10 @@ pub fn compile_source(src: String) Result<PipelineArtifacts, String> {
 
   builtins := make_builtin_registry()
   base_env := builtin_env()
+  project_root := loader.find_project_root(".")
 
   // Phase 1: Frontend analysis (parse → resolve → typecheck)
-  a_state := analyze.new_state(base_env, query_cache.empty(), ov, "/__virtual__")
+  a_state := analyze.new_state(base_env, query_cache.empty(), ov, project_root)
   a_result := analyze.analyze_module(virtual_id, "__input", base_env, a_state, [])
 
   if !a_result.ok {
@@ -59,6 +61,7 @@ pub fn compile_source(src: String) Result<PipelineArtifacts, String> {
   }
 
   lowered_out := stage_runner.lower(runner, cur_cache, parsed, typed, builtins)
+  cur_cache = lowered_out.store
   lowered := lowered_out.value
   if lowered.diagnostics.len() > 0 {
     return .Err(format_source_diagnostics("<input>", src, lowered.diagnostics))
