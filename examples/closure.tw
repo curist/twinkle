@@ -1,0 +1,7 @@
+closures : Vector<fn() Int> = collect i in 0..10 {
+  fn() { i }
+}
+
+for f in closures {
+  println("${f()}")
+}
