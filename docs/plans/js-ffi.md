@@ -424,9 +424,9 @@ If the scope feels large, a minimal viable approach is:
    correct `(import ...)` declaration
 5. [x] Stage 0: parse extern blocks (grouped syntax)
 6. [x] Tree-sitter: add `extern_declaration` + `extern_block` rules + highlights
-7. [ ] Boot compiler: lexer/parser/resolver/checker
-8. [ ] Boot compiler: lower_core + codegen + linker (consider `ExternalRef` reuse)
-9. [ ] Boot compiler: add monomorphizer guard for extern FuncIds
+7. [x] Boot compiler: lexer/parser/resolver/checker
+8. [x] Boot compiler: lower_core + codegen + linker (consider `ExternalRef` reuse)
+9. [x] Boot compiler: add monomorphizer guard for extern FuncIds
 10. [x] Update `docs/spec.md` and `docs/grammar.ebnf`
 11. [ ] Playground: curated web API modules
 12. [ ] Extend extern-safe type set (Phase 2: richer boundary types)
