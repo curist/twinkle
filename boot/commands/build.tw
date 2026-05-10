@@ -6,7 +6,7 @@ use @std.path
 use lib.argparse.app
 use lib.argparse.app.{ParseResult}
 use compiler.pipeline
-use commands.common.{get_positional, exit_usage_error, fs_error_message, print_warnings}
+use commands.common.{get_positional, exit_usage_error, fs_error_message, print_warnings, format_compile_error}
 
 fn default_build_output(file: String) String {
   dir := path.dirname(file)
@@ -46,8 +46,8 @@ pub fn run_build_command(parsed: ParseResult) {
 
   artifacts := case pipeline.compile_entry_path(file) {
     .Ok(result) => result,
-    .Err(msg) => {
-      eprintln(msg)
+    .Err(err) => {
+      eprintln(format_compile_error(err))
       proc.exit(1)
     },
   }

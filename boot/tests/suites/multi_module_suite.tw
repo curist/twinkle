@@ -2,6 +2,7 @@ use tests.runner
 use tests.assert
 use compiler.module_compiler
 use compiler.pipeline
+use commands.common.{format_compile_error}
 use lib.module.loader
 
 fn fixtures_dir() String {
@@ -23,7 +24,7 @@ pub fn suite() runner.Suite {
       result := module_compiler.compile_entry("${dir}/math_lib.tw")
       case result {
         .Ok(_) => .Ok({}),
-        .Err(msg) => .Err("expected success, got: ${msg}"),
+        .Err(err) => .Err("expected success, got: ${format_compile_error(err)}"),
       }
     })
 
@@ -31,7 +32,7 @@ pub fn suite() runner.Suite {
       result := module_compiler.compile_entry("${dir}/uses_math.tw")
       case result {
         .Ok(_) => .Ok({}),
-        .Err(msg) => .Err("expected success, got: ${msg}"),
+        .Err(err) => .Err("expected success, got: ${format_compile_error(err)}"),
       }
     })
 
@@ -39,7 +40,7 @@ pub fn suite() runner.Suite {
       result := module_compiler.compile_entry("${dir}/uses_types.tw")
       case result {
         .Ok(_) => .Ok({}),
-        .Err(msg) => .Err("expected success, got: ${msg}"),
+        .Err(err) => .Err("expected success, got: ${format_compile_error(err)}"),
       }
     })
 
@@ -47,7 +48,7 @@ pub fn suite() runner.Suite {
       result := module_compiler.compile_entry("${dir}/duplicate_type_imports_main.tw")
       case result {
         .Ok(_) => .Ok({}),
-        .Err(msg) => .Err("expected success, got: ${msg}"),
+        .Err(err) => .Err("expected success, got: ${format_compile_error(err)}"),
       }
     })
 
@@ -55,7 +56,7 @@ pub fn suite() runner.Suite {
       result := module_compiler.compile_entry("${dir}/vector_get_optional_return.tw")
       case result {
         .Ok(_) => .Ok({}),
-        .Err(msg) => .Err("expected success, got: ${msg}"),
+        .Err(err) => .Err("expected success, got: ${format_compile_error(err)}"),
       }
     })
 
@@ -63,7 +64,7 @@ pub fn suite() runner.Suite {
       result := module_compiler.compile_entry("${dir}/selective_only_variants_main.tw")
       case result {
         .Ok(_) => .Ok({}),
-        .Err(msg) => .Err("expected success, got: ${msg}"),
+        .Err(err) => .Err("expected success, got: ${format_compile_error(err)}"),
       }
     })
 
@@ -71,7 +72,7 @@ pub fn suite() runner.Suite {
       result := module_compiler.compile_entry("${dir}/type_flow_consumer.tw")
       case result {
         .Ok(_) => .Ok({}),
-        .Err(msg) => .Err("expected success, got: ${msg}"),
+        .Err(err) => .Err("expected success, got: ${format_compile_error(err)}"),
       }
     })
 
@@ -79,7 +80,7 @@ pub fn suite() runner.Suite {
       result := module_compiler.compile_entry("${dir}/type_flow_method_consumer.tw")
       case result {
         .Ok(_) => .Ok({}),
-        .Err(msg) => .Err("expected success, got: ${msg}"),
+        .Err(err) => .Err("expected success, got: ${format_compile_error(err)}"),
       }
     })
 
@@ -87,7 +88,7 @@ pub fn suite() runner.Suite {
       result := module_compiler.compile_entry("${dir}/lex_sim_parser.tw")
       case result {
         .Ok(_) => .Ok({}),
-        .Err(msg) => .Err("expected success, got: ${msg}"),
+        .Err(err) => .Err("expected success, got: ${format_compile_error(err)}"),
       }
     })
 
@@ -95,7 +96,7 @@ pub fn suite() runner.Suite {
       result := module_compiler.compile_entry("${dir}/alias_type_bridge.tw")
       case result {
         .Ok(_) => .Ok({}),
-        .Err(msg) => .Err("expected alias import topology to preserve type identity, got: ${msg}"),
+        .Err(err) => .Err("expected alias import topology to preserve type identity, got: ${format_compile_error(err)}"),
       }
     })
 
@@ -103,7 +104,7 @@ pub fn suite() runner.Suite {
       result := module_compiler.compile_entry("${dir}/alias_type_bridge_full_first.tw")
       case result {
         .Ok(_) => .Ok({}),
-        .Err(msg) => .Err("expected reversed alias import topology to preserve type identity, got: ${msg}"),
+        .Err(err) => .Err("expected reversed alias import topology to preserve type identity, got: ${format_compile_error(err)}"),
       }
     })
 
@@ -111,7 +112,7 @@ pub fn suite() runner.Suite {
       result := module_compiler.compile_entry("${dir}/alias_type_main.tw")
       case result {
         .Ok(_) => .Ok({}),
-        .Err(msg) => .Err("expected downstream alias topology to preserve exported support types, got: ${msg}"),
+        .Err(err) => .Err("expected downstream alias topology to preserve exported support types, got: ${format_compile_error(err)}"),
       }
     })
 
@@ -119,7 +120,7 @@ pub fn suite() runner.Suite {
       result := module_compiler.compile_entry("${dir}/alias_type_transitive_main.tw")
       case result {
         .Ok(_) => .Ok({}),
-        .Err(msg) => .Err("expected transitive alias bridges to preserve exported support types, got: ${msg}"),
+        .Err(err) => .Err("expected transitive alias bridges to preserve exported support types, got: ${format_compile_error(err)}"),
       }
     })
 
@@ -127,7 +128,7 @@ pub fn suite() runner.Suite {
       result := module_compiler.compile_entry("${dir}/support_method_main.tw")
       case result {
         .Ok(_) => .Ok({}),
-        .Err(msg) => .Err("expected support type method surface to survive downstream import, got: ${msg}"),
+        .Err(err) => .Err("expected support type method surface to survive downstream import, got: ${format_compile_error(err)}"),
       }
     })
 
@@ -135,7 +136,7 @@ pub fn suite() runner.Suite {
       result := module_compiler.compile_entry("${dir}/never_main.tw")
       case result {
         .Ok(_) => .Ok({}),
-        .Err(msg) => .Err("expected imported inferred Never return to survive downstream import, got: ${msg}"),
+        .Err(err) => .Err("expected imported inferred Never return to survive downstream import, got: ${format_compile_error(err)}"),
       }
     })
 
@@ -143,7 +144,7 @@ pub fn suite() runner.Suite {
       result := module_compiler.compile_entry("${root}/compiler/lexer.tw")
       case result {
         .Ok(_) => .Ok({}),
-        .Err(msg) => .Err("expected boot compiler lexer module to compile, got: ${msg}"),
+        .Err(err) => .Err("expected boot compiler lexer module to compile, got: ${format_compile_error(err)}"),
       }
     })
 
@@ -151,7 +152,7 @@ pub fn suite() runner.Suite {
       result := module_compiler.compile_entry("${dir}/method_call_consumer_full.tw")
       case result {
         .Ok(_) => .Ok({}),
-        .Err(msg) => .Err("expected success, got: ${msg}"),
+        .Err(err) => .Err("expected success, got: ${format_compile_error(err)}"),
       }
     })
 
@@ -159,7 +160,7 @@ pub fn suite() runner.Suite {
       result := module_compiler.compile_entry("${dir}/method_call_consumer.tw")
       case result {
         .Ok(_) => .Ok({}),
-        .Err(msg) => .Err("expected success, got: ${msg}"),
+        .Err(err) => .Err("expected success, got: ${format_compile_error(err)}"),
       }
     })
 
@@ -167,7 +168,7 @@ pub fn suite() runner.Suite {
       result := module_compiler.compile_entry("${dir}/method_call_consumer_rev.tw")
       case result {
         .Ok(_) => .Ok({}),
-        .Err(msg) => .Err("expected success, got: ${msg}"),
+        .Err(err) => .Err("expected success, got: ${format_compile_error(err)}"),
       }
     })
 
@@ -175,7 +176,7 @@ pub fn suite() runner.Suite {
       result := module_compiler.compile_entry("${dir}/transitive_a.tw")
       case result {
         .Ok(_) => .Ok({}),
-        .Err(msg) => .Err("expected success, got: ${msg}"),
+        .Err(err) => .Err("expected success, got: ${format_compile_error(err)}"),
       }
     })
 
@@ -183,7 +184,8 @@ pub fn suite() runner.Suite {
       result := module_compiler.compile_entry("${dir}/selective_no_parent_scope.tw")
       case result {
         .Ok(_) => .Err("expected selective import to reject parent module access"),
-        .Err(msg) => {
+        .Err(err) => {
+          msg := format_compile_error(err)
           try assert.is_true(msg.contains("math_lib.add") or msg.contains("math_lib"))
           .Ok({})
         },
@@ -194,7 +196,8 @@ pub fn suite() runner.Suite {
       result := module_compiler.compile_entry("${dir}/circular_a.tw")
       case result {
         .Ok(_) => .Err("expected circular import error"),
-        .Err(msg) => {
+        .Err(err) => {
+          msg := format_compile_error(err)
           try assert.is_true(msg.contains("Circular import"))
           .Ok({})
         },
@@ -216,7 +219,7 @@ pub fn suite() runner.Suite {
           try assert.vec_contains(names, "main")
           .Ok({})
         },
-        .Err(msg) => .Err("expected success, got: ${msg}"),
+        .Err(err) => .Err("expected success, got: ${format_compile_error(err)}"),
       }
     })
 
@@ -231,7 +234,7 @@ pub fn suite() runner.Suite {
           try assert.vec_contains(names, "__init__")
           .Ok({})
         },
-        .Err(msg) => .Err("expected success, got: ${msg}"),
+        .Err(err) => .Err("expected success, got: ${format_compile_error(err)}"),
       }
     })
 
@@ -244,7 +247,7 @@ pub fn suite() runner.Suite {
           try assert.vec_contains(names, "__init__")
           .Ok({})
         },
-        .Err(msg) => .Err("expected success, got: ${msg}"),
+        .Err(err) => .Err("expected success, got: ${format_compile_error(err)}"),
       }
     })
 
@@ -252,7 +255,8 @@ pub fn suite() runner.Suite {
       result := module_compiler.compile_entry("${dir}/two_type_errors.tw")
       case result {
         .Ok(_) => .Err("expected checker diagnostics"),
-        .Err(msg) => {
+        .Err(err) => {
+          msg := format_compile_error(err)
           try assert.str_contains(msg, "check:\n")
           try assert.str_contains(msg, "${dir}/two_type_errors.tw:2:")
           try assert.str_contains(msg, "${dir}/two_type_errors.tw:3:")
@@ -268,7 +272,7 @@ pub fn suite() runner.Suite {
       result := module_compiler.compile_entry("${dir}/func_identity_prelude_alias.tw")
       case result {
         .Ok(_) => .Ok({}),
-        .Err(msg) => .Err("expected prelude alias convergence, got: ${msg}"),
+        .Err(err) => .Err("expected prelude alias convergence, got: ${format_compile_error(err)}"),
       }
     })
 
@@ -276,7 +280,7 @@ pub fn suite() runner.Suite {
       result := module_compiler.compile_entry("${dir}/func_identity_selective_qualified.tw")
       case result {
         .Ok(_) => .Ok({}),
-        .Err(msg) => .Err("expected selective+qualified convergence, got: ${msg}"),
+        .Err(err) => .Err("expected selective+qualified convergence, got: ${format_compile_error(err)}"),
       }
     })
 
@@ -286,7 +290,7 @@ pub fn suite() runner.Suite {
       result := module_compiler.compile_entry("${dir}/uses_pub_value.tw")
       case result {
         .Ok(_) => .Ok({}),
-        .Err(msg) => .Err("expected pub value access to compile, got: ${msg}"),
+        .Err(err) => .Err("expected pub value access to compile, got: ${format_compile_error(err)}"),
       }
     })
 
@@ -294,7 +298,7 @@ pub fn suite() runner.Suite {
       result := module_compiler.compile_entry("${dir}/uses_pub_value_selective.tw")
       case result {
         .Ok(_) => .Ok({}),
-        .Err(msg) => .Err("expected selective pub value import to compile, got: ${msg}"),
+        .Err(err) => .Err("expected selective pub value import to compile, got: ${format_compile_error(err)}"),
       }
     })
 
@@ -302,7 +306,7 @@ pub fn suite() runner.Suite {
       result := module_compiler.compile_entry("${dir}/uses_pub_value_toplevel.tw")
       case result {
         .Ok(_) => .Ok({}),
-        .Err(msg) => .Err("expected top-level pub value access to compile, got: ${msg}"),
+        .Err(err) => .Err("expected top-level pub value access to compile, got: ${format_compile_error(err)}"),
       }
     })
 
@@ -310,7 +314,7 @@ pub fn suite() runner.Suite {
       result := module_compiler.compile_entry("${dir}/uses_pub_value_with_fn.tw")
       case result {
         .Ok(_) => .Ok({}),
-        .Err(msg) => .Err("expected mixed pub value+function access to compile, got: ${msg}"),
+        .Err(err) => .Err("expected mixed pub value+function access to compile, got: ${format_compile_error(err)}"),
       }
     })
 }

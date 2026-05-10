@@ -7,7 +7,6 @@
 //
 // Reference: src/module/mod.rs (compile_module, compile_planned_dependencies)
 
-use @std.fs
 use @std.path
 use @std.date
 use @std.proc
@@ -16,7 +15,7 @@ use compiler.lower_anf
 use compiler.opt.pipeline.{optimize_module}
 use compiler.builtins.{make_builtin_registry}
 use compiler.core_ir.{CompiledModule, ExternalRef, ExternalValueRef}
-use compiler.artifacts.{PipelineArtifacts}
+use compiler.artifacts.{PipelineArtifacts, CompileError}
 use compiler.imports
 use compiler.core_linker
 use compiler.base_env.{builtin_env}
@@ -26,8 +25,6 @@ use compiler.query.stage_runner
 use lib.module.loader
 use lib.source.identity
 use lib.source.overlay
-use lib.source.span
-use lib.source.diagnostic.{Diagnostic, format_source_diagnostics}
 
 // ── Public API ────────────────────��───────────────────────���─────────
 
@@ -35,7 +32,7 @@ use lib.source.diagnostic.{Diagnostic, format_source_diagnostics}
 ///
 /// Returns PipelineArtifacts for the fully linked, monomorphized,
 /// and optimized program.
-pub fn compile_entry(entry_path: String) Result<PipelineArtifacts, String> {
+pub fn compile_entry(entry_path: String) Result<PipelineArtifacts, CompileError> {
   dir := path.dirname(entry_path)
   project_root := loader.find_project_root(dir)
   canonical_roots := imports.make_canonical_roots(project_root)
@@ -54,9 +51,9 @@ pub fn compile_entry(entry_path: String) Result<PipelineArtifacts, String> {
 
   if !a_result.ok {
     if a_result.diagnostics.len() > 0 {
-      return .Err(format_analysis_errors(a_result.diagnostics))
+      return .Err(.Diagnostics(a_result.diagnostics))
     }
-    return .Err("analysis failed")
+    return .Err(.Internal("analysis failed"))
   }
 
   // Collect warnings from analysis diagnostics (returned in result).
@@ -73,26 +70,33 @@ pub fn compile_entry(entry_path: String) Result<PipelineArtifacts, String> {
     // Retrieve cached artifacts
     parsed := case query_cache.latest_parsed(cur_cache, module_path) {
       .Some(p) => p,
-      .None => { return .Err("internal: missing parsed cache for '${module_path}'") },
+      .None => { return .Err(.Internal("internal: missing parsed cache for '${module_path}'")) },
     }
     typed := case query_cache.latest_typed(cur_cache, module_path) {
       .Some(t) => t,
-      .None => { return .Err("internal: missing typed cache for '${module_path}'") },
+      .None => { return .Err(.Internal("internal: missing typed cache for '${module_path}'")) },
     }
     runner := case a_result.state.module_runners[module_path] {
       .Some(r) => r,
-      .None => { return .Err("internal: missing runner for '${module_path}'") },
+      .None => { return .Err(.Internal("internal: missing runner for '${module_path}'")) },
     }
 
     lowered_out := stage_runner.lower(runner, cur_cache, parsed, typed, builtins)
     cur_cache = lowered_out.store
     lowered := lowered_out.value
     if lowered.diagnostics.len() > 0 {
-      source := case fs.read_text(module_path) {
-        .Ok(text) => text,
-        .Err(_) => "",
+      diags := collect d in lowered.diagnostics {
+        analyze.AnalysisDiag.{
+          identity: identity.from_path(module_path),
+          version: .None,
+          span: .Some(d.span),
+          severity: d.severity,
+          message: d.message,
+          stage: "lower",
+          data: .None,
+        }
       }
-      return .Err(format_stage_error("lower", module_path, source, lowered.diagnostics))
+      return .Err(.Diagnostics(diags))
     }
 
     // Build external_refs from lowering's canonical imported origins.
@@ -146,7 +150,7 @@ pub fn compile_entry(entry_path: String) Result<PipelineArtifacts, String> {
   }
 
   if compiled_modules.len() == 0 {
-    return .Err("no modules compiled")
+    return .Err(.Internal("no modules compiled"))
   }
 
   // Phase 3: Link, monomorphize, ANF lower, optimize
@@ -183,35 +187,3 @@ pub fn compile_entry(entry_path: String) Result<PipelineArtifacts, String> {
   })
 }
 
-// ── Helpers ────────────���──────────────────────���─────────────────────
-
-fn format_stage_error(
-  stage: String,
-  file_path: String,
-  source: String,
-  diagnostics: Vector<Diagnostic>,
-) String {
-  "${stage}:\n${format_source_diagnostics(file_path, source, diagnostics)}"
-}
-
-/// Format analysis diagnostics with source locations.
-/// Groups by file so each diagnostic's span is resolved against the correct source.
-fn format_analysis_errors(diags: Vector<analyze.AnalysisDiag>) String {
-  if diags.len() == 0 { return "analysis failed" }
-  stage := diags[0].stage
-  parts: Vector<String> = []
-  for d in diags {
-    source := case fs.read_text(d.identity.path) {
-      .Ok(text) => text,
-      .Err(_) => "",
-    }
-    raw_span := case d.span {
-      .Some(s) => span.new(0, s.start, s.end),
-      .None => span.new(0, 0, 0),
-    }
-    raw := [Diagnostic.{ span: raw_span, severity: d.severity, message: d.message, related: [] }]
-    parts = parts.append(format_source_diagnostics(d.identity.path, source, raw))
-  }
-  sep := "\n"
-  "${stage}:\n${parts.join(sep)}"
-}

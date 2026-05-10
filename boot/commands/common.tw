@@ -8,6 +8,7 @@ use lib.source.registry.{FileRegistry}
 use lib.source.span
 use lib.source.diagnostic.{Severity, Diagnostic, format_source_diagnostics}
 use compiler.query.analyze
+use compiler.artifacts.{CompileError}
 
 pub fn usage_hint() String {
   "Usage: twk <command> [options]\nRun 'twk --help' or 'twk <command> --help'."
@@ -71,6 +72,35 @@ pub fn print_diagnostic(path: String, reg: FileRegistry, d: Diagnostic) {
       eprintln("${path}:${d.span.start}: ${severity_name(d.severity)}: ${d.message}")
     },
   }
+}
+
+/// Format a CompileError into a human-readable string.
+pub fn format_compile_error(err: CompileError) String {
+  case err {
+    .Diagnostics(diags) => format_analysis_diags(diags),
+    .Internal(msg) => msg,
+  }
+}
+
+/// Format analysis diagnostics with source locations, grouped by file.
+fn format_analysis_diags(diags: Vector<analyze.AnalysisDiag>) String {
+  if diags.len() == 0 { return "compilation failed" }
+  stage := diags[0].stage
+  parts: Vector<String> = []
+  for d in diags {
+    source := case fs.read_text(d.identity.path) {
+      .Ok(text) => text,
+      .Err(_) => "",
+    }
+    raw_span := case d.span {
+      .Some(s) => span.new(0, s.start, s.end),
+      .None => span.new(0, 0, 0),
+    }
+    raw := [Diagnostic.{ span: raw_span, severity: d.severity, message: d.message, related: [] }]
+    parts = parts.append(format_source_diagnostics(d.identity.path, source, raw))
+  }
+  sep := "\n"
+  "${stage}:\n${parts.join(sep)}"
 }
 
 /// Print structured analysis diagnostics (typically warnings) to stderr.

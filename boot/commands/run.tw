@@ -4,7 +4,7 @@ use @std.proc
 use lib.argparse.app
 use lib.argparse.app.{ParseResult}
 use compiler.pipeline
-use commands.common.{print_warnings}
+use commands.common.{print_warnings, format_compile_error}
 
 pub fn run_command_impl(parsed: ParseResult, file: String) {
   if app.has_flag(parsed, "interpreter") {
@@ -14,8 +14,8 @@ pub fn run_command_impl(parsed: ParseResult, file: String) {
 
   artifacts := case pipeline.compile_entry_path(file) {
     .Ok(result) => result,
-    .Err(msg) => {
-      eprintln(msg)
+    .Err(err) => {
+      eprintln(format_compile_error(err))
       proc.exit(1)
     },
   }

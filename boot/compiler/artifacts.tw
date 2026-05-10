@@ -9,6 +9,15 @@ use compiler.core_ir.{CoreModule}
 use compiler.anf.{AnfModule}
 use compiler.query.analyze.{AnalysisDiag}
 
+/// Structured compile error returned from the compiler library.
+/// CLI commands format these for display; tooling can inspect them directly.
+pub type CompileError = {
+  /// Errors with structured diagnostics (analysis or lowering failures).
+  Diagnostics(Vector<AnalysisDiag>),
+  /// Internal compiler errors (missing caches, invariant violations).
+  Internal(String),
+}
+
 pub type PipelineArtifacts = .{
   env: ResolvedEnv,
   builtins: BuiltinRegistry,

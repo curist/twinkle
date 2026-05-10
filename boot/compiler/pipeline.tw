@@ -5,7 +5,7 @@ use compiler.monomorphize
 use compiler.lower_anf
 use compiler.opt.pipeline.{optimize_module}
 use compiler.builtins.{make_builtin_registry}
-use compiler.artifacts.{PipelineArtifacts}
+use compiler.artifacts.{PipelineArtifacts, CompileError}
 use compiler.base_env.{builtin_env}
 use compiler.module_compiler
 use compiler.codegen.codegen.{codegen, codegen_wasm}
@@ -50,11 +50,11 @@ pub fn compile_source(src: String) Result<PipelineArtifacts, String> {
   })
 }
 
-pub fn compile_entry_path(path: String) Result<PipelineArtifacts, String> {
+pub fn compile_entry_path(path: String) Result<PipelineArtifacts, CompileError> {
   module_compiler.compile_entry(path)
 }
 
-pub fn compile_path(path: String) Result<PipelineArtifacts, String> {
+pub fn compile_path(path: String) Result<PipelineArtifacts, CompileError> {
   compile_entry_path(path)
 }
 

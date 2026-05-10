@@ -48,33 +48,23 @@ real pipeline.
 
 ---
 
-## 2. Structured Diagnostics (warnings: done, errors: pending)
+## 2. Structured Diagnostics
 
-### Warnings — done
+`compile_entry` now returns `Result<PipelineArtifacts, CompileError>` where:
 
-`PipelineArtifacts` now carries a `warnings: Vector<AnalysisDiag>` field.
-`compile_entry` collects analysis warnings and returns them in the result
-instead of printing via `eprintln`. CLI commands (`build`, `run`, `ir`,
-`check`) call `print_warnings` from `commands/common.tw` to display them.
-The compiler library no longer has warning side effects.
+- `PipelineArtifacts.warnings: Vector<AnalysisDiag>` carries structured
+  warnings (no more `eprintln` side effects in the compiler library).
+- `CompileError` is an enum: `Diagnostics(Vector<AnalysisDiag>)` for
+  analysis/lowering failures, `Internal(String)` for invariant violations.
 
-Also removed the unused `check_entry_path` wrapper — `check` now calls
-`compile_entry_path` directly.
+CLI commands format errors via `format_compile_error` and warnings via
+`print_warnings`, both in `commands/common.tw`. The compiler library has
+no presentation side effects.
 
-### Errors — pending
+`compile_source` (test-only path) still returns `Result<..., String>` —
+this will be resolved when the frontend pipelines are unified (item #1).
 
-Public APIs still return `Result<PipelineArtifacts, String>` for errors.
-`format_analysis_errors` and `format_stage_error` still collapse structured
-diagnostics into strings inside `module_compiler.tw`.
-
-Remaining work:
-
-1. Define a `CompileFailure` type carrying stage name and
-   `Vector<AnalysisDiag>`.
-2. Change error returns from `String` to `CompileFailure`.
-3. Move error string formatting into CLI command handlers.
-4. Update ~30 test callsites in `multi_module_suite.tw` that assert on
-   error strings.
+**Status: done** (except `compile_source`, deferred to item #1).
 
 ---
 
@@ -192,7 +182,7 @@ boundary tracking (`local_type_start`, `shared_type_start`).
 |----------|------|--------|-----------|
 | 1 | Harden linker invariants (#5) | Done | Small change, prevents silent corruption |
 | 2 | DCE-aware extern imports (#6) | Done | Already implemented in boot linker |
-| 3 | Structured diagnostics (#2) | Warnings done, errors pending | Unblocks tooling integration |
+| 3 | Structured diagnostics (#2) | Done | Unblocks tooling integration |
 | 4 | Unify frontend pipelines (#1) | Pending | Eliminates divergence risk |
 | 5 | Consolidate builtins (#4) | Pending | Reduces maintenance burden |
 | 6 | Type storage cleanup (#7) | Pending | Existing plan covers root cause; this is incremental |

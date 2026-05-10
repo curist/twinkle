@@ -4,7 +4,7 @@ use @std.proc
 use lib.argparse.app
 use lib.argparse.app.{ParseResult}
 use compiler.pipeline
-use commands.common.{get_positional, exit_usage_error, print_warnings}
+use commands.common.{get_positional, exit_usage_error, print_warnings, format_compile_error}
 use commands.fix_unused_imports.{fix_unused_imports}
 
 pub fn run_check_command(parsed: ParseResult) {
@@ -21,8 +21,8 @@ pub fn run_check_command(parsed: ParseResult) {
         print_warnings(artifacts.warnings)
         println("Type checking succeeded: ${file}")
       },
-      .Err(msg) => {
-        eprintln(msg)
+      .Err(err) => {
+        eprintln(format_compile_error(err))
         proc.exit(1)
       },
     }
