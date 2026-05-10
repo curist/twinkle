@@ -39,6 +39,12 @@ pub type AnalysisDiag = .{
   data: json.Json?,
 }
 
+/// A type entry bundled with its name, stored together to prevent index drift.
+pub type SharedTypeEntry = .{
+  entry: TypeEntry,
+  name: String,
+}
+
 /// Accumulated state during recursive module-graph analysis.
 pub type AnalysisState = .{
   cache: cache.Store,
@@ -47,8 +53,7 @@ pub type AnalysisState = .{
   canonical_roots: imports.CanonicalRoots,
   exports: Dict<String, ModuleExports>,
   interfaces: Dict<String, ModuleInterface>,
-  shared_types: Vector<TypeEntry>,
-  shared_type_names: Vector<String>,
+  shared_types: Vector<SharedTypeEntry>,
   shared_type_origins: Dict<Int, String>,
   module_order: Vector<String>,
   // Stage runners per module, preserved for downstream lowering.
@@ -110,6 +115,11 @@ type LocalCheck = .{
 /// Create a fresh analysis state.
 /// `base` provides the initial type vectors (from builtin_env).
 pub fn new_state(base: ResolvedEnv, store: cache.Store, ov: overlay.Overlay, project_root: String) AnalysisState {
+  // Bundle base types and names into SharedTypeEntry pairs.
+  initial_shared: Vector<SharedTypeEntry> = []
+  for i in 0..base.types.len() {
+    initial_shared = initial_shared.append(.{ entry: base.types[i], name: base.type_names[i] })
+  }
   .{
     cache: store,
     overlay: ov,
@@ -117,8 +127,7 @@ pub fn new_state(base: ResolvedEnv, store: cache.Store, ov: overlay.Overlay, pro
     canonical_roots: imports.make_canonical_roots(project_root),
     exports: Dict.new(),
     interfaces: Dict.new(),
-    shared_types: base.types,
-    shared_type_names: base.type_names,
+    shared_types: initial_shared,
     shared_type_origins: base.type_origins,
     module_order: [],
     module_runners: Dict.new(),
@@ -261,7 +270,7 @@ fn analyze_dependencies(
   dep_plan: imports.DependencyPlan,
   stack: Vector<String>,
 ) DependencyAnalysis {
-  env := base.extend_types_from(state.shared_types, state.shared_type_names, state.shared_type_origins)
+  env := extend_env_from_shared(base, state)
   cur := state
   // Track how far dep_base has been extended to avoid re-extending from scratch.
   dep_base := env
@@ -423,15 +432,26 @@ fn extend_new_shared_types_from(env: ResolvedEnv, state: AnalysisState, shared_t
   new_names: Vector<String> = []
   new_origins: Dict<Int, String> = Dict.new()
   for i in shared_type_start..state.shared_types.len() {
-    entry := state.shared_types[i]
-    new_types = new_types.append(entry)
-    new_names = new_names.append(state.shared_type_names[i])
-    case state.shared_type_origins[entry.id.id] {
-      .Some(origin) => new_origins[entry.id.id] = origin,
+    shared := state.shared_types[i]
+    new_types = new_types.append(shared.entry)
+    new_names = new_names.append(shared.name)
+    case state.shared_type_origins[shared.entry.id.id] {
+      .Some(origin) => new_origins[shared.entry.id.id] = origin,
       .None => {},
     }
   }
   env.extend_types_from(new_types, new_names, new_origins)
+}
+
+/// Extend an env with all shared types from state (used at dependency analysis start).
+fn extend_env_from_shared(base: ResolvedEnv, state: AnalysisState) ResolvedEnv {
+  types: Vector<TypeEntry> = []
+  names: Vector<String> = []
+  for shared in state.shared_types {
+    types = types.append(shared.entry)
+    names = names.append(shared.name)
+  }
+  base.extend_types_from(types, names, state.shared_type_origins)
 }
 
 // ── Type accumulation ────────────────────────────────────────────────
@@ -442,8 +462,7 @@ fn capture_local_types(state: AnalysisState, env: ResolvedEnv, canonical: String
   for i in local_type_start..env.types.len() {
     entry := env.types[i]
     name := env.type_names[i]
-    state.shared_types = state.shared_types.append(entry)
-    state.shared_type_names = state.shared_type_names.append(name)
+    state.shared_types = state.shared_types.append(.{ entry, name })
     // Record the assignment for future stable TypeId enforcement (Phase 4).
     // The returned out.id is not yet used — TypeIds still come from the
     // resolver/checker's sequential allocation.

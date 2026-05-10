@@ -178,11 +178,16 @@ boundary tracking (`local_type_start`, `shared_type_start`).
    index).
 4. Update `capture_local_types` and `extend_new_shared_types_from` accordingly.
 
-### Files to change
+**Status: done.** `SharedTypeEntry = .{ entry: TypeEntry, name: String }` replaces
+the two parallel vectors. `capture_local_types` appends a single bundled entry;
+`extend_new_shared_types_from` destructures it. `shared_type_origins` remains a
+separate dict (keyed by TypeId, not index). `resolver.tw` unchanged — the
+`extend_types_from` call site unpacks into the existing parallel-vector API.
 
-- `boot/compiler/query/analyze.tw` — introduce `SharedTypeEntry`, consolidate
-  vectors
-- `boot/compiler/resolver.tw` — update `extend_types_from` if needed
+### Files changed
+
+- `boot/compiler/query/analyze.tw` — introduced `SharedTypeEntry`, consolidated
+  vectors, added `extend_env_from_shared` helper
 
 ---
 
@@ -195,7 +200,7 @@ boundary tracking (`local_type_start`, `shared_type_start`).
 | 3 | Structured diagnostics (#2) | Done | Unblocks tooling integration |
 | 4 | Unify frontend pipelines (#1) | Done | Eliminates divergence risk |
 | 5 | Consolidate builtins (#4) | Done | Reduces maintenance burden |
-| 6 | Type storage cleanup (#7) | Pending | Existing plan covers root cause; this is incremental |
+| 6 | Type storage cleanup (#7) | Done | Existing plan covers root cause; this is incremental |
 
 ---
 
