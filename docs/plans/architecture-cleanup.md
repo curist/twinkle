@@ -101,11 +101,17 @@ possible despite the test suite.
 3. Keep `signature_drift_suite.tw` as a safety net during migration, then
    simplify once the single source is established.
 
-### Files to change
+**Status: done (phase 1).** `builtin_specs()` is now the single authoritative
+table defining all builtins: internal name, canonical name, and dispatch kind
+(runtime with wasm module/name, or intrinsic). `make_builtin_registry()` builds
+from this table. ABI types remain keyed by name via `builtin_abi()` (a future
+phase could derive ABI from MonoType signatures). The `signature_drift_suite`
+continues to validate that every canonical entry traces to a signature file.
 
-- `boot/compiler/builtins.tw` — refactor into shared table
-- `boot/compiler/base_env.tw` — derive env from shared table
-- `boot/tests/suites/signature_drift_suite.tw` — update/simplify
+### Files changed
+
+- `boot/compiler/builtins.tw` — introduced `BuiltinSpec`/`BuiltinDispatch`,
+  `builtin_specs()` table, rewrote `make_builtin_registry()` to iterate specs
 
 ---
 
@@ -188,7 +194,7 @@ boundary tracking (`local_type_start`, `shared_type_start`).
 | 2 | DCE-aware extern imports (#6) | Done | Already implemented in boot linker |
 | 3 | Structured diagnostics (#2) | Done | Unblocks tooling integration |
 | 4 | Unify frontend pipelines (#1) | Done | Eliminates divergence risk |
-| 5 | Consolidate builtins (#4) | Pending | Reduces maintenance burden |
+| 5 | Consolidate builtins (#4) | Done | Reduces maintenance burden |
 | 6 | Type storage cleanup (#7) | Pending | Existing plan covers root cause; this is incremental |
 
 ---
