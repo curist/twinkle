@@ -4,8 +4,9 @@ use @std.proc
 use @std.fs
 use lib.argparse.app.{ParseResult}
 use lib.source.registry
+use lib.source.diagnostics as diag
 use compiler.parser
-use commands.common.{get_positional, exit_usage_error, fs_error_message, print_diagnostic, diagnostics_have_errors}
+use commands.common.{get_positional, exit_usage_error, fs_error_message}
 
 pub fn run_parse_command(parsed: ParseResult) {
   file := case get_positional(parsed, 0, "file") {
@@ -29,10 +30,16 @@ pub fn run_parse_command(parsed: ParseResult) {
 
   println("parsed ${item_count} top-level item(s) with ${diag_count} diagnostic(s)")
   for d in parsed_mod.diagnostics {
-    print_diagnostic(file, reg, d)
+    sp := d.span()
+    label := case d { .Error(_) => "error", .Warning(_) => "warning" }
+    msg := d.message()
+    case registry.line_col(reg, sp) {
+      .Some(pos) => eprintln("${file}:${pos.line}:${pos.column}: ${label}: ${msg}"),
+      .None => eprintln("${file}:${sp.start}: ${label}: ${msg}"),
+    }
   }
 
-  if diagnostics_have_errors(parsed_mod.diagnostics) {
+  if diag.has_errors(parsed_mod.diagnostics) {
     proc.exit(1)
   }
 }

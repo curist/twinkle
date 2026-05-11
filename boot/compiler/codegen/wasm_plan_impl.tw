@@ -1,7 +1,8 @@
 // Wasm type registry and plan_wasm_types: pre-computes the complete set
 // of Wasm type definitions needed by the module before emission starts.
 
-use compiler.resolver.{MonoType, TypeId, ResolvedEnv, TypeEntry}
+use compiler.resolver.{ResolvedEnv, TypeEntry}
+use compiler.mono_type.{MonoType, TypeId}
 use compiler.type_util.{subst_type_params}
 use compiler.core_ir.{FuncId}
 use compiler.builtins as bi

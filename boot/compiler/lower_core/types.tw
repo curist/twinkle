@@ -1,6 +1,7 @@
 // Type-shape helpers shared by Core lowering routines.
 
-use compiler.resolver.{MonoType, ResolvedEnv, TypeId, ResolvedTypeParam}
+use compiler.resolver.{ResolvedEnv, ResolvedTypeParam}
+use compiler.mono_type.{MonoType, TypeId}
 
 pub fn find_field_index(env: ResolvedEnv, tid: TypeId, field_name: String) Int {
   find_field_index_in_type(env, .Named(tid, []), field_name)

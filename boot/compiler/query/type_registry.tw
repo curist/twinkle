@@ -5,7 +5,7 @@
 // New types get the next available ID; re-registered types get their
 // existing ID back.
 
-use compiler.resolver.{TypeId}
+use compiler.mono_type.{TypeId}
 
 pub type TypeRegistry = .{
   assignments: Dict<String, Int>,  // "module::name" → type id

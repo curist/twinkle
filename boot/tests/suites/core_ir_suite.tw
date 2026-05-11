@@ -3,6 +3,7 @@ use tests.assert
 use compiler.parser
 use compiler.resolver
 use compiler.resolver.{plain_resolved_type_params}
+use compiler.mono_type as mono_type
 use compiler.checker
 use compiler.ast
 use compiler.core_ir
@@ -20,7 +21,7 @@ use lib.source.span
 fn parse_ok(src: String) Result<ast.Module, String> {
   parsed := parser.parse(src, 0)
   if parsed.diagnostics.len() > 0 {
-    return .Err("expected no diagnostics, got ${parsed.diagnostics.len()}: ${parsed.diagnostics[0].message}")
+    return .Err("expected no diagnostics, got ${parsed.diagnostics.len()}: ${parsed.diagnostics[0].message()}")
   }
   .Ok(parsed.value)
 }
@@ -34,15 +35,15 @@ fn check_src(src: String) checker.CheckResult {
 fn lower_src(src: String) Result<lower_core.LowerResult, String> {
   parsed := parser.parse(src, 0)
   if parsed.diagnostics.len() > 0 {
-    return .Err("parse error: ${parsed.diagnostics[0].message}")
+    return .Err("parse error: ${parsed.diagnostics[0].message()}")
   }
   resolved := resolver.empty_env().resolve(parsed.value)
   if resolved.diagnostics.len() > 0 {
-    return .Err("resolve error: ${resolved.diagnostics[0].message}")
+    return .Err("resolve error: ${resolved.diagnostics[0].message()}")
   }
   check_result := checker.check(parsed.value, resolved.env)
   if check_result.diagnostics.len() > 0 {
-    return .Err("check error: ${check_result.diagnostics[0].message}")
+    return .Err("check error: ${check_result.diagnostics[0].message()}")
   }
   .Ok(lower_core.lower_module(parsed.value, check_result, make_builtin_registry()))
 }
@@ -50,15 +51,15 @@ fn lower_src(src: String) Result<lower_core.LowerResult, String> {
 fn lower_src_with_env(src: String, env: resolver.ResolvedEnv) Result<lower_core.LowerResult, String> {
   parsed := parser.parse(src, 0)
   if parsed.diagnostics.len() > 0 {
-    return .Err("parse error: ${parsed.diagnostics[0].message}")
+    return .Err("parse error: ${parsed.diagnostics[0].message()}")
   }
   resolved := env.resolve(parsed.value)
   if resolved.diagnostics.len() > 0 {
-    return .Err("resolve error: ${resolved.diagnostics[0].message}")
+    return .Err("resolve error: ${resolved.diagnostics[0].message()}")
   }
   check_result := checker.check(parsed.value, resolved.env)
   if check_result.diagnostics.len() > 0 {
-    return .Err("check error: ${check_result.diagnostics[0].message}")
+    return .Err("check error: ${check_result.diagnostics[0].message()}")
   }
   .Ok(lower_core.lower_module(parsed.value, check_result, make_builtin_registry()))
 }
@@ -66,15 +67,15 @@ fn lower_src_with_env(src: String, env: resolver.ResolvedEnv) Result<lower_core.
 fn lower_src_with_builtin_env(src: String) Result<lower_core.LowerResult, String> {
   parsed := parser.parse(src, 0)
   if parsed.diagnostics.len() > 0 {
-    return .Err("parse error: ${parsed.diagnostics[0].message}")
+    return .Err("parse error: ${parsed.diagnostics[0].message()}")
   }
   resolved := builtin_env().resolve(parsed.value)
   if resolved.diagnostics.len() > 0 {
-    return .Err("resolve error: ${resolved.diagnostics[0].message}")
+    return .Err("resolve error: ${resolved.diagnostics[0].message()}")
   }
   check_result := checker.check(parsed.value, resolved.env)
   if check_result.diagnostics.len() > 0 {
-    return .Err("check error: ${check_result.diagnostics[0].message}")
+    return .Err("check error: ${check_result.diagnostics[0].message()}")
   }
   .Ok(lower_core.lower_module(parsed.value, check_result, make_builtin_registry()))
 }
@@ -362,7 +363,7 @@ pub fn suite() runner.Suite {
     .test("CoreExpr construction", fn() Result<Void, String> {
       expr := core_ir.CoreExpr.{
         kind: .LitInt(42),
-        ty: resolver.MonoType.Int,
+        ty: mono_type.MonoType.Int,
         span: span.new(0, 0, 2),
       }
       case expr.kind {
@@ -373,15 +374,15 @@ pub fn suite() runner.Suite {
     .test("FunctionDef construction", fn() Result<Void, String> {
       body := core_ir.CoreExpr.{
         kind: .LitInt(0),
-        ty: resolver.MonoType.Int,
+        ty: mono_type.MonoType.Int,
         span: span.new(0, 0, 1),
       }
       def := core_ir.FunctionDef.{
         func_id: core_ir.FuncId.{ id: 1 },
         name: "test",
-        params: [core_ir.Param.{ local: core_ir.LocalId.{ id: 0 }, ty: resolver.MonoType.Int }],
+        params: [core_ir.Param.{ local: core_ir.LocalId.{ id: 0 }, ty: mono_type.MonoType.Int }],
         body: body,
-        return_ty: resolver.MonoType.Int,
+        return_ty: mono_type.MonoType.Int,
       }
       try assert.str_eq(def.name, "test")
       assert.int_eq(def.params.len(), 1)
@@ -659,7 +660,7 @@ pub fn suite() runner.Suite {
       result := checker.check(parsed.value, resolved.env)
 
       if result.diagnostics.len() > 0 {
-        return .Err("unexpected diagnostic: ${result.diagnostics[0].message}")
+        return .Err("unexpected diagnostic: ${result.diagnostics[0].message()}")
       }
 
       case parsed.value.items[1] {
@@ -968,10 +969,10 @@ pub fn suite() runner.Suite {
     })
     .test("lower for-in iterator loop follows type definition rather than preferred stored name", fn() Result<Void, String> {
       s0 := span.Span.{ file_id: 0, start: 0, end: 0 }
-      t := resolver.MonoType.Var("T")
+      t := mono_type.MonoType.Var("T")
 
       // Option (TypeId 0) — required by iterator loop pattern matching
-      option_tid := resolver.TypeId.{ id: 0 }
+      option_tid := mono_type.TypeId.{ id: 0 }
       option_entry := resolver.TypeEntry.{
         id: option_tid, arity: 1,
         def: .Some(resolver.ResolvedTypeDef.Sum("Option", plain_resolved_type_params(["T"]), [
@@ -982,7 +983,7 @@ pub fn suite() runner.Suite {
       }
 
       // Iterator (TypeId 62) — the type under test, intentionally a Sum
-      iter_tid := resolver.TypeId.{ id: 62 }
+      iter_tid := mono_type.TypeId.{ id: 62 }
       iter_entry := resolver.TypeEntry.{
         id: iter_tid, arity: 1,
         def: .Some(resolver.ResolvedTypeDef.Sum("Iterator", plain_resolved_type_params(["T"]), [
@@ -992,12 +993,12 @@ pub fn suite() runner.Suite {
       }
 
       // IterItem — required by build_iterator_loop
-      iter_item_tid := resolver.TypeId.{ id: 63 }
+      iter_item_tid := mono_type.TypeId.{ id: 63 }
       iter_item_entry := resolver.TypeEntry.{
         id: iter_item_tid, arity: 1,
         def: .Some(resolver.ResolvedTypeDef.Record("IterItem", plain_resolved_type_params(["T"]), [
           resolver.ResolvedField.{ name: "value", ty: t },
-          resolver.ResolvedField.{ name: "rest", ty: resolver.MonoType.Named(iter_tid, [t]) },
+          resolver.ResolvedField.{ name: "rest", ty: mono_type.MonoType.Named(iter_tid, [t]) },
         ])),
         span: s0,
       }
@@ -1136,8 +1137,8 @@ pub fn suite() runner.Suite {
         name: "filter",
         type_params: plain_resolved_type_params(["T"]),
         param_names: ["xs", "pred"],
-        params: [resolver.MonoType.Vector(resolver.MonoType.Var("T")), resolver.MonoType.Function([resolver.MonoType.Var("T")], resolver.MonoType.Bool)],
-        ret: .Some(resolver.MonoType.Vector(resolver.MonoType.Var("T"))),
+        params: [mono_type.MonoType.Vector(mono_type.MonoType.Var("T")), mono_type.MonoType.Function([mono_type.MonoType.Var("T")], mono_type.MonoType.Bool)],
+        ret: .Some(mono_type.MonoType.Vector(mono_type.MonoType.Var("T"))),
         doc: .None,
     extern_module: .None,
 }
@@ -1145,8 +1146,8 @@ pub fn suite() runner.Suite {
         name: "vector_filter",
         type_params: plain_resolved_type_params(["T"]),
         param_names: ["xs", "pred"],
-        params: [resolver.MonoType.Vector(resolver.MonoType.Var("T")), resolver.MonoType.Function([resolver.MonoType.Var("T")], resolver.MonoType.Bool)],
-        ret: .Some(resolver.MonoType.Vector(resolver.MonoType.Var("T"))),
+        params: [mono_type.MonoType.Vector(mono_type.MonoType.Var("T")), mono_type.MonoType.Function([mono_type.MonoType.Var("T")], mono_type.MonoType.Bool)],
+        ret: .Some(mono_type.MonoType.Vector(mono_type.MonoType.Var("T"))),
         doc: .None,
     extern_module: .None,
 }
@@ -1176,10 +1177,10 @@ pub fn suite() runner.Suite {
       s := span.Span.{ file_id: 0, start: 0, end: 0 }
       body := core_ir.CoreExpr.{
         kind: .Call(
-          core_ir.CoreExpr.{ kind: .GlobalFunc(core_ir.FuncId.{ id: 100 }), ty: resolver.MonoType.Void, span: s },
+          core_ir.CoreExpr.{ kind: .GlobalFunc(core_ir.FuncId.{ id: 100 }), ty: mono_type.MonoType.Void, span: s },
           [],
         ),
-        ty: resolver.MonoType.Void,
+        ty: mono_type.MonoType.Void,
         span: s,
       }
       func := core_ir.FunctionDef.{
@@ -1187,7 +1188,7 @@ pub fn suite() runner.Suite {
         name: "main",
         params: [],
         body,
-        return_ty: resolver.MonoType.Void,
+        return_ty: mono_type.MonoType.Void,
       }
       module := core_ir.CompiledModule.{
         path: "test/main.tw",
@@ -1224,10 +1225,10 @@ pub fn suite() runner.Suite {
       s := span.Span.{ file_id: 0, start: 0, end: 0 }
       body := core_ir.CoreExpr.{
         kind: .Call(
-          core_ir.CoreExpr.{ kind: .GlobalFunc(core_ir.FuncId.{ id: 100 }), ty: resolver.MonoType.Void, span: s },
+          core_ir.CoreExpr.{ kind: .GlobalFunc(core_ir.FuncId.{ id: 100 }), ty: mono_type.MonoType.Void, span: s },
           [],
         ),
-        ty: resolver.MonoType.Void,
+        ty: mono_type.MonoType.Void,
         span: s,
       }
       func := core_ir.FunctionDef.{
@@ -1235,7 +1236,7 @@ pub fn suite() runner.Suite {
         name: "main",
         params: [],
         body,
-        return_ty: resolver.MonoType.Void,
+        return_ty: mono_type.MonoType.Void,
       }
       ext_refs: Dict<Int, core_ir.ExternalRef> = Dict.new()
       ext_refs[100] = core_ir.ExternalRef.{ module_path: "dep/math.tw", func_name: "missing" }
@@ -1275,25 +1276,25 @@ pub fn suite() runner.Suite {
     })
     .test("core linker contract reachability prefers exact method target", fn() Result<Void, String> {
       s := span.Span.{ file_id: 0, start: 0, end: 0 }
-      receiver := core_ir.CoreExpr.{ kind: .LitInt(1), ty: resolver.MonoType.Int, span: s }
+      receiver := core_ir.CoreExpr.{ kind: .LitInt(1), ty: mono_type.MonoType.Int, span: s }
       body := core_ir.CoreExpr.{
         kind: .ContractCall(BuiltinContract.Stringify, "to_string", receiver, []),
-        ty: resolver.MonoType.String,
+        ty: mono_type.MonoType.String,
         span: s,
       }
       exact := core_ir.FunctionDef.{
         func_id: core_ir.FuncId.{ id: 42 },
         name: "int_to_string",
         params: [],
-        body: core_ir.CoreExpr.{ kind: .LitStr(""), ty: resolver.MonoType.String, span: s },
-        return_ty: resolver.MonoType.String,
+        body: core_ir.CoreExpr.{ kind: .LitStr(""), ty: mono_type.MonoType.String, span: s },
+        return_ty: mono_type.MonoType.String,
       }
       fallback := core_ir.FunctionDef.{
         func_id: core_ir.FuncId.{ id: 99 },
         name: "Other.to_string",
         params: [],
-        body: core_ir.CoreExpr.{ kind: .LitStr(""), ty: resolver.MonoType.String, span: s },
-        return_ty: resolver.MonoType.String,
+        body: core_ir.CoreExpr.{ kind: .LitStr(""), ty: mono_type.MonoType.String, span: s },
+        return_ty: mono_type.MonoType.String,
       }
       func_map: Dict<Int, core_ir.FunctionDef> = Dict.new()
       func_map[42] = exact
@@ -1307,18 +1308,18 @@ pub fn suite() runner.Suite {
     })
     .test("core linker contract fallback indexes method suffixes", fn() Result<Void, String> {
       s := span.Span.{ file_id: 0, start: 0, end: 0 }
-      receiver := core_ir.CoreExpr.{ kind: .LitInt(1), ty: resolver.MonoType.Int, span: s }
+      receiver := core_ir.CoreExpr.{ kind: .LitInt(1), ty: mono_type.MonoType.Int, span: s }
       body := core_ir.CoreExpr.{
         kind: .ContractCall(BuiltinContract.Stringify, "to_string", receiver, []),
-        ty: resolver.MonoType.String,
+        ty: mono_type.MonoType.String,
         span: s,
       }
       target := core_ir.FunctionDef.{
         func_id: core_ir.FuncId.{ id: 42 },
         name: "Int.to_string",
         params: [],
-        body: core_ir.CoreExpr.{ kind: .LitStr(""), ty: resolver.MonoType.String, span: s },
-        return_ty: resolver.MonoType.String,
+        body: core_ir.CoreExpr.{ kind: .LitStr(""), ty: mono_type.MonoType.String, span: s },
+        return_ty: mono_type.MonoType.String,
       }
       func_map: Dict<Int, core_ir.FunctionDef> = Dict.new()
       func_map[42] = target

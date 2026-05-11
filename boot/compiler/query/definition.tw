@@ -12,7 +12,8 @@ use compiler.imports
 use compiler.query.ast_walk.{NodeContext, find_node_in_block, find_node_in_expr, find_node_in_stmt}
 use compiler.query.cache
 use compiler.query.semantic.{SemanticSnapshot}
-use compiler.resolver.{TypeId, ResolvedEnv}
+use compiler.resolver.{ResolvedEnv}
+use compiler.mono_type.{TypeId}
 
 use lib.source.identity
 use lib.source.span

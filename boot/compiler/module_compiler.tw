@@ -26,7 +26,7 @@ use lib.module.loader
 use lib.source.identity
 use lib.source.overlay
 
-// ── Public API ────────────────────��───────────────────────���─────────
+// ── Public API ──────────────────────────────────────────────────────
 
 /// Compile an entry file and all its transitive dependencies.
 ///
@@ -51,7 +51,7 @@ pub fn compile_entry(entry_path: String) Result<PipelineArtifacts, CompileError>
 
   if !a_result.ok {
     if a_result.diagnostics.len() > 0 {
-      return .Err(.Diagnostics(a_result.diagnostics))
+      return .Err(.Diagnostics(.{ diagnostics: a_result.diagnostics, env: a_result.env }))
     }
     return .Err(.Internal("analysis failed"))
   }
@@ -59,8 +59,10 @@ pub fn compile_entry(entry_path: String) Result<PipelineArtifacts, CompileError>
   // Collect warnings from analysis diagnostics (returned in result).
   compile_warnings: Vector<analyze.AnalysisDiag> = []
   for d in a_result.diagnostics {
-    if d.severity != .Warning { continue }
-    compile_warnings = compile_warnings.append(d)
+    case d.kind {
+      .Warning(_) => { compile_warnings = compile_warnings.append(d) },
+      .Error(_) => {},
+    }
   }
 
   // Phase 2: Lower each analyzed module to Core IR
@@ -85,18 +87,17 @@ pub fn compile_entry(entry_path: String) Result<PipelineArtifacts, CompileError>
     cur_cache = lowered_out.store
     lowered := lowered_out.value
     if lowered.diagnostics.len() > 0 {
-      diags := collect d in lowered.diagnostics {
+      lower_id := identity.from_path(module_path)
+      lower_diags := collect d in lowered.diagnostics {
         analyze.AnalysisDiag.{
-          identity: identity.from_path(module_path),
+          identity: lower_id,
           version: .None,
-          span: .Some(d.span),
-          severity: d.severity,
-          message: d.message,
+          kind: d,
           stage: "lower",
           data: .None,
         }
       }
-      return .Err(.Diagnostics(diags))
+      return .Err(.Diagnostics(.{ diagnostics: lower_diags, env: a_result.env }))
     }
 
     // Build external_refs from lowering's canonical imported origins.

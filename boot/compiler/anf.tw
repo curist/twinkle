@@ -5,7 +5,7 @@
 // map directly to Wasm instructions.
 
 use .core_ir.{LocalId, FuncId, FieldId, VariantId, BinOp, UnOp, CorePattern, Param, ExternImport}
-use .resolver.{MonoType, TypeId}
+use .mono_type.{MonoType, TypeId}
 
 // ── Auxiliary enums ─────────────────────────────────────────────────
 

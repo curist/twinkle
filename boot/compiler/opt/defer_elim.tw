@@ -23,7 +23,7 @@ use compiler.core_ir.{LocalId}
 use compiler.anf.{Atom, AnfExpr, AnfOp, AnfMatchArm, FieldAtom, AnfFunctionDef}
 use compiler.anf_analysis.{collect_free_locals}
 use compiler.opt.analysis.{next_local_id}
-use compiler.resolver.{MonoType}
+use compiler.mono_type.{MonoType}
 
 // ── Public entry point ─────────────────────────────────────────────
 

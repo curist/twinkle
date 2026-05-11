@@ -3,6 +3,7 @@ use tests.assert
 use compiler.parser
 use compiler.resolver
 use compiler.resolver.{plain_resolved_type_params}
+use compiler.mono_type as mono_type
 use compiler.ast
 use compiler.imports
 use lib.module.loader
@@ -23,7 +24,7 @@ fn resolve_src_with_env(src: String, env: resolver.ResolvedEnv) resolver.Resolve
 fn resolve_ok_with_env(src: String, env: resolver.ResolvedEnv) Result<resolver.ResolvedEnv, String> {
   r := resolve_src_with_env(src, env)
   if r.diagnostics.len() > 0 {
-    return .Err("expected no diagnostics, got: ${r.diagnostics[0].message}")
+    return .Err("expected no diagnostics, got: ${r.diagnostics[0].message()}")
   }
   .Ok(r.env)
 }
@@ -31,7 +32,7 @@ fn resolve_ok_with_env(src: String, env: resolver.ResolvedEnv) Result<resolver.R
 fn resolve_ok(src: String) Result<resolver.ResolvedEnv, String> {
   r := resolve_src(src)
   if r.diagnostics.len() > 0 {
-    return .Err("expected no diagnostics, got: ${r.diagnostics[0].message}")
+    return .Err("expected no diagnostics, got: ${r.diagnostics[0].message()}")
   }
   .Ok(r.env)
 }
@@ -43,7 +44,7 @@ fn resolve_errs(src: String) Result<Vector<String>, String> {
   }
   msgs: Vector<String> = []
   for d in r.diagnostics {
-    msgs = msgs.append(d.message)
+    msgs = msgs.append(d.message())
   }
   .Ok(msgs)
 }
@@ -55,7 +56,7 @@ fn type_id_of(env: resolver.ResolvedEnv, name: String) Result<Int, String> {
   }
 }
 
-pub fn mono_to_string(ty: resolver.MonoType) String {
+pub fn mono_to_string(ty: mono_type.MonoType) String {
   case ty {
     .Int => "Int",
     .Float => "Float",
@@ -347,9 +348,9 @@ pub fn suite() runner.Suite {
       r := resolve_src("type A = B\ntype B = A")
       found_circular := false
       for d in r.diagnostics {
-        if d.message.contains("circular") {
-          has_span := d.span.start > 0
-          if !has_span { has_span = d.span.end > 0 }
+        if d.message().contains("circular") {
+          has_span := d.span().start > 0
+          if !has_span { has_span = d.span().end > 0 }
           if has_span {
             found_circular = true
           }
@@ -493,12 +494,12 @@ pub fn suite() runner.Suite {
       }
     })
     .test("lookup_type_method follows receiver identity rather than preferred name", fn() {
-      tid := resolver.TypeId.{ id: 41 }
+      tid := mono_type.TypeId.{ id: 41 }
       entry := resolver.TypeEntry.{
         id: tid,
         arity: 0,
         def: .Some(resolver.ResolvedTypeDef.Record("dep.Point", [], [
-          resolver.ResolvedField.{ name: "x", ty: resolver.MonoType.Int },
+          resolver.ResolvedField.{ name: "x", ty: mono_type.MonoType.Int },
         ])),
         span: span.Span.{ file_id: 0, start: 0, end: 0 },
       }
@@ -711,10 +712,10 @@ pub fn suite() runner.Suite {
         type_params: plain_resolved_type_params(["A", "B"]),
         param_names: ["xs", "f"],
         params: [
-          resolver.MonoType.Vector(resolver.MonoType.Var("A")),
-          resolver.MonoType.Function([resolver.MonoType.Var("A")], resolver.MonoType.Var("B")),
+          mono_type.MonoType.Vector(mono_type.MonoType.Var("A")),
+          mono_type.MonoType.Function([mono_type.MonoType.Var("A")], mono_type.MonoType.Var("B")),
         ],
-        ret: .Some(resolver.MonoType.Vector(resolver.MonoType.Var("B"))),
+        ret: .Some(mono_type.MonoType.Vector(mono_type.MonoType.Var("B"))),
         doc: .None,
     extern_module: .None,
 }
@@ -739,8 +740,8 @@ pub fn suite() runner.Suite {
         name: "to_string",
         type_params: [],
         param_names: ["x"],
-        params: [resolver.MonoType.Int],
-        ret: .Some(resolver.MonoType.String),
+        params: [mono_type.MonoType.Int],
+        ret: .Some(mono_type.MonoType.String),
         doc: .None,
     extern_module: .None,
 }
@@ -793,9 +794,9 @@ pub fn suite() runner.Suite {
     // ── Issue 5: Incremental add_type / add_function ──
     .test("add_type incrementally builds env", fn() {
       env := resolver.empty_env()
-      e1 := resolver.TypeEntry.{ id: resolver.TypeId.{ id: 0 }, arity: 0, def: .None, span: span.Span.{ file_id: 0, start: 0, end: 0 } }
+      e1 := resolver.TypeEntry.{ id: mono_type.TypeId.{ id: 0 }, arity: 0, def: .None, span: span.Span.{ file_id: 0, start: 0, end: 0 } }
       env = env.add_type( e1, "Foo")
-      e2 := resolver.TypeEntry.{ id: resolver.TypeId.{ id: 1 }, arity: 0, def: .None, span: span.Span.{ file_id: 0, start: 0, end: 0 } }
+      e2 := resolver.TypeEntry.{ id: mono_type.TypeId.{ id: 1 }, arity: 0, def: .None, span: span.Span.{ file_id: 0, start: 0, end: 0 } }
       env = env.add_type( e2, "Bar")
 
       try assert.is_true(resolver.has_type(env, "Foo"))
@@ -804,11 +805,11 @@ pub fn suite() runner.Suite {
       .Ok({})
     })
     .test("type entry can exist without a visible binding", fn() {
-      tid := resolver.TypeId.{ id: 7 }
+      tid := mono_type.TypeId.{ id: 7 }
       entry := resolver.TypeEntry.{
         id: tid,
         arity: 0,
-        def: .Some(resolver.ResolvedTypeDef.Alias("geom.Support", [], resolver.MonoType.Int)),
+        def: .Some(resolver.ResolvedTypeDef.Alias("geom.Support", [], mono_type.MonoType.Int)),
         span: span.Span.{ file_id: 0, start: 0, end: 0 },
       }
 
@@ -826,14 +827,14 @@ pub fn suite() runner.Suite {
       env := resolver.empty_env()
       sig1 := resolver.FunctionSig.{
         name: "foo", type_params: [], param_names: ["x"],
-        params: [resolver.MonoType.Int], ret: .Some(resolver.MonoType.Int),
+        params: [mono_type.MonoType.Int], ret: .Some(mono_type.MonoType.Int),
         doc: .None,
     extern_module: .None,
 }
       env = env.add_function( sig1)
       sig2 := resolver.FunctionSig.{
         name: "bar", type_params: [], param_names: ["x"],
-        params: [resolver.MonoType.String], ret: .Some(resolver.MonoType.String),
+        params: [mono_type.MonoType.String], ret: .Some(mono_type.MonoType.String),
         doc: .None,
     extern_module: .None,
 }
@@ -848,7 +849,7 @@ pub fn suite() runner.Suite {
       env := resolver.empty_env()
       sig1 := resolver.FunctionSig.{
         name: "foo", type_params: [], param_names: ["x"],
-        params: [resolver.MonoType.Int], ret: .Some(resolver.MonoType.Int),
+        params: [mono_type.MonoType.Int], ret: .Some(mono_type.MonoType.Int),
         doc: .None,
     extern_module: .None,
 }
@@ -856,7 +857,7 @@ pub fn suite() runner.Suite {
       // Add another "foo" — should shadow the first
       sig2 := resolver.FunctionSig.{
         name: "foo", type_params: [], param_names: ["x"],
-        params: [resolver.MonoType.String], ret: .Some(resolver.MonoType.String),
+        params: [mono_type.MonoType.String], ret: .Some(mono_type.MonoType.String),
         doc: .None,
     extern_module: .None,
 }
@@ -942,7 +943,7 @@ pub fn suite() runner.Suite {
       r := env.resolve(parsed.value)
       found := false
       for d in r.diagnostics {
-        if d.message.contains("show") { found = true }
+        if d.message().contains("show") { found = true }
       }
       try assert.is_true(found)
       .Ok({})
@@ -956,7 +957,7 @@ pub fn suite() runner.Suite {
       // But at minimum the duplicate function diagnostic
       found_dup := false
       for d in r.diagnostics {
-        if d.message.contains("duplicate function") { found_dup = true }
+        if d.message().contains("duplicate function") { found_dup = true }
       }
       try assert.is_true(found_dup)
       .Ok({})
@@ -1123,16 +1124,16 @@ pub fn suite() runner.Suite {
     })
 
     .test("extract_exports separates support-only imported types", fn() {
-      tid := resolver.TypeId.{ id: 11 }
+      tid := mono_type.TypeId.{ id: 11 }
       entry := resolver.TypeEntry.{
         id: tid,
         arity: 0,
-        def: .Some(resolver.ResolvedTypeDef.Alias("dep.Support", [], resolver.MonoType.Int)),
+        def: .Some(resolver.ResolvedTypeDef.Alias("dep.Support", [], mono_type.MonoType.Int)),
         span: span.Span.{ file_id: 0, start: 0, end: 0 },
       }
       sig := resolver.FunctionSig.{
         name: "expose", type_params: [], param_names: ["x"],
-        params: [resolver.MonoType.Named(tid, [])], ret: .Some(resolver.MonoType.Named(tid, [])),
+        params: [mono_type.MonoType.Named(tid, [])], ret: .Some(mono_type.MonoType.Named(tid, [])),
         doc: .None,
     extern_module: .None,
 }
@@ -1148,13 +1149,13 @@ pub fn suite() runner.Suite {
     })
 
     .test("extract_exports includes transitive support-only imported types", fn() {
-      inner_tid := resolver.TypeId.{ id: 21 }
-      outer_tid := resolver.TypeId.{ id: 22 }
+      inner_tid := mono_type.TypeId.{ id: 21 }
+      outer_tid := mono_type.TypeId.{ id: 22 }
       inner_entry := resolver.TypeEntry.{
         id: inner_tid,
         arity: 0,
         def: .Some(resolver.ResolvedTypeDef.Record("dep.Inner", [], [
-          resolver.ResolvedField.{ name: "value", ty: resolver.MonoType.Int },
+          resolver.ResolvedField.{ name: "value", ty: mono_type.MonoType.Int },
         ])),
         span: span.Span.{ file_id: 0, start: 0, end: 0 },
       }
@@ -1162,13 +1163,13 @@ pub fn suite() runner.Suite {
         id: outer_tid,
         arity: 0,
         def: .Some(resolver.ResolvedTypeDef.Record("dep.Outer", [], [
-          resolver.ResolvedField.{ name: "inner", ty: resolver.MonoType.Named(inner_tid, []) },
+          resolver.ResolvedField.{ name: "inner", ty: mono_type.MonoType.Named(inner_tid, []) },
         ])),
         span: span.Span.{ file_id: 0, start: 0, end: 0 },
       }
       sig := resolver.FunctionSig.{
         name: "expose", type_params: [], param_names: ["x"],
-        params: [resolver.MonoType.Named(outer_tid, [])], ret: .Some(resolver.MonoType.Named(outer_tid, [])),
+        params: [mono_type.MonoType.Named(outer_tid, [])], ret: .Some(mono_type.MonoType.Named(outer_tid, [])),
         doc: .None,
     extern_module: .None,
 }
@@ -1189,13 +1190,13 @@ pub fn suite() runner.Suite {
     })
 
     .test("extract_exports includes support types referenced by visible exported type definitions", fn() {
-      support_tid := resolver.TypeId.{ id: 23 }
-      wrapper_tid := resolver.TypeId.{ id: 24 }
+      support_tid := mono_type.TypeId.{ id: 23 }
+      wrapper_tid := mono_type.TypeId.{ id: 24 }
       support_entry := resolver.TypeEntry.{
         id: support_tid,
         arity: 0,
         def: .Some(resolver.ResolvedTypeDef.Record("dep.Support", [], [
-          resolver.ResolvedField.{ name: "value", ty: resolver.MonoType.Int },
+          resolver.ResolvedField.{ name: "value", ty: mono_type.MonoType.Int },
         ])),
         span: span.Span.{ file_id: 0, start: 0, end: 0 },
       }
@@ -1203,7 +1204,7 @@ pub fn suite() runner.Suite {
         id: wrapper_tid,
         arity: 0,
         def: .Some(resolver.ResolvedTypeDef.Record("Wrapper", [], [
-          resolver.ResolvedField.{ name: "inner", ty: resolver.MonoType.Named(support_tid, []) },
+          resolver.ResolvedField.{ name: "inner", ty: mono_type.MonoType.Named(support_tid, []) },
         ])),
         span: span.Span.{ file_id: 0, start: 0, end: 0 },
       }
@@ -1249,24 +1250,24 @@ pub fn suite() runner.Suite {
     })
 
     .test("extract_exports includes support method functions for exported support types", fn() {
-      env_tid := resolver.TypeId.{ id: 31 }
+      env_tid := mono_type.TypeId.{ id: 31 }
       env_entry := resolver.TypeEntry.{
         id: env_tid,
         arity: 0,
         def: .Some(resolver.ResolvedTypeDef.Record("dep.Env", [], [
-          resolver.ResolvedField.{ name: "value", ty: resolver.MonoType.Int },
+          resolver.ResolvedField.{ name: "value", ty: mono_type.MonoType.Int },
         ])),
         span: span.Span.{ file_id: 0, start: 0, end: 0 },
       }
       make_sig := resolver.FunctionSig.{
         name: "make_env", type_params: [], param_names: [],
-        params: [], ret: .Some(resolver.MonoType.Named(env_tid, [])),
+        params: [], ret: .Some(mono_type.MonoType.Named(env_tid, [])),
         doc: .None,
     extern_module: .None,
 }
       resolve_sig := resolver.FunctionSig.{
         name: "dep.resolve", type_params: [], param_names: ["env"],
-        params: [resolver.MonoType.Named(env_tid, [])], ret: .Some(resolver.MonoType.Int),
+        params: [mono_type.MonoType.Named(env_tid, [])], ret: .Some(mono_type.MonoType.Int),
         doc: .None,
     extern_module: .None,
 }
@@ -1316,16 +1317,16 @@ pub fn suite() runner.Suite {
     })
 
     .test("merge_module_exports registers support types without binding them", fn() {
-      tid := resolver.TypeId.{ id: 13 }
+      tid := mono_type.TypeId.{ id: 13 }
       entry := resolver.TypeEntry.{
         id: tid,
         arity: 0,
-        def: .Some(resolver.ResolvedTypeDef.Alias("dep.Support", [], resolver.MonoType.Int)),
+        def: .Some(resolver.ResolvedTypeDef.Alias("dep.Support", [], mono_type.MonoType.Int)),
         span: span.Span.{ file_id: 0, start: 0, end: 0 },
       }
       sig := resolver.FunctionSig.{
         name: "expose", type_params: [], param_names: ["x"],
-        params: [resolver.MonoType.Named(tid, [])], ret: .Some(resolver.MonoType.Named(tid, [])),
+        params: [mono_type.MonoType.Named(tid, [])], ret: .Some(mono_type.MonoType.Named(tid, [])),
         doc: .None,
     extern_module: .None,
 }
@@ -1342,7 +1343,7 @@ pub fn suite() runner.Suite {
 
       try assert.is_true(!resolver.has_type(env, "dep.Support"))
       try assert.is_true(resolver.has_function(env, "mod.expose"))
-      try assert.str_eq(try resolver.find_type_name(env, resolver.TypeId.{ id: 0 }).ok_or("support type missing"), "dep.Support")
+      try assert.str_eq(try resolver.find_type_name(env, mono_type.TypeId.{ id: 0 }).ok_or("support type missing"), "dep.Support")
       .Ok({})
     })
 
@@ -1503,7 +1504,7 @@ pub fn suite() runner.Suite {
       try assert.is_true(!resolver.has_type(env, "geom.Point"))
       try assert.is_true(!resolver.has_type(env, "Line"))
       try assert.is_true(!resolver.has_type(env, "geom.Line"))
-      try assert.str_eq(try resolver.find_type_name(env, resolver.TypeId.{ id: 1 }).ok_or("stored unselected type missing"), "geom.Line")
+      try assert.str_eq(try resolver.find_type_name(env, mono_type.TypeId.{ id: 1 }).ok_or("stored unselected type missing"), "geom.Line")
 
       for name in env.type_names {
         if name.starts_with("$import$.geom.") {
@@ -1538,7 +1539,7 @@ pub fn suite() runner.Suite {
       // Pre-populate with a builtin "len"
       builtin_sig := resolver.FunctionSig.{
         name: "len", type_params: [], param_names: ["x"],
-        params: [resolver.MonoType.String], ret: .Some(resolver.MonoType.Int),
+        params: [mono_type.MonoType.String], ret: .Some(mono_type.MonoType.Int),
         doc: .None,
     extern_module: .None,
 }
@@ -1662,7 +1663,7 @@ pub fn suite() runner.Suite {
       // Now add a local function that shadows it
       env = env.add_function(resolver.FunctionSig.{
         name: "filter", type_params: [], param_names: ["x"],
-        params: [resolver.MonoType.Int], ret: .Some(resolver.MonoType.Int),
+        params: [mono_type.MonoType.Int], ret: .Some(mono_type.MonoType.Int),
         doc: .None,
     extern_module: .None,
 })
@@ -1677,13 +1678,13 @@ pub fn suite() runner.Suite {
     .test("with_functions drops origins for removed registered targets", fn() {
       imported := resolver.FunctionSig.{
         name: "filter", type_params: [], param_names: ["x"],
-        params: [resolver.MonoType.Int], ret: .Some(resolver.MonoType.Int),
+        params: [mono_type.MonoType.Int], ret: .Some(mono_type.MonoType.Int),
         doc: .None,
     extern_module: .None,
 }
       local := resolver.FunctionSig.{
         name: "local_only", type_params: [], param_names: [],
-        params: [], ret: .Some(resolver.MonoType.Void),
+        params: [], ret: .Some(mono_type.MonoType.Void),
         doc: .None,
     extern_module: .None,
 }
@@ -1705,7 +1706,7 @@ pub fn suite() runner.Suite {
     .test("merge_module_exports preserves original defining origin across re-export metadata", fn() {
       sig := resolver.FunctionSig.{
         name: "foo", type_params: [], param_names: ["x"],
-        params: [resolver.MonoType.Int], ret: .Some(resolver.MonoType.Int),
+        params: [mono_type.MonoType.Int], ret: .Some(mono_type.MonoType.Int),
         doc: .None,
     extern_module: .None,
 }
@@ -1738,7 +1739,7 @@ pub fn suite() runner.Suite {
     .test("merge_module_exports preserves support function origins", fn() {
       helper_sig := resolver.FunctionSig.{
         name: "helper", type_params: [], param_names: ["x"],
-        params: [resolver.MonoType.Int], ret: .Some(resolver.MonoType.Int),
+        params: [mono_type.MonoType.Int], ret: .Some(mono_type.MonoType.Int),
         doc: .None,
     extern_module: .None,
 }

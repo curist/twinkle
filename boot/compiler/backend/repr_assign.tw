@@ -19,7 +19,8 @@
 // ErasedSum is reserved for future use. It is not currently produced by this
 // pass (it would require tracking which anyrefs previously held typed sums).
 
-use compiler.resolver.{MonoType, ResolvedEnv}
+use compiler.resolver.{ResolvedEnv}
+use compiler.mono_type.{MonoType}
 use compiler.codegen.wasm_ir.{ValType}
 use compiler.codegen.wasm_layout.{WasmLayout, layout_of, val_type_of_mono, mono_to_key}
 use compiler.backend.prepared_ir.{SlotInfo, ReprKind, PreparedFunc, PreparedExpr, PreparedOp}

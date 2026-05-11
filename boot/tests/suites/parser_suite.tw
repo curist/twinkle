@@ -5,7 +5,7 @@ use compiler.parser
 
 use compiler.ast
 use lib.source.registry
-use lib.source.diagnostic
+use lib.source.diagnostics as diag
 use @std.fs
 use @std.proc
 
@@ -101,7 +101,7 @@ fn assert_snapshot(fixture_path: String) Result<Void, String> {
   reg := registry.empty()
   result := registry.add_file(reg, fixture_path, src)
   parsed := parser.parse(src, result.file_id)
-  actual := diagnostic.format_diagnostics(reg, parsed.diagnostics)
+  actual := diag.format_diagnostics(reg, parsed.diagnostics)
   base := fixture_path.slice(0, fixture_path.len() - 3)
   expected_path := "${base}.boot.expected"
   update := snap_update_mode()
@@ -1642,7 +1642,7 @@ pub fn suite() runner.Suite {
     .test("diagnostics: return in expression position", fn() {
       parsed := parser.parse("fn f() Int { case 1 { 1 => return 1, _ => 0 } }", 0)
       try assert.is_true(parsed.diagnostics.len() > 0)
-      msg := parsed.diagnostics[0].message
+      msg := parsed.diagnostics[0].message()
       try assert.is_true(msg.contains("is a statement"))
       try assert.is_true(msg.contains("where an expression is expected"))
       assert.is_true(msg.contains("wrap it in a block expression"))
@@ -1650,7 +1650,7 @@ pub fn suite() runner.Suite {
     .test("diagnostics: break in expression position", fn() {
       parsed := parser.parse("fn f() { case 1 { 1 => break, _ => {} } }", 0)
       try assert.is_true(parsed.diagnostics.len() > 0)
-      msg := parsed.diagnostics[0].message
+      msg := parsed.diagnostics[0].message()
       try assert.is_true(msg.contains("is a statement"))
       try assert.is_true(msg.contains("where an expression is expected"))
       assert.is_true(msg.contains("wrap it in a block expression"))
@@ -1658,7 +1658,7 @@ pub fn suite() runner.Suite {
     .test("diagnostics: continue in expression position", fn() {
       parsed := parser.parse("fn f() { case 1 { 1 => continue, _ => {} } }", 0)
       try assert.is_true(parsed.diagnostics.len() > 0)
-      msg := parsed.diagnostics[0].message
+      msg := parsed.diagnostics[0].message()
       try assert.is_true(msg.contains("is a statement"))
       try assert.is_true(msg.contains("where an expression is expected"))
       assert.is_true(msg.contains("wrap it in a block expression"))
@@ -1666,7 +1666,7 @@ pub fn suite() runner.Suite {
     .test("diagnostics: defer in expression position", fn() {
       parsed := parser.parse("fn f() { case 1 { 1 => defer cleanup(), _ => {} } }", 0)
       try assert.is_true(parsed.diagnostics.len() > 0)
-      msg := parsed.diagnostics[0].message
+      msg := parsed.diagnostics[0].message()
       try assert.is_true(msg.contains("is a statement"))
       try assert.is_true(msg.contains("where an expression is expected"))
       assert.is_true(msg.contains("wrap it in a block expression"))
@@ -1674,7 +1674,7 @@ pub fn suite() runner.Suite {
     .test("diagnostics: for in expression position", fn() {
       parsed := parser.parse("fn f() { case 1 { 1 => for x in xs { }, _ => {} } }", 0)
       try assert.is_true(parsed.diagnostics.len() > 0)
-      msg := parsed.diagnostics[0].message
+      msg := parsed.diagnostics[0].message()
       try assert.is_true(msg.contains("is a statement"))
       try assert.is_true(msg.contains("where an expression is expected"))
       assert.is_true(msg.contains("wrap it in a block expression"))
@@ -1686,7 +1686,7 @@ pub fn suite() runner.Suite {
       src := "fn f() Int { case 1 { 1 => return 1, _ => 0 } }"
       parsed := parser.parse(src, 0)
       try assert.is_true(parsed.diagnostics.len() > 0)
-      diag_span := parsed.diagnostics[0].span
+      diag_span := parsed.diagnostics[0].span()
       // The span should cover the 'return' keyword (6 chars)
       assert.int_eq(diag_span.end - diag_span.start, 6)
     })
@@ -1716,22 +1716,22 @@ pub fn suite() runner.Suite {
     .test("diagnostics: statement in case arm mentions context", fn() {
       parsed := parser.parse("fn f() Int { case 1 { 1 => return 1, _ => 0 } }", 0)
       try assert.is_true(parsed.diagnostics.len() > 0)
-      assert.is_true(parsed.diagnostics[0].message.contains("case arm body"))
+      assert.is_true(parsed.diagnostics[0].message().contains("case arm body"))
     })
     .test("diagnostics: statement in call arg mentions context", fn() {
       parsed := parser.parse("fn f() { foo(return 1) }", 0)
       try assert.is_true(parsed.diagnostics.len() > 0)
-      assert.is_true(parsed.diagnostics[0].message.contains("call argument"))
+      assert.is_true(parsed.diagnostics[0].message().contains("call argument"))
     })
     .test("diagnostics: statement in array element mentions context", fn() {
       parsed := parser.parse("fn f() { [return 1] }", 0)
       try assert.is_true(parsed.diagnostics.len() > 0)
-      assert.is_true(parsed.diagnostics[0].message.contains("array element"))
+      assert.is_true(parsed.diagnostics[0].message().contains("array element"))
     })
     .test("diagnostics: statement in grouped expr mentions context", fn() {
       parsed := parser.parse("fn f() { (return 1) }", 0)
       try assert.is_true(parsed.diagnostics.len() > 0)
-      assert.is_true(parsed.diagnostics[0].message.contains("grouped expression"))
+      assert.is_true(parsed.diagnostics[0].message().contains("grouped expression"))
     })
 
     // ── Diagnostics Clarity: No False Positives ──────────────────

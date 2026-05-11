@@ -5,7 +5,7 @@
 // and updated context.
 
 use lib.source.span.{Span}
-use lib.source.diagnostic.{Diagnostic}
+use lib.source.diagnostics.{DiagKind}
 use .ast.{Module, Block, Expr}
 use .resolver.{FunctionOrigin}
 use .checker.{CheckResult}
@@ -33,7 +33,7 @@ use .lower_core.functions.{lower_function}
 
 pub type LowerResult = .{
   module: CoreModule,
-  diagnostics: Vector<Diagnostic>,
+  diagnostics: Vector<DiagKind>,
   func_table: Dict<String, FuncId>,
   imported_func_origins: Dict<Int, FunctionOrigin>,
   next_global_local_id: Int,

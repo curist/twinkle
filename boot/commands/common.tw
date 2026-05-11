@@ -4,9 +4,10 @@ use @std.proc
 use @std.fs
 use lib.argparse.app.{ParseResult}
 use lib.source.registry
-use lib.source.registry.{FileRegistry}
-use lib.source.span
-use lib.source.diagnostic.{Severity, Diagnostic, format_source_diagnostics}
+use lib.source.report
+use lib.source.render
+use compiler.resolver.{ResolvedEnv}
+use compiler.query.diag_render
 use compiler.query.analyze
 use compiler.artifacts.{CompileError}
 
@@ -43,78 +44,48 @@ pub fn fs_error_message(err: fs.FsError) String {
   }
 }
 
-pub fn severity_name(sev: Severity) String {
-  case sev {
-    .Error => "error",
-    .Warning => "warning",
-    .Hint => "hint",
-    .Info => "info",
-  }
-}
-
-pub fn diagnostics_have_errors(diags: Vector<Diagnostic>) Bool {
-  has_error := false
-  for d in diags {
-    if d.severity == .Error {
-      has_error = true
-      break
-    }
-  }
-  has_error
-}
-
-pub fn print_diagnostic(path: String, reg: FileRegistry, d: Diagnostic) {
-  case registry.line_col(reg, d.span) {
-    .Some(pos) => {
-      eprintln("${path}:${pos.line}:${pos.column}: ${severity_name(d.severity)}: ${d.message}")
-    },
-    .None => {
-      eprintln("${path}:${d.span.start}: ${severity_name(d.severity)}: ${d.message}")
-    },
-  }
-}
-
 /// Format a CompileError into a human-readable string.
 pub fn format_compile_error(err: CompileError) String {
   case err {
-    .Diagnostics(diags) => format_analysis_diags(diags),
+    .Diagnostics(de) => format_analysis_diags(de.env, de.diagnostics),
     .Internal(msg) => msg,
   }
 }
 
 /// Format analysis diagnostics with source locations, grouped by file.
-fn format_analysis_diags(diags: Vector<analyze.AnalysisDiag>) String {
+fn format_analysis_diags(env: ResolvedEnv, diags: Vector<analyze.AnalysisDiag>) String {
   if diags.len() == 0 { return "compilation failed" }
   stage := diags[0].stage
+  config := report.default_config()
   parts: Vector<String> = []
   for d in diags {
     source := case fs.read_text(d.identity.path) {
       .Ok(text) => text,
       .Err(_) => "",
     }
-    raw_span := case d.span {
-      .Some(s) => span.new(0, s.start, s.end),
-      .None => span.new(0, 0, 0),
-    }
-    raw := [Diagnostic.{ span: raw_span, severity: d.severity, message: d.message, related: [] }]
-    parts = parts.append(format_source_diagnostics(d.identity.path, source, raw))
+    reg := registry.empty()
+    registry.add_file(reg, d.identity.path, source)
+    ctx := diag_render.RenderCtx.{ registry: reg, env: .Some(env), module: .None, config }
+    rep := diag_render.to_report(d.kind, ctx)
+    parts = parts.append(render.render(rep, reg, config))
   }
-  sep := "\n"
+  sep := "\n\n"
   "${stage}:\n${parts.join(sep)}"
 }
 
 /// Print structured analysis diagnostics (typically warnings) to stderr.
 pub fn print_warnings(warnings: Vector<analyze.AnalysisDiag>) {
+  config := report.default_config()
   for d in warnings {
     source := case fs.read_text(d.identity.path) {
       .Ok(text) => text,
       .Err(_) => "",
     }
-    raw_span := case d.span {
-      .Some(s) => span.new(0, s.start, s.end),
-      .None => span.new(0, 0, 0),
-    }
-    raw := [Diagnostic.{ span: raw_span, severity: d.severity, message: d.message, related: [] }]
-    eprintln(format_source_diagnostics(d.identity.path, source, raw))
+    reg := registry.empty()
+    registry.add_file(reg, d.identity.path, source)
+    ctx := diag_render.RenderCtx.{ registry: reg, env: .None, module: .None, config }
+    rep := diag_render.to_report(d.kind, ctx)
+    eprintln(render.render(rep, reg, config))
+    eprintln("")
   }
 }

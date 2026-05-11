@@ -3,7 +3,8 @@
 // Specializes generic functions per unique concrete instantiation.
 // Algorithm: BFS seed → specialize → rewrite → drop generics.
 
-use .resolver.{MonoType, ResolvedEnv}
+use .resolver.{ResolvedEnv}
+use .mono_type.{MonoType}
 
 use .contracts.{BuiltinContract}
 use .core_ir.{CoreExpr, CoreExprKind, CoreModule, FunctionDef, Param, LocalId, FuncId, FieldInit, MatchArm}

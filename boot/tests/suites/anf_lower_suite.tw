@@ -17,15 +17,15 @@ use compiler.lower_anf
 fn anf_src(src: String) Result<AnfModule, String> {
   parsed := parser.parse(src, 0)
   if parsed.diagnostics.len() > 0 {
-    return .Err("parse: ${parsed.diagnostics[0].message}")
+    return .Err("parse: ${parsed.diagnostics[0].message()}")
   }
   resolved := resolver.empty_env().resolve(parsed.value)
   if resolved.diagnostics.len() > 0 {
-    return .Err("resolve: ${resolved.diagnostics[0].message}")
+    return .Err("resolve: ${resolved.diagnostics[0].message()}")
   }
   check_result := checker.check(parsed.value, resolved.env)
   if check_result.diagnostics.len() > 0 {
-    return .Err("check: ${check_result.diagnostics[0].message}")
+    return .Err("check: ${check_result.diagnostics[0].message()}")
   }
   lr := lower_core.lower_module(parsed.value, check_result, make_builtin_registry())
   mono := monomorphize.monomorphize(lr.module)

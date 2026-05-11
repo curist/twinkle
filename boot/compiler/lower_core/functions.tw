@@ -1,7 +1,7 @@
 // Function lowering helpers.
 
 use compiler.ast.{Block, FunctionDecl}
-use compiler.resolver.{MonoType}
+use compiler.mono_type.{MonoType}
 use compiler.core_ir.{FunctionDef, Param, FuncId}
 use compiler.lower_core.context.{LowerCtx, ExprOut}
 

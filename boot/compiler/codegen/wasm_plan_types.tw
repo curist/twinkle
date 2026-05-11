@@ -1,6 +1,6 @@
 // Shared wasm planner types used by the legacy planner, emitter, and tests.
 
-use compiler.resolver.{MonoType}
+use compiler.mono_type.{MonoType}
 use compiler.core_ir.{LocalId}
 use compiler.codegen.wasm_ir.{TypeDef, ImportDef}
 use compiler.codegen.wasm_layout.{WasmLayout}

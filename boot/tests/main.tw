@@ -15,6 +15,8 @@ use .suites.api_range_iterator_suite
 use .suites.stdlib_path_suite
 use .suites.stdlib_host_suite
 use .suites.source_suite
+use .suites.diag_suite
+use .suites.render_suite
 use .suites.parser_suite
 use .suites.resolver_suite
 use .suites.checker_suite
@@ -54,6 +56,8 @@ use .suites.fingerprint_suite
 use .suites.type_registry_suite
 use .suites.query_stage_runner_suite
 use .suites.query_analyze_suite
+use .suites.ast_path_suite
+use .suites.diag_render_suite
 use .suites.query_diagnostics_suite
 use .suites.imports_suite
 use .suites.lib_json_suite
@@ -92,6 +96,8 @@ runner.run_all([
   stdlib_path_suite.suite(),
   stdlib_host_suite.suite(),
   source_suite.suite(),
+  diag_suite.suite(),
+  render_suite.suite(),
   parser_suite.suite(),
   resolver_suite.suite(),
   checker_suite.suite(),
@@ -131,6 +137,8 @@ runner.run_all([
   type_registry_suite.suite(),
   query_stage_runner_suite.suite(),
   query_analyze_suite.suite(),
+  ast_path_suite.suite(),
+  diag_render_suite.suite(),
   query_diagnostics_suite.suite(),
   imports_suite.suite(),
   lib_json_suite.suite(),

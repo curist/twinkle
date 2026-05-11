@@ -11,7 +11,8 @@
 
 use compiler.core_ir.{CoreModule, CoreExpr, CoreExprKind, FunctionDef, LocalId, FuncId, FieldInit, MatchArm, CompiledModule, ExternImport}
 
-use compiler.resolver.{MonoType, ResolvedEnv}
+use compiler.resolver.{ResolvedEnv}
+use compiler.mono_type.{MonoType}
 use lib.source.span.{Span}
 use .core_linker.dce.{compute_reachable, collect_func_refs}
 

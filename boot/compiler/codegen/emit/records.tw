@@ -1,6 +1,6 @@
 // Record emission helpers.
 
-use compiler.resolver.{MonoType, TypeId}
+use compiler.mono_type.{MonoType, TypeId}
 use compiler.core_ir.{FieldId}
 use compiler.backend.prepared_ir.{PreparedAtom, PreparedFieldAtom}
 use compiler.codegen.wasm_ir.{ValType, Instr}

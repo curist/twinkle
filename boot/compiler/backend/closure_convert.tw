@@ -13,7 +13,8 @@
 
 use compiler.core_ir.{LocalId, FuncId, Param, CorePattern, VariantId}
 
-use compiler.resolver.{MonoType, TypeId, ResolvedEnv, lookup_type_def}
+use compiler.resolver.{ResolvedEnv, lookup_type_def}
+use compiler.mono_type.{MonoType, TypeId}
 use compiler.type_util.{subst_type_params}
 use compiler.anf.{AnfExpr, AnfOp, AnfFunctionDef, AnfModule, AnfMatchArm, Atom, FieldAtom}
 use compiler.backend.prepared_ir.{CaptureParam}

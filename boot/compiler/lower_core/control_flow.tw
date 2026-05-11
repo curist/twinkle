@@ -2,7 +2,7 @@
 
 use lib.source.span.{Span}
 use compiler.ast.{Block, Expr}
-use compiler.resolver.{MonoType, TypeId}
+use compiler.mono_type.{MonoType, TypeId}
 use compiler.core_ir.{CoreExpr, FieldInit, MatchArm, CorePattern}
 use compiler.lower_core.context.{LowerCtx, ExprOut}
 use compiler.lower_core.helpers.{void_expr, local_expr, variant_expr, variant_pattern, return_expr}

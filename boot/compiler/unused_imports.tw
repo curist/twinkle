@@ -4,7 +4,7 @@
 // imported names are actually referenced. Emits warnings for imports
 // that introduce no used names.
 
-use lib.source.diagnostic.{Diagnostic, warning}
+use lib.source.diagnostics.{DiagKind}
 use lib.source.span
 use .ast.{Module, FunctionDecl, TypeDecl, Block, Stmt, Expr, Pattern, TypeExpr, TypePath, UseDecl}
 
@@ -19,7 +19,7 @@ pub type ImportEdit = .{
 
 /// Pairs a warning diagnostic with its corresponding edit.
 pub type UnusedImportDiag = .{
-  diagnostic: Diagnostic,
+  kind: DiagKind,
   edit: ImportEdit,
 }
 
@@ -93,7 +93,7 @@ pub fn check_unused_imports(module: Module) UnusedImportResult {
                     binding := case v.alias { .Some(a) => a, .None => v.name }
                     if !final_used.has(binding) {
                       result_items = result_items.append(UnusedImportDiag.{
-                        diagnostic: warning(v.span, "unused import: ${binding}"),
+                        kind: .Warning(.UnusedImport(.{ span: v.span, binding })),
                         edit,
                       })
                     }
@@ -102,7 +102,7 @@ pub fn check_unused_imports(module: Module) UnusedImportResult {
                     binding := case t.alias { .Some(a) => a, .None => t.name }
                     if !final_used.has(binding) {
                       result_items = result_items.append(UnusedImportDiag.{
-                        diagnostic: warning(t.span, "unused import: ${binding}"),
+                        kind: .Warning(.UnusedImport(.{ span: t.span, binding })),
                         edit,
                       })
                     }
@@ -124,7 +124,7 @@ pub fn check_unused_imports(module: Module) UnusedImportResult {
             if alias != "" and !final_used.has(alias) {
               edit := ImportEdit.{ use_span: decl.span, replacement: "" }
               result_items = result_items.append(UnusedImportDiag.{
-                diagnostic: warning(decl.span, "unused import: ${alias}"),
+                kind: .Warning(.UnusedImport(.{ span: decl.span, binding: alias })),
                 edit,
               })
             }
@@ -139,8 +139,8 @@ pub fn check_unused_imports(module: Module) UnusedImportResult {
 
 /// Extract just the diagnostics from an UnusedImportResult (for callers
 /// that only need warnings without edit info).
-pub fn diagnostics_only(result: UnusedImportResult) Vector<Diagnostic> {
-  collect item in result.items { item.diagnostic }
+pub fn diagnostics_only(result: UnusedImportResult) Vector<DiagKind> {
+  collect item in result.items { item.kind }
 }
 
 // ── Reconstruction ──────────────────────────────────────────────────

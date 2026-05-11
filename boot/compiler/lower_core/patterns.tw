@@ -1,7 +1,7 @@
 // Pattern lowering helpers for Core lowering.
 
 use compiler.ast as ast
-use compiler.resolver.{MonoType}
+use compiler.mono_type.{MonoType}
 use compiler.core_ir.{CorePattern}
 use compiler.lower_core.context.{LowerCtx}
 use compiler.lower_core.types.{

@@ -1,7 +1,8 @@
 use tests.runner
 use tests.assert
 use compiler.resolver
-use compiler.resolver.{MonoType, TypeId, ResolvedEnv, TypeEntry, ResolvedTypeDef, ResolvedField, ResolvedVariant}
+use compiler.resolver.{ResolvedEnv, TypeEntry, ResolvedTypeDef, ResolvedField, ResolvedVariant}
+use compiler.mono_type.{MonoType, TypeId}
 use compiler.core_ir.{LocalId, FuncId, FieldId, VariantId, Param}
 use compiler.builtins as bi
 use compiler.builtins.{BuiltinRegistry, make_builtin_registry}

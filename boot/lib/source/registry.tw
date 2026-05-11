@@ -89,6 +89,11 @@ pub fn line_col(reg: FileRegistry, s: span.Span) LineCol? {
   .Some(.{ line, column })
 }
 
+pub fn file_name(reg: FileRegistry, file_id: Int) String? {
+  f := try get_file(reg, file_id)
+  .Some(f.name)
+}
+
 pub fn line_text(reg: FileRegistry, s: span.Span) String? {
   if s.start < 0 { return .None }
   f := try get_file(reg, s.file_id)

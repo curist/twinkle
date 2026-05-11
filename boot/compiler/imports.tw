@@ -9,6 +9,8 @@
 use @std.fs
 use @std.path
 use lib.module.loader
+use lib.source.span
+use lib.source.span.{Span}
 use .ast.{Module, UseDecl, ImportItem}
 
 
@@ -21,6 +23,15 @@ pub type PlannedDep = .{
   alias: String,
   kind: DependencyKind,
   items: Vector<ImportItem>?,
+  /// Span of the `use` statement that introduced this dependency.
+  /// Zero span for auto-injected prelude modules.
+  span: Span,
+}
+
+/// Error returned when a `use` statement cannot be resolved to a file.
+pub type ImportError = .{
+  message: String,
+  span: Span,
 }
 
 pub type DependencyPlan = .{
@@ -42,7 +53,7 @@ pub type CanonicalRoots = .{
 /// Returns dependencies in source order (explicit imports first),
 /// then auto-injected prelude modules (sorted, deduplicated).
 /// Internal modules (stdlib/prelude) skip prelude injection.
-pub fn plan_dependencies(module: Module, file_path: String, project_root: String) Result<DependencyPlan, String> {
+pub fn plan_dependencies(module: Module, file_path: String, project_root: String) Result<DependencyPlan, ImportError> {
   plan_dependencies_with_exists(module, file_path, project_root, fn(path_str: String) Bool { fs.exists(path_str) })
 }
 
@@ -51,7 +62,7 @@ pub fn plan_dependencies_with_exists(
   file_path: String,
   project_root: String,
   exists: fn(String) Bool,
-) Result<DependencyPlan, String> {
+) Result<DependencyPlan, ImportError> {
   roots := make_canonical_roots(project_root)
   stdlib_root := loader.resolve_stdlib_root(project_root)
   prelude_root := loader.resolve_prelude_root(project_root)
@@ -67,7 +78,7 @@ pub fn plan_dependencies_with_exists(
         dep_path := canonical_module_path(resolve_import_path(decl, file_path, import_root, stdlib_root), roots)
         if !exists(dep_path) {
           label := format_import_path(decl)
-          return .Err("Cannot resolve module '${label}': expected file '${dep_path}'")
+          return .Err(ImportError.{ message: "Cannot resolve module '${label}': expected file '${dep_path}'", span: decl.span })
         }
         alias := module_alias(decl)
         canonical_paths = canonical_paths.append(dep_path)
@@ -76,6 +87,7 @@ pub fn plan_dependencies_with_exists(
           alias,
           kind: .Import,
           items: decl.items,
+          span: decl.span,
         })
       },
       _ => {},
@@ -104,6 +116,7 @@ pub fn plan_dependencies_with_exists(
         alias: "__prelude_${stem}",
         kind: .Prelude,
         items: .None,
+        span: span.new(0, 0, 0),
       })
     }
   }

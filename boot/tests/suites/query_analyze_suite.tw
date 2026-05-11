@@ -49,7 +49,11 @@ pub fn suite() runner.Suite {
       result := analyze.analyze_module(id, "__entry", base_env.builtin_env(), state, [])
       try assert.is_false(result.ok)
       try assert.is_true(result.diagnostics.len() > 0)
-      try assert.str_contains(result.diagnostics[0].message, "Circular import")
+      generic_msg := case result.diagnostics[0].kind {
+        .Error(.Generic(d)) => d.message,
+        _ => "",
+      }
+      try assert.str_contains(generic_msg, "Circular import")
       .Ok({})
     })
 
@@ -121,7 +125,7 @@ pub fn suite() runner.Suite {
       // Diagnostic should point to the dep file, not the entry
       try assert.str_eq(result.diagnostics[0].identity.path, "/tmp/analyze/dep.tw")
       try assert.str_eq(result.diagnostics[0].stage, "check")
-      try assert.is_some(result.diagnostics[0].span)
+      try assert.is_true(result.diagnostics[0].kind.span().start >= 0)
       .Ok({})
     })
 
@@ -135,6 +139,45 @@ pub fn suite() runner.Suite {
       try assert.is_false(result.ok)
       try assert.is_true(result.diagnostics.len() > 0)
       try assert.str_eq(result.diagnostics[0].stage, "import")
+      .Ok({})
+    })
+
+    .test("missing dep diagnostic span points to the use statement", fn() {
+      // "use missing" occupies bytes 0..11; span.end should be > 0, not the
+      // old zero sentinel that was emitted before import spans were tracked.
+      ov := overlay.from_documents([
+        ov_doc("/tmp/analyze/main.tw", "use missing\nx := 1\n"),
+      ])
+      state := analyze.new_state(base_env.builtin_env(), cache.empty(), ov, "/tmp/analyze")
+      id := identity.from_path("/tmp/analyze/main.tw")
+      result := analyze.analyze_module(id, "__entry", base_env.builtin_env(), state, [])
+      try assert.is_false(result.ok)
+      d := result.diagnostics[0]
+      // Identity should be the importing file
+      try assert.str_eq(d.identity.path, "/tmp/analyze/main.tw")
+      // Span should be non-zero (points to `use missing`, not the old zero sentinel)
+      try assert.is_true(d.kind.span().end > 0)
+      .Ok({})
+    })
+
+    .test("circular import diagnostic points to importing file's use statement", fn() {
+      // a.tw has `use b` at bytes 0..5; b.tw has `use a` at bytes 0..5.
+      // The circularity is detected when b tries to re-import a.
+      // Diagnostic should be attributed to b.tw at its `use a` span.
+      ov := overlay.from_documents([
+        ov_doc("/tmp/analyze/a.tw", "use b\npub fn a() Int { b.b() }\n"),
+        ov_doc("/tmp/analyze/b.tw", "use a\npub fn b() Int { a.a() }\n"),
+      ])
+      state := analyze.new_state(base_env.builtin_env(), cache.empty(), ov, "/tmp/analyze")
+      id := identity.from_path("/tmp/analyze/a.tw")
+      result := analyze.analyze_module(id, "__entry", base_env.builtin_env(), state, [])
+      try assert.is_false(result.ok)
+      try assert.is_true(result.diagnostics.len() > 0)
+      d := result.diagnostics[0]
+      // b.tw triggers the circular detection when it imports a.tw
+      try assert.str_eq(d.identity.path, "/tmp/analyze/b.tw")
+      // Span should point to `use a` in b.tw, not the zero sentinel
+      try assert.is_true(d.kind.span().end > 0)
       .Ok({})
     })
 

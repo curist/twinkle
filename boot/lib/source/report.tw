@@ -1,0 +1,51 @@
+// Rich diagnostic report types for terminal rendering.
+//
+// A Report is the render-time structure built from a DiagKind (M4).
+// For M3, reports are hand-constructed in tests and by the renderer itself.
+
+use .span.{Span}
+use @std.proc
+
+// ── Render configuration ──────────────────────────────────────────────
+
+pub type RenderConfig = .{
+  color: Bool,
+}
+
+/// Build a RenderConfig that respects the NO_COLOR environment variable.
+pub fn default_config() RenderConfig {
+  color := case proc.env("NO_COLOR") {
+    .Some(v) => v == "",
+    .None => true,
+  }
+  .{ color }
+}
+
+// ── Report types ──────────────────────────────────────────────────────
+
+pub type ReportSeverity = { Error, Warning }
+
+/// A labeled source span within a report.
+///
+/// Primary spans use `^` underlines and are highlighted in red.
+/// Secondary spans use `-` underlines (e.g. "first defined here").
+pub type SpanLabel = .{
+  span: Span,
+  /// Annotation shown after the underline, or .None for no label.
+  label: String?,
+  /// True for the main error location; false for secondary context spans.
+  is_primary: Bool,
+}
+
+/// A rich diagnostic report ready for terminal rendering.
+///
+/// Labels are rendered in the order they appear in the vector.
+/// The primary label (first with is_primary=true) determines the
+/// location shown in the `-->` line.
+pub type Report = .{
+  severity: ReportSeverity,
+  title: String,
+  labels: Vector<SpanLabel>,
+  /// Free-form help/hint lines shown at the bottom of the report.
+  help_lines: Vector<String>,
+}

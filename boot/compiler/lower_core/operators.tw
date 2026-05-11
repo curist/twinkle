@@ -2,7 +2,8 @@
 
 use lib.source.span.{Span}
 use compiler.ast.{Expr, BinOp as AstBinOp, UnOp as AstUnOp}
-use compiler.resolver.{MonoType, ResolvedEnv, TypeId}
+use compiler.resolver.{ResolvedEnv}
+use compiler.mono_type.{MonoType, TypeId}
 use compiler.core_ir.{CoreExpr, CoreExprKind, MatchArm, BinOp, UnOp, FuncId}
 use compiler.lower_core.context.{LowerCtx, ExprOut}
 use compiler.lower_core.helpers.{void_expr, global_func_expr, variant_pattern}

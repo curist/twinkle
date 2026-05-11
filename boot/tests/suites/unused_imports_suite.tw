@@ -154,7 +154,7 @@ pub fn suite() runner.Suite {
       result := check_unused_imports(module)
       // "remove" from `use foo.{remove}` should be flagged as unused
       try assert.int_eq(result.items.len(), 1)
-      try assert.str_contains(result.items[0].diagnostic.message, "remove")
+      try assert.str_contains(result.items[0].kind.message(), "remove")
       .Ok({})
     })
     .test("check_unused_imports: empty module returns empty result", fn() {
@@ -187,7 +187,7 @@ pub fn suite() runner.Suite {
       result := check_unused_imports(module)
       try assert.int_eq(result.items.len(), 1)
       diag := result.items[0]
-      try assert.str_contains(diag.diagnostic.message, "unused_fn")
+      try assert.str_contains(diag.kind.message(), "unused_fn")
       // Edit should span the whole use statement
       try assert.int_eq(diag.edit.use_span.start, 0)
       try assert.int_eq(diag.edit.use_span.end, 25)

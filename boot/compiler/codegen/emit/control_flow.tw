@@ -1,6 +1,6 @@
 // Control-flow emission helpers for Wasm emission.
 
-use compiler.resolver.{MonoType}
+use compiler.mono_type.{MonoType}
 use compiler.backend.prepared_ir.{PreparedAtom, PreparedExpr}
 use compiler.codegen.wasm_ir.{ValType, Instr}
 use compiler.codegen.emit.context.{EmitCtx, LabelPair}

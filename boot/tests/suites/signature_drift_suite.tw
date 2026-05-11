@@ -45,7 +45,7 @@ fn resolve_ok_with_builtins(src: String) Result<Bool, String> {
   parsed := parser.parse(src, 0)
   result := builtin_env().resolve(parsed.value)
   if result.diagnostics.len() > 0 {
-    return .Err("resolve error: ${result.diagnostics[0].message}")
+    return .Err("resolve error: ${result.diagnostics[0].message()}")
   }
   .Ok(true)
 }
@@ -54,11 +54,11 @@ fn check_ok_with_builtins(src: String) Result<Bool, String> {
   parsed := parser.parse(src, 0)
   resolved := builtin_env().resolve(parsed.value)
   if resolved.diagnostics.len() > 0 {
-    return .Err("resolve error: ${resolved.diagnostics[0].message}")
+    return .Err("resolve error: ${resolved.diagnostics[0].message()}")
   }
   result := checker.check(parsed.value, resolved.env)
   if result.diagnostics.len() > 0 {
-    return .Err("type error: ${result.diagnostics[0].message}")
+    return .Err("type error: ${result.diagnostics[0].message()}")
   }
   .Ok(true)
 }

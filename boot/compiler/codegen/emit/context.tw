@@ -1,6 +1,7 @@
 // Shared context types and lookup helpers for Wasm emission.
 
-use compiler.resolver.{MonoType, ResolvedEnv}
+use compiler.resolver.{ResolvedEnv}
+use compiler.mono_type.{MonoType}
 use compiler.core_ir.{LocalId, FuncId}
 use compiler.builtins.{BuiltinRegistry}
 use compiler.codegen.wasm_ir.{ValType}

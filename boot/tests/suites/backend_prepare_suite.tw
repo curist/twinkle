@@ -13,7 +13,8 @@
 use tests.runner
 use tests.assert
 use compiler.resolver
-use compiler.resolver.{MonoType, ResolvedEnv, TypeId}
+use compiler.resolver.{ResolvedEnv}
+use compiler.mono_type.{MonoType, TypeId}
 use compiler.core_ir.{LocalId, FuncId, Param, CorePattern}
 use compiler.builtins.{BuiltinRegistry, make_builtin_registry}
 use compiler.anf.{AnfExpr, AnfOp, AnfFunctionDef, AnfModule, AnfMatchArm}

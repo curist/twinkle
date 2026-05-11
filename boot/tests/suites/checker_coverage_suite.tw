@@ -16,7 +16,7 @@ fn check_src(src: String) checker.CheckResult {
 fn check_ok(src: String) Result<checker.CheckResult, String> {
   r := check_src(src)
   if r.diagnostics.len() > 0 {
-    return .Err("expected no diagnostics, got: ${r.diagnostics[0].message}")
+    return .Err("expected no diagnostics, got: ${r.diagnostics[0].message()}")
   }
   .Ok(r)
 }
@@ -28,7 +28,7 @@ fn check_errs(src: String) Result<Vector<String>, String> {
   }
   msgs: Vector<String> = []
   for d in r.diagnostics {
-    msgs = msgs.append(d.message)
+    msgs = msgs.append(d.message())
   }
   .Ok(msgs)
 }

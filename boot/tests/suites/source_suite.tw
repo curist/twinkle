@@ -2,7 +2,7 @@ use tests.runner
 use tests.assert
 use lib.source.span
 use lib.source.registry
-use lib.source.diagnostic
+use lib.source.diagnostics as diag
 use lib.source.identity
 use lib.source.overlay
 
@@ -248,15 +248,15 @@ pub fn suite() runner.Suite {
     // ── Diagnostics ──
     .test("diagnostic construction", fn() {
       s := span.new(0, 0, 5)
-      d := diagnostic.error(s, "something went wrong")
-      try assert.str_eq(d.message, "something went wrong")
-      try assert.int_eq(d.span.start, 0)
-      try assert.int_eq(d.span.end, 5)
+      d := diag.error(s, "something went wrong")
+      try assert.str_eq(d.message(), "something went wrong")
+      try assert.int_eq(d.span().start, 0)
+      try assert.int_eq(d.span().end, 5)
       .Ok({})
     })
     .test("stage_result holds value and diagnostics", fn() {
-      d := diagnostic.error(span.new(0, 0, 1), "warn")
-      sr := diagnostic.stage_result(42, [d])
+      d := diag.error(span.new(0, 0, 1), "warn")
+      sr := diag.stage_result(42, [d])
       try assert.int_eq(sr.value, 42)
       try assert.int_eq(sr.diagnostics.len(), 1)
       .Ok({})

@@ -2,7 +2,8 @@
 
 use lib.source.span.{Span}
 use compiler.ast.{Expr}
-use compiler.resolver.{MonoType, ResolvedEnv}
+use compiler.resolver.{ResolvedEnv}
+use compiler.mono_type.{MonoType}
 use compiler.contracts.{BuiltinContract}
 use compiler.core_ir.{CoreExpr}
 use compiler.lower_core.context.{LowerCtx, ExprOut}

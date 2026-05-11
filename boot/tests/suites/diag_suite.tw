@@ -1,0 +1,95 @@
+use tests.runner
+use tests.assert
+use lib.source.span.{Span}
+use lib.source.diagnostics as diag
+use lib.source.diagnostics.{DiagKind}
+use lib.source.span
+use compiler.mono_type.{MonoType}
+
+fn s(start: Int, end: Int) Span {
+  span.new(0, start, end)
+}
+
+pub fn suite() runner.Suite {
+  runner.suite("diag")
+
+    // ── has_errors ──
+    .test("has_errors is false for empty list", fn() {
+      try assert.is_false(diag.has_errors([]))
+      .Ok({})
+    })
+    .test("has_errors is false for warnings only", fn() {
+      w := DiagKind.Warning(.UnusedImport(diag.UnusedImportDiag.{ span: s(0, 5), binding: "foo" }))
+      try assert.is_false(diag.has_errors([w]))
+      .Ok({})
+    })
+    .test("has_errors is true when any error present", fn() {
+      e := DiagKind.Error(.Generic(diag.GenericDiag.{ span: s(0, 5), message: "oops" }))
+      try assert.is_true(diag.has_errors([e]))
+      .Ok({})
+    })
+    .test("has_errors is true when errors mixed with warnings", fn() {
+      e := DiagKind.Error(.UndefinedVar(diag.UndefinedVarDiag.{ span: s(0, 3), name: "x" }))
+      w := DiagKind.Warning(.Generic(diag.GenericDiag.{ span: s(4, 9), message: "warn" }))
+      try assert.is_true(diag.has_errors([w, e]))
+      .Ok({})
+    })
+
+    // ── span extraction ──
+    .test("span from Error.Generic", fn() {
+      k := DiagKind.Error(.Generic(diag.GenericDiag.{ span: s(10, 20), message: "msg" }))
+      try assert.int_eq(k.span().start, 10)
+      try assert.int_eq(k.span().end, 20)
+      .Ok({})
+    })
+    .test("span from Error.UndefinedVar", fn() {
+      k := DiagKind.Error(.UndefinedVar(diag.UndefinedVarDiag.{ span: s(5, 8), name: "foo" }))
+      try assert.int_eq(k.span().start, 5)
+      try assert.int_eq(k.span().end, 8)
+      .Ok({})
+    })
+    .test("span from Error.WrongArity", fn() {
+      k := DiagKind.Error(.WrongArity(diag.WrongArityDiag.{ span: s(1, 4), expected: 2, found: 3 }))
+      try assert.int_eq(k.span().start, 1)
+      .Ok({})
+    })
+    .test("span from Error.TypeMismatch", fn() {
+      k := DiagKind.Error(.TypeMismatch(diag.TypeMismatchDiag.{
+        span: s(3, 7),
+        expected: MonoType.Int,
+        found: MonoType.Bool,
+      }))
+      try assert.int_eq(k.span().start, 3)
+      try assert.int_eq(k.span().end, 7)
+      .Ok({})
+    })
+    .test("span from Error.MissingVariants", fn() {
+      k := DiagKind.Error(.MissingVariants(diag.MissingVariantsDiag.{
+        span: s(2, 9),
+        scrutinee_ty: MonoType.Bool,
+        missing: ["True", "False"],
+      }))
+      try assert.int_eq(k.span().start, 2)
+      .Ok({})
+    })
+    .test("span from Error.DuplicateField", fn() {
+      k := DiagKind.Error(.DuplicateField(diag.DuplicateFieldDiag.{
+        span: s(10, 15),
+        name: "x",
+        first: s(0, 5),
+      }))
+      try assert.int_eq(k.span().start, 10)
+      .Ok({})
+    })
+    .test("span from Warning.UnusedImport", fn() {
+      k := DiagKind.Warning(.UnusedImport(diag.UnusedImportDiag.{ span: s(0, 10), binding: "bar" }))
+      try assert.int_eq(k.span().start, 0)
+      try assert.int_eq(k.span().end, 10)
+      .Ok({})
+    })
+    .test("span from Warning.Generic", fn() {
+      k := DiagKind.Warning(.Generic(diag.GenericDiag.{ span: s(6, 12), message: "warn" }))
+      try assert.int_eq(k.span().start, 6)
+      .Ok({})
+    })
+}

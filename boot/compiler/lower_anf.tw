@@ -8,7 +8,7 @@
 
 use .core_ir.{LocalId, CoreExpr, CoreModule, CorePattern, FunctionDef}
 
-use .resolver.{MonoType, TypeId, ty_to_string}
+use .mono_type.{MonoType, TypeId, ty_to_string}
 use .anf.{
   Atom, AnfExpr, AnfOp, AnfFunctionDef, AnfModule, AnfMatchArm,
   FieldAtom, OpKind, IndexKind,

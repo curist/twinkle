@@ -2,7 +2,7 @@
 
 use lib.source.span.{Span}
 use compiler.ast.{Block, Expr, ForStmt, CollectExpr}
-use compiler.resolver.{MonoType, TypeId}
+use compiler.mono_type.{MonoType, TypeId}
 use compiler.builder_family.{BuilderConfig, vector_builder_config}
 use compiler.core_ir.{
   CoreExpr, CoreExprKind, LocalId, FieldId, MatchArm, CorePattern,

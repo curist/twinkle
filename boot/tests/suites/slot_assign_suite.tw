@@ -7,7 +7,7 @@
 use tests.runner
 use tests.assert
 use compiler.resolver
-use compiler.resolver.{MonoType, TypeId}
+use compiler.mono_type.{MonoType, TypeId}
 
 use compiler.core_ir.{LocalId, FuncId, VariantId, Param}
 

@@ -1,6 +1,6 @@
 // Call emission for direct, runtime, intrinsic, and closure calls.
 
-use compiler.resolver.{MonoType}
+use compiler.mono_type.{MonoType}
 use compiler.core_ir.{FuncId}
 use compiler.builtins as bi
 use compiler.builtins.{RuntimeInfo}

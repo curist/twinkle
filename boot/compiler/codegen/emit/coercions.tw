@@ -1,6 +1,6 @@
 // Stack value coercion helpers for Wasm emission.
 
-use compiler.resolver.{MonoType}
+use compiler.mono_type.{MonoType}
 use compiler.core_ir.{FuncId}
 use compiler.codegen.wasm_ir.{ValType, Instr, AbiContract}
 use compiler.codegen.wasm_layout.{val_type_of_mono}

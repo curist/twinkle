@@ -1,0 +1,196 @@
+use tests.runner
+use tests.assert
+use compiler.parser
+use compiler.ast.{Module}
+use compiler.query.ast_path
+use compiler.query.ast_path.{NodeRef}
+
+fn parse_src(src: String) Module {
+  parser.parse(src, 0).value
+}
+
+fn node_tag(n: NodeRef?) String {
+  case n {
+    .Some(.FnDecl(_)) => "FnDecl",
+    .Some(.TypeDecl(_)) => "TypeDecl",
+    .Some(.UseDecl(_)) => "UseDecl",
+    .Some(.Block(_)) => "Block",
+    .Some(.Stmt(_)) => "Stmt",
+    .Some(.Expr(_)) => "Expr",
+    .Some(.Arm(_)) => "Arm",
+    .Some(.Pattern(_)) => "Pattern",
+    .None => "None",
+  }
+}
+
+// Return the byte offset of the first occurrence of `needle` in `src`.
+fn offset_of(src: String, needle: String) Int {
+  i := 0
+  needle_len := needle.len()
+  for i + needle_len <= src.len() {
+    if src.substring(i, i + needle_len) == needle { return i }
+    i = i + 1
+  }
+  -1
+}
+
+pub fn suite() runner.Suite {
+  runner.suite("ast_path")
+
+    // ── deepest / parent helpers on empty/short paths ──
+    .test("deepest returns None for empty path", fn() {
+      path := ast_path.AstPath.{ nodes: [] }
+      try assert.is_none(ast_path.deepest(path))
+      .Ok({})
+    })
+    .test("parent returns None for single-node path", fn() {
+      src := "x := 1"
+      module := parse_src(src)
+      path := ast_path.find_path(module, 0)
+      try assert.is_some(ast_path.deepest(path))
+      try assert.is_none(ast_path.parent(path))
+      .Ok({})
+    })
+
+    // ── top-level statements ──
+    .test("find_path on top-level let stmt", fn() {
+      src := "x := 42"
+      module := parse_src(src)
+      off := offset_of(src, "42")
+      path := ast_path.find_path(module, off)
+      // deepest should be an Expr (the int literal)
+      case ast_path.deepest(path) {
+        .Some(.Expr(_)) => {},
+        other => { return assert.fail("expected Expr, got ${node_tag(other)}") },
+      }
+      // parent should be a Stmt
+      case ast_path.parent(path) {
+        .Some(.Stmt(_)) => {},
+        other => { return assert.fail("expected Stmt, got ${node_tag(other)}") },
+      }
+      .Ok({})
+    })
+
+    // ── function declarations ──
+    .test("find_path enters function body", fn() {
+      src := "fn foo() Int { 99 }"
+      module := parse_src(src)
+      off := offset_of(src, "99")
+      path := ast_path.find_path(module, off)
+      // root should be FnDecl
+      case path.nodes[0] {
+        .FnDecl(d) => try assert.str_eq(d.name, "foo"),
+        other => { return assert.fail("expected FnDecl at root, got ${node_tag(.Some(other))}") },
+      }
+      // deepest should be an Expr (int literal)
+      case ast_path.deepest(path) {
+        .Some(.Expr(_)) => {},
+        other => { return assert.fail("expected Expr deepest, got ${node_tag(other)}") },
+      }
+      .Ok({})
+    })
+    .test("enclosing_fn returns the function decl", fn() {
+      src := "fn bar(x: Int) Int { x + 1 }"
+      module := parse_src(src)
+      off := offset_of(src, "x + 1")
+      path := ast_path.find_path(module, off)
+      case ast_path.enclosing_fn(path) {
+        .Some(decl) => try assert.str_eq(decl.name, "bar"),
+        .None => { return assert.fail("expected enclosing_fn to return Some") },
+      }
+      .Ok({})
+    })
+    .test("enclosing_fn returns None outside any function", fn() {
+      src := "x := 1"
+      module := parse_src(src)
+      path := ast_path.find_path(module, 0)
+      try assert.is_none(ast_path.enclosing_fn(path))
+      .Ok({})
+    })
+
+    // ── nested blocks ──
+    .test("find_path descends into nested block", fn() {
+      src := "fn f() Int { { 7 } }"
+      module := parse_src(src)
+      off := offset_of(src, "7")
+      path := ast_path.find_path(module, off)
+      try assert.is_true(path.nodes.len() >= 4)
+      case path.nodes[0] {
+        .FnDecl(_) => {},
+        other => { return assert.fail("expected FnDecl at root, got ${node_tag(.Some(other))}") },
+      }
+      case ast_path.deepest(path) {
+        .Some(.Expr(_)) => {},
+        other => { return assert.fail("expected Expr deepest, got ${node_tag(other)}") },
+      }
+      .Ok({})
+    })
+
+    // ── case arms and patterns ──
+    .test("find_path finds pattern in case arm", fn() {
+      src := "fn f(x: Int) Int { case x { 1 => 10, _ => 0 } }"
+      module := parse_src(src)
+      off := offset_of(src, "_ =>")
+      path := ast_path.find_path(module, off)
+      case ast_path.deepest(path) {
+        .Some(.Pattern(_)) => {},
+        other => { return assert.fail("expected Pattern deepest, got ${node_tag(other)}") },
+      }
+      .Ok({})
+    })
+    .test("find_path finds arm body expression", fn() {
+      src := "fn f(x: Int) Int { case x { 1 => 10, _ => 0 } }"
+      module := parse_src(src)
+      off := offset_of(src, "10")
+      path := ast_path.find_path(module, off)
+      arm_found := false
+      for node in path.nodes {
+        case node {
+          .Arm(_) => { arm_found = true },
+          _ => {},
+        }
+      }
+      try assert.is_true(arm_found)
+      case ast_path.deepest(path) {
+        .Some(.Expr(_)) => {},
+        other => { return assert.fail("expected Expr deepest, got ${node_tag(other)}") },
+      }
+      .Ok({})
+    })
+
+    // ── type declarations ──
+    .test("find_path returns TypeDecl for type item", fn() {
+      src := "type Point = .{ x: Int, y: Int }"
+      module := parse_src(src)
+      off := offset_of(src, "Point")
+      path := ast_path.find_path(module, off)
+      case ast_path.deepest(path) {
+        .Some(.TypeDecl(_)) => {},
+        other => { return assert.fail("expected TypeDecl, got ${node_tag(other)}") },
+      }
+      .Ok({})
+    })
+
+    // ── use declarations ──
+    .test("find_path returns UseDecl for use item", fn() {
+      src := "use lib.source.span"
+      module := parse_src(src)
+      off := offset_of(src, "span")
+      path := ast_path.find_path(module, off)
+      case ast_path.deepest(path) {
+        .Some(.UseDecl(_)) => {},
+        other => { return assert.fail("expected UseDecl, got ${node_tag(other)}") },
+      }
+      .Ok({})
+    })
+
+    // ── offset outside all nodes ──
+    .test("find_path returns empty path for offset past end", fn() {
+      src := "x := 1"
+      module := parse_src(src)
+      path := ast_path.find_path(module, 9999)
+      try assert.int_eq(path.nodes.len(), 0)
+      try assert.is_none(ast_path.deepest(path))
+      .Ok({})
+    })
+}

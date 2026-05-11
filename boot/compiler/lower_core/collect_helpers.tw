@@ -1,7 +1,7 @@
 // Helpers for lowering collect comprehensions.
 
 use lib.source.span.{Span}
-use compiler.resolver.{MonoType}
+use compiler.mono_type.{MonoType}
 use compiler.builder_family.{BuilderConfig}
 use compiler.core_ir.{CoreExpr, CoreExprKind, LocalId, FuncId}
 

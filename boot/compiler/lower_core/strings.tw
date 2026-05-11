@@ -2,7 +2,7 @@
 
 use lib.source.span.{Span}
 use compiler.ast.{Expr, StringPart}
-use compiler.resolver.{MonoType}
+use compiler.mono_type.{MonoType}
 use compiler.core_ir.{CoreExpr}
 use compiler.lower_core.context.{LowerCtx, ExprOut}
 

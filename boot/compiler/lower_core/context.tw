@@ -1,10 +1,11 @@
 // Lowering context and context-local helpers.
 
 use lib.source.span.{Span}
-use lib.source.diagnostic.{Diagnostic}
-use lib.source.diagnostic as diag
+use lib.source.diagnostics.{DiagKind}
+use lib.source.diagnostics as diag
 use compiler.ast.{Expr}
-use compiler.resolver.{MonoType, ResolvedEnv, FunctionOrigin}
+use compiler.resolver.{ResolvedEnv, FunctionOrigin}
+use compiler.mono_type.{MonoType}
 use compiler.checker.{CheckResult, MethodCallInfo}
 use compiler.builtins.{BuiltinRegistry}
 use compiler.core_ir.{CoreExpr, FunctionDef, LocalId, FuncId, ExternImport}
@@ -21,7 +22,7 @@ pub type LowerCtx = .{
   module_globals: Dict<String, LocalId>,
   next_global: Int,
   current_fn_return_type: MonoType?,
-  errors: Vector<Diagnostic>,
+  errors: Vector<DiagKind>,
   method_calls: Dict<Int, MethodCallInfo>,
   // Imported phantom FuncId → canonical defining-site origin.
   // Built during lower_module; consumed by module_compiler to build external_refs.

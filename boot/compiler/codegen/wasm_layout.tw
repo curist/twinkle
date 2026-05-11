@@ -3,7 +3,8 @@
 // Every concrete MonoType maps to exactly one WasmLayout.
 // This is the single source of truth — no shadow metadata.
 
-use compiler.resolver.{MonoType, TypeId, ResolvedEnv, ResolvedVariant, ResolvedTypeParam, TypeEntry}
+use compiler.resolver.{ResolvedEnv, ResolvedVariant, ResolvedTypeParam, TypeEntry}
+use compiler.mono_type.{MonoType, TypeId}
 
 use compiler.core_ir.{FieldId, VariantId}
 use compiler.codegen.wasm_ir.{ValType}

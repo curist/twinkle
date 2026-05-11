@@ -20,12 +20,12 @@ use compiler.lower_core
 use compiler.resolver
 use compiler.query.type_registry
 use lib.graph.dependency
-use lib.source.diagnostic.{Diagnostic}
+use lib.source.diagnostics.{DiagKind}
 
 
 pub type ParsedModule = .{
   module: ast.Module,
-  diagnostics: Vector<Diagnostic>,
+  diagnostics: Vector<DiagKind>,
 }
 
 pub type StageKind = {

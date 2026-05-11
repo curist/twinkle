@@ -4,7 +4,8 @@
 // If two fingerprints are equal, downstream dependents don't need recomputation.
 // Fingerprints intentionally ignore spans, ordering, and internal details.
 
-use compiler.resolver.{ModuleExports, ExportedType, ExportedFunction, FunctionSig, MonoType, ResolvedTypeDef}
+use compiler.resolver.{ModuleExports, ExportedType, ExportedFunction, FunctionSig, ResolvedTypeDef}
+use compiler.mono_type.{MonoType}
 
 use lib.query.keys
 

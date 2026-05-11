@@ -4,7 +4,8 @@
 // from the checker's type_map (keyed by expr.id).
 
 use lib.source.span.{Span}
-use .resolver.{MonoType, ResolvedEnv, TypeId}
+use .resolver.{ResolvedEnv}
+use .mono_type.{MonoType, TypeId}
 use .contracts.{BuiltinContract}
 
 // ── Identity types ──────────────────────────────────────────────────

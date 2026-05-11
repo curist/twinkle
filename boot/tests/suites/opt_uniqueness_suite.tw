@@ -6,7 +6,7 @@ use compiler.anf.{AnfExpr, AnfFunctionDef, AnfMatchArm, FieldAtom}
 
 
 use compiler.builder_family.{BuilderConfig}
-use compiler.resolver.{MonoType, TypeId}
+use compiler.mono_type.{MonoType, TypeId}
 use compiler.opt.semantics.{OptimizerSemantics, CallSemantics}
 use compiler.opt.uniqueness.{uniqueness_rewrite_with_semantics, uniqueness_rewrite_with_semantics_and_consumed_and_fresh}
 

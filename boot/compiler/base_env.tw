@@ -2,7 +2,8 @@ use @std.path
 use lib.module.loader
 use compiler.imports
 use compiler.resolver
-use compiler.resolver.{ResolvedEnv, MonoType, FunctionSig, TypeEntry, TypeId, ResolvedTypeDef, plain_resolved_type_params}
+use compiler.resolver.{ResolvedEnv, FunctionSig, TypeEntry, ResolvedTypeDef, plain_resolved_type_params}
+use compiler.mono_type.{MonoType, TypeId}
 use compiler.signatures
 
 fn builtin_sig(

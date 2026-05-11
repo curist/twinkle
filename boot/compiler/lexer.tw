@@ -1,6 +1,6 @@
 use lib.source.span
-use lib.source.diagnostic
-use lib.source.diagnostic.{Diagnostic, StageResult}
+use lib.source.diagnostics.{DiagKind, StageResult}
+use lib.source.diagnostics as diag
 use lib.ascii
 use .tokens
 use .tokens.{Token, TokenKind}
@@ -187,7 +187,7 @@ fn scan_string_segment(source: String, from: Int, content_start: Int) ScanString
 
 pub fn lex(source: String, file_id: Int) StageResult<Vector<Token>> {
   out: Vector<Token> = []
-  diagnostics_out: Vector<Diagnostic> = []
+  diagnostics_out: Vector<DiagKind> = []
   i := 0
   saw_newline := false
   n := source.len()
@@ -251,7 +251,7 @@ pub fn lex(source: String, file_id: Int) StageResult<Vector<Token>> {
         }
 
         if !scanned.terminated {
-          diagnostics_out = diagnostics_out.append(diagnostic.error(
+          diagnostics_out = diagnostics_out.append(diag.error(
             span.new(file_id, token_start, i),
             "unterminated string literal",
           ))
@@ -332,7 +332,7 @@ pub fn lex(source: String, file_id: Int) StageResult<Vector<Token>> {
       }
 
       if !scanned.terminated {
-        diagnostics_out = diagnostics_out.append(diagnostic.error(
+        diagnostics_out = diagnostics_out.append(diag.error(
           span.new(file_id, token_start, i),
           "unterminated string literal",
         ))
@@ -443,7 +443,7 @@ pub fn lex(source: String, file_id: Int) StageResult<Vector<Token>> {
       },
       .None => {
         i = i + 1
-        diagnostics_out = diagnostics_out.append(diagnostic.error(
+        diagnostics_out = diagnostics_out.append(diag.error(
           span.new(file_id, token_start, i),
           "unexpected character in source",
         ))
@@ -453,7 +453,7 @@ pub fn lex(source: String, file_id: Int) StageResult<Vector<Token>> {
   }
 
   out = out.append(tokens.eof(file_id, n, saw_newline))
-  diagnostic.stage_result(out, diagnostics_out)
+  StageResult.{ value: out, diagnostics: diagnostics_out }
 }
 
 /// Lex source and inject a CursorHole token at the given byte offset.
@@ -496,5 +496,5 @@ pub fn lex_with_cursor(source: String, file_id: Int, cursor_offset: Int) StageRe
     }
   }
 
-  diagnostic.stage_result(result, lexed.diagnostics)
+  StageResult.{ value: result, diagnostics: lexed.diagnostics }
 }

@@ -1,6 +1,6 @@
 // Array/vector and index operation emission helpers.
 
-use compiler.resolver.{MonoType}
+use compiler.mono_type.{MonoType}
 use compiler.anf.{IndexKind}
 use compiler.backend.prepared_ir.{PreparedAtom}
 use compiler.codegen.wasm_ir.{ValType, Instr}

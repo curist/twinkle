@@ -4,7 +4,7 @@ use compiler.core_ir.{LocalId, FuncId}
 use compiler.anf.{AnfExpr, AnfOp, AnfMatchArm}
 
 use compiler.builder_family.{BuilderConfig}
-use compiler.resolver.{MonoType}
+use compiler.mono_type.{MonoType}
 use compiler.opt.analysis.{analyze_loop_push_sites, count_global_call_sites, loop_push_reassign_elem}
 use compiler.opt.builder_region.{BuilderInit, BuilderRegion, lower_builder_region}
 

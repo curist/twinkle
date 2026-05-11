@@ -1,6 +1,7 @@
 // Small general helpers for Wasm emission.
 
-use compiler.resolver.{MonoType, TypeId, ResolvedEnv}
+use compiler.resolver.{ResolvedEnv}
+use compiler.mono_type.{MonoType, TypeId}
 use compiler.type_util.{subst_type_params}
 use compiler.core_ir.{VariantId}
 use compiler.codegen.wasm_ir.{Instr}

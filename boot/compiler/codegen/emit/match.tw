@@ -1,6 +1,6 @@
 // Pattern-match control-flow emission helpers.
 
-use compiler.resolver.{MonoType}
+use compiler.mono_type.{MonoType}
 use compiler.backend.prepared_ir.{PreparedAtom, PreparedExpr, PreparedMatchArm, PreparedPattern}
 use compiler.codegen.wasm_ir.{ValType, Instr}
 use compiler.codegen.emit.context.{EmitCtx}

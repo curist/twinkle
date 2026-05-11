@@ -5,7 +5,7 @@
 // semantic ANF facts or depend on Wasm planning/emission state.
 
 use compiler.backend.prepared_ir.{PreparedFunc, PreparedAtom, SlotId, SlotInfo, ReprKind}
-use compiler.resolver.{MonoType}
+use compiler.mono_type.{MonoType}
 use compiler.codegen.wasm_ir.{ValType}
 
 pub fn slot_info(func: PreparedFunc, sid: SlotId) SlotInfo {

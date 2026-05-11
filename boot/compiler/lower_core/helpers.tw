@@ -2,7 +2,7 @@
 
 use lib.source.span.{Span}
 use compiler.ast.{Expr}
-use compiler.resolver.{MonoType, TypeId}
+use compiler.mono_type.{MonoType, TypeId}
 use compiler.core_ir.{CoreExpr, CorePattern, LocalId, FuncId, FieldId}
 
 pub fn void_expr(s: Span) CoreExpr {

@@ -1,6 +1,6 @@
 // Variant construction emission helpers.
 
-use compiler.resolver.{MonoType, TypeId}
+use compiler.mono_type.{MonoType, TypeId}
 use compiler.core_ir.{VariantId}
 use compiler.backend.prepared_ir.{PreparedAtom}
 use compiler.codegen.wasm_ir.{ValType, Instr}

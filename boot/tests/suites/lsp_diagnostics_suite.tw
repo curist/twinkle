@@ -3,7 +3,7 @@ use tests.assert
 use compiler.query.diagnostics as query_diagnostics
 use lib.json
 use lib.lsp.diagnostics
-use lib.source.diagnostic as source_diag
+use lib.source.diagnostics as diag
 use lib.source.span
 use lib.text.line_index
 
@@ -15,7 +15,7 @@ pub fn suite() runner.Suite {
         uri: "file:///a.tw",
         version: .Some(2),
         span: .Some(span.Span.{ file_id: 0, start: 1, end: 5 }),
-        severity: source_diag.Severity.Error,
+        severity: diag.Severity.Error,
         message: "bad",
         stage: "check",
         data: .None,
@@ -51,7 +51,7 @@ pub fn suite() runner.Suite {
         uri: "file:///a.tw",
         version: .Some(1),
         span: .Some(span.Span.{ file_id: 0, start: 12, end: 13 }),
-        severity: source_diag.Severity.Warning,
+        severity: diag.Severity.Warning,
         message: "unused import: B",
         stage: "import",
         data: .Some(data),
@@ -75,7 +75,7 @@ pub fn suite() runner.Suite {
         uri: "file:///a.tw",
         version: .Some(1),
         span: .Some(span.Span.{ file_id: 0, start: 0, end: 1 }),
-        severity: source_diag.Severity.Error,
+        severity: diag.Severity.Error,
         message: "bad",
         stage: "check",
         data: .None,

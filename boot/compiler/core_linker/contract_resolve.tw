@@ -4,7 +4,8 @@
 // concrete function name that implements the contract for that type.
 
 use compiler.core_ir.{FuncId}
-use compiler.resolver.{MonoType, ResolvedEnv}
+use compiler.resolver.{ResolvedEnv}
+use compiler.mono_type.{MonoType}
 use compiler.contracts.{BuiltinContract}
 
 pub fn resolve_contract_target_name(contract: BuiltinContract, receiver_ty: MonoType, method_name: String, env: ResolvedEnv) String? {

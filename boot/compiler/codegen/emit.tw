@@ -7,7 +7,8 @@
 //   - Boundaries explicit — AWrapAnyref / AUnwrapAnyref already in IR
 //   - Pattern match arm chains are delegated to codegen.emit.match
 
-use compiler.resolver.{MonoType, TypeId, ResolvedEnv}
+use compiler.resolver.{ResolvedEnv}
+use compiler.mono_type.{MonoType, TypeId}
 use compiler.type_util.{subst_type_params}
 use compiler.core_ir.{FuncId, FieldId, VariantId, BinOp, UnOp}
 use compiler.builtins as bi

@@ -1,6 +1,7 @@
 // Discovery helpers for extra runtime bridge functions needed by emission.
 
-use compiler.resolver.{MonoType, ResolvedEnv}
+use compiler.resolver.{ResolvedEnv}
+use compiler.mono_type.{MonoType}
 use compiler.core_ir.{FuncId}
 use compiler.builtins as bi
 use compiler.builtins.{BuiltinRegistry}

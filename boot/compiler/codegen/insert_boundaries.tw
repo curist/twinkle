@@ -4,7 +4,8 @@
 //
 // Phase D, Milestone 4.
 
-use compiler.resolver.{MonoType, ResolvedEnv, TypeId, lookup_type_def}
+use compiler.resolver.{ResolvedEnv, lookup_type_def}
+use compiler.mono_type.{MonoType, TypeId}
 
 use compiler.type_util.{subst_type_params}
 use compiler.core_ir.{FuncId, LocalId, FieldId, VariantId}

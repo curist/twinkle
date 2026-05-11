@@ -11,7 +11,8 @@
 // land later once planning/emission migration makes more operations fully
 // prepared-IR-driven.
 
-use compiler.resolver.{MonoType, ResolvedEnv}
+use compiler.resolver.{ResolvedEnv}
+use compiler.mono_type.{MonoType}
 use compiler.builtins.{BuiltinRegistry}
 use compiler.backend.prepared_ir.{PreparedFunc}
 use compiler.backend.prepare.{PreparedModule}

@@ -2,7 +2,7 @@
 
 use lib.source.span.{Span}
 use compiler.ast.{Block, Param as AstParam}
-use compiler.resolver.{MonoType}
+use compiler.mono_type.{MonoType}
 use compiler.core_ir.{CoreExpr, CorePattern, FunctionDef, Param, LocalId}
 use compiler.lower_core.context.{LowerCtx, ExprOut}
 use compiler.lower_core.types.{expand_alias_for_iter}

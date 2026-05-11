@@ -8,7 +8,7 @@
 
 use compiler.core_ir.{LocalId, FieldId}
 
-use compiler.resolver.{MonoType}
+use compiler.mono_type.{MonoType}
 use compiler.anf.{Atom, AnfExpr, AnfOp, AnfMatchArm, AnfFunctionDef, AnfModule}
 use compiler.anf_analysis.{set_has}
 use compiler.opt.analysis.{base_reusable_after_binding_with_live, collect_tainted_and_live, next_local_id}

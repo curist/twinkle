@@ -3,7 +3,8 @@
 use compiler.backend.prepared_ir.{PreparedMatchArm, PreparedFieldAtom}
 use compiler.core_ir.{LocalId, FieldId, VariantId}
 use compiler.anf.{OpKind}
-use compiler.resolver.{MonoType, ResolvedEnv, lookup_type_def, resolved_type_param_names}
+use compiler.resolver.{ResolvedEnv, lookup_type_def, resolved_type_param_names}
+use compiler.mono_type.{MonoType}
 use compiler.builtins.{BuiltinRegistry}
 use compiler.codegen.wasm_ir.{ValType}
 use compiler.codegen.wasm_layout.{layout_of, val_type_of_mono}

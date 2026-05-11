@@ -5,7 +5,7 @@
 // facts instead of rediscovering them.
 
 use compiler.core_ir.{LocalId, FuncId, FieldId, VariantId, BinOp, UnOp}
-use compiler.resolver.{MonoType, TypeId}
+use compiler.mono_type.{MonoType, TypeId}
 use compiler.anf.{OpKind, IndexKind}
 use compiler.codegen.wasm_ir.{ValType}
 

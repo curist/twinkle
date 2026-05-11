@@ -6,7 +6,8 @@
 
 use compiler.core_ir.{CoreExpr, FunctionDef, FuncId}
 
-use compiler.resolver.{MonoType, ResolvedEnv}
+use compiler.resolver.{ResolvedEnv}
+use compiler.mono_type.{MonoType}
 use compiler.contracts.{BuiltinContract}
 use .contract_resolve.{exact_contract_ref}
 

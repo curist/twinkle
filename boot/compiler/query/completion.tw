@@ -10,7 +10,8 @@
 use compiler.lexer
 use compiler.tokens.{Token}
 use compiler.ast.{Block, Stmt, Expr, CaseArm}
-use compiler.resolver.{ResolvedEnv, MonoType, FunctionSig, ResolvedField, ResolvedTypeParam, ResolvedVariant, MethodEntry, ty_to_string_env, lookup_type_methods}
+use compiler.resolver.{ResolvedEnv, FunctionSig, ResolvedField, ResolvedTypeParam, ResolvedVariant, MethodEntry, ty_to_string_env, lookup_type_methods}
+use compiler.mono_type.{MonoType}
 use compiler.query.semantic.{SemanticSnapshot}
 use compiler.query.ast_walk.{find_node_in_block, find_node_in_stmt, NodeContext}
 use lib.lsp.completion as lsp_completion

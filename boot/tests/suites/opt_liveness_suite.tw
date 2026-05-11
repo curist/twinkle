@@ -5,7 +5,7 @@ use compiler.core_ir.{LocalId, FuncId, FieldId, Param}
 use compiler.anf.{AnfExpr, AnfFunctionDef}
 
 use compiler.anf_analysis.{set_has}
-use compiler.resolver.{TypeId}
+use compiler.mono_type.{TypeId}
 
 use compiler.opt.liveness.{live_after, annotate_in_place}
 

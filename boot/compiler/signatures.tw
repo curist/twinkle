@@ -11,7 +11,8 @@ use @std.path
 use compiler.parser
 use compiler.ast.{Param, TypeExpr, TypeParam, type_param_names}
 
-use compiler.resolver.{FunctionSig, MethodEntry, MonoType, ResolvedEnv, resolve_type_expr, ResolvedTypeParam, ResolvedContractRef}
+use compiler.resolver.{FunctionSig, MethodEntry, ResolvedEnv, resolve_type_expr, ResolvedTypeParam, ResolvedContractRef}
+use compiler.mono_type.{MonoType}
 
 use compiler.contracts.{resolve_builtin_contract_name}
 
@@ -150,7 +151,7 @@ fn resolve_param_type(env: ResolvedEnv, param: Param, type_vars: Vector<String>)
         .Some(mono) => .Ok(mono),
         .None => {
           case r.diagnostics.get(0) {
-            .Some(d) => .Err("type error in param '${param.name}': ${d.message}"),
+            .Some(d) => .Err("type error in param '${param.name}': ${d.message()}"),
             .None => .Err("unknown type error in param '${param.name}'"),
           }
         },
@@ -168,7 +169,7 @@ fn resolve_return_type(env: ResolvedEnv, ret_expr: TypeExpr?, type_vars: Vector<
         .Some(mono) => .Ok(.Some(mono)),
         .None => {
           case r.diagnostics.get(0) {
-            .Some(d) => .Err("type error in return type: ${d.message}"),
+            .Some(d) => .Err("type error in return type: ${d.message()}"),
             .None => .Err("unknown type error in return type"),
           }
         },
@@ -213,7 +214,7 @@ fn extract_doc_comment(source: String, decl_start: Int) String? {
 fn load_group_from_source(src: String, receiver: String?, env: ResolvedEnv) Result<SignatureGroup, String> {
   parsed := parser.parse(src, 0)
   if parsed.diagnostics.len() > 0 {
-    return .Err("parse error: ${parsed.diagnostics[0].message}")
+    return .Err("parse error: ${parsed.diagnostics[0].message()}")
   }
 
   sigs: Vector<FunctionSig> = []

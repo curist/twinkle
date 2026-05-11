@@ -21,7 +21,8 @@
 
 use compiler.core_ir.{LocalId, CorePattern, VariantId}
 
-use compiler.resolver.{MonoType, TypeId, ResolvedEnv, lookup_type_def}
+use compiler.resolver.{ResolvedEnv, lookup_type_def}
+use compiler.mono_type.{MonoType, TypeId}
 
 use compiler.type_util.{subst_type_params}
 use compiler.anf.{AnfExpr, AnfOp, AnfFunctionDef, Atom}

@@ -2,7 +2,8 @@
 
 use compiler.ast.{Item, Block, Stmt, Expr, FunctionDecl, TypeDecl, TypeExpr, TypePath, TypeDef, Pattern}
 use compiler.checker.{CheckResult}
-use compiler.resolver.{ResolvedEnv, MonoType, FunctionSig, TypeId, ResolvedTypeParam, ResolvedVariant, ty_to_string_env}
+use compiler.resolver.{ResolvedEnv, FunctionSig, ResolvedTypeParam, ResolvedVariant, ty_to_string_env}
+use compiler.mono_type.{MonoType, TypeId}
 
 use compiler.query.semantic.{SemanticSnapshot}
 use compiler.query.ast_walk.{NodeContext, find_node_in_block, find_node_in_expr, find_node_in_stmt}

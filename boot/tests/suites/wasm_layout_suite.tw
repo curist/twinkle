@@ -2,7 +2,8 @@ use tests.runner
 use tests.assert
 use lib.source.span
 use compiler.resolver
-use compiler.resolver.{MonoType, TypeId, ResolvedEnv, ResolvedTypeDef, ResolvedField, ResolvedVariant, TypeEntry, plain_resolved_type_params}
+use compiler.resolver.{ResolvedEnv, ResolvedTypeDef, ResolvedField, ResolvedVariant, TypeEntry, plain_resolved_type_params}
+use compiler.mono_type.{MonoType, TypeId}
 
 
 use compiler.codegen.wasm_layout.{WasmValType, WasmRecordLayout, layout_of, val_type_of, val_type_of_mono, mono_to_key}

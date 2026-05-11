@@ -1,5 +1,6 @@
 use compiler.resolver
-use compiler.resolver.{ResolvedEnv, ResolvedTypeDef, MonoType, TypeId}
+use compiler.resolver.{ResolvedEnv, ResolvedTypeDef}
+use compiler.mono_type.{MonoType, TypeId}
 use compiler.core_ir.{CoreExpr, CoreModule, Param, FieldId, VariantId, BinOp, UnOp, CorePattern}
 
 use compiler.contracts.{BuiltinContract, contract_spec}

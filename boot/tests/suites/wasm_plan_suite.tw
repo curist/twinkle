@@ -2,7 +2,8 @@ use tests.runner
 use tests.assert
 use lib.source.span
 use compiler.resolver
-use compiler.resolver.{MonoType, TypeId, ResolvedEnv, ResolvedTypeDef, ResolvedField, TypeEntry}
+use compiler.resolver.{ResolvedEnv, ResolvedTypeDef, ResolvedField, TypeEntry}
+use compiler.mono_type.{MonoType, TypeId}
 
 use compiler.core_ir.{LocalId, FuncId, FieldId, VariantId, Param}
 use compiler.builtins as bi

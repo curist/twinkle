@@ -6,6 +6,7 @@ use compiler.core_ir.{CompiledModule, ExternalRef, ExternalValueRef}
 use compiler.artifacts.{PipelineArtifacts, CompileError}
 use compiler.imports
 use compiler.base_env.{builtin_env}
+use compiler.resolver.{ResolvedEnv}
 use compiler.module_compiler
 use compiler.core_linker
 use compiler.query.analyze
@@ -15,7 +16,11 @@ use compiler.codegen.codegen.{codegen, codegen_wasm}
 use lib.module.loader
 use lib.source.identity
 use lib.source.overlay
-use lib.source.diagnostic.{Diagnostic, format_source_diagnostics}
+use lib.source.diagnostics as diag
+use lib.source.registry
+use lib.source.report
+use lib.source.render
+use compiler.query.diag_render
 
 /// Compile a source string through the full pipeline.
 ///
@@ -41,7 +46,7 @@ pub fn compile_source(src: String) Result<PipelineArtifacts, String> {
   a_result := analyze.analyze_module(virtual_id, "__input", base_env, a_state, [])
 
   if !a_result.ok {
-    return .Err(format_analysis_diags_inline(src, a_result.diagnostics))
+    return .Err(format_analysis_diags_inline(a_result.env, src, a_result.diagnostics))
   }
 
   // Phase 2: Lower to Core IR
@@ -64,7 +69,7 @@ pub fn compile_source(src: String) Result<PipelineArtifacts, String> {
   cur_cache = lowered_out.store
   lowered := lowered_out.value
   if lowered.diagnostics.len() > 0 {
-    return .Err(format_source_diagnostics("<input>", src, lowered.diagnostics))
+    return .Err(format_diags_inline(a_result.env, src, lowered.diagnostics))
   }
 
   // Build CompiledModule for linker
@@ -93,8 +98,10 @@ pub fn compile_source(src: String) Result<PipelineArtifacts, String> {
   // Collect warnings
   warnings: Vector<analyze.AnalysisDiag> = []
   for d in a_result.diagnostics {
-    if d.severity != .Warning { continue }
-    warnings = warnings.append(d)
+    case d.kind {
+      .Warning(_) => { warnings = warnings.append(d) },
+      .Error(_) => {},
+    }
   }
 
   .Ok(PipelineArtifacts.{
@@ -109,28 +116,36 @@ pub fn compile_source(src: String) Result<PipelineArtifacts, String> {
 }
 
 /// Format analysis diagnostics using the in-memory source (for virtual paths).
-fn format_analysis_diags_inline(src: String, diags: Vector<analyze.AnalysisDiag>) String {
+fn format_analysis_diags_inline(env: ResolvedEnv, src: String, diags: Vector<analyze.AnalysisDiag>) String {
   if diags.len() == 0 { return "compilation failed" }
-  out := ""
-  input_name := "<input>"
-  for d,i in diags {
-    if i > 0 { out = "${out}\n" }
-    part := format_one_diag(input_name, src, d)
-    out = "${out}${part}"
+  parts: Vector<String> = []
+  for d in diags {
+    parts = parts.append(format_analysis_diag_inline(env, src, d))
   }
-  out
+  parts.join("\n")
 }
 
-fn format_one_diag(input_name: String, src: String, d: analyze.AnalysisDiag) String {
-  case d.span {
-    .Some(sp) => {
-      diag: Diagnostic = .{ span: sp, message: d.message, severity: d.severity, related: [] }
-      format_source_diagnostics(input_name, src, [diag])
-    },
-    .None => {
-      "${d.stage}: ${d.message}"
-    },
+fn format_analysis_diag_inline(env: ResolvedEnv, src: String, d: analyze.AnalysisDiag) String {
+  reg := registry.empty()
+  registry.add_file(reg, "<input>", src)
+  config := report.default_config()
+  ctx := diag_render.RenderCtx.{ registry: reg, env: .Some(env), module: .None, config }
+  rep := diag_render.to_report(d.kind, ctx)
+  render.render(rep, reg, config)
+}
+
+fn format_diags_inline(env: ResolvedEnv, src: String, diags: Vector<diag.DiagKind>) String {
+  if diags.len() == 0 { return "compilation failed" }
+  reg := registry.empty()
+  registry.add_file(reg, "<input>", src)
+  config := report.default_config()
+  parts: Vector<String> = []
+  for d in diags {
+    ctx := diag_render.RenderCtx.{ registry: reg, env: .Some(env), module: .None, config }
+    rep := diag_render.to_report(d, ctx)
+    parts = parts.append(render.render(rep, reg, config))
   }
+  parts.join("\n\n")
 }
 
 pub fn compile_entry_path(path: String) Result<PipelineArtifacts, CompileError> {

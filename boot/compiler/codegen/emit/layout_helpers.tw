@@ -1,6 +1,7 @@
 // Layout and monotype helpers shared by Wasm emission routines.
 
-use compiler.resolver.{MonoType, ResolvedEnv}
+use compiler.resolver.{ResolvedEnv}
+use compiler.mono_type.{MonoType}
 use compiler.type_util.{subst_type_params}
 use compiler.core_ir.{FieldId}
 use compiler.codegen.wasm_layout.{

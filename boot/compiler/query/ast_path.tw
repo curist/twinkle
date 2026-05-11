@@ -1,0 +1,303 @@
+// Path-returning AST walk for rich diagnostic rendering and LSP context.
+//
+// find_path() walks from the module root to the deepest node containing a
+// byte offset, returning the full ancestor chain (root-most first, deepest
+// last). This gives renderers the enclosing function, block, and expression
+// context needed to produce useful error messages.
+//
+// Contrast with ast_walk.find_node_in_block, which starts from a block and
+// returns only the deepest NodeContext — no parent chain, no module-level items.
+
+use compiler.ast.{
+  Module, FunctionDecl, TypeDecl, UseDecl,
+  Block, Stmt, Expr, CaseArm, Pattern,
+  RecordEntry, CollectExpr,
+}
+use lib.source.span.{Span}
+
+// ── Node types ───────────────────────────────────────────────────────
+
+pub type NodeRef = {
+  FnDecl(FunctionDecl),
+  TypeDecl(TypeDecl),
+  UseDecl(UseDecl),
+  Block(Block),
+  Stmt(Stmt),
+  Expr(Expr),
+  Arm(CaseArm),
+  Pattern(Pattern),
+}
+
+pub type AstPath = .{
+  /// Ancestor chain: root-most first, deepest last. Empty if offset matched nothing.
+  nodes: Vector<NodeRef>,
+}
+
+// ── Public API ───────────────────────────────────────────────────────
+
+/// Walk the module from root to the deepest node containing `offset`.
+/// Returns a path with root-most nodes first and the matching leaf last.
+pub fn find_path(module: Module, offset: Int) AstPath {
+  nodes: Vector<NodeRef> = []
+  for item in module.items {
+    case item {
+      .Function(decl) => {
+        if decl.span.contains(offset) {
+          nodes = [NodeRef.FnDecl(decl)]
+          nodes = nodes.concat(path_in_block(decl.body, offset))
+          return AstPath.{ nodes }
+        }
+      },
+      .Type(decl) => {
+        if decl.span.contains(offset) {
+          return AstPath.{ nodes: [NodeRef.TypeDecl(decl)] }
+        }
+      },
+      .Use(decl) => {
+        if decl.span.contains(offset) {
+          return AstPath.{ nodes: [NodeRef.UseDecl(decl)] }
+        }
+      },
+      .Stmt(stmt) => {
+        child := path_in_stmt(stmt, offset)
+        if child.len() > 0 {
+          return AstPath.{ nodes: child }
+        }
+      },
+      _ => {},
+    }
+  }
+  AstPath.{ nodes: [] }
+}
+
+/// Return the deepest node in the path, or .None if the path is empty.
+pub fn deepest(path: AstPath) NodeRef? {
+  n := path.nodes.len()
+  if n == 0 { return .None }
+  .Some(path.nodes[n - 1])
+}
+
+/// Return the parent of the deepest node, or .None if the path has fewer than two nodes.
+pub fn parent(path: AstPath) NodeRef? {
+  n := path.nodes.len()
+  if n < 2 { return .None }
+  .Some(path.nodes[n - 2])
+}
+
+/// Return the innermost enclosing function declaration in the path.
+pub fn enclosing_fn(path: AstPath) FunctionDecl? {
+  i := path.nodes.len() - 1
+  for i >= 0 {
+    case path.nodes[i] {
+      .FnDecl(decl) => { return .Some(decl) },
+      _ => {},
+    }
+    i = i - 1
+  }
+  .None
+}
+
+// ── Block / statement / expression traversal ─────────────────────────
+
+fn path_in_block(block: Block, offset: Int) Vector<NodeRef> {
+  if !block.span.contains(offset) { return [] }
+  prefix := [NodeRef.Block(block)]
+  for stmt in block.stmts {
+    child := path_in_stmt(stmt, offset)
+    if child.len() > 0 { return prefix.concat(child) }
+  }
+  case block.tail {
+    .Some(expr) => {
+      child := path_in_expr(expr, offset)
+      if child.len() > 0 { return prefix.concat(child) }
+    },
+    .None => {},
+  }
+  prefix
+}
+
+fn path_in_stmt(stmt: Stmt, offset: Int) Vector<NodeRef> {
+  s := stmt_span(stmt)
+  if !s.contains(offset) { return [] }
+  prefix := [NodeRef.Stmt(stmt)]
+  case stmt {
+    .Let(ls) => {
+      child := path_in_expr(ls.value, offset)
+      if child.len() > 0 { return prefix.concat(child) }
+    },
+    .For(fs) => {
+      case fs.iter {
+        .Some(e) => {
+          child := path_in_expr(e, offset)
+          if child.len() > 0 { return prefix.concat(child) }
+        },
+        .None => {},
+      }
+      case fs.condition {
+        .Some(e) => {
+          child := path_in_expr(e, offset)
+          if child.len() > 0 { return prefix.concat(child) }
+        },
+        .None => {},
+      }
+      child := path_in_block(fs.body, offset)
+      if child.len() > 0 { return prefix.concat(child) }
+    },
+    .Return(rs) => {
+      case rs.value {
+        .Some(e) => {
+          child := path_in_expr(e, offset)
+          if child.len() > 0 { return prefix.concat(child) }
+        },
+        .None => {},
+      }
+    },
+    .Break(bs) => {
+      case bs.value {
+        .Some(e) => {
+          child := path_in_expr(e, offset)
+          if child.len() > 0 { return prefix.concat(child) }
+        },
+        .None => {},
+      }
+    },
+    .Defer(ds) => {
+      child := path_in_expr(ds.expr, offset)
+      if child.len() > 0 { return prefix.concat(child) }
+    },
+    .Expr(es) => {
+      child := path_in_expr(es.expr, offset)
+      if child.len() > 0 { return prefix.concat(child) }
+    },
+    _ => {},
+  }
+  prefix
+}
+
+fn stmt_span(stmt: Stmt) Span {
+  case stmt {
+    .Let(s) => s.span,
+    .For(s) => s.span,
+    .Return(s) => s.span,
+    .Break(s) => s.span,
+    .Continue(s) => s.span,
+    .Defer(s) => s.span,
+    .Expr(s) => s.span,
+    .ErrorStmt(sp) => sp,
+  }
+}
+
+fn path_in_expr(expr: Expr, offset: Int) Vector<NodeRef> {
+  if !expr.span.contains(offset) { return [] }
+  prefix := [NodeRef.Expr(expr)]
+  child := path_in_expr_children(expr, offset)
+  if child.len() > 0 { return prefix.concat(child) }
+  prefix
+}
+
+fn path_in_expr_children(expr: Expr, offset: Int) Vector<NodeRef> {
+  case expr.kind {
+    .Unary(_, inner) => path_in_expr(inner, offset),
+    .Binary(_, lhs, rhs) => {
+      c := path_in_expr(lhs, offset)
+      if c.len() > 0 { return c }
+      path_in_expr(rhs, offset)
+    },
+    .Call(callee, args) => {
+      c := path_in_expr(callee, offset)
+      if c.len() > 0 { return c }
+      path_in_exprs(args, offset)
+    },
+    .Field(base, _) => path_in_expr(base, offset),
+    .Index(base, idx) => {
+      c := path_in_expr(base, offset)
+      if c.len() > 0 { return c }
+      path_in_expr(idx, offset)
+    },
+    .BlockExpr(block) => path_in_block(block, offset),
+    .If(cond, then_block, else_expr) => {
+      c := path_in_expr(cond, offset)
+      if c.len() > 0 { return c }
+      c = path_in_block(then_block, offset)
+      if c.len() > 0 { return c }
+      case else_expr {
+        .Some(e) => path_in_expr(e, offset),
+        .None => [],
+      }
+    },
+    .Case(scrutinee, arms) => {
+      c := path_in_expr(scrutinee, offset)
+      if c.len() > 0 { return c }
+      for arm in arms {
+        if arm.span.contains(offset) {
+          arm_prefix := [NodeRef.Arm(arm)]
+          if arm.pattern.span.contains(offset) {
+            return arm_prefix.append(NodeRef.Pattern(arm.pattern))
+          }
+          c = path_in_expr(arm.expr, offset)
+          if c.len() > 0 { return arm_prefix.concat(c) }
+          return arm_prefix
+        }
+      }
+      []
+    },
+    .Array(elems) => path_in_exprs(elems, offset),
+    .Record(entries) => path_in_entries(entries, offset),
+    .NamedRecord(_, entries) => path_in_entries(entries, offset),
+    .Variant(_, fields) => path_in_exprs(fields, offset),
+    .Closure(_, _, body) => path_in_block(body, offset),
+    .Collect(col) => path_in_collect(col, offset),
+    .StringInterp(parts) => {
+      for part in parts {
+        case part {
+          .Interpolation(e) => {
+            c := path_in_expr(e, offset)
+            if c.len() > 0 { return c }
+          },
+          _ => {},
+        }
+      }
+      []
+    },
+    _ => [],
+  }
+}
+
+fn path_in_exprs(exprs: Vector<Expr>, offset: Int) Vector<NodeRef> {
+  for e in exprs {
+    c := path_in_expr(e, offset)
+    if c.len() > 0 { return c }
+  }
+  []
+}
+
+fn path_in_entries(entries: Vector<RecordEntry>, offset: Int) Vector<NodeRef> {
+  for entry in entries {
+    case entry.value {
+      .Some(e) => {
+        c := path_in_expr(e, offset)
+        if c.len() > 0 { return c }
+      },
+      .None => {},
+    }
+  }
+  []
+}
+
+fn path_in_collect(col: CollectExpr, offset: Int) Vector<NodeRef> {
+  case col.iter {
+    .Some(e) => {
+      c := path_in_expr(e, offset)
+      if c.len() > 0 { return c }
+    },
+    .None => {},
+  }
+  case col.condition {
+    .Some(e) => {
+      c := path_in_expr(e, offset)
+      if c.len() > 0 { return c }
+    },
+    .None => {},
+  }
+  path_in_block(col.body, offset)
+}

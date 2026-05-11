@@ -1,6 +1,7 @@
 // Runtime bridge function emission helpers.
 
-use compiler.resolver.{MonoType, ResolvedEnv}
+use compiler.resolver.{ResolvedEnv}
+use compiler.mono_type.{MonoType}
 use compiler.codegen.wasm_ir.{ValType, Instr, FuncDef}
 use compiler.codegen.wasm_layout.{layout_of, val_type_of_mono, mono_to_key}
 use compiler.codegen.emit.defaults.{emit_default_value}

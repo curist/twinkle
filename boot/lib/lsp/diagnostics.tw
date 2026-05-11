@@ -7,7 +7,7 @@
 use compiler.query.diagnostics as query_diagnostics
 use lib.json
 use lib.lsp.protocol
-use lib.source.diagnostic as source_diag
+use lib.source.diagnostics as diag
 use lib.text.line_index
 use .range.{range_to_json}
 
@@ -55,7 +55,7 @@ fn diagnostic_range(index: line_index.LineIndex, d: query_diagnostics.Diagnostic
 }
 
 
-fn severity_to_lsp(severity: source_diag.Severity) Int {
+fn severity_to_lsp(severity: diag.Severity) Int {
   case severity {
     .Error => 1,
     .Warning => 2,
