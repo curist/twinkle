@@ -17,13 +17,13 @@ use lib.source.identity
 use lib.source.overlay
 use lib.source.span
 use lib.json
-use lib.source.diagnostic as source_diag
+use lib.source.diagnostics as diag
 
 pub type Diagnostic = .{
   uri: String,
   version: Int?,
   span: span.Span?,
-  severity: source_diag.Severity,
+  severity: diag.Severity,
   message: String,
   stage: String,
   /// Optional data payload (roundtripped by LSP clients in code action requests).
@@ -126,12 +126,42 @@ fn convert_analysis_diags(diags: Vector<analyze.AnalysisDiag>) Vector<Diagnostic
     Diagnostic.{
       uri: d.identity.uri,
       version: d.version,
-      span: d.span,
-      severity: d.severity,
-      message: d.message,
+      span: .Some(d.kind.span()),
+      severity: kind_to_severity(d.kind),
+      message: kind_to_message(d.kind),
       stage: d.stage,
       data: d.data,
     }
+  }
+}
+
+fn kind_to_severity(kind: diag.DiagKind) diag.Severity {
+  case kind {
+    .Error(_) => .Error,
+    .Warning(_) => .Warning,
+  }
+}
+
+fn kind_to_message(kind: diag.DiagKind) String {
+  case kind {
+    .Error(e) => case e {
+      .TypeMismatch(_) => "type mismatch",
+      .UndefinedVar(d) => "undefined variable: ${d.name}",
+      .UndefinedType(d) => "undefined type: ${d.name}",
+      .WrongArity(d) => "expected ${d.expected} arguments, got ${d.found}",
+      .TypeArityMismatch(d) => "${d.name} expects ${d.expected} type argument(s), got ${d.found}",
+      .MissingVariants(_) => "non-exhaustive match",
+      .DuplicateField(d) => "duplicate field: ${d.name}",
+      .InfiniteType(_) => "infinite type (occurs check)",
+      .NoField(d) => "no field `${d.name}`",
+      .NotIterable(_) => "not iterable",
+      .NotIndexable(_) => "not indexable",
+      .Generic(d) => d.message,
+    },
+    .Warning(w) => case w {
+      .UnusedImport(d) => "unused import: ${d.binding}",
+      .Generic(d) => d.message,
+    },
   }
 }
 
@@ -179,15 +209,15 @@ fn synthetic_diagnostic(uri: String, version: Int?, stage: String, message: Stri
 pub fn convert_diagnostics(
   input: DocumentInput,
   stage: String,
-  diagnostics: Vector<source_diag.Diagnostic>,
+  diagnostics: Vector<diag.DiagKind>,
 ) Vector<Diagnostic> {
   collect d in diagnostics {
     .{
       uri: input.uri,
       version: input.version,
-      span: .Some(d.span),
-      severity: d.severity,
-      message: d.message,
+      span: .Some(d.span()),
+      severity: kind_to_severity(d),
+      message: kind_to_message(d),
       stage,
       data: .None,
     }

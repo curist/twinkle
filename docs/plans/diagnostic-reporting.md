@@ -283,67 +283,85 @@ initial DiagKind. If needed later, they can be added as `Hint(HintDiag)` and
 
 ## Milestones
 
-### M1 — DiagKind types + has_errors
+### M1 — DiagKind types + has_errors ✅
 
-* [ ] Define `DiagKind`, `ErrorDiag`, `WarningDiag` in `boot/lib/source/diag.tw`
-* [ ] Include `Generic` bridge variants in both `ErrorDiag` and `WarningDiag`
-* [ ] `has_errors(diags: Vector<DiagKind>) Bool`
-* [ ] `span(kind: DiagKind) Span` — extract primary span from any variant
-* [ ] Unit tests for `has_errors`, `span`
+* [x] Define `DiagKind`, `ErrorDiag`, `WarningDiag` in `boot/lib/source/diag.tw`
+* [x] Include `Generic` bridge variants in both `ErrorDiag` and `WarningDiag`
+* [x] `has_errors(diags: Vector<DiagKind>) Bool`
+* [x] `span(kind: DiagKind) Span` — extract primary span from any variant
+* [x] Unit tests for `has_errors`, `span`
 
-### M2 — Path-returning AST walk
+### M2 — Path-returning AST walk ✅
 
-* [ ] Define `NodeRef`, `AstPath` in `boot/compiler/query/ast_path.tw`
-* [ ] Implement module-level traversal: walk `FunctionDecl`, `TypeDecl`,
+* [x] Define `NodeRef`, `AstPath` in `boot/compiler/query/ast_path.tw`
+* [x] Implement module-level traversal: walk `FunctionDecl`, `TypeDecl`,
   `UseDecl` items to find the one containing the offset, then descend into
   its body/block
-* [ ] Implement `find_path(module, offset) AstPath` — full root-to-leaf walk
-* [ ] Helper methods: `deepest()`, `parent()`, `enclosing_fn()`
-* [ ] Unit tests: parse known `.tw` sources, call `find_path` at various
+* [x] Implement `find_path(module, offset) AstPath` — full root-to-leaf walk
+* [x] Helper methods: `deepest()`, `parent()`, `enclosing_fn()`
+* [x] Unit tests: parse known `.tw` sources, call `find_path` at various
   offsets, verify path contents and helper results
 
-### M3 — Report rendering
+### M3 — Report rendering ✅
 
 Depends on M2 (helpers used in render context, test assertions).
 
-* [ ] Define `Report` type and `render(report, registry, config) String`
-* [ ] `RenderConfig`: color (from NO_COLOR), style (Rich/Short)
-* [ ] Implement source snippet display with line numbers and gutter
-* [ ] Implement span underlines/carets with labels
-* [ ] Implement colored severity headers
-* [ ] Implement help/hint body lines
-* [ ] Unit tests: render known reports, assert output strings (color and no-color)
+* [x] Define `Report` type and `render(report, registry, config) String`
+* [x] `RenderConfig`: color (from NO_COLOR), style (Rich/Short)
+* [x] Implement source snippet display with line numbers and gutter
+* [x] Implement span underlines/carets with labels
+* [x] Implement colored severity headers
+* [x] Implement help/hint body lines
+* [x] Unit tests: render known reports, assert output strings (color and no-color)
 
-### M4 — DiagKind → Report renderers
+### M4 — DiagKind → Report renderers ✅
 
 Depends on M1 (DiagKind types) and M3 (Report type + render).
 
-* [ ] Define `RenderCtx` with `registry`, `env?`, `module?`, `config`
-* [ ] Implement `to_report(kind, ctx) Report` for initial ErrorDiag variants
-  (start with 5–8 high-impact kinds)
-* [ ] Each renderer uses `find_path()` to gather context as needed
-* [ ] Type display: use `ty_to_string_env(env, ty)` at render time for
+* [x] Define `RenderCtx` with `registry`, `env?`, `module?`, `config`
+* [x] Implement `to_report(kind, ctx) Report` for initial ErrorDiag variants
+  (5 typed variants: TypeMismatch, UndefinedVar, WrongArity, MissingVariants, DuplicateField)
+* [x] Type display: use `ty_to_string_env(env, ty)` at render time for
   MonoType values; fall back to structural display if `env` is unavailable
-* [ ] Implement `to_report` for WarningDiag variants
-* [ ] Unit tests per variant: given kind + parsed AST → expected report
+* [x] Implement `to_report` for WarningDiag variants
+* [x] Unit tests per variant: given kind + parsed AST → expected report
 
-### M5 — Pipeline integration + cutover
+Note: renderers do not yet call `find_path()` — no current variant requires
+enclosing-function context. Can be added when a future variant needs it.
 
-* [ ] Migrate emission sites: checker, resolver, parser → emit DiagKind
-  (zonk MonoType values at emission time)
-* [ ] Migrate `AnalysisDiag` to carry `kind: DiagKind` instead of
+### M5 — Pipeline integration + cutover (partial)
+
+Layer wiring and CLI rendering are complete. Emission site migration remains.
+
+* [x] Migrate `AnalysisDiag` to carry `kind: DiagKind` instead of
   `span? + severity + message`; retain `data: Json?` for LSP
-* [ ] Update `synthetic_diag()` to capture the triggering `use` span instead
-  of `span: .None`
-* [ ] Update `convert_unused_import_diags()` — read from `UnusedImport`
-  variant fields, populate `data: Json?` for LSP code actions
-* [ ] Update `convert_analysis_diags()` in `query/diagnostics.tw` — extract
-  severity and message from `DiagKind` for LSP JSON, pass `data` through
-* [ ] Remove `convert_source_diags()`
-* [ ] Migrate pipeline: thread `Vector<DiagKind>`, use `has_errors()`
-* [ ] Migrate CLI output: use Report renderer for terminal
-* [ ] Remove old `diagnostic.tw` formatting functions
-* [ ] Integration tests: compile known-bad sources, assert rich output
+* [x] Update `convert_unused_import_diags()` — emits `DiagKind.Warning(.UnusedImport(...))`,
+  populates `data: Json?` for LSP code actions
+* [x] Update `convert_analysis_diags()` in `query/diagnostics.tw` — extracts
+  severity and message from `DiagKind` for LSP JSON, passes `data` through
+* [x] Migrate CLI output: `format_analysis_diags` and `print_warnings` use
+  `to_report` + `render` — produces rustc/Gleam-style terminal output
+* [x] Migrate emission sites — first wave: typed variants added and sites migrated
+  for all core checker/resolver patterns. Current typed ErrorDiag variants:
+  `TypeMismatch`, `UndefinedVar`, `UndefinedType`, `WrongArity`, `TypeArityMismatch`,
+  `MissingVariants`, `DuplicateField`, `InfiniteType`, `NoField`, `NotIterable`,
+  `NotIndexable`.
+* [ ] Migrate emission sites — second wave (remaining high-value checker sites):
+  - `NoMethod(.{ span, ty, name })` — "type X has no method 'Y'"
+  - `MissingField(.{ span, name })` — "missing field 'X'" in record literals
+  - Reuse `WrongArity` for variant field arity (`.X expects N args`, checker)
+  - Reuse `WrongArity` for pattern arity (`.X pattern expects N bindings`, checker)
+* [ ] Migrate emission sites — lower priority (leave as Generic for now):
+  - Resolver declaration-level errors (duplicate defs, extern constraints, circular alias)
+  - Checker compiler-internal errors ("uninstantiated type variable", "cannot resolve
+    record type", "invalid method signature") — not caused by user mistakes
+  - Parser syntax errors — need a `ParseError` family or stay Generic long-term
+* [x] Update `synthetic_diag()` to capture the triggering `use` span instead
+  of the current zero span `(0, 0, 0)` — already done; falls back to `(0,0,0)`
+  only when there is no caller (entry file errors), which is correct.
+* [x] Remove `convert_source_diags()` — resolver now emits DiagKind directly; conversion step removed from analyze.tw, diagnostics.tw, semantic.tw
+* [x] Remove old `diagnostic.tw` — file retired; resolver migrated to emit DiagKind
+* [ ] Integration tests: compile known-bad sources, assert rich output format
 * [ ] Integration tests: verify LSP diagnostic JSON + code actions still work
 
 ---
@@ -449,15 +467,13 @@ reads `data` to construct workspace edits — same pattern as unused imports.
 
 ## Exit Criteria
 
-* All compiler errors/warnings render with source snippets, underlines, and
+* [x] All compiler errors/warnings render with source snippets, underlines, and
   colored severity headers in terminal output
-* NO_COLOR produces plain text without ANSI escapes
-* Diagnostic emission sites contain no string formatting — just typed variants
-  (`Generic` bridge is acceptable during transition but tracked for migration)
-* LSP diagnostic path produces equivalent information to today, including
+* [x] NO_COLOR produces plain text without ANSI escapes
+* [ ] Diagnostic emission sites contain no string formatting — just typed variants
+  (currently all checker/resolver sites go through `Generic` bridge; migration pending)
+* [x] LSP diagnostic path produces equivalent information to today, including
   code actions (unused import removal)
-* All three diagnostic layers updated: `DiagKind` replaces
-  `source_diag.Diagnostic`, `AnalysisDiag` carries `kind: DiagKind` +
-  `data: Json?` for LSP, `query_diagnostics.Diagnostic` extracts from
-  `DiagKind`
-* Old `format_diagnostic*` functions removed
+* [x] All three diagnostic layers updated: `AnalysisDiag` carries `kind: DiagKind` +
+  `data: Json?` for LSP; `query_diagnostics.Diagnostic` extracts from `DiagKind`
+* [x] Old `format_diagnostic*` functions removed

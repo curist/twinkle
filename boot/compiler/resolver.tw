@@ -6,36 +6,13 @@
 // Functional style: env is threaded through return values, never mutated in place.
 
 use lib.source.span
-use lib.source.diagnostic.{Diagnostic}
-
-use lib.source.diagnostic as diag
+use lib.source.diagnostics as diag
 use .ast.{Module, TypeDecl, FunctionDecl, ExternFunctionDecl, TypeExpr, TypePath, ImportItem, TypeParam, type_param_names}
 
 use .contracts.{BuiltinContract, resolve_builtin_contract_name}
+use .mono_type.{TypeId, MonoType}
 
 // ── Resolved Types ──────────────────────────────────────────────────
-
-pub type TypeId = .{ id: Int }
-
-pub type MonoType = {
-  Int,
-  Float,
-  Bool,
-  Byte,
-  String,
-  Void,
-  Anyref_,   // backend-internal explicit anyref carrier (inserted after ANF lowering)
-  Var(String),
-  Named(TypeId, Vector<MonoType>),
-  Vector(MonoType),
-  Dict(MonoType, MonoType),
-  Function(Vector<MonoType>, MonoType),
-  Optional(MonoType),
-  Result(MonoType, MonoType),
-  MetaVar(Int),
-  Never,
-  ErrorType,
-}
 
 pub type ResolvedField = .{
   name: String,
@@ -79,7 +56,7 @@ pub type ResolvedTypeDef = {
 
 type ResolvedTypeParamsResult = .{
   params: Vector<ResolvedTypeParam>,
-  diags: Vector<Diagnostic>,
+  diags: Vector<diag.DiagKind>,
 }
 
 pub type FunctionSig = .{
@@ -608,7 +585,7 @@ pub fn has_function(env: ResolvedEnv, name: String) Bool {
 
 pub type ResolveResult = .{
   env: ResolvedEnv,
-  diagnostics: Vector<Diagnostic>,
+  diagnostics: Vector<diag.DiagKind>,
 }
 
 fn all_exported_types(exports: ModuleExports) Vector<ExportedType> {
@@ -1202,7 +1179,7 @@ fn next_available_type_id(env: ResolvedEnv) Int {
 
 fn collect_declarations(env: ResolvedEnv, module: Module) ResolveResult {
   cur := env
-  diags: Vector<Diagnostic> = []
+  diags: Vector<diag.DiagKind> = []
   seen_fns: Dict<String, Bool> = Dict.new()
 
   for item in module.items {
@@ -1244,7 +1221,7 @@ fn collect_declarations(env: ResolvedEnv, module: Module) ResolveResult {
 
 // ── Pass 2: Resolution ──────────────────────────────────────────────
 
-fn resolve_references(env: ResolvedEnv, module: Module, diags: Vector<Diagnostic>) ResolveResult {
+fn resolve_references(env: ResolvedEnv, module: Module, diags: Vector<diag.DiagKind>) ResolveResult {
   cur := env
   result_diags := diags
 
@@ -1301,7 +1278,7 @@ fn resolve_references(env: ResolvedEnv, module: Module, diags: Vector<Diagnostic
 
 type DetectMethodsResult = .{
   env: ResolvedEnv,
-  diagnostics: Vector<Diagnostic>,
+  diagnostics: Vector<diag.DiagKind>,
 }
 
 // Inherent methods only apply to nominal user-defined types (Named).
@@ -1311,7 +1288,7 @@ type DetectMethodsResult = .{
 fn detect_inherent_methods(env: ResolvedEnv, local_type_names: Dict<String, Bool>) DetectMethodsResult {
   m := env.methods
   tm := env.methods_by_type
-  method_diags: Vector<Diagnostic> = []
+  method_diags: Vector<diag.DiagKind> = []
   for f in env.functions {
     if f.params.len() == 0 { continue }
     tid := case f.params[0] {
@@ -1353,7 +1330,7 @@ fn detect_inherent_methods(env: ResolvedEnv, local_type_names: Dict<String, Bool
   .{ env: env.with_methods(m).with_type_methods(tm), diagnostics: method_diags }
 }
 
-fn check_dup_names(names: Vector<String>, kind: String, s: span.Span) Vector<Diagnostic> {
+fn check_dup_names(names: Vector<String>, kind: String, s: span.Span) Vector<diag.DiagKind> {
   seen: Dict<String, Bool> = Dict.new()
   collect name in names {
     if !seen.has(name) {
@@ -1364,7 +1341,7 @@ fn check_dup_names(names: Vector<String>, kind: String, s: span.Span) Vector<Dia
   }
 }
 
-fn check_dup_type_params(type_params: Vector<String>, s: span.Span) Vector<Diagnostic> {
+fn check_dup_type_params(type_params: Vector<String>, s: span.Span) Vector<diag.DiagKind> {
   seen: Dict<String, Bool> = Dict.new()
   collect tp in type_params {
     if !seen.has(tp) {
@@ -1376,7 +1353,7 @@ fn check_dup_type_params(type_params: Vector<String>, s: span.Span) Vector<Diagn
 }
 
 fn resolve_ast_type_params(ast_params: Vector<TypeParam>, s: span.Span) ResolvedTypeParamsResult {
-  diags: Vector<Diagnostic> = []
+  diags: Vector<diag.DiagKind> = []
   resolved: Vector<ResolvedTypeParam> = []
   for tp in ast_params {
     bound_refs: Vector<ResolvedContractRef> = []
@@ -1479,7 +1456,7 @@ fn is_extern_safe_type(ty: MonoType, allow_void: Bool) Bool {
 }
 
 fn resolve_extern_function_decl(env: ResolvedEnv, decl: ExternFunctionDecl) ResolveResult {
-  diags: Vector<Diagnostic> = []
+  diags: Vector<diag.DiagKind> = []
 
   param_names := collect param in decl.params { param.name }
   diags = diags.concat(check_dup_names(param_names, "parameter", decl.span))
@@ -1590,14 +1567,14 @@ fn resolve_function_decl(env: ResolvedEnv, decl: FunctionDecl) ResolveResult {
 
 pub type TypeResolveResult = .{
   ty: MonoType?,
-  diagnostics: Vector<Diagnostic>,
+  diagnostics: Vector<diag.DiagKind>,
 }
 
 fn type_ok(ty: MonoType) TypeResolveResult {
   .{ ty: .Some(ty), diagnostics: [] }
 }
 
-fn type_err(d: Diagnostic) TypeResolveResult {
+fn type_err(d: diag.DiagKind) TypeResolveResult {
   .{ ty: .None, diagnostics: [d] }
 }
 
@@ -1615,7 +1592,7 @@ pub fn resolve_type_expr(env: ResolvedEnv, ty_expr: TypeExpr, type_vars: Vector<
 }
 
 fn resolve_applied_type(env: ResolvedEnv, path: TypePath, args: Vector<TypeExpr>, type_vars: Vector<String>) TypeResolveResult {
-  all_diags: Vector<Diagnostic> = []
+  all_diags: Vector<diag.DiagKind> = []
   resolved_args := collect arg in args {
     r := env.resolve_type_expr(arg, type_vars)
     all_diags = all_diags.concat(r.diagnostics)
@@ -1633,7 +1610,7 @@ fn resolve_applied_type(env: ResolvedEnv, path: TypePath, args: Vector<TypeExpr>
 }
 
 fn resolve_fn_type(env: ResolvedEnv, param_exprs: Vector<TypeExpr>, ret_expr: TypeExpr, type_vars: Vector<String>) TypeResolveResult {
-  all_diags: Vector<Diagnostic> = []
+  all_diags: Vector<diag.DiagKind> = []
   param_types := collect p in param_exprs {
     r := env.resolve_type_expr(p, type_vars)
     all_diags = all_diags.concat(r.diagnostics)
@@ -1666,7 +1643,7 @@ fn resolve_optional_type(env: ResolvedEnv, inner_expr: TypeExpr, type_vars: Vect
 }
 
 fn resolve_result_type(env: ResolvedEnv, ok_expr: TypeExpr, err_expr: TypeExpr, type_vars: Vector<String>) TypeResolveResult {
-  all_diags: Vector<Diagnostic> = []
+  all_diags: Vector<diag.DiagKind> = []
   r_ok := env.resolve_type_expr(ok_expr, type_vars)
   all_diags = all_diags.concat(r_ok.diagnostics)
   r_err := env.resolve_type_expr(err_expr, type_vars)
@@ -1942,28 +1919,28 @@ fn resolve_single_name(env: ResolvedEnv, name: String, args: Vector<MonoType>, t
       if args.len() == 1 {
         return type_ok(MonoType.Vector(args[0]))
       } else {
-        return type_err(diag.error(s, "Vector expects 1 type argument, got ${args.len()}"))
+        return type_err(.Error(.TypeArityMismatch(.{ span: s, name: "Vector", expected: 1, found: args.len() })))
       }
     },
     "Dict" => {
       if args.len() == 2 {
         return type_ok(MonoType.Dict(args[0], args[1]))
       } else {
-        return type_err(diag.error(s, "Dict expects 2 type arguments, got ${args.len()}"))
+        return type_err(.Error(.TypeArityMismatch(.{ span: s, name: "Dict", expected: 2, found: args.len() })))
       }
     },
     "Option" => {
       if args.len() == 1 {
         return type_ok(MonoType.Optional(args[0]))
       } else {
-        return type_err(diag.error(s, "Option expects 1 type argument, got ${args.len()}"))
+        return type_err(.Error(.TypeArityMismatch(.{ span: s, name: "Option", expected: 1, found: args.len() })))
       }
     },
     "Result" => {
       if args.len() == 2 {
         return type_ok(MonoType.Result(args[0], args[1]))
       } else {
-        return type_err(diag.error(s, "Result expects 2 type arguments, got ${args.len()}"))
+        return type_err(.Error(.TypeArityMismatch(.{ span: s, name: "Result", expected: 2, found: args.len() })))
       }
     },
     _ => {},
@@ -1981,7 +1958,7 @@ fn resolve_single_name(env: ResolvedEnv, name: String, args: Vector<MonoType>, t
       return type_ok(MonoType.Named(entry.id, args))
     },
     .None => {
-      return type_err(diag.error(s, "undefined type: ${name}"))
+      return type_err(.Error(.UndefinedType(.{ span: s, name })))
     },
   }
 }
@@ -2000,7 +1977,7 @@ fn check_user_type_arity(env: ResolvedEnv, name: String, args: Vector<MonoType>,
     .None => { return .None },
   }
   if args.len() != entry.arity {
-    return .Some(type_err(diag.error(s, "${name} expects ${entry.arity} type argument(s), got ${args.len()}")))
+    return .Some(type_err(.Error(.TypeArityMismatch(.{ span: s, name, expected: entry.arity, found: args.len() }))))
   }
   .None
 }
@@ -2174,7 +2151,7 @@ fn add_name_index(name: String, names: Vector<String>, acc: TypeRefs) TypeRefs {
 
 // ── Pass 3: Circular Alias Detection ────────────────────────────────
 
-fn detect_circular_aliases(env: ResolvedEnv, diags: Vector<Diagnostic>) Vector<Diagnostic> {
+fn detect_circular_aliases(env: ResolvedEnv, diags: Vector<diag.DiagKind>) Vector<diag.DiagKind> {
   result := diags
   for i in 0..env.type_names.len() {
     def := case env.types[i].def {
@@ -2272,40 +2249,6 @@ pub fn ty_to_string_env(env: ResolvedEnv, ty: MonoType) String {
     .Function(params, ret) => {
       joined := collect p in params { env.ty_to_string_env(p) }
       "fn(${joined.join(", ")}) ${env.ty_to_string_env(ret)}"
-    },
-    .ErrorType => "<error>",
-  }
-}
-
-// Debug-only type stringifier — Named types render as raw ids (e.g. "Named(3)").
-// Prefer ty_to_string_env for user-facing diagnostics.
-pub fn ty_to_string(ty: MonoType) String {
-  case ty {
-    .Int => "Int",
-    .Float => "Float",
-    .Bool => "Bool",
-    .Byte => "Byte",
-    .String => "String",
-    .Void => "Void",
-    .Anyref_ => "Anyref",
-    .Never => "Never",
-    .Var(n) => n,
-    .MetaVar(id) => "?${id}",
-    .Vector(inner) => "Vector<${ty_to_string(inner)}>",
-    .Dict(k, v) => "Dict<${ty_to_string(k)}, ${ty_to_string(v)}>",
-    .Optional(inner) => "${ty_to_string(inner)}?",
-    .Result(ok, err) => "Result<${ty_to_string(ok)}, ${ty_to_string(err)}>",
-    .Named(tid, args) => {
-      if args.len() == 0 {
-        "Named(${tid.id})"
-      } else {
-        joined := collect a in args { ty_to_string(a) }
-        "Named(${tid.id})<${joined.join(", ")}>"
-      }
-    },
-    .Function(params, ret) => {
-      joined := collect p in params { ty_to_string(p) }
-      "fn(${joined.join(", ")}) ${ty_to_string(ret)}"
     },
     .ErrorType => "<error>",
   }

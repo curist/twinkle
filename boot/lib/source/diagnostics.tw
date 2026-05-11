@@ -1,0 +1,210 @@
+// Rich diagnostic kinds for compiler error reporting.
+//
+// DiagKind replaces the old flat Diagnostic (span + severity + message string).
+// Emission sites store structured data (zonked types, names, spans) — no string
+// formatting at emit time. Rendering happens at the CLI or LSP boundary.
+//
+// Generic bridge variants cover emission sites that haven't been migrated yet.
+
+use .span.{Span}
+use .registry
+use compiler.mono_type.{MonoType, ty_to_string}
+
+// ── Severity ─────────────────────────────────────────────────────────
+
+/// LSP-compatible diagnostic severity.
+pub type Severity = { Error, Warning, Hint, Info }
+
+// ── Error payload types ──────────────────────────────────────────────
+
+pub type TypeMismatchDiag = .{
+  span: Span,
+  expected: MonoType,
+  found: MonoType,
+}
+
+pub type UndefinedVarDiag = .{
+  span: Span,
+  name: String,
+}
+
+pub type WrongArityDiag = .{
+  span: Span,
+  expected: Int,
+  found: Int,
+}
+
+pub type MissingVariantsDiag = .{
+  span: Span,
+  scrutinee_ty: MonoType,
+  missing: Vector<String>,
+}
+
+pub type DuplicateFieldDiag = .{
+  span: Span,
+  name: String,
+  first: Span,
+}
+
+pub type GenericDiag = .{
+  span: Span,
+  message: String,
+}
+
+pub type InfiniteTypeDiag = .{
+  span: Span,
+}
+
+pub type UndefinedTypeDiag = .{
+  span: Span,
+  name: String,
+}
+
+pub type TypeArityMismatchDiag = .{
+  span: Span,
+  name: String,
+  expected: Int,
+  found: Int,
+}
+
+pub type NoFieldDiag = .{
+  span: Span,
+  name: String,
+  ty: MonoType,
+}
+
+pub type NotIterableDiag = .{
+  span: Span,
+  ty: MonoType,
+}
+
+pub type NotIndexableDiag = .{
+  span: Span,
+  ty: MonoType,
+}
+
+// ── Warning payload types ────────────────────────────────────────────
+
+pub type UnusedImportDiag = .{
+  span: Span,
+  binding: String,
+}
+
+// ── Diagnostic enums ─────────────────────────────────────────────────
+
+pub type ErrorDiag = {
+  TypeMismatch(TypeMismatchDiag),
+  UndefinedVar(UndefinedVarDiag),
+  UndefinedType(UndefinedTypeDiag),
+  WrongArity(WrongArityDiag),
+  TypeArityMismatch(TypeArityMismatchDiag),
+  MissingVariants(MissingVariantsDiag),
+  DuplicateField(DuplicateFieldDiag),
+  InfiniteType(InfiniteTypeDiag),
+  NoField(NoFieldDiag),
+  NotIterable(NotIterableDiag),
+  NotIndexable(NotIndexableDiag),
+  /// Bridge variant for unmigrated emission sites during transition.
+  Generic(GenericDiag),
+}
+
+pub type WarningDiag = {
+  UnusedImport(UnusedImportDiag),
+  /// Bridge variant for unmigrated emission sites during transition.
+  Generic(GenericDiag),
+}
+
+pub type DiagKind = {
+  Error(ErrorDiag),
+  Warning(WarningDiag),
+}
+
+// ── Stage result ─────────────────────────────────────────────────────
+
+pub type StageResult<T> = .{ value: T, diagnostics: Vector<DiagKind> }
+
+pub fn stage_result<T>(value: T, diagnostics: Vector<DiagKind>) StageResult<T> {
+  .{ value, diagnostics }
+}
+
+// ── Helpers ──────────────────────────────────────────────────────────
+
+pub fn has_errors(diags: Vector<DiagKind>) Bool {
+  found := false
+  for d in diags {
+    case d {
+      .Error(_) => { found = true },
+      .Warning(_) => {},
+    }
+  }
+  found
+}
+
+pub fn span(kind: DiagKind) Span {
+  case kind {
+    .Error(e) => case e {
+      .TypeMismatch(d) => d.span,
+      .UndefinedVar(d) => d.span,
+      .UndefinedType(d) => d.span,
+      .WrongArity(d) => d.span,
+      .TypeArityMismatch(d) => d.span,
+      .MissingVariants(d) => d.span,
+      .DuplicateField(d) => d.span,
+      .InfiniteType(d) => d.span,
+      .NoField(d) => d.span,
+      .NotIterable(d) => d.span,
+      .NotIndexable(d) => d.span,
+      .Generic(d) => d.span,
+    },
+    .Warning(w) => case w {
+      .UnusedImport(d) => d.span,
+      .Generic(d) => d.span,
+    },
+  }
+}
+
+pub fn error(span: Span, message: String) DiagKind {
+  .Error(.Generic(.{ span, message }))
+}
+
+pub fn warning(span: Span, message: String) DiagKind {
+  .Warning(.Generic(.{ span, message }))
+}
+
+pub fn message(kind: DiagKind) String {
+  case kind {
+    .Error(e) => case e {
+      .TypeMismatch(d) => "type mismatch: expected ${ty_to_string(d.expected)}, found ${ty_to_string(d.found)}",
+      .UndefinedVar(d) => "undefined variable: ${d.name}",
+      .UndefinedType(d) => "undefined type: ${d.name}",
+      .WrongArity(d) => "expected ${d.expected} arguments, got ${d.found}",
+      .TypeArityMismatch(d) => "${d.name} expects ${d.expected} type argument(s), got ${d.found}",
+      .MissingVariants(d) => "non-exhaustive match on `${ty_to_string(d.scrutinee_ty)}`, missing: ${d.missing.join(", ")}",
+      .DuplicateField(d) => "duplicate field: ${d.name}",
+      .InfiniteType(_) => "infinite type (occurs check)",
+      .NoField(d) => "no field `${d.name}` on type ${ty_to_string(d.ty)}",
+      .NotIterable(d) => "cannot iterate over ${ty_to_string(d.ty)}",
+      .NotIndexable(d) => "cannot index into ${ty_to_string(d.ty)}",
+      .Generic(d) => d.message,
+    },
+    .Warning(w) => case w {
+      .UnusedImport(d) => "unused import: ${d.binding}",
+      .Generic(d) => d.message,
+    },
+  }
+}
+
+pub fn format_diagnostics(reg: registry.FileRegistry, diags: Vector<DiagKind>) String {
+  lines: Vector<String> = []
+  for d in diags {
+    sp := span(d)
+    label := case d { .Error(_) => "error", .Warning(_) => "warning" }
+    msg := message(d)
+    line := case registry.line_col(reg, sp) {
+      .Some(lc) => "${lc.line}:${lc.column}: ${label}: ${msg}",
+      .None => "?:?: ${label}: ${msg}",
+    }
+    lines = lines.append(line)
+  }
+  lines.join("\n")
+}

@@ -1,0 +1,182 @@
+// DiagKind → Report renderer.
+//
+// `to_report(kind, ctx)` converts a structured DiagKind into a Report
+// ready for terminal rendering (M3). Type names are resolved via
+// `ctx.env` when available; `ty_to_string` is used as a fallback.
+//
+// `ctx.module` is carried for future use by renderers that need
+// enclosing-function context via `find_path` (none of the current
+// variants require it, but M5 may add them).
+
+use lib.source.diagnostics.{DiagKind, ErrorDiag, WarningDiag}
+use lib.source.report.{Report, SpanLabel, RenderConfig}
+use lib.source.registry.{FileRegistry}
+use lib.source.span.{Span}
+use compiler.resolver.{ResolvedEnv}
+use compiler.mono_type.{MonoType, ty_to_string}
+use compiler.ast.{Module}
+
+// ── Render context ────────────────────────────────────────────────────
+
+pub type RenderCtx = .{
+  /// Source registry for snippet lookup during rendering.
+  registry: FileRegistry,
+  /// Type environment for resolving Named(TypeId) → human-readable name.
+  /// Fall back to structural display when .None.
+  env: ResolvedEnv?,
+  /// Parsed AST for enclosing-context queries via find_path().
+  module: Module?,
+  /// Color and style settings passed through to render().
+  config: RenderConfig,
+}
+
+// ── Internal helpers ──────────────────────────────────────────────────
+
+fn fmt_ty(ty: MonoType, ctx: RenderCtx) String {
+  case ctx.env {
+    .Some(env) => env.ty_to_string_env(ty),
+    .None => ty_to_string(ty),
+  }
+}
+
+fn primary(span: Span, label: String?) SpanLabel {
+  SpanLabel.{ span, label, is_primary: true }
+}
+
+fn secondary(span: Span, label: String?) SpanLabel {
+  SpanLabel.{ span, label, is_primary: false }
+}
+
+// ── Public API ────────────────────────────────────────────────────────
+
+pub fn to_report(kind: DiagKind, ctx: RenderCtx) Report {
+  case kind {
+    .Error(e) => error_to_report(e, ctx),
+    .Warning(w) => warning_to_report(w, ctx),
+  }
+}
+
+fn error_to_report(e: ErrorDiag, ctx: RenderCtx) Report {
+  case e {
+    .TypeMismatch(d) => {
+      Report.{
+        severity: .Error,
+        title: "type mismatch",
+        labels: [primary(d.span, .Some("expected ${fmt_ty(d.expected, ctx)}, found ${fmt_ty(d.found, ctx)}"))],
+        help_lines: [],
+      }
+    },
+    .UndefinedVar(d) => {
+      Report.{
+        severity: .Error,
+        title: "undefined variable `${d.name}`",
+        labels: [primary(d.span, .None)],
+        help_lines: [],
+      }
+    },
+    .WrongArity(d) => {
+      Report.{
+        severity: .Error,
+        title: "wrong number of arguments: expected ${d.expected}, found ${d.found}",
+        labels: [primary(d.span, .None)],
+        help_lines: [],
+      }
+    },
+    .MissingVariants(d) => {
+      Report.{
+        severity: .Error,
+        title: "non-exhaustive match on `${fmt_ty(d.scrutinee_ty, ctx)}`",
+        labels: [primary(d.span, .Some("missing variants"))],
+        help_lines: ["add arm(s): ${d.missing.join(", ")}"],
+      }
+    },
+    .DuplicateField(d) => {
+      Report.{
+        severity: .Error,
+        title: "duplicate field `${d.name}`",
+        labels: [
+          primary(d.span, .Some("duplicate")),
+          secondary(d.first, .Some("first defined here")),
+        ],
+        help_lines: [],
+      }
+    },
+    .InfiniteType(d) => {
+      Report.{
+        severity: .Error,
+        title: "infinite type",
+        labels: [primary(d.span, .Some("recursive type has infinite size"))],
+        help_lines: ["use indirection (e.g. wrap in a record or closure) to break the cycle"],
+      }
+    },
+    .UndefinedType(d) => {
+      Report.{
+        severity: .Error,
+        title: "undefined type `${d.name}`",
+        labels: [primary(d.span, .None)],
+        help_lines: [],
+      }
+    },
+    .TypeArityMismatch(d) => {
+      Report.{
+        severity: .Error,
+        title: "`${d.name}` expects ${d.expected} type argument(s), got ${d.found}",
+        labels: [primary(d.span, .None)],
+        help_lines: [],
+      }
+    },
+    .NoField(d) => {
+      Report.{
+        severity: .Error,
+        title: "no field `${d.name}` on type `${fmt_ty(d.ty, ctx)}`",
+        labels: [primary(d.span, .Some("unknown field"))],
+        help_lines: [],
+      }
+    },
+    .NotIterable(d) => {
+      Report.{
+        severity: .Error,
+        title: "cannot iterate over `${fmt_ty(d.ty, ctx)}`",
+        labels: [primary(d.span, .Some("not iterable"))],
+        help_lines: [],
+      }
+    },
+    .NotIndexable(d) => {
+      Report.{
+        severity: .Error,
+        title: "cannot index into `${fmt_ty(d.ty, ctx)}`",
+        labels: [primary(d.span, .Some("not indexable"))],
+        help_lines: [],
+      }
+    },
+    .Generic(d) => {
+      Report.{
+        severity: .Error,
+        title: d.message,
+        labels: [primary(d.span, .None)],
+        help_lines: [],
+      }
+    },
+  }
+}
+
+fn warning_to_report(w: WarningDiag, ctx: RenderCtx) Report {
+  case w {
+    .UnusedImport(d) => {
+      Report.{
+        severity: .Warning,
+        title: "unused import `${d.binding}`",
+        labels: [primary(d.span, .None)],
+        help_lines: ["remove this import"],
+      }
+    },
+    .Generic(d) => {
+      Report.{
+        severity: .Warning,
+        title: d.message,
+        labels: [primary(d.span, .None)],
+        help_lines: [],
+      }
+    },
+  }
+}
