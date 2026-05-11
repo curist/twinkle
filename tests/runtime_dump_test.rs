@@ -27,8 +27,9 @@ fn test_runtime_types_present() {
     for ty in &[
         "rt_types__Array",
         "rt_types__String",
-        "rt_types__DictEntry",
-        "rt_types__Dict",
+        "rt_types__HamtEntry",
+        "rt_types__HamtNode",
+        "rt_types__PDict",
         "rt_types__ClosureEnv",
         "rt_types__Closure",
         "rt_types__Variant",

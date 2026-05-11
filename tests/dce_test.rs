@@ -22,19 +22,25 @@ fn dce_removes_unused_imported_functions() {
 
     // used_fn should be kept (called from main)
     assert!(
-        func_names.iter().any(|n| *n == "used_fn"),
+        func_names
+            .iter()
+            .any(|n| n.ends_with(".used_fn") || *n == "used_fn"),
         "used_fn should be reachable. Functions: {:?}",
         func_names
     );
 
     // unused_fn and also_unused should be eliminated
     assert!(
-        !func_names.iter().any(|n| *n == "unused_fn"),
+        !func_names
+            .iter()
+            .any(|n| n.ends_with(".unused_fn") || *n == "unused_fn"),
         "unused_fn should be eliminated by DCE. Functions: {:?}",
         func_names
     );
     assert!(
-        !func_names.iter().any(|n| *n == "also_unused"),
+        !func_names
+            .iter()
+            .any(|n| n.ends_with(".also_unused") || *n == "also_unused"),
         "also_unused should be eliminated by DCE. Functions: {:?}",
         func_names
     );

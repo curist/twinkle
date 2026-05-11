@@ -512,11 +512,12 @@ const DICT_REMOVE: FuncId = FuncId(29);
 const DICT_SET_IN_PLACE: FuncId = FuncId(1015);
 const DICT_REMOVE_IN_PLACE: FuncId = FuncId(1016);
 
-/// Check whether any ACall in the module uses the given FuncId as callee.
+/// Check whether any ACall in user functions uses the given FuncId as callee.
 fn has_call_to(module: &AnfModule, func_id: FuncId) -> bool {
     module
         .functions
         .iter()
+        .filter(|f| !f.name.starts_with("__prelude_"))
         .any(|f| expr_has_call_to(&f.body, func_id))
 }
 
@@ -524,6 +525,7 @@ fn count_calls_to(module: &AnfModule, func_id: FuncId) -> usize {
     module
         .functions
         .iter()
+        .filter(|f| !f.name.starts_with("__prelude_"))
         .map(|f| expr_count_calls_to(&f.body, func_id))
         .sum()
 }

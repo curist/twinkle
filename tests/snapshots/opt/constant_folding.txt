@@ -1,8 +1,103 @@
 // ANF Module
-// 1 function(s)
-// init = FuncId(41)
+// 2 function(s)
+// init = FuncId(70)
 
-fn __init__  [FuncId(41)]  params=[]
+fn __prelude_vector.join  [FuncId(67)]  params=[L0: Vector(String), L1: String]
+  return_ty: String
+  body:
+    let L29 = call GlobalFunc(10) (L0)
+    let L2 = init(L29)
+    let L30 = binop(Eq, L2, 0, Int)
+    let L31 = if L30 {
+      return ""
+    } else {
+      void
+    }
+    let L32 = binop(Eq, L2, 1, Int)
+    let L34 = if L32 {
+      let L33 = index(L0, 0, Array)
+      return L33
+    } else {
+      void
+    }
+    let L35 = call GlobalFunc(1027) (L1)
+    let L3 = init(L35)
+    let L36 = array[]
+    let L4 = init(L36)
+    let L5 = init(0)
+    let L68 = call GlobalFunc(33) ()
+    let L64 = loop {
+      let L37 = binop(Lt, L5, L2, Int)
+      let L38 = unop(Not, L37, Bool)
+      let L63 = if L38 {
+        break
+      } else {
+        let L39 = binop(Gt, L5, 0, Int)
+        let L49 = if L39 {
+          let L6 = init(L3)
+          let L40 = call GlobalFunc(10) (L6)
+          let L7 = init(L40)
+          let L8 = init(0)
+          let L48 = loop {
+            let L41 = binop(Ge, L8, L7, Int)
+            let L47 = if L41 {
+              break
+            } else {
+              let L42 = index(L6, L8, Array)
+              let L9 = init(L42)
+              let L43 = binop(Add, L8, 1, Int)
+              let L44 = assign(L8 = L43)
+              let L45 = call GlobalFunc(34) (L68, L9)
+              let L46 = init(void)
+              continue
+            }
+            L47
+          }
+          void
+        } else {
+          void
+        }
+        let L50 = index(L0, L5, Array)
+        let L51 = call GlobalFunc(1027) (L50)
+        let L14 = init(L51)
+        let L15 = init(L14)
+        let L52 = call GlobalFunc(10) (L15)
+        let L16 = init(L52)
+        let L17 = init(0)
+        let L60 = loop {
+          let L53 = binop(Ge, L17, L16, Int)
+          let L59 = if L53 {
+            break
+          } else {
+            let L54 = index(L15, L17, Array)
+            let L18 = init(L54)
+            let L55 = binop(Add, L17, 1, Int)
+            let L56 = assign(L17 = L55)
+            let L57 = call GlobalFunc(34) (L68, L18)
+            let L58 = init(void)
+            continue
+          }
+          L59
+        }
+        let L61 = binop(Add, L5, 1, Int)
+        let L62 = assign(L5 = L61)
+        void
+      }
+      L63
+    }
+    let L69 = call GlobalFunc(35) (L68)
+    let L70 = assign(L4 = L69)
+    let L65 = call GlobalFunc(1028) (L4)
+    let L67 = match L65 {
+      Variant { type_id: TypeId(0), variant: VariantId(1), fields: [Var(LocalId(25))] } =>
+        L25
+      Variant { type_id: TypeId(0), variant: VariantId(0), fields: [] } =>
+        let L66 = call GlobalFunc(3) ("join: invalid utf8")
+        L66
+    }
+    L67
+
+fn __init__  [FuncId(70)]  params=[]
   return_ty: Void
   body:
     let L6 = call GlobalFunc(4) (42)

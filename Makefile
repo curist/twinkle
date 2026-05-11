@@ -26,7 +26,7 @@ boot-test: target/twk
 	target/twk run boot/tests/main.tw
 
 rust-test:
-	cargo test
+	cargo test --release
 
 test: rust-test boot-test
 

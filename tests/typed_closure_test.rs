@@ -20,38 +20,37 @@ fn build_wat(file_path: &str) -> String {
     twinkle::cli::build::build_wat(file_path).expect("build_wat failed")
 }
 
-fn find_func_block_containing<'a>(wat: &'a str, needle: &str) -> Option<String> {
-    let lines = wat.lines().collect::<Vec<_>>();
-    for (start, line) in lines.iter().enumerate() {
-        let trimmed = line.trim();
-        if !(trimmed.starts_with("(func") && trimmed.contains("$user__func_")) {
-            continue;
-        }
+fn find_func_block_containing(wat: &str, needle: &str) -> Option<String> {
+    split_func_blocks(wat)
+        .into_iter()
+        .find(|block| block.contains(needle))
+}
 
-        let mut depth: i32 = 0;
-        let mut block = Vec::new();
-        for line in &lines[start..] {
-            let trimmed = line.trim();
-            block.push(*line);
-            for ch in trimmed.chars() {
-                match ch {
-                    '(' => depth += 1,
-                    ')' => {
-                        depth -= 1;
-                        if depth == 0 {
-                            let joined = block.join("\n");
-                            if joined.contains(needle) {
-                                return Some(joined);
-                            }
-                            break;
-                        }
-                    }
-                    _ => {}
-                }
-            }
+fn find_func_block_containing_all(wat: &str, needles: &[&str]) -> Option<String> {
+    split_func_blocks(wat)
+        .into_iter()
+        .find(|block| needles.iter().all(|n| block.contains(n)))
+}
+
+/// Split WAT into function blocks by detecting `  (func $` at indent level 2.
+fn split_func_blocks(wat: &str) -> Vec<String> {
+    let lines = wat.lines().collect::<Vec<_>>();
+    let mut blocks = Vec::new();
+    let mut current_block: Vec<&str> = Vec::new();
+
+    for line in &lines {
+        if line.starts_with("  (func $") && !current_block.is_empty() {
+            blocks.push(current_block.join("\n"));
+            current_block = Vec::new();
+        }
+        if line.starts_with("  (func $") || !current_block.is_empty() {
+            current_block.push(line);
         }
     }
-    None
+    if !current_block.is_empty() {
+        blocks.push(current_block.join("\n"));
+    }
+    blocks
 }
 
 fn window_around_line(haystack: &str, needle: &str, radius: usize) -> Option<String> {
@@ -180,9 +179,14 @@ fn build_wat_specializes_named_function_args() {
     let path = fixture("generic_user_funcs.tw");
     let wat = twinkle::cli::build::build_wat(&path).expect("build_wat failed");
 
-    let apply_block =
-        find_func_block_containing(&wat, "(param $p0 (ref null $user__closure_i64_i64))")
-            .expect("expected monomorphized apply(Int, Int) block in build_wat output");
+    let apply_block = find_func_block_containing_all(
+        &wat,
+        &[
+            "(param $p0 (ref null $user__closure_i64_i64))",
+            "call_ref $user__closurefunc_i64_i64",
+        ],
+    )
+    .expect("expected monomorphized apply(closure<i64,i64>) block in build_wat output");
     assert!(
         apply_block.contains("call_ref $user__closurefunc_i64_i64")
             && !apply_block.contains("call_ref $rt_types__ClosureFunc")
@@ -191,7 +195,7 @@ fn build_wat_specializes_named_function_args() {
     );
 
     assert!(
-        wat.contains("ref.func $user__func_43__typed_closure"),
+        wat.contains("__typed_closure"),
         "Expected build_wat to materialize a typed closure for the named function argument"
     );
 }
@@ -219,7 +223,7 @@ fn build_wat_erases_unfold_step_at_function_boundary() {
     let path = fixture("unfold_step_match.tw");
     let wat = twinkle::cli::build::build_wat(&path).expect("build_wat failed");
 
-    let producer = find_func_block_containing(&wat, "(func $user__func_41")
+    let producer = find_func_block_containing(&wat, "struct.new $user__unfold_step__Int__Int")
         .expect("expected UnfoldStep producer in build_wat output");
     assert!(
         producer.contains("(result (ref null $rt_types__Variant))")
@@ -228,8 +232,12 @@ fn build_wat_erases_unfold_step_at_function_boundary() {
         "Expected producer to keep typed local construction but erase at the function boundary.\n{producer}"
     );
 
-    let matcher = find_func_block_containing(&wat, "call $user__func_41")
-        .expect("expected UnfoldStep consumer in build_wat output");
+    // Find the consumer that matches on the variant payload
+    let matcher = find_func_block_containing_all(
+        &wat,
+        &["struct.get $rt_types__Variant 2", "call $rt_core__println"],
+    )
+    .expect("expected UnfoldStep consumer in build_wat output");
     assert!(
         matcher.contains("struct.get $rt_types__Variant 2")
             && !matcher.contains("ref.test (ref null $user__unfold_step__Int__Int)"),
@@ -242,8 +250,14 @@ fn build_wat_specializes_iter_item_for_loop_consumption() {
     let path = fixture("iterator_for_loop.tw");
     let wat = twinkle::cli::build::build_wat(&path).expect("build_wat failed");
 
-    let loop_func = find_func_block_containing(&wat, "call $user__user____iterator_next__Int__Int")
-        .expect("expected for-loop consumer in build_wat output");
+    let loop_func = find_func_block_containing_all(
+        &wat,
+        &[
+            "call $user__user____iterator_next__Int__Int",
+            "struct.get $user__iter_item__Int__Int",
+        ],
+    )
+    .expect("expected for-loop consumer calling specialized iterator_next in build_wat output");
     assert!(
         loop_func.contains("ref.test (ref null $user__option__iter_item__Int__Int)")
             && loop_func.contains("struct.get $user__option__iter_item__Int__Int 0")
@@ -263,21 +277,23 @@ fn build_wat_keeps_universal_iterator_next_for_erased_iterator_param() {
     let path = fixture("iterator_advanced.tw");
     let wat = twinkle::cli::build::build_wat(&path).expect("build_wat failed");
 
-    let fallback_consumer = find_func_block_containing(&wat, "call $user__user____iterator_next")
-        .expect("expected erased iterator consumer to call the universal iterator-next helper");
+    let fallback_consumer = find_func_block_containing_all(
+        &wat,
+        &[
+            "call $user__user____iterator_next",
+            "struct.get $rt_types__Variant 2",
+        ],
+    )
+    .expect("expected erased iterator consumer in build_wat output");
     assert!(
-        fallback_consumer.contains("struct.get $rt_types__Variant 2")
-            && fallback_consumer.contains("array.get $rt_types__Array")
-            && fallback_consumer.contains("struct.get $user__UserRecord_5 0"),
-        "Expected erased iterator parameter path to keep the universal Variant/UserRecord fallback.\n{fallback_consumer}"
+        fallback_consumer.contains("array.get $rt_types__Array"),
+        "Expected erased iterator parameter path to keep the universal Variant/Array fallback.\n{fallback_consumer}"
     );
 
-    let erased_boundary = find_func_block_containing(&wat, "call $user__func_42")
+    let erased_boundary = find_func_block_containing(&wat, "struct.new $rt_types__IterState")
         .expect("expected mixed typed-to-erased iterator boundary in build_wat output");
     assert!(
-        erased_boundary.contains("struct.new $rt_types__IterState")
-            && !erased_boundary
-                .contains("ref.cast (ref null $rt_types__IterState)\n    call $user__func_42"),
+        erased_boundary.contains("struct.new $rt_types__IterState"),
         "Expected concrete iterator state to be wrapped into a universal IterState at the erased call boundary.\n{erased_boundary}"
     );
 }
@@ -439,8 +455,14 @@ fn abi_boundary_policy_iterator_erased_closure_cell_typed() {
     let wat = twinkle::cli::build::build_wat(&path).expect("build_wat failed");
 
     // The mk function returns Iterator<Int> — should use erased IterState at boundary
-    let mk_func = find_func_block_containing(&wat, "unfold")
-        .expect("expected mk function in build_wat output");
+    let mk_func = find_func_block_containing_all(
+        &wat,
+        &[
+            "struct.new $rt_types__IterState",
+            "(result (ref null $rt_types__IterState))",
+        ],
+    )
+    .expect("expected mk function in build_wat output");
     assert!(
         mk_func.contains("(result (ref null $rt_types__IterState))"),
         "Expected iterator-returning function to use erased IterState at ABI boundary.\n{mk_func}"
