@@ -409,10 +409,13 @@ Integration tests (M5):
   (`source_diag.Diagnostic` → `AnalysisDiag` → `query_diagnostics.Diagnostic`)
   must be updated together. The cutover is atomic — old and new cannot mix
   at the layer boundaries.
-* **`Generic` exit criterion:** The exit criterion "no string formatting" does
-  not apply to `Generic` variants, which are transitional. Tracked: all
-  `Generic` usages should be migrated to typed variants eventually, but this
-  can happen after the initial cutover.
+* **`Generic` exit criterion:** `Generic` is a transitional bridge — the goal
+  is to remove it entirely from `ErrorDiag` and `WarningDiag` once all sites
+  are typed. The self-host fixed-point test will surface any stale uses the
+  moment `Generic` is deleted. Remaining work before removal: second-wave
+  checker sites (NoMethod, MissingField, WrongArity reuse), resolver
+  declaration-level errors, and parser syntax errors (needs a `ParseError`
+  family or a deliberate decision to keep them Generic).
 
 ---
 
