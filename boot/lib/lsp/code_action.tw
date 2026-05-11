@@ -92,7 +92,7 @@ pub fn unused_import_actions(
       ws_edit := workspace_edit(uri, [edit_json])
       // Strip the "unused import: " prefix to get the bare name for the title
       import_name := if message.starts_with("unused import: ") {
-        message.substr(15, message.len())
+        message.substring(15, message.len())
       } else {
         message
       }

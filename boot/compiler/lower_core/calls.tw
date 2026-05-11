@@ -9,6 +9,11 @@ use compiler.lower_core.context.{LowerCtx, ExprOut}
 use compiler.lower_core.helpers.{extract_type_name_expr}
 use compiler.lower_core.types.{find_variant_index}
 
+// Generates method-derived internal names using a SINGLE underscore separator
+// ({prefix}_{method_name}), matching the output of to_internal_name in
+// signatures.tw.  Internal-only builtins (canonical=.None) that share a
+// receiver prefix intentionally use DOUBLE underscore ({prefix}__{name}) in
+// builtins.tw to avoid collisions with names produced here.
 pub fn prelude_method_alias(type_name: String, method_name: String) String? {
   case type_name {
     "Bool" => .Some("bool_${method_name}"),

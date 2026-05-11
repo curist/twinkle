@@ -89,7 +89,7 @@ pub fn lower_lvalue_assign(ctx: LowerCtx, lhs: Expr, rhs_core: CoreExpr, s: Span
               // Dispatch on base type: Vector vs Dict
               func_id := case base_ty {
                 .Dict(_, _) => ctx.builtins.id("dict_set"),
-                _ => ctx.builtins.id("vector_set_unsafe"),
+                _ => ctx.builtins.id("vector__set_unsafe"),
               }
               base_kind: CoreExprKind = case ctx.module_globals[name] {
                 .Some(_) => .GlobalLocal(root_local),
@@ -114,7 +114,7 @@ pub fn lower_lvalue_assign(ctx: LowerCtx, lhs: Expr, rhs_core: CoreExpr, s: Span
           ir := lower_expr_fn(br.ctx, index)
           func_id := case base_ty {
             .Dict(_, _) => ctx.builtins.id("dict_set"),
-            _ => ctx.builtins.id("vector_set_unsafe"),
+            _ => ctx.builtins.id("vector__set_unsafe"),
           }
           inner_update := CoreExpr.{
             kind: .Call(

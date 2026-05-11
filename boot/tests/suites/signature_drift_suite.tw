@@ -141,30 +141,30 @@ pub fn suite() runner.Suite {
 
     // ── mapping: internal-only builtins have no canonical name ────────────────
 
-    .test("vector_set_unsafe has no canonical name (internal-only)", fn() {
+    .test("vector__set_unsafe has no canonical name (internal-only)", fn() {
       reg := make_builtin_registry()
-      entry := try reg.entry(reg.id("vector_set_unsafe")).ok_or("missing vector_set_unsafe")
+      entry := try reg.entry(reg.id("vector__set_unsafe")).ok_or("missing vector__set_unsafe")
       try assert.is_none(entry.canonical_name)
       .Ok({})
     })
 
-    .test("string_substring has no canonical name (internal-only)", fn() {
+    .test("string__substring has no canonical name (internal-only)", fn() {
       reg := make_builtin_registry()
-      entry := try reg.entry(reg.id("string_substring")).ok_or("missing string_substring")
+      entry := try reg.entry(reg.id("string__substring")).ok_or("missing string__substring")
       try assert.is_none(entry.canonical_name)
       .Ok({})
     })
 
-    .test("vector_builder_new has no canonical name (internal-only)", fn() {
+    .test("vector__builder_new has no canonical name (internal-only)", fn() {
       reg := make_builtin_registry()
-      entry := try reg.entry(reg.id("vector_builder_new")).ok_or("missing vector_builder_new")
+      entry := try reg.entry(reg.id("vector__builder_new")).ok_or("missing vector__builder_new")
       try assert.is_none(entry.canonical_name)
       .Ok({})
     })
 
-    .test("dict_get_unsafe has no canonical name (internal-only)", fn() {
+    .test("dict__get_unsafe has no canonical name (internal-only)", fn() {
       reg := make_builtin_registry()
-      entry := try reg.entry(reg.id("dict_get_unsafe")).ok_or("missing dict_get_unsafe")
+      entry := try reg.entry(reg.id("dict__get_unsafe")).ok_or("missing dict__get_unsafe")
       try assert.is_none(entry.canonical_name)
       .Ok({})
     })

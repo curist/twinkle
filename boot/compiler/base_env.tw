@@ -236,12 +236,12 @@ pub fn builtin_env() ResolvedEnv {
     builtin_doc_sig("eprint",   [], ["s"],   [.String], .Some(.Void),  .Some("Print a string to stderr.")),
     builtin_doc_sig("eprintln", [], ["s"],   [.String], .Some(.Void),  .Some("Print a string to stderr followed by a newline.")),
     // ── String (internal-only, not in signature files) ──
-    builtin_sig("string_substring", [], ["s", "start", "end"], [.String, .Int, .Int], .Some(.String)),
+    builtin_sig("string__substring", [], ["s", "start", "end"], [.String, .Int, .Int], .Some(.String)),
     // ── Vector builders (internal, not in signature files) ──
-    builtin_sig("vector_builder_new",    ["T"], [],              [],                     .Some(.Vector(t))),
-    builtin_sig("vector_builder_push",   ["T"], ["xs", "value"], [.Vector(t), t],        .Some(.Void)),
-    builtin_sig("vector_builder_freeze", ["T"], ["xs"],          [.Vector(t)],           .Some(.Vector(t))),
-    builtin_sig("vector_builder_from",   ["T"], ["xs"],          [.Vector(t)],           .Some(.Vector(t))),
+    builtin_sig("vector__builder_new",    ["T"], [],              [],                     .Some(.Vector(t))),
+    builtin_sig("vector__builder_push",   ["T"], ["xs", "value"], [.Vector(t), t],        .Some(.Void)),
+    builtin_sig("vector__builder_freeze", ["T"], ["xs"],          [.Vector(t)],           .Some(.Vector(t))),
+    builtin_sig("vector__builder_from",   ["T"], ["xs"],          [.Vector(t)],           .Some(.Vector(t))),
     // ── Host ops ──
     builtin_sig("host_read_file",  [], ["path"],         [.String],              .Some(.String)),
     builtin_sig("host_write_file", [], ["path", "text"], [.String, .String],     .Some(.Void)),

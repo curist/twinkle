@@ -28,7 +28,7 @@ pub fn suite() runner.Suite {
       try assert.str_eq("".concat("x"), "x")
       .Ok({})
     })
-    .test("contains finds substring", fn() {
+    .test("contains finds substringing", fn() {
       try assert.is_true("hello world".contains("world"))
       try assert.is_true("hello world".contains("hello"))
       try assert.is_false("hello world".contains("xyz"))
@@ -85,23 +85,23 @@ pub fn suite() runner.Suite {
       try assert.str_eq("abc".slice(5, 10), "")
       .Ok({})
     })
-    .test("substr extracts by character index", fn() {
-      try assert.str_eq("hello world".substr(0, 5), "hello")
-      try assert.str_eq("hello world".substr(6, 11), "world")
+    .test("substring extracts by character index", fn() {
+      try assert.str_eq("hello world".substring(0, 5), "hello")
+      try assert.str_eq("hello world".substring(6, 11), "world")
       .Ok({})
     })
-    .test("substr handles multibyte characters", fn() {
-      try assert.str_eq("héllo".substr(0, 3), "hél")
-      try assert.str_eq("日本語".substr(1, 3), "本語")
-      try assert.str_eq("日本語".substr(0, 1), "日")
+    .test("substring handles multibyte characters", fn() {
+      try assert.str_eq("héllo".substring(0, 3), "hél")
+      try assert.str_eq("日本語".substring(1, 3), "本語")
+      try assert.str_eq("日本語".substring(0, 1), "日")
       .Ok({})
     })
-    .test("substr clamps indices", fn() {
-      try assert.str_eq("abc".substr(0, 100), "abc")
-      try assert.str_eq("abc".substr(-1, 2), "ab")
-      try assert.str_eq("abc".substr(5, 10), "")
-      try assert.str_eq("abc".substr(2, 2), "")
-      try assert.str_eq("abc".substr(3, 1), "")
+    .test("substring clamps indices", fn() {
+      try assert.str_eq("abc".substring(0, 100), "abc")
+      try assert.str_eq("abc".substring(-1, 2), "ab")
+      try assert.str_eq("abc".substring(5, 10), "")
+      try assert.str_eq("abc".substring(2, 2), "")
+      try assert.str_eq("abc".substring(3, 1), "")
       .Ok({})
     })
     .test("interpolation embeds values", fn() {

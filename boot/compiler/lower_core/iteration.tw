@@ -387,7 +387,7 @@ fn build_indexed_loop(setup: IterSetup, inner_action: CoreExpr, s: Span) ExprOut
           key_local_expr := CoreExpr.{ kind: .Local(setup.elem_local), ty: setup.elem_ty, span: s }
           get_unsafe_call := CoreExpr.{
             kind: .Call(
-              .{ kind: .GlobalFunc(ctx.builtins.id("dict_get_unsafe")), ty: void_ty, span: s },
+              .{ kind: .GlobalFunc(ctx.builtins.id("dict__get_unsafe")), ty: void_ty, span: s },
               [dict_local_expr, key_local_expr],
             ),
             ty: val_ty,

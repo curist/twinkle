@@ -257,7 +257,7 @@ pub fn code_point_at(s: String, i: Int) Int? {
 
 /// Return a substring by character (Unicode scalar) indices [start, end).
 /// Indices are clamped to [0, char_len]; start > end yields "".
-pub fn substr(s: String, start: Int, end: Int) String {
+pub fn substring(s: String, start: Int, end: Int) String {
   start := if start < 0 { 0 } else { start }
   end := if end < 0 { 0 } else { end }
   if start >= end { return "" }

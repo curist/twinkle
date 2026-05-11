@@ -23,15 +23,15 @@ fn test_vector_len_effect_is_read_only() Result<Void, String> {
 fn test_vector_set_unsafe_has_in_place_equivalent() Result<Void, String> {
   reg := make_builtin_registry()
   semantics := make_prelude_optimizer_semantics(reg)
-  case semantics.call_semantics[reg.id("vector_set_unsafe").id] {
+  case semantics.call_semantics[reg.id("vector__set_unsafe").id] {
     .Some(info) => {
       try assert.is_some(info.cow_base_arg)
       base_arg := try info.cow_base_arg.ok_or("missing cow_base_arg")
       try assert.int_eq(base_arg, 0)
       in_place := try info.in_place_equivalent.ok_or("missing in_place_equivalent")
-      assert.int_eq(in_place.id, reg.id("vector_set_in_place").id)
+      assert.int_eq(in_place.id, reg.id("vector__set_in_place").id)
     },
-    .None => .Err("missing vector_set_unsafe semantics"),
+    .None => .Err("missing vector__set_unsafe semantics"),
   }
 }
 
@@ -75,14 +75,14 @@ fn test_record_update_has_fresh_result() Result<Void, String> {
 fn test_vector_set_reusable_update_site() Result<Void, String> {
   reg := make_builtin_registry()
   semantics := make_prelude_optimizer_semantics(reg)
-  op: AnfOp = .ACall(.AGlobalFunc(reg.id("vector_set_unsafe")), [.ALocal(lid(0)), .ALitInt(0), .ALitInt(1)])
+  op: AnfOp = .ACall(.AGlobalFunc(reg.id("vector__set_unsafe")), [.ALocal(lid(0)), .ALitInt(0), .ALitInt(1)])
   case reusable_update_site(op, semantics) {
     .Some(site) => {
       try assert.int_eq(site.base_local.id, 0)
       in_place := try site.in_place_equivalent.ok_or("missing in-place equivalent")
-      assert.int_eq(in_place.id, reg.id("vector_set_in_place").id)
+      assert.int_eq(in_place.id, reg.id("vector__set_in_place").id)
     },
-    .None => .Err("expected vector_set_unsafe reusable update site"),
+    .None => .Err("expected vector__set_unsafe reusable update site"),
   }
 }
 

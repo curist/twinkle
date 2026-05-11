@@ -63,9 +63,9 @@ pub fn suite() runner.Suite {
       }
     })
 
-    .test("intrinsic vector_set_in_place carries PVec ABI result", fn() {
-      reg := empty_registry().intrinsic("vector_set_in_place")
-      entry := try reg.entry(reg.id("vector_set_in_place")).ok_or("missing")
+    .test("intrinsic vector__set_in_place carries PVec ABI result", fn() {
+      reg := empty_registry().intrinsic("vector__set_in_place")
+      entry := try reg.entry(reg.id("vector__set_in_place")).ok_or("missing")
       try assert.int_eq(entry.abi.result_types.len(), 1)
       case entry.abi.result_types[0] {
         .Ref(nullable, .Named(name)) => {
@@ -73,7 +73,7 @@ pub fn suite() runner.Suite {
           try assert.str_eq(name, "rt_types__PVec")
           .Ok({})
         },
-        _ => .Err("expected vector_set_in_place ABI result to be non-null rt_types__PVec"),
+        _ => .Err("expected vector__set_in_place ABI result to be non-null rt_types__PVec"),
       }
     })
 
@@ -165,15 +165,15 @@ pub fn suite() runner.Suite {
       // vector ops
       _ := reg.id("vector_len")
       _ := reg.id("vector_append")
-      _ := reg.id("vector_set_unsafe")
+      _ := reg.id("vector__set_unsafe")
 
       // dict ops
       _ := reg.id("dict_new")
       _ := reg.id("dict_set")
 
       // in-place variants
-      _ := reg.id("vector_set_in_place")
-      _ := reg.id("dict_set_in_place")
+      _ := reg.id("vector__set_in_place")
+      _ := reg.id("dict__set_in_place")
 
       // host ops
       _ := reg.id("host_read_file")

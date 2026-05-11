@@ -48,6 +48,12 @@ fn receiver_for_stem(stem: String) String? {
 /// For receiver groups the rule is <lowercase_receiver>_<canonical_name>,
 /// with a few String-receiver exceptions that keep their bare name.
 /// Free functions (receiver=None, e.g. range) are returned unchanged.
+///
+/// Invariant: names produced here always use a SINGLE underscore separator
+/// ({prefix}_{name}).  Internal-only builtins registered with canonical=.None
+/// in builtins.tw that share a receiver prefix MUST instead use DOUBLE
+/// underscore ({prefix}__{name}) to prevent future namespace collisions between
+/// the two classes.
 pub fn to_internal_name(receiver: String?, canonical_name: String) String {
   case receiver {
     .None => canonical_name,

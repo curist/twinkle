@@ -69,24 +69,24 @@ fn builtin_abi(name: String) AbiContract {
     "bool_to_string" => abi([.I32], [str_()]),
     "string_len" => abi([str_n()], [.I32]),
     "string_concat" => abi([str_n(), str_n()], [str_()]),
-    "string_substring" => abi([str_n(), .I32, .I32], [str_()]),
+    "string__substring" => abi([str_n(), .I32, .I32], [str_()]),
     "vector_len" => abi([pvec_n()], [.I32]),
-    "vector_set_unsafe" => abi([pvec_n(), .I32, .Anyref], [pvec_()]),
+    "vector__set_unsafe" => abi([pvec_n(), .I32, .Anyref], [pvec_()]),
     "vector_concat" => abi([pvec_n(), pvec_n()], [pvec_()]),
     "vector_slice" => abi([pvec_n(), .I32, .I32], [pvec_()]),
-    "vector_builder_new" => abi([], [arr_()]),
-    "vector_builder_push" => abi([arr_n(), .Anyref], []),
-    "vector_builder_freeze" => abi([arr_n()], [pvec_()]),
-    "vector_builder_from" => abi([pvec_n()], [arr_()]),
+    "vector__builder_new" => abi([], [arr_()]),
+    "vector__builder_push" => abi([arr_n(), .Anyref], []),
+    "vector__builder_freeze" => abi([arr_n()], [pvec_()]),
+    "vector__builder_from" => abi([pvec_n()], [arr_()]),
     "dict_new" => abi([], [dict_()]),
     "dict_set" => abi([dict_n(), .Anyref, .Anyref], [dict_()]),
-    "dict_set_in_place" => abi([dict_n(), .Anyref, .Anyref], [dict_()]),
+    "dict__set_in_place" => abi([dict_n(), .Anyref, .Anyref], [dict_()]),
     "dict_keys" => abi([dict_n()], [pvec_()]),
     "dict_get" => abi([dict_n(), .Anyref], [variant_()]),
     "dict_len" => abi([dict_n()], [.I32]),
     "dict_has" => abi([dict_n(), .Anyref], [.I32]),
     "dict_remove" => abi([dict_n(), .Anyref], [dict_()]),
-    "dict_remove_in_place" => abi([dict_n(), .Anyref], [dict_()]),
+    "dict__remove_in_place" => abi([dict_n(), .Anyref], [dict_()]),
     "host_read_file" => abi([str_n()], [variant_null()]),
     "host_write_file" => abi([str_n(), str_n()], []),
     "host_write_bytes" => abi([str_n(), arr_n()], []),
@@ -106,9 +106,9 @@ fn builtin_abi(name: String) AbiContract {
     "vector_append" => abi([pvec_n(), .Anyref], [pvec_()]),
     "vector_get" => abi([pvec_n(), .I32], [.Anyref]),
     "vector_set" => abi([pvec_n(), .I32, .Anyref], [variant_()]),
-    "vector_set_in_place" => abi([pvec_n(), .I32, .Anyref], [pvec_()]),
+    "vector__set_in_place" => abi([pvec_n(), .I32, .Anyref], [pvec_()]),
     "vector_make" => abi([.I32, .Anyref], [pvec_()]),
-    "dict_get_unsafe" => abi([dict_n(), .Anyref], [.Anyref]),
+    "dict__get_unsafe" => abi([dict_n(), .Anyref], [.Anyref]),
     "cell_new" => abi([.Anyref], [cell_n()]),
     "cell_get" => abi([cell_n()], [.Anyref]),
     "cell_set" => abi([cell_n(), .Anyref], []),
@@ -275,6 +275,14 @@ fn intr(name: String, canonical: String?) BuiltinSpec {
 
 /// The single authoritative table of all builtins.
 /// Order determines FuncId assignment (0-based, sequential).
+///
+/// Naming convention for internal-only builtins (canonical = .None):
+///   - Builtins with a receiver prefix (string, vector, dict, …) that have NO
+///     user-facing canonical name MUST use double-underscore as separator:
+///       {prefix}__{name}   e.g. "vector__set_unsafe", "dict__get_unsafe"
+///   - Method-derived internal names produced by `to_internal_name` in
+///     signatures.tw use single underscore: {prefix}_{name}
+///   - This prevents future namespace collisions between the two classes.
 pub fn builtin_specs() Vector<BuiltinSpec> {
   [
     // ── I/O ──
@@ -292,7 +300,7 @@ pub fn builtin_specs() Vector<BuiltinSpec> {
     // ── String ops ──
     rt("string_len",       "rt.str", "len",       .Some("String.len")),
     rt("string_concat",    "rt.str", "concat",    .Some("String.concat")),
-    rt("string_substring", "rt.str", "substring", .None),
+    rt("string__substring", "rt.str", "substring", .None),
     intr("string_get",       .Some("String.get")),
     intr("string_slice",     .Some("String.slice")),
     intr("from_code_point",  .Some("String.from_code_point")),
@@ -304,30 +312,30 @@ pub fn builtin_specs() Vector<BuiltinSpec> {
     // ── Vector ops ──
     rt("vector_len",        "rt.arr", "len",   .Some("Vector.len")),
     intr("vector_append",   .Some("Vector.append")),
-    rt("vector_set_unsafe", "rt.arr", "set",   .None),
+    rt("vector__set_unsafe", "rt.arr", "set",   .None),
     rt("vector_concat",     "rt.arr", "concat",.Some("Vector.concat")),
     rt("vector_slice",      "rt.arr", "slice", .Some("Vector.slice")),
     intr("vector_get",  .Some("Vector.get")),
     intr("vector_set",  .Some("Vector.set")),
     intr("vector_make", .Some("Vector.make")),
     // ── Vector builder ──
-    rt("vector_builder_new",    "rt.arr", "builder_new",    .None),
-    rt("vector_builder_push",   "rt.arr", "builder_push",   .None),
-    rt("vector_builder_freeze", "rt.arr", "builder_freeze", .None),
-    rt("vector_builder_from",   "rt.arr", "builder_from",   .None),
+    rt("vector__builder_new",    "rt.arr", "builder_new",    .None),
+    rt("vector__builder_push",   "rt.arr", "builder_push",   .None),
+    rt("vector__builder_freeze", "rt.arr", "builder_freeze", .None),
+    rt("vector__builder_from",   "rt.arr", "builder_from",   .None),
     // ── Dict ops ──
     rt("dict_new",    "rt.dict", "make",       .Some("Dict.new")),
     rt("dict_set",    "rt.dict", "set",        .Some("Dict.set")),
     rt("dict_keys",   "rt.dict", "keys",       .Some("Dict.keys")),
     rt("dict_get",    "rt.dict", "get_option", .Some("Dict.get")),
-    intr("dict_get_unsafe", .None),
+    intr("dict__get_unsafe", .None),
     rt("dict_len",    "rt.dict", "len",    .Some("Dict.len")),
     rt("dict_has",    "rt.dict", "has",    .Some("Dict.has")),
     rt("dict_remove", "rt.dict", "remove", .Some("Dict.remove")),
     // ── In-place variants (optimizer rewrites) ──
-    intr("vector_set_in_place", .None),
-    rt("dict_set_in_place",    "rt.dict", "set_in_place",    .None),
-    rt("dict_remove_in_place", "rt.dict", "remove_in_place", .None),
+    intr("vector__set_in_place", .None),
+    rt("dict__set_in_place",    "rt.dict", "set_in_place",    .None),
+    rt("dict__remove_in_place", "rt.dict", "remove_in_place", .None),
     // ── Range & iterators ──
     intr("range_from",      .Some("range_from")),
     intr("range",           .Some("range")),

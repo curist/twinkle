@@ -325,10 +325,10 @@ fn emit_func(func: AnfFunctionDef, prepared: PreparedFunc, base_ctx: EmitCtx) Fu
 }
 
 fn collect_vector_builder_slots(expr: PreparedExpr, builtins: BuiltinRegistry) Dict<Int, Bool> {
-  builder_new := bi.id(builtins, "vector_builder_new")
-  builder_from := bi.id(builtins, "vector_builder_from")
-  builder_push := bi.id(builtins, "vector_builder_push")
-  builder_freeze := bi.id(builtins, "vector_builder_freeze")
+  builder_new := bi.id(builtins, "vector__builder_new")
+  builder_from := bi.id(builtins, "vector__builder_from")
+  builder_push := bi.id(builtins, "vector__builder_push")
+  builder_freeze := bi.id(builtins, "vector__builder_freeze")
   collect_vector_builder_slots_expr(expr, builder_new, builder_from, builder_push, builder_freeze, Dict.new())
 }
 
@@ -926,8 +926,8 @@ fn emit_intrinsic_call(fid: FuncId, name: String, args: Vector<PreparedAtom>, re
     "vector_get"          => emit_intrinsic_vector_get(args, result_idx, result_mono, ctx, buf),
     "vector_set"          => emit_intrinsic_vector_set(args, result_idx, result_mono, ctx, buf),
     "vector_make"         => emit_intrinsic_vector_make(args, result_idx, ctx, buf),
-    "vector_set_in_place" => emit_intrinsic_vector_set_in_place(args, result_idx, ctx, buf),
-    "dict_get_unsafe"     => emit_intrinsic_dict_get_unsafe(args, result_idx, result_mono, ctx, buf),
+    "vector__set_in_place" => emit_intrinsic_vector_set_in_place(args, result_idx, ctx, buf),
+    "dict__get_unsafe"     => emit_intrinsic_dict_get_unsafe(args, result_idx, result_mono, ctx, buf),
     "string_get"          => emit_intrinsic_string_get(args, result_idx, result_mono, ctx, buf),
     "string_slice"        => emit_intrinsic_string_slice(args, result_idx, ctx, buf),
     "char_code_at"        => emit_intrinsic_char_code_at(args, result_idx, ctx, buf),

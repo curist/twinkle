@@ -16,15 +16,15 @@ pub fn is_host_vector_arg(name: String, index: Int) Bool {
 }
 
 pub fn is_vector_builder_array_arg(name: String, index: Int) Bool {
-  (name == "vector_builder_push" and index == 0) or (name == "vector_builder_freeze" and index == 0)
+  (name == "vector__builder_push" and index == 0) or (name == "vector__builder_freeze" and index == 0)
 }
 
 pub fn is_vector_builder_push(name: String) Bool {
-  name == "vector_builder_push"
+  name == "vector__builder_push"
 }
 
 pub fn is_vector_builder_seed(name: String) Bool {
-  name == "vector_builder_new" or name == "vector_builder_from"
+  name == "vector__builder_new" or name == "vector__builder_from"
 }
 
 // ABI shim: builder regions keep transient builders as erased anyref locals;

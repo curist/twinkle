@@ -629,14 +629,14 @@ pub fn suite() runner.Suite {
         .None => { return assert.fail("missing entry for int_to_string") },
       }
 
-      // vector_set_unsafe: (ref null $Array, i32, anyref) → (ref $Array)
-      vs_fid := bi.id(builtins, "vector_set_unsafe")
+      // vector__set_unsafe: (ref null $Array, i32, anyref) → (ref $Array)
+      vs_fid := bi.id(builtins, "vector__set_unsafe")
       case builtins.by_id[vs_fid.id] {
         .Some(entry) => {
           try assert.int_eq(entry.abi.param_types.len(), 3)
-          case entry.abi.param_types[2] { .Anyref => {}, _ => { return assert.fail("vector_set_unsafe param 2 should be anyref") } }
+          case entry.abi.param_types[2] { .Anyref => {}, _ => { return assert.fail("vector__set_unsafe param 2 should be anyref") } }
         },
-        .None => { return assert.fail("missing entry for vector_set_unsafe") },
+        .None => { return assert.fail("missing entry for vector__set_unsafe") },
       }
 
       .Ok({})

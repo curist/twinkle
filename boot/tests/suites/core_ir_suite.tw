@@ -736,9 +736,9 @@ pub fn suite() runner.Suite {
       reg := make_builtin_registry()
       // Should produce builder pattern with loop
       try assert.ok(has_loop(body), "expected Loop in collect desugaring")
-      try assert.ok(has_func_id(body, reg.id("vector_builder_new").id), "expected builder_new in collect lowering")
-      try assert.ok(has_func_id(body, reg.id("vector_builder_push").id), "expected builder_push in collect lowering")
-      try assert.ok(has_func_id(body, reg.id("vector_builder_freeze").id), "expected builder_freeze in collect lowering")
+      try assert.ok(has_func_id(body, reg.id("vector__builder_new").id), "expected builder_new in collect lowering")
+      try assert.ok(has_func_id(body, reg.id("vector__builder_push").id), "expected builder_push in collect lowering")
+      try assert.ok(has_func_id(body, reg.id("vector__builder_freeze").id), "expected builder_freeze in collect lowering")
       .Ok({})
     })
     .test("lower collect-while uses builder calls", fn() Result<Void, String> {
@@ -747,9 +747,9 @@ pub fn suite() runner.Suite {
       body := lr.module.functions[0].body
       reg := make_builtin_registry()
       try assert.ok(has_loop(body), "expected Loop in collect-while desugaring")
-      try assert.ok(has_func_id(body, reg.id("vector_builder_new").id), "expected builder_new in collect-while lowering")
-      try assert.ok(has_func_id(body, reg.id("vector_builder_push").id), "expected builder_push in collect-while lowering")
-      try assert.ok(has_func_id(body, reg.id("vector_builder_freeze").id), "expected builder_freeze in collect-while lowering")
+      try assert.ok(has_func_id(body, reg.id("vector__builder_new").id), "expected builder_new in collect-while lowering")
+      try assert.ok(has_func_id(body, reg.id("vector__builder_push").id), "expected builder_push in collect-while lowering")
+      try assert.ok(has_func_id(body, reg.id("vector__builder_freeze").id), "expected builder_freeze in collect-while lowering")
       .Ok({})
     })
     .test("lower array literal", fn() Result<Void, String> {
