@@ -440,7 +440,7 @@ fn error_to_report(e: ErrorDiag, ctx: RenderCtx) Report {
         severity: .Error,
         title: d.message,
         labels: [primary(d.span, .None)],
-        help_lines: [],
+        help_lines: d.help_lines,
       }
     },
     .LowerError(d) => {
@@ -448,7 +448,7 @@ fn error_to_report(e: ErrorDiag, ctx: RenderCtx) Report {
         severity: .Error,
         title: d.message,
         labels: [primary(d.span, .None)],
-        help_lines: [],
+        help_lines: d.help_lines,
       }
     },
   }
@@ -461,7 +461,7 @@ fn warning_to_report(w: WarningDiag, ctx: RenderCtx) Report {
         severity: .Warning,
         title: "unused import `${d.binding}`",
         labels: [primary(d.span, .None)],
-        help_lines: ["remove this import"],
+        help_lines: ["use `twk check --fix-unused-imports` to remove automatically"],
       }
     },
   }

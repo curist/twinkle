@@ -142,6 +142,6 @@ pub fn expr_type(ctx: LowerCtx, expr: Expr) MonoType {
 }
 
 pub fn emit_error(ctx: LowerCtx, s: Span, msg: String) LowerCtx {
-  ctx.errors = ctx.errors.append(.Error(.LowerError(.{ span: s, message: msg })))
+  ctx.errors = ctx.errors.append(.Error(.LowerError(.{ span: s, message: msg, help_lines: [] })))
   ctx
 }

@@ -24,7 +24,7 @@ pub fn suite() runner.Suite {
       .Ok({})
     })
     .test("has_errors is true when any error present", fn() {
-      e := DiagKind.Error(.ParseError(diag.GenericDiag.{ span: s(0, 5), message: "oops" }))
+      e := DiagKind.Error(.ParseError(diag.GenericDiag.{ span: s(0, 5), message: "oops", help_lines: [] }))
       try assert.is_true(diag.has_errors([e]))
       .Ok({})
     })
@@ -37,7 +37,7 @@ pub fn suite() runner.Suite {
 
     // ── span extraction ──
     .test("span from Error.ParseError", fn() {
-      k := DiagKind.Error(.ParseError(diag.GenericDiag.{ span: s(10, 20), message: "msg" }))
+      k := DiagKind.Error(.ParseError(diag.GenericDiag.{ span: s(10, 20), message: "msg", help_lines: [] }))
       try assert.int_eq(k.span().start, 10)
       try assert.int_eq(k.span().end, 20)
       .Ok({})

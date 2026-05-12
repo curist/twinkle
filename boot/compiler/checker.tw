@@ -1591,7 +1591,7 @@ fn check_variant_lit(name: String, args: Vector<Expr>, expected: MonoType, s: Sp
       }
       .{ ctx: cur_ctx, diags: cur_diags }
     },
-    .Some(.Err(msg)) => .{ ctx, diags: diags.append(.Error(.ParseError(.{ span: s, message: msg }))) },
+    .Some(.Err(msg)) => .{ ctx, diags: diags.append(.Error(.ParseError(.{ span: s, message: msg, help_lines: [] }))) },
     .None => .{ ctx, diags: diags.append(.Error(.VariantTypeMismatch(.{ span: s, name, ty: zonked }))) },
   }
 }
@@ -2106,7 +2106,7 @@ fn check_variant_pattern(name: String, sub_pats: Vector<Pattern>, expected: Mono
       }
       .{ ctx: cur_ctx, diags: cur_diags }
     },
-    .Some(.Err(msg)) => .{ ctx, diags: diags.append(.Error(.ParseError(.{ span: s, message: msg }))) },
+    .Some(.Err(msg)) => .{ ctx, diags: diags.append(.Error(.ParseError(.{ span: s, message: msg, help_lines: [] }))) },
     .None => .{ ctx, diags: diags.append(.Error(.VariantTypeMismatch(.{ span: s, name, ty: zonked }))) },
   }
 }

@@ -168,16 +168,18 @@ fn error_expr(span_in: span.Span) Expr {
   Expr.{ id: -1, kind: .ErrorExpr, span: span_in }
 }
 
-fn stmt_in_expr_msg(kw: String, context: String?) String {
+fn stmt_in_expr_diag(span: span.Span, kw: String, context: String?) DiagKind {
   ctx := case context {
     .Some(s) => " in ${s}",
     .None => "",
   }
-  "'${kw}' is a statement and cannot be used where an expression is expected${ctx}\nhint: wrap it in a block expression, e.g. `=> { ${kw} ... }`"
+  msg := "'${kw}' is a statement and cannot be used where an expression is expected${ctx}"
+  hint := "wrap it in a block expression, e.g. `=> { ${kw} ... }`"
+  diag.error_with_help(span, msg, [hint])
 }
 
 fn diag_statement_in_expression(c: Cursor, kw: String) ExprParse {
-  diagnostics: Vector<DiagKind> = [diag.error(c.span(), stmt_in_expr_msg(kw, .None))]
+  diagnostics: Vector<DiagKind> = [stmt_in_expr_diag(c.span(), kw, .None)]
   .{ value: error_expr(c.span()), cursor: c.advance(), diagnostics }
 }
 
@@ -196,7 +198,7 @@ fn parse_expr_in(c: Cursor, context: String) ExprParse {
   // Check for statement keyword before parsing — emit context-enriched diagnostic
   case is_stmt_keyword(c) {
     .Some(kw) => {
-      diagnostics: Vector<DiagKind> = [diag.error(c.span(), stmt_in_expr_msg(kw, .Some(context)))]
+      diagnostics: Vector<DiagKind> = [stmt_in_expr_diag(c.span(), kw, .Some(context))]
       kw_span := c.span()
       c = c.advance()
       last_span := kw_span

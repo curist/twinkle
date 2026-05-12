@@ -19,6 +19,7 @@ pub type Severity = { Error, Warning, Hint, Info }
 pub type GenericDiag = .{
   span: Span,
   message: String,
+  help_lines: Vector<String>,
 }
 
 // ── Error payload types ──────────────────────────────────────────────
@@ -324,7 +325,11 @@ pub fn stage_result<T>(value: T, diagnostics: Vector<DiagKind>) StageResult<T> {
 
 /// Convenience for parser and lexer emission sites.
 pub fn error(span: Span, message: String) DiagKind {
-  .Error(.ParseError(.{ span, message }))
+  .Error(.ParseError(.{ span, message, help_lines: [] }))
+}
+
+pub fn error_with_help(span: Span, message: String, help_lines: Vector<String>) DiagKind {
+  .Error(.ParseError(.{ span, message, help_lines }))
 }
 
 pub fn has_errors(diags: Vector<DiagKind>) Bool {
@@ -446,6 +451,17 @@ pub fn message(kind: DiagKind) String {
   }
 }
 
+pub fn help_lines(kind: DiagKind) Vector<String> {
+  case kind {
+    .Error(e) => case e {
+      .ParseError(d) => d.help_lines,
+      .LowerError(d) => d.help_lines,
+      _ => [],
+    },
+    .Warning(_) => [],
+  }
+}
+
 pub fn format_diagnostics(reg: registry.FileRegistry, diags: Vector<DiagKind>) String {
   lines: Vector<String> = []
   for d in diags {
@@ -457,6 +473,9 @@ pub fn format_diagnostics(reg: registry.FileRegistry, diags: Vector<DiagKind>) S
       .None => "?:?: ${label}: ${msg}",
     }
     lines = lines.append(line)
+    for h in help_lines(d) {
+      lines = lines.append("hint: ${h}")
+    }
   }
   lines.join("\n")
 }

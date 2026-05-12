@@ -525,7 +525,7 @@ fn capture_local_types(state: AnalysisState, env: ResolvedEnv, canonical: String
 // ── Helpers ─────────────────────────────────────────────────────────
 
 fn synthetic_diag(id: identity.SourceIdentity, version: Int?, diag_span: span.Span, stage: String, message: String) AnalysisDiag {
-  kind: diag.DiagKind = .Error(.ParseError(.{ span: diag_span, message }))
+  kind: diag.DiagKind = .Error(.ParseError(.{ span: diag_span, message, help_lines: [] }))
   .{ identity: id, version, kind, stage, data: .None, type_names: empty_type_names() }
 }
 
