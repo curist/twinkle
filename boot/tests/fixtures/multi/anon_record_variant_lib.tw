@@ -1,0 +1,13 @@
+pub type Shape = {
+  Circle(.{ radius: Float }),
+  Rect(.{ width: Float, height: Float }),
+  Point,
+}
+
+pub fn area(s: Shape) Float {
+  case s {
+    .Circle(c) => 3.14 * c.radius * c.radius,
+    .Rect(r) => r.width * r.height,
+    .Point => 0.0,
+  }
+}

@@ -317,4 +317,12 @@ pub fn suite() runner.Suite {
         .Err(err) => .Err("expected mixed pub value+function access to compile, got: ${format_compile_error(err)}"),
       }
     })
+
+    .test("cross-module anonymous record variant construction and use", fn() {
+      result := module_compiler.compile_entry("${dir}/anon_record_variant_consumer.tw")
+      case result {
+        .Ok(_) => .Ok({}),
+        .Err(err) => .Err("expected anon record variant cross-module to compile, got: ${format_compile_error(err)}"),
+      }
+    })
 }

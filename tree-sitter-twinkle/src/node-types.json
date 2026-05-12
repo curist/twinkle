@@ -845,6 +845,10 @@
             "named": true
           },
           {
+            "type": "record_type_def",
+            "named": true
+          },
+          {
             "type": "type_name",
             "named": true
           }
@@ -861,6 +865,10 @@
         },
         {
           "type": "primitive_type",
+          "named": true
+        },
+        {
+          "type": "record_type_def",
           "named": true
         },
         {
@@ -2137,6 +2145,10 @@
             "named": true
           },
           {
+            "type": "record_type_def",
+            "named": true
+          },
+          {
             "type": "type_name",
             "named": true
           }
@@ -2157,6 +2169,10 @@
         },
         {
           "type": "primitive_type",
+          "named": true
+        },
+        {
+          "type": "record_type_def",
           "named": true
         },
         {

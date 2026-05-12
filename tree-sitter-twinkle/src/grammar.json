@@ -3286,6 +3286,10 @@
         {
           "type": "SYMBOL",
           "name": "type_name"
+        },
+        {
+          "type": "SYMBOL",
+          "name": "record_type_def"
         }
       ]
     },
@@ -3486,6 +3490,10 @@
     [
       "_primary_expression",
       "type_name"
+    ],
+    [
+      "_type_definition",
+      "_base_type"
     ],
     [
       "shift_expression",

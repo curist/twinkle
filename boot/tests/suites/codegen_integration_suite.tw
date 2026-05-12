@@ -726,4 +726,9 @@ pub fn suite() runner.Suite {
     .test("user function appears in linked module", test_structural_user_func_present)
     .test("all imports are host-only after linking", test_structural_host_imports_are_host_only)
     .test("Option usage produces typed sum struct", test_structural_option_produces_typed_sum_struct)
+    .test("anon record variant compiles to WAT", fn() {
+      src := "type Msg = { Hello(.{ name: String }), Bye } fn greet(m: Msg) String { case m { .Hello(h) => h.name, .Bye => \"bye\" } } greet(Msg.Hello(.{ name: \"world\" }))"
+      try assert_codegen_src_compiles(src, "anon record variant")
+      .Ok({})
+    })
 }

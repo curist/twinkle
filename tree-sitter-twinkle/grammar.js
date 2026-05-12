@@ -690,6 +690,7 @@ module.exports = grammar({
       $.primitive_type,
       $.generic_type,
       $.type_name,
+      $.record_type_def,
     ),
 
     primitive_type: $ => choice(
@@ -757,6 +758,9 @@ module.exports = grammar({
     [$.type],
     // identifier '.' is ambiguous between field_access and type_name
     [$._primary_expression, $.type_name],
+    // record_type_def is valid both as a type definition and as a base type
+    // (anonymous record variant payload)
+    [$._type_definition, $._base_type],
     // Binary precedence edge cases
     [$.shift_expression, $.additive_expression],
     // Postfix vs unary (e.g. -x.y, -f(), -a[0])

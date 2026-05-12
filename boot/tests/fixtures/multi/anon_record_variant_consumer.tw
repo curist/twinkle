@@ -1,0 +1,4 @@
+use .anon_record_variant_lib as shapes
+
+s := shapes.Shape.Circle(.{ radius: 5.0 })
+a := shapes.area(s)

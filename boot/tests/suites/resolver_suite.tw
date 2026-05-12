@@ -97,7 +97,11 @@ pub fn mono_to_string(ty: mono_type.MonoType) String {
 }
 
 fn get_field_type(env: resolver.ResolvedEnv, type_name: String, field_name: String) Result<String, String> {
-  case resolver.lookup_type(env, type_name) {
+  found: resolver.TypeEntry? = case resolver.lookup_type(env, type_name) {
+    .Some(entry) => .Some(entry),
+    .None => resolver.lookup_registered_type(env, type_name),
+  }
+  case found {
     .Some(entry) => {
       case entry.def {
         .Some(def) => {
@@ -1767,5 +1771,44 @@ pub fn suite() runner.Suite {
         },
         .None => .Err("expected support function to preserve canonical origin"),
       }
+    })
+    // ── Anonymous record variants ──
+    .test("anon record variant synthesizes record type", fn() {
+      src := "type Foo = { Bar(.{ x: Int, y: String }) }"
+      env := try resolve_ok(src)
+      // The parent enum should exist
+      try assert.is_true(resolver.has_type(env, "Foo"))
+      // The synthesized record type should be findable by display name
+      try assert.str_eq(try get_field_type(env, "Foo.Bar", "x"), "Int")
+      try assert.str_eq(try get_field_type(env, "Foo.Bar", "y"), "String")
+      .Ok({})
+    })
+    .test("anon record variant payload is Named(synth_tid)", fn() {
+      src := "type Foo = { Bar(.{ x: Int }), Baz(Int) }"
+      env := try resolve_ok(src)
+      count := try get_variant_count(env, "Foo")
+      try assert.int_eq(count, 2)
+      .Ok({})
+    })
+    .test("two enums with same variant name coexist", fn() {
+      src := "type A = { X(.{ a: Int }) } type B = { X(.{ b: String }) }"
+      env := try resolve_ok(src)
+      try assert.str_eq(try get_field_type(env, "A.X", "a"), "Int")
+      try assert.str_eq(try get_field_type(env, "B.X", "b"), "String")
+      .Ok({})
+    })
+    .test("anon record variant not in type_bindings", fn() {
+      src := "type Foo = { Bar(.{ x: Int }) }"
+      env := try resolve_ok(src)
+      // "Bar" should NOT be a user-accessible type name
+      try assert.is_true(!resolver.has_type(env, "Bar"))
+      .Ok({})
+    })
+    .test("generic enum with anon record variant", fn() {
+      src := "type Wrap<T> = { Item(.{ value: T }) }"
+      env := try resolve_ok(src)
+      try assert.is_true(resolver.has_type(env, "Wrap"))
+      try assert.str_eq(try get_field_type(env, "Wrap.Item", "value"), "Var(T)")
+      .Ok({})
     })
 }

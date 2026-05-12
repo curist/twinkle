@@ -1686,4 +1686,20 @@ pub fn suite() runner.Suite {
       try assert.str_contains(msgs[0], "type mismatch")
       .Ok({})
     })
+    // ── Anonymous record variants ──
+    .test("anon record variant construction and pattern match", fn() {
+      src := "type Msg = { Hello(.{ name: String }), Bye } fn greet(m: Msg) String { case m { .Hello(h) => h.name, .Bye => \"bye\" } }"
+      r := try check_ok(src)
+      .Ok({})
+    })
+    .test("anon record variant with shorthand literal", fn() {
+      src := "type Msg = { Data(.{ x: Int, y: Int }) } fn f() Msg { .Data(.{ x: 1, y: 2 }) }"
+      r := try check_ok(src)
+      .Ok({})
+    })
+    .test("anon record variant mixed with regular variants", fn() {
+      src := "type Shape = { Circle(.{ r: Float }), Square(Float), Unit } fn f(s: Shape) Float { case s { .Circle(c) => c.r, .Square(side) => side, .Unit => 0.0 } }"
+      r := try check_ok(src)
+      .Ok({})
+    })
 }

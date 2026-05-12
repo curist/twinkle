@@ -235,7 +235,7 @@ fn lookup_type_by_id(env: ResolvedEnv, tid: TypeId) TypeEntry? {
   }
 }
 
-fn lookup_registered_type(env: ResolvedEnv, name: String) TypeEntry? {
+pub fn lookup_registered_type(env: ResolvedEnv, name: String) TypeEntry? {
   case env.type_index[name] {
     .Some(i) => .Some(env.types[i]),
     .None => .None,
@@ -854,19 +854,19 @@ fn register_imported_interface_types(env: ResolvedEnv, alias: String, method_ali
   cur := env
 
   for exported in exports.support_types {
-    target_name := merged_export_type_name(alias, exported.name)
+    target_name := merged_export_type_name(alias, exported.name, exported.origin)
     cur = merge_exported_type(cur, exported, target_name, type_ids, false)
   }
 
   for exported in exports.visible_types {
-    target_name := merged_export_type_name(alias, exported.name)
+    target_name := merged_export_type_name(alias, exported.name, exported.origin)
     cur = merge_exported_type(cur, exported, target_name, type_ids, bind_visible_types)
   }
 
   methods := cur.methods
   methods_by_type := cur.methods_by_type
   for exported in all_exported_types(exports) {
-    qualified_type := merged_export_type_name(alias, exported.name)
+    qualified_type := merged_export_type_name(alias, exported.name, exported.origin)
     case exports.methods[exported.name] {
       .Some(entries) => {
         qualified_methods := collect entry in entries {
@@ -1192,6 +1192,28 @@ fn collect_declarations(env: ResolvedEnv, module: Module) ResolveResult {
         } else {
           tid := TypeId.{ id: next_available_type_id(cur) }
           cur = cur.add_type(.{ id: tid, arity: decl.type_params.len(), def: .None, span: decl.span }, decl.name)
+          // Pre-register synthesized record types for anonymous record variants.
+          // Must happen after add_type so type_bindings is non-empty.
+          case decl.def {
+            .Sum(variants) => {
+              for variant in variants {
+                if variant.fields.len() == 1 {
+                  case variant.fields[0].kind {
+                    .Record(_) => {
+                      synth_tid := TypeId.{ id: next_available_type_id(cur) }
+                      display_name := "${decl.name}.${variant.name}"
+                      cur = cur.register_type_entry(
+                        .{ id: synth_tid, arity: decl.type_params.len(), def: .None, span: variant.span },
+                        display_name
+                      )
+                    },
+                    _ => {},
+                  }
+                }
+              }
+            },
+            _ => {},
+          }
         }
       },
       .Function(decl) => {
@@ -1399,19 +1421,43 @@ fn resolve_type_decl(env: ResolvedEnv, decl: TypeDecl) ResolveResult {
     .Sum(variants) => {
       variant_names := collect v in variants { v.name }
       diags = diags.concat(check_dup_names(variant_names, "variant", decl.span))
-      resolved_variants: Vector<ResolvedVariant> = collect variant in variants {
-        resolved_fields := collect field_ty in variant.fields {
-          r := env.resolve_type_expr(field_ty, names)
-          diags = diags.concat(r.diagnostics)
-          case r.ty {
-            .Some(ty) => ty,
-            .None => MonoType.ErrorType,
+      resolved_variants: Vector<ResolvedVariant> = []
+      for variant in variants {
+        is_anon_record := variant.fields.len() == 1 and case variant.fields[0].kind { .Record(_) => true, _ => false }
+
+        if is_anon_record {
+          record_fields := case variant.fields[0].kind { .Record(fs) => fs, _ => error("unreachable") }
+          field_names := collect f in record_fields { f.name }
+          diags = diags.concat(check_dup_names(field_names, "field", variant.fields[0].span))
+          resolved_record_fields: Vector<ResolvedField> = collect field in record_fields {
+            r := env.resolve_type_expr(field.ty, names)
+            diags = diags.concat(r.diagnostics)
+            ty := case r.ty { .Some(t) => t, .None => MonoType.ErrorType }
+            ResolvedField.{ name: field.name, ty }
           }
+          display_name := "${decl.name}.${variant.name}"
+          synth_tid := case env.type_index[display_name] {
+            .Some(idx) => env.types[idx].id,
+            .None => error("unreachable: synthesized type '${display_name}' not registered"),
+          }
+          env = env.set_type_def_by_id(synth_tid, .Record(display_name, type_params, resolved_record_fields))
+          synth_args: Vector<MonoType> = collect tp in type_params { MonoType.Var(tp.name) }
+          resolved_variants = resolved_variants.append(
+            .{ name: variant.name, fields: [MonoType.Named(synth_tid, synth_args)] }
+          )
+        } else {
+          resolved_fields: Vector<MonoType> = collect field_ty in variant.fields {
+            r := env.resolve_type_expr(field_ty, names)
+            diags = diags.concat(r.diagnostics)
+            case r.ty { .Some(ty) => ty, .None => MonoType.ErrorType }
+          }
+          resolved_variants = resolved_variants.append(
+            .{ name: variant.name, fields: resolved_fields }
+          )
         }
-        .{ name: variant.name, fields: resolved_fields }
       }
-      new_env := env.set_type_def(decl.name, .Sum(decl.name, type_params, resolved_variants))
-      .{ env: new_env, diagnostics: diags }
+      env = env.set_type_def(decl.name, .Sum(decl.name, type_params, resolved_variants))
+      .{ env, diagnostics: diags }
     },
     .Alias(ty_expr) => {
       r := env.resolve_type_expr(ty_expr, names)
@@ -1433,9 +1479,12 @@ fn set_type_def(env: ResolvedEnv, name: String, def: ResolvedTypeDef) ResolvedEn
     .Some(tid) => tid,
     .None => { return env },
   }
+  set_type_def_by_id(env, target_tid, def)
+}
 
+fn set_type_def_by_id(env: ResolvedEnv, tid: TypeId, def: ResolvedTypeDef) ResolvedEnv {
   new_types := collect entry in env.types {
-    if entry.id.id == target_tid.id {
+    if entry.id.id == tid.id {
       entry.def = .Some(def)
       entry
     } else {
@@ -1685,11 +1734,26 @@ fn import_binding_name(name: String, alias: String?) String {
   }
 }
 
-fn merged_export_type_name(alias: String, name: String) String {
-  if name.contains(".") {
-    name
-  } else {
-    qualify_name(alias, name)
+fn merged_export_type_name(alias: String, name: String, origin: String?) String {
+  // Determine if name was already qualified by a prior import.
+  // Origin format is "module_key::TypeName". If name matches the local part
+  // (after "::"), it hasn't been qualified yet and needs qualifying.
+  // If name differs from the local part, it was already qualified — pass through.
+  case origin {
+    .Some(o) => {
+      parts := o.split("::")
+      if parts.len() >= 2 {
+        local_part := parts[parts.len() - 1]
+        if name == local_part {
+          qualify_name(alias, name)
+        } else {
+          name
+        }
+      } else {
+        qualify_name(alias, name)
+      }
+    },
+    .None => qualify_name(alias, name),
   }
 }
 
@@ -1711,7 +1775,7 @@ fn plan_export_type_ids(env: ResolvedEnv, alias: String, exports: ModuleExports)
   ids: Dict<Int, TypeId> = Dict.new()
   next_id := next_available_type_id(env)
   for exported in all_exported_types(exports) {
-    target_name := merged_export_type_name(alias, exported.name)
+    target_name := merged_export_type_name(alias, exported.name, exported.origin)
     existing_id: TypeId? = case lookup_registered_type(env, target_name) {
       .Some(existing) => .Some(existing.id),
       .None => {
