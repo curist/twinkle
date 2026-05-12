@@ -307,9 +307,9 @@ pub fn suite() runner.Suite {
       .Ok({})
     })
     .test("logical and", fn() {
-      src := "fn f() Bool { true && false }"
+      src := "fn f() Bool { true and false }"
       r := try check_ok(src)
-      try assert.str_eq(try type_at(r, src, "true && false"), "Bool")
+      try assert.str_eq(try type_at(r, src, "true and false"), "Bool")
       .Ok({})
     })
     .test("negate int", fn() {
@@ -1282,7 +1282,7 @@ pub fn suite() runner.Suite {
       .Ok({})
     })
     .test("P4 for over Dict binds second variable to value type", fn() {
-      src := "fn f(d: Dict<String, Bool>) Bool {\nacc := false\nfor k, v in d { acc = acc || v }\nacc\n}"
+      src := "fn f(d: Dict<String, Bool>) Bool {\nacc := false\nfor k, v in d { acc = acc or v }\nacc\n}"
       r := try check_ok(src)
       .Ok({})
     })

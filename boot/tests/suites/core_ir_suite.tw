@@ -521,8 +521,8 @@ pub fn suite() runner.Suite {
       }
     })
     .test("lower short-circuit and", fn() Result<Void, String> {
-      body := try lower_fn_body("fn f(a: Bool, b: Bool) Bool { a && b }")
-      // a && b desugars to If(a, b, false)
+      body := try lower_fn_body("fn f(a: Bool, b: Bool) Bool { a and b }")
+      // `and` desugars to If(a, b, false)
       case body.kind {
         .If(_, _, else_e) => {
           case else_e.kind {
@@ -530,7 +530,7 @@ pub fn suite() runner.Suite {
             _ => .Err("expected LitBool(false) in else branch"),
           }
         },
-        _ => .Err("expected If (short-circuit &&)"),
+        _ => .Err("expected If (short-circuit and)"),
       }
     })
     // ── M4: Function calls, FuncId assignment ─────────────────────────

@@ -1,0 +1,7 @@
+fn f(a: Bool, b: Bool) Bool {
+    a && b
+}
+
+fn g(a: Bool, b: Bool) Bool {
+    a || b
+}

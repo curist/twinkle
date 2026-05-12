@@ -392,6 +392,14 @@ fn error_to_report(e: ErrorDiag, ctx: RenderCtx) Report {
         help_lines: [],
       }
     },
+    .CStyleLogicalOp(d) => {
+      Report.{
+        severity: .Error,
+        title: "use `${d.suggestion}` instead of `${d.operator}`",
+        labels: [primary(d.span, .Some("`${d.operator}` is not valid syntax"))],
+        help_lines: [],
+      }
+    },
     .ParseError(d) => {
       Report.{
         severity: .Error,

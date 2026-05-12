@@ -2178,6 +2178,13 @@ fn parse_expr_bp(c: Cursor, min_bp: Int) ExprParse {
           break
         }
 
+        // Reject C-style logical operators — Twinkle uses `and`/`or`
+        if k == .AmpAmp or k == .PipePipe {
+          suggestion := if k == .AmpAmp { "and" } else { "or" }
+          op_str := if k == .AmpAmp { "&&" } else { "||" }
+          diagnostics_out = diagnostics_out.append(.Error(.CStyleLogicalOp(.{ span: c.span(), operator: op_str, suggestion })))
+        }
+
         parsed_rhs := parse_expr_bp(c.advance(), info.right)
         diagnostics_out = diagnostics_out.concat(parsed_rhs.diagnostics)
         rhs := parsed_rhs.value

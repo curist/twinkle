@@ -186,6 +186,7 @@ fn kind_to_message(kind: diag.DiagKind) String {
       .CircularAlias(d) => "circular type alias: ${d.name}",
       .EmptyTypePath(_) => "empty type path",
       .MissingArmSeparator(_) => "missing `,` after case arm",
+      .CStyleLogicalOp(d) => "use `${d.suggestion}` instead of `${d.operator}`",
       .ParseError(d) => d.message,
       .LowerError(d) => d.message,
     },

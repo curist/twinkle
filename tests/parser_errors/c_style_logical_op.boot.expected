@@ -1,0 +1,2 @@
+2:7: error: use `and` instead of `&&`
+6:7: error: use `or` instead of `||`

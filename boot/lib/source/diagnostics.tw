@@ -239,6 +239,12 @@ pub type MissingArmSeparatorDiag = .{
   next_span: Span,
 }
 
+pub type CStyleLogicalOpDiag = .{
+  span: Span,
+  operator: String,
+  suggestion: String,
+}
+
 // ── Warning payload types ─────────────────────────────────────────────
 
 pub type UnusedImportDiag = .{
@@ -290,6 +296,7 @@ pub type ErrorDiag = {
   CircularAlias(CircularAliasDiag),
   EmptyTypePath(EmptyTypePathDiag),
   MissingArmSeparator(MissingArmSeparatorDiag),
+  CStyleLogicalOp(CStyleLogicalOpDiag),
   /// Syntax and parse-stage errors emitted by the lexer and parser.
   ParseError(GenericDiag),
   /// Internal errors emitted during IR lowering (post-typecheck).
@@ -375,6 +382,7 @@ pub fn span(kind: DiagKind) Span {
       .CircularAlias(d) => d.span,
       .EmptyTypePath(d) => d.span,
       .MissingArmSeparator(d) => d.span,
+      .CStyleLogicalOp(d) => d.span,
       .ParseError(d) => d.span,
       .LowerError(d) => d.span,
     },
@@ -428,6 +436,7 @@ pub fn message(kind: DiagKind) String {
       .CircularAlias(d) => "circular type alias: ${d.name}",
       .EmptyTypePath(_) => "empty type path",
       .MissingArmSeparator(_) => "missing `,` after case arm",
+      .CStyleLogicalOp(d) => "use `${d.suggestion}` instead of `${d.operator}`",
       .ParseError(d) => d.message,
       .LowerError(d) => d.message,
     },
