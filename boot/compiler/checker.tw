@@ -1227,8 +1227,7 @@ fn try_synth_method_call(base: Expr, method_name: String, args: Vector<Expr>, ca
           if named_function_field_exists(base_ty, method_name, br.ctx.env) {
             return .None
           }
-          err := diag.error(callee_span, "type ${br.ctx.env.ty_to_string_env(base_ty)} has no method '${method_name}'")
-          return .Some(.{ ty: .Void, ctx: br.ctx, diags: br.diags.append(err) })
+          return .Some(.{ ty: .Void, ctx: br.ctx, diags: br.diags.append(.Error(.NoMethod(.{ span: callee_span, ty: base_ty, name: method_name }))) })
         },
       }
     },
@@ -1555,7 +1554,7 @@ fn check_record_lit(entries: Vector<RecordEntry>, expected: MonoType, s: Span, c
           // Check missing fields
           for f in fields {
             if !entries.any(fn(e) { e.name == f.name }) {
-              cur_diags = cur_diags.append(diag.error(s, "missing field '${f.name}'"))
+              cur_diags = cur_diags.append(.Error(.MissingField(.{ span: s, name: f.name, ty: zonked })))
             }
           }
           .{ ctx: cur_ctx, diags: cur_diags }
@@ -1575,8 +1574,7 @@ fn check_variant_lit(name: String, args: Vector<Expr>, expected: MonoType, s: Sp
   case resolve_variant_info(name, zonked, ctx.env) {
     .Some(.Ok(info)) => {
       if args.len() != info.field_types.len() {
-        err := diag.error(s, ".${name} expects ${info.field_types.len()} arguments, got ${args.len()}")
-        return .{ ctx, diags: diags.append(err) }
+        return .{ ctx, diags: diags.append(.Error(.WrongArity(.{ span: s, expected: info.field_types.len(), found: args.len() }))) }
       }
       cur_ctx := ctx
       cur_diags := diags
@@ -2096,8 +2094,7 @@ fn check_variant_pattern(name: String, sub_pats: Vector<Pattern>, expected: Mono
   case resolve_variant_info(name, zonked, ctx.env) {
     .Some(.Ok(info)) => {
       if sub_pats.len() != info.field_types.len() {
-        err := diag.error(s, ".${name} pattern expects ${info.field_types.len()} bindings, got ${sub_pats.len()}")
-        return .{ ctx, diags: diags.append(err) }
+        return .{ ctx, diags: diags.append(.Error(.WrongArity(.{ span: s, expected: info.field_types.len(), found: sub_pats.len() }))) }
       }
       cur_ctx := ctx
       cur_diags := diags

@@ -149,6 +149,22 @@ fn error_to_report(e: ErrorDiag, ctx: RenderCtx) Report {
         help_lines: [],
       }
     },
+    .NoMethod(d) => {
+      Report.{
+        severity: .Error,
+        title: "type `${fmt_ty(d.ty, ctx)}` has no method `${d.name}`",
+        labels: [primary(d.span, .Some("unknown method"))],
+        help_lines: [],
+      }
+    },
+    .MissingField(d) => {
+      Report.{
+        severity: .Error,
+        title: "missing field `${d.name}` in record literal for `${fmt_ty(d.ty, ctx)}`",
+        labels: [primary(d.span, .Some("missing field `${d.name}`"))],
+        help_lines: [],
+      }
+    },
     .Generic(d) => {
       Report.{
         severity: .Error,

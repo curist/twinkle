@@ -83,6 +83,18 @@ pub type NotIndexableDiag = .{
   ty: MonoType,
 }
 
+pub type NoMethodDiag = .{
+  span: Span,
+  ty: MonoType,
+  name: String,
+}
+
+pub type MissingFieldDiag = .{
+  span: Span,
+  name: String,
+  ty: MonoType,
+}
+
 // ── Warning payload types ────────────────────────────────────────────
 
 pub type UnusedImportDiag = .{
@@ -104,6 +116,8 @@ pub type ErrorDiag = {
   NoField(NoFieldDiag),
   NotIterable(NotIterableDiag),
   NotIndexable(NotIndexableDiag),
+  NoMethod(NoMethodDiag),
+  MissingField(MissingFieldDiag),
   /// Bridge variant for unmigrated emission sites during transition.
   Generic(GenericDiag),
 }
@@ -154,6 +168,8 @@ pub fn span(kind: DiagKind) Span {
       .NoField(d) => d.span,
       .NotIterable(d) => d.span,
       .NotIndexable(d) => d.span,
+      .NoMethod(d) => d.span,
+      .MissingField(d) => d.span,
       .Generic(d) => d.span,
     },
     .Warning(w) => case w {
@@ -185,6 +201,8 @@ pub fn message(kind: DiagKind) String {
       .NoField(d) => "no field `${d.name}` on type ${ty_to_string(d.ty)}",
       .NotIterable(d) => "cannot iterate over ${ty_to_string(d.ty)}",
       .NotIndexable(d) => "cannot index into ${ty_to_string(d.ty)}",
+      .NoMethod(d) => "type ${ty_to_string(d.ty)} has no method '${d.name}'",
+      .MissingField(d) => "missing field '${d.name}' in record literal for ${ty_to_string(d.ty)}",
       .Generic(d) => d.message,
     },
     .Warning(w) => case w {

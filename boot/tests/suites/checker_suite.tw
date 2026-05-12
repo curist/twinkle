@@ -985,25 +985,25 @@ pub fn suite() runner.Suite {
     .test("T2 wrong variant arg count: Some(1,2)", fn() {
       src := "fn f() Int? { .Some(1, 2) }"
       msgs := try check_errs(src)
-      try assert.str_contains(msgs[0], "expects 1 argument")
+      try assert.str_contains(msgs[0], "expected 1 arguments, got 2")
       .Ok({})
     })
     .test("T2 wrong variant arg count: None(1)", fn() {
       src := "fn f() Int? { .None(1) }"
       msgs := try check_errs(src)
-      try assert.str_contains(msgs[0], "expects 0 argument")
+      try assert.str_contains(msgs[0], "expected 0 arguments, got 1")
       .Ok({})
     })
     .test("T2 wrong variant arg count: Ok()", fn() {
       src := "fn f() Result<Int, String> { .Ok() }"
       msgs := try check_errs(src)
-      try assert.str_contains(msgs[0], "expects 1 argument")
+      try assert.str_contains(msgs[0], "expected 1 arguments, got 0")
       .Ok({})
     })
     .test("T2 wrong variant arg count: Err(1,2)", fn() {
       src := "fn f() Result<Int, String> { .Err(1, 2) }"
       msgs := try check_errs(src)
-      try assert.str_contains(msgs[0], "expects 1 argument")
+      try assert.str_contains(msgs[0], "expected 1 arguments, got 2")
       .Ok({})
     })
     .test("T2 unknown variant for Option", fn() {
@@ -1028,7 +1028,7 @@ pub fn suite() runner.Suite {
       src := "type Shape = { Circle(Float) }\nfn f(s: Shape) Float {\ncase s { .Circle(r, s) => r }\n}"
       msgs := try check_errs(src)
       found := false
-      for m in msgs { if m.contains("expects") and m.contains("binding") { found = true } }
+      for m in msgs { if m.contains("expected 1 arguments, got 2") { found = true } }
       try assert.is_true(found)
       .Ok({})
     })

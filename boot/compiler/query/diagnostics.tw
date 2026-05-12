@@ -156,6 +156,8 @@ fn kind_to_message(kind: diag.DiagKind) String {
       .NoField(d) => "no field `${d.name}`",
       .NotIterable(_) => "not iterable",
       .NotIndexable(_) => "not indexable",
+      .NoMethod(d) => "no method `${d.name}`",
+      .MissingField(d) => "missing field `${d.name}`",
       .Generic(d) => d.message,
     },
     .Warning(w) => case w {
