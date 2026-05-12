@@ -1,3 +1,7 @@
 2:4: error: 'return' is a statement and cannot be used where an expression is expected in array element
 hint: wrap it in a block expression, e.g. `=> { return ... }`
-2:11: error: expected ',' or ']' in array literal
+3:1: error: expected ',' or ']' in array literal
+4:1: error: expected expression
+1:1: error: expected ',' or ']' in array literal
+1:1: error: expected ']' to close array literal
+1:1: error: expected '}' to close block

@@ -185,6 +185,7 @@ fn kind_to_message(kind: diag.DiagKind) String {
       .AnonymousTypeNotAllowed(_) => "anonymous type not allowed here",
       .CircularAlias(d) => "circular type alias: ${d.name}",
       .EmptyTypePath(_) => "empty type path",
+      .MissingArmSeparator(_) => "missing `,` after case arm",
       .ParseError(d) => d.message,
       .LowerError(d) => d.message,
     },

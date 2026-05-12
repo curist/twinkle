@@ -381,6 +381,17 @@ fn error_to_report(e: ErrorDiag, ctx: RenderCtx) Report {
         help_lines: [],
       }
     },
+    .MissingArmSeparator(d) => {
+      Report.{
+        severity: .Error,
+        title: "missing `,` after case arm",
+        labels: [
+          primary(d.span, .None),
+          secondary(d.next_span, .Some("next arm starts here")),
+        ],
+        help_lines: [],
+      }
+    },
     .ParseError(d) => {
       Report.{
         severity: .Error,
