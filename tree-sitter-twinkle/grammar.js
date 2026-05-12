@@ -180,7 +180,12 @@ module.exports = grammar({
       optional(field('return_type', $.extern_type)),
     )),
 
-    extern_type: $ => $._base_type,
+    // Extern return types: like `type` but without function_type to avoid
+    // ambiguity with the next `fn` signature inside extern blocks.
+    extern_type: $ => prec.right(choice(
+      seq('!', field('error_type', $._base_type)),
+      seq($._base_type, optional('?'), optional(seq('!', field('error_type', $._base_type)))),
+    )),
 
     type_parameters: $ => seq(
       '<',

@@ -831,10 +831,29 @@
   {
     "type": "extern_type",
     "named": true,
-    "fields": {},
+    "fields": {
+      "error_type": {
+        "multiple": false,
+        "required": false,
+        "types": [
+          {
+            "type": "generic_type",
+            "named": true
+          },
+          {
+            "type": "primitive_type",
+            "named": true
+          },
+          {
+            "type": "type_name",
+            "named": true
+          }
+        ]
+      }
+    },
     "children": {
       "multiple": false,
-      "required": true,
+      "required": false,
       "types": [
         {
           "type": "generic_type",

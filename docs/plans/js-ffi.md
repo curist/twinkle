@@ -80,7 +80,7 @@ call sites self-documenting. Two different modules can export functions with
 the same bare name (e.g., `extern a fn init()` and `extern b fn init()`
 coexist as `a.init()` and `b.init()`).
 
-**Future extension:** Module aliasing (`extern "globalThis.performance" as perf`)
+**Future extension:** Module aliasing (`extern globalThis_performance as perf`)
 is deferred. For now the namespace always matches the module name exactly.
 
 **Grammar addition:**
@@ -99,7 +99,7 @@ required for both individual declarations and grouped blocks.
 
 - No function body. The declaration is a type signature + import source.
 - Visibility follows normal `pub` rules (can be `pub extern ...`).
-- The string literal is the WASM import module name. The function identifier
+- The module identifier is the WASM import module name. The function identifier
   becomes the WASM import field name.
 - Parameters and return types must be "extern-safe" types (see below).
 
@@ -226,10 +226,10 @@ compiler work.
 Ship a set of pre-declared modules with fixed worker implementations:
 
 ```twinkle
-extern "console" fn log(msg: String)
-extern "console" fn warn(msg: String)
-extern "console" fn error(msg: String)
-extern "performance" fn now() Float
+extern console fn log(msg: String)
+extern console fn warn(msg: String)
+extern console fn error(msg: String)
+extern performance fn now() Float
 ```
 
 The worker provides these in its `hostImports` object alongside the existing
@@ -293,8 +293,8 @@ once `extern` is stable, stdlib could optionally be rewritten as:
 
 ```twinkle
 // stdlib/fs.tw — future form
-extern "host" fn read_file(path: String) Result<Vector<Byte>, String>
-extern "host" fn write_file(path: String, text: String)
+extern host fn read_file(path: String) Result<Vector<Byte>, String>
+extern host fn write_file(path: String, text: String)
 // ...
 ```
 
@@ -302,7 +302,7 @@ This is a cleanup, not a blocker for the FFI feature.
 
 ## Open Questions
 
-1. **Import deduplication**: If a user declares `extern "host" fn print(...)`,
+1. **Import deduplication**: If a user declares `extern host fn print(...)`,
    the runtime already emits an `ImportDef` for `(host, print)`. Emitting a
    duplicate WASM import for the same `(module, name)` pair is a WASM validation
    error. **Resolution:** The WAT linker (`src/wasm/linker.rs` /
@@ -312,10 +312,10 @@ This is a cleanup, not a blocker for the FFI feature.
    user's call to reference it. If signatures conflict, emit a compile error:
    "extern declaration conflicts with runtime import". Dedup must happen at link
    time (not in the checker or lower_core) to catch duplicates arising from
-   different compiled modules. This also means `extern "host" fn ...` effectively
+   different compiled modules. This also means `extern host fn ...` effectively
    shadows/overrides the builtin from the user's perspective but reuses the same
    WASM import slot. The same rule applies to user-to-user collisions: if two
-   modules both declare `extern "canvas" fn clear()` with matching signatures,
+   modules both declare `extern canvas fn clear()` with matching signatures,
    the linker emits one WASM import and both call sites reference it. If the
    signatures differ (e.g., one returns `()` and the other takes a parameter),
    the linker emits a compile error: "conflicting extern signatures for
