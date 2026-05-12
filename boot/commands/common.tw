@@ -11,9 +11,7 @@ use compiler.query.diag_render
 use compiler.query.analyze
 use compiler.artifacts.{CompileError}
 
-pub fn usage_hint() String {
-  "Usage: twk <command> [options]\nRun 'twk --help' or 'twk <command> --help'."
-}
+pub usage_hint := "Usage: twk <command> [options]\nRun 'twk --help' or 'twk <command> --help'."
 
 pub fn get_positional(parsed: ParseResult, idx: Int, name: String) String!String {
   if idx < parsed.positional.len() {
@@ -24,13 +22,9 @@ pub fn get_positional(parsed: ParseResult, idx: Int, name: String) String!String
 }
 
 pub fn exit_usage_error(msg: String) {
-  hint := usage_hint()
-  if msg == hint {
-    eprintln(hint)
-  } else {
-    eprintln(msg)
-    eprintln("")
-    eprintln(hint)
+  eprintln(msg)
+  if msg != usage_hint {
+    eprintln(usage_hint)
   }
   proc.exit(2)
 }

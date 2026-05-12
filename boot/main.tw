@@ -3,7 +3,7 @@ use lib.argparse.app
 use lib.argparse.app.{ParseResult}
 use lib.argparse.argv.{normalize_argv}
 use lib.argparse.command
-use commands.common.{get_positional, exit_usage_error}
+use commands.common.{get_positional, exit_usage_error, usage_hint}
 use commands.parse.{run_parse_command}
 use commands.check.{run_check_command}
 use commands.ir.{run_ir_command}
@@ -45,10 +45,6 @@ cli := app.make("twk", "Twinkle bootstrap compiler (self-hosting skeleton)").add
   lsp_cmd,
 ])
 
-fn usage_hint() String {
-  "Usage: twk <command> [options]\nRun 'twk --help' or 'twk <command> --help'."
-}
-
 type CommandPlan = .{ cmd: String, detail: String }
 
 fn file_detail(parsed: ParseResult, render: fn(String) String) String!String {
@@ -86,7 +82,7 @@ fn build_command_plan(parsed: ParseResult) CommandPlan!String {
       }
       .Ok(.{ cmd: cmd, detail: detail })
     },
-    .None => .Err(usage_hint()),
+    .None => .Err(usage_hint),
   }
 }
 
