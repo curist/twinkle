@@ -3,8 +3,6 @@
 // DiagKind replaces the old flat Diagnostic (span + severity + message string).
 // Emission sites store structured data (zonked types, names, spans) — no string
 // formatting at emit time. Rendering happens at the CLI or LSP boundary.
-//
-// Generic bridge variants cover emission sites that haven't been migrated yet.
 
 use .span.{Span}
 use .registry
@@ -14,6 +12,14 @@ use compiler.mono_type.{MonoType, ty_to_string}
 
 /// LSP-compatible diagnostic severity.
 pub type Severity = { Error, Warning, Hint, Info }
+
+// ── Shared payload type ───────────────────────────────────────────────
+
+/// Used by ParseError and LowerError where the message is already a string.
+pub type GenericDiag = .{
+  span: Span,
+  message: String,
+}
 
 // ── Error payload types ──────────────────────────────────────────────
 
@@ -44,11 +50,6 @@ pub type DuplicateFieldDiag = .{
   span: Span,
   name: String,
   first: Span,
-}
-
-pub type GenericDiag = .{
-  span: Span,
-  message: String,
 }
 
 pub type InfiniteTypeDiag = .{
@@ -95,7 +96,145 @@ pub type MissingFieldDiag = .{
   ty: MonoType,
 }
 
-// ── Warning payload types ────────────────────────────────────────────
+// ── Checker error payloads ────────────────────────────────────────────
+
+pub type ContractViolationDiag = .{
+  span: Span,
+  ty: MonoType,
+  contract: String,
+  owner: String,
+  reason: String,
+}
+
+pub type CannotSynthesizeDiag = .{
+  span: Span,
+}
+
+pub type AmbiguousTypeDiag = .{
+  span: Span,
+}
+
+pub type InvalidMethodSigDiag = .{
+  span: Span,
+  name: String,
+}
+
+pub type NotARecordDiag = .{
+  span: Span,
+  ty: MonoType,
+}
+
+pub type VariantTypeMismatchDiag = .{
+  span: Span,
+  name: String,
+  ty: MonoType,
+}
+
+pub type ByteOutOfRangeDiag = .{
+  span: Span,
+  value: Int,
+}
+
+pub type InvalidScrutineeDiag = .{
+  span: Span,
+  ty: MonoType,
+}
+
+pub type QualifierMismatchDiag = .{
+  span: Span,
+  qualifier: String,
+  scrutinee_type: String,
+}
+
+pub type IteratorNoIndexDiag = .{
+  span: Span,
+}
+
+pub type PublicRebindDiag = .{
+  span: Span,
+  name: String,
+}
+
+pub type InvalidAssignTargetDiag = .{
+  span: Span,
+}
+
+pub type InvalidOperandDiag = .{
+  span: Span,
+  ty: MonoType,
+  operation: String,
+}
+
+pub type TryOperandErrorDiag = .{
+  span: Span,
+  ty: MonoType,
+}
+
+pub type TryReturnMismatchDiag = .{
+  span: Span,
+  expected_kind: String,
+}
+
+pub type CannotInterpolateDiag = .{
+  span: Span,
+  ty: MonoType,
+  reason: String,
+}
+
+pub type DeferDivergeDiag = .{
+  span: Span,
+}
+
+pub type CompilerBugDiag = .{
+  span: Span,
+  message: String,
+}
+
+// ── Resolver error payloads ───────────────────────────────────────────
+
+pub type ReservedTypeNameDiag = .{
+  span: Span,
+  name: String,
+}
+
+pub type DuplicateNameDiag = .{
+  span: Span,
+  kind: String,
+  name: String,
+}
+
+pub type DuplicateTypeParamDiag = .{
+  span: Span,
+  name: String,
+}
+
+pub type UnknownContractDiag = .{
+  span: Span,
+  name: String,
+}
+
+pub type ExternBoundaryTypeDiag = .{
+  span: Span,
+}
+
+pub type MissingTypeAnnotationDiag = .{
+  span: Span,
+}
+
+pub type AnonymousTypeNotAllowedDiag = .{
+  span: Span,
+}
+
+pub type CircularAliasDiag = .{
+  span: Span,
+  name: String,
+}
+
+pub type EmptyTypePathDiag = .{
+  span: Span,
+}
+
+// ── Warning payload types ─────────────────────────────────────────────
 
 pub type UnusedImportDiag = .{
   span: Span,
@@ -118,14 +257,41 @@ pub type ErrorDiag = {
   NotIndexable(NotIndexableDiag),
   NoMethod(NoMethodDiag),
   MissingField(MissingFieldDiag),
-  /// Bridge variant for unmigrated emission sites during transition.
-  Generic(GenericDiag),
+  ContractViolation(ContractViolationDiag),
+  CannotSynthesize(CannotSynthesizeDiag),
+  AmbiguousType(AmbiguousTypeDiag),
+  InvalidMethodSig(InvalidMethodSigDiag),
+  NotARecord(NotARecordDiag),
+  VariantTypeMismatch(VariantTypeMismatchDiag),
+  ByteOutOfRange(ByteOutOfRangeDiag),
+  InvalidScrutinee(InvalidScrutineeDiag),
+  QualifierMismatch(QualifierMismatchDiag),
+  IteratorNoIndex(IteratorNoIndexDiag),
+  PublicRebind(PublicRebindDiag),
+  InvalidAssignTarget(InvalidAssignTargetDiag),
+  InvalidOperand(InvalidOperandDiag),
+  TryOperandError(TryOperandErrorDiag),
+  TryReturnMismatch(TryReturnMismatchDiag),
+  CannotInterpolate(CannotInterpolateDiag),
+  DeferDiverge(DeferDivergeDiag),
+  CompilerBug(CompilerBugDiag),
+  ReservedTypeName(ReservedTypeNameDiag),
+  DuplicateName(DuplicateNameDiag),
+  DuplicateTypeParam(DuplicateTypeParamDiag),
+  UnknownContract(UnknownContractDiag),
+  ExternBoundaryType(ExternBoundaryTypeDiag),
+  MissingTypeAnnotation(MissingTypeAnnotationDiag),
+  AnonymousTypeNotAllowed(AnonymousTypeNotAllowedDiag),
+  CircularAlias(CircularAliasDiag),
+  EmptyTypePath(EmptyTypePathDiag),
+  /// Syntax and parse-stage errors emitted by the lexer and parser.
+  ParseError(GenericDiag),
+  /// Internal errors emitted during IR lowering (post-typecheck).
+  LowerError(GenericDiag),
 }
 
 pub type WarningDiag = {
   UnusedImport(UnusedImportDiag),
-  /// Bridge variant for unmigrated emission sites during transition.
-  Generic(GenericDiag),
 }
 
 pub type DiagKind = {
@@ -142,6 +308,11 @@ pub fn stage_result<T>(value: T, diagnostics: Vector<DiagKind>) StageResult<T> {
 }
 
 // ── Helpers ──────────────────────────────────────────────────────────
+
+/// Convenience for parser and lexer emission sites.
+pub fn error(span: Span, message: String) DiagKind {
+  .Error(.ParseError(.{ span, message }))
+}
 
 pub fn has_errors(diags: Vector<DiagKind>) Bool {
   found := false
@@ -170,21 +341,40 @@ pub fn span(kind: DiagKind) Span {
       .NotIndexable(d) => d.span,
       .NoMethod(d) => d.span,
       .MissingField(d) => d.span,
-      .Generic(d) => d.span,
+      .ContractViolation(d) => d.span,
+      .CannotSynthesize(d) => d.span,
+      .AmbiguousType(d) => d.span,
+      .InvalidMethodSig(d) => d.span,
+      .NotARecord(d) => d.span,
+      .VariantTypeMismatch(d) => d.span,
+      .ByteOutOfRange(d) => d.span,
+      .InvalidScrutinee(d) => d.span,
+      .QualifierMismatch(d) => d.span,
+      .IteratorNoIndex(d) => d.span,
+      .PublicRebind(d) => d.span,
+      .InvalidAssignTarget(d) => d.span,
+      .InvalidOperand(d) => d.span,
+      .TryOperandError(d) => d.span,
+      .TryReturnMismatch(d) => d.span,
+      .CannotInterpolate(d) => d.span,
+      .DeferDiverge(d) => d.span,
+      .CompilerBug(d) => d.span,
+      .ReservedTypeName(d) => d.span,
+      .DuplicateName(d) => d.span,
+      .DuplicateTypeParam(d) => d.span,
+      .UnknownContract(d) => d.span,
+      .ExternBoundaryType(d) => d.span,
+      .MissingTypeAnnotation(d) => d.span,
+      .AnonymousTypeNotAllowed(d) => d.span,
+      .CircularAlias(d) => d.span,
+      .EmptyTypePath(d) => d.span,
+      .ParseError(d) => d.span,
+      .LowerError(d) => d.span,
     },
     .Warning(w) => case w {
       .UnusedImport(d) => d.span,
-      .Generic(d) => d.span,
     },
   }
-}
-
-pub fn error(span: Span, message: String) DiagKind {
-  .Error(.Generic(.{ span, message }))
-}
-
-pub fn warning(span: Span, message: String) DiagKind {
-  .Warning(.Generic(.{ span, message }))
 }
 
 pub fn message(kind: DiagKind) String {
@@ -203,11 +393,38 @@ pub fn message(kind: DiagKind) String {
       .NotIndexable(d) => "cannot index into ${ty_to_string(d.ty)}",
       .NoMethod(d) => "type ${ty_to_string(d.ty)} has no method '${d.name}'",
       .MissingField(d) => "missing field '${d.name}' in record literal for ${ty_to_string(d.ty)}",
-      .Generic(d) => d.message,
+      .ContractViolation(d) => "type argument ${ty_to_string(d.ty)} does not satisfy ${d.contract} required by ${d.owner}: ${d.reason}",
+      .CannotSynthesize(_) => "cannot synthesize type for this expression",
+      .AmbiguousType(_) => "cannot infer type for this expression",
+      .InvalidMethodSig(d) => "invalid method signature for '${d.name}'",
+      .NotARecord(d) => "expected a record type, got ${ty_to_string(d.ty)}",
+      .VariantTypeMismatch(d) => "variant .${d.name} used where ${ty_to_string(d.ty)} expected",
+      .ByteOutOfRange(d) => "integer literal ${d.value.to_string()} is out of range for Byte (0..255)",
+      .InvalidScrutinee(d) => "cannot match on ${ty_to_string(d.ty)}: case scrutinee must be a sum type or primitive (Int, Bool, String)",
+      .QualifierMismatch(d) => "qualifier ${d.qualifier} does not match scrutinee type ${d.scrutinee_type}",
+      .IteratorNoIndex(_) => "Iterator<T> does not support indexed bindings",
+      .PublicRebind(d) => "cannot rebind public binding '${d.name}'",
+      .InvalidAssignTarget(_) => "invalid assignment target",
+      .InvalidOperand(d) => "${d.operation} not supported for ${ty_to_string(d.ty)}",
+      .TryOperandError(d) => "try requires Option or Result, got ${ty_to_string(d.ty)}",
+      .TryReturnMismatch(d) => "try on ${d.expected_kind} requires function to return ${d.expected_kind}",
+      .CannotInterpolate(d) => "cannot interpolate ${ty_to_string(d.ty)}: ${d.reason}",
+      .DeferDiverge(_) => "defer body cannot diverge (return, break, continue, or error(...))",
+      .CompilerBug(d) => d.message,
+      .ReservedTypeName(d) => "type name '${d.name}' is reserved",
+      .DuplicateName(d) => "duplicate ${d.kind}: ${d.name}",
+      .DuplicateTypeParam(d) => "duplicate type parameter ${d.name}",
+      .UnknownContract(d) => "unknown contract '${d.name}'",
+      .ExternBoundaryType(_) => "extern functions only support primitive boundary types",
+      .MissingTypeAnnotation(_) => "function parameters must have type annotations",
+      .AnonymousTypeNotAllowed(_) => "anonymous record/sum types not supported in type expressions",
+      .CircularAlias(d) => "circular type alias: ${d.name}",
+      .EmptyTypePath(_) => "empty type path",
+      .ParseError(d) => d.message,
+      .LowerError(d) => d.message,
     },
     .Warning(w) => case w {
       .UnusedImport(d) => "unused import: ${d.binding}",
-      .Generic(d) => d.message,
     },
   }
 }

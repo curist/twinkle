@@ -1186,9 +1186,9 @@ fn collect_declarations(env: ResolvedEnv, module: Module) ResolveResult {
     case item {
       .Type(decl) => {
         if is_reserved_type_name(decl.name) {
-          diags = diags.append(diag.error(decl.span, "type name '${decl.name}' is reserved"))
+          diags = diags.append(.Error(.ReservedTypeName(.{ span: decl.span, name: decl.name })))
         } else if cur.has_type(decl.name) {
-          diags = diags.append(diag.error(decl.span, "duplicate type definition: ${decl.name}"))
+          diags = diags.append(.Error(.DuplicateName(.{ span: decl.span, kind: "type definition", name: decl.name })))
         } else {
           tid := TypeId.{ id: next_available_type_id(cur) }
           cur = cur.add_type(.{ id: tid, arity: decl.type_params.len(), def: .None, span: decl.span }, decl.name)
@@ -1196,7 +1196,7 @@ fn collect_declarations(env: ResolvedEnv, module: Module) ResolveResult {
       },
       .Function(decl) => {
         if seen_fns.has(decl.name) {
-          diags = diags.append(diag.error(decl.span, "duplicate function definition: ${decl.name}"))
+          diags = diags.append(.Error(.DuplicateName(.{ span: decl.span, kind: "function definition", name: decl.name })))
         } else {
           seen_fns[decl.name] = true
         }
@@ -1204,7 +1204,7 @@ fn collect_declarations(env: ResolvedEnv, module: Module) ResolveResult {
       .ExternFunction(decl) => {
         qualified := "${decl.module}.${decl.name}"
         if seen_fns.has(qualified) {
-          diags = diags.append(diag.error(decl.span, "duplicate function definition: ${qualified}"))
+          diags = diags.append(.Error(.DuplicateName(.{ span: decl.span, kind: "function definition", name: qualified })))
         } else {
           seen_fns[qualified] = true
         }
@@ -1318,10 +1318,11 @@ fn detect_inherent_methods(env: ResolvedEnv, local_type_names: Dict<String, Bool
       }
     }
     if collision {
-      method_diags = method_diags.append(diag.error(
-        span.Span.{ file_id: 0, start: 0, end: 0 },
-        "method '${f.name}' on type '${type_name}' conflicts with an existing registration"
-      ))
+      method_diags = method_diags.append(.Error(.DuplicateName(.{
+        span: span.Span.{ file_id: 0, start: 0, end: 0 },
+        kind: "method",
+        name: "${f.name} on ${type_name}",
+      })))
     } else {
       m = register_methods(m, type_name, [me(f.name, f.name)])
       tm = register_type_methods(tm, tid, [me(f.name, f.name)])
@@ -1337,7 +1338,7 @@ fn check_dup_names(names: Vector<String>, kind: String, s: span.Span) Vector<dia
       seen[name] = true
       continue
     }
-    diag.error(s, "duplicate ${kind} name: ${name}")
+    .Error(.DuplicateName(.{ span: s, kind, name }))
   }
 }
 
@@ -1348,7 +1349,7 @@ fn check_dup_type_params(type_params: Vector<String>, s: span.Span) Vector<diag.
       seen[tp] = true
       continue
     }
-    diag.error(s, "duplicate type parameter ${tp}")
+    .Error(.DuplicateTypeParam(.{ span: s, name: tp }))
   }
 }
 
@@ -1364,7 +1365,7 @@ fn resolve_ast_type_params(ast_params: Vector<TypeParam>, s: span.Span) Resolved
           bound_refs = bound_refs.append(.Builtin(c))
         },
         .None => {
-          diags = diags.append(diag.error(bound_path.span, "unknown contract '${seg}'"))
+          diags = diags.append(.Error(.UnknownContract(.{ span: bound_path.span, name: seg })))
         },
       }
     }
@@ -1468,7 +1469,7 @@ fn resolve_extern_function_decl(env: ResolvedEnv, decl: ExternFunctionDecl) Reso
         case r.ty {
           .Some(ty) => {
             if !is_extern_safe_type(ty, false) {
-              diags = diags.append(diag.error(ty_expr.span, "extern functions only support primitive boundary types"))
+              diags = diags.append(.Error(.ExternBoundaryType(.{ span: ty_expr.span })))
               .ErrorType
             } else {
               ty
@@ -1478,7 +1479,7 @@ fn resolve_extern_function_decl(env: ResolvedEnv, decl: ExternFunctionDecl) Reso
         }
       },
       .None => {
-        diags = diags.append(diag.error(param.span, "extern function parameters must have type annotations"))
+        diags = diags.append(.Error(.MissingTypeAnnotation(.{ span: param.span })))
         .ErrorType
       },
     }
@@ -1491,7 +1492,7 @@ fn resolve_extern_function_decl(env: ResolvedEnv, decl: ExternFunctionDecl) Reso
       case r.ty {
         .Some(ty) => {
           if !is_extern_safe_type(ty, true) {
-            diags = diags.append(diag.error(ty_expr.span, "extern functions only support primitive boundary types"))
+            diags = diags.append(.Error(.ExternBoundaryType(.{ span: ty_expr.span })))
           }
           .Some(ty)
         },
@@ -1535,7 +1536,7 @@ fn resolve_function_decl(env: ResolvedEnv, decl: FunctionDecl) ResolveResult {
         }
       },
       .None => {
-        diags = diags.append(diag.error(param.span, "function parameters must have type annotations"))
+        diags = diags.append(.Error(.MissingTypeAnnotation(.{ span: param.span })))
         .ErrorType
       },
     }
@@ -1585,8 +1586,8 @@ pub fn resolve_type_expr(env: ResolvedEnv, ty_expr: TypeExpr, type_vars: Vector<
     .Function(param_exprs, ret_expr) => resolve_fn_type(env, param_exprs, ret_expr, type_vars),
     .Optional(inner_expr) => resolve_optional_type(env, inner_expr, type_vars),
     .Result(ok_expr, err_expr) => resolve_result_type(env, ok_expr, err_expr, type_vars),
-    .Record(_) => type_err(diag.error(ty_expr.span, "anonymous record types not supported in type expressions")),
-    .Sum(_) => type_err(diag.error(ty_expr.span, "anonymous sum types not supported in type expressions")),
+    .Record(_) => type_err(.Error(.AnonymousTypeNotAllowed(.{ span: ty_expr.span }))),
+    .Sum(_) => type_err(.Error(.AnonymousTypeNotAllowed(.{ span: ty_expr.span }))),
     .ErrorType => .{ ty: .None, diagnostics: [] },
   }
 }
@@ -1661,7 +1662,7 @@ fn resolve_result_type(env: ResolvedEnv, ok_expr: TypeExpr, err_expr: TypeExpr, 
 
 fn resolve_type_path(env: ResolvedEnv, path: TypePath, args: Vector<MonoType>, type_vars: Vector<String>) TypeResolveResult {
   if path.segments.len() == 0 {
-    return type_err(diag.error(path.span, "empty type path"))
+    return type_err(.Error(.EmptyTypePath(.{ span: path.span })))
   }
 
   if path.segments.len() == 1 {
@@ -2163,7 +2164,7 @@ fn detect_circular_aliases(env: ResolvedEnv, diags: Vector<diag.DiagKind>) Vecto
       _ => { continue },
     }
     if is_circular_alias(env, aname, Dict.new()) {
-      result = result.append(diag.error(env.types[i].span, "circular type alias: ${aname}"))
+      result = result.append(.Error(.CircularAlias(.{ span: env.types[i].span, name: aname })))
     }
   }
   result

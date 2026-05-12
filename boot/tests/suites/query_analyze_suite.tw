@@ -49,11 +49,8 @@ pub fn suite() runner.Suite {
       result := analyze.analyze_module(id, "__entry", base_env.builtin_env(), state, [])
       try assert.is_false(result.ok)
       try assert.is_true(result.diagnostics.len() > 0)
-      generic_msg := case result.diagnostics[0].kind {
-        .Error(.Generic(d)) => d.message,
-        _ => "",
-      }
-      try assert.str_contains(generic_msg, "Circular import")
+      msg := result.diagnostics[0].kind.message()
+      try assert.str_contains(msg, "Circular import")
       .Ok({})
     })
 

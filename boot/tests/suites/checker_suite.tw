@@ -1276,7 +1276,7 @@ pub fn suite() runner.Suite {
       msgs := try check_errs(src)
       found := false
       for m in msgs {
-        if m.contains("bitwise") and (m.contains("Int") or m.contains("Byte")) { found = true }
+        if m.contains("bitwise") { found = true }
       }
       try assert.is_true(found)
       .Ok({})
@@ -1644,7 +1644,7 @@ pub fn suite() runner.Suite {
     .test("G11 negation on non-numeric errors", fn() {
       src := "fn f(x: Bool) Bool { -x }"
       msgs := try check_errs(src)
-      try assert.str_contains(msgs[0], "negate")
+      try assert.str_contains(msgs[0], "negation")
       .Ok({})
     })
     .test("G11 logical not on non-Bool errors", fn() {

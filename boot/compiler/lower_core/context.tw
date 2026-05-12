@@ -2,7 +2,6 @@
 
 use lib.source.span.{Span}
 use lib.source.diagnostics.{DiagKind}
-use lib.source.diagnostics as diag
 use compiler.ast.{Expr}
 use compiler.resolver.{ResolvedEnv, FunctionOrigin}
 use compiler.mono_type.{MonoType}
@@ -143,6 +142,6 @@ pub fn expr_type(ctx: LowerCtx, expr: Expr) MonoType {
 }
 
 pub fn emit_error(ctx: LowerCtx, s: Span, msg: String) LowerCtx {
-  ctx.errors = ctx.errors.append(diag.error(s, msg))
+  ctx.errors = ctx.errors.append(.Error(.LowerError(.{ span: s, message: msg })))
   ctx
 }

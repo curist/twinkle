@@ -24,20 +24,20 @@ pub fn suite() runner.Suite {
       .Ok({})
     })
     .test("has_errors is true when any error present", fn() {
-      e := DiagKind.Error(.Generic(diag.GenericDiag.{ span: s(0, 5), message: "oops" }))
+      e := DiagKind.Error(.ParseError(diag.GenericDiag.{ span: s(0, 5), message: "oops" }))
       try assert.is_true(diag.has_errors([e]))
       .Ok({})
     })
     .test("has_errors is true when errors mixed with warnings", fn() {
       e := DiagKind.Error(.UndefinedVar(diag.UndefinedVarDiag.{ span: s(0, 3), name: "x" }))
-      w := DiagKind.Warning(.Generic(diag.GenericDiag.{ span: s(4, 9), message: "warn" }))
+      w := DiagKind.Warning(.UnusedImport(diag.UnusedImportDiag.{ span: s(4, 9), binding: "unused" }))
       try assert.is_true(diag.has_errors([w, e]))
       .Ok({})
     })
 
     // ── span extraction ──
-    .test("span from Error.Generic", fn() {
-      k := DiagKind.Error(.Generic(diag.GenericDiag.{ span: s(10, 20), message: "msg" }))
+    .test("span from Error.ParseError", fn() {
+      k := DiagKind.Error(.ParseError(diag.GenericDiag.{ span: s(10, 20), message: "msg" }))
       try assert.int_eq(k.span().start, 10)
       try assert.int_eq(k.span().end, 20)
       .Ok({})
@@ -85,11 +85,6 @@ pub fn suite() runner.Suite {
       k := DiagKind.Warning(.UnusedImport(diag.UnusedImportDiag.{ span: s(0, 10), binding: "bar" }))
       try assert.int_eq(k.span().start, 0)
       try assert.int_eq(k.span().end, 10)
-      .Ok({})
-    })
-    .test("span from Warning.Generic", fn() {
-      k := DiagKind.Warning(.Generic(diag.GenericDiag.{ span: s(6, 12), message: "warn" }))
-      try assert.int_eq(k.span().start, 6)
       .Ok({})
     })
 }

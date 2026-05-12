@@ -158,9 +158,9 @@ pub fn suite() runner.Suite {
       .Ok({})
     })
 
-    // ── Generic error ─────────────────────────────────────────────────
-    .test("Generic error: title is the message", fn() {
-      kind := DiagKind.Error(.Generic(diag.GenericDiag.{
+    // ── ParseError ────────────────────────────────────────────────────
+    .test("ParseError: title is the message", fn() {
+      kind := DiagKind.Error(.ParseError(diag.GenericDiag.{
         span: s(0, 5),
         message: "something went wrong",
       }))
@@ -190,23 +190,6 @@ pub fn suite() runner.Suite {
       try assert.is_none(r.labels[0].label)
       try assert.int_eq(r.help_lines.len(), 1)
       try assert.is_true(r.help_lines[0].contains("remove"))
-      .Ok({})
-    })
-
-    // ── Generic warning ───────────────────────────────────────────────
-    .test("Generic warning: severity is Warning, title is the message", fn() {
-      kind := DiagKind.Warning(.Generic(diag.GenericDiag.{
-        span: s(0, 8),
-        message: "heads up",
-      }))
-      r := diag_render.to_report(kind, ctx())
-      case r.severity {
-        .Warning => {},
-        .Error => { return assert.fail("expected Warning severity") },
-      }
-      try assert.str_eq(r.title, "heads up")
-      try assert.int_eq(r.labels.len(), 1)
-      try assert.int_eq(r.help_lines.len(), 0)
       .Ok({})
     })
 

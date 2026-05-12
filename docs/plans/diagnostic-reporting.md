@@ -329,9 +329,10 @@ Depends on M1 (DiagKind types) and M3 (Report type + render).
 Note: renderers do not yet call `find_path()` — no current variant requires
 enclosing-function context. Can be added when a future variant needs it.
 
-### M5 — Pipeline integration + cutover (partial)
+### M5 — Pipeline integration + cutover ✅ (except integration tests)
 
-Layer wiring and CLI rendering are complete. Emission site migration remains.
+Layer wiring, CLI rendering, and all emission site migration are complete.
+`Generic` is fully removed from both `ErrorDiag` and `WarningDiag`.
 
 * [x] Migrate `AnalysisDiag` to carry `kind: DiagKind` instead of
   `span? + severity + message`; retain `data: Json?` for LSP
@@ -341,21 +342,11 @@ Layer wiring and CLI rendering are complete. Emission site migration remains.
   severity and message from `DiagKind` for LSP JSON, passes `data` through
 * [x] Migrate CLI output: `format_analysis_diags` and `print_warnings` use
   `to_report` + `render` — produces rustc/Gleam-style terminal output
-* [x] Migrate emission sites — first wave: typed variants added and sites migrated
-  for all core checker/resolver patterns. Current typed ErrorDiag variants:
-  `TypeMismatch`, `UndefinedVar`, `UndefinedType`, `WrongArity`, `TypeArityMismatch`,
-  `MissingVariants`, `DuplicateField`, `InfiniteType`, `NoField`, `NotIterable`,
-  `NotIndexable`.
-* [ ] Migrate emission sites — second wave (remaining high-value checker sites):
-  - `NoMethod(.{ span, ty, name })` — "type X has no method 'Y'"
-  - `MissingField(.{ span, name })` — "missing field 'X'" in record literals
-  - Reuse `WrongArity` for variant field arity (`.X expects N args`, checker)
-  - Reuse `WrongArity` for pattern arity (`.X pattern expects N bindings`, checker)
-* [ ] Migrate emission sites — lower priority (leave as Generic for now):
-  - Resolver declaration-level errors (duplicate defs, extern constraints, circular alias)
-  - Checker compiler-internal errors ("uninstantiated type variable", "cannot resolve
-    record type", "invalid method signature") — not caused by user mistakes
-  - Parser syntax errors — need a `ParseError` family or stay Generic long-term
+* [x] Migrate emission sites — all checker and resolver sites migrated to typed
+  variants. `ParseError(GenericDiag)` and `LowerError(GenericDiag)` are the
+  intentional terminal string-based variants for parser/lexer and lowering errors
+  respectively; parser/lexer sites route through the `diag.error()` helper which
+  emits `ParseError`. `Generic` bridge variant removed entirely.
 * [x] Update `synthetic_diag()` to capture the triggering `use` span instead
   of the current zero span `(0, 0, 0)` — already done; falls back to `(0,0,0)`
   only when there is no caller (entry file errors), which is correct.
@@ -409,13 +400,11 @@ Integration tests (M5):
   (`source_diag.Diagnostic` → `AnalysisDiag` → `query_diagnostics.Diagnostic`)
   must be updated together. The cutover is atomic — old and new cannot mix
   at the layer boundaries.
-* **`Generic` exit criterion:** `Generic` is a transitional bridge — the goal
-  is to remove it entirely from `ErrorDiag` and `WarningDiag` once all sites
-  are typed. The self-host fixed-point test will surface any stale uses the
-  moment `Generic` is deleted. Remaining work before removal: second-wave
-  checker sites (NoMethod, MissingField, WrongArity reuse), resolver
-  declaration-level errors, and parser syntax errors (needs a `ParseError`
-  family or a deliberate decision to keep them Generic).
+* **`Generic` exit criterion:** ✅ Achieved. `Generic` has been fully removed from
+  both `ErrorDiag` and `WarningDiag`. All checker and resolver sites emit typed
+  variants. Parser/lexer sites use `ParseError(GenericDiag)` and lowering sites
+  use `LowerError(GenericDiag)` as intentional terminal string-based variants.
+  The self-host fixed-point test confirmed correctness.
 
 ---
 
@@ -473,8 +462,9 @@ reads `data` to construct workspace edits — same pattern as unused imports.
 * [x] All compiler errors/warnings render with source snippets, underlines, and
   colored severity headers in terminal output
 * [x] NO_COLOR produces plain text without ANSI escapes
-* [ ] Diagnostic emission sites contain no string formatting — just typed variants
-  (currently all checker/resolver sites go through `Generic` bridge; migration pending)
+* [x] Diagnostic emission sites contain no string formatting — just typed variants.
+  `ParseError` and `LowerError` carry string messages by deliberate design (for
+  parser/lexer and lowering errors); all other sites use fully structured variants.
 * [x] LSP diagnostic path produces equivalent information to today, including
   code actions (unused import removal)
 * [x] All three diagnostic layers updated: `AnalysisDiag` carries `kind: DiagKind` +
