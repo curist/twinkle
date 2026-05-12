@@ -28,15 +28,50 @@ pub type RenderCtx = .{
   module: Module?,
   /// Color and style settings passed through to render().
   config: RenderConfig,
+  /// Per-diagnostic snapshot of TypeId → display name, captured at
+  /// diagnostic creation time. Checked before env for type name lookup.
+  type_names: Dict<Int, String>?,
 }
 
 // ── Internal helpers ──────────────────────────────────────────────────
 
 fn fmt_ty(ty: MonoType, ctx: RenderCtx) String {
-  case ctx.env {
-    .Some(env) => env.ty_to_string_env(ty),
-    .None => ty_to_string(ty),
+  case ty {
+    .Named(tid, args) => {
+      name := resolve_type_name(tid.id, ctx)
+      if args.len() == 0 {
+        name
+      } else {
+        joined := collect a in args { fmt_ty(a, ctx) }
+        "${name}<${joined.join(", ")}>"
+      }
+    },
+    _ => case ctx.env {
+      .Some(env) => env.ty_to_string_env(ty),
+      .None => ty_to_string(ty),
+    },
   }
+}
+
+fn resolve_type_name(id: Int, ctx: RenderCtx) String {
+  // 1. diagnostic-local snapshot
+  case ctx.type_names {
+    .Some(names) => case names[id] {
+      .Some(n) => { return n },
+      .None => {},
+    },
+    .None => {},
+  }
+  // 2. render context env
+  case ctx.env {
+    .Some(env) => case env.find_type_name(.{ id }) {
+      .Some(n) => { return n },
+      .None => {},
+    },
+    .None => {},
+  }
+  // 3. debug fallback
+  "Named(${id})"
 }
 
 fn primary(span: Span, label: String?) SpanLabel {

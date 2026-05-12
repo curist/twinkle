@@ -36,6 +36,22 @@ pub type AnalysisDiag = .{
   stage: String,
   /// Optional data payload for LSP roundtripping (e.g., unused import edits).
   data: json.Json?,
+  /// Snapshot of TypeId → display name at diagnostic creation time.
+  /// Ensures diagnostics render source-level type names even when the
+  /// rendering environment differs from the producing environment.
+  type_names: Dict<Int, String>,
+}
+
+pub fn empty_type_names() Dict<Int, String> {
+  Dict.new()
+}
+
+pub fn type_name_snapshot(env: ResolvedEnv) Dict<Int, String> {
+  names: Dict<Int, String> = Dict.new()
+  for i in range(env.types.len()) {
+    names[env.types[i].id.id] = env.type_names[i]
+  }
+  names
 }
 
 /// A type entry bundled with its name, stored together to prevent index drift.
@@ -259,7 +275,7 @@ fn parse_cached(
   state.cache = parsed_out.store
   parsed := parsed_out.value
   if parsed.diagnostics.len() > 0 {
-    diags := wrap_diags(source, "parse", parsed.diagnostics)
+    diags := wrap_diags(source, "parse", parsed.diagnostics, empty_type_names())
     return .Err(.{ state, diagnostics: diags })
   }
   .Ok(.{ state, parsed })
@@ -359,7 +375,7 @@ fn resolve_and_check_local(
   resolved := resolved_out.value
   if resolved.diagnostics.len() > 0 {
     state.cache = cache.clear_typed_and_later(state.cache, canonical)
-    diags := wrap_diags(source, "resolve", resolved.diagnostics)
+    diags := wrap_diags(source, "resolve", resolved.diagnostics, type_name_snapshot(resolved.env))
     return .Err(.{ state, diagnostics: prior_diagnostics.concat(diags) })
   }
 
@@ -368,7 +384,7 @@ fn resolve_and_check_local(
   checked := checked_out.value
   if checked.diagnostics.len() > 0 {
     state.cache = cache.clear_lowered_and_hash(state.cache, canonical)
-    diags := wrap_diags(source, "check", checked.diagnostics)
+    diags := wrap_diags(source, "check", checked.diagnostics, type_name_snapshot(checked.env))
     return .Err(.{ state, diagnostics: prior_diagnostics.concat(diags) })
   }
 
@@ -510,7 +526,7 @@ fn capture_local_types(state: AnalysisState, env: ResolvedEnv, canonical: String
 
 fn synthetic_diag(id: identity.SourceIdentity, version: Int?, diag_span: span.Span, stage: String, message: String) AnalysisDiag {
   kind: diag.DiagKind = .Error(.ParseError(.{ span: diag_span, message }))
-  .{ identity: id, version, kind, stage, data: .None }
+  .{ identity: id, version, kind, stage, data: .None, type_names: empty_type_names() }
 }
 
 fn convert_unused_import_diags(
@@ -530,6 +546,7 @@ fn convert_unused_import_diags(
       kind: item.kind,
       stage: "import",
       data: .Some(data),
+      type_names: empty_type_names(),
     }
   }
 }
@@ -538,6 +555,7 @@ fn wrap_diags(
   source: overlay.SourceText,
   stage: String,
   diagnostics: Vector<diag.DiagKind>,
+  type_names: Dict<Int, String>,
 ) Vector<AnalysisDiag> {
   collect d in diagnostics {
     AnalysisDiag.{
@@ -546,6 +564,7 @@ fn wrap_diags(
       kind: d,
       stage,
       data: .None,
+      type_names,
     }
   }
 }

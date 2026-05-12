@@ -95,6 +95,7 @@ pub fn compile_entry(entry_path: String) Result<PipelineArtifacts, CompileError>
           kind: d,
           stage: "lower",
           data: .None,
+          type_names: analyze.type_name_snapshot(a_result.env),
         }
       }
       return .Err(.Diagnostics(.{ diagnostics: lower_diags, env: a_result.env }))

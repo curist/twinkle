@@ -59,7 +59,7 @@ fn format_analysis_diags(env: ResolvedEnv, diags: Vector<analyze.AnalysisDiag>) 
     }
     reg := registry.empty()
     registry.add_file(reg, d.identity.path, source)
-    ctx := diag_render.RenderCtx.{ registry: reg, env: .Some(env), module: .None, config }
+    ctx := diag_render.RenderCtx.{ registry: reg, env: .Some(env), module: .None, config, type_names: .Some(d.type_names) }
     rep := diag_render.to_report(d.kind, ctx)
     parts = parts.append(render.render(rep, reg, config))
   }
@@ -77,7 +77,7 @@ pub fn print_warnings(warnings: Vector<analyze.AnalysisDiag>) {
     }
     reg := registry.empty()
     registry.add_file(reg, d.identity.path, source)
-    ctx := diag_render.RenderCtx.{ registry: reg, env: .None, module: .None, config }
+    ctx := diag_render.RenderCtx.{ registry: reg, env: .None, module: .None, config, type_names: .Some(d.type_names) }
     rep := diag_render.to_report(d.kind, ctx)
     eprintln(render.render(rep, reg, config))
     eprintln("")

@@ -129,7 +129,7 @@ fn format_analysis_diag_inline(env: ResolvedEnv, src: String, d: analyze.Analysi
   reg := registry.empty()
   registry.add_file(reg, "<input>", src)
   config := report.default_config()
-  ctx := diag_render.RenderCtx.{ registry: reg, env: .Some(env), module: .None, config }
+  ctx := diag_render.RenderCtx.{ registry: reg, env: .Some(env), module: .None, config, type_names: .Some(d.type_names) }
   rep := diag_render.to_report(d.kind, ctx)
   render.render(rep, reg, config)
 }
@@ -141,7 +141,7 @@ fn format_diags_inline(env: ResolvedEnv, src: String, diags: Vector<diag.DiagKin
   config := report.default_config()
   parts: Vector<String> = []
   for d in diags {
-    ctx := diag_render.RenderCtx.{ registry: reg, env: .Some(env), module: .None, config }
+    ctx := diag_render.RenderCtx.{ registry: reg, env: .Some(env), module: .None, config, type_names: .None }
     rep := diag_render.to_report(d, ctx)
     parts = parts.append(render.render(rep, reg, config))
   }

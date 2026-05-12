@@ -20,6 +20,7 @@ fn ctx() RenderCtx {
     env: .None,
     module: .None,
     config: RenderConfig.{ color: false },
+    type_names: .None,
   }
 }
 
@@ -190,6 +191,40 @@ pub fn suite() runner.Suite {
       try assert.is_none(r.labels[0].label)
       try assert.int_eq(r.help_lines.len(), 1)
       try assert.is_true(r.help_lines[0].contains("remove"))
+      .Ok({})
+    })
+
+    // ── Named type rendering with snapshot ─────────────────────────────
+    .test("MissingField with Named type falls back to Named(id) without snapshot", fn() {
+      tid := MonoType.Named(.{ id: 99 }, [])
+      kind := DiagKind.Error(.MissingField(diag.MissingFieldDiag.{
+        span: s(0, 10),
+        name: "y",
+        ty: tid,
+      }))
+      r := diag_render.to_report(kind, ctx())
+      try assert.is_true(r.title.contains("Named(99)"))
+      .Ok({})
+    })
+    .test("MissingField with Named type renders source name from snapshot", fn() {
+      tid := MonoType.Named(.{ id: 99 }, [])
+      kind := DiagKind.Error(.MissingField(diag.MissingFieldDiag.{
+        span: s(0, 10),
+        name: "y",
+        ty: tid,
+      }))
+      names: Dict<Int, String> = Dict.new()
+      names[99] = "Point"
+      snapshot_ctx := RenderCtx.{
+        registry: registry.empty(),
+        env: .None,
+        module: .None,
+        config: RenderConfig.{ color: false },
+        type_names: .Some(names),
+      }
+      r := diag_render.to_report(kind, snapshot_ctx)
+      try assert.is_true(r.title.contains("Point"))
+      try assert.is_false(r.title.contains("Named("))
       .Ok({})
     })
 
