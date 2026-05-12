@@ -27,7 +27,7 @@ pub fn verify_prepared_module(
   prepared: PreparedModule,
   env: ResolvedEnv,
   builtins: BuiltinRegistry,
-) Result<Void, String> {
+) !String {
   verify_prepared_module_with_level(prepared, env, builtins, .Full)
 }
 
@@ -36,7 +36,7 @@ pub fn verify_prepared_module_with_level(
   env: ResolvedEnv,
   builtins: BuiltinRegistry,
   level: VerifyLevel,
-) Result<Void, String> {
+) !String {
   timed := case proc.env("TWINKLE_TIMINGS") { .Some(_) => true, .None => false }
 
   funcs_by_id: Dict<Int, PreparedFunc> = Dict.new()

@@ -7,6 +7,7 @@
 use @std.fs
 use compiler.base_env.{add_internal_host_builtins}
 use compiler.imports
+use compiler.imports.{DependencyPlan}
 use compiler.resolver.{
   ResolvedEnv, ModuleExports, TypeEntry,
   extract_exports_for_module, merge_module_exports, merge_selective_imports,
@@ -231,7 +232,7 @@ fn load_source(
   module_id: identity.SourceIdentity,
   caller_id: identity.SourceIdentity?,
   use_span: span.Span?,
-) Result<SourceLoad, AnalysisError> {
+) SourceLoad!AnalysisError {
   source := case overlay.lookup(state.overlay, module_id) {
     .Ok(found) => found,
     .Err(err) => {
@@ -252,7 +253,7 @@ fn parse_cached(
   canonical: String,
   source: overlay.SourceText,
   source_hash: Int,
-) Result<ParseLoad, AnalysisError> {
+) ParseLoad!AnalysisError {
   parse_runner := stage_runner.new(canonical, source_hash, 0, 0, false)
   parsed_out := stage_runner.parse(parse_runner, state.cache, source.text, 0)
   state.cache = parsed_out.store
@@ -269,7 +270,7 @@ fn plan_dependencies(
   canonical: String,
   parsed: cache.ParsedModule,
   source: overlay.SourceText,
-) Result<imports.DependencyPlan, AnalysisError> {
+) DependencyPlan!AnalysisError {
   dep_plan := case imports.plan_dependencies_with_exists(parsed.module, canonical, state.project_root, fn(path_str: String) Bool {
     dep_id := identity.from_path(imports.canonical_module_path(path_str, state.canonical_roots))
     state.overlay.documents.has(dep_id.path) or fs.exists(dep_id.path)
@@ -352,7 +353,7 @@ fn resolve_and_check_local(
   env: ResolvedEnv,
   source: overlay.SourceText,
   prior_diagnostics: Vector<AnalysisDiag>,
-) Result<LocalCheck, AnalysisError> {
+) LocalCheck!AnalysisError {
   resolved_out := stage_runner.resolve(runner, state.cache, parsed, env)
   state.cache = resolved_out.store
   resolved := resolved_out.value

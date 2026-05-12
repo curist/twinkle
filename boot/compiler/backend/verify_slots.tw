@@ -10,7 +10,7 @@ pub fn verify_prepared_func_slots(
   pf: PreparedFunc,
   closure_captures: Dict<Int, Vector<CaptureParam>>,
   env: ResolvedEnv,
-) Result<Void, String> {
+) !String {
   for sid in pf.captures {
     try verify_slot_membership(pf, sid, .CaptureParam, env, "capture slot")
   }
@@ -55,7 +55,7 @@ fn verify_slot_membership(
   expected_role: SlotRole,
   env: ResolvedEnv,
   label: String,
-) Result<Void, String> {
+) !String {
   info := try facts.slot_info_result(pf, sid, label)
   if !slot_role_eq(info.role, expected_role) {
     return fail_func(
@@ -70,7 +70,7 @@ fn verify_local_slot_membership(
   pf: PreparedFunc,
   sid: SlotId,
   env: ResolvedEnv,
-) Result<Void, String> {
+) !String {
   info := try facts.slot_info_result(pf, sid, "local slot")
   role_ok := case info.role {
     .Local => true,
@@ -90,7 +90,7 @@ fn verify_local_slot_membership(
 fn verify_capture_alignment(
   pf: PreparedFunc,
   closure_captures: Dict<Int, Vector<CaptureParam>>,
-) Result<Void, String> {
+) !String {
   case closure_captures[pf.func_id.id] {
     .None => {
       if pf.captures.len() > 0 {
@@ -129,7 +129,7 @@ fn verify_slot_metadata(
   pf: PreparedFunc,
   info: SlotInfo,
   env: ResolvedEnv,
-) Result<Void, String> {
+) !String {
   case info.role {
     .DeadPlaceholder => {
       if !mono_eq(info.mono, .Never) {
