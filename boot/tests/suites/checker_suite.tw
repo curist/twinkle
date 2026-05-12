@@ -330,6 +330,12 @@ pub fn suite() runner.Suite {
       try assert.str_contains(msgs[0], "operator not supported")
       .Ok({})
     })
+    .test("string plus suggests concat or interpolation", fn() {
+      src := "fn f() String { \"hello\" + \"world\" }"
+      msgs := try check_errs(src)
+      try assert.str_contains(msgs[0], "cannot concatenate strings with `+`")
+      .Ok({})
+    })
     // string interp test deferred — can't embed ${} in string literals without outer interpolation
     .test("equality", fn() {
       src := "fn f() Bool { 1 == 2 }"

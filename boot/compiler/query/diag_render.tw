@@ -304,6 +304,14 @@ fn error_to_report(e: ErrorDiag, ctx: RenderCtx) Report {
         help_lines: [],
       }
     },
+    .StringConcatOperator(d) => {
+      Report.{
+        severity: .Error,
+        title: "cannot concatenate strings with `+`",
+        labels: [primary(d.span, .Some("`+` is numeric addition, not string concatenation"))],
+        help_lines: ["prefer string interpolation (`\"\${...}\"`); use `String.concat(a, b)` for explicit function calls"],
+      }
+    },
     .TryOperandError(d) => {
       Report.{
         severity: .Error,

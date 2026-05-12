@@ -159,6 +159,19 @@ pub fn suite() runner.Suite {
       .Ok({})
     })
 
+    // ── StringConcatOperator ──────────────────────────────────────────
+    .test("StringConcatOperator: suggests String.concat or interpolation", fn() {
+      kind := DiagKind.Error(.StringConcatOperator(.{ span: s(1, 10) }))
+      r := diag_render.to_report(kind, ctx())
+      try assert.str_eq(r.title, "cannot concatenate strings with `+`")
+      try assert.int_eq(r.labels.len(), 1)
+      try assert.is_true(r.labels[0].is_primary)
+      try assert.int_eq(r.help_lines.len(), 1)
+      try assert.is_true(r.help_lines[0].contains("String.concat"))
+      try assert.is_true(r.help_lines[0].contains("interpolation"))
+      .Ok({})
+    })
+
     // ── ParseError ────────────────────────────────────────────────────
     .test("ParseError: title is the message", fn() {
       kind := DiagKind.Error(.ParseError(diag.GenericDiag.{

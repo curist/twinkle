@@ -2332,6 +2332,10 @@ fn is_numeric(ty: MonoType) Bool {
   case ty { .Int => true, .Float => true, .Byte => true, _ => false }
 }
 
+fn is_string(ty: MonoType) Bool {
+  case ty { .String => true, _ => false }
+}
+
 fn synth_binary(op: BinOp, lhs: Expr, rhs: Expr, s: Span, ctx: InferCtx, diags: Vector<DiagKind>) SynthOut {
   case op {
     .Assign => synth_assign_op(lhs, rhs, s, ctx, diags),
@@ -2522,6 +2526,14 @@ fn synth_arith_op(op: BinOp, lhs: Expr, rhs: Expr, s: Span, ctx: InferCtx, diags
 
   left_z := zonk(lr.ty, cur_ctx.subst)
   right_z := zonk(rr.ty, cur_ctx.subst)
+
+  if op == .Add and (is_string(left_z) or is_string(right_z)) {
+    return .{
+      ty: MonoType.String,
+      ctx: cur_ctx,
+      diags: cur_diags.append(.Error(.StringConcatOperator(.{ span: s }))),
+    }
+  }
 
   // Int × Int → Int
   if (case left_z { .Int => true, _ => false }) and (case right_z { .Int => true, _ => false }) {

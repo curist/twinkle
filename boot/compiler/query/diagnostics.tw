@@ -171,6 +171,7 @@ fn kind_to_message(kind: diag.DiagKind) String {
       .PublicRebind(d) => "cannot rebind public binding `${d.name}`",
       .InvalidAssignTarget(_) => "invalid assignment target",
       .InvalidOperand(d) => "${d.operation} not supported",
+      .StringConcatOperator(_) => "cannot concatenate strings with `+`",
       .TryOperandError(_) => "try requires Option or Result",
       .TryReturnMismatch(d) => "try on ${d.expected_kind}: function must return ${d.expected_kind}",
       .CannotInterpolate(d) => "cannot interpolate: ${d.reason}",
