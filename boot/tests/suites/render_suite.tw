@@ -170,7 +170,6 @@ pub fn suite() runner.Suite {
         "  |",
         "2 | let x = 2",
         "  |     ^ duplicate",
-        "  |",
         "1 | let x = 1",
         "  |     - first defined here",
       ])

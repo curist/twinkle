@@ -150,6 +150,7 @@ pub fn render(report: Report, reg: registry.FileRegistry, config: RenderConfig) 
           lines = lines.append(cyan(config, "${pad} |"))
 
           // Each label: source line + underline
+          prev_line := 0
           for l, idx in report.labels {
             case registry.line_col(reg, l.span) {
               .None => {},
@@ -157,10 +158,11 @@ pub fn render(report: Report, reg: registry.FileRegistry, config: RenderConfig) 
                 case registry.line_text(reg, l.span) {
                   .None => {},
                   .Some(line_raw) => {
-                    // Blank separator between consecutive label blocks
-                    if idx > 0 {
+                    // Blank separator only when labels are non-adjacent
+                    if idx > 0 and lc.line > prev_line + 1 {
                       lines = lines.append(cyan(config, "${pad} |"))
                     }
+                    prev_line = lc.line
 
                     line_str := strip_newline(line_raw)
                     num_str := pad_left(Int.to_string(lc.line), gutter_w)
