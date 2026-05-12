@@ -1750,6 +1750,9 @@ pub fn suite() runner.Suite {
     .test("snapshot: statement_in_expression_return", fn() {
       assert_snapshot("tests/parser_errors/statement_in_expression_return.tw")
     })
+    .test("snapshot: statement_in_expression_case_arm", fn() {
+      assert_snapshot("tests/parser_errors/statement_in_expression_case_arm.tw")
+    })
     .test("snapshot: statement_in_expression_break", fn() {
       assert_snapshot("tests/parser_errors/statement_in_expression_break.tw")
     })

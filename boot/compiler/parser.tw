@@ -197,7 +197,16 @@ fn parse_expr_in(c: Cursor, context: String) ExprParse {
   case is_stmt_keyword(c) {
     .Some(kw) => {
       diagnostics: Vector<DiagKind> = [diag.error(c.span(), stmt_in_expr_msg(kw, .Some(context)))]
-      .{ value: error_expr(c.span()), cursor: c.advance(), diagnostics }
+      err := error_expr(c.span())
+      c = c.advance()
+      // Skip the rest of the statement on the same line to suppress cascade errors.
+      // Stop at line boundaries or structural delimiters (comma, brace, EOF).
+      for c.pos < c.tokens.len() and !c.preceded_by_newline() {
+        k := c.kind()
+        if k == .RBrace or k == .Comma or k == .Eof { break }
+        c = c.advance()
+      }
+      .{ value: err, cursor: c, diagnostics }
     },
     .None => parse_expr_bp(c, 0),
   }
