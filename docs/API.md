@@ -50,7 +50,7 @@ Supports `try` sugar — `v := try expr` extracts the `Ok` value or propagates t
 |----------|-----------|-------------|
 | `.map(f)` | `fn<T, U, E>(res: Result<T, E>, f: fn(T) U) Result<U, E>` | Transform `Ok(v)` into `Ok(f(v))`; leaves `Err(e)` unchanged |
 | `.and_then(f)` | `fn<T, U, E>(res: Result<T, E>, f: fn(T) Result<U, E>) Result<U, E>` | Chain Result-producing steps without nested Results |
-| `.transpose()` | `fn<T, E>(res: Result<Option<T>, E>) Option<Result<T, E>>` | Convert `Result<Option<T,E>>` into `Option<Result<T,E>>` |
+| `.transpose()` | `fn<T, E>(res: Result<Option<T>, E>) Option<Result<T, E>>` | Convert `Result<Option<T>,E>` into `Option<Result<T,E>>` |
 
 ### `Cell<T>`
 Mutable reference cell for imperative state.
