@@ -169,4 +169,5 @@ Related historical context outside this folder:
 | [boot-test-suite-cast-fix.md](boot-test-suite-cast-fix.md) | Fix `illegal cast` failures when large cross-module `Vector<runner.Suite>` values are aggregated — root cause was unqualified suffix-name aliasing in monomorphization; fixed in `lower.rs` and `monomorphize.rs` |
 | [salsa-refactor-plan.md](salsa-refactor-plan.md) | Salsa-like incremental query refactor — shared analyze module, exports fingerprinting for early cutoff, revision tracking, TypeId registry, unified build/LSP path |
 | [unused-import-cleanup.md](unused-import-cleanup.md) | Unused import detection with edit metadata, LSP code actions for removal, module-alias-aware false-negative fix |
-| [architecture-cleanup.md](architecture-cleanup.md) | Architecture cleanup, consolidate ownership boundaries, harden invariants, unify pipelines | 
+| [architecture-cleanup.md](architecture-cleanup.md) | Architecture cleanup, consolidate ownership boundaries, harden invariants, unify pipelines |
+| [diagnostic-reporting.md](diagnostic-reporting.md) | Rich multi-line diagnostic output with typed DiagKind variants, source snippets, underlines, and ANSI color |

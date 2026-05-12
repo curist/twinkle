@@ -352,8 +352,8 @@ Layer wiring, CLI rendering, and all emission site migration are complete.
   only when there is no caller (entry file errors), which is correct.
 * [x] Remove `convert_source_diags()` — resolver now emits DiagKind directly; conversion step removed from analyze.tw, diagnostics.tw, semantic.tw
 * [x] Remove old `diagnostic.tw` — file retired; resolver migrated to emit DiagKind
-* [ ] Integration tests: compile known-bad sources, assert rich output format
-* [ ] Integration tests: verify LSP diagnostic JSON + code actions still work
+* [x] Integration tests: compile known-bad sources, assert rich output format
+* [x] Integration tests: verify LSP diagnostic JSON + code actions still work
 
 ---
 
