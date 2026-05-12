@@ -16,11 +16,11 @@ use compiler.resolver.{ResolvedEnv}
 use compiler.mono_type.{TypeId}
 
 use lib.source.identity
-use lib.source.span
+use lib.source.span.{Span}
 
 pub type DefinitionResult = .{
   uri: String,
-  span: span.Span,
+  span: Span,
 }
 
 type Ref = {
@@ -34,7 +34,7 @@ type Ref = {
 
 type Binding = .{
   name: String,
-  span: span.Span,
+  span: Span,
 }
 
 pub fn definition(snap: SemanticSnapshot, byte_offset: Int) DefinitionResult? {
@@ -286,12 +286,12 @@ fn find_variant_in_module(snap: SemanticSnapshot, module_path: String, type_name
   .None
 }
 
-fn function_name_span(decl: FunctionDecl) span.Span {
+fn function_name_span(decl: FunctionDecl) Span {
   start := decl.span.start + if decl.is_pub { 7 } else { 3 }
   .{ file_id: decl.span.file_id, start, end: start + decl.name.len() }
 }
 
-fn type_name_span(decl: TypeDecl) span.Span {
+fn type_name_span(decl: TypeDecl) Span {
   start := decl.span.start + if decl.is_pub { 9 } else { 5 }
   .{ file_id: decl.span.file_id, start, end: start + decl.name.len() }
 }
@@ -483,24 +483,86 @@ fn find_pattern_variant_in_expr(expr: Expr, offset: Int) Ref? {
   if !expr.span.contains(offset) { return .None }
   case expr.kind {
     .Case(scrutinee, arms) => {
-      for arm in arms { case find_pattern_variant_in_pattern(arm.pattern, offset, .Some(scrutinee)) { .Some(r) => { return .Some(r) }, .None => {} } }
+      case find_pattern_variant_in_expr(scrutinee, offset) {
+        .Some(r) => { return .Some(r) },
+        .None => {},
+      }
+      for arm in arms {
+        case find_pattern_variant_in_pattern(arm.pattern, offset, .Some(scrutinee)) {
+          .Some(r) => { return .Some(r) },
+          .None => {},
+        }
+        case find_pattern_variant_in_expr(arm.expr, offset) {
+          .Some(r) => { return .Some(r) },
+          .None => {},
+        }
+      }
       .None
     },
     .BlockExpr(b) => find_pattern_variant_in_block(b, offset, .None),
+    .If(cond, then_block, else_expr) => case find_pattern_variant_in_expr(cond, offset) {
+      .Some(r) => .Some(r),
+      .None => case find_pattern_variant_in_block(then_block, offset, .None) {
+        .Some(r) => .Some(r),
+        .None => case else_expr { .Some(e) => find_pattern_variant_in_expr(e, offset), .None => .None },
+      },
+    },
+    .Call(callee, args) => case find_pattern_variant_in_expr(callee, offset) {
+      .Some(r) => .Some(r),
+      .None => find_pattern_variant_in_exprs(args, offset),
+    },
+    .Field(base, _) => find_pattern_variant_in_expr(base, offset),
+    .Index(base, idx) => case find_pattern_variant_in_expr(base, offset) {
+      .Some(r) => .Some(r),
+      .None => find_pattern_variant_in_expr(idx, offset),
+    },
+    .Array(elems) => find_pattern_variant_in_exprs(elems, offset),
+    .Record(entries) => find_pattern_variant_in_entries(entries, offset),
+    .NamedRecord(_, entries) => find_pattern_variant_in_entries(entries, offset),
+    .Variant(_, fields) => find_pattern_variant_in_exprs(fields, offset),
+    .Closure(_, _, body) => find_pattern_variant_in_block(body, offset, .None),
+    .Collect(col) => {
+      case col.iter { .Some(e) => case find_pattern_variant_in_expr(e, offset) { .Some(r) => { return .Some(r) }, .None => {} }, .None => {} }
+      case col.condition { .Some(e) => case find_pattern_variant_in_expr(e, offset) { .Some(r) => { return .Some(r) }, .None => {} }, .None => {} }
+      find_pattern_variant_in_block(col.body, offset, .None)
+    },
     _ => .None,
   }
+}
+
+fn find_pattern_variant_in_exprs(exprs: Vector<Expr>, offset: Int) Ref? {
+  for e in exprs {
+    case find_pattern_variant_in_expr(e, offset) {
+      .Some(r) => { return .Some(r) },
+      .None => {},
+    }
+  }
+  .None
+}
+
+fn find_pattern_variant_in_entries(entries: Vector<RecordEntry>, offset: Int) Ref? {
+  for entry in entries {
+    case entry.value {
+      .Some(e) => case find_pattern_variant_in_expr(e, offset) {
+        .Some(r) => { return .Some(r) },
+        .None => {},
+      },
+      .None => {},
+    }
+  }
+  .None
 }
 
 fn find_pattern_variant_in_pattern(pat: Pattern, offset: Int, scrutinee: Expr?) Ref? {
   if !pat.span.contains(offset) { return .None }
   case pat.kind {
     .Variant(name, subs) => {
-      if on_suffix(pat.span, name, offset) { return .Some(.Variant(name, scrutinee)) }
+      if variant_pattern_name_contains(pat.span, [], name, offset) { return .Some(.Variant(name, scrutinee)) }
       for p in subs { case find_pattern_variant_in_pattern(p, offset, scrutinee) { .Some(r) => { return .Some(r) }, .None => {} } }
       .None
     },
     .QualifiedVariant(prefix, name, subs) => {
-      if on_suffix(pat.span, name, offset) { return .Some(.Variant(name, scrutinee)) }
+      if variant_pattern_name_contains(pat.span, prefix, name, offset) { return .Some(.Variant(name, scrutinee)) }
       for p in subs { case find_pattern_variant_in_pattern(p, offset, scrutinee) { .Some(r) => { return .Some(r) }, .None => {} } }
       .None
     },
@@ -540,7 +602,13 @@ fn expr_ref_from_node(ctx: NodeContext, offset: Int) Ref? {
         .Ident(name) => .Some(.Ident(name)),
         .Variant(name, _) => if on_suffix(expr.span, name, offset) { .Some(.Variant(name, .None)) } else { .None },
         .Record(entries) => find_shorthand_entry(entries, offset),
-        .NamedRecord(_, entries) => find_shorthand_entry(entries, offset),
+        .NamedRecord(name, entries) => {
+          name_span := Span.{ file_id: expr.span.file_id, start: expr.span.start, end: expr.span.start + name.len() }
+          if name_span.contains(offset) {
+            return .Some(.TypeName(name))
+          }
+          find_shorthand_entry(entries, offset)
+        },
         _ => .None,
       }
     },
@@ -589,7 +657,21 @@ fn find_expr_ref_in_pattern(pat: Pattern, offset: Int) Ref? {
   }
 }
 
-fn on_suffix(s: span.Span, name: String, offset: Int) Bool {
+fn variant_pattern_name_contains(s: Span, prefix: Vector<String>, name: String, offset: Int) Bool {
+  if prefix.len() == 0 {
+    // Unqualified variants can be parsed either as `.Foo(...)`, where the
+    // pattern span starts at the dot, or as bare `Foo(...)`, where it starts at
+    // the name.  Without source text in the definition query, accept both
+    // possible name starts so bare uppercase patterns include their first char.
+    bare := Span.{ file_id: s.file_id, start: s.start, end: s.start + name.len() }
+    dotted := Span.{ file_id: s.file_id, start: s.start + 1, end: s.start + 1 + name.len() }
+    return bare.contains(offset) or dotted.contains(offset)
+  }
+  start := s.start + prefix.join(".").len() + 1
+  Span.{ file_id: s.file_id, start, end: start + name.len() }.contains(offset)
+}
+
+fn on_suffix(s: Span, name: String, offset: Int) Bool {
   start := s.end - name.len()
   start <= offset and offset < s.end
 }
@@ -734,7 +816,7 @@ fn find_binding_in_pattern(pat: Pattern, name: String) Binding? {
   }
 }
 
-fn stmt_span(stmt: Stmt) span.Span {
+fn stmt_span(stmt: Stmt) Span {
   case stmt {
     .Let(s) => s.span,
     .For(s) => s.span,

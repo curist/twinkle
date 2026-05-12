@@ -1,6 +1,6 @@
 // Hover query: find the type of the expression at a given byte offset.
 
-use compiler.ast.{Item, Block, Stmt, Expr, FunctionDecl, TypeDecl, TypeExpr, TypePath, TypeDef, Pattern}
+use compiler.ast.{Item, Block, Stmt, Expr, FunctionDecl, TypeDecl, TypeExpr, TypePath, TypeDef, Pattern, UseDecl}
 use compiler.checker.{CheckResult}
 use compiler.resolver.{ResolvedEnv, FunctionSig, ResolvedTypeParam, ResolvedVariant, ty_to_string_env}
 use compiler.mono_type.{MonoType, TypeId}
@@ -26,6 +26,14 @@ pub fn hover(snap: SemanticSnapshot, byte_offset: Int, source: String) HoverResu
 
   for item in parsed.module.items {
     case item {
+      .Use(decl) => {
+        if decl.span.contains(byte_offset) {
+          case hover_import(decl, byte_offset, typed) {
+            .Some(r) => { return .Some(r) },
+            .None => {},
+          }
+        }
+      },
       .Type(decl) => {
         if decl.span.contains(byte_offset) {
           case hover_type_decl(decl, byte_offset, typed, source) {
@@ -88,6 +96,43 @@ pub fn hover(snap: SemanticSnapshot, byte_offset: Int, source: String) HoverResu
       },
       _ => {},
     }
+  }
+  .None
+}
+
+fn hover_import(decl: UseDecl, offset: Int, typed: CheckResult) HoverResult? {
+  case decl.items {
+    .Some(import_items) => {
+      for it in import_items {
+        case it {
+          .Value(v) => if v.span.contains(offset) {
+            binding := v.alias.unwrap_or(v.name)
+            case typed.env.lookup_function(binding) {
+              .Some(sig) => { return .Some(.{ content: sig_to_string(typed.env, sig), span: v.span }) },
+              .None => {},
+            }
+          },
+          .Type(t) => if t.span.contains(offset) {
+            binding := t.alias.unwrap_or(t.name)
+            case typed.env.lookup_type(binding) {
+              .Some(entry) => case entry.def {
+                .Some(def) => {
+                  type_name := case def {
+                    .Record(n, _, _) => n,
+                    .Sum(n, _, _) => n,
+                    .Alias(n, _, _) => n,
+                  }
+                  return .Some(.{ content: append_doc(type_name, builtin_type_doc(type_name)), span: t.span })
+                },
+                .None => { return .Some(.{ content: binding, span: t.span }) },
+              },
+              .None => {},
+            }
+          },
+        }
+      }
+    },
+    .None => {},
   }
   .None
 }

@@ -205,6 +205,24 @@ pub fn suite() runner.Suite {
       try assert.str_eq(content, "```twinkle\nfn(a: Int, b: Int) Int\n```")
       .Ok({})
     })
+    .test("hover on destructured function import shows signature", fn() {
+      dep := "pub fn add(a: Int, b: Int) Int { a + b }\n"
+      main := "use dep.{add}\nx := add(1, 2)\n"
+      state := state_with_two_docs("file:///tmp/lsp-hover-import/dep.tw", dep, "file:///tmp/lsp-hover-import/main.tw", main)
+      step := server_core.handle_message(state, hover_request(1, "file:///tmp/lsp-hover-import/main.tw", 0, 10))
+      content := try hover_content(step)
+      try assert.str_eq(content, "```twinkle\nfn(a: Int, b: Int) Int\n```")
+      .Ok({})
+    })
+    .test("hover on destructured type import shows type", fn() {
+      dep := "pub type Point = .{ x: Int }\n"
+      main := "use dep.{Point}\np: Point = .{ x: 1 }\n"
+      state := state_with_two_docs("file:///tmp/lsp-hover-import-type/dep.tw", dep, "file:///tmp/lsp-hover-import-type/main.tw", main)
+      step := server_core.handle_message(state, hover_request(1, "file:///tmp/lsp-hover-import-type/main.tw", 0, 10))
+      content := try hover_content(step)
+      try assert.str_eq(content, "```twinkle\nPoint\n```")
+      .Ok({})
+    })
     .test("hover stable across method name characters", fn() {
       source := "type Counter = .{ value: Int }\nfn inc(c: Counter) Counter { Counter.{ value: c.value + 1 } }\nn := Counter.{ value: 1 }\nresult := n.inc()\n"
       state := state_with_doc("file:///a.tw", source)
