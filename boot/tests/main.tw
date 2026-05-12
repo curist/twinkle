@@ -45,6 +45,7 @@ use .suites.backend_prepare_suite
 use .suites.backend_repr_suite
 use .suites.backend_verify_suite
 use .suites.wat_suite
+use .suites.codegen_emit_suite
 use .suites.linker_suite
 use .suites.runtime_suite
 use .suites.module_loader_suite
@@ -126,6 +127,7 @@ runner.run_all([
   backend_repr_suite.suite(),
   backend_verify_suite.suite(),
   wat_suite.suite(),
+  codegen_emit_suite.suite(),
   linker_suite.suite(),
   runtime_suite.suite(),
   module_loader_suite.suite(),

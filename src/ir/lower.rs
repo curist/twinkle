@@ -2262,6 +2262,8 @@ impl Lowerer {
                     Some(CoreExprKind::GlobalFunc(func_id))
                 } else if let Some(&global_id) = self.module_globals.get(name.as_str()) {
                     Some(CoreExprKind::GlobalLocal(global_id))
+                } else if let Some(&global_id) = self.qualified_value_globals.get(name.as_str()) {
+                    Some(CoreExprKind::GlobalLocal(global_id))
                 } else {
                     self.errors.push(LowerError::InternalError {
                         message: format!("unresolved name '{}' during lowering", name),

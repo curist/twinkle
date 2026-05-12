@@ -618,22 +618,10 @@ fn emit_atom(atom: PreparedAtom, ctx: EmitCtx, buf: Vector<Instr>) Vector<Instr>
       }
     },
     .ASlot(sid) => {
-      is_init := case ctx.init_func_id {
-        .Some(ifid) => case ctx.current_func_id {
-          .Some(cfid) => cfid.id == ifid.id,
-          .None => false,
-        },
-        .None => false,
-      }
+      // Slots are function-local storage. Module globals are represented
+      // explicitly as AGlobalLocal atoms; source_local ids can overlap with
+      // ordinary function params after linking, so do not reinterpret slots as globals.
       entry := lookup_slot(ctx, sid)
-      if !is_init {
-        case ctx.registry.module_globals[entry.source_local.id] {
-          .Some(gentry) => {
-            return buf.append(.GlobalGet(gentry.sym))
-          },
-          .None => {},
-        }
-      }
       buf.append(.LocalGet(entry.index))
     },
     .AGlobalLocal(lid) => {

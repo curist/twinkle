@@ -168,10 +168,15 @@ fn rewrite_func(
     }
   }
 
-  // Find next available LocalId
+  // Find next available LocalId — must be higher than every existing local
+  // (body locals, params, and all op_result_mono keys including AAssign targets
+  // that may not appear as Let targets in the body).
   next := find_max_local_expr(func.body, 0)
   for p in func.params {
     if p.local.id > next { next = p.local.id }
+  }
+  for k in func.op_result_mono.keys() {
+    if k > next { next = k }
   }
   next = next + 1
 

@@ -1,0 +1,90 @@
+use tests.runner
+use tests.assert
+use compiler.resolver
+use compiler.builtins.{make_builtin_registry}
+use compiler.mono_type.{MonoType}
+use compiler.core_ir.{LocalId, FuncId, Param}
+use compiler.anf.{AnfExpr, AnfFunctionDef, AnfModule}
+use compiler.codegen.emit.{emit_module}
+use compiler.codegen.wat.{emit_wat_unlinked_for_test}
+use compiler.codegen.wasm_ir.{ValType}
+use compiler.codegen.wasm_plan_types.{WasmTypeRegistry, ModuleGlobalEntry}
+use compiler.backend.prepare.{PreparedModule}
+use compiler.backend.prepared_ir.{PreparedFunc, SlotId, SlotInfo, SlotRole, ReprKind, PreparedExpr, PreparedAtom}
+
+fn lid(n: Int) LocalId { LocalId.{ id: n } }
+fn fid(n: Int) FuncId { FuncId.{ id: n } }
+fn sid(n: Int) SlotId { SlotId.{ id: n } }
+
+fn empty_registry() WasmTypeRegistry {
+  WasmTypeRegistry.{
+    type_defs: [],
+    layout_cache: Dict.new(),
+    in_progress: Dict.new(),
+    type_index: Dict.new(),
+    concrete_func_sigs: Dict.new(),
+    closure_materialized_funcs: Dict.new(),
+    typed_closure_funcs: Dict.new(),
+    direct_builtin_calls: Dict.new(),
+    capture_layouts: Dict.new(),
+    module_globals: Dict.new(),
+    module_globals_order: [],
+    string_pool: Dict.new(),
+    string_pool_order: [],
+    string_pool_next_offset: 0,
+    runtime_imports: [],
+  }
+}
+
+fn test_param_local_id_can_overlap_module_global_id() Result<Void, String> {
+  // Linked modules can contain a module global with GlobalLocal id 0 while an
+  // ordinary function parameter also has source LocalId 0. A prepared ASlot is
+  // always function-local; only explicit AGlobalLocal atoms should read globals.
+  reg := empty_registry()
+  reg.module_globals[0] = ModuleGlobalEntry.{ sym: "global_local_0", mono: MonoType.String }
+  reg.module_globals_order = [0]
+
+  func := AnfFunctionDef.{
+    func_id: fid(10),
+    name: "use_param",
+    params: [Param.{ local: lid(0), ty: MonoType.Int }],
+    op_result_mono: Dict.new(),
+    body: AnfExpr.Atom(.ALocal(lid(0))),
+    return_ty: MonoType.Int,
+  }
+  anf := AnfModule.{ functions: [func], init_func_id: .None, extern_imports: Dict.new() }
+
+  slots: Dict<Int, SlotInfo> = Dict.new()
+  slots[0] = SlotInfo.{
+    slot: sid(0),
+    source_local: lid(0),
+    role: SlotRole.Param,
+    mono: MonoType.Int,
+    repr: ReprKind.I64,
+    wasm_type: ValType.I64,
+  }
+  prepared_func := PreparedFunc.{
+    func_id: fid(10),
+    name: "use_param",
+    captures: [],
+    params: [sid(0)],
+    locals: [],
+    slots: slots,
+    body: PreparedExpr.Atom(PreparedAtom.ASlot(sid(0))),
+    return_mono: MonoType.Int,
+  }
+  prepared := PreparedModule.{ anf: anf, closure_captures: Dict.new(), funcs: [prepared_func] }
+
+  wasm := emit_module(prepared, reg, make_builtin_registry(), resolver.empty_env())
+  wat := emit_wat_unlinked_for_test(wasm)
+
+  try assert.str_contains(wat, "global $global_local_0")
+  try assert.str_contains(wat, "local.get $p0")
+  try assert.is_false(wat.contains("global.get $global_local_0"))
+  .Ok({})
+}
+
+pub fn suite() runner.Suite {
+  runner.suite("codegen emit")
+    .test("function slots are not reinterpreted as module globals", test_param_local_id_can_overlap_module_global_id)
+}
