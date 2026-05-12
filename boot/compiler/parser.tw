@@ -197,15 +197,18 @@ fn parse_expr_in(c: Cursor, context: String) ExprParse {
   case is_stmt_keyword(c) {
     .Some(kw) => {
       diagnostics: Vector<DiagKind> = [diag.error(c.span(), stmt_in_expr_msg(kw, .Some(context)))]
-      err := error_expr(c.span())
+      kw_span := c.span()
       c = c.advance()
+      last_span := kw_span
       // Skip the rest of the statement on the same line to suppress cascade errors.
       // Stop at line boundaries or structural delimiters (comma, brace, EOF).
       for c.pos < c.tokens.len() and !c.preceded_by_newline() {
         k := c.kind()
         if k == .RBrace or k == .Comma or k == .Eof { break }
+        last_span = c.span()
         c = c.advance()
       }
+      err := error_expr(kw_span.merge(last_span))
       .{ value: err, cursor: c, diagnostics }
     },
     .None => parse_expr_bp(c, 0),
@@ -1666,8 +1669,9 @@ fn parse_case_expr(c: Cursor) ExprParse {
     if c.kind() == .Comma {
       c = c.advance()
     } else if c.kind() != .RBrace {
+      eol_point := span.Span.{ file_id: arm_span.file_id, start: arm_span.end, end: arm_span.end }
       diagnostics_out = diagnostics_out.append(
-        .Error(.MissingArmSeparator(.{ span: arm_span, next_span: c.span() }))
+        .Error(.MissingArmSeparator(.{ span: eol_point, next_span: c.span() }))
       )
     }
   }
