@@ -267,6 +267,11 @@ fn visit_type<'a>(ty: &'a Type, file_id: FileId, byte_offset: u32, best: &mut Op
                 visit_type(arg, file_id, byte_offset, best);
             }
         }
+        Type::Record { fields, .. } => {
+            for field in fields {
+                visit_type(&field.ty, file_id, byte_offset, best);
+            }
+        }
         Type::Function { params, ret, .. } => {
             for param in params {
                 visit_type(param, file_id, byte_offset, best);

@@ -24,6 +24,7 @@ pub struct Resolver {
     type_decls: HashMap<String, TypeDecl>,
     type_spans: HashMap<String, Span>,
     type_decl_order: Vec<String>,
+    synthesized_variant_record_type_ids: HashMap<String, TypeId>,
 
     // Track function declarations for Pass 2
     function_decls: HashMap<String, FunctionDecl>,
@@ -71,6 +72,7 @@ impl Resolver {
             type_decls: HashMap::new(),
             type_spans: HashMap::new(),
             type_decl_order: Vec::new(),
+            synthesized_variant_record_type_ids: HashMap::new(),
             function_decls: HashMap::new(),
             function_spans: HashMap::new(),
             function_decl_order: Vec::new(),
@@ -219,6 +221,24 @@ impl Resolver {
             let type_id = self.type_env.add_type(placeholder);
             type_ids.insert(name.clone(), type_id);
             self.local_type_ids.insert(type_id);
+
+            if let AstTypeDef::Sum { variants } = &decl.definition {
+                for variant in variants {
+                    if variant.fields.len() == 1
+                        && matches!(variant.fields.first(), Some(AstType::Record { .. }))
+                    {
+                        let display_name = format!("{}.{}", decl.name, variant.name);
+                        let synth_id = self.type_env.add_hidden_type(TypeDef::Record {
+                            name: display_name.clone(),
+                            type_params: decl.type_params.iter().map(|p| p.name.clone()).collect(),
+                            fields: Vec::new(),
+                            doc: None,
+                        });
+                        self.synthesized_variant_record_type_ids
+                            .insert(display_name, synth_id);
+                    }
+                }
+            }
         }
 
         // Pass 2b: Resolve each type definition fully and UPDATE in place
@@ -287,6 +307,50 @@ impl Resolver {
             AstTypeDef::Sum { variants } => {
                 let mut resolved_variants = Vec::new();
                 for variant in variants {
+                    if variant.fields.len() == 1 {
+                        if let AstType::Record { fields, .. } = &variant.fields[0] {
+                            let display_name = format!("{}.{}", decl.name, variant.name);
+                            let synth_id = *self
+                                .synthesized_variant_record_type_ids
+                                .get(&display_name)
+                                .expect("synthesized variant record type was not pre-registered");
+
+                            let mut resolved_record_fields = Vec::new();
+                            for field in fields {
+                                match self.resolve_type_with_vars(&field.ty, &type_params) {
+                                    Ok(ty) => resolved_record_fields.push(RecordField {
+                                        name: field.name.clone(),
+                                        ty,
+                                    }),
+                                    Err(()) => return Err(()),
+                                }
+                            }
+
+                            self.type_env.update_type(
+                                synth_id,
+                                TypeDef::Record {
+                                    name: display_name,
+                                    type_params: type_params.clone(),
+                                    fields: resolved_record_fields,
+                                    doc: None,
+                                },
+                            );
+
+                            let synth_args = type_params
+                                .iter()
+                                .map(|name| MonoType::Var(name.clone()))
+                                .collect();
+                            resolved_variants.push(Variant {
+                                name: variant.name.clone(),
+                                fields: vec![MonoType::Named {
+                                    type_id: synth_id,
+                                    args: synth_args,
+                                }],
+                            });
+                            continue;
+                        }
+                    }
+
                     let mut resolved_fields = Vec::new();
                     for field_ty in &variant.fields {
                         match self.resolve_type_with_vars(field_ty, &type_params) {
@@ -684,6 +748,11 @@ fn collect_type_refs<'a>(ty: &'a AstType, out: &mut Vec<&'a str>) {
             out.push(name.as_str());
             for arg in args {
                 collect_type_refs(arg, out);
+            }
+        }
+        AstType::Record { fields, .. } => {
+            for field in fields {
+                collect_type_refs(&field.ty, out);
             }
         }
         AstType::Function { params, ret, .. } => {

@@ -112,6 +112,11 @@ fn run_wasm_qualified_variant_constructor_edge() {
 }
 
 #[test]
+fn run_wasm_anonymous_record_variant() {
+    check("tests/run/anonymous_record_variant.tw");
+}
+
+#[test]
 fn run_wasm_closures() {
     check("tests/run/closures.tw");
 }

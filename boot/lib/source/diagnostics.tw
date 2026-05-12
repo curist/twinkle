@@ -22,282 +22,51 @@ pub type GenericDiag = .{
   help_lines: Vector<String>,
 }
 
-// ── Error payload types ──────────────────────────────────────────────
-
-pub type TypeMismatchDiag = .{
-  span: Span,
-  expected: MonoType,
-  found: MonoType,
-}
-
-pub type UndefinedVarDiag = .{
-  span: Span,
-  name: String,
-}
-
-pub type WrongArityDiag = .{
-  span: Span,
-  expected: Int,
-  found: Int,
-}
-
-pub type MissingVariantsDiag = .{
-  span: Span,
-  scrutinee_ty: MonoType,
-  missing: Vector<String>,
-}
-
-pub type DuplicateFieldDiag = .{
-  span: Span,
-  name: String,
-  first: Span,
-}
-
-pub type InfiniteTypeDiag = .{
-  span: Span,
-}
-
-pub type UndefinedTypeDiag = .{
-  span: Span,
-  name: String,
-}
-
-pub type TypeArityMismatchDiag = .{
-  span: Span,
-  name: String,
-  expected: Int,
-  found: Int,
-}
-
-pub type NoFieldDiag = .{
-  span: Span,
-  name: String,
-  ty: MonoType,
-}
-
-pub type NotIterableDiag = .{
-  span: Span,
-  ty: MonoType,
-}
-
-pub type NotIndexableDiag = .{
-  span: Span,
-  ty: MonoType,
-}
-
-pub type NoMethodDiag = .{
-  span: Span,
-  ty: MonoType,
-  name: String,
-}
-
-pub type MissingFieldDiag = .{
-  span: Span,
-  name: String,
-  ty: MonoType,
-}
-
-// ── Checker error payloads ────────────────────────────────────────────
-
-pub type ContractViolationDiag = .{
-  span: Span,
-  ty: MonoType,
-  contract: String,
-  owner: String,
-  reason: String,
-}
-
-pub type CannotSynthesizeDiag = .{
-  span: Span,
-}
-
-pub type AmbiguousTypeDiag = .{
-  span: Span,
-}
-
-pub type InvalidMethodSigDiag = .{
-  span: Span,
-  name: String,
-}
-
-pub type NotARecordDiag = .{
-  span: Span,
-  ty: MonoType,
-}
-
-pub type VariantTypeMismatchDiag = .{
-  span: Span,
-  name: String,
-  ty: MonoType,
-}
-
-pub type ByteOutOfRangeDiag = .{
-  span: Span,
-  value: Int,
-}
-
-pub type InvalidScrutineeDiag = .{
-  span: Span,
-  ty: MonoType,
-}
-
-pub type QualifierMismatchDiag = .{
-  span: Span,
-  qualifier: String,
-  scrutinee_type: String,
-}
-
-pub type IteratorNoIndexDiag = .{
-  span: Span,
-}
-
-pub type PublicRebindDiag = .{
-  span: Span,
-  name: String,
-}
-
-pub type InvalidAssignTargetDiag = .{
-  span: Span,
-}
-
-pub type InvalidOperandDiag = .{
-  span: Span,
-  ty: MonoType,
-  operation: String,
-}
-
-pub type TryOperandErrorDiag = .{
-  span: Span,
-  ty: MonoType,
-}
-
-pub type TryReturnMismatchDiag = .{
-  span: Span,
-  expected_kind: String,
-}
-
-pub type CannotInterpolateDiag = .{
-  span: Span,
-  ty: MonoType,
-  reason: String,
-}
-
-pub type DeferDivergeDiag = .{
-  span: Span,
-}
-
-pub type CompilerBugDiag = .{
-  span: Span,
-  message: String,
-}
-
-// ── Resolver error payloads ───────────────────────────────────────────
-
-pub type ReservedTypeNameDiag = .{
-  span: Span,
-  name: String,
-}
-
-pub type DuplicateNameDiag = .{
-  span: Span,
-  kind: String,
-  name: String,
-}
-
-pub type DuplicateTypeParamDiag = .{
-  span: Span,
-  name: String,
-}
-
-pub type UnknownContractDiag = .{
-  span: Span,
-  name: String,
-}
-
-pub type ExternBoundaryTypeDiag = .{
-  span: Span,
-}
-
-pub type MissingTypeAnnotationDiag = .{
-  span: Span,
-}
-
-pub type AnonymousTypeNotAllowedDiag = .{
-  span: Span,
-}
-
-pub type CircularAliasDiag = .{
-  span: Span,
-  name: String,
-}
-
-pub type EmptyTypePathDiag = .{
-  span: Span,
-}
-
-pub type MissingArmSeparatorDiag = .{
-  span: Span,
-  next_span: Span,
-}
-
-pub type CStyleLogicalOpDiag = .{
-  span: Span,
-  operator: String,
-  suggestion: String,
-}
-
-// ── Warning payload types ─────────────────────────────────────────────
-
-pub type UnusedImportDiag = .{
-  span: Span,
-  binding: String,
-}
-
 // ── Diagnostic enums ─────────────────────────────────────────────────
 
 pub type ErrorDiag = {
-  TypeMismatch(TypeMismatchDiag),
-  UndefinedVar(UndefinedVarDiag),
-  UndefinedType(UndefinedTypeDiag),
-  WrongArity(WrongArityDiag),
-  TypeArityMismatch(TypeArityMismatchDiag),
-  MissingVariants(MissingVariantsDiag),
-  DuplicateField(DuplicateFieldDiag),
-  InfiniteType(InfiniteTypeDiag),
-  NoField(NoFieldDiag),
-  NotIterable(NotIterableDiag),
-  NotIndexable(NotIndexableDiag),
-  NoMethod(NoMethodDiag),
-  MissingField(MissingFieldDiag),
-  ContractViolation(ContractViolationDiag),
-  CannotSynthesize(CannotSynthesizeDiag),
-  AmbiguousType(AmbiguousTypeDiag),
-  InvalidMethodSig(InvalidMethodSigDiag),
-  NotARecord(NotARecordDiag),
-  VariantTypeMismatch(VariantTypeMismatchDiag),
-  ByteOutOfRange(ByteOutOfRangeDiag),
-  InvalidScrutinee(InvalidScrutineeDiag),
-  QualifierMismatch(QualifierMismatchDiag),
-  IteratorNoIndex(IteratorNoIndexDiag),
-  PublicRebind(PublicRebindDiag),
-  InvalidAssignTarget(InvalidAssignTargetDiag),
-  InvalidOperand(InvalidOperandDiag),
-  TryOperandError(TryOperandErrorDiag),
-  TryReturnMismatch(TryReturnMismatchDiag),
-  CannotInterpolate(CannotInterpolateDiag),
-  DeferDiverge(DeferDivergeDiag),
-  CompilerBug(CompilerBugDiag),
-  ReservedTypeName(ReservedTypeNameDiag),
-  DuplicateName(DuplicateNameDiag),
-  DuplicateTypeParam(DuplicateTypeParamDiag),
-  UnknownContract(UnknownContractDiag),
-  ExternBoundaryType(ExternBoundaryTypeDiag),
-  MissingTypeAnnotation(MissingTypeAnnotationDiag),
-  AnonymousTypeNotAllowed(AnonymousTypeNotAllowedDiag),
-  CircularAlias(CircularAliasDiag),
-  EmptyTypePath(EmptyTypePathDiag),
-  MissingArmSeparator(MissingArmSeparatorDiag),
-  CStyleLogicalOp(CStyleLogicalOpDiag),
+  TypeMismatch(.{ span: Span, expected: MonoType, found: MonoType }),
+  UndefinedVar(.{ span: Span, name: String }),
+  UndefinedType(.{ span: Span, name: String }),
+  WrongArity(.{ span: Span, expected: Int, found: Int }),
+  TypeArityMismatch(.{ span: Span, name: String, expected: Int, found: Int }),
+  MissingVariants(.{ span: Span, scrutinee_ty: MonoType, missing: Vector<String> }),
+  DuplicateField(.{ span: Span, name: String, first: Span }),
+  InfiniteType(.{ span: Span }),
+  NoField(.{ span: Span, name: String, ty: MonoType }),
+  NotIterable(.{ span: Span, ty: MonoType }),
+  NotIndexable(.{ span: Span, ty: MonoType }),
+  NoMethod(.{ span: Span, ty: MonoType, name: String }),
+  MissingField(.{ span: Span, name: String, ty: MonoType }),
+  ContractViolation(.{ span: Span, ty: MonoType, contract: String, owner: String, reason: String }),
+  CannotSynthesize(.{ span: Span }),
+  AmbiguousType(.{ span: Span }),
+  InvalidMethodSig(.{ span: Span, name: String }),
+  NotARecord(.{ span: Span, ty: MonoType }),
+  VariantTypeMismatch(.{ span: Span, name: String, ty: MonoType }),
+  ByteOutOfRange(.{ span: Span, value: Int }),
+  InvalidScrutinee(.{ span: Span, ty: MonoType }),
+  QualifierMismatch(.{ span: Span, qualifier: String, scrutinee_type: String }),
+  IteratorNoIndex(.{ span: Span }),
+  PublicRebind(.{ span: Span, name: String }),
+  InvalidAssignTarget(.{ span: Span }),
+  InvalidOperand(.{ span: Span, ty: MonoType, operation: String }),
+  TryOperandError(.{ span: Span, ty: MonoType }),
+  TryReturnMismatch(.{ span: Span, expected_kind: String }),
+  CannotInterpolate(.{ span: Span, ty: MonoType, reason: String }),
+  DeferDiverge(.{ span: Span }),
+  CompilerBug(.{ span: Span, message: String }),
+  ReservedTypeName(.{ span: Span, name: String }),
+  DuplicateName(.{ span: Span, kind: String, name: String }),
+  DuplicateTypeParam(.{ span: Span, name: String }),
+  UnknownContract(.{ span: Span, name: String }),
+  ExternBoundaryType(.{ span: Span }),
+  MissingTypeAnnotation(.{ span: Span }),
+  AnonymousTypeNotAllowed(.{ span: Span }),
+  CircularAlias(.{ span: Span, name: String }),
+  EmptyTypePath(.{ span: Span }),
+  MissingArmSeparator(.{ span: Span, next_span: Span }),
+  CStyleLogicalOp(.{ span: Span, operator: String, suggestion: String }),
   /// Syntax and parse-stage errors emitted by the lexer and parser.
   ParseError(GenericDiag),
   /// Internal errors emitted during IR lowering (post-typecheck).
@@ -305,7 +74,7 @@ pub type ErrorDiag = {
 }
 
 pub type WarningDiag = {
-  UnusedImport(UnusedImportDiag),
+  UnusedImport(.{ span: Span, binding: String }),
 }
 
 pub type DiagKind = {

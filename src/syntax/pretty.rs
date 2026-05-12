@@ -403,6 +403,17 @@ fn print_type(ty: &Type, out: &mut String) {
                 write!(out, ">").unwrap();
             }
         }
+        Type::Record { fields, .. } => {
+            write!(out, ".{{ ").unwrap();
+            for (i, field) in fields.iter().enumerate() {
+                if i > 0 {
+                    write!(out, ", ").unwrap();
+                }
+                write!(out, "{}: ", field.name).unwrap();
+                print_type(&field.ty, out);
+            }
+            write!(out, " }}").unwrap();
+        }
         Type::Function { params, ret, .. } => {
             write!(out, "fn(").unwrap();
             for (i, param) in params.iter().enumerate() {

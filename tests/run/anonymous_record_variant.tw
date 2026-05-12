@@ -1,0 +1,60 @@
+// Expected output:
+//   mismatch expected=Int found=String span=7
+//   missing name=x span=9
+//   same variant names: 1 2
+//   generic value=42
+
+type ErrorDiag = {
+  TypeMismatch(.{ span: Int, expected: String, found: String }),
+  UndefinedVar(.{ span: Int, name: String }),
+  Generic(String),
+}
+
+type Foo = {
+  Bar(.{ x: Int }),
+}
+
+type FooFoo = {
+  Bar(.{ x: Int }),
+}
+
+type Boxed<T> = {
+  Item(.{ value: T }),
+}
+
+fn describe(diag: ErrorDiag) String {
+  case diag {
+    .TypeMismatch(d) => "mismatch expected=${d.expected} found=${d.found} span=${d.span}",
+    .UndefinedVar(d) => "missing name=${d.name} span=${d.span}",
+    .Generic(s) => s,
+  }
+}
+
+fn foo_value(foo: Foo) Int {
+  case foo {
+    .Bar(d) => d.x,
+  }
+}
+
+fn foofoo_value(foo: FooFoo) Int {
+  case foo {
+    .Bar(d) => d.x,
+  }
+}
+
+fn boxed_value(b: Boxed<Int>) Int {
+  case b {
+    .Item(d) => d.value,
+  }
+}
+
+mismatch := describe(ErrorDiag.TypeMismatch(.{ span: 7, expected: "Int", found: "String" }))
+missing := describe(ErrorDiag.UndefinedVar(.{ span: 9, name: "x" }))
+foo := foo_value(Foo.Bar(.{ x: 1 }))
+foofoo := foofoo_value(FooFoo.Bar(.{ x: 2 }))
+generic := boxed_value(Boxed.Item(.{ value: 42 }))
+
+println(mismatch)
+println(missing)
+println("same variant names: ${foo} ${foofoo}")
+println("generic value=${generic}")

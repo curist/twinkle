@@ -1,0 +1,6 @@
+---
+source: tests/integration_test.rs
+assertion_line: 162
+expression: err_msg
+---
+"statement_in_expression_case_arm.tw:5:13: 'return' is a statement and cannot be used where an expression is expected in case arm body\nhint: wrap it in a block expression, e.g. `=> { return ... }`\n   5 |     .Bar => return \"\",\n\n                  ^-----"

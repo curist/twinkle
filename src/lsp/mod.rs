@@ -232,6 +232,14 @@ fn format_ast_type(ty: &Type) -> String {
                 format!("{name}<{args_str}>")
             }
         }
+        Type::Record { fields, .. } => {
+            let fields_str = fields
+                .iter()
+                .map(|field| format!("{}: {}", field.name, format_ast_type(&field.ty)))
+                .collect::<Vec<_>>()
+                .join(", ");
+            format!(".{{ {fields_str} }}")
+        }
         Type::Function { params, ret, .. } => {
             let params_str = params
                 .iter()

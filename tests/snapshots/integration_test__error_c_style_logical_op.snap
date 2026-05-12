@@ -1,0 +1,5 @@
+---
+source: tests/integration_test.rs
+expression: err_msg
+---
+"c_style_logical_op.tw:2:8: Expected expression, found &\n   2 |     a && b\n\n             ^"

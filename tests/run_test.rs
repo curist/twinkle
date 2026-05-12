@@ -86,6 +86,11 @@ fn variant_collision() {
 }
 
 #[test]
+fn anonymous_record_variant() {
+    check("tests/run/anonymous_record_variant.tw");
+}
+
+#[test]
 fn range() {
     check("tests/run/range.tw");
 }

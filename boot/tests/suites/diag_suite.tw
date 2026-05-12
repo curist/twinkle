@@ -19,7 +19,7 @@ pub fn suite() runner.Suite {
       .Ok({})
     })
     .test("has_errors is false for warnings only", fn() {
-      w := DiagKind.Warning(.UnusedImport(diag.UnusedImportDiag.{ span: s(0, 5), binding: "foo" }))
+      w := DiagKind.Warning(.UnusedImport(.{ span: s(0, 5), binding: "foo" }))
       try assert.is_false(diag.has_errors([w]))
       .Ok({})
     })
@@ -29,8 +29,8 @@ pub fn suite() runner.Suite {
       .Ok({})
     })
     .test("has_errors is true when errors mixed with warnings", fn() {
-      e := DiagKind.Error(.UndefinedVar(diag.UndefinedVarDiag.{ span: s(0, 3), name: "x" }))
-      w := DiagKind.Warning(.UnusedImport(diag.UnusedImportDiag.{ span: s(4, 9), binding: "unused" }))
+      e := DiagKind.Error(.UndefinedVar(.{ span: s(0, 3), name: "x" }))
+      w := DiagKind.Warning(.UnusedImport(.{ span: s(4, 9), binding: "unused" }))
       try assert.is_true(diag.has_errors([w, e]))
       .Ok({})
     })
@@ -43,18 +43,18 @@ pub fn suite() runner.Suite {
       .Ok({})
     })
     .test("span from Error.UndefinedVar", fn() {
-      k := DiagKind.Error(.UndefinedVar(diag.UndefinedVarDiag.{ span: s(5, 8), name: "foo" }))
+      k := DiagKind.Error(.UndefinedVar(.{ span: s(5, 8), name: "foo" }))
       try assert.int_eq(k.span().start, 5)
       try assert.int_eq(k.span().end, 8)
       .Ok({})
     })
     .test("span from Error.WrongArity", fn() {
-      k := DiagKind.Error(.WrongArity(diag.WrongArityDiag.{ span: s(1, 4), expected: 2, found: 3 }))
+      k := DiagKind.Error(.WrongArity(.{ span: s(1, 4), expected: 2, found: 3 }))
       try assert.int_eq(k.span().start, 1)
       .Ok({})
     })
     .test("span from Error.TypeMismatch", fn() {
-      k := DiagKind.Error(.TypeMismatch(diag.TypeMismatchDiag.{
+      k := DiagKind.Error(.TypeMismatch(.{
         span: s(3, 7),
         expected: MonoType.Int,
         found: MonoType.Bool,
@@ -64,7 +64,7 @@ pub fn suite() runner.Suite {
       .Ok({})
     })
     .test("span from Error.MissingVariants", fn() {
-      k := DiagKind.Error(.MissingVariants(diag.MissingVariantsDiag.{
+      k := DiagKind.Error(.MissingVariants(.{
         span: s(2, 9),
         scrutinee_ty: MonoType.Bool,
         missing: ["True", "False"],
@@ -73,7 +73,7 @@ pub fn suite() runner.Suite {
       .Ok({})
     })
     .test("span from Error.DuplicateField", fn() {
-      k := DiagKind.Error(.DuplicateField(diag.DuplicateFieldDiag.{
+      k := DiagKind.Error(.DuplicateField(.{
         span: s(10, 15),
         name: "x",
         first: s(0, 5),
@@ -82,7 +82,7 @@ pub fn suite() runner.Suite {
       .Ok({})
     })
     .test("span from Warning.UnusedImport", fn() {
-      k := DiagKind.Warning(.UnusedImport(diag.UnusedImportDiag.{ span: s(0, 10), binding: "bar" }))
+      k := DiagKind.Warning(.UnusedImport(.{ span: s(0, 10), binding: "bar" }))
       try assert.int_eq(k.span().start, 0)
       try assert.int_eq(k.span().end, 10)
       .Ok({})

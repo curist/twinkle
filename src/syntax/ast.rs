@@ -408,6 +408,12 @@ pub enum Type {
         span: Span,
     },
 
+    /// Anonymous record type: .{ x: Int, y: String }
+    Record {
+        fields: Vec<RecordField>,
+        span: Span,
+    },
+
     /// Function type: fn(Int, String) Bool
     Function {
         params: Vec<Type>,
@@ -420,6 +426,7 @@ impl Type {
     pub fn span(&self) -> Span {
         match self {
             Type::Named { span, .. } => *span,
+            Type::Record { span, .. } => *span,
             Type::Function { span, .. } => *span,
         }
     }

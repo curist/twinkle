@@ -269,11 +269,28 @@ impl TypeEnv {
 
     /// Add a type definition and return its TypeId
     pub fn add_type(&mut self, def: TypeDef) -> TypeId {
+        self.add_type_with_binding(def, true)
+    }
+
+    /// Add an internal support type without binding its name in the user namespace.
+    pub fn add_hidden_type(&mut self, def: TypeDef) -> TypeId {
+        self.add_type_with_binding(def, false)
+    }
+
+    fn add_type_with_binding(&mut self, def: TypeDef, bind_name: bool) -> TypeId {
         let type_id = TypeId(self.types.len() as u32);
         let name = def.name().to_string();
 
-        // Build indices for field/variant lookup
-        match &def {
+        self.index_type_def(type_id, &def);
+        self.types.push(def);
+        if bind_name {
+            self.type_names.insert(name, type_id);
+        }
+        type_id
+    }
+
+    fn index_type_def(&mut self, type_id: TypeId, def: &TypeDef) {
+        match def {
             TypeDef::Record { fields, .. } => {
                 for (i, field) in fields.iter().enumerate() {
                     self.record_fields.insert((type_id, field.name.clone()), i);
@@ -286,10 +303,6 @@ impl TypeEnv {
             }
             TypeDef::Alias { .. } => {}
         }
-
-        self.types.push(def);
-        self.type_names.insert(name, type_id);
-        type_id
     }
 
     /// Update an existing type definition (preserves TypeId)
@@ -304,19 +317,7 @@ impl TypeEnv {
         self.sum_variants.retain(|(id, _), _| *id != type_id);
 
         // Build new indices
-        match &def {
-            TypeDef::Record { fields, .. } => {
-                for (i, field) in fields.iter().enumerate() {
-                    self.record_fields.insert((type_id, field.name.clone()), i);
-                }
-            }
-            TypeDef::Sum { variants, .. } => {
-                for (i, variant) in variants.iter().enumerate() {
-                    self.sum_variants.insert((type_id, variant.name.clone()), i);
-                }
-            }
-            TypeDef::Alias { .. } => {}
-        }
+        self.index_type_def(type_id, &def);
 
         self.types[idx] = def;
     }
@@ -703,6 +704,16 @@ impl TypeEnv {
                         })
                     }
                 }
+            }
+            AstType::Record { span, .. } => {
+                errors.push(TypeError::UnsupportedFeature {
+                    feature: "anonymous record types in this type position",
+                    span: *span,
+                    note:
+                        "Anonymous record types are only supported as a single enum variant payload"
+                            .to_string(),
+                });
+                Err(())
             }
             AstType::Function { params, ret, .. } => {
                 let mut resolved_params = Vec::new();

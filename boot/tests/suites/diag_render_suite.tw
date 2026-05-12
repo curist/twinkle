@@ -29,7 +29,7 @@ pub fn suite() runner.Suite {
 
     // ── TypeMismatch ──────────────────────────────────────────────────
     .test("TypeMismatch: severity is Error", fn() {
-      kind := DiagKind.Error(.TypeMismatch(diag.TypeMismatchDiag.{
+      kind := DiagKind.Error(.TypeMismatch(.{
         span: s(0, 5),
         expected: MonoType.Int,
         found: MonoType.Bool,
@@ -42,7 +42,7 @@ pub fn suite() runner.Suite {
       .Ok({})
     })
     .test("TypeMismatch: title is 'type mismatch'", fn() {
-      kind := DiagKind.Error(.TypeMismatch(diag.TypeMismatchDiag.{
+      kind := DiagKind.Error(.TypeMismatch(.{
         span: s(0, 5),
         expected: MonoType.Int,
         found: MonoType.Bool,
@@ -52,7 +52,7 @@ pub fn suite() runner.Suite {
       .Ok({})
     })
     .test("TypeMismatch: primary label contains expected and found types", fn() {
-      kind := DiagKind.Error(.TypeMismatch(diag.TypeMismatchDiag.{
+      kind := DiagKind.Error(.TypeMismatch(.{
         span: s(3, 8),
         expected: MonoType.Int,
         found: MonoType.String,
@@ -74,7 +74,7 @@ pub fn suite() runner.Suite {
 
     // ── UndefinedVar ──────────────────────────────────────────────────
     .test("UndefinedVar: title contains the variable name", fn() {
-      kind := DiagKind.Error(.UndefinedVar(diag.UndefinedVarDiag.{
+      kind := DiagKind.Error(.UndefinedVar(.{
         span: s(4, 7),
         name: "foo",
       }))
@@ -90,7 +90,7 @@ pub fn suite() runner.Suite {
 
     // ── WrongArity ────────────────────────────────────────────────────
     .test("WrongArity: title contains expected and found counts", fn() {
-      kind := DiagKind.Error(.WrongArity(diag.WrongArityDiag.{
+      kind := DiagKind.Error(.WrongArity(.{
         span: s(0, 10),
         expected: 2,
         found: 5,
@@ -106,7 +106,7 @@ pub fn suite() runner.Suite {
 
     // ── MissingVariants ───────────────────────────────────────────────
     .test("MissingVariants: title contains scrutinee type name", fn() {
-      kind := DiagKind.Error(.MissingVariants(diag.MissingVariantsDiag.{
+      kind := DiagKind.Error(.MissingVariants(.{
         span: s(5, 20),
         scrutinee_ty: MonoType.Bool,
         missing: ["True", "False"],
@@ -128,7 +128,7 @@ pub fn suite() runner.Suite {
 
     // ── DuplicateField ────────────────────────────────────────────────
     .test("DuplicateField: title contains field name", fn() {
-      kind := DiagKind.Error(.DuplicateField(diag.DuplicateFieldDiag.{
+      kind := DiagKind.Error(.DuplicateField(.{
         span: s(10, 15),
         name: "x",
         first: s(2, 7),
@@ -139,7 +139,7 @@ pub fn suite() runner.Suite {
       .Ok({})
     })
     .test("DuplicateField: primary label on duplicate span, secondary on first", fn() {
-      kind := DiagKind.Error(.DuplicateField(diag.DuplicateFieldDiag.{
+      kind := DiagKind.Error(.DuplicateField(.{
         span: s(10, 15),
         name: "x",
         first: s(2, 7),
@@ -177,7 +177,7 @@ pub fn suite() runner.Suite {
 
     // ── UnusedImport warning ──────────────────────────────────────────
     .test("UnusedImport: severity is Warning, title contains binding name", fn() {
-      kind := DiagKind.Warning(.UnusedImport(diag.UnusedImportDiag.{
+      kind := DiagKind.Warning(.UnusedImport(.{
         span: s(4, 11),
         binding: "my_mod",
       }))
@@ -198,7 +198,7 @@ pub fn suite() runner.Suite {
     // ── Named type rendering with snapshot ─────────────────────────────
     .test("MissingField with Named type falls back to Named(id) without snapshot", fn() {
       tid := MonoType.Named(.{ id: 99 }, [])
-      kind := DiagKind.Error(.MissingField(diag.MissingFieldDiag.{
+      kind := DiagKind.Error(.MissingField(.{
         span: s(0, 10),
         name: "y",
         ty: tid,
@@ -209,7 +209,7 @@ pub fn suite() runner.Suite {
     })
     .test("MissingField with Named type renders source name from snapshot", fn() {
       tid := MonoType.Named(.{ id: 99 }, [])
-      kind := DiagKind.Error(.MissingField(diag.MissingFieldDiag.{
+      kind := DiagKind.Error(.MissingField(.{
         span: s(0, 10),
         name: "y",
         ty: tid,
@@ -231,7 +231,7 @@ pub fn suite() runner.Suite {
 
     // ── Span pass-through ─────────────────────────────────────────────
     .test("primary label span matches the diagnostic span", fn() {
-      kind := DiagKind.Error(.UndefinedVar(diag.UndefinedVarDiag.{
+      kind := DiagKind.Error(.UndefinedVar(.{
         span: s(7, 14),
         name: "bar",
       }))

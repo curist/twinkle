@@ -476,41 +476,7 @@ impl Parser {
         // Parse type definition: record, sum, or alias
         let definition = if self.peek_is(TokenKind::Dot) {
             // Record type: .{ fields }
-            self.expect(TokenKind::Dot)?;
-            self.expect(TokenKind::LBrace)?;
-
-            let mut fields = Vec::new();
-            while !self.peek_is(TokenKind::RBrace) && !self.is_eof() {
-                let field_start = self.expect(TokenKind::Ident)?;
-                let field_name = field_start.text.clone();
-
-                if field_name.starts_with(|c: char| c.is_uppercase()) {
-                    return Err(ParseError::new(
-                        ParseErrorKind::CaseViolation {
-                            kind: "record field name",
-                            name: field_name,
-                            expected: "a lowercase",
-                        },
-                        field_start.span,
-                    ));
-                }
-
-                self.expect(TokenKind::Colon)?;
-                let field_ty = self.parse_type()?;
-                let field_span = field_start.span.merge(&field_ty.span());
-
-                fields.push(RecordField {
-                    name: field_name,
-                    ty: field_ty,
-                    span: field_span,
-                });
-
-                if !self.peek_is(TokenKind::RBrace) {
-                    self.expect(TokenKind::Comma)?;
-                }
-            }
-
-            self.expect(TokenKind::RBrace)?;
+            let (_, fields) = self.parse_record_type_fields()?;
             TypeDef::Record { fields }
         } else if self.peek_is(TokenKind::LBrace) {
             // Sum type: { variants }
@@ -1968,6 +1934,45 @@ impl Parser {
         Ok(Stmt::Return { value, span })
     }
 
+    fn parse_record_type_fields(&mut self) -> ParseResult<(Span, Vec<RecordField>)> {
+        let dot = self.expect(TokenKind::Dot)?;
+        self.expect(TokenKind::LBrace)?;
+
+        let mut fields = Vec::new();
+        while !self.peek_is(TokenKind::RBrace) && !self.is_eof() {
+            let field_start = self.expect(TokenKind::Ident)?;
+            let field_name = field_start.text.clone();
+
+            if field_name.starts_with(|c: char| c.is_uppercase()) {
+                return Err(ParseError::new(
+                    ParseErrorKind::CaseViolation {
+                        kind: "record field name",
+                        name: field_name,
+                        expected: "a lowercase",
+                    },
+                    field_start.span,
+                ));
+            }
+
+            self.expect(TokenKind::Colon)?;
+            let field_ty = self.parse_type()?;
+            let field_span = field_start.span.merge(&field_ty.span());
+
+            fields.push(RecordField {
+                name: field_name,
+                ty: field_ty,
+                span: field_span,
+            });
+
+            if !self.peek_is(TokenKind::RBrace) {
+                self.expect(TokenKind::Comma)?;
+            }
+        }
+
+        let rbrace = self.expect(TokenKind::RBrace)?;
+        Ok((dot.span.merge(&rbrace.span), fields))
+    }
+
     fn parse_type(&mut self) -> ParseResult<Type> {
         // !E shorthand: Result<Void, E>
         if self.peek_is(TokenKind::Bang) {
@@ -2017,6 +2022,12 @@ impl Parser {
     }
 
     fn parse_type_base(&mut self) -> ParseResult<Type> {
+        // Anonymous record type: .{ field: Type }
+        if self.peek_is(TokenKind::Dot) {
+            let (span, fields) = self.parse_record_type_fields()?;
+            return Ok(Type::Record { fields, span });
+        }
+
         // Check for function type: fn(T1, T2) RetType
         if self.peek_is(TokenKind::Fn) {
             let start = self.expect(TokenKind::Fn)?;
