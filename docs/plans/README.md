@@ -41,6 +41,9 @@ Self-hosting is complete. Historical design and status docs live in
 | Boot compiler layout | Reorganize `boot/compiler/` into focused subdirectories with stable end-state names | Planned | [boot-compiler-layout-reorg.md](boot-compiler-layout-reorg.md) |
 | Boot performance | Track current compiler bottlenecks and optimization wins | In Progress | [boot-compiler-perf.md](boot-compiler-perf.md) |
 | Nested variant lowering | Investigate the remaining nested variant-pattern lowering hazard | In Progress | [boot-nested-variant-pattern-lowering.md](boot-nested-variant-pattern-lowering.md) |
+| Unreachable case arms | Diagnose case arms shadowed by earlier catch-all, literal, or covering variant patterns | Planned | [unreachable-case-arms.md](unreachable-case-arms.md) |
+| Variant case dispatch | Emit `br_table` dispatch for eligible variant case expressions | Planned | [br-table-case-dispatch.md](br-table-case-dispatch.md) |
+| String case dispatch | Emit length-plus-trie dispatch for eligible string case expressions | Planned | [string-case-dispatch.md](string-case-dispatch.md) |
 
 
 ### Later — Tooling & Ecosystem
