@@ -202,8 +202,7 @@ fn compute_captures(expr: AnfExpr, next: Cell<Int>) CaptureResult {
   snapshots: Vector<SnapshotBinding> = []
 
   // Sort keys for determinism
-  keys := free.keys()
-  sorted := sort_ints(keys)
+  sorted := free.keys().sort_by(Int.compare)
 
   for src_id in sorted {
     snap_id := next.get()
@@ -238,26 +237,6 @@ fn prepend_snapshots(snapshots: Vector<SnapshotBinding>, tail: AnfExpr) AnfExpr 
     s := snapshots[idx]
     result = .Let(s.snap, .AInit(.ALocal(s.src)), result)
     idx = idx - 1
-  }
-  result
-}
-
-// Simple insertion sort for small int vectors
-fn sort_ints(xs: Vector<Int>) Vector<Int> {
-  result: Vector<Int> = []
-  for x in xs {
-    // Find insertion point
-    inserted := false
-    new: Vector<Int> = []
-    for r in result {
-      if !inserted and x < r {
-        new = new.append(x)
-        inserted = true
-      }
-      new = new.append(r)
-    }
-    if !inserted { new = new.append(x) }
-    result = new
   }
   result
 }
