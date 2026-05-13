@@ -8,6 +8,7 @@
 
 use @std.fs
 use @std.path
+use lib.module.core_lib
 use compiler.parser
 use compiler.ast.{Param, TypeExpr, TypeParam, type_param_names}
 
@@ -270,16 +271,19 @@ fn load_group_from_source(src: String, receiver: String?, env: ResolvedEnv) Resu
 /// Returns one SignatureGroup per file, in sorted file-system order.
 /// Fails if the directory cannot be read or any file fails to parse/resolve.
 pub fn load_signatures(signatures_dir: String, type_env: ResolvedEnv) Result<Vector<SignatureGroup>, String> {
-  entries := case fs.list_dir(signatures_dir) {
-    .Ok(es) => es,
-    .Err(_) => { return .Err("cannot read signatures directory: ${signatures_dir}") },
+  entries := case core_lib.list_dir(signatures_dir) {
+    .Some(es) => es,
+    .None => case fs.list_dir(signatures_dir) {
+      .Ok(es) => collect entry in es { entry.name },
+      .Err(_) => { return .Err("cannot read signatures directory: ${signatures_dir}") },
+    },
   }
 
   // collect .tw files and sort for determinism
   tw_files: Vector<String> = []
-  for entry in entries {
-    if path.extension(entry.name) == ".tw" {
-      tw_files = tw_files.append(entry.name)
+  for name in entries {
+    if path.extension(name) == ".tw" {
+      tw_files = tw_files.append(name)
     }
   }
   tw_files = tw_files.sort_by(fn(a, b) { if a < b { .Lt } else if a > b { .Gt } else { .Eq } })
@@ -290,9 +294,12 @@ pub fn load_signatures(signatures_dir: String, type_env: ResolvedEnv) Result<Vec
     receiver := receiver_for_stem(stem)
     file_path := path.join(signatures_dir, filename)
 
-    src := case fs.read_text(file_path) {
-      .Ok(s) => s,
-      .Err(_) => { return .Err("cannot read ${file_path}") },
+    src := case core_lib.read_text(file_path) {
+      .Some(s) => s,
+      .None => case fs.read_text(file_path) {
+        .Ok(s) => s,
+        .Err(_) => { return .Err("cannot read ${file_path}") },
+      },
     }
 
     group := try load_group_from_source(src, receiver, type_env)

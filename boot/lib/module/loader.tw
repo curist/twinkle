@@ -1,11 +1,12 @@
 // Module path resolution for multi-module compilation.
 //
-// stdlib/ and prelude/ are symlinked into boot/, so they're always
-// resolvable relative to the project root found by find_project_root.
+// Prelude and stdlib sources are embedded in the compiler via core_lib,
+// so they resolve without any filesystem layout requirement.
 
 use @std.fs
 use @std.path
 use @std.proc
+use .core_lib
 
 /// Walk up from `start` looking for `twinkle.toml`.
 /// Falls back to the current working directory when no project file is found.
@@ -47,14 +48,14 @@ pub fn resolve_relative_module_path(importing_file: String, module_path: Vector<
   resolve_module_path(parent, module_path)
 }
 
-/// Return the stdlib root: project_root/stdlib.
-pub fn resolve_stdlib_root(project_root: String) String {
-  path.join(project_root, "stdlib")
+/// Return the stdlib root bundled into the compiler.
+pub fn resolve_stdlib_root() String {
+  path.join(core_lib.root(), "stdlib")
 }
 
-/// Return the prelude root: project_root/prelude.
-pub fn resolve_prelude_root(project_root: String) String {
-  path.join(project_root, "prelude")
+/// Return the prelude root bundled into the compiler.
+pub fn resolve_prelude_root() String {
+  path.join(core_lib.root(), "prelude")
 }
 
 /// Resolve a stdlib import path from a given stdlib root.
@@ -71,21 +72,21 @@ pub fn resolve_stdlib_module_path(stdlib_root: String, module_path: Vector<Strin
 /// List all `.tw` files in the prelude directory, sorted by name.
 /// Returns file paths (not just names).
 pub fn list_prelude_modules(prelude_root: String) Vector<String> {
-  case fs.list_dir(prelude_root) {
-    .Ok(entries) => {
-      tw_paths := collect entry in entries {
-        entry.name
-      }
-      filtered: Vector<String> = []
-      for name in tw_paths {
-        if path.extension(name) == ".tw" {
-          filtered = filtered.append(path.join(prelude_root, name))
-        }
-      }
-      filtered.sort_by(fn(a: String, b: String) Order {
-        if a < b { .Lt } else if a > b { .Gt } else { .Eq }
-      })
+  names := case core_lib.list_dir(prelude_root) {
+    .Some(entries) => entries,
+    .None => case fs.list_dir(prelude_root) {
+      .Ok(entries) => collect entry in entries { entry.name },
+      .Err(_) => { return [] },
     },
-    .Err(_) => [],
   }
+
+  filtered: Vector<String> = []
+  for name in names {
+    if path.extension(name) == ".tw" {
+      filtered = filtered.append(path.join(prelude_root, name))
+    }
+  }
+  filtered.sort_by(fn(a: String, b: String) Order {
+    if a < b { .Lt } else if a > b { .Gt } else { .Eq }
+  })
 }

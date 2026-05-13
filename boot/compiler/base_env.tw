@@ -196,15 +196,12 @@ fn bind_public_free_builtins(env: ResolvedEnv) ResolvedEnv {
 }
 
 pub fn builtin_env() ResolvedEnv {
-  // Locate the signatures directory relative to the project root.
-  // find_project_root(".") returns "." when no twinkle.toml is found in or
-  // above the CWD (the common case when running from the twinkle root), or
-  // the boot project root when running from boot/.  In both cases
-  // "./prelude/signatures" resolves correctly because boot/prelude is a
-  // symlink to ../prelude.
+  // Locate compiler library sources (prelude/signatures and prelude modules).
+  // Bundled CLIs provide an internal virtual root so this does not depend on
+  // files next to the executable or in the caller's current working directory.
   root := loader.find_project_root(".")
-  prelude_dir := path.join(root, "prelude")
-  sigs_dir := path.join(root, "prelude/signatures")
+  prelude_dir := loader.resolve_prelude_root()
+  sigs_dir := path.join(prelude_dir, "signatures")
   canonical_roots := imports.make_canonical_roots(root)
 
   // Load and resolve builtin/runtime signature stubs (parse + type-resolve only,

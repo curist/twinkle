@@ -5,6 +5,7 @@
 // lowering on top; the LSP path wraps with structured diagnostics.
 
 use @std.fs
+use lib.module.core_lib
 use compiler.base_env.{add_internal_host_builtins}
 use compiler.imports
 use compiler.imports.{DependencyPlan}
@@ -289,7 +290,7 @@ fn plan_dependencies(
 ) DependencyPlan!AnalysisError {
   dep_plan := case imports.plan_dependencies_with_exists(parsed.module, canonical, state.project_root, fn(path_str: String) Bool {
     dep_id := identity.from_path(imports.canonical_module_path(path_str, state.canonical_roots))
-    state.overlay.documents.has(dep_id.path) or fs.exists(dep_id.path)
+    state.overlay.documents.has(dep_id.path) or core_lib.exists(dep_id.path) or fs.exists(dep_id.path)
   }) {
     .Ok(plan) => plan,
     .Err(err) => {

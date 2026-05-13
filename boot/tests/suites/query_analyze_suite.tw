@@ -102,10 +102,18 @@ pub fn suite() runner.Suite {
       id := identity.from_path("/tmp/analyze/main.tw")
       result := analyze.analyze_module(id, "__entry", base_env.builtin_env(), state, [])
       try assert.is_true(result.ok)
-      // dep should come before main (dependency order)
-      try assert.int_eq(result.state.module_order.len(), 2)
-      try assert.str_eq(result.state.module_order[0], "/tmp/analyze/dep.tw")
-      try assert.str_eq(result.state.module_order[1], "/tmp/analyze/main.tw")
+      // dep should come before main (dependency order), with bundled prelude modules allowed.
+      dep_index := -1
+      main_index := -1
+      i := 0
+      for p in result.state.module_order {
+        if p == "/tmp/analyze/dep.tw" { dep_index = i }
+        if p == "/tmp/analyze/main.tw" { main_index = i }
+        i = i + 1
+      }
+      try assert.is_true(dep_index >= 0)
+      try assert.is_true(main_index >= 0)
+      try assert.is_true(dep_index < main_index)
       .Ok({})
     })
 

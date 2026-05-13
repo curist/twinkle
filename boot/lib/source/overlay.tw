@@ -4,6 +4,7 @@
 // canonical source identity path.
 
 use @std.fs
+use lib.module.core_lib
 use .identity
 
 pub type OverlayDocument = .{
@@ -66,8 +67,11 @@ pub fn lookup(overlay: Overlay, id: identity.SourceIdentity) Result<SourceText, 
 }
 
 fn read_disk_text(path_str: String) Result<String, String> {
-  case fs.read_text(path_str) {
-    .Ok(text) => .Ok(text),
-    .Err(_) => .Err("Cannot read '${path_str}'"),
+  case core_lib.read_text(path_str) {
+    .Some(text) => .Ok(text),
+    .None => case fs.read_text(path_str) {
+      .Ok(text) => .Ok(text),
+      .Err(_) => .Err("Cannot read '${path_str}'"),
+    },
   }
 }

@@ -9,6 +9,7 @@
 use @std.fs
 use @std.path
 use lib.module.loader
+use lib.module.core_lib
 use lib.source.span
 use lib.source.span.{Span}
 use .ast.{Module, UseDecl, ImportItem}
@@ -42,8 +43,6 @@ pub type DependencyPlan = .{
 pub type CanonicalRoots = .{
   prelude_root: String,
   stdlib_root: String,
-  parent_prelude: String,
-  parent_stdlib: String,
 }
 
 // ── Public API ──────────────────────────────────────────────────────
@@ -54,7 +53,9 @@ pub type CanonicalRoots = .{
 /// then auto-injected prelude modules (sorted, deduplicated).
 /// Internal modules (stdlib/prelude) skip prelude injection.
 pub fn plan_dependencies(module: Module, file_path: String, project_root: String) Result<DependencyPlan, ImportError> {
-  plan_dependencies_with_exists(module, file_path, project_root, fn(path_str: String) Bool { fs.exists(path_str) })
+  plan_dependencies_with_exists(module, file_path, project_root, fn(path_str: String) Bool {
+    core_lib.exists(path_str) or fs.exists(path_str)
+  })
 }
 
 pub fn plan_dependencies_with_exists(
@@ -64,8 +65,8 @@ pub fn plan_dependencies_with_exists(
   exists: fn(String) Bool,
 ) Result<DependencyPlan, ImportError> {
   roots := make_canonical_roots(project_root)
-  stdlib_root := loader.resolve_stdlib_root(project_root)
-  prelude_root := loader.resolve_prelude_root(project_root)
+  stdlib_root := loader.resolve_stdlib_root()
+  prelude_root := loader.resolve_prelude_root()
   import_root := project_root
 
   deps: Vector<PlannedDep> = []
@@ -125,15 +126,9 @@ pub fn plan_dependencies_with_exists(
 }
 
 pub fn make_canonical_roots(project_root: String) CanonicalRoots {
-  prelude_root := path.normalize(loader.resolve_prelude_root(project_root))
-  stdlib_root := path.normalize(loader.resolve_stdlib_root(project_root))
-  parent_root := path.normalize(path.dirname(project_root))
-  CanonicalRoots.{
-    prelude_root,
-    stdlib_root,
-    parent_prelude: path.normalize(path.join(parent_root, "prelude")),
-    parent_stdlib: path.normalize(path.join(parent_root, "stdlib")),
-  }
+  prelude_root := path.normalize(loader.resolve_prelude_root())
+  stdlib_root := path.normalize(loader.resolve_stdlib_root())
+  CanonicalRoots.{ prelude_root, stdlib_root }
 }
 
 // ── Helpers ─────────────────────────────────────────────────────────
@@ -150,19 +145,7 @@ fn resolve_import_path(decl: UseDecl, importing_file: String, import_root: Strin
 }
 
 pub fn canonical_module_path(path_str: String, roots: CanonicalRoots) String {
-  normalized := path.normalize(path_str)
-
-  if normalized.starts_with(roots.prelude_root) and roots.parent_prelude != roots.prelude_root {
-    suffix := normalized.slice(roots.prelude_root.len(), normalized.len())
-    return "${roots.parent_prelude}${suffix}"
-  }
-
-  if normalized.starts_with(roots.stdlib_root) and roots.parent_stdlib != roots.stdlib_root {
-    suffix := normalized.slice(roots.stdlib_root.len(), normalized.len())
-    return "${roots.parent_stdlib}${suffix}"
-  }
-
-  normalized
+  path.normalize(path_str)
 }
 
 /// Compute the effective module alias from a UseDecl.

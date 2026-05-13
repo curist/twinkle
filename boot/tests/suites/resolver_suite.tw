@@ -1637,7 +1637,7 @@ pub fn suite() runner.Suite {
 
       root := loader.find_project_root("boot")
       roots := imports.make_canonical_roots(root)
-      prelude_vector := imports.canonical_module_path("${loader.resolve_prelude_root(root)}/vector.tw", roots)
+      prelude_vector := imports.canonical_module_path("${loader.resolve_prelude_root()}/vector.tw", roots)
 
       env := resolver.empty_env()
       env = env.merge_prelude_exports("__prelude_vector", prelude_vector, exports)

@@ -1,0 +1,7 @@
+// Bug: Dict.get crashes with "illegal cast" at runtime.
+// Dict.has and Dict.set work fine; only Dict.get triggers the crash.
+
+d: Dict<String, Int> = Dict.new()
+d["a"] = 42
+println(d.has("a").to_string())  // true — works
+v := d.get("a")                  // crashes here

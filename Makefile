@@ -8,6 +8,7 @@ TWK_CLI     ?= node tools/twk_cli_sea.cjs
 # Source file sets — used for dependency tracking.
 RUST_SRCS := $(shell find src -name '*.rs') Cargo.toml Cargo.lock
 BOOT_SRCS := $(shell find boot -name '*.tw' -not -path 'boot/tests/*' -not -path 'boot/tmp/*' -not -path 'boot/repros/*')
+CORE_LIB_SRCS := $(shell find prelude stdlib -name '*.tw')
 
 help:
 	@printf 'Twinkle development targets:\n'
@@ -41,7 +42,10 @@ target/release/twk: $(RUST_SRCS)
 # Stage0 (Rust) → stage1, stage1 → stage2, stage2 → stage3, then compare stage2 == stage3.
 stage2: $(STAGE2_WASM)
 
-$(STAGE2_WASM): $(BOOT_SRCS) target/release/twk
+boot/lib/module/core_lib.tw: $(CORE_LIB_SRCS) tools/generate_core_lib_tw.tw target/release/twk
+	./target/release/twk run tools/generate_core_lib_tw.tw
+
+$(STAGE2_WASM): $(BOOT_SRCS) $(CORE_LIB_SRCS) boot/lib/module/core_lib.tw target/release/twk
 	@printf '\n==> Build bridge module for Node runner\n'
 	./target/release/twk run boot/tests/gen_bridge_wasm.tw
 	@printf '\n==> Build stage1 compiler with stage0 -> $(STAGE1_WASM)\n'

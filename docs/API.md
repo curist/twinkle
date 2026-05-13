@@ -201,7 +201,7 @@ Strings are immutable, UTF-8 encoded, and GC-managed. String interpolation: `"he
 
 | Method | Signature | Description |
 |--------|-----------|-------------|
-| `.substr(start, end)` | `fn(s: String, start: Int, end: Int) String` | Substring by **character indices** `[start, end)`. Safe for multi-byte UTF-8. Indices clamped to `[0, char_len]`. O(n) |
+| `.substring(start, end)` | `fn(s: String, start: Int, end: Int) String` | Substring by **character indices** `[start, end)`. Safe for multi-byte UTF-8. Indices clamped to `[0, char_len]`. O(n) |
 | `.chars()` | `fn(s: String) Iterator<String>` | Iterate Unicode scalars (each as a 1–4 byte `String`) |
 | `.char_len()` | `fn(s: String) Int` | Number of Unicode scalars |
 | `.code_point_at(i)` | `fn(s: String, i: Int) Option<Int>` | Code point at **scalar index** `i` (O(n)) |

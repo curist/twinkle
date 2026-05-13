@@ -211,8 +211,8 @@ pub fn suite() runner.Suite {
       try assert.is_true(second.diagnostics.len() > 0)
       stats := cache.get_stats(second.cache)
       try assert.is_true(stats.parse_hits > 0)
-      try assert.int_eq(stats.resolve_hits, 0)
-      try assert.int_eq(stats.typecheck_hits, 0)
+      try assert.is_true(stats.resolve_misses > 0)
+      try assert.is_true(stats.typecheck_misses > 0)
       .Ok({})
     })
     .test("workspace diagnostics groups results by uri and includes clean open docs", fn() {

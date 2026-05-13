@@ -3,7 +3,6 @@ use tests.assert
 use lib.module.loader
 use @std.proc
 use @std.path
-use @std.fs
 
 pub fn suite() runner.Suite {
   root := loader.find_project_root(".")
@@ -77,23 +76,23 @@ pub fn suite() runner.Suite {
 
     // -- resolve_stdlib_root / resolve_prelude_root --
 
-    .test("resolve_stdlib_root is project_root/stdlib", fn() {
-      try assert.str_eq(loader.resolve_stdlib_root("/project"), "/project/stdlib")
+    .test("resolve_stdlib_root uses bundled core library root", fn() {
+      try assert.str_eq(loader.resolve_stdlib_root(), "/__twinkle_core/stdlib")
       .Ok({})
     })
 
-    .test("resolve_prelude_root is project_root/prelude", fn() {
-      try assert.str_eq(loader.resolve_prelude_root("/project"), "/project/prelude")
+    .test("resolve_prelude_root uses bundled core library root", fn() {
+      try assert.str_eq(loader.resolve_prelude_root(), "/__twinkle_core/prelude")
       .Ok({})
     })
 
-    .test("resolve_stdlib_root from real project root exists", fn() {
-      try assert.is_true(fs.exists(loader.resolve_stdlib_root(root)))
+    .test("resolve_stdlib_root points at embedded stdlib", fn() {
+      try assert.str_ends_with(loader.resolve_stdlib_root(), "/stdlib")
       .Ok({})
     })
 
-    .test("resolve_prelude_root from real project root exists", fn() {
-      try assert.is_true(fs.exists(loader.resolve_prelude_root(root)))
+    .test("resolve_prelude_root points at embedded prelude", fn() {
+      try assert.str_ends_with(loader.resolve_prelude_root(), "/prelude")
       .Ok({})
     })
 
@@ -139,18 +138,17 @@ pub fn suite() runner.Suite {
       .Ok({})
     })
 
-    .test("resolve_stdlib_module_path resolves real module", fn() {
-      stdlib := loader.resolve_stdlib_root(root)
+    .test("resolve_stdlib_module_path resolves bundled module path", fn() {
+      stdlib := loader.resolve_stdlib_root()
       result := loader.resolve_stdlib_module_path(stdlib, ["std", "path"])
       try assert.str_ends_with(result, "/stdlib/path.tw")
-      try assert.is_true(fs.exists(result))
       .Ok({})
     })
 
     // -- list_prelude_modules --
 
     .test("list_prelude_modules returns sorted .tw files", fn() {
-      prelude := loader.resolve_prelude_root(root)
+      prelude := loader.resolve_prelude_root()
       preludes := loader.list_prelude_modules(prelude)
       try assert.is_true(preludes.len() > 0)
       for p in preludes {
@@ -160,7 +158,7 @@ pub fn suite() runner.Suite {
     })
 
     .test("list_prelude_modules includes known files", fn() {
-      prelude := loader.resolve_prelude_root(root)
+      prelude := loader.resolve_prelude_root()
       preludes := loader.list_prelude_modules(prelude)
       names := collect p in preludes { path.basename(p) }
       try assert.vec_contains(names, "vector.tw")
@@ -174,7 +172,7 @@ pub fn suite() runner.Suite {
     })
 
     .test("list_prelude_modules is sorted", fn() {
-      prelude := loader.resolve_prelude_root(root)
+      prelude := loader.resolve_prelude_root()
       preludes := loader.list_prelude_modules(prelude)
       i := 1
       for i < preludes.len() {

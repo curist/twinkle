@@ -6,6 +6,7 @@
 // through resolver origins rather than name-only matching.
 
 use @std.fs
+use lib.module.core_lib
 use compiler.ast.{Item, Block, Stmt, Expr, RecordEntry, FunctionDecl, TypeExpr, TypePath, Pattern, TypeDecl, TypeDef}
 
 use compiler.imports
@@ -299,7 +300,7 @@ fn type_name_span(decl: TypeDecl) Span {
 fn dependency_path_for_alias(snap: SemanticSnapshot, parsed: cache.ParsedModule, alias: String) String? {
   plan := case imports.plan_dependencies_with_exists(parsed.module, snap.canonical_path, snap.project_root, fn(path_str: String) Bool {
     canonical := imports.canonical_module_path(path_str, imports.make_canonical_roots(snap.project_root))
-    fs.exists(canonical) or cache.latest_parsed(snap.cache, canonical) != .None
+    core_lib.exists(canonical) or fs.exists(canonical) or cache.latest_parsed(snap.cache, canonical) != .None
   }) {
     .Ok(p) => p,
     .Err(_) => { return .None },

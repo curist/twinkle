@@ -152,7 +152,7 @@ pub fn suite() runner.Suite {
 
     .test("prelude skipped for stdlib files", fn() {
       module := parse_module("fn helper() { }")
-      plan := try plan_deps(module, "${root}/stdlib/fs.tw", root)
+      plan := try plan_deps(module, "${loader.resolve_stdlib_root()}/fs.tw", root)
       try assert.is_true(plan.is_internal)
       prelude_count := 0
       for dep in plan.dependencies {
@@ -167,7 +167,7 @@ pub fn suite() runner.Suite {
 
     .test("prelude skipped for prelude files", fn() {
       module := parse_module("fn helper() { }")
-      plan := try plan_deps(module, "${root}/prelude/vector.tw", root)
+      plan := try plan_deps(module, "${loader.resolve_prelude_root()}/vector.tw", root)
       try assert.is_true(plan.is_internal)
       prelude_count := 0
       for dep in plan.dependencies {
