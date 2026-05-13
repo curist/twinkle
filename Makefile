@@ -42,8 +42,8 @@ target/release/twk: $(RUST_SRCS)
 # Stage0 (Rust) → stage1, stage1 → stage2, stage2 → stage3, then compare stage2 == stage3.
 stage2: $(STAGE2_WASM)
 
-boot/lib/module/core_lib.tw: $(CORE_LIB_SRCS) tools/generate_core_lib_tw.tw target/release/twk
-	./target/release/twk run tools/generate_core_lib_tw.tw
+boot/lib/module/core_lib.tw: $(CORE_LIB_SRCS) tools/generate_core_lib.tw target/release/twk
+	./target/release/twk run tools/generate_core_lib.tw
 
 $(STAGE2_WASM): $(BOOT_SRCS) $(CORE_LIB_SRCS) boot/lib/module/core_lib.tw target/release/twk
 	@printf '\n==> Build bridge module for Node runner\n'

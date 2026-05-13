@@ -82,6 +82,83 @@ fn collect_iterator_next_helpers_op(op: PreparedOp, func: PreparedFunc, want_fid
   }
 }
 
+pub fn collect_dict_get_inner_types(funcs: Vector<PreparedFunc>, builtins: BuiltinRegistry) Vector<MonoType> {
+  want_fid := bi.id(builtins, "dict_get")
+  seen: Dict<String, MonoType> = Dict.new()
+  order: Vector<String> = []
+  for func in funcs {
+    result := collect_dict_get_inner_types_expr(func.body, func, want_fid)
+    for mono in result {
+      key := mono_to_key(mono)
+      if !seen.has(key) {
+        seen[key] = mono
+        order = order.append(key)
+      }
+    }
+  }
+  collect key in order {
+    case seen[key] {
+      .Some(mono) => mono,
+      .None => error("collect_dict_get_inner_types: missing mono for ${key}"),
+    }
+  }
+}
+
+fn collect_dict_get_inner_types_expr(expr: PreparedExpr, func: PreparedFunc, want_fid: FuncId) Vector<MonoType> {
+  out: Vector<MonoType> = []
+  cur_expr := expr
+  for true {
+    case cur_expr {
+      .Let(sid, op, body) => {
+        from_op := collect_dict_get_inner_types_op(op, func, want_fid)
+        for mono in from_op { out = out.append(mono) }
+        case func.slots[sid.id] {
+          .Some(info) => {
+            case op {
+              .ACall(.AGlobalFunc(fid), _) => {
+                if fid.id == want_fid.id {
+                  // The slot type is Optional(inner); extract inner
+                  case info.mono {
+                    .Optional(inner) => { out = out.append(inner) },
+                    _ => {},
+                  }
+                }
+              },
+              _ => {},
+            }
+          },
+          .None => {},
+        }
+        cur_expr = body
+      },
+      _ => { return out },
+    }
+  }
+  out
+}
+
+fn collect_dict_get_inner_types_op(op: PreparedOp, func: PreparedFunc, want_fid: FuncId) Vector<MonoType> {
+  case op {
+    .AIf(_, then_e, else_e) => {
+      out := collect_dict_get_inner_types_expr(then_e, func, want_fid)
+      more := collect_dict_get_inner_types_expr(else_e, func, want_fid)
+      for mono in more { out = out.append(mono) }
+      out
+    },
+    .AMatch(_, arms) => {
+      out: Vector<MonoType> = []
+      for arm in arms {
+        more := collect_dict_get_inner_types_expr(arm.body, func, want_fid)
+        for mono in more { out = out.append(mono) }
+      }
+      out
+    },
+    .ALoop(body) => collect_dict_get_inner_types_expr(body, func, want_fid),
+    .ADefer(body) => collect_dict_get_inner_types_expr(body, func, want_fid),
+    _ => [],
+  }
+}
+
 pub fn is_sum_mono(mono: MonoType, env: ResolvedEnv) Bool {
   case mono {
     .Never => false,

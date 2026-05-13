@@ -38,6 +38,7 @@ use compiler.codegen.emit.anyref.{
 }
 use compiler.codegen.emit.helper_collectors.{
   collect_iterator_next_helpers, collect_sum_variant_helpers,
+  collect_dict_get_inner_types,
 }
 use compiler.codegen.emit.bridge_funcs.{
   iterator_next_helper_sym, option_from_variant_helper_sym,
@@ -132,6 +133,19 @@ pub fn emit_module(
     .append(emit_option_from_variant_helper(MonoType.String, env))
     .append(emit_option_from_variant_helper(MonoType.Int, env))
     .append(emit_option_from_variant_helper(MonoType.Float, env))
+  // Generate option_from_variant helpers for dict_get inner types
+  dict_get_inners := collect_dict_get_inner_types(prepared.funcs, builtins)
+  already_generated: Dict<String, Bool> = Dict.new()
+  already_generated["str"] = true
+  already_generated["i64"] = true
+  already_generated["f64"] = true
+  for inner in dict_get_inners {
+    key := mono_to_key(inner)
+    if !already_generated.has(key) {
+      funcs = funcs.append(emit_option_from_variant_helper(inner, env))
+      already_generated[key] = true
+    }
+  }
 
   // String pool: globals, getter functions, data segment
   str_globals := emit_string_pool_globals(reg)
@@ -916,6 +930,7 @@ fn emit_intrinsic_call(fid: FuncId, name: String, args: Vector<PreparedAtom>, re
     "vector_set"          => emit_intrinsic_vector_set(args, result_idx, result_mono, ctx, buf),
     "vector_make"         => emit_intrinsic_vector_make(args, result_idx, ctx, buf),
     "vector__set_in_place" => emit_intrinsic_vector_set_in_place(args, result_idx, ctx, buf),
+    "dict_get"             => emit_intrinsic_dict_get(args, result_idx, result_mono, ctx, buf),
     "dict__get_unsafe"     => emit_intrinsic_dict_get_unsafe(args, result_idx, result_mono, ctx, buf),
     "string_get"          => emit_intrinsic_string_get(args, result_idx, result_mono, ctx, buf),
     "string_slice"        => emit_intrinsic_string_slice(args, result_idx, ctx, buf),
@@ -1063,6 +1078,21 @@ fn emit_intrinsic_vector_set_in_place(args: Vector<PreparedAtom>, result_idx: In
   buf3 := emit_checked_i32_narrow(args[1], ctx, buf2)  // index
   buf4 := emit_erased_container_ingress(args[2], ctx, buf3)
   buf4.append(.Call("rt_arr__set")).append(.LocalSet(result_idx))
+}
+
+// ── dict_get: d.get(k) → Option<V> ────────────────────────────────────
+
+fn emit_intrinsic_dict_get(args: Vector<PreparedAtom>, result_idx: Int, result_mono: MonoType, ctx: EmitCtx, buf: Vector<Instr>) Vector<Instr> {
+  inner_mono := case result_mono {
+    .Optional(inner) => inner,
+    _ => error("emit_intrinsic_dict_get: expected Optional result"),
+  }
+  buf = emit_atom(args[0], ctx, buf)  // dict
+  buf = emit_erased_container_ingress(args[1], ctx, buf)  // key (erased)
+  buf.append(.Call("rt_dict__get_option"))
+    .append(.RefCast(true, .Named("rt_types__Variant")))
+    .append(.Call(option_from_variant_helper_sym(inner_mono)))
+    .append(.LocalSet(result_idx))
 }
 
 // ── dict_get_unsafe ────────────────────────────────────────────────────

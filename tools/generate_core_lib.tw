@@ -1,5 +1,5 @@
 // Generate boot/lib/module/core_lib.tw from prelude/ and stdlib/ sources.
-// Run: target/twk run tools/generate_core_lib_tw.tw
+// Run: target/twk run tools/generate_core_lib.tw
 
 use @std.fs
 use @std.path

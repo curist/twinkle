@@ -1,7 +1,17 @@
-// Bug: Dict.get crashes with "illegal cast" at runtime.
-// Dict.has and Dict.set work fine; only Dict.get triggers the crash.
+// Regression test: Dict.get used to crash with "illegal cast" at runtime.
 
 d: Dict<String, Int> = Dict.new()
 d["a"] = 42
-println(d.has("a").to_string())  // true — works
-v := d.get("a")                  // crashes here
+println(d.has("a").to_string())  // true
+
+v := d.get("a")
+case v {
+  .Some(x) => println(x.to_string()),  // 42
+  .None => println("none"),
+}
+
+v2 := d.get("missing")
+case v2 {
+  .Some(x) => println(x.to_string()),
+  .None => println("none"),  // none
+}

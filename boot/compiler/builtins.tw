@@ -327,7 +327,7 @@ pub fn builtin_specs() Vector<BuiltinSpec> {
     rt("dict_new",    "rt.dict", "make",       .Some("Dict.new")),
     rt("dict_set",    "rt.dict", "set",        .Some("Dict.set")),
     rt("dict_keys",   "rt.dict", "keys",       .Some("Dict.keys")),
-    rt("dict_get",    "rt.dict", "get_option", .Some("Dict.get")),
+    intr("dict_get", .Some("Dict.get")),
     intr("dict__get_unsafe", .None),
     rt("dict_len",    "rt.dict", "len",    .Some("Dict.len")),
     rt("dict_has",    "rt.dict", "has",    .Some("Dict.has")),

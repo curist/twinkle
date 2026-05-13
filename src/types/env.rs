@@ -239,6 +239,7 @@ impl TypeEnv {
             // Dict
             (BUILTIN_DICT_TYPE_ID, "len", "Dict.len"),
             (BUILTIN_DICT_TYPE_ID, "has", "Dict.has"),
+            (BUILTIN_DICT_TYPE_ID, "get", "Dict.get"),
             (BUILTIN_DICT_TYPE_ID, "keys", "Dict.keys"),
             (BUILTIN_DICT_TYPE_ID, "remove", "Dict.remove"),
             (BUILTIN_DICT_TYPE_ID, "set", "Dict.set"),

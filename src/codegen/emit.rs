@@ -4491,6 +4491,7 @@ fn emit_prelude_call(
         LoweringKind::CellGet => emit_cell_get_intrinsic(args, bind_ty, ctx),
         LoweringKind::CellSet => emit_cell_set_intrinsic(args, bind_ty, ctx),
         LoweringKind::CellUpdate => emit_cell_update_intrinsic(args, bind_ty, ctx),
+        LoweringKind::DictGet => emit_dict_get_intrinsic(args, bind_ty, ctx),
         LoweringKind::DictGetUnsafe => emit_dict_get_unsafe_intrinsic(args, bind_ty, ctx),
         LoweringKind::IteratorUnfold => emit_iterator_unfold_intrinsic(args, bind_ty, ctx),
         LoweringKind::IteratorNext => emit_iterator_next_intrinsic(args, bind_ty, ctx),
@@ -4570,6 +4571,15 @@ fn emit_range_step_intrinsic(
         bind_ty,
         ctx,
     )
+}
+
+fn emit_dict_get_intrinsic(args: &[Atom], bind_ty: &ValType, ctx: &mut EmitCtx<'_>) -> Vec<Instr> {
+    ensure_rt_dict_get_option_import(ctx);
+    let mut instrs = emit_atom(&args[0], Some(&ref_pdict_null()), ctx);
+    instrs.extend(emit_atom(&args[1], Some(&ValType::Anyref), ctx));
+    instrs.push(Instr::Call("rt_dict__get_option".to_string()));
+    instrs.extend(emit_coerce_stack(&ref_variant(), bind_ty));
+    instrs
 }
 
 fn emit_dict_get_unsafe_intrinsic(

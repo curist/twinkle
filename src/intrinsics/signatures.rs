@@ -472,6 +472,22 @@ pub fn contract(func_id: FuncId) -> Option<IntrinsicContract> {
                 abi_result: Some(IntrinsicAbiResult::I64),
             })
         }
+        id if id == prelude_ids::DICT_GET => {
+            let k = ty_var("K");
+            let v = ty_var("V");
+            Some(IntrinsicContract {
+                func_id,
+                twinkle_name: "Dict.get",
+                dispatch: IntrinsicDispatch::Intrinsic,
+                type_params: vec!["K".to_string(), "V".to_string()],
+                params: vec![MonoType::Dict(Box::new(k.clone()), Box::new(v.clone())), k],
+                ret: MonoType::Named {
+                    type_id: OPTION_TYPE_ID,
+                    args: vec![v],
+                },
+                abi_result: Some(IntrinsicAbiResult::Anyref),
+            })
+        }
         id if id == prelude_ids::DICT_HAS => {
             let k = ty_var("K");
             let v = ty_var("V");
@@ -712,6 +728,7 @@ fn builtin_doc(name: &str) -> Option<&'static str> {
         // Dict
         "Dict.new" => "Create an empty dictionary.",
         "Dict.set" => "Return a new dict with the key-value pair inserted or updated.",
+        "Dict.get" => "Return the value for the given key, or `None` if absent.",
         "Dict.keys" => "Return a vector of all keys.",
         "Dict.len" => "Return the number of key-value pairs.",
         "Dict.has" => "Return whether the key exists.",

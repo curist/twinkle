@@ -50,6 +50,7 @@ pub fn module() WasmModule {
       ImportDef.{ module: "rt.arr", name: "get", as_sym: "rt_arr__get", params: [ValType.Ref(true, HeapType.Named("rt_types__PVec")), .I32], results: [.Anyref] },
       ImportDef.{ module: "rt.dict", name: "len", as_sym: "rt_dict__len", params: [ValType.Ref(true, HeapType.Named("rt_types__PDict"))], results: [.I32] },
       ImportDef.{ module: "rt.dict", name: "get", as_sym: "rt_dict__get", params: [ValType.Ref(true, HeapType.Named("rt_types__PDict")), .Anyref], results: [.Anyref] },
+      ImportDef.{ module: "rt.dict", name: "get_option", as_sym: "rt_dict__get_option", params: [ValType.Ref(true, HeapType.Named("rt_types__PDict")), .Anyref], results: [variant_ref()] },
       ImportDef.{ module: "rt.dict", name: "keys", as_sym: "rt_dict__keys", params: [ValType.Ref(true, HeapType.Named("rt_types__PDict"))], results: [pvec_ref()] },
     ],
     funcs: funcs,
