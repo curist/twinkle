@@ -116,8 +116,8 @@
   (global $user____str_lit_global_6974656d (mut (ref null $rt_types__String)) ref.null $rt_types__String)
   (global $user____str_lit_global_6a6f696e3a20696e76616c69642075746638 (mut (ref null $rt_types__String)) ref.null $rt_types__String)
   (global $user____str_lit_global_6c6162656c733a (mut (ref null $rt_types__String)) ref.null $rt_types__String)
-  (global $user____str_lit_global_6e6f6e2d65786861757374697665206d6174636820696e205f5f696e69745f5f202846756e6349642837372929 (mut (ref null $rt_types__String)) ref.null $rt_types__String)
-  (global $user____str_lit_global_6e6f6e2d65786861757374697665206d6174636820696e205f5f7072656c7564655f766563746f722e6a6f696e202846756e6349642836372929 (mut (ref null $rt_types__String)) ref.null $rt_types__String)
+  (global $user____str_lit_global_6e6f6e2d65786861757374697665206d6174636820696e205f5f696e69745f5f202846756e6349642839352929 (mut (ref null $rt_types__String)) ref.null $rt_types__String)
+  (global $user____str_lit_global_6e6f6e2d65786861757374697665206d6174636820696e205f5f7072656c7564655f766563746f722e6a6f696e202846756e6349642838352929 (mut (ref null $rt_types__String)) ref.null $rt_types__String)
   (func $rt_arr__tailoff (type $functype_2)
     (param $p0 i32)
     (result i32)
@@ -3140,7 +3140,7 @@
     ref.cast (ref null eq)
     ref.eq
   )
-  (func $user__func_67 (type $functype_49)
+  (func $user__func_85 (type $functype_49)
     (param $p0 (ref null $rt_types__PVec))
     (param $p1 (ref null $rt_types__String))
     (result (ref null $rt_types__String))
@@ -3587,7 +3587,7 @@
             local.set $p56
             unreachable)
           (else
-            call $user____str_lit_get_6e6f6e2d65786861757374697665206d6174636820696e205f5f7072656c7564655f766563746f722e6a6f696e202846756e6349642836372929
+            call $user____str_lit_get_6e6f6e2d65786861757374697665206d6174636820696e205f5f7072656c7564655f766563746f722e6a6f696e202846756e6349642838352929
             call $rt_core__trap
             unreachable
             unreachable))))
@@ -3595,15 +3595,15 @@
     local.get $p57
     return
   )
-  (func $user__func_70 (type $functype_50)
+  (func $user__func_88 (type $functype_50)
     (param $p0 (ref null $rt_types__String))
     (result (ref null $rt_types__IterState))
     (local $p1 (ref null $user__closure_i64_T6_String_Int))
     (local $p2 (ref null $user__iter_state__String__Int))
-    ref.func $user__func_74__closure
+    ref.func $user__func_92__closure
     local.get $p0
     array.new_fixed $rt_types__ClosureEnv 1
-    ref.func $user__func_74__typed_closure
+    ref.func $user__func_92__typed_closure
     struct.new $user__closure_i64_T6_String_Int
     local.set $p1
     i64.const 0
@@ -3618,16 +3618,16 @@
     struct.new $rt_types__IterState
     return
   )
-  (func $user__func_71 (type $functype_51)
+  (func $user__func_89 (type $functype_51)
     (param $p0 i64)
     (result (ref null $rt_types__IterState))
     (local $p1 (ref null $user__closure_i64_T6_Int_Int))
     (local $p2 (ref null $user__iter_state__Int__Int))
-    ref.func $user__func_75__closure
+    ref.func $user__func_93__closure
     local.get $p0
     struct.new $rt_types__BoxedInt
     array.new_fixed $rt_types__ClosureEnv 1
-    ref.func $user__func_75__typed_closure
+    ref.func $user__func_93__typed_closure
     struct.new $user__closure_i64_T6_Int_Int
     local.set $p1
     i64.const 0
@@ -3642,7 +3642,7 @@
     struct.new $rt_types__IterState
     return
   )
-  (func $user__func_72 (type $functype_52)
+  (func $user__func_90 (type $functype_52)
     (param $p0 (ref null $rt_types__String))
     (param $p1 i64)
     (param $p2 i64)
@@ -3686,7 +3686,7 @@
     local.get $p10
     return
   )
-  (func $user__func_73 (type $functype_53)
+  (func $user__func_91 (type $functype_53)
     (param $p0 (ref null $rt_types__PVec))
     (result (ref null $rt_types__IterState))
     (local $p1 i64)
@@ -3702,12 +3702,12 @@
     local.get $p2
     struct.new $rt_types__BoxedInt
     global.set $user__global_local_1
-    ref.func $user__func_76__closure
+    ref.func $user__func_94__closure
     local.get $p0
     local.get $p2
     struct.new $rt_types__BoxedInt
     array.new_fixed $rt_types__ClosureEnv 2
-    ref.func $user__func_76__typed_closure
+    ref.func $user__func_94__typed_closure
     struct.new $user__closure_i64_T6_String_Int
     local.set $p3
     i64.const 0
@@ -3722,7 +3722,7 @@
     struct.new $rt_types__IterState
     return
   )
-  (func $user__func_77 (type $functype_54)
+  (func $user__func_95 (type $functype_54)
     (local $p0 i32)
     (local $p1 (ref null $rt_types__IterState))
     (local $p2 (ref null $rt_types__IterState))
@@ -3777,7 +3777,7 @@
     i32.const 0
     local.set $p0
     call $user____str_lit_get_48656c6c6f
-    call $user__func_70
+    call $user__func_88
     local.set $p1
     local.get $p1
     local.set $p2
@@ -3855,7 +3855,7 @@
                 local.set $p12
                 br $cont_0)
               (else
-                call $user____str_lit_get_6e6f6e2d65786861757374697665206d6174636820696e205f5f696e69745f5f202846756e6349642837372929
+                call $user____str_lit_get_6e6f6e2d65786861757374697665206d6174636820696e205f5f696e69745f5f202846756e6349642839352929
                 call $rt_core__trap
                 unreachable
                 unreachable))
@@ -3874,7 +3874,7 @@
     i32.const 0
     local.set $p16
     i64.const 5
-    call $user__func_71
+    call $user__func_89
     local.set $p17
     local.get $p17
     local.set $p18
@@ -3949,7 +3949,7 @@
                 local.set $p28
                 br $cont_1)
               (else
-                call $user____str_lit_get_6e6f6e2d65786861757374697665206d6174636820696e205f5f696e69745f5f202846756e6349642837372929
+                call $user____str_lit_get_6e6f6e2d65786861757374697665206d6174636820696e205f5f696e69745f5f202846756e6349642839352929
                 call $rt_core__trap
                 unreachable
                 unreachable))
@@ -3980,7 +3980,7 @@
     struct.new $rt_types__PVec
     local.set $p33
     local.get $p33
-    call $user__func_73
+    call $user__func_91
     local.set $p34
     local.get $p34
     local.set $p35
@@ -4053,7 +4053,7 @@
                 local.set $p45
                 br $cont_2)
               (else
-                call $user____str_lit_get_6e6f6e2d65786861757374697665206d6174636820696e205f5f696e69745f5f202846756e6349642837372929
+                call $user____str_lit_get_6e6f6e2d65786861757374697665206d6174636820696e205f5f696e69745f5f202846756e6349642839352929
                 call $rt_core__trap
                 unreachable
                 unreachable))
@@ -4066,7 +4066,7 @@
     call $user____str_lit_get_empty
     return_call $rt_core__println
   )
-  (func $user__func_74 (type $functype_55)
+  (func $user__func_92 (type $functype_55)
     (param $p0 i64)
     (param $p1 anyref)
     (result (ref null $rt_types__Variant))
@@ -4294,7 +4294,7 @@
         struct.new $rt_types__Variant))
     return
   )
-  (func $user__func_75 (type $functype_55)
+  (func $user__func_93 (type $functype_55)
     (param $p0 i64)
     (param $p1 anyref)
     (result (ref null $rt_types__Variant))
@@ -4394,7 +4394,7 @@
         struct.new $rt_types__Variant))
     return
   )
-  (func $user__func_76 (type $functype_56)
+  (func $user__func_94 (type $functype_56)
     (param $p0 i64)
     (param $p1 anyref)
     (param $p2 anyref)
@@ -4434,7 +4434,7 @@
         call $user____str_lit_get_6974656d
         local.get $p0
         local.get $p5
-        call $user__func_72
+        call $user__func_90
         local.set $p6
         local.get $p6
         local.set $p7
@@ -4470,7 +4470,7 @@
         struct.new $rt_types__Variant))
     return
   )
-  (func $user__func_67__closure (type $functype_57)
+  (func $user__func_85__closure (type $functype_57)
     (param $p0 anyref)
     (param $p1 anyref)
     (result anyref)
@@ -4484,9 +4484,9 @@
     i32.const 1
     array.get $rt_types__Array
     ref.cast (ref null $rt_types__String)
-    call $user__func_67
+    call $user__func_85
   )
-  (func $user__func_70__closure (type $functype_57)
+  (func $user__func_88__closure (type $functype_57)
     (param $p0 anyref)
     (param $p1 anyref)
     (result anyref)
@@ -4495,9 +4495,9 @@
     i32.const 0
     array.get $rt_types__Array
     ref.cast (ref null $rt_types__String)
-    call $user__func_70
+    call $user__func_88
   )
-  (func $user__func_71__closure (type $functype_57)
+  (func $user__func_89__closure (type $functype_57)
     (param $p0 anyref)
     (param $p1 anyref)
     (result anyref)
@@ -4507,9 +4507,9 @@
     array.get $rt_types__Array
     ref.cast (ref $rt_types__BoxedInt)
     struct.get $rt_types__BoxedInt 0
-    call $user__func_71
+    call $user__func_89
   )
-  (func $user__func_72__closure (type $functype_57)
+  (func $user__func_90__closure (type $functype_57)
     (param $p0 anyref)
     (param $p1 anyref)
     (result anyref)
@@ -4530,9 +4530,9 @@
     array.get $rt_types__Array
     ref.cast (ref $rt_types__BoxedInt)
     struct.get $rt_types__BoxedInt 0
-    call $user__func_72
+    call $user__func_90
   )
-  (func $user__func_73__closure (type $functype_57)
+  (func $user__func_91__closure (type $functype_57)
     (param $p0 anyref)
     (param $p1 anyref)
     (result anyref)
@@ -4541,17 +4541,17 @@
     i32.const 0
     array.get $rt_types__Array
     ref.cast (ref null $rt_types__PVec)
-    call $user__func_73
+    call $user__func_91
   )
-  (func $user__func_77__closure (type $functype_57)
+  (func $user__func_95__closure (type $functype_57)
     (param $p0 anyref)
     (param $p1 anyref)
     (result anyref)
-    call $user__func_77
+    call $user__func_95
     i32.const 0
     ref.i31
   )
-  (func $user__func_74__closure (type $functype_57)
+  (func $user__func_92__closure (type $functype_57)
     (param $p0 anyref)
     (param $p1 anyref)
     (result anyref)
@@ -4565,9 +4565,9 @@
     ref.cast (ref null $rt_types__ClosureEnv)
     i32.const 0
     array.get $rt_types__ClosureEnv
-    call $user__func_74
+    call $user__func_92
   )
-  (func $user__func_74__typed_closure (type $functype_58)
+  (func $user__func_92__typed_closure (type $functype_58)
     (param $p0 (ref null $rt_types__ClosureEnv))
     (param $p1 i64)
     (result (ref null $rt_types__Variant))
@@ -4576,9 +4576,9 @@
     ref.cast (ref null $rt_types__ClosureEnv)
     i32.const 0
     array.get $rt_types__ClosureEnv
-    call $user__func_74
+    call $user__func_92
   )
-  (func $user__func_75__closure (type $functype_57)
+  (func $user__func_93__closure (type $functype_57)
     (param $p0 anyref)
     (param $p1 anyref)
     (result anyref)
@@ -4592,9 +4592,9 @@
     ref.cast (ref null $rt_types__ClosureEnv)
     i32.const 0
     array.get $rt_types__ClosureEnv
-    call $user__func_75
+    call $user__func_93
   )
-  (func $user__func_75__typed_closure (type $functype_58)
+  (func $user__func_93__typed_closure (type $functype_58)
     (param $p0 (ref null $rt_types__ClosureEnv))
     (param $p1 i64)
     (result (ref null $rt_types__Variant))
@@ -4603,9 +4603,9 @@
     ref.cast (ref null $rt_types__ClosureEnv)
     i32.const 0
     array.get $rt_types__ClosureEnv
-    call $user__func_75
+    call $user__func_93
   )
-  (func $user__func_76__closure (type $functype_57)
+  (func $user__func_94__closure (type $functype_57)
     (param $p0 anyref)
     (param $p1 anyref)
     (result anyref)
@@ -4623,9 +4623,9 @@
     ref.cast (ref null $rt_types__ClosureEnv)
     i32.const 1
     array.get $rt_types__ClosureEnv
-    call $user__func_76
+    call $user__func_94
   )
-  (func $user__func_76__typed_closure (type $functype_58)
+  (func $user__func_94__typed_closure (type $functype_58)
     (param $p0 (ref null $rt_types__ClosureEnv))
     (param $p1 i64)
     (result (ref null $rt_types__Variant))
@@ -4638,7 +4638,7 @@
     ref.cast (ref null $rt_types__ClosureEnv)
     i32.const 1
     array.get $rt_types__ClosureEnv
-    call $user__func_76
+    call $user__func_94
   )
   (func $user__user____iterator_next (type $functype_59)
     (param $p0 anyref)
@@ -5317,7 +5317,7 @@
         struct.new $rt_types__Variant))
   )
   (func $user____user_init (type $functype_54)
-    call $user__func_77
+    call $user__func_95
   )
   (func $user____str_lit_get_empty (type $functype_64)
     (result (ref $rt_types__String))
@@ -5478,9 +5478,9 @@
     global.get $user____str_lit_global_6c6162656c733a
     ref.as_non_null
   )
-  (func $user____str_lit_get_6e6f6e2d65786861757374697665206d6174636820696e205f5f696e69745f5f202846756e6349642837372929 (type $functype_64)
+  (func $user____str_lit_get_6e6f6e2d65786861757374697665206d6174636820696e205f5f696e69745f5f202846756e6349642839352929 (type $functype_64)
     (result (ref $rt_types__String))
-    global.get $user____str_lit_global_6e6f6e2d65786861757374697665206d6174636820696e205f5f696e69745f5f202846756e6349642837372929
+    global.get $user____str_lit_global_6e6f6e2d65786861757374697665206d6174636820696e205f5f696e69745f5f202846756e6349642839352929
     ref.is_null
     (if
       (then
@@ -5525,18 +5525,18 @@
         i32.const 73
         i32.const 100
         i32.const 40
-        i32.const 55
-        i32.const 55
+        i32.const 57
+        i32.const 53
         i32.const 41
         i32.const 41
         array.new_fixed $rt_types__String 45
-        global.set $user____str_lit_global_6e6f6e2d65786861757374697665206d6174636820696e205f5f696e69745f5f202846756e6349642837372929))
-    global.get $user____str_lit_global_6e6f6e2d65786861757374697665206d6174636820696e205f5f696e69745f5f202846756e6349642837372929
+        global.set $user____str_lit_global_6e6f6e2d65786861757374697665206d6174636820696e205f5f696e69745f5f202846756e6349642839352929))
+    global.get $user____str_lit_global_6e6f6e2d65786861757374697665206d6174636820696e205f5f696e69745f5f202846756e6349642839352929
     ref.as_non_null
   )
-  (func $user____str_lit_get_6e6f6e2d65786861757374697665206d6174636820696e205f5f7072656c7564655f766563746f722e6a6f696e202846756e6349642836372929 (type $functype_64)
+  (func $user____str_lit_get_6e6f6e2d65786861757374697665206d6174636820696e205f5f7072656c7564655f766563746f722e6a6f696e202846756e6349642838352929 (type $functype_64)
     (result (ref $rt_types__String))
-    global.get $user____str_lit_global_6e6f6e2d65786861757374697665206d6174636820696e205f5f7072656c7564655f766563746f722e6a6f696e202846756e6349642836372929
+    global.get $user____str_lit_global_6e6f6e2d65786861757374697665206d6174636820696e205f5f7072656c7564655f766563746f722e6a6f696e202846756e6349642838352929
     ref.is_null
     (if
       (then
@@ -5594,19 +5594,19 @@
         i32.const 73
         i32.const 100
         i32.const 40
-        i32.const 54
-        i32.const 55
+        i32.const 56
+        i32.const 53
         i32.const 41
         i32.const 41
         array.new_fixed $rt_types__String 58
-        global.set $user____str_lit_global_6e6f6e2d65786861757374697665206d6174636820696e205f5f7072656c7564655f766563746f722e6a6f696e202846756e6349642836372929))
-    global.get $user____str_lit_global_6e6f6e2d65786861757374697665206d6174636820696e205f5f7072656c7564655f766563746f722e6a6f696e202846756e6349642836372929
+        global.set $user____str_lit_global_6e6f6e2d65786861757374697665206d6174636820696e205f5f7072656c7564655f766563746f722e6a6f696e202846756e6349642838352929))
+    global.get $user____str_lit_global_6e6f6e2d65786861757374697665206d6174636820696e205f5f7072656c7564655f766563746f722e6a6f696e202846756e6349642838352929
     ref.as_non_null
   )
   (func $__linked_init (type $functype_54)
     call $user____user_init
   )
-  (elem declare func $user__func_74__closure $user__func_74__typed_closure $user__func_75__closure $user__func_75__typed_closure $user__func_76__closure $user__func_76__typed_closure)
+  (elem declare func $user__func_92__closure $user__func_92__typed_closure $user__func_93__closure $user__func_93__typed_closure $user__func_94__closure $user__func_94__typed_closure)
   (export "rt_arr__tailoff" (func $rt_arr__tailoff))
   (export "rt_arr__get_leaf" (func $rt_arr__get_leaf))
   (export "rt_arr__new_path" (func $rt_arr__new_path))

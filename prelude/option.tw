@@ -1,8 +1,26 @@
-/// Convert Option to Result: Some(v) → Ok(v), None → Err(err).
-pub fn ok_or<T, E>(opt: T?, err: E) Result<T, E> {
+/// Return true if the option is Some.
+pub fn is_some<T>(opt: Option<T>) Bool {
   case opt {
-    .Some(v) => .Ok(v),
-    .None => .Err(err),
+    .Some(_) => true,
+    .None => false,
+  }
+}
+
+/// Return true if the option is None.
+pub fn is_none<T>(opt: Option<T>) Bool {
+  case opt {
+    .Some(_) => false,
+    .None => true,
+  }
+}
+
+/// Extract the value from Some, or trap if None.
+pub fn unwrap<T>(opt: Option<T>) T {
+  case opt {
+    .Some(v) => v,
+    .None => {
+      error("Option.unwrap: called on None")
+    },
   }
 }
 
@@ -11,6 +29,14 @@ pub fn unwrap_or<T>(opt: Option<T>, default: T) T {
   case opt {
     .Some(v) => v,
     .None => default,
+  }
+}
+
+/// Extract the value from Some, or lazily compute a default.
+pub fn unwrap_or_else<T>(opt: Option<T>, default: fn() T) T {
+  case opt {
+    .Some(v) => v,
+    .None => default(),
   }
 }
 
@@ -27,6 +53,57 @@ pub fn and_then<T, U>(opt: Option<T>, f: fn(T) Option<U>) Option<U> {
   case opt {
     .Some(v) => f(v),
     .None => .None,
+  }
+}
+
+/// Remove one layer of nested Option.
+pub fn flatten<T>(opt: Option<Option<T>>) Option<T> {
+  case opt {
+    .Some(inner) => inner,
+    .None => .None,
+  }
+}
+
+/// Keep Some(v) only when pred(v) is true.
+pub fn filter<T>(opt: Option<T>, pred: fn(T) Bool) Option<T> {
+  case opt {
+    .Some(v) => if pred(v) { .Some(v) } else { .None },
+    .None => .None,
+  }
+}
+
+/// Return this option if it is Some, otherwise return other.
+pub fn or<T>(opt: Option<T>, other: Option<T>) Option<T> {
+  case opt {
+    .Some(_) => opt,
+    .None => other,
+  }
+}
+
+/// Return this option if it is Some, otherwise lazily compute another option.
+pub fn or_else<T>(opt: Option<T>, other: fn() Option<T>) Option<T> {
+  case opt {
+    .Some(_) => opt,
+    .None => other(),
+  }
+}
+
+/// Run f(v) for Some(v), then return the original option.
+pub fn inspect<T>(opt: Option<T>, f: fn(T) Void) Option<T> {
+  case opt {
+    .Some(v) => {
+      f(v)
+      opt
+    },
+    .None => opt,
+  }
+}
+
+/// Convert Option to Result: Some(v) → Ok(v), None → Err(err).
+pub fn ok_or<T, E>(opt: T?, err: E) Result<T, E> {
+  case opt {
+    .Some(v) => .Ok(v),
+    .None => .Err(err),
   }
 }
 

@@ -1024,7 +1024,7 @@ fn parse_function(c: Cursor) ItemParse {
 
   fn_span := c.span()
   c = c.advance()
-  if c.kind() != .Ident {
+  if !lexer.is_identifier_text(c.text()) {
     diagnostics_out = diagnostics_out.append(diag.error(
       fn_span,
       "expected function name after 'fn'",
@@ -2090,7 +2090,7 @@ fn parse_postfix(c: Cursor, base: Expr) ExprParse {
         continue
       }
 
-      if c.at(1).kind() == .Ident {
+      if lexer.is_identifier_text(c.at(1).text()) {
         field_name := c.at(1).text()
         new_span := expr.span.merge(c.at(1).span())
         expr = Expr.{ id: c.alloc_expr_id(), kind: .Field(expr, field_name), span: new_span }

@@ -1,8 +1,8 @@
 // ANF Module
 // 4 function(s)
-// init = FuncId(72)
+// init = FuncId(90)
 
-fn __prelude_vector.join  [FuncId(67)]  params=[L0: Vector(String), L1: String]
+fn __prelude_vector.join  [FuncId(85)]  params=[L0: Vector(String), L1: String]
   return_ty: String
   body:
     let L29 = call GlobalFunc(10) (L0)
@@ -107,7 +107,7 @@ fn __prelude_vector.join  [FuncId(67)]  params=[L0: Vector(String), L1: String]
     }
     L67
 
-fn records.magnitude_sq  [FuncId(70)]  params=[L2: Named { type_id: TypeId(11), args: [] }]
+fn records.magnitude_sq  [FuncId(88)]  params=[L2: Named { type_id: TypeId(11), args: [] }]
   return_ty: Int
   body:
     let L3 = record_get(L2, .0, Type#11)
@@ -119,7 +119,7 @@ fn records.magnitude_sq  [FuncId(70)]  params=[L2: Named { type_id: TypeId(11), 
     let L9 = binop(Add, L5, L8, Int)
     L9
 
-fn records.translate  [FuncId(71)]  params=[L2: Named { type_id: TypeId(11), args: [] }, L3: Int, L4: Int]
+fn records.translate  [FuncId(89)]  params=[L2: Named { type_id: TypeId(11), args: [] }, L3: Int, L4: Int]
   return_ty: Named { type_id: TypeId(11), args: [] }
   body:
     let L5 = record_get(L2, .0, Type#11)
@@ -129,7 +129,7 @@ fn records.translate  [FuncId(71)]  params=[L2: Named { type_id: TypeId(11), arg
     let L9 = record(Type#11, .0=L6, .1=L8)
     L9
 
-fn __init__  [FuncId(72)]  params=[]
+fn __init__  [FuncId(90)]  params=[]
   return_ty: Void
   body:
     let L8 = record(Type#11, .0=3, .1=4)
@@ -144,7 +144,7 @@ fn __init__  [FuncId(72)]  params=[]
     let L15 = call GlobalFunc(9) ("", L14)
     let L16 = call GlobalFunc(2) (L15)
     let L6 = init(L16)
-    let L17 = call GlobalFunc(70) (L0)
+    let L17 = call GlobalFunc(88) (L0)
     let L18 = call GlobalFunc(4) (L17)
     let L19 = call GlobalFunc(9) ("", L18)
     let L20 = call GlobalFunc(2) (L19)
@@ -157,14 +157,14 @@ fn __init__  [FuncId(72)]  params=[]
     let L25 = call GlobalFunc(9) ("", L24)
     let L26 = call GlobalFunc(2) (L25)
     let L3 = init(L26)
-    let L27 = call GlobalFunc(71) (L0, 2, 2)
+    let L27 = call GlobalFunc(89) (L0, 2, 2)
     let L1 = init(L27)
     let L28 = record_get(L1, .0, Type#11)
     let L29 = call GlobalFunc(4) (L28)
     let L30 = call GlobalFunc(9) ("", L29)
     let L31 = call GlobalFunc(2) (L30)
     let L2 = init(L31)
-    let L32 = call GlobalFunc(70) (L1)
+    let L32 = call GlobalFunc(88) (L1)
     let L33 = call GlobalFunc(4) (L32)
     let L34 = call GlobalFunc(9) ("", L33)
     let L35 = call GlobalFunc(2) (L34)

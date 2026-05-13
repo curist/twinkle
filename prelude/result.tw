@@ -1,12 +1,42 @@
-/// Transpose Result<Option<T>, E> into Option<Result<T, E>>.
-/// Err(e) => Some(Err(e)), Ok(None) => None, Ok(Some(v)) => Some(Ok(v)).
-pub fn transpose<T, E>(res: Result<T?, E>) Option<Result<T, E>> {
+/// Return true if the result is Ok.
+pub fn is_ok<T, E>(res: Result<T, E>) Bool {
   case res {
-    .Err(e) => .Some(.Err(e)),
-    .Ok(inner) => case inner {
-      .None => .None,
-      .Some(v) => .Some(.Ok(v)),
+    .Ok(_) => true,
+    .Err(_) => false,
+  }
+}
+
+/// Return true if the result is Err.
+pub fn is_err<T, E>(res: Result<T, E>) Bool {
+  case res {
+    .Ok(_) => false,
+    .Err(_) => true,
+  }
+}
+
+/// Extract the value from Ok, or trap with the Err payload.
+pub fn unwrap<T, E: Stringify>(res: Result<T, E>) T {
+  case res {
+    .Ok(v) => v,
+    .Err(e) => {
+      error("Result.unwrap: called on Err(${e})")
     },
+  }
+}
+
+/// Extract the value from Ok, or return a default.
+pub fn unwrap_or<T, E>(res: Result<T, E>, default: T) T {
+  case res {
+    .Ok(v) => v,
+    .Err(_) => default,
+  }
+}
+
+/// Extract the value from Ok, or map the error to a fallback.
+pub fn unwrap_or_else<T, E>(res: Result<T, E>, default: fn(E) T) T {
+  case res {
+    .Ok(v) => v,
+    .Err(e) => default(e),
   }
 }
 
@@ -18,10 +48,54 @@ pub fn map<T, U, E>(res: Result<T, E>, f: fn(T) U) Result<U, E> {
   }
 }
 
+/// Transform the Err payload.
+pub fn map_err<T, E, F>(res: Result<T, E>, f: fn(E) F) Result<T, F> {
+  case res {
+    .Ok(v) => .Ok(v),
+    .Err(e) => .Err(f(e)),
+  }
+}
+
 /// Chain Result-producing operations.
 pub fn and_then<T, U, E>(res: Result<T, E>, f: fn(T) Result<U, E>) Result<U, E> {
   case res {
     .Ok(v) => f(v),
     .Err(e) => .Err(e),
+  }
+}
+
+/// Recover from an error by lazily producing another Result.
+pub fn or_else<T, E, F>(res: Result<T, E>, f: fn(E) Result<T, F>) Result<T, F> {
+  case res {
+    .Ok(v) => .Ok(v),
+    .Err(e) => f(e),
+  }
+}
+
+/// Convert Result<T, E> into Option<T>, discarding errors.
+pub fn ok<T, E>(res: Result<T, E>) Option<T> {
+  case res {
+    .Ok(v) => .Some(v),
+    .Err(_) => .None,
+  }
+}
+
+/// Convert Result<T, E> into Option<E>, discarding success values.
+pub fn err<T, E>(res: Result<T, E>) Option<E> {
+  case res {
+    .Ok(_) => .None,
+    .Err(e) => .Some(e),
+  }
+}
+
+/// Transpose Result<Option<T>, E> into Option<Result<T, E>>.
+/// Err(e) => Some(Err(e)), Ok(None) => None, Ok(Some(v)) => Some(Ok(v)).
+pub fn transpose<T, E>(res: Result<T?, E>) Option<Result<T, E>> {
+  case res {
+    .Err(e) => .Some(.Err(e)),
+    .Ok(inner) => case inner {
+      .None => .None,
+      .Some(v) => .Some(.Ok(v)),
+    },
   }
 }

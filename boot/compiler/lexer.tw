@@ -40,6 +40,23 @@ fn keyword_or_ident(text: String) TokenKind {
   }
 }
 
+pub fn is_identifier_text(text: String) Bool {
+  if text.len() == 0 {
+    return false
+  }
+  if !ascii.is_ident_start(text[0].to_int()) {
+    return false
+  }
+  i := 1
+  for i < text.len() {
+    if !ascii.is_ident_continue(text[i].to_int()) {
+      return false
+    }
+    i = i + 1
+  }
+  true
+}
+
 fn is_byte(c: Int, literal: String) Bool {
   c == literal[0].to_int()
 }

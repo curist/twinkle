@@ -106,6 +106,17 @@ impl Parser {
         id
     }
 
+    fn is_identifier_text(text: &str) -> bool {
+        let mut chars = text.chars();
+        let Some(first) = chars.next() else {
+            return false;
+        };
+        if !(first.is_alphabetic() || first == '_') {
+            return false;
+        }
+        chars.all(|ch| ch.is_alphanumeric() || ch == '_')
+    }
+
     // Core token navigation
 
     fn peek(&self) -> Option<&Token> {
@@ -551,7 +562,21 @@ impl Parser {
 
     fn parse_function_decl(&mut self, is_pub: bool) -> ParseResult<FunctionDecl> {
         let start = self.expect(TokenKind::Fn)?;
-        let name_token = self.expect(TokenKind::Ident)?;
+        let name_token = match self.peek() {
+            Some(token) if Self::is_identifier_text(&token.text) => self.advance().unwrap(),
+            Some(token) => {
+                return Err(ParseError::unexpected_token(
+                    vec![TokenKind::Ident.name()],
+                    token,
+                ));
+            }
+            None => {
+                return Err(ParseError::unexpected_eof(
+                    self.eof_span(),
+                    vec![TokenKind::Ident.name()],
+                ));
+            }
+        };
         let name = name_token.text.clone();
 
         if name.starts_with(|c: char| c.is_uppercase()) {
@@ -1274,7 +1299,21 @@ impl Parser {
             }
         }
 
-        let field = self.expect(TokenKind::Ident)?;
+        let field = match self.peek() {
+            Some(token) if Self::is_identifier_text(&token.text) => self.advance().unwrap(),
+            Some(token) => {
+                return Err(ParseError::unexpected_token(
+                    vec![TokenKind::Ident.name()],
+                    token,
+                ));
+            }
+            None => {
+                return Err(ParseError::unexpected_eof(
+                    self.eof_span(),
+                    vec![TokenKind::Ident.name()],
+                ));
+            }
+        };
         let span = start.merge(&field.span);
 
         Ok(Expr::new(

@@ -411,6 +411,146 @@ pub fn suite() runner.Suite {
       try assert.int_eq(Option.unwrap_or(opt, 7), 7)
       .Ok({})
     })
+    .test("Option predicates and unwrap extract values", fn() {
+      some: Int? = .Some(8)
+      none: Int? = .None
+      try assert.is_true(some.is_some())
+      try assert.is_false(some.is_none())
+      try assert.is_false(none.is_some())
+      try assert.is_true(none.is_none())
+      try assert.int_eq(some.unwrap(), 8)
+      .Ok({})
+    })
+    .test("Option.unwrap_or_else is lazy", fn() {
+      called := Cell.new(0)
+      some: Int? = .Some(3)
+      none: Int? = .None
+      try assert.int_eq(some.unwrap_or_else(fn() {
+        called.set(called.get() + 1)
+        10
+      }), 3)
+      try assert.int_eq(called.get(), 0)
+      try assert.int_eq(none.unwrap_or_else(fn() {
+        called.set(called.get() + 1)
+        10
+      }), 10)
+      try assert.int_eq(called.get(), 1)
+      .Ok({})
+    })
+    .test("Option.filter keeps matching Some", fn() {
+      some: Int? = .Some(6)
+      kept := some.filter(fn(x: Int) { x % 2 == 0 })
+      dropped := some.filter(fn(x: Int) { x > 10 })
+      none: Int? = .None
+      try assert.is_some(kept)
+      try assert.is_none(dropped)
+      try assert.is_none(none.filter(fn(x: Int) { x > 0 }))
+      .Ok({})
+    })
+    .test("Option.flatten removes one layer", fn() {
+      nested: Option<Int?> = .Some(.Some(5))
+      inner_none: Option<Int?> = .Some(.None)
+      outer_none: Option<Int?> = .None
+      try assert.int_eq(nested.flatten().unwrap_or(0), 5)
+      try assert.is_none(inner_none.flatten())
+      try assert.is_none(outer_none.flatten())
+      .Ok({})
+    })
+    .test("Option.or and or_else choose fallbacks", fn() {
+      some: Int? = .Some(1)
+      none: Int? = .None
+      called := Cell.new(0)
+      try assert.int_eq(some.or(.Some(2)).unwrap_or(0), 1)
+      try assert.int_eq(none.or(.Some(2)).unwrap_or(0), 2)
+      try assert.int_eq(some.or_else(fn() {
+        called.set(called.get() + 1)
+        .Some(3)
+      }).unwrap_or(0), 1)
+      try assert.int_eq(called.get(), 0)
+      try assert.int_eq(none.or_else(fn() {
+        called.set(called.get() + 1)
+        .Some(3)
+      }).unwrap_or(0), 3)
+      try assert.int_eq(called.get(), 1)
+      .Ok({})
+    })
+    .test("Option.inspect observes Some without changing shape", fn() {
+      seen := Cell.new(0)
+      some: Int? = .Some(9)
+      none: Int? = .None
+      observed := some.inspect(fn(x: Int) {
+        seen.set(x)
+      })
+      skipped := none.inspect(fn(x: Int) {
+        seen.set(x)
+      })
+      try assert.int_eq(observed.unwrap_or(0), 9)
+      try assert.is_none(skipped)
+      try assert.int_eq(seen.get(), 9)
+      .Ok({})
+    })
+    .test("Result predicates unwrap and unwrap_or", fn() {
+      ok: Result<Int, String> = .Ok(11)
+      err: Result<Int, String> = .Err("bad")
+      try assert.is_true(ok.is_ok())
+      try assert.is_false(ok.is_err())
+      try assert.is_false(err.is_ok())
+      try assert.is_true(err.is_err())
+      try assert.int_eq(ok.unwrap(), 11)
+      try assert.int_eq(ok.unwrap_or(0), 11)
+      try assert.int_eq(err.unwrap_or(7), 7)
+      .Ok({})
+    })
+    .test("Result.unwrap_or_else maps Err lazily", fn() {
+      ok: Result<Int, String> = .Ok(4)
+      err: Result<Int, String> = .Err("oops")
+      called := Cell.new(0)
+      try assert.int_eq(ok.unwrap_or_else(fn(e: String) {
+        called.set(called.get() + 1)
+        e.len()
+      }), 4)
+      try assert.int_eq(called.get(), 0)
+      try assert.int_eq(err.unwrap_or_else(fn(e: String) {
+        called.set(called.get() + 1)
+        e.len()
+      }), 4)
+      try assert.int_eq(called.get(), 1)
+      .Ok({})
+    })
+    .test("Result.map_err adapts error type", fn() {
+      ok: Result<Int, String> = .Ok(2)
+      err: Result<Int, String> = .Err("abcd")
+      mapped_ok := ok.map_err(fn(e: String) { e.len() })
+      mapped_err := err.map_err(fn(e: String) { e.len() })
+      try assert.is_ok(mapped_ok)
+      try assert.is_err(mapped_err)
+      err_len := case mapped_err {
+        .Ok(_) => -1,
+        .Err(n) => n,
+      }
+      try assert.int_eq(err_len, 4)
+      .Ok({})
+    })
+    .test("Result.or_else recovers from Err", fn() {
+      ok: Result<Int, String> = .Ok(5)
+      err: Result<Int, String> = .Err("no")
+      recovered_ok: Result<Int, Int> = ok.or_else(fn(e: String) { .Err(e.len()) })
+      recovered_err: Result<Int, Int> = err.or_else(fn(e: String) { .Ok(e.len()) })
+      try assert.is_ok(recovered_ok)
+      try assert.is_ok(recovered_err)
+      try assert.int_eq(recovered_ok.unwrap_or(0), 5)
+      try assert.int_eq(recovered_err.unwrap_or(0), 2)
+      .Ok({})
+    })
+    .test("Result.ok and err bridge to Option", fn() {
+      ok: Result<Int, String> = .Ok(12)
+      err: Result<Int, String> = .Err("lost")
+      try assert.int_eq(ok.ok().unwrap_or(0), 12)
+      try assert.is_none(ok.err())
+      try assert.is_none(err.ok())
+      try assert.str_eq(err.err().unwrap_or(""), "lost")
+      .Ok({})
+    })
     .test("Option and Result combinators support qualified calls", fn() {
       o: Int? = .Some(3)
       om := Option.map(o, fn(x: Int) { x + 2 })

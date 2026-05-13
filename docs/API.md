@@ -20,9 +20,18 @@ Shorthand: `T?` is equivalent to `Option<T>`.
 
 | Function | Signature | Description |
 |----------|-----------|-------------|
+| `.is_some()` | `fn<T>(opt: Option<T>) Bool` | True when `opt` is `Some` |
+| `.is_none()` | `fn<T>(opt: Option<T>) Bool` | True when `opt` is `None` |
+| `.unwrap()` | `fn<T>(opt: Option<T>) T` | Extract `Some(v)`; traps if `opt` is `None` |
 | `.unwrap_or(default)` | `fn<T>(opt: Option<T>, default: T) T` | Extract `Some(v)` or return `default` |
+| `.unwrap_or_else(f)` | `fn<T>(opt: Option<T>, f: fn() T) T` | Extract `Some(v)` or lazily compute a default |
 | `.map(f)` | `fn<T, U>(opt: Option<T>, f: fn(T) U) Option<U>` | Transform `Some(v)` into `Some(f(v))`; leaves `None` unchanged |
 | `.and_then(f)` | `fn<T, U>(opt: Option<T>, f: fn(T) Option<U>) Option<U>` | Chain Option-producing steps without nesting |
+| `.flatten()` | `fn<T>(opt: Option<Option<T>>) Option<T>` | Remove one level of nested `Option` |
+| `.filter(pred)` | `fn<T>(opt: Option<T>, pred: fn(T) Bool) Option<T>` | Keep `Some(v)` only when `pred(v)` is true |
+| `.or(other)` | `fn<T>(opt: Option<T>, other: Option<T>) Option<T>` | Return `opt` if it is `Some`, otherwise return `other` |
+| `.or_else(f)` | `fn<T>(opt: Option<T>, f: fn() Option<T>) Option<T>` | Return `opt` if it is `Some`, otherwise lazily compute another option |
+| `.inspect(f)` | `fn<T>(opt: Option<T>, f: fn(T) Void) Option<T>` | Run `f(v)` for `Some(v)` and return the original option |
 | `.ok_or(err)` | `fn<T, E>(opt: T?, err: E) Result<T, E>` | Convert to Result: `Some(v)` → `Ok(v)`, `None` → `Err(err)` |
 | `.ok_or_else(f)` | `fn<T, E>(opt: T?, f: fn() E) Result<T, E>` | Lazy variant — `f()` is only called when `opt` is `None` |
 | `.transpose()` | `fn<T, E>(opt: Option<Result<T, E>>) Result<Option<T>, E>` | Convert `Option<Result<T,E>>` into `Result<Option<T>,E>` |
@@ -48,8 +57,17 @@ Supports `try` sugar — `v := try expr` extracts the `Ok` value or propagates t
 
 | Function | Signature | Description |
 |----------|-----------|-------------|
+| `.is_ok()` | `fn<T, E>(res: Result<T, E>) Bool` | True when `res` is `Ok` |
+| `.is_err()` | `fn<T, E>(res: Result<T, E>) Bool` | True when `res` is `Err` |
+| `.unwrap()` | `fn<T, E: Stringify>(res: Result<T, E>) T` | Extract `Ok(v)`; traps with the error value if `res` is `Err(e)` |
+| `.unwrap_or(default)` | `fn<T, E>(res: Result<T, E>, default: T) T` | Extract `Ok(v)` or return `default` |
+| `.unwrap_or_else(f)` | `fn<T, E>(res: Result<T, E>, f: fn(E) T) T` | Extract `Ok(v)` or map the error to a fallback value |
 | `.map(f)` | `fn<T, U, E>(res: Result<T, E>, f: fn(T) U) Result<U, E>` | Transform `Ok(v)` into `Ok(f(v))`; leaves `Err(e)` unchanged |
+| `.map_err(f)` | `fn<T, E, F>(res: Result<T, E>, f: fn(E) F) Result<T, F>` | Transform `Err(e)` into `Err(f(e))`; leaves `Ok(v)` unchanged |
 | `.and_then(f)` | `fn<T, U, E>(res: Result<T, E>, f: fn(T) Result<U, E>) Result<U, E>` | Chain Result-producing steps without nested Results |
+| `.or_else(f)` | `fn<T, E, F>(res: Result<T, E>, f: fn(E) Result<T, F>) Result<T, F>` | Recover from an error by lazily producing another Result |
+| `.ok()` | `fn<T, E>(res: Result<T, E>) Option<T>` | Convert `Ok(v)` to `Some(v)` and discard errors |
+| `.err()` | `fn<T, E>(res: Result<T, E>) Option<E>` | Convert `Err(e)` to `Some(e)` and discard success values |
 | `.transpose()` | `fn<T, E>(res: Result<Option<T>, E>) Option<Result<T, E>>` | Convert `Result<Option<T>,E>` into `Option<Result<T,E>>` |
 
 ### `Cell<T>`
