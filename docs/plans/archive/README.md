@@ -171,3 +171,4 @@ Related historical context outside this folder:
 | [unused-import-cleanup.md](unused-import-cleanup.md) | Unused import detection with edit metadata, LSP code actions for removal, module-alias-aware false-negative fix |
 | [architecture-cleanup.md](architecture-cleanup.md) | Architecture cleanup, consolidate ownership boundaries, harden invariants, unify pipelines |
 | [diagnostic-reporting.md](diagnostic-reporting.md) | Rich multi-line diagnostic output with typed DiagKind variants, source snippets, underlines, and ANSI color |
+| [js-ffi.md](js-ffi.md) | User-facing `extern` declarations for JS/host FFI via WASM imports (Phase 1 complete; playground and Phase 2 richer types deferred) |

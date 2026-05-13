@@ -50,12 +50,6 @@ Self-hosting is complete. Historical design and status docs live in
 | Tooling | Formatter, linter, LSP, package manager | Planned | [tooling.md](tooling.md) |
 | LSP completion | Reliability during partial edits, protocol coverage | In Progress | [lsp-completion.md](lsp-completion.md) |
 
-### Language Features
-
-| Plan | Description | Status |
-|------|-------------|--------|
-| [js-ffi.md](js-ffi.md) | User-facing `extern` declarations for JS/host FFI via WASM imports | Planned |
-
 ### Active cross-cutting plans
 
 | Plan | Description |
