@@ -1,5 +1,11 @@
 # Length + trie dispatch for string case expressions
 
+## Status
+
+Implemented in the boot compiler's `boot/compiler/codegen/emit/match.tw`.
+Eligible string `case` expressions now use length dispatch followed by trie or
+small-chain dispatch, with final `rt_str__eq` guards at leaves.
+
 ## Context
 
 String `case` expressions are currently compiled as linear if-else chains. Each

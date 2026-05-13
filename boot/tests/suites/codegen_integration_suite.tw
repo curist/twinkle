@@ -471,6 +471,17 @@ fn test_match_literal_string() Result<Void, String> {
   .Ok({})
 }
 
+fn test_match_string_trie_dispatch() Result<Void, String> {
+  wat := try assert_codegen_src_compiles(
+    "fn classify(s: String) String {\n  case s {\n    \"alpha\" => \"a\",\n    \"bravo\" => \"b\",\n    \"gamma\" => \"g\",\n    \"delta\" => \"d\",\n    \"eagle\" => \"e\",\n    other => other,\n  }\n}\nprintln(classify(\"omega\"))\n",
+    "match string trie dispatch",
+  )
+  try assert.str_contains(wat, "string_case")
+  try assert.str_contains(wat, "array.get_u $rt_types__String")
+  try assert.str_contains(wat, "rt_str__eq")
+  .Ok({})
+}
+
 fn test_match_literal_int() Result<Void, String> {
   // Int literal pattern emits i64 comparison
   wat := try assert_codegen_src_compiles(
@@ -715,6 +726,7 @@ pub fn suite() runner.Suite {
     // Match emission coverage (ports emit_pattern_suite cases)
     .test("match: wildcard and var binding", test_match_wildcard_and_var_binding)
     .test("match: string literal emits rt_str__eq", test_match_literal_string)
+    .test("match: string trie dispatch", test_match_string_trie_dispatch)
     .test("match: int literal emits i64.eq", test_match_literal_int)
     .test("match: Result Ok/Err dispatch", test_match_result_ok_err)
     .test("match: wildcard catch-all arm", test_match_wildcard_catch_all)
