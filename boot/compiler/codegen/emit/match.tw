@@ -4,8 +4,9 @@ use compiler.mono_type.{MonoType}
 use compiler.backend.prepared_ir.{PreparedAtom, PreparedExpr, PreparedMatchArm, PreparedPattern}
 use compiler.codegen.wasm_ir.{ValType, Instr}
 use compiler.codegen.emit.context.{EmitCtx}
-use compiler.codegen.emit.helpers.{expr_always_diverges, all_arms_diverge}
+use compiler.codegen.emit.helpers.{expr_always_diverges, all_arms_diverge, pattern_is_trivial}
 use compiler.codegen.emit.control_flow.{append_result_store}
+use compiler.codegen.emit.layout_helpers.{cached_layout_of, get_sum_layout_ctx}
 
 pub type MatchEmitFns = .{
   emit_atom: fn(PreparedAtom, EmitCtx, Vector<Instr>) Vector<Instr>,
@@ -19,7 +20,11 @@ pub fn emit_match_op(scrutinee: PreparedAtom, arms: Vector<PreparedMatchArm>, re
   scrutinee_mono := fns.match_scrutinee_mono(scrutinee, ctx)
   // scrutinee_instrs is used as sub-body content, so keep as fresh []
   scrutinee_instrs := fns.emit_atom(scrutinee, ctx, [])
-  emit_arm_chain(scrutinee_instrs, scrutinee_mono, arms, result_idx, result_mono, ctx, buf, fns)
+  if is_br_table_eligible(arms, scrutinee_mono, ctx) {
+    emit_br_table_match(scrutinee_instrs, scrutinee_mono, arms, result_idx, result_mono, ctx, buf, fns)
+  } else {
+    emit_arm_chain(scrutinee_instrs, scrutinee_mono, arms, result_idx, result_mono, ctx, buf, fns)
+  }
 }
 
 fn emit_arm_chain(
@@ -61,6 +66,153 @@ fn emit_arm_chain(
   out := buf.concat(cond_instrs).append(.If(.None, then_body, else_body))
   if both_div {
     out = out.append(.Unreachable)
+  }
+  out
+}
+
+fn is_br_table_eligible(arms: Vector<PreparedMatchArm>, scrutinee_mono: MonoType, ctx: EmitCtx) Bool {
+  layout := cached_layout_of(scrutinee_mono, ctx)
+  variant_count := case layout {
+    .Sum(s) => s.variants.len(),
+    _ => { return false },
+  }
+
+  if variant_count == 0 { return false }
+
+  seen: Vector<Bool> = collect _ in 0..variant_count { false }
+  explicit_count := 0
+  catch_all_seen := false
+  last_idx := arms.len() - 1
+
+  for arm,i in arms {
+    case arm.pattern {
+      .Variant(_, vid, fields) => {
+        if catch_all_seen { return false }
+        if vid.id < 0 or vid.id >= variant_count { return false }
+        if seen[vid.id] { return false }
+        for field_pattern in fields {
+          if !pattern_is_trivial(field_pattern) { return false }
+        }
+        seen[vid.id] = true
+        explicit_count = explicit_count + 1
+      },
+      .Wildcard => {
+        if i != last_idx { return false }
+        if catch_all_seen { return false }
+        catch_all_seen = true
+      },
+      .Var(_) => {
+        if i != last_idx { return false }
+        if catch_all_seen { return false }
+        catch_all_seen = true
+      },
+      .LitInt(_) => { return false },
+      .LitBool(_) => { return false },
+      .LitStr(_) => { return false },
+    }
+  }
+
+  explicit_count >= 3
+}
+
+fn case_arm_label(result_idx: Int, tag: Int) String {
+  "$case_${result_idx}_arm_${tag}"
+}
+
+fn case_default_label(result_idx: Int) String {
+  "$case_${result_idx}_default"
+}
+
+fn case_end_label(result_idx: Int) String {
+  "$case_${result_idx}_end"
+}
+
+fn emit_br_table_match(
+  scrutinee_instrs: Vector<Instr>,
+  scrutinee_mono: MonoType,
+  arms: Vector<PreparedMatchArm>,
+  result_idx: Int,
+  result_mono: MonoType,
+  ctx: EmitCtx,
+  buf: Vector<Instr>,
+  fns: MatchEmitFns,
+) Vector<Instr> {
+  sum_layout := get_sum_layout_ctx(scrutinee_mono, ctx)
+  variant_count := sum_layout.variants.len()
+
+  tag_to_arm: Vector<Int> = collect _ in 0..variant_count { -1 }
+  default_arm_idx := -1
+
+  for arm,i in arms {
+    case arm.pattern {
+      .Variant(_, vid, _) => tag_to_arm[vid.id] = i,
+      .Wildcard => default_arm_idx = i,
+      .Var(_) => default_arm_idx = i,
+      _ => {},
+    }
+  }
+
+  default_label := case_default_label(result_idx)
+  end_label := case_end_label(result_idx)
+
+  table_labels: Vector<String> = []
+  explicit_tags: Vector<Int> = []
+  for tag in 0..variant_count {
+    arm_idx := tag_to_arm[tag]
+    if arm_idx >= 0 {
+      lbl := case_arm_label(result_idx, tag)
+      table_labels = table_labels.append(lbl)
+      explicit_tags = explicit_tags.append(tag)
+    } else {
+      table_labels = table_labels.append(default_label)
+    }
+  }
+
+  dispatch := scrutinee_instrs
+    .append(.StructGet(sum_layout.sym, 0))
+    .append(.BrTable(table_labels, default_label))
+
+  nested_body := dispatch
+  for tag in explicit_tags {
+    arm_idx := tag_to_arm[tag]
+    arm := arms[arm_idx]
+    arm_body := emit_match_arm_body(arm, scrutinee_instrs, scrutinee_mono, result_idx, result_mono, ctx, fns)
+    if !expr_always_diverges(arm.body) {
+      arm_body = arm_body.append(.Br(end_label))
+    }
+    nested_body = [Instr.Block(case_arm_label(result_idx, tag), .None, nested_body)].concat(arm_body)
+  }
+
+  default_body: Vector<Instr> = []
+  if default_arm_idx >= 0 {
+    default_arm := arms[default_arm_idx]
+    default_body = emit_match_arm_body(default_arm, scrutinee_instrs, scrutinee_mono, result_idx, result_mono, ctx, fns)
+  } else {
+    default_body = default_body.append(.Unreachable)
+  }
+
+  match_body := [Instr.Block(default_label, .None, nested_body)].concat(default_body)
+  out := buf.append(.Block(end_label, .None, match_body))
+  if all_arms_diverge(arms) {
+    out = out.append(.Unreachable)
+  }
+  out
+}
+
+fn emit_match_arm_body(
+  arm: PreparedMatchArm,
+  scrutinee_instrs: Vector<Instr>,
+  scrutinee_mono: MonoType,
+  result_idx: Int,
+  result_mono: MonoType,
+  ctx: EmitCtx,
+  fns: MatchEmitFns,
+) Vector<Instr> {
+  bindings := fns.emit_pattern_bindings(arm.pattern, scrutinee_instrs, scrutinee_mono, ctx)
+  body_instrs := fns.emit_expr(arm.body, result_mono, ctx, [])
+  out := bindings.concat(body_instrs)
+  if !expr_always_diverges(arm.body) {
+    out = append_result_store(out, result_idx, result_mono)
   }
   out
 }

@@ -158,6 +158,9 @@ Key points:
 - Each explicit arm block ends with `br $match_end` (unless it diverges).
 - Diverging arms (returning, breaking, erroring) skip the result store and
   `br $match_end`, same as the current if-else logic.
+- If every arm diverges, append an `unreachable` after the outer match block,
+  matching the existing if-else-chain lowering. This preserves Wasm validation
+  and type-flow behavior for matches whose result is never produced.
 - The wildcard/default body is emitted last, after all arm blocks. It stores
   the result and falls through to `$match_end` — no explicit `br` needed
   because it is already at the end of the outer block.
@@ -273,8 +276,11 @@ Logic:
    If no catch-all, emit `unreachable`. The bindings step is required for
    `.Var(sid)` catch-alls (e.g. `other => use(other)`) — without it the
    variable would read an unset local.
-7. Build the `br_table` label vector ordered by tag 0..N-1.
-8. Assemble the nested block structure with `BrTable` at the innermost level.
+7. If `all_arms_diverge(arms)` is true, append an `unreachable` after the
+   outer match block, just as `emit_arm_chain` does when both sides of the
+   generated if/else tree diverge.
+8. Build the `br_table` label vector ordered by tag 0..N-1.
+9. Assemble the nested block structure with `BrTable` at the innermost level.
 
 ### Step 3: Wire into `emit_match_op`
 
