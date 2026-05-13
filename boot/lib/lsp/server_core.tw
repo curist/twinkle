@@ -197,94 +197,98 @@ fn workspace_input(state: State, doc: document_store.Document) query_diagnostics
 }
 
 fn handle_hover(state: State, req: protocol.Request) Step {
-  case params.decode_hover(req.params) {
-    .Ok(hover_params) => {
-      uri := hover_params.text_document.uri
-      case document_store.get(state.documents, uri) {
-        .Some(doc) => {
-          offset := case line_index.position_to_byte_offset(doc.index, .{ line: hover_params.position.line, character: hover_params.position.character }, .Utf16) {
-            .Some(o) => o,
-            .None => { return .{ state, outgoing: [protocol.success_response(req.id, .Null)] } },
-          }
-          snap := workspace_snapshot(state, doc)
-          state.query_cache = snap.cache
-          case query_hover.hover(snap, offset, doc.text) {
-            .Some(result) => {
-              .{ state, outgoing: [protocol.success_response(req.id, lsp_hover.hover_response(doc.index, result))] }
-            },
-            .None => .{ state, outgoing: [protocol.success_response(req.id, .Null)] },
-          }
-        },
-        .None => .{ state, outgoing: [protocol.success_response(req.id, .Null)] },
-      }
+  hover_params := case params.decode_hover(req.params) {
+    .Ok(p) => p,
+    .Err(_) => { return null_response_step(state, req) },
+  }
+  doc := case document_store.get(state.documents, hover_params.text_document.uri) {
+    .Some(d) => d,
+    .None => { return null_response_step(state, req) },
+  }
+  offset := case position_offset(doc.index, hover_params.position) {
+    .Some(o) => o,
+    .None => { return null_response_step(state, req) },
+  }
+
+  snap := workspace_snapshot(state, doc)
+  state.query_cache = snap.cache
+  case query_hover.hover(snap, offset, doc.text) {
+    .Some(result) => {
+      .{ state, outgoing: [protocol.success_response(req.id, lsp_hover.hover_response(doc.index, result))] }
     },
-    .Err(_) => .{ state, outgoing: [protocol.success_response(req.id, .Null)] },
+    .None => null_response_step(state, req),
   }
 }
 
 fn handle_definition(state: State, req: protocol.Request) Step {
-  case params.decode_definition(req.params) {
-    .Ok(def_params) => {
-      uri := def_params.text_document.uri
-      case document_store.get(state.documents, uri) {
-        .Some(doc) => {
-          offset := case line_index.position_to_byte_offset(doc.index, .{ line: def_params.position.line, character: def_params.position.character }, .Utf16) {
-            .Some(o) => o,
-            .None => { return .{ state, outgoing: [protocol.success_response(req.id, .Null)] } },
-          }
-          snap := workspace_snapshot(state, doc)
-          state.query_cache = snap.cache
-          case query_definition.definition(snap, offset) {
-            .Some(result) => {
-              target_index := definition_target_index(state.documents, result.uri, doc.index)
-              .{ state, outgoing: [protocol.success_response(req.id, lsp_definition.definition_response(target_index, result))] }
-            },
-            .None => .{ state, outgoing: [protocol.success_response(req.id, .Null)] },
-          }
-        },
-        .None => .{ state, outgoing: [protocol.success_response(req.id, .Null)] },
-      }
+  def_params := case params.decode_definition(req.params) {
+    .Ok(p) => p,
+    .Err(_) => { return null_response_step(state, req) },
+  }
+  doc := case document_store.get(state.documents, def_params.text_document.uri) {
+    .Some(d) => d,
+    .None => { return null_response_step(state, req) },
+  }
+  offset := case position_offset(doc.index, def_params.position) {
+    .Some(o) => o,
+    .None => { return null_response_step(state, req) },
+  }
+
+  snap := workspace_snapshot(state, doc)
+  state.query_cache = snap.cache
+  case query_definition.definition(snap, offset) {
+    .Some(result) => {
+      target_index := definition_target_index(state.documents, result.uri, doc.index)
+      .{ state, outgoing: [protocol.success_response(req.id, lsp_definition.definition_response(target_index, result))] }
     },
-    .Err(_) => .{ state, outgoing: [protocol.success_response(req.id, .Null)] },
+    .None => null_response_step(state, req),
   }
 }
 
 fn handle_completion(state: State, req: protocol.Request) Step {
-  case params.decode_completion(req.params) {
-    .Ok(comp_params) => {
-      uri := comp_params.text_document.uri
-      case document_store.get(state.documents, uri) {
-        .Some(doc) => {
-          offset := case line_index.position_to_byte_offset(doc.index, .{ line: comp_params.position.line, character: comp_params.position.character }, .Utf16) {
-            .Some(o) => o,
-            .None => { return .{ state, outgoing: [protocol.success_response(req.id, json.array([]))] } },
-          }
-          snap := completion_snapshot(state, doc)
-          state.query_cache = snap.cache
-          items := query_completion.complete(snap, offset, doc.text)
-          .{ state, outgoing: [protocol.success_response(req.id, lsp_completion.completion_response(items))] }
-        },
-        .None => .{ state, outgoing: [protocol.success_response(req.id, json.array([]))] },
-      }
-    },
-    .Err(_) => .{ state, outgoing: [protocol.success_response(req.id, json.array([]))] },
+  comp_params := case params.decode_completion(req.params) {
+    .Ok(p) => p,
+    .Err(_) => { return empty_array_response_step(state, req) },
   }
+  doc := case document_store.get(state.documents, comp_params.text_document.uri) {
+    .Some(d) => d,
+    .None => { return empty_array_response_step(state, req) },
+  }
+  offset := case position_offset(doc.index, comp_params.position) {
+    .Some(o) => o,
+    .None => { return empty_array_response_step(state, req) },
+  }
+
+  snap := completion_snapshot(state, doc)
+  state.query_cache = snap.cache
+  items := query_completion.complete(snap, offset, doc.text)
+  .{ state, outgoing: [protocol.success_response(req.id, lsp_completion.completion_response(items))] }
 }
 
 fn handle_code_action(state: State, req: protocol.Request) Step {
-  case params.decode_code_action(req.params) {
-    .Ok(action_params) => {
-      uri := action_params.text_document.uri
-      case document_store.get(state.documents, uri) {
-        .Some(doc) => {
-          actions := lsp_code_action.unused_import_actions(doc.uri, doc.index, action_params.context_diagnostics)
-          .{ state, outgoing: [protocol.success_response(req.id, json.array(actions))] }
-        },
-        .None => .{ state, outgoing: [protocol.success_response(req.id, json.array([]))] },
-      }
-    },
-    .Err(_) => .{ state, outgoing: [protocol.success_response(req.id, json.array([]))] },
+  action_params := case params.decode_code_action(req.params) {
+    .Ok(p) => p,
+    .Err(_) => { return empty_array_response_step(state, req) },
   }
+  doc := case document_store.get(state.documents, action_params.text_document.uri) {
+    .Some(d) => d,
+    .None => { return empty_array_response_step(state, req) },
+  }
+
+  actions := lsp_code_action.unused_import_actions(doc.uri, doc.index, action_params.context_diagnostics)
+  .{ state, outgoing: [protocol.success_response(req.id, json.array(actions))] }
+}
+
+fn position_offset(index: line_index.LineIndex, position: params.Position) Int? {
+  line_index.position_to_byte_offset(index, .{ line: position.line, character: position.character }, .Utf16)
+}
+
+fn null_response_step(state: State, req: protocol.Request) Step {
+  .{ state, outgoing: [protocol.success_response(req.id, .Null)] }
+}
+
+fn empty_array_response_step(state: State, req: protocol.Request) Step {
+  .{ state, outgoing: [protocol.success_response(req.id, json.array([]))] }
 }
 
 fn project_root_for_document(file_path: String) String {
