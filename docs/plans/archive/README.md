@@ -172,3 +172,4 @@ Related historical context outside this folder:
 | [architecture-cleanup.md](architecture-cleanup.md) | Architecture cleanup, consolidate ownership boundaries, harden invariants, unify pipelines |
 | [diagnostic-reporting.md](diagnostic-reporting.md) | Rich multi-line diagnostic output with typed DiagKind variants, source snippets, underlines, and ANSI color |
 | [js-ffi.md](js-ffi.md) | User-facing `extern` declarations for JS/host FFI via WASM imports (Phase 1 complete; playground and Phase 2 richer types deferred) |
+| [anonymous-record-variant.md](anonymous-record-variant.md) | Anonymous record types as variant payloads in enum declarations, with synthesized scoped record types and cross-module export support |
