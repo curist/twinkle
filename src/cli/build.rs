@@ -35,16 +35,22 @@ pub fn build_file(file_path: &str, output: Option<&str>, emit_wat: bool) -> Resu
 
 pub fn build_wat(file_path: &str) -> Result<String> {
     let pipeline = crate::backend_pipeline::compile_backend_opt(file_path)?;
+    build_wat_from_core_module(pipeline.core_module)
+}
 
-    let user_module = emit_user_module(
-        &pipeline.optimized_anf_module,
-        &pipeline.core_module.type_env,
-    );
+/// Build WAT from an already-compiled CoreModule (useful for source-map compilation tests).
+pub fn build_wat_from_core_module(core_module: crate::ir::core::CoreModule) -> Result<String> {
+    let core_module = crate::ir::monomorphize(core_module);
+    let anf_module = crate::ir::lower_anf::lower_module(&core_module);
+    crate::ir::anf::verify::verify_module_or_panic(&anf_module, "post-lowering");
+    let optimized_anf_module = crate::opt::optimize_module(anf_module);
+    crate::ir::anf::verify::verify_module_or_panic(&optimized_anf_module, "post-optimization");
+
+    let user_module = emit_user_module(&optimized_anf_module, &core_module.type_env);
     let mut modules = runtime::all_modules();
     modules.push(user_module);
 
-    let extern_modules: std::collections::HashSet<String> = pipeline
-        .optimized_anf_module
+    let extern_modules: std::collections::HashSet<String> = optimized_anf_module
         .extern_imports
         .values()
         .map(|ext| ext.wasm_module.clone())

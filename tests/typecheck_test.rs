@@ -310,8 +310,6 @@ fn test_byte_literal_out_of_range_reports_note() {
 //
 #[test]
 fn test_closure_capture_by_value() {
-    // Use top-level statements (not `fn main`) so interpreter execution path
-    // in tests matches other run fixtures.
     let src = r#"
 fn main() {
     acc := 0
@@ -327,15 +325,11 @@ main()
         std::process::id()
     ));
     fs::write(&path, src).expect("write temp tw source");
-    let (core_module, _registry) =
-        twinkle::module::compile_entry(path.to_str().expect("temp path utf8"))
-            .expect("compile capture_by_value snippet");
-    let mut interp = twinkle::interp::Interpreter::new(core_module, Vec::<u8>::new());
-    interp.run().expect("run capture_by_value snippet");
-    let bytes = interp.into_output();
-    let output = String::from_utf8(bytes).expect("interpreter output is valid UTF-8");
+    let path_str = path.to_str().expect("temp path utf8");
+    let (stdout, _stderr) =
+        twinkle::cli::run_wasm::run_wasm_capture(path_str).expect("run capture_by_value snippet");
     let _ = fs::remove_file(path);
-    assert_eq!(output, "0\n1\n");
+    assert_eq!(stdout, "0\n1\n");
 }
 
 #[test]

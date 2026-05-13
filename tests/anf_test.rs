@@ -386,7 +386,7 @@ fn anf_defer_if() {
     check("tests/run/defer_if.tw");
 }
 
-// Trap tests — these panic at the interpreter level, but the lowering to ANF
+// Trap tests — these trap at runtime, but the lowering to ANF
 // should still succeed (trapping happens at runtime, not at compile time).
 #[test]
 fn anf_trap_array_oob() {

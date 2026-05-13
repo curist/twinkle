@@ -54,8 +54,7 @@ pub enum CoreExprKind {
 
     // Variables
     Local(LocalId),
-    /// Reference to a module-level global. The interpreter resolves this
-    /// from the globals store rather than the current call frame.
+    /// Reference to a module-level global.
     GlobalLocal(LocalId),
     GlobalFunc(FuncId),
 
@@ -137,9 +136,8 @@ pub enum CoreExprKind {
     },
 
     /// Defer: schedules the inner expression to run when the enclosing scope exits.
-    /// Treated as an opaque pass-through by all stages except the interpreter
-    /// (which executes it on scope exit) and the ANF elimination pass (which
-    /// rewrites it away). The WAT backend never sees this node.
+    /// The ANF elimination pass rewrites this away before codegen.
+    /// The WAT backend never sees this node.
     Defer(Box<CoreExpr>),
 
     // Data structures
@@ -218,7 +216,7 @@ pub struct CoreModule {
     pub type_env: TypeEnv,
     /// Entry module's __init__ FuncId (for display / CLI tools)
     pub init_func_id: Option<FuncId>,
-    /// All module __init__ FuncIds in dependency order; the interpreter runs these in sequence
+    /// All module __init__ FuncIds in dependency order
     pub all_init_func_ids: Vec<FuncId>,
     /// Extern function declarations keyed by FuncId.
     pub extern_imports: HashMap<FuncId, ExternImport>,

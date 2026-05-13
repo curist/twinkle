@@ -69,12 +69,7 @@ fn dce_renumbers_funcids_compactly() {
 fn dce_preserves_program_correctness() {
     // Verify the program still produces correct output after DCE
     let path = fixture("dce_test/main.tw");
-    let (core_module, _) =
-        twinkle::module::compile_entry(&path).expect("compile_entry should succeed");
-
-    let mut output = Vec::new();
-    let mut interp = twinkle::interp::Interpreter::new(core_module, &mut output);
-    interp.run().expect("interpreter should succeed");
-    let output_str = String::from_utf8(output).expect("output should be utf8");
-    assert_eq!(output_str.trim(), "6");
+    let (stdout, _stderr) =
+        twinkle::cli::run_wasm::run_wasm_capture(&path).expect("wasm run should succeed");
+    assert_eq!(stdout.trim(), "6");
 }

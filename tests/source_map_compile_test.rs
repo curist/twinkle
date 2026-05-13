@@ -36,9 +36,8 @@ pub fn answer() Int {
         &stdlib_root,
     )
     .expect("source-map compile should succeed");
-    let mut interp = twinkle::interp::Interpreter::new(core_module, Vec::<u8>::new());
-    interp.run().expect("compiled module should run");
-    let output = String::from_utf8(interp.into_output()).expect("utf8 output");
+    let (output, _stderr) = twinkle::cli::run_wasm::run_core_module_capture(core_module)
+        .expect("compiled module should run");
     assert_eq!(output, "42\n");
 }
 
@@ -108,9 +107,8 @@ pub fn cwd() String {
     )
     .expect("stdlib module should be allowed to call __host_*");
 
-    let mut interp = twinkle::interp::Interpreter::new(core_module, Vec::<u8>::new());
-    interp.run().expect("compiled module should run");
-    let output = String::from_utf8(interp.into_output()).expect("utf8 output");
+    let (output, _stderr) = twinkle::cli::run_wasm::run_core_module_capture(core_module)
+        .expect("compiled module should run");
     assert!(!output.trim().is_empty(), "cwd output should not be empty");
 }
 
@@ -159,9 +157,8 @@ pub fn first_or<A>(xs: Vector<A>, fallback: A) A {
     )
     .expect("new prelude method should compile without Rust-side registration changes");
 
-    let mut interp = twinkle::interp::Interpreter::new(core_module, Vec::<u8>::new());
-    interp.run().expect("compiled module should run");
-    let output = String::from_utf8(interp.into_output()).expect("utf8 output");
+    let (output, _stderr) = twinkle::cli::run_wasm::run_core_module_capture(core_module)
+        .expect("compiled module should run");
     assert_eq!(output, "1\n99\n");
 }
 
@@ -373,9 +370,8 @@ pub fn bad<T>(value: T) Cell<T> {
     )
     .expect("nested prelude signature modules should be ignored for auto-import");
 
-    let mut interp = twinkle::interp::Interpreter::new(core_module, Vec::<u8>::new());
-    interp.run().expect("compiled module should run");
-    let output = String::from_utf8(interp.into_output()).expect("utf8 output");
+    let (output, _stderr) = twinkle::cli::run_wasm::run_core_module_capture(core_module)
+        .expect("compiled module should run");
     assert_eq!(output, "ok\n");
 }
 
@@ -428,9 +424,8 @@ pub fn greet(name: String) String {
     )
     .expect("relative import from nested module should compile");
 
-    let mut interp = twinkle::interp::Interpreter::new(core_module, Vec::<u8>::new());
-    interp.run().expect("compiled module should run");
-    let output = String::from_utf8(interp.into_output()).expect("utf8 output");
+    let (output, _stderr) = twinkle::cli::run_wasm::run_core_module_capture(core_module)
+        .expect("compiled module should run");
     assert_eq!(output, "hello world\n");
 }
 
@@ -471,9 +466,8 @@ pub fn double(x: Int) Int {
     )
     .expect("relative import from root module should compile");
 
-    let mut interp = twinkle::interp::Interpreter::new(core_module, Vec::<u8>::new());
-    interp.run().expect("compiled module should run");
-    let output = String::from_utf8(interp.into_output()).expect("utf8 output");
+    let (output, _stderr) = twinkle::cli::run_wasm::run_core_module_capture(core_module)
+        .expect("compiled module should run");
     assert_eq!(output, "42\n");
 }
 
@@ -525,8 +519,7 @@ pub fn args() Vector<String> {
     )
     .expect("relative + stdlib imports should coexist");
 
-    let mut interp = twinkle::interp::Interpreter::new(core_module, Vec::<u8>::new());
-    interp.run().expect("compiled module should run");
-    let output = String::from_utf8(interp.into_output()).expect("utf8 output");
+    let (output, _stderr) = twinkle::cli::run_wasm::run_core_module_capture(core_module)
+        .expect("compiled module should run");
     assert_eq!(output, "hi relative\n");
 }

@@ -2,7 +2,7 @@
 //!
 //! These tests compile a single comprehensive `.tw` fixture through the full
 //! backend pipeline and assert that:
-//!   1. Both interpreter and Wasm produce identical, correct output.
+//!   1. Wasm produces correct output.
 //!   2. The generated WAT contains expected typed boundary structures
 //!      (typed closures, typed Option/Result structs, typed iterator state,
 //!       typed cells, trampolines).
@@ -29,30 +29,12 @@ fn build_wat() -> String {
 }
 
 // ---------------------------------------------------------------------------
-// 1. Behavioral correctness (interp + wasm agree with expected output)
+// 1. Behavioral correctness (wasm produces expected output)
 // ---------------------------------------------------------------------------
-
-#[test]
-fn boundary_characterization_interp() {
-    common::assert_interp_fixture(Path::new(FIXTURE));
-}
 
 #[test]
 fn boundary_characterization_wasm() {
     common::assert_wasm_fixture(Path::new(FIXTURE));
-}
-
-#[test]
-fn boundary_characterization_differential() {
-    let interp =
-        common::run_interp_capture(Path::new(FIXTURE)).expect("interpreter should succeed");
-    let (wasm_stdout, _) =
-        common::run_wasm_capture(Path::new(FIXTURE)).expect("wasm should succeed");
-    assert_eq!(
-        interp.lines().collect::<Vec<_>>(),
-        wasm_stdout.lines().collect::<Vec<_>>(),
-        "interpreter and wasm output must match for boundary characterization"
-    );
 }
 
 // ---------------------------------------------------------------------------

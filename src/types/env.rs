@@ -130,7 +130,7 @@ impl TypeEnv {
             }),
             RANGE_TYPE_ID,
         );
-        // TypeId(4) = Iterator<T> — opaque iterator, no fields (state is held in interpreter)
+        // TypeId(4) = Iterator<T> — opaque iterator, no fields (state is held at runtime)
         assert_eq!(
             env.add_type(TypeDef::Record {
                 name: "Iterator".to_string(),

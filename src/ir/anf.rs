@@ -7,7 +7,7 @@
 /// The ANF pipeline sits between Core IR and the WAT/Wasm backend:
 ///   Core IR → ANF IR → WAT/Wasm backend
 ///
-/// The interpreter continues to use Core IR directly; ANF is backend-only.
+/// ANF is used by the Wasm backend.
 use std::collections::HashMap;
 use std::fmt;
 

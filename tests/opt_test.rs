@@ -580,13 +580,9 @@ fn op_count_calls_to(op: &AnfOp, func_id: FuncId) -> usize {
 }
 
 fn run_and_capture(path: &str) -> String {
-    let (core_module, _registry) = twinkle::module::compile_entry(path)
-        .unwrap_or_else(|e| panic!("compile_entry failed for {path}: {e}"));
-    let mut interp = twinkle::interp::Interpreter::new(core_module, Vec::<u8>::new());
-    interp
-        .run()
-        .unwrap_or_else(|e| panic!("interpreter run failed for {path}: {e}"));
-    String::from_utf8(interp.into_output()).expect("interpreter output is valid UTF-8")
+    let (stdout, _stderr) = twinkle::cli::run_wasm::run_wasm_capture(path)
+        .unwrap_or_else(|e| panic!("run_wasm_capture failed for {path}: {e}"));
+    stdout
 }
 
 fn assert_runtime_output(path: &str, expected: &[&str]) {
@@ -997,8 +993,7 @@ fn opt_vector_set_cell_closure_loop_branch_escape_wasm_semantics() {
 
 #[test]
 fn opt_vector_set_cell_closure_loop_branch_escape_wasm_stress() {
-    // Stronger Wasm-only stress case. Keep the interpreter-side semantics test
-    // lightweight, but push the Wasm runtime with a larger loop count.
+    // Stronger stress case with a larger loop count.
     assert_runtime_output_wasm(
         "tests/opt/vector_set_cell_closure_loop_branch_escape_wasm_stress.tw",
         &["1", "99"],

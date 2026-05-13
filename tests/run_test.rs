@@ -3,11 +3,11 @@ mod common;
 use std::path::Path;
 
 fn check(path: &str) {
-    common::assert_interp_fixture(Path::new(path));
+    common::assert_wasm_fixture(Path::new(path));
 }
 
 fn check_trap(path: &str) {
-    common::assert_interp_fixture(Path::new(path));
+    common::assert_wasm_fixture(Path::new(path));
 }
 
 #[test]

@@ -1120,6 +1120,16 @@ pub fn execute_module(engine: &Engine, module: &Module) -> Result<(String, Strin
     Ok((out.stdout.clone(), out.stderr.clone()))
 }
 
+/// Run a pre-compiled CoreModule through the Wasm pipeline and return captured (stdout, stderr).
+pub fn run_core_module_capture(
+    core_module: crate::ir::core::CoreModule,
+) -> Result<(String, String)> {
+    let wat = crate::cli::build::build_wat_from_core_module(core_module)?;
+    let engine = build_engine()?;
+    let module = Module::new(&engine, &wat).context("failed to compile Wasm module from WAT")?;
+    execute_module(&engine, &module)
+}
+
 pub fn run_wasm_capture(path: &str) -> Result<(String, String)> {
     let (stdout, stderr, exit_code) = run_wasm_capture_with_exit_code(path, &[], false)?;
     if let Some(code) = exit_code {
