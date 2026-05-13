@@ -25,14 +25,19 @@ The MVP should preserve Twinkle's current value model:
 
 ## User-facing API Shape
 
-Initial API:
+MVP API (Phase 1):
 
 ```tw
 type Task<T>
 
 fn Task.spawn<T>(f: fn() T) Task<T>
 fn Task.await<T>(task: Task<T>) T
-fn Task.yield_now() Void
+```
+
+Phase 2 adds:
+
+```tw
+fn Task.yield() Void
 ```
 
 The primary style is dot-call based:
@@ -68,11 +73,14 @@ Tasks are cooperative and single-threaded. Only one task runs at a time. The
 scheduler never preempts a running task. A task gives control back to the
 scheduler only at defined suspension points.
 
-For the initial implementation, valid suspension points are runtime-controlled:
+Suspension points are introduced across phases:
 
-* task completion;
-* `Task.yield_now()`;
-* future host async operations, once added.
+* Phase 1: task completion; `Task.await` synchronously drives the scheduler
+  (no continuation saving required).
+* Phase 2: `Task.yield()` re-enqueues the current task; suspending
+  `Task.await` saves the current continuation and parks it as a waiter until
+  the awaited task completes.
+* Future: host async operations that complete via callbacks.
 
 The exact fairness policy can start as FIFO runnable queue semantics.
 
@@ -84,8 +92,10 @@ specified as a runtime/library operation with implementation-defined suspension
 constraints. In practice, the compiler/runtime may initially restrict `await` to
 places it can lower safely.
 
-A conservative first implementation may support `await` from task bodies and the
-main entry fiber/task only, then broaden support as lowering improves.
+Phase 1 `Task.await` may synchronously drive the scheduler: run queued tasks
+until the awaited task completes, then return the result. This does not require
+saving the current continuation. Phase 2 `Task.await` may suspend the current
+task and resume it later via the state-machine transform.
 
 ### Cells and shared state
 
@@ -97,7 +107,7 @@ for the MVP.
 Rule for MVP:
 
 > `Cell.update` callbacks must be non-suspending. They cannot call
-> `Task.await`, `Task.yield_now`, or future suspending host APIs.
+> `Task.await`, `Task.yield`, or future suspending host APIs.
 
 This avoids reentrancy surprises and keeps `Cell.update` atomic with respect to
 the cooperative scheduler.
@@ -140,23 +150,25 @@ switching without committing the public API to raw coroutine semantics.
 
 Add the builtin `Task<T>` type and basic runtime structures:
 
-* task object with state: pending/running/done/trapped;
+* task object with state: pending/running/done (trapped state reserved for
+  future phases with Wasm exception handling support);
 * result storage for completed tasks;
 * FIFO runnable queue;
 * `Task.spawn` to enqueue a closure;
 * `Task.await` for already-completed tasks and scheduler-driven completion;
 * entrypoint integration that drains the scheduler as needed.
 
-This phase may run spawned tasks to completion unless they call a supported
-runtime yield point.
+In Phase 1, spawned tasks run to completion when scheduled. Suspension points
+other than completion are introduced in later phases.
 
 ### Phase 2: Cooperative yield points
 
-Add `Task.yield_now()` as an explicit scheduler boundary. Lower supported task
-bodies into resumable state machines or an equivalent trampoline representation.
+Add `Task.yield()` as an explicit scheduler boundary. Lower supported task
+bodies into intraprocedural state machines and run them through the scheduler's
+trampoline loop.
 
-Keep the first supported shape narrow if necessary. For example, support
-`yield_now` only directly inside task bodies before allowing suspension through
+Keep the first supported shape narrow: support `yield` and suspending
+`await` only directly inside task bodies before allowing suspension through
 arbitrary nested calls.
 
 ### Phase 3: Host async integration
@@ -200,11 +212,67 @@ Initial lowering can be deliberately limited:
 
 * `Task.spawn(fn() T { ... })` accepts a closure and constructs a task object;
 * task bodies may initially run to completion;
-* `Task.yield_now` and non-completed `await` require resumable lowering before
-  being accepted generally.
+* `Task.yield` and Phase 2-style suspending `await` require resumable lowering
+  before being accepted generally.
 
 Diagnostics should be explicit when code uses suspension in an unsupported
 position.
+
+### Suspension lowering strategy
+
+Use a trampoline runtime from the start, but keep the first resumable compiler
+transform as an intraprocedural state machine. This avoids depending on stackful
+Wasm suspension and keeps ordinary Twinkle functions as ordinary Wasm calls.
+
+A suspendable task body is lowered to a task frame plus a generated resume
+function. The frame stores the program counter and locals live across suspension
+points. The scheduler repeatedly invokes resume functions until each task
+completes, traps, or returns `Suspend`.
+
+Conceptually:
+
+```text
+TaskFrame {
+  pc: Int
+  // hoisted locals live across suspension points
+}
+
+resume(frame):
+  switch frame.pc:
+    0:
+      ...
+      frame.pc = 1
+      return Suspend
+    1:
+      ...
+      return Complete(value)
+```
+
+`Task.yield()` saves the next program counter, stores live locals in the
+frame, returns `Suspend`, and lets the scheduler re-enqueue the task.
+`Task.await(other)` checks whether `other` is complete; if so, it reads the
+result and continues. If not, it stores the current task as a waiter on `other`,
+saves the continuation state, and returns `Suspend`.
+
+For Phase 2, suspension is task-body-only:
+
+* only closures passed directly to `Task.spawn` are eligible for resumable
+  lowering;
+* `Task.yield()` is accepted only directly in those task bodies;
+* `Task.await()` may suspend only in top-level code or directly in those task
+  bodies;
+* ordinary functions called from a task body are non-suspending.
+
+A validation pass should classify calls to known suspending operations and reject
+them when they appear in unsupported positions, including inside `Cell.update`
+callbacks. Diagnostics should explain that the operation would require
+suspension through an ordinary call frame.
+
+General CPS lowering is deferred until Twinkle needs suspension through nested
+calls. At that point, add a suspending-function classification/effect and either
+CPS-transform those functions or extend the state-machine transform across call
+boundaries. Wasm stack switching can still replace the implementation later, but
+the public `Task<T>` API should not depend on it.
 
 ### Runtime representation
 
@@ -213,39 +281,93 @@ A task object needs at least:
 * state;
 * closure or continuation;
 * result slot;
-* waiters/dependents, once `await` can suspend;
-* trapped/error payload if the runtime records trap details.
+* waiters/dependents, once `await` can suspend.
 
 The task queue must be visible to GC root marking.
 
 ## Stage0 and Boot Compiler Plan
 
-The boot compiler is the primary implementation, but this feature touches the
-language/runtime surface. Implement it in both compilers in staged form:
+The boot compiler is the primary implementation. Stage0 (Rust) is a compiler,
+not an interpreter — it does not need to execute tasks itself. It needs to:
+
+1. **Type-check** `Task<T>` and the builtin function signatures.
+2. **Emit valid Wasm** for task operations (constructing task objects, calling
+   runtime scheduling functions, etc.).
+
+The actual task scheduling happens in the emitted Wasm, executed by the Node.js
+runtime. This means stage0 needs frontend and codegen support for tasks, but not
+its own in-process task scheduler — the same work it already does for every
+other builtin type.
+
+Implementation order:
 
 1. Add the spec/API documentation first.
-2. Add `Task<T>` and builtin signatures to stage0 and boot so both frontends can
-   parse, resolve, and type-check programs using the API.
-3. Implement runtime/codegen behavior in boot first where possible.
-4. Keep stage0 either behaviorally equivalent or explicitly limited to the
-   subset needed to bootstrap and run parity tests.
-5. Once boot uses any task API internally or tests depend on task execution,
-   stage0 must support enough of the same behavior to rebuild the boot compiler.
+2. Add `Task<T>` and builtin signatures to both stage0 and boot so both
+   frontends can parse, resolve, and type-check programs using the API.
+3. Implement runtime/codegen behavior in boot first.
+4. Add codegen support to stage0 so it emits valid Wasm for task operations.
+   Stage0 does not need to replicate the scheduler — it just needs to emit code
+   that calls the same runtime functions the boot compiler targets.
+5. If the boot compiler's own source starts using tasks, stage0 must be able to
+   compile that code to valid Wasm. Since the runtime is in the emitted Wasm
+   (not in stage0 itself), this is a codegen task, not a runtime task.
+6. If Phase 2 suspension lowering (state-machine transform) is needed for boot
+   compiler source, stage0 must implement the same transform. Until then, stage0
+   can reject `Task.yield` and suspending `await` while supporting Phase 1
+   run-to-completion task operations.
 
-In other words: yes, this should exist in both stage0 and boot for language
-surface parity. The boot compiler can lead, but stage0 cannot be ignored if the
-new builtins become part of bootstrapping, stdlib, or conformance tests.
+## Design Decisions
 
-## Open Questions
+* **`Task.await` at top level:** Yes. The main module is implicitly a task, so
+  `await` works everywhere including top-level code. Restricting it to task
+  bodies would make results impossible to consume without a separate "run the
+  scheduler" entrypoint.
 
-* Should `Task.await` be allowed at top level, or only inside task bodies?
-* Should `Task.spawn` start eagerly immediately, or only when the scheduler is
-  run/awaited? The proposed default is eager scheduling, cooperative execution.
-* What result should `await` produce if a task traps? Trap again, or return a
-  runtime error object? The proposed default is to trap.
-* How much suspension should the first backend support: task-body-only or nested
-  function calls as well?
-* Should cancellation exist in the initial API, or wait for structured
-  concurrency?
-* Should `Task.yield_now()` be part of MVP, or should MVP start with spawn/await
-  only and no explicit yield?
+* **Eager vs deferred spawn:** Eager enqueue. `Task.spawn` adds the task to the
+  runnable queue immediately, but it does not run until the current task reaches
+  a yield or await point, preserving cooperative semantics.
+
+* **Trap propagation:** In Phase 1 and 2, a task body trap aborts execution
+  immediately like any ordinary Wasm trap. A future trap-catching implementation
+  (via Wasm exception handling) may record a `trapped` task state and make
+  `Task.await` re-trap the awaiter. A `Task.try_await` returning `Result` can
+  be considered at that point.
+
+* **Suspension depth in Phase 2:** Task-body-only first. `Task.yield` is
+  supported directly inside task bodies. Suspension through arbitrary nested
+  calls requires CPS transform or Wasm stack-switching support and is deferred
+  to a later phase.
+
+* **Cancellation:** Deferred to a future structured concurrency phase. The
+  initial API has no cancellation mechanism.
+
+* **`Task.yield` in MVP:** Deferred. Phase 1 (MVP) ships spawn/await only.
+  `Task.yield` arrives in Phase 2 alongside resumable lowering.
+
+* **Task identity:** Reference/pointer equality. Two task values are equal iff
+  they refer to the same task object. Equality and hash support, if exposed to
+  collections, use identity semantics (pointer-based). This is sufficient for
+  `Task.race`-style APIs that need to identify which task completed.
+
+* **Phase 1 value:** Phase 1 tasks run to completion when scheduled; `spawn`
+  only enqueues them. `Task.spawn` followed by `task.await()` is operationally
+  equivalent to calling the function directly. The value of Phase 1 is
+  type-system and runtime scaffolding: it establishes `Task<T>` as a builtin
+  type, wires up the scheduler data structures, and lets user code adopt the
+  task API before suspension is available. Real concurrency begins in Phase 2.
+
+* **Top-level await model:** Top-level module code is wrapped in an implicit
+  root task (or root scheduler frame), so `Task.await` can drive the scheduler
+  from top-level code without special syntax. In Phase 2, the root task uses
+  the same resumable lowering rules as spawned task bodies if top-level `await`
+  needs to suspend.
+
+* **Unawaited tasks:** When top-level code completes, the runtime drains
+  runnable tasks until the queue is empty or a deadlock is detected. This makes
+  eagerly spawned tasks run even if their result is not awaited. A spawned task
+  is a commitment to execute, not a lazy thunk.
+
+* **Await cycles / self-await:** Awaiting a task that cannot make progress (self-
+  await, mutual cycles) is a runtime deadlock. The scheduler should trap when it
+  has no runnable tasks but outstanding awaits remain.
+
