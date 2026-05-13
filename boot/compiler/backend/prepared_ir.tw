@@ -156,6 +156,7 @@ pub type PreparedMatchArm = .{ pattern: PreparedPattern, body: PreparedExpr }
 pub type PreparedFunc = .{
   func_id: FuncId,
   name: String,
+  is_init: Bool,
   // Slots in ABI order:
   captures: Vector<SlotId>,    // CaptureParam slots (empty for non-closures)
   params: Vector<SlotId>,      // Param slots (declared parameters)

@@ -15,10 +15,23 @@ use compiler.opt.pipeline.{optimize_module, optimize_module_with_semantics}
 fn lid(id: Int) LocalId { LocalId.{ id: id } }
 fn fid(id: Int) FuncId { FuncId.{ id: id } }
 
+fn make_init_func(id: Int, body: AnfExpr) AnfFunctionDef {
+  AnfFunctionDef.{
+    func_id: fid(id),
+    name: "$init",
+    is_init: true,
+    params: [],
+    op_result_mono: Dict.new(),
+    body: body,
+    return_ty: .Void,
+  }
+}
+
 fn make_func(id: Int, name: String, body: AnfExpr) AnfFunctionDef {
   AnfFunctionDef.{
     func_id: fid(id),
     name: name,
+    is_init: false,
     params: [],
     op_result_mono: Dict.new(),
     body: body,
@@ -30,6 +43,7 @@ fn make_func_with_params(id: Int, name: String, params: Vector<Param>, body: Anf
   AnfFunctionDef.{
     func_id: fid(id),
     name: name,
+    is_init: false,
     params: params,
     op_result_mono: Dict.new(),
     body: body,
@@ -90,14 +104,14 @@ fn test_branch_simp_then_dead_elim() Result<Void, String> {
 
 // ── Test: pinned locals not eliminated ──────────────────────────────
 
-// __init__ defines local 0 (x = 42), another function references local 0 as free
-// Dead let should NOT eliminate x even though it seems "unused" within __init__
+// $init defines local 0 (x = 42), another function references local 0 as free
+// Dead let should NOT eliminate x even though it seems "unused" within $init
 fn test_pinned_locals_preserved() Result<Void, String> {
-  // __init__: let x = 42; Atom(Void)
+  // $init: let x = 42; Atom(Void)
   init_body: AnfExpr = .Let(lid(0), .AInit(.ALitInt(42)), .Atom(.ALitVoid))
-  init_func := make_func(100, "__init__", init_body)
+  init_func := make_init_func(100, init_body)
 
-  // other func: body references local 0 (free variable from __init__)
+  // other func: body references local 0 (free variable from $init)
   other_body: AnfExpr = .Atom(.ALocal(lid(0)))
   other_func := make_func(101, "other", other_body)
 
@@ -180,12 +194,12 @@ fn test_already_optimal() Result<Void, String> {
 // ── Test: copy prop with pinned skips pinned local ──────────────────
 
 fn test_copy_prop_respects_pinned() Result<Void, String> {
-  // __init__: let x = 42; let y = AInit(ALocal(x)); Atom(y)
+  // $init: let x = 42; let y = AInit(ALocal(x)); Atom(y)
   // If x is pinned, copy prop should NOT inline x into y
   init_body: AnfExpr = .Let(lid(0), .AInit(.ALitInt(42)),
     .Let(lid(1), .AInit(.ALocal(lid(0))),
       .Atom(.ALocal(lid(1)))))
-  init_func := make_func(100, "__init__", init_body)
+  init_func := make_init_func(100, init_body)
 
   // other func references local 0 as free
   other_body: AnfExpr = .Atom(.ALocal(lid(0)))

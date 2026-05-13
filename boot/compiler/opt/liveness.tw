@@ -179,6 +179,7 @@ pub fn annotate_in_place(func: AnfFunctionDef) AnfFunctionDef {
   AnfFunctionDef.{
     func_id: func.func_id,
     name: func.name,
+    is_init: func.is_init,
     params: func.params,
     op_result_mono: func.op_result_mono,
     body: annotate_expr(func.body, param_locals),

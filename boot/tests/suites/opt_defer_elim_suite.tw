@@ -16,6 +16,7 @@ fn make_func(body: AnfExpr) AnfFunctionDef {
   AnfFunctionDef.{
     func_id: fid(1),
     name: "test",
+    is_init: false,
     params: [],
     op_result_mono: Dict.new(),
     body: body,
@@ -27,6 +28,7 @@ fn make_func_with_params(params: Vector<Param>, body: AnfExpr) AnfFunctionDef {
   AnfFunctionDef.{
     func_id: fid(1),
     name: "test",
+    is_init: false,
     params: params,
     op_result_mono: Dict.new(),
     body: body,

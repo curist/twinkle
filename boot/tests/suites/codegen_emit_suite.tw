@@ -51,6 +51,7 @@ fn test_param_local_id_can_overlap_module_global_id() Result<Void, String> {
     op_result_mono: Dict.new(),
     body: AnfExpr.Atom(.ALocal(lid(0))),
     return_ty: MonoType.Int,
+    is_init: false,
   }
   anf := AnfModule.{ functions: [func], init_func_id: .None, extern_imports: Dict.new() }
 
@@ -72,6 +73,7 @@ fn test_param_local_id_can_overlap_module_global_id() Result<Void, String> {
     slots: slots,
     body: PreparedExpr.Atom(PreparedAtom.ASlot(sid(0))),
     return_mono: MonoType.Int,
+    is_init: false,
   }
   prepared := PreparedModule.{ anf: anf, closure_captures: Dict.new(), funcs: [prepared_func] }
 

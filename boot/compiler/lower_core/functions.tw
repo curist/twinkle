@@ -67,6 +67,7 @@ pub fn lower_function(ctx: LowerCtx, decl: FunctionDecl, func_id: FuncId, lower_
   def := FunctionDef.{
     func_id,
     name: decl.name,
+    is_init: false,
     params,
     body: body_r.expr,
     return_ty: ret_ty,

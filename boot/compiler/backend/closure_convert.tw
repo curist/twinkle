@@ -140,6 +140,7 @@ fn rewrite_func(func: AnfFunctionDef, captures: Dict<Int, Vector<CaptureParam>>)
       .{
         func_id: func.func_id,
         name: func.name,
+        is_init: func.is_init,
         params: cap_declared.concat(func.params),
         op_result_mono: func.op_result_mono,
         body: rewrite_expr(func.body, rename),

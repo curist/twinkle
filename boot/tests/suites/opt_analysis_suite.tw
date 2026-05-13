@@ -52,6 +52,7 @@ fn make_func(body: AnfExpr) AnfFunctionDef {
     op_result_mono: Dict.new(),
     body: body,
     return_ty: .Void,
+    is_init: false,
   }
 }
 
@@ -63,6 +64,7 @@ fn make_func_with_params(params: Vector<Param>, body: AnfExpr) AnfFunctionDef {
     op_result_mono: Dict.new(),
     body: body,
     return_ty: .Void,
+    is_init: false,
   }
 }
 
@@ -101,6 +103,7 @@ fn test_next_local_id_accounts_for_pattern_bindings() Result<Void, String> {
     op_result_mono: Dict.new(),
     body: .Let(lid(2), .AMatch(.ALocal(lid(1)), [arm]), .Atom(.ALitVoid)),
     return_ty: .Void,
+    is_init: false,
   }
   assert.int_eq(next_local_id(func), 9)
 }

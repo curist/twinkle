@@ -219,6 +219,7 @@ pub fn lower_module(module: CoreModule) AnfModule {
     fdef := AnfFunctionDef.{
       func_id: func.func_id,
       name: func.name,
+      is_init: func.is_init,
       params: func.params,
       op_result_mono: result.state.op_result_mono,
       body: result.expr,

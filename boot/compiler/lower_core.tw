@@ -212,7 +212,7 @@ pub fn lower_module(module: Module, check_result: CheckResult, builtins: Builtin
   }
 
   // Pre-pass 1: assign a distinct GlobalLocal ID to each module-level let.
-  // Keep the IDs in source order so __init__ can bind names sequentially and
+  // Keep the IDs in source order so $init can bind names sequentially and
   // support top-level shadowing (e.g. `x := ...; ...; x := ...`).
   module_let_globals: Vector<LocalId> = []
   pub_value_globals: Dict<String, LocalId> = Dict.new()
@@ -304,7 +304,7 @@ pub fn lower_module(module: Module, check_result: CheckResult, builtins: Builtin
   // Ensure local IDs don't collide with module globals
   if ctx.next_local < ctx.next_global { ctx.next_local = ctx.next_global }
 
-  // Lower module-level statements into __init__. Rebuild the module-global
+  // Lower module-level statements into $init. Rebuild the module-global
   // name environment as we walk so expressions see the latest preceding
   // top-level binding, not the final binding from the pre-pass.
   // Preserve imported value phantom entries so cross-module value access
@@ -403,7 +403,8 @@ pub fn lower_module(module: Module, check_result: CheckResult, builtins: Builtin
 
     functions = functions.append(.{
       func_id: init_fid,
-      name: "__init__",
+      name: "$init",
+      is_init: true,
       params: [],
       body: init_body,
       return_ty: .Void,

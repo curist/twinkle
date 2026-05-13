@@ -132,6 +132,7 @@ pub fn assign_slots(
   PreparedFunc.{
     func_id: func.func_id,
     name: func.name,
+    is_init: func.is_init,
     captures: capture_slots,
     params: param_slots,
     locals: local_slots,

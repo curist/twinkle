@@ -1,5 +1,6 @@
 use compiler.anf.{AnfModule}
-use compiler.builtins.{BuiltinRegistry, make_builtin_registry}
+use compiler.builtins.{BuiltinRegistry}
+
 use compiler.resolver.{ResolvedEnv}
 use compiler.codegen.codegen.{codegen, runtime_modules}
 use compiler.codegen.emit.{emit_module}

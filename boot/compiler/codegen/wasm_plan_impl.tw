@@ -116,14 +116,14 @@ pub fn plan_wasm_types_impl(
 
   // Compute module globals from explicit prepared-body AGlobalLocal operands.
   // The referenced LocalIds must resolve back to slots in init functions.
-  // After linking, multiple per-module __init__ functions exist, so we
+  // After linking, multiple per-module $init functions exist, so we
   // search all of them for the defining slot.
   case input.anf.init_func_id {
     .Some(init_fid) => {
       // Build combined slot map from all init functions.
       all_init_slots: Dict<Int, MonoType> = Dict.new()
       for pf in input.funcs {
-        if pf.name == "__init__" or pf.name == "__combined_init__" {
+        if pf.is_init {
           for sid_int in pf.slots.keys() {
             case pf.slots[sid_int] {
               .Some(info) => { all_init_slots[info.source_local.id] = info.mono },
@@ -506,7 +506,7 @@ fn find_prepared_func(funcs_by_id: Dict<Int, PreparedFunc>, fid: FuncId) Prepare
 fn resolve_module_global_mono(init_func: PreparedFunc, local_id: Int) MonoType {
   case facts.find_slot_by_source_local(init_func, local_id) {
     .Some(info) => info.mono,
-    .None => error("resolve_module_global_mono: __init__ has no slot for module global L${local_id}"),
+    .None => error("resolve_module_global_mono: $init has no slot for module global L${local_id}"),
   }
 }
 

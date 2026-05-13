@@ -17,6 +17,15 @@ target/twk ir boot/main.tw --opt
 target/twk run boot/tests/main.tw
 ```
 
+### Debugging with WAT output
+To emit human-readable WAT instead of binary Wasm, use a `.wat` output path:
+```bash
+target/twk build boot/main.tw -o /tmp/debug.wat   # full program WAT
+target/twk build some/file.tw -o /tmp/debug.wat    # any entry file
+```
+This is useful for inspecting generated code, tracing Wasm function indices
+from runtime stack traces, and verifying codegen correctness.
+
 ### Bootstrap the boot compiler
 ```bash
 cargo run --release -- build boot/main.tw -o target/boot-main.wasm

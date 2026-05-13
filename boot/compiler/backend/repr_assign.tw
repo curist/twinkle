@@ -114,6 +114,7 @@ fn assign_repr_for_func(
     func: PreparedFunc.{
       func_id: pf.func_id,
       name: pf.name,
+      is_init: pf.is_init,
       captures: pf.captures,
       params: pf.params,
       locals: pf.locals,

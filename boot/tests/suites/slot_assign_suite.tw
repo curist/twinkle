@@ -38,6 +38,7 @@ fn mk_func_def(
     return_ty: return_ty,
     body: body,
     op_result_mono: op_result_mono,
+    is_init: false,
   }
 }
 

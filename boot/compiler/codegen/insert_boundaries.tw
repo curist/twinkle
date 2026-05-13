@@ -211,6 +211,7 @@ fn rewrite_func(
   AnfFunctionDef.{
     func_id: func.func_id,
     name: func.name,
+    is_init: func.is_init,
     params: func.params,
     op_result_mono: new_mono,
     body: result.expr,

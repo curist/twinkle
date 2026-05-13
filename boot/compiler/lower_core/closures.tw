@@ -210,6 +210,7 @@ pub fn lower_closure(ctx: LowerCtx, params: Vector<AstParam>, body: Block, ty: M
   hoisted_def := FunctionDef.{
     func_id: lambda_func_id,
     name: "__lambda",
+    is_init: false,
     params: lambda_params,
     body: body_r.expr,
     return_ty: lambda_ret_ty,

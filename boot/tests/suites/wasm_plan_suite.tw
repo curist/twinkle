@@ -61,6 +61,7 @@ fn mk_func_def(
     op_result_mono: mono_map,
     body: body,
     return_ty: ret,
+    is_init: false,
   }
   f
 }
@@ -724,11 +725,11 @@ pub fn test_plan_higher_order_global_func_does_not_synthesize_capture_layout() R
 }
 
 pub fn test_plan_module_globals() Result<Void, String> {
-  // __init__ function defines local 0 and local 1
+  // $init function defines local 0 and local 1
   init_mono: Dict<Int, MonoType> = Dict.new()
   init_mono[0] = MonoType.Int
   init_mono[1] = MonoType.String
-  init_fn := mk_func_def(1, "__init__",
+  init_fn := mk_func_def(1, "$init",
     [],
     MonoType.Void,
     .Let(mk_local(0), .AInit(.ALitInt(42)),
@@ -736,6 +737,7 @@ pub fn test_plan_module_globals() Result<Void, String> {
         .Atom(.ALitVoid))),
     init_mono,
   )
+  init_fn.is_init = true
   // Another function references local 0 (a module global) but not local 1
   user_mono := mono1(10, MonoType.Int)
   user_fn := mk_func_def(2, "get_val",

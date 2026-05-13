@@ -101,7 +101,7 @@ pub fn emit_module(
     current_func_id: .None,
     func_sym_map: func_sym_map,
     prepared_funcs: prepared_funcs,
-    init_func_id: anf.init_func_id,
+    is_init_func: false,
     loop_depth: 0,
   }
 
@@ -318,7 +318,7 @@ fn emit_func(func: AnfFunctionDef, prepared: PreparedFunc, base_ctx: EmitCtx) Fu
     current_func_id: .Some(func.func_id),
     func_sym_map: base_ctx.func_sym_map,
     prepared_funcs: base_ctx.prepared_funcs,
-    init_func_id: base_ctx.init_func_id,
+    is_init_func: func.is_init,
     loop_depth: 0,
   }
 
@@ -492,14 +492,7 @@ fn emit_let(local: SlotId, op: PreparedOp, body: PreparedExpr, expected_ty: Mono
       },
       _ => {
         buf = emit_op(cur_op, entry.index, .Some(entry.val_type), result_mono, ctx, buf)
-        is_init := case ctx.init_func_id {
-          .Some(ifid) => case ctx.current_func_id {
-            .Some(cfid) => cfid.id == ifid.id,
-            .None => false,
-          },
-          .None => false,
-        }
-        if is_init {
+        if ctx.is_init_func {
           case ctx.registry.module_globals[entry.source_local.id] {
             .Some(gentry) => {
               buf = buf.append(.LocalGet(entry.index))
@@ -535,15 +528,8 @@ fn emit_op(op: PreparedOp, result_idx: Int, result_vt: ValType?, result_mono: Mo
       tgt := lookup_slot(ctx, target)
       buf2 := emit_atom(atom, ctx, buf)
       buf2 = buf2.append(.LocalSet(tgt.index))
-      // For module globals in __init__, also set the global
-      is_init := case ctx.init_func_id {
-        .Some(ifid) => case ctx.current_func_id {
-          .Some(cfid) => cfid.id == ifid.id,
-          .None => false,
-        },
-        .None => false,
-      }
-      if is_init {
+      // For module globals in $init, also set the global
+      if ctx.is_init_func {
         case ctx.registry.module_globals[tgt.source_local.id] {
           .Some(gentry) => {
             buf2 = buf2.append(.LocalGet(tgt.index))

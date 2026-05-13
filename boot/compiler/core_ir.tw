@@ -98,6 +98,7 @@ pub type Param = .{ local: LocalId, ty: MonoType }
 pub type FunctionDef = .{
   func_id: FuncId,
   name: String,
+  is_init: Bool,
   params: Vector<Param>,
   body: CoreExpr,
   return_ty: MonoType,

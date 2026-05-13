@@ -69,6 +69,7 @@ pub type AnfMatchArm = .{ pattern: CorePattern, body: AnfExpr }
 pub type AnfFunctionDef = .{
   func_id: FuncId,
   name: String,
+  is_init: Bool,
   params: Vector<Param>,
   op_result_mono: Dict<Int, MonoType>,
   body: AnfExpr,

@@ -66,7 +66,7 @@ fn mk_func_def(
   func_id := fid(id)
   op_result_mono := mono_map
   return_ty := ret
-  .{ func_id, name, params, op_result_mono, body, return_ty }
+  .{ func_id, name, params, op_result_mono, body, return_ty, is_init: false }
 }
 
 fn mk_module(funcs: Vector<AnfFunctionDef>) AnfModule {

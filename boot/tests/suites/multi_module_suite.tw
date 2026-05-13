@@ -4,6 +4,7 @@ use compiler.module_compiler
 use compiler.pipeline
 use commands.common.{format_compile_error}
 use lib.module.loader
+use tests.helpers.codegen_harness
 
 fn fixtures_dir() String {
   root := loader.find_project_root("boot")
@@ -212,7 +213,7 @@ pub fn suite() runner.Suite {
         .Ok(artifacts) => {
           // After linking, Core IR should have functions from both modules.
           // math_lib defines: add, multiply, internal_helper
-          // uses_math defines: main (plus __init__)
+          // uses_math defines: main (plus $init)
           names := collect f in artifacts.core.functions { f.name }
           try assert.vec_contains(names, "add")
           try assert.vec_contains(names, "multiply")
@@ -231,7 +232,7 @@ pub fn suite() runner.Suite {
         .Ok(artifacts) => {
           names := collect f in artifacts.core.functions { f.name }
           try assert.vec_contains(names, "add")
-          try assert.vec_contains(names, "__init__")
+          try assert.vec_contains(names, "$init")
           .Ok({})
         },
         .Err(err) => .Err("expected success, got: ${format_compile_error(err)}"),
@@ -244,7 +245,7 @@ pub fn suite() runner.Suite {
         .Ok(artifacts) => {
           names := collect f in artifacts.core.functions { f.name }
           try assert.vec_contains(names, "add")
-          try assert.vec_contains(names, "__init__")
+          try assert.vec_contains(names, "$init")
           .Ok({})
         },
         .Err(err) => .Err("expected success, got: ${format_compile_error(err)}"),
@@ -324,5 +325,13 @@ pub fn suite() runner.Suite {
         .Ok(_) => .Ok({}),
         .Err(err) => .Err("expected anon record variant cross-module to compile, got: ${format_compile_error(err)}"),
       }
+    })
+
+    // ── Module global initialization ──────────────────────────────────
+
+    .test("cross-module pub value emits global.set in per-module $init", fn() {
+      wat := try codegen_harness.codegen_path("${dir}/module_global_init_main.tw")
+      try assert.str_contains(wat, "global.set $user__global_local_")
+      .Ok({})
     })
 }

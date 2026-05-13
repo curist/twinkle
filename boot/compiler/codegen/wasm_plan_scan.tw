@@ -27,13 +27,8 @@ pub fn scan_module_bodies(input: PreparedModule, builtins: BuiltinRegistry) Scan
     direct_builtin_calls: Dict.new(),
     module_globals: Dict.new(),
   }
-  init_fid := input.anf.init_func_id
   for func in input.funcs {
-    is_init := case init_fid {
-      .Some(fid) => fid.id == func.func_id.id,
-      .None => false,
-    }
-    out = scan_expr(func.body, builtins, is_init, out)
+    out = scan_expr(func.body, builtins, func.is_init, out)
   }
   out
 }

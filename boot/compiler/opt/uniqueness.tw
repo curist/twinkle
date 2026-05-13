@@ -761,6 +761,7 @@ pub fn uniqueness_rewrite_with_semantics_and_consumed_and_fresh(func: AnfFunctio
   AnfFunctionDef.{
     func_id: func.func_id,
     name: func.name,
+    is_init: func.is_init,
     params: func.params,
     op_result_mono: result.st.monos,
     body: result.expr,

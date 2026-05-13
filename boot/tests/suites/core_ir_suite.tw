@@ -383,6 +383,7 @@ pub fn suite() runner.Suite {
         params: [core_ir.Param.{ local: core_ir.LocalId.{ id: 0 }, ty: mono_type.MonoType.Int }],
         body: body,
         return_ty: mono_type.MonoType.Int,
+        is_init: false,
       }
       try assert.str_eq(def.name, "test")
       assert.int_eq(def.params.len(), 1)
@@ -760,12 +761,12 @@ pub fn suite() runner.Suite {
         _ => .Err("expected ArrayLit"),
       }
     })
-    // ── M8: Module-level lets, __init__ ───────────────────────────────
-    .test("lower module-level let with __init__", fn() Result<Void, String> {
+    // ── M8: Module-level lets, $init ─────────────────────────────────
+    .test("lower module-level let with $init", fn() Result<Void, String> {
       src := "x := 42\nfn f() Int { x }"
       lr := try lower_src(src)
-      // Should have __init__ func + f
-      try assert.ok(lr.module.functions.len() >= 2, "expected at least 2 functions (f + __init__)")
+      // Should have $init func + f
+      try assert.ok(lr.module.functions.len() >= 2, "expected functions for user code and $init")
       // init_func_id should be set
       case lr.module.init_func_id {
         .Some(_) => .Ok({}),
@@ -1189,6 +1190,7 @@ pub fn suite() runner.Suite {
         params: [],
         body,
         return_ty: mono_type.MonoType.Void,
+        is_init: false,
       }
       module := core_ir.CompiledModule.{
         path: "test/main.tw",
@@ -1237,6 +1239,7 @@ pub fn suite() runner.Suite {
         params: [],
         body,
         return_ty: mono_type.MonoType.Void,
+        is_init: false,
       }
       ext_refs: Dict<Int, core_ir.ExternalRef> = Dict.new()
       ext_refs[100] = core_ir.ExternalRef.{ module_path: "dep/math.tw", func_name: "missing" }
@@ -1288,6 +1291,7 @@ pub fn suite() runner.Suite {
         params: [],
         body: core_ir.CoreExpr.{ kind: .LitStr(""), ty: mono_type.MonoType.String, span: s },
         return_ty: mono_type.MonoType.String,
+        is_init: false,
       }
       fallback := core_ir.FunctionDef.{
         func_id: core_ir.FuncId.{ id: 99 },
@@ -1295,6 +1299,7 @@ pub fn suite() runner.Suite {
         params: [],
         body: core_ir.CoreExpr.{ kind: .LitStr(""), ty: mono_type.MonoType.String, span: s },
         return_ty: mono_type.MonoType.String,
+        is_init: false,
       }
       func_map: Dict<Int, core_ir.FunctionDef> = Dict.new()
       func_map[42] = exact
@@ -1320,6 +1325,7 @@ pub fn suite() runner.Suite {
         params: [],
         body: core_ir.CoreExpr.{ kind: .LitStr(""), ty: mono_type.MonoType.String, span: s },
         return_ty: mono_type.MonoType.String,
+        is_init: false,
       }
       func_map: Dict<Int, core_ir.FunctionDef> = Dict.new()
       func_map[42] = target

@@ -148,6 +148,7 @@ fn mk_func_def(
   AnfFunctionDef.{
     func_id: fid(id),
     name: name,
+    is_init: false,
     params: params,
     op_result_mono: mono_map,
     body: body,

@@ -27,7 +27,7 @@ AnfModule
 
 ### Pinned locals
 
-Module-level `__init__` functions may bind locals that other functions reference
+Module-level `$init` functions may bind locals that other functions reference
 (module-scope variables). `compute_pinned` identifies these cross-function locals so
 that dead let elimination and copy propagation never remove or inline them.
 

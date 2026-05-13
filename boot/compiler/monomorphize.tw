@@ -1065,6 +1065,7 @@ pub fn monomorphize(module: CoreModule) CoreModule {
         specialized := FunctionDef.{
           func_id: new_fid,
           name: spec_name,
+          is_init: false,
           params: new_params,
           body: new_body,
           return_ty: new_ret,
@@ -1086,6 +1087,7 @@ pub fn monomorphize(module: CoreModule) CoreModule {
       rewritten = rewritten.append(FunctionDef.{
         func_id: func.func_id,
         name: func.name,
+        is_init: func.is_init,
         params: func.params,
         body: new_body,
         return_ty: func.return_ty,
@@ -1099,6 +1101,7 @@ pub fn monomorphize(module: CoreModule) CoreModule {
     rewritten = rewritten.append(FunctionDef.{
       func_id: func.func_id,
       name: func.name,
+      is_init: func.is_init,
       params: func.params,
       body: new_body,
       return_ty: func.return_ty,

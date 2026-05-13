@@ -72,7 +72,7 @@ pub fn emit_loop_op(body: PreparedExpr, result_idx: Int, result_vt: ValType?, ct
     current_func_id: ctx.current_func_id,
     func_sym_map: ctx.func_sym_map,
     prepared_funcs: ctx.prepared_funcs,
-    init_func_id: ctx.init_func_id,
+    is_init_func: ctx.is_init_func,
     loop_depth: ctx.loop_depth + 1,
   }
 

@@ -199,6 +199,7 @@ pub fn link(
       all_functions = all_functions.append(.{
         func_id: remapped_id,
         name: f.name,
+        is_init: f.is_init,
         params: f.params,
         body: remap_expr(f.body, remap, global_remap),
         return_ty: f.return_ty,
@@ -352,7 +353,7 @@ type CombinedInit = .{
   init_func_id: FuncId?,
 }
 
-/// Build a combined __init__ function that calls all module inits in order.
+/// Build a combined $combined_init function that calls all module inits in order.
 fn build_combined_init(init_ids: Vector<FuncId>, next_global: Int) CombinedInit {
   if init_ids.len() == 0 {
     return CombinedInit.{ functions: [], init_func_id: .None }
@@ -384,7 +385,8 @@ fn build_combined_init(init_ids: Vector<FuncId>, next_global: Int) CombinedInit 
 
   combined := FunctionDef.{
     func_id: combined_id,
-    name: "__combined_init__",
+    name: "$combined_init",
+    is_init: true,
     params: [],
     body,
     return_ty: MonoType.Void,

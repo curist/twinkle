@@ -1,0 +1,7 @@
+// Library with a pub value used by a function in another module.
+
+pub hint := "expected value"
+
+pub fn check(msg: String) Bool {
+  msg != hint
+}

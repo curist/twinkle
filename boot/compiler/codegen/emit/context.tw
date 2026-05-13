@@ -32,7 +32,7 @@ pub type EmitCtx = .{
   current_func_id: FuncId?,
   func_sym_map: Dict<Int, String>,    // FuncId → wasm symbol
   prepared_funcs: Dict<Int, PreparedFunc>,
-  init_func_id: FuncId?,
+  is_init_func: Bool,
   loop_depth: Int,
 }
 

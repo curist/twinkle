@@ -95,6 +95,7 @@ fn mk_func_def(
     op_result_mono: mono_map,
     body: body,
     return_ty: ret,
+    is_init: false,
   }
 }
 

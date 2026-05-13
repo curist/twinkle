@@ -129,6 +129,7 @@ fn make_func(body: AnfExpr) AnfFunctionDef {
     op_result_mono: Dict.new(),
     body: body,
     return_ty: .Void,
+    is_init: false,
   }
 }
 
@@ -140,6 +141,7 @@ fn make_func_with_params(params: Vector<Param>, body: AnfExpr) AnfFunctionDef {
     op_result_mono: Dict.new(),
     body: body,
     return_ty: .Void,
+    is_init: false,
   }
 }
 
@@ -151,6 +153,7 @@ fn make_func_with_mono(body: AnfExpr, op_result_mono: Dict<Int, MonoType>) AnfFu
     op_result_mono: op_result_mono,
     body: body,
     return_ty: .Void,
+    is_init: false,
   }
 }
 
