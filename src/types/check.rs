@@ -3,8 +3,8 @@ use super::error::TypeError;
 use super::patterns::PatternChecker;
 use super::ty::{
     CELL_TYPE_ID, ITER_ITEM_TYPE_ID, ITERATOR_TYPE_ID, MonoType, OPTION_TYPE_ID, RANGE_TYPE_ID,
-    RESULT_TYPE_ID, TypeDef, TypeId, UNFOLD_STEP_TYPE_ID, builtin_method_alias, contains_meta,
-    method_receiver_type_id, zonk_ty,
+    RESULT_TYPE_ID, TASK_TYPE_ID, TypeDef, TypeId, UNFOLD_STEP_TYPE_ID, builtin_method_alias,
+    contains_meta, method_receiver_type_id, zonk_ty,
 };
 use super::type_map::TypeMap;
 use crate::module::artifacts::TypedModule;
@@ -630,6 +630,10 @@ impl TypeChecker {
                     }),
                     "Iterator" if resolved_args.len() == 1 => Ok(MonoType::Named {
                         type_id: ITERATOR_TYPE_ID,
+                        args: resolved_args,
+                    }),
+                    "Task" if resolved_args.len() == 1 => Ok(MonoType::Named {
+                        type_id: TASK_TYPE_ID,
                         args: resolved_args,
                     }),
                     "IterItem" if resolved_args.len() == 1 => Ok(MonoType::Named {

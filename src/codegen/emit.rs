@@ -4512,6 +4512,8 @@ fn emit_prelude_call(
         LoweringKind::ByteFromInt => emit_byte_from_int_intrinsic(args, ctx),
         LoweringKind::ByteToString => emit_byte_to_string_intrinsic(args, ctx),
         LoweringKind::FloatBits => emit_float_bits_intrinsic(args, ctx),
+        LoweringKind::TaskSpawn => emit_task_spawn_intrinsic(args, bind_ty, ctx),
+        LoweringKind::TaskAwait => emit_task_await_intrinsic(args, bind_ty, ctx),
     }
 }
 
@@ -5172,6 +5174,39 @@ fn emit_cell_update_intrinsic(
 
     instrs.push(Instr::ArraySet(T_ARRAY.to_string()));
     instrs.extend(emit_void_value(Some(bind_ty)));
+    instrs
+}
+
+// --- Task intrinsics ---
+// Phase 1: run-to-completion.  Task.spawn(f) calls f() immediately and wraps
+// the result in a 1-element rt_types__Array.  Task.await(task) unwraps it.
+
+fn emit_task_spawn_intrinsic(
+    args: &[Atom],
+    _bind_ty: &ValType,
+    ctx: &mut EmitCtx<'_>,
+) -> Vec<Instr> {
+    // Phase 1: call the thunk f() immediately and wrap result in a Task.
+    // The result must be boxed to anyref for storage in the task array.
+    let closure_atom = &args[0];
+    let anyref_ty = ValType::Anyref;
+    let mut instrs = emit_closure_call(closure_atom, &[], &anyref_ty, ctx);
+    // Wrap the result in a 1-element array to create the Task object.
+    instrs.push(Instr::ArrayNewFixed(T_ARRAY.to_string(), 1));
+    instrs
+}
+
+fn emit_task_await_intrinsic(
+    args: &[Atom],
+    bind_ty: &ValType,
+    ctx: &mut EmitCtx<'_>,
+) -> Vec<Instr> {
+    // Unwrap: load element 0 from the task array.
+    let mut instrs = emit_atom(&args[0], Some(&ref_array_null()), ctx);
+    instrs.push(Instr::I32Const(0));
+    instrs.push(Instr::ArrayGet(T_ARRAY.to_string()));
+    // Cast from anyref to the expected result type.
+    instrs.extend(emit_coerce_stack(&ValType::Anyref, bind_ty));
     instrs
 }
 

@@ -39,6 +39,7 @@ fn receiver_for_stem(stem: String) String? {
     "range"    => .None,
     "result"   => .Some("Result"),
     "string"   => .Some("String"),
+    "task"     => .Some("Task"),
     "vector"   => .Some("Vector"),
     _          => .None,
   }
@@ -76,6 +77,7 @@ pub fn to_internal_name(receiver: String?, canonical_name: String) String {
         "Iterator" => "iterator",
         "Option"   => "option",
         "Result"   => "result",
+        "Task"     => "task",
         "Int"      => "int",
         "Float"    => "float",
         "Bool"     => "bool",

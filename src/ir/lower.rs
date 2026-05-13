@@ -105,6 +105,9 @@ pub mod prelude {
     // String / numeric conversion builtins
     pub const CHAR_CODE_AT: FuncId = FuncId(1017); // String.char_code_at(s, i) -> Int
     pub const FROM_CHAR_CODE: FuncId = FuncId(1018); // String.from_char_code(n) -> Option<String>
+    pub const TASK_SPAWN: FuncId = FuncId(1034); // Task.spawn(f: fn() T) -> Task<T>
+    pub const TASK_AWAIT: FuncId = FuncId(1035); // Task.await(task: Task<T>) -> T
+
     pub const BYTE_TO_INT: FuncId = FuncId(1022); // Byte.to_int(b: Byte) -> Int
     pub const BYTE_FROM_INT: FuncId = FuncId(1023); // Byte.from_int(n: Int) -> Option<Byte>
     pub const BYTE_TO_STRING: FuncId = FuncId(1024); // Byte.to_string(b: Byte) -> String

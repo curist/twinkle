@@ -17,7 +17,7 @@ use crate::syntax::ast::{BinOp, UnOp};
 use crate::types::env::TypeEnv;
 use crate::types::ty::{
     CELL_TYPE_ID, ITER_ITEM_TYPE_ID, ITERATOR_TYPE_ID, MonoType, OPTION_TYPE_ID, RESULT_TYPE_ID,
-    TypeDef, TypeId, UNFOLD_STEP_TYPE_ID,
+    TASK_TYPE_ID, TypeDef, TypeId, UNFOLD_STEP_TYPE_ID,
 };
 use crate::wasm::ir::{FuncSym, HeapType, ImportDef, Label, ValType};
 
@@ -2563,6 +2563,10 @@ fn mono_named_to_valtype(type_id: TypeId, type_env: &TypeEnv) -> ValType {
     }
     if type_id == ITERATOR_TYPE_ID {
         return ref_named(true, T_ITER_STATE);
+    }
+    if type_id == TASK_TYPE_ID {
+        // Phase 1: Task is a 1-element rt_types__Array wrapping the result.
+        return ref_named(true, T_ARRAY);
     }
     match type_env.get_def(type_id) {
         Some(TypeDef::Sum { .. }) => ref_named(true, T_VARIANT),

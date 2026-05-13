@@ -135,6 +135,9 @@ fn builtin_abi(name: String) AbiContract {
     // Iterator intrinsics
     "iterator_next" => abi([.Anyref], [.Anyref]),
     "iterator_unfold" => abi([.Anyref, closure_n()], [.Anyref]),
+    // Task intrinsics
+    "task_spawn" => abi([closure_n()], [.Anyref]),
+    "task_await" => abi([.Anyref], [.Anyref]),
     // Numeric parsing
     "int_from_string" => abi([str_n()], [.Anyref]),
     "float_from_string" => abi([str_n()], [.Anyref]),
@@ -347,6 +350,9 @@ pub fn builtin_specs() Vector<BuiltinSpec> {
     intr("cell_get",    .Some("Cell.get")),
     intr("cell_set",    .Some("Cell.set")),
     intr("cell_update", .Some("Cell.update")),
+    // ── Task ──
+    intr("task_spawn", .Some("Task.spawn")),
+    intr("task_await", .Some("Task.await")),
     // ── Byte ops ──
     intr("byte_to_int",    .Some("Byte.to_int")),
     intr("byte_from_int",  .Some("Byte.from_int")),

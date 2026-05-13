@@ -143,6 +143,13 @@ fn find_type_entry(env: ResolvedEnv, tid: TypeId) TypeEntry {
   error("layout_of_named: TypeId ${tid.id} not found")
 }
 
+fn is_task_type(env: ResolvedEnv, tid: TypeId) Bool {
+  case env.type_index["Task"] {
+    .Some(idx) => env.types[idx].id.id == tid.id,
+    .None => false,
+  }
+}
+
 fn is_cell_type(env: ResolvedEnv, tid: TypeId) Bool {
   case env.type_index["Cell"] {
     .Some(idx) => env.types[idx].id.id == tid.id,
@@ -173,6 +180,10 @@ fn layout_of_named(tid: TypeId, args: Vector<MonoType>, env: ResolvedEnv) WasmLa
   }
   if is_iterator_type(env, tid) {
     return layout_of_iterator(args, env)
+  }
+  // Task<T> is an opaque anyref (1-element rt_types__Array) in Phase 1.
+  if is_task_type(env, tid) {
+    return .Scalar(.WAnyref)
   }
   entry := find_type_entry(env, tid)
   def := case entry.def {
@@ -378,6 +389,9 @@ pub fn val_type_of_mono(ty: MonoType, env: ResolvedEnv) ValType {
       }
       if is_iterator_type(env, tid) {
         return val_type_of(layout_of_iterator(args, env))
+      }
+      if is_task_type(env, tid) {
+        return .Anyref  // ValType.Anyref
       }
       entry := find_type_entry(env, tid)
       def := case entry.def {

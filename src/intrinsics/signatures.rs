@@ -9,7 +9,7 @@ use crate::types::env::{TypeEnv, ValueEnv};
 use crate::types::resolve::Resolver;
 use crate::types::ty::{
     CELL_TYPE_ID, FunctionSignature, ITER_ITEM_TYPE_ID, ITERATOR_TYPE_ID, MonoType, OPTION_TYPE_ID,
-    RANGE_TYPE_ID, UNFOLD_STEP_TYPE_ID,
+    RANGE_TYPE_ID, TASK_TYPE_ID, UNFOLD_STEP_TYPE_ID,
 };
 
 pub use crate::intrinsics::registry::IntrinsicDispatch;
@@ -313,6 +313,33 @@ pub fn contract(func_id: FuncId) -> Option<IntrinsicContract> {
                 abi_result: Some(IntrinsicAbiResult::Anyref),
             })
         }
+        id if id == prelude_ids::TASK_SPAWN => {
+            let t = ty_var("T");
+            Some(IntrinsicContract {
+                func_id,
+                twinkle_name: "Task.spawn",
+                dispatch: IntrinsicDispatch::Intrinsic,
+                type_params: vec!["T".to_string()],
+                params: vec![MonoType::Function {
+                    params: vec![],
+                    ret: Box::new(t.clone()),
+                }],
+                ret: task_ty(t),
+                abi_result: Some(IntrinsicAbiResult::Anyref),
+            })
+        }
+        id if id == prelude_ids::TASK_AWAIT => {
+            let t = ty_var("T");
+            Some(IntrinsicContract {
+                func_id,
+                twinkle_name: "Task.await",
+                dispatch: IntrinsicDispatch::Intrinsic,
+                type_params: vec!["T".to_string()],
+                params: vec![task_ty(t.clone())],
+                ret: t,
+                abi_result: Some(IntrinsicAbiResult::Anyref),
+            })
+        }
         id if id == prelude_ids::VECTOR_APPEND => {
             let t = ty_var("T");
             let vec_t = MonoType::Vector(Box::new(t.clone()));
@@ -588,6 +615,11 @@ const SIGNATURE_SOURCE_MODULES: &[SignatureSourceModule] = &[
         source: include_str!("../../prelude/signatures/iterator.tw"),
     },
     SignatureSourceModule {
+        virtual_path: "/virtual/prelude/signatures/task.tw",
+        module_alias: Some("Task"),
+        source: include_str!("../../prelude/signatures/task.tw"),
+    },
+    SignatureSourceModule {
         virtual_path: "/virtual/prelude/signatures/byte.tw",
         module_alias: Some("Byte"),
         source: include_str!("../../prelude/signatures/byte.tw"),
@@ -749,6 +781,12 @@ fn builtin_doc(name: &str) -> Option<&'static str> {
         "Iterator.next" => "Advance the iterator and return the next value, or `None`.",
         "Iterator.unfold" => "Create an iterator from a seed and step function.",
 
+        // Task
+        "Task.spawn" => {
+            "Spawn a task that runs the given function and eventually produces a value."
+        }
+        "Task.await" => "Wait for a task to complete and return its result.",
+
         _ => return None,
     })
 }
@@ -796,6 +834,13 @@ fn unfold_step_ty(yield_ty: MonoType, seed_ty: MonoType) -> MonoType {
     MonoType::Named {
         type_id: UNFOLD_STEP_TYPE_ID,
         args: vec![yield_ty, seed_ty],
+    }
+}
+
+fn task_ty(inner: MonoType) -> MonoType {
+    MonoType::Named {
+        type_id: TASK_TYPE_ID,
+        args: vec![inner],
     }
 }
 

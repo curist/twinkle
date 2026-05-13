@@ -107,14 +107,15 @@ fn builtin_type_entries() Vector<TypeEntry> {
       .{ name: "Eq", fields: [] },
       .{ name: "Gt", fields: [] },
     ])),
+    builtin_type_entry(next_type_id, 1, .Record("Task", rtp_t, [])),
   ])
   types
 }
 
 /// Returns a ResolvedEnv seeded with only the builtin named types (Option,
-/// Result, Cell, Range, Iterator, IterItem, UnfoldStep, Order).  No function
-/// signatures are added.  Used by the signature-only bootstrap loader to
-/// resolve TypeExprs in prelude/signatures/*.tw without creating a circular
+/// Result, Cell, Range, Iterator, IterItem, UnfoldStep, Order, Task).  No
+/// function signatures are added.  Used by the signature-only bootstrap loader
+/// to resolve TypeExprs in prelude/signatures/*.tw without creating a circular
 /// dependency.
 pub fn builtin_type_env() ResolvedEnv {
   types := builtin_type_entries()

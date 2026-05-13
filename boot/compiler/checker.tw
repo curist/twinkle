@@ -3134,7 +3134,7 @@ fn check_function(decl: FunctionDecl, ctx: InferCtx, diags: Vector<DiagKind>) Ch
 
 fn collect_module_aliases(module: Module) Dict<String, Bool> {
   builtin_module_aliases: Vector<String> = [
-    "Cell", "Dict", "Iterator", "Option", "Result",
+    "Cell", "Dict", "Iterator", "Option", "Result", "Task",
     "Vector", "String", "Int", "Float", "Bool", "Byte",
   ]
   aliases: Dict<String, Bool> = Dict.new()

@@ -26,6 +26,7 @@ pub fn prelude_method_alias(type_name: String, method_name: String) String? {
     "Iterator" => .Some("iterator_${method_name}"),
     "Option" => .Some("option_${method_name}"),
     "Result" => .Some("result_${method_name}"),
+    "Task" => .Some("task_${method_name}"),
     "Vector" => .Some("vector_${method_name}"),
     "String" => {
       if method_name == "char_code_at" or method_name == "from_char_code" or method_name == "from_code_point" {

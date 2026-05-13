@@ -25,6 +25,7 @@ pub const ITERATOR_TYPE_ID: TypeId = TypeId(4);
 pub const ITER_ITEM_TYPE_ID: TypeId = TypeId(5);
 pub const UNFOLD_STEP_TYPE_ID: TypeId = TypeId(6);
 pub const ORDER_TYPE_ID: TypeId = TypeId(7);
+pub const TASK_TYPE_ID: TypeId = TypeId(8);
 // Synthetic method-only TypeIds for builtin receiver types that are not
 // represented as MonoType::Named variants.
 pub const BUILTIN_VECTOR_TYPE_ID: TypeId = TypeId(u32::MAX - 5);
@@ -66,6 +67,7 @@ pub fn builtin_method_alias(type_id: TypeId) -> Option<&'static str> {
         ITERATOR_TYPE_ID => Some("Iterator"),
         OPTION_TYPE_ID => Some("Option"),
         RESULT_TYPE_ID => Some("Result"),
+        TASK_TYPE_ID => Some("Task"),
         _ => None,
     }
 }

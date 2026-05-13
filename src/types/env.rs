@@ -5,7 +5,7 @@ use super::ty::{
     BUILTIN_BOOL_TYPE_ID, BUILTIN_BYTE_TYPE_ID, BUILTIN_DICT_TYPE_ID, BUILTIN_FLOAT_TYPE_ID,
     BUILTIN_INT_TYPE_ID, BUILTIN_STRING_TYPE_ID, BUILTIN_VECTOR_TYPE_ID, CELL_TYPE_ID,
     FunctionSignature, ITER_ITEM_TYPE_ID, ITERATOR_TYPE_ID, MonoType, OPTION_TYPE_ID,
-    ORDER_TYPE_ID, RANGE_TYPE_ID, RESULT_TYPE_ID, RecordField, TypeDef, TypeId,
+    ORDER_TYPE_ID, RANGE_TYPE_ID, RESULT_TYPE_ID, RecordField, TASK_TYPE_ID, TypeDef, TypeId,
     UNFOLD_STEP_TYPE_ID, Variant,
 };
 use crate::intrinsics::signatures;
@@ -212,6 +212,17 @@ impl TypeEnv {
             ORDER_TYPE_ID,
         );
 
+        // TypeId(8) = Task<T> — opaque concurrent task handle
+        assert_eq!(
+            env.add_type(TypeDef::Record {
+                name: "Task".to_string(),
+                type_params: vec!["T".to_string()],
+                fields: vec![],
+                doc: Some("Concurrent task handle.".to_string()),
+            }),
+            TASK_TYPE_ID,
+        );
+
         // Register all builtin method mappings.
         // These map (synthetic_type_id, method_name) → qualified function name
         // so that the env-driven resolution path works for all builtin types.
@@ -249,6 +260,8 @@ impl TypeEnv {
             (CELL_TYPE_ID, "update", "Cell.update"),
             // Iterator
             (ITERATOR_TYPE_ID, "next", "Iterator.next"),
+            // Task
+            (TASK_TYPE_ID, "await", "Task.await"),
             // Option
             (OPTION_TYPE_ID, "ok_or", "Option.ok_or"),
             (OPTION_TYPE_ID, "ok_or_else", "Option.ok_or_else"),
@@ -614,6 +627,23 @@ impl TypeEnv {
                         return Ok(MonoType::Named {
                             type_id: ITERATOR_TYPE_ID,
                             args: vec![elem],
+                        });
+                    }
+                    "Task" => {
+                        if args.len() != 1 {
+                            errors.push(TypeError::UndefinedType {
+                                name: format!(
+                                    "Task (expected 1 type argument, found {})",
+                                    args.len()
+                                ),
+                                span: *span,
+                            });
+                            return Err(());
+                        }
+                        let inner = self.resolve_type(&args[0], errors)?;
+                        return Ok(MonoType::Named {
+                            type_id: TASK_TYPE_ID,
+                            args: vec![inner],
                         });
                     }
                     "IterItem" => {

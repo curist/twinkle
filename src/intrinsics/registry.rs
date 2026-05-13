@@ -45,6 +45,8 @@ pub enum LoweringKind {
     ByteFromInt,
     ByteToString,
     FloatBits,
+    TaskSpawn,
+    TaskAwait,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -314,6 +316,8 @@ const INTRINSIC_SPECS: &[IntrinsicSpec] = &[
         true,
         FloatFromString
     ),
+    spec!(TASK_SPAWN, "Task.spawn", Intrinsic, true, true, TaskSpawn),
+    spec!(TASK_AWAIT, "Task.await", Intrinsic, true, true, TaskAwait),
     spec!(HOST_READ_FILE, "__host_read_file", Runtime, false, false),
     spec!(HOST_WRITE_FILE, "__host_write_file", Runtime, false, false),
     spec!(
@@ -458,8 +462,8 @@ pub fn populate_func_table(
 
 pub fn builtin_module_aliases() -> &'static [&'static str] {
     &[
-        "Cell", "Dict", "Iterator", "Option", "Result", "Vector", "String", "Int", "Float", "Bool",
-        "Byte",
+        "Cell", "Dict", "Iterator", "Option", "Result", "Task", "Vector", "String", "Int", "Float",
+        "Bool", "Byte",
     ]
 }
 

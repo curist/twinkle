@@ -1,0 +1,9 @@
+/// Spawn a task that runs the given function and eventually produces a value.
+pub fn spawn<T>(f: fn() T) Task<T> {
+  f()
+}
+
+/// Wait for a task to complete and return its result.
+pub fn await<T>(task: Task<T>) T {
+  0
+}
