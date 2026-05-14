@@ -44,6 +44,34 @@ fi
 
 mkdir -p "$TMP_DIR" "$(dirname "$OUT")"
 
+if "$NODE_BIN" --help 2>/dev/null | grep -q -- '--build-sea'; then
+  cat > "$SEA_CONFIG" <<JSON
+{
+  "main": "$SEA_MAIN",
+  "executable": "$NODE_BIN",
+  "output": "$OUT",
+  "disableExperimentalSEAWarning": true,
+  "useCodeCache": true,
+  "assets": {
+    "boot.wasm": "$BOOT_WASM",
+    "bridge.wasm": "$BRIDGE_WASM"
+  }
+}
+JSON
+
+  "$NODE_BIN" --build-sea "$SEA_CONFIG"
+  case "$(uname -s)" in
+    Darwin)
+      if command -v codesign >/dev/null 2>&1; then
+        codesign --sign - "$OUT" >/dev/null 2>&1 || true
+      fi
+      ;;
+  esac
+  chmod +x "$OUT"
+  printf 'Built Node SEA Twinkle CLI: %s\n' "$OUT"
+  exit 0
+fi
+
 cat > "$SEA_CONFIG" <<JSON
 {
   "main": "$SEA_MAIN",

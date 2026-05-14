@@ -4,6 +4,8 @@ STAGE1_WASM ?= target/boot-stage1.wasm
 STAGE2_WASM ?= target/boot.wasm
 STAGE3_WASM ?= /tmp/twinkle-selfhost/stage3.wasm
 TWK_CLI     ?= node tools/twk_cli_sea.cjs
+SEA_NODE_VERSION ?= 26
+SEA_NODE_BIN ?=
 
 # Source file sets — used for dependency tracking.
 RUST_SRCS := $(shell find src -name '*.rs') Cargo.toml Cargo.lock
@@ -64,8 +66,8 @@ $(STAGE2_WASM): $(BOOT_SRCS) $(CORE_LIB_SRCS) boot/lib/module/core_lib.tw target
 	@printf '\nSelf-host loop completed successfully.\n'
 
 # Build the Node SEA standalone CLI from target/boot.wasm.
-target/twk: $(STAGE2_WASM) tools/build_node_sea_cli.sh tools/twk_cli_sea.cjs
-	tools/build_node_sea_cli.sh
+target/twk: $(STAGE2_WASM) tools/build_node_sea_cli.sh tools/find_node_sea_bin.sh tools/twk_cli_sea.cjs
+	NODE_BIN="$$(tools/find_node_sea_bin.sh "$(SEA_NODE_VERSION)" "$(SEA_NODE_BIN)")" tools/build_node_sea_cli.sh
 
 # Full standalone CLI rebuild: stage2 payload + Node SEA.
 bundle-cli: stage2 target/twk
@@ -75,7 +77,7 @@ cli: bundle-cli
 # Rebuild the standalone CLI from the existing target/boot.wasm without rebuilding
 # the self-hosted payload. This is only correct when target/boot.wasm is already fresh.
 quick-bundle-cli:
-	tools/build_node_sea_cli.sh
+	NODE_BIN="$$(tools/find_node_sea_bin.sh "$(SEA_NODE_VERSION)" "$(SEA_NODE_BIN)")" tools/build_node_sea_cli.sh
 
 # ---------------------------------------------------------------------------
 # Playground

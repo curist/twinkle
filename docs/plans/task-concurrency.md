@@ -1,5 +1,25 @@
 # Task Concurrency
 
+## Current conclusion
+
+The current Phase 2 implementation proves the scheduler, task representation,
+and narrow state-machine transform, but it is not the final concurrency model we
+want to expose broadly. Because the transform is intraprocedural, suspension is
+only safe at compiler-recognized points inside transformed task bodies. Ordinary
+helper functions cannot freely call `Task.await()` without either function
+coloring, whole-call-chain CPS/state-machine lowering, or stackful suspension.
+
+For a universally useful `Task<T>` API, Twinkle should wait for a robust fiber
+implementation strategy in the V8/Wasm target environment, ideally based on the
+WebAssembly stack-switching/continuations proposal once it is available. A
+fiber-backed implementation would allow `Task.await()` to suspend the current
+execution stack without forcing every caller into an explicit suspending ABI.
+
+Until then, keep the current `Task<T>` work conservative/experimental: useful as
+a runtime and codegen prototype, but not the primary mechanism for host async or
+LSP debounce. For near-term V8 host async needs, prefer JSPI + extern FFI; see
+`docs/plans/jspi-ffi-lsp-debounce.md`.
+
 ## Goal
 
 Add a library-first, single-threaded cooperative concurrency model for Twinkle
