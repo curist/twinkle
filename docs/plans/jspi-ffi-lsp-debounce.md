@@ -1,142 +1,100 @@
-# JSPI + FFI for LSP Debounce
+# JSPI + FFI for Twinkle-Owned LSP Debounce
 
 ## Goal
 
-Implement LSP diagnostics debounce with the smallest reliable mechanism first:
-host-owned JavaScript debounce around the existing synchronous Twinkle
-checker/compiler entrypoints.
+Implement LSP diagnostics debounce with Twinkle owning the debounce policy and
+freshness checks, while the JavaScript host provides only minimal async/event-loop
+primitives.
 
-JSPI + extern FFI is a follow-up option only if we later need debounce policy or
-other host waits to live inside Twinkle code.
+The host should not know when diagnostics are fresh, which documents need
+checking, or how debounce tokens are interpreted. It should only provide a way to
+schedule a later callback into the Twinkle LSP server.
 
-## Use Case
+## Desired Behavior
 
-The LSP receives frequent document changes. Diagnostics should not rerun on every
-keystroke; they should run after a short quiet period and only for the latest
-document version.
+1. `textDocument/didChange` records the new content and version in Twinkle state.
+2. Twinkle creates a debounce token for that document/version.
+3. Twinkle asks the host to deliver a timer event after the debounce delay.
+4. The LSP server keeps processing incoming messages while the timer is pending.
+5. When the host delivers the timer event, Twinkle checks whether the token still
+   matches the latest known document version.
+6. Only fresh timer events run diagnostics and publish results.
 
-Desired behavior:
+## Design: Host Timer Event, Twinkle Policy
 
-1. `textDocument/didChange` records the new content and version.
-2. A debounce delay is scheduled or reset.
-3. When the delay completes, diagnostics run for the latest version.
-4. Stale scheduled checks do not publish diagnostics.
+Avoid blocking the LSP message loop on a synchronous-looking sleep. A direct
+`host_sleep_ms(ms)` call inside `didChange` would suspend the current Wasm export
+under JSPI; if the LSP loop is a single long-running call, that can also stop the
+server from reading newer messages.
 
-## Phase 1: Host-Owned Debounce
+Instead, use host-owned timers as event delivery only:
 
-Keep debounce scheduling in the JavaScript LSP host. This is the deliverable that
-solves the immediate problem.
-
-```js
-let debounceTimer = null
-let latestDocument = null
-
-function onDidChange(document) {
-  latestDocument = document
-  clearTimeout(debounceTimer)
-  debounceTimer = setTimeout(() => {
-    runDiagnostics(latestDocument)
-  }, 150)
-}
+```tw
+extern fn host_schedule_lsp_timer(token: Int, delay_ms: Int) Void
 ```
 
-The Twinkle checker/compiler remains synchronous from its own point of view. The
-host decides when to call it.
+Twinkle owns token generation and validation:
 
-Benefits:
+```tw
+fn on_did_change(uri: String, version: Int, text: String) Void {
+  documents = documents.change_full_text(uri, text, .Some(version))
+  token := next_debounce_token()
+  debounce_by_uri[uri] = .{ token, version }
+  host_schedule_lsp_timer(token, 150)
+}
 
-* no compiler changes;
-* no Wasm/runtime changes;
-* easy cancellation with `clearTimeout`;
-* natural integration with the JS LSP server event loop;
-* works regardless of JSPI availability.
-
-### Version guard
-
-Even with host-owned debounce, diagnostics should carry the document version they
-were computed for. Before publishing, the host should check that the result still
-matches the latest known version. This prevents stale diagnostics if a check takes
-longer than expected.
-
-```js
-async function runDiagnostics(document) {
-  const version = document.version
-  const result = checkDocument(document)
-  if (latestDocument?.version === version) {
-    publishDiagnostics(document.uri, version, result)
+fn on_lsp_timer(token: Int) Void {
+  case find_debounce_by_token(token) {
+    .Some(entry) => {
+      if latest_version(entry.uri) == entry.version {
+        publish_workspace_diagnostics()
+      }
+    },
+    .None => {},
   }
 }
 ```
 
-## Scope Gate
+The host later injects an internal notification back into the normal LSP handling
+path, for example:
 
-Ship Phase 1 and close the LSP debounce issue if it is sufficient.
+```json
+{
+  "jsonrpc": "2.0",
+  "method": "$/twinkle/timer",
+  "params": { "token": 42 }
+}
+```
 
-Only pursue JSPI if a concrete follow-up need appears, such as:
+That keeps policy centralized in `boot/lib/lsp/server_core.tw`, while the host
+only knows how to call `setTimeout` and enqueue a message.
 
-* debounce policy must be shared/tested in Twinkle code;
-* Twinkle tooling needs synchronous-looking waits for host timers;
-* future host APIs need to await JavaScript Promises from inside Wasm.
+## Host Responsibilities
 
-## Phase 2 Option: Twinkle-Owned Delay via JSPI
+The host still needs changes, but they are intentionally narrow:
 
-If debounce policy needs to live in Twinkle code, expose a host timer import:
+* expose `host.schedule_lsp_timer(token, delay_ms)` as a Twinkle extern import;
+* implement it with `setTimeout`;
+* when the timer fires, enqueue or directly deliver the internal
+  `$/twinkle/timer` notification;
+* keep the LSP transport loop active while timers are pending.
+
+The host does **not** decide whether to run diagnostics, publish diagnostics, or
+cancel stale work.
+
+## JSPI Role
+
+This timer-event design does not require JSPI for the debounce path because the
+extern import can return immediately after scheduling a host timer.
+
+JSPI remains useful for future host APIs where Twinkle genuinely wants a
+synchronous-looking wait or Promise-returning import:
 
 ```tw
 extern fn host_sleep_ms(ms: Int) Void
-extern fn host_now_ms() Float
 ```
 
-The JavaScript implementation of `host_sleep_ms` returns a Promise:
-
-```js
-function sleep_ms(ms) {
-  return new Promise(resolve => setTimeout(resolve, Number(ms)))
-}
-```
-
-With JSPI, V8 can suspend the Wasm call while the Promise is pending and resume
-it when the timer fires. Twinkle code can remain synchronous-looking:
-
-```tw
-fn debounce_check(version: Int, delay_ms: Int) Void {
-  host_sleep_ms(delay_ms)
-  if current_document_version() == version {
-    publish_diagnostics(version)
-  }
-}
-```
-
-Use version checks rather than cancellation for the first Twinkle-owned design:
-
-* each edit increments a document version;
-* each scheduled check captures the version it was created for;
-* after `host_sleep_ms`, the check exits if a newer version exists.
-
-### Duplicate publish race
-
-If multiple suspended debounce calls resume in the same JavaScript turn, more
-than one call can observe the same current version and publish duplicate
-diagnostics. This is not corrupting, but it is noisy.
-
-For the first JSPI version, guard publishes with a per-document published-version
-cache:
-
-```js
-const lastPublished = new Map()
-
-function publishIfFresh(uri, version, diagnostics) {
-  if (latestVersion(uri) !== version) return
-  if (lastPublished.get(uri) === version) return
-  lastPublished.set(uri, version)
-  publishDiagnostics(uri, version, diagnostics)
-}
-```
-
-## JSPI Host Integration Sketch
-
-V8's JSPI API wraps Promise-returning imports and exports that may suspend.
-Conceptually:
+with JavaScript integration like:
 
 ```js
 const imports = {
@@ -147,101 +105,64 @@ const imports = {
   },
 }
 
-const { instance } = await WebAssembly.instantiate(wasmBytes, imports)
-const run = WebAssembly.promising(instance.exports.run_lsp_entry)
+const run = WebAssembly.promising(instance.exports.some_entry)
 await run()
 ```
 
-### Node/V8 compatibility
+Do not make debounce depend on this unless a concrete need appears. Timer events
+are simpler and avoid suspending the LSP message loop.
 
-JSPI availability depends on the exact Node/V8 runtime used by the LSP host.
-Verify at startup rather than assuming support:
+## Import Discovery
 
-```js
-const hasJspi =
-  "Suspending" in WebAssembly && "promising" in WebAssembly
+Use a hard-coded tooling import for the first implementation:
+
+* Twinkle extern: `host_schedule_lsp_timer(token: Int, delay_ms: Int) Void`
+* Wasm import: `host.schedule_lsp_timer`
+
+Avoid language syntax changes or an async-import manifest for the initial pass.
+A manifest can be added later if more host tooling imports need configuration.
+
+## Duplicate Publish Guard
+
+Token/version checks should prevent stale timers from publishing. If multiple
+timer events for the same current version are delivered, duplicate diagnostics
+are not corrupting but are noisy.
+
+Keep a per-document published-version cache in Twinkle state or the LSP
+server-core state:
+
+```tw
+last_published_by_uri[uri] = version
 ```
 
-Observed local behavior:
-
-* Node v23.11.0: JSPI requires `--experimental-wasm-jspi`.
-* Node v26.0.0/v26.1.0: JSPI is enabled by default; the old
-  `--experimental-wasm-jspi` flag is rejected.
-
-If JSPI is unavailable, disable Twinkle-owned JSPI debounce and use Phase 1
-host-owned debounce.
-
-SEA concern: `target/twk` is built as a Node SEA executable. With Node v23.11.0,
-JSPI required a flag and that flag did not carry through the tested SEA paths:
-
-* passing `--experimental-wasm-jspi` to the SEA executable left JSPI disabled;
-* `NODE_OPTIONS=--experimental-wasm-jspi` was rejected by Node;
-* adding `execArgv: ["--experimental-wasm-jspi"]` to the SEA config was ignored
-  by Node v23.11.0.
-
-With Node v26.1.0 from the official `node` npm package, a SEA built via
-`--build-sea` has JSPI enabled by default. That is the preferred SEA path for
-JSPI experiments.
-
-Caveat: the Homebrew Node v26.0.0 binary tested locally did not contain the SEA
-sentinel used by `--build-sea`/`postject`, so it could not be used to produce a
-SEA in the current build flow. For JSPI + SEA experiments, use a Node binary that
-both supports SEA generation and has JSPI enabled by default.
-
-## FFI Requirements for the JSPI Option
-
-### Import discovery
-
-The compiler already supports extern imports. The host harness needs to know
-which imports should be wrapped with `WebAssembly.Suspending`.
-
-Possible first-pass approaches:
-
-* hard-code tooling imports such as `host.sleep_ms` in the LSP runner;
-* use a host manifest listing async imports;
-* later, introduce a convention such as imports from `host.async`.
-
-Prefer hard-coded tooling imports for the first experiment to avoid language
-syntax changes.
-
-### Export invocation
-
-Any exported Twinkle function that may call a JSPI-suspending import must be
-called through `WebAssembly.promising` by the JS host.
-
-The Wasm function signature can remain ordinary for the first version; the host
-controls whether the call is promise-aware.
-
-### Type mapping
-
-Start with timer-only imports:
-
-* `Int` delay in milliseconds;
-* `Void` result.
-
-Promise rejection policy for the first JSPI pass: **trap**. Timer Promises should
-not reject, and trapping keeps the initial host adapter simple. If future host
-async APIs need recoverable failures, add explicit `Result<T, String>` adapters
-then.
+Before publishing, skip diagnostics for a document if the same version was
+already published.
 
 ## Implementation Steps
 
-1. Implement host-owned debounce in the LSP server.
-2. Add version guards before publishing diagnostics.
-3. Ship this as the initial LSP debounce solution.
-4. If Twinkle-owned waits become necessary, add a JSPI smoke experiment in
-   `tools/`:
-   * import `host.sleep_ms`;
-   * call it from Wasm;
-   * invoke the Wasm export via `WebAssembly.promising`.
-5. Verify Node/SEA JSPI compatibility and required flags.
-6. Add an internal tooling extern signature for `host_sleep_ms(ms: Int) Void`.
-7. Extend the LSP Node host harness to wrap `host.sleep_ms` with
-   `WebAssembly.Suspending`.
-8. Add smoke tests that run only when JSPI is available in the host runtime.
+1. Add debounce state to the boot LSP server core:
+   * next timer token;
+   * pending debounce entries by document URI/token;
+   * last-published version by document URI.
+2. Change `textDocument/didChange` to update document state and schedule a timer
+   instead of immediately publishing diagnostics.
+3. Add handling for the internal `$/twinkle/timer` notification.
+4. On timer notification, validate the token/version and run diagnostics only for
+   fresh work.
+5. Add the `host_schedule_lsp_timer` extern signature and call site.
+6. Extend the Node host harness to implement `host.schedule_lsp_timer` with
+   `setTimeout` and feed the timer notification back into the LSP message path.
+7. Keep `didOpen` behavior immediate unless editor behavior suggests it should
+   share the debounce path too.
+8. Add tests for stale timer suppression, latest-version publishing, and duplicate
+   publish suppression.
 
 ## Open Questions
 
-* Is host-owned debounce sufficient for the LSP long term?
-* If JSPI is needed, should the LSP host run under normal Node instead of SEA?
-* Should async imports remain hard-coded tooling hooks or move to a manifest?
+* Should `didOpen` publish immediately or go through the same debounce path?
+* Should timer events be represented as internal JSON-RPC notifications or as a
+  smaller host callback into a dedicated exported Twinkle function?
+* Does the current SEA host need a small event queue abstraction so stdin frames
+  and timer events share one dispatch path?
+* Should debounce delay be fixed initially or configurable via initialization
+  options?
