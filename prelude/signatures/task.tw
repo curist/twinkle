@@ -7,3 +7,7 @@ pub fn spawn<T>(f: fn() T) Task<T> {
 pub fn await<T>(task: Task<T>) T {
   0
 }
+
+/// Yield control to the scheduler, allowing other tasks to run.
+pub fn yield() Void {
+}

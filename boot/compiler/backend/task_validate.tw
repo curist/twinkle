@@ -1,0 +1,637 @@
+// Task suspension validation pass.
+//
+// Runs after closure conversion, before the state-machine transform.
+// Validates that Task.yield() and Task.await() appear only in valid positions:
+//
+// - Task.yield(): only directly in a task body closure (passed to Task.spawn)
+// - Task.await(): only in top-level code or directly in a task body closure
+// - Neither may appear inside branches, loops, or nested closures within task bodies
+//
+// Also classifies each Task.spawn call site for the transform:
+// - Direct closure with suspension → state-machine transform
+// - Direct closure without suspension → run-to-completion
+// - Indirect (variable) → run-to-completion
+
+use compiler.core_ir.{FuncId}
+use compiler.anf.{AnfExpr, AnfOp, AnfModule, AnfFunctionDef}
+use compiler.builtins.{BuiltinRegistry}
+
+// ── Public API ──
+
+pub fn validate_tasks(
+  anf: AnfModule,
+  builtins: BuiltinRegistry,
+) Result<Void, String> {
+  spawn_fid := builtins.id("task_spawn")
+  await_fid := builtins.id("task_await")
+  yield_fid := builtins.id("task_yield")
+  cell_update_fid := builtins.id("cell_update")
+
+  // Step 1: Find all Task.spawn call sites and identify task body FuncIds.
+  task_bodies := scan_module_for_task_bodies(anf, spawn_fid)
+
+  // Step 1b: Find all Cell.update callback FuncIds.
+  cell_update_cbs := scan_module_for_callback_bodies(anf, cell_update_fid)
+
+  // Step 2: Check which task bodies contain suspension points.
+  suspending_set: Dict<Int, Int> = Dict.new()
+  for f in anf.functions {
+    if task_bodies.has(f.func_id.id) {
+      if contains_suspension(f.body, await_fid, yield_fid) {
+        suspending_set = suspending_set.set(f.func_id.id, 1)
+      }
+    }
+  }
+
+  // Step 3: Validate all functions.
+  init_fid := anf.init_func_id
+  for f in anf.functions {
+    is_init := case init_fid {
+      .Some(fid) => fid.id == f.func_id.id,
+      .None => false,
+    }
+    is_task_body := task_bodies.has(f.func_id.id)
+    is_suspending := suspending_set.has(f.func_id.id)
+    is_cell_update_cb := cell_update_cbs.has(f.func_id.id)
+
+    case validate_function(f, is_init, is_task_body, is_suspending, is_cell_update_cb, await_fid, yield_fid, spawn_fid, anf) {
+      .Ok(_) => {},
+      .Err(msg) => { return .Err(msg) },
+    }
+  }
+
+  .Ok({})
+}
+
+// Classify task bodies for the transform (called separately after validation).
+pub fn classify_task_bodies(
+  anf: AnfModule,
+  builtins: BuiltinRegistry,
+) Vector<FuncId> {
+  spawn_fid := builtins.id("task_spawn")
+  await_fid := builtins.id("task_await")
+  yield_fid := builtins.id("task_yield")
+  task_bodies := scan_module_for_task_bodies(anf, spawn_fid)
+
+  result: Vector<FuncId> = []
+  for f in anf.functions {
+    if task_bodies.has(f.func_id.id) {
+      if contains_suspension(f.body, await_fid, yield_fid) {
+        result = result.append(f.func_id)
+      }
+    }
+  }
+  result
+}
+
+// ── Scan module-level for spawn patterns ──
+// After closure conversion, Task.spawn(fn() { ... }) looks like:
+//   Let(closure_local, AMakeClosure(body_fid, captures),
+//   Let(task_local, ACall(AGlobalFunc(spawn_fid), [ALocal(closure_local)]),
+//   ...))
+// We scan the let-chain and when we see AMakeClosure followed by a spawn call
+// using that local, we record the body_fid.
+
+fn scan_module_for_task_bodies(
+  anf: AnfModule,
+  spawn_fid: FuncId,
+) Dict<Int, Int> {
+  result: Dict<Int, Int> = Dict.new()
+  for f in anf.functions {
+    result = scan_letchain_for_spawn_pattern(f.body, spawn_fid, result)
+  }
+  result
+}
+
+fn scan_letchain_for_spawn_pattern(
+  expr: AnfExpr,
+  spawn_fid: FuncId,
+  acc: Dict<Int, Int>,
+) Dict<Int, Int> {
+  // Track: local_id → body_fid from AMakeClosure
+  closure_locals: Dict<Int, FuncId> = Dict.new()
+  scan_letchain_inner(expr, spawn_fid, closure_locals, acc)
+}
+
+fn scan_letchain_inner(
+  expr: AnfExpr,
+  spawn_fid: FuncId,
+  closure_locals: Dict<Int, FuncId>,
+  acc: Dict<Int, Int>,
+) Dict<Int, Int> {
+  case expr {
+    .Let(local, op, body) => {
+      case op {
+        .AMakeClosure(body_fid, _) => {
+          closure_locals = closure_locals.set(local.id, body_fid)
+        },
+        .ACall(callee, args) => {
+          case callee {
+            .AGlobalFunc(fid) => {
+              if fid.id == spawn_fid.id {
+                if args.len() > 0 {
+                  case args[0] {
+                    .ALocal(arg_local) => {
+                      case closure_locals[arg_local.id] {
+                        .Some(body_fid) => {
+                          acc = acc.set(body_fid.id, 1)
+                        },
+                        .None => {},
+                      }
+                    },
+                    _ => {},
+                  }
+                }
+              }
+            },
+            _ => {},
+          }
+        },
+        .AIf(_, then_e, else_e) => {
+          acc = scan_letchain_for_spawn_pattern(then_e, spawn_fid, acc)
+          acc = scan_letchain_for_spawn_pattern(else_e, spawn_fid, acc)
+        },
+        .AMatch(_, arms) => {
+          for arm in arms {
+            acc = scan_letchain_for_spawn_pattern(arm.body, spawn_fid, acc)
+          }
+        },
+        .ALoop(loop_body) => {
+          acc = scan_letchain_for_spawn_pattern(loop_body, spawn_fid, acc)
+        },
+        .ADefer(defer_body) => {
+          acc = scan_letchain_for_spawn_pattern(defer_body, spawn_fid, acc)
+        },
+        _ => {},
+      }
+      scan_letchain_inner(body, spawn_fid, closure_locals, acc)
+    },
+    _ => acc,
+  }
+}
+
+// ── Scan for callback bodies (e.g. Cell.update closures) ──
+// Same pattern as task body scanning but for two-arg builtins where
+// the closure is the second argument: Cell.update(cell, fn(v) { ... })
+
+fn scan_module_for_callback_bodies(
+  anf: AnfModule,
+  target_fid: FuncId,
+) Dict<Int, Int> {
+  result: Dict<Int, Int> = Dict.new()
+  for f in anf.functions {
+    result = scan_letchain_for_callback_pattern(f.body, target_fid, result)
+  }
+  result
+}
+
+fn scan_letchain_for_callback_pattern(
+  expr: AnfExpr,
+  target_fid: FuncId,
+  acc: Dict<Int, Int>,
+) Dict<Int, Int> {
+  closure_locals: Dict<Int, FuncId> = Dict.new()
+  scan_callback_inner(expr, target_fid, closure_locals, acc)
+}
+
+fn scan_callback_inner(
+  expr: AnfExpr,
+  target_fid: FuncId,
+  closure_locals: Dict<Int, FuncId>,
+  acc: Dict<Int, Int>,
+) Dict<Int, Int> {
+  case expr {
+    .Let(local, op, body) => {
+      case op {
+        .AMakeClosure(body_fid, _) => {
+          closure_locals = closure_locals.set(local.id, body_fid)
+        },
+        .ACall(callee, args) => {
+          case callee {
+            .AGlobalFunc(fid) => {
+              // Cell.update(cell, callback) — callback is args[1]
+              if fid.id == target_fid.id {
+                if args.len() > 1 {
+                  case args[1] {
+                    .ALocal(arg_local) => {
+                      case closure_locals[arg_local.id] {
+                        .Some(body_fid) => {
+                          acc = acc.set(body_fid.id, 1)
+                        },
+                        .None => {},
+                      }
+                    },
+                    _ => {},
+                  }
+                }
+              }
+            },
+            _ => {},
+          }
+        },
+        .AIf(_, then_e, else_e) => {
+          acc = scan_letchain_for_callback_pattern(then_e, target_fid, acc)
+          acc = scan_letchain_for_callback_pattern(else_e, target_fid, acc)
+        },
+        .AMatch(_, arms) => {
+          for arm in arms {
+            acc = scan_letchain_for_callback_pattern(arm.body, target_fid, acc)
+          }
+        },
+        .ALoop(loop_body) => {
+          acc = scan_letchain_for_callback_pattern(loop_body, target_fid, acc)
+        },
+        .ADefer(defer_body) => {
+          acc = scan_letchain_for_callback_pattern(defer_body, target_fid, acc)
+        },
+        _ => {},
+      }
+      scan_callback_inner(body, target_fid, closure_locals, acc)
+    },
+    _ => acc,
+  }
+}
+
+// ── Contains suspension point ──
+
+fn contains_suspension(expr: AnfExpr, await_fid: FuncId, yield_fid: FuncId) Bool {
+  case expr {
+    .Let(_, op, body) => {
+      if op_is_suspension(op, await_fid, yield_fid) { return true }
+      if op_contains_suspension(op, await_fid, yield_fid) { return true }
+      contains_suspension(body, await_fid, yield_fid)
+    },
+    _ => false,
+  }
+}
+
+fn op_is_suspension(op: AnfOp, await_fid: FuncId, yield_fid: FuncId) Bool {
+  case op {
+    .ACall(callee, _) => {
+      case callee {
+        .AGlobalFunc(fid) => fid.id == await_fid.id or fid.id == yield_fid.id,
+        _ => false,
+      }
+    },
+    _ => false,
+  }
+}
+
+fn op_contains_suspension(op: AnfOp, await_fid: FuncId, yield_fid: FuncId) Bool {
+  case op {
+    .AIf(_, then_e, else_e) => {
+      contains_suspension(then_e, await_fid, yield_fid) or
+        contains_suspension(else_e, await_fid, yield_fid)
+    },
+    .AMatch(_, arms) => {
+      for arm in arms {
+        if contains_suspension(arm.body, await_fid, yield_fid) { return true }
+      }
+      false
+    },
+    .ALoop(body) => contains_suspension(body, await_fid, yield_fid),
+    .ADefer(body) => contains_suspension(body, await_fid, yield_fid),
+    _ => false,
+  }
+}
+
+// ── Validate a single function ──
+
+fn validate_function(
+  f: AnfFunctionDef,
+  is_init: Bool,
+  is_task_body: Bool,
+  is_suspending: Bool,
+  is_cell_update_cb: Bool,
+  await_fid: FuncId,
+  yield_fid: FuncId,
+  spawn_fid: FuncId,
+  anf: AnfModule,
+) Result<Void, String> {
+  if is_task_body and is_suspending {
+    // Suspending task body: yield and await are allowed, but only at top-level let-chain
+    validate_suspending_body(f, await_fid, yield_fid)
+  } else if is_init {
+    // Init function: await allowed (drives scheduler), yield not allowed
+    validate_init(f, await_fid, yield_fid)
+  } else {
+    // Ordinary function or non-suspending task body
+    validate_ordinary(f, await_fid, yield_fid, is_cell_update_cb)
+  }
+}
+
+fn validate_suspending_body(
+  f: AnfFunctionDef,
+  await_fid: FuncId,
+  yield_fid: FuncId,
+) Result<Void, String> {
+  // Walk the top-level let-chain. Suspension points are allowed here.
+  // But inside branches, loops, nested closures — they are not.
+  validate_suspending_letchain(f.body, f.name, await_fid, yield_fid)
+}
+
+fn validate_suspending_letchain(
+  expr: AnfExpr,
+  func_name: String,
+  await_fid: FuncId,
+  yield_fid: FuncId,
+) Result<Void, String> {
+  case expr {
+    .Let(_, op, body) => {
+      // At top-level let-chain, suspension calls are OK.
+      // But within nested structures in the op, they are not.
+      if !op_is_suspension(op, await_fid, yield_fid) {
+        // Check that the op doesn't contain suspension in nested positions
+        case validate_no_suspension_in_nested(op, func_name, await_fid, yield_fid) {
+          .Ok(_) => {},
+          .Err(msg) => { return .Err(msg) },
+        }
+      }
+      validate_suspending_letchain(body, func_name, await_fid, yield_fid)
+    },
+    _ => .Ok({}),
+  }
+}
+
+fn validate_no_suspension_in_nested(
+  op: AnfOp,
+  func_name: String,
+  await_fid: FuncId,
+  yield_fid: FuncId,
+) Result<Void, String> {
+  case op {
+    .AIf(_, then_e, else_e) => {
+      case validate_no_suspension_expr(then_e, func_name, "if branch", await_fid, yield_fid) {
+        .Ok(_) => {},
+        .Err(msg) => { return .Err(msg) },
+      }
+      validate_no_suspension_expr(else_e, func_name, "if branch", await_fid, yield_fid)
+    },
+    .AMatch(_, arms) => {
+      for arm in arms {
+        case validate_no_suspension_expr(arm.body, func_name, "match arm", await_fid, yield_fid) {
+          .Ok(_) => {},
+          .Err(msg) => { return .Err(msg) },
+        }
+      }
+      .Ok({})
+    },
+    .ALoop(body) => {
+      validate_no_suspension_expr(body, func_name, "loop body", await_fid, yield_fid)
+    },
+    .ADefer(body) => {
+      validate_no_suspension_expr(body, func_name, "defer body", await_fid, yield_fid)
+    },
+    .AMakeClosure(_, _) => {
+      // Nested closure inside task body — suspension not allowed
+      // (The closure body itself is a separate function and will be validated there)
+      .Ok({})
+    },
+    _ => .Ok({}),
+  }
+}
+
+fn validate_no_suspension_expr(
+  expr: AnfExpr,
+  func_name: String,
+  context: String,
+  await_fid: FuncId,
+  yield_fid: FuncId,
+) Result<Void, String> {
+  case expr {
+    .Let(_, op, body) => {
+      case op {
+        .ACall(callee, _) => {
+          case callee {
+            .AGlobalFunc(fid) => {
+              if fid.id == yield_fid.id {
+                return .Err("Task.yield() inside ${context} is not supported in ${func_name}")
+              }
+              if fid.id == await_fid.id {
+                return .Err("Task.await() inside ${context} is not supported in ${func_name}")
+              }
+            },
+            _ => {},
+          }
+        },
+        _ => {},
+      }
+      case validate_no_suspension_in_nested(op, func_name, await_fid, yield_fid) {
+        .Ok(_) => {},
+        .Err(msg) => { return .Err(msg) },
+      }
+      validate_no_suspension_expr(body, func_name, context, await_fid, yield_fid)
+    },
+    _ => .Ok({}),
+  }
+}
+
+fn validate_init(
+  f: AnfFunctionDef,
+  await_fid: FuncId,
+  yield_fid: FuncId,
+) Result<Void, String> {
+  // In init function: Task.await is allowed (it drives scheduler_run_until).
+  // Task.yield is not allowed (init is not a task body).
+  validate_no_yield_in_expr(f.body, f.name, await_fid, yield_fid)
+}
+
+fn validate_no_yield_in_expr(
+  expr: AnfExpr,
+  func_name: String,
+  await_fid: FuncId,
+  yield_fid: FuncId,
+) Result<Void, String> {
+  case expr {
+    .Let(_, op, body) => {
+      case op {
+        .ACall(callee, _) => {
+          case callee {
+            .AGlobalFunc(fid) => {
+              if fid.id == yield_fid.id {
+                return .Err("Task.yield() is not valid in top-level code")
+              }
+            },
+            _ => {},
+          }
+        },
+        _ => {},
+      }
+      case validate_no_yield_in_op(op, func_name, await_fid, yield_fid) {
+        .Ok(_) => {},
+        .Err(msg) => { return .Err(msg) },
+      }
+      validate_no_yield_in_expr(body, func_name, await_fid, yield_fid)
+    },
+    _ => .Ok({}),
+  }
+}
+
+fn validate_no_yield_in_op(
+  op: AnfOp,
+  func_name: String,
+  await_fid: FuncId,
+  yield_fid: FuncId,
+) Result<Void, String> {
+  case op {
+    .AIf(_, then_e, else_e) => {
+      case validate_no_yield_in_expr(then_e, func_name, await_fid, yield_fid) {
+        .Ok(_) => {},
+        .Err(msg) => { return .Err(msg) },
+      }
+      validate_no_yield_in_expr(else_e, func_name, await_fid, yield_fid)
+    },
+    .AMatch(_, arms) => {
+      for arm in arms {
+        case validate_no_yield_in_expr(arm.body, func_name, await_fid, yield_fid) {
+          .Ok(_) => {},
+          .Err(msg) => { return .Err(msg) },
+        }
+      }
+      .Ok({})
+    },
+    .ALoop(body) => validate_no_yield_in_expr(body, func_name, await_fid, yield_fid),
+    .ADefer(body) => validate_no_yield_in_expr(body, func_name, await_fid, yield_fid),
+    _ => .Ok({}),
+  }
+}
+
+fn validate_ordinary(
+  f: AnfFunctionDef,
+  await_fid: FuncId,
+  yield_fid: FuncId,
+  is_cell_update_cb: Bool,
+) Result<Void, String> {
+  if is_cell_update_cb {
+    // Cell.update callbacks must not call Task.yield or Task.await.
+    // Yielding/awaiting inside an update callback would run other tasks
+    // mid-update, letting them observe partially-applied cell state.
+    validate_no_suspend_in_any(f.body, "Cell.update callback", await_fid, yield_fid)
+  } else {
+    // Other ordinary functions: Task.yield() not allowed (only in task bodies).
+    // Task.await() is allowed — it drives sched_run_until, which is safe
+    // when called from non-task context (e.g. test closures called from init).
+    validate_no_yield_in_any(f.body, f.name, yield_fid)
+  }
+}
+
+fn validate_no_suspend_in_any(
+  expr: AnfExpr,
+  func_name: String,
+  await_fid: FuncId,
+  yield_fid: FuncId,
+) Result<Void, String> {
+  case expr {
+    .Let(_, op, body) => {
+      case op {
+        .ACall(callee, _) => {
+          case callee {
+            .AGlobalFunc(fid) => {
+              if fid.id == yield_fid.id {
+                return .Err("Task.yield() is only valid directly inside a Task.spawn closure body")
+              }
+              if fid.id == await_fid.id {
+                return .Err("Task.await() is not valid in ordinary functions — use it at top level or directly inside a Task.spawn body (in ${func_name})")
+              }
+            },
+            _ => {},
+          }
+        },
+        _ => {},
+      }
+      case validate_no_suspend_in_any_op(op, func_name, await_fid, yield_fid) {
+        .Ok(_) => {},
+        .Err(msg) => { return .Err(msg) },
+      }
+      validate_no_suspend_in_any(body, func_name, await_fid, yield_fid)
+    },
+    _ => .Ok({}),
+  }
+}
+
+fn validate_no_suspend_in_any_op(
+  op: AnfOp,
+  func_name: String,
+  await_fid: FuncId,
+  yield_fid: FuncId,
+) Result<Void, String> {
+  case op {
+    .AIf(_, then_e, else_e) => {
+      case validate_no_suspend_in_any(then_e, func_name, await_fid, yield_fid) {
+        .Ok(_) => {},
+        .Err(msg) => { return .Err(msg) },
+      }
+      validate_no_suspend_in_any(else_e, func_name, await_fid, yield_fid)
+    },
+    .AMatch(_, arms) => {
+      for arm in arms {
+        case validate_no_suspend_in_any(arm.body, func_name, await_fid, yield_fid) {
+          .Ok(_) => {},
+          .Err(msg) => { return .Err(msg) },
+        }
+      }
+      .Ok({})
+    },
+    .ALoop(body) => validate_no_suspend_in_any(body, func_name, await_fid, yield_fid),
+    .ADefer(body) => validate_no_suspend_in_any(body, func_name, await_fid, yield_fid),
+    _ => .Ok({}),
+  }
+}
+
+fn validate_no_yield_in_any(
+  expr: AnfExpr,
+  func_name: String,
+  yield_fid: FuncId,
+) Result<Void, String> {
+  case expr {
+    .Let(_, op, body) => {
+      case op {
+        .ACall(callee, _) => {
+          case callee {
+            .AGlobalFunc(fid) => {
+              if fid.id == yield_fid.id {
+                return .Err("Task.yield() is only valid directly inside a Task.spawn closure body")
+              }
+            },
+            _ => {},
+          }
+        },
+        _ => {},
+      }
+      case validate_no_yield_in_any_op(op, func_name, yield_fid) {
+        .Ok(_) => {},
+        .Err(msg) => { return .Err(msg) },
+      }
+      validate_no_yield_in_any(body, func_name, yield_fid)
+    },
+    _ => .Ok({}),
+  }
+}
+
+fn validate_no_yield_in_any_op(
+  op: AnfOp,
+  func_name: String,
+  yield_fid: FuncId,
+) Result<Void, String> {
+  case op {
+    .AIf(_, then_e, else_e) => {
+      case validate_no_yield_in_any(then_e, func_name, yield_fid) {
+        .Ok(_) => {},
+        .Err(msg) => { return .Err(msg) },
+      }
+      validate_no_yield_in_any(else_e, func_name, yield_fid)
+    },
+    .AMatch(_, arms) => {
+      for arm in arms {
+        case validate_no_yield_in_any(arm.body, func_name, yield_fid) {
+          .Ok(_) => {},
+          .Err(msg) => { return .Err(msg) },
+        }
+      }
+      .Ok({})
+    },
+    .ALoop(body) => validate_no_yield_in_any(body, func_name, yield_fid),
+    .ADefer(body) => validate_no_yield_in_any(body, func_name, yield_fid),
+    _ => .Ok({}),
+  }
+}

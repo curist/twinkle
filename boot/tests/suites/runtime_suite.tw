@@ -64,7 +64,7 @@ fn test_rt_types_namespace() Result<Void, String> {
 
 fn test_rt_types_count() Result<Void, String> {
   m := rt_types.module()
-  try assert.int_eq(type_count(m), 16)
+  try assert.int_eq(type_count(m), 18)
   .Ok({})
 }
 
@@ -1033,7 +1033,7 @@ pub fn suite() runner.Suite {
   runner.suite("runtime modules (M10)")
     // rt.types
     .test("rt.types: namespace", test_rt_types_namespace)
-    .test("rt.types: 16 type definitions", test_rt_types_count)
+    .test("rt.types: 18 type definitions", test_rt_types_count)
     .test("rt.types: no funcs/imports/exports", test_rt_types_no_funcs)
     .test("rt.types: Array is mutable anyref array", test_rt_types_array)
     .test("rt.types: String is mutable i8 array", test_rt_types_string)

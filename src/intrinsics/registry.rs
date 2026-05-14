@@ -47,6 +47,7 @@ pub enum LoweringKind {
     FloatBits,
     TaskSpawn,
     TaskAwait,
+    TaskYield,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -318,6 +319,7 @@ const INTRINSIC_SPECS: &[IntrinsicSpec] = &[
     ),
     spec!(TASK_SPAWN, "Task.spawn", Intrinsic, true, true, TaskSpawn),
     spec!(TASK_AWAIT, "Task.await", Intrinsic, true, true, TaskAwait),
+    spec!(TASK_YIELD, "Task.yield", Intrinsic, true, true, TaskYield),
     spec!(HOST_READ_FILE, "__host_read_file", Runtime, false, false),
     spec!(HOST_WRITE_FILE, "__host_write_file", Runtime, false, false),
     spec!(

@@ -340,6 +340,15 @@ pub fn contract(func_id: FuncId) -> Option<IntrinsicContract> {
                 abi_result: Some(IntrinsicAbiResult::Anyref),
             })
         }
+        id if id == prelude_ids::TASK_YIELD => Some(IntrinsicContract {
+            func_id,
+            twinkle_name: "Task.yield",
+            dispatch: IntrinsicDispatch::Intrinsic,
+            type_params: vec![],
+            params: vec![],
+            ret: MonoType::Void,
+            abi_result: None,
+        }),
         id if id == prelude_ids::VECTOR_APPEND => {
             let t = ty_var("T");
             let vec_t = MonoType::Vector(Box::new(t.clone()));

@@ -13,6 +13,18 @@ pub fn variant_to_sum_helper_sym(sum_mono: MonoType) String {
   "variant_to_sum_helper_${mono_to_key(sum_mono)}"
 }
 
+fn is_task_mono(mono: MonoType, env: ResolvedEnv) Bool {
+  case mono {
+    .Named(tid, _) => {
+      case env.type_index["Task"] {
+        .Some(idx) => env.types[idx].id.id == tid.id,
+        .None => false,
+      }
+    },
+    _ => false,
+  }
+}
+
 pub fn emit_box_to_anyref(mono: MonoType, env: ResolvedEnv, buf: Vector<Instr>) Vector<Instr> {
   case mono {
     .Never => { return buf },
@@ -48,6 +60,9 @@ pub fn emit_unbox_from_anyref(mono: MonoType, env: ResolvedEnv, buf: Vector<Inst
     .Void => { return buf.append(.Drop).append(.I32Const(0)).append(.RefI31) },
     .String => { return buf.append(.RefCast(true, .Named("rt_types__String"))) },
     _ => {},
+  }
+  if is_task_mono(mono, env) {
+    return buf.append(.RefCast(true, .Named("rt_types__Task")))
   }
   layout := layout_of(mono, env)
   case layout {

@@ -108,6 +108,32 @@ pub fn module() WasmModule {
         .{ name: .Some("seed"), mutable: false, ty: .Anyref },
         .{ name: .Some("step"), mutable: false, ty: .Anyref },
       ], .None, false),
+
+      // ── Task concurrency (Phase 2) ──
+
+      // (type $Task (struct
+      //   (field $state   (mut i32))
+      //   (field $frame   (mut anyref))
+      //   (field $resume  (mut funcref))
+      //   (field $result  (mut anyref))
+      //   (field $waiters (mut (ref null $Array)))
+      // ))
+      // Note: resume is funcref (not a typed ref) to avoid functype index
+      // matching issues between the named type and auto-generated functypes.
+      // The scheduler casts to the concrete functype at call_ref sites.
+      .Struct("Task", [
+        .{ name: .Some("state"),   mutable: true, ty: .I32 },
+        .{ name: .Some("frame"),   mutable: true, ty: .Anyref },
+        .{ name: .Some("resume"),  mutable: true, ty: .Funcref },
+        .{ name: .Some("result"),  mutable: true, ty: .Anyref },
+        .{ name: .Some("waiters"), mutable: true, ty: .Ref(true, .Named("Array")) },
+      ], .None, true),
+
+      // (type $FrameRtc (struct (field $closure (mut anyref))))
+      // Run-to-completion frame: stores the closure to call once.
+      .Struct("FrameRtc", [
+        .{ name: .Some("closure"), mutable: true, ty: .Anyref },
+      ], .None, true),
     ],
     imports: [],
     funcs: [],

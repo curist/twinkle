@@ -181,7 +181,9 @@ fn layout_of_named(tid: TypeId, args: Vector<MonoType>, env: ResolvedEnv) WasmLa
   if is_iterator_type(env, tid) {
     return layout_of_iterator(args, env)
   }
-  // Task<T> is an opaque anyref (1-element rt_types__Array) in Phase 1.
+  // Task<T> is an opaque GC reference to rt_types__Task.
+  // Layout stays Scalar(.WAnyref) for boxing/unboxing purposes
+  // (identity boxing since it's already a GC ref).
   if is_task_type(env, tid) {
     return .Scalar(.WAnyref)
   }
@@ -391,7 +393,7 @@ pub fn val_type_of_mono(ty: MonoType, env: ResolvedEnv) ValType {
         return val_type_of(layout_of_iterator(args, env))
       }
       if is_task_type(env, tid) {
-        return .Anyref  // ValType.Anyref
+        return .Ref(true, .Named("rt_types__Task"))
       }
       entry := find_type_entry(env, tid)
       def := case entry.def {

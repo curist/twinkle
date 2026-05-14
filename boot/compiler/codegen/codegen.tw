@@ -26,10 +26,12 @@ use compiler.codegen.runtime.core as rt_core
 use compiler.codegen.runtime.str as rt_str
 use compiler.codegen.runtime.arr as rt_arr
 use compiler.codegen.runtime.dict as rt_dict
+use compiler.codegen.runtime.sched as rt_sched
 use compiler.codegen.intrinsics as cg_intrinsics
 use compiler.backend.prepare.{prepare_backend}
 use compiler.backend.verify.{verify_prepared_module_with_level, VerifyLevel}
 use compiler.backend.closure_convert.{convert_closures}
+use compiler.backend.task_validate.{validate_tasks}
 
 fn timings_enabled() Bool {
   case proc.env("TWINKLE_TIMINGS") { .Some(_) => true, .None => false }
@@ -53,6 +55,7 @@ pub fn runtime_modules() Vector<WasmModule> {
     rt_arr.module(),
     rt_dict.module(),
     rt_core.module(),
+    rt_sched.module(),
     cg_intrinsics.module(),
   ]
 }
@@ -69,6 +72,12 @@ pub fn link_program(
   closure_conversion := convert_closures(anf, env)
   t1 := date.now()
   if timed { log_time("closure_convert", t1 - t0) }
+
+  // 1b. Validate task suspension points.
+  case validate_tasks(closure_conversion.anf, builtins) {
+    .Ok(_) => {},
+    .Err(msg) => error(msg),
+  }
 
   // 2. Prepare backend IR.
   prepared := prepare_backend(

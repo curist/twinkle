@@ -4514,6 +4514,10 @@ fn emit_prelude_call(
         LoweringKind::FloatBits => emit_float_bits_intrinsic(args, ctx),
         LoweringKind::TaskSpawn => emit_task_spawn_intrinsic(args, bind_ty, ctx),
         LoweringKind::TaskAwait => emit_task_await_intrinsic(args, bind_ty, ctx),
+        LoweringKind::TaskYield => {
+            // Phase 1 stub: yield is a no-op (no scheduler yet in stage0)
+            vec![]
+        }
     }
 }
 

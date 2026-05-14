@@ -7,6 +7,7 @@ use compiler.builtins.{BuiltinRegistry}
 use compiler.codegen.wasm_ir.{ValType}
 use compiler.codegen.wasm_plan_types.{WasmTypeRegistry}
 use compiler.backend.prepared_ir.{PreparedFunc, ReprKind, SlotId}
+use compiler.codegen.emit.task_resume.{TaskResumeInfo}
 
 pub type LocalEntry = .{
   index: Int,
@@ -34,6 +35,7 @@ pub type EmitCtx = .{
   prepared_funcs: Dict<Int, PreparedFunc>,
   is_init_func: Bool,
   loop_depth: Int,
+  suspending_bodies: Dict<Int, TaskResumeInfo>,  // body_fid.id → resume info
 }
 
 pub fn current_prepared_func(ctx: EmitCtx) PreparedFunc? {

@@ -78,7 +78,10 @@ Suspension points are introduced across phases:
 * Phase 1: no scheduler; `Task.spawn` calls the closure synchronously and
   wraps the result. `Task.await` unwraps it (always already complete).
 * Phase 2: introduces the scheduler, FIFO runnable queue, `Task.yield()`,
-  and suspending `Task.await` via the state-machine transform.
+  and suspending `Task.await` via a deliberately narrow straight-line
+  state-machine transform.
+* Phase 3: broadens transformed task bodies to support ordinary local control
+  flow such as branches, pattern matches, and loops.
 * Future: host async operations that complete via callbacks.
 
 The exact fairness policy can start as FIFO runnable queue semantics.
@@ -146,7 +149,7 @@ switching without committing the public API to raw coroutine semantics.
 
 ## Implementation Strategy
 
-### Phase 1: Type scaffolding, synchronous execution
+### Phase 1: Type scaffolding, synchronous execution ✓ complete
 
 Add the builtin `Task<T>` type and basic intrinsics with the simplest
 possible runtime behavior:
@@ -161,23 +164,46 @@ resolution and codegen paths, and letting user code adopt the task API
 before real scheduling exists. Suspension points and the runtime scheduler
 are introduced in Phase 2.
 
-### Phase 2: Cooperative yield points
+### Phase 2: Cooperative yield points ✓ complete
 
 Add `Task.yield()` as an explicit scheduler boundary. Lower supported task
 bodies into intraprocedural state machines and run them through the scheduler's
 trampoline loop.
 
 Keep the first supported shape narrow: support `yield` and suspending
-`await` only directly inside task bodies before allowing suspension through
-arbitrary nested calls.
+`await` only in straight-line task bodies. Phase 3 extends this to local control
+flow inside task bodies; suspension through arbitrary nested calls remains a
+later feature.
 
-### Phase 3: Host async integration
+### Phase 3: Broader task-body control flow
+
+Make transformed task bodies useful for ordinary cooperative programs by
+supporting suspension inside local control flow:
+
+* `Task.yield` and suspending `Task.await` inside `if` branches;
+* `Task.yield` and suspending `Task.await` inside `case` arms;
+* suspension inside `for` loops, including condition-style `for cond { ... }`
+  loops, with loop state hoisted into the task frame;
+* nested local control flow within a task body.
+
+This phase is about making `Task<T>` broadly useful without adding suspension
+through arbitrary function calls. Ordinary functions called from a task body
+remain non-suspending until a later CPS/state-machine-across-calls phase or a
+Wasm stack-switching implementation exists.
+
+Phase 3 also adds a top-level `Task.yield()` scheduler-pump convenience. In
+that context, top-level code is still not transformed into a task: `Task.yield()`
+runs at most one scheduler turn and then returns. If no runnable tasks exist, it
+returns `Void`; if blocked tasks remain and no progress is possible, it traps
+with a deadlock error.
+
+### Phase 4: Host async integration
 
 Model host async operations as tasks or task-producing functions. For example,
 future filesystem/network APIs can return `Task<Result<T, E>>` and complete via
 host callbacks that re-enqueue waiting tasks.
 
-### Phase 4: Structured helpers
+### Phase 5: Structured helpers
 
 Once basic tasks are stable, add library helpers rather than syntax:
 
@@ -268,11 +294,13 @@ them when they appear in unsupported positions, including inside `Cell.update`
 callbacks. Diagnostics should explain that the operation would require
 suspension through an ordinary call frame.
 
-General CPS lowering is deferred until Twinkle needs suspension through nested
-calls. At that point, add a suspending-function classification/effect and either
-CPS-transform those functions or extend the state-machine transform across call
-boundaries. Wasm stack switching can still replace the implementation later, but
-the public `Task<T>` API should not depend on it.
+Phase 3 extends this transform to local control flow inside task bodies
+(branches, pattern matches, and loops). General CPS lowering is deferred until
+Twinkle needs suspension through nested calls. At that point, add a
+suspending-function classification/effect and either CPS-transform those
+functions or extend the state-machine transform across call boundaries. Wasm
+stack switching can still replace the implementation later, but the public
+`Task<T>` API should not depend on it.
 
 ### Runtime representation
 
@@ -374,6 +402,12 @@ Implementation order:
   top-level code could be transformed into a resumable task if needed, but
   Phase 2 does not require this.
 
+* **Top-level yield model:** Phase 2 rejects `Task.yield()` in top-level module
+  code. Phase 3 adds it as a scheduler-pump convenience rather than a true
+  suspension point: run at most one scheduler turn, return immediately if no
+  runnable tasks exist, and trap only when blocked tasks remain with no possible
+  progress.
+
 * **Unawaited tasks:** When top-level code completes, the runtime drains
   runnable tasks until the queue is empty or a deadlock is detected. This makes
   eagerly spawned tasks run even if their result is not awaited. A spawned task
@@ -383,12 +417,12 @@ Implementation order:
   await, mutual cycles) is a runtime deadlock. The scheduler should trap when it
   has no runnable tasks but outstanding awaits remain.
 
-## Phase 2 Detailed Design: State-Machine Transform
+## Phase 2 Detailed Design: Straight-Line State-Machine Transform
 
 This section specifies the compiler transform, runtime representation, and
 scheduler for cooperative yield points. Phase 2 adds `Task.yield()` and makes
-`Task.await` suspending, but only at task-body level — suspension through
-arbitrary nested calls is deferred.
+`Task.await` suspending, but only for straight-line task-body code — suspension
+inside branches, pattern matches, loops, and arbitrary nested calls is deferred.
 
 ### Runtime Representation
 
@@ -567,7 +601,7 @@ fn scheduler_run_until(target):
   while target.state != DONE:
     if sched_size == 0:
       // No runnable tasks remain.
-      // NOTE: Phase 3 host-async adds sched_pending_host; deadlock check
+      // NOTE: Phase 4 host-async adds sched_pending_host; deadlock check
       // must become: sched_blocked > 0 AND sched_pending_host == 0.
       if sched_blocked > 0:
         trap("task deadlock: awaited task cannot complete")
@@ -619,7 +653,7 @@ fn scheduler_drain():
     task.state = RUNNING
     action = call_ref task.resume(task)
     // ... same action handling as scheduler_run_until ...
-  // NOTE: Phase 3 host-async must also check sched_pending_host == 0
+  // NOTE: Phase 4 host-async must also check sched_pending_host == 0
   // before declaring deadlock here.
   if sched_blocked > 0:
     trap("task deadlock: blocked tasks remain at program exit")
@@ -1054,13 +1088,14 @@ each task body's ANF and check that every suspension-point call
 (`Task.yield`, `Task.await`) appears at the top level of the let-chain, not
 nested inside:
 - A closure body passed to any function other than `Task.spawn`
-- An `if`/`match` branch
+- An `if` branch or `case` arm
 - A loop body
 
 All three are rejected in Phase 2. Supporting suspension inside branches
 requires per-branch segment chains; supporting loops requires loop iterations
-to become pc-dispatch segments. Both are feasible but add significant
-complexity. Defer to a future phase once the basic flat transform is proven.
+to become pc-dispatch segments. Both are required for `Task<T>` to feel useful
+in ordinary Twinkle programs, so they are the dedicated scope of Phase 3 rather
+than host-async or helper-library work.
 
 Additionally, scan all non-task-body functions for `Task.yield` and
 `Task.await` calls and reject them (except `Task.await` in the top-level
@@ -1081,7 +1116,180 @@ value := wait_for(my_task)
 top-level let-chain (the init function), not merely called transitively from
 top-level code. The restriction is structural, not call-graph-based.
 
-### Backward Compatibility
+## Phase 3 Detailed Design: Local Control-Flow State Machines
+
+Phase 3 replaces the Phase 2 linear let-chain splitter with a local CFG-based
+state-machine transform. The transform still applies only to direct
+`Task.spawn` closure literals. It does not make ordinary functions or nested
+closures suspending.
+
+### CFG-based splitting
+
+Instead of cutting only a flat let-chain, the compiler lowers the task body's
+local expression tree into basic blocks. Each suspension point becomes a resume
+block with a distinct `pc` value. The generated resume function dispatches on
+`frame.pc`, restores the frame values needed by that block, executes until the
+next suspension, branch, loop back-edge, or return, then either continues to
+another block or returns a scheduler action.
+
+Values live across a suspension point are hoisted into the frame just as in
+Phase 2. Phase 3 extends liveness over CFG edges rather than over a single
+linear sequence. This includes values defined before a branch and used after its
+join, loop-carried values, iterator state, loop indices, and pattern bindings
+from `case` arms that are needed after a suspension.
+
+`Task.await` keeps the same fast-path/slow-path behavior in CFG form: if the
+awaited task is already DONE, the result is read and execution continues along
+the current CFG path without returning to the scheduler. If the target is not
+DONE, the current continuation `pc` and live values are saved, the task is
+parked as a waiter, and the resume function returns AWAIT. `Task.yield` always
+saves the continuation and returns YIELD.
+
+### Branches and joins
+
+Suspension is allowed in `if` branches and `case` arms. Each branch or arm may
+contain its own suspension points. A join point after the `if` or `case` gets a
+`pc` block when control can resume there.
+
+Expression-valued `if` and `case` forms use compiler-generated temporaries for
+the branch result. If a branch suspends before producing the expression result,
+any values needed to finish that branch are saved in the frame. Once a branch
+produces the result, the result is stored in a temporary that is available at the
+join block. If that temporary is live across a later suspension, it is hoisted
+into the frame.
+
+Suspending operations in condition, scrutinee, and iterable positions are also
+lowered through compiler temporaries. For example, `if task.await() { ... }`
+saves the awaited task on the slow path; on resume, the awaited result is read
+into a temporary and condition dispatch continues. The same rule applies to
+`case task.await() { ... }` scrutinees and `for item in task.await() { ... }`
+iterator setup.
+
+For `case`, variant payload bindings are ordinary arm-local locals. If a payload
+binding is live across a suspension within the arm, it is stored in the frame and
+restored when that arm resumes. Payload bindings do not exist outside their arm
+unless their values are explicitly used to produce an expression result that
+flows to the join.
+
+### Loops
+
+Suspension is allowed in `for` bodies, including collection iteration,
+indexed iteration, and condition-style `for cond { ... }` loops. Loop back-edges
+become CFG edges to the loop header. The task frame stores any loop-carried
+state live across suspension points: iterator/cursor state, current element,
+index variables, condition temporaries, accumulator locals, and user locals used
+after the suspension.
+
+A suspension inside a loop body resumes at the continuation block for that
+iteration. After the resumed body reaches the loop back-edge, normal loop logic
+runs again: advance the iterator or re-evaluate the condition, then either enter
+the next iteration or continue after the loop.
+
+Twinkle currently has no `break` or `continue` syntax. If those are added later,
+they should lower to CFG edges: `continue` jumps to the loop back-edge/header,
+and `break` jumps to the loop exit. Suspension before either jump uses the same
+frame-hoisting rules as any other path.
+
+### Allowed suspension positions
+
+Phase 3 allows suspension anywhere in the transformed task body's local control
+flow, including conditions, scrutinees, iterable expressions, branch/arm bodies,
+and loop bodies:
+
+```tw
+Task.spawn(fn() Void {
+  if should_wait().await() {
+    Task.yield()
+  }
+
+  for item in load_items().await() {
+    process(item)
+    Task.yield()
+  }
+
+  case fetch_state().await() {
+    .Ready(value) => use(value)
+    .Waiting(task) => task.await()
+  }
+})
+```
+
+The key boundary is lexical, not call-graph based: the suspension point must be
+inside the direct task-body expression tree that the compiler is transforming.
+It must not be hidden inside an ordinary function or nested closure.
+
+Allowed:
+
+```tw
+Task.spawn(fn() Void {
+  if cond {
+    Task.yield()
+  }
+})
+```
+
+Rejected:
+
+```tw
+Task.spawn(fn() Void {
+  helper := fn() Void {
+    Task.yield()
+  }
+  helper()
+})
+```
+
+The second example remains invalid because suspension through the nested closure
+would require that closure and its caller to be transformed as suspending call
+frames. That remains future work.
+
+### Phase 3 validation
+
+Phase 3 replaces the Phase 2 "flat top-level let-chain" validation rule with a
+local-CFG rule:
+
+> Suspension points are allowed anywhere in a transformed task body's local
+> control-flow graph, but still not inside ordinary function bodies or nested
+> closure bodies within that task body.
+
+The existing restrictions still apply:
+
+* `Task.yield()` outside a transformed task body is invalid, except for the
+  top-level scheduler-pump form added in Phase 3.
+* `Task.await()` outside top-level code or a transformed task body is invalid.
+* `Task.yield()` and `Task.await()` inside `Cell.update` callbacks are invalid.
+* Indirect closures passed to `Task.spawn` are non-suspending and cannot contain
+  suspension points.
+
+### Top-level `Task.yield()`
+
+Phase 3 adds top-level `Task.yield()` as a scheduler-pump operation. Top-level
+module code is still not a task and is not parked or resumed. The operation runs
+at most one scheduler turn:
+
+1. If the runnable queue is non-empty, dequeue one task, decrement
+   `sched_size`, mark it RUNNING, and call its resume function.
+2. Handle exactly one returned scheduler action from that resumed task:
+   - `COMPLETE`: mark the task DONE, store/release fields as usual, wake its
+     waiters by enqueueing them, decrement `sched_blocked` for each woken waiter,
+     increment `sched_size` for each enqueue, then return `Void`.
+   - `YIELD`: re-enqueue that task, increment `sched_size`, then return `Void`.
+   - `AWAIT`: leave that task BLOCKED, then return `Void`.
+3. If the runnable queue is empty and `sched_blocked == 0`, return `Void`.
+4. If the runnable queue is empty and `sched_blocked > 0`, trap with a task
+   deadlock error.
+
+"Exactly one returned scheduler action" means exactly one task is resumed.
+Completion may still iterate over that task's full waiter list and enqueue all
+waiters. Waiters woken by the one resumed task are only enqueued. They are not
+run by the same top-level `Task.yield()` call; a later `Task.yield()`,
+`Task.await()`, or program-exit drain may run them.
+
+As with `scheduler_run_until` and `scheduler_drain`, the deadlock check changes
+once host async exists: Phase 4 should only trap when no runnable tasks remain,
+blocked tasks remain, and no host completions are pending.
+
+## Backward Compatibility
 
 Phase 2 is **source-compatible** with Phase 1 programs but introduces a
 **timing change**: `Task.spawn` enqueues closures for later scheduling
