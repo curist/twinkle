@@ -7167,6 +7167,7 @@ fn is_host_vector_returning(func_id: FuncId) -> bool {
         || func_id == ids::HOST_LIST_DIR
         || func_id == ids::HOST_ENV
         || func_id == ids::HOST_STDIN_READ_CHUNK
+        || func_id == ids::HOST_STDIN_READ_TIMEOUT
 }
 
 fn is_host_read_file(func_id: FuncId) -> bool {

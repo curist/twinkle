@@ -100,6 +100,8 @@ fn builtin_abi(name: String) AbiContract {
     "host_now" => abi([], [.F64]),
     "host_run_wasm" => abi([arr_n(), arr_n()], [.I64]),
     "host_stdin_read_chunk" => abi([.I32], [arr_()]),
+    "host_stdin_read_timeout" => abi([.I32, .I32], [arr_()]),
+    "host_stdin_eof" => abi([], [.I32]),
     "host_stdout_write_bytes" => abi([arr_n()], []),
 
     // Intrinsics that still cross the anyref boundary after M4.
@@ -376,6 +378,8 @@ pub fn builtin_specs() Vector<BuiltinSpec> {
     rt("host_now",         "host", "now",         .None),
     rt("host_run_wasm",    "host", "run_wasm",    .None),
     rt("host_stdin_read_chunk",    "host", "stdin_read_chunk",    .None),
+    rt("host_stdin_read_timeout",  "host", "stdin_read_timeout",  .None),
+    rt("host_stdin_eof",           "host", "stdin_eof",           .None),
     rt("host_stdout_write_bytes",  "host", "stdout_write_bytes",  .None),
   ]
 }

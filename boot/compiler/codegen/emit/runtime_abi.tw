@@ -4,7 +4,7 @@ use compiler.codegen.wasm_ir.{Instr}
 
 // Host boundary helpers: identify functions that cross the Array/PVec boundary
 pub fn is_host_vector_returning(name: String) Bool {
-  name == "host_args" or name == "host_list_dir" or name == "host_env" or name == "host_stdin_read_chunk"
+  name == "host_args" or name == "host_list_dir" or name == "host_env" or name == "host_stdin_read_chunk" or name == "host_stdin_read_timeout"
 }
 pub fn is_host_read_file(name: String) Bool {
   name == "host_read_file"

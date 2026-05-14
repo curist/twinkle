@@ -31,6 +31,12 @@ fn diagnostic_count(out: json.Json) Int!String {
   .Ok(diagnostics.len())
 }
 
+fn publish_due_now(step: server_core.Step) server_core.Step {
+  state := step.state
+  state.diagnostics_deadline_ms = 0.0
+  server_core.publish_due_diagnostics(state)
+}
+
 pub fn suite() runner.Suite {
   runner.suite("lsp server core")
     .test("initialize returns minimal capabilities", fn() {
@@ -107,6 +113,9 @@ pub fn suite() runner.Suite {
         should_exit: false,
         documents: opened,
         query_cache: query_cache.empty(),
+        diagnostics_pending: false,
+        diagnostics_deadline_ms: 0.0,
+        last_published_versions: Dict.new(),
       }
       params := json.object([
         json.kv("textDocument", json.object([
@@ -122,8 +131,8 @@ pub fn suite() runner.Suite {
       doc := try document_store.get(step.state.documents, "file:///a.tw").ok_or("missing document")
       try assert.str_eq(doc.text, "new")
       try assert.int_eq(try doc.version.ok_or("missing version"), 2)
-      out := try only_out(step)
-      try assert.str_eq(try json.decode(out, json.field("method", json.string())), "textDocument/publishDiagnostics")
+      try assert.is_true(step.state.diagnostics_pending)
+      try assert.int_eq(step.outgoing.len(), 0)
       .Ok({})
     })
     .test("didChange publishes diagnostics for open importers", fn() {
@@ -136,6 +145,9 @@ pub fn suite() runner.Suite {
         should_exit: false,
         documents: docs,
         query_cache: query_cache.empty(),
+        diagnostics_pending: false,
+        diagnostics_deadline_ms: 0.0,
+        last_published_versions: Dict.new(),
       }
       params := json.object([
         json.kv("textDocument", json.object([
@@ -147,7 +159,7 @@ pub fn suite() runner.Suite {
         ])),
       ])
       msg := protocol.Message.Notification(.{ method: "textDocument/didChange", params: .Some(params) })
-      step := server_core.handle_message(state, msg)
+      step := publish_due_now(server_core.handle_message(state, msg))
       try assert.int_eq(step.outgoing.len(), 2)
       importer_out := try published_for(step, "file:///tmp/a.tw")
       try assert.is_true((try diagnostic_count(importer_out)) > 0)
@@ -228,6 +240,9 @@ pub fn suite() runner.Suite {
         should_exit: false,
         documents: docs,
         query_cache: query_cache.empty(),
+        diagnostics_pending: false,
+        diagnostics_deadline_ms: 0.0,
+        last_published_versions: Dict.new(),
       }
       params := json.object([
         json.kv("textDocument", json.object([
@@ -239,7 +254,7 @@ pub fn suite() runner.Suite {
         ])),
       ])
       msg := protocol.Message.Notification(.{ method: "textDocument/didChange", params: .Some(params) })
-      step := server_core.handle_message(state, msg)
+      step := publish_due_now(server_core.handle_message(state, msg))
       try assert.int_eq(step.outgoing.len(), 2)
       importer_out := try published_for(step, "file:///tmp/a.tw")
       try assert.int_eq(try diagnostic_count(importer_out), 0)
@@ -253,6 +268,9 @@ pub fn suite() runner.Suite {
         should_exit: false,
         documents: opened,
         query_cache: query_cache.empty(),
+        diagnostics_pending: false,
+        diagnostics_deadline_ms: 0.0,
+        last_published_versions: Dict.new(),
       }
       params := json.object([
         json.kv("textDocument", json.object([
@@ -303,6 +321,9 @@ pub fn suite() runner.Suite {
         should_exit: false,
         documents: docs,
         query_cache: query_cache.empty(),
+        diagnostics_pending: false,
+        diagnostics_deadline_ms: 0.0,
+        last_published_versions: Dict.new(),
       }
       // Build a codeAction request with a diagnostic carrying edit data
       diag_data := json.object([
@@ -361,6 +382,9 @@ pub fn suite() runner.Suite {
         should_exit: false,
         documents: docs,
         query_cache: query_cache.empty(),
+        diagnostics_pending: false,
+        diagnostics_deadline_ms: 0.0,
+        last_published_versions: Dict.new(),
       }
       // Trigger diagnostics via didChange on the main file
       change_params := json.object([
@@ -373,7 +397,7 @@ pub fn suite() runner.Suite {
         ])),
       ])
       msg := protocol.Message.Notification(.{ method: "textDocument/didChange", params: .Some(change_params) })
-      step := server_core.handle_message(state, msg)
+      step := publish_due_now(server_core.handle_message(state, msg))
 
       // Find diagnostics for main_import.tw
       main_out := try published_for(step, "file:///tmp/main_import.tw")
@@ -410,6 +434,9 @@ pub fn suite() runner.Suite {
         should_exit: false,
         documents: docs,
         query_cache: query_cache.empty(),
+        diagnostics_pending: false,
+        diagnostics_deadline_ms: 0.0,
+        last_published_versions: Dict.new(),
       }
       // Diagnostic without data
       diag_json := json.object([

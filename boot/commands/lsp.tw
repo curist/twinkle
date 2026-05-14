@@ -15,42 +15,53 @@ pub fn run_lsp_command(_parsed: ParseResult) {
   buffer: Vector<Byte> = []
 
   for !state.should_exit {
-    chunk := io.read_stdin_chunk(4096)
-    if chunk.len() == 0 {
+    chunk := case server_core.next_poll_timeout_ms(state) {
+      .Some(timeout_ms) => io.read_stdin_timeout(4096, timeout_ms),
+      .None => io.read_stdin_chunk(4096),
+    }
+    if chunk.len() == 0 and io.stdin_eof() {
       break
     }
-    buffer = buffer.concat(chunk)
+    if chunk.len() > 0 {
+      buffer = buffer.concat(chunk)
 
-    for true {
-      decoded := case framing.try_decode_frame_bytes(buffer) {
-        .Ok(result) => result,
-        .Err(msg) => {
-          eprintln("error: invalid LSP frame: ${msg}")
-          proc.exit(1)
-        },
-      }
+      for true {
+        decoded := case framing.try_decode_frame_bytes(buffer) {
+          .Ok(result) => result,
+          .Err(msg) => {
+            eprintln("error: invalid LSP frame: ${msg}")
+            proc.exit(1)
+          },
+        }
 
-      case decoded {
-        .NeedMoreBytes => { break },
-        .DecodedBytes(frame, rest) => {
-          message := case protocol.parse_message(frame.body) {
-            .Ok(msg) => msg,
-            .Err(msg) => {
-              eprintln("error: invalid JSON-RPC message: ${msg}")
-              proc.exit(1)
-            },
-          }
-          step := server_core.handle_message(state, message)
-          state = step.state
-          for out in step.outgoing {
-            io.write_stdout_text(framing.encode_message(json.stringify(out)))
-          }
-          buffer = rest
-          if state.should_exit {
-            break
-          }
-        },
+        case decoded {
+          .NeedMoreBytes => { break },
+          .DecodedBytes(frame, rest) => {
+            message := case protocol.parse_message(frame.body) {
+              .Ok(msg) => msg,
+              .Err(msg) => {
+                eprintln("error: invalid JSON-RPC message: ${msg}")
+                proc.exit(1)
+              },
+            }
+            step := server_core.handle_message(state, message)
+            state = step.state
+            for out in step.outgoing {
+              io.write_stdout_text(framing.encode_message(json.stringify(out)))
+            }
+            buffer = rest
+            if state.should_exit {
+              break
+            }
+          },
+        }
       }
+    }
+
+    step := server_core.publish_due_diagnostics(state)
+    state = step.state
+    for out in step.outgoing {
+      io.write_stdout_text(framing.encode_message(json.stringify(out)))
     }
   }
 

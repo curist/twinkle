@@ -252,6 +252,8 @@ pub fn builtin_env() ResolvedEnv {
     builtin_sig("host_cwd",        [], [],               [],                     .Some(.String)),
     builtin_sig("host_exit",       [], ["code"],         [.Int],                 .Some(.Never)),
     builtin_sig("host_stdin_read_chunk", [], ["max_bytes"], [.Int],              .Some(.Vector(.Byte))),
+    builtin_sig("host_stdin_read_timeout", [], ["max_bytes", "timeout_ms"], [.Int, .Int], .Some(.Vector(.Byte))),
+    builtin_sig("host_stdin_eof", [], [], [], .Some(.Bool)),
     builtin_sig("host_stdout_write_bytes", [], ["bytes"],  [.Vector(.Byte)],     .Some(.Void)),
   ]
 
@@ -294,5 +296,7 @@ pub fn add_internal_host_builtins(env: ResolvedEnv) ResolvedEnv {
     .add_function(builtin_sig("__host_now", [], [], [], .Some(.Float)))
     .add_function(builtin_sig("__host_run_wasm", [], ["bytes", "argv"], [.Vector(.Byte), .Vector(.String)], .Some(.Int)))
     .add_function(builtin_sig("__host_stdin_read_chunk", [], ["max_bytes"], [.Int], .Some(.Vector(.Byte))))
+    .add_function(builtin_sig("__host_stdin_read_timeout", [], ["max_bytes", "timeout_ms"], [.Int, .Int], .Some(.Vector(.Byte))))
+    .add_function(builtin_sig("__host_stdin_eof", [], [], [], .Some(.Bool)))
     .add_function(builtin_sig("__host_stdout_write_bytes", [], ["bytes"], [.Vector(.Byte)], .Some(.Void)))
 }

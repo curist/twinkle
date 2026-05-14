@@ -346,6 +346,14 @@ const INTRINSIC_SPECS: &[IntrinsicSpec] = &[
         false
     ),
     spec!(
+        HOST_STDIN_READ_TIMEOUT,
+        "__host_stdin_read_timeout",
+        Runtime,
+        false,
+        false
+    ),
+    spec!(HOST_STDIN_EOF, "__host_stdin_eof", Runtime, false, false),
+    spec!(
         HOST_STDOUT_WRITE_BYTES,
         "__host_stdout_write_bytes",
         Runtime,
@@ -418,6 +426,11 @@ const COMMON_BOOTSTRAP_FUNC_NAMES: &[(&str, FuncId)] = &[
         "__host_stdin_read_chunk",
         prelude_ids::HOST_STDIN_READ_CHUNK,
     ),
+    (
+        "__host_stdin_read_timeout",
+        prelude_ids::HOST_STDIN_READ_TIMEOUT,
+    ),
+    ("__host_stdin_eof", prelude_ids::HOST_STDIN_EOF),
     (
         "__host_stdout_write_bytes",
         prelude_ids::HOST_STDOUT_WRITE_BYTES,

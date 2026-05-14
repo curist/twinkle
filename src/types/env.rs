@@ -1051,6 +1051,20 @@ impl ValueEnv {
             },
         );
         env.builtins.insert(
+            "__host_stdin_read_timeout".to_string(),
+            MonoType::Function {
+                params: vec![MonoType::Int, MonoType::Int],
+                ret: Box::new(MonoType::Vector(Box::new(MonoType::Byte))),
+            },
+        );
+        env.builtins.insert(
+            "__host_stdin_eof".to_string(),
+            MonoType::Function {
+                params: vec![],
+                ret: Box::new(MonoType::Bool),
+            },
+        );
+        env.builtins.insert(
             "__host_stdout_write_bytes".to_string(),
             MonoType::Function {
                 params: vec![MonoType::Vector(Box::new(MonoType::Byte))],

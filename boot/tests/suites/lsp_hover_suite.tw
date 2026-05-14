@@ -14,6 +14,9 @@ fn state_with_doc(uri: String, text: String) server_core.State {
     should_exit: false,
     documents: docs,
     query_cache: query_cache.empty(),
+    diagnostics_pending: false,
+    diagnostics_deadline_ms: 0.0,
+    last_published_versions: Dict.new(),
   }
 }
 
@@ -26,6 +29,9 @@ fn state_with_two_docs(uri_a: String, text_a: String, uri_b: String, text_b: Str
     should_exit: false,
     documents: docs,
     query_cache: query_cache.empty(),
+    diagnostics_pending: false,
+    diagnostics_deadline_ms: 0.0,
+    last_published_versions: Dict.new(),
   }
 }
 

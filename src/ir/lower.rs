@@ -141,6 +141,8 @@ pub mod prelude {
     pub const HOST_NOW: FuncId = FuncId(1030); // () -> Float (milliseconds since time origin)
     pub const HOST_RUN_WASM: FuncId = FuncId(1031); // (bytes: Vector<Byte>, argv: Vector<String>) -> Int
     pub const HOST_STDIN_READ_CHUNK: FuncId = FuncId(1032); // (max_bytes: Int) -> Vector<Byte>
+    pub const HOST_STDIN_READ_TIMEOUT: FuncId = FuncId(1037); // (max_bytes: Int, timeout_ms: Int) -> Vector<Byte>
+    pub const HOST_STDIN_EOF: FuncId = FuncId(1038); // () -> Bool
     pub const HOST_STDOUT_WRITE_BYTES: FuncId = FuncId(1033); // (bytes: Vector<Byte>) -> Void
 
     // User functions start here

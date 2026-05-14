@@ -86,6 +86,38 @@ function makeByteArray(b, bytes) {
   return arr;
 }
 
+function sleepSyncMs(ms) {
+  if (ms <= 0) return;
+  const sab = new SharedArrayBuffer(4);
+  Atomics.wait(new Int32Array(sab), 0, 0, ms);
+}
+
+function readStdinTimeout(maxBytes, timeoutMs, runtime) {
+  const n = Number(maxBytes);
+  const timeout = Number(timeoutMs);
+  if (n <= 0) return Buffer.alloc(0);
+
+  void process.stdin;
+
+  const deadline = performance.now() + Math.max(0, timeout);
+  const buf = Buffer.allocUnsafe(n);
+  while (true) {
+    try {
+      const read = readSync(0, buf, 0, n, null);
+      if (read === 0) runtime.stdinEof = true;
+      return buf.subarray(0, read);
+    } catch (e) {
+      if (e?.code === "EAGAIN" || e?.code === "EWOULDBLOCK") {
+        const remaining = deadline - performance.now();
+        if (remaining <= 0) return Buffer.alloc(0);
+        sleepSyncMs(Math.min(10, remaining));
+        continue;
+      }
+      throw e;
+    }
+  }
+}
+
 function decodeStringArray(b, arrRef) {
   const len = b.array_len(arrRef);
   const out = new Array(len);
@@ -187,13 +219,9 @@ function makeHostImports(b, runtime) {
         const filePath = resolve(runtime.cwd, decodeString(b, pathRef));
         writeFileSync(filePath, decodeByteArray(b, bytesRef));
       },
-      stdin_read_chunk: (maxBytes) => {
-        const n = Number(maxBytes);
-        if (n <= 0) return makeByteArray(b, []);
-        const buf = Buffer.allocUnsafe(n);
-        const read = readSync(0, buf, 0, n, null);
-        return makeByteArray(b, buf.subarray(0, read));
-      },
+      stdin_read_chunk: (maxBytes) => makeByteArray(b, readStdinTimeout(maxBytes, 2147483647, runtime)),
+      stdin_read_timeout: (maxBytes, timeoutMs) => makeByteArray(b, readStdinTimeout(maxBytes, timeoutMs, runtime)),
+      stdin_eof: () => runtime.stdinEof ? 1 : 0,
       stdout_write_bytes: (bytesRef) => {
         const bytes = decodeByteArray(b, bytesRef);
         if (runtime.stdout?.fd !== undefined) {
@@ -256,6 +284,7 @@ export function runWasmBytes(
     stdout,
     stderr,
     bridgeBytes,
+    stdinEof: false,
   };
 
   const hostImports = makeHostImports(b, runtime);

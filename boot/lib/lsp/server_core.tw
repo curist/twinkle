@@ -3,6 +3,7 @@
 // Transport code owns framing and I/O. This module owns protocol state and
 // responses so server behavior can be tested without stdio.
 
+use @std.date
 use @std.fs
 use @std.path
 use compiler.imports
@@ -14,6 +15,7 @@ use compiler.query.hover as query_hover
 use compiler.query.semantic
 use lib.json
 use lib.module.loader
+use lib.query.keys
 use lib.source.identity
 use lib.lsp.code_action as lsp_code_action
 use lib.lsp.completion as lsp_completion
@@ -31,6 +33,9 @@ pub type State = .{
   should_exit: Bool,
   documents: document_store.Store,
   query_cache: query_cache.Store,
+  diagnostics_pending: Bool,
+  diagnostics_deadline_ms: Float,
+  last_published_versions: Dict<String, Int>,
 }
 
 pub type Step = .{
@@ -45,6 +50,9 @@ pub fn initial_state() State {
     should_exit: false,
     documents: document_store.empty(),
     query_cache: query_cache.empty(),
+    diagnostics_pending: false,
+    diagnostics_deadline_ms: 0.0,
+    last_published_versions: Dict.new(),
   }
 }
 
@@ -113,7 +121,7 @@ fn handle_did_open(state: State, note: protocol.Notification) Step {
     .Ok(open) => {
       doc := open.text_document
       state.documents = document_store.open(state.documents, doc.uri, doc.text, .Some(doc.version))
-      publish_workspace_diagnostics(state)
+      publish_workspace_diagnostics(state, false)
     },
     .Err(_) => .{ state, outgoing: [] },
   }
@@ -128,7 +136,8 @@ fn handle_did_change(state: State, note: protocol.Notification) Step {
       full := change.content_changes[change.content_changes.len() - 1]
       doc := change.text_document
       state.documents = document_store.change_full_text(state.documents, doc.uri, full.text, doc.version)
-      publish_workspace_diagnostics(state)
+      state = note_changed_document_source(state, doc.uri, full.text)
+      mark_diagnostics_pending(state)
     },
     .Err(_) => .{ state, outgoing: [] },
   }
@@ -297,7 +306,43 @@ fn project_root_for_document(file_path: String) String {
   if root == path.normalize(".") { dir } else { root }
 }
 
-fn publish_workspace_diagnostics(state: State) Step {
+pub fn next_poll_timeout_ms(state: State) Int? {
+  if !state.diagnostics_pending {
+    return .None
+  }
+  if date.now() >= state.diagnostics_deadline_ms {
+    .Some(0)
+  } else {
+    .Some(25)
+  }
+}
+
+pub fn publish_due_diagnostics(state: State) Step {
+  if state.diagnostics_pending and date.now() >= state.diagnostics_deadline_ms {
+    state.diagnostics_pending = false
+    return publish_workspace_diagnostics(state, true)
+  }
+  .{ state, outgoing: [] }
+}
+
+fn mark_diagnostics_pending(state: State) Step {
+  state.diagnostics_pending = true
+  state.diagnostics_deadline_ms = date.now() + 150.to_float()
+  .{ state, outgoing: [] }
+}
+
+fn note_changed_document_source(state: State, uri: String, text: String) State {
+  id := case identity.from_file_uri(uri) {
+    .Ok(parsed) => parsed,
+    .Err(_) => identity.from_path(uri),
+  }
+  root := project_root_for_document(id.path)
+  canonical := imports.canonical_module_path(id.path, imports.make_canonical_roots(root))
+  state.query_cache = query_cache.note_source_hash(state.query_cache, canonical, keys.hash_text(text))
+  state
+}
+
+fn publish_workspace_diagnostics(state: State, suppress_duplicates: Bool) Step {
   open_docs := state.documents.docs.values()
   overlay_docs := collect doc in open_docs {
     query_diagnostics.DocumentInput.{ uri: doc.uri, text: doc.text, version: doc.version }
@@ -341,8 +386,9 @@ fn publish_workspace_diagnostics(state: State) Step {
       }
       case document_by_identity_uri(state.documents, group.uri) {
         .Some(group_doc) => {
-          if !published.has(group.uri) {
+          if !published.has(group.uri) and should_publish_diagnostics(state, group_doc, suppress_duplicates) {
             outgoing = outgoing.append(lsp_diagnostics.publish_diagnostics(group_doc.uri, group_doc.version, group_doc.index, group.diagnostics))
+            state = mark_published_version(state, group_doc)
             published[group.uri] = true
           }
         },
@@ -370,8 +416,9 @@ fn publish_workspace_diagnostics(state: State) Step {
         }
         case document_by_identity_uri(state.documents, group.uri) {
           .Some(group_doc) => {
-            if !published.has(group.uri) {
+            if !published.has(group.uri) and should_publish_diagnostics(state, group_doc, suppress_duplicates) {
               outgoing = outgoing.append(lsp_diagnostics.publish_diagnostics(group_doc.uri, group_doc.version, group_doc.index, group.diagnostics))
+              state = mark_published_version(state, group_doc)
               published[group.uri] = true
             }
           },
@@ -383,6 +430,29 @@ fn publish_workspace_diagnostics(state: State) Step {
 
   state.query_cache = cur_cache
   .{ state, outgoing }
+}
+
+fn should_publish_diagnostics(state: State, doc: document_store.Document, suppress_duplicates: Bool) Bool {
+  if !suppress_duplicates {
+    return true
+  }
+  case doc.version {
+    .Some(version) => {
+      case state.last_published_versions[doc.identity.uri] {
+        .Some(last_version) => last_version != version,
+        .None => true,
+      }
+    },
+    .None => true,
+  }
+}
+
+fn mark_published_version(state: State, doc: document_store.Document) State {
+  case doc.version {
+    .Some(version) => { state.last_published_versions[doc.identity.uri] = version },
+    .None => {},
+  }
+  state
 }
 
 fn document_by_identity_uri(store: document_store.Store, identity_uri: String) document_store.Document? {
