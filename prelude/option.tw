@@ -73,7 +73,7 @@ pub fn filter<T>(opt: Option<T>, pred: fn(T) Bool) Option<T> {
 }
 
 /// Return this option if it is Some, otherwise return other.
-pub fn or<T>(opt: Option<T>, other: Option<T>) Option<T> {
+pub fn or_some<T>(opt: Option<T>, other: Option<T>) Option<T> {
   case opt {
     .Some(_) => opt,
     .None => other,

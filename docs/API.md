@@ -29,7 +29,7 @@ Shorthand: `T?` is equivalent to `Option<T>`.
 | `.and_then(f)` | `fn<T, U>(opt: Option<T>, f: fn(T) Option<U>) Option<U>` | Chain Option-producing steps without nesting |
 | `.flatten()` | `fn<T>(opt: Option<Option<T>>) Option<T>` | Remove one level of nested `Option` |
 | `.filter(pred)` | `fn<T>(opt: Option<T>, pred: fn(T) Bool) Option<T>` | Keep `Some(v)` only when `pred(v)` is true |
-| `.or(other)` | `fn<T>(opt: Option<T>, other: Option<T>) Option<T>` | Return `opt` if it is `Some`, otherwise return `other` |
+| `.or_some(other)` | `fn<T>(opt: Option<T>, other: Option<T>) Option<T>` | Return `opt` if it is `Some`, otherwise return `other` |
 | `.or_else(f)` | `fn<T>(opt: Option<T>, f: fn() Option<T>) Option<T>` | Return `opt` if it is `Some`, otherwise lazily compute another option |
 | `.inspect(f)` | `fn<T>(opt: Option<T>, f: fn(T) Void) Option<T>` | Run `f(v)` for `Some(v)` and return the original option |
 | `.ok_or(err)` | `fn<T, E>(opt: T?, err: E) Result<T, E>` | Convert to Result: `Some(v)` → `Ok(v)`, `None` → `Err(err)` |
@@ -251,6 +251,7 @@ existing key keeps its position, and remove+reinsert appends it at the end.
 | Method | Signature | Description |
 |--------|-----------|-------------|
 | `Dict.new()` | `fn<K,V>() Dict<K,V>` | Create empty dict |
+| `.get(key)` | `fn<K,V>(d: Dict<K,V>, key: K) Option<V>` | Look up value by key |
 | `.set(key, value)` | `fn<K,V>(d: Dict<K,V>, key: K, value: V) Dict<K,V>` | Insert/replace key-value pair, return new dict |
 | `.len()` | `fn<K,V>(d: Dict<K,V>) Int` | Number of entries |
 | `.has(key)` | `fn<K,V>(d: Dict<K,V>, key: K) Bool` | Check if key exists |

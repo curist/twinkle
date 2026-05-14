@@ -106,17 +106,6 @@ impl Parser {
         id
     }
 
-    fn is_identifier_text(text: &str) -> bool {
-        let mut chars = text.chars();
-        let Some(first) = chars.next() else {
-            return false;
-        };
-        if !(first.is_alphabetic() || first == '_') {
-            return false;
-        }
-        chars.all(|ch| ch.is_alphanumeric() || ch == '_')
-    }
-
     // Core token navigation
 
     fn peek(&self) -> Option<&Token> {
@@ -563,7 +552,7 @@ impl Parser {
     fn parse_function_decl(&mut self, is_pub: bool) -> ParseResult<FunctionDecl> {
         let start = self.expect(TokenKind::Fn)?;
         let name_token = match self.peek() {
-            Some(token) if Self::is_identifier_text(&token.text) => self.advance().unwrap(),
+            Some(token) if token.kind == TokenKind::Ident => self.advance().unwrap(),
             Some(token) => {
                 return Err(ParseError::unexpected_token(
                     vec![TokenKind::Ident.name()],
@@ -1300,7 +1289,7 @@ impl Parser {
         }
 
         let field = match self.peek() {
-            Some(token) if Self::is_identifier_text(&token.text) => self.advance().unwrap(),
+            Some(token) if token.kind == TokenKind::Ident => self.advance().unwrap(),
             Some(token) => {
                 return Err(ParseError::unexpected_token(
                     vec![TokenKind::Ident.name()],

@@ -456,12 +456,12 @@ pub fn suite() runner.Suite {
       try assert.is_none(outer_none.flatten())
       .Ok({})
     })
-    .test("Option.or and or_else choose fallbacks", fn() {
+    .test("Option.or_some and or_else choose fallbacks", fn() {
       some: Int? = .Some(1)
       none: Int? = .None
       called := Cell.new(0)
-      try assert.int_eq(some.or(.Some(2)).unwrap_or(0), 1)
-      try assert.int_eq(none.or(.Some(2)).unwrap_or(0), 2)
+      try assert.int_eq(some.or_some(.Some(2)).unwrap_or(0), 1)
+      try assert.int_eq(none.or_some(.Some(2)).unwrap_or(0), 2)
       try assert.int_eq(some.or_else(fn() {
         called.set(called.get() + 1)
         .Some(3)
