@@ -177,3 +177,4 @@ Related historical context outside this folder:
 | [anonymous-record-variant.md](anonymous-record-variant.md) | Anonymous record types as variant payloads in enum declarations, with synthesized scoped record types and cross-module export support |
 | [unify-js-runtime.md](unify-js-runtime.md) | Shared Node Wasm runtime (`runtime.mjs`) between library tools and SEA CLI |
 | [boot-jspi-runtime.md](boot-jspi-runtime.md) | JSPI entry ABI, async runtime path, suspending host/extern imports, browser async APIs (timer, fetch, fetch-backed VFS) |
+| [boot-nested-variant-pattern-lowering.md](boot-nested-variant-pattern-lowering.md) | Fix nested variant pattern lowering — concrete type substitution for generic variant fields in both stage0 lowerer and emitter |

@@ -1,8 +1,8 @@
 // ANF Module
 // 4 function(s)
-// init = FuncId(90)
+// init = FuncId(92)
 
-fn __prelude_vector.join  [FuncId(85)]  params=[L0: Vector(String), L1: String]
+fn __prelude_vector.join  [FuncId(87)]  params=[L0: Vector(String), L1: String]
   return_ty: String
   body:
     let L29 = call GlobalFunc(10) (L0)
@@ -107,33 +107,33 @@ fn __prelude_vector.join  [FuncId(85)]  params=[L0: Vector(String), L1: String]
     }
     L67
 
-fn arithmetic.add  [FuncId(88)]  params=[L0: Int, L1: Int]
+fn arithmetic.add  [FuncId(90)]  params=[L0: Int, L1: Int]
   return_ty: Int
   body:
     let L2 = binop(Add, L0, L1, Int)
     L2
 
-fn arithmetic.mul  [FuncId(89)]  params=[L0: Int, L1: Int]
+fn arithmetic.mul  [FuncId(91)]  params=[L0: Int, L1: Int]
   return_ty: Int
   body:
     let L2 = binop(Mul, L0, L1, Int)
     L2
 
-fn __init__  [FuncId(90)]  params=[]
+fn __init__  [FuncId(92)]  params=[]
   return_ty: Void
   body:
-    let L6 = call GlobalFunc(88) (3, 4)
+    let L6 = call GlobalFunc(90) (3, 4)
     let L7 = call GlobalFunc(4) (L6)
     let L8 = call GlobalFunc(9) ("", L7)
     let L9 = call GlobalFunc(2) (L8)
     let L5 = init(L9)
     let L10 = unop(Neg, 5, Int)
-    let L11 = call GlobalFunc(88) (2, L10)
+    let L11 = call GlobalFunc(90) (2, L10)
     let L12 = call GlobalFunc(4) (L11)
     let L13 = call GlobalFunc(9) ("", L12)
     let L14 = call GlobalFunc(2) (L13)
     let L4 = init(L14)
-    let L15 = call GlobalFunc(89) (3, 4)
+    let L15 = call GlobalFunc(91) (3, 4)
     let L16 = call GlobalFunc(4) (L15)
     let L17 = call GlobalFunc(9) ("", L16)
     let L18 = call GlobalFunc(2) (L17)

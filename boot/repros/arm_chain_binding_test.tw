@@ -1,0 +1,57 @@
+// Test arm-chain pattern matching (< 3 explicit arms on named enums).
+// If can_match_variant_pattern is broken, these bindings would be empty.
+
+type Color3 = { Red, Green, Blue }
+
+// 2 explicit arms → arm_chain (not br_table which needs >= 3)
+fn describe_partial(c: Color3) String {
+  case c {
+    .Red => "red",
+    _ => "other",
+  }
+}
+
+type Shape3 = { Circle(Int), Rect(Int, Int), Tri }
+
+// 2 explicit arms with bindings → arm_chain
+fn shape_area(s: Shape3) Int {
+  case s {
+    .Circle(r) => r * r,
+    .Rect(w, h) => w * h,
+    _ => 0,
+  }
+}
+
+// 1 explicit arm with binding → arm_chain
+fn get_circle_radius(s: Shape3) Int {
+  case s {
+    .Circle(r) => r,
+    _ => -1,
+  }
+}
+
+fn assert_eq_str(actual: String, expected: String, label: String) {
+  if actual != expected {
+    error("FAIL ${label}: expected '${expected}', got '${actual}'")
+  }
+}
+
+fn assert_eq_int(actual: Int, expected: Int, label: String) {
+  if actual != expected {
+    error("FAIL ${label}: expected ${expected}, got ${actual}")
+  }
+}
+
+assert_eq_str(describe_partial(.Red), "red", "partial-red")
+assert_eq_str(describe_partial(.Green), "other", "partial-green")
+assert_eq_str(describe_partial(.Blue), "other", "partial-blue")
+
+assert_eq_int(shape_area(.Circle(5)), 25, "circle-area")
+assert_eq_int(shape_area(.Rect(3, 4)), 12, "rect-area")
+assert_eq_int(shape_area(.Tri), 0, "tri-area")
+
+assert_eq_int(get_circle_radius(.Circle(7)), 7, "circle-radius")
+assert_eq_int(get_circle_radius(.Rect(1, 2)), -1, "rect-radius")
+assert_eq_int(get_circle_radius(.Tri), -1, "tri-radius")
+
+println("arm_chain_binding_test: all passed")

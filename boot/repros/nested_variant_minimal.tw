@@ -1,0 +1,184 @@
+// Minimal repro for nested variant pattern bug.
+// Tests `.Some(.Variant(...))` patterns — the shape that caused stage2 traps.
+
+type Color = { Red, Green, Blue }
+type Shape = { Circle(Int), Rect(Int, Int) }
+type Animal = { Cat(String), Dog(String), Fish }
+
+// ── Test 1: Option<Color> nested match ───────────────────────────────
+
+fn describe_color_nested(opt: Option<Color>) String {
+  case opt {
+    .Some(.Red) => "red",
+    .Some(.Green) => "green",
+    .Some(.Blue) => "blue",
+    .None => "none",
+  }
+}
+
+fn describe_color_two_step(opt: Option<Color>) String {
+  c := case opt {
+    .Some(c) => c,
+    .None => { return "none" },
+  }
+  case c {
+    .Red => "red",
+    .Green => "green",
+    .Blue => "blue",
+  }
+}
+
+// ── Test 2: Option<Shape> nested match with bindings ─────────────────
+
+fn describe_shape_nested(opt: Option<Shape>) String {
+  case opt {
+    .Some(.Circle(r)) => "circle ${r}",
+    .Some(.Rect(w, h)) => "rect ${w}x${h}",
+    .None => "none",
+  }
+}
+
+fn describe_shape_two_step(opt: Option<Shape>) String {
+  s := case opt {
+    .Some(s) => s,
+    .None => { return "none" },
+  }
+  case s {
+    .Circle(r) => "circle ${r}",
+    .Rect(w, h) => "rect ${w}x${h}",
+  }
+}
+
+// ── Test 3: Option<Animal> with wildcards ────────────────────────────
+
+fn describe_animal_nested(opt: Option<Animal>) String {
+  case opt {
+    .Some(.Cat(name)) => "cat ${name}",
+    .Some(.Dog(_)) => "dog",
+    .Some(.Fish) => "fish",
+    .None => "none",
+  }
+}
+
+fn describe_animal_two_step(opt: Option<Animal>) String {
+  a := case opt {
+    .Some(a) => a,
+    .None => { return "none" },
+  }
+  case a {
+    .Cat(name) => "cat ${name}",
+    .Dog(_) => "dog",
+    .Fish => "fish",
+  }
+}
+
+// ── Test 4: Result<Shape, String> nested match ───────────────────────
+
+fn describe_result_nested(res: Result<Shape, String>) String {
+  case res {
+    .Ok(.Circle(r)) => "ok circle ${r}",
+    .Ok(.Rect(w, h)) => "ok rect ${w}x${h}",
+    .Err(msg) => "err ${msg}",
+  }
+}
+
+fn describe_result_two_step(res: Result<Shape, String>) String {
+  s := case res {
+    .Ok(s) => s,
+    .Err(msg) => { return "err ${msg}" },
+  }
+  case s {
+    .Circle(r) => "ok circle ${r}",
+    .Rect(w, h) => "ok rect ${w}x${h}",
+  }
+}
+
+// ── Test 5: Option<Option<Int>> double nesting ───────────────────────
+
+fn describe_opt_opt_nested(opt: Option<Option<Int>>) String {
+  case opt {
+    .Some(.Some(n)) => "some ${n}",
+    .Some(.None) => "inner none",
+    .None => "outer none",
+  }
+}
+
+fn describe_opt_opt_two_step(opt: Option<Option<Int>>) String {
+  inner := case opt {
+    .Some(i) => i,
+    .None => { return "outer none" },
+  }
+  case inner {
+    .Some(n) => "some ${n}",
+    .None => "inner none",
+  }
+}
+
+// ── Test 6: Wildcard + nested — the original bug shape ───────────────
+
+type TypeDef = { Sum(String, Vector<String>, Int), Alias(String, Vector<String>, String) }
+
+fn check_nested(opt: Option<TypeDef>) String {
+  case opt {
+    .Some(.Sum(name, _, _)) => "sum ${name}",
+    .Some(.Alias(name, _, target)) => "alias ${name} -> ${target}",
+    _ => "other",
+  }
+}
+
+fn check_two_step(opt: Option<TypeDef>) String {
+  d := case opt {
+    .Some(d) => d,
+    .None => { return "other" },
+  }
+  case d {
+    .Sum(name, _, _) => "sum ${name}",
+    .Alias(name, _, target) => "alias ${name} -> ${target}",
+  }
+}
+
+// ── Runner ───────────────────────────────────────────────────────────
+
+fn assert_eq(actual: String, expected: String, label: String) {
+  if actual != expected {
+    error("FAIL ${label}: expected '${expected}', got '${actual}'")
+  }
+}
+
+fn test_pair(label: String, nested: String, two_step: String) {
+  assert_eq(nested, two_step, label)
+}
+
+// Test 1: Color
+test_pair("color-red",   describe_color_nested(.Some(.Red)),   describe_color_two_step(.Some(.Red)))
+test_pair("color-green", describe_color_nested(.Some(.Green)), describe_color_two_step(.Some(.Green)))
+test_pair("color-blue",  describe_color_nested(.Some(.Blue)),  describe_color_two_step(.Some(.Blue)))
+test_pair("color-none",  describe_color_nested(.None),         describe_color_two_step(.None))
+
+// Test 2: Shape
+test_pair("shape-circle", describe_shape_nested(.Some(.Circle(5))),    describe_shape_two_step(.Some(.Circle(5))))
+test_pair("shape-rect",   describe_shape_nested(.Some(.Rect(3, 4))),   describe_shape_two_step(.Some(.Rect(3, 4))))
+test_pair("shape-none",   describe_shape_nested(.None),                describe_shape_two_step(.None))
+
+// Test 3: Animal
+test_pair("animal-cat",  describe_animal_nested(.Some(.Cat("Tom"))),  describe_animal_two_step(.Some(.Cat("Tom"))))
+test_pair("animal-dog",  describe_animal_nested(.Some(.Dog("Rex"))),  describe_animal_two_step(.Some(.Dog("Rex"))))
+test_pair("animal-fish", describe_animal_nested(.Some(.Fish)),        describe_animal_two_step(.Some(.Fish)))
+test_pair("animal-none", describe_animal_nested(.None),               describe_animal_two_step(.None))
+
+// Test 4: Result
+test_pair("result-circle", describe_result_nested(.Ok(.Circle(7))),   describe_result_two_step(.Ok(.Circle(7))))
+test_pair("result-rect",   describe_result_nested(.Ok(.Rect(2, 3))),  describe_result_two_step(.Ok(.Rect(2, 3))))
+test_pair("result-err",    describe_result_nested(.Err("bad")),       describe_result_two_step(.Err("bad")))
+
+// Test 5: Option<Option<Int>>
+test_pair("opt-opt-some", describe_opt_opt_nested(.Some(.Some(42))),  describe_opt_opt_two_step(.Some(.Some(42))))
+test_pair("opt-opt-inner-none", describe_opt_opt_nested(.Some(.None)), describe_opt_opt_two_step(.Some(.None)))
+test_pair("opt-opt-outer-none", describe_opt_opt_nested(.None),       describe_opt_opt_two_step(.None))
+
+// Test 6: TypeDef (closest to the original bug)
+test_pair("typedef-sum",   check_nested(.Some(.Sum("Foo", [], 3))),           check_two_step(.Some(.Sum("Foo", [], 3))))
+test_pair("typedef-alias", check_nested(.Some(.Alias("Bar", ["T"], "Baz"))),  check_two_step(.Some(.Alias("Bar", ["T"], "Baz"))))
+test_pair("typedef-none",  check_nested(.None),                               check_two_step(.None))
+
+println("nested_variant_minimal: all tests passed")

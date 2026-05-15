@@ -1719,12 +1719,14 @@ fn emit_pattern_condition(
                 if pattern_is_trivially_true(field_pat) {
                     continue;
                 }
+                let field_expected =
+                    expected_mono.and_then(|mono| pattern_variant_field_mono(mono, *variant, idx));
                 let field_anyref =
                     emit_variant_field_anyref_universal(value_anyref_instrs, idx as i32);
                 inner_checks.push(emit_pattern_condition(
                     field_pat,
                     &field_anyref,
-                    None,
+                    field_expected,
                     None,
                     None,
                     None,
@@ -2024,7 +2026,11 @@ fn variant_field_mono_for_typed_sum<'a>(
         }
         MonoType::Named { type_id, args } if *type_id == OPTION_TYPE_ID && args.len() == 1 => {
             // Some = variant 1, field 0 → args[0]
-            if field_idx == 0 { args.get(0) } else { None }
+            if variant_id.0 == 1 && field_idx == 0 {
+                args.get(0)
+            } else {
+                None
+            }
         }
         _ => None,
     }

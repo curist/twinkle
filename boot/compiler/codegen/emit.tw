@@ -2117,13 +2117,9 @@ fn can_match_variant_pattern(scrutinee_mono: MonoType, env: ResolvedEnv) Bool {
     .Optional(_) => true,
     .Result(_, _) => true,
     .Named(tid, args) => {
-      def := case env.lookup_type_def(tid) {
-        .Some(d) => d,
-        .None => { return false },
-      }
-      case def {
-        .Sum(_, _, _) => true,
-        .Alias(_, type_params, target) => can_match_variant_pattern(subst_type_params(target, type_params, args), env),
+      case env.lookup_type_def(tid) {
+        .Some(.Sum(_, _, _)) => true,
+        .Some(.Alias(_, type_params, target)) => can_match_variant_pattern(subst_type_params(target, type_params, args), env),
         _ => false,
       }
     },

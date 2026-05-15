@@ -3267,12 +3267,62 @@ impl Lowerer {
 
                 // Pass each field pattern the corresponding declared field type so
                 // nested variant patterns (e.g. `.Some(.Ok(x))`) also resolve correctly.
-                let field_types: Vec<MonoType> = self
-                    .type_env
-                    .get_variants(type_id)
-                    .and_then(|vs| vs.get(variant_idx))
-                    .map(|v| v.fields.clone())
-                    .unwrap_or_default();
+                // Instantiate type parameters from the scrutinee to produce concrete
+                // field types (e.g. Option<Foo>.Some → [Foo], not [Void]).
+                let field_types: Vec<MonoType> = {
+                    let raw: Vec<MonoType> = self
+                        .type_env
+                        .get_variants(type_id)
+                        .and_then(|vs| vs.get(variant_idx))
+                        .map(|v| v.fields.clone())
+                        .unwrap_or_default();
+                    if let Some(MonoType::Named { args, .. }) = scrutinee_ty {
+                        if !args.is_empty() {
+                            let type_params = self
+                                .type_env
+                                .get_def(type_id)
+                                .map(|d| d.type_params())
+                                .unwrap_or(&[]);
+                            if !type_params.is_empty() {
+                                // User-defined generic type: substitute Var(name) → args[i]
+                                let subst: HashMap<&str, &MonoType> = type_params
+                                    .iter()
+                                    .zip(args.iter())
+                                    .map(|(name, arg)| (name.as_str(), arg))
+                                    .collect();
+                                raw.iter()
+                                    .map(|ty| subst_type_vars_in_field(ty, &subst))
+                                    .collect()
+                            } else if type_id == OPTION_TYPE_ID || type_id == RESULT_TYPE_ID {
+                                // Prelude type (Option, Result): type_params empty,
+                                // fields are Void placeholders.  Replace Void with the
+                                // concrete arg from the scrutinee MonoType.
+                                raw.iter()
+                                    .enumerate()
+                                    .map(|(i, ty)| {
+                                        if matches!(ty, MonoType::Void) {
+                                            prelude_variant_field_type(
+                                                type_id,
+                                                variant_idx,
+                                                i,
+                                                args,
+                                            )
+                                            .unwrap_or_else(|| ty.clone())
+                                        } else {
+                                            ty.clone()
+                                        }
+                                    })
+                                    .collect()
+                            } else {
+                                raw
+                            }
+                        } else {
+                            raw
+                        }
+                    } else {
+                        raw
+                    }
+                };
 
                 let mut lowered_fields = Vec::new();
                 for (f, field_ty) in fields.iter().zip(&field_types) {
@@ -5724,4 +5774,57 @@ fn expr_as_dotted_name(expr: &Expr) -> Option<String> {
         }
         _ => None,
     }
+}
+
+/// Substitute type variables in a field type using a name→type mapping.
+fn subst_type_vars_in_field(ty: &MonoType, subst: &HashMap<&str, &MonoType>) -> MonoType {
+    match ty {
+        MonoType::Var(name) => subst
+            .get(name.as_str())
+            .copied()
+            .cloned()
+            .unwrap_or_else(|| ty.clone()),
+        MonoType::Vector(elem) => MonoType::Vector(Box::new(subst_type_vars_in_field(elem, subst))),
+        MonoType::Dict(k, v) => MonoType::Dict(
+            Box::new(subst_type_vars_in_field(k, subst)),
+            Box::new(subst_type_vars_in_field(v, subst)),
+        ),
+        MonoType::Function { params, ret } => MonoType::Function {
+            params: params
+                .iter()
+                .map(|p| subst_type_vars_in_field(p, subst))
+                .collect(),
+            ret: Box::new(subst_type_vars_in_field(ret, subst)),
+        },
+        MonoType::Named { type_id, args } => MonoType::Named {
+            type_id: *type_id,
+            args: args
+                .iter()
+                .map(|a| subst_type_vars_in_field(a, subst))
+                .collect(),
+        },
+        _ => ty.clone(),
+    }
+}
+
+/// Map a prelude type's variant field to the concrete type from scrutinee args.
+/// Prelude types (Option, Result) store Void placeholders instead of Var("T").
+fn prelude_variant_field_type(
+    type_id: TypeId,
+    variant_idx: usize,
+    field_idx: usize,
+    args: &[MonoType],
+) -> Option<MonoType> {
+    if type_id == OPTION_TYPE_ID {
+        // Some = variant 1, field 0 → args[0]
+        if variant_idx == 1 && field_idx == 0 {
+            return args.first().cloned();
+        }
+    } else if type_id == RESULT_TYPE_ID {
+        // Ok = variant 0, field 0 → args[0]; Err = variant 1, field 0 → args[1]
+        if field_idx == 0 {
+            return args.get(variant_idx).cloned();
+        }
+    }
+    None
 }

@@ -95,7 +95,7 @@
   (global $rt_arr__empty_pvec (ref $rt_types__PVec) i32.const 0 i32.const 0 ref.null $rt_types__VecInternal global.get $rt_arr__empty_leaf struct.new $rt_types__PVec)
   (global $user____str_lit_global_empty (mut (ref null $rt_types__String)) ref.null $rt_types__String)
   (global $user____str_lit_global_6a6f696e3a20696e76616c69642075746638 (mut (ref null $rt_types__String)) ref.null $rt_types__String)
-  (global $user____str_lit_global_6e6f6e2d65786861757374697665206d6174636820696e205f5f7072656c7564655f766563746f722e6a6f696e202846756e6349642838352929 (mut (ref null $rt_types__String)) ref.null $rt_types__String)
+  (global $user____str_lit_global_6e6f6e2d65786861757374697665206d6174636820696e205f5f7072656c7564655f766563746f722e6a6f696e202846756e6349642838372929 (mut (ref null $rt_types__String)) ref.null $rt_types__String)
   (func $rt_arr__tailoff (type $functype_2)
     (param $p0 i32)
     (result i32)
@@ -3118,7 +3118,7 @@
     ref.cast (ref null eq)
     ref.eq
   )
-  (func $user__func_85 (type $functype_49)
+  (func $user__func_87 (type $functype_49)
     (param $p0 (ref null $rt_types__PVec))
     (param $p1 (ref null $rt_types__String))
     (result (ref null $rt_types__String))
@@ -3565,7 +3565,7 @@
             local.set $p56
             unreachable)
           (else
-            call $user____str_lit_get_6e6f6e2d65786861757374697665206d6174636820696e205f5f7072656c7564655f766563746f722e6a6f696e202846756e6349642838352929
+            call $user____str_lit_get_6e6f6e2d65786861757374697665206d6174636820696e205f5f7072656c7564655f766563746f722e6a6f696e202846756e6349642838372929
             call $rt_core__trap
             unreachable
             unreachable))))
@@ -3573,7 +3573,7 @@
     local.get $p57
     return
   )
-  (func $user__func_88 (type $functype_50)
+  (func $user__func_90 (type $functype_50)
     (param $p0 (ref null $user__UserRecord_12))
     (result i64)
     (local $p1 i64)
@@ -3610,7 +3610,7 @@
     local.get $p7
     return
   )
-  (func $user__func_89 (type $functype_51)
+  (func $user__func_91 (type $functype_51)
     (param $p0 (ref null $user__UserRecord_12))
     (param $p1 i64)
     (param $p2 i64)
@@ -3641,7 +3641,7 @@
     local.get $p7
     return
   )
-  (func $user__func_90 (type $functype_52)
+  (func $user__func_92 (type $functype_52)
     (local $p0 (ref null $user__UserRecord_12))
     (local $p1 anyref)
     (local $p2 i64)
@@ -3710,7 +3710,7 @@
     local.set $p9
     local.get $p1
     ref.cast (ref null $user__UserRecord_12)
-    call $user__func_88
+    call $user__func_90
     local.set $p10
     local.get $p10
     call $rt_str__from_i64
@@ -3752,7 +3752,7 @@
     ref.cast (ref null $user__UserRecord_12)
     i64.const 2
     i64.const 2
-    call $user__func_89
+    call $user__func_91
     local.set $p20
     local.get $p20
     local.set $p21
@@ -3771,7 +3771,7 @@
     i32.const 0
     local.set $p25
     local.get $p21
-    call $user__func_88
+    call $user__func_90
     local.set $p26
     local.get $p26
     call $rt_str__from_i64
@@ -3783,7 +3783,7 @@
     local.get $p28
     return_call $rt_core__println
   )
-  (func $user__func_85__closure (type $functype_53)
+  (func $user__func_87__closure (type $functype_53)
     (param $p0 anyref)
     (param $p1 anyref)
     (result anyref)
@@ -3797,9 +3797,9 @@
     i32.const 1
     array.get $rt_types__Array
     ref.cast (ref null $rt_types__String)
-    call $user__func_85
+    call $user__func_87
   )
-  (func $user__func_88__closure (type $functype_53)
+  (func $user__func_90__closure (type $functype_53)
     (param $p0 anyref)
     (param $p1 anyref)
     (result anyref)
@@ -3808,10 +3808,10 @@
     i32.const 0
     array.get $rt_types__Array
     ref.cast (ref null $user__UserRecord_12)
-    call $user__func_88
+    call $user__func_90
     struct.new $rt_types__BoxedInt
   )
-  (func $user__func_89__closure (type $functype_53)
+  (func $user__func_91__closure (type $functype_53)
     (param $p0 anyref)
     (param $p1 anyref)
     (result anyref)
@@ -3832,13 +3832,13 @@
     array.get $rt_types__Array
     ref.cast (ref $rt_types__BoxedInt)
     struct.get $rt_types__BoxedInt 0
-    call $user__func_89
+    call $user__func_91
   )
-  (func $user__func_90__closure (type $functype_53)
+  (func $user__func_92__closure (type $functype_53)
     (param $p0 anyref)
     (param $p1 anyref)
     (result anyref)
-    call $user__func_90
+    call $user__func_92
     i32.const 0
     ref.i31
   )
@@ -4519,7 +4519,7 @@
         struct.new $rt_types__Variant))
   )
   (func $user____user_init (type $functype_52)
-    call $user__func_90
+    call $user__func_92
   )
   (func $user____str_lit_get_empty (type $functype_59)
     (result (ref $rt_types__String))
@@ -4561,9 +4561,9 @@
     global.get $user____str_lit_global_6a6f696e3a20696e76616c69642075746638
     ref.as_non_null
   )
-  (func $user____str_lit_get_6e6f6e2d65786861757374697665206d6174636820696e205f5f7072656c7564655f766563746f722e6a6f696e202846756e6349642838352929 (type $functype_59)
+  (func $user____str_lit_get_6e6f6e2d65786861757374697665206d6174636820696e205f5f7072656c7564655f766563746f722e6a6f696e202846756e6349642838372929 (type $functype_59)
     (result (ref $rt_types__String))
-    global.get $user____str_lit_global_6e6f6e2d65786861757374697665206d6174636820696e205f5f7072656c7564655f766563746f722e6a6f696e202846756e6349642838352929
+    global.get $user____str_lit_global_6e6f6e2d65786861757374697665206d6174636820696e205f5f7072656c7564655f766563746f722e6a6f696e202846756e6349642838372929
     ref.is_null
     (if
       (then
@@ -4622,12 +4622,12 @@
         i32.const 100
         i32.const 40
         i32.const 56
-        i32.const 53
+        i32.const 55
         i32.const 41
         i32.const 41
         array.new_fixed $rt_types__String 58
-        global.set $user____str_lit_global_6e6f6e2d65786861757374697665206d6174636820696e205f5f7072656c7564655f766563746f722e6a6f696e202846756e6349642838352929))
-    global.get $user____str_lit_global_6e6f6e2d65786861757374697665206d6174636820696e205f5f7072656c7564655f766563746f722e6a6f696e202846756e6349642838352929
+        global.set $user____str_lit_global_6e6f6e2d65786861757374697665206d6174636820696e205f5f7072656c7564655f766563746f722e6a6f696e202846756e6349642838372929))
+    global.get $user____str_lit_global_6e6f6e2d65786861757374697665206d6174636820696e205f5f7072656c7564655f766563746f722e6a6f696e202846756e6349642838372929
     ref.as_non_null
   )
   (func $__linked_init (type $functype_52)
