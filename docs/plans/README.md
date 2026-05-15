@@ -43,6 +43,7 @@ Self-hosting is complete. Historical design and status docs live in
 | Nested variant lowering | Investigate the remaining nested variant-pattern lowering hazard | In Progress | [boot-nested-variant-pattern-lowering.md](boot-nested-variant-pattern-lowering.md) |
 | Unreachable case arms | Diagnose case arms shadowed by earlier catch-all, literal, or covering variant patterns | Planned | [unreachable-case-arms.md](unreachable-case-arms.md) |
 | Task concurrency | Add library-first cooperative `Task<T>` concurrency without new syntax | Planned | [task-concurrency.md](task-concurrency.md) |
+| Compound rebinding | Method shorthand on RHS of `=` to reduce repetitive rebinding patterns | Planned | [compound-rebinding.md](compound-rebinding.md) |
 
 
 ### Later — Tooling & Ecosystem
