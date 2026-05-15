@@ -23,9 +23,9 @@ const PRELUDE_FILES = [
 ];
 const PRELUDE_SIG_FILES = [
   'bool.tw', 'byte.tw', 'cell.tw', 'dict.tw', 'float.tw',
-  'int.tw', 'iterator.tw', 'range.tw', 'string.tw', 'vector.tw',
+  'int.tw', 'iterator.tw', 'range.tw', 'string.tw', 'task.tw', 'vector.tw',
 ];
-const STDLIB_FILES = ['date.tw', 'fs.tw', 'path.tw', 'proc.tw'];
+const STDLIB_FILES = ['date.tw', 'fs.tw', 'io.tw', 'path.tw', 'proc.tw'];
 
 async function loadResources() {
   if (cachedBridgeBytes && cachedBootBytes && cachedPrelude) return;
@@ -200,7 +200,7 @@ function makeResultErr(b, value) {
  *   - String returns from JS are encoded via bridge
  *   - Int (bigint), Float (number), Bool (i32) pass through
  */
-function autoBridgeExternImports(wasmModule, hostImports, b) {
+function autoBridgeExternImports(wasmModule, hostImports, b, jspi = false) {
   try {
     for (const imp of WebAssembly.Module.imports(wasmModule)) {
       // Already provided (host module, etc.) — skip
@@ -212,21 +212,39 @@ function autoBridgeExternImports(wasmModule, hostImports, b) {
       const fn = mod?.[imp.name];
       if (typeof fn !== 'function') continue; // silently skip in playground
 
-      // Create a bridged wrapper that auto-converts args and return values
-      const bridgedFn = (...args) => {
-        const jsArgs = args.map((arg) => {
-          if (typeof arg === 'bigint') return Number(arg);
-          if (typeof arg === 'number') return arg;
-          // GC ref — assume string
-          return decodeString(b, arg);
-        });
-        const result = fn.apply(mod, jsArgs);
+      const marshalArgs = (args) => args.map((arg) => {
+        if (typeof arg === 'bigint') return Number(arg);
+        if (typeof arg === 'number') return arg;
+        return decodeString(b, arg);
+      });
+
+      const marshalReturn = (result) => {
         if (result === undefined || result === null) return;
         if (typeof result === 'string') return encodeString(b, result);
         if (typeof result === 'number') return result;
         if (typeof result === 'bigint') return result;
         return result;
       };
+
+      let bridgedFn;
+      if (jspi) {
+        const asyncWrapper = async (...args) => {
+          const result = await fn.apply(mod, marshalArgs(args));
+          return marshalReturn(result);
+        };
+        bridgedFn = new WebAssembly.Suspending(asyncWrapper);
+      } else {
+        bridgedFn = (...args) => {
+          const result = fn.apply(mod, marshalArgs(args));
+          if (result instanceof Promise) {
+            throw new Error(
+              `Extern ${imp.module}.${imp.name} returned a Promise, but JSPI is not available. ` +
+              `Promise-returning externs require a runtime with WebAssembly.Suspending/promising support.`,
+            );
+          }
+          return marshalReturn(result);
+        };
+      }
 
       if (!hostImports[imp.module]) hostImports[imp.module] = {};
       hostImports[imp.module][imp.name] = bridgedFn;
@@ -235,6 +253,41 @@ function autoBridgeExternImports(wasmModule, hostImports, b) {
     // Module.imports may fail on GC modules in some runtimes.
   }
 }
+
+// ---------------------------------------------------------------------------
+// JSPI feature detection
+// ---------------------------------------------------------------------------
+
+const hasJspi =
+  typeof WebAssembly.Suspending === "function" &&
+  typeof WebAssembly.promising === "function";
+
+// ---------------------------------------------------------------------------
+// Browser-provided extern globals for JSPI-capable programs
+// ---------------------------------------------------------------------------
+
+// timer.sleep_ms(ms) — suspends Wasm for N milliseconds via setTimeout.
+// Usage: extern timer { fn sleep_ms(ms: Int) }
+globalThis.timer = {
+  sleep_ms: (ms) => new Promise(resolve => setTimeout(resolve, ms)),
+};
+
+// http.fetch(url) — fetches a URL and returns the response body as a string.
+// http.fetch_bytes(url) — fetches a URL and returns the response body as bytes.
+// Usage: extern http { fn fetch(url: String) String }
+globalThis.http = {
+  fetch: async (url) => {
+    const response = await fetch(url);
+    if (!response.ok) throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+    return await response.text();
+  },
+  fetch_bytes: async (url) => {
+    const response = await fetch(url);
+    if (!response.ok) throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+    const buf = await response.arrayBuffer();
+    return new Uint8Array(buf);
+  },
+};
 
 // ---------------------------------------------------------------------------
 // Core runner
@@ -290,6 +343,8 @@ function runWasmBytes(wasmBytes, { programArgs = [], env = {}, vfs, emit, wasmMo
       list_dir: (pathRef) => makeStringArray(b, vfs.listDir(decodeString(b, pathRef))),
       exists:   (pathRef) => vfs.exists(decodeString(b, pathRef)) ? 1 : 0,
       stdin_read_chunk: (_maxBytes) => makeByteArray(b, []),
+      stdin_read_timeout: (_maxBytes, _timeoutMs) => makeByteArray(b, []),
+      stdin_eof: () => 1,
       stdout_write_bytes: (bytesRef) => {
         const bytes = decodeByteArray(b, bytesRef);
         emit('stdout', textDecoder.decode(bytes));
@@ -310,7 +365,139 @@ function runWasmBytes(wasmBytes, { programArgs = [], env = {}, vfs, emit, wasmMo
   const mod = wasmModule ?? new WebAssembly.Module(wasmBytes);
   autoBridgeExternImports(mod, hostImports, b);
   try {
-    new WebAssembly.Instance(mod, hostImports);
+    const instance = new WebAssembly.Instance(mod, hostImports);
+    // Boot-compiled modules export __twinkle_start instead of using a Wasm
+    // start section. Stage0-compiled modules still use start and run during
+    // instantiation.
+    if (instance.exports.__twinkle_start) {
+      instance.exports.__twinkle_start();
+    }
+    return 0;
+  } catch (e) {
+    if (e instanceof HostExit) return e.code;
+    throw e;
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Async runner (JSPI-aware, top-level only)
+// ---------------------------------------------------------------------------
+
+async function runWasmBytesAsync(wasmBytes, { programArgs = [], env = {}, vfs, emit, wasmModule = null }) {
+  const b = instantiateBridge();
+
+  const hostImports = {
+    host: {
+      // I/O
+      print:   (s) => emit('stdout', decodeString(b, s)),
+      println: (s) => emit('stdout', decodeString(b, s) + '\n'),
+      error:   (s) => { const msg = decodeString(b, s); emit('stderr', msg + '\n'); throw new Error('host.error: ' + msg); },
+      eprint:   (s) => emit('stderr', decodeString(b, s)),
+      eprintln: (s) => emit('stderr', decodeString(b, s) + '\n'),
+
+      // Numeric
+      f64_to_string: (n) => encodeString(b, n.toString()),
+
+      // Process
+      args: () => makeStringArray(b, programArgs),
+      env:  (keyRef) => {
+        const key = decodeString(b, keyRef);
+        const val = env[key];
+        return val === undefined ? makeStringArray(b, []) : makeStringArray(b, [val]);
+      },
+      cwd:  () => encodeString(b, '/'),
+      exit: (code) => { throw new HostExit(typeof code === 'bigint' ? Number(code) : code); },
+      now:  () => performance.now(),
+
+      run_wasm: (bytesRef, argvRef) => {
+        const childBytes = decodeByteArray(b, bytesRef);
+        const childArgv  = decodeStringArray(b, argvRef);
+        const exitCode   = runWasmBytes(childBytes, { programArgs: childArgv, env, vfs, emit });
+        return BigInt(exitCode);
+      },
+
+      // Filesystem
+      read_file: (pathRef) => {
+        const path = decodeString(b, pathRef);
+        const data = vfs.read(path);
+        if (data === undefined) return makeResultErr(b, encodeString(b, `file not found: ${path}`));
+        return makeResultOk(b, makeByteArray(b, data));
+      },
+      write_file: (pathRef, contentRef) => {
+        vfs.write(decodeString(b, pathRef), textEncoder.encode(decodeString(b, contentRef)));
+      },
+      write_bytes: (pathRef, bytesRef) => {
+        vfs.write(decodeString(b, pathRef), decodeByteArray(b, bytesRef));
+      },
+      mkdirp:   (pathRef) => vfs.mkdirp(decodeString(b, pathRef)),
+      list_dir: (pathRef) => makeStringArray(b, vfs.listDir(decodeString(b, pathRef))),
+      exists:   (pathRef) => vfs.exists(decodeString(b, pathRef)) ? 1 : 0,
+      stdin_read_chunk: (_maxBytes) => makeByteArray(b, []),
+      stdin_read_timeout: (_maxBytes, _timeoutMs) => makeByteArray(b, []),
+      stdin_eof: () => 1,
+      stdout_write_bytes: (bytesRef) => {
+        const bytes = decodeByteArray(b, bytesRef);
+        emit('stdout', textDecoder.decode(bytes));
+      },
+
+      // Parsing
+      parse_int: (sRef) => {
+        const n = parseInt(decodeString(b, sRef), 10);
+        return isNaN(n) ? 0n : BigInt(n);
+      },
+      parse_float: (sRef) => {
+        const f = parseFloat(decodeString(b, sRef));
+        return isNaN(f) ? [0.0, 0] : [f, 1];
+      },
+    },
+  };
+
+  const mod = wasmModule ?? new WebAssembly.Module(wasmBytes);
+  autoBridgeExternImports(mod, hostImports, b, hasJspi);
+
+  if (hasJspi) {
+    // Fetch-backed read_file: check VFS first, then try fetching from server.
+    // This enables lazy loading of prelude/stdlib files on demand.
+    hostImports.host.read_file = new WebAssembly.Suspending(
+      async (pathRef) => {
+        const path = decodeString(b, pathRef);
+        const cached = vfs.read(path);
+        if (cached !== undefined) return makeResultOk(b, makeByteArray(b, cached));
+        try {
+          // Strip leading / to make it relative to BASE_URL
+          const url = BASE_URL + path.replace(/^\/+/, '');
+          const resp = await fetch(url);
+          if (!resp.ok) return makeResultErr(b, encodeString(b, `file not found: ${path}`));
+          const bytes = new Uint8Array(await resp.arrayBuffer());
+          vfs.write(path, bytes);
+          return makeResultOk(b, makeByteArray(b, bytes));
+        } catch (e) {
+          return makeResultErr(b, encodeString(b, `file not found: ${path}`));
+        }
+      },
+    );
+
+    // Wrap run_wasm as suspending so child programs can use JSPI imports
+    hostImports.host.run_wasm = new WebAssembly.Suspending(
+      async (bytesRef, argvRef) => {
+        const childBytes = decodeByteArray(b, bytesRef);
+        const childArgv  = decodeStringArray(b, argvRef);
+        const exitCode   = await runWasmBytesAsync(childBytes, { programArgs: childArgv, env, vfs, emit });
+        return BigInt(exitCode);
+      },
+    );
+  }
+
+  try {
+    const instance = new WebAssembly.Instance(mod, hostImports);
+    if (instance.exports.__twinkle_start) {
+      if (hasJspi) {
+        const start = WebAssembly.promising(instance.exports.__twinkle_start);
+        await start();
+      } else {
+        instance.exports.__twinkle_start();
+      }
+    }
     return 0;
   } catch (e) {
     if (e instanceof HostExit) return e.code;
@@ -341,7 +528,7 @@ self.onmessage = async (event) => {
 
     self.postMessage({ type: 'status', text: 'Running…' });
 
-    const exitCode = runWasmBytes(null, {
+    const exitCode = await runWasmBytesAsync(null, {
       programArgs: ['boot.wasm', 'run', '/input/main.tw'],
       env: { TWINKLE_ROOT: '/' },
       vfs,

@@ -137,6 +137,65 @@ function readStdinTimeout(maxBytes, timeoutMs, runtime) {
   }
 }
 
+function readStdinTimeoutAsync(maxBytes, timeoutMs, runtime) {
+  const n = Number(maxBytes);
+  const timeout = Number(timeoutMs);
+  if (n <= 0) return Promise.resolve(Buffer.alloc(0));
+
+  return new Promise((resolve) => {
+    let timer = null;
+
+    let settled = false;
+
+    const finish = (chunk) => {
+      if (settled) return;
+      settled = true;
+      if (timer !== null) { clearTimeout(timer); timer = null; }
+      process.stdin.removeListener("readable", onReadable);
+      process.stdin.removeListener("end", onEnd);
+      resolve(chunk);
+    };
+
+    const tryRead = () => {
+      // read() with no argument returns whatever is buffered (1..any bytes),
+      // matching the sync path's "read up to n" semantics.
+      const chunk = process.stdin.read();
+      if (chunk !== null) {
+        // If the stream returned more than n bytes, push the excess back.
+        if (chunk.length > n) {
+          process.stdin.unshift(chunk.subarray(n));
+          finish(chunk.subarray(0, n));
+        } else {
+          finish(chunk);
+        }
+        return true;
+      }
+      return false;
+    };
+
+    const onReadable = () => { tryRead(); };
+
+    const onEnd = () => {
+      runtime.stdinEof = true;
+      finish(Buffer.alloc(0));
+    };
+
+    // Try immediate read from the stream buffer
+    if (tryRead()) return;
+
+    if (process.stdin.readableEnded) {
+      runtime.stdinEof = true;
+      resolve(Buffer.alloc(0));
+      return;
+    }
+
+    timer = setTimeout(() => finish(Buffer.alloc(0)), Math.max(0, timeout));
+
+    process.stdin.once("readable", onReadable);
+    process.stdin.once("end", onEnd);
+  });
+}
+
 // ---------------------------------------------------------------------------
 // Extern auto-bridging
 // ---------------------------------------------------------------------------
@@ -148,7 +207,7 @@ function readStdinTimeout(maxBytes, timeoutMs, runtime) {
  *   - String returns from JS are encoded via bridge
  *   - Int (bigint), Float (number), Bool (i32) pass through
  */
-function autoBridgeExternImports(wasmModule, hostImports, b) {
+function autoBridgeExternImports(wasmModule, hostImports, b, jspi = false) {
   try {
     for (const imp of WebAssembly.Module.imports(wasmModule)) {
       // Already provided (host module, etc.) — skip
@@ -162,15 +221,14 @@ function autoBridgeExternImports(wasmModule, hostImports, b) {
         throw new Error(`Unsupported host import: ${imp.module}.${imp.name} (not found on globalThis.${imp.module})`);
       }
 
-      // Create a bridged wrapper that auto-converts args and return values
-      const bridgedFn = (...args) => {
-        const jsArgs = args.map((arg) => {
-          if (typeof arg === "bigint") return Number(arg);
-          if (typeof arg === "number") return arg;
-          // GC ref — assume string
-          return decodeString(b, arg);
-        });
-        const result = fn.apply(mod, jsArgs);
+      const marshalArgs = (args) => args.map((arg) => {
+        if (typeof arg === "bigint") return Number(arg);
+        if (typeof arg === "number") return arg;
+        // GC ref — assume string
+        return decodeString(b, arg);
+      });
+
+      const marshalReturn = (result) => {
         if (result === undefined || result === null) return;
         if (typeof result === "string") return encodeString(b, result);
         if (typeof result === "number") return result;
@@ -178,11 +236,34 @@ function autoBridgeExternImports(wasmModule, hostImports, b) {
         return result;
       };
 
+      let bridgedFn;
+      if (jspi) {
+        // JSPI mode: async wrapper so Promise-returning JS functions suspend
+        // Wasm. Non-Promise returns pass through without suspension.
+        const asyncWrapper = async (...args) => {
+          const result = await fn.apply(mod, marshalArgs(args));
+          return marshalReturn(result);
+        };
+        bridgedFn = new WebAssembly.Suspending(asyncWrapper);
+      } else {
+        // Sync mode: detect and reject Promise returns
+        bridgedFn = (...args) => {
+          const result = fn.apply(mod, marshalArgs(args));
+          if (result instanceof Promise) {
+            throw new Error(
+              `Extern ${imp.module}.${imp.name} returned a Promise, but JSPI is not available. ` +
+              `Promise-returning externs require a runtime with WebAssembly.Suspending/promising support.`,
+            );
+          }
+          return marshalReturn(result);
+        };
+      }
+
       if (!hostImports[imp.module]) hostImports[imp.module] = {};
       hostImports[imp.module][imp.name] = bridgedFn;
     }
   } catch (e) {
-    if (e.message?.startsWith("Unsupported host import:")) throw e;
+    if (e.message?.startsWith("Unsupported host import:") || e.message?.startsWith("Extern ")) throw e;
     // Module.imports may fail on GC modules in some runtimes.
   }
 }
@@ -310,12 +391,19 @@ function instantiateBridge(bridgeBytes) {
 }
 
 // ---------------------------------------------------------------------------
-// Public API
+// JSPI feature detection
 // ---------------------------------------------------------------------------
 
-export function runWasmBytes(
-  wasmBytes,
-  {
+export const hasJspi =
+  typeof WebAssembly.Suspending === "function" &&
+  typeof WebAssembly.promising === "function";
+
+// ---------------------------------------------------------------------------
+// Wasm preparation (shared by sync and async paths)
+// ---------------------------------------------------------------------------
+
+function prepareWasm(wasmBytes, opts, { jspi = false } = {}) {
+  const {
     programPath = "<memory>.wasm",
     guestArgs = [],
     cwd = process.cwd(),
@@ -323,8 +411,8 @@ export function runWasmBytes(
     stdout = process.stdout,
     stderr = process.stderr,
     bridgeBytes,
-  } = {},
-) {
+  } = opts;
+
   if (!bridgeBytes) {
     throw new Error("runWasmBytes: bridgeBytes is required");
   }
@@ -341,10 +429,25 @@ export function runWasmBytes(
 
   const hostImports = makeHostImports(b, runtime, bridgeBytes);
   const mainModule = new WebAssembly.Module(wasmBytes);
-  autoBridgeExternImports(mainModule, hostImports, b);
+  autoBridgeExternImports(mainModule, hostImports, b, jspi);
 
+  return { mainModule, hostImports, b, runtime };
+}
+
+// ---------------------------------------------------------------------------
+// Public API — synchronous
+// ---------------------------------------------------------------------------
+
+export function runWasmBytes(wasmBytes, opts = {}) {
+  const { mainModule, hostImports } = prepareWasm(wasmBytes, opts);
   try {
-    new WebAssembly.Instance(mainModule, hostImports);
+    const instance = new WebAssembly.Instance(mainModule, hostImports);
+    // Boot-compiled modules export __twinkle_start instead of using a Wasm
+    // start section. Stage0-compiled modules still use the start section and
+    // run during instantiation above.
+    if (instance.exports.__twinkle_start) {
+      instance.exports.__twinkle_start();
+    }
     return 0;
   } catch (e) {
     if (e instanceof HostExit) {
@@ -354,24 +457,72 @@ export function runWasmBytes(
   }
 }
 
-export function runWasmFile(
-  wasmPath,
-  {
-    guestArgs = [],
-    cwd = process.cwd(),
-    env = process.env,
-    stdout = process.stdout,
-    stderr = process.stderr,
-    bridgeBytes,
-  } = {},
-) {
+export function runWasmFile(wasmPath, opts = {}) {
   return runWasmBytes(readFileSync(wasmPath), {
     programPath: resolve(wasmPath),
-    guestArgs,
-    cwd,
-    env,
-    stdout,
-    stderr,
-    bridgeBytes,
+    ...opts,
+  });
+}
+
+// ---------------------------------------------------------------------------
+// Public API — async (JSPI-aware)
+// ---------------------------------------------------------------------------
+
+export async function runWasmBytesAsync(wasmBytes, opts = {}) {
+  const { mainModule, hostImports, b, runtime } = prepareWasm(wasmBytes, opts, { jspi: hasJspi });
+
+  if (hasJspi) {
+    // Phase 3: wrap stdin_read_timeout as a suspending import so the Node
+    // event loop stays free while Twinkle waits for stdin data or a timeout.
+    hostImports.host.stdin_read_timeout = new WebAssembly.Suspending(
+      async (maxBytes, timeoutMs) =>
+        makeByteArray(b, await readStdinTimeoutAsync(maxBytes, timeoutMs, runtime)),
+    );
+
+    // Phase 4: wrap run_wasm as a suspending import so child programs can
+    // themselves use JSPI suspending imports.
+    const childBridgeBytes = opts.bridgeBytes;
+    hostImports.host.run_wasm = new WebAssembly.Suspending(
+      async (bytesRef, argvRef) => {
+        const childBytes = decodeByteArray(b, bytesRef);
+        const childArgv = decodeStringArray(b, argvRef);
+        const [programPath, ...guestArgs] = childArgv;
+        const exitCode = await runWasmBytesAsync(childBytes, {
+          programPath: programPath ?? "<memory>.wasm",
+          guestArgs,
+          cwd: runtime.cwd,
+          env: runtime.env,
+          stdout: runtime.stdout,
+          stderr: runtime.stderr,
+          bridgeBytes: childBridgeBytes,
+        });
+        return BigInt(exitCode);
+      },
+    );
+  }
+
+  try {
+    const instance = new WebAssembly.Instance(mainModule, hostImports);
+    if (instance.exports.__twinkle_start) {
+      if (hasJspi) {
+        const start = WebAssembly.promising(instance.exports.__twinkle_start);
+        await start();
+      } else {
+        instance.exports.__twinkle_start();
+      }
+    }
+    return 0;
+  } catch (e) {
+    if (e instanceof HostExit) {
+      return e.code;
+    }
+    throw e;
+  }
+}
+
+export async function runWasmFileAsync(wasmPath, opts = {}) {
+  return runWasmBytesAsync(readFileSync(wasmPath), {
+    programPath: resolve(wasmPath),
+    ...opts,
   });
 }

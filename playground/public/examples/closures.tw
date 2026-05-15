@@ -1,0 +1,22 @@
+// First-class functions and closures
+fn make_adder(n: Int) fn(Int) Int {
+  fn(x) { x + n }
+}
+
+fn make_multiplier(n: Int) fn(Int) Int {
+  fn(x) { x * n }
+}
+
+add10  := make_adder(10)
+triple := make_multiplier(3)
+
+println("add10(7)         = ${add10(7)}")
+println("triple(7)        = ${triple(7)}")
+println("add10(triple(7)) = ${add10(triple(7))}")
+println("triple(add10(7)) = ${triple(add10(7))}")
+
+// Closures capture their environment
+adders := collect n in range_from(1, 6) { make_adder(n) }
+print("add 1..5 to 100: ")
+for add in adders { print("${add(100)} ") }
+println("")

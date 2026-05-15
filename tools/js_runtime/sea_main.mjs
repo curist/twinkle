@@ -7,7 +7,7 @@
 import { readFileSync } from "node:fs";
 import { resolve, dirname } from "node:path";
 import sea from "node:sea";
-import { runWasmBytes } from "./runtime.mjs";
+import { runWasmBytesAsync } from "./runtime.mjs";
 
 function assetBytes(key, fallbackPath) {
   if (sea.isSea()) {
@@ -60,9 +60,9 @@ function guestArgs() {
   return args;
 }
 
-function main() {
+async function main() {
   const bridgeBytes = loadBridgeWasm();
-  const exitCode = runWasmBytes(loadBootWasm(), {
+  const exitCode = await runWasmBytesAsync(loadBootWasm(), {
     programPath: sea.isSea() ? "twk.wasm" : resolve(defaultRootDir(), "target/boot.wasm"),
     guestArgs: guestArgs(),
     cwd: process.cwd(),
@@ -74,12 +74,10 @@ function main() {
   process.exit(exitCode);
 }
 
-try {
-  main();
-} catch (e) {
+main().catch((e) => {
   if (e.message?.startsWith("host.error:")) {
     process.exit(1);
   }
   console.error(e.stack || e.message || e);
   process.exit(1);
-}
+});

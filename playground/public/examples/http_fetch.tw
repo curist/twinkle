@@ -1,0 +1,36 @@
+// HTTP fetch — JSPI suspends Wasm while fetch() runs.
+// Twinkle code is synchronous; the browser handles the async I/O.
+
+extern http {
+  fn fetch(url: String) String
+}
+
+println("Fetching GitHub user info...")
+body := http.fetch("https://api.github.com/users/anthropics")
+println("Response length: ${body.len()} bytes")
+
+// Find the "name" field in the JSON (simple string search)
+fn find_json_value(json: String, key: String) String {
+  needle := "\"${key}\": \""
+  idx := 0
+  for i in range_from(0, json.len() - needle.len()) {
+    match := true
+    for j in range_from(0, needle.len()) {
+      if json.utf8_bytes()[i + j] != needle.utf8_bytes()[j] {
+        match = false
+      }
+    }
+    if match {
+      start := i + needle.len()
+      end := start
+      for end < json.len() and json.utf8_bytes()[end].to_string() != "\"" {
+        end = end + 1
+      }
+      return json.slice(start, end)
+    }
+  }
+  "(not found)"
+}
+
+name := find_json_value(body, "name")
+println("Organization: ${name}")

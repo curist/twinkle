@@ -9,3 +9,4 @@ playground/node_modules/
 playground/dist/
 playground/public/*
 !playground/public/worker.js
+!playground/public/examples/

@@ -9,7 +9,7 @@
 //   2. Build per-module rename maps for funcs, types, globals
 //   3. Resolve inter-module imports against export map
 //   4. Merge & rewrite all artifacts with qualified names
-//   5. Synthesize __linked_init if multiple start functions
+//   5. Synthesize __linked_init and export as __twinkle_start
 
 use compiler.codegen.wasm_ir.{
   ValType, HeapType, Instr, TypeDef, FieldDef, FuncDef, ImportDef,
@@ -384,7 +384,11 @@ pub fn link(modules: Vector<WasmModule>, entry: String?) Result<LinkedModule, Ve
     }
   }
 
-  // Phase 5: Synthesize start function
+  // Phase 5: Synthesize entry function exported as __twinkle_start
+  //
+  // Instead of a Wasm start section (which runs during instantiation and
+  // cannot be wrapped with WebAssembly.promising), we export the entry
+  // function so the host can call it explicitly. This is required for JSPI.
   start: String? = .None
 
   // Collect all call targets: start funcs + entry
@@ -395,10 +399,13 @@ pub fn link(modules: Vector<WasmModule>, entry: String?) Result<LinkedModule, Ve
   }
 
   if init_calls.len() == 0 {
-    start = .None
+    // no-op
   } else if init_calls.len() == 1 and case entry { .None => true, _ => false } {
-    // Single start, no entry → just use it directly
-    start = .Some(init_calls[0])
+    // Single start, no entry → export it directly as __twinkle_start
+    out_exports = out_exports.append(ExportDef.{
+      wasm_name: "__twinkle_start",
+      func_sym: init_calls[0],
+    })
   } else {
     // Multiple starts or entry specified → synthesize __linked_init
     init_body: Vector<Instr> = collect sym in init_calls { Instr.Call(sym) }
@@ -409,7 +416,10 @@ pub fn link(modules: Vector<WasmModule>, entry: String?) Result<LinkedModule, Ve
       locals: [],
       body: init_body,
     })
-    start = .Some("__linked_init")
+    out_exports = out_exports.append(ExportDef.{
+      wasm_name: "__twinkle_start",
+      func_sym: "__linked_init",
+    })
   }
 
   .Ok(LinkedModule.{

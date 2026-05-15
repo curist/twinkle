@@ -47,6 +47,13 @@ fn find_func(linked: LinkedModule, name: String) FuncDef? {
   .None
 }
 
+fn find_export(linked: LinkedModule, wasm_name: String) ExportDef? {
+  for e in linked.exports {
+    if e.wasm_name == wasm_name { return .Some(e) }
+  }
+  .None
+}
+
 fn find_global(linked: LinkedModule, name: String) GlobalDef? {
   for g in linked.globals {
     if g.name == name { return .Some(g) }
@@ -502,11 +509,9 @@ fn test_link_synthesizes_init_from_multiple_starts() Result<Void, String> {
     start: .Some("init_b"),
   }
   linked := try link_ok([a, b], .None)
-  // Should have a synthesized __linked_init that calls both
-  try assert.ok(
-    case linked.start { .Some(_) => true, .None => false },
-    "should have a start function",
-  )
+  // Should have a synthesized __linked_init exported as __twinkle_start
+  exp := try find_export(linked, "__twinkle_start").ok_or("missing __twinkle_start export")
+  try assert.str_eq(exp.func_sym, "__linked_init")
   init_fn := try find_func(linked, "__linked_init").ok_or("missing __linked_init")
   try assert.ok(instr_has_call(init_fn.body, "a__init_a"), "should call a__init_a")
   try assert.ok(instr_has_call(init_fn.body, "b__init_b"), "should call b__init_b")
@@ -527,11 +532,9 @@ fn test_link_single_start_no_synth() Result<Void, String> {
     start: .Some("init"),
   }
   linked := try link_ok([m], .None)
-  // Single start → just qualify it, no __linked_init needed
-  try assert.ok(
-    case linked.start { .Some(s) => s == "app__init", .None => false },
-    "start should be qualified as app__init",
-  )
+  // Single start → exported directly as __twinkle_start, no __linked_init needed
+  exp := try find_export(linked, "__twinkle_start").ok_or("missing __twinkle_start export")
+  try assert.str_eq(exp.func_sym, "app__init")
   .Ok({})
 }
 

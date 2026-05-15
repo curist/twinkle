@@ -14,10 +14,10 @@ host import.
 This is a boot-compiler/runtime plan only. Stage0 remains unchanged and does not
 need to learn this entry ABI, host wrapping policy, or async runtime path.
 
-This plan depends on [unify-js-runtime.md](unify-js-runtime.md). Unify the Node
-runtime implementation first so JSPI entry invocation, suspending stdin, nested
-`run_wasm`, and extern wrapping are implemented once rather than separately in
-`tools/wasm_runner_lib.mjs` and `tools/twk_cli_sea.cjs`.
+This plan depended on [unify-js-runtime.md](archive/unify-js-runtime.md) (done)
+and the entry-export ABI change (done). The shared runtime is now at
+`tools/js_runtime/runtime.mjs`, and the boot backend exports `__twinkle_start`
+instead of using a Wasm start section.
 
 ## Motivation
 
@@ -69,10 +69,9 @@ properly async: `read_stdin_timeout` can become a suspending import that returns
 a Promise resolved by stdin data, timeout, or EOF.
 
 The boot-generated programs currently execute through a Wasm `start` section.
-Both JavaScript hosts instantiate synchronously:
+The JavaScript hosts instantiate and call the entry export:
 
-* `tools/wasm_runner_lib.mjs`
-* `tools/twk_cli_sea.cjs`
+* `tools/js_runtime/runtime.mjs` (shared Node runtime)
 * `playground/public/worker.js`
 
 That is incompatible with suspending imports: JSPI requires a suspending import
@@ -263,75 +262,76 @@ Twinkle values such as `Result<T, E>`.
 
 ## Implementation Plan
 
-### Phase 0: Unify the JavaScript runtime
+### Phase 0: Unify the JavaScript runtime — DONE
 
-Complete [unify-js-runtime.md](unify-js-runtime.md) first. The shared runtime
-must be the single place that owns host imports, bridge marshaling, SEA asset
-loading adapters, nested `run_wasm`, and future async/JSPI behavior.
+Completed. The shared runtime is `tools/js_runtime/runtime.mjs`.
+See [archive/unify-js-runtime.md](archive/unify-js-runtime.md).
 
-Do not start the JSPI migration while the Node library runtime and SEA CLI still
-contain separate copies of the runtime logic.
+### Phase 1: Entry-export ABI in the boot backend — DONE
 
-### Phase 1: Entry-export ABI in the boot backend
+Completed. The boot linker exports `__twinkle_start` instead of emitting a Wasm
+start section. All three hosts (Node runtime, SEA CLI, playground worker) call
+`instance.exports.__twinkle_start()` after instantiation, with a fallback for
+stage0-compiled modules that still use the start section. Linker tests updated.
 
-* Change the boot backend so linked start functions are exported as
-  `__twinkle_start` instead of emitted through a Wasm `start` section.
-* Do this as the boot compiler's normal output ABI; do not add a persistent
-  user-facing flag to switch back to start-section output.
-* Leave stage0 unchanged.
-* Add boot-side tests that inspect WAT for the expected export and absence of
-  the start section.
+### Phase 2: Async runtime path — DONE
 
-### Phase 2: Async runtime path
+Completed. Added JSPI feature detection (`hasJspi`) and async variants
+(`runWasmBytesAsync`, `runWasmFileAsync`) to the shared Node runtime. When JSPI
+is available, `__twinkle_start` is wrapped with `WebAssembly.promising` and
+awaited; otherwise the sync path runs as before. The SEA CLI (`sea_main.mjs`)
+uses the async entry point. The browser playground worker has a matching async
+runner that wraps with `WebAssembly.promising` when available. The sync
+`runWasmBytes`/`runWasmFile` APIs are preserved unchanged for non-JSPI use and
+for recursive `host.run_wasm` calls.
 
-* Add async `runWasmBytes` / `runWasmFile` variants in the Node runtime library.
-* Mirror the change in the SEA CLI entry script.
-* Update the browser worker runner to invoke `__twinkle_start` through
-  `WebAssembly.promising` when running entry-export modules.
-* Preserve a synchronous runtime path for non-JSPI modules while the migration is
-  in progress.
+### Phase 3: Migrate LSP timed stdin to JSPI — DONE
 
-### Phase 3: Migrate LSP timed stdin to JSPI
+Completed. Added `readStdinTimeoutAsync` using Node's stream `readable`/`end`
+events and `setTimeout` instead of blocking `readSync` + `Atomics.wait`. In
+`runWasmBytesAsync`, when JSPI is available, `host.stdin_read_timeout` is
+replaced with a `WebAssembly.Suspending`-wrapped async function that calls
+`readStdinTimeoutAsync`. The sync `readStdinTimeout` and `stdin_read_chunk`
+remain unchanged for non-JSPI paths. `stdin_eof` stays a plain synchronous
+import. Debounce logic in `boot/lib/lsp/server_core.tw` is untouched.
 
-* Replace the Node synchronous polling/sleep implementation of
-  `stdin_read_timeout` with an event-loop-based Promise implementation in the
-  JSPI runtime path.
-* Wrap `stdin_read_timeout` with `WebAssembly.Suspending` when running an
-  entry-export module under JSPI.
-* Keep `stdin_eof` as plain synchronous state inspection.
-* Keep the existing synchronous implementation as a fallback for non-JSPI runtime
-  paths during the transition.
-* Validate that debounce behavior remains Twinkle-owned: deadlines, freshness,
-  duplicate suppression, and publishing stay in `boot/lib/lsp/server_core.tw`.
+### Phase 4: Boot `run` integration — DONE
 
-### Phase 4: Boot `run` integration
+Completed. In `runWasmBytesAsync`, when JSPI is available, `host.run_wasm` is
+replaced with a `WebAssembly.Suspending`-wrapped async function that calls
+`runWasmBytesAsync` recursively for child programs. This means child Wasm
+programs can themselves use suspending imports. The sync `runWasmBytes` path
+is unchanged — `host.run_wasm` still calls sync `runWasmBytes` there. The SEA
+CLI uses `runWasmBytesAsync` so `twk run file.tw` goes through the async path.
 
-* Make the boot compiler's `run` command use the entry-export ABI for user
-  programs when executing through the JS runtime.
-* Make `host.run_wasm` async-capable under JSPI so a boot compiler running under
-  Node or the playground can compile and execute a JSPI-capable child program.
-* Keep CLI behavior direct: `twk run file.tw` still exits with the child program's
-  exit code after awaited completion.
+### Phase 5: Suspended extern FFI — DONE
 
-### Phase 5: Suspended extern FFI
+Completed. `autoBridgeExternImports` in both `runtime.mjs` and `worker.js`
+accepts a `jspi` flag. When true, each bridged extern is wrapped as an async
+function passed through `new WebAssembly.Suspending(...)`, so Promise-returning
+JS functions suspend Wasm and non-Promise returns pass through without
+suspension. When false (sync path), a Promise return from a bridged extern
+throws a clear runtime error explaining that JSPI is required. Existing
+marshaling for strings, numbers, booleans, and void returns is unchanged.
 
-* Extend browser `autoBridgeExternImports` so auto-wired extern imports are
-  wrapped with `WebAssembly.Suspending` in JSPI mode.
-* Keep the existing marshaling behavior for strings, numbers, booleans, and
-  void-like returns.
-* Add examples that call Promise-returning JS functions from Twinkle direct-style
-  code.
-* Report a clear diagnostic/runtime error if a Promise-returning extern is used
-  without JSPI support.
+### Phase 6: Optional async host APIs — DONE
 
-### Phase 6: Optional async host APIs
+Completed for the browser playground. Three async capabilities added:
 
-After LSP stdin and extern FFI work, evaluate moving selected host operations to
-async implementations where it improves host behavior:
+* **Fetch-backed `read_file`**: in `runWasmBytesAsync`, when JSPI is available,
+  `host.read_file` is wrapped as a suspending import that checks the VFS first,
+  then falls back to `fetch()` from the server. Fetched files are cached in the
+  VFS for subsequent reads.
+* **`timer.sleep_ms` global**: exposed on `globalThis.timer` so Twinkle extern
+  declarations (`extern timer { fn sleep_ms(ms: Int) }`) auto-bridge to a
+  Promise-backed setTimeout. Wasm suspends during the sleep.
+* **`http.fetch` / `http.fetch_bytes` globals**: exposed on `globalThis.http`
+  so Twinkle extern declarations auto-bridge to the Fetch API. Wasm suspends
+  while the network request is in flight.
 
-* browser file/module loading backed by `fetch`;
-* Node filesystem operations if blocking becomes a practical problem;
-* future network or timer APIs.
+Playground examples added: "Async Timer" and "HTTP Fetch". Missing
+`stdin_read_timeout` and `stdin_eof` host imports added to the browser worker
+(no-op stubs, since there is no stdin in the browser).
 
 ## Testing Strategy
 
