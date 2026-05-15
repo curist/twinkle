@@ -8,11 +8,36 @@ pub fn suite() runner.Suite {
       try assert.int_eq("".len(), 0)
       .Ok({})
     })
+    .test("is_empty detects empty and non-empty strings", fn() {
+      try assert.is_true("".is_empty())
+      try assert.is_false("hello".is_empty())
+      try assert.is_true(String.is_empty(""))
+      .Ok({})
+    })
     .test("indexing returns byte", fn() {
       s := "abc"
       try assert.int_eq(s[0].to_int(), 97)
       try assert.int_eq(s[1].to_int(), 98)
       try assert.int_eq(s[2].to_int(), 99)
+      .Ok({})
+    })
+    .test("byte character predicates work as methods", fn() {
+      upper := "A"[0]
+      lower := "z"[0]
+      digit := "9"[0]
+      hex := "f"[0]
+      space := " "[0]
+      newline := "\n"[0]
+      try assert.is_true(upper.is_upper())
+      try assert.is_true(lower.is_lower())
+      try assert.is_true(digit.is_digit())
+      try assert.is_true(hex.is_hex_digit())
+      try assert.is_true(upper.is_alpha())
+      try assert.is_true(digit.is_alnum())
+      try assert.is_false(space.is_alnum())
+      try assert.is_true(space.is_space())
+      try assert.is_true(newline.is_newline())
+      try assert.is_true(upper.in_range(0x41, 0x5A))
       .Ok({})
     })
     .test("string get returns option byte", fn() {

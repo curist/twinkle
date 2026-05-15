@@ -8,6 +8,11 @@ pub fn len(s: String) Int {
   0
 }
 
+/// Return true when the string has no bytes.
+pub fn is_empty(s: String) Bool {
+  false
+}
+
 /// Concatenate two strings.
 pub fn concat(a: String, b: String) String {
   ""

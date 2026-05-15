@@ -1,3 +1,8 @@
+/// Return true when the vector has no elements.
+pub fn is_empty<A>(xs: Vector<A>) Bool {
+  xs.len() == 0
+}
+
 /// Transform each element with f.
 pub fn map<A, B>(xs: Vector<A>, f: fn(A) B) Vector<B> {
   collect x in xs { f(x) }

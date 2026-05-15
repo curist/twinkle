@@ -8,6 +8,11 @@ pub fn len<T>(xs: Vector<T>) Int {
   0
 }
 
+/// Return true when the vector has no elements.
+pub fn is_empty<T>(xs: Vector<T>) Bool {
+  false
+}
+
 /// Return a new vector with x appended.
 pub fn append<T>(xs: Vector<T>, x: T) Vector<T> {
   xs

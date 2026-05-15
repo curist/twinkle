@@ -18,6 +18,11 @@ pub fn len<K, V>(d: Dict<K, V>) Int {
   0
 }
 
+/// Return true when the dict has no entries.
+pub fn is_empty<K, V>(d: Dict<K, V>) Bool {
+  false
+}
+
 /// Return true when key exists in the dict.
 pub fn has<K, V>(d: Dict<K, V>, k: K) Bool {
   false

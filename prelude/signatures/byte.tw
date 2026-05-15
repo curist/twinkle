@@ -43,6 +43,16 @@ pub fn is_hex_digit(b: Byte) Bool {
   false
 }
 
+/// Return true when the byte is an ASCII letter.
+pub fn is_alpha(b: Byte) Bool {
+  false
+}
+
+/// Return true when the byte is an ASCII letter or decimal digit.
+pub fn is_alnum(b: Byte) Bool {
+  false
+}
+
 /// Return true when the byte is LF.
 pub fn is_newline(b: Byte) Bool {
   false

@@ -511,7 +511,7 @@ pub fn register_builtin_methods(env: ResolvedEnv) ResolvedEnv {
     me("from_code_point", "from_code_point"), me("from_utf8", "string_from_utf8"),
     me("compare", "compare"), me("index_of", "index_of"), me("contains", "contains"),
     me("starts_with", "starts_with"), me("ends_with", "ends_with"),
-    me("split", "split"), me("trim", "trim"),
+    me("split", "split"), me("trim", "trim"), me("is_empty", "string_is_empty"),
     me("chars", "chars"), me("char_len", "char_len"),
     me("code_point_at", "code_point_at"), me("graphemes", "graphemes"),
   ])
@@ -522,11 +522,12 @@ pub fn register_builtin_methods(env: ResolvedEnv) ResolvedEnv {
     me("map", "map"), me("filter", "filter"), me("fold", "fold"), me("find", "find"),
     me("any", "any"), me("all", "all"), me("contains", "contains"),
     me("reverse", "reverse"), me("sort_by", "sort_by"), me("join", "join"),
+    me("is_empty", "vector_is_empty"),
   ])
   env = env.register_bound_methods("Dict", [
     me("new", "dict_new"), me("len", "dict_len"), me("has", "dict_has"), me("keys", "dict_keys"),
     me("values", "dict_values"), me("get", "dict_get"), me("set", "dict_set"),
-    me("remove", "dict_remove"),
+    me("remove", "dict_remove"), me("is_empty", "dict_is_empty"),
   ])
   env = env.register_bound_methods("Cell", [
     me("new", "cell_new"), me("get", "cell_get"), me("set", "cell_set"), me("update", "cell_update"),
@@ -546,16 +547,26 @@ pub fn register_builtin_methods(env: ResolvedEnv) ResolvedEnv {
     me("from_int", "byte_from_int"), me("compare", "compare"),
     me("in_range", "byte_in_range"), me("is_upper", "byte_is_upper"),
     me("is_lower", "byte_is_lower"), me("is_digit", "byte_is_digit"),
-    me("is_hex_digit", "byte_is_hex_digit"), me("is_newline", "byte_is_newline"),
+    me("is_hex_digit", "byte_is_hex_digit"), me("is_alpha", "byte_is_alpha"),
+    me("is_alnum", "byte_is_alnum"), me("is_newline", "byte_is_newline"),
     me("is_space", "byte_is_space"),
   ])
   env = env.register_bound_methods("Option", [
-    me("unwrap_or", "unwrap_or"),
-    me("map", "map"), me("and_then", "and_then"), me("ok_or", "ok_or"),
-    me("ok_or_else", "ok_or_else"), me("transpose", "transpose"),
+    me("is_some", "option_is_some"), me("is_none", "option_is_none"),
+    me("unwrap", "option_unwrap"), me("unwrap_or", "unwrap_or"),
+    me("unwrap_or_else", "option_unwrap_or_else"),
+    me("map", "map"), me("and_then", "and_then"), me("flatten", "option_flatten"),
+    me("filter", "option_filter"), me("or_some", "option_or_some"),
+    me("or_else", "option_or_else"), me("inspect", "option_inspect"),
+    me("ok_or", "ok_or"), me("ok_or_else", "ok_or_else"), me("transpose", "transpose"),
   ])
   env = env.register_bound_methods("Result", [
-    me("map", "map"), me("and_then", "and_then"), me("transpose", "transpose"),
+    me("is_ok", "result_is_ok"), me("is_err", "result_is_err"),
+    me("unwrap", "result_unwrap"), me("unwrap_or", "result_unwrap_or"),
+    me("unwrap_or_else", "result_unwrap_or_else"), me("map", "map"),
+    me("map_err", "result_map_err"), me("and_then", "and_then"),
+    me("or_else", "result_or_else"), me("ok", "result_ok"), me("err", "result_err"),
+    me("transpose", "transpose"),
   ])
   env = env.register_bound_methods("Iterator", [
     me("next", "iterator_next"), me("unfold", "iterator_unfold"),

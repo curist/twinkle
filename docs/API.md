@@ -172,6 +172,8 @@ Primitive type representing a single byte (0–255). Returned by string indexing
 | `.is_lower()` | `fn(b: Byte) Bool` | Whether byte is an ASCII lowercase letter |
 | `.is_digit()` | `fn(b: Byte) Bool` | Whether byte is an ASCII decimal digit |
 | `.is_hex_digit()` | `fn(b: Byte) Bool` | Whether byte is an ASCII hexadecimal digit |
+| `.is_alpha()` | `fn(b: Byte) Bool` | Whether byte is an ASCII letter |
+| `.is_alnum()` | `fn(b: Byte) Bool` | Whether byte is an ASCII letter or decimal digit |
 | `.is_newline()` | `fn(b: Byte) Bool` | Whether byte is LF (`0x0A`) |
 | `.is_space()` | `fn(b: Byte) Bool` | Whether byte is an ASCII whitespace character recognized by the lexer |
 
@@ -186,6 +188,7 @@ Strings are immutable, UTF-8 encoded, and GC-managed. String interpolation: `"he
 | Method | Signature | Description |
 |--------|-----------|-------------|
 | `.len()` | `fn(s: String) Int` | Length in **bytes** |
+| `.is_empty()` | `fn(s: String) Bool` | Whether the string has no bytes |
 | `s[i]` | — | Byte at byte offset `i` (returns `Byte`, traps on OOB) |
 | `.get(i)` | `fn(s: String, i: Int) Option<Byte>` | Safe byte lookup at byte offset |
 | `.slice(start, end)` | `fn(s: String, start: Int, end: Int) String` | Substring by **byte offsets** `[start, end)`. Out-of-range indices are clamped to `[0, len]`. Traps if a clamped index falls mid-codepoint |
@@ -227,6 +230,7 @@ Persistent (copy-on-write) vector. Literal syntax: `[1, 2, 3]`.
 | Method | Signature | Description |
 |--------|-----------|-------------|
 | `.len()` | `fn<T>(v: Vector<T>) Int` | Number of elements |
+| `.is_empty()` | `fn<T>(v: Vector<T>) Bool` | Whether the vector has no elements |
 | `.append(elem)` | `fn<T>(v: Vector<T>, elem: T) Vector<T>` | Append element, return new vector |
 | `.get(i)` | `fn<T>(v: Vector<T>, i: Int) Option<T>` | Safe index lookup |
 | `.set(i, val)` | `fn<T>(v: Vector<T>, i: Int, val: T) Option<Vector<T>>` | Safe update at index |
@@ -263,6 +267,7 @@ existing key keeps its position, and remove+reinsert appends it at the end.
 | `.get(key)` | `fn<K,V>(d: Dict<K,V>, key: K) Option<V>` | Look up value by key |
 | `.set(key, value)` | `fn<K,V>(d: Dict<K,V>, key: K, value: V) Dict<K,V>` | Insert/replace key-value pair, return new dict |
 | `.len()` | `fn<K,V>(d: Dict<K,V>) Int` | Number of entries |
+| `.is_empty()` | `fn<K,V>(d: Dict<K,V>) Bool` | Whether the dict has no entries |
 | `.has(key)` | `fn<K,V>(d: Dict<K,V>, key: K) Bool` | Check if key exists |
 | `.keys()` | `fn<K,V>(d: Dict<K,V>) Vector<K>` | All keys as a vector |
 | `.values()` | `fn<K,V>(d: Dict<K,V>) Vector<V>` | All values as a vector |

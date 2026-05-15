@@ -1,3 +1,8 @@
+/// Return true when the string has no bytes.
+pub fn is_empty(s: String) Bool {
+  s.len() == 0
+}
+
 /// Lexicographic byte-order comparison.
 pub fn compare(a: String, b: String) Order {
   la := a.len()

@@ -16,6 +16,14 @@ pub fn suite() runner.Suite {
       try assert.int_eq(d.len(), 0)
       .Ok({})
     })
+    .test("is_empty detects empty and non-empty dicts", fn() {
+      empty: Dict<String, Int> = Dict.new()
+      full := make_dict()
+      try assert.is_true(empty.is_empty())
+      try assert.is_false(full.is_empty())
+      try assert.is_true(Dict.is_empty(empty))
+      .Ok({})
+    })
     .test("assignment and lookup", fn() {
       d: Dict<String, Int> = Dict.new()
       d["x"] = 42

@@ -30,6 +30,16 @@ pub fn is_hex_digit(b: Byte) Bool {
   b.is_digit() or b.in_range(0x41, 0x46) or b.in_range(0x61, 0x66) // A-F, a-f
 }
 
+/// Return true when the byte is an ASCII letter.
+pub fn is_alpha(b: Byte) Bool {
+  b.is_upper() or b.is_lower()
+}
+
+/// Return true when the byte is an ASCII letter or decimal digit.
+pub fn is_alnum(b: Byte) Bool {
+  b.is_alpha() or b.is_digit()
+}
+
 /// Return true when the byte is LF.
 pub fn is_newline(b: Byte) Bool {
   b == 0x0A

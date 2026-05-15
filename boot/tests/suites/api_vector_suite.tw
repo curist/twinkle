@@ -43,6 +43,14 @@ pub fn suite() runner.Suite {
       try assert.int_eq(xs.len(), 0)
       .Ok({})
     })
+    .test("is_empty detects empty and non-empty vectors", fn() {
+      empty: Vector<Int> = []
+      full: Vector<Int> = [1]
+      try assert.is_true(empty.is_empty())
+      try assert.is_false(full.is_empty())
+      try assert.is_true(Vector.is_empty(empty))
+      .Ok({})
+    })
     .test("indexing returns correct elements", fn() {
       xs: Vector<String> = ["a", "b", "c"]
       try assert.str_eq(xs[0], "a")
