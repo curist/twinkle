@@ -15,14 +15,14 @@ use compiler.query.stage_runner
 use lib.query.keys
 use lib.source.identity
 use lib.source.overlay
-use lib.source.span
+use lib.source.span.{Span}
 use lib.json
 use lib.source.diagnostics as diag
 
 pub type Diagnostic = .{
   uri: String,
   version: Int?,
-  span: span.Span?,
+  span: Span?,
   severity: diag.Severity,
   message: String,
   stage: String,

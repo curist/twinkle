@@ -7,11 +7,11 @@ use compiler.mono_type.{MonoType, TypeId}
 
 use compiler.query.semantic.{SemanticSnapshot}
 use compiler.query.ast_walk.{NodeContext, find_node_in_block, find_node_in_expr, find_node_in_stmt}
-use lib.source.span
+use lib.source.span.{Span}
 
 pub type HoverResult = .{
   content: String,
-  span: span.Span,
+  span: Span,
 }
 
 pub fn hover(snap: SemanticSnapshot, byte_offset: Int, source: String) HoverResult? {
@@ -194,12 +194,12 @@ fn hover_function_decl(decl: FunctionDecl, offset: Int, typed: CheckResult, item
   hover_block(decl.body, offset, typed, items, source)
 }
 
-fn function_name_span(decl: FunctionDecl) span.Span {
+fn function_name_span(decl: FunctionDecl) Span {
   start := decl.span.start + if decl.is_pub { 7 } else { 3 }
   .{ file_id: decl.span.file_id, start, end: start + decl.name.len() }
 }
 
-fn type_name_span(decl: TypeDecl) span.Span {
+fn type_name_span(decl: TypeDecl) Span {
   start := decl.span.start + if decl.is_pub { 9 } else { 5 }
   .{ file_id: decl.span.file_id, start, end: start + decl.name.len() }
 }
@@ -341,7 +341,7 @@ fn hover_for_node(ctx: NodeContext, offset: Int, typed: CheckResult, items: Vect
       }
     },
     .FieldAccess(expr, field, base) => {
-      field_span := span.Span.{ file_id: expr.span.file_id, start: expr.span.end - field.len(), end: expr.span.end }
+      field_span := Span.{ file_id: expr.span.file_id, start: expr.span.end - field.len(), end: expr.span.end }
       case hover_recorded_method(expr.id, base, field_span, typed) {
         .Some(r) => .Some(r),
         .None => case hover_method(base, field, field_span, typed) {
@@ -374,7 +374,7 @@ fn expr_type(expr: Expr, typed: CheckResult) HoverResult? {
   }
 }
 
-fn hover_recorded_method(callee_id: Int, base: Expr, method_span: span.Span, typed: CheckResult) HoverResult? {
+fn hover_recorded_method(callee_id: Int, base: Expr, method_span: Span, typed: CheckResult) HoverResult? {
   meta := case typed.method_calls[callee_id] {
     .Some(info) => info,
     .None => { return .None },
@@ -390,7 +390,7 @@ fn hover_recorded_method(callee_id: Int, base: Expr, method_span: span.Span, typ
   .Some(HoverResult.{ content: append_doc(sig_to_string(typed.env, display_sig), sig.doc), span: method_span })
 }
 
-fn hover_method(base: Expr, method: String, method_span: span.Span, typed: CheckResult) HoverResult? {
+fn hover_method(base: Expr, method: String, method_span: Span, typed: CheckResult) HoverResult? {
   case typed.type_map[base.id] {
     .Some(base_ty) => case variant_hover_for_type(typed.env, base_ty, method, method_span) {
       .Some(r) => { return .Some(r) },
@@ -628,7 +628,7 @@ fn hover_variant_pattern_parts(pat: Pattern, name: String, subs: Vector<Pattern>
   .None
 }
 
-fn variant_pattern_name_span(pat_span: span.Span, name: String) span.Span {
+fn variant_pattern_name_span(pat_span: Span, name: String) Span {
   start := pat_span.start + 1
   .{ file_id: pat_span.file_id, start, end: start + name.len() }
 }
@@ -640,7 +640,7 @@ type VariantInfo = .{
   fields: Vector<MonoType>,
 }
 
-fn variant_hover_for_type(env: ResolvedEnv, ty: MonoType, variant_name: String, hover_span: span.Span) HoverResult? {
+fn variant_hover_for_type(env: ResolvedEnv, ty: MonoType, variant_name: String, hover_span: Span) HoverResult? {
   case variant_info_for_type(env, ty, variant_name) {
     .Some(info) => .Some(.{ content: info.content, span: hover_span }),
     .None => .None,

@@ -1,8 +1,8 @@
-use lib.source.span
+use lib.source.span.{Span}
 
 pub type Module = .{
   items: Vector<Item>,
-  span: span.Span,
+  span: Span,
 }
 
 pub type Item = {
@@ -11,7 +11,7 @@ pub type Item = {
   Function(FunctionDecl),
   ExternFunction(ExternFunctionDecl),
   Stmt(Stmt),
-  ErrorItem(span.Span),
+  ErrorItem(Span),
 }
 
 pub type UseDecl = .{
@@ -20,7 +20,7 @@ pub type UseDecl = .{
   path: Vector<String>,
   alias: String?,
   items: Vector<ImportItem>?,
-  span: span.Span,
+  span: Span,
 }
 
 pub type ImportItem = {
@@ -31,19 +31,19 @@ pub type ImportItem = {
 pub type ImportValueItem = .{
   name: String,
   alias: String?,
-  span: span.Span,
+  span: Span,
 }
 
 pub type ImportTypeItem = .{
   name: String,
   alias: String?,
-  span: span.Span,
+  span: Span,
 }
 
 pub type TypeParam = .{
   name: String,
   bounds: Vector<TypePath>,
-  span: span.Span,
+  span: Span,
 }
 
 /// Extract plain type-parameter names from a list of TypeParam.
@@ -59,7 +59,7 @@ pub type FunctionDecl = .{
   params: Vector<Param>,
   return_type: TypeExpr?,
   body: Block,
-  span: span.Span,
+  span: Span,
   doc: String?,
 }
 
@@ -69,7 +69,7 @@ pub type ExternFunctionDecl = .{
   name: String,
   params: Vector<Param>,
   return_type: TypeExpr?,
-  span: span.Span,
+  span: Span,
 }
 
 pub type TypeDecl = .{
@@ -77,7 +77,7 @@ pub type TypeDecl = .{
   name: String,
   type_params: Vector<TypeParam>,
   def: TypeDef,
-  span: span.Span,
+  span: Span,
   doc: String?,
 }
 
@@ -85,29 +85,29 @@ pub type TypeDef = {
   Record(Vector<RecordField>),
   Sum(Vector<VariantDecl>),
   Alias(TypeExpr),
-  ErrorDef(span.Span),
+  ErrorDef(Span),
 }
 
 pub type RecordField = .{
   name: String,
   ty: TypeExpr,
-  span: span.Span,
+  span: Span,
 }
 
 pub type VariantDecl = .{
   name: String,
   fields: Vector<TypeExpr>,
-  span: span.Span,
+  span: Span,
 }
 
 pub type TypePath = .{
   segments: Vector<String>,
-  span: span.Span,
+  span: Span,
 }
 
 pub type TypeExpr = .{
   kind: TypeExprKind,
-  span: span.Span,
+  span: Span,
 }
 
 pub type TypeExprKind = {
@@ -124,14 +124,14 @@ pub type TypeExprKind = {
 pub type Param = .{
   name: String,
   ty: TypeExpr?,
-  name_span: span.Span,
-  span: span.Span,
+  name_span: Span,
+  span: Span,
 }
 
 pub type Block = .{
   stmts: Vector<Stmt>,
   tail: Expr?,
-  span: span.Span,
+  span: Span,
 }
 
 pub type Stmt = {
@@ -142,7 +142,7 @@ pub type Stmt = {
   Continue(ContinueStmt),
   Defer(DeferStmt),
   Expr(ExprStmt),
-  ErrorStmt(span.Span),
+  ErrorStmt(Span),
 }
 
 pub type LetStmt = .{
@@ -151,49 +151,49 @@ pub type LetStmt = .{
   value: Expr,
   is_rebind: Bool,
   is_pub: Bool,
-  name_span: span.Span,
-  span: span.Span,
+  name_span: Span,
+  span: Span,
 }
 
 pub type ForStmt = .{
   pattern: String?,
-  pattern_span: span.Span?,
+  pattern_span: Span?,
   index: String?,
-  index_span: span.Span?,
+  index_span: Span?,
   iter: Expr?,
   condition: Expr?,
   body: Block,
-  span: span.Span,
+  span: Span,
 }
 
 pub type ReturnStmt = .{
   value: Expr?,
-  span: span.Span,
+  span: Span,
 }
 
 pub type BreakStmt = .{
   value: Expr?,
-  span: span.Span,
+  span: Span,
 }
 
 pub type ContinueStmt = .{
-  span: span.Span,
+  span: Span,
 }
 
 pub type DeferStmt = .{
   expr: Expr,
-  span: span.Span,
+  span: Span,
 }
 
 pub type ExprStmt = .{
   expr: Expr,
-  span: span.Span,
+  span: Span,
 }
 
 pub type Expr = .{
   id: Int,
   kind: ExprKind,
-  span: span.Span,
+  span: Span,
 }
 
 pub type ExprKind = {
@@ -222,9 +222,9 @@ pub type ExprKind = {
 
 pub type CollectExpr = .{
   pattern: String?,
-  pattern_span: span.Span?,
+  pattern_span: Span?,
   index: String?,
-  index_span: span.Span?,
+  index_span: Span?,
   iter: Expr?,
   condition: Expr?,
   body: Block,
@@ -238,18 +238,18 @@ pub type StringPart = {
 pub type RecordEntry = .{
   name: String,
   value: Expr?,
-  span: span.Span,
+  span: Span,
 }
 
 pub type CaseArm = .{
   pattern: Pattern,
   expr: Expr,
-  span: span.Span,
+  span: Span,
 }
 
 pub type Pattern = .{
   kind: PatternKind,
-  span: span.Span,
+  span: Span,
 }
 
 pub type PatternKind = {

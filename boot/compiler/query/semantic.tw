@@ -13,7 +13,7 @@ use compiler.query.stage_runner
 use compiler.resolver.{ResolveResult}
 use lib.query.keys
 use lib.source.identity
-use lib.source.span
+use lib.source.span.{Span}
 
 pub type SemanticSnapshot = .{
   cache: cache.Store,
@@ -33,12 +33,12 @@ pub type SymbolKind = { Import, Type, Function, Let }
 pub type SymbolAtPosition = .{
   name: String,
   kind: SymbolKind,
-  span: span.Span,
+  span: Span,
 }
 
 pub type EnclosingSyntax = .{
   kind: String,
-  span: span.Span,
+  span: Span,
 }
 
 pub fn snapshot_workspace_from_cache(store: cache.Store, input: diagnostics.WorkspaceInput) SemanticSnapshot? {

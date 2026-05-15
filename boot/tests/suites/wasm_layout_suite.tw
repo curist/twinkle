@@ -1,6 +1,6 @@
 use tests.runner
 use tests.assert
-use lib.source.span
+use lib.source.span.{Span}
 use compiler.resolver
 use compiler.resolver.{ResolvedEnv, ResolvedTypeDef, ResolvedField, ResolvedVariant, TypeEntry, plain_resolved_type_params}
 use compiler.mono_type.{MonoType, TypeId}
@@ -11,7 +11,7 @@ use compiler.codegen.wasm_layout.{WasmValType, WasmRecordLayout, layout_of, val_
 
 // ── Helpers ─────────────────────────────────────────────────────────
 
-fn dummy_span() span.Span { span.Span.{ file_id: 0, start: 0, end: 0 } }
+fn dummy_span() Span { .{ file_id: 0, start: 0, end: 0 } }
 
 fn env_with_record(name: String, type_id: Int, fields: Vector<ResolvedField>) ResolvedEnv {
   entry := TypeEntry.{

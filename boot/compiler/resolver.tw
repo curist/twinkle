@@ -5,7 +5,7 @@
 //
 // Functional style: env is threaded through return values, never mutated in place.
 
-use lib.source.span
+use lib.source.span.{Span}
 use lib.source.diagnostics as diag
 use .ast.{Module, TypeDecl, FunctionDecl, ExternFunctionDecl, TypeExpr, TypePath, ImportItem, TypeParam, type_param_names}
 
@@ -110,7 +110,7 @@ pub type TypeEntry = .{
   id: TypeId,
   arity: Int,
   def: ResolvedTypeDef?,
-  span: span.Span,
+  span: Span,
 }
 
 pub type MethodEntry = .{
@@ -1356,7 +1356,7 @@ fn detect_inherent_methods(env: ResolvedEnv, local_type_names: Dict<String, Bool
     }
     if collision {
       method_diags = method_diags.append(.Error(.DuplicateName(.{
-        span: span.Span.{ file_id: 0, start: 0, end: 0 },
+        span: .{ file_id: 0, start: 0, end: 0 },
         kind: "method",
         name: "${f.name} on ${type_name}",
       })))
@@ -1368,7 +1368,7 @@ fn detect_inherent_methods(env: ResolvedEnv, local_type_names: Dict<String, Bool
   .{ env: env.with_methods(m).with_type_methods(tm), diagnostics: method_diags }
 }
 
-fn check_dup_names(names: Vector<String>, kind: String, s: span.Span) Vector<diag.DiagKind> {
+fn check_dup_names(names: Vector<String>, kind: String, s: Span) Vector<diag.DiagKind> {
   seen: Dict<String, Bool> = Dict.new()
   collect name in names {
     if !seen.has(name) {
@@ -1379,7 +1379,7 @@ fn check_dup_names(names: Vector<String>, kind: String, s: span.Span) Vector<dia
   }
 }
 
-fn check_dup_type_params(type_params: Vector<String>, s: span.Span) Vector<diag.DiagKind> {
+fn check_dup_type_params(type_params: Vector<String>, s: Span) Vector<diag.DiagKind> {
   seen: Dict<String, Bool> = Dict.new()
   collect tp in type_params {
     if !seen.has(tp) {
@@ -1390,7 +1390,7 @@ fn check_dup_type_params(type_params: Vector<String>, s: span.Span) Vector<diag.
   }
 }
 
-fn resolve_ast_type_params(ast_params: Vector<TypeParam>, s: span.Span) ResolvedTypeParamsResult {
+fn resolve_ast_type_params(ast_params: Vector<TypeParam>, s: Span) ResolvedTypeParamsResult {
   diags: Vector<diag.DiagKind> = []
   resolved: Vector<ResolvedTypeParam> = []
   for tp in ast_params {
@@ -1970,7 +1970,7 @@ fn remap_mono_type(ty: MonoType, type_ids: Dict<Int, TypeId>) MonoType {
   }
 }
 
-fn resolve_single_name(env: ResolvedEnv, name: String, args: Vector<MonoType>, type_vars: Vector<String>, s: span.Span) TypeResolveResult {
+fn resolve_single_name(env: ResolvedEnv, name: String, args: Vector<MonoType>, type_vars: Vector<String>, s: Span) TypeResolveResult {
   // Check type variables first
   if args.len() == 0 {
     for tv in type_vars {
@@ -2051,7 +2051,7 @@ fn def_type_param_count(def: ResolvedTypeDef) Int {
   }
 }
 
-fn check_user_type_arity(env: ResolvedEnv, name: String, args: Vector<MonoType>, s: span.Span) TypeResolveResult? {
+fn check_user_type_arity(env: ResolvedEnv, name: String, args: Vector<MonoType>, s: Span) TypeResolveResult? {
   entry := case env.lookup_type(name) {
     .Some(e) => e,
     .None => { return .None },

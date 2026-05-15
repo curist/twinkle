@@ -1,4 +1,5 @@
 use lib.source.span
+use lib.source.span.{Span}
 
 pub type TokenKind = {
   Use,
@@ -73,11 +74,11 @@ pub type TokenKind = {
 pub type Token = .{
   kind: TokenKind,
   text: String,
-  span: span.Span,
+  span: Span,
   preceded_by_newline: Bool,
 }
 
-pub fn make(kind: TokenKind, text: String, token_span: span.Span, preceded_by_newline: Bool) Token {
+pub fn make(kind: TokenKind, text: String, token_span: Span, preceded_by_newline: Bool) Token {
   .{ kind, text, span: token_span, preceded_by_newline }
 }
 

@@ -1,4 +1,5 @@
 use lib.source.span
+use lib.source.span.{Span}
 use lib.source.diagnostics.{DiagKind, StageResult}
 use lib.source.diagnostics as diag
 use .tokens.{TokenKind}
@@ -59,7 +60,7 @@ fn is_upper_ascii_name(name: String) Bool {
   c.is_upper()
 }
 
-fn span_of_stmt(stmt: Stmt) span.Span {
+fn span_of_stmt(stmt: Stmt) Span {
   case stmt {
     .Let(s) => s.span,
     .For(s) => s.span,
@@ -159,15 +160,15 @@ fn recover_to_next_item(c: Cursor) Cursor {
   cur.with_pos(cur.tokens.len() - 1)
 }
 
-fn error_type(span_in: span.Span) TypeExpr {
+fn error_type(span_in: Span) TypeExpr {
   TypeExpr.{ kind: .ErrorType, span: span_in }
 }
 
-fn error_expr(span_in: span.Span) Expr {
+fn error_expr(span_in: Span) Expr {
   Expr.{ id: -1, kind: .ErrorExpr, span: span_in }
 }
 
-fn stmt_in_expr_diag(span: span.Span, kw: String, context: String?) DiagKind {
+fn stmt_in_expr_diag(span: Span, kw: String, context: String?) DiagKind {
   ctx := case context {
     .Some(s) => " in ${s}",
     .None => "",
@@ -1173,7 +1174,7 @@ fn parse_extern(c: Cursor) ItemsParse {
   .{ value: [parsed.value], cursor: parsed.cursor, diagnostics: diagnostics_out }
 }
 
-fn parse_extern_sig(c: Cursor, is_pub: Bool, module_name: String, start_span: span.Span) ItemParse {
+fn parse_extern_sig(c: Cursor, is_pub: Bool, module_name: String, start_span: Span) ItemParse {
   diagnostics_out: Vector<DiagKind> = []
   start_pos := c.pos
   if c.kind() != .Fn {
@@ -1670,7 +1671,7 @@ fn parse_case_expr(c: Cursor) ExprParse {
     if c.kind() == .Comma {
       c = c.advance()
     } else if c.kind() != .RBrace {
-      eol_point := span.Span.{ file_id: arm_span.file_id, start: arm_span.end, end: arm_span.end }
+      eol_point := Span.{ file_id: arm_span.file_id, start: arm_span.end, end: arm_span.end }
       diagnostics_out = diagnostics_out.append(
         .Error(.MissingArmSeparator(.{ span: eol_point, next_span: c.span() }))
       )
@@ -1955,9 +1956,9 @@ fn parse_collect_expr(c: Cursor) ExprParse {
   start_pos := c.pos
   c = c.advance()
   pattern: String? = .None
-  pattern_span: span.Span? = .None
+  pattern_span: Span? = .None
   index: String? = .None
-  index_span: span.Span? = .None
+  index_span: Span? = .None
   iter: Expr? = .None
   condition: Expr? = .None
 
@@ -2331,9 +2332,9 @@ fn parse_for_stmt(c: Cursor) StmtParse {
   start_pos := c.pos
   c = c.advance()
   pattern: String? = .None
-  pattern_span: span.Span? = .None
+  pattern_span: Span? = .None
   index: String? = .None
-  index_span: span.Span? = .None
+  index_span: Span? = .None
   iter: Expr? = .None
   condition: Expr? = .None
 

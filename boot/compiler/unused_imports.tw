@@ -5,7 +5,7 @@
 // that introduce no used names.
 
 use lib.source.diagnostics.{DiagKind}
-use lib.source.span
+use lib.source.span.{Span}
 use .ast.{Module, FunctionDecl, TypeDecl, Block, Stmt, Expr, Pattern, TypeExpr, TypePath, UseDecl}
 
 
@@ -13,7 +13,7 @@ use .ast.{Module, FunctionDecl, TypeDecl, Block, Stmt, Expr, Pattern, TypeExpr, 
 
 /// Byte span of the entire `use` statement + replacement text.
 pub type ImportEdit = .{
-  use_span: span.Span,
+  use_span: Span,
   replacement: String,
 }
 
@@ -423,7 +423,7 @@ fn collect_used_names_expr(expr: Expr, used: Cell<Dict<String, Bool>>, aliases: 
     },
     .NamedRecord(name, entries) => {
       // The type name is being used as a constructor.
-      // For qualified names like "span.Span", mark the module alias (first segment).
+      // For qualified names like "Span", mark the module alias (first segment).
       parts := name.split(".")
       for part in parts {
         mark(used, part)

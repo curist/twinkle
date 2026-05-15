@@ -1,6 +1,6 @@
 // FileRegistry: stores source files and provides span-based lookups.
 
-use .span
+use .span.{Span}
 
 type SourceFile = .{
   name: String,
@@ -50,7 +50,7 @@ fn get_file(reg: FileRegistry, file_id: Int) SourceFile? {
   d.files[file_id]
 }
 
-pub fn snippet(reg: FileRegistry, s: span.Span) String? {
+pub fn snippet(reg: FileRegistry, s: Span) String? {
   f := try get_file(reg, s.file_id)
   if s.start >= 0 and s.end <= f.source.len() {
     .Some(f.source.slice(s.start, s.end))
@@ -77,7 +77,7 @@ fn find_line_index(line_starts: Vector<Int>, offset: Int) Int {
 
 pub type LineCol = .{ line: Int, column: Int }
 
-pub fn line_col(reg: FileRegistry, s: span.Span) LineCol? {
+pub fn line_col(reg: FileRegistry, s: Span) LineCol? {
   if s.start < 0 { return .None }
   f := try get_file(reg, s.file_id)
   line_index := find_line_index(f.line_starts, s.start)
@@ -93,7 +93,7 @@ pub fn file_name(reg: FileRegistry, file_id: Int) String? {
   .Some(f.name)
 }
 
-pub fn line_text(reg: FileRegistry, s: span.Span) String? {
+pub fn line_text(reg: FileRegistry, s: Span) String? {
   if s.start < 0 { return .None }
   f := try get_file(reg, s.file_id)
   line_index := find_line_index(f.line_starts, s.start)
