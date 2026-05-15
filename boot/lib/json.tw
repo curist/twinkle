@@ -56,7 +56,7 @@ pub fn parse_decode<A>(input: String, da: Decoder<A>) Result<A, String> {
 
 fn skip_ws(input: String, i: Int) Int {
   j := i
-  for j < input.len() and ascii.is_space(input[j].to_int()) {
+  for j < input.len() and ascii.is_space(input[j]) {
     j = j + 1
   }
   j
@@ -68,7 +68,7 @@ fn parse_value(input: String, i: Int) Result<ParseResult<Json>, String> {
     return .Err("unexpected end of input")
   }
 
-  c := input[j].to_int()
+  c := input[j]
   if c == 110 { parse_null(input, j) }       // n
   else if c == 116 { parse_true(input, j) }  // t
   else if c == 102 { parse_false(input, j) } // f
@@ -119,14 +119,14 @@ fn parse_number(input: String, i: Int) Result<ParseResult<Json>, String> {
     j = j + 1
   }
 
-  if j >= input.len() or !ascii.is_digit(input[j].to_int()) {
+  if j >= input.len() or !ascii.is_digit(input[j]) {
     return .Err("expected number at ${i}")
   }
 
   if input[j].to_int() == 48 {
     j = j + 1
   } else {
-    for j < input.len() and ascii.is_digit(input[j].to_int()) {
+    for j < input.len() and ascii.is_digit(input[j]) {
       j = j + 1
     }
   }
@@ -134,10 +134,10 @@ fn parse_number(input: String, i: Int) Result<ParseResult<Json>, String> {
   if j < input.len() and input[j].to_int() == 46 {
     has_float_part = true
     j = j + 1
-    if j >= input.len() or !ascii.is_digit(input[j].to_int()) {
+    if j >= input.len() or !ascii.is_digit(input[j]) {
       return .Err("expected digit after decimal point at ${j}")
     }
-    for j < input.len() and ascii.is_digit(input[j].to_int()) {
+    for j < input.len() and ascii.is_digit(input[j]) {
       j = j + 1
     }
   }
@@ -148,10 +148,10 @@ fn parse_number(input: String, i: Int) Result<ParseResult<Json>, String> {
     if j < input.len() and (input[j].to_int() == 43 or input[j].to_int() == 45) {
       j = j + 1
     }
-    if j >= input.len() or !ascii.is_digit(input[j].to_int()) {
+    if j >= input.len() or !ascii.is_digit(input[j]) {
       return .Err("expected digit in exponent at ${j}")
     }
-    for j < input.len() and ascii.is_digit(input[j].to_int()) {
+    for j < input.len() and ascii.is_digit(input[j]) {
       j = j + 1
     }
   }
@@ -178,7 +178,7 @@ fn parse_json_string(input: String, i: Int) Result<ParseResult<String>, String> 
   out: Vector<Byte> = []
   j := i + 1
   for j < input.len() {
-    c := input[j].to_int()
+    c := input[j]
     if c == 34 {
       case String.from_utf8(out) {
         .Some(s) => { return .Ok(.{ value: s, next: j + 1 }) },
@@ -289,7 +289,7 @@ fn parse_array(input: String, i: Int) Result<ParseResult<Json>, String> {
       return .Err("unterminated array at ${i}")
     }
 
-    c := input[j].to_int()
+    c := input[j]
     if c == 93 {
       return .Ok(.{ value: Json.Array(items), next: j + 1 })
     }
@@ -334,7 +334,7 @@ fn parse_object(input: String, i: Int) Result<ParseResult<Json>, String> {
       return .Err("unterminated object at ${i}")
     }
 
-    c := input[j].to_int()
+    c := input[j]
     if c == 125 {
       return .Ok(.{ value: Json.Object(obj), next: j + 1 })
     }

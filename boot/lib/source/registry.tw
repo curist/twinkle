@@ -28,7 +28,7 @@ pub fn empty() FileRegistry {
 fn compute_line_starts(source: String) Vector<Int> {
   starts: Vector<Int> = [0]
   for b, i in source {
-    if ascii.is_newline(b.to_int()) {
+    if ascii.is_newline(b) {
       starts = starts.append(i + 1)
     }
   }

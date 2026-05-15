@@ -41,17 +41,17 @@ fn keyword_or_ident(text: String) TokenKind {
 }
 
 
-fn is_byte(c: Int, literal: String) Bool {
-  c == literal[0].to_int()
+fn is_byte(c: Byte, literal: String) Bool {
+  c == literal[0]
 }
 
 // c in [start, end]
-fn in_byte_range(c: Int, start: String, end: String) Bool {
-  c >= start[0].to_int() and c <= end[0].to_int()
+fn in_byte_range(c: Byte, start: String, end: String) Bool {
+  c >= start[0] and c <= end[0]
 }
 
-fn byte_value(s: String) Int {
-  s[0].to_int()
+fn byte_value(s: String) Byte {
+  s[0]
 }
 
 fn make_token(kind: TokenKind, source: String, start: Int, end: Int, file_id: Int, preceded_by_newline: Bool) Token {
@@ -68,7 +68,7 @@ fn unescape_string(raw: String) String {
   has_escape := false
   k := 0
   for k < raw.len() {
-    if is_byte(raw[k].to_int(), "\\") {
+    if is_byte(raw[k], "\\") {
       has_escape = true
       break
     }
@@ -82,13 +82,13 @@ fn unescape_string(raw: String) String {
   seg_start := 0
   n := raw.len()
   for i < n {
-    ch := raw[i].to_int()
+    ch := raw[i]
     if is_byte(ch, "\\") and i + 1 < n {
       // Flush segment before this escape
       if i > seg_start {
         parts = parts.append(raw.slice(seg_start, i))
       }
-      next := raw[i + 1].to_int()
+      next := raw[i + 1]
       if is_byte(next, "n") { parts = parts.append("\n") }
       else if is_byte(next, "t") { parts = parts.append("\t") }
       else if is_byte(next, "r") { parts = parts.append("\r") }
@@ -97,8 +97,8 @@ fn unescape_string(raw: String) String {
       else if is_byte(next, "\$") { parts = parts.append("\$") }
       else if is_byte(next, "e") { parts = parts.append("\e") }
       else if is_byte(next, "x") and i + 3 < n {
-        hi := hex_digit_value(raw[i + 2].to_int())
-        lo := hex_digit_value(raw[i + 3].to_int())
+        hi := hex_digit_value(raw[i + 2])
+        lo := hex_digit_value(raw[i + 3])
         if hi >= 0 and lo >= 0 {
           code := hi * 16 + lo
           case String.from_code_point(code) {
@@ -132,7 +132,7 @@ fn unescape_string(raw: String) String {
   parts.join("")
 }
 
-fn hex_digit_value(ch: Int) Int {
+fn hex_digit_value(ch: Byte) Int {
   if in_byte_range(ch, "0", "9") { ch - byte_value("0") }
   else if in_byte_range(ch, "A", "F") { ch - byte_value("A") + 10 }
   else if in_byte_range(ch, "a", "f") { ch - byte_value("a") + 10 }
@@ -145,7 +145,7 @@ fn scan_string_segment(source: String, from: Int, content_start: Int) ScanString
   escaped := false
 
   for i < n {
-    ch := source[i].to_int()
+    ch := source[i]
     if escaped {
       escaped = false
       i = i + 1
@@ -164,7 +164,7 @@ fn scan_string_segment(source: String, from: Int, content_start: Int) ScanString
         found_interp: false,
       }
     }
-    if is_byte(ch, "$") and i + 1 < n and is_byte(source[i + 1].to_int(), "{") {
+    if is_byte(ch, "$") and i + 1 < n and is_byte(source[i + 1], "{") {
       return ScanStringResult.{
         next_index: i + 2,
         text: unescape_string(source.slice(content_start, i)),
@@ -195,7 +195,7 @@ pub fn lex(source: String, file_id: Int) StageResult<Vector<Token>> {
   interp_depths: Vector<Int> = []
 
   for i < n {
-    c := source[i].to_int()
+    c := source[i]
 
     if ascii.is_space(c) {
       if ascii.is_newline(c) {
@@ -205,9 +205,9 @@ pub fn lex(source: String, file_id: Int) StageResult<Vector<Token>> {
       continue
     }
 
-    if is_byte(c, "/") and i + 1 < n and is_byte(source[i + 1].to_int(), "/") {
+    if is_byte(c, "/") and i + 1 < n and is_byte(source[i + 1], "/") {
       i = i + 2
-      for i < n and !ascii.is_newline(source[i].to_int()) {
+      for i < n and !ascii.is_newline(source[i]) {
         i = i + 1
       }
       continue
@@ -272,7 +272,7 @@ pub fn lex(source: String, file_id: Int) StageResult<Vector<Token>> {
 
     if ascii.is_ident_start(c) {
       i = i + 1
-      for i < n and ascii.is_ident_continue(source[i].to_int()) {
+      for i < n and ascii.is_ident_continue(source[i]) {
         i = i + 1
       }
       text := source.slice(token_start, i)
@@ -287,9 +287,9 @@ pub fn lex(source: String, file_id: Int) StageResult<Vector<Token>> {
 
     if ascii.is_digit(c) {
       // Check for hex literal: 0x...
-      if is_byte(c, "0") and i + 1 < n and is_byte(source[i + 1].to_int(), "x") {
+      if is_byte(c, "0") and i + 1 < n and is_byte(source[i + 1], "x") {
         i = i + 2
-        for i < n and ascii.is_hex_digit(source[i].to_int()) {
+        for i < n and ascii.is_hex_digit(source[i]) {
           i = i + 1
         }
         out = out.append(make_token(.IntLit, source, token_start, i, file_id, preceded_by_newline))
@@ -297,15 +297,15 @@ pub fn lex(source: String, file_id: Int) StageResult<Vector<Token>> {
       }
 
       i = i + 1
-      for i < n and ascii.is_digit(source[i].to_int()) {
+      for i < n and ascii.is_digit(source[i]) {
         i = i + 1
       }
 
       kind := TokenKind.IntLit
-      if i + 1 < n and is_byte(source[i].to_int(), ".") and ascii.is_digit(source[i + 1].to_int()) {
+      if i + 1 < n and is_byte(source[i], ".") and ascii.is_digit(source[i + 1]) {
         kind = .FloatLit
         i = i + 1
-        for i < n and ascii.is_digit(source[i].to_int()) {
+        for i < n and ascii.is_digit(source[i]) {
           i = i + 1
         }
       }
@@ -343,14 +343,14 @@ pub fn lex(source: String, file_id: Int) StageResult<Vector<Token>> {
       continue
     }
 
-    if is_byte(c, ":") and i + 1 < n and is_byte(source[i + 1].to_int(), "=") {
+    if is_byte(c, ":") and i + 1 < n and is_byte(source[i + 1], "=") {
       i = i + 2
       out = out.append(make_token(.ColonEq, source, token_start, i, file_id, preceded_by_newline))
       continue
     }
 
     if is_byte(c, "=") and i + 1 < n {
-      c1 := source[i + 1].to_int()
+      c1 := source[i + 1]
       if is_byte(c1, "=") {
         i = i + 2
         out = out.append(make_token(.EqEq, source, token_start, i, file_id, preceded_by_newline))
@@ -363,49 +363,49 @@ pub fn lex(source: String, file_id: Int) StageResult<Vector<Token>> {
       }
     }
 
-    if is_byte(c, "!") and i + 1 < n and is_byte(source[i + 1].to_int(), "=") {
+    if is_byte(c, "!") and i + 1 < n and is_byte(source[i + 1], "=") {
       i = i + 2
       out = out.append(make_token(.BangEq, source, token_start, i, file_id, preceded_by_newline))
       continue
     }
 
-    if is_byte(c, "<") and i + 1 < n and is_byte(source[i + 1].to_int(), "=") {
+    if is_byte(c, "<") and i + 1 < n and is_byte(source[i + 1], "=") {
       i = i + 2
       out = out.append(make_token(.LtEq, source, token_start, i, file_id, preceded_by_newline))
       continue
     }
 
-    if is_byte(c, "<") and i + 1 < n and is_byte(source[i + 1].to_int(), "<") {
+    if is_byte(c, "<") and i + 1 < n and is_byte(source[i + 1], "<") {
       i = i + 2
       out = out.append(make_token(.LtLt, source, token_start, i, file_id, preceded_by_newline))
       continue
     }
 
-    if is_byte(c, ">") and i + 1 < n and is_byte(source[i + 1].to_int(), "=") {
+    if is_byte(c, ">") and i + 1 < n and is_byte(source[i + 1], "=") {
       i = i + 2
       out = out.append(make_token(.GtEq, source, token_start, i, file_id, preceded_by_newline))
       continue
     }
 
-    if is_byte(c, "&") and i + 1 < n and is_byte(source[i + 1].to_int(), "&") {
+    if is_byte(c, "&") and i + 1 < n and is_byte(source[i + 1], "&") {
       i = i + 2
       out = out.append(make_token(.AmpAmp, source, token_start, i, file_id, preceded_by_newline))
       continue
     }
 
-    if is_byte(c, "|") and i + 1 < n and is_byte(source[i + 1].to_int(), "|") {
+    if is_byte(c, "|") and i + 1 < n and is_byte(source[i + 1], "|") {
       i = i + 2
       out = out.append(make_token(.PipePipe, source, token_start, i, file_id, preceded_by_newline))
       continue
     }
 
-    if is_byte(c, ".") and i + 1 < n and is_byte(source[i + 1].to_int(), ".") {
+    if is_byte(c, ".") and i + 1 < n and is_byte(source[i + 1], ".") {
       i = i + 2
       out = out.append(make_token(.DotDot, source, token_start, i, file_id, preceded_by_newline))
       continue
     }
 
-    kind: TokenKind? = case String.from_char_code(c) {
+    kind: TokenKind? = case String.from_char_code(c.to_int()) {
       .Some(ch) => case ch {
         "@" => .Some(.At),
         "." => .Some(.Dot),
