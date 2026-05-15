@@ -175,3 +175,5 @@ Related historical context outside this folder:
 | [diagnostic-reporting.md](diagnostic-reporting.md) | Rich multi-line diagnostic output with typed DiagKind variants, source snippets, underlines, and ANSI color |
 | [js-ffi.md](js-ffi.md) | User-facing `extern` declarations for JS/host FFI via WASM imports (Phase 1 complete; playground and Phase 2 richer types deferred) |
 | [anonymous-record-variant.md](anonymous-record-variant.md) | Anonymous record types as variant payloads in enum declarations, with synthesized scoped record types and cross-module export support |
+| [unify-js-runtime.md](unify-js-runtime.md) | Shared Node Wasm runtime (`runtime.mjs`) between library tools and SEA CLI |
+| [boot-jspi-runtime.md](boot-jspi-runtime.md) | JSPI entry ABI, async runtime path, suspending host/extern imports, browser async APIs (timer, fetch, fetch-backed VFS) |

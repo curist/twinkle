@@ -14,7 +14,7 @@ host import.
 This is a boot-compiler/runtime plan only. Stage0 remains unchanged and does not
 need to learn this entry ABI, host wrapping policy, or async runtime path.
 
-This plan depended on [unify-js-runtime.md](archive/unify-js-runtime.md) (done)
+This plan depended on [unify-js-runtime.md](unify-js-runtime.md) (done)
 and the entry-export ABI change (done). The shared runtime is now at
 `tools/js_runtime/runtime.mjs`, and the boot backend exports `__twinkle_start`
 instead of using a Wasm start section.
