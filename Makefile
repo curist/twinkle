@@ -3,7 +3,7 @@
 STAGE1_WASM ?= target/boot-stage1.wasm
 STAGE2_WASM ?= target/boot.wasm
 STAGE3_WASM ?= /tmp/twinkle-selfhost/stage3.wasm
-TWK_CLI     ?= node tools/twk_cli_sea.cjs
+TWK_CLI     ?= node target/twk_cli_sea.cjs
 SEA_NODE_VERSION ?= 26
 SEA_NODE_BIN ?=
 
@@ -47,7 +47,12 @@ stage2: $(STAGE2_WASM)
 boot/lib/module/core_lib.tw: $(CORE_LIB_SRCS) tools/generate_core_lib.tw target/release/twk
 	./target/release/twk run tools/generate_core_lib.tw
 
-$(STAGE2_WASM): $(BOOT_SRCS) $(CORE_LIB_SRCS) boot/lib/module/core_lib.tw target/release/twk
+# Bundle the shared JS runtime into the CJS entry used by the Node runner.
+target/twk_cli_sea.cjs: tools/js_runtime/runtime.mjs tools/js_runtime/sea_main.mjs
+	@mkdir -p target
+	npx --yes esbuild tools/js_runtime/sea_main.mjs --bundle --platform=node --format=cjs --outfile=target/twk_cli_sea.cjs
+
+$(STAGE2_WASM): $(BOOT_SRCS) $(CORE_LIB_SRCS) boot/lib/module/core_lib.tw target/release/twk target/twk_cli_sea.cjs
 	@printf '\n==> Build bridge module for Node runner\n'
 	./target/release/twk run boot/tests/gen_bridge_wasm.tw
 	@printf '\n==> Build stage1 compiler with stage0 -> $(STAGE1_WASM)\n'
@@ -66,7 +71,7 @@ $(STAGE2_WASM): $(BOOT_SRCS) $(CORE_LIB_SRCS) boot/lib/module/core_lib.tw target
 	@printf '\nSelf-host loop completed successfully.\n'
 
 # Build the Node SEA standalone CLI from target/boot.wasm.
-target/twk: $(STAGE2_WASM) tools/build_node_sea_cli.sh tools/find_node_sea_bin.sh tools/twk_cli_sea.cjs
+target/twk: $(STAGE2_WASM) tools/build_node_sea_cli.sh tools/find_node_sea_bin.sh tools/js_runtime/runtime.mjs tools/js_runtime/sea_main.mjs
 	NODE_BIN="$$(tools/find_node_sea_bin.sh "$(SEA_NODE_VERSION)" "$(SEA_NODE_BIN)")" tools/build_node_sea_cli.sh
 
 # Full standalone CLI rebuild: stage2 payload + Node SEA.
@@ -105,4 +110,4 @@ playground-dev: $(STAGE2_WASM) tools/bridge.wasm tree-sitter-twinkle/tree-sitter
 
 clean:
 	cargo clean
-	rm -f target/boot.wasm target/boot-stage1.wasm target/twk
+	rm -f target/boot.wasm target/boot-stage1.wasm target/twk target/twk_cli_sea.cjs

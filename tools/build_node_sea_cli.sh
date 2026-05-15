@@ -7,7 +7,7 @@ cd "$ROOT_DIR"
 OUT="${1:-target/twk}"
 BOOT_WASM="${BOOT_WASM:-$ROOT_DIR/target/boot.wasm}"
 BRIDGE_WASM="${BRIDGE_WASM:-$ROOT_DIR/tools/bridge.wasm}"
-SEA_MAIN="$ROOT_DIR/tools/twk_cli_sea.cjs"
+SEA_MAIN="$ROOT_DIR/target/twk_cli_sea.cjs"
 TMP_DIR="${TMPDIR:-/tmp}/twinkle-sea-build.$$"
 SEA_CONFIG="$TMP_DIR/sea-config.json"
 SEA_BLOB="$TMP_DIR/twk-sea.blob"
@@ -43,6 +43,18 @@ if [[ ! -f "$BRIDGE_WASM" ]]; then
 fi
 
 mkdir -p "$TMP_DIR" "$(dirname "$OUT")"
+
+# Bundle the shared ESM runtime + SEA wrapper into a single CJS file.
+# When invoked via `make`, the Makefile target/twk_cli_sea.cjs rule handles this.
+# When invoked standalone (quick-bundle-cli), we bundle here.
+if [[ ! -f "$SEA_MAIN" ]] || [[ "$ROOT_DIR/tools/js_runtime/runtime.mjs" -nt "$SEA_MAIN" ]] || [[ "$ROOT_DIR/tools/js_runtime/sea_main.mjs" -nt "$SEA_MAIN" ]]; then
+  printf '==> Bundling SEA entry with esbuild\n'
+  npx --yes esbuild "$ROOT_DIR/tools/js_runtime/sea_main.mjs" \
+    --bundle \
+    --platform=node \
+    --format=cjs \
+    --outfile="$SEA_MAIN"
+fi
 
 if "$NODE_BIN" --help 2>/dev/null | grep -q -- '--build-sea'; then
   cat > "$SEA_CONFIG" <<JSON

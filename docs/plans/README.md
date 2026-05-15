@@ -44,7 +44,7 @@ Self-hosting is complete. Historical design and status docs live in
 | Unreachable case arms | Diagnose case arms shadowed by earlier catch-all, literal, or covering variant patterns | Planned | [unreachable-case-arms.md](unreachable-case-arms.md) |
 | Task concurrency | Add library-first cooperative `Task<T>` concurrency without new syntax | Planned | [task-concurrency.md](task-concurrency.md) |
 | JSPI runtime | Move boot JavaScript hosts to a JSPI entry ABI, starting with non-blocking LSP debounce stdin | Planned | [boot-jspi-runtime.md](boot-jspi-runtime.md) |
-| JS runtime unification | Share one Node Wasm runtime implementation between library tools and SEA CLI before JSPI migration | Planned | [unify-js-runtime.md](unify-js-runtime.md) |
+| JS runtime unification | Share one Node Wasm runtime implementation between library tools and SEA CLI before JSPI migration | Done | [archive/unify-js-runtime.md](archive/unify-js-runtime.md) |
 
 
 ### Later — Tooling & Ecosystem

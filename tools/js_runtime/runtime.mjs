@@ -1,20 +1,28 @@
-#!/usr/bin/env node
-// Node.js SEA entry for the Twinkle CLI.
+// Shared Wasm GC runtime library for the Twinkle Node.js host.
 //
-// This file is intentionally self-contained: an injected SEA main script cannot
-// load project-local modules with the normal file-based require(). The compiler
-// and JS↔Wasm bridge are embedded as SEA assets by tools/build_node_sea_cli.sh.
+// Provides the "host" imports that Twinkle's compiler emits, using a small
+// bridge Wasm module to create/read Wasm GC values (since JS cannot directly
+// construct or inspect Wasm GC arrays/structs).
+//
+// Used by:
+//   - tools/js_runtime/sea_main.mjs  (Node SEA standalone CLI, bundled via esbuild)
 
-const { readFileSync, writeFileSync, existsSync, readdirSync, mkdirSync, readSync, writeSync } = require("node:fs");
-const { resolve, dirname } = require("node:path");
-const { fileURLToPath } = require("node:url");
-const sea = require("node:sea");
+import { readFileSync, writeFileSync, existsSync, readdirSync, mkdirSync, readSync, writeSync } from "node:fs";
+import { resolve } from "node:path";
+
+// ---------------------------------------------------------------------------
+// Constants
+// ---------------------------------------------------------------------------
 
 const RESULT_TYPE_ID = 1; // matches src/types/ty.rs RESULT_TYPE_ID
 const RESULT_OK = 0;
 const RESULT_ERR = 1;
 
-class HostExit extends Error {
+// ---------------------------------------------------------------------------
+// HostExit
+// ---------------------------------------------------------------------------
+
+export class HostExit extends Error {
   constructor(code) {
     super(`host.exit(${code})`);
     this.name = "HostExit";
@@ -22,46 +30,12 @@ class HostExit extends Error {
   }
 }
 
+// ---------------------------------------------------------------------------
+// String / array marshaling
+// ---------------------------------------------------------------------------
+
 const textDecoder = new TextDecoder();
 const textEncoder = new TextEncoder();
-
-function assetBytes(key, fallbackPath) {
-  if (sea.isSea()) {
-    return Buffer.from(sea.getAsset(key));
-  }
-  return readFileSync(fallbackPath);
-}
-
-function defaultRootDir() {
-  if (sea.isSea()) {
-    return dirname(process.execPath);
-  }
-  return resolve(__dirname, "..");
-}
-
-function loadBootWasm() {
-  const fallback = resolve(defaultRootDir(), "target/boot.wasm");
-  try {
-    return assetBytes("boot.wasm", process.env.BOOT_WASM ? resolve(process.env.BOOT_WASM) : fallback);
-  } catch (e) {
-    console.error(`Error: boot compiler wasm not found: ${e.message}`);
-    console.error("Build the verified self-hosted payload with:");
-    console.error("  cargo build --release");
-    console.error("  make stage2");
-    process.exit(1);
-  }
-}
-
-function loadBridgeWasm() {
-  const fallback = resolve(defaultRootDir(), "tools/bridge.wasm");
-  try {
-    return assetBytes("bridge.wasm", process.env.BRIDGE_WASM ? resolve(process.env.BRIDGE_WASM) : fallback);
-  } catch (e) {
-    console.error(`Error: bridge wasm not found: ${e.message}`);
-    console.error("Regenerate with: ./target/release/twk run boot/tests/gen_bridge_wasm.tw");
-    process.exit(1);
-  }
-}
 
 function decodeString(b, ref) {
   if (!ref) return "";
@@ -106,6 +80,28 @@ function makeByteArray(b, bytes) {
   return arr;
 }
 
+function decodeStringArray(b, arrRef) {
+  const len = b.array_len(arrRef);
+  const out = new Array(len);
+  for (let i = 0; i < len; i++) {
+    out[i] = decodeString(b, b.array_get(arrRef, i));
+  }
+  return out;
+}
+
+function decodeByteArray(b, arrRef) {
+  const len = b.array_len(arrRef);
+  const out = Buffer.alloc(len);
+  for (let i = 0; i < len; i++) {
+    out[i] = b.i31_get(b.array_get(arrRef, i));
+  }
+  return out;
+}
+
+// ---------------------------------------------------------------------------
+// Stdin helpers
+// ---------------------------------------------------------------------------
+
 function sleepSyncMs(ms) {
   if (ms <= 0) return;
   const sab = new SharedArrayBuffer(4);
@@ -141,23 +137,9 @@ function readStdinTimeout(maxBytes, timeoutMs, runtime) {
   }
 }
 
-function decodeStringArray(b, arrRef) {
-  const len = b.array_len(arrRef);
-  const out = new Array(len);
-  for (let i = 0; i < len; i++) {
-    out[i] = decodeString(b, b.array_get(arrRef, i));
-  }
-  return out;
-}
-
-function decodeByteArray(b, arrRef) {
-  const len = b.array_len(arrRef);
-  const out = Buffer.alloc(len);
-  for (let i = 0; i < len; i++) {
-    out[i] = b.i31_get(b.array_get(arrRef, i));
-  }
-  return out;
-}
+// ---------------------------------------------------------------------------
+// Extern auto-bridging
+// ---------------------------------------------------------------------------
 
 /**
  * Auto-bridge extern imports by resolving `globalThis[module][name]` and
@@ -205,6 +187,10 @@ function autoBridgeExternImports(wasmModule, hostImports, b) {
   }
 }
 
+// ---------------------------------------------------------------------------
+// Host imports
+// ---------------------------------------------------------------------------
+
 function write(stream, text) {
   stream.write(text);
 }
@@ -212,6 +198,7 @@ function write(stream, text) {
 function makeHostImports(b, runtime, bridgeBytes) {
   return {
     host: {
+      // --- I/O ---
       print: (s) => write(runtime.stdout, decodeString(b, s)),
       println: (s) => write(runtime.stdout, decodeString(b, s) + "\n"),
       error: (s) => {
@@ -222,8 +209,10 @@ function makeHostImports(b, runtime, bridgeBytes) {
       eprint: (s) => write(runtime.stderr, decodeString(b, s)),
       eprintln: (s) => write(runtime.stderr, decodeString(b, s) + "\n"),
 
+      // --- String conversion ---
       f64_to_string: (n) => encodeString(b, n.toString()),
 
+      // --- Process ---
       args: () => makeStringArray(b, runtime.programArgs),
       env: (keyRef) => {
         const key = decodeString(b, keyRef);
@@ -252,6 +241,7 @@ function makeHostImports(b, runtime, bridgeBytes) {
         return BigInt(exitCode);
       },
 
+      // --- File system ---
       read_file: (pathRef) => {
         const filePath = resolve(runtime.cwd, decodeString(b, pathRef));
         try {
@@ -294,6 +284,7 @@ function makeHostImports(b, runtime, bridgeBytes) {
         return existsSync(filePath) ? 1 : 0;
       },
 
+      // --- Parsing ---
       parse_int: (sRef) => {
         const s = decodeString(b, sRef);
         const n = parseInt(s, 10);
@@ -308,13 +299,21 @@ function makeHostImports(b, runtime, bridgeBytes) {
   };
 }
 
+// ---------------------------------------------------------------------------
+// Bridge instantiation
+// ---------------------------------------------------------------------------
+
 function instantiateBridge(bridgeBytes) {
   const bridgeModule = new WebAssembly.Module(bridgeBytes);
   const bridgeInstance = new WebAssembly.Instance(bridgeModule);
   return bridgeInstance.exports;
 }
 
-function runWasmBytes(
+// ---------------------------------------------------------------------------
+// Public API
+// ---------------------------------------------------------------------------
+
+export function runWasmBytes(
   wasmBytes,
   {
     programPath = "<memory>.wasm",
@@ -323,9 +322,13 @@ function runWasmBytes(
     env = process.env,
     stdout = process.stdout,
     stderr = process.stderr,
-    bridgeBytes = loadBridgeWasm(),
+    bridgeBytes,
   } = {},
 ) {
+  if (!bridgeBytes) {
+    throw new Error("runWasmBytes: bridgeBytes is required");
+  }
+
   const b = instantiateBridge(bridgeBytes);
   const runtime = {
     programArgs: [programPath, ...guestArgs],
@@ -351,38 +354,24 @@ function runWasmBytes(
   }
 }
 
-function guestArgs() {
-  const argv1 = process.argv[1] ?? "";
-  // Node SEA preserves the executable path as argv[1], while direct `node
-  // tools/twk_cli_sea.cjs ...` preserves the script path there.
-  const hasScriptArg = sea.isSea() || argv1.endsWith(".cjs") || argv1.endsWith(".mjs") || argv1.endsWith(".js");
-  const args = hasScriptArg ? process.argv.slice(2) : process.argv.slice(1);
-  if (process.env.TWINKLE_DEBUG_ARGV === "1") {
-    console.error(JSON.stringify({ argv: process.argv, guestArgs: args, isSea: sea.isSea() }));
-  }
-  return args;
-}
-
-function main() {
-  const bridgeBytes = loadBridgeWasm();
-  const exitCode = runWasmBytes(loadBootWasm(), {
-    programPath: sea.isSea() ? "twk.wasm" : resolve(defaultRootDir(), "target/boot.wasm"),
-    guestArgs: guestArgs(),
-    cwd: process.cwd(),
-    env: process.env,
-    stdout: process.stdout,
-    stderr: process.stderr,
+export function runWasmFile(
+  wasmPath,
+  {
+    guestArgs = [],
+    cwd = process.cwd(),
+    env = process.env,
+    stdout = process.stdout,
+    stderr = process.stderr,
+    bridgeBytes,
+  } = {},
+) {
+  return runWasmBytes(readFileSync(wasmPath), {
+    programPath: resolve(wasmPath),
+    guestArgs,
+    cwd,
+    env,
+    stdout,
+    stderr,
     bridgeBytes,
   });
-  process.exit(exitCode);
-}
-
-try {
-  main();
-} catch (e) {
-  if (e.message?.startsWith("host.error:")) {
-    process.exit(1);
-  }
-  console.error(e.stack || e.message || e);
-  process.exit(1);
 }

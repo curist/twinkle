@@ -1,4 +1,4 @@
-// JS↔Wasm GC bridge module used by the Node.js Wasm runner (tools/twk_cli_sea.cjs).
+// JS↔Wasm GC bridge module used by the Node.js Wasm runner (tools/js_runtime/runtime.mjs).
 //
 // This is the Twinkle-owned source of truth for the helper module that lets
 // JS construct/read the GC values used by Twinkle's host ABI.
