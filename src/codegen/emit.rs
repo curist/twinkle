@@ -4503,6 +4503,7 @@ fn emit_prelude_call(
         LoweringKind::StringSlice => emit_string_slice_intrinsic(args, bind_ty, ctx),
         LoweringKind::CharCodeAt => emit_char_code_at_intrinsic(args, bind_ty, ctx),
         LoweringKind::FromCharCode => emit_from_char_code_intrinsic(args, bind_ty, ctx),
+        LoweringKind::FromByte => emit_from_byte_intrinsic(args, bind_ty, ctx),
         LoweringKind::FromCodePoint => emit_from_code_point_intrinsic(args, bind_ty, ctx),
         LoweringKind::StringUtf8Bytes => emit_string_utf8_bytes_intrinsic(args, bind_ty, ctx),
         LoweringKind::StringFromUtf8 => emit_string_from_utf8_intrinsic(args, bind_ty, ctx),
@@ -5851,6 +5852,42 @@ fn emit_from_char_code_intrinsic(
             let mut v = vec![
                 Instr::I32Const(0), // type_id
                 Instr::I32Const(0), // variant_id (None)
+                Instr::ArrayNewFixed(T_ARRAY.to_string(), 0),
+                Instr::StructNew(T_VARIANT.to_string()),
+            ];
+            v.extend(emit_coerce_stack(&ref_variant(), &ValType::Anyref));
+            v
+        },
+    });
+    instrs
+}
+
+fn emit_from_byte_intrinsic(
+    args: &[Atom],
+    _bind_ty: &ValType,
+    ctx: &mut EmitCtx<'_>,
+) -> Vec<Instr> {
+    // String.from_byte(b: Byte) -> Option<String>
+    // Only ASCII bytes are valid one-byte UTF-8 scalars.
+    let mut instrs = emit_atom(&args[0], Some(&ValType::I32), ctx);
+    instrs.push(Instr::I32Const(128));
+    instrs.push(Instr::I32LtU);
+    instrs.push(Instr::If {
+        result: Some(ValType::Anyref),
+        then_body: {
+            let mut v = vec![Instr::I32Const(0), Instr::I32Const(1)];
+            v.extend(emit_atom(&args[0], Some(&ValType::I32), ctx));
+            v.push(Instr::ArrayNewFixed(T_STRING.to_string(), 1));
+            v.extend(emit_coerce_stack(&ref_string(), &ValType::Anyref));
+            v.push(Instr::ArrayNewFixed(T_ARRAY.to_string(), 1));
+            v.push(Instr::StructNew(T_VARIANT.to_string()));
+            v.extend(emit_coerce_stack(&ref_variant(), &ValType::Anyref));
+            v
+        },
+        else_body: {
+            let mut v = vec![
+                Instr::I32Const(0),
+                Instr::I32Const(0),
                 Instr::ArrayNewFixed(T_ARRAY.to_string(), 0),
                 Instr::StructNew(T_VARIANT.to_string()),
             ];

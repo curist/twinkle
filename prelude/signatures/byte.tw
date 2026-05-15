@@ -12,3 +12,43 @@ pub fn from_int(n: Int) Option<Byte> {
 pub fn to_string(b: Byte) String {
   ""
 }
+
+/// Compare two bytes by numeric value.
+pub fn compare(a: Byte, b: Byte) Order {
+  .Eq
+}
+
+/// Return true when the byte is in the inclusive ASCII range [lo, hi].
+pub fn in_range(b: Byte, lo: Int, hi: Int) Bool {
+  false
+}
+
+/// Return true when the byte is an ASCII uppercase letter.
+pub fn is_upper(b: Byte) Bool {
+  false
+}
+
+/// Return true when the byte is an ASCII lowercase letter.
+pub fn is_lower(b: Byte) Bool {
+  false
+}
+
+/// Return true when the byte is an ASCII decimal digit.
+pub fn is_digit(b: Byte) Bool {
+  false
+}
+
+/// Return true when the byte is an ASCII hexadecimal digit.
+pub fn is_hex_digit(b: Byte) Bool {
+  false
+}
+
+/// Return true when the byte is LF.
+pub fn is_newline(b: Byte) Bool {
+  false
+}
+
+/// Return true when the byte is an ASCII whitespace character recognized by the lexer.
+pub fn is_space(b: Byte) Bool {
+  false
+}

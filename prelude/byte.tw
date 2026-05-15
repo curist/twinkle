@@ -4,3 +4,38 @@ pub fn compare(a: Byte, b: Byte) Order {
   bi := Byte.to_int(b)
   if ai < bi { .Lt } else if ai > bi { .Gt } else { .Eq }
 }
+
+/// Return true when the byte is in the inclusive ASCII range [lo, hi].
+pub fn in_range(b: Byte, lo: Int, hi: Int) Bool {
+  b >= lo and b <= hi
+}
+
+/// Return true when the byte is an ASCII uppercase letter.
+pub fn is_upper(b: Byte) Bool {
+  b.in_range(0x41, 0x5A) // A-Z
+}
+
+/// Return true when the byte is an ASCII lowercase letter.
+pub fn is_lower(b: Byte) Bool {
+  b.in_range(0x61, 0x7A) // a-z
+}
+
+/// Return true when the byte is an ASCII decimal digit.
+pub fn is_digit(b: Byte) Bool {
+  b.in_range(0x30, 0x39) // 0-9
+}
+
+/// Return true when the byte is an ASCII hexadecimal digit.
+pub fn is_hex_digit(b: Byte) Bool {
+  b.is_digit() or b.in_range(0x41, 0x46) or b.in_range(0x61, 0x66) // A-F, a-f
+}
+
+/// Return true when the byte is LF.
+pub fn is_newline(b: Byte) Bool {
+  b == 0x0A
+}
+
+/// Return true when the byte is an ASCII whitespace character recognized by the lexer.
+pub fn is_space(b: Byte) Bool {
+  b == 0x20 or b == 0x09 or b == 0x0D or b.is_newline()
+}

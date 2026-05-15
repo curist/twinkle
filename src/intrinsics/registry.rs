@@ -36,6 +36,7 @@ pub enum LoweringKind {
     StringSlice,
     CharCodeAt,
     FromCharCode,
+    FromByte,
     FromCodePoint,
     StringUtf8Bytes,
     StringFromUtf8,
@@ -275,6 +276,14 @@ const INTRINSIC_SPECS: &[IntrinsicSpec] = &[
         true,
         true,
         FromCharCode
+    ),
+    spec!(
+        FROM_BYTE,
+        "String.from_byte",
+        Intrinsic,
+        true,
+        true,
+        FromByte
     ),
     spec!(
         FROM_CODE_POINT,

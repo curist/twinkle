@@ -33,6 +33,11 @@ pub fn from_char_code(code: Int) Option<String> {
   .None
 }
 
+/// Create a single-byte string from an ASCII byte.
+pub fn from_byte(byte: Byte) Option<String> {
+  .None
+}
+
 /// Create a string from a Unicode code point.
 pub fn from_code_point(code: Int) Option<String> {
   .None

@@ -273,6 +273,14 @@ impl TypeEnv {
             // Byte
             (BUILTIN_BYTE_TYPE_ID, "to_int", "Byte.to_int"),
             (BUILTIN_BYTE_TYPE_ID, "to_string", "Byte.to_string"),
+            (BUILTIN_BYTE_TYPE_ID, "compare", "Byte.compare"),
+            (BUILTIN_BYTE_TYPE_ID, "in_range", "Byte.in_range"),
+            (BUILTIN_BYTE_TYPE_ID, "is_upper", "Byte.is_upper"),
+            (BUILTIN_BYTE_TYPE_ID, "is_lower", "Byte.is_lower"),
+            (BUILTIN_BYTE_TYPE_ID, "is_digit", "Byte.is_digit"),
+            (BUILTIN_BYTE_TYPE_ID, "is_hex_digit", "Byte.is_hex_digit"),
+            (BUILTIN_BYTE_TYPE_ID, "is_newline", "Byte.is_newline"),
+            (BUILTIN_BYTE_TYPE_ID, "is_space", "Byte.is_space"),
         ];
         for &(type_id, method, func) in builtin_methods {
             env.add_method(type_id, method.to_string(), func.to_string(), None);

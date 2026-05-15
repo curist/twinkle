@@ -143,6 +143,15 @@ pub fn contract(func_id: FuncId) -> Option<IntrinsicContract> {
             ret: option_ty(MonoType::String),
             abi_result: Some(IntrinsicAbiResult::Anyref),
         }),
+        id if id == prelude_ids::FROM_BYTE => Some(IntrinsicContract {
+            func_id,
+            twinkle_name: "String.from_byte",
+            dispatch: IntrinsicDispatch::Intrinsic,
+            type_params: vec![],
+            params: vec![MonoType::Byte],
+            ret: option_ty(MonoType::String),
+            abi_result: Some(IntrinsicAbiResult::Anyref),
+        }),
         id if id == prelude_ids::FROM_CODE_POINT => Some(IntrinsicContract {
             func_id,
             twinkle_name: "String.from_code_point",
@@ -748,8 +757,9 @@ fn builtin_doc(name: &str) -> Option<&'static str> {
         "String.utf8_bytes" => "Copy the string's UTF-8 bytes into a `Vector<Byte>`.",
         "String.from_utf8" => "Validate UTF-8 bytes and create a string. Returns `String?`.",
         "String.from_char_code" => {
-            "Create a string from a byte value (ASCII range). Returns `String?`."
+            "Create a string from an integer code (ASCII range). Returns `String?`."
         }
+        "String.from_byte" => "Create a string from a byte value (ASCII range). Returns `String?`.",
         "String.from_code_point" => "Create a string from a Unicode code point. Returns `String?`.",
 
         // Byte
@@ -924,6 +934,14 @@ mod tests {
         let sig = by_name
             .get("String.from_char_code")
             .expect("String.from_char_code signature");
+        assert_eq!(
+            sig.doc.as_deref(),
+            Some("Create a string from an integer code (ASCII range). Returns `String?`.")
+        );
+
+        let sig = by_name
+            .get("String.from_byte")
+            .expect("String.from_byte signature");
         assert_eq!(
             sig.doc.as_deref(),
             Some("Create a string from a byte value (ASCII range). Returns `String?`.")

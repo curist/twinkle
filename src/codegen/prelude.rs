@@ -486,6 +486,7 @@ mod tests {
             prelude_ids::HOST_STDOUT_WRITE_BYTES.0,
             prelude_ids::CHAR_CODE_AT.0,
             prelude_ids::FROM_CHAR_CODE.0,
+            prelude_ids::FROM_BYTE.0,
             prelude_ids::STRING_UTF8_BYTES.0,
             prelude_ids::STRING_FROM_UTF8.0,
             prelude_ids::FLOAT_BITS.0,

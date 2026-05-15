@@ -4,7 +4,6 @@
 // Because it is transparent, users can write plain functions as decoders
 // without any special wrapping — they just need to match the signature.
 
-use lib.ascii
 
 pub type Json = {
   Null,
@@ -56,7 +55,7 @@ pub fn parse_decode<A>(input: String, da: Decoder<A>) Result<A, String> {
 
 fn skip_ws(input: String, i: Int) Int {
   j := i
-  for j < input.len() and ascii.is_space(input[j]) {
+  for j < input.len() and input[j].is_space() {
     j = j + 1
   }
   j
@@ -69,16 +68,16 @@ fn parse_value(input: String, i: Int) Result<ParseResult<Json>, String> {
   }
 
   c := input[j]
-  if c == 110 { parse_null(input, j) }       // n
-  else if c == 116 { parse_true(input, j) }  // t
-  else if c == 102 { parse_false(input, j) } // f
-  else if c == 34 {                          // "
+  if c == 0x6E { parse_null(input, j) }       // n
+  else if c == 0x74 { parse_true(input, j) }  // t
+  else if c == 0x66 { parse_false(input, j) } // f
+  else if c == 0x22 {                          // "
     s := try parse_json_string(input, j)
     .Ok(.{ value: Json.Str(s.value), next: s.next })
   }
-  else if c == 91 { parse_array(input, j) }  // [
-  else if c == 123 { parse_object(input, j) } // {
-  else if c == 45 or ascii.is_digit(c) { parse_number(input, j) }
+  else if c == 0x5B { parse_array(input, j) }  // [
+  else if c == 0x7B { parse_object(input, j) } // {
+  else if c == 0x2D or c.is_digit() { parse_number(input, j) }
   else { .Err("unexpected character at ${j}") }
 }
 
@@ -115,43 +114,43 @@ fn parse_number(input: String, i: Int) Result<ParseResult<Json>, String> {
   j := i
   has_float_part := false
 
-  if j < input.len() and input[j].to_int() == 45 {
+  if j < input.len() and input[j] == 0x2D {
     j = j + 1
   }
 
-  if j >= input.len() or !ascii.is_digit(input[j]) {
+  if j >= input.len() or !input[j].is_digit() {
     return .Err("expected number at ${i}")
   }
 
-  if input[j].to_int() == 48 {
+  if input[j] == 0x30 {
     j = j + 1
   } else {
-    for j < input.len() and ascii.is_digit(input[j]) {
+    for j < input.len() and input[j].is_digit() {
       j = j + 1
     }
   }
 
-  if j < input.len() and input[j].to_int() == 46 {
+  if j < input.len() and input[j] == 0x2E {
     has_float_part = true
     j = j + 1
-    if j >= input.len() or !ascii.is_digit(input[j]) {
+    if j >= input.len() or !input[j].is_digit() {
       return .Err("expected digit after decimal point at ${j}")
     }
-    for j < input.len() and ascii.is_digit(input[j]) {
+    for j < input.len() and input[j].is_digit() {
       j = j + 1
     }
   }
 
-  if j < input.len() and (input[j].to_int() == 101 or input[j].to_int() == 69) {
+  if j < input.len() and (input[j] == 0x65 or input[j] == 0x45) {
     has_float_part = true
     j = j + 1
-    if j < input.len() and (input[j].to_int() == 43 or input[j].to_int() == 45) {
+    if j < input.len() and (input[j] == 0x2B or input[j] == 0x2D) {
       j = j + 1
     }
-    if j >= input.len() or !ascii.is_digit(input[j]) {
+    if j >= input.len() or !input[j].is_digit() {
       return .Err("expected digit in exponent at ${j}")
     }
-    for j < input.len() and ascii.is_digit(input[j]) {
+    for j < input.len() and input[j].is_digit() {
       j = j + 1
     }
   }
@@ -171,7 +170,7 @@ fn parse_number(input: String, i: Int) Result<ParseResult<Json>, String> {
 }
 
 fn parse_json_string(input: String, i: Int) Result<ParseResult<String>, String> {
-  if i >= input.len() or input[i].to_int() != 34 {
+  if i >= input.len() or input[i] != 0x22 {
     return .Err("expected string at ${i}")
   }
 
@@ -179,16 +178,16 @@ fn parse_json_string(input: String, i: Int) Result<ParseResult<String>, String> 
   j := i + 1
   for j < input.len() {
     c := input[j]
-    if c == 34 {
+    if c == 0x22 {
       case String.from_utf8(out) {
         .Some(s) => { return .Ok(.{ value: s, next: j + 1 }) },
         .None => { return .Err("invalid utf-8 in string at ${i}") },
       }
     }
-    if c < 32 {
+    if c < 0x20 {
       return .Err("unescaped control character in string at ${j}")
     }
-    if c == 92 {
+    if c == 0x5C {
       esc := try parse_escape(input, j)
       out = out.concat(esc.value.utf8_bytes())
       j = esc.next
@@ -201,19 +200,19 @@ fn parse_json_string(input: String, i: Int) Result<ParseResult<String>, String> 
 }
 
 fn parse_escape(input: String, i: Int) Result<ParseResult<String>, String> {
-  if i + 1 >= input.len() or input[i].to_int() != 92 {
+  if i + 1 >= input.len() or input[i] != 0x5C {
     return .Err("expected escape at ${i}")
   }
-  c := input[i + 1].to_int()
-  if c == 34 { .Ok(.{ value: "\"", next: i + 2 }) }
-  else if c == 92 { .Ok(.{ value: "\\", next: i + 2 }) }
-  else if c == 47 { .Ok(.{ value: "/", next: i + 2 }) }
-  else if c == 98 { .Ok(.{ value: code_point_string(8), next: i + 2 }) }
-  else if c == 102 { .Ok(.{ value: code_point_string(12), next: i + 2 }) }
-  else if c == 110 { .Ok(.{ value: "\n", next: i + 2 }) }
-  else if c == 114 { .Ok(.{ value: "\r", next: i + 2 }) }
-  else if c == 116 { .Ok(.{ value: "\t", next: i + 2 }) }
-  else if c == 117 { parse_unicode_escape(input, i) }
+  c := input[i + 1]
+  if c == 0x22 { .Ok(.{ value: "\"", next: i + 2 }) }
+  else if c == 0x5C { .Ok(.{ value: "\\", next: i + 2 }) }
+  else if c == 0x2F { .Ok(.{ value: "/", next: i + 2 }) }
+  else if c == 0x62 { .Ok(.{ value: code_point_string(0x08), next: i + 2 }) }
+  else if c == 0x66 { .Ok(.{ value: code_point_string(0x0C), next: i + 2 }) }
+  else if c == 0x6E { .Ok(.{ value: "\n", next: i + 2 }) }
+  else if c == 0x72 { .Ok(.{ value: "\r", next: i + 2 }) }
+  else if c == 0x74 { .Ok(.{ value: "\t", next: i + 2 }) }
+  else if c == 0x75 { parse_unicode_escape(input, i) }
   else { .Err("invalid escape at ${i}") }
 }
 
@@ -222,7 +221,7 @@ fn parse_unicode_escape(input: String, i: Int) Result<ParseResult<String>, Strin
 
   if code >= 0xD800 and code <= 0xDBFF {
     next := i + 6
-    if next + 5 >= input.len() or input[next].to_int() != 92 or input[next + 1].to_int() != 117 {
+    if next + 5 >= input.len() or input[next] != 0x5C or input[next + 1] != 0x75 {
       return .Err("expected low surrogate after high surrogate at ${i}")
     }
     low := try read_unicode_code_unit(input, next)
@@ -248,20 +247,20 @@ fn read_unicode_code_unit(input: String, i: Int) Result<Int, String> {
   if i + 5 >= input.len() {
     return .Err("incomplete unicode escape at ${i}")
   }
-  a := hex_value(input[i + 2].to_int())
-  b := hex_value(input[i + 3].to_int())
-  c := hex_value(input[i + 4].to_int())
-  d := hex_value(input[i + 5].to_int())
+  a := hex_value(input[i + 2])
+  b := hex_value(input[i + 3])
+  c := hex_value(input[i + 4])
+  d := hex_value(input[i + 5])
   if a < 0 or b < 0 or c < 0 or d < 0 {
     return .Err("invalid unicode escape at ${i}")
   }
-  .Ok(((a * 16 + b) * 16 + c) * 16 + d)
+  .Ok(((a * 0x10 + b) * 0x10 + c) * 0x10 + d)
 }
 
-fn hex_value(c: Int) Int {
-  if c >= 48 and c <= 57 { c - 48 }
-  else if c >= 65 and c <= 70 { c - 65 + 10 }
-  else if c >= 97 and c <= 102 { c - 97 + 10 }
+fn hex_value(c: Byte) Int {
+  if c >= 0x30 and c <= 0x39 { c - 0x30 }
+  else if c >= 0x41 and c <= 0x46 { c - 0x41 + 0x0A }
+  else if c >= 0x61 and c <= 0x66 { c - 0x61 + 0x0A }
   else { -1 }
 }
 
@@ -276,7 +275,7 @@ fn parse_array(input: String, i: Int) Result<ParseResult<Json>, String> {
   items: Vector<Json> = []
   j := skip_ws(input, i + 1)
 
-  if j < input.len() and input[j].to_int() == 93 {
+  if j < input.len() and input[j] == 0x5D {
     return .Ok(.{ value: Json.Array(items), next: j + 1 })
   }
 
@@ -290,15 +289,15 @@ fn parse_array(input: String, i: Int) Result<ParseResult<Json>, String> {
     }
 
     c := input[j]
-    if c == 93 {
+    if c == 0x5D {
       return .Ok(.{ value: Json.Array(items), next: j + 1 })
     }
-    if c != 44 {
+    if c != 0x2C {
       return .Err("expected ',' or ']' at ${j}")
     }
 
     j = skip_ws(input, j + 1)
-    if j < input.len() and input[j].to_int() == 93 {
+    if j < input.len() and input[j] == 0x5D {
       return .Err("trailing comma in array at ${j}")
     }
   }
@@ -310,19 +309,19 @@ fn parse_object(input: String, i: Int) Result<ParseResult<Json>, String> {
   obj: Dict<String, Json> = Dict.new()
   j := skip_ws(input, i + 1)
 
-  if j < input.len() and input[j].to_int() == 125 {
+  if j < input.len() and input[j] == 0x7D {
     return .Ok(.{ value: Json.Object(obj), next: j + 1 })
   }
 
   for true {
-    if j >= input.len() or input[j].to_int() != 34 {
+    if j >= input.len() or input[j] != 0x22 {
       return .Err("expected object key at ${j}")
     }
 
     key := try parse_json_string(input, j)
     j = skip_ws(input, key.next)
 
-    if j >= input.len() or input[j].to_int() != 58 {
+    if j >= input.len() or input[j] != 0x3A {
       return .Err("expected ':' after object key at ${j}")
     }
 
@@ -335,15 +334,15 @@ fn parse_object(input: String, i: Int) Result<ParseResult<Json>, String> {
     }
 
     c := input[j]
-    if c == 125 {
+    if c == 0x7D {
       return .Ok(.{ value: Json.Object(obj), next: j + 1 })
     }
-    if c != 44 {
+    if c != 0x2C {
       return .Err("expected ',' or '}' at ${j}")
     }
 
     j = skip_ws(input, j + 1)
-    if j < input.len() and input[j].to_int() == 125 {
+    if j < input.len() and input[j] == 0x7D {
       return .Err("trailing comma in object at ${j}")
     }
   }
@@ -676,15 +675,16 @@ fn quote_string(s: String) String {
   buf: Vector<Byte> = []
   for b in s.utf8_bytes() {
     n := Byte.to_int(b)
-    escape := if n == 34 { "\\\"" }       // "
-              else if n == 92 { "\\\\" }  // \
-              else if n == 8  { "\\b" }   // backspace
-              else if n == 12 { "\\f" }   // form feed
-              else if n == 10 { "\\n" }   // newline
-              else if n == 13 { "\\r" }   // carriage return
-              else if n == 9  { "\\t" }   // tab
-              else if n < 32  { "\\u00${hex_digit(n / 16)}${hex_digit(n % 16)}" }
-              else { "" }
+    escape := case n {
+      0x22 => "\\\"", // "
+      0x5C => "\\\\", // \
+      0x08 => "\\b",  // backspace
+      0x0C => "\\f",  // form feed
+      0x0A => "\\n",  // newline
+      0x0D => "\\r",  // carriage return
+      0x09 => "\\t",  // tab
+      _ => if n < 0x20 { "\\u00${hex_digit(n / 0x10)}${hex_digit(n % 0x10)}" } else { "" },
+    }
     if escape == "" {
       buf = buf.append(b)
     } else {
@@ -698,5 +698,5 @@ fn quote_string(s: String) String {
 }
 
 fn hex_digit(n: Int) String {
-  if n < 10 { code_point_string(48 + n) } else { code_point_string(87 + n) }
+  if n < 0x0A { code_point_string(0x30 + n) } else { code_point_string(0x57 + n) }
 }

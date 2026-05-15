@@ -29,7 +29,7 @@ pub fn prelude_method_alias(type_name: String, method_name: String) String? {
     "Task" => .Some("task_${method_name}"),
     "Vector" => .Some("vector_${method_name}"),
     "String" => {
-      if method_name == "char_code_at" or method_name == "from_char_code" or method_name == "from_code_point" {
+      if method_name == "char_code_at" or method_name == "from_char_code" or method_name == "from_byte" or method_name == "from_code_point" {
         .None
       } else {
         .Some("string_${method_name}")

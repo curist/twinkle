@@ -121,6 +121,7 @@ fn builtin_abi(name: String) AbiContract {
     "string_slice" => abi([str_n(), .I64, .I64], [str_()]),
     "char_code_at" => abi([str_n(), .I64], [.I64]),
     "from_char_code" => abi([.I64], [.Anyref]),
+    "from_byte" => abi([.I32], [.Anyref]),
     "from_code_point" => abi([.I64], [.Anyref]),
     "string_utf8_bytes" => abi([str_n()], [pvec_()]),
     "string_from_utf8" => abi([pvec_n()], [.Anyref]),
@@ -315,6 +316,7 @@ pub fn builtin_specs() Vector<BuiltinSpec> {
     intr("float_bits",       .Some("Float.bits")),
     intr("char_code_at",     .Some("String.char_code_at")),
     intr("from_char_code",   .Some("String.from_char_code")),
+    intr("from_byte",        .Some("String.from_byte")),
     // ── Vector ops ──
     rt("vector_len",        "rt.arr", "len",   .Some("Vector.len")),
     intr("vector_append",   .Some("Vector.append")),

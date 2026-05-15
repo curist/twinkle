@@ -149,7 +149,8 @@ names.sort_by(String.compare)
 | `Int.to_float` | `fn(n: Int) Float` | Convert `Int` to `Float` |
 | `Float.to_int` | `fn(f: Float) Int` | Convert integral `Float` to `Int` (traps if not integral) |
 | `Float.bits` | `fn(f: Float) Int` | Return the IEEE 754 bit pattern of the float as an `Int` |
-| `String.from_char_code` | `fn(n: Int) Option<String>` | Single-char string from byte value (ASCII range) |
+| `String.from_char_code` | `fn(n: Int) Option<String>` | Single-char string from integer code (ASCII range) |
+| `String.from_byte` | `fn(b: Byte) Option<String>` | Single-char string from byte value (ASCII range) |
 | `String.from_code_point` | `fn(n: Int) Option<String>` | String from Unicode code point (full range) |
 
 Conversion functions can be used as first-class function references (e.g. `nums.map(Int.to_string)`). The dot-call form `.to_string()` also works on values directly.
@@ -166,6 +167,13 @@ Primitive type representing a single byte (0–255). Returned by string indexing
 | `Byte.from_int` | `fn(n: Int) Option<Byte>` | Convert integer in range 0..255 to `Byte` |
 | `Byte.to_string` | `fn(b: Byte) String` | Convert byte to string representation |
 | `Byte.compare` | `fn(a: Byte, b: Byte) Order` | Compare two bytes by numeric value |
+| `.in_range(lo, hi)` | `fn(b: Byte, lo: Int, hi: Int) Bool` | Whether byte is in the inclusive ASCII range `[lo, hi]` |
+| `.is_upper()` | `fn(b: Byte) Bool` | Whether byte is an ASCII uppercase letter |
+| `.is_lower()` | `fn(b: Byte) Bool` | Whether byte is an ASCII lowercase letter |
+| `.is_digit()` | `fn(b: Byte) Bool` | Whether byte is an ASCII decimal digit |
+| `.is_hex_digit()` | `fn(b: Byte) Bool` | Whether byte is an ASCII hexadecimal digit |
+| `.is_newline()` | `fn(b: Byte) Bool` | Whether byte is LF (`0x0A`) |
+| `.is_space()` | `fn(b: Byte) Bool` | Whether byte is an ASCII whitespace character recognized by the lexer |
 
 ## String
 
@@ -185,6 +193,7 @@ Strings are immutable, UTF-8 encoded, and GC-managed. String interpolation: `"he
 | `.char_code_at(i)` | `fn(s: String, i: Int) Int` | Byte value at byte offset `i` (same as `Byte.to_int(s[i])`) |
 | `.utf8_bytes()` | `fn(s: String) Vector<Byte>` | Copy string bytes into a vector |
 | `String.from_utf8` | `fn(bytes: Vector<Byte>) Option<String>` | Validate UTF-8 and create string |
+| `String.from_byte` | `fn(b: Byte) Option<String>` | Create a one-character string from an ASCII byte; returns `None` for non-ASCII bytes |
 
 ### Prelude (auto-imported, no import needed)
 

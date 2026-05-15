@@ -507,8 +507,8 @@ pub fn register_builtin_methods(env: ResolvedEnv) ResolvedEnv {
     me("len", "string_len"), me("get", "string_get"), me("slice", "string_slice"),
     me("concat", "string_concat"), me("char_code_at", "char_code_at"),
     me("utf8_bytes", "string_utf8_bytes"), me("to_string", "string_to_string"),
-    me("from_char_code", "from_char_code"), me("from_code_point", "from_code_point"),
-    me("from_utf8", "string_from_utf8"),
+    me("from_char_code", "from_char_code"), me("from_byte", "from_byte"),
+    me("from_code_point", "from_code_point"), me("from_utf8", "string_from_utf8"),
     me("compare", "compare"), me("index_of", "index_of"), me("contains", "contains"),
     me("starts_with", "starts_with"), me("ends_with", "ends_with"),
     me("split", "split"), me("trim", "trim"),
@@ -544,6 +544,10 @@ pub fn register_builtin_methods(env: ResolvedEnv) ResolvedEnv {
   env = env.register_bound_methods("Byte", [
     me("to_string", "byte_to_string"), me("to_int", "byte_to_int"),
     me("from_int", "byte_from_int"), me("compare", "compare"),
+    me("in_range", "byte_in_range"), me("is_upper", "byte_is_upper"),
+    me("is_lower", "byte_is_lower"), me("is_digit", "byte_is_digit"),
+    me("is_hex_digit", "byte_is_hex_digit"), me("is_newline", "byte_is_newline"),
+    me("is_space", "byte_is_space"),
   ])
   env = env.register_bound_methods("Option", [
     me("unwrap_or", "unwrap_or"),
@@ -1048,7 +1052,7 @@ fn prelude_internal_function_name(alias: String, exported_name: String) String {
     return exported_name
   }
   if stem == "string" {
-    if exported_name == "char_code_at" or exported_name == "from_char_code" or exported_name == "from_code_point" {
+    if exported_name == "char_code_at" or exported_name == "from_char_code" or exported_name == "from_byte" or exported_name == "from_code_point" {
       return exported_name
     }
   }

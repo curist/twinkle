@@ -1,7 +1,6 @@
 use lib.source.span
 use lib.source.diagnostics.{DiagKind, StageResult}
 use lib.source.diagnostics as diag
-use lib.ascii
 use .tokens.{TokenKind}
 
 use .lexer
@@ -57,7 +56,7 @@ fn is_upper_ascii_name(name: String) Bool {
     return false
   }
   c := name[0]
-  ascii.is_upper(c)
+  c.is_upper()
 }
 
 fn span_of_stmt(stmt: Stmt) span.Span {

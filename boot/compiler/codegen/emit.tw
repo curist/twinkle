@@ -996,6 +996,7 @@ fn emit_intrinsic_call(fid: FuncId, name: String, args: Vector<PreparedAtom>, re
     "string_slice"        => emit_intrinsic_string_slice(args, result_idx, ctx, buf),
     "char_code_at"        => emit_intrinsic_char_code_at(args, result_idx, ctx, buf),
     "from_char_code"      => emit_intrinsic_from_char_code(args, result_idx, result_mono, ctx, buf),
+    "from_byte"           => emit_intrinsic_from_byte(args, result_idx, result_mono, ctx, buf),
     "from_code_point"     => emit_intrinsic_from_code_point(args, result_idx, result_mono, ctx, buf),
     "string_utf8_bytes"   => emit_intrinsic_string_utf8_bytes(args, result_idx, ctx, buf),
     "string_from_utf8"    => emit_intrinsic_string_from_utf8(args, result_idx, result_mono, ctx, buf),
@@ -1304,6 +1305,30 @@ fn emit_intrinsic_from_char_code(args: Vector<PreparedAtom>, result_idx: Int, re
   buf3 := buf2.append(.I64Const(0)).append(.I64GeS)
   buf4 := emit_atom(args[0], ctx, buf3)
   buf4.append(.I64Const(128)).append(.I64LtS).append(.I32And)
+    .append(.If(.Some(result_ref), then_instrs, else_instrs)).append(.LocalSet(result_idx))
+}
+
+// ── from_byte: Byte → Option<String> ───────────────────────────────────
+
+fn emit_intrinsic_from_byte(args: Vector<PreparedAtom>, result_idx: Int, result_mono: MonoType, ctx: EmitCtx, buf: Vector<Instr>) Vector<Instr> {
+  sum_layout := get_sum_layout_ctx(result_mono, ctx)
+  some_v := sum_layout.variants[1]
+  default_payload := if some_v.payload_types.len() > 0 {
+    emit_default_value(some_v.payload_types[0], [])
+  } else { [] }
+  result_ref := ValType.Ref(false, .Named(sum_layout.sym))
+
+  then_instrs : Vector<Instr> = [Instr.I32Const(1)]  // tag = Some
+      .concat(emit_atom(args[0], ctx, []))
+      .concat([.ArrayNewFixed("rt_types__String", 1), .StructNew(sum_layout.sym)])
+
+  else_instrs : Vector<Instr> = [Instr.I32Const(0)]  // tag = None
+      .concat(default_payload)
+      .concat([.StructNew(sum_layout.sym)])
+
+  // Only ASCII bytes are valid one-byte UTF-8 scalars.
+  buf2 := emit_atom(args[0], ctx, buf)
+  buf2.append(.I32Const(128)).append(.I32LtU)
     .append(.If(.Some(result_ref), then_instrs, else_instrs)).append(.LocalSet(result_idx))
 }
 

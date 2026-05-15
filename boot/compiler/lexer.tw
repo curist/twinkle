@@ -1,7 +1,6 @@
 use lib.source.span
 use lib.source.diagnostics.{DiagKind, StageResult}
 use lib.source.diagnostics as diag
-use lib.ascii
 use .tokens
 use .tokens.{Token, TokenKind}
 
@@ -52,6 +51,14 @@ fn in_byte_range(c: Byte, start: String, end: String) Bool {
 
 fn byte_value(s: String) Byte {
   s[0]
+}
+
+fn is_ident_start(c: Byte) Bool {
+  c.is_upper() or c.is_lower() or c == 0x5F
+}
+
+fn is_ident_continue(c: Byte) Bool {
+  is_ident_start(c) or c.is_digit()
 }
 
 fn make_token(kind: TokenKind, source: String, start: Int, end: Int, file_id: Int, preceded_by_newline: Bool) Token {
@@ -197,8 +204,8 @@ pub fn lex(source: String, file_id: Int) StageResult<Vector<Token>> {
   for i < n {
     c := source[i]
 
-    if ascii.is_space(c) {
-      if ascii.is_newline(c) {
+    if c.is_space() {
+      if c.is_newline() {
         saw_newline = true
       }
       i = i + 1
@@ -207,7 +214,7 @@ pub fn lex(source: String, file_id: Int) StageResult<Vector<Token>> {
 
     if is_byte(c, "/") and i + 1 < n and is_byte(source[i + 1], "/") {
       i = i + 2
-      for i < n and !ascii.is_newline(source[i]) {
+      for i < n and !source[i].is_newline() {
         i = i + 1
       }
       continue
@@ -270,9 +277,9 @@ pub fn lex(source: String, file_id: Int) StageResult<Vector<Token>> {
       }
     }
 
-    if ascii.is_ident_start(c) {
+    if is_ident_start(c) {
       i = i + 1
-      for i < n and ascii.is_ident_continue(source[i]) {
+      for i < n and is_ident_continue(source[i]) {
         i = i + 1
       }
       text := source.slice(token_start, i)
@@ -285,11 +292,11 @@ pub fn lex(source: String, file_id: Int) StageResult<Vector<Token>> {
       continue
     }
 
-    if ascii.is_digit(c) {
+    if c.is_digit() {
       // Check for hex literal: 0x...
       if is_byte(c, "0") and i + 1 < n and is_byte(source[i + 1], "x") {
         i = i + 2
-        for i < n and ascii.is_hex_digit(source[i]) {
+        for i < n and source[i].is_hex_digit() {
           i = i + 1
         }
         out = out.append(make_token(.IntLit, source, token_start, i, file_id, preceded_by_newline))
@@ -297,15 +304,15 @@ pub fn lex(source: String, file_id: Int) StageResult<Vector<Token>> {
       }
 
       i = i + 1
-      for i < n and ascii.is_digit(source[i]) {
+      for i < n and source[i].is_digit() {
         i = i + 1
       }
 
       kind := TokenKind.IntLit
-      if i + 1 < n and is_byte(source[i], ".") and ascii.is_digit(source[i + 1]) {
+      if i + 1 < n and is_byte(source[i], ".") and source[i + 1].is_digit() {
         kind = .FloatLit
         i = i + 1
-        for i < n and ascii.is_digit(source[i]) {
+        for i < n and source[i].is_digit() {
           i = i + 1
         }
       }
@@ -405,7 +412,7 @@ pub fn lex(source: String, file_id: Int) StageResult<Vector<Token>> {
       continue
     }
 
-    kind: TokenKind? = case String.from_char_code(c.to_int()) {
+    kind: TokenKind? = case String.from_byte(c) {
       .Some(ch) => case ch {
         "@" => .Some(.At),
         "." => .Some(.Dot),
