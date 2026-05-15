@@ -25,22 +25,19 @@ fn canonical_capture_source_local(
   closure_captures: Dict<Int, Vector<CaptureParam>>,
   info: SlotInfo,
 ) LocalId {
-  case info.role {
-    .CaptureParam => {
-      case closure_captures[pf.func_id.id] {
-        .Some(caps) => {
-          for cap in caps {
-            if cap.param_local.id == info.source_local.id {
-              return cap.local_id
-            }
-          }
-          info.source_local
-        },
-        .None => info.source_local,
-      }
+  caps := case info.role {
+    .CaptureParam => case closure_captures[pf.func_id.id] {
+      .Some(caps) => caps,
+      .None => { return info.source_local },
     },
-    _ => info.source_local,
+    _ => { return info.source_local },
   }
+  for cap in caps {
+    if cap.param_local.id == info.source_local.id {
+      return cap.local_id
+    }
+  }
+  info.source_local
 }
 
 pub fn verify_prepared_func_expr(
@@ -145,41 +142,41 @@ fn verify_op(
           .Ok({})
         },
         .None => {
-          case closure_captures[fid.id] {
+          caps := case closure_captures[fid.id] {
+            .Some(caps) => caps,
             .None => {
               if free_vars.len() != 0 {
                 return fail_slot(pf, result_info, "AMakeClosure for F${fid.id} has free vars but no closure metadata")
               }
+              return .Ok({})
             },
-            .Some(caps) => {
-              if free_vars.len() != caps.len() {
-                return fail_slot(
-                  pf,
-                  result_info,
-                  "AMakeClosure for F${fid.id} passes ${free_vars.len()} captures, expected ${caps.len()}",
-                )
-              }
-              for fv,i in free_vars {
-                info := try facts.slot_info_result(pf, fv, "closure capture")
-                cap := caps[i]
-                source_local := canonical_capture_source_local(pf, closure_captures, info)
-                if source_local.id != cap.local_id.id {
-                  return fail_slot(
-                    pf,
-                    result_info,
-                    "AMakeClosure capture ${i} uses L${source_local.id}, expected L${cap.local_id.id}",
-                  )
-                }
-                if !mono_eq(info.mono, cap.ty) {
-                  return fail_slot(
-                    pf,
-                    result_info,
-                    "AMakeClosure capture ${i} for L${info.source_local.id} has mono ${mono_name(info.mono)}, expected ${mono_name(cap.ty)}",
-                  )
-                }
-                try reject_dead_use(pf, info, "closure capture")
-              }
-            },
+          }
+          if free_vars.len() != caps.len() {
+            return fail_slot(
+              pf,
+              result_info,
+              "AMakeClosure for F${fid.id} passes ${free_vars.len()} captures, expected ${caps.len()}",
+            )
+          }
+          for fv,i in free_vars {
+            info := try facts.slot_info_result(pf, fv, "closure capture")
+            cap := caps[i]
+            source_local := canonical_capture_source_local(pf, closure_captures, info)
+            if source_local.id != cap.local_id.id {
+              return fail_slot(
+                pf,
+                result_info,
+                "AMakeClosure capture ${i} uses L${source_local.id}, expected L${cap.local_id.id}",
+              )
+            }
+            if !mono_eq(info.mono, cap.ty) {
+              return fail_slot(
+                pf,
+                result_info,
+                "AMakeClosure capture ${i} for L${info.source_local.id} has mono ${mono_name(info.mono)}, expected ${mono_name(cap.ty)}",
+              )
+            }
+            try reject_dead_use(pf, info, "closure capture")
           }
           .Ok({})
         },
@@ -275,21 +272,16 @@ fn expand_mono_alias(ty: MonoType, env: ResolvedEnv, depth: Int) MonoType {
   case ty {
     .Named(tid, args) => {
       case lookup_type_def(env, tid) {
-        .Some(def) => {
-          case def {
-            .Alias(_, type_params, target) => {
-              names := resolved_type_param_names(type_params)
-              var_map: Dict<String, MonoType> = Dict.new()
-              for i in 0..names.len() {
-                if i < args.len() { var_map[names[i]] = args[i] }
-              }
-              expanded := subst_mono_vars(target, var_map)
-              expand_mono_alias(expanded, env, depth + 1)
-            },
-            _ => ty,
+        .Some(.Alias(_, type_params, target)) => {
+          names := resolved_type_param_names(type_params)
+          var_map: Dict<String, MonoType> = Dict.new()
+          for i in 0..names.len() {
+            if i < args.len() { var_map[names[i]] = args[i] }
           }
+          expanded := subst_mono_vars(target, var_map)
+          expand_mono_alias(expanded, env, depth + 1)
         },
-        .None => ty,
+        _ => ty,
       }
     },
     _ => ty,
@@ -352,28 +344,27 @@ fn verify_call_shape(
       }
     },
     .AGlobalFunc(fid) => {
-      case callable_targets.callable_target(fid, funcs_by_id, builtins, env) {
-        .Some(target) => {
-          case target.builtin_name {
-            .Some(_) => verify_builtin_call_shape(pf, fid.id, args, module_globals, funcs_by_id, env, builtins),
-            .None => {
-              func_name := case funcs_by_id[fid.id] { .Some(f) => f.name, .None => "F${fid.id}" }
-              if args.len() != target.semantic_params.len() {
-                return fail_func(
-                  pf,
-                  "direct call to ${func_name} (F${fid.id}) passes ${args.len()} arg(s), expected ${target.semantic_params.len()}",
-                )
-              }
-              for arg,i in args {
-                param_mono := target.semantic_params[i]
-                try verify_call_arg_type(pf, arg, param_mono, funcs_by_id, module_globals, env, builtins, "direct call arg ${i} to ${func_name}")
-                try verify_call_arg_repr(pf, arg, repr_of_mono(param_mono, env), module_globals, env, "direct call arg ${i} to ${func_name}")
-              }
-              .Ok({})
-            },
+      target := case callable_targets.callable_target(fid, funcs_by_id, builtins, env) {
+        .Some(target) => target,
+        .None => { return .Ok({}) },
+      }
+      case target.builtin_name {
+        .Some(_) => verify_builtin_call_shape(pf, fid.id, args, module_globals, funcs_by_id, env, builtins),
+        .None => {
+          func_name := case funcs_by_id[fid.id] { .Some(f) => f.name, .None => "F${fid.id}" }
+          if args.len() != target.semantic_params.len() {
+            return fail_func(
+              pf,
+              "direct call to ${func_name} (F${fid.id}) passes ${args.len()} arg(s), expected ${target.semantic_params.len()}",
+            )
           }
+          for arg,i in args {
+            param_mono := target.semantic_params[i]
+            try verify_call_arg_type(pf, arg, param_mono, funcs_by_id, module_globals, env, builtins, "direct call arg ${i} to ${func_name}")
+            try verify_call_arg_repr(pf, arg, repr_of_mono(param_mono, env), module_globals, env, "direct call arg ${i} to ${func_name}")
+          }
+          .Ok({})
         },
-        .None => .Ok({}),
       }
     },
     _ => .Ok({}),
@@ -393,32 +384,31 @@ fn verify_builtin_call_shape(
   env: ResolvedEnv,
   builtins: BuiltinRegistry,
 ) Result<Void, String> {
-  case builtins.by_id[fid] {
-    .None => .Ok({}),
-    .Some(entry) => {
-      if !abi_has_types(entry.abi.param_types, entry.abi.result_types) {
-        return .Ok({})
-      }
-      if args.len() != entry.abi.param_types.len() {
-        return fail_func(
-          pf,
-          "builtin call to ${entry.name} (F${fid}) passes ${args.len()} arg(s), expected ${entry.abi.param_types.len()}",
-        )
-      }
-      for arg,i in args {
-        try verify_atom_coercible_to_val_type(
-          pf,
-          arg,
-          entry.abi.param_types[i],
-          funcs_by_id,
-          module_globals,
-          env,
-          "builtin call arg ${i} to ${entry.name}",
-        )
-      }
-      .Ok({})
-    },
+  entry := case builtins.by_id[fid] {
+    .Some(entry) => entry,
+    .None => { return .Ok({}) },
   }
+  if !abi_has_types(entry.abi.param_types, entry.abi.result_types) {
+    return .Ok({})
+  }
+  if args.len() != entry.abi.param_types.len() {
+    return fail_func(
+      pf,
+      "builtin call to ${entry.name} (F${fid}) passes ${args.len()} arg(s), expected ${entry.abi.param_types.len()}",
+    )
+  }
+  for arg,i in args {
+    try verify_atom_coercible_to_val_type(
+      pf,
+      arg,
+      entry.abi.param_types[i],
+      funcs_by_id,
+      module_globals,
+      env,
+      "builtin call arg ${i} to ${entry.name}",
+    )
+  }
+  .Ok({})
 }
 
 fn verify_return_expr(
@@ -430,27 +420,22 @@ fn verify_return_expr(
   builtins: BuiltinRegistry,
 ) Result<Void, String> {
   case pf.return_mono {
-    .Void => {
-      case atom {
-        .Some(_) => fail_func(pf, "void function must not return a value"),
-        .None => .Ok({}),
-      }
+    .Void => case atom {
+      .Some(_) => fail_func(pf, "void function must not return a value"),
+      .None => .Ok({}),
     },
-    .Never => {
-      case atom {
-        .Some(_) => fail_func(pf, "never-returning function must not return a value"),
-        .None => .Ok({}),
-      }
+    .Never => case atom {
+      .Some(_) => fail_func(pf, "never-returning function must not return a value"),
+      .None => .Ok({}),
     },
     _ => {
-      case atom {
-        .Some(a) => {
-          try verify_atom_use(pf, a, "return", module_globals)
-          try verify_return_value_type(pf, a, funcs_by_id, module_globals, env, builtins)
-          .Ok({})
-        },
-        .None => fail_func(pf, "non-void function must return a value"),
+      a := case atom {
+        .Some(a) => a,
+        .None => { return fail_func(pf, "non-void function must return a value") },
       }
+      try verify_atom_use(pf, a, "return", module_globals)
+      try verify_return_value_type(pf, a, funcs_by_id, module_globals, env, builtins)
+      .Ok({})
     },
   }
 }

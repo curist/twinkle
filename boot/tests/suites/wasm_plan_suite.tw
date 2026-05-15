@@ -196,12 +196,8 @@ pub fn test_plan_primitive_func() Result<Void, String> {
   // But the layout cache should have entries
   key := mono_to_key(MonoType.Int)
   case reg.layout_cache[key] {
-    .Some(l) => {
-      case l {
-        .Scalar(.WI64) => .Ok({}),
-        _ => assert.fail("expected Scalar(WI64) in cache"),
-      }
-    },
+    .Some(.Scalar(.WI64)) => .Ok({}),
+    .Some(_) => assert.fail("expected Scalar(WI64) in cache"),
     .None => assert.fail("Int layout not cached"),
   }
 }

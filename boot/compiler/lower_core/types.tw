@@ -11,24 +11,19 @@ pub fn find_field_index_in_type(env: ResolvedEnv, ty: MonoType, field_name: Stri
   case ty {
     .Named(tid, args) => {
       case env.lookup_type_def(tid) {
-        .Some(def) => {
-          case def {
-            .Record(_, _, fields) => {
-              for i in 0..fields.len() {
-                if fields[i].name == field_name {
-                  return i
-                }
-              }
-              -1
-            },
-            .Alias(_, type_params, target) => {
-              expanded := subst_vars(target, build_var_map(type_params, args))
-              find_field_index_in_type(env, expanded, field_name)
-            },
-            _ => -1,
+        .Some(.Record(_, _, fields)) => {
+          for i in 0..fields.len() {
+            if fields[i].name == field_name {
+              return i
+            }
           }
+          -1
         },
-        .None => -1,
+        .Some(.Alias(_, type_params, target)) => {
+          expanded := subst_vars(target, build_var_map(type_params, args))
+          find_field_index_in_type(env, expanded, field_name)
+        },
+        _ => -1,
       }
     },
     _ => -1,
@@ -43,25 +38,20 @@ pub fn find_field_type_in_type(env: ResolvedEnv, ty: MonoType, field_name: Strin
   case ty {
     .Named(tid, args) => {
       case env.lookup_type_def(tid) {
-        .Some(def) => {
-          case def {
-            .Record(_, type_params, fields) => {
-              var_map := build_var_map(type_params, args)
-              for f in fields {
-                if f.name == field_name {
-                  return subst_vars(f.ty, var_map)
-                }
-              }
-              .Void
-            },
-            .Alias(_, type_params, target) => {
-              expanded := subst_vars(target, build_var_map(type_params, args))
-              find_field_type_in_type(env, expanded, field_name)
-            },
-            _ => .Void,
+        .Some(.Record(_, type_params, fields)) => {
+          var_map := build_var_map(type_params, args)
+          for f in fields {
+            if f.name == field_name {
+              return subst_vars(f.ty, var_map)
+            }
           }
+          .Void
         },
-        .None => .Void,
+        .Some(.Alias(_, type_params, target)) => {
+          expanded := subst_vars(target, build_var_map(type_params, args))
+          find_field_type_in_type(env, expanded, field_name)
+        },
+        _ => .Void,
       }
     },
     _ => .Void,
@@ -70,20 +60,15 @@ pub fn find_field_type_in_type(env: ResolvedEnv, ty: MonoType, field_name: Strin
 
 pub fn find_variant_index(env: ResolvedEnv, tid: TypeId, variant_name: String) Int {
   case env.lookup_type_def(tid) {
-    .Some(def) => {
-      case def {
-        .Sum(_, _, variants) => {
-          for i in 0..variants.len() {
-            if variants[i].name == variant_name {
-              return i
-            }
-          }
-          -1
-        },
-        _ => -1,
+    .Some(.Sum(_, _, variants)) => {
+      for i in 0..variants.len() {
+        if variants[i].name == variant_name {
+          return i
+        }
       }
+      -1
     },
-    .None => -1,
+    _ => -1,
   }
 }
 
@@ -92,18 +77,13 @@ pub fn resolve_type_id(env: ResolvedEnv, name: String) TypeId? {
     .Some(entry) => {
       // Follow type aliases to the canonical record TypeId
       case entry.def {
-        .Some(def) => {
-          case def {
-            .Alias(_, _, target_ty) => {
-              case target_ty {
-                .Named(tid, _) => .Some(tid),
-                _ => .Some(entry.id),
-              }
-            },
+        .Some(.Alias(_, _, target_ty)) => {
+          case target_ty {
+            .Named(tid, _) => .Some(tid),
             _ => .Some(entry.id),
           }
         },
-        .None => .Some(entry.id),
+        _ => .Some(entry.id),
       }
     },
     .None => .None,
@@ -180,21 +160,16 @@ pub fn variant_field_types(ty: MonoType, name: String, env: ResolvedEnv) Vector<
     },
     .Named(tid, type_args) => {
       case env.lookup_type_def(tid) {
-        .Some(def) => {
-          case def {
-            .Sum(_, type_params, variants) => {
-              for v in variants {
-                if v.name == name {
-                  var_map := build_var_map(type_params, type_args)
-                  return collect ft in v.fields { subst_vars(ft, var_map) }
-                }
-              }
-              []
-            },
-            _ => [],
+        .Some(.Sum(_, type_params, variants)) => {
+          for v in variants {
+            if v.name == name {
+              var_map := build_var_map(type_params, type_args)
+              return collect ft in v.fields { subst_vars(ft, var_map) }
+            }
           }
+          []
         },
-        .None => [],
+        _ => [],
       }
     },
     _ => [],
@@ -209,19 +184,14 @@ pub fn iter_elem_type(ty: MonoType, env: ResolvedEnv) MonoType {
     .Dict(key, _) => key,
     .Named(tid, args) => {
       case env.lookup_type_def(tid) {
-        .Some(def) => {
-          case def {
-            .Record("Range", _, _) => .Int,
-            .Record("Iterator", _, _) => {
-              if args.len() > 0 { args[0] } else { .Void }
-            },
-            .Sum("Iterator", _, _) => {
-              if args.len() > 0 { args[0] } else { .Void }
-            },
-            _ => .Void,
-          }
+        .Some(.Record("Range", _, _)) => .Int,
+        .Some(.Record("Iterator", _, _)) => {
+          if args.len() > 0 { args[0] } else { .Void }
         },
-        .None => .Void,
+        .Some(.Sum("Iterator", _, _)) => {
+          if args.len() > 0 { args[0] } else { .Void }
+        },
+        _ => .Void,
       }
     },
     _ => .Void,
@@ -233,16 +203,11 @@ pub fn expand_alias_for_iter(ty: MonoType, env: ResolvedEnv, depth: Int) MonoTyp
   case ty {
     .Named(tid, args) => {
       case env.lookup_type_def(tid) {
-        .Some(def) => {
-          case def {
-            .Alias(_, type_params, target) => {
-              expanded := subst_vars(target, build_var_map(type_params, args))
-              expand_alias_for_iter(expanded, env, depth + 1)
-            },
-            _ => ty,
-          }
+        .Some(.Alias(_, type_params, target)) => {
+          expanded := subst_vars(target, build_var_map(type_params, args))
+          expand_alias_for_iter(expanded, env, depth + 1)
         },
-        .None => ty,
+        _ => ty,
       }
     },
     _ => ty,

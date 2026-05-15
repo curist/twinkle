@@ -45,13 +45,9 @@ fn next_builtin_type_id(next: Cell<Int>) TypeId {
 
 fn builtin_type_name(entry: TypeEntry) String {
   case entry.def {
-    .Some(def) => {
-      case def {
-        .Record(name, _, _) => name,
-        .Sum(name, _, _) => name,
-        .Alias(name, _, _) => name,
-      }
-    },
+    .Some(.Record(name, _, _)) => name,
+    .Some(.Sum(name, _, _)) => name,
+    .Some(.Alias(name, _, _)) => name,
     .None => error("builtin_type_name: builtin type entry missing definition"),
   }
 }

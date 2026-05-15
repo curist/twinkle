@@ -175,13 +175,9 @@ fn validate_concrete_mono(ty: MonoType, env: ResolvedEnv, context: String) {
     .Named(tid, args) => {
       entry := find_type_entry(env, tid)
       name := case entry.def {
-        .Some(def) => {
-          case def {
-            .Record(n, _, _) => n,
-            .Sum(n, _, _) => n,
-            .Alias(n, _, _) => n,
-          }
-        },
+        .Some(.Record(n, _, _)) => n,
+        .Some(.Sum(n, _, _)) => n,
+        .Some(.Alias(n, _, _)) => n,
         .None => "TypeId ${tid.id}",
       }
       if args.len() < entry.arity {

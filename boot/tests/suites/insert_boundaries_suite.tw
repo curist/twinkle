@@ -576,21 +576,13 @@ pub fn suite() runner.Suite {
       result := insert_boundaries(mk_module([func]), reg, builtins, empty_env())
 
       case result.functions[0].op_result_mono[11] {
-        .Some(ty) => {
-          case ty {
-            .Anyref_ => {},
-            _ => { return assert.fail("expected wrap temp local 11 to be typed as Anyref_") },
-          }
-        },
+        .Some(.Anyref_) => {},
+        .Some(_) => { return assert.fail("expected wrap temp local 11 to be typed as Anyref_") },
         .None => { return assert.fail("missing wrap temp local 11") },
       }
       case result.functions[0].op_result_mono[12] {
-        .Some(ty) => {
-          case ty {
-            .Anyref_ => .Ok({}),
-            _ => assert.fail("expected raw result temp local 12 to be typed as Anyref_"),
-          }
-        },
+        .Some(.Anyref_) => .Ok({}),
+        .Some(_) => assert.fail("expected raw result temp local 12 to be typed as Anyref_"),
         .None => assert.fail("missing raw result temp local 12"),
       }
     })

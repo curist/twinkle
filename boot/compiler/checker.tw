@@ -1129,13 +1129,9 @@ fn named_function_field_exists(base_ty: MonoType, field_name: String, env: Resol
 
 fn type_def_name(env: ResolvedEnv, tid: TypeId) String? {
   case env.lookup_type_def(tid) {
-    .Some(def) => {
-      case def {
-        .Record(name, _, _) => .Some(name),
-        .Sum(name, _, _) => .Some(name),
-        .Alias(name, _, _) => .Some(name),
-      }
-    },
+    .Some(.Record(name, _, _)) => .Some(name),
+    .Some(.Sum(name, _, _)) => .Some(name),
+    .Some(.Alias(name, _, _)) => .Some(name),
     .None => .None,
   }
 }
@@ -1146,17 +1142,13 @@ fn resolve_named_type_id(env: ResolvedEnv, name: String) TypeId? {
     .None => { return .None },
   }
   case entry.def {
-    .Some(def) => {
-      case def {
-        .Alias(_, _, target) => {
-          case expand_alias(target, env, 0) {
-            .Named(tid, _) => .Some(tid),
-            _ => .Some(entry.id),
-          }
-        },
+    .Some(.Alias(_, _, target)) => {
+      case expand_alias(target, env, 0) {
+        .Named(tid, _) => .Some(tid),
         _ => .Some(entry.id),
       }
     },
+    .Some(_) => .Some(entry.id),
     .None => .Some(entry.id),
   }
 }
@@ -1365,26 +1357,21 @@ fn try_resolve_type_from_expr(expr: Expr, ctx: InferCtx) ResolvedTypeExpr? {
       cur_ctx := ctx
       type_args: Vector<MonoType> = []
       case entry.def {
-        .Some(def) => {
-          case def {
-            .Sum(_, type_params, _) => {
-              for _ in type_params {
-                m := fresh_meta(cur_ctx)
-                cur_ctx = m.ctx
-                type_args = type_args.append(m.ty)
-              }
-            },
-            .Record(_, type_params, _) => {
-              for _ in type_params {
-                m := fresh_meta(cur_ctx)
-                cur_ctx = m.ctx
-                type_args = type_args.append(m.ty)
-              }
-            },
-            _ => {},
+        .Some(.Sum(_, type_params, _)) => {
+          for _ in type_params {
+            m := fresh_meta(cur_ctx)
+            cur_ctx = m.ctx
+            type_args = type_args.append(m.ty)
           }
         },
-        .None => {},
+        .Some(.Record(_, type_params, _)) => {
+          for _ in type_params {
+            m := fresh_meta(cur_ctx)
+            cur_ctx = m.ctx
+            type_args = type_args.append(m.ty)
+          }
+        },
+        _ => {},
       }
       .Some(.{ tid: entry.id, type_args, ctx: cur_ctx })
     },
@@ -2889,13 +2876,8 @@ fn stmt_diverges(stmt: Stmt, ctx: InferCtx) Bool {
 // Check if an expression definitely diverges.
 fn returns_never(sig: FunctionSig) Bool {
   case sig.ret {
-    .Some(ret) => {
-      case ret {
-        .Never => true,
-        _ => false,
-      }
-    },
-    .None => false,
+    .Some(.Never) => true,
+    _ => false,
   }
 }
 

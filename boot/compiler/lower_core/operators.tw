@@ -101,22 +101,17 @@ fn build_unit_variant_compare(ast_op: AstBinOp, scrutinee: CoreExpr, tid: TypeId
 
 fn unit_sum_variant_ids(env: ResolvedEnv, tid: TypeId) Vector<Int>? {
   case env.lookup_type_def(tid) {
-    .Some(def) => {
-      case def {
-        .Sum(_, _, variants) => {
-          ids: Vector<Int> = []
-          for i in 0..variants.len() {
-            if variants[i].fields.len() != 0 {
-              return .None
-            }
-            ids = ids.append(i)
-          }
-          .Some(ids)
-        },
-        _ => .None,
+    .Some(.Sum(_, _, variants)) => {
+      ids: Vector<Int> = []
+      for i in 0..variants.len() {
+        if variants[i].fields.len() != 0 {
+          return .None
+        }
+        ids = ids.append(i)
       }
+      .Some(ids)
     },
-    .None => .None,
+    _ => .None,
   }
 }
 
