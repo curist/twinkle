@@ -159,7 +159,7 @@ pub fn compile_entry(entry_path: String) Result<PipelineArtifacts, CompileError>
     eprintln("[time:frontend] publish=${ft.publish}ms  unused_imports=${ft.unused_imports}ms  lower=${lower_total_ms}ms")
     eprintln("[time:imports] extend=${ft.import_extend}ms  lookup=${ft.import_lookup}ms  module=${ft.import_module}ms  selective=${ft.import_selective}ms  prelude=${ft.import_prelude}ms")
     eprintln("[time:imports] edges=${fc.import_edges}  module=${fc.import_module_edges}  selective=${fc.import_selective_edges}  prelude=${fc.import_prelude_edges}  export_entries=${fc.import_export_entries}")
-    top_imports := a_result.state.import_timings.sort_by(fn(a, b) { if a.ms > b.ms { .Lt } else if a.ms < b.ms { .Gt } else { .Eq } })
+    top_imports := a_result.state.import_timings.sort_by(fn(a, b) { Float.compare(a.ms, b.ms) })
     top_n := if top_imports.len() < 8 { top_imports.len() } else { 8 }
     for i in 0..top_n {
       it := top_imports[i]

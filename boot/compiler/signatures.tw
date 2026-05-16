@@ -288,7 +288,7 @@ pub fn load_signatures(signatures_dir: String, type_env: ResolvedEnv) Result<Vec
       tw_files = .append(name)
     }
   }
-  tw_files = .sort_by(fn(a, b) { if a < b { .Lt } else if a > b { .Gt } else { .Eq } })
+  tw_files = .sort_by(String.compare)
 
   groups: Vector<SignatureGroup> = []
   for filename in tw_files {
