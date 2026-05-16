@@ -38,7 +38,7 @@ pub fn validate_tasks(
   for f in anf.functions {
     if task_bodies.has(f.func_id.id) {
       if contains_suspension(f.body, await_fid, yield_fid) {
-        suspending_set = suspending_set.set(f.func_id.id, 1)
+        suspending_set = .set(f.func_id.id, 1)
       }
     }
   }
@@ -77,7 +77,7 @@ pub fn classify_task_bodies(
   for f in anf.functions {
     if task_bodies.has(f.func_id.id) {
       if contains_suspension(f.body, await_fid, yield_fid) {
-        result = result.append(f.func_id)
+        result = .append(f.func_id)
       }
     }
   }
@@ -123,7 +123,7 @@ fn scan_letchain_inner(
     .Let(local, op, body) => {
       case op {
         .AMakeClosure(body_fid, _) => {
-          closure_locals = closure_locals.set(local.id, body_fid)
+          closure_locals = .set(local.id, body_fid)
         },
         .ACall(callee, args) => {
           case callee {
@@ -134,7 +134,7 @@ fn scan_letchain_inner(
                     .ALocal(arg_local) => {
                       case closure_locals[arg_local.id] {
                         .Some(body_fid) => {
-                          acc = acc.set(body_fid.id, 1)
+                          acc = .set(body_fid.id, 1)
                         },
                         .None => {},
                       }
@@ -204,7 +204,7 @@ fn scan_callback_inner(
     .Let(local, op, body) => {
       case op {
         .AMakeClosure(body_fid, _) => {
-          closure_locals = closure_locals.set(local.id, body_fid)
+          closure_locals = .set(local.id, body_fid)
         },
         .ACall(callee, args) => {
           case callee {
@@ -216,7 +216,7 @@ fn scan_callback_inner(
                     .ALocal(arg_local) => {
                       case closure_locals[arg_local.id] {
                         .Some(body_fid) => {
-                          acc = acc.set(body_fid.id, 1)
+                          acc = .set(body_fid.id, 1)
                         },
                         .None => {},
                       }

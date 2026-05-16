@@ -306,10 +306,10 @@ fn rewrite_record(result_local: LocalId, tid: TypeId, fields: Vector<FieldAtom>,
     case materialize_global_func_prefer_expected(field.value, expected, cur_ctx) {
       .Some(pair) => {
         cur_ctx = pair.ctx
-        new_fields = new_fields.append(FieldAtom.{ field: field.field, value: .ALocal(pair.temp) })
-        closure_lets = closure_lets.append(ClosureLet.{ local: pair.temp, fid: pair.fid })
+        new_fields = .append(FieldAtom.{ field: field.field, value: .ALocal(pair.temp) })
+        closure_lets = .append(ClosureLet.{ local: pair.temp, fid: pair.fid })
       },
-      .None => { new_fields = new_fields.append(field) },
+      .None => { new_fields = .append(field) },
     }
   }
   body_r := rewrite_expr(body, cur_ctx)
@@ -345,10 +345,10 @@ fn rewrite_variant(result_local: LocalId, tid: TypeId, vid: VariantId, args: Vec
     case materialize_global_func_prefer_expected(arg, expected, cur_ctx) {
       .Some(pair) => {
         cur_ctx = pair.ctx
-        new_args = new_args.append(.ALocal(pair.temp))
-        closure_lets = closure_lets.append(ClosureLet.{ local: pair.temp, fid: pair.fid })
+        new_args = .append(.ALocal(pair.temp))
+        closure_lets = .append(ClosureLet.{ local: pair.temp, fid: pair.fid })
       },
-      .None => { new_args = new_args.append(arg) },
+      .None => { new_args = .append(arg) },
     }
   }
   body_r := rewrite_expr(body, cur_ctx)
@@ -370,13 +370,13 @@ fn materialize_atoms_for_expected_mono(atoms: Vector<Atom>, expected: MonoType?,
         case mat {
           .Some(pair) => {
             cur_ctx = pair.ctx
-            new_atoms = new_atoms.append(.ALocal(pair.temp))
-            closure_lets = closure_lets.append(ClosureLet.{ local: pair.temp, fid: pair.fid })
+            new_atoms = .append(.ALocal(pair.temp))
+            closure_lets = .append(ClosureLet.{ local: pair.temp, fid: pair.fid })
           },
-          .None => { new_atoms = new_atoms.append(atom) },
+          .None => { new_atoms = .append(atom) },
         }
       },
-      .None => { new_atoms = new_atoms.append(atom) },
+      .None => { new_atoms = .append(atom) },
     }
   }
   .{ atoms: new_atoms, closure_lets: closure_lets, ctx: cur_ctx }
@@ -570,13 +570,13 @@ fn rewrite_call(
                 .None => expected_param_monos[i],
               }
               cur_ctx.local_types[tmp.id] = tmp_mono
-              new_args = new_args.append(.ALocal(tmp))
-              closure_lets = closure_lets.append(ClosureLet.{ local: tmp, fid: arg_fid })
+              new_args = .append(.ALocal(tmp))
+              closure_lets = .append(ClosureLet.{ local: tmp, fid: arg_fid })
             } else {
-              new_args = new_args.append(arg)
+              new_args = .append(arg)
             }
           },
-          _ => { new_args = new_args.append(arg) },
+          _ => { new_args = .append(arg) },
         }
       }
       body_r := rewrite_expr(body, cur_ctx)
@@ -611,7 +611,7 @@ fn rewrite_call(
                   .None => expected_param_monos[i],
                 }
                 cur_ctx.local_types[tmp.id] = tmp_mono
-                closure_lets = closure_lets.append(ClosureLet.{ local: tmp, fid: arg_fid })
+                closure_lets = .append(ClosureLet.{ local: tmp, fid: arg_fid })
                 .ALocal(tmp)
               } else {
                 arg
@@ -630,12 +630,12 @@ fn rewrite_call(
             wrap_local := pair.local
             cur_ctx = pair.ctx
             cur_ctx.local_types[wrap_local.id] = .Anyref_
-            new_args = new_args.append(.ALocal(wrap_local))
+            new_args = .append(.ALocal(wrap_local))
           } else {
-            new_args = new_args.append(materialized_arg)
+            new_args = .append(materialized_arg)
           }
         } else {
-          new_args = new_args.append(arg)
+          new_args = .append(arg)
         }
       }
 

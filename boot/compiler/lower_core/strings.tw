@@ -13,7 +13,7 @@ pub fn lower_string_interp(ctx: LowerCtx, parts: Vector<StringPart>, ty: MonoTyp
   for part in parts {
     case part {
       .Literal(text) => {
-        str_parts = str_parts.append(.{ kind: .LitStr(text), ty: str_ty, span: s })
+        str_parts = .append(.{ kind: .LitStr(text), ty: str_ty, span: s })
       },
       .Interpolation(expr) => {
         r := lower_expr_fn(cur_ctx, expr)
@@ -53,7 +53,7 @@ pub fn lower_string_interp(ctx: LowerCtx, parts: Vector<StringPart>, ty: MonoTyp
             }
           },
         }
-        str_parts = str_parts.append(str_expr)
+        str_parts = .append(str_expr)
       },
     }
   }

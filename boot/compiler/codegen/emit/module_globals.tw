@@ -13,7 +13,7 @@ pub fn emit_module_globals(reg: WasmTypeRegistry, anf: AnfModule, env: ResolvedE
     case reg.module_globals[k] {
       .Some(gentry) => {
         vt := val_type_of_mono(gentry.mono, env)
-        globals = globals.append(GlobalDef.{
+        globals = .append(GlobalDef.{
           name: gentry.sym,
           mutable: true,
           ty: vt,

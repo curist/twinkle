@@ -70,7 +70,7 @@ pub fn assign_slots(
           wasm_type: .Anyref,
         }
         local_to_slot[cap.param_local.id] = sid
-        capture_slots = capture_slots.append(sid)
+        capture_slots = .append(sid)
         next_slot = next_slot + 1
       }
     },
@@ -91,7 +91,7 @@ pub fn assign_slots(
       wasm_type: .Anyref,
     }
     local_to_slot[p.local.id] = sid
-    param_slots = param_slots.append(sid)
+    param_slots = .append(sid)
     next_slot = next_slot + 1
   }
 
@@ -125,7 +125,7 @@ pub fn assign_slots(
       wasm_type: .Anyref,
     }
     local_to_slot[lid] = sid
-    local_slots = local_slots.append(sid)
+    local_slots = .append(sid)
     next_slot = next_slot + 1
   }
 
@@ -282,7 +282,7 @@ fn collect_all_let_locals(expr: AnfExpr) Vector<Int> {
 fn collect_let_expr(expr: AnfExpr, out: Vector<Int>) Vector<Int> {
   case expr {
     .Let(local, op, body) => {
-      out = out.append(local.id)
+      out = .append(local.id)
       out = collect_let_op(op, out)
       collect_let_expr(body, out)
     },

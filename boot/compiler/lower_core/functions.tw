@@ -17,7 +17,7 @@ pub fn lower_function(ctx: LowerCtx, decl: FunctionDecl, func_id: FuncId, lower_
     // Look up param type from checker — params don't have expr.id,
     // so we look up the function sig from env
     param_ty := MonoType.Void  // placeholder; refined below
-    params = params.append(.{ local: lo.local, ty: param_ty })
+    params = .append(.{ local: lo.local, ty: param_ty })
   }
 
   // Get the actual param types from the function signature

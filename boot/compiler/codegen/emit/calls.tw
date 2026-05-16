@@ -56,11 +56,11 @@ fn emit_direct_call(fid: FuncId, args: Vector<PreparedAtom>, result_idx: Int, re
   for a in args {
     out = fns.emit_atom(a, ctx, out)
   }
-  out = out.append(.Call(sym))
+  out = .append(.Call(sym))
   case result_mono {
     .Void => {
-      out = out.append(.I32Const(0))
-      out = out.append(.RefI31)
+      out = .append(.I32Const(0))
+      out = .append(.RefI31)
       out.append(.LocalSet(result_idx))
     },
     .Never => out,
@@ -128,14 +128,14 @@ fn emit_runtime_call(fid: FuncId, info: RuntimeInfo, args: Vector<PreparedAtom>,
   for a,i in args {
     out = emit_runtime_arg(a, abi, i, entry_name, ctx, out, fns)
   }
-  out = out.append(.Call(import_sym))
+  out = .append(.Call(import_sym))
   // ABI shim: reshape host results back into PVec representation.
   out = emit_host_result_shim(entry_name, out)
   // Some runtime calls return void or never return at all.
   case result_mono {
     .Void => {
-      out = out.append(.I32Const(0))
-      out = out.append(.RefI31)
+      out = .append(.I32Const(0))
+      out = .append(.RefI31)
       out.append(.LocalSet(result_idx))
     },
     .Never => out,
@@ -144,7 +144,7 @@ fn emit_runtime_call(fid: FuncId, info: RuntimeInfo, args: Vector<PreparedAtom>,
         out = emit_default_value(val_type_of_mono(result_mono, ctx.env), out)
       } else {
         if !is_vector_builder_seed(entry_name) {
-          out = out.concat(adapt_runtime_result(fid, result_mono, ctx))
+          out = .concat(adapt_runtime_result(fid, result_mono, ctx))
         }
       }
       out.append(.LocalSet(result_idx))

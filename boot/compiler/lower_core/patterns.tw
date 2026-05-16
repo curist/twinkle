@@ -39,7 +39,7 @@ pub fn lower_pattern(ctx: LowerCtx, pat: ast.Pattern, scrut_ty: MonoType) Patter
       for i in 0..sub_pats.len() {
         sub_ty := if i < field_tys.len() { field_tys[i] } else { .Void }
         pr := lower_pattern(cur_ctx, sub_pats[i], sub_ty)
-        lowered_pats = lowered_pats.append(pr.pattern)
+        lowered_pats = .append(pr.pattern)
         cur_ctx = pr.ctx
       }
       .{
@@ -66,7 +66,7 @@ pub fn lower_pattern(ctx: LowerCtx, pat: ast.Pattern, scrut_ty: MonoType) Patter
       for i in 0..sub_pats.len() {
         sub_ty := if i < field_tys.len() { field_tys[i] } else { .Void }
         pr := lower_pattern(cur_ctx, sub_pats[i], sub_ty)
-        lowered_pats = lowered_pats.append(pr.pattern)
+        lowered_pats = .append(pr.pattern)
         cur_ctx = pr.ctx
       }
       .{

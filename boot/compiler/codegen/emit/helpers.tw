@@ -120,7 +120,7 @@ pub fn combine_and_checks(checks: Vector<Vector<Instr>>) Vector<Instr> {
   out := checks[0]
   idx := 1
   for idx < checks.len() {
-    out = out.append(.If(.Some(.I32), checks[idx], [.I32Const(0)]))
+    out = .append(.If(.Some(.I32), checks[idx], [.I32Const(0)]))
     idx = idx + 1
   }
   out

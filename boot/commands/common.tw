@@ -61,7 +61,7 @@ fn format_analysis_diags(env: ResolvedEnv, diags: Vector<analyze.AnalysisDiag>) 
     registry.add_file(reg, d.identity.path, source)
     ctx := diag_render.RenderCtx.{ registry: reg, env: .Some(env), module: .None, config, type_names: .Some(d.type_names) }
     rep := diag_render.to_report(d.kind, ctx)
-    parts = parts.append(render.render(rep, reg, config))
+    parts = .append(render.render(rep, reg, config))
   }
   sep := "\n\n"
   "${stage}:\n${parts.join(sep)}"

@@ -527,7 +527,7 @@ fn collect_ref_func_syms(funcs: Vector<FuncDef>, elems: Vector<ElemDef>) Vector<
 
   for elem in elems {
     for s in elem.func_syms {
-      seen = seen.remove(s)
+      seen = .remove(s)
     }
   }
 
@@ -704,7 +704,7 @@ fn compress_locals(locals: Vector<ValType>) Vector<LocalGroup> {
   for vt in locals {
     n := groups.len()
     if n == 0 {
-      groups = groups.append(.{ count: 1, ty: vt })
+      groups = .append(.{ count: 1, ty: vt })
     } else {
       last := groups[n - 1]
       if val_type_eq(last.ty, vt) {
@@ -714,7 +714,7 @@ fn compress_locals(locals: Vector<ValType>) Vector<LocalGroup> {
         }
         groups = updated
       } else {
-        groups = groups.append(.{ count: 1, ty: vt })
+        groups = .append(.{ count: 1, ty: vt })
       }
     }
   }

@@ -127,7 +127,7 @@ pub fn apply_fixes(edits_by_file: Dict<String, Vector<ImportFix>>) Vector<ApplyR
 
     case fs.write_text(file_path, result) {
       .Ok(_) => {
-        results = results.append(ApplyResult.{ path: file_path, count: fixes.len() })
+        results = .append(ApplyResult.{ path: file_path, count: fixes.len() })
       },
       .Err(_) => eprintln("error: could not write '${file_path}'"),
     }

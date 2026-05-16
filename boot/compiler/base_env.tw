@@ -88,7 +88,7 @@ fn builtin_type_entries() Vector<TypeEntry> {
 
   iterator_tid := TypeId.{ id: next_type_id.get() }
 
-  types = types.concat([
+  types = .concat([
     builtin_type_entry(next_type_id, 1, .Record("Iterator", rtp_t, [])),
     builtin_type_entry(next_type_id, 1, .Record("IterItem", rtp_t, [
       .{ name: "value", ty: t },
@@ -127,7 +127,7 @@ fn register_methods_from_groups(env: ResolvedEnv, groups: Vector<signatures.Sign
     case group.receiver {
       .None => {},
       .Some(recv) => {
-        cur = cur.register_bound_methods(recv, entries)
+        cur = .register_bound_methods(recv, entries)
       },
     }
   }
@@ -169,7 +169,7 @@ fn set_prelude_function_origins(
     module_path := imports.canonical_module_path(path.join(prelude_dir, "${stem}.tw"), canonical_roots)
     for sig in group.sigs {
       internal_name := signatures.to_internal_name(group.receiver, sig.name)
-      cur = cur.set_function_origin(internal_name, .{ module_path, func_name: sig.name })
+      cur = .set_function_origin(internal_name, .{ module_path, func_name: sig.name })
     }
   }
   cur
@@ -187,7 +187,7 @@ fn bind_public_free_builtins(env: ResolvedEnv) ResolvedEnv {
     "range_from",
     "range_step",
   ] {
-    cur = cur.bind_function(name, name)
+    cur = .bind_function(name, name)
   }
   cur
 }
@@ -272,7 +272,7 @@ pub fn builtin_env() ResolvedEnv {
   env = register_methods_from_groups(env, groups)
   env = register_methods_from_groups(env, prelude_groups)
   // Then register remaining prelude-backed methods (compare, map, filter, etc.).
-  env = env.register_builtin_methods()
+  env = .register_builtin_methods()
 
   env
 }

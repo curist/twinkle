@@ -61,7 +61,7 @@ pub fn rewrite_index_loop_continue(expr: CoreExpr, before_continue: CoreExpr, ct
       cur := callee_r.ctx
       for arg in args {
         arg_r := rewrite_index_loop_continue(arg, before_continue, cur)
-        new_args = new_args.append(arg_r.expr)
+        new_args = .append(arg_r.expr)
         cur = arg_r.ctx
       }
       .{ expr: CoreExpr.{ kind: .Call(callee_r.expr, new_args), ty: expr.ty, span: expr.span }, ctx: cur }
@@ -78,7 +78,7 @@ pub fn rewrite_index_loop_continue(expr: CoreExpr, before_continue: CoreExpr, ct
       cur := scrutinee_r.ctx
       for arm in arms {
         body_r := rewrite_index_loop_continue(arm.body, before_continue, cur)
-        new_arms = new_arms.append(MatchArm.{ pattern: arm.pattern, body: body_r.expr })
+        new_arms = .append(MatchArm.{ pattern: arm.pattern, body: body_r.expr })
         cur = body_r.ctx
       }
       .{ expr: CoreExpr.{ kind: .Match(scrutinee_r.expr, new_arms), ty: expr.ty, span: expr.span }, ctx: cur }
@@ -110,7 +110,7 @@ pub fn rewrite_index_loop_continue(expr: CoreExpr, before_continue: CoreExpr, ct
       cur := ctx
       for field in fields {
         value_r := rewrite_index_loop_continue(field.value, before_continue, cur)
-        new_fields = new_fields.append(FieldInit.{ field: field.field, value: value_r.expr })
+        new_fields = .append(FieldInit.{ field: field.field, value: value_r.expr })
         cur = value_r.ctx
       }
       .{ expr: CoreExpr.{ kind: .Record(tid, new_fields), ty: expr.ty, span: expr.span }, ctx: cur }
@@ -129,7 +129,7 @@ pub fn rewrite_index_loop_continue(expr: CoreExpr, before_continue: CoreExpr, ct
       cur := ctx
       for arg in args {
         arg_r := rewrite_index_loop_continue(arg, before_continue, cur)
-        new_args = new_args.append(arg_r.expr)
+        new_args = .append(arg_r.expr)
         cur = arg_r.ctx
       }
       .{ expr: CoreExpr.{ kind: .Variant(tid, vid, new_args), ty: expr.ty, span: expr.span }, ctx: cur }
@@ -139,7 +139,7 @@ pub fn rewrite_index_loop_continue(expr: CoreExpr, before_continue: CoreExpr, ct
       cur := ctx
       for item in items {
         item_r := rewrite_index_loop_continue(item, before_continue, cur)
-        new_items = new_items.append(item_r.expr)
+        new_items = .append(item_r.expr)
         cur = item_r.ctx
       }
       .{ expr: CoreExpr.{ kind: .ArrayLit(new_items), ty: expr.ty, span: expr.span }, ctx: cur }

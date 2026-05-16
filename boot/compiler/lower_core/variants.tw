@@ -23,7 +23,7 @@ pub fn lower_variant(ctx: LowerCtx, name: String, args: Vector<Expr>, ty: MonoTy
   cur_ctx := ctx
   for arg in args {
     r := lower_expr_fn(cur_ctx, arg)
-    lowered_args = lowered_args.append(r.expr)
+    lowered_args = .append(r.expr)
     cur_ctx = r.ctx
   }
   .{
@@ -45,7 +45,7 @@ pub fn lower_case(ctx: LowerCtx, scrut: Expr, arms: Vector<ast.CaseArm>, ty: Mon
     body_r := lower_expr_fn(cur_ctx, arm.expr)
     cur_ctx = body_r.ctx
     cur_ctx = cur_ctx.pop_scope()
-    lowered_arms = lowered_arms.append(.{ pattern: pat_r.pattern, body: body_r.expr })
+    lowered_arms = .append(.{ pattern: pat_r.pattern, body: body_r.expr })
   }
   .{
     expr: .{ kind: .Match(sr.expr, lowered_arms), ty, span: s },
@@ -58,7 +58,7 @@ pub fn lower_array(ctx: LowerCtx, elems: Vector<Expr>, ty: MonoType, s: Span, lo
   cur_ctx := ctx
   for e in elems {
     r := lower_expr_fn(cur_ctx, e)
-    lowered = lowered.append(r.expr)
+    lowered = .append(r.expr)
     cur_ctx = r.ctx
   }
   .{

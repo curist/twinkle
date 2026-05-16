@@ -189,10 +189,10 @@ fn parse_json_string(input: String, i: Int) Result<ParseResult<String>, String> 
     }
     if c == 0x5C {
       esc := try parse_escape(input, j)
-      out = out.concat(esc.value.utf8_bytes())
+      out = .concat(esc.value.utf8_bytes())
       j = esc.next
     } else {
-      out = out.append(input[j])
+      out = .append(input[j])
       j = j + 1
     }
   }
@@ -281,7 +281,7 @@ fn parse_array(input: String, i: Int) Result<ParseResult<Json>, String> {
 
   for true {
     item := try parse_value(input, j)
-    items = items.append(item.value)
+    items = .append(item.value)
     j = skip_ws(input, item.next)
 
     if j >= input.len() {
@@ -643,7 +643,7 @@ pub fn to_string(json: Json) String {
       }
       parts: Vector<String> = []
       for item in arr {
-        parts = parts.append(to_string(item))
+        parts = .append(to_string(item))
       }
       "[".concat(parts.join(",")).concat("]")
     },
@@ -656,7 +656,7 @@ pub fn to_string(json: Json) String {
       for key in keys {
         val := case obj[key] { .Some(v) => v, .None => Json.Null }
         entry := quote_string(key).concat(":").concat(to_string(val))
-        parts = parts.append(entry)
+        parts = .append(entry)
       }
       "{".concat(parts.join(",")).concat("}")
     },
@@ -686,10 +686,10 @@ fn quote_string(s: String) String {
       _ => if n < 0x20 { "\\u00${hex_digit(n / 0x10)}${hex_digit(n % 0x10)}" } else { "" },
     }
     if escape == "" {
-      buf = buf.append(b)
+      buf = .append(b)
     } else {
       for eb in escape.utf8_bytes() {
-        buf = buf.append(eb)
+        buf = .append(eb)
       }
     }
   }

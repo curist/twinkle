@@ -71,13 +71,13 @@ pub fn check_unused_imports(module: Module) UnusedImportResult {
                 .Value(v) => {
                   binding := case v.alias { .Some(a) => a, .None => v.name }
                   if !final_used.has(binding) {
-                    unused_in_decl = unused_in_decl.append(binding)
+                    unused_in_decl = .append(binding)
                   }
                 },
                 .Type(t) => {
                   binding := case t.alias { .Some(a) => a, .None => t.name }
                   if !final_used.has(binding) {
-                    unused_in_decl = unused_in_decl.append(binding)
+                    unused_in_decl = .append(binding)
                   }
                 },
               }
@@ -92,7 +92,7 @@ pub fn check_unused_imports(module: Module) UnusedImportResult {
                   .Value(v) => {
                     binding := case v.alias { .Some(a) => a, .None => v.name }
                     if !final_used.has(binding) {
-                      result_items = result_items.append(UnusedImportDiag.{
+                      result_items = .append(UnusedImportDiag.{
                         kind: .Warning(.UnusedImport(.{ span: v.span, binding })),
                         edit,
                       })
@@ -101,7 +101,7 @@ pub fn check_unused_imports(module: Module) UnusedImportResult {
                   .Type(t) => {
                     binding := case t.alias { .Some(a) => a, .None => t.name }
                     if !final_used.has(binding) {
-                      result_items = result_items.append(UnusedImportDiag.{
+                      result_items = .append(UnusedImportDiag.{
                         kind: .Warning(.UnusedImport(.{ span: t.span, binding })),
                         edit,
                       })
@@ -123,7 +123,7 @@ pub fn check_unused_imports(module: Module) UnusedImportResult {
             }
             if alias != "" and !final_used.has(alias) {
               edit := ImportEdit.{ use_span: decl.span, replacement: "" }
-              result_items = result_items.append(UnusedImportDiag.{
+              result_items = .append(UnusedImportDiag.{
                 kind: .Warning(.UnusedImport(.{ span: decl.span, binding: alias })),
                 edit,
               })
@@ -176,7 +176,7 @@ pub fn reconstruct_use_decl(decl: UseDecl, unused_names: Vector<String>) String 
               .None => t.name,
             },
           }
-          kept = kept.append(item_str)
+          kept = .append(item_str)
         }
       }
       if kept.len() == 0 {

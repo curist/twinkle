@@ -188,7 +188,7 @@ fn completions_for_type(env: ResolvedEnv, ty: MonoType) Vector<lsp_completion.Co
       case env.lookup_type_def(tid) {
         .Some(def) => case def {
           .Record(_, params, fields) => {
-            items = items.concat(field_completions(env, fields, params, args))
+            items = .concat(field_completions(env, fields, params, args))
           },
           _ => {},
         },
@@ -199,7 +199,7 @@ fn completions_for_type(env: ResolvedEnv, ty: MonoType) Vector<lsp_completion.Co
   }
 
   // Methods
-  items = items.concat(method_completions_for_type(env, ty))
+  items = .concat(method_completions_for_type(env, ty))
 
   items
 }
@@ -224,7 +224,7 @@ fn method_completions_for_type(env: ResolvedEnv, ty: MonoType) Vector<lsp_comple
     .Named(tid, _) => {
       case lookup_type_methods(env, tid) {
         .Some(entries) => {
-          items = items.concat(method_entries_to_items(env, entries))
+          items = .concat(method_entries_to_items(env, entries))
         },
         .None => {},
       }
@@ -237,7 +237,7 @@ fn method_completions_for_type(env: ResolvedEnv, ty: MonoType) Vector<lsp_comple
   case type_name {
     .Some(name) => case env.methods[name] {
       .Some(entries) => {
-        items = items.concat(method_entries_to_items(env, entries))
+        items = .concat(method_entries_to_items(env, entries))
       },
       .None => {},
     },
@@ -288,9 +288,9 @@ fn sig_to_detail(env: ResolvedEnv, sig: FunctionSig) String {
   for i in start..sig.params.len() {
     ty_text := ty_to_string_env(env, sig.params[i])
     if i < sig.param_names.len() and sig.param_names[i] != "" {
-      parts = parts.append("${sig.param_names[i]}: ${ty_text}")
+      parts = .append("${sig.param_names[i]}: ${ty_text}")
     } else {
-      parts = parts.append(ty_text)
+      parts = .append(ty_text)
     }
   }
   ret := case sig.ret {
@@ -311,7 +311,7 @@ fn general_completions(snap: SemanticSnapshot, prefix: String) Vector<lsp_comple
     "defer", "extern"]
   for kw in keywords {
     if prefix == "" or kw.starts_with(prefix) {
-      items = items.append(lsp_completion.CompletionItem.{
+      items = .append(lsp_completion.CompletionItem.{
         label: kw,
         kind: 14,
         detail: .None,
@@ -343,7 +343,7 @@ fn general_completions(snap: SemanticSnapshot, prefix: String) Vector<lsp_comple
             .Some(sig) => sig.doc,
             .None => .None,
           }
-          items = items.append(lsp_completion.CompletionItem.{
+          items = .append(lsp_completion.CompletionItem.{
             label: name,
             kind: 3,
             detail,
@@ -355,7 +355,7 @@ fn general_completions(snap: SemanticSnapshot, prefix: String) Vector<lsp_comple
       // Types
       for name in e.type_bindings.keys() {
         if prefix == "" or name.starts_with(prefix) {
-          items = items.append(lsp_completion.CompletionItem.{
+          items = .append(lsp_completion.CompletionItem.{
             label: name,
             kind: 7,
             detail: .None,
@@ -371,7 +371,7 @@ fn general_completions(snap: SemanticSnapshot, prefix: String) Vector<lsp_comple
             if prefix == "" or name.starts_with(prefix) {
               case typed.pub_values[name] {
                 .Some(ty) => {
-                  items = items.append(lsp_completion.CompletionItem.{
+                  items = .append(lsp_completion.CompletionItem.{
                     label: name,
                     kind: 6,
                     detail: .Some(ty_to_string_env(e, ty)),
@@ -397,9 +397,9 @@ fn fn_sig_to_detail(env: ResolvedEnv, sig: FunctionSig) String {
   for i in 0..sig.params.len() {
     ty_text := ty_to_string_env(env, sig.params[i])
     if i < sig.param_names.len() and sig.param_names[i] != "" {
-      parts = parts.append("${sig.param_names[i]}: ${ty_text}")
+      parts = .append("${sig.param_names[i]}: ${ty_text}")
     } else {
-      parts = parts.append(ty_text)
+      parts = .append(ty_text)
     }
   }
   ret := case sig.ret {
@@ -417,7 +417,7 @@ fn import_completions(snap: SemanticSnapshot) Vector<lsp_completion.CompletionIt
   case snap.resolved {
     .Some(resolved) => {
       for ns in resolved.env.extern_namespaces.keys() {
-        items = items.append(lsp_completion.CompletionItem.{
+        items = .append(lsp_completion.CompletionItem.{
           label: ns,
           kind: 9,
           detail: .Some("module"),
@@ -525,7 +525,7 @@ fn all_variant_completions(snap: SemanticSnapshot) Vector<lsp_completion.Complet
       .Some(def) => case def {
         .Sum(_, _, variants) => {
           for v in variants {
-            items = items.append(lsp_completion.CompletionItem.{
+            items = .append(lsp_completion.CompletionItem.{
               label: v.name,
               kind: 20,
               detail: .Some(name),
@@ -539,10 +539,10 @@ fn all_variant_completions(snap: SemanticSnapshot) Vector<lsp_completion.Complet
     }
   }
 
-  items = items.append(lsp_completion.CompletionItem.{ label: "None", kind: 20, detail: .Some("Option"), documentation: .None })
-  items = items.append(lsp_completion.CompletionItem.{ label: "Some", kind: 20, detail: .Some("Option"), documentation: .None })
-  items = items.append(lsp_completion.CompletionItem.{ label: "Ok", kind: 20, detail: .Some("Result"), documentation: .None })
-  items = items.append(lsp_completion.CompletionItem.{ label: "Err", kind: 20, detail: .Some("Result"), documentation: .None })
+  items = .append(lsp_completion.CompletionItem.{ label: "None", kind: 20, detail: .Some("Option"), documentation: .None })
+  items = .append(lsp_completion.CompletionItem.{ label: "Some", kind: 20, detail: .Some("Option"), documentation: .None })
+  items = .append(lsp_completion.CompletionItem.{ label: "Ok", kind: 20, detail: .Some("Result"), documentation: .None })
+  items = .append(lsp_completion.CompletionItem.{ label: "Err", kind: 20, detail: .Some("Result"), documentation: .None })
 
   items
 }

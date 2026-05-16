@@ -205,7 +205,7 @@ pub fn new_state(base: ResolvedEnv, store: cache.Store, ov: overlay.Overlay, pro
   // Bundle base types and names into SharedTypeEntry pairs.
   initial_shared: Vector<SharedTypeEntry> = []
   for i in 0..base.types.len() {
-    initial_shared = initial_shared.append(.{ entry: base.types[i], name: base.type_names[i] })
+    initial_shared = .append(.{ entry: base.types[i], name: base.type_names[i] })
   }
   .{
     cache: store,
@@ -320,7 +320,7 @@ fn analyze_module_impl(
     import_result := unused_imports.check_unused_imports(parsed_load.parsed.module)
     if import_result.items.len() > 0 {
       warn_diags := convert_unused_import_diags(loaded.source, import_result)
-      all_diags = all_diags.concat(warn_diags)
+      all_diags = .concat(warn_diags)
     }
   }
   if cur.timed { cur.timings.unused_imports = cur.timings.unused_imports + (date.now() - t_unused0) }
@@ -415,7 +415,7 @@ fn analyze_dependencies(
     if cur.timed { cur.timings.env_extend = cur.timings.env_extend + (date.now() - t_dep_extend0) }
     dep_result := analyze_module_impl(dep_id, dep.alias, dep_base, cur, stack, .Some(caller_id), .Some(dep.span))
     cur = dep_result.state
-    all_diags = all_diags.concat(dep_result.diagnostics)
+    all_diags = .concat(dep_result.diagnostics)
     if !dep_result.ok {
       deps_ok = false
       continue
@@ -463,7 +463,7 @@ fn analyze_dependencies(
           kind_name = "prelude"
         },
       }
-      cur.import_timings = cur.import_timings.append(.{ ms: dt, kind: kind_name, importer: canonical, dependency: dep.canonical_path, export_entries })
+      cur.import_timings = .append(.{ ms: dt, kind: kind_name, importer: canonical, dependency: dep.canonical_path, export_entries })
       cur.timings.import_merge = cur.timings.import_merge + (date.now() - t_import0)
     }
   }
@@ -484,7 +484,7 @@ fn dependency_hashes(store: cache.Store, dep_plan: imports.DependencyPlan) Depen
         .None => 0,
       },
     }
-    dep_hash_entries = dep_hash_entries.append(.{ path: dep.canonical_path, hash: dep_hash })
+    dep_hash_entries = .append(.{ path: dep.canonical_path, hash: dep_hash })
   }
   .{ deps_hash: keys.deps_hash(dep_hash_entries), context_hash: keys.context_hash(dep_hash_entries) }
 }
@@ -539,7 +539,7 @@ fn publish_interface(
   cur.interfaces[canonical] = interface
   cur.cache = cache.set_exports_fingerprint(cur.cache, canonical, interface.fingerprint)
   cur.cache = cache.set_module_hash(cur.cache, canonical, keys.module_hash(source_hash, deps_hash))
-  cur.module_order = cur.module_order.append(canonical)
+  cur.module_order = .append(canonical)
   cur
 }
 
@@ -559,7 +559,7 @@ fn make_module_interface(canonical: String, exports: ModuleExports, shared_type_
   type_ids: Vector<Int> = []
   type_origins: Dict<Int, String> = Dict.new()
   for t in exports.visible_types {
-    type_ids = type_ids.append(t.entry.id.id)
+    type_ids = .append(t.entry.id.id)
     case t.origin {
       .Some(origin) => type_origins[t.entry.id.id] = origin,
       .None => case shared_type_origins[t.entry.id.id] {
@@ -569,7 +569,7 @@ fn make_module_interface(canonical: String, exports: ModuleExports, shared_type_
     }
   }
   for t in exports.support_types {
-    type_ids = type_ids.append(t.entry.id.id)
+    type_ids = .append(t.entry.id.id)
     case t.origin {
       .Some(origin) => type_origins[t.entry.id.id] = origin,
       .None => case shared_type_origins[t.entry.id.id] {
@@ -581,10 +581,10 @@ fn make_module_interface(canonical: String, exports: ModuleExports, shared_type_
 
   function_names: Vector<String> = []
   for f in exports.functions {
-    function_names = function_names.append(f.name)
+    function_names = .append(f.name)
   }
   for f in exports.support_functions {
-    function_names = function_names.append(f.name)
+    function_names = .append(f.name)
   }
 
   .{
@@ -604,8 +604,8 @@ fn extend_new_shared_types_from(env: ResolvedEnv, state: AnalysisState, shared_t
   new_origins: Dict<Int, String> = Dict.new()
   for i in shared_type_start..state.shared_types.len() {
     shared := state.shared_types[i]
-    new_types = new_types.append(shared.entry)
-    new_names = new_names.append(shared.name)
+    new_types = .append(shared.entry)
+    new_names = .append(shared.name)
     case state.shared_type_origins[shared.entry.id.id] {
       .Some(origin) => new_origins[shared.entry.id.id] = origin,
       .None => {},
@@ -619,8 +619,8 @@ fn extend_env_from_shared(base: ResolvedEnv, state: AnalysisState) ResolvedEnv {
   types: Vector<TypeEntry> = []
   names: Vector<String> = []
   for shared in state.shared_types {
-    types = types.append(shared.entry)
-    names = names.append(shared.name)
+    types = .append(shared.entry)
+    names = .append(shared.name)
   }
   base.extend_types_from(types, names, state.shared_type_origins)
 }
@@ -633,7 +633,7 @@ fn capture_local_types(state: AnalysisState, env: ResolvedEnv, canonical: String
   for i in local_type_start..env.types.len() {
     entry := env.types[i]
     name := env.type_names[i]
-    state.shared_types = state.shared_types.append(.{ entry, name })
+    state.shared_types = .append(.{ entry, name })
     // Record the assignment for future stable TypeId enforcement (Phase 4).
     // The returned out.id is not yet used — TypeIds still come from the
     // resolver/checker's sequential allocation.

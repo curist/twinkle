@@ -44,7 +44,7 @@ pub fn find_path(module: Module, offset: Int) AstPath {
       .Function(decl) => {
         if decl.span.contains(offset) {
           nodes = [NodeRef.FnDecl(decl)]
-          nodes = nodes.concat(path_in_block(decl.body, offset))
+          nodes = .concat(path_in_block(decl.body, offset))
           return AstPath.{ nodes }
         }
       },

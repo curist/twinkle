@@ -24,7 +24,7 @@ fn set_add(s: Dict<Int, Bool>, k: Int) Dict<Int, Bool> {
 }
 
 fn set_remove(s: Dict<Int, Bool>, k: Int) Dict<Int, Bool> {
-  s = s.remove(k)
+  s = .remove(k)
   s
 }
 
@@ -241,7 +241,7 @@ fn scan_tainted_op(op: AnfOp, tainted: Dict<Int, Bool>, live_out: Dict<Int, Bool
         arm_r := scan_tainted_expr(arm.body, tainted, live_out, semantics)
         tainted = arm_r.tainted
         for k in bindings.keys() {
-          tainted = tainted.remove(k)
+          tainted = .remove(k)
         }
         by_binding = merge_by_binding(by_binding, arm_r.by_binding)
       }

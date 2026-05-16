@@ -126,7 +126,7 @@ pub fn render(report: Report, reg: registry.FileRegistry, config: RenderConfig) 
     .Error => bold_red(config, sev_str),
     .Warning => bold_yellow(config, sev_str),
   }
-  lines = lines.append("${sev_colored}: ${bold(config, report.title)}")
+  lines = .append("${sev_colored}: ${bold(config, report.title)}")
 
   // ── 2. Source context (only when labels are present) ─────────────
   case find_primary(report.labels) {
@@ -144,10 +144,10 @@ pub fn render(report: Report, reg: registry.FileRegistry, config: RenderConfig) 
           pad := repeat_str(" ", gutter_w)
 
           // Location line: one position left of the gutter `|`
-          lines = lines.append("${pad}--> ${fname}:${primary_lc.line}:${primary_lc.column}")
+          lines = .append("${pad}--> ${fname}:${primary_lc.line}:${primary_lc.column}")
 
           // Opening gutter separator
-          lines = lines.append(cyan(config, "${pad} |"))
+          lines = .append(cyan(config, "${pad} |"))
 
           // Each label: source line + underline
           prev_line := 0
@@ -160,13 +160,13 @@ pub fn render(report: Report, reg: registry.FileRegistry, config: RenderConfig) 
                   .Some(line_raw) => {
                     // Blank separator only when labels are non-adjacent
                     if idx > 0 and lc.line > prev_line + 1 {
-                      lines = lines.append(cyan(config, "${pad} |"))
+                      lines = .append(cyan(config, "${pad} |"))
                     }
                     prev_line = lc.line
 
                     line_str := strip_newline(line_raw)
                     num_str := pad_left(Int.to_string(lc.line), gutter_w)
-                    lines = lines.append("${cyan(config, "${num_str} |")} ${line_str}")
+                    lines = .append("${cyan(config, "${num_str} |")} ${line_str}")
 
                     // Underline below the source line
                     col_zero := lc.column - 1
@@ -184,7 +184,7 @@ pub fn render(report: Report, reg: registry.FileRegistry, config: RenderConfig) 
                       caret_str
                     }
                     spacing := repeat_str(" ", col_zero)
-                    lines = lines.append("${cyan(config, "${pad} |")} ${spacing}${styled_caret}")
+                    lines = .append("${cyan(config, "${pad} |")} ${spacing}${styled_caret}")
                   },
                 }
               },
@@ -201,7 +201,7 @@ pub fn render(report: Report, reg: registry.FileRegistry, config: RenderConfig) 
     gutter_w := digit_count(max_line)
     pad := repeat_str(" ", gutter_w)
     for h in report.help_lines {
-      lines = lines.append("${pad} = help: ${h}")
+      lines = .append("${pad} = help: ${h}")
     }
   }
 

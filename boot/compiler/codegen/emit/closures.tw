@@ -32,13 +32,13 @@ pub fn emit_make_closure(fid: FuncId, free_vars: Vector<SlotId>, ctx: EmitCtx, b
   env_buf: Vector<Instr> = []
   for fv in free_vars {
     entry := lookup_slot(ctx, fv)
-    env_buf = env_buf.append(.LocalGet(entry.index))
+    env_buf = .append(.LocalGet(entry.index))
     env_buf = emit_box_to_anyref(entry.mono, ctx.env, env_buf)
   }
   if free_vars.len() > 0 {
-    env_buf = env_buf.append(.ArrayNewFixed("rt_types__ClosureEnv", free_vars.len()))
+    env_buf = .append(.ArrayNewFixed("rt_types__ClosureEnv", free_vars.len()))
   } else {
-    env_buf = env_buf.append(.RefNull(.None_))
+    env_buf = .append(.RefNull(.None_))
   }
 
   if ctx.prepared_funcs.has(fid.id) {
@@ -93,11 +93,11 @@ fn emit_universal_closure_call(entry: LocalEntry, args: Vector<PreparedAtom>, re
     out.append(.RefNull(.None_))
   }
   // Get universal funcref (field 0)
-  out = out.append(.LocalGet(entry.index))
+  out = .append(.LocalGet(entry.index))
     .append(.RefCast(true, .Named("rt_types__Closure")))
     .append(.StructGet("rt_types__Closure", 0))
   // call_ref with universal func type
-  out = out.append(.CallRef("rt_types__ClosureFunc"))
+  out = .append(.CallRef("rt_types__ClosureFunc"))
   // Unbox result
   case result_mono {
     .Void => {
@@ -154,7 +154,7 @@ pub fn emit_builtin_trampolines(ctx: EmitCtx) Vector<FuncDef> {
       .Some(s) => s,
       .None => { continue },
     }
-    out = out.append(emit_builtin_universal_trampoline(entry, sig, target.wrapper_kind, ctx))
+    out = .append(emit_builtin_universal_trampoline(entry, sig, target.wrapper_kind, ctx))
   }
   out
 }
@@ -173,7 +173,7 @@ fn emit_builtin_universal_trampoline(entry: BuiltinEntry, sig: FuncSigEntry, wra
       tramp_sym := "$tramp_${entry.func_id.id}"
       body: Vector<Instr> = []
       for mono,i in sig.param_types {
-        body = body.append(.LocalGet(1))
+        body = .append(.LocalGet(1))
           .append(.RefCast(true, .Named("rt_types__Array")))
           .append(.I32Const(i))
           .append(.ArrayGet("rt_types__Array"))
@@ -182,12 +182,12 @@ fn emit_builtin_universal_trampoline(entry: BuiltinEntry, sig: FuncSigEntry, wra
       body = emit_builtin_trampoline_target(entry, wrapper_kind, body)
       case sig.return_type {
         .Void => {
-          body = body.append(.I32Const(0)).append(.RefI31)
+          body = .append(.I32Const(0)).append(.RefI31)
         },
         .Never => {},
         _ => {
           if is_sum_mono(sig.return_type, ctx.env) {
-            body = body.append(.Call(sum_to_variant_helper_sym(sig.return_type)))
+            body = .append(.Call(sum_to_variant_helper_sym(sig.return_type)))
           } else {
             body = emit_box_to_anyref(sig.return_type, ctx.env, body)
           }
@@ -208,29 +208,29 @@ fn emit_builtin_cell_update_universal_trampoline(entry: BuiltinEntry, sig: FuncS
   closure_vt := val_type_of_mono(closure_mono, ctx.env)
   body: Vector<Instr> = []
 
-  body = body.append(.LocalGet(1))
+  body = .append(.LocalGet(1))
     .append(.RefCast(true, .Named("rt_types__Array")))
     .append(.I32Const(0))
     .append(.ArrayGet("rt_types__Array"))
   body = emit_unbox_from_anyref(cell_mono, ctx.env, body)
-  body = body.append(.LocalSet(2))
+  body = .append(.LocalSet(2))
 
-  body = body.append(.LocalGet(1))
+  body = .append(.LocalGet(1))
     .append(.RefCast(true, .Named("rt_types__Array")))
     .append(.I32Const(1))
     .append(.ArrayGet("rt_types__Array"))
   body = emit_unbox_from_anyref(closure_mono, ctx.env, body)
-  body = body.append(.LocalSet(3))
+  body = .append(.LocalSet(3))
 
-  body = body.append(.LocalGet(2))
-  body = body.append(.LocalGet(3)).append(.StructGet("rt_types__Closure", 1))
-  body = body.append(.LocalGet(2)).append(.StructGet(sym, 0))
+  body = .append(.LocalGet(2))
+  body = .append(.LocalGet(3)).append(.StructGet("rt_types__Closure", 1))
+  body = .append(.LocalGet(2)).append(.StructGet(sym, 0))
   body = if sym != "$Cell_anyref" { emit_box_to_anyref(inner_mono, ctx.env, body) } else { body }
-  body = body.append(.ArrayNewFixed("rt_types__Array", 1))
-  body = body.append(.LocalGet(3)).append(.StructGet("rt_types__Closure", 0)).append(.CallRef("rt_types__ClosureFunc"))
+  body = .append(.ArrayNewFixed("rt_types__Array", 1))
+  body = .append(.LocalGet(3)).append(.StructGet("rt_types__Closure", 0)).append(.CallRef("rt_types__ClosureFunc"))
   body = if sym != "$Cell_anyref" { emit_unbox_from_anyref(inner_mono, ctx.env, body) } else { body }
-  body = body.append(.StructSet(sym, 0))
-  body = body.append(.I32Const(0)).append(.RefI31)
+  body = .append(.StructSet(sym, 0))
+  body = .append(.I32Const(0)).append(.RefI31)
 
   FuncDef.{
     name: tramp_sym,
@@ -247,14 +247,14 @@ fn emit_builtin_iterator_unfold_universal_trampoline(entry: BuiltinEntry, sig: F
   step_mono := sig.param_types[1]
   body: Vector<Instr> = []
 
-  body = body.append(.LocalGet(1))
+  body = .append(.LocalGet(1))
     .append(.RefCast(true, .Named("rt_types__Array")))
     .append(.I32Const(0))
     .append(.ArrayGet("rt_types__Array"))
   body = emit_unbox_from_anyref(seed_mono, ctx.env, body)
   body = emit_box_to_anyref(seed_mono, ctx.env, body)
 
-  body = body.append(.LocalGet(1))
+  body = .append(.LocalGet(1))
     .append(.RefCast(true, .Named("rt_types__Array")))
     .append(.I32Const(1))
     .append(.ArrayGet("rt_types__Array"))
@@ -270,13 +270,13 @@ fn emit_builtin_host_write_bytes_universal_trampoline(entry: BuiltinEntry, sig: 
   bytes_mono := sig.param_types[1]
   body: Vector<Instr> = []
 
-  body = body.append(.LocalGet(1))
+  body = .append(.LocalGet(1))
     .append(.RefCast(true, .Named("rt_types__Array")))
     .append(.I32Const(0))
     .append(.ArrayGet("rt_types__Array"))
   body = emit_unbox_from_anyref(path_mono, ctx.env, body)
 
-  body = body.append(.LocalGet(1))
+  body = .append(.LocalGet(1))
     .append(.RefCast(true, .Named("rt_types__Array")))
     .append(.I32Const(1))
     .append(.ArrayGet("rt_types__Array"))
@@ -284,7 +284,7 @@ fn emit_builtin_host_write_bytes_universal_trampoline(entry: BuiltinEntry, sig: 
     .append(.Call("rt_arr__to_array"))
 
   body = emit_builtin_trampoline_target(entry, .Some(.HostWriteBytes), body)
-  body = body.append(.I32Const(0)).append(.RefI31)
+  body = .append(.I32Const(0)).append(.RefI31)
 
   FuncDef.{ name: tramp_sym, params: [.Anyref, .Anyref], results: [.Anyref], locals: [], body: body }
 }
@@ -313,34 +313,34 @@ fn emit_universal_trampoline(func: PreparedFunc, sig: FuncSigEntry, ctx: EmitCtx
   // Extract captures from env (param 0)
   for sid,i in func.captures {
     cap := facts.slot_info(func, sid)
-    body = body.append(.LocalGet(0))
-    body = body.append(.RefCast(true, .Named("rt_types__ClosureEnv")))
-    body = body.append(.I32Const(i))
-    body = body.append(.ArrayGet("rt_types__ClosureEnv"))
+    body = .append(.LocalGet(0))
+    body = .append(.RefCast(true, .Named("rt_types__ClosureEnv")))
+    body = .append(.I32Const(i))
+    body = .append(.ArrayGet("rt_types__ClosureEnv"))
     body = emit_unbox_from_anyref(cap.mono, ctx.env, body)
   }
 
   // Extract args from args array (param 1)
   for sid,i in func.params {
     p := facts.slot_info(func, sid)
-    body = body.append(.LocalGet(1))
-    body = body.append(.RefCast(true, .Named("rt_types__Array")))
-    body = body.append(.I32Const(i))
-    body = body.append(.ArrayGet("rt_types__Array"))
+    body = .append(.LocalGet(1))
+    body = .append(.RefCast(true, .Named("rt_types__Array")))
+    body = .append(.I32Const(i))
+    body = .append(.ArrayGet("rt_types__Array"))
     body = emit_unbox_from_anyref(p.mono, ctx.env, body)
   }
 
-  body = body.append(.Call(func_sym))
+  body = .append(.Call(func_sym))
 
   case func.return_mono {
     .Void => {
-      body = body.append(.I32Const(0))
-      body = body.append(.RefI31)
+      body = .append(.I32Const(0))
+      body = .append(.RefI31)
     },
     .Never => {},
     _ => {
       if is_sum_mono(func.return_mono, ctx.env) {
-        body = body.append(.Call(sum_to_variant_helper_sym(func.return_mono)))
+        body = .append(.Call(sum_to_variant_helper_sym(func.return_mono)))
       } else {
         body = emit_box_to_anyref(func.return_mono, ctx.env, body)
       }

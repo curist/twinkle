@@ -25,12 +25,12 @@ fn item_to_json(item: CompletionItem) json.Json {
     json.kv("kind", .Int(item.kind)),
   ]
   case item.detail {
-    .Some(d) => { fields = fields.append(json.kv("detail", .Str(d))) },
+    .Some(d) => { fields = .append(json.kv("detail", .Str(d))) },
     .None => {},
   }
   case item.documentation {
     .Some(doc) => {
-      fields = fields.append(json.kv("documentation", json.object([
+      fields = .append(json.kv("documentation", json.object([
         json.kv("kind", .Str("markdown")),
         json.kv("value", .Str(doc)),
       ])))

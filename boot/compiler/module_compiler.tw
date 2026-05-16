@@ -136,7 +136,7 @@ pub fn compile_entry(entry_path: String) Result<PipelineArtifacts, CompileError>
       }
     }
 
-    compiled_modules = compiled_modules.append(.{
+    compiled_modules = .append(.{
       path: module_path,
       core: lowered.module,
       func_table: lowered.func_table,

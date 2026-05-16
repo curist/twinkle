@@ -15,7 +15,7 @@ fn set_add(s: Dict<Int, Bool>, k: Int) Dict<Int, Bool> {
 }
 
 fn set_remove(s: Dict<Int, Bool>, k: Int) Dict<Int, Bool> {
-  s = s.remove(k)
+  s = .remove(k)
   s
 }
 

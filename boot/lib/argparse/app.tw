@@ -35,7 +35,7 @@ pub fn add_command(a: App, cmd: command.Command) App {
 pub fn add_commands(a: App, cmds: Vector<command.Command>) App {
   out := a
   for c in cmds {
-    out = out.add_command(c)
+    out = .add_command(c)
   }
   out
 }
@@ -82,7 +82,7 @@ fn pad(s: String, width: Int) String {
   if n < 2 { n = 2 }
   out := s
   for n > 0 {
-    out = out.concat(" ")
+    out = .concat(" ")
     n = n - 1
   }
   out
@@ -131,7 +131,7 @@ fn format_arg_help(a: arg.Arg) String {
   if extra < 2 { extra = 2 }
   spaces := ""
   for extra > 0 {
-    spaces = spaces.concat(" ")
+    spaces = .concat(" ")
     extra = extra - 1
   }
   label.concat(spaces).concat(a.help)
@@ -146,44 +146,44 @@ fn format_help(a: App, cmd_name: String?) String {
       cmd := a.commands.find(fn(c: command.Command) Bool { c.name == name })
       case cmd {
         .Some(c) => {
-          out = out.concat(usage_label).concat(" ${a.name} ${name}")
+          out = .concat(usage_label).concat(" ${a.name} ${name}")
           for def in c.args {
             case def.kind {
               .Positional => {
                 if def.is_required {
-                  out = out.concat(" <${def.name}>")
+                  out = .concat(" <${def.name}>")
                 } else {
-                  out = out.concat(" [${def.name}]")
+                  out = .concat(" [${def.name}]")
                 }
               },
               _ => {},
             }
           }
-          out = out.concat(" [options]\n\n")
+          out = .concat(" [options]\n\n")
           for def in c.args {
-            out = out.concat(format_arg_help(def)).concat("\n")
+            out = .concat(format_arg_help(def)).concat("\n")
           }
         },
         .None => {
-          out = out.concat("Unknown command: ${name}\n")
+          out = .concat("Unknown command: ${name}\n")
         },
       }
     },
     .None => {
       if a.commands.len() > 0 {
-        out = out.concat(usage_label).concat(" ${a.name} <command> [options]\n\n")
-        out = out.concat(style.bold(style.yellow("Commands:"))).concat("\n")
+        out = .concat(usage_label).concat(" ${a.name} <command> [options]\n\n")
+        out = .concat(style.bold(style.yellow("Commands:"))).concat("\n")
         for cmd in a.commands {
-          out = out.concat("  ").concat(style.bold(cmd.name))
+          out = .concat("  ").concat(style.bold(cmd.name))
           out = pad(out, out.len() + 20 - cmd.name.len())
-          out = out.concat(cmd.help).concat("\n")
+          out = .concat(cmd.help).concat("\n")
         }
         hint := a.name.concat(" <command> --help")
-        out = out.concat("\nRun '").concat(style.bold(hint)).concat("' for more information.\n")
+        out = .concat("\nRun '").concat(style.bold(hint)).concat("' for more information.\n")
       } else {
-        out = out.concat(usage_label).concat(" ${a.name} [options]\n\n")
+        out = .concat(usage_label).concat(" ${a.name} [options]\n\n")
         for def in a.args {
-          out = out.concat(format_arg_help(def)).concat("\n")
+          out = .concat(format_arg_help(def)).concat("\n")
         }
       }
     },
@@ -224,7 +224,7 @@ pub fn parse(a: App, argv: Vector<String>) ParseResult!ParseError {
     current := argv[i]
 
     if past_flags {
-      pos = pos.append(current)
+      pos = .append(current)
       i = i + 1
       continue
     }
@@ -290,7 +290,7 @@ pub fn parse(a: App, argv: Vector<String>) ParseResult!ParseError {
         .Positional => pos = pos.append(current),
       }
     } else {
-      pos = pos.append(current)
+      pos = .append(current)
     }
 
     i = i + 1

@@ -308,8 +308,8 @@ pub fn extend_types_from(
   for i in 0..acc_types.len() {
     entry := acc_types[i]
     if find_type_entry_index(env, entry.id) == .None {
-      env.types = env.types.append(entry)
-      env.type_names = env.type_names.append(acc_type_names[i])
+      env.types = .append(entry)
+      env.type_names = .append(acc_type_names[i])
       env.type_index[acc_type_names[i]] = env.types.len() - 1
       env.type_id_index[entry.id.id] = env.types.len() - 1
     }
@@ -409,8 +409,8 @@ pub fn register_type_entry(env: ResolvedEnv, entry: TypeEntry, preferred_name: S
     .None => {
       env.type_index[preferred_name] = env.types.len()
       env.type_id_index[entry.id.id] = env.types.len()
-      env.types = env.types.append(entry)
-      env.type_names = env.type_names.append(preferred_name)
+      env.types = .append(entry)
+      env.type_names = .append(preferred_name)
       env
     },
   }
@@ -437,7 +437,7 @@ pub fn set_type_origin(env: ResolvedEnv, tid: TypeId, origin: String) ResolvedEn
 }
 
 pub fn remove_type_binding(env: ResolvedEnv, name: String) ResolvedEnv {
-  env.type_bindings = env.type_bindings.remove(name)
+  env.type_bindings = .remove(name)
   env
 }
 
@@ -458,14 +458,12 @@ pub fn register_function(env: ResolvedEnv, sig: FunctionSig) ResolvedEnv {
   // functions shadow prelude functions.
   case env.func_index[sig.name] {
     .Some(idx) => {
-      env.functions = collect i in 0..env.functions.len() {
-        if i == idx { sig } else { env.functions[i] }
-      }
+      env.functions[idx] = sig
       env
     },
     .None => {
       env.func_index[sig.name] = env.functions.len()
-      env.functions = env.functions.append(sig)
+      env.functions = .append(sig)
       env
     },
   }
@@ -482,7 +480,7 @@ pub fn bind_function(env: ResolvedEnv, name: String, target_name: String) Resolv
 }
 
 pub fn remove_function_binding(env: ResolvedEnv, name: String) ResolvedEnv {
-  env.function_bindings = env.function_bindings.remove(name)
+  env.function_bindings = .remove(name)
   env
 }
 
@@ -498,12 +496,12 @@ pub fn lookup_function_origin(env: ResolvedEnv, registered_name: String) Functio
 pub fn add_function(env: ResolvedEnv, sig: FunctionSig) ResolvedEnv {
   cur := env.register_function(sig).bind_function(sig.name, sig.name)
   // Clear any stale imported origin when a local function shadows a prelude/imported name.
-  cur.function_origins = cur.function_origins.remove(sig.name)
+  cur.function_origins = .remove(sig.name)
   cur
 }
 
 pub fn register_builtin_methods(env: ResolvedEnv) ResolvedEnv {
-  env = env.register_bound_methods("String", [
+  env = .register_bound_methods("String", [
     me("len", "string_len"), me("get", "string_get"), me("slice", "string_slice"),
     me("concat", "string_concat"), me("char_code_at", "char_code_at"),
     me("utf8_bytes", "string_utf8_bytes"), me("to_string", "string_to_string"),
@@ -515,7 +513,7 @@ pub fn register_builtin_methods(env: ResolvedEnv) ResolvedEnv {
     me("chars", "chars"), me("char_len", "char_len"),
     me("code_point_at", "code_point_at"), me("graphemes", "graphemes"),
   ])
-  env = env.register_bound_methods("Vector", [
+  env = .register_bound_methods("Vector", [
     me("len", "vector_len"), me("append", "vector_append"), me("get", "vector_get"),
     me("set", "vector_set"), me("concat", "vector_concat"), me("slice", "vector_slice"),
     me("make", "vector_make"),
@@ -524,25 +522,25 @@ pub fn register_builtin_methods(env: ResolvedEnv) ResolvedEnv {
     me("reverse", "reverse"), me("sort_by", "sort_by"), me("join", "join"),
     me("is_empty", "vector_is_empty"),
   ])
-  env = env.register_bound_methods("Dict", [
+  env = .register_bound_methods("Dict", [
     me("new", "dict_new"), me("len", "dict_len"), me("has", "dict_has"), me("keys", "dict_keys"),
     me("values", "dict_values"), me("get", "dict_get"), me("set", "dict_set"),
     me("remove", "dict_remove"), me("is_empty", "dict_is_empty"),
   ])
-  env = env.register_bound_methods("Cell", [
+  env = .register_bound_methods("Cell", [
     me("new", "cell_new"), me("get", "cell_get"), me("set", "cell_set"), me("update", "cell_update"),
   ])
-  env = env.register_bound_methods("Int", [
+  env = .register_bound_methods("Int", [
     me("to_string", "int_to_string"), me("to_float", "to_float"),
     me("from_string", "int_from_string"), me("compare", "compare"),
   ])
-  env = env.register_bound_methods("Float", [
+  env = .register_bound_methods("Float", [
     me("to_string", "float_to_string"), me("to_int", "to_int"),
     me("from_string", "float_from_string"), me("compare", "compare"),
     me("bits", "float_bits"),
   ])
-  env = env.register_bound_methods("Bool", [me("to_string", "bool_to_string")])
-  env = env.register_bound_methods("Byte", [
+  env = .register_bound_methods("Bool", [me("to_string", "bool_to_string")])
+  env = .register_bound_methods("Byte", [
     me("to_string", "byte_to_string"), me("to_int", "byte_to_int"),
     me("from_int", "byte_from_int"), me("compare", "compare"),
     me("in_range", "byte_in_range"), me("is_upper", "byte_is_upper"),
@@ -551,7 +549,7 @@ pub fn register_builtin_methods(env: ResolvedEnv) ResolvedEnv {
     me("is_alnum", "byte_is_alnum"), me("is_newline", "byte_is_newline"),
     me("is_space", "byte_is_space"),
   ])
-  env = env.register_bound_methods("Option", [
+  env = .register_bound_methods("Option", [
     me("is_some", "option_is_some"), me("is_none", "option_is_none"),
     me("unwrap", "option_unwrap"), me("unwrap_or", "unwrap_or"),
     me("unwrap_or_else", "option_unwrap_or_else"),
@@ -560,7 +558,7 @@ pub fn register_builtin_methods(env: ResolvedEnv) ResolvedEnv {
     me("or_else", "option_or_else"), me("inspect", "option_inspect"),
     me("ok_or", "ok_or"), me("ok_or_else", "ok_or_else"), me("transpose", "transpose"),
   ])
-  env = env.register_bound_methods("Result", [
+  env = .register_bound_methods("Result", [
     me("is_ok", "result_is_ok"), me("is_err", "result_is_err"),
     me("unwrap", "result_unwrap"), me("unwrap_or", "result_unwrap_or"),
     me("unwrap_or_else", "result_unwrap_or_else"), me("map", "map"),
@@ -568,7 +566,7 @@ pub fn register_builtin_methods(env: ResolvedEnv) ResolvedEnv {
     me("or_else", "result_or_else"), me("ok", "result_ok"), me("err", "result_err"),
     me("transpose", "transpose"),
   ])
-  env = env.register_bound_methods("Iterator", [
+  env = .register_bound_methods("Iterator", [
     me("next", "iterator_next"), me("unfold", "iterator_unfold"),
     me("map", "map"), me("filter", "filter"),
     me("take", "take"), me("to_vector", "to_vector"),
@@ -657,7 +655,7 @@ pub fn extract_exports_for_module(env: ResolvedEnv, module: Module, module_key: 
         if !decl.is_pub { continue }
         case env.lookup_type(decl.name) {
           .Some(entry) => {
-            visible_types = visible_types.append(ExportedType.{
+            visible_types = .append(ExportedType.{
               name: decl.name,
               entry,
               origin: exported_type_origin(env, entry.id, module_key, decl.name),
@@ -671,7 +669,7 @@ pub fn extract_exports_for_module(env: ResolvedEnv, module: Module, module_key: 
         if !decl.is_pub { continue }
         case env.lookup_function(decl.name) {
           .Some(sig) => {
-            exported_functions = exported_functions.append(.{
+            exported_functions = .append(.{
               name: sig.name,
               sig,
               source_name: sig.name,
@@ -689,7 +687,7 @@ pub fn extract_exports_for_module(env: ResolvedEnv, module: Module, module_key: 
         qualified := "${decl.module}.${decl.name}"
         case env.lookup_function(qualified) {
           .Some(sig) => {
-            exported_functions = exported_functions.append(.{
+            exported_functions = .append(.{
               name: sig.name,
               sig,
               source_name: sig.name,
@@ -732,7 +730,7 @@ pub fn extract_exports_for_module(env: ResolvedEnv, module: Module, module_key: 
       if !hidden_support_types.has(name) or exported_type_names.has(name) {
         continue
       }
-      support_types = support_types.append(ExportedType.{
+      support_types = .append(ExportedType.{
         name,
         entry: env.types[i],
         origin: exported_type_origin(env, env.types[i].id, module_key, name),
@@ -784,7 +782,7 @@ pub fn extract_exports_for_module(env: ResolvedEnv, module: Module, module_key: 
     if !interface_function_sources.has(sig.name) or visible_function_sources.has(sig.name) {
       continue
     }
-    support_functions = support_functions.append(.{
+    support_functions = .append(.{
       name: sig.name,
       sig,
       source_name: sig.name,
@@ -830,7 +828,7 @@ pub fn extract_exports_for_module(env: ResolvedEnv, module: Module, module_key: 
         if ls.is_pub {
           case pub_values[ls.name] {
             .Some(ty) => {
-              exported_values = exported_values.append(ExportedValue.{ name: ls.name, ty })
+              exported_values = .append(ExportedValue.{ name: ls.name, ty })
             },
             .None => {},
           }
@@ -848,7 +846,7 @@ fn merge_exported_type(env: ResolvedEnv, exported: ExportedType, target_name: St
   cur := env.register_type_entry(remapped, target_name)
   case exported.origin {
     .Some(origin) => {
-      cur = cur.set_type_origin(remapped.id, origin)
+      cur = .set_type_origin(remapped.id, origin)
     },
     .None => {},
   }
@@ -928,9 +926,9 @@ fn register_imported_functions(env: ResolvedEnv, alias: String, module_path: Str
       },
       .None => qualify_name(alias, exported.name),
     }
-    cur = cur.register_function(remap_function_sig(exported.sig, qualified_name, type_ids))
+    cur = .register_function(remap_function_sig(exported.sig, qualified_name, type_ids))
     if bind_qualified_names and visible_functions.has(exported.name) {
-      cur = cur.bind_function(qualified_name, qualified_name)
+      cur = .bind_function(qualified_name, qualified_name)
     }
     // Set canonical imported origin for this registered function.
     // Re-exports preserve the original defining origin.
@@ -938,7 +936,7 @@ fn register_imported_functions(env: ResolvedEnv, alias: String, module_path: Str
       .Some(o) => o,
       .None => FunctionOrigin.{ module_path, func_name: exported.source_name },
     }
-    cur = cur.set_function_origin(qualified_name, origin)
+    cur = .set_function_origin(qualified_name, origin)
   }
   cur
 }
@@ -994,7 +992,7 @@ fn merge_selective_via_registration(env: ResolvedEnv, alias: String, module_path
             source_name := qualify_name(alias, exported.name)
             case lookup_registered_function(cur, source_name) {
               .Some(_) => {
-                cur = cur.bind_function(binding_name, source_name)
+                cur = .bind_function(binding_name, source_name)
               },
               .None => {},
             }
@@ -1020,7 +1018,7 @@ fn merge_selective_via_registration(env: ResolvedEnv, alias: String, module_path
         binding_name := import_binding_name(type_item.name, type_item.alias)
         case lookup_registered_type(cur, source_name) {
           .Some(entry) => {
-            cur = cur.bind_type(binding_name, entry.id)
+            cur = .bind_type(binding_name, entry.id)
             case cur.methods[source_name] {
               .Some(entries) => {
                 methods = register_methods(methods, binding_name, entries)
@@ -1096,15 +1094,15 @@ pub fn merge_prelude_exports(env: ResolvedEnv, alias: String, module_path: Strin
 
   for exported in all_exported_functions(exports) {
     if !cur.has_function(exported.name) {
-      cur = cur.register_function(remap_function_sig(exported.sig, exported.name, reg.type_ids))
+      cur = .register_function(remap_function_sig(exported.sig, exported.name, reg.type_ids))
     }
     if visible_functions.has(exported.name) {
-      cur = cur.bind_function(exported.name, exported.name)
+      cur = .bind_function(exported.name, exported.name)
     }
 
     internal_name := prelude_internal_function_name(alias, exported.name)
     if internal_name != exported.name and !cur.has_function(internal_name) {
-      cur = cur.register_function(remap_function_sig(exported.sig, internal_name, reg.type_ids))
+      cur = .register_function(remap_function_sig(exported.sig, internal_name, reg.type_ids))
     }
 
     // Set canonical imported origin for registered prelude function names.
@@ -1114,10 +1112,10 @@ pub fn merge_prelude_exports(env: ResolvedEnv, alias: String, module_path: Strin
       .None => FunctionOrigin.{ module_path, func_name: exported.source_name },
     }
     if !cur.function_origins.has(exported.name) {
-      cur = cur.set_function_origin(exported.name, origin)
+      cur = .set_function_origin(exported.name, origin)
     }
     if internal_name != exported.name and !cur.function_origins.has(internal_name) {
-      cur = cur.set_function_origin(internal_name, origin)
+      cur = .set_function_origin(internal_name, origin)
     }
   }
 
@@ -1201,12 +1199,12 @@ fn collect_declarations(env: ResolvedEnv, module: Module) ResolveResult {
     case item {
       .Type(decl) => {
         if is_reserved_type_name(decl.name) {
-          diags = diags.append(.Error(.ReservedTypeName(.{ span: decl.span, name: decl.name })))
+          diags = .append(.Error(.ReservedTypeName(.{ span: decl.span, name: decl.name })))
         } else if cur.has_type(decl.name) {
-          diags = diags.append(.Error(.DuplicateName(.{ span: decl.span, kind: "type definition", name: decl.name })))
+          diags = .append(.Error(.DuplicateName(.{ span: decl.span, kind: "type definition", name: decl.name })))
         } else {
           tid := TypeId.{ id: next_available_type_id(cur) }
-          cur = cur.add_type(.{ id: tid, arity: decl.type_params.len(), def: .None, span: decl.span }, decl.name)
+          cur = .add_type(.{ id: tid, arity: decl.type_params.len(), def: .None, span: decl.span }, decl.name)
           // Pre-register synthesized record types for anonymous record variants.
           // Must happen after add_type so type_bindings is non-empty.
           case decl.def {
@@ -1217,7 +1215,7 @@ fn collect_declarations(env: ResolvedEnv, module: Module) ResolveResult {
                     .Record(_) => {
                       synth_tid := TypeId.{ id: next_available_type_id(cur) }
                       display_name := "${decl.name}.${variant.name}"
-                      cur = cur.register_type_entry(
+                      cur = .register_type_entry(
                         .{ id: synth_tid, arity: decl.type_params.len(), def: .None, span: variant.span },
                         display_name
                       )
@@ -1233,7 +1231,7 @@ fn collect_declarations(env: ResolvedEnv, module: Module) ResolveResult {
       },
       .Function(decl) => {
         if seen_fns.has(decl.name) {
-          diags = diags.append(.Error(.DuplicateName(.{ span: decl.span, kind: "function definition", name: decl.name })))
+          diags = .append(.Error(.DuplicateName(.{ span: decl.span, kind: "function definition", name: decl.name })))
         } else {
           seen_fns[decl.name] = true
         }
@@ -1241,7 +1239,7 @@ fn collect_declarations(env: ResolvedEnv, module: Module) ResolveResult {
       .ExternFunction(decl) => {
         qualified := "${decl.module}.${decl.name}"
         if seen_fns.has(qualified) {
-          diags = diags.append(.Error(.DuplicateName(.{ span: decl.span, kind: "function definition", name: qualified })))
+          diags = .append(.Error(.DuplicateName(.{ span: decl.span, kind: "function definition", name: qualified })))
         } else {
           seen_fns[qualified] = true
         }
@@ -1273,7 +1271,7 @@ fn resolve_references(env: ResolvedEnv, module: Module, diags: Vector<diag.DiagK
   for decl in sorted {
     r := resolve_type_decl(cur, decl)
     cur = r.env
-    result_diags = result_diags.concat(r.diagnostics)
+    result_diags = .concat(r.diagnostics)
   }
 
   // Resolve function signatures (skip module-internal duplicates reported in Pass 1)
@@ -1285,7 +1283,7 @@ fn resolve_references(env: ResolvedEnv, module: Module, diags: Vector<diag.DiagK
           seen_fns[decl.name] = true
           r := resolve_function_decl(cur, decl)
           cur = r.env
-          result_diags = result_diags.concat(r.diagnostics)
+          result_diags = .concat(r.diagnostics)
         }
       },
       .ExternFunction(decl) => {
@@ -1294,7 +1292,7 @@ fn resolve_references(env: ResolvedEnv, module: Module, diags: Vector<diag.DiagK
           seen_fns[qualified] = true
           r := resolve_extern_function_decl(cur, decl)
           cur = r.env
-          result_diags = result_diags.concat(r.diagnostics)
+          result_diags = .concat(r.diagnostics)
         }
       },
       _ => {},
@@ -1308,7 +1306,7 @@ fn resolve_references(env: ResolvedEnv, module: Module, diags: Vector<diag.DiagK
   }
   im := detect_inherent_methods(cur, local_type_names)
   cur = im.env
-  result_diags = result_diags.concat(im.diagnostics)
+  result_diags = .concat(im.diagnostics)
 
   .{ env: cur, diagnostics: result_diags }
 }
@@ -1355,7 +1353,7 @@ fn detect_inherent_methods(env: ResolvedEnv, local_type_names: Dict<String, Bool
       }
     }
     if collision {
-      method_diags = method_diags.append(.Error(.DuplicateName(.{
+      method_diags = .append(.Error(.DuplicateName(.{
         span: .{ file_id: 0, start: 0, end: 0 },
         kind: "method",
         name: "${f.name} on ${type_name}",
@@ -1399,14 +1397,14 @@ fn resolve_ast_type_params(ast_params: Vector<TypeParam>, s: Span) ResolvedTypeP
       seg := bound_path.segments[0]
       case resolve_builtin_contract_name(seg) {
         .Some(c) => {
-          bound_refs = bound_refs.append(.Builtin(c))
+          bound_refs = .append(.Builtin(c))
         },
         .None => {
-          diags = diags.append(.Error(.UnknownContract(.{ span: bound_path.span, name: seg })))
+          diags = .append(.Error(.UnknownContract(.{ span: bound_path.span, name: seg })))
         },
       }
     }
-    resolved = resolved.append(.{ name: tp.name, bounds: bound_refs })
+    resolved = .append(.{ name: tp.name, bounds: bound_refs })
   }
   .{ params: resolved, diags }
 }
@@ -1420,10 +1418,10 @@ fn resolve_type_decl(env: ResolvedEnv, decl: TypeDecl) ResolveResult {
   case decl.def {
     .Record(fields) => {
       field_names := collect f in fields { f.name }
-      diags = diags.concat(check_dup_names(field_names, "field", decl.span))
+      diags = .concat(check_dup_names(field_names, "field", decl.span))
       resolved_fields: Vector<ResolvedField> = collect field in fields {
         r := env.resolve_type_expr(field.ty, names)
-        diags = diags.concat(r.diagnostics)
+        diags = .concat(r.diagnostics)
         ty := case r.ty {
           .Some(t) => t,
           .None => MonoType.ErrorType,
@@ -1435,7 +1433,7 @@ fn resolve_type_decl(env: ResolvedEnv, decl: TypeDecl) ResolveResult {
     },
     .Sum(variants) => {
       variant_names := collect v in variants { v.name }
-      diags = diags.concat(check_dup_names(variant_names, "variant", decl.span))
+      diags = .concat(check_dup_names(variant_names, "variant", decl.span))
       resolved_variants: Vector<ResolvedVariant> = []
       for variant in variants {
         is_anon_record := variant.fields.len() == 1 and case variant.fields[0].kind { .Record(_) => true, _ => false }
@@ -1443,10 +1441,10 @@ fn resolve_type_decl(env: ResolvedEnv, decl: TypeDecl) ResolveResult {
         if is_anon_record {
           record_fields := case variant.fields[0].kind { .Record(fs) => fs, _ => error("unreachable") }
           field_names := collect f in record_fields { f.name }
-          diags = diags.concat(check_dup_names(field_names, "field", variant.fields[0].span))
+          diags = .concat(check_dup_names(field_names, "field", variant.fields[0].span))
           resolved_record_fields: Vector<ResolvedField> = collect field in record_fields {
             r := env.resolve_type_expr(field.ty, names)
-            diags = diags.concat(r.diagnostics)
+            diags = .concat(r.diagnostics)
             ty := case r.ty { .Some(t) => t, .None => MonoType.ErrorType }
             ResolvedField.{ name: field.name, ty }
           }
@@ -1455,28 +1453,28 @@ fn resolve_type_decl(env: ResolvedEnv, decl: TypeDecl) ResolveResult {
             .Some(idx) => env.types[idx].id,
             .None => error("unreachable: synthesized type '${display_name}' not registered"),
           }
-          env = env.set_type_def_by_id(synth_tid, .Record(display_name, type_params, resolved_record_fields))
+          env = .set_type_def_by_id(synth_tid, .Record(display_name, type_params, resolved_record_fields))
           synth_args: Vector<MonoType> = collect tp in type_params { MonoType.Var(tp.name) }
-          resolved_variants = resolved_variants.append(
+          resolved_variants = .append(
             .{ name: variant.name, fields: [MonoType.Named(synth_tid, synth_args)] }
           )
         } else {
           resolved_fields: Vector<MonoType> = collect field_ty in variant.fields {
             r := env.resolve_type_expr(field_ty, names)
-            diags = diags.concat(r.diagnostics)
+            diags = .concat(r.diagnostics)
             case r.ty { .Some(ty) => ty, .None => MonoType.ErrorType }
           }
-          resolved_variants = resolved_variants.append(
+          resolved_variants = .append(
             .{ name: variant.name, fields: resolved_fields }
           )
         }
       }
-      env = env.set_type_def(decl.name, .Sum(decl.name, type_params, resolved_variants))
+      env = .set_type_def(decl.name, .Sum(decl.name, type_params, resolved_variants))
       .{ env, diagnostics: diags }
     },
     .Alias(ty_expr) => {
       r := env.resolve_type_expr(ty_expr, names)
-      diags = diags.concat(r.diagnostics)
+      diags = .concat(r.diagnostics)
       case r.ty {
         .Some(ty) => {
           new_env := env.set_type_def(decl.name, .Alias(decl.name, type_params, ty))
@@ -1524,16 +1522,16 @@ fn resolve_extern_function_decl(env: ResolvedEnv, decl: ExternFunctionDecl) Reso
   diags: Vector<diag.DiagKind> = []
 
   param_names := collect param in decl.params { param.name }
-  diags = diags.concat(check_dup_names(param_names, "parameter", decl.span))
+  diags = .concat(check_dup_names(param_names, "parameter", decl.span))
   param_types: Vector<MonoType> = collect param in decl.params {
     case param.ty {
       .Some(ty_expr) => {
         r := env.resolve_type_expr(ty_expr, [])
-        diags = diags.concat(r.diagnostics)
+        diags = .concat(r.diagnostics)
         case r.ty {
           .Some(ty) => {
             if !is_extern_safe_type(ty, false) {
-              diags = diags.append(.Error(.ExternBoundaryType(.{ span: ty_expr.span })))
+              diags = .append(.Error(.ExternBoundaryType(.{ span: ty_expr.span })))
               .ErrorType
             } else {
               ty
@@ -1543,7 +1541,7 @@ fn resolve_extern_function_decl(env: ResolvedEnv, decl: ExternFunctionDecl) Reso
         }
       },
       .None => {
-        diags = diags.append(.Error(.MissingTypeAnnotation(.{ span: param.span })))
+        diags = .append(.Error(.MissingTypeAnnotation(.{ span: param.span })))
         .ErrorType
       },
     }
@@ -1552,11 +1550,11 @@ fn resolve_extern_function_decl(env: ResolvedEnv, decl: ExternFunctionDecl) Reso
   ret_ty: MonoType? = case decl.return_type {
     .Some(ty_expr) => {
       r := env.resolve_type_expr(ty_expr, [])
-      diags = diags.concat(r.diagnostics)
+      diags = .concat(r.diagnostics)
       case r.ty {
         .Some(ty) => {
           if !is_extern_safe_type(ty, true) {
-            diags = diags.append(.Error(.ExternBoundaryType(.{ span: ty_expr.span })))
+            diags = .append(.Error(.ExternBoundaryType(.{ span: ty_expr.span })))
           }
           .Some(ty)
         },
@@ -1588,19 +1586,19 @@ fn resolve_function_decl(env: ResolvedEnv, decl: FunctionDecl) ResolveResult {
   diags := r.diags.concat(check_dup_type_params(names, decl.span))
 
   param_names := collect param in decl.params { param.name }
-  diags = diags.concat(check_dup_names(param_names, "parameter", decl.span))
+  diags = .concat(check_dup_names(param_names, "parameter", decl.span))
   param_types: Vector<MonoType> = collect param in decl.params {
     case param.ty {
       .Some(ty_expr) => {
         r := env.resolve_type_expr(ty_expr, names)
-        diags = diags.concat(r.diagnostics)
+        diags = .concat(r.diagnostics)
         case r.ty {
           .Some(ty) => ty,
           .None => .ErrorType,
         }
       },
       .None => {
-        diags = diags.append(.Error(.MissingTypeAnnotation(.{ span: param.span })))
+        diags = .append(.Error(.MissingTypeAnnotation(.{ span: param.span })))
         .ErrorType
       },
     }
@@ -1609,7 +1607,7 @@ fn resolve_function_decl(env: ResolvedEnv, decl: FunctionDecl) ResolveResult {
   ret_ty: MonoType? = case decl.return_type {
     .Some(ty_expr) => {
       r := env.resolve_type_expr(ty_expr, names)
-      diags = diags.concat(r.diagnostics)
+      diags = .concat(r.diagnostics)
       r.ty
     },
     .None => .None,
@@ -1660,7 +1658,7 @@ fn resolve_applied_type(env: ResolvedEnv, path: TypePath, args: Vector<TypeExpr>
   all_diags: Vector<diag.DiagKind> = []
   resolved_args := collect arg in args {
     r := env.resolve_type_expr(arg, type_vars)
-    all_diags = all_diags.concat(r.diagnostics)
+    all_diags = .concat(r.diagnostics)
     case r.ty {
       .Some(ty) => ty,
       .None => { continue },
@@ -1670,7 +1668,7 @@ fn resolve_applied_type(env: ResolvedEnv, path: TypePath, args: Vector<TypeExpr>
     return .{ ty: .None, diagnostics: all_diags }
   }
   r := env.resolve_type_path(path, resolved_args, type_vars)
-  all_diags = all_diags.concat(r.diagnostics)
+  all_diags = .concat(r.diagnostics)
   .{ ty: r.ty, diagnostics: all_diags }
 }
 
@@ -1678,14 +1676,14 @@ fn resolve_fn_type(env: ResolvedEnv, param_exprs: Vector<TypeExpr>, ret_expr: Ty
   all_diags: Vector<diag.DiagKind> = []
   param_types := collect p in param_exprs {
     r := env.resolve_type_expr(p, type_vars)
-    all_diags = all_diags.concat(r.diagnostics)
+    all_diags = .concat(r.diagnostics)
     case r.ty {
       .Some(ty) => ty,
       .None => { continue },
     }
   }
   r := env.resolve_type_expr(ret_expr, type_vars)
-  all_diags = all_diags.concat(r.diagnostics)
+  all_diags = .concat(r.diagnostics)
   if param_types.len() != param_exprs.len() {
     return .{ ty: .None, diagnostics: all_diags }
   }
@@ -1710,9 +1708,9 @@ fn resolve_optional_type(env: ResolvedEnv, inner_expr: TypeExpr, type_vars: Vect
 fn resolve_result_type(env: ResolvedEnv, ok_expr: TypeExpr, err_expr: TypeExpr, type_vars: Vector<String>) TypeResolveResult {
   all_diags: Vector<diag.DiagKind> = []
   r_ok := env.resolve_type_expr(ok_expr, type_vars)
-  all_diags = all_diags.concat(r_ok.diagnostics)
+  all_diags = .concat(r_ok.diagnostics)
   r_err := env.resolve_type_expr(err_expr, type_vars)
-  all_diags = all_diags.concat(r_err.diagnostics)
+  all_diags = .concat(r_err.diagnostics)
   ok_ty := case r_ok.ty {
     .Some(t) => t,
     .None => { return .{ ty: .None, diagnostics: all_diags } },
@@ -2124,7 +2122,7 @@ fn topo_visit(i: Int, all_deps: Vector<Vector<Int>>, names: Vector<String>, stat
 
   // Mark done and append
   new_state[names[i]] = 2
-  new_order = new_order.append(i)
+  new_order = .append(i)
   .{ state: new_state, order: new_order }
 }
 
@@ -2222,7 +2220,7 @@ fn add_name_index(name: String, names: Vector<String>, acc: TypeRefs) TypeRefs {
     if names[i] == name {
       if acc.seen.has(i) { return acc }
       acc.seen[i] = true
-      acc.indices = acc.indices.append(i)
+      acc.indices = .append(i)
       return acc
     }
   }
@@ -2243,7 +2241,7 @@ fn detect_circular_aliases(env: ResolvedEnv, diags: Vector<diag.DiagKind>) Vecto
       _ => { continue },
     }
     if is_circular_alias(env, aname, Dict.new()) {
-      result = result.append(.Error(.CircularAlias(.{ span: env.types[i].span, name: aname })))
+      result = .append(.Error(.CircularAlias(.{ span: env.types[i].span, name: aname })))
     }
   }
   result

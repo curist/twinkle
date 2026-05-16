@@ -33,7 +33,7 @@ pub fn emit_if_op(
 
   if then_div and else_div {
     // Both diverge — no result
-    out = out.append(.If(.None, then_instrs, else_instrs))
+    out = .append(.If(.None, then_instrs, else_instrs))
     out.append(.Unreachable)
   } else {
     // Store result into local
@@ -80,7 +80,7 @@ pub fn emit_loop_op(body: PreparedExpr, result_idx: Int, result_vt: ValType?, ct
   // Loop body is a nested sub-body — use fresh []
   body_instrs := fns.emit_expr(body, .Void, loop_ctx, [])
   // Implicit continue at end of loop body
-  body_instrs = body_instrs.append(.Br(cont_label))
+  body_instrs = .append(.Br(cont_label))
 
   loop_instr := Instr.Loop(cont_label, .None, body_instrs)
   block_instrs: Vector<Instr> = [loop_instr]
@@ -96,7 +96,7 @@ pub fn append_result_store(body: Vector<Instr>, result_idx: Int, result_mono: Mo
   case result_mono {
     .Void => {
       out := body.append(.I32Const(0))
-      out = out.append(.RefI31)
+      out = .append(.RefI31)
       out.append(.LocalSet(result_idx))
     },
     .Never => body,

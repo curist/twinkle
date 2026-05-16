@@ -138,7 +138,7 @@ pub fn plan_wasm_types_impl(
           .None => error("resolve_module_global_mono: no init function has slot for module global L${k}"),
         }
         if !reg.module_globals.has(k) {
-          reg.module_globals_order = reg.module_globals_order.append(k)
+          reg.module_globals_order = .append(k)
         }
         reg.module_globals[k] = ModuleGlobalEntry.{
           sym: "global_local_${k}",
@@ -242,7 +242,7 @@ fn ensure_boundary_imports(reg: WasmTypeRegistry) WasmTypeRegistry {
       if existing.as_sym == imp.as_sym { already = true }
     }
     if !already {
-      reg.runtime_imports = reg.runtime_imports.append(imp)
+      reg.runtime_imports = .append(imp)
     }
   }
   reg
@@ -400,7 +400,7 @@ fn register_layout_type_def(reg: WasmTypeRegistry, layout: WasmLayout) WasmTypeR
           fields: Vector<FieldDef> = [.{ name: .Some("tag"), mutable: false, ty: .I32 }]
           for v in sum.variants {
             for pt,i in v.payload_types {
-              fields = fields.append(.{ name: .Some("${v.name}_${i}"), mutable: false, ty: pt })
+              fields = .append(.{ name: .Some("${v.name}_${i}"), mutable: false, ty: pt })
             }
           }
           td := TypeDef.Struct(sum.sym, fields, .None, false)
@@ -522,7 +522,7 @@ fn register_string(reg: WasmTypeRegistry, s: String) WasmTypeRegistry {
         byte_len: byte_len,
       }
       reg.string_pool[s] = entry
-      reg.string_pool_order = reg.string_pool_order.append(s)
+      reg.string_pool_order = .append(s)
       reg.string_pool_next_offset = reg.string_pool_next_offset + byte_len
       reg
     },
@@ -546,7 +546,7 @@ fn register_runtime_import(reg: WasmTypeRegistry, entry: BuiltinEntry, info: Run
     params: entry.abi.param_types,
     results: entry.abi.result_types,
   }
-  reg.runtime_imports = reg.runtime_imports.append(imp)
+  reg.runtime_imports = .append(imp)
   reg
 }
 
@@ -583,7 +583,7 @@ fn topo_sort_type_defs(reg: WasmTypeRegistry) WasmTypeRegistry {
           }
           if ready {
             emitted[name] = true
-            ordered_names = ordered_names.append(name)
+            ordered_names = .append(name)
             remaining = remaining - 1
             progress = true
           }
@@ -599,7 +599,7 @@ fn topo_sort_type_defs(reg: WasmTypeRegistry) WasmTypeRegistry {
           .Some(_) => {},
           .None => {
             emitted[name] = true
-            ordered_names = ordered_names.append(name)
+            ordered_names = .append(name)
             remaining = remaining - 1
           }
         }
@@ -615,7 +615,7 @@ fn topo_sort_type_defs(reg: WasmTypeRegistry) WasmTypeRegistry {
       .None => error("topo_sort_type_defs: missing typedef ${name}"),
     }
     new_index[name] = i
-    new_defs = new_defs.append(td)
+    new_defs = .append(td)
   }
 
   .{
@@ -650,7 +650,7 @@ fn type_def_deps(td: TypeDef) Vector<String> {
   case td {
     .Struct(_, fields, supertype, _) => {
       case supertype {
-        .Some(name) => deps = deps.append(name),
+        .Some(name) => deps = .append(name),
         .None => {},
       }
       for field in fields {
@@ -687,7 +687,7 @@ fn append_unique(base: Vector<String>, extra: Vector<String>) Vector<String> {
       if existing == name { seen = true }
     }
     if !seen {
-      out = out.append(name)
+      out = .append(name)
     }
   }
   out

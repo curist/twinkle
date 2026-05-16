@@ -81,7 +81,7 @@ pub fn emit_record_update(base: PreparedAtom, fid: FieldId, value: PreparedAtom,
     buf = fns.emit_atom(base, ctx, buf)      // struct ref for StructSet
     buf = fns.emit_atom(value, ctx, buf)    // new field value
     buf = emit_coerce_stack(fns.atom_val_type(value, ctx), field_vt, fns.atom_mono(value, ctx), ctx, buf)
-    buf = buf.append(.StructSet(rec.sym, field_idx))
+    buf = .append(.StructSet(rec.sym, field_idx))
     // Return the mutated struct
     fns.emit_atom(base, ctx, buf)
   } else {
@@ -92,7 +92,7 @@ pub fn emit_record_update(base: PreparedAtom, fid: FieldId, value: PreparedAtom,
         buf = emit_coerce_stack(fns.atom_val_type(value, ctx), fl.val_type, fns.atom_mono(value, ctx), ctx, buf)
       } else {
         buf = fns.emit_atom(base, ctx, buf)
-        buf = buf.append(.StructGet(rec.sym, i))
+        buf = .append(.StructGet(rec.sym, i))
       }
     }
     buf.append(.StructNew(rec.sym))

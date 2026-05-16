@@ -59,7 +59,7 @@ pub fn assign_repr_for_module(
   out: Vector<PreparedFunc> = []
   for pf in funcs {
     result := assign_repr_for_func(pf, env, builder_new, builder_from, cache)
-    out = out.append(result.func)
+    out = .append(result.func)
     cache = result.cache
   }
   out

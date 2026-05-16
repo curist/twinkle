@@ -31,7 +31,7 @@ pub fn compute_reachable(functions: Vector<FunctionDef>, init_id: FuncId?, entry
   // Seed with init function
   case init_id {
     .Some(id) => {
-      queue = queue.append(id.id)
+      queue = .append(id.id)
       reachable[id.id] = true
     },
     .None => {},
@@ -41,7 +41,7 @@ pub fn compute_reachable(functions: Vector<FunctionDef>, init_id: FuncId?, entry
   for fid in entry_func_ids {
     if !reachable.has(fid) {
       reachable[fid] = true
-      queue = queue.append(fid)
+      queue = .append(fid)
     }
   }
 

@@ -23,7 +23,7 @@ pub fn run_lsp_command(_parsed: ParseResult) {
       break
     }
     if chunk.len() > 0 {
-      buffer = buffer.concat(chunk)
+      buffer = .concat(chunk)
 
       for true {
         decoded := case framing.try_decode_frame_bytes(buffer) {

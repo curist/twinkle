@@ -245,8 +245,8 @@ pub fn link(modules: Vector<WasmModule>, entry: String?) Result<LinkedModule, Ve
       }
     }
 
-    all_func_renames = all_func_renames.append(func_renames)
-    all_type_renames = all_type_renames.append(type_renames)
+    all_func_renames = .append(func_renames)
+    all_type_renames = .append(type_renames)
   }
 
   // Phase 3: Resolve inter-module imports
@@ -268,7 +268,7 @@ pub fn link(modules: Vector<WasmModule>, entry: String?) Result<LinkedModule, Ve
         },
       }
     }
-    all_import_redirects = all_import_redirects.append(redirects)
+    all_import_redirects = .append(redirects)
   }
 
   if errors.len() > 0 {
@@ -307,12 +307,12 @@ pub fn link(modules: Vector<WasmModule>, entry: String?) Result<LinkedModule, Ve
     }
 
     for td in m.types {
-      out_types = out_types.append(rewrite_type_def(type_renames, td))
+      out_types = .append(rewrite_type_def(type_renames, td))
     }
 
     for imp in m.imports {
       if !import_redirects.has(imp.as_sym) and !import_redirects.has(qualify(m.namespace, imp.as_sym)) {
-        out_imports = out_imports.append(ImportDef.{
+        out_imports = .append(ImportDef.{
           module: imp.module,
           name: imp.name,
           as_sym: qualify(m.namespace, imp.as_sym),
@@ -323,7 +323,7 @@ pub fn link(modules: Vector<WasmModule>, entry: String?) Result<LinkedModule, Ve
     }
 
     for f in m.funcs {
-      out_funcs = out_funcs.append(FuncDef.{
+      out_funcs = .append(FuncDef.{
         name: rename(combined, f.name),
         params: rewrite_val_types(type_renames, f.params),
         results: rewrite_val_types(type_renames, f.results),
@@ -333,7 +333,7 @@ pub fn link(modules: Vector<WasmModule>, entry: String?) Result<LinkedModule, Ve
     }
 
     for g in m.globals {
-      out_globals = out_globals.append(GlobalDef.{
+      out_globals = .append(GlobalDef.{
         name: rename(combined, g.name),
         mutable: g.mutable,
         ty: rewrite_val_type(type_renames, g.ty),
@@ -342,7 +342,7 @@ pub fn link(modules: Vector<WasmModule>, entry: String?) Result<LinkedModule, Ve
     }
 
     for t in m.tables {
-      out_tables = out_tables.append(TableDef.{
+      out_tables = .append(TableDef.{
         name: qualify(m.namespace, t.name),
         elem_type: rewrite_val_type(type_renames, t.elem_type),
         min: t.min,
@@ -351,7 +351,7 @@ pub fn link(modules: Vector<WasmModule>, entry: String?) Result<LinkedModule, Ve
     }
 
     for e in m.elems {
-      out_elems = out_elems.append(ElemDef.{
+      out_elems = .append(ElemDef.{
         table: qualify(m.namespace, e.table),
         offset: rewrite_instrs(combined, type_renames, e.offset),
         func_syms: collect sym in e.func_syms { rename(combined, sym) },
@@ -361,7 +361,7 @@ pub fn link(modules: Vector<WasmModule>, entry: String?) Result<LinkedModule, Ve
     // Exports
     if retain_final_exports(m.namespace) {
       for exp in m.exports {
-        out_exports = out_exports.append(ExportDef.{
+        out_exports = .append(ExportDef.{
           wasm_name: exp.wasm_name,
           func_sym: rename(combined, exp.func_sym),
         })
@@ -370,7 +370,7 @@ pub fn link(modules: Vector<WasmModule>, entry: String?) Result<LinkedModule, Ve
 
     // Data segments
     for d in m.data {
-      out_data = out_data.append(DataSegment.{
+      out_data = .append(DataSegment.{
         name: rename(combined, d.name),
         offset: rewrite_instrs(combined, type_renames, d.offset),
         bytes: d.bytes,
@@ -379,7 +379,7 @@ pub fn link(modules: Vector<WasmModule>, entry: String?) Result<LinkedModule, Ve
 
     // Collect start functions
     case m.start {
-      .Some(s) => { start_funcs = start_funcs.append(rename(combined, s)) },
+      .Some(s) => { start_funcs = .append(rename(combined, s)) },
       .None => {},
     }
   }
@@ -394,7 +394,7 @@ pub fn link(modules: Vector<WasmModule>, entry: String?) Result<LinkedModule, Ve
   // Collect all call targets: start funcs + entry
   init_calls: Vector<String> = start_funcs
   case entry {
-    .Some(e) => { init_calls = init_calls.append(e) },
+    .Some(e) => { init_calls = .append(e) },
     .None => {},
   }
 
@@ -402,21 +402,21 @@ pub fn link(modules: Vector<WasmModule>, entry: String?) Result<LinkedModule, Ve
     // no-op
   } else if init_calls.len() == 1 and case entry { .None => true, _ => false } {
     // Single start, no entry → export it directly as __twinkle_start
-    out_exports = out_exports.append(ExportDef.{
+    out_exports = .append(ExportDef.{
       wasm_name: "__twinkle_start",
       func_sym: init_calls[0],
     })
   } else {
     // Multiple starts or entry specified → synthesize __linked_init
     init_body: Vector<Instr> = collect sym in init_calls { Instr.Call(sym) }
-    out_funcs = out_funcs.append(FuncDef.{
+    out_funcs = .append(FuncDef.{
       name: "__linked_init",
       params: [],
       results: [],
       locals: [],
       body: init_body,
     })
-    out_exports = out_exports.append(ExportDef.{
+    out_exports = .append(ExportDef.{
       wasm_name: "__twinkle_start",
       func_sym: "__linked_init",
     })

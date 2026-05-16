@@ -393,19 +393,19 @@ pub fn render_core_module(module: CoreModule) String {
   ]
   case module.init_func_id {
     .Some(init_id) => {
-      lines = lines.append("// init = FuncId(${init_id.id})")
+      lines = .append("// init = FuncId(${init_id.id})")
     },
     .None => {},
   }
-  lines = lines.append("")
+  lines = .append("")
 
   for func in module.functions {
     params := param_strings(module.type_env, func.params)
-    lines = lines.append("fn ${func.name} [FuncId(${func.func_id.id})] params=[${params.join(", ")}]")
-    lines = lines.append("  return_ty: ${mono(module.type_env, func.return_ty)}")
-    lines = lines.append("  body:")
+    lines = .append("fn ${func.name} [FuncId(${func.func_id.id})] params=[${params.join(", ")}]")
+    lines = .append("  return_ty: ${mono(module.type_env, func.return_ty)}")
+    lines = .append("  body:")
     lines = render_core_expr(lines, module.type_env, func.body, 4)
-    lines = lines.append("")
+    lines = .append("")
   }
 
   join_lines(lines)
@@ -418,11 +418,11 @@ pub fn render_anf_module(env: ResolvedEnv, module: AnfModule) String {
   ]
   case module.init_func_id {
     .Some(init_id) => {
-      lines = lines.append("// init = FuncId(${init_id.id})")
+      lines = .append("// init = FuncId(${init_id.id})")
     },
     .None => {},
   }
-  lines = lines.append("")
+  lines = .append("")
 
   for func in module.functions {
     lines = render_anf_function(lines, env, func)

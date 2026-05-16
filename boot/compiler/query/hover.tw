@@ -209,9 +209,9 @@ fn sig_to_string(env: ResolvedEnv, sig: FunctionSig) String {
   for i in 0..sig.params.len() {
     ty_text := ty_to_string_env(env, sig.params[i])
     if i < sig.param_names.len() and sig.param_names[i] != "" {
-      parts = parts.append("${sig.param_names[i]}: ${ty_text}")
+      parts = .append("${sig.param_names[i]}: ${ty_text}")
     } else {
-      parts = parts.append(ty_text)
+      parts = .append(ty_text)
     }
   }
   ret := case sig.ret {

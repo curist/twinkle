@@ -49,7 +49,7 @@ pub fn emit_array_literal(items: Vector<PreparedAtom>, result_mono: MonoType, ct
     out = fns.emit_atom(item, ctx, out)
     out = emit_coerce_stack(fns.atom_val_type(item, ctx), elem_vt, fns.atom_mono(item, ctx), ctx, out)
     out = emit_box_to_anyref(elem_mono, ctx.env, out)
-    out = out.append(.Call("rt_arr__push"))
+    out = .append(.Call("rt_arr__push"))
   }
   out
 }
@@ -64,7 +64,7 @@ pub fn emit_index_op(base: PreparedAtom, index: PreparedAtom, kind: IndexKind, r
       out := fns.emit_atom(index, ctx, buf).append(.I64Const(0)).append(.I64GeS)
       out = fns.emit_atom(index, ctx, out)
       out = fns.emit_atom(base, ctx, out)
-      out = out.append(.RefAsNonNull)
+      out = .append(.RefAsNonNull)
         .append(.StructGet("rt_types__PVec", 0))  // vec.len
         .append(.I64ExtendI32U)
         .append(.I64LtS)
@@ -74,7 +74,7 @@ pub fn emit_index_op(base: PreparedAtom, index: PreparedAtom, kind: IndexKind, r
       // Get element
       out = fns.emit_atom(base, ctx, out)
       out = fns.emit_checked_i32_narrow(index, ctx, out)
-      out = out.append(.Call("rt_arr__get"))
+      out = .append(.Call("rt_arr__get"))
       // Erased container egress: coerce anyref element to the expected typed slot.
       case result_vt {
         .Some(expected_vt) => {
@@ -109,14 +109,14 @@ pub fn emit_index_op(base: PreparedAtom, index: PreparedAtom, kind: IndexKind, r
           if some_variant.payload_types.len() > 0 {
             none_instrs = emit_default_value(some_variant.payload_types[0], none_instrs)
           }
-          none_instrs = none_instrs.append(.StructNew(sum_layout.sym))
+          none_instrs = .append(.StructNew(sum_layout.sym))
 
           some_instrs: Vector<Instr> = [.I32Const(1)]
-          some_instrs = some_instrs.concat(fns.emit_atom(base, ctx, []))
-          some_instrs = some_instrs.concat(fns.emit_erased_container_ingress(index, ctx, []))
-          some_instrs = some_instrs.append(.Call("rt_dict__get"))
+          some_instrs = .concat(fns.emit_atom(base, ctx, []))
+          some_instrs = .concat(fns.emit_erased_container_ingress(index, ctx, []))
+          some_instrs = .append(.Call("rt_dict__get"))
           some_instrs = emit_erased_container_egress(value_mono, ctx.env, some_instrs)
-          some_instrs = some_instrs.append(.StructNew(sum_layout.sym))
+          some_instrs = .append(.StructNew(sum_layout.sym))
 
           out := fns.emit_atom(base, ctx, buf)
           out = fns.emit_erased_container_ingress(index, ctx, out)
@@ -130,10 +130,10 @@ pub fn emit_index_op(base: PreparedAtom, index: PreparedAtom, kind: IndexKind, r
       // String indexing: bounds check + array.get_u → byte (i32)
       // Bounds check
       out := fns.emit_atom(index, ctx, buf)
-      out= out.append(.I64Const(0)).append(.I64GeS)
+      out= .append(.I64Const(0)).append(.I64GeS)
       out= fns.emit_atom(index, ctx, out)
       out= fns.emit_atom(base, ctx, out)
-      out= out.append(.ArrayLen).append(.I64ExtendI32U).append(.I64LtS).append(.I32And)
+      out= .append(.ArrayLen).append(.I64ExtendI32U).append(.I64LtS).append(.I32And)
         .append(.I32Eqz)
         .append(.If(.None, [.Unreachable], []))
       // Get byte

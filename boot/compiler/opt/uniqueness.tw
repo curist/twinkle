@@ -176,10 +176,10 @@ fn with_known_empty_local(st: RwState, local: LocalId) RwState {
 }
 
 fn without_local_ownership(st: RwState, local: LocalId) RwState {
-  st.ownership = st.ownership.remove(local.id)
-  st.known_empty = st.known_empty.remove(local.id)
-  st.refreshed = st.refreshed.remove(local.id)
-  st.fresh_records = st.fresh_records.remove(local.id)
+  st.ownership = .remove(local.id)
+  st.known_empty = .remove(local.id)
+  st.refreshed = .remove(local.id)
+  st.fresh_records = .remove(local.id)
   st
 }
 
@@ -198,18 +198,18 @@ fn transfer_owned_local(st: RwState, source: LocalId, target: LocalId) RwState {
 
   source_was_fresh_record := set_has(st.fresh_records, source.id)
   st = without_local_ownership(st, target)
-  st.ownership = st.ownership.remove(source.id)
+  st.ownership = .remove(source.id)
   st.ownership[target.id] = moved
-  st.refreshed = st.refreshed.remove(source.id)
+  st.refreshed = .remove(source.id)
   if set_has(st.tainted, target.id) {
     st.refreshed[target.id] = true
   }
-  st.fresh_records = st.fresh_records.remove(source.id)
+  st.fresh_records = .remove(source.id)
   if source_was_fresh_record {
     st.fresh_records[target.id] = true
   }
   if set_has(st.known_empty, source.id) {
-    st.known_empty = st.known_empty.remove(source.id)
+    st.known_empty = .remove(source.id)
     st.known_empty[target.id] = true
   }
   st
@@ -220,8 +220,8 @@ fn with_consumed_update_result(st: RwState, local: LocalId) RwState {
   if set_has(st.tainted, local.id) {
     st.refreshed[local.id] = true
   }
-  st.known_empty = st.known_empty.remove(local.id)
-  st.fresh_records = st.fresh_records.remove(local.id)
+  st.known_empty = .remove(local.id)
+  st.fresh_records = .remove(local.id)
   st
 }
 
@@ -292,7 +292,7 @@ fn intersect_bool_sets(dst: Dict<Int, Bool>, other: Dict<Int, Bool>) Dict<Int, B
   keys := dst.keys()
   for k in keys {
     if !set_has(other, k) {
-      dst = dst.remove(k)
+      dst = .remove(k)
     }
   }
   dst
@@ -306,10 +306,10 @@ fn intersect_ownership(dst: Dict<Int, Ownership>, other: Dict<Int, Ownership>) D
         case other[k] {
           .Some(rhs) => {
             if lhs != rhs {
-              dst = dst.remove(k)
+              dst = .remove(k)
             }
           },
-          .None => { dst = dst.remove(k) },
+          .None => { dst = .remove(k) },
         }
       },
       .None => {},
@@ -648,7 +648,7 @@ fn rewrite_op(op: AnfOp, st: RwState, consumed_params: Dict<Int, Bool>) OpRewrit
       acc := st
       new_arms := collect arm in arms {
         arm_r := rewrite_expr(arm.body, acc, consumed_params)
-        acc = acc.with_metadata_from(arm_r.st)
+        acc = .with_metadata_from(arm_r.st)
         AnfMatchArm.{ pattern: arm.pattern, body: arm_r.expr }
       }
       .{ op: .AMatch(scrutinee, new_arms), st: acc }

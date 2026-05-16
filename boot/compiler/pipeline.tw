@@ -120,7 +120,7 @@ fn format_analysis_diags_inline(env: ResolvedEnv, src: String, diags: Vector<ana
   if diags.len() == 0 { return "compilation failed" }
   parts: Vector<String> = []
   for d in diags {
-    parts = parts.append(format_analysis_diag_inline(env, src, d))
+    parts = .append(format_analysis_diag_inline(env, src, d))
   }
   parts.join("\n")
 }
@@ -143,7 +143,7 @@ fn format_diags_inline(env: ResolvedEnv, src: String, diags: Vector<diag.DiagKin
   for d in diags {
     ctx := diag_render.RenderCtx.{ registry: reg, env: .Some(env), module: .None, config, type_names: .None }
     rep := diag_render.to_report(d, ctx)
-    parts = parts.append(render.render(rep, reg, config))
+    parts = .append(render.render(rep, reg, config))
   }
   parts.join("\n\n")
 }

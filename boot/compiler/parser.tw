@@ -154,7 +154,7 @@ fn recover_to_next_item(c: Cursor) Cursor {
       _ => {},
     }
 
-    cur = cur.advance()
+    cur = .advance()
   }
 
   cur.with_pos(cur.tokens.len() - 1)
@@ -200,7 +200,7 @@ fn parse_expr_in(c: Cursor, context: String) ExprParse {
     .Some(kw) => {
       diagnostics: Vector<DiagKind> = [stmt_in_expr_diag(c.span(), kw, .Some(context))]
       kw_span := c.span()
-      c = c.advance()
+      c = .advance()
       last_span := kw_span
       // Skip the rest of the statement on the same line to suppress cascade errors.
       // Stop at line boundaries or structural delimiters (comma, brace, EOF).
@@ -208,7 +208,7 @@ fn parse_expr_in(c: Cursor, context: String) ExprParse {
         k := c.kind()
         if k == .RBrace or k == .Comma or k == .Eof { break }
         last_span = c.span()
-        c = c.advance()
+        c = .advance()
       }
       err := error_expr(kw_span.merge(last_span))
       .{ value: err, cursor: c, diagnostics }
@@ -225,13 +225,13 @@ fn parse_type_params(c: Cursor) TypeParamsParse {
     return .{ value: params, cursor: c, diagnostics: diagnostics_out }
   }
 
-  c = c.advance()
+  c = .advance()
   expect_ident := true
 
   for c.pos < c.tokens.len() {
     k := c.kind()
     if k == .Gt {
-      c = c.advance()
+      c = .advance()
       break
     }
 
@@ -239,58 +239,58 @@ fn parse_type_params(c: Cursor) TypeParamsParse {
       if k == .Ident {
         param_span := c.span()
         param_name := c.text()
-        c = c.advance()
+        c = .advance()
 
         // Optional bound: `: ContractName`
         bounds: Vector<TypePath> = []
         if c.kind() == .Colon {
-          c = c.advance()
+          c = .advance()
           if c.kind() == .Ident {
             bound_span := c.span()
             bound_name := c.text()
-            c = c.advance()
+            c = .advance()
             bounds = [.{ segments: [bound_name], span: bound_span }]
           } else {
-            diagnostics_out = diagnostics_out.append(diag.error(
+            diagnostics_out = .append(diag.error(
               c.span(),
               "expected contract name after ':'",
             ))
           }
           // Multiple bounds are not yet supported
-          if c.kind() == .Plus {
-            diagnostics_out = diagnostics_out.append(diag.error(
+          for c.kind() == .Plus {
+            diagnostics_out = .append(diag.error(
               c.span(),
               "multiple bounds are not supported yet",
             ))
-            c = c.advance()
+            c = .advance()
             if c.kind() == .Ident {
-              c = c.advance()
+              c = .advance()
             }
           }
         }
 
-        params = params.append(.{ name: param_name, bounds, span: param_span })
+        params = .append(.{ name: param_name, bounds, span: param_span })
         expect_ident = false
       } else {
-        diagnostics_out = diagnostics_out.append(diag.error(
+        diagnostics_out = .append(diag.error(
           c.span(),
           "expected type parameter name",
         ))
-        c = c.advance()
+        c = .advance()
       }
     } else {
       if k == .Comma {
-        c = c.advance()
+        c = .advance()
         expect_ident = true
       } else {
-        diagnostics_out = diagnostics_out.append(diag.error(
+        diagnostics_out = .append(diag.error(
           c.span(),
           "expected ',' or '>' in type parameter list",
         ))
         if c.kind() == .Eof {
           break
         }
-        c = c.advance()
+        c = .advance()
       }
     }
   }
@@ -312,12 +312,12 @@ fn parse_type_list_until(c: Cursor, end_kind: TokenKind) TypeListParse {
     }
 
     parsed_ty := parse_type_expr(c)
-    tys = tys.append(parsed_ty.value)
-    diagnostics_out = diagnostics_out.concat(parsed_ty.diagnostics)
+    tys = .append(parsed_ty.value)
+    diagnostics_out = .concat(parsed_ty.diagnostics)
     c = parsed_ty.cursor
 
     if c.kind() == .Comma {
-      c = c.advance()
+      c = .advance()
       if c.kind() == end_kind {
         break
       }
@@ -328,7 +328,7 @@ fn parse_type_list_until(c: Cursor, end_kind: TokenKind) TypeListParse {
       break
     }
 
-    diagnostics_out = diagnostics_out.append(diag.error(
+    diagnostics_out = .append(diag.error(
       c.span(),
       "expected ',' between types",
     ))
@@ -337,7 +337,7 @@ fn parse_type_list_until(c: Cursor, end_kind: TokenKind) TypeListParse {
       break
     }
 
-    c = c.advance()
+    c = .advance()
   }
 
   .{ value: tys, cursor: c, diagnostics: diagnostics_out }
@@ -353,7 +353,7 @@ fn parse_expr_list_ctx(c: Cursor, end_kind: TokenKind, error_msg: String, contex
 
   for c.pos < c.tokens.len() and c.kind() != end_kind {
     if c.kind() == .CursorHole {
-      c = c.advance()
+      c = .advance()
       break
     }
 
@@ -361,21 +361,21 @@ fn parse_expr_list_ctx(c: Cursor, end_kind: TokenKind, error_msg: String, contex
       .Some(ctx) => parse_expr_in(c, ctx),
       .None => parse_expr_bp(c, 0),
     }
-    exprs = exprs.append(parsed.value)
-    diagnostics_out = diagnostics_out.concat(parsed.diagnostics)
+    exprs = .append(parsed.value)
+    diagnostics_out = .concat(parsed.diagnostics)
     c = parsed.cursor
 
     if c.kind() == .Comma {
-      c = c.advance()
+      c = .advance()
     } else if c.kind() != end_kind {
-      diagnostics_out = diagnostics_out.append(diag.error(
+      diagnostics_out = .append(diag.error(
         c.span(),
         error_msg,
       ))
       if c.kind() == .Eof {
         break
       }
-      c = c.advance()
+      c = .advance()
     }
   }
 
@@ -388,21 +388,21 @@ fn parse_pattern_list(c: Cursor, end_kind: TokenKind, error_msg: String) Pattern
 
   for c.pos < c.tokens.len() and c.kind() != end_kind {
     parsed := parse_pattern(c)
-    patterns = patterns.append(parsed.value)
-    diagnostics_out = diagnostics_out.concat(parsed.diagnostics)
+    patterns = .append(parsed.value)
+    diagnostics_out = .concat(parsed.diagnostics)
     c = parsed.cursor
 
     if c.kind() == .Comma {
-      c = c.advance()
+      c = .advance()
     } else if c.kind() != end_kind {
-      diagnostics_out = diagnostics_out.append(diag.error(
+      diagnostics_out = .append(diag.error(
         c.span(),
         error_msg,
       ))
       if c.kind() == .Eof {
         break
       }
-      c = c.advance()
+      c = .advance()
     }
   }
 
@@ -420,14 +420,14 @@ fn parse_param_list(c: Cursor, end_kind: TokenKind, error_msg: String) ParamList
     }
 
     parsed := parse_param(c)
-    params = params.append(parsed.value)
-    diagnostics_out = diagnostics_out.concat(parsed.diagnostics)
+    params = .append(parsed.value)
+    diagnostics_out = .concat(parsed.diagnostics)
     c = parsed.cursor
 
     if c.kind() == .Comma {
-      c = c.advance()
+      c = .advance()
     } else if c.kind() != end_kind {
-      diagnostics_out = diagnostics_out.append(diag.error(
+      diagnostics_out = .append(diag.error(
         c.span(),
         error_msg,
       ))
@@ -438,7 +438,7 @@ fn parse_param_list(c: Cursor, end_kind: TokenKind, error_msg: String) ParamList
       if c.kind() == .LBrace and end_kind == .RParen {
         break
       }
-      c = c.advance()
+      c = .advance()
     }
   }
 
@@ -456,42 +456,42 @@ fn parse_type_record_fields(c: Cursor) RecordFieldsParse {
 
     field_start := c.pos
     if c.kind() != .Ident {
-      diagnostics_out = diagnostics_out.append(diag.error(
+      diagnostics_out = .append(diag.error(
         c.span(),
         "expected record field name",
       ))
       if c.kind() == .Eof {
         break
       }
-      c = c.advance()
+      c = .advance()
       continue
     }
 
     field_name := c.text()
-    c = c.advance()
+    c = .advance()
 
     if c.kind() != .Colon {
-      diagnostics_out = diagnostics_out.append(diag.error(
+      diagnostics_out = .append(diag.error(
         c.span(),
         "expected ':' after record field name",
       ))
       if c.kind() == .Eof {
         break
       }
-      c = c.advance()
+      c = .advance()
       continue
     }
 
-    c = c.advance()
+    c = .advance()
     ty_parsed := parse_type_expr(c)
-    diagnostics_out = diagnostics_out.concat(ty_parsed.diagnostics)
+    diagnostics_out = .concat(ty_parsed.diagnostics)
     c = ty_parsed.cursor
 
     field_span := c.tokens[field_start].span.merge(ty_parsed.value.span)
-    fields = fields.append(RecordField.{ name: field_name, ty: ty_parsed.value, span: field_span })
+    fields = .append(RecordField.{ name: field_name, ty: ty_parsed.value, span: field_span })
 
     if c.kind() == .Comma {
-      c = c.advance()
+      c = .advance()
       continue
     }
 
@@ -499,7 +499,7 @@ fn parse_type_record_fields(c: Cursor) RecordFieldsParse {
       break
     }
 
-    diagnostics_out = diagnostics_out.append(diag.error(
+    diagnostics_out = .append(diag.error(
       c.span(),
       "expected ',' or '}' in record type",
     ))
@@ -508,7 +508,7 @@ fn parse_type_record_fields(c: Cursor) RecordFieldsParse {
       break
     }
 
-    c = c.advance()
+    c = .advance()
   }
 
   .{ value: fields, cursor: c, diagnostics: diagnostics_out }
@@ -525,32 +525,32 @@ fn parse_sum_variants(c: Cursor) SumVariantsParse {
 
     variant_start := c.pos
     if c.kind() != .Ident {
-      diagnostics_out = diagnostics_out.append(diag.error(
+      diagnostics_out = .append(diag.error(
         c.span(),
         "expected variant name",
       ))
       if c.kind() == .Eof {
         break
       }
-      c = c.advance()
+      c = .advance()
       continue
     }
 
     name := c.text()
-    c = c.advance()
+    c = .advance()
     fields: Vector<TypeExpr> = []
 
     if c.kind() == .LParen {
-      c = c.advance()
+      c = .advance()
       parsed_fields := parse_type_list_until(c, TokenKind.RParen)
       fields = parsed_fields.value
-      diagnostics_out = diagnostics_out.concat(parsed_fields.diagnostics)
+      diagnostics_out = .concat(parsed_fields.diagnostics)
       c = parsed_fields.cursor
 
       if c.kind() == .RParen {
-        c = c.advance()
+        c = .advance()
       } else {
-        diagnostics_out = diagnostics_out.append(diag.error(
+        diagnostics_out = .append(diag.error(
           c.span(),
           "expected ')' after variant payload list",
         ))
@@ -558,14 +558,14 @@ fn parse_sum_variants(c: Cursor) SumVariantsParse {
     }
 
     variant_end_span := c.at(-1).span()
-    variants = variants.append(VariantDecl.{
+    variants = .append(VariantDecl.{
       name,
       fields,
       span: c.tokens[variant_start].span.merge(variant_end_span),
     })
 
     if c.kind() == .Comma {
-      c = c.advance()
+      c = .advance()
       continue
     }
 
@@ -573,7 +573,7 @@ fn parse_sum_variants(c: Cursor) SumVariantsParse {
       break
     }
 
-    diagnostics_out = diagnostics_out.append(diag.error(
+    diagnostics_out = .append(diag.error(
       c.span(),
       "expected ',' or '}' in sum type",
     ))
@@ -581,7 +581,7 @@ fn parse_sum_variants(c: Cursor) SumVariantsParse {
     if c.kind() == .Eof {
       break
     }
-    c = c.advance()
+    c = .advance()
   }
 
   .{ value: variants, cursor: c, diagnostics: diagnostics_out }
@@ -616,31 +616,31 @@ fn parse_type_expr_base(c: Cursor) TypeParse {
 
   if k == .Fn {
     fn_start_span := c.span()
-    c = c.advance()
+    c = .advance()
     if c.kind() != .LParen {
-      diagnostics_out = diagnostics_out.append(diag.error(
+      diagnostics_out = .append(diag.error(
         c.span(),
         "expected '(' in function type",
       ))
       return .{ value: error_type(fn_start_span), cursor: c, diagnostics: diagnostics_out }
     }
 
-    c = c.advance()
+    c = .advance()
     params_parsed := parse_type_list_until(c, TokenKind.RParen)
-    diagnostics_out = diagnostics_out.concat(params_parsed.diagnostics)
+    diagnostics_out = .concat(params_parsed.diagnostics)
     c = params_parsed.cursor
 
     if c.kind() == .RParen {
-      c = c.advance()
+      c = .advance()
     } else {
-      diagnostics_out = diagnostics_out.append(diag.error(
+      diagnostics_out = .append(diag.error(
         c.span(),
         "expected ')' after function type parameter list",
       ))
     }
 
     ret_parsed := parse_type_expr(c)
-    diagnostics_out = diagnostics_out.concat(ret_parsed.diagnostics)
+    diagnostics_out = .concat(ret_parsed.diagnostics)
     c = ret_parsed.cursor
 
     expr_span := fn_start_span.merge(ret_parsed.value.span)
@@ -654,14 +654,14 @@ fn parse_type_expr_base(c: Cursor) TypeParse {
 
   if k == .Dot and c.at(1).kind() == .LBrace {
     start_span := c.span()
-    c = c.at(2)
+    c = .at(2)
     fields_parsed := parse_type_record_fields(c)
-    diagnostics_out = diagnostics_out.concat(fields_parsed.diagnostics)
+    diagnostics_out = .concat(fields_parsed.diagnostics)
     c = fields_parsed.cursor
 
     if c.kind() == .RBrace {
       end_span := c.span()
-      c = c.advance()
+      c = .advance()
       ty := TypeExpr.{
         kind: .Record(fields_parsed.value),
         span: start_span.merge(end_span),
@@ -669,14 +669,14 @@ fn parse_type_expr_base(c: Cursor) TypeParse {
 
       if c.kind() == .Question {
         q_span := c.span()
-        c = c.advance()
+        c = .advance()
         ty = TypeExpr.{ kind: .Optional(ty), span: ty.span.merge(q_span) }
       }
 
       return .{ value: ty, cursor: c, diagnostics: diagnostics_out }
     }
 
-    diagnostics_out = diagnostics_out.append(diag.error(
+    diagnostics_out = .append(diag.error(
       c.span(),
       "expected '}' to close record type",
     ))
@@ -686,14 +686,14 @@ fn parse_type_expr_base(c: Cursor) TypeParse {
 
   if k == .LBrace {
     start_span := c.span()
-    c = c.advance()
+    c = .advance()
     variants_parsed := parse_sum_variants(c)
-    diagnostics_out = diagnostics_out.concat(variants_parsed.diagnostics)
+    diagnostics_out = .concat(variants_parsed.diagnostics)
     c = variants_parsed.cursor
 
     if c.kind() == .RBrace {
       end_span := c.span()
-      c = c.advance()
+      c = .advance()
       ty := TypeExpr.{
         kind: .Sum(variants_parsed.value),
         span: start_span.merge(end_span),
@@ -701,14 +701,14 @@ fn parse_type_expr_base(c: Cursor) TypeParse {
 
       if c.kind() == .Question {
         q_span := c.span()
-        c = c.advance()
+        c = .advance()
         ty = TypeExpr.{ kind: .Optional(ty), span: ty.span.merge(q_span) }
       }
 
       return .{ value: ty, cursor: c, diagnostics: diagnostics_out }
     }
 
-    diagnostics_out = diagnostics_out.append(diag.error(
+    diagnostics_out = .append(diag.error(
       c.span(),
       "expected '}' to close sum type",
     ))
@@ -717,7 +717,7 @@ fn parse_type_expr_base(c: Cursor) TypeParse {
   }
 
   if k != .Ident {
-    diagnostics_out = diagnostics_out.append(diag.error(
+    diagnostics_out = .append(diag.error(
       c.span(),
       "expected type",
     ))
@@ -726,12 +726,12 @@ fn parse_type_expr_base(c: Cursor) TypeParse {
 
   path_start := c.pos
   segments: Vector<String> = [c.text()]
-  c = c.advance()
+  c = .advance()
 
   for c.kind() == .Dot and c.at(1).kind() == .Ident {
-    c = c.advance()
-    segments = segments.append(c.text())
-    c = c.advance()
+    c = .advance()
+    segments = .append(c.text())
+    c = .advance()
   }
 
   path_span := c.span_from(path_start)
@@ -739,16 +739,16 @@ fn parse_type_expr_base(c: Cursor) TypeParse {
 
   type_args: Vector<TypeExpr> = []
   if c.kind() == .Lt {
-    c = c.advance()
+    c = .advance()
     args_parsed := parse_type_list_until(c, TokenKind.Gt)
     type_args = args_parsed.value
-    diagnostics_out = diagnostics_out.concat(args_parsed.diagnostics)
+    diagnostics_out = .concat(args_parsed.diagnostics)
     c = args_parsed.cursor
 
     if c.kind() == .Gt {
-      c = c.advance()
+      c = .advance()
     } else {
-      diagnostics_out = diagnostics_out.append(diag.error(
+      diagnostics_out = .append(diag.error(
         c.span(),
         "expected '>' after type argument list",
       ))
@@ -763,7 +763,7 @@ fn parse_type_expr_base(c: Cursor) TypeParse {
 
   if c.kind() == .Question {
     q_span := c.span()
-    c = c.advance()
+    c = .advance()
     ty = TypeExpr.{ kind: .Optional(ty), span: ty.span.merge(q_span) }
   }
 
@@ -775,7 +775,7 @@ fn parse_import_items(c: Cursor) ImportItemsParse {
   items: Vector<ImportItem> = []
 
   if c.kind() == .RBrace {
-    diagnostics_out = diagnostics_out.append(diag.error(
+    diagnostics_out = .append(diag.error(
       c.span(),
       "import destructuring list cannot be empty",
     ))
@@ -790,28 +790,28 @@ fn parse_import_items(c: Cursor) ImportItemsParse {
     item_start := c.pos
 
     if c.kind() != .Ident {
-      diagnostics_out = diagnostics_out.append(diag.error(
+      diagnostics_out = .append(diag.error(
         c.span(),
         "expected import item name",
       ))
       if c.kind() == .Eof {
         break
       }
-      c = c.advance()
+      c = .advance()
       continue
     }
 
     name := c.text()
-    c = c.advance()
+    c = .advance()
     alias: String? = .None
 
     if c.kind() == .As {
-      c = c.advance()
+      c = .advance()
       if c.kind() == .Ident {
         alias = .Some(c.text())
-        c = c.advance()
+        c = .advance()
       } else {
-        diagnostics_out = diagnostics_out.append(diag.error(
+        diagnostics_out = .append(diag.error(
           c.span(),
           "expected alias name after 'as'",
         ))
@@ -821,13 +821,13 @@ fn parse_import_items(c: Cursor) ImportItemsParse {
     item_span := c.span_from(item_start)
     is_type := is_upper_ascii_name(name)
     if is_type {
-      items = items.append(.Type(ImportTypeItem.{ name, alias, span: item_span }))
+      items = .append(.Type(ImportTypeItem.{ name, alias, span: item_span }))
     } else {
-      items = items.append(.Value(ImportValueItem.{ name, alias, span: item_span }))
+      items = .append(.Value(ImportValueItem.{ name, alias, span: item_span }))
     }
 
     if c.kind() == .Comma {
-      c = c.advance()
+      c = .advance()
       continue
     }
 
@@ -835,7 +835,7 @@ fn parse_import_items(c: Cursor) ImportItemsParse {
       break
     }
 
-    diagnostics_out = diagnostics_out.append(diag.error(
+    diagnostics_out = .append(diag.error(
       c.span(),
       "expected ',' or '}' in import destructuring list",
     ))
@@ -844,7 +844,7 @@ fn parse_import_items(c: Cursor) ImportItemsParse {
       break
     }
 
-    c = c.advance()
+    c = .advance()
   }
 
   .{ value: items, cursor: c, diagnostics: diagnostics_out }
@@ -854,28 +854,28 @@ fn parse_use(c: Cursor) ItemParse {
   diagnostics_out: Vector<DiagKind> = []
   start_pos := c.pos
   start_span := c.span()
-  c = c.advance()
+  c = .advance()
   is_stdlib := false
   is_relative := false
   path: Vector<String> = []
 
   if c.kind() == .At {
     is_stdlib = true
-    c = c.advance()
+    c = .advance()
   } else if c.kind() == .Dot {
     is_relative = true
-    c = c.advance()
+    c = .advance()
   }
 
   // Cursor hole where module name is expected: produce partial use with empty path
   if c.kind() == .CursorHole {
-    c = c.advance()
+    c = .advance()
     use_span := start_span.merge(c.span())
     return .{ value: .Use(.{ path: [], alias: .None, items: .None, is_stdlib, is_relative, span: use_span }), cursor: c, diagnostics: diagnostics_out }
   }
 
   if c.kind() != .Ident {
-    diagnostics_out = diagnostics_out.append(diag.error(
+    diagnostics_out = .append(diag.error(
       start_span,
       "expected module name after 'use'",
     ))
@@ -886,24 +886,24 @@ fn parse_use(c: Cursor) ItemParse {
     return .{ value: .ErrorItem(start_span), cursor: recovered, diagnostics: diagnostics_out }
   }
 
-  path = path.append(c.text())
-  c = c.advance()
+  path = .append(c.text())
+  c = .advance()
 
   for c.kind() == .Dot and c.at(1).kind() == .Ident {
-    c = c.advance()
-    path = path.append(c.text())
-    c = c.advance()
+    c = .advance()
+    path = .append(c.text())
+    c = .advance()
   }
 
   // Cursor hole after dot in use path: stop with partial path
   if c.kind() == .Dot and c.at(1).kind() == .CursorHole {
-    c = c.at(2)
+    c = .at(2)
     use_span := start_span.merge(c.span())
     return .{ value: .Use(.{ path, alias: .None, items: .None, is_stdlib, is_relative, span: use_span }), cursor: c, diagnostics: diagnostics_out }
   }
 
   if c.kind() == .Dot and c.at(1).kind() != .LBrace {
-    diagnostics_out = diagnostics_out.append(diag.error(
+    diagnostics_out = .append(diag.error(
       c.span(),
       "expected identifier after '.' in module path",
     ))
@@ -920,17 +920,17 @@ fn parse_use(c: Cursor) ItemParse {
   items: Vector<ImportItem>? = .None
   has_items := false
   if c.kind() == .Dot and c.at(1).kind() == .LBrace {
-    c = c.at(2)
+    c = .at(2)
     parsed_items := parse_import_items(c)
-    diagnostics_out = diagnostics_out.concat(parsed_items.diagnostics)
+    diagnostics_out = .concat(parsed_items.diagnostics)
     c = parsed_items.cursor
     items = .Some(parsed_items.value)
     has_items = true
 
     if c.kind() == .RBrace {
-      c = c.advance()
+      c = .advance()
     } else {
-      diagnostics_out = diagnostics_out.append(diag.error(
+      diagnostics_out = .append(diag.error(
         c.span(),
         "expected '}' to close import destructuring list",
       ))
@@ -939,22 +939,22 @@ fn parse_use(c: Cursor) ItemParse {
 
   alias: String? = .None
   if !has_items and c.kind() == .As {
-    c = c.advance()
+    c = .advance()
     if c.kind() == .Ident {
       alias = .Some(c.text())
-      c = c.advance()
+      c = .advance()
     } else {
-      diagnostics_out = diagnostics_out.append(diag.error(
+      diagnostics_out = .append(diag.error(
         c.span(),
         "expected module alias after 'as'",
       ))
     }
   } else if has_items and c.kind() == .As {
-    diagnostics_out = diagnostics_out.append(diag.error(
+    diagnostics_out = .append(diag.error(
       c.span(),
       "cannot combine import destructuring with module alias",
     ))
-    c = c.advance()
+    c = .advance()
   }
 
   use_span := c.span_from(start_pos)
@@ -974,7 +974,7 @@ fn parse_param(c: Cursor) ParamParse {
   diagnostics_out: Vector<DiagKind> = []
 
   if c.kind() != .Ident {
-    diagnostics_out = diagnostics_out.append(diag.error(
+    diagnostics_out = .append(diag.error(
       c.span(),
       "expected parameter name",
     ))
@@ -985,13 +985,13 @@ fn parse_param(c: Cursor) ParamParse {
   name := c.text()
   name_span := c.span()
   param_start := c.pos
-  c = c.advance()
+  c = .advance()
   ty: TypeExpr? = .None
 
   if c.kind() == .Colon {
-    c = c.advance()
+    c = .advance()
     parsed_ty := parse_type_expr(c)
-    diagnostics_out = diagnostics_out.concat(parsed_ty.diagnostics)
+    diagnostics_out = .concat(parsed_ty.diagnostics)
     c = parsed_ty.cursor
     ty = .Some(parsed_ty.value)
   }
@@ -1008,9 +1008,9 @@ fn parse_function(c: Cursor) ItemParse {
 
   if c.kind() == .Pub {
     is_pub = true
-    c = c.advance()
+    c = .advance()
     if c.kind() != .Fn {
-      diagnostics_out = diagnostics_out.append(diag.error(
+      diagnostics_out = .append(diag.error(
         start_span,
         "expected 'fn' after 'pub'",
       ))
@@ -1023,9 +1023,9 @@ fn parse_function(c: Cursor) ItemParse {
   }
 
   fn_span := c.span()
-  c = c.advance()
+  c = .advance()
   if c.kind() != .Ident {
-    diagnostics_out = diagnostics_out.append(diag.error(
+    diagnostics_out = .append(diag.error(
       fn_span,
       "expected function name after 'fn'",
     ))
@@ -1037,15 +1037,15 @@ fn parse_function(c: Cursor) ItemParse {
   }
 
   name := c.text()
-  c = c.advance()
+  c = .advance()
 
   parsed_type_params := parse_type_params(c)
   type_params := parsed_type_params.value
-  diagnostics_out = diagnostics_out.concat(parsed_type_params.diagnostics)
+  diagnostics_out = .concat(parsed_type_params.diagnostics)
   c = parsed_type_params.cursor
 
   if c.kind() != .LParen {
-    diagnostics_out = diagnostics_out.append(diag.error(
+    diagnostics_out = .append(diag.error(
       c.span(),
       "expected '(' after function name",
     ))
@@ -1056,16 +1056,16 @@ fn parse_function(c: Cursor) ItemParse {
     return .{ value: .ErrorItem(c.span_through(start_pos)), cursor: recovered, diagnostics: diagnostics_out }
   }
 
-  c = c.advance()
+  c = .advance()
   parsed_params := parse_param_list(c, TokenKind.RParen, "expected ',' or ')' in function parameter list")
   params := parsed_params.value
-  diagnostics_out = diagnostics_out.concat(parsed_params.diagnostics)
+  diagnostics_out = .concat(parsed_params.diagnostics)
   c = parsed_params.cursor
 
   if c.kind() == .RParen {
-    c = c.advance()
+    c = .advance()
   } else {
-    diagnostics_out = diagnostics_out.append(diag.error(
+    diagnostics_out = .append(diag.error(
       c.span(),
       "expected ')' after function parameters",
     ))
@@ -1074,7 +1074,7 @@ fn parse_function(c: Cursor) ItemParse {
   return_type: TypeExpr? = .None
   if c.kind() != .LBrace {
     parsed_ret := parse_type_expr(c)
-    diagnostics_out = diagnostics_out.concat(parsed_ret.diagnostics)
+    diagnostics_out = .concat(parsed_ret.diagnostics)
     return_type = .Some(parsed_ret.value)
     c = parsed_ret.cursor
   }
@@ -1082,7 +1082,7 @@ fn parse_function(c: Cursor) ItemParse {
   // If still no '{', the function has no body — recover instead of consuming
   // random tokens as a block
   if c.kind() != .LBrace {
-    diagnostics_out = diagnostics_out.append(diag.error(
+    diagnostics_out = .append(diag.error(
       c.span(),
       "expected '{' for function body",
     ))
@@ -1094,7 +1094,7 @@ fn parse_function(c: Cursor) ItemParse {
   }
 
   parsed_body := parse_block(c)
-  diagnostics_out = diagnostics_out.concat(parsed_body.diagnostics)
+  diagnostics_out = .concat(parsed_body.diagnostics)
   body := parsed_body.value
   c = parsed_body.cursor
 
@@ -1121,9 +1121,9 @@ fn parse_extern(c: Cursor) ItemsParse {
 
   if c.kind() == .Pub {
     is_pub = true
-    c = c.advance()
+    c = .advance()
     if c.kind() != .Extern {
-      diagnostics_out = diagnostics_out.append(diag.error(
+      diagnostics_out = .append(diag.error(
         start_span,
         "expected 'extern' after 'pub'",
       ))
@@ -1134,9 +1134,9 @@ fn parse_extern(c: Cursor) ItemsParse {
   }
 
   extern_span := c.span()
-  c = c.advance()
+  c = .advance()
   if c.kind() != .Ident {
-    diagnostics_out = diagnostics_out.append(diag.error(
+    diagnostics_out = .append(diag.error(
       extern_span,
       "expected module name after 'extern'",
     ))
@@ -1146,31 +1146,31 @@ fn parse_extern(c: Cursor) ItemsParse {
   }
 
   module_name := c.text()
-  c = c.advance()
+  c = .advance()
 
   if c.kind() == .LBrace {
-    c = c.advance()
+    c = .advance()
     items: Vector<Item> = []
     for c.kind() != .RBrace and c.kind() != .Eof {
       parsed := parse_extern_sig(c, is_pub, module_name, start_span)
-      diagnostics_out = diagnostics_out.concat(parsed.diagnostics)
-      items = items.append(parsed.value)
+      diagnostics_out = .concat(parsed.diagnostics)
+      items = .append(parsed.value)
       c = parsed.cursor
     }
     end_span := c.span()
     if c.kind() == .RBrace {
-      c = c.advance()
+      c = .advance()
     } else {
-      diagnostics_out = diagnostics_out.append(diag.error(c.span(), "expected '}' after extern block"))
+      diagnostics_out = .append(diag.error(c.span(), "expected '}' after extern block"))
     }
     if items.len() == 0 {
-      items = items.append(.ErrorItem(start_span.merge(end_span)))
+      items = .append(.ErrorItem(start_span.merge(end_span)))
     }
     return .{ value: items, cursor: c, diagnostics: diagnostics_out }
   }
 
   parsed := parse_extern_sig(c, is_pub, module_name, start_span)
-  diagnostics_out = diagnostics_out.concat(parsed.diagnostics)
+  diagnostics_out = .concat(parsed.diagnostics)
   .{ value: [parsed.value], cursor: parsed.cursor, diagnostics: diagnostics_out }
 }
 
@@ -1178,16 +1178,16 @@ fn parse_extern_sig(c: Cursor, is_pub: Bool, module_name: String, start_span: Sp
   diagnostics_out: Vector<DiagKind> = []
   start_pos := c.pos
   if c.kind() != .Fn {
-    diagnostics_out = diagnostics_out.append(diag.error(c.span(), "expected 'fn' in extern declaration"))
+    diagnostics_out = .append(diag.error(c.span(), "expected 'fn' in extern declaration"))
     recovered := recover_to_next_item(c)
     if recovered.pos <= start_pos { recovered = c.with_pos(start_pos + 1) }
     return .{ value: .ErrorItem(c.span()), cursor: recovered, diagnostics: diagnostics_out }
   }
 
   fn_span := c.span()
-  c = c.advance()
+  c = .advance()
   if c.kind() != .Ident {
-    diagnostics_out = diagnostics_out.append(diag.error(fn_span, "expected function name after 'fn'"))
+    diagnostics_out = .append(diag.error(fn_span, "expected function name after 'fn'"))
     recovered := recover_to_next_item(c)
     if recovered.pos <= start_pos { recovered = c.with_pos(start_pos + 1) }
     return .{ value: .ErrorItem(fn_span), cursor: recovered, diagnostics: diagnostics_out }
@@ -1196,33 +1196,33 @@ fn parse_extern_sig(c: Cursor, is_pub: Bool, module_name: String, start_span: Sp
   name := c.text()
   name_span := c.span()
   if is_upper_ascii_name(name) {
-    diagnostics_out = diagnostics_out.append(diag.error(name_span, "function name must start with a lowercase letter"))
+    diagnostics_out = .append(diag.error(name_span, "function name must start with a lowercase letter"))
   }
-  c = c.advance()
+  c = .advance()
 
   if c.kind() != .LParen {
-    diagnostics_out = diagnostics_out.append(diag.error(c.span(), "expected '(' after extern function name"))
+    diagnostics_out = .append(diag.error(c.span(), "expected '(' after extern function name"))
     recovered := recover_to_next_item(c)
     if recovered.pos <= start_pos { recovered = c.with_pos(start_pos + 1) }
     return .{ value: .ErrorItem(c.span()), cursor: recovered, diagnostics: diagnostics_out }
   }
 
-  c = c.advance()
+  c = .advance()
   parsed_params := parse_param_list(c, TokenKind.RParen, "expected ',' or ')' in extern function parameter list")
   params := parsed_params.value
-  diagnostics_out = diagnostics_out.concat(parsed_params.diagnostics)
+  diagnostics_out = .concat(parsed_params.diagnostics)
   c = parsed_params.cursor
 
   if c.kind() == .RParen {
-    c = c.advance()
+    c = .advance()
   } else {
-    diagnostics_out = diagnostics_out.append(diag.error(c.span(), "expected ')' after extern function parameters"))
+    diagnostics_out = .append(diag.error(c.span(), "expected ')' after extern function parameters"))
   }
 
   return_type: TypeExpr? = .None
   if c.kind() != .Eof and c.kind() != .Fn and c.kind() != .RBrace and c.kind() != .Pub and c.kind() != .Extern and !c.preceded_by_newline() {
     parsed_ret := parse_type_expr(c)
-    diagnostics_out = diagnostics_out.concat(parsed_ret.diagnostics)
+    diagnostics_out = .concat(parsed_ret.diagnostics)
     return_type = .Some(parsed_ret.value)
     c = parsed_ret.cursor
   }
@@ -1246,9 +1246,9 @@ fn parse_type(c: Cursor) ItemParse {
 
   if c.kind() == .Pub {
     is_pub = true
-    c = c.advance()
+    c = .advance()
     if c.kind() != .Type {
-      diagnostics_out = diagnostics_out.append(diag.error(
+      diagnostics_out = .append(diag.error(
         start_span,
         "expected 'type' after 'pub'",
       ))
@@ -1261,9 +1261,9 @@ fn parse_type(c: Cursor) ItemParse {
   }
 
   type_span := c.span()
-  c = c.advance()
+  c = .advance()
   if c.kind() != .Ident {
-    diagnostics_out = diagnostics_out.append(diag.error(
+    diagnostics_out = .append(diag.error(
       type_span,
       "expected type name after 'type'",
     ))
@@ -1275,15 +1275,15 @@ fn parse_type(c: Cursor) ItemParse {
   }
 
   name := c.text()
-  c = c.advance()
+  c = .advance()
 
   parsed_type_params := parse_type_params(c)
   type_params := parsed_type_params.value
-  diagnostics_out = diagnostics_out.concat(parsed_type_params.diagnostics)
+  diagnostics_out = .concat(parsed_type_params.diagnostics)
   c = parsed_type_params.cursor
 
   if c.kind() != .Eq {
-    diagnostics_out = diagnostics_out.append(diag.error(
+    diagnostics_out = .append(diag.error(
       c.span(),
       "expected '=' in type declaration",
     ))
@@ -1293,20 +1293,20 @@ fn parse_type(c: Cursor) ItemParse {
     }
     return .{ value: .ErrorItem(c.span_through(start_pos)), cursor: recovered, diagnostics: diagnostics_out }
   }
-  c = c.advance()
+  c = .advance()
 
   def: TypeDef = .ErrorDef(c.span())
 
   if c.kind() == .Dot and c.at(1).kind() == .LBrace {
-    c = c.at(2)
+    c = .at(2)
     fields_parsed := parse_type_record_fields(c)
-    diagnostics_out = diagnostics_out.concat(fields_parsed.diagnostics)
+    diagnostics_out = .concat(fields_parsed.diagnostics)
     c = fields_parsed.cursor
 
     if c.kind() == .RBrace {
-      c = c.advance()
+      c = .advance()
     } else {
-      diagnostics_out = diagnostics_out.append(diag.error(
+      diagnostics_out = .append(diag.error(
         c.span(),
         "expected '}' to close record type declaration",
       ))
@@ -1314,15 +1314,15 @@ fn parse_type(c: Cursor) ItemParse {
 
     def = .Record(fields_parsed.value)
   } else if c.kind() == .LBrace {
-    c = c.advance()
+    c = .advance()
     variants_parsed := parse_sum_variants(c)
-    diagnostics_out = diagnostics_out.concat(variants_parsed.diagnostics)
+    diagnostics_out = .concat(variants_parsed.diagnostics)
     c = variants_parsed.cursor
 
     if c.kind() == .RBrace {
-      c = c.advance()
+      c = .advance()
     } else {
-      diagnostics_out = diagnostics_out.append(diag.error(
+      diagnostics_out = .append(diag.error(
         c.span(),
         "expected '}' to close sum type declaration",
       ))
@@ -1331,7 +1331,7 @@ fn parse_type(c: Cursor) ItemParse {
     def = .Sum(variants_parsed.value)
   } else {
     parsed_alias := parse_type_expr(c)
-    diagnostics_out = diagnostics_out.concat(parsed_alias.diagnostics)
+    diagnostics_out = .concat(parsed_alias.diagnostics)
     c = parsed_alias.cursor
     def = .Alias(parsed_alias.value)
   }
@@ -1383,15 +1383,15 @@ fn parse_pattern(c: Cursor) PatternParse {
 
   if k == .Dot {
     dot_span := c.span()
-    c = c.advance()
+    c = .advance()
     // Cursor hole after dot in pattern: produce empty variant pattern
     if c.kind() == .CursorHole {
-      c = c.advance()
+      c = .advance()
       patt := Pattern.{ kind: .Variant("", []), span: c.span_from(start_pos) }
       return .{ value: patt, cursor: c, diagnostics: diagnostics_out }
     }
     if c.kind() != .Ident {
-      diagnostics_out = diagnostics_out.append(diag.error(
+      diagnostics_out = .append(diag.error(
         c.span(),
         "expected variant name after '.' in pattern",
       ))
@@ -1400,16 +1400,16 @@ fn parse_pattern(c: Cursor) PatternParse {
     }
 
     name := c.text()
-    c = c.advance()
+    c = .advance()
     args: Vector<Pattern> = []
 
     if c.kind() == .LParen {
       parsed_args := parse_pattern_list(c.advance(), TokenKind.RParen, "expected ',' or ')' in pattern argument list")
       args = parsed_args.value
-      diagnostics_out = diagnostics_out.concat(parsed_args.diagnostics)
+      diagnostics_out = .concat(parsed_args.diagnostics)
       c = parsed_args.cursor
       if c.kind() == .RParen {
-        c = c.advance()
+        c = .advance()
       }
     }
 
@@ -1426,11 +1426,11 @@ fn parse_pattern(c: Cursor) PatternParse {
     }
 
     segments: Vector<String> = [ident]
-    c = c.advance()
+    c = .advance()
     for c.kind() == .Dot and c.at(1).kind() == .Ident {
-      c = c.advance()
-      segments = segments.append(c.text())
-      c = c.advance()
+      c = .advance()
+      segments = .append(c.text())
+      c = .advance()
     }
 
     if segments.len() > 1 or (segments.len() == 1 and is_upper_ascii_name(segments[0])) {
@@ -1444,10 +1444,10 @@ fn parse_pattern(c: Cursor) PatternParse {
       if c.kind() == .LParen {
         parsed_args := parse_pattern_list(c.advance(), TokenKind.RParen, "expected ',' or ')' in pattern argument list")
         args = parsed_args.value
-        diagnostics_out = diagnostics_out.concat(parsed_args.diagnostics)
+        diagnostics_out = .concat(parsed_args.diagnostics)
         c = parsed_args.cursor
         if c.kind() == .RParen {
-          c = c.advance()
+          c = .advance()
         }
       }
 
@@ -1482,7 +1482,7 @@ fn parse_pattern(c: Cursor) PatternParse {
     return .{ value: patt, cursor: c.advance(), diagnostics: diagnostics_out }
   }
 
-  diagnostics_out = diagnostics_out.append(diag.error(
+  diagnostics_out = .append(diag.error(
     c.span(),
     "expected pattern",
   ))
@@ -1502,34 +1502,34 @@ fn parse_record_literal(c: Cursor, start_pos: Int, open_cursor: Cursor) ExprPars
 
     field_start := c.pos
     if c.kind() != .Ident {
-      diagnostics_out = diagnostics_out.append(diag.error(
+      diagnostics_out = .append(diag.error(
         c.span(),
         "expected record field name",
       ))
       if c.kind() == .Eof {
         break
       }
-      c = c.advance()
+      c = .advance()
       continue
     }
 
     field_name := c.text()
-    c = c.advance()
+    c = .advance()
     value: Expr? = .None
 
     if c.kind() == .Colon {
-      c = c.advance()
+      c = .advance()
       parsed_value := parse_expr_bp(c, 0)
-      diagnostics_out = diagnostics_out.concat(parsed_value.diagnostics)
+      diagnostics_out = .concat(parsed_value.diagnostics)
       value = .Some(parsed_value.value)
       c = parsed_value.cursor
     }
 
     entry_span := c.span_from(field_start)
-    fields = fields.append(RecordEntry.{ name: field_name, value, span: entry_span })
+    fields = .append(RecordEntry.{ name: field_name, value, span: entry_span })
 
     if c.kind() == .Comma {
-      c = c.advance()
+      c = .advance()
       continue
     }
 
@@ -1537,7 +1537,7 @@ fn parse_record_literal(c: Cursor, start_pos: Int, open_cursor: Cursor) ExprPars
       break
     }
 
-    diagnostics_out = diagnostics_out.append(diag.error(
+    diagnostics_out = .append(diag.error(
       c.span(),
       "expected ',' or '}' in record literal",
     ))
@@ -1545,11 +1545,11 @@ fn parse_record_literal(c: Cursor, start_pos: Int, open_cursor: Cursor) ExprPars
     if c.kind() == .Eof {
       break
     }
-    c = c.advance()
+    c = .advance()
   }
 
   if c.kind() != .RBrace {
-    diagnostics_out = diagnostics_out.append(diag.error(
+    diagnostics_out = .append(diag.error(
       c.span(),
       "expected '}' to close record literal",
     ))
@@ -1572,35 +1572,35 @@ fn parse_block_expr(c: Cursor) ExprParse {
 fn parse_if_expr(c: Cursor) ExprParse {
   diagnostics_out: Vector<DiagKind> = []
   start_span := c.span()
-  c = c.advance()
+  c = .advance()
 
   parsed_cond := parse_expr_bp(c, 0)
-  diagnostics_out = diagnostics_out.concat(parsed_cond.diagnostics)
+  diagnostics_out = .concat(parsed_cond.diagnostics)
   cond := parsed_cond.value
   c = parsed_cond.cursor
 
   parsed_then := parse_block(c)
-  diagnostics_out = diagnostics_out.concat(parsed_then.diagnostics)
+  diagnostics_out = .concat(parsed_then.diagnostics)
   then_block := parsed_then.value
   c = parsed_then.cursor
 
   else_expr: Expr? = .None
   if c.kind() == .Else {
-    c = c.advance()
+    c = .advance()
     k := c.kind()
     if k == .If {
       parsed_else := parse_if_expr(c)
-      diagnostics_out = diagnostics_out.concat(parsed_else.diagnostics)
+      diagnostics_out = .concat(parsed_else.diagnostics)
       else_expr = .Some(parsed_else.value)
       c = parsed_else.cursor
     } else if k == .LBrace {
       parsed_else := parse_block_expr(c)
-      diagnostics_out = diagnostics_out.concat(parsed_else.diagnostics)
+      diagnostics_out = .concat(parsed_else.diagnostics)
       else_expr = .Some(parsed_else.value)
       c = parsed_else.cursor
     } else {
       parsed_else := parse_expr_bp(c, 0)
-      diagnostics_out = diagnostics_out.concat(parsed_else.diagnostics)
+      diagnostics_out = .concat(parsed_else.diagnostics)
       else_expr = .Some(parsed_else.value)
       c = parsed_else.cursor
     }
@@ -1624,14 +1624,14 @@ fn parse_case_expr(c: Cursor) ExprParse {
   diagnostics_out: Vector<DiagKind> = []
   start_pos := c.pos
   start_span := c.span()
-  c = c.advance()
+  c = .advance()
   parsed_scrutinee := parse_expr_bp(c, 0)
-  diagnostics_out = diagnostics_out.concat(parsed_scrutinee.diagnostics)
+  diagnostics_out = .concat(parsed_scrutinee.diagnostics)
   scrutinee := parsed_scrutinee.value
   c = parsed_scrutinee.cursor
 
   if c.kind() != .LBrace {
-    diagnostics_out = diagnostics_out.append(diag.error(
+    diagnostics_out = .append(diag.error(
       c.span(),
       "expected '{' after case expression",
     ))
@@ -1639,17 +1639,17 @@ fn parse_case_expr(c: Cursor) ExprParse {
     return .{ value: expr, cursor: c, diagnostics: diagnostics_out }
   }
 
-  c = c.advance()
+  c = .advance()
   arms: Vector<CaseArm> = []
 
   for c.pos < c.tokens.len() and c.kind() != .RBrace {
     parsed_pattern := parse_pattern(c)
-    diagnostics_out = diagnostics_out.concat(parsed_pattern.diagnostics)
+    diagnostics_out = .concat(parsed_pattern.diagnostics)
     patt := parsed_pattern.value
     c = parsed_pattern.cursor
 
     if c.kind() != .FatArrow {
-      diagnostics_out = diagnostics_out.append(diag.error(
+      diagnostics_out = .append(diag.error(
         c.span(),
         "expected '=>' in case arm",
       ))
@@ -1657,22 +1657,22 @@ fn parse_case_expr(c: Cursor) ExprParse {
         break
       }
     } else {
-      c = c.advance()
+      c = .advance()
     }
 
     parsed_arm_expr := parse_expr_in(c, "case arm body")
-    diagnostics_out = diagnostics_out.concat(parsed_arm_expr.diagnostics)
+    diagnostics_out = .concat(parsed_arm_expr.diagnostics)
     arm_expr := parsed_arm_expr.value
     c = parsed_arm_expr.cursor
 
     arm_span := patt.span.merge(arm_expr.span)
-    arms = arms.append(CaseArm.{ pattern: patt, expr: arm_expr, span: arm_span })
+    arms = .append(CaseArm.{ pattern: patt, expr: arm_expr, span: arm_span })
 
     if c.kind() == .Comma {
-      c = c.advance()
+      c = .advance()
     } else if c.kind() != .RBrace {
       eol_point := Span.{ file_id: arm_span.file_id, start: arm_span.end, end: arm_span.end }
-      diagnostics_out = diagnostics_out.append(
+      diagnostics_out = .append(
         .Error(.MissingArmSeparator(.{ span: eol_point, next_span: c.span() }))
       )
     }
@@ -1683,7 +1683,7 @@ fn parse_case_expr(c: Cursor) ExprParse {
     return .{ value: expr, cursor: c.advance(), diagnostics: diagnostics_out }
   }
 
-  diagnostics_out = diagnostics_out.append(diag.error(
+  diagnostics_out = .append(diag.error(
     c.span(),
     "expected '}' to close case expression",
   ))
@@ -1723,30 +1723,30 @@ fn parse_prefix(c: Cursor) ExprParse {
     },
     .StringStart => {
       parts: Vector<StringPart> = []
-      parts = parts.append(.Literal(c.text()))
+      parts = .append(.Literal(c.text()))
       start_span := c.span()
-      c = c.advance()
+      c = .advance()
       last_span := start_span
 
       for c.pos < c.tokens.len() {
         parsed_part_expr := parse_expr_bp(c, 0)
-        diagnostics_out = diagnostics_out.concat(parsed_part_expr.diagnostics)
-        parts = parts.append(.Interpolation(parsed_part_expr.value))
+        diagnostics_out = .concat(parsed_part_expr.diagnostics)
+        parts = .append(.Interpolation(parsed_part_expr.value))
         c = parsed_part_expr.cursor
 
         case c.kind() {
           .StringContinue => {
-            parts = parts.append(.Literal(c.text()))
+            parts = .append(.Literal(c.text()))
             last_span = c.span()
-            c = c.advance()
+            c = .advance()
             continue
           },
           .StringEnd => {
             if c.text() != "" {
-              parts = parts.append(.Literal(c.text()))
+              parts = .append(.Literal(c.text()))
             }
             last_span = c.span()
-            c = c.advance()
+            c = .advance()
             expr := Expr.{
               id: c.alloc_expr_id(),
               kind: .StringInterp(parts),
@@ -1755,7 +1755,7 @@ fn parse_prefix(c: Cursor) ExprParse {
             return .{ value: expr, cursor: c, diagnostics: diagnostics_out }
           },
           _ => {
-            diagnostics_out = diagnostics_out.append(diag.error(
+            diagnostics_out = .append(diag.error(
               c.span(),
               "expected string interpolation continuation",
             ))
@@ -1783,7 +1783,7 @@ fn parse_prefix(c: Cursor) ExprParse {
       if c.at(1).kind() == .CursorHole {
         // Cursor hole after dot in prefix position: variant completion hole
         start_pos := c.pos
-        c = c.at(2)
+        c = .at(2)
         expr := Expr.{ id: c.alloc_expr_id(), kind: .Variant("", []), span: c.span_from(start_pos) }
         return .{ value: expr, cursor: c, diagnostics: diagnostics_out }
       }
@@ -1795,16 +1795,16 @@ fn parse_prefix(c: Cursor) ExprParse {
       if c.at(1).kind() == .Ident {
         name := c.at(1).text()
         start_pos := c.pos
-        c = c.at(2)
+        c = .at(2)
         args: Vector<Expr> = []
 
         if c.kind() == .LParen {
           parsed_args := parse_expr_list(c.advance(), TokenKind.RParen, "expected ',' or ')' in variant argument list")
           args = parsed_args.value
-          diagnostics_out = diagnostics_out.concat(parsed_args.diagnostics)
+          diagnostics_out = .concat(parsed_args.diagnostics)
           c = parsed_args.cursor
           if c.kind() == .RParen {
-            c = c.advance()
+            c = .advance()
           }
         }
 
@@ -1812,7 +1812,7 @@ fn parse_prefix(c: Cursor) ExprParse {
         return .{ value: expr, cursor: c, diagnostics: diagnostics_out }
       }
 
-      diagnostics_out = diagnostics_out.append(diag.error(
+      diagnostics_out = .append(diag.error(
         c.span(),
         "expected record or variant after '.'",
       ))
@@ -1821,14 +1821,14 @@ fn parse_prefix(c: Cursor) ExprParse {
     },
     .LParen => {
       parsed_inner := parse_expr_in(c.advance(), "grouped expression")
-      diagnostics_out = diagnostics_out.concat(parsed_inner.diagnostics)
+      diagnostics_out = .concat(parsed_inner.diagnostics)
       c = parsed_inner.cursor
       if c.kind() == .RParen {
-        c = c.advance()
+        c = .advance()
         return .{ value: parsed_inner.value, cursor: c, diagnostics: diagnostics_out }
       }
 
-      diagnostics_out = diagnostics_out.append(diag.error(
+      diagnostics_out = .append(diag.error(
         c.span(),
         "expected ')'",
       ))
@@ -1836,26 +1836,26 @@ fn parse_prefix(c: Cursor) ExprParse {
     },
     .LBracket => {
       start_pos := c.pos
-      c = c.advance()
+      c = .advance()
       elems: Vector<Expr> = []
 
       for c.pos < c.tokens.len() and c.kind() != .RBracket {
         parsed_elem := parse_expr_in(c, "array element")
-        diagnostics_out = diagnostics_out.concat(parsed_elem.diagnostics)
-        elems = elems.append(parsed_elem.value)
+        diagnostics_out = .concat(parsed_elem.diagnostics)
+        elems = .append(parsed_elem.value)
         c = parsed_elem.cursor
 
         if c.kind() == .Comma {
-          c = c.advance()
+          c = .advance()
         } else if c.kind() != .RBracket {
-          diagnostics_out = diagnostics_out.append(diag.error(
+          diagnostics_out = .append(diag.error(
             c.span(),
             "expected ',' or ']' in array literal",
           ))
           if c.kind() == .Eof {
             break
           }
-          c = c.advance()
+          c = .advance()
         }
       }
 
@@ -1864,7 +1864,7 @@ fn parse_prefix(c: Cursor) ExprParse {
         return .{ value: expr, cursor: c.advance(), diagnostics: diagnostics_out }
       }
 
-      diagnostics_out = diagnostics_out.append(diag.error(
+      diagnostics_out = .append(diag.error(
         c.span(),
         "expected ']' to close array literal",
       ))
@@ -1891,7 +1891,7 @@ fn parse_prefix(c: Cursor) ExprParse {
       .{ value: expr, cursor: c.advance(), diagnostics: diagnostics_out }
     },
     _ => {
-      diagnostics_out = diagnostics_out.append(diag.error(
+      diagnostics_out = .append(diag.error(
         c.span(),
         "expected expression",
       ))
@@ -1904,27 +1904,27 @@ fn parse_prefix(c: Cursor) ExprParse {
 fn parse_closure_expr(c: Cursor) ExprParse {
   diagnostics_out: Vector<DiagKind> = []
   start_span := c.span()
-  c = c.advance()
+  c = .advance()
 
   if c.kind() != .LParen {
-    diagnostics_out = diagnostics_out.append(diag.error(
+    diagnostics_out = .append(diag.error(
       c.span(),
       "expected '(' after 'fn' in closure expression",
     ))
     expr := error_expr(start_span)
     return .{ value: expr, cursor: c, diagnostics: diagnostics_out }
   }
-  c = c.advance()
+  c = .advance()
 
   parsed_params := parse_param_list(c, TokenKind.RParen, "expected ',' or ')' in closure parameter list")
   params := parsed_params.value
-  diagnostics_out = diagnostics_out.concat(parsed_params.diagnostics)
+  diagnostics_out = .concat(parsed_params.diagnostics)
   c = parsed_params.cursor
 
   if c.kind() == .RParen {
-    c = c.advance()
+    c = .advance()
   } else {
-    diagnostics_out = diagnostics_out.append(diag.error(
+    diagnostics_out = .append(diag.error(
       c.span(),
       "expected ')' after closure parameters",
     ))
@@ -1933,13 +1933,13 @@ fn parse_closure_expr(c: Cursor) ExprParse {
   return_type: TypeExpr? = .None
   if c.kind() != .LBrace {
     parsed_ret := parse_type_expr(c)
-    diagnostics_out = diagnostics_out.concat(parsed_ret.diagnostics)
+    diagnostics_out = .concat(parsed_ret.diagnostics)
     return_type = .Some(parsed_ret.value)
     c = parsed_ret.cursor
   }
 
   parsed_body := parse_block(c)
-  diagnostics_out = diagnostics_out.concat(parsed_body.diagnostics)
+  diagnostics_out = .concat(parsed_body.diagnostics)
   c = parsed_body.cursor
 
   closure_span := start_span.merge(parsed_body.value.span)
@@ -1954,7 +1954,7 @@ fn parse_closure_expr(c: Cursor) ExprParse {
 fn parse_collect_expr(c: Cursor) ExprParse {
   diagnostics_out: Vector<DiagKind> = []
   start_pos := c.pos
-  c = c.advance()
+  c = .advance()
   pattern: String? = .None
   pattern_span: Span? = .None
   index: String? = .None
@@ -1969,9 +1969,9 @@ fn parse_collect_expr(c: Cursor) ExprParse {
     if c.at(1).kind() == .In {
       pattern = .Some(first_name)
       pattern_span = .Some(first_span)
-      c = c.at(2)
+      c = .at(2)
       parsed_iter := parse_expr_bp(c, 0)
-      diagnostics_out = diagnostics_out.concat(parsed_iter.diagnostics)
+      diagnostics_out = .concat(parsed_iter.diagnostics)
       iter = .Some(parsed_iter.value)
       c = parsed_iter.cursor
     } else if c.at(1).kind() == .Comma and c.at(2).kind() == .Ident and c.at(3).kind() == .In {
@@ -1979,26 +1979,26 @@ fn parse_collect_expr(c: Cursor) ExprParse {
       pattern_span = .Some(first_span)
       index = .Some(c.at(2).text())
       index_span = .Some(c.at(2).span())
-      c = c.at(4)
+      c = .at(4)
       parsed_iter := parse_expr_bp(c, 0)
-      diagnostics_out = diagnostics_out.concat(parsed_iter.diagnostics)
+      diagnostics_out = .concat(parsed_iter.diagnostics)
       iter = .Some(parsed_iter.value)
       c = parsed_iter.cursor
     } else {
       parsed_cond := parse_expr_bp(c, 0)
-      diagnostics_out = diagnostics_out.concat(parsed_cond.diagnostics)
+      diagnostics_out = .concat(parsed_cond.diagnostics)
       condition = .Some(parsed_cond.value)
       c = parsed_cond.cursor
     }
   } else {
     parsed_cond := parse_expr_bp(c, 0)
-    diagnostics_out = diagnostics_out.concat(parsed_cond.diagnostics)
+    diagnostics_out = .concat(parsed_cond.diagnostics)
     condition = .Some(parsed_cond.value)
     c = parsed_cond.cursor
   }
 
   parsed_body := parse_block(c)
-  diagnostics_out = diagnostics_out.concat(parsed_body.diagnostics)
+  diagnostics_out = .concat(parsed_body.diagnostics)
   c = parsed_body.cursor
 
   collect_span := c.span_from(start_pos)
@@ -2044,17 +2044,17 @@ fn parse_postfix(c: Cursor, base: Expr) ExprParse {
     if k == .LParen {
       parsed_args := parse_expr_list_ctx(c.advance(), TokenKind.RParen, "expected ',' or ')' in call arguments", .Some("call argument"))
       args := parsed_args.value
-      diagnostics_out = diagnostics_out.concat(parsed_args.diagnostics)
+      diagnostics_out = .concat(parsed_args.diagnostics)
       c = parsed_args.cursor
 
       if c.kind() == .RParen {
         new_span := expr.span.merge(c.span())
         expr = Expr.{ id: c.alloc_expr_id(), kind: .Call(expr, args), span: new_span }
-        c = c.advance()
+        c = .advance()
         continue
       }
 
-      diagnostics_out = diagnostics_out.append(diag.error(
+      diagnostics_out = .append(diag.error(
         c.span(),
         "expected ')' after call arguments",
       ))
@@ -2067,13 +2067,13 @@ fn parse_postfix(c: Cursor, base: Expr) ExprParse {
       if c.at(1).kind() == .CursorHole {
         new_span := expr.span.merge(c.at(1).span())
         expr = Expr.{ id: c.alloc_expr_id(), kind: .Field(expr, ""), span: new_span }
-        c = c.at(2)
+        c = .at(2)
         break
       }
 
       if c.at(1).kind() == .LBrace {
         parsed_record := parse_record_literal(c, c.pos, c.at(1))
-        diagnostics_out = diagnostics_out.concat(parsed_record.diagnostics)
+        diagnostics_out = .concat(parsed_record.diagnostics)
         // If base expr is a dotted type path, produce NamedRecord.
         case dotted_name_expr(expr) {
           .Some(name) => {
@@ -2094,7 +2094,7 @@ fn parse_postfix(c: Cursor, base: Expr) ExprParse {
         field_name := c.at(1).text()
         new_span := expr.span.merge(c.at(1).span())
         expr = Expr.{ id: c.alloc_expr_id(), kind: .Field(expr, field_name), span: new_span }
-        c = c.at(2)
+        c = .at(2)
         continue
       }
 
@@ -2103,12 +2103,12 @@ fn parse_postfix(c: Cursor, base: Expr) ExprParse {
 
     if k == .LBracket {
       parsed_index := parse_expr_bp(c.advance(), 0)
-      diagnostics_out = diagnostics_out.concat(parsed_index.diagnostics)
+      diagnostics_out = .concat(parsed_index.diagnostics)
       idx_expr := parsed_index.value
       c = parsed_index.cursor
 
       if c.kind() != .RBracket {
-        diagnostics_out = diagnostics_out.append(diag.error(
+        diagnostics_out = .append(diag.error(
           c.span(),
           "expected ']' after index expression",
         ))
@@ -2117,7 +2117,7 @@ fn parse_postfix(c: Cursor, base: Expr) ExprParse {
 
       new_span := expr.span.merge(c.span())
       expr = Expr.{ id: c.alloc_expr_id(), kind: .Index(expr, idx_expr), span: new_span }
-      c = c.advance()
+      c = .advance()
       continue
     }
 
@@ -2134,7 +2134,7 @@ fn parse_expr_bp(c: Cursor, min_bp: Int) ExprParse {
   c = parsed_prefix.cursor
 
   parsed_postfix := parse_postfix(c, lhs)
-  diagnostics_out = diagnostics_out.concat(parsed_postfix.diagnostics)
+  diagnostics_out = .concat(parsed_postfix.diagnostics)
   lhs = parsed_postfix.value
   c = parsed_postfix.cursor
 
@@ -2156,7 +2156,7 @@ fn parse_expr_bp(c: Cursor, min_bp: Int) ExprParse {
         shr_right_bp := 19
         if shr_left_bp >= min_bp {
           parsed_rhs := parse_expr_bp(c.at(2), shr_right_bp)
-          diagnostics_out = diagnostics_out.concat(parsed_rhs.diagnostics)
+          diagnostics_out = .concat(parsed_rhs.diagnostics)
           rhs := parsed_rhs.value
           c = parsed_rhs.cursor
           lhs = Expr.{
@@ -2165,7 +2165,7 @@ fn parse_expr_bp(c: Cursor, min_bp: Int) ExprParse {
             span: lhs.span.merge(rhs.span),
           }
           parsed_postfix_rhs := parse_postfix(c, lhs)
-          diagnostics_out = diagnostics_out.concat(parsed_postfix_rhs.diagnostics)
+          diagnostics_out = .concat(parsed_postfix_rhs.diagnostics)
           lhs = parsed_postfix_rhs.value
           c = parsed_postfix_rhs.cursor
           continue
@@ -2184,7 +2184,7 @@ fn parse_expr_bp(c: Cursor, min_bp: Int) ExprParse {
         if k == .AmpAmp or k == .PipePipe {
           suggestion := if k == .AmpAmp { "and" } else { "or" }
           op_str := if k == .AmpAmp { "&&" } else { "||" }
-          diagnostics_out = diagnostics_out.append(.Error(.CStyleLogicalOp(.{ span: c.span(), operator: op_str, suggestion })))
+          diagnostics_out = .append(.Error(.CStyleLogicalOp(.{ span: c.span(), operator: op_str, suggestion })))
         }
 
         // Rebinding receiver shorthand: x = .method(args) => x = x.method(args)
@@ -2198,7 +2198,7 @@ fn parse_expr_bp(c: Cursor, min_bp: Int) ExprParse {
             span: lhs.span,
           }
           parsed_rhs := parse_postfix(rhs_cursor, receiver)
-          diagnostics_out = diagnostics_out.concat(parsed_rhs.diagnostics)
+          diagnostics_out = .concat(parsed_rhs.diagnostics)
           rhs := parsed_rhs.value
           c = parsed_rhs.cursor
 
@@ -2209,12 +2209,12 @@ fn parse_expr_bp(c: Cursor, min_bp: Int) ExprParse {
           }
 
           parsed_postfix_rhs := parse_postfix(c, lhs)
-          diagnostics_out = diagnostics_out.concat(parsed_postfix_rhs.diagnostics)
+          diagnostics_out = .concat(parsed_postfix_rhs.diagnostics)
           lhs = parsed_postfix_rhs.value
           c = parsed_postfix_rhs.cursor
         } else {
           parsed_rhs := parse_expr_bp(rhs_cursor, info.right)
-          diagnostics_out = diagnostics_out.concat(parsed_rhs.diagnostics)
+          diagnostics_out = .concat(parsed_rhs.diagnostics)
           rhs := parsed_rhs.value
           c = parsed_rhs.cursor
 
@@ -2225,7 +2225,7 @@ fn parse_expr_bp(c: Cursor, min_bp: Int) ExprParse {
           }
 
           parsed_postfix_rhs := parse_postfix(c, lhs)
-          diagnostics_out = diagnostics_out.concat(parsed_postfix_rhs.diagnostics)
+          diagnostics_out = .concat(parsed_postfix_rhs.diagnostics)
           lhs = parsed_postfix_rhs.value
           c = parsed_postfix_rhs.cursor
         }
@@ -2248,25 +2248,25 @@ fn parse_binding_stmt_with_pub(c: Cursor, is_pub: Bool) StmtParse {
 
   name := c.text()
   name_span := c.span()
-  c = c.advance()
+  c = .advance()
   ty: TypeExpr? = .None
   is_rebind := false
 
   next_kind := c.kind()
   if next_kind == .ColonEq {
-    c = c.advance()
+    c = .advance()
   } else if next_kind == .Eq {
     is_rebind = true
-    c = c.advance()
+    c = .advance()
   } else if next_kind == .Colon {
-    c = c.advance()
+    c = .advance()
     parsed_ty := parse_type_expr(c)
-    diagnostics_out = diagnostics_out.concat(parsed_ty.diagnostics)
+    diagnostics_out = .concat(parsed_ty.diagnostics)
     ty = .Some(parsed_ty.value)
     c = parsed_ty.cursor
 
     if c.kind() != .Eq {
-      diagnostics_out = diagnostics_out.append(diag.error(
+      diagnostics_out = .append(diag.error(
         c.span(),
         "expected '=' after typed binding",
       ))
@@ -2274,7 +2274,7 @@ fn parse_binding_stmt_with_pub(c: Cursor, is_pub: Bool) StmtParse {
       return .{ value: stmt, cursor: c.advance(), diagnostics: diagnostics_out }
     }
 
-    c = c.advance()
+    c = .advance()
   } else {
     stmt: Stmt = .ErrorStmt(c.span_through(start_pos))
     return .{ value: stmt, cursor: c, diagnostics: diagnostics_out }
@@ -2284,7 +2284,7 @@ fn parse_binding_stmt_with_pub(c: Cursor, is_pub: Bool) StmtParse {
   if is_rebind and c.kind() == .Dot and !c.preceded_by_newline() and c.at(1).kind() == .Ident and !is_upper_ascii_name(c.at(1).text()) and c.at(2).kind() == .LParen {
     receiver := Expr.{ id: c.alloc_expr_id(), kind: .Ident(name), span: name_span }
     parsed_value := parse_postfix(c, receiver)
-    diagnostics_out = diagnostics_out.concat(parsed_value.diagnostics)
+    diagnostics_out = .concat(parsed_value.diagnostics)
     c = parsed_value.cursor
 
     stmt: Stmt = .Let(LetStmt.{
@@ -2300,7 +2300,7 @@ fn parse_binding_stmt_with_pub(c: Cursor, is_pub: Bool) StmtParse {
   }
 
   parsed_value := parse_expr_bp(c, 0)
-  diagnostics_out = diagnostics_out.concat(parsed_value.diagnostics)
+  diagnostics_out = .concat(parsed_value.diagnostics)
   c = parsed_value.cursor
 
   stmt: Stmt = .Let(LetStmt.{
@@ -2323,13 +2323,13 @@ fn parse_binding_stmt(c: Cursor) StmtParse {
 fn parse_return_stmt(c: Cursor) StmtParse {
   diagnostics_out: Vector<DiagKind> = []
   start_pos := c.pos
-  c = c.advance()
+  c = .advance()
   value: Expr? = .None
 
   k := c.kind()
   if k != .Semi and k != .RBrace and k != .Eof {
     parsed := parse_expr_bp(c, 0)
-    diagnostics_out = diagnostics_out.concat(parsed.diagnostics)
+    diagnostics_out = .concat(parsed.diagnostics)
     value = .Some(parsed.value)
     c = parsed.cursor
   }
@@ -2341,13 +2341,13 @@ fn parse_return_stmt(c: Cursor) StmtParse {
 fn parse_break_stmt(c: Cursor) StmtParse {
   diagnostics_out: Vector<DiagKind> = []
   start_pos := c.pos
-  c = c.advance()
+  c = .advance()
   value: Expr? = .None
 
   k := c.kind()
   if k != .Semi and k != .RBrace and k != .Eof {
     parsed := parse_expr_bp(c, 0)
-    diagnostics_out = diagnostics_out.concat(parsed.diagnostics)
+    diagnostics_out = .concat(parsed.diagnostics)
     value = .Some(parsed.value)
     c = parsed.cursor
   }
@@ -2365,7 +2365,7 @@ fn parse_defer_stmt(c: Cursor) StmtParse {
   diagnostics_out: Vector<DiagKind> = []
   start_pos := c.pos
   parsed_expr := parse_expr_bp(c.advance(), 0)
-  diagnostics_out = diagnostics_out.concat(parsed_expr.diagnostics)
+  diagnostics_out = .concat(parsed_expr.diagnostics)
   stmt: Stmt = .Defer(DeferStmt.{
     expr: parsed_expr.value,
     span: parsed_expr.cursor.span_from(start_pos),
@@ -2376,7 +2376,7 @@ fn parse_defer_stmt(c: Cursor) StmtParse {
 fn parse_for_stmt(c: Cursor) StmtParse {
   diagnostics_out: Vector<DiagKind> = []
   start_pos := c.pos
-  c = c.advance()
+  c = .advance()
   pattern: String? = .None
   pattern_span: Span? = .None
   index: String? = .None
@@ -2391,9 +2391,9 @@ fn parse_for_stmt(c: Cursor) StmtParse {
     if c.at(1).kind() == .In {
       pattern = .Some(first_name)
       pattern_span = .Some(first_span)
-      c = c.at(2)
+      c = .at(2)
       parsed_iter := parse_expr_bp(c, 0)
-      diagnostics_out = diagnostics_out.concat(parsed_iter.diagnostics)
+      diagnostics_out = .concat(parsed_iter.diagnostics)
       iter = .Some(parsed_iter.value)
       c = parsed_iter.cursor
     } else if c.at(1).kind() == .Comma and c.at(2).kind() == .Ident and c.at(3).kind() == .In {
@@ -2401,26 +2401,26 @@ fn parse_for_stmt(c: Cursor) StmtParse {
       pattern_span = .Some(first_span)
       index = .Some(c.at(2).text())
       index_span = .Some(c.at(2).span())
-      c = c.at(4)
+      c = .at(4)
       parsed_iter := parse_expr_bp(c, 0)
-      diagnostics_out = diagnostics_out.concat(parsed_iter.diagnostics)
+      diagnostics_out = .concat(parsed_iter.diagnostics)
       iter = .Some(parsed_iter.value)
       c = parsed_iter.cursor
     } else {
       parsed_cond := parse_expr_bp(c, 0)
-      diagnostics_out = diagnostics_out.concat(parsed_cond.diagnostics)
+      diagnostics_out = .concat(parsed_cond.diagnostics)
       condition = .Some(parsed_cond.value)
       c = parsed_cond.cursor
     }
   } else {
     parsed_cond := parse_expr_bp(c, 0)
-    diagnostics_out = diagnostics_out.concat(parsed_cond.diagnostics)
+    diagnostics_out = .concat(parsed_cond.diagnostics)
     condition = .Some(parsed_cond.value)
     c = parsed_cond.cursor
   }
 
   parsed_body := parse_block(c)
-  diagnostics_out = diagnostics_out.concat(parsed_body.diagnostics)
+  diagnostics_out = .concat(parsed_body.diagnostics)
   body := parsed_body.value
   c = parsed_body.cursor
 
@@ -2473,7 +2473,7 @@ fn parse_block(c: Cursor) BlockParse {
   start_pos := c.pos
 
   if c.kind() != .LBrace {
-    diagnostics_out = diagnostics_out.append(diag.error(
+    diagnostics_out = .append(diag.error(
       c.span(),
       "expected '{'",
     ))
@@ -2481,7 +2481,7 @@ fn parse_block(c: Cursor) BlockParse {
     return .{ value: block, cursor: c.advance(), diagnostics: diagnostics_out }
   }
 
-  c = c.advance()
+  c = .advance()
 
   for c.pos < c.tokens.len() {
     k := c.kind()
@@ -2490,32 +2490,32 @@ fn parse_block(c: Cursor) BlockParse {
     }
 
     if k == .Semi {
-      c = c.advance()
+      c = .advance()
       continue
     }
 
     if is_stmt_leader(c) {
       parsed_stmt := parse_stmt(c)
-      diagnostics_out = diagnostics_out.concat(parsed_stmt.diagnostics)
-      stmts = stmts.append(parsed_stmt.value)
+      diagnostics_out = .concat(parsed_stmt.diagnostics)
+      stmts = .append(parsed_stmt.value)
       next_c := parsed_stmt.cursor
       if next_c.pos <= c.pos {
         next_c = c.advance()
       }
       c = next_c
       if c.kind() == .Semi {
-        c = c.advance()
+        c = .advance()
       }
       continue
     }
 
     parsed_expr := parse_expr_bp(c, 0)
-    diagnostics_out = diagnostics_out.concat(parsed_expr.diagnostics)
+    diagnostics_out = .concat(parsed_expr.diagnostics)
     expr := parsed_expr.value
     next_c := parsed_expr.cursor
 
     if next_c.kind() == .Semi {
-      stmts = stmts.append(.Expr(ExprStmt.{ expr, span: expr.span }))
+      stmts = .append(.Expr(ExprStmt.{ expr, span: expr.span }))
       c = next_c.advance()
       continue
     }
@@ -2527,17 +2527,17 @@ fn parse_block(c: Cursor) BlockParse {
     }
 
     if next_c.pos < next_c.tokens.len() and next_c.preceded_by_newline() {
-      stmts = stmts.append(.Expr(ExprStmt.{ expr, span: expr.span }))
+      stmts = .append(.Expr(ExprStmt.{ expr, span: expr.span }))
       c = next_c
       continue
     }
 
-    stmts = stmts.append(.Expr(ExprStmt.{ expr, span: expr.span }))
+    stmts = .append(.Expr(ExprStmt.{ expr, span: expr.span }))
     c = next_c
   }
 
   if c.kind() != .RBrace {
-    diagnostics_out = diagnostics_out.append(diag.error(
+    diagnostics_out = .append(diag.error(
       c.span(),
       "expected '}' to close block",
     ))
@@ -2556,11 +2556,11 @@ fn parse_top_level_stmt(c: Cursor) ItemParse {
   c = parsed_stmt.cursor
 
   if c.pos <= start_pos {
-    c = c.with_pos(start_pos + 1)
+    c = .with_pos(start_pos + 1)
   }
 
   if c.kind() == .Semi {
-    c = c.advance()
+    c = .advance()
   }
 
   // If we consumed to EOF or explicit item start boundary, return.
@@ -2582,11 +2582,11 @@ fn parse_pub_top_level_stmt(c: Cursor) ItemParse {
   c = parsed_stmt.cursor
 
   if c.pos <= start_pos {
-    c = c.with_pos(start_pos + 1)
+    c = .with_pos(start_pos + 1)
   }
 
   if c.kind() == .Semi {
-    c = c.advance()
+    c = .advance()
   }
 
   if c.kind() == .Eof {
@@ -2678,7 +2678,7 @@ pub fn parse(source: String, file_id: Int) StageResult<Module> {
   }
 
   for !state.cursor.is_eof() {
-    state = state.step()
+    state = .step()
   }
 
   items := attach_doc_comments(source, state.items)

@@ -107,7 +107,7 @@ fn unit_sum_variant_ids(env: ResolvedEnv, tid: TypeId) Vector<Int>? {
         if variants[i].fields.len() != 0 {
           return .None
         }
-        ids = ids.append(i)
+        ids = .append(i)
       }
       .Some(ids)
     },
@@ -118,13 +118,13 @@ fn unit_sum_variant_ids(env: ResolvedEnv, tid: TypeId) Vector<Int>? {
 fn build_unit_sum_compare(ast_op: AstBinOp, left: CoreExpr, right: CoreExpr, tid: TypeId, variants: Vector<Int>, s: Span) CoreExprKind {
   arms: Vector<MatchArm> = []
   for vid in variants {
-    arms = arms.append(MatchArm.{
+    arms = .append(MatchArm.{
       pattern: variant_pattern(tid, vid, []),
       body: CoreExpr.{ kind: build_unit_variant_compare(ast_op, right, tid, vid, s), ty: MonoType.Bool, span: s },
     })
   }
   fallback := if ast_op == .Eq { false } else { true }
-  arms = arms.append(MatchArm.{
+  arms = .append(MatchArm.{
     pattern: .Wildcard,
     body: CoreExpr.{ kind: .LitBool(fallback), ty: MonoType.Bool, span: s },
   })

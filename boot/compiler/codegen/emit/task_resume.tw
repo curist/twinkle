@@ -115,7 +115,7 @@ pub fn analyze_task_body(
   // Always hoist captures
   for cap_sid in func.captures {
     hoisted_set[cap_sid.id] = frame_field_idx
-    hoisted_slots = hoisted_slots.append(cap_sid)
+    hoisted_slots = .append(cap_sid)
     frame_field_idx = frame_field_idx + 1
   }
 
@@ -132,7 +132,7 @@ pub fn analyze_task_body(
       }
       if max_use > def_seg {
         hoisted_set[binding.slot.id] = frame_field_idx
-        hoisted_slots = hoisted_slots.append(binding.slot)
+        hoisted_slots = .append(binding.slot)
         frame_field_idx = frame_field_idx + 1
       }
     }
@@ -143,11 +143,11 @@ pub fn analyze_task_body(
   for sp in suspension_points {
     case sp.kind {
       .Await => {
-        await_target_fields = await_target_fields.append(frame_field_idx)
+        await_target_fields = .append(frame_field_idx)
         frame_field_idx = frame_field_idx + 1
       },
       .Yield => {
-        await_target_fields = await_target_fields.append(-1)
+        await_target_fields = .append(-1)
       },
     }
   }
@@ -160,7 +160,7 @@ pub fn analyze_task_body(
   for slot_sid in hoisted_slots {
     info := facts.slot_info(func, slot_sid)
     vt := val_type_of_mono(info.mono, env)
-    frame_fields = frame_fields.append(FieldDef.{
+    frame_fields = .append(FieldDef.{
       name: .Some("s${slot_sid.id}"),
       mutable: true,
       ty: make_nullable(vt),
@@ -168,7 +168,7 @@ pub fn analyze_task_body(
   }
   for af_idx in await_target_fields {
     if af_idx >= 0 {
-      frame_fields = frame_fields.append(FieldDef.{
+      frame_fields = .append(FieldDef.{
         name: .Some("await_target"),
         mutable: true,
         ty: .Anyref,
@@ -240,7 +240,7 @@ fn find_suspension_points(
   for binding,i in bindings {
     case classify_op(binding.op, yield_fid, await_fid) {
       .Some(kind) => {
-        result = result.append(SuspensionPoint.{
+        result = .append(SuspensionPoint.{
           slot: binding.slot,
           kind: kind,
           index: i,

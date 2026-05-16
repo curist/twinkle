@@ -25,14 +25,14 @@ fn collect_free_vars_inner(expr: CoreExpr, bound: Dict<Int, Bool>, captured: Dic
     .Local(id) => {
       if !bound.has(id.id) and !captured.has(id.id) {
         captured[id.id] = true
-        result = result.append(id)
+        result = .append(id)
       }
       .{ bound, captured, result }
     },
     .GlobalLocal(id) => {
       if !bound.has(id.id) and !captured.has(id.id) {
         captured[id.id] = true
-        result = result.append(id)
+        result = .append(id)
       }
       .{ bound, captured, result }
     },
@@ -44,7 +44,7 @@ fn collect_free_vars_inner(expr: CoreExpr, bound: Dict<Int, Bool>, captured: Dic
     .Assign(local, value) => {
       if !bound.has(local.id) and !captured.has(local.id) {
         captured[local.id] = true
-        result = result.append(local)
+        result = .append(local)
       }
       collect_free_vars_inner(value, bound, captured, result)
     },
@@ -118,7 +118,7 @@ fn collect_free_vars_inner(expr: CoreExpr, bound: Dict<Int, Bool>, captured: Dic
       for id in free_vars {
         if !bound.has(id.id) and !captured.has(id.id) {
           captured[id.id] = true
-          result = result.append(id)
+          result = .append(id)
         }
       }
       .{ bound, captured, result }
@@ -173,8 +173,8 @@ pub fn lower_closure(ctx: LowerCtx, params: Vector<AstParam>, body: Block, ty: M
     ctx = lo.ctx
     // Get param type from the closure's function type
     param_ty := MonoType.Void  // placeholder
-    lambda_params = lambda_params.append(.{ local: lo.local, ty: param_ty })
-    param_locals = param_locals.append(lo.local)
+    lambda_params = .append(.{ local: lo.local, ty: param_ty })
+    param_locals = .append(lo.local)
   }
   // Refine param types from the function type
   case expanded_ty {
@@ -215,7 +215,7 @@ pub fn lower_closure(ctx: LowerCtx, params: Vector<AstParam>, body: Block, ty: M
     body: body_r.expr,
     return_ty: lambda_ret_ty,
   }
-  ctx.hoisted = ctx.hoisted.append(hoisted_def)
+  ctx.hoisted = .append(hoisted_def)
 
   // 8. Emit MakeClosure
   .{

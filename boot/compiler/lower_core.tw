@@ -76,7 +76,7 @@ fn lower_expr(ctx: LowerCtx, expr: Expr) ExprOut {
                   .{ expr: .{ kind: .GlobalFunc(func_id), ty, span: s }, ctx }
                 },
                 .None => {
-                  ctx = ctx.emit_error(s, "undefined variable: ${name}")
+                  ctx = .emit_error(s, "undefined variable: ${name}")
                   .{ expr: void_expr(s), ctx }
                 },
               }
@@ -101,7 +101,7 @@ fn lower_expr(ctx: LowerCtx, expr: Expr) ExprOut {
     .StringInterp(parts) => lower_string_interp(ctx, parts, ty, s, lower_expr),
     .Collect(ce) => lower_collect(ctx, ce, ty, s, lower_expr, lower_block),
     _ => {
-      ctx = ctx.emit_error(s, "unsupported expression kind: ${expr.kind.name()}")
+      ctx = .emit_error(s, "unsupported expression kind: ${expr.kind.name()}")
       ExprOut.{ expr: void_expr(s), ctx }
     },
   }
@@ -110,10 +110,10 @@ fn lower_expr(ctx: LowerCtx, expr: Expr) ExprOut {
 // ── Block and statement lowering ────────────────────────────────────
 
 fn lower_block(ctx: LowerCtx, block: Block) ExprOut {
-  ctx = ctx.push_scope()
+  ctx = .push_scope()
   result := lower_stmts(ctx, block.stmts, 0, block.tail, block.span, lower_expr, lower_block)
   ctx = result.ctx
-  ctx = ctx.pop_scope()
+  ctx = .pop_scope()
   ExprOut.{ expr: result.expr, ctx }
 }
 
@@ -224,7 +224,7 @@ pub fn lower_module(module: Module, check_result: CheckResult, builtins: Builtin
             gid := LocalId.{ id: ctx.next_global }
             ctx.next_global = ctx.next_global + 1
             ctx.module_globals[ls.name] = gid
-            module_let_globals = module_let_globals.append(gid)
+            module_let_globals = .append(gid)
             if ls.is_pub {
               pub_value_globals[ls.name] = gid
             }
@@ -291,7 +291,7 @@ pub fn lower_module(module: Module, check_result: CheckResult, builtins: Builtin
         case ctx.func_table[decl.name] {
           .Some(fid) => {
             r := lower_function(ctx, decl, fid, lower_block)
-            functions = functions.append(r.def)
+            functions = .append(r.def)
             ctx = r.ctx
           },
           .None => {},
@@ -330,7 +330,7 @@ pub fn lower_module(module: Module, check_result: CheckResult, builtins: Builtin
             module_let_index = module_let_index + 1
             r := lower_expr(ctx, ls.value)
             ctx = r.ctx
-            init_stmts = init_stmts.append(.{
+            init_stmts = .append(.{
               kind: .Assign(gid, r.expr),
               ty: .Void,
               span: ls.span,
@@ -347,7 +347,7 @@ pub fn lower_module(module: Module, check_result: CheckResult, builtins: Builtin
                 case lower_lvalue_assign(ctx, lhs, rhs_r.expr, es.span, lower_expr) {
                   .Some(lv) => {
                     ctx = lv.ctx
-                    init_stmts = init_stmts.append(.{
+                    init_stmts = .append(.{
                       kind: .Assign(lv.root, lv.update),
                       ty: .Void,
                       span: es.span,
@@ -356,14 +356,14 @@ pub fn lower_module(module: Module, check_result: CheckResult, builtins: Builtin
                   .None => {
                     r := lower_expr(ctx, es.expr)
                     ctx = r.ctx
-                    init_stmts = init_stmts.append(r.expr)
+                    init_stmts = .append(r.expr)
                   },
                 }
               },
               _ => {
                 r := lower_expr(ctx, es.expr)
                 ctx = r.ctx
-                init_stmts = init_stmts.append(r.expr)
+                init_stmts = .append(r.expr)
               },
             }
           },
@@ -371,7 +371,7 @@ pub fn lower_module(module: Module, check_result: CheckResult, builtins: Builtin
             has_init = true
             r := lower_for(ctx, for_stmt, lower_expr, lower_block)
             ctx = r.ctx
-            init_stmts = init_stmts.append(r.expr)
+            init_stmts = .append(r.expr)
           },
           _ => {},
         }
@@ -401,7 +401,7 @@ pub fn lower_module(module: Module, check_result: CheckResult, builtins: Builtin
       i = i - 1
     }
 
-    functions = functions.append(.{
+    functions = .append(.{
       func_id: init_fid,
       name: "$init",
       is_init: true,
@@ -411,7 +411,7 @@ pub fn lower_module(module: Module, check_result: CheckResult, builtins: Builtin
     })
   }
 
-  functions = functions.concat(ctx.hoisted)
+  functions = .concat(ctx.hoisted)
 
   .{
     module: .{

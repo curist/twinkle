@@ -97,9 +97,9 @@ pub fn unused_import_actions(
         message
       }
       action := code_action("Remove unused import '${import_name}'", "quickfix", ws_edit, [diag])
-      actions = actions.append(action)
-      bulk_edits = bulk_edits.append(edit_json)
-      bulk_diags = bulk_diags.append(diag)
+      actions = .append(action)
+      bulk_edits = .append(edit_json)
+      bulk_diags = .append(diag)
     }
   }
 
@@ -107,7 +107,7 @@ pub fn unused_import_actions(
   if actions.len() > 1 {
     bulk_ws_edit := workspace_edit(uri, bulk_edits)
     bulk := code_action("Remove all unused imports", "quickfix", bulk_ws_edit, bulk_diags)
-    actions = actions.append(bulk)
+    actions = .append(bulk)
   }
 
   actions

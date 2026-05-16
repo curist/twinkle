@@ -245,9 +245,9 @@ pub fn format_diagnostics(reg: registry.FileRegistry, diags: Vector<DiagKind>) S
       .Some(lc) => "${lc.line}:${lc.column}: ${label}: ${msg}",
       .None => "?:?: ${label}: ${msg}",
     }
-    lines = lines.append(line)
+    lines = .append(line)
     for h in help_lines(d) {
-      lines = lines.append("hint: ${h}")
+      lines = .append("hint: ${h}")
     }
   }
   lines.join("\n")

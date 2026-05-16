@@ -103,7 +103,7 @@ pub fn analyze_workspace(store: cache.Store, input: WorkspaceInput) WorkspaceAna
       .Ok(parsed) => parsed,
       .Err(_) => identity.from_path(doc.uri),
     }
-    docs = docs.append(.{ identity: id, text: doc.text, version: doc.version })
+    docs = .append(.{ identity: id, text: doc.text, version: doc.version })
   }
 
   base := base_env.builtin_env()
@@ -204,13 +204,13 @@ fn group_diagnostics(diagnostics: Vector<Diagnostic>, open_documents: Vector<Doc
     found := false
     for i in 0..groups.len() {
       if groups[i].uri == d.uri {
-        groups[i].diagnostics = groups[i].diagnostics.append(d)
+        groups[i].diagnostics = .append(d)
         found = true
         break
       }
     }
     if !found {
-      groups = groups.append(.{ uri: d.uri, version: d.version, diagnostics: [d] })
+      groups = .append(.{ uri: d.uri, version: d.version, diagnostics: [d] })
     }
   }
 
@@ -227,7 +227,7 @@ fn group_diagnostics(diagnostics: Vector<Diagnostic>, open_documents: Vector<Doc
       }
     }
     if !found {
-      groups = groups.append(.{ uri, version: doc.version, diagnostics: [] })
+      groups = .append(.{ uri, version: doc.version, diagnostics: [] })
     }
   }
 

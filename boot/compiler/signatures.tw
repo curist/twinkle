@@ -96,7 +96,7 @@ pub fn all_internal_sigs(groups: Vector<SignatureGroup>) Vector<FunctionSig> {
   for group in groups {
     for sig in group.sigs {
       internal := to_internal_name(group.receiver, sig.name)
-      result = result.append(FunctionSig.{
+      result = .append(FunctionSig.{
         name: internal,
         type_params: sig.type_params,
         param_names: sig.param_names,
@@ -138,9 +138,9 @@ fn resolve_type_params(ast_params: Vector<TypeParam>) Result<Vector<ResolvedType
         .Some(c) => ResolvedContractRef.Builtin(c),
         .None => { return .Err("unknown contract '${seg}'") },
       }
-      bounds = bounds.append(bound)
+      bounds = .append(bound)
     }
-    resolved = resolved.append(.{ name: tp.name, bounds })
+    resolved = .append(.{ name: tp.name, bounds })
   }
   .Ok(resolved)
 }
@@ -234,8 +234,8 @@ fn load_group_from_source(src: String, receiver: String?, env: ResolvedEnv) Resu
         for param in decl.params {
           case resolve_param_type(env, param, type_vars) {
             .Ok(mono) => {
-              param_tys = param_tys.append(mono)
-              param_names = param_names.append(param.name)
+              param_tys = .append(mono)
+              param_names = .append(param.name)
             },
             .Err(msg) => {
               ok = false
@@ -255,7 +255,7 @@ fn load_group_from_source(src: String, receiver: String?, env: ResolvedEnv) Resu
           doc: extract_doc_comment(src, decl.span.start),
           extern_module: .None,
         }
-        sigs = sigs.append(sig)
+        sigs = .append(sig)
       },
       _ => {},
     }
@@ -285,10 +285,10 @@ pub fn load_signatures(signatures_dir: String, type_env: ResolvedEnv) Result<Vec
   tw_files: Vector<String> = []
   for name in entries {
     if path.extension(name) == ".tw" {
-      tw_files = tw_files.append(name)
+      tw_files = .append(name)
     }
   }
-  tw_files = tw_files.sort_by(fn(a, b) { if a < b { .Lt } else if a > b { .Gt } else { .Eq } })
+  tw_files = .sort_by(fn(a, b) { if a < b { .Lt } else if a > b { .Gt } else { .Eq } })
 
   groups: Vector<SignatureGroup> = []
   for filename in tw_files {
@@ -305,7 +305,7 @@ pub fn load_signatures(signatures_dir: String, type_env: ResolvedEnv) Result<Vec
     }
 
     group := try load_group_from_source(src, receiver, type_env)
-    groups = groups.append(group)
+    groups = .append(group)
   }
 
   .Ok(groups)

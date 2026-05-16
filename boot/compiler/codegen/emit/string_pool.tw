@@ -8,7 +8,7 @@ pub fn emit_string_pool_globals(reg: WasmTypeRegistry) Vector<GlobalDef> {
   for k in reg.string_pool_order {
     case reg.string_pool[k] {
       .Some(entry) => {
-        globals = globals.append(GlobalDef.{
+        globals = .append(GlobalDef.{
           name: entry.global_sym,
           mutable: true,
           ty: .Ref(true, .Named("rt_types__String")),
@@ -44,7 +44,7 @@ pub fn emit_string_pool_getters(reg: WasmTypeRegistry) Vector<FuncDef> {
           .RefAsNonNull,
         ]
 
-        funcs = funcs.append(FuncDef.{
+        funcs = .append(FuncDef.{
           name: entry.getter_sym,
           params: [],
           results: [.Ref(false, .Named("rt_types__String"))],
@@ -64,7 +64,7 @@ pub fn emit_string_data_segment(reg: WasmTypeRegistry) DataSegment? {
   // Collect all string bytes in insertion order
   all_bytes: Vector<Byte> = []
   for k in reg.string_pool_order {
-    for b in k { all_bytes = all_bytes.append(b) }
+    for b in k { all_bytes = .append(b) }
   }
 
   .Some(DataSegment.{

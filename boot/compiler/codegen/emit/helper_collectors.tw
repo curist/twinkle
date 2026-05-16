@@ -18,7 +18,7 @@ pub fn collect_iterator_next_helpers(funcs: Vector<PreparedFunc>, builtins: Buil
       key := mono_to_key(mono)
       if !seen.has(key) {
         seen[key] = mono
-        order = order.append(key)
+        order = .append(key)
       }
     }
   }
@@ -38,13 +38,13 @@ fn collect_iterator_next_helpers_expr(expr: PreparedExpr, func: PreparedFunc, wa
     case cur_expr {
       .Let(sid, op, body) => {
         from_op := collect_iterator_next_helpers_op(op, func, want_fid)
-        for mono in from_op { out = out.append(mono) }
+        for mono in from_op { out = .append(mono) }
         case func.slots[sid.id] {
           .Some(info) => {
             case op {
               .ACall(.AGlobalFunc(fid), _) => {
                 if fid.id == want_fid.id {
-                  out = out.append(info.mono)
+                  out = .append(info.mono)
                 }
               },
               _ => {},
@@ -65,14 +65,14 @@ fn collect_iterator_next_helpers_op(op: PreparedOp, func: PreparedFunc, want_fid
     .AIf(_, then_e, else_e) => {
       out := collect_iterator_next_helpers_expr(then_e, func, want_fid)
       more := collect_iterator_next_helpers_expr(else_e, func, want_fid)
-      for mono in more { out = out.append(mono) }
+      for mono in more { out = .append(mono) }
       out
     },
     .AMatch(_, arms) => {
       out: Vector<MonoType> = []
       for arm in arms {
         more := collect_iterator_next_helpers_expr(arm.body, func, want_fid)
-        for mono in more { out = out.append(mono) }
+        for mono in more { out = .append(mono) }
       }
       out
     },
@@ -92,7 +92,7 @@ pub fn collect_dict_get_inner_types(funcs: Vector<PreparedFunc>, builtins: Built
       key := mono_to_key(mono)
       if !seen.has(key) {
         seen[key] = mono
-        order = order.append(key)
+        order = .append(key)
       }
     }
   }
@@ -111,7 +111,7 @@ fn collect_dict_get_inner_types_expr(expr: PreparedExpr, func: PreparedFunc, wan
     case cur_expr {
       .Let(sid, op, body) => {
         from_op := collect_dict_get_inner_types_op(op, func, want_fid)
-        for mono in from_op { out = out.append(mono) }
+        for mono in from_op { out = .append(mono) }
         case func.slots[sid.id] {
           .Some(info) => {
             case op {
@@ -119,7 +119,7 @@ fn collect_dict_get_inner_types_expr(expr: PreparedExpr, func: PreparedFunc, wan
                 if fid.id == want_fid.id {
                   // The slot type is Optional(inner); extract inner
                   case info.mono {
-                    .Optional(inner) => { out = out.append(inner) },
+                    .Optional(inner) => { out = .append(inner) },
                     _ => {},
                   }
                 }
@@ -142,14 +142,14 @@ fn collect_dict_get_inner_types_op(op: PreparedOp, func: PreparedFunc, want_fid:
     .AIf(_, then_e, else_e) => {
       out := collect_dict_get_inner_types_expr(then_e, func, want_fid)
       more := collect_dict_get_inner_types_expr(else_e, func, want_fid)
-      for mono in more { out = out.append(mono) }
+      for mono in more { out = .append(mono) }
       out
     },
     .AMatch(_, arms) => {
       out: Vector<MonoType> = []
       for arm in arms {
         more := collect_dict_get_inner_types_expr(arm.body, func, want_fid)
-        for mono in more { out = out.append(mono) }
+        for mono in more { out = .append(mono) }
       }
       out
     },
@@ -207,7 +207,7 @@ pub fn collect_sum_variant_helpers(funcs: Vector<PreparedFunc>, env: ResolvedEnv
           }
           if cached2 and !seen.has(k) {
             seen[k] = info.mono
-            order = order.append(k)
+            order = .append(k)
           }
         },
         .None => {},

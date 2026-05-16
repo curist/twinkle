@@ -74,7 +74,7 @@ pub fn lower_contract_call(ctx: LowerCtx, contract: BuiltinContract, method_name
   cur_ctx := rr.ctx
   for arg in args {
     ar := lower_expr_fn(cur_ctx, arg)
-    lowered_args = lowered_args.append(ar.expr)
+    lowered_args = .append(ar.expr)
     cur_ctx = ar.ctx
   }
   .{
@@ -97,7 +97,7 @@ pub fn lower_call(ctx: LowerCtx, callee_expr: Expr, args: Vector<Expr>, ty: Mono
                 cur_ctx := ctx
                 for arg in args {
                   r := lower_expr_fn(cur_ctx, arg)
-                  lowered_args = lowered_args.append(r.expr)
+                  lowered_args = .append(r.expr)
                   cur_ctx = r.ctx
                 }
                 return .{
@@ -146,7 +146,7 @@ pub fn lower_call(ctx: LowerCtx, callee_expr: Expr, args: Vector<Expr>, ty: Mono
                 cur_ctx := rr.ctx
                 for arg in args {
                   ar := lower_expr_fn(cur_ctx, arg)
-                  lowered_args = lowered_args.append(ar.expr)
+                  lowered_args = .append(ar.expr)
                   cur_ctx = ar.ctx
                 }
                 callee_core := CoreExpr.{ kind: .GlobalFunc(fid), ty: callee_ty, span: callee_expr.span }
@@ -163,7 +163,7 @@ pub fn lower_call(ctx: LowerCtx, callee_expr: Expr, args: Vector<Expr>, ty: Mono
             cur_ctx := ctx
             for arg in args {
               ar := lower_expr_fn(cur_ctx, arg)
-              lowered_args = lowered_args.append(ar.expr)
+              lowered_args = .append(ar.expr)
               cur_ctx = ar.ctx
             }
             callee_core := CoreExpr.{ kind: .GlobalFunc(fid), ty: callee_ty, span: callee_expr.span }
@@ -186,7 +186,7 @@ pub fn lower_call_generic(ctx: LowerCtx, callee_expr: Expr, args: Vector<Expr>, 
   cur_ctx := cr.ctx
   for arg in args {
     ar := lower_expr_fn(cur_ctx, arg)
-    lowered_args = lowered_args.append(ar.expr)
+    lowered_args = .append(ar.expr)
     cur_ctx = ar.ctx
   }
   .{

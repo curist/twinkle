@@ -64,7 +64,7 @@ pub fn resolve_prelude_root() String {
 pub fn resolve_stdlib_module_path(stdlib_root: String, module_path: Vector<String>) String {
   segments := module_path
   if segments.len() > 0 and segments[0] == "std" {
-    segments = segments.slice(1, segments.len())
+    segments = .slice(1, segments.len())
   }
   resolve_module_path(stdlib_root, segments)
 }
@@ -83,7 +83,7 @@ pub fn list_prelude_modules(prelude_root: String) Vector<String> {
   filtered: Vector<String> = []
   for name in names {
     if path.extension(name) == ".tw" {
-      filtered = filtered.append(path.join(prelude_root, name))
+      filtered = .append(path.join(prelude_root, name))
     }
   }
   filtered.sort_by(fn(a: String, b: String) Order {

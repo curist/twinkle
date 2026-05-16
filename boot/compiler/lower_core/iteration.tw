@@ -35,7 +35,7 @@ type IterSetup = .{
 }
 
 fn setup_indexed_iter(ctx: LowerCtx, iter_expr: Expr, pattern: String?, index: String?, body: Block, s: Span, lower_expr_fn: fn(LowerCtx, Expr) ExprOut, lower_block_fn: fn(LowerCtx, Block) ExprOut) IterSetup {
-  ctx = ctx.push_scope()
+  ctx = .push_scope()
   ar := lower_expr_fn(ctx, iter_expr)
   ctx = ar.ctx
   elem_ty := iter_elem_type(ar.expr.ty, ctx.env)
@@ -79,7 +79,7 @@ fn setup_indexed_iter(ctx: LowerCtx, iter_expr: Expr, pattern: String?, index: S
   }
   body_r := lower_block_fn(ctx, body)
   ctx = body_r.ctx
-  ctx = ctx.pop_scope()
+  ctx = .pop_scope()
   .{
     ctx, arr_local, len_local, idx_local, elem_local, elem_ty,
     idx_user_local, index_source, index_source_ty,
@@ -95,7 +95,7 @@ fn build_range_loop(setup: IterSetup, inner_action: CoreExpr, s: Span) ExprOut {
   range_tid := case type_id_from_mono(setup.iter_core.ty) {
     .Some(tid) => tid,
     .None => {
-      ctx = ctx.emit_error(s, "internal error: expected Range type for range loop")
+      ctx = .emit_error(s, "internal error: expected Range type for range loop")
       return .{ expr: void_expr(s), ctx }
     },
   }
@@ -210,7 +210,7 @@ fn build_iterator_loop(setup: IterSetup, inner_action: CoreExpr, s: Span) ExprOu
   iter_item_tid := case resolve_type_id(ctx.env, "IterItem") {
     .Some(tid) => tid,
     .None => {
-      ctx = ctx.emit_error(s, "internal error: missing IterItem type")
+      ctx = .emit_error(s, "internal error: missing IterItem type")
       return .{ expr: void_expr(s), ctx }
     },
   }
@@ -552,12 +552,12 @@ pub fn lower_collect(ctx: LowerCtx, ce: CollectExpr, ty: MonoType, s: Span, lowe
       // collect while cond { body } — condition-form
       case ce.condition {
         .Some(cond_expr) => {
-          ctx = ctx.push_scope()
+          ctx = .push_scope()
           cr := lower_expr_fn(ctx, cond_expr)
           ctx = cr.ctx
           body_r := lower_block_fn(ctx, ce.body)
           ctx = body_r.ctx
-          ctx = ctx.pop_scope()
+          ctx = .pop_scope()
 
           push_call := collect_builder_push(builder, builder_local, body_r.expr, s)
 
@@ -576,7 +576,7 @@ pub fn lower_collect(ctx: LowerCtx, ce: CollectExpr, ty: MonoType, s: Span, lowe
           lower_collect_builder_region(ctx, builder, builder_local, loop_expr, ty, s)
         },
         .None => {
-          ctx = ctx.emit_error(s, "collect requires either iter or condition")
+          ctx = .emit_error(s, "collect requires either iter or condition")
           .{ expr: void_expr(s), ctx }
         },
       }

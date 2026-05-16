@@ -28,7 +28,7 @@ fn compute_line_starts(source: String) Vector<Int> {
   starts: Vector<Int> = [0]
   for b, i in source {
     if b.is_newline() {
-      starts = starts.append(i + 1)
+      starts = .append(i + 1)
     }
   }
   starts

@@ -69,12 +69,12 @@ fn empty_ctx(env: ResolvedEnv, module_aliases: Dict<String, Bool>) InferCtx {
 }
 
 fn push_scope(ctx: InferCtx) InferCtx {
-  ctx.locals = ctx.locals.append(Dict.new())
+  ctx.locals = .append(Dict.new())
   ctx
 }
 
 fn pop_scope(ctx: InferCtx) InferCtx {
-  ctx.locals = ctx.locals.slice(0, ctx.locals.len() - 1)
+  ctx.locals = .slice(0, ctx.locals.len() - 1)
   ctx
 }
 
@@ -177,7 +177,7 @@ fn zonk_with_meta(ty: MonoType, subst: Dict<Int, MonoType>) ZonkMetaOut {
       has_meta := false
       for p in params {
         pr := zonk_with_meta(p, subst)
-        zonked_params = zonked_params.append(pr.ty)
+        zonked_params = .append(pr.ty)
         if pr.has_meta { has_meta = true }
       }
       rr := zonk_with_meta(ret, subst)
@@ -197,7 +197,7 @@ fn zonk_with_meta(ty: MonoType, subst: Dict<Int, MonoType>) ZonkMetaOut {
       has_meta := false
       for a in args {
         ar := zonk_with_meta(a, subst)
-        zonked_args = zonked_args.append(ar.ty)
+        zonked_args = .append(ar.ty)
         if ar.has_meta { has_meta = true }
       }
       .{ ty: MonoType.Named(tid, zonked_args), has_meta: has_meta }
@@ -646,7 +646,7 @@ fn check_instantiated_bounds(sig: FunctionSig, type_args: Vector<MonoType>, erro
           case proof {
             .Ok(next_ctx) => { cur_ctx = next_ctx },
             .Err(reason) => {
-              cur_diags = cur_diags.append(.Error(.ContractViolation(.{
+              cur_diags = .append(.Error(.ContractViolation(.{
                 span: error_span,
                 ty: arg_ty,
                 contract: contract_name(contract),
@@ -676,7 +676,7 @@ fn check_resolved_type_param_bounds(owner_name: String, params: Vector<ResolvedT
           case proof {
             .Ok(next_ctx) => { cur_ctx = next_ctx },
             .Err(reason) => {
-              cur_diags = cur_diags.append(.Error(.ContractViolation(.{
+              cur_diags = .append(.Error(.ContractViolation(.{
                 span: error_span,
                 ty: arg_ty,
                 contract: contract_name(contract),
@@ -801,7 +801,7 @@ fn instantiate(sig: FunctionSig, ctx: InferCtx) InstOut {
     m := fresh_meta(cur_ctx)
     cur_ctx = m.ctx
     var_map[tp.name] = m.ty
-    inst_type_args = inst_type_args.append(m.ty)
+    inst_type_args = .append(m.ty)
   }
 
   inst_params := collect p in sig.params { subst_vars(p, var_map) }
@@ -1044,7 +1044,7 @@ fn synth_call_general(callee: Expr, args: Vector<Expr>, call_id: Int, call_span_
     ar := cur_ctx.synth(arg, cur_diags)
     cur_ctx = ar.ctx
     cur_diags = ar.diags
-    arg_tys = arg_tys.append(ar.ty)
+    arg_tys = .append(ar.ty)
   }
 
   ret_m := fresh_meta(cur_ctx)
@@ -1361,14 +1361,14 @@ fn try_resolve_type_from_expr(expr: Expr, ctx: InferCtx) ResolvedTypeExpr? {
           for _ in type_params {
             m := fresh_meta(cur_ctx)
             cur_ctx = m.ctx
-            type_args = type_args.append(m.ty)
+            type_args = .append(m.ty)
           }
         },
         .Some(.Record(_, type_params, _)) => {
           for _ in type_params {
             m := fresh_meta(cur_ctx)
             cur_ctx = m.ctx
-            type_args = type_args.append(m.ty)
+            type_args = .append(m.ty)
           }
         },
         _ => {},
@@ -1482,7 +1482,7 @@ fn synth_named_record(type_name: String, entries: Vector<RecordEntry>, record_id
         for _ in type_params {
           m := fresh_meta(cur_ctx)
           cur_ctx = m.ctx
-          type_args = type_args.append(m.ty)
+          type_args = .append(m.ty)
         }
       },
       _ => {},
@@ -1515,7 +1515,7 @@ fn check_record_lit(entries: Vector<RecordEntry>, expected: MonoType, s: Span, c
           for entry in entries {
             case seen_fields[entry.name] {
               .Some(first) => {
-                cur_diags = cur_diags.append(.Error(.DuplicateField(.{ span: entry.span, name: entry.name, first })))
+                cur_diags = .append(.Error(.DuplicateField(.{ span: entry.span, name: entry.name, first })))
               },
               .None => { seen_fields[entry.name] = entry.span },
             }
@@ -1540,14 +1540,14 @@ fn check_record_lit(entries: Vector<RecordEntry>, expected: MonoType, s: Span, c
                 }
               },
               .None => {
-                cur_diags = cur_diags.append(.Error(.NoField(.{ span: entry.span, name: entry.name, ty: zonked })))
+                cur_diags = .append(.Error(.NoField(.{ span: entry.span, name: entry.name, ty: zonked })))
               },
             }
           }
           // Check missing fields
           for f in fields {
             if !entries.any(fn(e) { e.name == f.name }) {
-              cur_diags = cur_diags.append(.Error(.MissingField(.{ span: s, name: f.name, ty: zonked })))
+              cur_diags = .append(.Error(.MissingField(.{ span: s, name: f.name, ty: zonked })))
             }
           }
           .{ ctx: cur_ctx, diags: cur_diags }
@@ -1724,14 +1724,14 @@ fn synth_closure(params: Vector<Param>, ret_ty_expr: TypeExpr?, body: Block, s: 
         ann := resolve_annotation(ty_expr, cur_ctx, cur_diags)
         cur_ctx = ann.ctx
         cur_diags = ann.diags
-        param_tys = param_tys.append(ann.ty)
+        param_tys = .append(ann.ty)
         cur_ctx = bind_local(cur_ctx, p.name, ann.ty)
       },
       .None => {
         m := fresh_meta(cur_ctx)
         cur_ctx = m.ctx
         cur_diags = m.diags
-        param_tys = param_tys.append(m.ty)
+        param_tys = .append(m.ty)
         cur_ctx = bind_local(cur_ctx, p.name, m.ty)
       },
     }
@@ -1776,7 +1776,7 @@ fn check_closure(params: Vector<Param>, ret_ty_expr: TypeExpr?, body: Block, exp
             ann := resolve_annotation(ty_expr, cur_ctx, cur_diags)
             cur_ctx = ann.ctx
             cur_diags = ann.diags
-            param_tys = param_tys.append(ann.ty)
+            param_tys = .append(ann.ty)
             // Unify with expected param
             if i < exp_params.len() {
               u := cur_ctx.unify(ann.ty, exp_params[i], p.span, cur_diags)
@@ -1792,7 +1792,7 @@ fn check_closure(params: Vector<Param>, ret_ty_expr: TypeExpr?, body: Block, exp
               cur_ctx = fm.ctx
               fm.ty
             }
-            param_tys = param_tys.append(pty)
+            param_tys = .append(pty)
             cur_ctx = bind_local(cur_ctx, p.name, pty)
           },
         }
@@ -1942,7 +1942,7 @@ fn synth_case(scrut: Expr, arms: Vector<CaseArm>, s: Span, ctx: InferCtx, diags:
 
   for arm in arms {
     if expr_needs_expected_type(arm.expr) {
-      deferred_arms = deferred_arms.append(arm)
+      deferred_arms = .append(arm)
       continue
     }
 
@@ -2030,7 +2030,7 @@ fn check_pattern(pat: Pattern, expected: MonoType, ctx: InferCtx, diags: Vector<
     .Variant(name, sub_pats) => check_variant_pattern(name, sub_pats, expected, pat.span, ctx, diags),
     .QualifiedVariant(path, name, sub_pats) => {
       // Validate that the qualifier matches the scrutinee type
-      diags = diags.concat(validate_qualifier(path, expected, pat.span, ctx))
+      diags = .concat(validate_qualifier(path, expected, pat.span, ctx))
       check_variant_pattern(name, sub_pats, expected, pat.span, ctx, diags)
     },
     .ErrorPattern => .{ ctx, diags },
@@ -2207,7 +2207,7 @@ fn bind_iterable_vars(ctx: InferCtx, iter_expr: Expr, pattern: String?, index: S
           .None => { cur_ctx = bind_local(cur_ctx, idx_name, MonoType.Int) },
         }
       } else {
-        cur_diags = cur_diags.append(.Error(.IteratorNoIndex(.{ span: iter_expr.span })))
+        cur_diags = .append(.Error(.IteratorNoIndex(.{ span: iter_expr.span })))
       }
     },
     .None => {},
@@ -3103,7 +3103,7 @@ fn check_function(decl: FunctionDecl, ctx: InferCtx, diags: Vector<DiagKind>) Ch
             if f.name == decl.name { f.ret = .Some(inferred_ret) }
             f
           }
-          result_ctx.env = result_ctx.env.with_functions(updated_fns)
+          result_ctx.env = .with_functions(updated_fns)
           .{ ctx: result_ctx, diags: body_r.diags }
         },
       }
@@ -3229,7 +3229,7 @@ pub fn check(module: Module, env: ResolvedEnv) CheckResult {
   // Pass 4: if any top-level let type was corrected in Pass 3, re-check
   // functions that may have seen stale types.
   if any_type_updated and cur_diags.len() > diags_before_pass2 {
-    cur_diags = cur_diags.slice(0, diags_before_pass2)
+    cur_diags = .slice(0, diags_before_pass2)
     for item in module.items {
       case item {
         .Function(decl) => {
@@ -3260,7 +3260,7 @@ pub fn check(module: Module, env: ResolvedEnv) CheckResult {
             .Some(span_start) => {
               if !reported_spans.has(span_start) {
                 reported_spans[span_start] = true
-                cur_diags = cur_diags.append(.Error(.AmbiguousType(.{ span: .{ file_id: 0, start: span_start, end: span_start } })))
+                cur_diags = .append(.Error(.AmbiguousType(.{ span: .{ file_id: 0, start: span_start, end: span_start } })))
               }
             },
             .None => {},

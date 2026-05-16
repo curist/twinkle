@@ -42,7 +42,7 @@ pub fn lower_record_fields(ctx: LowerCtx, tid: TypeId, entries: Vector<ast.Recor
     case entry.value {
       .Some(val_expr) => {
         r := lower_expr_fn(ctx, val_expr)
-        fields = fields.append(.{ field, value: r.expr })
+        fields = .append(.{ field, value: r.expr })
         ctx = r.ctx
       },
       .None => {
@@ -51,11 +51,11 @@ pub fn lower_record_fields(ctx: LowerCtx, tid: TypeId, entries: Vector<ast.Recor
           .Some(local_id) => {
             val_ty := find_field_type_in_type(ctx.env, ty, entry.name)
             val := CoreExpr.{ kind: .Local(local_id), ty: val_ty, span: entry.span }
-            fields = fields.append(.{ field, value: val })
+            fields = .append(.{ field, value: val })
           },
           .None => {
             ctx = ctx.emit_error(entry.span, "undefined variable: ${entry.name}")
-            fields = fields.append(.{ field, value: void_expr(entry.span) })
+            fields = .append(.{ field, value: void_expr(entry.span) })
           },
         }
       },

@@ -196,7 +196,7 @@ pub fn link(
     for f in m.core.functions {
       remapped_id := remap_func_id(f.func_id, remap)
 
-      all_functions = all_functions.append(.{
+      all_functions = .append(.{
         func_id: remapped_id,
         name: f.name,
         is_init: f.is_init,
@@ -209,7 +209,7 @@ pub fn link(
     // Track entry module function IDs for DCE roots.
     if m.path == entry_path {
       for f in m.core.functions {
-        entry_func_ids = entry_func_ids.append(remap_func_id(f.func_id, remap).id)
+        entry_func_ids = .append(remap_func_id(f.func_id, remap).id)
       }
     }
 
@@ -217,7 +217,7 @@ pub fn link(
     case m.core.init_func_id {
       .Some(init_id) => {
         remapped_init := remap_func_id(init_id, remap)
-        all_init_ids = all_init_ids.append(remapped_init)
+        all_init_ids = .append(remapped_init)
 
         if m.path == entry_path {
           entry_init = .Some(remapped_init)
@@ -243,7 +243,7 @@ pub fn link(
   live_functions: Vector<FunctionDef> = []
   for f in linked_functions {
     if reachable.has(f.func_id.id) {
-      live_functions = live_functions.append(f)
+      live_functions = .append(f)
     }
   }
 
