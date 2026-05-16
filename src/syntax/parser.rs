@@ -880,7 +880,13 @@ impl Parser {
                 }
 
                 self.advance(); // consume operator
-                let rhs = self.parse_expr_bp(r_bp)?;
+
+                // Rebinding receiver shorthand: x = .method(args) => x = x.method(args)
+                let rhs = if op_kind == TokenKind::Eq && self.is_receiver_shorthand() {
+                    self.parse_postfix_chain(lhs.clone())?
+                } else {
+                    self.parse_expr_bp(r_bp)?
+                };
                 let span = lhs.span.merge(&rhs.span);
 
                 lhs = Expr::new(
@@ -1058,6 +1064,73 @@ impl Parser {
             TokenKind::LBracket => self.parse_index(base),
             _ => unreachable!("parse_postfix called with non-postfix token"),
         }
+    }
+
+    /// Check if the current position starts a receiver shorthand: `.lowercase(`
+    fn is_receiver_shorthand(&self) -> bool {
+        if self.peek_kind() != Some(TokenKind::Dot) {
+            return false;
+        }
+        // Dot must not be preceded by newline
+        if let Some(dot_tok) = self.tokens.get(self.pos) {
+            if dot_tok.preceded_by_newline {
+                return false;
+            }
+        }
+        if let Some(ident_tok) = self.tokens.get(self.pos + 1) {
+            if ident_tok.kind != TokenKind::Ident {
+                return false;
+            }
+            if ident_tok.text.starts_with(|c: char| c.is_uppercase()) {
+                return false;
+            }
+            if let Some(paren_tok) = self.tokens.get(self.pos + 2) {
+                return paren_tok.kind == TokenKind::LParen;
+            }
+        }
+        false
+    }
+
+    /// Parse a postfix chain (`.method(args).field[idx]...`) starting from a receiver expression.
+    fn parse_postfix_chain(&mut self, receiver: Expr) -> ParseResult<Expr> {
+        let mut expr = receiver;
+        loop {
+            match self.peek_kind() {
+                Some(TokenKind::Dot) => {
+                    let tok = &self.tokens[self.pos];
+                    if tok.preceded_by_newline {
+                        // Check same rules as the main loop
+                        if let Some(next) = self.tokens.get(self.pos + 1) {
+                            if next.kind == TokenKind::LBrace {
+                                break;
+                            }
+                            if next.kind == TokenKind::Ident
+                                && next.text.starts_with(|c: char| c.is_uppercase())
+                            {
+                                break;
+                            }
+                        }
+                    }
+                    expr = self.parse_postfix(expr)?;
+                }
+                Some(TokenKind::LParen) => {
+                    let tok = &self.tokens[self.pos];
+                    if tok.preceded_by_newline {
+                        break;
+                    }
+                    expr = self.parse_postfix(expr)?;
+                }
+                Some(TokenKind::LBracket) => {
+                    let tok = &self.tokens[self.pos];
+                    if tok.preceded_by_newline {
+                        break;
+                    }
+                    expr = self.parse_postfix(expr)?;
+                }
+                _ => break,
+            }
+        }
+        Ok(expr)
     }
 
     // Literal parsing

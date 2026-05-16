@@ -371,6 +371,35 @@ a = RecordUpdate(a, b, RecordUpdate(a.b, c, x))
 
 The root of the chain must be a local identifier. Chains starting with expressions (e.g., `foo().x = 1`) are not allowed.
 
+#### Rebinding receiver shorthand
+
+When the right-hand side of a rebinding assignment begins with `.lowercase(`, the assignment target is used as the implicit receiver:
+
+```tw
+xs = .append(item)
+// desugars to:
+xs = xs.append(item)
+
+state.items = .append(entry)
+// desugars to:
+state.items = state.items.append(entry)
+```
+
+Method chains after the leading method call are part of the expression:
+
+```tw
+items = .filter(fn(x) { x.active }).map(fn(x) { x.name })
+// desugars to:
+items = items.filter(fn(x) { x.active }).map(fn(x) { x.name })
+```
+
+The shorthand is only valid at the head of a rebinding RHS. It does not apply inside nested expressions, in `let` bindings (`x := .method()`), or in other expression positions.
+
+Disambiguation by leading token:
+- `.lowercase(` — receiver shorthand
+- `.Uppercase` — variant literal
+- `.{` — anonymous record literal
+
 ---
 
 ### 7.7 Aliasing and Value Semantics

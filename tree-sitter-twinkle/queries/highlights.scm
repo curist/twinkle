@@ -132,6 +132,10 @@
   function: (field_access
     field: (identifier) @function.method.call))
 
+; Receiver shorthand: .method(args) in rebinding assignment
+(receiver_shorthand
+  method: (identifier) @function.method.call)
+
 ; Variants - high priority for constructors
 (variant_expression
   variant: (identifier) @constructor)

@@ -42,7 +42,6 @@ Self-hosting is complete. Historical design and status docs live in
 | Boot performance | Track current compiler bottlenecks and optimization wins | In Progress | [boot-compiler-perf.md](boot-compiler-perf.md) |
 | Unreachable case arms | Diagnose case arms shadowed by earlier catch-all, literal, or covering variant patterns | Planned | [unreachable-case-arms.md](unreachable-case-arms.md) |
 | Task concurrency | Add library-first cooperative `Task<T>` concurrency without new syntax | Planned | [task-concurrency.md](task-concurrency.md) |
-| Compound rebinding | Method shorthand on RHS of `=` to reduce repetitive rebinding patterns | Planned | [compound-rebinding.md](compound-rebinding.md) |
 
 
 ### Later — Tooling & Ecosystem

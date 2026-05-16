@@ -228,6 +228,15 @@ module.exports = grammar({
       $.range_expression,
     ),
 
+    // Receiver shorthand: .method(args) as a postfix expression in assignment RHS.
+    // x = .method(args) desugars to x = x.method(args).
+    // Placed in _postfix_expression so postfix chains (.map, [i], ()) apply normally.
+    receiver_shorthand: $ => seq(
+      '.',
+      field('method', $.identifier),
+      field('arguments', $.argument_list),
+    ),
+
     range_expression: $ => choice(
       prec.left('range', seq(
         field('start', $.logical_or_expression),
@@ -345,6 +354,7 @@ module.exports = grammar({
       $.call_expression,
       $.field_access,
       $.index_access,
+      $.receiver_shorthand,
       $._primary_expression,
     ),
 

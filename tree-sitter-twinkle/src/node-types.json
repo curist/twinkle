@@ -435,6 +435,10 @@
             "named": true
           },
           {
+            "type": "receiver_shorthand",
+            "named": true
+          },
+          {
             "type": "record_literal",
             "named": true
           },
@@ -953,6 +957,10 @@
             "named": true
           },
           {
+            "type": "receiver_shorthand",
+            "named": true
+          },
+          {
             "type": "record_literal",
             "named": true
           },
@@ -1359,6 +1367,10 @@
           },
           {
             "type": "parenthesized_expression",
+            "named": true
+          },
+          {
+            "type": "receiver_shorthand",
             "named": true
           },
           {
@@ -1821,6 +1833,32 @@
           "named": true
         }
       ]
+    }
+  },
+  {
+    "type": "receiver_shorthand",
+    "named": true,
+    "fields": {
+      "arguments": {
+        "multiple": false,
+        "required": true,
+        "types": [
+          {
+            "type": "argument_list",
+            "named": true
+          }
+        ]
+      },
+      "method": {
+        "multiple": false,
+        "required": true,
+        "types": [
+          {
+            "type": "identifier",
+            "named": true
+          }
+        ]
+      }
     }
   },
   {
@@ -2396,6 +2434,10 @@
         },
         {
           "type": "parenthesized_expression",
+          "named": true
+        },
+        {
+          "type": "receiver_shorthand",
           "named": true
         },
         {

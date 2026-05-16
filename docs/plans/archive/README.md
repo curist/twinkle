@@ -49,6 +49,14 @@ Related historical context outside this folder:
 
 ---
 
+## Archived Language Feature Plans
+
+| Plan | Description |
+|------|-------------|
+| [compound-rebinding.md](compound-rebinding.md) | Rebinding receiver shorthand: `x = .method(args)` desugars to `x = x.method(args)` at parse time |
+
+---
+
 ## Archived Boot Compiler Refactor Plans
 
 | Plan | Description |

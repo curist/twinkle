@@ -2187,21 +2187,48 @@ fn parse_expr_bp(c: Cursor, min_bp: Int) ExprParse {
           diagnostics_out = diagnostics_out.append(.Error(.CStyleLogicalOp(.{ span: c.span(), operator: op_str, suggestion })))
         }
 
-        parsed_rhs := parse_expr_bp(c.advance(), info.right)
-        diagnostics_out = diagnostics_out.concat(parsed_rhs.diagnostics)
-        rhs := parsed_rhs.value
-        c = parsed_rhs.cursor
+        // Rebinding receiver shorthand: x = .method(args) => x = x.method(args)
+        rhs_cursor := c.advance()
+        is_receiver_shorthand := info.op == .Assign and rhs_cursor.kind() == .Dot and !rhs_cursor.preceded_by_newline() and rhs_cursor.at(1).kind() == .Ident and !is_upper_ascii_name(rhs_cursor.at(1).text()) and rhs_cursor.at(2).kind() == .LParen
+        if is_receiver_shorthand {
+          // Use LHS as implicit receiver, then parse postfix chain
+          receiver := Expr.{
+            id: rhs_cursor.alloc_expr_id(),
+            kind: lhs.kind,
+            span: lhs.span,
+          }
+          parsed_rhs := parse_postfix(rhs_cursor, receiver)
+          diagnostics_out = diagnostics_out.concat(parsed_rhs.diagnostics)
+          rhs := parsed_rhs.value
+          c = parsed_rhs.cursor
 
-        lhs = Expr.{
-          id: c.alloc_expr_id(),
-          kind: .Binary(info.op, lhs, rhs),
-          span: lhs.span.merge(rhs.span),
+          lhs = Expr.{
+            id: c.alloc_expr_id(),
+            kind: .Binary(.Assign, lhs, rhs),
+            span: lhs.span.merge(rhs.span),
+          }
+
+          parsed_postfix_rhs := parse_postfix(c, lhs)
+          diagnostics_out = diagnostics_out.concat(parsed_postfix_rhs.diagnostics)
+          lhs = parsed_postfix_rhs.value
+          c = parsed_postfix_rhs.cursor
+        } else {
+          parsed_rhs := parse_expr_bp(rhs_cursor, info.right)
+          diagnostics_out = diagnostics_out.concat(parsed_rhs.diagnostics)
+          rhs := parsed_rhs.value
+          c = parsed_rhs.cursor
+
+          lhs = Expr.{
+            id: c.alloc_expr_id(),
+            kind: .Binary(info.op, lhs, rhs),
+            span: lhs.span.merge(rhs.span),
+          }
+
+          parsed_postfix_rhs := parse_postfix(c, lhs)
+          diagnostics_out = diagnostics_out.concat(parsed_postfix_rhs.diagnostics)
+          lhs = parsed_postfix_rhs.value
+          c = parsed_postfix_rhs.cursor
         }
-
-        parsed_postfix_rhs := parse_postfix(c, lhs)
-        diagnostics_out = diagnostics_out.concat(parsed_postfix_rhs.diagnostics)
-        lhs = parsed_postfix_rhs.value
-        c = parsed_postfix_rhs.cursor
       },
       .None => { break },
     }
@@ -2250,6 +2277,25 @@ fn parse_binding_stmt_with_pub(c: Cursor, is_pub: Bool) StmtParse {
     c = c.advance()
   } else {
     stmt: Stmt = .ErrorStmt(c.span_through(start_pos))
+    return .{ value: stmt, cursor: c, diagnostics: diagnostics_out }
+  }
+
+  // Rebinding receiver shorthand: name = .method(args) => name = name.method(args)
+  if is_rebind and c.kind() == .Dot and !c.preceded_by_newline() and c.at(1).kind() == .Ident and !is_upper_ascii_name(c.at(1).text()) and c.at(2).kind() == .LParen {
+    receiver := Expr.{ id: c.alloc_expr_id(), kind: .Ident(name), span: name_span }
+    parsed_value := parse_postfix(c, receiver)
+    diagnostics_out = diagnostics_out.concat(parsed_value.diagnostics)
+    c = parsed_value.cursor
+
+    stmt: Stmt = .Let(LetStmt.{
+      name,
+      ty,
+      value: parsed_value.value,
+      is_rebind,
+      is_pub,
+      name_span,
+      span: c.span_from(start_pos),
+    })
     return .{ value: stmt, cursor: c, diagnostics: diagnostics_out }
   }
 

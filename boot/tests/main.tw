@@ -80,6 +80,7 @@ use .suites.builtins_canonical_suite
 use .suites.signature_drift_suite
 use .suites.unused_imports_suite
 use .suites.task_suite
+use .suites.receiver_shorthand_suite
 
 runner.run_all([
   assert_helpers_suite.suite(),
@@ -163,4 +164,5 @@ runner.run_all([
   signature_drift_suite.suite(),
   unused_imports_suite.suite(),
   task_suite.suite(),
+  receiver_shorthand_suite.suite(),
 ])

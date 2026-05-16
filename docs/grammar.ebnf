@@ -162,11 +162,18 @@ Expr =
 
 AssignExpr =
       LValue AssignOp Expr
+    | LValue AssignOp ReceiverShorthand
     | RangeExpr ;
 
 AssignOp =
       "=" ;
+
+ReceiverShorthand =
+      "." Identifier "(" [ ArgList ] ")" { Call | FieldAccess | Index } ;
 (* Implementation note:
+   - Receiver shorthand: `x = .method(args)` desugars to `x = x.method(args)`.
+   - Only valid when RHS starts with `.lowercase(` (not `.Uppercase` or `.{`).
+   - The leading `.method(args)` may be followed by any postfix chain.
    - `:=` is *not* an assignment operator; it is only used in LetBinding.
    - No chained `a = b = c` is supported; `=` is not associative in grammar. *)
 
