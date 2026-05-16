@@ -3,7 +3,7 @@ use compiler.resolver.{ResolvedEnv, ResolvedTypeDef}
 use compiler.mono_type.{MonoType, TypeId}
 use compiler.core_ir.{CoreExpr, CoreModule, Param, FieldId, VariantId, BinOp, UnOp, CorePattern}
 
-use compiler.contracts.{BuiltinContract, contract_spec}
+use compiler.contracts.{BuiltinContract}
 use compiler.anf.{OpKind, IndexKind, Atom, AnfExpr, AnfOp, AnfFunctionDef, AnfModule}
 
 use compiler.codegen.wasm_ir.{WasmModule}
@@ -31,7 +31,7 @@ fn bool_name(v: Bool) String {
 }
 
 fn contract_name(contract: BuiltinContract) String {
-  contract_spec(contract).name
+  contract.spec().name
 }
 
 fn lookup_type_def(env: ResolvedEnv, tid: TypeId) ResolvedTypeDef? {

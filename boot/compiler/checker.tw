@@ -8,7 +8,7 @@ use lib.source.diagnostics.{DiagKind}
 use .resolver.{ResolvedEnv, FunctionSig, ResolvedField, ResolvedTypeParam, resolved_type_param_names}
 use .mono_type.{MonoType, TypeId}
 
-use .contracts.{BuiltinContract, ContractMethodRequirement, ContractReturnShape, contract_methods, contract_spec}
+use .contracts.{BuiltinContract, ContractMethodRequirement, ContractReturnShape}
 use .ast.{Module, FunctionDecl, Param, Block, Stmt, LetStmt, ReturnStmt, ForStmt, Expr, TypeExpr, BinOp, UnOp, StringPart, RecordEntry, CaseArm, Pattern, CollectExpr}
 
 
@@ -457,7 +457,7 @@ fn same_builtin_contract(a: BuiltinContract, b: BuiltinContract) Bool {
 }
 
 fn contract_name(contract: BuiltinContract) String {
-  contract_spec(contract).name
+  contract.spec().name
 }
 
 fn contract_return_type(shape: ContractReturnShape) MonoType {
@@ -514,7 +514,7 @@ fn lookup_scoped_contract_method(base_ty: MonoType, method_name: String, scope: 
   for bound in tp.bounds {
     case bound {
       .Builtin(contract) => {
-        for req in contract_methods(contract) {
+        for req in contract.methods() {
           if req.method_name == method_name {
             return .Some(req)
           }
@@ -618,7 +618,7 @@ fn prove_contract(ty: MonoType, contract: BuiltinContract, ctx: InferCtx, active
   }
 
   cur_ctx := ctx
-  for req in contract_methods(contract) {
+  for req in contract.methods() {
     proof := prove_contract_method(zonked, contract, req, cur_ctx, active)
     case proof {
       .Ok(next_ctx) => { cur_ctx = next_ctx },

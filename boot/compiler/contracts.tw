@@ -26,7 +26,7 @@ pub type ContractSpec = .{
   methods: Vector<ContractMethodRequirement>,
 }
 
-pub fn contract_spec(contract: BuiltinContract) ContractSpec {
+pub fn spec(contract: BuiltinContract) ContractSpec {
   case contract {
     .Stringify => .{
       name: "Stringify",
@@ -50,6 +50,6 @@ pub fn resolve_builtin_contract_name(name: String) BuiltinContract? {
 }
 
 /// Return the method requirements for a given builtin contract.
-pub fn contract_methods(contract: BuiltinContract) Vector<ContractMethodRequirement> {
-  contract_spec(contract).methods
+pub fn methods(contract: BuiltinContract) Vector<ContractMethodRequirement> {
+  contract.spec().methods
 }
