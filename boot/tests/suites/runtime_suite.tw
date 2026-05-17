@@ -271,19 +271,19 @@ fn test_rt_types_emits_wat() Result<Void, String> {
 // ── rt.core tests ───────────────────────────────────────────────────
 
 fn test_rt_core_namespace() Result<Void, String> {
-  m := rt_core.module()
+  m := rt_core.module(.{ records: [], sums: [] })
   try assert.equal(m.namespace, "rt.core")
   .Ok({})
 }
 
 fn test_rt_core_func_count() Result<Void, String> {
-  m := rt_core.module()
+  m := rt_core.module(.{ records: [], sums: [] })
   try assert.equal(m.funcs.len(), 10)
   .Ok({})
 }
 
 fn test_rt_core_exports_all_funcs() Result<Void, String> {
-  m := rt_core.module()
+  m := rt_core.module(.{ records: [], sums: [] })
   try assert.equal(m.exports.len(), m.funcs.len())
   for f in m.funcs {
     found := false
@@ -296,7 +296,7 @@ fn test_rt_core_exports_all_funcs() Result<Void, String> {
 }
 
 fn test_rt_core_host_imports() Result<Void, String> {
-  m := rt_core.module()
+  m := rt_core.module(.{ records: [], sums: [] })
   host_count := 0
   found_print := false
   found_println := false
@@ -323,7 +323,7 @@ fn test_rt_core_host_imports() Result<Void, String> {
 }
 
 fn test_rt_core_eq_imports() Result<Void, String> {
-  m := rt_core.module()
+  m := rt_core.module(.{ records: [], sums: [] })
   found_str := false
   found_arr_len := false
   found_arr_get := false
@@ -360,7 +360,7 @@ fn find_func(funcs: Vector<FuncDef>, name: String) FuncDef? {
 }
 
 fn test_rt_core_print_delegates() Result<Void, String> {
-  m := rt_core.module()
+  m := rt_core.module(.{ records: [], sums: [] })
   f := try find_func(m.funcs, "print").ok_or("missing print func")
   try assert.equal(f.params.len(), 1)
   // Body should call host_print
@@ -376,7 +376,7 @@ fn test_rt_core_print_delegates() Result<Void, String> {
 }
 
 fn test_rt_core_trap_unreachable() Result<Void, String> {
-  m := rt_core.module()
+  m := rt_core.module(.{ records: [], sums: [] })
   f := try find_func(m.funcs, "trap").ok_or("missing trap func")
   found_call := false
   found_unreachable := false
@@ -393,7 +393,7 @@ fn test_rt_core_trap_unreachable() Result<Void, String> {
 }
 
 fn test_rt_core_eq_uses_ref_test() Result<Void, String> {
-  m := rt_core.module()
+  m := rt_core.module(.{ records: [], sums: [] })
   f := try find_func(m.funcs, "eq").ok_or("missing eq func")
   try assert.equal(f.params.len(), 2)
   try assert.equal(f.results.len(), 1)
@@ -423,7 +423,7 @@ fn test_rt_core_eq_uses_ref_test() Result<Void, String> {
 }
 
 fn test_rt_core_emits_wat() Result<Void, String> {
-  m := rt_core.module()
+  m := rt_core.module(.{ records: [], sums: [] })
   wat := emit_wat_unlinked_for_test(m)
   try assert.ok(contains(wat, "(func $print"), "WAT should contain print func")
   try assert.ok(contains(wat, "(func $eq"), "WAT should contain eq func")

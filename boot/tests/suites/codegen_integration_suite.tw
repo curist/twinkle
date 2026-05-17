@@ -5,7 +5,10 @@ use compiler.codegen.linker.{link, LinkedModule}
 use compiler.codegen.wat.{emit_wat}
 use compiler.codegen.wasm_ir.{TypeDef, FuncDef, ExportDef, ValType, HeapType, Instr}
 use compiler.codegen.codegen.{runtime_modules, codegen}
+use compiler.codegen.wasm_layout.{EqTypeLayouts}
 use compiler.codegen.runtime.types as rt_types
+
+fn empty_eq_layouts() EqTypeLayouts { .{ records: [], sums: [] } }
 
 // ── Helpers ─────────────────────────────────────────────────────────
 
@@ -139,13 +142,13 @@ fn test_phase3_large_string_index_fixture() Result<Void, String> {
 // ── runtime_modules tests ───────────────────────────────────────────
 
 fn test_runtime_modules_count() Result<Void, String> {
-  mods := runtime_modules()
+  mods := runtime_modules(empty_eq_layouts())
   try assert.equal(mods.len(), 5)
   .Ok({})
 }
 
 fn test_runtime_modules_namespaces() Result<Void, String> {
-  mods := runtime_modules()
+  mods := runtime_modules(empty_eq_layouts())
   names := collect m in mods { m.namespace }
   try assert.ok(names[0] == "rt.types", "first module should be rt.types")
   try assert.ok(names[1] == "rt.str", "second module should be rt.str")
@@ -159,7 +162,7 @@ fn test_runtime_modules_namespaces() Result<Void, String> {
 
 fn test_link_runtime_resolves_imports() Result<Void, String> {
   // rt.core imports rt.str.eq — linking all runtime modules should resolve it
-  mods := runtime_modules()
+  mods := runtime_modules(empty_eq_layouts())
   case link(mods, .None) {
     .Ok(linked) => {
       // rt.core's import of rt.str.eq should be resolved (not in linked imports)
@@ -181,7 +184,7 @@ fn test_link_runtime_resolves_imports() Result<Void, String> {
 }
 
 fn test_link_runtime_emits_valid_wat() Result<Void, String> {
-  mods := runtime_modules()
+  mods := runtime_modules(empty_eq_layouts())
   case link(mods, .None) {
     .Ok(linked) => {
       wat := emit_wat(linked)
@@ -201,7 +204,7 @@ fn test_link_runtime_emits_valid_wat() Result<Void, String> {
 }
 
 fn test_link_runtime_host_imports_preserved() Result<Void, String> {
-  mods := runtime_modules()
+  mods := runtime_modules(empty_eq_layouts())
   case link(mods, .None) {
     .Ok(linked) => {
       // Should have host imports for print, println, error, eprint, eprintln, f64_to_string
@@ -228,7 +231,7 @@ fn test_link_runtime_host_imports_preserved() Result<Void, String> {
 
 fn test_link_runtime_no_start_function() Result<Void, String> {
   // Runtime modules alone have no start function
-  mods := runtime_modules()
+  mods := runtime_modules(empty_eq_layouts())
   case link(mods, .None) {
     .Ok(linked) => {
       try assert.ok(case linked.start { .None => true, _ => false },

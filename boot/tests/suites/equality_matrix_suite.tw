@@ -49,14 +49,14 @@ pub fn suite() runner.Suite {
       try assert.is_false(a == c)
       .Ok({})
     })
-    .test("vector equality: vectors containing records use identity", fn() {
+    .test("vector equality: vectors containing records use structural eq", fn() {
       shared := make_point(1, 2)
       other := make_point(1, 2)
       a: Vector<Point> = [shared]
       b: Vector<Point> = [shared]
       c: Vector<Point> = [other]
       try assert.is_true(a == b)
-      try assert.is_false(a == c)
+      try assert.is_true(a == c)
       .Ok({})
     })
 
@@ -120,7 +120,7 @@ pub fn suite() runner.Suite {
       try assert.is_false(a == c)
       .Ok({})
     })
-    .test("dict equality: record payload identity behavior", fn() {
+    .test("dict equality: record payload structural eq", fn() {
       shared := make_point(1, 2)
       other := make_point(1, 2)
 
@@ -134,7 +134,7 @@ pub fn suite() runner.Suite {
       c["p"] = other
 
       try assert.is_true(a == b)
-      try assert.is_false(a == c)
+      try assert.is_true(a == c)
       .Ok({})
     })
 
@@ -165,14 +165,14 @@ pub fn suite() runner.Suite {
       try assert.is_false(a == c)
       .Ok({})
     })
-    .test("sum equality: record payloads still use identity", fn() {
+    .test("sum equality: record payloads use structural eq", fn() {
       shared := make_point(1, 2)
       other := make_point(1, 2)
       a: Option<Point> = .Some(shared)
       b: Option<Point> = .Some(shared)
       c: Option<Point> = .Some(other)
       try assert.is_true(a == b)
-      try assert.is_false(a == c)
+      try assert.is_true(a == c)
       .Ok({})
     })
 }

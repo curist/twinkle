@@ -1,0 +1,89 @@
+// Eq contract — == works for values whose contents are Eq.
+//
+// Records and enums get structural equality automatically when all fields or
+// payloads are Eq. A type can also define an inherent `eq(self, other) Bool`
+// method; direct `==` / `!=` on that type will use the custom method.
+
+// --- Custom types ---
+
+type Color = { Red, Green, Blue }
+type Shape = { Circle(Float), Rect(Float, Float) }
+type Point = .{ x: Int, y: Int }
+type Pixel = .{ pos: Point, color: Color }
+
+// Records: structural field-wise comparison
+a := Point.{ x: 1, y: 2 }
+b := Point.{ x: 1, y: 2 }
+c := Point.{ x: 3, y: 4 }
+println("Point(1,2) == Point(1,2): ${a == b}")
+println("Point(1,2) == Point(3,4): ${a == c}")
+
+// Nested records recurse through their fields
+p1 := Pixel.{ pos: a, color: .Red }
+p2 := Pixel.{ pos: b, color: .Red }
+p3 := Pixel.{ pos: c, color: .Red }
+println("Pixel(a, Red) == Pixel(b, Red): ${p1 == p2}")
+println("Pixel(a, Red) == Pixel(c, Red): ${p1 == p3}")
+
+// Enums with payloads compare tag first, then payloads structurally
+println("Circle(3.14) == Circle(3.14): ${Shape.Circle(3.14) == Shape.Circle(3.14)}")
+println("Circle(3.14) == Rect(1.0, 2.0): ${Shape.Circle(3.14) == Shape.Rect(1.0, 2.0)}")
+println("Rect(1.0, 2.0) == Rect(1.0, 2.0): ${Shape.Rect(1.0, 2.0) == Shape.Rect(1.0, 2.0)}")
+
+// Custom enum nesting
+type Painted = { Colored(Shape, Color), Plain(Shape) }
+println("Colored(Circle, Red) == same: ${Painted.Colored(.Circle(1.0), .Red) == Painted.Colored(.Circle(1.0), .Red)}")
+println("Colored(Circle, Red) == Colored(Circle, Blue): ${Painted.Colored(.Circle(1.0), .Red) == Painted.Colored(.Circle(1.0), .Blue)}")
+
+// --- Custom Eq method ---
+
+// User equality overrides auto-derived structural equality for direct == / !=.
+// Here `label` is intentionally ignored: users are equal when their ids match.
+type User = .{ id: Int, label: String }
+fn eq(a: User, b: User) Bool {
+  a.id == b.id
+}
+
+u1 := User.{ id: 7, label: "alice" }
+u2 := User.{ id: 7, label: "renamed alice" }
+u3 := User.{ id: 8, label: "bob" }
+println("User same id, different label ==: ${u1 == u2}")
+println("User different id !=: ${u1 != u3}")
+println("User.eq is the same custom rule: ${u1.eq(u2)}")
+
+// --- Primitives ---
+
+println("1 == 1: ${1 == 1}")
+println("1 == 2: ${1 == 2}")
+println("\"hi\" == \"hi\": ${"hi" == "hi"}")
+println("true != false: ${true != false}")
+
+// Unit enums
+println("Red == Red: ${Color.Red == Color.Red}")
+println("Red == Blue: ${Color.Red == Color.Blue}")
+
+// --- Builtin containers with custom types ---
+
+x: Option<Int> = .Some(42)
+y: Option<Int> = .Some(42)
+z: Option<Int> = .None
+println(".Some(42) == .Some(42): ${x == y}")
+println(".Some(42) == .None: ${x == z}")
+
+// Records inside containers use recursive equality.
+v1 := [Point.{ x: 1, y: 2 }, Point.{ x: 3, y: 4 }]
+v2 := [Point.{ x: 1, y: 2 }, Point.{ x: 3, y: 4 }]
+v3 := [Point.{ x: 1, y: 2 }, Point.{ x: 5, y: 6 }]
+println("[Point, Point] == same: ${v1 == v2}")
+println("[Point, Point] == diff: ${v1 == v3}")
+
+// --- Compile-time safety ---
+// The Eq contract is checked at compile time — types with closure fields
+// cannot use == unless they provide a valid custom eq method.
+//
+// This would be a compile error:
+//   type Action = .{ run: fn(Int) Int }
+//   Action.{ run: fn(x: Int) Int { x } } == Action.{ run: fn(x: Int) Int { x } }
+//
+// This would be accepted because it supplies custom equality:
+//   fn eq(a: Action, b: Action) Bool { true }

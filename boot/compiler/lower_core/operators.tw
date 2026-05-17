@@ -5,7 +5,7 @@ use compiler.ast.{Expr, BinOp as AstBinOp, UnOp as AstUnOp}
 use compiler.resolver.{ResolvedEnv}
 use compiler.mono_type.{MonoType, TypeId}
 use compiler.core_ir.{CoreExpr, CoreExprKind, MatchArm, BinOp, UnOp, FuncId}
-use compiler.lower_core.context.{LowerCtx, ExprOut}
+use compiler.lower_core.context.{LowerCtx, ExprOut, lookup_func}
 use compiler.lower_core.helpers.{void_expr, global_func_expr, variant_pattern}
 use compiler.lower_core.lvalues.{lower_lvalue_assign}
 use compiler.lower_core.control_flow.{lower_try}
@@ -56,17 +56,42 @@ pub fn uses_runtime_eq(ty: MonoType) Bool {
   }
 }
 
+fn lower_eq_result(ast_op: AstBinOp, call_expr: CoreExpr, s: Span) CoreExpr {
+  case ast_op {
+    .Eq => call_expr,
+    .Ne => CoreExpr.{ kind: .UnOp(.Not, call_expr), ty: MonoType.Bool, span: s },
+    _ => error("lower_eq_result: expected Eq/Ne"),
+  }
+}
+
 pub fn lower_runtime_eq_call(core_eq_id: FuncId, ast_op: AstBinOp, left: CoreExpr, right: CoreExpr, s: Span) CoreExpr {
   call_expr := CoreExpr.{
     kind: .Call(global_func_expr(core_eq_id, s), [left, right]),
     ty: MonoType.Bool,
     span: s,
   }
-  case ast_op {
-    .Eq => call_expr,
-    .Ne => CoreExpr.{ kind: .UnOp(.Not, call_expr), ty: MonoType.Bool, span: s },
-    _ => error("lower_runtime_eq_call: expected Eq/Ne"),
+  lower_eq_result(ast_op, call_expr, s)
+}
+
+fn explicit_eq_func_id(ctx: LowerCtx, ty: MonoType) FuncId? {
+  fn_name := case ty {
+    .Named(tid, _) => case ctx.env.lookup_type_method(tid, "eq") {
+      .Some(name) => name,
+      .None => { return .None },
+    },
+    _ => { return .None },
   }
+  lookup_func(ctx, fn_name)
+}
+
+fn lower_custom_eq_call(fid: FuncId, ast_op: AstBinOp, left: CoreExpr, right: CoreExpr, s: Span) CoreExpr {
+  callee_ty := MonoType.Function([left.ty, right.ty], .Bool)
+  call_expr := CoreExpr.{
+    kind: .Call(CoreExpr.{ kind: .GlobalFunc(fid), ty: callee_ty, span: s }, [left, right]),
+    ty: MonoType.Bool,
+    span: s,
+  }
+  lower_eq_result(ast_op, call_expr, s)
 }
 
 type UnitVariantTag = .{ tid: TypeId, vid: Int }
@@ -261,8 +286,14 @@ pub fn lower_binary(ctx: LowerCtx, ast_op: AstBinOp, lhs: Expr, rhs: Expr, ty: M
           .{ expr: .{ kind, ty, span: s }, ctx: rr.ctx }
         },
         .None => {
-          if (ast_op == .Eq or ast_op == .Ne) and uses_runtime_eq(lr.expr.ty) {
-            return .{ expr: lower_runtime_eq_call(rr.ctx.builtins.id("core_eq"), ast_op, lr.expr, rr.expr, s), ctx: rr.ctx }
+          if ast_op == .Eq or ast_op == .Ne {
+            case explicit_eq_func_id(rr.ctx, lr.expr.ty) {
+              .Some(fid) => { return .{ expr: lower_custom_eq_call(fid, ast_op, lr.expr, rr.expr, s), ctx: rr.ctx } },
+              .None => {},
+            }
+            if uses_runtime_eq(lr.expr.ty) {
+              return .{ expr: lower_runtime_eq_call(rr.ctx.builtins.id("core_eq"), ast_op, lr.expr, rr.expr, s), ctx: rr.ctx }
+            }
           }
           .{
             expr: .{ kind: .BinOp(map_binop(ast_op), lr.expr, rr.expr), ty, span: s },

@@ -5,6 +5,9 @@
 use compiler.codegen.wasm_ir.{
   ValType, HeapType, Instr, FuncDef, ImportDef, ExportDef, WasmModule,
 }
+use compiler.codegen.wasm_layout.{
+  EqTypeLayouts, WasmRecordLayout, WasmSumLayout,
+}
 
 fn str_null() ValType { ValType.Ref(true, HeapType.Named("rt_types__String")) }
 fn str_ref() ValType { ValType.Ref(false, HeapType.Named("rt_types__String")) }
@@ -28,11 +31,13 @@ fn v_type_id() Int { 0 }
 fn v_variant_id() Int { 1 }
 fn v_payload() Int { 2 }
 
-pub fn module() WasmModule {
+pub fn module(eq_layouts: EqTypeLayouts) WasmModule {
+  rec_eq_funcs := collect rec in eq_layouts.records { gen_record_eq_fn(rec) }
+  sum_eq_funcs := collect sum in eq_layouts.sums { gen_sum_eq_fn(sum) }
   funcs := [
     print_fn(), println_fn(), eprint_fn(), eprintln_fn(), trap_fn(),
-    eq_array_fn(), eq_vec_fn(), eq_dict_fn(), eq_variant_fn(), eq_fn(),
-  ]
+    eq_array_fn(), eq_vec_fn(), eq_dict_fn(), eq_variant_fn(),
+  ].concat(rec_eq_funcs).concat(sum_eq_funcs).append(eq_fn(eq_layouts))
   exports := collect f in funcs {
     ExportDef.{ wasm_name: f.name, func_sym: f.name }
   }
@@ -215,7 +220,146 @@ fn eq_variant_fn() FuncDef {
   }
 }
 
-fn eq_fn() FuncDef {
+// ── Record structural equality ─────────────────────────────────────
+
+fn qualified_rec_sym(rec: WasmRecordLayout) String {
+  "user__${rec.sym}"
+}
+
+fn rec_eq_func_name(rec: WasmRecordLayout) String {
+  "eq_rec_${rec.sym}"
+}
+
+fn field_eq_instrs(qualified_sym: String, field_idx: Int, vt: ValType) Vector<Instr> {
+  get_both: Vector<Instr> = [
+    Instr.LocalGet(0), Instr.StructGet(qualified_sym, field_idx),
+    Instr.LocalGet(1), Instr.StructGet(qualified_sym, field_idx),
+  ]
+  compare := case vt {
+    .I8 => [Instr.I32Eq],
+    .I32 => [Instr.I32Eq],
+    .I64 => [Instr.I64Eq],
+    .F64 => [Instr.F64Eq],
+    _ => [Instr.Call("eq")],
+  }
+  get_both.concat(compare).concat([
+    Instr.I32Eqz,
+    Instr.If(.None, [Instr.I32Const(0), Instr.Return], []),
+  ])
+}
+
+fn gen_record_eq_fn(rec: WasmRecordLayout) FuncDef {
+  qsym := qualified_rec_sym(rec)
+  ref_ty := ValType.Ref(false, HeapType.Named(qsym))
+  body: Vector<Instr> = []
+  for f, i in rec.fields {
+    body = body.concat(field_eq_instrs(qsym, i, f.val_type))
+  }
+  body = body.append(Instr.I32Const(1))
+  FuncDef.{
+    name: rec_eq_func_name(rec),
+    params: [ref_ty, ref_ty],
+    results: [.I32],
+    locals: [],
+    body,
+  }
+}
+
+// ── Sum (enum) structural equality ─────────────────────────────────
+
+fn qualified_sum_sym(sum: WasmSumLayout) String {
+  "user__${sum.sym}"
+}
+
+fn sum_eq_func_name(sum: WasmSumLayout) String {
+  "eq_sum_${sum.sym}"
+}
+
+fn gen_sum_eq_fn(sum: WasmSumLayout) FuncDef {
+  qsym := qualified_sum_sym(sum)
+  ref_ty := ValType.Ref(false, HeapType.Named(qsym))
+  // Compare tags (field 0)
+  body: Vector<Instr> = [
+    Instr.LocalGet(0), Instr.StructGet(qsym, 0),
+    Instr.LocalGet(1), Instr.StructGet(qsym, 0),
+    Instr.I32Ne,
+    Instr.If(.None, [Instr.I32Const(0), Instr.Return], []),
+  ]
+  // For each variant with payloads, compare fields when tag matches
+  has_payload_variants := false
+  for v in sum.variants {
+    if v.payload_types.len() > 0 {
+      has_payload_variants = true
+    }
+  }
+  if has_payload_variants {
+    // Build a tag-switch: check tag for each variant with payload
+    for v in sum.variants {
+      if v.payload_types.len() > 0 {
+        // if tag == variant_id, compare payload fields
+        payload_cmp: Vector<Instr> = []
+        for pt, pi in v.payload_types {
+          field_idx := v.struct_field_offset + pi
+          payload_cmp = payload_cmp.concat(field_eq_instrs(qsym, field_idx, pt))
+        }
+        body = body.concat([
+          Instr.LocalGet(0), Instr.StructGet(qsym, 0),
+          Instr.I32Const(v.variant_id.id),
+          Instr.I32Eq,
+          Instr.If(.None, payload_cmp, []),
+        ])
+      }
+    }
+  }
+  body = body.append(Instr.I32Const(1))
+  FuncDef.{
+    name: sum_eq_func_name(sum),
+    params: [ref_ty, ref_ty],
+    results: [.I32],
+    locals: [],
+    body,
+  }
+}
+
+fn sum_eq_dispatch(sum_layouts: Vector<WasmSumLayout>) Vector<Instr> {
+  instrs: Vector<Instr> = []
+  for sum in sum_layouts {
+    qsym := qualified_sum_sym(sum)
+    ht := HeapType.Named(qsym)
+    instrs = instrs.concat([
+      Instr.LocalGet(0), Instr.RefTest(false, ht),
+      Instr.LocalGet(1), Instr.RefTest(false, ht),
+      Instr.I32And,
+      Instr.If(.None, [
+        Instr.LocalGet(0), Instr.RefCast(false, ht),
+        Instr.LocalGet(1), Instr.RefCast(false, ht),
+        Instr.Call(sum_eq_func_name(sum)), Instr.Return,
+      ], []),
+    ])
+  }
+  instrs
+}
+
+fn record_eq_dispatch(record_layouts: Vector<WasmRecordLayout>) Vector<Instr> {
+  instrs: Vector<Instr> = []
+  for rec in record_layouts {
+    qsym := qualified_rec_sym(rec)
+    ht := HeapType.Named(qsym)
+    instrs = instrs.concat([
+      Instr.LocalGet(0), Instr.RefTest(false, ht),
+      Instr.LocalGet(1), Instr.RefTest(false, ht),
+      Instr.I32And,
+      Instr.If(.None, [
+        Instr.LocalGet(0), Instr.RefCast(false, ht),
+        Instr.LocalGet(1), Instr.RefCast(false, ht),
+        Instr.Call(rec_eq_func_name(rec)), Instr.Return,
+      ], []),
+    ])
+  }
+  instrs
+}
+
+fn eq_fn(eq_layouts: EqTypeLayouts) FuncDef {
   FuncDef.{
     name: "eq",
     params: [.Anyref, .Anyref],
@@ -298,10 +442,11 @@ fn eq_fn() FuncDef {
         Instr.Call("eq_variant"), Instr.Return,
       ], []),
 
+    ].concat(record_eq_dispatch(eq_layouts.records)).concat(sum_eq_dispatch(eq_layouts.sums)).concat([
       // Fallback: identity
       Instr.LocalGet(0), Instr.RefCast(true, HeapType.Eq),
       Instr.LocalGet(1), Instr.RefCast(true, HeapType.Eq),
       Instr.RefEq,
-    ],
+    ]),
   }
 }

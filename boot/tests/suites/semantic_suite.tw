@@ -34,8 +34,13 @@ fn find_first_gt(xs: Vector<Int>, threshold: Int) String {
 }
 
 type Point = .{ x: Int, y: Int }
+type User = .{ id: Int, label: String }
 type Shape = { Dot, Pixel(Int), Pair(Vector<Int>, Option<Int>) }
 type Box<T> = .{ value: T }
+
+fn eq(a: User, b: User) Bool {
+  a.id == b.id
+}
 
 fn to_string<T: Stringify>(b: Box<T>) String {
   "Box(${b.value})"
@@ -185,14 +190,23 @@ pub fn suite() runner.Suite {
       try assert.is_false(d1 == d3)
       .Ok({})
     })
-    .test("record equality stays by reference", fn() {
+    .test("record equality is structural", fn() {
       a := Point.{ x: 1, y: 2 }
       b := Point.{ x: 1, y: 2 }
-      try assert.is_false(a == b)
+      try assert.is_true(a == b)
       try assert.is_true(a == a)
       .Ok({})
     })
-    .test("recursive equality preserves record identity semantics", fn() {
+    .test("custom record eq overrides direct equality", fn() {
+      a := User.{ id: 1, label: "first" }
+      b := User.{ id: 1, label: "renamed" }
+      c := User.{ id: 2, label: "other" }
+      try assert.is_true(a == b)
+      try assert.is_true(a.eq(b))
+      try assert.is_true(a != c)
+      .Ok({})
+    })
+    .test("recursive equality compares records structurally", fn() {
       same := Point.{ x: 1, y: 2 }
       other := Point.{ x: 1, y: 2 }
 
@@ -200,7 +214,7 @@ pub fn suite() runner.Suite {
       vec_same_b: Vector<Point> = [same]
       vec_other: Vector<Point> = [other]
       try assert.is_true(vec_same_a == vec_same_b)
-      try assert.is_false(vec_same_a == vec_other)
+      try assert.is_true(vec_same_a == vec_other)
 
       dict_same_a: Dict<String, Point> = Dict.new()
       dict_same_b: Dict<String, Point> = Dict.new()
@@ -209,13 +223,13 @@ pub fn suite() runner.Suite {
       dict_same_b["p"] = same
       dict_other["p"] = other
       try assert.is_true(dict_same_a == dict_same_b)
-      try assert.is_false(dict_same_a == dict_other)
+      try assert.is_true(dict_same_a == dict_other)
 
       sum_same_a: Option<Point> = .Some(same)
       sum_same_b: Option<Point> = .Some(same)
       sum_other: Option<Point> = .Some(other)
       try assert.is_true(sum_same_a == sum_same_b)
-      try assert.is_false(sum_same_a == sum_other)
+      try assert.is_true(sum_same_a == sum_other)
       .Ok({})
     })
 }

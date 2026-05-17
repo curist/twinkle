@@ -38,16 +38,16 @@ pub fn suite() runner.Suite {
       try assert.is_false(a == c)
       .Ok({})
     })
-    .test("record identity repro", fn() {
+    .test("record structural equality repro", fn() {
       same := Point.{ x: 1, y: 2 }
       other := Point.{ x: 1, y: 2 }
       same_opt_a: Option<Point> = .Some(same)
       same_opt_b: Option<Point> = .Some(same)
       other_opt: Option<Point> = .Some(other)
       try assert.is_true([same] == [same])
-      try assert.is_false([same] == [other])
+      try assert.is_true([same] == [other])
       try assert.is_true(same_opt_a == same_opt_b)
-      try assert.is_false(same_opt_a == other_opt)
+      try assert.is_true(same_opt_a == other_opt)
       .Ok({})
     })
 }

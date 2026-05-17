@@ -16,6 +16,7 @@ use compiler.anf.{AnfModule}
 use compiler.codegen.wasm_ir.{WasmModule}
 
 use compiler.codegen.wasm_plan.{plan_wasm_types}
+use compiler.codegen.wasm_layout.{EqTypeLayouts, collect_eq_type_layouts}
 use compiler.codegen.emit.{emit_module}
 use compiler.codegen.linker.{link, LinkedModule}
 
@@ -48,13 +49,13 @@ fn verify_level_from_env() VerifyLevel {
   }
 }
 
-pub fn runtime_modules() Vector<WasmModule> {
+pub fn runtime_modules(eq_layouts: EqTypeLayouts) Vector<WasmModule> {
   [
     rt_types.module(),
     rt_str.module(),
     rt_arr.module(),
     rt_dict.module(),
-    rt_core.module(),
+    rt_core.module(eq_layouts),
     rt_sched.module(),
     cg_intrinsics.module(),
   ]
@@ -108,7 +109,8 @@ pub fn link_program(
   if timed { log_time("emit_module", t5 - t4) }
 
   // 6. Link with runtime
-  modules := runtime_modules().append(user_module)
+  eq_layouts := collect_eq_type_layouts(registry.layout_cache)
+  modules := runtime_modules(eq_layouts).append(user_module)
   linked := case link(modules, .None) {
     .Ok(l) => l,
     .Err(errors) => {
