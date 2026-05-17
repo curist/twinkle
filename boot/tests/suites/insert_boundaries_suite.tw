@@ -231,7 +231,7 @@ pub fn suite() runner.Suite {
     .test("empty module passthrough", fn() {
       anf := mk_module([])
       result := insert_boundaries(anf, empty_registry(), empty_builtins(), empty_env())
-      try assert.int_eq(result.functions.len(), 0)
+      try assert.equal(result.functions.len(), 0)
       .Ok({})
     })
 
@@ -249,8 +249,8 @@ pub fn suite() runner.Suite {
       reg := registry_with_layouts([MonoType.Int])
       result := insert_boundaries(anf, reg, empty_builtins(), empty_env())
       result_body := result.functions[0].body
-      try assert.int_eq(count_wraps_expr(result_body), 0)
-      try assert.int_eq(count_unwraps_expr(result_body), 0)
+      try assert.equal(count_wraps_expr(result_body), 0)
+      try assert.equal(count_unwraps_expr(result_body), 0)
       .Ok({})
     })
 
@@ -286,7 +286,7 @@ pub fn suite() runner.Suite {
       result_body := result.functions[0].body
 
       // Int arg should be wrapped (String arg should not)
-      try assert.int_eq(count_wraps_expr(result_body), 1)
+      try assert.equal(count_wraps_expr(result_body), 1)
       // Check the wrap is for Int
       wrap_ty := try first_wrap_mono(result_body).ok_or("no AWrapAnyref found")
       case wrap_ty {
@@ -314,7 +314,7 @@ pub fn suite() runner.Suite {
       result_body := result.functions[0].body
 
       // Result should be unwrapped from anyref to Int
-      try assert.int_eq(count_unwraps_expr(result_body), 1)
+      try assert.equal(count_unwraps_expr(result_body), 1)
       unwrap_ty := try first_unwrap_mono(result_body).ok_or("no AUnwrapAnyref found")
       case unwrap_ty {
         .Int => .Ok({}),
@@ -343,8 +343,8 @@ pub fn suite() runner.Suite {
       result_body := result.functions[0].body
 
       // String → anyref needs no wrap (subtype), anyref → String needs unwrap (ref.cast)
-      try assert.int_eq(count_wraps_expr(result_body), 0)
-      try assert.int_eq(count_unwraps_expr(result_body), 1)
+      try assert.equal(count_wraps_expr(result_body), 0)
+      try assert.equal(count_unwraps_expr(result_body), 1)
       .Ok({})
     })
 
@@ -367,8 +367,8 @@ pub fn suite() runner.Suite {
       result_body := result.functions[0].body
 
       // Vector → anyref needs no wrap (subtype), anyref → Vector needs unwrap (ref.cast)
-      try assert.int_eq(count_wraps_expr(result_body), 0)
-      try assert.int_eq(count_unwraps_expr(result_body), 1)
+      try assert.equal(count_wraps_expr(result_body), 0)
+      try assert.equal(count_unwraps_expr(result_body), 1)
       .Ok({})
     })
 
@@ -390,7 +390,7 @@ pub fn suite() runner.Suite {
       result := insert_boundaries(anf, reg, empty_builtins(), empty_env())
       result_body := result.functions[0].body
 
-      try assert.int_eq(count_unwraps_expr(result_body), 1)
+      try assert.equal(count_unwraps_expr(result_body), 1)
       unwrap_ty := try first_unwrap_mono(result_body).ok_or("no AUnwrapAnyref found")
       case unwrap_ty {
         .Int => .Ok({}),
@@ -416,7 +416,7 @@ pub fn suite() runner.Suite {
       result := insert_boundaries(anf, reg, empty_builtins(), empty_env())
       result_body := result.functions[0].body
 
-      try assert.int_eq(count_unwraps_expr(result_body), 1)
+      try assert.equal(count_unwraps_expr(result_body), 1)
       .Ok({})
     })
 
@@ -437,8 +437,8 @@ pub fn suite() runner.Suite {
       result := insert_boundaries(anf, reg, empty_builtins(), empty_env())
       result_body := result.functions[0].body
 
-      try assert.int_eq(count_wraps_expr(result_body), 0)
-      try assert.int_eq(count_unwraps_expr(result_body), 0)
+      try assert.equal(count_wraps_expr(result_body), 0)
+      try assert.equal(count_unwraps_expr(result_body), 0)
       .Ok({})
     })
 
@@ -463,8 +463,8 @@ pub fn suite() runner.Suite {
       result := insert_boundaries(anf, reg, builtins, empty_env())
       result_body := result.functions[0].body
 
-      try assert.int_eq(count_wraps_expr(result_body), 1)
-      try assert.int_eq(count_unwraps_expr(result_body), 1)
+      try assert.equal(count_wraps_expr(result_body), 1)
+      try assert.equal(count_unwraps_expr(result_body), 1)
       .Ok({})
     })
 
@@ -489,9 +489,9 @@ pub fn suite() runner.Suite {
       result := insert_boundaries(anf, reg, builtins, empty_env())
       result_body := result.functions[0].body
 
-      try assert.int_eq(count_wraps_expr(result_body), 0)
+      try assert.equal(count_wraps_expr(result_body), 0)
       // i32 result to Int (i64) is a conversion, not an anyref boundary
-      try assert.int_eq(count_unwraps_expr(result_body), 0)
+      try assert.equal(count_unwraps_expr(result_body), 0)
       .Ok({})
     })
 
@@ -520,9 +520,9 @@ pub fn suite() runner.Suite {
       result_body := result.functions[0].body
 
       // Only elem (3rd arg, Int at anyref position) should be wrapped
-      try assert.int_eq(count_wraps_expr(result_body), 1)
+      try assert.equal(count_wraps_expr(result_body), 1)
       // Result is ref $Array, not anyref → no unwrap
-      try assert.int_eq(count_unwraps_expr(result_body), 0)
+      try assert.equal(count_unwraps_expr(result_body), 0)
       .Ok({})
     })
 
@@ -548,8 +548,8 @@ pub fn suite() runner.Suite {
       result_body := result.functions[0].body
 
       // Should have 2 wraps + 1 unwrap
-      try assert.int_eq(count_wraps_expr(result_body), 2)
-      try assert.int_eq(count_unwraps_expr(result_body), 1)
+      try assert.equal(count_wraps_expr(result_body), 2)
+      try assert.equal(count_unwraps_expr(result_body), 1)
 
       // All let-bound locals should be unique (no ID collision)
       locals := collect_let_locals(result_body)
@@ -595,8 +595,8 @@ pub fn suite() runner.Suite {
       println_fid := bi.id(builtins, "println")
       case builtins.by_id[println_fid.id] {
         .Some(entry) => {
-          try assert.int_eq(entry.abi.param_types.len(), 1)
-          try assert.int_eq(entry.abi.result_types.len(), 0)
+          try assert.equal(entry.abi.param_types.len(), 1)
+          try assert.equal(entry.abi.result_types.len(), 0)
         },
         .None => { return assert.fail("missing entry for println") },
       }
@@ -605,8 +605,8 @@ pub fn suite() runner.Suite {
       dict_set_fid := bi.id(builtins, "dict_set")
       case builtins.by_id[dict_set_fid.id] {
         .Some(entry) => {
-          try assert.int_eq(entry.abi.param_types.len(), 3)
-          try assert.int_eq(entry.abi.result_types.len(), 1)
+          try assert.equal(entry.abi.param_types.len(), 3)
+          try assert.equal(entry.abi.result_types.len(), 1)
           // Second param should be anyref (key)
           case entry.abi.param_types[1] { .Anyref => {}, _ => { return assert.fail("dict_set param 1 should be anyref") } }
         },
@@ -617,7 +617,7 @@ pub fn suite() runner.Suite {
       its_fid := bi.id(builtins, "int_to_string")
       case builtins.by_id[its_fid.id] {
         .Some(entry) => {
-          try assert.int_eq(entry.abi.param_types.len(), 1)
+          try assert.equal(entry.abi.param_types.len(), 1)
           case entry.abi.param_types[0] { .I64 => {}, _ => { return assert.fail("int_to_string param should be I64") } }
         },
         .None => { return assert.fail("missing entry for int_to_string") },
@@ -627,7 +627,7 @@ pub fn suite() runner.Suite {
       vs_fid := bi.id(builtins, "vector__set_unsafe")
       case builtins.by_id[vs_fid.id] {
         .Some(entry) => {
-          try assert.int_eq(entry.abi.param_types.len(), 3)
+          try assert.equal(entry.abi.param_types.len(), 3)
           case entry.abi.param_types[2] { .Anyref => {}, _ => { return assert.fail("vector__set_unsafe param 2 should be anyref") } }
         },
         .None => { return assert.fail("missing entry for vector__set_unsafe") },
@@ -651,7 +651,7 @@ pub fn suite() runner.Suite {
       result := insert_boundaries(anf, reg, builtins, empty_env())
       result_body := result.functions[0].body
 
-      try assert.int_eq(count_wraps_expr(result_body), 1)
+      try assert.equal(count_wraps_expr(result_body), 1)
       wrap_ty := try first_wrap_mono(result_body).ok_or("no AWrapAnyref found")
       case wrap_ty {
         .Bool => .Ok({}),
@@ -668,7 +668,7 @@ pub fn suite() runner.Suite {
       apply := mk_func_def(2, "apply", [mk_param(1, .Function([.Int], .Int)), mk_param(2, .Int)], .Int, .Atom(.ALocal(lid(2))), Dict.new())
       adder := mk_func_def(3, "adder", [mk_param(3, .Int)], .Int, .Atom(.ALocal(lid(3))), Dict.new())
       result := insert_boundaries(mk_module([caller, apply, adder]), registry_with_layouts([MonoType.Int, MonoType.Function([.Int], .Int)]), empty_builtins(), empty_env())
-      try assert.int_eq(count_make_closures_expr(result.functions[0].body), 1)
+      try assert.equal(count_make_closures_expr(result.functions[0].body), 1)
       .Ok({})
     })
 
@@ -678,7 +678,7 @@ pub fn suite() runner.Suite {
       ret_fn := mk_func_def(1, "make", [], .Function([.Int], .Int), body, mono)
       target := mk_func_def(2, "target", [mk_param(0, .Int)], .Int, .Atom(.ALocal(lid(0))), Dict.new())
       result := insert_boundaries(mk_module([ret_fn, target]), registry_with_layouts([MonoType.Int, MonoType.Function([.Int], .Int)]), empty_builtins(), empty_env())
-      try assert.int_eq(count_make_closures_expr(result.functions[0].body), 1)
+      try assert.equal(count_make_closures_expr(result.functions[0].body), 1)
       .Ok({})
     })
 
@@ -688,7 +688,7 @@ pub fn suite() runner.Suite {
       holder := mk_func_def(1, "holder", [], .Function([.Int], .Int), body, mono)
       target := mk_func_def(2, "target", [mk_param(0, .Int)], .Int, .Atom(.ALocal(lid(0))), Dict.new())
       result := insert_boundaries(mk_module([holder, target]), registry_with_layouts([MonoType.Int, MonoType.Function([.Int], .Int)]), empty_builtins(), empty_env())
-      try assert.int_eq(count_make_closures_expr(result.functions[0].body), 1)
+      try assert.equal(count_make_closures_expr(result.functions[0].body), 1)
       .Ok({})
     })
 
@@ -698,7 +698,7 @@ pub fn suite() runner.Suite {
       holder := mk_func_def(1, "holder", [mk_param(0, .Function([.Int], .Int))], .Function([.Int], .Int), body, mono)
       target := mk_func_def(2, "target", [mk_param(1, .Int)], .Int, .Atom(.ALocal(lid(1))), Dict.new())
       result := insert_boundaries(mk_module([holder, target]), registry_with_layouts([MonoType.Int, MonoType.Function([.Int], .Int)]), empty_builtins(), empty_env())
-      try assert.int_eq(count_make_closures_expr(result.functions[0].body), 1)
+      try assert.equal(count_make_closures_expr(result.functions[0].body), 1)
       .Ok({})
     })
 
@@ -708,7 +708,7 @@ pub fn suite() runner.Suite {
       holder := mk_func_def(1, "holder", [], .Vector(MonoType.Function([.Int], .Int)), body, mono)
       target := mk_func_def(2, "target", [mk_param(0, .Int)], .Int, .Atom(.ALocal(lid(0))), Dict.new())
       result := insert_boundaries(mk_module([holder, target]), registry_with_layouts([MonoType.Int, MonoType.Function([.Int], .Int), MonoType.Vector(MonoType.Function([.Int], .Int))]), empty_builtins(), empty_env())
-      try assert.int_eq(count_make_closures_expr(result.functions[0].body), 1)
+      try assert.equal(count_make_closures_expr(result.functions[0].body), 1)
       .Ok({})
     })
 
@@ -719,7 +719,7 @@ pub fn suite() runner.Suite {
       holder := mk_func_def(1, "holder", [], MonoType.Named(TypeId.{ id: 10 }, []), body, mono)
       target := mk_func_def(2, "target", [mk_param(0, .Int)], .Int, .Atom(.ALocal(lid(0))), Dict.new())
       result := insert_boundaries(mk_module([holder, target]), empty_registry(), empty_builtins(), env)
-      try assert.int_eq(count_make_closures_expr(result.functions[0].body), 1)
+      try assert.equal(count_make_closures_expr(result.functions[0].body), 1)
       .Ok({})
     })
 
@@ -730,7 +730,7 @@ pub fn suite() runner.Suite {
       holder := mk_func_def(1, "holder", [mk_param(0, MonoType.Named(TypeId.{ id: 10 }, []))], MonoType.Named(TypeId.{ id: 10 }, []), body, mono)
       target := mk_func_def(2, "target", [mk_param(1, .Int)], .Int, .Atom(.ALocal(lid(1))), Dict.new())
       result := insert_boundaries(mk_module([holder, target]), empty_registry(), empty_builtins(), env)
-      try assert.int_eq(count_make_closures_expr(result.functions[0].body), 1)
+      try assert.equal(count_make_closures_expr(result.functions[0].body), 1)
       .Ok({})
     })
 
@@ -741,7 +741,7 @@ pub fn suite() runner.Suite {
       holder := mk_func_def(1, "holder", [], MonoType.Named(TypeId.{ id: 11 }, []), body, mono)
       target := mk_func_def(2, "target", [mk_param(0, .Int)], .Int, .Atom(.ALocal(lid(0))), Dict.new())
       result := insert_boundaries(mk_module([holder, target]), empty_registry(), empty_builtins(), env)
-      try assert.int_eq(count_make_closures_expr(result.functions[0].body), 1)
+      try assert.equal(count_make_closures_expr(result.functions[0].body), 1)
       .Ok({})
     })
 
@@ -750,8 +750,8 @@ pub fn suite() runner.Suite {
       mono := mk_mono_map([10], [MonoType.Optional(MonoType.String)])
       func := mk_func_def(1, "wrap_some", [mk_param(0, .String)], MonoType.Optional(MonoType.String), body, mono)
       result := insert_boundaries(mk_module([func]), empty_registry(), empty_builtins(), empty_env())
-      try assert.int_eq(count_make_closures_expr(result.functions[0].body), 0)
-      try assert.int_eq(count_wraps_expr(result.functions[0].body), 0)
+      try assert.equal(count_make_closures_expr(result.functions[0].body), 0)
+      try assert.equal(count_wraps_expr(result.functions[0].body), 0)
       .Ok({})
     })
 }

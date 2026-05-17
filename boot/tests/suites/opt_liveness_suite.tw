@@ -47,14 +47,14 @@ fn test_live_atom_local() Result<Void, String> {
   expr: AnfExpr = .Atom(.ALocal(lid(0)))
   live := live_after(expr)
   try assert.is_true(set_has(live, 0))
-  assert.int_eq(live.len(), 1)
+  assert.equal(live.len(), 1)
 }
 
 fn test_live_atom_literal() Result<Void, String> {
   // Atom(ALitInt(42)) → nothing live
   expr: AnfExpr = .Atom(.ALitInt(42))
   live := live_after(expr)
-  assert.int_eq(live.len(), 0)
+  assert.equal(live.len(), 0)
 }
 
 // ── live_after: let kills binding ───────────────────────────────────
@@ -64,7 +64,7 @@ fn test_live_let_kills_binding() Result<Void, String> {
   // At entry: local 0 is NOT live (it's defined here)
   expr: AnfExpr = .Let(lid(0), .AInit(.ALitInt(1)), .Atom(.ALocal(lid(0))))
   live := live_after(expr)
-  assert.int_eq(live.len(), 0)
+  assert.equal(live.len(), 0)
 }
 
 fn test_live_let_op_reads() Result<Void, String> {
@@ -135,13 +135,13 @@ fn test_live_return() Result<Void, String> {
   expr: AnfExpr = .Return(.Some(.ALocal(lid(5))))
   live := live_after(expr)
   try assert.is_true(set_has(live, 5))
-  assert.int_eq(live.len(), 1)
+  assert.equal(live.len(), 1)
 }
 
 fn test_live_return_none() Result<Void, String> {
   expr: AnfExpr = .Return(.None)
   live := live_after(expr)
-  assert.int_eq(live.len(), 0)
+  assert.equal(live.len(), 0)
 }
 
 // ── live_after: dead after last use ─────────────────────────────────
@@ -359,7 +359,7 @@ fn test_live_assign_kills_old_value() Result<Void, String> {
   // So at entry, the old value of local 0 is NOT needed → live = {}
   expr: AnfExpr = .Let(lid(1), .AAssign(lid(0), .ALitInt(99)), .Atom(.ALocal(lid(0))))
   live := live_after(expr)
-  assert.int_eq(live.len(), 0)
+  assert.equal(live.len(), 0)
 }
 
 // ── annotate_in_place: consume-reassign pattern ─────────────────────

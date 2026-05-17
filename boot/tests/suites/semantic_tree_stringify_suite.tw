@@ -40,15 +40,15 @@ pub fn suite() runner.Suite {
     .test("custom recursive container satisfies Stringify", fn() {
       tree := sample_tree()
       expected := expected_tree_string()
-      try assert.str_eq(tree.to_string(), expected)
-      try assert.str_eq("${tree}", expected)
-      try assert.str_eq(show(tree), expected)
+      try assert.equal(tree.to_string(), expected)
+      try assert.equal("${tree}", expected)
+      try assert.equal(show(tree), expected)
       .Ok({})
     })
     .test("vector stringify composes with custom tree witness", fn() {
       tree := sample_tree()
       trees: Vector<Tree<Int>> = [tree, Tree.Empty]
-      try assert.str_eq(trees.to_string(), "[${expected_tree_string()}, Empty]")
+      try assert.equal(trees.to_string(), "[${expected_tree_string()}, Empty]")
       .Ok({})
     })
 }

@@ -20,7 +20,7 @@ pub fn suite() runner.Suite {
       x := 1
       f := fn() Int { x }
       x = 99
-      try assert.int_eq(f(), 1)
+      try assert.equal(f(), 1)
       .Ok({})
     })
     // §7.7.2 — shadowing: closure captures innermost binding
@@ -30,8 +30,8 @@ pub fn suite() runner.Suite {
         x := 10
         fn() Int { x }
       }
-      try assert.int_eq(inner(), 10)
-      try assert.int_eq(x, 1)
+      try assert.equal(inner(), 10)
+      try assert.equal(x, 1)
       .Ok({})
     })
     // §7.7.3 — rebinding after closure creation does not affect it
@@ -40,8 +40,8 @@ pub fn suite() runner.Suite {
       f := fn() Int { x }
       x = 2
       x = 3
-      try assert.int_eq(f(), 1)
-      try assert.int_eq(x, 3)
+      try assert.equal(f(), 1)
+      try assert.equal(x, 3)
       .Ok({})
     })
     // multiple closures capture independently
@@ -50,26 +50,26 @@ pub fn suite() runner.Suite {
       f := fn() Int { x }
       x = 20
       g := fn() Int { x }
-      try assert.int_eq(f(), 10)
-      try assert.int_eq(g(), 20)
+      try assert.equal(f(), 10)
+      try assert.equal(g(), 20)
       .Ok({})
     })
     // §7.7.5 — loop iteration captures per-iteration value
     .test("loop closures capture per-iteration value", fn() {
       fns := collect i in 0..4 { fn() Int { i } }
-      try assert.int_eq(fns[0](), 0)
-      try assert.int_eq(fns[1](), 1)
-      try assert.int_eq(fns[2](), 2)
-      try assert.int_eq(fns[3](), 3)
+      try assert.equal(fns[0](), 0)
+      try assert.equal(fns[1](), 1)
+      try assert.equal(fns[2](), 2)
+      try assert.equal(fns[3](), 3)
       .Ok({})
     })
     // closure over vector iteration variable
     .test("loop closures capture vector element", fn() {
       names: Vector<String> = ["alice", "bob", "carol"]
       greeters := collect name in names { fn() String { "hi ${name}" } }
-      try assert.str_eq(greeters[0](), "hi alice")
-      try assert.str_eq(greeters[1](), "hi bob")
-      try assert.str_eq(greeters[2](), "hi carol")
+      try assert.equal(greeters[0](), "hi alice")
+      try assert.equal(greeters[1](), "hi bob")
+      try assert.equal(greeters[2](), "hi carol")
       .Ok({})
     })
     // nested closure captures
@@ -79,24 +79,24 @@ pub fn suite() runner.Suite {
         fn() Int { x }
       }
       inner := outer()
-      try assert.int_eq(inner(), 5)
+      try assert.equal(inner(), 5)
       .Ok({})
     })
     // closure factory captures argument
     .test("closure factory captures argument", fn() {
       add5 := make_adder(5)
       add100 := make_adder(100)
-      try assert.int_eq(add5(1), 6)
-      try assert.int_eq(add100(1), 101)
-      try assert.int_eq(add5(add100(0)), 105)
+      try assert.equal(add5(1), 6)
+      try assert.equal(add100(1), 101)
+      try assert.equal(add5(add100(0)), 105)
       .Ok({})
     })
     // shared mutable state via Cell (not rebinding)
     .test("closures share state via cell", fn() {
       count := make_counter()
-      try assert.int_eq(count(), 1)
-      try assert.int_eq(count(), 2)
-      try assert.int_eq(count(), 3)
+      try assert.equal(count(), 1)
+      try assert.equal(count(), 2)
+      try assert.equal(count(), 3)
       .Ok({})
     })
     // two closures sharing same cell
@@ -106,9 +106,9 @@ pub fn suite() runner.Suite {
       get := fn() Int { c.get() }
       inc()
       inc()
-      try assert.int_eq(get(), 2)
+      try assert.equal(get(), 2)
       inc()
-      try assert.int_eq(get(), 3)
+      try assert.equal(get(), 3)
       .Ok({})
     })
     // §7.3-7.4 — rebinding in loop accumulates
@@ -117,7 +117,7 @@ pub fn suite() runner.Suite {
       for x in [1, 2, 3, 4, 5] {
         acc = acc + x
       }
-      try assert.int_eq(acc, 15)
+      try assert.equal(acc, 15)
       .Ok({})
     })
     // rebinding inside if does not create new scope
@@ -126,7 +126,7 @@ pub fn suite() runner.Suite {
       if true {
         x = 42
       }
-      try assert.int_eq(x, 42)
+      try assert.equal(x, 42)
       .Ok({})
     })
     // new binding with := inside if does shadow
@@ -134,9 +134,9 @@ pub fn suite() runner.Suite {
       x := 1
       if true {
         x := 99
-        try assert.int_eq(x, 99)
+        try assert.equal(x, 99)
       }
-      try assert.int_eq(x, 1)
+      try assert.equal(x, 1)
       .Ok({})
     })
     // §7.4 — pattern-bound names shadow outer
@@ -147,8 +147,8 @@ pub fn suite() runner.Suite {
         .Some(x) => x,
         .None => -1,
       }
-      try assert.int_eq(val, 7)
-      try assert.int_eq(x, 100)
+      try assert.equal(val, 7)
+      try assert.equal(x, 100)
       .Ok({})
     })
     // immutable value aliasing: rebinding doesn't affect alias
@@ -156,8 +156,8 @@ pub fn suite() runner.Suite {
       xs: Vector<Int> = [1, 2, 3]
       ys := xs
       xs = xs.append(4)
-      try assert.int_eq(ys.len(), 3)
-      try assert.int_eq(xs.len(), 4)
+      try assert.equal(ys.len(), 3)
+      try assert.equal(xs.len(), 4)
       .Ok({})
     })
 }

@@ -229,25 +229,25 @@ pub fn suite() runner.Suite {
     .test("int literal", fn() {
       src := "fn answer() Int { 42 }"
       r := try check_ok(src)
-      try assert.str_eq(try type_at(r, src, "42"), "Int")
+      try assert.equal(try type_at(r, src, "42"), "Int")
       .Ok({})
     })
     .test("string literal", fn() {
       src := "fn greeting() String { \"hello\" }"
       r := try check_ok(src)
-      try assert.str_eq(try type_at(r, src, "\"hello\""), "String")
+      try assert.equal(try type_at(r, src, "\"hello\""), "String")
       .Ok({})
     })
     .test("bool literal", fn() {
       src := "fn flag() Bool { true }"
       r := try check_ok(src)
-      try assert.str_eq(try type_at(r, src, "true"), "Bool")
+      try assert.equal(try type_at(r, src, "true"), "Bool")
       .Ok({})
     })
     .test("float literal", fn() {
       src := "fn ratio() Float { 3.14 }"
       r := try check_ok(src)
-      try assert.str_eq(try type_at(r, src, "3.14"), "Float")
+      try assert.equal(try type_at(r, src, "3.14"), "Float")
       .Ok({})
     })
     .test("return type mismatch", fn() {
@@ -260,13 +260,13 @@ pub fn suite() runner.Suite {
     .test("annotated let", fn() {
       src := "fn f() Int { x: Int = 5\n x }"
       r := try check_ok(src)
-      try assert.str_eq(try type_at(r, src, "5"), "Int")
+      try assert.equal(try type_at(r, src, "5"), "Int")
       .Ok({})
     })
     .test("inferred let", fn() {
       src := "fn f() Int { x := 42\n x }"
       r := try check_ok(src)
-      try assert.str_eq(try type_at(r, src, "42"), "Int")
+      try assert.equal(try type_at(r, src, "42"), "Int")
       .Ok({})
     })
     .test("annotated let type mismatch", fn() {
@@ -278,13 +278,13 @@ pub fn suite() runner.Suite {
     .test("ident resolves param", fn() {
       src := "fn f(x: Int) Int { x }"
       r := try check_ok(src)
-      try assert.str_eq(try type_at(r, src, "x }"), "Int")
+      try assert.equal(try type_at(r, src, "x }"), "Int")
       .Ok({})
     })
     .test("function call", fn() {
       src := "fn add(a: Int, b: Int) Int { a }\nfn main() Int { add(1, 2) }"
       r := try check_ok(src)
-      try assert.str_eq(try type_at(r, src, "add(1"), "Int")
+      try assert.equal(try type_at(r, src, "add(1"), "Int")
       .Ok({})
     })
     .test("wrong arg count", fn() {
@@ -297,31 +297,31 @@ pub fn suite() runner.Suite {
     .test("arithmetic int", fn() {
       src := "fn f() Int { 1 + 2 }"
       r := try check_ok(src)
-      try assert.str_eq(try type_at(r, src, "1 + 2"), "Int")
+      try assert.equal(try type_at(r, src, "1 + 2"), "Int")
       .Ok({})
     })
     .test("comparison", fn() {
       src := "fn f() Bool { 1 < 2 }"
       r := try check_ok(src)
-      try assert.str_eq(try type_at(r, src, "1 < 2"), "Bool")
+      try assert.equal(try type_at(r, src, "1 < 2"), "Bool")
       .Ok({})
     })
     .test("logical and", fn() {
       src := "fn f() Bool { true and false }"
       r := try check_ok(src)
-      try assert.str_eq(try type_at(r, src, "true and false"), "Bool")
+      try assert.equal(try type_at(r, src, "true and false"), "Bool")
       .Ok({})
     })
     .test("negate int", fn() {
       src := "fn f() Int { -5 }"
       r := try check_ok(src)
-      try assert.str_eq(try type_at(r, src, "-5"), "Int")
+      try assert.equal(try type_at(r, src, "-5"), "Int")
       .Ok({})
     })
     .test("not bool", fn() {
       src := "fn f() Bool { !true }"
       r := try check_ok(src)
-      try assert.str_eq(try type_at(r, src, "!true"), "Bool")
+      try assert.equal(try type_at(r, src, "!true"), "Bool")
       .Ok({})
     })
     .test("bool plus int error", fn() {
@@ -340,14 +340,14 @@ pub fn suite() runner.Suite {
     .test("equality", fn() {
       src := "fn f() Bool { 1 == 2 }"
       r := try check_ok(src)
-      try assert.str_eq(try type_at(r, src, "1 == 2"), "Bool")
+      try assert.equal(try type_at(r, src, "1 == 2"), "Bool")
       .Ok({})
     })
     // ── M4: Records, Fields, Variants ──
     .test("record field access", fn() {
       src := "type Point = .{ x: Int, y: Int }\nfn get_x(p: Point) Int { p.x }"
       r := try check_ok(src)
-      try assert.str_eq(try type_at(r, src, "p.x"), "Int")
+      try assert.equal(try type_at(r, src, "p.x"), "Int")
       .Ok({})
     })
     .test("record bad field", fn() {
@@ -402,13 +402,13 @@ pub fn suite() runner.Suite {
     .test("generic identity", fn() {
       src := "fn identity<A>(x: A) A { x }\nfn main() Int { identity(42) }"
       r := try check_ok(src)
-      try assert.str_eq(try type_at(r, src, "identity(42)"), "Int")
+      try assert.equal(try type_at(r, src, "identity(42)"), "Int")
       .Ok({})
     })
     .test("generic with array", fn() {
       src := "fn first<T>(xs: Vector<T>) T { xs[0] }\nfn main() Int { first([1, 2, 3]) }"
       r := try check_ok(src)
-      try assert.str_eq(try type_at(r, src, "first([1"), "Int")
+      try assert.equal(try type_at(r, src, "first([1"), "Int")
       .Ok({})
     })
     .test("generic type mismatch", fn() {
@@ -420,7 +420,7 @@ pub fn suite() runner.Suite {
     .test("generic two params", fn() {
       src := "fn pair<A, B>(a: A, b: B) A { a }\nfn main() Int { pair(1, \"hi\") }"
       r := try check_ok(src)
-      try assert.str_eq(try type_at(r, src, "pair(1"), "Int")
+      try assert.equal(try type_at(r, src, "pair(1"), "Int")
       .Ok({})
     })
     .test("generic type variable in nested local annotation", fn() {
@@ -431,25 +431,25 @@ pub fn suite() runner.Suite {
     .test("bounded type parameter method lookup", fn() {
       src := "fn show<T: Stringify>(x: T) String { x.to_string() }"
       r := try check_ok(src)
-      try assert.str_eq(try type_at(r, src, "x.to_string()"), "String")
+      try assert.equal(try type_at(r, src, "x.to_string()"), "String")
       .Ok({})
     })
     .test("generic bound satisfied by primitive", fn() {
       src := "fn show<T: Stringify>(x: T) String { x.to_string() }\nfn main() String { show(42) }"
       r := try check_ok(src)
-      try assert.str_eq(try type_at(r, src, "show(42)"), "String")
+      try assert.equal(try type_at(r, src, "show(42)"), "String")
       .Ok({})
     })
     .test("generic bound satisfied by inherent witness", fn() {
       src := "type User = .{ name: String }\nfn to_string(u: User) String { u.name }\nfn show<T: Stringify>(x: T) String { x.to_string() }\nfn main() String { show(User.{ name: \"Ada\" }) }"
       r := try check_ok(src)
-      try assert.str_eq(try type_at(r, src, "show(User"), "String")
+      try assert.equal(try type_at(r, src, "show(User"), "String")
       .Ok({})
     })
     .test("generic bound satisfaction recurses through witness bounds", fn() {
       src := "type Box<T> = .{ value: T }\nfn to_string<T: Stringify>(b: Box<T>) String { b.value.to_string() }\nfn show<T: Stringify>(x: T) String { x.to_string() }\nfn main() String { show(Box.{ value: 42 }) }"
       r := try check_ok(src)
-      try assert.str_eq(try type_at(r, src, "show(Box"), "String")
+      try assert.equal(try type_at(r, src, "show(Box"), "String")
       .Ok({})
     })
     .test("generic bound rejects unsatisfied type argument", fn() {
@@ -461,7 +461,7 @@ pub fn suite() runner.Suite {
     .test("bounded type declaration allows satisfying record construction", fn() {
       src := "type Box<T: Stringify> = .{ value: T }\nfn main() Box<Int> { Box.{ value: 1 } }"
       r := try check_ok(src)
-      try assert.str_eq(try type_at(r, src, "Box.{ value: 1 }"), "Named(0)<Int>")
+      try assert.equal(try type_at(r, src, "Box.{ value: 1 }"), "Named(0)<Int>")
       .Ok({})
     })
     .test("bounded type declaration rejects record construction", fn() {
@@ -486,19 +486,86 @@ pub fn suite() runner.Suite {
       dollar := "$"
       src := "fn show<T: Stringify>(x: T) String { \"${dollar}{x}\" }\nfn main() String { show(42) }"
       r := try check_ok(src)
-      try assert.str_eq(try type_at(r, src, "show(42)"), "String")
+      try assert.equal(try type_at(r, src, "show(42)"), "String")
       .Ok({})
     })
     .test("vector stringify witness comes from bounded prelude method", fn() {
       src := "fn main() String { xs: Vector<Int> = [1, 2]\n xs.to_string() }"
       r := try check_ok_with_env(src, base_env.builtin_env())
-      try assert.str_eq(try type_at(r, src, "xs.to_string()"), "String")
+      try assert.equal(try type_at(r, src, "xs.to_string()"), "String")
       .Ok({})
     })
     .test("vector stringify rejects unsatisfied element type", fn() {
       src := "type Foo = .{}\nfn main() String { xs: Vector<Foo> = [Foo.{}]\n xs.to_string() }"
       msgs := try check_errs_with_env(src, base_env.builtin_env())
       try assert.str_contains(msgs[0], "does not satisfy Stringify")
+      .Ok({})
+    })
+    .test("multiple contract bounds on type parameter", fn() {
+      src := "fn show_eq<T: Stringify + Eq>(a: T, b: T) String { if a.eq(b) { a.to_string() } else { \"ne\" } }"
+      r := try check_ok(src)
+      try assert.equal(try type_at(r, src, "a.to_string()"), "String")
+      try assert.equal(try type_at(r, src, "a.eq(b)"), "Bool")
+      .Ok({})
+    })
+    .test("Eq bound satisfied by primitive", fn() {
+      src := "fn same<T: Eq>(a: T, b: T) Bool { a.eq(b) }\nfn main() Bool { same(1, 2) }"
+      r := try check_ok(src)
+      try assert.equal(try type_at(r, src, "same(1, 2)"), "Bool")
+      .Ok({})
+    })
+    .test("Eq bound satisfied by record with all-Eq fields (auto-derive)", fn() {
+      src := "type Point = .{ x: Int, y: Int }\nfn same<T: Eq>(a: T, b: T) Bool { a.eq(b) }\nfn main() Bool { same(Point.{ x: 1, y: 2 }, Point.{ x: 3, y: 4 }) }"
+      r := try check_ok(src)
+      try assert.equal(try type_at(r, src, "same(Point"), "Bool")
+      .Ok({})
+    })
+    .test("Eq bound rejected for record with closure field", fn() {
+      src := "type Wrapper = .{ f: fn(Int) Int }\nfn same<T: Eq>(a: T, b: T) Bool { a.eq(b) }\nfn main() Bool { same(Wrapper.{ f: fn(x) { x } }, Wrapper.{ f: fn(x) { x } }) }"
+      msgs := try check_errs(src)
+      try assert.str_contains(msgs[0], "does not satisfy Eq")
+      .Ok({})
+    })
+    .test("Eq bound satisfied by enum with all-Eq payloads (auto-derive)", fn() {
+      src := "type Shape = { Circle(Int), Square(Int, Int) }\nfn same<T: Eq>(a: T, b: T) Bool { a.eq(b) }\nfn main() Bool { same(Shape.Circle(1), Shape.Square(2, 3)) }"
+      r := try check_ok(src)
+      try assert.equal(try type_at(r, src, "same(Shape"), "Bool")
+      .Ok({})
+    })
+    .test("Eq bound rejected for enum with closure payload", fn() {
+      src := "type Action = { Run(fn() Void) }\nfn same<T: Eq>(a: T, b: T) Bool { a.eq(b) }\nfn main() Bool { same(Action.Run(fn() {}), Action.Run(fn() {})) }"
+      msgs := try check_errs(src)
+      try assert.str_contains(msgs[0], "does not satisfy Eq")
+      .Ok({})
+    })
+    .test("Eq auto-derive for recursive enum (coinductive)", fn() {
+      src := "type List = { Nil, Cons(Int, List) }\nfn same<T: Eq>(a: T, b: T) Bool { a.eq(b) }\nfn main() Bool { same(List.Nil, List.Cons(1, List.Nil)) }"
+      r := try check_ok(src)
+      try assert.equal(try type_at(r, src, "same(List"), "Bool")
+      .Ok({})
+    })
+    .test("Eq explicit method takes priority over auto-derive", fn() {
+      src := "type Point = .{ x: Int, y: Int }\nfn eq(a: Point, b: Point) Bool { a.x == b.x }\nfn same<T: Eq>(a: T, b: T) Bool { a.eq(b) }\nfn main() Bool { same(Point.{ x: 1, y: 2 }, Point.{ x: 1, y: 3 }) }"
+      r := try check_ok(src)
+      try assert.equal(try type_at(r, src, "same(Point"), "Bool")
+      .Ok({})
+    })
+    .test("== on record with closure field is type error", fn() {
+      src := "type Bad = .{ f: fn(Int) Int }\nfn test(a: Bad, b: Bad) Bool { a == b }"
+      msgs := try check_errs(src)
+      try assert.str_contains(msgs[0], "does not satisfy Eq")
+      .Ok({})
+    })
+    .test("== on record auto-derives Eq", fn() {
+      src := "type Point = .{ x: Int, y: Int }\nfn test(a: Point, b: Point) Bool { a == b }"
+      r := try check_ok(src)
+      try assert.equal(r.diagnostics.len(), 0)
+      .Ok({})
+    })
+    .test("!= uses Eq contract", fn() {
+      src := "type Bad = .{ f: fn(Int) Int }\nfn test(a: Bad, b: Bad) Bool { a != b }"
+      msgs := try check_errs(src)
+      try assert.str_contains(msgs[0], "does not satisfy Eq")
       .Ok({})
     })
     // ── M6: If, Case, For ──
@@ -531,7 +598,7 @@ pub fn suite() runner.Suite {
     .test("case option with wildcard", fn() {
       src := "fn unwrap(o: Int?) Int { case o { .Some(x) => x, _ => 0 } }"
       r := try check_ok(src)
-      try assert.str_eq(try type_at(r, src, "case o"), "Int")
+      try assert.equal(try type_at(r, src, "case o"), "Int")
       .Ok({})
     })
     .test("case binds pattern var", fn() {
@@ -618,7 +685,7 @@ pub fn suite() runner.Suite {
     .test("case option exhaustive without wildcard", fn() {
       src := "fn unwrap_or(o: Int?, d: Int) Int { case o { .Some(x) => x, .None => d } }"
       r := try check_ok(src)
-      try assert.str_eq(try type_at(r, src, "case o"), "Int")
+      try assert.equal(try type_at(r, src, "case o"), "Int")
       .Ok({})
     })
     .test("case result exhaustive without wildcard", fn() {
@@ -629,7 +696,7 @@ pub fn suite() runner.Suite {
     .test("case diverging arm with error", fn() {
       src := "fn unwrap(o: Int?) Int { case o { .None => error(\"missing\"), .Some(x) => x } }"
       r := try check_ok_builtins(src)
-      try assert.str_eq(try type_at(r, src, "case o"), "Int")
+      try assert.equal(try type_at(r, src, "case o"), "Int")
       .Ok({})
     })
     .test("case all arms diverge is Never", fn() {
@@ -655,7 +722,7 @@ pub fn suite() runner.Suite {
     .test("integration no errors", fn() {
       src := "type Point = .{ x: Int, y: Int }\nfn dist(p: Point) Int { p.x + p.y }\nfn main() Int { dist(.{ x: 1, y: 2 }) }"
       r := try check_ok(src)
-      try assert.str_eq(try type_at(r, src, "dist(.{"), "Int")
+      try assert.equal(try type_at(r, src, "dist(.{"), "Int")
       .Ok({})
     })
     .test("integration partial typemap on error", fn() {
@@ -665,7 +732,7 @@ pub fn suite() runner.Suite {
       if r.diagnostics.len() == 0 {
         return .Err("expected diagnostics")
       }
-      try assert.str_eq(try type_at(r, src, "42"), "Int")
+      try assert.equal(try type_at(r, src, "42"), "Int")
       .Ok({})
     })
     // ── String interpolation with method registry ──
@@ -695,8 +762,8 @@ pub fn suite() runner.Suite {
     .test("multifunction program", fn() {
       src := "fn add(a: Int, b: Int) Int { a + b }\nfn double(x: Int) Int { add(x, x) }\nfn main() Int { double(21) }"
       r := try check_ok(src)
-      try assert.str_eq(try type_at(r, src, "double(21)"), "Int")
-      try assert.str_eq(try type_at(r, src, "add(x"), "Int")
+      try assert.equal(try type_at(r, src, "double(21)"), "Int")
+      try assert.equal(try type_at(r, src, "add(x"), "Int")
       .Ok({})
     })
     // ── F2: Bool exhaustiveness ──
@@ -746,7 +813,7 @@ pub fn suite() runner.Suite {
     .test("F4 inferred return type propagates", fn() {
       src := "fn double(x: Int) { x * 2 }\nfn use_it() Int { double(3) }"
       r := try check_ok(src)
-      try assert.str_eq(try type_at(r, src, "double(3)"), "Int")
+      try assert.equal(try type_at(r, src, "double(3)"), "Int")
       .Ok({})
     })
     .test("F4 inferred void return", fn() {
@@ -774,7 +841,7 @@ pub fn suite() runner.Suite {
     .test("F8 second function independent of first", fn() {
       src := "fn first() Int { 1 }\nfn second() String { \"hello\" }"
       r := try check_ok(src)
-      try assert.str_eq(try type_at(r, src, "\"hello\""), "String")
+      try assert.equal(try type_at(r, src, "\"hello\""), "String")
       .Ok({})
     })
     // ── F9: return records Never ──
@@ -796,7 +863,7 @@ pub fn suite() runner.Suite {
     .test("F9 inferred Never helper call diverges in case arm", fn() {
       src := "fn abort() { error(\"fail\") }\nfn f(x: Bool) Int { case x { true => 1, false => { abort() } } }"
       r := try check_ok_builtins(src)
-      try assert.str_eq(try type_at(r, src, "case x"), "Int")
+      try assert.equal(try type_at(r, src, "case x"), "Int")
       .Ok({})
     })
     // ── F3: try threads unification context ──
@@ -847,7 +914,7 @@ pub fn suite() runner.Suite {
     .test("C1 alias field access", fn() {
       src := "type Pt = .{ x: Int, y: Int }\ntype MyPt = Pt\nfn get_x(p: MyPt) Int { p.x }"
       r := try check_ok(src)
-      try assert.str_eq(try type_at(r, src, "p.x"), "Int")
+      try assert.equal(try type_at(r, src, "p.x"), "Int")
       .Ok({})
     })
     .test("C1 alias variant pattern match", fn() {
@@ -912,7 +979,7 @@ pub fn suite() runner.Suite {
     .test("C4 top-level let populates type map", fn() {
       src := "x := 42"
       r := try check_ok(src)
-      try assert.str_eq(try type_at(r, src, "42"), "Int")
+      try assert.equal(try type_at(r, src, "42"), "Int")
       .Ok({})
     })
     .test("C4 top-level type mismatch", fn() {
@@ -939,7 +1006,7 @@ pub fn suite() runner.Suite {
     .test("C5 closure call basic", fn() {
       src := "fn f() Int { g := fn(x: Int) Int { x + 1 }\n g(5) }"
       r := try check_ok(src)
-      try assert.str_eq(try type_at(r, src, "g(5)"), "Int")
+      try assert.equal(try type_at(r, src, "g(5)"), "Int")
       .Ok({})
     })
     .test("C5 closure call pushes expected type to record arg", fn() {
@@ -1083,7 +1150,7 @@ pub fn suite() runner.Suite {
     .test("T2 range operator", fn() {
       src := "fn f() { x := 1..10\nx }"
       r := try check_ok_builtins(src)
-      try assert.str_eq(try type_at(r, src, "1..10"), "Named(3)")
+      try assert.equal(try type_at(r, src, "1..10"), "Named(3)")
       .Ok({})
     })
     .test("T2 bitwise and", fn() {
@@ -1104,7 +1171,7 @@ pub fn suite() runner.Suite {
     .test("T2 bitwise not", fn() {
       src := "fn f(a: Int) Int { ~a }"
       r := try check_ok(src)
-      try assert.str_eq(try type_at(r, src, "~a"), "Int")
+      try assert.equal(try type_at(r, src, "~a"), "Int")
       .Ok({})
     })
     .test("T2 self-application type error", fn() {
@@ -1116,7 +1183,7 @@ pub fn suite() runner.Suite {
     .test("T2 scope shadowing", fn() {
       src := "fn f() Int {\nx := 42\nif true {\nx := \"hello\"\nx\n}\nx\n}"
       r := try check_ok(src)
-      try assert.str_eq(try type_at(r, src, "42"), "Int")
+      try assert.equal(try type_at(r, src, "42"), "Int")
       .Ok({})
     })
     .test("T2 literal pattern in case", fn() {
@@ -1128,7 +1195,7 @@ pub fn suite() runner.Suite {
     .test("T3 field access on generic record", fn() {
       src := "type Box<T> = .{ value: T }\nfn get_val(b: Box<Int>) Int { b.value }"
       r := try check_ok(src)
-      try assert.str_eq(try type_at(r, src, "b.value"), "Int")
+      try assert.equal(try type_at(r, src, "b.value"), "Int")
       .Ok({})
     })
     // ── Parity D1-D8 (red/green) ──
@@ -1180,7 +1247,7 @@ pub fn suite() runner.Suite {
     .test("P2 receiver method call dispatches through method registry", fn() {
       src := "type Point = .{ x: Int }\nfn len(p: Point) Int { p.x }\nfn f(p: Point) Int { p.len() }"
       r := try check_ok(src)
-      try assert.str_eq(try type_at(r, src, "p.len()"), "Int")
+      try assert.equal(try type_at(r, src, "p.len()"), "Int")
       .Ok({})
     })
     .test("P2 receiver method lookup follows receiver identity rather than preferred name", fn() {
@@ -1211,13 +1278,13 @@ pub fn suite() runner.Suite {
 
       src := "fn f(p: Point) Int { p.len() }"
       r := try check_ok_with_env(src, env)
-      try assert.str_eq(try type_at(r, src, "p.len()"), "Int")
+      try assert.equal(try type_at(r, src, "p.len()"), "Int")
       .Ok({})
     })
     .test("P2 module qualified call is gated by module alias set", fn() {
       src := "fn f() String { Int.to_string(1) }"
       r := try check_ok_builtins(src)
-      try assert.str_eq(try type_at(r, src, "Int.to_string(1)"), "String")
+      try assert.equal(try type_at(r, src, "Int.to_string(1)"), "String")
       .Ok({})
     })
     .test("P2 missing method on known receiver emits method diagnostic", fn() {
@@ -1257,13 +1324,13 @@ pub fn suite() runner.Suite {
     .test("P2 method value reference synthesizes function value", fn() {
       src := "type Point = .{ x: Int }\nfn len(p: Point) Int { p.x }\nfn apply(g: fn() Int) Int { g() }\nfn f(p: Point) Int { apply(p.len) }"
       r := try check_ok(src)
-      try assert.str_eq(try type_at(r, src, "p.len"), "fn() Int")
+      try assert.equal(try type_at(r, src, "p.len"), "fn() Int")
       .Ok({})
     })
     .test("P3 bitwise Byte and Byte yields Int", fn() {
       src := "fn f(a: Byte, b: Byte) Int { a & b }"
       r := try check_ok(src)
-      try assert.str_eq(try type_at(r, src, "a & b"), "Int")
+      try assert.equal(try type_at(r, src, "a & b"), "Int")
       .Ok({})
     })
     .test("P3 bitwise Byte and Int is allowed", fn() {
@@ -1274,7 +1341,7 @@ pub fn suite() runner.Suite {
     .test("P3 unary bitwise not on Byte yields Int", fn() {
       src := "fn f(a: Byte) Int { ~a }"
       r := try check_ok(src)
-      try assert.str_eq(try type_at(r, src, "~a"), "Int")
+      try assert.equal(try type_at(r, src, "~a"), "Int")
       .Ok({})
     })
     .test("P3 bitwise rejects non-Int/Byte operands", fn() {
@@ -1310,7 +1377,7 @@ pub fn suite() runner.Suite {
     .test("P5 functions can read later top-level lets", fn() {
       src := "fn use_x() Int { x }\nx := 42\nfn main() Int { use_x() }"
       r := try check_ok(src)
-      try assert.str_eq(try type_at_nth(r, src, "use_x()", 1), "Int")
+      try assert.equal(try type_at_nth(r, src, "use_x()", 1), "Int")
       .Ok({})
     })
     .test("P6 interpolation requires to_string receiver-only shape", fn() {
@@ -1353,33 +1420,33 @@ pub fn suite() runner.Suite {
     .test("P8 check mode narrows int literal to Byte", fn() {
       src := "fn f() Byte { b: Byte = 255\nb }"
       r := try check_ok(src)
-      try assert.str_eq(try type_at(r, src, "255"), "Byte")
+      try assert.equal(try type_at(r, src, "255"), "Byte")
       .Ok({})
     })
     // ── D9: Range operator type ────────────────────────────────────────
     .test("D9 range operator produces Named(3) not Vector<Int>", fn() {
       src := "fn f() { x := 1..10\nx }"
       r := try check_ok_builtins(src)
-      try assert.str_eq(try type_at(r, src, "1..10"), "Named(3)")
+      try assert.equal(try type_at(r, src, "1..10"), "Named(3)")
       .Ok({})
     })
     // ── D10: Byte/Int arithmetic cross-promotion ───────────────────────
     .test("D10 Byte + Int promotes to Int", fn() {
       src := "fn f(b: Byte) Int { b + 1 }"
       r := try check_ok(src)
-      try assert.str_eq(try type_at(r, src, "b + 1"), "Int")
+      try assert.equal(try type_at(r, src, "b + 1"), "Int")
       .Ok({})
     })
     .test("D10 Int - Byte promotes to Int", fn() {
       src := "fn f(n: Int, b: Byte) Int { n - b }"
       r := try check_ok(src)
-      try assert.str_eq(try type_at(r, src, "n - b"), "Int")
+      try assert.equal(try type_at(r, src, "n - b"), "Int")
       .Ok({})
     })
     .test("D10 Byte * Byte promotes to Int", fn() {
       src := "fn f(a: Byte, b: Byte) Int { a * b }"
       r := try check_ok(src)
-      try assert.str_eq(try type_at(r, src, "a * b"), "Int")
+      try assert.equal(try type_at(r, src, "a * b"), "Int")
       .Ok({})
     })
     .test("D10 Byte comparison with Int allowed", fn() {
@@ -1407,13 +1474,13 @@ pub fn suite() runner.Suite {
     .test("D11 left shift Int produces Int", fn() {
       src := "fn f(x: Int) Int { x << 2 }"
       r := try check_ok(src)
-      try assert.str_eq(try type_at(r, src, "x << 2"), "Int")
+      try assert.equal(try type_at(r, src, "x << 2"), "Int")
       .Ok({})
     })
     .test("D11 right shift Byte produces Int", fn() {
       src := "fn f(b: Byte) Int { b >> 1 }"
       r := try check_ok(src)
-      try assert.str_eq(try type_at(r, src, "b >> 1"), "Int")
+      try assert.equal(try type_at(r, src, "b >> 1"), "Int")
       .Ok({})
     })
     .test("D11 shift rejects non-Int/Byte operands", fn() {

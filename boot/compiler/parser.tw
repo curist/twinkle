@@ -256,15 +256,18 @@ fn parse_type_params(c: Cursor) TypeParamsParse {
               "expected contract name after ':'",
             ))
           }
-          // Multiple bounds are not yet supported
           for c.kind() == .Plus {
-            diagnostics_out = .append(diag.error(
-              c.span(),
-              "multiple bounds are not supported yet",
-            ))
             c = .advance()
             if c.kind() == .Ident {
+              extra_span := c.span()
+              extra_name := c.text()
               c = .advance()
+              bounds = .append(.{ segments: [extra_name], span: extra_span })
+            } else {
+              diagnostics_out = .append(diag.error(
+                c.span(),
+                "expected contract name after '+'",
+              ))
             }
           }
         }

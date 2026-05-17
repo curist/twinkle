@@ -21,7 +21,7 @@ fn test_fold_int_add() Result<Void, String> {
   case r.expr {
     .Let(_, op, _) => {
       case op {
-        .AInit(.ALitInt(n)) => assert.int_eq(n, 3),
+        .AInit(.ALitInt(n)) => assert.equal(n, 3),
         _ => .Err("expected AInit(3)"),
       }
     },
@@ -34,7 +34,7 @@ fn test_fold_int_sub() Result<Void, String> {
   r := constant_fold(expr)
   try assert.is_true(r.changed)
   case r.expr {
-    .Let(_, .AInit(.ALitInt(n)), _) => assert.int_eq(n, 7),
+    .Let(_, .AInit(.ALitInt(n)), _) => assert.equal(n, 7),
     _ => .Err("expected folded to 7"),
   }
 }
@@ -43,7 +43,7 @@ fn test_fold_int_mul() Result<Void, String> {
   expr: AnfExpr = .Let(lid(0), .ABinOp(.Mul, .ALitInt(6), .ALitInt(7), .Int), .Atom(.ALocal(lid(0))))
   r := constant_fold(expr)
   case r.expr {
-    .Let(_, .AInit(.ALitInt(n)), _) => assert.int_eq(n, 42),
+    .Let(_, .AInit(.ALitInt(n)), _) => assert.equal(n, 42),
     _ => .Err("expected folded to 42"),
   }
 }
@@ -52,7 +52,7 @@ fn test_fold_int_div() Result<Void, String> {
   expr: AnfExpr = .Let(lid(0), .ABinOp(.Div, .ALitInt(10), .ALitInt(3), .Int), .Atom(.ALocal(lid(0))))
   r := constant_fold(expr)
   case r.expr {
-    .Let(_, .AInit(.ALitInt(n)), _) => assert.int_eq(n, 3),
+    .Let(_, .AInit(.ALitInt(n)), _) => assert.equal(n, 3),
     _ => .Err("expected folded to 3"),
   }
 }
@@ -131,7 +131,7 @@ fn test_fold_neg_int() Result<Void, String> {
   expr: AnfExpr = .Let(lid(0), .AUnOp(.Neg, .ALitInt(5), .Int), .Atom(.ALocal(lid(0))))
   r := constant_fold(expr)
   case r.expr {
-    .Let(_, .AInit(.ALitInt(n)), _) => assert.int_eq(n, -5),
+    .Let(_, .AInit(.ALitInt(n)), _) => assert.equal(n, -5),
     _ => .Err("expected folded to -5"),
   }
 }
@@ -164,7 +164,7 @@ fn test_branch_true_selects_then() Result<Void, String> {
   r := branch_simplify(expr)
   try assert.is_true(r.changed)
   case r.expr {
-    .Let(_, .AInit(.ALitInt(n)), _) => assert.int_eq(n, 1),
+    .Let(_, .AInit(.ALitInt(n)), _) => assert.equal(n, 1),
     _ => .Err("expected simplified to AInit(1)"),
   }
 }
@@ -176,7 +176,7 @@ fn test_branch_false_selects_else() Result<Void, String> {
   r := branch_simplify(expr)
   try assert.is_true(r.changed)
   case r.expr {
-    .Let(_, .AInit(.ALitInt(n)), _) => assert.int_eq(n, 2),
+    .Let(_, .AInit(.ALitInt(n)), _) => assert.equal(n, 2),
     _ => .Err("expected simplified to AInit(2)"),
   }
 }
@@ -190,7 +190,7 @@ fn test_branch_diverging_drops_continuation() Result<Void, String> {
   r := branch_simplify(expr)
   try assert.is_true(r.changed)
   case r.expr {
-    .Let(_, .AInit(.ALitInt(n)), _) => assert.int_eq(n, 42),
+    .Let(_, .AInit(.ALitInt(n)), _) => assert.equal(n, 42),
     _ => .Err("expected Let(0, AInit(42), ...)"),
   }
 }
@@ -204,7 +204,7 @@ fn test_branch_true_diverging_drops_body() Result<Void, String> {
   r := branch_simplify(expr)
   try assert.is_true(r.changed)
   case r.expr {
-    .Return(.Some(.ALitInt(n))) => assert.int_eq(n, 99),
+    .Return(.Some(.ALitInt(n))) => assert.equal(n, 99),
     _ => .Err("expected Return(99)"),
   }
 }
@@ -230,7 +230,7 @@ fn test_branch_nested_let_in_branch() Result<Void, String> {
   try assert.is_true(r.changed)
   // Should start with Let(1, ...)
   case r.expr {
-    .Let(local, _, _) => assert.int_eq(local.id, 1),
+    .Let(local, _, _) => assert.equal(local.id, 1),
     _ => .Err("expected Let(1, ...)"),
   }
 }

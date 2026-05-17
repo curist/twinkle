@@ -19,7 +19,7 @@ pub fn suite() runner.Suite {
       id := identity.from_path("/tmp/analyze/main.tw")
       result := analyze.analyze_module(id, "__entry", base_env.builtin_env(), state, [])
       try assert.is_true(result.ok)
-      try assert.int_eq(result.diagnostics.len(), 0)
+      try assert.equal(result.diagnostics.len(), 0)
       try assert.is_true(result.state.exports.has("/tmp/analyze/main.tw"))
       .Ok({})
     })
@@ -33,7 +33,7 @@ pub fn suite() runner.Suite {
       id := identity.from_path("/tmp/analyze/main.tw")
       result := analyze.analyze_module(id, "__entry", base_env.builtin_env(), state, [])
       try assert.is_true(result.ok)
-      try assert.int_eq(result.diagnostics.len(), 0)
+      try assert.equal(result.diagnostics.len(), 0)
       try assert.is_true(result.state.exports.has("/tmp/analyze/dep.tw"))
       try assert.is_true(result.state.exports.has("/tmp/analyze/main.tw"))
       .Ok({})
@@ -61,7 +61,7 @@ pub fn suite() runner.Suite {
       result := analyze.analyze_module(id, "__entry", base_env.builtin_env(), state, [])
       try assert.is_false(result.ok)
       try assert.is_true(result.diagnostics.len() > 0)
-      try assert.str_eq(result.diagnostics[0].stage, "parse")
+      try assert.equal(result.diagnostics[0].stage, "parse")
       .Ok({})
     })
 
@@ -72,7 +72,7 @@ pub fn suite() runner.Suite {
       result := analyze.analyze_module(id, "__entry", base_env.builtin_env(), state, [])
       try assert.is_false(result.ok)
       try assert.is_true(result.diagnostics.len() > 0)
-      try assert.str_eq(result.diagnostics[0].stage, "check")
+      try assert.equal(result.diagnostics[0].stage, "check")
       .Ok({})
     })
 
@@ -128,8 +128,8 @@ pub fn suite() runner.Suite {
       try assert.is_false(result.ok)
       try assert.is_true(result.diagnostics.len() > 0)
       // Diagnostic should point to the dep file, not the entry
-      try assert.str_eq(result.diagnostics[0].identity.path, "/tmp/analyze/dep.tw")
-      try assert.str_eq(result.diagnostics[0].stage, "check")
+      try assert.equal(result.diagnostics[0].identity.path, "/tmp/analyze/dep.tw")
+      try assert.equal(result.diagnostics[0].stage, "check")
       try assert.is_true(result.diagnostics[0].kind.span().start >= 0)
       .Ok({})
     })
@@ -143,7 +143,7 @@ pub fn suite() runner.Suite {
       result := analyze.analyze_module(id, "__entry", base_env.builtin_env(), state, [])
       try assert.is_false(result.ok)
       try assert.is_true(result.diagnostics.len() > 0)
-      try assert.str_eq(result.diagnostics[0].stage, "import")
+      try assert.equal(result.diagnostics[0].stage, "import")
       .Ok({})
     })
 
@@ -159,7 +159,7 @@ pub fn suite() runner.Suite {
       try assert.is_false(result.ok)
       d := result.diagnostics[0]
       // Identity should be the importing file
-      try assert.str_eq(d.identity.path, "/tmp/analyze/main.tw")
+      try assert.equal(d.identity.path, "/tmp/analyze/main.tw")
       // Span should be non-zero (points to `use missing`, not the old zero sentinel)
       try assert.is_true(d.kind.span().end > 0)
       .Ok({})
@@ -180,7 +180,7 @@ pub fn suite() runner.Suite {
       try assert.is_true(result.diagnostics.len() > 0)
       d := result.diagnostics[0]
       // b.tw triggers the circular detection when it imports a.tw
-      try assert.str_eq(d.identity.path, "/tmp/analyze/b.tw")
+      try assert.equal(d.identity.path, "/tmp/analyze/b.tw")
       // Span should point to `use a` in b.tw, not the zero sentinel
       try assert.is_true(d.kind.span().end > 0)
       .Ok({})

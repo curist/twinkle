@@ -9,25 +9,25 @@ pub fn suite() runner.Suite {
 
     .test("hash_text empty string matches reference", fn() {
       // Rust: fnv1a_64(b"") = 14695981039346656037u64 = -3750763034362895579i64
-      try assert.int_eq(keys.hash_text(""), 0 - 3750763034362895579)
+      try assert.equal(keys.hash_text(""), 0 - 3750763034362895579)
       .Ok({})
     })
 
     .test("hash_text single char matches reference", fn() {
       // Rust: fnv1a_64(b"a") = -5808556873153909620i64
-      try assert.int_eq(keys.hash_text("a"), 0 - 5808556873153909620)
+      try assert.equal(keys.hash_text("a"), 0 - 5808556873153909620)
       .Ok({})
     })
 
     .test("hash_text multi-char matches reference", fn() {
       // Rust: fnv1a_64(b"hello") = -6615550055289275125i64
-      try assert.int_eq(keys.hash_text("hello"), 0 - 6615550055289275125)
+      try assert.equal(keys.hash_text("hello"), 0 - 6615550055289275125)
       .Ok({})
     })
 
     .test("hash_text stage name matches reference", fn() {
       // Rust: fnv1a_64(b"parse") = 886795330685173132i64
-      try assert.int_eq(keys.hash_text("parse"), 886795330685173132)
+      try assert.equal(keys.hash_text("parse"), 886795330685173132)
       .Ok({})
     })
 
@@ -36,7 +36,7 @@ pub fn suite() runner.Suite {
     .test("hash_text is deterministic", fn() {
       a := keys.hash_text("test string")
       b := keys.hash_text("test string")
-      try assert.int_eq(a, b)
+      try assert.equal(a, b)
       .Ok({})
     })
 
@@ -52,11 +52,11 @@ pub fn suite() runner.Suite {
     .test("parse_key matches reference", fn() {
       source_hash := keys.hash_text("fn main() {}")
       // Verify source hash first
-      try assert.int_eq(source_hash, 0 - 6186732394119585521)
+      try assert.equal(source_hash, 0 - 6186732394119585521)
       pk := keys.parse_key("test.tw", source_hash)
       // Rust: mix_many(&[1, hash_text("parse"), hash_text("test.tw"), source_hash])
       //     = -1554403158589966462i64
-      try assert.int_eq(pk, 0 - 1554403158589966462)
+      try assert.equal(pk, 0 - 1554403158589966462)
       .Ok({})
     })
 
@@ -114,7 +114,7 @@ pub fn suite() runner.Suite {
         keys.DepEntry.{ path: "a.tw", hash: 100 },
         keys.DepEntry.{ path: "b.tw", hash: 200 },
       ]
-      try assert.int_eq(keys.deps_hash(entries), 5538049689009683815)
+      try assert.equal(keys.deps_hash(entries), 5538049689009683815)
       .Ok({})
     })
 
@@ -128,7 +128,7 @@ pub fn suite() runner.Suite {
         keys.DepEntry.{ path: "b.tw", hash: 2 },
         keys.DepEntry.{ path: "a.tw", hash: 1 },
       ]
-      try assert.int_eq(keys.deps_hash(forward), keys.deps_hash(reversed))
+      try assert.equal(keys.deps_hash(forward), keys.deps_hash(reversed))
       .Ok({})
     })
 
@@ -147,7 +147,7 @@ pub fn suite() runner.Suite {
       dh := 5538049689009683815  // from deps_hash test above
       // Rust: mix_many(&[1, hash_text("module"), source_hash, dh])
       //     = 7533646049685068476i64
-      try assert.int_eq(keys.module_hash(source_hash, dh), 7533646049685068476)
+      try assert.equal(keys.module_hash(source_hash, dh), 7533646049685068476)
       .Ok({})
     })
 
@@ -162,7 +162,7 @@ pub fn suite() runner.Suite {
         keys.DepEntry.{ path: "y.tw", hash: 20 },
         keys.DepEntry.{ path: "x.tw", hash: 10 },
       ]
-      try assert.int_eq(keys.context_hash(a), keys.context_hash(b))
+      try assert.equal(keys.context_hash(a), keys.context_hash(b))
       .Ok({})
     })
 
@@ -186,7 +186,7 @@ pub fn suite() runner.Suite {
       // Should differ from base alone
       try assert.is_true(result != base)
       // Should be deterministic
-      try assert.int_eq(result, keys.with_context(base, ctx))
+      try assert.equal(result, keys.with_context(base, ctx))
       .Ok({})
     })
 
@@ -199,7 +199,7 @@ pub fn suite() runner.Suite {
       sh := keys.hash_text("test")
       a := keys.parse_key("test.tw", sh)
       b := keys.parse_key("test.tw", sh)
-      try assert.int_eq(a, b)
+      try assert.equal(a, b)
       .Ok({})
     })
 }

@@ -9,88 +9,88 @@ pub fn suite() runner.Suite {
 
     .test("to_string equals stringify", fn() {
       j: json.Json = .Array([.Int(1), .Str("x"), .Null])
-      try assert.str_eq(json.to_string(j), json.stringify(j))
+      try assert.equal(json.to_string(j), json.stringify(j))
       .Ok({})
     })
 
     // --- stringify primitives ---
 
     .test("stringify null", fn() {
-      try assert.str_eq(json.stringify(.Null), "null")
+      try assert.equal(json.stringify(.Null), "null")
       .Ok({})
     })
     .test("stringify bool true", fn() {
-      try assert.str_eq(json.stringify(.Bool(true)), "true")
+      try assert.equal(json.stringify(.Bool(true)), "true")
       .Ok({})
     })
     .test("stringify bool false", fn() {
-      try assert.str_eq(json.stringify(.Bool(false)), "false")
+      try assert.equal(json.stringify(.Bool(false)), "false")
       .Ok({})
     })
     .test("stringify int", fn() {
-      try assert.str_eq(json.stringify(.Int(42)), "42")
-      try assert.str_eq(json.stringify(.Int(0)), "0")
-      try assert.str_eq(json.stringify(.Int(-1)), "-1")
+      try assert.equal(json.stringify(.Int(42)), "42")
+      try assert.equal(json.stringify(.Int(0)), "0")
+      try assert.equal(json.stringify(.Int(-1)), "-1")
       .Ok({})
     })
     .test("stringify float", fn() {
-      try assert.str_eq(json.stringify(.Float(3.14)), "3.14")
+      try assert.equal(json.stringify(.Float(3.14)), "3.14")
       .Ok({})
     })
     .test("stringify plain string", fn() {
-      try assert.str_eq(json.stringify(.Str("hello")), "\"hello\"")
+      try assert.equal(json.stringify(.Str("hello")), "\"hello\"")
       .Ok({})
     })
     .test("stringify string with double quote escape", fn() {
-      try assert.str_eq(json.stringify(.Str("a\"b")), "\"a\\\"b\"")
+      try assert.equal(json.stringify(.Str("a\"b")), "\"a\\\"b\"")
       .Ok({})
     })
     .test("stringify string with backslash escape", fn() {
-      try assert.str_eq(json.stringify(.Str("a\\b")), "\"a\\\\b\"")
+      try assert.equal(json.stringify(.Str("a\\b")), "\"a\\\\b\"")
       .Ok({})
     })
     .test("stringify string with newline escape", fn() {
-      try assert.str_eq(json.stringify(.Str("a\nb")), "\"a\\nb\"")
+      try assert.equal(json.stringify(.Str("a\nb")), "\"a\\nb\"")
       .Ok({})
     })
     .test("stringify string with tab escape", fn() {
-      try assert.str_eq(json.stringify(.Str("a\tb")), "\"a\\tb\"")
+      try assert.equal(json.stringify(.Str("a\tb")), "\"a\\tb\"")
       .Ok({})
     })
     .test("stringify string with json control escapes", fn() {
       bs := case String.from_code_point(8) { .Some(s) => s, .None => "" }
       ff := case String.from_code_point(12) { .Some(s) => s, .None => "" }
       ctrl := case String.from_code_point(1) { .Some(s) => s, .None => "" }
-      try assert.str_eq(json.stringify(.Str("a${bs}b")), "\"a\\bb\"")
-      try assert.str_eq(json.stringify(.Str("a${ff}b")), "\"a\\fb\"")
-      try assert.str_eq(json.stringify(.Str("a${ctrl}b")), "\"a\\u0001b\"")
+      try assert.equal(json.stringify(.Str("a${bs}b")), "\"a\\bb\"")
+      try assert.equal(json.stringify(.Str("a${ff}b")), "\"a\\fb\"")
+      try assert.equal(json.stringify(.Str("a${ctrl}b")), "\"a\\u0001b\"")
       .Ok({})
     })
     .test("stringify empty array", fn() {
       arr: Vector<json.Json> = []
-      try assert.str_eq(json.stringify(.Array(arr)), "[]")
+      try assert.equal(json.stringify(.Array(arr)), "[]")
       .Ok({})
     })
     .test("stringify array with elements", fn() {
       arr: Vector<json.Json> = [.Int(1), .Int(2), .Int(3)]
-      try assert.str_eq(json.stringify(.Array(arr)), "[1,2,3]")
+      try assert.equal(json.stringify(.Array(arr)), "[1,2,3]")
       .Ok({})
     })
     .test("stringify nested array", fn() {
       inner: Vector<json.Json> = [.Bool(true), .Null]
       outer: Vector<json.Json> = [.Array(inner), .Str("x")]
-      try assert.str_eq(json.stringify(.Array(outer)), "[[true,null],\"x\"]")
+      try assert.equal(json.stringify(.Array(outer)), "[[true,null],\"x\"]")
       .Ok({})
     })
     .test("stringify empty object", fn() {
       d: Dict<String, json.Json> = Dict.new()
-      try assert.str_eq(json.stringify(.Object(d)), "{}")
+      try assert.equal(json.stringify(.Object(d)), "{}")
       .Ok({})
     })
     .test("stringify object with one field", fn() {
       d: Dict<String, json.Json> = Dict.new()
       d["x"] = .Int(1)
-      try assert.str_eq(json.stringify(.Object(d)), "{\"x\":1}")
+      try assert.equal(json.stringify(.Object(d)), "{\"x\":1}")
       .Ok({})
     })
 
@@ -106,7 +106,7 @@ pub fn suite() runner.Suite {
         _ => { return .Err("expected bool") },
       }
       case try json.parse("42") {
-        .Int(n) => try assert.int_eq(n, 42),
+        .Int(n) => try assert.equal(n, 42),
         _ => { return .Err("expected int") },
       }
       case try json.parse("-1.5") {
@@ -114,7 +114,7 @@ pub fn suite() runner.Suite {
         _ => { return .Err("expected float") },
       }
       case try json.parse("\"hi\\nthere\"") {
-        .Str(s) => try assert.str_eq(s, "hi\nthere"),
+        .Str(s) => try assert.equal(s, "hi\nthere"),
         _ => { return .Err("expected string") },
       }
       .Ok({})
@@ -122,11 +122,11 @@ pub fn suite() runner.Suite {
     .test("parse arrays and objects", fn() {
       parsed := try json.parse("{\"name\":\"Ada\",\"nums\":[1,2,null]}")
       name := try json.decode(parsed, json.field("name", json.string()))
-      try assert.str_eq(name, "Ada")
+      try assert.equal(name, "Ada")
       nums := try json.decode(parsed, json.field("nums", json.list(json.raw())))
-      try assert.int_eq(nums.len(), 3)
+      try assert.equal(nums.len(), 3)
       case nums[0] {
-        .Int(n) => try assert.int_eq(n, 1),
+        .Int(n) => try assert.equal(n, 1),
         _ => { return .Err("expected first array item to be int") },
       }
       case nums[2] {
@@ -137,18 +137,18 @@ pub fn suite() runner.Suite {
     })
     .test("parse unicode escapes", fn() {
       case try json.parse("\"\\u0041\\u00df\"") {
-        .Str(s) => try assert.str_eq(s, "Aß"),
+        .Str(s) => try assert.equal(s, "Aß"),
         _ => { return .Err("expected string") },
       }
       case try json.parse("\"\\ud834\\udd1e\"") {
-        .Str(s) => try assert.str_eq(s, "𝄞"),
+        .Str(s) => try assert.equal(s, "𝄞"),
         _ => { return .Err("expected string") },
       }
       .Ok({})
     })
     .test("parse_decode parses then decodes", fn() {
       name := try json.parse_decode("{\"name\":\"Ada\"}", json.field("name", json.string()))
-      try assert.str_eq(name, "Ada")
+      try assert.equal(name, "Ada")
       .Ok({})
     })
     .test("parse rejects malformed input", fn() {
@@ -169,17 +169,17 @@ pub fn suite() runner.Suite {
         json.kv("id", .Int(1)),
       ])
       version := try json.decode(obj, json.field("jsonrpc", json.string()))
-      try assert.str_eq(version, "2.0")
+      try assert.equal(version, "2.0")
       id := try json.decode(obj, json.field("id", json.int()))
-      try assert.int_eq(id, 1)
+      try assert.equal(id, 1)
       .Ok({})
     })
     .test("array constructs array values", fn() {
       arr_json := json.array([.Str("a"), .Str("b")])
       values := try json.decode(arr_json, json.list(json.string()))
-      try assert.int_eq(values.len(), 2)
-      try assert.str_eq(values[0], "a")
-      try assert.str_eq(values[1], "b")
+      try assert.equal(values.len(), 2)
+      try assert.equal(values[0], "a")
+      try assert.equal(values[1], "b")
       .Ok({})
     })
 
@@ -191,7 +191,7 @@ pub fn suite() runner.Suite {
       try assert.is_ok(r)
       got := case r { .Ok(v) => v, .Err(_) => .Null }
       case got {
-        .Int(n) => try assert.int_eq(n, 99),
+        .Int(n) => try assert.equal(n, 99),
         _ => { return .Err("expected Int variant") },
       }
       .Ok({})
@@ -200,7 +200,7 @@ pub fn suite() runner.Suite {
       r := json.decode(.Str("hi"), json.string())
       try assert.is_ok(r)
       s := case r { .Ok(v) => v, .Err(_) => "" }
-      try assert.str_eq(s, "hi")
+      try assert.equal(s, "hi")
       .Ok({})
     })
     .test("decode string failure on non-string", fn() {
@@ -211,7 +211,7 @@ pub fn suite() runner.Suite {
       r := json.decode(.Int(7), json.int())
       try assert.is_ok(r)
       n := case r { .Ok(v) => v, .Err(_) => -999 }
-      try assert.int_eq(n, 7)
+      try assert.equal(n, 7)
       .Ok({})
     })
     .test("decode int failure on non-int", fn() {
@@ -258,7 +258,7 @@ pub fn suite() runner.Suite {
       r := json.decode(.Null, json.succeed(42))
       try assert.is_ok(r)
       n := case r { .Ok(v) => v, .Err(_) => -1 }
-      try assert.int_eq(n, 42)
+      try assert.equal(n, 42)
       .Ok({})
     })
     .test("decode fail always errors", fn() {
@@ -274,7 +274,7 @@ pub fn suite() runner.Suite {
       r := json.decode(.Int(5), d)
       try assert.is_ok(r)
       n := case r { .Ok(v) => v, .Err(_) => -1 }
-      try assert.int_eq(n, 10)
+      try assert.equal(n, 10)
       .Ok({})
     })
     .test("map propagates error", fn() {
@@ -287,7 +287,7 @@ pub fn suite() runner.Suite {
       r := json.decode(.Int(3), d)
       try assert.is_ok(r)
       n := case r { .Ok(v) => v, .Err(_) => -1 }
-      try assert.int_eq(n, 6)
+      try assert.equal(n, 6)
       .Ok({})
     })
     .test("and_then chains decoders on success", fn() {
@@ -297,7 +297,7 @@ pub fn suite() runner.Suite {
       r := json.decode(.Int(5), d)
       try assert.is_ok(r)
       n := case r { .Ok(v) => v, .Err(_) => -1 }
-      try assert.int_eq(n, 5)
+      try assert.equal(n, 5)
       .Ok({})
     })
     .test("and_then fails when inner fails", fn() {
@@ -316,7 +316,7 @@ pub fn suite() runner.Suite {
       r := json.decode(.Object(d), json.field("age", json.int()))
       try assert.is_ok(r)
       n := case r { .Ok(v) => v, .Err(_) => -1 }
-      try assert.int_eq(n, 30)
+      try assert.equal(n, 30)
       .Ok({})
     })
     .test("field fails on missing key", fn() {
@@ -342,7 +342,7 @@ pub fn suite() runner.Suite {
       opt := case r { .Ok(v) => v, .Err(_) => .None }
       try assert.is_some(opt)
       s := case opt { .Some(v) => v, .None => "" }
-      try assert.str_eq(s, "v")
+      try assert.equal(s, "v")
       .Ok({})
     })
     .test("optional_field returns none when missing", fn() {
@@ -367,7 +367,7 @@ pub fn suite() runner.Suite {
       r := json.decode(.Array(arr), json.index(1, json.int()))
       try assert.is_ok(r)
       n := case r { .Ok(v) => v, .Err(_) => -1 }
-      try assert.int_eq(n, 20)
+      try assert.equal(n, 20)
       .Ok({})
     })
     .test("index fails out of bounds", fn() {
@@ -392,7 +392,7 @@ pub fn suite() runner.Suite {
       opt := case r { .Ok(v) => v, .Err(_) => .None }
       try assert.is_some(opt)
       n := case opt { .Some(v) => v, .None => -1 }
-      try assert.int_eq(n, 7)
+      try assert.equal(n, 7)
       .Ok({})
     })
     .test("list decodes array elements", fn() {
@@ -400,9 +400,9 @@ pub fn suite() runner.Suite {
       r := json.decode(.Array(arr), json.list(json.int()))
       try assert.is_ok(r)
       v := case r { .Ok(v) => v, .Err(_) => [] }
-      try assert.int_eq(v.len(), 3)
-      try assert.int_eq(v[0], 1)
-      try assert.int_eq(v[2], 3)
+      try assert.equal(v.len(), 3)
+      try assert.equal(v[0], 1)
+      try assert.equal(v[2], 3)
       .Ok({})
     })
     .test("list on empty array returns empty vector", fn() {
@@ -410,7 +410,7 @@ pub fn suite() runner.Suite {
       r := json.decode(.Array(arr), json.list(json.int()))
       try assert.is_ok(r)
       v := case r { .Ok(v) => v, .Err(_) => [] }
-      try assert.int_eq(v.len(), 0)
+      try assert.equal(v.len(), 0)
       .Ok({})
     })
     .test("list fails on bad element", fn() {
@@ -431,8 +431,8 @@ pub fn suite() runner.Suite {
       decoded := case r { .Ok(v) => v, .Err(_) => Dict.new() }
       va := case decoded["a"] { .Some(v) => v, .None => -1 }
       vb := case decoded["b"] { .Some(v) => v, .None => -1 }
-      try assert.int_eq(va, 1)
-      try assert.int_eq(vb, 2)
+      try assert.equal(va, 1)
+      try assert.equal(vb, 2)
       .Ok({})
     })
     .test("dict reports key decode failure", fn() {
@@ -456,12 +456,12 @@ pub fn suite() runner.Suite {
       r1 := json.decode(.Int(5), json.one_of(d))
       try assert.is_ok(r1)
       s1 := case r1 { .Ok(v) => v, .Err(_) => "" }
-      try assert.str_eq(s1, "5")
+      try assert.equal(s1, "5")
 
       r2 := json.decode(.Str("hi"), json.one_of(d))
       try assert.is_ok(r2)
       s2 := case r2 { .Ok(v) => v, .Err(_) => "" }
-      try assert.str_eq(s2, "hi")
+      try assert.equal(s2, "hi")
       .Ok({})
     })
     .test("one_of fails when no decoder matches", fn() {

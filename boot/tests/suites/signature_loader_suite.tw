@@ -61,7 +61,7 @@ pub fn suite() runner.Suite {
     .test("load_signatures returns one group per signature file", fn() {
       groups := try load_signatures(signatures_dir(), builtin_type_env())
       // 10 files: string, vector, dict, cell, iterator, int, float, bool, byte, range
-      try assert.bool_eq(groups.len() >= 10, true)
+      try assert.equal(groups.len() >= 10, true)
       .Ok({})
     })
 
@@ -115,8 +115,8 @@ pub fn suite() runner.Suite {
       groups := try load_signatures(signatures_dir(), builtin_type_env())
       group := try find_group(groups, "String").ok_or("no String group")
       sig := try find_sig(group.sigs, "len").ok_or("no len sig")
-      try assert.int_eq(sig.type_params.len(), 0)
-      try assert.int_eq(sig.params.len(), 1)
+      try assert.equal(sig.type_params.len(), 0)
+      try assert.equal(sig.params.len(), 1)
       case sig.params[0] {
         .String => .Ok({}),
         _ => .Err("expected first param to be String"),
@@ -127,7 +127,7 @@ pub fn suite() runner.Suite {
       groups := try load_signatures(signatures_dir(), builtin_type_env())
       group := try find_group(groups, "String").ok_or("no String group")
       sig := try find_sig(group.sigs, "get").ok_or("no get sig")
-      try assert.int_eq(sig.params.len(), 2)
+      try assert.equal(sig.params.len(), 2)
       inner := try sig.ret.ok_or("expected Some return")
       case inner {
         .Optional(.Byte) => .Ok({}),
@@ -139,7 +139,7 @@ pub fn suite() runner.Suite {
       groups := try load_signatures(signatures_dir(), builtin_type_env())
       group := try find_group(groups, "String").ok_or("no String group")
       sig := try find_sig(group.sigs, "concat").ok_or("no concat sig")
-      try assert.int_eq(sig.params.len(), 2)
+      try assert.equal(sig.params.len(), 2)
       .Ok({})
     })
 
@@ -160,9 +160,9 @@ pub fn suite() runner.Suite {
       groups := try load_signatures(signatures_dir(), builtin_type_env())
       group := try find_group(groups, "Vector").ok_or("no Vector group")
       sig := try find_sig(group.sigs, "append").ok_or("no append sig")
-      try assert.int_eq(sig.type_params.len(), 1)
-      try assert.str_eq(sig.type_params[0].name, "T")
-      try assert.int_eq(sig.params.len(), 2)
+      try assert.equal(sig.type_params.len(), 1)
+      try assert.equal(sig.type_params[0].name, "T")
+      try assert.equal(sig.params.len(), 2)
       .Ok({})
     })
 
@@ -221,7 +221,7 @@ pub fn suite() runner.Suite {
       groups := try load_signatures(signatures_dir(), builtin_type_env())
       group := try find_group(groups, "Cell").ok_or("no Cell group")
       sig := try find_sig(group.sigs, "new").ok_or("no new sig")
-      try assert.int_eq(sig.type_params.len(), 1)
+      try assert.equal(sig.type_params.len(), 1)
       .Ok({})
     })
 

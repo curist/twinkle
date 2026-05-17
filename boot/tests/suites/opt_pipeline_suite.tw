@@ -74,7 +74,7 @@ fn test_cross_round_chain() Result<Void, String> {
 
   // Fully reduces to Atom(9) after copy-prop inlines the final literal
   case optimized {
-    .Atom(.ALitInt(n)) => assert.int_eq(n, 9),
+    .Atom(.ALitInt(n)) => assert.equal(n, 9),
     _ => .Err("expected Atom(9)"),
   }
 }
@@ -97,7 +97,7 @@ fn test_branch_simp_then_dead_elim() Result<Void, String> {
 
   // Fully reduces to Atom(5) after copy-prop + dead-let
   case optimized {
-    .Atom(.ALitInt(n)) => assert.int_eq(n, 5),
+    .Atom(.ALitInt(n)) => assert.equal(n, 5),
     _ => .Err("expected Atom(5)"),
   }
 }
@@ -125,7 +125,7 @@ fn test_pinned_locals_preserved() Result<Void, String> {
 
   // Local 0 should still be bound (pinned, not eliminated)
   case init_optimized {
-    .Let(local, .AInit(.ALitInt(42)), _) => assert.int_eq(local.id, 0),
+    .Let(local, .AInit(.ALitInt(42)), _) => assert.equal(local.id, 0),
     _ => .Err("expected pinned local 0 to be preserved"),
   }
 }
@@ -165,12 +165,12 @@ fn test_multiple_functions_optimized() Result<Void, String> {
 
   // Check func1: fully reduces to Atom(3)
   case result.functions[0].body {
-    .Atom(.ALitInt(n)) => try assert.int_eq(n, 3),
+    .Atom(.ALitInt(n)) => try assert.equal(n, 3),
     _ => { return .Err("func1: expected Atom(3)") },
   }
   // Check func2: fully reduces to Atom(7)
   case result.functions[1].body {
-    .Atom(.ALitInt(n)) => assert.int_eq(n, 7),
+    .Atom(.ALitInt(n)) => assert.equal(n, 7),
     _ => .Err("func2: expected Atom(7)"),
   }
 }
@@ -215,7 +215,7 @@ fn test_copy_prop_respects_pinned() Result<Void, String> {
 
   // Local 0 should remain as a Let binding (pinned)
   case init_optimized {
-    .Let(local, .AInit(.ALitInt(42)), _) => assert.int_eq(local.id, 0),
+    .Let(local, .AInit(.ALitInt(42)), _) => assert.equal(local.id, 0),
     _ => .Err("expected pinned local 0 preserved in init"),
   }
 }
@@ -237,7 +237,7 @@ fn test_nested_multi_round() Result<Void, String> {
 
   // Fully reduces to Atom(7)
   case optimized {
-    .Atom(.ALitInt(n)) => assert.int_eq(n, 7),
+    .Atom(.ALitInt(n)) => assert.equal(n, 7),
     _ => .Err("expected Atom(7)"),
   }
 }
@@ -259,8 +259,8 @@ fn test_optimize_module_with_semantics_matches_default() Result<Void, String> {
     .Atom(.ALitInt(n1)) => {
       case defaulted.functions[0].body {
         .Atom(.ALitInt(n2)) => {
-          try assert.int_eq(n1, 9)
-          assert.int_eq(n2, 9)
+          try assert.equal(n1, 9)
+          assert.equal(n2, 9)
         },
         _ => { return .Err("default optimize_module did not reduce to Atom(9)") },
       }

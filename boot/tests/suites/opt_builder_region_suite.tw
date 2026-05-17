@@ -46,24 +46,24 @@ fn test_lower_builder_region_uses_builder_new() Result<Void, String> {
       .Let(bind_local, .ALoop(.Continue),
         .Let(freeze_local, .ACall(.AGlobalFunc(freeze_f), freeze_args),
           .Let(assign_local, .AAssign(base_local, value), .Atom(.ALocal(cont_local)))))) => {
-      try assert.int_eq(builder_local.id, 10)
-      try assert.int_eq(f.id, mock_builder_new().id)
-      try assert.int_eq(args.len(), 0)
-      try assert.int_eq(bind_local.id, 3)
-      try assert.int_eq(freeze_local.id, 11)
-      try assert.int_eq(freeze_f.id, mock_builder_freeze().id)
-      try assert.int_eq(freeze_args.len(), 1)
+      try assert.equal(builder_local.id, 10)
+      try assert.equal(f.id, mock_builder_new().id)
+      try assert.equal(args.len(), 0)
+      try assert.equal(bind_local.id, 3)
+      try assert.equal(freeze_local.id, 11)
+      try assert.equal(freeze_f.id, mock_builder_freeze().id)
+      try assert.equal(freeze_args.len(), 1)
       case freeze_args[0] {
-        .ALocal(id) => { try assert.int_eq(id.id, 10) },
+        .ALocal(id) => { try assert.equal(id.id, 10) },
         _ => { return .Err("expected freeze(builder_local)") },
       }
-      try assert.int_eq(assign_local.id, 12)
-      try assert.int_eq(base_local.id, 0)
+      try assert.equal(assign_local.id, 12)
+      try assert.equal(base_local.id, 0)
       case value {
-        .ALocal(id) => { try assert.int_eq(id.id, 11) },
+        .ALocal(id) => { try assert.equal(id.id, 11) },
         _ => { return .Err("expected assign from freeze local") },
       }
-      assert.int_eq(cont_local.id, 0)
+      assert.equal(cont_local.id, 0)
     },
     _ => .Err("expected canonical builder-region lowering shape"),
   }
@@ -75,10 +75,10 @@ fn test_lower_builder_region_uses_builder_from_base() Result<Void, String> {
 
   case result {
     .Let(_, .ACall(.AGlobalFunc(f), args), _) => {
-      try assert.int_eq(f.id, mock_builder_from().id)
-      try assert.int_eq(args.len(), 1)
+      try assert.equal(f.id, mock_builder_from().id)
+      try assert.equal(args.len(), 1)
       case args[0] {
-        .ALocal(base) => assert.int_eq(base.id, 0),
+        .ALocal(base) => assert.equal(base.id, 0),
         _ => .Err("expected builder_from base arg"),
       }
     },

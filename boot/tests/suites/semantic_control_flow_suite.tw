@@ -62,24 +62,24 @@ pub fn suite() runner.Suite {
     // if-else as expression
     .test("if-else returns value", fn() {
       x := if true { 1 } else { 2 }
-      try assert.int_eq(x, 1)
+      try assert.equal(x, 1)
       y := if false { 1 } else { 2 }
-      try assert.int_eq(y, 2)
+      try assert.equal(y, 2)
       .Ok({})
     })
     // chained if-else
     .test("chained if-else-if", fn() {
-      try assert.str_eq(classify(-5), "negative")
-      try assert.str_eq(classify(0), "zero")
-      try assert.str_eq(classify(7), "small")
-      try assert.str_eq(classify(100), "big")
+      try assert.equal(classify(-5), "negative")
+      try assert.equal(classify(0), "zero")
+      try assert.equal(classify(7), "small")
+      try assert.equal(classify(100), "big")
       .Ok({})
     })
     // case on enum variants
     .test("case matches enum variants", fn() {
-      try assert.str_eq(describe(.Circle(3.0)), "circle")
-      try assert.str_eq(describe(.Rect(2.0, 4.0)), "rect")
-      try assert.str_eq(describe(.UnitSquare), "unit")
+      try assert.equal(describe(.Circle(3.0)), "circle")
+      try assert.equal(describe(.Rect(2.0, 4.0)), "rect")
+      try assert.equal(describe(.UnitSquare), "unit")
       .Ok({})
     })
     // nested case
@@ -92,7 +92,7 @@ pub fn suite() runner.Suite {
         },
         .None => "nothing",
       }
-      try assert.str_eq(msg, "got circle")
+      try assert.equal(msg, "got circle")
       .Ok({})
     })
     // case with wildcard
@@ -102,40 +102,40 @@ pub fn suite() runner.Suite {
         .Circle(_) => "circle",
         _ => "not circle",
       }
-      try assert.str_eq(msg, "not circle")
+      try assert.equal(msg, "not circle")
       .Ok({})
     })
     // for loop with break
     .test("break exits loop early", fn() {
       result := sum_until_negative([3, 5, 2, -1, 10])
-      try assert.int_eq(result, 10)
+      try assert.equal(result, 10)
       .Ok({})
     })
     // break with no negative — processes all
     .test("break not triggered processes all", fn() {
       result := sum_until_negative([1, 2, 3])
-      try assert.int_eq(result, 6)
+      try assert.equal(result, 6)
       .Ok({})
     })
     // continue skips elements
     .test("continue skips elements in collect", fn() {
       result := collect_positives([3, -1, 4, -2, 5])
-      try assert.int_eq(result.len(), 3)
-      try assert.int_eq(result[0], 3)
-      try assert.int_eq(result[1], 4)
-      try assert.int_eq(result[2], 5)
+      try assert.equal(result.len(), 3)
+      try assert.equal(result[0], 3)
+      try assert.equal(result[1], 4)
+      try assert.equal(result[2], 5)
       .Ok({})
     })
     // collect with continue on empty result
     .test("collect with all skipped produces empty vector", fn() {
       result := collect_positives([-1, -2, -3])
-      try assert.int_eq(result.len(), 0)
+      try assert.equal(result.len(), 0)
       .Ok({})
     })
     // early return from inside loop
     .test("return from inside for loop", fn() {
-      try assert.str_eq(first_even([1, 3, 4, 6]), "even: 4")
-      try assert.str_eq(first_even([1, 3, 5]), "none")
+      try assert.equal(first_even([1, 3, 4, 6]), "even: 4")
+      try assert.equal(first_even([1, 3, 5]), "none")
       .Ok({})
     })
     // while-style for loop
@@ -144,7 +144,7 @@ pub fn suite() runner.Suite {
       for n < 100 {
         n = n * 2
       }
-      try assert.int_eq(n, 128)
+      try assert.equal(n, 128)
       .Ok({})
     })
     // for with range
@@ -153,7 +153,7 @@ pub fn suite() runner.Suite {
       for i in 0..5 {
         sum = sum + i
       }
-      try assert.int_eq(sum, 10)
+      try assert.equal(sum, 10)
       .Ok({})
     })
     // for with range_from
@@ -162,16 +162,16 @@ pub fn suite() runner.Suite {
       for i in 3..6 {
         sum = sum + i
       }
-      try assert.int_eq(sum, 12)
+      try assert.equal(sum, 12)
       .Ok({})
     })
     // collect from range
     .test("collect from range with transform", fn() {
       doubled := collect i in 0..4 { i * 2 }
-      try assert.int_eq(doubled.len(), 4)
-      try assert.int_eq(doubled[0], 0)
-      try assert.int_eq(doubled[1], 2)
-      try assert.int_eq(doubled[3], 6)
+      try assert.equal(doubled.len(), 4)
+      try assert.equal(doubled[0], 0)
+      try assert.equal(doubled[1], 2)
+      try assert.equal(doubled[3], 6)
       .Ok({})
     })
     // try propagation success path
@@ -179,7 +179,7 @@ pub fn suite() runner.Suite {
       r := chain_div(100, 5, 2)
       try assert.is_ok(r)
       val := case r { .Ok(v) => v, .Err(_) => -1 }
-      try assert.int_eq(val, 10)
+      try assert.equal(val, 10)
       .Ok({})
     })
     // try propagation first error
@@ -201,16 +201,16 @@ pub fn suite() runner.Suite {
       for x, i in xs {
         pairs.update(fn(s) { "${s}${i}:${x} " })
       }
-      try assert.str_eq(pairs.get(), "0:a 1:b 2:c ")
+      try assert.equal(pairs.get(), "0:a 1:b 2:c ")
       .Ok({})
     })
     // collect with indexed form
     .test("collect with index", fn() {
       xs: Vector<String> = ["x", "y", "z"]
       indexed := collect s, i in xs { "${i}-${s}" }
-      try assert.str_eq(indexed[0], "0-x")
-      try assert.str_eq(indexed[1], "1-y")
-      try assert.str_eq(indexed[2], "2-z")
+      try assert.equal(indexed[0], "0-x")
+      try assert.equal(indexed[1], "1-y")
+      try assert.equal(indexed[2], "2-z")
       .Ok({})
     })
     // diverging branch in case with return
@@ -220,7 +220,7 @@ pub fn suite() runner.Suite {
         .Some(v) => v,
         .None => { return .Ok({}) },
       }
-      try assert.int_eq(x, 42)
+      try assert.equal(x, 42)
       .Ok({})
     })
 }

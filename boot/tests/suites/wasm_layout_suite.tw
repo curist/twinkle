@@ -119,10 +119,10 @@ fn test_layout_record() Result<Void, String> {
   l := layout_of(.Named(TypeId.{ id: 10 }, []), env)
   case l {
     .Record(rec) => {
-      try assert.int_eq(rec.type_id.id, 10)
-      try assert.int_eq(rec.fields.len(), 2)
-      try assert.str_eq(rec.fields[0].name, "x")
-      try assert.str_eq(rec.fields[1].name, "y")
+      try assert.equal(rec.type_id.id, 10)
+      try assert.equal(rec.fields.len(), 2)
+      try assert.equal(rec.fields[0].name, "x")
+      try assert.equal(rec.fields[1].name, "y")
       .Ok({})
     },
     _ => assert.fail("expected Record layout"),
@@ -140,11 +140,11 @@ fn test_layout_sum() Result<Void, String> {
   l := layout_of(.Named(TypeId.{ id: 11 }, []), env)
   case l {
     .Sum(sum) => {
-      try assert.int_eq(sum.type_id.id, 11)
-      try assert.int_eq(sum.variants.len(), 3)
-      try assert.str_eq(sum.variants[0].name, "Circle")
-      try assert.str_eq(sum.variants[1].name, "Rect")
-      try assert.str_eq(sum.variants[2].name, "Unit")
+      try assert.equal(sum.type_id.id, 11)
+      try assert.equal(sum.variants.len(), 3)
+      try assert.equal(sum.variants[0].name, "Circle")
+      try assert.equal(sum.variants[1].name, "Rect")
+      try assert.equal(sum.variants[2].name, "Unit")
       .Ok({})
     },
     _ => assert.fail("expected Sum layout"),
@@ -158,9 +158,9 @@ fn test_layout_optional() Result<Void, String> {
   l := layout_of(.Optional(.Int), env)
   case l {
     .Sum(sum) => {
-      try assert.int_eq(sum.variants.len(), 2)
-      try assert.str_eq(sum.variants[0].name, "None")
-      try assert.str_eq(sum.variants[1].name, "Some")
+      try assert.equal(sum.variants.len(), 2)
+      try assert.equal(sum.variants[0].name, "None")
+      try assert.equal(sum.variants[1].name, "Some")
       .Ok({})
     },
     _ => assert.fail("expected Sum layout for Optional"),
@@ -172,9 +172,9 @@ fn test_layout_result() Result<Void, String> {
   l := layout_of(.Result(.Int, .String), env)
   case l {
     .Sum(sum) => {
-      try assert.int_eq(sum.variants.len(), 2)
-      try assert.str_eq(sum.variants[0].name, "Ok")
-      try assert.str_eq(sum.variants[1].name, "Err")
+      try assert.equal(sum.variants.len(), 2)
+      try assert.equal(sum.variants[0].name, "Ok")
+      try assert.equal(sum.variants[1].name, "Err")
       .Ok({})
     },
     _ => assert.fail("expected Sum layout for Result"),
@@ -222,7 +222,7 @@ fn test_layout_closure() Result<Void, String> {
   l := layout_of(.Function([.Int, .Int], .Int), env)
   case l {
     .Closure(c) => {
-      try assert.int_eq(c.param_types.len(), 2)
+      try assert.equal(c.param_types.len(), 2)
       .Ok({})
     },
     _ => assert.fail("expected Closure layout"),
@@ -234,9 +234,9 @@ fn test_layout_generic_alias_substitutes_args() Result<Void, String> {
   l := layout_of(.Named(TypeId.{ id: 20 }, [.Int]), env)
   case l {
     .Sum(sum) => {
-      try assert.int_eq(sum.variants.len(), 2)
+      try assert.equal(sum.variants.len(), 2)
       ok_payload := sum.variants[0].payload_types
-      try assert.int_eq(ok_payload.len(), 1)
+      try assert.equal(ok_payload.len(), 1)
       case ok_payload[0] {
         .I64 => .Ok({}),
         _ => assert.fail("expected generic alias payload to substitute Int -> I64"),
@@ -291,8 +291,8 @@ fn test_val_type_of_record() Result<Void, String> {
   vt := val_type_of(.Record(rec))
   case vt {
     .Ref(nullable, ht) => {
-      try assert.bool_eq(nullable, true)
-      case ht { .Named(s) => assert.str_eq(s, "$Point"), _ => assert.fail("expected Named") }
+      try assert.equal(nullable, true)
+      case ht { .Named(s) => assert.equal(s, "$Point"), _ => assert.fail("expected Named") }
     },
     _ => assert.fail("expected Ref"),
   }
@@ -302,8 +302,8 @@ fn test_val_type_of_vector() Result<Void, String> {
   vt := val_type_of(.Vector_(.Scalar(.WI64)))
   case vt {
     .Ref(nullable, ht) => {
-      try assert.bool_eq(nullable, true)
-      case ht { .Named(s) => assert.str_eq(s, "rt_types__PVec"), _ => assert.fail("expected Named rt_types__PVec") }
+      try assert.equal(nullable, true)
+      case ht { .Named(s) => assert.equal(s, "rt_types__PVec"), _ => assert.fail("expected Named rt_types__PVec") }
     },
     _ => assert.fail("expected Ref"),
   }
@@ -313,8 +313,8 @@ fn test_val_type_of_dict() Result<Void, String> {
   vt := val_type_of(.Dict_(.Scalar(.WAnyref), .Scalar(.WI64)))
   case vt {
     .Ref(nullable, ht) => {
-      try assert.bool_eq(nullable, true)
-      case ht { .Named(s) => assert.str_eq(s, "rt_types__PDict"), _ => assert.fail("expected Named rt_types__PDict") }
+      try assert.equal(nullable, true)
+      case ht { .Named(s) => assert.equal(s, "rt_types__PDict"), _ => assert.fail("expected Named rt_types__PDict") }
     },
     _ => assert.fail("expected Ref"),
   }
@@ -343,48 +343,48 @@ fn test_val_type_of_mono_anyref_marker() Result<Void, String> {
 // ── mono_to_key ─────────────────────────────────────────────────────
 
 fn test_mono_to_key_primitives() Result<Void, String> {
-  try assert.str_eq(mono_to_key(.Int), "i64")
-  try assert.str_eq(mono_to_key(.Float), "f64")
-  try assert.str_eq(mono_to_key(.Bool), "i32")
-  try assert.str_eq(mono_to_key(.Byte), "i32b")
-  try assert.str_eq(mono_to_key(.String), "str")
-  try assert.str_eq(mono_to_key(.Void), "void")
+  try assert.equal(mono_to_key(.Int), "i64")
+  try assert.equal(mono_to_key(.Float), "f64")
+  try assert.equal(mono_to_key(.Bool), "i32")
+  try assert.equal(mono_to_key(.Byte), "i32b")
+  try assert.equal(mono_to_key(.String), "str")
+  try assert.equal(mono_to_key(.Void), "void")
   .Ok({})
 }
 
 fn test_mono_to_key_named() Result<Void, String> {
   k := mono_to_key(.Named(TypeId.{ id: 3 }, [.Int, .Bool]))
-  try assert.str_eq(k, "t3_i64_i32")
+  try assert.equal(k, "t3_i64_i32")
   .Ok({})
 }
 
 fn test_mono_to_key_vector() Result<Void, String> {
   k := mono_to_key(.Vector(.Int))
-  try assert.str_eq(k, "vec_i64")
+  try assert.equal(k, "vec_i64")
   .Ok({})
 }
 
 fn test_mono_to_key_dict() Result<Void, String> {
   k := mono_to_key(.Dict(.String, .Int))
-  try assert.str_eq(k, "dict_str_i64")
+  try assert.equal(k, "dict_str_i64")
   .Ok({})
 }
 
 fn test_mono_to_key_function() Result<Void, String> {
   k := mono_to_key(.Function([.Int, .Float], .Bool))
-  try assert.str_eq(k, "fn_i64_f64_i32")
+  try assert.equal(k, "fn_i64_f64_i32")
   .Ok({})
 }
 
 fn test_mono_to_key_optional() Result<Void, String> {
   k := mono_to_key(.Optional(.Int))
-  try assert.str_eq(k, "opt_i64")
+  try assert.equal(k, "opt_i64")
   .Ok({})
 }
 
 fn test_mono_to_key_result() Result<Void, String> {
   k := mono_to_key(.Result(.Int, .String))
-  try assert.str_eq(k, "res_i64_str")
+  try assert.equal(k, "res_i64_str")
   .Ok({})
 }
 
@@ -392,7 +392,7 @@ fn test_mono_to_key_stable() Result<Void, String> {
   // Same type must produce same key
   a := mono_to_key(.Vector(.Named(TypeId.{ id: 5 }, [.Int])))
   b := mono_to_key(.Vector(.Named(TypeId.{ id: 5 }, [.Int])))
-  assert.str_eq(a, b)
+  assert.equal(a, b)
 }
 
 // ── Suite ───────────────────────────────────────────────────────────

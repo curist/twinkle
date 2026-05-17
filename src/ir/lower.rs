@@ -235,7 +235,7 @@ pub struct Lowerer {
     in_init_context: bool,
     /// Return type of the function currently being lowered (for `try Option` desugaring).
     current_fn_return_type: Option<MonoType>,
-    current_type_param_bounds: HashMap<String, String>,
+    current_type_param_bounds: HashMap<String, Vec<String>>,
     /// Extern function import metadata keyed by FuncId.
     extern_imports: HashMap<FuncId, ExternImport>,
 }
@@ -643,11 +643,8 @@ impl Lowerer {
             &mut self.current_type_param_bounds,
             decl.type_params
                 .iter()
-                .filter_map(|p| {
-                    p.bound
-                        .as_ref()
-                        .map(|bound| (p.name.clone(), bound.clone()))
-                })
+                .filter(|p| !p.bounds.is_empty())
+                .map(|p| (p.name.clone(), p.bounds.clone()))
                 .collect(),
         );
 
@@ -2978,7 +2975,7 @@ impl Lowerer {
             self.resolve_registered_method_func_id(&base_ty, method, span)
         {
             func_id
-        } else if matches!(&base_ty, MonoType::Var(name) if method == "to_string" && self.current_type_param_bounds.get(name).map(|b| b.as_str()) == Some("Stringify"))
+        } else if matches!(&base_ty, MonoType::Var(name) if method == "to_string" && self.current_type_param_bounds.get(name).map(|b| b.contains(&"Stringify".to_string())) == Some(true))
         {
             return Some(CoreExprKind::ContractCall {
                 contract: "Stringify".to_string(),

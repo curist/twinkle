@@ -39,7 +39,7 @@ pub fn suite() runner.Suite {
           .Prelude => {},
         }
       }
-      try assert.int_eq(import_count, 0)
+      try assert.equal(import_count, 0)
       .Ok({})
     })
 
@@ -126,7 +126,7 @@ pub fn suite() runner.Suite {
           _ => {},
         }
       }
-      try assert.int_eq(import_count, 2)
+      try assert.equal(import_count, 2)
       .Ok({})
     })
 
@@ -161,7 +161,7 @@ pub fn suite() runner.Suite {
           _ => {},
         }
       }
-      try assert.int_eq(prelude_count, 0)
+      try assert.equal(prelude_count, 0)
       .Ok({})
     })
 
@@ -176,7 +176,7 @@ pub fn suite() runner.Suite {
           _ => {},
         }
       }
-      try assert.int_eq(prelude_count, 0)
+      try assert.equal(prelude_count, 0)
       .Ok({})
     })
 
@@ -204,7 +204,7 @@ pub fn suite() runner.Suite {
       // First dependency should be the explicit import
       if plan.dependencies.len() > 0 {
         first := plan.dependencies[0]
-        try assert.str_eq(first.alias, "fs")
+        try assert.equal(first.alias, "fs")
         case first.kind {
           .Import => .Ok({}),
           .Prelude => assert.fail("first dependency should be Import, not Prelude"),
@@ -222,7 +222,7 @@ pub fn suite() runner.Suite {
         if dep.alias == "fs" {
           case dep.items {
             .Some(items) => {
-              try assert.int_eq(items.len(), 2)
+              try assert.equal(items.len(), 2)
               found = true
             },
             .None => { return .Err("expected selective items") },

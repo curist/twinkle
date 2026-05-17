@@ -38,19 +38,19 @@ pub fn suite() runner.Suite {
     // ── span extraction ──
     .test("span from Error.ParseError", fn() {
       k := DiagKind.Error(.ParseError(diag.GenericDiag.{ span: s(10, 20), message: "msg", help_lines: [] }))
-      try assert.int_eq(k.span().start, 10)
-      try assert.int_eq(k.span().end, 20)
+      try assert.equal(k.span().start, 10)
+      try assert.equal(k.span().end, 20)
       .Ok({})
     })
     .test("span from Error.UndefinedVar", fn() {
       k := DiagKind.Error(.UndefinedVar(.{ span: s(5, 8), name: "foo" }))
-      try assert.int_eq(k.span().start, 5)
-      try assert.int_eq(k.span().end, 8)
+      try assert.equal(k.span().start, 5)
+      try assert.equal(k.span().end, 8)
       .Ok({})
     })
     .test("span from Error.WrongArity", fn() {
       k := DiagKind.Error(.WrongArity(.{ span: s(1, 4), expected: 2, found: 3 }))
-      try assert.int_eq(k.span().start, 1)
+      try assert.equal(k.span().start, 1)
       .Ok({})
     })
     .test("span from Error.TypeMismatch", fn() {
@@ -59,8 +59,8 @@ pub fn suite() runner.Suite {
         expected: MonoType.Int,
         found: MonoType.Bool,
       }))
-      try assert.int_eq(k.span().start, 3)
-      try assert.int_eq(k.span().end, 7)
+      try assert.equal(k.span().start, 3)
+      try assert.equal(k.span().end, 7)
       .Ok({})
     })
     .test("span from Error.MissingVariants", fn() {
@@ -69,7 +69,7 @@ pub fn suite() runner.Suite {
         scrutinee_ty: MonoType.Bool,
         missing: ["True", "False"],
       }))
-      try assert.int_eq(k.span().start, 2)
+      try assert.equal(k.span().start, 2)
       .Ok({})
     })
     .test("span from Error.DuplicateField", fn() {
@@ -78,13 +78,13 @@ pub fn suite() runner.Suite {
         name: "x",
         first: s(0, 5),
       }))
-      try assert.int_eq(k.span().start, 10)
+      try assert.equal(k.span().start, 10)
       .Ok({})
     })
     .test("span from Warning.UnusedImport", fn() {
       k := DiagKind.Warning(.UnusedImport(.{ span: s(0, 10), binding: "bar" }))
-      try assert.int_eq(k.span().start, 0)
-      try assert.int_eq(k.span().end, 10)
+      try assert.equal(k.span().start, 0)
+      try assert.equal(k.span().end, 10)
       .Ok({})
     })
 }

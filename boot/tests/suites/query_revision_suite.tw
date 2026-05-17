@@ -12,7 +12,7 @@ pub fn suite() runner.Suite {
 
     .test("empty store starts at revision 0", fn() {
       store := cache.empty()
-      try assert.int_eq(store.revision, 0)
+      try assert.equal(store.revision, 0)
       .Ok({})
     })
 
@@ -20,7 +20,7 @@ pub fn suite() runner.Suite {
       store := cache.empty()
       hash := keys.hash_text("fn main() {}")
       store = cache.note_source_hash(store, "/a.tw", hash)
-      try assert.int_eq(store.revision, 1)
+      try assert.equal(store.revision, 1)
       .Ok({})
     })
 
@@ -29,7 +29,7 @@ pub fn suite() runner.Suite {
       hash := keys.hash_text("fn main() {}")
       store = cache.note_source_hash(store, "/a.tw", hash)
       store = cache.note_source_hash(store, "/a.tw", hash)
-      try assert.int_eq(store.revision, 1)
+      try assert.equal(store.revision, 1)
       .Ok({})
     })
 
@@ -39,7 +39,7 @@ pub fn suite() runner.Suite {
       h2 := keys.hash_text("fn main() { 2 }")
       store = cache.note_source_hash(store, "/a.tw", h1)
       store = cache.note_source_hash(store, "/a.tw", h2)
-      try assert.int_eq(store.revision, 2)
+      try assert.equal(store.revision, 2)
       .Ok({})
     })
 
@@ -49,7 +49,7 @@ pub fn suite() runner.Suite {
       hb := keys.hash_text("mod b")
       store = cache.note_source_hash(store, "/a.tw", ha)
       store = cache.note_source_hash(store, "/b.tw", hb)
-      try assert.int_eq(store.revision, 2)
+      try assert.equal(store.revision, 2)
       .Ok({})
     })
 
@@ -61,7 +61,7 @@ pub fn suite() runner.Suite {
       key := keys.parse_key("/a.tw", hash)
       parsed := make_parsed("x := 1")
       store = cache.put_parsed(store, "/a.tw", key, parsed)
-      try assert.int_eq(cache.changed_at(store, "/a.tw", .Parsed), 1)
+      try assert.equal(cache.changed_at(store, "/a.tw", .Parsed), 1)
       .Ok({})
     })
 
@@ -83,7 +83,7 @@ pub fn suite() runner.Suite {
       // Hit cache for /a.tw — verified_at should update to 2
       lookup := cache.get_parsed(store, "/a.tw", key)
       try assert.is_true(lookup.cache_hit)
-      try assert.int_eq(cache.verified_at(lookup.store, "/a.tw", .Parsed), 2)
+      try assert.equal(cache.verified_at(lookup.store, "/a.tw", .Parsed), 2)
       .Ok({})
     })
 
@@ -149,7 +149,7 @@ pub fn suite() runner.Suite {
       parsed := make_parsed("x := 1")
       resolved := env.resolve(parsed.module)
       store = cache.put_resolved(store, main, 99, resolved)
-      try assert.int_eq(cache.verified_at(store, main, .Resolved), 2)
+      try assert.equal(cache.verified_at(store, main, .Resolved), 2)
 
       // Dep changes → revision bumps to 3
       store = cache.note_source_hash(store, dep, keys.hash_text("v2"))

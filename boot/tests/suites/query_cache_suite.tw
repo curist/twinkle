@@ -19,8 +19,8 @@ pub fn suite() runner.Suite {
       try assert.is_true(lookup.cache_hit)
       try assert.is_some(lookup.value)
       st := cache.get_stats(lookup.store)
-      try assert.int_eq(st.parse_hits, 1)
-      try assert.int_eq(st.parse_misses, 0)
+      try assert.equal(st.parse_hits, 1)
+      try assert.equal(st.parse_misses, 0)
       .Ok({})
     })
     .test("parsed lookup misses when key changes", fn() {
@@ -32,7 +32,7 @@ pub fn suite() runner.Suite {
       try assert.is_false(lookup.cache_hit)
       try assert.is_none(lookup.value)
       st := cache.get_stats(lookup.store)
-      try assert.int_eq(st.parse_misses, 1)
+      try assert.equal(st.parse_misses, 1)
       .Ok({})
     })
     .test("invalidating changed module clears dependent stage entries", fn() {

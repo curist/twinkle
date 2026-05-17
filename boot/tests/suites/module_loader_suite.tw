@@ -14,12 +14,12 @@ pub fn suite() runner.Suite {
     .test("find_project_root returns TWINKLE_ROOT when set", fn() {
       case proc.env("TWINKLE_ROOT") {
         .Some(expected) => {
-          try assert.str_eq(loader.find_project_root("/some/arbitrary/path"), expected)
+          try assert.equal(loader.find_project_root("/some/arbitrary/path"), expected)
           .Ok({})
         },
         .None => {
           result := loader.find_project_root(root)
-          try assert.str_eq(result, root)
+          try assert.equal(result, root)
           .Ok({})
         },
       }
@@ -28,7 +28,7 @@ pub fn suite() runner.Suite {
     // -- resolve_module_path --
 
     .test("resolve_module_path joins root and segments", fn() {
-      try assert.str_eq(
+      try assert.equal(
         loader.resolve_module_path("/project", ["math", "vector"]),
         "/project/math/vector.tw",
       )
@@ -36,7 +36,7 @@ pub fn suite() runner.Suite {
     })
 
     .test("resolve_module_path single segment", fn() {
-      try assert.str_eq(
+      try assert.equal(
         loader.resolve_module_path("/project", ["main"]),
         "/project/main.tw",
       )
@@ -44,14 +44,14 @@ pub fn suite() runner.Suite {
     })
 
     .test("resolve_module_path empty segments", fn() {
-      try assert.str_eq(loader.resolve_module_path("/project", []), "/project.tw")
+      try assert.equal(loader.resolve_module_path("/project", []), "/project.tw")
       .Ok({})
     })
 
     // -- resolve_relative_module_path --
 
     .test("resolve_relative_module_path from parent dir", fn() {
-      try assert.str_eq(
+      try assert.equal(
         loader.resolve_relative_module_path("/project/lib/argparse/app.tw", ["helper"]),
         "/project/lib/argparse/helper.tw",
       )
@@ -59,7 +59,7 @@ pub fn suite() runner.Suite {
     })
 
     .test("resolve_relative_module_path nested segments", fn() {
-      try assert.str_eq(
+      try assert.equal(
         loader.resolve_relative_module_path("/project/src/main.tw", ["utils", "parse"]),
         "/project/src/utils/parse.tw",
       )
@@ -67,7 +67,7 @@ pub fn suite() runner.Suite {
     })
 
     .test("resolve_relative_module_path bare filename", fn() {
-      try assert.str_eq(
+      try assert.equal(
         loader.resolve_relative_module_path("file.tw", ["sibling"]),
         "./sibling.tw",
       )
@@ -77,12 +77,12 @@ pub fn suite() runner.Suite {
     // -- resolve_stdlib_root / resolve_prelude_root --
 
     .test("resolve_stdlib_root uses bundled core library root", fn() {
-      try assert.str_eq(loader.resolve_stdlib_root(), "/__twinkle_core/stdlib")
+      try assert.equal(loader.resolve_stdlib_root(), "/__twinkle_core/stdlib")
       .Ok({})
     })
 
     .test("resolve_prelude_root uses bundled core library root", fn() {
-      try assert.str_eq(loader.resolve_prelude_root(), "/__twinkle_core/prelude")
+      try assert.equal(loader.resolve_prelude_root(), "/__twinkle_core/prelude")
       .Ok({})
     })
 
@@ -99,7 +99,7 @@ pub fn suite() runner.Suite {
     // -- resolve_stdlib_module_path --
 
     .test("resolve_stdlib_module_path strips std prefix", fn() {
-      try assert.str_eq(
+      try assert.equal(
         loader.resolve_stdlib_module_path("/stdlib", ["std", "path"]),
         "/stdlib/path.tw",
       )
@@ -107,7 +107,7 @@ pub fn suite() runner.Suite {
     })
 
     .test("resolve_stdlib_module_path without std prefix", fn() {
-      try assert.str_eq(
+      try assert.equal(
         loader.resolve_stdlib_module_path("/stdlib", ["fs"]),
         "/stdlib/fs.tw",
       )
@@ -115,7 +115,7 @@ pub fn suite() runner.Suite {
     })
 
     .test("resolve_stdlib_module_path nested module", fn() {
-      try assert.str_eq(
+      try assert.equal(
         loader.resolve_stdlib_module_path("/stdlib", ["std", "io", "buf"]),
         "/stdlib/io/buf.tw",
       )
@@ -123,7 +123,7 @@ pub fn suite() runner.Suite {
     })
 
     .test("resolve_stdlib_module_path std-only segment", fn() {
-      try assert.str_eq(
+      try assert.equal(
         loader.resolve_stdlib_module_path("/stdlib", ["std"]),
         "/stdlib.tw",
       )
@@ -131,7 +131,7 @@ pub fn suite() runner.Suite {
     })
 
     .test("resolve_stdlib_module_path empty segments", fn() {
-      try assert.str_eq(
+      try assert.equal(
         loader.resolve_stdlib_module_path("/stdlib", []),
         "/stdlib.tw",
       )

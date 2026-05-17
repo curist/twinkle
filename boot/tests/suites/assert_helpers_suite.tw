@@ -12,7 +12,7 @@ fn parse_port(s: String) Result<Int, String> {
 pub fn suite() runner.Suite {
   runner.suite("assert helpers")
     .test("str_eq", fn() {
-      try assert.str_eq("hello", "hello")
+      try assert.equal("hello", "hello")
       .Ok({})
     })
     .test("str_contains", fn() {
@@ -28,7 +28,7 @@ pub fn suite() runner.Suite {
       .Ok({})
     })
     .test("int_eq", fn() {
-      try assert.int_eq(42, 42)
+      try assert.equal(42, 42)
       .Ok({})
     })
     .test("is_true", fn() {

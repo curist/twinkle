@@ -122,8 +122,8 @@ fn instr_has_struct_new(instrs: Vector<Instr>, target: String) Bool {
 
 fn test_link_empty_modules() Result<Void, String> {
   linked := try link_ok([], .None)
-  try assert.int_eq(linked.funcs.len(), 0)
-  try assert.int_eq(linked.types.len(), 0)
+  try assert.equal(linked.funcs.len(), 0)
+  try assert.equal(linked.types.len(), 0)
   try assert.ok(case linked.start { .None => true, _ => false }, "no start")
   .Ok({})
 }
@@ -136,8 +136,8 @@ fn test_link_single_module_qualifies_funcs() Result<Void, String> {
     globals: m.globals, tables: m.tables, elems: m.elems, exports: m.exports, data: m.data, start: m.start,
   }
   linked := try link_ok([m], .None)
-  try assert.int_eq(linked.funcs.len(), 1)
-  try assert.str_eq(linked.funcs[0].name, "math__add")
+  try assert.equal(linked.funcs.len(), 1)
+  try assert.equal(linked.funcs[0].name, "math__add")
   .Ok({})
 }
 
@@ -167,8 +167,8 @@ fn test_link_single_module_qualifies_globals() Result<Void, String> {
     tables: m.tables, elems: m.elems, exports: m.exports, data: m.data, start: m.start,
   }
   linked := try link_ok([m], .None)
-  try assert.int_eq(linked.globals.len(), 1)
-  try assert.str_eq(linked.globals[0].name, "state__counter")
+  try assert.equal(linked.globals.len(), 1)
+  try assert.equal(linked.globals[0].name, "state__counter")
   .Ok({})
 }
 
@@ -181,8 +181,8 @@ fn test_link_qualifies_data_segments() Result<Void, String> {
     start: m.start,
   }
   linked := try link_ok([m], .None)
-  try assert.int_eq(linked.data.len(), 1)
-  try assert.str_eq(linked.data[0].name, "user__d0")
+  try assert.equal(linked.data.len(), 1)
+  try assert.equal(linked.data[0].name, "user__d0")
   .Ok({})
 }
 
@@ -392,15 +392,15 @@ fn test_link_rewrites_func_param_result_types() Result<Void, String> {
   f := try find_func(linked, "ns__f").ok_or("missing ns__f")
   // Check param type rewritten
   case f.params[0] {
-    .Ref(_, .Named(name)) => try assert.str_eq(name, "ns__Rec"),
+    .Ref(_, .Named(name)) => try assert.equal(name, "ns__Rec"),
     _ => { return assert.fail("param should be ref to ns__Rec") },
   }
   case f.results[0] {
-    .Ref(_, .Named(name)) => try assert.str_eq(name, "ns__Rec"),
+    .Ref(_, .Named(name)) => try assert.equal(name, "ns__Rec"),
     _ => { return assert.fail("result should be ref to ns__Rec") },
   }
   case f.locals[0] {
-    .Ref(_, .Named(name)) => try assert.str_eq(name, "ns__Rec"),
+    .Ref(_, .Named(name)) => try assert.equal(name, "ns__Rec"),
     _ => { return assert.fail("local should be ref to ns__Rec") },
   }
   .Ok({})
@@ -511,7 +511,7 @@ fn test_link_synthesizes_init_from_multiple_starts() Result<Void, String> {
   linked := try link_ok([a, b], .None)
   // Should have a synthesized __linked_init exported as __twinkle_start
   exp := try find_export(linked, "__twinkle_start").ok_or("missing __twinkle_start export")
-  try assert.str_eq(exp.func_sym, "__linked_init")
+  try assert.equal(exp.func_sym, "__linked_init")
   init_fn := try find_func(linked, "__linked_init").ok_or("missing __linked_init")
   try assert.ok(instr_has_call(init_fn.body, "a__init_a"), "should call a__init_a")
   try assert.ok(instr_has_call(init_fn.body, "b__init_b"), "should call b__init_b")
@@ -534,7 +534,7 @@ fn test_link_single_start_no_synth() Result<Void, String> {
   linked := try link_ok([m], .None)
   // Single start → exported directly as __twinkle_start, no __linked_init needed
   exp := try find_export(linked, "__twinkle_start").ok_or("missing __twinkle_start export")
-  try assert.str_eq(exp.func_sym, "app__init")
+  try assert.equal(exp.func_sym, "app__init")
   .Ok({})
 }
 
@@ -578,7 +578,7 @@ fn test_link_dots_in_namespace_replaced() Result<Void, String> {
     start: .None,
   }
   linked := try link_ok([m], .None)
-  try assert.str_eq(linked.funcs[0].name, "rt_arr__get")
+  try assert.equal(linked.funcs[0].name, "rt_arr__get")
   .Ok({})
 }
 
@@ -603,7 +603,7 @@ fn test_link_rewrites_struct_supertype() Result<Void, String> {
   linked := try link_ok([m], .None)
   // Child's supertype should be rewritten to ns__Base
   case find_type(linked, "ns__Child") {
-    .Some(.Struct(_, _, .Some(sup), _)) => try assert.str_eq(sup, "ns__Base"),
+    .Some(.Struct(_, _, .Some(sup), _)) => try assert.equal(sup, "ns__Base"),
     .Some(_) => { return assert.fail("Child should have supertype") },
     .None => { return assert.fail("missing ns__Child") },
   }
@@ -629,10 +629,10 @@ fn test_link_rewrites_elem_func_syms() Result<Void, String> {
     start: .None,
   }
   linked := try link_ok([m], .None)
-  try assert.int_eq(linked.elems.len(), 1)
-  try assert.str_eq(linked.elems[0].func_syms[0], "ns__f1")
-  try assert.str_eq(linked.elems[0].func_syms[1], "ns__f2")
-  try assert.str_eq(linked.elems[0].table, "ns__tbl")
+  try assert.equal(linked.elems.len(), 1)
+  try assert.equal(linked.elems[0].func_syms[0], "ns__f1")
+  try assert.equal(linked.elems[0].func_syms[1], "ns__f2")
+  try assert.equal(linked.elems[0].table, "ns__tbl")
   .Ok({})
 }
 
@@ -652,8 +652,8 @@ fn test_link_qualifies_exports() Result<Void, String> {
     start: .None,
   }
   linked := try link_ok([m], .None)
-  try assert.int_eq(linked.exports.len(), 1)
-  try assert.str_eq(linked.exports[0].func_sym, "app__main")
+  try assert.equal(linked.exports.len(), 1)
+  try assert.equal(linked.exports[0].func_sym, "app__main")
   .Ok({})
 }
 

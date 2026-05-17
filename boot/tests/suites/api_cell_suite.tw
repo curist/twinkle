@@ -5,19 +5,19 @@ pub fn suite() runner.Suite {
   runner.suite("cell")
     .test("new and get returns initial value", fn() {
       c := Cell.new(42)
-      try assert.int_eq(c.get(), 42)
+      try assert.equal(c.get(), 42)
       .Ok({})
     })
     .test("set changes value", fn() {
       c := Cell.new(1)
       c.set(2)
-      try assert.int_eq(c.get(), 2)
+      try assert.equal(c.get(), 2)
       .Ok({})
     })
     .test("update applies function", fn() {
       c := Cell.new(10)
       c.update(fn(n) { n * 2 })
-      try assert.int_eq(c.get(), 20)
+      try assert.equal(c.get(), 20)
       .Ok({})
     })
     .test("multiple updates accumulate", fn() {
@@ -25,16 +25,16 @@ pub fn suite() runner.Suite {
       c.update(fn(n) { n + 1 })
       c.update(fn(n) { n + 1 })
       c.update(fn(n) { n + 1 })
-      try assert.int_eq(c.get(), 3)
+      try assert.equal(c.get(), 3)
       .Ok({})
     })
     .test("two references share same cell", fn() {
       c := Cell.new(0)
       alias := c
       c.set(5)
-      try assert.int_eq(alias.get(), 5)
+      try assert.equal(alias.get(), 5)
       alias.set(10)
-      try assert.int_eq(c.get(), 10)
+      try assert.equal(c.get(), 10)
       .Ok({})
     })
     .test("closure captures cell reference", fn() {
@@ -43,7 +43,7 @@ pub fn suite() runner.Suite {
       inc()
       inc()
       inc()
-      try assert.int_eq(c.get(), 3)
+      try assert.equal(c.get(), 3)
       .Ok({})
     })
     .test("cell in loop as accumulator", fn() {
@@ -51,13 +51,13 @@ pub fn suite() runner.Suite {
       for i in 0..5 {
         sum.update(fn(n) { n + i })
       }
-      try assert.int_eq(sum.get(), 10)
+      try assert.equal(sum.get(), 10)
       .Ok({})
     })
     .test("cell with string value", fn() {
       c := Cell.new("hello")
       c.set("world")
-      try assert.str_eq(c.get(), "world")
+      try assert.equal(c.get(), "world")
       .Ok({})
     })
 }

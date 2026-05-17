@@ -9,14 +9,6 @@ pub fn fail(msg: String) Result<Void, String> {
   .Err(msg)
 }
 
-pub fn str_eq(actual: String, expected: String) Result<Void, String> {
-  if actual == expected {
-    .Ok({})
-  } else {
-    .Err("expected \"${expected}\", got \"${actual}\"")
-  }
-}
-
 pub fn str_contains(actual: String, expected_substring: String) Result<Void, String> {
   if actual.contains(expected_substring) {
     .Ok({})
@@ -41,15 +33,7 @@ pub fn str_ends_with(actual: String, expected_suffix: String) Result<Void, Strin
   }
 }
 
-pub fn int_eq(actual: Int, expected: Int) Result<Void, String> {
-  if actual == expected {
-    .Ok({})
-  } else {
-    .Err("expected ${expected}, got ${actual}")
-  }
-}
-
-pub fn bool_eq(actual: Bool, expected: Bool) Result<Void, String> {
+pub fn equal<T: Eq + Stringify>(actual: T, expected: T) Result<Void, String> {
   if actual == expected {
     .Ok({})
   } else {
@@ -96,7 +80,7 @@ pub fn is_err<A, E>(res: Result<A, E>) Result<Void, String> {
 pub fn err_eq<A>(res: Result<A, String>, expected_error: String) Result<Void, String> {
   case res {
     .Ok(_) => .Err("expected Err(\"${expected_error}\"), got Ok"),
-    .Err(actual_error) => str_eq(actual_error, expected_error),
+    .Err(actual_error) => equal(actual_error, expected_error),
   }
 }
 

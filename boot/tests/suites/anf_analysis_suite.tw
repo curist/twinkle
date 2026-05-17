@@ -33,7 +33,7 @@ fn test_pattern_var() Result<Void, String> {
   s: Dict<Int, Bool> = Dict.new()
   s = collect_pattern_bindings(.Var(lid(1)), s)
   try assert.is_true(set_has(s, 1))
-  assert.int_eq(s.len(), 1)
+  assert.equal(s.len(), 1)
 }
 
 fn test_pattern_nested_variant() Result<Void, String> {
@@ -45,16 +45,16 @@ fn test_pattern_nested_variant() Result<Void, String> {
   s := collect_pattern_bindings(pat, empty_set())
   try assert.is_true(set_has(s, 1))
   try assert.is_true(set_has(s, 3))
-  assert.int_eq(s.len(), 2)
+  assert.equal(s.len(), 2)
 }
 
 fn test_pattern_wildcard_lit() Result<Void, String> {
   s := collect_pattern_bindings(.Wildcard, empty_set())
-  try assert.int_eq(s.len(), 0)
+  try assert.equal(s.len(), 0)
   s = collect_pattern_bindings(.LitInt(42), empty_set())
-  try assert.int_eq(s.len(), 0)
+  try assert.equal(s.len(), 0)
   s = collect_pattern_bindings(.LitBool(true), empty_set())
-  assert.int_eq(s.len(), 0)
+  assert.equal(s.len(), 0)
 }
 
 // ── collect_free_locals ─────────────────────────────────────────────
@@ -65,7 +65,7 @@ fn test_free_simple_let() Result<Void, String> {
   free := collect_free_locals(expr, empty_set())
   try assert.is_true(set_has(free, 5))
   try assert.is_false(set_has(free, 0))
-  assert.int_eq(free.len(), 1)
+  assert.equal(free.len(), 1)
 }
 
 fn test_free_declared_not_free() Result<Void, String> {
@@ -73,7 +73,7 @@ fn test_free_declared_not_free() Result<Void, String> {
   // with 0 declared as seed — nothing should be free
   expr: AnfExpr = .Let(lid(1), .ABinOp(.Add, .ALocal(lid(0)), .ALitInt(5), .Int), .Atom(.ALocal(lid(1))))
   free := collect_free_locals(expr, set_of1(0))
-  assert.int_eq(free.len(), 0)
+  assert.equal(free.len(), 0)
 }
 
 fn test_free_if_branches() Result<Void, String> {
@@ -87,7 +87,7 @@ fn test_free_if_branches() Result<Void, String> {
   free := collect_free_locals(expr, set_of1(0))
   try assert.is_true(set_has(free, 1))
   try assert.is_true(set_has(free, 2))
-  assert.int_eq(free.len(), 2)
+  assert.equal(free.len(), 2)
 }
 
 fn test_free_match_pattern_declares() Result<Void, String> {
@@ -99,7 +99,7 @@ fn test_free_match_pattern_declares() Result<Void, String> {
   }
   expr: AnfExpr = .Let(lid(1), .AMatch(.ALocal(lid(0)), [arm]), .Atom(.ALocal(lid(1))))
   free := collect_free_locals(expr, set_of1(0))
-  assert.int_eq(free.len(), 0)
+  assert.equal(free.len(), 0)
 }
 
 fn test_free_assign_target() Result<Void, String> {
@@ -107,7 +107,7 @@ fn test_free_assign_target() Result<Void, String> {
   expr: AnfExpr = .Let(lid(0), .AAssign(lid(9), .ALitInt(42)), .Atom(.ALitVoid))
   free := collect_free_locals(expr, empty_set())
   try assert.is_true(set_has(free, 9))
-  assert.int_eq(free.len(), 1)
+  assert.equal(free.len(), 1)
 }
 
 fn test_free_make_closure() Result<Void, String> {
@@ -116,7 +116,7 @@ fn test_free_make_closure() Result<Void, String> {
   free := collect_free_locals(expr, set_of1(1))
   try assert.is_true(set_has(free, 2))
   try assert.is_false(set_has(free, 1))
-  assert.int_eq(free.len(), 1)
+  assert.equal(free.len(), 1)
 }
 
 fn test_free_return_break_atoms() Result<Void, String> {
@@ -143,7 +143,7 @@ fn test_bound_nested() Result<Void, String> {
   try assert.is_true(set_has(bound, 1))
   try assert.is_true(set_has(bound, 2))
   try assert.is_true(set_has(bound, 3))
-  assert.int_eq(bound.len(), 4)
+  assert.equal(bound.len(), 4)
 }
 
 // ── collect_assigned_locals ─────────────────────────────────────────
@@ -158,7 +158,7 @@ fn test_assigned_nested() Result<Void, String> {
   assigned := collect_assigned_locals(expr)
   try assert.is_true(set_has(assigned, 8))
   try assert.is_true(set_has(assigned, 9))
-  assert.int_eq(assigned.len(), 2)
+  assert.equal(assigned.len(), 2)
 }
 
 // ── expr_always_diverges ────────────────────────────────────────────

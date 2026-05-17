@@ -21,22 +21,22 @@ pub fn suite() runner.Suite {
         data: .None,
       }
       out := diagnostics.publish_diagnostics("file:///a.tw", .Some(2), index, [diag])
-      try assert.str_eq(try json.decode(out, json.field("method", json.string())), "textDocument/publishDiagnostics")
+      try assert.equal(try json.decode(out, json.field("method", json.string())), "textDocument/publishDiagnostics")
       params := try json.decode(out, json.field("params", json.raw()))
-      try assert.str_eq(try json.decode(params, json.field("uri", json.string())), "file:///a.tw")
-      try assert.int_eq(try json.decode(params, json.field("version", json.int())), 2)
+      try assert.equal(try json.decode(params, json.field("uri", json.string())), "file:///a.tw")
+      try assert.equal(try json.decode(params, json.field("version", json.int())), 2)
       items := try json.decode(params, json.field("diagnostics", json.list(json.raw())))
-      try assert.int_eq(items.len(), 1)
+      try assert.equal(items.len(), 1)
       item := items[0]
-      try assert.int_eq(try json.decode(item, json.field("severity", json.int())), 1)
-      try assert.str_eq(try json.decode(item, json.field("source", json.string())), "twinkle")
-      try assert.str_eq(try json.decode(item, json.field("message", json.string())), "bad")
+      try assert.equal(try json.decode(item, json.field("severity", json.int())), 1)
+      try assert.equal(try json.decode(item, json.field("source", json.string())), "twinkle")
+      try assert.equal(try json.decode(item, json.field("message", json.string())), "bad")
       range := try json.decode(item, json.field("range", json.raw()))
       start := try json.decode(range, json.field("start", json.raw()))
       end := try json.decode(range, json.field("end", json.raw()))
-      try assert.int_eq(try json.decode(start, json.field("line", json.int())), 0)
-      try assert.int_eq(try json.decode(start, json.field("character", json.int())), 1)
-      try assert.int_eq(try json.decode(end, json.field("character", json.int())), 3)
+      try assert.equal(try json.decode(start, json.field("line", json.int())), 0)
+      try assert.equal(try json.decode(start, json.field("character", json.int())), 1)
+      try assert.equal(try json.decode(end, json.field("character", json.int())), 3)
       .Ok({})
     })
     .test("diagnostic with data field includes data in JSON", fn() {
@@ -59,14 +59,14 @@ pub fn suite() runner.Suite {
       out := diagnostics.publish_diagnostics("file:///a.tw", .Some(1), index, [diag])
       params := try json.decode(out, json.field("params", json.raw()))
       items := try json.decode(params, json.field("diagnostics", json.list(json.raw())))
-      try assert.int_eq(items.len(), 1)
+      try assert.equal(items.len(), 1)
       item := items[0]
-      try assert.int_eq(try json.decode(item, json.field("severity", json.int())), 2)
+      try assert.equal(try json.decode(item, json.field("severity", json.int())), 2)
       item_data := try json.decode(item, json.field("data", json.raw()))
-      try assert.str_eq(try json.decode(item_data, json.field("kind", json.string())), "unused_import")
-      try assert.int_eq(try json.decode(item_data, json.field("use_start", json.int())), 0)
-      try assert.int_eq(try json.decode(item_data, json.field("use_end", json.int())), 15)
-      try assert.str_eq(try json.decode(item_data, json.field("replacement", json.string())), "use foo.{A}\n")
+      try assert.equal(try json.decode(item_data, json.field("kind", json.string())), "unused_import")
+      try assert.equal(try json.decode(item_data, json.field("use_start", json.int())), 0)
+      try assert.equal(try json.decode(item_data, json.field("use_end", json.int())), 15)
+      try assert.equal(try json.decode(item_data, json.field("replacement", json.string())), "use foo.{A}\n")
       .Ok({})
     })
     .test("diagnostic without data omits data field", fn() {
@@ -94,7 +94,7 @@ pub fn suite() runner.Suite {
       out := diagnostics.clear_diagnostics("file:///a.tw", .None)
       params := try json.decode(out, json.field("params", json.raw()))
       items := try json.decode(params, json.field("diagnostics", json.list(json.raw())))
-      try assert.int_eq(items.len(), 0)
+      try assert.equal(items.len(), 0)
       case try json.decode(params, json.field("version", json.raw())) {
         .Null => .Ok({}),
         _ => assert.fail("expected null version"),

@@ -171,7 +171,7 @@ fn test_params_tainted_no_rewrite() Result<Void, String> {
 
   // Should still be MOCK_VEC_SET, not MOCK_VEC_SET_IN_PLACE
   case result.body {
-    .Let(_, .ACall(.AGlobalFunc(f), _), _) => assert.int_eq(f.id, mock_vec_set().id),
+    .Let(_, .ACall(.AGlobalFunc(f), _), _) => assert.equal(f.id, mock_vec_set().id),
     _ => .Err("expected ACall"),
   }
 }
@@ -193,7 +193,7 @@ fn test_closure_capture_taints() Result<Void, String> {
   // Dig into: Let(0, ..., Let(1, ..., Let(2, ACall(...), ...)))
   case result.body {
     .Let(_, _, .Let(_, _, .Let(_, .ACall(.AGlobalFunc(f), _), _))) => {
-      assert.int_eq(f.id, mock_vec_set().id)
+      assert.equal(f.id, mock_vec_set().id)
     },
     _ => .Err("expected nested Let with ACall"),
   }
@@ -214,7 +214,7 @@ fn test_fresh_unique_rewrite() Result<Void, String> {
 
   case result.body {
     .Let(_, _, .Let(_, .ACall(.AGlobalFunc(f), _), _)) => {
-      assert.int_eq(f.id, mock_vec_set_in_place().id)
+      assert.equal(f.id, mock_vec_set_in_place().id)
     },
     _ => .Err("expected rewritten to in_place"),
   }
@@ -231,7 +231,7 @@ fn test_fresh_unique_rewrite_with_semantics_entry() Result<Void, String> {
 
   case result.body {
     .Let(_, _, .Let(_, .ACall(.AGlobalFunc(f), _), _)) => {
-      assert.int_eq(f.id, mock_vec_set_in_place().id)
+      assert.equal(f.id, mock_vec_set_in_place().id)
     },
     _ => .Err("expected semantics entry point to rewrite to in_place"),
   }
@@ -252,7 +252,7 @@ fn test_array_lit_fresh() Result<Void, String> {
 
   case result.body {
     .Let(_, _, .Let(_, .ACall(.AGlobalFunc(f), _), _)) => {
-      assert.int_eq(f.id, mock_vec_set_in_place().id)
+      assert.equal(f.id, mock_vec_set_in_place().id)
     },
     _ => .Err("expected rewritten to in_place"),
   }
@@ -294,7 +294,7 @@ fn test_base_live_no_rewrite() Result<Void, String> {
 
   case result.body {
     .Let(_, _, .Let(_, .ACall(.AGlobalFunc(f), _), _)) => {
-      assert.int_eq(f.id, mock_vec_set().id)
+      assert.equal(f.id, mock_vec_set().id)
     },
     _ => .Err("expected no rewrite (base live)"),
   }
@@ -316,7 +316,7 @@ fn test_init_transfer() Result<Void, String> {
 
   case result.body {
     .Let(_, _, .Let(_, _, .Let(_, .ACall(.AGlobalFunc(f), _), _))) => {
-      assert.int_eq(f.id, mock_vec_set_in_place().id)
+      assert.equal(f.id, mock_vec_set_in_place().id)
     },
     _ => .Err("expected rewritten after init transfer"),
   }
@@ -346,8 +346,8 @@ fn test_consume_reassign() Result<Void, String> {
   case result.body {
     .Let(_, _, .Let(_, .ACall(.AGlobalFunc(f1), _),
       .Let(_, _, .Let(_, .ACall(.AGlobalFunc(f2), _), _)))) => {
-      try assert.int_eq(f1.id, mock_vec_set_in_place().id)
-      assert.int_eq(f2.id, mock_vec_set_in_place().id)
+      try assert.equal(f1.id, mock_vec_set_in_place().id)
+      assert.equal(f2.id, mock_vec_set_in_place().id)
     },
     _ => .Err("expected both vec_set rewritten"),
   }
@@ -369,7 +369,7 @@ fn test_non_cow_call_taints() Result<Void, String> {
 
   case result.body {
     .Let(_, _, .Let(_, _, .Let(_, .ACall(.AGlobalFunc(f), _), _))) => {
-      assert.int_eq(f.id, mock_vec_set().id)
+      assert.equal(f.id, mock_vec_set().id)
     },
     _ => .Err("expected no rewrite (tainted by non-COW call)"),
   }
@@ -391,7 +391,7 @@ fn test_read_only_no_taint() Result<Void, String> {
 
   case result.body {
     .Let(_, _, .Let(_, _, .Let(_, .ACall(.AGlobalFunc(f), _), _))) => {
-      assert.int_eq(f.id, mock_vec_set_in_place().id)
+      assert.equal(f.id, mock_vec_set_in_place().id)
     },
     _ => .Err("expected rewrite (read-only doesn't taint)"),
   }
@@ -413,7 +413,7 @@ fn test_cow_base_arg_not_tainted() Result<Void, String> {
 
   case result.body {
     .Let(_, _, .Let(_, .ACall(.AGlobalFunc(f), _), _)) => {
-      assert.int_eq(f.id, mock_vec_set_in_place().id)
+      assert.equal(f.id, mock_vec_set_in_place().id)
     },
     _ => .Err("expected rewrite (COW base not tainted)"),
   }
@@ -435,7 +435,7 @@ fn test_stored_in_array_taints() Result<Void, String> {
 
   case result.body {
     .Let(_, _, .Let(_, _, .Let(_, .ACall(.AGlobalFunc(f), _), _))) => {
-      assert.int_eq(f.id, mock_vec_set().id)
+      assert.equal(f.id, mock_vec_set().id)
     },
     _ => .Err("expected no rewrite (stored in array)"),
   }
@@ -489,7 +489,7 @@ fn test_branches_conservative() Result<Void, String> {
   // v is still unique after the harmless branch → should rewrite
   case result.body {
     .Let(_, _, .Let(_, _, .Let(_, .ACall(.AGlobalFunc(f), _), _))) => {
-      assert.int_eq(f.id, mock_vec_set_in_place().id)
+      assert.equal(f.id, mock_vec_set_in_place().id)
     },
     _ => .Err("expected rewrite (unique preserved across harmless branch)"),
   }
@@ -526,7 +526,7 @@ fn test_loop_accumulator_rewrite() Result<Void, String> {
   // Check: Let(0, AArrayLit, Let(builder, Call(builder_new, []), ...))
   case result.body {
     .Let(_, .AArrayLit(_), .Let(_, .ACall(.AGlobalFunc(f), _), _)) => {
-      assert.int_eq(f.id, mock_builder_new().id)
+      assert.equal(f.id, mock_builder_new().id)
     },
     _ => .Err("expected builder_new call after array lit"),
   }
@@ -558,7 +558,7 @@ fn test_loop_accumulator_from() Result<Void, String> {
   // Check: Let(0, Call(vec_make), Let(builder, Call(builder_from, [ALocal(0)]), ...))
   case result.body {
     .Let(_, _, .Let(_, .ACall(.AGlobalFunc(f), _), _)) => {
-      assert.int_eq(f.id, mock_builder_from().id)
+      assert.equal(f.id, mock_builder_from().id)
     },
     _ => .Err("expected builder_from call"),
   }
@@ -579,7 +579,7 @@ fn test_dict_set_rewrite() Result<Void, String> {
 
   case result.body {
     .Let(_, _, .Let(_, .ACall(.AGlobalFunc(f), _), _)) => {
-      assert.int_eq(f.id, mock_dict_set_in_place().id)
+      assert.equal(f.id, mock_dict_set_in_place().id)
     },
     _ => .Err("expected dict_set rewritten to in_place"),
   }
@@ -605,7 +605,7 @@ fn test_assign_transfer() Result<Void, String> {
 
   case result.body {
     .Let(_, _, .Let(_, _, .Let(_, _, .Let(_, .ACall(.AGlobalFunc(f), _), _)))) => {
-      assert.int_eq(f.id, mock_vec_set_in_place().id)
+      assert.equal(f.id, mock_vec_set_in_place().id)
     },
     _ => .Err("expected rewrite after assign transfer"),
   }
@@ -630,7 +630,7 @@ fn test_alias_taints() Result<Void, String> {
 
   case result.body {
     .Let(_, _, .Let(_, _, .Let(_, .ACall(.AGlobalFunc(f), _), _))) => {
-      assert.int_eq(f.id, mock_vec_set().id)
+      assert.equal(f.id, mock_vec_set().id)
     },
     _ => .Err("expected no rewrite (aliased)"),
   }
@@ -661,7 +661,7 @@ fn test_assign_alias_taints() Result<Void, String> {
   // vec_set should NOT be rewritten because v is aliased through w
   case result.body {
     .Let(_, _, .Let(_, _, .Let(_, _, .Let(_, .ACall(.AGlobalFunc(f), _), _)))) => {
-      assert.int_eq(f.id, mock_vec_set().id)
+      assert.equal(f.id, mock_vec_set().id)
     },
     _ => .Err("expected no rewrite (assign alias)"),
   }
@@ -695,7 +695,7 @@ fn test_branch_boundary_alias_escape() Result<Void, String> {
 
   case result.body {
     .Let(_, _, .Let(_, _, .Let(_, .ACall(.AGlobalFunc(f), _), _))) => {
-      assert.int_eq(f.id, mock_vec_set().id)
+      assert.equal(f.id, mock_vec_set().id)
     },
     _ => .Err("expected no rewrite (branch-boundary alias escape)"),
   }
@@ -730,7 +730,7 @@ fn test_assign_alias_cross_scope() Result<Void, String> {
 
   case result.body {
     .Let(_, _, .Let(_, _, .Let(_, _, .Let(_, .ACall(.AGlobalFunc(f), _), _)))) => {
-      assert.int_eq(f.id, mock_vec_set().id)
+      assert.equal(f.id, mock_vec_set().id)
     },
     _ => .Err("expected no rewrite (assign alias across scope)"),
   }
@@ -760,7 +760,7 @@ fn test_assign_alias_source_dead_ok() Result<Void, String> {
   // w is unique (transferred from v) → vec_set should rewrite
   case result.body {
     .Let(_, _, .Let(_, _, .Let(_, _, .Let(_, .ACall(.AGlobalFunc(f), _), _)))) => {
-      assert.int_eq(f.id, mock_vec_set_in_place().id)
+      assert.equal(f.id, mock_vec_set_in_place().id)
     },
     _ => .Err("expected rewrite (source dead after assign)"),
   }
@@ -794,7 +794,7 @@ fn test_assign_chain_taint() Result<Void, String> {
 
   case result.body {
     .Let(_, _, .Let(_, _, .Let(_, _, .Let(_, _, .Let(_, _, .Let(_, .ACall(.AGlobalFunc(f), _), _)))))) => {
-      assert.int_eq(f.id, mock_vec_set().id)
+      assert.equal(f.id, mock_vec_set().id)
     },
     _ => .Err("expected no rewrite (chain alias)"),
   }
@@ -825,7 +825,7 @@ fn test_branch_boundary_else_branch() Result<Void, String> {
 
   case result.body {
     .Let(_, _, .Let(_, _, .Let(_, .ACall(.AGlobalFunc(f), _), _))) => {
-      assert.int_eq(f.id, mock_vec_set().id)
+      assert.equal(f.id, mock_vec_set().id)
     },
     _ => .Err("expected no rewrite (else branch escape)"),
   }
@@ -888,7 +888,7 @@ fn test_match_arm_alias_escape() Result<Void, String> {
 
   case result.body {
     .Let(_, _, .Let(_, _, .Let(_, .ACall(.AGlobalFunc(f), _), _))) => {
-      assert.int_eq(f.id, mock_vec_set().id)
+      assert.equal(f.id, mock_vec_set().id)
     },
     _ => .Err("expected no rewrite (match arm alias escape)"),
   }
@@ -910,7 +910,7 @@ fn test_stored_in_record_taints() Result<Void, String> {
 
   case result.body {
     .Let(_, _, .Let(_, _, .Let(_, .ACall(.AGlobalFunc(f), _), _))) => {
-      assert.int_eq(f.id, mock_vec_set().id)
+      assert.equal(f.id, mock_vec_set().id)
     },
     _ => .Err("expected no rewrite (stored in record)"),
   }
@@ -931,7 +931,7 @@ fn test_stored_in_variant_taints() Result<Void, String> {
 
   case result.body {
     .Let(_, _, .Let(_, _, .Let(_, .ACall(.AGlobalFunc(f), _), _))) => {
-      assert.int_eq(f.id, mock_vec_set().id)
+      assert.equal(f.id, mock_vec_set().id)
     },
     _ => .Err("expected no rewrite (stored in variant)"),
   }
@@ -953,7 +953,7 @@ fn test_indirect_call_taints() Result<Void, String> {
 
   case result.body {
     .Let(_, _, .Let(_, _, .Let(_, .ACall(.AGlobalFunc(f), _), _))) => {
-      assert.int_eq(f.id, mock_vec_set().id)
+      assert.equal(f.id, mock_vec_set().id)
     },
     _ => .Err("expected no rewrite (indirect call)"),
   }
@@ -985,7 +985,7 @@ fn test_cow_non_base_arg_tainted() Result<Void, String> {
   // as a non-base arg in the first vec_set
   case result.body {
     .Let(_, _, .Let(_, _, .Let(_, _, .Let(_, .ACall(.AGlobalFunc(f), _), _)))) => {
-      assert.int_eq(f.id, mock_vec_set().id)
+      assert.equal(f.id, mock_vec_set().id)
     },
     _ => .Err("expected no rewrite (non-base arg tainted)"),
   }
@@ -1083,7 +1083,7 @@ fn test_loop_push_in_branch() Result<Void, String> {
   // Should be rewritten to builder
   case result.body {
     .Let(_, .AArrayLit(_), .Let(_, .ACall(.AGlobalFunc(f), _), _)) => {
-      assert.int_eq(f.id, mock_builder_new().id)
+      assert.equal(f.id, mock_builder_new().id)
     },
     _ => .Err("expected builder_new (push in branch)"),
   }
@@ -1106,7 +1106,7 @@ fn test_init_transfer_tainted_source() Result<Void, String> {
 
   case result.body {
     .Let(_, _, .Let(_, .ACall(.AGlobalFunc(f), _), _)) => {
-      assert.int_eq(f.id, mock_vec_set().id)
+      assert.equal(f.id, mock_vec_set().id)
     },
     _ => .Err("expected no rewrite (tainted source init transfer)"),
   }
@@ -1167,7 +1167,7 @@ fn test_fresh_wrapper_destructure_rewrites_dict_set() Result<Void, String> {
   result := rewrite_with_fresh_helpers(func, fresh_helpers)
 
   case find_dict_set(result.body) {
-    .Some(f) => try assert.int_eq(f.id, mock_dict_set_in_place().id),
+    .Some(f) => try assert.equal(f.id, mock_dict_set_in_place().id),
     .None => { return .Err("expected dict_set call") },
   }
   case find_record_update_can_reuse(result.body) {
@@ -1195,7 +1195,7 @@ fn test_fresh_wrapper_reread_same_field_blocks_rewrite() Result<Void, String> {
   result := rewrite_with_fresh_helpers(func, fresh_helpers)
 
   case find_dict_set(result.body) {
-    .Some(f) => assert.int_eq(f.id, mock_dict_set().id),
+    .Some(f) => assert.equal(f.id, mock_dict_set().id),
     .None => .Err("expected dict_set call in reread case"),
   }
 }
@@ -1216,7 +1216,7 @@ fn test_early_return_branch_preserves_refreshed_state() Result<Void, String> {
 
   case result.body {
     .Let(_, .AIf(_, _, _), .Let(_, .ACall(.AGlobalFunc(f), _), _)) => {
-      assert.int_eq(f.id, mock_vec_set_in_place().id)
+      assert.equal(f.id, mock_vec_set_in_place().id)
     },
     _ => .Err("expected early-return branch to preserve refreshed uniqueness"),
   }
@@ -1302,7 +1302,7 @@ fn test_loop_rewrite_continues_into_cont() Result<Void, String> {
 
   // Find the vec_set/vec_set_in_place call deep in the rewritten tree.
   case find_vec_set(result.body) {
-    .Some(f) => assert.int_eq(f.id, mock_vec_set_in_place().id),
+    .Some(f) => assert.equal(f.id, mock_vec_set_in_place().id),
     .None => .Err("expected to find vec_set call in rewritten tree"),
   }
 }

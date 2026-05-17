@@ -124,7 +124,7 @@ pub fn suite() runner.Suite {
       src := "fn f() { x := 0..10\nx }"
       r := try check_ok(src)
       ty := try type_at(r, src, "0..10")
-      assert.str_eq(ty, "Named(3)")
+      assert.equal(ty, "Named(3)")
     })
     .test("range literal rejects non-Int operand", fn() {
       src := "fn f() { \"a\"..10 }"

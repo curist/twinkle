@@ -11,7 +11,7 @@ pub fn suite() runner.Suite {
     // ── Span utilities ──
     .test("span len computes byte length", fn() {
       s := span.new(0, 10, 20)
-      try assert.int_eq(s.len(), 10)
+      try assert.equal(s.len(), 10)
       .Ok({})
     })
     .test("span is_empty for zero-width span", fn() {
@@ -41,16 +41,16 @@ pub fn suite() runner.Suite {
       a := span.new(0, 10, 20)
       b := span.new(0, 15, 25)
       m := a.merge(b)
-      try assert.int_eq(m.start, 10)
-      try assert.int_eq(m.end, 25)
+      try assert.equal(m.start, 10)
+      try assert.equal(m.end, 25)
       .Ok({})
     })
     .test("span merge reversed order", fn() {
       a := span.new(0, 15, 25)
       b := span.new(0, 10, 20)
       m := a.merge(b)
-      try assert.int_eq(m.start, 10)
-      try assert.int_eq(m.end, 25)
+      try assert.equal(m.start, 10)
+      try assert.equal(m.end, 25)
       .Ok({})
     })
 
@@ -59,8 +59,8 @@ pub fn suite() runner.Suite {
       reg := registry.empty()
       r1 := registry.add_file(reg, "a.tw", "hello")
       r2 := registry.add_file(reg, "b.tw", "world")
-      try assert.int_eq(r1.file_id, 0)
-      try assert.int_eq(r2.file_id, 1)
+      try assert.equal(r1.file_id, 0)
+      try assert.equal(r2.file_id, 1)
       .Ok({})
     })
     .test("snippet extracts text by span", fn() {
@@ -68,7 +68,7 @@ pub fn suite() runner.Suite {
       r := registry.add_file(reg, "test.tw", "hello world")
       s := span.new(r.file_id, 6, 11)
       snip := case registry.snippet(reg, s) { .Some(x) => x, .None => "NONE" }
-      try assert.str_eq(snip, "world")
+      try assert.equal(snip, "world")
       .Ok({})
     })
     .test("snippet returns None for invalid file_id", fn() {
@@ -84,8 +84,8 @@ pub fn suite() runner.Suite {
       lc := registry.line_col(reg, s)
       case lc {
         .Some(pos) => {
-          try assert.int_eq(pos.line, 1)
-          try assert.int_eq(pos.column, 1)
+          try assert.equal(pos.line, 1)
+          try assert.equal(pos.column, 1)
           .Ok({})
         },
         .None => assert.fail("expected Some"),
@@ -99,8 +99,8 @@ pub fn suite() runner.Suite {
       lc := registry.line_col(reg, s)
       case lc {
         .Some(pos) => {
-          try assert.int_eq(pos.line, 2)
-          try assert.int_eq(pos.column, 1)
+          try assert.equal(pos.line, 2)
+          try assert.equal(pos.column, 1)
           .Ok({})
         },
         .None => assert.fail("expected Some"),
@@ -114,8 +114,8 @@ pub fn suite() runner.Suite {
       lc := registry.line_col(reg, s)
       case lc {
         .Some(pos) => {
-          try assert.int_eq(pos.line, 1)
-          try assert.int_eq(pos.column, 4)
+          try assert.equal(pos.line, 1)
+          try assert.equal(pos.column, 4)
           .Ok({})
         },
         .None => assert.fail("expected Some"),
@@ -129,8 +129,8 @@ pub fn suite() runner.Suite {
       lc := registry.line_col(reg, s)
       case lc {
         .Some(pos) => {
-          try assert.int_eq(pos.line, 3)
-          try assert.int_eq(pos.column, 2)
+          try assert.equal(pos.line, 3)
+          try assert.equal(pos.column, 2)
           .Ok({})
         },
         .None => assert.fail("expected Some"),
@@ -145,9 +145,9 @@ pub fn suite() runner.Suite {
       lc := registry.line_col(reg, s)
       case lc {
         .Some(pos) => {
-          try assert.int_eq(pos.line, 1)
+          try assert.equal(pos.line, 1)
           // character column should be 6, not 7
-          try assert.int_eq(pos.column, 6)
+          try assert.equal(pos.column, 6)
           .Ok({})
         },
         .None => assert.fail("expected Some"),
@@ -161,8 +161,8 @@ pub fn suite() runner.Suite {
       lc := registry.line_col(reg, s)
       case lc {
         .Some(pos) => {
-          try assert.int_eq(pos.line, 1)
-          try assert.int_eq(pos.column, 3)
+          try assert.equal(pos.line, 1)
+          try assert.equal(pos.column, 3)
           .Ok({})
         },
         .None => assert.fail("expected Some"),
@@ -175,7 +175,7 @@ pub fn suite() runner.Suite {
       lt := registry.line_text(reg, s)
       // line_text includes the newline
       text := case lt { .Some(x) => x, .None => "NONE" }
-      try assert.str_eq(text, "line 2\n")
+      try assert.equal(text, "line 2\n")
       .Ok({})
     })
     .test("line_text last line no trailing newline", fn() {
@@ -184,7 +184,7 @@ pub fn suite() runner.Suite {
       s := span.new(r.file_id, 4, 7)
       lt := registry.line_text(reg, s)
       text := case lt { .Some(x) => x, .None => "NONE" }
-      try assert.str_eq(text, "bbb")
+      try assert.equal(text, "bbb")
       .Ok({})
     })
     .test("line_col returns None for invalid file_id", fn() {
@@ -211,13 +211,13 @@ pub fn suite() runner.Suite {
     // ── Source identity and overlay ──
     .test("file URI decoding normalizes paths", fn() {
       id := try identity.from_file_uri("file:///tmp/twinkle%20space/../source.tw")
-      try assert.str_eq(id.path, "/tmp/source.tw")
-      try assert.str_eq(id.uri, "file:///tmp/source.tw")
+      try assert.equal(id.path, "/tmp/source.tw")
+      try assert.equal(id.uri, "file:///tmp/source.tw")
       .Ok({})
     })
     .test("file URI decoding accepts localhost", fn() {
       id := try identity.from_file_uri("file://localhost/tmp/source.tw")
-      try assert.str_eq(id.path, "/tmp/source.tw")
+      try assert.equal(id.path, "/tmp/source.tw")
       .Ok({})
     })
     .test("file URI decoding rejects remote hosts", fn() {
@@ -227,7 +227,7 @@ pub fn suite() runner.Suite {
     })
     .test("path to file URI percent-encodes reserved bytes", fn() {
       uri := identity.path_to_file_uri("/tmp/a b#c.tw")
-      try assert.str_eq(uri, "file:///tmp/a%20b%23c.tw")
+      try assert.equal(uri, "file:///tmp/a%20b%23c.tw")
       .Ok({})
     })
     .test("source overlay prefers open document text", fn() {
@@ -236,10 +236,10 @@ pub fn suite() runner.Suite {
         overlay.OverlayDocument.{ identity: id, text: "open text", version: .Some(7) },
       ])
       source := try overlay.lookup(ov, id)
-      try assert.str_eq(source.text, "open text")
+      try assert.equal(source.text, "open text")
       try assert.is_true(source.from_overlay)
       case source.version {
-        .Some(v) => try assert.int_eq(v, 7),
+        .Some(v) => try assert.equal(v, 7),
         .None => { return assert.fail("expected overlay version") },
       }
       .Ok({})
@@ -249,16 +249,16 @@ pub fn suite() runner.Suite {
     .test("diagnostic construction", fn() {
       s := span.new(0, 0, 5)
       d := diag.error(s, "something went wrong")
-      try assert.str_eq(d.message(), "something went wrong")
-      try assert.int_eq(d.span().start, 0)
-      try assert.int_eq(d.span().end, 5)
+      try assert.equal(d.message(), "something went wrong")
+      try assert.equal(d.span().start, 0)
+      try assert.equal(d.span().end, 5)
       .Ok({})
     })
     .test("stage_result holds value and diagnostics", fn() {
       d := diag.error(span.new(0, 0, 1), "warn")
       sr := diag.stage_result(42, [d])
-      try assert.int_eq(sr.value, 42)
-      try assert.int_eq(sr.diagnostics.len(), 1)
+      try assert.equal(sr.value, 42)
+      try assert.equal(sr.diagnostics.len(), 1)
       .Ok({})
     })
 }

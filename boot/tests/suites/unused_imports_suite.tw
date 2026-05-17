@@ -46,7 +46,7 @@ pub fn suite() runner.Suite {
         make_value_item("C"),
       ]))
       result := reconstruct_use_decl(decl, ["B"])
-      try assert.str_eq(result, "use foo.{A, C}\n")
+      try assert.equal(result, "use foo.{A, C}\n")
       .Ok({})
     })
     .test("reconstruct_use_decl: all items unused produces empty string", fn() {
@@ -55,7 +55,7 @@ pub fn suite() runner.Suite {
         make_value_item("B"),
       ]))
       result := reconstruct_use_decl(decl, ["A", "B"])
-      try assert.str_eq(result, "")
+      try assert.equal(result, "")
       .Ok({})
     })
     .test("reconstruct_use_decl: single item kept uses brace syntax", fn() {
@@ -64,7 +64,7 @@ pub fn suite() runner.Suite {
         make_value_item("Y"),
       ]))
       result := reconstruct_use_decl(decl, ["Y"])
-      try assert.str_eq(result, "use foo.bar.{X}\n")
+      try assert.equal(result, "use foo.bar.{X}\n")
       .Ok({})
     })
     .test("reconstruct_use_decl: preserves aliases", fn() {
@@ -73,7 +73,7 @@ pub fn suite() runner.Suite {
         make_value_item("sub"),
       ]))
       result := reconstruct_use_decl(decl, ["sub"])
-      try assert.str_eq(result, "use lib.math.{add as plus}\n")
+      try assert.equal(result, "use lib.math.{add as plus}\n")
       .Ok({})
     })
     .test("reconstruct_use_decl: handles type items", fn() {
@@ -83,7 +83,7 @@ pub fn suite() runner.Suite {
         make_value_item("baz"),
       ]))
       result := reconstruct_use_decl(decl, ["Bar"])
-      try assert.str_eq(result, "use models.{Foo, baz}\n")
+      try assert.equal(result, "use models.{Foo, baz}\n")
       .Ok({})
     })
     .test("reconstruct_use_decl: stdlib prefix", fn() {
@@ -96,7 +96,7 @@ pub fn suite() runner.Suite {
         span: dummy_span(),
       }
       result := reconstruct_use_decl(decl, ["write"])
-      try assert.str_eq(result, "use @std.fs.{read}\n")
+      try assert.equal(result, "use @std.fs.{read}\n")
       .Ok({})
     })
     .test("reconstruct_use_decl: relative prefix", fn() {
@@ -109,13 +109,13 @@ pub fn suite() runner.Suite {
         span: dummy_span(),
       }
       result := reconstruct_use_decl(decl, ["unused_fn"])
-      try assert.str_eq(result, "use .utils.{helper}\n")
+      try assert.equal(result, "use .utils.{helper}\n")
       .Ok({})
     })
     .test("reconstruct_use_decl: full module import produces empty string", fn() {
       decl := make_use_decl(["foo", "bar"], .None)
       result := reconstruct_use_decl(decl, ["bar"])
-      try assert.str_eq(result, "")
+      try assert.equal(result, "")
       .Ok({})
     })
     .test("reconstruct_use_decl: no items unused keeps all", fn() {
@@ -124,7 +124,7 @@ pub fn suite() runner.Suite {
         make_value_item("B"),
       ]))
       result := reconstruct_use_decl(decl, [])
-      try assert.str_eq(result, "use foo.{A, B}\n")
+      try assert.equal(result, "use foo.{A, B}\n")
       .Ok({})
     })
     // ── check_unused_imports ──
@@ -153,7 +153,7 @@ pub fn suite() runner.Suite {
       }
       result := check_unused_imports(module)
       // "remove" from `use foo.{remove}` should be flagged as unused
-      try assert.int_eq(result.items.len(), 1)
+      try assert.equal(result.items.len(), 1)
       try assert.str_contains(result.items[0].kind.message(), "remove")
       .Ok({})
     })
@@ -181,7 +181,7 @@ pub fn suite() runner.Suite {
       }
       result := check_unused_imports(module)
       // "translate" from `use foo.{translate}` should be flagged as unused
-      try assert.int_eq(result.items.len(), 1)
+      try assert.equal(result.items.len(), 1)
       try assert.str_contains(result.items[0].kind.message(), "translate")
       .Ok({})
     })
@@ -211,7 +211,7 @@ pub fn suite() runner.Suite {
         span: dummy_span(),
       }
       result := check_unused_imports(module)
-      try assert.int_eq(result.items.len(), 1)
+      try assert.equal(result.items.len(), 1)
       try assert.str_contains(result.items[0].kind.message(), "transform")
       .Ok({})
     })
@@ -237,13 +237,13 @@ pub fn suite() runner.Suite {
         span: dummy_span(),
       }
       result := check_unused_imports(module)
-      try assert.int_eq(result.items.len(), 0)
+      try assert.equal(result.items.len(), 0)
       .Ok({})
     })
     .test("check_unused_imports: empty module returns empty result", fn() {
       module := Module.{ items: [], span: dummy_span() }
       result := check_unused_imports(module)
-      try assert.int_eq(result.items.len(), 0)
+      try assert.equal(result.items.len(), 0)
       .Ok({})
     })
     .test("check_unused_imports: unused selective item returns edit info", fn() {
@@ -268,14 +268,14 @@ pub fn suite() runner.Suite {
         span: dummy_span(),
       }
       result := check_unused_imports(module)
-      try assert.int_eq(result.items.len(), 1)
+      try assert.equal(result.items.len(), 1)
       diag := result.items[0]
       try assert.str_contains(diag.kind.message(), "unused_fn")
       // Edit should span the whole use statement
-      try assert.int_eq(diag.edit.use_span.start, 0)
-      try assert.int_eq(diag.edit.use_span.end, 25)
+      try assert.equal(diag.edit.use_span.start, 0)
+      try assert.equal(diag.edit.use_span.end, 25)
       // Replacement should reconstruct with only used_fn
-      try assert.str_eq(diag.edit.replacement, "use foo.{used_fn}\n")
+      try assert.equal(diag.edit.replacement, "use foo.{used_fn}\n")
       .Ok({})
     })
 }

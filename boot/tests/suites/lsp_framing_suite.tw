@@ -5,8 +5,8 @@ use lib.lsp.framing
 pub fn suite() runner.Suite {
   runner.suite("lsp framing")
     .test("encodes content length header", fn() {
-      try assert.str_eq(framing.content_length_header("{}"), "Content-Length: 2\r\n")
-      try assert.str_eq(framing.encode_message("{}"), "Content-Length: 2\r\n\r\n{}")
+      try assert.equal(framing.content_length_header("{}"), "Content-Length: 2\r\n")
+      try assert.equal(framing.encode_message("{}"), "Content-Length: 2\r\n\r\n{}")
       .Ok({})
     })
     .test("decodes complete frame and rest", fn() {
@@ -14,9 +14,9 @@ pub fn suite() runner.Suite {
       result := try framing.try_decode_frame(input)
       case result {
         .Decoded(frame, rest) => {
-          try assert.str_eq(frame.body, "{}")
-          try assert.str_eq(rest, "next")
-          try assert.str_eq(try frame.headers["Content-Length"].ok_or("missing header"), "2")
+          try assert.equal(frame.body, "{}")
+          try assert.equal(rest, "next")
+          try assert.equal(try frame.headers["Content-Length"].ok_or("missing header"), "2")
           .Ok({})
         },
         .NeedMore => assert.fail("expected decoded frame"),
@@ -27,7 +27,7 @@ pub fn suite() runner.Suite {
       result := try framing.try_decode_frame(input)
       case result {
         .Decoded(frame, _) => {
-          try assert.str_eq(try frame.headers["Content-Type"].ok_or("missing header"), "application/vscode-jsonrpc; charset=utf-8")
+          try assert.equal(try frame.headers["Content-Type"].ok_or("missing header"), "application/vscode-jsonrpc; charset=utf-8")
           .Ok({})
         },
         .NeedMore => assert.fail("expected decoded frame"),
@@ -58,8 +58,8 @@ pub fn suite() runner.Suite {
       complete := partial.concat("}rest".utf8_bytes())
       case try framing.try_decode_frame_bytes(complete) {
         .DecodedBytes(frame, rest) => {
-          try assert.str_eq(frame.body, "{}")
-          try assert.str_eq(try String.from_utf8(rest).ok_or("invalid rest"), "rest")
+          try assert.equal(frame.body, "{}")
+          try assert.equal(try String.from_utf8(rest).ok_or("invalid rest"), "rest")
           .Ok({})
         },
         .NeedMoreBytes => assert.fail("expected decoded bytes"),

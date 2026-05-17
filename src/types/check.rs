@@ -35,7 +35,7 @@ pub struct TypeChecker {
 
     // Type variable scope — names in scope resolve to MonoType::Var
     type_var_scope: Vec<String>,
-    current_type_param_bounds: HashMap<String, String>,
+    current_type_param_bounds: HashMap<String, Vec<String>>,
 
     // Names declared `pub` at module scope — these cannot be rebound
     pub_bindings: HashSet<String>,
@@ -259,11 +259,8 @@ impl TypeChecker {
             &mut self.current_type_param_bounds,
             decl.type_params
                 .iter()
-                .filter_map(|p| {
-                    p.bound
-                        .as_ref()
-                        .map(|bound| (p.name.clone(), bound.clone()))
-                })
+                .filter(|p| !p.bounds.is_empty())
+                .map(|p| (p.name.clone(), p.bounds.clone()))
                 .collect(),
         );
 
@@ -1674,7 +1671,7 @@ impl TypeChecker {
     }
 
     fn has_stringify_bound(&self, ty: &MonoType) -> bool {
-        matches!(ty, MonoType::Var(name) if self.current_type_param_bounds.get(name).map(|b| b.as_str()) == Some("Stringify"))
+        matches!(ty, MonoType::Var(name) if self.current_type_param_bounds.get(name).map(|b| b.contains(&"Stringify".to_string())) == Some(true))
     }
 
     fn validate_stringify_type(
@@ -1754,7 +1751,12 @@ impl TypeChecker {
             ));
         }
         for (name, meta_ty) in var_to_meta {
-            if sig.type_param_bounds.get(&name).map(|b| b.as_str()) == Some("Stringify") {
+            if sig
+                .type_param_bounds
+                .get(&name)
+                .map(|b| b.contains(&"Stringify".to_string()))
+                == Some(true)
+            {
                 self.validate_stringify_type(&self.zonk(&meta_ty), active)?;
             }
         }
@@ -1769,7 +1771,12 @@ impl TypeChecker {
         span: Span,
     ) -> Result<(), ()> {
         for (name, meta_ty) in var_to_meta {
-            if sig.type_param_bounds.get(name).map(|b| b.as_str()) == Some("Stringify") {
+            if sig
+                .type_param_bounds
+                .get(name)
+                .map(|b| b.contains(&"Stringify".to_string()))
+                == Some(true)
+            {
                 let concrete = self.zonk(meta_ty);
                 if let Err(reason) = self.validate_stringify_type(&concrete, &mut HashSet::new()) {
                     self.errors.push(TypeError::UnsupportedFeature {

@@ -139,7 +139,7 @@ pub fn test_func_sig_entry() Result<Void, String> {
     param_types: [MonoType.Int, MonoType.Float],
     return_type: MonoType.Bool,
   }
-  try assert.int_eq(e.param_types.len(), 2)
+  try assert.equal(e.param_types.len(), 2)
   .Ok({})
 }
 
@@ -148,7 +148,7 @@ pub fn test_capture_entry() Result<Void, String> {
     local_id: mk_local(5),
     ty: MonoType.Int,
   }
-  try assert.int_eq(e.local_id.id, 5)
+  try assert.equal(e.local_id.id, 5)
   .Ok({})
 }
 
@@ -160,8 +160,8 @@ pub fn test_string_pool_entry() Result<Void, String> {
     byte_offset: 0,
     byte_len: 5,
   }
-  try assert.str_eq(e.global_sym, "$str_0")
-  try assert.int_eq(e.byte_len, 5)
+  try assert.equal(e.global_sym, "$str_0")
+  try assert.equal(e.byte_len, 5)
   .Ok({})
 }
 
@@ -172,7 +172,7 @@ pub fn test_plan_empty_module() Result<Void, String> {
   env := resolver.empty_env()
   builtins := empty_builtins()
   reg := plan(anf, env, builtins)
-  try assert.int_eq(reg.string_pool.len(), 0)
+  try assert.equal(reg.string_pool.len(), 0)
   .Ok({})
 }
 
@@ -259,13 +259,13 @@ pub fn test_plan_string_literals() Result<Void, String> {
   reg := plan(anf, env, builtins)
 
   // "hello" and "world" — 2 unique strings
-  try assert.int_eq(reg.string_pool.len(), 2)
+  try assert.equal(reg.string_pool.len(), 2)
   case reg.string_pool["hello"] {
-    .Some(entry) => try assert.int_eq(entry.byte_len, 5),
+    .Some(entry) => try assert.equal(entry.byte_len, 5),
     .None => { return assert.fail("missing 'hello' in string pool") },
   }
   case reg.string_pool["world"] {
-    .Some(entry) => try assert.int_eq(entry.byte_len, 5),
+    .Some(entry) => try assert.equal(entry.byte_len, 5),
     .None => { return assert.fail("missing 'world' in string pool") },
   }
   .Ok({})
@@ -287,26 +287,26 @@ pub fn test_plan_string_offsets() Result<Void, String> {
   anf := mk_module([f])
   reg := plan(anf, resolver.empty_env(), empty_builtins())
 
-  try assert.int_eq(reg.string_pool.len(), 3)
+  try assert.equal(reg.string_pool.len(), 3)
   // Offsets should be cumulative: "ab"=0, "cde"=2, "f"=5
   case reg.string_pool["ab"] {
     .Some(e) => {
-      try assert.int_eq(e.byte_offset, 0)
-      try assert.int_eq(e.byte_len, 2)
+      try assert.equal(e.byte_offset, 0)
+      try assert.equal(e.byte_len, 2)
     },
     .None => { return assert.fail("missing 'ab'") },
   }
   case reg.string_pool["cde"] {
     .Some(e) => {
-      try assert.int_eq(e.byte_offset, 2)
-      try assert.int_eq(e.byte_len, 3)
+      try assert.equal(e.byte_offset, 2)
+      try assert.equal(e.byte_len, 3)
     },
     .None => { return assert.fail("missing 'cde'") },
   }
   case reg.string_pool["f"] {
     .Some(e) => {
-      try assert.int_eq(e.byte_offset, 5)
-      try assert.int_eq(e.byte_len, 1)
+      try assert.equal(e.byte_offset, 5)
+      try assert.equal(e.byte_len, 1)
     },
     .None => { return assert.fail("missing 'f'") },
   }
@@ -341,8 +341,8 @@ pub fn test_plan_closure() Result<Void, String> {
   // Should have capture layout for func 200
   case reg.capture_layouts[200] {
     .Some(caps) => {
-      try assert.int_eq(caps.len(), 1)
-      try assert.int_eq(caps[0].local_id.id, 0)
+      try assert.equal(caps.len(), 1)
+      try assert.equal(caps[0].local_id.id, 0)
       .Ok({})
     },
     .None => assert.fail("missing capture layout for func 200"),
@@ -413,7 +413,7 @@ pub fn test_plan_capture_types() Result<Void, String> {
 
   case reg.capture_layouts[200] {
     .Some(caps) => {
-      try assert.int_eq(caps.len(), 2)
+      try assert.equal(caps.len(), 2)
       // local 0 is Int (from param)
       try assert.ok(
         case caps[0].ty { .Int => true, _ => false },
@@ -455,7 +455,7 @@ pub fn test_plan_closure_func_sigs() Result<Void, String> {
   // concrete_func_sigs should have entry for func 200
   case reg.concrete_func_sigs[200] {
     .Some(sig) => {
-      try assert.int_eq(sig.param_types.len(), 1)
+      try assert.equal(sig.param_types.len(), 1)
       try assert.ok(
         case sig.param_types[0] { .Int => true, _ => false },
         "expected param type Int",
@@ -501,7 +501,7 @@ pub fn test_plan_higher_order_global_function_arg_registers_func_sig() Result<Vo
 
   case reg.concrete_func_sigs[300] {
     .Some(sig) => {
-      try assert.int_eq(sig.param_types.len(), 1)
+      try assert.equal(sig.param_types.len(), 1)
       try assert.ok(
         case sig.param_types[0] { .Int => true, _ => false },
         "expected higher-order bare global arg param type Int",
@@ -544,7 +544,7 @@ pub fn test_plan_builtin_higher_order_global_function_arg_registers_func_sig() R
 
   case reg.concrete_func_sigs[bi.id(builtins, "int_to_string").id] {
     .Some(sig) => {
-      try assert.int_eq(sig.param_types.len(), 1)
+      try assert.equal(sig.param_types.len(), 1)
       try assert.ok(case sig.param_types[0] { .Int => true, _ => false }, "expected builtin higher-order param type Int")
       try assert.ok(case sig.return_type { .String => true, _ => false }, "expected builtin higher-order return type String")
       .Ok({})
@@ -615,11 +615,11 @@ pub fn test_plan_runtime_imports() Result<Void, String> {
   for imp in reg.runtime_imports {
     if imp.name == "println" {
       found = true
-      try assert.int_eq(imp.params.len(), 1)
+      try assert.equal(imp.params.len(), 1)
       case imp.params[0] {
         .Ref(nullable, .Named(name)) => {
-          try assert.bool_eq(nullable, true)
-          try assert.str_eq(name, "rt_types__String")
+          try assert.equal(nullable, true)
+          try assert.equal(name, "rt_types__String")
         },
         _ => { return assert.fail("expected println import param to use builtin ABI ref null $String") },
       }
@@ -678,8 +678,8 @@ pub fn test_registry_empty() Result<Void, String> {
     string_pool_next_offset: 0,
     runtime_imports: [],
   }
-  try assert.int_eq(reg.type_defs.len(), 0)
-  try assert.int_eq(reg.runtime_imports.len(), 0)
+  try assert.equal(reg.type_defs.len(), 0)
+  try assert.equal(reg.runtime_imports.len(), 0)
   .Ok({})
 }
 

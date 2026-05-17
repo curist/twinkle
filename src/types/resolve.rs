@@ -530,14 +530,11 @@ impl Resolver {
 
     fn resolve_function_sig(&mut self, decl: &FunctionDecl) -> Result<FunctionSignature, ()> {
         let type_params: Vec<String> = decl.type_params.iter().map(|p| p.name.clone()).collect();
-        let type_param_bounds: HashMap<String, String> = decl
+        let type_param_bounds: HashMap<String, Vec<String>> = decl
             .type_params
             .iter()
-            .filter_map(|p| {
-                p.bound
-                    .as_ref()
-                    .map(|bound| (p.name.clone(), bound.clone()))
-            })
+            .filter(|p| !p.bounds.is_empty())
+            .map(|p| (p.name.clone(), p.bounds.clone()))
             .collect();
 
         // Resolve parameter types (type param names resolve to Var)

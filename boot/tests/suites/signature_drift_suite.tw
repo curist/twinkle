@@ -108,7 +108,7 @@ pub fn suite() runner.Suite {
       try assert.is_none(make_builtin_registry().entry_by_canonical("Vector.to_string"))
       internal := to_internal_name(.Some("Vector"), "to_string")
       try assert.is_some(lookup_registered_function(env, internal))
-      try assert.str_eq(try lookup_method(env, "Vector", "to_string").ok_or("missing Vector.to_string method"), internal)
+      try assert.equal(try lookup_method(env, "Vector", "to_string").ok_or("missing Vector.to_string method"), internal)
       .Ok({})
     })
 

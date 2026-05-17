@@ -167,7 +167,7 @@ fn test_literal_int() Result<Void, String> {
   body := try anf_body("fn f() Int { 42 }")
   // Body should be just an atom: ALitInt(42)
   case body {
-    .Atom(.ALitInt(n)) => assert.int_eq(n, 42),
+    .Atom(.ALitInt(n)) => assert.equal(n, 42),
     _ => assert.fail("expected Atom(ALitInt(42)), got let-chain or other"),
   }
 }
@@ -175,7 +175,7 @@ fn test_literal_int() Result<Void, String> {
 fn test_literal_bool() Result<Void, String> {
   body := try anf_body("fn f() Bool { true }")
   case body {
-    .Atom(.ALitBool(b)) => assert.bool_eq(b, true),
+    .Atom(.ALitBool(b)) => assert.equal(b, true),
     _ => assert.fail("expected Atom(ALitBool)"),
   }
 }
@@ -183,7 +183,7 @@ fn test_literal_bool() Result<Void, String> {
 fn test_literal_string() Result<Void, String> {
   body := try anf_body("fn f() String { \"hi\" }")
   case body {
-    .Atom(.ALitStr(s)) => assert.str_eq(s, "hi"),
+    .Atom(.ALitStr(s)) => assert.equal(s, "hi"),
     _ => assert.fail("expected Atom(ALitStr)"),
   }
 }
@@ -199,13 +199,13 @@ fn test_literal_void() Result<Void, String> {
 fn test_binop_add() Result<Void, String> {
   body := try anf_body("fn f() Int { 1 + 2 }")
   // Should be: Let(tmp, ABinOp(Add, ALitInt(1), ALitInt(2), Int), Atom(ALocal(tmp)))
-  try assert.int_eq(count_lets(body), 1)
+  try assert.equal(count_lets(body), 1)
   op := try nth_op(body, 0).ok_or("no op")
   case op {
     .ABinOp(binop, left, right, kind) => {
       case binop { .Add => {}, _ => { return .Err("expected Add") } }
-      case left { .ALitInt(n) => try assert.int_eq(n, 1), _ => { return .Err("expected ALitInt(1)") } }
-      case right { .ALitInt(n) => try assert.int_eq(n, 2), _ => { return .Err("expected ALitInt(2)") } }
+      case left { .ALitInt(n) => try assert.equal(n, 1), _ => { return .Err("expected ALitInt(1)") } }
+      case right { .ALitInt(n) => try assert.equal(n, 2), _ => { return .Err("expected ALitInt(2)") } }
       case kind { .Int => .Ok({}), _ => assert.fail("expected Int kind") }
     },
     _ => assert.fail("expected ABinOp"),
@@ -214,7 +214,7 @@ fn test_binop_add() Result<Void, String> {
 
 fn test_unop_neg() Result<Void, String> {
   body := try anf_body("fn f() Int { -5 }")
-  try assert.int_eq(count_lets(body), 1)
+  try assert.equal(count_lets(body), 1)
   op := try nth_op(body, 0).ok_or("no op")
   case op {
     .AUnOp(unop, atom, kind) => {
@@ -237,7 +237,7 @@ fn test_array_lit() Result<Void, String> {
   body := try anf_body("fn f() Vector<Int> { [1, 2, 3] }")
   op := try nth_op(body, 0).ok_or("no op")
   case op {
-    .AArrayLit(elems) => assert.int_eq(elems.len(), 3),
+    .AArrayLit(elems) => assert.equal(elems.len(), 3),
     _ => assert.fail("expected AArrayLit"),
   }
 }
@@ -245,7 +245,7 @@ fn test_array_lit() Result<Void, String> {
 fn test_nested_binop() Result<Void, String> {
   // (1 + 2) * 3 should produce two let-bindings
   body := try anf_body("fn f() Int { (1 + 2) * 3 }")
-  try assert.int_eq(count_lets(body), 2)
+  try assert.equal(count_lets(body), 2)
   .Ok({})
 }
 
@@ -261,7 +261,7 @@ fn test_return() Result<Void, String> {
   body := try anf_body("fn f() Int { return 99 }")
   // Should produce Return(Some(ALitInt(99)))
   case body {
-    .Return(.Some(.ALitInt(n))) => assert.int_eq(n, 99),
+    .Return(.Some(.ALitInt(n))) => assert.equal(n, 99),
     _ => assert.fail("expected Return(Some(ALitInt(99)))"),
   }
 }

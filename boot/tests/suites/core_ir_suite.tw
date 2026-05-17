@@ -367,7 +367,7 @@ pub fn suite() runner.Suite {
         span: span.new(0, 0, 2),
       }
       case expr.kind {
-        .LitInt(n) => assert.int_eq(n, 42),
+        .LitInt(n) => assert.equal(n, 42),
         _ => .Err("expected LitInt"),
       }
     })
@@ -385,8 +385,8 @@ pub fn suite() runner.Suite {
         return_ty: mono_type.MonoType.Int,
         is_init: false,
       }
-      try assert.str_eq(def.name, "test")
-      assert.int_eq(def.params.len(), 1)
+      try assert.equal(def.name, "test")
+      assert.equal(def.params.len(), 1)
     })
     .test("CoreModule construction", fn() Result<Void, String> {
       mod := core_ir.CoreModule.{
@@ -396,27 +396,27 @@ pub fn suite() runner.Suite {
         func_table: Dict.new(),
         extern_imports: Dict.new(),
       }
-      assert.int_eq(mod.functions.len(), 0)
+      assert.equal(mod.functions.len(), 0)
     })
     // ── M2: Literals, identifiers, let bindings ───────────────────────
     .test("lower int literal", fn() Result<Void, String> {
       body := try lower_fn_body("fn f() Int { 42 }")
       case body.kind {
-        .LitInt(n) => assert.int_eq(n, 42),
+        .LitInt(n) => assert.equal(n, 42),
         _ => .Err("expected LitInt, got other kind"),
       }
     })
     .test("lower hex literal", fn() Result<Void, String> {
       body := try lower_fn_body("fn f() Int { 0xFF }")
       case body.kind {
-        .LitInt(n) => assert.int_eq(n, 255),
+        .LitInt(n) => assert.equal(n, 255),
         _ => .Err("expected LitInt, got other kind"),
       }
     })
     .test("lower string literal", fn() Result<Void, String> {
       body := try lower_fn_body("fn f() String { \"hello\" }")
       case body.kind {
-        .LitStr(s) => assert.str_eq(s, "hello"),
+        .LitStr(s) => assert.equal(s, "hello"),
         _ => .Err("expected LitStr, got other kind"),
       }
     })
@@ -440,9 +440,9 @@ pub fn suite() runner.Suite {
         .Let(local, val, inner_body) => {
           case val.kind {
             .LitInt(n) => {
-              try assert.int_eq(n, 5)
+              try assert.equal(n, 5)
               case inner_body.kind {
-                .Local(ref) => assert.int_eq(ref.id, local.id),
+                .Local(ref) => assert.equal(ref.id, local.id),
                 _ => .Err("expected Local in body"),
               }
             },
@@ -463,8 +463,8 @@ pub fn suite() runner.Suite {
                 .LitInt(a) => {
                   case rhs.kind {
                     .LitInt(b) => {
-                      try assert.int_eq(a, 1)
-                      assert.int_eq(b, 2)
+                      try assert.equal(a, 1)
+                      assert.equal(b, 2)
                     },
                     _ => .Err("expected LitInt rhs"),
                   }
@@ -489,8 +489,8 @@ pub fn suite() runner.Suite {
                 .LitInt(a) => {
                   case else_e.kind {
                     .LitInt(b2) => {
-                      try assert.int_eq(a, 1)
-                      assert.int_eq(b2, 2)
+                      try assert.equal(a, 1)
+                      assert.equal(b2, 2)
                     },
                     _ => .Err("expected LitInt else"),
                   }
@@ -511,7 +511,7 @@ pub fn suite() runner.Suite {
           case op {
             .Neg => {
               case operand.kind {
-                .LitInt(n) => assert.int_eq(n, 42),
+                .LitInt(n) => assert.equal(n, 42),
                 _ => .Err("expected LitInt operand"),
               }
             },
@@ -550,7 +550,7 @@ pub fn suite() runner.Suite {
               // add should have been assigned a FuncId
               reg := make_builtin_registry()
               try assert.ok(fid.id >= reg.next_id, "FuncId should be >= user func start")
-              assert.int_eq(args.len(), 2)
+              assert.equal(args.len(), 2)
             },
             _ => .Err("expected GlobalFunc callee"),
           }
@@ -560,7 +560,7 @@ pub fn suite() runner.Suite {
     })
     .test("distinct FuncIds for multiple functions", fn() Result<Void, String> {
       lr := try lower_src("fn a() Int { 1 }\nfn b() Int { 2 }\nfn c() Int { 3 }")
-      try assert.int_eq(lr.module.functions.len(), 3)
+      try assert.equal(lr.module.functions.len(), 3)
       f0 := lr.module.functions[0].func_id.id
       f1 := lr.module.functions[1].func_id.id
       f2 := lr.module.functions[2].func_id.id
@@ -578,7 +578,7 @@ pub fn suite() runner.Suite {
       body := lr.module.functions[0].body
       case body.kind {
         .Record(tid, fields) => {
-          assert.int_eq(fields.len(), 2)
+          assert.equal(fields.len(), 2)
         },
         _ => .Err("expected Record"),
       }
@@ -598,7 +598,7 @@ pub fn suite() runner.Suite {
       body := lr.module.functions[0].body
       case body.kind {
         .Match(scrut, arms) => {
-          assert.int_eq(arms.len(), 2)
+          assert.equal(arms.len(), 2)
         },
         _ => .Err("expected Match"),
       }
@@ -622,7 +622,7 @@ pub fn suite() runner.Suite {
           case val {
             .Some(e) => {
               case e.kind {
-                .LitInt(n) => assert.int_eq(n, 42),
+                .LitInt(n) => assert.equal(n, 42),
                 _ => .Err("expected LitInt in return value"),
               }
             },
@@ -643,7 +643,7 @@ pub fn suite() runner.Suite {
             .Let(_, assign_val, _) => {
               case assign_val.kind {
                 .Assign(target, _) => {
-                  assert.int_eq(target.id, x_local.id)
+                  assert.equal(target.id, x_local.id)
                 },
                 _ => .Err("expected Assign"),
               }
@@ -757,7 +757,7 @@ pub fn suite() runner.Suite {
     .test("lower array literal", fn() Result<Void, String> {
       body := try lower_fn_body("fn f() Vector<Int> { [1, 2, 3] }")
       case body.kind {
-        .ArrayLit(elems) => assert.int_eq(elems.len(), 3),
+        .ArrayLit(elems) => assert.equal(elems.len(), 3),
         _ => .Err("expected ArrayLit"),
       }
     })
@@ -1032,8 +1032,8 @@ pub fn suite() runner.Suite {
         .Call(callee, args) => {
           case callee.kind {
             .GlobalFunc(fid) => {
-              try assert.int_eq(fid.id, get_x_fid)
-              assert.int_eq(args.len(), 1)  // receiver p is the arg
+              try assert.equal(fid.id, get_x_fid)
+              assert.equal(args.len(), 1)  // receiver p is the arg
             },
             _ => .Err("expected GlobalFunc callee for method call"),
           }
@@ -1047,7 +1047,7 @@ pub fn suite() runner.Suite {
       body := lr.module.functions[1].body
       case body.kind {
         .Match(_, arms) => {
-          try assert.int_eq(arms.len(), 4)
+          try assert.equal(arms.len(), 4)
           case arms[0].body.kind {
             .Match(_, _) => .Ok({}),
             _ => .Err("expected nested Match in unit-sum equality arm"),
@@ -1101,7 +1101,7 @@ pub fn suite() runner.Suite {
         .Record(f_tid, _) => {
           case g_body.kind {
             .Record(g_tid, _) => {
-              try assert.int_eq(g_tid.id, f_tid.id)
+              try assert.equal(g_tid.id, f_tid.id)
               .Ok({})
             },
             _ => .Err("expected Record in g"),
@@ -1127,7 +1127,7 @@ pub fn suite() runner.Suite {
       // Just check it lowers without error and has a Match
       case body.kind {
         .Match(_, arms) => {
-          try assert.int_eq(arms.len(), 2)
+          try assert.equal(arms.len(), 2)
           .Ok({})
         },
         _ => .Err("expected Match"),
@@ -1163,12 +1163,12 @@ pub fn suite() runner.Suite {
 
       filter_id := try lr.func_table["filter"].ok_or("expected filter in func_table")
       vector_filter_id := try lr.func_table["vector_filter"].ok_or("expected vector_filter in func_table")
-      try assert.int_eq(filter_id.id, vector_filter_id.id)
+      try assert.equal(filter_id.id, vector_filter_id.id)
 
       case lr.imported_func_origins[filter_id.id] {
         .Some(found) => {
-          try assert.str_eq(found.module_path, "prelude/vector.tw")
-          try assert.str_eq(found.func_name, "filter")
+          try assert.equal(found.module_path, "prelude/vector.tw")
+          try assert.equal(found.func_name, "filter")
           .Ok({})
         },
         .None => .Err("expected imported origin for shared prelude filter FuncId"),
@@ -1307,8 +1307,8 @@ pub fn suite() runner.Suite {
       func_table: Dict<String, core_ir.FuncId> = Dict.new()
       func_table["int_to_string"] = core_ir.FuncId.{ id: 42 }
       refs := dce.collect_func_refs(body, builtin_env(), func_table, func_map)
-      try assert.int_eq(refs.len(), 1)
-      try assert.int_eq(refs[0], 42)
+      try assert.equal(refs.len(), 1)
+      try assert.equal(refs[0], 42)
       .Ok({})
     })
     .test("core linker contract fallback indexes method suffixes", fn() Result<Void, String> {
@@ -1331,8 +1331,8 @@ pub fn suite() runner.Suite {
       func_map[42] = target
       func_table: Dict<String, core_ir.FuncId> = Dict.new()
       refs := dce.collect_func_refs(body, builtin_env(), func_table, func_map)
-      try assert.int_eq(refs.len(), 1)
-      try assert.int_eq(refs[0], 42)
+      try assert.equal(refs.len(), 1)
+      try assert.equal(refs[0], 42)
       .Ok({})
     })
     .test("monomorphize transitive generics", fn() Result<Void, String> {

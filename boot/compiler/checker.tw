@@ -7,6 +7,7 @@ use lib.source.span.{Span}
 use lib.source.diagnostics.{DiagKind}
 use .resolver.{ResolvedEnv, FunctionSig, ResolvedField, ResolvedTypeParam, resolved_type_param_names}
 use .mono_type.{MonoType, TypeId}
+use .type_util.{subst_type_params}
 
 use .contracts.{BuiltinContract, ContractMethodRequirement, ContractReturnShape}
 use .ast.{Module, FunctionDecl, Param, Block, Stmt, LetStmt, ReturnStmt, ForStmt, Expr, TypeExpr, BinOp, UnOp, StringPart, RecordEntry, CaseArm, Pattern, CollectExpr}
@@ -27,6 +28,7 @@ pub type InferCtx = .{
   call_expected_ret: MonoType?,
   pub_names: Dict<String, Bool>,
   method_calls: Dict<Int, MethodCallInfo>,
+  contract_cache: Dict<String, Bool>,
 }
 
 pub type MethodCallInfo = .{
@@ -65,6 +67,7 @@ fn empty_ctx(env: ResolvedEnv, module_aliases: Dict<String, Bool>) InferCtx {
     call_expected_ret: .None,
     pub_names: Dict.new(),
     method_calls: Dict.new(),
+    contract_cache: Dict.new(),
   }
 }
 
@@ -450,9 +453,8 @@ fn pre_unify_return(ctx: InferCtx, inst_ret: MonoType, call_expected: MonoType?,
 
 fn same_builtin_contract(a: BuiltinContract, b: BuiltinContract) Bool {
   case a {
-    .Stringify => case b {
-      .Stringify => true,
-    },
+    .Stringify => case b { .Stringify => true, _ => false },
+    .Eq => case b { .Eq => true, _ => false },
   }
 }
 
@@ -463,12 +465,14 @@ fn contract_name(contract: BuiltinContract) String {
 fn contract_return_type(shape: ContractReturnShape) MonoType {
   case shape {
     .String => .String,
+    .Bool => .Bool,
   }
 }
 
 fn contract_requirement_summary(req: ContractMethodRequirement) String {
   ret_name := case req.ret {
     .String => "String",
+    .Bool => "Bool",
   }
   if req.arg_count_without_receiver == 0 {
     return "${req.method_name}(self) -> ${ret_name}"
@@ -502,7 +506,12 @@ fn type_var_has_contract(name: String, contract: BuiltinContract, scope: Vector<
   false
 }
 
-fn lookup_scoped_contract_method(base_ty: MonoType, method_name: String, scope: Vector<ResolvedTypeParam>) ContractMethodRequirement? {
+type ScopedContractMatch = .{
+  contract: BuiltinContract,
+  req: ContractMethodRequirement,
+}
+
+fn lookup_scoped_contract_method(base_ty: MonoType, method_name: String, scope: Vector<ResolvedTypeParam>) ScopedContractMatch? {
   name := case base_ty {
     .Var(n) => n,
     _ => { return .None },
@@ -516,7 +525,7 @@ fn lookup_scoped_contract_method(base_ty: MonoType, method_name: String, scope: 
       .Builtin(contract) => {
         for req in contract.methods() {
           if req.method_name == method_name {
-            return .Some(req)
+            return .Some(.{ contract, req })
           }
         }
       },
@@ -528,6 +537,14 @@ fn lookup_scoped_contract_method(base_ty: MonoType, method_name: String, scope: 
 fn builtin_contract_satisfied_by_primitive(ty: MonoType, contract: BuiltinContract) Bool {
   case contract {
     .Stringify => case ty {
+      .Int => true,
+      .Float => true,
+      .Bool => true,
+      .Byte => true,
+      .String => true,
+      _ => false,
+    },
+    .Eq => case ty {
       .Int => true,
       .Float => true,
       .Bool => true,
@@ -596,10 +613,99 @@ fn prove_contract_method(ty: MonoType, contract: BuiltinContract, req: ContractM
   .Ok(cur_ctx)
 }
 
+fn contract_supports_auto_derive(contract: BuiltinContract) Bool {
+  case contract {
+    .Eq => true,
+    .Stringify => false,
+  }
+}
+
+fn try_builtin_container_contract(ty: MonoType, contract: BuiltinContract, ctx: InferCtx, active: Dict<String, Bool>) Result<InferCtx, String>? {
+  case contract {
+    .Eq => {
+      case ty {
+        .Optional(inner) => {
+          .Some(prove_contract(inner, .Eq, ctx, active))
+        },
+        .Result(ok, err) => {
+          case prove_contract(ok, .Eq, ctx, active) {
+            .Ok(ctx2) => .Some(prove_contract(err, .Eq, ctx2, active)),
+            .Err(e) => .Some(.Err(e)),
+          }
+        },
+        .Vector(elem) => {
+          .Some(prove_contract(elem, .Eq, ctx, active))
+        },
+        .Dict(k, v) => {
+          case prove_contract(k, .Eq, ctx, active) {
+            .Ok(ctx2) => .Some(prove_contract(v, .Eq, ctx2, active)),
+            .Err(e) => .Some(.Err(e)),
+          }
+        },
+        _ => .None,
+      }
+    },
+    .Stringify => .None,
+  }
+}
+
+fn try_auto_derive_eq(ty: MonoType, ctx: InferCtx, active: Dict<String, Bool>) Result<InferCtx, String>? {
+  case ty {
+    .Named(tid, type_args) => {
+      case ctx.env.lookup_type_def(tid) {
+        .Some(def) => case def {
+          .Record(_, type_params, fields) => {
+            cur_ctx := ctx
+            for field in fields {
+              field_ty := subst_type_params(field.ty, type_params, type_args)
+              case prove_contract(field_ty, .Eq, cur_ctx, active) {
+                .Ok(next_ctx) => { cur_ctx = next_ctx },
+                .Err(reason) => { return .Some(.Err(reason)) },
+              }
+            }
+            .Some(.Ok(cur_ctx))
+          },
+          .Sum(_, type_params, variants) => {
+            cur_ctx := ctx
+            for variant in variants {
+              for payload_ty in variant.fields {
+                concrete_ty := subst_type_params(payload_ty, type_params, type_args)
+                case prove_contract(concrete_ty, .Eq, cur_ctx, active) {
+                  .Ok(next_ctx) => { cur_ctx = next_ctx },
+                  .Err(reason) => { return .Some(.Err(reason)) },
+                }
+              }
+            }
+            .Some(.Ok(cur_ctx))
+          },
+          .Alias(_, _, _) => .None,
+        },
+        .None => .None,
+      }
+    },
+    _ => .None,
+  }
+}
+
 fn prove_contract(ty: MonoType, contract: BuiltinContract, ctx: InferCtx, active: Dict<String, Bool>) Result<InferCtx, String> {
   zonked := expand_alias(zonk(ty, ctx.subst), ctx.env, 0)
   key := "${ctx.env.ty_to_string_env(zonked)}::${contract_name(contract)}"
+
+  // Check proof cache first
+  case ctx.contract_cache.get(key) {
+    .Some(satisfied) => {
+      if satisfied { return .Ok(ctx) }
+      else { return .Err("type ${ctx.env.ty_to_string_env(zonked)} does not satisfy ${contract_name(contract)}") }
+    },
+    .None => {},
+  }
+
   if active.has(key) {
+    // Coinductive: for auto-derivable contracts, assume satisfaction holds
+    // for recursive types (structural equality on recursive types is well-defined)
+    if contract_supports_auto_derive(contract) {
+      return .Ok(ctx)
+    }
     return .Err("cyclic proof for ${ctx.env.ty_to_string_env(zonked)}: ${contract_name(contract)}")
   }
   active[key] = true
@@ -614,18 +720,64 @@ fn prove_contract(ty: MonoType, contract: BuiltinContract, ctx: InferCtx, active
   }
 
   if builtin_contract_satisfied_by_primitive(zonked, contract) {
+    ctx.contract_cache[key] = true
     return .Ok(ctx)
   }
 
+  // Conditional satisfaction for builtin container types
+  case try_builtin_container_contract(zonked, contract, ctx, active) {
+    .Some(result) => {
+      case result {
+        .Ok(ok_ctx) => {
+          ok_ctx.contract_cache[key] = true
+          return .Ok(ok_ctx)
+        },
+        .Err(e) => {
+          ctx.contract_cache[key] = false
+          return .Err(e)
+        },
+      }
+    },
+    .None => {},
+  }
+
+  // Try explicit method lookup first (user-defined eq takes priority)
   cur_ctx := ctx
+  method_ok := true
   for req in contract.methods() {
     proof := prove_contract_method(zonked, contract, req, cur_ctx, active)
     case proof {
       .Ok(next_ctx) => { cur_ctx = next_ctx },
-      .Err(reason) => { return .Err(reason) },
+      .Err(_) => { method_ok = false },
     }
   }
-  .Ok(cur_ctx)
+  if method_ok {
+    cur_ctx.contract_cache[key] = true
+    return .Ok(cur_ctx)
+  }
+
+  // Fall back to auto-derive for contracts that support it (currently Eq only)
+  if contract_supports_auto_derive(contract) {
+    case try_auto_derive_eq(zonked, ctx, active) {
+      .Some(result) => {
+        case result {
+          .Ok(ok_ctx) => {
+            ok_ctx.contract_cache[key] = true
+            return .Ok(ok_ctx)
+          },
+          .Err(e) => {
+            ctx.contract_cache[key] = false
+            return .Err(e)
+          },
+        }
+      },
+      .None => {},
+    }
+  }
+
+  // Neither explicit method nor auto-derive succeeded
+  ctx.contract_cache[key] = false
+  .Err("type ${ctx.env.ty_to_string_env(zonked)} does not satisfy ${contract_name(contract)}")
 }
 
 fn satisfies_contract(ty: MonoType, contract: BuiltinContract, ctx: InferCtx) Result<InferCtx, String> {
@@ -1206,13 +1358,20 @@ fn try_synth_method_call(base: Expr, method_name: String, args: Vector<Expr>, ca
   br := ctx.synth(base, diags)
   base_ty := expand_alias(zonk(br.ty, br.ctx.subst), br.ctx.env, 0)
 
-  contract_req := lookup_scoped_contract_method(base_ty, method_name, br.ctx.type_var_scope)
-  case contract_req {
-    .Some(req) => {
-      ret_ty := contract_return_type(req.ret)
+  contract_match := lookup_scoped_contract_method(base_ty, method_name, br.ctx.type_var_scope)
+  case contract_match {
+    .Some(m) => {
+      ret_ty := contract_return_type(m.req.ret)
+      // Build expected params for non-receiver arguments (each typed as base_ty)
+      extra_params: Vector<MonoType> = []
+      i := 0
+      for i < m.req.arg_count_without_receiver {
+        extra_params = .append(base_ty)
+        i = i + 1
+      }
       pu := pre_unify_return(br.ctx, ret_ty, call_expected, callee_span, br.diags)
-      meta := MethodCallInfo.{ func_name: "", has_receiver: true, contract: .Some(.Stringify), method_name }
-      return .Some(check_instantiated_call(pu.ctx, pu.diags, [], ret_ty, args, callee_span, callee_id, callee_span_start, .Some(meta)))
+      meta := MethodCallInfo.{ func_name: "", has_receiver: true, contract: .Some(m.contract), method_name }
+      return .Some(check_instantiated_call(pu.ctx, pu.diags, extra_params, ret_ty, args, callee_span, callee_id, callee_span_start, .Some(meta)))
     },
     .None => {},
   }
@@ -1259,10 +1418,16 @@ fn try_synth_method_call(base: Expr, method_name: String, args: Vector<Expr>, ca
 }
 
 fn try_synth_method_value(base_ty: MonoType, method_name: String, s: Span, ctx: InferCtx, diags: Vector<DiagKind>) SynthOut? {
-  scoped_req := lookup_scoped_contract_method(base_ty, method_name, ctx.type_var_scope)
-  case scoped_req {
-    .Some(req) => {
-      return .Some(.{ ty: .Function([], contract_return_type(req.ret)), ctx, diags })
+  scoped_match := lookup_scoped_contract_method(base_ty, method_name, ctx.type_var_scope)
+  case scoped_match {
+    .Some(m) => {
+      extra_params: Vector<MonoType> = []
+      i := 0
+      for i < m.req.arg_count_without_receiver {
+        extra_params = .append(base_ty)
+        i = i + 1
+      }
+      return .Some(.{ ty: .Function(extra_params, contract_return_type(m.req.ret)), ctx, diags })
     },
     .None => {},
   }
@@ -2596,7 +2761,9 @@ fn synth_bool_op(lhs: Expr, rhs: Expr, s: Span, ctx: InferCtx, diags: Vector<Dia
   .{ ty: MonoType.Bool, ctx: u2.ctx, diags: u2.diags }
 }
 
-fn try_eq_directional(synth_side: Expr, check_side: Expr, s: Span, ctx: InferCtx, diags: Vector<DiagKind>) SynthOut? {
+type EqDirectionalResult = .{ operand_ty: MonoType, ctx: InferCtx, diags: Vector<DiagKind> }
+
+fn try_eq_directional(synth_side: Expr, check_side: Expr, s: Span, ctx: InferCtx, diags: Vector<DiagKind>) EqDirectionalResult? {
   // Synth one side, then try check_expr on the other with the inferred type.
   // If the entire attempt introduces no new diagnostics, use that result.
   pre_len := diags.len()
@@ -2607,7 +2774,7 @@ fn try_eq_directional(synth_side: Expr, check_side: Expr, s: Span, ctx: InferCtx
   }
   cr := lr.ctx.check_expr(check_side, lr.ty, lr.diags)
   if cr.diags.len() == pre_len {
-    .Some(.{ ty: MonoType.Bool, ctx: cr.ctx, diags: cr.diags })
+    .Some(.{ operand_ty: lr.ty, ctx: cr.ctx, diags: cr.diags })
   } else {
     .None
   }
@@ -2617,13 +2784,13 @@ fn synth_eq_op(lhs: Expr, rhs: Expr, s: Span, ctx: InferCtx, diags: Vector<DiagK
   // Attempt 1: synth left, check right against left's type
   r1 := try_eq_directional(lhs, rhs, s, ctx, diags)
   case r1 {
-    .Some(r) => { return r },
+    .Some(r) => { return check_eq_contract(r.operand_ty, r.ctx, r.diags, s) },
     .None => {},
   }
   // Attempt 2: synth right, check left against right's type
   r2 := try_eq_directional(rhs, lhs, s, ctx, diags)
   case r2 {
-    .Some(r) => { return r },
+    .Some(r) => { return check_eq_contract(r.operand_ty, r.ctx, r.diags, s) },
     .None => {},
   }
   // Fallback: synth both, unify, allow Byte/Int cross-comparison
@@ -2635,7 +2802,69 @@ fn synth_eq_op(lhs: Expr, rhs: Expr, s: Span, ctx: InferCtx, diags: Vector<DiagK
     return .{ ty: MonoType.Bool, ctx: rr.ctx, diags: rr.diags }
   }
   u := rr.ctx.unify(lr.ty, rr.ty, s, rr.diags)
-  .{ ty: MonoType.Bool, ctx: u.ctx, diags: u.diags }
+  unified_ty := zonk(lr.ty, u.ctx.subst)
+  check_eq_contract(unified_ty, u.ctx, u.diags, s)
+}
+
+fn check_eq_contract(operand_ty: MonoType, ctx: InferCtx, diags: Vector<DiagKind>, s: Span) SynthOut {
+  zonked := expand_alias(zonk(operand_ty, ctx.subst), ctx.env, 0)
+  // Skip check for meta variables (not yet resolved), primitives (always Eq),
+  // and type variables (enforced at call site via bounds, not at == site)
+  if is_primitive_eq(zonked) or contains_type_var(zonked) {
+    return .{ ty: MonoType.Bool, ctx, diags }
+  }
+  case zonked {
+    .MetaVar(_) => { return .{ ty: MonoType.Bool, ctx, diags } },
+    _ => {},
+  }
+  proof := satisfies_contract(zonked, .Eq, ctx)
+  case proof {
+    .Ok(next_ctx) => .{ ty: MonoType.Bool, ctx: next_ctx, diags },
+    .Err(reason) => {
+      .{ ty: MonoType.Bool, ctx, diags: diags.append(.Error(.ContractViolation(.{
+        span: s,
+        ty: zonked,
+        contract: "Eq",
+        owner: "==",
+        reason,
+      }))) }
+    },
+  }
+}
+
+fn is_primitive_eq(ty: MonoType) Bool {
+  case ty {
+    .Int => true,
+    .Float => true,
+    .Bool => true,
+    .Byte => true,
+    .String => true,
+    .Void => true,
+    _ => false,
+  }
+}
+
+fn contains_type_var(ty: MonoType) Bool {
+  case ty {
+    .Var(_) => true,
+    .Vector(inner) => contains_type_var(inner),
+    .Dict(k, v) => contains_type_var(k) or contains_type_var(v),
+    .Function(params, ret) => {
+      for p in params {
+        if contains_type_var(p) { return true }
+      }
+      contains_type_var(ret)
+    },
+    .Optional(inner) => contains_type_var(inner),
+    .Result(ok, err) => contains_type_var(ok) or contains_type_var(err),
+    .Named(_, args) => {
+      for a in args {
+        if contains_type_var(a) { return true }
+      }
+      false
+    },
+    _ => false,
+  }
 }
 
 fn synth_unary(op: UnOp, operand: Expr, s: Span, ctx: InferCtx, diags: Vector<DiagKind>) SynthOut {

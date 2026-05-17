@@ -21,7 +21,7 @@ pub fn suite() runner.Suite {
       src := "pub fn add(a: Int, b: Int) Int { a + b }"
       fp1 := fingerprint.fingerprint_exports(exports_for(src))
       fp2 := fingerprint.fingerprint_exports(exports_for(src))
-      try assert.int_eq(fp1, fp2)
+      try assert.equal(fp1, fp2)
       .Ok({})
     })
 
@@ -30,7 +30,7 @@ pub fn suite() runner.Suite {
       src2 := "pub fn add(a: Int, b: Int) Int { b + a }"
       fp1 := fingerprint.fingerprint_exports(exports_for(src1))
       fp2 := fingerprint.fingerprint_exports(exports_for(src2))
-      try assert.int_eq(fp1, fp2)
+      try assert.equal(fp1, fp2)
       .Ok({})
     })
 
@@ -66,7 +66,7 @@ pub fn suite() runner.Suite {
       src2 := "fn helper() Int { 999 }\npub fn foo() Int { helper() }"
       fp1 := fingerprint.fingerprint_exports(exports_for(src1))
       fp2 := fingerprint.fingerprint_exports(exports_for(src2))
-      try assert.int_eq(fp1, fp2)
+      try assert.equal(fp1, fp2)
       .Ok({})
     })
 

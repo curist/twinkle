@@ -79,7 +79,7 @@ pub fn suite() runner.Suite {
       // "42" is at offset 5-7, line 0 char 5
       step := server_core.handle_message(state, hover_request(1, "file:///a.tw", 0, 5))
       content := try hover_content(step)
-      try assert.str_eq(content, "```twinkle\nInt\n```")
+      try assert.equal(content, "```twinkle\nInt\n```")
       .Ok({})
     })
     .test("hover on string literal shows String", fn() {
@@ -87,14 +87,14 @@ pub fn suite() runner.Suite {
       // "hello" starts at offset 5, line 0 char 5
       step := server_core.handle_message(state, hover_request(1, "file:///a.tw", 0, 5))
       content := try hover_content(step)
-      try assert.str_eq(content, "```twinkle\nString\n```")
+      try assert.equal(content, "```twinkle\nString\n```")
       .Ok({})
     })
     .test("hover on boolean literal shows Bool", fn() {
       state := state_with_doc("file:///a.tw", "x := true\n")
       step := server_core.handle_message(state, hover_request(1, "file:///a.tw", 0, 5))
       content := try hover_content(step)
-      try assert.str_eq(content, "```twinkle\nBool\n```")
+      try assert.equal(content, "```twinkle\nBool\n```")
       .Ok({})
     })
     .test("hover on variable shows inferred type", fn() {
@@ -103,7 +103,7 @@ pub fn suite() runner.Suite {
       // "x" on line 1 is at char 5
       step := server_core.handle_message(state, hover_request(1, "file:///a.tw", 1, 5))
       content := try hover_content(step)
-      try assert.str_eq(content, "```twinkle\nInt\n```")
+      try assert.equal(content, "```twinkle\nInt\n```")
       .Ok({})
     })
     .test("hover on function name shows function type", fn() {
@@ -111,7 +111,7 @@ pub fn suite() runner.Suite {
       // "add" on line 1 at char 5
       step := server_core.handle_message(state, hover_request(1, "file:///a.tw", 1, 5))
       content := try hover_content(step)
-      try assert.str_eq(content, "```twinkle\nfn(a: Int, b: Int) Int\n```")
+      try assert.equal(content, "```twinkle\nfn(a: Int, b: Int) Int\n```")
       .Ok({})
     })
     .test("hover on argument shows argument type", fn() {
@@ -119,7 +119,7 @@ pub fn suite() runner.Suite {
       // "1" on line 1 at char 9
       step := server_core.handle_message(state, hover_request(1, "file:///a.tw", 1, 9))
       content := try hover_content(step)
-      try assert.str_eq(content, "```twinkle\nInt\n```")
+      try assert.equal(content, "```twinkle\nInt\n```")
       .Ok({})
     })
     .test("hover returns null for unknown document", fn() {
@@ -140,35 +140,35 @@ pub fn suite() runner.Suite {
       // "1" at char 5
       step := server_core.handle_message(state, hover_request(1, "file:///a.tw", 0, 5))
       content := try hover_content(step)
-      try assert.str_eq(content, "```twinkle\nInt\n```")
+      try assert.equal(content, "```twinkle\nInt\n```")
       .Ok({})
     })
     .test("hover on type annotation name shows type", fn() {
       state := state_with_doc("file:///a.tw", "type Program = .{ source: String }\nfn f(x: Program) Program { x }\n")
       step := server_core.handle_message(state, hover_request(1, "file:///a.tw", 1, 8))
       content := try hover_content(step)
-      try assert.str_eq(content, "```twinkle\nProgram\n```")
+      try assert.equal(content, "```twinkle\nProgram\n```")
       .Ok({})
     })
     .test("hover on function declaration name shows signature", fn() {
       state := state_with_doc("file:///a.tw", "fn make(x: Int) Int { x }\n")
       step := server_core.handle_message(state, hover_request(1, "file:///a.tw", 0, 4))
       content := try hover_content(step)
-      try assert.str_eq(content, "```twinkle\nfn(x: Int) Int\n```")
+      try assert.equal(content, "```twinkle\nfn(x: Int) Int\n```")
       .Ok({})
     })
     .test("hover on type declaration name shows type", fn() {
       state := state_with_doc("file:///a.tw", "type Program = .{ source: String }\n")
       step := server_core.handle_message(state, hover_request(1, "file:///a.tw", 0, 6))
       content := try hover_content(step)
-      try assert.str_eq(content, "```twinkle\nProgram\n```")
+      try assert.equal(content, "```twinkle\nProgram\n```")
       .Ok({})
     })
     .test("hover on top-level binding name shows inferred type", fn() {
       state := state_with_doc("file:///a.tw", "value := 42\n")
       step := server_core.handle_message(state, hover_request(1, "file:///a.tw", 0, 1))
       content := try hover_content(step)
-      try assert.str_eq(content, "```twinkle\nInt\n```")
+      try assert.equal(content, "```twinkle\nInt\n```")
       .Ok({})
     })
     .test("hover on case arm variant shows constructor", fn() {
@@ -176,7 +176,7 @@ pub fn suite() runner.Suite {
       state := state_with_doc("file:///a.tw", source)
       step := server_core.handle_message(state, hover_request(1, "file:///a.tw", 3, 5))
       content := try hover_content(step)
-      try assert.str_eq(content, "```twinkle\nParseError.HelpRequested(String)\n```")
+      try assert.equal(content, "```twinkle\nParseError.HelpRequested(String)\n```")
       .Ok({})
     })
     .test("hover on Result case arm variants shows constructors", fn() {
@@ -184,10 +184,10 @@ pub fn suite() runner.Suite {
       state := state_with_doc("file:///a.tw", source)
       ok_step := server_core.handle_message(state, hover_request(1, "file:///a.tw", 3, 5))
       ok_content := try hover_content(ok_step)
-      try assert.str_eq(ok_content, "```twinkle\nResult.Ok(Int)\n```")
+      try assert.equal(ok_content, "```twinkle\nResult.Ok(Int)\n```")
       err_step := server_core.handle_message(state, hover_request(2, "file:///a.tw", 4, 5))
       err_content := try hover_content(err_step)
-      try assert.str_eq(err_content, "```twinkle\nResult.Err(String)\n```")
+      try assert.equal(err_content, "```twinkle\nResult.Err(String)\n```")
       .Ok({})
     })
     .test("hover on receiver method name shows signature with param names", fn() {
@@ -199,7 +199,7 @@ pub fn suite() runner.Suite {
       // "inc" starts at char 12
       step := server_core.handle_message(state, hover_request(1, "file:///a.tw", 3, 12))
       content := try hover_content(step)
-      try assert.str_eq(content, "```twinkle\nfn(c: Counter) Counter\n```")
+      try assert.equal(content, "```twinkle\nfn(c: Counter) Counter\n```")
       .Ok({})
     })
     .test("hover on module-qualified function shows signature", fn() {
@@ -208,7 +208,7 @@ pub fn suite() runner.Suite {
       // hover on "add" in the call on line 1 at char 5
       step := server_core.handle_message(state, hover_request(1, "file:///a.tw", 1, 5))
       content := try hover_content(step)
-      try assert.str_eq(content, "```twinkle\nfn(a: Int, b: Int) Int\n```")
+      try assert.equal(content, "```twinkle\nfn(a: Int, b: Int) Int\n```")
       .Ok({})
     })
     .test("hover on destructured function import shows signature", fn() {
@@ -217,7 +217,7 @@ pub fn suite() runner.Suite {
       state := state_with_two_docs("file:///tmp/lsp-hover-import/dep.tw", dep, "file:///tmp/lsp-hover-import/main.tw", main)
       step := server_core.handle_message(state, hover_request(1, "file:///tmp/lsp-hover-import/main.tw", 0, 10))
       content := try hover_content(step)
-      try assert.str_eq(content, "```twinkle\nfn(a: Int, b: Int) Int\n```")
+      try assert.equal(content, "```twinkle\nfn(a: Int, b: Int) Int\n```")
       .Ok({})
     })
     .test("hover on destructured type import shows type", fn() {
@@ -226,7 +226,7 @@ pub fn suite() runner.Suite {
       state := state_with_two_docs("file:///tmp/lsp-hover-import-type/dep.tw", dep, "file:///tmp/lsp-hover-import-type/main.tw", main)
       step := server_core.handle_message(state, hover_request(1, "file:///tmp/lsp-hover-import-type/main.tw", 0, 10))
       content := try hover_content(step)
-      try assert.str_eq(content, "```twinkle\nPoint\n```")
+      try assert.equal(content, "```twinkle\nPoint\n```")
       .Ok({})
     })
     .test("hover stable across method name characters", fn() {
@@ -238,7 +238,7 @@ pub fn suite() runner.Suite {
       // hover on last char 'c' of "inc" at char 14
       step2 := server_core.handle_message(state, hover_request(2, "file:///a.tw", 3, 14))
       c2 := try hover_content(step2)
-      try assert.str_eq(c1, c2)
+      try assert.equal(c1, c2)
       .Ok({})
     })
     .test("hover on function parameter name shows type", fn() {
@@ -248,7 +248,7 @@ pub fn suite() runner.Suite {
       state := state_with_doc("file:///a.tw", "fn add(a: Int, b: Int) Int { a + b }\n")
       step := server_core.handle_message(state, hover_request(1, "file:///a.tw", 0, 7))
       content := try hover_content(step)
-      try assert.str_eq(content, "```twinkle\nInt\n```")
+      try assert.equal(content, "```twinkle\nInt\n```")
       .Ok({})
     })
     .test("hover on let binding name in function body shows type", fn() {
@@ -257,7 +257,7 @@ pub fn suite() runner.Suite {
       // "x" on line 1 at char 2
       step := server_core.handle_message(state, hover_request(1, "file:///a.tw", 1, 2))
       content := try hover_content(step)
-      try assert.str_eq(content, "```twinkle\nInt\n```")
+      try assert.equal(content, "```twinkle\nInt\n```")
       .Ok({})
     })
     .test("hover on for loop value binder shows element type", fn() {
@@ -267,7 +267,7 @@ pub fn suite() runner.Suite {
       //                  01234
       step := server_core.handle_message(state, hover_request(1, "file:///a.tw", 2, 6))
       content := try hover_content(step)
-      try assert.str_eq(content, "```twinkle\nInt\n```")
+      try assert.equal(content, "```twinkle\nInt\n```")
       .Ok({})
     })
     .test("hover on case pattern binder shows type", fn() {
@@ -277,7 +277,7 @@ pub fn suite() runner.Suite {
       //                                0123456789
       step := server_core.handle_message(state, hover_request(1, "file:///a.tw", 3, 10))
       content := try hover_content(step)
-      try assert.str_eq(content, "```twinkle\nInt\n```")
+      try assert.equal(content, "```twinkle\nInt\n```")
       .Ok({})
     })
     .test("hover on closure parameter shows type", fn() {
@@ -288,7 +288,7 @@ pub fn suite() runner.Suite {
       // x is at char 10
       step := server_core.handle_message(state, hover_request(1, "file:///a.tw", 1, 10))
       content := try hover_content(step)
-      try assert.str_eq(content, "```twinkle\nInt\n```")
+      try assert.equal(content, "```twinkle\nInt\n```")
       .Ok({})
     })
     .test("hover on user function call shows doc comment", fn() {
@@ -392,10 +392,10 @@ pub fn suite() runner.Suite {
       state := state_with_doc("file:///a.tw", source)
       some_step := server_core.handle_message(state, hover_request(1, "file:///a.tw", 3, 5))
       some_content := try hover_content(some_step)
-      try assert.str_eq(some_content, "```twinkle\nOption.Some(Int)\n```")
+      try assert.equal(some_content, "```twinkle\nOption.Some(Int)\n```")
       none_step := server_core.handle_message(state, hover_request(2, "file:///a.tw", 4, 5))
       none_content := try hover_content(none_step)
-      try assert.str_eq(none_content, "```twinkle\nOption.None\n```")
+      try assert.equal(none_content, "```twinkle\nOption.None\n```")
       .Ok({})
     })
     .test("hover on expression variant constructor shows constructor", fn() {
@@ -403,7 +403,7 @@ pub fn suite() runner.Suite {
       state := state_with_doc("file:///variant-expr.tw", source)
       step := server_core.handle_message(state, hover_request(1, "file:///variant-expr.tw", 1, 3))
       content := try hover_content(step)
-      try assert.str_eq(content, "```twinkle\nResult.Ok(Int)\n```")
+      try assert.equal(content, "```twinkle\nResult.Ok(Int)\n```")
       .Ok({})
     })
     .test("hover on qualified variant constructor shows constructor", fn() {
@@ -411,7 +411,7 @@ pub fn suite() runner.Suite {
       state := state_with_doc("file:///qualified-variant.tw", source)
       step := server_core.handle_message(state, hover_request(1, "file:///qualified-variant.tw", 1, 24))
       content := try hover_content(step)
-      try assert.str_eq(content, "```twinkle\nColor.Rgb(Int, Int, Int)\n```")
+      try assert.equal(content, "```twinkle\nColor.Rgb(Int, Int, Int)\n```")
       .Ok({})
     })
     .test("hover on imported qualified variant constructor shows constructor", fn() {
@@ -420,7 +420,7 @@ pub fn suite() runner.Suite {
       state := state_with_two_docs("file:///tmp/lsp-hover-variant/dep.tw", dep, "file:///tmp/lsp-hover-variant/main.tw", main)
       step := server_core.handle_message(state, hover_request(1, "file:///tmp/lsp-hover-variant/main.tw", 1, 32))
       content := try hover_content(step)
-      try assert.str_eq(content, "```twinkle\nColor.Rgb(Int)\n```")
+      try assert.equal(content, "```twinkle\nColor.Rgb(Int)\n```")
       .Ok({})
     })
     .test("hover on nested pattern variants and binders shows types", fn() {
@@ -428,10 +428,10 @@ pub fn suite() runner.Suite {
       state := state_with_doc("file:///nested-pattern.tw", source)
       some_step := server_core.handle_message(state, hover_request(1, "file:///nested-pattern.tw", 3, 10))
       some_content := try hover_content(some_step)
-      try assert.str_eq(some_content, "```twinkle\nOption.Some(Int)\n```")
+      try assert.equal(some_content, "```twinkle\nOption.Some(Int)\n```")
       binder_step := server_core.handle_message(state, hover_request(2, "file:///nested-pattern.tw", 3, 15))
       binder_content := try hover_content(binder_step)
-      try assert.str_eq(binder_content, "```twinkle\nInt\n```")
+      try assert.equal(binder_content, "```twinkle\nInt\n```")
       .Ok({})
     })
     .test("hover on method with multibyte prefix line is stable", fn() {

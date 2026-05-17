@@ -48,7 +48,7 @@ pub fn suite() runner.Suite {
         help_lines: [],
       }
       out := render.render(report, reg, no_color())
-      try assert.str_eq(out, "error: something went wrong")
+      try assert.equal(out, "error: something went wrong")
       .Ok({})
     })
     .test("warning header only, no labels", fn() {
@@ -60,7 +60,7 @@ pub fn suite() runner.Suite {
         help_lines: [],
       }
       out := render.render(report, reg, no_color())
-      try assert.str_eq(out, "warning: unused value")
+      try assert.equal(out, "warning: unused value")
       .Ok({})
     })
 
@@ -83,7 +83,7 @@ pub fn suite() runner.Suite {
         "1 | let x = foo",
         "  |         ^^^",
       ])
-      try assert.str_eq(out, expected)
+      try assert.equal(out, expected)
       .Ok({})
     })
     .test("primary span with inline label, no color", fn() {
@@ -103,7 +103,7 @@ pub fn suite() runner.Suite {
         "1 | let x = foo",
         "  |         ^^^ not found",
       ])
-      try assert.str_eq(out, expected)
+      try assert.equal(out, expected)
       .Ok({})
     })
 
@@ -127,7 +127,7 @@ pub fn suite() runner.Suite {
         "  |         ^^^",
         "  = help: use `twk check --fix-unused-imports` to remove automatically",
       ])
-      try assert.str_eq(out, expected)
+      try assert.equal(out, expected)
       .Ok({})
     })
     .test("help line without labels", fn() {
@@ -143,7 +143,7 @@ pub fn suite() runner.Suite {
         "error: some error",
         "  = help: try something else",
       ])
-      try assert.str_eq(out, expected)
+      try assert.equal(out, expected)
       .Ok({})
     })
 
@@ -173,7 +173,7 @@ pub fn suite() runner.Suite {
         "1 | let x = 1",
         "  |     - first defined here",
       ])
-      try assert.str_eq(out, expected)
+      try assert.equal(out, expected)
       .Ok({})
     })
 

@@ -11,7 +11,7 @@ use compiler.codegen.wasm_ir.{
 fn test_heap_type_named() Result<Void, String> {
   h: HeapType = .Named("$Point")
   case h {
-    .Named(s) => assert.str_eq(s, "$Point"),
+    .Named(s) => assert.equal(s, "$Point"),
     _ => assert.fail("expected Named"),
   }
 }
@@ -44,9 +44,9 @@ fn test_val_type_ref() Result<Void, String> {
   r: ValType = .Ref(false, .Named("$Array"))
   case r {
     .Ref(nullable, ht) => {
-      try assert.bool_eq(nullable, false)
+      try assert.equal(nullable, false)
       case ht {
-        .Named(s) => assert.str_eq(s, "$Array"),
+        .Named(s) => assert.equal(s, "$Array"),
         _ => assert.fail("expected Named heap type"),
       }
     },
@@ -59,8 +59,8 @@ fn test_val_type_ref() Result<Void, String> {
 fn test_field_def() Result<Void, String> {
   f := FieldDef.{ name: .Some("x"), mutable: true, ty: .I64 }
   name := case f.name { .Some(s) => s, .None => "" }
-  try assert.str_eq(name, "x")
-  try assert.bool_eq(f.mutable, true)
+  try assert.equal(name, "x")
+  try assert.equal(f.mutable, true)
   case f.ty { .I64 => .Ok({}), _ => assert.fail("expected I64") }
 }
 
@@ -74,9 +74,9 @@ fn test_type_def_struct() Result<Void, String> {
   td: TypeDef = .Struct("$MyStruct", fields, .None, false)
   case td {
     .Struct(name, fs, sup, nf) => {
-      try assert.str_eq(name, "$MyStruct")
-      try assert.int_eq(fs.len(), 2)
-      try assert.bool_eq(nf, false)
+      try assert.equal(name, "$MyStruct")
+      try assert.equal(fs.len(), 2)
+      try assert.equal(nf, false)
       case sup { .None => .Ok({}), _ => assert.fail("expected no supertype") }
     },
     _ => assert.fail("expected Struct"),
@@ -88,8 +88,8 @@ fn test_type_def_array() Result<Void, String> {
   td: TypeDef = .Array("$ClosureEnv", elem)
   case td {
     .Array(name, f) => {
-      try assert.str_eq(name, "$ClosureEnv")
-      try assert.bool_eq(f.mutable, true)
+      try assert.equal(name, "$ClosureEnv")
+      try assert.equal(f.mutable, true)
       .Ok({})
     },
     _ => assert.fail("expected Array"),
@@ -100,9 +100,9 @@ fn test_type_def_func_type() Result<Void, String> {
   td: TypeDef = .FuncType("$ft_i64_i64", [.I64], [.I64])
   case td {
     .FuncType(name, ps, rs) => {
-      try assert.str_eq(name, "$ft_i64_i64")
-      try assert.int_eq(ps.len(), 1)
-      try assert.int_eq(rs.len(), 1)
+      try assert.equal(name, "$ft_i64_i64")
+      try assert.equal(ps.len(), 1)
+      try assert.equal(rs.len(), 1)
       .Ok({})
     },
     _ => assert.fail("expected FuncType"),
@@ -115,8 +115,8 @@ fn test_instr_constants() Result<Void, String> {
   a: Instr = .I32Const(42)
   b: Instr = .I64Const(100)
   c: Instr = .F64Const(3.14)
-  case a { .I32Const(n) => try assert.int_eq(n, 42), _ => { return .Err("expected I32Const") } }
-  case b { .I64Const(n) => try assert.int_eq(n, 100), _ => { return .Err("expected I64Const") } }
+  case a { .I32Const(n) => try assert.equal(n, 42), _ => { return .Err("expected I32Const") } }
+  case b { .I64Const(n) => try assert.equal(n, 100), _ => { return .Err("expected I64Const") } }
   .Ok({})
 }
 
@@ -124,9 +124,9 @@ fn test_instr_local_ops() Result<Void, String> {
   a: Instr = .LocalGet(0)
   b: Instr = .LocalSet(1)
   c: Instr = .LocalTee(2)
-  case a { .LocalGet(i) => try assert.int_eq(i, 0), _ => { return .Err("expected LocalGet") } }
-  case b { .LocalSet(i) => try assert.int_eq(i, 1), _ => { return .Err("expected LocalSet") } }
-  case c { .LocalTee(i) => try assert.int_eq(i, 2), _ => { return .Err("expected LocalTee") } }
+  case a { .LocalGet(i) => try assert.equal(i, 0), _ => { return .Err("expected LocalGet") } }
+  case b { .LocalSet(i) => try assert.equal(i, 1), _ => { return .Err("expected LocalSet") } }
+  case c { .LocalTee(i) => try assert.equal(i, 2), _ => { return .Err("expected LocalTee") } }
   .Ok({})
 }
 
@@ -134,11 +134,11 @@ fn test_instr_struct_ops() Result<Void, String> {
   a: Instr = .StructNew("$Point")
   b: Instr = .StructGet("$Point", 0)
   c: Instr = .StructSet("$Point", 1)
-  case a { .StructNew(s) => try assert.str_eq(s, "$Point"), _ => { return .Err("expected StructNew") } }
+  case a { .StructNew(s) => try assert.equal(s, "$Point"), _ => { return .Err("expected StructNew") } }
   case b {
     .StructGet(s, i) => {
-      try assert.str_eq(s, "$Point")
-      try assert.int_eq(i, 0)
+      try assert.equal(s, "$Point")
+      try assert.equal(i, 0)
       .Ok({})
     },
     _ => .Err("expected StructGet"),
@@ -148,8 +148,8 @@ fn test_instr_struct_ops() Result<Void, String> {
 fn test_instr_call() Result<Void, String> {
   a: Instr = .Call("$my_func")
   b: Instr = .CallRef("$ft_closure")
-  case a { .Call(s) => try assert.str_eq(s, "$my_func"), _ => { return .Err("expected Call") } }
-  case b { .CallRef(s) => try assert.str_eq(s, "$ft_closure"), _ => { return .Err("expected CallRef") } }
+  case a { .Call(s) => try assert.equal(s, "$my_func"), _ => { return .Err("expected Call") } }
+  case b { .CallRef(s) => try assert.equal(s, "$ft_closure"), _ => { return .Err("expected CallRef") } }
   .Ok({})
 }
 
@@ -157,8 +157,8 @@ fn test_instr_control_flow() Result<Void, String> {
   blk: Instr = .Block("$exit", .Some(.I64), [.I64Const(1)])
   case blk {
     .Block(label, result, body) => {
-      try assert.str_eq(label, "$exit")
-      try assert.int_eq(body.len(), 1)
+      try assert.equal(label, "$exit")
+      try assert.equal(body.len(), 1)
       .Ok({})
     },
     _ => assert.fail("expected Block"),
@@ -169,8 +169,8 @@ fn test_instr_if() Result<Void, String> {
   inst: Instr = .If(.Some(.I32), [.I32Const(1)], [.I32Const(0)])
   case inst {
     .If(result, then_body, else_body) => {
-      try assert.int_eq(then_body.len(), 1)
-      try assert.int_eq(else_body.len(), 1)
+      try assert.equal(then_body.len(), 1)
+      try assert.equal(else_body.len(), 1)
       .Ok({})
     },
     _ => assert.fail("expected If"),
@@ -187,10 +187,10 @@ fn test_func_def() Result<Void, String> {
     locals: [],
     body: [.LocalGet(0), .LocalGet(1), .I64Add, .Return],
   }
-  try assert.str_eq(f.name, "$add")
-  try assert.int_eq(f.params.len(), 2)
-  try assert.int_eq(f.results.len(), 1)
-  try assert.int_eq(f.body.len(), 4)
+  try assert.equal(f.name, "$add")
+  try assert.equal(f.params.len(), 2)
+  try assert.equal(f.results.len(), 1)
+  try assert.equal(f.body.len(), 4)
   .Ok({})
 }
 
@@ -204,11 +204,11 @@ fn test_import_def() Result<Void, String> {
     params: [.Anyref],
     results: [],
   }
-  try assert.str_eq(imp.module, "rt.core")
-  try assert.str_eq(imp.name, "print")
-  try assert.str_eq(imp.as_sym, "$rt_core__print")
-  try assert.int_eq(imp.params.len(), 1)
-  try assert.int_eq(imp.results.len(), 0)
+  try assert.equal(imp.module, "rt.core")
+  try assert.equal(imp.name, "print")
+  try assert.equal(imp.as_sym, "$rt_core__print")
+  try assert.equal(imp.params.len(), 1)
+  try assert.equal(imp.results.len(), 0)
   .Ok({})
 }
 
@@ -221,9 +221,9 @@ fn test_global_def() Result<Void, String> {
     ty: .Ref(true, .Named("$String")),
     init: [.RefNull(.Named("$String"))],
   }
-  try assert.str_eq(g.name, "$str_0")
-  try assert.bool_eq(g.mutable, true)
-  try assert.int_eq(g.init.len(), 1)
+  try assert.equal(g.name, "$str_0")
+  try assert.equal(g.mutable, true)
+  try assert.equal(g.init.len(), 1)
   .Ok({})
 }
 
@@ -231,8 +231,8 @@ fn test_global_def() Result<Void, String> {
 
 fn test_export_def() Result<Void, String> {
   e := ExportDef.{ wasm_name: "main", func_sym: "$user__main" }
-  try assert.str_eq(e.wasm_name, "main")
-  try assert.str_eq(e.func_sym, "$user__main")
+  try assert.equal(e.wasm_name, "main")
+  try assert.equal(e.func_sym, "$user__main")
   .Ok({})
 }
 
@@ -245,9 +245,9 @@ fn test_table_def() Result<Void, String> {
     min: 10,
     max: .Some(100),
   }
-  try assert.str_eq(t.name, "$func_table")
-  try assert.int_eq(t.min, 10)
-  case t.max { .Some(n) => try assert.int_eq(n, 100), .None => { return .Err("expected Some") } }
+  try assert.equal(t.name, "$func_table")
+  try assert.equal(t.min, 10)
+  case t.max { .Some(n) => try assert.equal(n, 100), .None => { return .Err("expected Some") } }
   .Ok({})
 }
 
@@ -257,8 +257,8 @@ fn test_elem_def() Result<Void, String> {
     offset: [.I32Const(0)],
     func_syms: ["$f1", "$f2"],
   }
-  try assert.str_eq(e.table, "$func_table")
-  try assert.int_eq(e.func_syms.len(), 2)
+  try assert.equal(e.table, "$func_table")
+  try assert.equal(e.func_syms.len(), 2)
   .Ok({})
 }
 
@@ -270,8 +270,8 @@ fn test_data_segment() Result<Void, String> {
     offset: [.I32Const(0)],
     bytes: [104, 105],
   }
-  try assert.str_eq(d.name, "$data_0")
-  try assert.int_eq(d.bytes.len(), 2)
+  try assert.equal(d.name, "$data_0")
+  try assert.equal(d.bytes.len(), 2)
   .Ok({})
 }
 
@@ -290,9 +290,9 @@ fn test_wasm_module_empty() Result<Void, String> {
     data: [],
     start: .None,
   }
-  try assert.str_eq(m.namespace, "user")
-  try assert.int_eq(m.types.len(), 0)
-  try assert.int_eq(m.funcs.len(), 0)
+  try assert.equal(m.namespace, "user")
+  try assert.equal(m.types.len(), 0)
+  try assert.equal(m.funcs.len(), 0)
   .Ok({})
 }
 
@@ -316,9 +316,9 @@ fn test_wasm_module_with_func() Result<Void, String> {
     data: [],
     start: .Some("$main"),
   }
-  try assert.int_eq(m.funcs.len(), 1)
-  try assert.str_eq(m.funcs[0].name, "$main")
-  case m.start { .Some(s) => assert.str_eq(s, "$main"), .None => assert.fail("expected start") }
+  try assert.equal(m.funcs.len(), 1)
+  try assert.equal(m.funcs[0].name, "$main")
+  case m.start { .Some(s) => assert.equal(s, "$main"), .None => assert.fail("expected start") }
 }
 
 // ── Suite ───────────────────────────────────────────────────────────

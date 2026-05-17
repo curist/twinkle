@@ -79,7 +79,7 @@ pub fn suite() runner.Suite {
       path := ast_path.find_path(module, off)
       // root should be FnDecl
       case path.nodes[0] {
-        .FnDecl(d) => try assert.str_eq(d.name, "foo"),
+        .FnDecl(d) => try assert.equal(d.name, "foo"),
         other => { return assert.fail("expected FnDecl at root, got ${node_tag(.Some(other))}") },
       }
       // deepest should be an Expr (int literal)
@@ -95,7 +95,7 @@ pub fn suite() runner.Suite {
       off := offset_of(src, "x + 1")
       path := ast_path.find_path(module, off)
       case ast_path.enclosing_fn(path) {
-        .Some(decl) => try assert.str_eq(decl.name, "bar"),
+        .Some(decl) => try assert.equal(decl.name, "bar"),
         .None => { return assert.fail("expected enclosing_fn to return Some") },
       }
       .Ok({})
@@ -189,7 +189,7 @@ pub fn suite() runner.Suite {
       src := "x := 1"
       module := parse_src(src)
       path := ast_path.find_path(module, 9999)
-      try assert.int_eq(path.nodes.len(), 0)
+      try assert.equal(path.nodes.len(), 0)
       try assert.is_none(ast_path.deepest(path))
       .Ok({})
     })

@@ -199,8 +199,8 @@ pub fn suite() runner.Suite {
     prepared := prepare_backend(anf, empty_env(), empty_builtins(), no_captures())
 
     result_body := prepared.anf.functions[0].body
-    try assert.int_eq(count_wraps_expr(result_body), 0)
-    try assert.int_eq(count_unwraps_expr(result_body), 0)
+    try assert.equal(count_wraps_expr(result_body), 0)
+    try assert.equal(count_unwraps_expr(result_body), 0)
     .Ok({})
   })
 
@@ -217,11 +217,11 @@ pub fn suite() runner.Suite {
     prepared := prepare_backend(anf, empty_env(), empty_builtins(), no_captures())
 
     pf := prepared.funcs[0]
-    try assert.int_eq(pf.params.len(), 1)
-    try assert.int_eq(pf.locals.len(), 1)
+    try assert.equal(pf.params.len(), 1)
+    try assert.equal(pf.locals.len(), 1)
     // L0 → slot 0 (Param), L10 → slot 1 (Local)
-    try assert.int_eq(find_slot_id_by_local(pf, 0), 0)
-    try assert.int_eq(find_slot_id_by_local(pf, 10), 1)
+    try assert.equal(find_slot_id_by_local(pf, 0), 0)
+    try assert.equal(find_slot_id_by_local(pf, 10), 1)
     .Ok({})
   })
 
@@ -247,7 +247,7 @@ pub fn suite() runner.Suite {
 
     // Boundary insertion should have added one AWrapAnyref for the Int arg
     result_body := prepared.anf.functions[0].body
-    try assert.int_eq(count_wraps_expr(result_body), 1)
+    try assert.equal(count_wraps_expr(result_body), 1)
 
     // The wrap temp local must be in the slot map
     all_lids := collect_let_lids_expr(result_body)
@@ -278,7 +278,7 @@ pub fn suite() runner.Suite {
     total_slots := pf.captures.len() + pf.params.len() + pf.locals.len()
     // 0 captures + 1 param (x) + 3 locals: wrap temp (Int→anyref), raw call result (anyref),
     // t0 unwrap target (anyref→String, since String is a typed ref not anyref-exact) = 4
-    try assert.int_eq(total_slots, 4)
+    try assert.equal(total_slots, 4)
     .Ok({})
   })
 
@@ -303,7 +303,7 @@ pub fn suite() runner.Suite {
     prepared := prepare_backend(anf, empty_env(), builtins, no_captures())
 
     result_body := prepared.anf.functions[0].body
-    try assert.int_eq(count_unwraps_expr(result_body), 1)
+    try assert.equal(count_unwraps_expr(result_body), 1)
 
     all_lids := collect_let_lids_expr(result_body)
     pf := prepared.funcs[0]
@@ -333,9 +333,9 @@ pub fn suite() runner.Suite {
     prepared := prepare_backend(anf, empty_env(), builtins, no_captures())
 
     // prepared.anf should show the boundary node
-    try assert.int_eq(count_wraps_expr(prepared.anf.functions[0].body), 1)
+    try assert.equal(count_wraps_expr(prepared.anf.functions[0].body), 1)
     // The pre-boundary anf (original) has no wrap
-    try assert.int_eq(count_wraps_expr(anf.functions[0].body), 0)
+    try assert.equal(count_wraps_expr(anf.functions[0].body), 0)
     .Ok({})
   })
 
@@ -354,14 +354,14 @@ pub fn suite() runner.Suite {
     case converted.captures[99] {
       .None => .Err("missing closure capture metadata for inner"),
       .Some(caps) => {
-        try assert.int_eq(caps.len(), 1)
-        try assert.int_eq(caps[0].local_id.id, 0)
+        try assert.equal(caps.len(), 1)
+        try assert.equal(caps[0].local_id.id, 0)
 
         rewritten := converted.anf.functions[1]
-        try assert.int_eq(rewritten.params.len(), 1)
-        try assert.int_eq(rewritten.params[0].local.id, caps[0].param_local.id)
+        try assert.equal(rewritten.params.len(), 1)
+        try assert.equal(rewritten.params[0].local.id, caps[0].param_local.id)
         case rewritten.body {
-          .Atom(.ALocal(l)) => try assert.int_eq(l.id, caps[0].param_local.id),
+          .Atom(.ALocal(l)) => try assert.equal(l.id, caps[0].param_local.id),
           _ => { return .Err("rewritten hoisted body did not use the explicit capture param") },
         }
         .Ok({})
@@ -388,7 +388,7 @@ pub fn suite() runner.Suite {
       .Some(caps) => {
         rewritten := converted.anf.functions[1]
         case rewritten.body {
-          .Let(_, .AAssign(target, _), _) => try assert.int_eq(target.id, caps[0].param_local.id),
+          .Let(_, .AAssign(target, _), _) => try assert.equal(target.id, caps[0].param_local.id),
           _ => { return .Err("rewritten hoisted body did not rewrite captured assign target") },
         }
         .Ok({})
@@ -419,8 +419,8 @@ pub fn suite() runner.Suite {
         rewritten_middle := converted.anf.functions[1]
         case rewritten_middle.body {
           .Let(_, .AMakeClosure(_, free_vars), _) => {
-            try assert.int_eq(free_vars.len(), 1)
-            try assert.int_eq(free_vars[0].id, middle_caps[0].param_local.id)
+            try assert.equal(free_vars.len(), 1)
+            try assert.equal(free_vars[0].id, middle_caps[0].param_local.id)
             .Ok({})
           },
           _ => .Err("rewritten middle body did not preserve nested closure creation"),
@@ -458,8 +458,8 @@ pub fn suite() runner.Suite {
     case converted.captures[99] {
       .None => .Err("missing closure capture metadata for inner"),
       .Some(caps) => {
-        try assert.int_eq(caps.len(), 1)
-        try assert.int_eq(caps[0].local_id.id, 1)
+        try assert.equal(caps.len(), 1)
+        try assert.equal(caps[0].local_id.id, 1)
         case caps[0].ty {
           .String => .Ok({}),
           _ => .Err("captured pattern local did not keep its String mono"),
@@ -486,8 +486,8 @@ pub fn suite() runner.Suite {
     case prepared.closure_captures[42] {
       .None => .Err("closure_captures not preserved in PreparedModule"),
       .Some(caps) => {
-        try assert.int_eq(caps.len(), 1)
-        try assert.int_eq(caps[0].local_id.id, 0)
+        try assert.equal(caps.len(), 1)
+        try assert.equal(caps[0].local_id.id, 0)
         .Ok({})
       },
     }

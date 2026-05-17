@@ -14,7 +14,7 @@ use compiler.anf.{
 fn test_atom_local() Result<Void, String> {
   a: Atom = .ALocal(LocalId.{ id: 0 })
   case a {
-    .ALocal(id) => assert.int_eq(id.id, 0),
+    .ALocal(id) => assert.equal(id.id, 0),
     _ => assert.fail("expected ALocal"),
   }
 }
@@ -22,7 +22,7 @@ fn test_atom_local() Result<Void, String> {
 fn test_atom_global_func() Result<Void, String> {
   a: Atom = .AGlobalFunc(FuncId.{ id: 42 })
   case a {
-    .AGlobalFunc(id) => assert.int_eq(id.id, 42),
+    .AGlobalFunc(id) => assert.equal(id.id, 42),
     _ => assert.fail("expected AGlobalFunc"),
   }
 }
@@ -34,9 +34,9 @@ fn test_atom_literals() Result<Void, String> {
   as_: Atom = .ALitStr("hello")
   av: Atom = .ALitVoid
 
-  case ai { .ALitInt(n) => try assert.int_eq(n, 99), _ => { return .Err("expected ALitInt") } }
-  case ab { .ALitBool(b) => try assert.bool_eq(b, true), _ => { return .Err("expected ALitBool") } }
-  case as_ { .ALitStr(s) => try assert.str_eq(s, "hello"), _ => { return .Err("expected ALitStr") } }
+  case ai { .ALitInt(n) => try assert.equal(n, 99), _ => { return .Err("expected ALitInt") } }
+  case ab { .ALitBool(b) => try assert.equal(b, true), _ => { return .Err("expected ALitBool") } }
+  case as_ { .ALitStr(s) => try assert.equal(s, "hello"), _ => { return .Err("expected ALitStr") } }
   case av { .ALitVoid => {}, _ => { return .Err("expected ALitVoid") } }
   .Ok({})
 }
@@ -47,7 +47,7 @@ fn test_expr_atom() Result<Void, String> {
   e: AnfExpr = .Atom(.ALitInt(1))
   case e {
     .Atom(a) => {
-      case a { .ALitInt(n) => assert.int_eq(n, 1), _ => assert.fail("expected ALitInt") }
+      case a { .ALitInt(n) => assert.equal(n, 1), _ => assert.fail("expected ALitInt") }
     },
     _ => assert.fail("expected Atom expr"),
   }
@@ -61,19 +61,19 @@ fn test_expr_let_chain() Result<Void, String> {
   outer: AnfExpr = .Let(t0, .AInit(.ALitInt(1)), inner)
   case outer {
     .Let(local, op, body) => {
-      try assert.int_eq(local.id, 100)
+      try assert.equal(local.id, 100)
       case op {
         .AInit(a) => {
-          case a { .ALitInt(n) => try assert.int_eq(n, 1), _ => { return .Err("expected ALitInt") } }
+          case a { .ALitInt(n) => try assert.equal(n, 1), _ => { return .Err("expected ALitInt") } }
         },
         _ => { return .Err("expected AInit") },
       }
       // body is another Let
       case body {
         .Let(l2, _, tail) => {
-          try assert.int_eq(l2.id, 101)
+          try assert.equal(l2.id, 101)
           case tail {
-            .Atom(.ALocal(id)) => assert.int_eq(id.id, 100),
+            .Atom(.ALocal(id)) => assert.equal(id.id, 100),
             _ => assert.fail("expected Atom(ALocal) tail"),
           }
         },
@@ -89,7 +89,7 @@ fn test_expr_return_break_continue() Result<Void, String> {
   b: AnfExpr = .Break(.None)
   c: AnfExpr = .Continue
 
-  case r { .Return(.Some(.ALitInt(n))) => try assert.int_eq(n, 42), _ => { return .Err("expected Return(Some)") } }
+  case r { .Return(.Some(.ALitInt(n))) => try assert.equal(n, 42), _ => { return .Err("expected Return(Some)") } }
   case b { .Break(.None) => {}, _ => { return .Err("expected Break(None)") } }
   case c { .Continue => {}, _ => { return .Err("expected Continue") } }
   .Ok({})
@@ -101,8 +101,8 @@ fn test_op_call() Result<Void, String> {
   op: AnfOp = .ACall(.AGlobalFunc(FuncId.{ id: 1 }), [.ALitInt(10)])
   case op {
     .ACall(callee, args) => {
-      case callee { .AGlobalFunc(id) => try assert.int_eq(id.id, 1), _ => { return .Err("expected AGlobalFunc") } }
-      try assert.int_eq(args.len(), 1)
+      case callee { .AGlobalFunc(id) => try assert.equal(id.id, 1), _ => { return .Err("expected AGlobalFunc") } }
+      try assert.equal(args.len(), 1)
       .Ok({})
     },
     _ => assert.fail("expected ACall"),
@@ -126,7 +126,7 @@ fn test_op_unop() Result<Void, String> {
   case op {
     .AUnOp(unop, atom, kind) => {
       case unop { .Neg => {}, _ => { return .Err("expected Neg") } }
-      case atom { .ALitInt(n) => assert.int_eq(n, 5), _ => assert.fail("expected ALitInt") }
+      case atom { .ALitInt(n) => assert.equal(n, 5), _ => assert.fail("expected ALitInt") }
     },
     _ => assert.fail("expected AUnOp"),
   }
@@ -136,9 +136,9 @@ fn test_op_if() Result<Void, String> {
   op: AnfOp = .AIf(.ALitBool(true), .Atom(.ALitInt(1)), .Atom(.ALitInt(2)))
   case op {
     .AIf(cond, then_e, else_e) => {
-      case cond { .ALitBool(b) => try assert.bool_eq(b, true), _ => { return .Err("expected ALitBool") } }
-      case then_e { .Atom(.ALitInt(n)) => try assert.int_eq(n, 1), _ => { return .Err("expected Atom(1)") } }
-      case else_e { .Atom(.ALitInt(n)) => try assert.int_eq(n, 2), _ => { return .Err("expected Atom(2)") } }
+      case cond { .ALitBool(b) => try assert.equal(b, true), _ => { return .Err("expected ALitBool") } }
+      case then_e { .Atom(.ALitInt(n)) => try assert.equal(n, 1), _ => { return .Err("expected Atom(1)") } }
+      case else_e { .Atom(.ALitInt(n)) => try assert.equal(n, 2), _ => { return .Err("expected Atom(2)") } }
       .Ok({})
     },
     _ => assert.fail("expected AIf"),
@@ -150,7 +150,7 @@ fn test_op_match() Result<Void, String> {
   op: AnfOp = .AMatch(.ALocal(LocalId.{ id: 0 }), [arm])
   case op {
     .AMatch(scrut, arms) => {
-      try assert.int_eq(arms.len(), 1)
+      try assert.equal(arms.len(), 1)
       case arms[0].pattern { .Wildcard => .Ok({}), _ => assert.fail("expected Wildcard") }
     },
     _ => assert.fail("expected AMatch"),
@@ -171,10 +171,10 @@ fn test_op_make_closure() Result<Void, String> {
   op: AnfOp = .AMakeClosure(FuncId.{ id: 5 }, [LocalId.{ id: 1 }, LocalId.{ id: 2 }])
   case op {
     .AMakeClosure(fid, fvs) => {
-      try assert.int_eq(fid.id, 5)
-      try assert.int_eq(fvs.len(), 2)
-      try assert.int_eq(fvs[0].id, 1)
-      assert.int_eq(fvs[1].id, 2)
+      try assert.equal(fid.id, 5)
+      try assert.equal(fvs.len(), 2)
+      try assert.equal(fvs[0].id, 1)
+      assert.equal(fvs[1].id, 2)
     },
     _ => assert.fail("expected AMakeClosure"),
   }
@@ -186,9 +186,9 @@ fn test_op_record() Result<Void, String> {
   op: AnfOp = .ARecord(tid, fields)
   case op {
     .ARecord(t, fs) => {
-      try assert.int_eq(t.id, 7)
-      try assert.int_eq(fs.len(), 1)
-      assert.int_eq(fs[0].field.id, 0)
+      try assert.equal(t.id, 7)
+      try assert.equal(fs.len(), 1)
+      assert.equal(fs[0].field.id, 0)
     },
     _ => assert.fail("expected ARecord"),
   }
@@ -198,8 +198,8 @@ fn test_op_record_get() Result<Void, String> {
   op: AnfOp = .ARecordGet(.ALocal(LocalId.{ id: 0 }), FieldId.{ id: 1 }, TypeId.{ id: 7 })
   case op {
     .ARecordGet(target, fid, tid) => {
-      try assert.int_eq(fid.id, 1)
-      assert.int_eq(tid.id, 7)
+      try assert.equal(fid.id, 1)
+      assert.equal(tid.id, 7)
     },
     _ => assert.fail("expected ARecordGet"),
   }
@@ -209,9 +209,9 @@ fn test_op_record_update() Result<Void, String> {
   op: AnfOp = .ARecordUpdate(.ALocal(LocalId.{ id: 0 }), FieldId.{ id: 1 }, .ALitInt(99), false, TypeId.{ id: 7 })
   case op {
     .ARecordUpdate(base, fid, val, reuse, tid) => {
-      try assert.int_eq(fid.id, 1)
-      try assert.bool_eq(reuse, false)
-      assert.int_eq(tid.id, 7)
+      try assert.equal(fid.id, 1)
+      try assert.equal(reuse, false)
+      assert.equal(tid.id, 7)
     },
     _ => assert.fail("expected ARecordUpdate"),
   }
@@ -221,9 +221,9 @@ fn test_op_variant() Result<Void, String> {
   op: AnfOp = .AVariant(TypeId.{ id: 0 }, VariantId.{ id: 1 }, [.ALitInt(42)])
   case op {
     .AVariant(tid, vid, args) => {
-      try assert.int_eq(tid.id, 0)
-      try assert.int_eq(vid.id, 1)
-      assert.int_eq(args.len(), 1)
+      try assert.equal(tid.id, 0)
+      try assert.equal(vid.id, 1)
+      assert.equal(args.len(), 1)
     },
     _ => assert.fail("expected AVariant"),
   }
@@ -232,7 +232,7 @@ fn test_op_variant() Result<Void, String> {
 fn test_op_array_lit() Result<Void, String> {
   op: AnfOp = .AArrayLit([.ALitInt(1), .ALitInt(2)])
   case op {
-    .AArrayLit(elems) => assert.int_eq(elems.len(), 2),
+    .AArrayLit(elems) => assert.equal(elems.len(), 2),
     _ => assert.fail("expected AArrayLit"),
   }
 }
@@ -254,14 +254,14 @@ fn test_op_init_assign() Result<Void, String> {
 
   case init_op {
     .AInit(a) => {
-      case a { .ALitInt(n) => try assert.int_eq(n, 42), _ => { return .Err("expected ALitInt") } }
+      case a { .ALitInt(n) => try assert.equal(n, 42), _ => { return .Err("expected ALitInt") } }
     },
     _ => { return .Err("expected AInit") },
   }
   case assign_op {
     .AAssign(lid, a) => {
-      try assert.int_eq(lid.id, 0)
-      case a { .ALitInt(n) => assert.int_eq(n, 99), _ => assert.fail("expected ALitInt") }
+      try assert.equal(lid.id, 0)
+      case a { .ALitInt(n) => assert.equal(n, 99), _ => assert.fail("expected ALitInt") }
     },
     _ => assert.fail("expected AAssign"),
   }
@@ -289,9 +289,9 @@ fn test_function_def() Result<Void, String> {
     return_ty: .Int,
     is_init: false,
   }
-  try assert.str_eq(fdef.name, "my_func")
-  try assert.int_eq(fdef.params.len(), 1)
-  try assert.int_eq(fdef.func_id.id, 41)
+  try assert.equal(fdef.name, "my_func")
+  try assert.equal(fdef.params.len(), 1)
+  try assert.equal(fdef.func_id.id, 41)
   case fdef.return_ty { .Int => .Ok({}), _ => assert.fail("expected Int return_ty") }
 }
 
@@ -310,9 +310,9 @@ fn test_module() Result<Void, String> {
     init_func_id: .Some(FuncId.{ id: 41 }),
     extern_imports: Dict.new(),
   }
-  try assert.int_eq(module.functions.len(), 1)
+  try assert.equal(module.functions.len(), 1)
   case module.init_func_id {
-    .Some(id) => assert.int_eq(id.id, 41),
+    .Some(id) => assert.equal(id.id, 41),
     .None => assert.fail("expected Some init_func_id"),
   }
 }

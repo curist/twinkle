@@ -6,12 +6,14 @@
 
 pub type BuiltinContract = {
   Stringify,
+  Eq,
 }
 
 /// The return shape of a contract method requirement.
 /// Kept separate from MonoType to avoid a dependency cycle with the resolver.
 pub type ContractReturnShape = {
   String,
+  Bool,
 }
 
 pub type ContractMethodRequirement = .{
@@ -37,6 +39,15 @@ pub fn spec(contract: BuiltinContract) ContractSpec {
         ret: .String,
       }],
     },
+    .Eq => .{
+      name: "Eq",
+      methods: [.{
+        method_name: "eq",
+        receiver_param_count: 1,
+        arg_count_without_receiver: 1,
+        ret: .Bool,
+      }],
+    },
   }
 }
 
@@ -45,6 +56,7 @@ pub fn spec(contract: BuiltinContract) ContractSpec {
 pub fn resolve_builtin_contract_name(name: String) BuiltinContract? {
   case name {
     "Stringify" => .Some(.Stringify),
+    "Eq" => .Some(.Eq),
     _ => .None,
   }
 }

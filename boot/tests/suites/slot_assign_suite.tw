@@ -63,7 +63,7 @@ fn slot_for_local(pf: PreparedFunc, lid: Int) SlotInfo? {
 // assert_slot_id: check that LocalId lid maps to slot with the given id.
 fn assert_slot_id(pf: PreparedFunc, lid: Int, expected_sid: Int) Result<Void, String> {
   case slot_for_local(pf, lid) {
-    .Some(info) => assert.int_eq(info.slot.id, expected_sid),
+    .Some(info) => assert.equal(info.slot.id, expected_sid),
     .None => assert.fail("L${lid} has no slot"),
   }
 }
@@ -126,9 +126,9 @@ fn test_simple_params_and_local() Result<Void, String> {
   )
   pf := assign_slots(func, no_captures(), resolver.empty_env())
 
-  try assert.int_eq(pf.captures.len(), 0)
-  try assert.int_eq(pf.params.len(), 2)
-  try assert.int_eq(pf.locals.len(), 1)
+  try assert.equal(pf.captures.len(), 0)
+  try assert.equal(pf.params.len(), 2)
+  try assert.equal(pf.locals.len(), 1)
 
   // params get Param role in ABI order
   try assert_role(pf, 0, .Param)
@@ -160,9 +160,9 @@ fn test_capture_params_precede_declared_params() Result<Void, String> {
   ])
   pf := assign_slots(func, captures, resolver.empty_env())
 
-  try assert.int_eq(pf.captures.len(), 1)
-  try assert.int_eq(pf.params.len(), 1)
-  try assert.int_eq(pf.locals.len(), 0)
+  try assert.equal(pf.captures.len(), 1)
+  try assert.equal(pf.params.len(), 1)
+  try assert.equal(pf.locals.len(), 0)
 
   // rewritten capture param L50 → slot 0; user param L10 → slot 1
   try assert_slot_id(pf, 50, 0)
@@ -188,7 +188,7 @@ fn test_multiple_captures_ordered() Result<Void, String> {
   ])
   pf := assign_slots(func, captures, resolver.empty_env())
 
-  try assert.int_eq(pf.captures.len(), 3)
+  try assert.equal(pf.captures.len(), 3)
   try assert_slot_id(pf, 21, 0)
   try assert_slot_id(pf, 23, 1)
   try assert_slot_id(pf, 27, 2)
@@ -288,9 +288,9 @@ fn test_no_slots_for_non_binding_patterns() Result<Void, String> {
   pf := assign_slots(func, no_captures(), resolver.empty_env())
 
   // Only param L0 and let-result L1 — no phantom pattern locals
-  try assert.int_eq(pf.captures.len(), 0)
-  try assert.int_eq(pf.params.len(), 1)
-  try assert.int_eq(pf.locals.len(), 1)
+  try assert.equal(pf.captures.len(), 0)
+  try assert.equal(pf.params.len(), 1)
+  try assert.equal(pf.locals.len(), 1)
   .Ok({})
 }
 

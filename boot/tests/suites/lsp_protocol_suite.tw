@@ -6,14 +6,14 @@ use lib.lsp.protocol
 pub fn suite() runner.Suite {
   runner.suite("lsp protocol")
     .test("decode request message", fn() {
-      msg := try protocol.parse_message("{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"initialize\",\"params\":{}}");
+      msg := try protocol.parse_message("{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"initialize\",\"params\":{}}")
       case msg {
         .Request(req) => {
           case req.id {
-            .IntId(n) => try assert.int_eq(n, 1),
+            .IntId(n) => try assert.equal(n, 1),
             _ => { return .Err("expected int id") },
           }
-          try assert.str_eq(req.method, "initialize")
+          try assert.equal(req.method, "initialize")
           try assert.is_some(req.params)
         },
         _ => { return .Err("expected request") },
@@ -24,7 +24,7 @@ pub fn suite() runner.Suite {
       msg := try protocol.parse_message("{\"jsonrpc\":\"2.0\",\"method\":\"initialized\"}");
       case msg {
         .Notification(note) => {
-          try assert.str_eq(note.method, "initialized")
+          try assert.equal(note.method, "initialized")
           try assert.is_none(note.params)
         },
         _ => { return .Err("expected notification") },
@@ -36,7 +36,7 @@ pub fn suite() runner.Suite {
       case msg {
         .Response(resp) => {
           case resp.id {
-            .StringId(s) => try assert.str_eq(s, "abc"),
+            .StringId(s) => try assert.equal(s, "abc"),
             _ => { return .Err("expected string id") },
           }
           try assert.is_some(resp.result)
@@ -48,22 +48,22 @@ pub fn suite() runner.Suite {
     })
     .test("make success response json", fn() {
       out := protocol.success_response(.IntId(7), .Str("ok"))
-      try assert.str_eq(try json.decode(out, json.field("jsonrpc", json.string())), "2.0")
-      try assert.int_eq(try json.decode(out, json.field("id", json.int())), 7)
-      try assert.str_eq(try json.decode(out, json.field("result", json.string())), "ok")
+      try assert.equal(try json.decode(out, json.field("jsonrpc", json.string())), "2.0")
+      try assert.equal(try json.decode(out, json.field("id", json.int())), 7)
+      try assert.equal(try json.decode(out, json.field("result", json.string())), "ok")
       .Ok({})
     })
     .test("make error response json", fn() {
       err := protocol.RpcError.{ code: -32601, message: "not found", data: .None }
       out := protocol.error_response(.NullId, err)
-      try assert.str_eq(try json.decode(out, json.field("jsonrpc", json.string())), "2.0")
+      try assert.equal(try json.decode(out, json.field("jsonrpc", json.string())), "2.0")
       case try json.decode(out, json.field("id", json.raw())) {
         .Null => {},
         _ => { return .Err("expected null id") },
       }
       error_obj := try json.decode(out, json.field("error", json.raw()))
-      try assert.int_eq(try json.decode(error_obj, json.field("code", json.int())), -32601)
-      try assert.str_eq(try json.decode(error_obj, json.field("message", json.string())), "not found")
+      try assert.equal(try json.decode(error_obj, json.field("code", json.int())), -32601)
+      try assert.equal(try json.decode(error_obj, json.field("message", json.string())), "not found")
       .Ok({})
     })
     .test("rejects invalid jsonrpc version", fn() {

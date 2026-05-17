@@ -12,41 +12,41 @@ pub fn suite() runner.Suite {
       xs = .append(1)
       xs = .append(2)
       xs = .append(3)
-      try assert.int_eq(xs.len(), 3)
-      try assert.int_eq(xs[0], 1)
-      try assert.int_eq(xs[2], 3)
+      try assert.equal(xs.len(), 3)
+      try assert.equal(xs[0], 1)
+      try assert.equal(xs[2], 3)
       .Ok({})
     })
     .test("chained methods", fn() {
       xs: Vector<Int> = [1, 2, 3, 4, 5]
       xs = .filter(fn(x) { x > 2 }).map(fn(x) { x * 10 })
-      try assert.int_eq(xs.len(), 3)
-      try assert.int_eq(xs[0], 30)
-      try assert.int_eq(xs[1], 40)
-      try assert.int_eq(xs[2], 50)
+      try assert.equal(xs.len(), 3)
+      try assert.equal(xs[0], 30)
+      try assert.equal(xs[1], 40)
+      try assert.equal(xs[2], 50)
       .Ok({})
     })
     .test("record field target", fn() {
       s: State = .{ items: [], name: "test" }
       s.items = .append(42)
       s.items = .append(99)
-      try assert.int_eq(s.items.len(), 2)
-      try assert.int_eq(s.items[0], 42)
-      try assert.int_eq(s.items[1], 99)
+      try assert.equal(s.items.len(), 2)
+      try assert.equal(s.items[0], 42)
+      try assert.equal(s.items[1], 99)
       .Ok({})
     })
     .test("concat shorthand", fn() {
       buf: Vector<Int> = [1, 2]
       buf = .concat([3, 4])
-      try assert.int_eq(buf.len(), 4)
-      try assert.int_eq(buf[3], 4)
+      try assert.equal(buf.len(), 4)
+      try assert.equal(buf[3], 4)
       .Ok({})
     })
     .test("variant literals still work after shorthand", fn() {
       x: Int? = .None
       x = .Some(42)
       case x {
-        .Some(v) => try assert.int_eq(v, 42),
+        .Some(v) => try assert.equal(v, 42),
         .None => { return .Err("expected Some") },
       }
       .Ok({})
@@ -54,8 +54,8 @@ pub fn suite() runner.Suite {
     .test("nested field target", fn() {
       o: Outer = .{ inner: .{ count: [1] } }
       o.inner.count = .append(2)
-      try assert.int_eq(o.inner.count.len(), 2)
-      try assert.int_eq(o.inner.count[1], 2)
+      try assert.equal(o.inner.count.len(), 2)
+      try assert.equal(o.inner.count[1], 2)
       .Ok({})
     })
 }

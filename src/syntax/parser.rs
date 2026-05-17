@@ -449,15 +449,18 @@ impl Parser {
 
             while !self.peek_is(TokenKind::Gt) && !self.is_eof() {
                 let param = self.expect(TokenKind::Ident)?;
-                let bound = if self.peek_is(TokenKind::Colon) {
+                let mut bounds = Vec::new();
+                if self.peek_is(TokenKind::Colon) {
                     self.expect(TokenKind::Colon)?;
-                    Some(self.expect(TokenKind::Ident)?.text)
-                } else {
-                    None
-                };
+                    bounds.push(self.expect(TokenKind::Ident)?.text);
+                    while self.peek_is(TokenKind::Plus) {
+                        self.expect(TokenKind::Plus)?;
+                        bounds.push(self.expect(TokenKind::Ident)?.text);
+                    }
+                }
                 params.push(TypeParam {
                     name: param.text.clone(),
-                    bound,
+                    bounds,
                 });
 
                 if !self.peek_is(TokenKind::Gt) {
@@ -586,15 +589,18 @@ impl Parser {
 
             while !self.peek_is(TokenKind::Gt) && !self.is_eof() {
                 let param = self.expect(TokenKind::Ident)?;
-                let bound = if self.peek_is(TokenKind::Colon) {
+                let mut bounds = Vec::new();
+                if self.peek_is(TokenKind::Colon) {
                     self.expect(TokenKind::Colon)?;
-                    Some(self.expect(TokenKind::Ident)?.text)
-                } else {
-                    None
-                };
+                    bounds.push(self.expect(TokenKind::Ident)?.text);
+                    while self.peek_is(TokenKind::Plus) {
+                        self.expect(TokenKind::Plus)?;
+                        bounds.push(self.expect(TokenKind::Ident)?.text);
+                    }
+                }
                 params.push(TypeParam {
                     name: param.text.clone(),
-                    bound,
+                    bounds,
                 });
 
                 if !self.peek_is(TokenKind::Gt) {

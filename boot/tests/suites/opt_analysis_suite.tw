@@ -88,7 +88,7 @@ fn test_count_global_call_sites_recursive() Result<Void, String> {
     ),
     .Atom(.ALitVoid),
   )
-  assert.int_eq(count_global_call_sites(expr, fid(20)), 2)
+  assert.equal(count_global_call_sites(expr, fid(20)), 2)
 }
 
 fn test_next_local_id_accounts_for_pattern_bindings() Result<Void, String> {
@@ -105,7 +105,7 @@ fn test_next_local_id_accounts_for_pattern_bindings() Result<Void, String> {
     return_ty: .Void,
     is_init: false,
   }
-  assert.int_eq(next_local_id(func), 9)
+  assert.equal(next_local_id(func), 9)
 }
 
 fn test_collect_tainted_marks_params() Result<Void, String> {
@@ -158,7 +158,7 @@ fn test_analyze_loop_push_sites_counts_valid_pushes() Result<Void, String> {
     .Let(lid(2), .AAssign(lid(0), .ALocal(lid(1))),
       .Continue))
   case analyze_loop_push_sites(loop_body, lid(0), mock_vec_push()) {
-    .Some(sites) => assert.int_eq(sites, 1),
+    .Some(sites) => assert.equal(sites, 1),
     .None => .Err("expected valid loop push site"),
   }
 }
@@ -172,7 +172,7 @@ fn test_analyze_loop_push_sites_counts_branch_pushes() Result<Void, String> {
     .AIf(.ALitBool(true), then_e, .Atom(.ALitVoid)),
     .Continue)
   case analyze_loop_push_sites(loop_body, lid(0), mock_vec_push()) {
-    .Some(sites) => assert.int_eq(sites, 1),
+    .Some(sites) => assert.equal(sites, 1),
     .None => .Err("expected branch push site to be counted"),
   }
 }
@@ -214,7 +214,7 @@ fn test_loop_push_reassign_elem_matches_valid_pattern() Result<Void, String> {
   op: AnfOp = .ACall(.AGlobalFunc(mock_vec_push()), [.ALocal(lid(0)), .ALitInt(1)])
   body: AnfExpr = .Let(lid(2), .AAssign(lid(0), .ALocal(lid(1))), .Continue)
   case loop_push_reassign_elem(op, body, lid(0), mock_vec_push(), lid(1)) {
-    .Some(.ALitInt(value)) => assert.int_eq(value, 1),
+    .Some(.ALitInt(value)) => assert.equal(value, 1),
     .Some(_) => .Err("expected pushed element literal"),
     .None => .Err("expected valid push+assign pattern"),
   }

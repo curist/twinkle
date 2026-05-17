@@ -17,8 +17,8 @@ pub fn suite() runner.Suite {
 
     .test("empty registry has next_id 0", fn() {
       reg := empty_registry()
-      try assert.int_eq(reg.next_id, 0)
-      try assert.int_eq(reg.entries.len(), 0)
+      try assert.equal(reg.next_id, 0)
+      try assert.equal(reg.entries.len(), 0)
       .Ok({})
     })
 
@@ -28,10 +28,10 @@ pub fn suite() runner.Suite {
       reg := empty_registry()
         .runtime("print", "rt.core", "print")
         .runtime("println", "rt.core", "println")
-      try assert.int_eq(reg.next_id, 2)
-      try assert.int_eq(reg.entries.len(), 2)
-      try assert.int_eq(reg.id("print").id, 0)
-      try assert.int_eq(reg.id("println").id, 1)
+      try assert.equal(reg.next_id, 2)
+      try assert.equal(reg.entries.len(), 2)
+      try assert.equal(reg.id("print").id, 0)
+      try assert.equal(reg.id("println").id, 1)
       .Ok({})
     })
 
@@ -41,8 +41,8 @@ pub fn suite() runner.Suite {
       entry := try reg.entry(reg.id("print")).ok_or("missing")
       case entry.kind {
         .Runtime(info) => {
-          try assert.str_eq(info.wasm_module, "rt.core")
-          try assert.str_eq(info.wasm_name, "print")
+          try assert.equal(info.wasm_module, "rt.core")
+          try assert.equal(info.wasm_name, "print")
           .Ok({})
         },
         .Intrinsic => .Err("expected Runtime, got Intrinsic"),
@@ -52,11 +52,11 @@ pub fn suite() runner.Suite {
     .test("runtime entry carries builtin ABI", fn() {
       reg := empty_registry().runtime("println", "rt.core", "println")
       entry := try reg.entry(reg.id("println")).ok_or("missing")
-      try assert.int_eq(entry.abi.param_types.len(), 1)
+      try assert.equal(entry.abi.param_types.len(), 1)
       case entry.abi.param_types[0] {
         .Ref(nullable, .Named(name)) => {
-          try assert.bool_eq(nullable, true)
-          try assert.str_eq(name, "rt_types__String")
+          try assert.equal(nullable, true)
+          try assert.equal(name, "rt_types__String")
           .Ok({})
         },
         _ => .Err("expected println ABI param to be ref null $String"),
@@ -66,11 +66,11 @@ pub fn suite() runner.Suite {
     .test("intrinsic vector__set_in_place carries PVec ABI result", fn() {
       reg := empty_registry().intrinsic("vector__set_in_place")
       entry := try reg.entry(reg.id("vector__set_in_place")).ok_or("missing")
-      try assert.int_eq(entry.abi.result_types.len(), 1)
+      try assert.equal(entry.abi.result_types.len(), 1)
       case entry.abi.result_types[0] {
         .Ref(nullable, .Named(name)) => {
-          try assert.bool_eq(nullable, false)
-          try assert.str_eq(name, "rt_types__PVec")
+          try assert.equal(nullable, false)
+          try assert.equal(name, "rt_types__PVec")
           .Ok({})
         },
         _ => .Err("expected vector__set_in_place ABI result to be non-null rt_types__PVec"),
@@ -83,7 +83,7 @@ pub fn suite() runner.Suite {
       reg := empty_registry()
         .runtime("print", "rt.core", "print")
         .intrinsic("string_to_string")
-      try assert.int_eq(reg.id("string_to_string").id, 1)
+      try assert.equal(reg.id("string_to_string").id, 1)
       .Ok({})
     })
 
@@ -103,7 +103,7 @@ pub fn suite() runner.Suite {
         result_types: [.I64],
       })
       entry := try reg.entry(reg.id("custom")).ok_or("missing")
-      try assert.int_eq(entry.abi.param_types.len(), 1)
+      try assert.equal(entry.abi.param_types.len(), 1)
       case entry.abi.result_types[0] {
         .I64 => .Ok({}),
         _ => .Err("expected custom ABI result to be I64"),
@@ -117,9 +117,9 @@ pub fn suite() runner.Suite {
         .runtime("a", "m", "a")
         .intrinsic("b")
         .runtime("c", "m", "c")
-      try assert.int_eq(reg.id("a").id, 0)
-      try assert.int_eq(reg.id("b").id, 1)
-      try assert.int_eq(reg.id("c").id, 2)
+      try assert.equal(reg.id("a").id, 0)
+      try assert.equal(reg.id("b").id, 1)
+      try assert.equal(reg.id("c").id, 2)
       .Ok({})
     })
 
@@ -128,9 +128,9 @@ pub fn suite() runner.Suite {
         .runtime("print", "rt.core", "print")
         .intrinsic("string_get")
       e0 := try reg.entry(reg.id("print")).ok_or("missing 0")
-      try assert.str_eq(e0.name, "print")
+      try assert.equal(e0.name, "print")
       e1 := try reg.entry(reg.id("string_get")).ok_or("missing 1")
-      try assert.str_eq(e1.name, "string_get")
+      try assert.equal(e1.name, "string_get")
       .Ok({})
     })
 
@@ -149,8 +149,8 @@ pub fn suite() runner.Suite {
       print_entry := try reg.entry(reg.id("print")).ok_or("missing print")
       case print_entry.kind {
         .Runtime(info) => {
-          try assert.str_eq(info.wasm_module, "rt.core")
-          try assert.str_eq(info.wasm_name, "print")
+          try assert.equal(info.wasm_module, "rt.core")
+          try assert.equal(info.wasm_name, "print")
         },
         .Intrinsic => { return .Err("print should be Runtime") },
       }
@@ -184,14 +184,14 @@ pub fn suite() runner.Suite {
 
     .test("full registry ids are contiguous from 0", fn() {
       reg := make_builtin_registry()
-      try assert.int_eq(reg.entries[0].func_id.id, 0)
+      try assert.equal(reg.entries[0].func_id.id, 0)
       // each entry's id matches its index
       for entry, i in reg.entries {
         if entry.func_id.id != i {
           error("entry ${i} has id ${entry.func_id.id}")
         }
       }
-      try assert.int_eq(reg.next_id, reg.entries.len())
+      try assert.equal(reg.next_id, reg.entries.len())
       .Ok({})
     })
 }

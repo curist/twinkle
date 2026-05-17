@@ -27,8 +27,8 @@ fn test_count_uses_simple() Result<Void, String> {
   // local 1 used once (in AInit), local 0 used once (in tail Atom)
   expr: AnfExpr = .Let(lid(0), .AInit(.ALocal(lid(1))), .Atom(.ALocal(lid(0))))
   uses := count_uses(expr)
-  try assert.int_eq(uses_for(uses, 0), 1)
-  try assert.int_eq(uses_for(uses, 1), 1)
+  try assert.equal(uses_for(uses, 0), 1)
+  try assert.equal(uses_for(uses, 1), 1)
   .Ok({})
 }
 
@@ -37,7 +37,7 @@ fn test_count_uses_let_binder_not_counted() Result<Void, String> {
   // local 5 is only the binder — should have 0 uses
   expr: AnfExpr = .Let(lid(5), .AInit(.ALitInt(42)), .Atom(.ALitVoid))
   uses := count_uses(expr)
-  try assert.int_eq(uses_for(uses, 5), 0)
+  try assert.equal(uses_for(uses, 5), 0)
   .Ok({})
 }
 
@@ -46,7 +46,7 @@ fn test_count_uses_assign_target_not_counted() Result<Void, String> {
   // local 7 is the assign target — not a use
   expr: AnfExpr = .Let(lid(0), .AAssign(lid(7), .ALitInt(1)), .Atom(.ALitVoid))
   uses := count_uses(expr)
-  try assert.int_eq(uses_for(uses, 7), 0)
+  try assert.equal(uses_for(uses, 7), 0)
   .Ok({})
 }
 
@@ -55,9 +55,9 @@ fn test_count_uses_closure_free_vars() Result<Void, String> {
   // locals 1 and 2 each used once (as free vars)
   expr: AnfExpr = .Let(lid(0), .AMakeClosure(fid(99), [lid(1), lid(2)]), .Atom(.ALocal(lid(0))))
   uses := count_uses(expr)
-  try assert.int_eq(uses_for(uses, 1), 1)
-  try assert.int_eq(uses_for(uses, 2), 1)
-  try assert.int_eq(uses_for(uses, 0), 1)
+  try assert.equal(uses_for(uses, 1), 1)
+  try assert.equal(uses_for(uses, 2), 1)
+  try assert.equal(uses_for(uses, 0), 1)
   .Ok({})
 }
 
@@ -67,8 +67,8 @@ fn test_count_uses_excluding_free_vars() Result<Void, String> {
   expr: AnfExpr = .Let(lid(1), .AInit(.ALitInt(10)),
     .Let(lid(0), .AMakeClosure(fid(99), [lid(1)]), .Atom(.ALocal(lid(0)))))
   uses := count_uses_excluding_free_vars(expr)
-  try assert.int_eq(uses_for(uses, 1), 0)
-  try assert.int_eq(uses_for(uses, 0), 1)
+  try assert.equal(uses_for(uses, 1), 0)
+  try assert.equal(uses_for(uses, 0), 1)
   .Ok({})
 }
 
@@ -81,7 +81,7 @@ fn test_count_uses_excluding_free_vars_nested_control_flow() Result<Void, String
       ), .Atom(.ALitVoid))
     ), .Atom(.ALitVoid)))
   uses := count_uses_excluding_free_vars(expr)
-  try assert.int_eq(uses_for(uses, 1), 0)
+  try assert.equal(uses_for(uses, 1), 0)
   .Ok({})
 }
 
@@ -99,8 +99,8 @@ fn test_count_uses_closure_free_var_inside_match_arm() Result<Void, String> {
     },
   ]), .Atom(.ALocal(lid(4))))
   uses := count_uses(expr)
-  try assert.int_eq(uses_for(uses, 1), 1)
-  try assert.int_eq(uses_for(uses, 2), 1)
+  try assert.equal(uses_for(uses, 1), 1)
+  try assert.equal(uses_for(uses, 2), 1)
   .Ok({})
 }
 
@@ -109,7 +109,7 @@ fn test_count_uses_multiple_refs() Result<Void, String> {
   // local 1 used twice
   expr: AnfExpr = .Let(lid(0), .ABinOp(.Add, .ALocal(lid(1)), .ALocal(lid(1)), .Int), .Atom(.ALocal(lid(0))))
   uses := count_uses(expr)
-  try assert.int_eq(uses_for(uses, 1), 2)
+  try assert.equal(uses_for(uses, 1), 2)
   .Ok({})
 }
 
@@ -172,7 +172,7 @@ fn test_dead_let_drops_unused_pure() Result<Void, String> {
   result := dead_let_elim(expr)
   try assert.is_true(result.changed)
   case result.expr {
-    .Atom(.ALitInt(n)) => assert.int_eq(n, 42),
+    .Atom(.ALitInt(n)) => assert.equal(n, 42),
     _ => .Err("expected Atom(42)"),
   }
 }
@@ -221,7 +221,7 @@ fn test_dead_let_keeps_assigned() Result<Void, String> {
   result := dead_let_elim(expr)
   // The outer Let(5) should be kept because 5 is assigned
   case result.expr {
-    .Let(local, _, _) => assert.int_eq(local.id, 5),
+    .Let(local, _, _) => assert.equal(local.id, 5),
     _ => .Err("expected Let(5) preserved"),
   }
 }
@@ -263,7 +263,7 @@ fn test_subst_atom_replaces() Result<Void, String> {
   expr: AnfExpr = .Atom(.ALocal(lid(5)))
   result := subst_atom(expr, lid(5), .ALitInt(42))
   case result {
-    .Atom(.ALitInt(n)) => assert.int_eq(n, 42),
+    .Atom(.ALitInt(n)) => assert.equal(n, 42),
     _ => .Err("expected substituted literal"),
   }
 }
@@ -273,7 +273,7 @@ fn test_subst_atom_leaves_other() Result<Void, String> {
   expr: AnfExpr = .Atom(.ALocal(lid(3)))
   result := subst_atom(expr, lid(5), .ALitInt(42))
   case result {
-    .Atom(.ALocal(local)) => assert.int_eq(local.id, 3),
+    .Atom(.ALocal(local)) => assert.equal(local.id, 3),
     _ => .Err("expected unchanged local"),
   }
 }
@@ -286,7 +286,7 @@ fn test_subst_atom_does_not_enter_closure_free_vars() Result<Void, String> {
   case result {
     .Let(_, op, _) => {
       case op {
-        .AMakeClosure(_, free_vars) => assert.int_eq(free_vars[0].id, 5),
+        .AMakeClosure(_, free_vars) => assert.equal(free_vars[0].id, 5),
         _ => { return .Err("expected AMakeClosure") },
       }
     },
@@ -303,7 +303,7 @@ fn test_copy_prop_inlines_literal() Result<Void, String> {
   result := copy_propagate(expr)
   try assert.is_true(result.changed)
   case result.expr {
-    .Atom(.ALitInt(n)) => assert.int_eq(n, 42),
+    .Atom(.ALitInt(n)) => assert.equal(n, 42),
     _ => .Err("expected inlined literal"),
   }
 }
@@ -314,7 +314,7 @@ fn test_copy_prop_inlines_global_func() Result<Void, String> {
   result := copy_propagate(expr)
   try assert.is_true(result.changed)
   case result.expr {
-    .Atom(.AGlobalFunc(f)) => assert.int_eq(f.id, 99),
+    .Atom(.AGlobalFunc(f)) => assert.equal(f.id, 99),
     _ => .Err("expected inlined global func"),
   }
 }
@@ -326,7 +326,7 @@ fn test_copy_prop_forwards_local() Result<Void, String> {
   result := copy_propagate(expr)
   try assert.is_true(result.changed)
   case result.expr {
-    .Atom(.ALocal(id)) => assert.int_eq(id.id, 5),
+    .Atom(.ALocal(id)) => assert.equal(id.id, 5),
     _ => .Err("expected Atom(ALocal(5))"),
   }
 }
@@ -339,7 +339,7 @@ fn test_copy_prop_keeps_local_when_assigned() Result<Void, String> {
   result := copy_propagate(expr)
   // The AInit(ALocal(5)) should not be propagated because local 5 is assigned
   case result.expr {
-    .Let(local, .AInit(.ALocal(_)), _) => assert.int_eq(local.id, 1),
+    .Let(local, .AInit(.ALocal(_)), _) => assert.equal(local.id, 1),
     _ => .Err("expected local 1 binding preserved"),
   }
 }
@@ -354,8 +354,8 @@ fn test_copy_prop_inlines_multi_use_literal() Result<Void, String> {
   // After propagation: Let(0, ABinOp(Add, ALitInt(42), ALitInt(42), Int), Atom(ALocal(0)))
   case result.expr {
     .Let(_, .ABinOp(_, .ALitInt(a), .ALitInt(b), _), _) => {
-      try assert.int_eq(a, 42)
-      assert.int_eq(b, 42)
+      try assert.equal(a, 42)
+      assert.equal(b, 42)
     },
     _ => .Err("expected literal inlined into both operands"),
   }
@@ -478,7 +478,7 @@ fn test_dead_let_semantics_keeps_read_only_call_parity() Result<Void, String> {
   try assert.is_false(result.changed)
   case result.expr {
     .Let(_, .ACall(.AGlobalFunc(f), _), _) => {
-      assert.int_eq(f.id, make_builtin_registry().id("vector_len").id)
+      assert.equal(f.id, make_builtin_registry().id("vector_len").id)
     },
     _ => .Err("expected unused read-only call to be preserved"),
   }

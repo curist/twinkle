@@ -145,9 +145,9 @@ pub fn suite() runner.Suite {
         .Use(d) => {
           try assert.is_false(d.is_stdlib)
           try assert.is_false(d.is_relative)
-          try assert.int_eq(d.path.len(), 2)
-          try assert.str_eq(d.path[0], "foo")
-          try assert.str_eq(d.path[1], "bar")
+          try assert.equal(d.path.len(), 2)
+          try assert.equal(d.path[0], "foo")
+          try assert.equal(d.path[1], "bar")
           try assert.is_none(d.alias)
           assert.is_none(d.items)
         },
@@ -158,10 +158,10 @@ pub fn suite() runner.Suite {
       item := try parse_first_item("use foo.bar as baz")
       case item {
         .Use(d) => {
-          try assert.str_eq(d.path[0], "foo")
-          try assert.str_eq(d.path[1], "bar")
+          try assert.equal(d.path[0], "foo")
+          try assert.equal(d.path[1], "bar")
           case d.alias {
-            .Some(a) => assert.str_eq(a, "baz"),
+            .Some(a) => assert.equal(a, "baz"),
             .None => assert.fail("expected alias"),
           }
         },
@@ -174,9 +174,9 @@ pub fn suite() runner.Suite {
         .Use(d) => {
           try assert.is_true(d.is_stdlib)
           try assert.is_false(d.is_relative)
-          try assert.int_eq(d.path.len(), 2)
-          try assert.str_eq(d.path[0], "std")
-          assert.str_eq(d.path[1], "fs")
+          try assert.equal(d.path.len(), 2)
+          try assert.equal(d.path[0], "std")
+          assert.equal(d.path[1], "fs")
         },
         _ => assert.fail("expected use declaration"),
       }
@@ -187,8 +187,8 @@ pub fn suite() runner.Suite {
         .Use(d) => {
           try assert.is_false(d.is_stdlib)
           try assert.is_true(d.is_relative)
-          try assert.int_eq(d.path.len(), 1)
-          assert.str_eq(d.path[0], "helper")
+          try assert.equal(d.path.len(), 1)
+          assert.equal(d.path[0], "helper")
         },
         _ => assert.fail("expected use declaration"),
       }
@@ -198,9 +198,9 @@ pub fn suite() runner.Suite {
       case item {
         .Use(d) => {
           try assert.is_true(d.is_relative)
-          try assert.int_eq(d.path.len(), 2)
-          try assert.str_eq(d.path[0], "sub")
-          assert.str_eq(d.path[1], "mod")
+          try assert.equal(d.path.len(), 2)
+          try assert.equal(d.path[0], "sub")
+          assert.equal(d.path[1], "mod")
         },
         _ => assert.fail("expected use declaration"),
       }
@@ -208,23 +208,23 @@ pub fn suite() runner.Suite {
     .test("import: destructuring with value, type, and aliases", fn() {
       src := "use math.vec.{add as plus, Vec2 as V2}"
       parsed := parser.parse(src, 0)
-      try assert.int_eq(parsed.diagnostics.len(), 0)
-      try assert.int_eq(parsed.value.items.len(), 1)
+      try assert.equal(parsed.diagnostics.len(), 0)
+      try assert.equal(parsed.value.items.len(), 1)
       case parsed.value.items[0] {
         .Use(decl) => {
           try assert.is_false(decl.is_stdlib)
           try assert.is_false(decl.is_relative)
-          try assert.int_eq(decl.path.len(), 2)
-          try assert.str_eq(decl.path[0], "math")
-          try assert.str_eq(decl.path[1], "vec")
+          try assert.equal(decl.path.len(), 2)
+          try assert.equal(decl.path[0], "math")
+          try assert.equal(decl.path[1], "vec")
           case decl.items {
             .Some(items) => {
-              try assert.int_eq(items.len(), 2)
+              try assert.equal(items.len(), 2)
               try case items[0] {
                 .Value(v) => {
-                  try assert.str_eq(v.name, "add")
+                  try assert.equal(v.name, "add")
                   case v.alias {
-                    .Some(a) => assert.str_eq(a, "plus"),
+                    .Some(a) => assert.equal(a, "plus"),
                     .None => assert.fail("expected alias on value import"),
                   }
                 },
@@ -232,9 +232,9 @@ pub fn suite() runner.Suite {
               }
               case items[1] {
                 .Type(t) => {
-                  try assert.str_eq(t.name, "Vec2")
+                  try assert.equal(t.name, "Vec2")
                   case t.alias {
-                    .Some(a) => assert.str_eq(a, "V2"),
+                    .Some(a) => assert.equal(a, "V2"),
                     .None => assert.fail("expected alias on type import"),
                   }
                 },
@@ -255,11 +255,11 @@ pub fn suite() runner.Suite {
       item := try parse_first_item(src)
       case item {
         .Function(f) => {
-          try assert.str_eq(f.name, "add")
+          try assert.equal(f.name, "add")
           try assert.is_false(f.is_pub)
-          try assert.int_eq(f.params.len(), 2)
-          try assert.str_eq(f.params[0].name, "x")
-          try assert.str_eq(f.params[1].name, "y")
+          try assert.equal(f.params.len(), 2)
+          try assert.equal(f.params[0].name, "x")
+          try assert.equal(f.params[1].name, "y")
           case f.return_type {
             .Some(rt) => assert.is_true(type_is_path(rt, "Int")),
             .None => assert.fail("expected return type"),
@@ -273,7 +273,7 @@ pub fn suite() runner.Suite {
       case item {
         .Function(f) => {
           try assert.is_true(f.is_pub)
-          assert.str_eq(f.name, "greet")
+          assert.equal(f.name, "greet")
         },
         _ => assert.fail("expected function"),
       }
@@ -282,10 +282,10 @@ pub fn suite() runner.Suite {
       item := try parse_first_item("fn map<A, B>(xs: Vector<A>, f: fn(A) B) Vector<B> {}")
       case item {
         .Function(f) => {
-          try assert.str_eq(f.name, "map")
-          try assert.int_eq(f.type_params.len(), 2)
-          try assert.str_eq(f.type_params[0].name, "A")
-          assert.str_eq(f.type_params[1].name, "B")
+          try assert.equal(f.name, "map")
+          try assert.equal(f.type_params.len(), 2)
+          try assert.equal(f.type_params[0].name, "A")
+          assert.equal(f.type_params[1].name, "B")
         },
         _ => assert.fail("expected function"),
       }
@@ -294,7 +294,7 @@ pub fn suite() runner.Suite {
       item := try parse_first_item("fn do_stuff(x: Int) {}")
       case item {
         .Function(f) => {
-          try assert.str_eq(f.name, "do_stuff")
+          try assert.equal(f.name, "do_stuff")
           assert.is_none(f.return_type)
         },
         _ => assert.fail("expected function"),
@@ -303,7 +303,7 @@ pub fn suite() runner.Suite {
     .test("fn decl: no params", fn() {
       item := try parse_first_item("fn hello() {}")
       case item {
-        .Function(f) => assert.int_eq(f.params.len(), 0),
+        .Function(f) => assert.equal(f.params.len(), 0),
         _ => assert.fail("expected function"),
       }
     })
@@ -315,14 +315,14 @@ pub fn suite() runner.Suite {
       src = "${src}type Option<T> = { None, Some(T) }\n"
       src = "${src}type Id = Int"
       mod := try parse_ok(src)
-      try assert.int_eq(mod.items.len(), 3)
+      try assert.equal(mod.items.len(), 3)
 
       try case mod.items[0] {
         .Type(t) => {
-          try assert.str_eq(t.name, "Point")
-          try assert.int_eq(t.type_params.len(), 1)
+          try assert.equal(t.name, "Point")
+          try assert.equal(t.type_params.len(), 1)
           case t.def {
-            .Record(fields) => assert.int_eq(fields.len(), 2),
+            .Record(fields) => assert.equal(fields.len(), 2),
             _ => assert.fail("expected record type def"),
           }
         },
@@ -331,9 +331,9 @@ pub fn suite() runner.Suite {
 
       try case mod.items[1] {
         .Type(t) => {
-          try assert.str_eq(t.name, "Option")
+          try assert.equal(t.name, "Option")
           case t.def {
-            .Sum(variants) => assert.int_eq(variants.len(), 2),
+            .Sum(variants) => assert.equal(variants.len(), 2),
             _ => assert.fail("expected sum type def"),
           }
         },
@@ -342,7 +342,7 @@ pub fn suite() runner.Suite {
 
       case mod.items[2] {
         .Type(t) => {
-          try assert.str_eq(t.name, "Id")
+          try assert.equal(t.name, "Id")
           case t.def {
             .Alias(ty) => assert.is_true(type_is_path(ty, "Int")),
             _ => assert.fail("expected alias type def"),
@@ -356,7 +356,7 @@ pub fn suite() runner.Suite {
       case item {
         .Type(t) => {
           try assert.is_true(t.is_pub)
-          assert.str_eq(t.name, "Color")
+          assert.equal(t.name, "Color")
         },
         _ => assert.fail("expected type declaration"),
       }
@@ -367,11 +367,11 @@ pub fn suite() runner.Suite {
         .Type(t) => {
           case t.def {
             .Sum(variants) => {
-              try assert.int_eq(variants.len(), 2)
-              try assert.str_eq(variants[0].name, "Leaf")
-              try assert.int_eq(variants[0].fields.len(), 0)
-              try assert.str_eq(variants[1].name, "Node")
-              assert.int_eq(variants[1].fields.len(), 3)
+              try assert.equal(variants.len(), 2)
+              try assert.equal(variants[0].name, "Leaf")
+              try assert.equal(variants[0].fields.len(), 0)
+              try assert.equal(variants[1].name, "Node")
+              assert.equal(variants[1].fields.len(), 3)
             },
             _ => assert.fail("expected sum type def"),
           }
@@ -385,14 +385,14 @@ pub fn suite() runner.Suite {
     .test("expr: integer literal", fn() {
       expr := try parse_body_tail("fn f() Int { 42 }")
       case expr.kind {
-        .IntLit(n) => assert.int_eq(n, 42),
+        .IntLit(n) => assert.equal(n, 42),
         _ => assert.fail("expected IntLit"),
       }
     })
     .test("expr: float literal", fn() {
       expr := try parse_body_tail("fn f() Float { 3.14 }")
       case expr.kind {
-        .FloatLit(f) => assert.str_eq(f.to_string(), "3.14"),
+        .FloatLit(f) => assert.equal(f.to_string(), "3.14"),
         _ => assert.fail("expected FloatLit"),
       }
     })
@@ -411,7 +411,7 @@ pub fn suite() runner.Suite {
       dollar := "$"
       expr := try parse_body_tail("fn f() String { \"a ${dollar}{x} b\" }")
       case expr.kind {
-        .StringInterp(parts) => assert.int_eq(parts.len(), 3),
+        .StringInterp(parts) => assert.equal(parts.len(), 3),
         _ => assert.fail("expected StringInterp"),
       }
     })
@@ -430,21 +430,21 @@ pub fn suite() runner.Suite {
     .test("expr: hex integer literal", fn() {
       expr := try parse_body_tail("fn f() Int { 0xFF }")
       case expr.kind {
-        .IntLit(n) => assert.int_eq(n, 255),
+        .IntLit(n) => assert.equal(n, 255),
         _ => assert.fail("expected IntLit"),
       }
     })
     .test("expr: identifier", fn() {
       expr := try parse_body_tail("fn f() Int { x }")
       case expr.kind {
-        .Ident(name) => assert.str_eq(name, "x"),
+        .Ident(name) => assert.equal(name, "x"),
         _ => assert.fail("expected Ident"),
       }
     })
     .test("expr: parenthesized grouping", fn() {
       expr := try parse_body_tail("fn f() Int { (x) }")
       case expr.kind {
-        .Ident(name) => assert.str_eq(name, "x"),
+        .Ident(name) => assert.equal(name, "x"),
         _ => assert.fail("expected Ident through parens"),
       }
     })
@@ -643,7 +643,7 @@ pub fn suite() runner.Suite {
       case expr.kind {
         .Call(callee, args) => {
           try assert_expr_kind(callee, "Ident")
-          assert.int_eq(args.len(), 2)
+          assert.equal(args.len(), 2)
         },
         _ => assert.fail("expected Call"),
       }
@@ -653,7 +653,7 @@ pub fn suite() runner.Suite {
       case expr.kind {
         .Field(base, name) => {
           try assert_expr_kind(base, "Ident")
-          assert.str_eq(name, "x")
+          assert.equal(name, "x")
         },
         _ => assert.fail("expected Field"),
       }
@@ -672,11 +672,11 @@ pub fn suite() runner.Suite {
       expr := try parse_body_tail("fn f() Int { a.foo(1).bar(2) }")
       case expr.kind {
         .Call(callee, args) => {
-          try assert.int_eq(args.len(), 1)
+          try assert.equal(args.len(), 1)
           // callee should be Field(Call(Field(a, foo), [1]), bar)
           case callee.kind {
             .Field(inner_call, name) => {
-              try assert.str_eq(name, "bar")
+              try assert.equal(name, "bar")
               assert_expr_kind(inner_call, "Call")
             },
             _ => assert.fail("expected Field as callee of outer call"),
@@ -718,11 +718,11 @@ pub fn suite() runner.Suite {
       case expr.kind {
         .Case(scrutinee, arms) => {
           try assert_expr_kind(scrutinee, "Ident")
-          try assert.int_eq(arms.len(), 2)
+          try assert.equal(arms.len(), 2)
           case arms[0].pattern.kind {
             .Variant(name, pats) => {
-              try assert.str_eq(name, "Some")
-              assert.int_eq(pats.len(), 1)
+              try assert.equal(name, "Some")
+              assert.equal(pats.len(), 1)
             },
             _ => assert.fail("expected Variant pattern"),
           }
@@ -733,7 +733,7 @@ pub fn suite() runner.Suite {
     .test("expr: array literal", fn() {
       expr := try parse_body_tail("fn f() { [1, 2, 3] }")
       case expr.kind {
-        .Array(elems) => assert.int_eq(elems.len(), 3),
+        .Array(elems) => assert.equal(elems.len(), 3),
         _ => assert.fail("expected Array"),
       }
     })
@@ -741,9 +741,9 @@ pub fn suite() runner.Suite {
       expr := try parse_body_tail("fn f() { .{ x: 1, y: 2 } }")
       case expr.kind {
         .Record(entries) => {
-          try assert.int_eq(entries.len(), 2)
-          try assert.str_eq(entries[0].name, "x")
-          assert.str_eq(entries[1].name, "y")
+          try assert.equal(entries.len(), 2)
+          try assert.equal(entries[0].name, "x")
+          assert.equal(entries[1].name, "y")
         },
         _ => assert.fail("expected Record"),
       }
@@ -753,10 +753,10 @@ pub fn suite() runner.Suite {
       expr := try parse_body_tail(src)
       case expr.kind {
         .Record(entries) => {
-          try assert.int_eq(entries.len(), 2)
-          try assert.str_eq(entries[0].name, "x")
+          try assert.equal(entries.len(), 2)
+          try assert.equal(entries[0].name, "x")
           try assert.is_none(entries[0].value)
-          try assert.str_eq(entries[1].name, "y")
+          try assert.equal(entries[1].name, "y")
           assert.is_none(entries[1].value)
         },
         _ => assert.fail("expected Record"),
@@ -766,16 +766,16 @@ pub fn suite() runner.Suite {
       none := try parse_body_tail("fn f() { .None }")
       try case none.kind {
         .Variant(name, args) => {
-          try assert.str_eq(name, "None")
-          assert.int_eq(args.len(), 0)
+          try assert.equal(name, "None")
+          assert.equal(args.len(), 0)
         },
         _ => assert.fail("expected Variant"),
       }
       some := try parse_body_tail("fn f() { .Some(1) }")
       case some.kind {
         .Variant(name, args) => {
-          try assert.str_eq(name, "Some")
-          assert.int_eq(args.len(), 1)
+          try assert.equal(name, "Some")
+          assert.equal(args.len(), 1)
         },
         _ => assert.fail("expected Variant"),
       }
@@ -784,8 +784,8 @@ pub fn suite() runner.Suite {
       expr := try parse_body_tail("fn f() { fn(x: Int) Int { x + 1 } }")
       case expr.kind {
         .Closure(params, ret_type, body) => {
-          try assert.int_eq(params.len(), 1)
-          try assert.str_eq(params[0].name, "x")
+          try assert.equal(params.len(), 1)
+          try assert.equal(params[0].name, "x")
           try assert.is_some(ret_type)
           assert.is_some(body.tail)
         },
@@ -796,7 +796,7 @@ pub fn suite() runner.Suite {
       expr := try parse_body_tail("fn f() { fn(x) { x } }")
       case expr.kind {
         .Closure(params, ret_type, _) => {
-          try assert.int_eq(params.len(), 1)
+          try assert.equal(params.len(), 1)
           assert.is_none(ret_type)
         },
         _ => assert.fail("expected Closure"),
@@ -821,7 +821,7 @@ pub fn suite() runner.Suite {
       stmt := try parse_body_stmt("fn f() { x := 1 }", 0)
       case stmt {
         .Let(bind) => {
-          try assert.str_eq(bind.name, "x")
+          try assert.equal(bind.name, "x")
           try assert.is_false(bind.is_rebind)
           try assert.is_none(bind.ty)
           assert_expr_kind(bind.value, "IntLit")
@@ -833,7 +833,7 @@ pub fn suite() runner.Suite {
       stmt := try parse_body_stmt("fn f() { x: Int = 1 }", 0)
       case stmt {
         .Let(bind) => {
-          try assert.str_eq(bind.name, "x")
+          try assert.equal(bind.name, "x")
           try assert.is_false(bind.is_rebind)
           case bind.ty {
             .Some(ty) => assert.is_true(type_is_path(ty, "Int")),
@@ -848,7 +848,7 @@ pub fn suite() runner.Suite {
       stmt := try parse_body_stmt(src, 1)
       case stmt {
         .Let(bind) => {
-          try assert.str_eq(bind.name, "x")
+          try assert.equal(bind.name, "x")
           assert.is_true(bind.is_rebind)
         },
         _ => assert.fail("expected Let rebind"),
@@ -859,7 +859,7 @@ pub fn suite() runner.Suite {
       case stmt {
         .For(s) => {
           case s.pattern {
-            .Some(p) => try assert.str_eq(p, "x"),
+            .Some(p) => try assert.equal(p, "x"),
             .None => { return assert.fail("expected pattern") },
           }
           try assert.is_none(s.index)
@@ -874,11 +874,11 @@ pub fn suite() runner.Suite {
       case stmt {
         .For(s) => {
           case s.pattern {
-            .Some(p) => try assert.str_eq(p, "x"),
+            .Some(p) => try assert.equal(p, "x"),
             .None => { return assert.fail("expected pattern") },
           }
           case s.index {
-            .Some(idx) => assert.str_eq(idx, "i"),
+            .Some(idx) => assert.equal(idx, "i"),
             .None => assert.fail("expected index"),
           }
         },
@@ -913,7 +913,7 @@ pub fn suite() runner.Suite {
       brk := try parse_body_stmt("fn f() { for true { break } }", 0)
       try case brk {
         .For(s) => {
-          try assert.int_eq(s.body.stmts.len(), 1)
+          try assert.equal(s.body.stmts.len(), 1)
           case s.body.stmts[0] {
             .Break(_) => .Ok({}),
             _ => assert.fail("expected Break"),
@@ -924,7 +924,7 @@ pub fn suite() runner.Suite {
       cont := try parse_body_stmt("fn f() { for true { continue } }", 0)
       case cont {
         .For(s) => {
-          try assert.int_eq(s.body.stmts.len(), 1)
+          try assert.equal(s.body.stmts.len(), 1)
           case s.body.stmts[0] {
             .Continue(_) => .Ok({}),
             _ => assert.fail("expected Continue"),
@@ -951,8 +951,8 @@ pub fn suite() runner.Suite {
             .Some(ty) => {
               case ty.kind {
                 .Applied(path, args) => {
-                  try assert.str_eq(path.segments[0], "Vector")
-                  try assert.int_eq(args.len(), 1)
+                  try assert.equal(path.segments[0], "Vector")
+                  try assert.equal(args.len(), 1)
                   assert.is_true(type_is_path(args[0], "Int"))
                 },
                 _ => assert.fail("expected Applied type"),
@@ -972,7 +972,7 @@ pub fn suite() runner.Suite {
             .Some(ty) => {
               case ty.kind {
                 .Function(params, ret) => {
-                  try assert.int_eq(params.len(), 1)
+                  try assert.equal(params.len(), 1)
                   assert.is_true(type_is_path(ret, "Bool"))
                 },
                 _ => assert.fail("expected Function type"),
@@ -1051,13 +1051,13 @@ pub fn suite() runner.Suite {
             .Some(ty) => {
               case ty.kind {
                 .Applied(path, args) => {
-                  try assert.str_eq(path.segments[0], "Dict")
-                  try assert.int_eq(args.len(), 2)
+                  try assert.equal(path.segments[0], "Dict")
+                  try assert.equal(args.len(), 2)
                   try assert.is_true(type_is_path(args[0], "String"))
                   case args[1].kind {
                     .Applied(inner_path, inner_args) => {
-                      try assert.str_eq(inner_path.segments[0], "Vector")
-                      assert.int_eq(inner_args.len(), 1)
+                      try assert.equal(inner_path.segments[0], "Vector")
+                      assert.equal(inner_args.len(), 1)
                     },
                     _ => assert.fail("expected Applied for inner type"),
                   }
@@ -1084,7 +1084,7 @@ pub fn suite() runner.Suite {
             _ => assert.fail("expected Wildcard pattern"),
           }
           case arms[1].pattern.kind {
-            .Ident(name) => assert.str_eq(name, "y"),
+            .Ident(name) => assert.equal(name, "y"),
             _ => assert.fail("expected Ident pattern"),
           }
         },
@@ -1115,10 +1115,10 @@ pub fn suite() runner.Suite {
         .Case(_, arms) => {
           case arms[0].pattern.kind {
             .Variant(name, pats) => {
-              try assert.str_eq(name, "Some")
-              try assert.int_eq(pats.len(), 1)
+              try assert.equal(name, "Some")
+              try assert.equal(pats.len(), 1)
               case pats[0].kind {
-                .Variant(inner_name, _) => assert.str_eq(inner_name, "Some"),
+                .Variant(inner_name, _) => assert.equal(inner_name, "Some"),
                 _ => assert.fail("expected nested Variant pattern"),
               }
             },
@@ -1135,10 +1135,10 @@ pub fn suite() runner.Suite {
         .Case(_, arms) => {
           case arms[0].pattern.kind {
             .QualifiedVariant(path, name, pats) => {
-              try assert.int_eq(path.len(), 1)
-              try assert.str_eq(path[0], "Result")
-              try assert.str_eq(name, "Ok")
-              assert.int_eq(pats.len(), 1)
+              try assert.equal(path.len(), 1)
+              try assert.equal(path[0], "Result")
+              try assert.equal(name, "Ok")
+              assert.equal(pats.len(), 1)
             },
             _ => assert.fail("expected QualifiedVariant pattern"),
           }
@@ -1153,7 +1153,7 @@ pub fn suite() runner.Suite {
       src := "fn f() { collect x in items { x * 2 } }"
       mod := try parse_ok(src)
       // collect should parse without diagnostics
-      assert.int_eq(mod.items.len(), 1)
+      assert.equal(mod.items.len(), 1)
     })
 
     // ── Multiline Continuity ──────────────────────────────────────
@@ -1165,7 +1165,7 @@ pub fn suite() runner.Suite {
       src = "${src}x"
 
       mod := try parse_ok(src)
-      try assert.int_eq(mod.items.len(), 3)
+      try assert.equal(mod.items.len(), 3)
 
       try case mod.items[1] {
         .Stmt(stmt) => {
@@ -1194,7 +1194,7 @@ pub fn suite() runner.Suite {
     .test("lexer: newline boundaries on tokens", fn() {
       src := "use foo\nfn main() {}"
       lexed := lexer.lex(src, 0)
-      try assert.int_eq(lexed.diagnostics.len(), 0)
+      try assert.equal(lexed.diagnostics.len(), 0)
       try assert.is_true(lexed.value.len() >= 4)
       try assert.is_true(lexed.value[2].kind == .Fn)
       assert.is_true(lexed.value[2].preceded_by_newline)
@@ -1203,7 +1203,7 @@ pub fn suite() runner.Suite {
       dollar := "$"
       src := "1.5 == 2 && 3 != 4 || 5 <= 6 >= 7 .. 8\n\"a ${dollar}{x + 1} b\""
       lexed := lexer.lex(src, 0)
-      try assert.int_eq(lexed.diagnostics.len(), 0)
+      try assert.equal(lexed.diagnostics.len(), 0)
       try assert.is_true(lexed.value[0].kind == .FloatLit)
       try assert.is_true(lexed.value[1].kind == .EqEq)
       try assert.is_true(lexed.value[3].kind == .AmpAmp)
@@ -1221,7 +1221,7 @@ pub fn suite() runner.Suite {
     .test("lexer: utf8 in comment does not trap", fn() {
       src := "// 你好\nfn main() {}"
       lexed := lexer.lex(src, 0)
-      try assert.int_eq(lexed.diagnostics.len(), 0)
+      try assert.equal(lexed.diagnostics.len(), 0)
       try assert.is_true(lexed.value.len() >= 2)
       try assert.is_true(lexed.value[0].kind == .Fn)
       assert.is_true(lexed.value[0].preceded_by_newline)
@@ -1229,7 +1229,7 @@ pub fn suite() runner.Suite {
     .test("lexer: utf8 plain string literal does not trap", fn() {
       src := "\"你好\""
       lexed := lexer.lex(src, 0)
-      try assert.int_eq(lexed.diagnostics.len(), 0)
+      try assert.equal(lexed.diagnostics.len(), 0)
       try assert.is_true(lexed.value.len() >= 2)
       assert.is_true(lexed.value[0].kind == .StringLit)
     })
@@ -1237,7 +1237,7 @@ pub fn suite() runner.Suite {
       dollar := "$"
       src := "\"你好 ${dollar}{x} 世界\""
       lexed := lexer.lex(src, 0)
-      try assert.int_eq(lexed.diagnostics.len(), 0)
+      try assert.equal(lexed.diagnostics.len(), 0)
       try assert.is_true(lexed.value.len() >= 4)
       try assert.is_true(lexed.value[0].kind == .StringStart)
       try assert.is_true(lexed.value[1].kind == .Ident)
@@ -1263,10 +1263,10 @@ pub fn suite() runner.Suite {
       // The outer expression should be a NamedRecord preserving the type name
       case expr.kind {
         .NamedRecord(name, entries) => {
-          try assert.str_eq(name, "Point")
-          try assert.int_eq(entries.len(), 2)
-          try assert.str_eq(entries[0].name, "x")
-          assert.str_eq(entries[1].name, "y")
+          try assert.equal(name, "Point")
+          try assert.equal(entries.len(), 2)
+          try assert.equal(entries[0].name, "x")
+          assert.equal(entries[1].name, "y")
         },
         _ => assert.fail("expected NamedRecord, got ${expr.kind.name()}"),
       }
@@ -1278,7 +1278,7 @@ pub fn suite() runner.Suite {
       // The boot parser does not enforce naming conventions, unlike the Rust parser
       parsed := parser.parse("fn Greet() {}", 0)
       // Boot parser currently allows this — no diagnostics
-      assert.int_eq(parsed.diagnostics.len(), 0)
+      assert.equal(parsed.diagnostics.len(), 0)
     })
 
     // ── Constructor-in-Postfix ────────────────────────────────────
@@ -1289,14 +1289,14 @@ pub fn suite() runner.Suite {
       case expr.kind {
         .Field(base, name) => {
           try assert_expr_kind(base, "Ident")
-          assert.str_eq(name, "Some")
+          assert.equal(name, "Some")
         },
         _ => assert.fail("expected Field, got ${expr.kind.name()}"),
       }
     })
     .test("postfix: newline before [ or ( starts a new statement", fn() {
       block := try parse_first_fn_body("fn f() { foo := \"asdf\"\n[1, 22, 3]\nbar\n(1) }")
-      try assert.int_eq(block.stmts.len(), 3)
+      try assert.equal(block.stmts.len(), 3)
 
       case block.stmts[0] {
         .Let(_) => {},
@@ -1306,7 +1306,7 @@ pub fn suite() runner.Suite {
       case block.stmts[1] {
         .Expr(es) => {
           case es.expr.kind {
-            .Array(items) => try assert.int_eq(items.len(), 3),
+            .Array(items) => try assert.equal(items.len(), 3),
             _ => try assert.fail("expected array expr stmt"),
           }
         },
@@ -1316,7 +1316,7 @@ pub fn suite() runner.Suite {
       case block.stmts[2] {
         .Expr(es) => {
           case es.expr.kind {
-            .Ident(name) => try assert.str_eq(name, "bar"),
+            .Ident(name) => try assert.equal(name, "bar"),
             _ => try assert.fail("expected ident expr stmt"),
           }
         },
@@ -1326,7 +1326,7 @@ pub fn suite() runner.Suite {
       case block.tail {
         .Some(expr) => {
           case expr.kind {
-            .IntLit(n) => try assert.int_eq(n, 1),
+            .IntLit(n) => try assert.equal(n, 1),
             _ => try assert.fail("expected grouped int tail expr"),
           }
         },
@@ -1339,10 +1339,10 @@ pub fn suite() runner.Suite {
       expr := try parse_body_tail("fn f() { foo\n.bar() }")
       case expr.kind {
         .Call(callee, args) => {
-          try assert.int_eq(args.len(), 0)
+          try assert.equal(args.len(), 0)
           case callee.kind {
             .Field(base, name) => {
-              try assert.str_eq(name, "bar")
+              try assert.equal(name, "bar")
               try assert_expr_kind(base, "Ident")
             },
             _ => try assert.fail("expected field callee"),
@@ -1358,13 +1358,13 @@ pub fn suite() runner.Suite {
 
     .test("pub let: pub on top-level binding parses as stmt", fn() {
       parsed := parser.parse("pub x := 42", 0)
-      try assert.int_eq(parsed.diagnostics.len(), 0)
-      try assert.int_eq(parsed.value.items.len(), 1)
+      try assert.equal(parsed.diagnostics.len(), 0)
+      try assert.equal(parsed.value.items.len(), 1)
       case parsed.value.items[0] {
         .Stmt(stmt) => {
           case stmt {
             .Let(ls) => {
-              try assert.str_eq(ls.name, "x")
+              try assert.equal(ls.name, "x")
               try assert.is_true(ls.is_pub)
               assert.is_true(!ls.is_rebind)
             },
@@ -1384,11 +1384,11 @@ pub fn suite() runner.Suite {
     .test("import: trailing comma in destructuring", fn() {
       src := "use foo.bar.{add, Vec,}"
       parsed := parser.parse(src, 0)
-      try assert.int_eq(parsed.diagnostics.len(), 0)
+      try assert.equal(parsed.diagnostics.len(), 0)
       case parsed.value.items[0] {
         .Use(d) => {
           case d.items {
-            .Some(items) => assert.int_eq(items.len(), 2),
+            .Some(items) => assert.equal(items.len(), 2),
             .None => assert.fail("expected destructuring items"),
           }
         },
@@ -1398,21 +1398,21 @@ pub fn suite() runner.Suite {
     .test("import: relative path with destructuring", fn() {
       src := "use .util.{helper, Config}"
       parsed := parser.parse(src, 0)
-      try assert.int_eq(parsed.diagnostics.len(), 0)
+      try assert.equal(parsed.diagnostics.len(), 0)
       case parsed.value.items[0] {
         .Use(d) => {
           try assert.is_true(d.is_relative)
-          try assert.int_eq(d.path.len(), 1)
-          try assert.str_eq(d.path[0], "util")
+          try assert.equal(d.path.len(), 1)
+          try assert.equal(d.path[0], "util")
           case d.items {
             .Some(items) => {
-              try assert.int_eq(items.len(), 2)
+              try assert.equal(items.len(), 2)
               try case items[0] {
-                .Value(v) => assert.str_eq(v.name, "helper"),
+                .Value(v) => assert.equal(v.name, "helper"),
                 _ => assert.fail("expected value import"),
               }
               case items[1] {
-                .Type(t) => assert.str_eq(t.name, "Config"),
+                .Type(t) => assert.equal(t.name, "Config"),
                 _ => assert.fail("expected type import"),
               }
             },
@@ -1437,13 +1437,13 @@ pub fn suite() runner.Suite {
       src := "use foo.\nfn ok() {}"
       parsed := parser.parse(src, 0)
       try assert.is_true(parsed.diagnostics.len() > 0)
-      try assert.int_eq(parsed.value.items.len(), 2)
+      try assert.equal(parsed.value.items.len(), 2)
       try case parsed.value.items[0] {
         .ErrorItem(_) => .Ok({}),
         _ => assert.fail("expected error node"),
       }
       case parsed.value.items[1] {
-        .Function(fn_decl) => assert.str_eq(fn_decl.name, "ok"),
+        .Function(fn_decl) => assert.equal(fn_decl.name, "ok"),
         _ => assert.fail("expected function after error"),
       }
     })
@@ -1561,7 +1561,7 @@ pub fn suite() runner.Suite {
       // '+' is not a valid prefix operator, so the parser should emit a diagnostic
       try assert.is_true(parsed.diagnostics.len() > 0)
       // Should still produce the function item
-      assert.int_eq(parsed.value.items.len(), 1)
+      assert.equal(parsed.value.items.len(), 1)
     })
     .test("error recovery: missing case arm body", fn() {
       src := "fn f() {\n  case x {\n    .A =>,\n    .B => 2,\n  }\n}"
@@ -1624,13 +1624,13 @@ pub fn suite() runner.Suite {
 
     .test("error recovery: empty source", fn() {
       parsed := parser.parse("", 0)
-      try assert.int_eq(parsed.diagnostics.len(), 0)
-      assert.int_eq(parsed.value.items.len(), 0)
+      try assert.equal(parsed.diagnostics.len(), 0)
+      assert.equal(parsed.value.items.len(), 0)
     })
     .test("error recovery: only whitespace and comments", fn() {
       parsed := parser.parse("  \n// just a comment\n  ", 0)
-      try assert.int_eq(parsed.diagnostics.len(), 0)
-      assert.int_eq(parsed.value.items.len(), 0)
+      try assert.equal(parsed.diagnostics.len(), 0)
+      assert.equal(parsed.value.items.len(), 0)
     })
     .test("error recovery: single unknown token", fn() {
       parsed := parser.parse("#", 0)
@@ -1693,7 +1693,7 @@ pub fn suite() runner.Suite {
       try assert.is_true(parsed.diagnostics.len() > 0)
       diag_span := parsed.diagnostics[0].span()
       // The span should cover the 'return' keyword (6 chars)
-      assert.int_eq(diag_span.end - diag_span.start, 6)
+      assert.equal(diag_span.end - diag_span.start, 6)
     })
 
     // ── Diagnostics Clarity: Recovery ────────────────────────────
@@ -1743,11 +1743,11 @@ pub fn suite() runner.Suite {
 
     .test("diagnostics: valid return in block has no statement-in-expr error", fn() {
       parsed := parser.parse("fn f() Int { return 1 }", 0)
-      assert.int_eq(parsed.diagnostics.len(), 0)
+      assert.equal(parsed.diagnostics.len(), 0)
     })
     .test("diagnostics: valid for loop has no statement-in-expr error", fn() {
       parsed := parser.parse("fn f() { for x in xs { continue } }", 0)
-      assert.int_eq(parsed.diagnostics.len(), 0)
+      assert.equal(parsed.diagnostics.len(), 0)
     })
 
     // ── Fixture Snapshot Tests ──────────────────────────────────

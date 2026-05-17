@@ -69,11 +69,11 @@ impl ImportDecl {
     }
 }
 
-/// Type parameter with an optional single contract bound.
+/// Type parameter with optional contract bounds.
 #[derive(Debug, Clone, PartialEq)]
 pub struct TypeParam {
     pub name: String,
-    pub bound: Option<String>,
+    pub bounds: Vec<String>,
 }
 
 /// Type declaration

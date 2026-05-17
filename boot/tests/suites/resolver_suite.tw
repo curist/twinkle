@@ -172,30 +172,30 @@ pub fn suite() runner.Suite {
     // ── Type declarations ──
     .test("resolve empty module", fn() {
       env := try resolve_ok("")
-      assert.int_eq(env.types.len(), 0)
+      assert.equal(env.types.len(), 0)
     })
     .test("resolve record type", fn() {
       env := try resolve_ok("type Point = .{ x: Int, y: Int }")
       try assert.is_true(resolver.has_type(env, "Point"))
-      try assert.str_eq(try get_field_type(env, "Point", "x"), "Int")
-      try assert.str_eq(try get_field_type(env, "Point", "y"), "Int")
+      try assert.equal(try get_field_type(env, "Point", "x"), "Int")
+      try assert.equal(try get_field_type(env, "Point", "y"), "Int")
       .Ok({})
     })
     .test("resolve record with various field types", fn() {
       src := "type Foo = .{ a: Int, b: Float, c: Bool, d: String, e: Byte }"
       env := try resolve_ok(src)
-      try assert.str_eq(try get_field_type(env, "Foo", "a"), "Int")
-      try assert.str_eq(try get_field_type(env, "Foo", "b"), "Float")
-      try assert.str_eq(try get_field_type(env, "Foo", "c"), "Bool")
-      try assert.str_eq(try get_field_type(env, "Foo", "d"), "String")
-      try assert.str_eq(try get_field_type(env, "Foo", "e"), "Byte")
+      try assert.equal(try get_field_type(env, "Foo", "a"), "Int")
+      try assert.equal(try get_field_type(env, "Foo", "b"), "Float")
+      try assert.equal(try get_field_type(env, "Foo", "c"), "Bool")
+      try assert.equal(try get_field_type(env, "Foo", "d"), "String")
+      try assert.equal(try get_field_type(env, "Foo", "e"), "Byte")
       .Ok({})
     })
     .test("resolve sum type", fn() {
       src := "type Shape = { Circle(Float), Rect(Float, Float), Unit }"
       env := try resolve_ok(src)
       try assert.is_true(resolver.has_type(env, "Shape"))
-      try assert.int_eq(try get_variant_count(env, "Shape"), 3)
+      try assert.equal(try get_variant_count(env, "Shape"), 3)
       .Ok({})
     })
     .test("resolve type alias", fn() {
@@ -208,7 +208,7 @@ pub fn suite() runner.Suite {
       src := "type Box<T> = .{ value: T }"
       env := try resolve_ok(src)
       try assert.is_true(resolver.has_type(env, "Box"))
-      try assert.str_eq(try get_field_type(env, "Box", "value"), "Var(T)")
+      try assert.equal(try get_field_type(env, "Box", "value"), "Var(T)")
       .Ok({})
     })
     .test("resolve type referencing another type", fn() {
@@ -217,40 +217,40 @@ pub fn suite() runner.Suite {
       try assert.is_true(resolver.has_type(env, "Point"))
       try assert.is_true(resolver.has_type(env, "Line"))
       start_ty := try get_field_type(env, "Line", "start")
-      try assert.str_eq(start_ty, "Named(0)")
+      try assert.equal(start_ty, "Named(0)")
       .Ok({})
     })
     .test("TypeIds are assigned in declaration order", fn() {
       src := "type A = .{ x: Int }\ntype B = .{ y: Float }\ntype C = .{ z: Bool }"
       env := try resolve_ok(src)
-      try assert.int_eq(try type_id_of(env, "A"), 0)
-      try assert.int_eq(try type_id_of(env, "B"), 1)
-      try assert.int_eq(try type_id_of(env, "C"), 2)
+      try assert.equal(try type_id_of(env, "A"), 0)
+      try assert.equal(try type_id_of(env, "B"), 1)
+      try assert.equal(try type_id_of(env, "C"), 2)
       .Ok({})
     })
     // ── Builtin generic types ──
     .test("resolve Vector type", fn() {
       src := "type Nums = .{ items: Vector<Int> }"
       env := try resolve_ok(src)
-      try assert.str_eq(try get_field_type(env, "Nums", "items"), "Vector<Int>")
+      try assert.equal(try get_field_type(env, "Nums", "items"), "Vector<Int>")
       .Ok({})
     })
     .test("resolve Dict type", fn() {
       src := "type Map = .{ data: Dict<String, Int> }"
       env := try resolve_ok(src)
-      try assert.str_eq(try get_field_type(env, "Map", "data"), "Dict<String, Int>")
+      try assert.equal(try get_field_type(env, "Map", "data"), "Dict<String, Int>")
       .Ok({})
     })
     .test("resolve Optional type", fn() {
       src := "type Foo = .{ value: Int? }"
       env := try resolve_ok(src)
-      try assert.str_eq(try get_field_type(env, "Foo", "value"), "Int?")
+      try assert.equal(try get_field_type(env, "Foo", "value"), "Int?")
       .Ok({})
     })
     .test("resolve function type in field", fn() {
       src := "type Callback = .{ handler: fn(Int) Bool }"
       env := try resolve_ok(src)
-      try assert.str_eq(try get_field_type(env, "Callback", "handler"), "fn(Int) Bool")
+      try assert.equal(try get_field_type(env, "Callback", "handler"), "fn(Int) Bool")
       .Ok({})
     })
     // ── Function declarations ──
@@ -258,28 +258,28 @@ pub fn suite() runner.Suite {
       src := "fn add(a: Int, b: Int) Int { a }"
       env := try resolve_ok(src)
       try assert.is_true(resolver.has_function(env, "add"))
-      try assert.str_eq(try get_param_type(env, "add", 0), "Int")
-      try assert.str_eq(try get_param_type(env, "add", 1), "Int")
-      try assert.str_eq(try get_return_type(env, "add"), "Int")
+      try assert.equal(try get_param_type(env, "add", 0), "Int")
+      try assert.equal(try get_param_type(env, "add", 1), "Int")
+      try assert.equal(try get_return_type(env, "add"), "Int")
       .Ok({})
     })
     .test("resolve function with no return type", fn() {
       src := "fn greet(name: String) { name }"
       env := try resolve_ok(src)
-      try assert.str_eq(try get_return_type(env, "greet"), "(none)")
+      try assert.equal(try get_return_type(env, "greet"), "(none)")
       .Ok({})
     })
     .test("resolve function with user type params", fn() {
       src := "type Point = .{ x: Int, y: Int }\nfn origin() Point { origin }"
       env := try resolve_ok(src)
-      try assert.str_eq(try get_return_type(env, "origin"), "Named(0)")
+      try assert.equal(try get_return_type(env, "origin"), "Named(0)")
       .Ok({})
     })
     .test("resolve generic function", fn() {
       src := "fn identity<T>(x: T) T { x }"
       env := try resolve_ok(src)
-      try assert.str_eq(try get_param_type(env, "identity", 0), "Var(T)")
-      try assert.str_eq(try get_return_type(env, "identity"), "Var(T)")
+      try assert.equal(try get_param_type(env, "identity", 0), "Var(T)")
+      try assert.equal(try get_return_type(env, "identity"), "Var(T)")
       .Ok({})
     })
     // ── Error cases ──
@@ -297,7 +297,7 @@ pub fn suite() runner.Suite {
     })
     .test("duplicate fn produces exactly one env entry", fn() {
       r := resolve_src("fn foo(x: Int) Int { x }\nfn foo(y: Int) Int { y }")
-      try assert.int_eq(r.env.functions.len(), 1)
+      try assert.equal(r.env.functions.len(), 1)
       .Ok({})
     })
     .test("undefined type in field", fn() {
@@ -315,7 +315,7 @@ pub fn suite() runner.Suite {
     .test("multiple type-arg errors collected", fn() {
       src := "type Foo = .{ x: Dict<Bad1, Bad2> }"
       msgs := try resolve_errs(src)
-      try assert.int_eq(msgs.len(), 2)
+      try assert.equal(msgs.len(), 2)
       try assert.str_contains(msgs[0], "Bad1")
       try assert.str_contains(msgs[1], "Bad2")
       .Ok({})
@@ -323,7 +323,7 @@ pub fn suite() runner.Suite {
     .test("multiple fn param type errors collected", fn() {
       src := "fn foo(a: Bad1, b: Bad2) Int { 0 }"
       msgs := try resolve_errs(src)
-      try assert.int_eq(msgs.len(), 2)
+      try assert.equal(msgs.len(), 2)
       try assert.str_contains(msgs[0], "Bad1")
       try assert.str_contains(msgs[1], "Bad2")
       .Ok({})
@@ -331,7 +331,7 @@ pub fn suite() runner.Suite {
     .test("fn type errors include return type", fn() {
       src := "type Foo = .{ f: fn(Bad1) Bad2 }"
       msgs := try resolve_errs(src)
-      try assert.int_eq(msgs.len(), 2)
+      try assert.equal(msgs.len(), 2)
       try assert.str_contains(msgs[0], "Bad1")
       try assert.str_contains(msgs[1], "Bad2")
       .Ok({})
@@ -367,7 +367,7 @@ pub fn suite() runner.Suite {
     .test("resolve Result type in field", fn() {
       src := "type Foo = .{ value: Result<Int, String> }"
       env := try resolve_ok(src)
-      try assert.str_eq(try get_field_type(env, "Foo", "value"), "Result<Int, String>")
+      try assert.equal(try get_field_type(env, "Foo", "value"), "Result<Int, String>")
       .Ok({})
     })
     // ── Sum with generic payloads ──
@@ -375,7 +375,7 @@ pub fn suite() runner.Suite {
       src := "type Either<A, B> = { Left(A), Right(B) }"
       env := try resolve_ok(src)
       try assert.is_true(resolver.has_type(env, "Either"))
-      try assert.int_eq(try get_variant_count(env, "Either"), 2)
+      try assert.equal(try get_variant_count(env, "Either"), 2)
       .Ok({})
     })
     // ── Multiple functions ──
@@ -430,7 +430,7 @@ pub fn suite() runner.Suite {
       env := try resolve_ok(src)
       try assert.is_true(resolver.has_type(env, "Line"))
       start_ty := try get_field_type(env, "Line", "start")
-      try assert.str_eq(start_ty, "Named(1)")
+      try assert.equal(start_ty, "Named(1)")
       .Ok({})
     })
     // ── Type alias chain ──
@@ -473,8 +473,8 @@ pub fn suite() runner.Suite {
       // fn f<Int>(x: Int) — the Int here should be Var("Int"), not MonoType.Int
       src := "fn f<Int>(x: Int) Int { x }"
       env := try resolve_ok(src)
-      try assert.str_eq(try get_param_type(env, "f", 0), "Var(Int)")
-      try assert.str_eq(try get_return_type(env, "f"), "Var(Int)")
+      try assert.equal(try get_param_type(env, "f", 0), "Var(Int)")
+      try assert.equal(try get_return_type(env, "f"), "Var(Int)")
       .Ok({})
     })
     // ── Method registry ──
@@ -491,7 +491,7 @@ pub fn suite() runner.Suite {
       env.methods["String"] = [entry]
       case resolver.lookup_method(env, "String", "len") {
         .Some(fn_name) => {
-          try assert.str_eq(fn_name, "string_len")
+          try assert.equal(fn_name, "string_len")
           .Ok({})
         },
         .None => .Err("expected Some"),
@@ -513,10 +513,10 @@ pub fn suite() runner.Suite {
         .bind_type("Point", tid)
         .register_bound_methods("Point", [resolver.MethodEntry.{ method_name: "len", function_name: "len" }])
 
-      try assert.str_eq(try resolver.find_type_name(env, tid).ok_or("preferred type name missing"), "dep.Point")
+      try assert.equal(try resolver.find_type_name(env, tid).ok_or("preferred type name missing"), "dep.Point")
       case resolver.lookup_type_method(env, tid, "len") {
         .Some(fn_name) => {
-          try assert.str_eq(fn_name, "len")
+          try assert.equal(fn_name, "len")
           .Ok({})
         },
         .None => .Err("expected type-id method lookup to succeed"),
@@ -526,7 +526,7 @@ pub fn suite() runner.Suite {
       env := resolver.empty_env().register_builtin_methods()
       case resolver.lookup_method(env, "String", "len") {
         .Some(fn_name) => {
-          try assert.str_eq(fn_name, "string_len")
+          try assert.equal(fn_name, "string_len")
           .Ok({})
         },
         .None => .Err("expected Some"),
@@ -536,7 +536,7 @@ pub fn suite() runner.Suite {
       env := resolver.empty_env().register_builtin_methods()
       case resolver.lookup_method(env, "Vector", "append") {
         .Some(fn_name) => {
-          try assert.str_eq(fn_name, "vector_append")
+          try assert.equal(fn_name, "vector_append")
           .Ok({})
         },
         .None => .Err("expected Some"),
@@ -546,7 +546,7 @@ pub fn suite() runner.Suite {
       env := resolver.empty_env().register_builtin_methods()
       case resolver.lookup_method(env, "Int", "to_string") {
         .Some(fn_name) => {
-          try assert.str_eq(fn_name, "int_to_string")
+          try assert.equal(fn_name, "int_to_string")
           .Ok({})
         },
         .None => .Err("expected Some"),
@@ -556,7 +556,7 @@ pub fn suite() runner.Suite {
       env := resolver.empty_env().register_builtin_methods()
       case resolver.lookup_method(env, "Dict", "keys") {
         .Some(fn_name) => {
-          try assert.str_eq(fn_name, "dict_keys")
+          try assert.equal(fn_name, "dict_keys")
           .Ok({})
         },
         .None => .Err("expected Some"),
@@ -568,7 +568,7 @@ pub fn suite() runner.Suite {
       env := try resolve_ok(src)
       case resolver.lookup_method(env, "Point", "to_string") {
         .Some(fn_name) => {
-          try assert.str_eq(fn_name, "to_string")
+          try assert.equal(fn_name, "to_string")
           .Ok({})
         },
         .None => .Err("expected to_string to be registered on Point"),
@@ -587,7 +587,7 @@ pub fn suite() runner.Suite {
       env := try resolve_ok(src)
       case resolver.lookup_method(env, "Shape", "area") {
         .Some(fn_name) => {
-          try assert.str_eq(fn_name, "area")
+          try assert.equal(fn_name, "area")
           .Ok({})
         },
         .None => .Err("expected area to be registered on Shape"),
@@ -602,7 +602,7 @@ pub fn suite() runner.Suite {
       // The function should still be registered with aligned vectors
       case resolver.lookup_function(r.env, "foo") {
         .Some(sig) => {
-          try assert.int_eq(sig.param_names.len(), sig.params.len())
+          try assert.equal(sig.param_names.len(), sig.params.len())
           .Ok({})
         },
         .None => .Err("function foo should be registered"),
@@ -688,7 +688,7 @@ pub fn suite() runner.Suite {
       src := "type Box<T> = .{ value: T }\nfn unwrap<T>(b: Box<T>) T { b.value }"
       env := try resolve_ok(src)
       case resolver.lookup_method(env, "Box", "unwrap") {
-        .Some(fn_name) => assert.str_eq(fn_name, "unwrap"),
+        .Some(fn_name) => assert.equal(fn_name, "unwrap"),
         .None => .Err("expected unwrap to be registered on Box"),
       }
     })
@@ -697,7 +697,7 @@ pub fn suite() runner.Suite {
       env2 := env.register_builtin_methods()
       // Should still find the method (even if registered twice)
       case resolver.lookup_method(env2, "String", "len") {
-        .Some(fn_name) => assert.str_eq(fn_name, "string_len"),
+        .Some(fn_name) => assert.equal(fn_name, "string_len"),
         .None => .Err("expected String.len after double registration"),
       }
     })
@@ -732,8 +732,8 @@ pub fn suite() runner.Suite {
       // Lookup should find user's map (1 param of Int), not prelude's (2 params)
       case resolver.lookup_function(result_env, "map") {
         .Some(sig) => {
-          try assert.int_eq(sig.params.len(), 1)
-          try assert.str_eq(mono_to_string(sig.params[0]), "Int")
+          try assert.equal(sig.params.len(), 1)
+          try assert.equal(mono_to_string(sig.params[0]), "Int")
           .Ok({})
         },
         .None => .Err("user-defined map should exist"),
@@ -754,7 +754,7 @@ pub fn suite() runner.Suite {
       // User redefines to_string — should NOT produce a "duplicate" diagnostic
       src := "fn to_string(x: Float) String { \"\" }"
       r := resolve_src_with_env(src, env)
-      try assert.int_eq(r.diagnostics.len(), 0)
+      try assert.equal(r.diagnostics.len(), 0)
       .Ok({})
     })
     // ── Issue 2: Missing param annotation alignment ──
@@ -766,7 +766,7 @@ pub fn suite() runner.Suite {
       // The function should have aligned param_names and params vectors
       case resolver.lookup_function(r.env, "foo") {
         .Some(sig) => {
-          try assert.int_eq(sig.param_names.len(), sig.params.len())
+          try assert.equal(sig.param_names.len(), sig.params.len())
           .Ok({})
         },
         .None => .Err("function foo should be registered"),
@@ -789,7 +789,7 @@ pub fn suite() runner.Suite {
             .Some(ty) => mono_to_string(ty),
             .None => "(none)",
           }
-          try assert.str_eq(ret_str, "Void")
+          try assert.equal(ret_str, "Void")
           .Ok({})
         },
         .None => .Err("function foo should be registered"),
@@ -805,7 +805,7 @@ pub fn suite() runner.Suite {
 
       try assert.is_true(resolver.has_type(env, "Foo"))
       try assert.is_true(resolver.has_type(env, "Bar"))
-      try assert.int_eq(env.types.len(), 2)
+      try assert.equal(env.types.len(), 2)
       .Ok({})
     })
     .test("type entry can exist without a visible binding", fn() {
@@ -819,9 +819,9 @@ pub fn suite() runner.Suite {
 
       env := resolver.empty_env().register_type_entry(entry, "geom.Support")
 
-      try assert.int_eq(env.types.len(), 1)
+      try assert.equal(env.types.len(), 1)
       try assert.is_true(!resolver.has_type(env, "geom.Support"))
-      try assert.str_eq(try resolver.find_type_name(env, tid).ok_or("preferred type name missing"), "geom.Support")
+      try assert.equal(try resolver.find_type_name(env, tid).ok_or("preferred type name missing"), "geom.Support")
       case resolver.lookup_type_def(env, tid) {
         .Some(_) => .Ok({}),
         .None => .Err("stored type entry should remain addressable by TypeId"),
@@ -846,7 +846,7 @@ pub fn suite() runner.Suite {
 
       try assert.is_true(resolver.has_function(env, "foo"))
       try assert.is_true(resolver.has_function(env, "bar"))
-      try assert.int_eq(env.functions.len(), 2)
+      try assert.equal(env.functions.len(), 2)
       .Ok({})
     })
     .test("add_function shadows existing by name", fn() {
@@ -870,7 +870,7 @@ pub fn suite() runner.Suite {
       case resolver.lookup_function(env, "foo") {
         .Some(sig) => {
           // Should find the second (shadowing) version
-          try assert.str_eq(mono_to_string(sig.params[0]), "String")
+          try assert.equal(mono_to_string(sig.params[0]), "String")
           .Ok({})
         },
         .None => .Err("foo should exist"),
@@ -922,17 +922,17 @@ pub fn suite() runner.Suite {
       // Test: verify arity is available on TypeEntry directly.
       src := "type Box<T> = .{ value: T }\ntype Pair<A, B> = .{ a: A, b: B }"
       r := resolve_src(src)
-      try assert.int_eq(r.diagnostics.len(), 0)
+      try assert.equal(r.diagnostics.len(), 0)
       box_entry := case resolver.lookup_type(r.env, "Box") {
         .Some(e) => e,
         .None => { return .Err("Box not found") },
       }
-      try assert.int_eq(box_entry.arity, 1)
+      try assert.equal(box_entry.arity, 1)
       pair_entry := case resolver.lookup_type(r.env, "Pair") {
         .Some(e) => e,
         .None => { return .Err("Pair not found") },
       }
-      try assert.int_eq(pair_entry.arity, 2)
+      try assert.equal(pair_entry.arity, 2)
       .Ok({})
     })
     // ── Hardening item 2: method name collision diagnostics ──
@@ -979,10 +979,10 @@ pub fn suite() runner.Suite {
             .Some(def) => {
               case def {
                 .Record(_, _, fields) => {
-                  try assert.int_eq(fields.len(), 3)
-                  try assert.str_eq(mono_to_string(fields[0].ty), "Int")
-                  try assert.str_eq(mono_to_string(fields[1].ty), "<error>")
-                  try assert.str_eq(mono_to_string(fields[2].ty), "Bool")
+                  try assert.equal(fields.len(), 3)
+                  try assert.equal(mono_to_string(fields[0].ty), "Int")
+                  try assert.equal(mono_to_string(fields[1].ty), "<error>")
+                  try assert.equal(mono_to_string(fields[2].ty), "Bool")
                   .Ok({})
                 },
                 _ => .Err("expected Record"),
@@ -1005,10 +1005,10 @@ pub fn suite() runner.Suite {
               case def {
                 .Sum(_, _, variants) => {
                   // Circle should have 1 field (ErrorType), not 0
-                  try assert.int_eq(variants[0].fields.len(), 1)
-                  try assert.str_eq(mono_to_string(variants[0].fields[0]), "<error>")
+                  try assert.equal(variants[0].fields.len(), 1)
+                  try assert.equal(mono_to_string(variants[0].fields[0]), "<error>")
                   // Rect should still have 2 fields
-                  try assert.int_eq(variants[1].fields.len(), 2)
+                  try assert.equal(variants[1].fields.len(), 2)
                   .Ok({})
                 },
                 _ => .Err("expected Sum"),
@@ -1027,7 +1027,7 @@ pub fn suite() runner.Suite {
       // B's field "value" should resolve to Var("A"), not Named(A's id)
       src := "type A = .{ x: Int }\ntype B<A> = .{ value: A }"
       env := try resolve_ok(src)
-      try assert.str_eq(try get_field_type(env, "B", "value"), "Var(A)")
+      try assert.equal(try get_field_type(env, "B", "value"), "Var(A)")
       .Ok({})
     })
     // ── Hardening item 5: reserve builtin type names ──
@@ -1104,7 +1104,7 @@ pub fn suite() runner.Suite {
           for e in entries {
             if e.method_name == "len" { count = count + 1 }
           }
-          try assert.int_eq(count, 1)
+          try assert.equal(count, 1)
           .Ok({})
         },
         .None => .Err("String methods should exist"),
@@ -1118,8 +1118,8 @@ pub fn suite() runner.Suite {
       parsed := parser.parse(src, 0)
       r := resolver.empty_env().resolve(parsed.value)
       exports := resolver.extract_exports(r.env, parsed.value)
-      try assert.int_eq(exports.visible_types.len(), 2)
-      try assert.int_eq(exports.support_types.len(), 0)
+      try assert.equal(exports.visible_types.len(), 2)
+      try assert.equal(exports.support_types.len(), 0)
       // Should have Foo and Baz, not Bar
       names: Vector<String> = collect et in exports.visible_types { et.name }
       try assert.vec_contains(names, "Foo")
@@ -1146,9 +1146,9 @@ pub fn suite() runner.Suite {
 
       exports := resolver.extract_exports(env, parsed.value)
 
-      try assert.int_eq(exports.visible_types.len(), 0)
-      try assert.int_eq(exports.support_types.len(), 1)
-      try assert.str_eq(exports.support_types[0].name, "dep.Support")
+      try assert.equal(exports.visible_types.len(), 0)
+      try assert.equal(exports.support_types.len(), 1)
+      try assert.equal(exports.support_types[0].name, "dep.Support")
       .Ok({})
     })
 
@@ -1185,8 +1185,8 @@ pub fn suite() runner.Suite {
 
       exports := resolver.extract_exports(env, parsed.value)
 
-      try assert.int_eq(exports.visible_types.len(), 0)
-      try assert.int_eq(exports.support_types.len(), 2)
+      try assert.equal(exports.visible_types.len(), 0)
+      try assert.equal(exports.support_types.len(), 2)
       names: Vector<String> = collect et in exports.support_types { et.name }
       try assert.vec_contains(names, "dep.Inner")
       try assert.vec_contains(names, "dep.Outer")
@@ -1219,10 +1219,10 @@ pub fn suite() runner.Suite {
 
       exports := resolver.extract_exports(env, parsed.value)
 
-      try assert.int_eq(exports.visible_types.len(), 1)
-      try assert.str_eq(exports.visible_types[0].name, "Wrapper")
-      try assert.int_eq(exports.support_types.len(), 1)
-      try assert.str_eq(exports.support_types[0].name, "dep.Support")
+      try assert.equal(exports.visible_types.len(), 1)
+      try assert.equal(exports.visible_types[0].name, "Wrapper")
+      try assert.equal(exports.support_types.len(), 1)
+      try assert.equal(exports.support_types[0].name, "dep.Support")
       .Ok({})
     })
 
@@ -1231,9 +1231,9 @@ pub fn suite() runner.Suite {
       parsed := parser.parse(src, 0)
       r := resolver.empty_env().resolve(parsed.value)
       exports := resolver.extract_exports(r.env, parsed.value)
-      try assert.int_eq(exports.functions.len(), 1)
-      try assert.str_eq(exports.functions[0].name, "add")
-      try assert.str_eq(exports.functions[0].source_name, "add")
+      try assert.equal(exports.functions.len(), 1)
+      try assert.equal(exports.functions[0].name, "add")
+      try assert.equal(exports.functions[0].source_name, "add")
       .Ok({})
     })
 
@@ -1285,10 +1285,10 @@ pub fn suite() runner.Suite {
       parsed := parser.parse("pub fn make_env() Int { 0 }", 0)
       exports := resolver.extract_exports(env, parsed.value)
 
-      try assert.int_eq(exports.support_types.len(), 1)
-      try assert.str_eq(exports.support_types[0].name, "dep.Env")
-      try assert.int_eq(exports.support_functions.len(), 1)
-      try assert.str_eq(exports.support_functions[0].name, "dep.resolve")
+      try assert.equal(exports.support_types.len(), 1)
+      try assert.equal(exports.support_types[0].name, "dep.Env")
+      try assert.equal(exports.support_functions.len(), 1)
+      try assert.equal(exports.support_functions[0].name, "dep.resolve")
       case exports.methods["dep.Env"] {
         .Some(methods) => {
           found := false
@@ -1347,7 +1347,7 @@ pub fn suite() runner.Suite {
 
       try assert.is_true(!resolver.has_type(env, "dep.Support"))
       try assert.is_true(resolver.has_function(env, "mod.expose"))
-      try assert.str_eq(try resolver.find_type_name(env, mono_type.TypeId.{ id: 0 }).ok_or("support type missing"), "dep.Support")
+      try assert.equal(try resolver.find_type_name(env, mono_type.TypeId.{ id: 0 }).ok_or("support type missing"), "dep.Support")
       .Ok({})
     })
 
@@ -1414,7 +1414,7 @@ pub fn suite() runner.Suite {
       bare := try resolver.lookup_type(env, "Diagnostic").ok_or("missing selective type binding")
       aliased := try resolver.lookup_type(env, "diag.Diagnostic").ok_or("missing aliased module type binding")
 
-      try assert.int_eq(bare.id.id, aliased.id.id)
+      try assert.equal(bare.id.id, aliased.id.id)
       .Ok({})
     })
 
@@ -1431,7 +1431,7 @@ pub fn suite() runner.Suite {
       first := try resolver.lookup_type(env, "diag_a.Diagnostic").ok_or("missing first aliased module type binding")
       second := try resolver.lookup_type(env, "diag_b.Diagnostic").ok_or("missing second aliased module type binding")
 
-      try assert.int_eq(first.id.id, second.id.id)
+      try assert.equal(first.id.id, second.id.id)
       .Ok({})
     })
 
@@ -1508,7 +1508,7 @@ pub fn suite() runner.Suite {
       try assert.is_true(!resolver.has_type(env, "geom.Point"))
       try assert.is_true(!resolver.has_type(env, "Line"))
       try assert.is_true(!resolver.has_type(env, "geom.Line"))
-      try assert.str_eq(try resolver.find_type_name(env, mono_type.TypeId.{ id: 1 }).ok_or("stored unselected type missing"), "geom.Line")
+      try assert.equal(try resolver.find_type_name(env, mono_type.TypeId.{ id: 1 }).ok_or("stored unselected type missing"), "geom.Line")
 
       for name in env.type_names {
         if name.starts_with("$import$.geom.") {
@@ -1560,7 +1560,7 @@ pub fn suite() runner.Suite {
       // Should still have the builtin version (String param, not Int)
       case resolver.lookup_function(env, "len") {
         .Some(sig) => {
-          try assert.str_eq(mono_to_string(sig.params[0]), "String")
+          try assert.equal(mono_to_string(sig.params[0]), "String")
           .Ok({})
         },
         .None => .Err("len should exist"),
@@ -1581,7 +1581,7 @@ pub fn suite() runner.Suite {
       // Now resolve a module that uses gfx.Color
       src2 := "type Canvas = .{ bg: gfx.Color }"
       r2 := env.resolve(parser.parse(src2, 0).value)
-      try assert.int_eq(r2.diagnostics.len(), 0)
+      try assert.equal(r2.diagnostics.len(), 0)
       .Ok({})
     })
 
@@ -1597,8 +1597,8 @@ pub fn suite() runner.Suite {
       // The registered function "mymod.greet" should have an origin
       case resolver.lookup_function_origin(env, "mymod.greet") {
         .Some(origin) => {
-          try assert.str_eq(origin.module_path, "test/mymod.tw")
-          try assert.str_eq(origin.func_name, "greet")
+          try assert.equal(origin.module_path, "test/mymod.tw")
+          try assert.equal(origin.func_name, "greet")
           .Ok({})
         },
         .None => .Err("expected function origin for mymod.greet"),
@@ -1621,8 +1621,8 @@ pub fn suite() runner.Suite {
       // The registered function "math.add" should have an origin
       case resolver.lookup_function_origin(env, "math.add") {
         .Some(origin) => {
-          try assert.str_eq(origin.module_path, "test/math.tw")
-          try assert.str_eq(origin.func_name, "add")
+          try assert.equal(origin.module_path, "test/math.tw")
+          try assert.equal(origin.func_name, "add")
           .Ok({})
         },
         .None => .Err("expected function origin for math.add"),
@@ -1644,8 +1644,8 @@ pub fn suite() runner.Suite {
 
       case resolver.lookup_function_origin(env, "filter") {
         .Some(origin) => {
-          try assert.str_eq(origin.module_path, prelude_vector)
-          try assert.str_eq(origin.func_name, "filter")
+          try assert.equal(origin.module_path, prelude_vector)
+          try assert.equal(origin.func_name, "filter")
           .Ok({})
         },
         .None => .Err("expected function origin for prelude filter"),
@@ -1732,8 +1732,8 @@ pub fn suite() runner.Suite {
 
       case resolver.lookup_function_origin(env, "bridge.foo") {
         .Some(origin) => {
-          try assert.str_eq(origin.module_path, "test/a.tw")
-          try assert.str_eq(origin.func_name, "foo")
+          try assert.equal(origin.module_path, "test/a.tw")
+          try assert.equal(origin.func_name, "foo")
           .Ok({})
         },
         .None => .Err("expected re-exported function to preserve original defining origin"),
@@ -1765,8 +1765,8 @@ pub fn suite() runner.Suite {
 
       case resolver.lookup_function_origin(env, "support_mod.helper") {
         .Some(origin) => {
-          try assert.str_eq(origin.module_path, "test/support.tw")
-          try assert.str_eq(origin.func_name, "helper")
+          try assert.equal(origin.module_path, "test/support.tw")
+          try assert.equal(origin.func_name, "helper")
           .Ok({})
         },
         .None => .Err("expected support function to preserve canonical origin"),
@@ -1779,22 +1779,22 @@ pub fn suite() runner.Suite {
       // The parent enum should exist
       try assert.is_true(resolver.has_type(env, "Foo"))
       // The synthesized record type should be findable by display name
-      try assert.str_eq(try get_field_type(env, "Foo.Bar", "x"), "Int")
-      try assert.str_eq(try get_field_type(env, "Foo.Bar", "y"), "String")
+      try assert.equal(try get_field_type(env, "Foo.Bar", "x"), "Int")
+      try assert.equal(try get_field_type(env, "Foo.Bar", "y"), "String")
       .Ok({})
     })
     .test("anon record variant payload is Named(synth_tid)", fn() {
       src := "type Foo = { Bar(.{ x: Int }), Baz(Int) }"
       env := try resolve_ok(src)
       count := try get_variant_count(env, "Foo")
-      try assert.int_eq(count, 2)
+      try assert.equal(count, 2)
       .Ok({})
     })
     .test("two enums with same variant name coexist", fn() {
       src := "type A = { X(.{ a: Int }) } type B = { X(.{ b: String }) }"
       env := try resolve_ok(src)
-      try assert.str_eq(try get_field_type(env, "A.X", "a"), "Int")
-      try assert.str_eq(try get_field_type(env, "B.X", "b"), "String")
+      try assert.equal(try get_field_type(env, "A.X", "a"), "Int")
+      try assert.equal(try get_field_type(env, "B.X", "b"), "String")
       .Ok({})
     })
     .test("anon record variant not in type_bindings", fn() {
@@ -1808,7 +1808,7 @@ pub fn suite() runner.Suite {
       src := "type Wrap<T> = { Item(.{ value: T }) }"
       env := try resolve_ok(src)
       try assert.is_true(resolver.has_type(env, "Wrap"))
-      try assert.str_eq(try get_field_type(env, "Wrap.Item", "value"), "Var(T)")
+      try assert.equal(try get_field_type(env, "Wrap.Item", "value"), "Var(T)")
       .Ok({})
     })
 }

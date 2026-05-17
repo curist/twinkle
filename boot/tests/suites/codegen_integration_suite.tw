@@ -140,7 +140,7 @@ fn test_phase3_large_string_index_fixture() Result<Void, String> {
 
 fn test_runtime_modules_count() Result<Void, String> {
   mods := runtime_modules()
-  try assert.int_eq(mods.len(), 5)
+  try assert.equal(mods.len(), 5)
   .Ok({})
 }
 

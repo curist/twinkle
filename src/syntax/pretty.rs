@@ -40,9 +40,12 @@ fn print_item(item: &Item, out: &mut String, indent: usize) {
                 let params = decl
                     .type_params
                     .iter()
-                    .map(|p| match &p.bound {
-                        Some(bound) => format!("{}: {}", p.name, bound),
-                        None => p.name.clone(),
+                    .map(|p| {
+                        if p.bounds.is_empty() {
+                            p.name.clone()
+                        } else {
+                            format!("{}: {}", p.name, p.bounds.join(" + "))
+                        }
                     })
                     .collect::<Vec<_>>()
                     .join(", ");
@@ -96,9 +99,12 @@ fn print_item(item: &Item, out: &mut String, indent: usize) {
                 let params = decl
                     .type_params
                     .iter()
-                    .map(|p| match &p.bound {
-                        Some(bound) => format!("{}: {}", p.name, bound),
-                        None => p.name.clone(),
+                    .map(|p| {
+                        if p.bounds.is_empty() {
+                            p.name.clone()
+                        } else {
+                            format!("{}: {}", p.name, p.bounds.join(" + "))
+                        }
                     })
                     .collect::<Vec<_>>()
                     .join(", ");
