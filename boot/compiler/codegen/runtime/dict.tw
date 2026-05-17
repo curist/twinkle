@@ -303,12 +303,14 @@ fn collision_set_fn() FuncDef {
 // ── node_get(node, hash, depth, key) -> anyref ───────────────────────────────
 fn node_get_fn() FuncDef {
   // p0=node, p1=hash, p2=depth, p3=key
-  // L4=fragment, L5=bit, L6=bitmap, L7=idx, L8=slot
+  // L4=fragment, L5=bit, L6=bitmap, L7=idx, L8=slot, L9=entries
   FuncDef.{ name: "node_get",
     params: [hamt_node_null(), .I32, .I32, .Anyref], results: [.Anyref],
-    locals: [.I32, .I32, .I32, .I32, .Anyref],
+    locals: [.I32, .I32, .I32, .I32, .Anyref, arr_null()],
     body: [
       .LocalGet(0), .RefIsNull,
+      .If(.None, [.RefNull(.Any), .Return], []),
+      .LocalGet(2), .I32Const(7), .I32GeU,
       .If(.None, [.RefNull(.Any), .Return], []),
       .LocalGet(1), .LocalGet(2), .I32Const(5), .I32Mul, .I32ShrU,
       .I32Const(31), .I32And, .LocalSet(4),
@@ -318,8 +320,10 @@ fn node_get_fn() FuncDef {
       .If(.None, [.RefNull(.Any), .Return], []),
       .LocalGet(6), .LocalGet(5), .I32Const(1), .I32Sub,
       .I32And, .Call("popcount"), .LocalSet(7),
-      .LocalGet(0), .RefAsNonNull, .StructGet(t_hamt_node(), hn_entries()),
-      .LocalGet(7), .ArrayGet(t_array()), .LocalSet(8),
+      .LocalGet(0), .RefAsNonNull, .StructGet(t_hamt_node(), hn_entries()), .LocalSet(9),
+      .LocalGet(7), .LocalGet(9), .RefAsNonNull, .ArrayLen, .I32GeU,
+      .If(.None, [.RefNull(.Any), .Return], []),
+      .LocalGet(9), .RefAsNonNull, .LocalGet(7), .ArrayGet(t_array()), .LocalSet(8),
       // HamtEntry?
       .LocalGet(8), .RefTest(false, .Named(t_hamt_entry())),
       .If(.None, [
@@ -395,8 +399,16 @@ fn node_set_fn() FuncDef {
         .LocalGet(12), .RefAsNonNull, .StructNew(t_hamt_node()), .Return,
       ], []),
 
-      .LocalGet(0), .RefAsNonNull, .StructGet(t_hamt_node(), hn_entries()),
-      .LocalGet(10), .ArrayGet(t_array()), .LocalSet(11),
+      .LocalGet(0), .RefAsNonNull, .StructGet(t_hamt_node(), hn_entries()), .LocalSet(12),
+      .LocalGet(10), .LocalGet(12), .RefAsNonNull, .ArrayLen, .I32GeU,
+      .If(.None, [
+        .LocalGet(12), .RefAsNonNull,
+        .LocalGet(12), .RefAsNonNull, .ArrayLen,
+        .LocalGet(5), .Call("arr_insert_at"), .LocalSet(12),
+        .LocalGet(9), .LocalGet(8), .I32Or,
+        .LocalGet(12), .RefAsNonNull, .StructNew(t_hamt_node()), .Return,
+      ], []),
+      .LocalGet(12), .RefAsNonNull, .LocalGet(10), .ArrayGet(t_array()), .LocalSet(11),
 
       // HamtEntry slot
       .LocalGet(11), .RefTest(false, .Named(t_hamt_entry())),
@@ -422,7 +434,16 @@ fn node_set_fn() FuncDef {
             .LocalGet(9), .LocalGet(12), .RefAsNonNull, .StructNew(t_hamt_node()), .Return,
           ]),
         ], [
-          // different hash: sub-node
+          // different hash: sub-node, unless all 32 hash bits are already consumed
+          .LocalGet(2), .I32Const(6), .I32GeU,
+          .If(.None, [
+            .LocalGet(13), .LocalGet(5), .ArrayNewFixed(t_array(), 2), .LocalSet(12),
+            .LocalGet(1), .LocalGet(12), .RefAsNonNull, .StructNew(t_hamt_collision()), .LocalSet(15),
+            .LocalGet(0), .RefAsNonNull, .StructGet(t_hamt_node(), hn_entries()),
+            .LocalGet(10), .LocalGet(15),
+            .Call("arr_replace_at"), .LocalSet(12),
+            .LocalGet(9), .LocalGet(12), .RefAsNonNull, .StructNew(t_hamt_node()), .Return,
+          ], []),
           .RefNull(.Named(t_hamt_node())),
           .LocalGet(13), .StructGet(t_hamt_entry(), he_hash()),
           .LocalGet(2), .I32Const(1), .I32Add,

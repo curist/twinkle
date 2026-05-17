@@ -1932,8 +1932,16 @@
     (local $p6 i32)
     (local $p7 i32)
     (local $p8 anyref)
+    (local $p9 (ref null $rt_types__Array))
     local.get $p0
     ref.is_null
+    (if
+      (then
+        ref.null any
+        return))
+    local.get $p2
+    i32.const 7
+    i32.ge_u
     (if
       (then
         ref.null any
@@ -1972,6 +1980,18 @@
     local.get $p0
     ref.as_non_null
     struct.get $rt_types__HamtNode 1
+    local.set $p9
+    local.get $p7
+    local.get $p9
+    ref.as_non_null
+    array.len
+    i32.ge_u
+    (if
+      (then
+        ref.null any
+        return))
+    local.get $p9
+    ref.as_non_null
     local.get $p7
     array.get $rt_types__Array
     local.set $p8
@@ -2110,6 +2130,31 @@
     local.get $p0
     ref.as_non_null
     struct.get $rt_types__HamtNode 1
+    local.set $p12
+    local.get $p10
+    local.get $p12
+    ref.as_non_null
+    array.len
+    i32.ge_u
+    (if
+      (then
+        local.get $p12
+        ref.as_non_null
+        local.get $p12
+        ref.as_non_null
+        array.len
+        local.get $p5
+        call $rt_dict__arr_insert_at
+        local.set $p12
+        local.get $p9
+        local.get $p8
+        i32.or
+        local.get $p12
+        ref.as_non_null
+        struct.new $rt_types__HamtNode
+        return))
+    local.get $p12
+    ref.as_non_null
     local.get $p10
     array.get $rt_types__Array
     local.set $p11
@@ -2167,6 +2212,32 @@
                 struct.new $rt_types__HamtNode
                 return)))
           (else
+            local.get $p2
+            i32.const 6
+            i32.ge_u
+            (if
+              (then
+                local.get $p13
+                local.get $p5
+                array.new_fixed $rt_types__Array 2
+                local.set $p12
+                local.get $p1
+                local.get $p12
+                ref.as_non_null
+                struct.new $rt_types__HamtCollision
+                local.set $p15
+                local.get $p0
+                ref.as_non_null
+                struct.get $rt_types__HamtNode 1
+                local.get $p10
+                local.get $p15
+                call $rt_dict__arr_replace_at
+                local.set $p12
+                local.get $p9
+                local.get $p12
+                ref.as_non_null
+                struct.new $rt_types__HamtNode
+                return))
             ref.null $rt_types__HamtNode
             local.get $p13
             struct.get $rt_types__HamtEntry 0

@@ -666,7 +666,7 @@ fn collision_set_fn() -> FuncDef {
 // ── node_get(node, hash, depth, key) -> anyref ───────────────────────────────
 fn node_get_fn() -> FuncDef {
     // p0=node, p1=hash, p2=depth, p3=key
-    // L4=fragment, L5=bit, L6=bitmap, L7=idx, L8=slot
+    // L4=fragment, L5=bit, L6=bitmap, L7=idx, L8=slot, L9=entries
     FuncDef {
         name: "node_get".into(),
         params: vec![
@@ -682,11 +682,21 @@ fn node_get_fn() -> FuncDef {
             ValType::I32,
             ValType::I32,
             ValType::Anyref,
+            ref_array_null(),
         ],
         body: vec![
             // if node is null: return null
             Instr::LocalGet(0),
             Instr::RefIsNull,
+            Instr::If {
+                result: None,
+                then_body: vec![Instr::RefNull(HeapType::Any), Instr::Return],
+                else_body: vec![],
+            },
+            // Stop before shift counts wrap past the 32-bit hash space.
+            Instr::LocalGet(2),
+            Instr::I32Const(7),
+            Instr::I32GeU,
             Instr::If {
                 result: None,
                 then_body: vec![Instr::RefNull(HeapType::Any), Instr::Return],
@@ -733,6 +743,19 @@ fn node_get_fn() -> FuncDef {
             Instr::LocalGet(0),
             Instr::RefAsNonNull,
             Instr::StructGet(T_HAMT_NODE.into(), HN_ENTRIES),
+            Instr::LocalSet(9),
+            Instr::LocalGet(7),
+            Instr::LocalGet(9),
+            Instr::RefAsNonNull,
+            Instr::ArrayLen,
+            Instr::I32GeU,
+            Instr::If {
+                result: None,
+                then_body: vec![Instr::RefNull(HeapType::Any), Instr::Return],
+                else_body: vec![],
+            },
+            Instr::LocalGet(9),
+            Instr::RefAsNonNull,
             Instr::LocalGet(7),
             Instr::ArrayGet(T_ARRAY.into()),
             Instr::LocalSet(8),
@@ -946,6 +969,35 @@ fn node_set_fn() -> FuncDef {
             Instr::LocalGet(0),
             Instr::RefAsNonNull,
             Instr::StructGet(T_HAMT_NODE.into(), HN_ENTRIES),
+            Instr::LocalSet(12),
+            Instr::LocalGet(10),
+            Instr::LocalGet(12),
+            Instr::RefAsNonNull,
+            Instr::ArrayLen,
+            Instr::I32GeU,
+            Instr::If {
+                result: None,
+                then_body: vec![
+                    Instr::LocalGet(12),
+                    Instr::RefAsNonNull,
+                    Instr::LocalGet(12),
+                    Instr::RefAsNonNull,
+                    Instr::ArrayLen,
+                    Instr::LocalGet(5),
+                    Instr::Call("arr_insert_at".into()),
+                    Instr::LocalSet(12),
+                    Instr::LocalGet(9),
+                    Instr::LocalGet(8),
+                    Instr::I32Or,
+                    Instr::LocalGet(12),
+                    Instr::RefAsNonNull,
+                    Instr::StructNew(T_HAMT_NODE.into()),
+                    Instr::Return,
+                ],
+                else_body: vec![],
+            },
+            Instr::LocalGet(12),
+            Instr::RefAsNonNull,
             Instr::LocalGet(10),
             Instr::ArrayGet(T_ARRAY.into()),
             Instr::LocalSet(11),
@@ -1020,7 +1072,38 @@ fn node_set_fn() -> FuncDef {
                             },
                         ],
                         else_body: vec![
-                            // different hash: create sub-node for old entry, then insert new
+                            // different hash: create sub-node for old entry, then insert new,
+                            // unless all 32 hash bits are already consumed.
+                            Instr::LocalGet(2),
+                            Instr::I32Const(6),
+                            Instr::I32GeU,
+                            Instr::If {
+                                result: None,
+                                then_body: vec![
+                                    Instr::LocalGet(13),
+                                    Instr::LocalGet(5),
+                                    Instr::ArrayNewFixed(T_ARRAY.into(), 2),
+                                    Instr::LocalSet(12),
+                                    Instr::LocalGet(1),
+                                    Instr::LocalGet(12),
+                                    Instr::RefAsNonNull,
+                                    Instr::StructNew(T_HAMT_COLLISION.into()),
+                                    Instr::LocalSet(15),
+                                    Instr::LocalGet(0),
+                                    Instr::RefAsNonNull,
+                                    Instr::StructGet(T_HAMT_NODE.into(), HN_ENTRIES),
+                                    Instr::LocalGet(10),
+                                    Instr::LocalGet(15),
+                                    Instr::Call("arr_replace_at".into()),
+                                    Instr::LocalSet(12),
+                                    Instr::LocalGet(9),
+                                    Instr::LocalGet(12),
+                                    Instr::RefAsNonNull,
+                                    Instr::StructNew(T_HAMT_NODE.into()),
+                                    Instr::Return,
+                                ],
+                                else_body: vec![],
+                            },
                             Instr::RefNull(HeapType::Named(T_HAMT_NODE.into())),
                             Instr::LocalGet(13),
                             Instr::StructGet(T_HAMT_ENTRY.into(), HE_HASH),
