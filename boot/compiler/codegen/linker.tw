@@ -70,6 +70,15 @@ fn rename(map: Dict<String, String>, sym: String) String {
   }
 }
 
+fn rename_func(ns: String, redirects: Dict<String, String>, sym: String) String {
+  case redirects[sym] {
+    .Some(new) => new,
+    .None => {
+      if sym.starts_with("rt_") { sym } else { qualify(ns, sym) }
+    },
+  }
+}
+
 // ── ValType rewriting ──────────────────────────────────────────────────
 
 fn rewrite_val_type(type_renames: Dict<String, String>, vt: ValType) ValType {
@@ -102,30 +111,32 @@ fn rewrite_heap_type(type_renames: Dict<String, String>, ht: HeapType) HeapType 
 // ── Instruction rewriting ──────────────────────────────────────────────
 
 fn rewrite_instrs(
-  func_renames: Dict<String, String>,
+  ns: String,
+  import_redirects: Dict<String, String>,
   type_renames: Dict<String, String>,
   instrs: Vector<Instr>,
 ) Vector<Instr> {
-  collect instr in instrs { rewrite_instr(func_renames, type_renames, instr) }
+  collect instr in instrs { rewrite_instr(ns, import_redirects, type_renames, instr) }
 }
 
 fn rewrite_instr(
-  func_renames: Dict<String, String>,
+  ns: String,
+  import_redirects: Dict<String, String>,
   type_renames: Dict<String, String>,
   instr: Instr,
 ) Instr {
   case instr {
     // Calls — func renames
-    .Call(sym) => Instr.Call(rename(func_renames, sym)),
-    .ReturnCall(sym) => Instr.ReturnCall(rename(func_renames, sym)),
-    .RefFunc(sym) => Instr.RefFunc(rename(func_renames, sym)),
+    .Call(sym) => Instr.Call(rename_func(ns, import_redirects, sym)),
+    .ReturnCall(sym) => Instr.ReturnCall(rename_func(ns, import_redirects, sym)),
+    .RefFunc(sym) => Instr.RefFunc(rename_func(ns, import_redirects, sym)),
     .CallRef(sym) => Instr.CallRef(rename(type_renames, sym)),
     .CallIndirect(sym, idx) => Instr.CallIndirect(rename(type_renames, sym), idx),
     .ReturnCallRef(sym) => Instr.ReturnCallRef(rename(type_renames, sym)),
 
     // Globals — func renames (globals share the func rename map)
-    .GlobalGet(sym) => Instr.GlobalGet(rename(func_renames, sym)),
-    .GlobalSet(sym) => Instr.GlobalSet(rename(func_renames, sym)),
+    .GlobalGet(sym) => Instr.GlobalGet(rename_func(ns, import_redirects, sym)),
+    .GlobalSet(sym) => Instr.GlobalSet(rename_func(ns, import_redirects, sym)),
 
     // Struct — type renames
     .StructNew(sym) => Instr.StructNew(rename(type_renames, sym)),
@@ -138,7 +149,7 @@ fn rewrite_instr(
     .ArrayNewDefault(sym) => Instr.ArrayNewDefault(rename(type_renames, sym)),
     .ArrayNewFixed(sym, n) => Instr.ArrayNewFixed(rename(type_renames, sym), n),
     .ArrayNewData(ty_sym, data_sym) =>
-      Instr.ArrayNewData(rename(type_renames, ty_sym), rename(func_renames, data_sym)),
+      Instr.ArrayNewData(rename(type_renames, ty_sym), rename_func(ns, import_redirects, data_sym)),
     .ArrayGet(sym) => Instr.ArrayGet(rename(type_renames, sym)),
     .ArrayGetU(sym) => Instr.ArrayGetU(rename(type_renames, sym)),
     .ArraySet(sym) => Instr.ArraySet(rename(type_renames, sym)),
@@ -153,15 +164,15 @@ fn rewrite_instr(
     .If(result, then_body, else_body) =>
       Instr.If(
         rewrite_val_type_opt(type_renames, result),
-        rewrite_instrs(func_renames, type_renames, then_body),
-        rewrite_instrs(func_renames, type_renames, else_body),
+        rewrite_instrs(ns, import_redirects, type_renames, then_body),
+        rewrite_instrs(ns, import_redirects, type_renames, else_body),
       ),
     .Block(label, result, body) =>
       Instr.Block(label, rewrite_val_type_opt(type_renames, result),
-        rewrite_instrs(func_renames, type_renames, body)),
+        rewrite_instrs(ns, import_redirects, type_renames, body)),
     .Loop(label, result, body) =>
       Instr.Loop(label, rewrite_val_type_opt(type_renames, result),
-        rewrite_instrs(func_renames, type_renames, body)),
+        rewrite_instrs(ns, import_redirects, type_renames, body)),
 
     // Everything else passes through unchanged
     _ => instr,
@@ -208,33 +219,10 @@ pub fn link(modules: Vector<WasmModule>, entry: String?) Result<LinkedModule, Ve
   }
 
   // Phase 2: Build per-module rename maps
-  all_func_renames: Vector<Dict<String, String>> = []
   all_type_renames: Vector<Dict<String, String>> = []
 
   for m in modules {
-    func_renames: Dict<String, String> = Dict.new()
     type_renames: Dict<String, String> = Dict.new()
-
-    // Functions
-    for f in m.funcs {
-      func_renames[f.name] = qualify(m.namespace, f.name)
-    }
-    // Globals
-    for g in m.globals {
-      func_renames[g.name] = qualify(m.namespace, g.name)
-    }
-    // Data segments
-    for d in m.data {
-      func_renames[d.name] = qualify(m.namespace, d.name)
-    }
-    // Tables
-    for t in m.tables {
-      func_renames[t.name] = qualify(m.namespace, t.name)
-    }
-    // Import as_syms (local aliases for imports)
-    for imp in m.imports {
-      func_renames[imp.as_sym] = qualify(m.namespace, imp.as_sym)
-    }
 
     // Types
     for td in m.types {
@@ -245,7 +233,6 @@ pub fn link(modules: Vector<WasmModule>, entry: String?) Result<LinkedModule, Ve
       }
     }
 
-    all_func_renames = .append(func_renames)
     all_type_renames = .append(type_renames)
   }
 
@@ -287,24 +274,12 @@ pub fn link(modules: Vector<WasmModule>, entry: String?) Result<LinkedModule, Ve
   start_funcs: Vector<String> = []
 
   for m, mi in modules {
-    func_renames := all_func_renames[mi]
     type_renames := all_type_renames[mi]
     import_redirects := all_import_redirects[mi]
 
-    // Build combined rename map: func_renames + import_redirects
-    combined: Dict<String, String> = Dict.new()
-    for k in func_renames.keys() {
-      case func_renames[k] {
-        .Some(v) => { combined[k] = v },
-        .None => {},
-      }
-    }
-    for k in import_redirects.keys() {
-      case import_redirects[k] {
-        .Some(v) => { combined[k] = v },
-        .None => {},
-      }
-    }
+    // Import redirects are the only function renames that cannot be derived
+    // from the current module namespace. Avoid building and repeatedly reading
+    // one huge function rename HAMT for the user module.
 
     for td in m.types {
       out_types = .append(rewrite_type_def(type_renames, td))
@@ -324,20 +299,20 @@ pub fn link(modules: Vector<WasmModule>, entry: String?) Result<LinkedModule, Ve
 
     for f in m.funcs {
       out_funcs = .append(FuncDef.{
-        name: rename(combined, f.name),
+        name: qualify(m.namespace, f.name),
         params: rewrite_val_types(type_renames, f.params),
         results: rewrite_val_types(type_renames, f.results),
         locals: rewrite_val_types(type_renames, f.locals),
-        body: rewrite_instrs(combined, type_renames, f.body),
+        body: rewrite_instrs(m.namespace, import_redirects, type_renames, f.body),
       })
     }
 
     for g in m.globals {
       out_globals = .append(GlobalDef.{
-        name: rename(combined, g.name),
+        name: qualify(m.namespace, g.name),
         mutable: g.mutable,
         ty: rewrite_val_type(type_renames, g.ty),
-        init: rewrite_instrs(combined, type_renames, g.init),
+        init: rewrite_instrs(m.namespace, import_redirects, type_renames, g.init),
       })
     }
 
@@ -353,8 +328,8 @@ pub fn link(modules: Vector<WasmModule>, entry: String?) Result<LinkedModule, Ve
     for e in m.elems {
       out_elems = .append(ElemDef.{
         table: qualify(m.namespace, e.table),
-        offset: rewrite_instrs(combined, type_renames, e.offset),
-        func_syms: collect sym in e.func_syms { rename(combined, sym) },
+        offset: rewrite_instrs(m.namespace, import_redirects, type_renames, e.offset),
+        func_syms: collect sym in e.func_syms { rename_func(m.namespace, import_redirects, sym) },
       })
     }
 
@@ -363,7 +338,7 @@ pub fn link(modules: Vector<WasmModule>, entry: String?) Result<LinkedModule, Ve
       for exp in m.exports {
         out_exports = .append(ExportDef.{
           wasm_name: exp.wasm_name,
-          func_sym: rename(combined, exp.func_sym),
+          func_sym: rename_func(m.namespace, import_redirects, exp.func_sym),
         })
       }
     }
@@ -371,15 +346,15 @@ pub fn link(modules: Vector<WasmModule>, entry: String?) Result<LinkedModule, Ve
     // Data segments
     for d in m.data {
       out_data = .append(DataSegment.{
-        name: rename(combined, d.name),
-        offset: rewrite_instrs(combined, type_renames, d.offset),
+        name: qualify(m.namespace, d.name),
+        offset: rewrite_instrs(m.namespace, import_redirects, type_renames, d.offset),
         bytes: d.bytes,
       })
     }
 
     // Collect start functions
     case m.start {
-      .Some(s) => { start_funcs = .append(rename(combined, s)) },
+      .Some(s) => { start_funcs = .append(rename_func(m.namespace, import_redirects, s)) },
       .None => {},
     }
   }
