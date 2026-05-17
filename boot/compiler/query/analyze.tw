@@ -11,11 +11,8 @@ use lib.module.core_lib
 use compiler.base_env.{add_internal_host_builtins}
 use compiler.imports
 use compiler.imports.{DependencyPlan}
-use compiler.resolver.{
-  ResolvedEnv, ModuleExports, TypeEntry,
-  extract_exports_for_module, merge_module_exports, merge_selective_imports,
-  merge_prelude_exports, extend_types_from,
-}
+use compiler.resolver.{ResolvedEnv, ModuleExports, TypeEntry, extract_exports_for_module}
+
 use compiler.checker
 use compiler.unused_imports
 use compiler.query.cache

@@ -15,7 +15,7 @@ use compiler.mono_type.{MonoType}
 use compiler.query.semantic.{SemanticSnapshot}
 use compiler.query.ast_walk.{find_node_in_block, find_node_in_stmt, NodeContext}
 use lib.lsp.completion as lsp_completion
-use lib.source.span
+
 
 pub type CompletionContext = {
   /// After a `.` token — complete fields/methods on the receiver

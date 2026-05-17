@@ -4,7 +4,7 @@
 // that both hover and definition can pattern-match on to do their specific work.
 
 use compiler.ast.{Block, Stmt, Expr, RecordEntry, CollectExpr, Pattern}
-use lib.source.span
+
 
 /// A node found at a byte offset, with context about where it sits.
 pub type NodeContext = {

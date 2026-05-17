@@ -157,6 +157,89 @@ pub fn suite() runner.Suite {
       try assert.str_contains(result.items[0].kind.message(), "remove")
       .Ok({})
     })
+    .test("check_unused_imports: inherent method call does not suppress unused selective import", fn() {
+      // `use foo.{translate}` (selective import)
+      // Code: `p.translate(1, 2)` — inherent method, doesn't use the import
+      foo_decl := UseDecl.{
+        is_stdlib: false, is_relative: false,
+        path: ["foo"],
+        alias: .None,
+        items: .Some([make_value_item("translate")]),
+        span: span.Span.{ file_id: 0, start: 0, end: 30 },
+      }
+      // p.translate(1, 2)
+      call_expr := dummy_expr(.Call(
+        dummy_expr(.Field(dummy_expr(.Ident("p")), "translate")),
+        [dummy_expr(.IntLit(1)), dummy_expr(.IntLit(2))],
+      ))
+      module := Module.{
+        items: [
+          Item.Use(foo_decl),
+          Item.Stmt(Stmt.Expr(ExprStmt.{ expr: call_expr, span: dummy_span() })),
+        ],
+        span: dummy_span(),
+      }
+      result := check_unused_imports(module)
+      // "translate" from `use foo.{translate}` should be flagged as unused
+      try assert.int_eq(result.items.len(), 1)
+      try assert.str_contains(result.items[0].kind.message(), "translate")
+      .Ok({})
+    })
+    .test("check_unused_imports: inherent method on complex expr does not suppress unused import", fn() {
+      // `use foo.{transform}` (selective import)
+      // Code: `get_items().transform()` — inherent method on return value
+      foo_decl := UseDecl.{
+        is_stdlib: false, is_relative: false,
+        path: ["foo"],
+        alias: .None,
+        items: .Some([make_value_item("transform")]),
+        span: span.Span.{ file_id: 0, start: 0, end: 30 },
+      }
+      // get_items().transform()
+      call_expr := dummy_expr(.Call(
+        dummy_expr(.Field(
+          dummy_expr(.Call(dummy_expr(.Ident("get_items")), [])),
+          "transform",
+        )),
+        [],
+      ))
+      module := Module.{
+        items: [
+          Item.Use(foo_decl),
+          Item.Stmt(Stmt.Expr(ExprStmt.{ expr: call_expr, span: dummy_span() })),
+        ],
+        span: dummy_span(),
+      }
+      result := check_unused_imports(module)
+      try assert.int_eq(result.items.len(), 1)
+      try assert.str_contains(result.items[0].kind.message(), "transform")
+      .Ok({})
+    })
+    .test("check_unused_imports: bare call to imported function is not flagged", fn() {
+      // `use foo.{translate}` (selective import)
+      // Code: `translate(p, 1, 2)` — bare call, DOES use the import
+      foo_decl := UseDecl.{
+        is_stdlib: false, is_relative: false,
+        path: ["foo"],
+        alias: .None,
+        items: .Some([make_value_item("translate")]),
+        span: span.Span.{ file_id: 0, start: 0, end: 30 },
+      }
+      call_expr := dummy_expr(.Call(
+        dummy_expr(.Ident("translate")),
+        [dummy_expr(.Ident("p"))],
+      ))
+      module := Module.{
+        items: [
+          Item.Use(foo_decl),
+          Item.Stmt(Stmt.Expr(ExprStmt.{ expr: call_expr, span: dummy_span() })),
+        ],
+        span: dummy_span(),
+      }
+      result := check_unused_imports(module)
+      try assert.int_eq(result.items.len(), 0)
+      .Ok({})
+    })
     .test("check_unused_imports: empty module returns empty result", fn() {
       module := Module.{ items: [], span: dummy_span() }
       result := check_unused_imports(module)
