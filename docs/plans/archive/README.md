@@ -107,6 +107,7 @@ Related historical context outside this folder:
 | [wasm-sum-representation-boundary-unification.md](wasm-sum-representation-boundary-unification.md) | Unify typed/erased Option/Result/Variant boundary handling to prevent cast-failure regressions |
 | [wasm-option-amatch-typed-metadata.md](wasm-option-amatch-typed-metadata.md) | Preserve typed Option/Result metadata for `AMatch`-produced locals |
 | [anf-analysis-consolidation.md](anf-analysis-consolidation.md) | Consolidate ANF traversal analyses into shared utilities with codegen/optimizer parity guardrails |
+| [stage0-illegal-cast.md](stage0-illegal-cast.md) | Postmortem for the stage0 module-global LocalId collision that made a `PVec` local emit as `Array`, plus the stage0/boot init-binding fixes |
 | [intrinsic-registry-unification.md](intrinsic-registry-unification.md) | Unify intrinsic/prelude metadata into one canonical registry |
 | [stdlib-signature-source-of-truth.md](stdlib-signature-source-of-truth.md) | Make `prelude/*` and `stdlib/*` the signature source of truth; remove cross-file Rust signature duplication |
 | [module-compile-orchestrator-refactor.md](module-compile-orchestrator-refactor.md) | Refactor module compile orchestration into dependency, stage-runner, and env-integration layers |
