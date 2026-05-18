@@ -7,27 +7,12 @@ use compiler.mono_type.{MonoType, TypeId}
 
 use compiler.query.semantic.{SemanticSnapshot}
 use compiler.query.ast_walk.{NodeContext, find_node_in_block, find_node_in_expr, find_node_in_stmt}
+use compiler.query.util.{find_map, find_map_indexed}
 use lib.source.span.{Span}
 
 pub type HoverResult = .{
   content: String,
   span: Span,
-}
-
-fn find_map<A, B>(xs: Vector<A>, f: fn(A) B?) B? {
-  for x in xs {
-    v := f(x)
-    if v.is_some() { return v }
-  }
-  .None
-}
-
-fn find_map_indexed<A, B>(xs: Vector<A>, f: fn(A, Int) B?) B? {
-  for x, i in xs {
-    v := f(x, i)
-    if v.is_some() { return v }
-  }
-  .None
 }
 
 pub fn hover(snap: SemanticSnapshot, byte_offset: Int, source: String) HoverResult? {

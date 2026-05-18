@@ -3,7 +3,8 @@
 // Finds the deepest AST node at a given byte offset, returning a NodeContext
 // that both hover and definition can pattern-match on to do their specific work.
 
-use compiler.ast.{Block, Stmt, Expr, RecordEntry, CollectExpr, Pattern}
+use compiler.ast.{Block, Stmt, Expr, CaseArm, RecordEntry, StringPart, Pattern}
+use compiler.query.util.{find_map}
 
 
 /// A node found at a byte offset, with context about where it sits.
@@ -19,16 +20,8 @@ pub type NodeContext = {
 
 /// Find the deepest AST node in a block containing `byte_offset`.
 pub fn find_node_in_block(block: Block, offset: Int) NodeContext? {
-  for stmt in block.stmts {
-    case find_node_in_stmt(stmt, offset) {
-      .Some(r) => { return .Some(r) },
-      .None => {},
-    }
-  }
-  case block.tail {
-    .Some(expr) => find_node_in_expr(expr, offset),
-    .None => .None,
-  }
+  find_map(block.stmts, fn(stmt) { find_node_in_stmt(stmt, offset) })
+    .or_else(fn() { case block.tail { .Some(expr) => find_node_in_expr(expr, offset), .None => .None } })
 }
 
 pub fn find_node_in_stmt(stmt: Stmt, offset: Int) NodeContext? {
@@ -36,28 +29,20 @@ pub fn find_node_in_stmt(stmt: Stmt, offset: Int) NodeContext? {
     .Let(ls) => if ls.span.contains(offset) { find_node_in_expr(ls.value, offset) } else { .None },
     .For(fs) => {
       if !fs.span.contains(offset) { return .None }
-      case fs.iter {
-        .Some(e) => case find_node_in_expr(e, offset) {
-          .Some(r) => { return .Some(r) },
-          .None => {},
-        },
-        .None => {},
-      }
-      case fs.condition {
-        .Some(e) => case find_node_in_expr(e, offset) {
-          .Some(r) => { return .Some(r) },
-          .None => {},
-        },
-        .None => {},
-      }
-      find_node_in_block(fs.body, offset)
+      find_in_opt_expr(fs.iter, offset)
+        .or_else(fn() { find_in_opt_expr(fs.condition, offset) })
+        .or_else(fn() { find_node_in_block(fs.body, offset) })
     },
-    .Return(rs) => if rs.span.contains(offset) { case rs.value { .Some(e) => find_node_in_expr(e, offset), .None => .None } } else { .None },
-    .Break(bs) => if bs.span.contains(offset) { case bs.value { .Some(e) => find_node_in_expr(e, offset), .None => .None } } else { .None },
+    .Return(rs) => if rs.span.contains(offset) { find_in_opt_expr(rs.value, offset) } else { .None },
+    .Break(bs) => if bs.span.contains(offset) { find_in_opt_expr(bs.value, offset) } else { .None },
     .Defer(ds) => if ds.span.contains(offset) { find_node_in_expr(ds.expr, offset) } else { .None },
     .Expr(es) => if es.span.contains(offset) { find_node_in_expr(es.expr, offset) } else { .None },
     _ => .None,
   }
+}
+
+fn find_in_opt_expr(opt: Expr?, offset: Int) NodeContext? {
+  case opt { .Some(e) => find_node_in_expr(e, offset), .None => .None }
 }
 
 /// Find the deepest AST node in an expression tree containing `byte_offset`.
@@ -72,14 +57,10 @@ pub fn find_node_in_expr(expr: Expr, offset: Int) NodeContext? {
 fn find_child_node(expr: Expr, offset: Int) NodeContext? {
   case expr.kind {
     .Unary(_, inner) => find_node_in_expr(inner, offset),
-    .Binary(_, lhs, rhs) => case find_node_in_expr(lhs, offset) {
-      .Some(r) => .Some(r),
-      .None => find_node_in_expr(rhs, offset),
-    },
-    .Call(callee, args) => case find_node_in_expr(callee, offset) {
-      .Some(r) => .Some(r),
-      .None => find_node_in_exprs(args, offset),
-    },
+    .Binary(_, lhs, rhs) =>
+      find_node_in_expr(lhs, offset).or_else(fn() { find_node_in_expr(rhs, offset) }),
+    .Call(callee, args) =>
+      find_node_in_expr(callee, offset).or_else(fn() { find_node_in_exprs(args, offset) }),
     .Field(base, field) => {
       field_start := expr.span.end - field.len()
       if offset >= field_start and offset < expr.span.end {
@@ -87,98 +68,51 @@ fn find_child_node(expr: Expr, offset: Int) NodeContext? {
       }
       find_node_in_expr(base, offset)
     },
-    .Index(base, idx) => case find_node_in_expr(base, offset) {
-      .Some(r) => .Some(r),
-      .None => find_node_in_expr(idx, offset),
-    },
+    .Index(base, idx) =>
+      find_node_in_expr(base, offset).or_else(fn() { find_node_in_expr(idx, offset) }),
     .BlockExpr(block) => find_node_in_block(block, offset),
-    .If(cond, then_block, else_expr) => case find_node_in_expr(cond, offset) {
-      .Some(r) => .Some(r),
-      .None => case find_node_in_block(then_block, offset) {
-        .Some(r) => .Some(r),
-        .None => case else_expr {
-          .Some(e) => find_node_in_expr(e, offset),
-          .None => .None,
-        },
-      },
-    },
-    .Case(scrutinee, arms) => case find_node_in_expr(scrutinee, offset) {
-      .Some(r) => .Some(r),
-      .None => {
-        for arm in arms {
-          if arm.span.contains(offset) {
-            if arm.pattern.span.contains(offset) {
-              return .Some(.PatternNode(arm.pattern, .Some(scrutinee)))
-            }
-            case find_node_in_expr(arm.expr, offset) {
-              .Some(r) => { return .Some(r) },
-              .None => {},
-            }
-          }
-        }
-        .None
-      },
-    },
+    .If(cond, then_block, else_expr) =>
+      find_node_in_expr(cond, offset)
+        .or_else(fn() { find_node_in_block(then_block, offset) })
+        .or_else(fn() { find_in_opt_expr(else_expr, offset) }),
+    .Case(scrutinee, arms) =>
+      find_node_in_expr(scrutinee, offset)
+        .or_else(fn() { find_node_in_case_arms(arms, scrutinee, offset) }),
     .Array(elems) => find_node_in_exprs(elems, offset),
     .Record(entries) => find_node_in_entries(entries, offset),
     .NamedRecord(_, entries) => find_node_in_entries(entries, offset),
     .Variant(_, fields) => find_node_in_exprs(fields, offset),
     .Closure(_, _, body) => find_node_in_block(body, offset),
-    .Collect(col) => find_node_in_collect(col, offset),
-    .StringInterp(parts) => {
-      for part in parts {
-        case part {
-          .Interpolation(e) => case find_node_in_expr(e, offset) {
-            .Some(r) => { return .Some(r) },
-            .None => {},
-          },
-          _ => {},
-        }
-      }
-      .None
-    },
+    .Collect(col) =>
+      find_in_opt_expr(col.iter, offset)
+        .or_else(fn() { find_in_opt_expr(col.condition, offset) })
+        .or_else(fn() { find_node_in_block(col.body, offset) }),
+    .StringInterp(parts) => find_node_in_interp(parts, offset),
     _ => .None,
   }
 }
 
 fn find_node_in_exprs(exprs: Vector<Expr>, offset: Int) NodeContext? {
-  for e in exprs {
-    case find_node_in_expr(e, offset) {
-      .Some(r) => { return .Some(r) },
-      .None => {},
-    }
-  }
-  .None
+  find_map(exprs, fn(e) { find_node_in_expr(e, offset) })
 }
 
 fn find_node_in_entries(entries: Vector<RecordEntry>, offset: Int) NodeContext? {
-  for entry in entries {
-    case entry.value {
-      .Some(e) => case find_node_in_expr(e, offset) {
-        .Some(r) => { return .Some(r) },
-        .None => {},
-      },
-      .None => {},
-    }
-  }
-  .None
+  find_map(entries, fn(e) { find_in_opt_expr(e.value, offset) })
 }
 
-fn find_node_in_collect(col: CollectExpr, offset: Int) NodeContext? {
-  case col.iter {
-    .Some(e) => case find_node_in_expr(e, offset) {
-      .Some(r) => { return .Some(r) },
-      .None => {},
-    },
-    .None => {},
-  }
-  case col.condition {
-    .Some(e) => case find_node_in_expr(e, offset) {
-      .Some(r) => { return .Some(r) },
-      .None => {},
-    },
-    .None => {},
-  }
-  find_node_in_block(col.body, offset)
+fn find_node_in_case_arms(arms: Vector<CaseArm>, scrutinee: Expr, offset: Int) NodeContext? {
+  find_map(arms, fn(arm) {
+    if !arm.span.contains(offset) { return .None }
+    if arm.pattern.span.contains(offset) {
+      return .Some(.PatternNode(arm.pattern, .Some(scrutinee)))
+    }
+    find_node_in_expr(arm.expr, offset)
+  })
+}
+
+fn find_node_in_interp(parts: Vector<StringPart>, offset: Int) NodeContext? {
+  find_map(parts, fn(part) {
+    case part { .Interpolation(e) => find_node_in_expr(e, offset), _ => .None }
+  })
 }
 
