@@ -27,7 +27,7 @@ use crate::runtime::types::{
 };
 use crate::types::env::TypeEnv;
 use crate::types::ty::{
-    ITER_ITEM_TYPE_ID, ITERATOR_TYPE_ID, MonoType, OPTION_TYPE_ID, RESULT_TYPE_ID,
+    ITER_ITEM_TYPE_ID, ITERATOR_TYPE_ID, MonoType, OPTION_TYPE_ID, ORDER_TYPE_ID, RESULT_TYPE_ID,
     TypeDef as LangTypeDef, TypeId, UNFOLD_STEP_TYPE_ID,
 };
 use crate::wasm::ir::{
@@ -4528,6 +4528,10 @@ fn emit_prelude_call(
         LoweringKind::ByteFromInt => emit_byte_from_int_intrinsic(args, ctx),
         LoweringKind::ByteToString => emit_byte_to_string_intrinsic(args, ctx),
         LoweringKind::FloatBits => emit_float_bits_intrinsic(args, ctx),
+        LoweringKind::IntCompare => emit_int_compare_intrinsic(args, bind_ty, ctx),
+        LoweringKind::FloatCompare => emit_float_compare_intrinsic(args, bind_ty, ctx),
+        LoweringKind::StringCompare => emit_string_compare_intrinsic(args, bind_ty, ctx),
+        LoweringKind::ByteCompare => emit_byte_compare_intrinsic(args, bind_ty, ctx),
         LoweringKind::TaskSpawn => emit_task_spawn_intrinsic(args, bind_ty, ctx),
         LoweringKind::TaskAwait => emit_task_await_intrinsic(args, bind_ty, ctx),
         LoweringKind::TaskYield => {
@@ -4535,6 +4539,112 @@ fn emit_prelude_call(
             vec![]
         }
     }
+}
+
+fn emit_order_variant(variant: u32, bind_ty: &ValType, ctx: &mut EmitCtx<'_>) -> Vec<Instr> {
+    emit_variant_literal(
+        ORDER_TYPE_ID,
+        crate::ir::VariantId(variant as usize),
+        &[],
+        bind_ty,
+        Some(&MonoType::named(ORDER_TYPE_ID)),
+        ctx,
+    )
+}
+
+fn emit_compare_from_lt_then_gt(
+    gt_instrs: Vec<Instr>,
+    bind_ty: &ValType,
+    ctx: &mut EmitCtx<'_>,
+) -> Vec<Instr> {
+    let mut else_body = gt_instrs;
+    else_body.push(Instr::If {
+        result: Some(bind_ty.clone()),
+        then_body: emit_order_variant(2, bind_ty, ctx),
+        else_body: emit_order_variant(1, bind_ty, ctx),
+    });
+    vec![Instr::If {
+        result: Some(bind_ty.clone()),
+        then_body: emit_order_variant(0, bind_ty, ctx),
+        else_body,
+    }]
+}
+
+fn emit_int_compare_intrinsic(
+    args: &[Atom],
+    bind_ty: &ValType,
+    ctx: &mut EmitCtx<'_>,
+) -> Vec<Instr> {
+    if args.len() != 2 {
+        panic!("Int.compare expects exactly two arguments");
+    }
+    let mut instrs = emit_atom(&args[0], Some(&ValType::I64), ctx);
+    instrs.extend(emit_atom(&args[1], Some(&ValType::I64), ctx));
+    instrs.push(Instr::I64LtS);
+    let mut gt_instrs = emit_atom(&args[0], Some(&ValType::I64), ctx);
+    gt_instrs.extend(emit_atom(&args[1], Some(&ValType::I64), ctx));
+    gt_instrs.push(Instr::I64GtS);
+    instrs.extend(emit_compare_from_lt_then_gt(gt_instrs, bind_ty, ctx));
+    instrs
+}
+
+fn emit_byte_compare_intrinsic(
+    args: &[Atom],
+    bind_ty: &ValType,
+    ctx: &mut EmitCtx<'_>,
+) -> Vec<Instr> {
+    if args.len() != 2 {
+        panic!("Byte.compare expects exactly two arguments");
+    }
+    let mut instrs = emit_atom(&args[0], Some(&ValType::I32), ctx);
+    instrs.extend(emit_atom(&args[1], Some(&ValType::I32), ctx));
+    instrs.push(Instr::I32LtU);
+    let mut gt_instrs = emit_atom(&args[0], Some(&ValType::I32), ctx);
+    gt_instrs.extend(emit_atom(&args[1], Some(&ValType::I32), ctx));
+    gt_instrs.push(Instr::I32GtU);
+    instrs.extend(emit_compare_from_lt_then_gt(gt_instrs, bind_ty, ctx));
+    instrs
+}
+
+fn emit_float_compare_intrinsic(
+    args: &[Atom],
+    bind_ty: &ValType,
+    ctx: &mut EmitCtx<'_>,
+) -> Vec<Instr> {
+    if args.len() != 2 {
+        panic!("Float.compare expects exactly two arguments");
+    }
+    let mut instrs = emit_atom(&args[0], Some(&ValType::F64), ctx);
+    instrs.extend(emit_atom(&args[1], Some(&ValType::F64), ctx));
+    instrs.push(Instr::F64Lt);
+    let mut gt_instrs = emit_atom(&args[0], Some(&ValType::F64), ctx);
+    gt_instrs.extend(emit_atom(&args[1], Some(&ValType::F64), ctx));
+    gt_instrs.push(Instr::F64Gt);
+    instrs.extend(emit_compare_from_lt_then_gt(gt_instrs, bind_ty, ctx));
+    instrs
+}
+
+fn emit_string_compare_intrinsic(
+    args: &[Atom],
+    bind_ty: &ValType,
+    ctx: &mut EmitCtx<'_>,
+) -> Vec<Instr> {
+    if args.len() != 2 {
+        panic!("String.compare expects exactly two arguments");
+    }
+    ensure_rt_str_cmp_import(ctx);
+    let mut instrs = emit_atom(&args[0], Some(&ref_string_null()), ctx);
+    instrs.extend(emit_atom(&args[1], Some(&ref_string_null()), ctx));
+    instrs.push(Instr::Call("rt_str__cmp".to_string()));
+    instrs.push(Instr::I32Const(0));
+    instrs.push(Instr::I32LtS);
+    let mut gt_instrs = emit_atom(&args[0], Some(&ref_string_null()), ctx);
+    gt_instrs.extend(emit_atom(&args[1], Some(&ref_string_null()), ctx));
+    gt_instrs.push(Instr::Call("rt_str__cmp".to_string()));
+    gt_instrs.push(Instr::I32Const(0));
+    gt_instrs.push(Instr::I32GtS);
+    instrs.extend(emit_compare_from_lt_then_gt(gt_instrs, bind_ty, ctx));
+    instrs
 }
 
 fn emit_string_to_string_identity(

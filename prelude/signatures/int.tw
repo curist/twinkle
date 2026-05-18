@@ -3,6 +3,11 @@ pub fn to_string(n: Int) String {
   ""
 }
 
+/// Compare two Ints.
+pub fn compare(a: Int, b: Int) Order {
+  .Eq
+}
+
 /// Parse a string as an integer, returning None on failure.
 pub fn from_string(s: String) Option<Int> {
   .None

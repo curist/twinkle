@@ -645,7 +645,7 @@ fn collect_ref_func_syms(funcs: Vector<FuncDef>, elems: Vector<ElemDef>) Vector<
     }
   }
 
-  seen.keys().sort_by(String.compare)
+  seen.keys().sort()
 }
 
 fn collect_ref_funcs_instr(instr: Instr, seen: Dict<String, Bool>) Dict<String, Bool> {

@@ -202,7 +202,7 @@ fn compute_captures(expr: AnfExpr, next: Cell<Int>) CaptureResult {
   snapshots: Vector<SnapshotBinding> = []
 
   // Sort keys for determinism
-  sorted := free.keys().sort_by(Int.compare)
+  sorted := free.keys().sort()
 
   for src_id in sorted {
     snap_id := next.get()

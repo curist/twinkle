@@ -86,5 +86,5 @@ pub fn list_prelude_modules(prelude_root: String) Vector<String> {
       filtered = .append(path.join(prelude_root, name))
     }
   }
-  filtered.sort_by(String.compare)
+  filtered.sort()
 }

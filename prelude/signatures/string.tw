@@ -13,6 +13,11 @@ pub fn is_empty(s: String) Bool {
   false
 }
 
+/// Lexicographic byte-order comparison.
+pub fn compare(a: String, b: String) Order {
+  .Eq
+}
+
 /// Concatenate two strings.
 pub fn concat(a: String, b: String) String {
   ""

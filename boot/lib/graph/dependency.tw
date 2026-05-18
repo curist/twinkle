@@ -82,7 +82,7 @@ pub fn reverse_dependents_closure(g: DependencyGraph, changed: String) Vector<St
     }
   }
 
-  queue.sort_by(String.compare)
+  queue.sort()
 }
 
 /// Topologically sort the graph starting from the given roots.
@@ -136,7 +136,7 @@ pub fn topo_sort(g: DependencyGraph, roots: Vector<String>) Result<Vector<String
     deg := case dep_count[node] { .Some(n) => n, .None => 0 }
     if deg == 0 { node } else { continue }
   }
-  queue = .sort_by(String.compare)
+  queue = .sort()
 
   result: Vector<String> = []
   qi := 0
@@ -161,7 +161,7 @@ pub fn topo_sort(g: DependencyGraph, roots: Vector<String>) Result<Vector<String
             }
           }
         }
-        freed = .sort_by(String.compare)
+        freed = .sort()
         queue = .concat(freed)
       },
       .None => {},
@@ -182,7 +182,7 @@ pub fn topo_sort(g: DependencyGraph, roots: Vector<String>) Result<Vector<String
     cycle_nodes := collect node in unprocessed.keys() {
       if can_reach_self(g, node, unprocessed) { node } else { continue }
     }
-    cycle_nodes = .sort_by(String.compare)
+    cycle_nodes = .sort()
     .Err(GraphError.Cycle(cycle_nodes))
   } else {
     .Ok(result)

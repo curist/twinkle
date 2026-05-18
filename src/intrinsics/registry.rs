@@ -46,6 +46,10 @@ pub enum LoweringKind {
     ByteFromInt,
     ByteToString,
     FloatBits,
+    IntCompare,
+    FloatCompare,
+    StringCompare,
+    ByteCompare,
     TaskSpawn,
     TaskAwait,
     TaskYield,
@@ -105,6 +109,14 @@ const INTRINSIC_SPECS: &[IntrinsicSpec] = &[
     ),
     spec!(STRING_LEN, "String.len", Runtime, true, true),
     spec!(STRING_CONCAT, "String.concat", Runtime, true, true),
+    spec!(
+        STRING_COMPARE,
+        "String.compare",
+        Intrinsic,
+        true,
+        true,
+        StringCompare
+    ),
     spec!(STRING_GET, "String.get", Intrinsic, true, true, StringGet),
     spec!(
         STRING_SLICE,
@@ -310,6 +322,30 @@ const INTRINSIC_SPECS: &[IntrinsicSpec] = &[
         StringFromUtf8
     ),
     spec!(FLOAT_BITS, "Float.bits", Intrinsic, true, true, FloatBits),
+    spec!(
+        INT_COMPARE,
+        "Int.compare",
+        Intrinsic,
+        true,
+        true,
+        IntCompare
+    ),
+    spec!(
+        FLOAT_COMPARE,
+        "Float.compare",
+        Intrinsic,
+        true,
+        true,
+        FloatCompare
+    ),
+    spec!(
+        BYTE_COMPARE,
+        "Byte.compare",
+        Intrinsic,
+        true,
+        true,
+        ByteCompare
+    ),
     spec!(
         INT_FROM_STRING,
         "Int.from_string",

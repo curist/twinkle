@@ -351,9 +351,15 @@ fn collect_instantiations<'a>(
             args,
             ..
         } => {
-            if let Some(fid) = resolve_contract_method_target(module, &receiver.ty, method)
-                .or_else(|| resolve_stringify_target(module, &receiver.ty))
-            {
+            let target =
+                resolve_contract_method_target(module, &receiver.ty, method).or_else(|| {
+                    if method == "to_string" {
+                        resolve_stringify_target(module, &receiver.ty)
+                    } else {
+                        None
+                    }
+                });
+            if let Some(fid) = target {
                 if let Some(gf) = generic_funcs.get(&fid) {
                     let mut call_args = Vec::with_capacity(1 + args.len());
                     call_args.push((**receiver).clone());
@@ -696,9 +702,15 @@ fn rewrite_calls_in_kind(
                 .iter()
                 .map(|a| rewrite_calls_in_expr(a, module, spec_map, generic_funcs))
                 .collect();
-            if let Some(mut fid) = resolve_contract_method_target(module, &new_receiver.ty, method)
-                .or_else(|| resolve_stringify_target(module, &new_receiver.ty))
-            {
+            let target =
+                resolve_contract_method_target(module, &new_receiver.ty, method).or_else(|| {
+                    if method == "to_string" {
+                        resolve_stringify_target(module, &new_receiver.ty)
+                    } else {
+                        None
+                    }
+                });
+            if let Some(mut fid) = target {
                 let mut call_args = Vec::with_capacity(1 + new_args.len());
                 call_args.push(new_receiver.clone());
                 call_args.extend(new_args);

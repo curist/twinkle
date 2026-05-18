@@ -3,6 +3,11 @@ pub fn to_string(f: Float) String {
   ""
 }
 
+/// Compare two Floats. NaN compares as greater than all other values.
+pub fn compare(a: Float, b: Float) Order {
+  .Eq
+}
+
 /// Parse a string as a float, returning None on failure.
 pub fn from_string(s: String) Option<Float> {
   .None

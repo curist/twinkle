@@ -118,6 +118,10 @@ pub mod prelude {
     pub const STRING_UTF8_BYTES: FuncId = FuncId(1027); // String.utf8_bytes(s: String) -> Vector<Byte>
     pub const STRING_FROM_UTF8: FuncId = FuncId(1028); // String.from_utf8(bytes: Vector<Byte>) -> Option<String>
     pub const FLOAT_BITS: FuncId = FuncId(1029); // Float.bits(f: Float) -> Int  (IEEE 754 bit pattern as i64)
+    pub const INT_COMPARE: FuncId = FuncId(1040); // Int.compare(a, b) -> Order
+    pub const FLOAT_COMPARE: FuncId = FuncId(1041); // Float.compare(a, b) -> Order
+    pub const STRING_COMPARE: FuncId = FuncId(1042); // String.compare(a, b) -> Order
+    pub const BYTE_COMPARE: FuncId = FuncId(1043); // Byte.compare(a, b) -> Order
 
     pub const INT_FROM_STRING: FuncId = FuncId(1019); // (s: String) -> Option<Int>
     pub const FLOAT_FROM_STRING: FuncId = FuncId(1020); // (s: String) -> Option<Float>
