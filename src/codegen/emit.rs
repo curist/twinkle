@@ -4614,13 +4614,58 @@ fn emit_float_compare_intrinsic(
     if args.len() != 2 {
         panic!("Float.compare expects exactly two arguments");
     }
-    let mut instrs = emit_atom(&args[0], Some(&ValType::F64), ctx);
-    instrs.extend(emit_atom(&args[1], Some(&ValType::F64), ctx));
-    instrs.push(Instr::F64Lt);
-    let mut gt_instrs = emit_atom(&args[0], Some(&ValType::F64), ctx);
-    gt_instrs.extend(emit_atom(&args[1], Some(&ValType::F64), ctx));
-    gt_instrs.push(Instr::F64Gt);
-    instrs.extend(emit_compare_from_lt_then_gt(gt_instrs, bind_ty, ctx));
+    // NaN-aware comparison matching prelude/float.tw semantics:
+    //   NaN > non-NaN, non-NaN < NaN, NaN == NaN (for stable sorting).
+    // Check a_nan = (a != a), b_nan = (b != b).
+    let mut instrs = Vec::new();
+
+    // a_nan
+    instrs.extend(emit_atom(&args[0], Some(&ValType::F64), ctx));
+    instrs.extend(emit_atom(&args[0], Some(&ValType::F64), ctx));
+    instrs.push(Instr::F64Ne); // a != a → true if NaN
+
+    instrs.push(Instr::If {
+        result: Some(bind_ty.clone()),
+        then_body: {
+            // a is NaN — check if b is also NaN
+            let mut then_instrs = Vec::new();
+            then_instrs.extend(emit_atom(&args[1], Some(&ValType::F64), ctx));
+            then_instrs.extend(emit_atom(&args[1], Some(&ValType::F64), ctx));
+            then_instrs.push(Instr::F64Ne); // b != b
+            then_instrs.push(Instr::If {
+                result: Some(bind_ty.clone()),
+                // both NaN → Eq
+                then_body: emit_order_variant(1, bind_ty, ctx),
+                // a NaN, b not → Gt
+                else_body: emit_order_variant(2, bind_ty, ctx),
+            });
+            then_instrs
+        },
+        else_body: {
+            // a is not NaN — check if b is NaN
+            let mut else_instrs = Vec::new();
+            else_instrs.extend(emit_atom(&args[1], Some(&ValType::F64), ctx));
+            else_instrs.extend(emit_atom(&args[1], Some(&ValType::F64), ctx));
+            else_instrs.push(Instr::F64Ne); // b != b
+            else_instrs.push(Instr::If {
+                result: Some(bind_ty.clone()),
+                // b NaN, a not → Lt
+                then_body: emit_order_variant(0, bind_ty, ctx),
+                else_body: {
+                    // neither is NaN — normal comparison
+                    let mut normal = emit_atom(&args[0], Some(&ValType::F64), ctx);
+                    normal.extend(emit_atom(&args[1], Some(&ValType::F64), ctx));
+                    normal.push(Instr::F64Lt);
+                    let mut gt = emit_atom(&args[0], Some(&ValType::F64), ctx);
+                    gt.extend(emit_atom(&args[1], Some(&ValType::F64), ctx));
+                    gt.push(Instr::F64Gt);
+                    normal.extend(emit_compare_from_lt_then_gt(gt, bind_ty, ctx));
+                    normal
+                },
+            });
+            else_instrs
+        },
+    });
     instrs
 }
 

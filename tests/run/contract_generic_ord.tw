@@ -1,0 +1,41 @@
+// Expected output:
+//   Lt
+//   Eq
+//   Gt
+//   Lt
+//   1
+
+fn show_order(o: Order) String {
+  case o {
+    .Lt => "Lt",
+    .Eq => "Eq",
+    .Gt => "Gt",
+  }
+}
+
+fn byte(n: Int) Byte {
+  case Byte.from_int(n) {
+    .Some(b) => b,
+    .None => "x"[0],
+  }
+}
+
+// Generic function with T: Ord bound
+fn compare_pair<T: Ord>(a: T, b: T) Order {
+  a.compare(b)
+}
+
+println(show_order(compare_pair(1, 2)))
+println(show_order(compare_pair("x", "x")))
+println(show_order(compare_pair(5.0, 1.0)))
+println(show_order(compare_pair(byte(10), byte(20))))
+
+// Generic min function using Ord contract
+fn min_val<T: Ord>(a: T, b: T) T {
+  case a.compare(b) {
+    .Gt => b,
+    _ => a,
+  }
+}
+
+println(Int.to_string(min_val(3, 1)))

@@ -1,0 +1,15 @@
+// Expected output:
+//   value: 42
+//   value: 3.14
+//   value: true
+//   value: hello
+
+// Generic function with T: Stringify bound
+fn show<T: Stringify>(x: T) String {
+  "value: ${x.to_string()}"
+}
+
+println(show(42))
+println(show(3.14))
+println(show(true))
+println(show("hello"))

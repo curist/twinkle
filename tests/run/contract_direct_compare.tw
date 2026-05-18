@@ -1,0 +1,48 @@
+// Expected output:
+//   Lt
+//   Eq
+//   Gt
+//   Lt
+//   Eq
+//   Gt
+//   Lt
+//   Eq
+//   Gt
+//   Lt
+//   Eq
+//   Gt
+
+fn show_order(o: Order) String {
+  case o {
+    .Lt => "Lt",
+    .Eq => "Eq",
+    .Gt => "Gt",
+  }
+}
+
+fn byte(n: Int) Byte {
+  case Byte.from_int(n) {
+    .Some(b) => b,
+    .None => "x"[0],
+  }
+}
+
+// Int.compare — representative Lt/Eq/Gt
+println(show_order(Int.compare(1, 2)))
+println(show_order(Int.compare(3, 3)))
+println(show_order(Int.compare(5, 1)))
+
+// Float.compare — representative Lt/Eq/Gt
+println(show_order(Float.compare(1.0, 2.0)))
+println(show_order(Float.compare(3.0, 3.0)))
+println(show_order(Float.compare(5.0, 1.0)))
+
+// String.compare — representative Lt/Eq/Gt
+println(show_order(String.compare("apple", "banana")))
+println(show_order(String.compare("hello", "hello")))
+println(show_order(String.compare("z", "a")))
+
+// Byte.compare — representative Lt/Eq/Gt
+println(show_order(Byte.compare(byte(10), byte(20))))
+println(show_order(Byte.compare(byte(10), byte(10))))
+println(show_order(Byte.compare(byte(20), byte(10))))

@@ -676,3 +676,30 @@ fn qualified_variant_constructor_edge() {
 fn toplevel_rebind() {
     check("tests/run/toplevel_rebind.tw");
 }
+
+// Stage0 builtin contract smoke tests (see docs/plans/stage0-builtin-contract-plan.md).
+// When boot starts using a newer prelude API, add a stage0 smoke case here.
+#[test]
+fn contract_ord_sort() {
+    check("tests/run/contract_ord_sort.tw");
+}
+
+#[test]
+fn contract_generic_ord() {
+    check("tests/run/contract_generic_ord.tw");
+}
+
+#[test]
+fn contract_generic_stringify() {
+    check("tests/run/contract_generic_stringify.tw");
+}
+
+#[test]
+fn contract_ord_float_nan() {
+    check("tests/run/contract_ord_float_nan.tw");
+}
+
+#[test]
+fn contract_direct_compare() {
+    check("tests/run/contract_direct_compare.tw");
+}

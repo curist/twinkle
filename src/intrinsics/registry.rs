@@ -3,6 +3,22 @@ use std::sync::OnceLock;
 use crate::ir::FuncId;
 use crate::ir::lower::prelude as prelude_ids;
 
+/// Classification for how a builtin is dispatched in stage0 codegen.
+///
+/// Each intrinsic falls into one of three categories:
+///
+/// - **Runtime**: forwarded as a Wasm import call to the JS/host runtime.
+///   Used for I/O, string conversion, and data-structure operations that
+///   require complex host logic (e.g. persistent vector/dict internals).
+///
+/// - **Intrinsic**: lowered to inline Wasm instructions via a `LoweringKind`.
+///   Used when the operation maps naturally to Wasm primitives (comparisons,
+///   struct/array access, identity coercions) and the runtime overhead of an
+///   import call is unnecessary. Each instruction-level intrinsic must maintain
+///   semantic parity with its corresponding `prelude/*.tw` implementation.
+///
+/// - **LibraryInternal**: like Runtime but not user-visible through the prelude.
+///   Available only to `boot/lib` modules for internal compiler plumbing.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum IntrinsicDispatch {
     Runtime,
@@ -13,45 +29,101 @@ pub enum IntrinsicDispatch {
     LibraryInternal,
 }
 
+/// Instruction-level lowering kinds for intrinsic dispatch.
+///
+/// Each variant here maps to a dedicated codegen function in `src/codegen/emit.rs`.
+/// The rationale for instruction-level lowering (rather than a runtime import or
+/// compiling the prelude `.tw` source) falls into a few categories:
+///
+/// - **Identity/coercion**: no-op at runtime, just satisfies the type system
+///   (e.g. `StringToStringIdentity`).
+/// - **GC struct/array access**: requires direct Wasm GC instructions that cannot
+///   be expressed in Twinkle source (e.g. `CellGet`, `VectorGet`, `DictGet`).
+/// - **Primitive comparison**: maps to Wasm comparison instructions for performance;
+///   must match NaN/overflow semantics of the prelude `.tw` implementation.
+/// - **Constructor lowering**: builds Wasm GC structs inline rather than calling
+///   through the runtime (e.g. `CellNew`, `Range`, `IteratorUnfold`).
+/// - **Encoding/conversion**: uses Wasm i32/i64 instructions directly for byte/int
+///   coercions that are trivial at the instruction level (e.g. `ByteToInt`).
+/// - **Task operations**: lowered to Wasm instructions for the async runtime.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum LoweringKind {
+    /// String.to_string is identity — no runtime call needed.
     StringToStringIdentity,
+    /// Vector.append: GC array tail-push via struct access.
     VectorPush,
+    /// range(n): constructs Range struct inline.
     Range,
+    /// range_from(start, end): constructs Range struct inline.
     RangeFrom,
+    /// range_step(start, end, step): constructs Range struct inline.
     RangeStep,
+    /// Cell.new: allocates GC struct with initial value.
     CellNew,
+    /// Cell.get: reads field 0 from GC struct.
     CellGet,
+    /// Cell.set: writes field 0 of GC struct.
     CellSet,
+    /// Cell.update: reads, applies function, writes back.
     CellUpdate,
+    /// Dict.get: GC struct access + HAMT lookup.
     DictGet,
+    /// dict_get_unsafe: like DictGet but traps on missing key.
     DictGetUnsafe,
+    /// Iterator.unfold: constructs Iterator GC struct from seed + step fn.
     IteratorUnfold,
+    /// Iterator.next: advances iterator via GC struct field access.
     IteratorNext,
+    /// Vector.make: allocates GC array with repeated value.
     VectorMake,
+    /// Vector.get: bounds-checked GC array access returning Option.
     VectorGet,
+    /// Vector.set: bounds-checked GC array copy-on-write returning Option.
     VectorSet,
+    /// __vector_set_in_place: mutable GC array write (internal).
     VectorSetInPlace,
+    /// String.get: byte-level GC array access returning Option<Byte>.
     StringGet,
+    /// String.slice: byte-range extraction from GC string.
     StringSlice,
+    /// String.char_code_at: i32 byte extraction from GC string.
     CharCodeAt,
+    /// String.from_char_code: creates single-char string from code point.
     FromCharCode,
+    /// String.from_byte: creates single-byte string.
     FromByte,
+    /// String.from_code_point: creates string from Unicode code point.
     FromCodePoint,
+    /// String.utf8_bytes: copies string bytes to GC array.
     StringUtf8Bytes,
+    /// String.from_utf8: validates and creates string from byte array.
     StringFromUtf8,
+    /// Int.from_string: runtime-assisted parse with i64 result.
     IntFromString,
+    /// Float.from_string: runtime-assisted parse with f64 result.
     FloatFromString,
+    /// Byte.to_int: i32 → i64 extend (trivial instruction).
     ByteToInt,
+    /// Byte.from_int: i64 → i32 wrap with range check.
     ByteFromInt,
+    /// Byte.to_string: converts byte to its decimal string representation.
     ByteToString,
+    /// Float.bits: f64 → i64 reinterpret (single Wasm instruction).
     FloatBits,
+    /// Int.compare: i64 signed comparison → Order variant.
     IntCompare,
+    /// Float.compare: f64 comparison with NaN handling → Order variant.
+    /// NaN semantics match prelude/float.tw: NaN > non-NaN, NaN == NaN.
     FloatCompare,
+    /// String.compare: delegates to runtime rt_str__cmp, wraps result as Order.
     StringCompare,
+    /// Byte.compare: i32 unsigned comparison → Order variant.
     ByteCompare,
+    /// Task.spawn: constructs task GC struct with thunk.
     TaskSpawn,
+    /// Task.await: blocks on task completion, extracts result.
     TaskAwait,
+    /// Task.yield: yields execution (currently a no-op stub).
     TaskYield,
 }
 

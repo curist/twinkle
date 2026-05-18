@@ -287,8 +287,8 @@ fn resolve_stringify_target(module: &CoreModule, receiver_ty: &MonoType) -> Opti
         .map(|f| f.func_id)
 }
 
-/// Resolve a contract method target (generalized version of resolve_stringify_target).
-/// Looks up a method by name on the receiver type and returns its FuncId.
+/// Resolve a contract method target by looking up the method name on the receiver
+/// type in the type environment, then finding the corresponding FuncId.
 fn resolve_contract_method_target(
     module: &CoreModule,
     receiver_ty: &MonoType,
@@ -320,6 +320,26 @@ fn resolve_contract_method_target(
     None
 }
 
+/// Resolve a builtin contract method using explicit (contract, method) dispatch.
+/// Each contract/method pair has its own resolution strategy with no cross-contract
+/// fallback — an unresolved Ord.compare can never fall through to Stringify.to_string.
+fn resolve_builtin_contract_method(
+    module: &CoreModule,
+    receiver_ty: &MonoType,
+    contract: &str,
+    method: &str,
+) -> Option<FuncId> {
+    match (contract, method) {
+        ("Stringify", "to_string") => {
+            resolve_contract_method_target(module, receiver_ty, "to_string")
+                .or_else(|| resolve_stringify_target(module, receiver_ty))
+        }
+        ("Ord", "compare") => resolve_contract_method_target(module, receiver_ty, "compare"),
+        ("Eq", "eq") => resolve_contract_method_target(module, receiver_ty, "eq"),
+        _ => None,
+    }
+}
+
 // ─── Tree traversals ──────────────────────────────────────────────────────────
 
 /// Walk `expr`, pushing `(orig_fid, subst)` onto `queue` for every direct or
@@ -346,19 +366,12 @@ fn collect_instantiations<'a>(
             }
         }
         CoreExprKind::ContractCall {
+            contract,
             method,
             receiver,
             args,
-            ..
         } => {
-            let target =
-                resolve_contract_method_target(module, &receiver.ty, method).or_else(|| {
-                    if method == "to_string" {
-                        resolve_stringify_target(module, &receiver.ty)
-                    } else {
-                        None
-                    }
-                });
+            let target = resolve_builtin_contract_method(module, &receiver.ty, contract, method);
             if let Some(fid) = target {
                 if let Some(gf) = generic_funcs.get(&fid) {
                     let mut call_args = Vec::with_capacity(1 + args.len());
@@ -703,13 +716,7 @@ fn rewrite_calls_in_kind(
                 .map(|a| rewrite_calls_in_expr(a, module, spec_map, generic_funcs))
                 .collect();
             let target =
-                resolve_contract_method_target(module, &new_receiver.ty, method).or_else(|| {
-                    if method == "to_string" {
-                        resolve_stringify_target(module, &new_receiver.ty)
-                    } else {
-                        None
-                    }
-                });
+                resolve_builtin_contract_method(module, &new_receiver.ty, contract, method);
             if let Some(mut fid) = target {
                 let mut call_args = Vec::with_capacity(1 + new_args.len());
                 call_args.push(new_receiver.clone());

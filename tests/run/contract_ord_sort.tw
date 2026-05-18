@@ -1,0 +1,36 @@
+// Expected output:
+//   [1, 2, 3, 4, 5]
+//   [1.1, 2.2, 3.3]
+//   [apple, banana, cherry]
+//   [10, 20, 30]
+
+fn show_ints(xs: Vector<Int>) String {
+  "[${xs.map(Int.to_string).join(", ")}]"
+}
+
+fn show_floats(xs: Vector<Float>) String {
+  "[${xs.map(Float.to_string).join(", ")}]"
+}
+
+fn byte(n: Int) Byte {
+  case Byte.from_int(n) {
+    .Some(b) => b,
+    .None => "x"[0],
+  }
+}
+
+// Vector<Int>.sort() — Ord contract on Int
+ints := [3, 1, 5, 2, 4]
+println(show_ints(ints.sort()))
+
+// Vector<Float>.sort() — Ord contract on Float
+floats := [3.3, 1.1, 2.2]
+println(show_floats(floats.sort()))
+
+// Vector<String>.sort() — Ord contract on String
+strs := ["cherry", "apple", "banana"]
+println("[${strs.sort().join(", ")}]")
+
+// Vector<Byte>.sort() — Ord contract on Byte
+bytes := [byte(30), byte(10), byte(20)]
+println("[${bytes.sort().map(fn(b) { Byte.to_string(b) }).join(", ")}]")

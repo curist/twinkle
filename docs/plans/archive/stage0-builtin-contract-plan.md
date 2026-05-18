@@ -1,6 +1,6 @@
 # Stage0 Builtin and Contract Alignment Plan
 
-Status: accepted
+Status: phases 1–4 implemented, phase 5 is ongoing maintenance
 
 ## Context
 
