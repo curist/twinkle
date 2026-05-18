@@ -11,8 +11,10 @@ lower it correctly. The immediate fix added stage0 intrinsic lowering for
 primitive compare methods and tightened the `Stringify` fallback, but the larger
 risk remains: builtin method knowledge is spread across several places.
 
-The goal of this plan is to make stage0 boring and predictable while preserving
-its role as a bootstrap compiler.
+The goal of this plan is to make stage0 boring and predictable: every builtin
+path accepted by stage0 is exercised by tests, every visible intrinsic has a
+validated signature and lowering path, and contract method lookup is explicit
+rather than fallthrough-based.
 
 ## Problems to Address
 
@@ -21,14 +23,14 @@ its role as a bootstrap compiler.
 Builtin methods and intrinsic functions are currently described across multiple
 systems:
 
-- prelude implementation sources
-- prelude signature stubs
-- Rust intrinsic registry
-- Rust intrinsic signature loader
-- Rust type environment method table
-- Rust monomorphizer contract resolution
-- Rust codegen intrinsic lowering
-- generated boot core library embedding
+- prelude implementation sources: `prelude/*.tw`
+- prelude signature stubs: `prelude/signatures/*.tw`
+- Rust intrinsic registry: `src/intrinsics/registry.rs`
+- Rust intrinsic signature loader: `src/intrinsics/signatures.rs`
+- Rust type environment method table: `src/types/env.rs`
+- Rust monomorphizer contract resolution: `src/ir/monomorphize.rs`
+- Rust codegen intrinsic lowering: `src/codegen/emit.rs`
+- generated boot core library embedding: `boot/lib/module/core_lib.tw`
 
 When one of these changes without the others, stage0 can accept code that later
 fails during monomorphization or codegen.
@@ -38,6 +40,10 @@ fails during monomorphization or codegen.
 Stage0 handles `Stringify` and `Ord` with special cases. Fallback logic that was
 intended for `Stringify.to_string` was able to catch `Ord.compare`, which turned
 a missing compare target into an invalid `String.to_string` call.
+
+`Eq` is a near-term motivating case too. As Eq contract support expands, it will
+exercise the same contract-resolution and builtin-drift paths as `Ord`, but for
+`eq`-style methods rather than ordering methods.
 
 ### Primitive methods are special in too many places
 
@@ -51,6 +57,12 @@ methods need a single policy for:
 - monomorphization target resolution
 - codegen lowering
 - semantic parity with the Twinkle prelude implementation
+
+Default assumption for this plan: primitive `compare` methods stay as Rust
+instruction-level intrinsics in stage0 until stage0 can reliably compile and link
+prelude implementation modules for bootstrapping. That gives Phase 4 a concrete
+task: document and validate the intrinsic policy, not remove the intrinsics
+immediately.
 
 ### Bootstrap-only failures are easy to miss
 
@@ -71,12 +83,32 @@ matrix needs explicit coverage for stage0 bootstrap-sensitive builtin paths.
 5. `make stage2` remains the authoritative bootstrap validation, but narrower
    tests catch drift earlier.
 
+## Ordering and Priority
+
+The phases are intentionally separable:
+
+- Phase 1 should happen first because it locks in current behavior and catches
+  regressions cheaply.
+- Phase 3 can proceed before Phase 2 and is the highest-value cleanup after
+  tests, because it removes the cross-contract fallback class directly.
+- Phase 2 and Phase 4 can proceed in parallel once Phase 1 tests exist.
+- The bootstrap fixture from Phase 1 should be kept in sync with later phases;
+  there is no separate validation phase.
+
 ## Proposed Work
 
 ### Phase 1: Make drift visible
 
-Add focused tests that compile small programs through Rust stage0 for all
-primitive contract methods used by boot code:
+Add focused Rust tests that compile small programs through stage0 for all
+primitive contract methods used by boot code.
+
+Suggested location:
+
+- `tests/stage0_builtin_contract_test.rs`, or
+- additional cases in an existing stage0-oriented integration test if that keeps
+  fixture helpers simpler.
+
+Coverage:
 
 - `Vector<Int>.sort()`
 - `Vector<Float>.sort()`
@@ -85,45 +117,83 @@ primitive contract methods used by boot code:
 - direct `Int.compare`, `Float.compare`, `String.compare`, and `Byte.compare`
 - generic functions with `T: Ord` calling `a.compare(b)`
 - generic functions with `T: Stringify` calling `x.to_string()`
+- Eq smoke coverage once Eq contract calls are lowered through the same stage0
+  path
 
-These should run in the Rust test suite and fail before codegen panics. The tests
-should assert successful build/run behavior rather than only typecheck success.
+These tests should build or run through Rust stage0, not only typecheck. They
+should fail with diagnostics before codegen panics when a builtin path is
+missing.
+
+Done criteria:
+
+- Each primitive contract method accepted by stage0 has a build/run test.
+- The tests fail if a method is present in `src/types/env.rs` but absent from the
+  intrinsic registry or codegen lowering.
+- The tests cover both direct primitive calls and generic contract-bound calls.
 
 ### Phase 2: Centralize intrinsic metadata checks
 
 Extend the intrinsic registry validation so each `include_in_signature_registry`
-entry is checked against the parsed `.tw` signature stubs for:
+entry in `src/intrinsics/registry.rs` is checked against parsed `.tw` signature
+stubs loaded by `src/intrinsics/signatures.rs`.
+
+Implementation pointers:
+
+- Build on the existing validation in `src/intrinsics/validate.rs`.
+- Compare registry entries against signatures parsed from
+  `prelude/signatures/*.tw`.
+- Keep `.tw` stubs as the source of user-visible signature shape; Rust registry
+  entries should be checked against them rather than silently diverging.
+
+Validate:
 
 - canonical name
 - type parameter names and bounds
 - parameter types
 - return type
-- dispatch kind expectations
+- dispatch kind expectations where applicable
 
-This keeps Rust registry entries honest without making Rust the canonical source
-for user-visible signatures.
+Done criteria:
 
-### Phase 3: Normalize contract target resolution
+- Adding an intrinsic registry entry without a matching signature stub fails a
+  Rust test.
+- Changing a `.tw` signature without updating the intrinsic metadata fails a
+  Rust test.
+- Primitive compare signatures are covered by this validation.
 
-Replace contract-specific fallback chains with a resolver that takes:
+### Phase 3: Make contract target lookup explicit
 
-- contract name
-- method name
-- receiver type
-- argument types
+Avoid introducing a large resolver framework for now. There are only three
+builtin contracts (`Stringify`, `Eq`, `Ord`) and each has one method. The root
+bug was not lack of a general framework; it was shared fallback logic leaking
+between contracts.
 
-The resolver should return an explicit result:
+Replace the fallback chain in `src/ir/monomorphize.rs` with explicit lookup keyed
+by `(contract, method)`.
 
-- resolved builtin intrinsic target
-- resolved user/prelude function target
-- unsatisfied contract
-- ambiguous or malformed contract implementation
+Implementation pointers:
 
-`Stringify.to_string` and `Ord.compare` should go through the same resolver
-shape, with method-specific matching only where the contract definition requires
-it.
+- Keep the logic near `resolve_contract_method_target` in
+  `src/ir/monomorphize.rs` unless it grows enough to deserve a separate module.
+- Introduce a small helper such as `resolve_builtin_contract_method_target` that
+  matches exact pairs:
+  - `("Stringify", "to_string")`
+  - `("Ord", "compare")`
+  - `("Eq", "eq")` or the final Eq method name when Eq lowering lands
+- Do not fall back from one pair to another.
+- Preserve the existing user/prelude method target lookup where it is correct;
+  make the contract-specific part decide only which lookup strategy is allowed.
 
-### Phase 4: Reduce primitive special cases
+Done criteria:
+
+- No contract resolution path uses a generic `.or_else(resolve_stringify_target)`
+  fallback for non-`to_string` methods.
+- Unsupported `(contract, method)` pairs remain unresolved and fail in the normal
+  compiler path instead of being rewritten to the wrong builtin.
+- Tests cover that `Ord.compare` cannot resolve to `String.to_string`.
+- Eq contract tests are added when Eq reaches monomorphization/codegen.
+
+### Phase 4: Document and reduce primitive special cases
 
 Audit primitive methods and classify each one as one of:
 
@@ -131,25 +201,50 @@ Audit primitive methods and classify each one as one of:
 - instruction-level intrinsic
 - ordinary prelude function compiled from Twinkle source
 
+Implementation pointers:
+
+- Registry and policy live in `src/intrinsics/registry.rs`.
+- Instruction-level lowering lives in `src/codegen/emit.rs`.
+- Signature shape lives in `prelude/signatures/*.tw` and is checked by Phase 2.
+- Typechecker method visibility lives in `src/types/env.rs`.
+
 For each instruction-level intrinsic, document why it cannot currently be an
 ordinary prelude function in stage0. Where there is no ABI or bootstrap reason,
 prefer ordinary prelude functions.
 
-### Phase 5: Strengthen bootstrap validation
+Default policy for now:
 
-Add a lightweight bootstrap smoke target that uses Rust stage0 to build a small
-fixture exercising recently added prelude APIs. This should be cheaper than a
-full `make stage2` but catch the same class of stage0 drift.
+- Keep primitive `compare` methods as instruction-level intrinsics in stage0.
+- Require semantic parity tests against the Twinkle prelude behavior, especially
+  for `Float.compare` NaN ordering.
 
-The full `make stage2` fixed-point check remains required before landing changes
-that affect boot sources, prelude signatures, intrinsic metadata, or contract
-resolution.
+Done criteria:
+
+- Every primitive intrinsic has an explicit classification.
+- Every instruction-level primitive intrinsic has a short rationale.
+- Primitive compare behavior is tested for representative Lt/Eq/Gt outcomes.
+- `Float.compare` has NaN behavior coverage matching `prelude/float.tw`.
+
+### Phase 5: Keep bootstrap-sensitive APIs in the smoke fixture
+
+This is not a separate test category from Phase 1. It is the maintenance rule for
+Phase 1's fixture: when boot starts using a newer prelude API, add a small stage0
+smoke case for that API before or with the boot change.
+
+Done criteria:
+
+- The fixture covers recently added prelude APIs used by boot sources.
+- The fixture is cheaper than `make stage2` but catches missing stage0 builtin
+  metadata or lowering.
+- `make stage2` remains required before landing changes that affect boot sources,
+  prelude signatures, intrinsic metadata, or contract resolution.
 
 ## Open Questions
 
-- Should primitive `compare` methods remain Rust intrinsics, or should stage0
-  compile their Twinkle implementations once stage0 can reliably load prelude
-  implementation modules?
+- Can primitive `compare` methods eventually become ordinary Twinkle prelude
+  functions in stage0? Default for this plan: no; keep them as intrinsics until
+  stage0 can compile/link prelude implementation modules reliably during
+  bootstrap.
 - Should contract definitions (`Stringify`, `Eq`, `Ord`) have a single machine-
   readable source shared by stage0 and boot?
 - Can the generated `boot/lib/module/core_lib.tw` be eliminated or replaced with
@@ -163,6 +258,8 @@ resolution.
 - Adding a trait system.
 - Changing Twinkle's explicit contract model.
 - Reworking the Wasm runtime ABI beyond what is needed for builtin consistency.
+- Building a general-purpose contract resolver framework before the current
+  contract set needs one.
 
 ## Practical Guidance Until This Lands
 
