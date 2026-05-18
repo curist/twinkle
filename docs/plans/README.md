@@ -50,6 +50,7 @@ Self-hosting is complete. Historical design and status docs live in
 |------|-------------|--------|---------|
 | Tooling | Formatter, linter, LSP, package manager | Planned | [tooling.md](tooling.md) |
 | LSP completion | Reliability during partial edits, protocol coverage | In Progress | [lsp-completion.md](lsp-completion.md) |
+| LSP contract hover | Hover information for builtin contract bounds and contract-backed method calls | Planned | [lsp-contract-hover.md](lsp-contract-hover.md) |
 
 ### Active cross-cutting plans
 
