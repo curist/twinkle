@@ -455,6 +455,7 @@ fn same_builtin_contract(a: BuiltinContract, b: BuiltinContract) Bool {
   case a {
     .Stringify => case b { .Stringify => true, _ => false },
     .Eq => case b { .Eq => true, _ => false },
+    .Ord => case b { .Ord => true, _ => false },
   }
 }
 
@@ -466,6 +467,7 @@ fn contract_return_type(shape: ContractReturnShape) MonoType {
   case shape {
     .String => .String,
     .Bool => .Bool,
+    .Order => MonoType.Named(TypeId.{ id: 7 }, []),
   }
 }
 
@@ -473,6 +475,7 @@ fn contract_requirement_summary(req: ContractMethodRequirement) String {
   ret_name := case req.ret {
     .String => "String",
     .Bool => "Bool",
+    .Order => "Order",
   }
   if req.arg_count_without_receiver == 0 {
     return "${req.method_name}(self) -> ${ret_name}"
@@ -552,6 +555,13 @@ fn builtin_contract_satisfied_by_primitive(ty: MonoType, contract: BuiltinContra
       .String => true,
       _ => false,
     },
+    .Ord => case ty {
+      .Int => true,
+      .Float => true,
+      .Byte => true,
+      .String => true,
+      _ => false,
+    },
   }
 }
 
@@ -587,6 +597,15 @@ fn prove_contract_method(ty: MonoType, contract: BuiltinContract, req: ContractM
     .None => { return .Err("${req.method_name} does not apply to ${ctx.env.ty_to_string_env(ty)}") },
   }
 
+  // Validate non-receiver parameters also match the target type
+  for i in 0..req.arg_count_without_receiver {
+    param_idx := req.receiver_param_count + i
+    recv_ctx = case silent_unify(recv_ctx, ty, inst.params[param_idx]) {
+      .Some(next_ctx) => next_ctx,
+      .None => { return .Err("${req.method_name} parameter ${param_idx} does not match ${ctx.env.ty_to_string_env(ty)}") },
+    }
+  }
+
   ret_ty := zonk(inst.ret, recv_ctx.subst)
   expected_ret := contract_return_type(req.ret)
   if zonk(expected_ret, recv_ctx.subst) != ret_ty {
@@ -617,6 +636,7 @@ fn contract_supports_auto_derive(contract: BuiltinContract) Bool {
   case contract {
     .Eq => true,
     .Stringify => false,
+    .Ord => false,
   }
 }
 
@@ -646,6 +666,14 @@ fn try_builtin_container_contract(ty: MonoType, contract: BuiltinContract, ctx: 
       }
     },
     .Stringify => .None,
+    .Ord => {
+      case ty {
+        .Vector(elem) => {
+          .Some(prove_contract(elem, .Ord, ctx, active))
+        },
+        _ => .None,
+      }
+    },
   }
 }
 
@@ -2496,10 +2524,10 @@ fn synth_binary(op: BinOp, lhs: Expr, rhs: Expr, s: Span, ctx: InferCtx, diags: 
     .Eq => synth_eq_op(lhs, rhs, s, ctx, diags),
     .Ne => synth_eq_op(lhs, rhs, s, ctx, diags),
     .Range => synth_range_op(lhs, rhs, s, ctx, diags),
-    .Lt => synth_cmp_op(lhs, rhs, s, ctx, diags),
-    .Le => synth_cmp_op(lhs, rhs, s, ctx, diags),
-    .Gt => synth_cmp_op(lhs, rhs, s, ctx, diags),
-    .Ge => synth_cmp_op(lhs, rhs, s, ctx, diags),
+    .Lt => synth_cmp_op(op, lhs, rhs, s, ctx, diags),
+    .Le => synth_cmp_op(op, lhs, rhs, s, ctx, diags),
+    .Gt => synth_cmp_op(op, lhs, rhs, s, ctx, diags),
+    .Ge => synth_cmp_op(op, lhs, rhs, s, ctx, diags),
     .BitAnd => synth_bitwise_op(lhs, rhs, s, ctx, diags),
     .BitOr => synth_bitwise_op(lhs, rhs, s, ctx, diags),
     .BitXor => synth_bitwise_op(lhs, rhs, s, ctx, diags),
@@ -2652,7 +2680,17 @@ fn synth_bitwise_op(lhs: Expr, rhs: Expr, s: Span, ctx: InferCtx, diags: Vector<
   .{ ty: MonoType.Int, ctx: cur_ctx, diags: cur_diags.append(.Error(.InvalidOperand(.{ span: s, ty: bad_ty, operation: "bitwise operator" }))) }
 }
 
-fn synth_cmp_op(lhs: Expr, rhs: Expr, s: Span, ctx: InferCtx, diags: Vector<DiagKind>) SynthOut {
+fn cmp_op_name(op: BinOp) String {
+  case op {
+    .Lt => "<",
+    .Gt => ">",
+    .Le => "<=",
+    .Ge => ">=",
+    _ => "comparison",
+  }
+}
+
+fn synth_cmp_op(op: BinOp, lhs: Expr, rhs: Expr, s: Span, ctx: InferCtx, diags: Vector<DiagKind>) SynthOut {
   lr := ctx.synth(lhs, diags)
   rr := lr.ctx.synth(rhs, lr.diags)
   cur_ctx := rr.ctx
@@ -2667,7 +2705,27 @@ fn synth_cmp_op(lhs: Expr, rhs: Expr, s: Span, ctx: InferCtx, diags: Vector<Diag
   }
 
   u := cur_ctx.unify(lr.ty, rr.ty, s, cur_diags)
-  .{ ty: MonoType.Bool, ctx: u.ctx, diags: u.diags }
+  unified_ty := zonk(lr.ty, u.ctx.subst)
+  check_ord_contract(unified_ty, op, u.ctx, u.diags, s)
+}
+
+fn check_ord_contract(operand_ty: MonoType, op: BinOp, ctx: InferCtx, diags: Vector<DiagKind>, s: Span) SynthOut {
+  zonked := expand_alias(zonk(operand_ty, ctx.subst), ctx.env, 0)
+  // Defer while inference is incomplete
+  if contains_meta(zonked) {
+    return .{ ty: MonoType.Bool, ctx, diags }
+  }
+  proof := satisfies_contract(zonked, .Ord, ctx)
+  case proof {
+    .Ok(next_ctx) => .{ ty: MonoType.Bool, ctx: next_ctx, diags },
+    .Err(reason) => .{ ty: MonoType.Bool, ctx, diags: diags.append(.Error(.ContractViolation(.{
+      span: s,
+      ty: zonked,
+      contract: "Ord",
+      owner: cmp_op_name(op),
+      reason,
+    }))) },
+  }
 }
 
 fn synth_arith_op(op: BinOp, lhs: Expr, rhs: Expr, s: Span, ctx: InferCtx, diags: Vector<DiagKind>) SynthOut {

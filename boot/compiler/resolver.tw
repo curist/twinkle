@@ -519,7 +519,8 @@ pub fn register_builtin_methods(env: ResolvedEnv) ResolvedEnv {
     me("make", "vector_make"),
     me("map", "map"), me("filter", "filter"), me("fold", "fold"), me("find", "find"),
     me("any", "any"), me("all", "all"), me("contains", "contains"),
-    me("reverse", "reverse"), me("sort_by", "sort_by"), me("join", "join"),
+    me("reverse", "reverse"), me("sort_by", "sort_by"), me("sort", "sort"),
+    me("compare", "compare"), me("join", "join"),
     me("is_empty", "vector_is_empty"),
   ])
   env = .register_bound_methods("Dict", [

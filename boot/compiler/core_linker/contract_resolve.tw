@@ -12,6 +12,7 @@ pub fn resolve_contract_target_name(contract: BuiltinContract, receiver_ty: Mono
   case contract {
     .Stringify => resolve_for_receiver(receiver_ty, method_name, env),
     .Eq => resolve_for_receiver(receiver_ty, method_name, env),
+    .Ord => resolve_for_receiver(receiver_ty, method_name, env),
   }
 }
 

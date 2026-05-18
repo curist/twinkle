@@ -7,6 +7,7 @@
 pub type BuiltinContract = {
   Stringify,
   Eq,
+  Ord,
 }
 
 /// The return shape of a contract method requirement.
@@ -14,6 +15,7 @@ pub type BuiltinContract = {
 pub type ContractReturnShape = {
   String,
   Bool,
+  Order,
 }
 
 pub type ContractMethodRequirement = .{
@@ -48,6 +50,15 @@ pub fn spec(contract: BuiltinContract) ContractSpec {
         ret: .Bool,
       }],
     },
+    .Ord => .{
+      name: "Ord",
+      methods: [.{
+        method_name: "compare",
+        receiver_param_count: 1,
+        arg_count_without_receiver: 1,
+        ret: .Order,
+      }],
+    },
   }
 }
 
@@ -57,6 +68,7 @@ pub fn resolve_builtin_contract_name(name: String) BuiltinContract? {
   case name {
     "Stringify" => .Some(.Stringify),
     "Eq" => .Some(.Eq),
+    "Ord" => .Some(.Ord),
     _ => .None,
   }
 }

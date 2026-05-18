@@ -8,8 +8,8 @@ use crate::syntax::ast::{
 use crate::syntax::span::Span;
 use crate::types::env::{TypeEnv, ValueEnv};
 use crate::types::ty::{
-    ITER_ITEM_TYPE_ID, ITERATOR_TYPE_ID, MonoType, OPTION_TYPE_ID, RANGE_TYPE_ID, RESULT_TYPE_ID,
-    TypeId, method_receiver_type_id,
+    ITER_ITEM_TYPE_ID, ITERATOR_TYPE_ID, MonoType, OPTION_TYPE_ID, ORDER_TYPE_ID, RANGE_TYPE_ID,
+    RESULT_TYPE_ID, TypeId, method_receiver_type_id,
 };
 use crate::types::type_map::TypeMap;
 
@@ -2360,6 +2360,9 @@ impl Lowerer {
                 {
                     return Some(rewritten);
                 }
+                if let Some(rewritten) = self.lower_ord_cmp(*op, &l, &r, span) {
+                    return Some(rewritten);
+                }
                 Some(CoreExprKind::BinOp {
                     op: *op,
                     left: Box::new(l),
@@ -2979,6 +2982,14 @@ impl Lowerer {
         {
             return Some(CoreExprKind::ContractCall {
                 contract: "Stringify".to_string(),
+                method: method.to_string(),
+                receiver: Box::new(all_args.remove(0)),
+                args: all_args,
+            });
+        } else if matches!(&base_ty, MonoType::Var(name) if method == "compare" && self.current_type_param_bounds.get(name).map(|b| b.contains(&"Ord".to_string())) == Some(true))
+        {
+            return Some(CoreExprKind::ContractCall {
+                contract: "Ord".to_string(),
                 method: method.to_string(),
                 receiver: Box::new(all_args.remove(0)),
                 args: all_args,
@@ -5417,6 +5428,112 @@ impl Lowerer {
                 None
             }
         }
+    }
+
+    /// Lower comparison operators (`<`, `>`, `<=`, `>=`) on non-primitive
+    /// types that satisfy Ord into a `compare` call + match on Order variants.
+    fn lower_ord_cmp(
+        &mut self,
+        op: BinOp,
+        left: &CoreExpr,
+        right: &CoreExpr,
+        span: Span,
+    ) -> Option<CoreExprKind> {
+        if !matches!(op, BinOp::Lt | BinOp::Le | BinOp::Gt | BinOp::Ge) {
+            return None;
+        }
+        let is_primitive = matches!(
+            &left.ty,
+            MonoType::Int | MonoType::Float | MonoType::Byte | MonoType::String | MonoType::Bool
+        );
+        if is_primitive {
+            return None;
+        }
+
+        let order_ty = MonoType::named(ORDER_TYPE_ID);
+
+        // Build the compare call expression
+        let compare_expr = if let MonoType::Var(name) = &left.ty {
+            // Type variable with Ord bound: emit ContractCall
+            if self
+                .current_type_param_bounds
+                .get(name)
+                .map(|b| b.contains(&"Ord".to_string()))
+                != Some(true)
+            {
+                return None;
+            }
+            CoreExpr {
+                kind: CoreExprKind::ContractCall {
+                    contract: "Ord".to_string(),
+                    method: "compare".to_string(),
+                    receiver: Box::new(left.clone()),
+                    args: vec![right.clone()],
+                },
+                ty: order_ty.clone(),
+                span,
+            }
+        } else {
+            // Concrete type: look up compare method and call directly
+            let type_id = method_receiver_type_id(&left.ty)?;
+            let func_name = self
+                .type_env
+                .get_method(type_id, "compare")?
+                .func_name
+                .clone();
+            let func_id = self.resolve_named_func_id(&func_name, span)?;
+            let callee_ty = MonoType::Function {
+                params: vec![left.ty.clone(), right.ty.clone()],
+                ret: Box::new(order_ty.clone()),
+            };
+            CoreExpr {
+                kind: CoreExprKind::Call {
+                    callee: Box::new(CoreExpr {
+                        kind: CoreExprKind::GlobalFunc(func_id),
+                        ty: callee_ty,
+                        span,
+                    }),
+                    args: vec![left.clone(), right.clone()],
+                },
+                ty: order_ty.clone(),
+                span,
+            }
+        };
+
+        // Build match on Order: Lt=0, Eq=1, Gt=2
+        let (match_vid, on_match) = match op {
+            BinOp::Lt => (VariantId(0), true),  // match Lt => true
+            BinOp::Gt => (VariantId(2), true),  // match Gt => true
+            BinOp::Le => (VariantId(2), false), // match Gt => false, else true
+            BinOp::Ge => (VariantId(0), false), // match Lt => false, else true
+            _ => unreachable!(),
+        };
+
+        Some(CoreExprKind::Match {
+            scrutinee: Box::new(compare_expr),
+            arms: vec![
+                MatchArm {
+                    pattern: CorePattern::Variant {
+                        type_id: ORDER_TYPE_ID,
+                        variant: match_vid,
+                        fields: vec![],
+                    },
+                    body: CoreExpr {
+                        kind: CoreExprKind::LitBool(on_match),
+                        ty: MonoType::Bool,
+                        span,
+                    },
+                },
+                MatchArm {
+                    pattern: CorePattern::Wildcard,
+                    body: CoreExpr {
+                        kind: CoreExprKind::LitBool(!on_match),
+                        ty: MonoType::Bool,
+                        span,
+                    },
+                },
+            ],
+        })
     }
 }
 

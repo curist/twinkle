@@ -287,6 +287,39 @@ fn resolve_stringify_target(module: &CoreModule, receiver_ty: &MonoType) -> Opti
         .map(|f| f.func_id)
 }
 
+/// Resolve a contract method target (generalized version of resolve_stringify_target).
+/// Looks up a method by name on the receiver type and returns its FuncId.
+fn resolve_contract_method_target(
+    module: &CoreModule,
+    receiver_ty: &MonoType,
+    method: &str,
+) -> Option<FuncId> {
+    let method_name = match receiver_ty {
+        MonoType::Named { type_id, .. } => module
+            .type_env
+            .get_method(*type_id, method)
+            .map(|info| info.func_name.clone()),
+        _ => method_receiver_type_id(receiver_ty)
+            .and_then(|type_id| module.type_env.get_method(type_id, method))
+            .map(|info| info.func_name.clone()),
+    };
+
+    if let Some(method_name) = method_name.as_ref() {
+        if let Some(fid) = resolve_func_id_by_name(module, method_name) {
+            return Some(fid);
+        }
+        if let Some(fid) = module
+            .functions
+            .iter()
+            .find(|f| f.name == *method_name)
+            .map(|f| f.func_id)
+        {
+            return Some(fid);
+        }
+    }
+    None
+}
+
 // ─── Tree traversals ──────────────────────────────────────────────────────────
 
 /// Walk `expr`, pushing `(orig_fid, subst)` onto `queue` for every direct or
@@ -313,21 +346,21 @@ fn collect_instantiations<'a>(
             }
         }
         CoreExprKind::ContractCall {
-            contract,
             method,
             receiver,
             args,
+            ..
         } => {
-            if contract == "Stringify" && method == "to_string" {
-                if let Some(fid) = resolve_stringify_target(module, &receiver.ty) {
-                    if let Some(gf) = generic_funcs.get(&fid) {
-                        let mut call_args = Vec::with_capacity(1 + args.len());
-                        call_args.push((**receiver).clone());
-                        call_args.extend(args.iter().cloned());
-                        let (type_params, subst) = infer_call_subst(gf, &call_args, &expr.ty);
-                        if type_params.iter().all(|p| subst.contains_key(p)) {
-                            queue.push_back((fid, subst));
-                        }
+            if let Some(fid) = resolve_contract_method_target(module, &receiver.ty, method)
+                .or_else(|| resolve_stringify_target(module, &receiver.ty))
+            {
+                if let Some(gf) = generic_funcs.get(&fid) {
+                    let mut call_args = Vec::with_capacity(1 + args.len());
+                    call_args.push((**receiver).clone());
+                    call_args.extend(args.iter().cloned());
+                    let (type_params, subst) = infer_call_subst(gf, &call_args, &expr.ty);
+                    if type_params.iter().all(|p| subst.contains_key(p)) {
+                        queue.push_back((fid, subst));
                     }
                 }
             }
@@ -663,33 +696,33 @@ fn rewrite_calls_in_kind(
                 .iter()
                 .map(|a| rewrite_calls_in_expr(a, module, spec_map, generic_funcs))
                 .collect();
-            if contract == "Stringify" && method == "to_string" {
-                if let Some(mut fid) = resolve_stringify_target(module, &new_receiver.ty) {
-                    let mut call_args = Vec::with_capacity(1 + new_args.len());
-                    call_args.push(new_receiver.clone());
-                    call_args.extend(new_args);
-                    if let Some(gf) = generic_funcs.get(&fid) {
-                        let (type_params, subst) = infer_call_subst(gf, &call_args, &parent.ty);
-                        let type_args: Vec<MonoType> = type_params
-                            .iter()
-                            .map(|p| subst.get(p).cloned().unwrap_or(MonoType::Void))
-                            .collect();
-                        if let Some(&new_fid) = spec_map.get(&(fid, type_args)) {
-                            fid = new_fid;
-                        }
+            if let Some(mut fid) = resolve_contract_method_target(module, &new_receiver.ty, method)
+                .or_else(|| resolve_stringify_target(module, &new_receiver.ty))
+            {
+                let mut call_args = Vec::with_capacity(1 + new_args.len());
+                call_args.push(new_receiver.clone());
+                call_args.extend(new_args);
+                if let Some(gf) = generic_funcs.get(&fid) {
+                    let (type_params, subst) = infer_call_subst(gf, &call_args, &parent.ty);
+                    let type_args: Vec<MonoType> = type_params
+                        .iter()
+                        .map(|p| subst.get(p).cloned().unwrap_or(MonoType::Void))
+                        .collect();
+                    if let Some(&new_fid) = spec_map.get(&(fid, type_args)) {
+                        fid = new_fid;
                     }
-                    return CoreExprKind::Call {
-                        callee: Box::new(CoreExpr {
-                            kind: CoreExprKind::GlobalFunc(fid),
-                            ty: MonoType::Function {
-                                params: call_args.iter().map(|a| a.ty.clone()).collect(),
-                                ret: Box::new(parent.ty.clone()),
-                            },
-                            span: parent.span,
-                        }),
-                        args: call_args,
-                    };
                 }
+                return CoreExprKind::Call {
+                    callee: Box::new(CoreExpr {
+                        kind: CoreExprKind::GlobalFunc(fid),
+                        ty: MonoType::Function {
+                            params: call_args.iter().map(|a| a.ty.clone()).collect(),
+                            ret: Box::new(parent.ty.clone()),
+                        },
+                        span: parent.span,
+                    }),
+                    args: call_args,
+                };
             }
             CoreExprKind::ContractCall {
                 contract: contract.clone(),

@@ -236,6 +236,9 @@ impl TypeEnv {
             (BUILTIN_VECTOR_TYPE_ID, "get", "Vector.get"),
             (BUILTIN_VECTOR_TYPE_ID, "set", "Vector.set"),
             (BUILTIN_VECTOR_TYPE_ID, "is_empty", "Vector.is_empty"),
+            (BUILTIN_VECTOR_TYPE_ID, "sort_by", "Vector.sort_by"),
+            (BUILTIN_VECTOR_TYPE_ID, "sort", "Vector.sort"),
+            (BUILTIN_VECTOR_TYPE_ID, "compare", "Vector.compare"),
             // String
             (BUILTIN_STRING_TYPE_ID, "len", "String.len"),
             (BUILTIN_STRING_TYPE_ID, "concat", "String.concat"),
@@ -296,9 +299,12 @@ impl TypeEnv {
             (RESULT_TYPE_ID, "transpose", "Result.transpose"),
             // Primitives
             (BUILTIN_INT_TYPE_ID, "to_string", "Int.to_string"),
+            (BUILTIN_INT_TYPE_ID, "compare", "Int.compare"),
             (BUILTIN_FLOAT_TYPE_ID, "to_string", "Float.to_string"),
+            (BUILTIN_FLOAT_TYPE_ID, "compare", "Float.compare"),
             (BUILTIN_FLOAT_TYPE_ID, "bits", "Float.bits"),
             (BUILTIN_BOOL_TYPE_ID, "to_string", "Bool.to_string"),
+            (BUILTIN_STRING_TYPE_ID, "compare", "String.compare"),
             // Byte
             (BUILTIN_BYTE_TYPE_ID, "to_int", "Byte.to_int"),
             (BUILTIN_BYTE_TYPE_ID, "to_string", "Byte.to_string"),

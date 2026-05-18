@@ -352,4 +352,41 @@ pub fn suite() runner.Suite {
       try assert.equal(ys[2], 3)
       .Ok({})
     })
+    .test("sort uses Ord contract for Int", fn() {
+      xs: Vector<Int> = [5, 1, 4, 2, 3]
+      sorted := xs.sort()
+      try assert.equal(sorted[0], 1)
+      try assert.equal(sorted[1], 2)
+      try assert.equal(sorted[2], 3)
+      try assert.equal(sorted[3], 4)
+      try assert.equal(sorted[4], 5)
+      .Ok({})
+    })
+    .test("sort uses Ord contract for String", fn() {
+      xs: Vector<String> = ["charlie", "alice", "bob"]
+      sorted := xs.sort()
+      try assert.equal(sorted[0], "alice")
+      try assert.equal(sorted[1], "bob")
+      try assert.equal(sorted[2], "charlie")
+      .Ok({})
+    })
+    .test("sort empty and singleton", fn() {
+      empty: Vector<Int> = []
+      one: Vector<Int> = [42]
+      try assert.equal(empty.sort().len(), 0)
+      try assert.equal(one.sort()[0], 42)
+      .Ok({})
+    })
+    .test("Vector.compare lexicographic", fn() {
+      a: Vector<Int> = [1, 2, 3]
+      b: Vector<Int> = [1, 2, 4]
+      c: Vector<Int> = [1, 2]
+      d: Vector<Int> = [1, 2, 3]
+      try assert.ok(a.compare(b) == .Lt, "a < b")
+      try assert.ok(b.compare(a) == .Gt, "b > a")
+      try assert.ok(c.compare(a) == .Lt, "c < a")
+      try assert.ok(a.compare(c) == .Gt, "a > c")
+      try assert.ok(a.compare(d) == .Eq, "a == d")
+      .Ok({})
+    })
 }

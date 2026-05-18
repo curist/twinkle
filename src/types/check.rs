@@ -1296,9 +1296,16 @@ impl TypeChecker {
                 Ok(MonoType::Bool)
             }
 
-            // Ordered comparison: T × T → Bool
+            // Ordered comparison: T × T → Bool (requires Ord for non-primitives)
             // Byte/Int mix allowed (same numeric coercion as arithmetic)
             BinOp::Lt | BinOp::Le | BinOp::Gt | BinOp::Ge => {
+                let op_name = match op {
+                    BinOp::Lt => "<",
+                    BinOp::Le => "<=",
+                    BinOp::Gt => ">",
+                    BinOp::Ge => ">=",
+                    _ => unreachable!(),
+                };
                 let left_raw = self.synth_expr(left)?;
                 let right_raw = self.synth_expr(right)?;
                 let left_ty = self.zonk(&left_raw);
@@ -1312,6 +1319,45 @@ impl TypeChecker {
                     }
                     _ => {
                         self.unify(&left_ty, &right_ty, right.span)?;
+                        // Check Ord contract for non-primitive types
+                        let unified = self.zonk(&left_ty);
+                        match &unified {
+                            MonoType::Int | MonoType::Float | MonoType::Byte | MonoType::String => {
+                            }
+                            MonoType::MetaVar(_) => {}
+                            MonoType::Var(name) => {
+                                // Type variables require an Ord bound
+                                if !self
+                                    .current_type_param_bounds
+                                    .get(name)
+                                    .map(|b| b.contains(&"Ord".to_string()))
+                                    .unwrap_or(false)
+                                {
+                                    self.errors.push(TypeError::UnsupportedFeature {
+                                        feature: "contract bound",
+                                        span,
+                                        note: format!(
+                                            "type variable {} does not satisfy Ord required by {}: missing Ord bound",
+                                            name, op_name
+                                        ),
+                                    });
+                                }
+                            }
+                            _ => {
+                                if let Err(reason) = self.validate_ord_type(&unified) {
+                                    self.errors.push(TypeError::UnsupportedFeature {
+                                        feature: "contract bound",
+                                        span,
+                                        note: format!(
+                                            "type {} does not satisfy Ord required by {}: {}",
+                                            unified.format_with_names(&self.type_env),
+                                            op_name,
+                                            reason
+                                        ),
+                                    });
+                                }
+                            }
+                        }
                     }
                 }
                 Ok(MonoType::Bool)
@@ -1533,7 +1579,20 @@ impl TypeChecker {
             return self.synth_method_call(base, base_ty, &method_name, args, span, callee_id);
         }
 
-        // Normal function call
+        // Normal function call: if callee is a plain Ident with a FunctionSignature
+        // (and not shadowed by a local), use the signature-aware path.
+        if let ExprKind::Ident(name) = &callee.kind {
+            if self.local_env.lookup(name).is_none() {
+                if let Some(sig) = self.value_env.get_function(name).cloned() {
+                    let call_label = format!("call to `{}`", name);
+                    let (ret, callee_ty) =
+                        self.synth_sig_call(&sig, args, call_expected, Some(&call_label), span)?;
+                    self.type_map.set_expr_type(callee.id, callee_ty);
+                    return Ok(ret);
+                }
+            }
+        }
+
         let callee_ty = self.synth_expr(callee)?;
 
         match callee_ty {
@@ -1605,6 +1664,56 @@ impl TypeChecker {
         self.synth_qualified_call(alias, func_name, args, span)
     }
 
+    /// Shared logic for calling a function with a known FunctionSignature:
+    /// arity check → instantiate type params → pre-unify return → check args → validate bounds.
+    /// `call_label` is used for error context (e.g. "call to `min`"); None omits annotation.
+    /// Returns `(return_type, instantiated_callee_type)`.
+    fn synth_sig_call(
+        &mut self,
+        sig: &crate::types::ty::FunctionSignature,
+        args: &[Expr],
+        call_expected: Option<MonoType>,
+        call_label: Option<&str>,
+        span: Span,
+    ) -> Result<(MonoType, MonoType), ()> {
+        if sig.params.len() != args.len() {
+            self.errors.push(TypeError::WrongArity {
+                expected: sig.params.len(),
+                actual: args.len(),
+                span,
+            });
+            return Err(());
+        }
+        let fn_ty = MonoType::Function {
+            params: sig.params.clone(),
+            ret: Box::new(sig.ret.clone().unwrap_or(MonoType::Void)),
+        };
+        let (inst_ty, var_to_meta) = self.instantiate_vars(&sig.type_params, &fn_ty);
+        let (inst_params, inst_ret) = match &inst_ty {
+            MonoType::Function { params, ret } => (params.clone(), *ret.clone()),
+            _ => unreachable!(),
+        };
+        if let Some(expected_ret) = call_expected {
+            let _ = self.unify(&inst_ret, &expected_ret, span);
+        }
+        for (idx, (arg, expected_ty)) in args.iter().zip(inst_params.iter()).enumerate() {
+            if let Err(()) = self.check_expr(arg, expected_ty) {
+                if let Some(label) = call_label {
+                    if let Some(TypeError::TypeMismatch { note, .. }) = self.errors.last_mut() {
+                        if note.is_none() {
+                            *note = Some(format!("argument {} of {}", idx + 1, label));
+                        }
+                    }
+                }
+                return Err(());
+            }
+        }
+        self.check_instantiated_contract_bounds(sig, &var_to_meta, span)?;
+        let ret = self.zonk(&inst_ret);
+        let callee_ty = self.zonk(&inst_ty);
+        Ok((ret, callee_ty))
+    }
+
     fn synth_qualified_call(
         &mut self,
         alias: &str,
@@ -1617,36 +1726,9 @@ impl TypeChecker {
         let call_expected = self.call_expected_ret.take();
 
         let qualified = format!("{}.{}", alias, func_name);
-        // Look up full function signature for proper MetaVar instantiation of generics.
         if let Some(sig) = self.value_env.get_function(&qualified).cloned() {
-            if sig.params.len() != args.len() {
-                self.errors.push(TypeError::WrongArity {
-                    expected: sig.params.len(),
-                    actual: args.len(),
-                    span,
-                });
-                return Err(());
-            }
-            let fn_ty = MonoType::Function {
-                params: sig.params.clone(),
-                ret: Box::new(sig.ret.clone().unwrap_or(MonoType::Void)),
-            };
-            let (inst_ty, var_to_meta) = self.instantiate_vars(&sig.type_params, &fn_ty);
-            let (inst_params, inst_ret) = match inst_ty {
-                MonoType::Function { params, ret } => (params, *ret),
-                _ => unreachable!(),
-            };
-            // Best-effort pre-unify: solve generic MetaVars from expected return
-            // type before checking arguments. Errors are deliberately ignored —
-            // the outer unify in check_expr will re-report any real mismatch.
-            if let Some(expected_ret) = call_expected {
-                let _ = self.unify(&inst_ret, &expected_ret, span);
-            }
-            for (arg, expected_ty) in args.iter().zip(inst_params.iter()) {
-                self.check_expr(arg, expected_ty)?;
-            }
-            self.check_instantiated_stringify_bounds(&sig, &var_to_meta, span)?;
-            return Ok(self.zonk(&inst_ret));
+            let (ret, _callee_ty) = self.synth_sig_call(&sig, args, call_expected, None, span)?;
+            return Ok(ret);
         }
         // Not a function or undefined
         match self.value_env.lookup(&qualified) {
@@ -1764,19 +1846,103 @@ impl TypeChecker {
         Ok(())
     }
 
-    fn check_instantiated_stringify_bounds(
+    fn has_ord_bound(&self, ty: &MonoType) -> bool {
+        matches!(ty, MonoType::Var(name) if self.current_type_param_bounds.get(name).map(|b| b.contains(&"Ord".to_string())) == Some(true))
+    }
+
+    fn validate_ord_type(&mut self, ty: &MonoType) -> Result<(), String> {
+        let ty = self.zonk(ty);
+        if self.has_ord_bound(&ty) {
+            return Ok(());
+        }
+        match &ty {
+            MonoType::Int | MonoType::Float | MonoType::String | MonoType::Byte => {
+                return Ok(());
+            }
+            // Containers: recurse into element types
+            MonoType::Vector(elem) => {
+                return self.validate_ord_type(&elem.as_ref().clone());
+            }
+            _ => {}
+        }
+        // Check for explicit compare method with correct shape
+        let Some(type_id) = method_receiver_type_id(&ty) else {
+            return Err("missing inherent `compare(self, other: Self) -> Order`".to_string());
+        };
+        let Some(method_info) = self.type_env.get_method(type_id, "compare").cloned() else {
+            return Err(format!(
+                "type {} does not satisfy Ord: missing `compare` method",
+                ty.format_with_names(&self.type_env)
+            ));
+        };
+        // Validate signature shape: compare(self, other: Self) -> Order
+        let Some(sig) = method_info
+            .signature
+            .or_else(|| self.value_env.get_function(&method_info.func_name).cloned())
+        else {
+            return Err("missing inherent `compare(self, other: Self) -> Order`".to_string());
+        };
+        let full_fn_ty = MonoType::Function {
+            params: sig.params.clone(),
+            ret: Box::new(sig.ret.clone().unwrap_or(MonoType::Void)),
+        };
+        let (inst_ty, var_to_meta) = self.instantiate_vars(&sig.type_params, &full_fn_ty);
+        let (inst_params, inst_ret) = match inst_ty {
+            MonoType::Function { params, ret } => (params, *ret),
+            _ => unreachable!(),
+        };
+        if inst_params.len() != 2 {
+            return Err(format!(
+                "`compare` has {} params, expected 2 (self, other: Self)",
+                inst_params.len()
+            ));
+        }
+        // Both params must unify with the target type (snapshot errors to avoid noise)
+        let errors_before = self.errors.len();
+        let span = Span::new(crate::syntax::span::FileId(0), 0, 0);
+        let ok0 = self.unify(&ty, &inst_params[0], span).is_ok();
+        let ok1 = self.unify(&ty, &inst_params[1], span).is_ok();
+        // Roll back any diagnostics from the silent proof
+        self.errors.truncate(errors_before);
+        if !ok0 {
+            return Err("compare first param does not match receiver type".to_string());
+        }
+        if !ok1 {
+            return Err("compare second param does not match receiver type".to_string());
+        }
+        // Return type must be Order
+        let ret_ty = self.zonk(&inst_ret);
+        let order_ty = MonoType::named(crate::types::ty::ORDER_TYPE_ID);
+        if ret_ty != order_ty {
+            return Err(format!(
+                "`compare` returns {} (expected Order)",
+                ret_ty.format_with_names(&self.type_env)
+            ));
+        }
+        // Validate bounds on the compare method's type params
+        for (name, meta_ty) in &var_to_meta {
+            if sig
+                .type_param_bounds
+                .get(name)
+                .map(|b| b.contains(&"Ord".to_string()))
+                == Some(true)
+            {
+                let concrete = self.zonk(meta_ty);
+                self.validate_ord_type(&concrete)?;
+            }
+        }
+        Ok(())
+    }
+
+    fn check_instantiated_contract_bounds(
         &mut self,
         sig: &crate::types::ty::FunctionSignature,
         var_to_meta: &[(String, MonoType)],
         span: Span,
     ) -> Result<(), ()> {
         for (name, meta_ty) in var_to_meta {
-            if sig
-                .type_param_bounds
-                .get(name)
-                .map(|b| b.contains(&"Stringify".to_string()))
-                == Some(true)
-            {
+            let bounds = sig.type_param_bounds.get(name);
+            if bounds.map(|b| b.contains(&"Stringify".to_string())) == Some(true) {
                 let concrete = self.zonk(meta_ty);
                 if let Err(reason) = self.validate_stringify_type(&concrete, &mut HashSet::new()) {
                     self.errors.push(TypeError::UnsupportedFeature {
@@ -1784,6 +1950,21 @@ impl TypeChecker {
                         span,
                         note: format!(
                             "type argument {} does not satisfy Stringify: {}",
+                            concrete.format_with_names(&self.type_env),
+                            reason
+                        ),
+                    });
+                    return Err(());
+                }
+            }
+            if bounds.map(|b| b.contains(&"Ord".to_string())) == Some(true) {
+                let concrete = self.zonk(meta_ty);
+                if let Err(reason) = self.validate_ord_type(&concrete) {
+                    self.errors.push(TypeError::UnsupportedFeature {
+                        feature: "contract bound",
+                        span,
+                        note: format!(
+                            "type argument {} does not satisfy Ord: {}",
                             concrete.format_with_names(&self.type_env),
                             reason
                         ),
@@ -1923,7 +2104,7 @@ impl TypeChecker {
         for (arg, expected_ty) in args.iter().zip(inst_params.iter().skip(1)) {
             self.check_expr(arg, expected_ty)?;
         }
-        self.check_instantiated_stringify_bounds(&sig, &var_to_meta, span)?;
+        self.check_instantiated_contract_bounds(&sig, &var_to_meta, span)?;
         Ok(Some(self.zonk(&inst_ret)))
     }
 
@@ -1946,6 +2127,10 @@ impl TypeChecker {
         }
         if method == "to_string" && args.is_empty() && self.has_stringify_bound(&base_ty) {
             return Ok(MonoType::String);
+        }
+        if method == "compare" && args.len() == 1 && self.has_ord_bound(&base_ty) {
+            self.check_expr(&args[0], &base_ty)?;
+            return Ok(MonoType::named(crate::types::ty::ORDER_TYPE_ID));
         }
 
         if let MonoType::Named {

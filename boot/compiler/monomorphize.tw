@@ -4,7 +4,7 @@
 // Algorithm: BFS seed → specialize → rewrite → drop generics.
 
 use .resolver.{ResolvedEnv}
-use .mono_type.{MonoType}
+use .mono_type.{MonoType, TypeId}
 
 use .contracts.{BuiltinContract}
 use .core_ir.{CoreExpr, CoreExprKind, CoreModule, FunctionDef, Param, LocalId, FuncId, FieldInit, MatchArm}
@@ -484,6 +484,7 @@ fn resolve_contract_target_name(contract: BuiltinContract, receiver_ty: MonoType
   case contract {
     .Stringify => resolve_method_for_receiver(receiver_ty, method_name, env),
     .Eq => resolve_method_for_receiver(receiver_ty, method_name, env),
+    .Ord => resolve_method_for_receiver(receiver_ty, method_name, env),
   }
 }
 
@@ -514,13 +515,22 @@ fn name_matches_method(fn_name: String, method_name: String) Bool {
   fn_name.slice(dot_idx, fn_name.len()) == ".${method_name}"
 }
 
-fn fallback_contract_target_id(receiver_ty: MonoType, method_name: String, func_map: Dict<Int, FunctionDef>) FuncId? {
+fn contract_expected_return(contract: BuiltinContract) MonoType {
+  case contract {
+    .Stringify => MonoType.String,
+    .Eq => MonoType.Bool,
+    .Ord => MonoType.Named(TypeId.{ id: 7 }, []),
+  }
+}
+
+fn fallback_contract_target_id(receiver_ty: MonoType, method_name: String, contract: BuiltinContract, func_map: Dict<Int, FunctionDef>) FuncId? {
+  expected_ret := contract_expected_return(contract)
   for fid in func_map.keys() {
     case func_map[fid] {
       .Some(func) => {
         if !name_matches_method(func.name, method_name) { continue }
         if func.params.len() == 0 { continue }
-        if func.return_ty != MonoType.String { continue }
+        if func.return_ty != expected_ret { continue }
 
         recv_pattern := func.params[0].ty
         subst := match_type_against(recv_pattern, receiver_ty, Dict.new())
@@ -535,20 +545,20 @@ fn fallback_contract_target_id(receiver_ty: MonoType, method_name: String, func_
   .None
 }
 
-fn resolve_contract_target_id(receiver_ty: MonoType, method_name: String, env: ResolvedEnv, func_table: Dict<String, FuncId>, func_map: Dict<Int, FunctionDef>) FuncId? {
-  case resolve_contract_target_name(.Stringify, receiver_ty, method_name, env) {
+fn resolve_contract_target_id(receiver_ty: MonoType, method_name: String, contract: BuiltinContract, env: ResolvedEnv, func_table: Dict<String, FuncId>, func_map: Dict<Int, FunctionDef>) FuncId? {
+  case resolve_method_for_receiver(receiver_ty, method_name, env) {
     .Some(target_name) => {
       case func_table[target_name] {
         .Some(id) => .Some(id),
-        .None => fallback_contract_target_id(receiver_ty, method_name, func_map),
+        .None => fallback_contract_target_id(receiver_ty, method_name, contract, func_map),
       }
     },
-    .None => fallback_contract_target_id(receiver_ty, method_name, func_map),
+    .None => fallback_contract_target_id(receiver_ty, method_name, contract, func_map),
   }
 }
 
 fn lower_resolved_contract_call(parent: CoreExpr, contract: BuiltinContract, method_name: String, receiver: CoreExpr, args: Vector<CoreExpr>, env: ResolvedEnv, func_table: Dict<String, FuncId>, func_map: Dict<Int, FunctionDef>) CoreExprKind {
-  fid := case resolve_contract_target_id(receiver.ty, method_name, env, func_table, func_map) {
+  fid := case resolve_contract_target_id(receiver.ty, method_name, contract, env, func_table, func_map) {
     .Some(id) => id,
     .None => error("monomorphize: unresolved contract call for ${env.ty_to_string_env(receiver.ty)}.${method_name}"),
   }
@@ -584,8 +594,8 @@ fn collect_instantiations(expr: CoreExpr, generic_ids: Dict<Int, Bool>, func_map
         },
       }
     },
-    .ContractCall(_, method_name, receiver, args) => {
-      case resolve_contract_target_id(receiver.ty, method_name, env, table, func_map) {
+    .ContractCall(contract, method_name, receiver, args) => {
+      case resolve_contract_target_id(receiver.ty, method_name, contract, env, table, func_map) {
         .Some(fid) => {
           if generic_ids.has(fid.id) {
             case func_map[fid.id] {

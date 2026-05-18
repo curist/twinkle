@@ -75,7 +75,7 @@ fn test_env() resolver.ResolvedEnv {
 
 fn check_src_with_builtins(src: String) checker.CheckResult {
   parsed := parser.parse(src, 0)
-  resolved := test_env().resolve(parsed.value)
+  resolved := base_env.builtin_env().resolve(parsed.value)
   checker.check(parsed.value, resolved.env)
 }
 
@@ -566,6 +566,61 @@ pub fn suite() runner.Suite {
       src := "type Bad = .{ f: fn(Int) Int }\nfn test(a: Bad, b: Bad) Bool { a != b }"
       msgs := try check_errs(src)
       try assert.str_contains(msgs[0], "does not satisfy Eq")
+      .Ok({})
+    })
+    // ── Ord contract ──
+    .test("Ord bound satisfied by Int", fn() {
+      src := "fn min<T: Ord>(a: T, b: T) T { if a.compare(b) == .Lt { a } else { b } }\nfn main() Int { min(1, 2) }"
+      r := try check_ok_builtins(src)
+      .Ok({})
+    })
+    .test("Ord bound satisfied by String", fn() {
+      src := "fn min<T: Ord>(a: T, b: T) T { if a.compare(b) == .Lt { a } else { b } }\nfn main() String { min(\"a\", \"b\") }"
+      r := try check_ok_builtins(src)
+      .Ok({})
+    })
+    .test("Ord bound rejected for Bool", fn() {
+      src := "fn min<T: Ord>(a: T, b: T) T { if a.compare(b) == .Lt { a } else { b } }\nfn main() Bool { min(true, false) }"
+      msgs := try check_errs_builtins(src)
+      try assert.str_contains(msgs[0], "does not satisfy Ord")
+      .Ok({})
+    })
+    .test("Ord bound rejected for record without compare", fn() {
+      src := "type Point = .{ x: Int, y: Int }\nfn min<T: Ord>(a: T, b: T) T { if a.compare(b) == .Lt { a } else { b } }\nfn main() Point { min(Point.{ x: 1, y: 2 }, Point.{ x: 3, y: 4 }) }"
+      msgs := try check_errs_builtins(src)
+      try assert.str_contains(msgs[0], "does not satisfy Ord")
+      .Ok({})
+    })
+    .test("Ord bound satisfied by record with explicit compare", fn() {
+      src := "type Point = .{ x: Int, y: Int }\nfn compare(a: Point, b: Point) Order { Int.compare(a.x, b.x) }\nfn min<T: Ord>(a: T, b: T) T { if a.compare(b) == .Lt { a } else { b } }\nfn main() Point { min(Point.{ x: 1, y: 2 }, Point.{ x: 3, y: 4 }) }"
+      r := try check_ok_builtins(src)
+      .Ok({})
+    })
+    .test("Ord does not auto-derive for records", fn() {
+      src := "type Pair = .{ a: Int, b: Int }\nfn sorted<T: Ord>(a: T, b: T) T { a }\nfn main() Pair { sorted(Pair.{ a: 1, b: 2 }, Pair.{ a: 3, b: 4 }) }"
+      msgs := try check_errs_builtins(src)
+      try assert.str_contains(msgs[0], "does not satisfy Ord")
+      .Ok({})
+    })
+    .test("< on primitives still works", fn() {
+      src := "fn test() Bool { 1 < 2 }"
+      r := try check_ok_builtins(src)
+      .Ok({})
+    })
+    .test("< on record without Ord is error", fn() {
+      src := "type Point = .{ x: Int, y: Int }\nfn test(a: Point, b: Point) Bool { a < b }"
+      msgs := try check_errs_builtins(src)
+      try assert.str_contains(msgs[0], "does not satisfy Ord")
+      .Ok({})
+    })
+    .test("< on record with Ord works", fn() {
+      src := "type Weight = .{ value: Int }\nfn compare(a: Weight, b: Weight) Order { Int.compare(a.value, b.value) }\nfn test(a: Weight, b: Weight) Bool { a < b }"
+      r := try check_ok_builtins(src)
+      .Ok({})
+    })
+    .test("multiple bounds with Ord", fn() {
+      src := "fn show_min<T: Stringify + Ord>(a: T, b: T) String { if a.compare(b) == .Lt { a.to_string() } else { b.to_string() } }"
+      r := try check_ok_builtins(src)
       .Ok({})
     })
     // ── M6: If, Case, For ──

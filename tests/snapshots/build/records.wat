@@ -3644,7 +3644,7 @@
     local.get $p57
     return
   )
-  (func $user__func_90 (type $functype_50)
+  (func $user__func_93 (type $functype_50)
     (param $p0 (ref null $user__UserRecord_12))
     (result i64)
     (local $p1 i64)
@@ -3681,7 +3681,7 @@
     local.get $p7
     return
   )
-  (func $user__func_91 (type $functype_51)
+  (func $user__func_94 (type $functype_51)
     (param $p0 (ref null $user__UserRecord_12))
     (param $p1 i64)
     (param $p2 i64)
@@ -3712,7 +3712,7 @@
     local.get $p7
     return
   )
-  (func $user__func_92 (type $functype_52)
+  (func $user__func_95 (type $functype_52)
     (local $p0 (ref null $user__UserRecord_12))
     (local $p1 anyref)
     (local $p2 i64)
@@ -3781,7 +3781,7 @@
     local.set $p9
     local.get $p1
     ref.cast (ref null $user__UserRecord_12)
-    call $user__func_90
+    call $user__func_93
     local.set $p10
     local.get $p10
     call $rt_str__from_i64
@@ -3823,7 +3823,7 @@
     ref.cast (ref null $user__UserRecord_12)
     i64.const 2
     i64.const 2
-    call $user__func_91
+    call $user__func_94
     local.set $p20
     local.get $p20
     local.set $p21
@@ -3842,7 +3842,7 @@
     i32.const 0
     local.set $p25
     local.get $p21
-    call $user__func_90
+    call $user__func_93
     local.set $p26
     local.get $p26
     call $rt_str__from_i64
@@ -3870,7 +3870,7 @@
     ref.cast (ref null $rt_types__String)
     call $user__func_87
   )
-  (func $user__func_90__closure (type $functype_53)
+  (func $user__func_93__closure (type $functype_53)
     (param $p0 anyref)
     (param $p1 anyref)
     (result anyref)
@@ -3879,10 +3879,10 @@
     i32.const 0
     array.get $rt_types__Array
     ref.cast (ref null $user__UserRecord_12)
-    call $user__func_90
+    call $user__func_93
     struct.new $rt_types__BoxedInt
   )
-  (func $user__func_91__closure (type $functype_53)
+  (func $user__func_94__closure (type $functype_53)
     (param $p0 anyref)
     (param $p1 anyref)
     (result anyref)
@@ -3903,13 +3903,13 @@
     array.get $rt_types__Array
     ref.cast (ref $rt_types__BoxedInt)
     struct.get $rt_types__BoxedInt 0
-    call $user__func_91
+    call $user__func_94
   )
-  (func $user__func_92__closure (type $functype_53)
+  (func $user__func_95__closure (type $functype_53)
     (param $p0 anyref)
     (param $p1 anyref)
     (result anyref)
-    call $user__func_92
+    call $user__func_95
     i32.const 0
     ref.i31
   )
@@ -4590,7 +4590,7 @@
         struct.new $rt_types__Variant))
   )
   (func $user____user_init (type $functype_52)
-    call $user__func_92
+    call $user__func_95
   )
   (func $user____str_lit_get_empty (type $functype_59)
     (result (ref $rt_types__String))

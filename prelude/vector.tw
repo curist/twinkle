@@ -149,3 +149,26 @@ pub fn sort_by<T>(xs: Vector<T>, cmp: fn(T, T) Order) Vector<T> {
   right := sort_by(xs.slice(mid, n), cmp)
   merge_sorted(left, right, cmp)
 }
+
+/// Return a new vector sorted using the Ord contract.
+pub fn sort<T: Ord>(xs: Vector<T>) Vector<T> {
+  xs.sort_by(fn(a: T, b: T) Order {
+    a.compare(b)
+  })
+}
+
+/// Lexicographic comparison of two vectors.
+pub fn compare<T: Ord>(a: Vector<T>, b: Vector<T>) Order {
+  min_len := if a.len() < b.len() { a.len() } else { b.len() }
+  i := 0
+  for i < min_len {
+    case a[i].compare(b[i]) {
+      .Eq => {},
+      other => { return other },
+    }
+    i = i + 1
+  }
+  al := a.len()
+  bl := b.len()
+  if al < bl { .Lt } else if al > bl { .Gt } else { .Eq }
+}

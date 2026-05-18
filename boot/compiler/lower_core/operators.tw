@@ -209,6 +209,113 @@ pub fn lower_unit_variant_compare(env: ResolvedEnv, ast_op: AstBinOp, left: Core
   .None
 }
 
+fn is_primitive_cmp(ty: MonoType) Bool {
+  case ty {
+    .Int => true,
+    .Float => true,
+    .Byte => true,
+    .String => true,
+    .Bool => true,
+    _ => false,
+  }
+}
+
+fn is_cmp_op(op: AstBinOp) Bool {
+  case op {
+    .Lt => true,
+    .Le => true,
+    .Gt => true,
+    .Ge => true,
+    _ => false,
+  }
+}
+
+// Order TypeId = 7, variants: Lt=0, Eq=1, Gt=2
+fn order_type_id() TypeId { TypeId.{ id: 7 } }
+fn order_type() MonoType { MonoType.Named(order_type_id(), []) }
+
+fn build_cmp_match(ast_op: AstBinOp, compare_expr: CoreExpr, s: Span) CoreExpr {
+  // a < b  => case compare(a,b) { .Lt => true, _ => false }
+  // a > b  => case compare(a,b) { .Gt => true, _ => false }
+  // a <= b => case compare(a,b) { .Gt => false, _ => true }
+  // a >= b => case compare(a,b) { .Lt => false, _ => true }
+  tid := order_type_id()
+  vid := case ast_op {
+    .Lt => 0,  // match Lt
+    .Gt => 2,  // match Gt
+    .Le => 2,  // match Gt (inverted)
+    .Ge => 0,  // match Lt (inverted)
+    _ => error("build_cmp_match: not a comparison op"),
+  }
+  on_match := case ast_op {
+    .Lt => true,
+    .Gt => true,
+    .Le => false,
+    .Ge => false,
+    _ => false,
+  }
+  CoreExpr.{
+    kind: .Match(compare_expr, [
+      MatchArm.{
+        pattern: variant_pattern(tid, vid, []),
+        body: CoreExpr.{ kind: .LitBool(on_match), ty: MonoType.Bool, span: s },
+      },
+      MatchArm.{
+        pattern: .Wildcard,
+        body: CoreExpr.{ kind: .LitBool(!on_match), ty: MonoType.Bool, span: s },
+      },
+    ]),
+    ty: MonoType.Bool,
+    span: s,
+  }
+}
+
+fn explicit_compare_func_id(ctx: LowerCtx, ty: MonoType) FuncId? {
+  fn_name := case ty {
+    .Named(tid, _) => case ctx.env.lookup_type_method(tid, "compare") {
+      .Some(name) => name,
+      .None => { return .None },
+    },
+    .Vector(_) => case ctx.env.lookup_method("Vector", "compare") {
+      .Some(name) => name,
+      .None => { return .None },
+    },
+    _ => { return .None },
+  }
+  lookup_func(ctx, fn_name)
+}
+
+fn lower_ord_cmp(ctx: LowerCtx, ast_op: AstBinOp, left: CoreExpr, right: CoreExpr, s: Span) CoreExprKind? {
+  if !is_cmp_op(ast_op) or is_primitive_cmp(left.ty) { return .None }
+  // For concrete types: direct call to compare
+  case explicit_compare_func_id(ctx, left.ty) {
+    .Some(fid) => {
+      callee_ty := MonoType.Function([left.ty, right.ty], order_type())
+      compare_expr := CoreExpr.{
+        kind: .Call(CoreExpr.{ kind: .GlobalFunc(fid), ty: callee_ty, span: s }, [left, right]),
+        ty: order_type(),
+        span: s,
+      }
+      return .Some(build_cmp_match(ast_op, compare_expr, s).kind)
+    },
+    .None => {},
+  }
+  // For type variables (T: Ord): emit ContractCall.
+  // The checker guarantees only Ord-bounded type variables reach here.
+  case left.ty {
+    .Var(name) => {
+      compare_expr := CoreExpr.{
+        kind: .ContractCall(.Ord, "compare", left, [right]),
+        ty: order_type(),
+        span: s,
+      }
+      return .Some(build_cmp_match(ast_op, compare_expr, s).kind)
+    },
+    _ => {},
+  }
+  .None
+}
+
 pub fn lower_binary(ctx: LowerCtx, ast_op: AstBinOp, lhs: Expr, rhs: Expr, ty: MonoType, s: Span, lower_expr_fn: fn(LowerCtx, Expr) ExprOut) ExprOut {
   // Short-circuit: a && b => If(a, b, false)
   case ast_op {
@@ -294,6 +401,12 @@ pub fn lower_binary(ctx: LowerCtx, ast_op: AstBinOp, lhs: Expr, rhs: Expr, ty: M
             if uses_runtime_eq(lr.expr.ty) {
               return .{ expr: lower_runtime_eq_call(rr.ctx.builtins.id("core_eq"), ast_op, lr.expr, rr.expr, s), ctx: rr.ctx }
             }
+          }
+          case lower_ord_cmp(rr.ctx, ast_op, lr.expr, rr.expr, s) {
+            .Some(kind) => {
+              return .{ expr: .{ kind, ty, span: s }, ctx: rr.ctx }
+            },
+            .None => {},
           }
           .{
             expr: .{ kind: .BinOp(map_binop(ast_op), lr.expr, rr.expr), ty, span: s },
