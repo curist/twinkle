@@ -1,6 +1,6 @@
 # Stage0 Builtin and Contract Alignment Plan
 
-Status: draft
+Status: accepted
 
 ## Context
 
@@ -118,7 +118,8 @@ Coverage:
 - generic functions with `T: Ord` calling `a.compare(b)`
 - generic functions with `T: Stringify` calling `x.to_string()`
 - Eq smoke coverage once Eq contract calls are lowered through the same stage0
-  path
+  path. Direct primitive Eq method tests are deferred unless/until stage0 exposes
+  concrete primitive Eq methods analogous to `Int.compare` / `String.compare`.
 
 These tests should build or run through Rust stage0, not only typecheck. They
 should fail with diagnostics before codegen panics when a builtin path is
@@ -175,6 +176,8 @@ Implementation pointers:
 
 - Keep the logic near `resolve_contract_method_target` in
   `src/ir/monomorphize.rs` unless it grows enough to deserve a separate module.
+  This function name exists as of this plan; if the monomorphizer is refactored,
+  keep the replacement contract-target helper as the owner for this work.
 - Introduce a small helper such as `resolve_builtin_contract_method_target` that
   matches exact pairs:
   - `("Stringify", "to_string")`
@@ -216,7 +219,8 @@ Default policy for now:
 
 - Keep primitive `compare` methods as instruction-level intrinsics in stage0.
 - Require semantic parity tests against the Twinkle prelude behavior, especially
-  for `Float.compare` NaN ordering.
+  for `Float.compare` NaN ordering. Per `prelude/float.tw`, NaN compares as
+  greater than all non-NaN values, and NaN compared with NaN yields Eq.
 
 Done criteria:
 
@@ -246,11 +250,15 @@ Done criteria:
   stage0 can compile/link prelude implementation modules reliably during
   bootstrap.
 - Should contract definitions (`Stringify`, `Eq`, `Ord`) have a single machine-
-  readable source shared by stage0 and boot?
+  readable source shared by stage0 and boot? Revisit after Phase 3, once the
+  explicit contract lookup shape is known.
 - Can the generated `boot/lib/module/core_lib.tw` be eliminated or replaced with
-  a more direct embedding step to reduce sync points?
+  a more direct embedding step to reduce sync points? Revisit after Phase 2,
+  when signature/registry drift checks show which generated artifacts still
+  create operational risk.
 - How much of stage0's type environment method table can be derived from parsed
-  signature modules instead of handwritten entries?
+  signature modules instead of handwritten entries? Revisit after Phase 2 and
+  Phase 4 classify the remaining handwritten primitive method entries.
 
 ## Non-Goals
 
