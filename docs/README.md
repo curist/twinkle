@@ -3,6 +3,8 @@
 ## Language
 
 - [spec.md](spec.md) — Language specification (canonical reference)
+- [API.md](API.md) — Built-in and standard-library API reference
+- [contracts.md](contracts.md) — Builtin contract reference (`Stringify`, `Eq`, `Ord`)
 - [grammar.ebnf](grammar.ebnf) — Formal grammar
 
 ## Design
@@ -17,7 +19,7 @@ Language design notes, rationale, and open questions.
 - [defer.md](design/defer.md) — `defer` semantics
 - [immutability.md](design/immutability.md) — Immutability and explicit state
 - [stdlib.md](design/stdlib.md) — Standard library API design
-- [contracts.md](design/contracts.md) — Contracts: compiler-recognized method requirements for generic bounds and syntax hooks (`Stringify`, `Slice`, etc.)
+- [contracts.md](design/contracts.md) — Contract-system design rationale and non-goals
 - [stringify-vector.md](design/stringify-vector.md) — Historical plan for `Vector<T>` stringification under the earlier `Stringify` design
 
 ## Open Questions

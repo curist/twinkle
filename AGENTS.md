@@ -2,6 +2,12 @@
 
 Twinkle is a statically typed programming language targeting WebAssembly GC. It features a rank-1 polymorphic (Damas–Milner) type system with bidirectional type checking (similar to Gleam/Elm), unboxed primitives, GC-managed references, and **no trait system**—capabilities are passed explicitly as records of functions (see `docs/spec.md`).
 
+**Primary documentation:**
+- `docs/spec.md` — canonical language specification
+- `docs/API.md` — built-in and standard-library API reference
+- `docs/contracts.md` — builtin contract reference (`Stringify`, `Eq`, `Ord`)
+- `docs/design/contracts.md` — contract-system design rationale and non-goals
+
 **Key Design Principles:**
 - Concise, low-ceremony syntax with `.tw` file extension
 - Inherent methods only via module functions

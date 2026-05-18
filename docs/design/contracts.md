@@ -142,15 +142,12 @@ Examples:
 
 ### Conditional satisfaction for builtin generic types
 
-Some builtin generic type constructors may have compiler-defined conditional
-satisfaction rules.
+Some builtin generic type constructors may have compiler- or prelude-defined
+conditional satisfaction rules.
 
-Example:
-
-* `Vector<T>` satisfies `Stringify` if `T` satisfies `Stringify`
-
-This allows common container types to participate in generic stringification
-without introducing general-purpose blanket impls.
+This allows common container types to participate in generic APIs without
+introducing general-purpose blanket impls. The current builtin rules are listed
+in [../contracts.md](../contracts.md).
 
 ---
 
@@ -209,41 +206,17 @@ The explicit bound keeps generic APIs honest and exportable.
 
 ---
 
-## Initial Contract Catalog
+## Contract Catalog
 
-The initial contract set should stay small.
+The current builtin contract reference lives in [../contracts.md](../contracts.md).
 
-### `Stringify`
-
-Purpose:
-
-* string interpolation
-* generic stringification helpers
-* canonical textual rendering owned by the type
-
-Required method:
-
-```tw
-to_string(self) -> String
-```
-
-Satisfaction:
-
-* builtin primitives and `String` satisfy it through builtin inherent methods,
-* user-defined types satisfy it by defining inherent `to_string`,
-* selected builtin containers may satisfy it conditionally.
-
-### Possible later contracts
-
-These may be useful later, but are not required for the initial rollout:
+The language should add new contracts only when they correspond to canonical,
+widely useful behavior. Possible future contracts include:
 
 * `Slice`
 * `IntoIterator`
 * `IndexRead`
 * `IndexWrite`
-
-The language should add new contracts only when they correspond to canonical,
-widely useful behavior.
 
 ---
 
@@ -251,19 +224,11 @@ widely useful behavior.
 
 Contracts may also back selected language surface forms.
 
-### String interpolation
+### Current syntax-backed contracts
 
-String interpolation should be defined in terms of `Stringify`:
-
-```tw
-"value=${expr}"
-```
-
-is legal when the type of `expr` satisfies `Stringify`.
-
-Lowering may call the resolved `to_string` method directly, or use equivalent
-compiler-lowered calls, but the type rule should be expressed in terms of the
-contract.
+Some language surface forms are typechecked through contracts, such as string
+interpolation and comparison operators. The current mapping is listed in
+[../contracts.md](../contracts.md).
 
 ### Future syntax-backed contracts
 

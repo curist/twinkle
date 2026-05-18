@@ -1,5 +1,8 @@
 # Twinkle API Reference
 
+This reference documents concrete built-in and standard-library APIs. The
+compiler-recognized contract reference is [contracts.md](contracts.md).
+
 ## Primitive Types
 
 | Type | Wasm repr | Description |
