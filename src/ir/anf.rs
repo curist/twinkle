@@ -8,7 +8,7 @@
 ///   Core IR → ANF IR → WAT/Wasm backend
 ///
 /// ANF is used by the Wasm backend.
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::fmt;
 
 use crate::ir::core::{CorePattern, ExternImport, FieldId, FuncId, LocalId, VariantId};
@@ -209,6 +209,12 @@ pub struct AnfModule {
     pub all_init_func_ids: Vec<FuncId>,
     /// Extern function declarations keyed by FuncId.
     pub extern_imports: HashMap<FuncId, ExternImport>,
+    /// Source-level module-global locals, computed pre-optimization.
+    ///
+    /// When `Some`, this set was derived from `AInit` bindings in `__init__`
+    /// *before* optimization passes could introduce synthetic `AInit` nodes.
+    /// Emit uses this to avoid re-deriving globals from post-optimization ANF.
+    pub module_global_locals: Option<HashSet<LocalId>>,
 }
 
 // ── Display implementations ──────────────────────────────────────────────────

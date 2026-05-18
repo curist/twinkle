@@ -704,6 +704,15 @@ fn module_global_sym(local_id: crate::ir::LocalId) -> String {
 }
 
 fn collect_module_global_locals(anf: &AnfModule) -> Vec<crate::ir::LocalId> {
+    // Prefer the pre-computed set from optimize_module (derived before
+    // optimization passes can introduce synthetic AInit nodes).
+    if let Some(ref precomputed) = anf.module_global_locals {
+        let mut globals = precomputed.iter().copied().collect::<Vec<_>>();
+        globals.sort_by_key(|id| id.0);
+        return globals;
+    }
+
+    // Fallback for unoptimized modules or tests: derive from AInit bindings.
     let init_funcs = anf
         .functions
         .iter()
@@ -720,12 +729,6 @@ fn collect_module_global_locals(anf: &AnfModule) -> Vec<crate::ir::LocalId> {
     let mut bound_in_init = HashSet::new();
     for func in &anf.functions {
         if init_funcs.contains(&func.func_id) {
-            // Module globals are source-level bindings initialized by __init__.
-            // Do not treat every __init__ temporary as a global candidate: LocalId
-            // values are reused across functions, so a free local in another
-            // function can numerically collide with an init temp. If that temp is
-            // an AArrayLit, assigning it as a global erases its Vector mono and can
-            // make codegen cast a PVec to Array.
             bound_in_init.extend(collect_init_binding_locals(&func.body));
         }
     }
@@ -8814,6 +8817,7 @@ mod tests {
             init_func_id: None,
             all_init_func_ids: Vec::new(),
             extern_imports: HashMap::new(),
+            module_global_locals: None,
         };
 
         let module = emit_user_module(&anf, &type_env);
@@ -8884,6 +8888,54 @@ mod tests {
             init_func_id: Some(FuncId(1)),
             all_init_func_ids: vec![FuncId(1)],
             extern_imports: HashMap::new(),
+            module_global_locals: None,
+        };
+
+        assert_eq!(collect_module_global_locals(&anf), vec![LocalId(1)]);
+    }
+
+    #[test]
+    fn module_global_collection_prefers_precomputed_pre_optimization_set() {
+        let init = AnfFunctionDef {
+            func_id: FuncId(1),
+            name: "__init__".to_string(),
+            params: vec![],
+            param_tys: vec![],
+            body: AnfExpr::Let {
+                local: LocalId(1),
+                op: Box::new(AnfOp::AInit {
+                    value: Atom::ALitInt(1),
+                }),
+                body: Box::new(AnfExpr::Let {
+                    local: LocalId(28),
+                    // Models an optimization-created AInit, e.g. from branch
+                    // simplification. It should not become a module global just
+                    // because another function has a numerically colliding free
+                    // LocalId.
+                    op: Box::new(AnfOp::AInit {
+                        value: Atom::ALitInt(28),
+                    }),
+                    body: Box::new(AnfExpr::Atom(Atom::ALocal(LocalId(28)))),
+                }),
+            },
+            return_ty: MonoType::Void,
+            op_result_mono: HashMap::new(),
+        };
+        let user_func = AnfFunctionDef {
+            func_id: FuncId(2),
+            name: "uses_global_and_has_colliding_free_local".to_string(),
+            params: vec![],
+            param_tys: vec![],
+            body: AnfExpr::Atom(Atom::ALocal(LocalId(28))),
+            return_ty: MonoType::Void,
+            op_result_mono: HashMap::new(),
+        };
+        let anf = AnfModule {
+            functions: vec![init, user_func],
+            init_func_id: Some(FuncId(1)),
+            all_init_func_ids: vec![FuncId(1)],
+            extern_imports: HashMap::new(),
+            module_global_locals: Some(HashSet::from([LocalId(1)])),
         };
 
         assert_eq!(collect_module_global_locals(&anf), vec![LocalId(1)]);
@@ -9350,6 +9402,7 @@ mod tests {
             init_func_id: None,
             all_init_func_ids: Vec::new(),
             extern_imports: HashMap::new(),
+            module_global_locals: None,
         };
 
         let module = emit_user_module(&anf, &type_env);
@@ -9425,6 +9478,7 @@ mod tests {
             init_func_id: None,
             all_init_func_ids: Vec::new(),
             extern_imports: HashMap::new(),
+            module_global_locals: None,
         };
 
         let module = emit_user_module(&anf, &type_env);
@@ -9462,6 +9516,7 @@ mod tests {
             init_func_id: None,
             all_init_func_ids: Vec::new(),
             extern_imports: HashMap::new(),
+            module_global_locals: None,
         };
 
         let module = emit_user_module(&anf, &type_env);
@@ -9534,6 +9589,7 @@ mod tests {
             init_func_id: None,
             all_init_func_ids: Vec::new(),
             extern_imports: HashMap::new(),
+            module_global_locals: None,
         };
 
         let module = emit_user_module(&anf, &type_env);
@@ -10310,6 +10366,7 @@ mod tests {
             init_func_id: Some(FuncId(2)),
             all_init_func_ids: vec![FuncId(1), FuncId(2)],
             extern_imports: HashMap::new(),
+            module_global_locals: None,
         };
 
         let module = emit_user_module(&anf, &type_env);

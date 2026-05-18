@@ -25,37 +25,35 @@ use @std.proc
 fn compute_pinned(module: AnfModule) Dict<Int, Bool> {
   pinned: Dict<Int, Bool> = Dict.new()
 
-  case module.init_func_id {
-    .None => { return pinned },
-    .Some(init_fid) => {
-      // Find the $init function and collect its bound locals
-      init_bound: Dict<Int, Bool> = Dict.new()
-      found := false
-      for f in module.functions {
-        if f.func_id.id == init_fid.id {
-          init_bound = collect_init_binding_locals(f.body)
-          found = true
-        }
-      }
-      if !found { return pinned }
+  // Collect source-level bindings from all init functions. After module linking
+  // there may be multiple per-module init functions, and `init_func_id` may name
+  // only the synthesized entry init.
+  init_bound: Dict<Int, Bool> = Dict.new()
+  found_init := false
+  for f in module.functions {
+    if f.is_init {
+      bindings := collect_init_binding_locals(f.body)
+      for k in bindings.keys() { init_bound[k] = true }
+      found_init = true
+    }
+  }
+  if !found_init { return pinned }
 
-      // Collect free locals of all non-init functions, seeding with their params
-      for f in module.functions {
-        if f.func_id.id != init_fid.id {
-          declared: Dict<Int, Bool> = Dict.new()
-          for p in f.params {
-            declared[p.local.id] = true
-          }
-          free := collect_free_locals(f.body, declared)
-          // Intersect with init's bound locals
-          for k in free.keys() {
-            if set_has(init_bound, k) {
-              pinned[k] = true
-            }
-          }
+  // Collect free locals of all non-init functions, seeding with their params.
+  for f in module.functions {
+    if !f.is_init {
+      declared: Dict<Int, Bool> = Dict.new()
+      for p in f.params {
+        declared[p.local.id] = true
+      }
+      free := collect_free_locals(f.body, declared)
+      // Intersect with init's source-level bindings.
+      for k in free.keys() {
+        if set_has(init_bound, k) {
+          pinned[k] = true
         }
       }
-    },
+    }
   }
 
   pinned
