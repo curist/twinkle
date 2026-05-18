@@ -4,7 +4,7 @@
 
 use compiler.builtins.{BuiltinRegistry, make_builtin_registry}
 use compiler.anf.{AnfExpr, AnfFunctionDef, AnfModule}
-use compiler.anf_analysis.{collect_free_locals, collect_bound_locals, set_has}
+use compiler.anf_analysis.{collect_free_locals, collect_init_binding_locals, set_has}
 use compiler.opt.dead_let.{dead_let_elim_with_pinned, dead_let_elim_with_pinned_and_semantics}
 use compiler.opt.copy_prop.{copy_propagate_with_pinned}
 
@@ -33,7 +33,7 @@ fn compute_pinned(module: AnfModule) Dict<Int, Bool> {
       found := false
       for f in module.functions {
         if f.func_id.id == init_fid.id {
-          init_bound = collect_bound_locals(f.body)
+          init_bound = collect_init_binding_locals(f.body)
           found = true
         }
       }

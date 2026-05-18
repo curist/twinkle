@@ -48,6 +48,18 @@ pub fn collect_bound_locals(expr: &AnfExpr) -> HashSet<LocalId> {
     out
 }
 
+/// Collect locals introduced by `AInit` bindings.
+///
+/// In `__init__`, source-level module bindings are lowered as `AInit`, while
+/// compiler temporaries use their producing op directly. This distinction is
+/// important for whole-module analyses because ordinary `LocalId`s are scoped to
+/// a function and can collide numerically across functions.
+pub fn collect_init_binding_locals(expr: &AnfExpr) -> HashSet<LocalId> {
+    let mut out = HashSet::new();
+    collect_init_binding_locals_expr(expr, &mut out);
+    out
+}
+
 pub fn collect_assigned_locals(expr: &AnfExpr) -> HashSet<LocalId> {
     let mut out = HashSet::new();
     collect_assigned_locals_expr(expr, &mut out);
@@ -227,6 +239,41 @@ fn collect_bound_locals_op(op: &AnfOp, out: &mut HashSet<LocalId>) {
     }
 }
 
+fn collect_init_binding_locals_expr(expr: &AnfExpr, out: &mut HashSet<LocalId>) {
+    match expr {
+        AnfExpr::Let { local, op, body } => {
+            if matches!(op.as_ref(), AnfOp::AInit { .. }) {
+                out.insert(*local);
+            }
+            collect_init_binding_locals_op(op, out);
+            collect_init_binding_locals_expr(body, out);
+        }
+        AnfExpr::Return(_) | AnfExpr::Break(_) | AnfExpr::Continue | AnfExpr::Atom(_) => {}
+    }
+}
+
+fn collect_init_binding_locals_op(op: &AnfOp, out: &mut HashSet<LocalId>) {
+    match op {
+        AnfOp::AIf {
+            then_branch,
+            else_branch,
+            ..
+        } => {
+            collect_init_binding_locals_expr(then_branch, out);
+            collect_init_binding_locals_expr(else_branch, out);
+        }
+        AnfOp::AMatch { arms, .. } => {
+            for arm in arms {
+                collect_init_binding_locals_expr(&arm.body, out);
+            }
+        }
+        AnfOp::ALoop { body } | AnfOp::ADefer(body) => {
+            collect_init_binding_locals_expr(body, out);
+        }
+        _ => {}
+    }
+}
+
 fn collect_assigned_locals_expr(expr: &AnfExpr, out: &mut HashSet<LocalId>) {
     match expr {
         AnfExpr::Let { op, body, .. } => {
@@ -268,8 +315,8 @@ mod tests {
 
     use super::{
         DivergenceOptions, collect_assigned_locals, collect_bound_locals, collect_free_locals,
-        collect_pattern_bindings, expr_always_diverges, expr_always_diverges_with,
-        op_always_diverges,
+        collect_init_binding_locals, collect_pattern_bindings, expr_always_diverges,
+        expr_always_diverges_with, op_always_diverges,
     };
     use crate::ir::anf::{AnfExpr, AnfMatchArm, AnfOp, Atom, OpKind};
     use crate::ir::core::{CorePattern, LocalId, VariantId};
@@ -493,6 +540,50 @@ mod tests {
         };
         let bound = collect_bound_locals(&expr);
         assert_eq!(bound, HashSet::from([lid(0), lid(1), lid(2), lid(3)]));
+    }
+
+    #[test]
+    fn collect_init_binding_locals_excludes_non_init_temporaries() {
+        let expr = AnfExpr::Let {
+            local: lid(0),
+            op: Box::new(AnfOp::AArrayLit(vec![])),
+            body: Box::new(AnfExpr::Let {
+                local: lid(1),
+                op: Box::new(AnfOp::AInit {
+                    value: Atom::ALocal(lid(0)),
+                }),
+                body: Box::new(AnfExpr::Let {
+                    local: lid(2),
+                    op: Box::new(AnfOp::AIf {
+                        cond: Atom::ALitBool(true),
+                        then_branch: Box::new(AnfExpr::Let {
+                            local: lid(3),
+                            op: Box::new(AnfOp::AInit {
+                                value: Atom::ALitInt(1),
+                            }),
+                            body: Box::new(AnfExpr::Atom(Atom::ALocal(lid(3)))),
+                        }),
+                        else_branch: Box::new(AnfExpr::Let {
+                            local: lid(4),
+                            op: Box::new(AnfOp::ARecord {
+                                type_id: TypeId(0),
+                                fields: vec![],
+                            }),
+                            body: Box::new(AnfExpr::Atom(Atom::ALocal(lid(4)))),
+                        }),
+                    }),
+                    body: Box::new(AnfExpr::Atom(Atom::ALocal(lid(2)))),
+                }),
+            }),
+        };
+        assert_eq!(
+            collect_bound_locals(&expr),
+            HashSet::from([lid(0), lid(1), lid(2), lid(3), lid(4)])
+        );
+        assert_eq!(
+            collect_init_binding_locals(&expr),
+            HashSet::from([lid(1), lid(3)])
+        );
     }
 
     #[test]

@@ -1,6 +1,6 @@
 use std::collections::{HashMap, HashSet};
 
-use crate::ir::anf::analysis::{collect_bound_locals, collect_free_locals};
+use crate::ir::anf::analysis::{collect_free_locals, collect_init_binding_locals};
 use crate::ir::anf::{AnfFunctionDef, AnfModule};
 use crate::ir::core::{FuncId, LocalId};
 use crate::opt::defer_elim::eliminate_defers;
@@ -150,7 +150,10 @@ fn collect_module_globals(module: &AnfModule) -> HashSet<LocalId> {
     let mut bound_in_init = HashSet::new();
     for func in &module.functions {
         if init_funcs.contains(&func.func_id) {
-            bound_in_init.extend(collect_bound_locals(&func.body));
+            // Pin only source-level init bindings. ANF temporaries may collide
+            // numerically with locals from other functions because LocalId is
+            // function-scoped outside the module-global range.
+            bound_in_init.extend(collect_init_binding_locals(&func.body));
         }
     }
 

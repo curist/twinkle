@@ -14,7 +14,9 @@ use crate::codegen::ctx::{
 use crate::codegen::prelude::build_prelude_map;
 use crate::intrinsics::registry::{self, LoweringKind};
 use crate::ir::FuncId;
-use crate::ir::anf::analysis::{collect_free_locals, expr_always_diverges, op_always_diverges};
+use crate::ir::anf::analysis::{
+    collect_free_locals, collect_init_binding_locals, expr_always_diverges, op_always_diverges,
+};
 use crate::ir::anf::{AnfExpr, AnfFunctionDef, AnfMatchArm, AnfModule, AnfOp, Atom};
 use crate::ir::core::CorePattern;
 use crate::ir::lower::prelude as prelude_ids;
@@ -734,46 +736,6 @@ fn collect_module_global_locals(anf: &AnfModule) -> Vec<crate::ir::LocalId> {
         .collect::<Vec<_>>();
     globals.sort_by_key(|id| id.0);
     globals
-}
-
-fn collect_init_binding_locals(expr: &AnfExpr) -> HashSet<crate::ir::LocalId> {
-    let mut out = HashSet::new();
-    collect_init_binding_locals_expr(expr, &mut out);
-    out
-}
-
-fn collect_init_binding_locals_expr(expr: &AnfExpr, out: &mut HashSet<crate::ir::LocalId>) {
-    match expr {
-        AnfExpr::Let { local, op, body } => {
-            if matches!(op.as_ref(), AnfOp::AInit { .. }) {
-                out.insert(*local);
-            }
-            collect_init_binding_locals_op(op, out);
-            collect_init_binding_locals_expr(body, out);
-        }
-        AnfExpr::Return(_) | AnfExpr::Break(_) | AnfExpr::Continue | AnfExpr::Atom(_) => {}
-    }
-}
-
-fn collect_init_binding_locals_op(op: &AnfOp, out: &mut HashSet<crate::ir::LocalId>) {
-    match op {
-        AnfOp::AIf {
-            then_branch,
-            else_branch,
-            ..
-        } => {
-            collect_init_binding_locals_expr(then_branch, out);
-            collect_init_binding_locals_expr(else_branch, out);
-        }
-        AnfOp::AMatch { arms, .. } => {
-            for arm in arms {
-                collect_init_binding_locals_expr(&arm.body, out);
-            }
-        }
-        AnfOp::ALoop { body } => collect_init_binding_locals_expr(body, out),
-        AnfOp::ADefer(body) => collect_init_binding_locals_expr(body, out),
-        _ => {}
-    }
 }
 
 #[cfg(test)]

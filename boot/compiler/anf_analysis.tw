@@ -185,6 +185,47 @@ fn collect_bound_op(op: AnfOp, out: Dict<Int, Bool>) Dict<Int, Bool> {
   }
 }
 
+// ── collect_init_binding_locals ─────────────────────────────────────
+
+// Collect locals introduced by AInit bindings. In $init these correspond to
+// source-level module bindings; other let-bound locals are compiler temporaries
+// whose ids can collide numerically with locals from other functions.
+pub fn collect_init_binding_locals(expr: AnfExpr) Dict<Int, Bool> {
+  collect_init_binding_expr(expr, Dict.new())
+}
+
+fn collect_init_binding_expr(expr: AnfExpr, out: Dict<Int, Bool>) Dict<Int, Bool> {
+  case expr {
+    .Let(local, op, body) => {
+      result := if is_init_op(op) { set_add(out, local.id) } else { out }
+      result = collect_init_binding_op(op, result)
+      collect_init_binding_expr(body, result)
+    },
+    _ => out,
+  }
+}
+
+fn collect_init_binding_op(op: AnfOp, out: Dict<Int, Bool>) Dict<Int, Bool> {
+  case op {
+    .AIf(_, then_e, else_e) => {
+      result := collect_init_binding_expr(then_e, out)
+      collect_init_binding_expr(else_e, result)
+    },
+    .AMatch(_, arms) => {
+      result := out
+      for arm in arms { result = collect_init_binding_expr(arm.body, result) }
+      result
+    },
+    .ALoop(body) => collect_init_binding_expr(body, out),
+    .ADefer(body) => collect_init_binding_expr(body, out),
+    _ => out,
+  }
+}
+
+fn is_init_op(op: AnfOp) Bool {
+  case op { .AInit(_) => true, _ => false }
+}
+
 // ── collect_assigned_locals ─────────────────────────────────────────
 
 pub fn collect_assigned_locals(expr: AnfExpr) Dict<Int, Bool> {
