@@ -446,6 +446,83 @@ pub fn suite() runner.Suite {
       try assert.str_contains(content, "fn(t: Text) String")
       .Ok({})
     })
+    .test("hover on Stringify bound in function shows contract info", fn() {
+      //                0         1         2         3
+      //                0123456789012345678901234567890123456789
+      source := "fn show<T: Stringify>(x: T) String { x.to_string() }\n"
+      state := state_with_doc("file:///a.tw", source)
+      // "Stringify" starts at char 11
+      step := server_core.handle_message(state, hover_request(1, "file:///a.tw", 0, 13))
+      content := try hover_content(step)
+      try assert.str_contains(content, "contract Stringify")
+      try assert.str_contains(content, "to_string")
+      .Ok({})
+    })
+    .test("hover on each bound in multi-bound T: Eq + Stringify", fn() {
+      //                0         1         2         3         4
+      //                01234567890123456789012345678901234567890123456789
+      source := "fn check<T: Eq + Stringify>(a: T, b: T) Bool { a == b }\n"
+      state := state_with_doc("file:///a.tw", source)
+      // "Eq" starts at char 12
+      eq_step := server_core.handle_message(state, hover_request(1, "file:///a.tw", 0, 12))
+      eq_content := try hover_content(eq_step)
+      try assert.str_contains(eq_content, "contract Eq")
+      try assert.str_contains(eq_content, "eq")
+      // "Stringify" starts at char 17
+      str_step := server_core.handle_message(state, hover_request(2, "file:///a.tw", 0, 19))
+      str_content := try hover_content(str_step)
+      try assert.str_contains(str_content, "contract Stringify")
+      try assert.str_contains(str_content, "to_string")
+      .Ok({})
+    })
+    .test("hover on Stringify bound in type declaration", fn() {
+      //                0         1         2
+      //                0123456789012345678901234567
+      source := "type Box<T: Stringify> = .{ value: T }\n"
+      state := state_with_doc("file:///a.tw", source)
+      // "Stringify" starts at char 12
+      step := server_core.handle_message(state, hover_request(1, "file:///a.tw", 0, 14))
+      content := try hover_content(step)
+      try assert.str_contains(content, "contract Stringify")
+      try assert.str_contains(content, "to_string")
+      .Ok({})
+    })
+    .test("hover on contract-backed to_string method call", fn() {
+      source := "fn show<T: Stringify>(x: T) String {\n  x.to_string()\n}\n"
+      state := state_with_doc("file:///a.tw", source)
+      // "to_string" on line 1: "  x.to_string()"
+      //                         01234
+      step := server_core.handle_message(state, hover_request(1, "file:///a.tw", 1, 5))
+      content := try hover_content(step)
+      try assert.str_contains(content, "fn to_string(value: Self) String")
+      try assert.str_contains(content, "Contract method from")
+      try assert.str_contains(content, "Stringify")
+      .Ok({})
+    })
+    .test("hover on contract-backed eq method call", fn() {
+      source := "fn same<T: Eq>(a: T, b: T) Bool {\n  a.eq(b)\n}\n"
+      state := state_with_doc("file:///a.tw", source)
+      // "eq" on line 1: "  a.eq(b)"
+      //                  01234
+      step := server_core.handle_message(state, hover_request(1, "file:///a.tw", 1, 4))
+      content := try hover_content(step)
+      try assert.str_contains(content, "fn eq(value: Self, other: Self) Bool")
+      try assert.str_contains(content, "Contract method from")
+      try assert.str_contains(content, "Eq")
+      .Ok({})
+    })
+    .test("hover on contract-backed compare method call", fn() {
+      source := "fn cmp<T: Ord>(a: T, b: T) Order {\n  a.compare(b)\n}\n"
+      state := state_with_doc("file:///a.tw", source)
+      // "compare" on line 1: "  a.compare(b)"
+      //                       01234
+      step := server_core.handle_message(state, hover_request(1, "file:///a.tw", 1, 5))
+      content := try hover_content(step)
+      try assert.str_contains(content, "fn compare(value: Self, other: Self) Order")
+      try assert.str_contains(content, "Contract method from")
+      try assert.str_contains(content, "Ord")
+      .Ok({})
+    })
     .test("initialize advertises hoverProvider", fn() {
       msg := protocol.Message.Request(.{ id: .IntId(1), method: "initialize", params: .None })
       step := server_core.handle_message(server_core.initial_state(), msg)

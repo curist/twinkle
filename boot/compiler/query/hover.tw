@@ -1,6 +1,7 @@
 // Hover query: find the type of the expression at a given byte offset.
 
-use compiler.ast.{Item, Block, Stmt, Expr, FunctionDecl, TypeDecl, TypeExpr, TypePath, TypeDef, Pattern, UseDecl, ImportItem, Param, RecordField, VariantDecl, LetStmt, ForStmt}
+use compiler.ast.{Item, Block, Stmt, Expr, FunctionDecl, TypeDecl, TypeExpr, TypePath, TypeDef, Pattern, UseDecl, ImportItem, Param, RecordField, VariantDecl, LetStmt, ForStmt, TypeParam}
+use compiler.contracts.{BuiltinContract, resolve_builtin_contract_name}
 use compiler.checker.{CheckResult}
 use compiler.resolver.{ResolvedEnv, FunctionSig, ResolvedTypeParam, ResolvedVariant, ResolvedTypeDef, ty_to_string_env}
 use compiler.mono_type.{MonoType, TypeId}
@@ -67,7 +68,8 @@ fn hover_type_decl(decl: TypeDecl, offset: Int, typed: CheckResult, source: Stri
     content := append_doc(decl.name, extract_doc_comment(source, decl.span.start))
     return .Some(.{ content, span: name_span })
   }
-  hover_type_def(decl.def, offset, typed)
+  hover_type_params(decl.type_params, offset)
+    .or_else(fn() { hover_type_def(decl.def, offset, typed) })
 }
 
 fn hover_function_decl(decl: FunctionDecl, offset: Int, typed: CheckResult, items: Vector<Item>, source: String) HoverResult? {
@@ -82,7 +84,8 @@ fn hover_function_decl(decl: FunctionDecl, offset: Int, typed: CheckResult, item
       .None => {},
     }
   }
-  hover_function_params(decl.params, sig, offset, typed)
+  hover_type_params(decl.type_params, offset)
+    .or_else(fn() { hover_function_params(decl.params, sig, offset, typed) })
     .or_else(fn() { hover_optional_type_expr(decl.return_type, offset, typed) })
     .or_else(fn() { hover_block(decl.body, offset, typed, items, source) })
 }
@@ -126,6 +129,43 @@ fn sig_to_string(env: ResolvedEnv, sig: FunctionSig) String {
     .None => "Void",
   }
   "fn(${parts.join(", ")}) ${ret}"
+}
+
+// ── Contract hover ────────────────────────────────────────────────
+
+fn contract_hover(contract: BuiltinContract) String {
+  case contract {
+    .Stringify => "contract Stringify\n\nRequired method: `fn to_string(value: Self) String`\n\nUsed by string interpolation and generic stringification.",
+    .Eq => "contract Eq\n\nRequired method: `fn eq(value: Self, other: Self) Bool`\n\nUsed by `==`, `!=`, and generic equality.",
+    .Ord => "contract Ord\n\nRequired method: `fn compare(value: Self, other: Self) Order`\n\nUsed by `<`, `<=`, `>`, `>=`, and generic ordering.",
+  }
+}
+
+fn contract_method_hover(contract: BuiltinContract, method_name: String) String? {
+  case contract {
+    .Stringify => if method_name == "to_string" {
+      .Some("fn to_string(value: Self) String\n\nContract method from `Stringify`.")
+    } else { .None },
+    .Eq => if method_name == "eq" {
+      .Some("fn eq(value: Self, other: Self) Bool\n\nContract method from `Eq`.")
+    } else { .None },
+    .Ord => if method_name == "compare" {
+      .Some("fn compare(value: Self, other: Self) Order\n\nContract method from `Ord`.")
+    } else { .None },
+  }
+}
+
+fn hover_type_params(params: Vector<TypeParam>, offset: Int) HoverResult? {
+  for tp in params {
+    for bound in tp.bounds {
+      if bound.span.contains(offset) {
+        name := bound.segments[bound.segments.len() - 1]
+        contract := try resolve_builtin_contract_name(name)
+        return .Some(.{ content: contract_hover(contract), span: bound.span })
+      }
+    }
+  }
+  .None
 }
 
 // ── Shared walker integration ──────────────────────────────────────
@@ -279,7 +319,13 @@ fn expr_type(expr: Expr, typed: CheckResult) HoverResult? {
 fn hover_recorded_method(callee_id: Int, base: Expr, method_span: Span, typed: CheckResult) HoverResult? {
   meta := try typed.method_calls[callee_id]
   if meta.func_name == "" {
-    return .None
+    case meta.contract {
+      .Some(contract) => {
+        content := try contract_method_hover(contract, meta.method_name)
+        return .Some(.{ content, span: method_span })
+      },
+      .None => { return .None },
+    }
   }
   sig := try typed.env.lookup_registered_function(meta.func_name)
   display_sig := if meta.has_receiver { instantiate_receiver_sig(sig, base, typed) } else { sig }
