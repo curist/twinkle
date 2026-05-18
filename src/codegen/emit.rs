@@ -14,9 +14,7 @@ use crate::codegen::ctx::{
 use crate::codegen::prelude::build_prelude_map;
 use crate::intrinsics::registry::{self, LoweringKind};
 use crate::ir::FuncId;
-use crate::ir::anf::analysis::{
-    collect_bound_locals, collect_free_locals, expr_always_diverges, op_always_diverges,
-};
+use crate::ir::anf::analysis::{collect_free_locals, expr_always_diverges, op_always_diverges};
 use crate::ir::anf::{AnfExpr, AnfFunctionDef, AnfMatchArm, AnfModule, AnfOp, Atom};
 use crate::ir::core::CorePattern;
 use crate::ir::lower::prelude as prelude_ids;
@@ -720,7 +718,13 @@ fn collect_module_global_locals(anf: &AnfModule) -> Vec<crate::ir::LocalId> {
     let mut bound_in_init = HashSet::new();
     for func in &anf.functions {
         if init_funcs.contains(&func.func_id) {
-            bound_in_init.extend(collect_bound_locals(&func.body));
+            // Module globals are source-level bindings initialized by __init__.
+            // Do not treat every __init__ temporary as a global candidate: LocalId
+            // values are reused across functions, so a free local in another
+            // function can numerically collide with an init temp. If that temp is
+            // an AArrayLit, assigning it as a global erases its Vector mono and can
+            // make codegen cast a PVec to Array.
+            bound_in_init.extend(collect_init_binding_locals(&func.body));
         }
     }
 
@@ -730,6 +734,46 @@ fn collect_module_global_locals(anf: &AnfModule) -> Vec<crate::ir::LocalId> {
         .collect::<Vec<_>>();
     globals.sort_by_key(|id| id.0);
     globals
+}
+
+fn collect_init_binding_locals(expr: &AnfExpr) -> HashSet<crate::ir::LocalId> {
+    let mut out = HashSet::new();
+    collect_init_binding_locals_expr(expr, &mut out);
+    out
+}
+
+fn collect_init_binding_locals_expr(expr: &AnfExpr, out: &mut HashSet<crate::ir::LocalId>) {
+    match expr {
+        AnfExpr::Let { local, op, body } => {
+            if matches!(op.as_ref(), AnfOp::AInit { .. }) {
+                out.insert(*local);
+            }
+            collect_init_binding_locals_op(op, out);
+            collect_init_binding_locals_expr(body, out);
+        }
+        AnfExpr::Return(_) | AnfExpr::Break(_) | AnfExpr::Continue | AnfExpr::Atom(_) => {}
+    }
+}
+
+fn collect_init_binding_locals_op(op: &AnfOp, out: &mut HashSet<crate::ir::LocalId>) {
+    match op {
+        AnfOp::AIf {
+            then_branch,
+            else_branch,
+            ..
+        } => {
+            collect_init_binding_locals_expr(then_branch, out);
+            collect_init_binding_locals_expr(else_branch, out);
+        }
+        AnfOp::AMatch { arms, .. } => {
+            for arm in arms {
+                collect_init_binding_locals_expr(&arm.body, out);
+            }
+        }
+        AnfOp::ALoop { body } => collect_init_binding_locals_expr(body, out),
+        AnfOp::ADefer(body) => collect_init_binding_locals_expr(body, out),
+        _ => {}
+    }
 }
 
 #[cfg(test)]
@@ -8828,6 +8872,59 @@ mod tests {
             &func.body,
             &|i| matches!(i, Instr::StructNew(name) if name == T_BOXED_INT)
         ));
+    }
+
+    #[test]
+    fn module_global_collection_ignores_init_temporaries_with_colliding_local_ids() {
+        let init = AnfFunctionDef {
+            func_id: FuncId(1),
+            name: "__init__".to_string(),
+            params: vec![],
+            param_tys: vec![],
+            body: AnfExpr::Let {
+                local: LocalId(12),
+                op: Box::new(AnfOp::ARecord {
+                    type_id: crate::types::ty::TypeId(0),
+                    fields: vec![],
+                }),
+                body: Box::new(AnfExpr::Let {
+                    local: LocalId(1),
+                    op: Box::new(AnfOp::AInit {
+                        value: Atom::ALocal(LocalId(12)),
+                    }),
+                    body: Box::new(AnfExpr::Let {
+                        local: LocalId(28),
+                        op: Box::new(AnfOp::AArrayLit(vec![Atom::ALocal(LocalId(1))])),
+                        body: Box::new(AnfExpr::Atom(Atom::ALocal(LocalId(28)))),
+                    }),
+                }),
+            },
+            return_ty: MonoType::Void,
+            op_result_mono: HashMap::new(),
+        };
+        let user_func = AnfFunctionDef {
+            func_id: FuncId(2),
+            name: "uses_global_and_has_colliding_free_local".to_string(),
+            params: vec![],
+            param_tys: vec![],
+            body: AnfExpr::Let {
+                local: LocalId(3),
+                op: Box::new(AnfOp::AInit {
+                    value: Atom::ALocal(LocalId(1)),
+                }),
+                body: Box::new(AnfExpr::Atom(Atom::ALocal(LocalId(28)))),
+            },
+            return_ty: MonoType::Void,
+            op_result_mono: HashMap::new(),
+        };
+        let anf = AnfModule {
+            functions: vec![init, user_func],
+            init_func_id: Some(FuncId(1)),
+            all_init_func_ids: vec![FuncId(1)],
+            extern_imports: HashMap::new(),
+        };
+
+        assert_eq!(collect_module_global_locals(&anf), vec![LocalId(1)]);
     }
 
     #[test]
