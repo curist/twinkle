@@ -7,8 +7,8 @@ const HE_KEY: u32 = 1;
 const HE_VAL: u32 = 2;
 const HN_BITMAP: u32 = 0;
 const HN_ENTRIES: u32 = 1;
-const HC_HASH: u32 = 0;
-const HC_ENTRIES: u32 = 1;
+const HC_HASH: u32 = 1;
+const HC_ENTRIES: u32 = 2;
 const PD_SIZE: u32 = 0;
 const PD_ROOT: u32 = 1;
 const PD_ORDER: u32 = 2;
@@ -623,6 +623,7 @@ fn collision_set_fn() -> FuncDef {
                                 Instr::LocalGet(7),
                                 Instr::Call("arr_replace_at".into()),
                                 Instr::LocalSet(8),
+                                Instr::I32Const(0),
                                 Instr::LocalGet(0),
                                 Instr::RefAsNonNull,
                                 Instr::StructGet(T_HAMT_COLLISION.into(), HC_HASH),
@@ -653,6 +654,7 @@ fn collision_set_fn() -> FuncDef {
             Instr::LocalGet(7),
             Instr::Call("arr_insert_at".into()),
             Instr::LocalSet(8),
+            Instr::I32Const(0),
             Instr::LocalGet(0),
             Instr::RefAsNonNull,
             Instr::StructGet(T_HAMT_COLLISION.into(), HC_HASH),
@@ -1051,6 +1053,7 @@ fn node_set_fn() -> FuncDef {
                                     Instr::LocalGet(5),  // new_entry
                                     Instr::ArrayNewFixed(T_ARRAY.into(), 2),
                                     Instr::LocalSet(12),
+                                    Instr::I32Const(0),
                                     Instr::LocalGet(1), // hash
                                     Instr::LocalGet(12),
                                     Instr::RefAsNonNull,
@@ -1084,6 +1087,7 @@ fn node_set_fn() -> FuncDef {
                                     Instr::LocalGet(5),
                                     Instr::ArrayNewFixed(T_ARRAY.into(), 2),
                                     Instr::LocalSet(12),
+                                    Instr::I32Const(0),
                                     Instr::LocalGet(1),
                                     Instr::LocalGet(12),
                                     Instr::RefAsNonNull,
@@ -1546,6 +1550,7 @@ fn node_remove_fn() -> FuncDef {
                 else_body: vec![],
             },
             // else: rebuild collision
+            Instr::I32Const(0),
             Instr::LocalGet(15),
             Instr::RefAsNonNull,
             Instr::StructGet(T_HAMT_COLLISION.into(), HC_HASH),

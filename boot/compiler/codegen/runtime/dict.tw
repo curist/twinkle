@@ -42,8 +42,8 @@ fn he_key() Int { 1 }
 fn he_val() Int { 2 }
 fn hn_bitmap() Int { 0 }
 fn hn_entries() Int { 1 }
-fn hc_hash() Int { 0 }
-fn hc_entries() Int { 1 }
+fn hc_hash() Int { 1 }
+fn hc_entries() Int { 2 }
 fn pd_size() Int { 0 }
 fn pd_root() Int { 1 }
 fn pd_order() Int { 2 }
@@ -283,6 +283,7 @@ fn collision_set_fn() FuncDef {
             .StructNew(t_hamt_entry()), .LocalSet(7),
             .LocalGet(4), .RefAsNonNull, .LocalGet(6), .LocalGet(7),
             .Call("arr_replace_at"), .LocalSet(8),
+            .I32Const(0),
             .LocalGet(0), .RefAsNonNull, .StructGet(t_hamt_collision(), hc_hash()),
             .LocalGet(8), .RefAsNonNull, .StructNew(t_hamt_collision()), .Return,
           ], []),
@@ -294,6 +295,7 @@ fn collision_set_fn() FuncDef {
       .LocalGet(1), .LocalGet(2), .LocalGet(3), .StructNew(t_hamt_entry()), .LocalSet(7),
       .LocalGet(4), .RefAsNonNull, .LocalGet(5), .LocalGet(7),
       .Call("arr_insert_at"), .LocalSet(8),
+      .I32Const(0),
       .LocalGet(0), .RefAsNonNull, .StructGet(t_hamt_collision(), hc_hash()),
       .LocalGet(8), .RefAsNonNull, .StructNew(t_hamt_collision()),
     ],
@@ -427,7 +429,7 @@ fn node_set_fn() FuncDef {
           ], [
             // same hash, diff key: collision
             .LocalGet(13), .LocalGet(5), .ArrayNewFixed(t_array(), 2), .LocalSet(12),
-            .LocalGet(1), .LocalGet(12), .RefAsNonNull, .StructNew(t_hamt_collision()), .LocalSet(15),
+            .I32Const(0), .LocalGet(1), .LocalGet(12), .RefAsNonNull, .StructNew(t_hamt_collision()), .LocalSet(15),
             .LocalGet(0), .RefAsNonNull, .StructGet(t_hamt_node(), hn_entries()),
             .LocalGet(10), .LocalGet(15),
             .Call("arr_replace_at"), .LocalSet(12),
@@ -438,7 +440,7 @@ fn node_set_fn() FuncDef {
           .LocalGet(2), .I32Const(6), .I32GeU,
           .If(.None, [
             .LocalGet(13), .LocalGet(5), .ArrayNewFixed(t_array(), 2), .LocalSet(12),
-            .LocalGet(1), .LocalGet(12), .RefAsNonNull, .StructNew(t_hamt_collision()), .LocalSet(15),
+            .I32Const(0), .LocalGet(1), .LocalGet(12), .RefAsNonNull, .StructNew(t_hamt_collision()), .LocalSet(15),
             .LocalGet(0), .RefAsNonNull, .StructGet(t_hamt_node(), hn_entries()),
             .LocalGet(10), .LocalGet(15),
             .Call("arr_replace_at"), .LocalSet(12),
@@ -582,6 +584,7 @@ fn node_remove_fn() FuncDef {
         .Call("arr_replace_at"), .LocalSet(12),
         .LocalGet(6), .LocalGet(12), .RefAsNonNull, .StructNew(t_hamt_node()), .Return,
       ], []),
+      .I32Const(0),
       .LocalGet(15), .RefAsNonNull, .StructGet(t_hamt_collision(), hc_hash()),
       .LocalGet(12), .RefAsNonNull, .StructNew(t_hamt_collision()), .LocalSet(21),
       .LocalGet(9), .RefAsNonNull, .LocalGet(7), .LocalGet(21),

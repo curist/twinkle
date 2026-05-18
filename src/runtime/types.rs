@@ -235,12 +235,15 @@ pub fn make() -> ModuleIR {
         ],
     });
 
-    // (type $HamtCollision (struct (field $hash i32) (field $entries (ref $Array))))
+    // (type $HamtCollision (struct (field $tag i32) (field $hash i32) (field $entries (ref $Array))))
+    // Keep this layout distinct from HamtNode. Wasm GC type checks are structural,
+    // so identical final struct shapes can make ref.test HamtNode succeed for a collision.
     m.types.push(TypeDef::Struct {
         name: "HamtCollision".into(),
         supertype: None,
         non_final: false,
         fields: vec![
+            FieldDef::named("tag", ValType::I32),
             FieldDef::named("hash", ValType::I32),
             FieldDef {
                 name: Some("entries".into()),
