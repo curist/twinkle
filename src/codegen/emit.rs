@@ -4633,17 +4633,29 @@ fn emit_string_compare_intrinsic(
         panic!("String.compare expects exactly two arguments");
     }
     ensure_rt_str_cmp_import(ctx);
+    // Call rt_str__cmp once; returns i32 (<0 = Lt, 0 = Eq, >0 = Gt).
+    // Check == 0 first (Eq fast path with a single call). The non-equal
+    // branch calls rt_str__cmp again to distinguish Lt vs Gt.
     let mut instrs = emit_atom(&args[0], Some(&ref_string_null()), ctx);
     instrs.extend(emit_atom(&args[1], Some(&ref_string_null()), ctx));
     instrs.push(Instr::Call("rt_str__cmp".to_string()));
-    instrs.push(Instr::I32Const(0));
-    instrs.push(Instr::I32LtS);
-    let mut gt_instrs = emit_atom(&args[0], Some(&ref_string_null()), ctx);
-    gt_instrs.extend(emit_atom(&args[1], Some(&ref_string_null()), ctx));
-    gt_instrs.push(Instr::Call("rt_str__cmp".to_string()));
-    gt_instrs.push(Instr::I32Const(0));
-    gt_instrs.push(Instr::I32GtS);
-    instrs.extend(emit_compare_from_lt_then_gt(gt_instrs, bind_ty, ctx));
+    instrs.push(Instr::I32Eqz);
+    // Non-zero: call again to distinguish Lt vs Gt
+    let mut neq_body = emit_atom(&args[0], Some(&ref_string_null()), ctx);
+    neq_body.extend(emit_atom(&args[1], Some(&ref_string_null()), ctx));
+    neq_body.push(Instr::Call("rt_str__cmp".to_string()));
+    neq_body.push(Instr::I32Const(0));
+    neq_body.push(Instr::I32LtS);
+    neq_body.push(Instr::If {
+        result: Some(bind_ty.clone()),
+        then_body: emit_order_variant(0, bind_ty, ctx), // Lt
+        else_body: emit_order_variant(2, bind_ty, ctx), // Gt
+    });
+    instrs.push(Instr::If {
+        result: Some(bind_ty.clone()),
+        then_body: emit_order_variant(1, bind_ty, ctx), // Eq
+        else_body: neq_body,
+    });
     instrs
 }
 
