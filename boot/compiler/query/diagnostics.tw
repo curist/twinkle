@@ -16,18 +16,18 @@ use lib.query.keys
 use lib.source.identity
 use lib.source.overlay
 use lib.source.span.{Span}
-use lib.json
-use lib.source.diagnostics as diag
+use lib.json.{Json}
+use lib.source.diagnostics.{DiagKind, Severity}
 
 pub type Diagnostic = .{
   uri: String,
   version: Int?,
   span: Span?,
-  severity: diag.Severity,
+  severity: Severity,
   message: String,
   stage: String,
   /// Optional data payload (roundtripped by LSP clients in code action requests).
-  data: json.Json?,
+  data: Json?,
 }
 
 pub type DocumentInput = .{
@@ -135,14 +135,14 @@ fn convert_analysis_diags(diags: Vector<analyze.AnalysisDiag>) Vector<Diagnostic
   }
 }
 
-fn kind_to_severity(kind: diag.DiagKind) diag.Severity {
+fn kind_to_severity(kind: DiagKind) Severity {
   case kind {
     .Error(_) => .Error,
     .Warning(_) => .Warning,
   }
 }
 
-fn kind_to_message(kind: diag.DiagKind) String {
+fn kind_to_message(kind: DiagKind) String {
   case kind {
     .Error(e) => case e {
       .TypeMismatch(_) => "type mismatch",
@@ -241,7 +241,7 @@ fn synthetic_diagnostic(uri: String, version: Int?, stage: String, message: Stri
 pub fn convert_diagnostics(
   input: DocumentInput,
   stage: String,
-  diagnostics: Vector<diag.DiagKind>,
+  diagnostics: Vector<DiagKind>,
 ) Vector<Diagnostic> {
   collect d in diagnostics {
     .{
