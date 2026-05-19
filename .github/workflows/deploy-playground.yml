@@ -5,6 +5,11 @@ on:
     branches: [main]
   workflow_dispatch:
 
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
 # Allow one concurrent deployment; cancel in-flight runs on new push
 concurrency:
   group: pages
@@ -37,23 +42,26 @@ jobs:
       - name: Build bridge.wasm
         run: cargo run --release -- run boot/tests/gen_bridge_wasm.tw
 
-      - name: Build boot-main.wasm
-        run: cargo run --release -- build boot/main.tw -o target/boot-main.wasm
+      - name: Build boot compiler payload
+        run: cargo run --release -- build boot/main.tw -o target/boot.wasm
 
-      - name: Set up Bun
-        uses: oven-sh/setup-bun@v2
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: playground/package-lock.json
 
       - name: Install playground dependencies
         working-directory: playground
-        run: bun install --frozen-lockfile
-
-      - name: Copy assets
-        working-directory: playground
-        run: bun run copy-assets
+        run: npm ci
 
       - name: Build playground
         working-directory: playground
-        run: bun run build
+        run: npm run build
+
+      - name: Configure Pages
+        uses: actions/configure-pages@v5
 
       - name: Upload Pages artifact
         uses: actions/upload-pages-artifact@v3
@@ -63,9 +71,6 @@ jobs:
   deploy:
     needs: build
     runs-on: ubuntu-latest
-    permissions:
-      pages: write
-      id-token: write
     environment:
       name: github-pages
       url: ${{ steps.deploy.outputs.page_url }}

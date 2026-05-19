@@ -1,11 +1,11 @@
 #!/usr/bin/env node
 // Copies build artifacts and source assets into public/ before Vite builds.
 //
-// Must be run after `cargo build` (produces bridge.wasm + boot.wasm)
-// and after `bun install` / `npm install` (provides tree-sitter.wasm).
+// Must be run after building tools/bridge.wasm and target/boot.wasm,
+// and after `npm install` / `npm ci` (provides tree-sitter.wasm).
 //
 // Usage:  node scripts/copy-assets.mjs
-//         bun run copy-assets
+//         npm run copy-assets
 
 import { cpSync, copyFileSync, mkdirSync, existsSync } from 'fs'
 import { fileURLToPath } from 'url'
@@ -15,28 +15,24 @@ const __dirname = dirname(fileURLToPath(import.meta.url))
 const projectRoot = join(__dirname, '../..')   // twinkle repo root
 const publicDir   = join(__dirname, '../public')
 
-let warnings = 0
-
 function ensureDir(dir) {
   mkdirSync(dir, { recursive: true })
 }
 
-function copyFile(src, dest) {
-  if (!existsSync(src)) {
-    console.warn(`  [warn] missing: ${src}`)
-    warnings++
-    return
+function requirePath(path) {
+  if (!existsSync(path)) {
+    throw new Error(`missing required asset: ${path}`)
   }
+}
+
+function copyFile(src, dest) {
+  requirePath(src)
   copyFileSync(src, dest)
   console.log(`  copied: ${dest.replace(publicDir + '/', 'public/')}`)
 }
 
 function copyDir(src, dest) {
-  if (!existsSync(src)) {
-    console.warn(`  [warn] missing dir: ${src}`)
-    warnings++
-    return
-  }
+  requirePath(src)
   // dereference: follow symlinks (boot/prelude and boot/stdlib are symlinks)
   cpSync(src, dest, { recursive: true, force: true, dereference: true })
   console.log(`  copied: ${dest.replace(publicDir + '/', 'public/')} (dir)`)
@@ -44,7 +40,7 @@ function copyDir(src, dest) {
 
 ensureDir(publicDir)
 
-// ── Wasm artifacts (require prior `cargo build`) ──────────────────────────
+// ── Wasm artifacts ───────────────────────────────────────────────────────
 console.log('\nwasm artifacts:')
 copyFile(join(projectRoot, 'tools/bridge.wasm'),      join(publicDir, 'bridge.wasm'))
 copyFile(join(projectRoot, 'target/boot.wasm'),  join(publicDir, 'boot.wasm'))
@@ -54,7 +50,7 @@ console.log('\ntwinkle source:')
 copyDir(join(projectRoot, 'boot/prelude'), join(publicDir, 'prelude'))
 copyDir(join(projectRoot, 'boot/stdlib'),  join(publicDir, 'stdlib'))
 
-// ── Tree-sitter wasm (requires prior `bun install` / `npm install`) ───────
+// ── Tree-sitter wasm (requires prior `npm install` / `npm ci`) ───────────
 console.log('\ntree-sitter:')
 const tsWasm = join(__dirname, '../node_modules/web-tree-sitter/tree-sitter.wasm')
 copyFile(tsWasm, join(publicDir, 'tree-sitter.wasm'))
@@ -63,6 +59,4 @@ copyFile(tsWasm, join(publicDir, 'tree-sitter.wasm'))
 const tsTwinkleWasm = join(projectRoot, 'tree-sitter-twinkle/tree-sitter-twinkle.wasm')
 copyFile(tsTwinkleWasm, join(publicDir, 'tree-sitter-twinkle.wasm'))
 
-console.log(warnings > 0
-  ? `\ncopy-assets done with ${warnings} warning(s) — see above`
-  : '\ncopy-assets done')
+console.log('\ncopy-assets done')

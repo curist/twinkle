@@ -20,7 +20,7 @@ parse_cmd := file_command("parse", "Parse source and print diagnostics")
 check_cmd := file_command("check", "Type-check source")
   .add_flag("fix-unused-imports", "Automatically remove unused imports")
 
-ir_cmd := file_command("ir", "Compile and print boot compiler IR")
+ir_cmd := file_command("ir", "Compile and print compiler IR")
   .add_flag("core", "Print lowered Core IR")
   .add_flag("mono", "Print monomorphized Core IR")
   .add_flag("anf", "Print unoptimized ANF IR")
@@ -36,12 +36,12 @@ build_cmd := file_command("build", "Compile to linked WAT or Wasm")
 
 lsp_cmd := command.make("lsp", "Start the Language Server Protocol server")
 
-cli := app.make("twk", "Twinkle bootstrap compiler (self-hosting skeleton)").add_commands([
-  parse_cmd,
-  check_cmd,
-  ir_cmd,
+cli := app.make("twk", "Twinkle compiler").add_commands([
   run_cmd,
+  check_cmd,
   build_cmd,
+  ir_cmd,
+  parse_cmd,
   lsp_cmd,
 ])
 
