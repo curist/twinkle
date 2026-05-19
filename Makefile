@@ -104,8 +104,8 @@ tree-sitter-twinkle/tree-sitter-twinkle.wasm: tree-sitter-twinkle/grammar.js
 	cd tree-sitter-twinkle && npx tree-sitter generate && npx tree-sitter build --wasm
 
 # Ensure playground npm deps are installed
-playground/node_modules: playground/package.json
-	cd playground && npm install && touch node_modules
+playground/node_modules: playground/package.json playground/package-lock.json
+	cd playground && npm ci && touch node_modules
 
 # Copy all artifacts into playground/public/, then run vite build
 playground: $(STAGE2_WASM) tools/bridge.wasm tree-sitter-twinkle/tree-sitter-twinkle.wasm playground/node_modules
