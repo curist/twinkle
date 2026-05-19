@@ -989,7 +989,6 @@ fn emit_intrinsic_call(fid: FuncId, name: String, args: Vector<PreparedAtom>, re
     "vector_get"          => emit_intrinsic_vector_get(args, result_idx, result_mono, ctx, buf),
     "vector_set"          => emit_intrinsic_vector_set(args, result_idx, result_mono, ctx, buf),
     "vector_make"         => emit_intrinsic_vector_make(args, result_idx, ctx, buf),
-    "vector__set_in_place" => emit_intrinsic_vector_set_in_place(args, result_idx, ctx, buf),
     "dict_get"             => emit_intrinsic_dict_get(args, result_idx, result_mono, ctx, buf),
     "dict__get_unsafe"     => emit_intrinsic_dict_get_unsafe(args, result_idx, result_mono, ctx, buf),
     "string_get"          => emit_intrinsic_string_get(args, result_idx, result_mono, ctx, buf),
@@ -1135,16 +1134,6 @@ fn emit_intrinsic_vector_make(args: Vector<PreparedAtom>, result_idx: Int, ctx: 
   buf2 := emit_checked_i32_narrow(args[0], ctx, buf)  // size (i32)
   buf3 := emit_erased_container_ingress(args[1], ctx, buf2)
   buf3.append(.Call("rt_arr__make")).append(.LocalSet(result_idx))
-}
-
-// ── vector_set_in_place ────────────────────────────────────────────────
-
-fn emit_intrinsic_vector_set_in_place(args: Vector<PreparedAtom>, result_idx: Int, ctx: EmitCtx, buf: Vector<Instr>) Vector<Instr> {
-  // vector_set_in_place: initially lowers to persistent set (correctness over perf)
-  buf2 := emit_atom(args[0], ctx, buf)  // vec
-  buf3 := emit_checked_i32_narrow(args[1], ctx, buf2)  // index
-  buf4 := emit_erased_container_ingress(args[2], ctx, buf3)
-  buf4.append(.Call("rt_arr__set")).append(.LocalSet(result_idx))
 }
 
 // ── dict_get: d.get(k) → Option<V> ────────────────────────────────────

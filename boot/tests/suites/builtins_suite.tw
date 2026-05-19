@@ -63,8 +63,8 @@ pub fn suite() runner.Suite {
       }
     })
 
-    .test("intrinsic vector__set_in_place carries PVec ABI result", fn() {
-      reg := empty_registry().intrinsic("vector__set_in_place")
+    .test("runtime vector__set_in_place carries PVec ABI result", fn() {
+      reg := empty_registry().runtime("vector__set_in_place", "rt.arr", "set_in_place")
       entry := try reg.entry(reg.id("vector__set_in_place")).ok_or("missing")
       try assert.equal(entry.abi.result_types.len(), 1)
       case entry.abi.result_types[0] {

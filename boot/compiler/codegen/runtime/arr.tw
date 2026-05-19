@@ -47,8 +47,9 @@ pub fn module() WasmModule {
   funcs := [
     // internal helpers
     tailoff_fn(), get_leaf_fn(), new_path_fn(), push_tail_fn(), do_set_fn(), push_fn(),
+    promote_full_tail_fn(),
     // public API
-    make_fn(), get_fn(), set_fn(), len_fn(), concat_fn(), slice_fn(),
+    make_fn(), get_fn(), set_fn(), set_in_place_fn(), len_fn(), concat_fn(), slice_fn(),
     builder_new_fn(), builder_from_fn(), builder_push_fn(), builder_extend_fn(),
     builder_freeze_fn(),
     from_array_fn(), to_array_fn(), from_read_file_result_fn(),
@@ -591,6 +592,26 @@ fn set_fn() FuncDef {
   }
 }
 
+// set_in_place(vec: PVec?, idx: i32, val: anyref) -> PVec
+// True in-place mutation for vectors proven unique by the optimizer.
+fn set_in_place_fn() FuncDef {
+  // p0=vec, p1=idx, p2=val
+  // Reuses get_leaf to find the leaf/tail, then mutates directly.
+  .{ name: "set_in_place", params: [pvec_null(), .I32, .Anyref], results: [pvec_ref()],
+    locals: [],
+    body: [
+      // get_leaf(vec, idx)[idx & 31] = val
+      .LocalGet(0), .RefAsNonNull, .LocalGet(1),
+      .Call("get_leaf"),
+      .LocalGet(1), .I32Const(mask()), .I32And,
+      .LocalGet(2),
+      .ArraySet(t_array()),
+      // return vec as-is
+      .LocalGet(0), .RefAsNonNull,
+    ],
+  }
+}
+
 // len(vec: PVec?) -> i32
 fn len_fn() FuncDef {
   .{ name: "len", params: [pvec_null()], results: [.I32], locals: [], body: [
@@ -634,24 +655,62 @@ fn concat_fn() FuncDef {
 
 // slice(vec: PVec?, start: i32, end: i32) -> PVec
 fn slice_fn() FuncDef {
-  // p0=vec, p1=start, p2=end, L3=builder, L4=i
+  ta := t_array()
+  // p0=vec, p1=start, p2=end, L3=len, L4=temp, L5=i, L6=leaf, L7=leaf_off, L8=copy_count
   .{ name: "slice", params: [pvec_null(), .I32, .I32], results: [pvec_ref()],
-    locals: [arr_null(), .I32],
+    locals: [.I32, arr_null(), .I32, arr_null(), .I32, .I32],
     body: [
-      .Call("builder_new"), .LocalSet(3),
-      .LocalGet(1), .LocalSet(4),
-      .Block("brk", .None, [.Loop("lp", .None, [
-        .LocalGet(4), .LocalGet(2), .I32GeS, .BrIf("brk"),
-
-        .LocalGet(3),
-        .LocalGet(0), .LocalGet(4), .Call("get"),
-        .Call("builder_push"),
-
-        .LocalGet(4), .I32Const(1), .I32Add, .LocalSet(4),
-        .Br("lp"),
-      ])]),
-      .LocalGet(3),
-      .Call("builder_freeze"),
+      // len = end - start
+      .LocalGet(2), .LocalGet(1), .I32Sub, .LocalSet(3),
+      .LocalGet(3), .I32Eqz,
+      .If(.Some(pvec_ref()),
+        [.GlobalGet("empty_pvec")],
+        [
+          // temp = new Array(len, null)
+          .RefNull(.None_), .LocalGet(3),
+          .ArrayNew(ta), .LocalSet(4),
+          // Copy via get_leaf in chunks
+          .LocalGet(1), .LocalSet(5),
+          .Block("brk", .None, [.Loop("lp", .None, [
+            .LocalGet(5), .LocalGet(2), .I32GeS, .BrIf("brk"),
+            // leaf = get_leaf(vec, i)
+            .LocalGet(0), .RefAsNonNull, .LocalGet(5),
+            .Call("get_leaf"), .LocalSet(6),
+            // leaf_off = i & 31
+            .LocalGet(5), .I32Const(mask()), .I32And, .LocalSet(7),
+            // copy_count = min(32 - leaf_off, end - i)
+            .I32Const(bf()), .LocalGet(7), .I32Sub,  // 32 - leaf_off
+            .LocalGet(2), .LocalGet(5), .I32Sub,      // end - i
+            // select smaller
+            .I32Const(bf()), .LocalGet(7), .I32Sub,
+            .LocalGet(2), .LocalGet(5), .I32Sub,
+            .I32Const(bf()), .LocalGet(7), .I32Sub,
+            .LocalGet(2), .LocalGet(5), .I32Sub,
+            .I32LtS,
+            .Select, .LocalSet(8),
+            // But also clamp to leaf.len - leaf_off (for short tails)
+            .LocalGet(6), .RefAsNonNull, .ArrayLen, .LocalGet(7), .I32Sub,
+            .LocalGet(8), .I32LtS,
+            .If(.None,
+              [.LocalGet(6), .RefAsNonNull, .ArrayLen, .LocalGet(7), .I32Sub, .LocalSet(8)],
+              [],
+            ),
+            // array.copy(temp, i - start, leaf, leaf_off, copy_count)
+            .LocalGet(4), .RefAsNonNull,
+            .LocalGet(5), .LocalGet(1), .I32Sub,
+            .LocalGet(6), .RefAsNonNull,
+            .LocalGet(7),
+            .LocalGet(8),
+            .ArrayCopy(ta, ta),
+            // i += copy_count
+            .LocalGet(5), .LocalGet(8), .I32Add, .LocalSet(5),
+            .Br("lp"),
+          ])]),
+          // from_array(temp)
+          .LocalGet(4), .RefAsNonNull,
+          .Call("from_array"),
+        ],
+      ),
     ],
   }
 }
@@ -661,16 +720,92 @@ fn slice_fn() FuncDef {
 //
 // Builder layout (3-slot $Array):
 //   [0] = pvec_so_far : PVec (trie prefix, tail always empty)
-//   [1] = tail_len    : BoxedInt
+//   [1] = tail_len    : i31ref
 //   [2] = tail_buf    : Array (mutable 32-slot buffer)
 // ═══════════════════════════════════════════════════════════════════════
 
+// promote_full_tail(prefix: PVec, full_tail: Array) -> PVec
+// Integrates a full 32-element tail into the trie, returning a PVec with empty tail.
+fn promote_full_tail_fn() FuncDef {
+  // p0=prefix, p1=full_tail
+  // L2=len (prefix.len + 32), L3=shift, L4=new_root, L5=new_children
+  .{ name: "promote_full_tail",
+    params: [pvec_ref(), arr_ref()],
+    results: [pvec_ref()],
+    locals: [.I32, .I32, ref_eq_null(), vec_children_null()],
+    body: [
+      // len = prefix.len + 32
+      .LocalGet(0), .StructGet(t_pvec(), pv_len()),
+      .I32Const(bf()), .I32Add, .LocalSet(2),
+      // shift = prefix.shift
+      .LocalGet(0), .StructGet(t_pvec(), pv_shift()), .LocalSet(3),
+      // if root == null: first trie node
+      .LocalGet(0), .StructGet(t_pvec(), pv_root()), .RefIsNull,
+      .If(.None,
+        [
+          .I32Const(b_()), .LocalSet(3),
+          .I32Const(b_()),
+          .LocalGet(1), .RefCast(false, .Eq),
+          .Call("new_path"),
+          .LocalSet(4),
+        ],
+        [
+          // Check if trie is full: (len >> 5) > (1 << shift)
+          .LocalGet(2), .I32Const(b_()), .I32ShrU,
+          .I32Const(1), .LocalGet(3), .I32Shl,
+          .I32GtU,
+          .If(.None,
+            [
+              // Need new root level
+              .RefNull(.Eq), .I32Const(bf()),
+              .ArrayNew(t_vec_children()), .LocalSet(5),
+              // new_children[0] = old root
+              .LocalGet(5), .RefAsNonNull, .I32Const(0),
+              .LocalGet(0), .StructGet(t_pvec(), pv_root()),
+              .RefAsNonNull,
+              .RefCast(false, .Eq),
+              .ArraySet(t_vec_children()),
+              // new_children[1] = new_path(shift, full_tail)
+              .LocalGet(5), .RefAsNonNull, .I32Const(1),
+              .LocalGet(3),
+              .LocalGet(1), .RefCast(false, .Eq),
+              .Call("new_path"),
+              .ArraySet(t_vec_children()),
+              // new_root = VecInternal { new_children }
+              .LocalGet(5), .RefAsNonNull,
+              .StructNew(t_vec_internal()),
+              .RefCast(false, .Eq),
+              .LocalSet(4),
+              // shift += 5
+              .LocalGet(3), .I32Const(b_()), .I32Add, .LocalSet(3),
+            ],
+            [
+              // push_tail into existing trie
+              .LocalGet(2), .LocalGet(3),
+              .LocalGet(0), .StructGet(t_pvec(), pv_root()),
+              .LocalGet(1), .RefCast(false, .Eq),
+              .Call("push_tail"),
+              .LocalSet(4),
+            ],
+          ),
+        ],
+      ),
+      // return PVec { len, new_shift, new_root, empty_leaf }
+      .LocalGet(2),
+      .LocalGet(3),
+      .LocalGet(4),
+      .RefCast(true, .Named(t_vec_internal())),
+      .GlobalGet("empty_leaf"),
+      .StructNew(t_pvec()),
+    ],
+  }
+}
+
 // builder_new() -> Array
 fn builder_new_fn() FuncDef {
-  bi := t_boxed_int()
   .{ name: "builder_new", params: [], results: [arr_ref()], locals: [], body: [
     .GlobalGet("empty_pvec"),
-    .I64Const(0), .StructNew(bi),
+    .I32Const(0), .RefI31,
     .RefNull(.None_), .I32Const(bf()), .ArrayNew(t_array()),
     .ArrayNewFixed(t_array(), 3),
   ] }
@@ -679,7 +814,6 @@ fn builder_new_fn() FuncDef {
 // builder_from(vec: PVec?) -> Array
 fn builder_from_fn() FuncDef {
   ta := t_array()
-  bi := t_boxed_int()
   // p0=vec, L1=tail_data, L2=tail_len, L3=new_tail_buf, L4=trie_prefix
   .{ name: "builder_from", params: [pvec_null()], results: [arr_ref()],
     locals: [arr_null(), .I32, arr_null(), pvec_null()],
@@ -706,9 +840,9 @@ fn builder_from_fn() FuncDef {
       .LocalGet(0), .RefAsNonNull, .StructGet(t_pvec(), pv_root()),
       .GlobalGet("empty_leaf"),
       .StructNew(t_pvec()), .LocalSet(4),
-      // return [trie_prefix, BoxedInt(tail_len), new_tail_buf]
+      // return [trie_prefix, i31ref(tail_len), new_tail_buf]
       .LocalGet(4), .RefAsNonNull,
-      .LocalGet(2), .I64ExtendI32S, .StructNew(bi),
+      .LocalGet(2), .RefI31,
       .LocalGet(3),
       .ArrayNewFixed(ta, 3),
     ],
@@ -718,20 +852,19 @@ fn builder_from_fn() FuncDef {
 // builder_push(builder: Array?, elem: anyref) -> void
 fn builder_push_fn() FuncDef {
   ta := t_array()
-  bi := t_boxed_int()
   // p0=builder, p1=elem
-  // L2=tail_buf, L3=tail_len, L4=pvec_so_far, L5=new_pvec
+  // L2=tail_buf, L3=tail_len, L4=pvec_so_far
   .{ name: "builder_push", params: [arr_null(), .Anyref], results: [],
-    locals: [arr_null(), .I32, pvec_null(), pvec_null()],
+    locals: [arr_null(), .I32, pvec_null()],
     body: [
       // tail_buf = builder[2] as Array
       .LocalGet(0), .RefAsNonNull, .I32Const(2),
       .ArrayGet(ta), .RefCast(true, .Named(ta)),
       .LocalSet(2),
-      // tail_len = unbox(builder[1])
+      // tail_len = i31ref.get_u(builder[1])
       .LocalGet(0), .RefAsNonNull, .I32Const(1),
-      .ArrayGet(ta), .RefCast(false, .Named(bi)),
-      .StructGet(bi, 0), .I32WrapI64, .LocalSet(3),
+      .ArrayGet(ta), .RefCast(false, .I31),
+      .I31GetU, .LocalSet(3),
       // if tail_len < 32: in-place append
       .LocalGet(3), .I32Const(bf()), .I32LtS,
       .If(.None,
@@ -739,35 +872,22 @@ fn builder_push_fn() FuncDef {
           // tail_buf[tail_len] = elem
           .LocalGet(2), .RefAsNonNull,
           .LocalGet(3), .LocalGet(1), .ArraySet(ta),
-          // builder[1] = BoxedInt(tail_len + 1)
+          // builder[1] = i31ref(tail_len + 1)
           .LocalGet(0), .RefAsNonNull, .I32Const(1),
           .LocalGet(3), .I32Const(1), .I32Add,
-          .I64ExtendI32S, .StructNew(bi),
+          .RefI31,
           .ArraySet(ta),
         ],
         [
-          // Tail full: promote tail_buf as leaf into pvec_so_far
+          // Tail full: promote tail_buf into trie via promote_full_tail
           .LocalGet(0), .RefAsNonNull, .I32Const(0),
           .ArrayGet(ta), .RefCast(true, .Named(t_pvec())),
           .LocalSet(4),
-          // temp = PVec { pvec_so_far.len + 32, shift, root, tail_buf }
-          // then push(temp, elem) to trigger promote
-          .LocalGet(4), .RefAsNonNull, .StructGet(t_pvec(), pv_len()),
-          .I32Const(bf()), .I32Add,
-          .LocalGet(4), .RefAsNonNull, .StructGet(t_pvec(), pv_shift()),
-          .LocalGet(4), .RefAsNonNull, .StructGet(t_pvec(), pv_root()),
-          .LocalGet(2), .RefAsNonNull,
-          .StructNew(t_pvec()),
-          .LocalGet(1),
-          .Call("push"), .LocalSet(5),
-          // builder[0] = PVec { result.len - 1, result.shift, result.root, empty_leaf }
+          // builder[0] = promote_full_tail(pvec_so_far, tail_buf)
           .LocalGet(0), .RefAsNonNull, .I32Const(0),
-          .LocalGet(5), .RefAsNonNull, .StructGet(t_pvec(), pv_len()),
-          .I32Const(1), .I32Sub,
-          .LocalGet(5), .RefAsNonNull, .StructGet(t_pvec(), pv_shift()),
-          .LocalGet(5), .RefAsNonNull, .StructGet(t_pvec(), pv_root()),
-          .GlobalGet("empty_leaf"),
-          .StructNew(t_pvec()),
+          .LocalGet(4), .RefAsNonNull,
+          .LocalGet(2), .RefAsNonNull,
+          .Call("promote_full_tail"),
           .ArraySet(ta),
           // new tail_buf = new Array(32, null) with elem at [0]
           .RefNull(.None_), .I32Const(bf()),
@@ -777,9 +897,9 @@ fn builder_push_fn() FuncDef {
           // builder[2] = new tail_buf
           .LocalGet(0), .RefAsNonNull, .I32Const(2),
           .LocalGet(2), .ArraySet(ta),
-          // builder[1] = BoxedInt(1)
+          // builder[1] = i31ref(1)
           .LocalGet(0), .RefAsNonNull, .I32Const(1),
-          .I64Const(1), .StructNew(bi),
+          .I32Const(1), .RefI31,
           .ArraySet(ta),
         ],
       ),
@@ -789,17 +909,22 @@ fn builder_push_fn() FuncDef {
 
 // builder_extend(builder: Array?, vec: PVec?) -> void
 fn builder_extend_fn() FuncDef {
-  // p0=builder, p1=vec, L2=i, L3=vec_len
+  ta := t_array()
+  // p0=builder, p1=vec, L2=i, L3=vec_len, L4=flat
   .{ name: "builder_extend", params: [arr_null(), pvec_null()], results: [],
-    locals: [.I32, .I32],
+    locals: [.I32, .I32, arr_null()],
     body: [
       .LocalGet(1), .RefAsNonNull,
       .StructGet(t_pvec(), pv_len()), .LocalSet(3),
+      .LocalGet(3), .I32Eqz,
+      .If(.None, [.Return], []),
+      // flat = to_array(vec)
+      .LocalGet(1), .Call("to_array"), .LocalSet(4),
       .I32Const(0), .LocalSet(2),
       .Block("brk", .None, [.Loop("lp", .None, [
         .LocalGet(2), .LocalGet(3), .I32GeS, .BrIf("brk"),
         .LocalGet(0),
-        .LocalGet(1), .LocalGet(2), .Call("get"),
+        .LocalGet(4), .RefAsNonNull, .LocalGet(2), .ArrayGet(ta),
         .Call("builder_push"),
         .LocalGet(2), .I32Const(1), .I32Add, .LocalSet(2),
         .Br("lp"),
@@ -811,7 +936,6 @@ fn builder_extend_fn() FuncDef {
 // builder_freeze(builder: Array?) -> PVec
 fn builder_freeze_fn() FuncDef {
   ta := t_array()
-  bi := t_boxed_int()
   // p0=builder, L1=pvec_so_far, L2=tail_len, L3=tail_buf, L4=final_tail
   .{ name: "builder_freeze", params: [arr_null()], results: [pvec_ref()],
     locals: [pvec_null(), .I32, arr_null(), arr_null()],
@@ -820,10 +944,10 @@ fn builder_freeze_fn() FuncDef {
       .LocalGet(0), .RefAsNonNull, .I32Const(0),
       .ArrayGet(ta), .RefCast(true, .Named(t_pvec())),
       .LocalSet(1),
-      // tail_len = unbox(builder[1])
+      // tail_len = i31ref.get_u(builder[1])
       .LocalGet(0), .RefAsNonNull, .I32Const(1),
-      .ArrayGet(ta), .RefCast(false, .Named(bi)),
-      .StructGet(bi, 0), .I32WrapI64, .LocalSet(2),
+      .ArrayGet(ta), .RefCast(false, .I31),
+      .I31GetU, .LocalSet(2),
       // tail_buf = builder[2] as Array
       .LocalGet(0), .RefAsNonNull, .I32Const(2),
       .ArrayGet(ta), .RefCast(true, .Named(ta)),
@@ -859,9 +983,9 @@ fn builder_freeze_fn() FuncDef {
 // from_array(arr: Array) -> PVec
 fn from_array_fn() FuncDef {
   ta := t_array()
-  // p0=arr, L1=len, L2=result, L3=i
+  // p0=arr, L1=len, L2=pvec, L3=i, L4=leaf, L5=remaining, L6=tail
   FuncDef.{ name: "from_array", params: [arr_ref()], results: [pvec_ref()],
-    locals: [.I32, pvec_null(), .I32],
+    locals: [.I32, pvec_null(), .I32, arr_null(), .I32, arr_null()],
     body: [
       .LocalGet(0), .ArrayLen, .LocalSet(1),
       .LocalGet(1), .I32Eqz,
@@ -878,18 +1002,47 @@ fn from_array_fn() FuncDef {
               .StructNew(t_pvec()),
             ],
             [
-              // len > 32: iterate and push
+              // len > 32: build trie from 32-element leaf copies
               .GlobalGet("empty_pvec"), .LocalSet(2),
               .I32Const(0), .LocalSet(3),
+              // Loop: promote full 32-element leaves (keep last chunk for tail)
               .Block("brk", .None, [.Loop("lp", .None, [
-                .LocalGet(3), .LocalGet(1), .I32GeS, .BrIf("brk"),
+                .LocalGet(3), .I32Const(bf()), .I32Add,
+                .LocalGet(1), .I32GeS, .BrIf("brk"),
+                // leaf = new Array(32, null); copy arr[i..i+32] -> leaf
+                .RefNull(.None_), .I32Const(bf()),
+                .ArrayNew(ta), .LocalSet(4),
+                .LocalGet(4), .RefAsNonNull, .I32Const(0),
+                .LocalGet(0), .LocalGet(3), .I32Const(bf()),
+                .ArrayCopy(ta, ta),
+                // pvec = promote_full_tail(pvec, leaf)
                 .LocalGet(2), .RefAsNonNull,
-                .LocalGet(0), .LocalGet(3), .ArrayGet(ta),
-                .Call("push"), .LocalSet(2),
-                .LocalGet(3), .I32Const(1), .I32Add, .LocalSet(3),
+                .LocalGet(4), .RefAsNonNull,
+                .Call("promote_full_tail"), .LocalSet(2),
+                .LocalGet(3), .I32Const(bf()), .I32Add, .LocalSet(3),
                 .Br("lp"),
               ])]),
-              .LocalGet(2), .RefAsNonNull,
+              // remaining = len - i
+              .LocalGet(1), .LocalGet(3), .I32Sub, .LocalSet(5),
+              // Build final tail
+              .LocalGet(5), .I32Eqz,
+              .If(.None,
+                [.GlobalGet("empty_leaf"), .LocalSet(6)],
+                [
+                  .RefNull(.None_), .LocalGet(5),
+                  .ArrayNew(ta), .LocalSet(6),
+                  .LocalGet(6), .RefAsNonNull, .I32Const(0),
+                  .LocalGet(0), .LocalGet(3), .LocalGet(5),
+                  .ArrayCopy(ta, ta),
+                ],
+              ),
+              // PVec { pvec.len + remaining, pvec.shift, pvec.root, tail }
+              .LocalGet(2), .RefAsNonNull, .StructGet(t_pvec(), pv_len()),
+              .LocalGet(5), .I32Add,
+              .LocalGet(2), .RefAsNonNull, .StructGet(t_pvec(), pv_shift()),
+              .LocalGet(2), .RefAsNonNull, .StructGet(t_pvec(), pv_root()),
+              .LocalGet(6), .RefAsNonNull,
+              .StructNew(t_pvec()),
             ],
           ),
         ],
@@ -901,24 +1054,41 @@ fn from_array_fn() FuncDef {
 // to_array(vec: PVec?) -> Array
 fn to_array_fn() FuncDef {
   ta := t_array()
-  // p0=vec, L1=len, L2=result, L3=i
+  // p0=vec, L1=len, L2=result, L3=i, L4=tail, L5=tail_len, L6=trie_len
   FuncDef.{ name: "to_array", params: [pvec_null()], results: [arr_ref()],
-    locals: [.I32, arr_null(), .I32],
+    locals: [.I32, arr_null(), .I32, arr_null(), .I32, .I32],
     body: [
       .LocalGet(0), .RefAsNonNull,
       .StructGet(t_pvec(), pv_len()), .LocalSet(1),
       .RefNull(.None_), .LocalGet(1),
       .ArrayNew(ta), .LocalSet(2),
+      // tail = vec.tail
+      .LocalGet(0), .RefAsNonNull,
+      .StructGet(t_pvec(), pv_tail()), .LocalSet(4),
+      // tail_len = tail.len
+      .LocalGet(4), .ArrayLen, .LocalSet(5),
+      // trie_len = len - tail_len
+      .LocalGet(1), .LocalGet(5), .I32Sub, .LocalSet(6),
+      // Copy trie leaves in 32-element chunks
       .I32Const(0), .LocalSet(3),
       .Block("brk", .None, [.Loop("lp", .None, [
-        .LocalGet(3), .LocalGet(1), .I32GeS, .BrIf("brk"),
+        .LocalGet(3), .LocalGet(6), .I32GeS, .BrIf("brk"),
+        // array.copy(result, i, get_leaf(vec, i), 0, 32)
         .LocalGet(2), .RefAsNonNull, .LocalGet(3),
         .LocalGet(0), .RefAsNonNull, .LocalGet(3),
-        .Call("get"),
-        .ArraySet(ta),
-        .LocalGet(3), .I32Const(1), .I32Add, .LocalSet(3),
+        .Call("get_leaf"),
+        .I32Const(0), .I32Const(bf()),
+        .ArrayCopy(ta, ta),
+        .LocalGet(3), .I32Const(bf()), .I32Add, .LocalSet(3),
         .Br("lp"),
       ])]),
+      // Copy tail
+      .LocalGet(5), .I32Eqz,
+      .If(.None, [], [
+        .LocalGet(2), .RefAsNonNull, .LocalGet(6),
+        .LocalGet(4), .I32Const(0), .LocalGet(5),
+        .ArrayCopy(ta, ta),
+      ]),
       .LocalGet(2), .RefAsNonNull,
     ],
   }

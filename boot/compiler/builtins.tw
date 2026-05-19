@@ -341,7 +341,7 @@ pub fn builtin_specs() Vector<BuiltinSpec> {
     rt("dict_has",    "rt.dict", "has",    .Some("Dict.has")),
     rt("dict_remove", "rt.dict", "remove", .Some("Dict.remove")),
     // ── In-place variants (optimizer rewrites) ──
-    intr("vector__set_in_place", .None),
+    rt("vector__set_in_place", "rt.arr", "set_in_place", .None),
     rt("dict__set_in_place",    "rt.dict", "set_in_place",    .None),
     rt("dict__remove_in_place", "rt.dict", "remove_in_place", .None),
     // ── Range & iterators ──

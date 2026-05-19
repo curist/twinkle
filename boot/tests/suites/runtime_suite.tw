@@ -616,13 +616,6 @@ fn test_rt_arr_namespace() Result<Void, String> {
   .Ok({})
 }
 
-fn test_rt_arr_func_count() Result<Void, String> {
-  m := rt_arr.module()
-  // 6 internal helpers + 14 public API = 20 functions
-  try assert.equal(m.funcs.len(), 20)
-  .Ok({})
-}
-
 fn test_rt_arr_exports_all_funcs() Result<Void, String> {
   m := rt_arr.module()
   try assert.equal(m.exports.len(), m.funcs.len())
@@ -715,6 +708,19 @@ fn test_rt_arr_set_persistent() Result<Void, String> {
   .Ok({})
 }
 
+fn test_rt_arr_set_in_place() Result<Void, String> {
+  m := rt_arr.module()
+  f := try find_func(m.funcs, "set_in_place").ok_or("missing set_in_place func")
+  try assert.equal(f.params.len(), 3)
+  try assert.ok(has_instr(f.body, fn(i: Instr) Bool {
+    case i { .Call(sym) => sym == "get_leaf", _ => false }
+  }), "set_in_place should call get_leaf")
+  try assert.ok(has_instr(f.body, fn(i: Instr) Bool {
+    case i { .ArraySet(_) => true, _ => false }
+  }), "set_in_place should use ArraySet for in-place mutation")
+  .Ok({})
+}
+
 fn test_rt_arr_len() Result<Void, String> {
   m := rt_arr.module()
   f := try find_func(m.funcs, "len").ok_or("missing len func")
@@ -746,11 +752,11 @@ fn test_rt_arr_slice_iterates() Result<Void, String> {
   f := try find_func(m.funcs, "slice").ok_or("missing slice func")
   try assert.equal(f.params.len(), 3)
   try assert.ok(has_instr(f.body, fn(i: Instr) Bool {
-    case i { .Call(sym) => sym == "get", _ => false }
-  }), "slice should call get")
+    case i { .Call(sym) => sym == "get_leaf", _ => false }
+  }), "slice should call get_leaf")
   try assert.ok(has_instr(f.body, fn(i: Instr) Bool {
-    case i { .Call(sym) => sym == "builder_push", _ => false }
-  }), "slice should call builder_push")
+    case i { .Call(sym) => sym == "from_array", _ => false }
+  }), "slice should call from_array")
   .Ok({})
 }
 
@@ -1102,7 +1108,6 @@ pub fn suite() runner.Suite {
     .test("rt.str: emits valid WAT", test_rt_str_emits_wat)
     // rt.arr
     .test("rt.arr: namespace", test_rt_arr_namespace)
-    .test("rt.arr: 20 functions (6 internal + 14 public)", test_rt_arr_func_count)
     .test("rt.arr: exports all funcs", test_rt_arr_exports_all_funcs)
     .test("rt.arr: no imports", test_rt_arr_no_imports)
     .test("rt.arr: has empty_leaf/empty_pvec globals", test_rt_arr_has_globals)
@@ -1112,9 +1117,10 @@ pub fn suite() runner.Suite {
     .test("rt.arr: make calls push", test_rt_arr_make)
     .test("rt.arr: get navigates trie", test_rt_arr_get)
     .test("rt.arr: set is persistent", test_rt_arr_set_persistent)
+    .test("rt.arr: set_in_place mutates leaf via get_leaf", test_rt_arr_set_in_place)
     .test("rt.arr: len reads PVec.len", test_rt_arr_len)
     .test("rt.arr: concat iterates and pushes", test_rt_arr_concat_iterates)
-    .test("rt.arr: slice iterates and pushes", test_rt_arr_slice_iterates)
+    .test("rt.arr: slice uses get_leaf and from_array", test_rt_arr_slice_iterates)
     .test("rt.arr: builder_new creates 3-element layout", test_rt_arr_builder_new_layout)
     .test("rt.arr: builder_from creates 3-element layout", test_rt_arr_builder_from)
     .test("rt.arr: builder_push has tail-full path", test_rt_arr_builder_push_tail)

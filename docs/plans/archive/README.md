@@ -91,6 +91,7 @@ Related historical context outside this folder:
 | [persistent-vector-benchmark-followup.md](persistent-vector-benchmark-followup.md) | Early benchmark investigation for persistent vector regressions before the later read-path follow-up settled the direction |
 | [persistent-vector-i64-poc.md](persistent-vector-i64-poc.md) | Historical stage0-only `Vector<Int>` typed-family POC that predates the shipped pragmatic `PVec` approach |
 | [persistent-vector-read-path-followup.md](persistent-vector-read-path-followup.md) | Read-path performance investigation and landed leaf-wrapper removal follow-up for persistent vectors |
+| [pvec-performance-enhancements.md](pvec-performance-enhancements.md) | Incremental PVec runtime optimizations: i31ref builder tail, promote_full_tail, bulk array conversion, leaf-oriented slice/extend, true in-place set |
 | [dict-wyhash-i64.md](dict-wyhash-i64.md) | Migrate active FNV-derived hashing to deterministic wyhash v3 and carry 64-bit hashes through the Dict HAMT |
 | [string-unicode-semantics.md](string-unicode-semantics.md) | Byte-first string semantics with explicit Unicode APIs |
 | [byte-first-fs-read-api.md](byte-first-fs-read-api.md) | Migrate file-read host ABI and stdlib layering to byte-first semantics |
