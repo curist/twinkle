@@ -5,18 +5,15 @@ It is designed around immutable data, persistent collections, top-level executab
 
 **Try it:** [Twinkle Playground](https://curist.github.io/twinkle/)
 
-## Overview
+## Why Twinkle?
 
-Twinkle aims to make functional, persistent-data programming feel direct:
+Twinkle is inspired by functional and value-oriented languages such as Gleam, but aims for a more direct and lightweight programming style.
 
-- Programs are ordinary `.tw` files with top-level statements, so scripts and applications use the same shape.
-- Records, enums, pattern matching, closures, and generics form the core language.
-- Values are immutable, while rebinding and update syntax keep everyday transformations concise.
-- `Vector` and `Dict` are persistent collections backed by persistent-vector and HAMT-style data structures.
-- `Option`, `Result`, and `try` provide typed control flow for absence and recoverable errors.
-- Module functions become inherent methods through dot-call syntax, keeping APIs discoverable without extra declarations.
-- Contracts provide syntax hooks for string interpolation, equality, and ordering.
-- The compiler emits WebAssembly GC for portable execution on modern Wasm runtimes.
+Immutable values, persistent collections, pattern matching, and higher-order functions are central to the language. Twinkle also embraces straightforward control flow: loops, rebinding, and early returns are all part of everyday programming.
+
+The goal is to make value-oriented programming practical and ergonomic without pushing programmers into ceremony when direct code is clearer.
+
+Twinkle also explores a compact WebAssembly GC–based runtime model with an emphasis on portability, tooling friendliness, and self-hosting.
 
 ## Quick Example
 
@@ -28,106 +25,40 @@ fn complete(todo: Todo) Todo {
   todo
 }
 
-fn complete_named(todos: Vector<Todo>, name: String) Todo!String {
-  todo := try todos
-    .find(fn(t) { t.name == name })
+fn complete_named(todos: Vector<Todo>, name: String) Vector<Todo>!String {
+  target := try todos
+    .find(fn(todo) { todo.name == name })
     .ok_or("unknown task: ${name}")
 
-  .Ok(todo.complete())
+  updated: Vector<Todo> = []
+  for todo in todos {
+    if todo.name == target.name {
+      todo = .complete()
+    }
+    updated = .append(todo)
+  }
+
+  .Ok(updated)
 }
 
-todos: Vector<Todo> = [
-  Todo.{ name: "parse", done: false },
-  Todo.{ name: "check", done: false },
-  Todo.{ name: "build", done: false },
-]
+todos: Vector<Todo> = []
+todos = .append(.{ name: "parse", done: false })
+todos = .append(.{ name: "check", done: false })
+todos = .append(.{ name: "build", done: false })
 
 case complete_named(todos, "build") {
-  .Ok(todo) => println("completed ${todo.name}"),
+  .Ok(updated) => println("updated ${updated.len()} tasks"),
   .Err(msg) => eprintln("error: ${msg}"),
 }
 ```
 
-## Language Highlights
+## Language Shape
 
-### Records, Rebinding, and Update Syntax
-
-Records are nominal types with concise construction syntax. Values are immutable, and assignment syntax rebinds a local name to a new value.
-
-```twinkle
-type Point = .{ x: Int, y: Int }
-
-fn translate(p: Point, dx: Int, dy: Int) Point {
-  p.x = p.x + dx
-  p.y = p.y + dy
-  p
-}
-```
-
-The field updates above rebuild and rebind `p`. Vector and dictionary index updates follow the same value-semantics model.
-
-### Module Functions as Methods
-
-Module functions can form method-style APIs for the types they define.
-
-```twinkle
-type Point = .{ x: Int, y: Int }
-
-fn translate(p: Point, dx: Int, dy: Int) Point {
-  Point.{ x: p.x + dx, y: p.y + dy }
-}
-
-p := Point.{ x: 1, y: 2 }
-q := p.translate(10, 20)
-```
-
-### Enums and Pattern Matching
-
-```twinkle
-type Tree<T> = {
-  Empty,
-  Node(T, Tree<T>, Tree<T>),
-}
-
-fn sum(t: Tree<Int>) Int {
-  case t {
-    .Empty => 0,
-    .Node(value, left, right) => value + sum(left) + sum(right),
-  }
-}
-```
-
-### Option, Result, and `try`
-
-`Option<T>` and `Result<T, E>` are built-in enum types with shorthand forms `T?` and `T!E`. The `try` expression propagates `.None` or `.Err(...)` from functions returning compatible types.
-
-```twinkle
-fn parse_pair(a: String, b: String) Int!String {
-  x := try Int.from_string(a).ok_or("invalid first integer")
-  y := try Int.from_string(b).ok_or("invalid second integer")
-  .Ok(x + y)
-}
-```
-
-### Generics, Capabilities, and Contracts
-
-Generic functions use explicit type parameters. Behavior can be passed through ordinary records of functions, while contracts cover common syntax-level behavior.
-
-```twinkle
-fn map<A, B>(xs: Vector<A>, f: fn(A) B) Vector<B> {
-  collect x in xs { f(x) }
-}
-
-type Show<T> = .{ to_string: fn(T) String }
-
-fn log<T>(x: T, show: Show<T>) {
-  println(show.to_string(x))
-}
-
-fn describe<T: Stringify>(x: T) String {
-  "value=${x}"
-}
-```
+- **Values are immutable.** Rebinding syntax such as `todo = .complete()` and `updated = .append(todo)` creates new values while keeping transformation code direct.
+- **Records and enums are the core data model.** Records are nominal, enums pattern-match exhaustively, and both work naturally with generics.
+- **Persistent collections are ordinary values.** `Vector` and `Dict` use persistent-vector and HAMT-style structures, with update syntax and method calls for ergonomic transformations.
+- **Control flow is typed but familiar.** `Option`, `Result`, and `try` handle absence and recoverable errors; loops, early returns, and `case` expressions are part of everyday code.
+- **Modules define APIs.** Functions become method-style calls when their first parameter is a module-defined type, and contracts provide syntax hooks for interpolation, equality, and ordering.
 
 ## Documentation
 
