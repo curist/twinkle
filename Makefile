@@ -1,4 +1,4 @@
-.PHONY: help test boot-test rust-test stage0 stage2 bundle-cli quick-bundle-cli cli playground playground-dev clean
+.PHONY: help test boot-test rust-test stage0 stage2 bundle-cli quick-bundle-cli cli playground playground-dev playground-wasm clean
 
 STAGE1_WASM ?= target/boot-stage1.wasm
 STAGE2_WASM ?= target/boot.wasm
@@ -24,6 +24,7 @@ help:
 	@printf '  make cli               Alias for bundle-cli\n'
 	@printf '  make playground        Build playground (all deps + vite build)\n'
 	@printf '  make playground-dev    Start playground dev server (all deps + vite dev)\n'
+	@printf '  make playground-wasm   Build target/playground.wasm (slim compiler for browser)\n'
 
 # Fast day-to-day validation for boot compiler changes.
 boot-test: target/twk
@@ -95,6 +96,16 @@ quick-bundle-cli:
 # Playground
 # ---------------------------------------------------------------------------
 
+# Slim compiler wasm for the browser playground (excludes LSP, IR debug, etc.)
+PLAYGROUND_WASM ?= target/playground.wasm
+PLAYGROUND_ENTRY := boot/playground.tw
+
+target/playground.wasm: $(STAGE2_WASM) $(PLAYGROUND_ENTRY)
+	@printf '\n==> Build playground.wasm (slim compiler for browser)\n'
+	BOOT_WASM=$(STAGE2_WASM) $(TWK_CLI) build $(PLAYGROUND_ENTRY) -o $(PLAYGROUND_WASM)
+
+playground-wasm: target/playground.wasm
+
 # Bridge module used by the JS runners
 tools/bridge.wasm: boot/tests/gen_bridge_wasm.tw target/release/twk
 	./target/release/twk run boot/tests/gen_bridge_wasm.tw
@@ -108,11 +119,11 @@ playground/node_modules: playground/package.json playground/package-lock.json
 	cd playground && npm ci && touch node_modules
 
 # Copy all artifacts into playground/public/, then run vite build
-playground: $(STAGE2_WASM) tools/bridge.wasm tree-sitter-twinkle/tree-sitter-twinkle.wasm playground/node_modules
+playground: target/playground.wasm tools/bridge.wasm tree-sitter-twinkle/tree-sitter-twinkle.wasm playground/node_modules
 	cd playground && node scripts/copy-assets.mjs && npx vite build
 
 # Copy artifacts and start the vite dev server
-playground-dev: $(STAGE2_WASM) tools/bridge.wasm tree-sitter-twinkle/tree-sitter-twinkle.wasm playground/node_modules
+playground-dev: target/playground.wasm tools/bridge.wasm tree-sitter-twinkle/tree-sitter-twinkle.wasm playground/node_modules
 	cd playground && node scripts/copy-assets.mjs && npx vite
 
 clean:

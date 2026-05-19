@@ -1,0 +1,149 @@
+// Minimal entry point for the JS playground.
+//
+// Unlike boot/main.tw, this does NOT import the LSP server, IR debug printer,
+// argparse library, or other CLI-only features.  The result is a smaller wasm
+// that only contains the core compilation pipeline + diagnostic rendering.
+//
+// Usage (same interface as `twk run`):
+//   playground.wasm run <file>
+//   playground.wasm build <file> -o <output>
+
+use @std.proc
+use @std.fs
+use @std.path
+use compiler.pipeline
+use compiler.artifacts.{CompileError}
+use lib.source.registry
+use lib.source.report
+use lib.source.render
+use compiler.resolver.{ResolvedEnv}
+use compiler.query.diag_render
+use compiler.query.analyze
+
+fn format_compile_error(err: CompileError) String {
+  case err {
+    .Diagnostics(de) => format_analysis_diags(de.env, de.diagnostics),
+    .Internal(msg) => msg,
+  }
+}
+
+fn format_analysis_diags(env: ResolvedEnv, diags: Vector<analyze.AnalysisDiag>) String {
+  if diags.len() == 0 { return "compilation failed" }
+  stage := diags[0].stage
+  config := report.default_config()
+  parts: Vector<String> = []
+  for d in diags {
+    source := case fs.read_text(d.identity.path) {
+      .Ok(text) => text,
+      .Err(_) => "",
+    }
+    reg := registry.empty()
+    registry.add_file(reg, d.identity.path, source)
+    ctx := diag_render.RenderCtx.{ registry: reg, env: .Some(env), module: .None, config, type_names: .Some(d.type_names) }
+    rep := diag_render.to_report(d.kind, ctx)
+    parts = parts.append(render.render(rep, reg, config))
+  }
+  sep := "\n\n"
+  "${stage}:\n${parts.join(sep)}"
+}
+
+fn print_warnings(warnings: Vector<analyze.AnalysisDiag>) {
+  config := report.default_config()
+  for d in warnings {
+    source := case fs.read_text(d.identity.path) {
+      .Ok(text) => text,
+      .Err(_) => "",
+    }
+    reg := registry.empty()
+    registry.add_file(reg, d.identity.path, source)
+    ctx := diag_render.RenderCtx.{ registry: reg, env: .None, module: .None, config, type_names: .Some(d.type_names) }
+    rep := diag_render.to_report(d.kind, ctx)
+    eprintln(render.render(rep, reg, config))
+    eprintln("")
+  }
+}
+
+fn compile_and_run(file: String, extra_args: Vector<String>) {
+  artifacts := case pipeline.compile_entry_path(file) {
+    .Ok(result) => result,
+    .Err(err) => {
+      eprintln(format_compile_error(err))
+      proc.exit(1)
+    },
+  }
+  print_warnings(artifacts.warnings)
+
+  wasm_bytes := pipeline.emit_wasm(artifacts)
+  argv := [file].concat(extra_args)
+  exit_code := proc.run_wasm(wasm_bytes, argv)
+  if exit_code != 0 {
+    proc.exit(exit_code)
+  }
+}
+
+fn compile_and_build(file: String, out: String) {
+  artifacts := case pipeline.compile_entry_path(file) {
+    .Ok(result) => result,
+    .Err(err) => {
+      eprintln(format_compile_error(err))
+      proc.exit(1)
+    },
+  }
+  print_warnings(artifacts.warnings)
+
+  ext := path.extension(out)
+  if ext == ".wasm" {
+    bytes := pipeline.emit_wasm(artifacts)
+    case fs.write_bytes(out, bytes) {
+      .Ok(_) => println("WASM output: ${out}"),
+      .Err(err) => {
+        eprintln("error: failed to write '${out}'")
+        proc.exit(1)
+      },
+    }
+  } else {
+    wat := pipeline.emit_wat(artifacts)
+    case fs.write_text(out, wat) {
+      .Ok(_) => println("WAT output: ${out}"),
+      .Err(err) => {
+        eprintln("error: failed to write '${out}'")
+        proc.exit(1)
+      },
+    }
+  }
+}
+
+argv := proc.args()
+
+if argv.len() < 3 {
+  eprintln("usage: playground <run|build> <file> [args...]")
+  proc.exit(2)
+}
+
+cmd := argv[1]
+file := argv[2]
+
+case cmd {
+  "run" => {
+    extra := if argv.len() > 3 {
+      argv.slice(3, argv.len())
+    } else {
+      []
+    }
+    compile_and_run(file, extra)
+  },
+  "build" => {
+    out := if argv.len() > 4 and argv[3] == "-o" {
+      argv[4]
+    } else {
+      stem := path.stem(file)
+      "${stem}.wat"
+    }
+    compile_and_build(file, out)
+  },
+  _ => {
+    eprintln("unknown command: ${cmd}")
+    eprintln("usage: playground <run|build> <file> [args...]")
+    proc.exit(2)
+  },
+}

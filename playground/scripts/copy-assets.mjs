@@ -43,7 +43,7 @@ ensureDir(publicDir)
 // ── Wasm artifacts ───────────────────────────────────────────────────────
 console.log('\nwasm artifacts:')
 copyFile(join(projectRoot, 'tools/bridge.wasm'),      join(publicDir, 'bridge.wasm'))
-copyFile(join(projectRoot, 'target/boot.wasm'),  join(publicDir, 'boot.wasm'))
+copyFile(join(projectRoot, 'target/playground.wasm'),  join(publicDir, 'boot.wasm'))
 
 // ── Twinkle source files (always present) ─────────────────────────────────
 console.log('\ntwinkle source:')
