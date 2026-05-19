@@ -2,20 +2,21 @@
 
 ## 1. Overview
 
-Twinkle is a small statically typed language targeting **WebAssembly GC**.
+Twinkle is a small statically typed language for value-oriented programs that compile to **WebAssembly GC**.
 
 Design goals:
 
-* Concise, low-ceremony syntax.
-* Rank-1 polymorphic (Damas–Milner) type system with bidirectional type checking.
-* Unboxed primitives (`Int = i64`, `Float = f64`, `Bool = i32`, `Byte = i32 (0..255)`).
-* GC-managed references for strings, arrays, records, dicts, and cells.
-* Small runtime; rely on `struct`, `array`, reference types.
-* Inherent methods only via module functions.
-* Immutable values with rebindable names.
-* No trait system; capabilities via records of functions.
+* Concise, low-ceremony syntax for everyday programming.
+* Immutable values with ergonomic rebinding and update syntax.
+* Persistent `Vector` and `Dict` collections with structural sharing.
+* Records, enums, pattern matching, closures, and rank-1 generics as the core language.
+* Bidirectional type checking over a Damas–Milner style type system.
+* Inherent methods via module functions and dot-call syntax.
+* Explicit capability records for passing behavior as ordinary values.
+* Small compiler-recognized contracts for syntax hooks such as interpolation, equality, and ordering.
+* WebAssembly GC output for portable execution on modern Wasm runtimes.
 
-Source files end with `.tw`.
+Source files end with `.tw`. Top-level statements execute directly.
 
 ---
 
@@ -25,7 +26,7 @@ Source files end with `.tw`.
 
 **All ordinary values in Twinkle are immutable.**
 
-* Primitives, strings, arrays, records, dicts, and functions cannot be mutated in place.
+* Primitives, strings, vectors, records, dicts, and functions cannot be mutated in place.
 * There is no observable in-place mutation of values in the language model.
 * Updates are expressed through rebinding: constructing a new value and binding a name to it.
 * Shared mutable state is explicit and only available through `Cell<T>` APIs (`Cell.set`, `Cell.update`).
@@ -41,9 +42,9 @@ Source files end with `.tw`.
 ### References (GC)
 
 * `String` — immutable text.
-* `Vector<T>` — immutable GC array; element unboxed/ref depending on `T`.
+* `Vector<T>` — immutable persistent vector; element unboxed/ref depending on `T`.
 * `record` — immutable closed struct shape.
-* `Dict<K,V>` — immutable hash map reference.
+* `Dict<K,V>` — immutable persistent hash map, implemented with HAMT-style structural sharing.
 * `function` — closure with captured environment (GC).
 * `Cell<T>` — mutable cell reference for explicit shared state.
 
@@ -64,7 +65,7 @@ fn map<A, B>(xs: Vector<A>, f: fn(A) B) Vector<B> { ... }
 
 No higher-kinded types.
 
-No trait constraints. Capabilities are passed as explicit function parameters (see Section 10).
+Generic parameters may use Twinkle's compiler-recognized contracts (`Stringify`, `Eq`, `Ord`) for syntax-level behavior. Other reusable behavior is passed explicitly through ordinary values, usually records of functions (see Section 10).
 
 Type alias:
 
@@ -359,7 +360,7 @@ m = Dict.set(m, k, v)
 
 #### Assignment targets
 
-The grammar allows identifiers, field accesses, and indexed expressions on the left of `=`. Field and index forms are still sugar that rebuild the owner value (see record/array/dict desugarings above); implementations should evaluate the left-hand side once when lowering.
+The grammar allows identifiers, field accesses, and indexed expressions on the left of `=`. Field and index forms are still sugar that rebuild the owner value (see record/vector/dict desugarings above); implementations should evaluate the left-hand side once when lowering.
 
 Nested field chains (`a.b.c = x`) are supported and desugar recursively from the inside out:
 
@@ -647,8 +648,8 @@ use utils             // import utils.tw at project root
 use .helper           // relative import: sibling module in same directory
 use .sub.mod          // relative import: nested path from same directory
 use .helper as h      // relative import with alias
-use @array            // stdlib module, bound as "array"
-use @std.json as json // stdlib module with alias
+use @std.fs           // stdlib module, bound as "fs"
+use @std.path as path // stdlib module with alias
 ```
 
 #### Filesystem mapping
@@ -861,90 +862,72 @@ case String.from_char_code(97) {
 * Check record fields first.
 * Then check the defining module of the receiver's type for a matching inherent method.
 * Method resolution depends on the type, not on how it was imported. A type obtained via destructured import, or received transitively from another module, resolves methods the same way.
-* No trait involvement.
+* No general trait/typeclass involvement. Dot syntax resolves fields and inherent/module methods; contract hooks are separate compiler-recognized rules.
 * If a name collision exists (field vs inherent), dot is illegal.
 
 ---
 
-# **10. Capabilities via Records of Functions**
+# **10. Capabilities and Contracts**
 
-Twinkle **does not** support traits, interfaces, or typeclass-style implicit capability systems.
+Twinkle has two complementary ways to express reusable behavior:
 
-Instead, Twinkle uses **records of functions** to model capabilities.
+* **Capability records** are ordinary record values containing functions. They are explicit, user-defined, and passed like any other argument.
+* **Contracts** are a small compiler-recognized set of named requirements used by syntax hooks and selected generic APIs. The built-in contracts are `Stringify`, `Eq`, and `Ord`.
 
----
-
-## **10.1 No Traits or Interfaces**
-
-* There is **no** syntax for declaring traits/interfaces (e.g. `trait Show`, `interface Iterable`).
-* There is **no** way to write generic constraints such as `T: Show` or `T: Iterable`.
-* There is **no** implicit resolution of "methods provided by a trait" based on the static type of a value.
-
-All polymorphic behavior is expressed using:
-
-* Ordinary **functions**,
-* **Records of functions** (capability records),
-* Modules and first-class values.
-
-This keeps:
-
-* The type system rank-1 polymorphic (Damas–Milner) and simple,
-* The compiler free from trait solvers, global coherence checks, and complex instance resolution.
+Capabilities are the general design pattern. Contracts are deliberately narrow and cover language-integrated behavior such as string interpolation, equality, and ordering.
 
 ---
 
-## **10.2 Capabilities via Records of Functions**
+## **10.1 Capability Records**
 
-A capability is a nominal type that captures a set of operations on some data type `T`.
-
-**Example: Show capability**
+A capability is a nominal record type that captures a set of operations on some data type `T`.
 
 ```tw
-type Show<T> = .{
-  to_string: fn(T) String,
+type Encoder<T> = .{
+  encode: fn(T) String,
 }
-```
 
-A function that needs "anything that can be shown" is written by taking both:
-
-* the value(s),
-* and a corresponding capability record.
-
-**Example: Generic printing**
-
-```tw
-fn print_all<T>(xs: Vector<T>, show: Show<T>) {
+fn write_all<T>(xs: Vector<T>, enc: Encoder<T>) {
   for x in xs {
-    println(show.to_string(x))
+    println(enc.encode(x))
   }
 }
 ```
 
-**Usage:**
+A function that needs custom behavior receives the relevant capability record explicitly. The compiler does not invent, search for, or implicitly pass capability values.
 
 ```tw
 type User = .{ name: String, age: Int }
 
-fn show_user(u: User) String {
-  // yep, this is comment
-  // twinkle will only have single line comment
-  // twinkle currently doesn't support `s1 + s2`
-  // string concat pattern, so we use string interpolation here
+fn encode_user(u: User) String {
   "${u.name}(${u.age})"
 }
 
-ShowUser: Show<User> = .{
-  to_string: show_user,
-}
-
+user_encoder: Encoder<User> = .{ encode: encode_user }
 users: Vector<User> = [...]
-print_all(users, ShowUser)
+
+write_all(users, user_encoder)
 ```
 
-**Key points:**
+---
 
-* The compiler does **not** invent or find `Show<User>` automatically.
-* The call site is always **explicit** about which capability record is passed.
+## **10.2 Built-in Contracts**
+
+Contracts are named method requirements recognized by the compiler. Generic parameters can require them:
+
+```tw
+fn describe<T: Stringify>(x: T) String {
+  "value=${x}"
+}
+```
+
+The built-in contracts are:
+
+* `Stringify` — required for string interpolation and generic stringification.
+* `Eq` — required by `==` and `!=` for generic operands.
+* `Ord` — required by `<`, `<=`, `>`, `>=`, and canonical sorting APIs.
+
+User-defined types satisfy contracts through inherent methods, builtin rules, or compiler-supported derivation where noted in [contracts.md](contracts.md). Contracts are not a general trait system: users cannot declare arbitrary new contracts in the MVP.
 
 ---
 
@@ -957,28 +940,28 @@ Built-in numeric operators do define explicit typing/promotion rules (for exampl
 `Byte` arithmetic yields `Int`), but those rules are part of operator semantics,
 not general implicit conversions.
 
-Given a parameter of type `Show<T>`:
+Given a parameter of type `Encoder<T>`:
 
 ```tw
-fn debug_value<T>(x: T, show: Show<T>) { ... }
+fn debug_value<T>(x: T, enc: Encoder<T>) { ... }
 ```
 
 the call:
 
 ```tw
-debug_value(user)       // ❌ illegal: missing Show<User>
+debug_value(user)       // ❌ illegal: missing Encoder<User>
 ```
 
-is rejected. The caller must explicitly supply a value of type `Show<User>`:
+is rejected. The caller must explicitly supply a value of type `Encoder<User>`:
 
 ```tw
-debug_value(user, ShowUser)  // ✅
+debug_value(user, user_encoder)  // ✅
 ```
 
 This applies uniformly:
 
-* No automatic wrapping of `T` into `Show<T>` (or similar),
-* No automatic rewriting of `Vector<T>` into `Vector<Show<T>>`,
+* No automatic wrapping of `T` into `Encoder<T>` (or similar),
+* No automatic rewriting of `Vector<T>` into `Vector<Encoder<T>>`,
 * No chained or inferred conversions.
 
 All adapter logic, if any, is explicit in user code.
@@ -987,43 +970,31 @@ All adapter logic, if any, is explicit in user code.
 
 ## **10.4 Common Capability Patterns**
 
-### Equality and Ordering
+### Domain-specific behavior
 
 ```tw
-type Eq<T> = .{
-  equals: fn(T, T) Bool,
+type Matches<T> = .{
+  matches: fn(T, T) Bool,
 }
 
-fn contains<T>(xs: Vector<T>, needle: T, eq: Eq<T>) Bool {
+fn contains_matching<T>(xs: Vector<T>, needle: T, m: Matches<T>) Bool {
   for x in xs {
-    if eq.equals(x, needle) {
+    if m.matches(x, needle) {
       return true
     }
   }
   false
 }
-
-type Point = .{ x: Int, y: Int }
-
-fn point_equals(a: Point, b: Point) Bool {
-  a.x == b.x && a.y == b.y
-}
-
-EqPoint: Eq<Point> = .{
-  equals: point_equals,
-}
-
-points: Vector<Point> = [...]
-p: Point = .{ x: 1, y: 2 }
-found := contains(points, p, EqPoint)
 ```
+
+Use a capability record when equality, ordering, rendering, or matching should be caller-selected rather than canonical language behavior.
 
 ### Collection-Specific Helpers
 
 Instead of a general "Iterable" trait, provide small, concrete helpers:
 
 ```tw
-fn sum_array(xs: Vector<Int>) Int {
+fn sum_vector(xs: Vector<Int>) Int {
   acc := 0
   for x in xs {
     acc = acc + x
@@ -1071,20 +1042,23 @@ String interpolation uses:
 "hello ${x}"
 ```
 
-Interpolation is **not** driven by a capability or trait. It is defined in terms of
-inherent `to_string` methods.
+Interpolation is driven by the built-in `Stringify` contract. A type satisfies
+`Stringify` when the compiler can resolve an appropriate inherent `to_string`
+method or builtin witness.
 
 ### Supported Conversion Rule
 
-For each `${expr}`, the compiler resolves a zero-argument `to_string` method on the
-type of `expr` with return type `String`.
+For each `${expr}`, the compiler proves that the expression type satisfies
+`Stringify`, then emits a call to the corresponding `to_string` witness.
 
-Built-in support exists for:
+Builtin support exists for:
 
 * `String` — identity
 * `Int` — decimal rendering
 * `Float` — float rendering
 * `Bool` — `true` / `false`
+* `Byte` — decimal rendering
+* `Vector<T>` when `T: Stringify`
 
 User-defined named types are interpolable when they define an inherent method:
 
@@ -1092,7 +1066,7 @@ User-defined named types are interpolable when they define an inherent method:
 fn to_string(x: MyType) String { ... }
 ```
 
-If no valid `to_string() String` is available, interpolation is a compile-time error.
+If no valid `Stringify` witness is available, interpolation is a compile-time error.
 
 ### Example
 
@@ -1129,7 +1103,7 @@ println("${(-1).to_string()}")  // ✅
 
 ### Desugaring
 
-String literals with interpolation are desugared into string concatenation with method calls.
+String literals with interpolation are desugared into string concatenation with `Stringify` witness calls.
 
 For example:
 
@@ -1178,7 +1152,7 @@ for x,i in coll { body }
 
 The `for x in coll` syntax supports the following types, each with dedicated type-directed lowering:
 
-* `Vector<T>` — lowered to an indexed loop over the array length.
+* `Vector<T>` — lowered to an indexed loop over the vector length.
 * `String` — lowered to an indexed loop over UTF-8 bytes (`str[i]`).
 * `Range` — lowered to a simple integer loop over the range bounds.
 * `Dict<K, V>` — lowered to iteration over key–value pairs.
@@ -1309,7 +1283,7 @@ Rules:
   * For `Dict<K,V>`, the second binder has type `V` (value), while the first binder is key `K`.
   * `Iterator<T>` does not support the two-binder form.
 * `continue` skips emission.
-* `break` ends early, returns partial array.
+* `break` ends early, returns the partial vector.
 * If the body returns `Void` → error, because collect expects a value to push.
 * The element type is inferred as the type of the body expression; all iterations must unify to same type; otherwise type error.
 
@@ -1407,12 +1381,12 @@ Used by `for` and `collect`.
 
 ## 17. Dict
 
-Dicts are **immutable** hash maps.
+Dicts are **immutable** persistent hash maps with HAMT-style structural sharing.
 
 **Key type constraint:** `K` must be `Int`, `String`, or `Byte`. No other types are
 allowed as dict keys. `Bool` keys are excluded (a two-entry dict should be expressed
-as a plain record). Since Twinkle has no trait system, this constraint is enforced as
-a compiler-known closed set rather than a generic bound.
+as a plain record). This constraint is enforced as a compiler-known closed set
+rather than a user-definable contract.
 
 Creation:
 
@@ -1429,7 +1403,7 @@ Dict operations via module functions (all return new dicts):
 * `Dict.get(m, k) V?` — returns Option<V> for safe access
 * `Dict.has(m, k) Bool` — checks if key exists
 * `Dict.keys(m) Vector<K>` — returns keys in dict order
-* `Dict.values(m) Vector<V>` — returns array of values (via `@std.dict_ext`)
+* `Dict.values(m) Vector<V>` — returns a vector of values (via `@std.dict_ext`)
 * `Dict.len(m) Int` — returns length of keys
 
 Indexing syntax:
@@ -1617,7 +1591,7 @@ The main naming rule remains:
 
 ### Type System
 
-Twinkle has a rank-1 polymorphic (Damas–Milner) type system: unification-based, principal types, no higher-ranked quantification, no trait constraints.
+Twinkle has a rank-1 polymorphic (Damas–Milner) type system: unification-based, principal types, no higher-ranked quantification, and no general trait/typeclass constraints. Built-in contracts (`Stringify`, `Eq`, `Ord`) provide a small set of named bounds for syntax-level behavior.
 
 ### Type Checking
 
@@ -1656,8 +1630,7 @@ This avoids value-restriction complexity and keeps local bindings simple. If you
 
 Capabilities are ordinary values (records of functions), so they participate in normal type inference without special rules.
 
-String interpolation is type-checked by resolving a zero-arg inherent `to_string() String`
-on the interpolated expression type.
+String interpolation is type-checked by proving the interpolated expression type satisfies the built-in `Stringify` contract.
 
 ### Numeric Operators and Promotion
 
@@ -1726,15 +1699,15 @@ In practice, bit-test expressions should be written with explicit parentheses:
   * `Bool` → unboxed `i32`
   * `Byte` → unboxed `i32` (logical range `0..255`)
 * Records → immutable `struct` (new values created via structural sharing where possible)
-* Vectors → immutable `array` (new values created via structural sharing where possible)
-* Dicts → immutable hash map structures (structural sharing where possible)
+* Vectors → persistent vector structures backed by Wasm GC objects/arrays
+* Dicts → persistent HAMT-style hash map structures backed by Wasm GC objects/arrays
 * Cells → mutable `struct` wrapper storing a `T` payload
 * Functions → closures allocated as small structs
 * Options:
 
   * ref types → nullable refs
   * value types → tagged struct
-* String interpolation → compiler inserts `to_string()` calls and string concatenation
+* String interpolation → compiler inserts `Stringify` witness calls and string concatenation
 * For loops → type-directed lowering to primitive loops based on collection type
 
 ---
