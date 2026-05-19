@@ -529,8 +529,8 @@ self.onmessage = async (event) => {
     self.postMessage({ type: 'status', text: 'Running…' });
 
     const exitCode = await runWasmBytesAsync(null, {
-      programArgs: ['boot.wasm', 'run', '/input/main.tw'],
-      env: { TWINKLE_ROOT: '/' },
+      programArgs: ['playground.wasm', '/input/main.tw'],
+      env: { TWINKLE_ROOT: '/', NO_COLOR: '1' },
       vfs,
       emit,
       wasmModule: cachedBootModule,

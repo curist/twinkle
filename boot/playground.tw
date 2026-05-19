@@ -4,13 +4,10 @@
 // argparse library, or other CLI-only features.  The result is a smaller wasm
 // that only contains the core compilation pipeline + diagnostic rendering.
 //
-// Usage (same interface as `twk run`):
-//   playground.wasm run <file>
-//   playground.wasm build <file> -o <output>
+// Usage:  playground.wasm <file> [args...]
 
 use @std.proc
 use @std.fs
-use @std.path
 use compiler.pipeline
 use compiler.artifacts.{CompileError}
 use lib.source.registry
@@ -63,7 +60,7 @@ fn print_warnings(warnings: Vector<analyze.AnalysisDiag>) {
   }
 }
 
-fn compile_and_run(file: String, extra_args: Vector<String>) {
+fn compile_and_run(file: String) {
   artifacts := case pipeline.compile_entry_path(file) {
     .Ok(result) => result,
     .Err(err) => {
@@ -74,76 +71,12 @@ fn compile_and_run(file: String, extra_args: Vector<String>) {
   print_warnings(artifacts.warnings)
 
   wasm_bytes := pipeline.emit_wasm(artifacts)
-  argv := [file].concat(extra_args)
-  exit_code := proc.run_wasm(wasm_bytes, argv)
+  exit_code := proc.run_wasm(wasm_bytes, [file])
   if exit_code != 0 {
     proc.exit(exit_code)
   }
 }
 
-fn compile_and_build(file: String, out: String) {
-  artifacts := case pipeline.compile_entry_path(file) {
-    .Ok(result) => result,
-    .Err(err) => {
-      eprintln(format_compile_error(err))
-      proc.exit(1)
-    },
-  }
-  print_warnings(artifacts.warnings)
-
-  ext := path.extension(out)
-  if ext == ".wasm" {
-    bytes := pipeline.emit_wasm(artifacts)
-    case fs.write_bytes(out, bytes) {
-      .Ok(_) => println("WASM output: ${out}"),
-      .Err(err) => {
-        eprintln("error: failed to write '${out}'")
-        proc.exit(1)
-      },
-    }
-  } else {
-    wat := pipeline.emit_wat(artifacts)
-    case fs.write_text(out, wat) {
-      .Ok(_) => println("WAT output: ${out}"),
-      .Err(err) => {
-        eprintln("error: failed to write '${out}'")
-        proc.exit(1)
-      },
-    }
-  }
-}
-
 argv := proc.args()
 
-if argv.len() < 3 {
-  eprintln("usage: playground <run|build> <file> [args...]")
-  proc.exit(2)
-}
-
-cmd := argv[1]
-file := argv[2]
-
-case cmd {
-  "run" => {
-    extra := if argv.len() > 3 {
-      argv.slice(3, argv.len())
-    } else {
-      []
-    }
-    compile_and_run(file, extra)
-  },
-  "build" => {
-    out := if argv.len() > 4 and argv[3] == "-o" {
-      argv[4]
-    } else {
-      stem := path.stem(file)
-      "${stem}.wat"
-    }
-    compile_and_build(file, out)
-  },
-  _ => {
-    eprintln("unknown command: ${cmd}")
-    eprintln("usage: playground <run|build> <file> [args...]")
-    proc.exit(2)
-  },
-}
+compile_and_run(argv[1])
