@@ -1,121 +1,141 @@
-### 1. The "Uncanny Valley" of Rebinding
+# Open Questions
 
-The spec allows syntax that looks like mutation (`x.field = value`) but performs a local rebinding.
-
-* **The Weakness:** This creates a massive mental model gap for developers coming from JavaScript, Java, or Python. In those languages, if you have `a := b`, then `a.x = 1` changes `b.x`. In Twinkle, it does not.
-* **The Risk:** Subtle bugs where a developer updates a record field and expects other references to see the change. While the spec mentions lints to discourage this, the syntax itself is an "attractor" for incorrect OO-style thinking.
-* **Needs Thought:** Should the language use a different operator for "rebinding update" (like `x.field <- value`) to clearly distinguish it from shared mutation?
-
-ans: we should lint for certain usage pattern; if users use record/array update syntax, but doesn't use the updated instance or return it, we should warn the user (the usage pattern implies in-place mutation)
-
-### 2. Lack of Structural Typing / Row Polymorphism
-
-Twinkle uses **nominal records**.
-
-* **The Weakness:** If you have two records, `User` and `Admin`, that both have a `name: String` field, you cannot write a single function that works on "anything with a name field".
-* **The Result:** You end up duplicating logic or wrapping everything in "capability records," which adds to the boilerplate mentioned above. For a language that uses records as its primary data structure, the lack of even basic structural subtyping (like TypeScript) or row polymorphism (like Elm/Roc) is a major limitation for code reuse.
-
-ans: could be real problem, would need more thoughts on this. how does Gleam do this?
-
-### 3. The "Persistent Runtime" is a Black Box
-
-The `persistent-runtime.md` note describes a "Core Surface" that backends must implement.
-
-* **The Weakness:** It assumes that persistent data structures (like Hash Array Mapped Tries) will just "work" efficiently across all backends. However, Wasm GC—the primary target—is still evolving.
-* **The Risk:** If the Wasm GC implementation of "immutable array updates" is just a full copy every time, performance will be catastrophic for large arrays. The spec doesn't yet define how the compiler or runtime will handle **structural sharing** efficiently to prevent O(n) costs on every "mutation-like" update.
-
-ans: we will have our own persistent data structure runtime built targeting wasm. we are on our own.
-
-### 4. Error Handling and "Traps"
-
-The spec mentions `Result<T, E>` and "traps" (like OOB or div-by-zero).
-
-* **Incompleteness:** There is no detailed specification for **Error Handling**. Does the language support `try/catch`? Does it have a `?` operator (like Rust/Zig) or a `try` keyword (like Gleam) to propagate `Result` types?
-* **Needs Thought:** If every "mutation" actually returns a new value, how do we handle errors in the middle of a nested update (e.g., `config.users[i].email = "..."` where `i` is out of bounds)?
-
-ans: resolved. Twinkle uses a two-tier error model:
-
-* **Recoverable errors** → `Result<T, E>` with `try` keyword for propagation. `E` can be any type, including a custom sum type with structured variants (e.g. `type ParseError = { InvalidFormat(String), OutOfRange(Int) }`). Pattern matching on `Result` arms uses either the anonymous form (`.Ok(n)`) or the qualified form (`ParseError.InvalidFormat(s)`).
-* **Unrecoverable faults** → Traps: array OOB, division by zero, and explicit `error("msg")` abort execution immediately. No recovery path; these map directly to Wasm traps.
-
-The nested-update OOB question is answered by the trap model: `config.users[i].email = ...` where `i` is OOB traps unconditionally. If recoverable behavior is needed, guard with an explicit bounds check before the update.
-
-### 5. Module System Rigidity
-
-The module system forbids circular imports.
-
-* **The Weakness:** While clean, this is often a nightmare in large-scale application development where types naturally want to refer to each other (e.g., `User` refers to `Post`, and `Post` refers to `User`).
-* **The Gap:** There is no "forward declaration" or "recursive module" support mentioned. This forces developers to put all related types into one giant file to avoid cycles, undermining the "dot-path" module organization.
-
-ans: not sure if this is really an issue.
-
-### 6. Resource Management (The "Deterministic Cleanup" Problem)
-
-Twinkle relies on **Wasm GC**, which is great for memory but terrible for resources like file descriptors, database connections, or network sockets. GC only cares about *memory pressure*, not whether you have 10,000 open file handles.
-
-**Status:** `defer` is implemented with block-scoped, LIFO semantics (see
-`docs/design/defer.md`). It eliminates the manual cleanup problem for the
-common case. The remaining open question is linear/unique types for guaranteed
-single-use of resources.
-
-**Remaining Weaknesses:**
-
-* **No Destructors/Finalizers:** Since Wasm GC doesn’t currently support reliable finalizers, you can’t have a `File` object that automatically closes itself when it’s garbage collected.
-* *The Risk:* In a purely immutable language, you might write `file = file.write(data)`. If that operation fails and returns an error, did the original handle get closed? Who owns the "closing" logic in a rebinding-heavy flow?
-
-**Resolved:**
-
-* **`defer` is implemented:** block-scoped, LIFO, fires on normal exit, `return`,
-  `break`, and `continue`. Traps do not drain defers (matches Wasm trap semantics).
-  See `docs/design/defer.md` for full semantics and implementation notes.
-
-**Still Needed:**
-
-* **Linear/Unique Types (Advanced):** Some modern languages (like Austral or even Mojo) use "Linear Types" to ensure a resource *must* be consumed (closed) exactly once. This might be too complex for Twinkle’s "simple" goal, but without it, you are back to manual `handle.close()` calls, which developers *will* forget.
+This file tracks design questions that are still worth revisiting. Resolved items
+should move into the spec or a design note rather than staying here as stale
+concerns.
 
 ---
 
-### 7. Wasm FFI (The "Two Heaps" Problem)
+## 1. Rebinding syntax and mutation-shaped code
 
-This is the most technical hurdle for Twinkle. Wasm currently has a "split personality":
+Twinkle intentionally uses assignment-like syntax for rebinding and value updates:
 
-1. **The Linear Memory Heap:** Where C/C++/Rust/Zig live (raw pointers, `i32` offsets).
-2. **The GC Heap:** Where Twinkle lives (opaque `struct` and `array` references managed by the browser/host).
-
-**The Weaknesses:**
-
-* **The Marshalling Tax:** You cannot simply pass a Twinkle `String` to a Wasm function written in C. The Twinkle string is a GC object; the C function expects a pointer to a null-terminated buffer in linear memory.
-* *The Current Gap:* The spec doesn't define how Twinkle interacts with `extern` functions. Does the compiler automatically copy data into linear memory? If so, who frees it?
-
-
-* **Opaque Handles:** If an FFI function returns a pointer (an `i32`), Twinkle has no way to wrap that safely. You’d likely have to store it in a `record` field as an `Int`, which is "unsafe" because the compiler can't verify if that pointer is still valid.
-
-**Needed Thoughts:**
-
-* **`extern` Blocks:** Twinkle needs a way to declare FFI imports that specifically handles type conversion.
 ```tw
--- This doesn't exist in the spec yet
-extern "env" {
-  fn print_raw(ptr: Int, len: Int)
-}
-
+state.items = .append(item)
 ```
 
-* **The "Buffer" Type:** Twinkle likely needs a `Buffer` or `ByteView` type that is explicitly *not* on the GC heap, allowing it to point directly into Wasm Linear Memory for high-performance interop with other Wasm modules.
+This keeps persistent-data transformations concise, but it can look like shared
+mutation to programmers coming from OO/imperative languages.
+
+**Current direction:** keep the syntax. The language model is value semantics:
+updates rebuild and rebind the local root, and aliases keep seeing the old value.
+
+**Open tooling question:** which patterns should produce warnings?
+
+Likely lint candidates:
+
+- updating a value and then never reading or returning the updated binding,
+- field/index update in a statement position whose result is effectively ignored,
+- suspicious aliasing patterns where code appears to expect another name to observe
+  the update.
 
 ---
 
-### 8. The Interaction: Resources + FFI
+## 2. Nominal records and code reuse
 
-The biggest "incomplete" part is when these two overlap. Usually, a **File Handle** is just an integer (pointer) returned from an FFI call to the host (like WASI).
+Twinkle records are nominal. Two record types with the same fields are still
+different types, and a function cannot currently say “anything with a `name`
+field”.
 
-**The "Pain Point" Scenario:**
+This keeps type identity, method resolution, and Wasm GC lowering simple, but it
+can make some reusable record-field helpers awkward.
 
-1. You call an FFI function to open a file. It returns an `Int`.
-2. You store that `Int` in a Twinkle `record`.
-3. Because Twinkle is immutable, you "update" the record 50 times during your logic.
-4. At the end, you have 50 versions of that record, all holding the same `Int`.
-5. **Which one is responsible for closing the file?**
+**Open question:** should Twinkle eventually add a lightweight mechanism for
+field-polymorphic code?
 
-If you call `close(record.handle)` on the 50th version, the file is closed. But if you accidentally use the 10th version of the record later, the `handle` it holds is now a **dangling resource**.
+Possible directions:
 
+- keep nominal records only and rely on module APIs/capability records,
+- add limited row-polymorphic functions,
+- add explicit projection/conversion helpers,
+- add a separate structural record feature for local/internal use.
+
+This needs more thought, especially in relation to method resolution and Wasm GC
+record layout.
+
+---
+
+## 3. Circular modules and recursive type groups
+
+The module system rejects circular imports. This keeps compilation order and
+incremental analysis straightforward, but large programs sometimes have mutually
+recursive domain concepts.
+
+**Open question:** is acyclic module structure enough in practice, or does Twinkle
+need an explicit mechanism for mutually recursive type groups across files?
+
+Possible directions:
+
+- keep cycles rejected and encourage colocating mutually recursive types,
+- allow type-only cycles with restrictions,
+- add explicit forward declarations,
+- add package-level recursive type groups.
+
+---
+
+## 4. Resource ownership beyond `defer`
+
+`defer` is implemented with block-scoped, LIFO semantics and covers ordinary
+manual cleanup well. It fires on normal block exit, `return`, `break`, and
+`continue`; traps do not drain defers.
+
+The remaining question is stronger ownership guarantees for external resources
+such as file handles, sockets, or host objects.
+
+**Open question:** should Twinkle add linear/unique types, or another ownership
+mechanism, for resources that must be closed exactly once?
+
+Without such a mechanism, APIs can still be written safely by convention, but the
+compiler cannot prove that resource handles are not duplicated, forgotten, or used
+after close.
+
+---
+
+## 5. FFI beyond phase-1 externs
+
+Twinkle supports `extern` declarations for host-provided Wasm imports. Phase-1
+boundary types are intentionally small: `Int`, `Float`, `Bool`, `String`, and
+`Void`/`()`. Compound Twinkle values such as records, enums, `Vector`, `Dict`,
+callbacks, and `Result` are not valid extern boundary types today.
+
+This avoids committing too early to a large interop model, but several questions
+remain.
+
+**Open questions:**
+
+- How should Twinkle interoperate with linear-memory Wasm modules?
+- Should there be explicit `Buffer`, `ByteView`, or linear-memory types?
+- Should any compound values have standardized ABI lowering?
+- How should opaque host handles be represented safely?
+- How much marshalling should the compiler generate automatically versus requiring
+  explicit library code?
+
+The playground and JS runner already bridge some host interactions, but the
+language-level FFI model should stay explicit and portable.
+
+---
+
+## 6. Resources plus FFI handles
+
+External resources often appear as opaque handles returned by host APIs. In a
+value-semantics language, a handle can be copied inside many immutable record
+versions:
+
+```tw
+type File = .{ handle: Int, path: String }
+```
+
+All record versions may contain the same underlying handle. If one path closes the
+handle, older aliases still contain the now-invalid integer.
+
+**Open question:** what is the recommended and/or compiler-enforced model for
+opaque resources?
+
+Possible directions:
+
+- keep handles opaque and document safe API patterns,
+- represent handles as `Cell`-backed state machines,
+- introduce affine/linear resource wrappers,
+- require host resources to be used through callback-scoped APIs.
+
+This overlaps with both FFI design and the broader ownership question.
