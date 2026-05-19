@@ -25,6 +25,11 @@ fn complete(todo: Todo) Todo {
   todo
 }
 
+fn to_string(todo: Todo) String {
+  mark := if todo.done { "✅" } else { "⬜" }
+  "${mark} ${todo.name}"
+}
+
 fn complete_named(todos: Vector<Todo>, name: String) Vector<Todo>!String {
   target := try todos
     .find(fn(todo) { todo.name == name })
@@ -47,7 +52,7 @@ todos = .append(.{ name: "check", done: false })
 todos = .append(.{ name: "build", done: false })
 
 case complete_named(todos, "build") {
-  .Ok(updated) => println("updated ${updated.len()} tasks"),
+  .Ok(updated) => println("updated ${updated}"), // updated [⬜ parse, ⬜ check, ✅ build]
   .Err(msg) => eprintln("error: ${msg}"),
 }
 ```
