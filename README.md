@@ -20,7 +20,7 @@ Twinkle aims to make functional, persistent-data programming feel direct:
 
 ## Quick Example
 
-```tw
+```rust
 type Todo = .{ name: String, done: Bool }
 
 fn complete(todo: Todo) Todo {
@@ -54,7 +54,7 @@ case complete_named(todos, "build") {
 
 Records are nominal types with concise construction syntax. Values are immutable, and assignment syntax rebinds a local name to a new value.
 
-```tw
+```rust
 type Point = .{ x: Int, y: Int }
 
 fn translate(p: Point, dx: Int, dy: Int) Point {
@@ -70,7 +70,7 @@ The field updates above rebuild and rebind `p`. Vector and dictionary index upda
 
 Module functions can form method-style APIs for the types they define.
 
-```tw
+```rust
 type Point = .{ x: Int, y: Int }
 
 fn translate(p: Point, dx: Int, dy: Int) Point {
@@ -83,7 +83,7 @@ q := p.translate(10, 20)
 
 ### Enums and Pattern Matching
 
-```tw
+```rust
 type Tree<T> = {
   Empty,
   Node(T, Tree<T>, Tree<T>),
@@ -101,7 +101,7 @@ fn sum(t: Tree<Int>) Int {
 
 `Option<T>` and `Result<T, E>` are built-in enum types with shorthand forms `T?` and `T!E`. The `try` expression propagates `.None` or `.Err(...)` from functions returning compatible types.
 
-```tw
+```rust
 fn parse_pair(a: String, b: String) Int!String {
   x := try Int.from_string(a).ok_or("invalid first integer")
   y := try Int.from_string(b).ok_or("invalid second integer")
@@ -113,7 +113,7 @@ fn parse_pair(a: String, b: String) Int!String {
 
 Generic functions use explicit type parameters. Behavior can be passed through ordinary records of functions, while contracts cover common syntax-level behavior.
 
-```tw
+```rust
 fn map<A, B>(xs: Vector<A>, f: fn(A) B) Vector<B> {
   collect x in xs { f(x) }
 }

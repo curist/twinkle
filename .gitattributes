@@ -1,0 +1,2 @@
+# GitHub Linguist does not know Twinkle yet; use Rust highlighting for .tw files.
+*.tw linguist-language=Rust
