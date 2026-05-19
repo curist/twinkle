@@ -1003,13 +1003,65 @@ fn remove_fn() FuncDef {
 }
 
 fn set_in_place_fn() FuncDef {
+  // p0=dict, p1=key, p2=val; L3=hash(i64), L4=new_root, L5=was_replace
   FuncDef.{ name: "set_in_place",
     params: [pdict_null(), .Anyref, .Anyref], results: [pdict_ref()],
-    locals: [], body: [.LocalGet(0), .LocalGet(1), .LocalGet(2), .Call("set")] }
+    locals: [.I64, hamt_node_null(), .I32],
+    body: [
+      .LocalGet(1), .Call("hash_key"), .LocalSet(3),
+      .I32Const(0), .GlobalSet("was_replace"),
+      .LocalGet(0), .RefAsNonNull, .StructGet(t_pdict(), pd_root()),
+      .LocalGet(3), .I32Const(0), .LocalGet(1), .LocalGet(2),
+      .Call("node_set"), .LocalSet(4),
+      .GlobalGet("was_replace"), .LocalSet(5),
+      // Mutate root in place
+      .LocalGet(0), .RefAsNonNull, .LocalGet(4), .StructSet(t_pdict(), pd_root()),
+      // If new key (not replace): push to order, bump size
+      .LocalGet(5), .I32Eqz,
+      .If(.None, [
+        .LocalGet(0), .RefAsNonNull,
+        .LocalGet(0), .RefAsNonNull, .StructGet(t_pdict(), pd_order()),
+        .LocalGet(1), .Call("arr_push"),
+        .StructSet(t_pdict(), pd_order()),
+        .LocalGet(0), .RefAsNonNull,
+        .LocalGet(0), .RefAsNonNull, .StructGet(t_pdict(), pd_size()),
+        .I32Const(1), .I32Add,
+        .StructSet(t_pdict(), pd_size()),
+      ], []),
+      .LocalGet(0), .RefAsNonNull,
+    ],
+  }
 }
 
 fn remove_in_place_fn() FuncDef {
+  // p0=dict, p1=key; L2=hash(i64), L3=old_root, L4=new_root, L5=was_removed
   FuncDef.{ name: "remove_in_place",
     params: [pdict_null(), .Anyref], results: [pdict_ref()],
-    locals: [], body: [.LocalGet(0), .LocalGet(1), .Call("remove")] }
+    locals: [.I64, hamt_node_null(), hamt_node_null(), .I32],
+    body: [
+      .LocalGet(1), .Call("hash_key"), .LocalSet(2),
+      .LocalGet(0), .RefAsNonNull, .StructGet(t_pdict(), pd_root()), .LocalSet(3),
+      .LocalGet(3), .LocalGet(2), .I32Const(0), .LocalGet(1),
+      .Call("node_remove"), .LocalSet(4),
+      // was_removed = !ref.eq(old_root, new_root)
+      .LocalGet(3), .LocalGet(4), .RefEq, .I32Eqz, .LocalSet(5),
+      // Always mutate root (no-op on miss: new_root == old_root)
+      .LocalGet(0), .RefAsNonNull, .LocalGet(4), .StructSet(t_pdict(), pd_root()),
+      .LocalGet(5),
+      .If(.None, [
+        // Mutate order
+        .LocalGet(0), .RefAsNonNull,
+        .LocalGet(0), .RefAsNonNull, .StructGet(t_pdict(), pd_order()),
+        .RefAsNonNull, .LocalGet(1),
+        .Call("order_remove_key"),
+        .StructSet(t_pdict(), pd_order()),
+        // Mutate size
+        .LocalGet(0), .RefAsNonNull,
+        .LocalGet(0), .RefAsNonNull, .StructGet(t_pdict(), pd_size()),
+        .I32Const(1), .I32Sub,
+        .StructSet(t_pdict(), pd_size()),
+      ], []),
+      .LocalGet(0), .RefAsNonNull,
+    ],
+  }
 }

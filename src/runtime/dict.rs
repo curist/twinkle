@@ -2375,32 +2375,151 @@ fn remove_fn() -> FuncDef {
     }
 }
 
-// ── set_in_place / remove_in_place: alias persistent versions for v1 ─────────
+// ── set_in_place / remove_in_place: mutate PDict header in place ─────────────
 fn set_in_place_fn() -> FuncDef {
+    // p0=dict, p1=key, p2=val; L3=hash(i64), L4=old_root, L5=new_root, L6=was_present
     FuncDef {
         name: "set_in_place".into(),
         params: vec![ref_pdict_null(), ValType::Anyref, ValType::Anyref],
         results: vec![ref_pdict()],
-        locals: vec![],
+        locals: vec![
+            ValType::I64,
+            ref_hamt_node_null(),
+            ref_hamt_node_null(),
+            ValType::I32,
+        ],
         body: vec![
+            Instr::LocalGet(1),
+            Instr::Call("hash_key".into()),
+            Instr::LocalSet(3),
             Instr::LocalGet(0),
+            Instr::RefAsNonNull,
+            Instr::StructGet(T_PDICT.into(), PD_ROOT),
+            Instr::LocalSet(4),
+            // was_present = node_get(root, hash, 0, key) != null
+            Instr::LocalGet(4),
+            Instr::LocalGet(3),
+            Instr::I32Const(0),
+            Instr::LocalGet(1),
+            Instr::Call("node_get".into()),
+            Instr::RefIsNull,
+            Instr::I32Eqz,
+            Instr::LocalSet(6),
+            // new_root = node_set(root, hash, 0, key, val)
+            Instr::LocalGet(4),
+            Instr::LocalGet(3),
+            Instr::I32Const(0),
             Instr::LocalGet(1),
             Instr::LocalGet(2),
-            Instr::Call("set".into()),
+            Instr::Call("node_set".into()),
+            Instr::LocalSet(5),
+            // Mutate root in place
+            Instr::LocalGet(0),
+            Instr::RefAsNonNull,
+            Instr::LocalGet(5),
+            Instr::StructSet(T_PDICT.into(), PD_ROOT),
+            // If new key (not replace): push to order, bump size
+            Instr::LocalGet(6),
+            Instr::I32Eqz,
+            Instr::If {
+                result: None,
+                then_body: vec![
+                    // dict.order = arr_push(dict.order, key)
+                    Instr::LocalGet(0),
+                    Instr::RefAsNonNull,
+                    Instr::LocalGet(0),
+                    Instr::RefAsNonNull,
+                    Instr::StructGet(T_PDICT.into(), PD_ORDER),
+                    Instr::LocalGet(1),
+                    Instr::Call("arr_push".into()),
+                    Instr::StructSet(T_PDICT.into(), PD_ORDER),
+                    // dict.size += 1
+                    Instr::LocalGet(0),
+                    Instr::RefAsNonNull,
+                    Instr::LocalGet(0),
+                    Instr::RefAsNonNull,
+                    Instr::StructGet(T_PDICT.into(), PD_SIZE),
+                    Instr::I32Const(1),
+                    Instr::I32Add,
+                    Instr::StructSet(T_PDICT.into(), PD_SIZE),
+                ],
+                else_body: vec![],
+            },
+            Instr::LocalGet(0),
+            Instr::RefAsNonNull,
         ],
     }
 }
 
 fn remove_in_place_fn() -> FuncDef {
+    // p0=dict, p1=key; L2=hash(i64), L3=old_root, L4=new_root, L5=was_present
     FuncDef {
         name: "remove_in_place".into(),
         params: vec![ref_pdict_null(), ValType::Anyref],
         results: vec![ref_pdict()],
-        locals: vec![],
+        locals: vec![
+            ValType::I64,
+            ref_hamt_node_null(),
+            ref_hamt_node_null(),
+            ValType::I32,
+        ],
         body: vec![
-            Instr::LocalGet(0),
             Instr::LocalGet(1),
-            Instr::Call("remove".into()),
+            Instr::Call("hash_key".into()),
+            Instr::LocalSet(2),
+            Instr::LocalGet(0),
+            Instr::RefAsNonNull,
+            Instr::StructGet(T_PDICT.into(), PD_ROOT),
+            Instr::LocalSet(3),
+            // was_present = node_get(root, hash, 0, key) != null
+            Instr::LocalGet(3),
+            Instr::LocalGet(2),
+            Instr::I32Const(0),
+            Instr::LocalGet(1),
+            Instr::Call("node_get".into()),
+            Instr::RefIsNull,
+            Instr::I32Eqz,
+            Instr::LocalSet(5),
+            // new_root = node_remove(root, hash, 0, key)
+            Instr::LocalGet(3),
+            Instr::LocalGet(2),
+            Instr::I32Const(0),
+            Instr::LocalGet(1),
+            Instr::Call("node_remove".into()),
+            Instr::LocalSet(4),
+            // Always mutate root (no-op on miss: new_root == old_root)
+            Instr::LocalGet(0),
+            Instr::RefAsNonNull,
+            Instr::LocalGet(4),
+            Instr::StructSet(T_PDICT.into(), PD_ROOT),
+            Instr::LocalGet(5),
+            Instr::If {
+                result: None,
+                then_body: vec![
+                    // dict.order = order_remove_key(dict.order, key)
+                    Instr::LocalGet(0),
+                    Instr::RefAsNonNull,
+                    Instr::LocalGet(0),
+                    Instr::RefAsNonNull,
+                    Instr::StructGet(T_PDICT.into(), PD_ORDER),
+                    Instr::RefAsNonNull,
+                    Instr::LocalGet(1),
+                    Instr::Call("order_remove_key".into()),
+                    Instr::StructSet(T_PDICT.into(), PD_ORDER),
+                    // dict.size -= 1
+                    Instr::LocalGet(0),
+                    Instr::RefAsNonNull,
+                    Instr::LocalGet(0),
+                    Instr::RefAsNonNull,
+                    Instr::StructGet(T_PDICT.into(), PD_SIZE),
+                    Instr::I32Const(1),
+                    Instr::I32Sub,
+                    Instr::StructSet(T_PDICT.into(), PD_SIZE),
+                ],
+                else_body: vec![],
+            },
+            Instr::LocalGet(0),
+            Instr::RefAsNonNull,
         ],
     }
 }

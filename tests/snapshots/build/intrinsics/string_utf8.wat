@@ -7,7 +7,7 @@
   (type $rt_types__HamtEntry (struct (field $hash i64) (field $key anyref) (field $val anyref)))
   (type $rt_types__HamtNode (struct (field $bitmap i32) (field $entries (ref $rt_types__Array))))
   (type $rt_types__HamtCollision (struct (field $tag i32) (field $hash i64) (field $entries (ref $rt_types__Array))))
-  (type $rt_types__PDict (struct (field $size i32) (field $root (ref null $rt_types__HamtNode)) (field $order (ref $rt_types__PVec))))
+  (type $rt_types__PDict (struct (field $size (mut i32)) (field $root (mut (ref null $rt_types__HamtNode))) (field $order (mut (ref $rt_types__PVec)))))
   (type $rt_types__ClosureEnv (array anyref))
   (type $rt_types__ClosureFunc (func (param anyref anyref) (result anyref)))
   (type $rt_types__Closure (sub (struct (field $func_ref (ref null $rt_types__ClosureFunc)) (field $env (ref null $rt_types__ClosureEnv)))))
@@ -4914,18 +4914,114 @@
     (param $p1 anyref)
     (param $p2 anyref)
     (result (ref $rt_types__PDict))
+    (local $p3 i64)
+    (local $p4 (ref null $rt_types__HamtNode))
+    (local $p5 (ref null $rt_types__HamtNode))
+    (local $p6 i32)
+    local.get $p1
+    call $rt_dict__hash_key
+    local.set $p3
     local.get $p0
+    ref.as_non_null
+    struct.get $rt_types__PDict 1
+    local.set $p4
+    local.get $p4
+    local.get $p3
+    i32.const 0
+    local.get $p1
+    call $rt_dict__node_get
+    ref.is_null
+    i32.eqz
+    local.set $p6
+    local.get $p4
+    local.get $p3
+    i32.const 0
     local.get $p1
     local.get $p2
-    call $rt_dict__set
+    call $rt_dict__node_set
+    local.set $p5
+    local.get $p0
+    ref.as_non_null
+    local.get $p5
+    struct.set $rt_types__PDict 1
+    local.get $p6
+    i32.eqz
+    (if
+      (then
+        local.get $p0
+        ref.as_non_null
+        local.get $p0
+        ref.as_non_null
+        struct.get $rt_types__PDict 2
+        local.get $p1
+        call $rt_arr__push
+        struct.set $rt_types__PDict 2
+        local.get $p0
+        ref.as_non_null
+        local.get $p0
+        ref.as_non_null
+        struct.get $rt_types__PDict 0
+        i32.const 1
+        i32.add
+        struct.set $rt_types__PDict 0))
+    local.get $p0
+    ref.as_non_null
   )
   (func $rt_dict__remove_in_place (type $functype_44)
     (param $p0 (ref null $rt_types__PDict))
     (param $p1 anyref)
     (result (ref $rt_types__PDict))
-    local.get $p0
+    (local $p2 i64)
+    (local $p3 (ref null $rt_types__HamtNode))
+    (local $p4 (ref null $rt_types__HamtNode))
+    (local $p5 i32)
     local.get $p1
-    call $rt_dict__remove
+    call $rt_dict__hash_key
+    local.set $p2
+    local.get $p0
+    ref.as_non_null
+    struct.get $rt_types__PDict 1
+    local.set $p3
+    local.get $p3
+    local.get $p2
+    i32.const 0
+    local.get $p1
+    call $rt_dict__node_get
+    ref.is_null
+    i32.eqz
+    local.set $p5
+    local.get $p3
+    local.get $p2
+    i32.const 0
+    local.get $p1
+    call $rt_dict__node_remove
+    local.set $p4
+    local.get $p0
+    ref.as_non_null
+    local.get $p4
+    struct.set $rt_types__PDict 1
+    local.get $p5
+    (if
+      (then
+        local.get $p0
+        ref.as_non_null
+        local.get $p0
+        ref.as_non_null
+        struct.get $rt_types__PDict 2
+        ref.as_non_null
+        local.get $p1
+        call $rt_dict__order_remove_key
+        struct.set $rt_types__PDict 2
+        local.get $p0
+        ref.as_non_null
+        local.get $p0
+        ref.as_non_null
+        struct.get $rt_types__PDict 0
+        i32.const 1
+        i32.sub
+        struct.set $rt_types__PDict 0))
+    local.get $p0
+    ref.as_non_null
   )
   (func $rt_core__print (type $functype_1)
     (param $p0 (ref null $rt_types__String))

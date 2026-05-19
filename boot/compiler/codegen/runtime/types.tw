@@ -68,9 +68,9 @@ pub fn module() WasmModule {
       // (type $PDict (struct (field $size i32) (field $root (ref null $HamtNode)) (field $order (ref $PVec))))
       // PVec is defined above to avoid a forward reference.
       .Struct("PDict", [
-        .{ name: .Some("size"), mutable: false, ty: .I32 },
-        .{ name: .Some("root"), mutable: false, ty: .Ref(true, .Named("HamtNode")) },
-        .{ name: .Some("order"), mutable: false, ty: .Ref(false, .Named("PVec")) },
+        .{ name: .Some("size"), mutable: true, ty: .I32 },
+        .{ name: .Some("root"), mutable: true, ty: .Ref(true, .Named("HamtNode")) },
+        .{ name: .Some("order"), mutable: true, ty: .Ref(false, .Named("PVec")) },
       ], .None, true),
 
       // (type $ClosureEnv (array anyref))

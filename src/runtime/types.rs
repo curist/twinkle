@@ -260,10 +260,14 @@ pub fn make() -> ModuleIR {
         supertype: None,
         non_final: false,
         fields: vec![
-            FieldDef::named("size", ValType::I32),
+            FieldDef {
+                name: Some("size".into()),
+                mutable: true,
+                ty: ValType::I32,
+            },
             FieldDef {
                 name: Some("root".into()),
-                mutable: false,
+                mutable: true,
                 ty: ValType::Ref {
                     nullable: true,
                     heap: HeapType::Named("HamtNode".into()),
@@ -271,7 +275,7 @@ pub fn make() -> ModuleIR {
             },
             FieldDef {
                 name: Some("order".into()),
-                mutable: false,
+                mutable: true,
                 ty: ref_pvec(),
             },
         ],

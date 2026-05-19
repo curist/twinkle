@@ -991,15 +991,21 @@ fn test_rt_dict_set_in_place() Result<Void, String> {
   m := rt_dict.module()
   f := try find_func(m.funcs, "set_in_place").ok_or("missing set_in_place func")
   try assert.equal(f.params.len(), 3)
-  // v1: aliases persistent set
-  found_set_call := false
+  // True in-place: calls node_set, mutates PDict via StructSet (no StructNew)
+  found_node_set := false
+  found_struct_set := false
+  found_struct_new := false
   for instr in f.body {
     case instr {
-      .Call(name) => { if name == "set" { found_set_call = true } },
+      .Call(name) => { if name == "node_set" { found_node_set = true } },
+      .StructSet(name, _) => { if name == "rt_types__PDict" { found_struct_set = true } },
+      .StructNew(name) => { if name == "rt_types__PDict" { found_struct_new = true } },
       _ => {},
     }
   }
-  try assert.ok(found_set_call, "set_in_place should delegate to set in v1")
+  try assert.ok(found_node_set, "set_in_place should call node_set")
+  try assert.ok(found_struct_set, "set_in_place should mutate PDict via StructSet")
+  try assert.ok(!found_struct_new, "set_in_place should not allocate new PDict")
   .Ok({})
 }
 
@@ -1007,15 +1013,21 @@ fn test_rt_dict_remove_in_place() Result<Void, String> {
   m := rt_dict.module()
   f := try find_func(m.funcs, "remove_in_place").ok_or("missing remove_in_place func")
   try assert.equal(f.params.len(), 2)
-  // v1: aliases persistent remove
-  found_remove_call := false
+  // True in-place: calls node_remove, mutates PDict via StructSet (no StructNew)
+  found_node_remove := false
+  found_struct_set := false
+  found_struct_new := false
   for instr in f.body {
     case instr {
-      .Call(name) => { if name == "remove" { found_remove_call = true } },
+      .Call(name) => { if name == "node_remove" { found_node_remove = true } },
+      .StructSet(name, _) => { if name == "rt_types__PDict" { found_struct_set = true } },
+      .StructNew(name) => { if name == "rt_types__PDict" { found_struct_new = true } },
       _ => {},
     }
   }
-  try assert.ok(found_remove_call, "remove_in_place should delegate to remove in v1")
+  try assert.ok(found_node_remove, "remove_in_place should call node_remove")
+  try assert.ok(found_struct_set, "remove_in_place should mutate PDict via StructSet")
+  try assert.ok(!found_struct_new, "remove_in_place should not allocate new PDict")
   .Ok({})
 }
 

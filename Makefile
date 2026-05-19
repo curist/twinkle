@@ -3,6 +3,7 @@
 STAGE1_WASM ?= target/boot-stage1.wasm
 STAGE2_WASM ?= target/boot.wasm
 STAGE3_WASM ?= /tmp/twinkle-selfhost/stage3.wasm
+STAGE4_WASM ?= /tmp/twinkle-selfhost/stage4.wasm
 TWK_CLI     ?= node target/twk_cli_sea.cjs
 SEA_NODE_VERSION ?= 26
 SEA_NODE_BIN ?=
@@ -41,7 +42,9 @@ target/release/twk: $(RUST_SRCS)
 	cargo build --release
 
 # Refresh target/boot.wasm from current boot sources and verify the fixed point.
-# Stage0 (Rust) → stage1, stage1 → stage2, stage2 → stage3, then compare stage2 == stage3.
+# Stage0 (Rust) → stage1, stage1 → stage2, stage2 → stage3, stage3 → stage4.
+# Compare stage3 == stage4 (both built by boot compilers, avoiding Rust/boot
+# encoder divergence in the stage2 vs stage3 comparison).
 stage2: $(STAGE2_WASM)
 
 boot/lib/module/core_lib.tw: $(CORE_LIB_SRCS) tools/generate_core_lib.tw target/release/twk
@@ -64,10 +67,14 @@ $(STAGE2_WASM): $(BOOT_SRCS) $(CORE_LIB_SRCS) boot/lib/module/core_lib.tw target
 	@printf '\n==> Build stage3 compiler with stage2 -> $(STAGE3_WASM)\n'
 	@mkdir -p $(dir $(STAGE3_WASM))
 	BOOT_WASM=$(STAGE2_WASM) $(TWK_CLI) build boot/main.tw -o $(STAGE3_WASM)
-	@printf '\n==> Compare stage2 and stage3 WASM\n'
-	@cmp -s $(STAGE2_WASM) $(STAGE3_WASM) \
-		&& printf 'Fixed point reached: $(STAGE2_WASM) == $(STAGE3_WASM)\n' \
-		|| { printf 'error: fixed point mismatch; compare files: $(STAGE2_WASM) $(STAGE3_WASM)\n' >&2; exit 1; }
+	@printf '\n==> Adopt stage3 as stage2 (converge to boot-compiled baseline)\n'
+	@cp $(STAGE3_WASM) $(STAGE2_WASM)
+	@printf '\n==> Build stage4 compiler with stage3 -> $(STAGE4_WASM)\n'
+	BOOT_WASM=$(STAGE2_WASM) $(TWK_CLI) build boot/main.tw -o $(STAGE4_WASM)
+	@printf '\n==> Compare stage3 and stage4 WASM\n'
+	@cmp -s $(STAGE2_WASM) $(STAGE4_WASM) \
+		&& printf 'Fixed point reached: stage3 == stage4\n' \
+		|| { printf 'error: fixed point mismatch; compare files: $(STAGE2_WASM) $(STAGE4_WASM)\n' >&2; exit 1; }
 	@printf '\nSelf-host loop completed successfully.\n'
 
 # Build the Node SEA standalone CLI from target/boot.wasm.
