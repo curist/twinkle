@@ -890,6 +890,7 @@ fn encode_instr_cached(
     .I32Xor  => .{ buf: emit_u8(buf, 0x73), cache: cache },
     .I32Shl  => .{ buf: emit_u8(buf, 0x74), cache: cache },
     .I32ShrU => .{ buf: emit_u8(buf, 0x76), cache: cache },
+    .I32Popcnt => .{ buf: emit_u8(buf, 0x69), cache: cache },
 
     // i64 arithmetic
     .I64Add  => .{ buf: emit_u8(buf, 0x7C), cache: cache },

@@ -384,6 +384,7 @@ fn emit_instr(instr: Instr, indent: Int) Vector<String> {
     .I32Xor => ["${pad}i32.xor"],
     .I32Shl => ["${pad}i32.shl"],
     .I32ShrU => ["${pad}i32.shr_u"],
+    .I32Popcnt => ["${pad}i32.popcnt"],
 
     // i64 arithmetic
     .I64Add => ["${pad}i64.add"],

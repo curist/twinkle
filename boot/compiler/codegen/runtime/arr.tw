@@ -52,7 +52,7 @@ pub fn module() WasmModule {
     make_fn(), get_fn(), set_fn(), set_in_place_fn(), len_fn(), concat_fn(), slice_fn(),
     builder_new_fn(), builder_from_fn(), builder_push_fn(), builder_extend_fn(),
     builder_freeze_fn(),
-    from_array_fn(), to_array_fn(), from_read_file_result_fn(),
+    from_array_fn(), to_array_fn(), from_read_file_result_fn(), make_empty_fn(),
   ]
   exports := collect f in funcs {
     ExportDef.{ wasm_name: f.name, func_sym: f.name }
@@ -1132,4 +1132,9 @@ fn from_read_file_result_fn() FuncDef {
       ),
     ],
   }
+}
+
+fn make_empty_fn() FuncDef {
+  FuncDef.{ name: "make_empty", params: [], results: [pvec_ref()],
+    locals: [], body: [.GlobalGet("empty_pvec")] }
 }
