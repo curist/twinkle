@@ -4,9 +4,9 @@
   (type $rt_types__VecChildren (array (mut (ref null eq))))
   (type $rt_types__VecInternal (struct (field $children (ref $rt_types__VecChildren))))
   (type $rt_types__PVec (struct (field $len i32) (field $shift i32) (field $root (ref null $rt_types__VecInternal)) (field $tail (ref $rt_types__Array))))
-  (type $rt_types__HamtEntry (struct (field $hash i32) (field $key anyref) (field $val anyref)))
+  (type $rt_types__HamtEntry (struct (field $hash i64) (field $key anyref) (field $val anyref)))
   (type $rt_types__HamtNode (struct (field $bitmap i32) (field $entries (ref $rt_types__Array))))
-  (type $rt_types__HamtCollision (struct (field $hash i32) (field $entries (ref $rt_types__Array))))
+  (type $rt_types__HamtCollision (struct (field $tag i32) (field $hash i64) (field $entries (ref $rt_types__Array))))
   (type $rt_types__PDict (struct (field $size i32) (field $root (ref null $rt_types__HamtNode)) (field $order (ref $rt_types__PVec))))
   (type $rt_types__ClosureEnv (array anyref))
   (type $rt_types__ClosureFunc (func (param anyref anyref) (result anyref)))
@@ -61,42 +61,43 @@
   (type $functype_26 (func (param i32) (result (ref $rt_types__String))))
   (type $functype_27 (func (param (ref $rt_types__Array) i32 anyref) (result (ref $rt_types__Array))))
   (type $functype_28 (func (param (ref $rt_types__Array) i32) (result (ref $rt_types__Array))))
-  (type $functype_29 (func (param i64) (result i32)))
-  (type $functype_30 (func (param anyref) (result i32)))
-  (type $functype_31 (func (param (ref null $rt_types__HamtCollision) anyref) (result anyref)))
-  (type $functype_32 (func (param (ref null $rt_types__HamtCollision) i32 anyref anyref) (result (ref $rt_types__HamtCollision))))
-  (type $functype_33 (func (param (ref null $rt_types__HamtNode) i32 i32 anyref) (result anyref)))
-  (type $functype_34 (func (param (ref null $rt_types__HamtNode) i32 i32 anyref anyref) (result (ref $rt_types__HamtNode))))
-  (type $functype_35 (func (param (ref null $rt_types__HamtNode) i32 i32 anyref) (result (ref null $rt_types__HamtNode))))
-  (type $functype_36 (func (result (ref $rt_types__PDict))))
-  (type $functype_37 (func (param (ref null $rt_types__PDict)) (result i32)))
-  (type $functype_38 (func (param (ref null $rt_types__PDict)) (result (ref $rt_types__PVec))))
-  (type $functype_39 (func (param (ref null $rt_types__PDict) anyref) (result i32)))
-  (type $functype_40 (func (param (ref null $rt_types__PDict) anyref) (result anyref)))
-  (type $functype_41 (func (param (ref null $rt_types__PDict) anyref) (result (ref $rt_types__Variant))))
-  (type $functype_42 (func (param (ref null $rt_types__PDict) anyref anyref) (result (ref $rt_types__PDict))))
-  (type $functype_43 (func (param (ref null $rt_types__PDict) anyref) (result (ref $rt_types__PDict))))
-  (type $functype_44 (func (param (ref null $rt_types__Array) (ref null $rt_types__Array)) (result i32)))
-  (type $functype_45 (func (param (ref $rt_types__PVec) (ref $rt_types__PVec)) (result i32)))
-  (type $functype_46 (func (param (ref $rt_types__PDict) (ref $rt_types__PDict)) (result i32)))
-  (type $functype_47 (func (param (ref $rt_types__Variant) (ref $rt_types__Variant)) (result i32)))
-  (type $functype_48 (func (param anyref anyref) (result i32)))
-  (type $functype_49 (func (param (ref null $rt_types__PVec) (ref null $rt_types__String)) (result (ref null $rt_types__String))))
-  (type $functype_50 (func (param (ref null $rt_types__String)) (result (ref null $rt_types__IterState))))
-  (type $functype_51 (func (param i64) (result (ref null $rt_types__IterState))))
-  (type $functype_52 (func (param (ref null $rt_types__String) i64 i64) (result (ref null $rt_types__String))))
-  (type $functype_53 (func (param (ref null $rt_types__PVec)) (result (ref null $rt_types__IterState))))
-  (type $functype_54 (func))
-  (type $functype_55 (func (param i64 anyref) (result (ref null $rt_types__Variant))))
-  (type $functype_56 (func (param i64 anyref anyref) (result (ref null $rt_types__Variant))))
-  (type $functype_57 (func (param anyref anyref) (result anyref)))
-  (type $functype_58 (func (param (ref null $rt_types__ClosureEnv) i64) (result (ref null $rt_types__Variant))))
-  (type $functype_59 (func (param anyref) (result (ref null $rt_types__Variant))))
-  (type $functype_60 (func (param (ref null $rt_types__String)) (result anyref)))
-  (type $functype_61 (func (param i32) (result anyref)))
-  (type $functype_62 (func (param (ref null $rt_types__String)) (result (ref $rt_types__Array))))
-  (type $functype_63 (func (param (ref null $rt_types__Array)) (result anyref)))
-  (type $functype_64 (func (result (ref $rt_types__String))))
+  (type $functype_29 (func (param i64) (result i64)))
+  (type $functype_30 (func (param (ref null $rt_types__String)) (result i64)))
+  (type $functype_31 (func (param anyref) (result i64)))
+  (type $functype_32 (func (param (ref null $rt_types__HamtCollision) anyref) (result anyref)))
+  (type $functype_33 (func (param (ref null $rt_types__HamtCollision) i64 anyref anyref) (result (ref $rt_types__HamtCollision))))
+  (type $functype_34 (func (param (ref null $rt_types__HamtNode) i64 i32 anyref) (result anyref)))
+  (type $functype_35 (func (param (ref null $rt_types__HamtNode) i64 i32 anyref anyref) (result (ref $rt_types__HamtNode))))
+  (type $functype_36 (func (param (ref null $rt_types__HamtNode) i64 i32 anyref) (result (ref null $rt_types__HamtNode))))
+  (type $functype_37 (func (result (ref $rt_types__PDict))))
+  (type $functype_38 (func (param (ref null $rt_types__PDict)) (result i32)))
+  (type $functype_39 (func (param (ref null $rt_types__PDict)) (result (ref $rt_types__PVec))))
+  (type $functype_40 (func (param (ref null $rt_types__PDict) anyref) (result i32)))
+  (type $functype_41 (func (param (ref null $rt_types__PDict) anyref) (result anyref)))
+  (type $functype_42 (func (param (ref null $rt_types__PDict) anyref) (result (ref $rt_types__Variant))))
+  (type $functype_43 (func (param (ref null $rt_types__PDict) anyref anyref) (result (ref $rt_types__PDict))))
+  (type $functype_44 (func (param (ref null $rt_types__PDict) anyref) (result (ref $rt_types__PDict))))
+  (type $functype_45 (func (param (ref null $rt_types__Array) (ref null $rt_types__Array)) (result i32)))
+  (type $functype_46 (func (param (ref $rt_types__PVec) (ref $rt_types__PVec)) (result i32)))
+  (type $functype_47 (func (param (ref $rt_types__PDict) (ref $rt_types__PDict)) (result i32)))
+  (type $functype_48 (func (param (ref $rt_types__Variant) (ref $rt_types__Variant)) (result i32)))
+  (type $functype_49 (func (param anyref anyref) (result i32)))
+  (type $functype_50 (func (param (ref null $rt_types__PVec) (ref null $rt_types__String)) (result (ref null $rt_types__String))))
+  (type $functype_51 (func (param (ref null $rt_types__String)) (result (ref null $rt_types__IterState))))
+  (type $functype_52 (func (param i64) (result (ref null $rt_types__IterState))))
+  (type $functype_53 (func (param (ref null $rt_types__String) i64 i64) (result (ref null $rt_types__String))))
+  (type $functype_54 (func (param (ref null $rt_types__PVec)) (result (ref null $rt_types__IterState))))
+  (type $functype_55 (func))
+  (type $functype_56 (func (param i64 anyref) (result (ref null $rt_types__Variant))))
+  (type $functype_57 (func (param i64 anyref anyref) (result (ref null $rt_types__Variant))))
+  (type $functype_58 (func (param anyref anyref) (result anyref)))
+  (type $functype_59 (func (param (ref null $rt_types__ClosureEnv) i64) (result (ref null $rt_types__Variant))))
+  (type $functype_60 (func (param anyref) (result (ref null $rt_types__Variant))))
+  (type $functype_61 (func (param (ref null $rt_types__String)) (result anyref)))
+  (type $functype_62 (func (param i32) (result anyref)))
+  (type $functype_63 (func (param (ref null $rt_types__String)) (result (ref $rt_types__Array))))
+  (type $functype_64 (func (param (ref null $rt_types__Array)) (result anyref)))
+  (type $functype_65 (func (result (ref $rt_types__String))))
   (import "host" "f64_to_string" (func $rt_str__host_f64_to_string (type $functype_0)))
   (import "host" "print" (func $rt_core__host_print (type $functype_1)))
   (import "host" "println" (func $rt_core__host_println (type $functype_1)))
@@ -1744,59 +1745,2120 @@
   )
   (func $rt_dict__hash_i64 (type $functype_29)
     (param $p0 i64)
-    (result i32)
-    (local $p1 i32)
-    local.get $p0
-    i32.wrap_i64
+    (result i64)
+    (local $p1 i64)
+    (local $p2 i64)
+    (local $p3 i64)
+    (local $p4 i64)
+    (local $p5 i64)
+    (local $p6 i64)
+    (local $p7 i64)
+    (local $p8 i64)
+    (local $p9 i64)
+    i64.const -1800455987208640293
+    i64.const 8
+    i64.xor
     local.get $p0
     i64.const 32
-    i64.shr_s
-    i32.wrap_i64
-    i32.xor
+    i64.shl
+    local.get $p0
+    i64.const 32
+    i64.shr_u
+    i64.or
+    i64.const -1800455987208640293
+    i64.xor
+    local.get $p0
+    i64.const -6884282663029611473
+    i64.xor
+    local.set $p2
     local.set $p1
     local.get $p1
-    i32.const -1640531527
-    i32.mul
-  )
-  (func $rt_dict__hash_string (type $functype_21)
-    (param $p0 (ref null $rt_types__String))
-    (result i32)
-    (local $p1 i32)
-    (local $p2 i32)
-    (local $p3 i32)
-    i32.const -2128831035
+    i64.const 4294967295
+    i64.and
+    local.set $p3
+    local.get $p1
+    i64.const 32
+    i64.shr_u
+    local.set $p4
+    local.get $p2
+    i64.const 4294967295
+    i64.and
+    local.set $p5
+    local.get $p2
+    i64.const 32
+    i64.shr_u
+    local.set $p6
+    local.get $p3
+    local.get $p6
+    i64.mul
+    local.set $p7
+    local.get $p4
+    local.get $p5
+    i64.mul
+    local.set $p8
+    local.get $p3
+    local.get $p5
+    i64.mul
     local.set $p1
+    local.get $p1
+    i64.const 32
+    i64.shr_u
+    local.get $p7
+    i64.const 4294967295
+    i64.and
+    i64.add
+    local.get $p8
+    i64.const 4294967295
+    i64.and
+    i64.add
+    local.set $p9
+    local.get $p4
+    local.get $p6
+    i64.mul
+    local.get $p7
+    i64.const 32
+    i64.shr_u
+    i64.add
+    local.get $p8
+    i64.const 32
+    i64.shr_u
+    i64.add
+    local.get $p9
+    i64.const 32
+    i64.shr_u
+    i64.add
+    local.get $p1
+    i64.const 4294967295
+    i64.and
+    local.get $p9
+    i64.const 4294967295
+    i64.and
+    i64.const 32
+    i64.shl
+    i64.or
+    i64.xor
+    local.set $p2
+    local.set $p1
+    local.get $p1
+    i64.const 4294967295
+    i64.and
+    local.set $p3
+    local.get $p1
+    i64.const 32
+    i64.shr_u
+    local.set $p4
+    local.get $p2
+    i64.const 4294967295
+    i64.and
+    local.set $p5
+    local.get $p2
+    i64.const 32
+    i64.shr_u
+    local.set $p6
+    local.get $p3
+    local.get $p6
+    i64.mul
+    local.set $p7
+    local.get $p4
+    local.get $p5
+    i64.mul
+    local.set $p8
+    local.get $p3
+    local.get $p5
+    i64.mul
+    local.set $p1
+    local.get $p1
+    i64.const 32
+    i64.shr_u
+    local.get $p7
+    i64.const 4294967295
+    i64.and
+    i64.add
+    local.get $p8
+    i64.const 4294967295
+    i64.and
+    i64.add
+    local.set $p9
+    local.get $p4
+    local.get $p6
+    i64.mul
+    local.get $p7
+    i64.const 32
+    i64.shr_u
+    i64.add
+    local.get $p8
+    i64.const 32
+    i64.shr_u
+    i64.add
+    local.get $p9
+    i64.const 32
+    i64.shr_u
+    i64.add
+    local.get $p1
+    i64.const 4294967295
+    i64.and
+    local.get $p9
+    i64.const 4294967295
+    i64.and
+    i64.const 32
+    i64.shl
+    i64.or
+    i64.xor
+  )
+  (func $rt_dict__hash_string (type $functype_30)
+    (param $p0 (ref null $rt_types__String))
+    (result i64)
+    (local $p1 i32)
+    (local $p2 i64)
+    (local $p3 i64)
+    (local $p4 i64)
+    (local $p5 i32)
+    (local $p6 i64)
+    (local $p7 i64)
+    (local $p8 i32)
+    (local $p9 i64)
+    (local $p10 i64)
+    (local $p11 i64)
+    (local $p12 i64)
+    (local $p13 i64)
+    (local $p14 i64)
+    (local $p15 i64)
+    (local $p16 i64)
+    (local $p17 i64)
     local.get $p0
     ref.as_non_null
     array.len
+    local.set $p1
+    i64.const -6884282663029611473
     local.set $p2
-    i32.const 0
-    local.set $p3
-    (block $exit
-      (loop $loop
-        local.get $p3
+    local.get $p1
+    i32.eqz
+    (if
+      (then
+        i64.const -1800455987208640293
+        i64.const -1800455987208640293
         local.get $p2
-        i32.ge_s
-        br_if $exit
+        local.set $p10
+        local.set $p9
+        local.get $p9
+        i64.const 4294967295
+        i64.and
+        local.set $p11
+        local.get $p9
+        i64.const 32
+        i64.shr_u
+        local.set $p12
+        local.get $p10
+        i64.const 4294967295
+        i64.and
+        local.set $p13
+        local.get $p10
+        i64.const 32
+        i64.shr_u
+        local.set $p14
+        local.get $p11
+        local.get $p14
+        i64.mul
+        local.set $p15
+        local.get $p12
+        local.get $p13
+        i64.mul
+        local.set $p16
+        local.get $p11
+        local.get $p13
+        i64.mul
+        local.set $p9
+        local.get $p9
+        i64.const 32
+        i64.shr_u
+        local.get $p15
+        i64.const 4294967295
+        i64.and
+        i64.add
+        local.get $p16
+        i64.const 4294967295
+        i64.and
+        i64.add
+        local.set $p17
+        local.get $p12
+        local.get $p14
+        i64.mul
+        local.get $p15
+        i64.const 32
+        i64.shr_u
+        i64.add
+        local.get $p16
+        i64.const 32
+        i64.shr_u
+        i64.add
+        local.get $p17
+        i64.const 32
+        i64.shr_u
+        i64.add
+        local.get $p9
+        i64.const 4294967295
+        i64.and
+        local.get $p17
+        i64.const 4294967295
+        i64.and
+        i64.const 32
+        i64.shl
+        i64.or
+        i64.xor
+        local.set $p10
+        local.set $p9
+        local.get $p9
+        i64.const 4294967295
+        i64.and
+        local.set $p11
+        local.get $p9
+        i64.const 32
+        i64.shr_u
+        local.set $p12
+        local.get $p10
+        i64.const 4294967295
+        i64.and
+        local.set $p13
+        local.get $p10
+        i64.const 32
+        i64.shr_u
+        local.set $p14
+        local.get $p11
+        local.get $p14
+        i64.mul
+        local.set $p15
+        local.get $p12
+        local.get $p13
+        i64.mul
+        local.set $p16
+        local.get $p11
+        local.get $p13
+        i64.mul
+        local.set $p9
+        local.get $p9
+        i64.const 32
+        i64.shr_u
+        local.get $p15
+        i64.const 4294967295
+        i64.and
+        i64.add
+        local.get $p16
+        i64.const 4294967295
+        i64.and
+        i64.add
+        local.set $p17
+        local.get $p12
+        local.get $p14
+        i64.mul
+        local.get $p15
+        i64.const 32
+        i64.shr_u
+        i64.add
+        local.get $p16
+        i64.const 32
+        i64.shr_u
+        i64.add
+        local.get $p17
+        i64.const 32
+        i64.shr_u
+        i64.add
+        local.get $p9
+        i64.const 4294967295
+        i64.and
+        local.get $p17
+        i64.const 4294967295
+        i64.and
+        i64.const 32
+        i64.shl
+        i64.or
+        i64.xor
+        return))
+    local.get $p1
+    i32.const 4
+    i32.lt_u
+    (if
+      (then
         local.get $p0
         ref.as_non_null
-        local.get $p3
+        i32.const 0
         array.get_u $rt_types__String
+        i32.const 16
+        i32.shl
+        local.get $p0
+        ref.as_non_null
         local.get $p1
-        i32.xor
-        i32.const 16777619
-        i32.mul
-        local.set $p1
+        i32.const 1
+        i32.shr_u
+        array.get_u $rt_types__String
+        i32.const 8
+        i32.shl
+        i32.or
+        local.get $p0
+        ref.as_non_null
+        local.get $p1
+        i32.const 1
+        i32.sub
+        array.get_u $rt_types__String
+        i32.or
+        i64.extend_i32_u
+        local.set $p3
+        i64.const 0
+        local.set $p4
+        i64.const -1800455987208640293
+        local.get $p1
+        i64.extend_i32_u
+        i64.xor
         local.get $p3
+        i64.const -1800455987208640293
+        i64.xor
+        local.get $p4
+        local.get $p2
+        i64.xor
+        local.set $p10
+        local.set $p9
+        local.get $p9
+        i64.const 4294967295
+        i64.and
+        local.set $p11
+        local.get $p9
+        i64.const 32
+        i64.shr_u
+        local.set $p12
+        local.get $p10
+        i64.const 4294967295
+        i64.and
+        local.set $p13
+        local.get $p10
+        i64.const 32
+        i64.shr_u
+        local.set $p14
+        local.get $p11
+        local.get $p14
+        i64.mul
+        local.set $p15
+        local.get $p12
+        local.get $p13
+        i64.mul
+        local.set $p16
+        local.get $p11
+        local.get $p13
+        i64.mul
+        local.set $p9
+        local.get $p9
+        i64.const 32
+        i64.shr_u
+        local.get $p15
+        i64.const 4294967295
+        i64.and
+        i64.add
+        local.get $p16
+        i64.const 4294967295
+        i64.and
+        i64.add
+        local.set $p17
+        local.get $p12
+        local.get $p14
+        i64.mul
+        local.get $p15
+        i64.const 32
+        i64.shr_u
+        i64.add
+        local.get $p16
+        i64.const 32
+        i64.shr_u
+        i64.add
+        local.get $p17
+        i64.const 32
+        i64.shr_u
+        i64.add
+        local.get $p9
+        i64.const 4294967295
+        i64.and
+        local.get $p17
+        i64.const 4294967295
+        i64.and
+        i64.const 32
+        i64.shl
+        i64.or
+        i64.xor
+        local.set $p10
+        local.set $p9
+        local.get $p9
+        i64.const 4294967295
+        i64.and
+        local.set $p11
+        local.get $p9
+        i64.const 32
+        i64.shr_u
+        local.set $p12
+        local.get $p10
+        i64.const 4294967295
+        i64.and
+        local.set $p13
+        local.get $p10
+        i64.const 32
+        i64.shr_u
+        local.set $p14
+        local.get $p11
+        local.get $p14
+        i64.mul
+        local.set $p15
+        local.get $p12
+        local.get $p13
+        i64.mul
+        local.set $p16
+        local.get $p11
+        local.get $p13
+        i64.mul
+        local.set $p9
+        local.get $p9
+        i64.const 32
+        i64.shr_u
+        local.get $p15
+        i64.const 4294967295
+        i64.and
+        i64.add
+        local.get $p16
+        i64.const 4294967295
+        i64.and
+        i64.add
+        local.set $p17
+        local.get $p12
+        local.get $p14
+        i64.mul
+        local.get $p15
+        i64.const 32
+        i64.shr_u
+        i64.add
+        local.get $p16
+        i64.const 32
+        i64.shr_u
+        i64.add
+        local.get $p17
+        i64.const 32
+        i64.shr_u
+        i64.add
+        local.get $p9
+        i64.const 4294967295
+        i64.and
+        local.get $p17
+        i64.const 4294967295
+        i64.and
+        i64.const 32
+        i64.shl
+        i64.or
+        i64.xor
+        return))
+    local.get $p1
+    i32.const 17
+    i32.lt_u
+    (if
+      (then
+        i32.const 0
+        local.set $p8
+        local.get $p0
+        ref.as_non_null
+        local.get $p8
+        array.get_u $rt_types__String
+        i64.extend_i32_u
+        local.get $p0
+        ref.as_non_null
+        local.get $p8
         i32.const 1
         i32.add
+        array.get_u $rt_types__String
+        i64.extend_i32_u
+        i64.const 8
+        i64.shl
+        i64.or
+        local.get $p0
+        ref.as_non_null
+        local.get $p8
+        i32.const 2
+        i32.add
+        array.get_u $rt_types__String
+        i64.extend_i32_u
+        i64.const 16
+        i64.shl
+        i64.or
+        local.get $p0
+        ref.as_non_null
+        local.get $p8
+        i32.const 3
+        i32.add
+        array.get_u $rt_types__String
+        i64.extend_i32_u
+        i64.const 24
+        i64.shl
+        i64.or
+        i64.const 32
+        i64.shl
+        local.get $p1
+        i32.const 3
+        i32.shr_u
+        i32.const 2
+        i32.shl
+        local.set $p8
+        local.get $p0
+        ref.as_non_null
+        local.get $p8
+        array.get_u $rt_types__String
+        i64.extend_i32_u
+        local.get $p0
+        ref.as_non_null
+        local.get $p8
+        i32.const 1
+        i32.add
+        array.get_u $rt_types__String
+        i64.extend_i32_u
+        i64.const 8
+        i64.shl
+        i64.or
+        local.get $p0
+        ref.as_non_null
+        local.get $p8
+        i32.const 2
+        i32.add
+        array.get_u $rt_types__String
+        i64.extend_i32_u
+        i64.const 16
+        i64.shl
+        i64.or
+        local.get $p0
+        ref.as_non_null
+        local.get $p8
+        i32.const 3
+        i32.add
+        array.get_u $rt_types__String
+        i64.extend_i32_u
+        i64.const 24
+        i64.shl
+        i64.or
+        i64.or
         local.set $p3
-        br $loop))
+        local.get $p1
+        i32.const 4
+        i32.sub
+        local.set $p8
+        local.get $p0
+        ref.as_non_null
+        local.get $p8
+        array.get_u $rt_types__String
+        i64.extend_i32_u
+        local.get $p0
+        ref.as_non_null
+        local.get $p8
+        i32.const 1
+        i32.add
+        array.get_u $rt_types__String
+        i64.extend_i32_u
+        i64.const 8
+        i64.shl
+        i64.or
+        local.get $p0
+        ref.as_non_null
+        local.get $p8
+        i32.const 2
+        i32.add
+        array.get_u $rt_types__String
+        i64.extend_i32_u
+        i64.const 16
+        i64.shl
+        i64.or
+        local.get $p0
+        ref.as_non_null
+        local.get $p8
+        i32.const 3
+        i32.add
+        array.get_u $rt_types__String
+        i64.extend_i32_u
+        i64.const 24
+        i64.shl
+        i64.or
+        i64.const 32
+        i64.shl
+        local.get $p1
+        i32.const 4
+        i32.sub
+        local.get $p1
+        i32.const 3
+        i32.shr_u
+        i32.const 2
+        i32.shl
+        i32.sub
+        local.set $p8
+        local.get $p0
+        ref.as_non_null
+        local.get $p8
+        array.get_u $rt_types__String
+        i64.extend_i32_u
+        local.get $p0
+        ref.as_non_null
+        local.get $p8
+        i32.const 1
+        i32.add
+        array.get_u $rt_types__String
+        i64.extend_i32_u
+        i64.const 8
+        i64.shl
+        i64.or
+        local.get $p0
+        ref.as_non_null
+        local.get $p8
+        i32.const 2
+        i32.add
+        array.get_u $rt_types__String
+        i64.extend_i32_u
+        i64.const 16
+        i64.shl
+        i64.or
+        local.get $p0
+        ref.as_non_null
+        local.get $p8
+        i32.const 3
+        i32.add
+        array.get_u $rt_types__String
+        i64.extend_i32_u
+        i64.const 24
+        i64.shl
+        i64.or
+        i64.or
+        local.set $p4
+        i64.const -1800455987208640293
+        local.get $p1
+        i64.extend_i32_u
+        i64.xor
+        local.get $p3
+        i64.const -1800455987208640293
+        i64.xor
+        local.get $p4
+        local.get $p2
+        i64.xor
+        local.set $p10
+        local.set $p9
+        local.get $p9
+        i64.const 4294967295
+        i64.and
+        local.set $p11
+        local.get $p9
+        i64.const 32
+        i64.shr_u
+        local.set $p12
+        local.get $p10
+        i64.const 4294967295
+        i64.and
+        local.set $p13
+        local.get $p10
+        i64.const 32
+        i64.shr_u
+        local.set $p14
+        local.get $p11
+        local.get $p14
+        i64.mul
+        local.set $p15
+        local.get $p12
+        local.get $p13
+        i64.mul
+        local.set $p16
+        local.get $p11
+        local.get $p13
+        i64.mul
+        local.set $p9
+        local.get $p9
+        i64.const 32
+        i64.shr_u
+        local.get $p15
+        i64.const 4294967295
+        i64.and
+        i64.add
+        local.get $p16
+        i64.const 4294967295
+        i64.and
+        i64.add
+        local.set $p17
+        local.get $p12
+        local.get $p14
+        i64.mul
+        local.get $p15
+        i64.const 32
+        i64.shr_u
+        i64.add
+        local.get $p16
+        i64.const 32
+        i64.shr_u
+        i64.add
+        local.get $p17
+        i64.const 32
+        i64.shr_u
+        i64.add
+        local.get $p9
+        i64.const 4294967295
+        i64.and
+        local.get $p17
+        i64.const 4294967295
+        i64.and
+        i64.const 32
+        i64.shl
+        i64.or
+        i64.xor
+        local.set $p10
+        local.set $p9
+        local.get $p9
+        i64.const 4294967295
+        i64.and
+        local.set $p11
+        local.get $p9
+        i64.const 32
+        i64.shr_u
+        local.set $p12
+        local.get $p10
+        i64.const 4294967295
+        i64.and
+        local.set $p13
+        local.get $p10
+        i64.const 32
+        i64.shr_u
+        local.set $p14
+        local.get $p11
+        local.get $p14
+        i64.mul
+        local.set $p15
+        local.get $p12
+        local.get $p13
+        i64.mul
+        local.set $p16
+        local.get $p11
+        local.get $p13
+        i64.mul
+        local.set $p9
+        local.get $p9
+        i64.const 32
+        i64.shr_u
+        local.get $p15
+        i64.const 4294967295
+        i64.and
+        i64.add
+        local.get $p16
+        i64.const 4294967295
+        i64.and
+        i64.add
+        local.set $p17
+        local.get $p12
+        local.get $p14
+        i64.mul
+        local.get $p15
+        i64.const 32
+        i64.shr_u
+        i64.add
+        local.get $p16
+        i64.const 32
+        i64.shr_u
+        i64.add
+        local.get $p17
+        i64.const 32
+        i64.shr_u
+        i64.add
+        local.get $p9
+        i64.const 4294967295
+        i64.and
+        local.get $p17
+        i64.const 4294967295
+        i64.and
+        i64.const 32
+        i64.shl
+        i64.or
+        i64.xor
+        return))
     local.get $p1
+    i32.const 48
+    i32.gt_u
+    (if
+      (then
+        local.get $p2
+        local.set $p6
+        local.get $p2
+        local.set $p7
+        i32.const 0
+        local.set $p5
+        (block $long_exit
+          (loop $long_loop
+            local.get $p5
+            i32.const 48
+            i32.add
+            local.get $p1
+            i32.gt_u
+            br_if $long_exit
+            local.get $p5
+            local.set $p8
+            local.get $p0
+            ref.as_non_null
+            local.get $p8
+            array.get_u $rt_types__String
+            i64.extend_i32_u
+            local.get $p0
+            ref.as_non_null
+            local.get $p8
+            i32.const 1
+            i32.add
+            array.get_u $rt_types__String
+            i64.extend_i32_u
+            i64.const 8
+            i64.shl
+            i64.or
+            local.get $p0
+            ref.as_non_null
+            local.get $p8
+            i32.const 2
+            i32.add
+            array.get_u $rt_types__String
+            i64.extend_i32_u
+            i64.const 16
+            i64.shl
+            i64.or
+            local.get $p0
+            ref.as_non_null
+            local.get $p8
+            i32.const 3
+            i32.add
+            array.get_u $rt_types__String
+            i64.extend_i32_u
+            i64.const 24
+            i64.shl
+            i64.or
+            local.get $p8
+            i32.const 4
+            i32.add
+            local.set $p8
+            local.get $p0
+            ref.as_non_null
+            local.get $p8
+            array.get_u $rt_types__String
+            i64.extend_i32_u
+            local.get $p0
+            ref.as_non_null
+            local.get $p8
+            i32.const 1
+            i32.add
+            array.get_u $rt_types__String
+            i64.extend_i32_u
+            i64.const 8
+            i64.shl
+            i64.or
+            local.get $p0
+            ref.as_non_null
+            local.get $p8
+            i32.const 2
+            i32.add
+            array.get_u $rt_types__String
+            i64.extend_i32_u
+            i64.const 16
+            i64.shl
+            i64.or
+            local.get $p0
+            ref.as_non_null
+            local.get $p8
+            i32.const 3
+            i32.add
+            array.get_u $rt_types__String
+            i64.extend_i32_u
+            i64.const 24
+            i64.shl
+            i64.or
+            i64.const 32
+            i64.shl
+            i64.or
+            i64.const -1800455987208640293
+            i64.xor
+            local.get $p5
+            i32.const 8
+            i32.add
+            local.set $p8
+            local.get $p0
+            ref.as_non_null
+            local.get $p8
+            array.get_u $rt_types__String
+            i64.extend_i32_u
+            local.get $p0
+            ref.as_non_null
+            local.get $p8
+            i32.const 1
+            i32.add
+            array.get_u $rt_types__String
+            i64.extend_i32_u
+            i64.const 8
+            i64.shl
+            i64.or
+            local.get $p0
+            ref.as_non_null
+            local.get $p8
+            i32.const 2
+            i32.add
+            array.get_u $rt_types__String
+            i64.extend_i32_u
+            i64.const 16
+            i64.shl
+            i64.or
+            local.get $p0
+            ref.as_non_null
+            local.get $p8
+            i32.const 3
+            i32.add
+            array.get_u $rt_types__String
+            i64.extend_i32_u
+            i64.const 24
+            i64.shl
+            i64.or
+            local.get $p8
+            i32.const 4
+            i32.add
+            local.set $p8
+            local.get $p0
+            ref.as_non_null
+            local.get $p8
+            array.get_u $rt_types__String
+            i64.extend_i32_u
+            local.get $p0
+            ref.as_non_null
+            local.get $p8
+            i32.const 1
+            i32.add
+            array.get_u $rt_types__String
+            i64.extend_i32_u
+            i64.const 8
+            i64.shl
+            i64.or
+            local.get $p0
+            ref.as_non_null
+            local.get $p8
+            i32.const 2
+            i32.add
+            array.get_u $rt_types__String
+            i64.extend_i32_u
+            i64.const 16
+            i64.shl
+            i64.or
+            local.get $p0
+            ref.as_non_null
+            local.get $p8
+            i32.const 3
+            i32.add
+            array.get_u $rt_types__String
+            i64.extend_i32_u
+            i64.const 24
+            i64.shl
+            i64.or
+            i64.const 32
+            i64.shl
+            i64.or
+            local.get $p2
+            i64.xor
+            local.set $p10
+            local.set $p9
+            local.get $p9
+            i64.const 4294967295
+            i64.and
+            local.set $p11
+            local.get $p9
+            i64.const 32
+            i64.shr_u
+            local.set $p12
+            local.get $p10
+            i64.const 4294967295
+            i64.and
+            local.set $p13
+            local.get $p10
+            i64.const 32
+            i64.shr_u
+            local.set $p14
+            local.get $p11
+            local.get $p14
+            i64.mul
+            local.set $p15
+            local.get $p12
+            local.get $p13
+            i64.mul
+            local.set $p16
+            local.get $p11
+            local.get $p13
+            i64.mul
+            local.set $p9
+            local.get $p9
+            i64.const 32
+            i64.shr_u
+            local.get $p15
+            i64.const 4294967295
+            i64.and
+            i64.add
+            local.get $p16
+            i64.const 4294967295
+            i64.and
+            i64.add
+            local.set $p17
+            local.get $p12
+            local.get $p14
+            i64.mul
+            local.get $p15
+            i64.const 32
+            i64.shr_u
+            i64.add
+            local.get $p16
+            i64.const 32
+            i64.shr_u
+            i64.add
+            local.get $p17
+            i64.const 32
+            i64.shr_u
+            i64.add
+            local.get $p9
+            i64.const 4294967295
+            i64.and
+            local.get $p17
+            i64.const 4294967295
+            i64.and
+            i64.const 32
+            i64.shl
+            i64.or
+            i64.xor
+            local.set $p2
+            local.get $p5
+            i32.const 16
+            i32.add
+            local.set $p8
+            local.get $p0
+            ref.as_non_null
+            local.get $p8
+            array.get_u $rt_types__String
+            i64.extend_i32_u
+            local.get $p0
+            ref.as_non_null
+            local.get $p8
+            i32.const 1
+            i32.add
+            array.get_u $rt_types__String
+            i64.extend_i32_u
+            i64.const 8
+            i64.shl
+            i64.or
+            local.get $p0
+            ref.as_non_null
+            local.get $p8
+            i32.const 2
+            i32.add
+            array.get_u $rt_types__String
+            i64.extend_i32_u
+            i64.const 16
+            i64.shl
+            i64.or
+            local.get $p0
+            ref.as_non_null
+            local.get $p8
+            i32.const 3
+            i32.add
+            array.get_u $rt_types__String
+            i64.extend_i32_u
+            i64.const 24
+            i64.shl
+            i64.or
+            local.get $p8
+            i32.const 4
+            i32.add
+            local.set $p8
+            local.get $p0
+            ref.as_non_null
+            local.get $p8
+            array.get_u $rt_types__String
+            i64.extend_i32_u
+            local.get $p0
+            ref.as_non_null
+            local.get $p8
+            i32.const 1
+            i32.add
+            array.get_u $rt_types__String
+            i64.extend_i32_u
+            i64.const 8
+            i64.shl
+            i64.or
+            local.get $p0
+            ref.as_non_null
+            local.get $p8
+            i32.const 2
+            i32.add
+            array.get_u $rt_types__String
+            i64.extend_i32_u
+            i64.const 16
+            i64.shl
+            i64.or
+            local.get $p0
+            ref.as_non_null
+            local.get $p8
+            i32.const 3
+            i32.add
+            array.get_u $rt_types__String
+            i64.extend_i32_u
+            i64.const 24
+            i64.shl
+            i64.or
+            i64.const 32
+            i64.shl
+            i64.or
+            i64.const -8167223561372836125
+            i64.xor
+            local.get $p5
+            i32.const 24
+            i32.add
+            local.set $p8
+            local.get $p0
+            ref.as_non_null
+            local.get $p8
+            array.get_u $rt_types__String
+            i64.extend_i32_u
+            local.get $p0
+            ref.as_non_null
+            local.get $p8
+            i32.const 1
+            i32.add
+            array.get_u $rt_types__String
+            i64.extend_i32_u
+            i64.const 8
+            i64.shl
+            i64.or
+            local.get $p0
+            ref.as_non_null
+            local.get $p8
+            i32.const 2
+            i32.add
+            array.get_u $rt_types__String
+            i64.extend_i32_u
+            i64.const 16
+            i64.shl
+            i64.or
+            local.get $p0
+            ref.as_non_null
+            local.get $p8
+            i32.const 3
+            i32.add
+            array.get_u $rt_types__String
+            i64.extend_i32_u
+            i64.const 24
+            i64.shl
+            i64.or
+            local.get $p8
+            i32.const 4
+            i32.add
+            local.set $p8
+            local.get $p0
+            ref.as_non_null
+            local.get $p8
+            array.get_u $rt_types__String
+            i64.extend_i32_u
+            local.get $p0
+            ref.as_non_null
+            local.get $p8
+            i32.const 1
+            i32.add
+            array.get_u $rt_types__String
+            i64.extend_i32_u
+            i64.const 8
+            i64.shl
+            i64.or
+            local.get $p0
+            ref.as_non_null
+            local.get $p8
+            i32.const 2
+            i32.add
+            array.get_u $rt_types__String
+            i64.extend_i32_u
+            i64.const 16
+            i64.shl
+            i64.or
+            local.get $p0
+            ref.as_non_null
+            local.get $p8
+            i32.const 3
+            i32.add
+            array.get_u $rt_types__String
+            i64.extend_i32_u
+            i64.const 24
+            i64.shl
+            i64.or
+            i64.const 32
+            i64.shl
+            i64.or
+            local.get $p6
+            i64.xor
+            local.set $p10
+            local.set $p9
+            local.get $p9
+            i64.const 4294967295
+            i64.and
+            local.set $p11
+            local.get $p9
+            i64.const 32
+            i64.shr_u
+            local.set $p12
+            local.get $p10
+            i64.const 4294967295
+            i64.and
+            local.set $p13
+            local.get $p10
+            i64.const 32
+            i64.shr_u
+            local.set $p14
+            local.get $p11
+            local.get $p14
+            i64.mul
+            local.set $p15
+            local.get $p12
+            local.get $p13
+            i64.mul
+            local.set $p16
+            local.get $p11
+            local.get $p13
+            i64.mul
+            local.set $p9
+            local.get $p9
+            i64.const 32
+            i64.shr_u
+            local.get $p15
+            i64.const 4294967295
+            i64.and
+            i64.add
+            local.get $p16
+            i64.const 4294967295
+            i64.and
+            i64.add
+            local.set $p17
+            local.get $p12
+            local.get $p14
+            i64.mul
+            local.get $p15
+            i64.const 32
+            i64.shr_u
+            i64.add
+            local.get $p16
+            i64.const 32
+            i64.shr_u
+            i64.add
+            local.get $p17
+            i64.const 32
+            i64.shr_u
+            i64.add
+            local.get $p9
+            i64.const 4294967295
+            i64.and
+            local.get $p17
+            i64.const 4294967295
+            i64.and
+            i64.const 32
+            i64.shl
+            i64.or
+            i64.xor
+            local.set $p6
+            local.get $p5
+            i32.const 32
+            i32.add
+            local.set $p8
+            local.get $p0
+            ref.as_non_null
+            local.get $p8
+            array.get_u $rt_types__String
+            i64.extend_i32_u
+            local.get $p0
+            ref.as_non_null
+            local.get $p8
+            i32.const 1
+            i32.add
+            array.get_u $rt_types__String
+            i64.extend_i32_u
+            i64.const 8
+            i64.shl
+            i64.or
+            local.get $p0
+            ref.as_non_null
+            local.get $p8
+            i32.const 2
+            i32.add
+            array.get_u $rt_types__String
+            i64.extend_i32_u
+            i64.const 16
+            i64.shl
+            i64.or
+            local.get $p0
+            ref.as_non_null
+            local.get $p8
+            i32.const 3
+            i32.add
+            array.get_u $rt_types__String
+            i64.extend_i32_u
+            i64.const 24
+            i64.shl
+            i64.or
+            local.get $p8
+            i32.const 4
+            i32.add
+            local.set $p8
+            local.get $p0
+            ref.as_non_null
+            local.get $p8
+            array.get_u $rt_types__String
+            i64.extend_i32_u
+            local.get $p0
+            ref.as_non_null
+            local.get $p8
+            i32.const 1
+            i32.add
+            array.get_u $rt_types__String
+            i64.extend_i32_u
+            i64.const 8
+            i64.shl
+            i64.or
+            local.get $p0
+            ref.as_non_null
+            local.get $p8
+            i32.const 2
+            i32.add
+            array.get_u $rt_types__String
+            i64.extend_i32_u
+            i64.const 16
+            i64.shl
+            i64.or
+            local.get $p0
+            ref.as_non_null
+            local.get $p8
+            i32.const 3
+            i32.add
+            array.get_u $rt_types__String
+            i64.extend_i32_u
+            i64.const 24
+            i64.shl
+            i64.or
+            i64.const 32
+            i64.shl
+            i64.or
+            i64.const 6380440055042464963
+            i64.xor
+            local.get $p5
+            i32.const 40
+            i32.add
+            local.set $p8
+            local.get $p0
+            ref.as_non_null
+            local.get $p8
+            array.get_u $rt_types__String
+            i64.extend_i32_u
+            local.get $p0
+            ref.as_non_null
+            local.get $p8
+            i32.const 1
+            i32.add
+            array.get_u $rt_types__String
+            i64.extend_i32_u
+            i64.const 8
+            i64.shl
+            i64.or
+            local.get $p0
+            ref.as_non_null
+            local.get $p8
+            i32.const 2
+            i32.add
+            array.get_u $rt_types__String
+            i64.extend_i32_u
+            i64.const 16
+            i64.shl
+            i64.or
+            local.get $p0
+            ref.as_non_null
+            local.get $p8
+            i32.const 3
+            i32.add
+            array.get_u $rt_types__String
+            i64.extend_i32_u
+            i64.const 24
+            i64.shl
+            i64.or
+            local.get $p8
+            i32.const 4
+            i32.add
+            local.set $p8
+            local.get $p0
+            ref.as_non_null
+            local.get $p8
+            array.get_u $rt_types__String
+            i64.extend_i32_u
+            local.get $p0
+            ref.as_non_null
+            local.get $p8
+            i32.const 1
+            i32.add
+            array.get_u $rt_types__String
+            i64.extend_i32_u
+            i64.const 8
+            i64.shl
+            i64.or
+            local.get $p0
+            ref.as_non_null
+            local.get $p8
+            i32.const 2
+            i32.add
+            array.get_u $rt_types__String
+            i64.extend_i32_u
+            i64.const 16
+            i64.shl
+            i64.or
+            local.get $p0
+            ref.as_non_null
+            local.get $p8
+            i32.const 3
+            i32.add
+            array.get_u $rt_types__String
+            i64.extend_i32_u
+            i64.const 24
+            i64.shl
+            i64.or
+            i64.const 32
+            i64.shl
+            i64.or
+            local.get $p7
+            i64.xor
+            local.set $p10
+            local.set $p9
+            local.get $p9
+            i64.const 4294967295
+            i64.and
+            local.set $p11
+            local.get $p9
+            i64.const 32
+            i64.shr_u
+            local.set $p12
+            local.get $p10
+            i64.const 4294967295
+            i64.and
+            local.set $p13
+            local.get $p10
+            i64.const 32
+            i64.shr_u
+            local.set $p14
+            local.get $p11
+            local.get $p14
+            i64.mul
+            local.set $p15
+            local.get $p12
+            local.get $p13
+            i64.mul
+            local.set $p16
+            local.get $p11
+            local.get $p13
+            i64.mul
+            local.set $p9
+            local.get $p9
+            i64.const 32
+            i64.shr_u
+            local.get $p15
+            i64.const 4294967295
+            i64.and
+            i64.add
+            local.get $p16
+            i64.const 4294967295
+            i64.and
+            i64.add
+            local.set $p17
+            local.get $p12
+            local.get $p14
+            i64.mul
+            local.get $p15
+            i64.const 32
+            i64.shr_u
+            i64.add
+            local.get $p16
+            i64.const 32
+            i64.shr_u
+            i64.add
+            local.get $p17
+            i64.const 32
+            i64.shr_u
+            i64.add
+            local.get $p9
+            i64.const 4294967295
+            i64.and
+            local.get $p17
+            i64.const 4294967295
+            i64.and
+            i64.const 32
+            i64.shl
+            i64.or
+            i64.xor
+            local.set $p7
+            local.get $p5
+            i32.const 48
+            i32.add
+            local.set $p5
+            br $long_loop))
+        local.get $p2
+        local.get $p6
+        i64.xor
+        local.get $p7
+        i64.xor
+        local.set $p2)
+      (else
+        i32.const 0
+        local.set $p5))
+    (block $med_exit
+      (loop $med_loop
+        local.get $p1
+        local.get $p5
+        i32.sub
+        i32.const 16
+        i32.le_u
+        br_if $med_exit
+        local.get $p5
+        local.set $p8
+        local.get $p0
+        ref.as_non_null
+        local.get $p8
+        array.get_u $rt_types__String
+        i64.extend_i32_u
+        local.get $p0
+        ref.as_non_null
+        local.get $p8
+        i32.const 1
+        i32.add
+        array.get_u $rt_types__String
+        i64.extend_i32_u
+        i64.const 8
+        i64.shl
+        i64.or
+        local.get $p0
+        ref.as_non_null
+        local.get $p8
+        i32.const 2
+        i32.add
+        array.get_u $rt_types__String
+        i64.extend_i32_u
+        i64.const 16
+        i64.shl
+        i64.or
+        local.get $p0
+        ref.as_non_null
+        local.get $p8
+        i32.const 3
+        i32.add
+        array.get_u $rt_types__String
+        i64.extend_i32_u
+        i64.const 24
+        i64.shl
+        i64.or
+        local.get $p8
+        i32.const 4
+        i32.add
+        local.set $p8
+        local.get $p0
+        ref.as_non_null
+        local.get $p8
+        array.get_u $rt_types__String
+        i64.extend_i32_u
+        local.get $p0
+        ref.as_non_null
+        local.get $p8
+        i32.const 1
+        i32.add
+        array.get_u $rt_types__String
+        i64.extend_i32_u
+        i64.const 8
+        i64.shl
+        i64.or
+        local.get $p0
+        ref.as_non_null
+        local.get $p8
+        i32.const 2
+        i32.add
+        array.get_u $rt_types__String
+        i64.extend_i32_u
+        i64.const 16
+        i64.shl
+        i64.or
+        local.get $p0
+        ref.as_non_null
+        local.get $p8
+        i32.const 3
+        i32.add
+        array.get_u $rt_types__String
+        i64.extend_i32_u
+        i64.const 24
+        i64.shl
+        i64.or
+        i64.const 32
+        i64.shl
+        i64.or
+        i64.const -1800455987208640293
+        i64.xor
+        local.get $p5
+        i32.const 8
+        i32.add
+        local.set $p8
+        local.get $p0
+        ref.as_non_null
+        local.get $p8
+        array.get_u $rt_types__String
+        i64.extend_i32_u
+        local.get $p0
+        ref.as_non_null
+        local.get $p8
+        i32.const 1
+        i32.add
+        array.get_u $rt_types__String
+        i64.extend_i32_u
+        i64.const 8
+        i64.shl
+        i64.or
+        local.get $p0
+        ref.as_non_null
+        local.get $p8
+        i32.const 2
+        i32.add
+        array.get_u $rt_types__String
+        i64.extend_i32_u
+        i64.const 16
+        i64.shl
+        i64.or
+        local.get $p0
+        ref.as_non_null
+        local.get $p8
+        i32.const 3
+        i32.add
+        array.get_u $rt_types__String
+        i64.extend_i32_u
+        i64.const 24
+        i64.shl
+        i64.or
+        local.get $p8
+        i32.const 4
+        i32.add
+        local.set $p8
+        local.get $p0
+        ref.as_non_null
+        local.get $p8
+        array.get_u $rt_types__String
+        i64.extend_i32_u
+        local.get $p0
+        ref.as_non_null
+        local.get $p8
+        i32.const 1
+        i32.add
+        array.get_u $rt_types__String
+        i64.extend_i32_u
+        i64.const 8
+        i64.shl
+        i64.or
+        local.get $p0
+        ref.as_non_null
+        local.get $p8
+        i32.const 2
+        i32.add
+        array.get_u $rt_types__String
+        i64.extend_i32_u
+        i64.const 16
+        i64.shl
+        i64.or
+        local.get $p0
+        ref.as_non_null
+        local.get $p8
+        i32.const 3
+        i32.add
+        array.get_u $rt_types__String
+        i64.extend_i32_u
+        i64.const 24
+        i64.shl
+        i64.or
+        i64.const 32
+        i64.shl
+        i64.or
+        local.get $p2
+        i64.xor
+        local.set $p10
+        local.set $p9
+        local.get $p9
+        i64.const 4294967295
+        i64.and
+        local.set $p11
+        local.get $p9
+        i64.const 32
+        i64.shr_u
+        local.set $p12
+        local.get $p10
+        i64.const 4294967295
+        i64.and
+        local.set $p13
+        local.get $p10
+        i64.const 32
+        i64.shr_u
+        local.set $p14
+        local.get $p11
+        local.get $p14
+        i64.mul
+        local.set $p15
+        local.get $p12
+        local.get $p13
+        i64.mul
+        local.set $p16
+        local.get $p11
+        local.get $p13
+        i64.mul
+        local.set $p9
+        local.get $p9
+        i64.const 32
+        i64.shr_u
+        local.get $p15
+        i64.const 4294967295
+        i64.and
+        i64.add
+        local.get $p16
+        i64.const 4294967295
+        i64.and
+        i64.add
+        local.set $p17
+        local.get $p12
+        local.get $p14
+        i64.mul
+        local.get $p15
+        i64.const 32
+        i64.shr_u
+        i64.add
+        local.get $p16
+        i64.const 32
+        i64.shr_u
+        i64.add
+        local.get $p17
+        i64.const 32
+        i64.shr_u
+        i64.add
+        local.get $p9
+        i64.const 4294967295
+        i64.and
+        local.get $p17
+        i64.const 4294967295
+        i64.and
+        i64.const 32
+        i64.shl
+        i64.or
+        i64.xor
+        local.set $p2
+        local.get $p5
+        i32.const 16
+        i32.add
+        local.set $p5
+        br $med_loop))
+    local.get $p1
+    i32.const 16
+    i32.sub
+    local.set $p8
+    local.get $p0
+    ref.as_non_null
+    local.get $p8
+    array.get_u $rt_types__String
+    i64.extend_i32_u
+    local.get $p0
+    ref.as_non_null
+    local.get $p8
+    i32.const 1
+    i32.add
+    array.get_u $rt_types__String
+    i64.extend_i32_u
+    i64.const 8
+    i64.shl
+    i64.or
+    local.get $p0
+    ref.as_non_null
+    local.get $p8
+    i32.const 2
+    i32.add
+    array.get_u $rt_types__String
+    i64.extend_i32_u
+    i64.const 16
+    i64.shl
+    i64.or
+    local.get $p0
+    ref.as_non_null
+    local.get $p8
+    i32.const 3
+    i32.add
+    array.get_u $rt_types__String
+    i64.extend_i32_u
+    i64.const 24
+    i64.shl
+    i64.or
+    local.get $p8
+    i32.const 4
+    i32.add
+    local.set $p8
+    local.get $p0
+    ref.as_non_null
+    local.get $p8
+    array.get_u $rt_types__String
+    i64.extend_i32_u
+    local.get $p0
+    ref.as_non_null
+    local.get $p8
+    i32.const 1
+    i32.add
+    array.get_u $rt_types__String
+    i64.extend_i32_u
+    i64.const 8
+    i64.shl
+    i64.or
+    local.get $p0
+    ref.as_non_null
+    local.get $p8
+    i32.const 2
+    i32.add
+    array.get_u $rt_types__String
+    i64.extend_i32_u
+    i64.const 16
+    i64.shl
+    i64.or
+    local.get $p0
+    ref.as_non_null
+    local.get $p8
+    i32.const 3
+    i32.add
+    array.get_u $rt_types__String
+    i64.extend_i32_u
+    i64.const 24
+    i64.shl
+    i64.or
+    i64.const 32
+    i64.shl
+    i64.or
+    local.set $p3
+    local.get $p1
+    i32.const 8
+    i32.sub
+    local.set $p8
+    local.get $p0
+    ref.as_non_null
+    local.get $p8
+    array.get_u $rt_types__String
+    i64.extend_i32_u
+    local.get $p0
+    ref.as_non_null
+    local.get $p8
+    i32.const 1
+    i32.add
+    array.get_u $rt_types__String
+    i64.extend_i32_u
+    i64.const 8
+    i64.shl
+    i64.or
+    local.get $p0
+    ref.as_non_null
+    local.get $p8
+    i32.const 2
+    i32.add
+    array.get_u $rt_types__String
+    i64.extend_i32_u
+    i64.const 16
+    i64.shl
+    i64.or
+    local.get $p0
+    ref.as_non_null
+    local.get $p8
+    i32.const 3
+    i32.add
+    array.get_u $rt_types__String
+    i64.extend_i32_u
+    i64.const 24
+    i64.shl
+    i64.or
+    local.get $p8
+    i32.const 4
+    i32.add
+    local.set $p8
+    local.get $p0
+    ref.as_non_null
+    local.get $p8
+    array.get_u $rt_types__String
+    i64.extend_i32_u
+    local.get $p0
+    ref.as_non_null
+    local.get $p8
+    i32.const 1
+    i32.add
+    array.get_u $rt_types__String
+    i64.extend_i32_u
+    i64.const 8
+    i64.shl
+    i64.or
+    local.get $p0
+    ref.as_non_null
+    local.get $p8
+    i32.const 2
+    i32.add
+    array.get_u $rt_types__String
+    i64.extend_i32_u
+    i64.const 16
+    i64.shl
+    i64.or
+    local.get $p0
+    ref.as_non_null
+    local.get $p8
+    i32.const 3
+    i32.add
+    array.get_u $rt_types__String
+    i64.extend_i32_u
+    i64.const 24
+    i64.shl
+    i64.or
+    i64.const 32
+    i64.shl
+    i64.or
+    local.set $p4
+    i64.const -1800455987208640293
+    local.get $p1
+    i64.extend_i32_u
+    i64.xor
+    local.get $p3
+    i64.const -1800455987208640293
+    i64.xor
+    local.get $p4
+    local.get $p2
+    i64.xor
+    local.set $p10
+    local.set $p9
+    local.get $p9
+    i64.const 4294967295
+    i64.and
+    local.set $p11
+    local.get $p9
+    i64.const 32
+    i64.shr_u
+    local.set $p12
+    local.get $p10
+    i64.const 4294967295
+    i64.and
+    local.set $p13
+    local.get $p10
+    i64.const 32
+    i64.shr_u
+    local.set $p14
+    local.get $p11
+    local.get $p14
+    i64.mul
+    local.set $p15
+    local.get $p12
+    local.get $p13
+    i64.mul
+    local.set $p16
+    local.get $p11
+    local.get $p13
+    i64.mul
+    local.set $p9
+    local.get $p9
+    i64.const 32
+    i64.shr_u
+    local.get $p15
+    i64.const 4294967295
+    i64.and
+    i64.add
+    local.get $p16
+    i64.const 4294967295
+    i64.and
+    i64.add
+    local.set $p17
+    local.get $p12
+    local.get $p14
+    i64.mul
+    local.get $p15
+    i64.const 32
+    i64.shr_u
+    i64.add
+    local.get $p16
+    i64.const 32
+    i64.shr_u
+    i64.add
+    local.get $p17
+    i64.const 32
+    i64.shr_u
+    i64.add
+    local.get $p9
+    i64.const 4294967295
+    i64.and
+    local.get $p17
+    i64.const 4294967295
+    i64.and
+    i64.const 32
+    i64.shl
+    i64.or
+    i64.xor
+    local.set $p10
+    local.set $p9
+    local.get $p9
+    i64.const 4294967295
+    i64.and
+    local.set $p11
+    local.get $p9
+    i64.const 32
+    i64.shr_u
+    local.set $p12
+    local.get $p10
+    i64.const 4294967295
+    i64.and
+    local.set $p13
+    local.get $p10
+    i64.const 32
+    i64.shr_u
+    local.set $p14
+    local.get $p11
+    local.get $p14
+    i64.mul
+    local.set $p15
+    local.get $p12
+    local.get $p13
+    i64.mul
+    local.set $p16
+    local.get $p11
+    local.get $p13
+    i64.mul
+    local.set $p9
+    local.get $p9
+    i64.const 32
+    i64.shr_u
+    local.get $p15
+    i64.const 4294967295
+    i64.and
+    i64.add
+    local.get $p16
+    i64.const 4294967295
+    i64.and
+    i64.add
+    local.set $p17
+    local.get $p12
+    local.get $p14
+    i64.mul
+    local.get $p15
+    i64.const 32
+    i64.shr_u
+    i64.add
+    local.get $p16
+    i64.const 32
+    i64.shr_u
+    i64.add
+    local.get $p17
+    i64.const 32
+    i64.shr_u
+    i64.add
+    local.get $p9
+    i64.const 4294967295
+    i64.and
+    local.get $p17
+    i64.const 4294967295
+    i64.and
+    i64.const 32
+    i64.shl
+    i64.or
+    i64.xor
   )
-  (func $rt_dict__hash_key (type $functype_30)
+  (func $rt_dict__hash_key (type $functype_31)
     (param $p0 anyref)
-    (result i32)
+    (result i64)
     local.get $p0
     ref.test (ref i31)
     (if
@@ -1820,7 +3882,7 @@
     ref.cast (ref null $rt_types__String)
     call $rt_dict__hash_string
   )
-  (func $rt_dict__collision_get (type $functype_31)
+  (func $rt_dict__collision_get (type $functype_32)
     (param $p0 (ref null $rt_types__HamtCollision))
     (param $p1 anyref)
     (result anyref)
@@ -1830,7 +3892,7 @@
     (local $p5 (ref null $rt_types__HamtEntry))
     local.get $p0
     ref.as_non_null
-    struct.get $rt_types__HamtCollision 1
+    struct.get $rt_types__HamtCollision 2
     local.set $p2
     local.get $p2
     ref.as_non_null
@@ -1866,9 +3928,9 @@
         br $scan))
     ref.null any
   )
-  (func $rt_dict__collision_set (type $functype_32)
+  (func $rt_dict__collision_set (type $functype_33)
     (param $p0 (ref null $rt_types__HamtCollision))
-    (param $p1 i32)
+    (param $p1 i64)
     (param $p2 anyref)
     (param $p3 anyref)
     (result (ref $rt_types__HamtCollision))
@@ -1879,7 +3941,7 @@
     (local $p8 (ref null $rt_types__Array))
     local.get $p0
     ref.as_non_null
-    struct.get $rt_types__HamtCollision 1
+    struct.get $rt_types__HamtCollision 2
     local.set $p4
     local.get $p4
     ref.as_non_null
@@ -1916,9 +3978,10 @@
             local.get $p7
             call $rt_dict__arr_replace_at
             local.set $p8
+            i32.const 0
             local.get $p0
             ref.as_non_null
-            struct.get $rt_types__HamtCollision 0
+            struct.get $rt_types__HamtCollision 1
             local.get $p8
             ref.as_non_null
             struct.new $rt_types__HamtCollision
@@ -1939,16 +4002,17 @@
     local.get $p7
     call $rt_dict__arr_insert_at
     local.set $p8
+    i32.const 0
     local.get $p0
     ref.as_non_null
-    struct.get $rt_types__HamtCollision 0
+    struct.get $rt_types__HamtCollision 1
     local.get $p8
     ref.as_non_null
     struct.new $rt_types__HamtCollision
   )
-  (func $rt_dict__node_get (type $functype_33)
+  (func $rt_dict__node_get (type $functype_34)
     (param $p0 (ref null $rt_types__HamtNode))
-    (param $p1 i32)
+    (param $p1 i64)
     (param $p2 i32)
     (param $p3 anyref)
     (result anyref)
@@ -1965,7 +4029,7 @@
         ref.null any
         return))
     local.get $p2
-    i32.const 7
+    i32.const 13
     i32.ge_u
     (if
       (then
@@ -1975,7 +4039,9 @@
     local.get $p2
     i32.const 5
     i32.mul
-    i32.shr_u
+    i64.extend_i32_u
+    i64.shr_u
+    i32.wrap_i64
     i32.const 31
     i32.and
     local.set $p4
@@ -2028,7 +4094,7 @@
         ref.cast (ref $rt_types__HamtEntry)
         struct.get $rt_types__HamtEntry 0
         local.get $p1
-        i32.eq
+        i64.eq
         (if
           (then
             local.get $p8
@@ -2062,9 +4128,9 @@
     local.get $p3
     call $rt_dict__collision_get
   )
-  (func $rt_dict__node_set (type $functype_34)
+  (func $rt_dict__node_set (type $functype_35)
     (param $p0 (ref null $rt_types__HamtNode))
-    (param $p1 i32)
+    (param $p1 i64)
     (param $p2 i32)
     (param $p3 anyref)
     (param $p4 anyref)
@@ -2094,7 +4160,9 @@
         local.get $p2
         i32.const 5
         i32.mul
-        i32.shr_u
+        i64.extend_i32_u
+        i64.shr_u
+        i32.wrap_i64
         i32.const 31
         i32.and
         local.set $p7
@@ -2113,7 +4181,9 @@
     local.set $p6
     local.get $p1
     local.get $p6
-    i32.shr_u
+    i64.extend_i32_u
+    i64.shr_u
+    i32.wrap_i64
     i32.const 31
     i32.and
     local.set $p7
@@ -2193,7 +4263,7 @@
         local.get $p13
         struct.get $rt_types__HamtEntry 0
         local.get $p1
-        i32.eq
+        i64.eq
         (if
           (then
             local.get $p13
@@ -2219,6 +4289,7 @@
                 local.get $p5
                 array.new_fixed $rt_types__Array 2
                 local.set $p12
+                i32.const 0
                 local.get $p1
                 local.get $p12
                 ref.as_non_null
@@ -2238,7 +4309,7 @@
                 return)))
           (else
             local.get $p2
-            i32.const 6
+            i32.const 12
             i32.ge_u
             (if
               (then
@@ -2246,6 +4317,7 @@
                 local.get $p5
                 array.new_fixed $rt_types__Array 2
                 local.set $p12
+                i32.const 0
                 local.get $p1
                 local.get $p12
                 ref.as_non_null
@@ -2343,9 +4415,9 @@
     ref.as_non_null
     struct.new $rt_types__HamtNode
   )
-  (func $rt_dict__node_remove (type $functype_35)
+  (func $rt_dict__node_remove (type $functype_36)
     (param $p0 (ref null $rt_types__HamtNode))
-    (param $p1 i32)
+    (param $p1 i64)
     (param $p2 i32)
     (param $p3 anyref)
     (result (ref null $rt_types__HamtNode))
@@ -2377,7 +4449,9 @@
     local.get $p2
     i32.const 5
     i32.mul
-    i32.shr_u
+    i64.extend_i32_u
+    i64.shr_u
+    i32.wrap_i64
     i32.const 31
     i32.and
     local.set $p4
@@ -2427,7 +4501,7 @@
         local.get $p11
         struct.get $rt_types__HamtEntry 0
         local.get $p1
-        i32.eq
+        i64.eq
         (if
           (then
             local.get $p11
@@ -2515,7 +4589,7 @@
     local.set $p15
     local.get $p15
     ref.as_non_null
-    struct.get $rt_types__HamtCollision 1
+    struct.get $rt_types__HamtCollision 2
     local.set $p16
     local.get $p16
     ref.as_non_null
@@ -2587,9 +4661,10 @@
         ref.as_non_null
         struct.new $rt_types__HamtNode
         return))
+    i32.const 0
     local.get $p15
     ref.as_non_null
-    struct.get $rt_types__HamtCollision 0
+    struct.get $rt_types__HamtCollision 1
     local.get $p12
     ref.as_non_null
     struct.new $rt_types__HamtCollision
@@ -2653,7 +4728,7 @@
     local.get $p4
     ref.as_non_null
   )
-  (func $rt_dict__make (type $functype_36)
+  (func $rt_dict__make (type $functype_37)
     (result (ref $rt_types__PDict))
     i32.const 0
     ref.null $rt_types__HamtNode
@@ -2664,21 +4739,21 @@
     struct.new $rt_types__PVec
     struct.new $rt_types__PDict
   )
-  (func $rt_dict__len (type $functype_37)
+  (func $rt_dict__len (type $functype_38)
     (param $p0 (ref null $rt_types__PDict))
     (result i32)
     local.get $p0
     ref.as_non_null
     struct.get $rt_types__PDict 0
   )
-  (func $rt_dict__keys (type $functype_38)
+  (func $rt_dict__keys (type $functype_39)
     (param $p0 (ref null $rt_types__PDict))
     (result (ref $rt_types__PVec))
     local.get $p0
     ref.as_non_null
     struct.get $rt_types__PDict 2
   )
-  (func $rt_dict__has (type $functype_39)
+  (func $rt_dict__has (type $functype_40)
     (param $p0 (ref null $rt_types__PDict))
     (param $p1 anyref)
     (result i32)
@@ -2693,7 +4768,7 @@
     ref.is_null
     i32.eqz
   )
-  (func $rt_dict__get (type $functype_40)
+  (func $rt_dict__get (type $functype_41)
     (param $p0 (ref null $rt_types__PDict))
     (param $p1 anyref)
     (result anyref)
@@ -2706,7 +4781,7 @@
     local.get $p1
     call $rt_dict__node_get
   )
-  (func $rt_dict__get_option (type $functype_41)
+  (func $rt_dict__get_option (type $functype_42)
     (param $p0 (ref null $rt_types__PDict))
     (param $p1 anyref)
     (result (ref $rt_types__Variant))
@@ -2735,12 +4810,12 @@
         array.new_fixed $rt_types__Array 1
         struct.new $rt_types__Variant))
   )
-  (func $rt_dict__set (type $functype_42)
+  (func $rt_dict__set (type $functype_43)
     (param $p0 (ref null $rt_types__PDict))
     (param $p1 anyref)
     (param $p2 anyref)
     (result (ref $rt_types__PDict))
-    (local $p3 i32)
+    (local $p3 i64)
     (local $p4 (ref null $rt_types__HamtNode))
     (local $p5 (ref null $rt_types__HamtNode))
     (local $p6 i32)
@@ -2791,11 +4866,11 @@
     ref.as_non_null
     struct.new $rt_types__PDict
   )
-  (func $rt_dict__remove (type $functype_43)
+  (func $rt_dict__remove (type $functype_44)
     (param $p0 (ref null $rt_types__PDict))
     (param $p1 anyref)
     (result (ref $rt_types__PDict))
-    (local $p2 i32)
+    (local $p2 i64)
     (local $p3 (ref null $rt_types__HamtNode))
     (local $p4 (ref null $rt_types__HamtNode))
     (local $p5 i32)
@@ -2843,7 +4918,7 @@
     ref.as_non_null
     struct.new $rt_types__PDict
   )
-  (func $rt_dict__set_in_place (type $functype_42)
+  (func $rt_dict__set_in_place (type $functype_43)
     (param $p0 (ref null $rt_types__PDict))
     (param $p1 anyref)
     (param $p2 anyref)
@@ -2853,7 +4928,7 @@
     local.get $p2
     call $rt_dict__set
   )
-  (func $rt_dict__remove_in_place (type $functype_43)
+  (func $rt_dict__remove_in_place (type $functype_44)
     (param $p0 (ref null $rt_types__PDict))
     (param $p1 anyref)
     (result (ref $rt_types__PDict))
@@ -2887,7 +4962,7 @@
     call $rt_core__host_error
     unreachable
   )
-  (func $rt_core__eq_array (type $functype_44)
+  (func $rt_core__eq_array (type $functype_45)
     (param $p0 (ref null $rt_types__Array))
     (param $p1 (ref null $rt_types__Array))
     (result i32)
@@ -2953,7 +5028,7 @@
         br $loop))
     i32.const 1
   )
-  (func $rt_core__eq_vec (type $functype_45)
+  (func $rt_core__eq_vec (type $functype_46)
     (param $p0 (ref $rt_types__PVec))
     (param $p1 (ref $rt_types__PVec))
     (result i32)
@@ -2997,7 +5072,7 @@
         br $loop))
     i32.const 1
   )
-  (func $rt_core__eq_dict (type $functype_46)
+  (func $rt_core__eq_dict (type $functype_47)
     (param $p0 (ref $rt_types__PDict))
     (param $p1 (ref $rt_types__PDict))
     (result i32)
@@ -3062,7 +5137,7 @@
         br $loop))
     i32.const 1
   )
-  (func $rt_core__eq_variant (type $functype_47)
+  (func $rt_core__eq_variant (type $functype_48)
     (param $p0 (ref $rt_types__Variant))
     (param $p1 (ref $rt_types__Variant))
     (result i32)
@@ -3096,7 +5171,7 @@
     local.get $p3
     call $rt_core__eq_array
   )
-  (func $rt_core__eq (type $functype_48)
+  (func $rt_core__eq (type $functype_49)
     (param $p0 anyref)
     (param $p1 anyref)
     (result i32)
@@ -3212,7 +5287,7 @@
     ref.cast (ref null eq)
     ref.eq
   )
-  (func $user__func_87 (type $functype_49)
+  (func $user__func_87 (type $functype_50)
     (param $p0 (ref null $rt_types__PVec))
     (param $p1 (ref null $rt_types__String))
     (result (ref null $rt_types__String))
@@ -3667,7 +5742,7 @@
     local.get $p57
     return
   )
-  (func $user__func_93 (type $functype_50)
+  (func $user__func_93 (type $functype_51)
     (param $p0 (ref null $rt_types__String))
     (result (ref null $rt_types__IterState))
     (local $p1 (ref null $user__closure_i64_T6_String_Int))
@@ -3690,7 +5765,7 @@
     struct.new $rt_types__IterState
     return
   )
-  (func $user__func_94 (type $functype_51)
+  (func $user__func_94 (type $functype_52)
     (param $p0 i64)
     (result (ref null $rt_types__IterState))
     (local $p1 (ref null $user__closure_i64_T6_Int_Int))
@@ -3714,7 +5789,7 @@
     struct.new $rt_types__IterState
     return
   )
-  (func $user__func_95 (type $functype_52)
+  (func $user__func_95 (type $functype_53)
     (param $p0 (ref null $rt_types__String))
     (param $p1 i64)
     (param $p2 i64)
@@ -3758,7 +5833,7 @@
     local.get $p10
     return
   )
-  (func $user__func_96 (type $functype_53)
+  (func $user__func_96 (type $functype_54)
     (param $p0 (ref null $rt_types__PVec))
     (result (ref null $rt_types__IterState))
     (local $p1 i64)
@@ -3794,7 +5869,7 @@
     struct.new $rt_types__IterState
     return
   )
-  (func $user__func_100 (type $functype_54)
+  (func $user__func_100 (type $functype_55)
     (local $p0 i32)
     (local $p1 (ref null $rt_types__IterState))
     (local $p2 (ref null $rt_types__IterState))
@@ -4138,7 +6213,7 @@
     call $user____str_lit_get_empty
     return_call $rt_core__println
   )
-  (func $user__func_97 (type $functype_55)
+  (func $user__func_97 (type $functype_56)
     (param $p0 i64)
     (param $p1 anyref)
     (result (ref null $rt_types__Variant))
@@ -4366,7 +6441,7 @@
         struct.new $rt_types__Variant))
     return
   )
-  (func $user__func_98 (type $functype_55)
+  (func $user__func_98 (type $functype_56)
     (param $p0 i64)
     (param $p1 anyref)
     (result (ref null $rt_types__Variant))
@@ -4466,7 +6541,7 @@
         struct.new $rt_types__Variant))
     return
   )
-  (func $user__func_99 (type $functype_56)
+  (func $user__func_99 (type $functype_57)
     (param $p0 i64)
     (param $p1 anyref)
     (param $p2 anyref)
@@ -4542,7 +6617,7 @@
         struct.new $rt_types__Variant))
     return
   )
-  (func $user__func_87__closure (type $functype_57)
+  (func $user__func_87__closure (type $functype_58)
     (param $p0 anyref)
     (param $p1 anyref)
     (result anyref)
@@ -4558,7 +6633,7 @@
     ref.cast (ref null $rt_types__String)
     call $user__func_87
   )
-  (func $user__func_93__closure (type $functype_57)
+  (func $user__func_93__closure (type $functype_58)
     (param $p0 anyref)
     (param $p1 anyref)
     (result anyref)
@@ -4569,7 +6644,7 @@
     ref.cast (ref null $rt_types__String)
     call $user__func_93
   )
-  (func $user__func_94__closure (type $functype_57)
+  (func $user__func_94__closure (type $functype_58)
     (param $p0 anyref)
     (param $p1 anyref)
     (result anyref)
@@ -4581,7 +6656,7 @@
     struct.get $rt_types__BoxedInt 0
     call $user__func_94
   )
-  (func $user__func_95__closure (type $functype_57)
+  (func $user__func_95__closure (type $functype_58)
     (param $p0 anyref)
     (param $p1 anyref)
     (result anyref)
@@ -4604,7 +6679,7 @@
     struct.get $rt_types__BoxedInt 0
     call $user__func_95
   )
-  (func $user__func_96__closure (type $functype_57)
+  (func $user__func_96__closure (type $functype_58)
     (param $p0 anyref)
     (param $p1 anyref)
     (result anyref)
@@ -4615,7 +6690,7 @@
     ref.cast (ref null $rt_types__PVec)
     call $user__func_96
   )
-  (func $user__func_100__closure (type $functype_57)
+  (func $user__func_100__closure (type $functype_58)
     (param $p0 anyref)
     (param $p1 anyref)
     (result anyref)
@@ -4623,7 +6698,7 @@
     i32.const 0
     ref.i31
   )
-  (func $user__func_97__closure (type $functype_57)
+  (func $user__func_97__closure (type $functype_58)
     (param $p0 anyref)
     (param $p1 anyref)
     (result anyref)
@@ -4639,7 +6714,7 @@
     array.get $rt_types__ClosureEnv
     call $user__func_97
   )
-  (func $user__func_97__typed_closure (type $functype_58)
+  (func $user__func_97__typed_closure (type $functype_59)
     (param $p0 (ref null $rt_types__ClosureEnv))
     (param $p1 i64)
     (result (ref null $rt_types__Variant))
@@ -4650,7 +6725,7 @@
     array.get $rt_types__ClosureEnv
     call $user__func_97
   )
-  (func $user__func_98__closure (type $functype_57)
+  (func $user__func_98__closure (type $functype_58)
     (param $p0 anyref)
     (param $p1 anyref)
     (result anyref)
@@ -4666,7 +6741,7 @@
     array.get $rt_types__ClosureEnv
     call $user__func_98
   )
-  (func $user__func_98__typed_closure (type $functype_58)
+  (func $user__func_98__typed_closure (type $functype_59)
     (param $p0 (ref null $rt_types__ClosureEnv))
     (param $p1 i64)
     (result (ref null $rt_types__Variant))
@@ -4677,7 +6752,7 @@
     array.get $rt_types__ClosureEnv
     call $user__func_98
   )
-  (func $user__func_99__closure (type $functype_57)
+  (func $user__func_99__closure (type $functype_58)
     (param $p0 anyref)
     (param $p1 anyref)
     (result anyref)
@@ -4697,7 +6772,7 @@
     array.get $rt_types__ClosureEnv
     call $user__func_99
   )
-  (func $user__func_99__typed_closure (type $functype_58)
+  (func $user__func_99__typed_closure (type $functype_59)
     (param $p0 (ref null $rt_types__ClosureEnv))
     (param $p1 i64)
     (result (ref null $rt_types__Variant))
@@ -4712,7 +6787,7 @@
     array.get $rt_types__ClosureEnv
     call $user__func_99
   )
-  (func $user__user____iterator_next (type $functype_59)
+  (func $user__user____iterator_next (type $functype_60)
     (param $p0 anyref)
     (result (ref null $rt_types__Variant))
     (local $p1 (ref null $rt_types__Variant))
@@ -4771,7 +6846,7 @@
         struct.new $rt_types__Variant))
     return
   )
-  (func $user__$int_from_string_helper (type $functype_60)
+  (func $user__$int_from_string_helper (type $functype_61)
     (param $p0 (ref null $rt_types__String))
     (result anyref)
     (local $p1 i64)
@@ -4891,7 +6966,7 @@
         array.new_fixed $rt_types__Array 0
         struct.new $rt_types__Variant))
   )
-  (func $user__$from_code_point_helper (type $functype_61)
+  (func $user__$from_code_point_helper (type $functype_62)
     (param $p0 i32)
     (result anyref)
     local.get $p0
@@ -5019,7 +7094,7 @@
                             array.new_fixed $rt_types__Array 0
                             struct.new $rt_types__Variant))))))))))))
   )
-  (func $user__$string_utf8_bytes_helper (type $functype_62)
+  (func $user__$string_utf8_bytes_helper (type $functype_63)
     (param $p0 (ref null $rt_types__String))
     (result (ref $rt_types__Array))
     (local $p1 i32)
@@ -5053,7 +7128,7 @@
         br $$continue))
     local.get $p3
   )
-  (func $user__$string_from_utf8_helper (type $functype_63)
+  (func $user__$string_from_utf8_helper (type $functype_64)
     (param $p0 (ref null $rt_types__Array))
     (result anyref)
     (local $p1 i32)
@@ -5388,10 +7463,10 @@
         array.new_fixed $rt_types__Array 1
         struct.new $rt_types__Variant))
   )
-  (func $user____user_init (type $functype_54)
+  (func $user____user_init (type $functype_55)
     call $user__func_100
   )
-  (func $user____str_lit_get_empty (type $functype_64)
+  (func $user____str_lit_get_empty (type $functype_65)
     (result (ref $rt_types__String))
     global.get $user____str_lit_global_empty
     ref.is_null
@@ -5402,7 +7477,7 @@
     global.get $user____str_lit_global_empty
     ref.as_non_null
   )
-  (func $user____str_lit_get_20 (type $functype_64)
+  (func $user____str_lit_get_20 (type $functype_65)
     (result (ref $rt_types__String))
     global.get $user____str_lit_global_20
     ref.is_null
@@ -5414,7 +7489,7 @@
     global.get $user____str_lit_global_20
     ref.as_non_null
   )
-  (func $user____str_lit_get_3d (type $functype_64)
+  (func $user____str_lit_get_3d (type $functype_65)
     (result (ref $rt_types__String))
     global.get $user____str_lit_global_3d
     ref.is_null
@@ -5426,7 +7501,7 @@
     global.get $user____str_lit_global_3d
     ref.as_non_null
   )
-  (func $user____str_lit_get_48656c6c6f (type $functype_64)
+  (func $user____str_lit_get_48656c6c6f (type $functype_65)
     (result (ref $rt_types__String))
     global.get $user____str_lit_global_48656c6c6f
     ref.is_null
@@ -5442,7 +7517,7 @@
     global.get $user____str_lit_global_48656c6c6f
     ref.as_non_null
   )
-  (func $user____str_lit_get_5f (type $functype_64)
+  (func $user____str_lit_get_5f (type $functype_65)
     (result (ref $rt_types__String))
     global.get $user____str_lit_global_5f
     ref.is_null
@@ -5454,7 +7529,7 @@
     global.get $user____str_lit_global_5f
     ref.as_non_null
   )
-  (func $user____str_lit_get_63686172733a (type $functype_64)
+  (func $user____str_lit_get_63686172733a (type $functype_65)
     (result (ref $rt_types__String))
     global.get $user____str_lit_global_63686172733a
     ref.is_null
@@ -5471,7 +7546,7 @@
     global.get $user____str_lit_global_63686172733a
     ref.as_non_null
   )
-  (func $user____str_lit_get_63756d756c3a (type $functype_64)
+  (func $user____str_lit_get_63756d756c3a (type $functype_65)
     (result (ref $rt_types__String))
     global.get $user____str_lit_global_63756d756c3a
     ref.is_null
@@ -5488,7 +7563,7 @@
     global.get $user____str_lit_global_63756d756c3a
     ref.as_non_null
   )
-  (func $user____str_lit_get_6974656d (type $functype_64)
+  (func $user____str_lit_get_6974656d (type $functype_65)
     (result (ref $rt_types__String))
     global.get $user____str_lit_global_6974656d
     ref.is_null
@@ -5503,7 +7578,7 @@
     global.get $user____str_lit_global_6974656d
     ref.as_non_null
   )
-  (func $user____str_lit_get_6a6f696e3a20696e76616c69642075746638 (type $functype_64)
+  (func $user____str_lit_get_6a6f696e3a20696e76616c69642075746638 (type $functype_65)
     (result (ref $rt_types__String))
     global.get $user____str_lit_global_6a6f696e3a20696e76616c69642075746638
     ref.is_null
@@ -5532,7 +7607,7 @@
     global.get $user____str_lit_global_6a6f696e3a20696e76616c69642075746638
     ref.as_non_null
   )
-  (func $user____str_lit_get_6c6162656c733a (type $functype_64)
+  (func $user____str_lit_get_6c6162656c733a (type $functype_65)
     (result (ref $rt_types__String))
     global.get $user____str_lit_global_6c6162656c733a
     ref.is_null
@@ -5550,7 +7625,7 @@
     global.get $user____str_lit_global_6c6162656c733a
     ref.as_non_null
   )
-  (func $user____str_lit_get_6e6f6e2d65786861757374697665206d6174636820696e205f5f696e69745f5f202846756e634964283130302929 (type $functype_64)
+  (func $user____str_lit_get_6e6f6e2d65786861757374697665206d6174636820696e205f5f696e69745f5f202846756e634964283130302929 (type $functype_65)
     (result (ref $rt_types__String))
     global.get $user____str_lit_global_6e6f6e2d65786861757374697665206d6174636820696e205f5f696e69745f5f202846756e634964283130302929
     ref.is_null
@@ -5607,7 +7682,7 @@
     global.get $user____str_lit_global_6e6f6e2d65786861757374697665206d6174636820696e205f5f696e69745f5f202846756e634964283130302929
     ref.as_non_null
   )
-  (func $user____str_lit_get_6e6f6e2d65786861757374697665206d6174636820696e205f5f7072656c7564655f766563746f722e6a6f696e202846756e6349642838372929 (type $functype_64)
+  (func $user____str_lit_get_6e6f6e2d65786861757374697665206d6174636820696e205f5f7072656c7564655f766563746f722e6a6f696e202846756e6349642838372929 (type $functype_65)
     (result (ref $rt_types__String))
     global.get $user____str_lit_global_6e6f6e2d65786861757374697665206d6174636820696e205f5f7072656c7564655f766563746f722e6a6f696e202846756e6349642838372929
     ref.is_null
@@ -5676,7 +7751,7 @@
     global.get $user____str_lit_global_6e6f6e2d65786861757374697665206d6174636820696e205f5f7072656c7564655f766563746f722e6a6f696e202846756e6349642838372929
     ref.as_non_null
   )
-  (func $__linked_init (type $functype_54)
+  (func $__linked_init (type $functype_55)
     call $user____user_init
   )
   (elem declare func $user__func_97__closure $user__func_97__typed_closure $user__func_98__closure $user__func_98__typed_closure $user__func_99__closure $user__func_99__typed_closure)

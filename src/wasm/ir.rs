@@ -144,6 +144,7 @@ pub enum Instr {
     I64Xor,
     I64Shl,
     I64ShrS,
+    I64ShrU,
     I64Eq,
     I64Ne,
     I64LtS,

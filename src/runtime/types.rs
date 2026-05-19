@@ -208,13 +208,13 @@ pub fn make() -> ModuleIR {
         ],
     });
 
-    // (type $HamtEntry (struct (field $hash i32) (field $key anyref) (field $val anyref)))
+    // (type $HamtEntry (struct (field $hash i64) (field $key anyref) (field $val anyref)))
     m.types.push(TypeDef::Struct {
         name: "HamtEntry".into(),
         supertype: None,
         non_final: false,
         fields: vec![
-            FieldDef::named("hash", ValType::I32),
+            FieldDef::named("hash", ValType::I64),
             FieldDef::named("key", ValType::Anyref),
             FieldDef::named("val", ValType::Anyref),
         ],
@@ -235,7 +235,7 @@ pub fn make() -> ModuleIR {
         ],
     });
 
-    // (type $HamtCollision (struct (field $tag i32) (field $hash i32) (field $entries (ref $Array))))
+    // (type $HamtCollision (struct (field $tag i32) (field $hash i64) (field $entries (ref $Array))))
     // Keep this layout distinct from HamtNode. Wasm GC type checks are structural,
     // so identical final struct shapes can make ref.test HamtNode succeed for a collision.
     m.types.push(TypeDef::Struct {
@@ -244,7 +244,7 @@ pub fn make() -> ModuleIR {
         non_final: false,
         fields: vec![
             FieldDef::named("tag", ValType::I32),
-            FieldDef::named("hash", ValType::I32),
+            FieldDef::named("hash", ValType::I64),
             FieldDef {
                 name: Some("entries".into()),
                 mutable: false,

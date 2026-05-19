@@ -11,6 +11,7 @@ use .suites.api_cell_suite
 use .suites.api_vector_suite
 use .suites.api_string_suite
 use .suites.api_dict_suite
+use .suites.dict_hash_suite
 use .suites.api_range_iterator_suite
 use .suites.stdlib_path_suite
 use .suites.stdlib_host_suite
@@ -95,6 +96,7 @@ runner.run_all([
   api_vector_suite.suite(),
   api_string_suite.suite(),
   api_dict_suite.suite(),
+  dict_hash_suite.suite(),
   api_range_iterator_suite.suite(),
   stdlib_path_suite.suite(),
   stdlib_host_suite.suite(),

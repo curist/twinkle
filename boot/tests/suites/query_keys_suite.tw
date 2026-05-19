@@ -5,29 +5,29 @@ use lib.query.keys
 pub fn suite() runner.Suite {
   runner.suite("query keys")
 
-    // -- hash_text: verified against Rust FNV-1a reference --
+    // -- hash_text: verified against Rust wyhash v3 reference --
 
     .test("hash_text empty string matches reference", fn() {
-      // Rust: fnv1a_64(b"") = 14695981039346656037u64 = -3750763034362895579i64
-      try assert.equal(keys.hash_text(""), 0 - 3750763034362895579)
+      // Rust: hash_text("") = 4808886099364463827i64
+      try assert.equal(keys.hash_text(""), 4808886099364463827)
       .Ok({})
     })
 
     .test("hash_text single char matches reference", fn() {
-      // Rust: fnv1a_64(b"a") = -5808556873153909620i64
-      try assert.equal(keys.hash_text("a"), 0 - 5808556873153909620)
+      // Rust: hash_text("a") = 7852112099385141351i64
+      try assert.equal(keys.hash_text("a"), 7852112099385141351)
       .Ok({})
     })
 
     .test("hash_text multi-char matches reference", fn() {
-      // Rust: fnv1a_64(b"hello") = -6615550055289275125i64
-      try assert.equal(keys.hash_text("hello"), 0 - 6615550055289275125)
+      // Rust: hash_text("hello") = -383672018962587131i64
+      try assert.equal(keys.hash_text("hello"), 0 - 383672018962587131)
       .Ok({})
     })
 
     .test("hash_text stage name matches reference", fn() {
-      // Rust: fnv1a_64(b"parse") = 886795330685173132i64
-      try assert.equal(keys.hash_text("parse"), 886795330685173132)
+      // Rust: hash_text("parse") = -7279295567456500006i64
+      try assert.equal(keys.hash_text("parse"), 0 - 7279295567456500006)
       .Ok({})
     })
 
@@ -47,16 +47,15 @@ pub fn suite() runner.Suite {
       .Ok({})
     })
 
-    // -- parse_key: verified against Rust mix_many reference --
+    // -- parse_key: verified against Rust reference --
 
     .test("parse_key matches reference", fn() {
       source_hash := keys.hash_text("fn main() {}")
       // Verify source hash first
-      try assert.equal(source_hash, 0 - 6186732394119585521)
+      try assert.equal(source_hash, 0 - 6247076241900209079)
       pk := keys.parse_key("test.tw", source_hash)
-      // Rust: mix_many(&[1, hash_text("parse"), hash_text("test.tw"), source_hash])
-      //     = -1554403158589966462i64
-      try assert.equal(pk, 0 - 1554403158589966462)
+      // Rust: parse_key("test.tw", source_hash) = -8184021968052220895i64
+      try assert.equal(pk, 0 - 8184021968052220895)
       .Ok({})
     })
 
@@ -108,13 +107,12 @@ pub fn suite() runner.Suite {
     // -- deps_hash: verified against Rust reference --
 
     .test("deps_hash matches reference", fn() {
-      // Rust: mix_many(&[hash_text("deps"), hash_text("a.tw"), 100, hash_text("b.tw"), 200])
-      //     = 5538049689009683815i64
+      // Rust: deps_hash([("a.tw", 100), ("b.tw", 200)]) = -3408744791725452791i64
       entries: Vector<keys.DepEntry> = [
         keys.DepEntry.{ path: "a.tw", hash: 100 },
         keys.DepEntry.{ path: "b.tw", hash: 200 },
       ]
-      try assert.equal(keys.deps_hash(entries), 5538049689009683815)
+      try assert.equal(keys.deps_hash(entries), 0 - 3408744791725452791)
       .Ok({})
     })
 
@@ -144,10 +142,9 @@ pub fn suite() runner.Suite {
 
     .test("module_hash matches reference", fn() {
       source_hash := keys.hash_text("fn main() {}")
-      dh := 5538049689009683815  // from deps_hash test above
-      // Rust: mix_many(&[1, hash_text("module"), source_hash, dh])
-      //     = 7533646049685068476i64
-      try assert.equal(keys.module_hash(source_hash, dh), 7533646049685068476)
+      dh := 0 - 3408744791725452791  // from deps_hash test above
+      // Rust: module_hash(source_hash, dh) = 5800117160120315122i64
+      try assert.equal(keys.module_hash(source_hash, dh), 5800117160120315122)
       .Ok({})
     })
 

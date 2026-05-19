@@ -339,97 +339,549 @@ fn arr_remove_at_fn() -> FuncDef {
     }
 }
 
-// ── hash_i64(v: i64) -> i32 ──────────────────────────────────────────────────
-// Wang/Knuth mix for i64 → i32.
+// ── Inline wyhash v3 helpers ─────────────────────────────────────────────────
+// These return instruction vectors for inlining into hash_i64/hash_string,
+// eliminating call overhead for wymix/wyr4/wyr8.
+
+/// Inline wymix: pops (a, b) from Wasm stack, pushes (lo ^ hi).
+/// 4 i64.mul — reconstructs low half from partial products instead of a 5th mul.
+fn wymix_instrs(
+    la: u32,
+    lb: u32,
+    la_lo: u32,
+    la_hi: u32,
+    lb_lo: u32,
+    lb_hi: u32,
+    lt1: u32,
+    lt2: u32,
+    lcross: u32,
+) -> Vec<Instr> {
+    vec![
+        Instr::LocalSet(lb),
+        Instr::LocalSet(la),
+        Instr::LocalGet(la),
+        Instr::I64Const(4294967295),
+        Instr::I64And,
+        Instr::LocalSet(la_lo),
+        Instr::LocalGet(la),
+        Instr::I64Const(32),
+        Instr::I64ShrU,
+        Instr::LocalSet(la_hi),
+        Instr::LocalGet(lb),
+        Instr::I64Const(4294967295),
+        Instr::I64And,
+        Instr::LocalSet(lb_lo),
+        Instr::LocalGet(lb),
+        Instr::I64Const(32),
+        Instr::I64ShrU,
+        Instr::LocalSet(lb_hi),
+        Instr::LocalGet(la_lo),
+        Instr::LocalGet(lb_hi),
+        Instr::I64Mul,
+        Instr::LocalSet(lt1),
+        Instr::LocalGet(la_hi),
+        Instr::LocalGet(lb_lo),
+        Instr::I64Mul,
+        Instr::LocalSet(lt2),
+        Instr::LocalGet(la_lo),
+        Instr::LocalGet(lb_lo),
+        Instr::I64Mul,
+        Instr::LocalSet(la),
+        Instr::LocalGet(la),
+        Instr::I64Const(32),
+        Instr::I64ShrU,
+        Instr::LocalGet(lt1),
+        Instr::I64Const(4294967295),
+        Instr::I64And,
+        Instr::I64Add,
+        Instr::LocalGet(lt2),
+        Instr::I64Const(4294967295),
+        Instr::I64And,
+        Instr::I64Add,
+        Instr::LocalSet(lcross),
+        Instr::LocalGet(la_hi),
+        Instr::LocalGet(lb_hi),
+        Instr::I64Mul,
+        Instr::LocalGet(lt1),
+        Instr::I64Const(32),
+        Instr::I64ShrU,
+        Instr::I64Add,
+        Instr::LocalGet(lt2),
+        Instr::I64Const(32),
+        Instr::I64ShrU,
+        Instr::I64Add,
+        Instr::LocalGet(lcross),
+        Instr::I64Const(32),
+        Instr::I64ShrU,
+        Instr::I64Add,
+        Instr::LocalGet(la),
+        Instr::I64Const(4294967295),
+        Instr::I64And,
+        Instr::LocalGet(lcross),
+        Instr::I64Const(4294967295),
+        Instr::I64And,
+        Instr::I64Const(32),
+        Instr::I64Shl,
+        Instr::I64Or,
+        Instr::I64Xor,
+    ]
+}
+
+/// Inline wyr4: reads 4 bytes LE as u64. str_local/off_local must be locals.
+fn wyr4_instrs(str_local: u32, off_local: u32) -> Vec<Instr> {
+    vec![
+        Instr::LocalGet(str_local),
+        Instr::RefAsNonNull,
+        Instr::LocalGet(off_local),
+        Instr::ArrayGetU(T_STRING.into()),
+        Instr::I64ExtendI32U,
+        Instr::LocalGet(str_local),
+        Instr::RefAsNonNull,
+        Instr::LocalGet(off_local),
+        Instr::I32Const(1),
+        Instr::I32Add,
+        Instr::ArrayGetU(T_STRING.into()),
+        Instr::I64ExtendI32U,
+        Instr::I64Const(8),
+        Instr::I64Shl,
+        Instr::I64Or,
+        Instr::LocalGet(str_local),
+        Instr::RefAsNonNull,
+        Instr::LocalGet(off_local),
+        Instr::I32Const(2),
+        Instr::I32Add,
+        Instr::ArrayGetU(T_STRING.into()),
+        Instr::I64ExtendI32U,
+        Instr::I64Const(16),
+        Instr::I64Shl,
+        Instr::I64Or,
+        Instr::LocalGet(str_local),
+        Instr::RefAsNonNull,
+        Instr::LocalGet(off_local),
+        Instr::I32Const(3),
+        Instr::I32Add,
+        Instr::ArrayGetU(T_STRING.into()),
+        Instr::I64ExtendI32U,
+        Instr::I64Const(24),
+        Instr::I64Shl,
+        Instr::I64Or,
+    ]
+}
+
+/// Inline wyr8: reads 8 bytes LE as u64. off_scratch holds base offset; clobbered.
+fn wyr8_instrs(str_local: u32, off_scratch: u32) -> Vec<Instr> {
+    let mut v = wyr4_instrs(str_local, off_scratch);
+    v.extend_from_slice(&[
+        Instr::LocalGet(off_scratch),
+        Instr::I32Const(4),
+        Instr::I32Add,
+        Instr::LocalSet(off_scratch),
+    ]);
+    v.extend(wyr4_instrs(str_local, off_scratch));
+    v.extend_from_slice(&[Instr::I64Const(32), Instr::I64Shl, Instr::I64Or]);
+    v
+}
+
+// ── hash_i64(v: i64) -> i64 ──────────────────────────────────────────────────
+// wyhash v3 for an 8-byte LE value. seed=0. Fully inlined.
 fn hash_i64_fn() -> FuncDef {
-    // h = lower XOR upper; h = h * 2654435761; return h
+    // L0=v(param), L1-L9=wymix scratch
+    let mix = wymix_instrs(1, 2, 3, 4, 5, 6, 7, 8, 9);
+    let mut body = vec![
+        // outer wymix arg1: secret[1] ^ len(=8)
+        Instr::I64Const(-1800455987208640293i64),
+        Instr::I64Const(8),
+        Instr::I64Xor,
+        // a = swap32(v) = (v << 32) | (v >>u 32)
+        Instr::LocalGet(0),
+        Instr::I64Const(32),
+        Instr::I64Shl,
+        Instr::LocalGet(0),
+        Instr::I64Const(32),
+        Instr::I64ShrU,
+        Instr::I64Or,
+        // a ^ secret[1]
+        Instr::I64Const(-1800455987208640293i64),
+        Instr::I64Xor,
+        // b ^ seed = v ^ secret[0]
+        Instr::LocalGet(0),
+        Instr::I64Const(-6884282663029611473i64),
+        Instr::I64Xor,
+    ];
+    body.extend(mix.iter().cloned());
+    body.extend(mix);
     FuncDef {
         name: "hash_i64".into(),
         params: vec![ValType::I64],
-        results: vec![ValType::I32],
-        locals: vec![ValType::I32],
-        body: vec![
-            // lower = i32.wrap_i64(v)
-            Instr::LocalGet(0),
-            Instr::I32WrapI64,
-            // upper = i32.wrap_i64(v >> 32)
-            Instr::LocalGet(0),
-            Instr::I64Const(32),
-            Instr::I64ShrS,
-            Instr::I32WrapI64,
-            // h = lower XOR upper
-            Instr::I32Xor,
-            Instr::LocalSet(1),
-            // h = h * 2654435761 (Knuth's multiplicative constant)
-            Instr::LocalGet(1),
-            Instr::I32Const(-1640531527i32), // 2654435769u32 as i32
-            Instr::I32Mul,
-        ],
+        results: vec![ValType::I64],
+        locals: vec![ValType::I64; 9],
+        body,
     }
 }
 
-// ── hash_string(s: ref null $String) -> i32 ──────────────────────────────────
-// FNV-1a 32-bit.
+// ── hash_string(s: ref null $String) -> i64 ──────────────────────────────────
+// wyhash v3 for a byte array. seed=0. Fully inlined.
 fn hash_string_fn() -> FuncDef {
-    // p0=s; L1=hash, L2=n, L3=i
+    // L0=s(param), L1=n(i32), L2=seed(i64), L3=a(i64), L4=b(i64),
+    // L5=i(i32), L6=see1(i64), L7=see2(i64),
+    // L8=off_scratch(i32), L9-L17=wymix scratch
+    let mix = || wymix_instrs(9, 10, 11, 12, 13, 14, 15, 16, 17);
+
+    // ── len == 0 ──
+    let mut len0 = vec![
+        Instr::I64Const(-1800455987208640293i64),
+        Instr::I64Const(-1800455987208640293i64),
+        Instr::LocalGet(2),
+    ];
+    len0.extend(mix());
+    len0.extend(mix());
+    len0.push(Instr::Return);
+
+    // ── len 1-3 ──
+    let mut len1_3 = vec![
+        Instr::LocalGet(0),
+        Instr::RefAsNonNull,
+        Instr::I32Const(0),
+        Instr::ArrayGetU(T_STRING.into()),
+        Instr::I32Const(16),
+        Instr::I32Shl,
+        Instr::LocalGet(0),
+        Instr::RefAsNonNull,
+        Instr::LocalGet(1),
+        Instr::I32Const(1),
+        Instr::I32ShrU,
+        Instr::ArrayGetU(T_STRING.into()),
+        Instr::I32Const(8),
+        Instr::I32Shl,
+        Instr::I32Or,
+        Instr::LocalGet(0),
+        Instr::RefAsNonNull,
+        Instr::LocalGet(1),
+        Instr::I32Const(1),
+        Instr::I32Sub,
+        Instr::ArrayGetU(T_STRING.into()),
+        Instr::I32Or,
+        Instr::I64ExtendI32U,
+        Instr::LocalSet(3),
+        Instr::I64Const(0),
+        Instr::LocalSet(4),
+        Instr::I64Const(-1800455987208640293i64),
+        Instr::LocalGet(1),
+        Instr::I64ExtendI32U,
+        Instr::I64Xor,
+        Instr::LocalGet(3),
+        Instr::I64Const(-1800455987208640293i64),
+        Instr::I64Xor,
+        Instr::LocalGet(4),
+        Instr::LocalGet(2),
+        Instr::I64Xor,
+    ];
+    len1_3.extend(mix());
+    len1_3.extend(mix());
+    len1_3.push(Instr::Return);
+
+    // ── len 4-16 ──
+    let mut len4_16 = vec![Instr::I32Const(0), Instr::LocalSet(8)];
+    len4_16.extend(wyr4_instrs(0, 8));
+    len4_16.extend_from_slice(&[
+        Instr::I64Const(32),
+        Instr::I64Shl,
+        Instr::LocalGet(1),
+        Instr::I32Const(3),
+        Instr::I32ShrU,
+        Instr::I32Const(2),
+        Instr::I32Shl,
+        Instr::LocalSet(8),
+    ]);
+    len4_16.extend(wyr4_instrs(0, 8));
+    len4_16.extend_from_slice(&[Instr::I64Or, Instr::LocalSet(3)]);
+    len4_16.extend_from_slice(&[
+        Instr::LocalGet(1),
+        Instr::I32Const(4),
+        Instr::I32Sub,
+        Instr::LocalSet(8),
+    ]);
+    len4_16.extend(wyr4_instrs(0, 8));
+    len4_16.extend_from_slice(&[
+        Instr::I64Const(32),
+        Instr::I64Shl,
+        Instr::LocalGet(1),
+        Instr::I32Const(4),
+        Instr::I32Sub,
+        Instr::LocalGet(1),
+        Instr::I32Const(3),
+        Instr::I32ShrU,
+        Instr::I32Const(2),
+        Instr::I32Shl,
+        Instr::I32Sub,
+        Instr::LocalSet(8),
+    ]);
+    len4_16.extend(wyr4_instrs(0, 8));
+    len4_16.extend_from_slice(&[Instr::I64Or, Instr::LocalSet(4)]);
+    len4_16.extend_from_slice(&[
+        Instr::I64Const(-1800455987208640293i64),
+        Instr::LocalGet(1),
+        Instr::I64ExtendI32U,
+        Instr::I64Xor,
+        Instr::LocalGet(3),
+        Instr::I64Const(-1800455987208640293i64),
+        Instr::I64Xor,
+        Instr::LocalGet(4),
+        Instr::LocalGet(2),
+        Instr::I64Xor,
+    ]);
+    len4_16.extend(mix());
+    len4_16.extend(mix());
+    len4_16.push(Instr::Return);
+
+    // ── long loop body (len > 48) ──
+    let mut long_loop = vec![
+        Instr::LocalGet(5),
+        Instr::I32Const(48),
+        Instr::I32Add,
+        Instr::LocalGet(1),
+        Instr::I32GtU,
+        Instr::BrIf("long_exit".into()),
+        Instr::LocalGet(5),
+        Instr::LocalSet(8),
+    ];
+    long_loop.extend(wyr8_instrs(0, 8));
+    long_loop.extend_from_slice(&[
+        Instr::I64Const(-1800455987208640293i64),
+        Instr::I64Xor,
+        Instr::LocalGet(5),
+        Instr::I32Const(8),
+        Instr::I32Add,
+        Instr::LocalSet(8),
+    ]);
+    long_loop.extend(wyr8_instrs(0, 8));
+    long_loop.extend_from_slice(&[Instr::LocalGet(2), Instr::I64Xor]);
+    long_loop.extend(mix());
+    long_loop.extend_from_slice(&[
+        Instr::LocalSet(2),
+        Instr::LocalGet(5),
+        Instr::I32Const(16),
+        Instr::I32Add,
+        Instr::LocalSet(8),
+    ]);
+    long_loop.extend(wyr8_instrs(0, 8));
+    long_loop.extend_from_slice(&[
+        Instr::I64Const(-8167223561372836125i64),
+        Instr::I64Xor,
+        Instr::LocalGet(5),
+        Instr::I32Const(24),
+        Instr::I32Add,
+        Instr::LocalSet(8),
+    ]);
+    long_loop.extend(wyr8_instrs(0, 8));
+    long_loop.extend_from_slice(&[Instr::LocalGet(6), Instr::I64Xor]);
+    long_loop.extend(mix());
+    long_loop.extend_from_slice(&[
+        Instr::LocalSet(6),
+        Instr::LocalGet(5),
+        Instr::I32Const(32),
+        Instr::I32Add,
+        Instr::LocalSet(8),
+    ]);
+    long_loop.extend(wyr8_instrs(0, 8));
+    long_loop.extend_from_slice(&[
+        Instr::I64Const(6380440055042464963i64),
+        Instr::I64Xor,
+        Instr::LocalGet(5),
+        Instr::I32Const(40),
+        Instr::I32Add,
+        Instr::LocalSet(8),
+    ]);
+    long_loop.extend(wyr8_instrs(0, 8));
+    long_loop.extend_from_slice(&[Instr::LocalGet(7), Instr::I64Xor]);
+    long_loop.extend(mix());
+    long_loop.extend_from_slice(&[
+        Instr::LocalSet(7),
+        Instr::LocalGet(5),
+        Instr::I32Const(48),
+        Instr::I32Add,
+        Instr::LocalSet(5),
+        Instr::Br("long_loop".into()),
+    ]);
+
+    let long_then = vec![
+        Instr::LocalGet(2),
+        Instr::LocalSet(6),
+        Instr::LocalGet(2),
+        Instr::LocalSet(7),
+        Instr::I32Const(0),
+        Instr::LocalSet(5),
+        Instr::Block {
+            label: "long_exit".into(),
+            result: None,
+            body: vec![Instr::Loop {
+                label: "long_loop".into(),
+                result: None,
+                body: long_loop,
+            }],
+        },
+        Instr::LocalGet(2),
+        Instr::LocalGet(6),
+        Instr::I64Xor,
+        Instr::LocalGet(7),
+        Instr::I64Xor,
+        Instr::LocalSet(2),
+    ];
+
+    // ── medium loop ──
+    let mut med_loop = vec![
+        Instr::LocalGet(1),
+        Instr::LocalGet(5),
+        Instr::I32Sub,
+        Instr::I32Const(16),
+        Instr::I32LeU,
+        Instr::BrIf("med_exit".into()),
+        Instr::LocalGet(5),
+        Instr::LocalSet(8),
+    ];
+    med_loop.extend(wyr8_instrs(0, 8));
+    med_loop.extend_from_slice(&[
+        Instr::I64Const(-1800455987208640293i64),
+        Instr::I64Xor,
+        Instr::LocalGet(5),
+        Instr::I32Const(8),
+        Instr::I32Add,
+        Instr::LocalSet(8),
+    ]);
+    med_loop.extend(wyr8_instrs(0, 8));
+    med_loop.extend_from_slice(&[Instr::LocalGet(2), Instr::I64Xor]);
+    med_loop.extend(mix());
+    med_loop.extend_from_slice(&[
+        Instr::LocalSet(2),
+        Instr::LocalGet(5),
+        Instr::I32Const(16),
+        Instr::I32Add,
+        Instr::LocalSet(5),
+        Instr::Br("med_loop".into()),
+    ]);
+
+    // ── final: a = wyr8(p + n - 16), b = wyr8(p + n - 8) ──
+    let mut final_part = vec![
+        Instr::LocalGet(1),
+        Instr::I32Const(16),
+        Instr::I32Sub,
+        Instr::LocalSet(8),
+    ];
+    final_part.extend(wyr8_instrs(0, 8));
+    final_part.extend_from_slice(&[
+        Instr::LocalSet(3),
+        Instr::LocalGet(1),
+        Instr::I32Const(8),
+        Instr::I32Sub,
+        Instr::LocalSet(8),
+    ]);
+    final_part.extend(wyr8_instrs(0, 8));
+    final_part.extend_from_slice(&[
+        Instr::LocalSet(4),
+        Instr::I64Const(-1800455987208640293i64),
+        Instr::LocalGet(1),
+        Instr::I64ExtendI32U,
+        Instr::I64Xor,
+        Instr::LocalGet(3),
+        Instr::I64Const(-1800455987208640293i64),
+        Instr::I64Xor,
+        Instr::LocalGet(4),
+        Instr::LocalGet(2),
+        Instr::I64Xor,
+    ]);
+    final_part.extend(mix());
+    final_part.extend(mix());
+
+    // ── Assemble body ──
+    let mut body = vec![
+        Instr::LocalGet(0),
+        Instr::RefAsNonNull,
+        Instr::ArrayLen,
+        Instr::LocalSet(1),
+        Instr::I64Const(-6884282663029611473i64),
+        Instr::LocalSet(2),
+        // len == 0
+        Instr::LocalGet(1),
+        Instr::I32Eqz,
+        Instr::If {
+            result: None,
+            then_body: len0,
+            else_body: vec![],
+        },
+        // len 1-3
+        Instr::LocalGet(1),
+        Instr::I32Const(4),
+        Instr::I32LtU,
+        Instr::If {
+            result: None,
+            then_body: len1_3,
+            else_body: vec![],
+        },
+        // len 4-16
+        Instr::LocalGet(1),
+        Instr::I32Const(17),
+        Instr::I32LtU,
+        Instr::If {
+            result: None,
+            then_body: len4_16,
+            else_body: vec![],
+        },
+        // len > 16
+        Instr::LocalGet(1),
+        Instr::I32Const(48),
+        Instr::I32GtU,
+        Instr::If {
+            result: None,
+            then_body: long_then,
+            else_body: vec![Instr::I32Const(0), Instr::LocalSet(5)],
+        },
+        // medium loop
+        Instr::Block {
+            label: "med_exit".into(),
+            result: None,
+            body: vec![Instr::Loop {
+                label: "med_loop".into(),
+                result: None,
+                body: med_loop,
+            }],
+        },
+    ];
+    body.extend(final_part);
+
     FuncDef {
         name: "hash_string".into(),
         params: vec![ref_string_local()],
-        results: vec![ValType::I32],
-        locals: vec![ValType::I32, ValType::I32, ValType::I32],
-        body: vec![
-            // hash = 2166136261 (FNV offset basis as i32: -2128831035)
-            Instr::I32Const(-2128831035i32),
-            Instr::LocalSet(1),
-            Instr::LocalGet(0),
-            Instr::RefAsNonNull,
-            Instr::ArrayLen,
-            Instr::LocalSet(2),
-            Instr::I32Const(0),
-            Instr::LocalSet(3),
-            Instr::Block {
-                label: "exit".into(),
-                result: None,
-                body: vec![Instr::Loop {
-                    label: "loop".into(),
-                    result: None,
-                    body: vec![
-                        Instr::LocalGet(3),
-                        Instr::LocalGet(2),
-                        Instr::I32GeS,
-                        Instr::BrIf("exit".into()),
-                        // byte = s[i] (unsigned)
-                        Instr::LocalGet(0),
-                        Instr::RefAsNonNull,
-                        Instr::LocalGet(3),
-                        Instr::ArrayGetU(T_STRING.into()),
-                        // hash = hash XOR byte
-                        Instr::LocalGet(1),
-                        Instr::I32Xor,
-                        // hash = hash * 16777619 (FNV prime)
-                        Instr::I32Const(16777619),
-                        Instr::I32Mul,
-                        Instr::LocalSet(1),
-                        Instr::LocalGet(3),
-                        Instr::I32Const(1),
-                        Instr::I32Add,
-                        Instr::LocalSet(3),
-                        Instr::Br("loop".into()),
-                    ],
-                }],
-            },
-            Instr::LocalGet(1),
+        results: vec![ValType::I64],
+        locals: vec![
+            ValType::I32,
+            ValType::I64,
+            ValType::I64,
+            ValType::I64,
+            ValType::I32,
+            ValType::I64,
+            ValType::I64,
+            ValType::I32,
+            ValType::I64,
+            ValType::I64,
+            ValType::I64,
+            ValType::I64,
+            ValType::I64,
+            ValType::I64,
+            ValType::I64,
+            ValType::I64,
+            ValType::I64,
         ],
+        body,
     }
 }
 
-// ── hash_key(key: anyref) -> i32 ─────────────────────────────────────────────
+// ── hash_key(key: anyref) -> i64 ─────────────────────────────────────────────
 fn hash_key_fn() -> FuncDef {
     // p0=key
     FuncDef {
         name: "hash_key".into(),
         params: vec![ValType::Anyref],
-        results: vec![ValType::I32],
+        results: vec![ValType::I64],
         locals: vec![],
         body: vec![
             // if I31: hash_i64(i64.extend_i32_u(i31.get_u(key)))
@@ -556,12 +1008,12 @@ fn collision_get_fn() -> FuncDef {
 
 // ── collision_set(c, hash, key, val) -> ref $HamtCollision ───────────────────
 fn collision_set_fn() -> FuncDef {
-    // p0=c, p1=hash, p2=key, p3=val; L4=entries, L5=n, L6=i, L7=entry, L8=new_entries
+    // p0=c, p1=hash(i64), p2=key, p3=val; L4=entries, L5=n, L6=i, L7=entry, L8=new_entries
     FuncDef {
         name: "collision_set".into(),
         params: vec![
             ref_hamt_collision_null(),
-            ValType::I32,
+            ValType::I64,
             ValType::Anyref,
             ValType::Anyref,
         ],
@@ -673,7 +1125,7 @@ fn node_get_fn() -> FuncDef {
         name: "node_get".into(),
         params: vec![
             ref_hamt_node_null(),
-            ValType::I32,
+            ValType::I64,
             ValType::I32,
             ValType::Anyref,
         ],
@@ -695,21 +1147,23 @@ fn node_get_fn() -> FuncDef {
                 then_body: vec![Instr::RefNull(HeapType::Any), Instr::Return],
                 else_body: vec![],
             },
-            // Stop before shift counts wrap past the 32-bit hash space.
+            // Stop before shift counts wrap past the 64-bit hash space.
             Instr::LocalGet(2),
-            Instr::I32Const(7),
+            Instr::I32Const(13),
             Instr::I32GeU,
             Instr::If {
                 result: None,
                 then_body: vec![Instr::RefNull(HeapType::Any), Instr::Return],
                 else_body: vec![],
             },
-            // fragment = (hash >> (depth*5)) & 31
-            Instr::LocalGet(1), // hash
+            // fragment = i32.wrap(hash >>u i64(depth*5)) & 31
+            Instr::LocalGet(1), // hash (i64)
             Instr::LocalGet(2),
             Instr::I32Const(5),
-            Instr::I32Mul, // shift
-            Instr::I32ShrU,
+            Instr::I32Mul, // shift (i32)
+            Instr::I64ExtendI32U,
+            Instr::I64ShrU,
+            Instr::I32WrapI64,
             Instr::I32Const(31),
             Instr::I32And,
             Instr::LocalSet(4),
@@ -777,7 +1231,7 @@ fn node_get_fn() -> FuncDef {
                     },
                     Instr::StructGet(T_HAMT_ENTRY.into(), HE_HASH),
                     Instr::LocalGet(1),
-                    Instr::I32Eq,
+                    Instr::I64Eq,
                     Instr::If {
                         result: None,
                         then_body: vec![
@@ -856,7 +1310,7 @@ fn node_set_fn() -> FuncDef {
         name: "node_set".into(),
         params: vec![
             ref_hamt_node_null(),
-            ValType::I32,
+            ValType::I64,
             ValType::I32,
             ValType::Anyref,
             ValType::Anyref,
@@ -889,12 +1343,14 @@ fn node_set_fn() -> FuncDef {
             Instr::If {
                 result: None,
                 then_body: vec![
-                    // fragment = (hash >> (depth*5)) & 31
+                    // fragment = i32.wrap(hash >>u i64(depth*5)) & 31
                     Instr::LocalGet(1),
                     Instr::LocalGet(2),
                     Instr::I32Const(5),
                     Instr::I32Mul,
-                    Instr::I32ShrU,
+                    Instr::I64ExtendI32U,
+                    Instr::I64ShrU,
+                    Instr::I32WrapI64,
                     Instr::I32Const(31),
                     Instr::I32And,
                     Instr::LocalSet(7),
@@ -917,10 +1373,12 @@ fn node_set_fn() -> FuncDef {
             Instr::I32Const(5),
             Instr::I32Mul,
             Instr::LocalSet(6),
-            // fragment = (hash >> shift) & 31
+            // fragment = i32.wrap(hash >>u i64(shift)) & 31
             Instr::LocalGet(1),
             Instr::LocalGet(6),
-            Instr::I32ShrU,
+            Instr::I64ExtendI32U,
+            Instr::I64ShrU,
+            Instr::I32WrapI64,
             Instr::I32Const(31),
             Instr::I32And,
             Instr::LocalSet(7),
@@ -1022,7 +1480,7 @@ fn node_set_fn() -> FuncDef {
                     Instr::LocalGet(13),
                     Instr::StructGet(T_HAMT_ENTRY.into(), HE_HASH),
                     Instr::LocalGet(1),
-                    Instr::I32Eq,
+                    Instr::I64Eq,
                     Instr::If {
                         result: None,
                         then_body: vec![
@@ -1076,9 +1534,9 @@ fn node_set_fn() -> FuncDef {
                         ],
                         else_body: vec![
                             // different hash: create sub-node for old entry, then insert new,
-                            // unless all 32 hash bits are already consumed.
+                            // unless all 64 hash bits are already consumed.
                             Instr::LocalGet(2),
-                            Instr::I32Const(6),
+                            Instr::I32Const(12),
                             Instr::I32GeU,
                             Instr::If {
                                 result: None,
@@ -1221,7 +1679,7 @@ fn node_remove_fn() -> FuncDef {
         name: "node_remove".into(),
         params: vec![
             ref_hamt_node_null(),
-            ValType::I32,
+            ValType::I64,
             ValType::I32,
             ValType::Anyref,
         ],
@@ -1258,12 +1716,14 @@ fn node_remove_fn() -> FuncDef {
                 ],
                 else_body: vec![],
             },
-            // fragment = (hash >> (depth*5)) & 31
+            // fragment = i32.wrap(hash >>u i64(depth*5)) & 31
             Instr::LocalGet(1),
             Instr::LocalGet(2),
             Instr::I32Const(5),
             Instr::I32Mul,
-            Instr::I32ShrU,
+            Instr::I64ExtendI32U,
+            Instr::I64ShrU,
+            Instr::I32WrapI64,
             Instr::I32Const(31),
             Instr::I32And,
             Instr::LocalSet(4),
@@ -1328,7 +1788,7 @@ fn node_remove_fn() -> FuncDef {
                     Instr::LocalGet(11),
                     Instr::StructGet(T_HAMT_ENTRY.into(), HE_HASH),
                     Instr::LocalGet(1),
-                    Instr::I32Eq,
+                    Instr::I64Eq,
                     Instr::If {
                         result: None,
                         then_body: vec![
@@ -1774,13 +2234,13 @@ fn get_option_fn() -> FuncDef {
 
 // ── set(dict: PDict?, key: anyref, val: anyref) -> PDict ─────────────────────
 fn set_fn() -> FuncDef {
-    // p0=dict, p1=key, p2=val; L3=hash, L4=old_root, L5=new_root, L6=was_present, L7=new_order
+    // p0=dict, p1=key, p2=val; L3=hash(i64), L4=old_root, L5=new_root, L6=was_present, L7=new_order
     FuncDef {
         name: "set".into(),
         params: vec![ref_pdict_null(), ValType::Anyref, ValType::Anyref],
         results: vec![ref_pdict()],
         locals: vec![
-            ValType::I32,
+            ValType::I64,
             ref_hamt_node_null(),
             ref_hamt_node_null(),
             ValType::I32,
@@ -1847,13 +2307,13 @@ fn set_fn() -> FuncDef {
 
 // ── remove(dict: PDict?, key: anyref) -> PDict ───────────────────────────────
 fn remove_fn() -> FuncDef {
-    // p0=dict, p1=key; L2=hash, L3=old_root, L4=new_root, L5=was_present, L6=new_order
+    // p0=dict, p1=key; L2=hash(i64), L3=old_root, L4=new_root, L5=was_present, L6=new_order
     FuncDef {
         name: "remove".into(),
         params: vec![ref_pdict_null(), ValType::Anyref],
         results: vec![ref_pdict()],
         locals: vec![
-            ValType::I32,
+            ValType::I64,
             ref_hamt_node_null(),
             ref_hamt_node_null(),
             ValType::I32,
@@ -1942,5 +2402,221 @@ fn remove_in_place_fn() -> FuncDef {
             Instr::LocalGet(1),
             Instr::Call("remove".into()),
         ],
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    /// Reference wymix: 64x64→128 multiply, then XOR high and low halves.
+    fn wymix_ref(a: u64, b: u64) -> u64 {
+        let full = (a as u128) * (b as u128);
+        let lo = full as u64;
+        let hi = (full >> 64) as u64;
+        lo ^ hi
+    }
+
+    /// Simulate the 4-partial-product decomposition used in the Wasm codegen,
+    /// to verify it produces the same result as native 128-bit multiply.
+    fn wymix_decomposed(a: u64, b: u64) -> u64 {
+        let a_lo = a & 0xFFFFFFFF;
+        let a_hi = a >> 32;
+        let b_lo = b & 0xFFFFFFFF;
+        let b_hi = b >> 32;
+
+        let t1 = a_lo.wrapping_mul(b_hi);
+        let t2 = a_hi.wrapping_mul(b_lo);
+        let p0 = a_lo.wrapping_mul(b_lo);
+
+        let cross = (p0 >> 32)
+            .wrapping_add(t1 & 0xFFFFFFFF)
+            .wrapping_add(t2 & 0xFFFFFFFF);
+
+        let high = a_hi
+            .wrapping_mul(b_hi)
+            .wrapping_add(t1 >> 32)
+            .wrapping_add(t2 >> 32)
+            .wrapping_add(cross >> 32);
+
+        let low = (p0 & 0xFFFFFFFF) | ((cross & 0xFFFFFFFF) << 32);
+        low ^ high
+    }
+
+    #[test]
+    fn test_wymix_decomposition_matches_native() {
+        let cases: &[(u64, u64)] = &[
+            (0, 0),
+            (1, 1),
+            (0xFFFFFFFF, 0xFFFFFFFF),
+            (0x0123456789ABCDEF, 0xFEDCBA9876543210),
+            (0xFFFFFFFFFFFFFFFF, 0xFFFFFFFFFFFFFFFF),
+            // wyhash v3 secret constants
+            (0xa0761d6478bd642f, 0xe7037ed1a0b428db),
+            (0x8ebc6af09c88c6e3, 0x589965cc75374cc3),
+        ];
+
+        for &(a, b) in cases {
+            let expected = wymix_ref(a, b);
+            let actual = wymix_decomposed(a, b);
+            assert_eq!(
+                actual, expected,
+                "wymix mismatch for (0x{a:016x}, 0x{b:016x}): \
+                 decomposed=0x{actual:016x}, native=0x{expected:016x}"
+            );
+        }
+    }
+
+    #[test]
+    fn test_wymix_known_vectors() {
+        // Verify specific outputs so boot compiler tests can assert the same values.
+        assert_eq!(wymix_ref(0, 0), 0);
+        assert_eq!(wymix_ref(1, 1), 1);
+        assert_eq!(wymix_ref(0xFFFFFFFF, 0xFFFFFFFF), 0xFFFFFFFE00000001);
+        assert_eq!(
+            wymix_ref(0x0123456789ABCDEF, 0xFEDCBA9876543210),
+            0x2317228F48165BB2
+        );
+        assert_eq!(
+            wymix_ref(0xFFFFFFFFFFFFFFFF, 0xFFFFFFFFFFFFFFFF),
+            0xFFFFFFFFFFFFFFFF
+        );
+        assert_eq!(
+            wymix_ref(0xa0761d6478bd642f, 0xe7037ed1a0b428db),
+            0x1ff5c2923a788d2c
+        );
+    }
+
+    // --- wyhash v3 reference implementation for test vectors ---
+    //
+    // Authoritative source: wyhash by Wang Yi
+    //   https://github.com/wangyi-fudan/wyhash
+    //   Pinned to wyhash v3 final (commit 991aa3d, 2023-08-20, wyhash.h)
+    //
+    // Constants (_wyp): the four secret primes used by wyhash v3.
+    // Seed: 0 (deterministic, no per-process randomization).
+    // Mix: wymix(a,b) = lo ^ hi of 128-bit multiply a*b.
+    //
+    // The same algorithm and constants are mirrored in:
+    //   - src/runtime/dict.rs  (Wasm IR codegen: wymix_instrs, hash_i64_fn, hash_string_fn)
+    //   - boot/compiler/codegen/runtime/dict.tw  (boot compiler mirror)
+    //   - src/query/keys.rs  (native Rust, compile-time hashing)
+    //   - boot/lib/query/keys.tw  (native Twinkle, compile-time hashing)
+
+    const SECRET: [u64; 4] = [
+        0xa0761d6478bd642f,
+        0xe7037ed1a0b428db,
+        0x8ebc6af09c88c6e3,
+        0x589965cc75374cc3,
+    ];
+
+    fn wyr3(p: &[u8], len: usize) -> u64 {
+        ((p[0] as u64) << 16) | ((p[len >> 1] as u64) << 8) | (p[len - 1] as u64)
+    }
+
+    fn wyr4(p: &[u8]) -> u64 {
+        u32::from_le_bytes([p[0], p[1], p[2], p[3]]) as u64
+    }
+
+    fn wyr8(p: &[u8]) -> u64 {
+        u64::from_le_bytes([p[0], p[1], p[2], p[3], p[4], p[5], p[6], p[7]])
+    }
+
+    fn wyhash_ref(key: &[u8], seed: u64) -> u64 {
+        let len = key.len();
+        let mut seed = seed ^ SECRET[0];
+        let (a, b);
+
+        if len <= 16 {
+            if len >= 4 {
+                let mid = (len >> 3) << 2;
+                a = (wyr4(key) << 32) | wyr4(&key[mid..]);
+                b = (wyr4(&key[len - 4..]) << 32) | wyr4(&key[len - 4 - mid..]);
+            } else if len > 0 {
+                a = wyr3(key, len);
+                b = 0;
+            } else {
+                a = 0;
+                b = 0;
+            }
+        } else {
+            let mut p = 0;
+            let mut i = len;
+            if i > 48 {
+                let mut see1 = seed;
+                let mut see2 = seed;
+                loop {
+                    seed = wymix_ref(wyr8(&key[p..]) ^ SECRET[1], wyr8(&key[p + 8..]) ^ seed);
+                    see1 = wymix_ref(
+                        wyr8(&key[p + 16..]) ^ SECRET[2],
+                        wyr8(&key[p + 24..]) ^ see1,
+                    );
+                    see2 = wymix_ref(
+                        wyr8(&key[p + 32..]) ^ SECRET[3],
+                        wyr8(&key[p + 40..]) ^ see2,
+                    );
+                    p += 48;
+                    i -= 48;
+                    if i <= 48 {
+                        break;
+                    }
+                }
+                seed ^= see1 ^ see2;
+            }
+            while i > 16 {
+                seed = wymix_ref(wyr8(&key[p..]) ^ SECRET[1], wyr8(&key[p + 8..]) ^ seed);
+                p += 16;
+                i -= 16;
+            }
+            a = wyr8(&key[len - 16..]);
+            b = wyr8(&key[len - 8..]);
+        }
+
+        wymix_ref(SECRET[1] ^ (len as u64), wymix_ref(a ^ SECRET[1], b ^ seed))
+    }
+
+    /// Reference hash_i64: treat i64 as 8 LE bytes, run wyhash v3 with seed=0.
+    fn hash_i64_ref(v: i64) -> u64 {
+        wyhash_ref(&v.to_le_bytes(), 0)
+    }
+
+    /// Reference hash_string: run wyhash v3 on raw bytes with seed=0.
+    fn hash_string_ref(s: &[u8]) -> u64 {
+        wyhash_ref(s, 0)
+    }
+
+    #[test]
+    fn test_wyhash_i64_vectors() {
+        // Pinned vectors: if any value changes, the Wasm codegen in hash_i64_fn
+        // and the boot compiler's runtime/dict.tw must be updated to match.
+        assert_eq!(hash_i64_ref(0), 0x426aa7db91aa5b32);
+        assert_eq!(hash_i64_ref(1), 0x609b1ba462acd964);
+        assert_eq!(hash_i64_ref(-1), 0x2dd1be9335d66126);
+        assert_eq!(hash_i64_ref(42), 0xc73c7e9ff277cd8f);
+        assert_eq!(hash_i64_ref(i64::MAX), 0xcea58c444358fd3b);
+        assert_eq!(hash_i64_ref(i64::MIN), 0x00a0852a528a546b);
+    }
+
+    #[test]
+    fn test_wyhash_string_vectors() {
+        // Pinned vectors: must match the Wasm codegen in hash_string_fn and the
+        // boot compiler's runtime/dict.tw. Also mirrored in query/keys.rs for
+        // the strings shared with the query-key hash path.
+        assert_eq!(hash_string_ref(b""), 0x42bc986dc5eec4d3);
+        assert_eq!(hash_string_ref(b"a"), 0x6cf84e5a2465e867);
+        assert_eq!(hash_string_ref(b"ab"), 0x172ba773b8ebb6d8);
+        assert_eq!(hash_string_ref(b"abc"), 0xb4808df22d44ffcf);
+        assert_eq!(hash_string_ref(b"abcd"), 0xe73573b4c2ddfea0);
+        assert_eq!(hash_string_ref(b"hello"), 0xfaacec54df7a6205);
+        assert_eq!(hash_string_ref(b"hello world"), 0x19f24a02fe04c3ca);
+        assert_eq!(
+            hash_string_ref(b"user__$f2396_mark_published_version"),
+            0x892f9a20308b0d45
+        );
+        assert_eq!(hash_string_ref(b"user__$str_333_get"), 0x23152e5b139e8c4b);
+
+        // The original FNV collision pair must not collide under wyhash v3
+        assert_ne!(
+            hash_string_ref(b"user__$f2396_mark_published_version"),
+            hash_string_ref(b"user__$str_333_get"),
+        );
     }
 }

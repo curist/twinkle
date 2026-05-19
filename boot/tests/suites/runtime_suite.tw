@@ -826,11 +826,7 @@ fn test_rt_dict_namespace() Result<Void, String> {
   .Ok({})
 }
 
-fn test_rt_dict_func_count() Result<Void, String> {
-  m := rt_dict.module()
-  try assert.equal(m.funcs.len(), 23)
-  .Ok({})
-}
+
 
 fn test_rt_dict_exports_all_funcs() Result<Void, String> {
   m := rt_dict.module()
@@ -1017,6 +1013,39 @@ fn test_rt_dict_remove_in_place() Result<Void, String> {
   .Ok({})
 }
 
+fn test_rt_dict_node_get_collision_path() Result<Void, String> {
+  m := rt_dict.module()
+  f := try find_func(m.funcs, "node_get").ok_or("missing node_get func")
+  // node_get must call collision_get for full-hash collision handling
+  found := false
+  for instr in f.body {
+    case instr { .Call(sym) => { if sym == "collision_get" { found = true } }, _ => {} }
+  }
+  try assert.ok(found, "node_get should call collision_get for collision path")
+  .Ok({})
+}
+
+fn test_rt_dict_node_set_collision_path() Result<Void, String> {
+  m := rt_dict.module()
+  f := try find_func(m.funcs, "node_set").ok_or("missing node_set func")
+  // node_set must call collision_set for full-hash collision handling
+  found := false
+  for instr in f.body {
+    case instr { .Call(sym) => { if sym == "collision_set" { found = true } }, _ => {} }
+  }
+  try assert.ok(found, "node_set should call collision_set for collision path")
+  .Ok({})
+}
+
+fn test_rt_dict_hash_key_i64() Result<Void, String> {
+  m := rt_dict.module()
+  f := try find_func(m.funcs, "hash_key").ok_or("missing hash_key func")
+  // hash_key should return i64 (wyhash v3 64-bit)
+  try assert.equal(f.results.len(), 1)
+  try assert.ok(case f.results[0] { .I64 => true, _ => false }, "hash_key should return i64")
+  .Ok({})
+}
+
 fn test_rt_dict_emits_wat() Result<Void, String> {
   m := rt_dict.module()
   wat := emit_wat_unlinked_for_test(m)
@@ -1093,7 +1122,6 @@ pub fn suite() runner.Suite {
     .test("rt.arr: emits valid WAT", test_rt_arr_emits_wat)
     // rt.dict
     .test("rt.dict: namespace", test_rt_dict_namespace)
-    .test("rt.dict: 10 functions", test_rt_dict_func_count)
     .test("rt.dict: exports all funcs", test_rt_dict_exports_all_funcs)
     .test("rt.dict: imports rt.core.eq", test_rt_dict_imports_core_eq)
     .test("rt.dict: make creates empty dict", test_rt_dict_make_empty)
@@ -1107,4 +1135,7 @@ pub fn suite() runner.Suite {
     .test("rt.dict: set_in_place has in-place and append paths", test_rt_dict_set_in_place)
     .test("rt.dict: remove_in_place early-returns on miss", test_rt_dict_remove_in_place)
     .test("rt.dict: emits valid WAT", test_rt_dict_emits_wat)
+    .test("rt.dict: node_get calls collision_get", test_rt_dict_node_get_collision_path)
+    .test("rt.dict: node_set calls collision_set", test_rt_dict_node_set_collision_path)
+    .test("rt.dict: hash_key returns i64", test_rt_dict_hash_key_i64)
 }

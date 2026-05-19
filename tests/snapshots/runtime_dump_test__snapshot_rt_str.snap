@@ -1,5 +1,6 @@
 ---
 source: tests/runtime_dump_test.rs
+assertion_line: 140
 expression: wat
 ---
 (module
@@ -8,9 +9,9 @@ expression: wat
   (type $rt_types__VecChildren (array (mut (ref null eq))))
   (type $rt_types__VecInternal (struct (field $children (ref $rt_types__VecChildren))))
   (type $rt_types__PVec (struct (field $len i32) (field $shift i32) (field $root (ref null $rt_types__VecInternal)) (field $tail (ref $rt_types__Array))))
-  (type $rt_types__HamtEntry (struct (field $hash i32) (field $key anyref) (field $val anyref)))
+  (type $rt_types__HamtEntry (struct (field $hash i64) (field $key anyref) (field $val anyref)))
   (type $rt_types__HamtNode (struct (field $bitmap i32) (field $entries (ref $rt_types__Array))))
-  (type $rt_types__HamtCollision (struct (field $hash i32) (field $entries (ref $rt_types__Array))))
+  (type $rt_types__HamtCollision (struct (field $tag i32) (field $hash i64) (field $entries (ref $rt_types__Array))))
   (type $rt_types__PDict (struct (field $size i32) (field $root (ref null $rt_types__HamtNode)) (field $order (ref $rt_types__PVec))))
   (type $rt_types__ClosureEnv (array anyref))
   (type $rt_types__ClosureFunc (func (param anyref anyref) (result anyref)))

@@ -4,7 +4,7 @@
 // Key comparison uses rt.core.eq (structural equality).
 // Key types: Int (BoxedInt or I31/Byte), String.
 
-use compiler.codegen.wasm_ir.{ ValType, FuncDef, ExportDef, WasmModule }
+use compiler.codegen.wasm_ir.{ Instr, ValType, FuncDef, ExportDef, WasmModule }
 
 // ── ValType helpers ──────────────────────────────────────────────────────────
 
@@ -174,46 +174,262 @@ fn arr_remove_at_fn() FuncDef {
   }
 }
 
-// ── hash_i64(v: i64) -> i32 ──────────────────────────────────────────────────
+// ── wyhash v3 helpers ────────────────────────────────────────────────────────
+// Source: https://github.com/wangyi-fudan/wyhash (v3 final, commit 991aa3d)
+// Must match src/runtime/dict.rs (Rust mirror) and src/query/keys.rs.
+
+// ── Inline wyhash v3 helpers ─────────────────────────────────────────────────
+// These return instruction arrays for inlining into hash_i64/hash_string,
+// eliminating call overhead for wymix/wyr4/wyr8.
+
+// Inline wymix: pops (a, b) from Wasm stack, pushes (lo ^ hi).
+// 4 i64.mul — reconstructs low half from partial products instead of a 5th mul.
+// Caller provides local indices: la/lb for inputs, rest for scratch.
+fn wymix_instrs(la: Int, lb: Int, la_lo: Int, la_hi: Int, lb_lo: Int, lb_hi: Int, lt1: Int, lt2: Int, lcross: Int) Vector<Instr> {
+  [
+    .LocalSet(lb), .LocalSet(la),
+    .LocalGet(la), .I64Const(4294967295), .I64And, .LocalSet(la_lo),
+    .LocalGet(la), .I64Const(32), .I64ShrU, .LocalSet(la_hi),
+    .LocalGet(lb), .I64Const(4294967295), .I64And, .LocalSet(lb_lo),
+    .LocalGet(lb), .I64Const(32), .I64ShrU, .LocalSet(lb_hi),
+    .LocalGet(la_lo), .LocalGet(lb_hi), .I64Mul, .LocalSet(lt1),
+    .LocalGet(la_hi), .LocalGet(lb_lo), .I64Mul, .LocalSet(lt2),
+    .LocalGet(la_lo), .LocalGet(lb_lo), .I64Mul, .LocalSet(la),
+    .LocalGet(la), .I64Const(32), .I64ShrU,
+    .LocalGet(lt1), .I64Const(4294967295), .I64And, .I64Add,
+    .LocalGet(lt2), .I64Const(4294967295), .I64And, .I64Add,
+    .LocalSet(lcross),
+    .LocalGet(la_hi), .LocalGet(lb_hi), .I64Mul,
+    .LocalGet(lt1), .I64Const(32), .I64ShrU, .I64Add,
+    .LocalGet(lt2), .I64Const(32), .I64ShrU, .I64Add,
+    .LocalGet(lcross), .I64Const(32), .I64ShrU, .I64Add,
+    .LocalGet(la), .I64Const(4294967295), .I64And,
+    .LocalGet(lcross), .I64Const(4294967295), .I64And, .I64Const(32), .I64Shl,
+    .I64Or,
+    .I64Xor,
+  ]
+}
+
+// Inline wyr4: reads 4 bytes LE as u64. str_local/off_local must be locals.
+fn wyr4_instrs(str_local: Int, off_local: Int) Vector<Instr> {
+  [
+    .LocalGet(str_local), .RefAsNonNull, .LocalGet(off_local),
+    .ArrayGetU(t_string()), .I64ExtendI32U,
+    .LocalGet(str_local), .RefAsNonNull, .LocalGet(off_local), .I32Const(1), .I32Add,
+    .ArrayGetU(t_string()), .I64ExtendI32U, .I64Const(8), .I64Shl, .I64Or,
+    .LocalGet(str_local), .RefAsNonNull, .LocalGet(off_local), .I32Const(2), .I32Add,
+    .ArrayGetU(t_string()), .I64ExtendI32U, .I64Const(16), .I64Shl, .I64Or,
+    .LocalGet(str_local), .RefAsNonNull, .LocalGet(off_local), .I32Const(3), .I32Add,
+    .ArrayGetU(t_string()), .I64ExtendI32U, .I64Const(24), .I64Shl, .I64Or,
+  ]
+}
+
+// Inline wyr8: reads 8 bytes LE as u64. off_scratch holds base offset; clobbered.
+fn wyr8_instrs(str_local: Int, off_scratch: Int) Vector<Instr> {
+  result := wyr4_instrs(str_local, off_scratch)
+  result = result.concat([
+    .LocalGet(off_scratch), .I32Const(4), .I32Add, .LocalSet(off_scratch),
+  ])
+  result = result.concat(wyr4_instrs(str_local, off_scratch))
+  result.concat([.I64Const(32), .I64Shl, .I64Or])
+}
+
+// ── hash_i64(v: i64) -> i64 ──────────────────────────────────────────────────
+// wyhash v3 for an 8-byte LE value. seed=0. Fully inlined.
 fn hash_i64_fn() FuncDef {
-  FuncDef.{ name: "hash_i64", params: [.I64], results: [.I32],
-    locals: [.I32],
-    body: [
-      .LocalGet(0), .I32WrapI64,
-      .LocalGet(0), .I64Const(32), .I64ShrS, .I32WrapI64,
-      .I32Xor, .LocalSet(1),
-      .LocalGet(1), .I32Const(-1640531527), .I32Mul,
-    ],
+  // L0=v(param), L1-L9=wymix scratch
+  mix := wymix_instrs(1, 2, 3, 4, 5, 6, 7, 8, 9)
+  body: Vector<Instr> = [
+    .I64Const(-1800455987208640293), .I64Const(8), .I64Xor,
+    .LocalGet(0), .I64Const(32), .I64Shl,
+    .LocalGet(0), .I64Const(32), .I64ShrU, .I64Or,
+    .I64Const(-1800455987208640293), .I64Xor,
+    .LocalGet(0), .I64Const(-6884282663029611473), .I64Xor,
+  ]
+  body = body.concat(mix).concat(mix)
+  FuncDef.{ name: "hash_i64", params: [.I64], results: [.I64],
+    locals: [.I64, .I64, .I64, .I64, .I64, .I64, .I64, .I64, .I64],
+    body: body,
   }
 }
 
-// ── hash_string(s: ref null $String) -> i32 ──────────────────────────────────
+// ── hash_string(s: ref null $String) -> i64 ──────────────────────────────────
+// wyhash v3 for a byte array. seed=0. Fully inlined.
 fn hash_string_fn() FuncDef {
-  // p0=s; L1=hash, L2=n, L3=i
-  FuncDef.{ name: "hash_string", params: [string_null()], results: [.I32],
-    locals: [.I32, .I32, .I32],
-    body: [
-      .I32Const(-2128831035), .LocalSet(1),
-      .LocalGet(0), .RefAsNonNull, .ArrayLen, .LocalSet(2),
-      .I32Const(0), .LocalSet(3),
-      .Block("exit", .None, [
-        .Loop("loop", .None, [
-          .LocalGet(3), .LocalGet(2), .I32GeS, .BrIf("exit"),
-          .LocalGet(0), .RefAsNonNull, .LocalGet(3), .ArrayGetU(t_string()),
-          .LocalGet(1), .I32Xor,
-          .I32Const(16777619), .I32Mul, .LocalSet(1),
-          .LocalGet(3), .I32Const(1), .I32Add, .LocalSet(3),
-          .Br("loop"),
-        ]),
-      ]),
-      .LocalGet(1),
-    ],
+  // L0=s(param), L1=n(i32), L2=seed(i64), L3=a(i64), L4=b(i64),
+  // L5=i(i32), L6=see1(i64), L7=see2(i64),
+  // L8=off_scratch(i32), L9-L17=wymix scratch
+  mix := wymix_instrs(9, 10, 11, 12, 13, 14, 15, 16, 17)
+
+  // ── len == 0 ──
+  len0: Vector<Instr> = [
+    .I64Const(-1800455987208640293),
+    .I64Const(-1800455987208640293),
+    .LocalGet(2),
+  ]
+  len0 = len0.concat(mix).concat(mix).concat([.Return])
+
+  // ── len 1-3 ──
+  len1_3: Vector<Instr> = [
+    .LocalGet(0), .RefAsNonNull, .I32Const(0), .ArrayGetU(t_string()),
+    .I32Const(16), .I32Shl,
+    .LocalGet(0), .RefAsNonNull, .LocalGet(1), .I32Const(1), .I32ShrU, .ArrayGetU(t_string()),
+    .I32Const(8), .I32Shl, .I32Or,
+    .LocalGet(0), .RefAsNonNull, .LocalGet(1), .I32Const(1), .I32Sub, .ArrayGetU(t_string()),
+    .I32Or,
+    .I64ExtendI32U, .LocalSet(3),
+    .I64Const(0), .LocalSet(4),
+    .I64Const(-1800455987208640293), .LocalGet(1), .I64ExtendI32U, .I64Xor,
+    .LocalGet(3), .I64Const(-1800455987208640293), .I64Xor,
+    .LocalGet(4), .LocalGet(2), .I64Xor,
+  ]
+  len1_3 = len1_3.concat(mix).concat(mix).concat([.Return])
+
+  // ── len 4-16 ──
+  len4_16: Vector<Instr> = [.I32Const(0), .LocalSet(8)]
+  len4_16 = len4_16.concat(wyr4_instrs(0, 8))
+  len4_16 = len4_16.concat([
+    .I64Const(32), .I64Shl,
+    .LocalGet(1), .I32Const(3), .I32ShrU, .I32Const(2), .I32Shl, .LocalSet(8),
+  ])
+  len4_16 = len4_16.concat(wyr4_instrs(0, 8))
+  len4_16 = len4_16.concat([.I64Or, .LocalSet(3)])
+  len4_16 = len4_16.concat([
+    .LocalGet(1), .I32Const(4), .I32Sub, .LocalSet(8),
+  ])
+  len4_16 = len4_16.concat(wyr4_instrs(0, 8))
+  len4_16 = len4_16.concat([
+    .I64Const(32), .I64Shl,
+    .LocalGet(1), .I32Const(4), .I32Sub,
+    .LocalGet(1), .I32Const(3), .I32ShrU, .I32Const(2), .I32Shl, .I32Sub,
+    .LocalSet(8),
+  ])
+  len4_16 = len4_16.concat(wyr4_instrs(0, 8))
+  len4_16 = len4_16.concat([.I64Or, .LocalSet(4)])
+  len4_16 = len4_16.concat([
+    .I64Const(-1800455987208640293), .LocalGet(1), .I64ExtendI32U, .I64Xor,
+    .LocalGet(3), .I64Const(-1800455987208640293), .I64Xor,
+    .LocalGet(4), .LocalGet(2), .I64Xor,
+  ])
+  len4_16 = len4_16.concat(mix).concat(mix).concat([.Return])
+
+  // ── long loop body (len > 48) ──
+  long_loop: Vector<Instr> = [
+    .LocalGet(5), .I32Const(48), .I32Add, .LocalGet(1), .I32GtU,
+    .BrIf("long_exit"),
+    .LocalGet(5), .LocalSet(8),
+  ]
+  long_loop = long_loop.concat(wyr8_instrs(0, 8))
+  long_loop = long_loop.concat([
+    .I64Const(-1800455987208640293), .I64Xor,
+    .LocalGet(5), .I32Const(8), .I32Add, .LocalSet(8),
+  ])
+  long_loop = long_loop.concat(wyr8_instrs(0, 8))
+  long_loop = long_loop.concat([.LocalGet(2), .I64Xor])
+  long_loop = long_loop.concat(mix)
+  long_loop = long_loop.concat([
+    .LocalSet(2),
+    .LocalGet(5), .I32Const(16), .I32Add, .LocalSet(8),
+  ])
+  long_loop = long_loop.concat(wyr8_instrs(0, 8))
+  long_loop = long_loop.concat([
+    .I64Const(-8167223561372836125), .I64Xor,
+    .LocalGet(5), .I32Const(24), .I32Add, .LocalSet(8),
+  ])
+  long_loop = long_loop.concat(wyr8_instrs(0, 8))
+  long_loop = long_loop.concat([.LocalGet(6), .I64Xor])
+  long_loop = long_loop.concat(mix)
+  long_loop = long_loop.concat([
+    .LocalSet(6),
+    .LocalGet(5), .I32Const(32), .I32Add, .LocalSet(8),
+  ])
+  long_loop = long_loop.concat(wyr8_instrs(0, 8))
+  long_loop = long_loop.concat([
+    .I64Const(6380440055042464963), .I64Xor,
+    .LocalGet(5), .I32Const(40), .I32Add, .LocalSet(8),
+  ])
+  long_loop = long_loop.concat(wyr8_instrs(0, 8))
+  long_loop = long_loop.concat([.LocalGet(7), .I64Xor])
+  long_loop = long_loop.concat(mix)
+  long_loop = long_loop.concat([
+    .LocalSet(7),
+    .LocalGet(5), .I32Const(48), .I32Add, .LocalSet(5),
+    .Br("long_loop"),
+  ])
+
+  long_then: Vector<Instr> = [
+    .LocalGet(2), .LocalSet(6),
+    .LocalGet(2), .LocalSet(7),
+    .I32Const(0), .LocalSet(5),
+    .Block("long_exit", .None, [
+      .Loop("long_loop", .None, long_loop),
+    ]),
+    .LocalGet(2), .LocalGet(6), .I64Xor, .LocalGet(7), .I64Xor, .LocalSet(2),
+  ]
+
+  // ── medium loop ──
+  med_loop: Vector<Instr> = [
+    .LocalGet(1), .LocalGet(5), .I32Sub, .I32Const(16), .I32LeU,
+    .BrIf("med_exit"),
+    .LocalGet(5), .LocalSet(8),
+  ]
+  med_loop = med_loop.concat(wyr8_instrs(0, 8))
+  med_loop = med_loop.concat([
+    .I64Const(-1800455987208640293), .I64Xor,
+    .LocalGet(5), .I32Const(8), .I32Add, .LocalSet(8),
+  ])
+  med_loop = med_loop.concat(wyr8_instrs(0, 8))
+  med_loop = med_loop.concat([.LocalGet(2), .I64Xor])
+  med_loop = med_loop.concat(mix)
+  med_loop = med_loop.concat([
+    .LocalSet(2),
+    .LocalGet(5), .I32Const(16), .I32Add, .LocalSet(5),
+    .Br("med_loop"),
+  ])
+
+  // ── final: a = wyr8(p + n - 16), b = wyr8(p + n - 8) ──
+  final_part: Vector<Instr> = [.LocalGet(1), .I32Const(16), .I32Sub, .LocalSet(8)]
+  final_part = final_part.concat(wyr8_instrs(0, 8))
+  final_part = final_part.concat([
+    .LocalSet(3),
+    .LocalGet(1), .I32Const(8), .I32Sub, .LocalSet(8),
+  ])
+  final_part = final_part.concat(wyr8_instrs(0, 8))
+  final_part = final_part.concat([
+    .LocalSet(4),
+    .I64Const(-1800455987208640293), .LocalGet(1), .I64ExtendI32U, .I64Xor,
+    .LocalGet(3), .I64Const(-1800455987208640293), .I64Xor,
+    .LocalGet(4), .LocalGet(2), .I64Xor,
+  ])
+  final_part = final_part.concat(mix).concat(mix)
+
+  // ── Assemble body ──
+  body: Vector<Instr> = [
+    .LocalGet(0), .RefAsNonNull, .ArrayLen, .LocalSet(1),
+    .I64Const(-6884282663029611473), .LocalSet(2),
+    .LocalGet(1), .I32Eqz,
+    .If(.None, len0, []),
+    .LocalGet(1), .I32Const(4), .I32LtU,
+    .If(.None, len1_3, []),
+    .LocalGet(1), .I32Const(17), .I32LtU,
+    .If(.None, len4_16, []),
+    .LocalGet(1), .I32Const(48), .I32GtU,
+    .If(.None, long_then, [.I32Const(0), .LocalSet(5)]),
+    .Block("med_exit", .None, [
+      .Loop("med_loop", .None, med_loop),
+    ]),
+  ]
+  body = body.concat(final_part)
+
+  FuncDef.{ name: "hash_string", params: [string_null()], results: [.I64],
+    locals: [.I32, .I64, .I64, .I64, .I32, .I64, .I64, .I32, .I64, .I64, .I64, .I64, .I64, .I64, .I64, .I64, .I64],
+    body: body,
   }
 }
 
-// ── hash_key(key: anyref) -> i32 ─────────────────────────────────────────────
+// ── hash_key(key: anyref) -> i64 ─────────────────────────────────────────────
 fn hash_key_fn() FuncDef {
-  FuncDef.{ name: "hash_key", params: [.Anyref], results: [.I32],
+  FuncDef.{ name: "hash_key", params: [.Anyref], results: [.I64],
     locals: [],
     body: [
       .LocalGet(0), .RefTest(false, .I31),
@@ -262,9 +478,9 @@ fn collision_get_fn() FuncDef {
 
 // ── collision_set(c, hash, key, val) -> HamtCollision ────────────────────────
 fn collision_set_fn() FuncDef {
-  // p0=c, p1=hash, p2=key, p3=val; L4=entries, L5=n, L6=i, L7=entry, L8=new_entries
+  // p0=c, p1=hash(i64), p2=key, p3=val; L4=entries, L5=n, L6=i, L7=entry, L8=new_entries
   FuncDef.{ name: "collision_set",
-    params: [hamt_collision_null(), .I32, .Anyref, .Anyref],
+    params: [hamt_collision_null(), .I64, .Anyref, .Anyref],
     results: [hamt_collision_ref()],
     locals: [arr_null(), .I32, .I32, hamt_entry_null(), arr_null()],
     body: [
@@ -304,18 +520,20 @@ fn collision_set_fn() FuncDef {
 
 // ── node_get(node, hash, depth, key) -> anyref ───────────────────────────────
 fn node_get_fn() FuncDef {
-  // p0=node, p1=hash, p2=depth, p3=key
+  // p0=node, p1=hash(i64), p2=depth, p3=key
   // L4=fragment, L5=bit, L6=bitmap, L7=idx, L8=slot, L9=entries
   FuncDef.{ name: "node_get",
-    params: [hamt_node_null(), .I32, .I32, .Anyref], results: [.Anyref],
+    params: [hamt_node_null(), .I64, .I32, .Anyref], results: [.Anyref],
     locals: [.I32, .I32, .I32, .I32, .Anyref, arr_null()],
     body: [
       .LocalGet(0), .RefIsNull,
       .If(.None, [.RefNull(.Any), .Return], []),
-      .LocalGet(2), .I32Const(7), .I32GeU,
+      .LocalGet(2), .I32Const(13), .I32GeU,
       .If(.None, [.RefNull(.Any), .Return], []),
-      .LocalGet(1), .LocalGet(2), .I32Const(5), .I32Mul, .I32ShrU,
-      .I32Const(31), .I32And, .LocalSet(4),
+      // fragment = i32.wrap(hash >>u i64(depth*5)) & 31
+      .LocalGet(1),
+      .LocalGet(2), .I32Const(5), .I32Mul, .I64ExtendI32U, .I64ShrU,
+      .I32WrapI64, .I32Const(31), .I32And, .LocalSet(4),
       .I32Const(1), .LocalGet(4), .I32Shl, .LocalSet(5),
       .LocalGet(0), .RefAsNonNull, .StructGet(t_hamt_node(), hn_bitmap()), .LocalSet(6),
       .LocalGet(6), .LocalGet(5), .I32And, .I32Eqz,
@@ -331,7 +549,7 @@ fn node_get_fn() FuncDef {
       .If(.None, [
         .LocalGet(8), .RefCast(false, .Named(t_hamt_entry())),
         .StructGet(t_hamt_entry(), he_hash()),
-        .LocalGet(1), .I32Eq,
+        .LocalGet(1), .I64Eq,
         .If(.None, [
           .LocalGet(8), .RefCast(false, .Named(t_hamt_entry())),
           .StructGet(t_hamt_entry(), he_key()),
@@ -359,11 +577,11 @@ fn node_get_fn() FuncDef {
 
 // ── node_set(node, hash, depth, key, val) -> HamtNode ────────────────────────
 fn node_set_fn() FuncDef {
-  // p0=node, p1=hash, p2=depth, p3=key, p4=val
+  // p0=node, p1=hash(i64), p2=depth, p3=key, p4=val
   // L5=new_entry, L6=shift, L7=fragment, L8=bit, L9=bitmap, L10=idx
   // L11=slot, L12=new_entries, L13=old_entry, L14=tmp_node, L15=collision, L16=new_collision
   FuncDef.{ name: "node_set",
-    params: [hamt_node_null(), .I32, .I32, .Anyref, .Anyref],
+    params: [hamt_node_null(), .I64, .I32, .Anyref, .Anyref],
     results: [hamt_node_ref()],
     locals: [
       hamt_entry_null(), .I32, .I32, .I32, .I32, .I32,
@@ -377,7 +595,9 @@ fn node_set_fn() FuncDef {
       // null node: single-entry node
       .LocalGet(0), .RefIsNull,
       .If(.None, [
-        .LocalGet(1), .LocalGet(2), .I32Const(5), .I32Mul, .I32ShrU,
+        // fragment = i32.wrap(hash >>u i64(depth*5)) & 31
+        .LocalGet(1), .LocalGet(2), .I32Const(5), .I32Mul,
+        .I64ExtendI32U, .I64ShrU, .I32WrapI64,
         .I32Const(31), .I32And, .LocalSet(7),
         .I32Const(1), .LocalGet(7), .I32Shl, .LocalSet(8),
         .LocalGet(8),
@@ -386,7 +606,9 @@ fn node_set_fn() FuncDef {
       ], []),
 
       .LocalGet(2), .I32Const(5), .I32Mul, .LocalSet(6),
-      .LocalGet(1), .LocalGet(6), .I32ShrU, .I32Const(31), .I32And, .LocalSet(7),
+      // fragment = i32.wrap(hash >>u i64(shift)) & 31
+      .LocalGet(1), .LocalGet(6), .I64ExtendI32U, .I64ShrU,
+      .I32WrapI64, .I32Const(31), .I32And, .LocalSet(7),
       .I32Const(1), .LocalGet(7), .I32Shl, .LocalSet(8),
       .LocalGet(0), .RefAsNonNull, .StructGet(t_hamt_node(), hn_bitmap()), .LocalSet(9),
       .LocalGet(9), .LocalGet(8), .I32Const(1), .I32Sub,
@@ -417,7 +639,7 @@ fn node_set_fn() FuncDef {
       .If(.None, [
         .LocalGet(11), .RefCast(false, .Named(t_hamt_entry())), .LocalSet(13),
         .LocalGet(13), .StructGet(t_hamt_entry(), he_hash()),
-        .LocalGet(1), .I32Eq,
+        .LocalGet(1), .I64Eq,
         .If(.None, [
           .LocalGet(13), .StructGet(t_hamt_entry(), he_key()),
           .LocalGet(3), .Call("core_eq"),
@@ -436,8 +658,8 @@ fn node_set_fn() FuncDef {
             .LocalGet(9), .LocalGet(12), .RefAsNonNull, .StructNew(t_hamt_node()), .Return,
           ]),
         ], [
-          // different hash: sub-node, unless all 32 hash bits are already consumed
-          .LocalGet(2), .I32Const(6), .I32GeU,
+          // different hash: sub-node, unless all 64 hash bits are already consumed
+          .LocalGet(2), .I32Const(12), .I32GeU,
           .If(.None, [
             .LocalGet(13), .LocalGet(5), .ArrayNewFixed(t_array(), 2), .LocalSet(12),
             .I32Const(0), .LocalGet(1), .LocalGet(12), .RefAsNonNull, .StructNew(t_hamt_collision()), .LocalSet(15),
@@ -488,12 +710,12 @@ fn node_set_fn() FuncDef {
 
 // ── node_remove(node, hash, depth, key) -> HamtNode? ─────────────────────────
 fn node_remove_fn() FuncDef {
-  // p0=node, p1=hash, p2=depth, p3=key
+  // p0=node, p1=hash(i64), p2=depth, p3=key
   // L4=fragment, L5=bit, L6=bitmap, L7=idx, L8=slot, L9=entries, L10=n_entries
   // L11=old_entry, L12=new_entries, L13=sub, L14=new_sub
   // L15=collision, L16=c_entries, L17=c_n, L18=found_j, L19=j, L20=ce, L21=new_c
   FuncDef.{ name: "node_remove",
-    params: [hamt_node_null(), .I32, .I32, .Anyref],
+    params: [hamt_node_null(), .I64, .I32, .Anyref],
     results: [hamt_node_null()],
     locals: [
       .I32, .I32, .I32, .I32, .Anyref,
@@ -506,8 +728,9 @@ fn node_remove_fn() FuncDef {
     body: [
       .LocalGet(0), .RefIsNull,
       .If(.None, [.RefNull(.Named(t_hamt_node())), .Return], []),
+      // fragment = i32.wrap(hash >>u i64(depth*5)) & 31
       .LocalGet(1), .LocalGet(2), .I32Const(5), .I32Mul,
-      .I32ShrU, .I32Const(31), .I32And, .LocalSet(4),
+      .I64ExtendI32U, .I64ShrU, .I32WrapI64, .I32Const(31), .I32And, .LocalSet(4),
       .I32Const(1), .LocalGet(4), .I32Shl, .LocalSet(5),
       .LocalGet(0), .RefAsNonNull, .StructGet(t_hamt_node(), hn_bitmap()), .LocalSet(6),
       .LocalGet(6), .LocalGet(5), .I32And, .I32Eqz,
@@ -523,7 +746,7 @@ fn node_remove_fn() FuncDef {
       .If(.None, [
         .LocalGet(8), .RefCast(false, .Named(t_hamt_entry())), .LocalSet(11),
         .LocalGet(11), .StructGet(t_hamt_entry(), he_hash()),
-        .LocalGet(1), .I32Eq,
+        .LocalGet(1), .I64Eq,
         .If(.None, [
           .LocalGet(11), .StructGet(t_hamt_entry(), he_key()),
           .LocalGet(3), .Call("core_eq"),
@@ -694,9 +917,9 @@ fn get_option_fn() FuncDef {
 
 // ── set(dict: PDict?, key, val) -> PDict ─────────────────────────────────────
 fn set_fn() FuncDef {
-  // p0=dict, p1=key, p2=val; L3=hash, L4=old_root, L5=new_root, L6=was_present, L7=new_order
+  // p0=dict, p1=key, p2=val; L3=hash(i64), L4=old_root, L5=new_root, L6=was_present, L7=new_order
   FuncDef.{ name: "set", params: [pdict_null(), .Anyref, .Anyref], results: [pdict_ref()],
-    locals: [.I32, hamt_node_null(), hamt_node_null(), .I32, pvec_null()],
+    locals: [.I64, hamt_node_null(), hamt_node_null(), .I32, pvec_null()],
     body: [
       .LocalGet(1), .Call("hash_key"), .LocalSet(3),
       .LocalGet(0), .RefAsNonNull, .StructGet(t_pdict(), pd_root()), .LocalSet(4),
@@ -720,9 +943,9 @@ fn set_fn() FuncDef {
 
 // ── remove(dict: PDict?, key) -> PDict ───────────────────────────────────────
 fn remove_fn() FuncDef {
-  // p0=dict, p1=key; L2=hash, L3=old_root, L4=new_root, L5=was_present, L6=new_order
+  // p0=dict, p1=key; L2=hash(i64), L3=old_root, L4=new_root, L5=was_present, L6=new_order
   FuncDef.{ name: "remove", params: [pdict_null(), .Anyref], results: [pdict_ref()],
-    locals: [.I32, hamt_node_null(), hamt_node_null(), .I32, pvec_null()],
+    locals: [.I64, hamt_node_null(), hamt_node_null(), .I32, pvec_null()],
     body: [
       .LocalGet(1), .Call("hash_key"), .LocalSet(2),
       .LocalGet(0), .RefAsNonNull, .StructGet(t_pdict(), pd_root()), .LocalSet(3),

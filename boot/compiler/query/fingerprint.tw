@@ -151,16 +151,6 @@ fn mix_type_def(h: Int, def: ResolvedTypeDef) Int {
   }
 }
 
-// Local copy of mix_word (keys.mix_word is not exported)
 fn mix_word(h: Int, word: Int) Int {
-  fnv_prime := 0x100000001b3
-  h = (h ^ (word & 0xff)) * fnv_prime
-  h = (h ^ ((word >> 8) & 0xff)) * fnv_prime
-  h = (h ^ ((word >> 16) & 0xff)) * fnv_prime
-  h = (h ^ ((word >> 24) & 0xff)) * fnv_prime
-  h = (h ^ ((word >> 32) & 0xff)) * fnv_prime
-  h = (h ^ ((word >> 40) & 0xff)) * fnv_prime
-  h = (h ^ ((word >> 48) & 0xff)) * fnv_prime
-  h = (h ^ ((word >> 56) & 0xff)) * fnv_prime
-  h
+  keys.mix_word(h, word)
 }

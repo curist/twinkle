@@ -43,9 +43,9 @@ pub fn module() WasmModule {
           ty: .Ref(false, .Named("Array")) },
       ], .None, true),
 
-      // (type $HamtEntry (struct (field $hash i32) (field $key anyref) (field $val anyref)))
+      // (type $HamtEntry (struct (field $hash i64) (field $key anyref) (field $val anyref)))
       .Struct("HamtEntry", [
-        .{ name: .Some("hash"), mutable: false, ty: .I32 },
+        .{ name: .Some("hash"), mutable: false, ty: .I64 },
         .{ name: .Some("key"), mutable: false, ty: .Anyref },
         .{ name: .Some("val"), mutable: false, ty: .Anyref },
       ], .None, true),
@@ -56,12 +56,12 @@ pub fn module() WasmModule {
         .{ name: .Some("entries"), mutable: false, ty: .Ref(false, .Named("Array")) },
       ], .None, true),
 
-      // (type $HamtCollision (struct (field $tag i32) (field $hash i32) (field $entries (ref $Array))))
+      // (type $HamtCollision (struct (field $tag i32) (field $hash i64) (field $entries (ref $Array))))
       // Keep this layout distinct from HamtNode. Wasm GC type checks are structural,
       // so identical final struct shapes can make ref.test HamtNode succeed for a collision.
       .Struct("HamtCollision", [
         .{ name: .Some("tag"), mutable: false, ty: .I32 },
-        .{ name: .Some("hash"), mutable: false, ty: .I32 },
+        .{ name: .Some("hash"), mutable: false, ty: .I64 },
         .{ name: .Some("entries"), mutable: false, ty: .Ref(false, .Named("Array")) },
       ], .None, true),
 

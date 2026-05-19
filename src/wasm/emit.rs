@@ -416,6 +416,7 @@ pub fn emit_instr(instr: &Instr, indent: usize) -> String {
         Instr::I64Xor => format!("{pad}i64.xor"),
         Instr::I64Shl => format!("{pad}i64.shl"),
         Instr::I64ShrS => format!("{pad}i64.shr_s"),
+        Instr::I64ShrU => format!("{pad}i64.shr_u"),
         Instr::I64Eq => format!("{pad}i64.eq"),
         Instr::I64Ne => format!("{pad}i64.ne"),
         Instr::I64LtS => format!("{pad}i64.lt_s"),
