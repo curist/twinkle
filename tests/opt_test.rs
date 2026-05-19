@@ -1646,15 +1646,18 @@ fn opt_phase_a_wasm_semantics() {
 
 #[test]
 fn opt_phase_b_dict_set_param_then_set_rewritten() {
-    // COW on tainted param produces fresh result; second set should be in-place.
+    // COW on tainted param produces fresh header but shares HAMT nodes with
+    // the caller's dict. Deep-ownership gate correctly blocks in-place.
     let module = compile_opt("tests/opt/dict_set_param_then_set.tw");
-    assert!(
-        has_call_to(&module, DICT_SET_IN_PLACE),
-        "Expected DICT_SET_IN_PLACE for second set on fresh COW result"
+    assert_eq!(
+        count_calls_to(&module, DICT_SET_IN_PLACE),
+        0,
+        "Expected no DICT_SET_IN_PLACE — fresh-if-copied result shares HAMT nodes with caller"
     );
-    assert!(
-        has_call_to(&module, DICT_SET),
-        "Expected DICT_SET to remain for first set on tainted param"
+    assert_eq!(
+        count_calls_to(&module, DICT_SET),
+        2,
+        "Expected both DICT_SET calls to remain COW"
     );
 }
 
@@ -1696,31 +1699,35 @@ fn opt_phase_b_wasm_semantics() {
 
 #[test]
 fn opt_dict_set_param_assign_back_chain_rewritten_after_refresh() {
+    // Both sets operate on a dict derived from a tainted param. The COW result
+    // shares HAMT nodes with the caller's dict, so deep-ownership gate blocks.
     let module = compile_opt("tests/opt/dict_set_param_assign_back_chain.tw");
     assert_eq!(
         count_calls_to(&module, DICT_SET),
-        1,
-        "Expected the first param-backed dict set to remain COW"
+        2,
+        "Expected both param-backed dict sets to remain COW (shared HAMT nodes)"
     );
     assert_eq!(
         count_calls_to(&module, DICT_SET_IN_PLACE),
-        1,
-        "Expected the second dict set to rewrite in-place after refresh"
+        0,
+        "Expected no in-place rewrite on param-derived dict"
     );
 }
 
 #[test]
 fn opt_dict_set_param_forward_bind_chain_rewritten_after_relaxed_consume_reassign() {
+    // Both sets operate on a dict derived from a tainted param via forward-bind
+    // chain. Deep-ownership gate blocks in-place (shared HAMT nodes).
     let module = compile_opt("tests/opt/dict_set_param_forward_bind_chain.tw");
     assert_eq!(
         count_calls_to(&module, DICT_SET),
-        1,
-        "Expected the first dict set to remain COW through the forward-bind refresh chain"
+        2,
+        "Expected both dict sets to remain COW (shared HAMT nodes with caller)"
     );
     assert_eq!(
         count_calls_to(&module, DICT_SET_IN_PLACE),
-        1,
-        "Expected the second dict set to rewrite after forward-bind consume-reassign recognition"
+        0,
+        "Expected no in-place rewrite on param-derived dict"
     );
 }
 
@@ -1836,16 +1843,18 @@ fn opt_dict_remove_helper_forward_wrapper_rewritten_in_caller() {
 
 #[test]
 fn opt_dict_set_after_if_join_propagates_post_join_uniqueness() {
+    // All three dict sets operate on a dict derived from a tainted param.
+    // Deep-ownership gate blocks in-place (shared HAMT nodes).
     let module = compile_opt("tests/opt/dict_set_after_if_join.tw");
     assert_eq!(
         count_calls_to(&module, DICT_SET_IN_PLACE),
-        1,
-        "Expected the post-join dict set to rewrite in-place after branch merge propagation"
+        0,
+        "Expected no in-place rewrite on param-derived dict"
     );
     assert_eq!(
         count_calls_to(&module, DICT_SET),
-        2,
-        "Expected only the branch-local param updates to remain COW"
+        3,
+        "Expected all dict sets to remain COW (shared HAMT nodes with caller)"
     );
 }
 
@@ -2255,14 +2264,17 @@ fn opt_vector_append_nonempty_init_loop_runtime_semantics() {
 /// update on ctx.table in place.
 #[test]
 fn opt_fresh_wrapper_destructure_dict_rewritten_in_place() {
+    // Stage0 uses the narrower deep-ownership gate: fresh-wrapper field
+    // extraction does not propagate source_fresh, so the dict set remains COW.
+    // (Boot compiler handles this more aggressively via Deep ownership.)
     let module = compile_opt("tests/opt/fresh_wrapper_destructure_dict.tw");
     assert!(
-        has_call_to(&module, DICT_SET_IN_PLACE),
-        "Expected DICT_SET_IN_PLACE after fresh-wrapper destructuring"
+        has_call_to(&module, DICT_SET),
+        "Expected DICT_SET to remain (stage0 narrower gate)"
     );
     assert!(
-        !has_call_to(&module, DICT_SET),
-        "Expected no remaining DICT_SET after fresh-wrapper destructuring"
+        !has_call_to(&module, DICT_SET_IN_PLACE),
+        "Expected no DICT_SET_IN_PLACE (stage0 does not propagate deep ownership through wrappers)"
     );
 }
 
@@ -2293,14 +2305,14 @@ fn opt_fresh_wrapper_destructure_runtime_semantics() {
 /// The second and third updates should fire field-borrow, producing DICT_SET_IN_PLACE.
 #[test]
 fn opt_field_borrow_dict_second_and_third_updates_in_place() {
+    // Stage0 uses the narrower deep-ownership gate: field-borrow extractions
+    // get shallow ownership (unique but not source_fresh), so dict in-place
+    // is blocked. (Boot compiler handles this via Deep ownership tracking.)
     let module = compile_opt("tests/opt/field_borrow_dict.tw");
     let in_place = count_calls_to(&module, DICT_SET_IN_PLACE);
-    let cow = count_calls_to(&module, DICT_SET);
-    assert!(
-        in_place >= 2,
-        "Expected at least 2 DICT_SET_IN_PLACE (field-borrow on cache + extra), got {}; DICT_SET={}",
-        in_place,
-        cow
+    assert_eq!(
+        in_place, 0,
+        "Expected no DICT_SET_IN_PLACE (stage0 narrower gate for field-borrow)"
     );
 }
 

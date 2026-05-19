@@ -2162,10 +2162,11 @@ fn rewrite_expr(
 
         // Dict in-place loop rewrite: for COW ops with a direct in-place swap
         // (no builder lifecycle needed), just swap the callee inside the loop.
+        // Require source_fresh (deep ownership) — same gate as point rewrites.
         for base in unique
             .iter()
             .copied()
-            .filter(|id| base_can_rewrite(*id, tainted, unique, refreshed, Some(source_fresh)))
+            .filter(|id| source_fresh.contains(id))
             .collect::<Vec<_>>()
         {
             let Some(expected_sites) = analyze_loop_dict_sites(loop_body, base, wrappers) else {
@@ -2190,8 +2191,27 @@ fn rewrite_expr(
             *op = Box::new(AnfOp::ALoop {
                 body: Box::new(rewritten_loop_body),
             });
+            // Process the loop op (this clears source_fresh for
+            // assigned-in-loop locals in the ALoop handler).
+            rewrite_op(
+                op,
+                tainted,
+                unique,
+                known_empty,
+                refreshed,
+                builder_safe,
+                source_fresh,
+                next_local,
+                wrappers,
+            );
+            // After a successful in-place loop rewrite, the base's tree
+            // nodes are all uniquely owned (built/modified in place from a
+            // fresh root). Restore deep ownership so downstream loops
+            // (e.g. a remove loop after a build loop) can also fire.
+            source_fresh.insert(base);
+            // Process the continuation after the loop.
             rewrite_expr(
-                expr,
+                body,
                 tainted,
                 unique,
                 known_empty,
@@ -2345,6 +2365,16 @@ fn rewrite_expr(
                 unique.remove(source);
                 source_fresh.remove(source);
             }
+            if source_fresh.contains(source) {
+                // Transfer deep ownership: the freshly-allocated value moves
+                // from source to target. Only transfer when the uniqueness
+                // move above succeeded (source is no longer in unique); if it
+                // failed, the alias means neither side is deeply owned.
+                if unique.contains(target) {
+                    source_fresh.remove(source);
+                    source_fresh.insert(*target);
+                }
+            }
             if known_empty.contains(source) && !tainted.contains(source) {
                 known_empty.remove(source);
                 known_empty.insert(*target);
@@ -2435,22 +2465,18 @@ fn rewrite_expr(
                 let base = *base;
                 let can_rewrite = is_consume_reassign(body, base, bind_local)
                     || !live_after(body).contains(&base);
-                // Use source_fresh only for ops that have a real in_place_id
-                // (DICT_SET, DICT_REMOVE, VECTOR_SET_UNSAFE). For VECTOR_APPEND
-                // (in_place_id = None), passing Some would trigger
-                // unique.insert(result) even without an actual swap, which can
-                // cascade and incorrectly enable downstream ops after opaque calls.
-                let can_reuse_in_place_base = base_can_rewrite(
-                    base,
-                    tainted,
-                    unique,
-                    refreshed,
-                    if info.in_place_id.is_some() {
-                        Some(source_fresh)
-                    } else {
-                        None
-                    },
-                );
+                // Dict/vector in-place rewrites (those with `in_place_id`) require
+                // deep ownership: the base must be in `source_fresh`, proving
+                // all reachable container nodes are uniquely owned (not just the
+                // top-level reference). Without this, a dict extracted from a
+                // dying record or produced by fresh-if-copied COW on a shared
+                // base could have shared HAMT/trie nodes, making in-place
+                // mutation observable through aliases.
+                let can_reuse_in_place_base = if info.in_place_id.is_some() {
+                    unique.contains(&base) && source_fresh.contains(&base)
+                } else {
+                    base_can_rewrite(base, tainted, unique, refreshed, None)
+                };
                 // Do NOT pass source_fresh to base_can_start_builder_region here.
                 let can_preserve_builder_uniqueness = info.builder_rewritable
                     && base_can_start_builder_region(
@@ -2470,6 +2496,13 @@ fn rewrite_expr(
                     }
                     // Result inherits uniqueness from the consuming update.
                     unique.insert(bind_local);
+                    // Propagate deep ownership: the consumed base's tree nodes
+                    // are now owned by the result. This applies to all consuming
+                    // COW ops (dict_set, vector_append, etc.), enabling downstream
+                    // in-place ops on the result.
+                    if source_fresh.contains(&base) {
+                        source_fresh.insert(bind_local);
+                    }
                     if tainted.contains(&bind_local) && can_preserve_builder_uniqueness {
                         builder_safe.insert(bind_local);
                     }

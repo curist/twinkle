@@ -24,6 +24,10 @@ fn mock_vec_set_in_place() FuncId { fid(201) }
 fn mock_dict_set() FuncId { fid(202) }
 fn mock_dict_set_in_place() FuncId { fid(203) }
 fn mock_vec_push() FuncId { fid(204) }
+fn mock_dict_remove() FuncId { fid(205) }
+fn mock_dict_remove_in_place() FuncId { fid(206) }
+// Opaque (retaining) function
+fn mock_opaque() FuncId { fid(250) }
 // Fresh producers
 fn mock_vec_make() FuncId { fid(210) }
 fn mock_dict_new() FuncId { fid(211) }
@@ -50,6 +54,12 @@ fn mock_semantics() OptimizerSemantics {
     fresh_result: false,
     cow_base_arg: .Some(0),
     in_place_equivalent: .Some(mock_dict_set_in_place()),
+  }
+  calls[mock_dict_remove().id] = .{
+    effect: .Update,
+    fresh_result: false,
+    cow_base_arg: .Some(0),
+    in_place_equivalent: .Some(mock_dict_remove_in_place()),
   }
   calls[mock_vec_push().id] = .{
     effect: .Update,
@@ -1385,6 +1395,193 @@ fn test_max_local_pattern_bindings() Result<Void, String> {
   }
 }
 
+// ── Dict in-place alias safety: negative tests ─────────────────────
+// These verify dict must NOT rewrite to in-place when aliases exist.
+
+fn test_dict_aliased_before_update_no_rewrite() Result<Void, String> {
+  // let d = dict_new(); let d2 = init(d); let r = dict_set(d, k, v); Atom(r)
+  // d2 = d creates alias while d is still live → tainted → no rewrite
+  body: AnfExpr = .Let(lid(0),
+    .ACall(.AGlobalFunc(mock_dict_new()), []),
+    .Let(lid(1), .AInit(.ALocal(lid(0))),
+      .Let(lid(2),
+        .ACall(.AGlobalFunc(mock_dict_set()), [.ALocal(lid(0)), .ALitInt(1), .ALitInt(42)]),
+        .Let(lid(3), .AInit(.ALocal(lid(1))),
+          .Atom(.ALocal(lid(2)))))))
+  func := make_func(body)
+  result := rewrite(func)
+  case find_dict_set(result.body) {
+    .Some(f) => assert.equal(f.id, mock_dict_set().id),
+    .None => .Err("expected dict_set call"),
+  }
+}
+
+fn test_dict_used_after_update_no_rewrite() Result<Void, String> {
+  // let d = dict_new(); let r = dict_set(d, k, v); let x = init(d); Atom(x)
+  // d is used after the dict_set → base still live → no rewrite
+  body: AnfExpr = .Let(lid(0),
+    .ACall(.AGlobalFunc(mock_dict_new()), []),
+    .Let(lid(1),
+      .ACall(.AGlobalFunc(mock_dict_set()), [.ALocal(lid(0)), .ALitInt(1), .ALitInt(42)]),
+      .Let(lid(2), .AInit(.ALocal(lid(0))),
+        .Atom(.ALocal(lid(2))))))
+  func := make_func(body)
+  result := rewrite(func)
+  case find_dict_set(result.body) {
+    .Some(f) => assert.equal(f.id, mock_dict_set().id),
+    .None => .Err("expected dict_set call"),
+  }
+}
+
+fn test_dict_captured_by_closure_no_rewrite() Result<Void, String> {
+  // let d = dict_new(); let c = closure(d); let r = dict_set(d, k, v); Atom(r)
+  // d captured by closure → tainted → no rewrite
+  body: AnfExpr = .Let(lid(0),
+    .ACall(.AGlobalFunc(mock_dict_new()), []),
+    .Let(lid(1), .AMakeClosure(fid(99), [lid(0)]),
+      .Let(lid(2),
+        .ACall(.AGlobalFunc(mock_dict_set()), [.ALocal(lid(0)), .ALitInt(1), .ALitInt(42)]),
+        .Atom(.ALocal(lid(2))))))
+  func := make_func(body)
+  result := rewrite(func)
+  case find_dict_set(result.body) {
+    .Some(f) => assert.equal(f.id, mock_dict_set().id),
+    .None => .Err("expected dict_set call"),
+  }
+}
+
+fn test_dict_stored_in_record_no_rewrite() Result<Void, String> {
+  // let d = dict_new(); let rec = record(d); let r = dict_set(d, k, v); Atom(r)
+  // d stored in record → tainted → no rewrite
+  body: AnfExpr = .Let(lid(0),
+    .ACall(.AGlobalFunc(mock_dict_new()), []),
+    .Let(lid(1), .ARecord(tid(7), [FieldAtom.{ field: field(0), value: .ALocal(lid(0)) }]),
+      .Let(lid(2),
+        .ACall(.AGlobalFunc(mock_dict_set()), [.ALocal(lid(0)), .ALitInt(1), .ALitInt(42)]),
+        .Atom(.ALocal(lid(2))))))
+  func := make_func(body)
+  result := rewrite(func)
+  case find_dict_set(result.body) {
+    .Some(f) => assert.equal(f.id, mock_dict_set().id),
+    .None => .Err("expected dict_set call"),
+  }
+}
+
+fn test_dict_stored_in_array_no_rewrite() Result<Void, String> {
+  // let d = dict_new(); let arr = [d]; let r = dict_set(d, k, v); Atom(r)
+  // d stored in array → tainted → no rewrite
+  body: AnfExpr = .Let(lid(0),
+    .ACall(.AGlobalFunc(mock_dict_new()), []),
+    .Let(lid(1), .AArrayLit([.ALocal(lid(0))]),
+      .Let(lid(2),
+        .ACall(.AGlobalFunc(mock_dict_set()), [.ALocal(lid(0)), .ALitInt(1), .ALitInt(42)]),
+        .Atom(.ALocal(lid(2))))))
+  func := make_func(body)
+  result := rewrite(func)
+  case find_dict_set(result.body) {
+    .Some(f) => assert.equal(f.id, mock_dict_set().id),
+    .None => .Err("expected dict_set call"),
+  }
+}
+
+fn test_dict_passed_to_retaining_fn_no_rewrite() Result<Void, String> {
+  // let d = dict_new(); let _ = opaque(d); let r = dict_set(d, k, v); Atom(r)
+  // d passed to opaque function → tainted → no rewrite
+  body: AnfExpr = .Let(lid(0),
+    .ACall(.AGlobalFunc(mock_dict_new()), []),
+    .Let(lid(1), .ACall(.AGlobalFunc(mock_opaque()), [.ALocal(lid(0))]),
+      .Let(lid(2),
+        .ACall(.AGlobalFunc(mock_dict_set()), [.ALocal(lid(0)), .ALitInt(1), .ALitInt(42)]),
+        .Atom(.ALocal(lid(2))))))
+  func := make_func(body)
+  result := rewrite(func)
+  case find_dict_set(result.body) {
+    .Some(f) => assert.equal(f.id, mock_dict_set().id),
+    .None => .Err("expected dict_set call"),
+  }
+}
+
+fn test_dict_param_no_rewrite() Result<Void, String> {
+  // fn f(d: Dict) { dict_set(d, k, v) }
+  // d is a parameter → tainted → no rewrite (HAMT nodes shared with caller)
+  params: Vector<Param> = [Param.{ local: lid(0), ty: .Void }]
+  body: AnfExpr = .Let(lid(1),
+    .ACall(.AGlobalFunc(mock_dict_set()), [.ALocal(lid(0)), .ALitInt(1), .ALitInt(42)]),
+    .Atom(.ALocal(lid(1))))
+  func := make_func_with_params(params, body)
+  result := rewrite(func)
+  case find_dict_set(result.body) {
+    .Some(f) => assert.equal(f.id, mock_dict_set().id),
+    .None => .Err("expected dict_set call"),
+  }
+}
+
+// ── Dict in-place alias safety: positive tests ─────────────────────
+// These verify dict SHOULD rewrite to in-place when linearly owned.
+
+fn test_dict_fresh_linear_set_chain() Result<Void, String> {
+  // let d = dict_new()
+  // let r1 = dict_set(d, k1, v1)   → in-place
+  // Atom(r1)
+  body: AnfExpr = .Let(lid(0),
+    .ACall(.AGlobalFunc(mock_dict_new()), []),
+    .Let(lid(1),
+      .ACall(.AGlobalFunc(mock_dict_set()), [.ALocal(lid(0)), .ALitInt(1), .ALitInt(42)]),
+      .Atom(.ALocal(lid(1)))))
+  func := make_func(body)
+  result := rewrite(func)
+  case find_dict_set(result.body) {
+    .Some(f) => assert.equal(f.id, mock_dict_set_in_place().id),
+    .None => .Err("expected dict_set call"),
+  }
+}
+
+fn test_dict_fresh_set_with_consume_reassign() Result<Void, String> {
+  // let d = dict_new()
+  // let r = dict_set(d, k, v)
+  // let _ = assign(d, r)
+  // let r2 = dict_set(d, k2, v2)    → in-place (d refreshed via assign)
+  // Atom(r2)
+  body: AnfExpr = .Let(lid(0),
+    .ACall(.AGlobalFunc(mock_dict_new()), []),
+    .Let(lid(1),
+      .ACall(.AGlobalFunc(mock_dict_set()), [.ALocal(lid(0)), .ALitInt(1), .ALitInt(10)]),
+      .Let(lid(2), .AAssign(lid(0), .ALocal(lid(1))),
+        .Let(lid(3),
+          .ACall(.AGlobalFunc(mock_dict_set()), [.ALocal(lid(0)), .ALitInt(2), .ALitInt(20)]),
+          .Atom(.ALocal(lid(3)))))))
+  func := make_func(body)
+  result := rewrite(func)
+  // Both dict_set calls should rewrite to in-place
+  case result.body {
+    .Let(_, _, .Let(_, .ACall(.AGlobalFunc(f1), _),
+      .Let(_, _, .Let(_, .ACall(.AGlobalFunc(f2), _), _)))) => {
+      try assert.equal(f1.id, mock_dict_set_in_place().id)
+      assert.equal(f2.id, mock_dict_set_in_place().id)
+    },
+    _ => .Err("expected two dict_set calls"),
+  }
+}
+
+fn test_dict_fresh_remove_rewrite() Result<Void, String> {
+  // let d = dict_new()
+  // let r = dict_remove(d, k)    → in-place
+  // Atom(r)
+  body: AnfExpr = .Let(lid(0),
+    .ACall(.AGlobalFunc(mock_dict_new()), []),
+    .Let(lid(1),
+      .ACall(.AGlobalFunc(mock_dict_remove()), [.ALocal(lid(0)), .ALitInt(1)]),
+      .Atom(.ALocal(lid(1)))))
+  func := make_func(body)
+  result := rewrite(func)
+  case result.body {
+    .Let(_, _, .Let(_, .ACall(.AGlobalFunc(f), _), _)) => {
+      assert.equal(f.id, mock_dict_remove_in_place().id)
+    },
+    _ => .Err("expected dict_remove call"),
+  }
+}
+
 // ── Suite ───────────────────────────────────────────────────────────
 
 pub fn suite() runner.Suite {
@@ -1439,5 +1636,17 @@ pub fn suite() runner.Suite {
   s = s.test("loop base used in non-push way", test_loop_base_used_non_push)
   // Regression: loop rewrite recurses into continuation
   s = s.test("loop rewrite continues into cont", test_loop_rewrite_continues_into_cont)
+  // Dict in-place alias safety: negative tests
+  s = s.test("dict aliased before update → no rewrite", test_dict_aliased_before_update_no_rewrite)
+  s = s.test("dict used after update → no rewrite", test_dict_used_after_update_no_rewrite)
+  s = s.test("dict captured by closure → no rewrite", test_dict_captured_by_closure_no_rewrite)
+  s = s.test("dict stored in record → no rewrite", test_dict_stored_in_record_no_rewrite)
+  s = s.test("dict stored in array → no rewrite", test_dict_stored_in_array_no_rewrite)
+  s = s.test("dict passed to retaining fn → no rewrite", test_dict_passed_to_retaining_fn_no_rewrite)
+  s = s.test("dict param → no rewrite", test_dict_param_no_rewrite)
+  // Dict in-place alias safety: positive tests
+  s = s.test("dict fresh linear set chain", test_dict_fresh_linear_set_chain)
+  s = s.test("dict fresh set with consume-reassign", test_dict_fresh_set_with_consume_reassign)
+  s = s.test("dict fresh remove rewrite", test_dict_fresh_remove_rewrite)
   s
 }

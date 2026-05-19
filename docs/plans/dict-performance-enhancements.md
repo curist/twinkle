@@ -228,6 +228,12 @@ Implementation notes:
 
 ## Phase 4 — True In-Place Mutation for `set_in_place` and `remove_in_place`
 
+**Dependency:** this phase depends on completing
+[`dict-in-place-alias-safety.md`](dict-in-place-alias-safety.md). Do not enable
+true in-place dict mutation before the alias-safety contract and optimizer tests
+are in place. Until then, `set_in_place_fn` and `remove_in_place_fn` should
+continue delegating to the persistent `set` and `remove` helpers.
+
 `set_in_place_fn` (line 971) and `remove_in_place_fn` (line 977) currently
 delegate to the persistent `set`/`remove` paths, performing full HAMT path-copy
 even when the optimizer has proven the dict is uniquely owned.
@@ -322,6 +328,9 @@ in hot loops. This saves 2 allocations (Array + PVec struct) per call.
 
 Boot-level behavior tests should cover:
 
+- Alias-safety prerequisite tests from
+  [`dict-in-place-alias-safety.md`](dict-in-place-alias-safety.md) before Phase
+  4 is enabled.
 - `popcount` uses `I32Popcnt` instruction (no loop)
 - `order_remove_key` calls `to_array` and `from_array` instead of per-element
   `arr_get`/`arr_push`
@@ -358,14 +367,24 @@ rg "popcount|order_remove_key|node_get|was_replace" /tmp/boot.wat
 
 ## Risks and Mitigations
 
+### Alias safety for in-place dict rewrites (Phase 4 dependency)
+
+Risk: the optimizer may rewrite a persistent dict update to an in-place call
+when another live alias can still observe the old value. This would violate
+Twinkle's persistent `Dict<K,V>` semantics.
+
+Mitigation: Phase 4 depends on
+[`dict-in-place-alias-safety.md`](dict-in-place-alias-safety.md), which tracks
+the ownership-contract audit and required optimizer/runtime tests.
+
 ### Mutable struct fields for in-place paths (Phase 4)
 
 Risk: making `HamtNode.entries` and `PDict` fields mutable could allow
 accidental mutation in persistent code paths.
 
 Mitigation: only the `*_in_place` helpers use `struct.set` / `array.set`. The
-persistent `set`/`remove` paths continue to allocate new nodes. The optimizer
-guarantees uniqueness before rewriting to in-place calls.
+persistent `set`/`remove` paths continue to allocate new nodes. The Phase 4
+prerequisite guarantees uniqueness before rewriting to in-place calls.
 
 ### `was_replace` global state (Phase 3)
 
