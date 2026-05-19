@@ -36,15 +36,6 @@ jobs:
           key: ${{ runner.os }}-cargo-${{ hashFiles('Cargo.lock') }}
           restore-keys: ${{ runner.os }}-cargo-
 
-      - name: Build twk binary
-        run: cargo build --release
-
-      - name: Build bridge.wasm
-        run: cargo run --release -- run boot/tests/gen_bridge_wasm.tw
-
-      - name: Build boot compiler payload
-        run: cargo run --release -- build boot/main.tw -o target/boot.wasm
-
       - name: Set up Node
         uses: actions/setup-node@v4
         with:
@@ -52,13 +43,8 @@ jobs:
           cache: npm
           cache-dependency-path: playground/package-lock.json
 
-      - name: Install playground dependencies
-        working-directory: playground
-        run: npm ci
-
       - name: Build playground
-        working-directory: playground
-        run: npm run build
+        run: make playground
 
       - name: Configure Pages
         uses: actions/configure-pages@v5
