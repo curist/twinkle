@@ -194,15 +194,76 @@ function makeResultErr(b, value) {
 // ---------------------------------------------------------------------------
 
 /**
+ * Parse the import section from raw Wasm bytes.
+ * Fallback for runtimes where WebAssembly.Module.imports() fails on GC modules.
+ */
+function parseWasmImports(bytes) {
+  const imports = [];
+  let offset = 8; // skip magic + version
+
+  const readLEB128 = () => {
+    let result = 0, shift = 0, byte;
+    do {
+      byte = bytes[offset++];
+      result |= (byte & 0x7f) << shift;
+      shift += 7;
+    } while (byte & 0x80);
+    return result >>> 0;
+  };
+  const readString = () => {
+    const len = readLEB128();
+    const str = textDecoder.decode(bytes.subarray(offset, offset + len));
+    offset += len;
+    return str;
+  };
+
+  while (offset < bytes.length) {
+    const sectionId = bytes[offset++];
+    const sectionSize = readLEB128();
+    const sectionEnd = offset + sectionSize;
+
+    if (sectionId === 2) { // Import section
+      const count = readLEB128();
+      for (let i = 0; i < count; i++) {
+        const module = readString();
+        const name = readString();
+        const kind = bytes[offset++];
+        if (kind === 0) { // function import: skip type index
+          readLEB128();
+        } else {
+          // Non-function imports: skip to section end
+          // (Twinkle extern only generates function imports)
+          break;
+        }
+        imports.push({ module, name, kind: 'function' });
+      }
+      break;
+    }
+
+    offset = sectionEnd;
+  }
+
+  return imports;
+}
+
+/**
  * Auto-bridge extern imports by resolving `globalThis[module][name]` and
  * wrapping with type conversions for Twinkle's extern-safe types:
  *   - String params (GC refs) are decoded via bridge
  *   - String returns from JS are encoded via bridge
  *   - Int (bigint), Float (number), Bool (i32) pass through
  */
-function autoBridgeExternImports(wasmModule, hostImports, b, jspi = false) {
+function autoBridgeExternImports(wasmModule, hostImports, b, jspi = false, wasmBytes = null) {
+  let importList;
   try {
-    for (const imp of WebAssembly.Module.imports(wasmModule)) {
+    importList = WebAssembly.Module.imports(wasmModule);
+  } catch (_e) {
+    // Module.imports fails on GC modules in some runtimes (e.g. mobile Safari).
+    // Fall back to parsing the binary import section directly.
+    importList = wasmBytes ? parseWasmImports(wasmBytes) : [];
+  }
+
+  for (const imp of importList) {
       // Already provided (host module, etc.) — skip
       if (hostImports[imp.module]?.[imp.name] !== undefined) continue;
       if (imp.kind !== 'function') continue;
@@ -248,9 +309,6 @@ function autoBridgeExternImports(wasmModule, hostImports, b, jspi = false) {
 
       if (!hostImports[imp.module]) hostImports[imp.module] = {};
       hostImports[imp.module][imp.name] = bridgedFn;
-    }
-  } catch (_e) {
-    // Module.imports may fail on GC modules in some runtimes.
   }
 }
 
@@ -363,7 +421,7 @@ function runWasmBytes(wasmBytes, { programArgs = [], env = {}, vfs, emit, wasmMo
   };
 
   const mod = wasmModule ?? new WebAssembly.Module(wasmBytes);
-  autoBridgeExternImports(mod, hostImports, b);
+  autoBridgeExternImports(mod, hostImports, b, false, wasmBytes);
   try {
     const instance = new WebAssembly.Instance(mod, hostImports);
     // Boot-compiled modules export __twinkle_start instead of using a Wasm
@@ -453,7 +511,7 @@ async function runWasmBytesAsync(wasmBytes, { programArgs = [], env = {}, vfs, e
   };
 
   const mod = wasmModule ?? new WebAssembly.Module(wasmBytes);
-  autoBridgeExternImports(mod, hostImports, b, hasJspi);
+  autoBridgeExternImports(mod, hostImports, b, hasJspi, wasmBytes);
 
   if (hasJspi) {
     // Fetch-backed read_file: check VFS first, then try fetching from server.
