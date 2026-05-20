@@ -253,6 +253,43 @@ function parseWasmImports(bytes) {
  *   - String returns from JS are encoded via bridge
  *   - Int (bigint), Float (number), Bool (i32) pass through
  */
+const EXTERN_ARG_MARSHAL = {
+  console: {
+    log: ['string'],
+    warn: ['string'],
+    error: ['string'],
+    info: ['string'],
+  },
+  http: {
+    fetch: ['string'],
+    fetch_bytes: ['string'],
+  },
+  timer: {
+    sleep_ms: ['raw'],
+  },
+  canvas: {
+    get_context: ['string'],
+    get_width: [],
+    get_height: [],
+    set_fill_style: ['raw', 'string'],
+    fill_rect: ['raw', 'raw', 'raw', 'raw', 'raw'],
+    clear_rect: ['raw', 'raw', 'raw', 'raw', 'raw'],
+    set_stroke_style: ['raw', 'string'],
+    stroke_rect: ['raw', 'raw', 'raw', 'raw', 'raw'],
+    begin_path: ['raw'],
+    close_path: ['raw'],
+    move_to: ['raw', 'raw', 'raw'],
+    line_to: ['raw', 'raw', 'raw'],
+    arc: ['raw', 'raw', 'raw', 'raw', 'raw', 'raw'],
+    fill: ['raw'],
+    stroke: ['raw'],
+    set_line_width: ['raw', 'raw'],
+    set_global_alpha: ['raw', 'raw'],
+    set_font: ['raw', 'string'],
+    fill_text: ['raw', 'string', 'raw', 'raw'],
+  },
+};
+
 function autoBridgeExternImports(wasmModule, hostImports, b, jspi = false, wasmBytes = null) {
   let importList;
   try {
@@ -273,12 +310,20 @@ function autoBridgeExternImports(wasmModule, hostImports, b, jspi = false, wasmB
       const fn = mod?.[imp.name];
       if (typeof fn !== 'function') continue; // silently skip in playground
 
-      const marshalArgs = (args) => args.map((arg) => {
+      const argSpec = EXTERN_ARG_MARSHAL[imp.module]?.[imp.name];
+      const marshalArg = (arg, kind) => {
         if (typeof arg === 'bigint') return Number(arg);
         if (typeof arg === 'number') return arg;
-        // Try to decode as Twinkle string; if it fails, it's an opaque externref
+        if (kind === 'raw') return arg;
+        if (kind === 'string') return decodeString(b, arg);
+        // Unknown extern signatures use the legacy best-effort path.
+        // Known externref-heavy APIs (notably canvas) are listed above so we
+        // never probe opaque host objects with bridge string helpers; Safari can
+        // recurse until stack overflow when a non-string externref is passed to
+        // those Wasm GC helpers.
         try { return decodeString(b, arg); } catch { return arg; }
-      });
+      };
+      const marshalArgs = (args) => args.map((arg, i) => marshalArg(arg, argSpec?.[i]));
 
       const marshalReturn = (result) => {
         if (result === undefined || result === null) return;
