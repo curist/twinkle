@@ -394,7 +394,7 @@ pub fn val_type_of_mono(ty: MonoType, env: ResolvedEnv) ValType {
     .Byte => .I32,
     .Void => .Anyref,
     .Anyref_ => .Anyref,
-    .ExternRef(_) => .Ref(false, .Extern),
+    .ExternRef(_) => .Ref(true, .Extern),
     .String => .Ref(true, .Named("rt_types__String")),
     .Named(tid, args) => {
       if is_cell_type(env, tid) {
