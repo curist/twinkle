@@ -638,14 +638,6 @@ impl TypeEnv {
                             return Err(());
                         }
                         let inner = self.resolve_type(&args[0], errors)?;
-                        if matches!(inner, MonoType::ExternRef(_)) {
-                            errors.push(TypeError::UnsupportedFeature {
-                                feature: "Option<extern type>",
-                                span: *span,
-                                note: "Nullable extern types are not supported yet; use an explicit host function or Result-style wrapper".to_string(),
-                            });
-                            return Err(());
-                        }
                         return Ok(MonoType::Named {
                             type_id: OPTION_TYPE_ID,
                             args: vec![inner],

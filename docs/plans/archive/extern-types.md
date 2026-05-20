@@ -445,7 +445,7 @@ so it can bootstrap boot source that uses the feature.
 
 ### Canvas drawing
 
-```tw
+```twinkle
 // canvas.tw
 extern dom type CanvasContext
 
@@ -532,9 +532,9 @@ const imports = {
 
 ### Phase 2: Nullable extern types (`Option<ExternType>`)
 
-13. [ ] `Option<ExternType>` layout specialization: nullable `externref`, `None` → `ref.null extern`
-14. [ ] Null-test codegen: `ref.is_null` for `None` check on extern Option
-15. [ ] End-to-end test: `Option<ExternType>` round-trip through extern boundary
+13. [x] `Option<ExternType>` layout specialization: nullable `externref`, `None` → `ref.null extern`
+14. [x] Null-test codegen: `ref.is_null` for `None` check on extern Option
+15. [x] End-to-end test: `Option<ExternType>` round-trip through extern boundary
 
 ## Open Questions
 

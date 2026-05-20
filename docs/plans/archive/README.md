@@ -54,6 +54,7 @@ Related historical context outside this folder:
 | Plan | Description |
 |------|-------------|
 | [compound-rebinding.md](compound-rebinding.md) | Rebinding receiver shorthand: `x = .method(args)` desugars to `x = x.method(args)` at parse time |
+| [extern-types.md](extern-types.md) | `externref`-backed opaque host handles for FFI — Phase 1 (non-null) and Phase 2 (nullable `Option<ExternType>`) |
 
 ---
 

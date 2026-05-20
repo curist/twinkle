@@ -38,6 +38,7 @@ pub fn emit_box_to_anyref(mono: MonoType, env: ResolvedEnv, buf: Vector<Instr>) 
     .Scalar(.WI32) => buf.append(.RefI31),
     .Scalar(.WAnyref) => buf,  // already anyref
     .Scalar(.WExternref) => buf.append(.AnyConvertExtern),
+    .Scalar(.WNullableExternref) => buf.append(.AnyConvertExtern),
     // Records stay identity-based even across erased boundaries.
     .Record(_) => buf,
     // Typed sums erase through the generic Variant bridge so runtime equality
@@ -80,6 +81,7 @@ pub fn emit_unbox_from_anyref(mono: MonoType, env: ResolvedEnv, buf: Vector<Inst
     },
     .Scalar(.WAnyref) => buf,  // already anyref
     .Scalar(.WExternref) => buf.append(.ExternConvertAny),
+    .Scalar(.WNullableExternref) => buf.append(.ExternConvertAny),
     .Record(r) => buf.append(.RefCast(false, .Named(r.sym))),
     .Sum(_) => buf.append(.RefCast(true, .Named("rt_types__Variant"))).append(.Call(variant_to_sum_helper_sym(mono))),
     .Closure(_) => buf.append(.RefCast(false, .Named("rt_types__Closure"))),

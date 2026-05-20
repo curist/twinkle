@@ -1602,6 +1602,7 @@ fn is_extern_safe_type(ty: MonoType, allow_void: Bool) Bool {
     .String => true,
     .Void => allow_void,
     .ExternRef(_) => true,
+    .Optional(.ExternRef(_)) => true,
     _ => false,
   }
 }
@@ -1785,15 +1786,9 @@ fn resolve_fn_type(env: ResolvedEnv, param_exprs: Vector<TypeExpr>, ret_expr: Ty
 fn resolve_optional_type(env: ResolvedEnv, inner_expr: TypeExpr, type_vars: Vector<String>) TypeResolveResult {
   r := env.resolve_type_expr(inner_expr, type_vars)
   case r.ty {
-    .Some(inner) => case inner {
-      .ExternRef(_) => .{
-        ty: .None,
-        diagnostics: r.diagnostics.append(.Error(.ExternBoundaryType(.{ span: inner_expr.span }))),
-      },
-      _ => .{
-        ty: .Some(MonoType.Optional(inner)),
-        diagnostics: r.diagnostics,
-      },
+    .Some(inner) => .{
+      ty: .Some(MonoType.Optional(inner)),
+      diagnostics: r.diagnostics,
     },
     .None => r,
   }

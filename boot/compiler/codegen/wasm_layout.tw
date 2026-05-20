@@ -13,7 +13,7 @@ use compiler.type_util.{subst_type_params}
 
 // ── Wasm value type (simplified for layout) ─────────────────────────
 
-pub type WasmValType = { WI32, WI64, WF64, WAnyref, WExternref }
+pub type WasmValType = { WI32, WI64, WF64, WAnyref, WExternref, WNullableExternref }
 
 // ── Layout types ────────────────────────────────────────────────────
 
@@ -265,6 +265,11 @@ fn layout_of_sum_def(
 }
 
 fn layout_of_optional(inner: MonoType, env: ResolvedEnv) WasmLayout {
+  // Option<ExternRef> → nullable externref (no struct wrapper)
+  case inner {
+    .ExternRef(_) => { return .Scalar(.WNullableExternref) },
+    _ => {},
+  }
   inner_vt := val_type_of_mono(inner, env)
   sym := "$Option_${mono_to_key(.Optional(inner))}"
   .Sum(WasmSumLayout.{
@@ -349,6 +354,7 @@ pub fn val_type_of(layout: WasmLayout) ValType {
     .Scalar(.WF64) => .F64,
     .Scalar(.WAnyref) => .Anyref,
     .Scalar(.WExternref) => .Ref(false, .Extern),
+    .Scalar(.WNullableExternref) => .Ref(true, .Extern),
     .Record(r) => .Ref(true, .Named(r.sym)),
     .Sum(s) => .Ref(true, .Named(s.sym)),
     .Closure(c) => .Ref(true, .Named(c.closure_sym)),
@@ -366,6 +372,7 @@ fn val_type_key(layout: WasmLayout) String {
     .Scalar(.WF64) => "f64",
     .Scalar(.WAnyref) => "anyref",
     .Scalar(.WExternref) => "externref",
+    .Scalar(.WNullableExternref) => "nullable_externref",
     .Record(r) => r.sym,
     .Sum(s) => s.sym,
     .Closure(c) => c.closure_sym,
@@ -414,7 +421,10 @@ pub fn val_type_of_mono(ty: MonoType, env: ResolvedEnv) ValType {
     .Vector(_) => .Ref(true, .Named("rt_types__PVec")),
     .Dict(_, _) => .Ref(true, .Named("rt_types__PDict")),
     .Function(_, _) => .Ref(true, .Named("rt_types__Closure")),
-    .Optional(inner) => .Ref(true, .Named("$Option_${mono_to_key(.Optional(inner))}")),
+    .Optional(inner) => case inner {
+      .ExternRef(_) => .Ref(true, .Extern),
+      _ => .Ref(true, .Named("$Option_${mono_to_key(.Optional(inner))}")),
+    },
     .Result(ok, err) => .Ref(true, .Named("$Result_${mono_to_key(.Result(ok, err))}")),
     .Var(_) => error("val_type_of_mono called on Var — must be monomorphized"),
     .MetaVar(_) => error("val_type_of_mono called on MetaVar — must be resolved"),

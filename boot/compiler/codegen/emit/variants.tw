@@ -15,7 +15,25 @@ pub type VariantEmitFns = .{
   atom_mono: fn(PreparedAtom, EmitCtx) MonoType,
 }
 
+pub fn is_nullable_extern_option(mono: MonoType) Bool {
+  case mono {
+    .Optional(.ExternRef(_)) => true,
+    _ => false,
+  }
+}
+
 pub fn emit_variant_literal(tid: TypeId, vid: VariantId, args: Vector<PreparedAtom>, result_mono: MonoType, ctx: EmitCtx, buf: Vector<Instr>, fns: VariantEmitFns) Vector<Instr> {
+  // Option<ExternRef> → nullable externref (no struct)
+  if is_nullable_extern_option(result_mono) {
+    if vid.id == 0 {
+      // None → ref.null extern
+      return buf.append(.RefNull(.Extern))
+    } else {
+      // Some(x) → just emit x
+      return fns.emit_atom(args[0], ctx, buf)
+    }
+  }
+
   // All variants → typed sum struct
   layout := cached_layout_of(result_mono, ctx)
   sum := case layout {

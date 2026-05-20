@@ -1066,12 +1066,32 @@ fn emit_intrinsic_vector_append(args: Vector<PreparedAtom>, result_idx: Int, ctx
 // ── vector_get: bounds-checked → Option<T> ─────────────────────────────
 
 fn emit_intrinsic_vector_get(args: Vector<PreparedAtom>, result_idx: Int, result_mono: MonoType, ctx: EmitCtx, buf: Vector<Instr>) Vector<Instr> {
-  // Result is Option<T> → typed sum struct
-  sum_layout := get_sum_layout_ctx(result_mono, ctx)
   elem_mono := case result_mono {
     .Optional(inner) => inner,
     _ => .Anyref_,
   }
+
+  // Option<ExternRef> → nullable externref, no struct wrapper
+  if variant_emit.is_nullable_extern_option(result_mono) {
+    result_vt := ValType.Ref(true, .Extern)
+
+    then_instrs : Vector<Instr> = emit_atom(args[0], ctx, [])
+        .concat(emit_checked_i32_narrow(args[1], ctx, []))
+        .concat([.Call("rt_arr__get")])
+        .concat(emit_erased_container_egress(elem_mono, ctx.env, []))
+
+    else_instrs : Vector<Instr> = [Instr.RefNull(.Extern)]
+
+    buf2 := emit_atom(args[1], ctx, buf)
+    buf3 := buf2.append(.I64Const(0)).append(.I64GeS)
+    buf4 := emit_atom(args[1], ctx, buf3)
+    buf5 := emit_atom(args[0], ctx, buf4)
+    return buf5.append(.RefAsNonNull).append(.StructGet("rt_types__PVec", 0)).append(.I64ExtendI32U).append(.I64LtS).append(.I32And)
+      .append(.If(.Some(result_vt), then_instrs, else_instrs)).append(.LocalSet(result_idx))
+  }
+
+  // Result is Option<T> → typed sum struct
+  sum_layout := get_sum_layout_ctx(result_mono, ctx)
   some_variant := sum_layout.variants[1]
   default_payload := if some_variant.payload_types.len() > 0 {
     emit_default_value(some_variant.payload_types[0], [])
@@ -2150,6 +2170,36 @@ fn emit_variant_pattern_condition(
   tid: TypeId, vid: VariantId, fields: Vector<PreparedPattern>,
   scrutinee_instrs: Vector<Instr>, scrutinee_mono: MonoType, ctx: EmitCtx, buf: Vector<Instr>,
 ) Vector<Instr> {
+  // Option<ExternRef> → null check instead of tag check
+  if variant_emit.is_nullable_extern_option(scrutinee_mono) {
+    if vid.id == 0 {
+      // None: ref.is_null
+      return buf.concat(scrutinee_instrs).append(.RefIsNull)
+    } else {
+      // Some: not null
+      tag_check := scrutinee_instrs.append(.RefIsNull).append(.I32Eqz)
+      // Check for non-trivial sub-patterns on the Some payload
+      has_inner := false
+      for fp in fields {
+        if !pattern_is_trivial(fp) { has_inner = true }
+      }
+      if !has_inner { return buf.concat(tag_check) }
+      // Sub-pattern on the payload (the scrutinee itself, cast to non-null)
+      inner_checks: Vector<Vector<Instr>> = []
+      for fp,i in fields {
+        if !pattern_is_trivial(fp) {
+          field_instrs := scrutinee_instrs.append(.RefAsNonNull)
+          field_mono := variant_field_mono(scrutinee_mono, vid, i, ctx.env)
+          inner_checks = .append(
+            emit_pattern_condition(fp, field_instrs, field_mono, ctx, [])
+          )
+        }
+      }
+      inner_cond := combine_and_checks(inner_checks)
+      return buf.concat(tag_check).append(.If(.Some(.I32), inner_cond, [.I32Const(0)]))
+    }
+  }
+
   sum_layout := get_sum_layout_ctx(scrutinee_mono, ctx)
 
   // Tag check — build as a separate small vector, then prepend to buf
@@ -2215,6 +2265,21 @@ fn emit_pattern_bindings(pattern: PreparedPattern, scrutinee_instrs: Vector<Inst
     .Variant(tid, vid, fields) => {
       if !can_match_variant_pattern(scrutinee_mono, ctx.env) {
         []
+      } else if variant_emit.is_nullable_extern_option(scrutinee_mono) {
+        // Option<ExternRef>: payload is the scrutinee itself (non-null for Some)
+        if vid.id == 0 {
+          // None — no bindings
+          []
+        } else {
+          out: Vector<Instr> = []
+          for fp,i in fields {
+            // The Some payload is the scrutinee cast to non-null
+            field_instrs := scrutinee_instrs.append(.RefAsNonNull)
+            field_mono := variant_field_mono(scrutinee_mono, vid, i, ctx.env)
+            out = .concat(emit_pattern_bindings(fp, field_instrs, field_mono, ctx))
+          }
+          out
+        }
       } else {
         sum_layout := get_sum_layout_ctx(scrutinee_mono, ctx)
         variant_layout := find_variant_layout(sum_layout, vid)

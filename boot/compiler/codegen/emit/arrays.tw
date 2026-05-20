@@ -10,6 +10,7 @@ use compiler.codegen.emit.defaults.{emit_default_value}
 use compiler.codegen.emit.layout_helpers.{get_sum_layout_ctx}
 use compiler.codegen.emit.coercions.{emit_coerce_stack}
 use compiler.codegen.emit.anyref.{emit_box_to_anyref, emit_erased_container_egress}
+use compiler.codegen.emit.variants.{is_nullable_extern_option}
 
 pub type ArrayEmitFns = .{
   emit_atom: fn(PreparedAtom, EmitCtx, Vector<Instr>) Vector<Instr>,
@@ -97,32 +98,49 @@ pub fn emit_index_op(base: PreparedAtom, index: PreparedAtom, kind: IndexKind, r
           out.append(.Call("rt_dict__get_option"))
         },
         _ => {
-          sum_layout := get_sum_layout_ctx(result_ty, ctx)
           value_mono := case result_ty {
             .Optional(inner) => inner,
             _ => error("emit_index_op: dict index expected Optional result, got ${mono_to_key(result_ty)}"),
           }
 
-          // Nested sub-bodies must use fresh []
-          none_instrs: Vector<Instr> = [.I32Const(0)]
-          some_variant := sum_layout.variants[1]
-          if some_variant.payload_types.len() > 0 {
-            none_instrs = emit_default_value(some_variant.payload_types[0], none_instrs)
+          if is_nullable_extern_option(result_ty) {
+            // Option<ExternRef> → nullable externref
+            result_vt_ext := ValType.Ref(true, .Extern)
+            none_instrs: Vector<Instr> = [.RefNull(.Extern)]
+            some_instrs: Vector<Instr> = fns.emit_atom(base, ctx, [])
+            some_instrs = fns.emit_erased_container_ingress(index, ctx, some_instrs)
+            some_instrs = .append(.Call("rt_dict__get"))
+            some_instrs = emit_erased_container_egress(value_mono, ctx.env, some_instrs)
+
+            out := fns.emit_atom(base, ctx, buf)
+            out = fns.emit_erased_container_ingress(index, ctx, out)
+            out.append(.Call("rt_dict__get"))
+              .append(.RefIsNull)
+              .append(.If(.Some(result_vt_ext), none_instrs, some_instrs))
+          } else {
+            sum_layout := get_sum_layout_ctx(result_ty, ctx)
+
+            // Nested sub-bodies must use fresh []
+            none_instrs: Vector<Instr> = [.I32Const(0)]
+            some_variant := sum_layout.variants[1]
+            if some_variant.payload_types.len() > 0 {
+              none_instrs = emit_default_value(some_variant.payload_types[0], none_instrs)
+            }
+            none_instrs = .append(.StructNew(sum_layout.sym))
+
+            some_instrs: Vector<Instr> = [.I32Const(1)]
+            some_instrs = .concat(fns.emit_atom(base, ctx, []))
+            some_instrs = .concat(fns.emit_erased_container_ingress(index, ctx, []))
+            some_instrs = .append(.Call("rt_dict__get"))
+            some_instrs = emit_erased_container_egress(value_mono, ctx.env, some_instrs)
+            some_instrs = .append(.StructNew(sum_layout.sym))
+
+            out := fns.emit_atom(base, ctx, buf)
+            out = fns.emit_erased_container_ingress(index, ctx, out)
+            out.append(.Call("rt_dict__get"))
+              .append(.RefIsNull)
+              .append(.If(.Some(.Ref(false, .Named(sum_layout.sym))), none_instrs, some_instrs))
           }
-          none_instrs = .append(.StructNew(sum_layout.sym))
-
-          some_instrs: Vector<Instr> = [.I32Const(1)]
-          some_instrs = .concat(fns.emit_atom(base, ctx, []))
-          some_instrs = .concat(fns.emit_erased_container_ingress(index, ctx, []))
-          some_instrs = .append(.Call("rt_dict__get"))
-          some_instrs = emit_erased_container_egress(value_mono, ctx.env, some_instrs)
-          some_instrs = .append(.StructNew(sum_layout.sym))
-
-          out := fns.emit_atom(base, ctx, buf)
-          out = fns.emit_erased_container_ingress(index, ctx, out)
-          out.append(.Call("rt_dict__get"))
-            .append(.RefIsNull)
-            .append(.If(.Some(.Ref(false, .Named(sum_layout.sym))), none_instrs, some_instrs))
         },
       }
     },

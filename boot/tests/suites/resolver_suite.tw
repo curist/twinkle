@@ -1803,9 +1803,9 @@ pub fn suite() runner.Suite {
       try assert.equal(try get_param_type(env, "dom.set_text", 0), "ExternRef(${try type_id_of(env, "Element")})")
       .Ok({})
     })
-    .test("Option of extern type is rejected in phase 1", fn() {
-      msgs := try resolve_errs("extern dom type Element\ntype MaybeElement = Element?")
-      try assert.is_true(msgs.len() > 0)
+    .test("Option of extern type is accepted", fn() {
+      env := try resolve_ok("extern dom type Element\ntype MaybeElement = Element?")
+      try assert.is_true(resolver.has_type(env, "MaybeElement"))
       .Ok({})
     })
     // ── Anonymous record variants ──

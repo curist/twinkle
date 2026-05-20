@@ -532,12 +532,19 @@ impl Resolver {
         match ty {
             MonoType::Int | MonoType::Float | MonoType::Bool | MonoType::String => Ok(()),
             MonoType::ExternRef(_) => Ok(()),
+            MonoType::Named { type_id, args }
+                if *type_id == crate::types::ty::OPTION_TYPE_ID
+                    && args.len() == 1
+                    && matches!(args[0], MonoType::ExternRef(_)) =>
+            {
+                Ok(())
+            }
             MonoType::Void if allow_void => Ok(()),
             _ => {
                 self.errors.push(TypeError::UnsupportedFeature {
                     feature: "extern functions only support primitive and extern boundary types",
                     span,
-                    note: "Allowed extern boundary types are Int, Float, Bool, String, extern types, and Void return"
+                    note: "Allowed extern boundary types are Int, Float, Bool, String, extern types, Option<extern type>, and Void return"
                         .to_string(),
                 });
                 Err(())
@@ -621,21 +628,10 @@ impl Resolver {
                             Box::new(it.next().unwrap()),
                         ))
                     }
-                    "Option" if resolved_args.len() == 1 => {
-                        if matches!(resolved_args.first(), Some(MonoType::ExternRef(_))) {
-                            self.errors.push(TypeError::UnsupportedFeature {
-                                feature: "Option<extern type>",
-                                span: *span,
-                                note: "Nullable extern types are not supported yet; use an explicit host function or Result-style wrapper".to_string(),
-                            });
-                            Err(())
-                        } else {
-                            Ok(MonoType::Named {
-                                type_id: crate::types::ty::OPTION_TYPE_ID,
-                                args: resolved_args,
-                            })
-                        }
-                    }
+                    "Option" if resolved_args.len() == 1 => Ok(MonoType::Named {
+                        type_id: crate::types::ty::OPTION_TYPE_ID,
+                        args: resolved_args,
+                    }),
                     "Result" if resolved_args.len() == 2 => Ok(MonoType::Named {
                         type_id: crate::types::ty::RESULT_TYPE_ID,
                         args: resolved_args,

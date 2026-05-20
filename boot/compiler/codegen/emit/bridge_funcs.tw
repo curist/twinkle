@@ -118,6 +118,38 @@ pub fn option_from_variant_helper_sym(inner_mono: MonoType) String {
 }
 
 pub fn emit_option_from_variant_helper(inner_mono: MonoType, env: ResolvedEnv) FuncDef {
+  // Option<ExternRef> → nullable externref, no struct wrapper
+  case inner_mono {
+    .ExternRef(_) => {
+      result_vt := ValType.Ref(true, .Extern)
+
+      none_body: Vector<Instr> = [.RefNull(.Extern)]
+
+      some_body: Vector<Instr> = [
+        .LocalGet(0),
+        .StructGet("rt_types__Variant", 2),
+        .RefCast(true, .Named("rt_types__Array")),
+        .I32Const(0),
+        .ArrayGet("rt_types__Array"),
+        .ExternConvertAny,
+      ]
+
+      return FuncDef.{
+        name: option_from_variant_helper_sym(inner_mono),
+        params: [ValType.Ref(true, .Named("rt_types__Variant"))],
+        results: [result_vt],
+        locals: [],
+        body: [
+          .LocalGet(0),
+          .StructGet("rt_types__Variant", 1),
+          .I32Eqz,
+          .If(.Some(result_vt), none_body, some_body),
+        ],
+      }
+    },
+    _ => {},
+  }
+
   result_mono := MonoType.Optional(inner_mono)
   result_layout := get_sum_layout(result_mono, env)
   payload_vt := val_type_of_mono(inner_mono, env)

@@ -271,6 +271,34 @@ mod tests {
     }
 
     #[test]
+    fn build_wat_extern_types_nullable_option_externref() {
+        let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+        let path = root.join("tests/run/extern_types_nullable.tw");
+        let wat = build_wat(path.to_str().unwrap())
+            .unwrap_or_else(|e| panic!("build_wat failed for extern_types_nullable.tw: {e}"));
+
+        // Import returning Element? should use nullable externref at the boundary
+        assert!(
+            wat.contains(r#"(import "dom" "query_selector""#),
+            "missing dom.query_selector import in WAT:\n{wat}"
+        );
+        assert!(
+            wat.contains("(result (ref null extern))"),
+            "extern fn returning Element? should have nullable externref result:\n{wat}"
+        );
+
+        // Bridge function wraps nullable externref into Variant
+        assert!(
+            wat.contains("any.convert_extern"),
+            "bridge should convert externref to anyref for Variant payload:\n{wat}"
+        );
+
+        let wasm = wat::parse_str(&wat).expect("nullable extern type WAT should assemble");
+        let engine = crate::cli::run_wasm::build_engine().expect("wasmtime engine");
+        wasmtime::Module::new(&engine, &wasm).expect("nullable extern type module should validate");
+    }
+
+    #[test]
     fn assemble_wat_to_wasm_writes_binary_module() {
         use std::time::{SystemTime, UNIX_EPOCH};
 

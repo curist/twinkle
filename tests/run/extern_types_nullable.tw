@@ -1,0 +1,64 @@
+extern dom type Element
+
+extern dom {
+  fn get_element(id: String) Element
+  fn has_element(id: String) Bool
+  fn same_node(a: Element, b: Element) Bool
+  fn query_selector(el: Element, sel: String) Element?
+  fn set_parent(child: Element, parent: Element?) Void
+}
+
+// Option<ExternRef> as function parameter and return type
+fn maybe_get(id: String) Element? {
+  if dom.has_element(id) {
+    .Some(dom.get_element(id))
+  } else {
+    .None
+  }
+}
+
+// Pattern matching on Option<ExternRef>
+fn describe(el: Element?) String {
+  case el {
+    .None => "nothing",
+    .Some(e) => "found",
+  }
+}
+
+// try sugar with Option<ExternRef>
+fn require_element(id: String) Element? {
+  el := try maybe_get(id)
+  .Some(el)
+}
+
+// Option<ExternRef> in record fields
+type SearchResult = .{
+  target: Element?,
+  fallback: Element,
+}
+
+fn search(root_id: String, target_id: String) SearchResult {
+  root := dom.get_element(root_id)
+  target := maybe_get(target_id)
+  .{ target: target, fallback: root }
+}
+
+// Option<ExternRef> in Vector
+fn find_elements(ids: Vector<String>) Vector<Element?> {
+  collect id in ids { maybe_get(id) }
+}
+
+// Extern fn returning Element? at the import boundary
+fn find_child(parent: Element, selector: String) Element? {
+  dom.query_selector(parent, selector)
+}
+
+// Exercise the codegen: bind locals, thread through functions
+result := maybe_get("root")
+msg := describe(result)
+sr := search("root", "missing")
+println(describe(sr.target))
+child := find_child(dom.get_element("root"), ".item")
+println(describe(child))
+// Extern fn with Element? parameter at the import boundary
+dom.set_parent(dom.get_element("root"), .None)

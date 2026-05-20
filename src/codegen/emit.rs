@@ -330,6 +330,19 @@ pub(crate) fn emit_named_module_from_plan(
             module.types.push(emit_typed_iter_option_struct_def(info));
         }
     }
+    // Pre-register typed option structs needed by extern import bridges.
+    for (_func_id, ext) in &anf.extern_imports {
+        for ty in ext
+            .param_tys
+            .iter()
+            .chain(ext.return_ty.iter())
+            .filter(|ty| is_option_extern_ref(ty))
+        {
+            let sym = typed_general_option_sym(ty);
+            ctx.request_typed_general_option(sym, ty.clone());
+        }
+    }
+
     // Emit typed general option structs registered during body emission.
     for (sym, mono) in ctx.requested_typed_general_options().clone() {
         if !module.types.iter().any(|ty| ty.name() == sym) {
@@ -377,26 +390,87 @@ pub(crate) fn emit_named_module_from_plan(
 
     // Add extern function imports
     for (func_id, ext) in &anf.extern_imports {
-        let params: Vec<ValType> = ext
+        let has_option_extern_param = ext.param_tys.iter().any(is_option_extern_ref);
+        let has_option_extern_ret = ext.return_ty.as_ref().map_or(false, is_option_extern_ref);
+        let needs_bridge = has_option_extern_param || has_option_extern_ret;
+
+        // Import params/results: use raw externref for Option<ExternRef> at the boundary
+        let import_params: Vec<ValType> = ext
             .param_tys
             .iter()
-            .map(|ty| mono_to_valtype(ty, type_env))
+            .map(|ty| {
+                if is_option_extern_ref(ty) {
+                    ValType::Ref {
+                        nullable: true,
+                        heap: HeapType::Extern,
+                    }
+                } else {
+                    mono_to_valtype(ty, type_env)
+                }
+            })
             .collect();
-        let results: Vec<ValType> = ext
+        let import_results: Vec<ValType> = ext
             .return_ty
             .as_ref()
             .filter(|ty| !matches!(ty, MonoType::Void))
-            .map(|ty| mono_to_valtype(ty, type_env))
+            .map(|ty| {
+                if is_option_extern_ref(ty) {
+                    ValType::Ref {
+                        nullable: true,
+                        heap: HeapType::Extern,
+                    }
+                } else {
+                    mono_to_valtype(ty, type_env)
+                }
+            })
             .into_iter()
             .collect();
-        let as_sym = user_func_sym(*func_id);
-        ctx.add_import(ImportDef {
-            module: ext.wasm_module.clone(),
-            name: ext.wasm_name.clone(),
-            as_sym,
-            params,
-            results,
-        });
+
+        let func_sym = user_func_sym(*func_id);
+
+        if needs_bridge {
+            // Import with __raw suffix; bridge function gets the original symbol
+            let raw_sym = format!("{func_sym}__raw");
+            ctx.add_import(ImportDef {
+                module: ext.wasm_module.clone(),
+                name: ext.wasm_name.clone(),
+                as_sym: raw_sym.clone(),
+                params: import_params.clone(),
+                results: import_results.clone(),
+            });
+
+            // Bridge function: converts between internal repr and raw externref
+            let bridge_params: Vec<ValType> = ext
+                .param_tys
+                .iter()
+                .map(|ty| mono_to_valtype(ty, type_env))
+                .collect();
+            let bridge_results: Vec<ValType> = ext
+                .return_ty
+                .as_ref()
+                .filter(|ty| !matches!(ty, MonoType::Void))
+                .map(|ty| mono_to_valtype(ty, type_env))
+                .into_iter()
+                .collect();
+
+            let bridge = emit_extern_nullable_bridge(
+                &func_sym,
+                &raw_sym,
+                &ext.param_tys,
+                &ext.return_ty,
+                &bridge_params,
+                &bridge_results,
+            );
+            module.funcs.push(bridge);
+        } else {
+            ctx.add_import(ImportDef {
+                module: ext.wasm_module.clone(),
+                name: ext.wasm_name.clone(),
+                as_sym: func_sym,
+                params: import_params,
+                results: import_results,
+            });
+        }
     }
 
     module.imports.extend(ctx.imports());
@@ -784,6 +858,128 @@ fn mono_to_valtype_for_user_abi_param(
 
 fn user_func_sym(func_id: FuncId) -> String {
     format!("func_{}", func_id.0)
+}
+
+/// Check if a MonoType is `Option<ExternRef>`.
+fn is_option_extern_ref(ty: &MonoType) -> bool {
+    matches!(
+        ty,
+        MonoType::Named { type_id, args }
+            if *type_id == OPTION_TYPE_ID
+                && args.len() == 1
+                && matches!(args[0], MonoType::ExternRef(_))
+    )
+}
+
+/// Generate a bridge function that wraps an extern import with Option<ExternRef>
+/// params or return type. The raw import uses nullable externref directly;
+/// the bridge converts between the erased Variant repr and raw externref.
+fn emit_extern_nullable_bridge(
+    bridge_sym: &str,
+    raw_sym: &str,
+    param_mono_tys: &[MonoType],
+    return_mono_ty: &Option<MonoType>,
+    bridge_params: &[ValType],
+    bridge_results: &[ValType],
+) -> FuncDef {
+    let nullable_externref = ValType::Ref {
+        nullable: true,
+        heap: HeapType::Extern,
+    };
+    let mut body = Vec::new();
+
+    // For each parameter: if Option<ExternRef>, unwrap the erased Variant to nullable externref.
+    // The caller passes an erased $rt_types__Variant (type_id, variant_id, payload_array).
+    // Otherwise, just pass through.
+    for (i, mono_ty) in param_mono_tys.iter().enumerate() {
+        let local_idx = i as u32;
+        if is_option_extern_ref(mono_ty) {
+            // Variant struct field 1 = variant_id (0=None, 1=Some)
+            body.push(Instr::LocalGet(local_idx));
+            body.push(Instr::RefCast {
+                nullable: true,
+                heap: HeapType::Named(T_VARIANT.to_string()),
+            });
+            body.push(Instr::StructGet(T_VARIANT.to_string(), 1)); // variant_id
+            body.push(Instr::I32Const(1));
+            body.push(Instr::I32Eq);
+            body.push(Instr::If {
+                result: Some(nullable_externref.clone()),
+                then_body: vec![
+                    // Some: extract payload[0] and convert anyref → externref
+                    Instr::LocalGet(local_idx),
+                    Instr::RefCast {
+                        nullable: true,
+                        heap: HeapType::Named(T_VARIANT.to_string()),
+                    },
+                    Instr::StructGet(T_VARIANT.to_string(), 2), // payload array
+                    Instr::I32Const(0),
+                    Instr::ArrayGet(T_ARRAY.to_string()),
+                    Instr::ExternConvertAny,
+                ],
+                else_body: vec![Instr::RefNull(HeapType::Extern)],
+            });
+        } else {
+            body.push(Instr::LocalGet(local_idx));
+        }
+    }
+
+    // Call the raw import
+    body.push(Instr::Call(raw_sym.to_string()));
+
+    // If return type is Option<ExternRef>, wrap nullable externref into a Variant struct.
+    // Variant layout: (type_id: i32, variant_id: i32, payload: (ref null $rt_types__Array))
+    if let Some(ret_ty) = return_mono_ty {
+        if is_option_extern_ref(ret_ty) {
+            let result_local = bridge_params.len() as u32;
+            body.push(Instr::LocalSet(result_local));
+            body.push(Instr::LocalGet(result_local));
+            body.push(Instr::RefIsNull);
+            let variant_ref = ValType::Ref {
+                nullable: true,
+                heap: HeapType::Named(T_VARIANT.to_string()),
+            };
+            body.push(Instr::If {
+                result: Some(variant_ref),
+                then_body: {
+                    // None: Variant(OPTION_TYPE_ID, 0, empty_array)
+                    vec![
+                        Instr::I32Const(OPTION_TYPE_ID.0 as i32),
+                        Instr::I32Const(0),
+                        Instr::ArrayNewFixed(T_ARRAY.to_string(), 0),
+                        Instr::StructNew(T_VARIANT.to_string()),
+                    ]
+                },
+                else_body: {
+                    // Some: Variant(OPTION_TYPE_ID, 1, [any.convert_extern(externref)])
+                    vec![
+                        Instr::I32Const(OPTION_TYPE_ID.0 as i32),
+                        Instr::I32Const(1),
+                        Instr::LocalGet(result_local),
+                        Instr::AnyConvertExtern,
+                        Instr::ArrayNewFixed(T_ARRAY.to_string(), 1),
+                        Instr::StructNew(T_VARIANT.to_string()),
+                    ]
+                },
+            });
+
+            return FuncDef {
+                name: bridge_sym.to_string(),
+                params: bridge_params.to_vec(),
+                results: bridge_results.to_vec(),
+                locals: vec![nullable_externref],
+                body,
+            };
+        }
+    }
+
+    FuncDef {
+        name: bridge_sym.to_string(),
+        params: bridge_params.to_vec(),
+        results: bridge_results.to_vec(),
+        locals: vec![],
+        body,
+    }
 }
 
 fn validate_unfold_step_typing_invariants(
@@ -8132,7 +8328,20 @@ fn emit_typed_general_option_struct_def(
                     WasmFieldDef {
                         name: Some("payload".to_string()),
                         mutable: false,
-                        ty: mono_to_valtype_specialized(&args[0], type_env, concrete_func_sigs),
+                        ty: {
+                            let mut vt =
+                                mono_to_valtype_specialized(&args[0], type_env, concrete_func_sigs);
+                            // Option<ExternRef>: payload must be nullable so None
+                            // can store ref.null extern
+                            if let ValType::Ref {
+                                nullable,
+                                heap: HeapType::Extern,
+                            } = &mut vt
+                            {
+                                *nullable = true;
+                            }
+                            vt
+                        },
                     },
                 ],
             }
