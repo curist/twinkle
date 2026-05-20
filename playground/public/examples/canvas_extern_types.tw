@@ -1,8 +1,8 @@
 // Canvas drawing with extern types — opaque browser handles via Wasm externref.
 //
 // Extern types let Twinkle code hold and pass host objects (like a Canvas 2D
-// context) without exposing their internals. The playground wires these to a
-// real <canvas> element automatically.
+// context) without exposing their internals. The playground provides a canvas
+// element with the id "twinkle" and wires these extern calls to it.
 
 extern canvas type CanvasContext
 
@@ -16,13 +16,9 @@ extern canvas {
   fn get_height() Float
   fn set_fill_style(ctx: CanvasContext, color: String)
   fn fill_rect(ctx: CanvasContext, x: Float, y: Float, w: Float, h: Float)
-  fn set_stroke_style(ctx: CanvasContext, color: String)
-  fn stroke_rect(ctx: CanvasContext, x: Float, y: Float, w: Float, h: Float)
   fn begin_path(ctx: CanvasContext)
   fn arc(ctx: CanvasContext, x: Float, y: Float, r: Float, start: Float, end: Float)
   fn fill(ctx: CanvasContext)
-  fn close_path(ctx: CanvasContext)
-  fn set_line_width(ctx: CanvasContext, w: Float)
   fn set_global_alpha(ctx: CanvasContext, a: Float)
 }
 
@@ -96,8 +92,10 @@ ctx.set_global_alpha(1.0)
 colors := ["#ff7b72", "#ffa657", "#e3b341", "#56d364", "#58a6ff", "#d2a8ff"]
 size := 18.0 * scale
 gap := 3.0 * scale
-cols := Math.floor((w - gap) / (size + gap)).to_int()
-start_x := (w - cols.to_float() * (size + gap)) / 2.0
+raw_cols := Math.floor((w - gap) / (size + gap)).to_int()
+cols := if raw_cols < 1 { 1 } else { raw_cols }
+grid_w := cols.to_float() * size + (cols.to_float() - 1.0) * gap
+start_x := (w - grid_w) / 2.0
 start_y := h - (size + gap) * 2.0 - gap
 
 for row in range(2) {
