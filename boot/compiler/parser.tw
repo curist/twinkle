@@ -459,13 +459,19 @@ fn parse_type_record_fields(c: Cursor) RecordFieldsParse {
 
     field_start := c.pos
     if c.kind() != .Ident {
+      if c.kind() == .Eof or (c.preceded_by_newline() and is_item_start(c.kind())) {
+        if fields.len() == 0 or !c.preceded_by_newline() or !is_item_start(c.kind()) {
+          diagnostics_out = .append(diag.error(
+            c.span(),
+            "expected record field name",
+          ))
+        }
+        break
+      }
       diagnostics_out = .append(diag.error(
         c.span(),
         "expected record field name",
       ))
-      if c.kind() == .Eof {
-        break
-      }
       c = .advance()
       continue
     }
@@ -474,6 +480,9 @@ fn parse_type_record_fields(c: Cursor) RecordFieldsParse {
     c = .advance()
 
     if c.kind() != .Colon {
+      if c.preceded_by_newline() and is_item_start(c.kind()) {
+        break
+      }
       diagnostics_out = .append(diag.error(
         c.span(),
         "expected ':' after record field name",
@@ -502,14 +511,14 @@ fn parse_type_record_fields(c: Cursor) RecordFieldsParse {
       break
     }
 
+    if c.kind() == .Eof or (c.preceded_by_newline() and is_item_start(c.kind())) {
+      break
+    }
+
     diagnostics_out = .append(diag.error(
       c.span(),
       "expected ',' or '}' in record type",
     ))
-
-    if c.kind() == .Eof {
-      break
-    }
 
     c = .advance()
   }
@@ -528,13 +537,22 @@ fn parse_sum_variants(c: Cursor) SumVariantsParse {
 
     variant_start := c.pos
     if c.kind() != .Ident {
+      // If we hit a token that starts a new top-level item on a new line,
+      // the sum type is likely unclosed — stop consuming tokens so the
+      // caller can report "expected '}'" and the outer parser can recover.
+      if c.kind() == .Eof or (c.preceded_by_newline() and is_item_start(c.kind())) {
+        if variants.len() == 0 or !c.preceded_by_newline() or !is_item_start(c.kind()) {
+          diagnostics_out = .append(diag.error(
+            c.span(),
+            "expected variant name",
+          ))
+        }
+        break
+      }
       diagnostics_out = .append(diag.error(
         c.span(),
         "expected variant name",
       ))
-      if c.kind() == .Eof {
-        break
-      }
       c = .advance()
       continue
     }
@@ -576,14 +594,17 @@ fn parse_sum_variants(c: Cursor) SumVariantsParse {
       break
     }
 
+    // If the next token starts a new item on a new line, the brace is
+    // probably just missing — break so the caller reports "expected '}'".
+    if c.kind() == .Eof or (c.preceded_by_newline() and is_item_start(c.kind())) {
+      break
+    }
+
     diagnostics_out = .append(diag.error(
       c.span(),
       "expected ',' or '}' in sum type",
     ))
 
-    if c.kind() == .Eof {
-      break
-    }
     c = .advance()
   }
 

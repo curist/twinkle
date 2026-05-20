@@ -1750,6 +1750,70 @@ pub fn suite() runner.Suite {
       assert.equal(parsed.diagnostics.len(), 0)
     })
 
+    // ── Error Recovery: Unclosed Type Bodies ────────────────────
+
+    .test("error recovery: unclosed sum type stops at next fn", fn() {
+      src := "type FB = { Fizz, Buzz, FizzBuzz, Num(Int)\n\nfn classify(i: Int) FB {\n  .Fizz\n}"
+      parsed := parser.parse(src, 0)
+      try assert.is_true(parsed.diagnostics.len() > 0)
+      // The parser should recover and parse the fn declaration
+      found_fn := false
+      for item in parsed.value.items {
+        case item {
+          .Function(f) => {
+            if f.name == "classify" {
+              found_fn = true
+            }
+          },
+          _ => {},
+        }
+      }
+      assert.is_true(found_fn)
+    })
+    .test("error recovery: unclosed sum type limits error count", fn() {
+      src := "type FB = { Fizz, Buzz, FizzBuzz, Num(Int)\n\nfn classify(i: Int) FB {\n  .Fizz\n}\n\nfn other() {}"
+      parsed := parser.parse(src, 0)
+      // Should NOT produce a wall of errors — just a couple about the unclosed type
+      try assert.is_true(parsed.diagnostics.len() > 0)
+      assert.is_true(parsed.diagnostics.len() < 5)
+    })
+    .test("error recovery: unclosed record type stops at next fn", fn() {
+      src := "type Point = .{ x: Int, y: Int\n\nfn origin() Point {\n  Point.{ x: 0, y: 0 }\n}"
+      parsed := parser.parse(src, 0)
+      try assert.is_true(parsed.diagnostics.len() > 0)
+      found_fn := false
+      for item in parsed.value.items {
+        case item {
+          .Function(f) => {
+            if f.name == "origin" {
+              found_fn = true
+            }
+          },
+          _ => {},
+        }
+      }
+      assert.is_true(found_fn)
+    })
+    .test("error recovery: unclosed record type limits error count", fn() {
+      src := "type Point = .{ x: Int, y: Int\n\nfn origin() Point {\n  Point.{ x: 0, y: 0 }\n}"
+      parsed := parser.parse(src, 0)
+      try assert.is_true(parsed.diagnostics.len() > 0)
+      assert.is_true(parsed.diagnostics.len() < 5)
+    })
+    .test("error recovery: unclosed sum type before type decl", fn() {
+      src := "type A = { X, Y\n\ntype B = { P, Q }"
+      parsed := parser.parse(src, 0)
+      try assert.is_true(parsed.diagnostics.len() > 0)
+      type_count := 0
+      for item in parsed.value.items {
+        case item {
+          .Type(_) => { type_count = type_count + 1 },
+          _ => {},
+        }
+      }
+      assert.is_true(type_count == 2)
+    })
+
     // ── Fixture Snapshot Tests ──────────────────────────────────
 
     .test("snapshot: statement_in_expression_return", fn() {
@@ -1796,5 +1860,11 @@ pub fn suite() runner.Suite {
     })
     .test("snapshot: invalid_unicode_escape", fn() {
       assert_snapshot("tests/parser_errors/invalid_unicode_escape.tw")
+    })
+    .test("snapshot: unclosed_sum_type", fn() {
+      assert_snapshot("tests/parser_errors/unclosed_sum_type.tw")
+    })
+    .test("snapshot: unclosed_record_type", fn() {
+      assert_snapshot("tests/parser_errors/unclosed_record_type.tw")
     })
 }
