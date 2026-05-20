@@ -34,6 +34,7 @@ module.exports = grammar({
       $.type_declaration,
       $.function_declaration,
       $.extern_declaration,
+      $.extern_type_declaration,
       $.extern_block,
       $._top_level_statement,
     ),
@@ -164,12 +165,20 @@ module.exports = grammar({
       optional(field('return_type', $.extern_type)),
     )),
 
+    extern_type_declaration: $ => seq(
+      optional('pub'),
+      'extern',
+      field('module', $.identifier),
+      'type',
+      field('name', $.identifier),
+    ),
+
     extern_block: $ => seq(
       optional('pub'),
       'extern',
       field('module', $.identifier),
       '{',
-      repeat($.extern_signature),
+      repeat(choice($.extern_signature, $.extern_type_signature)),
       '}',
     ),
 
@@ -179,6 +188,11 @@ module.exports = grammar({
       field('parameters', $.parameter_list),
       optional(field('return_type', $.extern_type)),
     )),
+
+    extern_type_signature: $ => seq(
+      'type',
+      field('name', $.identifier),
+    ),
 
     // Extern return types: like `type` but without function_type to avoid
     // ambiguity with the next `fn` signature inside extern blocks.

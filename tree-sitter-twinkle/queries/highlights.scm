@@ -104,11 +104,18 @@
   module: (identifier) @module
   name: (identifier) @function)
 
+(extern_type_declaration
+  module: (identifier) @module
+  name: (identifier) @type.definition)
+
 (extern_block
   module: (identifier) @module)
 
 (extern_signature
   name: (identifier) @function)
+
+(extern_type_signature
+  name: (identifier) @type.definition)
 
 ; Parameters
 (parameter

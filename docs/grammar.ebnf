@@ -23,6 +23,7 @@ TopLevel =
     | TypeDecl
     | FunctionDecl
     | ExternDecl
+    | ExternTypeDecl
     | ExternBlock
     | TopLevelStmt ;
 
@@ -128,19 +129,33 @@ ExternDecl =
     "(" [ ParamList ] ")"
     [ Type ] ;
 
+ExternTypeDecl =
+    [ "pub" ] "extern" Identifier "type" UpperIdent ;
+
 ExternBlock =
     [ "pub" ] "extern" Identifier "{"
-    { ExternFnSig }
+    { ExternBlockItem }
     "}" ;
+
+ExternBlockItem =
+      ExternFnSig
+    | ExternTypeSig ;
 
 ExternFnSig =
     "fn" Identifier "(" [ ParamList ] ")" [ Type ] ;
+
+ExternTypeSig =
+    "type" UpperIdent ;
 (* Implementation note:
    - The module name (first Identifier) is a bare identifier that doubles as the
      Wasm import module name and the call-site namespace: `extern console fn log(...)` → `console.log(...)`.
    - The function identifier is the Wasm import field name.
    - Grouped blocks are syntax sugar for declarations sharing one module.
-   - Extern boundary types are restricted to Int, Float, Bool, String, and Void. *)
+   - Extern boundary types are restricted to Int, Float, Bool, String, Void,
+     and extern types (which lower to `(ref extern)` in Wasm).
+   - `extern <mod> type <Name>` declares an opaque nominal type backed by
+     `externref`. The type lives in the declaring Twinkle module's type namespace,
+     not in the host-module namespace. See docs/plans/extern-types.md. *)
 
 (* ===== Function Expressions (values) ===== *)
 

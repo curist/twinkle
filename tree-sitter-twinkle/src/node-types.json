@@ -746,6 +746,10 @@
         {
           "type": "extern_signature",
           "named": true
+        },
+        {
+          "type": "extern_type_signature",
+          "named": true
         }
       ]
     }
@@ -880,6 +884,48 @@
           "named": true
         }
       ]
+    }
+  },
+  {
+    "type": "extern_type_declaration",
+    "named": true,
+    "fields": {
+      "module": {
+        "multiple": false,
+        "required": true,
+        "types": [
+          {
+            "type": "identifier",
+            "named": true
+          }
+        ]
+      },
+      "name": {
+        "multiple": false,
+        "required": true,
+        "types": [
+          {
+            "type": "identifier",
+            "named": true
+          }
+        ]
+      }
+    }
+  },
+  {
+    "type": "extern_type_signature",
+    "named": true,
+    "fields": {
+      "name": {
+        "multiple": false,
+        "required": true,
+        "types": [
+          {
+            "type": "identifier",
+            "named": true
+          }
+        ]
+      }
     }
   },
   {
@@ -2088,6 +2134,10 @@
         },
         {
           "type": "extern_declaration",
+          "named": true
+        },
+        {
+          "type": "extern_type_declaration",
           "named": true
         },
         {

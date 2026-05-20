@@ -48,6 +48,10 @@
         },
         {
           "type": "SYMBOL",
+          "name": "extern_type_declaration"
+        },
+        {
+          "type": "SYMBOL",
           "name": "extern_block"
         },
         {
@@ -834,6 +838,47 @@
         ]
       }
     },
+    "extern_type_declaration": {
+      "type": "SEQ",
+      "members": [
+        {
+          "type": "CHOICE",
+          "members": [
+            {
+              "type": "STRING",
+              "value": "pub"
+            },
+            {
+              "type": "BLANK"
+            }
+          ]
+        },
+        {
+          "type": "STRING",
+          "value": "extern"
+        },
+        {
+          "type": "FIELD",
+          "name": "module",
+          "content": {
+            "type": "SYMBOL",
+            "name": "identifier"
+          }
+        },
+        {
+          "type": "STRING",
+          "value": "type"
+        },
+        {
+          "type": "FIELD",
+          "name": "name",
+          "content": {
+            "type": "SYMBOL",
+            "name": "identifier"
+          }
+        }
+      ]
+    },
     "extern_block": {
       "type": "SEQ",
       "members": [
@@ -868,8 +913,17 @@
         {
           "type": "REPEAT",
           "content": {
-            "type": "SYMBOL",
-            "name": "extern_signature"
+            "type": "CHOICE",
+            "members": [
+              {
+                "type": "SYMBOL",
+                "name": "extern_signature"
+              },
+              {
+                "type": "SYMBOL",
+                "name": "extern_type_signature"
+              }
+            ]
           }
         },
         {
@@ -922,6 +976,23 @@
           }
         ]
       }
+    },
+    "extern_type_signature": {
+      "type": "SEQ",
+      "members": [
+        {
+          "type": "STRING",
+          "value": "type"
+        },
+        {
+          "type": "FIELD",
+          "name": "name",
+          "content": {
+            "type": "SYMBOL",
+            "name": "identifier"
+          }
+        }
+      ]
     },
     "extern_type": {
       "type": "PREC_RIGHT",
