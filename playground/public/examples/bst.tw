@@ -1,12 +1,14 @@
 // Immutable binary search tree
 type BST = { Empty, Node(Int, BST, BST) }
 
+// Functions whose first parameter is a type defined in the same module
+// become inherent methods: tree.insert(5) desugars to insert(tree, 5)
 fn insert(t: BST, n: Int) BST {
   case t {
     .Empty => .Node(n, .Empty, .Empty),
     .Node(v, left, right) => {
-      if n < v { .Node(v, insert(left, n), right) }
-      else if n > v { .Node(v, left, insert(right, n)) }
+      if n < v { .Node(v, left.insert(n), right) }
+      else if n > v { .Node(v, left, right.insert(n)) }
       else { t }
     },
   }
@@ -16,7 +18,7 @@ fn inorder(t: BST) Vector<Int> {
   case t {
     .Empty => [],
     .Node(v, left, right) =>
-      inorder(left).append(v).concat(inorder(right)),
+      left.inorder().append(v).concat(right.inorder()),
   }
 }
 
@@ -25,21 +27,16 @@ fn contains(t: BST, n: Int) Bool {
     .Empty => false,
     .Node(v, left, right) => {
       if n == v { true }
-      else if n < v { contains(left, n) }
-      else { contains(right, n) }
+      else if n < v { left.contains(n) }
+      else { right.contains(n) }
     },
   }
 }
 
 tree: BST = .Empty
-for v in [5, 3, 8, 1, 4, 7, 9, 2, 6] { tree = insert(tree, v) }
+for v in [5, 3, 8, 1, 4, 7, 9, 2, 6] { tree = .insert(v) }
 
-sorted := inorder(tree)
-print("Sorted: [")
-for v, i in sorted {
-  if i > 0 { print(", ") }
-  print("${v}")
-}
-println("]")
-println("Has 4?  ${contains(tree, 4)}")
-println("Has 10? ${contains(tree, 10)}")
+sorted := tree.inorder()
+println("Sorted: ${sorted}")
+println("Has 4?  ${tree.contains(4)}")
+println("Has 10? ${tree.contains(10)}")

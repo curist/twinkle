@@ -11,28 +11,19 @@ fn is_prime(n: Int) Bool {
   true
 }
 
-fn ints_to_string(v: Vector<Int>) String {
-  parts := collect n in v { "${n}" }
-  "[${parts.join(", ")}]"
-}
-
-primes := collect n in range_from(2, 80) {
+// `collect` builds a Vector; `continue` skips the element
+primes := collect n in 2..80 {
   if is_prime(n) { n } else { continue }
 }
-println("Primes up to 80: ${ints_to_string(primes)}")
+println("Primes up to 80: ${primes}")
 println("Count: ${primes.len()}")
 
 // Twin primes (pairs differing by 2)
-twins := collect i in range_from(0, primes.len() - 1) {
+twins := collect i in 0..(primes.len() - 1) {
   if primes[i + 1] - primes[i] == 2 {
     "(${primes[i]}, ${primes[i + 1]})"
   } else {
     continue
   }
 }
-print("Twin primes: [")
-for t, i in twins {
-  if i > 0 { print(", ") }
-  print(t)
-}
-println("]")
+println("Twin primes: ${twins}")

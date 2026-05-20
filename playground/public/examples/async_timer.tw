@@ -1,4 +1,4 @@
-// Async timer — JSPI suspends Wasm while setTimeout runs.
+// Async timer, JSPI suspends Wasm while setTimeout runs.
 // The browser event loop stays free during each sleep.
 
 extern timer {
@@ -11,10 +11,10 @@ extern performance {
 
 start := performance.now()
 
-for i in range_from(1, 6) {
+for i in 1..6 {
   timer.sleep_ms(500)
   elapsed := performance.now() - start
   println("tick ${i} at ${elapsed.to_string().slice(0, 6)} ms")
 }
 
-println("done — 5 ticks over ~2.5 seconds")
+println("done, 5 ticks over ~2.5 seconds")

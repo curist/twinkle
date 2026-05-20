@@ -2,6 +2,7 @@
 fn count_words(words: Vector<String>) Dict<String, Int> {
   counts: Dict<String, Int> = Dict.new()
   for word in words {
+    // Dict indexing returns Option, use pattern matching to handle both cases
     case counts[word] {
       .Some(n) => counts[word] = n + 1,
       .None    => counts[word] = 1,

@@ -1,4 +1,4 @@
-// Caesar cipher — string ↔ byte manipulation
+// Caesar cipher, string ↔ byte manipulation
 fn shift_char(b: Byte, shift: Int) Byte {
   n := b.to_int()
   if n >= 65 and n <= 90 {

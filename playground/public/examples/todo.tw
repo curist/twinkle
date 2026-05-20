@@ -1,0 +1,45 @@
+// Records, inherent methods, Result/try, and rebinding
+type Todo = .{ name: String, done: Bool }
+
+// All values are immutable, `todo.done = true` rebinds todo to a new
+// record with done=true, so we return the updated copy explicitly.
+fn complete(todo: Todo) Todo {
+  todo.done = true
+  todo
+}
+
+// Defining to_string(Todo) implements the Stringify contract,
+// enabling ${todo} string interpolation automatically.
+fn to_string(todo: Todo) String {
+  mark := if todo.done { "✅" } else { "⬜" }
+  "${mark} ${todo.name}"
+}
+
+fn complete_named(todos: Vector<Todo>, name: String) Vector<Todo>!String {
+  // `try` early-returns .Err if the result is an error
+  target := try todos
+    .find(fn(todo) { todo.name == name })
+    .ok_or("unknown task: ${name}")
+
+  updated: Vector<Todo> = []
+  for todo in todos {
+    if todo.name == target.name {
+      // .complete() is shorthand for todo.complete(), the leading dot
+      // calls an inherent method on the variable being rebound
+      todo = .complete()
+    }
+    updated = .append(todo)
+  }
+
+  .Ok(updated)
+}
+
+todos: Vector<Todo> = []
+todos = .append(.{ name: "parse", done: false })
+todos = .append(.{ name: "check", done: false })
+todos = .append(.{ name: "build", done: false })
+
+case complete_named(todos, "build") {
+  .Ok(updated) => println("updated ${updated}"),
+  .Err(msg) => eprintln("error: ${msg}"),
+}

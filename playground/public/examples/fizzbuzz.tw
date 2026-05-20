@@ -1,0 +1,21 @@
+// Enums + pattern matching
+type FB = { Fizz, Buzz, FizzBuzz, Num(Int) }
+
+// `.Variant` is shorthand, the type is inferred from the return type
+fn classify(i: Int) FB {
+  if i % 15 == 0 { .FizzBuzz }
+  else if i % 3 == 0 { .Fizz }
+  else if i % 5 == 0 { .Buzz }
+  else { .Num(i) }
+}
+
+for i in 1..21 {
+  // `case` is an expression, its result is assigned to label
+  label := case classify(i) {
+    .Fizz     => "Fizz",
+    .Buzz     => "Buzz",
+    .FizzBuzz => "FizzBuzz",
+    .Num(x)   => "${x}",
+  }
+  println(label)
+}

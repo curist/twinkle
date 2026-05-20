@@ -22,14 +22,14 @@ bench("fib(30)", fn() { fib(30).to_string() })
 // 2. Build a large vector
 bench("vector append 10k", fn() {
   v: Vector<Int> = []
-  for i in range_from(0, 10000) { v = v.append(i) }
+  for i in 0..10000 { v = v.append(i) }
   "len = ${v.len()}"
 })
 
 // 3. Dict insert + lookup
 bench("dict 1000 insert+lookup", fn() {
   d: Dict<String, Int> = Dict.new()
-  for i in range_from(0, 1000) {
+  for i in 0..1000 {
     d["${i}"] = i * i
   }
   sum := 0
@@ -42,7 +42,7 @@ bench("dict 1000 insert+lookup", fn() {
 // 4. String building
 bench("string concat 500", fn() {
   s := ""
-  for i in range_from(0, 500) {
+  for i in 0..500 {
     s = "${s}${i}"
   }
   "len = ${s.len()}"
@@ -63,7 +63,7 @@ fn is_prime(n: Int) Bool {
 
 bench("sum primes < 5000", fn() {
   sum := 0
-  for n in range_from(2, 5000) {
+  for n in 2..5000 {
     if is_prime(n) { sum = sum + n }
   }
   "${sum}"
