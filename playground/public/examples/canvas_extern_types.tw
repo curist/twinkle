@@ -11,7 +11,7 @@ extern Math {
 }
 
 extern canvas {
-  fn get_context(id: String) CanvasContext
+  fn get_context(id: String) CanvasContext?
   fn get_width() Float
   fn get_height() Float
   fn set_fill_style(ctx: CanvasContext, color: String)
@@ -75,37 +75,43 @@ fn draw_grid(ctx: CanvasContext, w: Float, h: Float, scale: Float) {
   }
 }
 
-// Get the canvas context and dimensions
-ctx := canvas.get_context("twinkle")
-w := canvas.get_width()
-h := canvas.get_height()
-pi := 3.14159265
+fn draw(ctx: CanvasContext) {
+  w := canvas.get_width()
+  h := canvas.get_height()
+  pi := 3.14159265
 
-scale := if w < h { w } else { h }
-scale = scale / 400.0
+  scale := if w < h { w } else { h }
+  scale = scale / 400.0
 
-stars: Vector<Star> = [
-  .{ nx: 0.13, ny: 0.15, r: 3.0, color: "#58a6ff" },
-  .{ nx: 0.33, ny: 0.10, r: 2.0, color: "#d2a8ff" },
-  .{ nx: 0.57, ny: 0.22, r: 4.0, color: "#ffa657" },
-  .{ nx: 0.83, ny: 0.12, r: 2.5, color: "#a5d6ff" },
-  .{ nx: 0.25, ny: 0.38, r: 1.5, color: "#c9d1d9" },
-  .{ nx: 0.75, ny: 0.32, r: 3.5, color: "#ff7b72" },
-  .{ nx: 0.08, ny: 0.50, r: 2.0, color: "#56d364" },
-  .{ nx: 0.47, ny: 0.45, r: 3.0, color: "#e3b341" },
-  .{ nx: 0.87, ny: 0.55, r: 2.0, color: "#58a6ff" },
-  .{ nx: 0.63, ny: 0.62, r: 1.5, color: "#d2a8ff" },
-  .{ nx: 0.20, ny: 0.70, r: 2.5, color: "#a5d6ff" },
-  .{ nx: 0.92, ny: 0.75, r: 2.0, color: "#ffa657" },
-  .{ nx: 0.40, ny: 0.28, r: 1.5, color: "#56d364" },
-  .{ nx: 0.05, ny: 0.85, r: 2.0, color: "#c9d1d9" },
-  .{ nx: 0.55, ny: 0.80, r: 3.0, color: "#ff7b72" },
-  .{ nx: 0.70, ny: 0.08, r: 2.0, color: "#e3b341" },
-]
+  stars: Vector<Star> = [
+    .{ nx: 0.13, ny: 0.15, r: 3.0, color: "#58a6ff" },
+    .{ nx: 0.33, ny: 0.10, r: 2.0, color: "#d2a8ff" },
+    .{ nx: 0.57, ny: 0.22, r: 4.0, color: "#ffa657" },
+    .{ nx: 0.83, ny: 0.12, r: 2.5, color: "#a5d6ff" },
+    .{ nx: 0.25, ny: 0.38, r: 1.5, color: "#c9d1d9" },
+    .{ nx: 0.75, ny: 0.32, r: 3.5, color: "#ff7b72" },
+    .{ nx: 0.08, ny: 0.50, r: 2.0, color: "#56d364" },
+    .{ nx: 0.47, ny: 0.45, r: 3.0, color: "#e3b341" },
+    .{ nx: 0.87, ny: 0.55, r: 2.0, color: "#58a6ff" },
+    .{ nx: 0.63, ny: 0.62, r: 1.5, color: "#d2a8ff" },
+    .{ nx: 0.20, ny: 0.70, r: 2.5, color: "#a5d6ff" },
+    .{ nx: 0.92, ny: 0.75, r: 2.0, color: "#ffa657" },
+    .{ nx: 0.40, ny: 0.28, r: 1.5, color: "#56d364" },
+    .{ nx: 0.05, ny: 0.85, r: 2.0, color: "#c9d1d9" },
+    .{ nx: 0.55, ny: 0.80, r: 3.0, color: "#ff7b72" },
+    .{ nx: 0.70, ny: 0.08, r: 2.0, color: "#e3b341" },
+  ]
 
-draw_background(ctx, w, h)
-for star in stars {
-  draw_star(ctx, star, w, h, scale, pi)
+  draw_background(ctx, w, h)
+  for star in stars {
+    draw_star(ctx, star, w, h, scale, pi)
+  }
+  ctx.set_global_alpha(1.0)
+  draw_grid(ctx, w, h, scale)
 }
-ctx.set_global_alpha(1.0)
-draw_grid(ctx, w, h, scale)
+
+// get_context returns CanvasContext? — gracefully handle missing canvas
+case canvas.get_context("twinkle") {
+  .None => println("no canvas available"),
+  .Some(ctx) => draw(ctx),
+}

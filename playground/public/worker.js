@@ -616,7 +616,7 @@ async function runWasmBytesAsync(wasmBytes, { programArgs = [], env = {}, vfs, e
 function setupCanvasGlobals(offscreen) {
   const ctx = offscreen.getContext('2d');
   globalThis.canvas = {
-    get_context:       (_id) => ctx,
+    get_context:       (_id) => ctx ?? null,
     get_width:         () => offscreen.width,
     get_height:        () => offscreen.height,
     set_fill_style:    (c, color) => { c.fillStyle = color; },
