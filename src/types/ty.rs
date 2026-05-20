@@ -41,7 +41,7 @@ pub const BUILTIN_BYTE_TYPE_ID: TypeId = TypeId(u32::MAX - 6);
 /// synthetic method-only TypeIds.
 pub fn method_receiver_type_id(ty: &MonoType) -> Option<TypeId> {
     match ty {
-        MonoType::Named { type_id, .. } => Some(*type_id),
+        MonoType::Named { type_id, .. } | MonoType::ExternRef(type_id) => Some(*type_id),
         MonoType::Vector(_) => Some(BUILTIN_VECTOR_TYPE_ID),
         MonoType::String => Some(BUILTIN_STRING_TYPE_ID),
         MonoType::Dict(_, _) => Some(BUILTIN_DICT_TYPE_ID),
@@ -117,6 +117,9 @@ pub enum MonoType {
         params: Vec<MonoType>,
         ret: Box<MonoType>,
     },
+
+    /// Opaque host handle backed by Wasm externref
+    ExternRef(TypeId),
 }
 
 impl MonoType {
@@ -202,6 +205,10 @@ impl MonoType {
                     .join(", ");
                 format!("fn({}) {}", params_str, ret.format_with_names(type_env))
             }
+            MonoType::ExternRef(type_id) => type_env
+                .get_def(*type_id)
+                .map(|def| def.name().to_string())
+                .unwrap_or_else(|| format!("Extern#{}", type_id.0)),
         }
     }
 }
@@ -247,6 +254,7 @@ impl fmt::Display for MonoType {
                 }
                 write!(f, ") {}", ret)
             }
+            MonoType::ExternRef(type_id) => write!(f, "Extern#{}", type_id.0),
         }
     }
 }

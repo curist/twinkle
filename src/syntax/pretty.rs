@@ -154,6 +154,13 @@ fn print_item(item: &Item, out: &mut String, indent: usize) {
             }
             writeln!(out).unwrap();
         }
+        Item::ExternType(decl) => {
+            write!(out, "{}ExternType", prefix).unwrap();
+            if decl.is_pub {
+                write!(out, " (pub)").unwrap();
+            }
+            writeln!(out, " [module={}]: {}", decl.module, decl.name).unwrap();
+        }
         Item::Stmt(stmt) => {
             print_stmt(stmt, out, indent);
         }

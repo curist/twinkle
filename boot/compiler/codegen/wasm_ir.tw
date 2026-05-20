@@ -86,6 +86,8 @@ pub type Instr = {
   RefCast(Bool, HeapType),
   RefTest(Bool, HeapType),
   RefFunc(String),
+  AnyConvertExtern,   // (ref extern) → (ref any)
+  ExternConvertAny,   // (ref any) → (ref extern)
 
   // Struct
   StructNew(String),

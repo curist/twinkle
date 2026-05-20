@@ -210,6 +210,7 @@ fn type_key(ty: &MonoType) -> String {
                 format!("T{}_{}", type_id.0, args_str)
             }
         }
+        MonoType::ExternRef(type_id) => format!("Extern{}", type_id.0),
         MonoType::Function { params, ret } => {
             let params_str = params.iter().map(type_key).collect::<Vec<_>>().join("_");
             format!("Fn_{}_{}", params_str, type_key(ret))

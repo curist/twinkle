@@ -199,25 +199,43 @@ Functions form **lexical scope boundaries**: names defined outside a function ca
 
 ### 7.2 Extern Declarations
 
-Extern declarations describe host-provided functions and compile to Wasm imports:
+Extern declarations describe host-provided functions and opaque host types.
+Extern functions compile to Wasm imports:
 
 ```tw
 extern console fn log(msg: String)
 extern crypto fn random() Float
 pub extern canvas {
-  fn clear()
+  type Context
+  fn get_context(id: String) Context
+  fn clear(ctx: Context)
   fn width() Int
 }
 ```
 
 The module name is a bare identifier that doubles as the Wasm import module name
-and the call-site namespace (`console.log(...)`, `canvas.clear()`). The function
-name becomes the Wasm import field name. `pub` controls Twinkle module visibility
-only; every extern declaration emits/reuses a Wasm import.
+and the call-site namespace for functions (`console.log(...)`,
+`canvas.clear(...)`). The function name becomes the Wasm import field name.
+`pub` controls Twinkle module visibility only; every extern function declaration
+emits/reuses a Wasm import.
+
+Extern types are opaque nominal handles backed by non-null Wasm `(ref extern)`.
+They live in the declaring Twinkle module's type namespace, not in the extern
+function namespace: inside the module above the type is `Context`, not
+`canvas.Context`. When public, other modules import it like any other type from
+the declaring Twinkle module. Extern types have no fields or variants and cannot
+be pattern matched. They do not provide equality, ordering, or hashing by
+default; use explicit host functions for those operations.
 
 Extern parameters must be annotated. Phase 1 boundary types are `Int`, `Float`,
-`Bool`, `String`, and `Void`/`()`. Compound values such as records, enums,
-`Vector`, `Dict`, callbacks, and `Result` are not valid extern boundary types.
+`Bool`, `String`, extern types, and `Void`/`()`. Compound values such as records,
+enums, `Vector`, `Dict`, callbacks, `Option`, and `Result` are not valid extern
+boundary types.
+
+Extern types are non-null. If a host function declared as returning an extern
+type returns `null` or `undefined`, the Wasm runtime traps at the import
+boundary. Nullable extern types (`Option<ExternType>`) are deferred and rejected
+in Phase 1.
 
 ---
 

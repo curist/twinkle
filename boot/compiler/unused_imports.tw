@@ -190,6 +190,7 @@ fn collect_used_names_module(module: Module, used: Cell<Dict<String, Bool>>) {
     case item {
       .Function(decl) => collect_used_names_function(decl, used),
       .ExternFunction(_) => {},
+      .ExternType(_) => {},
       .Type(decl) => collect_used_names_type_decl(decl, used),
       .Stmt(stmt) => collect_used_names_stmt(stmt, used),
       .Use(_) => {},

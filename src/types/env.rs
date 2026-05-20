@@ -35,6 +35,9 @@ pub struct TypeEnv {
     // For inherent methods: map (TypeId, method_name) -> MethodInfo
     // Methods are functions whose first parameter is the receiver type
     methods: HashMap<(TypeId, String), MethodInfo>,
+    // Opaque extern types backed by externref. Their TypeDef is an empty
+    // record placeholder so existing name/export machinery can carry them.
+    extern_type_ids: HashSet<TypeId>,
 }
 
 #[derive(Debug, Clone)]
@@ -51,6 +54,7 @@ impl TypeEnv {
             record_fields: HashMap::new(),
             sum_variants: HashMap::new(),
             methods: HashMap::new(),
+            extern_type_ids: HashSet::new(),
         };
 
         // Pre-register built-in parametric types with fixed TypeIds.
@@ -336,6 +340,23 @@ impl TypeEnv {
         self.add_type_with_binding(def, false)
     }
 
+    /// Add an opaque extern type and return its nominal TypeId.
+    pub fn add_extern_type(&mut self, name: String) -> TypeId {
+        let type_id = self.add_type(TypeDef::Record {
+            name,
+            type_params: vec![],
+            fields: vec![],
+            doc: Some("Opaque externref-backed host type.".to_string()),
+        });
+        self.extern_type_ids.insert(type_id);
+        type_id
+    }
+
+    /// True when a TypeId names an externref-backed opaque host type.
+    pub fn is_extern_type(&self, type_id: TypeId) -> bool {
+        self.extern_type_ids.contains(&type_id)
+    }
+
     fn add_type_with_binding(&mut self, def: TypeDef, bind_name: bool) -> TypeId {
         let type_id = TypeId(self.types.len() as u32);
         let name = def.name().to_string();
@@ -617,6 +638,14 @@ impl TypeEnv {
                             return Err(());
                         }
                         let inner = self.resolve_type(&args[0], errors)?;
+                        if matches!(inner, MonoType::ExternRef(_)) {
+                            errors.push(TypeError::UnsupportedFeature {
+                                feature: "Option<extern type>",
+                                span: *span,
+                                note: "Nullable extern types are not supported yet; use an explicit host function or Result-style wrapper".to_string(),
+                            });
+                            return Err(());
+                        }
                         return Ok(MonoType::Named {
                             type_id: OPTION_TYPE_ID,
                             args: vec![inner],
@@ -738,6 +767,19 @@ impl TypeEnv {
                                 return Err(());
                             }
                         };
+
+                        // Extern types are opaque nominal handles and take no type args.
+                        if self.is_extern_type(type_id) {
+                            if !args.is_empty() {
+                                errors.push(TypeError::GenericNotSupported {
+                                    name: name.clone(),
+                                    span: *span,
+                                    note: "Extern types cannot take type arguments".to_string(),
+                                });
+                                return Err(());
+                            }
+                            return Ok(MonoType::ExternRef(type_id));
+                        }
 
                         // Aliases: expand transparently, but don't accept type args
                         if let Some(TypeDef::Alias { target, .. }) = self.get_def(type_id) {

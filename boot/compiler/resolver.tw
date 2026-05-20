@@ -111,6 +111,7 @@ pub type TypeEntry = .{
   arity: Int,
   def: ResolvedTypeDef?,
   span: Span,
+  is_extern: Bool,
 }
 
 pub type MethodEntry = .{
@@ -701,6 +702,20 @@ pub fn extract_exports_for_module(env: ResolvedEnv, module: Module, module_key: 
           .None => {},
         }
       },
+      .ExternType(decl) => {
+        if !decl.is_pub { continue }
+        case env.lookup_type(decl.name) {
+          .Some(entry) => {
+            visible_types = .append(ExportedType.{
+              name: decl.name,
+              entry,
+              origin: exported_type_origin(env, entry.id, module_key, decl.name),
+            })
+            exported_type_names[decl.name] = true
+          },
+          .None => {},
+        }
+      },
       _ => {},
     }
   }
@@ -1205,7 +1220,7 @@ fn collect_declarations(env: ResolvedEnv, module: Module) ResolveResult {
           diags = .append(.Error(.DuplicateName(.{ span: decl.span, kind: "type definition", name: decl.name })))
         } else {
           tid := TypeId.{ id: next_available_type_id(cur) }
-          cur = .add_type(.{ id: tid, arity: decl.type_params.len(), def: .None, span: decl.span }, decl.name)
+          cur = .add_type(.{ id: tid, arity: decl.type_params.len(), def: .None, span: decl.span, is_extern: false }, decl.name)
           // Pre-register synthesized record types for anonymous record variants.
           // Must happen after add_type so type_bindings is non-empty.
           case decl.def {
@@ -1217,7 +1232,7 @@ fn collect_declarations(env: ResolvedEnv, module: Module) ResolveResult {
                       synth_tid := TypeId.{ id: next_available_type_id(cur) }
                       display_name := "${decl.name}.${variant.name}"
                       cur = .register_type_entry(
-                        .{ id: synth_tid, arity: decl.type_params.len(), def: .None, span: variant.span },
+                        .{ id: synth_tid, arity: decl.type_params.len(), def: .None, span: variant.span, is_extern: false },
                         display_name
                       )
                     },
@@ -1243,6 +1258,17 @@ fn collect_declarations(env: ResolvedEnv, module: Module) ResolveResult {
           diags = .append(.Error(.DuplicateName(.{ span: decl.span, kind: "function definition", name: qualified })))
         } else {
           seen_fns[qualified] = true
+        }
+      },
+      .ExternType(decl) => {
+        if is_reserved_type_name(decl.name) {
+          diags = .append(.Error(.ReservedTypeName(.{ span: decl.span, name: decl.name })))
+        } else if cur.has_type(decl.name) {
+          diags = .append(.Error(.DuplicateName(.{ span: decl.span, kind: "type definition", name: decl.name })))
+        } else {
+          tid := TypeId.{ id: next_available_type_id(cur) }
+          cur = .add_type(.{ id: tid, arity: 0, def: .None, span: decl.span, is_extern: true }, decl.name)
+          cur.extern_namespaces[decl.module] = true
         }
       },
       // Use/Stmt items: imports deferred to multi-module Phase E;
@@ -1305,6 +1331,12 @@ fn resolve_references(env: ResolvedEnv, module: Module, diags: Vector<diag.DiagK
   for decl in type_decls {
     local_type_names[decl.name] = true
   }
+  for item in module.items {
+    case item {
+      .ExternType(decl) => { local_type_names[decl.name] = true },
+      _ => {},
+    }
+  }
   im := detect_inherent_methods(cur, local_type_names)
   cur = im.env
   result_diags = .concat(im.diagnostics)
@@ -1329,6 +1361,7 @@ fn detect_inherent_methods(env: ResolvedEnv, local_type_names: Dict<String, Bool
     if f.params.len() == 0 { continue }
     tid := case f.params[0] {
       .Named(t, _) => t,
+      .ExternRef(t) => t,
       _ => { continue },  // Non-nominal first param — not an inherent method
     }
     type_name := case env.find_type_name(tid) {
@@ -1515,6 +1548,7 @@ fn is_extern_safe_type(ty: MonoType, allow_void: Bool) Bool {
     .Bool => true,
     .String => true,
     .Void => allow_void,
+    .ExternRef(_) => true,
     _ => false,
   }
 }
@@ -1698,9 +1732,15 @@ fn resolve_fn_type(env: ResolvedEnv, param_exprs: Vector<TypeExpr>, ret_expr: Ty
 fn resolve_optional_type(env: ResolvedEnv, inner_expr: TypeExpr, type_vars: Vector<String>) TypeResolveResult {
   r := env.resolve_type_expr(inner_expr, type_vars)
   case r.ty {
-    .Some(inner) => .{
-      ty: .Some(MonoType.Optional(inner)),
-      diagnostics: r.diagnostics,
+    .Some(inner) => case inner {
+      .ExternRef(_) => .{
+        ty: .None,
+        diagnostics: r.diagnostics.append(.Error(.ExternBoundaryType(.{ span: inner_expr.span }))),
+      },
+      _ => .{
+        ty: .Some(MonoType.Optional(inner)),
+        diagnostics: r.diagnostics,
+      },
     },
     .None => r,
   }
@@ -1965,6 +2005,13 @@ fn remap_mono_type(ty: MonoType, type_ids: Dict<Int, TypeId>) MonoType {
     },
     .Optional(inner) => MonoType.Optional(remap_mono_type(inner, type_ids)),
     .Result(ok, err) => MonoType.Result(remap_mono_type(ok, type_ids), remap_mono_type(err, type_ids)),
+    .ExternRef(tid) => {
+      new_tid := case type_ids[tid.id] {
+        .Some(mapped) => mapped,
+        .None => tid,
+      }
+      MonoType.ExternRef(new_tid)
+    },
     _ => ty,
   }
 }
@@ -2034,10 +2081,18 @@ fn resolve_single_name(env: ResolvedEnv, name: String, args: Vector<MonoType>, t
 
   case env.lookup_type(name) {
     .Some(entry) => {
-      return type_ok(MonoType.Named(entry.id, args))
+      if entry.is_extern {
+        if args.len() > 0 {
+          type_err(.Error(.TypeArityMismatch(.{ span: s, name, expected: 0, found: args.len() })))
+        } else {
+          type_ok(MonoType.ExternRef(entry.id))
+        }
+      } else {
+        type_ok(MonoType.Named(entry.id, args))
+      }
     },
     .None => {
-      return type_err(.Error(.UndefinedType(.{ span: s, name })))
+      type_err(.Error(.UndefinedType(.{ span: s, name })))
     },
   }
 }
@@ -2306,6 +2361,12 @@ pub fn ty_to_string_env(env: ResolvedEnv, ty: MonoType) String {
     .String => "String",
     .Void => "Void",
     .Anyref_ => "Anyref",
+    .ExternRef(tid) => {
+      case env.find_type_name(tid) {
+        .Some(n) => n,
+        .None => "ExternRef(${tid.id})",
+      }
+    },
     .Never => "Never",
     .Var(n) => n,
     .MetaVar(id) => "?${id}",

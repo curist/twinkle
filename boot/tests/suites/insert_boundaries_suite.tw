@@ -101,12 +101,14 @@ fn env_with_record_and_sum() ResolvedEnv {
     arity: 0,
     def: .Some(ResolvedTypeDef.Record("Holder", [], [ResolvedField.{ name: "f", ty: MonoType.Function([.Int], .Int) }])),
     span: .{ file_id: 0, start: 0, end: 0 },
+    is_extern: false,
   }
   sum := TypeEntry.{
     id: TypeId.{ id: 11 },
     arity: 0,
     def: .Some(ResolvedTypeDef.Sum("Box", [], [ResolvedVariant.{ name: "Wrap", fields: [MonoType.Function([.Int], .Int)] }])),
     span: .{ file_id: 0, start: 0, end: 0 },
+    is_extern: false,
   }
   resolver.empty_env().add_type(rec, "Holder").add_type(sum, "Box")
 }

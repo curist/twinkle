@@ -89,6 +89,7 @@ pub fn mono_to_string(ty: mono_type.MonoType) String {
       "fn(${joined}) ${mono_to_string(ret)}"
     },
     .Optional(inner) => "${mono_to_string(inner)}?",
+    .ExternRef(tid) => "ExternRef(${tid.id})",
     .Result(ok, err) => "Result<${mono_to_string(ok)}, ${mono_to_string(err)}>",
     .MetaVar(id) => "?${id}",
     .Never => "Never",
@@ -506,6 +507,7 @@ pub fn suite() runner.Suite {
           resolver.ResolvedField.{ name: "x", ty: mono_type.MonoType.Int },
         ])),
         span: span.Span.{ file_id: 0, start: 0, end: 0 },
+        is_extern: false,
       }
 
       env := resolver.empty_env()
@@ -798,9 +800,9 @@ pub fn suite() runner.Suite {
     // ── Issue 5: Incremental add_type / add_function ──
     .test("add_type incrementally builds env", fn() {
       env := resolver.empty_env()
-      e1 := resolver.TypeEntry.{ id: mono_type.TypeId.{ id: 0 }, arity: 0, def: .None, span: span.Span.{ file_id: 0, start: 0, end: 0 } }
+      e1 := resolver.TypeEntry.{ id: mono_type.TypeId.{ id: 0 }, arity: 0, def: .None, span: span.Span.{ file_id: 0, start: 0, end: 0 }, is_extern: false }
       env = env.add_type( e1, "Foo")
-      e2 := resolver.TypeEntry.{ id: mono_type.TypeId.{ id: 1 }, arity: 0, def: .None, span: span.Span.{ file_id: 0, start: 0, end: 0 } }
+      e2 := resolver.TypeEntry.{ id: mono_type.TypeId.{ id: 1 }, arity: 0, def: .None, span: span.Span.{ file_id: 0, start: 0, end: 0 }, is_extern: false }
       env = env.add_type( e2, "Bar")
 
       try assert.is_true(resolver.has_type(env, "Foo"))
@@ -815,6 +817,7 @@ pub fn suite() runner.Suite {
         arity: 0,
         def: .Some(resolver.ResolvedTypeDef.Alias("geom.Support", [], mono_type.MonoType.Int)),
         span: span.Span.{ file_id: 0, start: 0, end: 0 },
+        is_extern: false,
       }
 
       env := resolver.empty_env().register_type_entry(entry, "geom.Support")
@@ -1134,6 +1137,7 @@ pub fn suite() runner.Suite {
         arity: 0,
         def: .Some(resolver.ResolvedTypeDef.Alias("dep.Support", [], mono_type.MonoType.Int)),
         span: span.Span.{ file_id: 0, start: 0, end: 0 },
+        is_extern: false,
       }
       sig := resolver.FunctionSig.{
         name: "expose", type_params: [], param_names: ["x"],
@@ -1162,6 +1166,7 @@ pub fn suite() runner.Suite {
           resolver.ResolvedField.{ name: "value", ty: mono_type.MonoType.Int },
         ])),
         span: span.Span.{ file_id: 0, start: 0, end: 0 },
+        is_extern: false,
       }
       outer_entry := resolver.TypeEntry.{
         id: outer_tid,
@@ -1170,6 +1175,7 @@ pub fn suite() runner.Suite {
           resolver.ResolvedField.{ name: "inner", ty: mono_type.MonoType.Named(inner_tid, []) },
         ])),
         span: span.Span.{ file_id: 0, start: 0, end: 0 },
+        is_extern: false,
       }
       sig := resolver.FunctionSig.{
         name: "expose", type_params: [], param_names: ["x"],
@@ -1203,6 +1209,7 @@ pub fn suite() runner.Suite {
           resolver.ResolvedField.{ name: "value", ty: mono_type.MonoType.Int },
         ])),
         span: span.Span.{ file_id: 0, start: 0, end: 0 },
+        is_extern: false,
       }
       wrapper_entry := resolver.TypeEntry.{
         id: wrapper_tid,
@@ -1211,6 +1218,7 @@ pub fn suite() runner.Suite {
           resolver.ResolvedField.{ name: "inner", ty: mono_type.MonoType.Named(support_tid, []) },
         ])),
         span: span.Span.{ file_id: 0, start: 0, end: 0 },
+        is_extern: false,
       }
       parsed := parser.parse("pub type Wrapper = .{ inner: Int }", 0)
       env := resolver.empty_env()
@@ -1262,6 +1270,7 @@ pub fn suite() runner.Suite {
           resolver.ResolvedField.{ name: "value", ty: mono_type.MonoType.Int },
         ])),
         span: span.Span.{ file_id: 0, start: 0, end: 0 },
+        is_extern: false,
       }
       make_sig := resolver.FunctionSig.{
         name: "make_env", type_params: [], param_names: [],
@@ -1327,6 +1336,7 @@ pub fn suite() runner.Suite {
         arity: 0,
         def: .Some(resolver.ResolvedTypeDef.Alias("dep.Support", [], mono_type.MonoType.Int)),
         span: span.Span.{ file_id: 0, start: 0, end: 0 },
+        is_extern: false,
       }
       sig := resolver.FunctionSig.{
         name: "expose", type_params: [], param_names: ["x"],
@@ -1771,6 +1781,20 @@ pub fn suite() runner.Suite {
         },
         .None => .Err("expected support function to preserve canonical origin"),
       }
+    })
+    // ── Extern types ──
+    .test("extern type resolves in extern function signatures", fn() {
+      src := "extern dom type Element\nextern dom { fn get_element(id: String) Element fn set_text(el: Element, text: String) }"
+      env := try resolve_ok(src)
+      try assert.is_true(resolver.has_type(env, "Element"))
+      try assert.equal(try get_return_type(env, "dom.get_element"), "ExternRef(${try type_id_of(env, "Element")})")
+      try assert.equal(try get_param_type(env, "dom.set_text", 0), "ExternRef(${try type_id_of(env, "Element")})")
+      .Ok({})
+    })
+    .test("Option of extern type is rejected in phase 1", fn() {
+      msgs := try resolve_errs("extern dom type Element\ntype MaybeElement = Element?")
+      try assert.is_true(msgs.len() > 0)
+      .Ok({})
     })
     // ── Anonymous record variants ──
     .test("anon record variant synthesizes record type", fn() {

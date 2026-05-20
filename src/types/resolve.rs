@@ -5,7 +5,7 @@ use super::ty::{
 };
 use crate::module::artifacts::ResolvedModule;
 use crate::syntax::ast::{
-    ExternFunctionDecl, FunctionDecl, Item, SourceFile, Type as AstType, TypeDecl,
+    ExternFunctionDecl, ExternTypeDecl, FunctionDecl, Item, SourceFile, Type as AstType, TypeDecl,
     TypeDef as AstTypeDef,
 };
 use crate::syntax::span::Span;
@@ -116,6 +116,7 @@ impl Resolver {
                 Item::TypeDecl(decl) => self.collect_type_decl(decl),
                 Item::Function(decl) => self.collect_function_decl(decl),
                 Item::ExternFunction(decl) => self.collect_extern_function_decl(decl),
+                Item::ExternType(decl) => self.collect_extern_type_decl(decl),
                 Item::Import(_) => {
                     // Imports are compiled before reaching this point; no-op
                 }
@@ -156,6 +157,21 @@ impl Resolver {
         self.function_spans.insert(decl.name.clone(), decl.span);
         self.function_decls.insert(decl.name.clone(), decl.clone());
         self.function_decl_order.push(decl.name.clone());
+    }
+
+    fn collect_extern_type_decl(&mut self, decl: &ExternTypeDecl) {
+        if let Some(first_span) = self.type_spans.get(&decl.name) {
+            self.errors.push(TypeError::DuplicateDefinition {
+                name: decl.name.clone(),
+                first: *first_span,
+                second: decl.span,
+            });
+            return;
+        }
+
+        self.type_spans.insert(decl.name.clone(), decl.span);
+        let type_id = self.type_env.add_extern_type(decl.name.clone());
+        self.local_type_ids.insert(type_id);
     }
 
     fn collect_extern_function_decl(&mut self, decl: &ExternFunctionDecl) {
@@ -515,12 +531,13 @@ impl Resolver {
     ) -> Result<(), ()> {
         match ty {
             MonoType::Int | MonoType::Float | MonoType::Bool | MonoType::String => Ok(()),
+            MonoType::ExternRef(_) => Ok(()),
             MonoType::Void if allow_void => Ok(()),
             _ => {
                 self.errors.push(TypeError::UnsupportedFeature {
-                    feature: "extern functions only support primitive boundary types",
+                    feature: "extern functions only support primitive and extern boundary types",
                     span,
-                    note: "Allowed extern boundary types are Int, Float, Bool, String, and Void return"
+                    note: "Allowed extern boundary types are Int, Float, Bool, String, extern types, and Void return"
                         .to_string(),
                 });
                 Err(())
@@ -604,10 +621,21 @@ impl Resolver {
                             Box::new(it.next().unwrap()),
                         ))
                     }
-                    "Option" if resolved_args.len() == 1 => Ok(MonoType::Named {
-                        type_id: crate::types::ty::OPTION_TYPE_ID,
-                        args: resolved_args,
-                    }),
+                    "Option" if resolved_args.len() == 1 => {
+                        if matches!(resolved_args.first(), Some(MonoType::ExternRef(_))) {
+                            self.errors.push(TypeError::UnsupportedFeature {
+                                feature: "Option<extern type>",
+                                span: *span,
+                                note: "Nullable extern types are not supported yet; use an explicit host function or Result-style wrapper".to_string(),
+                            });
+                            Err(())
+                        } else {
+                            Ok(MonoType::Named {
+                                type_id: crate::types::ty::OPTION_TYPE_ID,
+                                args: resolved_args,
+                            })
+                        }
+                    }
                     "Result" if resolved_args.len() == 2 => Ok(MonoType::Named {
                         type_id: crate::types::ty::RESULT_TYPE_ID,
                         args: resolved_args,

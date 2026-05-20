@@ -779,6 +779,11 @@ fn build_module_exports(
                     exports.public_types.insert(decl.name.clone(), type_id);
                 }
             }
+            Item::ExternType(decl) if decl.is_pub => {
+                if let Some(type_id) = state.type_env.lookup_type(&decl.name) {
+                    exports.public_types.insert(decl.name.clone(), type_id);
+                }
+            }
             Item::Function(decl) if decl.is_pub => {
                 if let Some(sig) = state.value_env.get_function(&decl.name).cloned() {
                     exports.public_functions.insert(decl.name.clone(), sig);

@@ -10,8 +10,16 @@ pub type Item = {
   Type(TypeDecl),
   Function(FunctionDecl),
   ExternFunction(ExternFunctionDecl),
+  ExternType(ExternTypeDecl),
   Stmt(Stmt),
   ErrorItem(Span),
+}
+
+pub type ExternTypeDecl = .{
+  is_pub: Bool,
+  module: String,
+  name: String,
+  span: Span,
 }
 
 pub type UseDecl = .{

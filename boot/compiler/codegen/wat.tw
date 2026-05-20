@@ -454,6 +454,8 @@ fn emit_instr(instr: Instr, indent: Int) Vector<String> {
       else { ["${pad}ref.test (ref ${h})"] }
     },
     .RefFunc(s) => ["${pad}ref.func ${sym(s)}"],
+    .AnyConvertExtern => ["${pad}any.convert_extern"],
+    .ExternConvertAny => ["${pad}extern.convert_any"],
 
     // Struct
     .StructNew(ty) => ["${pad}struct.new ${sym(ty)}"],

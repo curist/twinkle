@@ -1,0 +1,6 @@
+---
+source: tests/integration_test.rs
+assertion_line: 162
+expression: err_msg
+---
+"unclosed_record_type.tw:3:1: Expected ,, found fn\n   3 | fn origin() Point {\n\n      ^-"

@@ -1252,6 +1252,7 @@ fn method_owner_name(base_ty: MonoType, env: ResolvedEnv) String? {
     .Optional(_) => .Some("Option"),
     .Result(_, _) => .Some("Result"),
     .Named(tid, _) => env.find_type_name(tid),
+    .ExternRef(tid) => env.find_type_name(tid),
     _ => .None,
   }
 }
@@ -1268,6 +1269,7 @@ fn resolve_method_func_name(base_ty: MonoType, method_name: String, env: Resolve
     .Optional(_) => env.lookup_method("Option", method_name),
     .Result(_, _) => env.lookup_method("Result", method_name),
     .Named(tid, _) => env.lookup_type_method(tid, method_name),
+    .ExternRef(tid) => env.lookup_type_method(tid, method_name),
     _ => .None,
   }
 }

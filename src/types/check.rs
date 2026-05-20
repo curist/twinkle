@@ -109,7 +109,10 @@ impl TypeChecker {
 
         for idx in order {
             match &ast.items[idx] {
-                Item::TypeDecl(_) | Item::Import(_) | Item::ExternFunction(_) => {
+                Item::TypeDecl(_)
+                | Item::Import(_)
+                | Item::ExternFunction(_)
+                | Item::ExternType(_) => {
                     // Already handled by resolver
                 }
                 Item::Function(decl) => {

@@ -199,6 +199,7 @@ fn validate_concrete_mono(ty: MonoType, env: ResolvedEnv, context: String) {
       validate_concrete_mono(ret, env, context)
     },
     .Optional(inner) => validate_concrete_mono(inner, env, context),
+    .ExternRef(_) => {},
     .Result(ok, err) => {
       validate_concrete_mono(ok, env, context)
       validate_concrete_mono(err, env, context)

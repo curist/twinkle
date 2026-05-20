@@ -8493,6 +8493,7 @@ fn collect_cell_payloads_from_mono(
         | MonoType::String
         | MonoType::Void
         | MonoType::Never
+        | MonoType::ExternRef(_)
         | MonoType::Var(_)
         | MonoType::MetaVar(_) => {}
     }

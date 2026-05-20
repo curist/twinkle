@@ -23,7 +23,8 @@ fn has_type_vars(ty: &MonoType) -> bool {
         | MonoType::Byte
         | MonoType::String
         | MonoType::Void
-        | MonoType::Never => false,
+        | MonoType::Never
+        | MonoType::ExternRef(_) => false,
     }
 }
 

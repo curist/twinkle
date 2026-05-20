@@ -13,7 +13,7 @@ use compiler.type_util.{subst_type_params}
 
 // ── Wasm value type (simplified for layout) ─────────────────────────
 
-pub type WasmValType = { WI32, WI64, WF64, WAnyref }
+pub type WasmValType = { WI32, WI64, WF64, WAnyref, WExternref }
 
 // ── Layout types ────────────────────────────────────────────────────
 
@@ -80,6 +80,7 @@ pub fn mono_to_key(ty: MonoType) String {
     .String => "str",
     .Void => "void",
     .Anyref_ => "anyref",
+    .ExternRef(tid) => "ext${tid.id}",
     .Never => "never",
     .Named(tid, args) => {
       base := "t${tid.id}"
@@ -111,6 +112,7 @@ pub fn layout_of(ty: MonoType, env: ResolvedEnv) WasmLayout {
     .Byte => .Scalar(.WI32),
     .Void => .Scalar(.WAnyref),
     .Anyref_ => .Scalar(.WAnyref),
+    .ExternRef(_) => .Scalar(.WExternref),
     .String => .Scalar(.WAnyref),
     .Never => error("layout_of called on Never — must be handled as unreachable"),
     .Named(tid, args) => layout_of_named(tid, args, env),
@@ -346,6 +348,7 @@ pub fn val_type_of(layout: WasmLayout) ValType {
     .Scalar(.WI64) => .I64,
     .Scalar(.WF64) => .F64,
     .Scalar(.WAnyref) => .Anyref,
+    .Scalar(.WExternref) => .Ref(false, .Extern),
     .Record(r) => .Ref(true, .Named(r.sym)),
     .Sum(s) => .Ref(true, .Named(s.sym)),
     .Closure(c) => .Ref(true, .Named(c.closure_sym)),
@@ -362,6 +365,7 @@ fn val_type_key(layout: WasmLayout) String {
     .Scalar(.WI64) => "i64",
     .Scalar(.WF64) => "f64",
     .Scalar(.WAnyref) => "anyref",
+    .Scalar(.WExternref) => "externref",
     .Record(r) => r.sym,
     .Sum(s) => s.sym,
     .Closure(c) => c.closure_sym,
@@ -383,6 +387,7 @@ pub fn val_type_of_mono(ty: MonoType, env: ResolvedEnv) ValType {
     .Byte => .I32,
     .Void => .Anyref,
     .Anyref_ => .Anyref,
+    .ExternRef(_) => .Ref(false, .Extern),
     .String => .Ref(true, .Named("rt_types__String")),
     .Named(tid, args) => {
       if is_cell_type(env, tid) {

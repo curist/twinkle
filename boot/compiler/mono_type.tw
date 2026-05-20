@@ -13,6 +13,7 @@ pub type MonoType = {
   String,
   Void,
   Anyref_,   // backend-internal explicit anyref carrier (inserted after ANF lowering)
+  ExternRef(TypeId),  // opaque host handle backed by Wasm externref
   Var(String),
   Named(TypeId, Vector<MonoType>),
   Vector(MonoType),
@@ -36,6 +37,7 @@ pub fn ty_to_string(ty: MonoType) String {
     .String => "String",
     .Void => "Void",
     .Anyref_ => "Anyref",
+    .ExternRef(tid) => "ExternRef(${tid.id})",
     .Never => "Never",
     .Var(n) => n,
     .MetaVar(id) => "?${id}",

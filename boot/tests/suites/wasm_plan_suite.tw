@@ -77,6 +77,7 @@ fn env_with_record(name: String, type_id: Int, fields: Vector<ResolvedField>) Re
     arity: 0,
     def: .Some(ResolvedTypeDef.Record(name, [], fields)),
     span: dummy_span(),
+    is_extern: false,
   }
   resolver.empty_env().add_type(entry, name)
 }
@@ -89,6 +90,7 @@ fn env_with_two_records() ResolvedEnv {
       ResolvedField.{ name: "value", ty: MonoType.Int },
     ])),
     span: dummy_span(),
+    is_extern: false,
   }
   outer := TypeEntry.{
     id: TypeId.{ id: 11 },
@@ -97,6 +99,7 @@ fn env_with_two_records() ResolvedEnv {
       ResolvedField.{ name: "inner", ty: MonoType.Named(TypeId.{ id: 10 }, []) },
     ])),
     span: dummy_span(),
+    is_extern: false,
   }
   resolver.empty_env().add_type(inner, "Inner").add_type(outer, "Outer")
 }
@@ -109,6 +112,7 @@ fn env_with_recursive_record() ResolvedEnv {
       ResolvedField.{ name: "next", ty: MonoType.Optional(MonoType.Named(TypeId.{ id: 12 }, [])) },
     ])),
     span: dummy_span(),
+    is_extern: false,
   }
   resolver.empty_env().add_type(node, "Node")
 }

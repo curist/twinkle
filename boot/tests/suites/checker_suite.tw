@@ -57,6 +57,7 @@ fn test_env() resolver.ResolvedEnv {
       resolver.ResolvedVariant.{ name: "Item", fields: [mono_type.MonoType.Var("T")] },
     ])),
     span: span.Span.{ file_id: 0, start: 0, end: 0 },
+    is_extern: false,
   }
   env = env.add_type(iter_entry, "Iterator")
   // Register Range type (TypeId 3 in stage0) so range operator tests work
@@ -68,6 +69,7 @@ fn test_env() resolver.ResolvedEnv {
       resolver.ResolvedField.{ name: "end", ty: mono_type.MonoType.Int },
     ])),
     span: span.Span.{ file_id: 0, start: 0, end: 0 },
+    is_extern: false,
   }
   env = env.add_type(range_entry, "Range")
   env.register_builtin_methods()
@@ -956,6 +958,7 @@ pub fn suite() runner.Suite {
           resolver.ResolvedVariant.{ name: "Blue", fields: [] },
         ])),
         span: span.Span.{ file_id: 0, start: 0, end: 0 },
+        is_extern: false,
       }
       env := resolver.empty_env()
         .register_type_entry(color_entry, "dep.Color")
@@ -998,6 +1001,7 @@ pub fn suite() runner.Suite {
           resolver.ResolvedVariant.{ name: "Item", fields: [mono_type.MonoType.Var("T")] },
         ])),
         span: span.Span.{ file_id: 0, start: 0, end: 0 },
+        is_extern: false,
       }
       env := resolver.empty_env()
         .register_type_entry(iter_entry, "dep.Iterator")
@@ -1314,6 +1318,7 @@ pub fn suite() runner.Suite {
           resolver.ResolvedField.{ name: "x", ty: mono_type.MonoType.Int },
         ])),
         span: span.Span.{ file_id: 0, start: 0, end: 0 },
+        is_extern: false,
       }
       len_sig := resolver.FunctionSig.{
         name: "len",

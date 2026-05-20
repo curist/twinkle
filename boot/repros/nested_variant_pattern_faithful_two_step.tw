@@ -67,6 +67,7 @@ fn build_env() ResolvedEnv {
       ResolvedVariant.{ name: "Stop", fields: [] },
     ])),
     span: dummy_span(),
+    is_extern: false,
   }
 
   alias_entry := TypeEntry.{
@@ -74,6 +75,7 @@ fn build_env() ResolvedEnv {
     arity: 1,
     def: .Some(ResolvedTypeDef.Alias("InnerAlias", ["A"], .Named(sum_tid, [MonoType.Var("A")]))),
     span: dummy_span(),
+    is_extern: false,
   }
 
   wrapper_entry := TypeEntry.{
@@ -81,6 +83,7 @@ fn build_env() ResolvedEnv {
     arity: 1,
     def: .Some(ResolvedTypeDef.Alias("WrapperAlias", ["B"], .Named(alias_tid, [MonoType.Var("B")]))),
     span: dummy_span(),
+    is_extern: false,
   }
 
   resolver.empty_env()

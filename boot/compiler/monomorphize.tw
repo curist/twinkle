@@ -278,6 +278,7 @@ fn type_key(ty: MonoType) String {
     .String => "String",
     .Void => "Void",
     .Anyref_ => "Anyref",
+    .ExternRef(tid) => "Ext${tid.id}",
     .Never => "Never",
     .Var(name) => name,
     .MetaVar(id) => "M${id}",

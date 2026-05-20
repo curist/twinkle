@@ -94,6 +94,7 @@ fn mix_mono_type(h: Int, ty: MonoType) Int {
     .String => mix_word(h, 5),
     .Void => mix_word(h, 6),
     .Anyref_ => mix_word(h, 7),
+    .ExternRef(tid) => mix_word(mix_word(h, 18), tid.id),
     .Var(name) => mix_word(mix_word(h, 8), keys.hash_text(name)),
     .Named(tid, args) => {
       h = mix_word(h, 9)

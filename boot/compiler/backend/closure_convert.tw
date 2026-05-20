@@ -535,6 +535,7 @@ fn mono_eq(a: MonoType, b: MonoType) Bool {
       _ => false,
     },
     .Optional(inner_a) => case b { .Optional(inner_b) => mono_eq(inner_a, inner_b), _ => false },
+    .ExternRef(tid_a) => case b { .ExternRef(tid_b) => tid_a.id == tid_b.id, _ => false },
     .Result(ok_a, err_a) => case b {
       .Result(ok_b, err_b) => mono_eq(ok_a, ok_b) and mono_eq(err_a, err_b),
       _ => false,

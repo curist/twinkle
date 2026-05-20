@@ -18,7 +18,17 @@ pub enum Item {
     TypeDecl(TypeDecl),
     Function(FunctionDecl),
     ExternFunction(ExternFunctionDecl),
+    ExternType(ExternTypeDecl),
     Stmt(Stmt),
+}
+
+/// Extern type declaration (opaque host handle backed by externref)
+#[derive(Debug, Clone, PartialEq)]
+pub struct ExternTypeDecl {
+    pub is_pub: bool,
+    pub module: String,
+    pub name: String,
+    pub span: Span,
 }
 
 /// A single item in a destructuring import list: `use foo.{x, type T as U}`

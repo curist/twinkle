@@ -2500,6 +2500,10 @@ pub fn mono_to_valtype(ty: &MonoType, type_env: &TypeEnv) -> ValType {
         MonoType::Function { .. } => ref_named(true, T_CLOSURE),
         MonoType::Var(_) | MonoType::MetaVar(_) => ValType::Anyref,
         MonoType::Named { type_id, .. } => mono_named_to_valtype(*type_id, type_env),
+        MonoType::ExternRef(_) => ValType::Ref {
+            nullable: false,
+            heap: HeapType::Extern,
+        },
     }
 }
 
@@ -2636,6 +2640,7 @@ pub fn is_concrete_mono_type(ty: &MonoType) -> bool {
             params.iter().all(is_concrete_mono_type) && is_concrete_mono_type(ret)
         }
         MonoType::Named { args, .. } => args.iter().all(is_concrete_mono_type),
+        MonoType::ExternRef(_) => true,
         MonoType::Var(_) | MonoType::MetaVar(_) => false,
     }
 }
@@ -2684,6 +2689,7 @@ pub fn mono_to_type_tag(ty: &MonoType) -> String {
         MonoType::Dict(_, _) => "dict".to_string(),
         MonoType::Function { .. } => "cls".to_string(),
         MonoType::Named { .. } => "ref".to_string(),
+        MonoType::ExternRef(_) => "extern".to_string(),
         MonoType::Var(_) | MonoType::MetaVar(_) => "any".to_string(),
     }
 }
@@ -2713,6 +2719,7 @@ pub fn mono_to_symbol_key(ty: &MonoType) -> String {
                 format!("T{}_{}", type_id.0, args_str)
             }
         }
+        MonoType::ExternRef(type_id) => format!("Extern{}", type_id.0),
         MonoType::Function { params, ret } => {
             let params_str = params
                 .iter()

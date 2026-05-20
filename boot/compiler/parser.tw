@@ -9,7 +9,7 @@ use .cursor
 use .cursor.{Cursor}
 use .parser.literals.{parse_int_literal, parse_float_literal}
 use .ast.{
-  Item, UseDecl, FunctionDecl, ExternFunctionDecl, Param, TypeDecl, Module,
+  Item, UseDecl, FunctionDecl, ExternFunctionDecl, ExternTypeDecl, Param, TypeDecl, Module,
   ImportItem, ImportValueItem, ImportTypeItem,
   Expr, ExprKind, Stmt, Block, Pattern, TypeExpr, TypePath,
   BinOp, UnOp, TypeDef, CaseArm, RecordEntry, RecordField,
@@ -1176,7 +1176,7 @@ fn parse_extern(c: Cursor) ItemsParse {
     c = .advance()
     items: Vector<Item> = []
     for c.kind() != .RBrace and c.kind() != .Eof {
-      parsed := parse_extern_sig(c, is_pub, module_name, start_span)
+      parsed := parse_extern_block_item(c, is_pub, module_name, start_span)
       diagnostics_out = .concat(parsed.diagnostics)
       items = .append(parsed.value)
       c = parsed.cursor
@@ -1193,9 +1193,49 @@ fn parse_extern(c: Cursor) ItemsParse {
     return .{ value: items, cursor: c, diagnostics: diagnostics_out }
   }
 
+  // Standalone: extern mod type Name  or  extern mod fn ...
+  if c.kind() == .Type {
+    parsed := parse_extern_type_decl(c, is_pub, module_name, start_span)
+    diagnostics_out = .concat(parsed.diagnostics)
+    return .{ value: [parsed.value], cursor: parsed.cursor, diagnostics: diagnostics_out }
+  }
+
   parsed := parse_extern_sig(c, is_pub, module_name, start_span)
   diagnostics_out = .concat(parsed.diagnostics)
   .{ value: [parsed.value], cursor: parsed.cursor, diagnostics: diagnostics_out }
+}
+
+fn parse_extern_block_item(c: Cursor, is_pub: Bool, module_name: String, start_span: Span) ItemParse {
+  if c.kind() == .Type {
+    return parse_extern_type_decl(c, is_pub, module_name, start_span)
+  }
+  parse_extern_sig(c, is_pub, module_name, start_span)
+}
+
+fn parse_extern_type_decl(c: Cursor, is_pub: Bool, module_name: String, start_span: Span) ItemParse {
+  diagnostics_out: Vector<DiagKind> = []
+  start_pos := c.pos
+  type_span := c.span()
+  c = .advance()  // consume 'type'
+
+  if c.kind() != .Ident or !is_upper_ascii_name(c.text()) {
+    diagnostics_out = .append(diag.error(c.span(), "expected type name (PascalCase) after 'type' in extern declaration"))
+    recovered := recover_to_next_item(c)
+    if recovered.pos <= start_pos { recovered = c.with_pos(start_pos + 1) }
+    return .{ value: .ErrorItem(type_span), cursor: recovered, diagnostics: diagnostics_out }
+  }
+
+  name := c.text()
+  end_span := c.span()
+  c = .advance()
+
+  decl := ExternTypeDecl.{
+    is_pub,
+    module: module_name,
+    name,
+    span: start_span.merge(end_span),
+  }
+  .{ value: .ExternType(decl), cursor: c, diagnostics: diagnostics_out }
 }
 
 fn parse_extern_sig(c: Cursor, is_pub: Bool, module_name: String, start_span: Span) ItemParse {

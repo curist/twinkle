@@ -953,6 +953,8 @@ fn encode_instr_cached(
     .RefAsNonNull => .{ buf: emit_u8(buf, 0xD4), cache: cache },
 
     // GC / typed-reference (0xFB prefix)
+    .AnyConvertExtern => .{ buf: emit_u32_leb(emit_u8(buf, 0xFB), 0x1A), cache: cache },
+    .ExternConvertAny => .{ buf: emit_u32_leb(emit_u8(buf, 0xFB), 0x1B), cache: cache },
     .RefI31  => .{ buf: emit_u32_leb(emit_u8(buf, 0xFB), 28), cache: cache },
     .I31GetS => .{ buf: emit_u32_leb(emit_u8(buf, 0xFB), 29), cache: cache },
     .I31GetU => .{ buf: emit_u32_leb(emit_u8(buf, 0xFB), 30), cache: cache },

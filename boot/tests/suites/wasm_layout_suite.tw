@@ -19,6 +19,7 @@ fn env_with_record(name: String, type_id: Int, fields: Vector<ResolvedField>) Re
     arity: 0,
     def: .Some(ResolvedTypeDef.Record(name, [], fields)),
     span: dummy_span(),
+    is_extern: false,
   }
   resolver.empty_env().add_type(entry, name)
 }
@@ -29,6 +30,7 @@ fn env_with_sum(name: String, type_id: Int, variants: Vector<ResolvedVariant>) R
     arity: 0,
     def: .Some(ResolvedTypeDef.Sum(name, [], variants)),
     span: dummy_span(),
+    is_extern: false,
   }
   resolver.empty_env().add_type(entry, name)
 }
@@ -39,6 +41,7 @@ fn env_with_alias(name: String, type_id: Int, type_params: Vector<String>, targe
     arity: type_params.len(),
     def: .Some(ResolvedTypeDef.Alias(name, plain_resolved_type_params(type_params), target)),
     span: dummy_span(),
+    is_extern: false,
   }
   resolver.empty_env().add_type(entry, name)
 }

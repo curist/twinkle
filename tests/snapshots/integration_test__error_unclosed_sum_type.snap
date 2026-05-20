@@ -1,0 +1,6 @@
+---
+source: tests/integration_test.rs
+assertion_line: 162
+expression: err_msg
+---
+"unclosed_sum_type.tw:3:1: Expected ,, found fn\n   3 | fn classify(i: Int) FB {\n\n      ^-"

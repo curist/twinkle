@@ -981,6 +981,7 @@ pub fn suite() runner.Suite {
           resolver.ResolvedVariant.{ name: "Some", fields: [t] },
         ])),
         span: s0,
+        is_extern: false,
       }
 
       // Iterator (TypeId 62) — the type under test, intentionally a Sum
@@ -991,6 +992,7 @@ pub fn suite() runner.Suite {
           resolver.ResolvedVariant.{ name: "Item", fields: [t] },
         ])),
         span: s0,
+        is_extern: false,
       }
 
       // IterItem — required by build_iterator_loop
@@ -1002,6 +1004,7 @@ pub fn suite() runner.Suite {
           resolver.ResolvedField.{ name: "rest", ty: mono_type.MonoType.Named(iter_tid, [t]) },
         ])),
         span: s0,
+        is_extern: false,
       }
 
       env := resolver.empty_env()

@@ -196,6 +196,7 @@ impl Parser {
                 Item::TypeDecl(t) => t.span,
                 Item::Function(f) => f.span,
                 Item::ExternFunction(e) => e.span,
+                Item::ExternType(e) => e.span,
                 Item::Stmt(s) => match s {
                     Stmt::Let { span, .. } => *span,
                     Stmt::For { span, .. } => *span,
@@ -237,9 +238,7 @@ impl Parser {
             }
             Some(TokenKind::Type) => Ok(Item::TypeDecl(self.parse_type_decl(is_pub)?)),
             Some(TokenKind::Fn) => Ok(Item::Function(self.parse_function_decl(is_pub)?)),
-            Some(TokenKind::Extern) => Ok(Item::ExternFunction(
-                self.parse_extern_function_decl(is_pub)?,
-            )),
+            Some(TokenKind::Extern) => self.parse_extern_item(is_pub),
             _ => {
                 if is_pub {
                     // Only let bindings can be `pub` at module scope
@@ -649,6 +648,133 @@ impl Parser {
             body,
             span,
         })
+    }
+
+    fn parse_extern_item(&mut self, is_pub: bool) -> ParseResult<Item> {
+        // Peek ahead to check: extern <module> type|fn|{
+        // Save position to allow rewind for the function path
+        let start_pos = self.pos;
+        let start = self.expect(TokenKind::Extern)?;
+        let module_tok = self.expect(TokenKind::Ident)?;
+        let module = module_tok.text.clone();
+
+        if self.peek_is(TokenKind::Type) {
+            // Standalone: extern module type TypeName
+            self.advance(); // consume 'type'
+            let name_tok = self.expect(TokenKind::Ident)?;
+            let name = name_tok.text.clone();
+            if !name.starts_with(|c: char| c.is_uppercase()) {
+                return Err(ParseError::new(
+                    ParseErrorKind::CaseViolation {
+                        kind: "type name",
+                        name,
+                        expected: "an uppercase",
+                    },
+                    name_tok.span,
+                ));
+            }
+            return Ok(Item::ExternType(ExternTypeDecl {
+                is_pub,
+                module,
+                name,
+                span: start.span.merge(&name_tok.span),
+            }));
+        }
+
+        if self.peek_is(TokenKind::LBrace) {
+            // Block: extern module { type T \n fn f(...) \n }
+            self.advance(); // consume '{'
+            let mut items: Vec<Item> = Vec::new();
+            while !self.peek_is(TokenKind::RBrace) && !self.is_eof() {
+                if self.peek_is(TokenKind::Type) {
+                    let _type_tok = self.advance();
+                    let name_tok = self.expect(TokenKind::Ident)?;
+                    let name = name_tok.text.clone();
+                    if !name.starts_with(|c: char| c.is_uppercase()) {
+                        return Err(ParseError::new(
+                            ParseErrorKind::CaseViolation {
+                                kind: "type name",
+                                name,
+                                expected: "an uppercase",
+                            },
+                            name_tok.span,
+                        ));
+                    }
+                    items.push(Item::ExternType(ExternTypeDecl {
+                        is_pub,
+                        module: module.clone(),
+                        name,
+                        span: start.span.merge(&name_tok.span),
+                    }));
+                    continue;
+                }
+                // Parse fn signature
+                self.expect(TokenKind::Fn)?;
+                let name_token = self.expect(TokenKind::Ident)?;
+                let name = name_token.text.clone();
+                if name.starts_with(|c: char| c.is_uppercase()) {
+                    return Err(ParseError::new(
+                        ParseErrorKind::CaseViolation {
+                            kind: "function name",
+                            name,
+                            expected: "a lowercase",
+                        },
+                        name_token.span,
+                    ));
+                }
+                self.expect(TokenKind::LParen)?;
+                let mut params = Vec::new();
+                while !self.peek_is(TokenKind::RParen) && !self.is_eof() {
+                    params.push(self.parse_param()?);
+                    if !self.peek_is(TokenKind::RParen) {
+                        self.expect(TokenKind::Comma)?;
+                    }
+                }
+                let end = self.expect(TokenKind::RParen)?;
+                let (return_type, fn_span) = if !self.peek_is(TokenKind::Fn)
+                    && !self.peek_is(TokenKind::Type)
+                    && !self.peek_is(TokenKind::RBrace)
+                    && !self.is_eof()
+                    && !self.peek_preceded_by_newline()
+                {
+                    let ty = self.parse_type()?;
+                    let span = start.span.merge(&ty.span());
+                    (Some(ty), span)
+                } else {
+                    (None, start.span.merge(&end.span))
+                };
+                items.push(Item::ExternFunction(ExternFunctionDecl {
+                    is_pub,
+                    module: module.clone(),
+                    name,
+                    params,
+                    return_type,
+                    span: fn_span,
+                }));
+            }
+            let end = self.expect(TokenKind::RBrace)?;
+            if items.is_empty() {
+                return Err(ParseError::new(
+                    ParseErrorKind::UnexpectedToken {
+                        expected: vec!["fn".into(), "type".into()],
+                        found: "}".into(),
+                    },
+                    end.span,
+                ));
+            }
+            // Return first item, push rest to pending
+            let first = items.remove(0);
+            for item in items {
+                self.pending_items.push(item);
+            }
+            return Ok(first);
+        }
+
+        // Standalone fn: rewind and parse as extern function
+        self.pos = start_pos;
+        Ok(Item::ExternFunction(
+            self.parse_extern_function_decl(is_pub)?,
+        ))
     }
 
     fn parse_extern_function_decl(&mut self, is_pub: bool) -> ParseResult<ExternFunctionDecl> {
