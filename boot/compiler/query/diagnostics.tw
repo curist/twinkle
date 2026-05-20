@@ -179,6 +179,7 @@ fn kind_to_message(kind: DiagKind) String {
       .CompilerBug(d) => "compiler bug: ${d.message}",
       .ReservedTypeName(d) => "type name '${d.name}' is reserved",
       .DuplicateName(d) => "duplicate ${d.kind}: ${d.name}",
+      .FieldMethodCollision(d) => "inherent method `${d.name}` conflicts with field `${d.name}` on ${d.type_name}",
       .DuplicateTypeParam(d) => "duplicate type parameter ${d.name}",
       .UnknownContract(d) => "unknown contract '${d.name}'",
       .ExternBoundaryType(_) => "extern boundary type not supported",

@@ -300,6 +300,18 @@ fn error_to_report(e: ErrorDiag, ctx: RenderCtx) Report {
       labels: [primary(d.span, .Some("already defined"))],
       help_lines: [],
     },
+    .FieldMethodCollision(d) => .{
+      severity: .Error,
+      title: "inherent method `${d.name}` conflicts with field `${d.name}` on `${d.type_name}`",
+      labels: [
+        primary(d.method_span, .Some("inherent method with this name")),
+        primary(d.span, .Some("field with the same name")),
+      ],
+      help_lines: [
+        "field and method names share the same dot namespace",
+        "rename either the field or the method",
+      ],
+    },
     .DuplicateTypeParam(d) => .{
       severity: .Error,
       title: "duplicate type parameter `${d.name}`",

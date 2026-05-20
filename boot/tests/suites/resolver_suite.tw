@@ -969,6 +969,18 @@ pub fn suite() runner.Suite {
       try assert.is_true(found_dup)
       .Ok({})
     })
+    .test("H2 inherent method colliding with record field emits diagnostic", fn() {
+      src := "type Counter = .{ step: Int }\nfn step(counter: Counter) Counter { .{ step: counter.step + 1 } }"
+      msgs := try resolve_errs(src)
+      found := false
+      for msg in msgs {
+        if msg.contains("inherent method 'step' conflicts with field 'step' on Counter") {
+          found = true
+        }
+      }
+      try assert.is_true(found)
+      .Ok({})
+    })
     // ── Hardening item 3: no partial defs on field resolution failure ──
     .test("H3 record with bad field preserves field count", fn() {
       src := "type Foo = .{ x: Int, y: Nonexistent, z: Bool }"

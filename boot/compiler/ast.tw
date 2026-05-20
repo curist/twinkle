@@ -63,6 +63,7 @@ pub fn type_param_names(params: Vector<TypeParam>) Vector<String> {
 pub type FunctionDecl = .{
   is_pub: Bool,
   name: String,
+  name_span: Span,
   type_params: Vector<TypeParam>,
   params: Vector<Param>,
   return_type: TypeExpr?,
@@ -75,6 +76,7 @@ pub type ExternFunctionDecl = .{
   is_pub: Bool,
   module: String,
   name: String,
+  name_span: Span,
   params: Vector<Param>,
   return_type: TypeExpr?,
   span: Span,
@@ -100,6 +102,7 @@ pub type RecordField = .{
   name: String,
   ty: TypeExpr,
   span: Span,
+  name_span: Span,
 }
 
 pub type VariantDecl = .{

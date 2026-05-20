@@ -477,6 +477,7 @@ fn parse_type_record_fields(c: Cursor) RecordFieldsParse {
     }
 
     field_name := c.text()
+    field_name_span := c.span()
     c = .advance()
 
     if c.kind() != .Colon {
@@ -500,7 +501,7 @@ fn parse_type_record_fields(c: Cursor) RecordFieldsParse {
     c = ty_parsed.cursor
 
     field_span := c.tokens[field_start].span.merge(ty_parsed.value.span)
-    fields = .append(RecordField.{ name: field_name, ty: ty_parsed.value, span: field_span })
+    fields = .append(RecordField.{ name: field_name, ty: ty_parsed.value, span: field_span, name_span: field_name_span })
 
     if c.kind() == .Comma {
       c = .advance()
@@ -1061,6 +1062,7 @@ fn parse_function(c: Cursor) ItemParse {
   }
 
   name := c.text()
+  name_span := c.span()
   c = .advance()
 
   parsed_type_params := parse_type_params(c)
@@ -1126,6 +1128,7 @@ fn parse_function(c: Cursor) ItemParse {
   decl := FunctionDecl.{
     is_pub,
     name,
+    name_span,
     type_params,
     params,
     return_type,
@@ -1295,6 +1298,7 @@ fn parse_extern_sig(c: Cursor, is_pub: Bool, module_name: String, start_span: Sp
     is_pub,
     module: module_name,
     name,
+    name_span,
     params,
     return_type,
     span: start_span.merge(c.span()),

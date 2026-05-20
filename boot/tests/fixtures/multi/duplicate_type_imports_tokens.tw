@@ -4,6 +4,6 @@ pub fn make(kind: Int) Token {
   Token.{ kind: kind }
 }
 
-pub fn kind(token: Token) Int {
+pub fn token_kind(token: Token) Int {
   token.kind
 }

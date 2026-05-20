@@ -1302,12 +1302,14 @@ fn resolve_references(env: ResolvedEnv, module: Module, diags: Vector<diag.DiagK
   }
 
   // Resolve function signatures (skip module-internal duplicates reported in Pass 1)
+  local_function_spans: Dict<String, Span> = Dict.new()
   seen_fns: Dict<String, Bool> = Dict.new()
   for item in module.items {
     case item {
       .Function(decl) => {
         if !seen_fns.has(decl.name) {
           seen_fns[decl.name] = true
+          local_function_spans[decl.name] = decl.name_span
           r := resolve_function_decl(cur, decl)
           cur = r.env
           result_diags = .concat(r.diagnostics)
@@ -1317,6 +1319,7 @@ fn resolve_references(env: ResolvedEnv, module: Module, diags: Vector<diag.DiagK
         qualified := "${decl.module}.${decl.name}"
         if !seen_fns.has(qualified) {
           seen_fns[qualified] = true
+          local_function_spans[qualified] = decl.name_span
           r := resolve_extern_function_decl(cur, decl)
           cur = r.env
           result_diags = .concat(r.diagnostics)
@@ -1328,8 +1331,19 @@ fn resolve_references(env: ResolvedEnv, module: Module, diags: Vector<diag.DiagK
 
   // Auto-detect inherent methods: only for types declared in this module
   local_type_names: Dict<String, Bool> = Dict.new()
+  local_field_spans: Dict<String, Dict<String, Span>> = Dict.new()
   for decl in type_decls {
     local_type_names[decl.name] = true
+    case decl.def {
+      .Record(fields) => {
+        field_spans: Dict<String, Span> = Dict.new()
+        for field in fields {
+          field_spans[field.name] = field.name_span
+        }
+        local_field_spans[decl.name] = field_spans
+      },
+      _ => {},
+    }
   }
   for item in module.items {
     case item {
@@ -1337,7 +1351,7 @@ fn resolve_references(env: ResolvedEnv, module: Module, diags: Vector<diag.DiagK
       _ => {},
     }
   }
-  im := detect_inherent_methods(cur, local_type_names)
+  im := detect_inherent_methods(cur, local_type_names, local_field_spans, local_function_spans)
   cur = im.env
   result_diags = .concat(im.diagnostics)
 
@@ -1353,7 +1367,7 @@ type DetectMethodsResult = .{
 // Functions with Vector<T>, Option<T>, Result<T,E>, Dict<K,V>, or
 // primitive first params are excluded — builtin container/type methods
 // must be registered separately via register_builtin_methods.
-fn detect_inherent_methods(env: ResolvedEnv, local_type_names: Dict<String, Bool>) DetectMethodsResult {
+fn detect_inherent_methods(env: ResolvedEnv, local_type_names: Dict<String, Bool>, local_field_spans: Dict<String, Dict<String, Span>>, local_function_spans: Dict<String, Span>) DetectMethodsResult {
   m := env.methods
   tm := env.methods_by_type
   method_diags: Vector<diag.DiagKind> = []
@@ -1379,15 +1393,27 @@ fn detect_inherent_methods(env: ResolvedEnv, local_type_names: Dict<String, Bool
       },
       .None => f.name,
     }
-    // Check for collision with already-registered methods
-    collision := case tm[tid.id] {
-      .Some(existing) => existing.any(fn(e) { e.method_name == method_name }),
-      .None => {
-        case m[type_name] {
-          .Some(existing) => existing.any(fn(e) { e.method_name == method_name }),
-          .None => false,
+    // Check for collision with record fields and already-registered methods.
+    field_collision := case env.lookup_type_def(tid) {
+      .Some(def) => {
+        case def {
+          .Record(_, _, fields) => fields.any(fn(field) { field.name == method_name }),
+          _ => false,
         }
       },
+      .None => false,
+    }
+    collision := field_collision
+    if !collision {
+      collision = case tm[tid.id] {
+        .Some(existing) => existing.any(fn(e) { e.method_name == method_name }),
+        .None => {
+          case m[type_name] {
+            .Some(existing) => existing.any(fn(e) { e.method_name == method_name }),
+            .None => false,
+          }
+        },
+      }
     }
     if !collision {
       collision = case m[type_name] {
@@ -1395,7 +1421,25 @@ fn detect_inherent_methods(env: ResolvedEnv, local_type_names: Dict<String, Bool
         .None => false,
       }
     }
-    if collision {
+    if field_collision {
+      span := case local_field_spans[type_name] {
+        .Some(fields) => case fields[method_name] {
+          .Some(s) => s,
+          .None => .{ file_id: 0, start: 0, end: 0 },
+        },
+        .None => .{ file_id: 0, start: 0, end: 0 },
+      }
+      method_span := case local_function_spans[f.name] {
+        .Some(s) => s,
+        .None => .{ file_id: 0, start: 0, end: 0 },
+      }
+      method_diags = .append(.Error(.FieldMethodCollision(.{
+        span,
+        type_name,
+        name: method_name,
+        method_span,
+      })))
+    } else if collision {
       method_diags = .append(.Error(.DuplicateName(.{
         span: .{ file_id: 0, start: 0, end: 0 },
         kind: "method",
