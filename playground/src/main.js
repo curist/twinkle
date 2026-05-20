@@ -129,6 +129,9 @@ loadExample(examples.value).then(code => jar.updateCode(code))
 // Sync line number scroll with editor
 editorEl.addEventListener('scroll', () => { lineNumbers.scrollTop = editorEl.scrollTop })
 
+// iOS Safari: reset stuck scroll when keyboard dismisses
+editorEl.addEventListener('blur', () => { window.scrollTo(0, 0) })
+
 // Kick off tree-sitter load in the background; editor works without it
 initTreeSitter().catch(e => console.warn('tree-sitter unavailable:', e.message))
 
