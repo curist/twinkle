@@ -517,17 +517,17 @@ const imports = {
 
 ### Phase 1: Non-null extern types
 
-1. [ ] Add `ExternRef` variant to `MonoType` (both compilers — Rust `MonoType` enum too)
-2. [ ] Add `WExternref` to `WasmValType`
-3. [ ] Add exhaustive match arms for `ExternRef` / `WExternref` in all total `case` expressions: `val_type_of_mono`, `layout_of`, `val_type_key`, `mono_to_key`, `emit_box_to_anyref` (emit `any.convert_extern`), `emit_unbox_from_anyref` (emit `extern.convert_any`), and any others
-4. [ ] Parser: `extern <mod> type <Ident>` syntax, standalone first, then inside blocks (both compilers)
-5. [ ] Resolver: register extern types, extend `is_extern_safe_type`, forbid `==` on extern types, reject extern types in `Option` type args
-6. [ ] Wasm layout: `val_type_of_mono` returns `(ref extern)` for `ExternRef`; `layout_of` returns `Scalar(WExternref)`
-7. [ ] Codegen: emit `(ref extern)` in import signatures; support extern types in record fields, function params, locals
+1. [x] Add `ExternRef` variant to `MonoType` (both compilers — Rust `MonoType` enum too)
+2. [x] Add `WExternref` to `WasmValType`
+3. [x] Add exhaustive match arms for `ExternRef` / `WExternref` in all total `case` expressions: `val_type_of_mono`, `layout_of`, `val_type_key`, `mono_to_key`, `emit_box_to_anyref` (emit `any.convert_extern`), `emit_unbox_from_anyref` (emit `extern.convert_any`), and any others
+4. [x] Parser: `extern <mod> type <Ident>` syntax, standalone first, then inside blocks (both compilers)
+5. [x] Resolver: register extern types, extend `is_extern_safe_type`, forbid `==` on extern types, reject extern types in `Option` type args
+6. [x] Wasm layout: `val_type_of_mono` returns `(ref extern)` for `ExternRef`; `layout_of` returns `Scalar(WExternref)`
+7. [x] Codegen: emit `(ref extern)` in import signatures; support extern types in record fields, function params, locals
 8. [ ] Monomorphizer: verify `ExternRef` works as generic payload (`Vector<Element>`, `Dict<String, Element>`, user generics)
 9. [ ] Verify no codegen path emits uninitialized `(ref extern)` locals (test: `case` branches where extern-type local assigned in only one branch)
 10. [ ] End-to-end test: extern type passed through extern fn, bound in local, stored in record field, stored in `Vector` — verify WAT output
-11. [ ] Update `docs/spec.md` §7.2 with extern type syntax, semantics, and boundary null behavior
+11. [x] Update `docs/spec.md` §7.2 with extern type syntax, semantics, and boundary null behavior
 12. [ ] Playground: example with canvas extern types
 
 ### Phase 2: Nullable extern types (`Option<ExternType>`)
