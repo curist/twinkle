@@ -157,24 +157,50 @@ editorEl.addEventListener('keydown', (e) => {
 // Divider drag
 // ---------------------------------------------------------------------------
 let dragging = false
-divider.addEventListener('mousedown', (e) => {
+const isVertical = () => window.matchMedia('(max-width: 640px)').matches
+
+function onDragStart(e) {
   dragging = true
   divider.classList.add('dragging')
   e.preventDefault()
-})
-document.addEventListener('mousemove', (e) => {
+}
+function onDragMove(clientX, clientY) {
   if (!dragging) return
   const workspace = document.querySelector('.workspace')
   const rect = workspace.getBoundingClientRect()
-  const ratio = (e.clientX - rect.left) / rect.width
-  const pct = Math.min(Math.max(ratio * 100, 20), 80)
-  document.getElementById('editor-pane').style.flex = 'none'
-  document.getElementById('editor-pane').style.width = pct + '%'
-  document.getElementById('output-pane').style.flex = '1'
-})
-document.addEventListener('mouseup', () => {
+  const editorPane = document.getElementById('editor-pane')
+  const outputPane = document.getElementById('output-pane')
+  if (isVertical()) {
+    const ratio = (clientY - rect.top) / rect.height
+    const pct = Math.min(Math.max(ratio * 100, 20), 80)
+    editorPane.style.flex = 'none'
+    editorPane.style.width = ''
+    editorPane.style.height = pct + '%'
+    outputPane.style.flex = '1'
+  } else {
+    const ratio = (clientX - rect.left) / rect.width
+    const pct = Math.min(Math.max(ratio * 100, 20), 80)
+    editorPane.style.flex = 'none'
+    editorPane.style.height = ''
+    editorPane.style.width = pct + '%'
+    outputPane.style.flex = '1'
+  }
+}
+function onDragEnd() {
   if (dragging) { dragging = false; divider.classList.remove('dragging') }
-})
+}
+
+divider.addEventListener('mousedown', onDragStart)
+document.addEventListener('mousemove', (e) => onDragMove(e.clientX, e.clientY))
+document.addEventListener('mouseup', onDragEnd)
+
+divider.addEventListener('touchstart', (e) => { onDragStart(e); }, { passive: false })
+document.addEventListener('touchmove', (e) => {
+  if (!dragging) return
+  const t = e.touches[0]
+  onDragMove(t.clientX, t.clientY)
+}, { passive: true })
+document.addEventListener('touchend', onDragEnd)
 
 // ---------------------------------------------------------------------------
 // Worker
@@ -218,7 +244,7 @@ worker.onerror = (e) => {
 
 function setRunning(running) {
   runBtn.disabled = running
-  runBtn.textContent = running ? '⏳ Running…' : '▶ Run'
+  runBtn.textContent = running ? '⏳ Run' : '▶ Run'
 }
 
 function run() {

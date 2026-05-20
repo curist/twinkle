@@ -52,6 +52,7 @@
       font-weight: 600;
       cursor: pointer;
       transition: background 0.15s;
+      height: 32px;
     }
     #run-btn:hover:not(:disabled) { background: #2ea043; }
     #run-btn:disabled { opacity: 0.5; cursor: not-allowed; }
@@ -178,6 +179,56 @@
     .out-stderr { color: #f78166; }
     .out-meta   { color: #8b949e; font-style: italic; }
     .out-error  { color: #ff7b72; }
+
+    /* ── Mobile / small screen ── */
+    @media (max-width: 640px) {
+      header {
+        flex-wrap: wrap;
+        gap: 6px 8px;
+        padding: 8px 12px;
+        min-height: unset;
+        position: relative;
+      }
+      .logo {
+        width: 100%;
+      }
+      #status {
+        position: absolute;
+        top: 10px;
+        right: 12px;
+        margin-left: 0;
+        min-width: unset;
+        font-size: 0.72rem;
+      }
+      select {
+        flex: 1;
+        min-width: 0;
+      }
+      #run-btn {
+        width: 5.5em;
+        flex-shrink: 0;
+        font-size: 0.78rem;
+        padding: 4px 10px;
+      }
+      .workspace {
+        flex-direction: column;
+      }
+      .divider {
+        width: auto;
+        height: 5px;
+        cursor: row-resize;
+      }
+      #editor {
+        font-size: 16px;
+      }
+      #line-numbers {
+        font-size: 16px;
+        padding: 10px 6px 10px 8px;
+      }
+      #output {
+        font-size: 12px;
+      }
+    }
   </style>
 </head>
 <body>
