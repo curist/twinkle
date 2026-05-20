@@ -1,0 +1,32 @@
+extern dom type Element
+
+extern dom {
+  fn get_element(id: String) Element
+  fn append_child(parent: Element, child: Element) Element
+}
+
+type Box<T> = .{ value: T }
+
+type App = .{
+  root: Element,
+  elements: Vector<Element>,
+  by_id: Dict<String, Element>,
+  boxed: Box<Element>,
+}
+
+fn mk_app(root_id: String, child_id: String) App {
+  root := dom.get_element(root_id)
+  child := dom.get_element(child_id)
+  elements: Vector<Element> = [root, child]
+  by_id: Dict<String, Element> = Dict.new().set("root", root).set("child", child)
+  boxed: Box<Element> = .{ value: root }
+  App.{ root: root, elements: elements, by_id: by_id, boxed: boxed }
+}
+
+fn choose_element(flag: Bool, a: Element, b: Element) Element {
+  if flag { a } else { b }
+}
+
+app := mk_app("root", "child")
+chosen := choose_element(true, app.root, app.elements[1])
+dom.append_child(app.boxed.value, chosen)

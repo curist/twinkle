@@ -187,6 +187,10 @@ pub enum Instr {
         nullable: bool,
         heap: HeapType,
     },
+    /// `any.convert_extern`: convert `(ref extern)` to `(ref any)`.
+    AnyConvertExtern,
+    /// `extern.convert_any`: convert `(ref any)` to `(ref extern)`.
+    ExternConvertAny,
     RefTest {
         nullable: bool,
         heap: HeapType,

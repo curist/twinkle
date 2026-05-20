@@ -3063,6 +3063,10 @@ fn emit_box_on_stack(local_ty: &ValType) -> Vec<Instr> {
         ValType::I64 => vec![Instr::StructNew(T_BOXED_INT.to_string())],
         ValType::F64 => vec![Instr::StructNew(T_BOXED_FLOAT.to_string())],
         ValType::I32 => vec![Instr::RefI31],
+        ValType::Ref {
+            nullable: false,
+            heap: HeapType::Extern,
+        } => vec![Instr::AnyConvertExtern],
         ValType::Anyref | ValType::Ref { .. } | ValType::I31ref | ValType::Funcref => Vec::new(),
         _ => panic!(
             "unsupported boxing coercion from {:?} to anyref in Stage 8c",
@@ -3477,6 +3481,10 @@ fn emit_unbox_on_stack(expected: &ValType) -> Vec<Instr> {
             },
             Instr::I31GetS,
         ],
+        ValType::Ref {
+            nullable: false,
+            heap: HeapType::Extern,
+        } => vec![Instr::ExternConvertAny, Instr::RefAsNonNull],
         ValType::Ref { nullable, heap } => vec![Instr::RefCast {
             nullable: *nullable,
             heap: heap.clone(),

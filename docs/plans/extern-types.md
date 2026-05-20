@@ -524,11 +524,11 @@ const imports = {
 5. [x] Resolver: register extern types, extend `is_extern_safe_type`, forbid `==` on extern types, reject extern types in `Option` type args
 6. [x] Wasm layout: `val_type_of_mono` returns `(ref extern)` for `ExternRef`; `layout_of` returns `Scalar(WExternref)`
 7. [x] Codegen: emit `(ref extern)` in import signatures; support extern types in record fields, function params, locals
-8. [ ] Monomorphizer: verify `ExternRef` works as generic payload (`Vector<Element>`, `Dict<String, Element>`, user generics)
-9. [ ] Verify no codegen path emits uninitialized `(ref extern)` locals (test: `case` branches where extern-type local assigned in only one branch)
-10. [ ] End-to-end test: extern type passed through extern fn, bound in local, stored in record field, stored in `Vector` — verify WAT output
+8. [x] Monomorphizer: verify `ExternRef` works as generic payload (`Vector<Element>`, `Dict<String, Element>`, user generics)
+9. [x] Verify no codegen path emits uninitialized `(ref extern)` locals (test: `case` branches where extern-type local assigned in only one branch)
+10. [x] End-to-end test: extern type passed through extern fn, bound in local, stored in record field, stored in `Vector` — verify WAT output
 11. [x] Update `docs/spec.md` §7.2 with extern type syntax, semantics, and boundary null behavior
-12. [ ] Playground: example with canvas extern types
+12. [x] Playground: example with canvas extern types
 
 ### Phase 2: Nullable extern types (`Option<ExternType>`)
 

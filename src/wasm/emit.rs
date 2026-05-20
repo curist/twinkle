@@ -458,6 +458,8 @@ pub fn emit_instr(instr: &Instr, indent: usize) -> String {
                 format!("{pad}ref.cast (ref {ht})")
             }
         }
+        Instr::AnyConvertExtern => format!("{pad}any.convert_extern"),
+        Instr::ExternConvertAny => format!("{pad}extern.convert_any"),
         Instr::RefTest { nullable, heap } => {
             let ht = emit_heap_type(heap);
             if *nullable {

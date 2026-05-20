@@ -238,6 +238,39 @@ mod tests {
     }
 
     #[test]
+    fn build_wat_extern_types_validate_and_cross_anyref_boundaries() {
+        let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+        let path = root.join("tests/run/extern_types.tw");
+        let wat = build_wat(path.to_str().unwrap())
+            .unwrap_or_else(|e| panic!("build_wat failed for extern_types.tw: {e}"));
+
+        assert!(
+            wat.contains(r#"(import "dom" "get_element""#),
+            "missing dom.get_element import in WAT:\n{wat}"
+        );
+        assert!(
+            wat.contains(r#"(import "dom" "append_child""#),
+            "missing dom.append_child import in WAT:\n{wat}"
+        );
+        assert!(
+            wat.contains("(ref extern)"),
+            "extern type should lower to non-null ref extern:\n{wat}"
+        );
+        assert!(
+            wat.contains("any.convert_extern"),
+            "storing extern refs in Vector should convert externref to anyref:\n{wat}"
+        );
+        assert!(
+            wat.contains("extern.convert_any"),
+            "loading extern refs from Vector should convert anyref to externref:\n{wat}"
+        );
+
+        let wasm = wat::parse_str(&wat).expect("extern type WAT should assemble");
+        let engine = crate::cli::run_wasm::build_engine().expect("wasmtime engine");
+        wasmtime::Module::new(&engine, &wasm).expect("extern type module should validate");
+    }
+
+    #[test]
     fn assemble_wat_to_wasm_writes_binary_module() {
         use std::time::{SystemTime, UNIX_EPOCH};
 
