@@ -276,7 +276,8 @@ function autoBridgeExternImports(wasmModule, hostImports, b, jspi = false, wasmB
       const marshalArgs = (args) => args.map((arg) => {
         if (typeof arg === 'bigint') return Number(arg);
         if (typeof arg === 'number') return arg;
-        return decodeString(b, arg);
+        // Try to decode as Twinkle string; if it fails, it's an opaque externref
+        try { return decodeString(b, arg); } catch { return arg; }
       });
 
       const marshalReturn = (result) => {
@@ -564,12 +565,43 @@ async function runWasmBytesAsync(wasmBytes, { programArgs = [], env = {}, vfs, e
 }
 
 // ---------------------------------------------------------------------------
+// Canvas extern support (OffscreenCanvas from main thread)
+// ---------------------------------------------------------------------------
+
+function setupCanvasGlobals(offscreen) {
+  const ctx = offscreen.getContext('2d');
+  globalThis.canvas = {
+    get_context:       (_id) => ctx,
+    get_width:         () => offscreen.width,
+    get_height:        () => offscreen.height,
+    set_fill_style:    (c, color) => { c.fillStyle = color; },
+    fill_rect:         (c, x, y, w, h) => c.fillRect(x, y, w, h),
+    clear_rect:        (c, x, y, w, h) => c.clearRect(x, y, w, h),
+    set_stroke_style:  (c, color) => { c.strokeStyle = color; },
+    stroke_rect:       (c, x, y, w, h) => c.strokeRect(x, y, w, h),
+    begin_path:        (c) => c.beginPath(),
+    close_path:        (c) => c.closePath(),
+    move_to:           (c, x, y) => c.moveTo(x, y),
+    line_to:           (c, x, y) => c.lineTo(x, y),
+    arc:               (c, x, y, r, start, end) => c.arc(x, y, r, start, end),
+    fill:              (c) => c.fill(),
+    stroke:            (c) => c.stroke(),
+    set_line_width:    (c, w) => { c.lineWidth = w; },
+    set_global_alpha:  (c, a) => { c.globalAlpha = a; },
+    set_font:          (c, font) => { c.font = font; },
+    fill_text:         (c, text, x, y) => c.fillText(text, x, y),
+  };
+}
+
+// ---------------------------------------------------------------------------
 // Message handler
 // ---------------------------------------------------------------------------
 
 self.onmessage = async (event) => {
-  const { type, code } = event.data;
+  const { type, code, offscreenCanvas } = event.data;
   if (type !== 'run') return;
+
+  if (offscreenCanvas) setupCanvasGlobals(offscreenCanvas);
 
   try {
     await loadResources();

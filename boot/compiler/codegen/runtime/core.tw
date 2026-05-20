@@ -231,10 +231,22 @@ fn rec_eq_func_name(rec: WasmRecordLayout) String {
 }
 
 fn field_eq_instrs(qualified_sym: String, field_idx: Int, vt: ValType) Vector<Instr> {
-  get_both: Vector<Instr> = [
-    Instr.LocalGet(0), Instr.StructGet(qualified_sym, field_idx),
-    Instr.LocalGet(1), Instr.StructGet(qualified_sym, field_idx),
-  ]
+  // Extern ref fields need any.convert_extern before calling eq (anyref params)
+  is_extern := case vt {
+    .Ref(_, .Extern) => true,
+    _ => false,
+  }
+  get_both: Vector<Instr> = if is_extern {
+    [
+      Instr.LocalGet(0), Instr.StructGet(qualified_sym, field_idx), Instr.AnyConvertExtern,
+      Instr.LocalGet(1), Instr.StructGet(qualified_sym, field_idx), Instr.AnyConvertExtern,
+    ]
+  } else {
+    [
+      Instr.LocalGet(0), Instr.StructGet(qualified_sym, field_idx),
+      Instr.LocalGet(1), Instr.StructGet(qualified_sym, field_idx),
+    ]
+  }
   compare := case vt {
     .I8 => [Instr.I32Eq],
     .I32 => [Instr.I32Eq],

@@ -1370,19 +1370,28 @@ fn detect_inherent_methods(env: ResolvedEnv, local_type_names: Dict<String, Bool
     }
     // Only register methods for types defined in this module
     if !local_type_names.has(type_name) { continue }
+    // Extern functions are qualified ("module.fn_name"); use the unqualified
+    // part as the method name so `ctx.fill_rect(...)` resolves correctly.
+    method_name := case f.extern_module {
+      .Some(_) => {
+        parts := f.name.split(".")
+        parts[parts.len() - 1]
+      },
+      .None => f.name,
+    }
     // Check for collision with already-registered methods
     collision := case tm[tid.id] {
-      .Some(existing) => existing.any(fn(e) { e.method_name == f.name }),
+      .Some(existing) => existing.any(fn(e) { e.method_name == method_name }),
       .None => {
         case m[type_name] {
-          .Some(existing) => existing.any(fn(e) { e.method_name == f.name }),
+          .Some(existing) => existing.any(fn(e) { e.method_name == method_name }),
           .None => false,
         }
       },
     }
     if !collision {
       collision = case m[type_name] {
-        .Some(existing) => existing.any(fn(e) { e.method_name == f.name }),
+        .Some(existing) => existing.any(fn(e) { e.method_name == method_name }),
         .None => false,
       }
     }
@@ -1390,11 +1399,11 @@ fn detect_inherent_methods(env: ResolvedEnv, local_type_names: Dict<String, Bool
       method_diags = .append(.Error(.DuplicateName(.{
         span: .{ file_id: 0, start: 0, end: 0 },
         kind: "method",
-        name: "${f.name} on ${type_name}",
+        name: "${method_name} on ${type_name}",
       })))
     } else {
-      m = register_methods(m, type_name, [me(f.name, f.name)])
-      tm = register_type_methods(tm, tid, [me(f.name, f.name)])
+      m = register_methods(m, type_name, [me(method_name, f.name)])
+      tm = register_type_methods(tm, tid, [me(method_name, f.name)])
     }
   }
   .{ env: env.with_methods(m).with_type_methods(tm), diagnostics: method_diags }

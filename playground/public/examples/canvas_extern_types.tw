@@ -1,35 +1,111 @@
-// Canvas extern types: opaque browser handles backed by Wasm externref.
+// Canvas drawing with extern types — opaque browser handles via Wasm externref.
 //
-// Extern types are compile-time-only Twinkle types. They let regular records,
-// vectors, and functions carry host objects without exposing fields or variants.
-// A real app would provide thin JS wrappers such as:
-//
-//   globalThis.canvas = {
-//     get_context: (id) => document.getElementById(id).getContext("2d"),
-//     fill_rect: (ctx, x, y, w, h) => ctx.fillRect(x, y, w, h),
-//   }
-//
-// and then uncomment the extern functions below.
+// Extern types let Twinkle code hold and pass host objects (like a Canvas 2D
+// context) without exposing their internals. The playground wires these to a
+// real <canvas> element automatically.
 
 extern canvas type CanvasContext
-extern canvas type Element
 
-// extern canvas {
-//   fn get_context(id: String) CanvasContext
-//   fn fill_rect(ctx: CanvasContext, x: Float, y: Float, w: Float, h: Float)
-//   fn set_fill_style(ctx: CanvasContext, color: String)
-// }
-
-type GameState = .{
-  canvas: CanvasContext,
-  root: Element,
-  score: Int,
-  sprites: Vector<Element>,
+extern Math {
+  fn floor(x: Float) Float
 }
 
-fn add_score(state: GameState, points: Int) GameState {
-  state.score = state.score + points
-  state
+extern canvas {
+  fn get_context(id: String) CanvasContext
+  fn get_width() Float
+  fn get_height() Float
+  fn set_fill_style(ctx: CanvasContext, color: String)
+  fn fill_rect(ctx: CanvasContext, x: Float, y: Float, w: Float, h: Float)
+  fn set_stroke_style(ctx: CanvasContext, color: String)
+  fn stroke_rect(ctx: CanvasContext, x: Float, y: Float, w: Float, h: Float)
+  fn begin_path(ctx: CanvasContext)
+  fn arc(ctx: CanvasContext, x: Float, y: Float, r: Float, start: Float, end: Float)
+  fn fill(ctx: CanvasContext)
+  fn close_path(ctx: CanvasContext)
+  fn set_line_width(ctx: CanvasContext, w: Float)
+  fn set_global_alpha(ctx: CanvasContext, a: Float)
 }
 
-println("Canvas extern types declared. Provide JS wrappers to draw with host handles.")
+// Get the canvas context and dimensions
+ctx := canvas.get_context("twinkle")
+w := canvas.get_width()
+h := canvas.get_height()
+
+// Night sky background
+ctx.set_fill_style("#0d1117")
+ctx.fill_rect(0.0, 0.0, w, h)
+
+// Scatter stars proportionally across the canvas
+type Star = .{ nx: Float, ny: Float, r: Float, color: String }
+
+// Positions in 0..1 normalized coordinates
+stars: Vector<Star> = [
+  .{ nx: 0.13, ny: 0.15, r: 3.0, color: "#58a6ff" },
+  .{ nx: 0.33, ny: 0.10, r: 2.0, color: "#d2a8ff" },
+  .{ nx: 0.57, ny: 0.22, r: 4.0, color: "#ffa657" },
+  .{ nx: 0.83, ny: 0.12, r: 2.5, color: "#a5d6ff" },
+  .{ nx: 0.25, ny: 0.38, r: 1.5, color: "#c9d1d9" },
+  .{ nx: 0.75, ny: 0.32, r: 3.5, color: "#ff7b72" },
+  .{ nx: 0.08, ny: 0.50, r: 2.0, color: "#56d364" },
+  .{ nx: 0.47, ny: 0.45, r: 3.0, color: "#e3b341" },
+  .{ nx: 0.87, ny: 0.55, r: 2.0, color: "#58a6ff" },
+  .{ nx: 0.63, ny: 0.62, r: 1.5, color: "#d2a8ff" },
+  .{ nx: 0.20, ny: 0.70, r: 2.5, color: "#a5d6ff" },
+  .{ nx: 0.92, ny: 0.75, r: 2.0, color: "#ffa657" },
+  .{ nx: 0.40, ny: 0.28, r: 1.5, color: "#56d364" },
+  .{ nx: 0.05, ny: 0.85, r: 2.0, color: "#c9d1d9" },
+  .{ nx: 0.55, ny: 0.80, r: 3.0, color: "#ff7b72" },
+  .{ nx: 0.70, ny: 0.08, r: 2.0, color: "#e3b341" },
+]
+
+pi := 3.14159265
+
+// Scale star radius with canvas size
+scale := if w < h { w } else { h }
+scale = scale / 400.0
+
+for star in stars {
+  sx := star.nx * w
+  sy := star.ny * h
+  sr := star.r * scale
+
+  // Outer glow
+  ctx.set_global_alpha(0.15)
+  ctx.set_fill_style(star.color)
+  ctx.begin_path()
+  ctx.arc(sx, sy, sr * 4.0, 0.0, pi * 2.0)
+  ctx.fill()
+
+  // Middle glow
+  ctx.set_global_alpha(0.4)
+  ctx.begin_path()
+  ctx.arc(sx, sy, sr * 2.0, 0.0, pi * 2.0)
+  ctx.fill()
+
+  // Bright core
+  ctx.set_global_alpha(1.0)
+  ctx.begin_path()
+  ctx.arc(sx, sy, sr, 0.0, pi * 2.0)
+  ctx.fill()
+}
+
+// Reset alpha
+ctx.set_global_alpha(1.0)
+
+// Draw a colorful grid of squares along the bottom
+colors := ["#ff7b72", "#ffa657", "#e3b341", "#56d364", "#58a6ff", "#d2a8ff"]
+size := 18.0 * scale
+gap := 3.0 * scale
+cols := Math.floor((w - gap) / (size + gap)).to_int()
+start_x := (w - cols.to_float() * (size + gap)) / 2.0
+start_y := h - (size + gap) * 2.0 - gap
+
+for row in range(2) {
+  for col in range(cols) {
+    color_idx := (row + col) % colors.len()
+    ctx.set_fill_style(colors[color_idx])
+    x := start_x + col.to_float() * (size + gap)
+    y := start_y + row.to_float() * (size + gap)
+    ctx.fill_rect(x, y, size, size)
+  }
+}

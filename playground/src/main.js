@@ -254,7 +254,26 @@ function run() {
   output.innerHTML = ''
   setRunning(true)
   status.textContent = 'Starting…'
-  worker.postMessage({ type: 'run', code: jar.toString() })
+
+  const code = jar.toString()
+  const needsCanvas = /extern\s+\w+\s+type\s+\w*Canvas\w*|extern\s+canvas\b/.test(code)
+
+  if (needsCanvas) {
+    const canvas = document.createElement('canvas')
+    const dpr = window.devicePixelRatio || 1
+    // Measure the content area of #output (excludes its own padding)
+    const style = getComputedStyle(output)
+    const w = output.clientWidth - parseFloat(style.paddingLeft) - parseFloat(style.paddingRight)
+    const h = output.clientHeight - parseFloat(style.paddingTop) - parseFloat(style.paddingBottom)
+    canvas.width = Math.round(w * dpr)
+    canvas.height = Math.round(h * dpr)
+    canvas.style.cssText = `display:block; width:${w}px; height:${h}px;`
+    output.appendChild(canvas)
+    const offscreen = canvas.transferControlToOffscreen()
+    worker.postMessage({ type: 'run', code, offscreenCanvas: offscreen }, [offscreen])
+  } else {
+    worker.postMessage({ type: 'run', code })
+  }
 }
 
 runBtn.addEventListener('click', run)

@@ -368,6 +368,14 @@ fn unify(ctx: InferCtx, a: MonoType, b: MonoType, s: Span, diags: Vector<DiagKin
         _ => {},
       }
     },
+    .ExternRef(ta) => {
+      case zb {
+        .ExternRef(tb) => {
+          if ta.id == tb.id { return .{ ctx, diags } }
+        },
+        _ => {},
+      }
+    },
     .Var(na) => {
       case zb {
         .Var(nb) => {

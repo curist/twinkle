@@ -251,6 +251,7 @@ pub fn repr_of_mono(mono: MonoType, env: ResolvedEnv) ReprKind {
     .Result(_, _) => .TypedSum(mono),
     .Vector(_) => .TypedRef(mono),
     .Dict(_, _) => .TypedRef(mono),
+    .ExternRef(_) => .TypedRef(mono),
     .Named(_, _) => repr_of_named(mono, env),
     // Var/MetaVar should not appear in prepared IR; fall back to OpaqueAnyref.
     _ => .OpaqueAnyref,
@@ -328,6 +329,7 @@ fn cached_repr_of_mono(mono: MonoType, env: ResolvedEnv, cache: ReprAssignCache)
         .Result(_, _) => .{ repr: .TypedSum(mono), cache: cache },
         .Vector(_) => .{ repr: .TypedRef(mono), cache: cache },
         .Dict(_, _) => .{ repr: .TypedRef(mono), cache: cache },
+        .ExternRef(_) => .{ repr: .TypedRef(mono), cache: cache },
         .Named(_, _) => repr_of_named_cached(mono, env, cache),
         _ => .{ repr: .OpaqueAnyref, cache: cache },
       }
