@@ -141,7 +141,6 @@ fn unit_sum_variant_ids(env: ResolvedEnv, tid: TypeId) Vector<Int>? {
         if variants[i].fields.len() != 0 {
           return .None
         }
-
         ids = .append(i)
       }
 
@@ -160,7 +159,6 @@ fn build_unit_sum_compare(
   s: Span,
 ) CoreExprKind {
   arms: Vector<MatchArm> = []
-
   for vid in variants {
     arms = .append(
       MatchArm.{
@@ -173,7 +171,6 @@ fn build_unit_sum_compare(
       },
     )
   }
-
   fallback := if ast_op == .Eq { false } else { true }
   arms = .append(
     MatchArm.{

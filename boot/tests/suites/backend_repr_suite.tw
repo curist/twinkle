@@ -238,9 +238,7 @@ fn mk_module(funcs: Vector<AnfFunctionDef>) AnfModule {
 
 fn mk_mono_map(entries: Vector<Int>, types: Vector<MonoType>) Dict<Int, MonoType> {
   d: Dict<Int, MonoType> = Dict.new()
-
   for k, i in entries { d[k] = types[i] }
-
   d
 }
 

@@ -173,11 +173,9 @@ fn resolve_type_name(snap: SemanticSnapshot, env: ResolvedEnv, name: String) Def
   case env.type_origins[entry.id.id] {
     .Some(origin) => {
       parts := origin.split("::")
-
       if parts.len() >= 2 {
         return find_type_in_module(snap, parts[0], parts[1])
       }
-
       .None
     },
     .None => find_type_in_module(snap, snap.canonical_path, local_name(name)),
@@ -1182,7 +1180,6 @@ fn find_scoped_binding_in_expr(expr: Expr, name: String, ref_offset: Int) Bindin
       if cond.span.contains(ref_offset) {
         return .None
       }
-
       if then_block.span.contains(ref_offset) {
         return find_local_in_block(then_block, name, ref_offset)
       }

@@ -96,9 +96,7 @@ pub fn plan_wasm_types_impl(
 
   t2 := date.now()
   funcs_by_id: Dict<Int, PreparedFunc> = Dict.new()
-
   for func in input.funcs { funcs_by_id[func.func_id.id] = func }
-
   for s in scan.strings.keys() { reg = register_string(reg, s) }
 
   for fid in scan.closure_materialized_funcs.keys() {
@@ -108,7 +106,6 @@ pub fn plan_wasm_types_impl(
       .None => { continue },
     }
     reg = register_func_sig_by_id(reg, FuncId.{ id: fid }, funcs_by_id, builtins, env)
-
     if target.typed_closure_support { reg.typed_closure_funcs[fid] = true }
   }
 
@@ -150,11 +147,9 @@ pub fn plan_wasm_types_impl(
             "resolve_module_global_mono: no init function has slot for module global L${k}",
           ),
         }
-
         if !reg.module_globals.has(k) {
           reg.module_globals_order = reg.module_globals_order.append(k)
         }
-
         reg.module_globals[k] = ModuleGlobalEntry.{ sym: "global_local_${k}", mono: mono }
       }
     },
@@ -200,11 +195,9 @@ fn validate_concrete_mono(ty: MonoType, env: ResolvedEnv, context: String) {
         .Some(.Alias(n, _, _)) => n,
         .None => "TypeId ${tid.id}",
       }
-
       if args.len() < entry.arity {
         error("${context}: ${name} expects ${entry.arity} type arg(s), got ${args.len()}")
       }
-
       for arg in args { validate_concrete_mono(arg, env, context) }
     },
     .Vector(inner) => validate_concrete_mono(inner, env, context),
@@ -214,7 +207,6 @@ fn validate_concrete_mono(ty: MonoType, env: ResolvedEnv, context: String) {
     },
     .Function(params, ret) => {
       for param in params { validate_concrete_mono(param, env, context) }
-
       validate_concrete_mono(ret, env, context)
     },
     .Optional(inner) => validate_concrete_mono(inner, env, context),
@@ -351,11 +343,8 @@ fn register_named_dependencies(
           "register_named_dependencies: ${name} expected ${type_params.len()} type arg(s), got ${args.len()}",
         )
       }
-
       cur := reg
-
       for f in fields { cur = register_mono(cur, subst_type_params(f.ty, type_params, args), env) }
-
       cur
     },
     .Sum(name, type_params, variants) => {
@@ -364,7 +353,6 @@ fn register_named_dependencies(
           "register_named_dependencies: ${name} expected ${type_params.len()} type arg(s), got ${args.len()}",
         )
       }
-
       cur := reg
 
       for v in variants {
@@ -381,7 +369,6 @@ fn register_named_dependencies(
           "register_named_dependencies: ${name} expected ${type_params.len()} type arg(s), got ${args.len()}",
         )
       }
-
       register_mono(reg, subst_type_params(target, type_params, args), env)
     },
   }
@@ -626,11 +613,8 @@ fn topo_sort_type_defs(reg: WasmTypeRegistry) WasmTypeRegistry {
   if reg.type_defs.len() <= 1 {
     return reg
   }
-
   defs_by_name: Dict<String, TypeDef> = Dict.new()
-
   for td in reg.type_defs { defs_by_name[type_def_name(td)] = td }
-
   ordered_names: Vector<String> = []
   emitted: Dict<String, Bool> = Dict.new()
   remaining := reg.type_defs.len()
@@ -739,7 +723,6 @@ fn type_def_deps(td: TypeDef) Vector<String> {
     .Array(_, elem) => { deps = append_unique(deps, val_type_deps(elem.ty)) },
     .FuncType(_, params, results) => {
       for vt in params { deps = append_unique(deps, val_type_deps(vt)) }
-
       for vt in results { deps = append_unique(deps, val_type_deps(vt)) }
     },
   }

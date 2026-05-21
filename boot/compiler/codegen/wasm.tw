@@ -283,19 +283,13 @@ fn build_ctx(
 
   // Global indices.
   global_idx: Dict<String, Int> = Dict.new()
-
   for global, i in globals { global_idx[global.name] = i }
-
   // Table indices.
   table_idx: Dict<String, Int> = Dict.new()
-
   for table, i in tables { table_idx[table.name] = i }
-
   // Data segment indices.
   data_idx: Dict<String, Int> = Dict.new()
-
   for d, i in data { data_idx[d.name] = i }
-
   .{ type_idx, anon_ft, anon_ft_idx, anon_ft_base, func_idx, global_idx, table_idx, data_idx }
 }
 
@@ -352,13 +346,9 @@ fn encode_func_comptype_into(
 ) Vector<Byte> {
   buf = emit_u8(buf, 0x60)
   buf = emit_u32_leb(buf, params.len())
-
   for p in params { buf = encode_val_type_into(buf, p, ctx) }
-
   buf = emit_u32_leb(buf, results.len())
-
   for r in results { buf = encode_val_type_into(buf, r, ctx) }
-
   buf
 }
 
@@ -367,9 +357,7 @@ fn encode_comptype_into(buf: Vector<Byte>, td: TypeDef, ctx: WasmCtx) Vector<Byt
     .Struct(_, fields, _, _) => {
       buf = emit_u8(buf, 0x5F)
       buf = emit_u32_leb(buf, fields.len())
-
       for f in fields { buf = encode_field_type_into(buf, f, ctx) }
-
       buf
     },
     .Array(_, field) => encode_field_type_into(emit_u8(buf, 0x5E), field, ctx),
@@ -416,9 +404,7 @@ fn encode_type_section_payload(
   ctx: WasmCtx,
 ) Vector<Byte> {
   types_by_name: Dict<String, TypeDef> = Dict.new()
-
   for td in types { types_by_name[type_def_name(td)] = td }
-
   entry_count := ordered_sccs.len() + anon_ft.len()
   payload := emit_u32_leb([], entry_count)
 
@@ -449,7 +435,6 @@ fn encode_type_section_payload(
   }
 
   for ft in anon_ft { payload = encode_func_comptype_into(payload, ft.params, ft.results, ctx) }
-
   payload
 }
 
@@ -469,9 +454,7 @@ fn encode_import_section_payload(imports: Vector<ImportDef>, ctx: WasmCtx) Vecto
 
 fn encode_function_section_payload(funcs: Vector<FuncDef>, ctx: WasmCtx) Vector<Byte> {
   payload := emit_u32_leb([], funcs.len())
-
   for f in funcs { payload = emit_u32_leb(payload, anon_ft_idx_of(ctx, f.params, f.results)) }
-
   payload
 }
 
@@ -545,25 +528,18 @@ fn collect_ref_funcs_instr(instr: Instr, seen: Dict<String, Bool>) Dict<String, 
     .RefFunc(s) => seen.set(s, true),
     .If(_, then_body, else_body) => {
       s := seen
-
       for i in then_body { s = collect_ref_funcs_instr(i, s) }
-
       for i in else_body { s = collect_ref_funcs_instr(i, s) }
-
       s
     },
     .Block(_, _, body) => {
       s := seen
-
       for i in body { s = collect_ref_funcs_instr(i, s) }
-
       s
     },
     .Loop(_, _, body) => {
       s := seen
-
       for i in body { s = collect_ref_funcs_instr(i, s) }
-
       s
     },
     _ => seen,
@@ -586,7 +562,6 @@ fn encode_elem_section_payload_with_refs(
     payload = emit_u8(payload, 0x0B) // end
     payload = emit_u8(payload, 0x00) // elemkind: funcref
     payload = emit_u32_leb(payload, elem.func_syms.len())
-
     for sym in elem.func_syms { payload = emit_u32_leb(payload, func_idx_of(ctx, sym)) }
   }
 
@@ -595,7 +570,6 @@ fn encode_elem_section_payload_with_refs(
     payload = emit_u32_leb(payload, 3)
     payload = emit_u8(payload, 0x00)
     payload = emit_u32_leb(payload, ref_func_syms.len())
-
     for sym in ref_func_syms { payload = emit_u32_leb(payload, func_idx_of(ctx, sym)) }
   }
 
@@ -803,7 +777,6 @@ fn find_label_depth(label_stack: Vector<String>, label: String) Int {
     if label_stack[i] == label {
       return n - 1 - i
     }
-
     i = i - 1
   }
 
@@ -828,9 +801,7 @@ fn encode_instrs(
   ctx: WasmCtx,
 ) Vector<Byte> {
   out := buf
-
   for instr in instrs { out = encode_instr(out, instr, label_stack, ctx) }
-
   out
 }
 
@@ -1113,9 +1084,7 @@ fn encode_instr_cached(
     },
     .BrTable(labels, default_label) => {
       out := emit_u32_leb(emit_u8(buf, 0x0E), labels.len())
-
       for lbl in labels { out = emit_u32_leb(out, label_depth_of(label_ctx, lbl)) }
-
       .{ buf: emit_u32_leb(out, label_depth_of(label_ctx, default_label)), cache: cache }
     },
     .If(bt, then_body, else_body) => {
@@ -1194,14 +1163,10 @@ fn emit_wasm_parts(
   t0 := date.now()
   ordered_sccs := compute_type_order(types)
   t_scc := date.now()
-
   if timed { eprintln("[time:wasm] type_order=${Float.to_string(t_scc - t0)}ms") }
-
   ctx := build_ctx(ordered_sccs, imports, funcs, globals, tables, data)
   t1 := date.now()
-
   if timed { eprintln("[time:wasm] build_ctx=${Float.to_string(t1 - t_scc)}ms") }
-
   // Module header: magic + version
   buf: Vector<Byte> = [
     byte(0x00),
@@ -1215,7 +1180,6 @@ fn emit_wasm_parts(
   ]
   // 1. Type section (id=1)
   total_types := ctx.anon_ft_base + ctx.anon_ft.len()
-
   if total_types > 0 {
     buf = emit_section_into(
       buf,
@@ -1223,30 +1187,23 @@ fn emit_wasm_parts(
       encode_type_section_payload(ordered_sccs, types, ctx.anon_ft, ctx),
     )
   }
-
   t2 := date.now()
-
   if timed { eprintln("[time:wasm] type_section=${Float.to_string(t2 - t1)}ms") }
-
   // 2. Import section (id=2)
   if imports.len() > 0 {
     buf = emit_section_into(buf, 2, encode_import_section_payload(imports, ctx))
   }
-
   // 3. Function section (id=3)
   if funcs.len() > 0 {
     buf = emit_section_into(buf, 3, encode_function_section_payload(funcs, ctx))
   }
-
   // 4. Table section (id=4)
   if tables.len() > 0 { buf = emit_section_into(buf, 4, encode_table_section_payload(tables, ctx)) }
-
   // (5 = memory — not used by Twinkle)
   // 6. Global section (id=6)
   if globals.len() > 0 {
     buf = emit_section_into(buf, 6, encode_global_section_payload(globals, ctx))
   }
-
   // 7. Export section (id=7)
   if exports.len() > 0 {
     buf = emit_section_into(buf, 7, encode_export_section_payload(exports, ctx))
@@ -1260,27 +1217,18 @@ fn emit_wasm_parts(
 
   // 9. Element section (id=9)
   ref_syms := collect_ref_func_syms(funcs, elems)
-
   if elems.len() > 0 or ref_syms.len() > 0 {
     buf = emit_section_into(buf, 9, encode_elem_section_payload_with_refs(elems, ref_syms, ctx))
   }
-
   t3 := date.now()
-
   if timed { eprintln("[time:wasm] small_sections=${Float.to_string(t3 - t2)}ms") }
-
   // 12. Data count section (id=12) — required before code when data segments exist
   if data.len() > 0 { buf = emit_section_into(buf, 12, encode_data_count_section_payload(data)) }
-
   // 10. Code section (id=10)
   if funcs.len() > 0 { buf = emit_section_into(buf, 10, encode_code_section_payload(funcs, ctx)) }
-
   t4 := date.now()
-
   if timed { eprintln("[time:wasm] code_section=${Float.to_string(t4 - t3)}ms") }
-
   // 11. Data section (id=11)
   if data.len() > 0 { buf = emit_section_into(buf, 11, encode_data_section_payload(data, ctx)) }
-
   buf
 }

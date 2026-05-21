@@ -14,7 +14,6 @@ pub fn run_fmt_command(parsed: ParseResult) {
   if parsed.positional.len() == 0 {
     exit_usage_error("missing required positional argument 'file'")
   }
-
   check := app.has_flag(parsed, "check")
   needs_reformat := false
 

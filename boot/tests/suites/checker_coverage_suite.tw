@@ -30,9 +30,7 @@ fn check_errs(src: String) Result<Vector<String>, String> {
   }
 
   msgs: Vector<String> = []
-
   for d in r.diagnostics { msgs = .append(d.message()) }
-
   .Ok(msgs)
 }
 
@@ -40,7 +38,6 @@ fn find_offset(src: String, needle: String) Int? {
   if needle.len() > src.len() {
     return .None
   }
-
   limit := src.len() - needle.len()
 
   for i in 0..limit + 1 {

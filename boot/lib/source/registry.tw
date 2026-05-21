@@ -75,7 +75,6 @@ pub fn line_col(reg: FileRegistry, s: Span) LineCol? {
   if s.start < 0 {
     return .None
   }
-
   f := try get_file(reg, s.file_id)
   line_index := find_line_index(f.line_starts, s.start)
   line := line_index + 1
@@ -94,7 +93,6 @@ pub fn line_text(reg: FileRegistry, s: Span) String? {
   if s.start < 0 {
     return .None
   }
-
   f := try get_file(reg, s.file_id)
   line_index := find_line_index(f.line_starts, s.start)
   line_start := f.line_starts[line_index]

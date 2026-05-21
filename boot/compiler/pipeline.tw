@@ -113,11 +113,8 @@ fn format_analysis_diags_inline(env: ResolvedEnv, src: String, diags: Vector<ana
   if diags.len() == 0 {
     return "compilation failed"
   }
-
   parts: Vector<String> = []
-
   for d in diags { parts = .append(format_analysis_diag_inline(env, src, d)) }
-
   parts.join("\n")
 }
 
@@ -140,7 +137,6 @@ fn format_diags_inline(env: ResolvedEnv, src: String, diags: Vector<diag.DiagKin
   if diags.len() == 0 {
     return "compilation failed"
   }
-
   reg := registry.empty()
   registry.add_file(reg, "<input>", src)
   config := report.default_config()

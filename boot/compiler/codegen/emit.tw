@@ -93,7 +93,6 @@ pub fn emit_module(
   }
 
   for pf in prepared.funcs { prepared_funcs[pf.func_id.id] = pf }
-
   // Analyze suspending task bodies for state-machine transform
   suspending_bodies: Dict<Int, TaskResumeInfo> = Dict.new()
   suspending_fids := classify_task_bodies(anf, builtins)
@@ -135,26 +134,19 @@ pub fn emit_module(
     }
     result := emit_func(func, pf, base_ctx)
     funcs = .append(result.func_def)
-
     for t in result.trampolines { trampolines = .append(t) }
   }
 
   for t in trampolines { funcs = .append(t) }
-
   for t in emit_builtin_trampolines(base_ctx) { funcs = .append(t) }
-
   iterator_helpers := collect_iterator_next_helpers(prepared.funcs, builtins)
-
   for mono in iterator_helpers { funcs = .append(emit_iterator_next_helper(mono, env)) }
-
   sum_helpers := collect_sum_variant_helpers(prepared.funcs, env)
-
   for mono in sum_helpers {
     funcs = .append(emit_sum_to_variant_helper(mono, env)).append(
       emit_variant_to_sum_helper(mono, env),
     )
   }
-
   funcs = .append(emit_host_read_file_result_helper(env)).append(
     emit_option_from_variant_helper(MonoType.String, env),
   ).append(emit_option_from_variant_helper(MonoType.Int, env)).append(
@@ -196,9 +188,7 @@ pub fn emit_module(
   // String pool: globals, getter functions, data segment
   str_globals := emit_string_pool_globals(reg)
   str_getters := emit_string_pool_getters(reg)
-
   for g in str_getters { funcs = .append(g) }
-
   str_data := emit_string_data_segment(reg)
   // Module globals
   mod_globals := emit_module_globals(reg, anf, env)
@@ -396,11 +386,9 @@ fn emit_func(func: AnfFunctionDef, prepared: PreparedFunc, base_ctx: EmitCtx) Fu
     suspending_bodies: base_ctx.suspending_bodies,
   }
   body_instrs := emit_expr(prepared.body, prepared.return_mono, ctx, [])
-
   // After the init function body, drain the scheduler to run any
   // spawned-but-unawaited tasks before program exit.
   if func.is_init { body_instrs = .append(Instr.Call("rt_sched__sched_drain")) }
-
   sym := lookup_func_sym(base_ctx.func_sym_map, func.func_id)
   fd := FuncDef.{
     name: sym,
@@ -488,12 +476,10 @@ fn collect_vector_builder_slots_op(
     },
     .AInit(.ASlot(src)) => {
       if known.has(src.id) { cur[sid.id] = true }
-
       cur
     },
     .AAssign(target, .ASlot(src)) => {
       if known.has(src.id) { cur[target.id] = true }
-
       cur
     },
     .AIf(_, then_e, else_e) => {
@@ -516,7 +502,6 @@ fn collect_vector_builder_slots_op(
     },
     .AMatch(_, arms) => {
       out := cur
-
       for arm in arms {
         out = collect_vector_builder_slots_expr(
           arm.body,
@@ -527,7 +512,6 @@ fn collect_vector_builder_slots_op(
           out,
         )
       }
-
       out
     },
     .ALoop(body) => collect_vector_builder_slots_expr(
@@ -586,20 +570,17 @@ fn emit_expr(expr: PreparedExpr, expected_ty: MonoType, ctx: EmitCtx, buf: Vecto
     .Return(.None) => buf.append(.Return),
     .Break(.Some(atom)) => {
       if ctx.label_stack.len() == 0 { error("emit_expr: Break with no label stack") }
-
       lp := ctx.label_stack[ctx.label_stack.len() - 1]
       buf2 := emit_atom(atom, ctx, buf)
       buf2.append(.Br(lp.break_label))
     },
     .Break(.None) => {
       if ctx.label_stack.len() == 0 { error("emit_expr: Break with no label stack") }
-
       lp := ctx.label_stack[ctx.label_stack.len() - 1]
       buf.append(.Br(lp.break_label))
     },
     .Continue => {
       if ctx.label_stack.len() == 0 { error("emit_expr: Continue with no label stack") }
-
       lp := ctx.label_stack[ctx.label_stack.len() - 1]
       buf.append(.Br(lp.continue_label))
     },
@@ -1821,9 +1802,7 @@ fn emit_spawn_suspending(
   buf = .append(.I32Const(0)) // state = RUNNABLE
   // Frame fields: pc, captures..., hoisted_locals..., await_targets...
   buf = .append(.I32Const(0)) // pc = 0
-
   for cap_sid in closure_info.captures { buf = emit_atom(.ASlot(cap_sid), ctx, buf) }
-
   // Default values for non-capture hoisted locals
   num_captures := closure_info.captures.len()
   i := num_captures
@@ -1972,9 +1951,7 @@ fn emit_resume_func(info: TaskResumeInfo, func: PreparedFunc, base_ctx: EmitCtx)
     Instr.StructGet(info.frame_sym, 0),
     Instr.LocalSet(pc_local),
   ]
-
   for instr in dispatch { loop_body = .append(instr) }
-
   body = .append(Instr.Loop("\$resume_loop", .Some(.I32), loop_body))
   FuncDef.{
     name: info.resume_sym,
@@ -2056,9 +2033,7 @@ fn emit_resume_segment(
     // Intermediate segment: emit bindings, then suspend
     seg_expr := build_segment_expr(info.bindings, start_idx, end_idx, PreparedExpr.Atom(.ALitVoid))
     seg_instrs := emit_expr(seg_expr, MonoType.Void, ctx, [])
-
     for instr in seg_instrs { buf = .append(instr) }
-
     // Save hoisted locals to frame
     buf = save_hoisted_to_frame(info, frame_local, ctx, buf)
     // Set next pc
@@ -2147,7 +2122,6 @@ fn emit_resume_segment(
       PreparedExpr.Atom(info.tail_atom),
     )
     seg_instrs := emit_expr(seg_expr, func.return_mono, ctx, [])
-
     for instr in seg_instrs { buf = .append(instr) }
 
     // Void expressions do not leave a stack value when emitted with a Void
@@ -2198,7 +2172,6 @@ fn build_pc_dispatch(pc_local: Int, segment_bodies: Vector<Vector<Instr>>, idx: 
   if idx == segment_bodies.len() - 1 {
     return segment_bodies[idx]
   }
-
   then_body := segment_bodies[idx]
   else_body := build_pc_dispatch(pc_local, segment_bodies, idx + 1)
   buf: Vector<Instr> = []
@@ -2607,7 +2580,6 @@ fn emit_variant_pattern_condition(
       if !has_inner {
         return buf.concat(tag_check)
       }
-
       // Sub-pattern on the payload (the scrutinee itself, cast to non-null)
       inner_checks: Vector<Vector<Instr>> = []
 
@@ -2639,7 +2611,6 @@ fn emit_variant_pattern_condition(
   if !has_inner {
     return buf.concat(tag_check)
   }
-
   // Short-circuit inner checks
   variant_layout := find_variant_layout(sum_layout, vid)
   inner_checks: Vector<Vector<Instr>> = []

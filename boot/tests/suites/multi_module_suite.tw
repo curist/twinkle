@@ -19,11 +19,9 @@ fn has_box_to_string_param(env: ResolvedEnv, func: FunctionDef) Bool {
   if func.name != "to_string" {
     return false
   }
-
   if func.params.len() == 0 {
     return false
   }
-
   env.ty_to_string_env(func.params[0].ty).starts_with("Box")
 }
 

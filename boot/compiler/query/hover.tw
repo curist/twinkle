@@ -50,7 +50,6 @@ fn hover_import_item(it: ImportItem, offset: Int, typed: CheckResult) HoverResul
       if !v.span.contains(offset) {
         return .None
       }
-
       binding := v.alias.unwrap_or(v.name)
 
       case typed.env.lookup_function(binding) {
@@ -62,7 +61,6 @@ fn hover_import_item(it: ImportItem, offset: Int, typed: CheckResult) HoverResul
       if !t.span.contains(offset) {
         return .None
       }
-
       binding := t.alias.unwrap_or(t.name)
       entry := try typed.env.lookup_type(binding)
 
@@ -258,17 +256,14 @@ fn hover_for_stmt(fs: ForStmt, offset: Int, typed: CheckResult) HoverResult? {
   if !fs.span.contains(offset) {
     return .None
   }
-
   hover_for_pattern(fs, offset, typed).or_else(fn() { hover_for_index(fs, offset, typed) })
 }
 
 fn hover_for_pattern(fs: ForStmt, offset: Int, typed: CheckResult) HoverResult? {
   ps := try fs.pattern_span
-
   if !ps.contains(offset) {
     return .None
   }
-
   iter := try fs.iter
   ty := try typed.type_map[iter.id]
   .Some(.{ content: ty_to_string_env(typed.env, iter_element_type(ty)), span: ps })
@@ -276,11 +271,9 @@ fn hover_for_pattern(fs: ForStmt, offset: Int, typed: CheckResult) HoverResult? 
 
 fn hover_for_index(fs: ForStmt, offset: Int, typed: CheckResult) HoverResult? {
   is := try fs.index_span
-
   if !is.contains(offset) {
     return .None
   }
-
   .Some(.{ content: ty_to_string_env(typed.env, .Int), span: is })
 }
 
@@ -573,7 +566,6 @@ fn hover_type_path(path: TypePath, offset: Int, typed: CheckResult) HoverResult?
   if !path.span.contains(offset) or path.segments.len() == 0 {
     return .None
   }
-
   name := path.segments.join(".")
 
   case typed.env.lookup_type(name) {
@@ -769,20 +761,15 @@ fn extract_doc_comment(source: String, decl_start: Int) String? {
   // Walk backwards from decl_start to find /// comment lines.
   // First, find the line start of the declaration.
   pos := decl_start - 1
-
   // Skip to start of declaration line
   for pos > 0 and source.char_code_at(pos) != 10 { pos = pos - 1 }
-
   if pos > 0 { pos = pos - 1 } // skip the newline, now on end of previous line
-
   lines: Vector<String> = []
 
   for pos >= 0 {
     // Find start of this line
     line_start := pos
-
     for line_start > 0 and source.char_code_at(line_start - 1) != 10 { line_start = line_start - 1 }
-
     line := source.slice(line_start, pos + 1)
     trimmed := line.trim()
 
@@ -791,9 +778,7 @@ fn extract_doc_comment(source: String, decl_start: Int) String? {
         trimmed.slice(4, trimmed.len())
       } else { trimmed.slice(3, trimmed.len()) }
       lines = [rest].concat(lines)
-
       if line_start == 0 { break }
-
       pos = line_start - 2 // move to end of previous line
     } else {
       break

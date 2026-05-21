@@ -28,6 +28,5 @@ pub fn run_command_impl(parsed: ParseResult, file: String) {
   }
   argv := [file].concat(user_args)
   exit_code := proc.run_wasm(wasm_bytes, argv)
-
   if exit_code != 0 { proc.exit(exit_code) }
 }

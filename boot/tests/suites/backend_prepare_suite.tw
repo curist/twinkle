@@ -71,9 +71,7 @@ fn mk_param(id: Int, ty: MonoType) Param { Param.{ local: lid(id), ty: ty } }
 
 fn mk_mono_map(entries: Vector<Int>, types: Vector<MonoType>) Dict<Int, MonoType> {
   d: Dict<Int, MonoType> = Dict.new()
-
   for k, i in entries { d[k] = types[i] }
-
   d
 }
 
@@ -144,9 +142,7 @@ fn count_wraps_op(op: AnfOp) Int {
     .AIf(_, then_e, else_e) => count_wraps_expr(then_e) + count_wraps_expr(else_e),
     .AMatch(_, arms) => {
       s := 0
-
       for arm in arms { s = s + count_wraps_expr(arm.body) }
-
       s
     },
     .ALoop(inner) => count_wraps_expr(inner),
@@ -167,9 +163,7 @@ fn count_unwraps_op(op: AnfOp) Int {
     .AIf(_, then_e, else_e) => count_unwraps_expr(then_e) + count_unwraps_expr(else_e),
     .AMatch(_, arms) => {
       s := 0
-
       for arm in arms { s = s + count_unwraps_expr(arm.body) }
-
       s
     },
     .ALoop(inner) => count_unwraps_expr(inner),
@@ -276,9 +270,7 @@ pub fn suite() runner.Suite {
       all_lids := collect_let_lids_expr(result_body)
       // all_lids includes the wrap temp (allocated at next_local = 11) and t0
       pf := prepared.funcs[0]
-
       for l in all_lids { _ := try find_slot_id_by_local_result(pf, l) }
-
       .Ok({})
     },
   ).test(
@@ -347,9 +339,7 @@ pub fn suite() runner.Suite {
       try assert.equal(count_unwraps_expr(result_body), 1)
       all_lids := collect_let_lids_expr(result_body)
       pf := prepared.funcs[0]
-
       for l in all_lids { _ := try find_slot_id_by_local_result(pf, l) }
-
       .Ok({})
     },
   ).test(

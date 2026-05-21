@@ -18,9 +18,7 @@ pub fn collect_pattern_bindings(pattern: CorePattern, out: Dict<Int, Bool>) Dict
     .Var(id) => set_add(out, id.id),
     .Variant(_, _, fields) => {
       result := out
-
       for f in fields { result = collect_pattern_bindings(f, result) }
-
       result
     },
     .Wildcard => out,
@@ -72,9 +70,7 @@ fn collect_free_op(op: AnfOp, declared: Dict<Int, Bool>, free: Dict<Int, Bool>) 
   case op {
     .ACall(callee, args) => {
       st = free_atom(callee, st)
-
       for a in args { st = free_atom(a, st) }
-
       st
     },
     .AIf(cond, then_e, else_e) => {
@@ -118,7 +114,6 @@ fn collect_free_op(op: AnfOp, declared: Dict<Int, Bool>, free: Dict<Int, Bool>) 
     },
     .ARecord(_, fields) => {
       for f in fields { st = free_atom(f.value, st) }
-
       st
     },
     .ARecordGet(target, _, _) => free_atom(target, st),
@@ -128,12 +123,10 @@ fn collect_free_op(op: AnfOp, declared: Dict<Int, Bool>, free: Dict<Int, Bool>) 
     },
     .AVariant(_, _, args) => {
       for a in args { st = free_atom(a, st) }
-
       st
     },
     .AArrayLit(elems) => {
       for a in elems { st = free_atom(a, st) }
-
       st
     },
     .AIndex(base, index, _, _) => {
@@ -145,7 +138,6 @@ fn collect_free_op(op: AnfOp, declared: Dict<Int, Bool>, free: Dict<Int, Bool>) 
       if !set_has(st.declared, local.id) {
         st = .{ declared: st.declared, free: set_add(st.free, local.id) }
       }
-
       free_atom(value, st)
     },
     .AWrapAnyref(a, _) => free_atom(a, st),
@@ -175,9 +167,7 @@ fn collect_bound_op(op: AnfOp, out: Dict<Int, Bool>) Dict<Int, Bool> {
     },
     .AMatch(_, arms) => {
       result := out
-
       for arm in arms { result = collect_bound_expr(arm.body, result) }
-
       result
     },
     .ALoop(body) => collect_bound_expr(body, out),
@@ -213,9 +203,7 @@ fn collect_init_binding_op(op: AnfOp, out: Dict<Int, Bool>) Dict<Int, Bool> {
     },
     .AMatch(_, arms) => {
       result := out
-
       for arm in arms { result = collect_init_binding_expr(arm.body, result) }
-
       result
     },
     .ALoop(body) => collect_init_binding_expr(body, out),
@@ -255,9 +243,7 @@ fn collect_assigned_op(op: AnfOp, out: Dict<Int, Bool>) Dict<Int, Bool> {
     },
     .AMatch(_, arms) => {
       result := out
-
       for arm in arms { result = collect_assigned_expr(arm.body, result) }
-
       result
     },
     .ALoop(body) => collect_assigned_expr(body, out),

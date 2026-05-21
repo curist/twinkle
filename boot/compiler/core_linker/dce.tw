@@ -100,7 +100,6 @@ fn maybe_add_ref(state: BfsState, ref_id: Int) BfsState {
   if state.reachable.has(ref_id) {
     return state
   }
-
   new_reachable := state.reachable
   new_reachable[ref_id] = true
   BfsState.{ queue: state.queue.append(ref_id), reachable: new_reachable }
@@ -110,9 +109,7 @@ fn add_refs(state: BfsState, refs: Vector<Int>) BfsState { refs.fold(state, mayb
 
 pub fn build_reachability_index(functions: Vector<FunctionDef>, method_table: Dict<String, FuncId>) ReachabilityIndex {
   funcs_by_id: Dict<Int, FunctionDef> = Dict.new()
-
   for f in functions { funcs_by_id[f.func_id.id] = f }
-
   .{ funcs_by_id, method_table }
 }
 

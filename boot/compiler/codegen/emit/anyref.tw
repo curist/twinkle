@@ -68,7 +68,6 @@ pub fn emit_unbox_from_anyref(mono: MonoType, env: ResolvedEnv, buf: Vector<Inst
   if is_task_mono(mono, env) {
     return buf.append(.RefCast(true, .Named("rt_types__Task")))
   }
-
   layout := layout_of(mono, env)
 
   case layout {

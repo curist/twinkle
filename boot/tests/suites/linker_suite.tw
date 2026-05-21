@@ -26,7 +26,6 @@ fn contains(haystack: String, needle: String) Bool {
   if needle.len() > haystack.len() {
     return false
   }
-
   if needle.len() == 0 {
     return true
   }
@@ -143,7 +142,6 @@ fn instr_has_call(instrs: Vector<Instr>, target: String) Bool {
         if instr_has_call(then_body, target) {
           return true
         }
-
         if instr_has_call(else_body, target) {
           return true
         }
@@ -177,7 +175,6 @@ fn instr_has_struct_new(instrs: Vector<Instr>, target: String) Bool {
         if instr_has_struct_new(then_body, target) {
           return true
         }
-
         if instr_has_struct_new(else_body, target) {
           return true
         }

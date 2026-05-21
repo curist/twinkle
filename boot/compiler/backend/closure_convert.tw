@@ -95,7 +95,6 @@ fn record_captures(
       if !capture_params_eq(existing, params) {
         error("convert_closures: inconsistent capture layout for F${fid.id}")
       }
-
       .{ captures: state.captures, next_local: state.next_local }
     },
   }
@@ -232,11 +231,9 @@ fn capture_params_eq(a: Vector<CaptureParam>, b: Vector<CaptureParam>) Bool {
 
   for cap, i in a {
     other := b[i]
-
     if cap.local_id.id != other.local_id.id {
       return false
     }
-
     if !mono_eq(cap.ty, other.ty) {
       return false
     }
@@ -247,19 +244,14 @@ fn capture_params_eq(a: Vector<CaptureParam>, b: Vector<CaptureParam>) Bool {
 
 fn max_local_id_module(anf: AnfModule) Int {
   max_id := -1
-
   for func in anf.functions { max_id = max_int(max_id, max_local_id_func(func)) }
-
   max_id
 }
 
 fn max_local_id_func(func: AnfFunctionDef) Int {
   max_id := -1
-
   for p in func.params { max_id = max_int(max_id, p.local.id) }
-
   for lid in func.op_result_mono.keys() { max_id = max_int(max_id, lid) }
-
   max_int(max_id, max_local_id_expr(func.body))
 }
 
@@ -285,14 +277,12 @@ fn max_local_id_op(op: AnfOp) Int {
     ),
     .AMatch(scrutinee, arms) => {
       max_id := max_local_id_atom(scrutinee)
-
       for arm in arms {
         max_id = max_int(
           max_id,
           max_int(max_local_id_pattern(arm.pattern), max_local_id_expr(arm.body)),
         )
       }
-
       max_id
     },
     .ALoop(body) => max_local_id_expr(body),
@@ -300,16 +290,12 @@ fn max_local_id_op(op: AnfOp) Int {
     .AUnOp(_, atom, _) => max_local_id_atom(atom),
     .AMakeClosure(_, free_vars) => {
       max_id := -1
-
       for lid in free_vars { max_id = max_int(max_id, lid.id) }
-
       max_id
     },
     .ARecord(_, fields) => {
       max_id := -1
-
       for field in fields { max_id = max_int(max_id, max_local_id_atom(field.value)) }
-
       max_id
     },
     .ARecordGet(target, _, _) => max_local_id_atom(target),
@@ -330,9 +316,7 @@ fn max_local_id_op(op: AnfOp) Int {
 
 fn max_local_id_atoms(atoms: Vector<Atom>) Int {
   max_id := -1
-
   for atom in atoms { max_id = max_int(max_id, max_local_id_atom(atom)) }
-
   max_id
 }
 
@@ -355,9 +339,7 @@ fn max_local_id_pattern(pattern: CorePattern) Int {
     .Var(lid) => lid.id,
     .Variant(_, _, fields) => {
       max_id := -1
-
       for field in fields { max_id = max_int(max_id, max_local_id_pattern(field)) }
-
       max_id
     },
     _ => -1,
@@ -481,18 +463,15 @@ fn get_variant_field_mono(
       if vid.id == 1 and field_idx == 0 {
         return inner
       }
-
       .Void
     },
     .Result(ok, err) => {
       if vid.id == 0 and field_idx == 0 {
         return ok
       }
-
       if vid.id == 1 and field_idx == 0 {
         return err
       }
-
       .Void
     },
     .Named(tid, args) => {
@@ -568,7 +547,6 @@ fn resolve_capture_type_with_captures(
   captures: Dict<Int, Vector<CaptureParam>>,
 ) MonoType {
   ty := resolve_capture_type(func, local, env)
-
   if ty != .Void {
     return ty
   }

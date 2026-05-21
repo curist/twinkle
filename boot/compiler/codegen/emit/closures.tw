@@ -51,7 +51,6 @@ pub fn emit_make_closure(fid: FuncId, free_vars: Vector<SlotId>, ctx: EmitCtx, b
       if !info.closure_materializable {
         error("emit_make_closure: builtin ${fid.id} is not closure-materializable")
       }
-
       emit_materialized_closure(fid, env_buf, ctx, buf)
     },
     .None => error("emit_make_closure: unknown callable target F${fid.id}"),
@@ -153,7 +152,6 @@ pub fn emit_builtin_trampolines(ctx: EmitCtx) Vector<FuncDef> {
 
   for fid in ctx.registry.concrete_func_sigs.keys() {
     if ctx.prepared_funcs.has(fid) { continue }
-
     func_id := FuncId.{ id: fid }
     target := case callable_targets.callable_target(
       func_id,
@@ -164,9 +162,7 @@ pub fn emit_builtin_trampolines(ctx: EmitCtx) Vector<FuncDef> {
       .Some(info) => info,
       .None => { continue },
     }
-
     if !target.closure_materializable { continue }
-
     entry := case bi.entry(ctx.builtins, func_id) {
       .Some(e) => e,
       .None => { continue },

@@ -18,7 +18,6 @@ fn set_remove(s: Dict<Int, Bool>, k: Int) Dict<Int, Bool> {
 
 fn set_union(a: Dict<Int, Bool>, b: Dict<Int, Bool>) Dict<Int, Bool> {
   for k in b.keys() { a[k] = true }
-
   a
 }
 
@@ -81,9 +80,7 @@ pub fn live_in_op_with_live_out(op: AnfOp, live: Dict<Int, Bool>) Dict<Int, Bool
   case op {
     .ACall(callee, args) => {
       result := add_atom(callee, live)
-
       for a in args { result = add_atom(a, result) }
-
       result
     },
     .AIf(cond, then_e, else_e) => {
@@ -101,9 +98,7 @@ pub fn live_in_op_with_live_out(op: AnfOp, live: Dict<Int, Bool>) Dict<Int, Bool
         arm_live := compute_live(arm.body, Dict.new())
         // Remove pattern bindings from arm's live set
         bindings := collect_pattern_bindings(arm.pattern, Dict.new())
-
         for k in bindings.keys() { arm_live = set_remove(arm_live, k) }
-
         result = set_union(result, arm_live)
       }
 
@@ -121,16 +116,12 @@ pub fn live_in_op_with_live_out(op: AnfOp, live: Dict<Int, Bool>) Dict<Int, Bool
     .AUnOp(_, inner, _) => add_atom(inner, live),
     .AMakeClosure(_, free_vars) => {
       result := live
-
       for v in free_vars { result = set_add(result, v.id) }
-
       result
     },
     .ARecord(_, fields) => {
       result := live
-
       for f in fields { result = add_atom(f.value, result) }
-
       result
     },
     .ARecordGet(target, _, _) => add_atom(target, live),
@@ -140,16 +131,12 @@ pub fn live_in_op_with_live_out(op: AnfOp, live: Dict<Int, Bool>) Dict<Int, Bool
     },
     .AVariant(_, _, args) => {
       result := live
-
       for a in args { result = add_atom(a, result) }
-
       result
     },
     .AArrayLit(elems) => {
       result := live
-
       for a in elems { result = add_atom(a, result) }
-
       result
     },
     .AIndex(base, index, _, _) => {
@@ -177,9 +164,7 @@ pub fn live_in_op_with_live_out(op: AnfOp, live: Dict<Int, Bool>) Dict<Int, Bool
 // base local is dead in the continuation.
 pub fn annotate_in_place(func: AnfFunctionDef) AnfFunctionDef {
   param_locals: Dict<Int, Bool> = Dict.new()
-
   for p in func.params { param_locals[p.local.id] = true }
-
   AnfFunctionDef.{
     func_id: func.func_id,
     name: func.name,

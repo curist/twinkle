@@ -43,9 +43,7 @@ pub fn parse_decode<A>(input: String, da: Decoder<A>) Result<A, String> {
 
 fn skip_ws(input: String, i: Int) Int {
   j := i
-
   for j < input.len() and input[j].is_space() { j = j + 1 }
-
   j
 }
 
@@ -110,7 +108,6 @@ fn parse_false(input: String, i: Int) Result<ParseResult<Json>, String> {
 fn parse_number(input: String, i: Int) Result<ParseResult<Json>, String> {
   j := i
   has_float_part := false
-
   if j < input.len() and input[j] == 0x2D { j = j + 1 }
 
   if j >= input.len() or !input[j].is_digit() {
@@ -137,7 +134,6 @@ fn parse_number(input: String, i: Int) Result<ParseResult<Json>, String> {
   if j < input.len() and (input[j] == 0x65 or input[j] == 0x45) {
     has_float_part = true
     j = j + 1
-
     if j < input.len() and (input[j] == 0x2B or input[j] == 0x2D) { j = j + 1 }
 
     if j >= input.len() or !input[j].is_digit() {
@@ -391,9 +387,7 @@ pub fn kv(key: String, value: Json) Field { .{ key, value } }
 
 pub fn object(fields: Vector<Field>) Json {
   obj: Dict<String, Json> = Dict.new()
-
   for field in fields { obj[field.key] = field.value }
-
   .Object(obj)
 }
 
@@ -720,20 +714,15 @@ pub fn to_string(json: Json) String {
       if arr.len() == 0 {
         return "[]"
       }
-
       parts: Vector<String> = []
-
       for item in arr { parts = .append(to_string(item)) }
-
       "[".concat(parts.join(",")).concat("]")
     },
     .Object(obj) => {
       keys := obj.keys()
-
       if keys.len() == 0 {
         return "{}"
       }
-
       parts: Vector<String> = []
 
       for key in keys {

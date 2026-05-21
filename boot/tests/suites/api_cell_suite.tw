@@ -61,9 +61,7 @@ pub fn suite() runner.Suite {
     "cell in loop as accumulator",
     fn() {
       sum := Cell.new(0)
-
       for i in 0..5 { sum.update(fn(n) { n + i }) }
-
       try assert.equal(sum.get(), 10)
       .Ok({})
     },

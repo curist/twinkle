@@ -221,7 +221,6 @@ fn fits(doc: Doc, indent: Int, remaining: Int) Bool {
     if rem < 0 {
       return false
     }
-
     last := fit_stack.len() - 1
     d := fit_stack[last]
     fit_stack = .slice(0, last)
@@ -277,7 +276,6 @@ fn spaces(n: Int) String {
   if n <= 0 {
     return ""
   }
-
   buf: Vector<String> = []
   i := 0
 

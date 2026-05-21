@@ -45,11 +45,9 @@ fn repeat_str(s: String, n: Int) String {
 
 fn pad_left(s: String, width: Int) String {
   extra := width - s.char_len()
-
   if extra <= 0 {
     return s
   }
-
   "${repeat_str(" ", extra)}${s}"
 }
 
@@ -71,7 +69,6 @@ fn digit_count(n: Int) Int {
   if n <= 0 {
     return 1
   }
-
   count := 0
   v := n
 
@@ -166,7 +163,6 @@ pub fn render(report: Report, reg: registry.FileRegistry, config: RenderConfig) 
                     if idx > 0 and lc.line > prev_line + 1 {
                       lines = .append(cyan(config, "${pad} |"))
                     }
-
                     prev_line = lc.line
                     line_str := strip_newline(line_raw)
                     num_str := pad_left(Int.to_string(lc.line), gutter_w)
@@ -201,7 +197,6 @@ pub fn render(report: Report, reg: registry.FileRegistry, config: RenderConfig) 
     max_line := max_label_line(report.labels, reg)
     gutter_w := digit_count(max_line)
     pad := repeat_str(" ", gutter_w)
-
     for h in report.help_lines { lines = .append("${pad} = help: ${h}") }
   }
 

@@ -30,7 +30,6 @@ fn offset_of(src: String, needle: String) Int {
     if src.substring(i, i + needle_len) == needle {
       return i
     }
-
     i = i + 1
   }
 

@@ -17,7 +17,6 @@ pub fn subst_type_params(
           if i < args.len() {
             return args[i]
           }
-
           error(
             "subst_type_params: missing arg for type param '${name}' (index ${i}) with ${args.len()} arg(s)",
           )

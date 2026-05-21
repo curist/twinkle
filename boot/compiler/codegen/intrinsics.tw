@@ -54,9 +54,7 @@ pub fn module() WasmModule {
 
 fn append_instrs(base: Vector<Instr>, tail: Vector<Instr>) Vector<Instr> {
   out := base
-
   for i in tail { out = .append(i) }
-
   out
 }
 
@@ -470,7 +468,6 @@ fn utf8_validate_multibyte(n: Int) Vector<Instr> {
       ],
     )
   }
-
   if n == 4 {
     instrs = append_instrs(
       instrs,
@@ -516,7 +513,6 @@ fn utf8_validate_multibyte(n: Int) Vector<Instr> {
       ],
     )
   }
-
   append_instrs(instrs, [.LocalGet(2), .I32Const(n), .I32Add, .LocalSet(2)])
 }
 

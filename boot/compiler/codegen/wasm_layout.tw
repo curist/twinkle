@@ -66,11 +66,9 @@ pub fn mono_to_key(ty: MonoType) String {
     .Never => "never",
     .Named(tid, args) => {
       base := "t${tid.id}"
-
       if args.len() == 0 {
         return base
       }
-
       parts := collect a in args { mono_to_key(a) }
       "${base}_${parts.join("_")}"
     },
@@ -194,7 +192,6 @@ fn layout_of_named(tid: TypeId, args: Vector<MonoType>, env: ResolvedEnv) WasmLa
           "layout_of_named: ${name} expected ${type_params.len()} type arg(s), got ${args.len()}",
         )
       }
-
       sym := "\$${name}_${mono_to_key(.Named(tid, args))}"
       field_layouts := collect f, i in fields {
         // Substitute type params with concrete args
@@ -213,7 +210,6 @@ fn layout_of_named(tid: TypeId, args: Vector<MonoType>, env: ResolvedEnv) WasmLa
           "layout_of_named: ${name} expected ${type_params.len()} type arg(s), got ${args.len()}",
         )
       }
-
       layout_of_sum_def(tid, args, name, type_params, variants, env)
     },
     .Alias(name, type_params, target) => {
@@ -222,7 +218,6 @@ fn layout_of_named(tid: TypeId, args: Vector<MonoType>, env: ResolvedEnv) WasmLa
           "layout_of_named: ${name} expected ${type_params.len()} type arg(s), got ${args.len()}",
         )
       }
-
       // Resolve alias and compute layout of the target
       layout_of(subst_type_params(target, type_params, args), env)
     },

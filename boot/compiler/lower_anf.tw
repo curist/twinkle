@@ -114,16 +114,12 @@ fn max_local_id_in_expr(expr: CoreExpr, max: Int) Int {
     .UnOp(_, inner) => max_local_id_in_expr(inner, max),
     .Call(callee, args) => {
       m := max_local_id_in_expr(callee, max)
-
       for a in args { m = max_local_id_in_expr(a, m) }
-
       m
     },
     .ContractCall(_, _, receiver, args) => {
       m := max_local_id_in_expr(receiver, max)
-
       for a in args { m = max_local_id_in_expr(a, m) }
-
       m
     },
     .If(cond, then_e, else_e) => {
@@ -156,9 +152,7 @@ fn max_local_id_in_expr(expr: CoreExpr, max: Int) Int {
     },
     .Record(_, fields) => {
       m := max
-
       for f in fields { m = max_local_id_in_expr(f.value, m) }
-
       m
     },
     .RecordGet(target, _) => max_local_id_in_expr(target, max),
@@ -168,16 +162,12 @@ fn max_local_id_in_expr(expr: CoreExpr, max: Int) Int {
     },
     .Variant(_, _, args) => {
       m := max
-
       for a in args { m = max_local_id_in_expr(a, m) }
-
       m
     },
     .ArrayLit(elements) => {
       m := max
-
       for e in elements { m = max_local_id_in_expr(e, m) }
-
       m
     },
     .Index(base, index) => {
@@ -200,9 +190,7 @@ fn max_local_id_in_pattern(pattern: CorePattern, max: Int) Int {
     .Var(id) => if id.id > max { id.id } else { max },
     .Variant(_, _, fields) => {
       m := max
-
       for f in fields { m = max_local_id_in_pattern(f, m) }
-
       m
     },
     .Wildcard => max,
@@ -429,9 +417,7 @@ fn lower_expr(expr: CoreExpr, state: LowerState, accum: Vector<LetBinding>) Expr
         .Atom(atom) => {
           // Value reduced to atom — extend outer accum, push AInit
           merged := accum
-
           for b in vr.accum { merged = .append(b) }
-
           pa := push_accum(merged, vr.state, orig_local, .AInit(atom), value.ty)
           // Continue with body
           lower_expr(body, pa.state, pa.accum)

@@ -130,7 +130,6 @@ pub fn invalidate_changed_module(store: Store, module: String) Store {
 
   for path in affected {
     if path == module { store.parsed = store.parsed.remove(path) }
-
     // Clear module_hashes so key recomputation reflects the change,
     // but preserve resolved/typed/lowered entries for lazy verification.
     store.module_hashes = store.module_hashes.remove(path)

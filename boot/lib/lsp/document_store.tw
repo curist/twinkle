@@ -47,9 +47,7 @@ fn make_document(uri: String, text: String, version: Int?) Document {
 
 fn put(store: Store, doc: Document) Store {
   docs: Dict<String, Document> = Dict.new()
-
   for uri, existing in store.docs { docs[uri] = existing }
-
   docs[doc.uri] = doc
   .{ docs }
 }

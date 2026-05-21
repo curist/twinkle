@@ -6,9 +6,7 @@ pub fn suite() runner.Suite {
     "range produces 0 to n-1",
     fn() {
       sum := 0
-
       for i in 0..5 { sum = sum + i }
-
       try assert.equal(sum, 10)
       .Ok({})
     },
@@ -16,9 +14,7 @@ pub fn suite() runner.Suite {
     "0..0 produces empty iteration",
     fn() {
       count := 0
-
       for _ in 0..0 { count = count + 1 }
-
       try assert.equal(count, 0)
       .Ok({})
     },
@@ -80,7 +76,6 @@ pub fn suite() runner.Suite {
     fn() {
       vals := collect i in 0..100 {
         if i >= 3 { break }
-
         i
       }
       try assert.equal(vals.len(), 3)
@@ -139,9 +134,7 @@ pub fn suite() runner.Suite {
         },
       )
       sum := 0
-
       for x in it { sum = sum + x }
-
       try assert.equal(sum, 10)
       .Ok({})
     },
@@ -187,9 +180,7 @@ pub fn suite() runner.Suite {
     fn() {
       it := Iterator.unfold(0, fn(_s: Int) UnfoldStep<Int, Int> { UnfoldStep.Done })
       count := 0
-
       for _, idx in it { count = count + 1 }
-
       try assert.equal(count, 0)
       .Ok({})
     },

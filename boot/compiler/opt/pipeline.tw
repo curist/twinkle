@@ -35,9 +35,7 @@ fn compute_pinned(module: AnfModule) Dict<Int, Bool> {
   for f in module.functions {
     if f.is_init {
       bindings := collect_init_binding_locals(f.body)
-
       for k in bindings.keys() { init_bound[k] = true }
-
       found_init = true
     }
   }
@@ -50,9 +48,7 @@ fn compute_pinned(module: AnfModule) Dict<Int, Bool> {
   for f in module.functions {
     if !f.is_init {
       declared: Dict<Int, Bool> = Dict.new()
-
       for p in f.params { declared[p.local.id] = true }
-
       free := collect_free_locals(f.body, declared)
 
       // Intersect with init's source-level bindings.
@@ -216,7 +212,6 @@ fn run_fixed_point_simplifications(expr: AnfExpr, ctx: OptimizerContext) FixedPo
     cur = r4.expr
     te := date.now()
     timing.branch_simp = timing.branch_simp + (te - td)
-
     if !r1.changed and !r2.changed and !r3.changed and !r4.changed { break }
   }
 
@@ -266,9 +261,7 @@ fn optimize_module_internal(
     result := optimize_function_with_context(f, ctx)
     timing = add_pass_timing(timing, result.timing)
     total_rounds = total_rounds + result.rounds
-
     if result.at_cap { funcs_at_cap = funcs_at_cap + 1 }
-
     result.func
   }
 

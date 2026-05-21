@@ -1,6 +1,4 @@
 use .alias_type_bridge_a
 use .alias_type_bridge_b
 
-fn main() {
-  alias_type_bridge_b.read(alias_type_bridge_a.make("transitive"))
-}
+fn main() { alias_type_bridge_b.read(alias_type_bridge_a.make("transitive")) }

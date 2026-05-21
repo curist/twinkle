@@ -314,9 +314,7 @@ pub fn suite() runner.Suite {
       t := Task.spawn(
         fn() Int {
           sum := Cell.new(0)
-
           for i in 0..10 { sum.update(fn(n) { n + i }) }
-
           sum.get()
         },
       )

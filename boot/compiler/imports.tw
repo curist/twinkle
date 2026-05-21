@@ -106,12 +106,9 @@ pub fn plan_dependencies_with_exists(
 
     for prelude_path in prelude_modules {
       canonical_prelude := canonical_module_path(prelude_path, roots)
-
       // Skip if already explicitly imported
       if canonical_paths.contains(canonical_prelude) { continue }
-
       if !exists(canonical_prelude) { continue }
-
       stem := path.stem(canonical_prelude)
       canonical_paths = .append(canonical_prelude)
       deps = .append(

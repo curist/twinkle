@@ -31,7 +31,6 @@ pub fn find_node_in_stmt(stmt: Stmt, offset: Int) NodeContext? {
       if !fs.span.contains(offset) {
         return .None
       }
-
       find_in_opt_expr(fs.iter, offset).or_else(fn() { find_in_opt_expr(fs.condition, offset) }).or_else(
         fn() { find_node_in_block(fs.body, offset) },
       )

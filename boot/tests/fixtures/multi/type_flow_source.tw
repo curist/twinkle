@@ -1,8 +1,6 @@
 pub type Color = { Red, Green, Blue }
 
-pub fn make_red() Color {
-  .Red
-}
+pub fn make_red() Color { .Red }
 
 pub fn is_red(c: Color) Bool {
   case c {

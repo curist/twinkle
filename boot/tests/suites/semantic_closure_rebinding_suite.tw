@@ -130,9 +130,7 @@ pub fn suite() runner.Suite {
     "rebinding in for loop accumulates",
     fn() {
       acc := 0
-
       for x in [1, 2, 3, 4, 5] { acc = acc + x }
-
       try assert.equal(acc, 15)
       .Ok({})
     },
@@ -140,9 +138,7 @@ pub fn suite() runner.Suite {
     "rebinding inside if affects outer binding",
     fn() {
       x := 1
-
       if true { x = 42 }
-
       try assert.equal(x, 42)
       .Ok({})
     },

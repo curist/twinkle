@@ -24,9 +24,7 @@ pub fn scan_module_bodies(input: PreparedModule, builtins: BuiltinRegistry) Scan
     direct_builtin_calls: Dict.new(),
     module_globals: Dict.new(),
   }
-
   for func in input.funcs { out = scan_expr(func.body, builtins, func.is_init, out) }
-
   out
 }
 
@@ -49,7 +47,6 @@ fn scan_op(op: PreparedOp, builtins: BuiltinRegistry, is_init: Bool, out: ScanRe
   case op {
     .ACall(callee, args) => {
       cur := scan_atom(callee, is_init, out)
-
       for arg in args { cur = scan_atom(arg, is_init, cur) }
 
       case callee {
@@ -90,16 +87,12 @@ fn scan_op(op: PreparedOp, builtins: BuiltinRegistry, is_init: Bool, out: ScanRe
     .AMakeClosure(fid, free_vars) => {
       cur := out
       cur.closure_materialized_funcs[fid.id] = true
-
       for fv in free_vars { cur = scan_atom(.ASlot(fv), is_init, cur) }
-
       cur
     },
     .ARecord(_, fields) => {
       cur := out
-
       for field in fields { cur = scan_atom(field.value, is_init, cur) }
-
       cur
     },
     .ARecordGet(target, _, _) => scan_atom(target, is_init, out),
@@ -122,9 +115,7 @@ fn scan_op(op: PreparedOp, builtins: BuiltinRegistry, is_init: Bool, out: ScanRe
 
 fn scan_atoms(atoms: Vector<PreparedAtom>, is_init: Bool, out: ScanResult) ScanResult {
   cur := out
-
   for atom in atoms { cur = scan_atom(atom, is_init, cur) }
-
   cur
 }
 
@@ -139,7 +130,6 @@ fn scan_atom(atom: PreparedAtom, is_init: Bool, out: ScanResult) ScanResult {
       if is_init {
         return out
       }
-
       cur := out
       cur.module_globals[lid.id] = true
       cur
@@ -157,9 +147,7 @@ fn scan_pattern(pattern: PreparedPattern, out: ScanResult) ScanResult {
     },
     .Variant(_, _, fields) => {
       cur := out
-
       for field in fields { cur = scan_pattern(field, cur) }
-
       cur
     },
     _ => out,

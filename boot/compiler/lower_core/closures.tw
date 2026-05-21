@@ -140,9 +140,7 @@ fn collect_pattern_bound(pattern: CorePattern, bound: Dict<Int, Bool>) Dict<Int,
     },
     .Variant(_, _, sub_pats) => {
       cur := bound
-
       for sp in sub_pats { cur = collect_pattern_bound(sp, cur) }
-
       cur
     },
     _ => bound,
@@ -210,9 +208,7 @@ pub fn lower_closure(
   ctx.current_fn_return_type = saved_return_type
   // 6. Collect free variables from the lowered body
   param_set: Dict<Int, Bool> = Dict.new()
-
   for pl in param_locals { param_set[pl.id] = true }
-
   free_vars := collect_free_vars(body_r.expr, param_set)
   // 7. Hoist the function definition
   hoisted_def := FunctionDef.{

@@ -63,9 +63,7 @@ fn branch_simplify_op(op: AnfOp) OpSimpResult {
       changed := false
       new_arms: Vector<AnfMatchArm> = collect arm in arms {
         r := branch_simplify(arm.body)
-
         if r.changed { changed = true }
-
         AnfMatchArm.{ pattern: arm.pattern, body: r.expr }
       }
       OpSimpResult.{ op: .AMatch(scrutinee, new_arms), changed: changed }

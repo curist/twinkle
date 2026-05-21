@@ -1,8 +1,4 @@
-pub type Shape = {
-  Circle(.{ radius: Float }),
-  Rect(.{ width: Float, height: Float }),
-  Point,
-}
+pub type Shape = { Circle(.{ radius: Float }), Rect(.{ width: Float, height: Float }), Point }
 
 pub fn area(s: Shape) Float {
   case s {

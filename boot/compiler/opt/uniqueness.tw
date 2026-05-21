@@ -68,7 +68,6 @@ fn has_cow_op_in_expr(expr: AnfExpr, semantics: OptimizerSemantics) Bool {
       if has_cow_op_in_op(op, semantics) {
         return true
       }
-
       has_cow_op_in_expr(body, semantics)
     },
     _ => false,
@@ -131,7 +130,6 @@ fn ownership_of(st: RwState, local: LocalId) Ownership? {
   if set_has(st.tainted, local.id) and !set_has(st.refreshed, local.id) {
     return .None
   }
-
   st.ownership[local.id]
 }
 
@@ -207,11 +205,8 @@ fn transfer_owned_local(st: RwState, source: LocalId, target: LocalId) RwState {
   st.ownership = st.ownership.remove(source.id)
   st.ownership[target.id] = moved
   st.refreshed = st.refreshed.remove(source.id)
-
   if set_has(st.tainted, target.id) { st.refreshed[target.id] = true }
-
   st.fresh_records = st.fresh_records.remove(source.id)
-
   if source_was_fresh_record { st.fresh_records[target.id] = true }
 
   if set_has(st.known_empty, source.id) {
@@ -224,9 +219,7 @@ fn transfer_owned_local(st: RwState, source: LocalId, target: LocalId) RwState {
 
 fn with_consumed_update_result(st: RwState, local: LocalId) RwState {
   st = with_local_ownership(st, local, .Deep)
-
   if set_has(st.tainted, local.id) { st.refreshed[local.id] = true }
-
   st.known_empty = st.known_empty.remove(local.id)
   st.fresh_records = st.fresh_records.remove(local.id)
   st
@@ -406,11 +399,9 @@ fn expr_uses_local(expr: AnfExpr, local: LocalId) Bool {
       if op_uses_local_non_recursive(op, local) {
         return true
       }
-
       if op_has_local_in_nested_scope(op, local) {
         return true
       }
-
       expr_uses_local(body, local)
     },
     .Atom(atom) => atom_is_local(atom, local),
@@ -754,7 +745,6 @@ fn has_rewritable_cow_op_in_op(op: AnfOp, tainted: Dict<Int, Bool>, semantics: O
       if has_rewritable_cow_op_in_expr(then_e, tainted, semantics) {
         return true
       }
-
       has_rewritable_cow_op_in_expr(else_e, tainted, semantics)
     },
     .AMatch(_, arms) => {
@@ -791,7 +781,6 @@ fn has_rewritable_cow_op_in_expr(
       if has_rewritable_cow_op_in_op(op, tainted, semantics) {
         return true
       }
-
       has_rewritable_cow_op_in_expr(body, tainted, semantics)
     },
     _ => false,
@@ -832,7 +821,6 @@ pub fn uniqueness_rewrite_with_semantics_and_consumed_and_fresh(
   if !has_cow_op_in_expr(func.body, config) {
     return func
   }
-
   tl := collect_tainted_and_live(func, config)
   // Keep running the full pass whenever the function contains a candidate COW
   // op. Branch-sensitive refreshed/fresh-wrapper facts may make a base

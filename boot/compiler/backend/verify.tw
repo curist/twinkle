@@ -38,7 +38,6 @@ pub fn verify_prepared_module_with_level(
     .None => false,
   }
   funcs_by_id: Dict<Int, PreparedFunc> = Dict.new()
-
   for pf in prepared.funcs { funcs_by_id[pf.func_id.id] = pf }
 
   for fid in prepared.closure_captures.keys() {

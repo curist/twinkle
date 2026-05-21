@@ -29,9 +29,7 @@ pub fn collect_fixes(diagnostics: Vector<analyze.AnalysisDiag>) Dict<String, Vec
           .Ok(k) => k,
           .Err(_) => { continue },
         }
-
         if kind != "unused_import" { continue }
-
         use_start := case json.decode(data, json.field("use_start", json.int())) {
           .Ok(s) => s,
           .Err(_) => { continue },
@@ -90,7 +88,6 @@ pub fn fix_unused_imports(file: String) {
   }
 
   results := apply_fixes(edits)
-
   for r in results { println("Fixed: ${r.path} (${r.count} edit(s))") }
 }
 

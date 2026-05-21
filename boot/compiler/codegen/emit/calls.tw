@@ -100,9 +100,7 @@ fn emit_direct_call(
 ) Vector<Instr> {
   sym := lookup_func_sym(ctx.func_sym_map, fid)
   out := buf
-
   for a in args { out = fns.emit_atom(a, ctx, out) }
-
   out = .append(.Call(sym))
 
   case result_mono {
@@ -144,13 +142,10 @@ fn emit_runtime_arg(
     },
     _ => false,
   }
-
   if needs_narrow {
     return fns.emit_checked_i32_narrow(a, ctx, buf)
   }
-
   out := fns.emit_atom(a, ctx, buf)
-
   // Builder regions keep transient Array builders in erased anyref slots even
   // though the surrounding Twinkle surface type is Vector<T>. For the builder
   // buffer argument, cast directly back to Array and skip the generic
@@ -158,7 +153,6 @@ fn emit_runtime_arg(
   if is_vector_builder_array_arg(entry_name, index) {
     return emit_builder_arg_shim(entry_name, index, out)
   }
-
   // Host boundary: host_write_bytes is surface-typed as Vector<Byte> / PVec,
   // but the raw host ABI takes a flat Array. The explicit shim performs the
   // PVec -> Array conversion, so the generic ABI coercion must not run first or
@@ -166,7 +160,6 @@ fn emit_runtime_arg(
   if is_host_vector_arg(entry_name, index) {
     return emit_host_arg_shim(entry_name, index, out)
   }
-
   // Coercion: adapt actual physical type to expected ABI param type via canonical path.
   out2 := case param_vt {
     .Some(expected_vt) => emit_coerce_stack(
@@ -202,9 +195,7 @@ fn emit_runtime_call(
     .None => "",
   }
   out := buf
-
   for a, i in args { out = emit_runtime_arg(a, abi, i, entry_name, ctx, out, fns) }
-
   out = .append(.Call(import_sym))
   // ABI shim: reshape host results back into PVec representation.
   out = emit_host_result_shim(entry_name, out)

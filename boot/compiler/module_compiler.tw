@@ -95,9 +95,7 @@ pub fn compile_entry(entry_path: String) Result<PipelineArtifacts, CompileError>
     t_lower0 := date.now()
     lowered_out := stage_runner.lower(runner, cur_cache, parsed, typed, builtins)
     cur_cache = lowered_out.store
-
     if timed { lower_total_ms = lower_total_ms + (date.now() - t_lower0) }
-
     lowered := lowered_out.value
 
     if lowered.diagnostics.len() > 0 {
@@ -207,23 +205,15 @@ pub fn compile_entry(entry_path: String) Result<PipelineArtifacts, CompileError>
   t0 := date.now()
   core := core_linker.link(compiled_modules, canonical_entry, a_result.env, builtins.next_id)
   t1 := date.now()
-
   if timed { eprintln("[time] core_link: ${t1 - t0}ms") }
-
   mono := monomorphize.monomorphize(core)
   t2 := date.now()
-
   if timed { eprintln("[time] monomorphize: ${t2 - t1}ms") }
-
   anf := lower_anf.lower_module(mono)
   t3 := date.now()
-
   if timed { eprintln("[time] lower_anf: ${t3 - t2}ms") }
-
   opt := optimize_module(anf)
   t4 := date.now()
-
   if timed { eprintln("[time] optimize: ${t4 - t3}ms") }
-
   .Ok(.{ env: a_result.env, builtins, core, mono, anf, opt, warnings: compile_warnings })
 }

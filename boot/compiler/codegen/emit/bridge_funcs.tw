@@ -141,11 +141,9 @@ pub fn emit_option_from_variant_helper(inner_mono: MonoType, env: ResolvedEnv) F
   payload_vt := val_type_of_mono(inner_mono, env)
   none_body: Vector<Instr> = [.I32Const(0)]
   some_variant := result_layout.variants[1]
-
   if some_variant.payload_types.len() > 0 {
     none_body = emit_default_value(some_variant.payload_types[0], none_body)
   }
-
   none_body = .append(.StructNew(result_layout.sym))
   some_body: Vector<Instr> = [
     .I32Const(1),

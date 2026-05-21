@@ -54,7 +54,6 @@ pub fn find_path(module: Module, offset: Int) AstPath {
       },
       .Stmt(stmt) => {
         child := path_in_stmt(stmt, offset)
-
         if child.len() > 0 {
           return AstPath.{ nodes: child }
         }
@@ -69,22 +68,18 @@ pub fn find_path(module: Module, offset: Int) AstPath {
 /// Return the deepest node in the path, or .None if the path is empty.
 pub fn deepest(path: AstPath) NodeRef? {
   n := path.nodes.len()
-
   if n == 0 {
     return .None
   }
-
   .Some(path.nodes[n - 1])
 }
 
 /// Return the parent of the deepest node, or .None if the path has fewer than two nodes.
 pub fn parent(path: AstPath) NodeRef? {
   n := path.nodes.len()
-
   if n < 2 {
     return .None
   }
-
   .Some(path.nodes[n - 2])
 }
 
@@ -116,7 +111,6 @@ fn path_in_block(block: Block, offset: Int) Vector<NodeRef> {
 
   for stmt in block.stmts {
     child := path_in_stmt(stmt, offset)
-
     if child.len() > 0 {
       return prefix.concat(child)
     }
@@ -125,7 +119,6 @@ fn path_in_block(block: Block, offset: Int) Vector<NodeRef> {
   case block.tail {
     .Some(expr) => {
       child := path_in_expr(expr, offset)
-
       if child.len() > 0 {
         return prefix.concat(child)
       }
@@ -148,7 +141,6 @@ fn path_in_stmt(stmt: Stmt, offset: Int) Vector<NodeRef> {
   case stmt {
     .Let(ls) => {
       child := path_in_expr(ls.value, offset)
-
       if child.len() > 0 {
         return prefix.concat(child)
       }
@@ -157,7 +149,6 @@ fn path_in_stmt(stmt: Stmt, offset: Int) Vector<NodeRef> {
       case fs.iter {
         .Some(e) => {
           child := path_in_expr(e, offset)
-
           if child.len() > 0 {
             return prefix.concat(child)
           }
@@ -168,7 +159,6 @@ fn path_in_stmt(stmt: Stmt, offset: Int) Vector<NodeRef> {
       case fs.condition {
         .Some(e) => {
           child := path_in_expr(e, offset)
-
           if child.len() > 0 {
             return prefix.concat(child)
           }
@@ -177,7 +167,6 @@ fn path_in_stmt(stmt: Stmt, offset: Int) Vector<NodeRef> {
       }
 
       child := path_in_block(fs.body, offset)
-
       if child.len() > 0 {
         return prefix.concat(child)
       }
@@ -186,7 +175,6 @@ fn path_in_stmt(stmt: Stmt, offset: Int) Vector<NodeRef> {
       case rs.value {
         .Some(e) => {
           child := path_in_expr(e, offset)
-
           if child.len() > 0 {
             return prefix.concat(child)
           }
@@ -198,7 +186,6 @@ fn path_in_stmt(stmt: Stmt, offset: Int) Vector<NodeRef> {
       case bs.value {
         .Some(e) => {
           child := path_in_expr(e, offset)
-
           if child.len() > 0 {
             return prefix.concat(child)
           }
@@ -208,14 +195,12 @@ fn path_in_stmt(stmt: Stmt, offset: Int) Vector<NodeRef> {
     },
     .Defer(ds) => {
       child := path_in_expr(ds.expr, offset)
-
       if child.len() > 0 {
         return prefix.concat(child)
       }
     },
     .Expr(es) => {
       child := path_in_expr(es.expr, offset)
-
       if child.len() > 0 {
         return prefix.concat(child)
       }
@@ -246,11 +231,9 @@ fn path_in_expr(expr: Expr, offset: Int) Vector<NodeRef> {
 
   prefix := [NodeRef.Expr(expr)]
   child := path_in_expr_children(expr, offset)
-
   if child.len() > 0 {
     return prefix.concat(child)
   }
-
   prefix
 }
 
@@ -259,42 +242,33 @@ fn path_in_expr_children(expr: Expr, offset: Int) Vector<NodeRef> {
     .Unary(_, inner) => path_in_expr(inner, offset),
     .Binary(_, lhs, rhs) => {
       c := path_in_expr(lhs, offset)
-
       if c.len() > 0 {
         return c
       }
-
       path_in_expr(rhs, offset)
     },
     .Call(callee, args) => {
       c := path_in_expr(callee, offset)
-
       if c.len() > 0 {
         return c
       }
-
       path_in_exprs(args, offset)
     },
     .Field(base, _) => path_in_expr(base, offset),
     .Index(base, idx) => {
       c := path_in_expr(base, offset)
-
       if c.len() > 0 {
         return c
       }
-
       path_in_expr(idx, offset)
     },
     .BlockExpr(block) => path_in_block(block, offset),
     .If(cond, then_block, else_expr) => {
       c := path_in_expr(cond, offset)
-
       if c.len() > 0 {
         return c
       }
-
       c = path_in_block(then_block, offset)
-
       if c.len() > 0 {
         return c
       }
@@ -306,7 +280,6 @@ fn path_in_expr_children(expr: Expr, offset: Int) Vector<NodeRef> {
     },
     .Case(scrutinee, arms) => {
       c := path_in_expr(scrutinee, offset)
-
       if c.len() > 0 {
         return c
       }
@@ -314,13 +287,10 @@ fn path_in_expr_children(expr: Expr, offset: Int) Vector<NodeRef> {
       for arm in arms {
         if arm.span.contains(offset) {
           arm_prefix := [NodeRef.Arm(arm)]
-
           if arm.pattern.span.contains(offset) {
             return arm_prefix.append(NodeRef.Pattern(arm.pattern))
           }
-
           c = path_in_expr(arm.expr, offset)
-
           if c.len() > 0 {
             return arm_prefix.concat(c)
           }
@@ -342,7 +312,6 @@ fn path_in_expr_children(expr: Expr, offset: Int) Vector<NodeRef> {
         case part {
           .Interpolation(e) => {
             c := path_in_expr(e, offset)
-
             if c.len() > 0 {
               return c
             }
@@ -360,7 +329,6 @@ fn path_in_expr_children(expr: Expr, offset: Int) Vector<NodeRef> {
 fn path_in_exprs(exprs: Vector<Expr>, offset: Int) Vector<NodeRef> {
   for e in exprs {
     c := path_in_expr(e, offset)
-
     if c.len() > 0 {
       return c
     }
@@ -374,7 +342,6 @@ fn path_in_entries(entries: Vector<RecordEntry>, offset: Int) Vector<NodeRef> {
     case entry.value {
       .Some(e) => {
         c := path_in_expr(e, offset)
-
         if c.len() > 0 {
           return c
         }
@@ -390,7 +357,6 @@ fn path_in_collect(col: CollectExpr, offset: Int) Vector<NodeRef> {
   case col.iter {
     .Some(e) => {
       c := path_in_expr(e, offset)
-
       if c.len() > 0 {
         return c
       }
@@ -401,7 +367,6 @@ fn path_in_collect(col: CollectExpr, offset: Int) Vector<NodeRef> {
   case col.condition {
     .Some(e) => {
       c := path_in_expr(e, offset)
-
       if c.len() > 0 {
         return c
       }

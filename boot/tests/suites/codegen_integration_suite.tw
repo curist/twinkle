@@ -219,18 +219,14 @@ fn test_link_runtime_host_imports_preserved() Result<Void, String> {
     .Ok(linked) => {
       // Should have host imports for print, println, error, eprint, eprintln, f64_to_string
       host_names: Vector<String> = []
-
       for imp in linked.imports { host_names = .append(imp.name) }
-
       found_print := false
       found_println := false
       found_f64 := false
 
       for n in host_names {
         if n == "print" { found_print = true }
-
         if n == "println" { found_println = true }
-
         if n == "f64_to_string" { found_f64 = true }
       }
 
@@ -628,7 +624,6 @@ fn instr_has_call(instrs: Vector<Instr>, target: String) Bool {
         if instr_has_call(then_body, target) {
           return true
         }
-
         if instr_has_call(else_body, target) {
           return true
         }
@@ -662,7 +657,6 @@ fn instr_has_struct_new(instrs: Vector<Instr>, target: String) Bool {
         if instr_has_struct_new(then_body, target) {
           return true
         }
-
         if instr_has_struct_new(else_body, target) {
           return true
         }
@@ -709,14 +703,12 @@ fn test_structural_user_func_present() Result<Void, String> {
 fn test_structural_host_imports_are_host_only() Result<Void, String> {
   // After linking, all remaining imports must come from "host" module.
   linked := try codegen_harness.codegen_linked("println(\"hi\")")
-
   for imp in linked.imports {
     try assert.ok(
       imp.module == "host",
       "non-host import survived linking: ${imp.module}.${imp.name}",
     )
   }
-
   .Ok({})
 }
 
@@ -750,9 +742,7 @@ fn test_dict_index_materializes_typed_option() Result<Void, String> {
 
   for f in linked.funcs {
     if instr_has_call(f.body, "rt_dict__get") { found_get = true }
-
     if instr_has_call(f.body, "rt_dict__get_option") { found_get_option = true }
-
     if instr_has_struct_new(f.body, "user__\$Option_opt_i64") { found_option_struct = true }
   }
 

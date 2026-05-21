@@ -26,9 +26,7 @@ fn build_trivia_map(tokens: Vector<Token>) TriviaMap {
 
   for tok in tokens {
     if tok.leading_trivia.len() > 0 { leading[tok.span.start] = tok.leading_trivia }
-
     if tok.trailing_trivia.len() > 0 { trailing[tok.span.end] = tok.trailing_trivia }
-
     if tok.kind == .IntLit or tok.kind == .FloatLit { literal_text[tok.span.start] = tok.text }
   }
 
@@ -98,7 +96,6 @@ fn emit_trivia(trivia: Vector<Trivia>) Doc {
       .BlankLine => {
         prev_is_comment := i > 0 and is_comment_trivia(trivia[i - 1])
         next_is_comment := i + 1 < trivia.len() and is_comment_trivia(trivia[i + 1])
-
         if !prev_is_comment and next_is_comment { result = doc.concat([result, doc.hard_line()]) }
       },
       .LineComment => { result = doc.concat([result, doc.text(t.text), doc.hard_line()]) },
@@ -181,7 +178,6 @@ fn sort_import_blocks(items: Vector<Item>) Vector<Item> {
         }
 
         sorted := sort_uses(uses)
-
         for u in sorted { result = .append(Item.Use(u)) }
       },
       _ => {
@@ -248,11 +244,9 @@ fn import_item_name(item: ImportItem) String {
 // --- Module ---
 pub fn format_module(module: Module, tokens: Vector<Token>) Doc {
   items := sort_import_blocks(module.items)
-
   if items.len() == 0 {
     return doc.nil()
   }
-
   tm := build_trivia_map(tokens)
   result := Doc.Nil
   original_first_start := item_span(module.items[0]).start
@@ -260,11 +254,9 @@ pub fn format_module(module: Module, tokens: Vector<Token>) Doc {
 
   if leading_file_trivia.len() > 0 {
     start := 0
-
     for start < leading_file_trivia.len() and is_blank_trivia(leading_file_trivia[start]) {
       start = start + 1
     }
-
     if start < leading_file_trivia.len() {
       result = doc.concat([
         result,
@@ -292,24 +284,18 @@ pub fn format_module(module: Module, tokens: Vector<Token>) Doc {
       result = doc.concat([result, doc.hard_line()])
       // Determine if a blank line is needed
       needs_blank := should_blank_between(prev_kind, cur_kind)
-
       // Blank line between different import groups
       if prev_kind == "use" and cur_kind == "use" and prev_import_group != cur_import_group {
         needs_blank = true
       }
-
       if needs_blank { result = doc.concat([result, doc.hard_line()]) }
-
       comments := non_blank_trivia(trivia)
-
       if comments.len() > 0 { result = doc.concat([result, emit_trivia(comments)]) }
     }
 
     item_doc := format_item(item, tm)
     trailing := get_trailing_trivia(tm, item_span(item).end)
-
     if trailing.len() > 0 { item_doc = doc.concat([item_doc, emit_trailing_trivia(trailing)]) }
-
     result = doc.concat([result, item_doc])
     prev_kind = cur_kind
     prev_import_group = cur_import_group
@@ -345,12 +331,10 @@ fn should_blank_between(prev: String, cur: String) Bool {
   if prev == "use" and cur == "use" {
     return false
   }
-
   // Between statements: no blank line required
   if prev == "stmt" and cur == "stmt" {
     return false
   }
-
   // Otherwise: blank line between different declaration kinds
   true
 }
@@ -416,13 +400,9 @@ fn format_import_item(item: ImportItem) Doc {
 // --- Type Declarations ---
 fn format_type_decl(decl: TypeDecl) Doc {
   parts: Vector<Doc> = []
-
   if decl.is_pub { parts = .append(doc.text("pub ")) }
-
   parts = .append(doc.text("type ${decl.name}"))
-
   if decl.type_params.len() > 0 { parts = .append(format_type_params(decl.type_params)) }
-
   parts = .append(doc.text(" = "))
 
   case decl.def {
@@ -502,13 +482,9 @@ fn format_type_expr(ty: TypeExpr) Doc {
 // --- Functions ---
 fn format_function(decl: FunctionDecl, tm: TriviaMap) Doc {
   parts: Vector<Doc> = []
-
   if decl.is_pub { parts = .append(doc.text("pub ")) }
-
   parts = .append(doc.text("fn ${decl.name}"))
-
   if decl.type_params.len() > 0 { parts = .append(format_type_params(decl.type_params)) }
-
   param_docs := collect p in decl.params { format_param(p) }
   parts = .append(doc.tight_bracketed("(", ")", param_docs))
 
@@ -527,9 +503,7 @@ fn format_function(decl: FunctionDecl, tm: TriviaMap) Doc {
 
 fn format_extern_fn(decl: ExternFunctionDecl) Doc {
   parts: Vector<Doc> = []
-
   if decl.is_pub { parts = .append(doc.text("pub ")) }
-
   parts = .append(doc.text("extern fn \"${decl.module}\" ${decl.name}"))
   param_docs := collect p in decl.params { format_param(p) }
   parts = .append(doc.tight_bracketed("(", ")", param_docs))
@@ -547,9 +521,7 @@ fn format_extern_fn(decl: ExternFunctionDecl) Doc {
 
 fn format_extern_type(decl: ExternTypeDecl) Doc {
   parts: Vector<Doc> = []
-
   if decl.is_pub { parts = .append(doc.text("pub ")) }
-
   parts = .append(doc.text("extern type \"${decl.module}\" ${decl.name}"))
   doc.concat(parts)
 }
@@ -577,13 +549,9 @@ fn format_block_with_options(
   for stmt in block.stmts {
     trivia := non_blank_trivia(get_trivia(tm, stmt_span(stmt).start))
     stmt_doc := format_stmt(stmt, tm)
-
     if trivia.len() > 0 { stmt_doc = doc.concat([emit_trivia(trivia), stmt_doc]) }
-
     trailing := get_trailing_trivia(tm, stmt_span(stmt).end)
-
     if trailing.len() > 0 { stmt_doc = doc.concat([stmt_doc, emit_trailing_trivia(trailing)]) }
-
     body_docs = .append(stmt_doc)
   }
 
@@ -591,13 +559,9 @@ fn format_block_with_options(
     .Some(expr) => {
       trivia := non_blank_trivia(get_trivia(tm, expr.span.start))
       tail_doc := format_expr(expr, tm)
-
       if trivia.len() > 0 { tail_doc = doc.concat([emit_trivia(trivia), tail_doc]) }
-
       trailing := get_trailing_trivia(tm, expr.span.end)
-
       if trailing.len() > 0 { tail_doc = doc.concat([tail_doc, emit_trailing_trivia(trailing)]) }
-
       body_docs = .append(tail_doc)
     },
     .None => {},
@@ -614,7 +578,6 @@ fn format_block_with_options(
         .Some(expr) => {
           trivia := get_trivia(tm, expr.span.start)
           trailing_t := get_trailing_trivia(tm, expr.span.end)
-
           if is_simple_expr(expr) and trivia.len() == 0 and trailing_t.len() == 0 {
             return doc.group(
               doc.concat([
@@ -632,7 +595,6 @@ fn format_block_with_options(
       stmt := block.stmts[0]
       trivia := get_trivia(tm, stmt_span(stmt).start)
       trailing_t := get_trailing_trivia(tm, stmt_span(stmt).end)
-
       if is_simple_stmt(stmt, allow_return_inline) and trivia.len() == 0 and trailing_t.len() == 0 {
         return doc.group(
           doc.concat([
@@ -658,9 +620,7 @@ fn format_block_with_options(
 fn join_block_docs(block: Block, docs: Vector<Doc>) Doc {
   result := docs[0]
   prev_flow := false
-
   if block.stmts.len() > 0 { prev_flow = is_flow_stmt(block.stmts[0]) }
-
   i := 1
 
   for i < docs.len() {
@@ -691,7 +651,6 @@ fn should_use_compact_flow_separator(block: Block, cur_index: Int) Bool {
   if cur_index >= block.stmts.len() or cur_index == 0 {
     return false
   }
-
   prev := block.stmts[cur_index - 1]
   cur := block.stmts[cur_index]
   is_simple_stmt(prev, true) and is_simple_terminal_stmt(cur)
@@ -707,7 +666,7 @@ fn is_simple_terminal_stmt(stmt: Stmt) Bool {
 
 fn is_flow_stmt(stmt: Stmt) Bool {
   case stmt {
-    .For(_) => true,
+    .For(s) => !is_simple_inline_block(s.body),
     .Return(_) => true,
     .Defer(_) => true,
     .Expr(s) => is_flow_expr(s.expr),
@@ -717,11 +676,29 @@ fn is_flow_stmt(stmt: Stmt) Bool {
 
 fn is_flow_expr(expr: Expr) Bool {
   case expr.kind {
-    .If(_, _, _) => true,
+    .If(_, then_block, else_expr) => {
+      case else_expr {
+        .Some(_) => true,
+        .None => !is_simple_inline_block(then_block),
+      }
+    },
     .Case(_, _) => true,
-    .Collect(_) => true,
+    .Collect(coll) => !is_simple_inline_block(coll.body),
     .BlockExpr(_) => true,
     _ => false,
+  }
+}
+
+fn is_simple_inline_block(block: Block) Bool {
+  if block.stmts.len() == 0 {
+    case block.tail {
+      .Some(expr) => is_simple_expr(expr),
+      .None => true,
+    }
+  } else if block.stmts.len() == 1 and block.tail.is_none() {
+    is_simple_stmt(block.stmts[0], true)
+  } else {
+    false
   }
 }
 
@@ -740,7 +717,6 @@ fn format_stmt(stmt: Stmt, tm: TriviaMap) Doc {
 
 fn format_let(s: LetStmt, tm: TriviaMap) Doc {
   parts: Vector<Doc> = []
-
   if s.is_pub { parts = .append(doc.text("pub ")) }
 
   case s.ty {
@@ -933,7 +909,6 @@ fn format_binary_inner(op: BinOp, lhs: Expr, rhs: Expr, tm: TriviaMap, indent_co
   if is_logical_op(op) {
     return format_logical_binary(op, lhs, rhs, tm, indent_continuation)
   }
-
   op_str := binop_str(op)
   lhs_doc := format_binary_child(op, lhs, false, tm, false)
   rhs_doc := format_binary_child(op, rhs, true, tm, false)
@@ -1025,15 +1000,12 @@ fn format_binary_child(
 fn needs_binary_parens(parent: BinOp, child: BinOp, is_right: Bool) Bool {
   parent_prec := binop_prec(parent)
   child_prec := binop_prec(child)
-
   if child_prec < parent_prec {
     return true
   }
-
   if child_prec > parent_prec {
     return false
   }
-
   // Preserve grouping for right-nested operators at the same precedence.
   // This is required for non-associative ops and harmlessly explicit for others.
   is_right
@@ -1098,7 +1070,6 @@ fn format_call(callee: Expr, args: Vector<Expr>, tm: TriviaMap) Doc {
       doc.text(")"),
     ])
   }
-
   arg_docs := collect a in args { format_expr(a, tm) }
   doc.concat([format_expr(callee, tm), doc.tight_bracketed("(", ")", arg_docs)])
 }
@@ -1159,13 +1130,9 @@ fn format_case(scrutinee: Expr, arms: Vector<CaseArm>, tm: TriviaMap) Doc {
   for arm in arms {
     trivia := non_blank_trivia(get_trivia(tm, arm.span.start))
     arm_doc := format_case_arm(arm, tm)
-
     if trivia.len() > 0 { arm_doc = doc.concat([emit_trivia(trivia), arm_doc]) }
-
     trailing := get_trailing_trivia(tm, arm.span.end)
-
     if trailing.len() > 0 { arm_doc = doc.concat([arm_doc, emit_trailing_trivia(trailing)]) }
-
     arm_docs = .append(arm_doc)
   }
 
@@ -1476,7 +1443,6 @@ fn escape_string(s: String) String {
     case escape {
       .Some(esc) => {
         if i > seg_start { result = .append(s.slice(seg_start, i)) }
-
         result = .append(esc)
         i = i + 1
         seg_start = i
@@ -1486,7 +1452,6 @@ fn escape_string(s: String) String {
   }
 
   if seg_start < n { result = .append(s.slice(seg_start, n)) }
-
   result.join("")
 }
 

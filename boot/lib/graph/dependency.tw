@@ -157,7 +157,6 @@ pub fn topo_sort(g: DependencyGraph, roots: Vector<String>) Result<Vector<String
             }
             deg = deg - 1
             dep_count[dep] = deg
-
             if deg == 0 { freed = .append(dep) }
           }
         }
@@ -178,7 +177,6 @@ pub fn topo_sort(g: DependencyGraph, roots: Vector<String>) Result<Vector<String
         .Some(n) => n,
         .None => 0,
       }
-
       if deg > 0 { unprocessed[node] = true }
     }
 
@@ -219,13 +217,10 @@ fn can_reach_self(g: DependencyGraph, start: String, allowed: Dict<String, Bool>
   for si < stack.len() {
     cur := stack[si]
     si = si + 1
-
     if cur == start {
       return true
     }
-
     if visited.has(cur) { continue }
-
     visited[cur] = true
 
     case g.forward[cur] {
@@ -246,7 +241,6 @@ fn dedup(v: Vector<String>) Vector<String> {
 
   collect item in v {
     if seen.has(item) { continue }
-
     seen[item] = true
     item
   }

@@ -1,7 +1,4 @@
 // Access pub values from an imported module via qualified name.
-
 use .pub_value_lib
 
-fn main() Int {
-  pub_value_lib.answer
-}
+fn main() Int { pub_value_lib.answer }

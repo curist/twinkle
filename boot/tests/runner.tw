@@ -92,7 +92,6 @@ pub fn suite_stats(s: Suite) RunStats { suite_stats_with(default_options(), s) }
 
 pub fn suite_stats_with(opts: RunOptions, s: Suite) RunStats {
   if !opts.verbose { print_compact_filter(opts) }
-
   result := run_suite(opts, s)
 
   if !opts.verbose {
@@ -152,7 +151,6 @@ fn print_failures(opts: RunOptions, failures: Vector<FailedTest>) Void {
   if failures.len() == 0 {
     return
   }
-
   println("")
   println(bold(opts.color, "Failed tests:"))
 
@@ -166,13 +164,11 @@ fn print_failures(opts: RunOptions, failures: Vector<FailedTest>) Void {
 
 fn finish_compact_run(opts: RunOptions, failures: Vector<FailedTest>, executed: Int) Void {
   if executed > 0 { println("") }
-
   print_failures(opts, failures)
 }
 
 fn run_suite(opts: RunOptions, s: Suite) SuiteRun {
   if opts.verbose { print_suite_header(opts, s) }
-
   total := s.tests.len()
   passed := 0
   failed := 0
@@ -204,7 +200,6 @@ fn run_suite(opts: RunOptions, s: Suite) SuiteRun {
   }
 
   if opts.verbose { print_suite_summary(opts, passed, failed, filtered) }
-
   SuiteRun.{
     stats: RunStats.{ total: total, passed: passed, failed: failed, filtered: filtered },
     failures,
@@ -237,7 +232,6 @@ pub fn run_all_stats_with(opts: RunOptions, suites: Vector<Suite>) RunStats {
   failed := 0
   filtered := 0
   failures: Vector<FailedTest> = []
-
   if !opts.verbose { print_compact_filter(opts) }
 
   for s in suites {
@@ -259,6 +253,5 @@ pub fn run_all_stats_with(opts: RunOptions, suites: Vector<Suite>) RunStats {
 
 pub fn run_all_with(opts: RunOptions, suites: Vector<Suite>) Void {
   st := run_all_stats_with(opts, suites)
-
   if st.failed > 0 { proc.exit(1) }
 }

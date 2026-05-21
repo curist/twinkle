@@ -210,7 +210,6 @@ fn set_prelude_function_origins(
 
 fn bind_public_free_builtins(env: ResolvedEnv) ResolvedEnv {
   cur := env
-
   for name in [
     "print",
     "println",
@@ -221,7 +220,6 @@ fn bind_public_free_builtins(env: ResolvedEnv) ResolvedEnv {
     "range_from",
     "range_step",
   ] { cur = .bind_function(name, name) }
-
   cur
 }
 

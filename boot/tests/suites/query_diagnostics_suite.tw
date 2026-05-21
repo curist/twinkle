@@ -298,7 +298,6 @@ pub fn suite() runner.Suite {
 
       for group in result.diagnostics_by_uri {
         if group.uri == entry { try assert.is_true(group.diagnostics.len() > 0) }
-
         if group.uri == dep { try assert.equal(group.diagnostics.len(), 0) }
       }
 

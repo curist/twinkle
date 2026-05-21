@@ -37,13 +37,9 @@ pub fn emit_if_op(
     // If one branch diverges, it won't produce a value, but that's OK
     // because it ends with Unreachable/Br
     then_body := then_instrs
-
     if !then_div { then_body = append_result_store(then_body, result_idx, result_mono) }
-
     else_body := else_instrs
-
     if !else_div { else_body = append_result_store(else_body, result_idx, result_mono) }
-
     out.append(.If(.None, then_body, else_body))
   }
 }

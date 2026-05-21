@@ -481,9 +481,7 @@ fn gen_record_eq_fn(rec: WasmRecordLayout) FuncDef {
   qsym := qualified_rec_sym(rec)
   ref_ty := ValType.Ref(false, HeapType.Named(qsym))
   body: Vector<Instr> = []
-
   for f, i in rec.fields { body = .concat(field_eq_instrs(qsym, i, f.val_type)) }
-
   body = .append(Instr.I32Const(1))
   FuncDef.{
     name: rec_eq_func_name(rec),

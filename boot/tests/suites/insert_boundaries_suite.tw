@@ -57,9 +57,7 @@ fn mk_param(id: Int, ty: MonoType) Param { Param.{ local: lid(id), ty: ty } }
 
 fn mk_mono_map(entries: Vector<Int>, types: Vector<MonoType>) Dict<Int, MonoType> {
   d: Dict<Int, MonoType> = Dict.new()
-
   for k, i in entries { d[k] = types[i] }
-
   d
 }
 
@@ -134,9 +132,7 @@ fn count_wraps_op(op: AnfOp) Int {
     .AIf(_, then_e, else_e) => count_wraps_expr(then_e) + count_wraps_expr(else_e),
     .AMatch(_, arms) => {
       s := 0
-
       for arm in arms { s = s + count_wraps_expr(arm.body) }
-
       s
     },
     .ALoop(inner) => count_wraps_expr(inner),
@@ -158,9 +154,7 @@ fn count_make_closures_op(op: AnfOp) Int {
     .AIf(_, then_e, else_e) => count_make_closures_expr(then_e) + count_make_closures_expr(else_e),
     .AMatch(_, arms) => {
       s := 0
-
       for arm in arms { s = s + count_make_closures_expr(arm.body) }
-
       s
     },
     .ALoop(inner) => count_make_closures_expr(inner),
@@ -182,9 +176,7 @@ fn count_unwraps_op(op: AnfOp) Int {
     .AIf(_, then_e, else_e) => count_unwraps_expr(then_e) + count_unwraps_expr(else_e),
     .AMatch(_, arms) => {
       s := 0
-
       for arm in arms { s = s + count_unwraps_expr(arm.body) }
-
       s
     },
     .ALoop(inner) => count_unwraps_expr(inner),

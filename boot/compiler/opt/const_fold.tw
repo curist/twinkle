@@ -155,9 +155,7 @@ fn constant_fold_op(op: AnfOp) OpFoldResult {
       changed := false
       new_arms: Vector<AnfMatchArm> = collect arm in arms {
         r := constant_fold(arm.body)
-
         if r.changed { changed = true }
-
         AnfMatchArm.{ pattern: arm.pattern, body: r.expr }
       }
       OpFoldResult.{ op: .AMatch(scrutinee, new_arms), changed: changed }

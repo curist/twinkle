@@ -115,9 +115,7 @@ pub fn suite() runner.Suite {
 
       for p in result.state.module_order {
         if p == "/tmp/analyze/dep.tw" { dep_index = i }
-
         if p == "/tmp/analyze/main.tw" { main_index = i }
-
         i = i + 1
       }
 
@@ -206,12 +204,10 @@ pub fn suite() runner.Suite {
       id := identity.from_path("/tmp/analyze/main.tw")
       result := analyze.analyze_module(id, "__entry", base_env.builtin_env(), state, [])
       try assert.is_true(result.ok)
-
       // Every module in module_order should have a runner
       for mod_path in result.state.module_order {
         try assert.is_true(result.state.module_runners.has(mod_path))
       }
-
       .Ok({})
     },
   ).test(

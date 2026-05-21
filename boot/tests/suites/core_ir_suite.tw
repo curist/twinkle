@@ -182,42 +182,32 @@ fn make_closure_targets(expr: core_ir.CoreExpr, out: Vector<Int>) Vector<Int> {
     .If(_, then_e, else_e) => make_closure_targets(else_e, make_closure_targets(then_e, out)),
     .Match(_, arms) => {
       cur := out
-
       for arm in arms { cur = make_closure_targets(arm.body, cur) }
-
       cur
     },
     .Loop(body) => make_closure_targets(body, out),
     .Assign(_, val) => make_closure_targets(val, out),
     .Record(_, fields) => {
       cur := out
-
       for field in fields { cur = make_closure_targets(field.value, cur) }
-
       cur
     },
     .RecordGet(target, _) => make_closure_targets(target, out),
     .RecordUpdate(base, _, value) => make_closure_targets(value, make_closure_targets(base, out)),
     .Variant(_, _, args) => {
       cur := out
-
       for arg in args { cur = make_closure_targets(arg, cur) }
-
       cur
     },
     .ArrayLit(elems) => {
       cur := out
-
       for elem in elems { cur = make_closure_targets(elem, cur) }
-
       cur
     },
     .Index(base, idx) => make_closure_targets(idx, make_closure_targets(base, out)),
     .Call(callee, args) => {
       cur := make_closure_targets(callee, out)
-
       for arg in args { cur = make_closure_targets(arg, cur) }
-
       cur
     },
     .UnOp(_, inner) => make_closure_targets(inner, out),
@@ -242,7 +232,6 @@ fn join_names(names: Vector<String>) String {
   if names.len() == 0 {
     return ""
   }
-
   result := names[0]
   i := 1
 
@@ -1018,7 +1007,6 @@ pub fn suite() runner.Suite {
 
       for func in result.functions {
         if func.name == "id" { has_generic = true }
-
         if func.name.len() > 2 and func.name.slice(0, 2) == "id" and func.name != "id" {
           has_specialized = true
         }
@@ -1039,7 +1027,6 @@ pub fn suite() runner.Suite {
 
       for func in result.functions {
         if func.name == "fail" { has_generic_fail = true }
-
         if func.name.starts_with("fail__") { has_specialized_fail = true }
       }
 
@@ -1097,7 +1084,6 @@ pub fn suite() runner.Suite {
 
       for func in result.functions {
         defined[func.func_id.id] = true
-
         if func.name == "compose" { has_generic_compose = true }
 
         if func.name.starts_with("compose__") {
@@ -1114,14 +1100,12 @@ pub fn suite() runner.Suite {
       }
       targets := make_closure_targets(body, [])
       try assert.ok(targets.len() > 0, "expected specialized compose body to contain MakeClosure")
-
       for tid in targets {
         try assert.ok(
           defined.has(tid),
           "expected make_closure target F${tid} to exist after monomorphization",
         )
       }
-
       .Ok({})
     },
   ).test(

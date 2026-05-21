@@ -1,9 +1,5 @@
 pub type Env = .{ value: Int }
 
-pub fn new_env(value: Int) Env {
-  Env.{ value }
-}
+pub fn new_env(value: Int) Env { Env.{ value } }
 
-pub fn resolve(env: Env) Int {
-  env.value
-}
+pub fn resolve(env: Env) Int { env.value }

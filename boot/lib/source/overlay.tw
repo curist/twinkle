@@ -23,9 +23,7 @@ pub fn empty() Overlay { .{ documents: Dict.new() } }
 
 pub fn from_documents(documents: Vector<OverlayDocument>) Overlay {
   docs: Dict<String, OverlayDocument> = Dict.new()
-
   for doc in documents { docs[doc.identity.path] = doc }
-
   .{ documents: docs }
 }
 

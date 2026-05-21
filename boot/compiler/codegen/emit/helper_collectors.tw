@@ -46,7 +46,6 @@ fn collect_iterator_next_helpers_expr(expr: PreparedExpr, func: PreparedFunc, wa
     case cur_expr {
       .Let(sid, op, body) => {
         from_op := collect_iterator_next_helpers_op(op, func, want_fid)
-
         for mono in from_op { out = .append(mono) }
 
         case func.slots[sid.id] {
@@ -77,9 +76,7 @@ fn collect_iterator_next_helpers_op(op: PreparedOp, func: PreparedFunc, want_fid
     .AIf(_, then_e, else_e) => {
       out := collect_iterator_next_helpers_expr(then_e, func, want_fid)
       more := collect_iterator_next_helpers_expr(else_e, func, want_fid)
-
       for mono in more { out = .append(mono) }
-
       out
     },
     .AMatch(_, arms) => {
@@ -87,7 +84,6 @@ fn collect_iterator_next_helpers_op(op: PreparedOp, func: PreparedFunc, want_fid
 
       for arm in arms {
         more := collect_iterator_next_helpers_expr(arm.body, func, want_fid)
-
         for mono in more { out = .append(mono) }
       }
 
@@ -137,7 +133,6 @@ fn collect_dict_get_inner_types_expr(expr: PreparedExpr, func: PreparedFunc, wan
     case cur_expr {
       .Let(sid, op, body) => {
         from_op := collect_dict_get_inner_types_op(op, func, want_fid)
-
         for mono in from_op { out = .append(mono) }
 
         case func.slots[sid.id] {
@@ -174,9 +169,7 @@ fn collect_dict_get_inner_types_op(op: PreparedOp, func: PreparedFunc, want_fid:
     .AIf(_, then_e, else_e) => {
       out := collect_dict_get_inner_types_expr(then_e, func, want_fid)
       more := collect_dict_get_inner_types_expr(else_e, func, want_fid)
-
       for mono in more { out = .append(mono) }
-
       out
     },
     .AMatch(_, arms) => {
@@ -184,7 +177,6 @@ fn collect_dict_get_inner_types_op(op: PreparedOp, func: PreparedFunc, want_fid:
 
       for arm in arms {
         more := collect_dict_get_inner_types_expr(arm.body, func, want_fid)
-
         for mono in more { out = .append(mono) }
       }
 

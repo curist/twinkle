@@ -57,7 +57,6 @@ fn match_type_against(pattern: MonoType, concrete: MonoType, out: Dict<String, M
   case pattern {
     .Var(name) => {
       if !out.has(name) { out[name] = concrete }
-
       out
     },
     .Vector(elem_p) => {
@@ -96,7 +95,6 @@ fn match_type_against(pattern: MonoType, concrete: MonoType, out: Dict<String, M
           if tid_p.id != tid_c.id {
             return out
           }
-
           i := 0
 
           for i < ap.len() and i < ac.len() {
@@ -141,16 +139,12 @@ fn apply_subst(ty: MonoType, subst: Dict<String, MonoType>) MonoType {
     .Dict(k, v) => MonoType.Dict(apply_subst(k, subst), apply_subst(v, subst)),
     .Function(params, ret) => {
       new_params: Vector<MonoType> = []
-
       for p in params { new_params = .append(apply_subst(p, subst)) }
-
       MonoType.Function(new_params, apply_subst(ret, subst))
     },
     .Named(tid, args) => {
       new_args: Vector<MonoType> = []
-
       for a in args { new_args = .append(apply_subst(a, subst)) }
-
       MonoType.Named(tid, new_args)
     },
     .Optional(inner) => MonoType.Optional(apply_subst(inner, subst)),
@@ -231,9 +225,7 @@ fn collect_vars_in_expr_types(expr: CoreExpr, seen: Dict<String, Bool>, result: 
     .UnOp(_, inner) => collect_vars_in_expr_types(inner, st.seen, st.result),
     .Call(callee, args) => {
       st = collect_vars_in_expr_types(callee, st.seen, st.result)
-
       for arg in args { st = collect_vars_in_expr_types(arg, st.seen, st.result) }
-
       st
     },
     .If(cond, then_e, else_e) => {
@@ -243,9 +235,7 @@ fn collect_vars_in_expr_types(expr: CoreExpr, seen: Dict<String, Bool>, result: 
     },
     .Match(scrut, arms) => {
       st = collect_vars_in_expr_types(scrut, st.seen, st.result)
-
       for arm in arms { st = collect_vars_in_expr_types(arm.body, st.seen, st.result) }
-
       st
     },
     .Loop(body) => collect_vars_in_expr_types(body, st.seen, st.result),
@@ -260,7 +250,6 @@ fn collect_vars_in_expr_types(expr: CoreExpr, seen: Dict<String, Bool>, result: 
     .Defer(inner) => collect_vars_in_expr_types(inner, st.seen, st.result),
     .Record(_, fields) => {
       for field in fields { st = collect_vars_in_expr_types(field.value, st.seen, st.result) }
-
       st
     },
     .RecordGet(target, _) => collect_vars_in_expr_types(target, st.seen, st.result),
@@ -270,12 +259,10 @@ fn collect_vars_in_expr_types(expr: CoreExpr, seen: Dict<String, Bool>, result: 
     },
     .Variant(_, _, args) => {
       for arg in args { st = collect_vars_in_expr_types(arg, st.seen, st.result) }
-
       st
     },
     .ArrayLit(elems) => {
       for elem in elems { st = collect_vars_in_expr_types(elem, st.seen, st.result) }
-
       st
     },
     .Index(base, idx) => {
@@ -307,17 +294,13 @@ fn type_key(ty: MonoType) String {
         "T${tid.id}"
       } else {
         parts: Vector<String> = []
-
         for a in args { parts = .append(type_key(a)) }
-
         "T${tid.id}_${join_parts(parts)}"
       }
     },
     .Function(params, ret) => {
       parts: Vector<String> = []
-
       for p in params { parts = .append(type_key(p)) }
-
       "Fn_${join_parts(parts)}_${type_key(ret)}"
     },
     .Optional(inner) => "Opt_${type_key(inner)}",
@@ -330,7 +313,6 @@ fn join_parts(parts: Vector<String>) String {
   if parts.len() == 0 {
     return ""
   }
-
   result := parts[0]
   i := 1
 
@@ -345,9 +327,7 @@ fn join_parts(parts: Vector<String>) String {
 // Serialize a (FuncId, type_args) key for the spec_map.
 fn spec_key(func_id: FuncId, type_args: Vector<MonoType>) String {
   parts: Vector<String> = []
-
   for ta in type_args { parts = .append(type_key(ta)) }
-
   "${func_id.id}|${join_parts(parts)}"
 }
 
@@ -377,9 +357,7 @@ fn subst_covers(type_params: Vector<String>, subst: Dict<String, MonoType>) Bool
 
 fn generic_func_type(func: FunctionDef) MonoType {
   param_tys: Vector<MonoType> = []
-
   for p in func.params { param_tys = .append(p.ty) }
-
   MonoType.Function(param_tys, func.return_ty)
 }
 
@@ -397,7 +375,6 @@ fn infer_call_subst(gf: FunctionDef, args: Vector<CoreExpr>, call_ty: MonoType) 
   }
 
   if !subst_covers(type_params, subst) { subst = match_type_against(gf.return_ty, call_ty, subst) }
-
   subst
 }
 
@@ -405,12 +382,10 @@ fn collect_local_types(expr: CoreExpr, out: Dict<Int, MonoType>) Dict<Int, MonoT
   case expr.kind {
     .Local(id) => {
       if !out.has(id.id) { out[id.id] = expr.ty }
-
       out
     },
     .GlobalLocal(id) => {
       if !out.has(id.id) { out[id.id] = expr.ty }
-
       out
     },
     .Let(local, value, body) => {
@@ -420,7 +395,6 @@ fn collect_local_types(expr: CoreExpr, out: Dict<Int, MonoType>) Dict<Int, MonoT
     },
     .Assign(local, value) => {
       if !out.has(local.id) { out[local.id] = value.ty }
-
       collect_local_types(value, out)
     },
     .BinOp(_, lhs, rhs) => {
@@ -430,9 +404,7 @@ fn collect_local_types(expr: CoreExpr, out: Dict<Int, MonoType>) Dict<Int, MonoT
     .UnOp(_, inner) => collect_local_types(inner, out),
     .Call(callee, args) => {
       out = collect_local_types(callee, out)
-
       for arg in args { out = collect_local_types(arg, out) }
-
       out
     },
     .If(cond, then_e, else_e) => {
@@ -442,9 +414,7 @@ fn collect_local_types(expr: CoreExpr, out: Dict<Int, MonoType>) Dict<Int, MonoT
     },
     .Match(scrut, arms) => {
       out = collect_local_types(scrut, out)
-
       for arm in arms { out = collect_local_types(arm.body, out) }
-
       out
     },
     .Loop(body) => collect_local_types(body, out),
@@ -459,7 +429,6 @@ fn collect_local_types(expr: CoreExpr, out: Dict<Int, MonoType>) Dict<Int, MonoT
     .Defer(inner) => collect_local_types(inner, out),
     .Record(_, fields) => {
       for field in fields { out = collect_local_types(field.value, out) }
-
       out
     },
     .RecordGet(target, _) => collect_local_types(target, out),
@@ -469,12 +438,10 @@ fn collect_local_types(expr: CoreExpr, out: Dict<Int, MonoType>) Dict<Int, MonoT
     },
     .Variant(_, _, args) => {
       for arg in args { out = collect_local_types(arg, out) }
-
       out
     },
     .ArrayLit(elems) => {
       for elem in elems { out = collect_local_types(elem, out) }
-
       out
     },
     .Index(base, idx) => {
@@ -511,9 +478,7 @@ fn capture_subst_from_free_vars(
 
 fn collect_instantiations_func(func: FunctionDef, ctx: MonoCtx, queue: InstQueue) InstQueue {
   local_types: Dict<Int, MonoType> = Dict.new()
-
   for p in func.params { local_types[p.local.id] = p.ty }
-
   collect_instantiations(func.body, ctx, queue, local_types)
 }
 
@@ -581,7 +546,6 @@ fn collect_instantiations(
               .Some(gf) => {
                 type_params := collect_type_params(gf)
                 subst := infer_call_subst(gf, args, expr.ty)
-
                 if subst_covers(type_params, subst) {
                   queue.items = queue.items.append(InstItem.{ func_id: fid, subst })
                 }
@@ -609,7 +573,6 @@ fn collect_instantiations(
                 call_args := [receiver].concat(args)
                 type_params := collect_type_params(gf)
                 subst := infer_call_subst(gf, call_args, expr.ty)
-
                 if subst_covers(type_params, subst) {
                   queue.items = queue.items.append(InstItem.{ func_id: fid, subst })
                 }
@@ -631,7 +594,6 @@ fn collect_instantiations(
             generic_fn_ty := generic_func_type(gf)
             type_params := collect_type_params(gf)
             subst := match_type_against(generic_fn_ty, expr.ty, Dict.new())
-
             if subst_covers(type_params, subst) {
               queue.items = queue.items.append(InstItem.{ func_id: fid, subst })
             }
@@ -649,7 +611,6 @@ fn collect_instantiations(
             type_params := collect_type_params(gf)
             subst := match_type_against(generic_func_type(gf), expr.ty, Dict.new())
             subst = capture_subst_from_free_vars(gf, free_vars, local_types, subst)
-
             if subst_covers(type_params, subst) {
               queue.items = queue.items.append(InstItem.{ func_id: fid, subst })
             }
@@ -747,16 +708,12 @@ fn apply_subst_to_kind(kind: CoreExprKind, subst: Dict<String, MonoType>) CoreEx
     .UnOp(op, inner) => .UnOp(op, apply_subst_to_expr(inner, subst)),
     .Call(callee, args) => {
       new_args: Vector<CoreExpr> = []
-
       for a in args { new_args = .append(apply_subst_to_expr(a, subst)) }
-
       .Call(apply_subst_to_expr(callee, subst), new_args)
     },
     .ContractCall(contract, method_name, receiver, args) => {
       new_args: Vector<CoreExpr> = []
-
       for a in args { new_args = .append(apply_subst_to_expr(a, subst)) }
-
       .ContractCall(contract, method_name, apply_subst_to_expr(receiver, subst), new_args)
     },
     .MakeClosure(fid, free_vars) => kind,
@@ -769,13 +726,11 @@ fn apply_subst_to_kind(kind: CoreExprKind, subst: Dict<String, MonoType>) CoreEx
     },
     .Match(scrut, arms) => {
       new_arms: Vector<MatchArm> = []
-
       for arm in arms {
         new_arms = .append(
           MatchArm.{ pattern: arm.pattern, body: apply_subst_to_expr(arm.body, subst) },
         )
       }
-
       .Match(apply_subst_to_expr(scrut, subst), new_arms)
     },
     .Loop(body) => .Loop(apply_subst_to_expr(body, subst)),
@@ -794,13 +749,11 @@ fn apply_subst_to_kind(kind: CoreExprKind, subst: Dict<String, MonoType>) CoreEx
     .Defer(inner) => .Defer(apply_subst_to_expr(inner, subst)),
     .Record(tid, fields) => {
       new_fields: Vector<FieldInit> = []
-
       for fi in fields {
         new_fields = .append(
           FieldInit.{ field: fi.field, value: apply_subst_to_expr(fi.value, subst) },
         )
       }
-
       .Record(tid, new_fields)
     },
     .RecordGet(target, fid) => .RecordGet(apply_subst_to_expr(target, subst), fid),
@@ -811,16 +764,12 @@ fn apply_subst_to_kind(kind: CoreExprKind, subst: Dict<String, MonoType>) CoreEx
     ),
     .Variant(tid, vid, args) => {
       new_args: Vector<CoreExpr> = []
-
       for a in args { new_args = .append(apply_subst_to_expr(a, subst)) }
-
       .Variant(tid, vid, new_args)
     },
     .ArrayLit(elems) => {
       new_elems: Vector<CoreExpr> = []
-
       for e in elems { new_elems = .append(apply_subst_to_expr(e, subst)) }
-
       .ArrayLit(new_elems)
     },
     .Index(base, idx) => .Index(apply_subst_to_expr(base, subst), apply_subst_to_expr(idx, subst)),
@@ -830,9 +779,7 @@ fn apply_subst_to_kind(kind: CoreExprKind, subst: Dict<String, MonoType>) CoreEx
 // ── Call rewriting ───────────────────────────────────────────────
 fn rewrite_calls_func(func: FunctionDef, spec_map: Dict<String, FuncId>, ctx: MonoCtx) CoreExpr {
   local_types: Dict<Int, MonoType> = Dict.new()
-
   for p in func.params { local_types[p.local.id] = p.ty }
-
   rewrite_calls(func.body, spec_map, ctx, local_types)
 }
 
@@ -855,7 +802,6 @@ fn rewrite_calls_kind(
   case parent.kind {
     .Call(callee, args) => {
       new_args: Vector<CoreExpr> = []
-
       for a in args { new_args = .append(rewrite_calls(a, spec_map, ctx, local_types)) }
 
       case callee.kind {
@@ -903,9 +849,7 @@ fn rewrite_calls_kind(
     .ContractCall(_, method_name, receiver, args) => {
       new_receiver := rewrite_calls(receiver, spec_map, ctx, local_types)
       new_args: Vector<CoreExpr> = []
-
       for a in args { new_args = .append(rewrite_calls(a, spec_map, ctx, local_types)) }
-
       lowered := CoreExpr.{
         kind: lower_resolved_contract_call(parent, method_name, new_receiver, new_args, ctx),
         ty: parent.ty,
@@ -920,11 +864,9 @@ fn rewrite_calls_kind(
             generic_fn_ty := generic_func_type(gf)
             type_params := collect_type_params(gf)
             subst := match_type_against(generic_fn_ty, parent.ty, Dict.new())
-
             if !subst_covers(type_params, subst) {
               return parent.kind
             }
-
             type_args: Vector<MonoType> = []
 
             for tp in type_params {
@@ -1007,7 +949,6 @@ fn rewrite_calls_kind(
     },
     .Match(scrut, arms) => {
       new_arms: Vector<MatchArm> = []
-
       for arm in arms {
         new_arms = .append(
           MatchArm.{
@@ -1016,7 +957,6 @@ fn rewrite_calls_kind(
           },
         )
       }
-
       .Match(rewrite_calls(scrut, spec_map, ctx, local_types), new_arms)
     },
     .Loop(body) => .Loop(rewrite_calls(body, spec_map, ctx, local_types)),
@@ -1031,13 +971,11 @@ fn rewrite_calls_kind(
     .Defer(inner) => .Defer(rewrite_calls(inner, spec_map, ctx, local_types)),
     .Record(tid, fields) => {
       new_fields: Vector<FieldInit> = []
-
       for fi in fields {
         new_fields = .append(
           FieldInit.{ field: fi.field, value: rewrite_calls(fi.value, spec_map, ctx, local_types) },
         )
       }
-
       .Record(tid, new_fields)
     },
     .RecordGet(target, fid) => .RecordGet(rewrite_calls(target, spec_map, ctx, local_types), fid),
@@ -1050,16 +988,12 @@ fn rewrite_calls_kind(
     },
     .Variant(tid, vid, args) => {
       new_args: Vector<CoreExpr> = []
-
       for a in args { new_args = .append(rewrite_calls(a, spec_map, ctx, local_types)) }
-
       .Variant(tid, vid, new_args)
     },
     .ArrayLit(elems) => {
       new_elems: Vector<CoreExpr> = []
-
       for e in elems { new_elems = .append(rewrite_calls(e, spec_map, ctx, local_types)) }
-
       .ArrayLit(new_elems)
     },
     .Index(base, idx) => {
@@ -1080,14 +1014,12 @@ pub fn monomorphize(module: CoreModule) CoreModule {
 
   for func in module.functions {
     func_map[func.func_id.id] = func
-
     if is_func_generic(func) { generic_ids[func.func_id.id] = true }
   }
 
   if generic_ids.keys().len() == 0 {
     return module
   }
-
   ctx := MonoCtx.{
     generic_ids,
     func_map,
@@ -1126,9 +1058,7 @@ pub fn monomorphize(module: CoreModule) CoreModule {
     case func_map[item.func_id.id] {
       .Some(gf) => {
         type_params := collect_type_params(gf)
-
         if !subst_covers(type_params, item.subst) { continue }
-
         type_args: Vector<MonoType> = []
 
         for tp in type_params {
@@ -1139,9 +1069,7 @@ pub fn monomorphize(module: CoreModule) CoreModule {
         }
 
         key := spec_key(item.func_id, type_args)
-
         if processed.has(key) { continue }
-
         processed[key] = true
         // Assign fresh FuncId
         new_fid := FuncId.{ id: next_func_id }
@@ -1149,17 +1077,13 @@ pub fn monomorphize(module: CoreModule) CoreModule {
         spec_map[key] = new_fid
         // Build specialized name
         suffix_parts: Vector<String> = []
-
         for ta in type_args { suffix_parts = .append(type_key(ta)) }
-
         spec_name := gf.name.concat("__").concat(join_parts(suffix_parts))
         // Clone and substitute
         new_params: Vector<Param> = []
-
         for p in gf.params {
           new_params = .append(Param.{ local: p.local, ty: apply_subst(p.ty, item.subst) })
         }
-
         new_body := apply_subst_to_expr(gf.body, item.subst)
         new_ret := apply_subst(gf.return_ty, item.subst)
         specialized := FunctionDef.{

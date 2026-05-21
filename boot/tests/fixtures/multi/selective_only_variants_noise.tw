@@ -1,7 +1,7 @@
 pub type NoiseA = .{ value: Int }
+
 pub type NoiseB = .{ value: Int }
+
 pub type NoiseC = .{ value: Int }
 
-pub fn keep() Int {
-  0
-}
+pub fn keep() Int { 0 }

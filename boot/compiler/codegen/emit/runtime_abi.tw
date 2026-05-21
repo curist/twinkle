@@ -37,7 +37,6 @@ pub fn emit_builder_arg_shim(entry_name: String, index: Int, buf: Vector<Instr>)
   if is_vector_builder_array_arg(entry_name, index) {
     return buf.append(.RefCast(true, .Named("rt_types__Array")))
   }
-
   buf
 }
 
@@ -46,7 +45,6 @@ pub fn emit_host_arg_shim(entry_name: String, index: Int, buf: Vector<Instr>) Ve
   if is_host_vector_arg(entry_name, index) {
     return buf.append(.Call("rt_arr__to_array"))
   }
-
   buf
 }
 
@@ -57,12 +55,10 @@ pub fn emit_host_result_shim(entry_name: String, buf: Vector<Instr>) Vector<Inst
   if is_host_vector_returning(entry_name) {
     return buf.append(.Call("rt_arr__from_array"))
   }
-
   if is_host_read_file(entry_name) {
     return buf.append(.RefCast(true, .Named("rt_types__Variant"))).append(
       .Call("rt_arr__from_read_file_result"),
     ).append(.Call(host_read_file_result_helper_sym()))
   }
-
   buf
 }

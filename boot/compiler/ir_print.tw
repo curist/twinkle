@@ -484,9 +484,7 @@ pub fn render_anf_module(env: ResolvedEnv, module: AnfModule) String {
   }
 
   lines = .append("")
-
   for func in module.functions { lines = render_anf_function(lines, env, func) }
-
   join_lines(lines)
 }
 

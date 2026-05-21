@@ -15,7 +15,6 @@ pub fn new(source: String) LineIndex {
 
   for i < source.len() {
     if source[i].to_int() == 10 { starts = .append(i + 1) }
-
     i = i + 1
   }
 
@@ -40,7 +39,6 @@ pub fn position_to_byte_offset(index: LineIndex, pos: Position, encoding: Positi
   if pos.line < 0 or pos.line >= index.line_starts.len() or pos.character < 0 {
     return .None
   }
-
   start := index.line_starts[pos.line]
   end := line_content_end(index, pos.line)
   line_text := index.source.slice(start, end)
@@ -49,7 +47,6 @@ pub fn position_to_byte_offset(index: LineIndex, pos: Position, encoding: Positi
       if pos.character > line_text.len() {
         return .None
       }
-
       pos.character
     },
     .Utf16 => case utf16.code_units_to_byte_offset(line_text, pos.character) {
@@ -106,7 +103,6 @@ fn byte_offset_to_scalars(s: String, byte_offset: Int) Int {
     if cp.byte_end > target {
       return count
     }
-
     count = count + 1
   }
 

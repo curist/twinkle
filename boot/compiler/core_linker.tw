@@ -405,11 +405,8 @@ pub fn validate_compiled_module_links(
   global_ids: Dict<String, Dict<String, Int>>,
 ) Result<Void, String> {
   defined: Dict<Int, Bool> = Dict.new()
-
   for f in m.core.functions { defined[f.func_id.id] = true }
-
   func_map: Dict<Int, FunctionDef> = Dict.new()
-
   for f in m.core.functions { func_map[f.func_id.id] = f }
 
   // Imported refs must either be builtins, locally defined functions, or have
@@ -419,7 +416,6 @@ pub fn validate_compiled_module_links(
 
     for ref_id in refs {
       if ref_id < m.builtin_count or defined.has(ref_id) { continue }
-
       if m.extern_imports.has(ref_id) { continue }
 
       if !m.external_refs.has(ref_id) {

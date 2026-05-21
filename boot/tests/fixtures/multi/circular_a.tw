@@ -1,4 +1,4 @@
 // Circular import: a imports b, b imports a.
 use .circular_b
 
-fn main() { }
+fn main() {}

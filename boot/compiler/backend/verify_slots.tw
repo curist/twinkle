@@ -14,11 +14,8 @@ pub fn verify_prepared_func_slots(
   env: ResolvedEnv,
 ) Void!String {
   for sid in pf.captures { try verify_slot_membership(pf, sid, .CaptureParam, env, "capture slot") }
-
   for sid in pf.params { try verify_slot_membership(pf, sid, .Param, env, "param slot") }
-
   for sid in pf.locals { try verify_local_slot_membership(pf, sid, env) }
-
   seen_source_locals: Dict<Int, Int> = Dict.new()
 
   for sid_int in pf.slots.keys() {
@@ -31,7 +28,6 @@ pub fn verify_prepared_func_slots(
             "slot table key S${sid_int} stores mismatched SlotId S${info.slot.id}",
           )
         }
-
         src_id := info.source_local.id
 
         case seen_source_locals[src_id] {
@@ -60,7 +56,6 @@ fn verify_slot_membership(
   label: String,
 ) Void!String {
   info := try facts.slot_info_result(pf, sid, label)
-
   if !slot_role_eq(info.role, expected_role) {
     return fail_func(
       pf,
@@ -69,7 +64,6 @@ fn verify_slot_membership(
       )}",
     )
   }
-
   verify_slot_metadata(pf, info, env)
 }
 
@@ -81,7 +75,6 @@ fn verify_local_slot_membership(pf: PreparedFunc, sid: SlotId, env: ResolvedEnv)
     .DeadPlaceholder => true,
     _ => false,
   }
-
   if !role_ok {
     return fail_func(
       pf,
@@ -90,7 +83,6 @@ fn verify_local_slot_membership(pf: PreparedFunc, sid: SlotId, env: ResolvedEnv)
       )}",
     )
   }
-
   verify_slot_metadata(pf, info, env)
 }
 
@@ -112,14 +104,12 @@ fn verify_capture_alignment(pf: PreparedFunc, closure_captures: Dict<Int, Vector
       for sid, i in pf.captures {
         info := try facts.slot_info_result(pf, sid, "capture slot")
         cap := captures[i]
-
         if info.source_local.id != cap.param_local.id {
           return fail_func(
             pf,
             "capture slot ${i} uses L${info.source_local.id}, expected rewritten capture param L${cap.param_local.id}",
           )
         }
-
         if !mono_eq(info.mono, cap.ty) {
           return fail_func(
             pf,
@@ -172,7 +162,6 @@ fn verify_slot_metadata(pf: PreparedFunc, info: SlotInfo, env: ResolvedEnv) Void
   }
 
   expected := expected_wasm_type(info.repr, info.mono, env)
-
   if !val_type_eq(info.wasm_type, expected) {
     return fail_slot(
       pf,
@@ -182,6 +171,5 @@ fn verify_slot_metadata(pf: PreparedFunc, info: SlotInfo, env: ResolvedEnv) Void
       )} (expected ${val_type_name(expected)})",
     )
   }
-
   .Ok({})
 }

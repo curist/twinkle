@@ -141,9 +141,7 @@ pub fn suite() runner.Suite {
       prelude := loader.resolve_prelude_root()
       preludes := loader.list_prelude_modules(prelude)
       try assert.is_true(preludes.len() > 0)
-
       for p in preludes { try assert.str_ends_with(p, ".tw") }
-
       .Ok({})
     },
   ).test(

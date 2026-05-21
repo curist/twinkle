@@ -108,10 +108,8 @@ pub fn copy_propagate(expr: AnfExpr) PropResult { copy_propagate_with_pinned(exp
 pub fn copy_propagate_with_pinned(expr: AnfExpr, pinned: Dict<Int, Bool>) PropResult {
   counts := count_uses_and_free_var_flags(expr)
   assigned := collect_assigned_locals(expr)
-
   // Merge pinned into assigned so pinned locals are never propagated
   for k in pinned.keys() { assigned[k] = true }
-
   copy_prop_inner(expr, counts.uses, counts.free_var_uses, assigned)
 }
 
@@ -197,9 +195,7 @@ fn copy_prop_op(
       changed := false
       new_arms: Vector<AnfMatchArm> = collect arm in arms {
         r := copy_prop_inner(arm.body, uses, free_var_uses, assigned)
-
         if r.changed { changed = true }
-
         AnfMatchArm.{ pattern: arm.pattern, body: r.expr }
       }
       OpPropResult.{ op: .AMatch(scrutinee, new_arms), changed: changed }

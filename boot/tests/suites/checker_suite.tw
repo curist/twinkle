@@ -128,9 +128,7 @@ fn check_errs_builtins(src: String) Result<Vector<String>, String> {
   }
 
   msgs: Vector<String> = []
-
   for d in r.diagnostics { msgs = .append(d.message()) }
-
   .Ok(msgs)
 }
 
@@ -162,9 +160,7 @@ fn check_errs(src: String) Result<Vector<String>, String> {
   }
 
   msgs: Vector<String> = []
-
   for d in r.diagnostics { msgs = .append(d.message()) }
-
   .Ok(msgs)
 }
 
@@ -176,9 +172,7 @@ fn check_errs_with_env(src: String, env: resolver.ResolvedEnv) Result<Vector<Str
   }
 
   msgs: Vector<String> = []
-
   for d in r.diagnostics { msgs = .append(d.message()) }
-
   .Ok(msgs)
 }
 
@@ -231,7 +225,6 @@ fn find_offset_after(src: String, needle: String, start: Int) Int? {
   if needle.len() > src.len() {
     return .None
   }
-
   limit := src.len() - needle.len()
 
   for i in 0..limit + 1 {
@@ -245,11 +238,9 @@ fn find_offset_after(src: String, needle: String, start: Int) Int? {
 
 fn find_offset_nth(src: String, needle: String, n: Int) Int? {
   count := 0
-
   if needle.len() > src.len() {
     return .None
   }
-
   limit := src.len() - needle.len()
 
   for i in 0..limit + 1 {

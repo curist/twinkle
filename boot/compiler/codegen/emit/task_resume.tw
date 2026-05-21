@@ -46,11 +46,9 @@ pub fn analyze_task_body(func: PreparedFunc, builtins: BuiltinRegistry, env: Res
   flat := flatten_inner(func.body, [])
   // 2. Find suspension points
   suspension_points := find_suspension_points(flat.bindings, yield_fid, await_fid)
-
   if suspension_points.len() == 0 {
     error("analyze_task_body: no suspension points in ${func.name}")
   }
-
   num_segments := suspension_points.len() + 1
   // 3. Compute segment membership for each binding
   slot_def_segment: Dict<Int, Int> = Dict.new()
@@ -69,9 +67,7 @@ pub fn analyze_task_body(func: PreparedFunc, builtins: BuiltinRegistry, env: Res
   }
 
   for cap_sid in func.captures { slot_def_segment[cap_sid.id] = -1 }
-
   for param_sid in func.params { slot_def_segment[param_sid.id] = -1 }
-
   // 4. Track uses: max segment where each slot is used
   slot_max_use: Dict<Int, Int> = Dict.new()
   seg = 0
@@ -244,9 +240,7 @@ fn track_uses_in_op(op: PreparedOp, seg: Int, uses: Dict<Int, Int>) Dict<Int, In
   case op {
     .ACall(callee, args) => {
       uses = track_uses_in_atom(callee, seg, uses)
-
       for a in args { uses = track_uses_in_atom(a, seg, uses) }
-
       uses
     },
     .AIf(cond, _, _) => track_uses_in_atom(cond, seg, uses),
@@ -258,12 +252,10 @@ fn track_uses_in_op(op: PreparedOp, seg: Int, uses: Dict<Int, Int>) Dict<Int, In
     .AUnOp(_, a, _) => track_uses_in_atom(a, seg, uses),
     .AMakeClosure(_, captures) => {
       for c in captures { uses = track_uses_in_slot(c, seg, uses) }
-
       uses
     },
     .ARecord(_, fields) => {
       for f in fields { uses = track_uses_in_atom(f.value, seg, uses) }
-
       uses
     },
     .ARecordGet(a, _, _) => track_uses_in_atom(a, seg, uses),
@@ -273,12 +265,10 @@ fn track_uses_in_op(op: PreparedOp, seg: Int, uses: Dict<Int, Int>) Dict<Int, In
     },
     .AVariant(_, _, args) => {
       for a in args { uses = track_uses_in_atom(a, seg, uses) }
-
       uses
     },
     .AArrayLit(elems) => {
       for e in elems { uses = track_uses_in_atom(e, seg, uses) }
-
       uses
     },
     .AIndex(a, b, _, _) => {
@@ -309,9 +299,7 @@ fn track_uses_in_slot(sid: SlotId, seg: Int, uses: Dict<Int, Int>) Dict<Int, Int
     .Some(s) => s,
     .None => -1,
   }
-
   if seg > cur { uses[sid.id] = seg }
-
   uses
 }
 

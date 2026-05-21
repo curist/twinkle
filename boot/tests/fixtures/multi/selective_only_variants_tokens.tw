@@ -1,13 +1,5 @@
-pub type TokenKind = {
-  For,
-  Return,
-  Ident,
-}
+pub type TokenKind = { For, Return, Ident }
 
-pub type Token = .{
-  kind: TokenKind,
-}
+pub type Token = .{ kind: TokenKind }
 
-pub fn make(kind: TokenKind) Token {
-  Token.{ kind }
-}
+pub fn make(kind: TokenKind) Token { Token.{ kind } }

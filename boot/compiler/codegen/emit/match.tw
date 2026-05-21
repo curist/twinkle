@@ -85,7 +85,6 @@ fn emit_arm_chain(
   if arms.len() == 0 {
     return buf.append(.Unreachable)
   }
-
   head := arms[0]
   tail: Vector<PreparedMatchArm> = arms.slice(1, arms.len())
   // Pattern condition is used as sub-body content — use fresh []
@@ -112,9 +111,7 @@ fn emit_arm_chain(
   tail_div := all_arms_diverge(tail)
   both_div := head_div and tail_div
   out := buf.concat(cond_instrs).append(.If(.None, then_body, else_body))
-
   if both_div { out = .append(.Unreachable) }
-
   out
 }
 
@@ -124,11 +121,9 @@ fn is_br_table_eligible(arms: Vector<PreparedMatchArm>, scrutinee_mono: MonoType
     .Sum(s) => s.variants.len(),
     _ => { return false },
   }
-
   if variant_count == 0 {
     return false
   }
-
   seen: Vector<Bool> = collect _ in 0..variant_count { false }
   explicit_count := 0
   catch_all_seen := false
@@ -140,11 +135,9 @@ fn is_br_table_eligible(arms: Vector<PreparedMatchArm>, scrutinee_mono: MonoType
         if catch_all_seen {
           return false
         }
-
         if vid.id < 0 or vid.id >= variant_count {
           return false
         }
-
         if seen[vid.id] {
           return false
         }
@@ -162,22 +155,18 @@ fn is_br_table_eligible(arms: Vector<PreparedMatchArm>, scrutinee_mono: MonoType
         if i != last_idx {
           return false
         }
-
         if catch_all_seen {
           return false
         }
-
         catch_all_seen = true
       },
       .Var(_) => {
         if i != last_idx {
           return false
         }
-
         if catch_all_seen {
           return false
         }
-
         catch_all_seen = true
       },
       .LitInt(_) => { return false },
@@ -259,9 +248,7 @@ fn emit_br_table_match(
       ctx,
       fns,
     )
-
     if !expr_always_diverges(arm.body) { arm_body = .append(.Br(end_label)) }
-
     nested_body = [Instr.Block(case_arm_label(result_idx, tag), .None, nested_body)].concat(
       arm_body,
     )
@@ -286,9 +273,7 @@ fn emit_br_table_match(
 
   match_body := [Instr.Block(default_label, .None, nested_body)].concat(default_body)
   out := buf.append(.Block(end_label, .None, match_body))
-
   if all_arms_diverge(arms) { out = .append(.Unreachable) }
-
   out
 }
 
@@ -304,9 +289,7 @@ fn emit_match_arm_body(
   bindings := fns.emit_pattern_bindings(arm.pattern, scrutinee_instrs, scrutinee_mono, ctx)
   body_instrs := fns.emit_expr(arm.body, result_mono, ctx, [])
   out := bindings.concat(body_instrs)
-
   if !expr_always_diverges(arm.body) { out = append_result_store(out, result_idx, result_mono) }
-
   out
 }
 
@@ -327,11 +310,9 @@ fn is_string_trie_eligible(arms: Vector<PreparedMatchArm>, scrutinee_mono: MonoT
         if catch_all_seen {
           return false
         }
-
         if seen.has(s) {
           return false
         }
-
         seen[s] = true
         string_count = string_count + 1
       },
@@ -339,22 +320,18 @@ fn is_string_trie_eligible(arms: Vector<PreparedMatchArm>, scrutinee_mono: MonoT
         if i != last_idx {
           return false
         }
-
         if catch_all_seen {
           return false
         }
-
         catch_all_seen = true
       },
       .Var(_) => {
         if i != last_idx {
           return false
         }
-
         if catch_all_seen {
           return false
         }
-
         catch_all_seen = true
       },
       _ => { return false },
@@ -450,9 +427,7 @@ fn emit_string_trie_match(
 
   match_body := [Instr.Block(default_label, .None, nested_body)].concat(default_body)
   out := buf.append(.Block(end_label, .None, match_body))
-
   if all_arms_diverge(arms) { out = .append(.Unreachable) }
-
   out
 }
 
@@ -490,7 +465,6 @@ fn emit_string_length_dispatch(
 
   for bucket in buckets {
     if bucket.len < min_len { min_len = bucket.len }
-
     if bucket.len > max_len { max_len = bucket.len }
   }
 
@@ -498,7 +472,6 @@ fn emit_string_length_dispatch(
 
   if range <= buckets.len() * 2 {
     labels: Vector<String> = []
-
     for len in min_len..max_len + 1 {
       labels = .append(label_for_string_length(buckets, len, default_label, result_idx))
     }
@@ -533,13 +506,11 @@ fn emit_sparse_length_dispatch(
   result_idx: Int,
 ) Vector<Instr> {
   out: Vector<Instr> = []
-
   for bucket in buckets {
     out = .concat(scrutinee_instrs).append(.RefAsNonNull).append(.ArrayLen).append(
       .I32Const(bucket.len),
     ).append(.I32Eq).append(.BrIf(string_case_len_label(result_idx, bucket.len)))
   }
-
   out.append(.Br(default_label))
 }
 
@@ -592,11 +563,9 @@ fn build_string_trie(
   }
 
   groups: Vector<ByteCandidateGroup> = []
-
   for cand in candidates {
     groups = add_candidate_to_byte_groups(groups, string_byte_at(cand.literal, best_pos), cand)
   }
-
   branches: Vector<TrieBranch> = []
   next_used := used_positions.append(best_pos)
 
@@ -622,7 +591,6 @@ fn choose_best_string_position(
 
       for cand in candidates {
         b := string_byte_at(cand.literal, pos)
-
         if !int_vector_contains(distinct, b) { distinct = .append(b) }
       }
 
@@ -796,9 +764,7 @@ fn emit_string_candidate_chain(
     ctx,
     fns,
   )
-
   if !expr_always_diverges(arm.body) { then_body = .append(.Br(end_label)) }
-
   else_body := emit_string_candidate_chain(
     tail,
     arms,

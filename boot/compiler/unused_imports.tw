@@ -44,7 +44,6 @@ pub fn check_unused_imports(module: Module) UnusedImportResult {
                     .Some(a) => a,
                     .None => v.name,
                   }
-
                   if !final_used.has(binding) { unused_in_decl = .append(binding) }
                 },
                 .Type(t) => {
@@ -52,7 +51,6 @@ pub fn check_unused_imports(module: Module) UnusedImportResult {
                     .Some(a) => a,
                     .None => t.name,
                   }
-
                   if !final_used.has(binding) { unused_in_decl = .append(binding) }
                 },
               }
@@ -71,7 +69,6 @@ pub fn check_unused_imports(module: Module) UnusedImportResult {
                       .Some(a) => a,
                       .None => v.name,
                     }
-
                     if !final_used.has(binding) {
                       result_items = .append(
                         UnusedImportDiag.{
@@ -86,7 +83,6 @@ pub fn check_unused_imports(module: Module) UnusedImportResult {
                       .Some(a) => a,
                       .None => t.name,
                     }
-
                     if !final_used.has(binding) {
                       result_items = .append(
                         UnusedImportDiag.{
@@ -256,12 +252,10 @@ fn collect_used_names_type_expr(te: TypeExpr, used: Cell<Dict<String, Bool>>) {
     .Path(path) => collect_used_names_type_path(path, used),
     .Applied(path, args) => {
       collect_used_names_type_path(path, used)
-
       for arg in args { collect_used_names_type_expr(arg, used) }
     },
     .Function(params, ret) => {
       for p in params { collect_used_names_type_expr(p, used) }
-
       collect_used_names_type_expr(ret, used)
     },
     .Optional(inner) => collect_used_names_type_expr(inner, used),
@@ -363,7 +357,6 @@ fn collect_used_names_expr(expr: Expr, used: Cell<Dict<String, Bool>>) {
     },
     .Call(callee, args) => {
       collect_used_names_expr(callee, used)
-
       for a in args { collect_used_names_expr(a, used) }
     },
     .Field(base, _) => collect_used_names_expr(base, used),
@@ -404,7 +397,6 @@ fn collect_used_names_expr(expr: Expr, used: Cell<Dict<String, Bool>>) {
       // The type name is being used as a constructor.
       // For qualified names like "Span", mark the module alias (first segment).
       parts := name.split(".")
-
       for part in parts { mark(used, part) }
 
       for entry in entries {
@@ -459,7 +451,6 @@ fn collect_used_names_pattern(pat: Pattern, used: Cell<Dict<String, Bool>>) {
     .QualifiedVariant(qualifier, _, sub_pats) => {
       // e.g., module.Type.Variant - first segment is the module alias
       if qualifier.len() > 0 { mark(used, qualifier[0]) }
-
       for p in sub_pats { collect_used_names_pattern(p, used) }
     },
     .ErrorPattern => {},

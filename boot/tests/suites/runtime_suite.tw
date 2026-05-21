@@ -13,7 +13,6 @@ fn contains(haystack: String, needle: String) Bool {
   if needle.len() > haystack.len() {
     return false
   }
-
   if needle.len() == 0 {
     return true
   }
@@ -65,7 +64,6 @@ fn has_instr(body: Vector<Instr>, pred: fn(Instr) Bool) Bool {
         if has_instr(then_body, pred) {
           return true
         }
-
         if has_instr(else_body, pred) {
           return true
         }
@@ -464,15 +462,10 @@ fn test_rt_core_host_imports() Result<Void, String> {
   for imp in m.imports {
     if imp.module == "host" {
       host_count = host_count + 1
-
       if imp.name == "print" { found_print = true }
-
       if imp.name == "println" { found_println = true }
-
       if imp.name == "error" { found_error = true }
-
       if imp.name == "eprint" { found_eprint = true }
-
       if imp.name == "eprintln" { found_eprintln = true }
     }
   }
@@ -504,13 +497,9 @@ fn test_rt_core_eq_imports() Result<Void, String> {
     }
 
     if imp.module == "rt.arr" and imp.name == "len" { found_arr_len = true }
-
     if imp.module == "rt.arr" and imp.name == "get" { found_arr_get = true }
-
     if imp.module == "rt.dict" and imp.name == "len" { found_dict_len = true }
-
     if imp.module == "rt.dict" and imp.name == "get" { found_dict_get = true }
-
     if imp.module == "rt.dict" and imp.name == "keys" { found_dict_keys = true }
   }
 
@@ -589,11 +578,8 @@ fn test_rt_core_eq_uses_ref_test() Result<Void, String> {
     case instr {
       .RefTest(_, .Named(n)) => {
         if n == "rt_types__BoxedInt" { found_boxed_int = true }
-
         if n == "rt_types__PVec" { found_pvec = true }
-
         if n == "rt_types__PDict" { found_pdict = true }
-
         if n == "rt_types__Variant" { found_variant = true }
       },
       .RefEq => { found_ref_eq = true },

@@ -34,9 +34,7 @@ pub fn add_command(a: App, cmd: command.Command) App {
 
 pub fn add_commands(a: App, cmds: Vector<command.Command>) App {
   out := a
-
   for c in cmds { out = .add_command(c) }
-
   out
 }
 
@@ -79,9 +77,7 @@ fn find_by_short(args: Vector<arg.Arg>, s: String) arg.Arg? {
 
 fn pad(s: String, width: Int) String {
   n := width - s.len()
-
   if n < 2 { n = 2 }
-
   out := s
 
   for n > 0 {
@@ -138,9 +134,7 @@ fn format_arg_help(a: arg.Arg) String {
     },
   }
   extra := 28 - raw_len
-
   if extra < 2 { extra = 2 }
-
   spaces := ""
 
   for extra > 0 {
@@ -177,7 +171,6 @@ fn format_help(a: App, cmd_name: String?) String {
           }
 
           out = .concat(" [options]\n\n")
-
           for def in c.args { out = .concat(format_arg_help(def)).concat("\n") }
         },
         .None => { out = .concat("Unknown command: ${name}\n") },
@@ -198,7 +191,6 @@ fn format_help(a: App, cmd_name: String?) String {
         out = .concat("\nRun '").concat(style.bold(hint)).concat("' for more information.\n")
       } else {
         out = .concat(usage_label).concat(" ${a.name} [options]\n\n")
-
         for def in a.args { out = .concat(format_arg_help(def)).concat("\n") }
       }
     },

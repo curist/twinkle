@@ -49,13 +49,10 @@ pub fn span_from(c: Cursor, from_pos: Int) Span {
   if from_pos < 0 or from_pos >= c.tokens.len() {
     return span.new(0, 0, 0)
   }
-
   end_pos := if c.pos - 1 >= c.tokens.len() { c.tokens.len() - 1 } else { c.pos - 1 }
-
   if end_pos < from_pos {
     return c.tokens[from_pos].span
   }
-
   c.tokens[from_pos].span.merge(c.tokens[end_pos].span)
 }
 
@@ -63,12 +60,9 @@ pub fn span_through(c: Cursor, from_pos: Int) Span {
   if from_pos < 0 or from_pos >= c.tokens.len() {
     return span.new(0, 0, 0)
   }
-
   end_pos := if c.pos >= c.tokens.len() { c.tokens.len() - 1 } else { c.pos }
-
   if end_pos < from_pos {
     return c.tokens[from_pos].span
   }
-
   c.tokens[from_pos].span.merge(c.tokens[end_pos].span)
 }

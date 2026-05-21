@@ -1,7 +1,6 @@
 // Test: prelude function aliases converge to one identity.
 // The prelude provides "filter" and method resolution uses "vector_filter".
 // Both should reference the same imported function after canonicalization.
-
 fn main() {
   xs: Vector<Int> = [1, 2, 3, 4, 5]
   evens := xs.filter(fn(x) { x % 2 == 0 })

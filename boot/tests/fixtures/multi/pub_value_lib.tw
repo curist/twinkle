@@ -1,5 +1,3 @@
-// Library exporting pub values for cross-module tests.
-
 pub answer := 42
 pub greeting := "hello"
 

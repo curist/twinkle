@@ -98,18 +98,15 @@ pub fn variant_field_mono(
       if vid.id == 1 and field_idx == 0 {
         return inner
       }
-
       .Void
     },
     .Result(ok, err) => {
       if vid.id == 0 and field_idx == 0 {
         return ok
       }
-
       if vid.id == 1 and field_idx == 0 {
         return err
       }
-
       .Void
     },
     .Named(tid, args) => {
@@ -157,7 +154,6 @@ pub fn combine_and_checks(checks: Vector<Vector<Instr>>) Vector<Instr> {
   if checks.len() == 1 {
     return checks[0]
   }
-
   out := checks[0]
   idx := 1
 

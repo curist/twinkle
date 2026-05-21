@@ -189,7 +189,6 @@ fn zonk_with_meta(ty: MonoType, subst: Dict<Int, MonoType>) ZonkMetaOut {
       for p in params {
         pr := zonk_with_meta(p, subst)
         zonked_params = .append(pr.ty)
-
         if pr.has_meta { has_meta = true }
       }
 
@@ -212,7 +211,6 @@ fn zonk_with_meta(ty: MonoType, subst: Dict<Int, MonoType>) ZonkMetaOut {
       for a in args {
         ar := zonk_with_meta(a, subst)
         zonked_args = .append(ar.ty)
-
         if ar.has_meta { has_meta = true }
       }
 
@@ -690,11 +688,9 @@ fn builtin_contract_satisfied_by_primitive(ty: MonoType, contract: BuiltinContra
 
 fn silent_unify(ctx: InferCtx, a: MonoType, b: MonoType) InferCtx? {
   u := ctx.unify(a, b, .{ file_id: 0, start: 0, end: 0 }, [])
-
   if u.diags.len() > 0 {
     return .None
   }
-
   .Some(u.ctx)
 }
 
@@ -765,7 +761,6 @@ fn prove_contract_method(
 
   for i in 0..sig.type_params.len() {
     if i >= inst.type_args.len() { continue }
-
     arg_ty := expand_alias(zonk(inst.type_args[i], cur_ctx.subst), cur_ctx.env, 0)
     tp := sig.type_params[i]
 
@@ -1020,7 +1015,6 @@ fn check_instantiated_bounds(
 
   for i in 0..sig.type_params.len() {
     if i >= type_args.len() { continue }
-
     tp := sig.type_params[i]
     arg_ty := expand_alias(zonk(type_args[i], cur_ctx.subst), cur_ctx.env, 0)
 
@@ -1068,7 +1062,6 @@ fn check_resolved_type_param_bounds(
 
   for i in 0..params.len() {
     if i >= type_args.len() { continue }
-
     tp := params[i]
     arg_ty := expand_alias(zonk(type_args[i], cur_ctx.subst), cur_ctx.env, 0)
 
@@ -1225,7 +1218,6 @@ fn check_instantiated_call(
       ),
     }
   }
-
   ar := check_args(ctx, args, params, diags)
   callee_ty := MonoType.Function(params, ret)
   final_ctx := set_type_map_span(ar.ctx, callee_id, callee_span_start, callee_ty)
@@ -1450,7 +1442,6 @@ fn synth_call(
                   ),
                 }
               }
-
               // Pre-unify the result type with the call-site expected type so
               // MetaVars in the type args get solved before we check arguments.
               pu := pre_unify_return(resolved.ctx, named_ty, call_expected, s, diags)
@@ -1603,7 +1594,6 @@ fn is_module_alias(ctx: InferCtx, name: String) Bool {
   if ctx.module_aliases.has(name) {
     return true
   }
-
   ctx.env.extern_namespaces.has(name)
 }
 
@@ -1663,7 +1653,6 @@ fn named_function_field_exists(base_ty: MonoType, field_name: String, env: Resol
 
           for f in fields {
             if f.name != field_name { continue }
-
             field_ty := subst_vars(f.ty, var_map)
 
             case field_ty {
@@ -2307,7 +2296,6 @@ fn check_variant_lit(
           ),
         }
       }
-
       cur_ctx := ctx
       cur_diags := diags
 
@@ -2634,11 +2622,9 @@ fn synth_if(
       if contains_meta(then_zonked) {
         // Then type still ambiguous — synth else and unify
         else_r := then_r.ctx.synth(else_e, then_r.diags)
-
         if else_r.ty == .Never {
           return .{ ty: then_zonked, ctx: else_r.ctx, diags: else_r.diags }
         }
-
         u2 := else_r.ctx.unify(then_zonked, else_r.ty, s, else_r.diags)
         .{ ty: then_zonked, ctx: u2.ctx, diags: u2.diags }
       } else {
@@ -2737,7 +2723,6 @@ fn synth_case(scrut: Expr, arms: Vector<CaseArm>, s: Span, ctx: InferCtx, diags:
   sr := ctx.synth(scrut, diags)
   cur_ctx := sr.ctx
   cur_diags := sr.diags
-
   if !is_case_scrutinee_supported(sr.ty, cur_ctx) {
     return .{
       ty: .Void,
@@ -2747,7 +2732,6 @@ fn synth_case(scrut: Expr, arms: Vector<CaseArm>, s: Span, ctx: InferCtx, diags:
       ),
     }
   }
-
   result_ty: MonoType? = .None
   deferred_arms: Vector<CaseArm> = []
 
@@ -2828,7 +2812,6 @@ fn check_case(
   sr := ctx.synth(scrut, diags)
   cur_ctx := sr.ctx
   cur_diags := sr.diags
-
   if !is_case_scrutinee_supported(sr.ty, cur_ctx) {
     return .{
       ctx: cur_ctx,
@@ -2946,7 +2929,6 @@ fn check_variant_pattern(
           ),
         }
       }
-
       cur_ctx := ctx
       cur_diags := diags
 
@@ -2997,7 +2979,6 @@ fn check_exhaustiveness(
           .QualifiedVariant(path, name, _) => {
             // Only count as covered if qualifier matches scrutinee type
             if !qualifier_matches_scrutinee(path, scrut_ty, ctx) { continue }
-
             name
           },
           .Literal(lit_expr) => {
@@ -3014,7 +2995,6 @@ fn check_exhaustiveness(
       // Find uncovered variants
       missing := collect name in names {
         if covered.any(fn(c) { c == name }) { continue }
-
         name
       }
 
@@ -3429,11 +3409,9 @@ fn synth_bitwise_op(lhs: Expr, rhs: Expr, s: Span, ctx: InferCtx, diags: Vector<
 
   left_final := zonk(lr.ty, cur_ctx.subst)
   right_final := zonk(rr.ty, cur_ctx.subst)
-
   if is_int_or_byte(left_final) and is_int_or_byte(right_final) {
     return .{ ty: MonoType.Int, ctx: cur_ctx, diags: cur_diags }
   }
-
   bad_ty := if !is_int_or_byte(left_final) { left_final } else { right_final }
   .{
     ty: MonoType.Int,
@@ -3461,12 +3439,10 @@ fn synth_cmp_op(op: BinOp, lhs: Expr, rhs: Expr, s: Span, ctx: InferCtx, diags: 
   cur_diags := rr.diags
   left_z := zonk(lr.ty, cur_ctx.subst)
   right_z := zonk(rr.ty, cur_ctx.subst)
-
   // Byte/Int cross-comparison: skip unify, just check both are numeric
   if is_int_or_byte(left_z) and is_int_or_byte(right_z) {
     return .{ ty: MonoType.Bool, ctx: cur_ctx, diags: cur_diags }
   }
-
   u := cur_ctx.unify(lr.ty, rr.ty, s, cur_diags)
   unified_ty := zonk(lr.ty, u.ctx.subst)
   check_ord_contract(unified_ty, op, u.ctx, u.diags, s)
@@ -3480,12 +3456,10 @@ fn check_ord_contract(
   s: Span,
 ) SynthOut {
   zonked := expand_alias(zonk(operand_ty, ctx.subst), ctx.env, 0)
-
   // Defer while inference is incomplete
   if contains_meta(zonked) {
     return .{ ty: MonoType.Bool, ctx, diags }
   }
-
   proof := satisfies_contract(zonked, .Ord, ctx)
 
   case proof {
@@ -3511,7 +3485,6 @@ fn synth_arith_op(op: BinOp, lhs: Expr, rhs: Expr, s: Span, ctx: InferCtx, diags
   cur_diags := rr.diags
   left_z := zonk(lr.ty, cur_ctx.subst)
   right_z := zonk(rr.ty, cur_ctx.subst)
-
   if op == .Add and (is_string(left_z) or is_string(right_z)) {
     return .{
       ty: MonoType.String,
@@ -3519,17 +3492,14 @@ fn synth_arith_op(op: BinOp, lhs: Expr, rhs: Expr, s: Span, ctx: InferCtx, diags
       diags: cur_diags.append(.Error(.StringConcatOperator(.{ span: s }))),
     }
   }
-
   // Int × Int → Int
   if is_int(left_z) and is_int(right_z) {
     return .{ ty: MonoType.Int, ctx: cur_ctx, diags: cur_diags }
   }
-
   // Float × Float → Float
   if is_float(left_z) and is_float(right_z) {
     return .{ ty: MonoType.Float, ctx: cur_ctx, diags: cur_diags }
   }
-
   // Byte × Byte → Int, Int × Byte → Int, Byte × Int → Int
   if is_int_or_byte(left_z) and is_int_or_byte(right_z) {
     return .{ ty: MonoType.Int, ctx: cur_ctx, diags: cur_diags }
@@ -3615,12 +3585,10 @@ fn try_eq_directional(
   // If the entire attempt introduces no new diagnostics, use that result.
   pre_len := diags.len()
   lr := ctx.synth(synth_side, diags)
-
   if lr.diags.len() > pre_len {
     // Synth itself failed — bail without polluting state
     return .None
   }
-
   cr := lr.ctx.check_expr(check_side, lr.ty, lr.diags)
 
   if cr.diags.len() == pre_len {
@@ -3652,11 +3620,9 @@ fn synth_eq_op(lhs: Expr, rhs: Expr, s: Span, ctx: InferCtx, diags: Vector<DiagK
   rr := lr.ctx.synth(rhs, lr.diags)
   left_z := zonk(lr.ty, rr.ctx.subst)
   right_z := zonk(rr.ty, rr.ctx.subst)
-
   if is_int_or_byte(left_z) and is_int_or_byte(right_z) {
     return .{ ty: MonoType.Bool, ctx: rr.ctx, diags: rr.diags }
   }
-
   u := rr.ctx.unify(lr.ty, rr.ty, s, rr.diags)
   unified_ty := zonk(lr.ty, u.ctx.subst)
   check_eq_contract(unified_ty, u.ctx, u.diags, s)
@@ -3664,7 +3630,6 @@ fn synth_eq_op(lhs: Expr, rhs: Expr, s: Span, ctx: InferCtx, diags: Vector<DiagK
 
 fn check_eq_contract(operand_ty: MonoType, ctx: InferCtx, diags: Vector<DiagKind>, s: Span) SynthOut {
   zonked := expand_alias(zonk(operand_ty, ctx.subst), ctx.env, 0)
-
   // Skip check for meta variables (not yet resolved), primitives (always Eq),
   // and type variables (enforced at call site via bounds, not at == site)
   if is_primitive_eq(zonked) or contains_type_var(zonked) {
@@ -4034,7 +3999,6 @@ fn call_diverges(callee: Expr, ctx: InferCtx) Bool {
           if !is_module_alias(ctx, alias) {
             return false
           }
-
           fn_name := case ctx.env.lookup_method(alias, method_name) {
             .Some(found) => found,
             .None => { return false },
@@ -4217,12 +4181,10 @@ fn check_function(decl: FunctionDecl, ctx: InferCtx, diags: Vector<DiagKind>) Ch
   case ctx.env.lookup_function(decl.name) {
     .Some(sig) => {
       fn_ctx := push_scope(ctx)
-
       // Bind parameters
       for i in 0..sig.params.len() {
         fn_ctx = bind_local(fn_ctx, sig.param_names[i], sig.params[i])
       }
-
       // Set current_ret and type_var_scope
       fn_ctx.current_ret = sig.ret
       fn_ctx.type_var_scope = sig.type_params
@@ -4243,7 +4205,6 @@ fn check_function(decl: FunctionDecl, ctx: InferCtx, diags: Vector<DiagKind>) Ch
           inferred_ret := zonk(body_r.ty, result_ctx.subst)
           updated_fns := collect f in result_ctx.env.functions {
             if f.name == decl.name { f.ret = .Some(inferred_ret) }
-
             f
           }
           result_ctx.env = result_ctx.env.with_functions(updated_fns)
@@ -4272,7 +4233,6 @@ fn collect_module_aliases(module: Module) Dict<String, Bool> {
     "Byte",
   ]
   aliases: Dict<String, Bool> = Dict.new()
-
   for alias in builtin_module_aliases { aliases[alias] = true }
 
   for item in module.items {
@@ -4288,7 +4248,6 @@ fn collect_module_aliases(module: Module) Dict<String, Bool> {
           .Some(name) => name,
           .None => fallback,
         }
-
         if alias != "" { aliases[alias] = true }
       },
       _ => {},

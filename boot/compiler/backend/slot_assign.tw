@@ -75,7 +75,6 @@ pub fn assign_slots(
   // ── 2. Declared params ──────────────────────────────────────────────
   for p in func.params {
     if local_to_slot.has(p.local.id) { continue }
-
     sid := SlotId.{ id: next_slot }
     slots[next_slot] = SlotInfo.{
       slot: sid,
@@ -99,7 +98,6 @@ pub fn assign_slots(
 
   for lid in all_lids {
     if local_to_slot.has(lid) { continue } // already a capture or param slot
-
     mono := case pattern_monos[lid] {
       .Some(m) => m,
       .None => resolve_local_mono(func, LocalId.{ id: lid }),
@@ -318,7 +316,6 @@ fn collect_pattern_lids(pattern: CorePattern, out: Vector<Int>) Vector<Int> {
     .Var(lid) => out.append(lid.id),
     .Variant(_, _, fields) => {
       for f in fields { out = collect_pattern_lids(f, out) }
-
       out
     },
     _ => out,
@@ -364,7 +361,6 @@ fn mark_pattern_lids(pattern: CorePattern, out: Dict<Int, Bool>) Dict<Int, Bool>
     },
     .Variant(_, _, fields) => {
       for f in fields { out = mark_pattern_lids(f, out) }
-
       out
     },
     _ => out,
@@ -488,18 +484,15 @@ fn get_variant_field_mono(
       if vid.id == 1 and field_idx == 0 {
         return inner
       }
-
       .Void
     },
     .Result(ok, err) => {
       if vid.id == 0 and field_idx == 0 {
         return ok
       }
-
       if vid.id == 1 and field_idx == 0 {
         return err
       }
-
       .Void
     },
     .Named(tid, args) => {

@@ -12,9 +12,7 @@ pub fn add_arg(cmd: Command, a: arg.Arg) Command {
 
 pub fn add_args(cmd: Command, args: Vector<arg.Arg>) Command {
   out := cmd
-
   for a in args { out = .add_arg(a) }
-
   out
 }
 

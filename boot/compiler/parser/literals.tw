@@ -25,7 +25,6 @@ pub fn parse_int_literal(raw: String) Int {
   if raw.starts_with("0x") or raw.starts_with("0X") {
     return parse_hex(raw)
   }
-
   result := 0
   neg := false
   start := 0

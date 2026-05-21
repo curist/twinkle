@@ -48,9 +48,7 @@ fn resolve_errs(src: String) Result<Vector<String>, String> {
   }
 
   msgs: Vector<String> = []
-
   for d in r.diagnostics { msgs = .append(d.message()) }
-
   .Ok(msgs)
 }
 
@@ -423,9 +421,7 @@ pub fn suite() runner.Suite {
       for d in r.diagnostics {
         if d.message().contains("circular") {
           has_span := d.span().start > 0
-
           if !has_span { has_span = d.span().end > 0 }
-
           if has_span { found_circular = true }
         }
       }

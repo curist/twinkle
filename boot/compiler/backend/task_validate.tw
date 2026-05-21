@@ -95,9 +95,7 @@ pub fn classify_task_bodies(anf: AnfModule, builtins: BuiltinRegistry) Vector<Fu
 // using that local, we record the body_fid.
 fn scan_module_for_task_bodies(anf: AnfModule, spawn_fid: FuncId) Dict<Int, Int> {
   result: Dict<Int, Int> = Dict.new()
-
   for f in anf.functions { result = scan_letchain_for_spawn_pattern(f.body, spawn_fid, result) }
-
   result
 }
 
@@ -163,9 +161,7 @@ fn scan_letchain_inner(
 // the closure is the second argument: Cell.update(cell, fn(v) { ... })
 fn scan_module_for_callback_bodies(anf: AnfModule, target_fid: FuncId) Dict<Int, Int> {
   result: Dict<Int, Int> = Dict.new()
-
   for f in anf.functions { result = scan_letchain_for_callback_pattern(f.body, target_fid, result) }
-
   result
 }
 
@@ -237,11 +233,9 @@ fn contains_suspension(expr: AnfExpr, await_fid: FuncId, yield_fid: FuncId) Bool
       if op_is_suspension(op, await_fid, yield_fid) {
         return true
       }
-
       if op_contains_suspension(op, await_fid, yield_fid) {
         return true
       }
-
       contains_suspension(body, await_fid, yield_fid)
     },
     _ => false,

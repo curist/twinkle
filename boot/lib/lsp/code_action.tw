@@ -53,9 +53,7 @@ pub fn unused_import_actions(
       .Ok(k) => k,
       .Err(_) => { continue },
     }
-
     if kind != "unused_import" { continue }
-
     use_start := case json.decode(data, json.field("use_start", json.int())) {
       .Ok(s) => s,
       .Err(_) => { continue },

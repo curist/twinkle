@@ -200,9 +200,7 @@ fn completion_snapshot(state: State, doc: document_store.Document) semantic.Sema
     imports.make_canonical_roots(input.project_root),
   )
   snap.typed = query_cache.latest_typed(snap.cache, canonical)
-
   if snap.resolved == .None { snap.resolved = query_cache.latest_resolved(snap.cache, canonical) }
-
   snap
 }
 
@@ -445,7 +443,6 @@ fn publish_workspace_diagnostics(state: State, suppress_duplicates: Bool) Step {
     // as separate entries to catch disjoint dependency graphs.
     for doc in docs {
       if published.has(doc.identity.uri) { continue }
-
       extra := query_diagnostics.analyze_workspace(
         cur_cache,
         .{ entry_uri: doc.uri, project_root: root, open_documents: overlay_docs },

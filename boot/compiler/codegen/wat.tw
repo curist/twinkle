@@ -67,9 +67,7 @@ fn emit_wat_parts(
   start: String?,
 ) String {
   lines: Vector<String> = ["(module"]
-
   for block in emit_typedef_blocks(types) { lines = .concat(block) }
-
   ft_registry := build_functype_registry(imports, funcs)
 
   for i in 0..ft_registry.entries.len() {
@@ -109,7 +107,6 @@ fn emit_wat_parts(
   for f in funcs {
     idx := lookup_functype(ft_registry, f.params, f.results)
     func_lines := emit_func_def(f, idx)
-
     for fl in func_lines { lines = .append(fl) }
   }
 
@@ -262,11 +259,9 @@ fn build_functype_registry(imports: Vector<ImportDef>, funcs: Vector<FuncDef>) F
 
 fn register_functype(reg: FuncTypeRegistry, params: Vector<ValType>, results: Vector<ValType>) FuncTypeRegistry {
   key := sig_key(params, results)
-
   if reg.keys.has(key) {
     return reg
   }
-
   idx := reg.entries.len()
   .{
     entries: reg.entries.append(.{ params: params, results: results }),
@@ -343,7 +338,6 @@ fn emit_func_def(f: FuncDef, type_idx: Int) Vector<String> {
   // Body instructions
   for instr in f.body {
     instr_lines := emit_instr(instr, 4)
-
     for il in instr_lines { lines = .append(il) }
   }
 
@@ -511,7 +505,6 @@ fn emit_instr(instr: Instr, indent: Int) Vector<String> {
 
       for i in then_body {
         inner := emit_instr(i, indent + 4)
-
         for il in inner { lines = .append(il) }
       }
 
@@ -522,7 +515,6 @@ fn emit_instr(instr: Instr, indent: Int) Vector<String> {
 
         for i in else_body {
           inner := emit_instr(i, indent + 4)
-
           for il in inner { lines = .append(il) }
         }
 
@@ -542,7 +534,6 @@ fn emit_instr(instr: Instr, indent: Int) Vector<String> {
 
       for i in body {
         inner := emit_instr(i, indent + 2)
-
         for il in inner { lines = .append(il) }
       }
 
@@ -559,7 +550,6 @@ fn emit_instr(instr: Instr, indent: Int) Vector<String> {
 
       for i in body {
         inner := emit_instr(i, indent + 2)
-
         for il in inner { lines = .append(il) }
       }
 
@@ -609,22 +599,17 @@ fn emit_f64(v: Float) String {
   if v != v {
     return "nan"
   }
-
   // Check string repr for infinity
   s := v.to_string()
-
   if s == "inf" or s == "Infinity" {
     return "inf"
   }
-
   if s == "-inf" or s == "-Infinity" {
     return "-inf"
   }
-
   if s == "NaN" {
     return "nan"
   }
-
   s
 }
 
@@ -677,25 +662,18 @@ fn collect_ref_funcs_instr(instr: Instr, seen: Dict<String, Bool>) Dict<String, 
     .RefFunc(s) => seen.set(s, true),
     .If(_, then_body, else_body) => {
       s := seen
-
       for i in then_body { s = collect_ref_funcs_instr(i, s) }
-
       for i in else_body { s = collect_ref_funcs_instr(i, s) }
-
       s
     },
     .Block(_, _, body) => {
       s := seen
-
       for i in body { s = collect_ref_funcs_instr(i, s) }
-
       s
     },
     .Loop(_, _, body) => {
       s := seen
-
       for i in body { s = collect_ref_funcs_instr(i, s) }
-
       s
     },
     _ => seen,
@@ -709,10 +687,8 @@ fn emit_instrs_inline(instrs: Vector<Instr>) String {
 
 fn emit_instr_flat(instr: Instr) String {
   lines := emit_instr(instr, 0)
-
   if lines.len() == 0 {
     return ""
   }
-
   (collect l in lines { l.trim() }).join(" ")
 }

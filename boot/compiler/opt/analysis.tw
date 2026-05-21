@@ -63,7 +63,6 @@ fn taint_atom_local(a: Atom, tainted: Dict<Int, Bool>) Dict<Int, Bool> {
 
 fn taint_atoms(args: Vector<Atom>, tainted: Dict<Int, Bool>) Dict<Int, Bool> {
   for a in args { tainted = taint_atom_local(a, tainted) }
-
   tainted
 }
 
@@ -72,7 +71,6 @@ fn taint_non_base_args(args: Vector<Atom>, base_arg: Int, tainted: Dict<Int, Boo
 
   for a in args {
     if idx != base_arg { tainted = taint_atom_local(a, tainted) }
-
     idx = idx + 1
   }
 
@@ -81,10 +79,8 @@ fn taint_non_base_args(args: Vector<Atom>, base_arg: Int, tainted: Dict<Int, Boo
 
 pub fn collect_tainted(func: AnfFunctionDef, semantics: OptimizerSemantics) Dict<Int, Bool> {
   tainted: Dict<Int, Bool> = Dict.new()
-
   // Function params come from outside the function and are never unique.
   for p in func.params { tainted[p.local.id] = true }
-
   empty: Dict<Int, Bool> = Dict.new()
   result := scan_tainted_expr(func.body, tainted, empty, semantics)
   result.tainted
@@ -96,9 +92,7 @@ pub type TaintWithLive = .{ tainted: Dict<Int, Bool>, by_binding: Dict<Int, Dict
 
 pub fn collect_tainted_and_live(func: AnfFunctionDef, semantics: OptimizerSemantics) TaintWithLive {
   tainted: Dict<Int, Bool> = Dict.new()
-
   for p in func.params { tainted[p.local.id] = true }
-
   empty: Dict<Int, Bool> = Dict.new()
   result := scan_tainted_expr(func.body, tainted, empty, semantics)
   TaintWithLive.{ tainted: result.tainted, by_binding: result.by_binding }
@@ -224,7 +218,6 @@ fn scan_tainted_op(
   case op {
     .AMakeClosure(_, free_vars) => {
       for v in free_vars { tainted[v.id] = true }
-
       TaintOpScan.{ tainted, by_binding: Dict.new() }
     },
     .AArrayLit(elems) => TaintOpScan.{
@@ -233,7 +226,6 @@ fn scan_tainted_op(
     },
     .ARecord(_, fields) => {
       for f in fields { tainted = taint_atom_local(f.value, tainted) }
-
       TaintOpScan.{ tainted, by_binding: Dict.new() }
     },
     .AVariant(_, _, args) => TaintOpScan.{
@@ -272,9 +264,7 @@ fn scan_tainted_op(
         bindings := collect_pattern_bindings(arm.pattern, Dict.new())
         arm_r := scan_tainted_expr(arm.body, tainted, live_out, semantics)
         tainted = arm_r.tainted
-
         for k in bindings.keys() { tainted = .remove(k) }
-
         by_binding = merge_by_binding(by_binding, arm_r.by_binding)
       }
 
@@ -311,7 +301,6 @@ pub fn analyze_loop_push_sites(expr: AnfExpr, base: LocalId, push_id: FuncId) In
           if op_uses_local_non_recursive(op, base) {
             return .None
           }
-
           sub := try analyze_loop_push_sites_in_op(op, base, push_id)
           rest := try analyze_loop_push_sites(body, base, push_id)
           .Some(sub + rest)
@@ -451,9 +440,7 @@ fn count_global_call_sites_in_op(op: AnfOp, func_id: FuncId) Int {
       + count_global_call_sites(else_e, func_id),
     .AMatch(_, arms) => {
       c := 0
-
       for arm in arms { c = c + count_global_call_sites(arm.body, func_id) }
-
       c
     },
     .ALoop(body) => count_global_call_sites(body, func_id),
@@ -496,7 +483,6 @@ pub fn collect_consumed_params(module: AnfModule) Dict<Int, Dict<Int, Bool>> {
 
   for func in module.functions {
     if !set_has(has_external_call, func.func_id.id) { continue }
-
     nc: Dict<Int, Bool> = case non_consuming[func.func_id.id] {
       .Some(nc) => nc,
       .None => Dict.new(),
@@ -506,7 +492,6 @@ pub fn collect_consumed_params(module: AnfModule) Dict<Int, Dict<Int, Bool>> {
 
     for p in func.params {
       if !set_has(nc, idx) { consumed[p.local.id] = true }
-
       idx = idx + 1
     }
 
@@ -574,11 +559,9 @@ fn scan_consume_sites_op(
     },
     .AMatch(_, arms) => {
       r := ConsumeSiteScan.{ non_consuming, has_external_call }
-
       for arm in arms {
         r = scan_consume_sites_expr(arm.body, caller_id, r.non_consuming, r.has_external_call)
       }
-
       r
     },
     .ALoop(body) => scan_consume_sites_expr(body, caller_id, non_consuming, has_external_call),
@@ -603,9 +586,7 @@ fn max_local_in_pattern(pat: CorePattern, m: Int) Int {
     .Var(local) => if local.id > m { local.id } else { m },
     .Variant(_, _, fields) => {
       r := m
-
       for f in fields { r = max_local_in_pattern(f, r) }
-
       r
     },
     _ => m,
@@ -637,9 +618,7 @@ fn max_local_in_op(op: AnfOp, m: Int) Int {
   case op {
     .ACall(callee, args) => {
       r := max_local_in_atom(callee, m)
-
       for a in args { r = max_local_in_atom(a, r) }
-
       r
     },
     .AIf(cond, then_e, else_e) => {
@@ -675,9 +654,7 @@ fn max_local_in_op(op: AnfOp, m: Int) Int {
     },
     .ARecord(_, fields) => {
       r := m
-
       for f in fields { r = max_local_in_atom(f.value, r) }
-
       r
     },
     .ARecordGet(target, _, _) => max_local_in_atom(target, m),
@@ -687,16 +664,12 @@ fn max_local_in_op(op: AnfOp, m: Int) Int {
     },
     .AVariant(_, _, args) => {
       r := m
-
       for a in args { r = max_local_in_atom(a, r) }
-
       r
     },
     .AArrayLit(elems) => {
       r := m
-
       for a in elems { r = max_local_in_atom(a, r) }
-
       r
     },
     .AIndex(base, index, _, _) => {

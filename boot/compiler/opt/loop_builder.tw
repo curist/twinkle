@@ -90,11 +90,9 @@ pub fn rewrite_loop_region(
   builder: BuilderConfig,
 ) LoopRewrite? {
   sites := try analyze_loop_push_sites(loop_body, base, builder.push_id)
-
   if sites == 0 {
     return .None
   }
-
   builder_local := LocalId.{ id: next_local }
   freeze_local := LocalId.{ id: next_local + 1 }
   assign_local := LocalId.{ id: next_local + 2 }
@@ -106,11 +104,9 @@ pub fn rewrite_loop_region(
     builder.builder_push_id,
   )
   rewritten_sites := count_global_call_sites(rewritten_body, builder.builder_push_id)
-
   if rewritten_sites == 0 or rewritten_sites != sites {
     return .None
   }
-
   init: BuilderInit = if use_builder_new {
     .New
   } else {

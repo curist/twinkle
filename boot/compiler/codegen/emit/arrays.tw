@@ -149,11 +149,9 @@ pub fn emit_index_op(
             // Nested sub-bodies must use fresh []
             none_instrs: Vector<Instr> = [.I32Const(0)]
             some_variant := sum_layout.variants[1]
-
             if some_variant.payload_types.len() > 0 {
               none_instrs = emit_default_value(some_variant.payload_types[0], none_instrs)
             }
-
             none_instrs = .append(.StructNew(sum_layout.sym))
             some_instrs: Vector<Instr> = [.I32Const(1)]
             some_instrs = .concat(fns.emit_atom(base, ctx, []))

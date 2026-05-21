@@ -1,6 +1,4 @@
-use .contract_generic_fallback_provider
 use .contract_generic_fallback_box
+use .contract_generic_fallback_provider
 
-fn main() String {
-  contract_generic_fallback_box.show_box()
-}
+fn main() String { contract_generic_fallback_box.show_box() }

@@ -25,13 +25,10 @@ pub fn find_project_root(start: String) String {
     if fs.exists(path.join(dir, "twinkle.toml")) {
       return dir
     }
-
     parent := path.dirname(dir)
-
     if parent == dir {
       return path.normalize(".")
     }
-
     dir = parent
   }
 
@@ -64,9 +61,7 @@ pub fn resolve_prelude_root() String { path.join(core_lib.root(), "prelude") }
 /// e.g. stdlib_root + ["std", "path"] -> stdlib_root/path.tw
 pub fn resolve_stdlib_module_path(stdlib_root: String, module_path: Vector<String>) String {
   segments := module_path
-
   if segments.len() > 0 and segments[0] == "std" { segments = .slice(1, segments.len()) }
-
   resolve_module_path(stdlib_root, segments)
 }
 
