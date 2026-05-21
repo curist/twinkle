@@ -54,8 +54,8 @@ pub fn render_with_width(doc: Doc, width: Int) String {
           StackEntry.{ indent: entry.indent, mode: entry.mode, doc: a },
         )
       },
-      .Group(inner) => {
-        if fits(inner, entry.indent, width - col) {
+      .Group(inner, flat_width) => {
+        if flat_width >= 0 and flat_width <= width - col {
           stack = stack.append(
             StackEntry.{ indent: entry.indent, mode: .Flat, doc: inner },
           )
@@ -118,7 +118,7 @@ fn fits(doc: Doc, indent: Int, remaining: Int) Bool {
         fit_stack = fit_stack.append(b)
         fit_stack = fit_stack.append(a)
       },
-      .Group(inner) => {
+      .Group(inner, _) => {
         // Nested groups in flat mode stay flat
         fit_stack = fit_stack.append(inner)
       },

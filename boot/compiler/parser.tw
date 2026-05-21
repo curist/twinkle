@@ -2,7 +2,7 @@ use lib.source.span
 use lib.source.span.{Span}
 use lib.source.diagnostics.{DiagKind, StageResult}
 use lib.source.diagnostics as diag
-use .tokens.{TokenKind}
+use .tokens.{Token, TokenKind}
 
 use .lexer
 use .cursor
@@ -2738,11 +2738,15 @@ fn step(self: ParseState) ParseState {
 
 pub fn parse(source: String, file_id: Int) StageResult<Module> {
   lexed := lexer.lex(source, file_id)
-  c := cursor.new(lexed.value)
+  parse_tokens(source, file_id, lexed.value, lexed.diagnostics)
+}
+
+pub fn parse_tokens(source: String, file_id: Int, tokens: Vector<Token>, lex_diagnostics: Vector<DiagKind>) StageResult<Module> {
+  c := cursor.new(tokens)
   state := ParseState.{
     cursor: c,
     items: [],
-    diagnostics: lexed.diagnostics,
+    diagnostics: lex_diagnostics,
   }
 
   for !state.cursor.is_eof() {

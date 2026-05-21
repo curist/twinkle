@@ -5,7 +5,7 @@ pub type Doc = {
   HardLine,
   Indent(Int, Doc),
   Concat(Doc, Doc),
-  Group(Doc),
+  Group(Doc, Int),
   IfBreak(Doc, Doc),
 }
 
@@ -20,7 +20,7 @@ pub fn hard_line() Doc { .HardLine }
 pub fn nil() Doc { .Nil }
 
 pub fn group(d: Doc) Doc {
-  .Group(d)
+  .Group(d, flat_width(d))
 }
 
 pub fn if_break(broken: Doc, flat: Doc) Doc {
@@ -33,6 +33,31 @@ pub fn indent(d: Doc) Doc {
 
 pub fn indent_by(n: Int, d: Doc) Doc {
   .Indent(n, d)
+}
+
+/// Return the number of columns needed to render a doc flat, or -1 if it
+/// contains a hard line and therefore can never fit flat. Group nodes cache
+/// this value so the layout engine does not repeatedly walk the same subtree
+/// while deciding whether enclosing groups fit.
+fn flat_width(d: Doc) Int {
+  case d {
+    .Nil => 0,
+    .Text(s) => s.len(),
+    .Line => 1,
+    .HardLine => -1,
+    .Indent(_, inner) => flat_width(inner),
+    .Concat(a, b) => {
+      aw := flat_width(a)
+      if aw < 0 {
+        -1
+      } else {
+        bw := flat_width(b)
+        if bw < 0 { -1 } else { aw + bw }
+      }
+    },
+    .Group(_, cached) => cached,
+    .IfBreak(_, flat) => flat_width(flat),
+  }
 }
 
 pub fn concat(docs: Vector<Doc>) Doc {
