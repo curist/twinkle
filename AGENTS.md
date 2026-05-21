@@ -73,6 +73,13 @@ make rust-test                      # Rust tests only
 - Update Rust stage0 in `src/` when required to bootstrap `boot/main.tw` or to keep it as a correctness reference.
 - Prefer the boot compiler path over the Rust interpreter for day-to-day compiler work.
 
+### Format Twinkle source
+After editing a `.tw` file, run the formatter to ensure canonical style:
+```bash
+target/twk fmt path/to/file.tw
+```
+The formatter is idempotent — running it twice produces no further changes.
+
 ### Run Twinkle Programs
 - No `main` function — top-level statements execute directly.
 - `TWINKLE_ROOT` env var overrides project root (see Modules & Imports below).

@@ -73,6 +73,14 @@ Related historical context outside this folder:
 
 ---
 
+## Archived Tooling Plans
+
+| Plan | Description |
+|------|-------------|
+| [formatter.md](formatter.md) | Source formatter (`twk fmt`) — lossless trivia model, Wadler-Lindig Doc IR, AST printer, Fill layout for imports, trailing comment preservation |
+
+---
+
 ## Archived Cross-Cutting Plans
 
 | Plan | Description |

@@ -27,9 +27,10 @@
 
 **Milestones to reach those goals:**
 
-* **T1 — Formatter core**
-  * finish lossless lexer trivia model and formatter AST printer;
-  * add `twk fmt <file>` with golden tests + idempotence tests.
+* **T1 — Formatter core** ✅
+  * lossless lexer trivia model (leading + trailing), Doc IR, AST printer, layout engine;
+  * `twk fmt <file>` with `--check`, idempotent on all boot sources.
+  * Archived plan: [archive/formatter.md](archive/formatter.md).
 
 * **T2 — Whole-project formatter UX**
   * add `twk fmt --all` file discovery, include/exclude rules, and stable output ordering;
