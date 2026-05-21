@@ -1,0 +1,3 @@
+pub type Ops = .{ run: fn(Int) Int }
+
+pub fn apply(ops: Ops, x: Int) Int { ops.run(x) }

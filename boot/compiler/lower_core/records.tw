@@ -68,15 +68,33 @@ pub fn lower_record_fields(
       },
       .None => {
         // Field punning: `name` means `name: name`
+        // Resolution mirrors the .Ident path: local → module global → function
+        val_ty := find_field_type_in_type(ctx.env, ty, entry.name)
+
         case ctx.lookup_local(entry.name) {
           .Some(local_id) => {
-            val_ty := find_field_type_in_type(ctx.env, ty, entry.name)
             val := CoreExpr.{ kind: .Local(local_id), ty: val_ty, span: entry.span }
             fields = .append(.{ field, value: val })
           },
           .None => {
-            ctx = .emit_error(entry.span, "undefined variable: ${entry.name}")
-            fields = .append(.{ field, value: void_expr(entry.span) })
+            case ctx.module_globals[entry.name] {
+              .Some(gid) => {
+                val := CoreExpr.{ kind: .GlobalLocal(gid), ty: val_ty, span: entry.span }
+                fields = .append(.{ field, value: val })
+              },
+              .None => {
+                case ctx.lookup_func(entry.name) {
+                  .Some(func_id) => {
+                    val := CoreExpr.{ kind: .GlobalFunc(func_id), ty: val_ty, span: entry.span }
+                    fields = .append(.{ field, value: val })
+                  },
+                  .None => {
+                    ctx = .emit_error(entry.span, "undefined variable: ${entry.name}")
+                    fields = .append(.{ field, value: void_expr(entry.span) })
+                  },
+                }
+              },
+            }
           },
         }
       },

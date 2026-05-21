@@ -1,0 +1,5 @@
+use tests.fixtures.multi.record_shorthand_lib.{Ops}
+
+fn run(x: Int) Int { x + 1 }
+
+pub fn make() Ops { .{ run } }

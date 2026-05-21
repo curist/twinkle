@@ -508,5 +508,15 @@ pub fn suite() runner.Suite {
       try assert.str_contains(wat, "global.set \$user__global_local_")
       .Ok({})
     },
+  ).test(
+    "record shorthand with module function across modules",
+    fn() {
+      result := module_compiler.compile_entry("${dir}/record_shorthand_main.tw")
+
+      case result {
+        .Ok(_) => .Ok({}),
+        .Err(err) => .Err("expected success, got: ${format_compile_error(err)}"),
+      }
+    },
   )
 }
