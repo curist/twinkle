@@ -1,9 +1,6 @@
 use lib.source.span.{Span}
 
-pub type Module = .{
-  items: Vector<Item>,
-  span: Span,
-}
+pub type Module = .{ items: Vector<Item>, span: Span }
 
 pub type Item = {
   Use(UseDecl),
@@ -31,28 +28,13 @@ pub type UseDecl = .{
   span: Span,
 }
 
-pub type ImportItem = {
-  Value(ImportValueItem),
-  Type(ImportTypeItem),
-}
+pub type ImportItem = { Value(ImportValueItem), Type(ImportTypeItem) }
 
-pub type ImportValueItem = .{
-  name: String,
-  alias: String?,
-  span: Span,
-}
+pub type ImportValueItem = .{ name: String, alias: String?, span: Span }
 
-pub type ImportTypeItem = .{
-  name: String,
-  alias: String?,
-  span: Span,
-}
+pub type ImportTypeItem = .{ name: String, alias: String?, span: Span }
 
-pub type TypeParam = .{
-  name: String,
-  bounds: Vector<TypePath>,
-  span: Span,
-}
+pub type TypeParam = .{ name: String, bounds: Vector<TypePath>, span: Span }
 
 /// Extract plain type-parameter names from a list of TypeParam.
 /// Used for migration: most existing code works with Vector<String>.
@@ -105,21 +87,11 @@ pub type RecordField = .{
   name_span: Span,
 }
 
-pub type VariantDecl = .{
-  name: String,
-  fields: Vector<TypeExpr>,
-  span: Span,
-}
+pub type VariantDecl = .{ name: String, fields: Vector<TypeExpr>, span: Span }
 
-pub type TypePath = .{
-  segments: Vector<String>,
-  span: Span,
-}
+pub type TypePath = .{ segments: Vector<String>, span: Span }
 
-pub type TypeExpr = .{
-  kind: TypeExprKind,
-  span: Span,
-}
+pub type TypeExpr = .{ kind: TypeExprKind, span: Span }
 
 pub type TypeExprKind = {
   Path(TypePath),
@@ -132,18 +104,9 @@ pub type TypeExprKind = {
   ErrorType,
 }
 
-pub type Param = .{
-  name: String,
-  ty: TypeExpr?,
-  name_span: Span,
-  span: Span,
-}
+pub type Param = .{ name: String, ty: TypeExpr?, name_span: Span, span: Span }
 
-pub type Block = .{
-  stmts: Vector<Stmt>,
-  tail: Expr?,
-  span: Span,
-}
+pub type Block = .{ stmts: Vector<Stmt>, tail: Expr?, span: Span }
 
 pub type Stmt = {
   Let(LetStmt),
@@ -177,35 +140,17 @@ pub type ForStmt = .{
   span: Span,
 }
 
-pub type ReturnStmt = .{
-  value: Expr?,
-  span: Span,
-}
+pub type ReturnStmt = .{ value: Expr?, span: Span }
 
-pub type BreakStmt = .{
-  value: Expr?,
-  span: Span,
-}
+pub type BreakStmt = .{ value: Expr?, span: Span }
 
-pub type ContinueStmt = .{
-  span: Span,
-}
+pub type ContinueStmt = .{ span: Span }
 
-pub type DeferStmt = .{
-  expr: Expr,
-  span: Span,
-}
+pub type DeferStmt = .{ expr: Expr, span: Span }
 
-pub type ExprStmt = .{
-  expr: Expr,
-  span: Span,
-}
+pub type ExprStmt = .{ expr: Expr, span: Span }
 
-pub type Expr = .{
-  id: Int,
-  kind: ExprKind,
-  span: Span,
-}
+pub type Expr = .{ id: Int, kind: ExprKind, span: Span }
 
 pub type ExprKind = {
   Ident(String),
@@ -241,27 +186,13 @@ pub type CollectExpr = .{
   body: Block,
 }
 
-pub type StringPart = {
-  Literal(String),
-  Interpolation(Expr),
-}
+pub type StringPart = { Literal(String), Interpolation(Expr) }
 
-pub type RecordEntry = .{
-  name: String,
-  value: Expr?,
-  span: Span,
-}
+pub type RecordEntry = .{ name: String, value: Expr?, span: Span }
 
-pub type CaseArm = .{
-  pattern: Pattern,
-  expr: Expr,
-  span: Span,
-}
+pub type CaseArm = .{ pattern: Pattern, expr: Expr, span: Span }
 
-pub type Pattern = .{
-  kind: PatternKind,
-  span: Span,
-}
+pub type Pattern = .{ kind: PatternKind, span: Span }
 
 pub type PatternKind = {
   Wildcard,
@@ -295,12 +226,7 @@ pub type BinOp = {
   Assign,
 }
 
-pub type UnOp = {
-  Neg,
-  Not,
-  BitNot,
-  Try,
-}
+pub type UnOp = { Neg, Not, BitNot, Try }
 
 pub fn name(kind: ExprKind) String {
   case kind {

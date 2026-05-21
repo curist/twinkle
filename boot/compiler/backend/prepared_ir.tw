@@ -3,14 +3,12 @@
 // These types make closure captures, physical slot identity, and runtime
 // representation metadata explicit so later backend passes can consume verified
 // facts instead of rediscovering them.
-
-use compiler.core_ir.{LocalId, FuncId, FieldId, VariantId, BinOp, UnOp}
-use compiler.mono_type.{MonoType, TypeId}
-use compiler.anf.{OpKind, IndexKind}
+use compiler.anf.{IndexKind, OpKind}
 use compiler.codegen.wasm_ir.{ValType}
+use compiler.core_ir.{BinOp, FieldId, FuncId, LocalId, UnOp, VariantId}
+use compiler.mono_type.{MonoType, TypeId}
 
 // ── Capture parameters ──────────────────────────────────────────────
-
 // CaptureParam records one explicitly captured outer local in a hoisted function.
 //
 // local_id: the outer LocalId captured at the AMakeClosure construction site
@@ -28,7 +26,6 @@ pub type CaptureParam = .{
 }
 
 // ── Slot types ──────────────────────────────────────────────────────
-
 // SlotId is the physical backend identifier for a function's parameter or local.
 // It is distinct from semantic LocalId. SlotIds are assigned in ABI order:
 //   captures (0..n), params (n..m), locals (m..k)
@@ -36,15 +33,14 @@ pub type SlotId = .{ id: Int }
 
 // SlotRole classifies the purpose of a backend slot.
 pub type SlotRole = {
-  Param,           // declared function parameter
-  CaptureParam,    // captured outer local (hoisted closure only; always before Params)
-  Local,           // let-bound local or AAssign target in the function body
-  PatternLocal,    // local bound by a match-arm pattern
-  DeadPlaceholder, // Never-typed; allocated for Wasm validation but never read
+  Param,
+  CaptureParam,
+  Local,
+  PatternLocal,
+  DeadPlaceholder,
 }
 
 // ── Runtime representation kinds ────────────────────────────────────
-
 // ReprKind is the runtime representation category for a prepared slot.
 //
 // This drives typed-layout operation gating in the verifier and emitter:
@@ -58,15 +54,15 @@ pub type SlotRole = {
 // formerly-typed sum from a plain OpaqueAnyref (reserved for future repr
 // tracking; not yet produced by repr_assign).
 pub type ReprKind = {
-  I64,               // unboxed i64 (Int)
-  F64,               // unboxed f64 (Float)
-  I32,               // unboxed i32 (Bool, Byte)
-  TypedRef(MonoType),  // typed GC ref: String, record, Vector, Dict, Cell, Iterator
-  TypedSum(MonoType),  // typed sum: Optional<T>, Result<T,E>, user sum types
-  ClosureRef,        // closure/function reference
-  ErasedSum,         // sum type erased to anyref at a boundary (reserved; not yet emitted)
-  OpaqueAnyref,      // opaque anyref: Void, Anyref_, AWrapAnyref result
-  DeadValue,         // Never type — slot is unreachable
+  I64,
+  F64,
+  I32,
+  TypedRef(MonoType),
+  TypedSum(MonoType),
+  ClosureRef,
+  ErasedSum,
+  OpaqueAnyref,
+  DeadValue,
 }
 
 // SlotInfo is the complete backend record for one physical slot.
@@ -80,12 +76,11 @@ pub type SlotInfo = .{
   source_local: LocalId,
   role: SlotRole,
   mono: MonoType,
-  repr: ReprKind,    // representation category (OpaqueAnyref until repr_assign runs)
-  wasm_type: ValType, // physical Wasm type (Anyref until repr_assign runs)
+  repr: ReprKind,
+  wasm_type: ValType,
 }
 
 // ── Prepared body IR ───────────────────────────────────────────────
-
 // PreparedAtom is the slot-native backend operand form.
 // Any function-local value reference is explicit via SlotId rather than
 // semantic LocalId.
@@ -157,13 +152,10 @@ pub type PreparedFunc = .{
   func_id: FuncId,
   name: String,
   is_init: Bool,
-  // Slots in ABI order:
-  captures: Vector<SlotId>,    // CaptureParam slots (empty for non-closures)
-  params: Vector<SlotId>,      // Param slots (declared parameters)
-  locals: Vector<SlotId>,      // Local/PatternLocal/DeadPlaceholder slots
-  // Lookup table:
-  slots: Dict<Int, SlotInfo>,  // SlotId.id → SlotInfo
-  // Slot-native post-boundary prepared body:
+  captures: Vector<SlotId>,
+  params: Vector<SlotId>,
+  locals: Vector<SlotId>,
+  slots: Dict<Int, SlotInfo>,
   body: PreparedExpr,
   return_mono: MonoType,
 }

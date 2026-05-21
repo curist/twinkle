@@ -1,32 +1,8 @@
 use compiler.ast.{
-  BinOp,
-  Block,
-  BreakStmt,
-  CaseArm,
-  CollectExpr,
-  DeferStmt,
-  Expr,
-  ExternFunctionDecl,
-  ExternTypeDecl,
-  ForStmt,
-  FunctionDecl,
-  ImportItem,
-  Item,
-  LetStmt,
-  Module,
-  Param,
-  Pattern,
-  RecordEntry,
-  RecordField,
-  ReturnStmt,
-  Stmt,
-  StringPart,
-  TypeDecl,
-  TypeExpr,
-  TypeParam,
-  UnOp,
-  UseDecl,
-  VariantDecl,
+  BinOp, Block, BreakStmt, CaseArm, CollectExpr, DeferStmt, Expr,
+  ExternFunctionDecl, ExternTypeDecl, ForStmt, FunctionDecl, ImportItem, Item,
+  LetStmt, Module, Param, Pattern, RecordEntry, RecordField, ReturnStmt, Stmt,
+  StringPart, TypeDecl, TypeExpr, TypeParam, UnOp, UseDecl, VariantDecl,
 }
 use compiler.fmt.doc
 use compiler.fmt.doc.{Doc}
@@ -658,7 +634,6 @@ fn format_block_with_options(
       case block.tail {
         .Some(expr) => {
           trivia := get_trivia(tm, expr.span.start)
-
           trailing_t := get_trailing_trivia(tm, expr.span.end)
 
           if is_simple_expr(expr) and trivia.len() == 0

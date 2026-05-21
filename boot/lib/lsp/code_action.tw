@@ -2,25 +2,20 @@
 //
 // Builds CodeAction, TextEdit, and WorkspaceEdit JSON objects for the
 // textDocument/codeAction response.
-
 use lib.json
 use lib.text.line_index
+
 use .range.{byte_range_to_lsp_range}
 
 /// Build a TextEdit JSON object.
 pub fn text_edit(range: json.Json, new_text: String) json.Json {
-  json.object([
-    json.kv("range", range),
-    json.kv("newText", .Str(new_text)),
-  ])
+  json.object([json.kv("range", range), json.kv("newText", .Str(new_text))])
 }
 
 /// Build a WorkspaceEdit with changes for a single file.
 pub fn workspace_edit(uri: String, edits: Vector<json.Json>) json.Json {
   json.object([
-    json.kv("changes", json.object([
-      json.kv(uri, json.array(edits)),
-    ])),
+    json.kv("changes", json.object([json.kv(uri, json.array(edits))])),
   ])
 }
 
@@ -65,6 +60,7 @@ pub fn unused_import_actions(
       .Ok(k) => k,
       .Err(_) => { continue },
     }
+
     if kind != "unused_import" { continue }
 
     use_start := case json.decode(data, json.field("use_start", json.int())) {
@@ -75,7 +71,10 @@ pub fn unused_import_actions(
       .Ok(e) => e,
       .Err(_) => { continue },
     }
-    replacement := case json.decode(data, json.field("replacement", json.string())) {
+    replacement := case json.decode(
+      data,
+      json.field("replacement", json.string()),
+    ) {
       .Ok(r) => r,
       .Err(_) => { continue },
     }
@@ -83,8 +82,8 @@ pub fn unused_import_actions(
       .Ok(m) => m,
       .Err(_) => "Remove unused import",
     }
-
     span_key := "${use_start}:${use_end}"
+
     if !seen_spans.has(span_key) {
       seen_spans[span_key] = true
       range := byte_range_to_lsp_range(index, use_start, use_end)
@@ -93,10 +92,13 @@ pub fn unused_import_actions(
       // Strip the "unused import: " prefix to get the bare name for the title
       import_name := if message.starts_with("unused import: ") {
         message.substring(15, message.len())
-      } else {
-        message
-      }
-      action := code_action("Remove unused import '${import_name}'", "quickfix", ws_edit, [diag])
+      } else { message }
+      action := code_action(
+        "Remove unused import '${import_name}'",
+        "quickfix",
+        ws_edit,
+        [diag],
+      )
       actions = .append(action)
       bulk_edits = .append(edit_json)
       bulk_diags = .append(diag)
@@ -106,7 +108,12 @@ pub fn unused_import_actions(
   // Bulk action when more than one
   if actions.len() > 1 {
     bulk_ws_edit := workspace_edit(uri, bulk_edits)
-    bulk := code_action("Remove all unused imports", "quickfix", bulk_ws_edit, bulk_diags)
+    bulk := code_action(
+      "Remove all unused imports",
+      "quickfix",
+      bulk_ws_edit,
+      bulk_diags,
+    )
     actions = .append(bulk)
   }
 

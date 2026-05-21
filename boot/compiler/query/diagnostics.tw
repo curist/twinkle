@@ -7,17 +7,16 @@
 // Workspace analysis delegates to the shared analyze module, which is also
 // used by module_compiler for builds. Single-document analysis (no imports)
 // remains self-contained here.
-
 use compiler.base_env
 use compiler.query.analyze
 use compiler.query.cache
 use compiler.query.stage_runner
+use lib.json.{Json}
 use lib.query.keys
+use lib.source.diagnostics.{DiagKind, Severity}
 use lib.source.identity
 use lib.source.overlay
 use lib.source.span.{Span}
-use lib.json.{Json}
-use lib.source.diagnostics.{DiagKind, Severity}
 
 pub type Diagnostic = .{
   uri: String,
@@ -26,15 +25,10 @@ pub type Diagnostic = .{
   severity: Severity,
   message: String,
   stage: String,
-  /// Optional data payload (roundtripped by LSP clients in code action requests).
   data: Json?,
 }
 
-pub type DocumentInput = .{
-  uri: String,
-  text: String,
-  version: Int?,
-}
+pub type DocumentInput = .{ uri: String, text: String, version: Int? }
 
 pub type AnalysisResult = .{
   cache: cache.Store,
@@ -62,29 +56,49 @@ pub type WorkspaceInput = .{
 pub fn analyze_document(store: cache.Store, input: DocumentInput) AnalysisResult {
   source_hash := keys.hash_text(input.text)
   runner := stage_runner.new(input.uri, source_hash, 0, 0, false)
-
   parsed_out := stage_runner.parse(runner, store, input.text, 0)
   cur_cache := parsed_out.store
   parsed := parsed_out.value
+
   if parsed.diagnostics.len() > 0 {
-    return .{ cache: cur_cache, diagnostics: convert_diagnostics(input, "parse", parsed.diagnostics) }
+    return .{
+      cache: cur_cache,
+      diagnostics: convert_diagnostics(input, "parse", parsed.diagnostics),
+    }
   }
 
-  resolved_out := stage_runner.resolve(runner, cur_cache, parsed, base_env.builtin_env())
+  resolved_out := stage_runner.resolve(
+    runner,
+    cur_cache,
+    parsed,
+    base_env.builtin_env(),
+  )
   cur_cache = resolved_out.store
   resolved := resolved_out.value
+
   if resolved.diagnostics.len() > 0 {
-    return .{ cache: cur_cache, diagnostics: convert_diagnostics(input, "resolve", resolved.diagnostics) }
+    return .{
+      cache: cur_cache,
+      diagnostics: convert_diagnostics(input, "resolve", resolved.diagnostics),
+    }
   }
 
   checked_out := stage_runner.typecheck(runner, cur_cache, parsed, resolved)
   cur_cache = checked_out.store
   checked := checked_out.value
+
   if checked.diagnostics.len() > 0 {
-    return .{ cache: cur_cache, diagnostics: convert_diagnostics(input, "check", checked.diagnostics) }
+    return .{
+      cache: cur_cache,
+      diagnostics: convert_diagnostics(input, "check", checked.diagnostics),
+    }
   }
 
-  cur_cache = cache.set_module_hash(cur_cache, input.uri, keys.module_hash(source_hash, 0))
+  cur_cache = cache.set_module_hash(
+    cur_cache,
+    input.uri,
+    keys.module_hash(source_hash, 0),
+  )
   .{ cache: cur_cache, diagnostics: [] }
 }
 
@@ -93,11 +107,16 @@ pub fn analyze_workspace(store: cache.Store, input: WorkspaceInput) WorkspaceAna
     .Ok(id) => id,
     .Err(err) => {
       diags := [synthetic_diagnostic(input.entry_uri, .None, "source", err)]
-      return .{ cache: store, diagnostics: diags, diagnostics_by_uri: group_diagnostics(diags, input.open_documents) }
+
+      return .{
+        cache: store,
+        diagnostics: diags,
+        diagnostics_by_uri: group_diagnostics(diags, input.open_documents),
+      }
     },
   }
-
   docs: Vector<overlay.OverlayDocument> = []
+
   for doc in input.open_documents {
     id := case identity.from_file_uri(doc.uri) {
       .Ok(parsed) => parsed,
@@ -110,7 +129,6 @@ pub fn analyze_workspace(store: cache.Store, input: WorkspaceInput) WorkspaceAna
   ov := overlay.from_documents(docs)
   state := analyze.new_state(base, store, ov, input.project_root)
   result := analyze.analyze_module(entry_id, "__entry", base, state, [])
-
   diags := convert_analysis_diags(result.diagnostics)
   .{
     cache: result.state.cache,
@@ -120,8 +138,9 @@ pub fn analyze_workspace(store: cache.Store, input: WorkspaceInput) WorkspaceAna
 }
 
 // ── Helpers ─────────────────────────────────────────────────────────
-
-fn convert_analysis_diags(diags: Vector<analyze.AnalysisDiag>) Vector<Diagnostic> {
+fn convert_analysis_diags(diags: Vector<analyze.AnalysisDiag>) Vector<
+  Diagnostic,
+> {
   collect d in diags {
     Diagnostic.{
       uri: d.identity.uri,
@@ -198,18 +217,23 @@ fn kind_to_message(kind: DiagKind) String {
   }
 }
 
-fn group_diagnostics(diagnostics: Vector<Diagnostic>, open_documents: Vector<DocumentInput>) Vector<DiagnosticGroup> {
+fn group_diagnostics(
+  diagnostics: Vector<Diagnostic>,
+  open_documents: Vector<DocumentInput>,
+) Vector<DiagnosticGroup> {
   groups: Vector<DiagnosticGroup> = []
 
   for d in diagnostics {
     found := false
+
     for i in 0..groups.len() {
       if groups[i].uri == d.uri {
-        groups[i].diagnostics = .append(d)
+        groups[i].diagnostics = groups[i].diagnostics.append(d)
         found = true
         break
       }
     }
+
     if !found {
       groups = .append(.{ uri: d.uri, version: d.version, diagnostics: [d] })
     }
@@ -221,12 +245,14 @@ fn group_diagnostics(diagnostics: Vector<Diagnostic>, open_documents: Vector<Doc
       .Err(_) => identity.from_path(doc.uri).uri,
     }
     found := false
+
     for group in groups {
       if group.uri == uri {
         found = true
         break
       }
     }
+
     if !found {
       groups = .append(.{ uri, version: doc.version, diagnostics: [] })
     }
@@ -235,7 +261,12 @@ fn group_diagnostics(diagnostics: Vector<Diagnostic>, open_documents: Vector<Doc
   groups
 }
 
-fn synthetic_diagnostic(uri: String, version: Int?, stage: String, message: String) Diagnostic {
+fn synthetic_diagnostic(
+  uri: String,
+  version: Int?,
+  stage: String,
+  message: String,
+) Diagnostic {
   .{ uri, version, span: .None, severity: .Error, message, stage, data: .None }
 }
 

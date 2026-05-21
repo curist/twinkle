@@ -1,55 +1,64 @@
-use tests.runner
-use tests.assert
-use compiler.parser
-use compiler.resolver
+use compiler.anf.{AnfExpr, AnfFunctionDef, AnfModule, AnfOp}
+use compiler.builtins.{make_builtin_registry}
 use compiler.checker
-
-
+use compiler.lower_anf
 use compiler.lower_core
 use compiler.monomorphize
-use compiler.builtins.{make_builtin_registry}
-use compiler.anf.{AnfExpr, AnfOp, AnfFunctionDef, AnfModule}
-
-use compiler.lower_anf
+use compiler.parser
+use compiler.resolver
+use tests.assert
+use tests.runner
 
 // ── Pipeline helpers ────────────────────────────────────────────────
-
 fn anf_src(src: String) Result<AnfModule, String> {
   parsed := parser.parse(src, 0)
+
   if parsed.diagnostics.len() > 0 {
     return .Err("parse: ${parsed.diagnostics[0].message()}")
   }
+
   resolved := resolver.empty_env().resolve(parsed.value)
+
   if resolved.diagnostics.len() > 0 {
     return .Err("resolve: ${resolved.diagnostics[0].message()}")
   }
+
   check_result := checker.check(parsed.value, resolved.env)
+
   if check_result.diagnostics.len() > 0 {
     return .Err("check: ${check_result.diagnostics[0].message()}")
   }
-  lr := lower_core.lower_module(parsed.value, check_result, make_builtin_registry())
+
+  lr := lower_core.lower_module(
+    parsed.value,
+    check_result,
+    make_builtin_registry(),
+  )
   mono := monomorphize.monomorphize(lr.module)
   .Ok(lower_anf.lower_module(mono))
 }
 
 fn anf_body(src: String) Result<AnfExpr, String> {
   module := try anf_src(src)
+
   if module.functions.len() == 0 {
     return .Err("no functions in module")
   }
+
   .Ok(module.functions[0].body)
 }
 
 fn anf_func(src: String) Result<AnfFunctionDef, String> {
   module := try anf_src(src)
+
   if module.functions.len() == 0 {
     return .Err("no functions in module")
   }
+
   .Ok(module.functions[0])
 }
 
 // ── ANF structure helpers ───────────────────────────────────────────
-
 // Count Let nodes in the top-level chain (not descending into ops)
 fn count_lets(expr: AnfExpr) Int {
   case expr {
@@ -70,7 +79,11 @@ fn tail_of(expr: AnfExpr) AnfExpr {
 fn nth_op(expr: AnfExpr, n: Int) AnfOp? {
   case expr {
     .Let(_, op, body) => {
-      if n == 0 { .Some(op) } else { nth_op(body, n - 1) }
+      if n == 0 {
+        .Some(op)
+      } else {
+        nth_op(body, n - 1)
+      }
     },
     _ => .None,
   }
@@ -162,9 +175,9 @@ fn has_match(expr: AnfExpr) Bool {
 }
 
 // ── M2: Atoms & Simple Ops ─────────────────────────────────────────
-
 fn test_literal_int() Result<Void, String> {
   body := try anf_body("fn f() Int { 42 }")
+
   // Body should be just an atom: ALitInt(42)
   case body {
     .Atom(.ALitInt(n)) => assert.equal(n, 42),
@@ -174,6 +187,7 @@ fn test_literal_int() Result<Void, String> {
 
 fn test_literal_bool() Result<Void, String> {
   body := try anf_body("fn f() Bool { true }")
+
   case body {
     .Atom(.ALitBool(b)) => assert.equal(b, true),
     _ => assert.fail("expected Atom(ALitBool)"),
@@ -182,6 +196,7 @@ fn test_literal_bool() Result<Void, String> {
 
 fn test_literal_string() Result<Void, String> {
   body := try anf_body("fn f() String { \"hi\" }")
+
   case body {
     .Atom(.ALitStr(s)) => assert.equal(s, "hi"),
     _ => assert.fail("expected Atom(ALitStr)"),
@@ -190,6 +205,7 @@ fn test_literal_string() Result<Void, String> {
 
 fn test_literal_void() Result<Void, String> {
   body := try anf_body("fn f() Void { }")
+
   case body {
     .Atom(.ALitVoid) => .Ok({}),
     _ => assert.fail("expected Atom(ALitVoid)"),
@@ -201,12 +217,34 @@ fn test_binop_add() Result<Void, String> {
   // Should be: Let(tmp, ABinOp(Add, ALitInt(1), ALitInt(2), Int), Atom(ALocal(tmp)))
   try assert.equal(count_lets(body), 1)
   op := try nth_op(body, 0).ok_or("no op")
+
   case op {
     .ABinOp(binop, left, right, kind) => {
-      case binop { .Add => {}, _ => { return .Err("expected Add") } }
-      case left { .ALitInt(n) => try assert.equal(n, 1), _ => { return .Err("expected ALitInt(1)") } }
-      case right { .ALitInt(n) => try assert.equal(n, 2), _ => { return .Err("expected ALitInt(2)") } }
-      case kind { .Int => .Ok({}), _ => assert.fail("expected Int kind") }
+      case binop {
+        .Add => {},
+        _ => {
+          return .Err("expected Add")
+        },
+      }
+
+      case left {
+        .ALitInt(n) => try assert.equal(n, 1),
+        _ => {
+          return .Err("expected ALitInt(1)")
+        },
+      }
+
+      case right {
+        .ALitInt(n) => try assert.equal(n, 2),
+        _ => {
+          return .Err("expected ALitInt(2)")
+        },
+      }
+
+      case kind {
+        .Int => .Ok({}),
+        _ => assert.fail("expected Int kind"),
+      }
     },
     _ => assert.fail("expected ABinOp"),
   }
@@ -216,10 +254,20 @@ fn test_unop_neg() Result<Void, String> {
   body := try anf_body("fn f() Int { -5 }")
   try assert.equal(count_lets(body), 1)
   op := try nth_op(body, 0).ok_or("no op")
+
   case op {
     .AUnOp(unop, atom, kind) => {
-      case unop { .Neg => {}, _ => { return .Err("expected Neg") } }
-      case kind { .Int => .Ok({}), _ => assert.fail("expected Int kind") }
+      case unop {
+        .Neg => {},
+        _ => {
+          return .Err("expected Neg")
+        },
+      }
+
+      case kind {
+        .Int => .Ok({}),
+        _ => assert.fail("expected Int kind"),
+      }
     },
     _ => assert.fail("expected AUnOp"),
   }
@@ -236,6 +284,7 @@ fn test_call() Result<Void, String> {
 fn test_array_lit() Result<Void, String> {
   body := try anf_body("fn f() Vector<Int> { [1, 2, 3] }")
   op := try nth_op(body, 0).ok_or("no op")
+
   case op {
     .AArrayLit(elems) => assert.equal(elems.len(), 3),
     _ => assert.fail("expected AArrayLit"),
@@ -250,7 +299,6 @@ fn test_nested_binop() Result<Void, String> {
 }
 
 // ── M3: Control Flow ────────────────────────────────────────────────
-
 fn test_if_expr() Result<Void, String> {
   body := try anf_body("fn f() Int { if true { 1 } else { 2 } }")
   try assert.is_true(has_if(body))
@@ -259,6 +307,7 @@ fn test_if_expr() Result<Void, String> {
 
 fn test_return() Result<Void, String> {
   body := try anf_body("fn f() Int { return 99 }")
+
   // Should produce Return(Some(ALitInt(99)))
   case body {
     .Return(.Some(.ALitInt(n))) => assert.equal(n, 99),
@@ -281,7 +330,6 @@ fn test_match() Result<Void, String> {
 }
 
 // ── M4: Let, Assign, Defer ─────────────────────────────────────────
-
 fn test_let_binding() Result<Void, String> {
   body := try anf_body("fn f() Int { x := 1 + 2\nx }")
   // Should have: Let(tmp, ABinOp(Add,1,2,Int), Let(x, AInit(ALocal(tmp)), Atom(ALocal(x))))
@@ -289,6 +337,7 @@ fn test_let_binding() Result<Void, String> {
   try assert.is_true(has_binop(body))
   // Tail should be an Atom referencing the let-bound local
   tail := tail_of(body)
+
   case tail {
     .Atom(.ALocal(_)) => .Ok({}),
     _ => assert.fail("expected Atom(ALocal) tail"),
@@ -313,6 +362,7 @@ fn test_let_terminal_value() Result<Void, String> {
   // When Let value diverges, body is unreachable
   src := "fn f() Int { x := { return 1 }\nx }"
   body := try anf_body(src)
+
   // Should ultimately produce a Return, not reference x
   case tail_of(body) {
     .Return(_) => .Ok({}),
@@ -321,7 +371,6 @@ fn test_let_terminal_value() Result<Void, String> {
 }
 
 // ── op_result_mono metadata ─────────────────────────────────────────
-
 fn test_op_result_mono() Result<Void, String> {
   fdef := try anf_func("fn f() Int { 1 + 2 }")
   // The ABinOp's temp should have an entry in op_result_mono
@@ -330,30 +379,29 @@ fn test_op_result_mono() Result<Void, String> {
 }
 
 // ── Suite ───────────────────────────────────────────────────────────
-
 pub fn suite() runner.Suite {
   s := runner.suite("ANF Lowering")
   // M2: Atoms & simple ops
-  s = s.test("literal int", test_literal_int)
-  s = s.test("literal bool", test_literal_bool)
-  s = s.test("literal string", test_literal_string)
-  s = s.test("literal void", test_literal_void)
-  s = s.test("binop add", test_binop_add)
-  s = s.test("unop neg", test_unop_neg)
-  s = s.test("call", test_call)
-  s = s.test("array lit", test_array_lit)
-  s = s.test("nested binop", test_nested_binop)
+  s = .test("literal int", test_literal_int)
+  s = .test("literal bool", test_literal_bool)
+  s = .test("literal string", test_literal_string)
+  s = .test("literal void", test_literal_void)
+  s = .test("binop add", test_binop_add)
+  s = .test("unop neg", test_unop_neg)
+  s = .test("call", test_call)
+  s = .test("array lit", test_array_lit)
+  s = .test("nested binop", test_nested_binop)
   // M3: Control flow
-  s = s.test("if expr", test_if_expr)
-  s = s.test("return", test_return)
-  s = s.test("loop/break", test_loop_break)
-  s = s.test("match", test_match)
+  s = .test("if expr", test_if_expr)
+  s = .test("return", test_return)
+  s = .test("loop/break", test_loop_break)
+  s = .test("match", test_match)
   // M4: Let, Assign, Defer
-  s = s.test("let binding", test_let_binding)
-  s = s.test("let chain", test_let_chain)
-  s = s.test("assign", test_assign)
-  s = s.test("let terminal value", test_let_terminal_value)
+  s = .test("let binding", test_let_binding)
+  s = .test("let chain", test_let_chain)
+  s = .test("assign", test_assign)
+  s = .test("let terminal value", test_let_terminal_value)
   // Metadata
-  s = s.test("op_result_mono populated", test_op_result_mono)
+  s = .test("op_result_mono populated", test_op_result_mono)
   s
 }

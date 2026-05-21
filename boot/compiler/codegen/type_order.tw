@@ -3,9 +3,7 @@
 // This module is format-independent backend infrastructure. WAT and binary
 // emission both consume the same dependency-before-dependent SCC order so their
 // recursive type grouping cannot drift apart.
-
-use compiler.codegen.wasm_ir.{ValType, TypeDef}
-
+use compiler.codegen.wasm_ir.{TypeDef, ValType}
 
 pub fn type_def_name(td: TypeDef) String {
   case td {
@@ -17,20 +15,26 @@ pub fn type_def_name(td: TypeDef) String {
 
 pub fn type_def_deps(td: TypeDef) Vector<String> {
   deps: Vector<String> = []
+
   case td {
     .Struct(_, fields, super_type, _) => {
       case super_type {
-        .Some(parent) => deps = .append(parent),
+        .Some(parent) => deps = deps.append(parent),
         .None => {},
       }
-      for field in fields { deps = append_unique(deps, val_type_deps(field.ty)) }
+
+      for field in fields {
+        deps = append_unique(deps, val_type_deps(field.ty))
+      }
     },
     .Array(_, field) => deps = append_unique(deps, val_type_deps(field.ty)),
     .FuncType(_, params, results) => {
       for vt in params { deps = append_unique(deps, val_type_deps(vt)) }
+
       for vt in results { deps = append_unique(deps, val_type_deps(vt)) }
     },
   }
+
   deps
 }
 
@@ -43,23 +47,29 @@ fn val_type_deps(vt: ValType) Vector<String> {
 
 fn append_unique(base: Vector<String>, extra: Vector<String>) Vector<String> {
   out := base
+
   for name in extra {
     seen := false
+
     for existing in out {
       if existing == name { seen = true }
     }
+
     if !seen { out = .append(name) }
   }
+
   out
 }
 
 fn reverse_strings(items: Vector<String>) Vector<String> {
   out: Vector<String> = []
   i := items.len() - 1
+
   for i >= 0 {
     out = .append(items[i])
     i = i - 1
   }
+
   out
 }
 
@@ -72,16 +82,23 @@ fn dict_int(dict: Dict<String, Int>, key: String, msg: String) Int {
 
 pub fn type_def_has_self_edge(td: TypeDef) Bool {
   name := type_def_name(td)
+
   for dep in type_def_deps(td) {
-    if dep == name { return true }
+    if dep == name {
+      return true
+    }
   }
+
   false
 }
 
 pub fn find_type_def(types: Vector<TypeDef>, name: String) TypeDef {
   for td in types {
-    if type_def_name(td) == name { return td }
+    if type_def_name(td) == name {
+      return td
+    }
   }
+
   error("type_order: missing type ${name}")
 }
 
@@ -111,53 +128,90 @@ fn tarjan_visit(
   cur_on_stack := on_stack
   cur_stack := stack
   cur_components := components
-
   cur_indices[name] = cur_next
   cur_lowlinks[name] = cur_next
   cur_next = cur_next + 1
   cur_stack = .append(name)
   cur_on_stack[name] = true
-
   td := case types_by_name[name] {
     .Some(t) => t,
     .None => error("type_order: tarjan_visit: missing type '${name}'"),
   }
+
   for dep in type_def_deps(td) {
     if !type_name_set.has(dep) { continue }
+
     if !cur_indices.has(dep) {
-      result := tarjan_visit(dep, types_by_name, type_name_set, cur_next, cur_indices, cur_lowlinks, cur_on_stack, cur_stack, cur_components)
+      result := tarjan_visit(
+        dep,
+        types_by_name,
+        type_name_set,
+        cur_next,
+        cur_indices,
+        cur_lowlinks,
+        cur_on_stack,
+        cur_stack,
+        cur_components,
+      )
       cur_next = result.next_index
       cur_indices = result.indices
       cur_lowlinks = result.lowlinks
       cur_on_stack = result.on_stack
       cur_stack = result.stack
       cur_components = result.components
-      dep_low  := dict_int(cur_lowlinks, dep,  "type_order: tarjan_visit dep lowlink")
-      self_low := dict_int(cur_lowlinks, name, "type_order: tarjan_visit self lowlink")
+      dep_low := dict_int(
+        cur_lowlinks,
+        dep,
+        "type_order: tarjan_visit dep lowlink",
+      )
+      self_low := dict_int(
+        cur_lowlinks,
+        name,
+        "type_order: tarjan_visit self lowlink",
+      )
+
       if dep_low < self_low { cur_lowlinks[name] = dep_low }
     } else {
-      is_on_stack := case cur_on_stack[dep] { .Some(v) => v, .None => false }
+      is_on_stack := case cur_on_stack[dep] {
+        .Some(v) => v,
+        .None => false,
+      }
+
       if is_on_stack {
-        dep_idx  := dict_int(cur_indices,  dep,  "type_order: tarjan_visit dep index")
-        self_low := dict_int(cur_lowlinks, name, "type_order: tarjan_visit self lowlink")
+        dep_idx := dict_int(
+          cur_indices,
+          dep,
+          "type_order: tarjan_visit dep index",
+        )
+        self_low := dict_int(
+          cur_lowlinks,
+          name,
+          "type_order: tarjan_visit self lowlink",
+        )
+
         if dep_idx < self_low { cur_lowlinks[name] = dep_idx }
       }
     }
   }
 
   name_low := dict_int(cur_lowlinks, name, "type_order: tarjan_visit lowlink")
-  name_idx := dict_int(cur_indices,  name, "type_order: tarjan_visit index")
+  name_idx := dict_int(cur_indices, name, "type_order: tarjan_visit index")
+
   if name_low == name_idx {
     component: Vector<String> = []
     done := false
+
     for !done {
       if cur_stack.len() == 0 { error("type_order: tarjan_visit: empty stack") }
+
       top := cur_stack[cur_stack.len() - 1]
       cur_stack = .slice(0, cur_stack.len() - 1)
       cur_on_stack[top] = false
       component = .append(top)
+
       if top == name { done = true }
     }
+
     cur_components = .append(reverse_strings(component))
   }
 
@@ -174,12 +228,17 @@ fn tarjan_visit(
 // Returns SCC groups in topological order (dependencies before dependents).
 // Each group is a Vector<String> of type names.
 pub fn compute_type_order(types: Vector<TypeDef>) Vector<Vector<String>> {
-  if types.len() == 0 { return [] }
-  names := collect td in types { type_def_name(td) }
+  if types.len() == 0 {
+    return []
+  }
 
+  names := collect td in types { type_def_name(td) }
   types_by_name: Dict<String, TypeDef> = Dict.new()
+
   for td in types { types_by_name[type_def_name(td)] = td }
+
   type_name_set: Dict<String, Bool> = Dict.new()
+
   for name in names { type_name_set[name] = true }
 
   next_index := 0
@@ -191,64 +250,88 @@ pub fn compute_type_order(types: Vector<TypeDef>) Vector<Vector<String>> {
 
   for name in names {
     if !indices.has(name) {
-      result := tarjan_visit(name, types_by_name, type_name_set, next_index, indices, lowlinks, on_stack, stack, components)
+      result := tarjan_visit(
+        name,
+        types_by_name,
+        type_name_set,
+        next_index,
+        indices,
+        lowlinks,
+        on_stack,
+        stack,
+        components,
+      )
       next_index = result.next_index
-      indices    = result.indices
-      lowlinks   = result.lowlinks
-      on_stack   = result.on_stack
-      stack      = result.stack
+      indices = result.indices
+      lowlinks = result.lowlinks
+      on_stack = result.on_stack
+      stack = result.stack
       components = result.components
     }
   }
 
   name_to_comp_id: Dict<String, String> = Dict.new()
+
   for comp in components {
     cid := comp.join("|")
+
     for member in comp { name_to_comp_id[member] = cid }
   }
 
   comp_ids := collect comp in components { comp.join("|") }
   comp_members: Dict<String, Vector<String>> = Dict.new()
   comp_deps: Dict<String, Vector<String>> = Dict.new()
+
   for comp in components {
     cid := comp.join("|")
     comp_members[cid] = comp
     deps: Vector<String> = []
+
     for member in comp {
       td := case types_by_name[member] {
         .Some(t) => t,
-        .None => error("type_order: compute_type_order: missing type '${member}'"),
+        .None => error(
+          "type_order: compute_type_order: missing type '${member}'",
+        ),
       }
+
       for dep in type_def_deps(td) {
         if type_name_set.has(dep) {
           dep_cid := case name_to_comp_id[dep] {
             .Some(c) => c,
-            .None => error("type_order: compute_type_order: missing comp for '${dep}'"),
+            .None => error(
+              "type_order: compute_type_order: missing comp for '${dep}'",
+            ),
           }
-          if dep_cid != cid {
-            deps = append_unique(deps, [dep_cid])
-          }
+
+          if dep_cid != cid { deps = append_unique(deps, [dep_cid]) }
         }
       }
     }
+
     comp_deps[cid] = deps
   }
 
   ordered: Vector<String> = []
   emitted: Dict<String, Bool> = Dict.new()
   remaining := comp_ids.len()
+
   for remaining > 0 {
     progress := false
+
     for cid in comp_ids {
       if emitted.has(cid) { continue }
+
       deps: Vector<String> = case comp_deps[cid] {
         .Some(ds) => ds,
         .None => ["__sentinel__"].slice(0, 0),
       }
       ready := true
+
       for dep in deps {
         if !emitted.has(dep) { ready = false }
       }
+
       if ready {
         emitted[cid] = true
         ordered = .append(cid)
@@ -256,18 +339,23 @@ pub fn compute_type_order(types: Vector<TypeDef>) Vector<Vector<String>> {
         progress = true
       }
     }
+
     if !progress {
       error("type_order: compute_type_order: cyclic component ordering failure")
     }
   }
 
   result: Vector<Vector<String>> = []
+
   for cid in ordered {
     comp := case comp_members[cid] {
       .Some(c) => c,
-      .None => error("type_order: compute_type_order: missing component '${cid}'"),
+      .None => error(
+        "type_order: compute_type_order: missing component '${cid}'",
+      ),
     }
     result = .append(comp)
   }
+
   result
 }

@@ -4,31 +4,24 @@
 // Pass 2: Resolve type references, build resolved environments.
 //
 // Functional style: env is threaded through return values, never mutated in place.
-
-use lib.source.span.{Span}
 use lib.source.diagnostics as diag
-use .ast.{Module, TypeDecl, FunctionDecl, ExternFunctionDecl, TypeExpr, TypePath, ImportItem, TypeParam, type_param_names}
+use lib.source.span.{Span}
 
+use .ast.{
+  ExternFunctionDecl, FunctionDecl, ImportItem, Module, TypeDecl, TypeExpr,
+  TypeParam, TypePath, type_param_names,
+}
 use .contracts.{BuiltinContract, resolve_builtin_contract_name}
-use .mono_type.{TypeId, MonoType}
+use .mono_type.{MonoType, TypeId}
 
 // ── Resolved Types ──────────────────────────────────────────────────
+pub type ResolvedField = .{ name: String, ty: MonoType }
 
-pub type ResolvedField = .{
-  name: String,
-  ty: MonoType,
-}
-
-pub type ResolvedVariant = .{
-  name: String,
-  fields: Vector<MonoType>,
-}
+pub type ResolvedVariant = .{ name: String, fields: Vector<MonoType> }
 
 /// A reference to a builtin contract, as resolved from source.
 /// Kept as a sum type for future extensibility (user-defined contracts).
-pub type ResolvedContractRef = {
-  Builtin(BuiltinContract),
-}
+pub type ResolvedContractRef = { Builtin(BuiltinContract) }
 
 /// A type parameter with its resolved bounds, ready for the checker.
 pub type ResolvedTypeParam = .{
@@ -38,14 +31,20 @@ pub type ResolvedTypeParam = .{
 
 /// Extract plain type-parameter names from resolved type parameters.
 /// Used for migration: most existing code works with Vector<String>.
-pub fn resolved_type_param_names(params: Vector<ResolvedTypeParam>) Vector<String> {
+pub fn resolved_type_param_names(params: Vector<ResolvedTypeParam>) Vector<
+  String,
+> {
   collect p in params { p.name }
 }
 
 /// Wrap plain names as unbound ResolvedTypeParams.
 /// Used to construct FunctionSig entries for builtin/hardcoded functions.
-pub fn plain_resolved_type_params(names: Vector<String>) Vector<ResolvedTypeParam> {
-  collect n in names { .{ name: n, bounds: [] } }
+pub fn plain_resolved_type_params(names: Vector<String>) Vector<
+  ResolvedTypeParam,
+> {
+  collect n in names {
+    .{ name: n, bounds: [] }
+  }
 }
 
 pub type ResolvedTypeDef = {
@@ -72,16 +71,9 @@ pub type FunctionSig = .{
 /// Canonical defining-site identity for an imported function.
 /// Equivalent to core_ir.ExternalRef but owned by the resolver to avoid
 /// circular imports.
-pub type FunctionOrigin = .{
-  module_path: String,
-  func_name: String,
-}
+pub type FunctionOrigin = .{ module_path: String, func_name: String }
 
-pub type ExportedType = .{
-  name: String,
-  entry: TypeEntry,
-  origin: String?,
-}
+pub type ExportedType = .{ name: String, entry: TypeEntry, origin: String? }
 
 pub type ExportedFunction = .{
   name: String,
@@ -90,10 +82,7 @@ pub type ExportedFunction = .{
   origin: FunctionOrigin?,
 }
 
-pub type ExportedValue = .{
-  name: String,
-  ty: MonoType,
-}
+pub type ExportedValue = .{ name: String, ty: MonoType }
 
 pub type ModuleExports = .{
   visible_types: Vector<ExportedType>,
@@ -105,7 +94,6 @@ pub type ModuleExports = .{
 }
 
 // ── Resolved Environment ────────────────────────────────────────────
-
 pub type TypeEntry = .{
   id: TypeId,
   arity: Int,
@@ -114,10 +102,7 @@ pub type TypeEntry = .{
   is_extern: Bool,
 }
 
-pub type MethodEntry = .{
-  method_name: String,
-  function_name: String,
-}
+pub type MethodEntry = .{ method_name: String, function_name: String }
 
 pub type ResolvedEnv = .{
   types: Vector<TypeEntry>,
@@ -163,6 +148,7 @@ fn lookup_method_entries(entries: Vector<MethodEntry>, method_name: String) Stri
       return .Some(e.function_name)
     }
   }
+
   .None
 }
 
@@ -190,35 +176,49 @@ fn me(method_name: String, function_name: String) MethodEntry {
   .{ method_name, function_name }
 }
 
-pub fn register_methods(methods: Dict<String, Vector<MethodEntry>>, type_name: String, entries: Vector<MethodEntry>) Dict<String, Vector<MethodEntry>> {
+pub fn register_methods(
+  methods: Dict<String, Vector<MethodEntry>>,
+  type_name: String,
+  entries: Vector<MethodEntry>,
+) Dict<String, Vector<MethodEntry>> {
   existing := case methods[type_name] {
     .Some(v) => v,
     .None => {
       methods[type_name] = entries
+
       return methods
     },
   }
   new_entries := collect e in entries {
     // Deduplicate: skip if method_name already registered
     dup := existing.any(fn(ex) { ex.method_name == e.method_name })
+
     if dup { continue }
+
     e
   }
   methods[type_name] = existing.concat(new_entries)
   methods
 }
 
-pub fn register_type_methods(methods: Dict<Int, Vector<MethodEntry>>, tid: TypeId, entries: Vector<MethodEntry>) Dict<Int, Vector<MethodEntry>> {
+pub fn register_type_methods(
+  methods: Dict<Int, Vector<MethodEntry>>,
+  tid: TypeId,
+  entries: Vector<MethodEntry>,
+) Dict<Int, Vector<MethodEntry>> {
   existing := case methods[tid.id] {
     .Some(v) => v,
     .None => {
       methods[tid.id] = entries
+
       return methods
     },
   }
   new_entries := collect e in entries {
     dup := existing.any(fn(ex) { ex.method_name == e.method_name })
+
     if dup { continue }
+
     e
   }
   methods[tid.id] = existing.concat(new_entries)
@@ -243,15 +243,19 @@ pub fn lookup_registered_type(env: ResolvedEnv, name: String) TypeEntry? {
   }
 }
 
-pub fn with_types(env: ResolvedEnv, types: Vector<TypeEntry>, type_names: Vector<String>) ResolvedEnv {
+pub fn with_types(
+  env: ResolvedEnv,
+  types: Vector<TypeEntry>,
+  type_names: Vector<String>,
+) ResolvedEnv {
   // Rebuild type index from scratch
   idx: Dict<String, Int> = Dict.new()
-  for i in 0..type_names.len() {
-    idx[type_names[i]] = i
-  }
+
+  for i in 0..type_names.len() { idx[type_names[i]] = i }
 
   valid_type_ids: Dict<Int, Bool> = Dict.new()
   id_idx: Dict<Int, Int> = Dict.new()
+
   for i in 0..types.len() {
     entry := types[i]
     valid_type_ids[entry.id.id] = true
@@ -259,29 +263,26 @@ pub fn with_types(env: ResolvedEnv, types: Vector<TypeEntry>, type_names: Vector
   }
 
   bindings: Dict<String, TypeId> = Dict.new()
+
   for name in env.type_bindings.keys() {
     case env.type_bindings[name] {
       .Some(tid) => {
-        if valid_type_ids.has(tid.id) {
-          bindings[name] = tid
-        }
+        if valid_type_ids.has(tid.id) { bindings[name] = tid }
       },
       .None => {},
     }
   }
+
   if env.type_bindings.len() == 0 {
-    for i in 0..type_names.len() {
-      bindings[type_names[i]] = types[i].id
-    }
+    for i in 0..type_names.len() { bindings[type_names[i]] = types[i].id }
   }
 
   origins: Dict<Int, String> = Dict.new()
+
   for tid in env.type_origins.keys() {
     case env.type_origins[tid] {
       .Some(origin) => {
-        if valid_type_ids.has(tid) {
-          origins[tid] = origin
-        }
+        if valid_type_ids.has(tid) { origins[tid] = origin }
       },
       .None => {},
     }
@@ -308,13 +309,15 @@ pub fn extend_types_from(
 ) ResolvedEnv {
   for i in 0..acc_types.len() {
     entry := acc_types[i]
+
     if find_type_entry_index(env, entry.id) == .None {
-      env.types = .append(entry)
-      env.type_names = .append(acc_type_names[i])
+      env.types = env.types.append(entry)
+      env.type_names = env.type_names.append(acc_type_names[i])
       env.type_index[acc_type_names[i]] = env.types.len() - 1
       env.type_id_index[entry.id.id] = env.types.len() - 1
     }
   }
+
   for tid in acc_type_origins.keys() {
     if !env.type_origins.has(tid) {
       case acc_type_origins[tid] {
@@ -323,40 +326,41 @@ pub fn extend_types_from(
       }
     }
   }
+
   env
 }
 
-fn with_functions_impl(env: ResolvedEnv, functions: Vector<FunctionSig>, bind_all_when_empty: Bool) ResolvedEnv {
+fn with_functions_impl(
+  env: ResolvedEnv,
+  functions: Vector<FunctionSig>,
+  bind_all_when_empty: Bool,
+) ResolvedEnv {
   // Rebuild func index from scratch
   idx: Dict<String, Int> = Dict.new()
-  for i in 0..functions.len() {
-    idx[functions[i].name] = i
-  }
+
+  for i in 0..functions.len() { idx[functions[i].name] = i }
 
   bindings: Dict<String, String> = Dict.new()
+
   for name in env.function_bindings.keys() {
     case env.function_bindings[name] {
       .Some(target) => {
-        if idx.has(target) {
-          bindings[name] = target
-        }
+        if idx.has(target) { bindings[name] = target }
       },
       .None => {},
     }
   }
+
   if bind_all_when_empty and env.function_bindings.len() == 0 {
-    for sig in functions {
-      bindings[sig.name] = sig.name
-    }
+    for sig in functions { bindings[sig.name] = sig.name }
   }
 
   origins: Dict<String, FunctionOrigin> = Dict.new()
+
   for name in env.function_origins.keys() {
     case env.function_origins[name] {
       .Some(origin) => {
-        if idx.has(name) {
-          origins[name] = origin
-        }
+        if idx.has(name) { origins[name] = origin }
       },
       .None => {},
     }
@@ -373,34 +377,59 @@ pub fn with_functions(env: ResolvedEnv, functions: Vector<FunctionSig>) Resolved
   with_functions_impl(env, functions, true)
 }
 
-pub fn with_registered_functions(env: ResolvedEnv, functions: Vector<FunctionSig>) ResolvedEnv {
-  with_functions_impl(env, functions, false)
-}
+pub fn with_registered_functions(
+  env: ResolvedEnv,
+  functions: Vector<FunctionSig>,
+) ResolvedEnv { with_functions_impl(env, functions, false) }
 
-pub fn with_methods(env: ResolvedEnv, methods: Dict<String, Vector<MethodEntry>>) ResolvedEnv {
+pub fn with_methods(
+  env: ResolvedEnv,
+  methods: Dict<String, Vector<MethodEntry>>,
+) ResolvedEnv {
   env.methods = methods
   env
 }
 
-pub fn with_type_methods(env: ResolvedEnv, methods_by_type: Dict<Int, Vector<MethodEntry>>) ResolvedEnv {
+pub fn with_type_methods(
+  env: ResolvedEnv,
+  methods_by_type: Dict<Int, Vector<MethodEntry>>,
+) ResolvedEnv {
   env.methods_by_type = methods_by_type
   env
 }
 
-pub fn register_bound_methods(env: ResolvedEnv, type_name: String, entries: Vector<MethodEntry>) ResolvedEnv {
+pub fn register_bound_methods(
+  env: ResolvedEnv,
+  type_name: String,
+  entries: Vector<MethodEntry>,
+) ResolvedEnv {
   methods := register_methods(env.methods, type_name, entries)
   methods_by_type := case env.lookup_type(type_name) {
-    .Some(entry) => register_type_methods(env.methods_by_type, entry.id, entries),
+    .Some(entry) => register_type_methods(
+      env.methods_by_type,
+      entry.id,
+      entries,
+    ),
     .None => env.methods_by_type,
   }
   env.with_methods(methods).with_type_methods(methods_by_type)
 }
 
-pub fn register_receiver_methods(env: ResolvedEnv, tid: TypeId, entries: Vector<MethodEntry>) ResolvedEnv {
-  env.with_type_methods(register_type_methods(env.methods_by_type, tid, entries))
+pub fn register_receiver_methods(
+  env: ResolvedEnv,
+  tid: TypeId,
+  entries: Vector<MethodEntry>,
+) ResolvedEnv {
+  env.with_type_methods(
+    register_type_methods(env.methods_by_type, tid, entries),
+  )
 }
 
-pub fn register_type_entry(env: ResolvedEnv, entry: TypeEntry, preferred_name: String) ResolvedEnv {
+pub fn register_type_entry(
+  env: ResolvedEnv,
+  entry: TypeEntry,
+  preferred_name: String,
+) ResolvedEnv {
   case find_type_entry_index(env, entry.id) {
     .Some(idx) => {
       env.type_index[preferred_name] = idx
@@ -410,8 +439,8 @@ pub fn register_type_entry(env: ResolvedEnv, entry: TypeEntry, preferred_name: S
     .None => {
       env.type_index[preferred_name] = env.types.len()
       env.type_id_index[entry.id.id] = env.types.len()
-      env.types = .append(entry)
-      env.type_names = .append(preferred_name)
+      env.types = env.types.append(entry)
+      env.type_names = env.type_names.append(preferred_name)
       env
     },
   }
@@ -438,7 +467,7 @@ pub fn set_type_origin(env: ResolvedEnv, tid: TypeId, origin: String) ResolvedEn
 }
 
 pub fn remove_type_binding(env: ResolvedEnv, name: String) ResolvedEnv {
-  env.type_bindings = .remove(name)
+  env.type_bindings = env.type_bindings.remove(name)
   env
 }
 
@@ -464,7 +493,7 @@ pub fn register_function(env: ResolvedEnv, sig: FunctionSig) ResolvedEnv {
     },
     .None => {
       env.func_index[sig.name] = env.functions.len()
-      env.functions = .append(sig)
+      env.functions = env.functions.append(sig)
       env
     },
   }
@@ -481,11 +510,15 @@ pub fn bind_function(env: ResolvedEnv, name: String, target_name: String) Resolv
 }
 
 pub fn remove_function_binding(env: ResolvedEnv, name: String) ResolvedEnv {
-  env.function_bindings = .remove(name)
+  env.function_bindings = env.function_bindings.remove(name)
   env
 }
 
-pub fn set_function_origin(env: ResolvedEnv, registered_name: String, origin: FunctionOrigin) ResolvedEnv {
+pub fn set_function_origin(
+  env: ResolvedEnv,
+  registered_name: String,
+  origin: FunctionOrigin,
+) ResolvedEnv {
   env.function_origins[registered_name] = origin
   env
 }
@@ -497,82 +530,173 @@ pub fn lookup_function_origin(env: ResolvedEnv, registered_name: String) Functio
 pub fn add_function(env: ResolvedEnv, sig: FunctionSig) ResolvedEnv {
   cur := env.register_function(sig).bind_function(sig.name, sig.name)
   // Clear any stale imported origin when a local function shadows a prelude/imported name.
-  cur.function_origins = .remove(sig.name)
+  cur.function_origins = cur.function_origins.remove(sig.name)
   cur
 }
 
 pub fn register_builtin_methods(env: ResolvedEnv) ResolvedEnv {
-  env = .register_bound_methods("String", [
-    me("len", "string_len"), me("get", "string_get"), me("slice", "string_slice"),
-    me("concat", "string_concat"), me("char_code_at", "char_code_at"),
-    me("utf8_bytes", "string_utf8_bytes"), me("to_string", "string_to_string"),
-    me("from_char_code", "from_char_code"), me("from_byte", "from_byte"),
-    me("from_code_point", "from_code_point"), me("from_utf8", "string_from_utf8"),
-    me("compare", "compare"), me("index_of", "index_of"), me("contains", "contains"),
-    me("starts_with", "starts_with"), me("ends_with", "ends_with"),
-    me("split", "split"), me("trim", "trim"), me("is_empty", "string_is_empty"),
-    me("chars", "chars"), me("char_len", "char_len"),
-    me("code_point_at", "code_point_at"), me("graphemes", "graphemes"),
-  ])
-  env = .register_bound_methods("Vector", [
-    me("len", "vector_len"), me("append", "vector_append"), me("get", "vector_get"),
-    me("set", "vector_set"), me("concat", "vector_concat"), me("slice", "vector_slice"),
-    me("make", "vector_make"),
-    me("map", "map"), me("filter", "filter"), me("fold", "fold"), me("find", "find"),
-    me("any", "any"), me("all", "all"), me("contains", "contains"),
-    me("reverse", "reverse"), me("sort_by", "sort_by"), me("sort", "sort"),
-    me("compare", "compare"), me("join", "join"),
-    me("is_empty", "vector_is_empty"),
-  ])
-  env = .register_bound_methods("Dict", [
-    me("new", "dict_new"), me("len", "dict_len"), me("has", "dict_has"), me("keys", "dict_keys"),
-    me("values", "dict_values"), me("get", "dict_get"), me("set", "dict_set"),
-    me("remove", "dict_remove"), me("is_empty", "dict_is_empty"),
-  ])
-  env = .register_bound_methods("Cell", [
-    me("new", "cell_new"), me("get", "cell_get"), me("set", "cell_set"), me("update", "cell_update"),
-  ])
-  env = .register_bound_methods("Int", [
-    me("to_string", "int_to_string"), me("to_float", "to_float"),
-    me("from_string", "int_from_string"), me("compare", "compare"),
-  ])
-  env = .register_bound_methods("Float", [
-    me("to_string", "float_to_string"), me("to_int", "to_int"),
-    me("from_string", "float_from_string"), me("compare", "compare"),
-    me("bits", "float_bits"),
-  ])
+  env = .register_bound_methods(
+    "String",
+    [
+      me("len", "string_len"),
+      me("get", "string_get"),
+      me("slice", "string_slice"),
+      me("concat", "string_concat"),
+      me("char_code_at", "char_code_at"),
+      me("utf8_bytes", "string_utf8_bytes"),
+      me("to_string", "string_to_string"),
+      me("from_char_code", "from_char_code"),
+      me("from_byte", "from_byte"),
+      me("from_code_point", "from_code_point"),
+      me("from_utf8", "string_from_utf8"),
+      me("compare", "compare"),
+      me("index_of", "index_of"),
+      me("contains", "contains"),
+      me("starts_with", "starts_with"),
+      me("ends_with", "ends_with"),
+      me("split", "split"),
+      me("trim", "trim"),
+      me("is_empty", "string_is_empty"),
+      me("chars", "chars"),
+      me("char_len", "char_len"),
+      me("code_point_at", "code_point_at"),
+      me("graphemes", "graphemes"),
+    ],
+  )
+  env = .register_bound_methods(
+    "Vector",
+    [
+      me("len", "vector_len"),
+      me("append", "vector_append"),
+      me("get", "vector_get"),
+      me("set", "vector_set"),
+      me("concat", "vector_concat"),
+      me("slice", "vector_slice"),
+      me("make", "vector_make"),
+      me("map", "map"),
+      me("filter", "filter"),
+      me("fold", "fold"),
+      me("find", "find"),
+      me("any", "any"),
+      me("all", "all"),
+      me("contains", "contains"),
+      me("reverse", "reverse"),
+      me("sort_by", "sort_by"),
+      me("sort", "sort"),
+      me("compare", "compare"),
+      me("join", "join"),
+      me("is_empty", "vector_is_empty"),
+    ],
+  )
+  env = .register_bound_methods(
+    "Dict",
+    [
+      me("new", "dict_new"),
+      me("len", "dict_len"),
+      me("has", "dict_has"),
+      me("keys", "dict_keys"),
+      me("values", "dict_values"),
+      me("get", "dict_get"),
+      me("set", "dict_set"),
+      me("remove", "dict_remove"),
+      me("is_empty", "dict_is_empty"),
+    ],
+  )
+  env = .register_bound_methods(
+    "Cell",
+    [
+      me("new", "cell_new"),
+      me("get", "cell_get"),
+      me("set", "cell_set"),
+      me("update", "cell_update"),
+    ],
+  )
+  env = .register_bound_methods(
+    "Int",
+    [
+      me("to_string", "int_to_string"),
+      me("to_float", "to_float"),
+      me("from_string", "int_from_string"),
+      me("compare", "compare"),
+    ],
+  )
+  env = .register_bound_methods(
+    "Float",
+    [
+      me("to_string", "float_to_string"),
+      me("to_int", "to_int"),
+      me("from_string", "float_from_string"),
+      me("compare", "compare"),
+      me("bits", "float_bits"),
+    ],
+  )
   env = .register_bound_methods("Bool", [me("to_string", "bool_to_string")])
-  env = .register_bound_methods("Byte", [
-    me("to_string", "byte_to_string"), me("to_int", "byte_to_int"),
-    me("from_int", "byte_from_int"), me("compare", "compare"),
-    me("in_range", "byte_in_range"), me("is_upper", "byte_is_upper"),
-    me("is_lower", "byte_is_lower"), me("is_digit", "byte_is_digit"),
-    me("is_hex_digit", "byte_is_hex_digit"), me("is_alpha", "byte_is_alpha"),
-    me("is_alnum", "byte_is_alnum"), me("is_newline", "byte_is_newline"),
-    me("is_space", "byte_is_space"),
-  ])
-  env = .register_bound_methods("Option", [
-    me("is_some", "option_is_some"), me("is_none", "option_is_none"),
-    me("unwrap", "option_unwrap"), me("unwrap_or", "unwrap_or"),
-    me("unwrap_or_else", "option_unwrap_or_else"),
-    me("map", "map"), me("and_then", "and_then"), me("flatten", "option_flatten"),
-    me("filter", "option_filter"), me("or_some", "option_or_some"),
-    me("or_else", "option_or_else"), me("inspect", "option_inspect"),
-    me("ok_or", "ok_or"), me("ok_or_else", "ok_or_else"), me("transpose", "transpose"),
-  ])
-  env = .register_bound_methods("Result", [
-    me("is_ok", "result_is_ok"), me("is_err", "result_is_err"),
-    me("unwrap", "result_unwrap"), me("unwrap_or", "result_unwrap_or"),
-    me("unwrap_or_else", "result_unwrap_or_else"), me("map", "map"),
-    me("map_err", "result_map_err"), me("and_then", "and_then"),
-    me("or_else", "result_or_else"), me("ok", "result_ok"), me("err", "result_err"),
-    me("transpose", "transpose"),
-  ])
-  env = .register_bound_methods("Iterator", [
-    me("next", "iterator_next"), me("unfold", "iterator_unfold"),
-    me("map", "map"), me("filter", "filter"),
-    me("take", "take"), me("to_vector", "to_vector"),
-  ])
+  env = .register_bound_methods(
+    "Byte",
+    [
+      me("to_string", "byte_to_string"),
+      me("to_int", "byte_to_int"),
+      me("from_int", "byte_from_int"),
+      me("compare", "compare"),
+      me("in_range", "byte_in_range"),
+      me("is_upper", "byte_is_upper"),
+      me("is_lower", "byte_is_lower"),
+      me("is_digit", "byte_is_digit"),
+      me("is_hex_digit", "byte_is_hex_digit"),
+      me("is_alpha", "byte_is_alpha"),
+      me("is_alnum", "byte_is_alnum"),
+      me("is_newline", "byte_is_newline"),
+      me("is_space", "byte_is_space"),
+    ],
+  )
+  env = .register_bound_methods(
+    "Option",
+    [
+      me("is_some", "option_is_some"),
+      me("is_none", "option_is_none"),
+      me("unwrap", "option_unwrap"),
+      me("unwrap_or", "unwrap_or"),
+      me("unwrap_or_else", "option_unwrap_or_else"),
+      me("map", "map"),
+      me("and_then", "and_then"),
+      me("flatten", "option_flatten"),
+      me("filter", "option_filter"),
+      me("or_some", "option_or_some"),
+      me("or_else", "option_or_else"),
+      me("inspect", "option_inspect"),
+      me("ok_or", "ok_or"),
+      me("ok_or_else", "ok_or_else"),
+      me("transpose", "transpose"),
+    ],
+  )
+  env = .register_bound_methods(
+    "Result",
+    [
+      me("is_ok", "result_is_ok"),
+      me("is_err", "result_is_err"),
+      me("unwrap", "result_unwrap"),
+      me("unwrap_or", "result_unwrap_or"),
+      me("unwrap_or_else", "result_unwrap_or_else"),
+      me("map", "map"),
+      me("map_err", "result_map_err"),
+      me("and_then", "and_then"),
+      me("or_else", "result_or_else"),
+      me("ok", "result_ok"),
+      me("err", "result_err"),
+      me("transpose", "transpose"),
+    ],
+  )
+  env = .register_bound_methods(
+    "Iterator",
+    [
+      me("next", "iterator_next"),
+      me("unfold", "iterator_unfold"),
+      me("map", "map"),
+      me("filter", "filter"),
+      me("take", "take"),
+      me("to_vector", "to_vector"),
+    ],
+  )
   env
 }
 
@@ -617,6 +741,7 @@ fn visible_export_function(exports: ModuleExports, name: String) ExportedFunctio
       return .Some(exported)
     }
   }
+
   .None
 }
 
@@ -628,7 +753,12 @@ fn local_type_origin(module_key: String, name: String) String? {
   }
 }
 
-fn exported_type_origin(env: ResolvedEnv, tid: TypeId, module_key: String, name: String) String? {
+fn exported_type_origin(
+  env: ResolvedEnv,
+  tid: TypeId,
+  module_key: String,
+  name: String,
+) String? {
   case env.type_origins[tid.id] {
     .Some(origin) => .Some(origin),
     .None => local_type_origin(module_key, name),
@@ -636,12 +766,16 @@ fn exported_type_origin(env: ResolvedEnv, tid: TypeId, module_key: String, name:
 }
 
 // ── Public API ──────────────────────────────────────────────────────
-
 pub fn extract_exports(env: ResolvedEnv, module: Module) ModuleExports {
   extract_exports_for_module(env, module, "", Dict.new())
 }
 
-pub fn extract_exports_for_module(env: ResolvedEnv, module: Module, module_key: String, pub_values: Dict<String, MonoType>) ModuleExports {
+pub fn extract_exports_for_module(
+  env: ResolvedEnv,
+  module: Module,
+  module_key: String,
+  pub_values: Dict<String, MonoType>,
+) ModuleExports {
   visible_types: Vector<ExportedType> = []
   support_types: Vector<ExportedType> = []
   exported_functions: Vector<ExportedFunction> = []
@@ -655,13 +789,21 @@ pub fn extract_exports_for_module(env: ResolvedEnv, module: Module, module_key: 
     case item {
       .Type(decl) => {
         if !decl.is_pub { continue }
+
         case env.lookup_type(decl.name) {
           .Some(entry) => {
-            visible_types = .append(ExportedType.{
-              name: decl.name,
-              entry,
-              origin: exported_type_origin(env, entry.id, module_key, decl.name),
-            })
+            visible_types = .append(
+              ExportedType.{
+                name: decl.name,
+                entry,
+                origin: exported_type_origin(
+                  env,
+                  entry.id,
+                  module_key,
+                  decl.name,
+                ),
+              },
+            )
             exported_type_names[decl.name] = true
           },
           .None => {},
@@ -669,14 +811,12 @@ pub fn extract_exports_for_module(env: ResolvedEnv, module: Module, module_key: 
       },
       .Function(decl) => {
         if !decl.is_pub { continue }
+
         case env.lookup_function(decl.name) {
           .Some(sig) => {
-            exported_functions = .append(.{
-              name: sig.name,
-              sig,
-              source_name: sig.name,
-              origin: .None,
-            })
+            exported_functions = .append(
+              .{ name: sig.name, sig, source_name: sig.name, origin: .None },
+            )
             visible_function_names[sig.name] = true
             visible_function_sources[sig.name] = true
             interface_function_sources[sig.name] = true
@@ -686,15 +826,14 @@ pub fn extract_exports_for_module(env: ResolvedEnv, module: Module, module_key: 
       },
       .ExternFunction(decl) => {
         if !decl.is_pub { continue }
+
         qualified := "${decl.module}.${decl.name}"
+
         case env.lookup_function(qualified) {
           .Some(sig) => {
-            exported_functions = .append(.{
-              name: sig.name,
-              sig,
-              source_name: sig.name,
-              origin: .None,
-            })
+            exported_functions = .append(
+              .{ name: sig.name, sig, source_name: sig.name, origin: .None },
+            )
             visible_function_names[sig.name] = true
             visible_function_sources[sig.name] = true
             interface_function_sources[sig.name] = true
@@ -704,13 +843,21 @@ pub fn extract_exports_for_module(env: ResolvedEnv, module: Module, module_key: 
       },
       .ExternType(decl) => {
         if !decl.is_pub { continue }
+
         case env.lookup_type(decl.name) {
           .Some(entry) => {
-            visible_types = .append(ExportedType.{
-              name: decl.name,
-              entry,
-              origin: exported_type_origin(env, entry.id, module_key, decl.name),
-            })
+            visible_types = .append(
+              ExportedType.{
+                name: decl.name,
+                entry,
+                origin: exported_type_origin(
+                  env,
+                  entry.id,
+                  module_key,
+                  decl.name,
+                ),
+              },
+            )
             exported_type_names[decl.name] = true
           },
           .None => {},
@@ -721,36 +868,56 @@ pub fn extract_exports_for_module(env: ResolvedEnv, module: Module, module_key: 
   }
 
   hidden_support_types: Dict<String, Bool> = Dict.new()
+
   for exported in visible_types {
-    hidden_support_types = collect_hidden_support_types_from_entry(env, exported.entry, hidden_support_types)
+    hidden_support_types = collect_hidden_support_types_from_entry(
+      env,
+      exported.entry,
+      hidden_support_types,
+    )
   }
+
   for exported in exported_functions {
     for param_ty in exported.sig.params {
-      hidden_support_types = collect_hidden_support_types(env, param_ty, hidden_support_types)
+      hidden_support_types = collect_hidden_support_types(
+        env,
+        param_ty,
+        hidden_support_types,
+      )
     }
+
     case exported.sig.ret {
       .Some(ret_ty) => {
-        hidden_support_types = collect_hidden_support_types(env, ret_ty, hidden_support_types)
+        hidden_support_types = collect_hidden_support_types(
+          env,
+          ret_ty,
+          hidden_support_types,
+        )
       },
       .None => {},
     }
   }
 
   changed := true
+
   for changed {
     changed = false
 
     // Preserve the source env's declaration order for deterministic export order.
     for i in 0..env.type_names.len() {
       name := env.type_names[i]
+
       if !hidden_support_types.has(name) or exported_type_names.has(name) {
         continue
       }
-      support_types = .append(ExportedType.{
-        name,
-        entry: env.types[i],
-        origin: exported_type_origin(env, env.types[i].id, module_key, name),
-      })
+
+      support_types = .append(
+        ExportedType.{
+          name,
+          entry: env.types[i],
+          origin: exported_type_origin(env, env.types[i].id, module_key, name),
+        },
+      )
       exported_type_names[name] = true
       changed = true
     }
@@ -763,7 +930,9 @@ pub fn extract_exports_for_module(env: ResolvedEnv, module: Module, module_key: 
       methods: Dict.new(),
       values: [],
     }) {
-      entries: Vector<MethodEntry> = case env.lookup_type_methods(exported.entry.id) {
+      entries: Vector<MethodEntry> = case env.lookup_type_methods(
+        exported.entry.id,
+      ) {
         .Some(found) => found,
         .None => {
           case env.methods[exported.name] {
@@ -772,18 +941,30 @@ pub fn extract_exports_for_module(env: ResolvedEnv, module: Module, module_key: 
           }
         },
       }
+
       for entry in entries {
         if interface_function_sources.has(entry.function_name) { continue }
+
         case lookup_registered_function(env, entry.function_name) {
           .Some(sig) => {
             interface_function_sources[entry.function_name] = true
             changed = true
+
             for param_ty in sig.params {
-              hidden_support_types = collect_hidden_support_types(env, param_ty, hidden_support_types)
+              hidden_support_types = collect_hidden_support_types(
+                env,
+                param_ty,
+                hidden_support_types,
+              )
             }
+
             case sig.ret {
               .Some(ret_ty) => {
-                hidden_support_types = collect_hidden_support_types(env, ret_ty, hidden_support_types)
+                hidden_support_types = collect_hidden_support_types(
+                  env,
+                  ret_ty,
+                  hidden_support_types,
+                )
               },
               .None => {},
             }
@@ -795,40 +976,45 @@ pub fn extract_exports_for_module(env: ResolvedEnv, module: Module, module_key: 
   }
 
   for sig in env.functions {
-    if !interface_function_sources.has(sig.name) or visible_function_sources.has(sig.name) {
-      continue
-    }
-    support_functions = .append(.{
-      name: sig.name,
-      sig,
-      source_name: sig.name,
-      origin: env.function_origins[sig.name],
-    })
+    if !interface_function_sources.has(sig.name)
+    or visible_function_sources.has(sig.name) { continue }
+
+    support_functions = .append(
+      .{
+        name: sig.name,
+        sig,
+        source_name: sig.name,
+        origin: env.function_origins[sig.name],
+      },
+    )
   }
 
   exported_methods: Dict<String, Vector<MethodEntry>> = Dict.new()
   exported_types := visible_types.concat(support_types)
+
   for exported in exported_types {
     case env.lookup_type_methods(exported.entry.id) {
       .Some(entries) => {
         visible := collect entry in entries {
           if !interface_function_sources.has(entry.function_name) { continue }
+
           entry
         }
-        if visible.len() > 0 {
-          exported_methods[exported.name] = visible
-        }
+
+        if visible.len() > 0 { exported_methods[exported.name] = visible }
       },
       .None => {
         case env.methods[exported.name] {
           .Some(entries) => {
             visible := collect entry in entries {
-              if !interface_function_sources.has(entry.function_name) { continue }
+              if !interface_function_sources.has(entry.function_name) {
+                continue
+              }
+
               entry
             }
-            if visible.len() > 0 {
-              exported_methods[exported.name] = visible
-            }
+
+            if visible.len() > 0 { exported_methods[exported.name] = visible }
           },
           .None => {},
         }
@@ -838,6 +1024,7 @@ pub fn extract_exports_for_module(env: ResolvedEnv, module: Module, module_key: 
 
   // Collect pub value exports.
   exported_values: Vector<ExportedValue> = []
+
   for item in module.items {
     case item {
       .Stmt(.Let(ls)) => {
@@ -854,84 +1041,138 @@ pub fn extract_exports_for_module(env: ResolvedEnv, module: Module, module_key: 
     }
   }
 
-  ModuleExports.{ visible_types, support_types, functions: exported_functions, support_functions, methods: exported_methods, values: exported_values }
+  ModuleExports.{
+    visible_types,
+    support_types,
+    functions: exported_functions,
+    support_functions,
+    methods: exported_methods,
+    values: exported_values,
+  }
 }
 
-fn merge_exported_type(env: ResolvedEnv, exported: ExportedType, target_name: String, type_ids: Dict<Int, TypeId>, bind_name: Bool) ResolvedEnv {
+fn merge_exported_type(
+  env: ResolvedEnv,
+  exported: ExportedType,
+  target_name: String,
+  type_ids: Dict<Int, TypeId>,
+  bind_name: Bool,
+) ResolvedEnv {
   remapped := remap_type_entry(exported.entry, target_name, type_ids)
   cur := env.register_type_entry(remapped, target_name)
+
   case exported.origin {
-    .Some(origin) => {
-      cur = .set_type_origin(remapped.id, origin)
-    },
+    .Some(origin) => { cur = .set_type_origin(remapped.id, origin) },
     .None => {},
   }
-  if bind_name {
-    cur.bind_type(target_name, remapped.id)
-  } else {
-    cur
-  }
+
+  if bind_name { cur.bind_type(target_name, remapped.id) } else { cur }
 }
 
-type ImportTypeRegistration = .{
+type ImportTypeRegistration = .{ env: ResolvedEnv, type_ids: Dict<Int, TypeId> }
+
+fn register_imported_interface_types(
   env: ResolvedEnv,
-  type_ids: Dict<Int, TypeId>,
-}
-
-fn register_imported_interface_types(env: ResolvedEnv, alias: String, method_alias: String, exports: ModuleExports, bind_visible_types: Bool) ImportTypeRegistration {
+  alias: String,
+  method_alias: String,
+  exports: ModuleExports,
+  bind_visible_types: Bool,
+) ImportTypeRegistration {
   type_ids := plan_export_type_ids(env, alias, exports)
   cur := env
 
   for exported in exports.support_types {
-    target_name := merged_export_type_name(alias, exported.name, exported.origin)
+    target_name := merged_export_type_name(
+      alias,
+      exported.name,
+      exported.origin,
+    )
     cur = merge_exported_type(cur, exported, target_name, type_ids, false)
   }
 
   for exported in exports.visible_types {
-    target_name := merged_export_type_name(alias, exported.name, exported.origin)
-    cur = merge_exported_type(cur, exported, target_name, type_ids, bind_visible_types)
+    target_name := merged_export_type_name(
+      alias,
+      exported.name,
+      exported.origin,
+    )
+    cur = merge_exported_type(
+      cur,
+      exported,
+      target_name,
+      type_ids,
+      bind_visible_types,
+    )
   }
 
   methods := cur.methods
   methods_by_type := cur.methods_by_type
+
   for exported in all_exported_types(exports) {
-    qualified_type := merged_export_type_name(alias, exported.name, exported.origin)
+    qualified_type := merged_export_type_name(
+      alias,
+      exported.name,
+      exported.origin,
+    )
+
     case exports.methods[exported.name] {
       .Some(entries) => {
         qualified_methods := collect entry in entries {
           me(entry.method_name, qualify_name(method_alias, entry.function_name))
         }
+
         if qualified_methods.len() > 0 {
           methods = register_methods(methods, qualified_type, qualified_methods)
           remapped_id := case type_ids[exported.entry.id.id] {
             .Some(id) => id,
             .None => exported.entry.id,
           }
-          methods_by_type = register_type_methods(methods_by_type, remapped_id, qualified_methods)
+          methods_by_type = register_type_methods(
+            methods_by_type,
+            remapped_id,
+            qualified_methods,
+          )
         }
       },
       .None => {},
     }
   }
 
-  .{ env: cur.with_methods(methods).with_type_methods(methods_by_type), type_ids }
+  .{
+    env: cur.with_methods(methods).with_type_methods(methods_by_type),
+    type_ids,
+  }
 }
 
-pub fn merge_selective_imports(env: ResolvedEnv, alias: String, module_path: String, exports: ModuleExports, items: Vector<ImportItem>) ResolvedEnv {
+pub fn merge_selective_imports(
+  env: ResolvedEnv,
+  alias: String,
+  module_path: String,
+  exports: ModuleExports,
+  items: Vector<ImportItem>,
+) ResolvedEnv {
   merge_selective_via_registration(env, alias, module_path, exports, items)
 }
 
 fn visible_function_names(exports: ModuleExports) Dict<String, Bool> {
   names: Dict<String, Bool> = Dict.new()
-  for exported in exports.functions {
-    names[exported.name] = true
-  }
+
+  for exported in exports.functions { names[exported.name] = true }
+
   names
 }
 
-fn register_imported_functions(env: ResolvedEnv, alias: String, module_path: String, exports: ModuleExports, type_ids: Dict<Int, TypeId>, bind_qualified_names: Bool) ResolvedEnv {
+fn register_imported_functions(
+  env: ResolvedEnv,
+  alias: String,
+  module_path: String,
+  exports: ModuleExports,
+  type_ids: Dict<Int, TypeId>,
+  bind_qualified_names: Bool,
+) ResolvedEnv {
   cur := env
   visible_functions := visible_function_names(exports)
+
   for exported in all_exported_functions(exports) {
     // Extern functions keep their extern-qualified name (e.g., "console.log")
     // instead of being prefixed with the import alias.
@@ -942,10 +1183,14 @@ fn register_imported_functions(env: ResolvedEnv, alias: String, module_path: Str
       },
       .None => qualify_name(alias, exported.name),
     }
-    cur = .register_function(remap_function_sig(exported.sig, qualified_name, type_ids))
+    cur = .register_function(
+      remap_function_sig(exported.sig, qualified_name, type_ids),
+    )
+
     if bind_qualified_names and visible_functions.has(exported.name) {
       cur = .bind_function(qualified_name, qualified_name)
     }
+
     // Set canonical imported origin for this registered function.
     // Re-exports preserve the original defining origin.
     origin := case exported.origin {
@@ -954,13 +1199,25 @@ fn register_imported_functions(env: ResolvedEnv, alias: String, module_path: Str
     }
     cur = .set_function_origin(qualified_name, origin)
   }
+
   cur
 }
 
-pub fn merge_module_exports(env: ResolvedEnv, alias: String, module_path: String, exports: ModuleExports) ResolvedEnv {
+pub fn merge_module_exports(
+  env: ResolvedEnv,
+  alias: String,
+  module_path: String,
+  exports: ModuleExports,
+) ResolvedEnv {
   reg := register_imported_interface_types(env, alias, alias, exports, true)
-  cur := register_imported_functions(reg.env, alias, module_path, exports, reg.type_ids, true)
-
+  cur := register_imported_functions(
+    reg.env,
+    alias,
+    module_path,
+    exports,
+    reg.type_ids,
+    true,
+  )
   methods := cur.methods
   module_entries := collect exported in exports.functions {
     // Extern functions are namespaced by their extern module, not the import alias
@@ -969,6 +1226,7 @@ pub fn merge_module_exports(env: ResolvedEnv, alias: String, module_path: String
       .None => me(exported.name, qualify_name(alias, exported.name)),
     }
   }
+
   if module_entries.len() > 0 {
     methods = register_methods(methods, alias, module_entries)
   }
@@ -977,7 +1235,10 @@ pub fn merge_module_exports(env: ResolvedEnv, alias: String, module_path: String
   for v in exports.values {
     qualified := qualify_name(alias, v.name)
     cur.value_bindings[qualified] = v.ty
-    cur.value_origins[qualified] = FunctionOrigin.{ module_path, func_name: v.name }
+    cur.value_origins[qualified] = FunctionOrigin.{
+      module_path,
+      func_name: v.name,
+    }
   }
 
   cur.with_methods(methods)
@@ -986,15 +1247,33 @@ pub fn merge_module_exports(env: ResolvedEnv, alias: String, module_path: String
 // When this is a standalone selective import (no prior full import),
 // register the full imported interface first, then bind only the
 // selected type and value names.
-fn merge_selective_via_registration(env: ResolvedEnv, alias: String, module_path: String, exports: ModuleExports, items: Vector<ImportItem>) ResolvedEnv {
+fn merge_selective_via_registration(
+  env: ResolvedEnv,
+  alias: String,
+  module_path: String,
+  exports: ModuleExports,
+  items: Vector<ImportItem>,
+) ResolvedEnv {
   reg := register_imported_interface_types(env, alias, alias, exports, false)
-  cur := register_imported_functions(reg.env, alias, module_path, exports, reg.type_ids, false)
+  cur := register_imported_functions(
+    reg.env,
+    alias,
+    module_path,
+    exports,
+    reg.type_ids,
+    false,
+  )
+
   // Register exported values under qualified names so selective import can find them.
   for v in exports.values {
     qualified := qualify_name(alias, v.name)
     cur.value_bindings[qualified] = v.ty
-    cur.value_origins[qualified] = FunctionOrigin.{ module_path, func_name: v.name }
+    cur.value_origins[qualified] = FunctionOrigin.{
+      module_path,
+      func_name: v.name,
+    }
   }
+
   methods := cur.methods
   methods_by_type := cur.methods_by_type
 
@@ -1002,23 +1281,25 @@ fn merge_selective_via_registration(env: ResolvedEnv, alias: String, module_path
     case item {
       .Value(value_item) => {
         binding_name := import_binding_name(value_item.name, value_item.alias)
+
         // Try function first, then value binding.
         case visible_export_function(exports, value_item.name) {
           .Some(exported) => {
             source_name := qualify_name(alias, exported.name)
+
             case lookup_registered_function(cur, source_name) {
-              .Some(_) => {
-                cur = .bind_function(binding_name, source_name)
-              },
+              .Some(_) => { cur = .bind_function(binding_name, source_name) },
               .None => {},
             }
           },
           .None => {
             // Check for an exported value.
             qualified := qualify_name(alias, value_item.name)
+
             case cur.value_bindings[qualified] {
               .Some(ty) => {
                 cur.value_bindings[binding_name] = ty
+
                 case cur.value_origins[qualified] {
                   .Some(origin) => { cur.value_origins[binding_name] = origin },
                   .None => {},
@@ -1032,13 +1313,19 @@ fn merge_selective_via_registration(env: ResolvedEnv, alias: String, module_path
       .Type(type_item) => {
         source_name := qualify_name(alias, type_item.name)
         binding_name := import_binding_name(type_item.name, type_item.alias)
+
         case lookup_registered_type(cur, source_name) {
           .Some(entry) => {
             cur = .bind_type(binding_name, entry.id)
+
             case cur.methods[source_name] {
               .Some(entries) => {
                 methods = register_methods(methods, binding_name, entries)
-                methods_by_type = register_type_methods(methods_by_type, entry.id, entries)
+                methods_by_type = register_type_methods(
+                  methods_by_type,
+                  entry.id,
+                  entries,
+                )
               },
               .None => {},
             }
@@ -1066,9 +1353,7 @@ fn prelude_internal_function_name(alias: String, exported_name: String) String {
     "__prelude_result" => "result",
     "__prelude_string" => "string",
     "__prelude_vector" => "vector",
-    _ => if alias.starts_with("__prelude_") {
-      alias.slice(10, alias.len())
-    } else {
+    _ => if alias.starts_with("__prelude_") { alias.slice(10, alias.len()) } else {
       alias
     },
   }
@@ -1076,8 +1361,11 @@ fn prelude_internal_function_name(alias: String, exported_name: String) String {
   if stem == "range" {
     return exported_name
   }
+
   if stem == "string" {
-    if exported_name == "char_code_at" or exported_name == "from_char_code" or exported_name == "from_byte" or exported_name == "from_code_point" {
+    if exported_name == "char_code_at" or exported_name == "from_char_code"
+    or exported_name == "from_byte"
+    or exported_name == "from_code_point" {
       return exported_name
     }
   }
@@ -1096,6 +1384,7 @@ fn prelude_internal_function_name(alias: String, exported_name: String) String {
     "vector" => "vector",
     _ => "",
   }
+
   if prefix == "" {
     exported_name
   } else {
@@ -1103,22 +1392,33 @@ fn prelude_internal_function_name(alias: String, exported_name: String) String {
   }
 }
 
-pub fn merge_prelude_exports(env: ResolvedEnv, alias: String, module_path: String, exports: ModuleExports) ResolvedEnv {
+pub fn merge_prelude_exports(
+  env: ResolvedEnv,
+  alias: String,
+  module_path: String,
+  exports: ModuleExports,
+) ResolvedEnv {
   reg := register_imported_interface_types(env, "", "", exports, true)
   cur := reg.env
   visible_functions := visible_function_names(exports)
 
   for exported in all_exported_functions(exports) {
     if !cur.has_function(exported.name) {
-      cur = .register_function(remap_function_sig(exported.sig, exported.name, reg.type_ids))
+      cur = .register_function(
+        remap_function_sig(exported.sig, exported.name, reg.type_ids),
+      )
     }
+
     if visible_functions.has(exported.name) {
       cur = .bind_function(exported.name, exported.name)
     }
 
     internal_name := prelude_internal_function_name(alias, exported.name)
+
     if internal_name != exported.name and !cur.has_function(internal_name) {
-      cur = .register_function(remap_function_sig(exported.sig, internal_name, reg.type_ids))
+      cur = .register_function(
+        remap_function_sig(exported.sig, internal_name, reg.type_ids),
+      )
     }
 
     // Set canonical imported origin for registered prelude function names.
@@ -1127,22 +1427,29 @@ pub fn merge_prelude_exports(env: ResolvedEnv, alias: String, module_path: Strin
       .Some(o) => o,
       .None => FunctionOrigin.{ module_path, func_name: exported.source_name },
     }
+
     if !cur.function_origins.has(exported.name) {
       cur = .set_function_origin(exported.name, origin)
     }
-    if internal_name != exported.name and !cur.function_origins.has(internal_name) {
+
+    if internal_name != exported.name
+    and !cur.function_origins.has(internal_name) {
       cur = .set_function_origin(internal_name, origin)
     }
   }
 
   methods := cur.methods
   methods_by_type := cur.methods_by_type
+
   for exported in all_exported_types(exports) {
     case exports.methods[exported.name] {
       .Some(entries) => {
         if entries.len() > 0 {
           remapped_entries := collect entry in entries {
-            internal_name := prelude_internal_function_name(alias, entry.function_name)
+            internal_name := prelude_internal_function_name(
+              alias,
+              entry.function_name,
+            )
             me(entry.method_name, internal_name)
           }
           methods = register_methods(methods, exported.name, remapped_entries)
@@ -1150,7 +1457,11 @@ pub fn merge_prelude_exports(env: ResolvedEnv, alias: String, module_path: Strin
             .Some(id) => id,
             .None => exported.entry.id,
           }
-          methods_by_type = register_type_methods(methods_by_type, remapped_id, remapped_entries)
+          methods_by_type = register_type_methods(
+            methods_by_type,
+            remapped_id,
+            remapped_entries,
+          )
         }
       },
       .None => {},
@@ -1163,46 +1474,52 @@ pub fn merge_prelude_exports(env: ResolvedEnv, alias: String, module_path: Strin
 pub fn resolve(env: ResolvedEnv, module: Module) ResolveResult {
   // Pass 1: collect declarations
   p1 := collect_declarations(env, module)
-
   // Pass 2: resolve type references and function signatures
   p2 := resolve_references(p1.env, module, p1.diagnostics)
-
   // Pass 3: detect circular aliases
   p3_diags := detect_circular_aliases(p2.env, p2.diagnostics)
-
   .{ env: p2.env, diagnostics: p3_diags }
 }
 
 fn is_reserved_type_name(name: String) Bool {
   case name {
-    "Int" => true, "Float" => true, "Bool" => true, "Byte" => true,
-    "String" => true, "Void" => true, "Never" => true,
-    "Vector" => true, "Dict" => true, "Option" => true, "Result" => true,
-    "Cell" => true, "Range" => true, "Iterator" => true, "IterItem" => true,
-    "UnfoldStep" => true, "Order" => true,
+    "Int" => true,
+    "Float" => true,
+    "Bool" => true,
+    "Byte" => true,
+    "String" => true,
+    "Void" => true,
+    "Never" => true,
+    "Vector" => true,
+    "Dict" => true,
+    "Option" => true,
+    "Result" => true,
+    "Cell" => true,
+    "Range" => true,
+    "Iterator" => true,
+    "IterItem" => true,
+    "UnfoldStep" => true,
+    "Order" => true,
     _ => false,
   }
 }
 
 // ── Pass 1: Collection ──────────────────────────────────────────────
-
 fn next_available_type_id(env: ResolvedEnv) Int {
   max_id := -1
+
   for entry in env.types {
-    if entry.id.id > max_id {
-      max_id = entry.id.id
-    }
+    if entry.id.id > max_id { max_id = entry.id.id }
   }
+
   for tid in env.type_origins.keys() {
-    if tid > max_id {
-      max_id = tid
-    }
+    if tid > max_id { max_id = tid }
   }
+
   for tid in env.methods_by_type.keys() {
-    if tid > max_id {
-      max_id = tid
-    }
+    if tid > max_id { max_id = tid }
   }
+
   max_id + 1
 }
 
@@ -1215,12 +1532,30 @@ fn collect_declarations(env: ResolvedEnv, module: Module) ResolveResult {
     case item {
       .Type(decl) => {
         if is_reserved_type_name(decl.name) {
-          diags = .append(.Error(.ReservedTypeName(.{ span: decl.span, name: decl.name })))
+          diags = .append(
+            .Error(.ReservedTypeName(.{ span: decl.span, name: decl.name })),
+          )
         } else if cur.has_type(decl.name) {
-          diags = .append(.Error(.DuplicateName(.{ span: decl.span, kind: "type definition", name: decl.name })))
+          diags = .append(
+            .Error(
+              .DuplicateName(
+                .{ span: decl.span, kind: "type definition", name: decl.name },
+              ),
+            ),
+          )
         } else {
           tid := TypeId.{ id: next_available_type_id(cur) }
-          cur = .add_type(.{ id: tid, arity: decl.type_params.len(), def: .None, span: decl.span, is_extern: false }, decl.name)
+          cur = .add_type(
+            .{
+              id: tid,
+              arity: decl.type_params.len(),
+              def: .None,
+              span: decl.span,
+              is_extern: false,
+            },
+            decl.name,
+          )
+
           // Pre-register synthesized record types for anonymous record variants.
           // Must happen after add_type so type_bindings is non-empty.
           case decl.def {
@@ -1232,8 +1567,14 @@ fn collect_declarations(env: ResolvedEnv, module: Module) ResolveResult {
                       synth_tid := TypeId.{ id: next_available_type_id(cur) }
                       display_name := "${decl.name}.${variant.name}"
                       cur = .register_type_entry(
-                        .{ id: synth_tid, arity: decl.type_params.len(), def: .None, span: variant.span, is_extern: false },
-                        display_name
+                        .{
+                          id: synth_tid,
+                          arity: decl.type_params.len(),
+                          def: .None,
+                          span: variant.span,
+                          is_extern: false,
+                        },
+                        display_name,
                       )
                     },
                     _ => {},
@@ -1247,27 +1588,59 @@ fn collect_declarations(env: ResolvedEnv, module: Module) ResolveResult {
       },
       .Function(decl) => {
         if seen_fns.has(decl.name) {
-          diags = .append(.Error(.DuplicateName(.{ span: decl.span, kind: "function definition", name: decl.name })))
+          diags = .append(
+            .Error(
+              .DuplicateName(
+                .{
+                  span: decl.span,
+                  kind: "function definition",
+                  name: decl.name,
+                },
+              ),
+            ),
+          )
         } else {
           seen_fns[decl.name] = true
         }
       },
       .ExternFunction(decl) => {
         qualified := "${decl.module}.${decl.name}"
+
         if seen_fns.has(qualified) {
-          diags = .append(.Error(.DuplicateName(.{ span: decl.span, kind: "function definition", name: qualified })))
+          diags = .append(
+            .Error(
+              .DuplicateName(
+                .{
+                  span: decl.span,
+                  kind: "function definition",
+                  name: qualified,
+                },
+              ),
+            ),
+          )
         } else {
           seen_fns[qualified] = true
         }
       },
       .ExternType(decl) => {
         if is_reserved_type_name(decl.name) {
-          diags = .append(.Error(.ReservedTypeName(.{ span: decl.span, name: decl.name })))
+          diags = .append(
+            .Error(.ReservedTypeName(.{ span: decl.span, name: decl.name })),
+          )
         } else if cur.has_type(decl.name) {
-          diags = .append(.Error(.DuplicateName(.{ span: decl.span, kind: "type definition", name: decl.name })))
+          diags = .append(
+            .Error(
+              .DuplicateName(
+                .{ span: decl.span, kind: "type definition", name: decl.name },
+              ),
+            ),
+          )
         } else {
           tid := TypeId.{ id: next_available_type_id(cur) }
-          cur = .add_type(.{ id: tid, arity: 0, def: .None, span: decl.span, is_extern: true }, decl.name)
+          cur = .add_type(
+            .{ id: tid, arity: 0, def: .None, span: decl.span, is_extern: true },
+            decl.name,
+          )
           cur.extern_namespaces[decl.module] = true
         }
       },
@@ -1282,19 +1655,22 @@ fn collect_declarations(env: ResolvedEnv, module: Module) ResolveResult {
 }
 
 // ── Pass 2: Resolution ──────────────────────────────────────────────
-
-fn resolve_references(env: ResolvedEnv, module: Module, diags: Vector<diag.DiagKind>) ResolveResult {
+fn resolve_references(
+  env: ResolvedEnv,
+  module: Module,
+  diags: Vector<diag.DiagKind>,
+) ResolveResult {
   cur := env
   result_diags := diags
-
   // Collect type declarations and resolve in dependency order
-  type_decls:= collect item in module.items {
+  type_decls := collect item in module.items {
     case item {
       .Type(decl) => decl,
-      _ => { continue },  // Use/Function/Stmt items handled separately
+      _ => { continue },
     }
   }
   sorted := topo_sort_type_decls(type_decls)
+
   for decl in sorted {
     r := resolve_type_decl(cur, decl)
     cur = r.env
@@ -1304,6 +1680,7 @@ fn resolve_references(env: ResolvedEnv, module: Module, diags: Vector<diag.DiagK
   // Resolve function signatures (skip module-internal duplicates reported in Pass 1)
   local_function_spans: Dict<String, Span> = Dict.new()
   seen_fns: Dict<String, Bool> = Dict.new()
+
   for item in module.items {
     case item {
       .Function(decl) => {
@@ -1317,6 +1694,7 @@ fn resolve_references(env: ResolvedEnv, module: Module, diags: Vector<diag.DiagK
       },
       .ExternFunction(decl) => {
         qualified := "${decl.module}.${decl.name}"
+
         if !seen_fns.has(qualified) {
           seen_fns[qualified] = true
           local_function_spans[qualified] = decl.name_span
@@ -1332,29 +1710,37 @@ fn resolve_references(env: ResolvedEnv, module: Module, diags: Vector<diag.DiagK
   // Auto-detect inherent methods: only for types declared in this module
   local_type_names: Dict<String, Bool> = Dict.new()
   local_field_spans: Dict<String, Dict<String, Span>> = Dict.new()
+
   for decl in type_decls {
     local_type_names[decl.name] = true
+
     case decl.def {
       .Record(fields) => {
         field_spans: Dict<String, Span> = Dict.new()
-        for field in fields {
-          field_spans[field.name] = field.name_span
-        }
+
+        for field in fields { field_spans[field.name] = field.name_span }
+
         local_field_spans[decl.name] = field_spans
       },
       _ => {},
     }
   }
+
   for item in module.items {
     case item {
       .ExternType(decl) => { local_type_names[decl.name] = true },
       _ => {},
     }
   }
-  im := detect_inherent_methods(cur, local_type_names, local_field_spans, local_function_spans)
+
+  im := detect_inherent_methods(
+    cur,
+    local_type_names,
+    local_field_spans,
+    local_function_spans,
+  )
   cur = im.env
   result_diags = .concat(im.diagnostics)
-
   .{ env: cur, diagnostics: result_diags }
 }
 
@@ -1367,23 +1753,32 @@ type DetectMethodsResult = .{
 // Functions with Vector<T>, Option<T>, Result<T,E>, Dict<K,V>, or
 // primitive first params are excluded — builtin container/type methods
 // must be registered separately via register_builtin_methods.
-fn detect_inherent_methods(env: ResolvedEnv, local_type_names: Dict<String, Bool>, local_field_spans: Dict<String, Dict<String, Span>>, local_function_spans: Dict<String, Span>) DetectMethodsResult {
+fn detect_inherent_methods(
+  env: ResolvedEnv,
+  local_type_names: Dict<String, Bool>,
+  local_field_spans: Dict<String, Dict<String, Span>>,
+  local_function_spans: Dict<String, Span>,
+) DetectMethodsResult {
   m := env.methods
   tm := env.methods_by_type
   method_diags: Vector<diag.DiagKind> = []
+
   for f in env.functions {
     if f.params.len() == 0 { continue }
+
     tid := case f.params[0] {
       .Named(t, _) => t,
       .ExternRef(t) => t,
-      _ => { continue },  // Non-nominal first param — not an inherent method
+      _ => { continue },
     }
     type_name := case env.find_type_name(tid) {
       .Some(n) => n,
       .None => { continue },
     }
+
     // Only register methods for types defined in this module
     if !local_type_names.has(type_name) { continue }
+
     // Extern functions are qualified ("module.fn_name"); use the unqualified
     // part as the method name so `ctx.fill_rect(...)` resolves correctly.
     method_name := case f.extern_module {
@@ -1397,30 +1792,37 @@ fn detect_inherent_methods(env: ResolvedEnv, local_type_names: Dict<String, Bool
     field_collision := case env.lookup_type_def(tid) {
       .Some(def) => {
         case def {
-          .Record(_, _, fields) => fields.any(fn(field) { field.name == method_name }),
+          .Record(_, _, fields) => fields.any(
+            fn(field) { field.name == method_name },
+          ),
           _ => false,
         }
       },
       .None => false,
     }
     collision := field_collision
+
     if !collision {
       collision = case tm[tid.id] {
         .Some(existing) => existing.any(fn(e) { e.method_name == method_name }),
         .None => {
           case m[type_name] {
-            .Some(existing) => existing.any(fn(e) { e.method_name == method_name }),
+            .Some(existing) => existing.any(
+              fn(e) { e.method_name == method_name },
+            ),
             .None => false,
           }
         },
       }
     }
+
     if !collision {
       collision = case m[type_name] {
         .Some(existing) => existing.any(fn(e) { e.method_name == method_name }),
         .None => false,
       }
     }
+
     if field_collision {
       span := case local_field_spans[type_name] {
         .Some(fields) => case fields[method_name] {
@@ -1433,44 +1835,60 @@ fn detect_inherent_methods(env: ResolvedEnv, local_type_names: Dict<String, Bool
         .Some(s) => s,
         .None => .{ file_id: 0, start: 0, end: 0 },
       }
-      method_diags = .append(.Error(.FieldMethodCollision(.{
-        span,
-        type_name,
-        name: method_name,
-        method_span,
-      })))
+      method_diags = .append(
+        .Error(
+          .FieldMethodCollision(
+            .{ span, type_name, name: method_name, method_span },
+          ),
+        ),
+      )
     } else if collision {
-      method_diags = .append(.Error(.DuplicateName(.{
-        span: .{ file_id: 0, start: 0, end: 0 },
-        kind: "method",
-        name: "${method_name} on ${type_name}",
-      })))
+      method_diags = .append(
+        .Error(
+          .DuplicateName(
+            .{
+              span: .{ file_id: 0, start: 0, end: 0 },
+              kind: "method",
+              name: "${method_name} on ${type_name}",
+            },
+          ),
+        ),
+      )
     } else {
       m = register_methods(m, type_name, [me(method_name, f.name)])
       tm = register_type_methods(tm, tid, [me(method_name, f.name)])
     }
   }
+
   .{ env: env.with_methods(m).with_type_methods(tm), diagnostics: method_diags }
 }
 
-fn check_dup_names(names: Vector<String>, kind: String, s: Span) Vector<diag.DiagKind> {
+fn check_dup_names(names: Vector<String>, kind: String, s: Span) Vector<
+  diag.DiagKind,
+> {
   seen: Dict<String, Bool> = Dict.new()
+
   collect name in names {
     if !seen.has(name) {
       seen[name] = true
       continue
     }
+
     .Error(.DuplicateName(.{ span: s, kind, name }))
   }
 }
 
-fn check_dup_type_params(type_params: Vector<String>, s: Span) Vector<diag.DiagKind> {
+fn check_dup_type_params(type_params: Vector<String>, s: Span) Vector<
+  diag.DiagKind,
+> {
   seen: Dict<String, Bool> = Dict.new()
+
   collect tp in type_params {
     if !seen.has(tp) {
       seen[tp] = true
       continue
     }
+
     .Error(.DuplicateTypeParam(.{ span: s, name: tp }))
   }
 }
@@ -1478,21 +1896,26 @@ fn check_dup_type_params(type_params: Vector<String>, s: Span) Vector<diag.DiagK
 fn resolve_ast_type_params(ast_params: Vector<TypeParam>, s: Span) ResolvedTypeParamsResult {
   diags: Vector<diag.DiagKind> = []
   resolved: Vector<ResolvedTypeParam> = []
+
   for tp in ast_params {
     bound_refs: Vector<ResolvedContractRef> = []
+
     for bound_path in tp.bounds {
       seg := bound_path.segments[0]
+
       case resolve_builtin_contract_name(seg) {
-        .Some(c) => {
-          bound_refs = .append(.Builtin(c))
-        },
+        .Some(c) => { bound_refs = .append(.Builtin(c)) },
         .None => {
-          diags = .append(.Error(.UnknownContract(.{ span: bound_path.span, name: seg })))
+          diags = .append(
+            .Error(.UnknownContract(.{ span: bound_path.span, name: seg })),
+          )
         },
       }
     }
+
     resolved = .append(.{ name: tp.name, bounds: bound_refs })
   }
+
   .{ params: resolved, diags }
 }
 
@@ -1515,56 +1938,94 @@ fn resolve_type_decl(env: ResolvedEnv, decl: TypeDecl) ResolveResult {
         }
         .{ name: field.name, ty }
       }
-      new_env := env.set_type_def(decl.name, .Record(decl.name, type_params, resolved_fields))
+      new_env := env.set_type_def(
+        decl.name,
+        .Record(decl.name, type_params, resolved_fields),
+      )
       .{ env: new_env, diagnostics: diags }
     },
     .Sum(variants) => {
       variant_names := collect v in variants { v.name }
       diags = .concat(check_dup_names(variant_names, "variant", decl.span))
       resolved_variants: Vector<ResolvedVariant> = []
+
       for variant in variants {
-        is_anon_record := variant.fields.len() == 1 and case variant.fields[0].kind { .Record(_) => true, _ => false }
+        is_anon_record := variant.fields.len() == 1
+        and case variant.fields[0].kind {
+          .Record(_) => true,
+          _ => false,
+        }
 
         if is_anon_record {
-          record_fields := case variant.fields[0].kind { .Record(fs) => fs, _ => error("unreachable") }
+          record_fields := case variant.fields[0].kind {
+            .Record(fs) => fs,
+            _ => error("unreachable"),
+          }
           field_names := collect f in record_fields { f.name }
-          diags = .concat(check_dup_names(field_names, "field", variant.fields[0].span))
+          diags = .concat(
+            check_dup_names(field_names, "field", variant.fields[0].span),
+          )
           resolved_record_fields: Vector<ResolvedField> = collect field in record_fields {
             r := env.resolve_type_expr(field.ty, names)
             diags = .concat(r.diagnostics)
-            ty := case r.ty { .Some(t) => t, .None => MonoType.ErrorType }
+            ty := case r.ty {
+              .Some(t) => t,
+              .None => MonoType.ErrorType,
+            }
             ResolvedField.{ name: field.name, ty }
           }
           display_name := "${decl.name}.${variant.name}"
           synth_tid := case env.type_index[display_name] {
             .Some(idx) => env.types[idx].id,
-            .None => error("unreachable: synthesized type '${display_name}' not registered"),
+            .None => error(
+              "unreachable: synthesized type '${display_name}' not registered",
+            ),
           }
-          env = .set_type_def_by_id(synth_tid, .Record(display_name, type_params, resolved_record_fields))
-          synth_args: Vector<MonoType> = collect tp in type_params { MonoType.Var(tp.name) }
+          env = .set_type_def_by_id(
+            synth_tid,
+            .Record(display_name, type_params, resolved_record_fields),
+          )
+          synth_args: Vector<MonoType> = collect tp in type_params {
+            MonoType.Var(tp.name)
+          }
           resolved_variants = .append(
-            .{ name: variant.name, fields: [MonoType.Named(synth_tid, synth_args)] }
+            .{
+              name: variant.name,
+              fields: [MonoType.Named(synth_tid, synth_args)],
+            },
           )
         } else {
           resolved_fields: Vector<MonoType> = collect field_ty in variant.fields {
             r := env.resolve_type_expr(field_ty, names)
             diags = .concat(r.diagnostics)
-            case r.ty { .Some(ty) => ty, .None => MonoType.ErrorType }
+
+            case r.ty {
+              .Some(ty) => ty,
+              .None => MonoType.ErrorType,
+            }
           }
           resolved_variants = .append(
-            .{ name: variant.name, fields: resolved_fields }
+            .{ name: variant.name, fields: resolved_fields },
           )
         }
       }
-      env = .set_type_def(decl.name, .Sum(decl.name, type_params, resolved_variants))
+
+      env = .set_type_def(
+        decl.name,
+        .Sum(decl.name, type_params, resolved_variants),
+      )
       .{ env, diagnostics: diags }
     },
     .Alias(ty_expr) => {
       r := env.resolve_type_expr(ty_expr, names)
       diags = .concat(r.diagnostics)
+
       case r.ty {
         .Some(ty) => {
-          new_env := env.set_type_def(decl.name, .Alias(decl.name, type_params, ty))
+          new_env := env.set_type_def(
+            decl.name,
+            .Alias(decl.name, type_params, ty),
+          )
           .{ env: new_env, diagnostics: diags }
         },
         .None => .{ env, diagnostics: diags },
@@ -1609,7 +2070,6 @@ fn is_extern_safe_type(ty: MonoType, allow_void: Bool) Bool {
 
 fn resolve_extern_function_decl(env: ResolvedEnv, decl: ExternFunctionDecl) ResolveResult {
   diags: Vector<diag.DiagKind> = []
-
   param_names := collect param in decl.params { param.name }
   diags = .concat(check_dup_names(param_names, "parameter", decl.span))
   param_types: Vector<MonoType> = collect param in decl.params {
@@ -1617,10 +2077,13 @@ fn resolve_extern_function_decl(env: ResolvedEnv, decl: ExternFunctionDecl) Reso
       .Some(ty_expr) => {
         r := env.resolve_type_expr(ty_expr, [])
         diags = .concat(r.diagnostics)
+
         case r.ty {
           .Some(ty) => {
             if !is_extern_safe_type(ty, false) {
-              diags = .append(.Error(.ExternBoundaryType(.{ span: ty_expr.span })))
+              diags = .append(
+                .Error(.ExternBoundaryType(.{ span: ty_expr.span })),
+              )
               .ErrorType
             } else {
               ty
@@ -1635,16 +2098,19 @@ fn resolve_extern_function_decl(env: ResolvedEnv, decl: ExternFunctionDecl) Reso
       },
     }
   }
-
   ret_ty: MonoType? = case decl.return_type {
     .Some(ty_expr) => {
       r := env.resolve_type_expr(ty_expr, [])
       diags = .concat(r.diagnostics)
+
       case r.ty {
         .Some(ty) => {
           if !is_extern_safe_type(ty, true) {
-            diags = .append(.Error(.ExternBoundaryType(.{ span: ty_expr.span })))
+            diags = .append(
+              .Error(.ExternBoundaryType(.{ span: ty_expr.span })),
+            )
           }
+
           .Some(ty)
         },
         .None => .None,
@@ -1652,7 +2118,6 @@ fn resolve_extern_function_decl(env: ResolvedEnv, decl: ExternFunctionDecl) Reso
     },
     .None => .None,
   }
-
   qualified := "${decl.module}.${decl.name}"
   new_env := env.add_function(.{
     name: qualified,
@@ -1664,7 +2129,6 @@ fn resolve_extern_function_decl(env: ResolvedEnv, decl: ExternFunctionDecl) Reso
     extern_module: .Some(decl.module),
   })
   new_env.extern_namespaces[decl.module] = true
-
   .{ env: new_env, diagnostics: diags }
 }
 
@@ -1673,7 +2137,6 @@ fn resolve_function_decl(env: ResolvedEnv, decl: FunctionDecl) ResolveResult {
   type_params := r.params
   names := resolved_type_param_names(type_params)
   diags := r.diags.concat(check_dup_type_params(names, decl.span))
-
   param_names := collect param in decl.params { param.name }
   diags = .concat(check_dup_names(param_names, "parameter", decl.span))
   param_types: Vector<MonoType> = collect param in decl.params {
@@ -1681,6 +2144,7 @@ fn resolve_function_decl(env: ResolvedEnv, decl: FunctionDecl) ResolveResult {
       .Some(ty_expr) => {
         r := env.resolve_type_expr(ty_expr, names)
         diags = .concat(r.diagnostics)
+
         case r.ty {
           .Some(ty) => ty,
           .None => .ErrorType,
@@ -1692,7 +2156,6 @@ fn resolve_function_decl(env: ResolvedEnv, decl: FunctionDecl) ResolveResult {
       },
     }
   }
-
   ret_ty: MonoType? = case decl.return_type {
     .Some(ty_expr) => {
       r := env.resolve_type_expr(ty_expr, names)
@@ -1701,7 +2164,6 @@ fn resolve_function_decl(env: ResolvedEnv, decl: FunctionDecl) ResolveResult {
     },
     .None => .None,
   }
-
   new_env := env.add_function(.{
     name: decl.name,
     type_params: type_params,
@@ -1711,12 +2173,10 @@ fn resolve_function_decl(env: ResolvedEnv, decl: FunctionDecl) ResolveResult {
     doc: decl.doc,
     extern_module: .None,
   })
-
   .{ env: new_env, diagnostics: diags }
 }
 
 // ── Type Expression Resolution ──────────────────────────────────────
-
 pub type TypeResolveResult = .{
   ty: MonoType?,
   diagnostics: Vector<diag.DiagKind>,
@@ -1730,42 +2190,74 @@ fn type_err(d: diag.DiagKind) TypeResolveResult {
   .{ ty: .None, diagnostics: [d] }
 }
 
-pub fn resolve_type_expr(env: ResolvedEnv, ty_expr: TypeExpr, type_vars: Vector<String>) TypeResolveResult {
+pub fn resolve_type_expr(
+  env: ResolvedEnv,
+  ty_expr: TypeExpr,
+  type_vars: Vector<String>,
+) TypeResolveResult {
   case ty_expr.kind {
     .Path(path) => resolve_type_path(env, path, [], type_vars),
     .Applied(path, args) => resolve_applied_type(env, path, args, type_vars),
-    .Function(param_exprs, ret_expr) => resolve_fn_type(env, param_exprs, ret_expr, type_vars),
+    .Function(param_exprs, ret_expr) => resolve_fn_type(
+      env,
+      param_exprs,
+      ret_expr,
+      type_vars,
+    ),
     .Optional(inner_expr) => resolve_optional_type(env, inner_expr, type_vars),
-    .Result(ok_expr, err_expr) => resolve_result_type(env, ok_expr, err_expr, type_vars),
-    .Record(_) => type_err(.Error(.AnonymousTypeNotAllowed(.{ span: ty_expr.span }))),
-    .Sum(_) => type_err(.Error(.AnonymousTypeNotAllowed(.{ span: ty_expr.span }))),
+    .Result(ok_expr, err_expr) => resolve_result_type(
+      env,
+      ok_expr,
+      err_expr,
+      type_vars,
+    ),
+    .Record(_) => type_err(
+      .Error(.AnonymousTypeNotAllowed(.{ span: ty_expr.span })),
+    ),
+    .Sum(_) => type_err(
+      .Error(.AnonymousTypeNotAllowed(.{ span: ty_expr.span })),
+    ),
     .ErrorType => .{ ty: .None, diagnostics: [] },
   }
 }
 
-fn resolve_applied_type(env: ResolvedEnv, path: TypePath, args: Vector<TypeExpr>, type_vars: Vector<String>) TypeResolveResult {
+fn resolve_applied_type(
+  env: ResolvedEnv,
+  path: TypePath,
+  args: Vector<TypeExpr>,
+  type_vars: Vector<String>,
+) TypeResolveResult {
   all_diags: Vector<diag.DiagKind> = []
   resolved_args := collect arg in args {
     r := env.resolve_type_expr(arg, type_vars)
     all_diags = .concat(r.diagnostics)
+
     case r.ty {
       .Some(ty) => ty,
       .None => { continue },
     }
   }
+
   if resolved_args.len() != args.len() {
     return .{ ty: .None, diagnostics: all_diags }
   }
+
   r := env.resolve_type_path(path, resolved_args, type_vars)
   all_diags = .concat(r.diagnostics)
   .{ ty: r.ty, diagnostics: all_diags }
 }
 
-fn resolve_fn_type(env: ResolvedEnv, param_exprs: Vector<TypeExpr>, ret_expr: TypeExpr, type_vars: Vector<String>) TypeResolveResult {
+fn resolve_fn_type(
+  env: ResolvedEnv,
+  param_exprs: Vector<TypeExpr>,
+  ret_expr: TypeExpr,
+  type_vars: Vector<String>,
+) TypeResolveResult {
   all_diags: Vector<diag.DiagKind> = []
   param_types := collect p in param_exprs {
     r := env.resolve_type_expr(p, type_vars)
     all_diags = .concat(r.diagnostics)
+
     case r.ty {
       .Some(ty) => ty,
       .None => { continue },
@@ -1773,9 +2265,11 @@ fn resolve_fn_type(env: ResolvedEnv, param_exprs: Vector<TypeExpr>, ret_expr: Ty
   }
   r := env.resolve_type_expr(ret_expr, type_vars)
   all_diags = .concat(r.diagnostics)
+
   if param_types.len() != param_exprs.len() {
     return .{ ty: .None, diagnostics: all_diags }
   }
+
   ret_ty := case r.ty {
     .Some(t) => t,
     .None => { return .{ ty: .None, diagnostics: all_diags } },
@@ -1783,8 +2277,13 @@ fn resolve_fn_type(env: ResolvedEnv, param_exprs: Vector<TypeExpr>, ret_expr: Ty
   .{ ty: .Some(MonoType.Function(param_types, ret_ty)), diagnostics: all_diags }
 }
 
-fn resolve_optional_type(env: ResolvedEnv, inner_expr: TypeExpr, type_vars: Vector<String>) TypeResolveResult {
+fn resolve_optional_type(
+  env: ResolvedEnv,
+  inner_expr: TypeExpr,
+  type_vars: Vector<String>,
+) TypeResolveResult {
   r := env.resolve_type_expr(inner_expr, type_vars)
+
   case r.ty {
     .Some(inner) => .{
       ty: .Some(MonoType.Optional(inner)),
@@ -1794,7 +2293,12 @@ fn resolve_optional_type(env: ResolvedEnv, inner_expr: TypeExpr, type_vars: Vect
   }
 }
 
-fn resolve_result_type(env: ResolvedEnv, ok_expr: TypeExpr, err_expr: TypeExpr, type_vars: Vector<String>) TypeResolveResult {
+fn resolve_result_type(
+  env: ResolvedEnv,
+  ok_expr: TypeExpr,
+  err_expr: TypeExpr,
+  type_vars: Vector<String>,
+) TypeResolveResult {
   all_diags: Vector<diag.DiagKind> = []
   r_ok := env.resolve_type_expr(ok_expr, type_vars)
   all_diags = .concat(r_ok.diagnostics)
@@ -1811,13 +2315,19 @@ fn resolve_result_type(env: ResolvedEnv, ok_expr: TypeExpr, err_expr: TypeExpr, 
   .{ ty: .Some(MonoType.Result(ok_ty, err_ty)), diagnostics: all_diags }
 }
 
-fn resolve_type_path(env: ResolvedEnv, path: TypePath, args: Vector<MonoType>, type_vars: Vector<String>) TypeResolveResult {
+fn resolve_type_path(
+  env: ResolvedEnv,
+  path: TypePath,
+  args: Vector<MonoType>,
+  type_vars: Vector<String>,
+) TypeResolveResult {
   if path.segments.len() == 0 {
     return type_err(.Error(.EmptyTypePath(.{ span: path.span })))
   }
 
   if path.segments.len() == 1 {
     name := path.segments[0]
+
     return env.resolve_single_name(name, args, type_vars, path.span)
   }
 
@@ -1826,7 +2336,11 @@ fn resolve_type_path(env: ResolvedEnv, path: TypePath, args: Vector<MonoType>, t
 }
 
 fn qualify_name(prefix: String, name: String) String {
-  if prefix == "" { name } else { "${prefix}.${name}" }
+  if prefix == "" {
+    name
+  } else {
+    "${prefix}.${name}"
+  }
 }
 
 fn import_binding_name(name: String, alias: String?) String {
@@ -1844,13 +2358,11 @@ fn merged_export_type_name(alias: String, name: String, origin: String?) String 
   case origin {
     .Some(o) => {
       parts := o.split("::")
+
       if parts.len() >= 2 {
         local_part := parts[parts.len() - 1]
-        if name == local_part {
-          qualify_name(alias, name)
-        } else {
-          name
-        }
+
+        if name == local_part { qualify_name(alias, name) } else { name }
       } else {
         qualify_name(alias, name)
       }
@@ -1870,14 +2382,23 @@ fn find_by_origin(env: ResolvedEnv, origin: String) TypeId? {
       .None => {},
     }
   }
+
   .None
 }
 
-fn plan_export_type_ids(env: ResolvedEnv, alias: String, exports: ModuleExports) Dict<Int, TypeId> {
+fn plan_export_type_ids(env: ResolvedEnv, alias: String, exports: ModuleExports) Dict<
+  Int,
+  TypeId,
+> {
   ids: Dict<Int, TypeId> = Dict.new()
   next_id := next_available_type_id(env)
+
   for exported in all_exported_types(exports) {
-    target_name := merged_export_type_name(alias, exported.name, exported.origin)
+    target_name := merged_export_type_name(
+      alias,
+      exported.name,
+      exported.origin,
+    )
     existing_id: TypeId? = case lookup_registered_type(env, target_name) {
       .Some(existing) => .Some(existing.id),
       .None => {
@@ -1887,16 +2408,16 @@ fn plan_export_type_ids(env: ResolvedEnv, alias: String, exports: ModuleExports)
         }
       },
     }
+
     case existing_id {
-      .Some(eid) => {
-        ids[exported.entry.id.id] = eid
-      },
+      .Some(eid) => { ids[exported.entry.id.id] = eid },
       .None => {
         ids[exported.entry.id.id] = TypeId.{ id: next_id }
         next_id = next_id + 1
       },
     }
   }
+
   ids
 }
 
@@ -1914,86 +2435,130 @@ fn is_builtin_interface_type(name: String) Bool {
   }
 }
 
-fn collect_hidden_support_types(env: ResolvedEnv, ty: MonoType, needed: Dict<String, Bool>) Dict<String, Bool> {
+fn collect_hidden_support_types(
+  env: ResolvedEnv,
+  ty: MonoType,
+  needed: Dict<String, Bool>,
+) Dict<String, Bool> {
   case ty {
     .Named(tid, args) => {
       cur := needed
-      for arg in args {
-        cur = collect_hidden_support_types(env, arg, cur)
-      }
+
+      for arg in args { cur = collect_hidden_support_types(env, arg, cur) }
 
       name := case env.find_type_name(tid) {
         .Some(found) => found,
         .None => { return cur },
       }
+
       if is_builtin_interface_type(name) or cur.has(name) {
         return cur
       }
 
       cur[name] = true
+
       case lookup_type_by_id(env, tid) {
         .Some(entry) => collect_hidden_support_types_from_entry(env, entry, cur),
         .None => cur,
       }
     },
     .Vector(inner) => collect_hidden_support_types(env, inner, needed),
-    .Dict(key, value) => collect_hidden_support_types(env, value, collect_hidden_support_types(env, key, needed)),
+    .Dict(key, value) => collect_hidden_support_types(
+      env,
+      value,
+      collect_hidden_support_types(env, key, needed),
+    ),
     .Function(params, ret) => {
       cur := needed
+
       for param in params {
         cur = collect_hidden_support_types(env, param, cur)
       }
+
       collect_hidden_support_types(env, ret, cur)
     },
     .Optional(inner) => collect_hidden_support_types(env, inner, needed),
-    .Result(ok, err) => collect_hidden_support_types(env, err, collect_hidden_support_types(env, ok, needed)),
+    .Result(ok, err) => collect_hidden_support_types(
+      env,
+      err,
+      collect_hidden_support_types(env, ok, needed),
+    ),
     _ => needed,
   }
 }
 
-fn collect_hidden_support_types_from_entry(env: ResolvedEnv, entry: TypeEntry, needed: Dict<String, Bool>) Dict<String, Bool> {
+fn collect_hidden_support_types_from_entry(
+  env: ResolvedEnv,
+  entry: TypeEntry,
+  needed: Dict<String, Bool>,
+) Dict<String, Bool> {
   case entry.def {
     .Some(def) => collect_hidden_support_types_from_def(env, def, needed),
     .None => needed,
   }
 }
 
-fn collect_hidden_support_types_from_def(env: ResolvedEnv, def: ResolvedTypeDef, needed: Dict<String, Bool>) Dict<String, Bool> {
+fn collect_hidden_support_types_from_def(
+  env: ResolvedEnv,
+  def: ResolvedTypeDef,
+  needed: Dict<String, Bool>,
+) Dict<String, Bool> {
   case def {
     .Record(_, _, fields) => {
-      fields.fold(needed, fn(cur, field) { collect_hidden_support_types(env, field.ty, cur) })
+      fields.fold(
+        needed,
+        fn(cur, field) { collect_hidden_support_types(env, field.ty, cur) },
+      )
     },
     .Sum(_, _, variants) => {
       cur := needed
+
       for variant in variants {
         for field_ty in variant.fields {
           cur = collect_hidden_support_types(env, field_ty, cur)
         }
       }
+
       cur
     },
     .Alias(_, _, target) => collect_hidden_support_types(env, target, needed),
   }
 }
 
-fn remap_type_entry(entry: TypeEntry, new_name: String, type_ids: Dict<Int, TypeId>) TypeEntry {
+fn remap_type_entry(
+  entry: TypeEntry,
+  new_name: String,
+  type_ids: Dict<Int, TypeId>,
+) TypeEntry {
   new_entry := entry
+
   case type_ids[entry.id.id] {
     .Some(new_id) => { new_entry.id = new_id },
     .None => {},
   }
+
   case entry.def {
-    .Some(def) => { new_entry.def = .Some(remap_type_def(def, new_name, type_ids)) },
+    .Some(def) => {
+      new_entry.def = .Some(remap_type_def(def, new_name, type_ids))
+    },
     .None => {},
   }
+
   new_entry
 }
 
-fn remap_type_def(def: ResolvedTypeDef, new_name: String, type_ids: Dict<Int, TypeId>) ResolvedTypeDef {
+fn remap_type_def(
+  def: ResolvedTypeDef,
+  new_name: String,
+  type_ids: Dict<Int, TypeId>,
+) ResolvedTypeDef {
   case def {
     .Record(_, type_params, fields) => {
       remapped_fields := collect field in fields {
-        ResolvedField.{ name: field.name, ty: remap_mono_type(field.ty, type_ids) }
+        ResolvedField.{
+          name: field.name,
+          ty: remap_mono_type(field.ty, type_ids),
+        }
       }
       .Record(new_name, type_params, remapped_fields)
     },
@@ -2012,10 +2577,12 @@ fn remap_type_def(def: ResolvedTypeDef, new_name: String, type_ids: Dict<Int, Ty
   }
 }
 
-fn remap_function_sig(sig: FunctionSig, new_name: String, type_ids: Dict<Int, TypeId>) FunctionSig {
-  params := collect ty in sig.params {
-    remap_mono_type(ty, type_ids)
-  }
+fn remap_function_sig(
+  sig: FunctionSig,
+  new_name: String,
+  type_ids: Dict<Int, TypeId>,
+) FunctionSig {
+  params := collect ty in sig.params { remap_mono_type(ty, type_ids) }
   ret: MonoType? = case sig.ret {
     .Some(ty) => .Some(remap_mono_type(ty, type_ids)),
     .None => .None,
@@ -2034,9 +2601,7 @@ fn remap_function_sig(sig: FunctionSig, new_name: String, type_ids: Dict<Int, Ty
 fn remap_mono_type(ty: MonoType, type_ids: Dict<Int, TypeId>) MonoType {
   case ty {
     .Named(tid, args) => {
-      remapped_args := collect arg in args {
-        remap_mono_type(arg, type_ids)
-      }
+      remapped_args := collect arg in args { remap_mono_type(arg, type_ids) }
       new_tid := case type_ids[tid.id] {
         .Some(mapped) => mapped,
         .None => tid,
@@ -2044,7 +2609,10 @@ fn remap_mono_type(ty: MonoType, type_ids: Dict<Int, TypeId>) MonoType {
       MonoType.Named(new_tid, remapped_args)
     },
     .Vector(inner) => MonoType.Vector(remap_mono_type(inner, type_ids)),
-    .Dict(k, v) => MonoType.Dict(remap_mono_type(k, type_ids), remap_mono_type(v, type_ids)),
+    .Dict(k, v) => MonoType.Dict(
+      remap_mono_type(k, type_ids),
+      remap_mono_type(v, type_ids),
+    ),
     .Function(params, ret) => {
       remapped_params := collect param in params {
         remap_mono_type(param, type_ids)
@@ -2052,7 +2620,10 @@ fn remap_mono_type(ty: MonoType, type_ids: Dict<Int, TypeId>) MonoType {
       MonoType.Function(remapped_params, remap_mono_type(ret, type_ids))
     },
     .Optional(inner) => MonoType.Optional(remap_mono_type(inner, type_ids)),
-    .Result(ok, err) => MonoType.Result(remap_mono_type(ok, type_ids), remap_mono_type(err, type_ids)),
+    .Result(ok, err) => MonoType.Result(
+      remap_mono_type(ok, type_ids),
+      remap_mono_type(err, type_ids),
+    ),
     .ExternRef(tid) => {
       new_tid := case type_ids[tid.id] {
         .Some(mapped) => mapped,
@@ -2064,7 +2635,13 @@ fn remap_mono_type(ty: MonoType, type_ids: Dict<Int, TypeId>) MonoType {
   }
 }
 
-fn resolve_single_name(env: ResolvedEnv, name: String, args: Vector<MonoType>, type_vars: Vector<String>, s: Span) TypeResolveResult {
+fn resolve_single_name(
+  env: ResolvedEnv,
+  name: String,
+  args: Vector<MonoType>,
+  type_vars: Vector<String>,
+  s: Span,
+) TypeResolveResult {
   // Check type variables first
   if args.len() == 0 {
     for tv in type_vars {
@@ -2093,28 +2670,52 @@ fn resolve_single_name(env: ResolvedEnv, name: String, args: Vector<MonoType>, t
       if args.len() == 1 {
         return type_ok(MonoType.Vector(args[0]))
       } else {
-        return type_err(.Error(.TypeArityMismatch(.{ span: s, name: "Vector", expected: 1, found: args.len() })))
+        return type_err(
+          .Error(
+            .TypeArityMismatch(
+              .{ span: s, name: "Vector", expected: 1, found: args.len() },
+            ),
+          ),
+        )
       }
     },
     "Dict" => {
       if args.len() == 2 {
         return type_ok(MonoType.Dict(args[0], args[1]))
       } else {
-        return type_err(.Error(.TypeArityMismatch(.{ span: s, name: "Dict", expected: 2, found: args.len() })))
+        return type_err(
+          .Error(
+            .TypeArityMismatch(
+              .{ span: s, name: "Dict", expected: 2, found: args.len() },
+            ),
+          ),
+        )
       }
     },
     "Option" => {
       if args.len() == 1 {
         return type_ok(MonoType.Optional(args[0]))
       } else {
-        return type_err(.Error(.TypeArityMismatch(.{ span: s, name: "Option", expected: 1, found: args.len() })))
+        return type_err(
+          .Error(
+            .TypeArityMismatch(
+              .{ span: s, name: "Option", expected: 1, found: args.len() },
+            ),
+          ),
+        )
       }
     },
     "Result" => {
       if args.len() == 2 {
         return type_ok(MonoType.Result(args[0], args[1]))
       } else {
-        return type_err(.Error(.TypeArityMismatch(.{ span: s, name: "Result", expected: 2, found: args.len() })))
+        return type_err(
+          .Error(
+            .TypeArityMismatch(
+              .{ span: s, name: "Result", expected: 2, found: args.len() },
+            ),
+          ),
+        )
       }
     },
     _ => {},
@@ -2122,6 +2723,7 @@ fn resolve_single_name(env: ResolvedEnv, name: String, args: Vector<MonoType>, t
 
   // Check user-defined types
   check := env.check_user_type_arity(name, args, s)
+
   case check {
     .Some(err_result) => { return err_result },
     .None => {},
@@ -2131,17 +2733,19 @@ fn resolve_single_name(env: ResolvedEnv, name: String, args: Vector<MonoType>, t
     .Some(entry) => {
       if entry.is_extern {
         if args.len() > 0 {
-          type_err(.Error(.TypeArityMismatch(.{ span: s, name, expected: 0, found: args.len() })))
-        } else {
-          type_ok(MonoType.ExternRef(entry.id))
-        }
+          type_err(
+            .Error(
+              .TypeArityMismatch(
+                .{ span: s, name, expected: 0, found: args.len() },
+              ),
+            ),
+          )
+        } else { type_ok(MonoType.ExternRef(entry.id)) }
       } else {
         type_ok(MonoType.Named(entry.id, args))
       }
     },
-    .None => {
-      type_err(.Error(.UndefinedType(.{ span: s, name })))
-    },
+    .None => { type_err(.Error(.UndefinedType(.{ span: s, name }))) },
   }
 }
 
@@ -2153,31 +2757,44 @@ fn def_type_param_count(def: ResolvedTypeDef) Int {
   }
 }
 
-fn check_user_type_arity(env: ResolvedEnv, name: String, args: Vector<MonoType>, s: Span) TypeResolveResult? {
+fn check_user_type_arity(
+  env: ResolvedEnv,
+  name: String,
+  args: Vector<MonoType>,
+  s: Span,
+) TypeResolveResult? {
   entry := case env.lookup_type(name) {
     .Some(e) => e,
     .None => { return .None },
   }
+
   if args.len() != entry.arity {
-    return .Some(type_err(.Error(.TypeArityMismatch(.{ span: s, name, expected: entry.arity, found: args.len() }))))
+    return .Some(
+      type_err(
+        .Error(
+          .TypeArityMismatch(
+            .{ span: s, name, expected: entry.arity, found: args.len() },
+          ),
+        ),
+      ),
+    )
   }
+
   .None
 }
 
 // ── Topological Sort for Type Declarations ──────────────────────────
-
 fn topo_sort_type_decls(decls: Vector<TypeDecl>) Vector<TypeDecl> {
   n := decls.len()
-  if n <= 1 { return decls }
+
+  if n <= 1 {
+    return decls
+  }
 
   // Build name list for dependency lookup
   names := collect d in decls { d.name }
-
   // Build deps: for each decl index, which other decl indices it depends on
-  all_deps := collect decl in decls {
-    collect_type_refs(decl, names)
-  }
-
+  all_deps := collect decl in decls { collect_type_refs(decl, names) }
   // DFS-based topological sort
   // state per node: 0=unvisited, 1=in-progress, 2=done
   state: Dict<String, Int> = Dict.new()
@@ -2192,12 +2809,15 @@ fn topo_sort_type_decls(decls: Vector<TypeDecl>) Vector<TypeDecl> {
   collect idx in result { decls[idx] }
 }
 
-type TopoState = .{
+type TopoState = .{ state: Dict<String, Int>, order: Vector<Int> }
+
+fn topo_visit(
+  i: Int,
+  all_deps: Vector<Vector<Int>>,
+  names: Vector<String>,
   state: Dict<String, Int>,
   order: Vector<Int>,
-}
-
-fn topo_visit(i: Int, all_deps: Vector<Vector<Int>>, names: Vector<String>, state: Dict<String, Int>, order: Vector<Int>) TopoState {
+) TopoState {
   cur_state := case state[names[i]] {
     .Some(s) => s,
     .None => 0,
@@ -2208,7 +2828,9 @@ fn topo_visit(i: Int, all_deps: Vector<Vector<Int>>, names: Vector<String>, stat
   // ordering pass, not a cycle verifier.  Cycles are silently tolerated;
   // alias cycles are caught later in Pass 3.  Mutual recursion between
   // records/sums is allowed by design.
-  if cur_state > 0 { return .{ state, order } }
+  if cur_state > 0 {
+    return .{ state, order }
+  }
 
   // Mark in-progress
   new_state := state
@@ -2230,10 +2852,7 @@ fn topo_visit(i: Int, all_deps: Vector<Vector<Int>>, names: Vector<String>, stat
   .{ state: new_state, order: new_order }
 }
 
-type TypeRefs = .{
-  indices: Vector<Int>,
-  seen: Dict<Int, Bool>,
-}
+type TypeRefs = .{ indices: Vector<Int>, seen: Dict<Int, Bool> }
 
 // Collect indices of type names referenced by a type declaration's definition.
 // Type parameters are excluded to avoid phantom dependency edges when a type
@@ -2241,11 +2860,10 @@ type TypeRefs = .{
 fn collect_type_refs(decl: TypeDecl, names: Vector<String>) Vector<Int> {
   refs: TypeRefs = .{ indices: [], seen: Dict.new() }
   tp := type_param_names(decl.type_params)
+
   case decl.def {
     .Record(fields) => {
-      for f in fields {
-        refs = collect_type_expr_refs(f.ty, names, tp, refs)
-      }
+      for f in fields { refs = collect_type_expr_refs(f.ty, names, tp, refs) }
     },
     .Sum(variants) => {
       for v in variants {
@@ -2259,18 +2877,28 @@ fn collect_type_refs(decl: TypeDecl, names: Vector<String>) Vector<Int> {
     },
     .ErrorDef(_) => {},
   }
+
   refs.indices
 }
 
 fn is_type_param(name: String, type_params: Vector<String>) Bool {
   for tp in type_params {
-    if tp == name { return true }
+    if tp == name {
+      return true
+    }
   }
+
   false
 }
 
-fn collect_type_expr_refs(ty: TypeExpr, names: Vector<String>, type_params: Vector<String>, acc: TypeRefs) TypeRefs {
+fn collect_type_expr_refs(
+  ty: TypeExpr,
+  names: Vector<String>,
+  type_params: Vector<String>,
+  acc: TypeRefs,
+) TypeRefs {
   result := acc
+
   case ty.kind {
     .Path(path) => {
       if path.segments.len() == 1 {
@@ -2285,6 +2913,7 @@ fn collect_type_expr_refs(ty: TypeExpr, names: Vector<String>, type_params: Vect
           result = add_name_index(path.segments[0], names, result)
         }
       }
+
       for arg in args {
         result = collect_type_expr_refs(arg, names, type_params, result)
       }
@@ -2293,6 +2922,7 @@ fn collect_type_expr_refs(ty: TypeExpr, names: Vector<String>, type_params: Vect
       for p in params {
         result = collect_type_expr_refs(p, names, type_params, result)
       }
+
       result = collect_type_expr_refs(ret, names, type_params, result)
     },
     .Optional(inner) => {
@@ -2316,25 +2946,33 @@ fn collect_type_expr_refs(ty: TypeExpr, names: Vector<String>, type_params: Vect
     },
     .ErrorType => {},
   }
+
   result
 }
 
 fn add_name_index(name: String, names: Vector<String>, acc: TypeRefs) TypeRefs {
   for i in 0..names.len() {
     if names[i] == name {
-      if acc.seen.has(i) { return acc }
+      if acc.seen.has(i) {
+        return acc
+      }
+
       acc.seen[i] = true
-      acc.indices = .append(i)
+      acc.indices = acc.indices.append(i)
+
       return acc
     }
   }
+
   acc
 }
 
 // ── Pass 3: Circular Alias Detection ────────────────────────────────
-
-fn detect_circular_aliases(env: ResolvedEnv, diags: Vector<diag.DiagKind>) Vector<diag.DiagKind> {
+fn detect_circular_aliases(env: ResolvedEnv, diags: Vector<diag.DiagKind>) Vector<
+  diag.DiagKind,
+> {
   result := diags
+
   for i in 0..env.type_names.len() {
     def := case env.types[i].def {
       .Some(d) => d,
@@ -2344,18 +2982,28 @@ fn detect_circular_aliases(env: ResolvedEnv, diags: Vector<diag.DiagKind>) Vecto
       .Alias(name, _, _) => name,
       _ => { continue },
     }
+
     if is_circular_alias(env, aname, Dict.new()) {
-      result = .append(.Error(.CircularAlias(.{ span: env.types[i].span, name: aname })))
+      result = .append(
+        .Error(.CircularAlias(.{ span: env.types[i].span, name: aname })),
+      )
     }
   }
+
   result
 }
 
-fn is_circular_alias(env: ResolvedEnv, name: String, visited: Dict<String, Bool>) Bool {
-  if visited.has(name) { return true }
+fn is_circular_alias(
+  env: ResolvedEnv,
+  name: String,
+  visited: Dict<String, Bool>,
+) Bool {
+  if visited.has(name) {
+    return true
+  }
+
   new_visited := visited
   new_visited[name] = true
-
   entry := case env.lookup_type(name) {
     .Some(e) => e,
     .None => { return false },
@@ -2364,21 +3012,32 @@ fn is_circular_alias(env: ResolvedEnv, name: String, visited: Dict<String, Bool>
     .Some(d) => d,
     .None => { return false },
   }
+
   case def {
     .Alias(_, _, target) => mono_contains_circular(env, target, new_visited),
     _ => false,
   }
 }
 
-fn mono_contains_circular(env: ResolvedEnv, ty: MonoType, visited: Dict<String, Bool>) Bool {
+fn mono_contains_circular(
+  env: ResolvedEnv,
+  ty: MonoType,
+  visited: Dict<String, Bool>,
+) Bool {
   case ty {
     .Named(tid, args) => {
       case env.find_type_name(tid) {
         .Some(tname) => {
-          if is_circular_alias(env, tname, visited) { return true }
-          for a in args {
-            if mono_contains_circular(env, a, visited) { return true }
+          if is_circular_alias(env, tname, visited) {
+            return true
           }
+
+          for a in args {
+            if mono_contains_circular(env, a, visited) {
+              return true
+            }
+          }
+
           false
         },
         .None => false,
@@ -2386,12 +3045,17 @@ fn mono_contains_circular(env: ResolvedEnv, ty: MonoType, visited: Dict<String, 
     },
     .Optional(inner) => mono_contains_circular(env, inner, visited),
     .Vector(inner) => mono_contains_circular(env, inner, visited),
-    .Dict(k, v) => mono_contains_circular(env, k, visited) or mono_contains_circular(env, v, visited),
-    .Result(ok, err) => mono_contains_circular(env, ok, visited) or mono_contains_circular(env, err, visited),
+    .Dict(k, v) => mono_contains_circular(env, k, visited)
+    or mono_contains_circular(env, v, visited),
+    .Result(ok, err) => mono_contains_circular(env, ok, visited)
+    or mono_contains_circular(env, err, visited),
     .Function(params, ret) => {
       for p in params {
-        if mono_contains_circular(env, p, visited) { return true }
+        if mono_contains_circular(env, p, visited) {
+          return true
+        }
       }
+
       mono_contains_circular(env, ret, visited)
     },
     _ => false,
@@ -2421,12 +3085,15 @@ pub fn ty_to_string_env(env: ResolvedEnv, ty: MonoType) String {
     .Vector(inner) => "Vector<${env.ty_to_string_env(inner)}>",
     .Dict(k, v) => "Dict<${env.ty_to_string_env(k)}, ${env.ty_to_string_env(v)}>",
     .Optional(inner) => "${env.ty_to_string_env(inner)}?",
-    .Result(ok, err) => "Result<${env.ty_to_string_env(ok)}, ${env.ty_to_string_env(err)}>",
+    .Result(ok, err) => "Result<${env.ty_to_string_env(ok)}, ${env.ty_to_string_env(
+      err,
+    )}>",
     .Named(tid, args) => {
       name := case env.find_type_name(tid) {
         .Some(n) => n,
         .None => "Named(${tid.id})",
       }
+
       if args.len() == 0 {
         name
       } else {
@@ -2448,6 +3115,7 @@ pub fn lookup_type_def(env: ResolvedEnv, tid: TypeId) ResolvedTypeDef? {
       return entry.def
     }
   }
+
   .None
 }
 

@@ -1,13 +1,12 @@
 // Lowering context and context-local helpers.
-
-use lib.source.span.{Span}
-use lib.source.diagnostics.{DiagKind}
 use compiler.ast.{Expr}
-use compiler.resolver.{ResolvedEnv, FunctionOrigin}
-use compiler.mono_type.{MonoType}
-use compiler.checker.{CheckResult, MethodCallInfo}
 use compiler.builtins.{BuiltinRegistry}
-use compiler.core_ir.{CoreExpr, FunctionDef, LocalId, FuncId, ExternImport}
+use compiler.checker.{CheckResult, MethodCallInfo}
+use compiler.core_ir.{CoreExpr, ExternImport, FuncId, FunctionDef, LocalId}
+use compiler.mono_type.{MonoType}
+use compiler.resolver.{FunctionOrigin, ResolvedEnv}
+use lib.source.diagnostics.{DiagKind}
+use lib.source.span.{Span}
 
 pub type LowerCtx = .{
   type_map: Dict<Int, MonoType>,
@@ -23,26 +22,28 @@ pub type LowerCtx = .{
   current_fn_return_type: MonoType?,
   errors: Vector<DiagKind>,
   method_calls: Dict<Int, MethodCallInfo>,
-  // Imported phantom FuncId → canonical defining-site origin.
-  // Built during lower_module; consumed by module_compiler to build external_refs.
   imported_func_origins: Dict<Int, FunctionOrigin>,
-  // Cache: serialized origin key → FuncId, for deduplicating phantom FuncIds.
   origin_cache: Dict<String, FuncId>,
   extern_imports: Dict<Int, ExternImport>,
 }
 
 pub type ExprOut = .{ expr: CoreExpr, ctx: LowerCtx }
+
 pub type LocalOut = .{ local: LocalId, ctx: LowerCtx }
+
 pub type FuncIdOut = .{ func_id: FuncId, ctx: LowerCtx }
 
 pub fn new_ctx(check_result: CheckResult, reg: BuiltinRegistry) LowerCtx {
   func_table: Dict<String, FuncId> = Dict.new()
+
   for entry in reg.entries {
     func_table[entry.name] = entry.func_id
+
     if entry.name.starts_with("host_") {
       func_table["__${entry.name}"] = entry.func_id
     }
   }
+
   .{
     type_map: check_result.type_map,
     env: check_result.env,
@@ -69,10 +70,12 @@ pub fn alloc_local(ctx: LowerCtx, name: String) LocalOut {
   scope_idx := ctx.locals.len() - 1
   scope := ctx.locals[scope_idx]
   scope[name] = id
+
   case ctx.locals.set(scope_idx, scope) {
     .Some(new_locals) => { ctx.locals = new_locals },
     .None => {},
   }
+
   LocalOut.{ local: id, ctx }
 }
 
@@ -100,13 +103,18 @@ pub fn pop_scope(ctx: LowerCtx) LowerCtx {
 
 pub fn lookup_local(ctx: LowerCtx, name: String) LocalId? {
   i := ctx.locals.len() - 1
+
   for _ in 0..ctx.locals.len() {
     case ctx.locals[i][name] {
-      .Some(id) => { return .Some(id) },
+      .Some(id) => {
+        return .Some(id)
+      },
       .None => {},
     }
+
     i = i - 1
   }
+
   .None
 }
 
@@ -127,9 +135,7 @@ pub fn lookup_func(ctx: LowerCtx, name: String) FuncId? {
     .None => {
       if name.starts_with("__host_") {
         ctx.func_table[name.slice(2, name.len())]
-      } else {
-        .None
-      }
+      } else { .None }
     },
   }
 }
@@ -142,6 +148,8 @@ pub fn expr_type(ctx: LowerCtx, expr: Expr) MonoType {
 }
 
 pub fn emit_error(ctx: LowerCtx, s: Span, msg: String) LowerCtx {
-  ctx.errors = ctx.errors.append(.Error(.LowerError(.{ span: s, message: msg, help_lines: [] })))
+  ctx.errors = ctx.errors.append(
+    .Error(.LowerError(.{ span: s, message: msg, help_lines: [] })),
+  )
   ctx
 }

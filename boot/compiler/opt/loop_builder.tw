@@ -1,12 +1,14 @@
 // Helper for rewriting loop accumulator regions into builder regions.
-
-use compiler.core_ir.{LocalId, FuncId}
-use compiler.anf.{AnfExpr, AnfOp, AnfMatchArm}
-
+use compiler.anf.{AnfExpr, AnfMatchArm, AnfOp}
 use compiler.builder_family.{BuilderConfig}
+use compiler.core_ir.{FuncId, LocalId}
 use compiler.mono_type.{MonoType}
-use compiler.opt.analysis.{analyze_loop_push_sites, count_global_call_sites, loop_push_reassign_elem}
-use compiler.opt.builder_region.{BuilderInit, BuilderRegion, lower_builder_region}
+use compiler.opt.analysis.{
+  analyze_loop_push_sites, count_global_call_sites, loop_push_reassign_elem,
+}
+use compiler.opt.builder_region.{
+  BuilderInit, BuilderRegion, lower_builder_region,
+}
 
 pub type LoopRewrite = .{
   expr: AnfExpr,
@@ -14,72 +16,145 @@ pub type LoopRewrite = .{
   next_local: Int,
 }
 
-fn rewrite_loop_expr(expr: AnfExpr, base: LocalId, builder: LocalId, push_id: FuncId, builder_push_id: FuncId) AnfExpr {
+fn rewrite_loop_expr(
+  expr: AnfExpr,
+  base: LocalId,
+  builder: LocalId,
+  push_id: FuncId,
+  builder_push_id: FuncId,
+) AnfExpr {
   case expr {
     .Let(local, op, body) => {
       case loop_push_reassign_elem(op, body, base, push_id, local) {
         .Some(elem) => {
-          new_op := AnfOp.ACall(.AGlobalFunc(builder_push_id), [.ALocal(builder), elem])
+          new_op := AnfOp.ACall(
+            .AGlobalFunc(builder_push_id),
+            [.ALocal(builder), elem],
+          )
+
           case body {
             .Let(assign_local, _, rest) => {
               new_assign := AnfOp.AInit(.ALitVoid)
-              return AnfExpr.Let(local, new_op,
-                AnfExpr.Let(assign_local, new_assign,
-                  rewrite_loop_expr(rest, base, builder, push_id, builder_push_id)))
+
+              return AnfExpr.Let(
+                local,
+                new_op,
+                AnfExpr.Let(
+                  assign_local,
+                  new_assign,
+                  rewrite_loop_expr(
+                    rest,
+                    base,
+                    builder,
+                    push_id,
+                    builder_push_id,
+                  ),
+                ),
+              )
             },
             _ => {},
           }
         },
         .None => {},
       }
-      new_op := rewrite_loop_op_subexpr(op, base, builder, push_id, builder_push_id)
-      AnfExpr.Let(local, new_op, rewrite_loop_expr(body, base, builder, push_id, builder_push_id))
+
+      new_op := rewrite_loop_op_subexpr(
+        op,
+        base,
+        builder,
+        push_id,
+        builder_push_id,
+      )
+      AnfExpr.Let(
+        local,
+        new_op,
+        rewrite_loop_expr(body, base, builder, push_id, builder_push_id),
+      )
     },
     _ => expr,
   }
 }
 
-fn rewrite_loop_op_subexpr(op: AnfOp, base: LocalId, builder: LocalId, push_id: FuncId, builder_push_id: FuncId) AnfOp {
+fn rewrite_loop_op_subexpr(
+  op: AnfOp,
+  base: LocalId,
+  builder: LocalId,
+  push_id: FuncId,
+  builder_push_id: FuncId,
+) AnfOp {
   case op {
     .AIf(cond, then_e, else_e) => {
-      AnfOp.AIf(cond,
+      AnfOp.AIf(
+        cond,
         rewrite_loop_expr(then_e, base, builder, push_id, builder_push_id),
-        rewrite_loop_expr(else_e, base, builder, push_id, builder_push_id))
+        rewrite_loop_expr(else_e, base, builder, push_id, builder_push_id),
+      )
     },
     .AMatch(scrutinee, arms) => {
       new_arms: Vector<AnfMatchArm> = collect arm in arms {
         AnfMatchArm.{
           pattern: arm.pattern,
-          body: rewrite_loop_expr(arm.body, base, builder, push_id, builder_push_id),
+          body: rewrite_loop_expr(
+            arm.body,
+            base,
+            builder,
+            push_id,
+            builder_push_id,
+          ),
         }
       }
       AnfOp.AMatch(scrutinee, new_arms)
     },
-    .ALoop(body) => AnfOp.ALoop(rewrite_loop_expr(body, base, builder, push_id, builder_push_id)),
-    .ADefer(body) => AnfOp.ADefer(rewrite_loop_expr(body, base, builder, push_id, builder_push_id)),
+    .ALoop(body) => AnfOp.ALoop(
+      rewrite_loop_expr(body, base, builder, push_id, builder_push_id),
+    ),
+    .ADefer(body) => AnfOp.ADefer(
+      rewrite_loop_expr(body, base, builder, push_id, builder_push_id),
+    ),
     _ => op,
   }
 }
 
-pub fn rewrite_loop_region(bind_local: LocalId, loop_body: AnfExpr, cont: AnfExpr, base: LocalId, base_mono: MonoType, next_local: Int, use_builder_new: Bool, builder: BuilderConfig) LoopRewrite? {
+pub fn rewrite_loop_region(
+  bind_local: LocalId,
+  loop_body: AnfExpr,
+  cont: AnfExpr,
+  base: LocalId,
+  base_mono: MonoType,
+  next_local: Int,
+  use_builder_new: Bool,
+  builder: BuilderConfig,
+) LoopRewrite? {
   sites := try analyze_loop_push_sites(loop_body, base, builder.push_id)
-  if sites == 0 { return .None }
+
+  if sites == 0 {
+    return .None
+  }
 
   builder_local := LocalId.{ id: next_local }
   freeze_local := LocalId.{ id: next_local + 1 }
   assign_local := LocalId.{ id: next_local + 2 }
+  rewritten_body := rewrite_loop_expr(
+    loop_body,
+    base,
+    builder_local,
+    builder.push_id,
+    builder.builder_push_id,
+  )
+  rewritten_sites := count_global_call_sites(
+    rewritten_body,
+    builder.builder_push_id,
+  )
 
-  rewritten_body := rewrite_loop_expr(loop_body, base, builder_local, builder.push_id, builder.builder_push_id)
-
-  rewritten_sites := count_global_call_sites(rewritten_body, builder.builder_push_id)
-  if rewritten_sites == 0 or rewritten_sites != sites { return .None }
+  if rewritten_sites == 0 or rewritten_sites != sites {
+    return .None
+  }
 
   init: BuilderInit = if use_builder_new {
     .New
   } else {
     .FromBase(base)
   }
-
   region := BuilderRegion.{
     bind_local: bind_local,
     base_local: base,
@@ -90,15 +165,15 @@ pub fn rewrite_loop_region(bind_local: LocalId, loop_body: AnfExpr, cont: AnfExp
     loop_body: rewritten_body,
     cont: cont,
   }
-
   mono_updates: Dict<Int, MonoType> = Dict.new()
   mono_updates[builder_local.id] = base_mono
   mono_updates[freeze_local.id] = base_mono
   mono_updates[assign_local.id] = .Void
-
-  .Some(LoopRewrite.{
-    expr: lower_builder_region(region, builder),
-    mono_updates: mono_updates,
-    next_local: next_local + 3,
-  })
+  .Some(
+    LoopRewrite.{
+      expr: lower_builder_region(region, builder),
+      mono_updates: mono_updates,
+      next_local: next_local + 3,
+    },
+  )
 }

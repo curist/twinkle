@@ -1,23 +1,24 @@
-use tests.runner
-use tests.assert
-use compiler.core_ir.{LocalId}
-
 use compiler.anf.{AnfExpr}
-
-use compiler.opt.const_fold.{constant_fold}
+use compiler.core_ir.{LocalId}
 use compiler.opt.branch_simp.{branch_simplify}
+use compiler.opt.const_fold.{constant_fold}
+use tests.assert
+use tests.runner
 
 // ── Helpers ─────────────────────────────────────────────────────────
-
 fn lid(id: Int) LocalId { LocalId.{ id: id } }
 
 // ── constant_fold: int arithmetic ───────────────────────────────────
-
 fn test_fold_int_add() Result<Void, String> {
   // Let(0, ABinOp(Add, 1, 2, Int), Atom(ALocal(0))) → Let(0, AInit(3), ...)
-  expr: AnfExpr = .Let(lid(0), .ABinOp(.Add, .ALitInt(1), .ALitInt(2), .Int), .Atom(.ALocal(lid(0))))
+  expr: AnfExpr = .Let(
+    lid(0),
+    .ABinOp(.Add, .ALitInt(1), .ALitInt(2), .Int),
+    .Atom(.ALocal(lid(0))),
+  )
   r := constant_fold(expr)
   try assert.is_true(r.changed)
+
   case r.expr {
     .Let(_, op, _) => {
       case op {
@@ -30,9 +31,14 @@ fn test_fold_int_add() Result<Void, String> {
 }
 
 fn test_fold_int_sub() Result<Void, String> {
-  expr: AnfExpr = .Let(lid(0), .ABinOp(.Sub, .ALitInt(10), .ALitInt(3), .Int), .Atom(.ALocal(lid(0))))
+  expr: AnfExpr = .Let(
+    lid(0),
+    .ABinOp(.Sub, .ALitInt(10), .ALitInt(3), .Int),
+    .Atom(.ALocal(lid(0))),
+  )
   r := constant_fold(expr)
   try assert.is_true(r.changed)
+
   case r.expr {
     .Let(_, .AInit(.ALitInt(n)), _) => assert.equal(n, 7),
     _ => .Err("expected folded to 7"),
@@ -40,8 +46,13 @@ fn test_fold_int_sub() Result<Void, String> {
 }
 
 fn test_fold_int_mul() Result<Void, String> {
-  expr: AnfExpr = .Let(lid(0), .ABinOp(.Mul, .ALitInt(6), .ALitInt(7), .Int), .Atom(.ALocal(lid(0))))
+  expr: AnfExpr = .Let(
+    lid(0),
+    .ABinOp(.Mul, .ALitInt(6), .ALitInt(7), .Int),
+    .Atom(.ALocal(lid(0))),
+  )
   r := constant_fold(expr)
+
   case r.expr {
     .Let(_, .AInit(.ALitInt(n)), _) => assert.equal(n, 42),
     _ => .Err("expected folded to 42"),
@@ -49,8 +60,13 @@ fn test_fold_int_mul() Result<Void, String> {
 }
 
 fn test_fold_int_div() Result<Void, String> {
-  expr: AnfExpr = .Let(lid(0), .ABinOp(.Div, .ALitInt(10), .ALitInt(3), .Int), .Atom(.ALocal(lid(0))))
+  expr: AnfExpr = .Let(
+    lid(0),
+    .ABinOp(.Div, .ALitInt(10), .ALitInt(3), .Int),
+    .Atom(.ALocal(lid(0))),
+  )
   r := constant_fold(expr)
+
   case r.expr {
     .Let(_, .AInit(.ALitInt(n)), _) => assert.equal(n, 3),
     _ => .Err("expected folded to 3"),
@@ -58,9 +74,14 @@ fn test_fold_int_div() Result<Void, String> {
 }
 
 fn test_fold_int_div_by_zero_kept() Result<Void, String> {
-  expr: AnfExpr = .Let(lid(0), .ABinOp(.Div, .ALitInt(1), .ALitInt(0), .Int), .Atom(.ALocal(lid(0))))
+  expr: AnfExpr = .Let(
+    lid(0),
+    .ABinOp(.Div, .ALitInt(1), .ALitInt(0), .Int),
+    .Atom(.ALocal(lid(0))),
+  )
   r := constant_fold(expr)
   try assert.is_false(r.changed)
+
   case r.expr {
     .Let(_, .ABinOp(_, _, _, _), _) => .Ok({}),
     _ => .Err("expected ABinOp preserved"),
@@ -68,14 +89,23 @@ fn test_fold_int_div_by_zero_kept() Result<Void, String> {
 }
 
 fn test_fold_int_mod_by_zero_kept() Result<Void, String> {
-  expr: AnfExpr = .Let(lid(0), .ABinOp(.Mod, .ALitInt(5), .ALitInt(0), .Int), .Atom(.ALocal(lid(0))))
+  expr: AnfExpr = .Let(
+    lid(0),
+    .ABinOp(.Mod, .ALitInt(5), .ALitInt(0), .Int),
+    .Atom(.ALocal(lid(0))),
+  )
   r := constant_fold(expr)
   assert.is_false(r.changed)
 }
 
 fn test_fold_int_comparison() Result<Void, String> {
-  expr: AnfExpr = .Let(lid(0), .ABinOp(.Lt, .ALitInt(3), .ALitInt(5), .Int), .Atom(.ALocal(lid(0))))
+  expr: AnfExpr = .Let(
+    lid(0),
+    .ABinOp(.Lt, .ALitInt(3), .ALitInt(5), .Int),
+    .Atom(.ALocal(lid(0))),
+  )
   r := constant_fold(expr)
+
   case r.expr {
     .Let(_, .AInit(.ALitBool(b)), _) => assert.is_true(b),
     _ => .Err("expected folded to true"),
@@ -83,8 +113,13 @@ fn test_fold_int_comparison() Result<Void, String> {
 }
 
 fn test_fold_int_eq_false() Result<Void, String> {
-  expr: AnfExpr = .Let(lid(0), .ABinOp(.Eq, .ALitInt(3), .ALitInt(5), .Int), .Atom(.ALocal(lid(0))))
+  expr: AnfExpr = .Let(
+    lid(0),
+    .ABinOp(.Eq, .ALitInt(3), .ALitInt(5), .Int),
+    .Atom(.ALocal(lid(0))),
+  )
   r := constant_fold(expr)
+
   case r.expr {
     .Let(_, .AInit(.ALitBool(b)), _) => assert.is_false(b),
     _ => .Err("expected folded to false"),
@@ -92,24 +127,36 @@ fn test_fold_int_eq_false() Result<Void, String> {
 }
 
 // ── constant_fold: float ────────────────────────────────────────────
-
 fn test_fold_float_add() Result<Void, String> {
-  expr: AnfExpr = .Let(lid(0), .ABinOp(.Add, .ALitFloat(1.5), .ALitFloat(2.5), .Float), .Atom(.ALocal(lid(0))))
+  expr: AnfExpr = .Let(
+    lid(0),
+    .ABinOp(.Add, .ALitFloat(1.5), .ALitFloat(2.5), .Float),
+    .Atom(.ALocal(lid(0))),
+  )
   r := constant_fold(expr)
   try assert.is_true(r.changed)
+
   case r.expr {
     .Let(_, .AInit(.ALitFloat(f)), _) => {
-        if f == 4.0 { .Ok({}) } else { .Err("expected 4.0, got ${f}") }
-      },
+      if f == 4.0 {
+        .Ok({})
+      } else {
+        .Err("expected 4.0, got ${f}")
+      }
+    },
     _ => .Err("expected folded to 4.0"),
   }
 }
 
 // ── constant_fold: bool ─────────────────────────────────────────────
-
 fn test_fold_bool_and() Result<Void, String> {
-  expr: AnfExpr = .Let(lid(0), .ABinOp(.And, .ALitBool(true), .ALitBool(false), .Bool), .Atom(.ALocal(lid(0))))
+  expr: AnfExpr = .Let(
+    lid(0),
+    .ABinOp(.And, .ALitBool(true), .ALitBool(false), .Bool),
+    .Atom(.ALocal(lid(0))),
+  )
   r := constant_fold(expr)
+
   case r.expr {
     .Let(_, .AInit(.ALitBool(b)), _) => assert.is_false(b),
     _ => .Err("expected folded to false"),
@@ -117,8 +164,13 @@ fn test_fold_bool_and() Result<Void, String> {
 }
 
 fn test_fold_bool_or() Result<Void, String> {
-  expr: AnfExpr = .Let(lid(0), .ABinOp(.Or, .ALitBool(false), .ALitBool(true), .Bool), .Atom(.ALocal(lid(0))))
+  expr: AnfExpr = .Let(
+    lid(0),
+    .ABinOp(.Or, .ALitBool(false), .ALitBool(true), .Bool),
+    .Atom(.ALocal(lid(0))),
+  )
   r := constant_fold(expr)
+
   case r.expr {
     .Let(_, .AInit(.ALitBool(b)), _) => assert.is_true(b),
     _ => .Err("expected folded to true"),
@@ -126,10 +178,14 @@ fn test_fold_bool_or() Result<Void, String> {
 }
 
 // ── constant_fold: unary ────────────────────────────────────────────
-
 fn test_fold_neg_int() Result<Void, String> {
-  expr: AnfExpr = .Let(lid(0), .AUnOp(.Neg, .ALitInt(5), .Int), .Atom(.ALocal(lid(0))))
+  expr: AnfExpr = .Let(
+    lid(0),
+    .AUnOp(.Neg, .ALitInt(5), .Int),
+    .Atom(.ALocal(lid(0))),
+  )
   r := constant_fold(expr)
+
   case r.expr {
     .Let(_, .AInit(.ALitInt(n)), _) => assert.equal(n, -5),
     _ => .Err("expected folded to -5"),
@@ -137,8 +193,13 @@ fn test_fold_neg_int() Result<Void, String> {
 }
 
 fn test_fold_not_bool() Result<Void, String> {
-  expr: AnfExpr = .Let(lid(0), .AUnOp(.Not, .ALitBool(true), .Bool), .Atom(.ALocal(lid(0))))
+  expr: AnfExpr = .Let(
+    lid(0),
+    .AUnOp(.Not, .ALitBool(true), .Bool),
+    .Atom(.ALocal(lid(0))),
+  )
   r := constant_fold(expr)
+
   case r.expr {
     .Let(_, .AInit(.ALitBool(b)), _) => assert.is_false(b),
     _ => .Err("expected folded to false"),
@@ -146,23 +207,28 @@ fn test_fold_not_bool() Result<Void, String> {
 }
 
 // ── constant_fold: non-literal operands unchanged ───────────────────
-
 fn test_fold_non_literal_unchanged() Result<Void, String> {
-  expr: AnfExpr = .Let(lid(0), .ABinOp(.Add, .ALocal(lid(1)), .ALitInt(2), .Int), .Atom(.ALocal(lid(0))))
+  expr: AnfExpr = .Let(
+    lid(0),
+    .ABinOp(.Add, .ALocal(lid(1)), .ALitInt(2), .Int),
+    .Atom(.ALocal(lid(0))),
+  )
   r := constant_fold(expr)
   assert.is_false(r.changed)
 }
 
 // ── branch_simplify ─────────────────────────────────────────────────
-
 fn test_branch_true_selects_then() Result<Void, String> {
   // Let(0, AIf(true, Atom(ALitInt(1)), Atom(ALitInt(2))), Atom(ALocal(0)))
   // → Let(0, AInit(ALitInt(1)), Atom(ALocal(0)))
-  expr: AnfExpr = .Let(lid(0),
+  expr: AnfExpr = .Let(
+    lid(0),
     .AIf(.ALitBool(true), .Atom(.ALitInt(1)), .Atom(.ALitInt(2))),
-    .Atom(.ALocal(lid(0))))
+    .Atom(.ALocal(lid(0))),
+  )
   r := branch_simplify(expr)
   try assert.is_true(r.changed)
+
   case r.expr {
     .Let(_, .AInit(.ALitInt(n)), _) => assert.equal(n, 1),
     _ => .Err("expected simplified to AInit(1)"),
@@ -170,11 +236,14 @@ fn test_branch_true_selects_then() Result<Void, String> {
 }
 
 fn test_branch_false_selects_else() Result<Void, String> {
-  expr: AnfExpr = .Let(lid(0),
+  expr: AnfExpr = .Let(
+    lid(0),
     .AIf(.ALitBool(false), .Atom(.ALitInt(1)), .Atom(.ALitInt(2))),
-    .Atom(.ALocal(lid(0))))
+    .Atom(.ALocal(lid(0))),
+  )
   r := branch_simplify(expr)
   try assert.is_true(r.changed)
+
   case r.expr {
     .Let(_, .AInit(.ALitInt(n)), _) => assert.equal(n, 2),
     _ => .Err("expected simplified to AInit(2)"),
@@ -184,11 +253,14 @@ fn test_branch_false_selects_else() Result<Void, String> {
 fn test_branch_diverging_drops_continuation() Result<Void, String> {
   // Let(0, AIf(false, Return(None), Atom(42)), Atom(ALocal(0)))
   // false → select else = Atom(42) → Let(0, AInit(42), Atom(ALocal(0)))
-  expr: AnfExpr = .Let(lid(0),
+  expr: AnfExpr = .Let(
+    lid(0),
     .AIf(.ALitBool(false), .Return(.None), .Atom(.ALitInt(42))),
-    .Atom(.ALocal(lid(0))))
+    .Atom(.ALocal(lid(0))),
+  )
   r := branch_simplify(expr)
   try assert.is_true(r.changed)
+
   case r.expr {
     .Let(_, .AInit(.ALitInt(n)), _) => assert.equal(n, 42),
     _ => .Err("expected Let(0, AInit(42), ...)"),
@@ -198,11 +270,14 @@ fn test_branch_diverging_drops_continuation() Result<Void, String> {
 fn test_branch_true_diverging_drops_body() Result<Void, String> {
   // Let(0, AIf(true, Return(Some(99)), Atom(42)), Atom(ALocal(0)))
   // true → select then = Return(Some(99)) → continuation is unreachable
-  expr: AnfExpr = .Let(lid(0),
+  expr: AnfExpr = .Let(
+    lid(0),
     .AIf(.ALitBool(true), .Return(.Some(.ALitInt(99))), .Atom(.ALitInt(42))),
-    .Atom(.ALocal(lid(0))))
+    .Atom(.ALocal(lid(0))),
+  )
   r := branch_simplify(expr)
   try assert.is_true(r.changed)
+
   case r.expr {
     .Return(.Some(.ALitInt(n))) => assert.equal(n, 99),
     _ => .Err("expected Return(99)"),
@@ -210,9 +285,11 @@ fn test_branch_true_diverging_drops_body() Result<Void, String> {
 }
 
 fn test_branch_non_literal_cond_unchanged() Result<Void, String> {
-  expr: AnfExpr = .Let(lid(0),
+  expr: AnfExpr = .Let(
+    lid(0),
     .AIf(.ALocal(lid(1)), .Atom(.ALitInt(1)), .Atom(.ALitInt(2))),
-    .Atom(.ALocal(lid(0))))
+    .Atom(.ALocal(lid(0))),
+  )
   r := branch_simplify(expr)
   assert.is_false(r.changed)
 }
@@ -221,13 +298,18 @@ fn test_branch_nested_let_in_branch() Result<Void, String> {
   // Let(0, AIf(true, Let(1, AInit(10), Atom(ALocal(1))), Atom(0)), Atom(ALocal(0)))
   // → splice Let(1, AInit(10), Atom(ALocal(1))) into continuation
   // → Let(1, AInit(10), Let(0, AInit(ALocal(1)), Atom(ALocal(0))))
-  expr: AnfExpr = .Let(lid(0),
-    .AIf(.ALitBool(true),
+  expr: AnfExpr = .Let(
+    lid(0),
+    .AIf(
+      .ALitBool(true),
       .Let(lid(1), .AInit(.ALitInt(10)), .Atom(.ALocal(lid(1)))),
-      .Atom(.ALitInt(0))),
-    .Atom(.ALocal(lid(0))))
+      .Atom(.ALitInt(0)),
+    ),
+    .Atom(.ALocal(lid(0))),
+  )
   r := branch_simplify(expr)
   try assert.is_true(r.changed)
+
   // Should start with Let(1, ...)
   case r.expr {
     .Let(local, _, _) => assert.equal(local.id, 1),
@@ -236,30 +318,38 @@ fn test_branch_nested_let_in_branch() Result<Void, String> {
 }
 
 // ── Suite ───────────────────────────────────────────────────────────
-
 pub fn suite() runner.Suite {
   s := runner.suite("Opt: Const Fold & Branch Simp")
   // constant folding
-  s = s.test("fold: int add", test_fold_int_add)
-  s = s.test("fold: int sub", test_fold_int_sub)
-  s = s.test("fold: int mul", test_fold_int_mul)
-  s = s.test("fold: int div", test_fold_int_div)
-  s = s.test("fold: int div/0 kept", test_fold_int_div_by_zero_kept)
-  s = s.test("fold: int mod/0 kept", test_fold_int_mod_by_zero_kept)
-  s = s.test("fold: int comparison", test_fold_int_comparison)
-  s = s.test("fold: int eq false", test_fold_int_eq_false)
-  s = s.test("fold: float add", test_fold_float_add)
-  s = s.test("fold: bool and", test_fold_bool_and)
-  s = s.test("fold: bool or", test_fold_bool_or)
-  s = s.test("fold: neg int", test_fold_neg_int)
-  s = s.test("fold: not bool", test_fold_not_bool)
-  s = s.test("fold: non-literal unchanged", test_fold_non_literal_unchanged)
+  s = .test("fold: int add", test_fold_int_add)
+  s = .test("fold: int sub", test_fold_int_sub)
+  s = .test("fold: int mul", test_fold_int_mul)
+  s = .test("fold: int div", test_fold_int_div)
+  s = .test("fold: int div/0 kept", test_fold_int_div_by_zero_kept)
+  s = .test("fold: int mod/0 kept", test_fold_int_mod_by_zero_kept)
+  s = .test("fold: int comparison", test_fold_int_comparison)
+  s = .test("fold: int eq false", test_fold_int_eq_false)
+  s = .test("fold: float add", test_fold_float_add)
+  s = .test("fold: bool and", test_fold_bool_and)
+  s = .test("fold: bool or", test_fold_bool_or)
+  s = .test("fold: neg int", test_fold_neg_int)
+  s = .test("fold: not bool", test_fold_not_bool)
+  s = .test("fold: non-literal unchanged", test_fold_non_literal_unchanged)
   // branch simplification
-  s = s.test("branch: true selects then", test_branch_true_selects_then)
-  s = s.test("branch: false selects else", test_branch_false_selects_else)
-  s = s.test("branch: false with diverging then", test_branch_diverging_drops_continuation)
-  s = s.test("branch: true diverging drops body", test_branch_true_diverging_drops_body)
-  s = s.test("branch: non-literal unchanged", test_branch_non_literal_cond_unchanged)
-  s = s.test("branch: nested let in branch", test_branch_nested_let_in_branch)
+  s = .test("branch: true selects then", test_branch_true_selects_then)
+  s = .test("branch: false selects else", test_branch_false_selects_else)
+  s = .test(
+    "branch: false with diverging then",
+    test_branch_diverging_drops_continuation,
+  )
+  s = .test(
+    "branch: true diverging drops body",
+    test_branch_true_diverging_drops_body,
+  )
+  s = .test(
+    "branch: non-literal unchanged",
+    test_branch_non_literal_cond_unchanged,
+  )
+  s = .test("branch: nested let in branch", test_branch_nested_let_in_branch)
   s
 }

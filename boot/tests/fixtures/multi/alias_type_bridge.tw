@@ -1,9 +1,7 @@
-use .alias_type_source.{Diagnostic}
 use .alias_type_source as diag
+use .alias_type_source.{Diagnostic}
 
-pub fn make(message: String) Diagnostic {
-  diag.error(message)
-}
+pub fn make(message: String) Diagnostic { diag.error(message) }
 
 pub fn batch(message: String) Vector<Diagnostic> {
   [diag.error(message)]

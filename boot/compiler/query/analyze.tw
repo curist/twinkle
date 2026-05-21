@@ -3,63 +3,56 @@
 // This is the single recursive module-graph analysis used by both
 // module_compiler (build) and diagnostics (LSP). The build path adds
 // lowering on top; the LSP path wraps with structured diagnostics.
-
-use @std.fs
 use @std.date
+use @std.fs
 use @std.proc
-use lib.module.core_lib
+
 use compiler.base_env.{add_internal_host_builtins}
+use compiler.checker
 use compiler.imports
 use compiler.imports.{DependencyPlan}
-use compiler.resolver.{ResolvedEnv, ModuleExports, TypeEntry, extract_exports_for_module}
-
-use compiler.checker
-use compiler.unused_imports
 use compiler.query.cache
 use compiler.query.fingerprint
 use compiler.query.stage_runner
 use compiler.query.type_registry
+use compiler.resolver.{
+  ModuleExports, ResolvedEnv, TypeEntry, extract_exports_for_module,
+}
+use compiler.unused_imports
+use lib.json
+use lib.module.core_lib
 use lib.query.keys
+use lib.source.diagnostics as diag
 use lib.source.identity
 use lib.source.overlay
 use lib.source.span
 use lib.source.span.{Span}
-use lib.json
-use lib.source.diagnostics as diag
 
 // ── Types ───────────────────────────────────────────────────────────
-
 /// A diagnostic emitted during analysis, tagged with module identity.
 pub type AnalysisDiag = .{
   identity: identity.SourceIdentity,
   version: Int?,
   kind: diag.DiagKind,
   stage: String,
-  /// Optional data payload for LSP roundtripping (e.g., unused import edits).
   data: json.Json?,
-  /// Snapshot of TypeId → display name at diagnostic creation time.
-  /// Ensures diagnostics render source-level type names even when the
-  /// rendering environment differs from the producing environment.
   type_names: Dict<Int, String>,
 }
 
-pub fn empty_type_names() Dict<Int, String> {
-  Dict.new()
-}
+pub fn empty_type_names() Dict<Int, String> { Dict.new() }
 
 pub fn type_name_snapshot(env: ResolvedEnv) Dict<Int, String> {
   names: Dict<Int, String> = Dict.new()
+
   for i in range(env.types.len()) {
     names[env.types[i].id.id] = env.type_names[i]
   }
+
   names
 }
 
 /// A type entry bundled with its name, stored together to prevent index drift.
-pub type SharedTypeEntry = .{
-  entry: TypeEntry,
-  name: String,
-}
+pub type SharedTypeEntry = .{ entry: TypeEntry, name: String }
 
 /// Accumulated state during recursive module-graph analysis.
 pub type FrontendTimings = .{
@@ -106,7 +99,6 @@ pub type AnalysisState = .{
   shared_types: Vector<SharedTypeEntry>,
   shared_type_origins: Dict<Int, String>,
   module_order: Vector<String>,
-  // Stage runners per module, preserved for downstream lowering.
   module_runners: Dict<String, stage_runner.Runner>,
   timed: Bool,
   timings: FrontendTimings,
@@ -142,10 +134,7 @@ type AnalysisError = .{
   diagnostics: Vector<AnalysisDiag>,
 }
 
-type ParseLoad = .{
-  state: AnalysisState,
-  parsed: cache.ParsedModule,
-}
+type ParseLoad = .{ state: AnalysisState, parsed: cache.ParsedModule }
 
 type DependencyAnalysis = .{
   env: ResolvedEnv,
@@ -154,18 +143,11 @@ type DependencyAnalysis = .{
   ok: Bool,
 }
 
-type DependencyHashes = .{
-  deps_hash: Int,
-  context_hash: Int,
-}
+type DependencyHashes = .{ deps_hash: Int, context_hash: Int }
 
-type LocalCheck = .{
-  state: AnalysisState,
-  checked: checker.CheckResult,
-}
+type LocalCheck = .{ state: AnalysisState, checked: checker.CheckResult }
 
 // ── Public API ──────────────────────────────────────────────────────
-
 /// Create a fresh analysis state.
 /// `base` provides the initial type vectors (from builtin_env).
 pub fn empty_timings() FrontendTimings {
@@ -198,12 +180,21 @@ pub fn empty_counts() FrontendCounts {
   }
 }
 
-pub fn new_state(base: ResolvedEnv, store: cache.Store, ov: overlay.Overlay, project_root: String) AnalysisState {
+pub fn new_state(
+  base: ResolvedEnv,
+  store: cache.Store,
+  ov: overlay.Overlay,
+  project_root: String,
+) AnalysisState {
   // Bundle base types and names into SharedTypeEntry pairs.
   initial_shared: Vector<SharedTypeEntry> = []
+
   for i in 0..base.types.len() {
-    initial_shared = .append(.{ entry: base.types[i], name: base.type_names[i] })
+    initial_shared = .append(
+      .{ entry: base.types[i], name: base.type_names[i] },
+    )
   }
+
   .{
     cache: store,
     overlay: ov,
@@ -215,7 +206,10 @@ pub fn new_state(base: ResolvedEnv, store: cache.Store, ov: overlay.Overlay, pro
     shared_type_origins: base.type_origins,
     module_order: [],
     module_runners: Dict.new(),
-    timed: case proc.env("TWINKLE_TIMINGS") { .Some(_) => true, .None => false },
+    timed: case proc.env("TWINKLE_TIMINGS") {
+      .Some(_) => true,
+      .None => false,
+    },
     timings: empty_timings(),
     counts: empty_counts(),
     import_timings: [],
@@ -250,83 +244,189 @@ fn analyze_module_impl(
 
   // Already analyzed? Return cached exports.
   case state.exports[canonical] {
-    .Some(_) => { return .{ env: base, state, diagnostics: [], ok: true } },
+    .Some(_) => {
+      return .{ env: base, state, diagnostics: [], ok: true }
+    },
     .None => {},
   }
 
   // Circular import detection — report at the triggering `use` statement in
   // the calling module when caller context is available.
   if stack.contains(canonical) {
-    err_id := case caller_id { .Some(cid) => cid, .None => module_id }
-    err_span := case use_span { .Some(s) => s, .None => span.new(0, 0, 0) }
-    d := synthetic_diag(err_id, .None, err_span, "import", "Circular import detected: '${canonical}' is already being analyzed")
+    err_id := case caller_id {
+      .Some(cid) => cid,
+      .None => module_id,
+    }
+    err_span := case use_span {
+      .Some(s) => s,
+      .None => span.new(0, 0, 0),
+    }
+    d := synthetic_diag(
+      err_id,
+      .None,
+      err_span,
+      "import",
+      "Circular import detected: '${canonical}' is already being analyzed",
+    )
+
     return .{ env: base, state, diagnostics: [d], ok: false }
   }
 
   t_load0 := date.now()
   loaded := case load_source(state, canonical, module_id, caller_id, use_span) {
     .Ok(value) => value,
-    .Err(err) => { return .{ env: base, state: err.state, diagnostics: err.diagnostics, ok: false } },
+    .Err(err) => {
+      return .{
+        env: base,
+        state: err.state,
+        diagnostics: err.diagnostics,
+        ok: false,
+      }
+    },
   }
-  if loaded.state.timed { loaded.state.timings.load_source = loaded.state.timings.load_source + (date.now() - t_load0) }
+
+  if loaded.state.timed {
+    loaded.state.timings.load_source = loaded.state.timings.load_source
+    + (date.now() - t_load0)
+  }
 
   t_parse0 := date.now()
-  parsed_load := case parse_cached(loaded.state, canonical, loaded.source, loaded.source_hash) {
+  parsed_load := case parse_cached(
+    loaded.state,
+    canonical,
+    loaded.source,
+    loaded.source_hash,
+  ) {
     .Ok(value) => value,
-    .Err(err) => { return .{ env: base, state: err.state, diagnostics: err.diagnostics, ok: false } },
+    .Err(err) => {
+      return .{
+        env: base,
+        state: err.state,
+        diagnostics: err.diagnostics,
+        ok: false,
+      }
+    },
   }
-  if parsed_load.state.timed { parsed_load.state.timings.parse = parsed_load.state.timings.parse + (date.now() - t_parse0) }
+
+  if parsed_load.state.timed {
+    parsed_load.state.timings.parse = parsed_load.state.timings.parse
+    + (date.now() - t_parse0)
+  }
 
   t_plan0 := date.now()
-  dep_plan := case plan_dependencies(parsed_load.state, canonical, parsed_load.parsed, loaded.source) {
+  dep_plan := case plan_dependencies(
+    parsed_load.state,
+    canonical,
+    parsed_load.parsed,
+    loaded.source,
+  ) {
     .Ok(plan) => plan,
-    .Err(err) => { return .{ env: base, state: err.state, diagnostics: err.diagnostics, ok: false } },
+    .Err(err) => {
+      return .{
+        env: base,
+        state: err.state,
+        diagnostics: err.diagnostics,
+        ok: false,
+      }
+    },
   }
-  if parsed_load.state.timed { parsed_load.state.timings.plan_deps = parsed_load.state.timings.plan_deps + (date.now() - t_plan0) }
 
-  deps := analyze_dependencies(base, parsed_load.state, canonical, dep_plan, stack.append(canonical))
+  if parsed_load.state.timed {
+    parsed_load.state.timings.plan_deps = parsed_load.state.timings.plan_deps
+    + (date.now() - t_plan0)
+  }
+
+  deps := analyze_dependencies(
+    base,
+    parsed_load.state,
+    canonical,
+    dep_plan,
+    stack.append(canonical),
+  )
+
   if !deps.ok {
-    return .{ env: deps.env, state: deps.state, diagnostics: deps.diagnostics, ok: false }
+    return .{
+      env: deps.env,
+      state: deps.state,
+      diagnostics: deps.diagnostics,
+      ok: false,
+    }
   }
-  cur := deps.state
 
+  cur := deps.state
   t_hash0 := date.now()
   hashes := dependency_hashes(cur.cache, dep_plan)
-  if cur.timed { cur.timings.dep_hashes = cur.timings.dep_hashes + (date.now() - t_hash0) }
-  runner := stage_runner.new(canonical, loaded.source_hash, hashes.deps_hash, hashes.context_hash, dep_plan.is_internal)
+
+  if cur.timed {
+    cur.timings.dep_hashes = cur.timings.dep_hashes + (date.now() - t_hash0)
+  }
+
+  runner := stage_runner.new(
+    canonical,
+    loaded.source_hash,
+    hashes.deps_hash,
+    hashes.context_hash,
+    dep_plan.is_internal,
+  )
   cur.module_runners[canonical] = runner
   env := deps.env
-  if dep_plan.is_internal {
-    env = add_internal_host_builtins(env)
-  }
+
+  if dep_plan.is_internal { env = add_internal_host_builtins(env) }
+
   local_type_start := env.types.len()
-
-  local := case resolve_and_check_local(cur, canonical, runner, parsed_load.parsed, env, loaded.source, deps.diagnostics) {
+  local := case resolve_and_check_local(
+    cur,
+    canonical,
+    runner,
+    parsed_load.parsed,
+    env,
+    loaded.source,
+    deps.diagnostics,
+  ) {
     .Ok(value) => value,
-    .Err(err) => { return .{ env, state: err.state, diagnostics: err.diagnostics, ok: false } },
+    .Err(err) => {
+      return .{ env, state: err.state, diagnostics: err.diagnostics, ok: false }
+    },
   }
-
   t_publish0 := date.now()
-  cur = publish_interface(local.state, canonical, parsed_load.parsed, local.checked, local_type_start, loaded.source_hash, hashes.deps_hash)
-  if cur.timed { cur.timings.publish = cur.timings.publish + (date.now() - t_publish0) }
+  cur = publish_interface(
+    local.state,
+    canonical,
+    parsed_load.parsed,
+    local.checked,
+    local_type_start,
+    loaded.source_hash,
+    hashes.deps_hash,
+  )
+
+  if cur.timed {
+    cur.timings.publish = cur.timings.publish + (date.now() - t_publish0)
+  }
 
   // Emit unused import warnings for non-internal modules
   all_diags := deps.diagnostics
   t_unused0 := date.now()
+
   if !dep_plan.is_internal {
-    import_result := unused_imports.check_unused_imports(parsed_load.parsed.module)
+    import_result := unused_imports.check_unused_imports(
+      parsed_load.parsed.module,
+    )
+
     if import_result.items.len() > 0 {
       warn_diags := convert_unused_import_diags(loaded.source, import_result)
       all_diags = .concat(warn_diags)
     }
   }
-  if cur.timed { cur.timings.unused_imports = cur.timings.unused_imports + (date.now() - t_unused0) }
+
+  if cur.timed {
+    cur.timings.unused_imports = cur.timings.unused_imports
+    + (date.now() - t_unused0)
+  }
 
   .{ env: local.checked.env, state: cur, diagnostics: all_diags, ok: true }
 }
 
 // ── Analysis helpers ────────────────────────────────────────────────
-
 fn load_source(
   state: AnalysisState,
   canonical: String,
@@ -338,9 +438,16 @@ fn load_source(
     .Ok(found) => found,
     .Err(err) => {
       state.cache = cache.clear_module(state.cache, canonical)
-      err_id := case caller_id { .Some(cid) => cid, .None => module_id }
-      err_span := case use_span { .Some(s) => s, .None => span.new(0, 0, 0) }
+      err_id := case caller_id {
+        .Some(cid) => cid,
+        .None => module_id,
+      }
+      err_span := case use_span {
+        .Some(s) => s,
+        .None => span.new(0, 0, 0),
+      }
       d := synthetic_diag(err_id, .None, err_span, "source", err)
+
       return .Err(.{ state, diagnostics: [d] })
     },
   }
@@ -359,10 +466,13 @@ fn parse_cached(
   parsed_out := stage_runner.parse(parse_runner, state.cache, source.text, 0)
   state.cache = parsed_out.store
   parsed := parsed_out.value
+
   if parsed.diagnostics.len() > 0 {
     diags := wrap_diags(source, "parse", parsed.diagnostics, empty_type_names())
+
     return .Err(.{ state, diagnostics: diags })
   }
+
   .Ok(.{ state, parsed })
 }
 
@@ -372,14 +482,29 @@ fn plan_dependencies(
   parsed: cache.ParsedModule,
   source: overlay.SourceText,
 ) DependencyPlan!AnalysisError {
-  dep_plan := case imports.plan_dependencies_with_exists(parsed.module, canonical, state.project_root, fn(path_str: String) Bool {
-    dep_id := identity.from_path(imports.canonical_module_path(path_str, state.canonical_roots))
-    state.overlay.documents.has(dep_id.path) or core_lib.exists(dep_id.path) or fs.exists(dep_id.path)
-  }) {
+  dep_plan := case imports.plan_dependencies_with_exists(
+    parsed.module,
+    canonical,
+    state.project_root,
+    fn(path_str: String) Bool {
+      dep_id := identity.from_path(
+        imports.canonical_module_path(path_str, state.canonical_roots),
+      )
+      state.overlay.documents.has(dep_id.path) or core_lib.exists(dep_id.path)
+      or fs.exists(dep_id.path)
+    },
+  ) {
     .Ok(plan) => plan,
     .Err(err) => {
       state.cache = cache.clear_resolved_and_later(state.cache, canonical)
-      d := synthetic_diag(source.identity, source.version, err.span, "import", err.message)
+      d := synthetic_diag(
+        source.identity,
+        source.version,
+        err.span,
+        "import",
+        err.message,
+      )
+
       return .Err(.{ state, diagnostics: [d] })
     },
   }
@@ -396,23 +521,42 @@ fn analyze_dependencies(
   t_env0 := date.now()
   env := extend_env_from_shared(base, state)
   cur := state
-  if cur.timed { cur.timings.env_extend = cur.timings.env_extend + (date.now() - t_env0) }
+
+  if cur.timed {
+    cur.timings.env_extend = cur.timings.env_extend + (date.now() - t_env0)
+  }
+
   // Track how far dep_base has been extended to avoid re-extending from scratch.
   dep_base := env
   dep_base_upto := cur.shared_types.len()
   all_diags: Vector<AnalysisDiag> = []
   deps_ok := true
   caller_id := identity.from_path(canonical)
+
   for dep in dep_plan.dependencies {
     dep_id := identity.from_path(dep.canonical_path)
     shared_type_start := cur.shared_types.len()
     t_dep_extend0 := date.now()
     dep_base = extend_new_shared_types_from(dep_base, cur, dep_base_upto)
     dep_base_upto = cur.shared_types.len()
-    if cur.timed { cur.timings.env_extend = cur.timings.env_extend + (date.now() - t_dep_extend0) }
-    dep_result := analyze_module_impl(dep_id, dep.alias, dep_base, cur, stack, .Some(caller_id), .Some(dep.span))
+
+    if cur.timed {
+      cur.timings.env_extend = cur.timings.env_extend
+      + (date.now() - t_dep_extend0)
+    }
+
+    dep_result := analyze_module_impl(
+      dep_id,
+      dep.alias,
+      dep_base,
+      cur,
+      stack,
+      .Some(caller_id),
+      .Some(dep.span),
+    )
     cur = dep_result.state
     all_diags = .concat(dep_result.diagnostics)
+
     if !dep_result.ok {
       deps_ok = false
       continue
@@ -421,7 +565,12 @@ fn analyze_dependencies(
     t_import0 := date.now()
     t_import_extend0 := date.now()
     env = extend_new_shared_types_from(env, cur, shared_type_start)
-    if cur.timed { cur.timings.import_extend = cur.timings.import_extend + (date.now() - t_import_extend0) }
+
+    if cur.timed {
+      cur.timings.import_extend = cur.timings.import_extend
+      + (date.now() - t_import_extend0)
+    }
+
     t_lookup0 := date.now()
     dep_interface := case cur.interfaces[dep.canonical_path] {
       .Some(interface) => interface,
@@ -430,22 +579,37 @@ fn analyze_dependencies(
         continue
       },
     }
-    if cur.timed { cur.timings.import_lookup = cur.timings.import_lookup + (date.now() - t_lookup0) }
-    export_entries := dep_interface.exports.visible_types.len() + dep_interface.exports.support_types.len() + dep_interface.exports.functions.len() + dep_interface.exports.support_functions.len() + dep_interface.exports.values.len()
+
+    if cur.timed {
+      cur.timings.import_lookup = cur.timings.import_lookup
+      + (date.now() - t_lookup0)
+    }
+
+    export_entries := dep_interface.exports.visible_types.len()
+    + dep_interface.exports.support_types.len()
+    + dep_interface.exports.functions.len()
+    + dep_interface.exports.support_functions.len()
+    + dep_interface.exports.values.len()
+
     if cur.timed {
       cur.counts.import_edges = cur.counts.import_edges + 1
-      cur.counts.import_export_entries = cur.counts.import_export_entries + export_entries
+      cur.counts.import_export_entries = cur.counts.import_export_entries
+      + export_entries
     }
+
     t_merge_kind0 := date.now()
     env = merge_import_interface(env, dep, dep_interface)
+
     if cur.timed {
       dt := date.now() - t_merge_kind0
       kind_name := ""
+
       case dep.kind {
         .Import => case dep.items {
           .Some(_) => {
             cur.timings.import_selective = cur.timings.import_selective + dt
-            cur.counts.import_selective_edges = cur.counts.import_selective_edges + 1
+            cur.counts.import_selective_edges = cur.counts.import_selective_edges
+            + 1
             kind_name = "selective"
           },
           .None => {
@@ -460,19 +624,35 @@ fn analyze_dependencies(
           kind_name = "prelude"
         },
       }
-      cur.import_timings = .append(.{ ms: dt, kind: kind_name, importer: canonical, dependency: dep.canonical_path, export_entries })
-      cur.timings.import_merge = cur.timings.import_merge + (date.now() - t_import0)
+
+      cur.import_timings = cur.import_timings.append(.{
+        ms: dt,
+        kind: kind_name,
+        importer: canonical,
+        dependency: dep.canonical_path,
+        export_entries,
+      })
+      cur.timings.import_merge = cur.timings.import_merge
+      + (date.now() - t_import0)
     }
   }
-  cur.cache = cache.set_dependencies(cur.cache, canonical, collect dep in dep_plan.dependencies { dep.canonical_path })
+
+  cur.cache = cache.set_dependencies(
+    cur.cache,
+    canonical,
+    collect dep in dep_plan.dependencies { dep.canonical_path },
+  )
+
   if !deps_ok {
     cur.cache = cache.clear_resolved_and_later(cur.cache, canonical)
   }
+
   .{ env, state: cur, diagnostics: all_diags, ok: deps_ok }
 }
 
 fn dependency_hashes(store: cache.Store, dep_plan: imports.DependencyPlan) DependencyHashes {
   dep_hash_entries: Vector<keys.DepEntry> = []
+
   for dep in dep_plan.dependencies {
     dep_hash := case cache.exports_fingerprint(store, dep.canonical_path) {
       .Some(fp) => fp,
@@ -483,7 +663,11 @@ fn dependency_hashes(store: cache.Store, dep_plan: imports.DependencyPlan) Depen
     }
     dep_hash_entries = .append(.{ path: dep.canonical_path, hash: dep_hash })
   }
-  .{ deps_hash: keys.deps_hash(dep_hash_entries), context_hash: keys.context_hash(dep_hash_entries) }
+
+  .{
+    deps_hash: keys.deps_hash(dep_hash_entries),
+    context_hash: keys.context_hash(dep_hash_entries),
+  }
 }
 
 fn resolve_and_check_local(
@@ -498,22 +682,44 @@ fn resolve_and_check_local(
   t_resolve0 := date.now()
   resolved_out := stage_runner.resolve(runner, state.cache, parsed, env)
   state.cache = resolved_out.store
-  if state.timed { state.timings.resolve = state.timings.resolve + (date.now() - t_resolve0) }
+
+  if state.timed {
+    state.timings.resolve = state.timings.resolve + (date.now() - t_resolve0)
+  }
+
   resolved := resolved_out.value
+
   if resolved.diagnostics.len() > 0 {
     state.cache = cache.clear_typed_and_later(state.cache, canonical)
-    diags := wrap_diags(source, "resolve", resolved.diagnostics, type_name_snapshot(resolved.env))
+    diags := wrap_diags(
+      source,
+      "resolve",
+      resolved.diagnostics,
+      type_name_snapshot(resolved.env),
+    )
+
     return .Err(.{ state, diagnostics: prior_diagnostics.concat(diags) })
   }
 
   t_check0 := date.now()
   checked_out := stage_runner.typecheck(runner, state.cache, parsed, resolved)
   state.cache = checked_out.store
-  if state.timed { state.timings.typecheck = state.timings.typecheck + (date.now() - t_check0) }
+
+  if state.timed {
+    state.timings.typecheck = state.timings.typecheck + (date.now() - t_check0)
+  }
+
   checked := checked_out.value
+
   if checked.diagnostics.len() > 0 {
     state.cache = cache.clear_lowered_and_hash(state.cache, canonical)
-    diags := wrap_diags(source, "check", checked.diagnostics, type_name_snapshot(checked.env))
+    diags := wrap_diags(
+      source,
+      "check",
+      checked.diagnostics,
+      type_name_snapshot(checked.env),
+    )
+
     return .Err(.{ state, diagnostics: prior_diagnostics.concat(diags) })
   }
 
@@ -530,33 +736,73 @@ fn publish_interface(
   deps_hash: Int,
 ) AnalysisState {
   cur := capture_local_types(state, checked.env, canonical, local_type_start)
-  exports := extract_exports_for_module(checked.env, parsed.module, canonical, checked.pub_values)
-  interface := make_module_interface(canonical, exports, cur.shared_type_origins)
+  exports := extract_exports_for_module(
+    checked.env,
+    parsed.module,
+    canonical,
+    checked.pub_values,
+  )
+  interface := make_module_interface(
+    canonical,
+    exports,
+    cur.shared_type_origins,
+  )
   cur.exports[canonical] = exports
   cur.interfaces[canonical] = interface
-  cur.cache = cache.set_exports_fingerprint(cur.cache, canonical, interface.fingerprint)
-  cur.cache = cache.set_module_hash(cur.cache, canonical, keys.module_hash(source_hash, deps_hash))
-  cur.module_order = .append(canonical)
+  cur.cache = cache.set_exports_fingerprint(
+    cur.cache,
+    canonical,
+    interface.fingerprint,
+  )
+  cur.cache = cache.set_module_hash(
+    cur.cache,
+    canonical,
+    keys.module_hash(source_hash, deps_hash),
+  )
+  cur.module_order = cur.module_order.append(canonical)
   cur
 }
 
-fn merge_import_interface(env: ResolvedEnv, dep: imports.PlannedDep, interface: ModuleInterface) ResolvedEnv {
+fn merge_import_interface(
+  env: ResolvedEnv,
+  dep: imports.PlannedDep,
+  interface: ModuleInterface,
+) ResolvedEnv {
   case dep.kind {
     .Import => {
       case dep.items {
-        .Some(items) => env.merge_selective_imports(dep.alias, interface.path, interface.exports, items),
-        .None => env.merge_module_exports(dep.alias, interface.path, interface.exports),
+        .Some(items) => env.merge_selective_imports(
+          dep.alias,
+          interface.path,
+          interface.exports,
+          items,
+        ),
+        .None => env.merge_module_exports(
+          dep.alias,
+          interface.path,
+          interface.exports,
+        ),
       }
     },
-    .Prelude => env.merge_prelude_exports(dep.alias, interface.path, interface.exports),
+    .Prelude => env.merge_prelude_exports(
+      dep.alias,
+      interface.path,
+      interface.exports,
+    ),
   }
 }
 
-fn make_module_interface(canonical: String, exports: ModuleExports, shared_type_origins: Dict<Int, String>) ModuleInterface {
+fn make_module_interface(
+  canonical: String,
+  exports: ModuleExports,
+  shared_type_origins: Dict<Int, String>,
+) ModuleInterface {
   type_ids: Vector<Int> = []
   type_origins: Dict<Int, String> = Dict.new()
+
   for t in exports.visible_types {
     type_ids = .append(t.entry.id.id)
+
     case t.origin {
       .Some(origin) => type_origins[t.entry.id.id] = origin,
       .None => case shared_type_origins[t.entry.id.id] {
@@ -565,8 +811,10 @@ fn make_module_interface(canonical: String, exports: ModuleExports, shared_type_
       },
     }
   }
+
   for t in exports.support_types {
     type_ids = .append(t.entry.id.id)
+
     case t.origin {
       .Some(origin) => type_origins[t.entry.id.id] = origin,
       .None => case shared_type_origins[t.entry.id.id] {
@@ -577,12 +825,10 @@ fn make_module_interface(canonical: String, exports: ModuleExports, shared_type_
   }
 
   function_names: Vector<String> = []
-  for f in exports.functions {
-    function_names = .append(f.name)
-  }
-  for f in exports.support_functions {
-    function_names = .append(f.name)
-  }
+
+  for f in exports.functions { function_names = .append(f.name) }
+
+  for f in exports.support_functions { function_names = .append(f.name) }
 
   .{
     path: canonical,
@@ -594,20 +840,30 @@ fn make_module_interface(canonical: String, exports: ModuleExports, shared_type_
   }
 }
 
-fn extend_new_shared_types_from(env: ResolvedEnv, state: AnalysisState, shared_type_start: Int) ResolvedEnv {
-  if state.shared_types.len() <= shared_type_start { return env }
+fn extend_new_shared_types_from(
+  env: ResolvedEnv,
+  state: AnalysisState,
+  shared_type_start: Int,
+) ResolvedEnv {
+  if state.shared_types.len() <= shared_type_start {
+    return env
+  }
+
   new_types: Vector<TypeEntry> = []
   new_names: Vector<String> = []
   new_origins: Dict<Int, String> = Dict.new()
+
   for i in shared_type_start..state.shared_types.len() {
     shared := state.shared_types[i]
     new_types = .append(shared.entry)
     new_names = .append(shared.name)
+
     case state.shared_type_origins[shared.entry.id.id] {
       .Some(origin) => new_origins[shared.entry.id.id] = origin,
       .None => {},
     }
   }
+
   env.extend_types_from(new_types, new_names, new_origins)
 }
 
@@ -615,27 +871,38 @@ fn extend_new_shared_types_from(env: ResolvedEnv, state: AnalysisState, shared_t
 fn extend_env_from_shared(base: ResolvedEnv, state: AnalysisState) ResolvedEnv {
   types: Vector<TypeEntry> = []
   names: Vector<String> = []
+
   for shared in state.shared_types {
     types = .append(shared.entry)
     names = .append(shared.name)
   }
+
   base.extend_types_from(types, names, state.shared_type_origins)
 }
 
 // ── Type accumulation ────────────────────────────────────────────────
+fn capture_local_types(
+  state: AnalysisState,
+  env: ResolvedEnv,
+  canonical: String,
+  local_type_start: Int,
+) AnalysisState {
+  if env.types.len() <= local_type_start {
+    return state
+  }
 
-fn capture_local_types(state: AnalysisState, env: ResolvedEnv, canonical: String, local_type_start: Int) AnalysisState {
-  if env.types.len() <= local_type_start { return state }
   reg := state.cache.type_registry
+
   for i in local_type_start..env.types.len() {
     entry := env.types[i]
     name := env.type_names[i]
-    state.shared_types = .append(.{ entry, name })
+    state.shared_types = state.shared_types.append(.{ entry, name })
     // Record the assignment for future stable TypeId enforcement (Phase 4).
     // The returned out.id is not yet used — TypeIds still come from the
     // resolver/checker's sequential allocation.
     out := type_registry.assign(reg, canonical, name)
     reg = out.registry
+
     case env.type_origins[entry.id.id] {
       .Some(origin) => {
         if !state.shared_type_origins.has(entry.id.id) {
@@ -647,15 +914,30 @@ fn capture_local_types(state: AnalysisState, env: ResolvedEnv, canonical: String
       },
     }
   }
+
   state.cache.type_registry = reg
   state
 }
 
 // ── Helpers ─────────────────────────────────────────────────────────
-
-fn synthetic_diag(id: identity.SourceIdentity, version: Int?, diag_span: Span, stage: String, message: String) AnalysisDiag {
-  kind: diag.DiagKind = .Error(.ParseError(.{ span: diag_span, message, help_lines: [] }))
-  .{ identity: id, version, kind, stage, data: .None, type_names: empty_type_names() }
+fn synthetic_diag(
+  id: identity.SourceIdentity,
+  version: Int?,
+  diag_span: Span,
+  stage: String,
+  message: String,
+) AnalysisDiag {
+  kind: diag.DiagKind = .Error(
+    .ParseError(.{ span: diag_span, message, help_lines: [] }),
+  )
+  .{
+    identity: id,
+    version,
+    kind,
+    stage,
+    data: .None,
+    type_names: empty_type_names(),
+  }
 }
 
 fn convert_unused_import_diags(

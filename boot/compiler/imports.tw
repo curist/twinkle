@@ -5,18 +5,17 @@
 // (explicit imports + auto-injected prelude modules).
 //
 // Reference: src/module/planner.rs
-
 use @std.fs
 use @std.path
-use lib.module.loader
+
 use lib.module.core_lib
+use lib.module.loader
 use lib.source.span
 use lib.source.span.{Span}
-use .ast.{Module, UseDecl, ImportItem}
 
+use .ast.{ImportItem, Module, UseDecl}
 
 // ── Types ───────────────────────────────────────────────────────────
-
 pub type DependencyKind = { Import, Prelude }
 
 pub type PlannedDep = .{
@@ -24,38 +23,38 @@ pub type PlannedDep = .{
   alias: String,
   kind: DependencyKind,
   items: Vector<ImportItem>?,
-  /// Span of the `use` statement that introduced this dependency.
-  /// Zero span for auto-injected prelude modules.
   span: Span,
 }
 
 /// Error returned when a `use` statement cannot be resolved to a file.
-pub type ImportError = .{
-  message: String,
-  span: Span,
-}
+pub type ImportError = .{ message: String, span: Span }
 
 pub type DependencyPlan = .{
   dependencies: Vector<PlannedDep>,
   is_internal: Bool,
 }
 
-pub type CanonicalRoots = .{
-  prelude_root: String,
-  stdlib_root: String,
-}
+pub type CanonicalRoots = .{ prelude_root: String, stdlib_root: String }
 
 // ── Public API ──────────────────────────────────────────────────────
-
 /// Scan a module's imports and produce a dependency plan.
 ///
 /// Returns dependencies in source order (explicit imports first),
 /// then auto-injected prelude modules (sorted, deduplicated).
 /// Internal modules (stdlib/prelude) skip prelude injection.
-pub fn plan_dependencies(module: Module, file_path: String, project_root: String) Result<DependencyPlan, ImportError> {
-  plan_dependencies_with_exists(module, file_path, project_root, fn(path_str: String) Bool {
-    core_lib.exists(path_str) or fs.exists(path_str)
-  })
+pub fn plan_dependencies(
+  module: Module,
+  file_path: String,
+  project_root: String,
+) Result<DependencyPlan, ImportError> {
+  plan_dependencies_with_exists(
+    module,
+    file_path,
+    project_root,
+    fn(path_str: String) Bool {
+      core_lib.exists(path_str) or fs.exists(path_str)
+    },
+  )
 }
 
 pub fn plan_dependencies_with_exists(
@@ -68,7 +67,6 @@ pub fn plan_dependencies_with_exists(
   stdlib_root := loader.resolve_stdlib_root()
   prelude_root := loader.resolve_prelude_root()
   import_root := project_root
-
   deps: Vector<PlannedDep> = []
   canonical_paths: Vector<String> = []
 
@@ -76,20 +74,33 @@ pub fn plan_dependencies_with_exists(
   for item in module.items {
     case item {
       .Use(decl) => {
-        dep_path := canonical_module_path(resolve_import_path(decl, file_path, import_root, stdlib_root), roots)
+        dep_path := canonical_module_path(
+          resolve_import_path(decl, file_path, import_root, stdlib_root),
+          roots,
+        )
+
         if !exists(dep_path) {
           label := format_import_path(decl)
-          return .Err(ImportError.{ message: "Cannot resolve module '${label}': expected file '${dep_path}'", span: decl.span })
+
+          return .Err(
+            ImportError.{
+              message: "Cannot resolve module '${label}': expected file '${dep_path}'",
+              span: decl.span,
+            },
+          )
         }
+
         alias := module_alias(decl)
         canonical_paths = .append(dep_path)
-        deps = .append(.{
-          canonical_path: dep_path,
-          alias,
-          kind: .Import,
-          items: decl.items,
-          span: decl.span,
-        })
+        deps = .append(
+          .{
+            canonical_path: dep_path,
+            alias,
+            kind: .Import,
+            items: decl.items,
+            span: decl.span,
+          },
+        )
       },
       _ => {},
     }
@@ -99,26 +110,32 @@ pub fn plan_dependencies_with_exists(
   norm_file := canonical_module_path(file_path, roots)
   norm_stdlib := canonical_module_path(stdlib_root, roots)
   norm_prelude := canonical_module_path(prelude_root, roots)
-  is_internal := norm_file.starts_with(norm_stdlib) or norm_file.starts_with(norm_prelude)
+  is_internal := norm_file.starts_with(norm_stdlib)
+  or norm_file.starts_with(norm_prelude)
 
   // Auto-inject prelude modules for non-internal files
   if !is_internal {
     prelude_modules := loader.list_prelude_modules(prelude_root)
+
     for prelude_path in prelude_modules {
       canonical_prelude := canonical_module_path(prelude_path, roots)
+
       // Skip if already explicitly imported
       if canonical_paths.contains(canonical_prelude) { continue }
+
       if !exists(canonical_prelude) { continue }
 
       stem := path.stem(canonical_prelude)
       canonical_paths = .append(canonical_prelude)
-      deps = .append(.{
-        canonical_path: canonical_prelude,
-        alias: "__prelude_${stem}",
-        kind: .Prelude,
-        items: .None,
-        span: span.new(0, 0, 0),
-      })
+      deps = .append(
+        .{
+          canonical_path: canonical_prelude,
+          alias: "__prelude_${stem}",
+          kind: .Prelude,
+          items: .None,
+          span: span.new(0, 0, 0),
+        },
+      )
     }
   }
 
@@ -132,16 +149,18 @@ pub fn make_canonical_roots(project_root: String) CanonicalRoots {
 }
 
 // ── Helpers ─────────────────────────────────────────────────────────
-
 /// Resolve a UseDecl to a file path based on its kind.
-fn resolve_import_path(decl: UseDecl, importing_file: String, import_root: String, stdlib_root: String) String {
+fn resolve_import_path(
+  decl: UseDecl,
+  importing_file: String,
+  import_root: String,
+  stdlib_root: String,
+) String {
   if decl.is_stdlib {
     loader.resolve_stdlib_module_path(stdlib_root, decl.path)
   } else if decl.is_relative {
     loader.resolve_relative_module_path(importing_file, decl.path)
-  } else {
-    loader.resolve_module_path(import_root, decl.path)
-  }
+  } else { loader.resolve_module_path(import_root, decl.path) }
 }
 
 pub fn canonical_module_path(path_str: String, roots: CanonicalRoots) String {
@@ -151,9 +170,7 @@ pub fn canonical_module_path(path_str: String, roots: CanonicalRoots) String {
 /// Compute the effective module alias from a UseDecl.
 /// Uses explicit `as alias` if present, otherwise the last path segment.
 fn module_alias(decl: UseDecl) String {
-  fallback := if decl.path.len() > 0 {
-    decl.path[decl.path.len() - 1]
-  } else {
+  fallback := if decl.path.len() > 0 { decl.path[decl.path.len() - 1] } else {
     ""
   }
   decl.alias.unwrap_or(fallback)
@@ -162,6 +179,7 @@ fn module_alias(decl: UseDecl) String {
 /// Format an import path for error messages.
 fn format_import_path(decl: UseDecl) String {
   joined := decl.path.join(".")
+
   if decl.is_stdlib {
     "@${joined}"
   } else if decl.is_relative {

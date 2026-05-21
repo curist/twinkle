@@ -1,18 +1,16 @@
-use tests.runner
-use tests.assert
-use lib.source.span
-use lib.source.span.{Span}
+use compiler.mono_type.{MonoType}
+use compiler.query.diag_render
+use compiler.query.diag_render.{RenderCtx}
 use lib.source.diagnostics as diag
 use lib.source.diagnostics.{DiagKind}
 use lib.source.registry
 use lib.source.report.{RenderConfig}
-use compiler.query.diag_render
-use compiler.query.diag_render.{RenderCtx}
-use compiler.mono_type.{MonoType}
+use lib.source.span
+use lib.source.span.{Span}
+use tests.assert
+use tests.runner
 
-fn s(start: Int, end: Int) Span {
-  span.new(0, start, end)
-}
+fn s(start: Int, end: Int) Span { span.new(0, start, end) }
 
 fn ctx() RenderCtx {
   RenderCtx.{
@@ -25,43 +23,49 @@ fn ctx() RenderCtx {
 }
 
 pub fn suite() runner.Suite {
-  runner.suite("diag_render")
-
-    // ── TypeMismatch ──────────────────────────────────────────────────
-    .test("TypeMismatch: severity is Error", fn() {
-      kind := DiagKind.Error(.TypeMismatch(.{
-        span: s(0, 5),
-        expected: MonoType.Int,
-        found: MonoType.Bool,
-      }))
+  runner.suite("diag_render").test(
+    "TypeMismatch: severity is Error",
+    fn() {
+      kind := DiagKind.Error(
+        .TypeMismatch(
+          .{ span: s(0, 5), expected: MonoType.Int, found: MonoType.Bool },
+        ),
+      )
       r := diag_render.to_report(kind, ctx())
+
       case r.severity {
         .Error => {},
         .Warning => { return assert.fail("expected Error severity") },
       }
+
       .Ok({})
-    })
-    .test("TypeMismatch: title is 'type mismatch'", fn() {
-      kind := DiagKind.Error(.TypeMismatch(.{
-        span: s(0, 5),
-        expected: MonoType.Int,
-        found: MonoType.Bool,
-      }))
+    },
+  ).test(
+    "TypeMismatch: title is 'type mismatch'",
+    fn() {
+      kind := DiagKind.Error(
+        .TypeMismatch(
+          .{ span: s(0, 5), expected: MonoType.Int, found: MonoType.Bool },
+        ),
+      )
       r := diag_render.to_report(kind, ctx())
       try assert.equal(r.title, "type mismatch")
       .Ok({})
-    })
-    .test("TypeMismatch: primary label contains expected and found types", fn() {
-      kind := DiagKind.Error(.TypeMismatch(.{
-        span: s(3, 8),
-        expected: MonoType.Int,
-        found: MonoType.String,
-      }))
+    },
+  ).test(
+    "TypeMismatch: primary label contains expected and found types",
+    fn() {
+      kind := DiagKind.Error(
+        .TypeMismatch(
+          .{ span: s(3, 8), expected: MonoType.Int, found: MonoType.String },
+        ),
+      )
       r := diag_render.to_report(kind, ctx())
       try assert.equal(r.labels.len(), 1)
       lbl := r.labels[0]
       try assert.is_true(lbl.is_primary)
       try assert.equal(lbl.span.start, 3)
+
       case lbl.label {
         .Some(text) => {
           try assert.is_true(text.contains("Int"))
@@ -70,80 +74,99 @@ pub fn suite() runner.Suite {
         },
         .None => assert.fail("expected label text"),
       }
-    })
-
-    // ── UndefinedVar ──────────────────────────────────────────────────
-    .test("UndefinedVar: title contains the variable name", fn() {
-      kind := DiagKind.Error(.UndefinedVar(.{
-        span: s(4, 7),
-        name: "foo",
-      }))
+    },
+  ).test(
+    "UndefinedVar: title contains the variable name",
+    fn() {
+      kind := DiagKind.Error(.UndefinedVar(.{ span: s(4, 7), name: "foo" }))
       r := diag_render.to_report(kind, ctx())
-      case r.severity { .Error => {}, .Warning => { return assert.fail("expected Error severity") } }
+
+      case r.severity {
+        .Error => {},
+        .Warning => { return assert.fail("expected Error severity") },
+      }
+
       try assert.is_true(r.title.contains("foo"))
       try assert.equal(r.labels.len(), 1)
       try assert.is_true(r.labels[0].is_primary)
       try assert.equal(r.labels[0].span.start, 4)
       try assert.is_none(r.labels[0].label)
       .Ok({})
-    })
-
-    // ── WrongArity ────────────────────────────────────────────────────
-    .test("WrongArity: title contains expected and found counts", fn() {
-      kind := DiagKind.Error(.WrongArity(.{
-        span: s(0, 10),
-        expected: 2,
-        found: 5,
-      }))
+    },
+  ).test(
+    "WrongArity: title contains expected and found counts",
+    fn() {
+      kind := DiagKind.Error(
+        .WrongArity(.{ span: s(0, 10), expected: 2, found: 5 }),
+      )
       r := diag_render.to_report(kind, ctx())
-      case r.severity { .Error => {}, .Warning => { return assert.fail("expected Error severity") } }
+
+      case r.severity {
+        .Error => {},
+        .Warning => { return assert.fail("expected Error severity") },
+      }
+
       try assert.is_true(r.title.contains("2"))
       try assert.is_true(r.title.contains("5"))
       try assert.equal(r.labels.len(), 1)
       try assert.is_true(r.labels[0].is_primary)
       .Ok({})
-    })
-
-    // ── MissingVariants ───────────────────────────────────────────────
-    .test("MissingVariants: title contains scrutinee type name", fn() {
-      kind := DiagKind.Error(.MissingVariants(.{
-        span: s(5, 20),
-        scrutinee_ty: MonoType.Bool,
-        missing: ["True", "False"],
-      }))
+    },
+  ).test(
+    "MissingVariants: title contains scrutinee type name",
+    fn() {
+      kind := DiagKind.Error(
+        .MissingVariants(
+          .{
+            span: s(5, 20),
+            scrutinee_ty: MonoType.Bool,
+            missing: ["True", "False"],
+          },
+        ),
+      )
       r := diag_render.to_report(kind, ctx())
-      case r.severity { .Error => {}, .Warning => { return assert.fail("expected Error severity") } }
+
+      case r.severity {
+        .Error => {},
+        .Warning => { return assert.fail("expected Error severity") },
+      }
+
       try assert.is_true(r.title.contains("Bool"))
       try assert.equal(r.labels.len(), 1)
       try assert.is_true(r.labels[0].is_primary)
+
       case r.labels[0].label {
         .Some(text) => try assert.equal(text, "missing variants"),
         .None => { return assert.fail("expected label") },
       }
+
       try assert.equal(r.help_lines.len(), 1)
       try assert.is_true(r.help_lines[0].contains("True"))
       try assert.is_true(r.help_lines[0].contains("False"))
       .Ok({})
-    })
-
-    // ── DuplicateField ────────────────────────────────────────────────
-    .test("DuplicateField: title contains field name", fn() {
-      kind := DiagKind.Error(.DuplicateField(.{
-        span: s(10, 15),
-        name: "x",
-        first: s(2, 7),
-      }))
+    },
+  ).test(
+    "DuplicateField: title contains field name",
+    fn() {
+      kind := DiagKind.Error(
+        .DuplicateField(.{ span: s(10, 15), name: "x", first: s(2, 7) }),
+      )
       r := diag_render.to_report(kind, ctx())
-      case r.severity { .Error => {}, .Warning => { return assert.fail("expected Error severity") } }
+
+      case r.severity {
+        .Error => {},
+        .Warning => { return assert.fail("expected Error severity") },
+      }
+
       try assert.is_true(r.title.contains("x"))
       .Ok({})
-    })
-    .test("DuplicateField: primary label on duplicate span, secondary on first", fn() {
-      kind := DiagKind.Error(.DuplicateField(.{
-        span: s(10, 15),
-        name: "x",
-        first: s(2, 7),
-      }))
+    },
+  ).test(
+    "DuplicateField: primary label on duplicate span, secondary on first",
+    fn() {
+      kind := DiagKind.Error(
+        .DuplicateField(.{ span: s(10, 15), name: "x", first: s(2, 7) }),
+      )
       r := diag_render.to_report(kind, ctx())
       try assert.equal(r.labels.len(), 2)
       primary_lbl := r.labels[0]
@@ -152,15 +175,17 @@ pub fn suite() runner.Suite {
       try assert.equal(primary_lbl.span.start, 10)
       try assert.is_false(secondary_lbl.is_primary)
       try assert.equal(secondary_lbl.span.start, 2)
+
       case secondary_lbl.label {
         .Some(text) => try assert.is_true(text.contains("first")),
         .None => { return assert.fail("expected secondary label") },
       }
-      .Ok({})
-    })
 
-    // ── StringConcatOperator ──────────────────────────────────────────
-    .test("StringConcatOperator: suggests String.concat or interpolation", fn() {
+      .Ok({})
+    },
+  ).test(
+    "StringConcatOperator: suggests String.concat or interpolation",
+    fn() {
       kind := DiagKind.Error(.StringConcatOperator(.{ span: s(1, 10) }))
       r := diag_render.to_report(kind, ctx())
       try assert.equal(r.title, "cannot concatenate strings with `+`")
@@ -170,35 +195,45 @@ pub fn suite() runner.Suite {
       try assert.is_true(r.help_lines[0].contains("String.concat"))
       try assert.is_true(r.help_lines[0].contains("interpolation"))
       .Ok({})
-    })
-
-    // ── ParseError ────────────────────────────────────────────────────
-    .test("ParseError: title is the message", fn() {
-      kind := DiagKind.Error(.ParseError(diag.GenericDiag.{
-        span: s(0, 5),
-        message: "something went wrong",
-        help_lines: [],
-      }))
+    },
+  ).test(
+    "ParseError: title is the message",
+    fn() {
+      kind := DiagKind.Error(
+        .ParseError(
+          diag.GenericDiag.{
+            span: s(0, 5),
+            message: "something went wrong",
+            help_lines: [],
+          },
+        ),
+      )
       r := diag_render.to_report(kind, ctx())
-      case r.severity { .Error => {}, .Warning => { return assert.fail("expected Error severity") } }
+
+      case r.severity {
+        .Error => {},
+        .Warning => { return assert.fail("expected Error severity") },
+      }
+
       try assert.equal(r.title, "something went wrong")
       try assert.equal(r.labels.len(), 1)
       try assert.is_true(r.labels[0].is_primary)
       try assert.is_none(r.labels[0].label)
       .Ok({})
-    })
-
-    // ── UnusedImport warning ──────────────────────────────────────────
-    .test("UnusedImport: severity is Warning, title contains binding name", fn() {
-      kind := DiagKind.Warning(.UnusedImport(.{
-        span: s(4, 11),
-        binding: "my_mod",
-      }))
+    },
+  ).test(
+    "UnusedImport: severity is Warning, title contains binding name",
+    fn() {
+      kind := DiagKind.Warning(
+        .UnusedImport(.{ span: s(4, 11), binding: "my_mod" }),
+      )
       r := diag_render.to_report(kind, ctx())
+
       case r.severity {
         .Warning => {},
         .Error => { return assert.fail("expected Warning severity") },
       }
+
       try assert.is_true(r.title.contains("my_mod"))
       try assert.equal(r.labels.len(), 1)
       try assert.is_true(r.labels[0].is_primary)
@@ -206,27 +241,25 @@ pub fn suite() runner.Suite {
       try assert.equal(r.help_lines.len(), 1)
       try assert.is_true(r.help_lines[0].contains("remove"))
       .Ok({})
-    })
-
-    // ── Named type rendering with snapshot ─────────────────────────────
-    .test("MissingField with Named type falls back to Named(id) without snapshot", fn() {
+    },
+  ).test(
+    "MissingField with Named type falls back to Named(id) without snapshot",
+    fn() {
       tid := MonoType.Named(.{ id: 99 }, [])
-      kind := DiagKind.Error(.MissingField(.{
-        span: s(0, 10),
-        name: "y",
-        ty: tid,
-      }))
+      kind := DiagKind.Error(
+        .MissingField(.{ span: s(0, 10), name: "y", ty: tid }),
+      )
       r := diag_render.to_report(kind, ctx())
       try assert.is_true(r.title.contains("Named(99)"))
       .Ok({})
-    })
-    .test("MissingField with Named type renders source name from snapshot", fn() {
+    },
+  ).test(
+    "MissingField with Named type renders source name from snapshot",
+    fn() {
       tid := MonoType.Named(.{ id: 99 }, [])
-      kind := DiagKind.Error(.MissingField(.{
-        span: s(0, 10),
-        name: "y",
-        ty: tid,
-      }))
+      kind := DiagKind.Error(
+        .MissingField(.{ span: s(0, 10), name: "y", ty: tid }),
+      )
       names: Dict<Int, String> = Dict.new()
       names[99] = "Point"
       snapshot_ctx := RenderCtx.{
@@ -240,17 +273,15 @@ pub fn suite() runner.Suite {
       try assert.is_true(r.title.contains("Point"))
       try assert.is_false(r.title.contains("Named("))
       .Ok({})
-    })
-
-    // ── Span pass-through ─────────────────────────────────────────────
-    .test("primary label span matches the diagnostic span", fn() {
-      kind := DiagKind.Error(.UndefinedVar(.{
-        span: s(7, 14),
-        name: "bar",
-      }))
+    },
+  ).test(
+    "primary label span matches the diagnostic span",
+    fn() {
+      kind := DiagKind.Error(.UndefinedVar(.{ span: s(7, 14), name: "bar" }))
       r := diag_render.to_report(kind, ctx())
       try assert.equal(r.labels[0].span.start, 7)
       try assert.equal(r.labels[0].span.end, 14)
       .Ok({})
-    })
+    },
+  )
 }

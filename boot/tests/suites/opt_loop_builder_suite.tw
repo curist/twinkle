@@ -1,18 +1,22 @@
-use tests.runner
-use tests.assert
-use compiler.core_ir.{LocalId, FuncId}
 use compiler.anf.{AnfExpr}
-
 use compiler.builder_family.{BuilderConfig}
+use compiler.core_ir.{FuncId, LocalId}
 use compiler.opt.loop_builder.{rewrite_loop_region}
+use tests.assert
+use tests.runner
 
 fn lid(id: Int) LocalId { LocalId.{ id: id } }
+
 fn fid(id: Int) FuncId { FuncId.{ id: id } }
 
 fn mock_vec_push() FuncId { fid(204) }
+
 fn mock_builder_new() FuncId { fid(230) }
+
 fn mock_builder_from() FuncId { fid(231) }
+
 fn mock_builder_push() FuncId { fid(232) }
+
 fn mock_builder_freeze() FuncId { fid(233) }
 
 fn mock_builder_config() BuilderConfig {
@@ -25,13 +29,27 @@ fn mock_builder_config() BuilderConfig {
   }
 }
 
-fn test_rewrite_loop_region_uses_builder_new_for_known_empty() Result<Void, String> {
-  loop_body: AnfExpr = .Let(lid(1),
+fn test_rewrite_loop_region_uses_builder_new_for_known_empty() Result<
+  Void,
+  String,
+> {
+  loop_body: AnfExpr = .Let(
+    lid(1),
     .ACall(.AGlobalFunc(mock_vec_push()), [.ALocal(lid(0)), .ALitInt(1)]),
-    .Let(lid(2), .AAssign(lid(0), .ALocal(lid(1))), .Continue))
+    .Let(lid(2), .AAssign(lid(0), .ALocal(lid(1))), .Continue),
+  )
   cont: AnfExpr = .Atom(.ALocal(lid(0)))
 
-  case rewrite_loop_region(lid(3), loop_body, cont, lid(0), .Vector(.Int), 10, true, mock_builder_config()) {
+  case rewrite_loop_region(
+    lid(3),
+    loop_body,
+    cont,
+    lid(0),
+    .Vector(.Int),
+    10,
+    true,
+    mock_builder_config(),
+  ) {
     .Some(result) => {
       case result.expr {
         .Let(_, .ACall(.AGlobalFunc(f), args), _) => {
@@ -45,18 +63,33 @@ fn test_rewrite_loop_region_uses_builder_new_for_known_empty() Result<Void, Stri
   }
 }
 
-fn test_rewrite_loop_region_uses_builder_from_for_non_empty() Result<Void, String> {
-  loop_body: AnfExpr = .Let(lid(1),
+fn test_rewrite_loop_region_uses_builder_from_for_non_empty() Result<
+  Void,
+  String,
+> {
+  loop_body: AnfExpr = .Let(
+    lid(1),
     .ACall(.AGlobalFunc(mock_vec_push()), [.ALocal(lid(0)), .ALitInt(1)]),
-    .Let(lid(2), .AAssign(lid(0), .ALocal(lid(1))), .Continue))
+    .Let(lid(2), .AAssign(lid(0), .ALocal(lid(1))), .Continue),
+  )
   cont: AnfExpr = .Atom(.ALocal(lid(0)))
 
-  case rewrite_loop_region(lid(3), loop_body, cont, lid(0), .Vector(.Int), 10, false, mock_builder_config()) {
+  case rewrite_loop_region(
+    lid(3),
+    loop_body,
+    cont,
+    lid(0),
+    .Vector(.Int),
+    10,
+    false,
+    mock_builder_config(),
+  ) {
     .Some(result) => {
       case result.expr {
         .Let(_, .ACall(.AGlobalFunc(f), args), _) => {
           try assert.equal(f.id, mock_builder_from().id)
           try assert.equal(args.len(), 1)
+
           case args[0] {
             .ALocal(local) => assert.equal(local.id, 0),
             _ => .Err("expected builder_from base arg"),
@@ -70,20 +103,37 @@ fn test_rewrite_loop_region_uses_builder_from_for_non_empty() Result<Void, Strin
 }
 
 fn test_rewrite_loop_region_rejects_non_push_base_use() Result<Void, String> {
-  loop_body: AnfExpr = .Let(lid(1),
+  loop_body: AnfExpr = .Let(
+    lid(1),
     .ACall(.AGlobalFunc(fid(999)), [.ALocal(lid(0))]),
-    .Continue)
+    .Continue,
+  )
   cont: AnfExpr = .Atom(.ALocal(lid(0)))
 
-  case rewrite_loop_region(lid(3), loop_body, cont, lid(0), .Vector(.Int), 10, true, mock_builder_config()) {
+  case rewrite_loop_region(
+    lid(3),
+    loop_body,
+    cont,
+    lid(0),
+    .Vector(.Int),
+    10,
+    true,
+    mock_builder_config(),
+  ) {
     .Some(_) => .Err("expected invalid loop region to be rejected"),
     .None => .Ok({}),
   }
 }
 
 pub fn suite() runner.Suite {
-  runner.suite("Opt: Loop Builder")
-    .test("rewrite loop region uses builder_new for known empty", test_rewrite_loop_region_uses_builder_new_for_known_empty)
-    .test("rewrite loop region uses builder_from for non-empty", test_rewrite_loop_region_uses_builder_from_for_non_empty)
-    .test("rewrite loop region rejects non-push base use", test_rewrite_loop_region_rejects_non_push_base_use)
+  runner.suite("Opt: Loop Builder").test(
+    "rewrite loop region uses builder_new for known empty",
+    test_rewrite_loop_region_uses_builder_new_for_known_empty,
+  ).test(
+    "rewrite loop region uses builder_from for non-empty",
+    test_rewrite_loop_region_uses_builder_from_for_non_empty,
+  ).test(
+    "rewrite loop region rejects non-push base use",
+    test_rewrite_loop_region_rejects_non_push_base_use,
+  )
 }

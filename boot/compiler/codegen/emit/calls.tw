@@ -1,39 +1,81 @@
 // Call emission for direct, runtime, intrinsic, and closure calls.
-
-use compiler.mono_type.{MonoType}
-use compiler.core_ir.{FuncId}
+use compiler.backend.prepared_ir.{PreparedAtom, SlotId}
 use compiler.builtins as bi
 use compiler.builtins.{RuntimeInfo}
-use compiler.backend.prepared_ir.{PreparedAtom, SlotId}
-use compiler.codegen.wasm_ir.{ValType, Instr, AbiContract}
-use compiler.codegen.wasm_layout.{val_type_of_mono}
+use compiler.codegen.emit.coercions.{adapt_runtime_result, emit_coerce_stack}
 use compiler.codegen.emit.context.{EmitCtx, lookup_func_sym}
-use compiler.codegen.emit.runtime_abi.{
-  is_host_vector_arg, is_vector_builder_array_arg, is_vector_builder_push,
-  is_vector_builder_seed, emit_builder_arg_shim, emit_host_arg_shim,
-  emit_host_result_shim,
-}
 use compiler.codegen.emit.defaults.{emit_default_value}
-use compiler.codegen.emit.coercions.{emit_coerce_stack, adapt_runtime_result}
+use compiler.codegen.emit.runtime_abi.{
+  emit_builder_arg_shim, emit_host_arg_shim, emit_host_result_shim,
+  is_host_vector_arg, is_vector_builder_array_arg, is_vector_builder_push,
+  is_vector_builder_seed,
+}
+use compiler.codegen.wasm_ir.{AbiContract, Instr, ValType}
+use compiler.codegen.wasm_layout.{val_type_of_mono}
+use compiler.core_ir.{FuncId}
+use compiler.mono_type.{MonoType}
 
 pub type CallEmitFns = .{
   emit_atom: fn(PreparedAtom, EmitCtx, Vector<Instr>) Vector<Instr>,
   atom_val_type: fn(PreparedAtom, EmitCtx) ValType,
   atom_mono: fn(PreparedAtom, EmitCtx) MonoType,
-  emit_checked_i32_narrow: fn(PreparedAtom, EmitCtx, Vector<Instr>) Vector<Instr>,
-  emit_intrinsic_call: fn(FuncId, String, Vector<PreparedAtom>, Int, MonoType, EmitCtx, Vector<Instr>) Vector<Instr>,
-  emit_closure_call: fn(PreparedAtom, SlotId, Vector<PreparedAtom>, Int, MonoType, EmitCtx, Vector<Instr>) Vector<Instr>,
+  emit_checked_i32_narrow: fn(PreparedAtom, EmitCtx, Vector<Instr>) Vector<
+    Instr,
+  >,
+  emit_intrinsic_call: fn(
+    FuncId,
+    String,
+    Vector<PreparedAtom>,
+    Int,
+    MonoType,
+    EmitCtx,
+    Vector<Instr>,
+  ) Vector<Instr>,
+  emit_closure_call: fn(
+    PreparedAtom,
+    SlotId,
+    Vector<PreparedAtom>,
+    Int,
+    MonoType,
+    EmitCtx,
+    Vector<Instr>,
+  ) Vector<Instr>,
 }
 
-pub fn emit_call(callee: PreparedAtom, args: Vector<PreparedAtom>, result_idx: Int, result_mono: MonoType, ctx: EmitCtx, buf: Vector<Instr>, fns: CallEmitFns) Vector<Instr> {
+pub fn emit_call(
+  callee: PreparedAtom,
+  args: Vector<PreparedAtom>,
+  result_idx: Int,
+  result_mono: MonoType,
+  ctx: EmitCtx,
+  buf: Vector<Instr>,
+  fns: CallEmitFns,
+) Vector<Instr> {
   case callee {
     .AGlobalFunc(fid) => {
       // Check if it's a builtin
       case bi.entry(ctx.builtins, fid) {
         .Some(entry) => {
           case entry.kind {
-            .Runtime(info) => emit_runtime_call(fid, info, args, result_idx, result_mono, ctx, buf, fns),
-            .Intrinsic => fns.emit_intrinsic_call(fid, entry.name, args, result_idx, result_mono, ctx, buf),
+            .Runtime(info) => emit_runtime_call(
+              fid,
+              info,
+              args,
+              result_idx,
+              result_mono,
+              ctx,
+              buf,
+              fns,
+            ),
+            .Intrinsic => fns.emit_intrinsic_call(
+              fid,
+              entry.name,
+              args,
+              result_idx,
+              result_mono,
+              ctx,
+              buf,
+            ),
           }
         },
         .None => {
@@ -44,19 +86,36 @@ pub fn emit_call(callee: PreparedAtom, args: Vector<PreparedAtom>, result_idx: I
     },
     .ASlot(sid) => {
       // Closure call — indirect
-      fns.emit_closure_call(callee, sid, args, result_idx, result_mono, ctx, buf)
+      fns.emit_closure_call(
+        callee,
+        sid,
+        args,
+        result_idx,
+        result_mono,
+        ctx,
+        buf,
+      )
     },
     _ => error("emit_call: unexpected callee atom"),
   }
 }
 
-fn emit_direct_call(fid: FuncId, args: Vector<PreparedAtom>, result_idx: Int, result_mono: MonoType, ctx: EmitCtx, buf: Vector<Instr>, fns: CallEmitFns) Vector<Instr> {
+fn emit_direct_call(
+  fid: FuncId,
+  args: Vector<PreparedAtom>,
+  result_idx: Int,
+  result_mono: MonoType,
+  ctx: EmitCtx,
+  buf: Vector<Instr>,
+  fns: CallEmitFns,
+) Vector<Instr> {
   sym := lookup_func_sym(ctx.func_sym_map, fid)
   out := buf
-  for a in args {
-    out = fns.emit_atom(a, ctx, out)
-  }
+
+  for a in args { out = fns.emit_atom(a, ctx, out) }
+
   out = .append(.Call(sym))
+
   case result_mono {
     .Void => {
       out = .append(.I32Const(0))
@@ -68,20 +127,35 @@ fn emit_direct_call(fid: FuncId, args: Vector<PreparedAtom>, result_idx: Int, re
   }
 }
 
-fn emit_runtime_arg(a: PreparedAtom, abi: AbiContract?, index: Int, entry_name: String, ctx: EmitCtx, buf: Vector<Instr>, fns: CallEmitFns) Vector<Instr> {
+fn emit_runtime_arg(
+  a: PreparedAtom,
+  abi: AbiContract?,
+  index: Int,
+  entry_name: String,
+  ctx: EmitCtx,
+  buf: Vector<Instr>,
+  fns: CallEmitFns,
+) Vector<Instr> {
   param_vt: ValType? = case abi {
     .Some(ab) => {
-      if index < ab.param_types.len() { .Some(ab.param_types[index]) } else { .None }
+      if index < ab.param_types.len() {
+        .Some(ab.param_types[index])
+      } else {
+        .None
+      }
     },
     .None => .None,
   }
-
   // ABI shim: checked i64→i32 narrowing with trap for runtime functions that take I32.
   // This is not coercion — it traps on out-of-range values.
   needs_narrow := case param_vt {
-    .Some(.I32) => case fns.atom_mono(a, ctx) { .Int => true, _ => false },
+    .Some(.I32) => case fns.atom_mono(a, ctx) {
+      .Int => true,
+      _ => false,
+    },
     _ => false,
   }
+
   if needs_narrow {
     return fns.emit_checked_i32_narrow(a, ctx, buf)
   }
@@ -106,15 +180,29 @@ fn emit_runtime_arg(a: PreparedAtom, abi: AbiContract?, index: Int, entry_name: 
 
   // Coercion: adapt actual physical type to expected ABI param type via canonical path.
   out2 := case param_vt {
-    .Some(expected_vt) => emit_coerce_stack(fns.atom_val_type(a, ctx), expected_vt, fns.atom_mono(a, ctx), ctx, out),
+    .Some(expected_vt) => emit_coerce_stack(
+      fns.atom_val_type(a, ctx),
+      expected_vt,
+      fns.atom_mono(a, ctx),
+      ctx,
+      out,
+    ),
     .None => out,
   }
-
   // ABI shims: representation reshaping for specific runtime/host surfaces.
   emit_host_arg_shim(entry_name, index, out2)
 }
 
-fn emit_runtime_call(fid: FuncId, info: RuntimeInfo, args: Vector<PreparedAtom>, result_idx: Int, result_mono: MonoType, ctx: EmitCtx, buf: Vector<Instr>, fns: CallEmitFns) Vector<Instr> {
+fn emit_runtime_call(
+  fid: FuncId,
+  info: RuntimeInfo,
+  args: Vector<PreparedAtom>,
+  result_idx: Int,
+  result_mono: MonoType,
+  ctx: EmitCtx,
+  buf: Vector<Instr>,
+  fns: CallEmitFns,
+) Vector<Instr> {
   import_sym := "${info.wasm_module}__${info.wasm_name}"
   abi: AbiContract? = case ctx.builtins.by_id[fid.id] {
     .Some(entry) => .Some(entry.abi),
@@ -125,12 +213,15 @@ fn emit_runtime_call(fid: FuncId, info: RuntimeInfo, args: Vector<PreparedAtom>,
     .None => "",
   }
   out := buf
-  for a,i in args {
+
+  for a, i in args {
     out = emit_runtime_arg(a, abi, i, entry_name, ctx, out, fns)
   }
+
   out = .append(.Call(import_sym))
   // ABI shim: reshape host results back into PVec representation.
   out = emit_host_result_shim(entry_name, out)
+
   // Some runtime calls return void or never return at all.
   case result_mono {
     .Void => {
@@ -147,6 +238,7 @@ fn emit_runtime_call(fid: FuncId, info: RuntimeInfo, args: Vector<PreparedAtom>,
           out = .concat(adapt_runtime_result(fid, result_mono, ctx))
         }
       }
+
       out.append(.LocalSet(result_idx))
     },
   }

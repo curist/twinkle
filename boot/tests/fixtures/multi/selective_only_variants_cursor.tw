@@ -1,5 +1,3 @@
 use .selective_only_variants_tokens.{Token, TokenKind}
 
-pub fn kind(token: Token) TokenKind {
-  token.kind
-}
+pub fn kind(token: Token) TokenKind { token.kind }

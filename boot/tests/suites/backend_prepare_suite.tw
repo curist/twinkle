@@ -9,27 +9,24 @@
 //   - boundary insertion has an explicit architectural home (inside prepare_backend)
 //   - prepared backend IR has an explicit representation-transition story
 //   - slot maps reflect post-boundary locals including wrap/unwrap temporaries
-
-use tests.runner
-use tests.assert
-use compiler.resolver
-use compiler.resolver.{ResolvedEnv}
-use compiler.mono_type.{MonoType, TypeId}
-use compiler.core_ir.{LocalId, FuncId, Param, CorePattern}
+use compiler.anf.{AnfExpr, AnfFunctionDef, AnfMatchArm, AnfModule, AnfOp}
+use compiler.backend.closure_convert.{convert_closures}
+use compiler.backend.prepare.{prepare_backend}
+use compiler.backend.prepared_ir.{CaptureParam, PreparedFunc}
 use compiler.builtins.{BuiltinRegistry, make_builtin_registry}
-use compiler.anf.{AnfExpr, AnfOp, AnfFunctionDef, AnfModule, AnfMatchArm}
-
-use compiler.codegen.wasm_ir.{ValType, AbiContract}
+use compiler.codegen.wasm_ir.{AbiContract, ValType}
 use compiler.codegen.wasm_layout.{layout_of, mono_to_key}
 use compiler.codegen.wasm_plan_types.{WasmTypeRegistry}
-use compiler.backend.prepared_ir.{CaptureParam, PreparedFunc}
-
-use compiler.backend.prepare.{prepare_backend}
-use compiler.backend.closure_convert.{convert_closures}
+use compiler.core_ir.{CorePattern, FuncId, LocalId, Param}
+use compiler.mono_type.{MonoType, TypeId}
+use compiler.resolver
+use compiler.resolver.{ResolvedEnv}
+use tests.assert
+use tests.runner
 
 // ── Construction helpers ─────────────────────────────────────────────
-
 fn lid(n: Int) LocalId { LocalId.{ id: n } }
+
 fn fid(n: Int) FuncId { FuncId.{ id: n } }
 
 fn empty_env() ResolvedEnv { resolver.empty_env() }
@@ -57,26 +54,29 @@ fn empty_registry() WasmTypeRegistry {
 fn registry_with_layouts(types: Vector<MonoType>) WasmTypeRegistry {
   reg := empty_registry()
   env := empty_env()
+
   for ty in types {
     key := mono_to_key(ty)
     reg.layout_cache[key] = layout_of(ty, env)
   }
+
   reg
 }
 
-fn empty_builtins() BuiltinRegistry {
-  make_builtin_registry()
-}
+fn empty_builtins() BuiltinRegistry { make_builtin_registry() }
 
 fn no_captures() Dict<Int, Vector<CaptureParam>> { Dict.new() }
 
-fn mk_param(id: Int, ty: MonoType) Param {
-  Param.{ local: lid(id), ty: ty }
-}
+fn mk_param(id: Int, ty: MonoType) Param { Param.{ local: lid(id), ty: ty } }
 
-fn mk_mono_map(entries: Vector<Int>, types: Vector<MonoType>) Dict<Int, MonoType> {
+fn mk_mono_map(entries: Vector<Int>, types: Vector<MonoType>) Dict<
+  Int,
+  MonoType,
+> {
   d: Dict<Int, MonoType> = Dict.new()
-  for k,i in entries { d[k] = types[i] }
+
+  for k, i in entries { d[k] = types[i] }
+
   d
 }
 
@@ -100,7 +100,11 @@ fn mk_func_def(
 }
 
 fn mk_module(funcs: Vector<AnfFunctionDef>) AnfModule {
-  AnfModule.{ functions: funcs, init_func_id: .None, extern_imports: Dict.new() }
+  AnfModule.{
+    functions: funcs,
+    init_func_id: .None,
+    extern_imports: Dict.new(),
+  }
 }
 
 fn mk_abi(params: Vector<ValType>, results: Vector<ValType>) AbiContract {
@@ -110,25 +114,33 @@ fn mk_abi(params: Vector<ValType>, results: Vector<ValType>) AbiContract {
 fn find_slot_id_by_local(pf: PreparedFunc, local_id: Int) Int {
   for sid in pf.slots.keys() {
     case pf.slots[sid] {
-      .Some(info) => if info.source_local.id == local_id { return info.slot.id },
+      .Some(info) => if info.source_local.id == local_id {
+        return info.slot.id
+      },
       .None => {},
     }
   }
+
   error("find_slot_id_by_local: missing slot for L${local_id}")
 }
 
-fn find_slot_id_by_local_result(pf: PreparedFunc, local_id: Int) Result<Int, String> {
+fn find_slot_id_by_local_result(pf: PreparedFunc, local_id: Int) Result<
+  Int,
+  String,
+> {
   for sid in pf.slots.keys() {
     case pf.slots[sid] {
-      .Some(info) => if info.source_local.id == local_id { return .Ok(info.slot.id) },
+      .Some(info) => if info.source_local.id == local_id {
+        return .Ok(info.slot.id)
+      },
       .None => {},
     }
   }
+
   .Err("let-bound local L${local_id} missing from slot map")
 }
 
 // ── ANF inspection helpers ───────────────────────────────────────────
-
 fn count_wraps_expr(expr: AnfExpr) Int {
   case expr {
     .Let(_, op, body) => count_wraps_op(op) + count_wraps_expr(body),
@@ -139,10 +151,13 @@ fn count_wraps_expr(expr: AnfExpr) Int {
 fn count_wraps_op(op: AnfOp) Int {
   case op {
     .AWrapAnyref(_, _) => 1,
-    .AIf(_, then_e, else_e) => count_wraps_expr(then_e) + count_wraps_expr(else_e),
+    .AIf(_, then_e, else_e) => count_wraps_expr(then_e)
+    + count_wraps_expr(else_e),
     .AMatch(_, arms) => {
       s := 0
+
       for arm in arms { s = s + count_wraps_expr(arm.body) }
+
       s
     },
     .ALoop(inner) => count_wraps_expr(inner),
@@ -160,10 +175,13 @@ fn count_unwraps_expr(expr: AnfExpr) Int {
 fn count_unwraps_op(op: AnfOp) Int {
   case op {
     .AUnwrapAnyref(_, _) => 1,
-    .AIf(_, then_e, else_e) => count_unwraps_expr(then_e) + count_unwraps_expr(else_e),
+    .AIf(_, then_e, else_e) => count_unwraps_expr(then_e)
+    + count_unwraps_expr(else_e),
     .AMatch(_, arms) => {
       s := 0
+
       for arm in arms { s = s + count_unwraps_expr(arm.body) }
+
       s
     },
     .ALoop(inner) => count_unwraps_expr(inner),
@@ -180,316 +198,452 @@ fn collect_let_lids_expr(expr: AnfExpr) Vector<Int> {
 }
 
 // ── Tests ────────────────────────────────────────────────────────────
-
 pub fn suite() runner.Suite {
-  runner.suite("backend prepare (Phase 4a)")
+  runner.suite("backend prepare (Phase 4a)").test(
+    "user function with no ABI calls: no boundaries inserted",
+    fn() {
+      // fn f(x: Int) Int { let t0 = call(user_fn#99, [x]); t0 }
+      // User functions have no ABI contracts, so no wraps/unwraps.
+      body: AnfExpr = .Let(
+        lid(10),
+        .ACall(.AGlobalFunc(fid(99)), [.ALocal(lid(0))]),
+        .Atom(.ALocal(lid(10))),
+      )
+      func := mk_func_def(
+        1,
+        "f",
+        [mk_param(0, .Int)],
+        .Int,
+        body,
+        mk_mono_map([10], [MonoType.Int]),
+      )
+      anf := mk_module([func])
+      prepared := prepare_backend(
+        anf,
+        empty_env(),
+        empty_builtins(),
+        no_captures(),
+      )
+      result_body := prepared.anf.functions[0].body
+      try assert.equal(count_wraps_expr(result_body), 0)
+      try assert.equal(count_unwraps_expr(result_body), 0)
+      .Ok({})
+    },
+  ).test(
+    "user function: param and let local appear in slot map",
+    fn() {
+      // fn f(x: Int) Int { let t0 = call(fn#99, [x]); t0 }
+      // Slot 0: Param x, Slot 1: Local t0
+      body: AnfExpr = .Let(
+        lid(10),
+        .ACall(.AGlobalFunc(fid(99)), [.ALocal(lid(0))]),
+        .Atom(.ALocal(lid(10))),
+      )
+      func := mk_func_def(
+        1,
+        "f",
+        [mk_param(0, .Int)],
+        .Int,
+        body,
+        mk_mono_map([10], [MonoType.Int]),
+      )
+      anf := mk_module([func])
+      prepared := prepare_backend(
+        anf,
+        empty_env(),
+        empty_builtins(),
+        no_captures(),
+      )
+      pf := prepared.funcs[0]
+      try assert.equal(pf.params.len(), 1)
+      try assert.equal(pf.locals.len(), 1)
+      // L0 → slot 0 (Param), L10 → slot 1 (Local)
+      try assert.equal(find_slot_id_by_local(pf, 0), 0)
+      try assert.equal(find_slot_id_by_local(pf, 10), 1)
+      .Ok({})
+    },
+  ).test(
+    "wrap temporary allocated by boundary insertion has a slot",
+    fn() {
+      // fn f(x: Int) String { let t0 = builtin(x); t0 }
+      // Builtin ABI: (anyref) → (anyref). x is Int (i64) → needs wrap.
+      // Boundary insertion allocates a fresh local for the wrapped Int.
+      // That temporary must appear in the slot map.
+      builtins := empty_builtins().runtime_with_abi(
+        "box_it",
+        "rt.test",
+        "box_it",
+        mk_abi([.Anyref], [.Anyref]),
+      )
+      box_fid := builtins.id("box_it")
+      body: AnfExpr = .Let(
+        lid(10),
+        .ACall(.AGlobalFunc(box_fid), [.ALocal(lid(0))]),
+        .Atom(.ALocal(lid(10))),
+      )
+      func := mk_func_def(
+        1,
+        "f",
+        [mk_param(0, .Int)],
+        .String,
+        body,
+        mk_mono_map([10], [MonoType.String]),
+      )
+      anf := mk_module([func])
+      prepared := prepare_backend(anf, empty_env(), builtins, no_captures())
+      // Boundary insertion should have added one AWrapAnyref for the Int arg
+      result_body := prepared.anf.functions[0].body
+      try assert.equal(count_wraps_expr(result_body), 1)
+      // The wrap temp local must be in the slot map
+      all_lids := collect_let_lids_expr(result_body)
+      // all_lids includes the wrap temp (allocated at next_local = 11) and t0
+      pf := prepared.funcs[0]
 
-  // ── No-boundary pass-through ──
+      for l in all_lids { _ := try find_slot_id_by_local_result(pf, l) }
 
-  .test("user function with no ABI calls: no boundaries inserted", fn() {
-    // fn f(x: Int) Int { let t0 = call(user_fn#99, [x]); t0 }
-    // User functions have no ABI contracts, so no wraps/unwraps.
-    body: AnfExpr = .Let(lid(10),
-      .ACall(.AGlobalFunc(fid(99)), [.ALocal(lid(0))]),
-      .Atom(.ALocal(lid(10))))
-    func := mk_func_def(1, "f", [mk_param(0, .Int)], .Int, body,
-      mk_mono_map([10], [MonoType.Int]))
-    anf := mk_module([func])
+      .Ok({})
+    },
+  ).test(
+    "slot count includes wrap temporary",
+    fn() {
+      // Same setup as above: 1 param + 1 result local + 1 wrap temp = 3 total slots
+      builtins := empty_builtins().runtime_with_abi(
+        "box_it",
+        "rt.test",
+        "box_it",
+        mk_abi([.Anyref], [.Anyref]),
+      )
+      box_fid := builtins.id("box_it")
+      body: AnfExpr = .Let(
+        lid(10),
+        .ACall(.AGlobalFunc(box_fid), [.ALocal(lid(0))]),
+        .Atom(.ALocal(lid(10))),
+      )
+      func := mk_func_def(
+        1,
+        "f",
+        [mk_param(0, .Int)],
+        .String,
+        body,
+        mk_mono_map([10], [MonoType.String]),
+      )
+      anf := mk_module([func])
+      prepared := prepare_backend(anf, empty_env(), builtins, no_captures())
+      pf := prepared.funcs[0]
+      total_slots := pf.captures.len() + pf.params.len() + pf.locals.len()
+      // 0 captures + 1 param (x) + 3 locals: wrap temp (Int→anyref), raw call result (anyref),
+      // t0 unwrap target (anyref→String, since String is a typed ref not anyref-exact) = 4
+      try assert.equal(total_slots, 4)
+      .Ok({})
+    },
+  ).test(
+    "unwrap temporary allocated by boundary insertion has a slot",
+    fn() {
+      // fn f(x: String) Int { let t0 = builtin(x); t0 }
+      // Builtin ABI: (anyref) → (anyref), result mono = Int → needs unwrap.
+      // Boundary insertion: raw_local = call(builtin, x); t0 = AUnwrapAnyref(raw_local, Int).
+      // raw_local must appear in slot map.
+      builtins := empty_builtins().runtime_with_abi(
+        "unbox_it",
+        "rt.test",
+        "unbox_it",
+        mk_abi([.Anyref], [.Anyref]),
+      )
+      unbox_fid := builtins.id("unbox_it")
+      body: AnfExpr = .Let(
+        lid(10),
+        .ACall(.AGlobalFunc(unbox_fid), [.ALocal(lid(0))]),
+        .Atom(.ALocal(lid(10))),
+      )
+      func := mk_func_def(
+        1,
+        "f",
+        [mk_param(0, .String)],
+        .Int,
+        body,
+        mk_mono_map([10], [MonoType.Int]),
+      )
+      anf := mk_module([func])
+      prepared := prepare_backend(anf, empty_env(), builtins, no_captures())
+      result_body := prepared.anf.functions[0].body
+      try assert.equal(count_unwraps_expr(result_body), 1)
+      all_lids := collect_let_lids_expr(result_body)
+      pf := prepared.funcs[0]
 
-    prepared := prepare_backend(anf, empty_env(), empty_builtins(), no_captures())
+      for l in all_lids { _ := try find_slot_id_by_local_result(pf, l) }
 
-    result_body := prepared.anf.functions[0].body
-    try assert.equal(count_wraps_expr(result_body), 0)
-    try assert.equal(count_unwraps_expr(result_body), 0)
-    .Ok({})
-  })
+      .Ok({})
+    },
+  ).test(
+    "prepared.anf holds post-boundary ANF, not pre-boundary",
+    fn() {
+      // Before Phase 4a, the old prepare_backend() stored pre-boundary ANF.
+      // Now it must store post-boundary ANF (boundaries already inserted).
+      // Verify: if the builtin call needs a wrap, the boundary node is in prepared.anf.
+      builtins := empty_builtins().runtime_with_abi(
+        "store_int",
+        "rt.test",
+        "store",
+        mk_abi([.Anyref], [.Anyref]),
+      )
+      store_fid := builtins.id("store_int")
+      body: AnfExpr = .Let(
+        lid(5),
+        .ACall(.AGlobalFunc(store_fid), [.ALocal(lid(0))]),
+        .Atom(.ALitVoid),
+      )
+      func := mk_func_def(
+        1,
+        "g",
+        [mk_param(0, .Int)],
+        .Void,
+        body,
+        mk_mono_map([5], [MonoType.Void]),
+      )
+      anf := mk_module([func])
+      prepared := prepare_backend(anf, empty_env(), builtins, no_captures())
+      // prepared.anf should show the boundary node
+      try assert.equal(count_wraps_expr(prepared.anf.functions[0].body), 1)
+      // The pre-boundary anf (original) has no wrap
+      try assert.equal(count_wraps_expr(anf.functions[0].body), 0)
+      .Ok({})
+    },
+  ).test(
+    "closure conversion rewrites hoisted body to explicit capture param",
+    fn() {
+      outer_body: AnfExpr = .Let(
+        lid(10),
+        .AMakeClosure(fid(99), [lid(0)]),
+        .Atom(.ALocal(lid(10))),
+      )
+      outer := mk_func_def(
+        1,
+        "outer",
+        [mk_param(0, .Int)],
+        .Function([], .Int),
+        outer_body,
+        mk_mono_map([10], [MonoType.Function([], .Int)]),
+      )
+      inner := mk_func_def(
+        99,
+        "inner",
+        [],
+        .Int,
+        .Atom(.ALocal(lid(0))),
+        Dict.new(),
+      )
+      converted := convert_closures(mk_module([outer, inner]), empty_env())
 
-  .test("user function: param and let local appear in slot map", fn() {
-    // fn f(x: Int) Int { let t0 = call(fn#99, [x]); t0 }
-    // Slot 0: Param x, Slot 1: Local t0
-    body: AnfExpr = .Let(lid(10),
-      .ACall(.AGlobalFunc(fid(99)), [.ALocal(lid(0))]),
-      .Atom(.ALocal(lid(10))))
-    func := mk_func_def(1, "f", [mk_param(0, .Int)], .Int, body,
-      mk_mono_map([10], [MonoType.Int]))
-    anf := mk_module([func])
+      case converted.captures[99] {
+        .None => .Err("missing closure capture metadata for inner"),
+        .Some(caps) => {
+          try assert.equal(caps.len(), 1)
+          try assert.equal(caps[0].local_id.id, 0)
+          rewritten := converted.anf.functions[1]
+          try assert.equal(rewritten.params.len(), 1)
+          try assert.equal(rewritten.params[0].local.id, caps[0].param_local.id)
 
-    prepared := prepare_backend(anf, empty_env(), empty_builtins(), no_captures())
+          case rewritten.body {
+            .Atom(.ALocal(l)) => try assert.equal(l.id, caps[0].param_local.id),
+            _ => {
+              return .Err(
+                "rewritten hoisted body did not use the explicit capture param",
+              )
+            },
+          }
 
-    pf := prepared.funcs[0]
-    try assert.equal(pf.params.len(), 1)
-    try assert.equal(pf.locals.len(), 1)
-    // L0 → slot 0 (Param), L10 → slot 1 (Local)
-    try assert.equal(find_slot_id_by_local(pf, 0), 0)
-    try assert.equal(find_slot_id_by_local(pf, 10), 1)
-    .Ok({})
-  })
+          .Ok({})
+        },
+      }
+    },
+  ).test(
+    "closure conversion rewrites captured assign target to explicit capture param",
+    fn() {
+      outer_body: AnfExpr = .Let(
+        lid(10),
+        .AMakeClosure(fid(99), [lid(0)]),
+        .Atom(.ALocal(lid(10))),
+      )
+      outer := mk_func_def(
+        1,
+        "outer",
+        [mk_param(0, .Int)],
+        .Function([], .Void),
+        outer_body,
+        mk_mono_map([10], [MonoType.Function([], .Void)]),
+      )
+      inner_body: AnfExpr = .Let(
+        lid(11),
+        .AAssign(lid(0), .ALitInt(42)),
+        .Atom(.ALocal(lid(11))),
+      )
+      inner := mk_func_def(
+        99,
+        "inner",
+        [],
+        .Void,
+        inner_body,
+        mk_mono_map([11], [MonoType.Void]),
+      )
+      converted := convert_closures(mk_module([outer, inner]), empty_env())
 
-  // ── Wrap temporary included in slot map ──
+      case converted.captures[99] {
+        .None => .Err("missing closure capture metadata for inner"),
+        .Some(caps) => {
+          rewritten := converted.anf.functions[1]
 
-  .test("wrap temporary allocated by boundary insertion has a slot", fn() {
-    // fn f(x: Int) String { let t0 = builtin(x); t0 }
-    // Builtin ABI: (anyref) → (anyref). x is Int (i64) → needs wrap.
-    // Boundary insertion allocates a fresh local for the wrapped Int.
-    // That temporary must appear in the slot map.
-    builtins := empty_builtins().runtime_with_abi(
-      "box_it", "rt.test", "box_it", mk_abi([.Anyref], [.Anyref]))
-    box_fid := builtins.id("box_it")
+          case rewritten.body {
+            .Let(_, .AAssign(target, _), _) => try assert.equal(
+              target.id,
+              caps[0].param_local.id,
+            ),
+            _ => {
+              return .Err(
+                "rewritten hoisted body did not rewrite captured assign target",
+              )
+            },
+          }
 
-    body: AnfExpr = .Let(lid(10),
-      .ACall(.AGlobalFunc(box_fid), [.ALocal(lid(0))]),
-      .Atom(.ALocal(lid(10))))
-    func := mk_func_def(1, "f", [mk_param(0, .Int)], .String, body,
-      mk_mono_map([10], [MonoType.String]))
-    anf := mk_module([func])
+          .Ok({})
+        },
+      }
+    },
+  ).test(
+    "closure conversion rewrites nested closure free vars to rewritten capture params",
+    fn() {
+      outer_body: AnfExpr = .Let(
+        lid(10),
+        .AMakeClosure(fid(99), [lid(0)]),
+        .Atom(.ALocal(lid(10))),
+      )
+      outer := mk_func_def(
+        1,
+        "outer",
+        [mk_param(0, .Int)],
+        .Function([], .Function([], .Int)),
+        outer_body,
+        mk_mono_map([10], [MonoType.Function([], .Function([], .Int))]),
+      )
+      middle_body: AnfExpr = .Let(
+        lid(11),
+        .AMakeClosure(fid(100), [lid(0)]),
+        .Atom(.ALocal(lid(11))),
+      )
+      middle := mk_func_def(
+        99,
+        "middle",
+        [],
+        .Function([], .Int),
+        middle_body,
+        mk_mono_map([11], [MonoType.Function([], .Int)]),
+      )
+      inner := mk_func_def(
+        100,
+        "inner",
+        [],
+        .Int,
+        .Atom(.ALocal(lid(0))),
+        Dict.new(),
+      )
+      converted := convert_closures(
+        mk_module([outer, middle, inner]),
+        empty_env(),
+      )
 
-    prepared := prepare_backend(anf, empty_env(), builtins, no_captures())
+      case converted.captures[99] {
+        .None => .Err("missing closure capture metadata for middle"),
+        .Some(middle_caps) => {
+          rewritten_middle := converted.anf.functions[1]
 
-    // Boundary insertion should have added one AWrapAnyref for the Int arg
-    result_body := prepared.anf.functions[0].body
-    try assert.equal(count_wraps_expr(result_body), 1)
+          case rewritten_middle.body {
+            .Let(_, .AMakeClosure(_, free_vars), _) => {
+              try assert.equal(free_vars.len(), 1)
+              try assert.equal(free_vars[0].id, middle_caps[0].param_local.id)
+              .Ok({})
+            },
+            _ => .Err(
+              "rewritten middle body did not preserve nested closure creation",
+            ),
+          }
+        },
+      }
+    },
+  ).test(
+    "closure conversion resolves captured pattern local mono",
+    fn() {
+      some_arm := AnfMatchArm.{
+        pattern: .Variant(
+          TypeId.{ id: 0 },
+          .{ id: 1 },
+          [CorePattern.Var(lid(1))],
+        ),
+        body: .Let(lid(11), .AMakeClosure(fid(99), [lid(1)]), .Atom(.ALitVoid)),
+      }
+      none_arm := AnfMatchArm.{
+        pattern: .Variant(TypeId.{ id: 0 }, .{ id: 0 }, []),
+        body: .Atom(.ALitVoid),
+      }
+      outer_body: AnfExpr = .Let(
+        lid(10),
+        .AMatch(.ALocal(lid(0)), [some_arm, none_arm]),
+        .Atom(.ALitVoid),
+      )
+      outer := mk_func_def(
+        1,
+        "outer",
+        [mk_param(0, .Optional(.String))],
+        .Void,
+        outer_body,
+        mk_mono_map([10, 11], [MonoType.Void, MonoType.Function([], .String)]),
+      )
+      inner := mk_func_def(
+        99,
+        "inner",
+        [],
+        .String,
+        .Atom(.ALocal(lid(0))),
+        Dict.new(),
+      )
+      converted := convert_closures(mk_module([outer, inner]), empty_env())
 
-    // The wrap temp local must be in the slot map
-    all_lids := collect_let_lids_expr(result_body)
-    // all_lids includes the wrap temp (allocated at next_local = 11) and t0
-    pf := prepared.funcs[0]
-    for l in all_lids {
-      _ := try find_slot_id_by_local_result(pf, l)
-    }
-    .Ok({})
-  })
+      case converted.captures[99] {
+        .None => .Err("missing closure capture metadata for inner"),
+        .Some(caps) => {
+          try assert.equal(caps.len(), 1)
+          try assert.equal(caps[0].local_id.id, 1)
 
-  .test("slot count includes wrap temporary", fn() {
-    // Same setup as above: 1 param + 1 result local + 1 wrap temp = 3 total slots
-    builtins := empty_builtins().runtime_with_abi(
-      "box_it", "rt.test", "box_it", mk_abi([.Anyref], [.Anyref]))
-    box_fid := builtins.id("box_it")
+          case caps[0].ty {
+            .String => .Ok({}),
+            _ => .Err("captured pattern local did not keep its String mono"),
+          }
+        },
+      }
+    },
+  ).test(
+    "closure_captures from caller are stored in PreparedModule",
+    fn() {
+      // Verify that the caller-provided closure_captures map flows through
+      // to PreparedModule.closure_captures unchanged.
+      body: AnfExpr = .Atom(.ALitVoid)
+      func := mk_func_def(1, "h", [], .Void, body, Dict.new())
+      anf := mk_module([func])
+      cap: CaptureParam = CaptureParam.{
+        local_id: lid(0),
+        param_local: lid(100),
+        ty: .Int,
+      }
+      captures: Dict<Int, Vector<CaptureParam>> = Dict.new()
+      captures[42] = [cap]
+      prepared := prepare_backend(anf, empty_env(), empty_builtins(), captures)
 
-    body: AnfExpr = .Let(lid(10),
-      .ACall(.AGlobalFunc(box_fid), [.ALocal(lid(0))]),
-      .Atom(.ALocal(lid(10))))
-    func := mk_func_def(1, "f", [mk_param(0, .Int)], .String, body,
-      mk_mono_map([10], [MonoType.String]))
-    anf := mk_module([func])
-
-    prepared := prepare_backend(anf, empty_env(), builtins, no_captures())
-
-    pf := prepared.funcs[0]
-    total_slots := pf.captures.len() + pf.params.len() + pf.locals.len()
-    // 0 captures + 1 param (x) + 3 locals: wrap temp (Int→anyref), raw call result (anyref),
-    // t0 unwrap target (anyref→String, since String is a typed ref not anyref-exact) = 4
-    try assert.equal(total_slots, 4)
-    .Ok({})
-  })
-
-  // ── Unwrap temporary included in slot map ──
-
-  .test("unwrap temporary allocated by boundary insertion has a slot", fn() {
-    // fn f(x: String) Int { let t0 = builtin(x); t0 }
-    // Builtin ABI: (anyref) → (anyref), result mono = Int → needs unwrap.
-    // Boundary insertion: raw_local = call(builtin, x); t0 = AUnwrapAnyref(raw_local, Int).
-    // raw_local must appear in slot map.
-    builtins := empty_builtins().runtime_with_abi(
-      "unbox_it", "rt.test", "unbox_it", mk_abi([.Anyref], [.Anyref]))
-    unbox_fid := builtins.id("unbox_it")
-
-    body: AnfExpr = .Let(lid(10),
-      .ACall(.AGlobalFunc(unbox_fid), [.ALocal(lid(0))]),
-      .Atom(.ALocal(lid(10))))
-    func := mk_func_def(1, "f", [mk_param(0, .String)], .Int, body,
-      mk_mono_map([10], [MonoType.Int]))
-    anf := mk_module([func])
-
-    prepared := prepare_backend(anf, empty_env(), builtins, no_captures())
-
-    result_body := prepared.anf.functions[0].body
-    try assert.equal(count_unwraps_expr(result_body), 1)
-
-    all_lids := collect_let_lids_expr(result_body)
-    pf := prepared.funcs[0]
-    for l in all_lids {
-      _ := try find_slot_id_by_local_result(pf, l)
-    }
-    .Ok({})
-  })
-
-  // ── PreparedModule.anf is post-boundary ──
-
-  .test("prepared.anf holds post-boundary ANF, not pre-boundary", fn() {
-    // Before Phase 4a, the old prepare_backend() stored pre-boundary ANF.
-    // Now it must store post-boundary ANF (boundaries already inserted).
-    // Verify: if the builtin call needs a wrap, the boundary node is in prepared.anf.
-    builtins := empty_builtins().runtime_with_abi(
-      "store_int", "rt.test", "store", mk_abi([.Anyref], [.Anyref]))
-    store_fid := builtins.id("store_int")
-
-    body: AnfExpr = .Let(lid(5),
-      .ACall(.AGlobalFunc(store_fid), [.ALocal(lid(0))]),
-      .Atom(.ALitVoid))
-    func := mk_func_def(1, "g", [mk_param(0, .Int)], .Void, body,
-      mk_mono_map([5], [MonoType.Void]))
-    anf := mk_module([func])
-
-    prepared := prepare_backend(anf, empty_env(), builtins, no_captures())
-
-    // prepared.anf should show the boundary node
-    try assert.equal(count_wraps_expr(prepared.anf.functions[0].body), 1)
-    // The pre-boundary anf (original) has no wrap
-    try assert.equal(count_wraps_expr(anf.functions[0].body), 0)
-    .Ok({})
-  })
-
-  // ── Closure conversion rewrite ──
-
-  .test("closure conversion rewrites hoisted body to explicit capture param", fn() {
-    outer_body: AnfExpr = .Let(lid(10),
-      .AMakeClosure(fid(99), [lid(0)]),
-      .Atom(.ALocal(lid(10))))
-    outer := mk_func_def(1, "outer", [mk_param(0, .Int)], .Function([], .Int), outer_body,
-      mk_mono_map([10], [MonoType.Function([], .Int)]))
-    inner := mk_func_def(99, "inner", [], .Int, .Atom(.ALocal(lid(0))), Dict.new())
-
-    converted := convert_closures(mk_module([outer, inner]), empty_env())
-
-    case converted.captures[99] {
-      .None => .Err("missing closure capture metadata for inner"),
-      .Some(caps) => {
-        try assert.equal(caps.len(), 1)
-        try assert.equal(caps[0].local_id.id, 0)
-
-        rewritten := converted.anf.functions[1]
-        try assert.equal(rewritten.params.len(), 1)
-        try assert.equal(rewritten.params[0].local.id, caps[0].param_local.id)
-        case rewritten.body {
-          .Atom(.ALocal(l)) => try assert.equal(l.id, caps[0].param_local.id),
-          _ => { return .Err("rewritten hoisted body did not use the explicit capture param") },
-        }
-        .Ok({})
-      },
-    }
-  })
-
-  .test("closure conversion rewrites captured assign target to explicit capture param", fn() {
-    outer_body: AnfExpr = .Let(lid(10),
-      .AMakeClosure(fid(99), [lid(0)]),
-      .Atom(.ALocal(lid(10))))
-    outer := mk_func_def(1, "outer", [mk_param(0, .Int)], .Function([], .Void), outer_body,
-      mk_mono_map([10], [MonoType.Function([], .Void)]))
-    inner_body: AnfExpr = .Let(lid(11),
-      .AAssign(lid(0), .ALitInt(42)),
-      .Atom(.ALocal(lid(11))))
-    inner := mk_func_def(99, "inner", [], .Void, inner_body,
-      mk_mono_map([11], [MonoType.Void]))
-
-    converted := convert_closures(mk_module([outer, inner]), empty_env())
-
-    case converted.captures[99] {
-      .None => .Err("missing closure capture metadata for inner"),
-      .Some(caps) => {
-        rewritten := converted.anf.functions[1]
-        case rewritten.body {
-          .Let(_, .AAssign(target, _), _) => try assert.equal(target.id, caps[0].param_local.id),
-          _ => { return .Err("rewritten hoisted body did not rewrite captured assign target") },
-        }
-        .Ok({})
-      },
-    }
-  })
-
-  .test("closure conversion rewrites nested closure free vars to rewritten capture params", fn() {
-    outer_body: AnfExpr = .Let(lid(10),
-      .AMakeClosure(fid(99), [lid(0)]),
-      .Atom(.ALocal(lid(10))))
-    outer := mk_func_def(1, "outer", [mk_param(0, .Int)], .Function([], .Function([], .Int)), outer_body,
-      mk_mono_map([10], [MonoType.Function([], .Function([], .Int))]))
-
-    middle_body: AnfExpr = .Let(lid(11),
-      .AMakeClosure(fid(100), [lid(0)]),
-      .Atom(.ALocal(lid(11))))
-    middle := mk_func_def(99, "middle", [], .Function([], .Int), middle_body,
-      mk_mono_map([11], [MonoType.Function([], .Int)]))
-
-    inner := mk_func_def(100, "inner", [], .Int, .Atom(.ALocal(lid(0))), Dict.new())
-
-    converted := convert_closures(mk_module([outer, middle, inner]), empty_env())
-
-    case converted.captures[99] {
-      .None => .Err("missing closure capture metadata for middle"),
-      .Some(middle_caps) => {
-        rewritten_middle := converted.anf.functions[1]
-        case rewritten_middle.body {
-          .Let(_, .AMakeClosure(_, free_vars), _) => {
-            try assert.equal(free_vars.len(), 1)
-            try assert.equal(free_vars[0].id, middle_caps[0].param_local.id)
-            .Ok({})
-          },
-          _ => .Err("rewritten middle body did not preserve nested closure creation"),
-        }
-      },
-    }
-  })
-
-  .test("closure conversion resolves captured pattern local mono", fn() {
-    some_arm := AnfMatchArm.{
-      pattern: .Variant(TypeId.{ id: 0 }, .{ id: 1 }, [CorePattern.Var(lid(1))]),
-      body: .Let(lid(11), .AMakeClosure(fid(99), [lid(1)]), .Atom(.ALitVoid)),
-    }
-    none_arm := AnfMatchArm.{
-      pattern: .Variant(TypeId.{ id: 0 }, .{ id: 0 }, []),
-      body: .Atom(.ALitVoid),
-    }
-    outer_body: AnfExpr = .Let(
-      lid(10),
-      .AMatch(.ALocal(lid(0)), [some_arm, none_arm]),
-      .Atom(.ALitVoid),
-    )
-    outer := mk_func_def(
-      1,
-      "outer",
-      [mk_param(0, .Optional(.String))],
-      .Void,
-      outer_body,
-      mk_mono_map([10, 11], [MonoType.Void, MonoType.Function([], .String)]),
-    )
-    inner := mk_func_def(99, "inner", [], .String, .Atom(.ALocal(lid(0))), Dict.new())
-
-    converted := convert_closures(mk_module([outer, inner]), empty_env())
-
-    case converted.captures[99] {
-      .None => .Err("missing closure capture metadata for inner"),
-      .Some(caps) => {
-        try assert.equal(caps.len(), 1)
-        try assert.equal(caps[0].local_id.id, 1)
-        case caps[0].ty {
-          .String => .Ok({}),
-          _ => .Err("captured pattern local did not keep its String mono"),
-        }
-      },
-    }
-  })
-
-  // ── Closure captures preserved ──
-
-  .test("closure_captures from caller are stored in PreparedModule", fn() {
-    // Verify that the caller-provided closure_captures map flows through
-    // to PreparedModule.closure_captures unchanged.
-    body: AnfExpr = .Atom(.ALitVoid)
-    func := mk_func_def(1, "h", [], .Void, body, Dict.new())
-    anf := mk_module([func])
-
-    cap: CaptureParam = CaptureParam.{ local_id: lid(0), param_local: lid(100), ty: .Int }
-    captures: Dict<Int, Vector<CaptureParam>> = Dict.new()
-    captures[42] = [cap]
-
-    prepared := prepare_backend(anf, empty_env(), empty_builtins(), captures)
-
-    case prepared.closure_captures[42] {
-      .None => .Err("closure_captures not preserved in PreparedModule"),
-      .Some(caps) => {
-        try assert.equal(caps.len(), 1)
-        try assert.equal(caps[0].local_id.id, 0)
-        .Ok({})
-      },
-    }
-  })
+      case prepared.closure_captures[42] {
+        .None => .Err("closure_captures not preserved in PreparedModule"),
+        .Some(caps) => {
+          try assert.equal(caps.len(), 1)
+          try assert.equal(caps[0].local_id.id, 0)
+          .Ok({})
+        },
+      }
+    },
+  )
 }

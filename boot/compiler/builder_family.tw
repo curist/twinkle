@@ -1,7 +1,6 @@
 // Shared vector-builder family metadata used by lowering and optimizer code.
-
-use compiler.core_ir.{FuncId}
 use compiler.builtins.{BuiltinRegistry}
+use compiler.core_ir.{FuncId}
 
 pub type BuilderConfig = .{
   push_id: FuncId,

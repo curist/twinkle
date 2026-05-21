@@ -1,28 +1,31 @@
-use tests.runner
-use tests.assert
+use compiler.ast
+use compiler.base_env.{builtin_env}
+use compiler.builtins.{make_builtin_registry}
+use compiler.checker
+use compiler.contracts.{BuiltinContract}
+use compiler.core_ir
+use compiler.core_linker.dce
+use compiler.core_linker
+use compiler.lower_core
+use compiler.mono_type as mono_type
+use compiler.monomorphize
 use compiler.parser
 use compiler.resolver
 use compiler.resolver.{plain_resolved_type_params}
-use compiler.mono_type as mono_type
-use compiler.checker
-use compiler.ast
-use compiler.core_ir
-use compiler.core_linker
-use compiler.core_linker.dce
-use compiler.lower_core
-use compiler.monomorphize
-use compiler.builtins.{make_builtin_registry}
-use compiler.base_env.{builtin_env}
-use compiler.contracts.{BuiltinContract}
 use lib.source.span
+use tests.assert
+use tests.runner
 
 // ── Helpers ──────────────────────────────────────────────────────────
-
 fn parse_ok(src: String) Result<ast.Module, String> {
   parsed := parser.parse(src, 0)
+
   if parsed.diagnostics.len() > 0 {
-    return .Err("expected no diagnostics, got ${parsed.diagnostics.len()}: ${parsed.diagnostics[0].message()}")
+    return .Err(
+      "expected no diagnostics, got ${parsed.diagnostics.len()}: ${parsed.diagnostics[0].message()}",
+    )
   }
+
   .Ok(parsed.value)
 }
 
@@ -34,57 +37,89 @@ fn check_src(src: String) checker.CheckResult {
 
 fn lower_src(src: String) Result<lower_core.LowerResult, String> {
   parsed := parser.parse(src, 0)
+
   if parsed.diagnostics.len() > 0 {
     return .Err("parse error: ${parsed.diagnostics[0].message()}")
   }
+
   resolved := resolver.empty_env().resolve(parsed.value)
+
   if resolved.diagnostics.len() > 0 {
     return .Err("resolve error: ${resolved.diagnostics[0].message()}")
   }
+
   check_result := checker.check(parsed.value, resolved.env)
+
   if check_result.diagnostics.len() > 0 {
     return .Err("check error: ${check_result.diagnostics[0].message()}")
   }
-  .Ok(lower_core.lower_module(parsed.value, check_result, make_builtin_registry()))
+
+  .Ok(
+    lower_core.lower_module(parsed.value, check_result, make_builtin_registry()),
+  )
 }
 
-fn lower_src_with_env(src: String, env: resolver.ResolvedEnv) Result<lower_core.LowerResult, String> {
+fn lower_src_with_env(src: String, env: resolver.ResolvedEnv) Result<
+  lower_core.LowerResult,
+  String,
+> {
   parsed := parser.parse(src, 0)
+
   if parsed.diagnostics.len() > 0 {
     return .Err("parse error: ${parsed.diagnostics[0].message()}")
   }
+
   resolved := env.resolve(parsed.value)
+
   if resolved.diagnostics.len() > 0 {
     return .Err("resolve error: ${resolved.diagnostics[0].message()}")
   }
+
   check_result := checker.check(parsed.value, resolved.env)
+
   if check_result.diagnostics.len() > 0 {
     return .Err("check error: ${check_result.diagnostics[0].message()}")
   }
-  .Ok(lower_core.lower_module(parsed.value, check_result, make_builtin_registry()))
+
+  .Ok(
+    lower_core.lower_module(parsed.value, check_result, make_builtin_registry()),
+  )
 }
 
-fn lower_src_with_builtin_env(src: String) Result<lower_core.LowerResult, String> {
+fn lower_src_with_builtin_env(src: String) Result<
+  lower_core.LowerResult,
+  String,
+> {
   parsed := parser.parse(src, 0)
+
   if parsed.diagnostics.len() > 0 {
     return .Err("parse error: ${parsed.diagnostics[0].message()}")
   }
+
   resolved := builtin_env().resolve(parsed.value)
+
   if resolved.diagnostics.len() > 0 {
     return .Err("resolve error: ${resolved.diagnostics[0].message()}")
   }
+
   check_result := checker.check(parsed.value, resolved.env)
+
   if check_result.diagnostics.len() > 0 {
     return .Err("check error: ${check_result.diagnostics[0].message()}")
   }
-  .Ok(lower_core.lower_module(parsed.value, check_result, make_builtin_registry()))
+
+  .Ok(
+    lower_core.lower_module(parsed.value, check_result, make_builtin_registry()),
+  )
 }
 
 fn lower_fn_body(src: String) Result<core_ir.CoreExpr, String> {
   lr := try lower_src(src)
+
   if lr.module.functions.len() == 0 {
     return .Err("no functions in lowered module")
   }
+
   .Ok(lr.module.functions[0].body)
 }
 
@@ -95,8 +130,11 @@ fn has_loop(expr: core_ir.CoreExpr) Bool {
     .If(_, then_e, else_e) => has_loop(then_e) or has_loop(else_e),
     .Match(_, arms) => {
       for arm in arms {
-        if has_loop(arm.body) { return true }
+        if has_loop(arm.body) {
+          return true
+        }
       }
+
       false
     },
     _ => false,
@@ -107,11 +145,15 @@ fn has_make_closure(expr: core_ir.CoreExpr) Bool {
   case expr.kind {
     .MakeClosure(_, _) => true,
     .Let(_, val, body) => has_make_closure(val) or has_make_closure(body),
-    .If(_, then_e, else_e) => has_make_closure(then_e) or has_make_closure(else_e),
+    .If(_, then_e, else_e) => has_make_closure(then_e)
+    or has_make_closure(else_e),
     .Match(_, arms) => {
       for arm in arms {
-        if has_make_closure(arm.body) { return true }
+        if has_make_closure(arm.body) {
+          return true
+        }
       }
+
       false
     },
     _ => false,
@@ -122,16 +164,24 @@ fn has_make_closure_capture(expr: core_ir.CoreExpr, target_local_id: Int) Bool {
   case expr.kind {
     .MakeClosure(_, free_vars) => {
       for fv in free_vars {
-        if fv.id == target_local_id { return true }
+        if fv.id == target_local_id {
+          return true
+        }
       }
+
       false
     },
-    .Let(_, val, body) => has_make_closure_capture(val, target_local_id) or has_make_closure_capture(body, target_local_id),
-    .If(_, then_e, else_e) => has_make_closure_capture(then_e, target_local_id) or has_make_closure_capture(else_e, target_local_id),
+    .Let(_, val, body) => has_make_closure_capture(val, target_local_id)
+    or has_make_closure_capture(body, target_local_id),
+    .If(_, then_e, else_e) => has_make_closure_capture(then_e, target_local_id)
+    or has_make_closure_capture(else_e, target_local_id),
     .Match(_, arms) => {
       for arm in arms {
-        if has_make_closure_capture(arm.body, target_local_id) { return true }
+        if has_make_closure_capture(arm.body, target_local_id) {
+          return true
+        }
       }
+
       false
     },
     _ => false,
@@ -141,50 +191,65 @@ fn has_make_closure_capture(expr: core_ir.CoreExpr, target_local_id: Int) Bool {
 fn make_closure_targets(expr: core_ir.CoreExpr, out: Vector<Int>) Vector<Int> {
   case expr.kind {
     .MakeClosure(fid, _) => out.append(fid.id),
-    .Let(_, val, body) => make_closure_targets(body, make_closure_targets(val, out)),
-    .If(_, then_e, else_e) => make_closure_targets(else_e, make_closure_targets(then_e, out)),
+    .Let(_, val, body) => make_closure_targets(
+      body,
+      make_closure_targets(val, out),
+    ),
+    .If(_, then_e, else_e) => make_closure_targets(
+      else_e,
+      make_closure_targets(then_e, out),
+    ),
     .Match(_, arms) => {
       cur := out
-      for arm in arms {
-        cur = make_closure_targets(arm.body, cur)
-      }
+
+      for arm in arms { cur = make_closure_targets(arm.body, cur) }
+
       cur
     },
     .Loop(body) => make_closure_targets(body, out),
     .Assign(_, val) => make_closure_targets(val, out),
     .Record(_, fields) => {
       cur := out
-      for field in fields {
-        cur = make_closure_targets(field.value, cur)
-      }
+
+      for field in fields { cur = make_closure_targets(field.value, cur) }
+
       cur
     },
     .RecordGet(target, _) => make_closure_targets(target, out),
-    .RecordUpdate(base, _, value) => make_closure_targets(value, make_closure_targets(base, out)),
+    .RecordUpdate(base, _, value) => make_closure_targets(
+      value,
+      make_closure_targets(base, out),
+    ),
     .Variant(_, _, args) => {
       cur := out
-      for arg in args {
-        cur = make_closure_targets(arg, cur)
-      }
+
+      for arg in args { cur = make_closure_targets(arg, cur) }
+
       cur
     },
     .ArrayLit(elems) => {
       cur := out
-      for elem in elems {
-        cur = make_closure_targets(elem, cur)
-      }
+
+      for elem in elems { cur = make_closure_targets(elem, cur) }
+
       cur
     },
-    .Index(base, idx) => make_closure_targets(idx, make_closure_targets(base, out)),
+    .Index(base, idx) => make_closure_targets(
+      idx,
+      make_closure_targets(base, out),
+    ),
     .Call(callee, args) => {
       cur := make_closure_targets(callee, out)
-      for arg in args {
-        cur = make_closure_targets(arg, cur)
-      }
+
+      for arg in args { cur = make_closure_targets(arg, cur) }
+
       cur
     },
     .UnOp(_, inner) => make_closure_targets(inner, out),
-    .BinOp(_, lhs, rhs) => make_closure_targets(rhs, make_closure_targets(lhs, out)),
+    .BinOp(_, lhs, rhs) => make_closure_targets(
+      rhs,
+      make_closure_targets(lhs, out),
+    ),
     .Break(.Some(v)) => make_closure_targets(v, out),
     .Return(.Some(v)) => make_closure_targets(v, out),
     .Defer(inner) => make_closure_targets(inner, out),
@@ -202,13 +267,18 @@ fn has_match(expr: core_ir.CoreExpr) Bool {
 }
 
 fn join_names(names: Vector<String>) String {
-  if names.len() == 0 { return "" }
+  if names.len() == 0 {
+    return ""
+  }
+
   result := names[0]
   i := 1
+
   for i < names.len() {
-    result = result.concat(", ").concat(names[i])
+    result = .concat(", ").concat(names[i])
     i = i + 1
   }
+
   result
 }
 
@@ -216,11 +286,15 @@ fn has_global_local(expr: core_ir.CoreExpr) Bool {
   case expr.kind {
     .GlobalLocal(_) => true,
     .Let(_, val, body) => has_global_local(val) or has_global_local(body),
-    .If(_, then_e, else_e) => has_global_local(then_e) or has_global_local(else_e),
+    .If(_, then_e, else_e) => has_global_local(then_e)
+    or has_global_local(else_e),
     .Match(_, arms) => {
       for arm in arms {
-        if has_global_local(arm.body) { return true }
+        if has_global_local(arm.body) {
+          return true
+        }
       }
+
       false
     },
     _ => false,
@@ -239,13 +313,20 @@ fn has_terminal_in_let_value(expr: core_ir.CoreExpr) Bool {
       }
     },
     .If(cond, then_e, else_e) => {
-      has_terminal_in_let_value(cond) or has_terminal_in_let_value(then_e) or has_terminal_in_let_value(else_e)
+      has_terminal_in_let_value(cond) or has_terminal_in_let_value(then_e)
+      or has_terminal_in_let_value(else_e)
     },
     .Match(scrut, arms) => {
-      if has_terminal_in_let_value(scrut) { return true }
-      for arm in arms {
-        if has_terminal_in_let_value(arm.body) { return true }
+      if has_terminal_in_let_value(scrut) {
+        return true
       }
+
+      for arm in arms {
+        if has_terminal_in_let_value(arm.body) {
+          return true
+        }
+      }
+
       false
     },
     .Loop(inner) => has_terminal_in_let_value(inner),
@@ -258,24 +339,42 @@ fn has_func_id(expr: core_ir.CoreExpr, target_id: Int) Bool {
     .Call(callee, args) => {
       case callee.kind {
         .GlobalFunc(fid) => {
-          if fid.id == target_id { return true }
+          if fid.id == target_id {
+            return true
+          }
         },
         _ => {},
       }
-      if has_func_id(callee, target_id) { return true }
-      for a in args {
-        if has_func_id(a, target_id) { return true }
+
+      if has_func_id(callee, target_id) {
+        return true
       }
+
+      for a in args {
+        if has_func_id(a, target_id) {
+          return true
+        }
+      }
+
       false
     },
     .GlobalFunc(fid) => fid.id == target_id,
-    .Let(_, val, body) => has_func_id(val, target_id) or has_func_id(body, target_id),
-    .If(cond, then_e, else_e) => has_func_id(cond, target_id) or has_func_id(then_e, target_id) or has_func_id(else_e, target_id),
+    .Let(_, val, body) => has_func_id(val, target_id)
+    or has_func_id(body, target_id),
+    .If(cond, then_e, else_e) => has_func_id(cond, target_id)
+    or has_func_id(then_e, target_id)
+    or has_func_id(else_e, target_id),
     .Match(scrut, arms) => {
-      if has_func_id(scrut, target_id) { return true }
-      for arm in arms {
-        if has_func_id(arm.body, target_id) { return true }
+      if has_func_id(scrut, target_id) {
+        return true
       }
+
+      for arm in arms {
+        if has_func_id(arm.body, target_id) {
+          return true
+        }
+      }
+
       false
     },
     .Loop(inner) => has_func_id(inner, target_id),
@@ -291,8 +390,11 @@ fn has_call(expr: core_ir.CoreExpr) Bool {
     .If(_, then_e, else_e) => has_call(then_e) or has_call(else_e),
     .Match(_, arms) => {
       for arm in arms {
-        if has_call(arm.body) { return true }
+        if has_call(arm.body) {
+          return true
+        }
       }
+
       false
     },
     _ => false,
@@ -300,78 +402,117 @@ fn has_call(expr: core_ir.CoreExpr) Bool {
 }
 
 // ── M0: Expression identity ─────────────────────────────────────────
-
 pub fn suite() runner.Suite {
-  runner.suite("core_ir")
-    .test("expr has id field", fn() Result<Void, String> {
+  runner.suite("core_ir").test(
+    "expr has id field",
+    fn() Result<Void, String> {
       mod := try parse_ok("fn f() Int { 42 }")
+
       case mod.items[0] {
         .Function(f) => {
           case f.body.tail {
             .Some(expr) => {
               assert.ok(expr.id >= 0, "expr.id should be non-negative")
             },
-            .None => { return .Err("expected tail expression") },
+            .None => {
+              return .Err("expected tail expression")
+            },
           }
         },
-        _ => { return .Err("expected function") },
+        _ => {
+          return .Err("expected function")
+        },
       }
+
       .Ok({})
-    })
-    .test("distinct exprs get distinct ids", fn() Result<Void, String> {
+    },
+  ).test(
+    "distinct exprs get distinct ids",
+    fn() Result<Void, String> {
       mod := try parse_ok("fn f() Int { 1 + 2 }")
+
       case mod.items[0] {
         .Function(f) => {
           case f.body.tail {
             .Some(expr) => {
               case expr.kind {
                 .Binary(_, lhs, rhs) => {
-                  try assert.ok(expr.id != lhs.id, "binary and lhs should have different ids")
-                  try assert.ok(expr.id != rhs.id, "binary and rhs should have different ids")
-                  assert.ok(lhs.id != rhs.id, "lhs and rhs should have different ids")
+                  try assert.ok(
+                    expr.id != lhs.id,
+                    "binary and lhs should have different ids",
+                  )
+                  try assert.ok(
+                    expr.id != rhs.id,
+                    "binary and rhs should have different ids",
+                  )
+                  assert.ok(
+                    lhs.id != rhs.id,
+                    "lhs and rhs should have different ids",
+                  )
                 },
-                _ => { return .Err("expected binary expression") },
+                _ => {
+                  return .Err("expected binary expression")
+                },
               }
             },
-            .None => { return .Err("expected tail expression") },
+            .None => {
+              return .Err("expected tail expression")
+            },
           }
         },
-        _ => { return .Err("expected function") },
+        _ => {
+          return .Err("expected function")
+        },
       }
-    })
-    .test("call expr and callee get distinct ids", fn() Result<Void, String> {
+    },
+  ).test(
+    "call expr and callee get distinct ids",
+    fn() Result<Void, String> {
       mod := try parse_ok("fn foo() Int { 0 }\nfn f() Int { foo(1) }")
+
       case mod.items[1] {
         .Function(f) => {
           case f.body.tail {
             .Some(call_expr) => {
               case call_expr.kind {
                 .Call(callee, args) => {
-                  assert.ok(call_expr.id != callee.id,
-                    "call expr and callee should have different ids")
+                  assert.ok(
+                    call_expr.id != callee.id,
+                    "call expr and callee should have different ids",
+                  )
                 },
-                _ => { return .Err("expected call expression") },
+                _ => {
+                  return .Err("expected call expression")
+                },
               }
             },
-            .None => { return .Err("expected tail expression") },
+            .None => {
+              return .Err("expected tail expression")
+            },
           }
         },
-        _ => { return .Err("expected function") },
+        _ => {
+          return .Err("expected function")
+        },
       }
-    })
-    // ── M1: Core IR types ─────────────────────────────────────────────
-    .test("CoreExpr construction", fn() Result<Void, String> {
+    },
+  ).test(
+    "CoreExpr construction",
+    fn() Result<Void, String> {
       expr := core_ir.CoreExpr.{
         kind: .LitInt(42),
         ty: mono_type.MonoType.Int,
         span: span.new(0, 0, 2),
       }
+
       case expr.kind {
         .LitInt(n) => assert.equal(n, 42),
         _ => .Err("expected LitInt"),
       }
-    })
-    .test("FunctionDef construction", fn() Result<Void, String> {
+    },
+  ).test(
+    "FunctionDef construction",
+    fn() Result<Void, String> {
       body := core_ir.CoreExpr.{
         kind: .LitInt(0),
         ty: mono_type.MonoType.Int,
@@ -380,15 +521,22 @@ pub fn suite() runner.Suite {
       def := core_ir.FunctionDef.{
         func_id: core_ir.FuncId.{ id: 1 },
         name: "test",
-        params: [core_ir.Param.{ local: core_ir.LocalId.{ id: 0 }, ty: mono_type.MonoType.Int }],
+        params: [
+          core_ir.Param.{
+            local: core_ir.LocalId.{ id: 0 },
+            ty: mono_type.MonoType.Int,
+          },
+        ],
         body: body,
         return_ty: mono_type.MonoType.Int,
         is_init: false,
       }
       try assert.equal(def.name, "test")
       assert.equal(def.params.len(), 1)
-    })
-    .test("CoreModule construction", fn() Result<Void, String> {
+    },
+  ).test(
+    "CoreModule construction",
+    fn() Result<Void, String> {
       mod := core_ir.CoreModule.{
         functions: [],
         type_env: resolver.empty_env(),
@@ -397,50 +545,68 @@ pub fn suite() runner.Suite {
         extern_imports: Dict.new(),
       }
       assert.equal(mod.functions.len(), 0)
-    })
-    // ── M2: Literals, identifiers, let bindings ───────────────────────
-    .test("lower int literal", fn() Result<Void, String> {
+    },
+  ).test(
+    "lower int literal",
+    fn() Result<Void, String> {
       body := try lower_fn_body("fn f() Int { 42 }")
+
       case body.kind {
         .LitInt(n) => assert.equal(n, 42),
         _ => .Err("expected LitInt, got other kind"),
       }
-    })
-    .test("lower hex literal", fn() Result<Void, String> {
+    },
+  ).test(
+    "lower hex literal",
+    fn() Result<Void, String> {
       body := try lower_fn_body("fn f() Int { 0xFF }")
+
       case body.kind {
         .LitInt(n) => assert.equal(n, 255),
         _ => .Err("expected LitInt, got other kind"),
       }
-    })
-    .test("lower string literal", fn() Result<Void, String> {
+    },
+  ).test(
+    "lower string literal",
+    fn() Result<Void, String> {
       body := try lower_fn_body("fn f() String { \"hello\" }")
+
       case body.kind {
         .LitStr(s) => assert.equal(s, "hello"),
         _ => .Err("expected LitStr, got other kind"),
       }
-    })
-    .test("lower float literal", fn() Result<Void, String> {
+    },
+  ).test(
+    "lower float literal",
+    fn() Result<Void, String> {
       body := try lower_fn_body("fn f() Float { 3.14 }")
+
       case body.kind {
         .LitFloat(_) => .Ok({}),
         _ => .Err("expected LitFloat, got other kind"),
       }
-    })
-    .test("lower bool literal", fn() Result<Void, String> {
+    },
+  ).test(
+    "lower bool literal",
+    fn() Result<Void, String> {
       body := try lower_fn_body("fn f() Bool { true }")
+
       case body.kind {
         .LitBool(b) => assert.ok(b, "expected true"),
         _ => .Err("expected LitBool, got other kind"),
       }
-    })
-    .test("lower let binding", fn() Result<Void, String> {
+    },
+  ).test(
+    "lower let binding",
+    fn() Result<Void, String> {
       body := try lower_fn_body("fn f() Int { x := 5; x }")
+
       case body.kind {
         .Let(local, val, inner_body) => {
           case val.kind {
             .LitInt(n) => {
               try assert.equal(n, 5)
+
               case inner_body.kind {
                 .Local(ref) => assert.equal(ref.id, local.id),
                 _ => .Err("expected Local in body"),
@@ -451,10 +617,12 @@ pub fn suite() runner.Suite {
         },
         _ => .Err("expected Let, got other kind"),
       }
-    })
-    // ── M3: Binary/unary operators, if expressions ────────────────────
-    .test("lower binary add", fn() Result<Void, String> {
+    },
+  ).test(
+    "lower binary add",
+    fn() Result<Void, String> {
       body := try lower_fn_body("fn f() Int { 1 + 2 }")
+
       case body.kind {
         .BinOp(op, lhs, rhs) => {
           case op {
@@ -477,14 +645,18 @@ pub fn suite() runner.Suite {
         },
         _ => .Err("expected BinOp"),
       }
-    })
-    .test("lower if expression", fn() Result<Void, String> {
+    },
+  ).test(
+    "lower if expression",
+    fn() Result<Void, String> {
       body := try lower_fn_body("fn f() Int { if true { 1 } else { 2 } }")
+
       case body.kind {
         .If(cond, then_e, else_e) => {
           case cond.kind {
             .LitBool(b) => {
               try assert.ok(b, "expected true")
+
               case then_e.kind {
                 .LitInt(a) => {
                   case else_e.kind {
@@ -503,9 +675,12 @@ pub fn suite() runner.Suite {
         },
         _ => .Err("expected If"),
       }
-    })
-    .test("lower unary negation", fn() Result<Void, String> {
+    },
+  ).test(
+    "lower unary negation",
+    fn() Result<Void, String> {
       body := try lower_fn_body("fn f() Int { -42 }")
+
       case body.kind {
         .UnOp(op, operand) => {
           case op {
@@ -520,9 +695,12 @@ pub fn suite() runner.Suite {
         },
         _ => .Err("expected UnOp"),
       }
-    })
-    .test("lower short-circuit and", fn() Result<Void, String> {
+    },
+  ).test(
+    "lower short-circuit and",
+    fn() Result<Void, String> {
       body := try lower_fn_body("fn f(a: Bool, b: Bool) Bool { a and b }")
+
       // `and` desugars to If(a, b, false)
       case body.kind {
         .If(_, _, else_e) => {
@@ -533,23 +711,34 @@ pub fn suite() runner.Suite {
         },
         _ => .Err("expected If (short-circuit and)"),
       }
-    })
-    // ── M4: Function calls, FuncId assignment ─────────────────────────
-    .test("lower function call", fn() Result<Void, String> {
-      body := try lower_fn_body("fn add(a: Int, b: Int) Int { a + b }\nfn f() Int { add(1, 2) }")
+    },
+  ).test(
+    "lower function call",
+    fn() Result<Void, String> {
+      body := try lower_fn_body(
+        "fn add(a: Int, b: Int) Int { a + b }\nfn f() Int { add(1, 2) }",
+      )
       // lower_fn_body returns first function's body (add), we want the second (f)
-      lr := try lower_src("fn add(a: Int, b: Int) Int { a + b }\nfn f() Int { add(1, 2) }")
+      lr := try lower_src(
+        "fn add(a: Int, b: Int) Int { a + b }\nfn f() Int { add(1, 2) }",
+      )
+
       if lr.module.functions.len() < 2 {
         return .Err("expected 2 functions, got ${lr.module.functions.len()}")
       }
+
       call_body := lr.module.functions[1].body
+
       case call_body.kind {
         .Call(callee, args) => {
           case callee.kind {
             .GlobalFunc(fid) => {
               // add should have been assigned a FuncId
               reg := make_builtin_registry()
-              try assert.ok(fid.id >= reg.next_id, "FuncId should be >= user func start")
+              try assert.ok(
+                fid.id >= reg.next_id,
+                "FuncId should be >= user func start",
+              )
               assert.equal(args.len(), 2)
             },
             _ => .Err("expected GlobalFunc callee"),
@@ -557,9 +746,13 @@ pub fn suite() runner.Suite {
         },
         _ => .Err("expected Call"),
       }
-    })
-    .test("distinct FuncIds for multiple functions", fn() Result<Void, String> {
-      lr := try lower_src("fn a() Int { 1 }\nfn b() Int { 2 }\nfn c() Int { 3 }")
+    },
+  ).test(
+    "distinct FuncIds for multiple functions",
+    fn() Result<Void, String> {
+      lr := try lower_src(
+        "fn a() Int { 1 }\nfn b() Int { 2 }\nfn c() Int { 3 }",
+      )
       try assert.equal(lr.module.functions.len(), 3)
       f0 := lr.module.functions[0].func_id.id
       f1 := lr.module.functions[1].func_id.id
@@ -567,44 +760,51 @@ pub fn suite() runner.Suite {
       try assert.ok(f0 != f1, "f0 and f1 should differ")
       try assert.ok(f1 != f2, "f1 and f2 should differ")
       assert.ok(f0 != f2, "f0 and f2 should differ")
-    })
-    // ── M5: Records, variants, pattern matching ───────────────────────
-    .test("lower named record", fn() Result<Void, String> {
+    },
+  ).test(
+    "lower named record",
+    fn() Result<Void, String> {
       src := "type Point = .{ x: Int, y: Int }\nfn f() Point { Point.{ x: 1, y: 2 } }"
       lr := try lower_src(src)
+
       if lr.module.functions.len() < 1 {
         return .Err("expected at least 1 function")
       }
+
       body := lr.module.functions[0].body
+
       case body.kind {
-        .Record(tid, fields) => {
-          assert.equal(fields.len(), 2)
-        },
+        .Record(tid, fields) => { assert.equal(fields.len(), 2) },
         _ => .Err("expected Record"),
       }
-    })
-    .test("lower field access", fn() Result<Void, String> {
+    },
+  ).test(
+    "lower field access",
+    fn() Result<Void, String> {
       src := "type Point = .{ x: Int, y: Int }\nfn f(p: Point) Int { p.x }"
       lr := try lower_src(src)
       body := lr.module.functions[0].body
+
       case body.kind {
         .RecordGet(_, fid) => .Ok({}),
         _ => .Err("expected RecordGet"),
       }
-    })
-    .test("lower case match", fn() Result<Void, String> {
+    },
+  ).test(
+    "lower case match",
+    fn() Result<Void, String> {
       src := "type MyOpt = { MyNone, MySome(Int) }\nfn f(o: MyOpt) Int { case o { .MySome(x) => x, .MyNone => 0 } }"
       lr := try lower_src(src)
       body := lr.module.functions[0].body
+
       case body.kind {
-        .Match(scrut, arms) => {
-          assert.equal(arms.len(), 2)
-        },
+        .Match(scrut, arms) => { assert.equal(arms.len(), 2) },
         _ => .Err("expected Match"),
       }
-    })
-    // ── M6: For loops, break/continue, return, assign, defer ──────────
-    .test("lower for-in vector loop", fn() Result<Void, String> {
+    },
+  ).test(
+    "lower for-in vector loop",
+    fn() Result<Void, String> {
       src := "fn f(xs: Vector<Int>) Void { for x in xs { x } }"
       lr := try lower_src(src)
       body := lr.module.functions[0].body
@@ -612,11 +812,14 @@ pub fn suite() runner.Suite {
       // for_desugaring = Let(arr, xs, Let(len, ..., Let(idx, 0, Loop(...))))
       try assert.ok(has_loop(body), "expected Loop node in for-in desugaring")
       .Ok({})
-    })
-    .test("lower return as terminal", fn() Result<Void, String> {
+    },
+  ).test(
+    "lower return as terminal",
+    fn() Result<Void, String> {
       src := "fn f() Int { return 42 }"
       lr := try lower_src(src)
       body := lr.module.functions[0].body
+
       case body.kind {
         .Return(val) => {
           case val {
@@ -631,20 +834,21 @@ pub fn suite() runner.Suite {
         },
         _ => .Err("expected Return"),
       }
-    })
-    .test("lower simple assign", fn() Result<Void, String> {
+    },
+  ).test(
+    "lower simple assign",
+    fn() Result<Void, String> {
       src := "fn f() Int { x := 1; x = x + 1; x }"
       lr := try lower_src(src)
       body := lr.module.functions[0].body
+
       // Should be Let(x, 1, Let(_, Assign(x, x+1), Local(x)))
       case body.kind {
         .Let(x_local, _, inner) => {
           case inner.kind {
             .Let(_, assign_val, _) => {
               case assign_val.kind {
-                .Assign(target, _) => {
-                  assert.equal(target.id, x_local.id)
-                },
+                .Assign(target, _) => { assert.equal(target.id, x_local.id) },
                 _ => .Err("expected Assign"),
               }
             },
@@ -653,8 +857,10 @@ pub fn suite() runner.Suite {
         },
         _ => .Err("expected Let at top"),
       }
-    })
-    .test("type_map keyed by expr.id", fn() Result<Void, String> {
+    },
+  ).test(
+    "type_map keyed by expr.id",
+    fn() Result<Void, String> {
       src := "fn foo(x: Int) Int { x }\nfn f() Int { foo(1) }"
       parsed := parser.parse(src, 0)
       resolved := resolver.empty_env().resolve(parsed.value)
@@ -672,132 +878,212 @@ pub fn suite() runner.Suite {
                 .Call(callee, _) => {
                   call_has := result.type_map.has(call_expr.id)
                   callee_has := result.type_map.has(callee.id)
-                  try assert.ok(call_has, "call expr type not found in type_map")
+                  try assert.ok(
+                    call_has,
+                    "call expr type not found in type_map",
+                  )
                   assert.ok(callee_has, "callee type not found in type_map")
                 },
-                _ => { return .Err("expected call expression") },
+                _ => {
+                  return .Err("expected call expression")
+                },
               }
             },
-            .None => { return .Err("expected tail expression") },
+            .None => {
+              return .Err("expected tail expression")
+            },
           }
         },
-        _ => { return .Err("expected function") },
+        _ => {
+          return .Err("expected function")
+        },
       }
-    })
-    // ── M7: Closures, try, string interpolation, collect ──────────────
-    .test("lower closure with capture", fn() Result<Void, String> {
+    },
+  ).test(
+    "lower closure with capture",
+    fn() Result<Void, String> {
       src := "fn f(y: Int) fn(Int) Int { fn(x: Int) Int { x + y } }"
       lr := try lower_src(src)
       body := lr.module.functions[0].body
       // Should produce MakeClosure with free_vars containing y
-      try assert.ok(has_make_closure(body), "expected MakeClosure in closure lowering")
+      try assert.ok(
+        has_make_closure(body),
+        "expected MakeClosure in closure lowering",
+      )
       // Should have hoisted a function
-      try assert.ok(lr.module.functions.len() >= 2, "expected hoisted lambda function")
+      try assert.ok(
+        lr.module.functions.len() >= 2,
+        "expected hoisted lambda function",
+      )
       .Ok({})
-    })
-    .test("lower nested closure capture", fn() Result<Void, String> {
+    },
+  ).test(
+    "lower nested closure capture",
+    fn() Result<Void, String> {
       src := "fn f(a: Int) fn(Int) fn(Int) Int { fn(b: Int) fn(Int) Int { fn(c: Int) Int { a + b + c } } }"
       lr := try lower_src(src)
       // Should have 3 functions: f + 2 hoisted lambdas
-      try assert.ok(lr.module.functions.len() >= 3, "expected at least 3 functions (f + 2 lambdas)")
+      try assert.ok(
+        lr.module.functions.len() >= 3,
+        "expected at least 3 functions (f + 2 lambdas)",
+      )
       .Ok({})
-    })
-    .test("lower try in result-returning fn", fn() Result<Void, String> {
+    },
+  ).test(
+    "lower try in result-returning fn",
+    fn() Result<Void, String> {
       src := "fn parse(s: String) Result<Int, String> { .Ok(1) }\nfn f(s: String) Result<Int, String> { x := try parse(s); .Ok(x) }"
       lr := try lower_src(src)
       // f's body should contain a Match (try desugaring)
       body := lr.module.functions[1].body
       try assert.ok(has_match(body), "expected Match from try desugaring")
       .Ok({})
-    })
-    .test("lower try in option-returning fn", fn() Result<Void, String> {
+    },
+  ).test(
+    "lower try in option-returning fn",
+    fn() Result<Void, String> {
       src := "fn find(x: Int) Int? { .Some(x) }\nfn f(x: Int) Int? { y := try find(x); .Some(y) }"
       lr := try lower_src(src)
       body := lr.module.functions[1].body
       try assert.ok(has_match(body), "expected Match from try desugaring")
       .Ok({})
-    })
-    .test("lower string interpolation", fn() Result<Void, String> {
+    },
+  ).test(
+    "lower string interpolation",
+    fn() Result<Void, String> {
       // Build source with interpolation syntax without triggering our own parser
       // Use from_code_point(36) to get "$" without triggering interpolation
       dollar: String = case String.from_code_point(36) {
         .Some(d) => d,
-        .None => { return .Err("failed to create dollar sign") },
+        .None => {
+          return .Err("failed to create dollar sign")
+        },
       }
-      src: String = "fn f(n: Int) String { \"value: ".concat(dollar).concat("{n}\" }")
+      src: String = "fn f(n: Int) String { \"value: ".concat(dollar).concat(
+        "{n}\" }",
+      )
       lr := try lower_src(src)
       body := lr.module.functions[0].body
       // Should produce Call(string_concat, [...]) chain
       try assert.ok(has_call(body), "expected Call in string interpolation")
       .Ok({})
-    })
-    .test("lower collect expression", fn() Result<Void, String> {
+    },
+  ).test(
+    "lower collect expression",
+    fn() Result<Void, String> {
       src := "fn f(xs: Vector<Int>) Vector<Int> { collect x in xs { x * 2 } }"
       lr := try lower_src(src)
       body := lr.module.functions[0].body
       reg := make_builtin_registry()
       // Should produce builder pattern with loop
       try assert.ok(has_loop(body), "expected Loop in collect desugaring")
-      try assert.ok(has_func_id(body, reg.id("vector__builder_new").id), "expected builder_new in collect lowering")
-      try assert.ok(has_func_id(body, reg.id("vector__builder_push").id), "expected builder_push in collect lowering")
-      try assert.ok(has_func_id(body, reg.id("vector__builder_freeze").id), "expected builder_freeze in collect lowering")
+      try assert.ok(
+        has_func_id(body, reg.id("vector__builder_new").id),
+        "expected builder_new in collect lowering",
+      )
+      try assert.ok(
+        has_func_id(body, reg.id("vector__builder_push").id),
+        "expected builder_push in collect lowering",
+      )
+      try assert.ok(
+        has_func_id(body, reg.id("vector__builder_freeze").id),
+        "expected builder_freeze in collect lowering",
+      )
       .Ok({})
-    })
-    .test("lower collect-while uses builder calls", fn() Result<Void, String> {
+    },
+  ).test(
+    "lower collect-while uses builder calls",
+    fn() Result<Void, String> {
       src := "fn f() Vector<Int> {\n  i := 0\n  collect i < 3 {\n    i = i + 1\n    i\n  }\n}"
       lr := try lower_src(src)
       body := lr.module.functions[0].body
       reg := make_builtin_registry()
       try assert.ok(has_loop(body), "expected Loop in collect-while desugaring")
-      try assert.ok(has_func_id(body, reg.id("vector__builder_new").id), "expected builder_new in collect-while lowering")
-      try assert.ok(has_func_id(body, reg.id("vector__builder_push").id), "expected builder_push in collect-while lowering")
-      try assert.ok(has_func_id(body, reg.id("vector__builder_freeze").id), "expected builder_freeze in collect-while lowering")
+      try assert.ok(
+        has_func_id(body, reg.id("vector__builder_new").id),
+        "expected builder_new in collect-while lowering",
+      )
+      try assert.ok(
+        has_func_id(body, reg.id("vector__builder_push").id),
+        "expected builder_push in collect-while lowering",
+      )
+      try assert.ok(
+        has_func_id(body, reg.id("vector__builder_freeze").id),
+        "expected builder_freeze in collect-while lowering",
+      )
       .Ok({})
-    })
-    .test("lower array literal", fn() Result<Void, String> {
+    },
+  ).test(
+    "lower array literal",
+    fn() Result<Void, String> {
       body := try lower_fn_body("fn f() Vector<Int> { [1, 2, 3] }")
+
       case body.kind {
         .ArrayLit(elems) => assert.equal(elems.len(), 3),
         _ => .Err("expected ArrayLit"),
       }
-    })
-    // ── M8: Module-level lets, $init ─────────────────────────────────
-    .test("lower module-level let with $init", fn() Result<Void, String> {
+    },
+  ).test(
+    "lower module-level let with \$init",
+    fn() Result<Void, String> {
       src := "x := 42\nfn f() Int { x }"
       lr := try lower_src(src)
       // Should have $init func + f
-      try assert.ok(lr.module.functions.len() >= 2, "expected functions for user code and $init")
+      try assert.ok(
+        lr.module.functions.len() >= 2,
+        "expected functions for user code and \$init",
+      )
+
       // init_func_id should be set
       case lr.module.init_func_id {
         .Some(_) => .Ok({}),
         .None => .Err("expected init_func_id to be set"),
       }
-    })
-    .test("module-level let produces GlobalLocal", fn() Result<Void, String> {
+    },
+  ).test(
+    "module-level let produces GlobalLocal",
+    fn() Result<Void, String> {
       src := "x := 42\nfn f() Int { x }"
       lr := try lower_src(src)
       // f should reference x via GlobalLocal
       f_body := lr.module.functions[0].body
-      try assert.ok(has_global_local(f_body), "expected GlobalLocal reference in f body")
+      try assert.ok(
+        has_global_local(f_body),
+        "expected GlobalLocal reference in f body",
+      )
       .Ok({})
-    })
-    .test("module-level let shadows visible function in expression lowering", fn() Result<Void, String> {
+    },
+  ).test(
+    "module-level let shadows visible function in expression lowering",
+    fn() Result<Void, String> {
       src := "values := [1, 2, 3]\nfn f() Int {\n  n := 0\n  for x in values { n = n + x }\n  n\n}"
       lr := try lower_src_with_builtin_env(src)
       body := lr.module.functions[0].body
-      try assert.ok(has_global_local(body), "expected for-loop iterator to resolve values as GlobalLocal")
+      try assert.ok(
+        has_global_local(body),
+        "expected for-loop iterator to resolve values as GlobalLocal",
+      )
       .Ok({})
-    })
-    .test("closure captures module global from top-level lambda", fn() Result<Void, String> {
+    },
+  ).test(
+    "closure captures module global from top-level lambda",
+    fn() Result<Void, String> {
       src := "add5 := fn(x: Int) Int { x + 5 }\nfn f() fn(Int) Int { fn(x: Int) Int { add5(x) } }"
       lr := try lower_src_with_builtin_env(src)
       f_body := lr.module.functions[0].body
-      try assert.ok(has_make_closure(f_body), "expected MakeClosure in outer function")
-      try assert.ok(has_make_closure_capture(f_body, 0), "expected lambda closure to capture module global add5")
+      try assert.ok(
+        has_make_closure(f_body),
+        "expected MakeClosure in outer function",
+      )
+      try assert.ok(
+        has_make_closure_capture(f_body, 0),
+        "expected lambda closure to capture module global add5",
+      )
       .Ok({})
-    })
-    // ── M9: Monomorphization ─────────────────────────────────────────
-    .test("monomorphize identity function", fn() Result<Void, String> {
+    },
+  ).test(
+    "monomorphize identity function",
+    fn() Result<Void, String> {
       src := "fn id<T>(x: T) T { x }\nfn f() Int { id(42) }"
       lr := try lower_src(src)
       result := monomorphize.monomorphize(lr.module)
@@ -805,104 +1091,151 @@ pub fn suite() runner.Suite {
       // Only f and id__Int should remain
       has_generic := false
       has_specialized := false
+
       for func in result.functions {
         if func.name == "id" { has_generic = true }
-        if func.name.len() > 2 and func.name.slice(0, 2) == "id" and func.name != "id" {
-          has_specialized = true
-        }
+
+        if func.name.len() > 2 and func.name.slice(0, 2) == "id"
+        and func.name != "id" { has_specialized = true }
       }
+
       try assert.ok(!has_generic, "generic id should be dropped")
       try assert.ok(has_specialized, "specialized id should exist")
       .Ok({})
-    })
-    .test("monomorphize infers return-only type params from call result type", fn() Result<Void, String> {
+    },
+  ).test(
+    "monomorphize infers return-only type params from call result type",
+    fn() Result<Void, String> {
       src := "fn fail<T>(msg: String) T { error(msg) }\nfn f() Int { fail(\"oops\") }"
       lr := try lower_src_with_builtin_env(src)
       result := monomorphize.monomorphize(lr.module)
       has_generic_fail := false
       has_specialized_fail := false
+
       for func in result.functions {
         if func.name == "fail" { has_generic_fail = true }
+
         if func.name.starts_with("fail__") { has_specialized_fail = true }
       }
+
       try assert.ok(!has_generic_fail, "generic fail should be dropped")
       try assert.ok(has_specialized_fail, "specialized fail should exist")
       .Ok({})
-    })
-    .test("monomorphize infers nested return-only type params from contextual call type", fn() Result<Void, String> {
+    },
+  ).test(
+    "monomorphize infers nested return-only type params from contextual call type",
+    fn() Result<Void, String> {
       src := "type Decoder<T> = .{ run: fn(Int) T }\nfn fail<T>(msg: String) Decoder<T> { .{ run: fn(_: Int) T { error(msg) } } }\nfn decode<T>(x: Int, d: Decoder<T>) T { d.run(x) }\nfn f() Int { decode(0, fail(\"oops\")) }"
       lr := try lower_src_with_builtin_env(src)
       result := monomorphize.monomorphize(lr.module)
       has_generic_fail := false
       spec_fail_id: Int? = .None
       f_body: core_ir.CoreExpr? = .None
+
       for func in result.functions {
         if func.name == "fail" { has_generic_fail = true }
+
         if func.name.starts_with("fail__") {
           spec_fail_id = .Some(func.func_id.id)
         }
+
         if func.name == "f" {
           f_body = .Some(func.body)
         }
       }
+
       try assert.ok(!has_generic_fail, "generic fail should be dropped")
       sid := case spec_fail_id {
         .Some(id) => id,
-        .None => { return .Err("expected specialized fail function") },
+        .None => {
+          return .Err("expected specialized fail function")
+        },
       }
       body := case f_body {
         .Some(b) => b,
-        .None => { return .Err("expected f body") },
+        .None => {
+          return .Err("expected f body")
+        },
       }
-      try assert.ok(has_func_id(body, sid), "expected f body to reference specialized fail")
+      try assert.ok(
+        has_func_id(body, sid),
+        "expected f body to reference specialized fail",
+      )
       .Ok({})
-    })
-    .test("monomorphize generic closure-returning function rewrites make_closure target", fn() Result<Void, String> {
+    },
+  ).test(
+    "monomorphize generic closure-returning function rewrites make_closure target",
+    fn() Result<Void, String> {
       src := "fn compose<A, B, C>(f: fn(B) C, g: fn(A) B) fn(A) C { fn(x) { f(g(x)) } }\ndouble := fn(x: Int) Int { x * 2 }\nadd1 := fn(x: Int) Int { x + 1 }\nf := compose(add1, double)"
       lr := try lower_src(src)
       result := monomorphize.monomorphize(lr.module)
       defined: Dict<Int, Bool> = Dict.new()
       compose_body: core_ir.CoreExpr? = .None
       has_generic_compose := false
+
       for func in result.functions {
         defined[func.func_id.id] = true
+
         if func.name == "compose" { has_generic_compose = true }
+
         if func.name.starts_with("compose__") {
           compose_body = .Some(func.body)
         }
       }
+
       try assert.ok(!has_generic_compose, "generic compose should be dropped")
       body := case compose_body {
         .Some(b) => b,
-        .None => { return .Err("expected specialized compose function") },
+        .None => {
+          return .Err("expected specialized compose function")
+        },
       }
       targets := make_closure_targets(body, [])
-      try assert.ok(targets.len() > 0, "expected specialized compose body to contain MakeClosure")
+      try assert.ok(
+        targets.len() > 0,
+        "expected specialized compose body to contain MakeClosure",
+      )
+
       for tid in targets {
-        try assert.ok(defined.has(tid), "expected make_closure target F${tid} to exist after monomorphization")
+        try assert.ok(
+          defined.has(tid),
+          "expected make_closure target F${tid} to exist after monomorphization",
+        )
       }
+
       .Ok({})
-    })
-    // ── M10: Integration / end-to-end ────────────────────────────────
-    .test("end-to-end: generics + patterns", fn() Result<Void, String> {
+    },
+  ).test(
+    "end-to-end: generics + patterns",
+    fn() Result<Void, String> {
       src := "fn first<T>(a: T, b: T) T { a }\nfn pick<T>(x: T) T { first(x, x) }\nfn f() Int { pick(42) }"
       lr := try lower_src(src)
       result := monomorphize.monomorphize(lr.module)
       // first and pick are generic, should be dropped
       // f + specialized first + specialized pick = 3 functions
       has_generic := false
+
       for func in result.functions {
         if func.name == "first" or func.name == "pick" { has_generic = true }
       }
-      try assert.ok(!has_generic, "generic functions should be dropped after mono")
-      try assert.ok(result.functions.len() >= 3, "expected at least 3 functions after mono")
+
+      try assert.ok(
+        !has_generic,
+        "generic functions should be dropped after mono",
+      )
+      try assert.ok(
+        result.functions.len() >= 3,
+        "expected at least 3 functions after mono",
+      )
       .Ok({})
-    })
-    // ── G3: Complex lvalue assignment ────────────────────────────────
-    .test("lower field assignment", fn() Result<Void, String> {
+    },
+  ).test(
+    "lower field assignment",
+    fn() Result<Void, String> {
       src := "type Point = .{ x: Int, y: Int }\nfn f(p: Point) Point { p.x = 42; p }"
       lr := try lower_src(src)
       body := lr.module.functions[0].body
+
       // Should produce: Let(_, Assign(p, RecordUpdate(Local(p), x_fid, LitInt(42))), Local(p))
       case body.kind {
         .Let(_, assign_expr, _) => {
@@ -918,11 +1251,14 @@ pub fn suite() runner.Suite {
         },
         _ => .Err("expected Let wrapping field assignment"),
       }
-    })
-    .test("lower index assignment", fn() Result<Void, String> {
+    },
+  ).test(
+    "lower index assignment",
+    fn() Result<Void, String> {
       src := "fn f(xs: Vector<Int>) Vector<Int> { xs[0] = 99; xs }"
       lr := try lower_src(src)
       body := lr.module.functions[0].body
+
       // Should produce: Let(_, Assign(xs, Call(VECTOR_SET_UNSAFE, [...])), Local(xs))
       case body.kind {
         .Let(_, assign_expr, _) => {
@@ -938,11 +1274,14 @@ pub fn suite() runner.Suite {
         },
         _ => .Err("expected Let wrapping index assignment"),
       }
-    })
-    .test("lower dict assignment", fn() Result<Void, String> {
+    },
+  ).test(
+    "lower dict assignment",
+    fn() Result<Void, String> {
       src := "fn f(m: Dict<String, Int>) Dict<String, Int> { m[\"k\"] = 1; m }"
       lr := try lower_src(src)
       body := lr.module.functions[0].body
+
       case body.kind {
         .Let(_, assign_expr, _) => {
           case assign_expr.kind {
@@ -957,73 +1296,99 @@ pub fn suite() runner.Suite {
         },
         _ => .Err("expected Let wrapping dict assignment"),
       }
-    })
-    // ── G4: For-loop type dispatch ──────────────────────────────────
-    .test("lower for-in string loop", fn() Result<Void, String> {
+    },
+  ).test(
+    "lower for-in string loop",
+    fn() Result<Void, String> {
       src := "fn f(s: String) Void { for b in s { b } }"
       lr := try lower_src(src)
       body := lr.module.functions[0].body
       try assert.ok(has_loop(body), "expected Loop in string for-in")
       reg := make_builtin_registry()
-      try assert.ok(has_func_id(body, reg.id("string_len").id), "expected string_len call")
+      try assert.ok(
+        has_func_id(body, reg.id("string_len").id),
+        "expected string_len call",
+      )
       .Ok({})
-    })
-    .test("lower for-in iterator loop follows type definition rather than preferred stored name", fn() Result<Void, String> {
+    },
+  ).test(
+    "lower for-in iterator loop follows type definition rather than preferred stored name",
+    fn() Result<Void, String> {
       s0 := span.Span.{ file_id: 0, start: 0, end: 0 }
       t := mono_type.MonoType.Var("T")
-
       // Option (TypeId 0) — required by iterator loop pattern matching
       option_tid := mono_type.TypeId.{ id: 0 }
       option_entry := resolver.TypeEntry.{
-        id: option_tid, arity: 1,
-        def: .Some(resolver.ResolvedTypeDef.Sum("Option", plain_resolved_type_params(["T"]), [
-          resolver.ResolvedVariant.{ name: "None", fields: [] },
-          resolver.ResolvedVariant.{ name: "Some", fields: [t] },
-        ])),
+        id: option_tid,
+        arity: 1,
+        def: .Some(
+          resolver.ResolvedTypeDef.Sum(
+            "Option",
+            plain_resolved_type_params(["T"]),
+            [
+              resolver.ResolvedVariant.{ name: "None", fields: [] },
+              resolver.ResolvedVariant.{ name: "Some", fields: [t] },
+            ],
+          ),
+        ),
         span: s0,
         is_extern: false,
       }
-
       // Iterator (TypeId 62) — the type under test, intentionally a Sum
       iter_tid := mono_type.TypeId.{ id: 62 }
       iter_entry := resolver.TypeEntry.{
-        id: iter_tid, arity: 1,
-        def: .Some(resolver.ResolvedTypeDef.Sum("Iterator", plain_resolved_type_params(["T"]), [
-          resolver.ResolvedVariant.{ name: "Item", fields: [t] },
-        ])),
+        id: iter_tid,
+        arity: 1,
+        def: .Some(
+          resolver.ResolvedTypeDef.Sum(
+            "Iterator",
+            plain_resolved_type_params(["T"]),
+            [resolver.ResolvedVariant.{ name: "Item", fields: [t] }],
+          ),
+        ),
         span: s0,
         is_extern: false,
       }
-
       // IterItem — required by build_iterator_loop
       iter_item_tid := mono_type.TypeId.{ id: 63 }
       iter_item_entry := resolver.TypeEntry.{
-        id: iter_item_tid, arity: 1,
-        def: .Some(resolver.ResolvedTypeDef.Record("IterItem", plain_resolved_type_params(["T"]), [
-          resolver.ResolvedField.{ name: "value", ty: t },
-          resolver.ResolvedField.{ name: "rest", ty: mono_type.MonoType.Named(iter_tid, [t]) },
-        ])),
+        id: iter_item_tid,
+        arity: 1,
+        def: .Some(
+          resolver.ResolvedTypeDef.Record(
+            "IterItem",
+            plain_resolved_type_params(["T"]),
+            [
+              resolver.ResolvedField.{ name: "value", ty: t },
+              resolver.ResolvedField.{
+                name: "rest",
+                ty: mono_type.MonoType.Named(iter_tid, [t]),
+              },
+            ],
+          ),
+        ),
         span: s0,
         is_extern: false,
       }
-
-      env := resolver.empty_env()
-        .register_type_entry(option_entry, "Option")
-        .bind_type("Option", option_tid)
-        .register_type_entry(iter_entry, "dep.Iterator")
-        .bind_type("Iterator", iter_tid)
-        .register_type_entry(iter_item_entry, "IterItem")
-        .bind_type("IterItem", iter_item_tid)
-
+      env := resolver.empty_env().register_type_entry(option_entry, "Option").bind_type(
+        "Option",
+        option_tid,
+      ).register_type_entry(iter_entry, "dep.Iterator").bind_type(
+        "Iterator",
+        iter_tid,
+      ).register_type_entry(iter_item_entry, "IterItem").bind_type(
+        "IterItem",
+        iter_item_tid,
+      )
       src := "fn f(it: Iterator<Int>) Void { for x in it { x } }"
       lr := try lower_src_with_env(src, env)
       body := lr.module.functions[0].body
       try assert.ok(has_loop(body), "expected Loop in iterator for-in")
       .Ok({})
-    })
-    // Range for-loop test deferred — requires Range type in test env
-    // ── G1+G2: Method calls ──────────────────────────────────────────
-    .test("lower method call as GlobalFunc", fn() Result<Void, String> {
+    },
+  ).test(
+    "lower method call as GlobalFunc",
+    fn() Result<Void, String> {
       // p.get_x() should become Call(GlobalFunc(get_x_fid), [p])
       src := "type Point = .{ x: Int, y: Int }\nfn get_x(p: Point) Int { p.x }\nfn f(p: Point) Int { p.get_x() }"
       lr := try lower_src(src)
@@ -1031,26 +1396,31 @@ pub fn suite() runner.Suite {
       // get_x should have a FuncId, and f's body should call GlobalFunc(get_x_fid)
       get_x_fid := lr.module.functions[0].func_id.id
       f_body := lr.module.functions[1].body
+
       case f_body.kind {
         .Call(callee, args) => {
           case callee.kind {
             .GlobalFunc(fid) => {
               try assert.equal(fid.id, get_x_fid)
-              assert.equal(args.len(), 1)  // receiver p is the arg
+              assert.equal(args.len(), 1) // receiver p is the arg
             },
             _ => .Err("expected GlobalFunc callee for method call"),
           }
         },
         _ => .Err("expected Call for method call, got other kind"),
       }
-    })
-    .test("lower unit-sum equality between values to match", fn() Result<Void, String> {
+    },
+  ).test(
+    "lower unit-sum equality between values to match",
+    fn() Result<Void, String> {
       src := "type Kind = { A, B, C }\ntype Cursor = .{}\nfn kind(c: Cursor) Kind { .A }\nfn f(c: Cursor, end_kind: Kind) Bool { c.kind() == end_kind }"
       lr := try lower_src(src)
       body := lr.module.functions[1].body
+
       case body.kind {
         .Match(_, arms) => {
           try assert.equal(arms.len(), 4)
+
           case arms[0].body.kind {
             .Match(_, _) => .Ok({}),
             _ => .Err("expected nested Match in unit-sum equality arm"),
@@ -1058,41 +1428,65 @@ pub fn suite() runner.Suite {
         },
         _ => .Err("expected unit-sum equality to lower to Match"),
       }
-    })
-    .test("lower module-qualified function value as GlobalFunc", fn() Result<Void, String> {
+    },
+  ).test(
+    "lower module-qualified function value as GlobalFunc",
+    fn() Result<Void, String> {
       src := "fn f(xs: Vector<String>) Vector<String> { xs.sort_by(String.compare) }"
       lr := try lower_src_with_builtin_env(src)
       body := lr.module.functions[0].body
-      compare_id := try lr.func_table["string_compare"].ok_or("expected string_compare in func_table")
-      try assert.ok(has_func_id(body, compare_id.id), "expected string_compare reference")
+      compare_id := try lr.func_table["string_compare"].ok_or(
+        "expected string_compare in func_table",
+      )
+      try assert.ok(
+        has_func_id(body, compare_id.id),
+        "expected string_compare reference",
+      )
       .Ok({})
-    })
-    .test("lower for-in dict loop", fn() Result<Void, String> {
+    },
+  ).test(
+    "lower for-in dict loop",
+    fn() Result<Void, String> {
       src := "fn f(m: Dict<String, Int>) Void { for k in m { k } }"
       lr := try lower_src(src)
       body := lr.module.functions[0].body
       try assert.ok(has_loop(body), "expected Loop in dict for-in")
       reg := make_builtin_registry()
-      try assert.ok(has_func_id(body, reg.id("dict_keys").id), "expected dict_keys call")
+      try assert.ok(
+        has_func_id(body, reg.id("dict_keys").id),
+        "expected dict_keys call",
+      )
       .Ok({})
-    })
-    .test("lower collect over string", fn() Result<Void, String> {
+    },
+  ).test(
+    "lower collect over string",
+    fn() Result<Void, String> {
       src := "fn f(s: String) Vector<Byte> { collect b in s { b } }"
       lr := try lower_src(src)
       body := lr.module.functions[0].body
       reg := make_builtin_registry()
-      try assert.ok(has_func_id(body, reg.id("string_len").id), "expected string_len call")
+      try assert.ok(
+        has_func_id(body, reg.id("string_len").id),
+        "expected string_len call",
+      )
       .Ok({})
-    })
-    .test("lower collect over dict", fn() Result<Void, String> {
+    },
+  ).test(
+    "lower collect over dict",
+    fn() Result<Void, String> {
       src := "fn f(m: Dict<String, Int>) Vector<String> { collect k in m { k } }"
       lr := try lower_src(src)
       body := lr.module.functions[0].body
       reg := make_builtin_registry()
-      try assert.ok(has_func_id(body, reg.id("dict_keys").id), "expected dict_keys call")
+      try assert.ok(
+        has_func_id(body, reg.id("dict_keys").id),
+        "expected dict_keys call",
+      )
       .Ok({})
-    })
-    .test("lower named record through type alias", fn() Result<Void, String> {
+    },
+  ).test(
+    "lower named record through type alias",
+    fn() Result<Void, String> {
       // Pt is an alias for Point. The record constructor must use Point's canonical
       // TypeId so that field indices resolve correctly.
       src := "type Point = .{ x: Int, y: Int }\ntype Pt = Point\nfn f() Point { Point.{ x: 1, y: 2 } }\nfn g() Pt { Pt.{ x: 1, y: 2 } }"
@@ -1100,6 +1494,7 @@ pub fn suite() runner.Suite {
       // f uses Point directly, g uses alias Pt — both should produce same TypeId
       f_body := lr.module.functions[0].body
       g_body := lr.module.functions[1].body
+
       case f_body.kind {
         .Record(f_tid, _) => {
           case g_body.kind {
@@ -1112,21 +1507,29 @@ pub fn suite() runner.Suite {
         },
         _ => .Err("expected Record in f"),
       }
-    })
-    .test("terminal expr-stmt not wrapped in Let", fn() Result<Void, String> {
+    },
+  ).test(
+    "terminal expr-stmt not wrapped in Let",
+    fn() Result<Void, String> {
       // A block expression containing return, used as an expr-statement,
       // should emit the terminal directly, not wrap in Let(_, Return, rest)
       src := "fn f(x: Int) Int {\n  { return 1 }\n  0\n}"
       lr := try lower_src(src)
       body := lr.module.functions[0].body
-      try assert.ok(!has_terminal_in_let_value(body), "terminal should not appear in Let value position")
+      try assert.ok(
+        !has_terminal_in_let_value(body),
+        "terminal should not appear in Let value position",
+      )
       .Ok({})
-    })
-    .test("qualified variant uses qualifier TypeId", fn() Result<Void, String> {
+    },
+  ).test(
+    "qualified variant uses qualifier TypeId",
+    fn() Result<Void, String> {
       // QualifiedVariant should resolve TypeId from qualifier, not scrutinee
       src := "type Foo = { A(Int), B }\nfn f(x: Foo) Int { case x { Foo.A(n) => n, Foo.B => 0 } }"
       lr := try lower_src(src)
       body := lr.module.functions[0].body
+
       // Just check it lowers without error and has a Match
       case body.kind {
         .Match(_, arms) => {
@@ -1135,37 +1538,55 @@ pub fn suite() runner.Suite {
         },
         _ => .Err("expected Match"),
       }
-    })
-    .test("imported prelude aliases reuse one phantom func id", fn() Result<Void, String> {
+    },
+  ).test(
+    "imported prelude aliases reuse one phantom func id",
+    fn() Result<Void, String> {
       filter_sig := resolver.FunctionSig.{
         name: "filter",
         type_params: plain_resolved_type_params(["T"]),
         param_names: ["xs", "pred"],
-        params: [mono_type.MonoType.Vector(mono_type.MonoType.Var("T")), mono_type.MonoType.Function([mono_type.MonoType.Var("T")], mono_type.MonoType.Bool)],
+        params: [
+          mono_type.MonoType.Vector(mono_type.MonoType.Var("T")),
+          mono_type.MonoType.Function(
+            [mono_type.MonoType.Var("T")],
+            mono_type.MonoType.Bool,
+          ),
+        ],
         ret: .Some(mono_type.MonoType.Vector(mono_type.MonoType.Var("T"))),
         doc: .None,
-    extern_module: .None,
-}
+        extern_module: .None,
+      }
       vector_filter_sig := resolver.FunctionSig.{
         name: "vector_filter",
         type_params: plain_resolved_type_params(["T"]),
         param_names: ["xs", "pred"],
-        params: [mono_type.MonoType.Vector(mono_type.MonoType.Var("T")), mono_type.MonoType.Function([mono_type.MonoType.Var("T")], mono_type.MonoType.Bool)],
+        params: [
+          mono_type.MonoType.Vector(mono_type.MonoType.Var("T")),
+          mono_type.MonoType.Function(
+            [mono_type.MonoType.Var("T")],
+            mono_type.MonoType.Bool,
+          ),
+        ],
         ret: .Some(mono_type.MonoType.Vector(mono_type.MonoType.Var("T"))),
         doc: .None,
-    extern_module: .None,
-}
-      origin := resolver.FunctionOrigin.{ module_path: "prelude/vector.tw", func_name: "filter" }
-
-      env := resolver.empty_env()
-        .with_functions([filter_sig, vector_filter_sig])
-        .set_function_origin("filter", origin)
-        .set_function_origin("vector_filter", origin)
-
+        extern_module: .None,
+      }
+      origin := resolver.FunctionOrigin.{
+        module_path: "prelude/vector.tw",
+        func_name: "filter",
+      }
+      env := resolver.empty_env().with_functions([filter_sig, vector_filter_sig]).set_function_origin(
+        "filter",
+        origin,
+      ).set_function_origin("vector_filter", origin)
       lr := try lower_src_with_env("fn main() Int { 0 }", env)
-
-      filter_id := try lr.func_table["filter"].ok_or("expected filter in func_table")
-      vector_filter_id := try lr.func_table["vector_filter"].ok_or("expected vector_filter in func_table")
+      filter_id := try lr.func_table["filter"].ok_or(
+        "expected filter in func_table",
+      )
+      vector_filter_id := try lr.func_table["vector_filter"].ok_or(
+        "expected vector_filter in func_table",
+      )
       try assert.equal(filter_id.id, vector_filter_id.id)
 
       case lr.imported_func_origins[filter_id.id] {
@@ -1174,14 +1595,22 @@ pub fn suite() runner.Suite {
           try assert.equal(found.func_name, "filter")
           .Ok({})
         },
-        .None => .Err("expected imported origin for shared prelude filter FuncId"),
+        .None => .Err(
+          "expected imported origin for shared prelude filter FuncId",
+        ),
       }
-    })
-    .test("core linker validation rejects unresolved imported func ids", fn() Result<Void, String> {
+    },
+  ).test(
+    "core linker validation rejects unresolved imported func ids",
+    fn() Result<Void, String> {
       s := span.Span.{ file_id: 0, start: 0, end: 0 }
       body := core_ir.CoreExpr.{
         kind: .Call(
-          core_ir.CoreExpr.{ kind: .GlobalFunc(core_ir.FuncId.{ id: 100 }), ty: mono_type.MonoType.Void, span: s },
+          core_ir.CoreExpr.{
+            kind: .GlobalFunc(core_ir.FuncId.{ id: 100 }),
+            ty: mono_type.MonoType.Void,
+            span: s,
+          },
           [],
         ),
         ty: mono_type.MonoType.Void,
@@ -1225,12 +1654,18 @@ pub fn suite() runner.Suite {
           .Ok({})
         },
       }
-    })
-    .test("core linker validation rejects missing external targets", fn() Result<Void, String> {
+    },
+  ).test(
+    "core linker validation rejects missing external targets",
+    fn() Result<Void, String> {
       s := span.Span.{ file_id: 0, start: 0, end: 0 }
       body := core_ir.CoreExpr.{
         kind: .Call(
-          core_ir.CoreExpr.{ kind: .GlobalFunc(core_ir.FuncId.{ id: 100 }), ty: mono_type.MonoType.Void, span: s },
+          core_ir.CoreExpr.{
+            kind: .GlobalFunc(core_ir.FuncId.{ id: 100 }),
+            ty: mono_type.MonoType.Void,
+            span: s,
+          },
           [],
         ),
         ty: mono_type.MonoType.Void,
@@ -1245,7 +1680,10 @@ pub fn suite() runner.Suite {
         is_init: false,
       }
       ext_refs: Dict<Int, core_ir.ExternalRef> = Dict.new()
-      ext_refs[100] = core_ir.ExternalRef.{ module_path: "dep/math.tw", func_name: "missing" }
+      ext_refs[100] = core_ir.ExternalRef.{
+        module_path: "dep/math.tw",
+        func_name: "missing",
+      }
       module := core_ir.CompiledModule.{
         path: "test/main.tw",
         core: core_ir.CoreModule.{
@@ -1279,12 +1717,23 @@ pub fn suite() runner.Suite {
           .Ok({})
         },
       }
-    })
-    .test("core linker contract reachability prefers exact method target", fn() Result<Void, String> {
+    },
+  ).test(
+    "core linker contract reachability prefers exact method target",
+    fn() Result<Void, String> {
       s := span.Span.{ file_id: 0, start: 0, end: 0 }
-      receiver := core_ir.CoreExpr.{ kind: .LitInt(1), ty: mono_type.MonoType.Int, span: s }
+      receiver := core_ir.CoreExpr.{
+        kind: .LitInt(1),
+        ty: mono_type.MonoType.Int,
+        span: s,
+      }
       body := core_ir.CoreExpr.{
-        kind: .ContractCall(BuiltinContract.Stringify, "to_string", receiver, []),
+        kind: .ContractCall(
+          BuiltinContract.Stringify,
+          "to_string",
+          receiver,
+          [],
+        ),
         ty: mono_type.MonoType.String,
         span: s,
       }
@@ -1292,7 +1741,11 @@ pub fn suite() runner.Suite {
         func_id: core_ir.FuncId.{ id: 42 },
         name: "int_to_string",
         params: [],
-        body: core_ir.CoreExpr.{ kind: .LitStr(""), ty: mono_type.MonoType.String, span: s },
+        body: core_ir.CoreExpr.{
+          kind: .LitStr(""),
+          ty: mono_type.MonoType.String,
+          span: s,
+        },
         return_ty: mono_type.MonoType.String,
         is_init: false,
       }
@@ -1300,7 +1753,11 @@ pub fn suite() runner.Suite {
         func_id: core_ir.FuncId.{ id: 99 },
         name: "Other.to_string",
         params: [],
-        body: core_ir.CoreExpr.{ kind: .LitStr(""), ty: mono_type.MonoType.String, span: s },
+        body: core_ir.CoreExpr.{
+          kind: .LitStr(""),
+          ty: mono_type.MonoType.String,
+          span: s,
+        },
         return_ty: mono_type.MonoType.String,
         is_init: false,
       }
@@ -1313,12 +1770,23 @@ pub fn suite() runner.Suite {
       try assert.equal(refs.len(), 1)
       try assert.equal(refs[0], 42)
       .Ok({})
-    })
-    .test("core linker contract fallback indexes method suffixes", fn() Result<Void, String> {
+    },
+  ).test(
+    "core linker contract fallback indexes method suffixes",
+    fn() Result<Void, String> {
       s := span.Span.{ file_id: 0, start: 0, end: 0 }
-      receiver := core_ir.CoreExpr.{ kind: .LitInt(1), ty: mono_type.MonoType.Int, span: s }
+      receiver := core_ir.CoreExpr.{
+        kind: .LitInt(1),
+        ty: mono_type.MonoType.Int,
+        span: s,
+      }
       body := core_ir.CoreExpr.{
-        kind: .ContractCall(BuiltinContract.Stringify, "to_string", receiver, []),
+        kind: .ContractCall(
+          BuiltinContract.Stringify,
+          "to_string",
+          receiver,
+          [],
+        ),
         ty: mono_type.MonoType.String,
         span: s,
       }
@@ -1326,7 +1794,11 @@ pub fn suite() runner.Suite {
         func_id: core_ir.FuncId.{ id: 42 },
         name: "Int.to_string",
         params: [],
-        body: core_ir.CoreExpr.{ kind: .LitStr(""), ty: mono_type.MonoType.String, span: s },
+        body: core_ir.CoreExpr.{
+          kind: .LitStr(""),
+          ty: mono_type.MonoType.String,
+          span: s,
+        },
         return_ty: mono_type.MonoType.String,
         is_init: false,
       }
@@ -1337,16 +1809,21 @@ pub fn suite() runner.Suite {
       try assert.equal(refs.len(), 1)
       try assert.equal(refs[0], 42)
       .Ok({})
-    })
-    .test("monomorphize transitive generics", fn() Result<Void, String> {
+    },
+  ).test(
+    "monomorphize transitive generics",
+    fn() Result<Void, String> {
       src := "fn id<T>(x: T) T { x }\nfn wrap<T>(x: T) T { id(x) }\nfn f() Int { wrap(42) }"
       lr := try lower_src(src)
       result := monomorphize.monomorphize(lr.module)
+
       // Both id and wrap should be specialized, originals dropped
       for func in result.functions {
         try assert.ok(func.name != "id", "generic id should be dropped")
         try assert.ok(func.name != "wrap", "generic wrap should be dropped")
       }
+
       .Ok({})
-    })
+    },
+  )
 }

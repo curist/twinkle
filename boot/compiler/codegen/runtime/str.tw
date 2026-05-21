@@ -1,19 +1,31 @@
 // rt.str — string operations.
 //
 // Mirrors stage0 src/runtime/str.rs.
-
-use compiler.codegen.wasm_ir.{ValType, HeapType, FuncDef, ImportDef, ExportDef, WasmModule}
-
+use compiler.codegen.wasm_ir.{
+  ExportDef, FuncDef, HeapType, ImportDef, ValType, WasmModule,
+}
 
 // Cross-module qualified names (already linked form)
-fn str_null() ValType { .Ref(true, HeapType.Named("rt_types__String")) }
-fn str_ref() ValType { .Ref(false, HeapType.Named("rt_types__String")) }
+fn str_null() ValType {
+  .Ref(true, HeapType.Named("rt_types__String"))
+}
+
+fn str_ref() ValType {
+  .Ref(false, HeapType.Named("rt_types__String"))
+}
+
 fn t_string() String { "rt_types__String" }
 
 pub fn module() WasmModule {
   funcs := [
-    len_fn(), concat_fn(), substring_fn(), eq_fn(), cmp_fn(),
-    from_i64_fn(), from_f64_fn(), from_bool_fn(),
+    len_fn(),
+    concat_fn(),
+    substring_fn(),
+    eq_fn(),
+    cmp_fn(),
+    from_i64_fn(),
+    from_f64_fn(),
+    from_bool_fn(),
   ]
   exports := collect f in funcs {
     ExportDef.{ wasm_name: f.name, func_sym: f.name }
@@ -23,8 +35,11 @@ pub fn module() WasmModule {
     types: [],
     imports: [
       ImportDef.{
-        module: "host", name: "f64_to_string", as_sym: "host_f64_to_string",
-        params: [.F64], results: [str_ref()],
+        module: "host",
+        name: "f64_to_string",
+        as_sym: "host_f64_to_string",
+        params: [.F64],
+        results: [str_ref()],
       },
     ],
     funcs: funcs,
@@ -39,42 +54,59 @@ pub fn module() WasmModule {
 
 // len(s: String?) -> i32
 fn len_fn() FuncDef {
-  .{ name: "len", params: [str_null()], results: [.I32], locals: [], body: [
-    .LocalGet(0), .RefAsNonNull, .ArrayLen,
-  ] }
+  .{
+    name: "len",
+    params: [str_null()],
+    results: [.I32],
+    locals: [],
+    body: [.LocalGet(0), .RefAsNonNull, .ArrayLen],
+  }
 }
 
 // concat(a: String?, b: String?) -> String
 fn concat_fn() FuncDef {
   ts := t_string()
   // Locals: p2=len_a, p3=len_b, p4=total, p5=result
-  FuncDef.{ name: "concat", params: [str_null(), str_null()], results: [str_ref()],
+  FuncDef.{
+    name: "concat",
+    params: [str_null(), str_null()],
+    results: [str_ref()],
     locals: [.I32, .I32, .I32, str_null()],
     body: [
-      // p2 = len(a)
-      .LocalGet(0), .RefAsNonNull, .ArrayLen, .LocalSet(2),
-      // p3 = len(b)
-      .LocalGet(1), .RefAsNonNull, .ArrayLen, .LocalSet(3),
-      // p4 = total
-      .LocalGet(2), .LocalGet(3), .I32Add, .LocalSet(4),
-      // result = array.new $String (0, total)
-      .I32Const(0), .LocalGet(4), .ArrayNew(ts), .LocalSet(5),
-      // copy a into result[0..len_a]
-      .LocalGet(5), .RefAsNonNull,
+      .LocalGet(0),
+      .RefAsNonNull,
+      .ArrayLen,
+      .LocalSet(2),
+      .LocalGet(1),
+      .RefAsNonNull,
+      .ArrayLen,
+      .LocalSet(3),
+      .LocalGet(2),
+      .LocalGet(3),
+      .I32Add,
+      .LocalSet(4),
       .I32Const(0),
-      .LocalGet(0), .RefAsNonNull,
+      .LocalGet(4),
+      .ArrayNew(ts),
+      .LocalSet(5),
+      .LocalGet(5),
+      .RefAsNonNull,
+      .I32Const(0),
+      .LocalGet(0),
+      .RefAsNonNull,
       .I32Const(0),
       .LocalGet(2),
       .ArrayCopy(ts, ts),
-      // copy b into result[len_a..total]
-      .LocalGet(5), .RefAsNonNull,
+      .LocalGet(5),
+      .RefAsNonNull,
       .LocalGet(2),
-      .LocalGet(1), .RefAsNonNull,
+      .LocalGet(1),
+      .RefAsNonNull,
       .I32Const(0),
       .LocalGet(3),
       .ArrayCopy(ts, ts),
-      // return result
-      .LocalGet(5), .RefAsNonNull,
+      .LocalGet(5),
+      .RefAsNonNull,
     ],
   }
 }
@@ -83,39 +115,54 @@ fn concat_fn() FuncDef {
 fn substring_fn() FuncDef {
   ts := t_string()
   // Locals: p3=len/new_len, p4=result
-  FuncDef.{ name: "substring", params: [str_null(), .I32, .I32], results: [str_ref()],
+  FuncDef.{
+    name: "substring",
+    params: [str_null(), .I32, .I32],
+    results: [str_ref()],
     locals: [.I32, str_null()],
     body: [
-      // p3 = len(s)
-      .LocalGet(0), .RefAsNonNull, .ArrayLen, .LocalSet(3),
-      // Clamp start: if start < 0 then start = len
-      .LocalGet(1), .I32Const(0), .I32LtS,
-      .If(.None, [.LocalGet(3), .LocalSet(1)], []),
-      // if start > len then start = len
-      .LocalGet(1), .LocalGet(3), .I32GtS,
-      .If(.None, [.LocalGet(3), .LocalSet(1)], []),
-      // Clamp end: if end < 0 then end = len
-      .LocalGet(2), .I32Const(0), .I32LtS,
-      .If(.None, [.LocalGet(3), .LocalSet(2)], []),
-      // if end > len then end = len
-      .LocalGet(2), .LocalGet(3), .I32GtS,
-      .If(.None, [.LocalGet(3), .LocalSet(2)], []),
-      // if end < start then end = start
-      .LocalGet(2), .LocalGet(1), .I32LtS,
-      .If(.None, [.LocalGet(1), .LocalSet(2)], []),
-      // p3 = new_len = end - start
-      .LocalGet(2), .LocalGet(1), .I32Sub, .LocalSet(3),
-      // result = array.new $String (0, new_len)
-      .I32Const(0), .LocalGet(3), .ArrayNew(ts), .LocalSet(4),
-      // array.copy result 0 s start new_len
-      .LocalGet(4), .RefAsNonNull,
+      .LocalGet(0),
+      .RefAsNonNull,
+      .ArrayLen,
+      .LocalSet(3),
+      .LocalGet(1),
       .I32Const(0),
-      .LocalGet(0), .RefAsNonNull,
+      .I32LtS,
+      .If(.None, [.LocalGet(3), .LocalSet(1)], []),
+      .LocalGet(1),
+      .LocalGet(3),
+      .I32GtS,
+      .If(.None, [.LocalGet(3), .LocalSet(1)], []),
+      .LocalGet(2),
+      .I32Const(0),
+      .I32LtS,
+      .If(.None, [.LocalGet(3), .LocalSet(2)], []),
+      .LocalGet(2),
+      .LocalGet(3),
+      .I32GtS,
+      .If(.None, [.LocalGet(3), .LocalSet(2)], []),
+      .LocalGet(2),
+      .LocalGet(1),
+      .I32LtS,
+      .If(.None, [.LocalGet(1), .LocalSet(2)], []),
+      .LocalGet(2),
+      .LocalGet(1),
+      .I32Sub,
+      .LocalSet(3),
+      .I32Const(0),
+      .LocalGet(3),
+      .ArrayNew(ts),
+      .LocalSet(4),
+      .LocalGet(4),
+      .RefAsNonNull,
+      .I32Const(0),
+      .LocalGet(0),
+      .RefAsNonNull,
       .LocalGet(1),
       .LocalGet(3),
       .ArrayCopy(ts, ts),
-      // return result
-      .LocalGet(4), .RefAsNonNull,
+      .LocalGet(4),
+      .RefAsNonNull,
     ],
   }
 }
@@ -124,31 +171,55 @@ fn substring_fn() FuncDef {
 fn eq_fn() FuncDef {
   ts := t_string()
   // Locals: p2=len, p3=i
-  FuncDef.{ name: "eq", params: [str_null(), str_null()], results: [.I32],
+  FuncDef.{
+    name: "eq",
+    params: [str_null(), str_null()],
+    results: [.I32],
     locals: [.I32, .I32],
     body: [
-      // p2 = len(a)
-      .LocalGet(0), .RefAsNonNull, .ArrayLen, .LocalSet(2),
-      // if len(a) != len(b): return 0
+      .LocalGet(0),
+      .RefAsNonNull,
+      .ArrayLen,
+      .LocalSet(2),
       .LocalGet(2),
-      .LocalGet(1), .RefAsNonNull, .ArrayLen,
+      .LocalGet(1),
+      .RefAsNonNull,
+      .ArrayLen,
       .I32Ne,
       .If(.None, [.I32Const(0), .Return], []),
-      // p3 = 0
-      .I32Const(0), .LocalSet(3),
-      // byte comparison loop
-      .Block("exit", .None, [
-        .Loop("cmp", .None, [
-          .LocalGet(3), .LocalGet(2), .I32GeS,
-          .BrIf("exit"),
-          .LocalGet(0), .RefAsNonNull, .LocalGet(3), .ArrayGetU(ts),
-          .LocalGet(1), .RefAsNonNull, .LocalGet(3), .ArrayGetU(ts),
-          .I32Ne,
-          .If(.None, [.I32Const(0), .Return], []),
-          .LocalGet(3), .I32Const(1), .I32Add, .LocalSet(3),
-          .Br("cmp"),
-        ]),
-      ]),
+      .I32Const(0),
+      .LocalSet(3),
+      .Block(
+        "exit",
+        .None,
+        [
+          .Loop(
+            "cmp",
+            .None,
+            [
+              .LocalGet(3),
+              .LocalGet(2),
+              .I32GeS,
+              .BrIf("exit"),
+              .LocalGet(0),
+              .RefAsNonNull,
+              .LocalGet(3),
+              .ArrayGetU(ts),
+              .LocalGet(1),
+              .RefAsNonNull,
+              .LocalGet(3),
+              .ArrayGetU(ts),
+              .I32Ne,
+              .If(.None, [.I32Const(0), .Return], []),
+              .LocalGet(3),
+              .I32Const(1),
+              .I32Add,
+              .LocalSet(3),
+              .Br("cmp"),
+            ],
+          ),
+        ],
+      ),
       .I32Const(1),
     ],
   }
@@ -158,47 +229,75 @@ fn eq_fn() FuncDef {
 fn cmp_fn() FuncDef {
   ts := t_string()
   // Locals: p2=min_len, p3=i, p4=byte_a, p5=byte_b, p6=len_a, p7=len_b
-  FuncDef.{ name: "cmp", params: [str_null(), str_null()], results: [.I32],
+  FuncDef.{
+    name: "cmp",
+    params: [str_null(), str_null()],
+    results: [.I32],
     locals: [.I32, .I32, .I32, .I32, .I32, .I32],
     body: [
-      // p6 = len(a)
-      .LocalGet(0), .RefAsNonNull, .ArrayLen, .LocalSet(6),
-      // p7 = len(b)
-      .LocalGet(1), .RefAsNonNull, .ArrayLen, .LocalSet(7),
-      // p2 = min(len_a, len_b) via select
-      .LocalGet(6), .LocalGet(7),
-      .LocalGet(6), .LocalGet(7), .I32LeS,
+      .LocalGet(0),
+      .RefAsNonNull,
+      .ArrayLen,
+      .LocalSet(6),
+      .LocalGet(1),
+      .RefAsNonNull,
+      .ArrayLen,
+      .LocalSet(7),
+      .LocalGet(6),
+      .LocalGet(7),
+      .LocalGet(6),
+      .LocalGet(7),
+      .I32LeS,
       .Select,
       .LocalSet(2),
-      // p3 = 0
-      .I32Const(0), .LocalSet(3),
-      // byte-by-byte comparison loop
-      .Block("done", .None, [
-        .Loop("cmp_loop", .None, [
-          // if i >= min_len: break
-          .LocalGet(3), .LocalGet(2), .I32GeS,
-          .BrIf("done"),
-          // p4 = a[i]
-          .LocalGet(0), .RefAsNonNull, .LocalGet(3), .ArrayGetU(ts),
-          .LocalSet(4),
-          // p5 = b[i]
-          .LocalGet(1), .RefAsNonNull, .LocalGet(3), .ArrayGetU(ts),
-          .LocalSet(5),
-          // if byte_a < byte_b: return -1
-          .LocalGet(4), .LocalGet(5), .I32LtU,
-          .If(.None, [.I32Const(-1), .Return], []),
-          // if byte_a > byte_b: return 1
-          .LocalGet(4), .LocalGet(5), .I32GtU,
-          .If(.None, [.I32Const(1), .Return], []),
-          // i++
-          .LocalGet(3), .I32Const(1), .I32Add, .LocalSet(3),
-          .Br("cmp_loop"),
-        ]),
-      ]),
-      // Compare lengths
-      .LocalGet(6), .LocalGet(7), .I32LtS,
+      .I32Const(0),
+      .LocalSet(3),
+      .Block(
+        "done",
+        .None,
+        [
+          .Loop(
+            "cmp_loop",
+            .None,
+            [
+              .LocalGet(3),
+              .LocalGet(2),
+              .I32GeS,
+              .BrIf("done"),
+              .LocalGet(0),
+              .RefAsNonNull,
+              .LocalGet(3),
+              .ArrayGetU(ts),
+              .LocalSet(4),
+              .LocalGet(1),
+              .RefAsNonNull,
+              .LocalGet(3),
+              .ArrayGetU(ts),
+              .LocalSet(5),
+              .LocalGet(4),
+              .LocalGet(5),
+              .I32LtU,
+              .If(.None, [.I32Const(-1), .Return], []),
+              .LocalGet(4),
+              .LocalGet(5),
+              .I32GtU,
+              .If(.None, [.I32Const(1), .Return], []),
+              .LocalGet(3),
+              .I32Const(1),
+              .I32Add,
+              .LocalSet(3),
+              .Br("cmp_loop"),
+            ],
+          ),
+        ],
+      ),
+      .LocalGet(6),
+      .LocalGet(7),
+      .I32LtS,
       .If(.None, [.I32Const(-1), .Return], []),
-      .LocalGet(6), .LocalGet(7), .I32GtS,
+      .LocalGet(6),
+      .LocalGet(7),
+      .I32GtS,
       .If(.None, [.I32Const(1), .Return], []),
       .I32Const(0),
     ],
@@ -209,112 +308,166 @@ fn cmp_fn() FuncDef {
 // Locals: p1=neg, p2=work, p3=pos, p4=result_len, p5=buf, p6=result
 fn from_i64_fn() FuncDef {
   ts := t_string()
-  FuncDef.{ name: "from_i64", params: [.I64], results: [str_ref()],
+  FuncDef.{
+    name: "from_i64",
+    params: [.I64],
+    results: [str_ref()],
     locals: [.I32, .I64, .I32, .I32, str_null(), str_null()],
     body: [
-      // Special case: n == 0 → return "0"
-      .LocalGet(0), .I64Eqz,
-      .If(.None, [
-        .I32Const(48), .ArrayNewFixed(ts, 1), .Return,
-      ], []),
-      // Special case: i64::MIN — emit literal "-9223372036854775808"
-      .LocalGet(0), .I64Const(-9223372036854775807 - 1), .I64Eq,
-      .If(.None, [
-        .I32Const(45),  // '-'
-        .I32Const(57),  // '9'
-        .I32Const(50),  // '2'
-        .I32Const(50),  // '2'
-        .I32Const(51),  // '3'
-        .I32Const(51),  // '3'
-        .I32Const(55),  // '7'
-        .I32Const(50),  // '2'
-        .I32Const(48),  // '0'
-        .I32Const(51),  // '3'
-        .I32Const(54),  // '6'
-        .I32Const(56),  // '8'
-        .I32Const(53),  // '5'
-        .I32Const(52),  // '4'
-        .I32Const(55),  // '7'
-        .I32Const(55),  // '7'
-        .I32Const(53),  // '5'
-        .I32Const(56),  // '8'
-        .I32Const(48),  // '0'
-        .I32Const(56),  // '8'
-        .ArrayNewFixed(ts, 20), .Return,
-      ], []),
-      // neg = (n < 0)
-      .LocalGet(0), .I64Const(0), .I64LtS, .LocalSet(1),
-      // work = neg ? -n : n
-      .LocalGet(1),
-      .If(.Some(.I64),
-        [.I64Const(0), .LocalGet(0), .I64Sub],
-        [.LocalGet(0)],
+      .LocalGet(0),
+      .I64Eqz,
+      .If(.None, [.I32Const(48), .ArrayNewFixed(ts, 1), .Return], []),
+      .LocalGet(0),
+      .I64Const(-9223372036854775807 - 1),
+      .I64Eq,
+      .If(
+        .None,
+        [
+          .I32Const(45),
+          .I32Const(57),
+          .I32Const(50),
+          .I32Const(50),
+          .I32Const(51),
+          .I32Const(51),
+          .I32Const(55),
+          .I32Const(50),
+          .I32Const(48),
+          .I32Const(51),
+          .I32Const(54),
+          .I32Const(56),
+          .I32Const(53),
+          .I32Const(52),
+          .I32Const(55),
+          .I32Const(55),
+          .I32Const(53),
+          .I32Const(56),
+          .I32Const(48),
+          .I32Const(56),
+          .ArrayNewFixed(ts, 20),
+          .Return,
+        ],
+        [],
       ),
-      .LocalSet(2),
-      // buf = array.new $String (0, 20)
-      .I32Const(0), .I32Const(20), .ArrayNew(ts), .LocalSet(5),
-      // pos = 19
-      .I32Const(19), .LocalSet(3),
-      // digit extraction loop
-      .Loop("digits", .None, [
-        // buf[pos] = '0' + (work % 10)
-        .LocalGet(5), .RefAsNonNull, .LocalGet(3),
-        .LocalGet(2), .I64Const(10), .I64RemS,
-        .I32WrapI64, .I32Const(48), .I32Add,
-        .ArraySet(ts),
-        // work /= 10
-        .LocalGet(2), .I64Const(10), .I64DivS, .LocalSet(2),
-        // pos--
-        .LocalGet(3), .I32Const(1), .I32Sub, .LocalSet(3),
-        // continue if work != 0
-        .LocalGet(2), .I64Eqz, .I32Eqz, .BrIf("digits"),
-      ]),
-      // if neg: buf[pos] = '-'; pos--
+      .LocalGet(0),
+      .I64Const(0),
+      .I64LtS,
+      .LocalSet(1),
       .LocalGet(1),
-      .If(.None, [
-        .LocalGet(5), .RefAsNonNull, .LocalGet(3),
-        .I32Const(45), .ArraySet(ts),
-        .LocalGet(3), .I32Const(1), .I32Sub, .LocalSet(3),
-      ], []),
-      // result_len = 19 - pos
-      .I32Const(19), .LocalGet(3), .I32Sub, .LocalSet(4),
-      // result = array.new $String (0, result_len)
-      .I32Const(0), .LocalGet(4), .ArrayNew(ts), .LocalSet(6),
-      // array.copy result 0 buf (pos+1) result_len
-      .LocalGet(6), .RefAsNonNull,
+      .If(.Some(.I64), [.I64Const(0), .LocalGet(0), .I64Sub], [.LocalGet(0)]),
+      .LocalSet(2),
       .I32Const(0),
-      .LocalGet(5), .RefAsNonNull,
-      .LocalGet(3), .I32Const(1), .I32Add,
+      .I32Const(20),
+      .ArrayNew(ts),
+      .LocalSet(5),
+      .I32Const(19),
+      .LocalSet(3),
+      .Loop(
+        "digits",
+        .None,
+        [
+          .LocalGet(5),
+          .RefAsNonNull,
+          .LocalGet(3),
+          .LocalGet(2),
+          .I64Const(10),
+          .I64RemS,
+          .I32WrapI64,
+          .I32Const(48),
+          .I32Add,
+          .ArraySet(ts),
+          .LocalGet(2),
+          .I64Const(10),
+          .I64DivS,
+          .LocalSet(2),
+          .LocalGet(3),
+          .I32Const(1),
+          .I32Sub,
+          .LocalSet(3),
+          .LocalGet(2),
+          .I64Eqz,
+          .I32Eqz,
+          .BrIf("digits"),
+        ],
+      ),
+      .LocalGet(1),
+      .If(
+        .None,
+        [
+          .LocalGet(5),
+          .RefAsNonNull,
+          .LocalGet(3),
+          .I32Const(45),
+          .ArraySet(ts),
+          .LocalGet(3),
+          .I32Const(1),
+          .I32Sub,
+          .LocalSet(3),
+        ],
+        [],
+      ),
+      .I32Const(19),
+      .LocalGet(3),
+      .I32Sub,
+      .LocalSet(4),
+      .I32Const(0),
+      .LocalGet(4),
+      .ArrayNew(ts),
+      .LocalSet(6),
+      .LocalGet(6),
+      .RefAsNonNull,
+      .I32Const(0),
+      .LocalGet(5),
+      .RefAsNonNull,
+      .LocalGet(3),
+      .I32Const(1),
+      .I32Add,
       .LocalGet(4),
       .ArrayCopy(ts, ts),
-      // return result
-      .LocalGet(6), .RefAsNonNull,
+      .LocalGet(6),
+      .RefAsNonNull,
     ],
   }
 }
 
 // from_f64(n: f64) -> String — delegates to host
 fn from_f64_fn() FuncDef {
-  .{ name: "from_f64", params: [.F64], results: [str_ref()], locals: [], body: [
-    .LocalGet(0), .Call("host_f64_to_string"),
-  ] }
+  .{
+    name: "from_f64",
+    params: [.F64],
+    results: [str_ref()],
+    locals: [],
+    body: [.LocalGet(0), .Call("host_f64_to_string")],
+  }
 }
 
 // from_bool(b: i32) -> String
 fn from_bool_fn() FuncDef {
   ts := t_string()
-  FuncDef.{ name: "from_bool", params: [.I32], results: [str_ref()], locals: [], body: [
-    .LocalGet(0),
-    .If(.Some(str_ref()),
-      [
-        .I32Const(116), .I32Const(114), .I32Const(117), .I32Const(101),
-        .ArrayNewFixed(ts, 4),
-      ],
-      [
-        .I32Const(102), .I32Const(97), .I32Const(108),
-        .I32Const(115), .I32Const(101),
-        .ArrayNewFixed(ts, 5),
-      ],
-    ),
-  ] }
+  FuncDef.{
+    name: "from_bool",
+    params: [.I32],
+    results: [str_ref()],
+    locals: [],
+    body: [
+      .LocalGet(0),
+      .If(
+        .Some(str_ref()),
+        [
+          .I32Const(116),
+          .I32Const(114),
+          .I32Const(117),
+          .I32Const(101),
+          .ArrayNewFixed(ts, 4),
+        ],
+        [
+          .I32Const(102),
+          .I32Const(97),
+          .I32Const(108),
+          .I32Const(115),
+          .I32Const(101),
+          .ArrayNewFixed(ts, 5),
+        ],
+      ),
+    ],
+  }
 }

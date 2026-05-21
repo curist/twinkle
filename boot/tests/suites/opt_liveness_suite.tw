@@ -1,19 +1,18 @@
-use tests.runner
-use tests.assert
-use compiler.core_ir.{LocalId, FuncId, FieldId, Param}
-
 use compiler.anf.{AnfExpr, AnfFunctionDef}
-
 use compiler.anf_analysis.{set_has}
+use compiler.core_ir.{FieldId, FuncId, LocalId, Param}
 use compiler.mono_type.{TypeId}
-
-use compiler.opt.liveness.{live_after, annotate_in_place}
+use compiler.opt.liveness.{annotate_in_place, live_after}
+use tests.assert
+use tests.runner
 
 // ── Helpers ─────────────────────────────────────────────────────────
-
 fn lid(id: Int) LocalId { LocalId.{ id: id } }
+
 fn fid(id: Int) FuncId { FuncId.{ id: id } }
+
 fn field(id: Int) FieldId { FieldId.{ id: id } }
+
 fn tid(id: Int) TypeId { TypeId.{ id: id } }
 
 fn make_func(body: AnfExpr) AnfFunctionDef {
@@ -41,7 +40,6 @@ fn make_func_with_params(params: Vector<Param>, body: AnfExpr) AnfFunctionDef {
 }
 
 // ── live_after: basic atom ──────────────────────────────────────────
-
 fn test_live_atom_local() Result<Void, String> {
   // Atom(ALocal(0)) → local 0 is live
   expr: AnfExpr = .Atom(.ALocal(lid(0)))
@@ -58,7 +56,6 @@ fn test_live_atom_literal() Result<Void, String> {
 }
 
 // ── live_after: let kills binding ───────────────────────────────────
-
 fn test_live_let_kills_binding() Result<Void, String> {
   // Let(0, AInit(ALitInt(1)), Atom(ALocal(0)))
   // At entry: local 0 is NOT live (it's defined here)
@@ -77,12 +74,14 @@ fn test_live_let_op_reads() Result<Void, String> {
 }
 
 // ── live_after: chain ───────────────────────────────────────────────
-
 fn test_live_chain() Result<Void, String> {
   // Let(1, ABinOp(Add, ALocal(0), ALocal(2)), Atom(ALocal(1)))
   // Live at entry: {0, 2}
-  expr: AnfExpr = .Let(lid(1), .ABinOp(.Add, .ALocal(lid(0)), .ALocal(lid(2)), .Int),
-    .Atom(.ALocal(lid(1))))
+  expr: AnfExpr = .Let(
+    lid(1),
+    .ABinOp(.Add, .ALocal(lid(0)), .ALocal(lid(2)), .Int),
+    .Atom(.ALocal(lid(1))),
+  )
   live := live_after(expr)
   try assert.is_true(set_has(live, 0))
   try assert.is_true(set_has(live, 2))
@@ -90,14 +89,14 @@ fn test_live_chain() Result<Void, String> {
 }
 
 // ── live_after: if branches union ───────────────────────────────────
-
 fn test_live_if_union() Result<Void, String> {
   // Let(2, AIf(ALocal(0), Atom(ALocal(1)), Atom(ALocal(3))), Atom(ALocal(2)))
   // Live: {0, 1, 3}
-  expr: AnfExpr = .Let(lid(2), .AIf(.ALocal(lid(0)),
-    .Atom(.ALocal(lid(1))),
-    .Atom(.ALocal(lid(3)))),
-    .Atom(.ALocal(lid(2))))
+  expr: AnfExpr = .Let(
+    lid(2),
+    .AIf(.ALocal(lid(0)), .Atom(.ALocal(lid(1))), .Atom(.ALocal(lid(3)))),
+    .Atom(.ALocal(lid(2))),
+  )
   live := live_after(expr)
   try assert.is_true(set_has(live, 0))
   try assert.is_true(set_has(live, 1))
@@ -106,7 +105,6 @@ fn test_live_if_union() Result<Void, String> {
 }
 
 // ── live_after: loop conservative ───────────────────────────────────
-
 fn test_live_loop_conservative() Result<Void, String> {
   // Let(1, ALoop(Atom(ALocal(0))), Atom(ALitVoid))
   // Loop reads local 0 → live at entry: {0}
@@ -116,12 +114,14 @@ fn test_live_loop_conservative() Result<Void, String> {
 }
 
 // ── live_after: closure captures ────────────────────────────────────
-
 fn test_live_closure_captures() Result<Void, String> {
   // Let(2, AMakeClosure(f, [0, 1]), Atom(ALocal(2)))
   // Free vars 0, 1 are live
-  expr: AnfExpr = .Let(lid(2), .AMakeClosure(fid(99), [lid(0), lid(1)]),
-    .Atom(.ALocal(lid(2))))
+  expr: AnfExpr = .Let(
+    lid(2),
+    .AMakeClosure(fid(99), [lid(0), lid(1)]),
+    .Atom(.ALocal(lid(2))),
+  )
   live := live_after(expr)
   try assert.is_true(set_has(live, 0))
   try assert.is_true(set_has(live, 1))
@@ -129,7 +129,6 @@ fn test_live_closure_captures() Result<Void, String> {
 }
 
 // ── live_after: return ──────────────────────────────────────────────
-
 fn test_live_return() Result<Void, String> {
   // Return(ALocal(5))
   expr: AnfExpr = .Return(.Some(.ALocal(lid(5))))
@@ -145,7 +144,6 @@ fn test_live_return_none() Result<Void, String> {
 }
 
 // ── live_after: dead after last use ─────────────────────────────────
-
 fn test_live_dead_after_last_use() Result<Void, String> {
   // Let(0, AInit(ALitInt(1)),
   //   Let(1, AInit(ALocal(0)),
@@ -159,12 +157,13 @@ fn test_live_dead_after_last_use() Result<Void, String> {
 }
 
 // ── live_after: record update reads base and value ──────────────────
-
 fn test_live_record_update() Result<Void, String> {
   // Let(2, ARecordUpdate(ALocal(0), field0, ALocal(1), false, tid), Atom(ALocal(2)))
-  expr: AnfExpr = .Let(lid(2),
+  expr: AnfExpr = .Let(
+    lid(2),
     .ARecordUpdate(.ALocal(lid(0)), field(0), .ALocal(lid(1)), false, tid(7)),
-    .Atom(.ALocal(lid(2))))
+    .Atom(.ALocal(lid(2))),
+  )
   live := live_after(expr)
   try assert.is_true(set_has(live, 0))
   try assert.is_true(set_has(live, 1))
@@ -172,12 +171,13 @@ fn test_live_record_update() Result<Void, String> {
 }
 
 // ── live_after: call reads callee and args ──────────────────────────
-
 fn test_live_call() Result<Void, String> {
   // Let(3, ACall(ALocal(0), [ALocal(1), ALocal(2)]), Atom(ALocal(3)))
-  expr: AnfExpr = .Let(lid(3),
+  expr: AnfExpr = .Let(
+    lid(3),
     .ACall(.ALocal(lid(0)), [.ALocal(lid(1)), .ALocal(lid(2))]),
-    .Atom(.ALocal(lid(3))))
+    .Atom(.ALocal(lid(3))),
+  )
   live := live_after(expr)
   try assert.is_true(set_has(live, 0))
   try assert.is_true(set_has(live, 1))
@@ -186,12 +186,13 @@ fn test_live_call() Result<Void, String> {
 }
 
 // ── live_after: index reads base and index ──────────────────────────
-
 fn test_live_index() Result<Void, String> {
   // Let(2, AIndex(ALocal(0), ALocal(1), Array, Int), Atom(ALocal(2)))
-  expr: AnfExpr = .Let(lid(2),
+  expr: AnfExpr = .Let(
+    lid(2),
     .AIndex(.ALocal(lid(0)), .ALocal(lid(1)), .Array, .Int),
-    .Atom(.ALocal(lid(2))))
+    .Atom(.ALocal(lid(2))),
+  )
   live := live_after(expr)
   try assert.is_true(set_has(live, 0))
   try assert.is_true(set_has(live, 1))
@@ -199,13 +200,14 @@ fn test_live_index() Result<Void, String> {
 }
 
 // ── annotate_in_place: base dead → mark true ────────────────────────
-
 fn test_annotate_base_dead() Result<Void, String> {
   // Let(1, ARecordUpdate(ALocal(0), field0, ALitInt(99), false, tid), Atom(ALocal(1)))
   // Local 0 is NOT live in Atom(ALocal(1)) → can_reuse_in_place = true
-  body: AnfExpr = .Let(lid(1),
+  body: AnfExpr = .Let(
+    lid(1),
     .ARecordUpdate(.ALocal(lid(0)), field(0), .ALitInt(99), false, tid(7)),
-    .Atom(.ALocal(lid(1))))
+    .Atom(.ALocal(lid(1))),
+  )
   func := make_func(body)
   result := annotate_in_place(func)
 
@@ -218,14 +220,15 @@ fn test_annotate_base_dead() Result<Void, String> {
 }
 
 // ── annotate_in_place: base still live → keep false ─────────────────
-
 fn test_annotate_base_live() Result<Void, String> {
   // Let(1, ARecordUpdate(ALocal(0), field0, ALitInt(99), false, tid),
   //   Let(2, AInit(ALocal(0)), Atom(ALocal(2))))
   // Local 0 IS used in the continuation → can_reuse_in_place stays false
-  body: AnfExpr = .Let(lid(1),
+  body: AnfExpr = .Let(
+    lid(1),
     .ARecordUpdate(.ALocal(lid(0)), field(0), .ALitInt(99), false, tid(7)),
-    .Let(lid(2), .AInit(.ALocal(lid(0))), .Atom(.ALocal(lid(2)))))
+    .Let(lid(2), .AInit(.ALocal(lid(0))), .Atom(.ALocal(lid(2)))),
+  )
   func := make_func(body)
   result := annotate_in_place(func)
 
@@ -238,13 +241,14 @@ fn test_annotate_base_live() Result<Void, String> {
 }
 
 // ── annotate_in_place: non-local base → no annotation ───────────────
-
 fn test_annotate_non_local_base() Result<Void, String> {
   // Let(1, ARecordUpdate(ALitVoid, field0, ALitInt(1), false, tid), Atom(ALocal(1)))
   // Base is not ALocal → no annotation change
-  body: AnfExpr = .Let(lid(1),
+  body: AnfExpr = .Let(
+    lid(1),
     .ARecordUpdate(.ALitVoid, field(0), .ALitInt(1), false, tid(7)),
-    .Atom(.ALocal(lid(1))))
+    .Atom(.ALocal(lid(1))),
+  )
   func := make_func(body)
   result := annotate_in_place(func)
 
@@ -257,20 +261,22 @@ fn test_annotate_non_local_base() Result<Void, String> {
 }
 
 // ── annotate_in_place: nested in if branch ──────────────────────────
-
 fn test_annotate_nested_in_if() Result<Void, String> {
   // Let(2, AIf(cond,
   //   Let(1, ARecordUpdate(ALocal(0), ..., false), Atom(ALocal(1))),
   //   Atom(ALitVoid)),
   //   Atom(ALocal(2)))
   // Inside the then branch, local 0 is dead after the update → should be annotated
-  then_branch: AnfExpr = .Let(lid(1),
+  then_branch: AnfExpr = .Let(
+    lid(1),
     .ARecordUpdate(.ALocal(lid(0)), field(0), .ALitInt(5), false, tid(7)),
-    .Atom(.ALocal(lid(1))))
-  body: AnfExpr = .Let(lid(2), .AIf(.ALocal(lid(3)),
-    then_branch,
-    .Atom(.ALitVoid)),
-    .Atom(.ALocal(lid(2))))
+    .Atom(.ALocal(lid(1))),
+  )
+  body: AnfExpr = .Let(
+    lid(2),
+    .AIf(.ALocal(lid(3)), then_branch, .Atom(.ALitVoid)),
+    .Atom(.ALocal(lid(2))),
+  )
   func := make_func(body)
   result := annotate_in_place(func)
 
@@ -289,13 +295,14 @@ fn test_annotate_nested_in_if() Result<Void, String> {
 }
 
 // ── annotate_in_place: param base stays non-reusable ────────────────
-
 fn test_annotate_param_base_dead() Result<Void, String> {
   // Function params come from outside the function, so a dead-base update should
   // not mark the record update reusable in place.
-  body: AnfExpr = .Let(lid(1),
+  body: AnfExpr = .Let(
+    lid(1),
     .ARecordUpdate(.ALocal(lid(0)), field(0), .ALitInt(99), false, tid(7)),
-    .Atom(.ALocal(lid(1))))
+    .Atom(.ALocal(lid(1))),
+  )
   params: Vector<Param> = [Param.{ local: lid(0), ty: .Void }]
   func := make_func_with_params(params, body)
   result := annotate_in_place(func)
@@ -309,18 +316,21 @@ fn test_annotate_param_base_dead() Result<Void, String> {
 }
 
 // ── annotate_in_place: chained updates ──────────────────────────────
-
 fn test_annotate_chained_updates() Result<Void, String> {
   // Let(1, ARecordUpdate(ALocal(0), f0, v1, false, tid),
   //   Let(2, ARecordUpdate(ALocal(1), f1, v2, false, tid),
   //     Atom(ALocal(2))))
   // Local 0 dead after first update → annotate
   // Local 1 dead after second update → annotate
-  body: AnfExpr = .Let(lid(1),
+  body: AnfExpr = .Let(
+    lid(1),
     .ARecordUpdate(.ALocal(lid(0)), field(0), .ALitInt(10), false, tid(7)),
-    .Let(lid(2),
+    .Let(
+      lid(2),
       .ARecordUpdate(.ALocal(lid(1)), field(1), .ALitInt(20), false, tid(7)),
-      .Atom(.ALocal(lid(2)))))
+      .Atom(.ALocal(lid(2))),
+    ),
+  )
   func := make_func(body)
   result := annotate_in_place(func)
 
@@ -328,6 +338,7 @@ fn test_annotate_chained_updates() Result<Void, String> {
   case result.body {
     .Let(_, .ARecordUpdate(_, _, _, can_reuse1, _), rest) => {
       try assert.is_true(can_reuse1)
+
       // Second update: local 1 dead in continuation → true
       case rest {
         .Let(_, .ARecordUpdate(_, _, _, can_reuse2, _), _) => {
@@ -341,12 +352,15 @@ fn test_annotate_chained_updates() Result<Void, String> {
 }
 
 // ── live_after: AAssign kills target ─────────────────────────────────
-
 fn test_live_assign_kills_target() Result<Void, String> {
   // Let(1, AAssign(0, ALocal(2)), Atom(ALocal(1)))
   // AAssign(0, ...) kills local 0, reads local 2
   // At entry: {2} (not 0, because 0 was killed by the assign)
-  expr: AnfExpr = .Let(lid(1), .AAssign(lid(0), .ALocal(lid(2))), .Atom(.ALocal(lid(1))))
+  expr: AnfExpr = .Let(
+    lid(1),
+    .AAssign(lid(0), .ALocal(lid(2))),
+    .Atom(.ALocal(lid(1))),
+  )
   live := live_after(expr)
   try assert.is_true(set_has(live, 2))
   assert.is_true(!set_has(live, 0))
@@ -357,13 +371,16 @@ fn test_live_assign_kills_old_value() Result<Void, String> {
   // The body reads local 0, but AAssign(0, ...) kills the OLD value of 0.
   // The body reads the NEW value (set by AAssign), not the old one.
   // So at entry, the old value of local 0 is NOT needed → live = {}
-  expr: AnfExpr = .Let(lid(1), .AAssign(lid(0), .ALitInt(99)), .Atom(.ALocal(lid(0))))
+  expr: AnfExpr = .Let(
+    lid(1),
+    .AAssign(lid(0), .ALitInt(99)),
+    .Atom(.ALocal(lid(0))),
+  )
   live := live_after(expr)
   assert.equal(live.len(), 0)
 }
 
 // ── annotate_in_place: consume-reassign pattern ─────────────────────
-
 fn test_annotate_consume_reassign() Result<Void, String> {
   // The classic consume-reassign pattern:
   // Let(1, ARecordUpdate(ALocal(0), f0, v, false, tid),
@@ -371,10 +388,11 @@ fn test_annotate_consume_reassign() Result<Void, String> {
   //     Atom(ALocal(0))))
   // Old local 0 is consumed by the update, then 0 is reassigned to the result.
   // The AAssign kills old 0 in liveness, so annotate_in_place should mark true.
-  body: AnfExpr = .Let(lid(1),
+  body: AnfExpr = .Let(
+    lid(1),
     .ARecordUpdate(.ALocal(lid(0)), field(0), .ALitInt(99), false, tid(7)),
-    .Let(lid(2), .AAssign(lid(0), .ALocal(lid(1))),
-      .Atom(.ALocal(lid(0)))))
+    .Let(lid(2), .AAssign(lid(0), .ALocal(lid(1))), .Atom(.ALocal(lid(0)))),
+  )
   func := make_func(body)
   result := annotate_in_place(func)
 
@@ -387,33 +405,32 @@ fn test_annotate_consume_reassign() Result<Void, String> {
 }
 
 // ── Suite ───────────────────────────────────────────────────────────
-
 pub fn suite() runner.Suite {
   s := runner.suite("Opt: Liveness & Annotate In-Place")
   // live_after
-  s = s.test("live: atom local", test_live_atom_local)
-  s = s.test("live: atom literal", test_live_atom_literal)
-  s = s.test("live: let kills binding", test_live_let_kills_binding)
-  s = s.test("live: let op reads", test_live_let_op_reads)
-  s = s.test("live: chain", test_live_chain)
-  s = s.test("live: if branches union", test_live_if_union)
-  s = s.test("live: loop conservative", test_live_loop_conservative)
-  s = s.test("live: closure captures", test_live_closure_captures)
-  s = s.test("live: return some", test_live_return)
-  s = s.test("live: return none", test_live_return_none)
-  s = s.test("live: dead after last use", test_live_dead_after_last_use)
-  s = s.test("live: record update", test_live_record_update)
-  s = s.test("live: call", test_live_call)
-  s = s.test("live: index", test_live_index)
-  s = s.test("live: assign kills target", test_live_assign_kills_target)
-  s = s.test("live: assign kills old value", test_live_assign_kills_old_value)
+  s = .test("live: atom local", test_live_atom_local)
+  s = .test("live: atom literal", test_live_atom_literal)
+  s = .test("live: let kills binding", test_live_let_kills_binding)
+  s = .test("live: let op reads", test_live_let_op_reads)
+  s = .test("live: chain", test_live_chain)
+  s = .test("live: if branches union", test_live_if_union)
+  s = .test("live: loop conservative", test_live_loop_conservative)
+  s = .test("live: closure captures", test_live_closure_captures)
+  s = .test("live: return some", test_live_return)
+  s = .test("live: return none", test_live_return_none)
+  s = .test("live: dead after last use", test_live_dead_after_last_use)
+  s = .test("live: record update", test_live_record_update)
+  s = .test("live: call", test_live_call)
+  s = .test("live: index", test_live_index)
+  s = .test("live: assign kills target", test_live_assign_kills_target)
+  s = .test("live: assign kills old value", test_live_assign_kills_old_value)
   // annotate_in_place
-  s = s.test("annotate: base dead", test_annotate_base_dead)
-  s = s.test("annotate: base live", test_annotate_base_live)
-  s = s.test("annotate: non-local base", test_annotate_non_local_base)
-  s = s.test("annotate: nested in if", test_annotate_nested_in_if)
-  s = s.test("annotate: param base dead", test_annotate_param_base_dead)
-  s = s.test("annotate: chained updates", test_annotate_chained_updates)
-  s = s.test("annotate: consume-reassign", test_annotate_consume_reassign)
+  s = .test("annotate: base dead", test_annotate_base_dead)
+  s = .test("annotate: base live", test_annotate_base_live)
+  s = .test("annotate: non-local base", test_annotate_non_local_base)
+  s = .test("annotate: nested in if", test_annotate_nested_in_if)
+  s = .test("annotate: param base dead", test_annotate_param_base_dead)
+  s = .test("annotate: chained updates", test_annotate_chained_updates)
+  s = .test("annotate: consume-reassign", test_annotate_consume_reassign)
   s
 }

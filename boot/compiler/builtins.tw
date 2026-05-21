@@ -1,18 +1,11 @@
 // Builtin function registry — centralizes FuncId assignments and dispatch metadata.
 // See docs/plans/boot-builtin-registry.md for design.
-
+use compiler.codegen.wasm_ir.{AbiContract, ValType}
 use compiler.core_ir.{FuncId}
-use compiler.codegen.wasm_ir.{ValType, AbiContract}
 
-pub type BuiltinKind = {
-  Runtime(RuntimeInfo),
-  Intrinsic,
-}
+pub type BuiltinKind = { Runtime(RuntimeInfo), Intrinsic }
 
-pub type RuntimeInfo = .{
-  wasm_module: String,
-  wasm_name: String,
-}
+pub type RuntimeInfo = .{ wasm_module: String, wasm_name: String }
 
 pub type BuiltinEntry = .{
   name: String,
@@ -31,24 +24,40 @@ pub type BuiltinRegistry = .{
 }
 
 // ── Registration helpers ──
-
 fn empty_abi() AbiContract {
   AbiContract.{ param_types: [], result_types: [] }
 }
 
-fn ref_null(name: String) ValType { .Ref(true, .Named(name)) }
-fn ref_nn(name: String) ValType { .Ref(false, .Named(name)) }
+fn ref_null(name: String) ValType {
+  .Ref(true, .Named(name))
+}
+
+fn ref_nn(name: String) ValType {
+  .Ref(false, .Named(name))
+}
+
 fn str_n() ValType { ref_null("rt_types__String") }
+
 fn str_() ValType { ref_nn("rt_types__String") }
+
 fn arr_n() ValType { ref_null("rt_types__Array") }
+
 fn arr_() ValType { ref_nn("rt_types__Array") }
+
 fn pvec_n() ValType { ref_null("rt_types__PVec") }
+
 fn pvec_() ValType { ref_nn("rt_types__PVec") }
+
 fn dict_n() ValType { ref_null("rt_types__PDict") }
+
 fn dict_() ValType { ref_nn("rt_types__PDict") }
+
 fn variant_() ValType { ref_nn("rt_types__Variant") }
+
 fn variant_null() ValType { ref_null("rt_types__Variant") }
+
 fn closure_n() ValType { ref_null("rt_types__Closure") }
+
 fn cell_n() ValType { ref_null("rt_types__Cell") }
 
 fn abi(params: Vector<ValType>, results: Vector<ValType>) AbiContract {
@@ -103,7 +112,6 @@ fn builtin_abi(name: String) AbiContract {
     "host_stdin_read_timeout" => abi([.I32, .I32], [arr_()]),
     "host_stdin_eof" => abi([], [.I32]),
     "host_stdout_write_bytes" => abi([arr_n()], []),
-
     // Intrinsics that still cross the anyref boundary after M4.
     "vector_append" => abi([pvec_n(), .Anyref], [pvec_()]),
     "vector_get" => abi([pvec_n(), .I32], [.Anyref]),
@@ -149,11 +157,18 @@ fn builtin_abi(name: String) AbiContract {
   }
 }
 
-pub fn runtime_with_abi(reg: BuiltinRegistry, name: String, wasm_module: String, wasm_name: String, builtin_abi: AbiContract) BuiltinRegistry {
+pub fn runtime_with_abi(
+  reg: BuiltinRegistry,
+  name: String,
+  wasm_module: String,
+  wasm_name: String,
+  builtin_abi: AbiContract,
+) BuiltinRegistry {
   case reg.by_name[name] {
     .Some(_) => error("duplicate builtin registration: ${name}"),
     .None => {},
   }
+
   fid := FuncId.{ id: reg.next_id }
   entry := BuiltinEntry.{
     name: name,
@@ -175,17 +190,33 @@ pub fn runtime_with_abi(reg: BuiltinRegistry, name: String, wasm_module: String,
   }
 }
 
-pub fn runtime(reg: BuiltinRegistry, name: String, wasm_module: String, wasm_name: String) BuiltinRegistry {
+pub fn runtime(
+  reg: BuiltinRegistry,
+  name: String,
+  wasm_module: String,
+  wasm_name: String,
+) BuiltinRegistry {
   runtime_with_abi(reg, name, wasm_module, wasm_name, builtin_abi(name))
 }
 
-pub fn intrinsic_with_abi(reg: BuiltinRegistry, name: String, builtin_abi: AbiContract) BuiltinRegistry {
+pub fn intrinsic_with_abi(
+  reg: BuiltinRegistry,
+  name: String,
+  builtin_abi: AbiContract,
+) BuiltinRegistry {
   case reg.by_name[name] {
     .Some(_) => error("duplicate builtin registration: ${name}"),
     .None => {},
   }
+
   fid := FuncId.{ id: reg.next_id }
-  entry := BuiltinEntry.{ name: name, canonical_name: .None, func_id: fid, kind: .Intrinsic, abi: builtin_abi }
+  entry := BuiltinEntry.{
+    name: name,
+    canonical_name: .None,
+    func_id: fid,
+    kind: .Intrinsic,
+    abi: builtin_abi,
+  }
   by_name := reg.by_name
   by_id := reg.by_id
   by_name[name] = entry
@@ -260,11 +291,7 @@ pub fn entry_by_canonical(reg: BuiltinRegistry, canonical: String) BuiltinEntry?
 // Single authoritative definition of all builtins: name, dispatch kind,
 // wasm target, and canonical (user-facing) name.  Both BuiltinRegistry and
 // the signature drift tests derive from this table.
-
-pub type BuiltinDispatch = {
-  Runtime(String, String),
-  Intrinsic,
-}
+pub type BuiltinDispatch = { Runtime(String, String), Intrinsic }
 
 pub type BuiltinSpec = .{
   name: String,
@@ -292,115 +319,114 @@ fn intr(name: String, canonical: String?) BuiltinSpec {
 ///   - This prevents future namespace collisions between the two classes.
 pub fn builtin_specs() Vector<BuiltinSpec> {
   [
-    // ── I/O ──
-    rt("print",    "rt.core", "print",   .None),
-    rt("println",  "rt.core", "println", .None),
-    rt("error",    "rt.core", "trap",    .None),
-    rt("eprint",   "rt.core", "eprint",  .None),
-    rt("eprintln", "rt.core", "eprintln",.None),
-    rt("core_eq",  "rt.core", "eq",      .None),
-    // ── to_string family ──
-    rt("int_to_string",   "rt.str", "from_i64",  .Some("Int.to_string")),
-    rt("float_to_string", "rt.str", "from_f64",  .Some("Float.to_string")),
-    rt("bool_to_string",  "rt.str", "from_bool", .Some("Bool.to_string")),
+    rt("print", "rt.core", "print", .None),
+    rt("println", "rt.core", "println", .None),
+    rt("error", "rt.core", "trap", .None),
+    rt("eprint", "rt.core", "eprint", .None),
+    rt("eprintln", "rt.core", "eprintln", .None),
+    rt("core_eq", "rt.core", "eq", .None),
+    rt("int_to_string", "rt.str", "from_i64", .Some("Int.to_string")),
+    rt("float_to_string", "rt.str", "from_f64", .Some("Float.to_string")),
+    rt("bool_to_string", "rt.str", "from_bool", .Some("Bool.to_string")),
     intr("string_to_string", .Some("String.to_string")),
-    // ── String ops ──
-    rt("string_len",       "rt.str", "len",       .Some("String.len")),
-    rt("string_concat",    "rt.str", "concat",    .Some("String.concat")),
+    rt("string_len", "rt.str", "len", .Some("String.len")),
+    rt("string_concat", "rt.str", "concat", .Some("String.concat")),
     rt("string__substring", "rt.str", "substring", .None),
-    intr("string_get",       .Some("String.get")),
-    intr("string_slice",     .Some("String.slice")),
-    intr("from_code_point",  .Some("String.from_code_point")),
-    intr("string_utf8_bytes",.Some("String.utf8_bytes")),
+    intr("string_get", .Some("String.get")),
+    intr("string_slice", .Some("String.slice")),
+    intr("from_code_point", .Some("String.from_code_point")),
+    intr("string_utf8_bytes", .Some("String.utf8_bytes")),
     intr("string_from_utf8", .Some("String.from_utf8")),
-    intr("float_bits",       .Some("Float.bits")),
-    intr("char_code_at",     .Some("String.char_code_at")),
-    intr("from_char_code",   .Some("String.from_char_code")),
-    intr("from_byte",        .Some("String.from_byte")),
-    // ── Vector ops ──
-    rt("vector_len",        "rt.arr", "len",   .Some("Vector.len")),
-    intr("vector_append",   .Some("Vector.append")),
-    rt("vector__set_unsafe", "rt.arr", "set",   .None),
-    rt("vector_concat",     "rt.arr", "concat",.Some("Vector.concat")),
-    rt("vector_slice",      "rt.arr", "slice", .Some("Vector.slice")),
-    intr("vector_get",  .Some("Vector.get")),
-    intr("vector_set",  .Some("Vector.set")),
+    intr("float_bits", .Some("Float.bits")),
+    intr("char_code_at", .Some("String.char_code_at")),
+    intr("from_char_code", .Some("String.from_char_code")),
+    intr("from_byte", .Some("String.from_byte")),
+    rt("vector_len", "rt.arr", "len", .Some("Vector.len")),
+    intr("vector_append", .Some("Vector.append")),
+    rt("vector__set_unsafe", "rt.arr", "set", .None),
+    rt("vector_concat", "rt.arr", "concat", .Some("Vector.concat")),
+    rt("vector_slice", "rt.arr", "slice", .Some("Vector.slice")),
+    intr("vector_get", .Some("Vector.get")),
+    intr("vector_set", .Some("Vector.set")),
     intr("vector_make", .Some("Vector.make")),
-    // ── Vector builder ──
-    rt("vector__builder_new",    "rt.arr", "builder_new",    .None),
-    rt("vector__builder_push",   "rt.arr", "builder_push",   .None),
+    rt("vector__builder_new", "rt.arr", "builder_new", .None),
+    rt("vector__builder_push", "rt.arr", "builder_push", .None),
     rt("vector__builder_freeze", "rt.arr", "builder_freeze", .None),
-    rt("vector__builder_from",   "rt.arr", "builder_from",   .None),
-    // ── Dict ops ──
-    rt("dict_new",    "rt.dict", "make",       .Some("Dict.new")),
-    rt("dict_set",    "rt.dict", "set",        .Some("Dict.set")),
-    rt("dict_keys",   "rt.dict", "keys",       .Some("Dict.keys")),
+    rt("vector__builder_from", "rt.arr", "builder_from", .None),
+    rt("dict_new", "rt.dict", "make", .Some("Dict.new")),
+    rt("dict_set", "rt.dict", "set", .Some("Dict.set")),
+    rt("dict_keys", "rt.dict", "keys", .Some("Dict.keys")),
     intr("dict_get", .Some("Dict.get")),
     intr("dict__get_unsafe", .None),
-    rt("dict_len",    "rt.dict", "len",    .Some("Dict.len")),
-    rt("dict_has",    "rt.dict", "has",    .Some("Dict.has")),
+    rt("dict_len", "rt.dict", "len", .Some("Dict.len")),
+    rt("dict_has", "rt.dict", "has", .Some("Dict.has")),
     rt("dict_remove", "rt.dict", "remove", .Some("Dict.remove")),
-    // ── In-place variants (optimizer rewrites) ──
     rt("vector__set_in_place", "rt.arr", "set_in_place", .None),
-    rt("dict__set_in_place",    "rt.dict", "set_in_place",    .None),
+    rt("dict__set_in_place", "rt.dict", "set_in_place", .None),
     rt("dict__remove_in_place", "rt.dict", "remove_in_place", .None),
-    // ── Range & iterators ──
-    intr("range_from",      .Some("range_from")),
-    intr("range",           .Some("range")),
-    intr("range_step",      .Some("range_step")),
-    intr("iterator_next",   .Some("Iterator.next")),
+    intr("range_from", .Some("range_from")),
+    intr("range", .Some("range")),
+    intr("range_step", .Some("range_step")),
+    intr("iterator_next", .Some("Iterator.next")),
     intr("iterator_unfold", .Some("Iterator.unfold")),
-    // ── Cell ──
-    intr("cell_new",    .Some("Cell.new")),
-    intr("cell_get",    .Some("Cell.get")),
-    intr("cell_set",    .Some("Cell.set")),
+    intr("cell_new", .Some("Cell.new")),
+    intr("cell_get", .Some("Cell.get")),
+    intr("cell_set", .Some("Cell.set")),
     intr("cell_update", .Some("Cell.update")),
-    // ── Task ──
     intr("task_spawn", .Some("Task.spawn")),
     intr("task_await", .Some("Task.await")),
     intr("task_yield", .Some("Task.yield")),
-    // ── Byte ops ──
-    intr("byte_to_int",    .Some("Byte.to_int")),
-    intr("byte_from_int",  .Some("Byte.from_int")),
+    intr("byte_to_int", .Some("Byte.to_int")),
+    intr("byte_from_int", .Some("Byte.from_int")),
     intr("byte_to_string", .Some("Byte.to_string")),
-    // ── Numeric parsing ──
-    intr("int_from_string",   .Some("Int.from_string")),
+    intr("int_from_string", .Some("Int.from_string")),
     intr("float_from_string", .Some("Float.from_string")),
-    // ── Host ops ──
-    rt("host_read_file",   "host", "read_file",   .None),
-    rt("host_write_file",  "host", "write_file",  .None),
+    rt("host_read_file", "host", "read_file", .None),
+    rt("host_write_file", "host", "write_file", .None),
     rt("host_write_bytes", "host", "write_bytes", .None),
-    rt("host_mkdirp",      "host", "mkdirp",      .None),
-    rt("host_list_dir",    "host", "list_dir",    .None),
-    rt("host_exists",      "host", "exists",      .None),
-    rt("host_args",        "host", "args",        .None),
-    rt("host_env",         "host", "env",         .None),
-    rt("host_cwd",         "host", "cwd",         .None),
-    rt("host_exit",        "host", "exit",        .None),
-    rt("host_now",         "host", "now",         .None),
-    rt("host_run_wasm",    "host", "run_wasm",    .None),
-    rt("host_stdin_read_chunk",    "host", "stdin_read_chunk",    .None),
-    rt("host_stdin_read_timeout",  "host", "stdin_read_timeout",  .None),
-    rt("host_stdin_eof",           "host", "stdin_eof",           .None),
-    rt("host_stdout_write_bytes",  "host", "stdout_write_bytes",  .None),
+    rt("host_mkdirp", "host", "mkdirp", .None),
+    rt("host_list_dir", "host", "list_dir", .None),
+    rt("host_exists", "host", "exists", .None),
+    rt("host_args", "host", "args", .None),
+    rt("host_env", "host", "env", .None),
+    rt("host_cwd", "host", "cwd", .None),
+    rt("host_exit", "host", "exit", .None),
+    rt("host_now", "host", "now", .None),
+    rt("host_run_wasm", "host", "run_wasm", .None),
+    rt("host_stdin_read_chunk", "host", "stdin_read_chunk", .None),
+    rt("host_stdin_read_timeout", "host", "stdin_read_timeout", .None),
+    rt("host_stdin_eof", "host", "stdin_eof", .None),
+    rt("host_stdout_write_bytes", "host", "stdout_write_bytes", .None),
   ]
 }
 
 // ── Full registry ──
-
 pub fn make_builtin_registry() BuiltinRegistry {
   specs := builtin_specs()
-  reg := BuiltinRegistry.{ by_name: Dict.new(), by_id: Dict.new(), by_canonical: Dict.new(), entries: [], next_id: 0 }
+  reg := BuiltinRegistry.{
+    by_name: Dict.new(),
+    by_id: Dict.new(),
+    by_canonical: Dict.new(),
+    entries: [],
+    next_id: 0,
+  }
   cur := reg
+
   for spec in specs {
     cur = case spec.dispatch {
-      .Runtime(wasm_module, wasm_name) => cur.runtime(spec.name, wasm_module, wasm_name),
+      .Runtime(wasm_module, wasm_name) => cur.runtime(
+        spec.name,
+        wasm_module,
+        wasm_name,
+      ),
       .Intrinsic => cur.intrinsic(spec.name),
     }
+
     case spec.canonical {
-      .Some(canonical) => { cur = cur.with_canonical(canonical, spec.name) },
+      .Some(canonical) => { cur = .with_canonical(canonical, spec.name) },
       .None => {},
     }
   }
+
   cur
 }

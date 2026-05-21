@@ -3,39 +3,56 @@
 // These helpers are deliberately limited to facts already materialized in
 // PreparedFunc and related prepared-IR records. They should not rediscover
 // semantic ANF facts or depend on Wasm planning/emission state.
-
-use compiler.backend.prepared_ir.{PreparedFunc, PreparedAtom, SlotId, SlotInfo, ReprKind}
-use compiler.mono_type.{MonoType}
+use compiler.backend.prepared_ir.{
+  PreparedAtom, PreparedFunc, ReprKind, SlotId, SlotInfo,
+}
 use compiler.codegen.wasm_ir.{ValType}
+use compiler.mono_type.{MonoType}
 
 pub fn slot_info(func: PreparedFunc, sid: SlotId) SlotInfo {
   case func.slots[sid.id] {
     .Some(info) => info,
-    .None => error("backend facts: missing slot S${sid.id} in function ${func.name} (F${func.func_id.id})"),
+    .None => error(
+      "backend facts: missing slot S${sid.id} in function ${func.name} (F${func.func_id.id})",
+    ),
   }
 }
 
-pub fn slot_info_result(func: PreparedFunc, sid: SlotId, context: String) Result<SlotInfo, String> {
+pub fn slot_info_result(func: PreparedFunc, sid: SlotId, context: String) Result<
+  SlotInfo,
+  String,
+> {
   case func.slots[sid.id] {
     .Some(info) => .Ok(info),
-    .None => .Err("backend verifier: function ${func.name} (F${func.func_id.id}): ${context} references missing slot S${sid.id}"),
+    .None => .Err(
+      "backend verifier: function ${func.name} (F${func.func_id.id}): ${context} references missing slot S${sid.id}",
+    ),
   }
 }
 
 pub fn find_slot_by_source_local(func: PreparedFunc, local_id: Int) SlotInfo? {
   for sid_int in func.slots.keys() {
     case func.slots[sid_int] {
-      .Some(info) => if info.source_local.id == local_id { return .Some(info) },
+      .Some(info) => if info.source_local.id == local_id {
+        return .Some(info)
+      },
       .None => {},
     }
   }
+
   .None
 }
 
-pub fn slot_by_source_local_result(func: PreparedFunc, local_id: Int, context: String) Result<SlotInfo, String> {
+pub fn slot_by_source_local_result(
+  func: PreparedFunc,
+  local_id: Int,
+  context: String,
+) Result<SlotInfo, String> {
   case find_slot_by_source_local(func, local_id) {
     .Some(info) => .Ok(info),
-    .None => .Err("backend verifier: function ${func.name} (F${func.func_id.id}): ${context} references unmapped local L${local_id}"),
+    .None => .Err(
+      "backend verifier: function ${func.name} (F${func.func_id.id}): ${context} references unmapped local L${local_id}",
+    ),
   }
 }
 

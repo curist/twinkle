@@ -1,17 +1,16 @@
-use compiler.anf.{AnfModule}
-use compiler.builtins.{BuiltinRegistry}
-
-use compiler.resolver.{ResolvedEnv}
-use compiler.codegen.codegen.{codegen, runtime_modules}
-use compiler.codegen.wasm_layout.{collect_eq_type_layouts}
-use compiler.codegen.emit.{emit_module}
-use compiler.codegen.wasm_plan.{plan_wasm_types}
-use compiler.codegen.linker.{link, LinkedModule}
-use compiler.backend.prepare.{prepare_backend}
-use compiler.backend.closure_convert.{convert_closures}
-use compiler.backend.task_validate.{validate_tasks}
-use compiler.pipeline
 use commands.common.{format_compile_error}
+use compiler.anf.{AnfModule}
+use compiler.backend.closure_convert.{convert_closures}
+use compiler.backend.prepare.{prepare_backend}
+use compiler.backend.task_validate.{validate_tasks}
+use compiler.builtins.{BuiltinRegistry}
+use compiler.codegen.codegen.{codegen, runtime_modules}
+use compiler.codegen.emit.{emit_module}
+use compiler.codegen.linker.{LinkedModule, link}
+use compiler.codegen.wasm_layout.{collect_eq_type_layouts}
+use compiler.codegen.wasm_plan.{plan_wasm_types}
+use compiler.pipeline
+use compiler.resolver.{ResolvedEnv}
 
 pub type CodegenInputs = .{
   anf: AnfModule,
@@ -21,7 +20,13 @@ pub type CodegenInputs = .{
 
 pub fn codegen_inputs(src: String) Result<CodegenInputs, String> {
   artifacts := try pipeline.compile_source(src)
-  .Ok(CodegenInputs.{ anf: artifacts.opt, env: artifacts.env, builtins: artifacts.builtins })
+  .Ok(
+    CodegenInputs.{
+      anf: artifacts.opt,
+      env: artifacts.env,
+      builtins: artifacts.builtins,
+    },
+  )
 }
 
 pub fn codegen_src(src: String) Result<String, String> {
@@ -32,7 +37,9 @@ pub fn codegen_src(src: String) Result<String, String> {
 pub fn codegen_path(path: String) Result<String, String> {
   artifacts := case pipeline.compile_entry_path(path) {
     .Ok(a) => a,
-    .Err(err) => { return .Err(format_compile_error(err)) },
+    .Err(err) => {
+      return .Err(format_compile_error(err))
+    },
   }
   .Ok(codegen(artifacts.opt, artifacts.env, artifacts.builtins))
 }
@@ -58,6 +65,7 @@ pub fn codegen_linked(src: String) Result<LinkedModule, String> {
   user_module := emit_module(prepared, registry, inputs.builtins, inputs.env)
   eq_layouts := collect_eq_type_layouts(registry.layout_cache)
   modules := runtime_modules(eq_layouts).append(user_module)
+
   case link(modules, .None) {
     .Ok(linked) => .Ok(linked),
     .Err(_) => .Err("link failed"),

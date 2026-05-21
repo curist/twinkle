@@ -1,14 +1,21 @@
 // Block statement chain lowering.
-
-use lib.source.span.{Span}
-use compiler.ast.{Block, Stmt, Expr}
+use compiler.ast.{Block, Expr, Stmt}
 use compiler.core_ir.{LocalId}
-use compiler.lower_core.context.{LowerCtx, ExprOut}
-use compiler.lower_core.helpers.{void_expr, is_terminal}
-use compiler.lower_core.lvalues.{lower_lvalue_assign}
+use compiler.lower_core.context.{ExprOut, LowerCtx}
+use compiler.lower_core.helpers.{is_terminal, void_expr}
 use compiler.lower_core.iteration.{lower_for}
+use compiler.lower_core.lvalues.{lower_lvalue_assign}
+use lib.source.span.{Span}
 
-pub fn lower_stmts(ctx: LowerCtx, stmts: Vector<Stmt>, idx: Int, tail: Expr?, block_span: Span, lower_expr_fn: fn(LowerCtx, Expr) ExprOut, lower_block_fn: fn(LowerCtx, Block) ExprOut) ExprOut {
+pub fn lower_stmts(
+  ctx: LowerCtx,
+  stmts: Vector<Stmt>,
+  idx: Int,
+  tail: Expr?,
+  block_span: Span,
+  lower_expr_fn: fn(LowerCtx, Expr) ExprOut,
+  lower_block_fn: fn(LowerCtx, Block) ExprOut,
+) ExprOut {
   if idx >= stmts.len() {
     case tail {
       .Some(expr) => lower_expr_fn(ctx, expr),
@@ -16,6 +23,7 @@ pub fn lower_stmts(ctx: LowerCtx, stmts: Vector<Stmt>, idx: Int, tail: Expr?, bl
     }
   } else {
     stmt := stmts[idx]
+
     case stmt {
       .Let(ls) => {
         if ls.is_rebind {
@@ -24,15 +32,30 @@ pub fn lower_stmts(ctx: LowerCtx, stmts: Vector<Stmt>, idx: Int, tail: Expr?, bl
           target := case r.ctx.lookup_local_or_global(ls.name) {
             .Some(id) => id,
             .None => {
-              r.ctx = r.ctx.emit_error(ls.span, "undefined variable for assign: ${ls.name}")
+              r.ctx = r.ctx.emit_error(
+                ls.span,
+                "undefined variable for assign: ${ls.name}",
+              )
               LocalId.{ id: -1 }
             },
           }
-          rest := lower_stmts(r.ctx, stmts, idx + 1, tail, block_span, lower_expr_fn, lower_block_fn)
+          rest := lower_stmts(
+            r.ctx,
+            stmts,
+            idx + 1,
+            tail,
+            block_span,
+            lower_expr_fn,
+            lower_block_fn,
+          )
           ao := rest.ctx.alloc_anon_local()
           .{
             expr: .{
-              kind: .Let(ao.local, .{ kind: .Assign(target, r.expr), ty: .Void, span: ls.span }, rest.expr),
+              kind: .Let(
+                ao.local,
+                .{ kind: .Assign(target, r.expr), ty: .Void, span: ls.span },
+                rest.expr,
+              ),
               ty: rest.expr.ty,
               span: ls.span,
             },
@@ -41,7 +64,15 @@ pub fn lower_stmts(ctx: LowerCtx, stmts: Vector<Stmt>, idx: Int, tail: Expr?, bl
         } else {
           r := lower_expr_fn(ctx, ls.value)
           lo := r.ctx.alloc_local(ls.name)
-          rest := lower_stmts(lo.ctx, stmts, idx + 1, tail, block_span, lower_expr_fn, lower_block_fn)
+          rest := lower_stmts(
+            lo.ctx,
+            stmts,
+            idx + 1,
+            tail,
+            block_span,
+            lower_expr_fn,
+            lower_block_fn,
+          )
           .{
             expr: .{
               kind: .Let(lo.local, r.expr, rest.expr),
@@ -57,13 +88,36 @@ pub fn lower_stmts(ctx: LowerCtx, stmts: Vector<Stmt>, idx: Int, tail: Expr?, bl
         case es.expr.kind {
           .Binary(.Assign, lhs, rhs) => {
             rhs_r := lower_expr_fn(ctx, rhs)
-            case lower_lvalue_assign(rhs_r.ctx, lhs, rhs_r.expr, es.span, lower_expr_fn) {
+
+            case lower_lvalue_assign(
+              rhs_r.ctx,
+              lhs,
+              rhs_r.expr,
+              es.span,
+              lower_expr_fn,
+            ) {
               .Some(lv) => {
-                rest := lower_stmts(lv.ctx, stmts, idx + 1, tail, block_span, lower_expr_fn, lower_block_fn)
+                rest := lower_stmts(
+                  lv.ctx,
+                  stmts,
+                  idx + 1,
+                  tail,
+                  block_span,
+                  lower_expr_fn,
+                  lower_block_fn,
+                )
                 ao := rest.ctx.alloc_anon_local()
                 .{
                   expr: .{
-                    kind: .Let(ao.local, .{ kind: .Assign(lv.root, lv.update), ty: .Void, span: es.span }, rest.expr),
+                    kind: .Let(
+                      ao.local,
+                      .{
+                        kind: .Assign(lv.root, lv.update),
+                        ty: .Void,
+                        span: es.span,
+                      },
+                      rest.expr,
+                    ),
                     ty: rest.expr.ty,
                     span: es.span,
                   },
@@ -73,10 +127,19 @@ pub fn lower_stmts(ctx: LowerCtx, stmts: Vector<Stmt>, idx: Int, tail: Expr?, bl
               .None => {
                 // Fall through to generic expr lowering
                 r := lower_expr_fn(ctx, es.expr)
+
                 if is_terminal(r.expr) {
                   .{ expr: r.expr, ctx: r.ctx }
                 } else {
-                  rest := lower_stmts(r.ctx, stmts, idx + 1, tail, block_span, lower_expr_fn, lower_block_fn)
+                  rest := lower_stmts(
+                    r.ctx,
+                    stmts,
+                    idx + 1,
+                    tail,
+                    block_span,
+                    lower_expr_fn,
+                    lower_block_fn,
+                  )
                   ao := rest.ctx.alloc_anon_local()
                   .{
                     expr: .{
@@ -92,11 +155,20 @@ pub fn lower_stmts(ctx: LowerCtx, stmts: Vector<Stmt>, idx: Int, tail: Expr?, bl
           },
           _ => {
             r := lower_expr_fn(ctx, es.expr)
+
             if is_terminal(r.expr) {
               // Terminal expr-stmt: emit directly, drop remaining stmts
               .{ expr: r.expr, ctx: r.ctx }
             } else {
-              rest := lower_stmts(r.ctx, stmts, idx + 1, tail, block_span, lower_expr_fn, lower_block_fn)
+              rest := lower_stmts(
+                r.ctx,
+                stmts,
+                idx + 1,
+                tail,
+                block_span,
+                lower_expr_fn,
+                lower_block_fn,
+              )
               ao := rest.ctx.alloc_anon_local()
               .{
                 expr: .{
@@ -116,15 +188,22 @@ pub fn lower_stmts(ctx: LowerCtx, stmts: Vector<Stmt>, idx: Int, tail: Expr?, bl
             r := lower_expr_fn(ctx, val_expr)
             // `return {}` in a void function: treat as bare return
             .{
-              expr: .{ kind: .Return(if r.expr.ty == .Void { .None } else { .Some(r.expr) }), ty: .Void, span: rs.span },
+              expr: .{
+                kind: .Return(
+                  if r.expr.ty == .Void {
+                    .None
+                  } else {
+                    .Some(r.expr)
+                  },
+                ),
+                ty: .Void,
+                span: rs.span,
+              },
               ctx: r.ctx,
             }
           },
           .None => {
-            .{
-              expr: .{ kind: .Return(.None), ty: .Void, span: rs.span },
-              ctx,
-            }
+            .{ expr: .{ kind: .Return(.None), ty: .Void, span: rs.span }, ctx }
           },
         }
       },
@@ -138,26 +217,32 @@ pub fn lower_stmts(ctx: LowerCtx, stmts: Vector<Stmt>, idx: Int, tail: Expr?, bl
             }
           },
           .None => {
-            .{
-              expr: .{ kind: .Break(.None), ty: .Void, span: bs.span },
-              ctx,
-            }
+            .{ expr: .{ kind: .Break(.None), ty: .Void, span: bs.span }, ctx }
           },
         }
       },
       .Continue(_) => {
-        .{
-          expr: .{ kind: .Continue, ty: .Void, span: block_span },
-          ctx,
-        }
+        .{ expr: .{ kind: .Continue, ty: .Void, span: block_span }, ctx }
       },
       .Defer(ds) => {
         r := lower_expr_fn(ctx, ds.expr)
-        rest := lower_stmts(r.ctx, stmts, idx + 1, tail, block_span, lower_expr_fn, lower_block_fn)
+        rest := lower_stmts(
+          r.ctx,
+          stmts,
+          idx + 1,
+          tail,
+          block_span,
+          lower_expr_fn,
+          lower_block_fn,
+        )
         ao := rest.ctx.alloc_anon_local()
         .{
           expr: .{
-            kind: .Let(ao.local, .{ kind: .Defer(r.expr), ty: .Void, span: ds.span }, rest.expr),
+            kind: .Let(
+              ao.local,
+              .{ kind: .Defer(r.expr), ty: .Void, span: ds.span },
+              rest.expr,
+            ),
             ty: rest.expr.ty,
             span: ds.span,
           },
@@ -166,7 +251,15 @@ pub fn lower_stmts(ctx: LowerCtx, stmts: Vector<Stmt>, idx: Int, tail: Expr?, bl
       },
       .For(for_stmt) => {
         r := lower_for(ctx, for_stmt, lower_expr_fn, lower_block_fn)
-        rest := lower_stmts(r.ctx, stmts, idx + 1, tail, block_span, lower_expr_fn, lower_block_fn)
+        rest := lower_stmts(
+          r.ctx,
+          stmts,
+          idx + 1,
+          tail,
+          block_span,
+          lower_expr_fn,
+          lower_block_fn,
+        )
         ao := rest.ctx.alloc_anon_local()
         .{
           expr: .{
@@ -178,10 +271,17 @@ pub fn lower_stmts(ctx: LowerCtx, stmts: Vector<Stmt>, idx: Int, tail: Expr?, bl
         }
       },
       _ => {
-        ctx = ctx.emit_error(block_span, "unsupported statement kind")
-        lower_stmts(ctx, stmts, idx + 1, tail, block_span, lower_expr_fn, lower_block_fn)
+        ctx = .emit_error(block_span, "unsupported statement kind")
+        lower_stmts(
+          ctx,
+          stmts,
+          idx + 1,
+          tail,
+          block_span,
+          lower_expr_fn,
+          lower_block_fn,
+        )
       },
     }
   }
 }
-

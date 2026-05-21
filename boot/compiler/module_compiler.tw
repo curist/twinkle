@@ -6,19 +6,19 @@
 // This module adds lowering to Core IR on top, then links all modules.
 //
 // Reference: src/module/mod.rs (compile_module, compile_planned_dependencies)
-
-use @std.path
 use @std.date
+use @std.path
 use @std.proc
-use compiler.monomorphize
-use compiler.lower_anf
-use compiler.opt.pipeline.{optimize_module}
+
+use compiler.artifacts.{CompileError, PipelineArtifacts}
+use compiler.base_env.{builtin_env}
 use compiler.builtins.{make_builtin_registry}
 use compiler.core_ir.{CompiledModule, ExternalRef, ExternalValueRef}
-use compiler.artifacts.{PipelineArtifacts, CompileError}
-use compiler.imports
 use compiler.core_linker
-use compiler.base_env.{builtin_env}
+use compiler.imports
+use compiler.lower_anf
+use compiler.monomorphize
+use compiler.opt.pipeline.{optimize_module}
 use compiler.query.analyze
 use compiler.query.cache as query_cache
 use compiler.query.stage_runner
@@ -27,7 +27,6 @@ use lib.source.identity
 use lib.source.overlay
 
 // ── Public API ──────────────────────────────────────────────────────
-
 /// Compile an entry file and all its transitive dependencies.
 ///
 /// Returns PipelineArtifacts for the fully linked, monomorphized,
@@ -37,30 +36,40 @@ pub fn compile_entry(entry_path: String) Result<PipelineArtifacts, CompileError>
   project_root := loader.find_project_root(dir)
   canonical_roots := imports.make_canonical_roots(project_root)
   canonical_entry := imports.canonical_module_path(entry_path, canonical_roots)
-
   builtins := make_builtin_registry()
   base_env := builtin_env()
-  timed := case proc.env("TWINKLE_TIMINGS") { .Some(_) => true, .None => false }
-
+  timed := case proc.env("TWINKLE_TIMINGS") {
+    .Some(_) => true,
+    .None => false,
+  }
   // Phase 1: Frontend analysis (parse → resolve → typecheck → exports)
   // Uses the shared analyze module (same path as LSP diagnostics).
   t_modules_start := date.now()
   entry_id := identity.from_path(canonical_entry)
-  a_state := analyze.new_state(base_env, query_cache.empty(), overlay.empty(), project_root)
+  a_state := analyze.new_state(
+    base_env,
+    query_cache.empty(),
+    overlay.empty(),
+    project_root,
+  )
   a_result := analyze.analyze_module(entry_id, "__entry", base_env, a_state, [])
 
   if !a_result.ok {
     if a_result.diagnostics.len() > 0 {
-      return .Err(.Diagnostics(.{ diagnostics: a_result.diagnostics, env: a_result.env }))
+      return .Err(
+        .Diagnostics(.{ diagnostics: a_result.diagnostics, env: a_result.env }),
+      )
     }
+
     return .Err(.Internal("analysis failed"))
   }
 
   // Collect warnings from analysis diagnostics (returned in result).
   compile_warnings: Vector<analyze.AnalysisDiag> = []
+
   for d in a_result.diagnostics {
     case d.kind {
-      .Warning(_) => { compile_warnings = compile_warnings.append(d) },
+      .Warning(_) => { compile_warnings = .append(d) },
       .Error(_) => {},
     }
   }
@@ -69,26 +78,45 @@ pub fn compile_entry(entry_path: String) Result<PipelineArtifacts, CompileError>
   compiled_modules: Vector<CompiledModule> = []
   cur_cache := a_result.state.cache
   lower_total_ms := 0.0
+
   for module_path in a_result.state.module_order {
     // Retrieve cached artifacts
     parsed := case query_cache.latest_parsed(cur_cache, module_path) {
       .Some(p) => p,
-      .None => { return .Err(.Internal("internal: missing parsed cache for '${module_path}'")) },
+      .None => {
+        return .Err(
+          .Internal("internal: missing parsed cache for '${module_path}'"),
+        )
+      },
     }
     typed := case query_cache.latest_typed(cur_cache, module_path) {
       .Some(t) => t,
-      .None => { return .Err(.Internal("internal: missing typed cache for '${module_path}'")) },
+      .None => {
+        return .Err(
+          .Internal("internal: missing typed cache for '${module_path}'"),
+        )
+      },
     }
     runner := case a_result.state.module_runners[module_path] {
       .Some(r) => r,
-      .None => { return .Err(.Internal("internal: missing runner for '${module_path}'")) },
+      .None => {
+        return .Err(.Internal("internal: missing runner for '${module_path}'"))
+      },
     }
-
     t_lower0 := date.now()
-    lowered_out := stage_runner.lower(runner, cur_cache, parsed, typed, builtins)
+    lowered_out := stage_runner.lower(
+      runner,
+      cur_cache,
+      parsed,
+      typed,
+      builtins,
+    )
     cur_cache = lowered_out.store
+
     if timed { lower_total_ms = lower_total_ms + (date.now() - t_lower0) }
+
     lowered := lowered_out.value
+
     if lowered.diagnostics.len() > 0 {
       lower_id := identity.from_path(module_path)
       lower_diags := collect d in lowered.diagnostics {
@@ -101,11 +129,15 @@ pub fn compile_entry(entry_path: String) Result<PipelineArtifacts, CompileError>
           type_names: analyze.type_name_snapshot(a_result.env),
         }
       }
-      return .Err(.Diagnostics(.{ diagnostics: lower_diags, env: a_result.env }))
+
+      return .Err(
+        .Diagnostics(.{ diagnostics: lower_diags, env: a_result.env }),
+      )
     }
 
     // Build external_refs from lowering's canonical imported origins.
     external_refs: Dict<Int, ExternalRef> = Dict.new()
+
     for fid in lowered.imported_func_origins.keys() {
       case lowered.imported_func_origins[fid] {
         .Some(origin) => {
@@ -120,6 +152,7 @@ pub fn compile_entry(entry_path: String) Result<PipelineArtifacts, CompileError>
 
     // Build value_exports from pub_value_globals.
     value_exports: Dict<String, Int> = Dict.new()
+
     for name in lowered.pub_value_globals.keys() {
       case lowered.pub_value_globals[name] {
         .Some(lid) => { value_exports[name] = lid.id },
@@ -129,6 +162,7 @@ pub fn compile_entry(entry_path: String) Result<PipelineArtifacts, CompileError>
 
     // Build value_refs from imported_value_origins.
     value_refs: Dict<Int, ExternalValueRef> = Dict.new()
+
     for lid in lowered.imported_value_origins.keys() {
       case lowered.imported_value_origins[lid] {
         .Some(origin) => { value_refs[lid] = origin },
@@ -136,34 +170,55 @@ pub fn compile_entry(entry_path: String) Result<PipelineArtifacts, CompileError>
       }
     }
 
-    compiled_modules = .append(.{
-      path: module_path,
-      core: lowered.module,
-      func_table: lowered.func_table,
-      external_refs,
-      extern_imports: lowered.module.extern_imports,
-      builtin_count: builtins.next_id,
-      value_exports,
-      value_refs,
-      defined_global_count: lowered.next_global_local_id,
-    })
+    compiled_modules = .append(
+      .{
+        path: module_path,
+        core: lowered.module,
+        func_table: lowered.func_table,
+        external_refs,
+        extern_imports: lowered.module.extern_imports,
+        builtin_count: builtins.next_id,
+        value_exports,
+        value_refs,
+        defined_global_count: lowered.next_global_local_id,
+      },
+    )
   }
+
   t_modules_end := date.now()
+
   if timed {
     n := compiled_modules.len()
     ft := a_result.state.timings
     fc := a_result.state.counts
-    eprintln("[time] compile_modules (${n} modules): ${t_modules_end - t_modules_start}ms")
-    eprintln("[time:frontend] load=${ft.load_source}ms  parse=${ft.parse}ms  plan_deps=${ft.plan_deps}ms  dep_hashes=${ft.dep_hashes}ms")
-    eprintln("[time:frontend] env_extend=${ft.env_extend}ms  import_merge=${ft.import_merge}ms  resolve=${ft.resolve}ms  typecheck=${ft.typecheck}ms")
-    eprintln("[time:frontend] publish=${ft.publish}ms  unused_imports=${ft.unused_imports}ms  lower=${lower_total_ms}ms")
-    eprintln("[time:imports] extend=${ft.import_extend}ms  lookup=${ft.import_lookup}ms  module=${ft.import_module}ms  selective=${ft.import_selective}ms  prelude=${ft.import_prelude}ms")
-    eprintln("[time:imports] edges=${fc.import_edges}  module=${fc.import_module_edges}  selective=${fc.import_selective_edges}  prelude=${fc.import_prelude_edges}  export_entries=${fc.import_export_entries}")
-    top_imports := a_result.state.import_timings.sort_by(fn(a, b) { Float.compare(a.ms, b.ms) })
+    eprintln(
+      "[time] compile_modules (${n} modules): ${t_modules_end - t_modules_start}ms",
+    )
+    eprintln(
+      "[time:frontend] load=${ft.load_source}ms  parse=${ft.parse}ms  plan_deps=${ft.plan_deps}ms  dep_hashes=${ft.dep_hashes}ms",
+    )
+    eprintln(
+      "[time:frontend] env_extend=${ft.env_extend}ms  import_merge=${ft.import_merge}ms  resolve=${ft.resolve}ms  typecheck=${ft.typecheck}ms",
+    )
+    eprintln(
+      "[time:frontend] publish=${ft.publish}ms  unused_imports=${ft.unused_imports}ms  lower=${lower_total_ms}ms",
+    )
+    eprintln(
+      "[time:imports] extend=${ft.import_extend}ms  lookup=${ft.import_lookup}ms  module=${ft.import_module}ms  selective=${ft.import_selective}ms  prelude=${ft.import_prelude}ms",
+    )
+    eprintln(
+      "[time:imports] edges=${fc.import_edges}  module=${fc.import_module_edges}  selective=${fc.import_selective_edges}  prelude=${fc.import_prelude_edges}  export_entries=${fc.import_export_entries}",
+    )
+    top_imports := a_result.state.import_timings.sort_by(
+      fn(a, b) { Float.compare(a.ms, b.ms) },
+    )
     top_n := if top_imports.len() < 8 { top_imports.len() } else { 8 }
+
     for i in 0..top_n {
       it := top_imports[i]
-      eprintln("[time:imports:top] ${it.ms}ms  ${it.kind}  entries=${it.export_entries}  ${it.importer} <- ${it.dependency}")
+      eprintln(
+        "[time:imports:top] ${it.ms}ms  ${it.kind}  entries=${it.export_entries}  ${it.importer} <- ${it.dependency}",
+      )
     }
   }
 
@@ -180,28 +235,33 @@ pub fn compile_entry(entry_path: String) Result<PipelineArtifacts, CompileError>
     builtins.next_id,
   )
   t1 := date.now()
+
   if timed { eprintln("[time] core_link: ${t1 - t0}ms") }
 
   mono := monomorphize.monomorphize(core)
   t2 := date.now()
+
   if timed { eprintln("[time] monomorphize: ${t2 - t1}ms") }
 
   anf := lower_anf.lower_module(mono)
   t3 := date.now()
+
   if timed { eprintln("[time] lower_anf: ${t3 - t2}ms") }
 
   opt := optimize_module(anf)
   t4 := date.now()
+
   if timed { eprintln("[time] optimize: ${t4 - t3}ms") }
 
-  .Ok(.{
-    env: a_result.env,
-    builtins,
-    core,
-    mono,
-    anf,
-    opt,
-    warnings: compile_warnings,
-  })
+  .Ok(
+    .{
+      env: a_result.env,
+      builtins,
+      core,
+      mono,
+      anf,
+      opt,
+      warnings: compile_warnings,
+    },
+  )
 }
-

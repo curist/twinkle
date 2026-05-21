@@ -3,13 +3,12 @@
 // This is the boot analogue of Rust's module StageRunner: it computes stable
 // query keys, checks an explicit cache, and runs the underlying stage only on a
 // miss. Diagnostics remain in each stage artifact instead of being formatted.
-
-use compiler.parser
-use compiler.resolver
+use compiler.builtins.{BuiltinRegistry}
 use compiler.checker
 use compiler.lower_core
-use compiler.builtins.{BuiltinRegistry}
+use compiler.parser
 use compiler.query.cache
+use compiler.resolver
 use lib.query.keys
 
 pub type Runner = .{
@@ -20,24 +19,32 @@ pub type Runner = .{
   is_internal: Bool,
 }
 
-pub type StageOut<T> = .{
-  store: cache.Store,
-  value: T,
-  cache_hit: Bool,
-}
+pub type StageOut<T> = .{ store: cache.Store, value: T, cache_hit: Bool }
 
-pub fn new(path: String, source_hash: Int, deps_hash: Int, context_hash: Int, is_internal: Bool) Runner {
+pub fn new(
+  path: String,
+  source_hash: Int,
+  deps_hash: Int,
+  context_hash: Int,
+  is_internal: Bool,
+) Runner {
   .{ path, source_hash, deps_hash, context_hash, is_internal }
 }
 
-pub fn parse(runner: Runner, store: cache.Store, source: String, file_id: Int) StageOut<cache.ParsedModule> {
+pub fn parse(runner: Runner, store: cache.Store, source: String, file_id: Int) StageOut<
+  cache.ParsedModule,
+> {
   key := keys.parse_key(runner.path, runner.source_hash)
   lookup := cache.get_parsed(store, runner.path, key)
+
   case lookup.value {
     .Some(parsed) => .{ store: lookup.store, value: parsed, cache_hit: true },
     .None => {
       parsed_stage := parser.parse(source, file_id)
-      parsed := cache.ParsedModule.{ module: parsed_stage.value, diagnostics: parsed_stage.diagnostics }
+      parsed := cache.ParsedModule.{
+        module: parsed_stage.value,
+        diagnostics: parsed_stage.diagnostics,
+      }
       next := cache.put_parsed(lookup.store, runner.path, key, parsed)
       .{ store: next, value: parsed, cache_hit: false }
     },
@@ -50,11 +57,20 @@ pub fn resolve(
   module: cache.ParsedModule,
   env: resolver.ResolvedEnv,
 ) StageOut<resolver.ResolveResult> {
-  base_key := keys.resolve_key(runner.path, runner.source_hash, runner.deps_hash)
+  base_key := keys.resolve_key(
+    runner.path,
+    runner.source_hash,
+    runner.deps_hash,
+  )
   key := keys.with_context(base_key, runner.context_hash)
   lookup := cache.get_resolved(store, runner.path, key)
+
   case lookup.value {
-    .Some(resolved) => .{ store: lookup.store, value: resolved, cache_hit: true },
+    .Some(resolved) => .{
+      store: lookup.store,
+      value: resolved,
+      cache_hit: true,
+    },
     .None => {
       resolved := env.resolve(module.module)
       next := cache.put_resolved(lookup.store, runner.path, key, resolved)
@@ -69,9 +85,15 @@ pub fn typecheck(
   module: cache.ParsedModule,
   resolved: resolver.ResolveResult,
 ) StageOut<checker.CheckResult> {
-  base_key := keys.typecheck_key(runner.path, runner.source_hash, runner.deps_hash, runner.is_internal)
+  base_key := keys.typecheck_key(
+    runner.path,
+    runner.source_hash,
+    runner.deps_hash,
+    runner.is_internal,
+  )
   key := keys.with_context(base_key, runner.context_hash)
   lookup := cache.get_typed(store, runner.path, key)
+
   case lookup.value {
     .Some(typed) => .{ store: lookup.store, value: typed, cache_hit: true },
     .None => {
@@ -89,9 +111,15 @@ pub fn lower(
   typed: checker.CheckResult,
   builtins: BuiltinRegistry,
 ) StageOut<lower_core.LowerResult> {
-  base_key := keys.lower_key(runner.path, runner.source_hash, runner.deps_hash, 0)
+  base_key := keys.lower_key(
+    runner.path,
+    runner.source_hash,
+    runner.deps_hash,
+    0,
+  )
   key := keys.with_context(base_key, runner.context_hash)
   lookup := cache.get_lowered(store, runner.path, key)
+
   case lookup.value {
     .Some(lowered) => .{ store: lookup.store, value: lowered, cache_hit: true },
     .None => {

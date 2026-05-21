@@ -2,42 +2,57 @@
 //
 // Provides the scheduler trampoline, queue management, and the generic
 // run-to-completion resume function for non-suspending tasks.
-
 use compiler.codegen.wasm_ir.{
-  ValType, HeapType, Instr, FuncDef, GlobalDef, ImportDef, ExportDef, WasmModule,
+  ExportDef, FuncDef, GlobalDef, HeapType, ImportDef, Instr, ValType, WasmModule,
 }
 
 // ── Type helpers ──
-
 fn task_ref() ValType { ValType.Ref(false, HeapType.Named("rt_types__Task")) }
+
 fn task_null() ValType { ValType.Ref(true, HeapType.Named("rt_types__Task")) }
+
 fn arr_ref() ValType { ValType.Ref(false, HeapType.Named("rt_types__Array")) }
+
 fn arr_null() ValType { ValType.Ref(true, HeapType.Named("rt_types__Array")) }
 
 fn t_task() String { "rt_types__Task" }
+
 fn t_array() String { "rt_types__Array" }
+
 fn t_frame_rtc() String { "rt_types__FrameRtc" }
+
 fn t_closure() String { "rt_types__Closure" }
+
 fn t_closure_func() String { "rt_types__ClosureFunc" }
+
 // FuncType for call_ref on resume functions: (ref $Task) -> i32
 fn t_resume_fn() String { "ResumeFn" }
 
 // Task struct field indices
 fn f_state() Int { 0 }
+
 fn f_frame() Int { 1 }
+
 fn f_resume() Int { 2 }
+
 fn f_result() Int { 3 }
+
 fn f_waiters() Int { 4 }
 
 // Task states
 fn s_runnable() Int { 0 }
+
 fn s_running() Int { 1 }
+
 fn s_blocked() Int { 2 }
+
 fn s_done() Int { 3 }
 
 // Resume action codes
 fn a_complete() Int { 0 }
+
 fn a_yield() Int { 1 }
+
 fn a_await() Int { 2 }
 
 pub fn module() WasmModule {
@@ -56,49 +71,42 @@ pub fn module() WasmModule {
   }
   WasmModule.{
     namespace: "rt.sched",
-    types: [
-      // FuncType for resume functions: (ref $Task) -> i32
-      // Used for call_ref at scheduler dispatch sites.
-      .FuncType("ResumeFn", [task_ref()], [.I32]),
-    ],
+    types: [.FuncType("ResumeFn", [task_ref()], [.I32])],
     imports: [
       ImportDef.{
-        module: "host", name: "error", as_sym: "host_error",
+        module: "host",
+        name: "error",
+        as_sym: "host_error",
         params: [ValType.Ref(true, HeapType.Named("rt_types__String"))],
         results: [],
       },
     ],
     funcs: funcs,
     globals: [
-      // sched_queue: mutable array used as a FIFO queue of tasks
       GlobalDef.{
         name: "sched_queue",
         mutable: true,
         ty: arr_null(),
         init: [Instr.RefNull(HeapType.Named("rt_types__Array"))],
       },
-      // sched_head: read cursor into the queue array
       GlobalDef.{
         name: "sched_head",
         mutable: true,
         ty: .I32,
         init: [Instr.I32Const(0)],
       },
-      // sched_tail: write cursor into the queue array
       GlobalDef.{
         name: "sched_tail",
         mutable: true,
         ty: .I32,
         init: [Instr.I32Const(0)],
       },
-      // sched_size: number of RUNNABLE tasks
       GlobalDef.{
         name: "sched_size",
         mutable: true,
         ty: .I32,
         init: [Instr.I32Const(0)],
       },
-      // sched_blocked: number of BLOCKED tasks
       GlobalDef.{
         name: "sched_blocked",
         mutable: true,
@@ -116,7 +124,6 @@ pub fn module() WasmModule {
 
 // ── sched_init ─────────────────────────────────────────────────────
 // Initialize the queue with an initial capacity.
-
 fn sched_init_fn() FuncDef {
   FuncDef.{
     name: "sched_init",
@@ -124,9 +131,8 @@ fn sched_init_fn() FuncDef {
     results: [],
     locals: [],
     body: [
-      // sched_queue = new Array(16) filled with null
-      Instr.RefNull(HeapType.None_),     // default value (null anyref)
-      Instr.I32Const(16),                // initial capacity
+      Instr.RefNull(HeapType.None_),
+      Instr.I32Const(16),
       Instr.ArrayNew(t_array()),
       Instr.GlobalSet("sched_queue"),
     ],
@@ -136,7 +142,6 @@ fn sched_init_fn() FuncDef {
 // ── sched_enqueue ──────────────────────────────────────────────────
 // Append a task to the back of the queue. Grows if needed.
 // param 0: task (ref $Task)
-
 fn sched_enqueue_fn() FuncDef {
   // local 0: task (param)
   // local 1: queue (ref $Array)
@@ -149,75 +154,53 @@ fn sched_enqueue_fn() FuncDef {
     results: [],
     locals: [arr_ref(), .I32, arr_ref(), .I32],
     body: [
-      // queue = sched_queue!
       Instr.GlobalGet("sched_queue"),
       Instr.RefAsNonNull,
       Instr.LocalSet(1),
-
-      // capacity = array.len(queue)
       Instr.LocalGet(1),
       Instr.ArrayLen,
       Instr.LocalSet(2),
-
-      // if sched_tail >= capacity, grow the queue
       Instr.GlobalGet("sched_tail"),
       Instr.LocalGet(2),
       Instr.I32GeS,
-      Instr.If(.None,
-        // then: grow — allocate new array of 2*capacity, copy elements
+      Instr.If(
+        .None,
         [
-          // new_queue = new Array(capacity * 2)
           Instr.RefNull(HeapType.None_),
           Instr.LocalGet(2),
           Instr.I32Const(2),
           Instr.I32Mul,
           Instr.ArrayNew(t_array()),
           Instr.LocalSet(3),
-
-          // Copy [head..tail) to [0..tail-head)
-          // array.copy(new_queue, 0, queue, head, tail-head)
-          Instr.LocalGet(3),      // dst
-          Instr.I32Const(0),      // dst_offset
-          Instr.LocalGet(1),      // src
-          Instr.GlobalGet("sched_head"),  // src_offset
+          Instr.LocalGet(3),
+          Instr.I32Const(0),
+          Instr.LocalGet(1),
+          Instr.GlobalGet("sched_head"),
           Instr.GlobalGet("sched_tail"),
           Instr.GlobalGet("sched_head"),
-          Instr.I32Sub,           // length = tail - head
+          Instr.I32Sub,
           Instr.ArrayCopy(t_array(), t_array()),
-
-          // Update tail = tail - head, head = 0
           Instr.GlobalGet("sched_tail"),
           Instr.GlobalGet("sched_head"),
           Instr.I32Sub,
           Instr.GlobalSet("sched_tail"),
           Instr.I32Const(0),
           Instr.GlobalSet("sched_head"),
-
-          // sched_queue = new_queue
           Instr.LocalGet(3),
           Instr.GlobalSet("sched_queue"),
-
-          // queue = new_queue (for the store below)
           Instr.LocalGet(3),
           Instr.LocalSet(1),
         ],
-        // else: no grow needed
         [],
       ),
-
-      // queue[tail] = task
       Instr.LocalGet(1),
       Instr.GlobalGet("sched_tail"),
       Instr.LocalGet(0),
       Instr.ArraySet(t_array()),
-
-      // tail += 1
       Instr.GlobalGet("sched_tail"),
       Instr.I32Const(1),
       Instr.I32Add,
       Instr.GlobalSet("sched_tail"),
-
-      // sched_size += 1
       Instr.GlobalGet("sched_size"),
       Instr.I32Const(1),
       Instr.I32Add,
@@ -229,7 +212,6 @@ fn sched_enqueue_fn() FuncDef {
 // ── sched_dequeue ──────────────────────────────────────────────────
 // Pop the front task from the queue.
 // Returns (ref $Task). Traps if queue is empty.
-
 fn sched_dequeue_fn() FuncDef {
   // local 0: task (ref $Task)
   FuncDef.{
@@ -238,45 +220,38 @@ fn sched_dequeue_fn() FuncDef {
     results: [task_ref()],
     locals: [task_ref()],
     body: [
-      // task = queue[head] as ref $Task
       Instr.GlobalGet("sched_queue"),
       Instr.RefAsNonNull,
       Instr.GlobalGet("sched_head"),
       Instr.ArrayGet(t_array()),
       Instr.RefCast(false, HeapType.Named(t_task())),
       Instr.LocalSet(0),
-
-      // queue[head] = null (release reference for GC)
       Instr.GlobalGet("sched_queue"),
       Instr.RefAsNonNull,
       Instr.GlobalGet("sched_head"),
       Instr.RefNull(HeapType.None_),
       Instr.ArraySet(t_array()),
-
-      // head += 1
       Instr.GlobalGet("sched_head"),
       Instr.I32Const(1),
       Instr.I32Add,
       Instr.GlobalSet("sched_head"),
-
-      // sched_size -= 1
       Instr.GlobalGet("sched_size"),
       Instr.I32Const(1),
       Instr.I32Sub,
       Instr.GlobalSet("sched_size"),
-
-      // Compact: if head == tail, reset both to 0
       Instr.GlobalGet("sched_head"),
       Instr.GlobalGet("sched_tail"),
       Instr.I32Eq,
-      Instr.If(.None,
+      Instr.If(
+        .None,
         [
-          Instr.I32Const(0), Instr.GlobalSet("sched_head"),
-          Instr.I32Const(0), Instr.GlobalSet("sched_tail"),
+          Instr.I32Const(0),
+          Instr.GlobalSet("sched_head"),
+          Instr.I32Const(0),
+          Instr.GlobalSet("sched_tail"),
         ],
         [],
       ),
-
       Instr.LocalGet(0),
     ],
   }
@@ -286,7 +261,6 @@ fn sched_dequeue_fn() FuncDef {
 // Drive the scheduler until the target task is DONE.
 // param 0: target (ref $Task)
 // Returns: anyref (the target's result, still boxed)
-
 fn sched_run_until_fn() FuncDef {
   // local 0: target (param)
   // local 1: task (ref $Task) — current task being run
@@ -301,95 +275,70 @@ fn sched_run_until_fn() FuncDef {
     results: [.Anyref],
     locals: [task_ref(), .I32, arr_null(), .I32, .I32, task_ref()],
     body: [
-      // while target.state != DONE
-      Instr.Block("done", .None, [
-        Instr.Loop("loop", .None, [
-          // if target.state == DONE, break
-          Instr.LocalGet(0),
-          Instr.StructGet(t_task(), f_state()),
-          Instr.I32Const(s_done()),
-          Instr.I32Eq,
-          Instr.BrIf("done"),
-
-          // if sched_size == 0, deadlock
-          Instr.GlobalGet("sched_size"),
-          Instr.I32Eqz,
-          Instr.If(.None,
-            [Instr.Unreachable],  // trap: deadlock
-            [],
-          ),
-
-          // task = dequeue()
-          Instr.Call("sched_dequeue"),
-          Instr.LocalSet(1),
-
-          // task.state = RUNNING
-          Instr.LocalGet(1),
-          Instr.I32Const(s_running()),
-          Instr.StructSet(t_task(), f_state()),
-
-          // action = call_ref task.resume(task)
-          Instr.LocalGet(1),   // arg: task
-          Instr.LocalGet(1),
-          Instr.StructGet(t_task(), f_resume()),
-          Instr.RefCast(false, HeapType.Named(t_resume_fn())),
-          Instr.CallRef(t_resume_fn()),
-          Instr.LocalSet(2),
-
-          // dispatch on action
-          // if action == COMPLETE (0)
-          Instr.LocalGet(2),
-          Instr.I32Eqz,
-          Instr.If(.None,
+      Instr.Block(
+        "done",
+        .None,
+        [
+          Instr.Loop(
+            "loop",
+            .None,
             [
-              // task.state = DONE
-              Instr.LocalGet(1),
+              Instr.LocalGet(0),
+              Instr.StructGet(t_task(), f_state()),
               Instr.I32Const(s_done()),
-              Instr.StructSet(t_task(), f_state()),
-
-              // task.frame = null
-              Instr.LocalGet(1),
-              Instr.RefNull(HeapType.None_),
-              Instr.StructSet(t_task(), f_frame()),
-
-              // wake waiters
-              Instr.LocalGet(1),
-              Instr.Call("sched_wake_waiters"),
-
-              Instr.Br("loop"),
-            ],
-            [
-              // if action == YIELD (1)
-              Instr.LocalGet(2),
-              Instr.I32Const(a_yield()),
               Instr.I32Eq,
-              Instr.If(.None,
+              Instr.BrIf("done"),
+              Instr.GlobalGet("sched_size"),
+              Instr.I32Eqz,
+              Instr.If(.None, [Instr.Unreachable], []),
+              Instr.Call("sched_dequeue"),
+              Instr.LocalSet(1),
+              Instr.LocalGet(1),
+              Instr.I32Const(s_running()),
+              Instr.StructSet(t_task(), f_state()),
+              Instr.LocalGet(1),
+              Instr.LocalGet(1),
+              Instr.StructGet(t_task(), f_resume()),
+              Instr.RefCast(false, HeapType.Named(t_resume_fn())),
+              Instr.CallRef(t_resume_fn()),
+              Instr.LocalSet(2),
+              Instr.LocalGet(2),
+              Instr.I32Eqz,
+              Instr.If(
+                .None,
                 [
-                  // task.state = RUNNABLE
                   Instr.LocalGet(1),
-                  Instr.I32Const(s_runnable()),
+                  Instr.I32Const(s_done()),
                   Instr.StructSet(t_task(), f_state()),
-
-                  // enqueue(task)
                   Instr.LocalGet(1),
-                  Instr.Call("sched_enqueue"),
-
+                  Instr.RefNull(HeapType.None_),
+                  Instr.StructSet(t_task(), f_frame()),
+                  Instr.LocalGet(1),
+                  Instr.Call("sched_wake_waiters"),
                   Instr.Br("loop"),
                 ],
                 [
-                  // action == AWAIT (2)
-                  // task.state already set to BLOCKED by resume function
-                  // sched_blocked already incremented by resume function
-                  // Just continue the loop
-                  Instr.Br("loop"),
+                  Instr.LocalGet(2),
+                  Instr.I32Const(a_yield()),
+                  Instr.I32Eq,
+                  Instr.If(
+                    .None,
+                    [
+                      Instr.LocalGet(1),
+                      Instr.I32Const(s_runnable()),
+                      Instr.StructSet(t_task(), f_state()),
+                      Instr.LocalGet(1),
+                      Instr.Call("sched_enqueue"),
+                      Instr.Br("loop"),
+                    ],
+                    [Instr.Br("loop")],
+                  ),
                 ],
               ),
             ],
           ),
-        ]),
-      ]),
-
-      // return target.result
+        ],
+      ),
       Instr.LocalGet(0),
       Instr.StructGet(t_task(), f_result()),
     ],
@@ -398,7 +347,6 @@ fn sched_run_until_fn() FuncDef {
 
 // ── sched_drain ────────────────────────────────────────────────────
 // Drain all remaining runnable tasks. Called at program exit.
-
 fn sched_drain_fn() FuncDef {
   // local 0: task
   // local 1: action
@@ -408,80 +356,68 @@ fn sched_drain_fn() FuncDef {
     results: [],
     locals: [task_ref(), .I32],
     body: [
-      // while sched_size > 0
-      Instr.Block("done", .None, [
-        Instr.Loop("loop", .None, [
-          Instr.GlobalGet("sched_size"),
-          Instr.I32Eqz,
-          Instr.BrIf("done"),
-
-          // task = dequeue()
-          Instr.Call("sched_dequeue"),
-          Instr.LocalSet(0),
-
-          // task.state = RUNNING
-          Instr.LocalGet(0),
-          Instr.I32Const(s_running()),
-          Instr.StructSet(t_task(), f_state()),
-
-          // action = call_ref task.resume(task)
-          Instr.LocalGet(0),
-          Instr.LocalGet(0),
-          Instr.StructGet(t_task(), f_resume()),
-          Instr.RefCast(false, HeapType.Named(t_resume_fn())),
-          Instr.CallRef(t_resume_fn()),
-          Instr.LocalSet(1),
-
-          // dispatch on action (same as sched_run_until)
-          Instr.LocalGet(1),
-          Instr.I32Eqz,
-          Instr.If(.None,
+      Instr.Block(
+        "done",
+        .None,
+        [
+          Instr.Loop(
+            "loop",
+            .None,
             [
-              // COMPLETE
+              Instr.GlobalGet("sched_size"),
+              Instr.I32Eqz,
+              Instr.BrIf("done"),
+              Instr.Call("sched_dequeue"),
+              Instr.LocalSet(0),
               Instr.LocalGet(0),
-              Instr.I32Const(s_done()),
+              Instr.I32Const(s_running()),
               Instr.StructSet(t_task(), f_state()),
-
               Instr.LocalGet(0),
-              Instr.RefNull(HeapType.None_),
-              Instr.StructSet(t_task(), f_frame()),
-
               Instr.LocalGet(0),
-              Instr.Call("sched_wake_waiters"),
-            ],
-            [
+              Instr.StructGet(t_task(), f_resume()),
+              Instr.RefCast(false, HeapType.Named(t_resume_fn())),
+              Instr.CallRef(t_resume_fn()),
+              Instr.LocalSet(1),
               Instr.LocalGet(1),
-              Instr.I32Const(a_yield()),
-              Instr.I32Eq,
-              Instr.If(.None,
+              Instr.I32Eqz,
+              Instr.If(
+                .None,
                 [
-                  // YIELD: re-enqueue
                   Instr.LocalGet(0),
-                  Instr.I32Const(s_runnable()),
+                  Instr.I32Const(s_done()),
                   Instr.StructSet(t_task(), f_state()),
-
                   Instr.LocalGet(0),
-                  Instr.Call("sched_enqueue"),
+                  Instr.RefNull(HeapType.None_),
+                  Instr.StructSet(t_task(), f_frame()),
+                  Instr.LocalGet(0),
+                  Instr.Call("sched_wake_waiters"),
                 ],
                 [
-                  // AWAIT: already handled by resume
+                  Instr.LocalGet(1),
+                  Instr.I32Const(a_yield()),
+                  Instr.I32Eq,
+                  Instr.If(
+                    .None,
+                    [
+                      Instr.LocalGet(0),
+                      Instr.I32Const(s_runnable()),
+                      Instr.StructSet(t_task(), f_state()),
+                      Instr.LocalGet(0),
+                      Instr.Call("sched_enqueue"),
+                    ],
+                    [],
+                  ),
                 ],
               ),
+              Instr.Br("loop"),
             ],
           ),
-
-          Instr.Br("loop"),
-        ]),
-      ]),
-
-      // Check for deadlocked blocked tasks
+        ],
+      ),
       Instr.GlobalGet("sched_blocked"),
       Instr.I32Const(0),
       Instr.I32GtS,
-      Instr.If(.None,
-        [Instr.Unreachable],  // trap: deadlock at exit
-        [],
-      ),
+      Instr.If(.None, [Instr.Unreachable], []),
     ],
   }
 }
@@ -490,7 +426,6 @@ fn sched_drain_fn() FuncDef {
 // Add a waiter task to target's waiter list.
 // param 0: target (ref $Task)
 // param 1: waiter (ref $Task)
-
 fn sched_append_waiter_fn() FuncDef {
   // local 0: target (param)
   // local 1: waiter (param)
@@ -503,38 +438,30 @@ fn sched_append_waiter_fn() FuncDef {
     results: [],
     locals: [arr_null(), arr_ref(), .I32],
     body: [
-      // waiters = target.waiters
       Instr.LocalGet(0),
       Instr.StructGet(t_task(), f_waiters()),
       Instr.LocalSet(2),
-
-      // if waiters == null, create a new 1-element array
       Instr.LocalGet(2),
       Instr.RefIsNull,
-      Instr.If(.None,
+      Instr.If(
+        .None,
         [
-          // target.waiters = [waiter]
           Instr.LocalGet(0),
           Instr.LocalGet(1),
           Instr.ArrayNewFixed(t_array(), 1),
           Instr.StructSet(t_task(), f_waiters()),
         ],
         [
-          // Append: create new array of old_len+1, copy old, store waiter
           Instr.LocalGet(2),
           Instr.RefAsNonNull,
           Instr.ArrayLen,
           Instr.LocalSet(4),
-
-          // new_waiters = new Array(old_len + 1)
           Instr.RefNull(HeapType.None_),
           Instr.LocalGet(4),
           Instr.I32Const(1),
           Instr.I32Add,
           Instr.ArrayNew(t_array()),
           Instr.LocalSet(3),
-
-          // copy old waiters
           Instr.LocalGet(3),
           Instr.I32Const(0),
           Instr.LocalGet(2),
@@ -542,14 +469,10 @@ fn sched_append_waiter_fn() FuncDef {
           Instr.I32Const(0),
           Instr.LocalGet(4),
           Instr.ArrayCopy(t_array(), t_array()),
-
-          // new_waiters[old_len] = waiter
           Instr.LocalGet(3),
           Instr.LocalGet(4),
           Instr.LocalGet(1),
           Instr.ArraySet(t_array()),
-
-          // target.waiters = new_waiters
           Instr.LocalGet(0),
           Instr.LocalGet(3),
           Instr.StructSet(t_task(), f_waiters()),
@@ -562,7 +485,6 @@ fn sched_append_waiter_fn() FuncDef {
 // ── sched_wake_waiters ─────────────────────────────────────────────
 // Wake all tasks waiting on a completed task, enqueue them.
 // param 0: task (ref $Task) — the completed task
-
 fn sched_wake_waiters_fn() FuncDef {
   // local 0: task (param)
   // local 1: waiters (ref null $Array)
@@ -575,69 +497,54 @@ fn sched_wake_waiters_fn() FuncDef {
     results: [],
     locals: [arr_null(), .I32, .I32, task_ref()],
     body: [
-      // waiters = task.waiters
       Instr.LocalGet(0),
       Instr.StructGet(t_task(), f_waiters()),
       Instr.LocalSet(1),
-
-      // if waiters == null, return
       Instr.LocalGet(1),
       Instr.RefIsNull,
-      Instr.If(.None,
-        [Instr.Return],
-        [],
-      ),
-
-      // num_waiters = array.len(waiters)
+      Instr.If(.None, [Instr.Return], []),
       Instr.LocalGet(1),
       Instr.RefAsNonNull,
       Instr.ArrayLen,
       Instr.LocalSet(3),
-
-      // for i in 0..num_waiters
       Instr.I32Const(0),
       Instr.LocalSet(2),
-      Instr.Block("wdone", .None, [
-        Instr.Loop("wloop", .None, [
-          Instr.LocalGet(2),
-          Instr.LocalGet(3),
-          Instr.I32GeS,
-          Instr.BrIf("wdone"),
-
-          // waiter = waiters[i] as ref $Task
-          Instr.LocalGet(1),
-          Instr.RefAsNonNull,
-          Instr.LocalGet(2),
-          Instr.ArrayGet(t_array()),
-          Instr.RefCast(false, HeapType.Named(t_task())),
-          Instr.LocalSet(4),
-
-          // waiter.state = RUNNABLE
-          Instr.LocalGet(4),
-          Instr.I32Const(s_runnable()),
-          Instr.StructSet(t_task(), f_state()),
-
-          // sched_blocked -= 1
-          Instr.GlobalGet("sched_blocked"),
-          Instr.I32Const(1),
-          Instr.I32Sub,
-          Instr.GlobalSet("sched_blocked"),
-
-          // enqueue(waiter)
-          Instr.LocalGet(4),
-          Instr.Call("sched_enqueue"),
-
-          // i += 1
-          Instr.LocalGet(2),
-          Instr.I32Const(1),
-          Instr.I32Add,
-          Instr.LocalSet(2),
-
-          Instr.Br("wloop"),
-        ]),
-      ]),
-
-      // task.waiters = null (release)
+      Instr.Block(
+        "wdone",
+        .None,
+        [
+          Instr.Loop(
+            "wloop",
+            .None,
+            [
+              Instr.LocalGet(2),
+              Instr.LocalGet(3),
+              Instr.I32GeS,
+              Instr.BrIf("wdone"),
+              Instr.LocalGet(1),
+              Instr.RefAsNonNull,
+              Instr.LocalGet(2),
+              Instr.ArrayGet(t_array()),
+              Instr.RefCast(false, HeapType.Named(t_task())),
+              Instr.LocalSet(4),
+              Instr.LocalGet(4),
+              Instr.I32Const(s_runnable()),
+              Instr.StructSet(t_task(), f_state()),
+              Instr.GlobalGet("sched_blocked"),
+              Instr.I32Const(1),
+              Instr.I32Sub,
+              Instr.GlobalSet("sched_blocked"),
+              Instr.LocalGet(4),
+              Instr.Call("sched_enqueue"),
+              Instr.LocalGet(2),
+              Instr.I32Const(1),
+              Instr.I32Add,
+              Instr.LocalSet(2),
+              Instr.Br("wloop"),
+            ],
+          ),
+        ],
+      ),
       Instr.LocalGet(0),
       Instr.RefNull(HeapType.Named("rt_types__Array")),
       Instr.StructSet(t_task(), f_waiters()),
@@ -651,7 +558,6 @@ fn sched_wake_waiters_fn() FuncDef {
 // stores it in task.result, returns COMPLETE (0).
 // param 0: task (ref $Task)
 // returns: i32 (action code: always 0 = COMPLETE)
-
 fn resume_rtc_fn() FuncDef {
   // local 0: task (param)
   // local 1: closure result (anyref)
@@ -661,42 +567,24 @@ fn resume_rtc_fn() FuncDef {
     results: [.I32],
     locals: [.Anyref],
     body: [
-      // closure = task.frame as ref $FrameRtc, get closure field
-      // env = closure.env
       Instr.LocalGet(0),
       Instr.StructGet(t_task(), f_frame()),
       Instr.RefCast(false, HeapType.Named(t_frame_rtc())),
-      Instr.StructGet(t_frame_rtc(), 0),  // closure field
+      Instr.StructGet(t_frame_rtc(), 0),
       Instr.RefCast(false, HeapType.Named(t_closure())),
-
-      // Call: env, null args, funcref, call_ref
-      // Stack: closure_ref
-      // Dup closure for env and funcref access
-      Instr.LocalSet(1),  // stash closure in local 1 temporarily
-
-      // env = closure.env
+      Instr.LocalSet(1),
       Instr.LocalGet(1),
       Instr.RefCast(false, HeapType.Named(t_closure())),
-      Instr.StructGet(t_closure(), 1),  // env (field 1)
-
-      // args = null (zero-arg closure)
+      Instr.StructGet(t_closure(), 1),
       Instr.RefNull(HeapType.None_),
-
-      // funcref = closure.func_ref
       Instr.LocalGet(1),
       Instr.RefCast(false, HeapType.Named(t_closure())),
-      Instr.StructGet(t_closure(), 0),  // func_ref (field 0)
-
-      // call_ref ClosureFunc → anyref result
+      Instr.StructGet(t_closure(), 0),
       Instr.CallRef(t_closure_func()),
-
-      // Store result in task.result
-      Instr.LocalSet(1),  // result
-      Instr.LocalGet(0),  // task
-      Instr.LocalGet(1),  // result
+      Instr.LocalSet(1),
+      Instr.LocalGet(0),
+      Instr.LocalGet(1),
       Instr.StructSet(t_task(), f_result()),
-
-      // return COMPLETE (0)
       Instr.I32Const(a_complete()),
     ],
   }

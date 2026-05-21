@@ -2,25 +2,35 @@
 //
 // These helpers are semantic type utilities: they operate on resolver MonoType
 // values and do not depend on backend preparation or Wasm layout facts.
-
-use compiler.resolver.{ResolvedTypeParam}
 use compiler.mono_type.{MonoType}
+use compiler.resolver.{ResolvedTypeParam}
 
-pub fn subst_type_params(ty: MonoType, type_params: Vector<ResolvedTypeParam>, args: Vector<MonoType>) MonoType {
+pub fn subst_type_params(
+  ty: MonoType,
+  type_params: Vector<ResolvedTypeParam>,
+  args: Vector<MonoType>,
+) MonoType {
   case ty {
     .Var(name) => {
-      for p,i in type_params {
+      for p, i in type_params {
         if p.name == name {
           if i < args.len() {
             return args[i]
           }
-          error("subst_type_params: missing arg for type param '${name}' (index ${i}) with ${args.len()} arg(s)")
+
+          error(
+            "subst_type_params: missing arg for type param '${name}' (index ${i}) with ${args.len()} arg(s)",
+          )
         }
       }
+
       ty
     },
     .Named(tid, inner_args) => {
-      .Named(tid, collect a in inner_args { subst_type_params(a, type_params, args) })
+      .Named(
+        tid,
+        collect a in inner_args { subst_type_params(a, type_params, args) },
+      )
     },
     .Vector(elem) => .Vector(subst_type_params(elem, type_params, args)),
     .Dict(k, v) => .Dict(

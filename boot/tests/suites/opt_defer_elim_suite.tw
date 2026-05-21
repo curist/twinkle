@@ -1,15 +1,12 @@
-use tests.runner
-use tests.assert
-use compiler.core_ir.{LocalId, FuncId, Param}
-
-use compiler.anf.{AnfExpr, AnfOp, AnfFunctionDef}
-
-
+use compiler.anf.{AnfExpr, AnfFunctionDef, AnfOp}
+use compiler.core_ir.{FuncId, LocalId, Param}
 use compiler.opt.defer_elim.{eliminate_defers}
+use tests.assert
+use tests.runner
 
 // ── Helpers ─────────────────────────────────────────────────────────
-
 fn lid(id: Int) LocalId { LocalId.{ id: id } }
+
 fn fid(id: Int) FuncId { FuncId.{ id: id } }
 
 fn make_func(body: AnfExpr) AnfFunctionDef {
@@ -77,7 +74,6 @@ fn is_void_atom(expr: AnfExpr) Bool {
 }
 
 // ── Test: basic defer at function exit ─────────────────────────────
-
 fn test_basic_defer_at_function_exit() Result<Void, String> {
   // Input:
   //   let _0 = defer { let _1 = call(f, []) in void }
@@ -86,24 +82,26 @@ fn test_basic_defer_at_function_exit() Result<Void, String> {
   // Expected: defer body inlined before terminal atom
   //   let _1 = call(f, [])
   //   atom(void)
-
-  defer_body: AnfExpr = .Let(lid(1), .ACall(.AGlobalFunc(fid(10)), []), .Atom(.ALitVoid))
+  defer_body: AnfExpr = .Let(
+    lid(1),
+    .ACall(.AGlobalFunc(fid(10)), []),
+    .Atom(.ALitVoid),
+  )
   input: AnfExpr = .Let(lid(0), .ADefer(defer_body), .Atom(.ALitVoid))
   func := make_func(input)
-
   result := eliminate_defers(func)
-
   // Should be: Let(1, ACall(f10, []), Atom(void))
   try assert.is_true(is_let_call(result.body))
+
   case let_op(result.body) {
     .ACall(.AGlobalFunc(f), _) => try assert.equal(f.id, 10),
     _ => try assert.is_true(false),
   }
+
   assert.is_true(is_void_atom(let_body(result.body)))
 }
 
 // ── Test: no defer means no change ─────────────────────────────────
-
 fn test_no_defer_passthrough() Result<Void, String> {
   // Input: let 0 = init(42) in atom(local(0))
   input: AnfExpr = .Let(lid(0), .AInit(.ALitInt(42)), .Atom(.ALocal(lid(0))))
@@ -121,7 +119,6 @@ fn test_no_defer_passthrough() Result<Void, String> {
 }
 
 // ── Test: defer fires at return ────────────────────────────────────
-
 fn test_defer_fires_at_return() Result<Void, String> {
   // Input:
   //   let _ = defer { let _1 = call(cleanup, []) in void }
@@ -130,14 +127,21 @@ fn test_defer_fires_at_return() Result<Void, String> {
   // Expected: defer inlined before return
   //   let _1 = call(cleanup, [])
   //   return(some(42))
-
-  defer_body: AnfExpr = .Let(lid(1), .ACall(.AGlobalFunc(fid(20)), []), .Atom(.ALitVoid))
-  input: AnfExpr = .Let(lid(0), .ADefer(defer_body), .Return(.Some(.ALitInt(42))))
+  defer_body: AnfExpr = .Let(
+    lid(1),
+    .ACall(.AGlobalFunc(fid(20)), []),
+    .Atom(.ALitVoid),
+  )
+  input: AnfExpr = .Let(
+    lid(0),
+    .ADefer(defer_body),
+    .Return(.Some(.ALitInt(42))),
+  )
   func := make_func(input)
   result := eliminate_defers(func)
-
   // Let(1, ACall(...), Return(Some(42)))
   try assert.is_true(is_let_call(result.body))
+
   case let_body(result.body) {
     .Return(.Some(.ALitInt(42))) => assert.is_true(true),
     _ => assert.is_true(false),
@@ -145,7 +149,6 @@ fn test_defer_fires_at_return() Result<Void, String> {
 }
 
 // ── Test: LIFO ordering with two defers ────────────────────────────
-
 fn test_lifo_ordering() Result<Void, String> {
   // Input:
   //   let _ = defer { call(first, []) }
@@ -154,15 +157,21 @@ fn test_lifo_ordering() Result<Void, String> {
   //
   // Expected (LIFO): second fires before first
   //   call(second, []) ; call(first, []) ; atom(void)
-
-  defer1: AnfExpr = .Let(lid(10), .ACall(.AGlobalFunc(fid(100)), []), .Atom(.ALitVoid))
-  defer2: AnfExpr = .Let(lid(11), .ACall(.AGlobalFunc(fid(200)), []), .Atom(.ALitVoid))
-
-  input: AnfExpr =
-    .Let(lid(0), .ADefer(defer1),
-    .Let(lid(1), .ADefer(defer2),
-    .Atom(.ALitVoid)))
-
+  defer1: AnfExpr = .Let(
+    lid(10),
+    .ACall(.AGlobalFunc(fid(100)), []),
+    .Atom(.ALitVoid),
+  )
+  defer2: AnfExpr = .Let(
+    lid(11),
+    .ACall(.AGlobalFunc(fid(200)), []),
+    .Atom(.ALitVoid),
+  )
+  input: AnfExpr = .Let(
+    lid(0),
+    .ADefer(defer1),
+    .Let(lid(1), .ADefer(defer2), .Atom(.ALitVoid)),
+  )
   func := make_func(input)
   result := eliminate_defers(func)
 
@@ -174,10 +183,10 @@ fn test_lifo_ordering() Result<Void, String> {
   // fold: acc=tail, d=defer1 → splice(defer1, tail) → defer1;tail
   //       acc=defer1;tail, d=defer2 → splice(defer2, defer1;tail) → defer2;defer1;tail
   // So defer2 (second, fid=200) is outermost → executes first. Correct LIFO!
-
   case result.body {
     .Let(_, .ACall(.AGlobalFunc(f), _), rest) => {
       try assert.equal(f.id, 200)
+
       case rest {
         .Let(_, .ACall(.AGlobalFunc(f2), _), .Atom(.ALitVoid)) => {
           assert.equal(f2.id, 100)
@@ -190,7 +199,6 @@ fn test_lifo_ordering() Result<Void, String> {
 }
 
 // ── Test: defer inside loop fires at break ─────────────────────────
-
 fn test_defer_in_loop_fires_at_break() Result<Void, String> {
   // Input:
   //   let _0 = loop {
@@ -205,12 +213,16 @@ fn test_defer_in_loop_fires_at_break() Result<Void, String> {
   //     break(some(42))
   //   }
   //   atom(local(0))
-
-  defer_body: AnfExpr = .Let(lid(10), .ACall(.AGlobalFunc(fid(30)), []), .Atom(.ALitVoid))
-  loop_body: AnfExpr =
-    .Let(lid(2), .ADefer(defer_body),
-    .Break(.Some(.ALitInt(42))))
-
+  defer_body: AnfExpr = .Let(
+    lid(10),
+    .ACall(.AGlobalFunc(fid(30)), []),
+    .Atom(.ALitVoid),
+  )
+  loop_body: AnfExpr = .Let(
+    lid(2),
+    .ADefer(defer_body),
+    .Break(.Some(.ALitInt(42))),
+  )
   input: AnfExpr = .Let(lid(0), .ALoop(loop_body), .Atom(.ALocal(lid(0))))
   func := make_func(input)
   result := eliminate_defers(func)
@@ -220,6 +232,7 @@ fn test_defer_in_loop_fires_at_break() Result<Void, String> {
     .Let(outer_l, .ALoop(inner), .Atom(.ALocal(tail_l))) => {
       try assert.equal(outer_l.id, 0)
       try assert.equal(tail_l.id, 0)
+
       // inner: Let(10, ACall(30, []), Break(Some(42)))
       case inner {
         .Let(_, .ACall(.AGlobalFunc(f), _), .Break(.Some(.ALitInt(42)))) => {
@@ -233,7 +246,6 @@ fn test_defer_in_loop_fires_at_break() Result<Void, String> {
 }
 
 // ── Test: defer inside loop fires at continue ──────────────────────
-
 fn test_defer_in_loop_fires_at_continue() Result<Void, String> {
   // Input:
   //   let _0 = loop {
@@ -241,12 +253,12 @@ fn test_defer_in_loop_fires_at_continue() Result<Void, String> {
   //     continue
   //   }
   //   atom(void)
-
-  defer_body: AnfExpr = .Let(lid(10), .ACall(.AGlobalFunc(fid(30)), []), .Atom(.ALitVoid))
-  loop_body: AnfExpr =
-    .Let(lid(2), .ADefer(defer_body),
-    .Continue)
-
+  defer_body: AnfExpr = .Let(
+    lid(10),
+    .ACall(.AGlobalFunc(fid(30)), []),
+    .Atom(.ALitVoid),
+  )
+  loop_body: AnfExpr = .Let(lid(2), .ADefer(defer_body), .Continue)
   input: AnfExpr = .Let(lid(0), .ALoop(loop_body), .Atom(.ALitVoid))
   func := make_func(input)
   result := eliminate_defers(func)
@@ -266,7 +278,6 @@ fn test_defer_in_loop_fires_at_continue() Result<Void, String> {
 }
 
 // ── Test: loop defer fires at iteration end (tail atom) ────────────
-
 fn test_defer_in_loop_fires_at_iteration_end() Result<Void, String> {
   // Input:
   //   let _0 = loop {
@@ -274,12 +285,12 @@ fn test_defer_in_loop_fires_at_iteration_end() Result<Void, String> {
   //     atom(void)      // <-- loop iteration end
   //   }
   //   atom(void)
-
-  defer_body: AnfExpr = .Let(lid(10), .ACall(.AGlobalFunc(fid(30)), []), .Atom(.ALitVoid))
-  loop_body: AnfExpr =
-    .Let(lid(2), .ADefer(defer_body),
-    .Atom(.ALitVoid))
-
+  defer_body: AnfExpr = .Let(
+    lid(10),
+    .ACall(.AGlobalFunc(fid(30)), []),
+    .Atom(.ALitVoid),
+  )
+  loop_body: AnfExpr = .Let(lid(2), .ADefer(defer_body), .Atom(.ALitVoid))
   input: AnfExpr = .Let(lid(0), .ALoop(loop_body), .Atom(.ALitVoid))
   func := make_func(input)
   result := eliminate_defers(func)
@@ -299,7 +310,6 @@ fn test_defer_in_loop_fires_at_iteration_end() Result<Void, String> {
 }
 
 // ── Test: return inside loop fires both loop and fn defers ─────────
-
 fn test_return_in_loop_fires_all_defers() Result<Void, String> {
   // Input:
   //   let _ = defer { call(fn_cleanup, []) }      // fn defer
@@ -311,19 +321,26 @@ fn test_return_in_loop_fires_all_defers() Result<Void, String> {
   //
   // Expected: return gets both fn_cleanup(100) and loop_cleanup(200)
   // LIFO: loop_cleanup fires first (innermost), then fn_cleanup
-
-  fn_defer: AnfExpr = .Let(lid(10), .ACall(.AGlobalFunc(fid(100)), []), .Atom(.ALitVoid))
-  loop_defer: AnfExpr = .Let(lid(11), .ACall(.AGlobalFunc(fid(200)), []), .Atom(.ALitVoid))
-
-  loop_body: AnfExpr =
-    .Let(lid(3), .ADefer(loop_defer),
-    .Return(.Some(.ALitInt(1))))
-
-  input: AnfExpr =
-    .Let(lid(2), .ADefer(fn_defer),
-    .Let(lid(0), .ALoop(loop_body),
-    .Atom(.ALitVoid)))
-
+  fn_defer: AnfExpr = .Let(
+    lid(10),
+    .ACall(.AGlobalFunc(fid(100)), []),
+    .Atom(.ALitVoid),
+  )
+  loop_defer: AnfExpr = .Let(
+    lid(11),
+    .ACall(.AGlobalFunc(fid(200)), []),
+    .Atom(.ALitVoid),
+  )
+  loop_body: AnfExpr = .Let(
+    lid(3),
+    .ADefer(loop_defer),
+    .Return(.Some(.ALitInt(1))),
+  )
+  input: AnfExpr = .Let(
+    lid(2),
+    .ADefer(fn_defer),
+    .Let(lid(0), .ALoop(loop_body), .Atom(.ALitVoid)),
+  )
   func := make_func(input)
   result := eliminate_defers(func)
 
@@ -335,6 +352,7 @@ fn test_return_in_loop_fires_all_defers() Result<Void, String> {
       case inner {
         .Let(_, .ACall(.AGlobalFunc(f1), _), rest1) => {
           try assert.equal(f1.id, 200)
+
           case rest1 {
             .Let(_, .ACall(.AGlobalFunc(f2), _), .Return(.Some(.ALitInt(1)))) => {
               assert.equal(f2.id, 100)
@@ -350,7 +368,6 @@ fn test_return_in_loop_fires_all_defers() Result<Void, String> {
 }
 
 // ── Test: defer does NOT fire in sub-expr (if branch) ──────────────
-
 fn test_defer_no_fire_in_if_branch() Result<Void, String> {
   // Input:
   //   let _ = defer { call(cleanup, []) }
@@ -359,14 +376,20 @@ fn test_defer_no_fire_in_if_branch() Result<Void, String> {
   //
   // The if branches are sub-expressions — Atom(1) and Atom(2) should
   // NOT trigger defer. Defer only fires at the final atom(local(1)).
-
-  defer_body: AnfExpr = .Let(lid(10), .ACall(.AGlobalFunc(fid(50)), []), .Atom(.ALitVoid))
-
-  input: AnfExpr =
-    .Let(lid(0), .ADefer(defer_body),
-    .Let(lid(1), .AIf(.ALitBool(true), .Atom(.ALitInt(1)), .Atom(.ALitInt(2))),
-    .Atom(.ALocal(lid(1)))))
-
+  defer_body: AnfExpr = .Let(
+    lid(10),
+    .ACall(.AGlobalFunc(fid(50)), []),
+    .Atom(.ALitVoid),
+  )
+  input: AnfExpr = .Let(
+    lid(0),
+    .ADefer(defer_body),
+    .Let(
+      lid(1),
+      .AIf(.ALitBool(true), .Atom(.ALitInt(1)), .Atom(.ALitInt(2))),
+      .Atom(.ALocal(lid(1))),
+    ),
+  )
   func := make_func(input)
   result := eliminate_defers(func)
 
@@ -374,6 +397,7 @@ fn test_defer_no_fire_in_if_branch() Result<Void, String> {
   case result.body {
     .Let(l1, .AIf(_, .Atom(.ALitInt(1)), .Atom(.ALitInt(2))), rest) => {
       try assert.equal(l1.id, 1)
+
       // rest should have the defer then the tail atom
       case rest {
         .Let(_, .ACall(.AGlobalFunc(f), _), .Atom(.ALocal(tail))) => {
@@ -388,7 +412,6 @@ fn test_defer_no_fire_in_if_branch() Result<Void, String> {
 }
 
 // ── Test: capture semantics — snapshot at registration time ────────
-
 fn test_capture_semantics() Result<Void, String> {
   // Input:
   //   param: local(0)
@@ -401,14 +424,16 @@ fn test_capture_semantics() Result<Void, String> {
   //   let _ = assign(0, lit(99))               // mutation happens
   //   call(f, [snap_0])                        // defer uses snapshot
   //   atom(void)
-
-  defer_body: AnfExpr = .Let(lid(10), .ACall(.AGlobalFunc(fid(60)), [.ALocal(lid(0))]), .Atom(.ALitVoid))
-
-  input: AnfExpr =
-    .Let(lid(1), .ADefer(defer_body),
-    .Let(lid(2), .AAssign(lid(0), .ALitInt(99)),
-    .Atom(.ALitVoid)))
-
+  defer_body: AnfExpr = .Let(
+    lid(10),
+    .ACall(.AGlobalFunc(fid(60)), [.ALocal(lid(0))]),
+    .Atom(.ALitVoid),
+  )
+  input: AnfExpr = .Let(
+    lid(1),
+    .ADefer(defer_body),
+    .Let(lid(2), .AAssign(lid(0), .ALitInt(99)), .Atom(.ALitVoid)),
+  )
   params := [Param.{ local: lid(0), ty: .Int }]
   func := make_func_with_params(params, input)
   result := eliminate_defers(func)
@@ -420,15 +445,18 @@ fn test_capture_semantics() Result<Void, String> {
       // snap_local should be a fresh ID (>= 1 since params go to 0)
       snap_id := snap_local.id
       try assert.is_true(snap_id >= 1)
+
       case rest {
         .Let(_, .AAssign(assign_target, .ALitInt(99)), rest2) => {
           try assert.equal(assign_target.id, 0)
+
           // rest2: the deferred call using snap_local, then void
           case rest2 {
             .Let(_, .ACall(.AGlobalFunc(f), args), .Atom(.ALitVoid)) => {
               try assert.equal(f.id, 60)
               // The arg should reference the snapshot local, not original 0
               try assert.equal(args.len(), 1)
+
               case args[0] {
                 .ALocal(arg_id) => assert.equal(arg_id.id, snap_id),
                 _ => assert.is_true(false),
@@ -445,7 +473,6 @@ fn test_capture_semantics() Result<Void, String> {
 }
 
 // ── Test: fn defer does NOT fire at loop iteration end ─────────────
-
 fn test_fn_defer_not_at_loop_iteration_end() Result<Void, String> {
   // Input:
   //   let _ = defer { call(fn_cleanup, []) }
@@ -453,15 +480,17 @@ fn test_fn_defer_not_at_loop_iteration_end() Result<Void, String> {
   //     atom(void)   // loop iteration end — should NOT fire fn_cleanup
   //   }
   //   atom(void)     // function exit — fires fn_cleanup
-
-  fn_defer: AnfExpr = .Let(lid(10), .ACall(.AGlobalFunc(fid(100)), []), .Atom(.ALitVoid))
+  fn_defer: AnfExpr = .Let(
+    lid(10),
+    .ACall(.AGlobalFunc(fid(100)), []),
+    .Atom(.ALitVoid),
+  )
   loop_body: AnfExpr = .Atom(.ALitVoid)
-
-  input: AnfExpr =
-    .Let(lid(0), .ADefer(fn_defer),
-    .Let(lid(1), .ALoop(loop_body),
-    .Atom(.ALitVoid)))
-
+  input: AnfExpr = .Let(
+    lid(0),
+    .ADefer(fn_defer),
+    .Let(lid(1), .ALoop(loop_body), .Atom(.ALitVoid)),
+  )
   func := make_func(input)
   result := eliminate_defers(func)
 
@@ -469,6 +498,7 @@ fn test_fn_defer_not_at_loop_iteration_end() Result<Void, String> {
   case result.body {
     .Let(_, .ALoop(inner), rest) => {
       try assert.is_true(is_void_atom(inner))
+
       // rest (function tail) should have the fn defer
       case rest {
         .Let(_, .ACall(.AGlobalFunc(f), _), .Atom(.ALitVoid)) => {
@@ -482,7 +512,6 @@ fn test_fn_defer_not_at_loop_iteration_end() Result<Void, String> {
 }
 
 // ── Test: defer inside if-branch fires at branch exit (block-scoped) ──────────
-
 fn test_defer_in_if_branch_block_scoped() Result<Void, String> {
   // Input:
   //   let _0 = if(true,
@@ -499,15 +528,18 @@ fn test_defer_in_if_branch_block_scoped() Result<Void, String> {
   //     ,
   //       atom(void))
   //   atom(void)   ← outer terminal: no defers
-
-  defer_body: AnfExpr = .Let(lid(10), .ACall(.AGlobalFunc(fid(50)), []), .Atom(.ALitVoid))
+  defer_body: AnfExpr = .Let(
+    lid(10),
+    .ACall(.AGlobalFunc(fid(50)), []),
+    .Atom(.ALitVoid),
+  )
   then_branch: AnfExpr = .Let(lid(1), .ADefer(defer_body), .Atom(.ALitVoid))
   else_branch: AnfExpr = .Atom(.ALitVoid)
-
-  input: AnfExpr =
-    .Let(lid(0), .AIf(.ALitBool(true), then_branch, else_branch),
-    .Atom(.ALitVoid))
-
+  input: AnfExpr = .Let(
+    lid(0),
+    .AIf(.ALitBool(true), then_branch, else_branch),
+    .Atom(.ALitVoid),
+  )
   func := make_func(input)
   result := eliminate_defers(func)
 
@@ -516,10 +548,13 @@ fn test_defer_in_if_branch_block_scoped() Result<Void, String> {
     .Let(_, .AIf(.ALitBool(true), then_r, else_r), tail) => {
       try assert.is_true(is_void_atom(tail))
       try assert.is_true(is_void_atom(else_r))
+
       // then-branch: ADefer should have been inlined as ACall
       case then_r {
-        .Let(_, .ACall(.AGlobalFunc(f), _), .Atom(.ALitVoid)) =>
-          assert.equal(f.id, 50),
+        .Let(_, .ACall(.AGlobalFunc(f), _), .Atom(.ALitVoid)) => assert.equal(
+          f.id,
+          50,
+        ),
         _ => assert.is_true(false),
       }
     },
@@ -528,7 +563,6 @@ fn test_defer_in_if_branch_block_scoped() Result<Void, String> {
 }
 
 // ── Test: break fires only loop defers, NOT fn-level defers ──────────
-
 fn test_break_fires_only_loop_defers() Result<Void, String> {
   // Input:
   //   let _ = defer { call(fn_cleanup(100), []) }   // fn defer
@@ -540,19 +574,22 @@ fn test_break_fires_only_loop_defers() Result<Void, String> {
   //
   // Expected: break inlines only loop defer (200).
   //   fn defer (100) fires at function tail (atom(local(0))), not at break.
-
-  fn_defer: AnfExpr = .Let(lid(10), .ACall(.AGlobalFunc(fid(100)), []), .Atom(.ALitVoid))
-  loop_defer: AnfExpr = .Let(lid(11), .ACall(.AGlobalFunc(fid(200)), []), .Atom(.ALitVoid))
-
-  loop_body: AnfExpr =
-    .Let(lid(3), .ADefer(loop_defer),
-    .Break(.None))
-
-  input: AnfExpr =
-    .Let(lid(2), .ADefer(fn_defer),
-    .Let(lid(0), .ALoop(loop_body),
-    .Atom(.ALocal(lid(0)))))
-
+  fn_defer: AnfExpr = .Let(
+    lid(10),
+    .ACall(.AGlobalFunc(fid(100)), []),
+    .Atom(.ALitVoid),
+  )
+  loop_defer: AnfExpr = .Let(
+    lid(11),
+    .ACall(.AGlobalFunc(fid(200)), []),
+    .Atom(.ALitVoid),
+  )
+  loop_body: AnfExpr = .Let(lid(3), .ADefer(loop_defer), .Break(.None))
+  input: AnfExpr = .Let(
+    lid(2),
+    .ADefer(fn_defer),
+    .Let(lid(0), .ALoop(loop_body), .Atom(.ALocal(lid(0)))),
+  )
   func := make_func(input)
   result := eliminate_defers(func)
 
@@ -560,14 +597,19 @@ fn test_break_fires_only_loop_defers() Result<Void, String> {
     .Let(_, .ALoop(inner), tail) => {
       // Loop body: Let(_, call(200), Break(none)) — only loop defer at break
       case inner {
-        .Let(_, .ACall(.AGlobalFunc(f_loop), _), .Break(.None)) =>
-          try assert.equal(f_loop.id, 200),
+        .Let(_, .ACall(.AGlobalFunc(f_loop), _), .Break(.None)) => try assert.equal(
+          f_loop.id,
+          200,
+        ),
         _ => try assert.is_true(false),
       }
+
       // Function tail: Let(_, call(100), Atom(local(0))) — fn defer fires here
       case tail {
-        .Let(_, .ACall(.AGlobalFunc(f_fn), _), .Atom(.ALocal(_))) =>
-          assert.equal(f_fn.id, 100),
+        .Let(_, .ACall(.AGlobalFunc(f_fn), _), .Atom(.ALocal(_))) => assert.equal(
+          f_fn.id,
+          100,
+        ),
         _ => assert.is_true(false),
       }
     },
@@ -576,7 +618,6 @@ fn test_break_fires_only_loop_defers() Result<Void, String> {
 }
 
 // ── Test: continue fires only loop defers, NOT fn-level defers ───────
-
 fn test_continue_fires_only_loop_defers() Result<Void, String> {
   // Input:
   //   let _ = defer { call(fn_cleanup(100), []) }   // fn defer
@@ -588,19 +629,22 @@ fn test_continue_fires_only_loop_defers() Result<Void, String> {
   //
   // Expected: continue inlines only loop defer (200).
   //   fn defer (100) fires at function tail (atom(local(0))), not at continue.
-
-  fn_defer: AnfExpr = .Let(lid(10), .ACall(.AGlobalFunc(fid(100)), []), .Atom(.ALitVoid))
-  loop_defer: AnfExpr = .Let(lid(11), .ACall(.AGlobalFunc(fid(200)), []), .Atom(.ALitVoid))
-
-  loop_body: AnfExpr =
-    .Let(lid(3), .ADefer(loop_defer),
-    .Continue)
-
-  input: AnfExpr =
-    .Let(lid(2), .ADefer(fn_defer),
-    .Let(lid(0), .ALoop(loop_body),
-    .Atom(.ALocal(lid(0)))))
-
+  fn_defer: AnfExpr = .Let(
+    lid(10),
+    .ACall(.AGlobalFunc(fid(100)), []),
+    .Atom(.ALitVoid),
+  )
+  loop_defer: AnfExpr = .Let(
+    lid(11),
+    .ACall(.AGlobalFunc(fid(200)), []),
+    .Atom(.ALitVoid),
+  )
+  loop_body: AnfExpr = .Let(lid(3), .ADefer(loop_defer), .Continue)
+  input: AnfExpr = .Let(
+    lid(2),
+    .ADefer(fn_defer),
+    .Let(lid(0), .ALoop(loop_body), .Atom(.ALocal(lid(0)))),
+  )
   func := make_func(input)
   result := eliminate_defers(func)
 
@@ -608,14 +652,19 @@ fn test_continue_fires_only_loop_defers() Result<Void, String> {
     .Let(_, .ALoop(inner), tail) => {
       // Loop body: Let(_, call(200), Continue) — only loop defer at continue
       case inner {
-        .Let(_, .ACall(.AGlobalFunc(f_loop), _), .Continue) =>
-          try assert.equal(f_loop.id, 200),
+        .Let(_, .ACall(.AGlobalFunc(f_loop), _), .Continue) => try assert.equal(
+          f_loop.id,
+          200,
+        ),
         _ => try assert.is_true(false),
       }
+
       // Function tail: Let(_, call(100), Atom(local(0))) — fn defer fires here
       case tail {
-        .Let(_, .ACall(.AGlobalFunc(f_fn), _), .Atom(.ALocal(_))) =>
-          assert.equal(f_fn.id, 100),
+        .Let(_, .ACall(.AGlobalFunc(f_fn), _), .Atom(.ALocal(_))) => assert.equal(
+          f_fn.id,
+          100,
+        ),
         _ => assert.is_true(false),
       }
     },
@@ -624,22 +673,39 @@ fn test_continue_fires_only_loop_defers() Result<Void, String> {
 }
 
 // ── Suite ──────────────────────────────────────────────────────────
-
 pub fn suite() runner.Suite {
   s := runner.suite("Opt: Defer Elimination")
-  s = s.test("basic defer at function exit", test_basic_defer_at_function_exit)
-  s = s.test("no defer passthrough", test_no_defer_passthrough)
-  s = s.test("defer fires at return", test_defer_fires_at_return)
-  s = s.test("LIFO ordering with two defers", test_lifo_ordering)
-  s = s.test("defer in loop fires at break", test_defer_in_loop_fires_at_break)
-  s = s.test("defer in loop fires at continue", test_defer_in_loop_fires_at_continue)
-  s = s.test("defer in loop fires at iteration end", test_defer_in_loop_fires_at_iteration_end)
-  s = s.test("return in loop fires all defers", test_return_in_loop_fires_all_defers)
-  s = s.test("defer does not fire in if branch", test_defer_no_fire_in_if_branch)
-  s = s.test("capture semantics snapshot", test_capture_semantics)
-  s = s.test("fn defer not at loop iteration end", test_fn_defer_not_at_loop_iteration_end)
-  s = s.test("defer in if branch block-scoped", test_defer_in_if_branch_block_scoped)
-  s = s.test("break fires only loop defers", test_break_fires_only_loop_defers)
-  s = s.test("continue fires only loop defers", test_continue_fires_only_loop_defers)
+  s = .test("basic defer at function exit", test_basic_defer_at_function_exit)
+  s = .test("no defer passthrough", test_no_defer_passthrough)
+  s = .test("defer fires at return", test_defer_fires_at_return)
+  s = .test("LIFO ordering with two defers", test_lifo_ordering)
+  s = .test("defer in loop fires at break", test_defer_in_loop_fires_at_break)
+  s = .test(
+    "defer in loop fires at continue",
+    test_defer_in_loop_fires_at_continue,
+  )
+  s = .test(
+    "defer in loop fires at iteration end",
+    test_defer_in_loop_fires_at_iteration_end,
+  )
+  s = .test(
+    "return in loop fires all defers",
+    test_return_in_loop_fires_all_defers,
+  )
+  s = .test("defer does not fire in if branch", test_defer_no_fire_in_if_branch)
+  s = .test("capture semantics snapshot", test_capture_semantics)
+  s = .test(
+    "fn defer not at loop iteration end",
+    test_fn_defer_not_at_loop_iteration_end,
+  )
+  s = .test(
+    "defer in if branch block-scoped",
+    test_defer_in_if_branch_block_scoped,
+  )
+  s = .test("break fires only loop defers", test_break_fires_only_loop_defers)
+  s = .test(
+    "continue fires only loop defers",
+    test_continue_fires_only_loop_defers,
+  )
   s
 }

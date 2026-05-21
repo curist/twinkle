@@ -1,25 +1,24 @@
-use tests.runner
-use tests.assert
-use compiler.core_ir.{LocalId, FuncId, VariantId, CorePattern}
-
-use compiler.mono_type.{TypeId}
-
 use compiler.anf.{AnfExpr, AnfMatchArm}
-
 use compiler.anf_analysis.{
-  set_has, collect_free_locals, collect_bound_locals, collect_assigned_locals,
-  collect_pattern_bindings, expr_always_diverges,
+  collect_assigned_locals, collect_bound_locals, collect_free_locals,
+  collect_pattern_bindings, expr_always_diverges, set_has,
 }
+use compiler.core_ir.{CorePattern, FuncId, LocalId, VariantId}
+use compiler.mono_type.{TypeId}
+use tests.assert
+use tests.runner
 
 // ── Helpers ─────────────────────────────────────────────────────────
-
 fn lid(id: Int) LocalId { LocalId.{ id: id } }
+
 fn empty_set() Dict<Int, Bool> { Dict.new() }
+
 fn set_of1(a: Int) Dict<Int, Bool> {
   s: Dict<Int, Bool> = Dict.new()
   s[a] = true
   s
 }
+
 fn set_of2(a: Int, b: Int) Dict<Int, Bool> {
   s: Dict<Int, Bool> = Dict.new()
   s[a] = true
@@ -28,7 +27,6 @@ fn set_of2(a: Int, b: Int) Dict<Int, Bool> {
 }
 
 // ── collect_pattern_bindings ────────────────────────────────────────
-
 fn test_pattern_var() Result<Void, String> {
   s: Dict<Int, Bool> = Dict.new()
   s = collect_pattern_bindings(.Var(lid(1)), s)
@@ -38,10 +36,14 @@ fn test_pattern_var() Result<Void, String> {
 
 fn test_pattern_nested_variant() Result<Void, String> {
   // Variant(_, _, [Var(1), Variant(_, _, [Var(3), Wildcard])])
-  pat: CorePattern = .Variant(TypeId.{ id: 7 }, VariantId.{ id: 2 }, [
-    .Var(lid(1)),
-    .Variant(TypeId.{ id: 8 }, VariantId.{ id: 1 }, [.Var(lid(3)), .Wildcard]),
-  ])
+  pat: CorePattern = .Variant(
+    TypeId.{ id: 7 },
+    VariantId.{ id: 2 },
+    [
+      .Var(lid(1)),
+      .Variant(TypeId.{ id: 8 }, VariantId.{ id: 1 }, [.Var(lid(3)), .Wildcard]),
+    ],
+  )
   s := collect_pattern_bindings(pat, empty_set())
   try assert.is_true(set_has(s, 1))
   try assert.is_true(set_has(s, 3))
@@ -58,7 +60,6 @@ fn test_pattern_wildcard_lit() Result<Void, String> {
 }
 
 // ── collect_free_locals ─────────────────────────────────────────────
-
 fn test_free_simple_let() Result<Void, String> {
   // Let(0, AInit(ALocal(5)), Atom(ALocal(0))) — 5 is free, 0 is declared
   expr: AnfExpr = .Let(lid(0), .AInit(.ALocal(lid(5))), .Atom(.ALocal(lid(0))))
@@ -71,7 +72,11 @@ fn test_free_simple_let() Result<Void, String> {
 fn test_free_declared_not_free() Result<Void, String> {
   // Let(1, ABinOp(Add, ALocal(0), ALitInt(5)), Atom(ALocal(1)))
   // with 0 declared as seed — nothing should be free
-  expr: AnfExpr = .Let(lid(1), .ABinOp(.Add, .ALocal(lid(0)), .ALitInt(5), .Int), .Atom(.ALocal(lid(1))))
+  expr: AnfExpr = .Let(
+    lid(1),
+    .ABinOp(.Add, .ALocal(lid(0)), .ALitInt(5), .Int),
+    .Atom(.ALocal(lid(1))),
+  )
   free := collect_free_locals(expr, set_of1(0))
   assert.equal(free.len(), 0)
 }
@@ -79,11 +84,11 @@ fn test_free_declared_not_free() Result<Void, String> {
 fn test_free_if_branches() Result<Void, String> {
   // Let(4, AIf(ALocal(0), then=Atom(ALocal(1)), else=Atom(ALocal(2))), Atom(ALocal(4)))
   // with 0 declared — 1, 2 are free
-  expr: AnfExpr = .Let(lid(4),
-    .AIf(.ALocal(lid(0)),
-      .Atom(.ALocal(lid(1))),
-      .Atom(.ALocal(lid(2)))),
-    .Atom(.ALocal(lid(4))))
+  expr: AnfExpr = .Let(
+    lid(4),
+    .AIf(.ALocal(lid(0)), .Atom(.ALocal(lid(1))), .Atom(.ALocal(lid(2)))),
+    .Atom(.ALocal(lid(4))),
+  )
   free := collect_free_locals(expr, set_of1(0))
   try assert.is_true(set_has(free, 1))
   try assert.is_true(set_has(free, 2))
@@ -97,7 +102,11 @@ fn test_free_match_pattern_declares() Result<Void, String> {
     pattern: .Variant(TypeId.{ id: 5 }, VariantId.{ id: 0 }, [.Var(lid(2))]),
     body: .Atom(.ALocal(lid(2))),
   }
-  expr: AnfExpr = .Let(lid(1), .AMatch(.ALocal(lid(0)), [arm]), .Atom(.ALocal(lid(1))))
+  expr: AnfExpr = .Let(
+    lid(1),
+    .AMatch(.ALocal(lid(0)), [arm]),
+    .Atom(.ALocal(lid(1))),
+  )
   free := collect_free_locals(expr, set_of1(0))
   assert.equal(free.len(), 0)
 }
@@ -112,7 +121,11 @@ fn test_free_assign_target() Result<Void, String> {
 
 fn test_free_make_closure() Result<Void, String> {
   // Let(8, AMakeClosure(99, [1, 2]), Atom(ALocal(8))) — 1 declared, 2 free
-  expr: AnfExpr = .Let(lid(8), .AMakeClosure(FuncId.{ id: 99 }, [lid(1), lid(2)]), .Atom(.ALocal(lid(8))))
+  expr: AnfExpr = .Let(
+    lid(8),
+    .AMakeClosure(FuncId.{ id: 99 }, [lid(1), lid(2)]),
+    .Atom(.ALocal(lid(8))),
+  )
   free := collect_free_locals(expr, set_of1(1))
   try assert.is_true(set_has(free, 2))
   try assert.is_false(set_has(free, 1))
@@ -130,14 +143,21 @@ fn test_free_return_break_atoms() Result<Void, String> {
 }
 
 // ── collect_bound_locals ────────────────────────────────────────────
-
 fn test_bound_nested() Result<Void, String> {
   // Let(0, AIf(true, Let(1,...,Atom(1)), Let(2, ALoop(Let(3,...,Break)), Atom(2))), Atom(0))
-  expr: AnfExpr = .Let(lid(0),
-    .AIf(.ALitBool(true),
+  expr: AnfExpr = .Let(
+    lid(0),
+    .AIf(
+      .ALitBool(true),
       .Let(lid(1), .AInit(.ALitInt(1)), .Atom(.ALocal(lid(1)))),
-      .Let(lid(2), .ALoop(.Let(lid(3), .AInit(.ALitInt(2)), .Break(.None))), .Atom(.ALocal(lid(2))))),
-    .Atom(.ALocal(lid(0))))
+      .Let(
+        lid(2),
+        .ALoop(.Let(lid(3), .AInit(.ALitInt(2)), .Break(.None))),
+        .Atom(.ALocal(lid(2))),
+      ),
+    ),
+    .Atom(.ALocal(lid(0))),
+  )
   bound := collect_bound_locals(expr)
   try assert.is_true(set_has(bound, 0))
   try assert.is_true(set_has(bound, 1))
@@ -147,14 +167,23 @@ fn test_bound_nested() Result<Void, String> {
 }
 
 // ── collect_assigned_locals ─────────────────────────────────────────
-
 fn test_assigned_nested() Result<Void, String> {
   // Let(0, AIf(true, Let(1,AAssign(8,...),Atom(1)), Let(2,ADefer(Let(3,AAssign(9,...),Atom(3))),Atom(2))), Atom(0))
-  expr: AnfExpr = .Let(lid(0),
-    .AIf(.ALitBool(true),
+  expr: AnfExpr = .Let(
+    lid(0),
+    .AIf(
+      .ALitBool(true),
       .Let(lid(1), .AAssign(lid(8), .ALitInt(10)), .Atom(.ALocal(lid(1)))),
-      .Let(lid(2), .ADefer(.Let(lid(3), .AAssign(lid(9), .ALitInt(20)), .Atom(.ALocal(lid(3))))), .Atom(.ALocal(lid(2))))),
-    .Atom(.ALocal(lid(0))))
+      .Let(
+        lid(2),
+        .ADefer(
+          .Let(lid(3), .AAssign(lid(9), .ALitInt(20)), .Atom(.ALocal(lid(3)))),
+        ),
+        .Atom(.ALocal(lid(2))),
+      ),
+    ),
+    .Atom(.ALocal(lid(0))),
+  )
   assigned := collect_assigned_locals(expr)
   try assert.is_true(set_has(assigned, 8))
   try assert.is_true(set_has(assigned, 9))
@@ -162,7 +191,6 @@ fn test_assigned_nested() Result<Void, String> {
 }
 
 // ── expr_always_diverges ────────────────────────────────────────────
-
 fn test_diverges_return() Result<Void, String> {
   assert.is_true(expr_always_diverges(.Return(.None)))
 }
@@ -181,13 +209,21 @@ fn test_diverges_atom_does_not() Result<Void, String> {
 
 fn test_diverges_if_both_branches() Result<Void, String> {
   // Let(0, AIf(true, Return, Break), Atom(0)) — diverges because both branches do
-  expr: AnfExpr = .Let(lid(0), .AIf(.ALitBool(true), .Return(.None), .Break(.None)), .Atom(.ALocal(lid(0))))
+  expr: AnfExpr = .Let(
+    lid(0),
+    .AIf(.ALitBool(true), .Return(.None), .Break(.None)),
+    .Atom(.ALocal(lid(0))),
+  )
   assert.is_true(expr_always_diverges(expr))
 }
 
 fn test_diverges_if_one_branch_no() Result<Void, String> {
   // Let(0, AIf(true, Return, Atom(1)), Atom(0)) — does NOT diverge
-  expr: AnfExpr = .Let(lid(0), .AIf(.ALitBool(true), .Return(.None), .Atom(.ALitVoid)), .Atom(.ALocal(lid(0))))
+  expr: AnfExpr = .Let(
+    lid(0),
+    .AIf(.ALitBool(true), .Return(.None), .Atom(.ALitVoid)),
+    .Atom(.ALocal(lid(0))),
+  )
   assert.is_false(expr_always_diverges(expr))
 }
 
@@ -204,33 +240,32 @@ fn test_diverges_loop_conservative() Result<Void, String> {
 }
 
 // ── Suite ───────────────────────────────────────────────────────────
-
 pub fn suite() runner.Suite {
   s := runner.suite("ANF Analysis")
   // pattern bindings
-  s = s.test("pattern: var", test_pattern_var)
-  s = s.test("pattern: nested variant", test_pattern_nested_variant)
-  s = s.test("pattern: wildcard/lit", test_pattern_wildcard_lit)
+  s = .test("pattern: var", test_pattern_var)
+  s = .test("pattern: nested variant", test_pattern_nested_variant)
+  s = .test("pattern: wildcard/lit", test_pattern_wildcard_lit)
   // free locals
-  s = s.test("free: simple let", test_free_simple_let)
-  s = s.test("free: declared not free", test_free_declared_not_free)
-  s = s.test("free: if branches", test_free_if_branches)
-  s = s.test("free: match pattern declares", test_free_match_pattern_declares)
-  s = s.test("free: assign target", test_free_assign_target)
-  s = s.test("free: make_closure", test_free_make_closure)
-  s = s.test("free: return/break atoms", test_free_return_break_atoms)
+  s = .test("free: simple let", test_free_simple_let)
+  s = .test("free: declared not free", test_free_declared_not_free)
+  s = .test("free: if branches", test_free_if_branches)
+  s = .test("free: match pattern declares", test_free_match_pattern_declares)
+  s = .test("free: assign target", test_free_assign_target)
+  s = .test("free: make_closure", test_free_make_closure)
+  s = .test("free: return/break atoms", test_free_return_break_atoms)
   // bound locals
-  s = s.test("bound: nested", test_bound_nested)
+  s = .test("bound: nested", test_bound_nested)
   // assigned locals
-  s = s.test("assigned: nested", test_assigned_nested)
+  s = .test("assigned: nested", test_assigned_nested)
   // divergence
-  s = s.test("diverges: return", test_diverges_return)
-  s = s.test("diverges: break", test_diverges_break)
-  s = s.test("diverges: continue", test_diverges_continue)
-  s = s.test("diverges: atom does not", test_diverges_atom_does_not)
-  s = s.test("diverges: if both branches", test_diverges_if_both_branches)
-  s = s.test("diverges: if one branch no", test_diverges_if_one_branch_no)
-  s = s.test("diverges: let body", test_diverges_let_body)
-  s = s.test("diverges: loop conservative", test_diverges_loop_conservative)
+  s = .test("diverges: return", test_diverges_return)
+  s = .test("diverges: break", test_diverges_break)
+  s = .test("diverges: continue", test_diverges_continue)
+  s = .test("diverges: atom does not", test_diverges_atom_does_not)
+  s = .test("diverges: if both branches", test_diverges_if_both_branches)
+  s = .test("diverges: if one branch no", test_diverges_if_one_branch_no)
+  s = .test("diverges: let body", test_diverges_let_body)
+  s = .test("diverges: loop conservative", test_diverges_loop_conservative)
   s
 }

@@ -1,22 +1,24 @@
 // Runtime ABI shim helpers for Wasm emission.
-
 use compiler.codegen.wasm_ir.{Instr}
 
 // Host boundary helpers: identify functions that cross the Array/PVec boundary
 pub fn is_host_vector_returning(name: String) Bool {
-  name == "host_args" or name == "host_list_dir" or name == "host_env" or name == "host_stdin_read_chunk" or name == "host_stdin_read_timeout"
+  name == "host_args" or name == "host_list_dir" or name == "host_env"
+  or name == "host_stdin_read_chunk"
+  or name == "host_stdin_read_timeout"
 }
-pub fn is_host_read_file(name: String) Bool {
-  name == "host_read_file"
-}
+
+pub fn is_host_read_file(name: String) Bool { name == "host_read_file" }
+
 pub fn is_host_vector_arg(name: String, index: Int) Bool {
-  (name == "host_write_bytes" and index == 1)
-  or (name == "host_stdout_write_bytes" and index == 0)
-  or (name == "host_run_wasm" and (index == 0 or index == 1))
+  name == "host_write_bytes" and index == 1
+  or name == "host_stdout_write_bytes" and index == 0
+  or name == "host_run_wasm" and (index == 0 or index == 1)
 }
 
 pub fn is_vector_builder_array_arg(name: String, index: Int) Bool {
-  (name == "vector__builder_push" and index == 0) or (name == "vector__builder_freeze" and index == 0)
+  name == "vector__builder_push" and index == 0
+  or name == "vector__builder_freeze" and index == 0
 }
 
 pub fn is_vector_builder_push(name: String) Bool {
@@ -29,18 +31,24 @@ pub fn is_vector_builder_seed(name: String) Bool {
 
 // ABI shim: builder regions keep transient builders as erased anyref locals;
 // cast back to concrete Array before the push/freeze call.
-pub fn emit_builder_arg_shim(entry_name: String, index: Int, buf: Vector<Instr>) Vector<Instr> {
+pub fn emit_builder_arg_shim(entry_name: String, index: Int, buf: Vector<Instr>) Vector<
+  Instr,
+> {
   if is_vector_builder_array_arg(entry_name, index) {
     return buf.append(.RefCast(true, .Named("rt_types__Array")))
   }
+
   buf
 }
 
 // ABI shim: host_write_bytes expects a flat Array, not a PVec.
-pub fn emit_host_arg_shim(entry_name: String, index: Int, buf: Vector<Instr>) Vector<Instr> {
+pub fn emit_host_arg_shim(entry_name: String, index: Int, buf: Vector<Instr>) Vector<
+  Instr,
+> {
   if is_host_vector_arg(entry_name, index) {
     return buf.append(.Call("rt_arr__to_array"))
   }
+
   buf
 }
 
@@ -49,16 +57,18 @@ pub fn host_read_file_result_helper_sym() String {
   "host_read_file_result_helper"
 }
 
-pub fn emit_host_result_shim(entry_name: String, buf: Vector<Instr>) Vector<Instr> {
+pub fn emit_host_result_shim(entry_name: String, buf: Vector<Instr>) Vector<
+  Instr,
+> {
   if is_host_vector_returning(entry_name) {
     return buf.append(.Call("rt_arr__from_array"))
   }
+
   if is_host_read_file(entry_name) {
-    return buf
-      .append(.RefCast(true, .Named("rt_types__Variant")))
-      .append(.Call("rt_arr__from_read_file_result"))
-      .append(.Call(host_read_file_result_helper_sym()))
+    return buf.append(.RefCast(true, .Named("rt_types__Variant"))).append(
+      .Call("rt_arr__from_read_file_result"),
+    ).append(.Call(host_read_file_result_helper_sym()))
   }
+
   buf
 }
-

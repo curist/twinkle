@@ -1,44 +1,67 @@
 // Record construction and field access lowering.
-
-use lib.source.span.{Span}
 use compiler.ast as ast
 use compiler.ast.{Expr}
-use compiler.mono_type.{MonoType, TypeId}
 use compiler.core_ir.{CoreExpr, FieldId, FieldInit, VariantId}
-use compiler.lower_core.context.{LowerCtx, ExprOut}
-use compiler.lower_core.helpers.{void_expr, extract_type_name_expr}
+use compiler.lower_core.context.{ExprOut, LowerCtx}
+use compiler.lower_core.helpers.{extract_type_name_expr, void_expr}
 use compiler.lower_core.types.{
   find_field_index, find_field_index_in_type, find_field_type_in_type,
   find_variant_index, resolve_type_id, type_id_from_mono,
 }
+use compiler.mono_type.{MonoType, TypeId}
+use lib.source.span.{Span}
 
-pub fn lower_named_record(ctx: LowerCtx, type_name: String, entries: Vector<ast.RecordEntry>, ty: MonoType, s: Span, lower_expr_fn: fn(LowerCtx, Expr) ExprOut) ExprOut {
+pub fn lower_named_record(
+  ctx: LowerCtx,
+  type_name: String,
+  entries: Vector<ast.RecordEntry>,
+  ty: MonoType,
+  s: Span,
+  lower_expr_fn: fn(LowerCtx, Expr) ExprOut,
+) ExprOut {
   tid := case resolve_type_id(ctx.env, type_name) {
     .Some(id) => id,
     .None => {
-      ctx = ctx.emit_error(s, "unknown type: ${type_name}")
+      ctx = .emit_error(s, "unknown type: ${type_name}")
+
       return .{ expr: void_expr(s), ctx }
     },
   }
   lower_record_fields(ctx, tid, entries, ty, s, lower_expr_fn)
 }
 
-pub fn lower_anon_record(ctx: LowerCtx, entries: Vector<ast.RecordEntry>, ty: MonoType, s: Span, lower_expr_fn: fn(LowerCtx, Expr) ExprOut) ExprOut {
+pub fn lower_anon_record(
+  ctx: LowerCtx,
+  entries: Vector<ast.RecordEntry>,
+  ty: MonoType,
+  s: Span,
+  lower_expr_fn: fn(LowerCtx, Expr) ExprOut,
+) ExprOut {
   tid := case type_id_from_mono(ty) {
     .Some(id) => id,
     .None => {
-      ctx = ctx.emit_error(s, "cannot determine record type")
+      ctx = .emit_error(s, "cannot determine record type")
+
       return .{ expr: void_expr(s), ctx }
     },
   }
   lower_record_fields(ctx, tid, entries, ty, s, lower_expr_fn)
 }
 
-pub fn lower_record_fields(ctx: LowerCtx, tid: TypeId, entries: Vector<ast.RecordEntry>, ty: MonoType, s: Span, lower_expr_fn: fn(LowerCtx, Expr) ExprOut) ExprOut {
+pub fn lower_record_fields(
+  ctx: LowerCtx,
+  tid: TypeId,
+  entries: Vector<ast.RecordEntry>,
+  ty: MonoType,
+  s: Span,
+  lower_expr_fn: fn(LowerCtx, Expr) ExprOut,
+) ExprOut {
   fields: Vector<FieldInit> = []
+
   for entry in entries {
     fid_idx := find_field_index_in_type(ctx.env, ty, entry.name)
     field := FieldId.{ id: fid_idx }
+
     case entry.value {
       .Some(val_expr) => {
         r := lower_expr_fn(ctx, val_expr)
@@ -50,33 +73,48 @@ pub fn lower_record_fields(ctx: LowerCtx, tid: TypeId, entries: Vector<ast.Recor
         case ctx.lookup_local(entry.name) {
           .Some(local_id) => {
             val_ty := find_field_type_in_type(ctx.env, ty, entry.name)
-            val := CoreExpr.{ kind: .Local(local_id), ty: val_ty, span: entry.span }
+            val := CoreExpr.{
+              kind: .Local(local_id),
+              ty: val_ty,
+              span: entry.span,
+            }
             fields = .append(.{ field, value: val })
           },
           .None => {
-            ctx = ctx.emit_error(entry.span, "undefined variable: ${entry.name}")
+            ctx = .emit_error(entry.span, "undefined variable: ${entry.name}")
             fields = .append(.{ field, value: void_expr(entry.span) })
           },
         }
       },
     }
   }
-  .{
-    ctx,
-    expr: .{ kind: .Record(tid, fields), ty, span: s },
-  }
+
+  .{ ctx, expr: .{ kind: .Record(tid, fields), ty, span: s } }
 }
 
-pub fn lower_field(ctx: LowerCtx, full_expr: Expr, base_expr: Expr, field_name: String, ty: MonoType, s: Span, lower_expr_fn: fn(LowerCtx, Expr) ExprOut) ExprOut {
+pub fn lower_field(
+  ctx: LowerCtx,
+  full_expr: Expr,
+  base_expr: Expr,
+  field_name: String,
+  ty: MonoType,
+  s: Span,
+  lower_expr_fn: fn(LowerCtx, Expr) ExprOut,
+) ExprOut {
   // TypeName.Variant (zero-arg variant construction)
   case extract_type_name_expr(base_expr) {
     .Some(name) => {
       case ctx.env.lookup_type(name) {
         .Some(entry) => {
           vid_idx := find_variant_index(ctx.env, entry.id, field_name)
+
           if vid_idx >= 0 {
             return .{
-              expr: .{ kind: .Variant(entry.id, VariantId.{ id: vid_idx }, []), ty, span: s },
+              expr: .{
+                kind: .Variant(entry.id, VariantId.{ id: vid_idx }, []),
+                ty,
+                span: s,
+              },
               ctx,
             }
           }
@@ -89,20 +127,19 @@ pub fn lower_field(ctx: LowerCtx, full_expr: Expr, base_expr: Expr, field_name: 
         .None => {
           // For extern namespaces, try direct qualified lookup
           qualified := "${name}.${field_name}"
+
           case ctx.env.lookup_function(qualified) {
             .Some(_) => .Some(qualified),
             .None => .None,
           }
         },
       }
+
       case fn_name {
         .Some(fn_name) => {
           case ctx.func_table[fn_name] {
             .Some(fid) => {
-              return .{
-                expr: .{ kind: .GlobalFunc(fid), ty, span: s },
-                ctx,
-              }
+              return .{ expr: .{ kind: .GlobalFunc(fid), ty, span: s }, ctx }
             },
             .None => {},
           }
@@ -110,12 +147,10 @@ pub fn lower_field(ctx: LowerCtx, full_expr: Expr, base_expr: Expr, field_name: 
         .None => {
           // Check for an imported module-level value binding.
           qualified := "${name}.${field_name}"
+
           case ctx.module_globals[qualified] {
             .Some(gid) => {
-              return .{
-                expr: .{ kind: .GlobalLocal(gid), ty, span: s },
-                ctx,
-              }
+              return .{ expr: .{ kind: .GlobalLocal(gid), ty, span: s }, ctx }
             },
             .None => {},
           }
@@ -124,12 +159,17 @@ pub fn lower_field(ctx: LowerCtx, full_expr: Expr, base_expr: Expr, field_name: 
     },
     .None => {},
   }
+
   br := lower_expr_fn(ctx, base_expr)
   base_ty := br.ctx.expr_type(base_expr)
   tid := case type_id_from_mono(base_ty) {
     .Some(id) => id,
     .None => {
-      ctx2 := br.ctx.emit_error(s, "cannot determine record type for field access")
+      ctx2 := br.ctx.emit_error(
+        s,
+        "cannot determine record type for field access",
+      )
+
       return .{ expr: void_expr(s), ctx: ctx2 }
     },
   }

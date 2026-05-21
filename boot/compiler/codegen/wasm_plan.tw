@@ -3,24 +3,32 @@
 // Planning consumes PreparedModule directly. Capture layouts are authoritative
 // prepared-backend facts; planner traversal of `prepared.anf` is limited to
 // body-discovery concerns like strings and builtin calls.
-
-use compiler.resolver.{ResolvedEnv}
-use compiler.builtins.{BuiltinRegistry}
 use compiler.backend.prepare.{PreparedModule}
 use compiler.backend.prepared_ir.{CaptureParam}
-use compiler.codegen.wasm_plan_types.{WasmTypeRegistry, CaptureEntry}
+use compiler.builtins.{BuiltinRegistry}
 use compiler.codegen.wasm_plan_impl as impl
+use compiler.codegen.wasm_plan_types.{CaptureEntry, WasmTypeRegistry}
+use compiler.resolver.{ResolvedEnv}
 
 pub fn plan_wasm_types(
   input: PreparedModule,
   env: ResolvedEnv,
   builtins: BuiltinRegistry,
 ) WasmTypeRegistry {
-  impl.plan_wasm_types_impl(input, env, builtins, to_capture_entries(input.closure_captures))
+  impl.plan_wasm_types_impl(
+    input,
+    env,
+    builtins,
+    to_capture_entries(input.closure_captures),
+  )
 }
 
-fn to_capture_entries(precomputed: Dict<Int, Vector<CaptureParam>>) Dict<Int, Vector<CaptureEntry>> {
+fn to_capture_entries(precomputed: Dict<Int, Vector<CaptureParam>>) Dict<
+  Int,
+  Vector<CaptureEntry>,
+> {
   out: Dict<Int, Vector<CaptureEntry>> = Dict.new()
+
   for fid in precomputed.keys() {
     case precomputed[fid] {
       .Some(caps) => {
@@ -31,5 +39,6 @@ fn to_capture_entries(precomputed: Dict<Int, Vector<CaptureParam>>) Dict<Int, Ve
       .None => {},
     }
   }
+
   out
 }

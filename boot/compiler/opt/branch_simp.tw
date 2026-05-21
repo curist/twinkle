@@ -3,10 +3,8 @@
 // Let(t, AIf(ALitBool(b), then, else), body) → splice selected branch.
 // If the selected branch terminates (Return/Break/Continue), the
 // continuation body is unreachable and dropped.
-
+use compiler.anf.{AnfExpr, AnfMatchArm, AnfOp}
 use compiler.core_ir.{LocalId}
-use compiler.anf.{AnfExpr, AnfOp, AnfMatchArm}
-
 
 pub type SimpResult = .{ expr: AnfExpr, changed: Bool }
 
@@ -49,7 +47,6 @@ fn splice_branch(branch: AnfExpr, result_local: LocalId, continuation: AnfExpr) 
 }
 
 // ── Recurse into sub-expressions ────────────────────────────────────
-
 type OpSimpResult = .{ op: AnfOp, changed: Bool }
 
 fn branch_simplify_op(op: AnfOp) OpSimpResult {
@@ -66,7 +63,9 @@ fn branch_simplify_op(op: AnfOp) OpSimpResult {
       changed := false
       new_arms: Vector<AnfMatchArm> = collect arm in arms {
         r := branch_simplify(arm.body)
+
         if r.changed { changed = true }
+
         AnfMatchArm.{ pattern: arm.pattern, body: r.expr }
       }
       OpSimpResult.{ op: .AMatch(scrutinee, new_arms), changed: changed }

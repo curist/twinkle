@@ -8,16 +8,17 @@
 // 4. Combines init functions in dependency order
 //
 // Reference: src/module/mod.rs (link, remap_func_id, remap_expr_func_ids)
-
-use compiler.core_ir.{CoreModule, CoreExpr, CoreExprKind, FunctionDef, LocalId, FuncId, FieldInit, MatchArm, CompiledModule, ExternImport}
-
-use compiler.resolver.{ResolvedEnv}
+use compiler.core_ir.{
+  CompiledModule, CoreExpr, CoreExprKind, CoreModule, ExternImport, FieldInit,
+  FuncId, FunctionDef, LocalId, MatchArm,
+}
 use compiler.mono_type.{MonoType}
+use compiler.resolver.{ResolvedEnv}
 use lib.source.span.{Span}
-use .core_linker.dce.{compute_reachable, collect_func_refs}
+
+use .core_linker.dce.{collect_func_refs, compute_reachable}
 
 // ── Public API ──────────────────────────────────────────────────────
-
 /// Link all compiled modules into a single CoreModule.
 ///
 /// Modules must be in dependency order (deps before dependents).
@@ -29,7 +30,13 @@ pub fn link(
   builtin_count: Int,
 ) CoreModule {
   if modules.len() == 0 {
-    return CoreModule.{ functions: [], type_env: entry_env, init_func_id: .None, func_table: Dict.new(), extern_imports: Dict.new() }
+    return CoreModule.{
+      functions: [],
+      type_env: entry_env,
+      init_func_id: .None,
+      func_table: Dict.new(),
+      extern_imports: Dict.new(),
+    }
   }
 
   // Step 1: Assign globally unique FuncIds to all defined functions.
@@ -89,14 +96,16 @@ pub fn link(
     }
 
     defined_global_ids[m.path] = local_to_global
-
     name_to_id: Dict<String, Int> = Dict.new()
+
     for name in m.value_exports.keys() {
       case m.value_exports[name] {
         .Some(local_id) => {
           case local_to_global[local_id] {
             .Some(gid) => { name_to_id[name] = gid },
-            .None => error("link: value export points at missing local GlobalLocal"),
+            .None => error(
+              "link: value export points at missing local GlobalLocal",
+            ),
           }
         },
         .None => {},
@@ -145,12 +154,10 @@ pub fn link(
             .Some(ids) => ids,
             .None => error("link: external ref points at missing module"),
           }
-
           gid := case target_globals[ext.func_name] {
             .Some(id) => id,
             .None => error("link: external ref points at missing function"),
           }
-
           remap[local_id] = gid
         },
         .None => error("link: external ref key missing ref payload"),
@@ -170,12 +177,10 @@ pub fn link(
             .Some(values) => values,
             .None => error("link: value ref points at missing module"),
           }
-
           gid := case target_values[vref.value_name] {
             .Some(id) => id,
             .None => error("link: value ref points at missing value"),
           }
-
           global_remap[phantom_id] = gid
         },
         .None => error("link: value ref key missing ref payload"),
@@ -185,25 +190,26 @@ pub fn link(
     // Preserve the module's visible name table with remapped global FuncIds.
     for name in m.func_table.keys() {
       case m.func_table[name] {
-        .Some(fid) => {
-          linked_func_table[name] = remap_func_id(fid, remap)
-        },
-        .None => error("link: func_table key '${name}' missing during iteration"),
+        .Some(fid) => { linked_func_table[name] = remap_func_id(fid, remap) },
+        .None => error(
+          "link: func_table key '${name}' missing during iteration",
+        ),
       }
     }
 
     // Remap and collect functions.
     for f in m.core.functions {
       remapped_id := remap_func_id(f.func_id, remap)
-
-      all_functions = .append(.{
-        func_id: remapped_id,
-        name: f.name,
-        is_init: f.is_init,
-        params: f.params,
-        body: remap_expr(f.body, remap, global_remap),
-        return_ty: f.return_ty,
-      })
+      all_functions = .append(
+        .{
+          func_id: remapped_id,
+          name: f.name,
+          is_init: f.is_init,
+          params: f.params,
+          body: remap_expr(f.body, remap, global_remap),
+          return_ty: f.return_ty,
+        },
+      )
     }
 
     // Track entry module function IDs for DCE roots.
@@ -230,7 +236,6 @@ pub fn link(
   // Step 4: Create combined init that calls all inits in dependency order.
   combined_init := build_combined_init(all_init_ids, next_global)
   linked_functions := all_functions.concat(combined_init.functions)
-
   // Step 5: Dead code elimination.
   reachable := compute_reachable(
     linked_functions,
@@ -239,15 +244,14 @@ pub fn link(
     entry_env,
     linked_func_table,
   )
-
   live_functions: Vector<FunctionDef> = []
+
   for f in linked_functions {
-    if reachable.has(f.func_id.id) {
-      live_functions = .append(f)
-    }
+    if reachable.has(f.func_id.id) { live_functions = .append(f) }
   }
 
   live_func_table: Dict<String, FuncId> = Dict.new()
+
   for name in linked_func_table.keys() {
     case linked_func_table[name] {
       .Some(fid) => {
@@ -255,17 +259,22 @@ pub fn link(
           live_func_table[name] = fid
         }
       },
-      .None => error("link: linked_func_table key '${name}' missing during DCE filtering"),
+      .None => error(
+        "link: linked_func_table key '${name}' missing during DCE filtering",
+      ),
     }
   }
 
   // Filter extern imports after DCE so dead modules do not leak dead imports.
   live_extern_imports: Dict<Int, ExternImport> = Dict.new()
+
   for id in linked_extern_imports.keys() {
     if reachable.has(id) {
       case linked_extern_imports[id] {
         .Some(ext) => { live_extern_imports[id] = ext },
-        .None => error("link: linked_extern_imports key ${id} missing during DCE filtering"),
+        .None => error(
+          "link: linked_extern_imports key ${id} missing during DCE filtering",
+        ),
       }
     }
   }
@@ -280,7 +289,6 @@ pub fn link(
 }
 
 // ── Imported-link validation ────────────────────────────────────────
-
 /// Validate that every imported phantom FuncId referenced by a compiled module
 /// has an external ref, and that every external ref points at a real function
 /// in a known target module.
@@ -289,33 +297,33 @@ pub fn validate_compiled_module_links(
   global_ids: Dict<String, Dict<String, Int>>,
 ) Result<Void, String> {
   defined: Dict<Int, Bool> = Dict.new()
-  for f in m.core.functions {
-    defined[f.func_id.id] = true
-  }
+
+  for f in m.core.functions { defined[f.func_id.id] = true }
 
   func_map: Dict<Int, FunctionDef> = Dict.new()
-  for f in m.core.functions {
-    func_map[f.func_id.id] = f
-  }
+
+  for f in m.core.functions { func_map[f.func_id.id] = f }
 
   // Imported refs must either be builtins, locally defined functions, or have
   // an ExternalRef recorded by the module compiler/lowering pipeline.
   for f in m.core.functions {
     refs := collect_func_refs(f.body, m.core.type_env, m.func_table, func_map)
+
     for ref_id in refs {
-      if ref_id < m.builtin_count or defined.has(ref_id) {
-        continue
-      }
-      if m.extern_imports.has(ref_id) {
-        continue
-      }
+      if ref_id < m.builtin_count or defined.has(ref_id) { continue }
+
+      if m.extern_imports.has(ref_id) { continue }
+
       if !m.external_refs.has(ref_id) {
         ref_name := func_name_for_id(m.func_table, ref_id)
         label := case ref_name {
           .Some(name) => " name='${name}'",
           .None => "",
         }
-        return .Err("core_linker.link: unresolved imported FuncId=${ref_id}${label} in module '${m.path}'")
+
+        return .Err(
+          "core_linker.link: unresolved imported FuncId=${ref_id}${label} in module '${m.path}'",
+        )
       }
     }
   }
@@ -328,13 +336,13 @@ pub fn validate_compiled_module_links(
           .Some(target_globals) => {
             if !target_globals.has(ext.func_name) {
               return .Err(
-                "core_linker.link: imported FuncId=${local_id} in module '${m.path}' targets missing function '${ext.func_name}' in module '${ext.module_path}'"
+                "core_linker.link: imported FuncId=${local_id} in module '${m.path}' targets missing function '${ext.func_name}' in module '${ext.module_path}'",
               )
             }
           },
           .None => {
             return .Err(
-              "core_linker.link: imported FuncId=${local_id} in module '${m.path}' targets unknown module '${ext.module_path}'"
+              "core_linker.link: imported FuncId=${local_id} in module '${m.path}' targets unknown module '${ext.module_path}'",
             )
           },
         }
@@ -347,17 +355,14 @@ pub fn validate_compiled_module_links(
 }
 
 // ── Combined init ───────────────────────────────────────────────────
-
-type CombinedInit = .{
-  functions: Vector<FunctionDef>,
-  init_func_id: FuncId?,
-}
+type CombinedInit = .{ functions: Vector<FunctionDef>, init_func_id: FuncId? }
 
 /// Build a combined $combined_init function that calls all module inits in order.
 fn build_combined_init(init_ids: Vector<FuncId>, next_global: Int) CombinedInit {
   if init_ids.len() == 0 {
     return CombinedInit.{ functions: [], init_func_id: .None }
   }
+
   if init_ids.len() == 1 {
     // Single init — no wrapper needed
     return CombinedInit.{ functions: [], init_func_id: .Some(init_ids[0]) }
@@ -366,17 +371,13 @@ fn build_combined_init(init_ids: Vector<FuncId>, next_global: Int) CombinedInit 
   // Multiple inits: create a combined function that calls each in order.
   combined_id := FuncId.{ id: next_global }
   s := dummy_span()
-
   // Build body: Let(_, Call(init1), Let(_, Call(init2), ... Call(initN)))
   body := make_call(init_ids[init_ids.len() - 1], s)
   i := init_ids.len() - 2
+
   for _ in 0..init_ids.len() - 1 {
     body = CoreExpr.{
-      kind: .Let(
-        LocalId.{ id: 9999900 + i },
-        make_call(init_ids[i], s),
-        body,
-      ),
+      kind: .Let(LocalId.{ id: 9999900 + i }, make_call(init_ids[i], s), body),
       ty: MonoType.Void,
       span: s,
     }
@@ -385,13 +386,12 @@ fn build_combined_init(init_ids: Vector<FuncId>, next_global: Int) CombinedInit 
 
   combined := FunctionDef.{
     func_id: combined_id,
-    name: "$combined_init",
+    name: "\$combined_init",
     is_init: true,
     params: [],
     body,
     return_ty: MonoType.Void,
   }
-
   CombinedInit.{ functions: [combined], init_func_id: .Some(combined_id) }
 }
 
@@ -407,7 +407,6 @@ fn make_call(func_id: FuncId, s: Span) CoreExpr {
 }
 
 // ── FuncId remapping ────────────────────────────────────────────────
-
 fn remap_func_id(id: FuncId, remap: Dict<Int, Int>) FuncId {
   case remap[id.id] {
     .Some(new_id) => FuncId.{ id: new_id },
@@ -422,7 +421,11 @@ fn remap_local_id(id: LocalId, global_remap: Dict<Int, Int>) LocalId {
   }
 }
 
-fn remap_expr(expr: CoreExpr, remap: Dict<Int, Int>, global_remap: Dict<Int, Int>) CoreExpr {
+fn remap_expr(
+  expr: CoreExpr,
+  remap: Dict<Int, Int>,
+  global_remap: Dict<Int, Int>,
+) CoreExpr {
   new_kind: CoreExprKind = case expr.kind {
     .LitInt(_) => expr.kind,
     .LitFloat(_) => expr.kind,
@@ -431,36 +434,59 @@ fn remap_expr(expr: CoreExpr, remap: Dict<Int, Int>, global_remap: Dict<Int, Int
     .LitVoid => expr.kind,
     .Local(_) => expr.kind,
     .GlobalLocal(id) => .GlobalLocal(remap_local_id(id, global_remap)),
-
     .GlobalFunc(id) => .GlobalFunc(remap_func_id(id, remap)),
-
     .Let(local, value, body) => {
-      .Let(local, remap_expr(value, remap, global_remap), remap_expr(body, remap, global_remap))
+      .Let(
+        local,
+        remap_expr(value, remap, global_remap),
+        remap_expr(body, remap, global_remap),
+      )
     },
     .Assign(local, value) => {
-      .Assign(remap_local_id(local, global_remap), remap_expr(value, remap, global_remap))
+      .Assign(
+        remap_local_id(local, global_remap),
+        remap_expr(value, remap, global_remap),
+      )
     },
-
-    .BinOp(op, lhs, rhs) => .BinOp(op, remap_expr(lhs, remap, global_remap), remap_expr(rhs, remap, global_remap)),
+    .BinOp(op, lhs, rhs) => .BinOp(
+      op,
+      remap_expr(lhs, remap, global_remap),
+      remap_expr(rhs, remap, global_remap),
+    ),
     .UnOp(op, operand) => .UnOp(op, remap_expr(operand, remap, global_remap)),
-
     .Call(callee, args) => {
-      .Call(remap_expr(callee, remap, global_remap), remap_exprs(args, remap, global_remap))
+      .Call(
+        remap_expr(callee, remap, global_remap),
+        remap_exprs(args, remap, global_remap),
+      )
     },
     .ContractCall(contract, method_name, receiver, args) => {
-      .ContractCall(contract, method_name, remap_expr(receiver, remap, global_remap), remap_exprs(args, remap, global_remap))
+      .ContractCall(
+        contract,
+        method_name,
+        remap_expr(receiver, remap, global_remap),
+        remap_exprs(args, remap, global_remap),
+      )
     },
     .MakeClosure(func_id, captures) => {
-      remapped_captures := collect c in captures { remap_local_id(c, global_remap) }
+      remapped_captures := collect c in captures {
+        remap_local_id(c, global_remap)
+      }
       .MakeClosure(remap_func_id(func_id, remap), remapped_captures)
     },
-
     .If(cond, then_br, else_br) => {
-      .If(remap_expr(cond, remap, global_remap), remap_expr(then_br, remap, global_remap), remap_expr(else_br, remap, global_remap))
+      .If(
+        remap_expr(cond, remap, global_remap),
+        remap_expr(then_br, remap, global_remap),
+        remap_expr(else_br, remap, global_remap),
+      )
     },
     .Match(scrutinee, arms) => {
       new_arms := collect arm in arms {
-        MatchArm.{ pattern: arm.pattern, body: remap_expr(arm.body, remap, global_remap) }
+        MatchArm.{
+          pattern: arm.pattern,
+          body: remap_expr(arm.body, remap, global_remap),
+        }
       }
       .Match(remap_expr(scrutinee, remap, global_remap), new_arms)
     },
@@ -479,32 +505,47 @@ fn remap_expr(expr: CoreExpr, remap: Dict<Int, Int>, global_remap: Dict<Int, Int
       }
     },
     .Defer(body) => .Defer(remap_expr(body, remap, global_remap)),
-
     .Record(type_id, fields) => {
       new_fields := collect fi in fields {
-        FieldInit.{ field: fi.field, value: remap_expr(fi.value, remap, global_remap) }
+        FieldInit.{
+          field: fi.field,
+          value: remap_expr(fi.value, remap, global_remap),
+        }
       }
       .Record(type_id, new_fields)
     },
-    .RecordGet(rec, field) => .RecordGet(remap_expr(rec, remap, global_remap), field),
+    .RecordGet(rec, field) => .RecordGet(
+      remap_expr(rec, remap, global_remap),
+      field,
+    ),
     .RecordUpdate(rec, field, value) => {
-      .RecordUpdate(remap_expr(rec, remap, global_remap), field, remap_expr(value, remap, global_remap))
+      .RecordUpdate(
+        remap_expr(rec, remap, global_remap),
+        field,
+        remap_expr(value, remap, global_remap),
+      )
     },
     .Variant(type_id, variant_id, args) => {
       .Variant(type_id, variant_id, remap_exprs(args, remap, global_remap))
     },
     .ArrayLit(elems) => .ArrayLit(remap_exprs(elems, remap, global_remap)),
-    .Index(arr, idx) => .Index(remap_expr(arr, remap, global_remap), remap_expr(idx, remap, global_remap)),
+    .Index(arr, idx) => .Index(
+      remap_expr(arr, remap, global_remap),
+      remap_expr(idx, remap, global_remap),
+    ),
   }
   CoreExpr.{ kind: new_kind, ty: expr.ty, span: expr.span }
 }
 
-fn remap_exprs(exprs: Vector<CoreExpr>, remap: Dict<Int, Int>, global_remap: Dict<Int, Int>) Vector<CoreExpr> {
+fn remap_exprs(
+  exprs: Vector<CoreExpr>,
+  remap: Dict<Int, Int>,
+  global_remap: Dict<Int, Int>,
+) Vector<CoreExpr> {
   collect e in exprs { remap_expr(e, remap, global_remap) }
 }
 
 // ── Helpers ─────────────────────────────────────────────────────────
-
 fn func_name_for_id(func_table: Dict<String, FuncId>, ref_id: Int) String? {
   for name in func_table.keys() {
     case func_table[name] {
@@ -516,9 +557,8 @@ fn func_name_for_id(func_table: Dict<String, FuncId>, ref_id: Int) String? {
       .None => {},
     }
   }
+
   .None
 }
 
-fn dummy_span() Span {
-  .{ file_id: 0, start: 0, end: 0 }
-}
+fn dummy_span() Span { .{ file_id: 0, start: 0, end: 0 } }

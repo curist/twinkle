@@ -3,18 +3,18 @@
 // ANF makes evaluation order explicit: every intermediate computation
 // is bound to a named local via Let, producing flat let-chains that
 // map directly to Wasm instructions.
-
-use .core_ir.{LocalId, FuncId, FieldId, VariantId, BinOp, UnOp, CorePattern, Param, ExternImport}
+use .core_ir.{
+  BinOp, CorePattern, ExternImport, FieldId, FuncId, LocalId, Param, UnOp,
+  VariantId,
+}
 use .mono_type.{MonoType, TypeId}
 
 // ── Auxiliary enums ─────────────────────────────────────────────────
-
 pub type OpKind = { Int, Float, Bool, Str }
 
 pub type IndexKind = { Array, Dict, Str }
 
 // ── Atoms (trivial values) ──────────────────────────────────────────
-
 pub type Atom = {
   ALocal(LocalId),
   AGlobalFunc(FuncId),
@@ -26,7 +26,6 @@ pub type Atom = {
 }
 
 // ── ANF expressions (flat let-chains) ───────────────────────────────
-
 pub type AnfExpr = {
   Let(LocalId, AnfOp, AnfExpr),
   Atom(Atom),
@@ -36,7 +35,6 @@ pub type AnfExpr = {
 }
 
 // ── ANF operations (non-atomic computations) ────────────────────────
-
 pub type AnfOp = {
   ACall(Atom, Vector<Atom>),
   AIf(Atom, AnfExpr, AnfExpr),
@@ -54,18 +52,16 @@ pub type AnfOp = {
   AInit(Atom),
   AAssign(LocalId, Atom),
   ADefer(AnfExpr),
-  // Phase D boundary insertion (added for codegen)
-  AWrapAnyref(Atom, MonoType),         // typed → anyref boxing
-  AUnwrapAnyref(Atom, MonoType),       // anyref → typed unboxing
+  AWrapAnyref(Atom, MonoType),
+  AUnwrapAnyref(Atom, MonoType),
 }
 
 // ── Supporting records ──────────────────────────────────────────────
-
 pub type FieldAtom = .{ field: FieldId, value: Atom }
+
 pub type AnfMatchArm = .{ pattern: CorePattern, body: AnfExpr }
 
 // ── Function and module ─────────────────────────────────────────────
-
 pub type AnfFunctionDef = .{
   func_id: FuncId,
   name: String,

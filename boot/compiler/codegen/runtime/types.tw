@@ -3,140 +3,180 @@
 // Mirrors stage0 src/runtime/types.rs.
 // This module defines no functions — only type definitions that all
 // other runtime modules reference.
-
-use compiler.codegen.wasm_ir.{ WasmModule }
+use compiler.codegen.wasm_ir.{WasmModule}
 
 pub fn module() WasmModule {
   .{
     namespace: "rt.types",
     types: [
-      // (type $Array (array (mut anyref)))
       .Array("Array", .{ name: .None, mutable: true, ty: .Anyref }),
-
-      // (type $String (array (mut i8)))
       .Array("String", .{ name: .None, mutable: true, ty: .I8 }),
-
-      // -- Persistent vector trie types --
-      // VecChildren/VecInternal/PVec must come before PDict (which has a ref $PVec field)
-      // to avoid forward type references that V8's validator rejects.
-
-      // (type $VecChildren (array (mut (ref null eq))))
-      .Array("VecChildren", .{
-        name: .None, mutable: true,
-        ty: .Ref(true, .Eq),
-      }),
-
-      // (type $VecInternal (struct (field $children (ref $VecChildren))))
-      .Struct("VecInternal", [
-        .{ name: .Some("children"), mutable: false,
-          ty: .Ref(false, .Named("VecChildren")) },
-      ], .None, true),
-
-      // (type $PVec (struct (field $len i32) (field $shift i32)
-      //                     (field $root (ref null $VecInternal)) (field $tail (ref $Array))))
-      .Struct("PVec", [
-        .{ name: .Some("len"), mutable: false, ty: .I32 },
-        .{ name: .Some("shift"), mutable: false, ty: .I32 },
-        .{ name: .Some("root"), mutable: false,
-          ty: .Ref(true, .Named("VecInternal")) },
-        .{ name: .Some("tail"), mutable: false,
-          ty: .Ref(false, .Named("Array")) },
-      ], .None, true),
-
-      // (type $HamtEntry (struct (field $hash i64) (field $key anyref) (field $val anyref)))
-      .Struct("HamtEntry", [
-        .{ name: .Some("hash"), mutable: false, ty: .I64 },
-        .{ name: .Some("key"), mutable: false, ty: .Anyref },
-        .{ name: .Some("val"), mutable: false, ty: .Anyref },
-      ], .None, true),
-
-      // (type $HamtNode (struct (field $bitmap i32) (field $entries (ref $Array))))
-      .Struct("HamtNode", [
-        .{ name: .Some("bitmap"), mutable: false, ty: .I32 },
-        .{ name: .Some("entries"), mutable: false, ty: .Ref(false, .Named("Array")) },
-      ], .None, true),
-
-      // (type $HamtCollision (struct (field $tag i32) (field $hash i64) (field $entries (ref $Array))))
-      // Keep this layout distinct from HamtNode. Wasm GC type checks are structural,
-      // so identical final struct shapes can make ref.test HamtNode succeed for a collision.
-      .Struct("HamtCollision", [
-        .{ name: .Some("tag"), mutable: false, ty: .I32 },
-        .{ name: .Some("hash"), mutable: false, ty: .I64 },
-        .{ name: .Some("entries"), mutable: false, ty: .Ref(false, .Named("Array")) },
-      ], .None, true),
-
-      // (type $PDict (struct (field $size i32) (field $root (ref null $HamtNode)) (field $order (ref $PVec))))
-      // PVec is defined above to avoid a forward reference.
-      .Struct("PDict", [
-        .{ name: .Some("size"), mutable: true, ty: .I32 },
-        .{ name: .Some("root"), mutable: true, ty: .Ref(true, .Named("HamtNode")) },
-        .{ name: .Some("order"), mutable: true, ty: .Ref(false, .Named("PVec")) },
-      ], .None, true),
-
-      // (type $ClosureEnv (array anyref))
+      .Array(
+        "VecChildren",
+        .{ name: .None, mutable: true, ty: .Ref(true, .Eq) },
+      ),
+      .Struct(
+        "VecInternal",
+        [
+          .{
+            name: .Some("children"),
+            mutable: false,
+            ty: .Ref(false, .Named("VecChildren")),
+          },
+        ],
+        .None,
+        true,
+      ),
+      .Struct(
+        "PVec",
+        [
+          .{ name: .Some("len"), mutable: false, ty: .I32 },
+          .{ name: .Some("shift"), mutable: false, ty: .I32 },
+          .{
+            name: .Some("root"),
+            mutable: false,
+            ty: .Ref(true, .Named("VecInternal")),
+          },
+          .{
+            name: .Some("tail"),
+            mutable: false,
+            ty: .Ref(false, .Named("Array")),
+          },
+        ],
+        .None,
+        true,
+      ),
+      .Struct(
+        "HamtEntry",
+        [
+          .{ name: .Some("hash"), mutable: false, ty: .I64 },
+          .{ name: .Some("key"), mutable: false, ty: .Anyref },
+          .{ name: .Some("val"), mutable: false, ty: .Anyref },
+        ],
+        .None,
+        true,
+      ),
+      .Struct(
+        "HamtNode",
+        [
+          .{ name: .Some("bitmap"), mutable: false, ty: .I32 },
+          .{
+            name: .Some("entries"),
+            mutable: false,
+            ty: .Ref(false, .Named("Array")),
+          },
+        ],
+        .None,
+        true,
+      ),
+      .Struct(
+        "HamtCollision",
+        [
+          .{ name: .Some("tag"), mutable: false, ty: .I32 },
+          .{ name: .Some("hash"), mutable: false, ty: .I64 },
+          .{
+            name: .Some("entries"),
+            mutable: false,
+            ty: .Ref(false, .Named("Array")),
+          },
+        ],
+        .None,
+        true,
+      ),
+      .Struct(
+        "PDict",
+        [
+          .{ name: .Some("size"), mutable: true, ty: .I32 },
+          .{
+            name: .Some("root"),
+            mutable: true,
+            ty: .Ref(true, .Named("HamtNode")),
+          },
+          .{
+            name: .Some("order"),
+            mutable: true,
+            ty: .Ref(false, .Named("PVec")),
+          },
+        ],
+        .None,
+        true,
+      ),
       .Array("ClosureEnv", .{ name: .None, mutable: false, ty: .Anyref }),
-
-      // (type $ClosureFunc (func (param anyref anyref) (result anyref)))
       .FuncType("ClosureFunc", [.Anyref, .Anyref], [.Anyref]),
-
-      // (type $Closure (sub (struct ...))) — kept non-final so future typed
-      // specialization can layer on without changing the universal ABI.
-      .Struct("Closure", [
-        .{ name: .Some("func_ref"), mutable: false,
-          ty: .Ref(true, .Named("ClosureFunc")) },
-        .{ name: .Some("env"), mutable: false,
-          ty: .Ref(true, .Named("ClosureEnv")) },
-      ], .None, false),
-
-      // (type $Variant (struct (field $type_id i32) (field $variant_id i32) (field $payload (ref null $Array))))
-      .Struct("Variant", [
-        .{ name: .Some("type_id"), mutable: false, ty: .I32 },
-        .{ name: .Some("variant_id"), mutable: false, ty: .I32 },
-        .{ name: .Some("payload"), mutable: false,
-          ty: .Ref(true, .Named("Array")) },
-      ], .None, true),
-
-      // (type $BoxedInt (struct (field $v i64)))
-      .Struct("BoxedInt", [
-        .{ name: .Some("v"), mutable: false, ty: .I64 },
-      ], .None, true),
-
-      // (type $BoxedFloat (struct (field $v f64)))
-      .Struct("BoxedFloat", [
-        .{ name: .Some("v"), mutable: false, ty: .F64 },
-      ], .None, true),
-
-      // (type $IterState (sub (struct (field $seed anyref) (field $step anyref))))
-      .Struct("IterState", [
-        .{ name: .Some("seed"), mutable: false, ty: .Anyref },
-        .{ name: .Some("step"), mutable: false, ty: .Anyref },
-      ], .None, false),
-
-      // ── Task concurrency (Phase 2) ──
-
-      // (type $Task (struct
-      //   (field $state   (mut i32))
-      //   (field $frame   (mut anyref))
-      //   (field $resume  (mut funcref))
-      //   (field $result  (mut anyref))
-      //   (field $waiters (mut (ref null $Array)))
-      // ))
-      // Note: resume is funcref (not a typed ref) to avoid functype index
-      // matching issues between the named type and auto-generated functypes.
-      // The scheduler casts to the concrete functype at call_ref sites.
-      .Struct("Task", [
-        .{ name: .Some("state"),   mutable: true, ty: .I32 },
-        .{ name: .Some("frame"),   mutable: true, ty: .Anyref },
-        .{ name: .Some("resume"),  mutable: true, ty: .Funcref },
-        .{ name: .Some("result"),  mutable: true, ty: .Anyref },
-        .{ name: .Some("waiters"), mutable: true, ty: .Ref(true, .Named("Array")) },
-      ], .None, true),
-
-      // (type $FrameRtc (struct (field $closure (mut anyref))))
-      // Run-to-completion frame: stores the closure to call once.
-      .Struct("FrameRtc", [
-        .{ name: .Some("closure"), mutable: true, ty: .Anyref },
-      ], .None, true),
+      .Struct(
+        "Closure",
+        [
+          .{
+            name: .Some("func_ref"),
+            mutable: false,
+            ty: .Ref(true, .Named("ClosureFunc")),
+          },
+          .{
+            name: .Some("env"),
+            mutable: false,
+            ty: .Ref(true, .Named("ClosureEnv")),
+          },
+        ],
+        .None,
+        false,
+      ),
+      .Struct(
+        "Variant",
+        [
+          .{ name: .Some("type_id"), mutable: false, ty: .I32 },
+          .{ name: .Some("variant_id"), mutable: false, ty: .I32 },
+          .{
+            name: .Some("payload"),
+            mutable: false,
+            ty: .Ref(true, .Named("Array")),
+          },
+        ],
+        .None,
+        true,
+      ),
+      .Struct(
+        "BoxedInt",
+        [.{ name: .Some("v"), mutable: false, ty: .I64 }],
+        .None,
+        true,
+      ),
+      .Struct(
+        "BoxedFloat",
+        [.{ name: .Some("v"), mutable: false, ty: .F64 }],
+        .None,
+        true,
+      ),
+      .Struct(
+        "IterState",
+        [
+          .{ name: .Some("seed"), mutable: false, ty: .Anyref },
+          .{ name: .Some("step"), mutable: false, ty: .Anyref },
+        ],
+        .None,
+        false,
+      ),
+      .Struct(
+        "Task",
+        [
+          .{ name: .Some("state"), mutable: true, ty: .I32 },
+          .{ name: .Some("frame"), mutable: true, ty: .Anyref },
+          .{ name: .Some("resume"), mutable: true, ty: .Funcref },
+          .{ name: .Some("result"), mutable: true, ty: .Anyref },
+          .{
+            name: .Some("waiters"),
+            mutable: true,
+            ty: .Ref(true, .Named("Array")),
+          },
+        ],
+        .None,
+        true,
+      ),
+      .Struct(
+        "FrameRtc",
+        [.{ name: .Some("closure"), mutable: true, ty: .Anyref }],
+        .None,
+        true,
+      ),
     ],
     imports: [],
     funcs: [],

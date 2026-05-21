@@ -1,19 +1,18 @@
-use tests.runner
-use tests.assert
-use compiler.parser
 use compiler.ast
 use compiler.imports
+use compiler.parser
 use lib.module.loader
+use tests.assert
+use tests.runner
 
-fn parse_module(src: String) ast.Module {
-  parser.parse(src, 0).value
-}
+fn parse_module(src: String) ast.Module { parser.parse(src, 0).value }
 
-fn get_project_root() String {
-  loader.find_project_root("boot")
-}
+fn get_project_root() String { loader.find_project_root("boot") }
 
-fn plan_deps(module: ast.Module, path: String, root: String) Result<imports.DependencyPlan, String> {
+fn plan_deps(module: ast.Module, path: String, root: String) Result<
+  imports.DependencyPlan,
+  String,
+> {
   case imports.plan_dependencies(module, path, root) {
     .Ok(p) => .Ok(p),
     .Err(e) => .Err(e.message),
@@ -22,61 +21,67 @@ fn plan_deps(module: ast.Module, path: String, root: String) Result<imports.Depe
 
 pub fn suite() runner.Suite {
   root := get_project_root()
-
-  runner.suite("imports")
-
-    // -- plan_dependencies basics --
-
-    .test("no imports produces empty plan", fn() {
+  runner.suite("imports").test(
+    "no imports produces empty plan",
+    fn() {
       module := parse_module("fn main() { }")
       plan := try plan_deps(module, "${root}/tests/fixtures/empty.tw", root)
       // No explicit imports, but prelude modules should be auto-added
       // Check that no Import-kind deps exist
       import_count := 0
+
       for dep in plan.dependencies {
         case dep.kind {
           .Import => { import_count = import_count + 1 },
           .Prelude => {},
         }
       }
+
       try assert.equal(import_count, 0)
       .Ok({})
-    })
-
-    .test("single import resolves to file path", fn() {
+    },
+  ).test(
+    "single import resolves to file path",
+    fn() {
       // Import a module we know exists: stdlib/path.tw
       module := parse_module("use @std.path\nfn main() { }")
       plan := try plan_deps(module, "${root}/main.tw", root)
       found := false
+
       for dep in plan.dependencies {
         if dep.alias == "path" {
           case dep.kind {
             .Import => { found = true },
             _ => {},
           }
+
           try assert.is_true(dep.canonical_path.ends_with("path.tw"))
         }
       }
+
       try assert.is_true(found)
       .Ok({})
-    })
-
-    .test("import with alias uses explicit alias", fn() {
+    },
+  ).test(
+    "import with alias uses explicit alias",
+    fn() {
       module := parse_module("use @std.path as p\nfn main() { }")
       plan := try plan_deps(module, "${root}/main.tw", root)
       found := false
+
       for dep in plan.dependencies {
-        if dep.alias == "p" {
-          found = true
-        }
+        if dep.alias == "p" { found = true }
       }
+
       try assert.is_true(found)
       .Ok({})
-    })
-
-    .test("missing import file returns error", fn() {
+    },
+  ).test(
+    "missing import file returns error",
+    fn() {
       module := parse_module("use @std.nonexistent_module\nfn main() { }")
       result := imports.plan_dependencies(module, "${root}/main.tw", root)
+
       case result {
         .Ok(_) => assert.fail("expected error for missing module"),
         .Err(err) => {
@@ -84,12 +89,14 @@ pub fn suite() runner.Suite {
           .Ok({})
         },
       }
-    })
-
-    .test("stdlib import has correct path format", fn() {
+    },
+  ).test(
+    "stdlib import has correct path format",
+    fn() {
       module := parse_module("use @std.fs\nfn main() { }")
       plan := try plan_deps(module, "${root}/main.tw", root)
       found := false
+
       for dep in plan.dependencies {
         if dep.alias == "fs" {
           try assert.is_true(dep.canonical_path.ends_with("fs.tw"))
@@ -97,45 +104,52 @@ pub fn suite() runner.Suite {
           found = true
         }
       }
+
       try assert.is_true(found)
       .Ok({})
-    })
-
-    .test("bare import resolves from boot project root", fn() {
+    },
+  ).test(
+    "bare import resolves from boot project root",
+    fn() {
       // Import compiler.parser which exists as compiler/parser.tw under boot root.
       module := parse_module("use compiler.parser\nfn main() { }")
       plan := try plan_deps(module, "${root}/main.tw", root)
       found := false
+
       for dep in plan.dependencies {
         if dep.alias == "parser" {
           try assert.is_true(dep.canonical_path.ends_with("parser.tw"))
           found = true
         }
       }
+
       try assert.is_true(found)
       .Ok({})
-    })
-
-    .test("multiple imports produce multiple dependencies", fn() {
+    },
+  ).test(
+    "multiple imports produce multiple dependencies",
+    fn() {
       module := parse_module("use @std.fs\nuse @std.path\nfn main() { }")
       plan := try plan_deps(module, "${root}/main.tw", root)
       import_count := 0
+
       for dep in plan.dependencies {
         case dep.kind {
           .Import => { import_count = import_count + 1 },
           _ => {},
         }
       }
+
       try assert.equal(import_count, 2)
       .Ok({})
-    })
-
-    // -- prelude injection --
-
-    .test("prelude modules auto-injected for non-internal files", fn() {
+    },
+  ).test(
+    "prelude modules auto-injected for non-internal files",
+    fn() {
       module := parse_module("fn main() { }")
       plan := try plan_deps(module, "${root}/main.tw", root)
       prelude_count := 0
+
       for dep in plan.dependencies {
         case dep.kind {
           .Prelude => {
@@ -145,79 +159,103 @@ pub fn suite() runner.Suite {
           _ => {},
         }
       }
+
       // Should have at least some prelude modules (vector, string, etc.)
       try assert.is_true(prelude_count > 0)
       .Ok({})
-    })
-
-    .test("prelude skipped for stdlib files", fn() {
+    },
+  ).test(
+    "prelude skipped for stdlib files",
+    fn() {
       module := parse_module("fn helper() { }")
-      plan := try plan_deps(module, "${loader.resolve_stdlib_root()}/fs.tw", root)
+      plan := try plan_deps(
+        module,
+        "${loader.resolve_stdlib_root()}/fs.tw",
+        root,
+      )
       try assert.is_true(plan.is_internal)
       prelude_count := 0
+
       for dep in plan.dependencies {
         case dep.kind {
           .Prelude => { prelude_count = prelude_count + 1 },
           _ => {},
         }
       }
+
       try assert.equal(prelude_count, 0)
       .Ok({})
-    })
-
-    .test("prelude skipped for prelude files", fn() {
+    },
+  ).test(
+    "prelude skipped for prelude files",
+    fn() {
       module := parse_module("fn helper() { }")
-      plan := try plan_deps(module, "${loader.resolve_prelude_root()}/vector.tw", root)
+      plan := try plan_deps(
+        module,
+        "${loader.resolve_prelude_root()}/vector.tw",
+        root,
+      )
       try assert.is_true(plan.is_internal)
       prelude_count := 0
+
       for dep in plan.dependencies {
         case dep.kind {
           .Prelude => { prelude_count = prelude_count + 1 },
           _ => {},
         }
       }
+
       try assert.equal(prelude_count, 0)
       .Ok({})
-    })
-
-    .test("explicit prelude import not duplicated", fn() {
+    },
+  ).test(
+    "explicit prelude import not duplicated",
+    fn() {
       // If user explicitly imports a prelude module, don't auto-add it
       // We need to test with a prelude module path that matches
       module := parse_module("fn main() { }")
       plan := try plan_deps(module, "${root}/main.tw", root)
       // Count unique canonical paths
       paths: Dict<String, Bool> = Dict.new()
+
       for dep in plan.dependencies {
         if paths.has(dep.canonical_path) {
           return .Err("duplicate dependency: ${dep.canonical_path}")
         }
+
         paths[dep.canonical_path] = true
       }
+
       .Ok({})
-    })
-
-    // -- dependency plan structure --
-
-    .test("explicit imports come before prelude", fn() {
+    },
+  ).test(
+    "explicit imports come before prelude",
+    fn() {
       module := parse_module("use @std.fs\nfn main() { }")
       plan := try plan_deps(module, "${root}/main.tw", root)
+
       // First dependency should be the explicit import
       if plan.dependencies.len() > 0 {
         first := plan.dependencies[0]
         try assert.equal(first.alias, "fs")
+
         case first.kind {
           .Import => .Ok({}),
-          .Prelude => assert.fail("first dependency should be Import, not Prelude"),
+          .Prelude => assert.fail(
+            "first dependency should be Import, not Prelude",
+          ),
         }
       } else {
         assert.fail("expected at least one dependency")
       }
-    })
-
-    .test("selective import preserves items", fn() {
+    },
+  ).test(
+    "selective import preserves items",
+    fn() {
       module := parse_module("use @std.fs.{read_file, DirEntry}\nfn main() { }")
       plan := try plan_deps(module, "${root}/main.tw", root)
       found := false
+
       for dep in plan.dependencies {
         if dep.alias == "fs" {
           case dep.items {
@@ -225,11 +263,15 @@ pub fn suite() runner.Suite {
               try assert.equal(items.len(), 2)
               found = true
             },
-            .None => { return .Err("expected selective items") },
+            .None => {
+              return .Err("expected selective items")
+            },
           }
         }
       }
+
       try assert.is_true(found)
       .Ok({})
-    })
+    },
+  )
 }

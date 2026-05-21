@@ -10,14 +10,12 @@
 //   3. Resolve inter-module imports against export map
 //   4. Merge & rewrite all artifacts with qualified names
 //   5. Synthesize __linked_init and export as __twinkle_start
-
 use compiler.codegen.wasm_ir.{
-  ValType, HeapType, Instr, TypeDef, FieldDef, FuncDef, ImportDef,
-  GlobalDef, ExportDef, TableDef, ElemDef, DataSegment, WasmModule,
+  DataSegment, ElemDef, ExportDef, FieldDef, FuncDef, GlobalDef, HeapType,
+  ImportDef, Instr, TableDef, TypeDef, ValType, WasmModule,
 }
 
 // ── Types ──────────────────────────────────────────────────────────────
-
 pub type LinkedModule = .{
   types: Vector<TypeDef>,
   imports: Vector<ImportDef>,
@@ -30,23 +28,23 @@ pub type LinkedModule = .{
   start: String?,
 }
 
-pub type LinkError = {
-  MissingExport(String, String),  // (module, name)
-}
+pub type LinkError = { MissingExport(String, String) }
 
 // ── Naming helpers ─────────────────────────────────────────────────────
-
 fn ns_prefix(ns: String) String {
   // "rt.arr" → "rt_arr"
   out := ""
+
   for i in 0..ns.len() {
     ch := ns.slice(i, i + 1)
+
     if ch == "." {
       out = "${out}_"
     } else {
       out = "${out}${ch}"
     }
   }
+
   out
 }
 
@@ -62,7 +60,6 @@ fn retain_final_exports(ns: String) Bool {
 }
 
 // ── Rename map helpers ─────────────────────────────────────────────────
-
 fn rename(map: Dict<String, String>, sym: String) String {
   case map[sym] {
     .Some(new) => new,
@@ -80,15 +77,19 @@ fn rename_func(ns: String, redirects: Dict<String, String>, sym: String) String 
 }
 
 // ── ValType rewriting ──────────────────────────────────────────────────
-
 fn rewrite_val_type(type_renames: Dict<String, String>, vt: ValType) ValType {
   case vt {
-    .Ref(nullable, .Named(name)) => ValType.Ref(nullable, HeapType.Named(rename(type_renames, name))),
+    .Ref(nullable, .Named(name)) => ValType.Ref(
+      nullable,
+      HeapType.Named(rename(type_renames, name)),
+    ),
     _ => vt,
   }
 }
 
-fn rewrite_val_types(type_renames: Dict<String, String>, vts: Vector<ValType>) Vector<ValType> {
+fn rewrite_val_types(type_renames: Dict<String, String>, vts: Vector<ValType>) Vector<
+  ValType,
+> {
   collect vt in vts { rewrite_val_type(type_renames, vt) }
 }
 
@@ -100,7 +101,6 @@ fn rewrite_val_type_opt(type_renames: Dict<String, String>, vt: ValType?) ValTyp
 }
 
 // ── HeapType rewriting ─────────────────────────────────────────────────
-
 fn rewrite_heap_type(type_renames: Dict<String, String>, ht: HeapType) HeapType {
   case ht {
     .Named(name) => HeapType.Named(rename(type_renames, name)),
@@ -109,14 +109,15 @@ fn rewrite_heap_type(type_renames: Dict<String, String>, ht: HeapType) HeapType 
 }
 
 // ── Instruction rewriting ──────────────────────────────────────────────
-
 fn rewrite_instrs(
   ns: String,
   import_redirects: Dict<String, String>,
   type_renames: Dict<String, String>,
   instrs: Vector<Instr>,
 ) Vector<Instr> {
-  collect instr in instrs { rewrite_instr(ns, import_redirects, type_renames, instr) }
+  collect instr in instrs {
+    rewrite_instr(ns, import_redirects, type_renames, instr)
+  }
 }
 
 fn rewrite_instr(
@@ -131,58 +132,72 @@ fn rewrite_instr(
     .ReturnCall(sym) => Instr.ReturnCall(rename_func(ns, import_redirects, sym)),
     .RefFunc(sym) => Instr.RefFunc(rename_func(ns, import_redirects, sym)),
     .CallRef(sym) => Instr.CallRef(rename(type_renames, sym)),
-    .CallIndirect(sym, idx) => Instr.CallIndirect(rename(type_renames, sym), idx),
+    .CallIndirect(sym, idx) => Instr.CallIndirect(
+      rename(type_renames, sym),
+      idx,
+    ),
     .ReturnCallRef(sym) => Instr.ReturnCallRef(rename(type_renames, sym)),
-
     // Globals — func renames (globals share the func rename map)
     .GlobalGet(sym) => Instr.GlobalGet(rename_func(ns, import_redirects, sym)),
     .GlobalSet(sym) => Instr.GlobalSet(rename_func(ns, import_redirects, sym)),
-
     // Struct — type renames
     .StructNew(sym) => Instr.StructNew(rename(type_renames, sym)),
     .StructGet(sym, idx) => Instr.StructGet(rename(type_renames, sym), idx),
     .StructGetS(sym, idx) => Instr.StructGetS(rename(type_renames, sym), idx),
     .StructSet(sym, idx) => Instr.StructSet(rename(type_renames, sym), idx),
-
     // Array — type renames
     .ArrayNew(sym) => Instr.ArrayNew(rename(type_renames, sym)),
     .ArrayNewDefault(sym) => Instr.ArrayNewDefault(rename(type_renames, sym)),
     .ArrayNewFixed(sym, n) => Instr.ArrayNewFixed(rename(type_renames, sym), n),
-    .ArrayNewData(ty_sym, data_sym) =>
-      Instr.ArrayNewData(rename(type_renames, ty_sym), rename_func(ns, import_redirects, data_sym)),
+    .ArrayNewData(ty_sym, data_sym) => Instr.ArrayNewData(
+      rename(type_renames, ty_sym),
+      rename_func(ns, import_redirects, data_sym),
+    ),
     .ArrayGet(sym) => Instr.ArrayGet(rename(type_renames, sym)),
     .ArrayGetU(sym) => Instr.ArrayGetU(rename(type_renames, sym)),
     .ArraySet(sym) => Instr.ArraySet(rename(type_renames, sym)),
-    .ArrayCopy(dst, src) => Instr.ArrayCopy(rename(type_renames, dst), rename(type_renames, src)),
-
+    .ArrayCopy(dst, src) => Instr.ArrayCopy(
+      rename(type_renames, dst),
+      rename(type_renames, src),
+    ),
     // References — type renames for heap types
     .RefNull(ht) => Instr.RefNull(rewrite_heap_type(type_renames, ht)),
-    .RefCast(nullable, ht) => Instr.RefCast(nullable, rewrite_heap_type(type_renames, ht)),
-    .RefTest(nullable, ht) => Instr.RefTest(nullable, rewrite_heap_type(type_renames, ht)),
-
+    .RefCast(nullable, ht) => Instr.RefCast(
+      nullable,
+      rewrite_heap_type(type_renames, ht),
+    ),
+    .RefTest(nullable, ht) => Instr.RefTest(
+      nullable,
+      rewrite_heap_type(type_renames, ht),
+    ),
     // Control flow — recurse into bodies, rewrite result types
-    .If(result, then_body, else_body) =>
-      Instr.If(
-        rewrite_val_type_opt(type_renames, result),
-        rewrite_instrs(ns, import_redirects, type_renames, then_body),
-        rewrite_instrs(ns, import_redirects, type_renames, else_body),
-      ),
-    .Block(label, result, body) =>
-      Instr.Block(label, rewrite_val_type_opt(type_renames, result),
-        rewrite_instrs(ns, import_redirects, type_renames, body)),
-    .Loop(label, result, body) =>
-      Instr.Loop(label, rewrite_val_type_opt(type_renames, result),
-        rewrite_instrs(ns, import_redirects, type_renames, body)),
-
+    .If(result, then_body, else_body) => Instr.If(
+      rewrite_val_type_opt(type_renames, result),
+      rewrite_instrs(ns, import_redirects, type_renames, then_body),
+      rewrite_instrs(ns, import_redirects, type_renames, else_body),
+    ),
+    .Block(label, result, body) => Instr.Block(
+      label,
+      rewrite_val_type_opt(type_renames, result),
+      rewrite_instrs(ns, import_redirects, type_renames, body),
+    ),
+    .Loop(label, result, body) => Instr.Loop(
+      label,
+      rewrite_val_type_opt(type_renames, result),
+      rewrite_instrs(ns, import_redirects, type_renames, body),
+    ),
     // Everything else passes through unchanged
     _ => instr,
   }
 }
 
 // ── TypeDef rewriting ──────────────────────────────────────────────────
-
 fn rewrite_field_def(type_renames: Dict<String, String>, fd: FieldDef) FieldDef {
-  FieldDef.{ name: fd.name, mutable: fd.mutable, ty: rewrite_val_type(type_renames, fd.ty) }
+  FieldDef.{
+    name: fd.name,
+    mutable: fd.mutable,
+    ty: rewrite_val_type(type_renames, fd.ty),
+  }
 }
 
 fn rewrite_type_def(type_renames: Dict<String, String>, td: TypeDef) TypeDef {
@@ -193,27 +208,36 @@ fn rewrite_type_def(type_renames: Dict<String, String>, td: TypeDef) TypeDef {
         .Some(s) => .Some(rename(type_renames, s)),
         .None => .None,
       }
-      TypeDef.Struct(rename(type_renames, name), new_fields, new_super, is_final)
-    },
-    .Array(name, elem) =>
-      TypeDef.Array(rename(type_renames, name), rewrite_field_def(type_renames, elem)),
-    .FuncType(name, params, results) =>
-      TypeDef.FuncType(
+      TypeDef.Struct(
         rename(type_renames, name),
-        rewrite_val_types(type_renames, params),
-        rewrite_val_types(type_renames, results),
-      ),
+        new_fields,
+        new_super,
+        is_final,
+      )
+    },
+    .Array(name, elem) => TypeDef.Array(
+      rename(type_renames, name),
+      rewrite_field_def(type_renames, elem),
+    ),
+    .FuncType(name, params, results) => TypeDef.FuncType(
+      rename(type_renames, name),
+      rewrite_val_types(type_renames, params),
+      rewrite_val_types(type_renames, results),
+    ),
   }
 }
 
 // ── Public API ─────────────────────────────────────────────────────────
-
-pub fn link(modules: Vector<WasmModule>, entry: String?) Result<LinkedModule, Vector<LinkError>> {
+pub fn link(modules: Vector<WasmModule>, entry: String?) Result<
+  LinkedModule,
+  Vector<LinkError>,
+> {
   // Phase 1: Build export map — (namespace, wasm_name) → qualified func sym
   export_map: Dict<String, String> = Dict.new()
+
   for m in modules {
     for exp in m.exports {
-      key := "${m.namespace}\x00${exp.wasm_name}"
+      key := "${m.namespace} ${exp.wasm_name}"
       export_map[key] = qualify(m.namespace, exp.func_sym)
     }
   }
@@ -227,9 +251,13 @@ pub fn link(modules: Vector<WasmModule>, entry: String?) Result<LinkedModule, Ve
     // Types
     for td in m.types {
       case td {
-        .Struct(name, _, _, _) => { type_renames[name] = qualify(m.namespace, name) },
+        .Struct(name, _, _, _) => {
+          type_renames[name] = qualify(m.namespace, name)
+        },
         .Array(name, _) => { type_renames[name] = qualify(m.namespace, name) },
-        .FuncType(name, _, _) => { type_renames[name] = qualify(m.namespace, name) },
+        .FuncType(name, _, _) => {
+          type_renames[name] = qualify(m.namespace, name)
+        },
       }
     }
 
@@ -242,19 +270,20 @@ pub fn link(modules: Vector<WasmModule>, entry: String?) Result<LinkedModule, Ve
 
   for m, mi in modules {
     redirects: Dict<String, String> = Dict.new()
+
     for imp in m.imports {
-      key := "${imp.module}\x00${imp.name}"
+      key := "${imp.module} ${imp.name}"
+
       case export_map[key] {
         .Some(qualified_export) => {
           // Both the local alias and the qualified alias redirect to the export
           redirects[imp.as_sym] = qualified_export
           redirects[qualify(m.namespace, imp.as_sym)] = qualified_export
         },
-        .None => {
-          // External import (host/user extern/etc.) — preserve it.
-        },
+        .None => {},
       }
     }
+
     all_import_redirects = .append(redirects)
   }
 
@@ -280,81 +309,119 @@ pub fn link(modules: Vector<WasmModule>, entry: String?) Result<LinkedModule, Ve
     // Import redirects are the only function renames that cannot be derived
     // from the current module namespace. Avoid building and repeatedly reading
     // one huge function rename HAMT for the user module.
-
     for td in m.types {
       out_types = .append(rewrite_type_def(type_renames, td))
     }
 
     for imp in m.imports {
-      if !import_redirects.has(imp.as_sym) and !import_redirects.has(qualify(m.namespace, imp.as_sym)) {
-        out_imports = .append(ImportDef.{
-          module: imp.module,
-          name: imp.name,
-          as_sym: qualify(m.namespace, imp.as_sym),
-          params: rewrite_val_types(type_renames, imp.params),
-          results: rewrite_val_types(type_renames, imp.results),
-        })
+      if !import_redirects.has(imp.as_sym)
+      and !import_redirects.has(qualify(m.namespace, imp.as_sym)) {
+        out_imports = .append(
+          ImportDef.{
+            module: imp.module,
+            name: imp.name,
+            as_sym: qualify(m.namespace, imp.as_sym),
+            params: rewrite_val_types(type_renames, imp.params),
+            results: rewrite_val_types(type_renames, imp.results),
+          },
+        )
       }
     }
 
     for f in m.funcs {
-      out_funcs = .append(FuncDef.{
-        name: qualify(m.namespace, f.name),
-        params: rewrite_val_types(type_renames, f.params),
-        results: rewrite_val_types(type_renames, f.results),
-        locals: rewrite_val_types(type_renames, f.locals),
-        body: rewrite_instrs(m.namespace, import_redirects, type_renames, f.body),
-      })
+      out_funcs = .append(
+        FuncDef.{
+          name: qualify(m.namespace, f.name),
+          params: rewrite_val_types(type_renames, f.params),
+          results: rewrite_val_types(type_renames, f.results),
+          locals: rewrite_val_types(type_renames, f.locals),
+          body: rewrite_instrs(
+            m.namespace,
+            import_redirects,
+            type_renames,
+            f.body,
+          ),
+        },
+      )
     }
 
     for g in m.globals {
-      out_globals = .append(GlobalDef.{
-        name: qualify(m.namespace, g.name),
-        mutable: g.mutable,
-        ty: rewrite_val_type(type_renames, g.ty),
-        init: rewrite_instrs(m.namespace, import_redirects, type_renames, g.init),
-      })
+      out_globals = .append(
+        GlobalDef.{
+          name: qualify(m.namespace, g.name),
+          mutable: g.mutable,
+          ty: rewrite_val_type(type_renames, g.ty),
+          init: rewrite_instrs(
+            m.namespace,
+            import_redirects,
+            type_renames,
+            g.init,
+          ),
+        },
+      )
     }
 
     for t in m.tables {
-      out_tables = .append(TableDef.{
-        name: qualify(m.namespace, t.name),
-        elem_type: rewrite_val_type(type_renames, t.elem_type),
-        min: t.min,
-        max: t.max,
-      })
+      out_tables = .append(
+        TableDef.{
+          name: qualify(m.namespace, t.name),
+          elem_type: rewrite_val_type(type_renames, t.elem_type),
+          min: t.min,
+          max: t.max,
+        },
+      )
     }
 
     for e in m.elems {
-      out_elems = .append(ElemDef.{
-        table: qualify(m.namespace, e.table),
-        offset: rewrite_instrs(m.namespace, import_redirects, type_renames, e.offset),
-        func_syms: collect sym in e.func_syms { rename_func(m.namespace, import_redirects, sym) },
-      })
+      out_elems = .append(
+        ElemDef.{
+          table: qualify(m.namespace, e.table),
+          offset: rewrite_instrs(
+            m.namespace,
+            import_redirects,
+            type_renames,
+            e.offset,
+          ),
+          func_syms: collect sym in e.func_syms {
+            rename_func(m.namespace, import_redirects, sym)
+          },
+        },
+      )
     }
 
     // Exports
     if retain_final_exports(m.namespace) {
       for exp in m.exports {
-        out_exports = .append(ExportDef.{
-          wasm_name: exp.wasm_name,
-          func_sym: rename_func(m.namespace, import_redirects, exp.func_sym),
-        })
+        out_exports = .append(
+          ExportDef.{
+            wasm_name: exp.wasm_name,
+            func_sym: rename_func(m.namespace, import_redirects, exp.func_sym),
+          },
+        )
       }
     }
 
     // Data segments
     for d in m.data {
-      out_data = .append(DataSegment.{
-        name: qualify(m.namespace, d.name),
-        offset: rewrite_instrs(m.namespace, import_redirects, type_renames, d.offset),
-        bytes: d.bytes,
-      })
+      out_data = .append(
+        DataSegment.{
+          name: qualify(m.namespace, d.name),
+          offset: rewrite_instrs(
+            m.namespace,
+            import_redirects,
+            type_renames,
+            d.offset,
+          ),
+          bytes: d.bytes,
+        },
+      )
     }
 
     // Collect start functions
     case m.start {
-      .Some(s) => { start_funcs = .append(rename_func(m.namespace, import_redirects, s)) },
+      .Some(s) => {
+        start_funcs = .append(rename_func(m.namespace, import_redirects, s))
+      },
       .None => {},
     }
   }
@@ -365,47 +432,51 @@ pub fn link(modules: Vector<WasmModule>, entry: String?) Result<LinkedModule, Ve
   // cannot be wrapped with WebAssembly.promising), we export the entry
   // function so the host can call it explicitly. This is required for JSPI.
   start: String? = .None
-
   // Collect all call targets: start funcs + entry
   init_calls: Vector<String> = start_funcs
+
   case entry {
     .Some(e) => { init_calls = .append(e) },
     .None => {},
   }
 
-  if init_calls.len() == 0 {
-    // no-op
-  } else if init_calls.len() == 1 and case entry { .None => true, _ => false } {
+  if init_calls.len() == 0 {} else if init_calls.len() == 1
+  and case entry {
+    .None => true,
+    _ => false,
+  } {
     // Single start, no entry → export it directly as __twinkle_start
-    out_exports = .append(ExportDef.{
-      wasm_name: "__twinkle_start",
-      func_sym: init_calls[0],
-    })
+    out_exports = .append(
+      ExportDef.{ wasm_name: "__twinkle_start", func_sym: init_calls[0] },
+    )
   } else {
     // Multiple starts or entry specified → synthesize __linked_init
     init_body: Vector<Instr> = collect sym in init_calls { Instr.Call(sym) }
-    out_funcs = .append(FuncDef.{
-      name: "__linked_init",
-      params: [],
-      results: [],
-      locals: [],
-      body: init_body,
-    })
-    out_exports = .append(ExportDef.{
-      wasm_name: "__twinkle_start",
-      func_sym: "__linked_init",
-    })
+    out_funcs = .append(
+      FuncDef.{
+        name: "__linked_init",
+        params: [],
+        results: [],
+        locals: [],
+        body: init_body,
+      },
+    )
+    out_exports = .append(
+      ExportDef.{ wasm_name: "__twinkle_start", func_sym: "__linked_init" },
+    )
   }
 
-  .Ok(LinkedModule.{
-    types: out_types,
-    imports: out_imports,
-    funcs: out_funcs,
-    globals: out_globals,
-    tables: out_tables,
-    elems: out_elems,
-    exports: out_exports,
-    data: out_data,
-    start: start,
-  })
+  .Ok(
+    LinkedModule.{
+      types: out_types,
+      imports: out_imports,
+      funcs: out_funcs,
+      globals: out_globals,
+      tables: out_tables,
+      elems: out_elems,
+      exports: out_exports,
+      data: out_data,
+      start: start,
+    },
+  )
 }

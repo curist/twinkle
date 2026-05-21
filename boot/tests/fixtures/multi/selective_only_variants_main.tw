@@ -1,5 +1,5 @@
-use .selective_only_variants_tokens.{Token, TokenKind}
 use .selective_only_variants_cursor
+use .selective_only_variants_tokens.{Token, TokenKind}
 
 fn is_loop(kind: TokenKind) Bool {
   case kind {

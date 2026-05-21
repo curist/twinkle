@@ -1,28 +1,24 @@
-use tests.runner
-use tests.assert
-use lib.source.span
-use compiler.resolver
-use compiler.resolver.{ResolvedEnv, ResolvedTypeDef, ResolvedField, TypeEntry}
-use compiler.mono_type.{MonoType, TypeId}
-
-use compiler.core_ir.{LocalId, FuncId, FieldId, VariantId, Param}
+use compiler.anf.{AnfExpr, AnfFunctionDef, AnfModule, FieldAtom}
+use compiler.backend.closure_convert.{convert_closures}
+use compiler.backend.prepare.{PreparedModule, prepare_backend}
+use compiler.backend.prepared_ir.{CaptureParam}
+use compiler.base_env
 use compiler.builtins as bi
 use compiler.builtins.{BuiltinRegistry, make_builtin_registry}
-use compiler.anf.{AnfExpr, FieldAtom, AnfFunctionDef, AnfModule}
-
-
 use compiler.codegen.wasm_layout.{mono_to_key}
-
 use compiler.codegen.wasm_plan.{plan_wasm_types}
-use compiler.codegen.wasm_plan_types.{WasmTypeRegistry, FuncSigEntry, CaptureEntry, StringPoolEntry}
-
-use compiler.backend.prepared_ir.{CaptureParam}
-use compiler.backend.prepare.{prepare_backend, PreparedModule}
-use compiler.backend.closure_convert.{convert_closures}
-use compiler.base_env
+use compiler.codegen.wasm_plan_types.{
+  CaptureEntry, FuncSigEntry, StringPoolEntry, WasmTypeRegistry,
+}
+use compiler.core_ir.{FieldId, FuncId, LocalId, Param, VariantId}
+use compiler.mono_type.{MonoType, TypeId}
+use compiler.resolver
+use compiler.resolver.{ResolvedEnv, ResolvedField, ResolvedTypeDef, TypeEntry}
+use lib.source.span
+use tests.assert
+use tests.runner
 
 // ── Helpers ─────────────────────────────────────────────────────────
-
 fn dummy_span() span.Span { span.Span.{ file_id: 0, start: 0, end: 0 } }
 
 fn empty_builtins() BuiltinRegistry {
@@ -33,11 +29,10 @@ fn empty_builtins() BuiltinRegistry {
   make_builtin_registry()
 }
 
-fn simple_builtins() BuiltinRegistry {
-  make_builtin_registry()
-}
+fn simple_builtins() BuiltinRegistry { make_builtin_registry() }
 
 fn mk_local(n: Int) LocalId { LocalId.{ id: n } }
+
 fn mk_func(n: Int) FuncId { FuncId.{ id: n } }
 
 fn mono1(key: Int, val: MonoType) Dict<Int, MonoType> {
@@ -67,7 +62,11 @@ fn mk_func_def(
 }
 
 fn mk_module(funcs: Vector<AnfFunctionDef>) AnfModule {
-  m: AnfModule = AnfModule.{ functions: funcs, init_func_id: .None, extern_imports: Dict.new() }
+  m: AnfModule = AnfModule.{
+    functions: funcs,
+    init_func_id: .None,
+    extern_imports: Dict.new(),
+  }
   m
 }
 
@@ -86,18 +85,31 @@ fn env_with_two_records() ResolvedEnv {
   inner := TypeEntry.{
     id: TypeId.{ id: 10 },
     arity: 0,
-    def: .Some(ResolvedTypeDef.Record("Inner", [], [
-      ResolvedField.{ name: "value", ty: MonoType.Int },
-    ])),
+    def: .Some(
+      ResolvedTypeDef.Record(
+        "Inner",
+        [],
+        [ResolvedField.{ name: "value", ty: MonoType.Int }],
+      ),
+    ),
     span: dummy_span(),
     is_extern: false,
   }
   outer := TypeEntry.{
     id: TypeId.{ id: 11 },
     arity: 0,
-    def: .Some(ResolvedTypeDef.Record("Outer", [], [
-      ResolvedField.{ name: "inner", ty: MonoType.Named(TypeId.{ id: 10 }, []) },
-    ])),
+    def: .Some(
+      ResolvedTypeDef.Record(
+        "Outer",
+        [],
+        [
+          ResolvedField.{
+            name: "inner",
+            ty: MonoType.Named(TypeId.{ id: 10 }, []),
+          },
+        ],
+      ),
+    ),
     span: dummy_span(),
     is_extern: false,
   }
@@ -108,9 +120,18 @@ fn env_with_recursive_record() ResolvedEnv {
   node := TypeEntry.{
     id: TypeId.{ id: 12 },
     arity: 0,
-    def: .Some(ResolvedTypeDef.Record("Node", [], [
-      ResolvedField.{ name: "next", ty: MonoType.Optional(MonoType.Named(TypeId.{ id: 12 }, [])) },
-    ])),
+    def: .Some(
+      ResolvedTypeDef.Record(
+        "Node",
+        [],
+        [
+          ResolvedField.{
+            name: "next",
+            ty: MonoType.Optional(MonoType.Named(TypeId.{ id: 12 }, [])),
+          },
+        ],
+      ),
+    ),
     span: dummy_span(),
     is_extern: false,
   }
@@ -130,14 +151,22 @@ fn plan(anf: AnfModule, env: ResolvedEnv, builtins: BuiltinRegistry) WasmTypeReg
   plan_wasm_types(prepare(anf, env, builtins), env, builtins)
 }
 
-fn plan_with_closures(anf: AnfModule, env: ResolvedEnv, builtins: BuiltinRegistry) WasmTypeRegistry {
+fn plan_with_closures(
+  anf: AnfModule,
+  env: ResolvedEnv,
+  builtins: BuiltinRegistry,
+) WasmTypeRegistry {
   closure_conversion := convert_closures(anf, env)
-  prepared := prepare_backend(closure_conversion.anf, env, builtins, closure_conversion.captures)
+  prepared := prepare_backend(
+    closure_conversion.anf,
+    env,
+    builtins,
+    closure_conversion.captures,
+  )
   plan_wasm_types(prepared, env, builtins)
 }
 
 // ── Registry types construction ─────────────────────────────────────
-
 pub fn test_func_sig_entry() Result<Void, String> {
   e := FuncSigEntry.{
     param_types: [MonoType.Int, MonoType.Float],
@@ -148,31 +177,31 @@ pub fn test_func_sig_entry() Result<Void, String> {
 }
 
 pub fn test_capture_entry() Result<Void, String> {
-  e := CaptureEntry.{
-    local_id: mk_local(5),
-    ty: MonoType.Int,
-  }
+  e := CaptureEntry.{ local_id: mk_local(5), ty: MonoType.Int }
   try assert.equal(e.local_id.id, 5)
   .Ok({})
 }
 
 pub fn test_string_pool_entry() Result<Void, String> {
   e := StringPoolEntry.{
-    global_sym: "$str_0",
-    getter_sym: "$str_0_get",
-    data_segment_name: "$data_strings",
+    global_sym: "\$str_0",
+    getter_sym: "\$str_0_get",
+    data_segment_name: "\$data_strings",
     byte_offset: 0,
     byte_len: 5,
   }
-  try assert.equal(e.global_sym, "$str_0")
+  try assert.equal(e.global_sym, "\$str_0")
   try assert.equal(e.byte_len, 5)
   .Ok({})
 }
 
 // ── plan_wasm_types: empty module ───────────────────────────────────
-
 pub fn test_plan_empty_module() Result<Void, String> {
-  anf := AnfModule.{ functions: [], init_func_id: .None, extern_imports: Dict.new() }
+  anf := AnfModule.{
+    functions: [],
+    init_func_id: .None,
+    extern_imports: Dict.new(),
+  }
   env := resolver.empty_env()
   builtins := empty_builtins()
   reg := plan(anf, env, builtins)
@@ -181,15 +210,22 @@ pub fn test_plan_empty_module() Result<Void, String> {
 }
 
 // ── plan_wasm_types: collects primitive types ───────────────────────
-
 pub fn test_plan_primitive_func() Result<Void, String> {
   // fn add(a: Int, b: Int) Int { a + b }
   mono := mono1(0, MonoType.Int)
-  f := mk_func_def(100, "add",
-    [Param.{ local: mk_local(0), ty: MonoType.Int }, Param.{ local: mk_local(1), ty: MonoType.Int }],
+  f := mk_func_def(
+    100,
+    "add",
+    [
+      Param.{ local: mk_local(0), ty: MonoType.Int },
+      Param.{ local: mk_local(1), ty: MonoType.Int },
+    ],
     MonoType.Int,
-    .Let(mk_local(2), .ABinOp(.Add, .ALocal(mk_local(0)), .ALocal(mk_local(1)), .Int),
-      .Atom(.ALocal(mk_local(2)))),
+    .Let(
+      mk_local(2),
+      .ABinOp(.Add, .ALocal(mk_local(0)), .ALocal(mk_local(1)), .Int),
+      .Atom(.ALocal(mk_local(2))),
+    ),
     mono,
   )
   anf := mk_module([f])
@@ -199,6 +235,7 @@ pub fn test_plan_primitive_func() Result<Void, String> {
   // Primitives don't need struct defs, so type_defs should be empty or minimal
   // But the layout cache should have entries
   key := mono_to_key(MonoType.Int)
+
   case reg.layout_cache[key] {
     .Some(.Scalar(.WI64)) => .Ok({}),
     .Some(_) => assert.fail("expected Scalar(WI64) in cache"),
@@ -207,32 +244,42 @@ pub fn test_plan_primitive_func() Result<Void, String> {
 }
 
 // ── plan_wasm_types: collects record types ──────────────────────────
-
 pub fn test_plan_record_type() Result<Void, String> {
   // A function that creates a Point record
-  env := env_with_record("Point", 10, [
-    ResolvedField.{ name: "x", ty: MonoType.Int },
-    ResolvedField.{ name: "y", ty: MonoType.Int },
-  ])
+  env := env_with_record(
+    "Point",
+    10,
+    [
+      ResolvedField.{ name: "x", ty: MonoType.Int },
+      ResolvedField.{ name: "y", ty: MonoType.Int },
+    ],
+  )
   point_ty: MonoType = .Named(TypeId.{ id: 10 }, [])
   mono := mono1(0, point_ty)
-  f := mk_func_def(100, "mk_point",
+  f := mk_func_def(
+    100,
+    "mk_point",
     [],
     point_ty,
-    .Let(mk_local(0),
-      .ARecord(TypeId.{ id: 10 }, [
-        FieldAtom.{ field: FieldId.{ id: 0 }, value: .ALitInt(1) },
-        FieldAtom.{ field: FieldId.{ id: 1 }, value: .ALitInt(2) },
-      ]),
-      .Atom(.ALocal(mk_local(0)))),
+    .Let(
+      mk_local(0),
+      .ARecord(
+        TypeId.{ id: 10 },
+        [
+          FieldAtom.{ field: FieldId.{ id: 0 }, value: .ALitInt(1) },
+          FieldAtom.{ field: FieldId.{ id: 1 }, value: .ALitInt(2) },
+        ],
+      ),
+      .Atom(.ALocal(mk_local(0))),
+    ),
     mono,
   )
   anf := mk_module([f])
   builtins := empty_builtins()
   reg := plan(anf, env, builtins)
-
   // Should have a struct TypeDef for Point
   found := false
+
   for td in reg.type_defs {
     case td {
       .Struct(name, _, _, _) => {
@@ -241,57 +288,80 @@ pub fn test_plan_record_type() Result<Void, String> {
       _ => {},
     }
   }
-  if found { .Ok({}) } else { assert.fail("expected Point struct in type_defs") }
+
+  if found {
+    .Ok({})
+  } else {
+    assert.fail("expected Point struct in type_defs")
+  }
 }
 
 // ── plan_wasm_types: collects string literals ───────────────────────
-
 pub fn test_plan_string_literals() Result<Void, String> {
   mono := mono1(0, MonoType.String)
-  f := mk_func_def(100, "greet",
+  f := mk_func_def(
+    100,
+    "greet",
     [],
     MonoType.String,
-    .Let(mk_local(0), .AInit(.ALitStr("hello")),
-      .Let(mk_local(1), .AInit(.ALitStr("world")),
-        .Let(mk_local(2), .AInit(.ALitStr("hello")),
-          .Atom(.ALocal(mk_local(0)))))),
+    .Let(
+      mk_local(0),
+      .AInit(.ALitStr("hello")),
+      .Let(
+        mk_local(1),
+        .AInit(.ALitStr("world")),
+        .Let(
+          mk_local(2),
+          .AInit(.ALitStr("hello")),
+          .Atom(.ALocal(mk_local(0))),
+        ),
+      ),
+    ),
     mono,
   )
   anf := mk_module([f])
   env := resolver.empty_env()
   builtins := empty_builtins()
   reg := plan(anf, env, builtins)
-
   // "hello" and "world" — 2 unique strings
   try assert.equal(reg.string_pool.len(), 2)
+
   case reg.string_pool["hello"] {
     .Some(entry) => try assert.equal(entry.byte_len, 5),
     .None => { return assert.fail("missing 'hello' in string pool") },
   }
+
   case reg.string_pool["world"] {
     .Some(entry) => try assert.equal(entry.byte_len, 5),
     .None => { return assert.fail("missing 'world' in string pool") },
   }
+
   .Ok({})
 }
 
 // ── plan_wasm_types: string pool byte offsets ────────────────────────
-
 pub fn test_plan_string_offsets() Result<Void, String> {
   mono := mono1(0, MonoType.String)
-  f := mk_func_def(100, "strs",
+  f := mk_func_def(
+    100,
+    "strs",
     [],
     MonoType.String,
-    .Let(mk_local(0), .AInit(.ALitStr("ab")),       // 2 bytes, offset 0
-      .Let(mk_local(1), .AInit(.ALitStr("cde")),    // 3 bytes, offset 2
-        .Let(mk_local(2), .AInit(.ALitStr("f")),    // 1 byte, offset 5
-          .Atom(.ALocal(mk_local(0)))))),
+    .Let(
+      mk_local(0),
+      .AInit(.ALitStr("ab")),
+      .Let(
+        mk_local(1),
+        .AInit(.ALitStr("cde")),
+        .Let(mk_local(2), .AInit(.ALitStr("f")), .Atom(.ALocal(mk_local(0)))),
+      ),
+    ),
     mono,
   )
   anf := mk_module([f])
   reg := plan(anf, resolver.empty_env(), empty_builtins())
-
   try assert.equal(reg.string_pool.len(), 3)
+
   // Offsets should be cumulative: "ab"=0, "cde"=2, "f"=5
   case reg.string_pool["ab"] {
     .Some(e) => {
@@ -300,6 +370,7 @@ pub fn test_plan_string_offsets() Result<Void, String> {
     },
     .None => { return assert.fail("missing 'ab'") },
   }
+
   case reg.string_pool["cde"] {
     .Some(e) => {
       try assert.equal(e.byte_offset, 2)
@@ -307,6 +378,7 @@ pub fn test_plan_string_offsets() Result<Void, String> {
     },
     .None => { return assert.fail("missing 'cde'") },
   }
+
   case reg.string_pool["f"] {
     .Some(e) => {
       try assert.equal(e.byte_offset, 5)
@@ -314,27 +386,34 @@ pub fn test_plan_string_offsets() Result<Void, String> {
     },
     .None => { return assert.fail("missing 'f'") },
   }
+
   .Ok({})
 }
 
 // ── plan_wasm_types: collects closure signatures ────────────────────
-
 pub fn test_plan_closure() Result<Void, String> {
   // A function that creates a closure capturing local 0
   closure_mono := mono1(0, MonoType.Function([MonoType.Int], MonoType.Int))
   // The closure's target function (func_id 200)
-  closure_fn := mk_func_def(200, "adder",
+  closure_fn := mk_func_def(
+    200,
+    "adder",
     [Param.{ local: mk_local(10), ty: MonoType.Int }],
     MonoType.Int,
     .Atom(.ALocal(mk_local(10))),
     Dict.new(),
   )
   // The outer function that makes the closure
-  outer := mk_func_def(100, "make_adder",
+  outer := mk_func_def(
+    100,
+    "make_adder",
     [Param.{ local: mk_local(0), ty: MonoType.Int }],
     MonoType.Function([MonoType.Int], MonoType.Int),
-    .Let(mk_local(1), .AMakeClosure(mk_func(200), [mk_local(0)]),
-      .Atom(.ALocal(mk_local(1)))),
+    .Let(
+      mk_local(1),
+      .AMakeClosure(mk_func(200), [mk_local(0)]),
+      .Atom(.ALocal(mk_local(1))),
+    ),
     closure_mono,
   )
   anf := mk_module([outer, closure_fn])
@@ -355,46 +434,55 @@ pub fn test_plan_closure() Result<Void, String> {
 
 pub fn test_plan_closure_registers_func_type() Result<Void, String> {
   closure_mono := mono1(0, MonoType.Function([MonoType.Int], MonoType.Int))
-  closure_fn := mk_func_def(200, "adder",
+  closure_fn := mk_func_def(
+    200,
+    "adder",
     [Param.{ local: mk_local(10), ty: MonoType.Int }],
     MonoType.Int,
     .Atom(.ALocal(mk_local(10))),
     Dict.new(),
   )
-  outer := mk_func_def(100, "make_adder",
+  outer := mk_func_def(
+    100,
+    "make_adder",
     [Param.{ local: mk_local(0), ty: MonoType.Int }],
     MonoType.Function([MonoType.Int], MonoType.Int),
-    .Let(mk_local(1), .AMakeClosure(mk_func(200), [mk_local(0)]),
-      .Atom(.ALocal(mk_local(1)))),
+    .Let(
+      mk_local(1),
+      .AMakeClosure(mk_func(200), [mk_local(0)]),
+      .Atom(.ALocal(mk_local(1))),
+    ),
     closure_mono,
   )
   anf := mk_module([outer, closure_fn])
   reg := plan_with_closures(anf, resolver.empty_env(), empty_builtins())
-
   found_func_type := false
   found_closure_struct := false
+
   for td in reg.type_defs {
     case td {
       .FuncType(name, _, _) => {
-        if name.contains("$ft_") { found_func_type = true }
+        if name.contains("\$ft_") { found_func_type = true }
       },
       .Struct(name, _, _, _) => {
-        if name.contains("$closure_") { found_closure_struct = true }
+        if name.contains("\$closure_") { found_closure_struct = true }
       },
       _ => {},
     }
   }
+
   try assert.is_true(found_func_type)
   try assert.is_true(found_closure_struct)
   .Ok({})
 }
 
 // ── plan_wasm_types: capture layouts have real types ─────────────────
-
 pub fn test_plan_capture_types() Result<Void, String> {
   // Outer function has local 0: Int (param), local 1: String (let-bound)
   // Closure captures both
-  closure_fn := mk_func_def(200, "use_both",
+  closure_fn := mk_func_def(
+    200,
+    "use_both",
     [Param.{ local: mk_local(10), ty: MonoType.Int }],
     MonoType.Int,
     .Atom(.ALocal(mk_local(10))),
@@ -404,12 +492,20 @@ pub fn test_plan_capture_types() Result<Void, String> {
   mono[0] = MonoType.Function([MonoType.Int], MonoType.Int)
   mono[1] = MonoType.String
   mono[2] = MonoType.Function([MonoType.Int], MonoType.Int)
-  outer := mk_func_def(100, "make_closure",
+  outer := mk_func_def(
+    100,
+    "make_closure",
     [Param.{ local: mk_local(0), ty: MonoType.Int }],
     MonoType.Function([MonoType.Int], MonoType.Int),
-    .Let(mk_local(1), .AInit(.ALitStr("hello")),
-      .Let(mk_local(2), .AMakeClosure(mk_func(200), [mk_local(0), mk_local(1)]),
-        .Atom(.ALocal(mk_local(2))))),
+    .Let(
+      mk_local(1),
+      .AInit(.ALitStr("hello")),
+      .Let(
+        mk_local(2),
+        .AMakeClosure(mk_func(200), [mk_local(0), mk_local(1)]),
+        .Atom(.ALocal(mk_local(2))),
+      ),
+    ),
     mono,
   )
   anf := mk_module([outer, closure_fn])
@@ -420,12 +516,18 @@ pub fn test_plan_capture_types() Result<Void, String> {
       try assert.equal(caps.len(), 2)
       // local 0 is Int (from param)
       try assert.ok(
-        case caps[0].ty { .Int => true, _ => false },
+        case caps[0].ty {
+          .Int => true,
+          _ => false,
+        },
         "expected capture 0 type Int, got other",
       )
       // local 1 is String (from op_result_mono)
       try assert.ok(
-        case caps[1].ty { .String => true, _ => false },
+        case caps[1].ty {
+          .String => true,
+          _ => false,
+        },
         "expected capture 1 type String, got other",
       )
       .Ok({})
@@ -435,10 +537,11 @@ pub fn test_plan_capture_types() Result<Void, String> {
 }
 
 // ── plan_wasm_types: closure populates concrete_func_sigs ───────────
-
 pub fn test_plan_closure_func_sigs() Result<Void, String> {
   // The closure's target function (func_id 200): fn(Int) Int
-  closure_fn := mk_func_def(200, "adder",
+  closure_fn := mk_func_def(
+    200,
+    "adder",
     [Param.{ local: mk_local(10), ty: MonoType.Int }],
     MonoType.Int,
     .Atom(.ALocal(mk_local(10))),
@@ -446,11 +549,16 @@ pub fn test_plan_closure_func_sigs() Result<Void, String> {
   )
   // The outer function makes the closure
   closure_mono := mono1(0, MonoType.Function([MonoType.Int], MonoType.Int))
-  outer := mk_func_def(100, "make_adder",
+  outer := mk_func_def(
+    100,
+    "make_adder",
     [Param.{ local: mk_local(0), ty: MonoType.Int }],
     MonoType.Function([MonoType.Int], MonoType.Int),
-    .Let(mk_local(1), .AMakeClosure(mk_func(200), [mk_local(0)]),
-      .Atom(.ALocal(mk_local(1)))),
+    .Let(
+      mk_local(1),
+      .AMakeClosure(mk_func(200), [mk_local(0)]),
+      .Atom(.ALocal(mk_local(1))),
+    ),
     closure_mono,
   )
   anf := mk_module([outer, closure_fn])
@@ -461,11 +569,17 @@ pub fn test_plan_closure_func_sigs() Result<Void, String> {
     .Some(sig) => {
       try assert.equal(sig.param_types.len(), 1)
       try assert.ok(
-        case sig.param_types[0] { .Int => true, _ => false },
+        case sig.param_types[0] {
+          .Int => true,
+          _ => false,
+        },
         "expected param type Int",
       )
       try assert.ok(
-        case sig.return_type { .Int => true, _ => false },
+        case sig.return_type {
+          .Int => true,
+          _ => false,
+        },
         "expected return type Int",
       )
       .Ok({})
@@ -474,8 +588,13 @@ pub fn test_plan_closure_func_sigs() Result<Void, String> {
   }
 }
 
-pub fn test_plan_higher_order_global_function_arg_registers_func_sig() Result<Void, String> {
-  adder := mk_func_def(300, "adder",
+pub fn test_plan_higher_order_global_function_arg_registers_func_sig() Result<
+  Void,
+  String,
+> {
+  adder := mk_func_def(
+    300,
+    "adder",
     [Param.{ local: mk_local(20), ty: MonoType.Int }],
     MonoType.Int,
     .Atom(.ALocal(mk_local(20))),
@@ -483,50 +602,83 @@ pub fn test_plan_higher_order_global_function_arg_registers_func_sig() Result<Vo
   )
   apply_mono: Dict<Int, MonoType> = Dict.new()
   apply_mono[10] = MonoType.Int
-  apply := mk_func_def(200, "apply",
+  apply := mk_func_def(
+    200,
+    "apply",
     [
-      Param.{ local: mk_local(0), ty: MonoType.Function([MonoType.Int], MonoType.Int) },
+      Param.{
+        local: mk_local(0),
+        ty: MonoType.Function([MonoType.Int], MonoType.Int),
+      },
       Param.{ local: mk_local(1), ty: MonoType.Int },
     ],
     MonoType.Int,
-    .Let(mk_local(10), .ACall(.ALocal(mk_local(0)), [.ALocal(mk_local(1))]),
-      .Atom(.ALocal(mk_local(10)))),
+    .Let(
+      mk_local(10),
+      .ACall(.ALocal(mk_local(0)), [.ALocal(mk_local(1))]),
+      .Atom(.ALocal(mk_local(10))),
+    ),
     apply_mono,
   )
   caller_mono: Dict<Int, MonoType> = Dict.new()
   caller_mono[11] = MonoType.Int
-  caller := mk_func_def(100, "caller", [], MonoType.Int,
-    .Let(mk_local(11), .ACall(.AGlobalFunc(mk_func(200)), [.AGlobalFunc(mk_func(300)), .ALitInt(7)]),
-      .Atom(.ALocal(mk_local(11)))),
+  caller := mk_func_def(
+    100,
+    "caller",
+    [],
+    MonoType.Int,
+    .Let(
+      mk_local(11),
+      .ACall(
+        .AGlobalFunc(mk_func(200)),
+        [.AGlobalFunc(mk_func(300)), .ALitInt(7)],
+      ),
+      .Atom(.ALocal(mk_local(11))),
+    ),
     caller_mono,
   )
-
-  reg := plan(mk_module([caller, apply, adder]), resolver.empty_env(), empty_builtins())
+  reg := plan(
+    mk_module([caller, apply, adder]),
+    resolver.empty_env(),
+    empty_builtins(),
+  )
 
   case reg.concrete_func_sigs[300] {
     .Some(sig) => {
       try assert.equal(sig.param_types.len(), 1)
       try assert.ok(
-        case sig.param_types[0] { .Int => true, _ => false },
+        case sig.param_types[0] {
+          .Int => true,
+          _ => false,
+        },
         "expected higher-order bare global arg param type Int",
       )
       try assert.ok(
-        case sig.return_type { .Int => true, _ => false },
+        case sig.return_type {
+          .Int => true,
+          _ => false,
+        },
         "expected higher-order bare global arg return type Int",
       )
       .Ok({})
     },
-    .None => assert.fail("missing concrete_func_sigs entry for bare global function argument"),
+    .None => assert.fail(
+      "missing concrete_func_sigs entry for bare global function argument",
+    ),
   }
 }
 
-pub fn test_plan_builtin_higher_order_global_function_arg_registers_func_sig() Result<Void, String> {
+pub fn test_plan_builtin_higher_order_global_function_arg_registers_func_sig() Result<
+  Void,
+  String,
+> {
   builtins := simple_builtins()
   env := base_env.builtin_env()
-
   map_mono: Dict<Int, MonoType> = Dict.new()
   map_mono[10] = MonoType.Vector(.String)
-  map := mk_func_def(200, "map",
+  map := mk_func_def(
+    200,
+    "map",
     [
       Param.{ local: mk_local(0), ty: MonoType.Vector(.Int) },
       Param.{ local: mk_local(1), ty: MonoType.Function([.Int], .String) },
@@ -535,35 +687,61 @@ pub fn test_plan_builtin_higher_order_global_function_arg_registers_func_sig() R
     .Atom(.ALocal(mk_local(10))),
     map_mono,
   )
-
   caller_mono: Dict<Int, MonoType> = Dict.new()
   caller_mono[11] = MonoType.Vector(.String)
-  caller := mk_func_def(100, "caller", [], MonoType.Vector(.String),
-    .Let(mk_local(11), .ACall(.AGlobalFunc(mk_func(200)), [.ALitVoid, .AGlobalFunc(bi.id(builtins, "int_to_string"))]),
-      .Atom(.ALocal(mk_local(11)))),
+  caller := mk_func_def(
+    100,
+    "caller",
+    [],
+    MonoType.Vector(.String),
+    .Let(
+      mk_local(11),
+      .ACall(
+        .AGlobalFunc(mk_func(200)),
+        [.ALitVoid, .AGlobalFunc(bi.id(builtins, "int_to_string"))],
+      ),
+      .Atom(.ALocal(mk_local(11))),
+    ),
     caller_mono,
   )
-
   reg := plan(mk_module([caller, map]), env, builtins)
 
   case reg.concrete_func_sigs[bi.id(builtins, "int_to_string").id] {
     .Some(sig) => {
       try assert.equal(sig.param_types.len(), 1)
-      try assert.ok(case sig.param_types[0] { .Int => true, _ => false }, "expected builtin higher-order param type Int")
-      try assert.ok(case sig.return_type { .String => true, _ => false }, "expected builtin higher-order return type String")
+      try assert.ok(
+        case sig.param_types[0] {
+          .Int => true,
+          _ => false,
+        },
+        "expected builtin higher-order param type Int",
+      )
+      try assert.ok(
+        case sig.return_type {
+          .String => true,
+          _ => false,
+        },
+        "expected builtin higher-order return type String",
+      )
       .Ok({})
     },
-    .None => assert.fail("missing concrete_func_sigs entry for builtin higher-order global arg"),
+    .None => assert.fail(
+      "missing concrete_func_sigs entry for builtin higher-order global arg",
+    ),
   }
 }
 
-pub fn test_plan_callable_separation_tracks_closure_and_direct_calls() Result<Void, String> {
+pub fn test_plan_callable_separation_tracks_closure_and_direct_calls() Result<
+  Void,
+  String,
+> {
   builtins := simple_builtins()
   env := base_env.builtin_env()
-
   map_mono: Dict<Int, MonoType> = Dict.new()
   map_mono[10] = MonoType.Vector(.String)
-  map := mk_func_def(200, "map",
+  map := mk_func_def(
+    200,
+    "map",
     [
       Param.{ local: mk_local(0), ty: MonoType.Vector(.Int) },
       Param.{ local: mk_local(1), ty: MonoType.Function([.Int], .String) },
@@ -572,85 +750,143 @@ pub fn test_plan_callable_separation_tracks_closure_and_direct_calls() Result<Vo
     .Atom(.ALocal(mk_local(10))),
     map_mono,
   )
-
   caller_mono: Dict<Int, MonoType> = Dict.new()
   caller_mono[11] = MonoType.Vector(.String)
   caller_mono[12] = MonoType.String
   caller_mono[13] = MonoType.Void
-  caller := mk_func_def(100, "caller", [], MonoType.Vector(.String),
-    .Let(mk_local(11), .ACall(.AGlobalFunc(mk_func(200)), [.ALitVoid, .AGlobalFunc(bi.id(builtins, "int_to_string"))]),
-      .Let(mk_local(12), .ACall(.AGlobalFunc(bi.id(builtins, "int_to_string")), [.ALitInt(7)]),
-        .Let(mk_local(13), .ACall(.AGlobalFunc(bi.id(builtins, "println")), [.ALocal(mk_local(12))]),
-          .Atom(.ALocal(mk_local(11)))))),
+  caller := mk_func_def(
+    100,
+    "caller",
+    [],
+    MonoType.Vector(.String),
+    .Let(
+      mk_local(11),
+      .ACall(
+        .AGlobalFunc(mk_func(200)),
+        [.ALitVoid, .AGlobalFunc(bi.id(builtins, "int_to_string"))],
+      ),
+      .Let(
+        mk_local(12),
+        .ACall(.AGlobalFunc(bi.id(builtins, "int_to_string")), [.ALitInt(7)]),
+        .Let(
+          mk_local(13),
+          .ACall(
+            .AGlobalFunc(bi.id(builtins, "println")),
+            [.ALocal(mk_local(12))],
+          ),
+          .Atom(.ALocal(mk_local(11))),
+        ),
+      ),
+    ),
     caller_mono,
   )
-
   reg := plan(mk_module([caller, map]), env, builtins)
   int_to_string := bi.id(builtins, "int_to_string").id
   println_id := bi.id(builtins, "println").id
-
-  try assert.ok(case reg.closure_materialized_funcs[int_to_string] { .Some(true) => true, _ => false }, "expected int_to_string closure materialization")
-  try assert.ok(case reg.typed_closure_funcs[int_to_string] { .Some(true) => true, _ => false }, "expected int_to_string typed closure support")
-  try assert.ok(case reg.direct_builtin_calls[int_to_string] { .Some(true) => true, _ => false }, "expected int_to_string direct builtin call tracking")
-  try assert.ok(case reg.direct_builtin_calls[println_id] { .Some(true) => true, _ => false }, "expected println direct builtin call tracking")
+  try assert.ok(
+    case reg.closure_materialized_funcs[int_to_string] {
+      .Some(true) => true,
+      _ => false,
+    },
+    "expected int_to_string closure materialization",
+  )
+  try assert.ok(
+    case reg.typed_closure_funcs[int_to_string] {
+      .Some(true) => true,
+      _ => false,
+    },
+    "expected int_to_string typed closure support",
+  )
+  try assert.ok(
+    case reg.direct_builtin_calls[int_to_string] {
+      .Some(true) => true,
+      _ => false,
+    },
+    "expected int_to_string direct builtin call tracking",
+  )
+  try assert.ok(
+    case reg.direct_builtin_calls[println_id] {
+      .Some(true) => true,
+      _ => false,
+    },
+    "expected println direct builtin call tracking",
+  )
   .Ok({})
 }
 
 // ── plan_wasm_types: collects runtime imports ───────────────────────
-
 pub fn test_plan_runtime_imports() Result<Void, String> {
   builtins := simple_builtins()
   // A function that calls println (a runtime builtin)
   print_id := bi.id(builtins, "println")
   mono := mono1(0, MonoType.Void)
-  f := mk_func_def(100, "main",
+  f := mk_func_def(
+    100,
+    "main",
     [],
     MonoType.Void,
-    .Let(mk_local(0), .ACall(.AGlobalFunc(print_id), [.ALitStr("hi")]),
-      .Atom(.ALitVoid)),
+    .Let(
+      mk_local(0),
+      .ACall(.AGlobalFunc(print_id), [.ALitStr("hi")]),
+      .Atom(.ALitVoid),
+    ),
     mono,
   )
   anf := mk_module([f])
   env := resolver.empty_env()
   reg := plan(anf, env, builtins)
-
   // Should have runtime import for println with non-empty params
   found := false
+
   for imp in reg.runtime_imports {
     if imp.name == "println" {
       found = true
       try assert.equal(imp.params.len(), 1)
+
       case imp.params[0] {
         .Ref(nullable, .Named(name)) => {
           try assert.equal(nullable, true)
           try assert.equal(name, "rt_types__String")
         },
-        _ => { return assert.fail("expected println import param to use builtin ABI ref null $String") },
+        _ => {
+          return assert.fail(
+            "expected println import param to use builtin ABI ref null \$String",
+          )
+        },
       }
     }
   }
-  if found { .Ok({}) } else { assert.fail("expected println in runtime_imports") }
+
+  if found {
+    .Ok({})
+  } else {
+    assert.fail("expected println in runtime_imports")
+  }
 }
 
 // ── plan_wasm_types: collects Optional sum type ─────────────────────
-
 pub fn test_plan_optional_type() Result<Void, String> {
   opt_ty: MonoType = .Optional(.Int)
   mono := mono1(0, opt_ty)
-  f := mk_func_def(100, "maybe",
+  f := mk_func_def(
+    100,
+    "maybe",
     [],
     opt_ty,
-    .Let(mk_local(0), .AVariant(TypeId.{ id: -1 }, VariantId.{ id: 1 }, [.ALitInt(42)]),
-      .Atom(.ALocal(mk_local(0)))),
+    .Let(
+      mk_local(0),
+      .AVariant(TypeId.{ id: -1 }, VariantId.{ id: 1 }, [.ALitInt(42)]),
+      .Atom(.ALocal(mk_local(0))),
+    ),
     mono,
   )
   anf := mk_module([f])
   env := resolver.empty_env()
   builtins := empty_builtins()
   reg := plan(anf, env, builtins)
-
   // Should have a sum struct for Option<Int>
   found := false
+
   for td in reg.type_defs {
     case td {
       .Struct(name, _, _, _) => {
@@ -659,11 +895,15 @@ pub fn test_plan_optional_type() Result<Void, String> {
       _ => {},
     }
   }
-  if found { .Ok({}) } else { assert.fail("expected Option struct in type_defs") }
+
+  if found {
+    .Ok({})
+  } else {
+    assert.fail("expected Option struct in type_defs")
+  }
 }
 
 // ── WasmTypeRegistry field access ───────────────────────────────────
-
 pub fn test_registry_empty() Result<Void, String> {
   reg := WasmTypeRegistry.{
     type_defs: [],
@@ -688,38 +928,63 @@ pub fn test_registry_empty() Result<Void, String> {
 }
 
 // ── plan_wasm_types: module globals ──────────────────────────────────
-
-pub fn test_plan_higher_order_global_func_does_not_synthesize_capture_layout() Result<Void, String> {
+pub fn test_plan_higher_order_global_func_does_not_synthesize_capture_layout() Result<
+  Void,
+  String,
+> {
   // apply(f, x) calls a function-typed parameter directly.
-  apply_fn := mk_func_def(3, "apply",
+  apply_fn := mk_func_def(
+    3,
+    "apply",
     [
-      Param.{ local: mk_local(0), ty: MonoType.Function([MonoType.Int], MonoType.Int) },
+      Param.{
+        local: mk_local(0),
+        ty: MonoType.Function([MonoType.Int], MonoType.Int),
+      },
       Param.{ local: mk_local(1), ty: MonoType.Int },
     ],
     MonoType.Int,
-    .Let(mk_local(2), .ACall(.ALocal(mk_local(0)), [.ALocal(mk_local(1))]),
-      .Atom(.ALocal(mk_local(2)))),
+    .Let(
+      mk_local(2),
+      .ACall(.ALocal(mk_local(0)), [.ALocal(mk_local(1))]),
+      .Atom(.ALocal(mk_local(2))),
+    ),
     mono1(2, MonoType.Int),
   )
-  double_fn := mk_func_def(4, "double",
+  double_fn := mk_func_def(
+    4,
+    "double",
     [Param.{ local: mk_local(10), ty: MonoType.Int }],
     MonoType.Int,
-    .Let(mk_local(11), .ABinOp(.Add, .ALocal(mk_local(10)), .ALocal(mk_local(10)), .Int),
-      .Atom(.ALocal(mk_local(11)))),
+    .Let(
+      mk_local(11),
+      .ABinOp(.Add, .ALocal(mk_local(10)), .ALocal(mk_local(10)), .Int),
+      .Atom(.ALocal(mk_local(11))),
+    ),
     mono1(11, MonoType.Int),
   )
-  main_fn := mk_func_def(5, "main",
+  main_fn := mk_func_def(
+    5,
+    "main",
     [],
     MonoType.Int,
-    .Let(mk_local(20), .ACall(.AGlobalFunc(mk_func(3)), [.AGlobalFunc(mk_func(4)), .ALitInt(21)]),
-      .Atom(.ALocal(mk_local(20)))),
+    .Let(
+      mk_local(20),
+      .ACall(.AGlobalFunc(mk_func(3)), [.AGlobalFunc(mk_func(4)), .ALitInt(21)]),
+      .Atom(.ALocal(mk_local(20))),
+    ),
     mono1(20, MonoType.Int),
   )
-
-  reg := plan(mk_module([apply_fn, double_fn, main_fn]), resolver.empty_env(), empty_builtins())
+  reg := plan(
+    mk_module([apply_fn, double_fn, main_fn]),
+    resolver.empty_env(),
+    empty_builtins(),
+  )
 
   case reg.capture_layouts[4] {
-    .Some(_) => assert.fail("higher-order global function should not get synthesized empty capture layout"),
+    .Some(_) => assert.fail(
+      "higher-order global function should not get synthesized empty capture layout",
+    ),
     .None => .Ok({}),
   }
 }
@@ -729,25 +994,38 @@ pub fn test_plan_module_globals() Result<Void, String> {
   init_mono: Dict<Int, MonoType> = Dict.new()
   init_mono[0] = MonoType.Int
   init_mono[1] = MonoType.String
-  init_fn := mk_func_def(1, "$init",
+  init_fn := mk_func_def(
+    1,
+    "\$init",
     [],
     MonoType.Void,
-    .Let(mk_local(0), .AInit(.ALitInt(42)),
-      .Let(mk_local(1), .AInit(.ALitStr("hello")),
-        .Atom(.ALitVoid))),
+    .Let(
+      mk_local(0),
+      .AInit(.ALitInt(42)),
+      .Let(mk_local(1), .AInit(.ALitStr("hello")), .Atom(.ALitVoid)),
+    ),
     init_mono,
   )
   init_fn.is_init = true
   // Another function references local 0 (a module global) but not local 1
   user_mono := mono1(10, MonoType.Int)
-  user_fn := mk_func_def(2, "get_val",
+  user_fn := mk_func_def(
+    2,
+    "get_val",
     [],
     MonoType.Int,
-    .Let(mk_local(10), .AInit(.ALocal(mk_local(0))),
-      .Atom(.ALocal(mk_local(10)))),
+    .Let(
+      mk_local(10),
+      .AInit(.ALocal(mk_local(0))),
+      .Atom(.ALocal(mk_local(10))),
+    ),
     user_mono,
   )
-  anf := AnfModule.{ functions: [init_fn, user_fn], init_func_id: .Some(mk_func(1)), extern_imports: Dict.new() }
+  anf := AnfModule.{
+    functions: [init_fn, user_fn],
+    init_func_id: .Some(mk_func(1)),
+    extern_imports: Dict.new(),
+  }
   reg := plan(anf, resolver.empty_env(), empty_builtins())
 
   // local 0 should be a module global (referenced outside init, bound in init)
@@ -762,6 +1040,7 @@ pub fn test_plan_module_globals() Result<Void, String> {
     },
     .None => { return assert.fail("expected local 0 in module_globals") },
   }
+
   // local 1 should NOT be a module global (not referenced outside init)
   case reg.module_globals[1] {
     .Some(_) => assert.fail("local 1 should not be a module global"),
@@ -773,18 +1052,29 @@ pub fn test_plan_nested_record_dependencies_are_ordered() Result<Void, String> {
   env := env_with_two_records()
   outer_ty: MonoType = .Named(TypeId.{ id: 11 }, [])
   mono := mono1(0, outer_ty)
-  f := mk_func_def(100, "mk_outer",
+  f := mk_func_def(
+    100,
+    "mk_outer",
     [],
     outer_ty,
-    .Let(mk_local(0), .ARecord(TypeId.{ id: 11 }, []),
-      .Atom(.ALocal(mk_local(0)))),
+    .Let(
+      mk_local(0),
+      .ARecord(TypeId.{ id: 11 }, []),
+      .Atom(.ALocal(mk_local(0))),
+    ),
     mono,
   )
   reg := plan(mk_module([f]), env, empty_builtins())
-
-  inner_idx := try reg.type_index["$Inner_t10"].ok_or("missing Inner type index")
-  outer_idx := try reg.type_index["$Outer_t11"].ok_or("missing Outer type index")
-  try assert.ok(inner_idx < outer_idx, "expected Inner to be registered before Outer")
+  inner_idx := try reg.type_index["\$Inner_t10"].ok_or(
+    "missing Inner type index",
+  )
+  outer_idx := try reg.type_index["\$Outer_t11"].ok_or(
+    "missing Outer type index",
+  )
+  try assert.ok(
+    inner_idx < outer_idx,
+    "expected Inner to be registered before Outer",
+  )
   .Ok({})
 }
 
@@ -792,45 +1082,69 @@ pub fn test_plan_recursive_record_terminates() Result<Void, String> {
   env := env_with_recursive_record()
   node_ty: MonoType = .Named(TypeId.{ id: 12 }, [])
   mono := mono1(0, node_ty)
-  f := mk_func_def(100, "mk_node",
+  f := mk_func_def(
+    100,
+    "mk_node",
     [],
     node_ty,
-    .Let(mk_local(0), .ARecord(TypeId.{ id: 12 }, []),
-      .Atom(.ALocal(mk_local(0)))),
+    .Let(
+      mk_local(0),
+      .ARecord(TypeId.{ id: 12 }, []),
+      .Atom(.ALocal(mk_local(0))),
+    ),
     mono,
   )
   reg := plan(mk_module([f]), env, empty_builtins())
 
-  case reg.type_index["$Node_t12"] {
+  case reg.type_index["\$Node_t12"] {
     .Some(_) => .Ok({}),
     .None => assert.fail("expected recursive Node type to be registered"),
   }
 }
 
 // ── Suite ───────────────────────────────────────────────────────────
-
 pub fn suite() runner.Suite {
-  runner.suite("wasm plan")
-    .test("FuncSigEntry construction", test_func_sig_entry)
-    .test("CaptureEntry construction", test_capture_entry)
-    .test("StringPoolEntry construction", test_string_pool_entry)
-    .test("WasmTypeRegistry empty", test_registry_empty)
-    .test("plan empty module", test_plan_empty_module)
-    .test("plan primitive func", test_plan_primitive_func)
-    .test("plan record type", test_plan_record_type)
-    .test("plan string literals", test_plan_string_literals)
-    .test("plan string pool byte offsets", test_plan_string_offsets)
-    .test("plan closure", test_plan_closure)
-    .test("plan closure registers functype", test_plan_closure_registers_func_type)
-    .test("plan closure capture types", test_plan_capture_types)
-    .test("plan closure populates concrete_func_sigs", test_plan_closure_func_sigs)
-    .test("plan bare higher-order global function arg registers concrete func sig", test_plan_higher_order_global_function_arg_registers_func_sig)
-    .test("plan builtin higher-order global function arg registers concrete func sig", test_plan_builtin_higher_order_global_function_arg_registers_func_sig)
-    .test("plan callable separation tracks closure and direct calls", test_plan_callable_separation_tracks_closure_and_direct_calls)
-    .test("plan runtime imports", test_plan_runtime_imports)
-    .test("plan optional type", test_plan_optional_type)
-    .test("plan higher-order global func does not synthesize capture layout", test_plan_higher_order_global_func_does_not_synthesize_capture_layout)
-    .test("plan module globals", test_plan_module_globals)
-    .test("plan nested record dependencies are ordered", test_plan_nested_record_dependencies_are_ordered)
-    .test("plan recursive record terminates", test_plan_recursive_record_terminates)
+  runner.suite("wasm plan").test(
+    "FuncSigEntry construction",
+    test_func_sig_entry,
+  ).test("CaptureEntry construction", test_capture_entry).test(
+    "StringPoolEntry construction",
+    test_string_pool_entry,
+  ).test("WasmTypeRegistry empty", test_registry_empty).test(
+    "plan empty module",
+    test_plan_empty_module,
+  ).test("plan primitive func", test_plan_primitive_func).test(
+    "plan record type",
+    test_plan_record_type,
+  ).test("plan string literals", test_plan_string_literals).test(
+    "plan string pool byte offsets",
+    test_plan_string_offsets,
+  ).test("plan closure", test_plan_closure).test(
+    "plan closure registers functype",
+    test_plan_closure_registers_func_type,
+  ).test("plan closure capture types", test_plan_capture_types).test(
+    "plan closure populates concrete_func_sigs",
+    test_plan_closure_func_sigs,
+  ).test(
+    "plan bare higher-order global function arg registers concrete func sig",
+    test_plan_higher_order_global_function_arg_registers_func_sig,
+  ).test(
+    "plan builtin higher-order global function arg registers concrete func sig",
+    test_plan_builtin_higher_order_global_function_arg_registers_func_sig,
+  ).test(
+    "plan callable separation tracks closure and direct calls",
+    test_plan_callable_separation_tracks_closure_and_direct_calls,
+  ).test("plan runtime imports", test_plan_runtime_imports).test(
+    "plan optional type",
+    test_plan_optional_type,
+  ).test(
+    "plan higher-order global func does not synthesize capture layout",
+    test_plan_higher_order_global_func_does_not_synthesize_capture_layout,
+  ).test("plan module globals", test_plan_module_globals).test(
+    "plan nested record dependencies are ordered",
+    test_plan_nested_record_dependencies_are_ordered,
+  ).test(
+    "plan recursive record terminates",
+    test_plan_recursive_record_terminates,
+  )
 }

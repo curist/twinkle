@@ -1,17 +1,16 @@
-use tests.runner
-use tests.assert
 use compiler.codegen.wasm_ir.{
-  HeapType, ValType, FieldDef, TypeDef,
-  Instr, FuncDef, ImportDef, GlobalDef, ExportDef,
-  TableDef, ElemDef, DataSegment, WasmModule,
+  DataSegment, ElemDef, ExportDef, FieldDef, FuncDef, GlobalDef, HeapType,
+  ImportDef, Instr, TableDef, TypeDef, ValType, WasmModule,
 }
+use tests.assert
+use tests.runner
 
 // ── HeapType ────────────────────────────────────────────────────────
-
 fn test_heap_type_named() Result<Void, String> {
-  h: HeapType = .Named("$Point")
+  h: HeapType = .Named("\$Point")
+
   case h {
-    .Named(s) => assert.equal(s, "$Point"),
+    .Named(s) => assert.equal(s, "\$Point"),
     _ => assert.fail("expected Named"),
   }
 }
@@ -28,7 +27,6 @@ fn test_heap_type_variants() Result<Void, String> {
 }
 
 // ── ValType ─────────────────────────────────────────────────────────
-
 fn test_val_type_scalars() Result<Void, String> {
   _a: ValType = .I8
   _b: ValType = .I32
@@ -41,12 +39,14 @@ fn test_val_type_scalars() Result<Void, String> {
 }
 
 fn test_val_type_ref() Result<Void, String> {
-  r: ValType = .Ref(false, .Named("$Array"))
+  r: ValType = .Ref(false, .Named("\$Array"))
+
   case r {
     .Ref(nullable, ht) => {
       try assert.equal(nullable, false)
+
       case ht {
-        .Named(s) => assert.equal(s, "$Array"),
+        .Named(s) => assert.equal(s, "\$Array"),
         _ => assert.fail("expected Named heap type"),
       }
     },
@@ -55,29 +55,39 @@ fn test_val_type_ref() Result<Void, String> {
 }
 
 // ── FieldDef ────────────────────────────────────────────────────────
-
 fn test_field_def() Result<Void, String> {
   f := FieldDef.{ name: .Some("x"), mutable: true, ty: .I64 }
-  name := case f.name { .Some(s) => s, .None => "" }
+  name := case f.name {
+    .Some(s) => s,
+    .None => "",
+  }
   try assert.equal(name, "x")
   try assert.equal(f.mutable, true)
-  case f.ty { .I64 => .Ok({}), _ => assert.fail("expected I64") }
+
+  case f.ty {
+    .I64 => .Ok({}),
+    _ => assert.fail("expected I64"),
+  }
 }
 
 // ── TypeDef ─────────────────────────────────────────────────────────
-
 fn test_type_def_struct() Result<Void, String> {
   fields := [
     FieldDef.{ name: .Some("tag"), mutable: false, ty: .I32 },
     FieldDef.{ name: .Some("val"), mutable: false, ty: .I64 },
   ]
-  td: TypeDef = .Struct("$MyStruct", fields, .None, false)
+  td: TypeDef = .Struct("\$MyStruct", fields, .None, false)
+
   case td {
     .Struct(name, fs, sup, nf) => {
-      try assert.equal(name, "$MyStruct")
+      try assert.equal(name, "\$MyStruct")
       try assert.equal(fs.len(), 2)
       try assert.equal(nf, false)
-      case sup { .None => .Ok({}), _ => assert.fail("expected no supertype") }
+
+      case sup {
+        .None => .Ok({}),
+        _ => assert.fail("expected no supertype"),
+      }
     },
     _ => assert.fail("expected Struct"),
   }
@@ -85,10 +95,11 @@ fn test_type_def_struct() Result<Void, String> {
 
 fn test_type_def_array() Result<Void, String> {
   elem := FieldDef.{ name: .None, mutable: true, ty: .Anyref }
-  td: TypeDef = .Array("$ClosureEnv", elem)
+  td: TypeDef = .Array("\$ClosureEnv", elem)
+
   case td {
     .Array(name, f) => {
-      try assert.equal(name, "$ClosureEnv")
+      try assert.equal(name, "\$ClosureEnv")
       try assert.equal(f.mutable, true)
       .Ok({})
     },
@@ -97,10 +108,11 @@ fn test_type_def_array() Result<Void, String> {
 }
 
 fn test_type_def_func_type() Result<Void, String> {
-  td: TypeDef = .FuncType("$ft_i64_i64", [.I64], [.I64])
+  td: TypeDef = .FuncType("\$ft_i64_i64", [.I64], [.I64])
+
   case td {
     .FuncType(name, ps, rs) => {
-      try assert.equal(name, "$ft_i64_i64")
+      try assert.equal(name, "\$ft_i64_i64")
       try assert.equal(ps.len(), 1)
       try assert.equal(rs.len(), 1)
       .Ok({})
@@ -110,13 +122,25 @@ fn test_type_def_func_type() Result<Void, String> {
 }
 
 // ── Instr ───────────────────────────────────────────────────────────
-
 fn test_instr_constants() Result<Void, String> {
   a: Instr = .I32Const(42)
   b: Instr = .I64Const(100)
   c: Instr = .F64Const(3.14)
-  case a { .I32Const(n) => try assert.equal(n, 42), _ => { return .Err("expected I32Const") } }
-  case b { .I64Const(n) => try assert.equal(n, 100), _ => { return .Err("expected I64Const") } }
+
+  case a {
+    .I32Const(n) => try assert.equal(n, 42),
+    _ => {
+      return .Err("expected I32Const")
+    },
+  }
+
+  case b {
+    .I64Const(n) => try assert.equal(n, 100),
+    _ => {
+      return .Err("expected I64Const")
+    },
+  }
+
   .Ok({})
 }
 
@@ -124,20 +148,46 @@ fn test_instr_local_ops() Result<Void, String> {
   a: Instr = .LocalGet(0)
   b: Instr = .LocalSet(1)
   c: Instr = .LocalTee(2)
-  case a { .LocalGet(i) => try assert.equal(i, 0), _ => { return .Err("expected LocalGet") } }
-  case b { .LocalSet(i) => try assert.equal(i, 1), _ => { return .Err("expected LocalSet") } }
-  case c { .LocalTee(i) => try assert.equal(i, 2), _ => { return .Err("expected LocalTee") } }
+
+  case a {
+    .LocalGet(i) => try assert.equal(i, 0),
+    _ => {
+      return .Err("expected LocalGet")
+    },
+  }
+
+  case b {
+    .LocalSet(i) => try assert.equal(i, 1),
+    _ => {
+      return .Err("expected LocalSet")
+    },
+  }
+
+  case c {
+    .LocalTee(i) => try assert.equal(i, 2),
+    _ => {
+      return .Err("expected LocalTee")
+    },
+  }
+
   .Ok({})
 }
 
 fn test_instr_struct_ops() Result<Void, String> {
-  a: Instr = .StructNew("$Point")
-  b: Instr = .StructGet("$Point", 0)
-  c: Instr = .StructSet("$Point", 1)
-  case a { .StructNew(s) => try assert.equal(s, "$Point"), _ => { return .Err("expected StructNew") } }
+  a: Instr = .StructNew("\$Point")
+  b: Instr = .StructGet("\$Point", 0)
+  c: Instr = .StructSet("\$Point", 1)
+
+  case a {
+    .StructNew(s) => try assert.equal(s, "\$Point"),
+    _ => {
+      return .Err("expected StructNew")
+    },
+  }
+
   case b {
     .StructGet(s, i) => {
-      try assert.equal(s, "$Point")
+      try assert.equal(s, "\$Point")
       try assert.equal(i, 0)
       .Ok({})
     },
@@ -146,18 +196,32 @@ fn test_instr_struct_ops() Result<Void, String> {
 }
 
 fn test_instr_call() Result<Void, String> {
-  a: Instr = .Call("$my_func")
-  b: Instr = .CallRef("$ft_closure")
-  case a { .Call(s) => try assert.equal(s, "$my_func"), _ => { return .Err("expected Call") } }
-  case b { .CallRef(s) => try assert.equal(s, "$ft_closure"), _ => { return .Err("expected CallRef") } }
+  a: Instr = .Call("\$my_func")
+  b: Instr = .CallRef("\$ft_closure")
+
+  case a {
+    .Call(s) => try assert.equal(s, "\$my_func"),
+    _ => {
+      return .Err("expected Call")
+    },
+  }
+
+  case b {
+    .CallRef(s) => try assert.equal(s, "\$ft_closure"),
+    _ => {
+      return .Err("expected CallRef")
+    },
+  }
+
   .Ok({})
 }
 
 fn test_instr_control_flow() Result<Void, String> {
-  blk: Instr = .Block("$exit", .Some(.I64), [.I64Const(1)])
+  blk: Instr = .Block("\$exit", .Some(.I64), [.I64Const(1)])
+
   case blk {
     .Block(label, result, body) => {
-      try assert.equal(label, "$exit")
+      try assert.equal(label, "\$exit")
       try assert.equal(body.len(), 1)
       .Ok({})
     },
@@ -167,6 +231,7 @@ fn test_instr_control_flow() Result<Void, String> {
 
 fn test_instr_if() Result<Void, String> {
   inst: Instr = .If(.Some(.I32), [.I32Const(1)], [.I32Const(0)])
+
   case inst {
     .If(result, then_body, else_body) => {
       try assert.equal(then_body.len(), 1)
@@ -178,16 +243,15 @@ fn test_instr_if() Result<Void, String> {
 }
 
 // ── FuncDef ─────────────────────────────────────────────────────────
-
 fn test_func_def() Result<Void, String> {
   f := FuncDef.{
-    name: "$add",
+    name: "\$add",
     params: [.I64, .I64],
     results: [.I64],
     locals: [],
     body: [.LocalGet(0), .LocalGet(1), .I64Add, .Return],
   }
-  try assert.equal(f.name, "$add")
+  try assert.equal(f.name, "\$add")
   try assert.equal(f.params.len(), 2)
   try assert.equal(f.results.len(), 1)
   try assert.equal(f.body.len(), 4)
@@ -195,88 +259,89 @@ fn test_func_def() Result<Void, String> {
 }
 
 // ── ImportDef ───────────────────────────────────────────────────────
-
 fn test_import_def() Result<Void, String> {
   imp := ImportDef.{
     module: "rt.core",
     name: "print",
-    as_sym: "$rt_core__print",
+    as_sym: "\$rt_core__print",
     params: [.Anyref],
     results: [],
   }
   try assert.equal(imp.module, "rt.core")
   try assert.equal(imp.name, "print")
-  try assert.equal(imp.as_sym, "$rt_core__print")
+  try assert.equal(imp.as_sym, "\$rt_core__print")
   try assert.equal(imp.params.len(), 1)
   try assert.equal(imp.results.len(), 0)
   .Ok({})
 }
 
 // ── GlobalDef ───────────────────────────────────────────────────────
-
 fn test_global_def() Result<Void, String> {
   g := GlobalDef.{
-    name: "$str_0",
+    name: "\$str_0",
     mutable: true,
-    ty: .Ref(true, .Named("$String")),
-    init: [.RefNull(.Named("$String"))],
+    ty: .Ref(true, .Named("\$String")),
+    init: [.RefNull(.Named("\$String"))],
   }
-  try assert.equal(g.name, "$str_0")
+  try assert.equal(g.name, "\$str_0")
   try assert.equal(g.mutable, true)
   try assert.equal(g.init.len(), 1)
   .Ok({})
 }
 
 // ── ExportDef ───────────────────────────────────────────────────────
-
 fn test_export_def() Result<Void, String> {
-  e := ExportDef.{ wasm_name: "main", func_sym: "$user__main" }
+  e := ExportDef.{ wasm_name: "main", func_sym: "\$user__main" }
   try assert.equal(e.wasm_name, "main")
-  try assert.equal(e.func_sym, "$user__main")
+  try assert.equal(e.func_sym, "\$user__main")
   .Ok({})
 }
 
 // ── TableDef & ElemDef ──────────────────────────────────────────────
-
 fn test_table_def() Result<Void, String> {
   t := TableDef.{
-    name: "$func_table",
+    name: "\$func_table",
     elem_type: .Funcref,
     min: 10,
     max: .Some(100),
   }
-  try assert.equal(t.name, "$func_table")
+  try assert.equal(t.name, "\$func_table")
   try assert.equal(t.min, 10)
-  case t.max { .Some(n) => try assert.equal(n, 100), .None => { return .Err("expected Some") } }
+
+  case t.max {
+    .Some(n) => try assert.equal(n, 100),
+    .None => {
+      return .Err("expected Some")
+    },
+  }
+
   .Ok({})
 }
 
 fn test_elem_def() Result<Void, String> {
   e := ElemDef.{
-    table: "$func_table",
+    table: "\$func_table",
     offset: [.I32Const(0)],
-    func_syms: ["$f1", "$f2"],
+    func_syms: ["\$f1", "\$f2"],
   }
-  try assert.equal(e.table, "$func_table")
+  try assert.equal(e.table, "\$func_table")
   try assert.equal(e.func_syms.len(), 2)
   .Ok({})
 }
 
 // ── DataSegment ─────────────────────────────────────────────────────
-
 fn test_data_segment() Result<Void, String> {
   d := DataSegment.{
-    name: "$data_0",
+    name: "\$data_0",
     offset: [.I32Const(0)],
     bytes: [104, 105],
   }
-  try assert.equal(d.name, "$data_0")
+  try assert.equal(d.name, "\$data_0")
   try assert.equal(d.bytes.len(), 2)
   .Ok({})
 }
 
 // ── WasmModule ──────────────────────────────────────────────────────
-
 fn test_wasm_module_empty() Result<Void, String> {
   m := WasmModule.{
     namespace: "user",
@@ -298,7 +363,7 @@ fn test_wasm_module_empty() Result<Void, String> {
 
 fn test_wasm_module_with_func() Result<Void, String> {
   f := FuncDef.{
-    name: "$main",
+    name: "\$main",
     params: [],
     results: [],
     locals: [.I64],
@@ -312,64 +377,53 @@ fn test_wasm_module_with_func() Result<Void, String> {
     globals: [],
     tables: [],
     elems: [],
-    exports: [ExportDef.{ wasm_name: "_start", func_sym: "$main" }],
+    exports: [ExportDef.{ wasm_name: "_start", func_sym: "\$main" }],
     data: [],
-    start: .Some("$main"),
+    start: .Some("\$main"),
   }
   try assert.equal(m.funcs.len(), 1)
-  try assert.equal(m.funcs[0].name, "$main")
-  case m.start { .Some(s) => assert.equal(s, "$main"), .None => assert.fail("expected start") }
+  try assert.equal(m.funcs[0].name, "\$main")
+
+  case m.start {
+    .Some(s) => assert.equal(s, "\$main"),
+    .None => assert.fail("expected start"),
+  }
 }
 
 // ── Suite ───────────────────────────────────────────────────────────
-
 pub fn suite() runner.Suite {
-  runner.suite("wasm ir types")
-
-    // HeapType
-    .test("HeapType Named", test_heap_type_named)
-    .test("HeapType all variants", test_heap_type_variants)
-
-    // ValType
-    .test("ValType scalars", test_val_type_scalars)
-    .test("ValType Ref", test_val_type_ref)
-
-    // FieldDef
-    .test("FieldDef construction", test_field_def)
-
-    // TypeDef
-    .test("TypeDef Struct", test_type_def_struct)
-    .test("TypeDef Array", test_type_def_array)
-    .test("TypeDef FuncType", test_type_def_func_type)
-
-    // Instr
-    .test("Instr constants", test_instr_constants)
-    .test("Instr local ops", test_instr_local_ops)
-    .test("Instr struct ops", test_instr_struct_ops)
-    .test("Instr call", test_instr_call)
-    .test("Instr control flow Block", test_instr_control_flow)
-    .test("Instr If", test_instr_if)
-
-    // FuncDef
-    .test("FuncDef construction", test_func_def)
-
-    // ImportDef
-    .test("ImportDef construction", test_import_def)
-
-    // GlobalDef
-    .test("GlobalDef construction", test_global_def)
-
-    // ExportDef
-    .test("ExportDef construction", test_export_def)
-
-    // TableDef & ElemDef
-    .test("TableDef construction", test_table_def)
-    .test("ElemDef construction", test_elem_def)
-
-    // DataSegment
-    .test("DataSegment construction", test_data_segment)
-
-    // WasmModule
-    .test("WasmModule empty", test_wasm_module_empty)
-    .test("WasmModule with func", test_wasm_module_with_func)
+  runner.suite("wasm ir types").test("HeapType Named", test_heap_type_named).test(
+    "HeapType all variants",
+    test_heap_type_variants,
+  ).test("ValType scalars", test_val_type_scalars).test(
+    "ValType Ref",
+    test_val_type_ref,
+  ).test("FieldDef construction", test_field_def).test(
+    "TypeDef Struct",
+    test_type_def_struct,
+  ).test("TypeDef Array", test_type_def_array).test(
+    "TypeDef FuncType",
+    test_type_def_func_type,
+  ).test("Instr constants", test_instr_constants).test(
+    "Instr local ops",
+    test_instr_local_ops,
+  ).test("Instr struct ops", test_instr_struct_ops).test(
+    "Instr call",
+    test_instr_call,
+  ).test("Instr control flow Block", test_instr_control_flow).test(
+    "Instr If",
+    test_instr_if,
+  ).test("FuncDef construction", test_func_def).test(
+    "ImportDef construction",
+    test_import_def,
+  ).test("GlobalDef construction", test_global_def).test(
+    "ExportDef construction",
+    test_export_def,
+  ).test("TableDef construction", test_table_def).test(
+    "ElemDef construction",
+    test_elem_def,
+  ).test("DataSegment construction", test_data_segment).test(
+    "WasmModule empty",
+    test_wasm_module_empty,
+  ).test("WasmModule with func", test_wasm_module_with_func)
 }

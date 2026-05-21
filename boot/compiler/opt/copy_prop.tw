@@ -2,25 +2,20 @@
 // atom and t is used exactly once (excluding closure free_var positions).
 //
 // Also provides subst_atom for general atom substitution.
-
-use compiler.core_ir.{LocalId}
-
-use compiler.anf.{Atom, AnfExpr, AnfOp, AnfMatchArm, FieldAtom}
+use compiler.anf.{AnfExpr, AnfMatchArm, AnfOp, Atom, FieldAtom}
 use compiler.anf_analysis.{collect_assigned_locals, set_has}
+use compiler.core_ir.{LocalId}
 use compiler.opt.use_count.{count_uses_and_free_var_flags}
 
 pub type PropResult = .{ expr: AnfExpr, changed: Bool }
 
 // ── subst_atom ──────────────────────────────────────────────────────
-
 pub fn subst_atom(expr: AnfExpr, target: LocalId, replacement: Atom) AnfExpr {
   case expr {
     .Let(local, op, body) => {
       new_op := subst_op(op, target, replacement)
       // Shadow-stop guard: if this Let rebinds target, don't substitute in body
-      new_body := if local.id == target.id {
-        body
-      } else {
+      new_body := if local.id == target.id { body } else {
         subst_atom(body, target, replacement)
       }
       AnfExpr.Let(local, new_op, new_body)
@@ -45,22 +40,35 @@ fn subst_atom_val(a: Atom, target: LocalId, replacement: Atom) Atom {
 
 fn subst_op(op: AnfOp, target: LocalId, replacement: Atom) AnfOp {
   sa := fn(a: Atom) Atom { subst_atom_val(a, target, replacement) }
+
   case op {
     .ACall(callee, args) => {
       new_args: Vector<Atom> = collect a in args { sa(a) }
       AnfOp.ACall(sa(callee), new_args)
     },
     .AIf(cond, then_e, else_e) => {
-      AnfOp.AIf(sa(cond), subst_atom(then_e, target, replacement), subst_atom(else_e, target, replacement))
+      AnfOp.AIf(
+        sa(cond),
+        subst_atom(then_e, target, replacement),
+        subst_atom(else_e, target, replacement),
+      )
     },
     .AMatch(scrutinee, arms) => {
       new_arms: Vector<AnfMatchArm> = collect arm in arms {
-        AnfMatchArm.{ pattern: arm.pattern, body: subst_atom(arm.body, target, replacement) }
+        AnfMatchArm.{
+          pattern: arm.pattern,
+          body: subst_atom(arm.body, target, replacement),
+        }
       }
       AnfOp.AMatch(sa(scrutinee), new_arms)
     },
     .ALoop(body) => .ALoop(subst_atom(body, target, replacement)),
-    .ABinOp(binop, left, right, kind) => .ABinOp(binop, sa(left), sa(right), kind),
+    .ABinOp(binop, left, right, kind) => .ABinOp(
+      binop,
+      sa(left),
+      sa(right),
+      kind,
+    ),
     .AUnOp(unop, inner, kind) => .AUnOp(unop, sa(inner), kind),
     .AMakeClosure(func_id, free_vars) => {
       // free_vars are closure-body local ids, not ordinary atom positions.
@@ -97,7 +105,6 @@ fn subst_op(op: AnfOp, target: LocalId, replacement: Atom) AnfOp {
 }
 
 // ── is_non_local_atom ───────────────────────────────────────────────
-
 fn is_non_local_atom(a: Atom) Bool {
   case a {
     .ALocal(_) => false,
@@ -106,7 +113,6 @@ fn is_non_local_atom(a: Atom) Bool {
 }
 
 // ── copy_propagate ──────────────────────────────────────────────────
-
 pub fn copy_propagate(expr: AnfExpr) PropResult {
   copy_propagate_with_pinned(expr, Dict.new())
 }
@@ -114,16 +120,26 @@ pub fn copy_propagate(expr: AnfExpr) PropResult {
 pub fn copy_propagate_with_pinned(expr: AnfExpr, pinned: Dict<Int, Bool>) PropResult {
   counts := count_uses_and_free_var_flags(expr)
   assigned := collect_assigned_locals(expr)
+
   // Merge pinned into assigned so pinned locals are never propagated
   for k in pinned.keys() { assigned[k] = true }
+
   copy_prop_inner(expr, counts.uses, counts.free_var_uses, assigned)
 }
 
 // Check if an atom can be propagated into N use sites.
 // Literals and global funcs are always safe to duplicate.
 // Locals are safe if used exactly once and the source isn't reassigned.
-fn can_propagate(lit: Atom, use_count: Int, target_assigned: Bool, assigned: Dict<Int, Bool>) Bool {
-  if target_assigned { return false }
+fn can_propagate(
+  lit: Atom,
+  use_count: Int,
+  target_assigned: Bool,
+  assigned: Dict<Int, Bool>,
+) Bool {
+  if target_assigned {
+    return false
+  }
+
   case lit {
     .ALocal(src) => {
       // Local-to-local forwarding: safe when the source isn't reassigned
@@ -148,10 +164,19 @@ fn copy_prop_inner(
       case op {
         .AInit(lit) => {
           use_count := uses[local.id].unwrap_or(0)
-          if !set_has(free_var_uses, local.id) and can_propagate(lit, use_count, set_has(assigned, local.id), assigned) {
+
+          if !set_has(free_var_uses, local.id)
+          and can_propagate(
+            lit,
+            use_count,
+            set_has(assigned, local.id),
+            assigned,
+          ) {
             new_body := subst_atom(body, local, lit)
+
             return PropResult.{ expr: new_body, changed: true }
           }
+
           // Fall through to recursive case
           op_result := copy_prop_op(op, uses, free_var_uses, assigned)
           body_result := copy_prop_inner(body, uses, free_var_uses, assigned)
@@ -195,7 +220,9 @@ fn copy_prop_op(
       changed := false
       new_arms: Vector<AnfMatchArm> = collect arm in arms {
         r := copy_prop_inner(arm.body, uses, free_var_uses, assigned)
+
         if r.changed { changed = true }
+
         AnfMatchArm.{ pattern: arm.pattern, body: r.expr }
       }
       OpPropResult.{ op: .AMatch(scrutinee, new_arms), changed: changed }

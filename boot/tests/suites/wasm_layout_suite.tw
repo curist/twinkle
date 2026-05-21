@@ -1,16 +1,18 @@
-use tests.runner
-use tests.assert
-use lib.source.span.{Span}
-use compiler.resolver
-use compiler.resolver.{ResolvedEnv, ResolvedTypeDef, ResolvedField, ResolvedVariant, TypeEntry, plain_resolved_type_params}
+use compiler.codegen.wasm_layout.{
+  WasmRecordLayout, WasmValType, layout_of, mono_to_key, val_type_of,
+  val_type_of_mono,
+}
 use compiler.mono_type.{MonoType, TypeId}
-
-
-use compiler.codegen.wasm_layout.{WasmValType, WasmRecordLayout, layout_of, val_type_of, val_type_of_mono, mono_to_key}
-
+use compiler.resolver
+use compiler.resolver.{
+  ResolvedEnv, ResolvedField, ResolvedTypeDef, ResolvedVariant, TypeEntry,
+  plain_resolved_type_params,
+}
+use lib.source.span.{Span}
+use tests.assert
+use tests.runner
 
 // ── Helpers ─────────────────────────────────────────────────────────
-
 fn dummy_span() Span { .{ file_id: 0, start: 0, end: 0 } }
 
 fn env_with_record(name: String, type_id: Int, fields: Vector<ResolvedField>) ResolvedEnv {
@@ -35,11 +37,22 @@ fn env_with_sum(name: String, type_id: Int, variants: Vector<ResolvedVariant>) R
   resolver.empty_env().add_type(entry, name)
 }
 
-fn env_with_alias(name: String, type_id: Int, type_params: Vector<String>, target: MonoType) ResolvedEnv {
+fn env_with_alias(
+  name: String,
+  type_id: Int,
+  type_params: Vector<String>,
+  target: MonoType,
+) ResolvedEnv {
   entry := TypeEntry.{
     id: TypeId.{ id: type_id },
     arity: type_params.len(),
-    def: .Some(ResolvedTypeDef.Alias(name, plain_resolved_type_params(type_params), target)),
+    def: .Some(
+      ResolvedTypeDef.Alias(
+        name,
+        plain_resolved_type_params(type_params),
+        target,
+      ),
+    ),
     span: dummy_span(),
     is_extern: false,
   }
@@ -47,7 +60,6 @@ fn env_with_alias(name: String, type_id: Int, type_params: Vector<String>, targe
 }
 
 // ── WasmValType construction ────────────────────────────────────────
-
 fn test_wasm_val_type_variants() Result<Void, String> {
   _a: WasmValType = .WI32
   _b: WasmValType = .WI64
@@ -57,10 +69,10 @@ fn test_wasm_val_type_variants() Result<Void, String> {
 }
 
 // ── layout_of: primitives ───────────────────────────────────────────
-
 fn test_layout_int() Result<Void, String> {
   env := resolver.empty_env()
   l := layout_of(.Int, env)
+
   case l {
     .Scalar(.WI64) => .Ok({}),
     _ => assert.fail("expected Scalar(WI64)"),
@@ -70,6 +82,7 @@ fn test_layout_int() Result<Void, String> {
 fn test_layout_float() Result<Void, String> {
   env := resolver.empty_env()
   l := layout_of(.Float, env)
+
   case l {
     .Scalar(.WF64) => .Ok({}),
     _ => assert.fail("expected Scalar(WF64)"),
@@ -79,6 +92,7 @@ fn test_layout_float() Result<Void, String> {
 fn test_layout_bool() Result<Void, String> {
   env := resolver.empty_env()
   l := layout_of(.Bool, env)
+
   case l {
     .Scalar(.WI32) => .Ok({}),
     _ => assert.fail("expected Scalar(WI32)"),
@@ -88,6 +102,7 @@ fn test_layout_bool() Result<Void, String> {
 fn test_layout_byte() Result<Void, String> {
   env := resolver.empty_env()
   l := layout_of(.Byte, env)
+
   case l {
     .Scalar(.WI32) => .Ok({}),
     _ => assert.fail("expected Scalar(WI32) for Byte"),
@@ -97,6 +112,7 @@ fn test_layout_byte() Result<Void, String> {
 fn test_layout_void() Result<Void, String> {
   env := resolver.empty_env()
   l := layout_of(.Void, env)
+
   case l {
     .Scalar(.WAnyref) => .Ok({}),
     _ => assert.fail("expected Scalar(WAnyref) for Void"),
@@ -106,6 +122,7 @@ fn test_layout_void() Result<Void, String> {
 fn test_layout_string() Result<Void, String> {
   env := resolver.empty_env()
   l := layout_of(.String, env)
+
   case l {
     .Scalar(.WAnyref) => .Ok({}),
     _ => assert.fail("expected Scalar(WAnyref) for String"),
@@ -113,13 +130,17 @@ fn test_layout_string() Result<Void, String> {
 }
 
 // ── layout_of: records ──────────────────────────────────────────────
-
 fn test_layout_record() Result<Void, String> {
-  env := env_with_record("Point", 10, [
-    ResolvedField.{ name: "x", ty: .Int },
-    ResolvedField.{ name: "y", ty: .Int },
-  ])
+  env := env_with_record(
+    "Point",
+    10,
+    [
+      ResolvedField.{ name: "x", ty: .Int },
+      ResolvedField.{ name: "y", ty: .Int },
+    ],
+  )
   l := layout_of(.Named(TypeId.{ id: 10 }, []), env)
+
   case l {
     .Record(rec) => {
       try assert.equal(rec.type_id.id, 10)
@@ -133,14 +154,18 @@ fn test_layout_record() Result<Void, String> {
 }
 
 // ── layout_of: sums ────────────────────────────────────────────────
-
 fn test_layout_sum() Result<Void, String> {
-  env := env_with_sum("Shape", 11, [
-    ResolvedVariant.{ name: "Circle", fields: [.Float] },
-    ResolvedVariant.{ name: "Rect", fields: [.Float, .Float] },
-    ResolvedVariant.{ name: "Unit", fields: [] },
-  ])
+  env := env_with_sum(
+    "Shape",
+    11,
+    [
+      ResolvedVariant.{ name: "Circle", fields: [.Float] },
+      ResolvedVariant.{ name: "Rect", fields: [.Float, .Float] },
+      ResolvedVariant.{ name: "Unit", fields: [] },
+    ],
+  )
   l := layout_of(.Named(TypeId.{ id: 11 }, []), env)
+
   case l {
     .Sum(sum) => {
       try assert.equal(sum.type_id.id, 11)
@@ -155,10 +180,10 @@ fn test_layout_sum() Result<Void, String> {
 }
 
 // ── layout_of: Optional & Result ────────────────────────────────────
-
 fn test_layout_optional() Result<Void, String> {
   env := resolver.empty_env()
   l := layout_of(.Optional(.Int), env)
+
   case l {
     .Sum(sum) => {
       try assert.equal(sum.variants.len(), 2)
@@ -173,6 +198,7 @@ fn test_layout_optional() Result<Void, String> {
 fn test_layout_result() Result<Void, String> {
   env := resolver.empty_env()
   l := layout_of(.Result(.Int, .String), env)
+
   case l {
     .Sum(sum) => {
       try assert.equal(sum.variants.len(), 2)
@@ -185,10 +211,10 @@ fn test_layout_result() Result<Void, String> {
 }
 
 // ── layout_of: containers ───────────────────────────────────────────
-
 fn test_layout_vector() Result<Void, String> {
   env := resolver.empty_env()
   l := layout_of(.Vector(.Int), env)
+
   case l {
     .Vector_(inner) => {
       case inner {
@@ -203,12 +229,14 @@ fn test_layout_vector() Result<Void, String> {
 fn test_layout_dict() Result<Void, String> {
   env := resolver.empty_env()
   l := layout_of(.Dict(.String, .Int), env)
+
   case l {
     .Dict_(kl, vl) => {
       case kl {
         .Scalar(.WAnyref) => {},
         _ => { return assert.fail("expected key Scalar(WAnyref)") },
       }
+
       case vl {
         .Scalar(.WI64) => .Ok({}),
         _ => assert.fail("expected val Scalar(WI64)"),
@@ -219,10 +247,10 @@ fn test_layout_dict() Result<Void, String> {
 }
 
 // ── layout_of: closures ─────────────────────────────────────────────
-
 fn test_layout_closure() Result<Void, String> {
   env := resolver.empty_env()
   l := layout_of(.Function([.Int, .Int], .Int), env)
+
   case l {
     .Closure(c) => {
       try assert.equal(c.param_types.len(), 2)
@@ -235,14 +263,18 @@ fn test_layout_closure() Result<Void, String> {
 fn test_layout_generic_alias_substitutes_args() Result<Void, String> {
   env := env_with_alias("Wrapped", 20, ["T"], .Result(.Var("T"), .String))
   l := layout_of(.Named(TypeId.{ id: 20 }, [.Int]), env)
+
   case l {
     .Sum(sum) => {
       try assert.equal(sum.variants.len(), 2)
       ok_payload := sum.variants[0].payload_types
       try assert.equal(ok_payload.len(), 1)
+
       case ok_payload[0] {
         .I64 => .Ok({}),
-        _ => assert.fail("expected generic alias payload to substitute Int -> I64"),
+        _ => assert.fail(
+          "expected generic alias payload to substitute Int -> I64",
+        ),
       }
     },
     _ => assert.fail("expected alias to resolve to Result sum layout"),
@@ -252,11 +284,14 @@ fn test_layout_generic_alias_substitutes_args() Result<Void, String> {
 fn test_layout_closure_never_return() Result<Void, String> {
   env := resolver.empty_env()
   l := layout_of(.Function([.Int], .Never), env)
+
   case l {
     .Closure(c) => {
       case c.result_type {
         .None => .Ok({}),
-        .Some(_) => assert.fail("expected closure with Never return to have no result type"),
+        .Some(_) => assert.fail(
+          "expected closure with Never return to have no result type",
+        ),
       }
     },
     _ => assert.fail("expected Closure layout"),
@@ -264,38 +299,58 @@ fn test_layout_closure_never_return() Result<Void, String> {
 }
 
 // ── val_type_of ─────────────────────────────────────────────────────
-
 fn test_val_type_of_scalar_i64() Result<Void, String> {
   vt := val_type_of(.Scalar(.WI64))
-  case vt { .I64 => .Ok({}), _ => assert.fail("expected I64") }
+
+  case vt {
+    .I64 => .Ok({}),
+    _ => assert.fail("expected I64"),
+  }
 }
 
 fn test_val_type_of_scalar_i32() Result<Void, String> {
   vt := val_type_of(.Scalar(.WI32))
-  case vt { .I32 => .Ok({}), _ => assert.fail("expected I32") }
+
+  case vt {
+    .I32 => .Ok({}),
+    _ => assert.fail("expected I32"),
+  }
 }
 
 fn test_val_type_of_scalar_f64() Result<Void, String> {
   vt := val_type_of(.Scalar(.WF64))
-  case vt { .F64 => .Ok({}), _ => assert.fail("expected F64") }
+
+  case vt {
+    .F64 => .Ok({}),
+    _ => assert.fail("expected F64"),
+  }
 }
 
 fn test_val_type_of_scalar_anyref() Result<Void, String> {
   vt := val_type_of(.Scalar(.WAnyref))
-  case vt { .Anyref => .Ok({}), _ => assert.fail("expected Anyref") }
+
+  case vt {
+    .Anyref => .Ok({}),
+    _ => assert.fail("expected Anyref"),
+  }
 }
 
 fn test_val_type_of_record() Result<Void, String> {
   rec := WasmRecordLayout.{
     type_id: TypeId.{ id: 10 },
-    sym: "$Point",
+    sym: "\$Point",
     fields: [],
   }
   vt := val_type_of(.Record(rec))
+
   case vt {
     .Ref(nullable, ht) => {
       try assert.equal(nullable, true)
-      case ht { .Named(s) => assert.equal(s, "$Point"), _ => assert.fail("expected Named") }
+
+      case ht {
+        .Named(s) => assert.equal(s, "\$Point"),
+        _ => assert.fail("expected Named"),
+      }
     },
     _ => assert.fail("expected Ref"),
   }
@@ -303,10 +358,15 @@ fn test_val_type_of_record() Result<Void, String> {
 
 fn test_val_type_of_vector() Result<Void, String> {
   vt := val_type_of(.Vector_(.Scalar(.WI64)))
+
   case vt {
     .Ref(nullable, ht) => {
       try assert.equal(nullable, true)
-      case ht { .Named(s) => assert.equal(s, "rt_types__PVec"), _ => assert.fail("expected Named rt_types__PVec") }
+
+      case ht {
+        .Named(s) => assert.equal(s, "rt_types__PVec"),
+        _ => assert.fail("expected Named rt_types__PVec"),
+      }
     },
     _ => assert.fail("expected Ref"),
   }
@@ -314,37 +374,52 @@ fn test_val_type_of_vector() Result<Void, String> {
 
 fn test_val_type_of_dict() Result<Void, String> {
   vt := val_type_of(.Dict_(.Scalar(.WAnyref), .Scalar(.WI64)))
+
   case vt {
     .Ref(nullable, ht) => {
       try assert.equal(nullable, true)
-      case ht { .Named(s) => assert.equal(s, "rt_types__PDict"), _ => assert.fail("expected Named rt_types__PDict") }
+
+      case ht {
+        .Named(s) => assert.equal(s, "rt_types__PDict"),
+        _ => assert.fail("expected Named rt_types__PDict"),
+      }
     },
     _ => assert.fail("expected Ref"),
   }
 }
 
 // ── val_type_of_mono ────────────────────────────────────────────────
-
 fn test_val_type_of_mono_int() Result<Void, String> {
   env := resolver.empty_env()
   vt := val_type_of_mono(.Int, env)
-  case vt { .I64 => .Ok({}), _ => assert.fail("expected I64") }
+
+  case vt {
+    .I64 => .Ok({}),
+    _ => assert.fail("expected I64"),
+  }
 }
 
 fn test_val_type_of_mono_bool() Result<Void, String> {
   env := resolver.empty_env()
   vt := val_type_of_mono(.Bool, env)
-  case vt { .I32 => .Ok({}), _ => assert.fail("expected I32") }
+
+  case vt {
+    .I32 => .Ok({}),
+    _ => assert.fail("expected I32"),
+  }
 }
 
 fn test_val_type_of_mono_anyref_marker() Result<Void, String> {
   env := resolver.empty_env()
   vt := val_type_of_mono(.Anyref_, env)
-  case vt { .Anyref => .Ok({}), _ => assert.fail("expected Anyref") }
+
+  case vt {
+    .Anyref => .Ok({}),
+    _ => assert.fail("expected Anyref"),
+  }
 }
 
 // ── mono_to_key ─────────────────────────────────────────────────────
-
 fn test_mono_to_key_primitives() Result<Void, String> {
   try assert.equal(mono_to_key(.Int), "i64")
   try assert.equal(mono_to_key(.Float), "f64")
@@ -399,53 +474,60 @@ fn test_mono_to_key_stable() Result<Void, String> {
 }
 
 // ── Suite ───────────────────────────────────────────────────────────
-
 pub fn suite() runner.Suite {
-  runner.suite("wasm layout")
-
-    // WasmValType
-    .test("WasmValType variants", test_wasm_val_type_variants)
-
-    // layout_of primitives
-    .test("layout_of Int", test_layout_int)
-    .test("layout_of Float", test_layout_float)
-    .test("layout_of Bool", test_layout_bool)
-    .test("layout_of Byte", test_layout_byte)
-    .test("layout_of Void", test_layout_void)
-    .test("layout_of String", test_layout_string)
-
-    // layout_of compound types
-    .test("layout_of Record", test_layout_record)
-    .test("layout_of Sum", test_layout_sum)
-    .test("layout_of Optional", test_layout_optional)
-    .test("layout_of Result", test_layout_result)
-    .test("layout_of Vector", test_layout_vector)
-    .test("layout_of Dict", test_layout_dict)
-    .test("layout_of Closure", test_layout_closure)
-    .test("layout_of generic Alias substitutes args", test_layout_generic_alias_substitutes_args)
-    .test("layout_of Closure handles Never return", test_layout_closure_never_return)
-
-    // val_type_of
-    .test("val_type_of Scalar I64", test_val_type_of_scalar_i64)
-    .test("val_type_of Scalar I32", test_val_type_of_scalar_i32)
-    .test("val_type_of Scalar F64", test_val_type_of_scalar_f64)
-    .test("val_type_of Scalar Anyref", test_val_type_of_scalar_anyref)
-    .test("val_type_of Record", test_val_type_of_record)
-    .test("val_type_of Vector", test_val_type_of_vector)
-    .test("val_type_of Dict", test_val_type_of_dict)
-
-    // val_type_of_mono
-    .test("val_type_of_mono Int", test_val_type_of_mono_int)
-    .test("val_type_of_mono Bool", test_val_type_of_mono_bool)
-    .test("val_type_of_mono Anyref marker", test_val_type_of_mono_anyref_marker)
-
-    // mono_to_key
-    .test("mono_to_key primitives", test_mono_to_key_primitives)
-    .test("mono_to_key Named", test_mono_to_key_named)
-    .test("mono_to_key Vector", test_mono_to_key_vector)
-    .test("mono_to_key Dict", test_mono_to_key_dict)
-    .test("mono_to_key Function", test_mono_to_key_function)
-    .test("mono_to_key Optional", test_mono_to_key_optional)
-    .test("mono_to_key Result", test_mono_to_key_result)
-    .test("mono_to_key stable", test_mono_to_key_stable)
+  runner.suite("wasm layout").test(
+    "WasmValType variants",
+    test_wasm_val_type_variants,
+  ).test("layout_of Int", test_layout_int).test(
+    "layout_of Float",
+    test_layout_float,
+  ).test("layout_of Bool", test_layout_bool).test(
+    "layout_of Byte",
+    test_layout_byte,
+  ).test("layout_of Void", test_layout_void).test(
+    "layout_of String",
+    test_layout_string,
+  ).test("layout_of Record", test_layout_record).test(
+    "layout_of Sum",
+    test_layout_sum,
+  ).test("layout_of Optional", test_layout_optional).test(
+    "layout_of Result",
+    test_layout_result,
+  ).test("layout_of Vector", test_layout_vector).test(
+    "layout_of Dict",
+    test_layout_dict,
+  ).test("layout_of Closure", test_layout_closure).test(
+    "layout_of generic Alias substitutes args",
+    test_layout_generic_alias_substitutes_args,
+  ).test(
+    "layout_of Closure handles Never return",
+    test_layout_closure_never_return,
+  ).test("val_type_of Scalar I64", test_val_type_of_scalar_i64).test(
+    "val_type_of Scalar I32",
+    test_val_type_of_scalar_i32,
+  ).test("val_type_of Scalar F64", test_val_type_of_scalar_f64).test(
+    "val_type_of Scalar Anyref",
+    test_val_type_of_scalar_anyref,
+  ).test("val_type_of Record", test_val_type_of_record).test(
+    "val_type_of Vector",
+    test_val_type_of_vector,
+  ).test("val_type_of Dict", test_val_type_of_dict).test(
+    "val_type_of_mono Int",
+    test_val_type_of_mono_int,
+  ).test("val_type_of_mono Bool", test_val_type_of_mono_bool).test(
+    "val_type_of_mono Anyref marker",
+    test_val_type_of_mono_anyref_marker,
+  ).test("mono_to_key primitives", test_mono_to_key_primitives).test(
+    "mono_to_key Named",
+    test_mono_to_key_named,
+  ).test("mono_to_key Vector", test_mono_to_key_vector).test(
+    "mono_to_key Dict",
+    test_mono_to_key_dict,
+  ).test("mono_to_key Function", test_mono_to_key_function).test(
+    "mono_to_key Optional",
+    test_mono_to_key_optional,
+  ).test("mono_to_key Result", test_mono_to_key_result).test(
+    "mono_to_key stable",
+    test_mono_to_key_stable,
+  )
 }

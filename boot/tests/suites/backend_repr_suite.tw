@@ -11,27 +11,27 @@
 //   - Dead: Never → DeadValue (via DeadPlaceholder role)
 //   - Boundary overrides: AWrapAnyref result → OpaqueAnyref;
 //                         AUnwrapAnyref result → typed repr from target mono
-
-use tests.runner
-use tests.assert
+use compiler.anf.{AnfExpr, AnfFunctionDef, AnfModule}
+use compiler.backend.prepare.{prepare_backend}
+use compiler.backend.prepared_ir.{
+  CaptureParam, PreparedFunc, ReprKind, SlotInfo,
+}
+use compiler.backend.repr_assign.{repr_of_mono}
+use compiler.builtins.{BuiltinRegistry, make_builtin_registry}
+use compiler.codegen.wasm_ir.{AbiContract, ValType}
+use compiler.codegen.wasm_plan_types.{WasmTypeRegistry}
+use compiler.core_ir.{FuncId, LocalId, Param}
+use compiler.mono_type.{MonoType}
 use compiler.resolver
 use compiler.resolver.{ResolvedEnv}
-use compiler.mono_type.{MonoType}
-use compiler.core_ir.{LocalId, FuncId, Param}
-use compiler.builtins.{BuiltinRegistry, make_builtin_registry}
-use compiler.anf.{AnfExpr, AnfFunctionDef, AnfModule}
-
-use compiler.codegen.wasm_ir.{ValType, AbiContract}
-
-use compiler.codegen.wasm_plan_types.{WasmTypeRegistry}
-use compiler.backend.prepared_ir.{CaptureParam, ReprKind, PreparedFunc, SlotInfo}
-use compiler.backend.repr_assign.{repr_of_mono}
-use compiler.backend.prepare.{prepare_backend}
+use tests.assert
+use tests.runner
 
 // ── Helpers ──────────────────────────────────────────────────────────
-
 fn lid(n: Int) LocalId { LocalId.{ id: n } }
+
 fn fid(n: Int) FuncId { FuncId.{ id: n } }
+
 fn empty_env() ResolvedEnv { resolver.empty_env() }
 
 fn empty_registry() WasmTypeRegistry {
@@ -54,9 +54,7 @@ fn empty_registry() WasmTypeRegistry {
   }
 }
 
-fn empty_builtins() BuiltinRegistry {
-  make_builtin_registry()
-}
+fn empty_builtins() BuiltinRegistry { make_builtin_registry() }
 
 fn no_captures() Dict<Int, Vector<CaptureParam>> { Dict.new() }
 
@@ -68,71 +66,157 @@ fn mk_abi(params: Vector<ValType>, results: Vector<ValType>) AbiContract {
 fn assert_repr(mono: MonoType, expected: ReprKind) Result<Void, String> {
   got := repr_of_mono(mono, empty_env())
   repr_ok := case expected {
-    .I64 => case got { .I64 => true, _ => false },
-    .F64 => case got { .F64 => true, _ => false },
-    .I32 => case got { .I32 => true, _ => false },
-    .TypedRef(_) => case got { .TypedRef(_) => true, _ => false },
-    .TypedSum(_) => case got { .TypedSum(_) => true, _ => false },
-    .ClosureRef => case got { .ClosureRef => true, _ => false },
-    .OpaqueAnyref => case got { .OpaqueAnyref => true, _ => false },
-    .DeadValue => case got { .DeadValue => true, _ => false },
-    .ErasedSum => case got { .ErasedSum => true, _ => false },
+    .I64 => case got {
+      .I64 => true,
+      _ => false,
+    },
+    .F64 => case got {
+      .F64 => true,
+      _ => false,
+    },
+    .I32 => case got {
+      .I32 => true,
+      _ => false,
+    },
+    .TypedRef(_) => case got {
+      .TypedRef(_) => true,
+      _ => false,
+    },
+    .TypedSum(_) => case got {
+      .TypedSum(_) => true,
+      _ => false,
+    },
+    .ClosureRef => case got {
+      .ClosureRef => true,
+      _ => false,
+    },
+    .OpaqueAnyref => case got {
+      .OpaqueAnyref => true,
+      _ => false,
+    },
+    .DeadValue => case got {
+      .DeadValue => true,
+      _ => false,
+    },
+    .ErasedSum => case got {
+      .ErasedSum => true,
+      _ => false,
+    },
   }
-  if repr_ok { .Ok({}) } else { assert.fail("wrong repr for mono") }
+
+  if repr_ok {
+    .Ok({})
+  } else {
+    assert.fail("wrong repr for mono")
+  }
 }
 
 fn slot_for_local(pf: PreparedFunc, lid_id: Int) SlotInfo? {
   for sid in pf.slots.keys() {
     case pf.slots[sid] {
-      .Some(info) => if info.source_local.id == lid_id { return .Some(info) },
+      .Some(info) => if info.source_local.id == lid_id {
+        return .Some(info)
+      },
       .None => {},
     }
   }
+
   .None
 }
 
 // assert_slot_repr: check ReprKind for a given LocalId's slot in a PreparedFunc
-fn assert_slot_repr(
-  pf: PreparedFunc,
-  lid_id: Int,
-  expected: ReprKind,
-) Result<Void, String> {
+fn assert_slot_repr(pf: PreparedFunc, lid_id: Int, expected: ReprKind) Result<
+  Void,
+  String,
+> {
   case slot_for_local(pf, lid_id) {
-    .None => { return .Err("L${lid_id} has no slot") },
+    .None => {
+      return .Err("L${lid_id} has no slot")
+    },
     .Some(info) => {
       repr_ok := case expected {
-        .I64 => case info.repr { .I64 => true, _ => false },
-        .F64 => case info.repr { .F64 => true, _ => false },
-        .I32 => case info.repr { .I32 => true, _ => false },
-        .TypedRef(_) => case info.repr { .TypedRef(_) => true, _ => false },
-        .TypedSum(_) => case info.repr { .TypedSum(_) => true, _ => false },
-        .ClosureRef => case info.repr { .ClosureRef => true, _ => false },
-        .OpaqueAnyref => case info.repr { .OpaqueAnyref => true, _ => false },
-        .DeadValue => case info.repr { .DeadValue => true, _ => false },
-        .ErasedSum => case info.repr { .ErasedSum => true, _ => false },
+        .I64 => case info.repr {
+          .I64 => true,
+          _ => false,
+        },
+        .F64 => case info.repr {
+          .F64 => true,
+          _ => false,
+        },
+        .I32 => case info.repr {
+          .I32 => true,
+          _ => false,
+        },
+        .TypedRef(_) => case info.repr {
+          .TypedRef(_) => true,
+          _ => false,
+        },
+        .TypedSum(_) => case info.repr {
+          .TypedSum(_) => true,
+          _ => false,
+        },
+        .ClosureRef => case info.repr {
+          .ClosureRef => true,
+          _ => false,
+        },
+        .OpaqueAnyref => case info.repr {
+          .OpaqueAnyref => true,
+          _ => false,
+        },
+        .DeadValue => case info.repr {
+          .DeadValue => true,
+          _ => false,
+        },
+        .ErasedSum => case info.repr {
+          .ErasedSum => true,
+          _ => false,
+        },
       }
-      if repr_ok { .Ok({}) } else { assert.fail("L${lid_id}: wrong repr") }
+
+      if repr_ok {
+        .Ok({})
+      } else {
+        assert.fail("L${lid_id}: wrong repr")
+      }
     },
   }
 }
 
 // assert_wasm_type: check wasm_type for a given LocalId's slot
-fn assert_wasm_type(
-  pf: PreparedFunc,
-  lid_id: Int,
-  expected: ValType,
-) Result<Void, String> {
+fn assert_wasm_type(pf: PreparedFunc, lid_id: Int, expected: ValType) Result<
+  Void,
+  String,
+> {
   case slot_for_local(pf, lid_id) {
-    .None => { return .Err("L${lid_id} has no slot") },
+    .None => {
+      return .Err("L${lid_id} has no slot")
+    },
     .Some(info) => {
       wt_ok := case expected {
-        .I64 => case info.wasm_type { .I64 => true, _ => false },
-        .F64 => case info.wasm_type { .F64 => true, _ => false },
-        .I32 => case info.wasm_type { .I32 => true, _ => false },
-        .Anyref => case info.wasm_type { .Anyref => true, _ => false },
+        .I64 => case info.wasm_type {
+          .I64 => true,
+          _ => false,
+        },
+        .F64 => case info.wasm_type {
+          .F64 => true,
+          _ => false,
+        },
+        .I32 => case info.wasm_type {
+          .I32 => true,
+          _ => false,
+        },
+        .Anyref => case info.wasm_type {
+          .Anyref => true,
+          _ => false,
+        },
         _ => false,
       }
-      if wt_ok { .Ok({}) } else { assert.fail("L${lid_id}: wrong wasm_type") }
+
+      if wt_ok {
+        .Ok({})
+      } else {
+        assert.fail("L${lid_id}: wrong wasm_type")
+      }
     },
   }
 }
@@ -157,12 +241,21 @@ fn mk_func_def(
 }
 
 fn mk_module(funcs: Vector<AnfFunctionDef>) AnfModule {
-  AnfModule.{ functions: funcs, init_func_id: .None, extern_imports: Dict.new() }
+  AnfModule.{
+    functions: funcs,
+    init_func_id: .None,
+    extern_imports: Dict.new(),
+  }
 }
 
-fn mk_mono_map(entries: Vector<Int>, types: Vector<MonoType>) Dict<Int, MonoType> {
+fn mk_mono_map(entries: Vector<Int>, types: Vector<MonoType>) Dict<
+  Int,
+  MonoType,
+> {
   d: Dict<Int, MonoType> = Dict.new()
-  for k,i in entries { d[k] = types[i] }
+
+  for k, i in entries { d[k] = types[i] }
+
   d
 }
 
@@ -181,183 +274,173 @@ fn prepared_pf(
 }
 
 // ── repr_of_mono tests ────────────────────────────────────────────────
-
 pub fn suite() runner.Suite {
-  runner.suite("backend repr assign (Phase 4b)")
+  runner.suite("backend repr assign (Phase 4b)").test(
+    "Int → I64",
+    fn() { assert_repr(.Int, .I64) },
+  ).test("Float → F64", fn() { assert_repr(.Float, .F64) }).test(
+    "Bool → I32",
+    fn() { assert_repr(.Bool, .I32) },
+  ).test("Byte → I32", fn() { assert_repr(.Byte, .I32) }).test(
+    "String → TypedRef",
+    fn() { assert_repr(.String, .TypedRef(.String)) },
+  ).test(
+    "Vector<Int> → TypedRef",
+    fn() { assert_repr(.Vector(.Int), .TypedRef(.Vector(.Int))) },
+  ).test(
+    "Dict<String,Int> → TypedRef",
+    fn() { assert_repr(.Dict(.String, .Int), .TypedRef(.Dict(.String, .Int))) },
+  ).test(
+    "Optional<Int> → TypedSum",
+    fn() { assert_repr(.Optional(.Int), .TypedSum(.Optional(.Int))) },
+  ).test(
+    "Result<Int,String> → TypedSum",
+    fn() {
+      assert_repr(.Result(.Int, .String), .TypedSum(.Result(.Int, .String)))
+    },
+  ).test(
+    "Function → ClosureRef",
+    fn() { assert_repr(.Function([.Int], .Bool), .ClosureRef) },
+  ).test("Void → OpaqueAnyref", fn() { assert_repr(.Void, .OpaqueAnyref) }).test(
+    "Anyref_ → OpaqueAnyref",
+    fn() { assert_repr(.Anyref_, .OpaqueAnyref) },
+  ).test("Never → DeadValue", fn() { assert_repr(.Never, .DeadValue) }).test(
+    "Int param slot gets I64 repr and I64 wasm_type",
+    fn() {
+      // fn f(x: Int) Int { x }
+      body: AnfExpr = .Atom(.ALocal(lid(0)))
+      pf := prepared_pf([mk_param(0, .Int)], body, Dict.new(), .Int)
+      try assert_slot_repr(pf, 0, .I64)
+      try assert_wasm_type(pf, 0, .I64)
+      .Ok({})
+    },
+  ).test(
+    "String param slot gets TypedRef repr",
+    fn() {
+      body: AnfExpr = .Atom(.ALocal(lid(0)))
+      pf := prepared_pf([mk_param(0, .String)], body, Dict.new(), .String)
+      assert_slot_repr(pf, 0, .TypedRef(.String))
+    },
+  ).test(
+    "Bool param slot gets I32 repr",
+    fn() {
+      body: AnfExpr = .Atom(.ALitBool(true))
+      pf := prepared_pf([mk_param(0, .Bool)], body, Dict.new(), .Bool)
+      assert_slot_repr(pf, 0, .I32)
+    },
+  ).test(
+    "Optional<Int> let-local gets TypedSum repr",
+    fn() {
+      // fn f(x: Int) Optional<Int> { let t0 = call(fn#99, [x]); t0 }
+      body: AnfExpr = .Let(
+        lid(10),
+        .ACall(.AGlobalFunc(fid(99)), [.ALocal(lid(0))]),
+        .Atom(.ALocal(lid(10))),
+      )
+      pf := prepared_pf(
+        [mk_param(0, .Int)],
+        body,
+        mk_mono_map([10], [MonoType.Optional(.Int)]),
+        .Optional(.Int),
+      )
+      assert_slot_repr(pf, 10, .TypedSum(.Optional(.Int)))
+    },
+  ).test(
+    "Never-typed local gets DeadValue repr",
+    fn() {
+      body: AnfExpr = .Let(
+        lid(10),
+        .ACall(.AGlobalFunc(fid(99)), []),
+        .Atom(.ALitVoid),
+      )
+      pf := prepared_pf([], body, mk_mono_map([10], [MonoType.Never]), .Void)
+      assert_slot_repr(pf, 10, .DeadValue)
+    },
+  ).test(
+    "AWrapAnyref result local gets OpaqueAnyref repr",
+    fn() {
+      // insert_boundaries wraps Int args to anyref builtins.
+      // The wrap temp local should get OpaqueAnyref repr even though its
+      // op_result_mono says Anyref_.
+      builtins := empty_builtins().runtime_with_abi(
+        "store",
+        "rt.test",
+        "store",
+        mk_abi([.Anyref], [.Anyref]),
+      )
+      store_fid := builtins.id("store")
+      body: AnfExpr = .Let(
+        lid(10),
+        .ACall(.AGlobalFunc(store_fid), [.ALocal(lid(0))]),
+        .Atom(.ALitVoid),
+      )
+      func := mk_func_def(
+        1,
+        "f",
+        [mk_param(0, .Int)],
+        .Void,
+        body,
+        mk_mono_map([10], [MonoType.Void]),
+      )
+      anf := mk_module([func])
+      prepared := prepare_backend(anf, empty_env(), builtins, no_captures())
+      pf := prepared.funcs[0]
+      // The wrap temp (allocated after L10) must be OpaqueAnyref
+      // Scan all let locals for AWrapAnyref
+      has_opaque_wrap := false
 
-  // ── Primitive scalars ──
-
-  .test("Int → I64", fn() {
-    assert_repr(.Int, .I64)
-  })
-
-  .test("Float → F64", fn() {
-    assert_repr(.Float, .F64)
-  })
-
-  .test("Bool → I32", fn() {
-    assert_repr(.Bool, .I32)
-  })
-
-  .test("Byte → I32", fn() {
-    assert_repr(.Byte, .I32)
-  })
-
-  // ── Typed refs ──
-
-  .test("String → TypedRef", fn() {
-    assert_repr(.String, .TypedRef(.String))
-  })
-
-  .test("Vector<Int> → TypedRef", fn() {
-    assert_repr(.Vector(.Int), .TypedRef(.Vector(.Int)))
-  })
-
-  .test("Dict<String,Int> → TypedRef", fn() {
-    assert_repr(.Dict(.String, .Int), .TypedRef(.Dict(.String, .Int)))
-  })
-
-  // ── Typed sums ──
-
-  .test("Optional<Int> → TypedSum", fn() {
-    assert_repr(.Optional(.Int), .TypedSum(.Optional(.Int)))
-  })
-
-  .test("Result<Int,String> → TypedSum", fn() {
-    assert_repr(.Result(.Int, .String), .TypedSum(.Result(.Int, .String)))
-  })
-
-  // ── Closures ──
-
-  .test("Function → ClosureRef", fn() {
-    assert_repr(.Function([.Int], .Bool), .ClosureRef)
-  })
-
-  // ── Opaque anyref ──
-
-  .test("Void → OpaqueAnyref", fn() {
-    assert_repr(.Void, .OpaqueAnyref)
-  })
-
-  .test("Anyref_ → OpaqueAnyref", fn() {
-    assert_repr(.Anyref_, .OpaqueAnyref)
-  })
-
-  // ── Dead value ──
-
-  .test("Never → DeadValue", fn() {
-    assert_repr(.Never, .DeadValue)
-  })
-
-  // ── Slot-level repr after prepare_backend ──
-
-  .test("Int param slot gets I64 repr and I64 wasm_type", fn() {
-    // fn f(x: Int) Int { x }
-    body: AnfExpr = .Atom(.ALocal(lid(0)))
-    pf := prepared_pf([mk_param(0, .Int)], body, Dict.new(), .Int)
-    try assert_slot_repr(pf, 0, .I64)
-    try assert_wasm_type(pf, 0, .I64)
-    .Ok({})
-  })
-
-  .test("String param slot gets TypedRef repr", fn() {
-    body: AnfExpr = .Atom(.ALocal(lid(0)))
-    pf := prepared_pf([mk_param(0, .String)], body, Dict.new(), .String)
-    assert_slot_repr(pf, 0, .TypedRef(.String))
-  })
-
-  .test("Bool param slot gets I32 repr", fn() {
-    body: AnfExpr = .Atom(.ALitBool(true))
-    pf := prepared_pf([mk_param(0, .Bool)], body, Dict.new(), .Bool)
-    assert_slot_repr(pf, 0, .I32)
-  })
-
-  .test("Optional<Int> let-local gets TypedSum repr", fn() {
-    // fn f(x: Int) Optional<Int> { let t0 = call(fn#99, [x]); t0 }
-    body: AnfExpr = .Let(lid(10),
-      .ACall(.AGlobalFunc(fid(99)), [.ALocal(lid(0))]),
-      .Atom(.ALocal(lid(10))))
-    pf := prepared_pf(
-      [mk_param(0, .Int)],
-      body,
-      mk_mono_map([10], [MonoType.Optional(.Int)]),
-      .Optional(.Int))
-    assert_slot_repr(pf, 10, .TypedSum(.Optional(.Int)))
-  })
-
-  .test("Never-typed local gets DeadValue repr", fn() {
-    body: AnfExpr = .Let(lid(10),
-      .ACall(.AGlobalFunc(fid(99)), []),
-      .Atom(.ALitVoid))
-    pf := prepared_pf(
-      [],
-      body,
-      mk_mono_map([10], [MonoType.Never]),
-      .Void)
-    assert_slot_repr(pf, 10, .DeadValue)
-  })
-
-  // ── Boundary override: AWrapAnyref → OpaqueAnyref ──
-
-  .test("AWrapAnyref result local gets OpaqueAnyref repr", fn() {
-    // insert_boundaries wraps Int args to anyref builtins.
-    // The wrap temp local should get OpaqueAnyref repr even though its
-    // op_result_mono says Anyref_.
-    builtins := empty_builtins().runtime_with_abi(
-      "store", "rt.test", "store", mk_abi([.Anyref], [.Anyref]))
-    store_fid := builtins.id("store")
-
-    body: AnfExpr = .Let(lid(10),
-      .ACall(.AGlobalFunc(store_fid), [.ALocal(lid(0))]),
-      .Atom(.ALitVoid))
-    func := mk_func_def(1, "f", [mk_param(0, .Int)], .Void, body,
-      mk_mono_map([10], [MonoType.Void]))
-    anf := mk_module([func])
-
-    prepared := prepare_backend(anf, empty_env(), builtins, no_captures())
-    pf := prepared.funcs[0]
-
-    // The wrap temp (allocated after L10) must be OpaqueAnyref
-    // Scan all let locals for AWrapAnyref
-    has_opaque_wrap := false
-    for sid_int in pf.slots.keys() {
-      case pf.slots[sid_int] {
-        .None => {},
-        .Some(info) => {
-          case info.repr {
-            .OpaqueAnyref => { has_opaque_wrap = true },
-            _ => {},
-          }
-        },
+      for sid_int in pf.slots.keys() {
+        case pf.slots[sid_int] {
+          .None => {},
+          .Some(info) => {
+            case info.repr {
+              .OpaqueAnyref => { has_opaque_wrap = true },
+              _ => {},
+            }
+          },
+        }
       }
-    }
-    if has_opaque_wrap { .Ok({}) } else { assert.fail("no OpaqueAnyref slot found for wrap temp") }
-  })
 
-  // ── Boundary override: AUnwrapAnyref → typed repr ──
-
-  .test("AUnwrapAnyref result local gets typed repr from target mono", fn() {
-    // Unwrapping from anyref to Int → result slot gets I64 repr
-    // This happens when a runtime fn returns anyref but result mono is Int.
-    builtins := empty_builtins().runtime_with_abi(
-      "get_int", "rt.test", "get_int", mk_abi([.Anyref], [.Anyref]))
-    get_fid := builtins.id("get_int")
-
-    body: AnfExpr = .Let(lid(10),
-      .ACall(.AGlobalFunc(get_fid), [.ALocal(lid(0))]),
-      .Atom(.ALocal(lid(10))))
-    func := mk_func_def(1, "f", [mk_param(0, .String)], .Int, body,
-      mk_mono_map([10], [MonoType.Int]))
-    anf := mk_module([func])
-
-    prepared := prepare_backend(anf, empty_env(), builtins, no_captures())
-    pf := prepared.funcs[0]
-
-    // L10 was the call result (now replaced by unwrap chain):
-    // insert_boundaries produces: raw = call(...); L10 = AUnwrapAnyref(raw, Int)
-    // So L10 should get I64 repr (from AUnwrapAnyref target mono = Int)
-    try assert_slot_repr(pf, 10, .I64)
-    try assert_wasm_type(pf, 10, .I64)
-    .Ok({})
-  })
+      if has_opaque_wrap {
+        .Ok({})
+      } else {
+        assert.fail("no OpaqueAnyref slot found for wrap temp")
+      }
+    },
+  ).test(
+    "AUnwrapAnyref result local gets typed repr from target mono",
+    fn() {
+      // Unwrapping from anyref to Int → result slot gets I64 repr
+      // This happens when a runtime fn returns anyref but result mono is Int.
+      builtins := empty_builtins().runtime_with_abi(
+        "get_int",
+        "rt.test",
+        "get_int",
+        mk_abi([.Anyref], [.Anyref]),
+      )
+      get_fid := builtins.id("get_int")
+      body: AnfExpr = .Let(
+        lid(10),
+        .ACall(.AGlobalFunc(get_fid), [.ALocal(lid(0))]),
+        .Atom(.ALocal(lid(10))),
+      )
+      func := mk_func_def(
+        1,
+        "f",
+        [mk_param(0, .String)],
+        .Int,
+        body,
+        mk_mono_map([10], [MonoType.Int]),
+      )
+      anf := mk_module([func])
+      prepared := prepare_backend(anf, empty_env(), builtins, no_captures())
+      pf := prepared.funcs[0]
+      // L10 was the call result (now replaced by unwrap chain):
+      // insert_boundaries produces: raw = call(...); L10 = AUnwrapAnyref(raw, Int)
+      // So L10 should get I64 repr (from AUnwrapAnyref target mono = Int)
+      try assert_slot_repr(pf, 10, .I64)
+      try assert_wasm_type(pf, 10, .I64)
+      .Ok({})
+    },
+  )
 }

@@ -1,21 +1,29 @@
-use tests.runner
-use tests.assert
-use compiler.core_ir.{LocalId, FuncId, VariantId, Param}
-use compiler.anf.{AnfExpr, AnfOp, AnfFunctionDef, AnfMatchArm}
+use compiler.anf.{AnfExpr, AnfFunctionDef, AnfMatchArm, AnfOp}
 use compiler.anf_analysis.{set_has}
 use compiler.builder_family.{empty_builder_config}
-
+use compiler.core_ir.{FuncId, LocalId, Param, VariantId}
 use compiler.mono_type.{TypeId}
-use compiler.opt.semantics.{OptimizerSemantics, CallSemantics}
-use compiler.opt.analysis.{analyze_loop_push_sites, base_reusable_after_binding, collect_tainted, loop_push_reassign_elem, op_uses_local_non_recursive, count_global_call_sites, next_local_id}
+use compiler.opt.analysis.{
+  analyze_loop_push_sites, base_reusable_after_binding, collect_tainted,
+  count_global_call_sites, loop_push_reassign_elem, next_local_id,
+  op_uses_local_non_recursive,
+}
+use compiler.opt.semantics.{CallSemantics, OptimizerSemantics}
+use tests.assert
+use tests.runner
 
 fn lid(id: Int) LocalId { LocalId.{ id: id } }
+
 fn fid(id: Int) FuncId { FuncId.{ id: id } }
+
 fn tid(id: Int) TypeId { TypeId.{ id: id } }
 
 fn mock_vec_set() FuncId { fid(200) }
+
 fn mock_vec_push() FuncId { fid(204) }
+
 fn mock_vec_make() FuncId { fid(210) }
+
 fn mock_vec_len() FuncId { fid(220) }
 
 fn mock_semantics() OptimizerSemantics {
@@ -38,10 +46,7 @@ fn mock_semantics() OptimizerSemantics {
     cow_base_arg: .None,
     in_place_equivalent: .None,
   }
-  OptimizerSemantics.{
-    call_semantics: calls,
-    builder: empty_builder_config(),
-  }
+  OptimizerSemantics.{ call_semantics: calls, builder: empty_builder_config() }
 }
 
 fn make_func(body: AnfExpr) AnfFunctionDef {
@@ -73,7 +78,10 @@ fn test_op_uses_local_non_recursive_direct_operand() Result<Void, String> {
   assert.is_true(op_uses_local_non_recursive(op, lid(3)))
 }
 
-fn test_op_uses_local_non_recursive_ignores_nested_branches() Result<Void, String> {
+fn test_op_uses_local_non_recursive_ignores_nested_branches() Result<
+  Void,
+  String,
+> {
   op: AnfOp = .AIf(.ALitBool(true), .Atom(.ALocal(lid(7))), .Atom(.ALitVoid))
   assert.is_false(op_uses_local_non_recursive(op, lid(7)))
 }
@@ -84,7 +92,11 @@ fn test_count_global_call_sites_recursive() Result<Void, String> {
     .AIf(
       .ALitBool(true),
       .Let(lid(1), .ACall(.AGlobalFunc(fid(20)), []), .Atom(.ALitVoid)),
-      .Let(lid(2), .ALoop(.Let(lid(3), .ACall(.AGlobalFunc(fid(20)), []), .Break(.None))), .Atom(.ALitVoid)),
+      .Let(
+        lid(2),
+        .ALoop(.Let(lid(3), .ACall(.AGlobalFunc(fid(20)), []), .Break(.None))),
+        .Atom(.ALitVoid),
+      ),
     ),
     .Atom(.ALitVoid),
   )
@@ -109,54 +121,86 @@ fn test_next_local_id_accounts_for_pattern_bindings() Result<Void, String> {
 }
 
 fn test_collect_tainted_marks_params() Result<Void, String> {
-  func := make_func_with_params([Param.{ local: lid(0), ty: .Void }], .Atom(.ALitVoid))
+  func := make_func_with_params(
+    [Param.{ local: lid(0), ty: .Void }],
+    .Atom(.ALitVoid),
+  )
   tainted := collect_tainted(func, mock_semantics())
   assert.is_true(set_has(tainted, 0))
 }
 
 fn test_collect_tainted_skips_cow_base_arg() Result<Void, String> {
-  body: AnfExpr = .Let(lid(0),
+  body: AnfExpr = .Let(
+    lid(0),
     .ACall(.AGlobalFunc(mock_vec_make()), []),
-    .Let(lid(1),
-      .ACall(.AGlobalFunc(mock_vec_set()), [.ALocal(lid(0)), .ALitInt(0), .ALitInt(1)]),
-      .Atom(.ALocal(lid(1)))))
+    .Let(
+      lid(1),
+      .ACall(
+        .AGlobalFunc(mock_vec_set()),
+        [.ALocal(lid(0)), .ALitInt(0), .ALitInt(1)],
+      ),
+      .Atom(.ALocal(lid(1))),
+    ),
+  )
   tainted := collect_tainted(make_func(body), mock_semantics())
   assert.is_false(set_has(tainted, 0))
 }
 
 fn test_collect_tainted_marks_non_base_cow_arg() Result<Void, String> {
-  body: AnfExpr = .Let(lid(0),
+  body: AnfExpr = .Let(
+    lid(0),
     .ACall(.AGlobalFunc(mock_vec_make()), []),
-    .Let(lid(1),
+    .Let(
+      lid(1),
       .ACall(.AGlobalFunc(mock_vec_make()), []),
-      .Let(lid(2),
-        .ACall(.AGlobalFunc(mock_vec_set()), [.ALocal(lid(0)), .ALitInt(0), .ALocal(lid(1))]),
-        .Atom(.ALocal(lid(2))))))
+      .Let(
+        lid(2),
+        .ACall(
+          .AGlobalFunc(mock_vec_set()),
+          [.ALocal(lid(0)), .ALitInt(0), .ALocal(lid(1))],
+        ),
+        .Atom(.ALocal(lid(2))),
+      ),
+    ),
+  )
   tainted := collect_tainted(make_func(body), mock_semantics())
   assert.is_false(set_has(tainted, 0))
   assert.is_true(set_has(tainted, 1))
 }
 
 fn test_collect_tainted_marks_branch_alias_escape() Result<Void, String> {
-  then_e: AnfExpr = .Let(lid(1),
+  then_e: AnfExpr = .Let(
+    lid(1),
     .AInit(.ALocal(lid(0))),
-    .Let(lid(2), .AMakeClosure(fid(99), [lid(1)]), .Atom(.ALitVoid)))
-  body: AnfExpr = .Let(lid(0),
+    .Let(lid(2), .AMakeClosure(fid(99), [lid(1)]), .Atom(.ALitVoid)),
+  )
+  body: AnfExpr = .Let(
+    lid(0),
     .ACall(.AGlobalFunc(mock_vec_make()), []),
-    .Let(lid(3),
+    .Let(
+      lid(3),
       .AIf(.ALitBool(true), then_e, .Atom(.ALitVoid)),
-      .Let(lid(4),
-        .ACall(.AGlobalFunc(mock_vec_set()), [.ALocal(lid(0)), .ALitInt(0), .ALitInt(1)]),
-        .Atom(.ALocal(lid(4))))))
+      .Let(
+        lid(4),
+        .ACall(
+          .AGlobalFunc(mock_vec_set()),
+          [.ALocal(lid(0)), .ALitInt(0), .ALitInt(1)],
+        ),
+        .Atom(.ALocal(lid(4))),
+      ),
+    ),
+  )
   tainted := collect_tainted(make_func(body), mock_semantics())
   assert.is_true(set_has(tainted, 0))
 }
 
 fn test_analyze_loop_push_sites_counts_valid_pushes() Result<Void, String> {
-  loop_body: AnfExpr = .Let(lid(1),
+  loop_body: AnfExpr = .Let(
+    lid(1),
     .ACall(.AGlobalFunc(mock_vec_push()), [.ALocal(lid(0)), .ALitInt(1)]),
-    .Let(lid(2), .AAssign(lid(0), .ALocal(lid(1))),
-      .Continue))
+    .Let(lid(2), .AAssign(lid(0), .ALocal(lid(1))), .Continue),
+  )
+
   case analyze_loop_push_sites(loop_body, lid(0), mock_vec_push()) {
     .Some(sites) => assert.equal(sites, 1),
     .None => .Err("expected valid loop push site"),
@@ -164,13 +208,17 @@ fn test_analyze_loop_push_sites_counts_valid_pushes() Result<Void, String> {
 }
 
 fn test_analyze_loop_push_sites_counts_branch_pushes() Result<Void, String> {
-  then_e: AnfExpr = .Let(lid(2),
+  then_e: AnfExpr = .Let(
+    lid(2),
     .ACall(.AGlobalFunc(mock_vec_push()), [.ALocal(lid(0)), .ALitInt(1)]),
-    .Let(lid(3), .AAssign(lid(0), .ALocal(lid(2))),
-      .Atom(.ALitVoid)))
-  loop_body: AnfExpr = .Let(lid(1),
+    .Let(lid(3), .AAssign(lid(0), .ALocal(lid(2))), .Atom(.ALitVoid)),
+  )
+  loop_body: AnfExpr = .Let(
+    lid(1),
     .AIf(.ALitBool(true), then_e, .Atom(.ALitVoid)),
-    .Continue)
+    .Continue,
+  )
+
   case analyze_loop_push_sites(loop_body, lid(0), mock_vec_push()) {
     .Some(sites) => assert.equal(sites, 1),
     .None => .Err("expected branch push site to be counted"),
@@ -178,17 +226,24 @@ fn test_analyze_loop_push_sites_counts_branch_pushes() Result<Void, String> {
 }
 
 fn test_analyze_loop_push_sites_rejects_non_push_base_use() Result<Void, String> {
-  loop_body: AnfExpr = .Let(lid(1),
+  loop_body: AnfExpr = .Let(
+    lid(1),
     .ACall(.AGlobalFunc(fid(999)), [.ALocal(lid(0))]),
-    .Continue)
+    .Continue,
+  )
+
   case analyze_loop_push_sites(loop_body, lid(0), mock_vec_push()) {
     .Some(_) => .Err("expected non-push base use to be rejected"),
     .None => .Ok({}),
   }
 }
 
-fn test_analyze_loop_push_sites_rejects_base_escape_in_terminal_atom() Result<Void, String> {
+fn test_analyze_loop_push_sites_rejects_base_escape_in_terminal_atom() Result<
+  Void,
+  String,
+> {
   loop_body: AnfExpr = .Atom(.ALocal(lid(0)))
+
   case analyze_loop_push_sites(loop_body, lid(0), mock_vec_push()) {
     .Some(_) => .Err("expected terminal base use to be rejected"),
     .None => .Ok({}),
@@ -201,7 +256,11 @@ fn test_base_reusable_after_binding_when_base_dead() Result<Void, String> {
 }
 
 fn test_base_reusable_after_binding_with_consume_reassign() Result<Void, String> {
-  body: AnfExpr = .Let(lid(2), .AAssign(lid(0), .ALocal(lid(1))), .Atom(.ALocal(lid(0))))
+  body: AnfExpr = .Let(
+    lid(2),
+    .AAssign(lid(0), .ALocal(lid(1))),
+    .Atom(.ALocal(lid(0))),
+  )
   assert.is_true(base_reusable_after_binding(body, lid(0), lid(1)))
 }
 
@@ -211,8 +270,12 @@ fn test_base_reusable_after_binding_rejects_live_base() Result<Void, String> {
 }
 
 fn test_loop_push_reassign_elem_matches_valid_pattern() Result<Void, String> {
-  op: AnfOp = .ACall(.AGlobalFunc(mock_vec_push()), [.ALocal(lid(0)), .ALitInt(1)])
+  op: AnfOp = .ACall(
+    .AGlobalFunc(mock_vec_push()),
+    [.ALocal(lid(0)), .ALitInt(1)],
+  )
   body: AnfExpr = .Let(lid(2), .AAssign(lid(0), .ALocal(lid(1))), .Continue)
+
   case loop_push_reassign_elem(op, body, lid(0), mock_vec_push(), lid(1)) {
     .Some(.ALitInt(value)) => assert.equal(value, 1),
     .Some(_) => .Err("expected pushed element literal"),
@@ -221,8 +284,12 @@ fn test_loop_push_reassign_elem_matches_valid_pattern() Result<Void, String> {
 }
 
 fn test_loop_push_reassign_elem_rejects_base_as_element() Result<Void, String> {
-  op: AnfOp = .ACall(.AGlobalFunc(mock_vec_push()), [.ALocal(lid(0)), .ALocal(lid(0))])
+  op: AnfOp = .ACall(
+    .AGlobalFunc(mock_vec_push()),
+    [.ALocal(lid(0)), .ALocal(lid(0))],
+  )
   body: AnfExpr = .Let(lid(2), .AAssign(lid(0), .ALocal(lid(1))), .Continue)
+
   case loop_push_reassign_elem(op, body, lid(0), mock_vec_push(), lid(1)) {
     .Some(_) => .Err("expected invalid push element to be rejected"),
     .None => .Ok({}),
@@ -230,22 +297,53 @@ fn test_loop_push_reassign_elem_rejects_base_as_element() Result<Void, String> {
 }
 
 pub fn suite() runner.Suite {
-  runner.suite("Opt: Analysis")
-    .test("op uses local non-recursive direct operand", test_op_uses_local_non_recursive_direct_operand)
-    .test("op uses local non-recursive ignores nested branches", test_op_uses_local_non_recursive_ignores_nested_branches)
-    .test("count global call sites recursive", test_count_global_call_sites_recursive)
-    .test("next local id accounts for pattern bindings", test_next_local_id_accounts_for_pattern_bindings)
-    .test("collect tainted marks params", test_collect_tainted_marks_params)
-    .test("collect tainted skips cow base arg", test_collect_tainted_skips_cow_base_arg)
-    .test("collect tainted marks non-base cow arg", test_collect_tainted_marks_non_base_cow_arg)
-    .test("collect tainted marks branch alias escape", test_collect_tainted_marks_branch_alias_escape)
-    .test("analyze loop push sites counts valid pushes", test_analyze_loop_push_sites_counts_valid_pushes)
-    .test("analyze loop push sites counts branch pushes", test_analyze_loop_push_sites_counts_branch_pushes)
-    .test("analyze loop push sites rejects non-push base use", test_analyze_loop_push_sites_rejects_non_push_base_use)
-    .test("analyze loop push sites rejects terminal base escape", test_analyze_loop_push_sites_rejects_base_escape_in_terminal_atom)
-    .test("base reusable after binding when base dead", test_base_reusable_after_binding_when_base_dead)
-    .test("base reusable after binding with consume-reassign", test_base_reusable_after_binding_with_consume_reassign)
-    .test("base reusable after binding rejects live base", test_base_reusable_after_binding_rejects_live_base)
-    .test("loop push reassign elem matches valid pattern", test_loop_push_reassign_elem_matches_valid_pattern)
-    .test("loop push reassign elem rejects base as element", test_loop_push_reassign_elem_rejects_base_as_element)
+  runner.suite("Opt: Analysis").test(
+    "op uses local non-recursive direct operand",
+    test_op_uses_local_non_recursive_direct_operand,
+  ).test(
+    "op uses local non-recursive ignores nested branches",
+    test_op_uses_local_non_recursive_ignores_nested_branches,
+  ).test(
+    "count global call sites recursive",
+    test_count_global_call_sites_recursive,
+  ).test(
+    "next local id accounts for pattern bindings",
+    test_next_local_id_accounts_for_pattern_bindings,
+  ).test("collect tainted marks params", test_collect_tainted_marks_params).test(
+    "collect tainted skips cow base arg",
+    test_collect_tainted_skips_cow_base_arg,
+  ).test(
+    "collect tainted marks non-base cow arg",
+    test_collect_tainted_marks_non_base_cow_arg,
+  ).test(
+    "collect tainted marks branch alias escape",
+    test_collect_tainted_marks_branch_alias_escape,
+  ).test(
+    "analyze loop push sites counts valid pushes",
+    test_analyze_loop_push_sites_counts_valid_pushes,
+  ).test(
+    "analyze loop push sites counts branch pushes",
+    test_analyze_loop_push_sites_counts_branch_pushes,
+  ).test(
+    "analyze loop push sites rejects non-push base use",
+    test_analyze_loop_push_sites_rejects_non_push_base_use,
+  ).test(
+    "analyze loop push sites rejects terminal base escape",
+    test_analyze_loop_push_sites_rejects_base_escape_in_terminal_atom,
+  ).test(
+    "base reusable after binding when base dead",
+    test_base_reusable_after_binding_when_base_dead,
+  ).test(
+    "base reusable after binding with consume-reassign",
+    test_base_reusable_after_binding_with_consume_reassign,
+  ).test(
+    "base reusable after binding rejects live base",
+    test_base_reusable_after_binding_rejects_live_base,
+  ).test(
+    "loop push reassign elem matches valid pattern",
+    test_loop_push_reassign_elem_matches_valid_pattern,
+  ).test(
+    "loop push reassign elem rejects base as element",
+    test_loop_push_reassign_elem_rejects_base_as_element,
+  )
 }

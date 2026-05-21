@@ -1,13 +1,12 @@
 // Regenerates tools/bridge.wasm from the Twinkle-owned bridge WasmModule.
 // Run: cargo run --release -- run boot/tests/gen_bridge_wasm.tw
-
 use @std.fs
+
 use compiler.codegen.bridge
 use compiler.codegen.wasm.{emit_wasm}
 
 out := "tools/bridge.wasm"
 bytes := emit_wasm(bridge.module())
-
 case fs.write_bytes(out, bytes) {
   .Ok(_) => println("wrote ${out}"),
   .Err(_) => error("write failed"),

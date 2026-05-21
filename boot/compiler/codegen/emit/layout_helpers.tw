@@ -1,13 +1,12 @@
 // Layout and monotype helpers shared by Wasm emission routines.
-
-use compiler.resolver.{ResolvedEnv}
-use compiler.mono_type.{MonoType}
-use compiler.type_util.{subst_type_params}
-use compiler.core_ir.{FieldId}
+use compiler.codegen.emit.context.{EmitCtx}
 use compiler.codegen.wasm_layout.{
   WasmLayout, WasmRecordLayout, WasmSumLayout, layout_of, mono_to_key,
 }
-use compiler.codegen.emit.context.{EmitCtx}
+use compiler.core_ir.{FieldId}
+use compiler.mono_type.{MonoType}
+use compiler.resolver.{ResolvedEnv}
+use compiler.type_util.{subst_type_params}
 
 pub fn cell_struct_sym(inner_mono: MonoType, env: ResolvedEnv) String {
   inner_layout := layout_of(inner_mono, env)
@@ -18,7 +17,7 @@ pub fn cell_struct_sym(inner_mono: MonoType, env: ResolvedEnv) String {
     .Scalar(.WAnyref) => "anyref",
     _ => "anyref",
   }
-  "$Cell_${key}"
+  "\$Cell_${key}"
 }
 
 pub fn cell_inner_mono(cell_mono: MonoType) MonoType {
@@ -32,6 +31,7 @@ pub fn cell_inner_mono(cell_mono: MonoType) MonoType {
 
 pub fn cached_layout_of(mono: MonoType, ctx: EmitCtx) WasmLayout {
   key := mono_to_key(mono)
+
   case ctx.registry.layout_cache[key] {
     .Some(layout) => layout,
     .None => layout_of(mono, ctx.env),
@@ -40,17 +40,25 @@ pub fn cached_layout_of(mono: MonoType, ctx: EmitCtx) WasmLayout {
 
 pub fn record_layout_of_ctx(mono: MonoType, ctx: EmitCtx) WasmRecordLayout {
   layout := cached_layout_of(mono, ctx)
+
   case layout {
     .Record(r) => r,
     _ => {
       case mono {
         .Named(tid, args) => {
           case ctx.env.lookup_type_def(tid) {
-            .Some(.Alias(_, type_params, target)) => record_layout_of_ctx(subst_type_params(target, type_params, args), ctx),
-            _ => error("record_layout_of: expected Record layout for ${mono_to_key(mono)}"),
+            .Some(.Alias(_, type_params, target)) => record_layout_of_ctx(
+              subst_type_params(target, type_params, args),
+              ctx,
+            ),
+            _ => error(
+              "record_layout_of: expected Record layout for ${mono_to_key(mono)}",
+            ),
           }
         },
-        _ => error("record_layout_of: expected Record layout for ${mono_to_key(mono)}"),
+        _ => error(
+          "record_layout_of: expected Record layout for ${mono_to_key(mono)}",
+        ),
       }
     },
   }
@@ -58,17 +66,25 @@ pub fn record_layout_of_ctx(mono: MonoType, ctx: EmitCtx) WasmRecordLayout {
 
 pub fn record_layout_of(mono: MonoType, env: ResolvedEnv) WasmRecordLayout {
   layout := layout_of(mono, env)
+
   case layout {
     .Record(r) => r,
     _ => {
       case mono {
         .Named(tid, args) => {
           case env.lookup_type_def(tid) {
-            .Some(.Alias(_, type_params, target)) => record_layout_of(subst_type_params(target, type_params, args), env),
-            _ => error("record_layout_of: expected Record layout for ${mono_to_key(mono)}"),
+            .Some(.Alias(_, type_params, target)) => record_layout_of(
+              subst_type_params(target, type_params, args),
+              env,
+            ),
+            _ => error(
+              "record_layout_of: expected Record layout for ${mono_to_key(mono)}",
+            ),
           }
         },
-        _ => error("record_layout_of: expected Record layout for ${mono_to_key(mono)}"),
+        _ => error(
+          "record_layout_of: expected Record layout for ${mono_to_key(mono)}",
+        ),
       }
     },
   }
@@ -76,15 +92,21 @@ pub fn record_layout_of(mono: MonoType, env: ResolvedEnv) WasmRecordLayout {
 
 pub fn get_sum_layout_ctx(mono: MonoType, ctx: EmitCtx) WasmSumLayout {
   layout := cached_layout_of(mono, ctx)
+
   case layout {
     .Sum(s) => s,
-    _ => error("get_sum_layout: expected Sum, got other for ${mono_to_key(mono)}"),
+    _ => error(
+      "get_sum_layout: expected Sum, got other for ${mono_to_key(mono)}",
+    ),
   }
 }
 
 pub fn find_field_index(rec: WasmRecordLayout, fid: FieldId) Int {
-  for f,i in rec.fields {
-    if f.field_id.id == fid.id { return i }
+  for f, i in rec.fields {
+    if f.field_id.id == fid.id {
+      return i
+    }
   }
+
   error("find_field_index: FieldId ${fid.id} not found in ${rec.sym}")
 }

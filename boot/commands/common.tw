@@ -1,15 +1,15 @@
 // Shared helpers for CLI commands.
-
-use @std.proc
 use @std.fs
+use @std.proc
+
+use compiler.artifacts.{CompileError}
+use compiler.query.analyze
+use compiler.query.diag_render
+use compiler.resolver.{ResolvedEnv}
 use lib.argparse.app.{ParseResult}
 use lib.source.registry
-use lib.source.report
 use lib.source.render
-use compiler.resolver.{ResolvedEnv}
-use compiler.query.diag_render
-use compiler.query.analyze
-use compiler.artifacts.{CompileError}
+use lib.source.report
 
 pub usage_hint := "Usage: twk <command> [options]\nRun 'twk --help' or 'twk <command> --help'."
 
@@ -23,9 +23,9 @@ pub fn get_positional(parsed: ParseResult, idx: Int, name: String) String!String
 
 pub fn exit_usage_error(msg: String) {
   eprintln(msg)
-  if msg != usage_hint {
-    eprintln(usage_hint)
-  }
+
+  if msg != usage_hint { eprintln(usage_hint) }
+
   proc.exit(2)
 }
 
@@ -48,10 +48,14 @@ pub fn format_compile_error(err: CompileError) String {
 
 /// Format analysis diagnostics with source locations, grouped by file.
 fn format_analysis_diags(env: ResolvedEnv, diags: Vector<analyze.AnalysisDiag>) String {
-  if diags.len() == 0 { return "compilation failed" }
+  if diags.len() == 0 {
+    return "compilation failed"
+  }
+
   stage := diags[0].stage
   config := report.default_config()
   parts: Vector<String> = []
+
   for d in diags {
     source := case fs.read_text(d.identity.path) {
       .Ok(text) => text,
@@ -59,10 +63,17 @@ fn format_analysis_diags(env: ResolvedEnv, diags: Vector<analyze.AnalysisDiag>) 
     }
     reg := registry.empty()
     registry.add_file(reg, d.identity.path, source)
-    ctx := diag_render.RenderCtx.{ registry: reg, env: .Some(env), module: .None, config, type_names: .Some(d.type_names) }
+    ctx := diag_render.RenderCtx.{
+      registry: reg,
+      env: .Some(env),
+      module: .None,
+      config,
+      type_names: .Some(d.type_names),
+    }
     rep := diag_render.to_report(d.kind, ctx)
     parts = .append(render.render(rep, reg, config))
   }
+
   sep := "\n\n"
   "${stage}:\n${parts.join(sep)}"
 }
@@ -70,6 +81,7 @@ fn format_analysis_diags(env: ResolvedEnv, diags: Vector<analyze.AnalysisDiag>) 
 /// Print structured analysis diagnostics (typically warnings) to stderr.
 pub fn print_warnings(warnings: Vector<analyze.AnalysisDiag>) {
   config := report.default_config()
+
   for d in warnings {
     source := case fs.read_text(d.identity.path) {
       .Ok(text) => text,
@@ -77,7 +89,13 @@ pub fn print_warnings(warnings: Vector<analyze.AnalysisDiag>) {
     }
     reg := registry.empty()
     registry.add_file(reg, d.identity.path, source)
-    ctx := diag_render.RenderCtx.{ registry: reg, env: .None, module: .None, config, type_names: .Some(d.type_names) }
+    ctx := diag_render.RenderCtx.{
+      registry: reg,
+      env: .None,
+      module: .None,
+      config,
+      type_names: .Some(d.type_names),
+    }
     rep := diag_render.to_report(d.kind, ctx)
     eprintln(render.render(rep, reg, config))
     eprintln("")

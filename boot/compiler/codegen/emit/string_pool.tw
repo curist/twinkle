@@ -1,28 +1,32 @@
 // String-pool emission helpers.
-
-use compiler.codegen.wasm_ir.{Instr, FuncDef, GlobalDef, DataSegment}
+use compiler.codegen.wasm_ir.{DataSegment, FuncDef, GlobalDef, Instr}
 use compiler.codegen.wasm_plan_types.{WasmTypeRegistry}
 
 pub fn emit_string_pool_globals(reg: WasmTypeRegistry) Vector<GlobalDef> {
   globals: Vector<GlobalDef> = []
+
   for k in reg.string_pool_order {
     case reg.string_pool[k] {
       .Some(entry) => {
-        globals = .append(GlobalDef.{
-          name: entry.global_sym,
-          mutable: true,
-          ty: .Ref(true, .Named("rt_types__String")),
-          init: [.RefNull(.Named("rt_types__String"))],
-        })
+        globals = .append(
+          GlobalDef.{
+            name: entry.global_sym,
+            mutable: true,
+            ty: .Ref(true, .Named("rt_types__String")),
+            init: [.RefNull(.Named("rt_types__String"))],
+          },
+        )
       },
       .None => {},
     }
   }
+
   globals
 }
 
 pub fn emit_string_pool_getters(reg: WasmTypeRegistry) Vector<FuncDef> {
   funcs: Vector<FuncDef> = []
+
   for k in reg.string_pool_order {
     case reg.string_pool[k] {
       .Some(entry) => {
@@ -43,33 +47,34 @@ pub fn emit_string_pool_getters(reg: WasmTypeRegistry) Vector<FuncDef> {
           .GlobalGet(entry.global_sym),
           .RefAsNonNull,
         ]
-
-        funcs = .append(FuncDef.{
-          name: entry.getter_sym,
-          params: [],
-          results: [.Ref(false, .Named("rt_types__String"))],
-          locals: [],
-          body: body,
-        })
+        funcs = .append(
+          FuncDef.{
+            name: entry.getter_sym,
+            params: [],
+            results: [.Ref(false, .Named("rt_types__String"))],
+            locals: [],
+            body: body,
+          },
+        )
       },
       .None => {},
     }
   }
+
   funcs
 }
 
 pub fn emit_string_data_segment(reg: WasmTypeRegistry) DataSegment? {
-  if reg.string_pool_order.len() == 0 { return .None }
+  if reg.string_pool_order.len() == 0 {
+    return .None
+  }
 
   // Collect all string bytes in insertion order
   all_bytes: Vector<Byte> = []
+
   for k in reg.string_pool_order {
     for b in k { all_bytes = .append(b) }
   }
 
-  .Some(DataSegment.{
-    name: "$data_strings",
-    offset: [],  // passive data segment (no offset)
-    bytes: all_bytes,
-  })
+  .Some(DataSegment.{ name: "\$data_strings", offset: [], bytes: all_bytes })
 }

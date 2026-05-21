@@ -2,13 +2,17 @@
 //
 // Maps a (BuiltinContract, receiver_type, method_name) triple to the
 // concrete function name that implements the contract for that type.
-
-use compiler.core_ir.{FuncId}
-use compiler.resolver.{ResolvedEnv}
-use compiler.mono_type.{MonoType}
 use compiler.contracts.{BuiltinContract}
+use compiler.core_ir.{FuncId}
+use compiler.mono_type.{MonoType}
+use compiler.resolver.{ResolvedEnv}
 
-pub fn resolve_contract_target_name(contract: BuiltinContract, receiver_ty: MonoType, method_name: String, env: ResolvedEnv) String? {
+pub fn resolve_contract_target_name(
+  contract: BuiltinContract,
+  receiver_ty: MonoType,
+  method_name: String,
+  env: ResolvedEnv,
+) String? {
   case contract {
     .Stringify => resolve_for_receiver(receiver_ty, method_name, env),
     .Eq => resolve_for_receiver(receiver_ty, method_name, env),
@@ -16,7 +20,11 @@ pub fn resolve_contract_target_name(contract: BuiltinContract, receiver_ty: Mono
   }
 }
 
-fn resolve_for_receiver(receiver_ty: MonoType, method_name: String, env: ResolvedEnv) String? {
+fn resolve_for_receiver(
+  receiver_ty: MonoType,
+  method_name: String,
+  env: ResolvedEnv,
+) String? {
   case receiver_ty {
     .Int => env.lookup_method("Int", method_name),
     .Float => env.lookup_method("Float", method_name),
@@ -32,7 +40,13 @@ fn resolve_for_receiver(receiver_ty: MonoType, method_name: String, env: Resolve
   }
 }
 
-pub fn exact_contract_ref(contract: BuiltinContract, receiver_ty: MonoType, method_name: String, env: ResolvedEnv, func_table: Dict<String, FuncId>) FuncId? {
+pub fn exact_contract_ref(
+  contract: BuiltinContract,
+  receiver_ty: MonoType,
+  method_name: String,
+  env: ResolvedEnv,
+  func_table: Dict<String, FuncId>,
+) FuncId? {
   case resolve_contract_target_name(contract, receiver_ty, method_name, env) {
     .Some(target_name) => func_table[target_name],
     .None => .None,

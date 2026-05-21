@@ -1,6 +1,6 @@
 // selective source first, bridge second
-use .method_call_src.{Point}
 use .method_call_bridge
+use .method_call_src.{Point}
 
 fn main() {
   p: Point = method_call_bridge.origin()

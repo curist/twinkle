@@ -1,26 +1,26 @@
-use compiler.monomorphize
-use compiler.lower_anf
-use compiler.opt.pipeline.{optimize_module}
-use compiler.builtins.{make_builtin_registry}
-use compiler.core_ir.{CompiledModule, ExternalRef, ExternalValueRef}
-use compiler.artifacts.{PipelineArtifacts, CompileError}
-use compiler.imports
+use compiler.artifacts.{CompileError, PipelineArtifacts}
 use compiler.base_env.{builtin_env}
-use compiler.resolver.{ResolvedEnv}
-use compiler.module_compiler
+use compiler.builtins.{make_builtin_registry}
+use compiler.codegen.codegen.{codegen, codegen_wasm}
+use compiler.core_ir.{CompiledModule, ExternalRef, ExternalValueRef}
 use compiler.core_linker
+use compiler.imports
+use compiler.lower_anf
+use compiler.module_compiler
+use compiler.monomorphize
+use compiler.opt.pipeline.{optimize_module}
 use compiler.query.analyze
 use compiler.query.cache as query_cache
+use compiler.query.diag_render
 use compiler.query.stage_runner
-use compiler.codegen.codegen.{codegen, codegen_wasm}
+use compiler.resolver.{ResolvedEnv}
 use lib.module.loader
+use lib.source.diagnostics as diag
 use lib.source.identity
 use lib.source.overlay
-use lib.source.diagnostics as diag
 use lib.source.registry
-use lib.source.report
 use lib.source.render
-use compiler.query.diag_render
+use lib.source.report
 
 /// Compile a source string through the full pipeline.
 ///
@@ -29,45 +29,59 @@ use compiler.query.diag_render
 pub fn compile_source(src: String) Result<PipelineArtifacts, String> {
   virtual_path := "/__virtual__/input.tw"
   virtual_id := identity.from_path(virtual_path)
-
   // Put the source in an overlay so analyze_module finds it without disk access.
   ov := overlay.empty().put(overlay.OverlayDocument.{
     identity: virtual_id,
     text: src,
     version: .None,
   })
-
   builtins := make_builtin_registry()
   base_env := builtin_env()
   project_root := loader.find_project_root(".")
-
   // Phase 1: Frontend analysis (parse → resolve → typecheck)
   a_state := analyze.new_state(base_env, query_cache.empty(), ov, project_root)
-  a_result := analyze.analyze_module(virtual_id, "__input", base_env, a_state, [])
+  a_result := analyze.analyze_module(
+    virtual_id,
+    "__input",
+    base_env,
+    a_state,
+    [],
+  )
 
   if !a_result.ok {
-    return .Err(format_analysis_diags_inline(a_result.env, src, a_result.diagnostics))
+    return .Err(
+      format_analysis_diags_inline(a_result.env, src, a_result.diagnostics),
+    )
   }
 
   // Phase 2: Lower to Core IR
   cur_cache := a_result.state.cache
-  canonical := imports.canonical_module_path(virtual_path, a_result.state.canonical_roots)
+  canonical := imports.canonical_module_path(
+    virtual_path,
+    a_result.state.canonical_roots,
+  )
   parsed := case query_cache.latest_parsed(cur_cache, canonical) {
     .Some(p) => p,
-    .None => { return .Err("internal: missing parsed cache") },
+    .None => {
+      return .Err("internal: missing parsed cache")
+    },
   }
   typed := case query_cache.latest_typed(cur_cache, canonical) {
     .Some(t) => t,
-    .None => { return .Err("internal: missing typed cache") },
+    .None => {
+      return .Err("internal: missing typed cache")
+    },
   }
   runner := case a_result.state.module_runners[canonical] {
     .Some(r) => r,
-    .None => { return .Err("internal: missing runner") },
+    .None => {
+      return .Err("internal: missing runner")
+    },
   }
-
   lowered_out := stage_runner.lower(runner, cur_cache, parsed, typed, builtins)
   cur_cache = lowered_out.store
   lowered := lowered_out.value
+
   if lowered.diagnostics.len() > 0 {
     return .Err(format_diags_inline(a_result.env, src, lowered.diagnostics))
   }
@@ -76,7 +90,6 @@ pub fn compile_source(src: String) Result<PipelineArtifacts, String> {
   external_refs: Dict<Int, ExternalRef> = Dict.new()
   value_exports: Dict<String, Int> = Dict.new()
   value_refs: Dict<Int, ExternalValueRef> = Dict.new()
-
   compiled_module := CompiledModule.{
     path: canonical,
     core: lowered.module,
@@ -88,63 +101,101 @@ pub fn compile_source(src: String) Result<PipelineArtifacts, String> {
     value_refs,
     defined_global_count: lowered.next_global_local_id,
   }
-
   // Phase 3: Link, monomorphize, ANF lower, optimize
-  core := core_linker.link([compiled_module], canonical, a_result.env, builtins.next_id)
+  core := core_linker.link(
+    [compiled_module],
+    canonical,
+    a_result.env,
+    builtins.next_id,
+  )
   mono := monomorphize.monomorphize(core)
   anf := lower_anf.lower_module(mono)
   opt := optimize_module(anf)
-
   // Collect warnings
   warnings: Vector<analyze.AnalysisDiag> = []
+
   for d in a_result.diagnostics {
     case d.kind {
-      .Warning(_) => { warnings = warnings.append(d) },
+      .Warning(_) => { warnings = .append(d) },
       .Error(_) => {},
     }
   }
 
-  .Ok(PipelineArtifacts.{
-    env: a_result.env,
-    builtins,
-    core,
-    mono,
-    anf,
-    opt,
-    warnings,
-  })
+  .Ok(
+    PipelineArtifacts.{
+      env: a_result.env,
+      builtins,
+      core,
+      mono,
+      anf,
+      opt,
+      warnings,
+    },
+  )
 }
 
 /// Format analysis diagnostics using the in-memory source (for virtual paths).
-fn format_analysis_diags_inline(env: ResolvedEnv, src: String, diags: Vector<analyze.AnalysisDiag>) String {
-  if diags.len() == 0 { return "compilation failed" }
-  parts: Vector<String> = []
-  for d in diags {
-    parts = .append(format_analysis_diag_inline(env, src, d))
+fn format_analysis_diags_inline(
+  env: ResolvedEnv,
+  src: String,
+  diags: Vector<analyze.AnalysisDiag>,
+) String {
+  if diags.len() == 0 {
+    return "compilation failed"
   }
+
+  parts: Vector<String> = []
+
+  for d in diags { parts = .append(format_analysis_diag_inline(env, src, d)) }
+
   parts.join("\n")
 }
 
-fn format_analysis_diag_inline(env: ResolvedEnv, src: String, d: analyze.AnalysisDiag) String {
+fn format_analysis_diag_inline(
+  env: ResolvedEnv,
+  src: String,
+  d: analyze.AnalysisDiag,
+) String {
   reg := registry.empty()
   registry.add_file(reg, "<input>", src)
   config := report.default_config()
-  ctx := diag_render.RenderCtx.{ registry: reg, env: .Some(env), module: .None, config, type_names: .Some(d.type_names) }
+  ctx := diag_render.RenderCtx.{
+    registry: reg,
+    env: .Some(env),
+    module: .None,
+    config,
+    type_names: .Some(d.type_names),
+  }
   rep := diag_render.to_report(d.kind, ctx)
   render.render(rep, reg, config)
 }
 
-fn format_diags_inline(env: ResolvedEnv, src: String, diags: Vector<diag.DiagKind>) String {
-  if diags.len() == 0 { return "compilation failed" }
+fn format_diags_inline(
+  env: ResolvedEnv,
+  src: String,
+  diags: Vector<diag.DiagKind>,
+) String {
+  if diags.len() == 0 {
+    return "compilation failed"
+  }
+
   reg := registry.empty()
   registry.add_file(reg, "<input>", src)
   config := report.default_config()
   parts: Vector<String> = []
+
   for d in diags {
-    ctx := diag_render.RenderCtx.{ registry: reg, env: .Some(env), module: .None, config, type_names: .None }
+    ctx := diag_render.RenderCtx.{
+      registry: reg,
+      env: .Some(env),
+      module: .None,
+      config,
+      type_names: .None,
+    }
     rep := diag_render.to_report(d, ctx)
     parts = .append(render.render(rep, reg, config))
   }
+
   parts.join("\n\n")
 }
 

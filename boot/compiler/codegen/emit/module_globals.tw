@@ -1,27 +1,34 @@
 // Module-global emission helpers.
-
-use compiler.resolver.{ResolvedEnv}
 use compiler.anf.{AnfModule}
-use compiler.codegen.wasm_ir.{GlobalDef}
-use compiler.codegen.wasm_plan_types.{WasmTypeRegistry}
-use compiler.codegen.wasm_layout.{val_type_of_mono}
 use compiler.codegen.emit.defaults.{emit_default_value}
+use compiler.codegen.wasm_ir.{GlobalDef}
+use compiler.codegen.wasm_layout.{val_type_of_mono}
+use compiler.codegen.wasm_plan_types.{WasmTypeRegistry}
+use compiler.resolver.{ResolvedEnv}
 
-pub fn emit_module_globals(reg: WasmTypeRegistry, anf: AnfModule, env: ResolvedEnv) Vector<GlobalDef> {
+pub fn emit_module_globals(
+  reg: WasmTypeRegistry,
+  anf: AnfModule,
+  env: ResolvedEnv,
+) Vector<GlobalDef> {
   globals: Vector<GlobalDef> = []
+
   for k in reg.module_globals_order {
     case reg.module_globals[k] {
       .Some(gentry) => {
         vt := val_type_of_mono(gentry.mono, env)
-        globals = .append(GlobalDef.{
-          name: gentry.sym,
-          mutable: true,
-          ty: vt,
-          init: emit_default_value(vt, []),
-        })
+        globals = .append(
+          GlobalDef.{
+            name: gentry.sym,
+            mutable: true,
+            ty: vt,
+            init: emit_default_value(vt, []),
+          },
+        )
       },
       .None => {},
     }
   }
+
   globals
 }

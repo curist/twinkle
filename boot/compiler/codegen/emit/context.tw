@@ -1,13 +1,12 @@
 // Shared context types and lookup helpers for Wasm emission.
-
-use compiler.resolver.{ResolvedEnv}
-use compiler.mono_type.{MonoType}
-use compiler.core_ir.{LocalId, FuncId}
+use compiler.backend.prepared_ir.{PreparedFunc, ReprKind, SlotId}
 use compiler.builtins.{BuiltinRegistry}
+use compiler.codegen.emit.task_resume.{TaskResumeInfo}
 use compiler.codegen.wasm_ir.{ValType}
 use compiler.codegen.wasm_plan_types.{WasmTypeRegistry}
-use compiler.backend.prepared_ir.{PreparedFunc, ReprKind, SlotId}
-use compiler.codegen.emit.task_resume.{TaskResumeInfo}
+use compiler.core_ir.{FuncId, LocalId}
+use compiler.mono_type.{MonoType}
+use compiler.resolver.{ResolvedEnv}
 
 pub type LocalEntry = .{
   index: Int,
@@ -17,25 +16,22 @@ pub type LocalEntry = .{
   source_local: LocalId,
 }
 
-pub type LabelPair = .{
-  break_label: String,
-  continue_label: String,
-}
+pub type LabelPair = .{ break_label: String, continue_label: String }
 
 pub type EmitCtx = .{
   registry: WasmTypeRegistry,
   builtins: BuiltinRegistry,
   env: ResolvedEnv,
-  local_map: Dict<Int, LocalEntry>,  // SlotId.id → LocalEntry
+  local_map: Dict<Int, LocalEntry>,
   next_local: Int,
-  wasm_locals: Vector<ValType>,       // additional locals (beyond params)
+  wasm_locals: Vector<ValType>,
   label_stack: Vector<LabelPair>,
   current_func_id: FuncId?,
-  func_sym_map: Dict<Int, String>,    // FuncId → wasm symbol
+  func_sym_map: Dict<Int, String>,
   prepared_funcs: Dict<Int, PreparedFunc>,
   is_init_func: Bool,
   loop_depth: Int,
-  suspending_bodies: Dict<Int, TaskResumeInfo>,  // body_fid.id → resume info
+  suspending_bodies: Dict<Int, TaskResumeInfo>,
 }
 
 pub fn current_prepared_func(ctx: EmitCtx) PreparedFunc? {

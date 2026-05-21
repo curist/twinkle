@@ -1,14 +1,11 @@
 use .duplicate_type_imports_tokens
 use .duplicate_type_imports_tokens.{Token}
 
-fn bare_kind(token: Token) Int {
-  token.kind
-}
+fn bare_kind(token: Token) Int { token.kind }
 
 fn main() {
   from_module: Token = duplicate_type_imports_tokens.make(1)
   from_bare := Token.{ kind: 2 }
-
   module_kind := duplicate_type_imports_tokens.token_kind(from_bare)
   bare_kind(from_module)
   module_kind

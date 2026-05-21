@@ -10,16 +10,16 @@
 // legacy semantic-ANF operand representation details; those tighter checks can
 // land later once planning/emission migration makes more operations fully
 // prepared-IR-driven.
-
-use compiler.resolver.{ResolvedEnv}
-use compiler.mono_type.{MonoType}
-use compiler.builtins.{BuiltinRegistry}
-use compiler.backend.prepared_ir.{PreparedFunc}
-use compiler.backend.prepare.{PreparedModule}
-use compiler.backend.verify_slots.{verify_prepared_func_slots}
-use compiler.backend.verify_expr.{verify_prepared_func_expr}
 use @std.date
 use @std.proc
+
+use compiler.backend.prepare.{PreparedModule}
+use compiler.backend.prepared_ir.{PreparedFunc}
+use compiler.backend.verify_expr.{verify_prepared_func_expr}
+use compiler.backend.verify_slots.{verify_prepared_func_slots}
+use compiler.builtins.{BuiltinRegistry}
+use compiler.mono_type.{MonoType}
+use compiler.resolver.{ResolvedEnv}
 
 pub type VerifyLevel = { Basic, Full }
 
@@ -27,7 +27,7 @@ pub fn verify_prepared_module(
   prepared: PreparedModule,
   env: ResolvedEnv,
   builtins: BuiltinRegistry,
-) !String {
+) Void!String {
   verify_prepared_module_with_level(prepared, env, builtins, .Full)
 }
 
@@ -36,22 +36,24 @@ pub fn verify_prepared_module_with_level(
   env: ResolvedEnv,
   builtins: BuiltinRegistry,
   level: VerifyLevel,
-) !String {
-  timed := case proc.env("TWINKLE_TIMINGS") { .Some(_) => true, .None => false }
-
-  funcs_by_id: Dict<Int, PreparedFunc> = Dict.new()
-  for pf in prepared.funcs {
-    funcs_by_id[pf.func_id.id] = pf
+) Void!String {
+  timed := case proc.env("TWINKLE_TIMINGS") {
+    .Some(_) => true,
+    .None => false,
   }
+  funcs_by_id: Dict<Int, PreparedFunc> = Dict.new()
+
+  for pf in prepared.funcs { funcs_by_id[pf.func_id.id] = pf }
 
   for fid in prepared.closure_captures.keys() {
     if !funcs_by_id.has(fid) {
-      return .Err("backend verifier: closure capture entry for unknown function F${fid}")
+      return .Err(
+        "backend verifier: closure capture entry for unknown function F${fid}",
+      )
     }
   }
 
   module_globals := build_module_globals(prepared)
-
   total_slots: Int = 0
   total_slot_entries: Int = 0
   t_slots: Float = 0.0
@@ -61,23 +63,34 @@ pub fn verify_prepared_module_with_level(
     slot_count := pf.captures.len() + pf.params.len() + pf.locals.len()
     total_slots = total_slots + slot_count
     total_slot_entries = total_slot_entries + pf.slots.len()
-
     ta := date.now()
     try verify_prepared_func_slots(pf, prepared.closure_captures, env)
     tb := date.now()
+
     case level {
       .Basic => {},
-      .Full => { try verify_prepared_func_expr(pf, prepared.closure_captures, funcs_by_id, env, module_globals, builtins) },
+      .Full => {
+        try verify_prepared_func_expr(
+          pf,
+          prepared.closure_captures,
+          funcs_by_id,
+          env,
+          module_globals,
+          builtins,
+        )
+      },
     }
-    tc := date.now()
 
+    tc := date.now()
     t_slots = t_slots + (tb - ta)
     t_expr = t_expr + (tc - tb)
   }
 
   if timed {
     n := prepared.funcs.len()
-    eprintln("[time:verify] funcs=${n}  total_slots=${total_slots}  total_slot_entries=${total_slot_entries}")
+    eprintln(
+      "[time:verify] funcs=${n}  total_slots=${total_slots}  total_slot_entries=${total_slot_entries}",
+    )
     eprintln("[time:verify] slot_checks=${t_slots}ms  expr_walk=${t_expr}ms")
   }
 
@@ -90,6 +103,7 @@ pub fn verify_prepared_module_with_level(
 // $combined_init, so we collect globals from all of them.
 fn build_module_globals(prepared: PreparedModule) Dict<Int, MonoType> {
   out: Dict<Int, MonoType> = Dict.new()
+
   for pf in prepared.funcs {
     if pf.is_init {
       for sid_int in pf.slots.keys() {
@@ -100,6 +114,6 @@ fn build_module_globals(prepared: PreparedModule) Dict<Int, MonoType> {
       }
     }
   }
+
   out
 }
-

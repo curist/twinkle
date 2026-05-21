@@ -2,28 +2,21 @@
 //
 // Extracted from pipeline.tw to break circular imports between
 // pipeline.tw and module_compiler.tw.
-
-use compiler.resolver.{ResolvedEnv}
+use compiler.anf.{AnfModule}
 use compiler.builtins.{BuiltinRegistry}
 use compiler.core_ir.{CoreModule}
-use compiler.anf.{AnfModule}
 use compiler.query.analyze.{AnalysisDiag}
+use compiler.resolver.{ResolvedEnv}
 
 /// Diagnostics payload bundled with the env needed to resolve type names.
 pub type DiagnosticsError = .{
   diagnostics: Vector<AnalysisDiag>,
-  /// Environment for resolving Named(TypeId) → human-readable name at render time.
   env: ResolvedEnv,
 }
 
 /// Structured compile error returned from the compiler library.
 /// CLI commands format these for display; tooling can inspect them directly.
-pub type CompileError = {
-  /// Errors with structured diagnostics (analysis or lowering failures).
-  Diagnostics(DiagnosticsError),
-  /// Internal compiler errors (missing caches, invariant violations).
-  Internal(String),
-}
+pub type CompileError = { Diagnostics(DiagnosticsError), Internal(String) }
 
 pub type PipelineArtifacts = .{
   env: ResolvedEnv,

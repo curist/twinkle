@@ -13,27 +13,17 @@
 //   import environment;
 // - internal-module status is part of the typecheck key because internal host
 //   builtins are only visible for stdlib/prelude implementation modules.
-
 use compiler.ast
 use compiler.checker
 use compiler.lower_core
-use compiler.resolver
 use compiler.query.type_registry
+use compiler.resolver
 use lib.graph.dependency
 use lib.source.diagnostics.{DiagKind}
 
+pub type ParsedModule = .{ module: ast.Module, diagnostics: Vector<DiagKind> }
 
-pub type ParsedModule = .{
-  module: ast.Module,
-  diagnostics: Vector<DiagKind>,
-}
-
-pub type StageKind = {
-  Parsed,
-  Resolved,
-  Typed,
-  Lowered,
-}
+pub type StageKind = { Parsed, Resolved, Typed, Lowered }
 
 pub type CacheStats = .{
   parse_hits: Int,
@@ -46,12 +36,7 @@ pub type CacheStats = .{
   lower_misses: Int,
 }
 
-type CacheEntry<T> = .{
-  key: Int,
-  value: T,
-  verified_at: Int,
-  changed_at: Int,
-}
+type CacheEntry<T> = .{ key: Int, value: T, verified_at: Int, changed_at: Int }
 
 pub type Store = .{
   parsed: Dict<String, CacheEntry<ParsedModule>>,
@@ -67,11 +52,7 @@ pub type Store = .{
   revision: Int,
 }
 
-pub type Lookup<T> = .{
-  store: Store,
-  value: T?,
-  cache_hit: Bool,
-}
+pub type Lookup<T> = .{ store: Store, value: T?, cache_hit: Bool }
 
 pub fn empty_stats() CacheStats {
   .{
@@ -102,9 +83,7 @@ pub fn empty() Store {
   }
 }
 
-pub fn get_stats(store: Store) CacheStats {
-  store.stats
-}
+pub fn get_stats(store: Store) CacheStats { store.stats }
 
 pub fn set_dependencies(store: Store, module: String, deps: Vector<String>) Store {
   store.graph = dependency.set_dependencies(store.graph, module, deps)
@@ -132,17 +111,20 @@ pub fn exports_fingerprint(store: Store, module: String) Int? {
 pub fn note_source_hash(store: Store, module: String, source_hash: Int) Store {
   case store.source_hashes[module] {
     .Some(prev) => {
-      if prev == source_hash { return store }
+      if prev == source_hash {
+        return store
+      }
     },
     .None => {
       store.revision = store.revision + 1
       store.source_hashes[module] = source_hash
+
       return store
     },
   }
 
   store.revision = store.revision + 1
-  store.parsed = .remove(module)
+  store.parsed = store.parsed.remove(module)
   store = invalidate_changed_module(store, module)
   store.source_hashes[module] = source_hash
   store
@@ -150,38 +132,39 @@ pub fn note_source_hash(store: Store, module: String, source_hash: Int) Store {
 
 pub fn invalidate_changed_module(store: Store, module: String) Store {
   affected := dependency.reverse_dependents_closure(store.graph, module)
+
   for path in affected {
-    if path == module {
-      store.parsed = .remove(path)
-    }
+    if path == module { store.parsed = store.parsed.remove(path) }
+
     // Clear module_hashes so key recomputation reflects the change,
     // but preserve resolved/typed/lowered entries for lazy verification.
-    store.module_hashes = .remove(path)
+    store.module_hashes = store.module_hashes.remove(path)
   }
+
   store
 }
 
 pub fn clear_module(store: Store, module: String) Store {
-  store.parsed = .remove(module)
+  store.parsed = store.parsed.remove(module)
   store = clear_resolved_and_later(store, module)
   store
 }
 
 pub fn clear_resolved_and_later(store: Store, module: String) Store {
-  store.resolved = .remove(module)
+  store.resolved = store.resolved.remove(module)
   store = clear_typed_and_later(store, module)
   store
 }
 
 pub fn clear_typed_and_later(store: Store, module: String) Store {
-  store.typed = .remove(module)
+  store.typed = store.typed.remove(module)
   store = clear_lowered_and_hash(store, module)
   store
 }
 
 pub fn clear_lowered_and_hash(store: Store, module: String) Store {
-  store.lowered = .remove(module)
-  store.module_hashes = .remove(module)
+  store.lowered = store.lowered.remove(module)
+  store.module_hashes = store.module_hashes.remove(module)
   store
 }
 
@@ -211,78 +194,147 @@ pub fn get_parsed(store: Store, module: String, key: Int) Lookup<ParsedModule> {
     .Some(entry) => {
       if entry.key == key {
         store.stats.parse_hits = store.stats.parse_hits + 1
-        store.parsed[module] = .{ key: entry.key, value: entry.value, verified_at: store.revision, changed_at: entry.changed_at }
+        store.parsed[module] = .{
+          key: entry.key,
+          value: entry.value,
+          verified_at: store.revision,
+          changed_at: entry.changed_at,
+        }
+
         return .{ store, value: .Some(entry.value), cache_hit: true }
       }
     },
     .None => {},
   }
+
   store.stats.parse_misses = store.stats.parse_misses + 1
   .{ store, value: .None, cache_hit: false }
 }
 
 pub fn put_parsed(store: Store, module: String, key: Int, value: ParsedModule) Store {
-  store.parsed[module] = .{ key, value, verified_at: store.revision, changed_at: store.revision }
+  store.parsed[module] = .{
+    key,
+    value,
+    verified_at: store.revision,
+    changed_at: store.revision,
+  }
   store
 }
 
-pub fn get_resolved(store: Store, module: String, key: Int) Lookup<resolver.ResolveResult> {
+pub fn get_resolved(store: Store, module: String, key: Int) Lookup<
+  resolver.ResolveResult,
+> {
   case store.resolved[module] {
     .Some(entry) => {
       if entry.key == key {
         store.stats.resolve_hits = store.stats.resolve_hits + 1
-        store.resolved[module] = .{ key: entry.key, value: entry.value, verified_at: store.revision, changed_at: entry.changed_at }
+        store.resolved[module] = .{
+          key: entry.key,
+          value: entry.value,
+          verified_at: store.revision,
+          changed_at: entry.changed_at,
+        }
+
         return .{ store, value: .Some(entry.value), cache_hit: true }
       }
     },
     .None => {},
   }
+
   store.stats.resolve_misses = store.stats.resolve_misses + 1
   .{ store, value: .None, cache_hit: false }
 }
 
-pub fn put_resolved(store: Store, module: String, key: Int, value: resolver.ResolveResult) Store {
-  store.resolved[module] = .{ key, value, verified_at: store.revision, changed_at: store.revision }
+pub fn put_resolved(
+  store: Store,
+  module: String,
+  key: Int,
+  value: resolver.ResolveResult,
+) Store {
+  store.resolved[module] = .{
+    key,
+    value,
+    verified_at: store.revision,
+    changed_at: store.revision,
+  }
   store
 }
 
-pub fn get_typed(store: Store, module: String, key: Int) Lookup<checker.CheckResult> {
+pub fn get_typed(store: Store, module: String, key: Int) Lookup<
+  checker.CheckResult,
+> {
   case store.typed[module] {
     .Some(entry) => {
       if entry.key == key {
         store.stats.typecheck_hits = store.stats.typecheck_hits + 1
-        store.typed[module] = .{ key: entry.key, value: entry.value, verified_at: store.revision, changed_at: entry.changed_at }
+        store.typed[module] = .{
+          key: entry.key,
+          value: entry.value,
+          verified_at: store.revision,
+          changed_at: entry.changed_at,
+        }
+
         return .{ store, value: .Some(entry.value), cache_hit: true }
       }
     },
     .None => {},
   }
+
   store.stats.typecheck_misses = store.stats.typecheck_misses + 1
   .{ store, value: .None, cache_hit: false }
 }
 
-pub fn put_typed(store: Store, module: String, key: Int, value: checker.CheckResult) Store {
-  store.typed[module] = .{ key, value, verified_at: store.revision, changed_at: store.revision }
+pub fn put_typed(
+  store: Store,
+  module: String,
+  key: Int,
+  value: checker.CheckResult,
+) Store {
+  store.typed[module] = .{
+    key,
+    value,
+    verified_at: store.revision,
+    changed_at: store.revision,
+  }
   store
 }
 
-pub fn get_lowered(store: Store, module: String, key: Int) Lookup<lower_core.LowerResult> {
+pub fn get_lowered(store: Store, module: String, key: Int) Lookup<
+  lower_core.LowerResult,
+> {
   case store.lowered[module] {
     .Some(entry) => {
       if entry.key == key {
         store.stats.lower_hits = store.stats.lower_hits + 1
-        store.lowered[module] = .{ key: entry.key, value: entry.value, verified_at: store.revision, changed_at: entry.changed_at }
+        store.lowered[module] = .{
+          key: entry.key,
+          value: entry.value,
+          verified_at: store.revision,
+          changed_at: entry.changed_at,
+        }
+
         return .{ store, value: .Some(entry.value), cache_hit: true }
       }
     },
     .None => {},
   }
+
   store.stats.lower_misses = store.stats.lower_misses + 1
   .{ store, value: .None, cache_hit: false }
 }
 
-pub fn put_lowered(store: Store, module: String, key: Int, value: lower_core.LowerResult) Store {
-  store.lowered[module] = .{ key, value, verified_at: store.revision, changed_at: store.revision }
+pub fn put_lowered(
+  store: Store,
+  module: String,
+  key: Int,
+  value: lower_core.LowerResult,
+) Store {
+  store.lowered[module] = .{
+    key,
+    value,
+    verified_at: store.revision,
+    changed_at: store.revision,
+  }
   store
 }
 

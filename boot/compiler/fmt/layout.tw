@@ -171,26 +171,23 @@ pub fn render_with_width(doc: Doc, width: Int) String {
           )
           stack = rest_pushed.stack
           top = rest_pushed.top
-
           // Decide separator mode: does item + sep + next_item fit?
           item_w := flat_width(children[0])
           sep_w := flat_width(children[1])
           next_w := flat_width(children[2])
           sep_mode: Mode = if item_w >= 0 and sep_w >= 0 and next_w >= 0
-          and col + item_w + sep_w + next_w <= width {
-            .Flat
-          } else {
-            .Break
-          }
-
+          and col + item_w + sep_w + next_w <= width { .Flat } else { .Break }
           sep_pushed := push_stack(
             stack,
             top,
-            StackEntry.{ indent: entry.indent, mode: sep_mode, doc: children[1] },
+            StackEntry.{
+              indent: entry.indent,
+              mode: sep_mode,
+              doc: children[1],
+            },
           )
           stack = sep_pushed.stack
           top = sep_pushed.top
-
           item_pushed := push_stack(
             stack,
             top,
@@ -206,7 +203,6 @@ pub fn render_with_width(doc: Doc, width: Int) String {
           )
           stack = sep_pushed.stack
           top = sep_pushed.top
-
           item_pushed := push_stack(
             stack,
             top,

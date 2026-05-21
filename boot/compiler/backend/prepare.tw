@@ -13,15 +13,14 @@
 //
 // INVARIANT: Do not add new inference logic in wasm_plan.tw or emit.tw.
 //            New backend facts belong in PreparedModule or its sub-records.
-
 use compiler.anf.{AnfModule}
-use compiler.resolver.{ResolvedEnv}
-use compiler.builtins.{BuiltinRegistry}
 use compiler.backend.prepared_ir.{CaptureParam, PreparedFunc}
-use compiler.backend.slot_assign.{assign_slots_for_module}
 use compiler.backend.repr_assign.{assign_repr_for_module}
-use compiler.codegen.wasm_plan_types.{WasmTypeRegistry}
+use compiler.backend.slot_assign.{assign_slots_for_module}
+use compiler.builtins.{BuiltinRegistry}
 use compiler.codegen.insert_boundaries.{insert_boundaries}
+use compiler.codegen.wasm_plan_types.{WasmTypeRegistry}
+use compiler.resolver.{ResolvedEnv}
 
 // PreparedModule is the codegen contract between optimized ANF and emission.
 //
@@ -30,17 +29,8 @@ use compiler.codegen.insert_boundaries.{insert_boundaries}
 // read explicit facts from `.funcs` and `.closure_captures`; `.anf` is the
 // source syntax tree those prepared facts describe.
 pub type PreparedModule = .{
-  // Post-boundary ANF body tree described by the prepared metadata below.
   anf: AnfModule,
-
-  // Authoritative closure capture map: FuncId.id → ordered capture params.
-  // Computed by caller via compute_closure_captures() before prepare_backend().
-  // All backend passes must read from here.
   closure_captures: Dict<Int, Vector<CaptureParam>>,
-
-  // Authoritative slot map: one PreparedFunc per function in the module,
-  // in the same order as AnfModule.functions. Includes slots for boundary
-  // temporaries (AWrapAnyref/AUnwrapAnyref locals).
   funcs: Vector<PreparedFunc>,
 }
 
@@ -59,20 +49,13 @@ pub fn prepare_backend(
 ) PreparedModule {
   // Insert explicit wrap/unwrap nodes at every representation-crossing point.
   anf2 := insert_boundaries(anf, empty_registry(), builtins, env)
-
   // Assign slots after boundary insertion so wrap/unwrap temporaries are
   // included in the slot maps.
   funcs := assign_slots_for_module(anf2.functions, closure_captures, env)
-
   // Refine SlotInfo.repr and SlotInfo.wasm_type from the slot-assignment
   // defaults using MonoType and boundary-op overrides.
   funcs2 := assign_repr_for_module(funcs, env, builtins)
-
-  .{
-    anf: anf2,
-    closure_captures: closure_captures,
-    funcs: funcs2,
-  }
+  .{ anf: anf2, closure_captures: closure_captures, funcs: funcs2 }
 }
 
 fn empty_registry() WasmTypeRegistry {

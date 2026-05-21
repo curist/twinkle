@@ -2,19 +2,23 @@
 //
 // Consumes ResolvedEnv + Module AST, produces TypeMap + diagnostics.
 // InferCtx is threaded functionally through every call; updates use COW field mutation.
-
-use lib.source.span.{Span}
 use lib.source.diagnostics.{DiagKind}
-use .resolver.{ResolvedEnv, FunctionSig, ResolvedField, ResolvedTypeParam, resolved_type_param_names}
+use lib.source.span.{Span}
+
+use .ast.{
+  BinOp, Block, CaseArm, CollectExpr, Expr, ForStmt, FunctionDecl, LetStmt,
+  Module, Param, Pattern, RecordEntry, ReturnStmt, Stmt, StringPart, TypeExpr,
+  UnOp,
+}
+use .contracts.{BuiltinContract, ContractMethodRequirement, ContractReturnShape}
 use .mono_type.{MonoType, TypeId}
+use .resolver.{
+  FunctionSig, ResolvedEnv, ResolvedField, ResolvedTypeParam,
+  resolved_type_param_names,
+}
 use .type_util.{subst_type_params}
 
-use .contracts.{BuiltinContract, ContractMethodRequirement, ContractReturnShape}
-use .ast.{Module, FunctionDecl, Param, Block, Stmt, LetStmt, ReturnStmt, ForStmt, Expr, TypeExpr, BinOp, UnOp, StringPart, RecordEntry, CaseArm, Pattern, CollectExpr}
-
-
 // ── Types ───────────────────────────────────────────────────────────
-
 pub type InferCtx = .{
   env: ResolvedEnv,
   module_aliases: Dict<String, Bool>,
@@ -39,7 +43,9 @@ pub type MethodCallInfo = .{
 }
 
 type SynthOut = .{ ty: MonoType, ctx: InferCtx, diags: Vector<DiagKind> }
+
 type CheckOut = .{ ctx: InferCtx, diags: Vector<DiagKind> }
+
 type UnifyOut = .{ ctx: InferCtx, diags: Vector<DiagKind> }
 
 pub type CheckResult = .{
@@ -52,7 +58,6 @@ pub type CheckResult = .{
 }
 
 // ── Context helpers ─────────────────────────────────────────────────
-
 fn empty_ctx(env: ResolvedEnv, module_aliases: Dict<String, Bool>) InferCtx {
   .{
     env,
@@ -72,12 +77,12 @@ fn empty_ctx(env: ResolvedEnv, module_aliases: Dict<String, Bool>) InferCtx {
 }
 
 fn push_scope(ctx: InferCtx) InferCtx {
-  ctx.locals = .append(Dict.new())
+  ctx.locals = ctx.locals.append(Dict.new())
   ctx
 }
 
 fn pop_scope(ctx: InferCtx) InferCtx {
-  ctx.locals = .slice(0, ctx.locals.len() - 1)
+  ctx.locals = ctx.locals.slice(0, ctx.locals.len() - 1)
   ctx
 }
 
@@ -92,22 +97,29 @@ fn bind_local(ctx: InferCtx, name: String, ty: MonoType) InferCtx {
   last := ctx.locals.len() - 1
   frame := ctx.locals[last]
   frame[name] = ty
+
   case ctx.locals.set(last, frame) {
     .Some(new_locals) => { ctx.locals = new_locals },
     .None => {},
   }
+
   ctx
 }
 
 fn lookup_local(ctx: InferCtx, name: String) MonoType? {
   i := ctx.locals.len() - 1
+
   for i >= 0 {
     case ctx.locals[i][name] {
-      .Some(ty) => { return .Some(ty) },
+      .Some(ty) => {
+        return .Some(ty)
+      },
       .None => {},
     }
+
     i = i - 1
   }
+
   .None
 }
 
@@ -128,13 +140,21 @@ fn set_subst(ctx: InferCtx, id: Int, ty: MonoType) InferCtx {
 }
 
 // ── Type annotation resolution ──────────────────────────────────────
-
 fn resolve_annotation(ty_expr: TypeExpr, ctx: InferCtx, diags: Vector<DiagKind>) SynthOut {
-  r := ctx.env.resolve_type_expr(ty_expr, resolved_type_param_names(ctx.type_var_scope))
+  r := ctx.env.resolve_type_expr(
+    ty_expr,
+    resolved_type_param_names(ctx.type_var_scope),
+  )
   result_diags := diags.concat(r.diagnostics)
+
   case r.ty {
     .Some(ty) => {
-      bounds_r := check_type_instantiation_bounds(ty, ty_expr.span, ctx, result_diags)
+      bounds_r := check_type_instantiation_bounds(
+        ty,
+        ty_expr.span,
+        ctx,
+        result_diags,
+      )
       .{ ty, ctx: bounds_r.ctx, diags: bounds_r.diags }
     },
     .None => {
@@ -145,7 +165,6 @@ fn resolve_annotation(ty_expr: TypeExpr, ctx: InferCtx, diags: Vector<DiagKind>)
 }
 
 // ── Core engine ─────────────────────────────────────────────────────
-
 fn fresh_meta(ctx: InferCtx) SynthOut {
   ty := MonoType.MetaVar(ctx.next_meta)
   ctx.next_meta = ctx.next_meta + 1
@@ -178,13 +197,19 @@ fn zonk_with_meta(ty: MonoType, subst: Dict<Int, MonoType>) ZonkMetaOut {
     .Function(params, ret) => {
       zonked_params: Vector<MonoType> = []
       has_meta := false
+
       for p in params {
         pr := zonk_with_meta(p, subst)
         zonked_params = .append(pr.ty)
+
         if pr.has_meta { has_meta = true }
       }
+
       rr := zonk_with_meta(ret, subst)
-      .{ ty: MonoType.Function(zonked_params, rr.ty), has_meta: has_meta or rr.has_meta }
+      .{
+        ty: MonoType.Function(zonked_params, rr.ty),
+        has_meta: has_meta or rr.has_meta,
+      }
     },
     .Optional(inner) => {
       r := zonk_with_meta(inner, subst)
@@ -193,16 +218,22 @@ fn zonk_with_meta(ty: MonoType, subst: Dict<Int, MonoType>) ZonkMetaOut {
     .Result(ok, err) => {
       ok_r := zonk_with_meta(ok, subst)
       err_r := zonk_with_meta(err, subst)
-      .{ ty: MonoType.Result(ok_r.ty, err_r.ty), has_meta: ok_r.has_meta or err_r.has_meta }
+      .{
+        ty: MonoType.Result(ok_r.ty, err_r.ty),
+        has_meta: ok_r.has_meta or err_r.has_meta,
+      }
     },
     .Named(tid, args) => {
       zonked_args: Vector<MonoType> = []
       has_meta := false
+
       for a in args {
         ar := zonk_with_meta(a, subst)
         zonked_args = .append(ar.ty)
+
         if ar.has_meta { has_meta = true }
       }
+
       .{ ty: MonoType.Named(tid, zonked_args), has_meta: has_meta }
     },
     _ => .{ ty: ty, has_meta: false },
@@ -212,7 +243,10 @@ fn zonk_with_meta(ty: MonoType, subst: Dict<Int, MonoType>) ZonkMetaOut {
 fn occurs(id: Int, ty: MonoType, subst: Dict<Int, MonoType>) Bool {
   case ty {
     .MetaVar(other) => {
-      if id == other { return true }
+      if id == other {
+        return true
+      }
+
       case subst[other] {
         .Some(resolved) => occurs(id, resolved, subst),
         .None => false,
@@ -222,16 +256,22 @@ fn occurs(id: Int, ty: MonoType, subst: Dict<Int, MonoType>) Bool {
     .Dict(k, v) => occurs(id, k, subst) or occurs(id, v, subst),
     .Function(params, ret) => {
       for p in params {
-        if occurs(id, p, subst) { return true }
+        if occurs(id, p, subst) {
+          return true
+        }
       }
+
       occurs(id, ret, subst)
     },
     .Optional(inner) => occurs(id, inner, subst),
     .Result(ok, err) => occurs(id, ok, subst) or occurs(id, err, subst),
     .Named(_, args) => {
       for a in args {
-        if occurs(id, a, subst) { return true }
+        if occurs(id, a, subst) {
+          return true
+        }
       }
+
       false
     },
     _ => false,
@@ -245,29 +285,48 @@ fn contains_meta(ty: MonoType) Bool {
     .Dict(k, v) => contains_meta(k) or contains_meta(v),
     .Function(params, ret) => {
       for p in params {
-        if contains_meta(p) { return true }
+        if contains_meta(p) {
+          return true
+        }
       }
+
       contains_meta(ret)
     },
     .Optional(inner) => contains_meta(inner),
     .Result(ok, err) => contains_meta(ok) or contains_meta(err),
     .Named(_, args) => {
       for a in args {
-        if contains_meta(a) { return true }
+        if contains_meta(a) {
+          return true
+        }
       }
+
       false
     },
     _ => false,
   }
 }
 
-fn unify(ctx: InferCtx, a: MonoType, b: MonoType, s: Span, diags: Vector<DiagKind>) UnifyOut {
+fn unify(
+  ctx: InferCtx,
+  a: MonoType,
+  b: MonoType,
+  s: Span,
+  diags: Vector<DiagKind>,
+) UnifyOut {
   za := expand_alias(zonk(a, ctx.subst), ctx.env, 0)
   zb := expand_alias(zonk(b, ctx.subst), ctx.env, 0)
 
   // Never unifies with anything
-  case za { .Never => { return .{ ctx, diags } }, _ => {} }
-  case zb { .Never => { return .{ ctx, diags } }, _ => {} }
+  case za {
+    .Never => { return .{ ctx, diags } },
+    _ => {},
+  }
+
+  case zb {
+    .Never => { return .{ ctx, diags } },
+    _ => {},
+  }
 
   // MetaVar binding
   case za {
@@ -278,10 +337,12 @@ fn unify(ctx: InferCtx, a: MonoType, b: MonoType, s: Span, diags: Vector<DiagKin
           diags: diags.append(.Error(.InfiniteType(.{ span: s }))),
         }
       }
+
       return .{ ctx: set_subst(ctx, id, zb), diags }
     },
     _ => {},
   }
+
   case zb {
     .MetaVar(id) => {
       if occurs(id, za, ctx.subst) {
@@ -290,6 +351,7 @@ fn unify(ctx: InferCtx, a: MonoType, b: MonoType, s: Span, diags: Vector<DiagKin
           diags: diags.append(.Error(.InfiniteType(.{ span: s }))),
         }
       }
+
       return .{ ctx: set_subst(ctx, id, za), diags }
     },
     _ => {},
@@ -297,13 +359,48 @@ fn unify(ctx: InferCtx, a: MonoType, b: MonoType, s: Span, diags: Vector<DiagKin
 
   // Structural matching
   case za {
-    .Int => { case zb { .Int => { return .{ ctx, diags } }, _ => {} } },
-    .Float => { case zb { .Float => { return .{ ctx, diags } }, _ => {} } },
-    .Bool => { case zb { .Bool => { return .{ ctx, diags } }, _ => {} } },
-    .Byte => { case zb { .Byte => { return .{ ctx, diags } }, _ => {} } },
-    .String => { case zb { .String => { return .{ ctx, diags } }, _ => {} } },
-    .Void => { case zb { .Void => { return .{ ctx, diags } }, _ => {} } },
-    .Anyref_ => { case zb { .Anyref_ => { return .{ ctx, diags } }, _ => {} } },
+    .Int => {
+      case zb {
+        .Int => { return .{ ctx, diags } },
+        _ => {},
+      }
+    },
+    .Float => {
+      case zb {
+        .Float => { return .{ ctx, diags } },
+        _ => {},
+      }
+    },
+    .Bool => {
+      case zb {
+        .Bool => { return .{ ctx, diags } },
+        _ => {},
+      }
+    },
+    .Byte => {
+      case zb {
+        .Byte => { return .{ ctx, diags } },
+        _ => {},
+      }
+    },
+    .String => {
+      case zb {
+        .String => { return .{ ctx, diags } },
+        _ => {},
+      }
+    },
+    .Void => {
+      case zb {
+        .Void => { return .{ ctx, diags } },
+        _ => {},
+      }
+    },
+    .Anyref_ => {
+      case zb {
+        .Anyref_ => { return .{ ctx, diags } },
+        _ => {},
+      }
+    },
     .Vector(ia) => {
       case zb {
         .Vector(ib) => { return ctx.unify(ia, ib, s, diags) },
@@ -314,6 +411,7 @@ fn unify(ctx: InferCtx, a: MonoType, b: MonoType, s: Span, diags: Vector<DiagKin
       case zb {
         .Dict(kb, vb) => {
           r := ctx.unify(ka, kb, s, diags)
+
           return r.ctx.unify(va, vb, s, r.diags)
         },
         _ => {},
@@ -329,6 +427,7 @@ fn unify(ctx: InferCtx, a: MonoType, b: MonoType, s: Span, diags: Vector<DiagKin
       case zb {
         .Result(ob, eb) => {
           r := ctx.unify(oa, ob, s, diags)
+
           return r.ctx.unify(ea, eb, s, r.diags)
         },
         _ => {},
@@ -340,11 +439,13 @@ fn unify(ctx: InferCtx, a: MonoType, b: MonoType, s: Span, diags: Vector<DiagKin
           if ta.id == tb.id and aa.len() == ab.len() {
             cur_ctx := ctx
             cur_diags := diags
+
             for i in 0..aa.len() {
               r := cur_ctx.unify(aa[i], ab[i], s, cur_diags)
               cur_ctx = r.ctx
               cur_diags = r.diags
             }
+
             return .{ ctx: cur_ctx, diags: cur_diags }
           }
         },
@@ -357,11 +458,13 @@ fn unify(ctx: InferCtx, a: MonoType, b: MonoType, s: Span, diags: Vector<DiagKin
           if pa.len() == pb.len() {
             cur_ctx := ctx
             cur_diags := diags
+
             for i in 0..pa.len() {
               r := cur_ctx.unify(pa[i], pb[i], s, cur_diags)
               cur_ctx = r.ctx
               cur_diags = r.diags
             }
+
             return cur_ctx.unify(ra, rb, s, cur_diags)
           }
         },
@@ -371,7 +474,9 @@ fn unify(ctx: InferCtx, a: MonoType, b: MonoType, s: Span, diags: Vector<DiagKin
     .ExternRef(ta) => {
       case zb {
         .ExternRef(tb) => {
-          if ta.id == tb.id { return .{ ctx, diags } }
+          if ta.id == tb.id {
+            return .{ ctx, diags }
+          }
         },
         _ => {},
       }
@@ -384,7 +489,19 @@ fn unify(ctx: InferCtx, a: MonoType, b: MonoType, s: Span, diags: Vector<DiagKin
           }
         },
         _ => {
-          return .{ ctx, diags: diags.append(.Error(.CompilerBug(.{ span: s, message: "uninstantiated type variable '${na}' reached unification" }))) }
+          return .{
+            ctx,
+            diags: diags.append(
+              .Error(
+                .CompilerBug(
+                  .{
+                    span: s,
+                    message: "uninstantiated type variable '${na}' reached unification",
+                  },
+                ),
+              ),
+            ),
+          }
         },
       }
     },
@@ -394,12 +511,17 @@ fn unify(ctx: InferCtx, a: MonoType, b: MonoType, s: Span, diags: Vector<DiagKin
   // Mismatch
   .{
     ctx,
-    diags: diags.append(.Error(.TypeMismatch(.{ span: s, expected: za, found: zb }))),
+    diags: diags.append(
+      .Error(.TypeMismatch(.{ span: s, expected: za, found: zb })),
+    ),
   }
 }
 
 fn subst_vars(ty: MonoType, var_map: Dict<String, MonoType>) MonoType {
-  if var_map.len() == 0 { return ty }
+  if var_map.len() == 0 {
+    return ty
+  }
+
   case ty {
     .Var(name) => {
       case var_map[name] {
@@ -414,7 +536,10 @@ fn subst_vars(ty: MonoType, var_map: Dict<String, MonoType>) MonoType {
       .Function(inst_params, subst_vars(ret, var_map))
     },
     .Optional(inner) => .Optional(subst_vars(inner, var_map)),
-    .Result(ok, err) => .Result(subst_vars(ok, var_map), subst_vars(err, var_map)),
+    .Result(ok, err) => .Result(
+      subst_vars(ok, var_map),
+      subst_vars(err, var_map),
+    ),
     .Named(tid, args) => {
       inst_args := collect a in args { subst_vars(a, var_map) }
       MonoType.Named(tid, inst_args)
@@ -423,21 +548,33 @@ fn subst_vars(ty: MonoType, var_map: Dict<String, MonoType>) MonoType {
   }
 }
 
-fn build_var_map(type_params: Vector<ResolvedTypeParam>, type_args: Vector<MonoType>) Dict<String, MonoType> {
+fn build_var_map(
+  type_params: Vector<ResolvedTypeParam>,
+  type_args: Vector<MonoType>,
+) Dict<String, MonoType> {
   m: Dict<String, MonoType> = Dict.new()
+
   for i in 0..type_params.len() {
     if i < type_args.len() { m[type_params[i].name] = type_args[i] }
   }
+
   m
 }
 
-fn find_record_field_type(fields: Vector<ResolvedField>, type_params: Vector<ResolvedTypeParam>, type_args: Vector<MonoType>, name: String) MonoType? {
+fn find_record_field_type(
+  fields: Vector<ResolvedField>,
+  type_params: Vector<ResolvedTypeParam>,
+  type_args: Vector<MonoType>,
+  name: String,
+) MonoType? {
   var_map := build_var_map(type_params, type_args)
+
   for f in fields {
     if f.name == name {
       return .Some(subst_vars(f.ty, var_map))
     }
   }
+
   .None
 }
 
@@ -446,7 +583,13 @@ fn find_record_field_type(fields: Vector<ResolvedField>, type_params: Vector<Res
 // return type from context.  Any mismatch diagnostics from this unification are
 // intentionally discarded — the real error will be reported later by the
 // outer call-site or type-check pass.  This matches the stage0 policy.
-fn pre_unify_return(ctx: InferCtx, inst_ret: MonoType, call_expected: MonoType?, s: Span, diags: Vector<DiagKind>) CheckOut {
+fn pre_unify_return(
+  ctx: InferCtx,
+  inst_ret: MonoType,
+  call_expected: MonoType?,
+  s: Span,
+  diags: Vector<DiagKind>,
+) CheckOut {
   case call_expected {
     .Some(expected_ret) => {
       pre_u := ctx.unify(inst_ret, expected_ret, s, diags)
@@ -461,15 +604,22 @@ fn pre_unify_return(ctx: InferCtx, inst_ret: MonoType, call_expected: MonoType?,
 
 fn same_builtin_contract(a: BuiltinContract, b: BuiltinContract) Bool {
   case a {
-    .Stringify => case b { .Stringify => true, _ => false },
-    .Eq => case b { .Eq => true, _ => false },
-    .Ord => case b { .Ord => true, _ => false },
+    .Stringify => case b {
+      .Stringify => true,
+      _ => false,
+    },
+    .Eq => case b {
+      .Eq => true,
+      _ => false,
+    },
+    .Ord => case b {
+      .Ord => true,
+      _ => false,
+    },
   }
 }
 
-fn contract_name(contract: BuiltinContract) String {
-  contract.spec().name
-}
+fn contract_name(contract: BuiltinContract) String { contract.spec().name }
 
 fn contract_return_type(shape: ContractReturnShape) MonoType {
   case shape {
@@ -485,9 +635,11 @@ fn contract_requirement_summary(req: ContractMethodRequirement) String {
     .Bool => "Bool",
     .Order => "Order",
   }
+
   if req.arg_count_without_receiver == 0 {
     return "${req.method_name}(self) -> ${ret_name}"
   }
+
   "${req.method_name}(self, ...) -> ${ret_name}"
 }
 
@@ -497,14 +649,20 @@ fn lookup_scoped_type_param(scope: Vector<ResolvedTypeParam>, name: String) Reso
       return .Some(tp)
     }
   }
+
   .None
 }
 
-fn type_var_has_contract(name: String, contract: BuiltinContract, scope: Vector<ResolvedTypeParam>) Bool {
+fn type_var_has_contract(
+  name: String,
+  contract: BuiltinContract,
+  scope: Vector<ResolvedTypeParam>,
+) Bool {
   tp := case lookup_scoped_type_param(scope, name) {
     .Some(found) => found,
     .None => { return false },
   }
+
   for bound in tp.bounds {
     case bound {
       .Builtin(found) => {
@@ -514,6 +672,7 @@ fn type_var_has_contract(name: String, contract: BuiltinContract, scope: Vector<
       },
     }
   }
+
   false
 }
 
@@ -522,7 +681,11 @@ type ScopedContractMatch = .{
   req: ContractMethodRequirement,
 }
 
-fn lookup_scoped_contract_method(base_ty: MonoType, method_name: String, scope: Vector<ResolvedTypeParam>) ScopedContractMatch? {
+fn lookup_scoped_contract_method(
+  base_ty: MonoType,
+  method_name: String,
+  scope: Vector<ResolvedTypeParam>,
+) ScopedContractMatch? {
   name := case base_ty {
     .Var(n) => n,
     _ => { return .None },
@@ -531,6 +694,7 @@ fn lookup_scoped_contract_method(base_ty: MonoType, method_name: String, scope: 
     .Some(found) => found,
     .None => { return .None },
   }
+
   for bound in tp.bounds {
     case bound {
       .Builtin(contract) => {
@@ -542,10 +706,14 @@ fn lookup_scoped_contract_method(base_ty: MonoType, method_name: String, scope: 
       },
     }
   }
+
   .None
 }
 
-fn builtin_contract_satisfied_by_primitive(ty: MonoType, contract: BuiltinContract) Bool {
+fn builtin_contract_satisfied_by_primitive(
+  ty: MonoType,
+  contract: BuiltinContract,
+) Bool {
   case contract {
     .Stringify => case ty {
       .Int => true,
@@ -575,34 +743,58 @@ fn builtin_contract_satisfied_by_primitive(ty: MonoType, contract: BuiltinContra
 
 fn silent_unify(ctx: InferCtx, a: MonoType, b: MonoType) InferCtx? {
   u := ctx.unify(a, b, .{ file_id: 0, start: 0, end: 0 }, [])
+
   if u.diags.len() > 0 {
     return .None
   }
+
   .Some(u.ctx)
 }
 
-fn prove_contract_method(ty: MonoType, contract: BuiltinContract, req: ContractMethodRequirement, ctx: InferCtx, active: Dict<String, Bool>) Result<InferCtx, String> {
+fn prove_contract_method(
+  ty: MonoType,
+  contract: BuiltinContract,
+  req: ContractMethodRequirement,
+  ctx: InferCtx,
+  active: Dict<String, Bool>,
+) Result<InferCtx, String> {
   fn_name := case resolve_method_func_name(ty, req.method_name, ctx.env) {
     .Some(name) => name,
-    .None => { return .Err("missing ${contract_requirement_summary(req)}") },
+    .None => {
+      return .Err("missing ${contract_requirement_summary(req)}")
+    },
   }
   sig := case ctx.env.lookup_registered_function(fn_name) {
     .Some(found) => found,
-    .None => { return .Err("missing ${contract_requirement_summary(req)}") },
+    .None => {
+      return .Err("missing ${contract_requirement_summary(req)}")
+    },
   }
   inst := instantiate(sig, ctx)
+  expected_param_count := req.receiver_param_count
+  + req.arg_count_without_receiver
 
-  expected_param_count := req.receiver_param_count + req.arg_count_without_receiver
   if inst.params.len() != expected_param_count {
-    return .Err("${req.method_name} has the wrong receiver-only shape for ${contract_name(contract)}")
+    return .Err(
+      "${req.method_name} has the wrong receiver-only shape for ${contract_name(
+        contract,
+      )}",
+    )
   }
+
   if req.receiver_param_count != 1 {
-    return .Err("unsupported contract receiver shape for ${contract_name(contract)}")
+    return .Err(
+      "unsupported contract receiver shape for ${contract_name(contract)}",
+    )
   }
 
   recv_ctx := case silent_unify(inst.ctx, ty, inst.params[0]) {
     .Some(next_ctx) => next_ctx,
-    .None => { return .Err("${req.method_name} does not apply to ${ctx.env.ty_to_string_env(ty)}") },
+    .None => {
+      return .Err(
+        "${req.method_name} does not apply to ${ctx.env.ty_to_string_env(ty)}",
+      )
+    },
   }
 
   // Validate non-receiver parameters also match the target type
@@ -610,33 +802,55 @@ fn prove_contract_method(ty: MonoType, contract: BuiltinContract, req: ContractM
     param_idx := req.receiver_param_count + i
     recv_ctx = case silent_unify(recv_ctx, ty, inst.params[param_idx]) {
       .Some(next_ctx) => next_ctx,
-      .None => { return .Err("${req.method_name} parameter ${param_idx} does not match ${ctx.env.ty_to_string_env(ty)}") },
+      .None => {
+        return .Err(
+          "${req.method_name} parameter ${param_idx} does not match ${ctx.env.ty_to_string_env(
+            ty,
+          )}",
+        )
+      },
     }
   }
 
   ret_ty := zonk(inst.ret, recv_ctx.subst)
   expected_ret := contract_return_type(req.ret)
+
   if zonk(expected_ret, recv_ctx.subst) != ret_ty {
-    return .Err("${req.method_name} returns ${recv_ctx.env.ty_to_string_env(ret_ty)}, expected ${recv_ctx.env.ty_to_string_env(expected_ret)}")
+    return .Err(
+      "${req.method_name} returns ${recv_ctx.env.ty_to_string_env(ret_ty)}, expected ${recv_ctx.env.ty_to_string_env(
+        expected_ret,
+      )}",
+    )
   }
 
   cur_ctx := recv_ctx
+
   for i in 0..sig.type_params.len() {
     if i >= inst.type_args.len() { continue }
-    arg_ty := expand_alias(zonk(inst.type_args[i], cur_ctx.subst), cur_ctx.env, 0)
+
+    arg_ty := expand_alias(
+      zonk(inst.type_args[i], cur_ctx.subst),
+      cur_ctx.env,
+      0,
+    )
     tp := sig.type_params[i]
+
     for bound in tp.bounds {
       case bound {
         .Builtin(bound_contract) => {
           proof := prove_contract(arg_ty, bound_contract, cur_ctx, active)
+
           case proof {
             .Ok(next_ctx) => { cur_ctx = next_ctx },
-            .Err(reason) => { return .Err(reason) },
+            .Err(reason) => {
+              return .Err(reason)
+            },
           }
         },
       }
     }
   }
+
   .Ok(cur_ctx)
 }
 
@@ -648,7 +862,12 @@ fn contract_supports_auto_derive(contract: BuiltinContract) Bool {
   }
 }
 
-fn try_builtin_container_contract(ty: MonoType, contract: BuiltinContract, ctx: InferCtx, active: Dict<String, Bool>) Result<InferCtx, String>? {
+fn try_builtin_container_contract(
+  ty: MonoType,
+  contract: BuiltinContract,
+  ctx: InferCtx,
+  active: Dict<String, Bool>,
+) Result<InferCtx, String>? {
   case contract {
     .Eq => {
       case ty {
@@ -685,33 +904,50 @@ fn try_builtin_container_contract(ty: MonoType, contract: BuiltinContract, ctx: 
   }
 }
 
-fn try_auto_derive_eq(ty: MonoType, ctx: InferCtx, active: Dict<String, Bool>) Result<InferCtx, String>? {
+fn try_auto_derive_eq(ty: MonoType, ctx: InferCtx, active: Dict<String, Bool>) Result<
+  InferCtx,
+  String,
+>? {
   case ty {
     .Named(tid, type_args) => {
       case ctx.env.lookup_type_def(tid) {
         .Some(def) => case def {
           .Record(_, type_params, fields) => {
             cur_ctx := ctx
+
             for field in fields {
               field_ty := subst_type_params(field.ty, type_params, type_args)
+
               case prove_contract(field_ty, .Eq, cur_ctx, active) {
                 .Ok(next_ctx) => { cur_ctx = next_ctx },
-                .Err(reason) => { return .Some(.Err(reason)) },
+                .Err(reason) => {
+                  return .Some(.Err(reason))
+                },
               }
             }
+
             .Some(.Ok(cur_ctx))
           },
           .Sum(_, type_params, variants) => {
             cur_ctx := ctx
+
             for variant in variants {
               for payload_ty in variant.fields {
-                concrete_ty := subst_type_params(payload_ty, type_params, type_args)
+                concrete_ty := subst_type_params(
+                  payload_ty,
+                  type_params,
+                  type_args,
+                )
+
                 case prove_contract(concrete_ty, .Eq, cur_ctx, active) {
                   .Ok(next_ctx) => { cur_ctx = next_ctx },
-                  .Err(reason) => { return .Some(.Err(reason)) },
+                  .Err(reason) => {
+                    return .Some(.Err(reason))
+                  },
                 }
               }
             }
+
             .Some(.Ok(cur_ctx))
           },
           .Alias(_, _, _) => .None,
@@ -723,15 +959,27 @@ fn try_auto_derive_eq(ty: MonoType, ctx: InferCtx, active: Dict<String, Bool>) R
   }
 }
 
-fn prove_contract(ty: MonoType, contract: BuiltinContract, ctx: InferCtx, active: Dict<String, Bool>) Result<InferCtx, String> {
+fn prove_contract(
+  ty: MonoType,
+  contract: BuiltinContract,
+  ctx: InferCtx,
+  active: Dict<String, Bool>,
+) Result<InferCtx, String> {
   zonked := expand_alias(zonk(ty, ctx.subst), ctx.env, 0)
   key := "${ctx.env.ty_to_string_env(zonked)}::${contract_name(contract)}"
 
   // Check proof cache first
   case ctx.contract_cache.get(key) {
     .Some(satisfied) => {
-      if satisfied { return .Ok(ctx) }
-      else { return .Err("type ${ctx.env.ty_to_string_env(zonked)} does not satisfy ${contract_name(contract)}") }
+      if satisfied {
+        return .Ok(ctx)
+      } else {
+        return .Err(
+          "type ${ctx.env.ty_to_string_env(zonked)} does not satisfy ${contract_name(
+            contract,
+          )}",
+        )
+      }
     },
     .None => {},
   }
@@ -742,8 +990,14 @@ fn prove_contract(ty: MonoType, contract: BuiltinContract, ctx: InferCtx, active
     if contract_supports_auto_derive(contract) {
       return .Ok(ctx)
     }
-    return .Err("cyclic proof for ${ctx.env.ty_to_string_env(zonked)}: ${contract_name(contract)}")
+
+    return .Err(
+      "cyclic proof for ${ctx.env.ty_to_string_env(zonked)}: ${contract_name(
+        contract,
+      )}",
+    )
   }
+
   active[key] = true
 
   case zonked {
@@ -757,6 +1011,7 @@ fn prove_contract(ty: MonoType, contract: BuiltinContract, ctx: InferCtx, active
 
   if builtin_contract_satisfied_by_primitive(zonked, contract) {
     ctx.contract_cache[key] = true
+
     return .Ok(ctx)
   }
 
@@ -766,10 +1021,12 @@ fn prove_contract(ty: MonoType, contract: BuiltinContract, ctx: InferCtx, active
       case result {
         .Ok(ok_ctx) => {
           ok_ctx.contract_cache[key] = true
+
           return .Ok(ok_ctx)
         },
         .Err(e) => {
           ctx.contract_cache[key] = false
+
           return .Err(e)
         },
       }
@@ -780,15 +1037,19 @@ fn prove_contract(ty: MonoType, contract: BuiltinContract, ctx: InferCtx, active
   // Try explicit method lookup first (user-defined eq takes priority)
   cur_ctx := ctx
   method_ok := true
+
   for req in contract.methods() {
     proof := prove_contract_method(zonked, contract, req, cur_ctx, active)
+
     case proof {
       .Ok(next_ctx) => { cur_ctx = next_ctx },
       .Err(_) => { method_ok = false },
     }
   }
+
   if method_ok {
     cur_ctx.contract_cache[key] = true
+
     return .Ok(cur_ctx)
   }
 
@@ -799,10 +1060,12 @@ fn prove_contract(ty: MonoType, contract: BuiltinContract, ctx: InferCtx, active
         case result {
           .Ok(ok_ctx) => {
             ok_ctx.contract_cache[key] = true
+
             return .Ok(ok_ctx)
           },
           .Err(e) => {
             ctx.contract_cache[key] = false
+
             return .Err(e)
           },
         }
@@ -813,77 +1076,130 @@ fn prove_contract(ty: MonoType, contract: BuiltinContract, ctx: InferCtx, active
 
   // Neither explicit method nor auto-derive succeeded
   ctx.contract_cache[key] = false
-  .Err("type ${ctx.env.ty_to_string_env(zonked)} does not satisfy ${contract_name(contract)}")
+  .Err(
+    "type ${ctx.env.ty_to_string_env(zonked)} does not satisfy ${contract_name(
+      contract,
+    )}",
+  )
 }
 
-fn satisfies_contract(ty: MonoType, contract: BuiltinContract, ctx: InferCtx) Result<InferCtx, String> {
-  prove_contract(ty, contract, ctx, Dict.new())
-}
+fn satisfies_contract(ty: MonoType, contract: BuiltinContract, ctx: InferCtx) Result<
+  InferCtx,
+  String,
+> { prove_contract(ty, contract, ctx, Dict.new()) }
 
-fn check_instantiated_bounds(sig: FunctionSig, type_args: Vector<MonoType>, error_span: Span, ctx: InferCtx, diags: Vector<DiagKind>) CheckOut {
+fn check_instantiated_bounds(
+  sig: FunctionSig,
+  type_args: Vector<MonoType>,
+  error_span: Span,
+  ctx: InferCtx,
+  diags: Vector<DiagKind>,
+) CheckOut {
   cur_ctx := ctx
   cur_diags := diags
+
   for i in 0..sig.type_params.len() {
     if i >= type_args.len() { continue }
+
     tp := sig.type_params[i]
     arg_ty := expand_alias(zonk(type_args[i], cur_ctx.subst), cur_ctx.env, 0)
+
     for bound in tp.bounds {
       case bound {
         .Builtin(contract) => {
           proof := satisfies_contract(arg_ty, contract, cur_ctx)
+
           case proof {
             .Ok(next_ctx) => { cur_ctx = next_ctx },
             .Err(reason) => {
-              cur_diags = .append(.Error(.ContractViolation(.{
-                span: error_span,
-                ty: arg_ty,
-                contract: contract_name(contract),
-                owner: "${sig.name}<${tp.name}: ${contract_name(contract)}>",
-                reason,
-              })))
+              cur_diags = .append(
+                .Error(
+                  .ContractViolation(
+                    .{
+                      span: error_span,
+                      ty: arg_ty,
+                      contract: contract_name(contract),
+                      owner: "${sig.name}<${tp.name}: ${contract_name(contract)}>",
+                      reason,
+                    },
+                  ),
+                ),
+              )
             },
           }
         },
       }
     }
   }
+
   .{ ctx: cur_ctx, diags: cur_diags }
 }
 
-fn check_resolved_type_param_bounds(owner_name: String, params: Vector<ResolvedTypeParam>, type_args: Vector<MonoType>, error_span: Span, ctx: InferCtx, diags: Vector<DiagKind>) CheckOut {
+fn check_resolved_type_param_bounds(
+  owner_name: String,
+  params: Vector<ResolvedTypeParam>,
+  type_args: Vector<MonoType>,
+  error_span: Span,
+  ctx: InferCtx,
+  diags: Vector<DiagKind>,
+) CheckOut {
   cur_ctx := ctx
   cur_diags := diags
+
   for i in 0..params.len() {
     if i >= type_args.len() { continue }
+
     tp := params[i]
     arg_ty := expand_alias(zonk(type_args[i], cur_ctx.subst), cur_ctx.env, 0)
+
     for bound in tp.bounds {
       case bound {
         .Builtin(contract) => {
           proof := satisfies_contract(arg_ty, contract, cur_ctx)
+
           case proof {
             .Ok(next_ctx) => { cur_ctx = next_ctx },
             .Err(reason) => {
-              cur_diags = .append(.Error(.ContractViolation(.{
-                span: error_span,
-                ty: arg_ty,
-                contract: contract_name(contract),
-                owner: "${owner_name}<${tp.name}: ${contract_name(contract)}>",
-                reason,
-              })))
+              cur_diags = .append(
+                .Error(
+                  .ContractViolation(
+                    .{
+                      span: error_span,
+                      ty: arg_ty,
+                      contract: contract_name(contract),
+                      owner: "${owner_name}<${tp.name}: ${contract_name(
+                        contract,
+                      )}>",
+                      reason,
+                    },
+                  ),
+                ),
+              )
             },
           }
         },
       }
     }
   }
+
   .{ ctx: cur_ctx, diags: cur_diags }
 }
 
-fn check_type_instantiation_bounds(ty: MonoType, error_span: Span, ctx: InferCtx, diags: Vector<DiagKind>) CheckOut {
+fn check_type_instantiation_bounds(
+  ty: MonoType,
+  error_span: Span,
+  ctx: InferCtx,
+  diags: Vector<DiagKind>,
+) CheckOut {
   zonked := expand_alias(zonk(ty, ctx.subst), ctx.env, 0)
+
   case zonked {
-    .Vector(elem) => check_type_instantiation_bounds(elem, error_span, ctx, diags),
+    .Vector(elem) => check_type_instantiation_bounds(
+      elem,
+      error_span,
+      ctx,
+      diags,
+    ),
     .Dict(k, v) => {
       kr := check_type_instantiation_bounds(k, error_span, ctx, diags)
       check_type_instantiation_bounds(v, error_span, kr.ctx, kr.diags)
@@ -891,14 +1207,21 @@ fn check_type_instantiation_bounds(ty: MonoType, error_span: Span, ctx: InferCtx
     .Function(params, ret) => {
       cur_ctx := ctx
       cur_diags := diags
+
       for p in params {
         pr := check_type_instantiation_bounds(p, error_span, cur_ctx, cur_diags)
         cur_ctx = pr.ctx
         cur_diags = pr.diags
       }
+
       check_type_instantiation_bounds(ret, error_span, cur_ctx, cur_diags)
     },
-    .Optional(inner) => check_type_instantiation_bounds(inner, error_span, ctx, diags),
+    .Optional(inner) => check_type_instantiation_bounds(
+      inner,
+      error_span,
+      ctx,
+      diags,
+    ),
     .Result(ok, err) => {
       ok_r := check_type_instantiation_bounds(ok, error_span, ctx, diags)
       check_type_instantiation_bounds(err, error_span, ok_r.ctx, ok_r.diags)
@@ -906,22 +1229,59 @@ fn check_type_instantiation_bounds(ty: MonoType, error_span: Span, ctx: InferCtx
     .Named(tid, type_args) => {
       cur_ctx := ctx
       cur_diags := diags
+
       for arg in type_args {
-        ar := check_type_instantiation_bounds(arg, error_span, cur_ctx, cur_diags)
+        ar := check_type_instantiation_bounds(
+          arg,
+          error_span,
+          cur_ctx,
+          cur_diags,
+        )
         cur_ctx = ar.ctx
         cur_diags = ar.diags
       }
+
       def := case cur_ctx.env.lookup_type_def(tid) {
         .Some(found) => found,
         .None => { return .{ ctx: cur_ctx, diags: cur_diags } },
       }
+
       case def {
-        .Record(name, type_params, _) => check_resolved_type_param_bounds(name, type_params, type_args, error_span, cur_ctx, cur_diags),
-        .Sum(name, type_params, _) => check_resolved_type_param_bounds(name, type_params, type_args, error_span, cur_ctx, cur_diags),
+        .Record(name, type_params, _) => check_resolved_type_param_bounds(
+          name,
+          type_params,
+          type_args,
+          error_span,
+          cur_ctx,
+          cur_diags,
+        ),
+        .Sum(name, type_params, _) => check_resolved_type_param_bounds(
+          name,
+          type_params,
+          type_args,
+          error_span,
+          cur_ctx,
+          cur_diags,
+        ),
         .Alias(name, type_params, target) => {
-          own_r := check_resolved_type_param_bounds(name, type_params, type_args, error_span, cur_ctx, cur_diags)
-          expanded_target := subst_vars(target, build_var_map(type_params, type_args))
-          check_type_instantiation_bounds(expanded_target, error_span, own_r.ctx, own_r.diags)
+          own_r := check_resolved_type_param_bounds(
+            name,
+            type_params,
+            type_args,
+            error_span,
+            cur_ctx,
+            cur_diags,
+          )
+          expanded_target := subst_vars(
+            target,
+            build_var_map(type_params, type_args),
+          )
+          check_type_instantiation_bounds(
+            expanded_target,
+            error_span,
+            own_r.ctx,
+            own_r.diags,
+          )
         },
       }
     },
@@ -929,14 +1289,21 @@ fn check_type_instantiation_bounds(ty: MonoType, error_span: Span, ctx: InferCtx
   }
 }
 
-fn check_args(ctx: InferCtx, args: Vector<Expr>, param_tys: Vector<MonoType>, diags: Vector<DiagKind>) CheckOut {
+fn check_args(
+  ctx: InferCtx,
+  args: Vector<Expr>,
+  param_tys: Vector<MonoType>,
+  diags: Vector<DiagKind>,
+) CheckOut {
   cur_ctx := ctx
   cur_diags := diags
+
   for i in 0..args.len() {
     ar := cur_ctx.check_expr(args[i], param_tys[i], cur_diags)
     cur_ctx = ar.ctx
     cur_diags = ar.diags
   }
+
   .{ ctx: cur_ctx, diags: cur_diags }
 }
 
@@ -957,34 +1324,63 @@ fn check_instantiated_call(
   if args.len() != params.len() {
     return .{
       ty: ret,
-      ctx: set_type_map_span(ctx, callee_id, callee_span_start, MonoType.Function(params, ret)),
-      diags: diags.append(.Error(.WrongArity(.{ span: error_span, expected: params.len(), found: args.len() }))),
+      ctx: set_type_map_span(
+        ctx,
+        callee_id,
+        callee_span_start,
+        MonoType.Function(params, ret),
+      ),
+      diags: diags.append(
+        .Error(
+          .WrongArity(
+            .{ span: error_span, expected: params.len(), found: args.len() },
+          ),
+        ),
+      ),
     }
   }
+
   ar := check_args(ctx, args, params, diags)
   callee_ty := MonoType.Function(params, ret)
-  final_ctx := set_type_map_span(ar.ctx, callee_id, callee_span_start, callee_ty)
+  final_ctx := set_type_map_span(
+    ar.ctx,
+    callee_id,
+    callee_span_start,
+    callee_ty,
+  )
+
   case method_meta {
     .Some(meta) => { final_ctx.method_calls[callee_id] = meta },
     .None => {},
   }
+
   .{ ty: ret, ctx: final_ctx, diags: ar.diags }
 }
 
-type InstOut = .{ params: Vector<MonoType>, ret: MonoType, type_args: Vector<MonoType>, ctx: InferCtx }
+type InstOut = .{
+  params: Vector<MonoType>,
+  ret: MonoType,
+  type_args: Vector<MonoType>,
+  ctx: InferCtx,
+}
 
 fn instantiate(sig: FunctionSig, ctx: InferCtx) InstOut {
   // Fast path: non-generic functions need no substitution — avoid allocating
   // var_map and copying params (the common case: almost all compiler functions
   // are non-generic).
   if sig.type_params.len() == 0 {
-    inst_ret := case sig.ret { .Some(r) => r, .None => MonoType.Void }
+    inst_ret := case sig.ret {
+      .Some(r) => r,
+      .None => MonoType.Void,
+    }
+
     return .{ params: sig.params, ret: inst_ret, type_args: [], ctx }
   }
 
   var_map: Dict<String, MonoType> = Dict.new()
   cur_ctx := ctx
   inst_type_args: Vector<MonoType> = []
+
   for tp in sig.type_params {
     m := fresh_meta(cur_ctx)
     cur_ctx = m.ctx
@@ -993,25 +1389,32 @@ fn instantiate(sig: FunctionSig, ctx: InferCtx) InstOut {
   }
 
   inst_params := collect p in sig.params { subst_vars(p, var_map) }
-
   inst_ret := case sig.ret {
     .Some(r) => subst_vars(r, var_map),
     .None => MonoType.Void,
   }
-
-  .{ params: inst_params, ret: inst_ret, type_args: inst_type_args, ctx: cur_ctx }
+  .{
+    params: inst_params,
+    ret: inst_ret,
+    type_args: inst_type_args,
+    ctx: cur_ctx,
+  }
 }
 
 // Expand type aliases: if ty is Named(tid, args) and the def is an Alias,
 // substitute type params and return the target type. Recurses up to depth 10.
 fn expand_alias(ty: MonoType, env: ResolvedEnv, depth: Int) MonoType {
-  if depth > 10 { return ty }
+  if depth > 10 {
+    return ty
+  }
+
   case ty {
     .Named(tid, type_args) => {
       def := case env.lookup_type_def(tid) {
         .Some(d) => d,
         .None => { return ty },
       }
+
       case def {
         .Alias(_, type_params, target) => {
           expanded := subst_vars(target, build_var_map(type_params, type_args))
@@ -1025,10 +1428,13 @@ fn expand_alias(ty: MonoType, env: ResolvedEnv, depth: Int) MonoType {
 }
 
 // ── Synthesis ───────────────────────────────────────────────────────
-
 fn synth(ctx: InferCtx, expr: Expr, diags: Vector<DiagKind>) SynthOut {
   r := ctx.synth_inner(expr, diags)
-  .{ ty: r.ty, ctx: set_type_map_span(r.ctx, expr.id, expr.span.start, r.ty), diags: r.diags }
+  .{
+    ty: r.ty,
+    ctx: set_type_map_span(r.ctx, expr.id, expr.span.start, r.ty),
+    diags: r.diags,
+  }
 }
 
 fn synth_inner(ctx: InferCtx, expr: Expr, diags: Vector<DiagKind>) SynthOut {
@@ -1037,32 +1443,56 @@ fn synth_inner(ctx: InferCtx, expr: Expr, diags: Vector<DiagKind>) SynthOut {
     .FloatLit(_) => .{ ty: .Float, ctx, diags },
     .BoolLit(_) => .{ ty: .Bool, ctx, diags },
     .StringLit(_) => .{ ty: .String, ctx, diags },
-
     .Ident(name) => synth_ident(name, expr.span, ctx, diags),
-
-    .Call(callee, args) => synth_call(callee, args, expr.id, expr.span.start, expr.span, ctx, diags),
-
+    .Call(callee, args) => synth_call(
+      callee,
+      args,
+      expr.id,
+      expr.span.start,
+      expr.span,
+      ctx,
+      diags,
+    ),
     .BlockExpr(block) => synth_block(block, ctx, diags),
-
     .Binary(op, lhs, rhs) => synth_binary(op, lhs, rhs, expr.span, ctx, diags),
     .Unary(op, operand) => synth_unary(op, operand, expr.span, ctx, diags),
     .Index(base, idx) => synth_index(base, idx, expr.span, ctx, diags),
-
     .StringInterp(parts) => synth_string_interp(parts, ctx, diags),
-
-    .Field(base, field_name) => synth_field(base, field_name, expr.span, ctx, diags),
-
+    .Field(base, field_name) => synth_field(
+      base,
+      field_name,
+      expr.span,
+      ctx,
+      diags,
+    ),
     .Array(elems) => synth_array(elems, expr.span, ctx, diags),
-
-    .If(cond, then_block, else_expr) => synth_if(cond, then_block, else_expr, expr.span, ctx, diags),
+    .If(cond, then_block, else_expr) => synth_if(
+      cond,
+      then_block,
+      else_expr,
+      expr.span,
+      ctx,
+      diags,
+    ),
     .Case(scrut, arms) => synth_case(scrut, arms, expr.span, ctx, diags),
-
-    .Closure(params, ret_ty, body) => synth_closure(params, ret_ty, body, expr.span, ctx, diags),
-
+    .Closure(params, ret_ty, body) => synth_closure(
+      params,
+      ret_ty,
+      body,
+      expr.span,
+      ctx,
+      diags,
+    ),
     .Collect(ce) => synth_collect(ce, expr.span, ctx, diags),
-
-    .NamedRecord(type_name, entries) => synth_named_record(type_name, entries, expr.id, expr.span.start, expr.span, ctx, diags),
-
+    .NamedRecord(type_name, entries) => synth_named_record(
+      type_name,
+      entries,
+      expr.id,
+      expr.span.start,
+      expr.span,
+      ctx,
+      diags,
+    ),
     _ => {
       m := fresh_meta(ctx)
       .{
@@ -1106,7 +1536,15 @@ fn synth_ident(name: String, s: Span, ctx: InferCtx, diags: Vector<DiagKind>) Sy
   }
 }
 
-fn synth_call(callee: Expr, args: Vector<Expr>, call_id: Int, call_span_start: Int, s: Span, ctx: InferCtx, diags: Vector<DiagKind>) SynthOut {
+fn synth_call(
+  callee: Expr,
+  args: Vector<Expr>,
+  call_id: Int,
+  call_span_start: Int,
+  s: Span,
+  ctx: InferCtx,
+  diags: Vector<DiagKind>,
+) SynthOut {
   // Capture and clear call_expected_ret so it doesn't leak into nested
   // synth_expr calls (e.g. synthesising the callee/base). The value is
   // used once for pre-unification at the right level.
@@ -1121,14 +1559,31 @@ fn synth_call(callee: Expr, args: Vector<Expr>, call_id: Int, call_span_start: I
       case base.kind {
         .Ident(alias) => {
           if is_module_alias(clean_ctx, alias) {
-            module_call := try_synth_module_qualified_call(alias, method_name, args, callee.id, callee.span.start, callee.span, clean_ctx, diags, call_expected)
+            module_call := try_synth_module_qualified_call(
+              alias,
+              method_name,
+              args,
+              callee.id,
+              callee.span.start,
+              callee.span,
+              clean_ctx,
+              diags,
+              call_expected,
+            )
+
             case module_call {
               .Some(r) => { return r },
               .None => {
                 return .{
                   ty: .Void,
                   ctx: clean_ctx,
-                  diags: diags.append(.Error(.UndefinedVar(.{ span: callee.span, name: "${alias}.${method_name}" }))),
+                  diags: diags.append(
+                    .Error(
+                      .UndefinedVar(
+                        .{ span: callee.span, name: "${alias}.${method_name}" },
+                      ),
+                    ),
+                  ),
                 }
               },
             }
@@ -1141,31 +1596,66 @@ fn synth_call(callee: Expr, args: Vector<Expr>, call_id: Int, call_span_start: I
       case try_resolve_type_from_expr(base, clean_ctx) {
         .Some(resolved) => {
           named_ty := MonoType.Named(resolved.tid, resolved.type_args)
+
           case resolve_variant_info(method_name, named_ty, resolved.ctx.env) {
             .Some(.Ok(info)) => {
               if args.len() != info.field_types.len() {
                 return .{
                   ty: named_ty,
                   ctx: resolved.ctx,
-                  diags: diags.append(.Error(.WrongArity(.{ span: s, expected: info.field_types.len(), found: args.len() }))),
+                  diags: diags.append(
+                    .Error(
+                      .WrongArity(
+                        .{
+                          span: s,
+                          expected: info.field_types.len(),
+                          found: args.len(),
+                        },
+                      ),
+                    ),
+                  ),
                 }
               }
+
               // Pre-unify the result type with the call-site expected type so
               // MetaVars in the type args get solved before we check arguments.
-              pu := pre_unify_return(resolved.ctx, named_ty, call_expected, s, diags)
+              pu := pre_unify_return(
+                resolved.ctx,
+                named_ty,
+                call_expected,
+                s,
+                diags,
+              )
               cur_ctx := pu.ctx
               cur_diags := pu.diags
+
               for i in 0..args.len() {
-                ar := cur_ctx.check_expr(args[i], info.field_types[i], cur_diags)
+                ar := cur_ctx.check_expr(
+                  args[i],
+                  info.field_types[i],
+                  cur_diags,
+                )
                 cur_ctx = ar.ctx
                 cur_diags = ar.diags
               }
-              bounds_r := check_type_instantiation_bounds(named_ty, s, cur_ctx, cur_diags)
+
+              bounds_r := check_type_instantiation_bounds(
+                named_ty,
+                s,
+                cur_ctx,
+                cur_diags,
+              )
               cur_ctx = bounds_r.ctx
               cur_diags = bounds_r.diags
               callee_ty := MonoType.Function(info.field_types, named_ty)
               cur_ctx = set_type_map(cur_ctx, base.id, named_ty)
-              cur_ctx = set_type_map_span(cur_ctx, callee.id, callee.span.start, callee_ty)
+              cur_ctx = set_type_map_span(
+                cur_ctx,
+                callee.id,
+                callee.span.start,
+                callee_ty,
+              )
+
               return .{ ty: named_ty, ctx: cur_ctx, diags: cur_diags }
             },
             _ => {},
@@ -1175,10 +1665,30 @@ fn synth_call(callee: Expr, args: Vector<Expr>, call_id: Int, call_span_start: I
       }
 
       // Receiver method call form: receiver.method(...)
-      method_call := try_synth_method_call(base, method_name, args, callee.id, callee.span.start, callee.span, clean_ctx, diags, call_expected)
+      method_call := try_synth_method_call(
+        base,
+        method_name,
+        args,
+        callee.id,
+        callee.span.start,
+        callee.span,
+        clean_ctx,
+        diags,
+        call_expected,
+      )
+
       case method_call {
         .Some(r) => r,
-        .None => synth_call_general(callee, args, call_id, s.start, s, clean_ctx, diags, call_expected),
+        .None => synth_call_general(
+          callee,
+          args,
+          call_id,
+          s.start,
+          s,
+          clean_ctx,
+          diags,
+          call_expected,
+        ),
       }
     },
     .Ident(name) => {
@@ -1187,25 +1697,68 @@ fn synth_call(callee: Expr, args: Vector<Expr>, call_id: Int, call_span_start: I
           inst := instantiate(sig, clean_ctx)
           // Pre-unify return type to solve MetaVars before checking arguments
           pu := pre_unify_return(inst.ctx, inst.ret, call_expected, s, diags)
-          call_r := check_instantiated_call(pu.ctx, pu.diags, inst.params, inst.ret, args, s, callee.id, callee.span.start, .None)
-          bounds_r := check_instantiated_bounds(sig, inst.type_args, s, call_r.ctx, call_r.diags)
+          call_r := check_instantiated_call(
+            pu.ctx,
+            pu.diags,
+            inst.params,
+            inst.ret,
+            args,
+            s,
+            callee.id,
+            callee.span.start,
+            .None,
+          )
+          bounds_r := check_instantiated_bounds(
+            sig,
+            inst.type_args,
+            s,
+            call_r.ctx,
+            call_r.diags,
+          )
           .{ ty: call_r.ty, ctx: bounds_r.ctx, diags: bounds_r.diags }
         },
-        .None => synth_call_general(callee, args, call_id, s.start, s, clean_ctx, diags, call_expected),
+        .None => synth_call_general(
+          callee,
+          args,
+          call_id,
+          s.start,
+          s,
+          clean_ctx,
+          diags,
+          call_expected,
+        ),
       }
     },
-    _ => synth_call_general(callee, args, call_id, s.start, s, clean_ctx, diags, call_expected),
+    _ => synth_call_general(
+      callee,
+      args,
+      call_id,
+      s.start,
+      s,
+      clean_ctx,
+      diags,
+      call_expected,
+    ),
   }
 }
 
-fn synth_call_general(callee: Expr, args: Vector<Expr>, call_id: Int, call_span_start: Int, s: Span, ctx: InferCtx, diags: Vector<DiagKind>, call_expected: MonoType?) SynthOut {
+fn synth_call_general(
+  callee: Expr,
+  args: Vector<Expr>,
+  call_id: Int,
+  call_span_start: Int,
+  s: Span,
+  ctx: InferCtx,
+  diags: Vector<DiagKind>,
+  call_expected: MonoType?,
+) SynthOut {
   // Synth the callee
   callee_r := ctx.synth(callee, diags)
   cur_ctx := callee_r.ctx
   cur_diags := callee_r.diags
-
   // If callee type is Function(param_tys, ret), check args against param types
   callee_ty := zonk(callee_r.ty, cur_ctx.subst)
+
   case callee_ty {
     .Function(param_tys, ret_ty) => {
       if param_tys.len() == args.len() {
@@ -1214,20 +1767,26 @@ fn synth_call_general(callee: Expr, args: Vector<Expr>, call_id: Int, call_span_
         pu := pre_unify_return(cur_ctx, ret_ty, call_expected, s, cur_diags)
         cur_ctx = pu.ctx
         cur_diags = pu.diags
+
         for i in 0..args.len() {
           cr := cur_ctx.check_expr(args[i], param_tys[i], cur_diags)
           cur_ctx = cr.ctx
           cur_diags = cr.diags
         }
-        return .{ ty: ret_ty, ctx: set_type_map_span(cur_ctx, call_id, call_span_start, ret_ty), diags: cur_diags }
+
+        return .{
+          ty: ret_ty,
+          ctx: set_type_map_span(cur_ctx, call_id, call_span_start, ret_ty),
+          diags: cur_diags,
+        }
       }
-      // Wrong arg count — fall through to synth path for error reporting
     },
     _ => {},
   }
 
   // Fallback: synth all args and unify callee with fn(arg_tys) -> ?ret
   arg_tys: Vector<MonoType> = []
+
   for arg in args {
     ar := cur_ctx.synth(arg, cur_diags)
     cur_ctx = ar.ctx
@@ -1239,12 +1798,14 @@ fn synth_call_general(callee: Expr, args: Vector<Expr>, call_id: Int, call_span_
   cur_ctx = ret_m.ctx
   expected_fn := MonoType.Function(arg_tys, ret_m.ty)
   u := cur_ctx.unify(callee_r.ty, expected_fn, s, cur_diags)
-
   .{ ty: ret_m.ty, ctx: u.ctx, diags: u.diags }
 }
 
 fn is_module_alias(ctx: InferCtx, name: String) Bool {
-  if ctx.module_aliases.has(name) { return true }
+  if ctx.module_aliases.has(name) {
+    return true
+  }
+
   ctx.env.extern_namespaces.has(name)
 }
 
@@ -1265,7 +1826,11 @@ fn method_owner_name(base_ty: MonoType, env: ResolvedEnv) String? {
   }
 }
 
-fn resolve_method_func_name(base_ty: MonoType, method_name: String, env: ResolvedEnv) String? {
+fn resolve_method_func_name(
+  base_ty: MonoType,
+  method_name: String,
+  env: ResolvedEnv,
+) String? {
   case base_ty {
     .Int => env.lookup_method("Int", method_name),
     .Float => env.lookup_method("Float", method_name),
@@ -1290,24 +1855,33 @@ fn lookup_method_sig(base_ty: MonoType, method_name: String, env: ResolvedEnv) F
   env.lookup_registered_function(fn_name)
 }
 
-fn named_function_field_exists(base_ty: MonoType, field_name: String, env: ResolvedEnv) Bool {
+fn named_function_field_exists(
+  base_ty: MonoType,
+  field_name: String,
+  env: ResolvedEnv,
+) Bool {
   case base_ty {
     .Named(tid, type_args) => {
       def := case env.lookup_type_def(tid) {
         .Some(d) => d,
         .None => { return false },
       }
+
       case def {
         .Record(_, type_params, fields) => {
           var_map := build_var_map(type_params, type_args)
+
           for f in fields {
             if f.name != field_name { continue }
+
             field_ty := subst_vars(f.ty, var_map)
+
             case field_ty {
               .Function(_, _) => { return true },
               _ => { return false },
             }
           }
+
           false
         },
         _ => false,
@@ -1331,6 +1905,7 @@ fn resolve_named_type_id(env: ResolvedEnv, name: String) TypeId? {
     .Some(found) => found,
     .None => { return .None },
   }
+
   case entry.def {
     .Some(.Alias(_, _, target)) => {
       case expand_alias(target, env, 0) {
@@ -1343,17 +1918,25 @@ fn resolve_named_type_id(env: ResolvedEnv, name: String) TypeId? {
   }
 }
 
-fn try_synth_module_qualified_value(type_name: String, method_name: String, ctx: InferCtx, diags: Vector<DiagKind>) SynthOut? {
+fn try_synth_module_qualified_value(
+  type_name: String,
+  method_name: String,
+  ctx: InferCtx,
+  diags: Vector<DiagKind>,
+) SynthOut? {
   fn_name := case ctx.env.lookup_method(type_name, method_name) {
     .Some(name) => name,
     .None => {
       qualified := "${type_name}.${method_name}"
+
       case ctx.env.lookup_function(qualified) {
         .Some(_) => qualified,
         .None => {
           // Check for an imported module-level value binding.
           case ctx.env.value_bindings[qualified] {
-            .Some(ty) => { return .Some(.{ ty, ctx, diags }) },
+            .Some(ty) => {
+              return .Some(.{ ty, ctx, diags })
+            },
             .None => { return .None },
           }
         },
@@ -1368,12 +1951,23 @@ fn try_synth_module_qualified_value(type_name: String, method_name: String, ctx:
   .Some(.{ ty: MonoType.Function(inst.params, inst.ret), ctx: inst.ctx, diags })
 }
 
-fn try_synth_module_qualified_call(type_name: String, method_name: String, args: Vector<Expr>, callee_id: Int, callee_span_start: Int, callee_span: Span, ctx: InferCtx, diags: Vector<DiagKind>, call_expected: MonoType?) SynthOut? {
+fn try_synth_module_qualified_call(
+  type_name: String,
+  method_name: String,
+  args: Vector<Expr>,
+  callee_id: Int,
+  callee_span_start: Int,
+  callee_span: Span,
+  ctx: InferCtx,
+  diags: Vector<DiagKind>,
+  call_expected: MonoType?,
+) SynthOut? {
   fn_name := case ctx.env.lookup_method(type_name, method_name) {
     .Some(name) => name,
     .None => {
       // For extern namespaces, look up directly as qualified name
       qualified := "${type_name}.${method_name}"
+
       case ctx.env.lookup_function(qualified) {
         .Some(_) => qualified,
         .None => { return .None },
@@ -1386,30 +1980,91 @@ fn try_synth_module_qualified_call(type_name: String, method_name: String, args:
   }
   inst := instantiate(sig, ctx)
   pu := pre_unify_return(inst.ctx, inst.ret, call_expected, callee_span, diags)
-  meta := MethodCallInfo.{ func_name: fn_name, has_receiver: false, contract: .None, method_name }
-  call_r := check_instantiated_call(pu.ctx, pu.diags, inst.params, inst.ret, args, callee_span, callee_id, callee_span_start, .Some(meta))
-  bounds_r := check_instantiated_bounds(sig, inst.type_args, callee_span, call_r.ctx, call_r.diags)
+  meta := MethodCallInfo.{
+    func_name: fn_name,
+    has_receiver: false,
+    contract: .None,
+    method_name,
+  }
+  call_r := check_instantiated_call(
+    pu.ctx,
+    pu.diags,
+    inst.params,
+    inst.ret,
+    args,
+    callee_span,
+    callee_id,
+    callee_span_start,
+    .Some(meta),
+  )
+  bounds_r := check_instantiated_bounds(
+    sig,
+    inst.type_args,
+    callee_span,
+    call_r.ctx,
+    call_r.diags,
+  )
   .Some(.{ ty: call_r.ty, ctx: bounds_r.ctx, diags: bounds_r.diags })
 }
 
-fn try_synth_method_call(base: Expr, method_name: String, args: Vector<Expr>, callee_id: Int, callee_span_start: Int, callee_span: Span, ctx: InferCtx, diags: Vector<DiagKind>, call_expected: MonoType?) SynthOut? {
+fn try_synth_method_call(
+  base: Expr,
+  method_name: String,
+  args: Vector<Expr>,
+  callee_id: Int,
+  callee_span_start: Int,
+  callee_span: Span,
+  ctx: InferCtx,
+  diags: Vector<DiagKind>,
+  call_expected: MonoType?,
+) SynthOut? {
   br := ctx.synth(base, diags)
   base_ty := expand_alias(zonk(br.ty, br.ctx.subst), br.ctx.env, 0)
+  contract_match := lookup_scoped_contract_method(
+    base_ty,
+    method_name,
+    br.ctx.type_var_scope,
+  )
 
-  contract_match := lookup_scoped_contract_method(base_ty, method_name, br.ctx.type_var_scope)
   case contract_match {
     .Some(m) => {
       ret_ty := contract_return_type(m.req.ret)
       // Build expected params for non-receiver arguments (each typed as base_ty)
       extra_params: Vector<MonoType> = []
       i := 0
+
       for i < m.req.arg_count_without_receiver {
         extra_params = .append(base_ty)
         i = i + 1
       }
-      pu := pre_unify_return(br.ctx, ret_ty, call_expected, callee_span, br.diags)
-      meta := MethodCallInfo.{ func_name: "", has_receiver: true, contract: .Some(m.contract), method_name }
-      return .Some(check_instantiated_call(pu.ctx, pu.diags, extra_params, ret_ty, args, callee_span, callee_id, callee_span_start, .Some(meta)))
+
+      pu := pre_unify_return(
+        br.ctx,
+        ret_ty,
+        call_expected,
+        callee_span,
+        br.diags,
+      )
+      meta := MethodCallInfo.{
+        func_name: "",
+        has_receiver: true,
+        contract: .Some(m.contract),
+        method_name,
+      }
+
+      return .Some(
+        check_instantiated_call(
+          pu.ctx,
+          pu.diags,
+          extra_params,
+          ret_ty,
+          args,
+          callee_span,
+          callee_id,
+          callee_span_start,
+          .Some(meta),
+        ),
+      )
     },
     .None => {},
   }
@@ -1418,54 +2073,121 @@ fn try_synth_method_call(base: Expr, method_name: String, args: Vector<Expr>, ca
     .Some(s) => s,
     .None => {
       owner := method_owner_name(base_ty, br.ctx.env)
+
       case owner {
         .None => { return .None },
         .Some(_) => {
           if named_function_field_exists(base_ty, method_name, br.ctx.env) {
             return .None
           }
-          return .Some(.{ ty: .Void, ctx: br.ctx, diags: br.diags.append(.Error(.NoMethod(.{ span: callee_span, ty: base_ty, name: method_name }))) })
+
+          return .Some(
+            .{
+              ty: .Void,
+              ctx: br.ctx,
+              diags: br.diags.append(
+                .Error(
+                  .NoMethod(
+                    .{ span: callee_span, ty: base_ty, name: method_name },
+                  ),
+                ),
+              ),
+            },
+          )
         },
       }
     },
   }
   inst := instantiate(sig, br.ctx)
-  pu := pre_unify_return(inst.ctx, inst.ret, call_expected, callee_span, br.diags)
+  pu := pre_unify_return(
+    inst.ctx,
+    inst.ret,
+    call_expected,
+    callee_span,
+    br.diags,
+  )
   cur_ctx := pu.ctx
   cur_diags := pu.diags
 
   if inst.params.len() == 0 {
-    return .Some(.{
-      ty: inst.ret,
-      ctx: cur_ctx,
-      diags: cur_diags.append(.Error(.InvalidMethodSig(.{ span: callee_span, name: method_name }))),
-    })
+    return .Some(
+      .{
+        ty: inst.ret,
+        ctx: cur_ctx,
+        diags: cur_diags.append(
+          .Error(.InvalidMethodSig(.{ span: callee_span, name: method_name })),
+        ),
+      },
+    )
   }
 
   recv_u := cur_ctx.unify(base_ty, inst.params[0], base.span, cur_diags)
-
   expected_args := inst.params.slice(1, inst.params.len())
-  resolved_fn := case resolve_method_func_name(base_ty, method_name, recv_u.ctx.env) {
+  resolved_fn := case resolve_method_func_name(
+    base_ty,
+    method_name,
+    recv_u.ctx.env,
+  ) {
     .Some(name) => name,
-    .None => method_name,  // fallback to surface name
+    .None => method_name,
   }
-  meta := MethodCallInfo.{ func_name: resolved_fn, has_receiver: true, contract: .None, method_name }
-  call_r := check_instantiated_call(recv_u.ctx, recv_u.diags, expected_args, inst.ret, args, callee_span, callee_id, callee_span_start, .Some(meta))
-  bounds_r := check_instantiated_bounds(sig, inst.type_args, callee_span, call_r.ctx, call_r.diags)
+  meta := MethodCallInfo.{
+    func_name: resolved_fn,
+    has_receiver: true,
+    contract: .None,
+    method_name,
+  }
+  call_r := check_instantiated_call(
+    recv_u.ctx,
+    recv_u.diags,
+    expected_args,
+    inst.ret,
+    args,
+    callee_span,
+    callee_id,
+    callee_span_start,
+    .Some(meta),
+  )
+  bounds_r := check_instantiated_bounds(
+    sig,
+    inst.type_args,
+    callee_span,
+    call_r.ctx,
+    call_r.diags,
+  )
   .Some(.{ ty: call_r.ty, ctx: bounds_r.ctx, diags: bounds_r.diags })
 }
 
-fn try_synth_method_value(base_ty: MonoType, method_name: String, s: Span, ctx: InferCtx, diags: Vector<DiagKind>) SynthOut? {
-  scoped_match := lookup_scoped_contract_method(base_ty, method_name, ctx.type_var_scope)
+fn try_synth_method_value(
+  base_ty: MonoType,
+  method_name: String,
+  s: Span,
+  ctx: InferCtx,
+  diags: Vector<DiagKind>,
+) SynthOut? {
+  scoped_match := lookup_scoped_contract_method(
+    base_ty,
+    method_name,
+    ctx.type_var_scope,
+  )
+
   case scoped_match {
     .Some(m) => {
       extra_params: Vector<MonoType> = []
       i := 0
+
       for i < m.req.arg_count_without_receiver {
         extra_params = .append(base_ty)
         i = i + 1
       }
-      return .Some(.{ ty: .Function(extra_params, contract_return_type(m.req.ret)), ctx, diags })
+
+      return .Some(
+        .{
+          ty: .Function(extra_params, contract_return_type(m.req.ret)),
+          ctx,
+          diags,
+        },
+      )
     },
     .None => {},
   }
@@ -1479,26 +2201,26 @@ fn try_synth_method_value(base_ty: MonoType, method_name: String, s: Span, ctx: 
   cur_diags := diags
 
   if inst.params.len() == 0 {
-    return .Some(.{
-      ty: .Function([], inst.ret),
-      ctx: cur_ctx,
-      diags: cur_diags.append(.Error(.InvalidMethodSig(.{ span: s, name: method_name }))),
-    })
+    return .Some(
+      .{
+        ty: .Function([], inst.ret),
+        ctx: cur_ctx,
+        diags: cur_diags.append(
+          .Error(.InvalidMethodSig(.{ span: s, name: method_name })),
+        ),
+      },
+    )
   }
 
   recv_u := cur_ctx.unify(base_ty, inst.params[0], s, cur_diags)
   cur_ctx = recv_u.ctx
   cur_diags = recv_u.diags
-
   remaining := inst.params.slice(1, inst.params.len())
   .Some(.{ ty: .Function(remaining, inst.ret), ctx: cur_ctx, diags: cur_diags })
 }
 
 // ── Records, Fields, Variants ───────────────────────────────────────
-
-type VariantInfo = .{
-  field_types: Vector<MonoType>,
-}
+type VariantInfo = .{ field_types: Vector<MonoType> }
 
 type ResolvedTypeExpr = .{
   tid: TypeId,
@@ -1508,29 +2230,48 @@ type ResolvedTypeExpr = .{
 
 // Resolve a variant name against a zonked type, returning substituted field types.
 // Returns .Ok(info) if found, .Err(message) on error, .None if not a sum type.
-fn resolve_variant_info(name: String, zonked: MonoType, env: ResolvedEnv) Result<VariantInfo, String>? {
+fn resolve_variant_info(name: String, zonked: MonoType, env: ResolvedEnv) Result<
+  VariantInfo,
+  String,
+>? {
   case zonked {
     .Optional(inner) => {
-      if name == "Some" { return .Some(.Ok(.{ field_types: [inner] })) }
-      if name == "None" { return .Some(.Ok(.{ field_types: [] })) }
+      if name == "Some" {
+        return .Some(.Ok(.{ field_types: [inner] }))
+      }
+
+      if name == "None" {
+        return .Some(.Ok(.{ field_types: [] }))
+      }
+
       .Some(.Err("unknown variant .${name} for Optional"))
     },
     .Result(ok_ty, err_ty) => {
-      if name == "Ok" { return .Some(.Ok(.{ field_types: [ok_ty] })) }
-      if name == "Err" { return .Some(.Ok(.{ field_types: [err_ty] })) }
+      if name == "Ok" {
+        return .Some(.Ok(.{ field_types: [ok_ty] }))
+      }
+
+      if name == "Err" {
+        return .Some(.Ok(.{ field_types: [err_ty] }))
+      }
+
       .Some(.Err("unknown variant .${name} for Result"))
     },
     .Named(tid, type_args) => {
       def := try env.lookup_type_def(tid)
+
       case def {
         .Sum(_, type_params, variants) => {
           var_map := build_var_map(type_params, type_args)
+
           for v in variants {
             if v.name == name {
               field_types := collect ft in v.fields { subst_vars(ft, var_map) }
+
               return .Some(.Ok(.{ field_types }))
             }
           }
+
           .Some(.Err("unknown variant .${name}"))
         },
         _ => .None,
@@ -1554,11 +2295,13 @@ fn extract_type_name_expr(expr: Expr) String? {
 // Try to resolve an expression as a type name, returning a named type plus fresh meta args.
 fn try_resolve_type_from_expr(expr: Expr, ctx: InferCtx) ResolvedTypeExpr? {
   type_name := try extract_type_name_expr(expr)
+
   case ctx.env.lookup_type(type_name) {
     .Some(entry) => {
       // Build fresh meta type args for generic types
       cur_ctx := ctx
       type_args: Vector<MonoType> = []
+
       case entry.def {
         .Some(.Sum(_, type_params, _)) => {
           for _ in type_params {
@@ -1576,25 +2319,38 @@ fn try_resolve_type_from_expr(expr: Expr, ctx: InferCtx) ResolvedTypeExpr? {
         },
         _ => {},
       }
+
       .Some(.{ tid: entry.id, type_args, ctx: cur_ctx })
     },
     .None => .None,
   }
 }
 
-fn synth_field(base: Expr, field_name: String, s: Span, ctx: InferCtx, diags: Vector<DiagKind>) SynthOut {
+fn synth_field(
+  base: Expr,
+  field_name: String,
+  s: Span,
+  ctx: InferCtx,
+  diags: Vector<DiagKind>,
+) SynthOut {
   // Check if base is a type name with a variant (TypeName.VariantName)
   case try_resolve_type_from_expr(base, ctx) {
     .Some(resolved) => {
       named_ty := MonoType.Named(resolved.tid, resolved.type_args)
+
       case resolve_variant_info(field_name, named_ty, resolved.ctx.env) {
         .Some(.Ok(info)) => {
           // Zero-arg variant: value of the named type; otherwise: constructor function
           new_ctx := set_type_map(resolved.ctx, base.id, named_ty)
+
           if info.field_types.len() == 0 {
             return .{ ty: named_ty, ctx: new_ctx, diags }
           } else {
-            return .{ ty: .Function(info.field_types, named_ty), ctx: new_ctx, diags }
+            return .{
+              ty: .Function(info.field_types, named_ty),
+              ctx: new_ctx,
+              diags,
+            }
           }
         },
         _ => {},
@@ -1606,7 +2362,13 @@ fn synth_field(base: Expr, field_name: String, s: Span, ctx: InferCtx, diags: Ve
   case base.kind {
     .Ident(alias) => {
       if is_module_alias(ctx, alias) {
-        module_value := try_synth_module_qualified_value(alias, field_name, ctx, diags)
+        module_value := try_synth_module_qualified_value(
+          alias,
+          field_name,
+          ctx,
+          diags,
+        )
+
         case module_value {
           .Some(r) => { return r },
           .None => {},
@@ -1624,42 +2386,86 @@ fn synth_field(base: Expr, field_name: String, s: Span, ctx: InferCtx, diags: Ve
       def := case br.ctx.env.lookup_type_def(tid) {
         .Some(d) => d,
         .None => {
-          return .{ ty: .Void, ctx: br.ctx, diags: br.diags.append(.Error(.NotARecord(.{ span: s, ty: zonked_base }))) }
+          return .{
+            ty: .Void,
+            ctx: br.ctx,
+            diags: br.diags.append(
+              .Error(.NotARecord(.{ span: s, ty: zonked_base })),
+            ),
+          }
         },
       }
+
       case def {
         .Record(_, type_params, fields) => {
-          case find_record_field_type(fields, type_params, type_args, field_name) {
+          case find_record_field_type(
+            fields,
+            type_params,
+            type_args,
+            field_name,
+          ) {
             .Some(fty) => { return .{ ty: fty, ctx: br.ctx, diags: br.diags } },
             .None => {},
           }
-          method_r := try_synth_method_value(zonked_base, field_name, s, br.ctx, br.diags)
+
+          method_r := try_synth_method_value(
+            zonked_base,
+            field_name,
+            s,
+            br.ctx,
+            br.diags,
+          )
+
           case method_r {
             .Some(r) => r,
             .None => {
-              err: DiagKind = .Error(.NoField(.{ span: s, name: field_name, ty: zonked_base }))
+              err: DiagKind = .Error(
+                .NoField(.{ span: s, name: field_name, ty: zonked_base }),
+              )
               .{ ty: .Void, ctx: br.ctx, diags: br.diags.append(err) }
             },
           }
         },
         _ => {
-          method_r := try_synth_method_value(zonked_base, field_name, s, br.ctx, br.diags)
+          method_r := try_synth_method_value(
+            zonked_base,
+            field_name,
+            s,
+            br.ctx,
+            br.diags,
+          )
+
           case method_r {
             .Some(r) => r,
             .None => {
-              .{ ty: .Void, ctx: br.ctx, diags: br.diags.append(.Error(.NotARecord(.{ span: s, ty: zonked_base }))) }
+              .{
+                ty: .Void,
+                ctx: br.ctx,
+                diags: br.diags.append(
+                  .Error(.NotARecord(.{ span: s, ty: zonked_base })),
+                ),
+              }
             },
           }
         },
       }
     },
     _ => {
-      method_r := try_synth_method_value(zonked_base, field_name, s, br.ctx, br.diags)
+      method_r := try_synth_method_value(
+        zonked_base,
+        field_name,
+        s,
+        br.ctx,
+        br.diags,
+      )
+
       case method_r {
         .Some(r) => r,
         .None => {
           m := fresh_meta(br.ctx)
-          err: DiagKind = .Error(.NoField(.{ span: s, name: field_name, ty: zonked_base }))
+          err: DiagKind = .Error(
+            .NoField(.{ span: s, name: field_name, ty: zonked_base }),
+          )
           .{ ty: m.ty, ctx: m.ctx, diags: br.diags.append(err) }
         },
       }
@@ -1667,18 +2473,33 @@ fn synth_field(base: Expr, field_name: String, s: Span, ctx: InferCtx, diags: Ve
   }
 }
 
-fn synth_named_record(type_name: String, entries: Vector<RecordEntry>, record_id: Int, record_span_start: Int, s: Span, ctx: InferCtx, diags: Vector<DiagKind>) SynthOut {
+fn synth_named_record(
+  type_name: String,
+  entries: Vector<RecordEntry>,
+  record_id: Int,
+  record_span_start: Int,
+  s: Span,
+  ctx: InferCtx,
+  diags: Vector<DiagKind>,
+) SynthOut {
   entry := case ctx.env.lookup_type(type_name) {
     .Some(e) => e,
     .None => {
       m := fresh_meta(ctx)
-      return .{ ty: m.ty, ctx: m.ctx, diags: diags.append(.Error(.UndefinedType(.{ span: s, name: type_name }))) }
+
+      return .{
+        ty: m.ty,
+        ctx: m.ctx,
+        diags: diags.append(
+          .Error(.UndefinedType(.{ span: s, name: type_name })),
+        ),
+      }
     },
   }
-
   // Build type args: fresh MetaVars for generic record types
   cur_ctx := ctx
   type_args: Vector<MonoType> = []
+
   case entry.def {
     .Some(def) => case def {
       .Record(_, type_params, _) => {
@@ -1696,36 +2517,64 @@ fn synth_named_record(type_name: String, entries: Vector<RecordEntry>, record_id
   expected := MonoType.Named(entry.id, type_args)
   cr := check_record_lit(entries, expected, s, cur_ctx, diags)
   bounds_r := check_type_instantiation_bounds(expected, s, cr.ctx, cr.diags)
-  .{ ty: expected, ctx: set_type_map_span(bounds_r.ctx, record_id, record_span_start, expected), diags: bounds_r.diags }
+  .{
+    ty: expected,
+    ctx: set_type_map_span(bounds_r.ctx, record_id, record_span_start, expected),
+    diags: bounds_r.diags,
+  }
 }
 
-fn check_record_lit(entries: Vector<RecordEntry>, expected: MonoType, s: Span, ctx: InferCtx, diags: Vector<DiagKind>) CheckOut {
+fn check_record_lit(
+  entries: Vector<RecordEntry>,
+  expected: MonoType,
+  s: Span,
+  ctx: InferCtx,
+  diags: Vector<DiagKind>,
+) CheckOut {
   zonked := expand_alias(zonk(expected, ctx.subst), ctx.env, 0)
+
   case zonked {
     .Named(tid, type_args) => {
       def := case ctx.env.lookup_type_def(tid) {
         .Some(d) => d,
         .None => {
-          return .{ ctx, diags: diags.append(.Error(.NotARecord(.{ span: s, ty: zonked }))) }
+          return .{
+            ctx,
+            diags: diags.append(.Error(.NotARecord(.{ span: s, ty: zonked }))),
+          }
         },
       }
+
       case def {
         .Record(_, type_params, fields) => {
           cur_ctx := ctx
           cur_diags := diags
           // Detect duplicate fields before checking values
           seen_fields: Dict<String, Span> = Dict.new()
+
           for entry in entries {
             case seen_fields[entry.name] {
               .Some(first) => {
-                cur_diags = .append(.Error(.DuplicateField(.{ span: entry.span, name: entry.name, first })))
+                cur_diags = .append(
+                  .Error(
+                    .DuplicateField(
+                      .{ span: entry.span, name: entry.name, first },
+                    ),
+                  ),
+                )
               },
               .None => { seen_fields[entry.name] = entry.span },
             }
           }
+
           // Check each provided field
           for entry in entries {
-            case find_record_field_type(fields, type_params, type_args, entry.name) {
+            case find_record_field_type(
+              fields,
+              type_params,
+              type_args,
+              entry.name,
+            ) {
               .Some(field_ty) => {
                 case entry.value {
                   .Some(val) => {
@@ -1735,7 +2584,12 @@ fn check_record_lit(entries: Vector<RecordEntry>, expected: MonoType, s: Span, c
                   },
                   .None => {
                     // Punning: .{ name } means .{ name: name }
-                    ir := synth_ident(entry.name, entry.span, cur_ctx, cur_diags)
+                    ir := synth_ident(
+                      entry.name,
+                      entry.span,
+                      cur_ctx,
+                      cur_diags,
+                    )
                     u := ir.ctx.unify(ir.ty, field_ty, entry.span, ir.diags)
                     cur_ctx = u.ctx
                     cur_diags = u.diags
@@ -1743,19 +2597,32 @@ fn check_record_lit(entries: Vector<RecordEntry>, expected: MonoType, s: Span, c
                 }
               },
               .None => {
-                cur_diags = .append(.Error(.NoField(.{ span: entry.span, name: entry.name, ty: zonked })))
+                cur_diags = .append(
+                  .Error(
+                    .NoField(
+                      .{ span: entry.span, name: entry.name, ty: zonked },
+                    ),
+                  ),
+                )
               },
             }
           }
+
           // Check missing fields
           for f in fields {
             if !entries.any(fn(e) { e.name == f.name }) {
-              cur_diags = .append(.Error(.MissingField(.{ span: s, name: f.name, ty: zonked })))
+              cur_diags = .append(
+                .Error(.MissingField(.{ span: s, name: f.name, ty: zonked })),
+              )
             }
           }
+
           .{ ctx: cur_ctx, diags: cur_diags }
         },
-        _ => .{ ctx, diags: diags.append(.Error(.NotARecord(.{ span: s, ty: zonked }))) },
+        _ => .{
+          ctx,
+          diags: diags.append(.Error(.NotARecord(.{ span: s, ty: zonked }))),
+        },
       }
     },
     _ => .{
@@ -1765,24 +2632,58 @@ fn check_record_lit(entries: Vector<RecordEntry>, expected: MonoType, s: Span, c
   }
 }
 
-fn check_variant_lit(name: String, args: Vector<Expr>, expected: MonoType, s: Span, ctx: InferCtx, diags: Vector<DiagKind>) CheckOut {
+fn check_variant_lit(
+  name: String,
+  args: Vector<Expr>,
+  expected: MonoType,
+  s: Span,
+  ctx: InferCtx,
+  diags: Vector<DiagKind>,
+) CheckOut {
   zonked := expand_alias(zonk(expected, ctx.subst), ctx.env, 0)
+
   case resolve_variant_info(name, zonked, ctx.env) {
     .Some(.Ok(info)) => {
       if args.len() != info.field_types.len() {
-        return .{ ctx, diags: diags.append(.Error(.WrongArity(.{ span: s, expected: info.field_types.len(), found: args.len() }))) }
+        return .{
+          ctx,
+          diags: diags.append(
+            .Error(
+              .WrongArity(
+                .{
+                  span: s,
+                  expected: info.field_types.len(),
+                  found: args.len(),
+                },
+              ),
+            ),
+          ),
+        }
       }
+
       cur_ctx := ctx
       cur_diags := diags
+
       for i in 0..args.len() {
         ar := cur_ctx.check_expr(args[i], info.field_types[i], cur_diags)
         cur_ctx = ar.ctx
         cur_diags = ar.diags
       }
+
       .{ ctx: cur_ctx, diags: cur_diags }
     },
-    .Some(.Err(msg)) => .{ ctx, diags: diags.append(.Error(.ParseError(.{ span: s, message: msg, help_lines: [] }))) },
-    .None => .{ ctx, diags: diags.append(.Error(.VariantTypeMismatch(.{ span: s, name, ty: zonked }))) },
+    .Some(.Err(msg)) => .{
+      ctx,
+      diags: diags.append(
+        .Error(.ParseError(.{ span: s, message: msg, help_lines: [] })),
+      ),
+    },
+    .None => .{
+      ctx,
+      diags: diags.append(
+        .Error(.VariantTypeMismatch(.{ span: s, name, ty: zonked })),
+      ),
+    },
   }
 }
 
@@ -1802,42 +2703,64 @@ fn expr_needs_expected_type(expr: Expr) Bool {
   }
 }
 
-fn synth_array(elems: Vector<Expr>, s: Span, ctx: InferCtx, diags: Vector<DiagKind>) SynthOut {
+fn synth_array(
+  elems: Vector<Expr>,
+  s: Span,
+  ctx: InferCtx,
+  diags: Vector<DiagKind>,
+) SynthOut {
   if elems.len() == 0 {
     m := fresh_meta(ctx)
+
     return .{ ty: MonoType.Vector(m.ty), ctx: m.ctx, diags }
   }
+
   // Synth first element, unify rest against it
   first := ctx.synth(elems[0], diags)
   cur_ctx := first.ctx
   cur_diags := first.diags
+
   for i in 1..elems.len() {
     r := cur_ctx.synth(elems[i], cur_diags)
     u := r.ctx.unify(r.ty, first.ty, elems[i].span, r.diags)
     cur_ctx = u.ctx
     cur_diags = u.diags
   }
+
   .{ ty: .Vector(first.ty), ctx: cur_ctx, diags: cur_diags }
 }
 
 // ── Check mode ──────────────────────────────────────────────────────
+fn int_literal_fits_byte(n: Int) Bool { n >= 0 and n <= 255 }
 
-fn int_literal_fits_byte(n: Int) Bool {
-  n >= 0 and n <= 255
-}
-
-fn check_expr(ctx: InferCtx, expr: Expr, expected: MonoType, diags: Vector<DiagKind>) CheckOut {
+fn check_expr(
+  ctx: InferCtx,
+  expr: Expr,
+  expected: MonoType,
+  diags: Vector<DiagKind>,
+) CheckOut {
   // Check-mode dispatch: certain expression forms benefit from pushing the expected type down
   case expr.kind {
     .IntLit(n) => {
       case zonk(expected, ctx.subst) {
         .Byte => {
           if int_literal_fits_byte(n) {
-            return .{ ctx: set_type_map_span(ctx, expr.id, expr.span.start, MonoType.Byte), diags }
+            return .{
+              ctx: set_type_map_span(
+                ctx,
+                expr.id,
+                expr.span.start,
+                MonoType.Byte,
+              ),
+              diags,
+            }
           }
+
           return .{
             ctx,
-            diags: diags.append(.Error(.ByteOutOfRange(.{ span: expr.span, value: n }))),
+            diags: diags.append(
+              .Error(.ByteOutOfRange(.{ span: expr.span, value: n })),
+            ),
           }
         },
         _ => {},
@@ -1845,30 +2768,63 @@ fn check_expr(ctx: InferCtx, expr: Expr, expected: MonoType, diags: Vector<DiagK
     },
     _ => {},
   }
+
   case expr.kind {
     .BlockExpr(block) => {
       r := check_block(block, expected, ctx, diags)
-      return .{ ctx: set_type_map_span(r.ctx, expr.id, expr.span.start, expected), diags: r.diags }
+
+      return .{
+        ctx: set_type_map_span(r.ctx, expr.id, expr.span.start, expected),
+        diags: r.diags,
+      }
     },
     .If(cond, then_block, else_expr) => {
-      r := check_if(cond, then_block, else_expr, expected, expr.span, ctx, diags)
-      return .{ ctx: set_type_map_span(r.ctx, expr.id, expr.span.start, expected), diags: r.diags }
+      r := check_if(
+        cond,
+        then_block,
+        else_expr,
+        expected,
+        expr.span,
+        ctx,
+        diags,
+      )
+
+      return .{
+        ctx: set_type_map_span(r.ctx, expr.id, expr.span.start, expected),
+        diags: r.diags,
+      }
     },
     .Case(scrut, arms) => {
       r := check_case(scrut, arms, expected, expr.span, ctx, diags)
-      return .{ ctx: set_type_map_span(r.ctx, expr.id, expr.span.start, expected), diags: r.diags }
+
+      return .{
+        ctx: set_type_map_span(r.ctx, expr.id, expr.span.start, expected),
+        diags: r.diags,
+      }
     },
     .Record(entries) => {
       r := check_record_lit(entries, expected, expr.span, ctx, diags)
-      return .{ ctx: set_type_map_span(r.ctx, expr.id, expr.span.start, expected), diags: r.diags }
+
+      return .{
+        ctx: set_type_map_span(r.ctx, expr.id, expr.span.start, expected),
+        diags: r.diags,
+      }
     },
     .Variant(name, args) => {
       r := check_variant_lit(name, args, expected, expr.span, ctx, diags)
-      return .{ ctx: set_type_map_span(r.ctx, expr.id, expr.span.start, expected), diags: r.diags }
+
+      return .{
+        ctx: set_type_map_span(r.ctx, expr.id, expr.span.start, expected),
+        diags: r.diags,
+      }
     },
     .Closure(params, ret_ty, body) => {
       r := check_closure(params, ret_ty, body, expected, expr.span, ctx, diags)
-      return .{ ctx: set_type_map_span(r.ctx, expr.id, expr.span.start, expected), diags: r.diags }
+
+      return .{
+        ctx: set_type_map_span(r.ctx, expr.id, expr.span.start, expected),
+        diags: r.diags,
+      }
     },
     .Array(elems) => {
       // Push expected element type into array check
@@ -1876,12 +2832,17 @@ fn check_expr(ctx: InferCtx, expr: Expr, expected: MonoType, diags: Vector<DiagK
         .Vector(elem_ty) => {
           cur_ctx := ctx
           cur_diags := diags
+
           for e in elems {
             er := cur_ctx.check_expr(e, elem_ty, cur_diags)
             cur_ctx = er.ctx
             cur_diags = er.diags
           }
-          return .{ ctx: set_type_map_span(cur_ctx, expr.id, expr.span.start, expected), diags: cur_diags }
+
+          return .{
+            ctx: set_type_map_span(cur_ctx, expr.id, expr.span.start, expected),
+            diags: cur_diags,
+          }
         },
         _ => {},
       }
@@ -1890,7 +2851,11 @@ fn check_expr(ctx: InferCtx, expr: Expr, expected: MonoType, diags: Vector<DiagK
       case expand_alias(zonk(expected, ctx.subst), ctx.env, 0) {
         .Vector(elem_ty) => {
           r := check_collect(ce, elem_ty, expr.span, ctx, diags)
-          return .{ ctx: set_type_map_span(r.ctx, expr.id, expr.span.start, expected), diags: r.diags }
+
+          return .{
+            ctx: set_type_map_span(r.ctx, expr.id, expr.span.start, expected),
+            diags: r.diags,
+          }
         },
         _ => {},
       }
@@ -1902,10 +2867,12 @@ fn check_expr(ctx: InferCtx, expr: Expr, expected: MonoType, diags: Vector<DiagK
       call_ctx.call_expected_ret = .Some(expected)
       r := call_ctx.synth(expr, diags)
       u := r.ctx.unify(r.ty, expected, expr.span, r.diags)
+
       return .{ ctx: u.ctx, diags: u.diags }
     },
     _ => {},
   }
+
   // Fallback: synth then unify
   r := ctx.synth(expr, diags)
   u := r.ctx.unify(r.ty, expected, expr.span, r.diags)
@@ -1913,14 +2880,20 @@ fn check_expr(ctx: InferCtx, expr: Expr, expected: MonoType, diags: Vector<DiagK
 }
 
 // ── Closures ────────────────────────────────────────────────────────
-
-fn synth_closure(params: Vector<Param>, ret_ty_expr: TypeExpr?, body: Block, s: Span, ctx: InferCtx, diags: Vector<DiagKind>) SynthOut {
+fn synth_closure(
+  params: Vector<Param>,
+  ret_ty_expr: TypeExpr?,
+  body: Block,
+  s: Span,
+  ctx: InferCtx,
+  diags: Vector<DiagKind>,
+) SynthOut {
   cur_ctx := push_scope(ctx)
   cur_diags := diags
   prev_ret := cur_ctx.current_ret
-
   // Resolve param types (annotated or fresh meta)
   param_tys: Vector<MonoType> = []
+
   for p in params {
     case p.ty {
       .Some(ty_expr) => {
@@ -1956,41 +2929,59 @@ fn synth_closure(params: Vector<Param>, ret_ty_expr: TypeExpr?, body: Block, s: 
       body_r := synth_block(body, cur_ctx, cur_diags)
       cur_ctx = pop_scope(body_r.ctx)
       cur_ctx.current_ret = prev_ret
-      .{ ty: .Function(param_tys, body_r.ty), ctx: cur_ctx, diags: body_r.diags }
+      .{
+        ty: .Function(param_tys, body_r.ty),
+        ctx: cur_ctx,
+        diags: body_r.diags,
+      }
     },
   }
 }
 
-fn check_closure(params: Vector<Param>, ret_ty_expr: TypeExpr?, body: Block, expected: MonoType, s: Span, ctx: InferCtx, diags: Vector<DiagKind>) CheckOut {
+fn check_closure(
+  params: Vector<Param>,
+  ret_ty_expr: TypeExpr?,
+  body: Block,
+  expected: MonoType,
+  s: Span,
+  ctx: InferCtx,
+  diags: Vector<DiagKind>,
+) CheckOut {
   // Push expected param types into unannotated closure params
   zonked := expand_alias(zonk(expected, ctx.subst), ctx.env, 0)
+
   case zonked {
     .Function(exp_params, exp_ret) => {
       cur_ctx := push_scope(ctx)
       cur_diags := diags
       prev_ret := cur_ctx.current_ret
       cur_ctx.current_ret = .Some(exp_ret)
-
       param_tys: Vector<MonoType> = []
+
       for i in 0..params.len() {
         p := params[i]
+
         case p.ty {
           .Some(ty_expr) => {
             ann := resolve_annotation(ty_expr, cur_ctx, cur_diags)
             cur_ctx = ann.ctx
             cur_diags = ann.diags
             param_tys = .append(ann.ty)
+
             // Unify with expected param
             if i < exp_params.len() {
               u := cur_ctx.unify(ann.ty, exp_params[i], p.span, cur_diags)
               cur_ctx = u.ctx
               cur_diags = u.diags
             }
+
             cur_ctx = bind_local(cur_ctx, p.name, ann.ty)
           },
           .None => {
             // Use expected param type
-            pty := if i < exp_params.len() { exp_params[i] } else {
+            pty := if i < exp_params.len() {
+              exp_params[i]
+            } else {
               fm := fresh_meta(cur_ctx)
               cur_ctx = fm.ctx
               fm.ty
@@ -2016,7 +3007,6 @@ fn check_closure(params: Vector<Param>, ret_ty_expr: TypeExpr?, body: Block, exp
         },
         .None => exp_ret,
       }
-
       // Check body against the resolved return type.
       body_r := check_block(body, body_expected, cur_ctx, cur_diags)
       out_ctx := pop_scope(body_r.ctx)
@@ -2033,12 +3023,17 @@ fn check_closure(params: Vector<Param>, ret_ty_expr: TypeExpr?, body: Block, exp
 }
 
 // ── If, Case, For ──────────────────────────────────────────────────
-
-fn synth_if(cond: Expr, then_block: Block, else_expr: Expr?, s: Span, ctx: InferCtx, diags: Vector<DiagKind>) SynthOut {
+fn synth_if(
+  cond: Expr,
+  then_block: Block,
+  else_expr: Expr?,
+  s: Span,
+  ctx: InferCtx,
+  diags: Vector<DiagKind>,
+) SynthOut {
   // Check condition is Bool
   cr := ctx.synth(cond, diags)
   u := cr.ctx.unify(cr.ty, MonoType.Bool, cond.span, cr.diags)
-
   // Synth then branch
   then_r := synth_block(then_block, u.ctx, u.diags)
 
@@ -2047,13 +3042,20 @@ fn synth_if(cond: Expr, then_block: Block, else_expr: Expr?, s: Span, ctx: Infer
       if then_r.ty == .Never {
         // Then diverges — synth else freely
         else_r := then_r.ctx.synth(else_e, then_r.diags)
+
         return .{ ty: else_r.ty, ctx: else_r.ctx, diags: else_r.diags }
       }
+
       then_zonked := zonk(then_r.ty, then_r.ctx.subst)
+
       if contains_meta(then_zonked) {
         // Then type still ambiguous — synth else and unify
         else_r := then_r.ctx.synth(else_e, then_r.diags)
-        if else_r.ty == .Never { return .{ ty: then_zonked, ctx: else_r.ctx, diags: else_r.diags } }
+
+        if else_r.ty == .Never {
+          return .{ ty: then_zonked, ctx: else_r.ctx, diags: else_r.diags }
+        }
+
         u2 := else_r.ctx.unify(then_zonked, else_r.ty, s, else_r.diags)
         .{ ty: then_zonked, ctx: u2.ctx, diags: u2.diags }
       } else {
@@ -2069,13 +3071,22 @@ fn synth_if(cond: Expr, then_block: Block, else_expr: Expr?, s: Span, ctx: Infer
   }
 }
 
-fn check_if(cond: Expr, then_block: Block, else_expr: Expr?, expected: MonoType, s: Span, ctx: InferCtx, diags: Vector<DiagKind>) CheckOut {
+fn check_if(
+  cond: Expr,
+  then_block: Block,
+  else_expr: Expr?,
+  expected: MonoType,
+  s: Span,
+  ctx: InferCtx,
+  diags: Vector<DiagKind>,
+) CheckOut {
   cr := ctx.synth(cond, diags)
   u := cr.ctx.unify(cr.ty, .Bool, cond.span, cr.diags)
 
   case else_expr {
     .Some(else_e) => {
       then_r := check_block(then_block, expected, u.ctx, u.diags)
+
       case else_e.kind {
         .BlockExpr(block) => {
           else_r := check_block(block, expected, then_r.ctx, then_r.diags)
@@ -2097,6 +3108,7 @@ fn check_if(cond: Expr, then_block: Block, else_expr: Expr?, expected: MonoType,
 
 fn is_case_scrutinee_supported(ty: MonoType, ctx: InferCtx) Bool {
   zonked := expand_alias(zonk(ty, ctx.subst), ctx.env, 0)
+
   case zonked {
     .Int => true,
     .Bool => true,
@@ -2108,6 +3120,7 @@ fn is_case_scrutinee_supported(ty: MonoType, ctx: InferCtx) Bool {
         .Some(d) => d,
         .None => { return false },
       }
+
       case def {
         .Sum(_, _, _) => true,
         _ => false,
@@ -2117,27 +3130,54 @@ fn is_case_scrutinee_supported(ty: MonoType, ctx: InferCtx) Bool {
   }
 }
 
-fn synth_case_arm(arm: CaseArm, scrut_ty: MonoType, ctx: InferCtx, diags: Vector<DiagKind>) SynthOut {
+fn synth_case_arm(
+  arm: CaseArm,
+  scrut_ty: MonoType,
+  ctx: InferCtx,
+  diags: Vector<DiagKind>,
+) SynthOut {
   arm_ctx := push_scope(ctx)
   pr := check_pattern(arm.pattern, scrut_ty, arm_ctx, diags)
   body_r := pr.ctx.synth(arm.expr, pr.diags)
   .{ ty: body_r.ty, ctx: pop_scope(body_r.ctx), diags: body_r.diags }
 }
 
-fn check_case_arm(arm: CaseArm, scrut_ty: MonoType, expected: MonoType, ctx: InferCtx, diags: Vector<DiagKind>) CheckOut {
+fn check_case_arm(
+  arm: CaseArm,
+  scrut_ty: MonoType,
+  expected: MonoType,
+  ctx: InferCtx,
+  diags: Vector<DiagKind>,
+) CheckOut {
   arm_ctx := push_scope(ctx)
   pr := check_pattern(arm.pattern, scrut_ty, arm_ctx, diags)
   body_r := pr.ctx.check_expr(arm.expr, expected, pr.diags)
   .{ ctx: pop_scope(body_r.ctx), diags: body_r.diags }
 }
 
-fn synth_case(scrut: Expr, arms: Vector<CaseArm>, s: Span, ctx: InferCtx, diags: Vector<DiagKind>) SynthOut {
+fn synth_case(
+  scrut: Expr,
+  arms: Vector<CaseArm>,
+  s: Span,
+  ctx: InferCtx,
+  diags: Vector<DiagKind>,
+) SynthOut {
   sr := ctx.synth(scrut, diags)
   cur_ctx := sr.ctx
   cur_diags := sr.diags
 
   if !is_case_scrutinee_supported(sr.ty, cur_ctx) {
-    return .{ ty: .Void, ctx: cur_ctx, diags: cur_diags.append(.Error(.InvalidScrutinee(.{ span: scrut.span, ty: zonk(sr.ty, cur_ctx.subst) }))) }
+    return .{
+      ty: .Void,
+      ctx: cur_ctx,
+      diags: cur_diags.append(
+        .Error(
+          .InvalidScrutinee(
+            .{ span: scrut.span, ty: zonk(sr.ty, cur_ctx.subst) },
+          ),
+        ),
+      ),
+    }
   }
 
   result_ty: MonoType? = .None
@@ -2152,8 +3192,8 @@ fn synth_case(scrut: Expr, arms: Vector<CaseArm>, s: Span, ctx: InferCtx, diags:
     arm_r := synth_case_arm(arm, sr.ty, cur_ctx, cur_diags)
     cur_ctx = arm_r.ctx
     cur_diags = arm_r.diags
-
     arm_ty := zonk(arm_r.ty, cur_ctx.subst)
+
     case arm_ty {
       .Never => {},
       _ => {
@@ -2163,7 +3203,9 @@ fn synth_case(scrut: Expr, arms: Vector<CaseArm>, s: Span, ctx: InferCtx, diags:
             cur_ctx = u.ctx
             cur_diags = u.diags
           },
-          .None => { result_ty = .Some(arm_ty) },
+          .None => {
+            result_ty = .Some(arm_ty)
+          },
         }
       },
     }
@@ -2174,6 +3216,7 @@ fn synth_case(scrut: Expr, arms: Vector<CaseArm>, s: Span, ctx: InferCtx, diags:
   case result_ty {
     .Some(join_ty) => {
       zonked_join := zonk(join_ty, cur_ctx.subst)
+
       if deferred_arms.len() > 0 and !contains_meta(zonked_join) {
         for arm in deferred_arms {
           arm_r := check_case_arm(arm, sr.ty, zonked_join, cur_ctx, cur_diags)
@@ -2187,6 +3230,7 @@ fn synth_case(scrut: Expr, arms: Vector<CaseArm>, s: Span, ctx: InferCtx, diags:
           cur_diags = arm_r.diags
         }
       }
+
       .{ ty: zonked_join, ctx: cur_ctx, diags: cur_diags }
     },
     .None => {
@@ -2196,20 +3240,38 @@ fn synth_case(scrut: Expr, arms: Vector<CaseArm>, s: Span, ctx: InferCtx, diags:
           cur_ctx = arm_r.ctx
           cur_diags = arm_r.diags
         }
+
         return .{ ty: MonoType.Void, ctx: cur_ctx, diags: cur_diags }
       }
+
       .{ ty: MonoType.Never, ctx: cur_ctx, diags: cur_diags }
-    }
+    },
   }
 }
 
-fn check_case(scrut: Expr, arms: Vector<CaseArm>, expected: MonoType, s: Span, ctx: InferCtx, diags: Vector<DiagKind>) CheckOut {
+fn check_case(
+  scrut: Expr,
+  arms: Vector<CaseArm>,
+  expected: MonoType,
+  s: Span,
+  ctx: InferCtx,
+  diags: Vector<DiagKind>,
+) CheckOut {
   sr := ctx.synth(scrut, diags)
   cur_ctx := sr.ctx
   cur_diags := sr.diags
 
   if !is_case_scrutinee_supported(sr.ty, cur_ctx) {
-    return .{ ctx: cur_ctx, diags: cur_diags.append(.Error(.InvalidScrutinee(.{ span: scrut.span, ty: zonk(sr.ty, cur_ctx.subst) }))) }
+    return .{
+      ctx: cur_ctx,
+      diags: cur_diags.append(
+        .Error(
+          .InvalidScrutinee(
+            .{ span: scrut.span, ty: zonk(sr.ty, cur_ctx.subst) },
+          ),
+        ),
+      ),
+    }
   }
 
   for arm in arms {
@@ -2218,10 +3280,18 @@ fn check_case(scrut: Expr, arms: Vector<CaseArm>, expected: MonoType, s: Span, c
     cur_diags = arm_r.diags
   }
 
-  .{ ctx: cur_ctx, diags: check_exhaustiveness(sr.ty, arms, s, cur_ctx, cur_diags) }
+  .{
+    ctx: cur_ctx,
+    diags: check_exhaustiveness(sr.ty, arms, s, cur_ctx, cur_diags),
+  }
 }
 
-fn check_pattern(pat: Pattern, expected: MonoType, ctx: InferCtx, diags: Vector<DiagKind>) CheckOut {
+fn check_pattern(
+  pat: Pattern,
+  expected: MonoType,
+  ctx: InferCtx,
+  diags: Vector<DiagKind>,
+) CheckOut {
   case pat.kind {
     .Wildcard => .{ ctx, diags },
     .Ident(name) => .{ ctx: bind_local(ctx, name, expected), diags },
@@ -2230,7 +3300,14 @@ fn check_pattern(pat: Pattern, expected: MonoType, ctx: InferCtx, diags: Vector<
       u := r.ctx.unify(r.ty, expected, pat.span, r.diags)
       .{ ctx: u.ctx, diags: u.diags }
     },
-    .Variant(name, sub_pats) => check_variant_pattern(name, sub_pats, expected, pat.span, ctx, diags),
+    .Variant(name, sub_pats) => check_variant_pattern(
+      name,
+      sub_pats,
+      expected,
+      pat.span,
+      ctx,
+      diags,
+    ),
     .QualifiedVariant(path, name, sub_pats) => {
       // Validate that the qualifier matches the scrutinee type
       diags = .concat(validate_qualifier(path, expected, pat.span, ctx))
@@ -2243,6 +3320,7 @@ fn check_pattern(pat: Pattern, expected: MonoType, ctx: InferCtx, diags: Vector<
 // Returns a display name for a scrutinee type, if it's a named/sum type.
 fn scrutinee_type_name(ty: MonoType, ctx: InferCtx) String? {
   zonked := expand_alias(zonk(ty, ctx.subst), ctx.env, 0)
+
   case zonked {
     .Optional(_) => .Some("Option"),
     .Result(_, _) => .Some("Result"),
@@ -2251,9 +3329,14 @@ fn scrutinee_type_name(ty: MonoType, ctx: InferCtx) String? {
   }
 }
 
-fn qualifier_matches_scrutinee(path: Vector<String>, expected: MonoType, ctx: InferCtx) Bool {
+fn qualifier_matches_scrutinee(
+  path: Vector<String>,
+  expected: MonoType,
+  ctx: InferCtx,
+) Bool {
   qualifier := path.join(".")
   zonked := expand_alias(zonk(expected, ctx.subst), ctx.env, 0)
+
   case zonked {
     .Optional(_) => qualifier == "Option",
     .Result(_, _) => qualifier == "Result",
@@ -2268,40 +3351,99 @@ fn qualifier_matches_scrutinee(path: Vector<String>, expected: MonoType, ctx: In
 }
 
 // Validate that a qualified variant path (e.g., Color in Color.Red) matches the scrutinee type.
-fn validate_qualifier(path: Vector<String>, expected: MonoType, s: Span, ctx: InferCtx) Vector<DiagKind> {
-  if path.len() == 0 { return [] }
+fn validate_qualifier(
+  path: Vector<String>,
+  expected: MonoType,
+  s: Span,
+  ctx: InferCtx,
+) Vector<DiagKind> {
+  if path.len() == 0 {
+    return []
+  }
+
   qualifier := path.join(".")
+
   if qualifier_matches_scrutinee(path, expected, ctx) {
     return []
   }
+
   case scrutinee_type_name(expected, ctx) {
-    .Some(type_name) => [.Error(.QualifierMismatch(.{ span: s, qualifier, scrutinee_type: type_name }))],
+    .Some(type_name) => [
+      .Error(
+        .QualifierMismatch(.{ span: s, qualifier, scrutinee_type: type_name }),
+      ),
+    ],
     .None => [],
   }
 }
 
-fn check_variant_pattern(name: String, sub_pats: Vector<Pattern>, expected: MonoType, s: Span, ctx: InferCtx, diags: Vector<DiagKind>) CheckOut {
+fn check_variant_pattern(
+  name: String,
+  sub_pats: Vector<Pattern>,
+  expected: MonoType,
+  s: Span,
+  ctx: InferCtx,
+  diags: Vector<DiagKind>,
+) CheckOut {
   zonked := expand_alias(zonk(expected, ctx.subst), ctx.env, 0)
+
   case resolve_variant_info(name, zonked, ctx.env) {
     .Some(.Ok(info)) => {
       if sub_pats.len() != info.field_types.len() {
-        return .{ ctx, diags: diags.append(.Error(.WrongArity(.{ span: s, expected: info.field_types.len(), found: sub_pats.len() }))) }
+        return .{
+          ctx,
+          diags: diags.append(
+            .Error(
+              .WrongArity(
+                .{
+                  span: s,
+                  expected: info.field_types.len(),
+                  found: sub_pats.len(),
+                },
+              ),
+            ),
+          ),
+        }
       }
+
       cur_ctx := ctx
       cur_diags := diags
+
       for i in 0..sub_pats.len() {
-        pr := check_pattern(sub_pats[i], info.field_types[i], cur_ctx, cur_diags)
+        pr := check_pattern(
+          sub_pats[i],
+          info.field_types[i],
+          cur_ctx,
+          cur_diags,
+        )
         cur_ctx = pr.ctx
         cur_diags = pr.diags
       }
+
       .{ ctx: cur_ctx, diags: cur_diags }
     },
-    .Some(.Err(msg)) => .{ ctx, diags: diags.append(.Error(.ParseError(.{ span: s, message: msg, help_lines: [] }))) },
-    .None => .{ ctx, diags: diags.append(.Error(.VariantTypeMismatch(.{ span: s, name, ty: zonked }))) },
+    .Some(.Err(msg)) => .{
+      ctx,
+      diags: diags.append(
+        .Error(.ParseError(.{ span: s, message: msg, help_lines: [] })),
+      ),
+    },
+    .None => .{
+      ctx,
+      diags: diags.append(
+        .Error(.VariantTypeMismatch(.{ span: s, name, ty: zonked })),
+      ),
+    },
   }
 }
 
-fn check_exhaustiveness(scrut_ty: MonoType, arms: Vector<CaseArm>, s: Span, ctx: InferCtx, diags: Vector<DiagKind>) Vector<DiagKind> {
+fn check_exhaustiveness(
+  scrut_ty: MonoType,
+  arms: Vector<CaseArm>,
+  s: Span,
+  ctx: InferCtx,
+  diags: Vector<DiagKind>,
+) Vector<DiagKind> {
   // Check if any arm is a wildcard or ident (covers all)
   for arm in arms {
     case arm.pattern.kind {
@@ -2312,6 +3454,7 @@ fn check_exhaustiveness(scrut_ty: MonoType, arms: Vector<CaseArm>, s: Span, ctx:
   }
 
   variant_names := get_variant_names(scrut_ty, ctx)
+
   case variant_names {
     .None => diags,
     .Some(names) => {
@@ -2321,16 +3464,14 @@ fn check_exhaustiveness(scrut_ty: MonoType, arms: Vector<CaseArm>, s: Span, ctx:
           .Variant(name, _) => name,
           .QualifiedVariant(path, name, _) => {
             // Only count as covered if qualifier matches scrutinee type
-            if !qualifier_matches_scrutinee(path, scrut_ty, ctx) {
-              continue
-            }
+            if !qualifier_matches_scrutinee(path, scrut_ty, ctx) { continue }
+
             name
           },
           .Literal(lit_expr) => {
             case lit_expr.kind {
               .BoolLit(val) => {
-                if val { "true" }
-                else { "false" }
+                if val { "true" } else { "false" }
               },
               _ => { continue },
             }
@@ -2341,25 +3482,33 @@ fn check_exhaustiveness(scrut_ty: MonoType, arms: Vector<CaseArm>, s: Span, ctx:
       // Find uncovered variants
       missing := collect name in names {
         if covered.any(fn(c) { c == name }) { continue }
+
         name
       }
+
       if missing.len() > 0 {
-        diags.append(.Error(.MissingVariants(.{ span: s, scrutinee_ty: zonk(scrut_ty, ctx.subst), missing })))
-      } else {
-        diags
-      }
+        diags.append(
+          .Error(
+            .MissingVariants(
+              .{ span: s, scrutinee_ty: zonk(scrut_ty, ctx.subst), missing },
+            ),
+          ),
+        )
+      } else { diags }
     },
   }
 }
 
 fn get_variant_names(scrut_ty: MonoType, ctx: InferCtx) Vector<String>? {
   zonked := zonk(scrut_ty, ctx.subst)
+
   case zonked {
     .Optional(_) => .Some(["Some", "None"]),
     .Result(_, _) => .Some(["Ok", "Err"]),
     .Bool => .Some(["true", "false"]),
     .Named(tid, _) => {
       def := try ctx.env.lookup_type_def(tid)
+
       case def {
         .Sum(_, _, variants) => .Some(collect v in variants { v.name }),
         _ => .None,
@@ -2372,14 +3521,20 @@ fn get_variant_names(scrut_ty: MonoType, ctx: InferCtx) Vector<String>? {
 fn check_for(for_stmt: ForStmt, ctx: InferCtx, diags: Vector<DiagKind>) CheckOut {
   cur_ctx := push_scope(ctx)
   cur_diags := diags
-
   cond_r := check_optional_condition(for_stmt.condition, cur_ctx, cur_diags)
   cur_ctx = cond_r.ctx
   cur_diags = cond_r.diags
 
   case for_stmt.iter {
     .Some(iter_expr) => {
-      ib := bind_iterable_vars(cur_ctx, iter_expr, for_stmt.pattern, for_stmt.index, "for-loop", cur_diags)
+      ib := bind_iterable_vars(
+        cur_ctx,
+        iter_expr,
+        for_stmt.pattern,
+        for_stmt.index,
+        "for-loop",
+        cur_diags,
+      )
       cur_ctx = ib.ctx
       cur_diags = ib.diags
     },
@@ -2391,13 +3546,23 @@ fn check_for(for_stmt: ForStmt, ctx: InferCtx, diags: Vector<DiagKind>) CheckOut
   .{ ctx: pop_scope(body_stmts.ctx), diags: body_stmts.diags }
 }
 
-type IterBindResult = .{ ctx: InferCtx, diags: Vector<DiagKind>, elem_ty: MonoType }
+type IterBindResult = .{
+  ctx: InferCtx,
+  diags: Vector<DiagKind>,
+  elem_ty: MonoType,
+}
 
-fn bind_iterable_vars(ctx: InferCtx, iter_expr: Expr, pattern: String?, index: String?, index_err_label: String, diags: Vector<DiagKind>) IterBindResult {
+fn bind_iterable_vars(
+  ctx: InferCtx,
+  iter_expr: Expr,
+  pattern: String?,
+  index: String?,
+  index_err_label: String,
+  diags: Vector<DiagKind>,
+) IterBindResult {
   ir := ctx.synth(iter_expr, diags)
   cur_ctx := ir.ctx
   cur_diags := ir.diags
-
   info := iterable_binding_info_of(ir.ty, iter_expr.span, cur_ctx, cur_diags)
   cur_diags = info.diags
   cur_ctx = bind_optional(cur_ctx, pattern, info.elem_ty)
@@ -2415,6 +3580,7 @@ fn bind_iterable_vars(ctx: InferCtx, iter_expr: Expr, pattern: String?, index: S
     },
     .None => {},
   }
+
   .{ ctx: cur_ctx, diags: cur_diags, elem_ty: info.elem_ty }
 }
 
@@ -2436,24 +3602,57 @@ type IterableBindingInfo = .{
   diags: Vector<DiagKind>,
 }
 
-fn iterable_binding_info_of(ty: MonoType, s: Span, ctx: InferCtx, diags: Vector<DiagKind>) IterableBindingInfo {
+fn iterable_binding_info_of(
+  ty: MonoType,
+  s: Span,
+  ctx: InferCtx,
+  diags: Vector<DiagKind>,
+) IterableBindingInfo {
   zonked := expand_alias(zonk(ty, ctx.subst), ctx.env, 0)
+
   case zonked {
-    .Vector(elem) => .{ elem_ty: elem, secondary_ty: .Some(MonoType.Int), secondary_allowed: true, diags },
-    .String => .{ elem_ty: MonoType.Byte, secondary_ty: .Some(MonoType.Int), secondary_allowed: true, diags },
-    .Dict(k, v) => .{ elem_ty: k, secondary_ty: .Some(v), secondary_allowed: true, diags },
+    .Vector(elem) => .{
+      elem_ty: elem,
+      secondary_ty: .Some(MonoType.Int),
+      secondary_allowed: true,
+      diags,
+    },
+    .String => .{
+      elem_ty: MonoType.Byte,
+      secondary_ty: .Some(MonoType.Int),
+      secondary_allowed: true,
+      diags,
+    },
+    .Dict(k, v) => .{
+      elem_ty: k,
+      secondary_ty: .Some(v),
+      secondary_allowed: true,
+      diags,
+    },
     .Named(tid, args) => {
       case type_def_name(ctx.env, tid) {
-        .Some("Range") => .{ elem_ty: MonoType.Int, secondary_ty: .Some(MonoType.Int), secondary_allowed: true, diags },
+        .Some("Range") => .{
+          elem_ty: MonoType.Int,
+          secondary_ty: .Some(MonoType.Int),
+          secondary_allowed: true,
+          diags,
+        },
         .Some("Iterator") => {
           if args.len() > 0 {
-            .{ elem_ty: args[0], secondary_ty: .Some(MonoType.Int), secondary_allowed: true, diags }
+            .{
+              elem_ty: args[0],
+              secondary_ty: .Some(MonoType.Int),
+              secondary_allowed: true,
+              diags,
+            }
           } else {
             .{
               elem_ty: MonoType.Int,
               secondary_ty: .Some(MonoType.Int),
               secondary_allowed: true,
-              diags: diags.append(.Error(.NotIterable(.{ span: s, ty: zonked }))),
+              diags: diags.append(
+                .Error(.NotIterable(.{ span: s, ty: zonked })),
+              ),
             }
           }
         },
@@ -2474,13 +3673,25 @@ fn iterable_binding_info_of(ty: MonoType, s: Span, ctx: InferCtx, diags: Vector<
   }
 }
 
-fn synth_collect(ce: CollectExpr, s: Span, ctx: InferCtx, diags: Vector<DiagKind>) SynthOut {
+fn synth_collect(
+  ce: CollectExpr,
+  s: Span,
+  ctx: InferCtx,
+  diags: Vector<DiagKind>,
+) SynthOut {
   cur_ctx := push_scope(ctx)
   cur_diags := diags
 
   case ce.iter {
     .Some(iter_expr) => {
-      ib := bind_iterable_vars(cur_ctx, iter_expr, ce.pattern, ce.index, "collect", cur_diags)
+      ib := bind_iterable_vars(
+        cur_ctx,
+        iter_expr,
+        ce.pattern,
+        ce.index,
+        "collect",
+        cur_diags,
+      )
       cur_ctx = ib.ctx
       cur_diags = ib.diags
     },
@@ -2490,18 +3701,34 @@ fn synth_collect(ce: CollectExpr, s: Span, ctx: InferCtx, diags: Vector<DiagKind
   cond_r := check_optional_condition(ce.condition, cur_ctx, cur_diags)
   cur_ctx = cond_r.ctx
   cur_diags = cond_r.diags
-
   body_r := synth_block(ce.body, cur_ctx, cur_diags)
-  .{ ty: MonoType.Vector(body_r.ty), ctx: pop_scope(body_r.ctx), diags: body_r.diags }
+  .{
+    ty: MonoType.Vector(body_r.ty),
+    ctx: pop_scope(body_r.ctx),
+    diags: body_r.diags,
+  }
 }
 
-fn check_collect(ce: CollectExpr, expected_elem: MonoType, s: Span, ctx: InferCtx, diags: Vector<DiagKind>) CheckOut {
+fn check_collect(
+  ce: CollectExpr,
+  expected_elem: MonoType,
+  s: Span,
+  ctx: InferCtx,
+  diags: Vector<DiagKind>,
+) CheckOut {
   cur_ctx := push_scope(ctx)
   cur_diags := diags
 
   case ce.iter {
     .Some(iter_expr) => {
-      ib := bind_iterable_vars(cur_ctx, iter_expr, ce.pattern, ce.index, "collect", cur_diags)
+      ib := bind_iterable_vars(
+        cur_ctx,
+        iter_expr,
+        ce.pattern,
+        ce.index,
+        "collect",
+        cur_diags,
+      )
       cur_ctx = ib.ctx
       cur_diags = ib.diags
     },
@@ -2511,22 +3738,35 @@ fn check_collect(ce: CollectExpr, expected_elem: MonoType, s: Span, ctx: InferCt
   cond_r := check_optional_condition(ce.condition, cur_ctx, cur_diags)
   cur_ctx = cond_r.ctx
   cur_diags = cond_r.diags
-
   body_r := check_block(ce.body, expected_elem, cur_ctx, cur_diags)
   .{ ctx: pop_scope(body_r.ctx), diags: body_r.diags }
 }
 
 // ── Operators ───────────────────────────────────────────────────────
-
 fn is_numeric(ty: MonoType) Bool {
-  case ty { .Int => true, .Float => true, .Byte => true, _ => false }
+  case ty {
+    .Int => true,
+    .Float => true,
+    .Byte => true,
+    _ => false,
+  }
 }
 
 fn is_string(ty: MonoType) Bool {
-  case ty { .String => true, _ => false }
+  case ty {
+    .String => true,
+    _ => false,
+  }
 }
 
-fn synth_binary(op: BinOp, lhs: Expr, rhs: Expr, s: Span, ctx: InferCtx, diags: Vector<DiagKind>) SynthOut {
+fn synth_binary(
+  op: BinOp,
+  lhs: Expr,
+  rhs: Expr,
+  s: Span,
+  ctx: InferCtx,
+  diags: Vector<DiagKind>,
+) SynthOut {
   case op {
     .Assign => synth_assign_op(lhs, rhs, s, ctx, diags),
     .LogicalAnd => synth_bool_op(lhs, rhs, s, ctx, diags),
@@ -2547,7 +3787,13 @@ fn synth_binary(op: BinOp, lhs: Expr, rhs: Expr, s: Span, ctx: InferCtx, diags: 
   }
 }
 
-fn synth_assign_op(lhs: Expr, rhs: Expr, s: Span, ctx: InferCtx, diags: Vector<DiagKind>) SynthOut {
+fn synth_assign_op(
+  lhs: Expr,
+  rhs: Expr,
+  s: Span,
+  ctx: InferCtx,
+  diags: Vector<DiagKind>,
+) SynthOut {
   case lhs.kind {
     .Ident(name) => {
       if ctx.pub_names.has(name) {
@@ -2557,6 +3803,7 @@ fn synth_assign_op(lhs: Expr, rhs: Expr, s: Span, ctx: InferCtx, diags: Vector<D
           diags: diags.append(.Error(.PublicRebind(.{ span: lhs.span, name }))),
         }
       }
+
       case lookup_local(ctx, name) {
         .Some(existing_ty) => {
           rr := ctx.check_expr(rhs, existing_ty, diags)
@@ -2572,6 +3819,7 @@ fn synth_assign_op(lhs: Expr, rhs: Expr, s: Span, ctx: InferCtx, diags: Vector<D
     .Field(base, field_name) => {
       br := ctx.synth(base, diags)
       zonked_base := expand_alias(zonk(br.ty, br.ctx.subst), br.ctx.env, 0)
+
       case zonked_base {
         .Named(tid, type_args) => {
           def := case br.ctx.env.lookup_type_def(tid) {
@@ -2580,13 +3828,21 @@ fn synth_assign_op(lhs: Expr, rhs: Expr, s: Span, ctx: InferCtx, diags: Vector<D
               return .{
                 ty: MonoType.Void,
                 ctx: br.ctx,
-                diags: br.diags.append(.Error(.NotARecord(.{ span: lhs.span, ty: zonked_base }))),
+                diags: br.diags.append(
+                  .Error(.NotARecord(.{ span: lhs.span, ty: zonked_base })),
+                ),
               }
             },
           }
+
           case def {
             .Record(_, type_params, fields) => {
-              case find_record_field_type(fields, type_params, type_args, field_name) {
+              case find_record_field_type(
+                fields,
+                type_params,
+                type_args,
+                field_name,
+              ) {
                 .Some(fty) => {
                   rr := br.ctx.check_expr(rhs, fty, br.diags)
                   .{ ty: MonoType.Void, ctx: rr.ctx, diags: rr.diags }
@@ -2594,27 +3850,38 @@ fn synth_assign_op(lhs: Expr, rhs: Expr, s: Span, ctx: InferCtx, diags: Vector<D
                 .None => .{
                   ty: MonoType.Void,
                   ctx: br.ctx,
-                  diags: br.diags.append(.Error(.NoField(.{ span: lhs.span, name: field_name, ty: zonked_base }))),
+                  diags: br.diags.append(
+                    .Error(
+                      .NoField(
+                        .{ span: lhs.span, name: field_name, ty: zonked_base },
+                      ),
+                    ),
+                  ),
                 },
               }
             },
             _ => .{
               ty: MonoType.Void,
               ctx: br.ctx,
-              diags: br.diags.append(.Error(.NotARecord(.{ span: lhs.span, ty: zonked_base }))),
+              diags: br.diags.append(
+                .Error(.NotARecord(.{ span: lhs.span, ty: zonked_base })),
+              ),
             },
           }
         },
         _ => .{
           ty: MonoType.Void,
           ctx: br.ctx,
-          diags: br.diags.append(.Error(.NotARecord(.{ span: lhs.span, ty: zonked_base }))),
+          diags: br.diags.append(
+            .Error(.NotARecord(.{ span: lhs.span, ty: zonked_base })),
+          ),
         },
       }
     },
     .Index(base, idx) => {
       br := ctx.synth(base, diags)
       zonked_base := expand_alias(zonk(br.ty, br.ctx.subst), br.ctx.env, 0)
+
       case zonked_base {
         .Vector(elem_ty) => {
           ir := br.ctx.check_expr(idx, MonoType.Int, br.diags)
@@ -2629,7 +3896,9 @@ fn synth_assign_op(lhs: Expr, rhs: Expr, s: Span, ctx: InferCtx, diags: Vector<D
         _ => .{
           ty: MonoType.Void,
           ctx: br.ctx,
-          diags: br.diags.append(.Error(.NotIndexable(.{ span: base.span, ty: zonked_base }))),
+          diags: br.diags.append(
+            .Error(.NotIndexable(.{ span: base.span, ty: zonked_base })),
+          ),
         },
       }
     },
@@ -2641,7 +3910,13 @@ fn synth_assign_op(lhs: Expr, rhs: Expr, s: Span, ctx: InferCtx, diags: Vector<D
   }
 }
 
-fn synth_range_op(lhs: Expr, rhs: Expr, s: Span, ctx: InferCtx, diags: Vector<DiagKind>) SynthOut {
+fn synth_range_op(
+  lhs: Expr,
+  rhs: Expr,
+  s: Span,
+  ctx: InferCtx,
+  diags: Vector<DiagKind>,
+) SynthOut {
   lr := ctx.synth(lhs, diags)
   u1 := lr.ctx.unify(lr.ty, MonoType.Int, lhs.span, lr.diags)
   rr := u1.ctx.synth(rhs, u1.diags)
@@ -2650,16 +3925,24 @@ fn synth_range_op(lhs: Expr, rhs: Expr, s: Span, ctx: InferCtx, diags: Vector<Di
 }
 
 fn is_int_or_byte(ty: MonoType) Bool {
-  case ty { .Int => true, .Byte => true, _ => false }
+  case ty {
+    .Int => true,
+    .Byte => true,
+    _ => false,
+  }
 }
 
-fn synth_bitwise_op(lhs: Expr, rhs: Expr, s: Span, ctx: InferCtx, diags: Vector<DiagKind>) SynthOut {
+fn synth_bitwise_op(
+  lhs: Expr,
+  rhs: Expr,
+  s: Span,
+  ctx: InferCtx,
+  diags: Vector<DiagKind>,
+) SynthOut {
   lr := ctx.synth(lhs, diags)
   rr := lr.ctx.synth(rhs, lr.diags)
-
   cur_ctx := rr.ctx
   cur_diags := rr.diags
-
   left_z := zonk(lr.ty, cur_ctx.subst)
   right_z := zonk(rr.ty, cur_ctx.subst)
 
@@ -2671,6 +3954,7 @@ fn synth_bitwise_op(lhs: Expr, rhs: Expr, s: Span, ctx: InferCtx, diags: Vector<
     },
     _ => {},
   }
+
   case right_z {
     .MetaVar(_) => {
       u := cur_ctx.unify(rr.ty, MonoType.Int, rhs.span, cur_diags)
@@ -2682,12 +3966,21 @@ fn synth_bitwise_op(lhs: Expr, rhs: Expr, s: Span, ctx: InferCtx, diags: Vector<
 
   left_final := zonk(lr.ty, cur_ctx.subst)
   right_final := zonk(rr.ty, cur_ctx.subst)
+
   if is_int_or_byte(left_final) and is_int_or_byte(right_final) {
     return .{ ty: MonoType.Int, ctx: cur_ctx, diags: cur_diags }
   }
 
   bad_ty := if !is_int_or_byte(left_final) { left_final } else { right_final }
-  .{ ty: MonoType.Int, ctx: cur_ctx, diags: cur_diags.append(.Error(.InvalidOperand(.{ span: s, ty: bad_ty, operation: "bitwise operator" }))) }
+  .{
+    ty: MonoType.Int,
+    ctx: cur_ctx,
+    diags: cur_diags.append(
+      .Error(
+        .InvalidOperand(.{ span: s, ty: bad_ty, operation: "bitwise operator" }),
+      ),
+    ),
+  }
 }
 
 fn cmp_op_name(op: BinOp) String {
@@ -2700,12 +3993,18 @@ fn cmp_op_name(op: BinOp) String {
   }
 }
 
-fn synth_cmp_op(op: BinOp, lhs: Expr, rhs: Expr, s: Span, ctx: InferCtx, diags: Vector<DiagKind>) SynthOut {
+fn synth_cmp_op(
+  op: BinOp,
+  lhs: Expr,
+  rhs: Expr,
+  s: Span,
+  ctx: InferCtx,
+  diags: Vector<DiagKind>,
+) SynthOut {
   lr := ctx.synth(lhs, diags)
   rr := lr.ctx.synth(rhs, lr.diags)
   cur_ctx := rr.ctx
   cur_diags := rr.diags
-
   left_z := zonk(lr.ty, cur_ctx.subst)
   right_z := zonk(rr.ty, cur_ctx.subst)
 
@@ -2719,31 +4018,56 @@ fn synth_cmp_op(op: BinOp, lhs: Expr, rhs: Expr, s: Span, ctx: InferCtx, diags: 
   check_ord_contract(unified_ty, op, u.ctx, u.diags, s)
 }
 
-fn check_ord_contract(operand_ty: MonoType, op: BinOp, ctx: InferCtx, diags: Vector<DiagKind>, s: Span) SynthOut {
+fn check_ord_contract(
+  operand_ty: MonoType,
+  op: BinOp,
+  ctx: InferCtx,
+  diags: Vector<DiagKind>,
+  s: Span,
+) SynthOut {
   zonked := expand_alias(zonk(operand_ty, ctx.subst), ctx.env, 0)
+
   // Defer while inference is incomplete
   if contains_meta(zonked) {
     return .{ ty: MonoType.Bool, ctx, diags }
   }
+
   proof := satisfies_contract(zonked, .Ord, ctx)
+
   case proof {
     .Ok(next_ctx) => .{ ty: MonoType.Bool, ctx: next_ctx, diags },
-    .Err(reason) => .{ ty: MonoType.Bool, ctx, diags: diags.append(.Error(.ContractViolation(.{
-      span: s,
-      ty: zonked,
-      contract: "Ord",
-      owner: cmp_op_name(op),
-      reason,
-    }))) },
+    .Err(reason) => .{
+      ty: MonoType.Bool,
+      ctx,
+      diags: diags.append(
+        .Error(
+          .ContractViolation(
+            .{
+              span: s,
+              ty: zonked,
+              contract: "Ord",
+              owner: cmp_op_name(op),
+              reason,
+            },
+          ),
+        ),
+      ),
+    },
   }
 }
 
-fn synth_arith_op(op: BinOp, lhs: Expr, rhs: Expr, s: Span, ctx: InferCtx, diags: Vector<DiagKind>) SynthOut {
+fn synth_arith_op(
+  op: BinOp,
+  lhs: Expr,
+  rhs: Expr,
+  s: Span,
+  ctx: InferCtx,
+  diags: Vector<DiagKind>,
+) SynthOut {
   lr := ctx.synth(lhs, diags)
   rr := lr.ctx.synth(rhs, lr.diags)
   cur_ctx := rr.ctx
   cur_diags := rr.diags
-
   left_z := zonk(lr.ty, cur_ctx.subst)
   right_z := zonk(rr.ty, cur_ctx.subst)
 
@@ -2756,31 +4080,51 @@ fn synth_arith_op(op: BinOp, lhs: Expr, rhs: Expr, s: Span, ctx: InferCtx, diags
   }
 
   // Int × Int → Int
-  if (case left_z { .Int => true, _ => false }) and (case right_z { .Int => true, _ => false }) {
+  if case left_z {
+    .Int => true,
+    _ => false,
+  }
+  and case right_z {
+    .Int => true,
+    _ => false,
+  } {
     return .{ ty: MonoType.Int, ctx: cur_ctx, diags: cur_diags }
   }
+
   // Float × Float → Float
-  if (case left_z { .Float => true, _ => false }) and (case right_z { .Float => true, _ => false }) {
+  if case left_z {
+    .Float => true,
+    _ => false,
+  }
+  and case right_z {
+    .Float => true,
+    _ => false,
+  } {
     return .{ ty: MonoType.Float, ctx: cur_ctx, diags: cur_diags }
   }
+
   // Byte × Byte → Int, Int × Byte → Int, Byte × Int → Int
   if is_int_or_byte(left_z) and is_int_or_byte(right_z) {
     return .{ ty: MonoType.Int, ctx: cur_ctx, diags: cur_diags }
   }
+
   // MetaVar × concrete: solve meta, then determine result
   case left_z {
     .MetaVar(_) => {
       case right_z {
         .Int => {
           u := cur_ctx.unify(lr.ty, MonoType.Int, lhs.span, cur_diags)
+
           return .{ ty: MonoType.Int, ctx: u.ctx, diags: u.diags }
         },
         .Float => {
           u := cur_ctx.unify(lr.ty, MonoType.Float, lhs.span, cur_diags)
+
           return .{ ty: MonoType.Float, ctx: u.ctx, diags: u.diags }
         },
         .Byte => {
           u := cur_ctx.unify(lr.ty, MonoType.Int, lhs.span, cur_diags)
+
           return .{ ty: MonoType.Int, ctx: u.ctx, diags: u.diags }
         },
         _ => {},
@@ -2788,19 +4132,23 @@ fn synth_arith_op(op: BinOp, lhs: Expr, rhs: Expr, s: Span, ctx: InferCtx, diags
     },
     _ => {},
   }
+
   case right_z {
     .MetaVar(_) => {
       case left_z {
         .Int => {
           u := cur_ctx.unify(rr.ty, MonoType.Int, rhs.span, cur_diags)
+
           return .{ ty: MonoType.Int, ctx: u.ctx, diags: u.diags }
         },
         .Float => {
           u := cur_ctx.unify(rr.ty, MonoType.Float, rhs.span, cur_diags)
+
           return .{ ty: MonoType.Float, ctx: u.ctx, diags: u.diags }
         },
         .Byte => {
           u := cur_ctx.unify(rr.ty, MonoType.Int, rhs.span, cur_diags)
+
           return .{ ty: MonoType.Int, ctx: u.ctx, diags: u.diags }
         },
         _ => {},
@@ -2808,20 +4156,42 @@ fn synth_arith_op(op: BinOp, lhs: Expr, rhs: Expr, s: Span, ctx: InferCtx, diags
     },
     _ => {},
   }
+
   // MetaVar × MetaVar: unify and return left type
-  if (case left_z { .MetaVar(_) => true, _ => false }) and (case right_z { .MetaVar(_) => true, _ => false }) {
+  if case left_z {
+    .MetaVar(_) => true,
+    _ => false,
+  }
+  and case right_z {
+    .MetaVar(_) => true,
+    _ => false,
+  } {
     u := cur_ctx.unify(lr.ty, rr.ty, s, cur_diags)
+
     return .{ ty: lr.ty, ctx: u.ctx, diags: u.diags }
   }
+
   // Error: unsupported operand types
   .{
     ty: lr.ty,
     ctx: cur_ctx,
-    diags: cur_diags.append(.Error(.InvalidOperand(.{ span: s, ty: left_z, operation: "arithmetic operator" }))),
+    diags: cur_diags.append(
+      .Error(
+        .InvalidOperand(
+          .{ span: s, ty: left_z, operation: "arithmetic operator" },
+        ),
+      ),
+    ),
   }
 }
 
-fn synth_bool_op(lhs: Expr, rhs: Expr, s: Span, ctx: InferCtx, diags: Vector<DiagKind>) SynthOut {
+fn synth_bool_op(
+  lhs: Expr,
+  rhs: Expr,
+  s: Span,
+  ctx: InferCtx,
+  diags: Vector<DiagKind>,
+) SynthOut {
   lr := ctx.synth(lhs, diags)
   u1 := lr.ctx.unify(lr.ty, MonoType.Bool, lhs.span, lr.diags)
   rr := u1.ctx.synth(rhs, u1.diags)
@@ -2829,18 +4199,31 @@ fn synth_bool_op(lhs: Expr, rhs: Expr, s: Span, ctx: InferCtx, diags: Vector<Dia
   .{ ty: MonoType.Bool, ctx: u2.ctx, diags: u2.diags }
 }
 
-type EqDirectionalResult = .{ operand_ty: MonoType, ctx: InferCtx, diags: Vector<DiagKind> }
+type EqDirectionalResult = .{
+  operand_ty: MonoType,
+  ctx: InferCtx,
+  diags: Vector<DiagKind>,
+}
 
-fn try_eq_directional(synth_side: Expr, check_side: Expr, s: Span, ctx: InferCtx, diags: Vector<DiagKind>) EqDirectionalResult? {
+fn try_eq_directional(
+  synth_side: Expr,
+  check_side: Expr,
+  s: Span,
+  ctx: InferCtx,
+  diags: Vector<DiagKind>,
+) EqDirectionalResult? {
   // Synth one side, then try check_expr on the other with the inferred type.
   // If the entire attempt introduces no new diagnostics, use that result.
   pre_len := diags.len()
   lr := ctx.synth(synth_side, diags)
+
   if lr.diags.len() > pre_len {
     // Synth itself failed — bail without polluting state
     return .None
   }
+
   cr := lr.ctx.check_expr(check_side, lr.ty, lr.diags)
+
   if cr.diags.len() == pre_len {
     .Some(.{ operand_ty: lr.ty, ctx: cr.ctx, diags: cr.diags })
   } else {
@@ -2848,54 +4231,79 @@ fn try_eq_directional(synth_side: Expr, check_side: Expr, s: Span, ctx: InferCtx
   }
 }
 
-fn synth_eq_op(lhs: Expr, rhs: Expr, s: Span, ctx: InferCtx, diags: Vector<DiagKind>) SynthOut {
+fn synth_eq_op(
+  lhs: Expr,
+  rhs: Expr,
+  s: Span,
+  ctx: InferCtx,
+  diags: Vector<DiagKind>,
+) SynthOut {
   // Attempt 1: synth left, check right against left's type
   r1 := try_eq_directional(lhs, rhs, s, ctx, diags)
+
   case r1 {
     .Some(r) => { return check_eq_contract(r.operand_ty, r.ctx, r.diags, s) },
     .None => {},
   }
+
   // Attempt 2: synth right, check left against right's type
   r2 := try_eq_directional(rhs, lhs, s, ctx, diags)
+
   case r2 {
     .Some(r) => { return check_eq_contract(r.operand_ty, r.ctx, r.diags, s) },
     .None => {},
   }
+
   // Fallback: synth both, unify, allow Byte/Int cross-comparison
   lr := ctx.synth(lhs, diags)
   rr := lr.ctx.synth(rhs, lr.diags)
   left_z := zonk(lr.ty, rr.ctx.subst)
   right_z := zonk(rr.ty, rr.ctx.subst)
+
   if is_int_or_byte(left_z) and is_int_or_byte(right_z) {
     return .{ ty: MonoType.Bool, ctx: rr.ctx, diags: rr.diags }
   }
+
   u := rr.ctx.unify(lr.ty, rr.ty, s, rr.diags)
   unified_ty := zonk(lr.ty, u.ctx.subst)
   check_eq_contract(unified_ty, u.ctx, u.diags, s)
 }
 
-fn check_eq_contract(operand_ty: MonoType, ctx: InferCtx, diags: Vector<DiagKind>, s: Span) SynthOut {
+fn check_eq_contract(
+  operand_ty: MonoType,
+  ctx: InferCtx,
+  diags: Vector<DiagKind>,
+  s: Span,
+) SynthOut {
   zonked := expand_alias(zonk(operand_ty, ctx.subst), ctx.env, 0)
+
   // Skip check for meta variables (not yet resolved), primitives (always Eq),
   // and type variables (enforced at call site via bounds, not at == site)
   if is_primitive_eq(zonked) or contains_type_var(zonked) {
     return .{ ty: MonoType.Bool, ctx, diags }
   }
+
   case zonked {
     .MetaVar(_) => { return .{ ty: MonoType.Bool, ctx, diags } },
     _ => {},
   }
+
   proof := satisfies_contract(zonked, .Eq, ctx)
+
   case proof {
     .Ok(next_ctx) => .{ ty: MonoType.Bool, ctx: next_ctx, diags },
     .Err(reason) => {
-      .{ ty: MonoType.Bool, ctx, diags: diags.append(.Error(.ContractViolation(.{
-        span: s,
-        ty: zonked,
-        contract: "Eq",
-        owner: "==",
-        reason,
-      }))) }
+      .{
+        ty: MonoType.Bool,
+        ctx,
+        diags: diags.append(
+          .Error(
+            .ContractViolation(
+              .{ span: s, ty: zonked, contract: "Eq", owner: "==", reason },
+            ),
+          ),
+        ),
+      }
     },
   }
 }
@@ -2919,31 +4327,49 @@ fn contains_type_var(ty: MonoType) Bool {
     .Dict(k, v) => contains_type_var(k) or contains_type_var(v),
     .Function(params, ret) => {
       for p in params {
-        if contains_type_var(p) { return true }
+        if contains_type_var(p) {
+          return true
+        }
       }
+
       contains_type_var(ret)
     },
     .Optional(inner) => contains_type_var(inner),
     .Result(ok, err) => contains_type_var(ok) or contains_type_var(err),
     .Named(_, args) => {
       for a in args {
-        if contains_type_var(a) { return true }
+        if contains_type_var(a) {
+          return true
+        }
       }
+
       false
     },
     _ => false,
   }
 }
 
-fn synth_unary(op: UnOp, operand: Expr, s: Span, ctx: InferCtx, diags: Vector<DiagKind>) SynthOut {
+fn synth_unary(
+  op: UnOp,
+  operand: Expr,
+  s: Span,
+  ctx: InferCtx,
+  diags: Vector<DiagKind>,
+) SynthOut {
   case op {
     .Neg => {
       r := ctx.synth(operand, diags)
       zonked := zonk(r.ty, r.ctx.subst)
-      result_diags := if is_numeric(zonked) or (case zonked { .MetaVar(_) => true, _ => false }) {
-        r.diags
-      } else {
-        r.diags.append(.Error(.InvalidOperand(.{ span: s, ty: zonked, operation: "negation" })))
+      result_diags := if is_numeric(zonked)
+      or case zonked {
+        .MetaVar(_) => true,
+        _ => false,
+      } { r.diags } else {
+        r.diags.append(
+          .Error(
+            .InvalidOperand(.{ span: s, ty: zonked, operation: "negation" }),
+          ),
+        )
       }
       .{ ty: r.ty, ctx: r.ctx, diags: result_diags }
     },
@@ -2955,6 +4381,7 @@ fn synth_unary(op: UnOp, operand: Expr, s: Span, ctx: InferCtx, diags: Vector<Di
     .BitNot => {
       r := ctx.synth(operand, diags)
       zonked := zonk(r.ty, r.ctx.subst)
+
       case zonked {
         .Int => .{ ty: MonoType.Int, ctx: r.ctx, diags: r.diags },
         .Byte => .{ ty: MonoType.Int, ctx: r.ctx, diags: r.diags },
@@ -2963,13 +4390,24 @@ fn synth_unary(op: UnOp, operand: Expr, s: Span, ctx: InferCtx, diags: Vector<Di
           .{ ty: MonoType.Int, ctx: u.ctx, diags: u.diags }
         },
         _ => {
-          .{ ty: MonoType.Int, ctx: r.ctx, diags: r.diags.append(.Error(.InvalidOperand(.{ span: s, ty: zonked, operation: "bitwise not" }))) }
+          .{
+            ty: MonoType.Int,
+            ctx: r.ctx,
+            diags: r.diags.append(
+              .Error(
+                .InvalidOperand(
+                  .{ span: s, ty: zonked, operation: "bitwise not" },
+                ),
+              ),
+            ),
+          }
         },
       }
     },
     .Try => {
       r := ctx.synth(operand, diags)
       zonked := zonk(r.ty, r.ctx.subst)
+
       case zonked {
         .Optional(inner) => {
           // try on Option: function must return Option
@@ -2977,10 +4415,16 @@ fn synth_unary(op: UnOp, operand: Expr, s: Span, ctx: InferCtx, diags: Vector<Di
             .Some(ret_ty) => {
               case zonk(ret_ty, r.ctx.subst) {
                 .Optional(_) => r.diags,
-                _ => r.diags.append(.Error(.TryReturnMismatch(.{ span: s, expected_kind: "Option" }))),
+                _ => r.diags.append(
+                  .Error(
+                    .TryReturnMismatch(.{ span: s, expected_kind: "Option" }),
+                  ),
+                ),
               }
             },
-            .None => r.diags.append(.Error(.TryReturnMismatch(.{ span: s, expected_kind: "Option" }))),
+            .None => r.diags.append(
+              .Error(.TryReturnMismatch(.{ span: s, expected_kind: "Option" })),
+            ),
           }
           .{ ty: inner, ctx: r.ctx, diags: try_diags }
         },
@@ -2994,10 +4438,26 @@ fn synth_unary(op: UnOp, operand: Expr, s: Span, ctx: InferCtx, diags: Vector<Di
                   // Thread u.ctx so MetaVar substitutions from error unification are preserved
                   .{ ty: ok_ty, ctx: u.ctx, diags: u.diags }
                 },
-                _ => .{ ty: ok_ty, ctx: r.ctx, diags: r.diags.append(.Error(.TryReturnMismatch(.{ span: s, expected_kind: "Result" }))) },
+                _ => .{
+                  ty: ok_ty,
+                  ctx: r.ctx,
+                  diags: r.diags.append(
+                    .Error(
+                      .TryReturnMismatch(.{ span: s, expected_kind: "Result" }),
+                    ),
+                  ),
+                },
               }
             },
-            .None => .{ ty: ok_ty, ctx: r.ctx, diags: r.diags.append(.Error(.TryReturnMismatch(.{ span: s, expected_kind: "Result" }))) },
+            .None => .{
+              ty: ok_ty,
+              ctx: r.ctx,
+              diags: r.diags.append(
+                .Error(
+                  .TryReturnMismatch(.{ span: s, expected_kind: "Result" }),
+                ),
+              ),
+            },
           }
           try_result
         },
@@ -3006,7 +4466,9 @@ fn synth_unary(op: UnOp, operand: Expr, s: Span, ctx: InferCtx, diags: Vector<Di
           .{
             ty: m.ty,
             ctx: m.ctx,
-            diags: r.diags.append(.Error(.TryOperandError(.{ span: s, ty: zonked }))),
+            diags: r.diags.append(
+              .Error(.TryOperandError(.{ span: s, ty: zonked })),
+            ),
           }
         },
       }
@@ -3014,11 +4476,17 @@ fn synth_unary(op: UnOp, operand: Expr, s: Span, ctx: InferCtx, diags: Vector<Di
   }
 }
 
-fn synth_index(base: Expr, idx: Expr, s: Span, ctx: InferCtx, diags: Vector<DiagKind>) SynthOut {
+fn synth_index(
+  base: Expr,
+  idx: Expr,
+  s: Span,
+  ctx: InferCtx,
+  diags: Vector<DiagKind>,
+) SynthOut {
   br := ctx.synth(base, diags)
   ir := br.ctx.synth(idx, br.diags)
-
   zonked_base := zonk(br.ty, ir.ctx.subst)
+
   case zonked_base {
     .Vector(elem) => {
       u := ir.ctx.unify(ir.ty, MonoType.Int, idx.span, ir.diags)
@@ -3037,13 +4505,20 @@ fn synth_index(base: Expr, idx: Expr, s: Span, ctx: InferCtx, diags: Vector<Diag
       .{
         ty: m.ty,
         ctx: m.ctx,
-        diags: ir.diags.append(.Error(.NotIndexable(.{ span: s, ty: zonked_base }))),
+        diags: ir.diags.append(
+          .Error(.NotIndexable(.{ span: s, ty: zonked_base })),
+        ),
       }
     },
   }
 }
 
-fn check_interpolation_expr(expr: Expr, expr_ty: MonoType, ctx: InferCtx, diags: Vector<DiagKind>) CheckOut {
+fn check_interpolation_expr(
+  expr: Expr,
+  expr_ty: MonoType,
+  ctx: InferCtx,
+  diags: Vector<DiagKind>,
+) CheckOut {
   zonked := expand_alias(zonk(expr_ty, ctx.subst), ctx.env, 0)
 
   case zonked {
@@ -3053,13 +4528,32 @@ fn check_interpolation_expr(expr: Expr, expr_ty: MonoType, ctx: InferCtx, diags:
   }
 
   proof := satisfies_contract(zonked, .Stringify, ctx)
+
   case proof {
-    .Err(reason) => .{ ctx, diags: diags.append(.Error(.CannotInterpolate(.{ span: expr.span, ty: zonked, reason: "to_string ${reason}" }))) },
+    .Err(reason) => .{
+      ctx,
+      diags: diags.append(
+        .Error(
+          .CannotInterpolate(
+            .{ span: expr.span, ty: zonked, reason: "to_string ${reason}" },
+          ),
+        ),
+      ),
+    },
     .Ok(proof_ctx) => {
       info := case zonked {
-        .Var(_) => MethodCallInfo.{ func_name: "", has_receiver: true, contract: .Some(.Stringify), method_name: "to_string" },
+        .Var(_) => MethodCallInfo.{
+          func_name: "",
+          has_receiver: true,
+          contract: .Some(.Stringify),
+          method_name: "to_string",
+        },
         _ => {
-          fn_name := case resolve_method_func_name(zonked, "to_string", proof_ctx.env) {
+          fn_name := case resolve_method_func_name(
+            zonked,
+            "to_string",
+            proof_ctx.env,
+          ) {
             .Some(name) => name,
             .None => {
               case zonked {
@@ -3072,7 +4566,12 @@ fn check_interpolation_expr(expr: Expr, expr_ty: MonoType, ctx: InferCtx, diags:
               }
             },
           }
-          MethodCallInfo.{ func_name: fn_name, has_receiver: true, contract: .None, method_name: "to_string" }
+          MethodCallInfo.{
+            func_name: fn_name,
+            has_receiver: true,
+            contract: .None,
+            method_name: "to_string",
+          }
         },
       }
       proof_ctx.method_calls[expr.id] = info
@@ -3081,9 +4580,14 @@ fn check_interpolation_expr(expr: Expr, expr_ty: MonoType, ctx: InferCtx, diags:
   }
 }
 
-fn synth_string_interp(parts: Vector<StringPart>, ctx: InferCtx, diags: Vector<DiagKind>) SynthOut {
+fn synth_string_interp(
+  parts: Vector<StringPart>,
+  ctx: InferCtx,
+  diags: Vector<DiagKind>,
+) SynthOut {
   cur_ctx := ctx
   cur_diags := diags
+
   for part in parts {
     case part {
       .Literal(_) => {},
@@ -3097,11 +4601,11 @@ fn synth_string_interp(parts: Vector<StringPart>, ctx: InferCtx, diags: Vector<D
       },
     }
   }
+
   .{ ty: MonoType.String, ctx: cur_ctx, diags: cur_diags }
 }
 
 // ── Block / Statement handling ──────────────────────────────────────
-
 fn synth_block(block: Block, ctx: InferCtx, diags: Vector<DiagKind>) SynthOut {
   cur_ctx := push_scope(ctx)
   cur_diags := diags
@@ -3119,17 +4623,21 @@ fn synth_block(block: Block, ctx: InferCtx, diags: Vector<DiagKind>) SynthOut {
     },
     .None => {
       // If the last statement diverges, the block type is Never, not Void
-      block_ty := if block.stmts.len() > 0 and stmt_diverges(block.stmts[block.stmts.len() - 1], cur_ctx) {
+      block_ty := if block.stmts.len() > 0
+      and stmt_diverges(block.stmts[block.stmts.len() - 1], cur_ctx) {
         MonoType.Never
-      } else {
-        MonoType.Void
-      }
+      } else { MonoType.Void }
       .{ ty: block_ty, ctx: pop_scope(cur_ctx), diags: cur_diags }
     },
   }
 }
 
-fn check_block(block: Block, expected: MonoType, ctx: InferCtx, diags: Vector<DiagKind>) CheckOut {
+fn check_block(
+  block: Block,
+  expected: MonoType,
+  ctx: InferCtx,
+  diags: Vector<DiagKind>,
+) CheckOut {
   cur_ctx := push_scope(ctx)
   cur_diags := diags
 
@@ -3149,6 +4657,7 @@ fn check_block(block: Block, expected: MonoType, ctx: InferCtx, diags: Vector<Di
       diverges := if block.stmts.len() > 0 {
         stmt_diverges(block.stmts[block.stmts.len() - 1], cur_ctx)
       } else { false }
+
       if diverges {
         .{ ctx: pop_scope(cur_ctx), diags: cur_diags }
       } else {
@@ -3182,7 +4691,10 @@ fn returns_never(sig: FunctionSig) Bool {
 fn call_diverges(callee: Expr, ctx: InferCtx) Bool {
   case callee.kind {
     .Ident(name) => {
-      if name == "error" { return true }
+      if name == "error" {
+        return true
+      }
+
       case ctx.env.lookup_function(name) {
         .Some(sig) => returns_never(sig),
         .None => false,
@@ -3191,11 +4703,15 @@ fn call_diverges(callee: Expr, ctx: InferCtx) Bool {
     .Field(base, method_name) => {
       case base.kind {
         .Ident(alias) => {
-          if !is_module_alias(ctx, alias) { return false }
+          if !is_module_alias(ctx, alias) {
+            return false
+          }
+
           fn_name := case ctx.env.lookup_method(alias, method_name) {
             .Some(found) => found,
             .None => { return false },
           }
+
           case ctx.env.lookup_registered_function(fn_name) {
             .Some(sig) => returns_never(sig),
             .None => false,
@@ -3232,9 +4748,7 @@ fn block_diverges(block: Block, ctx: InferCtx) Bool {
     .None => {
       if block.stmts.len() > 0 {
         stmt_diverges(block.stmts[block.stmts.len() - 1], ctx)
-      } else {
-        false
-      }
+      } else { false }
     },
   }
 }
@@ -3314,24 +4828,37 @@ fn check_top_level_stmt(stmt: Stmt, ctx: InferCtx, diags: Vector<DiagKind>) Chec
 fn check_let(ls: LetStmt, ctx: InferCtx, diags: Vector<DiagKind>) CheckOut {
   if ls.is_rebind {
     if ctx.pub_names.has(ls.name) {
-      return .{ ctx, diags: diags.append(.Error(.PublicRebind(.{ span: ls.span, name: ls.name }))) }
+      return .{
+        ctx,
+        diags: diags.append(
+          .Error(.PublicRebind(.{ span: ls.span, name: ls.name })),
+        ),
+      }
     }
+
     // Assignment: x = value — check against the existing binding type
     case lookup_local(ctx, ls.name) {
       .Some(existing_ty) => {
         val_r := ctx.check_expr(ls.value, existing_ty, diags)
+
         return .{ ctx: val_r.ctx, diags: val_r.diags }
       },
       .None => {
         val_r := ctx.synth(ls.value, diags)
-        return .{ ctx: val_r.ctx, diags: val_r.diags.append(.Error(.UndefinedVar(.{ span: ls.span, name: ls.name }))) }
+
+        return .{
+          ctx: val_r.ctx,
+          diags: val_r.diags.append(
+            .Error(.UndefinedVar(.{ span: ls.span, name: ls.name })),
+          ),
+        }
       },
     }
   }
+
   // Track pub bindings
-  if ls.is_pub {
-    ctx.pub_names[ls.name] = true
-  }
+  if ls.is_pub { ctx.pub_names[ls.name] = true }
+
   case ls.ty {
     .Some(ty_expr) => {
       // Annotated: x: T = value — use check mode to push expected type down
@@ -3367,7 +4894,6 @@ fn check_return(rs: ReturnStmt, ctx: InferCtx, diags: Vector<DiagKind>) CheckOut
 }
 
 // ── Function checking ───────────────────────────────────────────────
-
 fn check_function(decl: FunctionDecl, ctx: InferCtx, diags: Vector<DiagKind>) CheckOut {
   case ctx.env.lookup_function(decl.name) {
     .Some(sig) => {
@@ -3398,9 +4924,10 @@ fn check_function(decl: FunctionDecl, ctx: InferCtx, diags: Vector<DiagKind>) Ch
           inferred_ret := zonk(body_r.ty, result_ctx.subst)
           updated_fns := collect f in result_ctx.env.functions {
             if f.name == decl.name { f.ret = .Some(inferred_ret) }
+
             f
           }
-          result_ctx.env = .with_functions(updated_fns)
+          result_ctx.env = result_ctx.env.with_functions(updated_fns)
           .{ ctx: result_ctx, diags: body_r.diags }
         },
       }
@@ -3410,16 +4937,25 @@ fn check_function(decl: FunctionDecl, ctx: InferCtx, diags: Vector<DiagKind>) Ch
 }
 
 // ── Public API ──────────────────────────────────────────────────────
-
 fn collect_module_aliases(module: Module) Dict<String, Bool> {
   builtin_module_aliases: Vector<String> = [
-    "Cell", "Dict", "Iterator", "Option", "Result", "Task",
-    "Vector", "String", "Int", "Float", "Bool", "Byte",
+    "Cell",
+    "Dict",
+    "Iterator",
+    "Option",
+    "Result",
+    "Task",
+    "Vector",
+    "String",
+    "Int",
+    "Float",
+    "Bool",
+    "Byte",
   ]
   aliases: Dict<String, Bool> = Dict.new()
-  for alias in builtin_module_aliases {
-    aliases[alias] = true
-  }
+
+  for alias in builtin_module_aliases { aliases[alias] = true }
+
   for item in module.items {
     case item {
       .Use(decl) => {
@@ -3427,20 +4963,21 @@ fn collect_module_aliases(module: Module) Dict<String, Bool> {
           .Some(_) => { continue },
           .None => {},
         }
-        fallback := if decl.path.len() > 0 {
-          decl.path[decl.path.len() - 1]
-        } else {
+
+        fallback := if decl.path.len() > 0 { decl.path[decl.path.len() - 1] } else {
           ""
         }
         alias := case decl.alias {
           .Some(name) => name,
           .None => fallback,
         }
+
         if alias != "" { aliases[alias] = true }
       },
       _ => {},
     }
   }
+
   aliases
 }
 
@@ -3478,6 +5015,7 @@ pub fn check(module: Module, env: ResolvedEnv) CheckResult {
 
   // Pass 2: function bodies.
   diags_before_pass2 := cur_diags.len()
+
   for item in module.items {
     case item {
       .Function(decl) => {
@@ -3493,26 +5031,27 @@ pub fn check(module: Module, env: ResolvedEnv) CheckResult {
   // Now that all function return types are inferred, re-synthesize these
   // bindings to get correct types and report real errors.
   any_type_updated := false
+
   for item in module.items {
     case item {
       .Stmt(.Let(ls)) => {
         case ls.ty {
           .None => {
             r := check_let(ls, ctx, cur_diags)
+
             // Check if the type changed from Pass 1
             case lookup_local(r.ctx, ls.name) {
               .Some(new_ty) => {
                 case lookup_local(ctx, ls.name) {
                   .Some(old_ty) => {
-                    if old_ty != new_ty {
-                      any_type_updated = true
-                    }
+                    if old_ty != new_ty { any_type_updated = true }
                   },
                   .None => { any_type_updated = true },
                 }
               },
               .None => {},
             }
+
             ctx = r.ctx
             cur_diags = r.diags
           },
@@ -3527,6 +5066,7 @@ pub fn check(module: Module, env: ResolvedEnv) CheckResult {
   // functions that may have seen stale types.
   if any_type_updated and cur_diags.len() > diags_before_pass2 {
     cur_diags = .slice(0, diags_before_pass2)
+
     for item in module.items {
       case item {
         .Function(decl) => {
@@ -3543,11 +5083,13 @@ pub fn check(module: Module, env: ResolvedEnv) CheckResult {
   // Deduplicate by span_start so one root ambiguity emits at most one diagnostic.
   final_map: Dict<Int, MonoType> = Dict.new()
   reported_spans: Dict<Int, Bool> = Dict.new()
+
   for key in ctx.type_map.keys() {
     case ctx.type_map[key] {
       .Some(ty) => {
         zonked := zonk_with_meta(ty, ctx.subst)
         final_map[key] = zonked.ty
+
         if zonked.has_meta {
           // Only report for entries with a known source position.  Entries
           // written via set_type_map (no span) are internal type-name nodes;
@@ -3557,7 +5099,19 @@ pub fn check(module: Module, env: ResolvedEnv) CheckResult {
             .Some(span_start) => {
               if !reported_spans.has(span_start) {
                 reported_spans[span_start] = true
-                cur_diags = .append(.Error(.AmbiguousType(.{ span: .{ file_id: 0, start: span_start, end: span_start } })))
+                cur_diags = .append(
+                  .Error(
+                    .AmbiguousType(
+                      .{
+                        span: .{
+                          file_id: 0,
+                          start: span_start,
+                          end: span_start,
+                        },
+                      },
+                    ),
+                  ),
+                )
               }
             },
             .None => {},
@@ -3570,8 +5124,10 @@ pub fn check(module: Module, env: ResolvedEnv) CheckResult {
 
   // Collect pub value types from module-level scope.
   pub_values: Dict<String, MonoType> = Dict.new()
+
   if ctx.locals.len() > 0 {
     module_scope := ctx.locals[0]
+
     for name in ctx.pub_names.keys() {
       case module_scope[name] {
         .Some(ty) => { pub_values[name] = zonk(ty, ctx.subst) },

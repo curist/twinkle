@@ -7,35 +7,36 @@
 // optimized semantic ANF and the backend. All backend passes must flow
 // through that boundary. See boot/compiler/backend/prepare.tw for the
 // migration contract and per-phase plan.
-
 use @std.date
 use @std.proc
-use compiler.resolver.{ResolvedEnv}
-use compiler.builtins.{BuiltinRegistry}
+
 use compiler.anf.{AnfModule}
-use compiler.codegen.wasm_ir.{WasmModule}
-
-use compiler.codegen.wasm_plan.{plan_wasm_types}
-use compiler.codegen.wasm_layout.{EqTypeLayouts, collect_eq_type_layouts}
+use compiler.backend.closure_convert.{convert_closures}
+use compiler.backend.prepare.{prepare_backend}
+use compiler.backend.task_validate.{validate_tasks}
+use compiler.backend.verify.{VerifyLevel, verify_prepared_module_with_level}
+use compiler.builtins.{BuiltinRegistry}
 use compiler.codegen.emit.{emit_module}
-use compiler.codegen.linker.{link, LinkedModule}
-
-use compiler.codegen.wat.{emit_wat}
-use compiler.codegen.wasm.{emit_linked_wasm}
-use compiler.codegen.runtime.types as rt_types
-use compiler.codegen.runtime.core as rt_core
-use compiler.codegen.runtime.str as rt_str
+use compiler.codegen.intrinsics as cg_intrinsics
+use compiler.codegen.linker.{LinkedModule, link}
 use compiler.codegen.runtime.arr as rt_arr
+use compiler.codegen.runtime.core as rt_core
 use compiler.codegen.runtime.dict as rt_dict
 use compiler.codegen.runtime.sched as rt_sched
-use compiler.codegen.intrinsics as cg_intrinsics
-use compiler.backend.prepare.{prepare_backend}
-use compiler.backend.verify.{verify_prepared_module_with_level, VerifyLevel}
-use compiler.backend.closure_convert.{convert_closures}
-use compiler.backend.task_validate.{validate_tasks}
+use compiler.codegen.runtime.str as rt_str
+use compiler.codegen.runtime.types as rt_types
+use compiler.codegen.wasm.{emit_linked_wasm}
+use compiler.codegen.wasm_ir.{WasmModule}
+use compiler.codegen.wasm_layout.{EqTypeLayouts, collect_eq_type_layouts}
+use compiler.codegen.wasm_plan.{plan_wasm_types}
+use compiler.codegen.wat.{emit_wat}
+use compiler.resolver.{ResolvedEnv}
 
 fn timings_enabled() Bool {
-  case proc.env("TWINKLE_TIMINGS") { .Some(_) => true, .None => false }
+  case proc.env("TWINKLE_TIMINGS") {
+    .Some(_) => true,
+    .None => false,
+  }
 }
 
 fn log_time(label: String, ms: Float) {
@@ -61,17 +62,13 @@ pub fn runtime_modules(eq_layouts: EqTypeLayouts) Vector<WasmModule> {
   ]
 }
 
-pub fn link_program(
-  anf: AnfModule,
-  env: ResolvedEnv,
-  builtins: BuiltinRegistry,
-) LinkedModule {
+pub fn link_program(anf: AnfModule, env: ResolvedEnv, builtins: BuiltinRegistry) LinkedModule {
   timed := timings_enabled()
-
   // 1. Final closure conversion.
   t0 := date.now()
   closure_conversion := convert_closures(anf, env)
   t1 := date.now()
+
   if timed { log_time("closure_convert", t1 - t0) }
 
   // 1b. Validate task suspension points.
@@ -88,24 +85,34 @@ pub fn link_program(
     closure_conversion.captures,
   )
   t2 := date.now()
+
   if timed { log_time("prepare_backend", t2 - t1) }
 
   // 3. Verify prepared backend IR.
-  case verify_prepared_module_with_level(prepared, env, builtins, verify_level_from_env()) {
+  case verify_prepared_module_with_level(
+    prepared,
+    env,
+    builtins,
+    verify_level_from_env(),
+  ) {
     .Ok(_) => {},
     .Err(msg) => error(msg),
   }
+
   t3 := date.now()
+
   if timed { log_time("verify", t3 - t2) }
 
   // 4. Plan Wasm types from prepared backend IR.
   registry := plan_wasm_types(prepared, env, builtins)
   t4 := date.now()
+
   if timed { log_time("plan_wasm_types", t4 - t3) }
 
   // 5. Emit user module from prepared backend IR.
   user_module := emit_module(prepared, registry, builtins, env)
   t5 := date.now()
+
   if timed { log_time("emit_module", t5 - t4) }
 
   // 6. Link with runtime
@@ -115,6 +122,7 @@ pub fn link_program(
     .Ok(l) => l,
     .Err(errors) => {
       msg := "Link errors:"
+
       for e in errors {
         case e {
           .MissingExport(mod, name) => {
@@ -122,33 +130,31 @@ pub fn link_program(
           },
         }
       }
+
       error(msg)
     },
   }
   t6 := date.now()
+
   if timed { log_time("link", t6 - t5) }
 
   linked
 }
 
-pub fn codegen(
-  anf: AnfModule,
-  env: ResolvedEnv,
-  builtins: BuiltinRegistry,
-) String {
+pub fn codegen(anf: AnfModule, env: ResolvedEnv, builtins: BuiltinRegistry) String {
   emit_wat(link_program(anf, env, builtins))
 }
 
-pub fn codegen_wasm(
-  anf: AnfModule,
-  env: ResolvedEnv,
-  builtins: BuiltinRegistry,
-) Vector<Byte> {
+pub fn codegen_wasm(anf: AnfModule, env: ResolvedEnv, builtins: BuiltinRegistry) Vector<
+  Byte,
+> {
   linked := link_program(anf, env, builtins)
   timed := timings_enabled()
   t0 := date.now()
   bytes := emit_linked_wasm(linked)
   t1 := date.now()
+
   if timed { log_time("emit_wasm_binary", t1 - t0) }
+
   bytes
 }

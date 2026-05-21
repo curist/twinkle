@@ -1,18 +1,22 @@
 // Lvalue assignment lowering.
-
-use lib.source.span.{Span}
 use compiler.ast.{Expr}
-use compiler.core_ir.{CoreExpr, CoreExprKind, LocalId, FieldId}
-use compiler.lower_core.context.{LowerCtx, ExprOut}
+use compiler.core_ir.{CoreExpr, CoreExprKind, FieldId, LocalId}
+use compiler.lower_core.context.{ExprOut, LowerCtx}
 use compiler.lower_core.types.{find_field_index_in_type, type_id_from_mono}
+use lib.source.span.{Span}
 
 // ── Lvalue chain lowering ────────────────────────────────────────────
-
 pub type LvalueOut = .{ root: LocalId, update: CoreExpr, ctx: LowerCtx }
 
 // Recursively lower an lvalue assignment: r.field = v, xs[i] = v, m[k] = v
 // Returns the root local and the update expression to assign to it.
-pub fn lower_lvalue_assign(ctx: LowerCtx, lhs: Expr, rhs_core: CoreExpr, s: Span, lower_expr_fn: fn(LowerCtx, Expr) ExprOut) LvalueOut? {
+pub fn lower_lvalue_assign(
+  ctx: LowerCtx,
+  lhs: Expr,
+  rhs_core: CoreExpr,
+  s: Span,
+  lower_expr_fn: fn(LowerCtx, Expr) ExprOut,
+) LvalueOut? {
   case lhs.kind {
     .Ident(name) => {
       case ctx.lookup_local_or_global(name) {
@@ -98,7 +102,11 @@ pub fn lower_lvalue_assign(ctx: LowerCtx, lhs: Expr, rhs_core: CoreExpr, s: Span
               update := CoreExpr.{
                 kind: .Call(
                   .{ kind: .GlobalFunc(func_id), ty: .Void, span: s },
-                  [CoreExpr.{ kind: base_kind, ty: base_ty, span: s }, ir.expr, rhs_core],
+                  [
+                    CoreExpr.{ kind: base_kind, ty: base_ty, span: s },
+                    ir.expr,
+                    rhs_core,
+                  ],
                 ),
                 ty: base_ty,
                 span: s,
@@ -131,4 +139,3 @@ pub fn lower_lvalue_assign(ctx: LowerCtx, lhs: Expr, rhs_core: CoreExpr, s: Span
     _ => .None,
   }
 }
-

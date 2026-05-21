@@ -1,7 +1,5 @@
 // Dead let elimination: remove Let(t, pure_op, body) where t is never used.
-
-use compiler.anf.{AnfExpr, AnfOp, AnfMatchArm}
-
+use compiler.anf.{AnfExpr, AnfMatchArm, AnfOp}
 use compiler.anf_analysis.{collect_assigned_locals, set_has}
 use compiler.opt.semantics.{OptimizerSemantics, empty_optimizer_semantics}
 use compiler.opt.use_count.{count_uses, is_pure_with_optimizer_semantics}
@@ -13,25 +11,44 @@ pub fn dead_let_elim(expr: AnfExpr) ElimResult {
 }
 
 pub fn dead_let_elim_with_pinned(expr: AnfExpr, pinned: Dict<Int, Bool>) ElimResult {
-  dead_let_elim_with_pinned_and_semantics(expr, pinned, empty_optimizer_semantics())
+  dead_let_elim_with_pinned_and_semantics(
+    expr,
+    pinned,
+    empty_optimizer_semantics(),
+  )
 }
 
-pub fn dead_let_elim_with_pinned_and_semantics(expr: AnfExpr, pinned: Dict<Int, Bool>, semantics: OptimizerSemantics) ElimResult {
+pub fn dead_let_elim_with_pinned_and_semantics(
+  expr: AnfExpr,
+  pinned: Dict<Int, Bool>,
+  semantics: OptimizerSemantics,
+) ElimResult {
   uses := count_uses(expr)
   assigned := collect_assigned_locals(expr)
+
   // Merge pinned into assigned so pinned locals are never eliminated
   for k in pinned.keys() { assigned[k] = true }
+
   dead_let_inner(expr, uses, assigned, semantics)
 }
 
-fn dead_let_inner(expr: AnfExpr, uses: Dict<Int, Int>, assigned: Dict<Int, Bool>, semantics: OptimizerSemantics) ElimResult {
+fn dead_let_inner(
+  expr: AnfExpr,
+  uses: Dict<Int, Int>,
+  assigned: Dict<Int, Bool>,
+  semantics: OptimizerSemantics,
+) ElimResult {
   case expr {
     .Let(local, op, body) => {
       use_count := uses[local.id].unwrap_or(0)
-      if use_count == 0 and !set_has(assigned, local.id) and is_pure_with_optimizer_semantics(op, body, semantics) {
+
+      if use_count == 0 and !set_has(assigned, local.id)
+      and is_pure_with_optimizer_semantics(op, body, semantics) {
         result := dead_let_inner(body, uses, assigned, semantics)
+
         return ElimResult.{ expr: result.expr, changed: true }
       }
+
       op_result := dead_let_op(op, uses, assigned, semantics)
       body_result := dead_let_inner(body, uses, assigned, semantics)
       ElimResult.{
@@ -45,7 +62,12 @@ fn dead_let_inner(expr: AnfExpr, uses: Dict<Int, Int>, assigned: Dict<Int, Bool>
 
 type OpElimResult = .{ op: AnfOp, changed: Bool }
 
-fn dead_let_op(op: AnfOp, uses: Dict<Int, Int>, assigned: Dict<Int, Bool>, semantics: OptimizerSemantics) OpElimResult {
+fn dead_let_op(
+  op: AnfOp,
+  uses: Dict<Int, Int>,
+  assigned: Dict<Int, Bool>,
+  semantics: OptimizerSemantics,
+) OpElimResult {
   case op {
     .AIf(cond, then_e, else_e) => {
       then_r := dead_let_inner(then_e, uses, assigned, semantics)
@@ -59,7 +81,9 @@ fn dead_let_op(op: AnfOp, uses: Dict<Int, Int>, assigned: Dict<Int, Bool>, seman
       changed := false
       new_arms: Vector<AnfMatchArm> = collect arm in arms {
         r := dead_let_inner(arm.body, uses, assigned, semantics)
+
         if r.changed { changed = true }
+
         AnfMatchArm.{ pattern: arm.pattern, body: r.expr }
       }
       OpElimResult.{ op: .AMatch(scrutinee, new_arms), changed: changed }

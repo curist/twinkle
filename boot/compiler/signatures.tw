@@ -5,48 +5,44 @@
 // never typechecked, lowered, or codegenned.
 //
 // This is the boot-side counterpart to src/intrinsics/signatures.rs.
-
 use @std.fs
 use @std.path
-use lib.module.core_lib
-use compiler.parser
+
 use compiler.ast.{Param, TypeExpr, TypeParam, type_param_names}
-
-use compiler.resolver.{FunctionSig, MethodEntry, ResolvedEnv, resolve_type_expr, ResolvedTypeParam, ResolvedContractRef}
-use compiler.mono_type.{MonoType}
-
 use compiler.contracts.{resolve_builtin_contract_name}
+use compiler.mono_type.{MonoType}
+use compiler.parser
+use compiler.resolver.{
+  FunctionSig, MethodEntry, ResolvedContractRef, ResolvedEnv, ResolvedTypeParam,
+  resolve_type_expr,
+}
+use lib.module.core_lib
 
 /// One file's worth of resolved signatures, tagged with an optional receiver
 /// type name.  receiver=None means the functions are free (e.g. range.tw).
-pub type SignatureGroup = .{
-  receiver: String?,
-  sigs: Vector<FunctionSig>,
-}
+pub type SignatureGroup = .{ receiver: String?, sigs: Vector<FunctionSig> }
 
 // ── receiver mapping ─────────────────────────────────────────────────────────
-
 fn receiver_for_stem(stem: String) String? {
   case stem {
-    "bool"     => .Some("Bool"),
-    "byte"     => .Some("Byte"),
-    "cell"     => .Some("Cell"),
-    "dict"     => .Some("Dict"),
-    "float"    => .Some("Float"),
-    "int"      => .Some("Int"),
+    "bool" => .Some("Bool"),
+    "byte" => .Some("Byte"),
+    "cell" => .Some("Cell"),
+    "dict" => .Some("Dict"),
+    "float" => .Some("Float"),
+    "int" => .Some("Int"),
     "iterator" => .Some("Iterator"),
-    "option"   => .Some("Option"),
-    "range"    => .None,
-    "result"   => .Some("Result"),
-    "string"   => .Some("String"),
-    "task"     => .Some("Task"),
-    "vector"   => .Some("Vector"),
-    _          => .None,
+    "option" => .Some("Option"),
+    "range" => .None,
+    "result" => .Some("Result"),
+    "string" => .Some("String"),
+    "task" => .Some("Task"),
+    "vector" => .Some("Vector"),
+    _ => .None,
   }
 }
 
 // ── canonical → internal name mapping ───────────────────────────────────────
-
 /// Map a canonical signature name to its boot-internal function name.
 /// For receiver groups the rule is <lowercase_receiver>_<canonical_name>,
 /// with a few String-receiver exceptions that keep their bare name.
@@ -65,24 +61,28 @@ pub fn to_internal_name(receiver: String?, canonical_name: String) String {
       // string_ prefix because their canonical names are already globally
       // unique (char_code_at, from_char_code, from_byte, from_code_point).
       if recv == "String" {
-        if canonical_name == "char_code_at" or canonical_name == "from_char_code" or canonical_name == "from_byte" or canonical_name == "from_code_point" {
+        if canonical_name == "char_code_at"
+        or canonical_name == "from_char_code"
+        or canonical_name == "from_byte"
+        or canonical_name == "from_code_point" {
           return canonical_name
         }
       }
+
       prefix := case recv {
-        "String"   => "string",
-        "Vector"   => "vector",
-        "Dict"     => "dict",
-        "Cell"     => "cell",
+        "String" => "string",
+        "Vector" => "vector",
+        "Dict" => "dict",
+        "Cell" => "cell",
         "Iterator" => "iterator",
-        "Option"   => "option",
-        "Result"   => "result",
-        "Task"     => "task",
-        "Int"      => "int",
-        "Float"    => "float",
-        "Bool"     => "bool",
-        "Byte"     => "byte",
-        _          => recv,
+        "Option" => "option",
+        "Result" => "result",
+        "Task" => "task",
+        "Int" => "int",
+        "Float" => "float",
+        "Bool" => "bool",
+        "Byte" => "byte",
+        _ => recv,
       }
       "${prefix}_${canonical_name}"
     },
@@ -93,20 +93,24 @@ pub fn to_internal_name(receiver: String?, canonical_name: String) String {
 /// These can be concatenated onto the hardcoded builtin list in base_env.
 pub fn all_internal_sigs(groups: Vector<SignatureGroup>) Vector<FunctionSig> {
   result: Vector<FunctionSig> = []
+
   for group in groups {
     for sig in group.sigs {
       internal := to_internal_name(group.receiver, sig.name)
-      result = .append(FunctionSig.{
-        name: internal,
-        type_params: sig.type_params,
-        param_names: sig.param_names,
-        params: sig.params,
-        ret: sig.ret,
-        doc: sig.doc,
-        extern_module: .None,
-      })
+      result = .append(
+        FunctionSig.{
+          name: internal,
+          type_params: sig.type_params,
+          param_names: sig.param_names,
+          params: sig.params,
+          ret: sig.ret,
+          doc: sig.doc,
+          extern_module: .None,
+        },
+      )
     }
   }
+
   result
 }
 
@@ -127,34 +131,48 @@ pub fn group_method_entries(group: SignatureGroup) Vector<MethodEntry> {
 }
 
 // ── type resolution ──────────────────────────────────────────────────────────
-
-fn resolve_type_params(ast_params: Vector<TypeParam>) Result<Vector<ResolvedTypeParam>, String> {
+fn resolve_type_params(ast_params: Vector<TypeParam>) Result<
+  Vector<ResolvedTypeParam>,
+  String,
+> {
   resolved: Vector<ResolvedTypeParam> = []
+
   for tp in ast_params {
     bounds: Vector<ResolvedContractRef> = []
+
     for bound_path in tp.bounds {
       seg := bound_path.segments[0]
       bound := case resolve_builtin_contract_name(seg) {
         .Some(c) => ResolvedContractRef.Builtin(c),
-        .None => { return .Err("unknown contract '${seg}'") },
+        .None => {
+          return .Err("unknown contract '${seg}'")
+        },
       }
       bounds = .append(bound)
     }
+
     resolved = .append(.{ name: tp.name, bounds })
   }
+
   .Ok(resolved)
 }
 
-fn resolve_param_type(env: ResolvedEnv, param: Param, type_vars: Vector<String>) Result<MonoType, String> {
+fn resolve_param_type(env: ResolvedEnv, param: Param, type_vars: Vector<String>) Result<
+  MonoType,
+  String,
+> {
   case param.ty {
     .None => .Err("parameter '${param.name}' has no type annotation"),
     .Some(ty_expr) => {
       r := resolve_type_expr(env, ty_expr, type_vars)
+
       case r.ty {
         .Some(mono) => .Ok(mono),
         .None => {
           case r.diagnostics.get(0) {
-            .Some(d) => .Err("type error in param '${param.name}': ${d.message()}"),
+            .Some(d) => .Err(
+              "type error in param '${param.name}': ${d.message()}",
+            ),
             .None => .Err("unknown type error in param '${param.name}'"),
           }
         },
@@ -163,11 +181,16 @@ fn resolve_param_type(env: ResolvedEnv, param: Param, type_vars: Vector<String>)
   }
 }
 
-fn resolve_return_type(env: ResolvedEnv, ret_expr: TypeExpr?, type_vars: Vector<String>) Result<MonoType?, String> {
+fn resolve_return_type(
+  env: ResolvedEnv,
+  ret_expr: TypeExpr?,
+  type_vars: Vector<String>,
+) Result<MonoType?, String> {
   case ret_expr {
     .None => .Ok(.None),
     .Some(ty_expr) => {
       r := resolve_type_expr(env, ty_expr, type_vars)
+
       case r.ty {
         .Some(mono) => .Ok(.Some(mono)),
         .None => {
@@ -182,55 +205,69 @@ fn resolve_return_type(env: ResolvedEnv, ret_expr: TypeExpr?, type_vars: Vector<
 }
 
 // ── per-file loading ─────────────────────────────────────────────────────────
-
 fn extract_doc_comment(source: String, decl_start: Int) String? {
   pos := decl_start - 1
-  for pos > 0 and source.char_code_at(pos) != 10 {
-    pos = pos - 1
-  }
+
+  for pos > 0 and source.char_code_at(pos) != 10 { pos = pos - 1 }
+
   if pos > 0 { pos = pos - 1 }
 
   lines: Vector<String> = []
+
   for pos >= 0 {
     line_start := pos
+
     for line_start > 0 and source.char_code_at(line_start - 1) != 10 {
       line_start = line_start - 1
     }
+
     line := source.slice(line_start, pos + 1)
     trimmed := line.trim()
+
     if trimmed.len() >= 3 and trimmed.slice(0, 3) == "///" {
       rest := if trimmed.len() > 3 and trimmed.slice(3, 4) == " " {
         trimmed.slice(4, trimmed.len())
-      } else {
-        trimmed.slice(3, trimmed.len())
-      }
+      } else { trimmed.slice(3, trimmed.len()) }
       lines = [rest].concat(lines)
+
       if line_start == 0 { break }
+
       pos = line_start - 2
     } else {
       break
     }
   }
-  if lines.len() == 0 { .None } else { .Some(lines.join("\n")) }
+
+  if lines.len() == 0 {
+    .None
+  } else {
+    .Some(lines.join("\n"))
+  }
 }
 
-fn load_group_from_source(src: String, receiver: String?, env: ResolvedEnv) Result<SignatureGroup, String> {
+fn load_group_from_source(src: String, receiver: String?, env: ResolvedEnv) Result<
+  SignatureGroup,
+  String,
+> {
   parsed := parser.parse(src, 0)
+
   if parsed.diagnostics.len() > 0 {
     return .Err("parse error: ${parsed.diagnostics[0].message()}")
   }
 
   sigs: Vector<FunctionSig> = []
+
   for item in parsed.value.items {
     case item {
       .Function(decl) => {
         if !decl.is_pub { continue }
+
         resolved_type_params := try resolve_type_params(decl.type_params)
         type_vars := type_param_names(decl.type_params)
-
         param_tys: Vector<MonoType> = []
         param_names: Vector<String> = []
         ok := true
+
         for param in decl.params {
           case resolve_param_type(env, param, type_vars) {
             .Ok(mono) => {
@@ -239,10 +276,12 @@ fn load_group_from_source(src: String, receiver: String?, env: ResolvedEnv) Resu
             },
             .Err(msg) => {
               ok = false
+
               return .Err("in function '${decl.name}': ${msg}")
             },
           }
         }
+
         if !ok { continue }
 
         ret := try resolve_return_type(env, decl.return_type, type_vars)
@@ -265,45 +304,48 @@ fn load_group_from_source(src: String, receiver: String?, env: ResolvedEnv) Resu
 }
 
 // ── public API ───────────────────────────────────────────────────────────────
-
 /// Load all prelude/signatures/*.tw files from the given signatures directory
 /// (e.g. "/path/to/twinkle/prelude/signatures").
 /// `type_env` should be a ResolvedEnv seeded with builtin named types only
 /// (no function signatures) — use builtin_type_env() from base_env.
 /// Returns one SignatureGroup per file, in sorted file-system order.
 /// Fails if the directory cannot be read or any file fails to parse/resolve.
-pub fn load_signatures(signatures_dir: String, type_env: ResolvedEnv) Result<Vector<SignatureGroup>, String> {
+pub fn load_signatures(signatures_dir: String, type_env: ResolvedEnv) Result<
+  Vector<SignatureGroup>,
+  String,
+> {
   entries := case core_lib.list_dir(signatures_dir) {
     .Some(es) => es,
     .None => case fs.list_dir(signatures_dir) {
       .Ok(es) => collect entry in es { entry.name },
-      .Err(_) => { return .Err("cannot read signatures directory: ${signatures_dir}") },
+      .Err(_) => {
+        return .Err("cannot read signatures directory: ${signatures_dir}")
+      },
     },
   }
-
   // collect .tw files and sort for determinism
   tw_files: Vector<String> = []
-  for name in entries {
-    if path.extension(name) == ".tw" {
-      tw_files = .append(name)
-    }
-  }
-  tw_files = .sort()
 
+  for name in entries {
+    if path.extension(name) == ".tw" { tw_files = .append(name) }
+  }
+
+  tw_files = .sort()
   groups: Vector<SignatureGroup> = []
+
   for filename in tw_files {
     stem := path.stem(filename)
     receiver := receiver_for_stem(stem)
     file_path := path.join(signatures_dir, filename)
-
     src := case core_lib.read_text(file_path) {
       .Some(s) => s,
       .None => case fs.read_text(file_path) {
         .Ok(s) => s,
-        .Err(_) => { return .Err("cannot read ${file_path}") },
+        .Err(_) => {
+          return .Err("cannot read ${file_path}")
+        },
       },
     }
-
     group := try load_group_from_source(src, receiver, type_env)
     groups = .append(group)
   }

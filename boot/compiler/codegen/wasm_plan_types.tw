@@ -1,19 +1,15 @@
 // Shared wasm planner types used by the legacy planner, emitter, and tests.
-
-use compiler.mono_type.{MonoType}
-use compiler.core_ir.{LocalId}
-use compiler.codegen.wasm_ir.{TypeDef, ImportDef}
+use compiler.codegen.wasm_ir.{ImportDef, TypeDef}
 use compiler.codegen.wasm_layout.{WasmLayout}
+use compiler.core_ir.{LocalId}
+use compiler.mono_type.{MonoType}
 
 pub type FuncSigEntry = .{
   param_types: Vector<MonoType>,
   return_type: MonoType,
 }
 
-pub type CaptureEntry = .{
-  local_id: LocalId,
-  ty: MonoType,
-}
+pub type CaptureEntry = .{ local_id: LocalId, ty: MonoType }
 
 pub type StringPoolEntry = .{
   global_sym: String,
@@ -23,10 +19,7 @@ pub type StringPoolEntry = .{
   byte_len: Int,
 }
 
-pub type ModuleGlobalEntry = .{
-  sym: String,
-  mono: MonoType,
-}
+pub type ModuleGlobalEntry = .{ sym: String, mono: MonoType }
 
 pub type WasmTypeRegistry = .{
   type_defs: Vector<TypeDef>,

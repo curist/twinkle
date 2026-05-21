@@ -5,17 +5,17 @@
 // that only contains the core compilation pipeline + diagnostic rendering.
 //
 // Usage:  playground.wasm <file> [args...]
-
-use @std.proc
 use @std.fs
-use compiler.pipeline
+use @std.proc
+
 use compiler.artifacts.{CompileError}
-use lib.source.registry
-use lib.source.report
-use lib.source.render
-use compiler.resolver.{ResolvedEnv}
-use compiler.query.diag_render
+use compiler.pipeline
 use compiler.query.analyze
+use compiler.query.diag_render
+use compiler.resolver.{ResolvedEnv}
+use lib.source.registry
+use lib.source.render
+use lib.source.report
 
 fn format_compile_error(err: CompileError) String {
   case err {
@@ -25,10 +25,14 @@ fn format_compile_error(err: CompileError) String {
 }
 
 fn format_analysis_diags(env: ResolvedEnv, diags: Vector<analyze.AnalysisDiag>) String {
-  if diags.len() == 0 { return "compilation failed" }
+  if diags.len() == 0 {
+    return "compilation failed"
+  }
+
   stage := diags[0].stage
   config := report.default_config()
   parts: Vector<String> = []
+
   for d in diags {
     source := case fs.read_text(d.identity.path) {
       .Ok(text) => text,
@@ -36,16 +40,24 @@ fn format_analysis_diags(env: ResolvedEnv, diags: Vector<analyze.AnalysisDiag>) 
     }
     reg := registry.empty()
     registry.add_file(reg, d.identity.path, source)
-    ctx := diag_render.RenderCtx.{ registry: reg, env: .Some(env), module: .None, config, type_names: .Some(d.type_names) }
+    ctx := diag_render.RenderCtx.{
+      registry: reg,
+      env: .Some(env),
+      module: .None,
+      config,
+      type_names: .Some(d.type_names),
+    }
     rep := diag_render.to_report(d.kind, ctx)
-    parts = parts.append(render.render(rep, reg, config))
+    parts = .append(render.render(rep, reg, config))
   }
+
   sep := "\n\n"
   "${stage}:\n${parts.join(sep)}"
 }
 
 fn print_warnings(warnings: Vector<analyze.AnalysisDiag>) {
   config := report.default_config()
+
   for d in warnings {
     source := case fs.read_text(d.identity.path) {
       .Ok(text) => text,
@@ -53,7 +65,13 @@ fn print_warnings(warnings: Vector<analyze.AnalysisDiag>) {
     }
     reg := registry.empty()
     registry.add_file(reg, d.identity.path, source)
-    ctx := diag_render.RenderCtx.{ registry: reg, env: .None, module: .None, config, type_names: .Some(d.type_names) }
+    ctx := diag_render.RenderCtx.{
+      registry: reg,
+      env: .None,
+      module: .None,
+      config,
+      type_names: .Some(d.type_names),
+    }
     rep := diag_render.to_report(d.kind, ctx)
     eprintln(render.render(rep, reg, config))
     eprintln("")
@@ -69,14 +87,11 @@ fn compile_and_run(file: String) {
     },
   }
   print_warnings(artifacts.warnings)
-
   wasm_bytes := pipeline.emit_wasm(artifacts)
   exit_code := proc.run_wasm(wasm_bytes, [file])
-  if exit_code != 0 {
-    proc.exit(exit_code)
-  }
+
+  if exit_code != 0 { proc.exit(exit_code) }
 }
 
 argv := proc.args()
-
 compile_and_run(argv[1])

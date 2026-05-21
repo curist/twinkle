@@ -1,19 +1,18 @@
 // Parse command: parse source and print diagnostics.
-
-use @std.proc
 use @std.fs
-use lib.argparse.app.{ParseResult}
-use lib.source.registry
-use lib.source.diagnostics as diag
+use @std.proc
+
+use commands.common.{exit_usage_error, fs_error_message, get_positional}
 use compiler.parser
-use commands.common.{get_positional, exit_usage_error, fs_error_message}
+use lib.argparse.app.{ParseResult}
+use lib.source.diagnostics as diag
+use lib.source.registry
 
 pub fn run_parse_command(parsed: ParseResult) {
   file := case get_positional(parsed, 0, "file") {
     .Ok(path) => path,
     .Err(msg) => { exit_usage_error(msg) },
   }
-
   source := case fs.read_text(file) {
     .Ok(text) => text,
     .Err(err) => {
@@ -21,25 +20,30 @@ pub fn run_parse_command(parsed: ParseResult) {
       proc.exit(1)
     },
   }
-
   reg := registry.empty()
   added := registry.add_file(reg, file, source)
   parsed_mod := parser.parse(source, added.file_id)
   item_count := parsed_mod.value.items.len()
   diag_count := parsed_mod.diagnostics.len()
+  println(
+    "parsed ${item_count} top-level item(s) with ${diag_count} diagnostic(s)",
+  )
 
-  println("parsed ${item_count} top-level item(s) with ${diag_count} diagnostic(s)")
   for d in parsed_mod.diagnostics {
     sp := d.span()
-    label := case d { .Error(_) => "error", .Warning(_) => "warning" }
+    label := case d {
+      .Error(_) => "error",
+      .Warning(_) => "warning",
+    }
     msg := d.message()
+
     case registry.line_col(reg, sp) {
-      .Some(pos) => eprintln("${file}:${pos.line}:${pos.column}: ${label}: ${msg}"),
+      .Some(pos) => eprintln(
+        "${file}:${pos.line}:${pos.column}: ${label}: ${msg}",
+      ),
       .None => eprintln("${file}:${sp.start}: ${label}: ${msg}"),
     }
   }
 
-  if diag.has_errors(parsed_mod.diagnostics) {
-    proc.exit(1)
-  }
+  if diag.has_errors(parsed_mod.diagnostics) { proc.exit(1) }
 }

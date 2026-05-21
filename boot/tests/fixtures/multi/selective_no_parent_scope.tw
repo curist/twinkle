@@ -1,5 +1,3 @@
 use .math_lib.{add}
 
-fn main() Int {
-  math_lib.add(1, 2)
-}
+fn main() Int { math_lib.add(1, 2) }

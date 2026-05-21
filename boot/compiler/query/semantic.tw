@@ -2,8 +2,6 @@
 //
 // This module exposes parsed/resolved/typed artifacts and lightweight source
 // lookup helpers without lowering or codegen.
-
-
 use compiler.base_env
 use compiler.checker.{CheckResult}
 use compiler.imports
@@ -30,24 +28,22 @@ pub type SemanticSnapshot = .{
 
 pub type SymbolKind = { Import, Type, Function, Let }
 
-pub type SymbolAtPosition = .{
-  name: String,
-  kind: SymbolKind,
-  span: Span,
-}
+pub type SymbolAtPosition = .{ name: String, kind: SymbolKind, span: Span }
 
-pub type EnclosingSyntax = .{
-  kind: String,
-  span: Span,
-}
+pub type EnclosingSyntax = .{ kind: String, span: Span }
 
-pub fn snapshot_workspace_from_cache(store: cache.Store, input: diagnostics.WorkspaceInput) SemanticSnapshot? {
+pub fn snapshot_workspace_from_cache(
+  store: cache.Store,
+  input: diagnostics.WorkspaceInput,
+) SemanticSnapshot? {
   id := case identity.from_file_uri(input.entry_uri) {
     .Ok(parsed) => parsed,
     .Err(_) => identity.from_path(input.entry_uri),
   }
-  canonical := imports.canonical_module_path(id.path, imports.make_canonical_roots(input.project_root))
-
+  canonical := imports.canonical_module_path(
+    id.path,
+    imports.make_canonical_roots(input.project_root),
+  )
   parsed := case cache.latest_parsed(store, canonical) {
     .Some(value) => value,
     .None => { return .None },
@@ -60,31 +56,34 @@ pub fn snapshot_workspace_from_cache(store: cache.Store, input: diagnostics.Work
     .Some(value) => value,
     .None => { return .None },
   }
-
   version: Int? = .None
+
   for doc in input.open_documents {
     doc_id := case identity.from_file_uri(doc.uri) {
       .Ok(p) => p,
       .Err(_) => identity.from_path(doc.uri),
     }
+
     if doc_id.path == id.path {
       version = doc.version
       break
     }
   }
 
-  .Some(.{
-    cache: store,
-    uri: id.uri,
-    canonical_path: canonical,
-    project_root: input.project_root,
-    version,
-    parsed: .Some(parsed),
-    resolved: .Some(resolved),
-    typed: .Some(typed),
-    diagnostics: [],
-    ok: true,
-  })
+  .Some(
+    .{
+      cache: store,
+      uri: id.uri,
+      canonical_path: canonical,
+      project_root: input.project_root,
+      version,
+      parsed: .Some(parsed),
+      resolved: .Some(resolved),
+      typed: .Some(typed),
+      diagnostics: [],
+      ok: true,
+    },
+  )
 }
 
 pub fn snapshot_workspace(store: cache.Store, input: diagnostics.WorkspaceInput) SemanticSnapshot {
@@ -92,21 +91,23 @@ pub fn snapshot_workspace(store: cache.Store, input: diagnostics.WorkspaceInput)
     .Ok(parsed) => parsed,
     .Err(_) => identity.from_path(input.entry_uri),
   }
-
   // Run full workspace analysis (resolves imports from disk/overlays).
   result := diagnostics.analyze_workspace(store, input)
   cur_cache := result.cache
-
   // Find the canonical path for this entry so we can look up cached artifacts.
-  canonical := imports.canonical_module_path(id.path, imports.make_canonical_roots(input.project_root))
-
+  canonical := imports.canonical_module_path(
+    id.path,
+    imports.make_canonical_roots(input.project_root),
+  )
   // Find diagnostics and version for this entry.
   version: Int? = .None
+
   for doc in input.open_documents {
     doc_id := case identity.from_file_uri(doc.uri) {
       .Ok(p) => p,
       .Err(_) => identity.from_path(doc.uri),
     }
+
     if doc_id.path == id.path {
       version = doc.version
       break
@@ -114,6 +115,7 @@ pub fn snapshot_workspace(store: cache.Store, input: diagnostics.WorkspaceInput)
   }
 
   entry_diags: Vector<diagnostics.Diagnostic> = []
+
   for group in result.diagnostics_by_uri {
     if group.uri == id.uri {
       entry_diags = group.diagnostics
@@ -125,7 +127,6 @@ pub fn snapshot_workspace(store: cache.Store, input: diagnostics.WorkspaceInput)
   parsed := cache.latest_parsed(cur_cache, canonical)
   resolved := cache.latest_resolved(cur_cache, canonical)
   typed := cache.latest_typed(cur_cache, canonical)
-
   .{
     cache: cur_cache,
     uri: id.uri,
@@ -148,45 +149,95 @@ pub fn snapshot(store: cache.Store, input: diagnostics.DocumentInput) SemanticSn
   source_hash := keys.hash_text(input.text)
   store = cache.note_source_hash(store, id.path, source_hash)
   runner := stage_runner.new(id.path, source_hash, 0, 0, false)
-
   parsed_out := stage_runner.parse(runner, store, input.text, 0)
   cur_cache := parsed_out.store
   parsed := parsed_out.value
+
   if parsed.diagnostics.len() > 0 {
     return .{
-      cache: cur_cache, uri: id.uri, canonical_path: id.path, project_root: "", version: input.version,
-      parsed: .Some(parsed), resolved: .None, typed: .None,
-      diagnostics: diagnostics.convert_diagnostics(input, "parse", parsed.diagnostics), ok: false,
+      cache: cur_cache,
+      uri: id.uri,
+      canonical_path: id.path,
+      project_root: "",
+      version: input.version,
+      parsed: .Some(parsed),
+      resolved: .None,
+      typed: .None,
+      diagnostics: diagnostics.convert_diagnostics(
+        input,
+        "parse",
+        parsed.diagnostics,
+      ),
+      ok: false,
     }
   }
 
-  resolved_out := stage_runner.resolve(runner, cur_cache, parsed, base_env.builtin_env())
+  resolved_out := stage_runner.resolve(
+    runner,
+    cur_cache,
+    parsed,
+    base_env.builtin_env(),
+  )
   cur_cache = resolved_out.store
   resolved := resolved_out.value
+
   if resolved.diagnostics.len() > 0 {
     return .{
-      cache: cur_cache, uri: id.uri, canonical_path: id.path, project_root: "", version: input.version,
-      parsed: .Some(parsed), resolved: .Some(resolved), typed: .None,
-      diagnostics: diagnostics.convert_diagnostics(input, "resolve", resolved.diagnostics), ok: false,
+      cache: cur_cache,
+      uri: id.uri,
+      canonical_path: id.path,
+      project_root: "",
+      version: input.version,
+      parsed: .Some(parsed),
+      resolved: .Some(resolved),
+      typed: .None,
+      diagnostics: diagnostics.convert_diagnostics(
+        input,
+        "resolve",
+        resolved.diagnostics,
+      ),
+      ok: false,
     }
   }
 
   checked_out := stage_runner.typecheck(runner, cur_cache, parsed, resolved)
   cur_cache = checked_out.store
   checked := checked_out.value
+
   if checked.diagnostics.len() > 0 {
     return .{
-      cache: cur_cache, uri: id.uri, canonical_path: id.path, project_root: "", version: input.version,
-      parsed: .Some(parsed), resolved: .Some(resolved), typed: .Some(checked),
-      diagnostics: diagnostics.convert_diagnostics(input, "check", checked.diagnostics), ok: false,
+      cache: cur_cache,
+      uri: id.uri,
+      canonical_path: id.path,
+      project_root: "",
+      version: input.version,
+      parsed: .Some(parsed),
+      resolved: .Some(resolved),
+      typed: .Some(checked),
+      diagnostics: diagnostics.convert_diagnostics(
+        input,
+        "check",
+        checked.diagnostics,
+      ),
+      ok: false,
     }
   }
 
   .{
-    cache: cache.set_module_hash(cur_cache, id.path, keys.module_hash(source_hash, 0)),
-    uri: id.uri, canonical_path: id.path, project_root: "", version: input.version,
-    parsed: .Some(parsed), resolved: .Some(resolved), typed: .Some(checked),
-    diagnostics: [], ok: true,
+    cache: cache.set_module_hash(
+      cur_cache,
+      id.path,
+      keys.module_hash(source_hash, 0),
+    ),
+    uri: id.uri,
+    canonical_path: id.path,
+    project_root: "",
+    version: input.version,
+    parsed: .Some(parsed),
+    resolved: .Some(resolved),
+    typed: .Some(checked),
+    diagnostics: [],
+    ok: true,
   }
 }
 
@@ -195,27 +246,48 @@ pub fn symbol_at_position(snap: SemanticSnapshot, byte_offset: Int) SymbolAtPosi
     .Some(value) => value,
     .None => { return .None },
   }
+
   for item in parsed.module.items {
     case item {
       .Use(decl) => {
         if decl.span.contains(byte_offset) {
-          return .Some(SymbolAtPosition.{ name: decl.path.join("."), kind: .Import, span: decl.span })
+          return .Some(
+            SymbolAtPosition.{
+              name: decl.path.join("."),
+              kind: .Import,
+              span: decl.span,
+            },
+          )
         }
       },
       .Type(decl) => {
         if decl.span.contains(byte_offset) {
-          return .Some(SymbolAtPosition.{ name: decl.name, kind: .Type, span: decl.span })
+          return .Some(
+            SymbolAtPosition.{ name: decl.name, kind: .Type, span: decl.span },
+          )
         }
       },
       .Function(decl) => {
         if decl.span.contains(byte_offset) {
-          return .Some(SymbolAtPosition.{ name: decl.name, kind: .Function, span: decl.span })
+          return .Some(
+            SymbolAtPosition.{
+              name: decl.name,
+              kind: .Function,
+              span: decl.span,
+            },
+          )
         }
       },
       .Stmt(stmt) => case stmt {
         .Let(let_stmt) => {
           if let_stmt.span.contains(byte_offset) {
-            return .Some(SymbolAtPosition.{ name: let_stmt.name, kind: .Let, span: let_stmt.span })
+            return .Some(
+              SymbolAtPosition.{
+                name: let_stmt.name,
+                kind: .Let,
+                span: let_stmt.span,
+              },
+            )
           }
         },
         _ => {},
@@ -223,6 +295,7 @@ pub fn symbol_at_position(snap: SemanticSnapshot, byte_offset: Int) SymbolAtPosi
       _ => {},
     }
   }
+
   .None
 }
 
@@ -231,19 +304,34 @@ pub fn enclosing_syntax(snap: SemanticSnapshot, byte_offset: Int) EnclosingSynta
     .Some(value) => value,
     .None => { return .None },
   }
+
   for item in parsed.module.items {
     case item {
-      .Use(decl) => if decl.span.contains(byte_offset) { return .Some(EnclosingSyntax.{ kind: "import", span: decl.span }) },
-      .Type(decl) => if decl.span.contains(byte_offset) { return .Some(EnclosingSyntax.{ kind: "type", span: decl.span }) },
-      .Function(decl) => if decl.span.contains(byte_offset) { return .Some(EnclosingSyntax.{ kind: "function", span: decl.span }) },
+      .Use(decl) => if decl.span.contains(byte_offset) {
+        return .Some(EnclosingSyntax.{ kind: "import", span: decl.span })
+      },
+      .Type(decl) => if decl.span.contains(byte_offset) {
+        return .Some(EnclosingSyntax.{ kind: "type", span: decl.span })
+      },
+      .Function(decl) => if decl.span.contains(byte_offset) {
+        return .Some(EnclosingSyntax.{ kind: "function", span: decl.span })
+      },
       .Stmt(stmt) => case stmt {
-        .Let(let_stmt) => if let_stmt.span.contains(byte_offset) { return .Some(EnclosingSyntax.{ kind: "let", span: let_stmt.span }) },
-        .Expr(expr_stmt) => if expr_stmt.span.contains(byte_offset) { return .Some(EnclosingSyntax.{ kind: "expr", span: expr_stmt.span }) },
+        .Let(let_stmt) => if let_stmt.span.contains(byte_offset) {
+          return .Some(EnclosingSyntax.{ kind: "let", span: let_stmt.span })
+        },
+        .Expr(expr_stmt) => if expr_stmt.span.contains(byte_offset) {
+          return .Some(EnclosingSyntax.{ kind: "expr", span: expr_stmt.span })
+        },
         _ => {},
       },
       _ => {},
     }
   }
-  if parsed.module.span.contains(byte_offset) { return .Some(EnclosingSyntax.{ kind: "module", span: parsed.module.span }) }
+
+  if parsed.module.span.contains(byte_offset) {
+    return .Some(EnclosingSyntax.{ kind: "module", span: parsed.module.span })
+  }
+
   .None
 }

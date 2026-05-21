@@ -1,10 +1,9 @@
 // Control-flow emission helpers for Wasm emission.
-
-use compiler.mono_type.{MonoType}
 use compiler.backend.prepared_ir.{PreparedAtom, PreparedExpr}
-use compiler.codegen.wasm_ir.{ValType, Instr}
 use compiler.codegen.emit.context.{EmitCtx, LabelPair}
 use compiler.codegen.emit.helpers.{expr_always_diverges}
+use compiler.codegen.wasm_ir.{Instr, ValType}
+use compiler.mono_type.{MonoType}
 
 pub type ControlEmitFns = .{
   emit_atom: fn(PreparedAtom, EmitCtx, Vector<Instr>) Vector<Instr>,
@@ -23,11 +22,9 @@ pub fn emit_if_op(
   fns: ControlEmitFns,
 ) Vector<Instr> {
   out := fns.emit_atom(cond, ctx, buf)
-
   // Nested sub-bodies must use fresh []
   then_instrs := fns.emit_expr(then_e, result_mono, ctx, [])
   else_instrs := fns.emit_expr(else_e, result_mono, ctx, [])
-
   then_div := expr_always_diverges(then_e)
   else_div := expr_always_diverges(else_e)
 
@@ -40,22 +37,32 @@ pub fn emit_if_op(
     // If one branch diverges, it won't produce a value, but that's OK
     // because it ends with Unreachable/Br
     then_body := then_instrs
+
     if !then_div {
       then_body = append_result_store(then_body, result_idx, result_mono)
     }
+
     else_body := else_instrs
+
     if !else_div {
       else_body = append_result_store(else_body, result_idx, result_mono)
     }
+
     out.append(.If(.None, then_body, else_body))
   }
 }
 
-pub fn emit_loop_op(body: PreparedExpr, result_idx: Int, result_vt: ValType?, ctx: EmitCtx, buf: Vector<Instr>, fns: ControlEmitFns) Vector<Instr> {
+pub fn emit_loop_op(
+  body: PreparedExpr,
+  result_idx: Int,
+  result_vt: ValType?,
+  ctx: EmitCtx,
+  buf: Vector<Instr>,
+  fns: ControlEmitFns,
+) Vector<Instr> {
   depth := ctx.loop_depth
-  break_label := "$break_${depth}"
-  cont_label := "$continue_${depth}"
-
+  break_label := "\$break_${depth}"
+  cont_label := "\$continue_${depth}"
   // Push labels onto label_stack
   new_labels := ctx.label_stack.append(LabelPair.{
     break_label: break_label,
@@ -76,23 +83,23 @@ pub fn emit_loop_op(body: PreparedExpr, result_idx: Int, result_vt: ValType?, ct
     loop_depth: ctx.loop_depth + 1,
     suspending_bodies: ctx.suspending_bodies,
   }
-
   // Loop body is a nested sub-body — use fresh []
   body_instrs := fns.emit_expr(body, .Void, loop_ctx, [])
   // Implicit continue at end of loop body
   body_instrs = .append(.Br(cont_label))
-
   loop_instr := Instr.Loop(cont_label, .None, body_instrs)
   block_instrs: Vector<Instr> = [loop_instr]
-
   // Block wraps the loop for break target
   out := buf.append(.Block(break_label, .None, block_instrs))
-
   // Loop produces void — set result to void
   out.append(.I32Const(0)).append(.RefI31).append(.LocalSet(result_idx))
 }
 
-pub fn append_result_store(body: Vector<Instr>, result_idx: Int, result_mono: MonoType) Vector<Instr> {
+pub fn append_result_store(
+  body: Vector<Instr>,
+  result_idx: Int,
+  result_mono: MonoType,
+) Vector<Instr> {
   case result_mono {
     .Void => {
       out := body.append(.I32Const(0))

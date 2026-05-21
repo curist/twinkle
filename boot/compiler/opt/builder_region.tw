@@ -1,14 +1,9 @@
 // Optimizer-facing transient builder region representation.
-
-use compiler.core_ir.{LocalId}
 use compiler.anf.{AnfExpr, AnfOp}
-
 use compiler.builder_family.{BuilderConfig}
+use compiler.core_ir.{LocalId}
 
-pub type BuilderInit = {
-  New,
-  FromBase(LocalId),
-}
+pub type BuilderInit = { New, FromBase(LocalId) }
 
 pub type BuilderRegion = .{
   bind_local: LocalId,
@@ -24,18 +19,32 @@ pub type BuilderRegion = .{
 fn builder_init_call(init: BuilderInit, builder: BuilderConfig) AnfOp {
   case init {
     .New => .ACall(.AGlobalFunc(builder.builder_new_id), []),
-    .FromBase(base) => .ACall(.AGlobalFunc(builder.builder_from_id), [.ALocal(base)]),
+    .FromBase(base) => .ACall(
+      .AGlobalFunc(builder.builder_from_id),
+      [.ALocal(base)],
+    ),
   }
 }
 
 pub fn lower_builder_region(region: BuilderRegion, builder: BuilderConfig) AnfExpr {
-  AnfExpr.Let(region.builder_local,
+  AnfExpr.Let(
+    region.builder_local,
     builder_init_call(region.init, builder),
-    AnfExpr.Let(region.bind_local,
+    AnfExpr.Let(
+      region.bind_local,
       .ALoop(region.loop_body),
-      AnfExpr.Let(region.freeze_local,
-        .ACall(.AGlobalFunc(builder.builder_freeze_id), [.ALocal(region.builder_local)]),
-        AnfExpr.Let(region.assign_local,
+      AnfExpr.Let(
+        region.freeze_local,
+        .ACall(
+          .AGlobalFunc(builder.builder_freeze_id),
+          [.ALocal(region.builder_local)],
+        ),
+        AnfExpr.Let(
+          region.assign_local,
           .AAssign(region.base_local, .ALocal(region.freeze_local)),
-          region.cont))))
+          region.cont,
+        ),
+      ),
+    ),
+  )
 }

@@ -44,8 +44,7 @@ fn is_byte(c: Byte, literal: String) Bool { c == literal[0] }
 
 // c in [start, end]
 fn in_byte_range(c: Byte, start: String, end: String) Bool {
-  c >= start[0]
-  and c <= end[0]
+  c >= start[0] and c <= end[0]
 }
 
 fn byte_value(s: String) Byte { s[0] }

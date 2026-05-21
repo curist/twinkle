@@ -1,22 +1,26 @@
 // Function lowering helpers.
-
 use compiler.ast.{Block, FunctionDecl}
+use compiler.core_ir.{FuncId, FunctionDef, Param}
+use compiler.lower_core.context.{ExprOut, LowerCtx}
 use compiler.mono_type.{MonoType}
-use compiler.core_ir.{FunctionDef, Param, FuncId}
-use compiler.lower_core.context.{LowerCtx, ExprOut}
 
 pub type FuncOut = .{ def: FunctionDef, ctx: LowerCtx }
 
-pub fn lower_function(ctx: LowerCtx, decl: FunctionDecl, func_id: FuncId, lower_block_fn: fn(LowerCtx, Block) ExprOut) FuncOut {
-  ctx = ctx.push_scope()
-
+pub fn lower_function(
+  ctx: LowerCtx,
+  decl: FunctionDecl,
+  func_id: FuncId,
+  lower_block_fn: fn(LowerCtx, Block) ExprOut,
+) FuncOut {
+  ctx = .push_scope()
   params: Vector<Param> = []
+
   for p in decl.params {
     lo := ctx.alloc_local(p.name)
     ctx = lo.ctx
     // Look up param type from checker — params don't have expr.id,
     // so we look up the function sig from env
-    param_ty := MonoType.Void  // placeholder; refined below
+    param_ty := MonoType.Void // placeholder; refined below
     params = .append(.{ local: lo.local, ty: param_ty })
   }
 
@@ -24,11 +28,13 @@ pub fn lower_function(ctx: LowerCtx, decl: FunctionDecl, func_id: FuncId, lower_
   case ctx.env.lookup_function(decl.name) {
     .Some(sig) => {
       i := 0
+
       for i < params.len() and i < sig.params.len() {
         case params.set(i, .{ local: params[i].local, ty: sig.params[i] }) {
           .Some(new_params) => { params = new_params },
           .None => {},
         }
+
         i = i + 1
       }
     },
@@ -47,12 +53,10 @@ pub fn lower_function(ctx: LowerCtx, decl: FunctionDecl, func_id: FuncId, lower_
   }
   saved_return_type := ctx.current_fn_return_type
   ctx.current_fn_return_type = ret_ty_for_try
-
   body_r := lower_block_fn(ctx, decl.body)
   ctx = body_r.ctx
-  ctx = ctx.pop_scope()
+  ctx = .pop_scope()
   ctx.current_fn_return_type = saved_return_type
-
   // Get return type from signature
   ret_ty := case ctx.env.lookup_function(decl.name) {
     .Some(sig) => {
@@ -63,7 +67,6 @@ pub fn lower_function(ctx: LowerCtx, decl: FunctionDecl, func_id: FuncId, lower_
     },
     .None => body_r.expr.ty,
   }
-
   def := FunctionDef.{
     func_id,
     name: decl.name,

@@ -4,41 +4,11 @@ use lib.source.span
 use lib.source.span.{Span}
 
 use .ast.{
-  BinOp,
-  Block,
-  BreakStmt,
-  CaseArm,
-  CollectExpr,
-  ContinueStmt,
-  DeferStmt,
-  Expr,
-  ExprKind,
-  ExprStmt,
-  ExternFunctionDecl,
-  ExternTypeDecl,
-  ForStmt,
-  FunctionDecl,
-  ImportItem,
-  ImportTypeItem,
-  ImportValueItem,
-  Item,
-  LetStmt,
-  Module,
-  Param,
-  Pattern,
-  RecordEntry,
-  RecordField,
-  ReturnStmt,
-  Stmt,
-  StringPart,
-  TypeDecl,
-  TypeDef,
-  TypeExpr,
-  TypeParam,
-  TypePath,
-  UnOp,
-  UseDecl,
-  VariantDecl,
+  BinOp, Block, BreakStmt, CaseArm, CollectExpr, ContinueStmt, DeferStmt, Expr,
+  ExprKind, ExprStmt, ExternFunctionDecl, ExternTypeDecl, ForStmt, FunctionDecl,
+  ImportItem, ImportTypeItem, ImportValueItem, Item, LetStmt, Module, Param,
+  Pattern, RecordEntry, RecordField, ReturnStmt, Stmt, StringPart, TypeDecl,
+  TypeDef, TypeExpr, TypeParam, TypePath, UnOp, UseDecl, VariantDecl,
 }
 use .cursor
 use .cursor.{Cursor}
@@ -212,11 +182,7 @@ fn stmt_in_expr_diag(span: Span, kw: String, context: String?) DiagKind {
 
 fn diag_statement_in_expression(c: Cursor, kw: String) ExprParse {
   diagnostics: Vector<DiagKind> = [stmt_in_expr_diag(c.span(), kw, .None)]
-  .{
-    value: error_expr(c.span()),
-    cursor: c.advance(),
-    diagnostics,
-  }
+  .{ value: error_expr(c.span()), cursor: c.advance(), diagnostics }
 }
 
 fn is_stmt_keyword(c: Cursor) String? {
@@ -253,11 +219,7 @@ fn parse_expr_in(c: Cursor, context: String) ExprParse {
       }
 
       err := error_expr(kw_span.merge(last_span))
-      .{
-        value: err,
-        cursor: c,
-        diagnostics,
-      }
+      .{ value: err, cursor: c, diagnostics }
     },
     .None => parse_expr_bp(c, 0),
   }
@@ -1069,11 +1031,7 @@ fn parse_use(c: Cursor) ItemParse {
 
   use_span := c.span_from(start_pos)
   decl := UseDecl.{ is_stdlib, is_relative, path, alias, items, span: use_span }
-  .{
-    value: .Use(decl),
-    cursor: c,
-    diagnostics: diagnostics_out,
-  }
+  .{ value: .Use(decl), cursor: c, diagnostics: diagnostics_out }
 }
 
 fn parse_param(c: Cursor) ParamParse {
@@ -1101,11 +1059,7 @@ fn parse_param(c: Cursor) ParamParse {
   }
 
   param := Param.{ name, ty, name_span, span: c.span_from(param_start) }
-  .{
-    value: param,
-    cursor: c,
-    diagnostics: diagnostics_out,
-  }
+  .{ value: param, cursor: c, diagnostics: diagnostics_out }
 }
 
 fn parse_function(c: Cursor) ItemParse {
@@ -1781,11 +1735,7 @@ fn parse_pattern(c: Cursor) PatternParse {
 
   diagnostics_out = .append(diag.error(c.span(), "expected pattern"))
   patt := Pattern.{ kind: .ErrorPattern, span: c.span() }
-  .{
-    value: patt,
-    cursor: c.advance(),
-    diagnostics: diagnostics_out,
-  }
+  .{ value: patt, cursor: c.advance(), diagnostics: diagnostics_out }
 }
 
 fn parse_record_literal(c: Cursor, start_pos: Int, open_cursor: Cursor) ExprParse {
@@ -2174,11 +2124,7 @@ fn parse_prefix(c: Cursor) ExprParse {
         diag.error(c.span(), "expected record or variant after '.'"),
       )
       expr := error_expr(c.span())
-      .{
-        value: expr,
-        cursor: c.advance(),
-        diagnostics: diagnostics_out,
-      }
+      .{ value: expr, cursor: c.advance(), diagnostics: diagnostics_out }
     },
     .LParen => {
       parsed_inner := parse_expr_in(c.advance(), "grouped expression")
@@ -2196,11 +2142,7 @@ fn parse_prefix(c: Cursor) ExprParse {
       }
 
       diagnostics_out = .append(diag.error(c.span(), "expected ')'"))
-      .{
-        value: parsed_inner.value,
-        cursor: c,
-        diagnostics: diagnostics_out,
-      }
+      .{ value: parsed_inner.value, cursor: c, diagnostics: diagnostics_out }
     },
     .LBracket => {
       start_pos := c.pos
@@ -2267,20 +2209,12 @@ fn parse_prefix(c: Cursor) ExprParse {
     .CursorHole => {
       // Cursor hole in expression position: produce placeholder without diagnostics
       expr := error_expr(c.span())
-      .{
-        value: expr,
-        cursor: c.advance(),
-        diagnostics: diagnostics_out,
-      }
+      .{ value: expr, cursor: c.advance(), diagnostics: diagnostics_out }
     },
     _ => {
       diagnostics_out = .append(diag.error(c.span(), "expected expression"))
       expr := error_expr(c.span())
-      .{
-        value: expr,
-        cursor: c.advance(),
-        diagnostics: diagnostics_out,
-      }
+      .{ value: expr, cursor: c.advance(), diagnostics: diagnostics_out }
     },
   }
 }
@@ -2775,11 +2709,7 @@ fn parse_return_stmt(c: Cursor) StmtParse {
   }
 
   stmt: Stmt = .Return(ReturnStmt.{ value, span: c.span_from(start_pos) })
-  .{
-    value: stmt,
-    cursor: c,
-    diagnostics: diagnostics_out,
-  }
+  .{ value: stmt, cursor: c, diagnostics: diagnostics_out }
 }
 
 fn parse_break_stmt(c: Cursor) StmtParse {
@@ -2797,20 +2727,12 @@ fn parse_break_stmt(c: Cursor) StmtParse {
   }
 
   stmt: Stmt = .Break(BreakStmt.{ value, span: c.span_from(start_pos) })
-  .{
-    value: stmt,
-    cursor: c,
-    diagnostics: diagnostics_out,
-  }
+  .{ value: stmt, cursor: c, diagnostics: diagnostics_out }
 }
 
 fn parse_continue_stmt(c: Cursor) StmtParse {
   stmt: Stmt = .Continue(ContinueStmt.{ span: c.span() })
-  .{
-    value: stmt,
-    cursor: c.advance(),
-    diagnostics: [],
-  }
+  .{ value: stmt, cursor: c.advance(), diagnostics: [] }
 }
 
 fn parse_defer_stmt(c: Cursor) StmtParse {
@@ -3013,11 +2935,7 @@ fn parse_block(c: Cursor) BlockParse {
   }
 
   block := Block.{ stmts, tail, span: c.span_through(start_pos) }
-  .{
-    value: block,
-    cursor: c.advance(),
-    diagnostics: diagnostics_out,
-  }
+  .{ value: block, cursor: c.advance(), diagnostics: diagnostics_out }
 }
 
 fn parse_top_level_stmt(c: Cursor) ItemParse {

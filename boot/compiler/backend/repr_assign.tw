@@ -18,19 +18,20 @@
 //
 // ErasedSum is reserved for future use. It is not currently produced by this
 // pass (it would require tracking which anyrefs previously held typed sums).
-
-use compiler.resolver.{ResolvedEnv}
-use compiler.mono_type.{MonoType}
-use compiler.codegen.wasm_ir.{ValType}
-use compiler.codegen.wasm_layout.{WasmLayout, layout_of, val_type_of_mono, mono_to_key}
-use compiler.backend.prepared_ir.{SlotInfo, ReprKind, PreparedFunc, PreparedExpr, PreparedOp}
-
-use compiler.builtins.{BuiltinRegistry}
-use compiler.core_ir.{FuncId}
+use compiler.backend.prepared_ir.{
+  PreparedExpr, PreparedFunc, PreparedOp, ReprKind, SlotInfo,
+}
 use compiler.builtins as bi
+use compiler.builtins.{BuiltinRegistry}
+use compiler.codegen.wasm_ir.{ValType}
+use compiler.codegen.wasm_layout.{
+  WasmLayout, layout_of, mono_to_key, val_type_of_mono,
+}
+use compiler.core_ir.{FuncId}
+use compiler.mono_type.{MonoType}
+use compiler.resolver.{ResolvedEnv}
 
 // ── Public entry ────────────────────────────────────────────────────
-
 // assign_repr_for_module refines repr and wasm_type for all slots in all
 // prepared functions. Call after assign_slots_for_module in prepare_backend().
 type ReprAssignCache = .{
@@ -39,10 +40,7 @@ type ReprAssignCache = .{
   layout_cache: Dict<String, WasmLayout>,
 }
 
-type ReprAssignResult = .{
-  func: PreparedFunc,
-  cache: ReprAssignCache,
-}
+type ReprAssignResult = .{ func: PreparedFunc, cache: ReprAssignCache }
 
 pub fn assign_repr_for_module(
   funcs: Vector<PreparedFunc>,
@@ -57,11 +55,13 @@ pub fn assign_repr_for_module(
     layout_cache: Dict.new(),
   }
   out: Vector<PreparedFunc> = []
+
   for pf in funcs {
     result := assign_repr_for_func(pf, env, builder_new, builder_from, cache)
     out = .append(result.func)
     cache = result.cache
   }
+
   out
 }
 
@@ -78,21 +78,34 @@ fn assign_repr_for_func(
   wrap_slots: Dict<Int, Bool> = Dict.new()
   unwrap_monos: Dict<Int, MonoType> = Dict.new()
   scan_body(pf.body, wrap_slots, unwrap_monos, builder_new, builder_from)
-
   // Refine each slot.
   new_slots: Dict<Int, SlotInfo> = Dict.new()
   cache2 := cache
+
   for sid_int in pf.slots.keys() {
     case pf.slots[sid_int] {
       .None => {},
       .Some(info) => {
         sid := info.slot.id
         result := case info.role {
-          .DeadPlaceholder => ReprWasmResult.{ repr: .DeadValue, wasm_type: .Anyref, cache: cache2 },
+          .DeadPlaceholder => ReprWasmResult.{
+            repr: .DeadValue,
+            wasm_type: .Anyref,
+            cache: cache2,
+          },
           _ => case wrap_slots[sid] {
-            .Some(_) => ReprWasmResult.{ repr: .OpaqueAnyref, wasm_type: .Anyref, cache: cache2 },
+            .Some(_) => ReprWasmResult.{
+              repr: .OpaqueAnyref,
+              wasm_type: .Anyref,
+              cache: cache2,
+            },
             .None => case unwrap_monos[sid] {
-              .Some(target_mono) => repr_and_wasm_type_of(target_mono, info.mono, env, cache2),
+              .Some(target_mono) => repr_and_wasm_type_of(
+                target_mono,
+                info.mono,
+                env,
+                cache2,
+              ),
               .None => repr_and_wasm_type_of(info.mono, info.mono, env, cache2),
             },
           },
@@ -127,7 +140,6 @@ fn assign_repr_for_func(
 }
 
 // ── Body scanning ────────────────────────────────────────────────────
-
 fn scan_body(
   expr: PreparedExpr,
   wrap_slots: Dict<Int, Bool>,
@@ -153,12 +165,8 @@ fn scan_op(
   builder_from: FuncId,
 ) Void {
   case op {
-    .AWrapAnyref(_, _) => {
-      wrap_slots[result_sid] = true
-    },
-    .AUnwrapAnyref(_, target_mono) => {
-      unwrap_monos[result_sid] = target_mono
-    },
+    .AWrapAnyref(_, _) => { wrap_slots[result_sid] = true },
+    .AUnwrapAnyref(_, target_mono) => { unwrap_monos[result_sid] = target_mono },
     .ACall(callee, _) => {
       case callee {
         .AGlobalFunc(fid) => {
@@ -174,62 +182,72 @@ fn scan_op(
       scan_body(else_e, wrap_slots, unwrap_monos, builder_new, builder_from)
     },
     .AMatch(_, arms) => {
-      for arm in arms { scan_body(arm.body, wrap_slots, unwrap_monos, builder_new, builder_from) }
+      for arm in arms {
+        scan_body(arm.body, wrap_slots, unwrap_monos, builder_new, builder_from)
+      }
     },
-    .ALoop(inner) => scan_body(inner, wrap_slots, unwrap_monos, builder_new, builder_from),
+    .ALoop(inner) => scan_body(
+      inner,
+      wrap_slots,
+      unwrap_monos,
+      builder_new,
+      builder_from,
+    ),
     _ => {},
   }
 }
 
 // ── ReprKind derivation ─────────────────────────────────────────────
-
 type ReprWasmResult = .{
   repr: ReprKind,
   wasm_type: ValType,
   cache: ReprAssignCache,
 }
 
-type CachedLayoutResult = .{
-  layout: WasmLayout,
-  cache: ReprAssignCache,
-}
+type CachedLayoutResult = .{ layout: WasmLayout, cache: ReprAssignCache }
 
-type CachedValTypeResult = .{
-  val_type: ValType,
-  cache: ReprAssignCache,
-}
+type CachedValTypeResult = .{ val_type: ValType, cache: ReprAssignCache }
 
-type CachedReprResult = .{
-  repr: ReprKind,
-  cache: ReprAssignCache,
-}
+type CachedReprResult = .{ repr: ReprKind, cache: ReprAssignCache }
 
 fn cached_layout_of(mono: MonoType, env: ResolvedEnv, cache: ReprAssignCache) CachedLayoutResult {
   key := mono_to_key(mono)
+
   case cache.layout_cache[key] {
     .Some(layout) => .{ layout: layout, cache: cache },
     .None => {
       layout := layout_of(mono, env)
-      .{ layout: layout, cache: ReprAssignCache.{
-        repr_cache: cache.repr_cache,
-        val_type_cache: cache.val_type_cache,
-        layout_cache: cache.layout_cache.set(key, layout),
-      }}
+      .{
+        layout: layout,
+        cache: ReprAssignCache.{
+          repr_cache: cache.repr_cache,
+          val_type_cache: cache.val_type_cache,
+          layout_cache: cache.layout_cache.set(key, layout),
+        },
+      }
     },
   }
 }
 
-fn cached_val_type_of_mono(mono: MonoType, env: ResolvedEnv, cache: ReprAssignCache) CachedValTypeResult {
+fn cached_val_type_of_mono(
+  mono: MonoType,
+  env: ResolvedEnv,
+  cache: ReprAssignCache,
+) CachedValTypeResult {
   key := mono_to_key(mono)
+
   case cache.val_type_cache[key] {
     .Some(vt) => .{ val_type: vt, cache: cache },
     .None => {
       vt := val_type_of_mono(mono, env)
-      .{ val_type: vt, cache: ReprAssignCache.{
-        repr_cache: cache.repr_cache,
-        val_type_cache: cache.val_type_cache.set(key, vt),
-        layout_cache: cache.layout_cache,
-      }}
+      .{
+        val_type: vt,
+        cache: ReprAssignCache.{
+          repr_cache: cache.repr_cache,
+          val_type_cache: cache.val_type_cache.set(key, vt),
+          layout_cache: cache.layout_cache,
+        },
+      }
     },
   }
 }
@@ -259,19 +277,28 @@ pub fn repr_of_mono(mono: MonoType, env: ResolvedEnv) ReprKind {
 }
 
 fn repr_of_named(mono: MonoType, env: ResolvedEnv) ReprKind {
-  result := repr_of_named_cached(mono, env, ReprAssignCache.{
-    repr_cache: Dict.new(),
-    val_type_cache: Dict.new(),
-    layout_cache: Dict.new(),
-  })
+  result := repr_of_named_cached(
+    mono,
+    env,
+    ReprAssignCache.{
+      repr_cache: Dict.new(),
+      val_type_cache: Dict.new(),
+      layout_cache: Dict.new(),
+    },
+  )
   result.repr
 }
 
-fn repr_of_named_cached(mono: MonoType, env: ResolvedEnv, cache: ReprAssignCache) CachedReprResult {
+fn repr_of_named_cached(
+  mono: MonoType,
+  env: ResolvedEnv,
+  cache: ReprAssignCache,
+) CachedReprResult {
   // Use layout_of to distinguish record vs sum vs alias.
   // layout_of errors on Never (already handled above).
   layout_result := cached_layout_of(mono, env, cache)
   cache2 := layout_result.cache
+
   case layout_result.layout {
     .Record(_) => .{ repr: .TypedRef(mono), cache: cache2 },
     .Sum(_) => .{ repr: .TypedSum(mono), cache: cache2 },
@@ -303,15 +330,29 @@ fn repr_of_named_cached(mono: MonoType, env: ResolvedEnv, cache: ReprAssignCache
 }
 
 // ── ValType derivation ───────────────────────────────────────────────
-
-fn repr_and_wasm_type_of(repr_mono: MonoType, wasm_mono: MonoType, env: ResolvedEnv, cache: ReprAssignCache) ReprWasmResult {
+fn repr_and_wasm_type_of(
+  repr_mono: MonoType,
+  wasm_mono: MonoType,
+  env: ResolvedEnv,
+  cache: ReprAssignCache,
+) ReprWasmResult {
   repr_result := cached_repr_of_mono(repr_mono, env, cache)
-  vt_result := wasm_type_of_repr_cached(repr_result.repr, wasm_mono, env, repr_result.cache)
-  ReprWasmResult.{ repr: repr_result.repr, wasm_type: vt_result.val_type, cache: vt_result.cache }
+  vt_result := wasm_type_of_repr_cached(
+    repr_result.repr,
+    wasm_mono,
+    env,
+    repr_result.cache,
+  )
+  ReprWasmResult.{
+    repr: repr_result.repr,
+    wasm_type: vt_result.val_type,
+    cache: vt_result.cache,
+  }
 }
 
 fn cached_repr_of_mono(mono: MonoType, env: ResolvedEnv, cache: ReprAssignCache) CachedReprResult {
   key := mono_to_key(mono)
+
   case cache.repr_cache[key] {
     .Some(repr) => .{ repr: repr, cache: cache },
     .None => {
@@ -333,25 +374,38 @@ fn cached_repr_of_mono(mono: MonoType, env: ResolvedEnv, cache: ReprAssignCache)
         .Named(_, _) => repr_of_named_cached(mono, env, cache),
         _ => .{ repr: .OpaqueAnyref, cache: cache },
       }
-      .{ repr: result.repr, cache: ReprAssignCache.{
-        repr_cache: result.cache.repr_cache.set(key, result.repr),
-        val_type_cache: result.cache.val_type_cache,
-        layout_cache: result.cache.layout_cache,
-      }}
+      .{
+        repr: result.repr,
+        cache: ReprAssignCache.{
+          repr_cache: result.cache.repr_cache.set(key, result.repr),
+          val_type_cache: result.cache.val_type_cache,
+          layout_cache: result.cache.layout_cache,
+        },
+      }
     },
   }
 }
 
 fn wasm_type_of_repr(repr: ReprKind, mono: MonoType, env: ResolvedEnv) ValType {
-  result := wasm_type_of_repr_cached(repr, mono, env, ReprAssignCache.{
-    repr_cache: Dict.new(),
-    val_type_cache: Dict.new(),
-    layout_cache: Dict.new(),
-  })
+  result := wasm_type_of_repr_cached(
+    repr,
+    mono,
+    env,
+    ReprAssignCache.{
+      repr_cache: Dict.new(),
+      val_type_cache: Dict.new(),
+      layout_cache: Dict.new(),
+    },
+  )
   result.val_type
 }
 
-fn wasm_type_of_repr_cached(repr: ReprKind, mono: MonoType, env: ResolvedEnv, cache: ReprAssignCache) CachedValTypeResult {
+fn wasm_type_of_repr_cached(
+  repr: ReprKind,
+  mono: MonoType,
+  env: ResolvedEnv,
+  cache: ReprAssignCache,
+) CachedValTypeResult {
   case repr {
     .I64 => .{ val_type: .I64, cache: cache },
     .F64 => .{ val_type: .F64, cache: cache },
@@ -363,6 +417,6 @@ fn wasm_type_of_repr_cached(repr: ReprKind, mono: MonoType, env: ResolvedEnv, ca
     .ClosureRef => cached_val_type_of_mono(mono, env, cache),
     .ErasedSum => .{ val_type: .Anyref, cache: cache },
     .OpaqueAnyref => .{ val_type: .Anyref, cache: cache },
-    .DeadValue => .{ val_type: .Anyref, cache: cache },  // placeholder; dead slots are never read
+    .DeadValue => .{ val_type: .Anyref, cache: cache },
   }
 }

@@ -1,12 +1,11 @@
-use compiler.core_ir.{FuncId}
-use compiler.resolver as resolver
-use compiler.resolver.{ResolvedEnv}
-use compiler.mono_type.{MonoType}
+use compiler.backend.facts as facts
+use compiler.backend.prepared_ir.{PreparedFunc}
 use compiler.builtins as bi
 use compiler.builtins.{BuiltinRegistry}
-use compiler.backend.prepared_ir.{PreparedFunc}
-
-use compiler.backend.facts as facts
+use compiler.core_ir.{FuncId}
+use compiler.mono_type.{MonoType}
+use compiler.resolver as resolver
+use compiler.resolver.{ResolvedEnv}
 
 // Which dedicated wrapper trampoline a builtin closure needs
 pub type WrapperKind = {
@@ -17,17 +16,12 @@ pub type WrapperKind = {
 }
 
 // How a callable's direct calls are lowered
-pub type DirectCallPolicy = {
-  UserCompiled,   // compiled user function, called via its Wasm symbol
-  RuntimeImport,  // builtin runtime import call
-  Intrinsic,      // bespoke inline lowering
-}
+pub type DirectCallPolicy = { UserCompiled, RuntimeImport, Intrinsic }
 
 pub type CallableTargetInfo = .{
   semantic_params: Vector<MonoType>,
   semantic_ret: MonoType,
   builtin_name: String?,
-  // four separate closure/call policy facts
   closure_materializable: Bool,
   wrapper_kind: WrapperKind?,
   typed_closure_support: Bool,
@@ -41,15 +35,19 @@ pub fn callable_target(
   env: ResolvedEnv,
 ) CallableTargetInfo? {
   case funcs_by_id[fid.id] {
-    .Some(func) => .Some(CallableTargetInfo.{
-      semantic_params: collect sid in func.params { facts.slot_info(func, sid).mono },
-      semantic_ret: func.return_mono,
-      builtin_name: .None,
-      closure_materializable: true,
-      wrapper_kind: .None,
-      typed_closure_support: true,
-      direct_call_policy: .UserCompiled,
-    }),
+    .Some(func) => .Some(
+      CallableTargetInfo.{
+        semantic_params: collect sid in func.params {
+          facts.slot_info(func, sid).mono
+        },
+        semantic_ret: func.return_mono,
+        builtin_name: .None,
+        closure_materializable: true,
+        wrapper_kind: .None,
+        typed_closure_support: true,
+        direct_call_policy: .UserCompiled,
+      },
+    ),
     .None => builtin_target(fid, builtins, env),
   }
 }
@@ -59,9 +57,7 @@ pub fn semantic_sig(
   funcs_by_id: Dict<Int, PreparedFunc>,
   builtins: BuiltinRegistry,
   env: ResolvedEnv,
-) CallableTargetInfo? {
-  callable_target(fid, funcs_by_id, builtins, env)
-}
+) CallableTargetInfo? { callable_target(fid, funcs_by_id, builtins, env) }
 
 pub fn is_closure_materializable(
   fid: FuncId,
@@ -83,9 +79,15 @@ fn builtin_target(fid: FuncId, builtins: BuiltinRegistry, env: ResolvedEnv) Call
   sig := case resolver.lookup_registered_function(env, entry.name) {
     .Some(s) => s,
     .None => case entry.canonical_name {
-      .Some(canonical) => case resolver.lookup_registered_function(env, canonical) {
+      .Some(canonical) => case resolver.lookup_registered_function(
+        env,
+        canonical,
+      ) {
         .Some(s) => s,
-        .None => case resolver.lookup_registered_function(env, "__${entry.name}") {
+        .None => case resolver.lookup_registered_function(
+          env,
+          "__${entry.name}",
+        ) {
           .Some(s) => s,
           .None => { return .None },
         },
@@ -109,31 +111,43 @@ fn builtin_target(fid: FuncId, builtins: BuiltinRegistry, env: ResolvedEnv) Call
     .Runtime(_) => .RuntimeImport,
     .Intrinsic => .Intrinsic,
   }
-  .Some(CallableTargetInfo.{
-    semantic_params: sig.params,
-    semantic_ret: ret,
-    builtin_name: .Some(entry.name),
-    closure_materializable: materializable,
-    wrapper_kind: wk,
-    typed_closure_support: materializable,
-    direct_call_policy: dcp,
-  })
+  .Some(
+    CallableTargetInfo.{
+      semantic_params: sig.params,
+      semantic_ret: ret,
+      builtin_name: .Some(entry.name),
+      closure_materializable: materializable,
+      wrapper_kind: wk,
+      typed_closure_support: materializable,
+      direct_call_policy: dcp,
+    },
+  )
 }
 
 // Returns the wrapper kind for builtins that need a dedicated closure trampoline.
 // None means the builtin uses the generic universal trampoline path (or is not materializable).
 pub fn builtin_wrapper_kind(name: String) WrapperKind? {
-  if name == "byte_to_string" { return .Some(.ByteToString) }
-  if name == "cell_update" { return .Some(.CellUpdate) }
-  if name == "iterator_unfold" { return .Some(.IteratorUnfold) }
-  if name == "host_write_bytes" { return .Some(.HostWriteBytes) }
+  if name == "byte_to_string" {
+    return .Some(.ByteToString)
+  }
+
+  if name == "cell_update" {
+    return .Some(.CellUpdate)
+  }
+
+  if name == "iterator_unfold" {
+    return .Some(.IteratorUnfold)
+  }
+
+  if name == "host_write_bytes" {
+    return .Some(.HostWriteBytes)
+  }
+
   .None
 }
 
 fn builtin_generic_closure_materializable(name: String) Bool {
-  name == "int_to_string"
-    or name == "float_to_string"
-    or name == "bool_to_string"
-    or name == "string_to_string"
+  name == "int_to_string" or name == "float_to_string"
+  or name == "bool_to_string"
+  or name == "string_to_string"
 }
-

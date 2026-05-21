@@ -1,17 +1,20 @@
-use tests.runner
+use compiler.codegen.codegen.{codegen, runtime_modules}
+use compiler.codegen.linker.{LinkedModule, link}
+use compiler.codegen.runtime.types as rt_types
+use compiler.codegen.wasm_ir.{
+  ExportDef, FuncDef, HeapType, Instr, TypeDef, ValType,
+}
+use compiler.codegen.wasm_layout.{EqTypeLayouts}
+use compiler.codegen.wat.{emit_wat}
 use tests.assert
 use tests.helpers.codegen_harness
-use compiler.codegen.linker.{link, LinkedModule}
-use compiler.codegen.wat.{emit_wat}
-use compiler.codegen.wasm_ir.{TypeDef, FuncDef, ExportDef, ValType, HeapType, Instr}
-use compiler.codegen.codegen.{runtime_modules, codegen}
-use compiler.codegen.wasm_layout.{EqTypeLayouts}
-use compiler.codegen.runtime.types as rt_types
+use tests.runner
 
-fn empty_eq_layouts() EqTypeLayouts { .{ records: [], sums: [] } }
+fn empty_eq_layouts() EqTypeLayouts {
+  .{ records: [], sums: [] }
+}
 
 // ── Helpers ─────────────────────────────────────────────────────────
-
 fn codegen_src(src: String) Result<String, String> {
   inputs := try codegen_harness.codegen_inputs(src)
   .Ok(codegen(inputs.anf, inputs.env, inputs.builtins))
@@ -22,37 +25,47 @@ fn assert_module_wat(wat: String, label: String) Result<Void, String> {
   .Ok({})
 }
 
-fn assert_codegen_src_compiles(src: String, label: String) Result<String, String> {
+fn assert_codegen_src_compiles(src: String, label: String) Result<
+  String,
+  String,
+> {
   wat := try codegen_src(src)
   try assert_module_wat(wat, label)
   .Ok(wat)
 }
 
-fn assert_codegen_path_compiles(path: String, label: String) Result<String, String> {
+fn assert_codegen_path_compiles(path: String, label: String) Result<
+  String,
+  String,
+> {
   wat := try codegen_harness.codegen_path(path)
   try assert_module_wat(wat, label)
   .Ok(wat)
 }
 
 // ── Linked WAT emission tests ───────────────────────────────────────
-
 fn test_emit_wat_basic() Result<Void, String> {
   // Link a single trivial module and emit WAT
   m := rt_types.module()
+
   case link([m], .None) {
     .Ok(linked) => {
       wat := emit_wat(linked)
       try assert.str_contains(wat, "(module")
-      try assert.str_contains(wat, "$rt_types__Array")
-      try assert.str_contains(wat, "$rt_types__String")
+      try assert.str_contains(wat, "\$rt_types__Array")
+      try assert.str_contains(wat, "\$rt_types__String")
     },
     .Err(_) => { return assert.fail("link should succeed for single module") },
   }
+
   .Ok({})
 }
 
 fn test_codegen_end_to_end_simple_program() Result<Void, String> {
-  wat := try assert_codegen_src_compiles("fn main() Int { 42 }", "simple program")
+  wat := try assert_codegen_src_compiles(
+    "fn main() Int { 42 }",
+    "simple program",
+  )
   try assert.str_contains(wat, "user__")
   try assert.str_contains(wat, "i64.const 42")
   try assert.str_contains(wat, "rt_types__String")
@@ -60,7 +73,10 @@ fn test_codegen_end_to_end_simple_program() Result<Void, String> {
 }
 
 fn test_phase1_option_boundary_fixture() Result<Void, String> {
-  wat := try assert_codegen_path_compiles("tests/run/option_boundary_call.tw", "phase 1 option boundary fixture")
+  wat := try assert_codegen_path_compiles(
+    "tests/run/option_boundary_call.tw",
+    "phase 1 option boundary fixture",
+  )
   try assert.str_contains(wat, "rt_types__Variant")
   .Ok({})
 }
@@ -84,7 +100,10 @@ fn test_phase2_return_inside_for() Result<Void, String> {
 }
 
 fn test_phase3_string_get_fixture() Result<Void, String> {
-  wat := try assert_codegen_path_compiles("tests/run/string_get.tw", "phase 3 string.get fixture")
+  wat := try assert_codegen_path_compiles(
+    "tests/run/string_get.tw",
+    "phase 3 string.get fixture",
+  )
   try assert.str_contains(wat, "Option_opt_i32b")
   .Ok({})
 }
@@ -101,18 +120,14 @@ fn test_phase3_bool_case() Result<Void, String> {
 fn test_phase4_record_field_access() Result<Void, String> {
   dollar: String = case String.from_code_point(36) {
     .Some(d) => d,
-    .None => { return .Err("failed to create dollar sign") },
+    .None => {
+      return .Err("failed to create dollar sign")
+    },
   }
-  src: String =
-    "type Pair = .{ x: Int, y: Int }\nfn main() Void { p := Pair.{ x: 41, y: 1 }\nprintln(\""
-      .concat(dollar)
-      .concat("{p.x}\")\nprintln(\"")
-      .concat(dollar)
-      .concat("{p.y}\") }\nmain()\n")
-  wat := try assert_codegen_src_compiles(
-    src,
-    "phase 4 record field access",
-  )
+  src: String = "type Pair = .{ x: Int, y: Int }\nfn main() Void { p := Pair.{ x: 41, y: 1 }\nprintln(\"".concat(
+    dollar,
+  ).concat("{p.x}\")\nprintln(\"").concat(dollar).concat("{p.y}\") }\nmain()\n")
+  wat := try assert_codegen_src_compiles(src, "phase 4 record field access")
   try assert.str_contains(wat, "struct.get")
   .Ok({})
 }
@@ -122,11 +137,20 @@ fn test_cell_record_field_uses_declared_typed_cell_symbol() Result<Void, String>
     "type Inner = .{ value: Int }\ntype Outer = .{ slot: Cell<Inner> }\no := Outer.{ slot: Cell.new(Inner.{ value: 1 }) }\nprintln(Int.to_string(Cell.get(o.slot).value))\n",
     "cell record field typed symbol",
   )
-  try assert.str_contains(wat, "(type $user__$Cell_anyref (sub (struct (field $value (mut anyref)))))")
-  try assert.str_contains(wat, "(field $slot (mut (ref null $user__$Cell_anyref)))")
-  try assert.str_contains(wat, "struct.new $user__$Cell_anyref")
-  try assert.str_contains(wat, "struct.get $user__$Cell_anyref 0")
-  try assert.ok(!wat.contains("$$Cell_anyref"), "cell codegen should not reference unqualified $$Cell_anyref")
+  try assert.str_contains(
+    wat,
+    "(type \$user__\$Cell_anyref (sub (struct (field \$value (mut anyref)))))",
+  )
+  try assert.str_contains(
+    wat,
+    "(field \$slot (mut (ref null \$user__\$Cell_anyref)))",
+  )
+  try assert.str_contains(wat, "struct.new \$user__\$Cell_anyref")
+  try assert.str_contains(wat, "struct.get \$user__\$Cell_anyref 0")
+  try assert.ok(
+    !wat.contains("\$\$Cell_anyref"),
+    "cell codegen should not reference unqualified \$\$Cell_anyref",
+  )
   .Ok({})
 }
 
@@ -140,7 +164,6 @@ fn test_phase3_large_string_index_fixture() Result<Void, String> {
 }
 
 // ── runtime_modules tests ───────────────────────────────────────────
-
 fn test_runtime_modules_count() Result<Void, String> {
   mods := runtime_modules(empty_eq_layouts())
   try assert.equal(mods.len(), 5)
@@ -159,17 +182,19 @@ fn test_runtime_modules_namespaces() Result<Void, String> {
 }
 
 // ── Link runtime modules together ───────────────────────────────────
-
 fn test_link_runtime_resolves_imports() Result<Void, String> {
   // rt.core imports rt.str.eq — linking all runtime modules should resolve it
   mods := runtime_modules(empty_eq_layouts())
+
   case link(mods, .None) {
     .Ok(linked) => {
       // rt.core's import of rt.str.eq should be resolved (not in linked imports)
       for imp in linked.imports {
         // Only host imports should survive
-        try assert.ok(imp.module == "host",
-          "non-host import survived linking: ${imp.module}.${imp.name}")
+        try assert.ok(
+          imp.module == "host",
+          "non-host import survived linking: ${imp.module}.${imp.name}",
+        )
       }
     },
     .Err(errors) => {
@@ -180,11 +205,13 @@ fn test_link_runtime_resolves_imports() Result<Void, String> {
       }
     },
   }
+
   .Ok({})
 }
 
 fn test_link_runtime_emits_valid_wat() Result<Void, String> {
   mods := runtime_modules(empty_eq_layouts())
+
   case link(mods, .None) {
     .Ok(linked) => {
       wat := emit_wat(linked)
@@ -200,50 +227,63 @@ fn test_link_runtime_emits_valid_wat() Result<Void, String> {
     },
     .Err(_) => { return assert.fail("link should succeed") },
   }
+
   .Ok({})
 }
 
 fn test_link_runtime_host_imports_preserved() Result<Void, String> {
   mods := runtime_modules(empty_eq_layouts())
+
   case link(mods, .None) {
     .Ok(linked) => {
       // Should have host imports for print, println, error, eprint, eprintln, f64_to_string
       host_names: Vector<String> = []
-      for imp in linked.imports {
-        host_names = host_names.append(imp.name)
-      }
+
+      for imp in linked.imports { host_names = .append(imp.name) }
+
       found_print := false
       found_println := false
       found_f64 := false
+
       for n in host_names {
         if n == "print" { found_print = true }
+
         if n == "println" { found_println = true }
+
         if n == "f64_to_string" { found_f64 = true }
       }
+
       try assert.ok(found_print, "should preserve host.print import")
       try assert.ok(found_println, "should preserve host.println import")
       try assert.ok(found_f64, "should preserve host.f64_to_string import")
     },
     .Err(_) => { return assert.fail("link should succeed") },
   }
+
   .Ok({})
 }
 
 fn test_link_runtime_no_start_function() Result<Void, String> {
   // Runtime modules alone have no start function
   mods := runtime_modules(empty_eq_layouts())
+
   case link(mods, .None) {
     .Ok(linked) => {
-      try assert.ok(case linked.start { .None => true, _ => false },
-        "runtime-only link should have no start function")
+      try assert.ok(
+        case linked.start {
+          .None => true,
+          _ => false,
+        },
+        "runtime-only link should have no start function",
+      )
     },
     .Err(_) => { return assert.fail("link should succeed") },
   }
+
   .Ok({})
 }
 
 // ── Checked narrowing tests ─────────────────────────────────────────
-
 fn test_checked_narrowing_vector_index() Result<Void, String> {
   // Vector indexing should emit a checked i64→i32 narrowing with trap,
   // not a bare i32.wrap_i64.  The hallmark is the upper-bound constant.
@@ -280,12 +320,11 @@ fn test_large_vector_literal_uses_runtime_push() Result<Void, String> {
     "xs: Vector<Int> = [\n  0, 1, 2, 3, 4, 5, 6, 7, 8, 9,\n  10, 11, 12, 13, 14, 15, 16, 17, 18, 19,\n  20, 21, 22, 23, 24, 25, 26, 27, 28, 29,\n  30, 31, 32\n]\nprintln(xs[0].to_string())\nprintln(xs[31].to_string())\nprintln(xs[32].to_string())\n",
     "large vector literal uses runtime push",
   )
-  try assert.str_contains(wat, "call $rt_arr__push")
+  try assert.str_contains(wat, "call \$rt_arr__push")
   .Ok({})
 }
 
 // ── Closure representation tests ────────────────────────────────────
-
 fn test_closure_first_class_function_arg() Result<Void, String> {
   // Passing a named function as an argument should wrap it as a closure.
   // The correctness path uses the universal closure ABI.
@@ -293,8 +332,8 @@ fn test_closure_first_class_function_arg() Result<Void, String> {
     "fn double(n: Int) Int { n * 2 }\nfn apply(f: fn(Int) Int, x: Int) Int { f(x) }\nprintln(Int.to_string(apply(double, 5)))\n",
     "first-class function arg",
   )
-  try assert.str_contains(wat, "struct.new $rt_types__Closure")
-  try assert.str_contains(wat, "call_ref $rt_types__ClosureFunc")
+  try assert.str_contains(wat, "struct.new \$rt_types__Closure")
+  try assert.str_contains(wat, "call_ref \$rt_types__ClosureFunc")
   .Ok({})
 }
 
@@ -304,7 +343,7 @@ fn test_closure_struct_is_subtype_of_base() Result<Void, String> {
     "fn inc(n: Int) Int { n + 1 }\nfn apply(f: fn(Int) Int, x: Int) Int { f(x) }\nprintln(Int.to_string(apply(inc, 5)))\n",
     "closure subtype",
   )
-  try assert.str_contains(wat, "sub $rt_types__Closure")
+  try assert.str_contains(wat, "sub \$rt_types__Closure")
   .Ok({})
 }
 
@@ -314,7 +353,7 @@ fn test_closure_call_uses_universal_funcref() Result<Void, String> {
     "fn neg(n: Int) Int { 0 - n }\nfn apply(f: fn(Int) Int, x: Int) Int { f(x) }\nprintln(Int.to_string(apply(neg, 5)))\n",
     "closure universal call",
   )
-  try assert.str_contains(wat, "call_ref $rt_types__ClosureFunc")
+  try assert.str_contains(wat, "call_ref \$rt_types__ClosureFunc")
   .Ok({})
 }
 
@@ -323,8 +362,8 @@ fn test_iterator_unfold_wraps_named_step_as_closure() Result<Void, String> {
     "fn step(i: Int) UnfoldStep<Int, Int> { if i >= 3 { UnfoldStep.Done } else { UnfoldStep.Yield(i, i + 1) } }\nit := Iterator.unfold(0, step)\nprintln(Int.to_string(it.take(2).to_vector().len()))\n",
     "iterator unfold named step",
   )
-  try assert.str_contains(wat, "$tramp_")
-  try assert.str_contains(wat, "struct.new $rt_types__Closure")
+  try assert.str_contains(wat, "\$tramp_")
+  try assert.str_contains(wat, "struct.new \$rt_types__Closure")
   .Ok({})
 }
 
@@ -333,62 +372,76 @@ fn test_cell_update_wraps_named_function_as_closure() Result<Void, String> {
     "fn inc(x: Int) Int { x + 1 }\nc := Cell.new(1)\nc.update(inc)\nprintln(Int.to_string(c.get()))\n",
     "cell update named function",
   )
-  try assert.str_contains(wat, "$tramp_")
-  try assert.str_contains(wat, "struct.get $rt_types__Closure 0")
+  try assert.str_contains(wat, "\$tramp_")
+  try assert.str_contains(wat, "struct.get \$rt_types__Closure 0")
   .Ok({})
 }
 
-fn test_builtin_first_class_function_arg_uses_builtin_trampolines() Result<Void, String> {
+fn test_builtin_first_class_function_arg_uses_builtin_trampolines() Result<
+  Void,
+  String,
+> {
   wat := try assert_codegen_src_compiles(
     "fn apply(f: fn(Int) String, x: Int) String { f(x) }\nprintln(apply(Int.to_string, 5))\n",
     "builtin first-class function arg",
   )
-  try assert.str_contains(wat, "struct.new $rt_types__Closure")
-  try assert.str_contains(wat, "call $rt_str__from_i64")
+  try assert.str_contains(wat, "struct.new \$rt_types__Closure")
+  try assert.str_contains(wat, "call \$rt_str__from_i64")
   .Ok({})
 }
 
-fn test_wrapper_backed_builtin_first_class_function_arg_uses_wrapper_trampoline() Result<Void, String> {
+fn test_wrapper_backed_builtin_first_class_function_arg_uses_wrapper_trampoline() Result<
+  Void,
+  String,
+> {
   wat := try assert_codegen_src_compiles(
     "fn apply(f: fn(Byte) String, x: Byte) String { f(x) }\ncase Byte.from_int(42) {\n  .Some(b) => println(apply(Byte.to_string, b)),\n  .None => println(\"none\"),\n}\n",
     "wrapper-backed builtin first-class function arg",
   )
-  try assert.str_contains(wat, "struct.new $rt_types__Closure")
+  try assert.str_contains(wat, "struct.new \$rt_types__Closure")
   try assert.str_contains(wat, "i64.extend_i32_u")
-  try assert.str_contains(wat, "call $rt_str__from_i64")
+  try assert.str_contains(wat, "call \$rt_str__from_i64")
   .Ok({})
 }
 
-fn test_host_write_bytes_builtin_first_class_function_arg_uses_wrapper_trampoline() Result<Void, String> {
+fn test_host_write_bytes_builtin_first_class_function_arg_uses_wrapper_trampoline() Result<
+  Void,
+  String,
+> {
   wat := try assert_codegen_src_compiles(
     "fn apply(f: fn(String, Vector<Byte>) Void, path: String, bytes: Vector<Byte>) Void { f(path, bytes) }\napply(host.write_bytes, \"/tmp/twinkle.out\", [1, 2, 3])\n",
     "host write_bytes builtin first-class function arg",
   )
-  try assert.str_contains(wat, "struct.new $rt_types__Closure")
-  try assert.str_contains(wat, "call $host__write_bytes")
-  try assert.str_contains(wat, "call $rt_arr__to_array")
+  try assert.str_contains(wat, "struct.new \$rt_types__Closure")
+  try assert.str_contains(wat, "call \$host__write_bytes")
+  try assert.str_contains(wat, "call \$rt_arr__to_array")
   .Ok({})
 }
 
-
-fn test_cell_update_builtin_first_class_function_arg_uses_wrapper_trampoline() Result<Void, String> {
+fn test_cell_update_builtin_first_class_function_arg_uses_wrapper_trampoline() Result<
+  Void,
+  String,
+> {
   wat := try assert_codegen_src_compiles(
     "fn inc(x: Int) Int { x + 1 }\nfn apply_update(f: fn(Cell<Int>, fn(Int) Int) Void, c: Cell<Int>, g: fn(Int) Int) Void { f(c, g) }\nc := Cell.new(1)\napply_update(Cell.update, c, inc)\nprintln(Int.to_string(c.get()))\n",
     "cell update builtin first-class function arg",
   )
-  try assert.str_contains(wat, "struct.new $rt_types__Closure")
-  try assert.str_contains(wat, "call_ref $rt_types__ClosureFunc")
-  try assert.str_contains(wat, "struct.set $user__$Cell_i64 0")
+  try assert.str_contains(wat, "struct.new \$rt_types__Closure")
+  try assert.str_contains(wat, "call_ref \$rt_types__ClosureFunc")
+  try assert.str_contains(wat, "struct.set \$user__\$Cell_i64 0")
   .Ok({})
 }
 
-fn test_iterator_unfold_builtin_first_class_function_arg_uses_wrapper_trampoline() Result<Void, String> {
+fn test_iterator_unfold_builtin_first_class_function_arg_uses_wrapper_trampoline() Result<
+  Void,
+  String,
+> {
   wat := try assert_codegen_src_compiles(
     "fn step(i: Int) UnfoldStep<Int, Int> { if i >= 3 { UnfoldStep.Done } else { UnfoldStep.Yield(i, i + 1) } }\nfn apply_unfold(f: fn(Int, fn(Int) UnfoldStep<Int, Int>) Iterator<Int>, seed: Int, g: fn(Int) UnfoldStep<Int, Int>) Iterator<Int> { f(seed, g) }\nit := apply_unfold(Iterator.unfold, 0, step)\nprintln(Int.to_string(it.take(2).to_vector().len()))\n",
     "iterator unfold builtin first-class function arg",
   )
-  try assert.str_contains(wat, "struct.new $rt_types__Closure")
-  try assert.str_contains(wat, "struct.new $rt_types__IterState")
+  try assert.str_contains(wat, "struct.new \$rt_types__Closure")
+  try assert.str_contains(wat, "struct.new \$rt_types__IterState")
   .Ok({})
 }
 
@@ -400,8 +453,8 @@ fn test_builtin_stored_in_local_then_called() Result<Void, String> {
     "f: fn(Int) String = Int.to_string\nprintln(f(42))\n",
     "builtin stored in local then called",
   )
-  try assert.str_contains(wat, "$tramp_")
-  try assert.str_contains(wat, "struct.new $rt_types__Closure")
+  try assert.str_contains(wat, "\$tramp_")
+  try assert.str_contains(wat, "struct.new \$rt_types__Closure")
   .Ok({})
 }
 
@@ -412,8 +465,8 @@ fn test_builtin_returned_from_function_then_called() Result<Void, String> {
     "fn get_converter() fn(Int) String { Int.to_string }\nf := get_converter()\nprintln(f(42))\n",
     "builtin returned from function then called",
   )
-  try assert.str_contains(wat, "$tramp_")
-  try assert.str_contains(wat, "struct.new $rt_types__Closure")
+  try assert.str_contains(wat, "\$tramp_")
+  try assert.str_contains(wat, "struct.new \$rt_types__Closure")
   .Ok({})
 }
 
@@ -424,8 +477,8 @@ fn test_builtin_stored_in_record_field_then_called() Result<Void, String> {
     "type Wrapper = .{ f: fn(Int) String }\nw := Wrapper.{ f: Int.to_string }\nprintln(w.f(42))\n",
     "builtin stored in record field then called",
   )
-  try assert.str_contains(wat, "$tramp_")
-  try assert.str_contains(wat, "struct.new $rt_types__Closure")
+  try assert.str_contains(wat, "\$tramp_")
+  try assert.str_contains(wat, "struct.new \$rt_types__Closure")
   .Ok({})
 }
 
@@ -434,8 +487,8 @@ fn test_user_function_stored_in_record_field_then_called() Result<Void, String> 
     "fn double(n: Int) Int { n * 2 }\ntype Wrapper = .{ f: fn(Int) Int }\nw := Wrapper.{ f: double }\nprintln(Int.to_string(w.f(21)))\n",
     "user function stored in record field then called",
   )
-  try assert.str_contains(wat, "struct.new $rt_types__Closure")
-  try assert.str_contains(wat, "call_ref $rt_types__ClosureFunc")
+  try assert.str_contains(wat, "struct.new \$rt_types__Closure")
+  try assert.str_contains(wat, "call_ref \$rt_types__ClosureFunc")
   .Ok({})
 }
 
@@ -444,15 +497,14 @@ fn test_user_function_returned_from_function_then_called() Result<Void, String> 
     "fn double(n: Int) Int { n * 2 }\nfn get_double() fn(Int) Int { double }\nf := get_double()\nprintln(Int.to_string(f(21)))\n",
     "user function returned from function then called",
   )
-  try assert.str_contains(wat, "struct.new $rt_types__Closure")
-  try assert.str_contains(wat, "call_ref $rt_types__ClosureFunc")
+  try assert.str_contains(wat, "struct.new \$rt_types__Closure")
+  try assert.str_contains(wat, "call_ref \$rt_types__ClosureFunc")
   .Ok({})
 }
 
 // ── Match emission coverage ──────────────────────────────────────────
 // Ports focused match-emission cases from the former emit_pattern_suite,
 // now exercising the consolidated emit.tw path end-to-end.
-
 fn test_match_wildcard_and_var_binding() Result<Void, String> {
   // Wildcard and var-binding patterns in a case expression
   wat := try assert_codegen_src_compiles(
@@ -480,7 +532,7 @@ fn test_match_string_trie_dispatch() Result<Void, String> {
     "match string trie dispatch",
   )
   try assert.str_contains(wat, "string_case")
-  try assert.str_contains(wat, "array.get_u $rt_types__String")
+  try assert.str_contains(wat, "array.get_u \$rt_types__String")
   try assert.str_contains(wat, "rt_str__eq")
   .Ok({})
 }
@@ -541,67 +593,116 @@ fn test_match_named_sum_multi_variant() Result<Void, String> {
 }
 
 // ── Structural validation (inspects LinkedModule, not WAT text) ─────
-
 fn has_func_named(linked: LinkedModule, name: String) Bool {
   for f in linked.funcs {
-    if f.name == name { return true }
+    if f.name == name {
+      return true
+    }
   }
+
   false
 }
 
 fn has_export_named(linked: LinkedModule, name: String) Bool {
   for e in linked.exports {
-    if e.wasm_name == name { return true }
+    if e.wasm_name == name {
+      return true
+    }
   }
+
   false
 }
 
 fn has_type_named(linked: LinkedModule, name: String) Bool {
   for t in linked.types {
     case t {
-      .Struct(n, _, _, _) => if n == name { return true },
-      .Array(n, _) => if n == name { return true },
-      .FuncType(n, _, _) => if n == name { return true },
+      .Struct(n, _, _, _) => if n == name {
+        return true
+      },
+      .Array(n, _) => if n == name {
+        return true
+      },
+      .FuncType(n, _, _) => if n == name {
+        return true
+      },
     }
   }
+
   false
 }
 
 fn instr_has_call(instrs: Vector<Instr>, target: String) Bool {
   for instr in instrs {
     case instr {
-      .Call(sym) => { if sym == target { return true } },
-      .Block(_, _, body) => { if instr_has_call(body, target) { return true } },
-      .Loop(_, _, body) => { if instr_has_call(body, target) { return true } },
+      .Call(sym) => {
+        if sym == target {
+          return true
+        }
+      },
+      .Block(_, _, body) => {
+        if instr_has_call(body, target) {
+          return true
+        }
+      },
+      .Loop(_, _, body) => {
+        if instr_has_call(body, target) {
+          return true
+        }
+      },
       .If(_, then_body, else_body) => {
-        if instr_has_call(then_body, target) { return true }
-        if instr_has_call(else_body, target) { return true }
+        if instr_has_call(then_body, target) {
+          return true
+        }
+
+        if instr_has_call(else_body, target) {
+          return true
+        }
       },
       _ => {},
     }
   }
+
   false
 }
 
 fn instr_has_struct_new(instrs: Vector<Instr>, target: String) Bool {
   for instr in instrs {
     case instr {
-      .StructNew(sym) => { if sym == target { return true } },
-      .Block(_, _, body) => { if instr_has_struct_new(body, target) { return true } },
-      .Loop(_, _, body) => { if instr_has_struct_new(body, target) { return true } },
+      .StructNew(sym) => {
+        if sym == target {
+          return true
+        }
+      },
+      .Block(_, _, body) => {
+        if instr_has_struct_new(body, target) {
+          return true
+        }
+      },
+      .Loop(_, _, body) => {
+        if instr_has_struct_new(body, target) {
+          return true
+        }
+      },
       .If(_, then_body, else_body) => {
-        if instr_has_struct_new(then_body, target) { return true }
-        if instr_has_struct_new(else_body, target) { return true }
+        if instr_has_struct_new(then_body, target) {
+          return true
+        }
+
+        if instr_has_struct_new(else_body, target) {
+          return true
+        }
       },
       _ => {},
     }
   }
+
   false
 }
 
 fn test_structural_linked_module_has_start() Result<Void, String> {
   // A program with top-level statements must produce a start function.
   linked := try codegen_harness.codegen_linked("println(\"hello\")")
+
   case linked.start {
     .Some(_) => .Ok({}),
     .None => assert.fail("expected start function for top-level program"),
@@ -611,9 +712,18 @@ fn test_structural_linked_module_has_start() Result<Void, String> {
 fn test_structural_linked_module_has_runtime_types() Result<Void, String> {
   // Any linked program must include core runtime type definitions.
   linked := try codegen_harness.codegen_linked("x := 1")
-  try assert.ok(has_type_named(linked, "rt_types__String"), "missing rt_types__String type")
-  try assert.ok(has_type_named(linked, "rt_types__Array"), "missing rt_types__Array type")
-  try assert.ok(has_type_named(linked, "rt_types__Closure"), "missing rt_types__Closure type")
+  try assert.ok(
+    has_type_named(linked, "rt_types__String"),
+    "missing rt_types__String type",
+  )
+  try assert.ok(
+    has_type_named(linked, "rt_types__Array"),
+    "missing rt_types__Array type",
+  )
+  try assert.ok(
+    has_type_named(linked, "rt_types__Closure"),
+    "missing rt_types__Closure type",
+  )
   .Ok({})
 }
 
@@ -621,11 +731,11 @@ fn test_structural_user_func_present() Result<Void, String> {
   // A program with top-level code should produce at least one user-namespace function.
   linked := try codegen_harness.codegen_linked("println(Int.to_string(42))")
   found := false
+
   for f in linked.funcs {
-    if f.name.starts_with("user__") {
-      found = true
-    }
+    if f.name.starts_with("user__") { found = true }
   }
+
   try assert.ok(found, "expected at least one user function in linked module")
   .Ok({})
 }
@@ -633,117 +743,207 @@ fn test_structural_user_func_present() Result<Void, String> {
 fn test_structural_host_imports_are_host_only() Result<Void, String> {
   // After linking, all remaining imports must come from "host" module.
   linked := try codegen_harness.codegen_linked("println(\"hi\")")
+
   for imp in linked.imports {
-    try assert.ok(imp.module == "host",
-      "non-host import survived linking: ${imp.module}.${imp.name}")
+    try assert.ok(
+      imp.module == "host",
+      "non-host import survived linking: ${imp.module}.${imp.name}",
+    )
   }
+
   .Ok({})
 }
 
 fn test_structural_option_produces_typed_sum_struct() Result<Void, String> {
   // A program using Option<Int> should produce a typed sum struct type.
   linked := try codegen_harness.codegen_linked(
-    "x: Int? = .Some(42)\ncase x { .Some(n) => println(Int.to_string(n)), .None => println(\"none\") }"
+    "x: Int? = .Some(42)\ncase x { .Some(n) => println(Int.to_string(n)), .None => println(\"none\") }",
   )
   found_option := false
+
   for t in linked.types {
     case t {
       .Struct(name, _, _, _) => {
-        if name.starts_with("user__$Option_") {
-          found_option = true
-        }
+        if name.starts_with("user__\$Option_") { found_option = true }
       },
       _ => {},
     }
   }
-  try assert.ok(found_option, "expected a typed Option struct in linked module types")
+
+  try assert.ok(
+    found_option,
+    "expected a typed Option struct in linked module types",
+  )
   .Ok({})
 }
 
 fn test_dict_index_materializes_typed_option() Result<Void, String> {
   linked := try codegen_harness.codegen_linked(
-    "d: Dict<String, Int> = Dict.new()\nd[\"x\"] = 10\nprintln(Int.to_string(d[\"x\"].unwrap_or(0)))"
+    "d: Dict<String, Int> = Dict.new()\nd[\"x\"] = 10\nprintln(Int.to_string(d[\"x\"].unwrap_or(0)))",
   )
-
   found_get := false
   found_get_option := false
   found_option_struct := false
 
   for f in linked.funcs {
-    if instr_has_call(f.body, "rt_dict__get") {
-      found_get = true
-    }
-    if instr_has_call(f.body, "rt_dict__get_option") {
-      found_get_option = true
-    }
-    if instr_has_struct_new(f.body, "user__$Option_opt_i64") {
+    if instr_has_call(f.body, "rt_dict__get") { found_get = true }
+
+    if instr_has_call(f.body, "rt_dict__get_option") { found_get_option = true }
+
+    if instr_has_struct_new(f.body, "user__\$Option_opt_i64") {
       found_option_struct = true
     }
   }
 
   try assert.ok(found_get, "expected dict indexing to call rt_dict__get")
-  try assert.ok(!found_get_option, "dict indexing should not call rt_dict__get_option")
-  try assert.ok(found_option_struct, "expected dict indexing to construct a typed Option<Int>")
+  try assert.ok(
+    !found_get_option,
+    "dict indexing should not call rt_dict__get_option",
+  )
+  try assert.ok(
+    found_option_struct,
+    "expected dict indexing to construct a typed Option<Int>",
+  )
   .Ok({})
 }
 
 // ── Suite ───────────────────────────────────────────────────────────
-
 pub fn suite() runner.Suite {
-  runner.suite("codegen integration (M11)")
-    .test("emit_wat produces valid linked WAT", test_emit_wat_basic)
-    .test("codegen compiles a simple source program end to end", test_codegen_end_to_end_simple_program)
-    .test("phase 1 option boundary fixture compiles through boot codegen", test_phase1_option_boundary_fixture)
-    .test("phase 2 return inside if compiles through boot codegen", test_phase2_return_inside_if)
-    .test("phase 2 return inside for compiles through boot codegen", test_phase2_return_inside_for)
-    .test("phase 3 string.get fixture compiles through boot codegen", test_phase3_string_get_fixture)
-    .test("phase 3 bool case compiles through boot codegen", test_phase3_bool_case)
-    .test("phase 3 large string index fixture compiles through boot codegen", test_phase3_large_string_index_fixture)
-    .test("phase 4 record field access compiles through boot codegen", test_phase4_record_field_access)
-    .test("cell record field uses declared typed cell symbol", test_cell_record_field_uses_declared_typed_cell_symbol)
-    .test("runtime_modules returns 5 modules", test_runtime_modules_count)
-    .test("runtime_modules has correct namespaces", test_runtime_modules_namespaces)
-    .test("linking runtime resolves all inter-module imports", test_link_runtime_resolves_imports)
-    .test("linked runtime emits valid WAT with qualified names", test_link_runtime_emits_valid_wat)
-    .test("linked runtime preserves host imports", test_link_runtime_host_imports_preserved)
-    .test("runtime-only link has no start function", test_link_runtime_no_start_function)
-    .test("vector index emits checked i64→i32 narrowing", test_checked_narrowing_vector_index)
-    .test("runtime call emits checked i64→i32 narrowing", test_checked_narrowing_runtime_call)
-    .test("string index emits checked i64→i32 narrowing", test_checked_narrowing_string_index)
-    .test("large vector literals build through rt.arr.push", test_large_vector_literal_uses_runtime_push)
-    .test("dict index materializes typed Option without generic Variant helper", test_dict_index_materializes_typed_option)
-    .test("first-class function arg wraps as closure", test_closure_first_class_function_arg)
-    .test("closure type is subtype of base", test_closure_struct_is_subtype_of_base)
-    .test("closure call uses universal funcref via call_ref", test_closure_call_uses_universal_funcref)
-    .test("iterator unfold wraps named step as closure", test_iterator_unfold_wraps_named_step_as_closure)
-    .test("cell update wraps named function as closure", test_cell_update_wraps_named_function_as_closure)
-    .test("builtin first-class function arg uses builtin trampolines", test_builtin_first_class_function_arg_uses_builtin_trampolines)
-    .test("wrapper-backed builtin first-class function arg uses wrapper trampoline", test_wrapper_backed_builtin_first_class_function_arg_uses_wrapper_trampoline)
-    .test("cell update builtin first-class function arg uses wrapper trampoline", test_cell_update_builtin_first_class_function_arg_uses_wrapper_trampoline)
-    .test("iterator unfold builtin first-class function arg uses wrapper trampoline", test_iterator_unfold_builtin_first_class_function_arg_uses_wrapper_trampoline)
-    .test("builtin function stored in local then called indirectly", test_builtin_stored_in_local_then_called)
-    .test("builtin function returned from function then called indirectly", test_builtin_returned_from_function_then_called)
-    .test("builtin function stored in record field then called indirectly", test_builtin_stored_in_record_field_then_called)
-    .test("user function stored in record field then called indirectly", test_user_function_stored_in_record_field_then_called)
-    .test("user function returned from function then called indirectly", test_user_function_returned_from_function_then_called)
-    // Match emission coverage (ports emit_pattern_suite cases)
-    .test("match: wildcard and var binding", test_match_wildcard_and_var_binding)
-    .test("match: string literal emits rt_str__eq", test_match_literal_string)
-    .test("match: string trie dispatch", test_match_string_trie_dispatch)
-    .test("match: int literal emits i64.eq", test_match_literal_int)
-    .test("match: Result Ok/Err dispatch", test_match_result_ok_err)
-    .test("match: wildcard catch-all arm", test_match_wildcard_catch_all)
-    .test("match: all-diverging arms", test_match_all_diverging_arms)
-    .test("match: named sum with multiple variants", test_match_named_sum_multi_variant)
-    // Structural validation (inspects LinkedModule fields, not WAT text)
-    .test("linked program has start function", test_structural_linked_module_has_start)
-    .test("linked program includes runtime type definitions", test_structural_linked_module_has_runtime_types)
-    .test("user function appears in linked module", test_structural_user_func_present)
-    .test("all imports are host-only after linking", test_structural_host_imports_are_host_only)
-    .test("Option usage produces typed sum struct", test_structural_option_produces_typed_sum_struct)
-    .test("anon record variant compiles to WAT", fn() {
+  runner.suite("codegen integration (M11)").test(
+    "emit_wat produces valid linked WAT",
+    test_emit_wat_basic,
+  ).test(
+    "codegen compiles a simple source program end to end",
+    test_codegen_end_to_end_simple_program,
+  ).test(
+    "phase 1 option boundary fixture compiles through boot codegen",
+    test_phase1_option_boundary_fixture,
+  ).test(
+    "phase 2 return inside if compiles through boot codegen",
+    test_phase2_return_inside_if,
+  ).test(
+    "phase 2 return inside for compiles through boot codegen",
+    test_phase2_return_inside_for,
+  ).test(
+    "phase 3 string.get fixture compiles through boot codegen",
+    test_phase3_string_get_fixture,
+  ).test(
+    "phase 3 bool case compiles through boot codegen",
+    test_phase3_bool_case,
+  ).test(
+    "phase 3 large string index fixture compiles through boot codegen",
+    test_phase3_large_string_index_fixture,
+  ).test(
+    "phase 4 record field access compiles through boot codegen",
+    test_phase4_record_field_access,
+  ).test(
+    "cell record field uses declared typed cell symbol",
+    test_cell_record_field_uses_declared_typed_cell_symbol,
+  ).test("runtime_modules returns 5 modules", test_runtime_modules_count).test(
+    "runtime_modules has correct namespaces",
+    test_runtime_modules_namespaces,
+  ).test(
+    "linking runtime resolves all inter-module imports",
+    test_link_runtime_resolves_imports,
+  ).test(
+    "linked runtime emits valid WAT with qualified names",
+    test_link_runtime_emits_valid_wat,
+  ).test(
+    "linked runtime preserves host imports",
+    test_link_runtime_host_imports_preserved,
+  ).test(
+    "runtime-only link has no start function",
+    test_link_runtime_no_start_function,
+  ).test(
+    "vector index emits checked i64→i32 narrowing",
+    test_checked_narrowing_vector_index,
+  ).test(
+    "runtime call emits checked i64→i32 narrowing",
+    test_checked_narrowing_runtime_call,
+  ).test(
+    "string index emits checked i64→i32 narrowing",
+    test_checked_narrowing_string_index,
+  ).test(
+    "large vector literals build through rt.arr.push",
+    test_large_vector_literal_uses_runtime_push,
+  ).test(
+    "dict index materializes typed Option without generic Variant helper",
+    test_dict_index_materializes_typed_option,
+  ).test(
+    "first-class function arg wraps as closure",
+    test_closure_first_class_function_arg,
+  ).test(
+    "closure type is subtype of base",
+    test_closure_struct_is_subtype_of_base,
+  ).test(
+    "closure call uses universal funcref via call_ref",
+    test_closure_call_uses_universal_funcref,
+  ).test(
+    "iterator unfold wraps named step as closure",
+    test_iterator_unfold_wraps_named_step_as_closure,
+  ).test(
+    "cell update wraps named function as closure",
+    test_cell_update_wraps_named_function_as_closure,
+  ).test(
+    "builtin first-class function arg uses builtin trampolines",
+    test_builtin_first_class_function_arg_uses_builtin_trampolines,
+  ).test(
+    "wrapper-backed builtin first-class function arg uses wrapper trampoline",
+    test_wrapper_backed_builtin_first_class_function_arg_uses_wrapper_trampoline,
+  ).test(
+    "cell update builtin first-class function arg uses wrapper trampoline",
+    test_cell_update_builtin_first_class_function_arg_uses_wrapper_trampoline,
+  ).test(
+    "iterator unfold builtin first-class function arg uses wrapper trampoline",
+    test_iterator_unfold_builtin_first_class_function_arg_uses_wrapper_trampoline,
+  ).test(
+    "builtin function stored in local then called indirectly",
+    test_builtin_stored_in_local_then_called,
+  ).test(
+    "builtin function returned from function then called indirectly",
+    test_builtin_returned_from_function_then_called,
+  ).test(
+    "builtin function stored in record field then called indirectly",
+    test_builtin_stored_in_record_field_then_called,
+  ).test(
+    "user function stored in record field then called indirectly",
+    test_user_function_stored_in_record_field_then_called,
+  ).test(
+    "user function returned from function then called indirectly",
+    test_user_function_returned_from_function_then_called,
+  ).test("match: wildcard and var binding", test_match_wildcard_and_var_binding).test(
+    "match: string literal emits rt_str__eq",
+    test_match_literal_string,
+  ).test("match: string trie dispatch", test_match_string_trie_dispatch).test(
+    "match: int literal emits i64.eq",
+    test_match_literal_int,
+  ).test("match: Result Ok/Err dispatch", test_match_result_ok_err).test(
+    "match: wildcard catch-all arm",
+    test_match_wildcard_catch_all,
+  ).test("match: all-diverging arms", test_match_all_diverging_arms).test(
+    "match: named sum with multiple variants",
+    test_match_named_sum_multi_variant,
+  ).test(
+    "linked program has start function",
+    test_structural_linked_module_has_start,
+  ).test(
+    "linked program includes runtime type definitions",
+    test_structural_linked_module_has_runtime_types,
+  ).test(
+    "user function appears in linked module",
+    test_structural_user_func_present,
+  ).test(
+    "all imports are host-only after linking",
+    test_structural_host_imports_are_host_only,
+  ).test(
+    "Option usage produces typed sum struct",
+    test_structural_option_produces_typed_sum_struct,
+  ).test(
+    "anon record variant compiles to WAT",
+    fn() {
       src := "type Msg = { Hello(.{ name: String }), Bye } fn greet(m: Msg) String { case m { .Hello(h) => h.name, .Bye => \"bye\" } } greet(Msg.Hello(.{ name: \"world\" }))"
       try assert_codegen_src_compiles(src, "anon record variant")
       .Ok({})
-    })
+    },
+  )
 }

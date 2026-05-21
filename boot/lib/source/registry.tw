@@ -1,21 +1,11 @@
 // FileRegistry: stores source files and provides span-based lookups.
-
 use .span.{Span}
 
-type SourceFile = .{
-  name: String,
-  source: String,
-  line_starts: Vector<Int>,
-}
+type SourceFile = .{ name: String, source: String, line_starts: Vector<Int> }
 
-pub type FileRegistry = .{
-  data: Cell<RegistryData>,
-}
+pub type FileRegistry = .{ data: Cell<RegistryData> }
 
-type RegistryData = .{
-  files: Dict<Int, SourceFile>,
-  count: Int,
-}
+type RegistryData = .{ files: Dict<Int, SourceFile>, count: Int }
 
 pub type AddFileResult = .{ file_id: Int }
 
@@ -26,11 +16,11 @@ pub fn empty() FileRegistry {
 
 fn compute_line_starts(source: String) Vector<Int> {
   starts: Vector<Int> = [0]
+
   for b, i in source {
-    if b.is_newline() {
-      starts = .append(i + 1)
-    }
+    if b.is_newline() { starts = .append(i + 1) }
   }
+
   starts
 }
 
@@ -52,6 +42,7 @@ fn get_file(reg: FileRegistry, file_id: Int) SourceFile? {
 
 pub fn snippet(reg: FileRegistry, s: Span) String? {
   f := try get_file(reg, s.file_id)
+
   if s.start >= 0 and s.end <= f.source.len() {
     .Some(f.source.slice(s.start, s.end))
   } else {
@@ -63,14 +54,17 @@ pub fn snippet(reg: FileRegistry, s: Span) String? {
 fn find_line_index(line_starts: Vector<Int>, offset: Int) Int {
   lo := 0
   hi := line_starts.len()
+
   for lo < hi {
     mid := (lo + hi) / 2
+
     if line_starts[mid] <= offset {
       lo = mid + 1
     } else {
       hi = mid
     }
   }
+
   // lo is now the first line_start > offset, so line index is lo - 1
   lo - 1
 }
@@ -78,7 +72,10 @@ fn find_line_index(line_starts: Vector<Int>, offset: Int) Int {
 pub type LineCol = .{ line: Int, column: Int }
 
 pub fn line_col(reg: FileRegistry, s: Span) LineCol? {
-  if s.start < 0 { return .None }
+  if s.start < 0 {
+    return .None
+  }
+
   f := try get_file(reg, s.file_id)
   line_index := find_line_index(f.line_starts, s.start)
   line := line_index + 1
@@ -94,14 +91,15 @@ pub fn file_name(reg: FileRegistry, file_id: Int) String? {
 }
 
 pub fn line_text(reg: FileRegistry, s: Span) String? {
-  if s.start < 0 { return .None }
+  if s.start < 0 {
+    return .None
+  }
+
   f := try get_file(reg, s.file_id)
   line_index := find_line_index(f.line_starts, s.start)
   line_start := f.line_starts[line_index]
   line_end := if line_index + 1 < f.line_starts.len() {
     f.line_starts[line_index + 1]
-  } else {
-    f.source.len()
-  }
+  } else { f.source.len() }
   .Some(f.source.slice(line_start, line_end))
 }

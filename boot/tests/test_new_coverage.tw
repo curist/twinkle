@@ -1,21 +1,25 @@
-use tests.helpers.codegen_harness
 use compiler.codegen.codegen.{codegen}
+use tests.helpers.codegen_harness
 
-inputs1 := case codegen_harness.codegen_inputs("f: fn(Int) String = Int.to_string\nprintln(f(42))\n") {
+inputs1 := case codegen_harness.codegen_inputs(
+  "f: fn(Int) String = Int.to_string\nprintln(f(42))\n",
+) {
   .Ok(i) => i,
   .Err(e) => { error("test1 input failed: ${e}") },
 }
 _wat1 := codegen(inputs1.anf, inputs1.env, inputs1.builtins)
 println("test1 ok: stored in local")
-
-inputs2 := case codegen_harness.codegen_inputs("fn get_converter() fn(Int) String { Int.to_string }\nf := get_converter()\nprintln(f(42))\n") {
+inputs2 := case codegen_harness.codegen_inputs(
+  "fn get_converter() fn(Int) String { Int.to_string }\nf := get_converter()\nprintln(f(42))\n",
+) {
   .Ok(i) => i,
   .Err(e) => { error("test2 input failed: ${e}") },
 }
 _wat2 := codegen(inputs2.anf, inputs2.env, inputs2.builtins)
 println("test2 ok: returned from function")
-
-inputs3 := case codegen_harness.codegen_inputs("type Wrapper = .{ f: fn(Int) String }\nw := Wrapper.{ f: Int.to_string }\nprintln(w.f(42))\n") {
+inputs3 := case codegen_harness.codegen_inputs(
+  "type Wrapper = .{ f: fn(Int) String }\nw := Wrapper.{ f: Int.to_string }\nprintln(w.f(42))\n",
+) {
   .Ok(i) => i,
   .Err(e) => { error("test3 input failed: ${e}") },
 }

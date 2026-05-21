@@ -6,67 +6,69 @@
 //   - No SumRepr — all sums are typed structs
 //   - Boundaries explicit — AWrapAnyref / AUnwrapAnyref already in IR
 //   - Pattern match arm chains are delegated to codegen.emit.match
-
-use compiler.resolver.{ResolvedEnv}
-use compiler.mono_type.{MonoType, TypeId}
-use compiler.type_util.{subst_type_params}
-use compiler.core_ir.{FuncId, FieldId, VariantId, BinOp, UnOp}
+use compiler.anf.{AnfFunctionDef, IndexKind, OpKind}
+use compiler.backend.facts as facts
+use compiler.backend.prepare.{PreparedModule}
+use compiler.backend.prepared_ir.{
+  PreparedAtom, PreparedExpr, PreparedFieldAtom, PreparedFunc, PreparedMatchArm,
+  PreparedOp, PreparedPattern, ReprKind, SlotId,
+}
+use compiler.backend.repr_assign.{repr_of_mono}
+use compiler.backend.task_validate.{classify_task_bodies}
 use compiler.builtins as bi
 use compiler.builtins.{BuiltinRegistry}
-use compiler.anf.{OpKind, IndexKind, AnfFunctionDef}
-use compiler.codegen.wasm_ir.{
-  ValType, Instr, TypeDef, FuncDef, ImportDef, GlobalDef, DataSegment,
-  WasmModule,
-}
-use compiler.codegen.wasm_layout.{val_type_of_mono, mono_to_key}
-
-use compiler.codegen.wasm_plan_types.{WasmTypeRegistry}
-use compiler.backend.prepared_ir.{
-  PreparedFunc, SlotId, ReprKind, PreparedAtom, PreparedExpr, PreparedOp,
-  PreparedFieldAtom, PreparedMatchArm, PreparedPattern,
-}
-use compiler.backend.prepare.{PreparedModule}
-use compiler.backend.repr_assign.{repr_of_mono}
-use compiler.backend.facts as facts
-use compiler.codegen.emit.defaults.{emit_default_value}
-use compiler.codegen.emit.module_globals.{emit_module_globals}
-use compiler.codegen.emit.helpers.{sanitize_name, repr_name, pattern_is_trivial, find_variant_layout, variant_field_mono, combine_and_checks}
-
-use compiler.codegen.emit.string_pool.{emit_string_pool_globals, emit_string_pool_getters, emit_string_data_segment}
 use compiler.codegen.emit.anyref.{
-  emit_box_to_anyref, emit_unbox_from_anyref, emit_erased_container_egress,
+  emit_box_to_anyref, emit_erased_container_egress, emit_unbox_from_anyref,
 }
-use compiler.codegen.emit.helper_collectors.{
-  collect_iterator_next_helpers, collect_sum_variant_helpers,
-  collect_dict_get_inner_types,
-}
+use compiler.codegen.emit.arrays as array_emit
 use compiler.codegen.emit.bridge_funcs.{
-  iterator_next_helper_sym, option_from_variant_helper_sym,
-  emit_iterator_next_helper, emit_sum_to_variant_helper, emit_variant_to_sum_helper,
-  emit_host_read_file_result_helper, emit_option_from_variant_helper,
+  emit_host_read_file_result_helper, emit_iterator_next_helper,
+  emit_option_from_variant_helper, emit_sum_to_variant_helper,
+  emit_variant_to_sum_helper, iterator_next_helper_sym,
+  option_from_variant_helper_sym,
 }
+use compiler.codegen.emit.calls as call_emit
+use compiler.codegen.emit.closures as closure_emit
+use compiler.codegen.emit.coercions.{emit_coerce_stack}
 use compiler.codegen.emit.context.{
-  LocalEntry, EmitCtx, current_prepared_func, lookup_slot, lookup_func_sym,
+  EmitCtx, LocalEntry, current_prepared_func, lookup_func_sym, lookup_slot,
+}
+use compiler.codegen.emit.control_flow as control_emit
+use compiler.codegen.emit.defaults.{emit_default_value}
+use compiler.codegen.emit.helper_collectors.{
+  collect_dict_get_inner_types, collect_iterator_next_helpers,
+  collect_sum_variant_helpers,
+}
+use compiler.codegen.emit.helpers.{
+  combine_and_checks, find_variant_layout, pattern_is_trivial, repr_name,
+  sanitize_name, variant_field_mono,
 }
 use compiler.codegen.emit.layout_helpers.{
-  cell_struct_sym, cell_inner_mono, cached_layout_of, get_sum_layout_ctx,
+  cached_layout_of, cell_inner_mono, cell_struct_sym, get_sum_layout_ctx,
 }
-use compiler.codegen.emit.coercions.{emit_coerce_stack}
-use compiler.codegen.emit.calls as call_emit
-use compiler.codegen.emit.control_flow as control_emit
-use compiler.codegen.emit.records as record_emit
-use compiler.codegen.emit.variants as variant_emit
-use compiler.codegen.emit.arrays as array_emit
 use compiler.codegen.emit.match as match_emit
-use compiler.codegen.emit.closures as closure_emit
-use compiler.codegen.emit.task_resume.{
-  TaskResumeInfo, LetBinding, ClosureInfo,
-  analyze_task_body, find_closure_for_slot,
+use compiler.codegen.emit.module_globals.{emit_module_globals}
+use compiler.codegen.emit.records as record_emit
+use compiler.codegen.emit.string_pool.{
+  emit_string_data_segment, emit_string_pool_getters, emit_string_pool_globals,
 }
-use compiler.backend.task_validate.{classify_task_bodies}
+use compiler.codegen.emit.task_resume.{
+  ClosureInfo, LetBinding, TaskResumeInfo, analyze_task_body,
+  find_closure_for_slot,
+}
+use compiler.codegen.emit.variants as variant_emit
+use compiler.codegen.wasm_ir.{
+  DataSegment, FuncDef, GlobalDef, ImportDef, Instr, TypeDef, ValType,
+  WasmModule,
+}
+use compiler.codegen.wasm_layout.{mono_to_key, val_type_of_mono}
+use compiler.codegen.wasm_plan_types.{WasmTypeRegistry}
+use compiler.core_ir.{BinOp, FieldId, FuncId, UnOp, VariantId}
+use compiler.mono_type.{MonoType, TypeId}
+use compiler.resolver.{ResolvedEnv}
+use compiler.type_util.{subst_type_params}
 
 // ── Module emission ────────────────────────────────────────────────────
-
 pub fn emit_module(
   prepared: PreparedModule,
   reg: WasmTypeRegistry,
@@ -74,29 +76,32 @@ pub fn emit_module(
   env: ResolvedEnv,
 ) WasmModule {
   anf := prepared.anf
-
   // Build FuncId → symbol map and prepared-function lookup
   func_sym_map: Dict<Int, String> = Dict.new()
   prepared_funcs: Dict<Int, PreparedFunc> = Dict.new()
+
   for func in anf.functions {
-    sym := "$f${func.func_id.id}_${sanitize_name(func.name)}"
+    sym := "\$f${func.func_id.id}_${sanitize_name(func.name)}"
     func_sym_map[func.func_id.id] = sym
   }
+
   for fid in anf.extern_imports.keys() {
     case anf.extern_imports[fid] {
       .Some(ext) => {
-        func_sym_map[fid] = "$extern_${fid}_${sanitize_name(ext.wasm_module)}_${sanitize_name(ext.wasm_name)}"
+        func_sym_map[fid] = "\$extern_${fid}_${sanitize_name(ext.wasm_module)}_${sanitize_name(
+          ext.wasm_name,
+        )}"
       },
       .None => {},
     }
   }
-  for pf in prepared.funcs {
-    prepared_funcs[pf.func_id.id] = pf
-  }
+
+  for pf in prepared.funcs { prepared_funcs[pf.func_id.id] = pf }
 
   // Analyze suspending task bodies for state-machine transform
   suspending_bodies: Dict<Int, TaskResumeInfo> = Dict.new()
   suspending_fids := classify_task_bodies(anf, builtins)
+
   for fid in suspending_fids {
     case prepared_funcs[fid.id] {
       .Some(pf) => {
@@ -123,43 +128,56 @@ pub fn emit_module(
     loop_depth: 0,
     suspending_bodies: suspending_bodies,
   }
-
   // Emit user functions
   funcs: Vector<FuncDef> = []
   trampolines: Vector<FuncDef> = []
+
   for func in anf.functions {
     pf := case prepared_funcs[func.func_id.id] {
       .Some(f) => f,
-      .None => error("emit_module: missing PreparedFunc for F${func.func_id.id}"),
+      .None => error(
+        "emit_module: missing PreparedFunc for F${func.func_id.id}",
+      ),
     }
     result := emit_func(func, pf, base_ctx)
     funcs = .append(result.func_def)
+
     for t in result.trampolines { trampolines = .append(t) }
   }
+
   for t in trampolines { funcs = .append(t) }
+
   for t in emit_builtin_trampolines(base_ctx) { funcs = .append(t) }
 
   iterator_helpers := collect_iterator_next_helpers(prepared.funcs, builtins)
+
   for mono in iterator_helpers {
     funcs = .append(emit_iterator_next_helper(mono, env))
   }
+
   sum_helpers := collect_sum_variant_helpers(prepared.funcs, env)
+
   for mono in sum_helpers {
-    funcs = .append(emit_sum_to_variant_helper(mono, env))
-      .append(emit_variant_to_sum_helper(mono, env))
+    funcs = .append(emit_sum_to_variant_helper(mono, env)).append(
+      emit_variant_to_sum_helper(mono, env),
+    )
   }
-  funcs = .append(emit_host_read_file_result_helper(env))
-    .append(emit_option_from_variant_helper(MonoType.String, env))
-    .append(emit_option_from_variant_helper(MonoType.Int, env))
-    .append(emit_option_from_variant_helper(MonoType.Float, env))
+
+  funcs = .append(emit_host_read_file_result_helper(env)).append(
+    emit_option_from_variant_helper(MonoType.String, env),
+  ).append(emit_option_from_variant_helper(MonoType.Int, env)).append(
+    emit_option_from_variant_helper(MonoType.Float, env),
+  )
   // Generate option_from_variant helpers for dict_get inner types
   dict_get_inners := collect_dict_get_inner_types(prepared.funcs, builtins)
   already_generated: Dict<String, Bool> = Dict.new()
   already_generated["str"] = true
   already_generated["i64"] = true
   already_generated["f64"] = true
+
   for inner in dict_get_inners {
     key := mono_to_key(inner)
+
     if !already_generated.has(key) {
       funcs = .append(emit_option_from_variant_helper(inner, env))
       already_generated[key] = true
@@ -168,14 +186,14 @@ pub fn emit_module(
 
   // Generate resume functions and frame types for suspending task bodies
   resume_type_defs: Vector<TypeDef> = []
+
   for fid in suspending_fids {
     case suspending_bodies[fid.id] {
       .Some(info) => {
         resume_type_defs = .append(info.frame_type)
+
         case prepared_funcs[fid.id] {
-          .Some(pf) => {
-            funcs = .append(emit_resume_func(info, pf, base_ctx))
-          },
+          .Some(pf) => { funcs = .append(emit_resume_func(info, pf, base_ctx)) },
           .None => {},
         }
       },
@@ -186,17 +204,17 @@ pub fn emit_module(
   // String pool: globals, getter functions, data segment
   str_globals := emit_string_pool_globals(reg)
   str_getters := emit_string_pool_getters(reg)
-  for g in str_getters { funcs = .append(g) }
-  str_data := emit_string_data_segment(reg)
 
+  for g in str_getters { funcs = .append(g) }
+
+  str_data := emit_string_data_segment(reg)
   // Module globals
   mod_globals := emit_module_globals(reg, anf, env)
-
   // Assemble all globals
   globals: Vector<GlobalDef> = mod_globals.concat(str_globals)
-
   // Data segments
   data: Vector<DataSegment> = []
+
   case str_data {
     .Some(d) => { data = .append(d) },
     .None => {},
@@ -207,9 +225,9 @@ pub fn emit_module(
     .Some(fid) => func_sym_map[fid.id],
     .None => .None,
   }
-
   type_defs: Vector<TypeDef> = reg.type_defs.concat(resume_type_defs)
   extern_imports: Vector<ImportDef> = []
+
   for fid in anf.extern_imports.keys() {
     case anf.extern_imports[fid] {
       .Some(ext) => {
@@ -219,13 +237,15 @@ pub fn emit_module(
           .Some(ty) => [val_type_of_mono(ty, env)],
           .None => [],
         }
-        extern_imports = .append(.{
-          module: ext.wasm_module,
-          name: ext.wasm_name,
-          as_sym: lookup_func_sym(func_sym_map, .{ id: fid }),
-          params,
-          results,
-        })
+        extern_imports = .append(
+          .{
+            module: ext.wasm_module,
+            name: ext.wasm_name,
+            as_sym: lookup_func_sym(func_sym_map, .{ id: fid }),
+            params,
+            results,
+          },
+        )
       },
       .None => {},
     }
@@ -261,7 +281,6 @@ pub fn emit_module(
     as_sym: "float_from_string_helper",
     params: [.Ref(true, .Named("rt_types__String"))],
     results: [.Anyref],
-  // ── Scheduler runtime imports ──
   }).append(.{
     module: "rt.sched",
     name: "sched_enqueue",
@@ -290,10 +309,12 @@ pub fn emit_module(
     module: "rt.sched",
     name: "sched_append_waiter",
     as_sym: "sched_append_waiter",
-    params: [.Ref(false, .Named("rt_types__Task")), .Ref(false, .Named("rt_types__Task"))],
+    params: [
+      .Ref(false, .Named("rt_types__Task")),
+      .Ref(false, .Named("rt_types__Task")),
+    ],
     results: [],
   })
-
   WasmModule.{
     namespace: "user",
     types: type_defs,
@@ -308,15 +329,15 @@ pub fn emit_module(
   }
 }
 
-type FuncResult = .{
-  func_def: FuncDef,
-  trampolines: Vector<FuncDef>,
-}
+type FuncResult = .{ func_def: FuncDef, trampolines: Vector<FuncDef> }
 
 fn emit_func(func: AnfFunctionDef, prepared: PreparedFunc, base_ctx: EmitCtx) FuncResult {
   // Local handling is slot-based. PreparedFunc provides the authoritative
   // ABI/local ordering, so emission does not reconstruct it by scanning ANF.
-  builder_slots := collect_vector_builder_slots(prepared.body, base_ctx.builtins)
+  builder_slots := collect_vector_builder_slots(
+    prepared.body,
+    base_ctx.builtins,
+  )
   local_map: Dict<Int, LocalEntry> = Dict.new()
   param_types: Vector<ValType> = []
   extra_locals: Vector<ValType> = []
@@ -324,8 +345,12 @@ fn emit_func(func: AnfFunctionDef, prepared: PreparedFunc, base_ctx: EmitCtx) Fu
 
   for sid in prepared.captures {
     info := facts.slot_info(prepared, sid)
-    vt := if builder_slots.has(sid.id) { ValType.Anyref } else { info.wasm_type }
-    repr := if builder_slots.has(sid.id) { ReprKind.OpaqueAnyref } else { info.repr }
+    vt := if builder_slots.has(sid.id) { ValType.Anyref } else {
+      info.wasm_type
+    }
+    repr := if builder_slots.has(sid.id) { ReprKind.OpaqueAnyref } else {
+      info.repr
+    }
     local_map[sid.id] = LocalEntry.{
       index: idx,
       val_type: vt,
@@ -339,8 +364,12 @@ fn emit_func(func: AnfFunctionDef, prepared: PreparedFunc, base_ctx: EmitCtx) Fu
 
   for sid in prepared.params {
     info := facts.slot_info(prepared, sid)
-    vt := if builder_slots.has(sid.id) { ValType.Anyref } else { info.wasm_type }
-    repr := if builder_slots.has(sid.id) { ReprKind.OpaqueAnyref } else { info.repr }
+    vt := if builder_slots.has(sid.id) { ValType.Anyref } else {
+      info.wasm_type
+    }
+    repr := if builder_slots.has(sid.id) { ReprKind.OpaqueAnyref } else {
+      info.repr
+    }
     local_map[sid.id] = LocalEntry.{
       index: idx,
       val_type: vt,
@@ -354,8 +383,12 @@ fn emit_func(func: AnfFunctionDef, prepared: PreparedFunc, base_ctx: EmitCtx) Fu
 
   for sid in prepared.locals {
     info := facts.slot_info(prepared, sid)
-    vt := if builder_slots.has(sid.id) { ValType.Anyref } else { info.wasm_type }
-    repr := if builder_slots.has(sid.id) { ReprKind.OpaqueAnyref } else { info.repr }
+    vt := if builder_slots.has(sid.id) { ValType.Anyref } else {
+      info.wasm_type
+    }
+    repr := if builder_slots.has(sid.id) { ReprKind.OpaqueAnyref } else {
+      info.repr
+    }
     local_map[sid.id] = LocalEntry.{
       index: idx,
       val_type: vt,
@@ -373,7 +406,6 @@ fn emit_func(func: AnfFunctionDef, prepared: PreparedFunc, base_ctx: EmitCtx) Fu
     .Never => [],
     _ => [val_type_of_mono(func.return_ty, base_ctx.env)],
   }
-
   ctx := EmitCtx.{
     registry: base_ctx.registry,
     builtins: base_ctx.builtins,
@@ -389,14 +421,11 @@ fn emit_func(func: AnfFunctionDef, prepared: PreparedFunc, base_ctx: EmitCtx) Fu
     loop_depth: 0,
     suspending_bodies: base_ctx.suspending_bodies,
   }
-
   body_instrs := emit_expr(prepared.body, prepared.return_mono, ctx, [])
 
   // After the init function body, drain the scheduler to run any
   // spawned-but-unawaited tasks before program exit.
-  if func.is_init {
-    body_instrs = .append(Instr.Call("rt_sched__sched_drain"))
-  }
+  if func.is_init { body_instrs = .append(Instr.Call("rt_sched__sched_drain")) }
 
   sym := lookup_func_sym(base_ctx.func_sym_map, func.func_id)
   fd := FuncDef.{
@@ -406,19 +435,27 @@ fn emit_func(func: AnfFunctionDef, prepared: PreparedFunc, base_ctx: EmitCtx) Fu
     locals: ctx.wasm_locals,
     body: body_instrs,
   }
-
   // Generate trampolines if this function is used as a closure
   tramps := emit_trampolines_for_func(prepared, ctx)
-
   FuncResult.{ func_def: fd, trampolines: tramps }
 }
 
-fn collect_vector_builder_slots(expr: PreparedExpr, builtins: BuiltinRegistry) Dict<Int, Bool> {
+fn collect_vector_builder_slots(expr: PreparedExpr, builtins: BuiltinRegistry) Dict<
+  Int,
+  Bool,
+> {
   builder_new := bi.id(builtins, "vector__builder_new")
   builder_from := bi.id(builtins, "vector__builder_from")
   builder_push := bi.id(builtins, "vector__builder_push")
   builder_freeze := bi.id(builtins, "vector__builder_freeze")
-  collect_vector_builder_slots_expr(expr, builder_new, builder_from, builder_push, builder_freeze, Dict.new())
+  collect_vector_builder_slots_expr(
+    expr,
+    builder_new,
+    builder_from,
+    builder_push,
+    builder_freeze,
+    Dict.new(),
+  )
 }
 
 fn collect_vector_builder_slots_expr(
@@ -432,8 +469,23 @@ fn collect_vector_builder_slots_expr(
   case expr {
     .Let(sid, op, body) => {
       cur := known
-      cur = collect_vector_builder_slots_op(op, sid, builder_new, builder_from, builder_push, builder_freeze, cur)
-      collect_vector_builder_slots_expr(body, builder_new, builder_from, builder_push, builder_freeze, cur)
+      cur = collect_vector_builder_slots_op(
+        op,
+        sid,
+        builder_new,
+        builder_from,
+        builder_push,
+        builder_freeze,
+        cur,
+      )
+      collect_vector_builder_slots_expr(
+        body,
+        builder_new,
+        builder_from,
+        builder_push,
+        builder_freeze,
+        cur,
+      )
     },
     _ => known,
   }
@@ -449,51 +501,94 @@ fn collect_vector_builder_slots_op(
   known: Dict<Int, Bool>,
 ) Dict<Int, Bool> {
   cur := known
+
   case op {
     .ACall(.AGlobalFunc(fid), args) => {
       if fid.id == builder_new.id or fid.id == builder_from.id {
         cur[sid.id] = true
       }
-      if (fid.id == builder_push.id or fid.id == builder_freeze.id) and args.len() > 0 {
+
+      if (fid.id == builder_push.id or fid.id == builder_freeze.id)
+      and args.len() > 0 {
         case args[0] {
           .ASlot(builder_sid) => cur[builder_sid.id] = true,
           _ => {},
         }
       }
+
       cur
     },
     .AInit(.ASlot(src)) => {
-      if known.has(src.id) {
-        cur[sid.id] = true
-      }
+      if known.has(src.id) { cur[sid.id] = true }
+
       cur
     },
     .AAssign(target, .ASlot(src)) => {
-      if known.has(src.id) {
-        cur[target.id] = true
-      }
+      if known.has(src.id) { cur[target.id] = true }
+
       cur
     },
     .AIf(_, then_e, else_e) => {
-      cur = collect_vector_builder_slots_expr(then_e, builder_new, builder_from, builder_push, builder_freeze, cur)
-      collect_vector_builder_slots_expr(else_e, builder_new, builder_from, builder_push, builder_freeze, cur)
+      cur = collect_vector_builder_slots_expr(
+        then_e,
+        builder_new,
+        builder_from,
+        builder_push,
+        builder_freeze,
+        cur,
+      )
+      collect_vector_builder_slots_expr(
+        else_e,
+        builder_new,
+        builder_from,
+        builder_push,
+        builder_freeze,
+        cur,
+      )
     },
     .AMatch(_, arms) => {
       out := cur
+
       for arm in arms {
-        out = collect_vector_builder_slots_expr(arm.body, builder_new, builder_from, builder_push, builder_freeze, out)
+        out = collect_vector_builder_slots_expr(
+          arm.body,
+          builder_new,
+          builder_from,
+          builder_push,
+          builder_freeze,
+          out,
+        )
       }
+
       out
     },
-    .ALoop(body) => collect_vector_builder_slots_expr(body, builder_new, builder_from, builder_push, builder_freeze, cur),
-    .ADefer(body) => collect_vector_builder_slots_expr(body, builder_new, builder_from, builder_push, builder_freeze, cur),
+    .ALoop(body) => collect_vector_builder_slots_expr(
+      body,
+      builder_new,
+      builder_from,
+      builder_push,
+      builder_freeze,
+      cur,
+    ),
+    .ADefer(body) => collect_vector_builder_slots_expr(
+      body,
+      builder_new,
+      builder_from,
+      builder_push,
+      builder_freeze,
+      cur,
+    ),
     _ => cur,
   }
 }
 
 // ── Expression emission ────────────────────────────────────────────────
-
-fn emit_expr(expr: PreparedExpr, expected_ty: MonoType, ctx: EmitCtx, buf: Vector<Instr>) Vector<Instr> {
+fn emit_expr(
+  expr: PreparedExpr,
+  expected_ty: MonoType,
+  ctx: EmitCtx,
+  buf: Vector<Instr>,
+) Vector<Instr> {
   case expr {
     .Let(local, op, body) => emit_let(local, op, body, expected_ty, ctx, buf),
     .Atom(atom) => {
@@ -502,6 +597,7 @@ fn emit_expr(expr: PreparedExpr, expected_ty: MonoType, ctx: EmitCtx, buf: Vecto
           // In ANF, side effects happen in the enclosing Let op; a trailing
           // Void atom is just the pure sentinel value for that statement.
           mono := atom_mono(atom, ctx)
+
           case mono {
             .Void => buf,
             .Never => emit_atom(atom, ctx, buf),
@@ -527,6 +623,7 @@ fn emit_expr(expr: PreparedExpr, expected_ty: MonoType, ctx: EmitCtx, buf: Vecto
       if ctx.label_stack.len() == 0 {
         error("emit_expr: Break with no label stack")
       }
+
       lp := ctx.label_stack[ctx.label_stack.len() - 1]
       buf2 := emit_atom(atom, ctx, buf)
       buf2.append(.Br(lp.break_label))
@@ -535,6 +632,7 @@ fn emit_expr(expr: PreparedExpr, expected_ty: MonoType, ctx: EmitCtx, buf: Vecto
       if ctx.label_stack.len() == 0 {
         error("emit_expr: Break with no label stack")
       }
+
       lp := ctx.label_stack[ctx.label_stack.len() - 1]
       buf.append(.Br(lp.break_label))
     },
@@ -542,6 +640,7 @@ fn emit_expr(expr: PreparedExpr, expected_ty: MonoType, ctx: EmitCtx, buf: Vecto
       if ctx.label_stack.len() == 0 {
         error("emit_expr: Continue with no label stack")
       }
+
       lp := ctx.label_stack[ctx.label_stack.len() - 1]
       buf.append(.Br(lp.continue_label))
     },
@@ -549,23 +648,40 @@ fn emit_expr(expr: PreparedExpr, expected_ty: MonoType, ctx: EmitCtx, buf: Vecto
 }
 
 // ── Let emission ───────────────────────────────────────────────────────
-
-fn emit_let(local: SlotId, op: PreparedOp, body: PreparedExpr, expected_ty: MonoType, ctx: EmitCtx, buf: Vector<Instr>) Vector<Instr> {
+fn emit_let(
+  local: SlotId,
+  op: PreparedOp,
+  body: PreparedExpr,
+  expected_ty: MonoType,
+  ctx: EmitCtx,
+  buf: Vector<Instr>,
+) Vector<Instr> {
   // Flatten the Let chain iteratively: each op pushes directly into buf,
   // rather than creating intermediate vectors and concating (O(N²) with PVec).
   cur_local := local
   cur_op := op
   cur_body := body
+
   for true {
     entry := lookup_slot(ctx, cur_local)
     result_mono := entry.mono
+
     case result_mono {
       .Never => {
         buf = emit_op(cur_op, entry.index, .None, result_mono, ctx, buf)
+
         return buf.append(.Unreachable)
       },
       _ => {
-        buf = emit_op(cur_op, entry.index, .Some(entry.val_type), result_mono, ctx, buf)
+        buf = emit_op(
+          cur_op,
+          entry.index,
+          .Some(entry.val_type),
+          result_mono,
+          ctx,
+          buf,
+        )
+
         if ctx.is_init_func {
           case ctx.registry.module_globals[entry.source_local.id] {
             .Some(gentry) => {
@@ -575,33 +691,38 @@ fn emit_let(local: SlotId, op: PreparedOp, body: PreparedExpr, expected_ty: Mono
             .None => {},
           }
         }
+
         case cur_body {
           .Let(next_local, next_op, next_body) => {
             cur_local = next_local
             cur_op = next_op
             cur_body = next_body
           },
-          _ => {
-            return emit_expr(cur_body, expected_ty, ctx, buf)
-          },
+          _ => { return emit_expr(cur_body, expected_ty, ctx, buf) },
         }
       },
     }
   }
+
   buf
 }
 
 // ── Op emission ────────────────────────────────────────────────────────
-
-fn emit_op(op: PreparedOp, result_idx: Int, result_vt: ValType?, result_mono: MonoType, ctx: EmitCtx, buf: Vector<Instr>) Vector<Instr> {
+fn emit_op(
+  op: PreparedOp,
+  result_idx: Int,
+  result_vt: ValType?,
+  result_mono: MonoType,
+  ctx: EmitCtx,
+  buf: Vector<Instr>,
+) Vector<Instr> {
   case op {
-    .AInit(atom) => {
-      emit_atom(atom, ctx, buf).append(.LocalSet(result_idx))
-    },
+    .AInit(atom) => { emit_atom(atom, ctx, buf).append(.LocalSet(result_idx)) },
     .AAssign(target, atom) => {
       tgt := lookup_slot(ctx, target)
       buf2 := emit_atom(atom, ctx, buf)
       buf2 = .append(.LocalSet(tgt.index))
+
       // For module globals in $init, also set the global
       if ctx.is_init_func {
         case ctx.registry.module_globals[tgt.source_local.id] {
@@ -612,6 +733,7 @@ fn emit_op(op: PreparedOp, result_idx: Int, result_vt: ValType?, result_mono: Mo
           .None => {},
         }
       }
+
       // AAssign produces void — set result to void
       buf2 = .append(.I32Const(0))
       buf2 = .append(.RefI31)
@@ -629,14 +751,29 @@ fn emit_op(op: PreparedOp, result_idx: Int, result_vt: ValType?, result_mono: Mo
       emit_call(callee, args, result_idx, result_mono, ctx, buf)
     },
     .AIf(cond, then_e, else_e) => {
-      emit_if_op(cond, then_e, else_e, result_idx, result_vt, result_mono, ctx, buf)
+      emit_if_op(
+        cond,
+        then_e,
+        else_e,
+        result_idx,
+        result_vt,
+        result_mono,
+        ctx,
+        buf,
+      )
     },
     .AMatch(scrutinee, arms) => {
-      emit_match_op(scrutinee, arms, result_idx, result_vt, result_mono, ctx, buf)
+      emit_match_op(
+        scrutinee,
+        arms,
+        result_idx,
+        result_vt,
+        result_mono,
+        ctx,
+        buf,
+      )
     },
-    .ALoop(body) => {
-      emit_loop_op(body, result_idx, result_vt, ctx, buf)
-    },
+    .ALoop(body) => { emit_loop_op(body, result_idx, result_vt, ctx, buf) },
     .ARecord(tid, fields) => {
       buf2 := emit_record_literal(tid, fields, result_mono, ctx, buf)
       buf2.append(.LocalSet(result_idx))
@@ -646,7 +783,16 @@ fn emit_op(op: PreparedOp, result_idx: Int, result_vt: ValType?, result_mono: Mo
       buf2.append(.LocalSet(result_idx))
     },
     .ARecordUpdate(base, fid, value, can_reuse, tid) => {
-      buf2 := emit_record_update(base, fid, value, can_reuse, tid, result_mono, ctx, buf)
+      buf2 := emit_record_update(
+        base,
+        fid,
+        value,
+        can_reuse,
+        tid,
+        result_mono,
+        ctx,
+        buf,
+      )
       buf2.append(.LocalSet(result_idx))
     },
     .AVariant(tid, vid, args) => {
@@ -678,7 +824,6 @@ fn emit_op(op: PreparedOp, result_idx: Int, result_vt: ValType?, result_mono: Mo
 }
 
 // ── Atom emission ──────────────────────────────────────────────────────
-
 fn emit_atom(atom: PreparedAtom, ctx: EmitCtx, buf: Vector<Instr>) Vector<Instr> {
   case atom {
     .ALitInt(n) => buf.append(.I64Const(n)),
@@ -719,6 +864,7 @@ fn atom_mono(atom: PreparedAtom, ctx: EmitCtx) MonoType {
     },
     .None => {},
   }
+
   case atom {
     .ALitInt(_) => .Int,
     .ALitFloat(_) => .Float,
@@ -735,7 +881,7 @@ fn atom_mono(atom: PreparedAtom, ctx: EmitCtx) MonoType {
         .None => .Void,
       }
     },
-    .AGlobalFunc(_) => .Void,  // function refs handled specially
+    .AGlobalFunc(_) => .Void,
   }
 }
 
@@ -747,6 +893,7 @@ fn atom_repr(atom: PreparedAtom, ctx: EmitCtx) ReprKind {
     },
     .None => {},
   }
+
   case atom {
     .ALitInt(_) => .I64,
     .ALitFloat(_) => .F64,
@@ -775,6 +922,7 @@ fn atom_val_type(atom: PreparedAtom, ctx: EmitCtx) ValType {
     },
     .None => {},
   }
+
   case atom {
     .ALitInt(_) => .I64,
     .ALitFloat(_) => .F64,
@@ -798,12 +946,17 @@ fn atom_val_type(atom: PreparedAtom, ctx: EmitCtx) ValType {
 fn require_typed_record_atom(atom: PreparedAtom, ctx: EmitCtx, context: String) MonoType {
   mono := atom_mono(atom, ctx)
   repr := atom_repr(atom, ctx)
+
   case mono {
     .Void => .Void,
     _ => {
       case repr {
         .TypedRef(_) => mono,
-        _ => error("${context}: expected typed record ref, got ${repr_name(repr)} for ${mono_to_key(mono)}"),
+        _ => error(
+          "${context}: expected typed record ref, got ${repr_name(repr)} for ${mono_to_key(
+            mono,
+          )}",
+        ),
       }
     },
   }
@@ -812,9 +965,14 @@ fn require_typed_record_atom(atom: PreparedAtom, ctx: EmitCtx, context: String) 
 fn require_typed_sum_atom(atom: PreparedAtom, ctx: EmitCtx, context: String) MonoType {
   mono := atom_mono(atom, ctx)
   repr := atom_repr(atom, ctx)
+
   case repr {
     .TypedSum(sum_mono) => sum_mono,
-    _ => error("${context}: expected typed sum repr, got ${repr_name(repr)} for ${mono_to_key(mono)}"),
+    _ => error(
+      "${context}: expected typed sum repr, got ${repr_name(repr)} for ${mono_to_key(
+        mono,
+      )}",
+    ),
   }
 }
 
@@ -828,15 +986,26 @@ fn match_scrutinee_mono(atom: PreparedAtom, ctx: EmitCtx) MonoType {
 fn require_closure_atom(atom: PreparedAtom, ctx: EmitCtx, context: String) MonoType {
   mono := atom_mono(atom, ctx)
   repr := atom_repr(atom, ctx)
+
   case repr {
     .ClosureRef => mono,
-    _ => error("${context}: expected closure repr, got ${repr_name(repr)} for ${mono_to_key(mono)}"),
+    _ => error(
+      "${context}: expected closure repr, got ${repr_name(repr)} for ${mono_to_key(
+        mono,
+      )}",
+    ),
   }
 }
 
 // ── Binary operations ──────────────────────────────────────────────────
-
-fn emit_binop(bop: BinOp, left: PreparedAtom, right: PreparedAtom, kind: OpKind, ctx: EmitCtx, buf: Vector<Instr>) Vector<Instr> {
+fn emit_binop(
+  bop: BinOp,
+  left: PreparedAtom,
+  right: PreparedAtom,
+  kind: OpKind,
+  ctx: EmitCtx,
+  buf: Vector<Instr>,
+) Vector<Instr> {
   case kind {
     .Int => emit_int_binop(bop, left, right, ctx, buf),
     .Float => emit_float_binop(bop, left, right, ctx, buf),
@@ -846,16 +1015,25 @@ fn emit_binop(bop: BinOp, left: PreparedAtom, right: PreparedAtom, kind: OpKind,
 }
 
 // Emit an atom and coerce to i64 if the atom is Byte-typed (i32).
-fn emit_atom_as_i64(atom: PreparedAtom, ctx: EmitCtx, buf: Vector<Instr>) Vector<Instr> {
+fn emit_atom_as_i64(atom: PreparedAtom, ctx: EmitCtx, buf: Vector<Instr>) Vector<
+  Instr,
+> {
   buf2 := emit_atom(atom, ctx, buf)
+
   case atom_mono(atom, ctx) {
     .Byte => buf2.append(.I64ExtendI32S),
     _ => buf2,
   }
 }
 
-fn emit_int_binop(bop: BinOp, left: PreparedAtom, right: PreparedAtom, ctx: EmitCtx, buf: Vector<Instr>) Vector<Instr> {
-  instr : Instr = case bop {
+fn emit_int_binop(
+  bop: BinOp,
+  left: PreparedAtom,
+  right: PreparedAtom,
+  ctx: EmitCtx,
+  buf: Vector<Instr>,
+) Vector<Instr> {
+  instr: Instr = case bop {
     .Add => .I64Add,
     .Sub => .I64Sub,
     .Mul => .I64Mul,
@@ -880,8 +1058,14 @@ fn emit_int_binop(bop: BinOp, left: PreparedAtom, right: PreparedAtom, ctx: Emit
   buf3.append(instr)
 }
 
-fn emit_float_binop(bop: BinOp, left: PreparedAtom, right: PreparedAtom, ctx: EmitCtx, buf: Vector<Instr>) Vector<Instr> {
-  instr : Instr = case bop {
+fn emit_float_binop(
+  bop: BinOp,
+  left: PreparedAtom,
+  right: PreparedAtom,
+  ctx: EmitCtx,
+  buf: Vector<Instr>,
+) Vector<Instr> {
+  instr: Instr = case bop {
     .Add => .F64Add,
     .Sub => .F64Sub,
     .Mul => .F64Mul,
@@ -899,8 +1083,14 @@ fn emit_float_binop(bop: BinOp, left: PreparedAtom, right: PreparedAtom, ctx: Em
   buf3.append(instr)
 }
 
-fn emit_bool_binop(bop: BinOp, left: PreparedAtom, right: PreparedAtom, ctx: EmitCtx, buf: Vector<Instr>) Vector<Instr> {
-  instr : Instr = case bop {
+fn emit_bool_binop(
+  bop: BinOp,
+  left: PreparedAtom,
+  right: PreparedAtom,
+  ctx: EmitCtx,
+  buf: Vector<Instr>,
+) Vector<Instr> {
+  instr: Instr = case bop {
     .Eq => .I32Eq,
     .Ne => .I32Ne,
     .And => .I32And,
@@ -912,24 +1102,44 @@ fn emit_bool_binop(bop: BinOp, left: PreparedAtom, right: PreparedAtom, ctx: Emi
   buf3.append(instr)
 }
 
-fn emit_str_binop(bop: BinOp, left: PreparedAtom, right: PreparedAtom, ctx: EmitCtx, buf: Vector<Instr>) Vector<Instr> {
+fn emit_str_binop(
+  bop: BinOp,
+  left: PreparedAtom,
+  right: PreparedAtom,
+  ctx: EmitCtx,
+  buf: Vector<Instr>,
+) Vector<Instr> {
   buf2 := emit_atom(left, ctx, buf)
   buf3 := emit_atom(right, ctx, buf2)
+
   case bop {
     .Add => buf3.append(.Call("rt_str__concat")),
     .Eq => buf3.append(.Call("rt_str__eq")),
     .Ne => buf3.append(.Call("rt_str__eq")).append(.I32Eqz),
-    .Lt => buf3.append(.Call("rt_str__cmp")).append(.I32Const(0)).append(.I32LtS),
-    .Le => buf3.append(.Call("rt_str__cmp")).append(.I32Const(1)).append(.I32LtS),
-    .Gt => buf3.append(.Call("rt_str__cmp")).append(.I32Const(0)).append(.I32GtS),
-    .Ge => buf3.append(.Call("rt_str__cmp")).append(.I32Const(-1)).append(.I32GtS),
+    .Lt => buf3.append(.Call("rt_str__cmp")).append(.I32Const(0)).append(
+      .I32LtS,
+    ),
+    .Le => buf3.append(.Call("rt_str__cmp")).append(.I32Const(1)).append(
+      .I32LtS,
+    ),
+    .Gt => buf3.append(.Call("rt_str__cmp")).append(.I32Const(0)).append(
+      .I32GtS,
+    ),
+    .Ge => buf3.append(.Call("rt_str__cmp")).append(.I32Const(-1)).append(
+      .I32GtS,
+    ),
     _ => error("emit_str_binop: unsupported op"),
   }
 }
 
 // ── Unary operations ───────────────────────────────────────────────────
-
-fn emit_unop(uop: UnOp, operand: PreparedAtom, kind: OpKind, ctx: EmitCtx, buf: Vector<Instr>) Vector<Instr> {
+fn emit_unop(
+  uop: UnOp,
+  operand: PreparedAtom,
+  kind: OpKind,
+  ctx: EmitCtx,
+  buf: Vector<Instr>,
+) Vector<Instr> {
   case uop {
     .Neg => case kind {
       .Int => {
@@ -962,43 +1172,122 @@ fn emit_unop(uop: UnOp, operand: PreparedAtom, kind: OpKind, ctx: EmitCtx, buf: 
 // These wrappers preserve the public emit.tw entrypoint while moving focused
 // emission slices into submodules. Callback records keep expression/atom and
 // intrinsic helpers local to this module, which avoids Twinkle import cycles.
-
 // ── Call dispatch ──────────────────────────────────────────────────────
-
-fn emit_call(callee: PreparedAtom, args: Vector<PreparedAtom>, result_idx: Int, result_mono: MonoType, ctx: EmitCtx, buf: Vector<Instr>) Vector<Instr> {
-  call_emit.emit_call(callee, args, result_idx, result_mono, ctx, buf, call_emit.CallEmitFns.{
-    emit_atom: emit_atom,
-    atom_val_type: atom_val_type,
-    atom_mono: atom_mono,
-    emit_checked_i32_narrow: emit_checked_i32_narrow,
-    emit_intrinsic_call: emit_intrinsic_call,
-    emit_closure_call: emit_closure_call,
-  })
+fn emit_call(
+  callee: PreparedAtom,
+  args: Vector<PreparedAtom>,
+  result_idx: Int,
+  result_mono: MonoType,
+  ctx: EmitCtx,
+  buf: Vector<Instr>,
+) Vector<Instr> {
+  call_emit.emit_call(
+    callee,
+    args,
+    result_idx,
+    result_mono,
+    ctx,
+    buf,
+    call_emit.CallEmitFns.{
+      emit_atom: emit_atom,
+      atom_val_type: atom_val_type,
+      atom_mono: atom_mono,
+      emit_checked_i32_narrow: emit_checked_i32_narrow,
+      emit_intrinsic_call: emit_intrinsic_call,
+      emit_closure_call: emit_closure_call,
+    },
+  )
 }
 
 // ── Intrinsic emission ─────────────────────────────────────────────────
-
-fn emit_intrinsic_call(fid: FuncId, name: String, args: Vector<PreparedAtom>, result_idx: Int, result_mono: MonoType, ctx: EmitCtx, buf: Vector<Instr>) Vector<Instr> {
+fn emit_intrinsic_call(
+  fid: FuncId,
+  name: String,
+  args: Vector<PreparedAtom>,
+  result_idx: Int,
+  result_mono: MonoType,
+  ctx: EmitCtx,
+  buf: Vector<Instr>,
+) Vector<Instr> {
   case name {
     "string_to_string" => {
       // Identity — just return the string
       buf2 := emit_atom(args[0], ctx, buf)
       buf2.append(.LocalSet(result_idx))
     },
-    "vector_append"       => emit_intrinsic_vector_append(args, result_idx, ctx, buf),
-    "vector_get"          => emit_intrinsic_vector_get(args, result_idx, result_mono, ctx, buf),
-    "vector_set"          => emit_intrinsic_vector_set(args, result_idx, result_mono, ctx, buf),
-    "vector_make"         => emit_intrinsic_vector_make(args, result_idx, ctx, buf),
-    "dict_get"             => emit_intrinsic_dict_get(args, result_idx, result_mono, ctx, buf),
-    "dict__get_unsafe"     => emit_intrinsic_dict_get_unsafe(args, result_idx, result_mono, ctx, buf),
-    "string_get"          => emit_intrinsic_string_get(args, result_idx, result_mono, ctx, buf),
-    "string_slice"        => emit_intrinsic_string_slice(args, result_idx, ctx, buf),
-    "char_code_at"        => emit_intrinsic_char_code_at(args, result_idx, ctx, buf),
-    "from_char_code"      => emit_intrinsic_from_char_code(args, result_idx, result_mono, ctx, buf),
-    "from_byte"           => emit_intrinsic_from_byte(args, result_idx, result_mono, ctx, buf),
-    "from_code_point"     => emit_intrinsic_from_code_point(args, result_idx, result_mono, ctx, buf),
-    "string_utf8_bytes"   => emit_intrinsic_string_utf8_bytes(args, result_idx, ctx, buf),
-    "string_from_utf8"    => emit_intrinsic_string_from_utf8(args, result_idx, result_mono, ctx, buf),
+    "vector_append" => emit_intrinsic_vector_append(args, result_idx, ctx, buf),
+    "vector_get" => emit_intrinsic_vector_get(
+      args,
+      result_idx,
+      result_mono,
+      ctx,
+      buf,
+    ),
+    "vector_set" => emit_intrinsic_vector_set(
+      args,
+      result_idx,
+      result_mono,
+      ctx,
+      buf,
+    ),
+    "vector_make" => emit_intrinsic_vector_make(args, result_idx, ctx, buf),
+    "dict_get" => emit_intrinsic_dict_get(
+      args,
+      result_idx,
+      result_mono,
+      ctx,
+      buf,
+    ),
+    "dict__get_unsafe" => emit_intrinsic_dict_get_unsafe(
+      args,
+      result_idx,
+      result_mono,
+      ctx,
+      buf,
+    ),
+    "string_get" => emit_intrinsic_string_get(
+      args,
+      result_idx,
+      result_mono,
+      ctx,
+      buf,
+    ),
+    "string_slice" => emit_intrinsic_string_slice(args, result_idx, ctx, buf),
+    "char_code_at" => emit_intrinsic_char_code_at(args, result_idx, ctx, buf),
+    "from_char_code" => emit_intrinsic_from_char_code(
+      args,
+      result_idx,
+      result_mono,
+      ctx,
+      buf,
+    ),
+    "from_byte" => emit_intrinsic_from_byte(
+      args,
+      result_idx,
+      result_mono,
+      ctx,
+      buf,
+    ),
+    "from_code_point" => emit_intrinsic_from_code_point(
+      args,
+      result_idx,
+      result_mono,
+      ctx,
+      buf,
+    ),
+    "string_utf8_bytes" => emit_intrinsic_string_utf8_bytes(
+      args,
+      result_idx,
+      ctx,
+      buf,
+    ),
+    "string_from_utf8" => emit_intrinsic_string_from_utf8(
+      args,
+      result_idx,
+      result_mono,
+      ctx,
+      buf,
+    ),
     "byte_to_int" => {
       buf2 := emit_atom(args[0], ctx, buf)
       buf2.append(.I64ExtendI32U).append(.LocalSet(result_idx))
@@ -1007,65 +1296,142 @@ fn emit_intrinsic_call(fid: FuncId, name: String, args: Vector<PreparedAtom>, re
       buf2 := emit_atom(args[0], ctx, buf)
       buf2.append(.I64ReinterpretF64).append(.LocalSet(result_idx))
     },
-    "byte_from_int"  => emit_intrinsic_byte_from_int(args, result_idx, result_mono, ctx, buf),
+    "byte_from_int" => emit_intrinsic_byte_from_int(
+      args,
+      result_idx,
+      result_mono,
+      ctx,
+      buf,
+    ),
     "byte_to_string" => {
       // Zero-extend byte to i64, call int_to_string
       buf2 := emit_atom(args[0], ctx, buf)
-      buf2.append(.I64ExtendI32U).append(.Call("rt_str__from_i64")).append(.LocalSet(result_idx))
+      buf2.append(.I64ExtendI32U).append(.Call("rt_str__from_i64")).append(
+        .LocalSet(result_idx),
+      )
     },
-    "task_spawn"  => emit_intrinsic_task_spawn(args, result_idx, result_mono, ctx, buf),
-    "task_await"  => emit_intrinsic_task_await(args, result_idx, result_mono, ctx, buf),
-    "task_yield"  => {
+    "task_spawn" => emit_intrinsic_task_spawn(
+      args,
+      result_idx,
+      result_mono,
+      ctx,
+      buf,
+    ),
+    "task_await" => emit_intrinsic_task_await(
+      args,
+      result_idx,
+      result_mono,
+      ctx,
+      buf,
+    ),
+    "task_yield" => {
       // Phase 2 stub for top-level yield: no-op (yield only meaningful in task bodies)
       buf.append(.I32Const(0)).append(.RefI31).append(.LocalSet(result_idx))
     },
-    "cell_new"    => emit_intrinsic_cell_new(args, result_idx, result_mono, ctx, buf),
-    "cell_get"    => emit_intrinsic_cell_get(args, result_idx, result_mono, ctx, buf),
-    "cell_set"    => emit_intrinsic_cell_set(args, result_idx, ctx, buf),
+    "cell_new" => emit_intrinsic_cell_new(
+      args,
+      result_idx,
+      result_mono,
+      ctx,
+      buf,
+    ),
+    "cell_get" => emit_intrinsic_cell_get(
+      args,
+      result_idx,
+      result_mono,
+      ctx,
+      buf,
+    ),
+    "cell_set" => emit_intrinsic_cell_set(args, result_idx, ctx, buf),
     "cell_update" => emit_intrinsic_cell_update(args, result_idx, ctx, buf),
-    "range_from"  => emit_intrinsic_range_from(args, result_idx, result_mono, ctx, buf),
-    "range"       => emit_intrinsic_range(args, result_idx, result_mono, ctx, buf),
-    "range_step"  => emit_intrinsic_range_step(args, result_idx, result_mono, ctx, buf),
-    "iterator_next"   => emit_intrinsic_iterator_next(args, result_idx, result_mono, ctx, buf),
-    "iterator_unfold" => emit_intrinsic_iterator_unfold(args, result_idx, result_mono, ctx, buf),
+    "range_from" => emit_intrinsic_range_from(
+      args,
+      result_idx,
+      result_mono,
+      ctx,
+      buf,
+    ),
+    "range" => emit_intrinsic_range(args, result_idx, result_mono, ctx, buf),
+    "range_step" => emit_intrinsic_range_step(
+      args,
+      result_idx,
+      result_mono,
+      ctx,
+      buf,
+    ),
+    "iterator_next" => emit_intrinsic_iterator_next(
+      args,
+      result_idx,
+      result_mono,
+      ctx,
+      buf,
+    ),
+    "iterator_unfold" => emit_intrinsic_iterator_unfold(
+      args,
+      result_idx,
+      result_mono,
+      ctx,
+      buf,
+    ),
     "int_from_string" => {
       buf2 := emit_atom(args[0], ctx, buf)
-      buf2.append(.Call("int_from_string_helper"))
-        .append(.RefCast(true, .Named("rt_types__Variant")))
-        .append(.Call(option_from_variant_helper_sym(MonoType.Int)))
-        .append(.LocalSet(result_idx))
+      buf2.append(.Call("int_from_string_helper")).append(
+        .RefCast(true, .Named("rt_types__Variant")),
+      ).append(.Call(option_from_variant_helper_sym(MonoType.Int))).append(
+        .LocalSet(result_idx),
+      )
     },
     "float_from_string" => {
       buf2 := emit_atom(args[0], ctx, buf)
-      buf2.append(.Call("float_from_string_helper"))
-        .append(.RefCast(true, .Named("rt_types__Variant")))
-        .append(.Call(option_from_variant_helper_sym(MonoType.Float)))
-        .append(.LocalSet(result_idx))
+      buf2.append(.Call("float_from_string_helper")).append(
+        .RefCast(true, .Named("rt_types__Variant")),
+      ).append(.Call(option_from_variant_helper_sym(MonoType.Float))).append(
+        .LocalSet(result_idx),
+      )
     },
     _ => error("emit_intrinsic_call: unknown intrinsic '${name}'"),
   }
 }
 
 // ── vector_append: COW append via concat ─────────────────────────────────
-
 // Erased container ingress: emit a typed/scalar value and coerce it to anyref
 // for storage in a vector or dict (rt_arr__*, rt_dict__* surfaces).
-fn emit_erased_container_ingress(arg: PreparedAtom, ctx: EmitCtx, buf: Vector<Instr>) Vector<Instr> {
+fn emit_erased_container_ingress(
+  arg: PreparedAtom,
+  ctx: EmitCtx,
+  buf: Vector<Instr>,
+) Vector<Instr> {
   buf2 := emit_atom(arg, ctx, buf)
-  emit_coerce_stack(atom_val_type(arg, ctx), .Anyref, atom_mono(arg, ctx), ctx, buf2)
+  emit_coerce_stack(
+    atom_val_type(arg, ctx),
+    .Anyref,
+    atom_mono(arg, ctx),
+    ctx,
+    buf2,
+  )
 }
 
-fn emit_intrinsic_vector_append(args: Vector<PreparedAtom>, result_idx: Int, ctx: EmitCtx, buf: Vector<Instr>) Vector<Instr> {
+fn emit_intrinsic_vector_append(
+  args: Vector<PreparedAtom>,
+  result_idx: Int,
+  ctx: EmitCtx,
+  buf: Vector<Instr>,
+) Vector<Instr> {
   // vector_append(vec, elem) → rt_arr__push(vec, elem)
-  buf2 := emit_atom(args[0], ctx, buf)  // vec (PVec, nullable)
-  buf3 := buf2.append(.RefAsNonNull)    // push takes non-null PVec
+  buf2 := emit_atom(args[0], ctx, buf) // vec (PVec, nullable)
+  buf3 := buf2.append(.RefAsNonNull) // push takes non-null PVec
   buf4 := emit_erased_container_ingress(args[1], ctx, buf3)
   buf4.append(.Call("rt_arr__push")).append(.LocalSet(result_idx))
 }
 
 // ── vector_get: bounds-checked → Option<T> ─────────────────────────────
-
-fn emit_intrinsic_vector_get(args: Vector<PreparedAtom>, result_idx: Int, result_mono: MonoType, ctx: EmitCtx, buf: Vector<Instr>) Vector<Instr> {
+fn emit_intrinsic_vector_get(
+  args: Vector<PreparedAtom>,
+  result_idx: Int,
+  result_mono: MonoType,
+  ctx: EmitCtx,
+  buf: Vector<Instr>,
+) Vector<Instr> {
   elem_mono := case result_mono {
     .Optional(inner) => inner,
     _ => .Anyref_,
@@ -1074,20 +1440,22 @@ fn emit_intrinsic_vector_get(args: Vector<PreparedAtom>, result_idx: Int, result
   // Option<ExternRef> → nullable externref, no struct wrapper
   if variant_emit.is_nullable_extern_option(result_mono) {
     result_vt := ValType.Ref(true, .Extern)
-
-    then_instrs : Vector<Instr> = emit_atom(args[0], ctx, [])
-        .concat(emit_checked_i32_narrow(args[1], ctx, []))
-        .concat([.Call("rt_arr__get")])
-        .concat(emit_erased_container_egress(elem_mono, ctx.env, []))
-
-    else_instrs : Vector<Instr> = [Instr.RefNull(.Extern)]
-
+    then_instrs: Vector<Instr> = emit_atom(args[0], ctx, []).concat(
+      emit_checked_i32_narrow(args[1], ctx, []),
+    ).concat([.Call("rt_arr__get")]).concat(
+      emit_erased_container_egress(elem_mono, ctx.env, []),
+    )
+    else_instrs: Vector<Instr> = [Instr.RefNull(.Extern)]
     buf2 := emit_atom(args[1], ctx, buf)
     buf3 := buf2.append(.I64Const(0)).append(.I64GeS)
     buf4 := emit_atom(args[1], ctx, buf3)
     buf5 := emit_atom(args[0], ctx, buf4)
-    return buf5.append(.RefAsNonNull).append(.StructGet("rt_types__PVec", 0)).append(.I64ExtendI32U).append(.I64LtS).append(.I32And)
-      .append(.If(.Some(result_vt), then_instrs, else_instrs)).append(.LocalSet(result_idx))
+
+    return buf5.append(.RefAsNonNull).append(.StructGet("rt_types__PVec", 0)).append(
+      .I64ExtendI32U,
+    ).append(.I64LtS).append(.I32And).append(
+      .If(.Some(result_vt), then_instrs, else_instrs),
+    ).append(.LocalSet(result_idx))
   }
 
   // Result is Option<T> → typed sum struct
@@ -1095,131 +1463,172 @@ fn emit_intrinsic_vector_get(args: Vector<PreparedAtom>, result_idx: Int, result
   some_variant := sum_layout.variants[1]
   default_payload := if some_variant.payload_types.len() > 0 {
     emit_default_value(some_variant.payload_types[0], [])
-  } else { [] }
+  } else {
+    []
+  }
   result_ref := ValType.Ref(false, .Named(sum_layout.sym))
-
   // Nested sub-bodies must use fresh []
-  then_instrs : Vector<Instr> = [Instr.I32Const(1)]  // tag = Some
-      .concat(emit_atom(args[0], ctx, []))  // vec
-      .concat(emit_checked_i32_narrow(args[1], ctx, []))  // index
-      .concat([.Call("rt_arr__get")])
-      .concat(emit_erased_container_egress(elem_mono, ctx.env, []))
-      .concat([.StructNew(sum_layout.sym)])
-
-  else_instrs : Vector<Instr> = [Instr.I32Const(0)]  // tag = None
-      .concat(default_payload)
-      .concat([.StructNew(sum_layout.sym)])
-
+  then_instrs: Vector<Instr> = [Instr.I32Const(1)].concat(
+    emit_atom(args[0], ctx, []),
+  ).concat(emit_checked_i32_narrow(args[1], ctx, [])).concat([
+    .Call("rt_arr__get"),
+  ]).concat(emit_erased_container_egress(elem_mono, ctx.env, [])).concat([
+    .StructNew(sum_layout.sym),
+  ])
+  else_instrs: Vector<Instr> = [Instr.I32Const(0)].concat(default_payload).concat([
+    .StructNew(sum_layout.sym),
+  ])
   // Bounds check: 0 <= index < len (index is i64, len is i32)
   buf2 := emit_atom(args[1], ctx, buf)
-  buf3 := buf2.append(.I64Const(0)).append(.I64GeS)  // index >= 0
+  buf3 := buf2.append(.I64Const(0)).append(.I64GeS) // index >= 0
   buf4 := emit_atom(args[1], ctx, buf3)
   buf5 := emit_atom(args[0], ctx, buf4)
-  buf5.append(.RefAsNonNull).append(.StructGet("rt_types__PVec", 0)).append(.I64ExtendI32U).append(.I64LtS).append(.I32And)
-    .append(.If(.Some(result_ref), then_instrs, else_instrs)).append(.LocalSet(result_idx))
+  buf5.append(.RefAsNonNull).append(.StructGet("rt_types__PVec", 0)).append(
+    .I64ExtendI32U,
+  ).append(.I64LtS).append(.I32And).append(
+    .If(.Some(result_ref), then_instrs, else_instrs),
+  ).append(.LocalSet(result_idx))
 }
 
 // ── vector_set: bounds-checked COW → Option<Vector<T>> ─────────────────
-
-fn emit_intrinsic_vector_set(args: Vector<PreparedAtom>, result_idx: Int, result_mono: MonoType, ctx: EmitCtx, buf: Vector<Instr>) Vector<Instr> {
+fn emit_intrinsic_vector_set(
+  args: Vector<PreparedAtom>,
+  result_idx: Int,
+  result_mono: MonoType,
+  ctx: EmitCtx,
+  buf: Vector<Instr>,
+) Vector<Instr> {
   sum_layout := get_sum_layout_ctx(result_mono, ctx)
   some_v := sum_layout.variants[1]
   default_payload := if some_v.payload_types.len() > 0 {
     emit_default_value(some_v.payload_types[0], [])
-  } else { [] }
+  } else {
+    []
+  }
   result_ref := ValType.Ref(false, .Named(sum_layout.sym))
-
   // Nested sub-bodies must use fresh []
-  then_instrs : Vector<Instr> = [Instr.I32Const(1)]  // tag = Some
-      .concat(emit_atom(args[0], ctx, []))  // vec
-      .concat(emit_checked_i32_narrow(args[1], ctx, []))  // index
-      .concat(emit_erased_container_ingress(args[2], ctx, []))
-      .concat([.Call("rt_arr__set"), .StructNew(sum_layout.sym)])
-
-  else_instrs : Vector<Instr> = [Instr.I32Const(0)]  // tag = None
-      .concat(default_payload)
-      .concat([.StructNew(sum_layout.sym)])
-
-  buf2 := emit_atom(args[1], ctx, buf)  // index (i64)
+  then_instrs: Vector<Instr> = [Instr.I32Const(1)].concat(
+    emit_atom(args[0], ctx, []),
+  ).concat(emit_checked_i32_narrow(args[1], ctx, [])).concat(
+    emit_erased_container_ingress(args[2], ctx, []),
+  ).concat([.Call("rt_arr__set"), .StructNew(sum_layout.sym)])
+  else_instrs: Vector<Instr> = [Instr.I32Const(0)].concat(default_payload).concat([
+    .StructNew(sum_layout.sym),
+  ])
+  buf2 := emit_atom(args[1], ctx, buf) // index (i64)
   buf3 := buf2.append(.I64Const(0)).append(.I64GeS)
   buf4 := emit_atom(args[1], ctx, buf3)
   buf5 := emit_atom(args[0], ctx, buf4)
-  buf5.append(.RefAsNonNull).append(.StructGet("rt_types__PVec", 0)).append(.I64ExtendI32U).append(.I64LtS).append(.I32And)
-    .append(.If(.Some(result_ref), then_instrs, else_instrs)).append(.LocalSet(result_idx))
+  buf5.append(.RefAsNonNull).append(.StructGet("rt_types__PVec", 0)).append(
+    .I64ExtendI32U,
+  ).append(.I64LtS).append(.I32And).append(
+    .If(.Some(result_ref), then_instrs, else_instrs),
+  ).append(.LocalSet(result_idx))
 }
 
 // ── vector_make: make(size, default) ───────────────────────────────────
-
-fn emit_intrinsic_vector_make(args: Vector<PreparedAtom>, result_idx: Int, ctx: EmitCtx, buf: Vector<Instr>) Vector<Instr> {
-  buf2 := emit_checked_i32_narrow(args[0], ctx, buf)  // size (i32)
+fn emit_intrinsic_vector_make(
+  args: Vector<PreparedAtom>,
+  result_idx: Int,
+  ctx: EmitCtx,
+  buf: Vector<Instr>,
+) Vector<Instr> {
+  buf2 := emit_checked_i32_narrow(args[0], ctx, buf) // size (i32)
   buf3 := emit_erased_container_ingress(args[1], ctx, buf2)
   buf3.append(.Call("rt_arr__make")).append(.LocalSet(result_idx))
 }
 
 // ── dict_get: d.get(k) → Option<V> ────────────────────────────────────
-
-fn emit_intrinsic_dict_get(args: Vector<PreparedAtom>, result_idx: Int, result_mono: MonoType, ctx: EmitCtx, buf: Vector<Instr>) Vector<Instr> {
+fn emit_intrinsic_dict_get(
+  args: Vector<PreparedAtom>,
+  result_idx: Int,
+  result_mono: MonoType,
+  ctx: EmitCtx,
+  buf: Vector<Instr>,
+) Vector<Instr> {
   inner_mono := case result_mono {
     .Optional(inner) => inner,
     _ => error("emit_intrinsic_dict_get: expected Optional result"),
   }
-  buf = emit_atom(args[0], ctx, buf)  // dict
-  buf = emit_erased_container_ingress(args[1], ctx, buf)  // key (erased)
-  buf.append(.Call("rt_dict__get_option"))
-    .append(.RefCast(true, .Named("rt_types__Variant")))
-    .append(.Call(option_from_variant_helper_sym(inner_mono)))
-    .append(.LocalSet(result_idx))
+  buf = emit_atom(args[0], ctx, buf) // dict
+  buf = emit_erased_container_ingress(args[1], ctx, buf) // key (erased)
+  buf.append(.Call("rt_dict__get_option")).append(
+    .RefCast(true, .Named("rt_types__Variant")),
+  ).append(.Call(option_from_variant_helper_sym(inner_mono))).append(
+    .LocalSet(result_idx),
+  )
 }
 
 // ── dict_get_unsafe ────────────────────────────────────────────────────
-
-fn emit_intrinsic_dict_get_unsafe(args: Vector<PreparedAtom>, result_idx: Int, result_mono: MonoType, ctx: EmitCtx, buf: Vector<Instr>) Vector<Instr> {
-  buf2 := emit_atom(args[0], ctx, buf)  // dict
-  buf3 := emit_erased_container_ingress(args[1], ctx, buf2)  // key (erased)
-  emit_erased_container_egress(result_mono, ctx.env, buf3.append(.Call("rt_dict__get")))
-    .append(.LocalSet(result_idx))
+fn emit_intrinsic_dict_get_unsafe(
+  args: Vector<PreparedAtom>,
+  result_idx: Int,
+  result_mono: MonoType,
+  ctx: EmitCtx,
+  buf: Vector<Instr>,
+) Vector<Instr> {
+  buf2 := emit_atom(args[0], ctx, buf) // dict
+  buf3 := emit_erased_container_ingress(args[1], ctx, buf2) // key (erased)
+  emit_erased_container_egress(
+    result_mono,
+    ctx.env,
+    buf3.append(.Call("rt_dict__get")),
+  ).append(.LocalSet(result_idx))
 }
 
 // ── string_get: s.get(i) → Option<Byte> ───────────────────────────────
-
-fn emit_intrinsic_string_get(args: Vector<PreparedAtom>, result_idx: Int, result_mono: MonoType, ctx: EmitCtx, buf: Vector<Instr>) Vector<Instr> {
+fn emit_intrinsic_string_get(
+  args: Vector<PreparedAtom>,
+  result_idx: Int,
+  result_mono: MonoType,
+  ctx: EmitCtx,
+  buf: Vector<Instr>,
+) Vector<Instr> {
   sum_layout := get_sum_layout_ctx(result_mono, ctx)
   some_v := sum_layout.variants[1]
   default_payload := if some_v.payload_types.len() > 0 {
     emit_default_value(some_v.payload_types[0], [])
-  } else { [] }
+  } else {
+    []
+  }
   result_ref := ValType.Ref(false, .Named(sum_layout.sym))
-
   // Nested sub-bodies must use fresh []
-  then_instrs : Vector<Instr> = [Instr.I32Const(1)]  // tag = Some
-      .concat(emit_atom(args[0], ctx, []))
-      .concat(emit_checked_i32_narrow(args[1], ctx, []))
-      .concat([.ArrayGetU("rt_types__String"), .StructNew(sum_layout.sym)])
-
-  else_instrs : Vector<Instr> = [Instr.I32Const(0)]  // tag = None
-      .concat(default_payload)
-      .concat([.StructNew(sum_layout.sym)])
-
+  then_instrs: Vector<Instr> = [Instr.I32Const(1)].concat(
+    emit_atom(args[0], ctx, []),
+  ).concat(emit_checked_i32_narrow(args[1], ctx, [])).concat([
+    .ArrayGetU("rt_types__String"),
+    .StructNew(sum_layout.sym),
+  ])
+  else_instrs: Vector<Instr> = [Instr.I32Const(0)].concat(default_payload).concat([
+    .StructNew(sum_layout.sym),
+  ])
   // Bounds check in i64 domain
-  buf2 := emit_atom(args[1], ctx, buf)  // index (i64)
+  buf2 := emit_atom(args[1], ctx, buf) // index (i64)
   buf3 := buf2.append(.I64Const(0)).append(.I64GeS)
   buf4 := emit_atom(args[1], ctx, buf3)
-  buf5 := emit_atom(args[0], ctx, buf4)  // string
-  buf5.append(.ArrayLen).append(.I64ExtendI32U).append(.I64LtS).append(.I32And)
-    .append(.If(.Some(result_ref), then_instrs, else_instrs)).append(.LocalSet(result_idx))
+  buf5 := emit_atom(args[0], ctx, buf4) // string
+  buf5.append(.ArrayLen).append(.I64ExtendI32U).append(.I64LtS).append(.I32And).append(
+    .If(.Some(result_ref), then_instrs, else_instrs),
+  ).append(.LocalSet(result_idx))
 }
 
 // ── string_slice: s.slice(start, end) ──────────────────────────────────
-
 // Emit max(arg, 0) as i32: select(val, 0, val >= 0) then i32.wrap
-fn emit_clamped_i32(arg: PreparedAtom, ctx: EmitCtx, buf: Vector<Instr>) Vector<Instr> {
-  buf2 := emit_atom(arg, ctx, buf)     // val (i64)
-  buf3 := buf2.append(.I64Const(0))    // 0 (i64)
-  buf4 := emit_atom(arg, ctx, buf3)    // val again
+fn emit_clamped_i32(arg: PreparedAtom, ctx: EmitCtx, buf: Vector<Instr>) Vector<
+  Instr,
+> {
+  buf2 := emit_atom(arg, ctx, buf) // val (i64)
+  buf3 := buf2.append(.I64Const(0)) // 0 (i64)
+  buf4 := emit_atom(arg, ctx, buf3) // val again
   buf4.append(.I64Const(0)).append(.I64GeS).append(.Select).append(.I32WrapI64)
 }
 
-fn emit_intrinsic_string_slice(args: Vector<PreparedAtom>, result_idx: Int, ctx: EmitCtx, buf: Vector<Instr>) Vector<Instr> {
+fn emit_intrinsic_string_slice(
+  args: Vector<PreparedAtom>,
+  result_idx: Int,
+  ctx: EmitCtx,
+  buf: Vector<Instr>,
+) Vector<Instr> {
   // Clamp start/end to >= 0, then UTF-8 boundary validation, then call
   // rt_str__substring (which clamps to len and normalizes end >= start).
   buf2 := emit_utf8_boundary_check_clamped(args[0], args[1], ctx, buf)
@@ -1230,188 +1639,250 @@ fn emit_intrinsic_string_slice(args: Vector<PreparedAtom>, result_idx: Int, ctx:
   buf6.append(.Call("rt_str__substring")).append(.LocalSet(result_idx))
 }
 
-fn emit_utf8_boundary_check(str_atom: PreparedAtom, idx_atom: PreparedAtom, ctx: EmitCtx, buf: Vector<Instr>) Vector<Instr> {
+fn emit_utf8_boundary_check(
+  str_atom: PreparedAtom,
+  idx_atom: PreparedAtom,
+  ctx: EmitCtx,
+  buf: Vector<Instr>,
+) Vector<Instr> {
   // if idx > 0 && idx < len: check (s[idx] & 0xC0) != 0x80
   // The check sub-body is a nested Wasm control flow body — use fresh []
   check_buf1 := emit_atom(str_atom, ctx, [])
   check_buf2 := emit_checked_i32_narrow(idx_atom, ctx, check_buf1)
-  check : Vector<Instr> = check_buf2
-    .append(.ArrayGetU("rt_types__String"))
-    .append(.I32Const(192))   // 0xC0
-    .append(.I32And)
-    .append(.I32Const(128))   // 0x80
-    .append(.I32Eq)
-    .append(.If(.None, [.Unreachable], []))
-
+  check: Vector<Instr> = check_buf2.append(.ArrayGetU("rt_types__String")).append(
+    .I32Const(192),
+  ).append(.I32And).append(.I32Const(128)).append(.I32Eq).append(
+    .If(.None, [.Unreachable], []),
+  )
   buf2 := emit_atom(idx_atom, ctx, buf)
-  buf3 := buf2.append(.I64Const(0)).append(.I64GtS)  // idx > 0
+  buf3 := buf2.append(.I64Const(0)).append(.I64GtS) // idx > 0
   buf4 := emit_atom(idx_atom, ctx, buf3)
   buf5 := emit_atom(str_atom, ctx, buf4)
-  buf5.append(.ArrayLen).append(.I64ExtendI32U).append(.I64LtS).append(.I32And)
-    .append(.If(.None, check, []))
+  buf5.append(.ArrayLen).append(.I64ExtendI32U).append(.I64LtS).append(.I32And).append(
+    .If(.None, check, []),
+  )
 }
 
-fn emit_utf8_boundary_check_clamped(str_atom: PreparedAtom, idx_atom: PreparedAtom, ctx: EmitCtx, buf: Vector<Instr>) Vector<Instr> {
+fn emit_utf8_boundary_check_clamped(
+  str_atom: PreparedAtom,
+  idx_atom: PreparedAtom,
+  ctx: EmitCtx,
+  buf: Vector<Instr>,
+) Vector<Instr> {
   // Like emit_utf8_boundary_check but uses clamped idx (max(idx, 0) as i32).
   // if clamped_idx > 0 && clamped_idx < len: check (s[clamped_idx] & 0xC0) != 0x80
-
   // Build the check body
   check_buf1 := emit_atom(str_atom, ctx, [])
   check_buf2 := emit_clamped_i32(idx_atom, ctx, check_buf1)
-  check : Vector<Instr> = check_buf2
-    .append(.ArrayGetU("rt_types__String"))
-    .append(.I32Const(192))
-    .append(.I32And)
-    .append(.I32Const(128))
-    .append(.I32Eq)
-    .append(.If(.None, [.Unreachable], []))
-
+  check: Vector<Instr> = check_buf2.append(.ArrayGetU("rt_types__String")).append(
+    .I32Const(192),
+  ).append(.I32And).append(.I32Const(128)).append(.I32Eq).append(
+    .If(.None, [.Unreachable], []),
+  )
   // Condition: clamped > 0 && clamped < len
   buf2 := emit_clamped_i32(idx_atom, ctx, buf)
   buf3 := buf2.append(.I32Const(0)).append(.I32GtU)
   buf4 := emit_clamped_i32(idx_atom, ctx, buf3)
   buf5 := emit_atom(str_atom, ctx, buf4)
-  buf5.append(.ArrayLen).append(.I32LtU).append(.I32And)
-    .append(.If(.None, check, []))
+  buf5.append(.ArrayLen).append(.I32LtU).append(.I32And).append(
+    .If(.None, check, []),
+  )
 }
 
 // ── char_code_at ───────────────────────────────────────────────────────
-
-fn emit_intrinsic_char_code_at(args: Vector<PreparedAtom>, result_idx: Int, ctx: EmitCtx, buf: Vector<Instr>) Vector<Instr> {
+fn emit_intrinsic_char_code_at(
+  args: Vector<PreparedAtom>,
+  result_idx: Int,
+  ctx: EmitCtx,
+  buf: Vector<Instr>,
+) Vector<Instr> {
   // Trap if out of bounds, then read byte
-  buf2 := emit_atom(args[1], ctx, buf)  // index (i64)
+  buf2 := emit_atom(args[1], ctx, buf) // index (i64)
   buf3 := buf2.append(.I64Const(0)).append(.I64GeS)
   buf4 := emit_atom(args[1], ctx, buf3)
   buf5 := emit_atom(args[0], ctx, buf4)
-  buf6 := buf5.append(.ArrayLen).append(.I64ExtendI32U).append(.I64LtS).append(.I32And).append(.I32Eqz)
+  buf6 := buf5.append(.ArrayLen).append(.I64ExtendI32U).append(.I64LtS).append(
+    .I32And,
+  ).append(.I32Eqz)
   buf7 := buf6.append(.If(.None, [.Unreachable], []))
   buf8 := emit_atom(args[0], ctx, buf7)
   buf9 := emit_checked_i32_narrow(args[1], ctx, buf8)
-  buf9.append(.ArrayGetU("rt_types__String")).append(.I64ExtendI32U).append(.LocalSet(result_idx))
+  buf9.append(.ArrayGetU("rt_types__String")).append(.I64ExtendI32U).append(
+    .LocalSet(result_idx),
+  )
 }
 
 // ── from_char_code: Int → Option<String> ───────────────────────────────
-
-fn emit_intrinsic_from_char_code(args: Vector<PreparedAtom>, result_idx: Int, result_mono: MonoType, ctx: EmitCtx, buf: Vector<Instr>) Vector<Instr> {
+fn emit_intrinsic_from_char_code(
+  args: Vector<PreparedAtom>,
+  result_idx: Int,
+  result_mono: MonoType,
+  ctx: EmitCtx,
+  buf: Vector<Instr>,
+) Vector<Instr> {
   sum_layout := get_sum_layout_ctx(result_mono, ctx)
   some_v := sum_layout.variants[1]
   default_payload := if some_v.payload_types.len() > 0 {
     emit_default_value(some_v.payload_types[0], [])
-  } else { [] }
+  } else {
+    []
+  }
   result_ref := ValType.Ref(false, .Named(sum_layout.sym))
-
   // Nested sub-bodies must use fresh []
-  then_instrs : Vector<Instr> = [Instr.I32Const(1)]  // tag = Some
-      .concat(emit_atom(args[0], ctx, []))
-      .concat([.I32WrapI64, .ArrayNewFixed("rt_types__String", 1), .StructNew(sum_layout.sym)])
-
-  else_instrs : Vector<Instr> = [Instr.I32Const(0)]  // tag = None
-      .concat(default_payload)
-      .concat([.StructNew(sum_layout.sym)])
-
+  then_instrs: Vector<Instr> = [Instr.I32Const(1)].concat(
+    emit_atom(args[0], ctx, []),
+  ).concat([
+    .I32WrapI64,
+    .ArrayNewFixed("rt_types__String", 1),
+    .StructNew(sum_layout.sym),
+  ])
+  else_instrs: Vector<Instr> = [Instr.I32Const(0)].concat(default_payload).concat([
+    .StructNew(sum_layout.sym),
+  ])
   // Check 0 <= code < 128
   buf2 := emit_atom(args[0], ctx, buf)
   buf3 := buf2.append(.I64Const(0)).append(.I64GeS)
   buf4 := emit_atom(args[0], ctx, buf3)
-  buf4.append(.I64Const(128)).append(.I64LtS).append(.I32And)
-    .append(.If(.Some(result_ref), then_instrs, else_instrs)).append(.LocalSet(result_idx))
+  buf4.append(.I64Const(128)).append(.I64LtS).append(.I32And).append(
+    .If(.Some(result_ref), then_instrs, else_instrs),
+  ).append(.LocalSet(result_idx))
 }
 
 // ── from_byte: Byte → Option<String> ───────────────────────────────────
-
-fn emit_intrinsic_from_byte(args: Vector<PreparedAtom>, result_idx: Int, result_mono: MonoType, ctx: EmitCtx, buf: Vector<Instr>) Vector<Instr> {
+fn emit_intrinsic_from_byte(
+  args: Vector<PreparedAtom>,
+  result_idx: Int,
+  result_mono: MonoType,
+  ctx: EmitCtx,
+  buf: Vector<Instr>,
+) Vector<Instr> {
   sum_layout := get_sum_layout_ctx(result_mono, ctx)
   some_v := sum_layout.variants[1]
   default_payload := if some_v.payload_types.len() > 0 {
     emit_default_value(some_v.payload_types[0], [])
-  } else { [] }
+  } else {
+    []
+  }
   result_ref := ValType.Ref(false, .Named(sum_layout.sym))
-
-  then_instrs : Vector<Instr> = [Instr.I32Const(1)]  // tag = Some
-      .concat(emit_atom(args[0], ctx, []))
-      .concat([.ArrayNewFixed("rt_types__String", 1), .StructNew(sum_layout.sym)])
-
-  else_instrs : Vector<Instr> = [Instr.I32Const(0)]  // tag = None
-      .concat(default_payload)
-      .concat([.StructNew(sum_layout.sym)])
-
+  then_instrs: Vector<Instr> = [Instr.I32Const(1)].concat(
+    emit_atom(args[0], ctx, []),
+  ).concat([.ArrayNewFixed("rt_types__String", 1), .StructNew(sum_layout.sym)])
+  else_instrs: Vector<Instr> = [Instr.I32Const(0)].concat(default_payload).concat([
+    .StructNew(sum_layout.sym),
+  ])
   // Only ASCII bytes are valid one-byte UTF-8 scalars.
   buf2 := emit_atom(args[0], ctx, buf)
-  buf2.append(.I32Const(128)).append(.I32LtU)
-    .append(.If(.Some(result_ref), then_instrs, else_instrs)).append(.LocalSet(result_idx))
+  buf2.append(.I32Const(128)).append(.I32LtU).append(
+    .If(.Some(result_ref), then_instrs, else_instrs),
+  ).append(.LocalSet(result_idx))
 }
 
 // ── from_code_point: Int → Option<String> ──────────────────────────────
-
-fn emit_intrinsic_from_code_point(args: Vector<PreparedAtom>, result_idx: Int, result_mono: MonoType, ctx: EmitCtx, buf: Vector<Instr>) Vector<Instr> {
+fn emit_intrinsic_from_code_point(
+  args: Vector<PreparedAtom>,
+  result_idx: Int,
+  result_mono: MonoType,
+  ctx: EmitCtx,
+  buf: Vector<Instr>,
+) Vector<Instr> {
   // Helper returns the generic runtime Variant encoding for Option<String>.
   // Adapt it to the concrete Option<String> layout used by the current module.
   buf2 := emit_checked_i32_narrow(args[0], ctx, buf)
-  buf2.append(.Call("from_code_point_helper"))
-    .append(.RefCast(true, .Named("rt_types__Variant")))
-    .append(.Call(option_from_variant_helper_sym(MonoType.String)))
-    .append(.LocalSet(result_idx))
+  buf2.append(.Call("from_code_point_helper")).append(
+    .RefCast(true, .Named("rt_types__Variant")),
+  ).append(.Call(option_from_variant_helper_sym(MonoType.String))).append(
+    .LocalSet(result_idx),
+  )
 }
 
 // ── string_utf8_bytes ──────────────────────────────────────────────────
-
-fn emit_intrinsic_string_utf8_bytes(args: Vector<PreparedAtom>, result_idx: Int, ctx: EmitCtx, buf: Vector<Instr>) Vector<Instr> {
+fn emit_intrinsic_string_utf8_bytes(
+  args: Vector<PreparedAtom>,
+  result_idx: Int,
+  ctx: EmitCtx,
+  buf: Vector<Instr>,
+) Vector<Instr> {
   // Helper returns flat $Array; wrap to PVec
   buf2 := emit_atom(args[0], ctx, buf)
-  buf2.append(.Call("string_utf8_bytes_helper")).append(.Call("rt_arr__from_array")).append(.LocalSet(result_idx))
+  buf2.append(.Call("string_utf8_bytes_helper")).append(
+    .Call("rt_arr__from_array"),
+  ).append(.LocalSet(result_idx))
 }
 
 // ── string_from_utf8 ──────────────────────────────────────────────────
-
-fn emit_intrinsic_string_from_utf8(args: Vector<PreparedAtom>, result_idx: Int, result_mono: MonoType, ctx: EmitCtx, buf: Vector<Instr>) Vector<Instr> {
+fn emit_intrinsic_string_from_utf8(
+  args: Vector<PreparedAtom>,
+  result_idx: Int,
+  result_mono: MonoType,
+  ctx: EmitCtx,
+  buf: Vector<Instr>,
+) Vector<Instr> {
   // User passes PVec; helper expects flat $Array
   buf2 := emit_atom(args[0], ctx, buf)
-  buf2.append(.Call("rt_arr__to_array"))
-    .append(.Call("string_from_utf8_helper"))
-    .append(.RefCast(true, .Named("rt_types__Variant")))
-    .append(.Call(option_from_variant_helper_sym(MonoType.String)))
-    .append(.LocalSet(result_idx))
+  buf2.append(.Call("rt_arr__to_array")).append(
+    .Call("string_from_utf8_helper"),
+  ).append(.RefCast(true, .Named("rt_types__Variant"))).append(
+    .Call(option_from_variant_helper_sym(MonoType.String)),
+  ).append(.LocalSet(result_idx))
 }
 
 // ── byte_from_int: Int → Option<Byte> ──────────────────────────────────
-
-fn emit_intrinsic_byte_from_int(args: Vector<PreparedAtom>, result_idx: Int, result_mono: MonoType, ctx: EmitCtx, buf: Vector<Instr>) Vector<Instr> {
+fn emit_intrinsic_byte_from_int(
+  args: Vector<PreparedAtom>,
+  result_idx: Int,
+  result_mono: MonoType,
+  ctx: EmitCtx,
+  buf: Vector<Instr>,
+) Vector<Instr> {
   sum_layout := get_sum_layout_ctx(result_mono, ctx)
   some_v := sum_layout.variants[1]
   default_payload := if some_v.payload_types.len() > 0 {
     emit_default_value(some_v.payload_types[0], [])
-  } else { [] }
+  } else {
+    []
+  }
   result_ref := ValType.Ref(false, .Named(sum_layout.sym))
-
   // Nested sub-bodies must use fresh []
-  then_instrs : Vector<Instr> = [Instr.I32Const(1)]
-      .concat(emit_atom(args[0], ctx, []))
-      .concat([.I32WrapI64, .StructNew(sum_layout.sym)])
-
-  else_instrs : Vector<Instr> = [Instr.I32Const(0)]
-      .concat(default_payload)
-      .concat([.StructNew(sum_layout.sym)])
-
+  then_instrs: Vector<Instr> = [Instr.I32Const(1)].concat(
+    emit_atom(args[0], ctx, []),
+  ).concat([.I32WrapI64, .StructNew(sum_layout.sym)])
+  else_instrs: Vector<Instr> = [Instr.I32Const(0)].concat(default_payload).concat([
+    .StructNew(sum_layout.sym),
+  ])
   // Check 0 <= n <= 255
   buf2 := emit_atom(args[0], ctx, buf)
   buf3 := buf2.append(.I64Const(0)).append(.I64GeS)
   buf4 := emit_atom(args[0], ctx, buf3)
-  buf4.append(.I64Const(256)).append(.I64LtS).append(.I32And)
-    .append(.If(.Some(result_ref), then_instrs, else_instrs)).append(.LocalSet(result_idx))
+  buf4.append(.I64Const(256)).append(.I64LtS).append(.I32And).append(
+    .If(.Some(result_ref), then_instrs, else_instrs),
+  ).append(.LocalSet(result_idx))
 }
 
 // ── Cell intrinsics ────────────────────────────────────────────────────
-
-fn emit_cell_value_arg(arg: PreparedAtom, inner_mono: MonoType, sym: String, ctx: EmitCtx, buf: Vector<Instr>) Vector<Instr> {
+fn emit_cell_value_arg(
+  arg: PreparedAtom,
+  inner_mono: MonoType,
+  sym: String,
+  ctx: EmitCtx,
+  buf: Vector<Instr>,
+) Vector<Instr> {
   actual_vt := atom_val_type(arg, ctx)
-  target_vt := if sym == "$Cell_anyref" { ValType.Anyref } else { val_type_of_mono(inner_mono, ctx.env) }
+  target_vt := if sym == "\$Cell_anyref" { ValType.Anyref } else {
+    val_type_of_mono(inner_mono, ctx.env)
+  }
   buf2 := emit_atom(arg, ctx, buf)
   emit_coerce_stack(actual_vt, target_vt, inner_mono, ctx, buf2)
 }
 
-fn emit_intrinsic_cell_new(args: Vector<PreparedAtom>, result_idx: Int, result_mono: MonoType, ctx: EmitCtx, buf: Vector<Instr>) Vector<Instr> {
+fn emit_intrinsic_cell_new(
+  args: Vector<PreparedAtom>,
+  result_idx: Int,
+  result_mono: MonoType,
+  ctx: EmitCtx,
+  buf: Vector<Instr>,
+) Vector<Instr> {
   // Cell<T> is a single-field mutable struct
-  inner_mono : MonoType = case result_mono {
+  inner_mono: MonoType = case result_mono {
     .Named(_, type_args) => {
       if type_args.len() > 0 { type_args[0] } else { .Void }
     },
@@ -1422,9 +1893,19 @@ fn emit_intrinsic_cell_new(args: Vector<PreparedAtom>, result_idx: Int, result_m
   buf2.append(.StructNew(sym)).append(.LocalSet(result_idx))
 }
 
-fn emit_intrinsic_cell_get(args: Vector<PreparedAtom>, result_idx: Int, result_mono: MonoType, ctx: EmitCtx, buf: Vector<Instr>) Vector<Instr> {
+fn emit_intrinsic_cell_get(
+  args: Vector<PreparedAtom>,
+  result_idx: Int,
+  result_mono: MonoType,
+  ctx: EmitCtx,
+  buf: Vector<Instr>,
+) Vector<Instr> {
   // Get Cell<T>'s inner type from the cell arg's mono
-  cell_mono := require_typed_record_atom(args[0], ctx, "emit_intrinsic_cell_get")
+  cell_mono := require_typed_record_atom(
+    args[0],
+    ctx,
+    "emit_intrinsic_cell_get",
+  )
   inner_mono := case cell_mono {
     .Named(_, type_args) => {
       if type_args.len() > 0 { type_args[0] } else { MonoType.Void }
@@ -1434,44 +1915,79 @@ fn emit_intrinsic_cell_get(args: Vector<PreparedAtom>, result_idx: Int, result_m
   sym := cell_struct_sym(inner_mono, ctx.env)
   buf2 := emit_atom(args[0], ctx, buf)
   buf3 := buf2.append(.StructGet(sym, 0))
-  buf4 := if sym == "$Cell_anyref" { emit_unbox_from_anyref(inner_mono, ctx.env, buf3) } else { buf3 }
+  buf4 := if sym == "\$Cell_anyref" {
+    emit_unbox_from_anyref(inner_mono, ctx.env, buf3)
+  } else { buf3 }
   buf4.append(.LocalSet(result_idx))
 }
 
-fn emit_intrinsic_cell_set(args: Vector<PreparedAtom>, result_idx: Int, ctx: EmitCtx, buf: Vector<Instr>) Vector<Instr> {
-  cell_mono := require_typed_record_atom(args[0], ctx, "emit_intrinsic_cell_set")
+fn emit_intrinsic_cell_set(
+  args: Vector<PreparedAtom>,
+  result_idx: Int,
+  ctx: EmitCtx,
+  buf: Vector<Instr>,
+) Vector<Instr> {
+  cell_mono := require_typed_record_atom(
+    args[0],
+    ctx,
+    "emit_intrinsic_cell_set",
+  )
   inner_mono := cell_inner_mono(cell_mono)
   sym := cell_struct_sym(inner_mono, ctx.env)
-  buf2 := emit_atom(args[0], ctx, buf)  // cell ref
+  buf2 := emit_atom(args[0], ctx, buf) // cell ref
   buf3 := emit_cell_value_arg(args[1], inner_mono, sym, ctx, buf2)
-  buf3.append(.StructSet(sym, 0)).append(.I32Const(0)).append(.RefI31).append(.LocalSet(result_idx))  // return void
+  buf3.append(.StructSet(sym, 0)).append(.I32Const(0)).append(.RefI31).append(
+    .LocalSet(result_idx),
+  ) // return void
 }
 
-fn emit_intrinsic_cell_update(args: Vector<PreparedAtom>, result_idx: Int, ctx: EmitCtx, buf: Vector<Instr>) Vector<Instr> {
+fn emit_intrinsic_cell_update(
+  args: Vector<PreparedAtom>,
+  result_idx: Int,
+  ctx: EmitCtx,
+  buf: Vector<Instr>,
+) Vector<Instr> {
   // cell_update(cell, fn(T) T) — apply function to cell value, store result
-  cell_mono := require_typed_record_atom(args[0], ctx, "emit_intrinsic_cell_update")
+  cell_mono := require_typed_record_atom(
+    args[0],
+    ctx,
+    "emit_intrinsic_cell_update",
+  )
   inner_mono := cell_inner_mono(cell_mono)
   sym := cell_struct_sym(inner_mono, ctx.env)
   // For simplicity, use the universal closure path
-  buf2 := emit_atom(args[0], ctx, buf)  // cell ref for struct.set target
+  buf2 := emit_atom(args[0], ctx, buf) // cell ref for struct.set target
   buf3 := emit_atom(args[1], ctx, buf2)
-  buf4 := buf3.append(.StructGet("rt_types__Closure", 1))  // env (field 1)
+  buf4 := buf3.append(.StructGet("rt_types__Closure", 1)) // env (field 1)
   buf5 := emit_atom(args[0], ctx, buf4)
-  buf6 := buf5.append(.StructGet(sym, 0))  // current cell value
-  buf7 := if sym != "$Cell_anyref" { emit_box_to_anyref(inner_mono, ctx.env, buf6) } else { buf6 }
-  buf8 := buf7.append(.ArrayNewFixed("rt_types__Array", 1))  // args array
+  buf6 := buf5.append(.StructGet(sym, 0)) // current cell value
+  buf7 := if sym != "\$Cell_anyref" {
+    emit_box_to_anyref(inner_mono, ctx.env, buf6)
+  } else { buf6 }
+  buf8 := buf7.append(.ArrayNewFixed("rt_types__Array", 1)) // args array
   buf9 := emit_atom(args[1], ctx, buf8)
-  buf10 := buf9.append(.StructGet("rt_types__Closure", 0)).append(.CallRef("rt_types__ClosureFunc"))
-  buf11 := if sym != "$Cell_anyref" { emit_unbox_from_anyref(inner_mono, ctx.env, buf10) } else { buf10 }
-  buf11.append(.StructSet(sym, 0)).append(.I32Const(0)).append(.RefI31).append(.LocalSet(result_idx))  // return void
+  buf10 := buf9.append(.StructGet("rt_types__Closure", 0)).append(
+    .CallRef("rt_types__ClosureFunc"),
+  )
+  buf11 := if sym != "\$Cell_anyref" {
+    emit_unbox_from_anyref(inner_mono, ctx.env, buf10)
+  } else { buf10 }
+  buf11.append(.StructSet(sym, 0)).append(.I32Const(0)).append(.RefI31).append(
+    .LocalSet(result_idx),
+  ) // return void
 }
 
 // ── Task intrinsics (Phase 2: scheduler-based) ────────────────────────
 // Task.spawn(f) creates a Task struct with a run-to-completion frame
 // and enqueues it.  Task.await(task) drives the scheduler until the
 // target task completes, then unboxes the result.
-
-fn emit_intrinsic_task_spawn(args: Vector<PreparedAtom>, result_idx: Int, result_mono: MonoType, ctx: EmitCtx, buf: Vector<Instr>) Vector<Instr> {
+fn emit_intrinsic_task_spawn(
+  args: Vector<PreparedAtom>,
+  result_idx: Int,
+  result_mono: MonoType,
+  ctx: EmitCtx,
+  buf: Vector<Instr>,
+) Vector<Instr> {
   // Check if this spawn is for a suspending task body
   case args[0] {
     .ASlot(closure_sid) => {
@@ -1482,8 +1998,11 @@ fn emit_intrinsic_task_spawn(args: Vector<PreparedAtom>, result_idx: Int, result
               case ctx.suspending_bodies[closure_info.body_fid.id] {
                 .Some(resume_info) => {
                   return emit_spawn_suspending(
-                    closure_info, resume_info,
-                    result_idx, ctx, buf,
+                    closure_info,
+                    resume_info,
+                    result_idx,
+                    ctx,
+                    buf,
                   )
                 },
                 .None => {},
@@ -1497,11 +2016,18 @@ fn emit_intrinsic_task_spawn(args: Vector<PreparedAtom>, result_idx: Int, result
     },
     _ => {},
   }
+
   // Non-suspending path (default): FrameRtc + resume_rtc
   emit_spawn_rtc(args, result_idx, result_mono, ctx, buf)
 }
 
-fn emit_intrinsic_task_await(args: Vector<PreparedAtom>, result_idx: Int, result_mono: MonoType, ctx: EmitCtx, buf: Vector<Instr>) Vector<Instr> {
+fn emit_intrinsic_task_await(
+  args: Vector<PreparedAtom>,
+  result_idx: Int,
+  result_mono: MonoType,
+  ctx: EmitCtx,
+  buf: Vector<Instr>,
+) Vector<Instr> {
   // Phase 2 top-level await: fast-path check + scheduler fallback.
   //
   // The task atom (args[0]) already has its own local, so we can
@@ -1511,44 +2037,44 @@ fn emit_intrinsic_task_await(args: Vector<PreparedAtom>, result_idx: Int, result
   //   result = unbox(task.result)
   // else:
   //   result = unbox(sched_run_until(task))
-
   // Check task.state == DONE (3)
   buf = emit_atom(args[0], ctx, buf)
   buf = .append(.RefCast(false, .Named("rt_types__Task")))
-  buf = .append(.StructGet("rt_types__Task", 0))   // state field
-  buf = .append(.I32Const(3))                       // DONE
+  buf = .append(.StructGet("rt_types__Task", 0)) // state field
+  buf = .append(.I32Const(3)) // DONE
   buf = .append(.I32Eq)
-
   // We need to re-emit the atom inside each branch since
   // the If consumes the condition and starts with empty stack.
   // Build the then/else branch instruction vectors separately.
   then_branch: Vector<Instr> = []
   then_branch = emit_atom(args[0], ctx, then_branch)
   then_branch = .append(.RefCast(false, .Named("rt_types__Task")))
-  then_branch = .append(.StructGet("rt_types__Task", 3))  // result field
-
+  then_branch = .append(.StructGet("rt_types__Task", 3)) // result field
   else_branch: Vector<Instr> = []
   else_branch = emit_atom(args[0], ctx, else_branch)
   else_branch = .append(.RefCast(false, .Named("rt_types__Task")))
-  else_branch = .append(.Call("sched_run_until"))  // returns anyref
-
+  else_branch = .append(.Call("sched_run_until")) // returns anyref
   buf = .append(.If(.Some(.Anyref), then_branch, else_branch))
-
   // Unbox the anyref result to the concrete type
   buf = emit_unbox_from_anyref(result_mono, ctx.env, buf)
   buf.append(.LocalSet(result_idx))
 }
 
 // ── Task spawn helpers ────────────────────────────────────────────────
-
-fn emit_spawn_rtc(args: Vector<PreparedAtom>, result_idx: Int, result_mono: MonoType, ctx: EmitCtx, buf: Vector<Instr>) Vector<Instr> {
+fn emit_spawn_rtc(
+  args: Vector<PreparedAtom>,
+  result_idx: Int,
+  result_mono: MonoType,
+  ctx: EmitCtx,
+  buf: Vector<Instr>,
+) Vector<Instr> {
   // Non-suspending: FrameRtc + resume_rtc
-  buf = .append(.I32Const(0))                 // state = RUNNABLE
-  buf = emit_atom(args[0], ctx, buf)             // closure
+  buf = .append(.I32Const(0)) // state = RUNNABLE
+  buf = emit_atom(args[0], ctx, buf) // closure
   buf = .append(.StructNew("rt_types__FrameRtc"))
-  buf = .append(.RefFunc("resume_rtc"))       // resume function ref
-  buf = .append(.RefNull(.None_))             // result = null
-  buf = .append(.RefNull(.Named("rt_types__Array")))  // waiters = null
+  buf = .append(.RefFunc("resume_rtc")) // resume function ref
+  buf = .append(.RefNull(.None_)) // result = null
+  buf = .append(.RefNull(.Named("rt_types__Array"))) // waiters = null
   buf = .append(.StructNew("rt_types__Task"))
   buf = .append(.LocalSet(result_idx))
   buf = .append(.LocalGet(result_idx))
@@ -1568,18 +2094,19 @@ fn emit_spawn_suspending(
     .Some(pf) => pf,
     .None => error("emit_spawn_suspending: missing PreparedFunc"),
   }
-
   // Task fields: state, frame, resume, result, waiters
-  buf = .append(.I32Const(0))  // state = RUNNABLE
-
+  buf = .append(.I32Const(0)) // state = RUNNABLE
   // Frame fields: pc, captures..., hoisted_locals..., await_targets...
-  buf = .append(.I32Const(0))  // pc = 0
+  buf = .append(.I32Const(0)) // pc = 0
+
   for cap_sid in closure_info.captures {
     buf = emit_atom(.ASlot(cap_sid), ctx, buf)
   }
+
   // Default values for non-capture hoisted locals
   num_captures := closure_info.captures.len()
   i := num_captures
+
   for i < resume_info.hoisted_slots.len() {
     sid := resume_info.hoisted_slots[i]
     info_s := facts.slot_info(body_pf, sid)
@@ -1587,19 +2114,17 @@ fn emit_spawn_suspending(
     buf = .append(default_for_vt(vt))
     i = i + 1
   }
+
   // Null for await target fields
   for af_idx in resume_info.await_target_fields {
-    if af_idx >= 0 {
-      buf = .append(.RefNull(.None_))
-    }
+    if af_idx >= 0 { buf = .append(.RefNull(.None_)) }
   }
+
   buf = .append(.StructNew(resume_info.frame_sym))
-
   buf = .append(.RefFunc(resume_info.resume_sym))
-  buf = .append(.RefNull(.None_))             // result = null
-  buf = .append(.RefNull(.Named("rt_types__Array")))  // waiters = null
+  buf = .append(.RefNull(.None_)) // result = null
+  buf = .append(.RefNull(.Named("rt_types__Array"))) // waiters = null
   buf = .append(.StructNew("rt_types__Task"))
-
   buf = .append(.LocalSet(result_idx))
   buf = .append(.LocalGet(result_idx))
   buf = .append(.RefAsNonNull)
@@ -1618,7 +2143,6 @@ fn default_for_vt(vt: ValType) Instr {
 }
 
 // ── Resume function generation ────────────────────────────────────────
-
 fn emit_resume_func(info: TaskResumeInfo, func: PreparedFunc, base_ctx: EmitCtx) FuncDef {
   // Resume function: (ref $Task) -> i32
   // local 0: task (param)
@@ -1626,44 +2150,53 @@ fn emit_resume_func(info: TaskResumeInfo, func: PreparedFunc, base_ctx: EmitCtx)
   // local 2: pc (extra)
   // local 3+: one per slot
   // last: result_temp (anyref)
-
   task_local := 0
   frame_local := 1
   pc_local := 2
   next_local := 3
-
   extra_locals: Vector<ValType> = [
-    ValType.Ref(true, .Named(info.frame_sym)),  // frame
-    .I32,                                        // pc
+    ValType.Ref(true, .Named(info.frame_sym)),
+    .I32,
   ]
-
   local_map: Dict<Int, LocalEntry> = Dict.new()
+
   for sid in func.captures {
     info_s := facts.slot_info(func, sid)
     vt := val_type_of_mono(info_s.mono, base_ctx.env)
     local_map[sid.id] = LocalEntry.{
-      index: next_local, val_type: vt, mono: info_s.mono,
-      repr: info_s.repr, source_local: info_s.source_local,
+      index: next_local,
+      val_type: vt,
+      mono: info_s.mono,
+      repr: info_s.repr,
+      source_local: info_s.source_local,
     }
     extra_locals = .append(vt)
     next_local = next_local + 1
   }
+
   for sid in func.params {
     info_s := facts.slot_info(func, sid)
     vt := val_type_of_mono(info_s.mono, base_ctx.env)
     local_map[sid.id] = LocalEntry.{
-      index: next_local, val_type: vt, mono: info_s.mono,
-      repr: info_s.repr, source_local: info_s.source_local,
+      index: next_local,
+      val_type: vt,
+      mono: info_s.mono,
+      repr: info_s.repr,
+      source_local: info_s.source_local,
     }
     extra_locals = .append(vt)
     next_local = next_local + 1
   }
+
   for sid in func.locals {
     info_s := facts.slot_info(func, sid)
     vt := val_type_of_mono(info_s.mono, base_ctx.env)
     local_map[sid.id] = LocalEntry.{
-      index: next_local, val_type: vt, mono: info_s.mono,
-      repr: info_s.repr, source_local: info_s.source_local,
+      index: next_local,
+      val_type: vt,
+      mono: info_s.mono,
+      repr: info_s.repr,
+      source_local: info_s.source_local,
     }
     extra_locals = .append(vt)
     next_local = next_local + 1
@@ -1672,7 +2205,6 @@ fn emit_resume_func(info: TaskResumeInfo, func: PreparedFunc, base_ctx: EmitCtx)
   result_temp_local := next_local
   extra_locals = .append(.Anyref)
   next_local = next_local + 1
-
   ctx := EmitCtx.{
     registry: base_ctx.registry,
     builtins: base_ctx.builtins,
@@ -1688,25 +2220,28 @@ fn emit_resume_func(info: TaskResumeInfo, func: PreparedFunc, base_ctx: EmitCtx)
     loop_depth: 0,
     suspending_bodies: base_ctx.suspending_bodies,
   }
-
   body: Vector<Instr> = []
-
   // Prologue: load frame from task
   body = .append(.LocalGet(task_local))
   body = .append(.StructGet("rt_types__Task", 1))
   body = .append(.RefCast(false, .Named(info.frame_sym)))
   body = .append(.LocalSet(frame_local))
-
   // Load pc
   body = .append(.LocalGet(frame_local))
   body = .append(.StructGet(info.frame_sym, 0))
   body = .append(.LocalSet(pc_local))
-
   // Build segment bodies
   segment_bodies: Vector<Vector<Instr>> = []
+
   for seg_idx in 0..info.num_segments {
     seg_body := emit_resume_segment(
-      seg_idx, info, func, task_local, frame_local, result_temp_local, ctx,
+      seg_idx,
+      info,
+      func,
+      task_local,
+      frame_local,
+      result_temp_local,
+      ctx,
     )
     segment_bodies = .append(seg_body)
   }
@@ -1719,9 +2254,10 @@ fn emit_resume_func(info: TaskResumeInfo, func: PreparedFunc, base_ctx: EmitCtx)
     Instr.StructGet(info.frame_sym, 0),
     Instr.LocalSet(pc_local),
   ]
-  for instr in dispatch { loop_body = .append(instr) }
-  body = .append(Instr.Loop("$resume_loop", .Some(.I32), loop_body))
 
+  for instr in dispatch { loop_body = .append(instr) }
+
+  body = .append(Instr.Loop("\$resume_loop", .Some(.I32), loop_body))
   FuncDef.{
     name: info.resume_sym,
     params: [ValType.Ref(false, .Named("rt_types__Task"))],
@@ -1741,14 +2277,13 @@ fn emit_resume_segment(
   ctx: EmitCtx,
 ) Vector<Instr> {
   buf: Vector<Instr> = []
-
   // Binding range for this segment
-  start_idx := if seg_idx == 0 { 0 } else { info.suspension_points[seg_idx - 1].index + 1 }
+  start_idx := if seg_idx == 0 { 0 } else {
+    info.suspension_points[seg_idx - 1].index + 1
+  }
   end_idx := if seg_idx < info.suspension_points.len() {
     info.suspension_points[seg_idx].index
-  } else {
-    info.bindings.len()
-  }
+  } else { info.bindings.len() }
 
   // Restore hoisted locals from frame
   for slot_sid in info.hoisted_slots {
@@ -1757,12 +2292,12 @@ fn emit_resume_segment(
         entry := lookup_slot(ctx, slot_sid)
         buf = .append(.LocalGet(frame_local))
         buf = .append(.StructGet(info.frame_sym, field_idx))
+
         case entry.val_type {
-          .Ref(false, ht) => {
-            buf = .append(.RefCast(false, ht))
-          },
+          .Ref(false, ht) => { buf = .append(.RefCast(false, ht)) },
           _ => {},
         }
+
         buf = .append(.LocalSet(entry.index))
       },
       .None => {},
@@ -1772,15 +2307,17 @@ fn emit_resume_segment(
   // Handle resume value for segments after a suspension point
   if seg_idx > 0 {
     prev_sp := info.suspension_points[seg_idx - 1]
+
     case prev_sp.kind {
       .Await => {
         at_field := info.await_target_fields[seg_idx - 1]
+
         if at_field >= 0 {
           entry := lookup_slot(ctx, prev_sp.slot)
           buf = .append(.LocalGet(frame_local))
           buf = .append(.StructGet(info.frame_sym, at_field))
           buf = .append(.RefCast(false, .Named("rt_types__Task")))
-          buf = .append(.StructGet("rt_types__Task", 3))  // result
+          buf = .append(.StructGet("rt_types__Task", 3)) // result
           buf = emit_unbox_from_anyref(entry.mono, ctx.env, buf)
           buf = .append(.LocalSet(entry.index))
           // Null out await target field
@@ -1801,25 +2338,31 @@ fn emit_resume_segment(
   // Build sub-expression for this segment and emit it
   if seg_idx < info.suspension_points.len() {
     // Intermediate segment: emit bindings, then suspend
-    seg_expr := build_segment_expr(info.bindings, start_idx, end_idx, PreparedExpr.Atom(.ALitVoid))
+    seg_expr := build_segment_expr(
+      info.bindings,
+      start_idx,
+      end_idx,
+      PreparedExpr.Atom(.ALitVoid),
+    )
     seg_instrs := emit_expr(seg_expr, MonoType.Void, ctx, [])
+
     for instr in seg_instrs { buf = .append(instr) }
 
     // Save hoisted locals to frame
     buf = save_hoisted_to_frame(info, frame_local, ctx, buf)
-
     // Set next pc
     buf = .append(.LocalGet(frame_local))
     buf = .append(.I32Const(seg_idx + 1))
     buf = .append(.StructSet(info.frame_sym, 0))
-
     sp := info.suspension_points[seg_idx]
+
     case sp.kind {
       .Yield => {
-        buf = .append(.I32Const(1))  // YIELD
+        buf = .append(.I32Const(1)) // YIELD
       },
       .Await => {
         await_binding := info.bindings[sp.index]
+
         case await_binding.op {
           .ACall(_, args) => {
             if args.len() > 0 {
@@ -1829,7 +2372,6 @@ fn emit_resume_segment(
               buf = emit_atom(args[0], ctx, buf)
               buf = .append(.RefCast(false, .Named("rt_types__Task")))
               buf = .append(.LocalSet(result_temp_local))
-
               // Fast path: if target.state == DONE, read result and continue
               fast_path: Vector<Instr> = []
               // Read result, unbox, store to await slot
@@ -1844,12 +2386,16 @@ fn emit_resume_segment(
               fast_path = .append(.LocalGet(result_temp_local))
               fast_path = .append(.StructSet(info.frame_sym, at_field))
               // Save hoisted, bump pc, re-dispatch
-              fast_path = save_hoisted_to_frame(info, frame_local, ctx, fast_path)
+              fast_path = save_hoisted_to_frame(
+                info,
+                frame_local,
+                ctx,
+                fast_path,
+              )
               fast_path = .append(.LocalGet(frame_local))
               fast_path = .append(.I32Const(seg_idx + 1))
               fast_path = .append(.StructSet(info.frame_sym, 0))
-              fast_path = .append(.Br("$resume_loop"))
-
+              fast_path = .append(.Br("\$resume_loop"))
               // Slow path: block and suspend
               slow_path: Vector<Instr> = []
               // Save target to frame
@@ -1870,29 +2416,32 @@ fn emit_resume_segment(
               slow_path = .append(.RefCast(false, .Named("rt_types__Task")))
               slow_path = .append(.LocalGet(task_local))
               slow_path = .append(.Call("sched_append_waiter"))
-              slow_path = .append(.I32Const(2))  // AWAIT
-
+              slow_path = .append(.I32Const(2)) // AWAIT
               // Check: target.state == DONE?
               buf = .append(.LocalGet(result_temp_local))
               buf = .append(.RefCast(false, .Named("rt_types__Task")))
               buf = .append(.StructGet("rt_types__Task", 0))
-              buf = .append(.I32Const(3))  // DONE
+              buf = .append(.I32Const(3)) // DONE
               buf = .append(.I32Eq)
               buf = .append(.If(.Some(.I32), fast_path, slow_path))
             } else {
               buf = .append(.I32Const(1))
             }
           },
-          _ => {
-            buf = .append(.I32Const(1))
-          },
+          _ => { buf = .append(.I32Const(1)) },
         }
       },
     }
   } else {
     // Last segment: emit bindings + tail, box result, store, return COMPLETE
-    seg_expr := build_segment_expr(info.bindings, start_idx, end_idx, PreparedExpr.Atom(info.tail_atom))
+    seg_expr := build_segment_expr(
+      info.bindings,
+      start_idx,
+      end_idx,
+      PreparedExpr.Atom(info.tail_atom),
+    )
     seg_instrs := emit_expr(seg_expr, func.return_mono, ctx, [])
+
     for instr in seg_instrs { buf = .append(instr) }
 
     // Void expressions do not leave a stack value when emitted with a Void
@@ -1908,18 +2457,15 @@ fn emit_resume_segment(
     // Box the result
     buf = emit_box_to_anyref(func.return_mono, ctx.env, buf)
     buf = .append(.LocalSet(result_temp_local))
-
     // Store in task.result
     buf = .append(.LocalGet(task_local))
     buf = .append(.LocalGet(result_temp_local))
     buf = .append(.StructSet("rt_types__Task", 3))
-
     // Null out the frame
     buf = .append(.LocalGet(task_local))
     buf = .append(.RefNull(.None_))
     buf = .append(.StructSet("rt_types__Task", 1))
-
-    buf = .append(.I32Const(0))  // COMPLETE
+    buf = .append(.I32Const(0)) // COMPLETE
   }
 
   buf
@@ -1933,11 +2479,13 @@ fn build_segment_expr(
 ) PreparedExpr {
   result := tail
   i := end - 1
+
   for i >= start {
     b := bindings[i]
     result = PreparedExpr.Let(b.slot, b.op, result)
     i = i - 1
   }
+
   result
 }
 
@@ -1949,9 +2497,11 @@ fn build_pc_dispatch(
   if idx >= segment_bodies.len() {
     return [Instr.Unreachable]
   }
+
   if idx == segment_bodies.len() - 1 {
     return segment_bodies[idx]
   }
+
   then_body := segment_bodies[idx]
   else_body := build_pc_dispatch(pc_local, segment_bodies, idx + 1)
   buf: Vector<Instr> = []
@@ -1979,42 +2529,78 @@ fn save_hoisted_to_frame(
       .None => {},
     }
   }
+
   buf
 }
 
 // ── Range intrinsics ───────────────────────────────────────────────────
-
-fn emit_intrinsic_range(args: Vector<PreparedAtom>, result_idx: Int, result_mono: MonoType, ctx: EmitCtx, buf: Vector<Instr>) Vector<Instr> {
+fn emit_intrinsic_range(
+  args: Vector<PreparedAtom>,
+  result_idx: Int,
+  result_mono: MonoType,
+  ctx: EmitCtx,
+  buf: Vector<Instr>,
+) Vector<Instr> {
   // 0..end → Range struct (start=0, end=end, step=1)
   layout := cached_layout_of(result_mono, ctx)
-  sym := case layout { .Record(r) => r.sym, _ => error("range: expected Record layout") }
-  buf2 := buf.append(.I64Const(0))  // start
-  buf3 := emit_atom(args[0], ctx, buf2)  // end
-  buf3.append(.I64Const(1)).append(.StructNew(sym)).append(.LocalSet(result_idx))
+  sym := case layout {
+    .Record(r) => r.sym,
+    _ => error("range: expected Record layout"),
+  }
+  buf2 := buf.append(.I64Const(0)) // start
+  buf3 := emit_atom(args[0], ctx, buf2) // end
+  buf3.append(.I64Const(1)).append(.StructNew(sym)).append(
+    .LocalSet(result_idx),
+  )
 }
 
-fn emit_intrinsic_range_from(args: Vector<PreparedAtom>, result_idx: Int, result_mono: MonoType, ctx: EmitCtx, buf: Vector<Instr>) Vector<Instr> {
+fn emit_intrinsic_range_from(
+  args: Vector<PreparedAtom>,
+  result_idx: Int,
+  result_mono: MonoType,
+  ctx: EmitCtx,
+  buf: Vector<Instr>,
+) Vector<Instr> {
   // start..end → Range struct
   layout := cached_layout_of(result_mono, ctx)
-  sym := case layout { .Record(r) => r.sym, _ => error("range_from: expected Record layout") }
-  buf2 := emit_atom(args[0], ctx, buf)  // start
-  buf3 := emit_atom(args[1], ctx, buf2)  // end
-  buf3.append(.I64Const(1)).append(.StructNew(sym)).append(.LocalSet(result_idx))
+  sym := case layout {
+    .Record(r) => r.sym,
+    _ => error("range_from: expected Record layout"),
+  }
+  buf2 := emit_atom(args[0], ctx, buf) // start
+  buf3 := emit_atom(args[1], ctx, buf2) // end
+  buf3.append(.I64Const(1)).append(.StructNew(sym)).append(
+    .LocalSet(result_idx),
+  )
 }
 
-fn emit_intrinsic_range_step(args: Vector<PreparedAtom>, result_idx: Int, result_mono: MonoType, ctx: EmitCtx, buf: Vector<Instr>) Vector<Instr> {
+fn emit_intrinsic_range_step(
+  args: Vector<PreparedAtom>,
+  result_idx: Int,
+  result_mono: MonoType,
+  ctx: EmitCtx,
+  buf: Vector<Instr>,
+) Vector<Instr> {
   // range_step(start, end, step) → Range struct
   layout := cached_layout_of(result_mono, ctx)
-  sym := case layout { .Record(r) => r.sym, _ => error("range_step: expected Record layout") }
-  buf2 := emit_atom(args[0], ctx, buf)  // start
-  buf3 := emit_atom(args[1], ctx, buf2)  // end
-  buf4 := emit_atom(args[2], ctx, buf3)  // step
+  sym := case layout {
+    .Record(r) => r.sym,
+    _ => error("range_step: expected Record layout"),
+  }
+  buf2 := emit_atom(args[0], ctx, buf) // start
+  buf3 := emit_atom(args[1], ctx, buf2) // end
+  buf4 := emit_atom(args[2], ctx, buf3) // step
   buf4.append(.StructNew(sym)).append(.LocalSet(result_idx))
 }
 
 // ── Iterator intrinsics ────────────────────────────────────────────────
-
-fn emit_intrinsic_iterator_unfold(args: Vector<PreparedAtom>, result_idx: Int, result_mono: MonoType, ctx: EmitCtx, buf: Vector<Instr>) Vector<Instr> {
+fn emit_intrinsic_iterator_unfold(
+  args: Vector<PreparedAtom>,
+  result_idx: Int,
+  result_mono: MonoType,
+  ctx: EmitCtx,
+  buf: Vector<Instr>,
+) Vector<Instr> {
   // iterator_unfold(seed, step_fn) → IteratorState struct
   layout := cached_layout_of(result_mono, ctx)
   sym := case layout {
@@ -2022,103 +2608,239 @@ fn emit_intrinsic_iterator_unfold(args: Vector<PreparedAtom>, result_idx: Int, r
     .Iterator_(it) => it.state_sym,
     _ => error("iterator_unfold: unexpected layout"),
   }
-  buf2 := emit_erased_container_ingress(args[0], ctx, buf)  // seed (erased anyref state field)
+  buf2 := emit_erased_container_ingress(args[0], ctx, buf) // seed (erased anyref state field)
   buf3 := emit_atom(args[1], ctx, buf2)
   buf3.append(.StructNew(sym)).append(.LocalSet(result_idx))
 }
 
-fn emit_intrinsic_iterator_next(args: Vector<PreparedAtom>, result_idx: Int, result_mono: MonoType, ctx: EmitCtx, buf: Vector<Instr>) Vector<Instr> {
+fn emit_intrinsic_iterator_next(
+  args: Vector<PreparedAtom>,
+  result_idx: Int,
+  result_mono: MonoType,
+  ctx: EmitCtx,
+  buf: Vector<Instr>,
+) Vector<Instr> {
   buf2 := emit_atom(args[0], ctx, buf)
-  buf2.append(.Call(iterator_next_helper_sym(result_mono))).append(.LocalSet(result_idx))
+  buf2.append(.Call(iterator_next_helper_sym(result_mono))).append(
+    .LocalSet(result_idx),
+  )
 }
 
 // ── Record operations ──────────────────────────────────────────────────
-
-fn emit_record_literal(tid: TypeId, fields: Vector<PreparedFieldAtom>, result_mono: MonoType, ctx: EmitCtx, buf: Vector<Instr>) Vector<Instr> {
-  record_emit.emit_record_literal(tid, fields, result_mono, ctx, buf, record_emit.RecordEmitFns.{
-    emit_atom: emit_atom,
-    atom_val_type: atom_val_type,
-    atom_mono: atom_mono,
-    require_typed_record_atom: require_typed_record_atom,
-  })
+fn emit_record_literal(
+  tid: TypeId,
+  fields: Vector<PreparedFieldAtom>,
+  result_mono: MonoType,
+  ctx: EmitCtx,
+  buf: Vector<Instr>,
+) Vector<Instr> {
+  record_emit.emit_record_literal(
+    tid,
+    fields,
+    result_mono,
+    ctx,
+    buf,
+    record_emit.RecordEmitFns.{
+      emit_atom: emit_atom,
+      atom_val_type: atom_val_type,
+      atom_mono: atom_mono,
+      require_typed_record_atom: require_typed_record_atom,
+    },
+  )
 }
 
-fn emit_record_get(target: PreparedAtom, fid: FieldId, tid: TypeId, result_mono: MonoType, ctx: EmitCtx, buf: Vector<Instr>) Vector<Instr> {
-  record_emit.emit_record_get(target, fid, tid, result_mono, ctx, buf, record_emit.RecordEmitFns.{
-    emit_atom: emit_atom,
-    atom_val_type: atom_val_type,
-    atom_mono: atom_mono,
-    require_typed_record_atom: require_typed_record_atom,
-  })
+fn emit_record_get(
+  target: PreparedAtom,
+  fid: FieldId,
+  tid: TypeId,
+  result_mono: MonoType,
+  ctx: EmitCtx,
+  buf: Vector<Instr>,
+) Vector<Instr> {
+  record_emit.emit_record_get(
+    target,
+    fid,
+    tid,
+    result_mono,
+    ctx,
+    buf,
+    record_emit.RecordEmitFns.{
+      emit_atom: emit_atom,
+      atom_val_type: atom_val_type,
+      atom_mono: atom_mono,
+      require_typed_record_atom: require_typed_record_atom,
+    },
+  )
 }
 
-fn emit_record_update(base: PreparedAtom, fid: FieldId, value: PreparedAtom, can_reuse: Bool, tid: TypeId, result_mono: MonoType, ctx: EmitCtx, buf: Vector<Instr>) Vector<Instr> {
-  record_emit.emit_record_update(base, fid, value, can_reuse, tid, result_mono, ctx, buf, record_emit.RecordEmitFns.{
-    emit_atom: emit_atom,
-    atom_val_type: atom_val_type,
-    atom_mono: atom_mono,
-    require_typed_record_atom: require_typed_record_atom,
-  })
+fn emit_record_update(
+  base: PreparedAtom,
+  fid: FieldId,
+  value: PreparedAtom,
+  can_reuse: Bool,
+  tid: TypeId,
+  result_mono: MonoType,
+  ctx: EmitCtx,
+  buf: Vector<Instr>,
+) Vector<Instr> {
+  record_emit.emit_record_update(
+    base,
+    fid,
+    value,
+    can_reuse,
+    tid,
+    result_mono,
+    ctx,
+    buf,
+    record_emit.RecordEmitFns.{
+      emit_atom: emit_atom,
+      atom_val_type: atom_val_type,
+      atom_mono: atom_mono,
+      require_typed_record_atom: require_typed_record_atom,
+    },
+  )
 }
 
 // ── Variant operations ─────────────────────────────────────────────────
-
-fn emit_variant_literal(tid: TypeId, vid: VariantId, args: Vector<PreparedAtom>, result_mono: MonoType, ctx: EmitCtx, buf: Vector<Instr>) Vector<Instr> {
-  variant_emit.emit_variant_literal(tid, vid, args, result_mono, ctx, buf, variant_emit.VariantEmitFns.{
-    emit_atom: emit_atom,
-    atom_val_type: atom_val_type,
-    atom_mono: atom_mono,
-  })
+fn emit_variant_literal(
+  tid: TypeId,
+  vid: VariantId,
+  args: Vector<PreparedAtom>,
+  result_mono: MonoType,
+  ctx: EmitCtx,
+  buf: Vector<Instr>,
+) Vector<Instr> {
+  variant_emit.emit_variant_literal(
+    tid,
+    vid,
+    args,
+    result_mono,
+    ctx,
+    buf,
+    variant_emit.VariantEmitFns.{
+      emit_atom: emit_atom,
+      atom_val_type: atom_val_type,
+      atom_mono: atom_mono,
+    },
+  )
 }
 
 // ── Array operations ───────────────────────────────────────────────────
-
-fn emit_array_literal(items: Vector<PreparedAtom>, result_mono: MonoType, ctx: EmitCtx, buf: Vector<Instr>) Vector<Instr> {
-  array_emit.emit_array_literal(items, result_mono, ctx, buf, array_emit.ArrayEmitFns.{
-    emit_atom: emit_atom,
-    atom_val_type: atom_val_type,
-    atom_mono: atom_mono,
-    emit_checked_i32_narrow: emit_checked_i32_narrow,
-    emit_erased_container_ingress: emit_erased_container_ingress,
-  })
+fn emit_array_literal(
+  items: Vector<PreparedAtom>,
+  result_mono: MonoType,
+  ctx: EmitCtx,
+  buf: Vector<Instr>,
+) Vector<Instr> {
+  array_emit.emit_array_literal(
+    items,
+    result_mono,
+    ctx,
+    buf,
+    array_emit.ArrayEmitFns.{
+      emit_atom: emit_atom,
+      atom_val_type: atom_val_type,
+      atom_mono: atom_mono,
+      emit_checked_i32_narrow: emit_checked_i32_narrow,
+      emit_erased_container_ingress: emit_erased_container_ingress,
+    },
+  )
 }
 
-fn emit_index_op(base: PreparedAtom, index: PreparedAtom, kind: IndexKind, result_ty: MonoType, result_vt: ValType?, ctx: EmitCtx, buf: Vector<Instr>) Vector<Instr> {
-  array_emit.emit_index_op(base, index, kind, result_ty, result_vt, ctx, buf, array_emit.ArrayEmitFns.{
-    emit_atom: emit_atom,
-    atom_val_type: atom_val_type,
-    atom_mono: atom_mono,
-    emit_checked_i32_narrow: emit_checked_i32_narrow,
-    emit_erased_container_ingress: emit_erased_container_ingress,
-  })
+fn emit_index_op(
+  base: PreparedAtom,
+  index: PreparedAtom,
+  kind: IndexKind,
+  result_ty: MonoType,
+  result_vt: ValType?,
+  ctx: EmitCtx,
+  buf: Vector<Instr>,
+) Vector<Instr> {
+  array_emit.emit_index_op(
+    base,
+    index,
+    kind,
+    result_ty,
+    result_vt,
+    ctx,
+    buf,
+    array_emit.ArrayEmitFns.{
+      emit_atom: emit_atom,
+      atom_val_type: atom_val_type,
+      atom_mono: atom_mono,
+      emit_checked_i32_narrow: emit_checked_i32_narrow,
+      emit_erased_container_ingress: emit_erased_container_ingress,
+    },
+  )
 }
 
 // ── If emission ────────────────────────────────────────────────────────
-
-fn emit_if_op(cond: PreparedAtom, then_e: PreparedExpr, else_e: PreparedExpr, result_idx: Int, result_vt: ValType?, result_mono: MonoType, ctx: EmitCtx, buf: Vector<Instr>) Vector<Instr> {
-  control_emit.emit_if_op(cond, then_e, else_e, result_idx, result_vt, result_mono, ctx, buf, control_emit.ControlEmitFns.{
-    emit_atom: emit_atom,
-    emit_expr: emit_expr,
-  })
+fn emit_if_op(
+  cond: PreparedAtom,
+  then_e: PreparedExpr,
+  else_e: PreparedExpr,
+  result_idx: Int,
+  result_vt: ValType?,
+  result_mono: MonoType,
+  ctx: EmitCtx,
+  buf: Vector<Instr>,
+) Vector<Instr> {
+  control_emit.emit_if_op(
+    cond,
+    then_e,
+    else_e,
+    result_idx,
+    result_vt,
+    result_mono,
+    ctx,
+    buf,
+    control_emit.ControlEmitFns.{ emit_atom: emit_atom, emit_expr: emit_expr },
+  )
 }
 
-fn emit_loop_op(body: PreparedExpr, result_idx: Int, result_vt: ValType?, ctx: EmitCtx, buf: Vector<Instr>) Vector<Instr> {
-  control_emit.emit_loop_op(body, result_idx, result_vt, ctx, buf, control_emit.ControlEmitFns.{
-    emit_atom: emit_atom,
-    emit_expr: emit_expr,
-  })
+fn emit_loop_op(
+  body: PreparedExpr,
+  result_idx: Int,
+  result_vt: ValType?,
+  ctx: EmitCtx,
+  buf: Vector<Instr>,
+) Vector<Instr> {
+  control_emit.emit_loop_op(
+    body,
+    result_idx,
+    result_vt,
+    ctx,
+    buf,
+    control_emit.ControlEmitFns.{ emit_atom: emit_atom, emit_expr: emit_expr },
+  )
 }
 
 // ── Match emission ─────────────────────────────────────────────────────
-
-fn emit_match_op(scrutinee: PreparedAtom, arms: Vector<PreparedMatchArm>, result_idx: Int, result_vt: ValType?, result_mono: MonoType, ctx: EmitCtx, buf: Vector<Instr>) Vector<Instr> {
-  match_emit.emit_match_op(scrutinee, arms, result_idx, result_vt, result_mono, ctx, buf, match_emit.MatchEmitFns.{
-    emit_atom: emit_atom,
-    emit_expr: emit_expr,
-    match_scrutinee_mono: match_scrutinee_mono,
-    emit_pattern_condition: emit_pattern_condition,
-    emit_pattern_bindings: emit_pattern_bindings,
-  })
+fn emit_match_op(
+  scrutinee: PreparedAtom,
+  arms: Vector<PreparedMatchArm>,
+  result_idx: Int,
+  result_vt: ValType?,
+  result_mono: MonoType,
+  ctx: EmitCtx,
+  buf: Vector<Instr>,
+) Vector<Instr> {
+  match_emit.emit_match_op(
+    scrutinee,
+    arms,
+    result_idx,
+    result_vt,
+    result_mono,
+    ctx,
+    buf,
+    match_emit.MatchEmitFns.{
+      emit_atom: emit_atom,
+      emit_expr: emit_expr,
+      match_scrutinee_mono: match_scrutinee_mono,
+      emit_pattern_condition: emit_pattern_condition,
+      emit_pattern_bindings: emit_pattern_bindings,
+    },
+  )
 }
 
 fn can_match_variant_pattern(scrutinee_mono: MonoType, env: ResolvedEnv) Bool {
@@ -2128,7 +2850,10 @@ fn can_match_variant_pattern(scrutinee_mono: MonoType, env: ResolvedEnv) Bool {
     .Named(tid, args) => {
       case env.lookup_type_def(tid) {
         .Some(.Sum(_, _, _)) => true,
-        .Some(.Alias(_, type_params, target)) => can_match_variant_pattern(subst_type_params(target, type_params, args), env),
+        .Some(.Alias(_, type_params, target)) => can_match_variant_pattern(
+          subst_type_params(target, type_params, args),
+          env,
+        ),
         _ => false,
       }
     },
@@ -2136,7 +2861,13 @@ fn can_match_variant_pattern(scrutinee_mono: MonoType, env: ResolvedEnv) Bool {
   }
 }
 
-fn emit_pattern_condition(pattern: PreparedPattern, scrutinee_instrs: Vector<Instr>, scrutinee_mono: MonoType, ctx: EmitCtx, buf: Vector<Instr>) Vector<Instr> {
+fn emit_pattern_condition(
+  pattern: PreparedPattern,
+  scrutinee_instrs: Vector<Instr>,
+  scrutinee_mono: MonoType,
+  ctx: EmitCtx,
+  buf: Vector<Instr>,
+) Vector<Instr> {
   case pattern {
     .Wildcard => buf.append(.I32Const(1)),
     .Var(_) => buf.append(.I32Const(1)),
@@ -2144,11 +2875,14 @@ fn emit_pattern_condition(pattern: PreparedPattern, scrutinee_instrs: Vector<Ins
       buf.concat(scrutinee_instrs).append(.I64Const(n)).append(.I64Eq)
     },
     .LitBool(b) => {
-      buf.concat(scrutinee_instrs).append(.I32Const(if b { 1 } else { 0 })).append(.I32Eq)
+      buf.concat(scrutinee_instrs).append(.I32Const(if b { 1 } else { 0 })).append(
+        .I32Eq,
+      )
     },
     .LitStr(s) => {
       // String comparison via rt_str__eq
       out := buf.concat(scrutinee_instrs)
+
       case ctx.registry.string_pool[s] {
         .Some(entry) => {
           out.append(.Call(entry.getter_sym)).append(.Call("rt_str__eq"))
@@ -2160,15 +2894,28 @@ fn emit_pattern_condition(pattern: PreparedPattern, scrutinee_instrs: Vector<Ins
       if !can_match_variant_pattern(scrutinee_mono, ctx.env) {
         buf.append(.I32Const(0))
       } else {
-        emit_variant_pattern_condition(tid, vid, fields, scrutinee_instrs, scrutinee_mono, ctx, buf)
+        emit_variant_pattern_condition(
+          tid,
+          vid,
+          fields,
+          scrutinee_instrs,
+          scrutinee_mono,
+          ctx,
+          buf,
+        )
       }
     },
   }
 }
 
 fn emit_variant_pattern_condition(
-  tid: TypeId, vid: VariantId, fields: Vector<PreparedPattern>,
-  scrutinee_instrs: Vector<Instr>, scrutinee_mono: MonoType, ctx: EmitCtx, buf: Vector<Instr>,
+  tid: TypeId,
+  vid: VariantId,
+  fields: Vector<PreparedPattern>,
+  scrutinee_instrs: Vector<Instr>,
+  scrutinee_mono: MonoType,
+  ctx: EmitCtx,
+  buf: Vector<Instr>,
 ) Vector<Instr> {
   // Option<ExternRef> → null check instead of tag check
   if variant_emit.is_nullable_extern_option(scrutinee_mono) {
@@ -2180,50 +2927,63 @@ fn emit_variant_pattern_condition(
       tag_check := scrutinee_instrs.append(.RefIsNull).append(.I32Eqz)
       // Check for non-trivial sub-patterns on the Some payload
       has_inner := false
+
       for fp in fields {
         if !pattern_is_trivial(fp) { has_inner = true }
       }
-      if !has_inner { return buf.concat(tag_check) }
+
+      if !has_inner {
+        return buf.concat(tag_check)
+      }
+
       // Sub-pattern on the payload (the scrutinee itself, cast to non-null)
       inner_checks: Vector<Vector<Instr>> = []
-      for fp,i in fields {
+
+      for fp, i in fields {
         if !pattern_is_trivial(fp) {
           field_instrs := scrutinee_instrs.append(.RefAsNonNull)
           field_mono := variant_field_mono(scrutinee_mono, vid, i, ctx.env)
           inner_checks = .append(
-            emit_pattern_condition(fp, field_instrs, field_mono, ctx, [])
+            emit_pattern_condition(fp, field_instrs, field_mono, ctx, []),
           )
         }
       }
+
       inner_cond := combine_and_checks(inner_checks)
-      return buf.concat(tag_check).append(.If(.Some(.I32), inner_cond, [.I32Const(0)]))
+
+      return buf.concat(tag_check).append(
+        .If(.Some(.I32), inner_cond, [.I32Const(0)]),
+      )
     }
   }
 
   sum_layout := get_sum_layout_ctx(scrutinee_mono, ctx)
-
   // Tag check — build as a separate small vector, then prepend to buf
-  tag_check := scrutinee_instrs
-    .append(.StructGet(sum_layout.sym, 0))
-    .append(.I32Const(vid.id))
-    .append(.I32Eq)
-
+  tag_check := scrutinee_instrs.append(.StructGet(sum_layout.sym, 0)).append(
+    .I32Const(vid.id),
+  ).append(.I32Eq)
   // Check for non-trivial sub-patterns
   has_inner := false
+
   for fp in fields {
     if !pattern_is_trivial(fp) { has_inner = true }
   }
-  if !has_inner { return buf.concat(tag_check) }
+
+  if !has_inner {
+    return buf.concat(tag_check)
+  }
 
   // Short-circuit inner checks
   variant_layout := find_variant_layout(sum_layout, vid)
   inner_checks: Vector<Vector<Instr>> = []
-  for fp,i in fields {
+
+  for fp, i in fields {
     if !pattern_is_trivial(fp) {
       offset := variant_layout.struct_field_offset + i
       field_instrs := scrutinee_instrs
       field_instrs = .append(.StructGet(sum_layout.sym, offset))
       field_mono := variant_field_mono(scrutinee_mono, vid, i, ctx.env)
+
       case field_mono {
         .Void => {
           case fp {
@@ -2232,26 +2992,34 @@ fn emit_variant_pattern_condition(
                 .Some(fid) => fid.id.to_string(),
                 .None => "?",
               }
-              error("emit_variant_pattern_condition: nested variant pattern on void field in FuncId(${fid_text}), scrutinee=${mono_to_key(scrutinee_mono)}, variant=${vid.id}, field=${i}, nested_variant=${nested_vid.id}")
+              error(
+                "emit_variant_pattern_condition: nested variant pattern on void field in FuncId(${fid_text}), scrutinee=${mono_to_key(
+                  scrutinee_mono,
+                )}, variant=${vid.id}, field=${i}, nested_variant=${nested_vid.id}",
+              )
             },
             _ => {},
           }
         },
         _ => {},
       }
+
       inner_checks = .append(
-        // Each inner check is used as a sub-body — pass [] as buf
-        emit_pattern_condition(fp, field_instrs, field_mono, ctx, [])
+        emit_pattern_condition(fp, field_instrs, field_mono, ctx, []),
       )
     }
   }
 
   inner_cond := combine_and_checks(inner_checks)
-
   buf.concat(tag_check).append(.If(.Some(.I32), inner_cond, [.I32Const(0)]))
 }
 
-fn emit_pattern_bindings(pattern: PreparedPattern, scrutinee_instrs: Vector<Instr>, scrutinee_mono: MonoType, ctx: EmitCtx) Vector<Instr> {
+fn emit_pattern_bindings(
+  pattern: PreparedPattern,
+  scrutinee_instrs: Vector<Instr>,
+  scrutinee_mono: MonoType,
+  ctx: EmitCtx,
+) Vector<Instr> {
   case pattern {
     .Wildcard => [],
     .LitInt(_) => [],
@@ -2272,25 +3040,33 @@ fn emit_pattern_bindings(pattern: PreparedPattern, scrutinee_instrs: Vector<Inst
           []
         } else {
           out: Vector<Instr> = []
-          for fp,i in fields {
+
+          for fp, i in fields {
             // The Some payload is the scrutinee cast to non-null
             field_instrs := scrutinee_instrs.append(.RefAsNonNull)
             field_mono := variant_field_mono(scrutinee_mono, vid, i, ctx.env)
-            out = .concat(emit_pattern_bindings(fp, field_instrs, field_mono, ctx))
+            out = .concat(
+              emit_pattern_bindings(fp, field_instrs, field_mono, ctx),
+            )
           }
+
           out
         }
       } else {
         sum_layout := get_sum_layout_ctx(scrutinee_mono, ctx)
         variant_layout := find_variant_layout(sum_layout, vid)
         out: Vector<Instr> = []
-        for fp,i in fields {
+
+        for fp, i in fields {
           offset := variant_layout.struct_field_offset + i
           field_instrs := scrutinee_instrs
           field_instrs = .append(.StructGet(sum_layout.sym, offset))
           field_mono := variant_field_mono(scrutinee_mono, vid, i, ctx.env)
-          out = .concat(emit_pattern_bindings(fp, field_instrs, field_mono, ctx))
+          out = .concat(
+            emit_pattern_bindings(fp, field_instrs, field_mono, ctx),
+          )
         }
+
         out
       }
     },
@@ -2298,16 +3074,32 @@ fn emit_pattern_bindings(pattern: PreparedPattern, scrutinee_instrs: Vector<Inst
 }
 
 // ── Closure emission ───────────────────────────────────────────────────
+fn emit_make_closure(
+  fid: FuncId,
+  free_vars: Vector<SlotId>,
+  ctx: EmitCtx,
+  buf: Vector<Instr>,
+) Vector<Instr> { closure_emit.emit_make_closure(fid, free_vars, ctx, buf) }
 
-fn emit_make_closure(fid: FuncId, free_vars: Vector<SlotId>, ctx: EmitCtx, buf: Vector<Instr>) Vector<Instr> {
-  closure_emit.emit_make_closure(fid, free_vars, ctx, buf)
-}
-
-fn emit_closure_call(callee: PreparedAtom, lid: SlotId, args: Vector<PreparedAtom>, result_idx: Int, result_mono: MonoType, ctx: EmitCtx, buf: Vector<Instr>) Vector<Instr> {
-  closure_emit.emit_closure_call(callee, lid, args, result_idx, result_mono, ctx, buf, closure_emit.ClosureEmitFns.{
-    emit_atom: emit_atom,
-    atom_mono: atom_mono,
-  })
+fn emit_closure_call(
+  callee: PreparedAtom,
+  lid: SlotId,
+  args: Vector<PreparedAtom>,
+  result_idx: Int,
+  result_mono: MonoType,
+  ctx: EmitCtx,
+  buf: Vector<Instr>,
+) Vector<Instr> {
+  closure_emit.emit_closure_call(
+    callee,
+    lid,
+    args,
+    result_idx,
+    result_mono,
+    ctx,
+    buf,
+    closure_emit.ClosureEmitFns.{ emit_atom: emit_atom, atom_mono: atom_mono },
+  )
 }
 
 fn emit_trampolines_for_func(func: PreparedFunc, ctx: EmitCtx) Vector<FuncDef> {
@@ -2319,32 +3111,40 @@ fn emit_builtin_trampolines(ctx: EmitCtx) Vector<FuncDef> {
 }
 
 // ── Boxing / unboxing (AWrapAnyref / AUnwrapAnyref) ────────────────────
-
-fn emit_wrap_anyref(atom: PreparedAtom, mono: MonoType, ctx: EmitCtx, buf: Vector<Instr>) Vector<Instr> {
+fn emit_wrap_anyref(
+  atom: PreparedAtom,
+  mono: MonoType,
+  ctx: EmitCtx,
+  buf: Vector<Instr>,
+) Vector<Instr> {
   buf = emit_atom(atom, ctx, buf)
   emit_box_to_anyref(mono, ctx.env, buf)
 }
 
-fn emit_unwrap_anyref(atom: PreparedAtom, mono: MonoType, ctx: EmitCtx, buf: Vector<Instr>) Vector<Instr> {
+fn emit_unwrap_anyref(
+  atom: PreparedAtom,
+  mono: MonoType,
+  ctx: EmitCtx,
+  buf: Vector<Instr>,
+) Vector<Instr> {
   buf = emit_atom(atom, ctx, buf)
   emit_unbox_from_anyref(mono, ctx.env, buf)
 }
 
 // ── Checked i32 narrowing ──────────────────────────────────────────────
-
-fn emit_checked_i32_narrow(atom: PreparedAtom, ctx: EmitCtx, buf: Vector<Instr>) Vector<Instr> {
+fn emit_checked_i32_narrow(atom: PreparedAtom, ctx: EmitCtx, buf: Vector<Instr>) Vector<
+  Instr,
+> {
   // Safe i64→i32: trap if < 0 or > i32::MAX (2147483647).
   // Emits the atom three times: twice for the range check, once for the wrap.
   // Atoms are cheap (local.get / const), so re-emission is fine.
   buf = emit_atom(atom, ctx, buf)
-  buf = .concat([.I64Const(0), .I64GeS])  // value >= 0
+  buf = .concat([.I64Const(0), .I64GeS]) // value >= 0
   buf = emit_atom(atom, ctx, buf)
-  buf = .concat([.I64Const(2147483647), .I64LeS])  // value <= i32::MAX
+  buf = .concat([.I64Const(2147483647), .I64LeS]) // value <= i32::MAX
   buf = .concat([.I32And, .I32Eqz, .If(.None, [.Unreachable], [])])
   buf = emit_atom(atom, ctx, buf)
   buf.append(.I32WrapI64)
 }
 
 // ── Helper utilities ───────────────────────────────────────────────────
-
-

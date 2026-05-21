@@ -1,10 +1,14 @@
 use @std.path
-use lib.module.loader
+
 use compiler.imports
-use compiler.resolver
-use compiler.resolver.{ResolvedEnv, FunctionSig, TypeEntry, ResolvedTypeDef, plain_resolved_type_params}
 use compiler.mono_type.{MonoType, TypeId}
+use compiler.resolver
+use compiler.resolver.{
+  FunctionSig, ResolvedEnv, ResolvedTypeDef, TypeEntry,
+  plain_resolved_type_params,
+}
 use compiler.signatures
+use lib.module.loader
 
 fn builtin_sig(
   name: String,
@@ -24,9 +28,16 @@ fn builtin_doc_sig(
   ret: MonoType?,
   doc: String?,
 ) FunctionSig {
-  .{ name, type_params: plain_resolved_type_params(type_params), param_names, params, ret, doc, extern_module: .None }
+  .{
+    name,
+    type_params: plain_resolved_type_params(type_params),
+    param_names,
+    params,
+    ret,
+    doc,
+    extern_module: .None,
+  }
 }
-
 
 fn builtin_type_entry(next: Cell<Int>, arity: Int, def: ResolvedTypeDef) TypeEntry {
   .{
@@ -65,47 +76,84 @@ fn builtin_type_entries() Vector<TypeEntry> {
   e := MonoType.Var(tp_e)
   s := MonoType.Var(tp_s)
   next_type_id := Cell.new(0)
-
   rtp_t := plain_resolved_type_params([tp_t])
   rtp_te := plain_resolved_type_params([tp_t, tp_e])
   rtp_ts := plain_resolved_type_params([tp_t, tp_s])
-
   types := [
-    builtin_type_entry(next_type_id, 1, .Sum("Option", rtp_t, [
-      .{ name: "None", fields: [] },
-      .{ name: "Some", fields: [t] },
-    ])),
-    builtin_type_entry(next_type_id, 2, .Sum("Result", rtp_te, [
-      .{ name: "Ok", fields: [t] },
-      .{ name: "Err", fields: [e] },
-    ])),
+    builtin_type_entry(
+      next_type_id,
+      1,
+      .Sum(
+        "Option",
+        rtp_t,
+        [.{ name: "None", fields: [] }, .{ name: "Some", fields: [t] }],
+      ),
+    ),
+    builtin_type_entry(
+      next_type_id,
+      2,
+      .Sum(
+        "Result",
+        rtp_te,
+        [.{ name: "Ok", fields: [t] }, .{ name: "Err", fields: [e] }],
+      ),
+    ),
     builtin_type_entry(next_type_id, 1, .Record("Cell", rtp_t, [])),
-    builtin_type_entry(next_type_id, 0, .Record("Range", [], [
-      .{ name: "start", ty: .Int },
-      .{ name: "end", ty: .Int },
-      .{ name: "step", ty: .Int },
-    ])),
+    builtin_type_entry(
+      next_type_id,
+      0,
+      .Record(
+        "Range",
+        [],
+        [
+          .{ name: "start", ty: .Int },
+          .{ name: "end", ty: .Int },
+          .{ name: "step", ty: .Int },
+        ],
+      ),
+    ),
   ]
-
   iterator_tid := TypeId.{ id: next_type_id.get() }
-
-  types = .concat([
-    builtin_type_entry(next_type_id, 1, .Record("Iterator", rtp_t, [])),
-    builtin_type_entry(next_type_id, 1, .Record("IterItem", rtp_t, [
-      .{ name: "value", ty: t },
-      .{ name: "rest", ty: .Named(iterator_tid, [t]) },
-    ])),
-    builtin_type_entry(next_type_id, 2, .Sum("UnfoldStep", rtp_ts, [
-      .{ name: "Done", fields: [] },
-      .{ name: "Yield", fields: [t, s] },
-    ])),
-    builtin_type_entry(next_type_id, 0, .Sum("Order", [], [
-      .{ name: "Lt", fields: [] },
-      .{ name: "Eq", fields: [] },
-      .{ name: "Gt", fields: [] },
-    ])),
-    builtin_type_entry(next_type_id, 1, .Record("Task", rtp_t, [])),
-  ])
+  types = .concat(
+    [
+      builtin_type_entry(next_type_id, 1, .Record("Iterator", rtp_t, [])),
+      builtin_type_entry(
+        next_type_id,
+        1,
+        .Record(
+          "IterItem",
+          rtp_t,
+          [
+            .{ name: "value", ty: t },
+            .{ name: "rest", ty: .Named(iterator_tid, [t]) },
+          ],
+        ),
+      ),
+      builtin_type_entry(
+        next_type_id,
+        2,
+        .Sum(
+          "UnfoldStep",
+          rtp_ts,
+          [.{ name: "Done", fields: [] }, .{ name: "Yield", fields: [t, s] }],
+        ),
+      ),
+      builtin_type_entry(
+        next_type_id,
+        0,
+        .Sum(
+          "Order",
+          [],
+          [
+            .{ name: "Lt", fields: [] },
+            .{ name: "Eq", fields: [] },
+            .{ name: "Gt", fields: [] },
+          ],
+        ),
+      ),
+      builtin_type_entry(next_type_id, 1, .Record("Task", rtp_t, [])),
+    ],
+  )
   types
 }
 
@@ -120,18 +168,21 @@ pub fn builtin_type_env() ResolvedEnv {
 }
 
 // ── method registration from signature groups ────────────────────────────────
-
-fn register_methods_from_groups(env: ResolvedEnv, groups: Vector<signatures.SignatureGroup>) ResolvedEnv {
+fn register_methods_from_groups(
+  env: ResolvedEnv,
+  groups: Vector<signatures.SignatureGroup>,
+) ResolvedEnv {
   cur := env
+
   for group in groups {
     entries := signatures.group_method_entries(group)
+
     case group.receiver {
       .None => {},
-      .Some(recv) => {
-        cur = .register_bound_methods(recv, entries)
-      },
+      .Some(recv) => { cur = .register_bound_methods(recv, entries) },
     }
   }
+
   cur
 }
 
@@ -162,22 +213,32 @@ fn set_prelude_function_origins(
   canonical_roots: imports.CanonicalRoots,
 ) ResolvedEnv {
   cur := env
+
   for group in groups {
     stem := case prelude_module_stem(group.receiver) {
       .Some(s) => s,
       .None => { continue },
     }
-    module_path := imports.canonical_module_path(path.join(prelude_dir, "${stem}.tw"), canonical_roots)
+    module_path := imports.canonical_module_path(
+      path.join(prelude_dir, "${stem}.tw"),
+      canonical_roots,
+    )
+
     for sig in group.sigs {
       internal_name := signatures.to_internal_name(group.receiver, sig.name)
-      cur = .set_function_origin(internal_name, .{ module_path, func_name: sig.name })
+      cur = .set_function_origin(
+        internal_name,
+        .{ module_path, func_name: sig.name },
+      )
     }
   }
+
   cur
 }
 
 fn bind_public_free_builtins(env: ResolvedEnv) ResolvedEnv {
   cur := env
+
   for name in [
     "print",
     "println",
@@ -187,9 +248,8 @@ fn bind_public_free_builtins(env: ResolvedEnv) ResolvedEnv {
     "range",
     "range_from",
     "range_step",
-  ] {
-    cur = .bind_function(name, name)
-  }
+  ] { cur = .bind_function(name, name) }
+
   cur
 }
 
@@ -201,7 +261,6 @@ pub fn builtin_env() ResolvedEnv {
   prelude_dir := loader.resolve_prelude_root()
   sigs_dir := path.join(prelude_dir, "signatures")
   canonical_roots := imports.make_canonical_roots(root)
-
   // Load and resolve builtin/runtime signature stubs (parse + type-resolve only,
   // no codegen).
   groups := case signatures.load_signatures(sigs_dir, builtin_type_env()) {
@@ -211,89 +270,232 @@ pub fn builtin_env() ResolvedEnv {
   // Load public signatures from the actual prelude modules as well. These
   // provide the prelude-backed methods like Vector.map and Option.map that are
   // not represented in prelude/signatures/*.tw.
-  prelude_groups := case signatures.load_signatures(prelude_dir, builtin_type_env()) {
+  prelude_groups := case signatures.load_signatures(
+    prelude_dir,
+    builtin_type_env(),
+  ) {
     .Ok(g) => g,
     .Err(msg) => error("builtin_env: failed to load prelude sources: ${msg}"),
   }
-
   // Derive FunctionSigs with internal names from the signature groups.
   sig_fns := signatures.all_internal_sigs(groups)
   prelude_fns := signatures.all_internal_sigs(prelude_groups)
-
   // Functions NOT covered by any signature file: I/O builtins, string_substring,
   // vector builders, and host ops.
   t := MonoType.Var("T")
-
   hardcoded := [
-    // ── I/O ──
-    builtin_doc_sig("print",    [], ["s"],   [.String], .Some(.Void),  .Some("Print a string to stdout.")),
-    builtin_doc_sig("println",  [], ["s"],   [.String], .Some(.Void),  .Some("Print a string to stdout followed by a newline.")),
-    builtin_doc_sig("error",    [], ["msg"], [.String], .Some(.Never), .Some("Trap with an unrecoverable error message.")),
-    builtin_doc_sig("eprint",   [], ["s"],   [.String], .Some(.Void),  .Some("Print a string to stderr.")),
-    builtin_doc_sig("eprintln", [], ["s"],   [.String], .Some(.Void),  .Some("Print a string to stderr followed by a newline.")),
-    // ── String (internal-only, not in signature files) ──
-    builtin_sig("string__substring", [], ["s", "start", "end"], [.String, .Int, .Int], .Some(.String)),
-    // ── Vector builders (internal, not in signature files) ──
-    builtin_sig("vector__builder_new",    ["T"], [],              [],                     .Some(.Vector(t))),
-    builtin_sig("vector__builder_push",   ["T"], ["xs", "value"], [.Vector(t), t],        .Some(.Void)),
-    builtin_sig("vector__builder_freeze", ["T"], ["xs"],          [.Vector(t)],           .Some(.Vector(t))),
-    builtin_sig("vector__builder_from",   ["T"], ["xs"],          [.Vector(t)],           .Some(.Vector(t))),
-    // ── Host ops ──
-    builtin_sig("host_read_file",  [], ["path"],         [.String],              .Some(.String)),
-    builtin_sig("host_write_file", [], ["path", "text"], [.String, .String],     .Some(.Void)),
-    builtin_sig("host_mkdirp",     [], ["path"],         [.String],              .Some(.Void)),
-    builtin_sig("host_list_dir",   [], ["path"],         [.String],              .Some(.Vector(.String))),
-    builtin_sig("host_exists",     [], ["path"],         [.String],              .Some(.Bool)),
-    builtin_sig("host_args",       [], [],               [],                     .Some(.Vector(.String))),
-    builtin_sig("host_env",        [], ["name"],         [.String],              .Some(.Vector(.String))),
-    builtin_sig("host_cwd",        [], [],               [],                     .Some(.String)),
-    builtin_sig("host_exit",       [], ["code"],         [.Int],                 .Some(.Never)),
-    builtin_sig("host_stdin_read_chunk", [], ["max_bytes"], [.Int],              .Some(.Vector(.Byte))),
-    builtin_sig("host_stdin_read_timeout", [], ["max_bytes", "timeout_ms"], [.Int, .Int], .Some(.Vector(.Byte))),
+    builtin_doc_sig(
+      "print",
+      [],
+      ["s"],
+      [.String],
+      .Some(.Void),
+      .Some("Print a string to stdout."),
+    ),
+    builtin_doc_sig(
+      "println",
+      [],
+      ["s"],
+      [.String],
+      .Some(.Void),
+      .Some("Print a string to stdout followed by a newline."),
+    ),
+    builtin_doc_sig(
+      "error",
+      [],
+      ["msg"],
+      [.String],
+      .Some(.Never),
+      .Some("Trap with an unrecoverable error message."),
+    ),
+    builtin_doc_sig(
+      "eprint",
+      [],
+      ["s"],
+      [.String],
+      .Some(.Void),
+      .Some("Print a string to stderr."),
+    ),
+    builtin_doc_sig(
+      "eprintln",
+      [],
+      ["s"],
+      [.String],
+      .Some(.Void),
+      .Some("Print a string to stderr followed by a newline."),
+    ),
+    builtin_sig(
+      "string__substring",
+      [],
+      ["s", "start", "end"],
+      [.String, .Int, .Int],
+      .Some(.String),
+    ),
+    builtin_sig("vector__builder_new", ["T"], [], [], .Some(.Vector(t))),
+    builtin_sig(
+      "vector__builder_push",
+      ["T"],
+      ["xs", "value"],
+      [.Vector(t), t],
+      .Some(.Void),
+    ),
+    builtin_sig(
+      "vector__builder_freeze",
+      ["T"],
+      ["xs"],
+      [.Vector(t)],
+      .Some(.Vector(t)),
+    ),
+    builtin_sig(
+      "vector__builder_from",
+      ["T"],
+      ["xs"],
+      [.Vector(t)],
+      .Some(.Vector(t)),
+    ),
+    builtin_sig("host_read_file", [], ["path"], [.String], .Some(.String)),
+    builtin_sig(
+      "host_write_file",
+      [],
+      ["path", "text"],
+      [.String, .String],
+      .Some(.Void),
+    ),
+    builtin_sig("host_mkdirp", [], ["path"], [.String], .Some(.Void)),
+    builtin_sig(
+      "host_list_dir",
+      [],
+      ["path"],
+      [.String],
+      .Some(.Vector(.String)),
+    ),
+    builtin_sig("host_exists", [], ["path"], [.String], .Some(.Bool)),
+    builtin_sig("host_args", [], [], [], .Some(.Vector(.String))),
+    builtin_sig("host_env", [], ["name"], [.String], .Some(.Vector(.String))),
+    builtin_sig("host_cwd", [], [], [], .Some(.String)),
+    builtin_sig("host_exit", [], ["code"], [.Int], .Some(.Never)),
+    builtin_sig(
+      "host_stdin_read_chunk",
+      [],
+      ["max_bytes"],
+      [.Int],
+      .Some(.Vector(.Byte)),
+    ),
+    builtin_sig(
+      "host_stdin_read_timeout",
+      [],
+      ["max_bytes", "timeout_ms"],
+      [.Int, .Int],
+      .Some(.Vector(.Byte)),
+    ),
     builtin_sig("host_stdin_eof", [], [], [], .Some(.Bool)),
-    builtin_sig("host_stdout_write_bytes", [], ["bytes"],  [.Vector(.Byte)],     .Some(.Void)),
+    builtin_sig(
+      "host_stdout_write_bytes",
+      [],
+      ["bytes"],
+      [.Vector(.Byte)],
+      .Some(.Void),
+    ),
   ]
-
   builtin_named_types := builtin_type_entries()
   builtin_named_type_names := builtin_type_names(builtin_named_types)
-
-  env := resolver.empty_env()
-    .with_types(builtin_named_types, builtin_named_type_names)
-    .with_registered_functions(sig_fns.concat(prelude_fns).concat(hardcoded))
-
+  env := resolver.empty_env().with_types(
+    builtin_named_types,
+    builtin_named_type_names,
+  ).with_registered_functions(sig_fns.concat(prelude_fns).concat(hardcoded))
   env = bind_public_free_builtins(env)
-
   // Actual prelude module functions should carry canonical imported origins in
   // the builtin environment so internal/prelude modules can link through the
   // same imported-function identity model as user modules.
-  env = set_prelude_function_origins(env, prelude_groups, prelude_dir, canonical_roots)
-
+  env = set_prelude_function_origins(
+    env,
+    prelude_groups,
+    prelude_dir,
+    canonical_roots,
+  )
   // First register methods derived from signature groups (these take priority
   // under the deduplication rule in register_methods).
   env = register_methods_from_groups(env, groups)
   env = register_methods_from_groups(env, prelude_groups)
   // Then register remaining prelude-backed methods (compare, map, filter, etc.).
   env = .register_builtin_methods()
-
   env
 }
 
 pub fn add_internal_host_builtins(env: ResolvedEnv) ResolvedEnv {
-  env
-    .add_function(builtin_sig("__host_read_file", [], ["path"], [.String], .Some(.Result(.Vector(.Byte), .String))))
-    .add_function(builtin_sig("__host_write_file", [], ["path", "text"], [.String, .String], .Some(.Void)))
-    .add_function(builtin_sig("__host_write_bytes", [], ["path", "bytes"], [.String, .Vector(.Byte)], .Some(.Void)))
-    .add_function(builtin_sig("__host_mkdirp", [], ["path"], [.String], .Some(.Void)))
-    .add_function(builtin_sig("__host_list_dir", [], ["path"], [.String], .Some(.Vector(.String))))
-    .add_function(builtin_sig("__host_exists", [], ["path"], [.String], .Some(.Bool)))
-    .add_function(builtin_sig("__host_args", [], [], [], .Some(.Vector(.String))))
-    .add_function(builtin_sig("__host_env", [], ["name"], [.String], .Some(.Vector(.String))))
-    .add_function(builtin_sig("__host_cwd", [], [], [], .Some(.String)))
-    .add_function(builtin_sig("__host_exit", [], ["code"], [.Int], .Some(.Never)))
-    .add_function(builtin_sig("__host_now", [], [], [], .Some(.Float)))
-    .add_function(builtin_sig("__host_run_wasm", [], ["bytes", "argv"], [.Vector(.Byte), .Vector(.String)], .Some(.Int)))
-    .add_function(builtin_sig("__host_stdin_read_chunk", [], ["max_bytes"], [.Int], .Some(.Vector(.Byte))))
-    .add_function(builtin_sig("__host_stdin_read_timeout", [], ["max_bytes", "timeout_ms"], [.Int, .Int], .Some(.Vector(.Byte))))
-    .add_function(builtin_sig("__host_stdin_eof", [], [], [], .Some(.Bool)))
-    .add_function(builtin_sig("__host_stdout_write_bytes", [], ["bytes"], [.Vector(.Byte)], .Some(.Void)))
+  env.add_function(
+    builtin_sig(
+      "__host_read_file",
+      [],
+      ["path"],
+      [.String],
+      .Some(.Result(.Vector(.Byte), .String)),
+    ),
+  ).add_function(
+    builtin_sig(
+      "__host_write_file",
+      [],
+      ["path", "text"],
+      [.String, .String],
+      .Some(.Void),
+    ),
+  ).add_function(
+    builtin_sig(
+      "__host_write_bytes",
+      [],
+      ["path", "bytes"],
+      [.String, .Vector(.Byte)],
+      .Some(.Void),
+    ),
+  ).add_function(
+    builtin_sig("__host_mkdirp", [], ["path"], [.String], .Some(.Void)),
+  ).add_function(
+    builtin_sig(
+      "__host_list_dir",
+      [],
+      ["path"],
+      [.String],
+      .Some(.Vector(.String)),
+    ),
+  ).add_function(
+    builtin_sig("__host_exists", [], ["path"], [.String], .Some(.Bool)),
+  ).add_function(
+    builtin_sig("__host_args", [], [], [], .Some(.Vector(.String))),
+  ).add_function(
+    builtin_sig("__host_env", [], ["name"], [.String], .Some(.Vector(.String))),
+  ).add_function(builtin_sig("__host_cwd", [], [], [], .Some(.String))).add_function(
+    builtin_sig("__host_exit", [], ["code"], [.Int], .Some(.Never)),
+  ).add_function(builtin_sig("__host_now", [], [], [], .Some(.Float))).add_function(
+    builtin_sig(
+      "__host_run_wasm",
+      [],
+      ["bytes", "argv"],
+      [.Vector(.Byte), .Vector(.String)],
+      .Some(.Int),
+    ),
+  ).add_function(
+    builtin_sig(
+      "__host_stdin_read_chunk",
+      [],
+      ["max_bytes"],
+      [.Int],
+      .Some(.Vector(.Byte)),
+    ),
+  ).add_function(
+    builtin_sig(
+      "__host_stdin_read_timeout",
+      [],
+      ["max_bytes", "timeout_ms"],
+      [.Int, .Int],
+      .Some(.Vector(.Byte)),
+    ),
+  ).add_function(builtin_sig("__host_stdin_eof", [], [], [], .Some(.Bool))).add_function(
+    builtin_sig(
+      "__host_stdout_write_bytes",
+      [],
+      ["bytes"],
+      [.Vector(.Byte)],
+      .Some(.Void),
+    ),
+  )
 }

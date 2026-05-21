@@ -2,31 +2,50 @@
 //
 // This is the Twinkle-owned source of truth for the helper module that lets
 // JS construct/read the GC values used by Twinkle's host ABI.
-
 use compiler.codegen.wasm_ir.{
-  ValType, HeapType, Instr, TypeDef, FieldDef, FuncDef, ExportDef, WasmModule,
+  ExportDef, FieldDef, FuncDef, HeapType, Instr, TypeDef, ValType, WasmModule,
 }
 
-fn string_null() ValType { .Ref(true, .Named("String")) }
-fn string_ref() ValType { .Ref(false, .Named("String")) }
-fn array_null() ValType { .Ref(true, .Named("Array")) }
-fn array_ref() ValType { .Ref(false, .Named("Array")) }
-fn variant_ref() ValType { .Ref(false, .Named("Variant")) }
-fn i31_ref() ValType { .Ref(false, .I31) }
-
-fn export(f: FuncDef) ExportDef {
-  .{ wasm_name: f.name, func_sym: f.name }
+fn string_null() ValType {
+  .Ref(true, .Named("String"))
 }
+
+fn string_ref() ValType {
+  .Ref(false, .Named("String"))
+}
+
+fn array_null() ValType {
+  .Ref(true, .Named("Array"))
+}
+
+fn array_ref() ValType {
+  .Ref(false, .Named("Array"))
+}
+
+fn variant_ref() ValType {
+  .Ref(false, .Named("Variant"))
+}
+
+fn i31_ref() ValType {
+  .Ref(false, .I31)
+}
+
+fn export(f: FuncDef) ExportDef { .{ wasm_name: f.name, func_sym: f.name } }
 
 fn types() Vector<TypeDef> {
   [
     .Array("String", FieldDef.{ name: .None, mutable: true, ty: .I8 }),
     .Array("Array", FieldDef.{ name: .None, mutable: true, ty: .Anyref }),
-    .Struct("Variant", [
-      .{ name: .Some("type_id"), mutable: false, ty: .I32 },
-      .{ name: .Some("variant_id"), mutable: false, ty: .I32 },
-      .{ name: .Some("payload"), mutable: false, ty: array_null() },
-    ], .None, true),
+    .Struct(
+      "Variant",
+      [
+        .{ name: .Some("type_id"), mutable: false, ty: .I32 },
+        .{ name: .Some("variant_id"), mutable: false, ty: .I32 },
+        .{ name: .Some("payload"), mutable: false, ty: array_null() },
+      ],
+      .None,
+      true,
+    ),
   ]
 }
 

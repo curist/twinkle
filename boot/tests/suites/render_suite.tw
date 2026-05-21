@@ -1,17 +1,13 @@
-use tests.runner
-use tests.assert
 use lib.source.registry
-use lib.source.report.{Report, SpanLabel, RenderConfig}
 use lib.source.render
+use lib.source.report.{RenderConfig, Report, SpanLabel}
 use lib.source.span
+use tests.assert
+use tests.runner
 
-fn no_color() RenderConfig {
-  .{ color: false }
-}
+fn no_color() RenderConfig { .{ color: false } }
 
-fn with_color() RenderConfig {
-  .{ color: true }
-}
+fn with_color() RenderConfig { .{ color: true } }
 
 fn make_reg(name: String, source: String) registry.FileRegistry {
   reg := registry.empty()
@@ -27,19 +23,14 @@ fn secondary(s: span.Span, lbl: String?) SpanLabel {
   SpanLabel.{ span: s, label: lbl, is_primary: false }
 }
 
-fn sp(start: Int, end: Int) span.Span {
-  span.new(0, start, end)
-}
+fn sp(start: Int, end: Int) span.Span { span.new(0, start, end) }
 
-fn lines(parts: Vector<String>) String {
-  parts.join("\n")
-}
+fn lines(parts: Vector<String>) String { parts.join("\n") }
 
 pub fn suite() runner.Suite {
-  runner.suite("render")
-
-    // ── Header only ──────────────────────────────────────────────────
-    .test("error header only, no labels", fn() {
+  runner.suite("render").test(
+    "error header only, no labels",
+    fn() {
       reg := registry.empty()
       report := Report.{
         severity: .Error,
@@ -50,8 +41,10 @@ pub fn suite() runner.Suite {
       out := render.render(report, reg, no_color())
       try assert.equal(out, "error: something went wrong")
       .Ok({})
-    })
-    .test("warning header only, no labels", fn() {
+    },
+  ).test(
+    "warning header only, no labels",
+    fn() {
       reg := registry.empty()
       report := Report.{
         severity: .Warning,
@@ -62,10 +55,10 @@ pub fn suite() runner.Suite {
       out := render.render(report, reg, no_color())
       try assert.equal(out, "warning: unused value")
       .Ok({})
-    })
-
-    // ── Primary span ─────────────────────────────────────────────────
-    .test("error with primary span, no color", fn() {
+    },
+  ).test(
+    "error with primary span, no color",
+    fn() {
       // "foo" is at bytes 8..11 in "let x = foo"
       source := "let x = foo"
       reg := make_reg("test.tw", source)
@@ -85,8 +78,10 @@ pub fn suite() runner.Suite {
       ])
       try assert.equal(out, expected)
       .Ok({})
-    })
-    .test("primary span with inline label, no color", fn() {
+    },
+  ).test(
+    "primary span with inline label, no color",
+    fn() {
       source := "let x = foo"
       reg := make_reg("test.tw", source)
       report := Report.{
@@ -105,10 +100,10 @@ pub fn suite() runner.Suite {
       ])
       try assert.equal(out, expected)
       .Ok({})
-    })
-
-    // ── Help lines ───────────────────────────────────────────────────
-    .test("warning with primary span and help line, no color", fn() {
+    },
+  ).test(
+    "warning with primary span and help line, no color",
+    fn() {
       // "bar" is at bytes 8..11 in "use lib.bar"
       source := "use lib.bar"
       reg := make_reg("test.tw", source)
@@ -116,7 +111,9 @@ pub fn suite() runner.Suite {
         severity: .Warning,
         title: "unused import `bar`",
         labels: [primary(sp(8, 11), .None)],
-        help_lines: ["use `twk check --fix-unused-imports` to remove automatically"],
+        help_lines: [
+          "use `twk check --fix-unused-imports` to remove automatically",
+        ],
       }
       out := render.render(report, reg, no_color())
       expected := lines([
@@ -129,8 +126,10 @@ pub fn suite() runner.Suite {
       ])
       try assert.equal(out, expected)
       .Ok({})
-    })
-    .test("help line without labels", fn() {
+    },
+  ).test(
+    "help line without labels",
+    fn() {
       reg := registry.empty()
       report := Report.{
         severity: .Error,
@@ -139,16 +138,13 @@ pub fn suite() runner.Suite {
         help_lines: ["try something else"],
       }
       out := render.render(report, reg, no_color())
-      expected := lines([
-        "error: some error",
-        "  = help: try something else",
-      ])
+      expected := lines(["error: some error", "  = help: try something else"])
       try assert.equal(out, expected)
       .Ok({})
-    })
-
-    // ── Primary + secondary span ──────────────────────────────────────
-    .test("primary and secondary span, no color", fn() {
+    },
+  ).test(
+    "primary and secondary span, no color",
+    fn() {
       // "let x = 1\nlet x = 2"
       //  0123456789 0123456789
       // first x at byte 4, second x at byte 14 (after '\n' at byte 9)
@@ -175,10 +171,10 @@ pub fn suite() runner.Suite {
       ])
       try assert.equal(out, expected)
       .Ok({})
-    })
-
-    // ── Multi-digit line gutter ───────────────────────────────────────
-    .test("gutter widens for two-digit line numbers", fn() {
+    },
+  ).test(
+    "gutter widens for two-digit line numbers",
+    fn() {
       // Build a 10-line source; each "line N\n" is 7 bytes (N=1..9), last is 7 chars.
       source := "line 1\nline 2\nline 3\nline 4\nline 5\nline 6\nline 7\nline 8\nline 9\nline 10"
       reg := make_reg("test.tw", source)
@@ -195,10 +191,10 @@ pub fn suite() runner.Suite {
       try assert.is_true(out.contains("10 | line 10"))
       try assert.is_true(out.contains("   | ^^^^"))
       .Ok({})
-    })
-
-    // ── ANSI color ────────────────────────────────────────────────────
-    .test("error header contains bold-red ANSI code when color enabled", fn() {
+    },
+  ).test(
+    "error header contains bold-red ANSI code when color enabled",
+    fn() {
       reg := registry.empty()
       report := Report.{
         severity: .Error,
@@ -212,8 +208,10 @@ pub fn suite() runner.Suite {
       // Bold escape for title
       try assert.is_true(out.contains("\e[1msomething\e[0m"))
       .Ok({})
-    })
-    .test("warning header contains bold-yellow ANSI code when color enabled", fn() {
+    },
+  ).test(
+    "warning header contains bold-yellow ANSI code when color enabled",
+    fn() {
       reg := registry.empty()
       report := Report.{
         severity: .Warning,
@@ -224,8 +222,10 @@ pub fn suite() runner.Suite {
       out := render.render(report, reg, with_color())
       try assert.is_true(out.contains("\e[33;1mwarning\e[0m"))
       .Ok({})
-    })
-    .test("gutter uses cyan ANSI code when color enabled", fn() {
+    },
+  ).test(
+    "gutter uses cyan ANSI code when color enabled",
+    fn() {
       source := "let x = 1"
       reg := make_reg("test.tw", source)
       report := Report.{
@@ -238,8 +238,10 @@ pub fn suite() runner.Suite {
       // Gutter lines (separator | and source |) should use cyan
       try assert.is_true(out.contains("\e[36m"))
       .Ok({})
-    })
-    .test("primary underline uses bold-red ANSI when color enabled", fn() {
+    },
+  ).test(
+    "primary underline uses bold-red ANSI when color enabled",
+    fn() {
       source := "let x = 1"
       reg := make_reg("test.tw", source)
       report := Report.{
@@ -251,8 +253,10 @@ pub fn suite() runner.Suite {
       out := render.render(report, reg, with_color())
       try assert.is_true(out.contains("\e[31;1m^^^"))
       .Ok({})
-    })
-    .test("no ANSI codes when color disabled", fn() {
+    },
+  ).test(
+    "no ANSI codes when color disabled",
+    fn() {
       source := "let x = 1"
       reg := make_reg("test.tw", source)
       report := Report.{
@@ -264,10 +268,10 @@ pub fn suite() runner.Suite {
       out := render.render(report, reg, no_color())
       try assert.is_false(out.contains("\e["))
       .Ok({})
-    })
-
-    // ── CRLF source ───────────────────────────────────────────────────
-    .test("CRLF line endings do not leak \\r into rendered output", fn() {
+    },
+  ).test(
+    "CRLF line endings do not leak \\r into rendered output",
+    fn() {
       // Source with Windows-style line endings
       source := "let x = 1\r\nlet y = 2"
       reg := make_reg("test.tw", source)
@@ -282,10 +286,10 @@ pub fn suite() runner.Suite {
       try assert.is_false(out.contains("\r"))
       try assert.is_true(out.contains("let x = 1"))
       .Ok({})
-    })
-
-    // ── Zero-width span ───────────────────────────────────────────────
-    .test("zero-width span renders at least one caret", fn() {
+    },
+  ).test(
+    "zero-width span renders at least one caret",
+    fn() {
       source := "foo()"
       reg := make_reg("test.tw", source)
       // Empty span at byte 3 (the opening paren position)
@@ -298,5 +302,6 @@ pub fn suite() runner.Suite {
       out := render.render(report, reg, no_color())
       try assert.is_true(out.contains("^"))
       .Ok({})
-    })
+    },
+  )
 }

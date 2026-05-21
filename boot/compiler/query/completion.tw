@@ -6,31 +6,26 @@
 //
 // Works with the existing SemanticSnapshot, falling back to stale cached
 // state when the current analysis fails.
-
+use compiler.ast.{Block, CaseArm, Expr, Item, Stmt}
 use compiler.lexer
-use compiler.tokens.{Token}
-use compiler.ast.{Item, Block, Stmt, Expr, CaseArm}
-use compiler.resolver.{ResolvedEnv, FunctionSig, ResolvedField, ResolvedTypeParam, ResolvedVariant, MethodEntry, ty_to_string_env, lookup_type_methods}
 use compiler.mono_type.{MonoType}
+use compiler.query.ast_walk.{NodeContext, find_node_in_block, find_node_in_stmt}
 use compiler.query.semantic.{SemanticSnapshot}
-use compiler.query.ast_walk.{find_node_in_block, find_node_in_stmt, NodeContext}
 use compiler.query.util.{find_map}
+use compiler.resolver.{
+  FunctionSig, MethodEntry, ResolvedEnv, ResolvedField, ResolvedTypeParam,
+  ResolvedVariant, lookup_type_methods, ty_to_string_env,
+}
+use compiler.tokens.{Token}
 use lib.lsp.completion as lsp_completion
 
+pub type CompletionContext = { Member(Int), General(String), Import, Variant }
 
-pub type CompletionContext = {
-  /// After a `.` token — complete fields/methods on the receiver
-  Member(Int),
-  /// General identifier position — complete locals, functions, types, keywords
-  General(String),
-  /// After `use` keyword — complete import paths
-  Import,
-  /// Variant position: `.` at start of expression or in pattern
-  Variant,
-}
-
-pub fn complete(snap: SemanticSnapshot, offset: Int, source: String) Vector<lsp_completion.CompletionItem> {
+pub fn complete(snap: SemanticSnapshot, offset: Int, source: String) Vector<
+  lsp_completion.CompletionItem,
+> {
   ctx := classify_context(source, offset)
+
   case ctx {
     .Member(dot_offset) => member_completions(snap, dot_offset, source),
     .General(prefix) => general_completions(snap, prefix),
@@ -40,14 +35,13 @@ pub fn complete(snap: SemanticSnapshot, offset: Int, source: String) Vector<lsp_
 }
 
 // ── Context classification ──────────────────────────────────────────
-
 fn classify_context(source: String, offset: Int) CompletionContext {
   // Lex with cursor hole injection at the cursor offset.
   lexed := lexer.lex_with_cursor(source, 0, offset)
   tokens := lexed.value
-
   // Find the CursorHole token and look at what's before it.
   cursor_idx := find_cursor_hole(tokens)
+
   if cursor_idx < 0 {
     return .General("")
   }
@@ -63,20 +57,26 @@ fn classify_context(source: String, offset: Int) CompletionContext {
   if prev.kind == .Dot {
     if cursor_idx >= 2 {
       before_dot := tokens[cursor_idx - 2]
+
       // Dot in prefix position (after {, =>, ,) → variant
-      if before_dot.kind == .LBrace or before_dot.kind == .FatArrow or before_dot.kind == .Comma or before_dot.kind == .ColonEq or before_dot.kind == .Eq {
+      if before_dot.kind == .LBrace or before_dot.kind == .FatArrow
+      or before_dot.kind == .Comma
+      or before_dot.kind == .ColonEq
+      or before_dot.kind == .Eq {
         return .Variant
       }
     } else {
       // Dot at very start → variant
       return .Variant
     }
+
     return .Member(prev.span.start)
   }
 
   // Inside/after a partial identifier right after a dot: `foo.ba|`
   if prev.kind == .Ident and cursor_idx >= 2 {
     before := tokens[cursor_idx - 2]
+
     if before.kind == .Dot {
       return .Member(before.span.start)
     }
@@ -86,17 +86,20 @@ fn classify_context(source: String, offset: Int) CompletionContext {
   if prev.kind == .Use {
     return .Import
   }
+
   // Walk backwards through ident/dot/at to detect use path context
   if cursor_idx > 1 {
     i := cursor_idx - 1
+
     for i >= 0 {
       tk := tokens[i]
+
       if tk.kind == .Use {
         return .Import
       }
-      if tk.kind != .Ident and tk.kind != .Dot and tk.kind != .At {
-        break
-      }
+
+      if tk.kind != .Ident and tk.kind != .Dot and tk.kind != .At { break }
+
       i = i - 1
     }
   }
@@ -105,6 +108,7 @@ fn classify_context(source: String, offset: Int) CompletionContext {
   if prev.kind == .Ident {
     if offset >= prev.span.start and offset <= prev.span.end {
       prefix := source.slice(prev.span.start, offset)
+
       return .General(prefix)
     }
   }
@@ -118,44 +122,73 @@ fn find_cursor_hole(tokens: Vector<Token>) Int {
       return i
     }
   }
+
   -1
 }
 
 // ── Member completions ──────────────────────────────────────────────
-
-fn member_completions(snap: SemanticSnapshot, dot_offset: Int, source: String) Vector<lsp_completion.CompletionItem> {
-  typed := case snap.typed { .Some(v) => v, .None => { return [] } }
-  parsed := case snap.parsed { .Some(v) => v, .None => { return [] } }
+fn member_completions(snap: SemanticSnapshot, dot_offset: Int, source: String) Vector<
+  lsp_completion.CompletionItem,
+> {
+  typed := case snap.typed {
+    .Some(v) => v,
+    .None => {
+      return []
+    },
+  }
+  parsed := case snap.parsed {
+    .Some(v) => v,
+    .None => {
+      return []
+    },
+  }
 
   // Find the receiver expression before the dot.
   // We search at dot_offset - 1 to land inside the receiver expression,
   // since in the (possibly stale) AST the receiver's span ends at dot_offset
   // and span.contains uses half-open [start, end).
-  if dot_offset <= 0 { return [] }
-  search_offset := dot_offset - 1
+  if dot_offset <= 0 {
+    return []
+  }
 
-  receiver_type := find_receiver_type(parsed.module.items, typed.type_map, search_offset)
+  search_offset := dot_offset - 1
+  receiver_type := find_receiver_type(
+    parsed.module.items,
+    typed.type_map,
+    search_offset,
+  )
+
   case receiver_type {
     .Some(ty) => completions_for_type(typed.env, ty),
     .None => [],
   }
 }
 
-fn find_receiver_type(items: Vector<Item>, type_map: Dict<Int, MonoType>, offset: Int) MonoType? {
-  find_map(items, fn(item) {
-    case item {
-      .Function(decl) => {
-        if !decl.span.contains(offset) { return .None }
-        ctx := try find_node_in_block(decl.body, offset)
-        receiver_type_from_ctx(type_map, ctx)
-      },
-      .Stmt(stmt) => {
-        ctx := try find_node_in_stmt(stmt, offset)
-        receiver_type_from_ctx(type_map, ctx)
-      },
-      _ => .None,
-    }
-  })
+fn find_receiver_type(
+  items: Vector<Item>,
+  type_map: Dict<Int, MonoType>,
+  offset: Int,
+) MonoType? {
+  find_map(
+    items,
+    fn(item) {
+      case item {
+        .Function(decl) => {
+          if !decl.span.contains(offset) {
+            return .None
+          }
+
+          ctx := try find_node_in_block(decl.body, offset)
+          receiver_type_from_ctx(type_map, ctx)
+        },
+        .Stmt(stmt) => {
+          ctx := try find_node_in_stmt(stmt, offset)
+          receiver_type_from_ctx(type_map, ctx)
+        },
+        _ => .None,
+      }
+    },
+  )
 }
 
 fn receiver_type_from_ctx(type_map: Dict<Int, MonoType>, ctx: NodeContext) MonoType? {
@@ -167,7 +200,9 @@ fn receiver_type_from_ctx(type_map: Dict<Int, MonoType>, ctx: NodeContext) MonoT
   }
 }
 
-fn completions_for_type(env: ResolvedEnv, ty: MonoType) Vector<lsp_completion.CompletionItem> {
+fn completions_for_type(env: ResolvedEnv, ty: MonoType) Vector<
+  lsp_completion.CompletionItem,
+> {
   items: Vector<lsp_completion.CompletionItem> = []
 
   // Record fields
@@ -183,11 +218,15 @@ fn completions_for_type(env: ResolvedEnv, ty: MonoType) Vector<lsp_completion.Co
 
   // Methods
   items = .concat(method_completions_for_type(env, ty))
-
   items
 }
 
-fn field_completions(env: ResolvedEnv, fields: Vector<ResolvedField>, params: Vector<ResolvedTypeParam>, args: Vector<MonoType>) Vector<lsp_completion.CompletionItem> {
+fn field_completions(
+  env: ResolvedEnv,
+  fields: Vector<ResolvedField>,
+  params: Vector<ResolvedTypeParam>,
+  args: Vector<MonoType>,
+) Vector<lsp_completion.CompletionItem> {
   collect f in fields {
     field_ty := substitute_type_params(f.ty, params, args)
     lsp_completion.CompletionItem.{
@@ -199,13 +238,17 @@ fn field_completions(env: ResolvedEnv, fields: Vector<ResolvedField>, params: Ve
   }
 }
 
-fn method_completions_for_type(env: ResolvedEnv, ty: MonoType) Vector<lsp_completion.CompletionItem> {
+fn method_completions_for_type(env: ResolvedEnv, ty: MonoType) Vector<
+  lsp_completion.CompletionItem,
+> {
   items: Vector<lsp_completion.CompletionItem> = []
 
   // Methods by TypeId
   case ty {
     .Named(tid, _) => case lookup_type_methods(env, tid) {
-      .Some(entries) => { items = .concat(method_entries_to_items(env, entries)) },
+      .Some(entries) => {
+        items = .concat(method_entries_to_items(env, entries))
+      },
       .None => {},
     },
     _ => {},
@@ -214,7 +257,9 @@ fn method_completions_for_type(env: ResolvedEnv, ty: MonoType) Vector<lsp_comple
   // Methods by type name for builtins
   case builtin_type_name(ty) {
     .Some(name) => case env.methods[name] {
-      .Some(entries) => { items = .concat(method_entries_to_items(env, entries)) },
+      .Some(entries) => {
+        items = .concat(method_entries_to_items(env, entries))
+      },
       .None => {},
     },
     .None => {},
@@ -238,11 +283,19 @@ fn builtin_type_name(ty: MonoType) String? {
   }
 }
 
-fn method_entries_to_items(env: ResolvedEnv, entries: Vector<MethodEntry>) Vector<lsp_completion.CompletionItem> {
+fn method_entries_to_items(env: ResolvedEnv, entries: Vector<MethodEntry>) Vector<
+  lsp_completion.CompletionItem,
+> {
   collect e in entries {
     sig := env.lookup_registered_function(e.function_name)
-    detail: String? = case sig { .Some(s) => .Some(sig_to_detail(env, s)), .None => .None }
-    doc: String? = case sig { .Some(s) => s.doc, .None => .None }
+    detail: String? = case sig {
+      .Some(s) => .Some(sig_to_detail(env, s)),
+      .None => .None,
+    }
+    doc: String? = case sig {
+      .Some(s) => s.doc,
+      .None => .None,
+    }
     lsp_completion.CompletionItem.{
       label: e.method_name,
       kind: 2,
@@ -256,14 +309,17 @@ fn sig_to_detail(env: ResolvedEnv, sig: FunctionSig) String {
   parts: Vector<String> = []
   // Skip first param (receiver) for method display
   start := if sig.params.len() > 0 { 1 } else { 0 }
+
   for i in start..sig.params.len() {
     ty_text := ty_to_string_env(env, sig.params[i])
+
     if i < sig.param_names.len() and sig.param_names[i] != "" {
       parts = .append("${sig.param_names[i]}: ${ty_text}")
     } else {
       parts = .append(ty_text)
     }
   }
+
   ret := case sig.ret {
     .Some(t) => ty_to_string_env(env, t),
     .None => "Void",
@@ -272,22 +328,43 @@ fn sig_to_detail(env: ResolvedEnv, sig: FunctionSig) String {
 }
 
 // ── General completions ─────────────────────────────────────────────
-
-fn general_completions(snap: SemanticSnapshot, prefix: String) Vector<lsp_completion.CompletionItem> {
+fn general_completions(snap: SemanticSnapshot, prefix: String) Vector<
+  lsp_completion.CompletionItem,
+> {
   items: Vector<lsp_completion.CompletionItem> = []
-
   // Keywords
-  keywords := ["if", "else", "case", "for", "in", "fn", "type", "let", "use",
-    "pub", "return", "break", "continue", "true", "false", "try", "collect",
-    "defer", "extern"]
+  keywords := [
+    "if",
+    "else",
+    "case",
+    "for",
+    "in",
+    "fn",
+    "type",
+    "let",
+    "use",
+    "pub",
+    "return",
+    "break",
+    "continue",
+    "true",
+    "false",
+    "try",
+    "collect",
+    "defer",
+    "extern",
+  ]
+
   for kw in keywords {
     if prefix == "" or kw.starts_with(prefix) {
-      items = .append(lsp_completion.CompletionItem.{
-        label: kw,
-        kind: 14,
-        detail: .None,
-        documentation: .None,
-      })
+      items = .append(
+        lsp_completion.CompletionItem.{
+          label: kw,
+          kind: 14,
+          detail: .None,
+          documentation: .None,
+        },
+      )
     }
   }
 
@@ -306,26 +383,36 @@ fn general_completions(snap: SemanticSnapshot, prefix: String) Vector<lsp_comple
       for name in e.function_bindings.keys() {
         if prefix == "" or name.starts_with(prefix) {
           sig := e.lookup_function(name)
-          detail: String? = case sig { .Some(s) => .Some(fn_sig_to_detail(e, s)), .None => .None }
-          doc: String? = case sig { .Some(s) => s.doc, .None => .None }
-          items = .append(lsp_completion.CompletionItem.{
-            label: name,
-            kind: 3,
-            detail,
-            documentation: doc,
-          })
+          detail: String? = case sig {
+            .Some(s) => .Some(fn_sig_to_detail(e, s)),
+            .None => .None,
+          }
+          doc: String? = case sig {
+            .Some(s) => s.doc,
+            .None => .None,
+          }
+          items = .append(
+            lsp_completion.CompletionItem.{
+              label: name,
+              kind: 3,
+              detail,
+              documentation: doc,
+            },
+          )
         }
       }
 
       // Types
       for name in e.type_bindings.keys() {
         if prefix == "" or name.starts_with(prefix) {
-          items = .append(lsp_completion.CompletionItem.{
-            label: name,
-            kind: 7,
-            detail: .None,
-            documentation: .None,
-          })
+          items = .append(
+            lsp_completion.CompletionItem.{
+              label: name,
+              kind: 7,
+              detail: .None,
+              documentation: .None,
+            },
+          )
         }
       }
 
@@ -334,14 +421,17 @@ fn general_completions(snap: SemanticSnapshot, prefix: String) Vector<lsp_comple
         .Some(typed) => {
           for name in typed.pub_values.keys() {
             if prefix != "" and !name.starts_with(prefix) { continue }
+
             case typed.pub_values[name] {
               .Some(ty) => {
-                items = .append(lsp_completion.CompletionItem.{
-                  label: name,
-                  kind: 6,
-                  detail: .Some(ty_to_string_env(e, ty)),
-                  documentation: .None,
-                })
+                items = .append(
+                  lsp_completion.CompletionItem.{
+                    label: name,
+                    kind: 6,
+                    detail: .Some(ty_to_string_env(e, ty)),
+                    documentation: .None,
+                  },
+                )
               },
               .None => {},
             }
@@ -358,14 +448,17 @@ fn general_completions(snap: SemanticSnapshot, prefix: String) Vector<lsp_comple
 
 fn fn_sig_to_detail(env: ResolvedEnv, sig: FunctionSig) String {
   parts: Vector<String> = []
+
   for i in 0..sig.params.len() {
     ty_text := ty_to_string_env(env, sig.params[i])
+
     if i < sig.param_names.len() and sig.param_names[i] != "" {
       parts = .append("${sig.param_names[i]}: ${ty_text}")
     } else {
       parts = .append(ty_text)
     }
   }
+
   ret := case sig.ret {
     .Some(t) => ty_to_string_env(env, t),
     .None => "Void",
@@ -374,9 +467,16 @@ fn fn_sig_to_detail(env: ResolvedEnv, sig: FunctionSig) String {
 }
 
 // ── Import completions ──────────────────────────────────────────────
+fn import_completions(snap: SemanticSnapshot) Vector<
+  lsp_completion.CompletionItem,
+> {
+  resolved := case snap.resolved {
+    .Some(r) => r,
+    .None => {
+      return []
+    },
+  }
 
-fn import_completions(snap: SemanticSnapshot) Vector<lsp_completion.CompletionItem> {
-  resolved := case snap.resolved { .Some(r) => r, .None => { return [] } }
   collect ns in resolved.env.extern_namespaces.keys() {
     lsp_completion.CompletionItem.{
       label: ns,
@@ -388,39 +488,79 @@ fn import_completions(snap: SemanticSnapshot) Vector<lsp_completion.CompletionIt
 }
 
 // ── Variant completions ─────────────────────────────────────────────
-
-fn variant_completions(snap: SemanticSnapshot, offset: Int) Vector<lsp_completion.CompletionItem> {
-  typed := case snap.typed { .Some(v) => v, .None => { return all_variant_completions(snap) } }
-  parsed := case snap.parsed { .Some(v) => v, .None => { return all_variant_completions(snap) } }
-
+fn variant_completions(snap: SemanticSnapshot, offset: Int) Vector<
+  lsp_completion.CompletionItem,
+> {
+  typed := case snap.typed {
+    .Some(v) => v,
+    .None => { return all_variant_completions(snap) },
+  }
+  parsed := case snap.parsed {
+    .Some(v) => v,
+    .None => { return all_variant_completions(snap) },
+  }
   // Try to find the enclosing case expression's scrutinee type and existing arms
-  info := find_map(parsed.module.items, fn(item) {
-    case item {
-      .Function(decl) => if decl.span.contains(offset) { find_case_info_in_block(decl.body, offset) } else { .None },
-      .Stmt(stmt) => find_case_info_in_stmt(stmt, offset),
-      _ => .None,
-    }
-  })
-
-  ci := case info { .Some(ci) => ci, .None => { return all_variant_completions(snap) } }
-  ty := case typed.type_map[ci.scrutinee.id] { .Some(ty) => ty, .None => { return all_variant_completions(snap) } }
+  info := find_map(
+    parsed.module.items,
+    fn(item) {
+      case item {
+        .Function(decl) => if decl.span.contains(offset) {
+          find_case_info_in_block(decl.body, offset)
+        } else { .None },
+        .Stmt(stmt) => find_case_info_in_stmt(stmt, offset),
+        _ => .None,
+      }
+    },
+  )
+  ci := case info {
+    .Some(ci) => ci,
+    .None => { return all_variant_completions(snap) },
+  }
+  ty := case typed.type_map[ci.scrutinee.id] {
+    .Some(ty) => ty,
+    .None => { return all_variant_completions(snap) },
+  }
   covered := covered_variant_names(ci.arms)
   items := variants_for_type(typed.env, ty)
+
   collect item in items {
     if covered.has(item.label) { continue }
+
     item
   }
 }
 
-fn variants_for_type(env: ResolvedEnv, ty: MonoType) Vector<lsp_completion.CompletionItem> {
+fn variants_for_type(env: ResolvedEnv, ty: MonoType) Vector<
+  lsp_completion.CompletionItem,
+> {
   case ty {
     .Optional(_) => [
-      lsp_completion.CompletionItem.{ label: "Some", kind: 20, detail: .Some("Option"), documentation: .None },
-      lsp_completion.CompletionItem.{ label: "None", kind: 20, detail: .Some("Option"), documentation: .None },
+      lsp_completion.CompletionItem.{
+        label: "Some",
+        kind: 20,
+        detail: .Some("Option"),
+        documentation: .None,
+      },
+      lsp_completion.CompletionItem.{
+        label: "None",
+        kind: 20,
+        detail: .Some("Option"),
+        documentation: .None,
+      },
     ],
     .Result(_, _) => [
-      lsp_completion.CompletionItem.{ label: "Ok", kind: 20, detail: .Some("Result"), documentation: .None },
-      lsp_completion.CompletionItem.{ label: "Err", kind: 20, detail: .Some("Result"), documentation: .None },
+      lsp_completion.CompletionItem.{
+        label: "Ok",
+        kind: 20,
+        detail: .Some("Result"),
+        documentation: .None,
+      },
+      lsp_completion.CompletionItem.{
+        label: "Err",
+        kind: 20,
+        detail: .Some("Result"),
+        documentation: .None,
+      },
     ],
     .Named(tid, _) => case env.lookup_type_def(tid) {
       .Some(.Sum(type_name, _, variants)) => variant_items(type_name, variants),
@@ -430,7 +570,9 @@ fn variants_for_type(env: ResolvedEnv, ty: MonoType) Vector<lsp_completion.Compl
   }
 }
 
-fn variant_items(type_name: String, variants: Vector<ResolvedVariant>) Vector<lsp_completion.CompletionItem> {
+fn variant_items(type_name: String, variants: Vector<ResolvedVariant>) Vector<
+  lsp_completion.CompletionItem,
+> {
   collect v in variants {
     lsp_completion.CompletionItem.{
       label: v.name,
@@ -441,50 +583,81 @@ fn variant_items(type_name: String, variants: Vector<ResolvedVariant>) Vector<ls
   }
 }
 
-fn all_variant_completions(snap: SemanticSnapshot) Vector<lsp_completion.CompletionItem> {
+fn all_variant_completions(snap: SemanticSnapshot) Vector<
+  lsp_completion.CompletionItem,
+> {
   env := case snap.typed {
     .Some(typed) => typed.env,
     .None => case snap.resolved {
       .Some(resolved) => resolved.env,
-      .None => { return [] },
+      .None => {
+        return []
+      },
     },
   }
-
   items: Vector<lsp_completion.CompletionItem> = []
+
   for i in 0..env.types.len() {
     name := env.type_names[i]
+
     case env.types[i].def {
       .Some(.Sum(_, _, variants)) => {
         for v in variants {
-          items = .append(lsp_completion.CompletionItem.{
-            label: v.name,
-            kind: 20,
-            detail: .Some(name),
-            documentation: .None,
-          })
+          items = .append(
+            lsp_completion.CompletionItem.{
+              label: v.name,
+              kind: 20,
+              detail: .Some(name),
+              documentation: .None,
+            },
+          )
         }
       },
       _ => {},
     }
   }
 
-  items = .append(lsp_completion.CompletionItem.{ label: "None", kind: 20, detail: .Some("Option"), documentation: .None })
-  items = .append(lsp_completion.CompletionItem.{ label: "Some", kind: 20, detail: .Some("Option"), documentation: .None })
-  items = .append(lsp_completion.CompletionItem.{ label: "Ok", kind: 20, detail: .Some("Result"), documentation: .None })
-  items = .append(lsp_completion.CompletionItem.{ label: "Err", kind: 20, detail: .Some("Result"), documentation: .None })
-
+  items = .append(
+    lsp_completion.CompletionItem.{
+      label: "None",
+      kind: 20,
+      detail: .Some("Option"),
+      documentation: .None,
+    },
+  )
+  items = .append(
+    lsp_completion.CompletionItem.{
+      label: "Some",
+      kind: 20,
+      detail: .Some("Option"),
+      documentation: .None,
+    },
+  )
+  items = .append(
+    lsp_completion.CompletionItem.{
+      label: "Ok",
+      kind: 20,
+      detail: .Some("Result"),
+      documentation: .None,
+    },
+  )
+  items = .append(
+    lsp_completion.CompletionItem.{
+      label: "Err",
+      kind: 20,
+      detail: .Some("Result"),
+      documentation: .None,
+    },
+  )
   items
 }
 
 // ── Case info finding ──────────────────────────────────────────────
-
-type CaseInfo = .{
-  scrutinee: Expr,
-  arms: Vector<CaseArm>,
-}
+type CaseInfo = .{ scrutinee: Expr, arms: Vector<CaseArm> }
 
 fn covered_variant_names(arms: Vector<CaseArm>) Dict<String, Bool> {
   covered: Dict<String, Bool> = Dict.new()
+
   for arm in arms {
     case arm.pattern.kind {
       .Variant(name, _) => { covered[name] = true },
@@ -492,55 +665,90 @@ fn covered_variant_names(arms: Vector<CaseArm>) Dict<String, Bool> {
       _ => {},
     }
   }
+
   covered
 }
 
 fn find_case_info_in_block(block: Block, offset: Int) CaseInfo? {
-  find_map(block.stmts, fn(stmt) { find_case_info_in_stmt(stmt, offset) })
-    .or_else(fn() { case block.tail { .Some(expr) => find_case_info_in_expr(expr, offset), .None => .None } })
+  find_map(block.stmts, fn(stmt) { find_case_info_in_stmt(stmt, offset) }).or_else(
+    fn() {
+      case block.tail {
+        .Some(expr) => find_case_info_in_expr(expr, offset),
+        .None => .None,
+      }
+    },
+  )
 }
 
 fn find_case_info_in_stmt(stmt: Stmt, offset: Int) CaseInfo? {
   case stmt {
-    .Let(ls) => if ls.span.contains(offset) { find_case_info_in_expr(ls.value, offset) } else { .None },
-    .For(fs) => if fs.span.contains(offset) { find_case_info_in_block(fs.body, offset) } else { .None },
-    .Return(rs) => if rs.span.contains(offset) { case rs.value { .Some(e) => find_case_info_in_expr(e, offset), .None => .None } } else { .None },
-    .Expr(es) => if es.span.contains(offset) { find_case_info_in_expr(es.expr, offset) } else { .None },
-    .Defer(ds) => if ds.span.contains(offset) { find_case_info_in_expr(ds.expr, offset) } else { .None },
+    .Let(ls) => if ls.span.contains(offset) {
+      find_case_info_in_expr(ls.value, offset)
+    } else { .None },
+    .For(fs) => if fs.span.contains(offset) {
+      find_case_info_in_block(fs.body, offset)
+    } else { .None },
+    .Return(rs) => if rs.span.contains(offset) {
+      case rs.value {
+        .Some(e) => find_case_info_in_expr(e, offset),
+        .None => .None,
+      }
+    } else {
+      .None
+    },
+    .Expr(es) => if es.span.contains(offset) {
+      find_case_info_in_expr(es.expr, offset)
+    } else { .None },
+    .Defer(ds) => if ds.span.contains(offset) {
+      find_case_info_in_expr(ds.expr, offset)
+    } else { .None },
     _ => .None,
   }
 }
 
 fn find_case_info_in_expr(expr: Expr, offset: Int) CaseInfo? {
-  if !expr.span.contains(offset) { return .None }
+  if !expr.span.contains(offset) {
+    return .None
+  }
+
   case expr.kind {
     .Case(scrutinee, arms) => {
       // Check nested case expressions in arms first (innermost wins)
       for arm in arms {
         if arm.span.contains(offset) {
           case find_case_info_in_expr(arm.expr, offset) {
-            .Some(s) => { return .Some(s) },
+            .Some(s) => {
+              return .Some(s)
+            },
             .None => {},
           }
+
           // Offset is in this arm but not in a nested case — this is our case
           return .Some(.{ scrutinee, arms })
         }
       }
+
       // Offset is in the case expression but not in any arm
       .Some(.{ scrutinee, arms })
     },
     .BlockExpr(block) => find_case_info_in_block(block, offset),
-    .If(cond, then_block, else_expr) =>
-      find_case_info_in_expr(cond, offset)
-        .or_else(fn() { find_case_info_in_block(then_block, offset) })
-        .or_else(fn() { case else_expr { .Some(e) => find_case_info_in_expr(e, offset), .None => .None } }),
+    .If(cond, then_block, else_expr) => find_case_info_in_expr(cond, offset).or_else(
+      fn() { find_case_info_in_block(then_block, offset) },
+    ).or_else(
+      fn() {
+        case else_expr {
+          .Some(e) => find_case_info_in_expr(e, offset),
+          .None => .None,
+        }
+      },
+    ),
     .Closure(_, _, body) => find_case_info_in_block(body, offset),
-    .Call(callee, args) =>
-      find_case_info_in_expr(callee, offset)
-        .or_else(fn() { find_case_info_in_exprs(args, offset) }),
-    .Binary(_, lhs, rhs) =>
-      find_case_info_in_expr(lhs, offset)
-        .or_else(fn() { find_case_info_in_expr(rhs, offset) }),
+    .Call(callee, args) => find_case_info_in_expr(callee, offset).or_else(
+      fn() { find_case_info_in_exprs(args, offset) },
+    ),
+    .Binary(_, lhs, rhs) => find_case_info_in_expr(lhs, offset).or_else(
+      fn() { find_case_info_in_expr(rhs, offset) },
+    ),
     _ => .None,
   }
 }
@@ -550,8 +758,11 @@ fn find_case_info_in_exprs(exprs: Vector<Expr>, offset: Int) CaseInfo? {
 }
 
 // ── Type param substitution ─────────────────────────────────────────
-
-fn substitute_type_params(ty: MonoType, params: Vector<ResolvedTypeParam>, args: Vector<MonoType>) MonoType {
+fn substitute_type_params(
+  ty: MonoType,
+  params: Vector<ResolvedTypeParam>,
+  args: Vector<MonoType>,
+) MonoType {
   case ty {
     .Var(name) => {
       for i in 0..params.len() {
@@ -559,14 +770,27 @@ fn substitute_type_params(ty: MonoType, params: Vector<ResolvedTypeParam>, args:
           return args[i]
         }
       }
+
       ty
     },
-    .Named(tid, inner_args) => .Named(tid, collect a in inner_args { substitute_type_params(a, params, args) }),
+    .Named(tid, inner_args) => .Named(
+      tid,
+      collect a in inner_args { substitute_type_params(a, params, args) },
+    ),
     .Vector(inner) => .Vector(substitute_type_params(inner, params, args)),
-    .Dict(k, v) => .Dict(substitute_type_params(k, params, args), substitute_type_params(v, params, args)),
-    .Function(fn_params, ret) => .Function(collect p in fn_params { substitute_type_params(p, params, args) }, substitute_type_params(ret, params, args)),
+    .Dict(k, v) => .Dict(
+      substitute_type_params(k, params, args),
+      substitute_type_params(v, params, args),
+    ),
+    .Function(fn_params, ret) => .Function(
+      collect p in fn_params { substitute_type_params(p, params, args) },
+      substitute_type_params(ret, params, args),
+    ),
     .Optional(inner) => .Optional(substitute_type_params(inner, params, args)),
-    .Result(ok, err) => .Result(substitute_type_params(ok, params, args), substitute_type_params(err, params, args)),
+    .Result(ok, err) => .Result(
+      substitute_type_params(ok, params, args),
+      substitute_type_params(err, params, args),
+    ),
     _ => ty,
   }
 }

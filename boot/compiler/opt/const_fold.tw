@@ -1,9 +1,8 @@
 // Constant folding: evaluate ABinOp/AUnOp with literal operands at compile time.
 //
 // Division/modulo by zero are left as-is (runtime trap is intended).
-
+use compiler.anf.{AnfExpr, AnfMatchArm, AnfOp, Atom}
 use compiler.core_ir.{BinOp, UnOp}
-use compiler.anf.{Atom, AnfExpr, AnfOp, AnfMatchArm}
 
 pub type FoldResult = .{ expr: AnfExpr, changed: Bool }
 
@@ -13,7 +12,10 @@ pub fn constant_fold(expr: AnfExpr) FoldResult {
       case try_fold_op(op) {
         .Some(folded) => {
           body_r := constant_fold(body)
-          FoldResult.{ expr: .Let(local, .AInit(folded), body_r.expr), changed: true }
+          FoldResult.{
+            expr: .Let(local, .AInit(folded), body_r.expr),
+            changed: true,
+          }
         },
         .None => {
           op_r := constant_fold_op(op)
@@ -67,10 +69,18 @@ fn fold_int_binop(op: BinOp, a: Int, b: Int) Atom? {
     .Sub => .Some(.ALitInt(a - b)),
     .Mul => .Some(.ALitInt(a * b)),
     .Div => {
-      if b == 0 { .None } else { .Some(.ALitInt(a / b)) }
+      if b == 0 {
+        .None
+      } else {
+        .Some(.ALitInt(a / b))
+      }
     },
     .Mod => {
-      if b == 0 { .None } else { .Some(.ALitInt(a % b)) }
+      if b == 0 {
+        .None
+      } else {
+        .Some(.ALitInt(a % b))
+      }
     },
     .BitAnd => .Some(.ALitInt(a & b)),
     .BitOr => .Some(.ALitInt(a | b)),
@@ -132,7 +142,6 @@ fn fold_unop(op: UnOp, inner: Atom) Atom? {
 }
 
 // ── Recurse into sub-expressions ────────────────────────────────────
-
 type OpFoldResult = .{ op: AnfOp, changed: Bool }
 
 fn constant_fold_op(op: AnfOp) OpFoldResult {
@@ -149,7 +158,9 @@ fn constant_fold_op(op: AnfOp) OpFoldResult {
       changed := false
       new_arms: Vector<AnfMatchArm> = collect arm in arms {
         r := constant_fold(arm.body)
+
         if r.changed { changed = true }
+
         AnfMatchArm.{ pattern: arm.pattern, body: r.expr }
       }
       OpFoldResult.{ op: .AMatch(scrutinee, new_arms), changed: changed }

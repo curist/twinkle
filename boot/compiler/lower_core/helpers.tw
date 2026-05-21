@@ -1,13 +1,10 @@
 // Shared Core lowering expression/pattern constructors.
-
-use lib.source.span.{Span}
 use compiler.ast.{Expr}
+use compiler.core_ir.{CoreExpr, CorePattern, FieldId, FuncId, LocalId}
 use compiler.mono_type.{MonoType, TypeId}
-use compiler.core_ir.{CoreExpr, CorePattern, LocalId, FuncId, FieldId}
+use lib.source.span.{Span}
 
-pub fn void_expr(s: Span) CoreExpr {
-  .{ kind: .LitVoid, ty: .Void, span: s }
-}
+pub fn void_expr(s: Span) CoreExpr { .{ kind: .LitVoid, ty: .Void, span: s } }
 
 pub fn local_expr(local: LocalId, ty: MonoType, s: Span) CoreExpr {
   .{ kind: .Local(local), ty, span: s }
@@ -21,7 +18,13 @@ pub fn record_get_expr(base: CoreExpr, field: FieldId, ty: MonoType, s: Span) Co
   .{ kind: .RecordGet(base, field), ty, span: s }
 }
 
-pub fn variant_expr(tid: TypeId, vid: Int, args: Vector<CoreExpr>, ty: MonoType, s: Span) CoreExpr {
+pub fn variant_expr(
+  tid: TypeId,
+  vid: Int,
+  args: Vector<CoreExpr>,
+  ty: MonoType,
+  s: Span,
+) CoreExpr {
   .{ kind: .Variant(tid, .{ id: vid }, args), ty, span: s }
 }
 
