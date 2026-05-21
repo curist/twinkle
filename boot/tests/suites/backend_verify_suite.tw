@@ -44,7 +44,7 @@ fn empty_builtins() BuiltinRegistry { make_builtin_registry() }
 
 fn no_captures() Dict<Int, Vector<CaptureParam>> { Dict.new() }
 
-fn mk_param(id: Int, ty: MonoType) Param { .{ local: lid(id), ty: ty } }
+fn mk_param(id: Int, ty: MonoType) Param { .{ local: lid(id), ty } }
 
 fn mk_mono_map(entries: Vector<Int>, types: Vector<MonoType>) Dict<Int, MonoType> {
   d: Dict<Int, MonoType> = Dict.new()
@@ -143,7 +143,7 @@ fn slots_with_wasm_type(pf: PreparedFunc, target_sid: Int, wasm_type: ValType) D
             role: info.role,
             mono: info.mono,
             repr: info.repr,
-            wasm_type: wasm_type,
+            wasm_type,
           }
         } else {
           info

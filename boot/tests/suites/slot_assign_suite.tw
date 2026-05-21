@@ -27,11 +27,11 @@ fn mk_func_def(
 ) AnfFunctionDef {
   AnfFunctionDef.{
     func_id: mk_func(id),
-    name: name,
-    params: params,
-    return_ty: return_ty,
-    body: body,
-    op_result_mono: op_result_mono,
+    name,
+    params,
+    return_ty,
+    body,
+    op_result_mono,
     is_init: false,
   }
 }

@@ -105,7 +105,7 @@ pub fn module() WasmModule {
     namespace: "rt.arr",
     types: [],
     imports: [],
-    funcs: funcs,
+    funcs,
     globals: [
       .{ name: "empty_leaf", mutable: false, ty: arr_ref(), init: [.ArrayNewFixed(t_array(), 0)] },
       .{
@@ -123,7 +123,7 @@ pub fn module() WasmModule {
     ],
     tables: [],
     elems: [],
-    exports: exports,
+    exports,
     data: [],
     start: .None,
   }

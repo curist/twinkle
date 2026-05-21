@@ -170,7 +170,7 @@ fn copy_prop_inner(
         },
       }
     },
-    _ => PropResult.{ expr: expr, changed: false },
+    _ => PropResult.{ expr, changed: false },
   }
 }
 
@@ -198,7 +198,7 @@ fn copy_prop_op(
         if r.changed { changed = true }
         AnfMatchArm.{ pattern: arm.pattern, body: r.expr }
       }
-      OpPropResult.{ op: .AMatch(scrutinee, new_arms), changed: changed }
+      OpPropResult.{ op: .AMatch(scrutinee, new_arms), changed }
     },
     .ALoop(body) => {
       r := copy_prop_inner(body, uses, free_var_uses, assigned)
@@ -208,6 +208,6 @@ fn copy_prop_op(
       r := copy_prop_inner(inner, uses, free_var_uses, assigned)
       OpPropResult.{ op: .ADefer(r.expr), changed: r.changed }
     },
-    _ => OpPropResult.{ op: op, changed: false },
+    _ => OpPropResult.{ op, changed: false },
   }
 }

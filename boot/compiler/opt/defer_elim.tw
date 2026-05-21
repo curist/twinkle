@@ -46,7 +46,7 @@ pub fn eliminate_defers(func: AnfFunctionDef) AnfFunctionDef {
     is_init: func.is_init,
     params: func.params,
     op_result_mono: new_mono,
-    body: body,
+    body,
     return_ty: func.return_ty,
   }
 }
@@ -238,7 +238,7 @@ fn compute_captures(expr: AnfExpr, next: Cell<Int>) CaptureResult {
     )
   }
 
-  CaptureResult.{ remap: remap, snapshots: snapshots }
+  CaptureResult.{ remap, snapshots }
 }
 
 // Register types for snapshot locals from op_result_mono or param types

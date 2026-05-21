@@ -4,9 +4,9 @@ use compiler.opt.builder_region.{BuilderInit, BuilderRegion, lower_builder_regio
 use tests.assert
 use tests.runner
 
-fn lid(id: Int) LocalId { LocalId.{ id: id } }
+fn lid(id: Int) LocalId { LocalId.{ id } }
 
-fn fid(id: Int) FuncId { FuncId.{ id: id } }
+fn fid(id: Int) FuncId { FuncId.{ id } }
 
 fn mock_vec_push() FuncId { fid(204) }
 
@@ -35,7 +35,7 @@ fn sample_region(init: BuilderInit) BuilderRegion {
     builder_local: lid(10),
     freeze_local: lid(11),
     assign_local: lid(12),
-    init: init,
+    init,
     loop_body: .Continue,
     cont: .Atom(.ALocal(lid(0))),
   }

@@ -569,7 +569,7 @@ fn rewrite_reusable_update(
     _ => {},
   }
 
-  UpdateRewrite.{ op: new_op, st: st }
+  UpdateRewrite.{ op: new_op, st }
 }
 
 fn rewrite_expr(expr: AnfExpr, st: RwState, consumed_params: Dict<Int, Bool>) ExprRewrite {
@@ -679,7 +679,7 @@ fn rewrite_expr(expr: AnfExpr, st: RwState, consumed_params: Dict<Int, Bool>) Ex
       body_r := rewrite_expr(body, op_r.st, consumed_params)
       ExprRewrite.{ expr: AnfExpr.Let(local, op_r.op, body_r.expr), st: body_r.st }
     },
-    _ => ExprRewrite.{ expr: expr, st: st },
+    _ => ExprRewrite.{ expr, st },
   }
 }
 
@@ -832,8 +832,8 @@ pub fn uniqueness_rewrite_with_semantics_and_consumed_and_fresh(
     refreshed: Dict.new(),
     fresh_records: Dict.new(),
     live_after_by_binding: tl.by_binding,
-    config: config,
-    fresh_helper_ids: fresh_helper_ids,
+    config,
+    fresh_helper_ids,
     next_local: next_local_id(func),
     monos: func.op_result_mono,
   }

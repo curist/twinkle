@@ -146,11 +146,11 @@ pub fn module(eq_layouts: EqTypeLayouts) WasmModule {
         results: [pvec_ref()],
       },
     ],
-    funcs: funcs,
+    funcs,
     globals: [],
     tables: [],
     elems: [],
-    exports: exports,
+    exports,
     data: [],
     start: .None,
   }

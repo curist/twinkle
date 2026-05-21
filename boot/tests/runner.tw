@@ -77,11 +77,11 @@ fn matches_filter(filter: String?, suite_name: String, test_name: String) Bool {
 
 // API
 pub fn suite(name: String) Suite {
-  Suite.{ name: name, tests: [] }
+  Suite.{ name, tests: [] }
 }
 
 pub fn test(s: Suite, name: String, f: fn() Result<Void, String>) Suite {
-  Suite.{ name: s.name, tests: s.tests.append(Test.{ name: name, run: f }) }
+  Suite.{ name: s.name, tests: s.tests.append(Test.{ name, run: f }) }
 }
 
 pub fn run(s: Suite) Bool { run_with(default_options(), s) }
@@ -200,10 +200,7 @@ fn run_suite(opts: RunOptions, s: Suite) SuiteRun {
   }
 
   if opts.verbose { print_suite_summary(opts, passed, failed, filtered) }
-  SuiteRun.{
-    stats: RunStats.{ total: total, passed: passed, failed: failed, filtered: filtered },
-    failures,
-  }
+  SuiteRun.{ stats: RunStats.{ total, passed, failed, filtered }, failures }
 }
 
 pub fn run_all(suites: Vector<Suite>) Void { run_all_with(default_options(), suites) }
@@ -248,7 +245,7 @@ pub fn run_all_stats_with(opts: RunOptions, suites: Vector<Suite>) RunStats {
   }
 
   print_totals(opts, total, passed, failed, filtered)
-  RunStats.{ total: total, passed: passed, failed: failed, filtered: filtered }
+  RunStats.{ total, passed, failed, filtered }
 }
 
 pub fn run_all_with(opts: RunOptions, suites: Vector<Suite>) Void {

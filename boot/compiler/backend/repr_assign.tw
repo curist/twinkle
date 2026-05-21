@@ -183,11 +183,11 @@ fn cached_layout_of(mono: MonoType, env: ResolvedEnv, cache: ReprAssignCache) Ca
   key := mono_to_key(mono)
 
   case cache.layout_cache[key] {
-    .Some(layout) => .{ layout: layout, cache: cache },
+    .Some(layout) => .{ layout, cache },
     .None => {
       layout := layout_of(mono, env)
       .{
-        layout: layout,
+        layout,
         cache: ReprAssignCache.{
           repr_cache: cache.repr_cache,
           val_type_cache: cache.val_type_cache,
@@ -202,7 +202,7 @@ fn cached_val_type_of_mono(mono: MonoType, env: ResolvedEnv, cache: ReprAssignCa
   key := mono_to_key(mono)
 
   case cache.val_type_cache[key] {
-    .Some(vt) => .{ val_type: vt, cache: cache },
+    .Some(vt) => .{ val_type: vt, cache },
     .None => {
       vt := val_type_of_mono(mono, env)
       .{
@@ -281,7 +281,7 @@ fn repr_of_named_cached(mono: MonoType, env: ResolvedEnv, cache: ReprAssignCache
         // Ref means the alias target is a typed heap value (e.g. String).
         .Ref(_, _) => .TypedRef(mono),
       }
-      .{ repr: repr, cache: vt_result.cache }
+      .{ repr, cache: vt_result.cache }
     },
   }
 }
@@ -302,25 +302,25 @@ fn cached_repr_of_mono(mono: MonoType, env: ResolvedEnv, cache: ReprAssignCache)
   key := mono_to_key(mono)
 
   case cache.repr_cache[key] {
-    .Some(repr) => .{ repr: repr, cache: cache },
+    .Some(repr) => .{ repr, cache },
     .None => {
       result := case mono {
-        .Never => .{ repr: .DeadValue, cache: cache },
-        .Void => .{ repr: .OpaqueAnyref, cache: cache },
-        .Anyref_ => .{ repr: .OpaqueAnyref, cache: cache },
-        .Int => .{ repr: .I64, cache: cache },
-        .Float => .{ repr: .F64, cache: cache },
-        .Bool => .{ repr: .I32, cache: cache },
-        .Byte => .{ repr: .I32, cache: cache },
-        .String => .{ repr: .TypedRef(.String), cache: cache },
-        .Function(_, _) => .{ repr: .ClosureRef, cache: cache },
-        .Optional(_) => .{ repr: .TypedSum(mono), cache: cache },
-        .Result(_, _) => .{ repr: .TypedSum(mono), cache: cache },
-        .Vector(_) => .{ repr: .TypedRef(mono), cache: cache },
-        .Dict(_, _) => .{ repr: .TypedRef(mono), cache: cache },
-        .ExternRef(_) => .{ repr: .TypedRef(mono), cache: cache },
+        .Never => .{ repr: .DeadValue, cache },
+        .Void => .{ repr: .OpaqueAnyref, cache },
+        .Anyref_ => .{ repr: .OpaqueAnyref, cache },
+        .Int => .{ repr: .I64, cache },
+        .Float => .{ repr: .F64, cache },
+        .Bool => .{ repr: .I32, cache },
+        .Byte => .{ repr: .I32, cache },
+        .String => .{ repr: .TypedRef(.String), cache },
+        .Function(_, _) => .{ repr: .ClosureRef, cache },
+        .Optional(_) => .{ repr: .TypedSum(mono), cache },
+        .Result(_, _) => .{ repr: .TypedSum(mono), cache },
+        .Vector(_) => .{ repr: .TypedRef(mono), cache },
+        .Dict(_, _) => .{ repr: .TypedRef(mono), cache },
+        .ExternRef(_) => .{ repr: .TypedRef(mono), cache },
         .Named(_, _) => repr_of_named_cached(mono, env, cache),
-        _ => .{ repr: .OpaqueAnyref, cache: cache },
+        _ => .{ repr: .OpaqueAnyref, cache },
       }
       .{
         repr: result.repr,
@@ -351,16 +351,16 @@ fn wasm_type_of_repr_cached(
   cache: ReprAssignCache,
 ) CachedValTypeResult {
   case repr {
-    .I64 => .{ val_type: .I64, cache: cache },
-    .F64 => .{ val_type: .F64, cache: cache },
-    .I32 => .{ val_type: .I32, cache: cache },
+    .I64 => .{ val_type: .I64, cache },
+    .F64 => .{ val_type: .F64, cache },
+    .I32 => .{ val_type: .I32, cache },
     .TypedRef(m) => cached_val_type_of_mono(m, env, cache),
     .TypedSum(m) => cached_val_type_of_mono(m, env, cache),
     // Function values remain heap refs; the correctness path uses the base
     // closure ABI, while future specialization can still refine this later.
     .ClosureRef => cached_val_type_of_mono(mono, env, cache),
-    .ErasedSum => .{ val_type: .Anyref, cache: cache },
-    .OpaqueAnyref => .{ val_type: .Anyref, cache: cache },
-    .DeadValue => .{ val_type: .Anyref, cache: cache },
+    .ErasedSum => .{ val_type: .Anyref, cache },
+    .OpaqueAnyref => .{ val_type: .Anyref, cache },
+    .DeadValue => .{ val_type: .Anyref, cache },
   }
 }

@@ -5,11 +5,7 @@ use compiler.mono_type.{MonoType}
 use lib.source.span.{Span}
 
 pub fn global_func_call(func_id: FuncId, args: Vector<CoreExpr>, ty: MonoType, s: Span) CoreExpr {
-  CoreExpr.{
-    kind: .Call(.{ kind: .GlobalFunc(func_id), ty: .Void, span: s }, args),
-    ty: ty,
-    span: s,
-  }
+  CoreExpr.{ kind: .Call(.{ kind: .GlobalFunc(func_id), ty: .Void, span: s }, args), ty, span: s }
 }
 
 pub fn collect_builder_push(

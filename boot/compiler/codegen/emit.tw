@@ -110,18 +110,18 @@ pub fn emit_module(
   // Base context (per-function state will be reset in emit_func)
   base_ctx := EmitCtx.{
     registry: reg,
-    builtins: builtins,
-    env: env,
+    builtins,
+    env,
     local_map: Dict.new(),
     next_local: 0,
     wasm_locals: [],
     label_stack: [],
     current_func_id: .None,
-    func_sym_map: func_sym_map,
-    prepared_funcs: prepared_funcs,
+    func_sym_map,
+    prepared_funcs,
     is_init_func: false,
     loop_depth: 0,
-    suspending_bodies: suspending_bodies,
+    suspending_bodies,
   }
   // Emit user functions
   funcs: Vector<FuncDef> = []
@@ -298,13 +298,13 @@ pub fn emit_module(
     namespace: "user",
     types: type_defs,
     imports: runtime_imports.concat(extern_imports),
-    funcs: funcs,
-    globals: globals,
+    funcs,
+    globals,
     tables: [],
     elems: [],
     exports: [],
-    data: data,
-    start: start,
+    data,
+    start,
   }
 }
 
@@ -327,7 +327,7 @@ fn emit_func(func: AnfFunctionDef, prepared: PreparedFunc, base_ctx: EmitCtx) Fu
       index: idx,
       val_type: vt,
       mono: info.mono,
-      repr: repr,
+      repr,
       source_local: info.source_local,
     }
     param_types = .append(vt)
@@ -342,7 +342,7 @@ fn emit_func(func: AnfFunctionDef, prepared: PreparedFunc, base_ctx: EmitCtx) Fu
       index: idx,
       val_type: vt,
       mono: info.mono,
-      repr: repr,
+      repr,
       source_local: info.source_local,
     }
     param_types = .append(vt)
@@ -357,7 +357,7 @@ fn emit_func(func: AnfFunctionDef, prepared: PreparedFunc, base_ctx: EmitCtx) Fu
       index: idx,
       val_type: vt,
       mono: info.mono,
-      repr: repr,
+      repr,
       source_local: info.source_local,
     }
     extra_locals = .append(vt)
@@ -374,7 +374,7 @@ fn emit_func(func: AnfFunctionDef, prepared: PreparedFunc, base_ctx: EmitCtx) Fu
     registry: base_ctx.registry,
     builtins: base_ctx.builtins,
     env: base_ctx.env,
-    local_map: local_map,
+    local_map,
     next_local: idx,
     wasm_locals: extra_locals,
     label_stack: [],
@@ -1071,12 +1071,12 @@ fn emit_call(
     ctx,
     buf,
     call_emit.CallEmitFns.{
-      emit_atom: emit_atom,
-      atom_val_type: atom_val_type,
-      atom_mono: atom_mono,
-      emit_checked_i32_narrow: emit_checked_i32_narrow,
-      emit_intrinsic_call: emit_intrinsic_call,
-      emit_closure_call: emit_closure_call,
+      emit_atom,
+      atom_val_type,
+      atom_mono,
+      emit_checked_i32_narrow,
+      emit_intrinsic_call,
+      emit_closure_call,
     },
   )
 }
@@ -1906,8 +1906,8 @@ fn emit_resume_func(info: TaskResumeInfo, func: PreparedFunc, base_ctx: EmitCtx)
     registry: base_ctx.registry,
     builtins: base_ctx.builtins,
     env: base_ctx.env,
-    local_map: local_map,
-    next_local: next_local,
+    local_map,
+    next_local,
     wasm_locals: extra_locals,
     label_stack: [],
     current_func_id: .Some(func.func_id),
@@ -1958,7 +1958,7 @@ fn emit_resume_func(info: TaskResumeInfo, func: PreparedFunc, base_ctx: EmitCtx)
     params: [ValType.Ref(false, .Named("rt_types__Task"))],
     results: [.I32],
     locals: ctx.wasm_locals,
-    body: body,
+    body,
   }
 }
 
@@ -2301,12 +2301,7 @@ fn emit_record_literal(
     result_mono,
     ctx,
     buf,
-    record_emit.RecordEmitFns.{
-      emit_atom: emit_atom,
-      atom_val_type: atom_val_type,
-      atom_mono: atom_mono,
-      require_typed_record_atom: require_typed_record_atom,
-    },
+    record_emit.RecordEmitFns.{ emit_atom, atom_val_type, atom_mono, require_typed_record_atom },
   )
 }
 
@@ -2325,12 +2320,7 @@ fn emit_record_get(
     result_mono,
     ctx,
     buf,
-    record_emit.RecordEmitFns.{
-      emit_atom: emit_atom,
-      atom_val_type: atom_val_type,
-      atom_mono: atom_mono,
-      require_typed_record_atom: require_typed_record_atom,
-    },
+    record_emit.RecordEmitFns.{ emit_atom, atom_val_type, atom_mono, require_typed_record_atom },
   )
 }
 
@@ -2353,12 +2343,7 @@ fn emit_record_update(
     result_mono,
     ctx,
     buf,
-    record_emit.RecordEmitFns.{
-      emit_atom: emit_atom,
-      atom_val_type: atom_val_type,
-      atom_mono: atom_mono,
-      require_typed_record_atom: require_typed_record_atom,
-    },
+    record_emit.RecordEmitFns.{ emit_atom, atom_val_type, atom_mono, require_typed_record_atom },
   )
 }
 
@@ -2378,11 +2363,7 @@ fn emit_variant_literal(
     result_mono,
     ctx,
     buf,
-    variant_emit.VariantEmitFns.{
-      emit_atom: emit_atom,
-      atom_val_type: atom_val_type,
-      atom_mono: atom_mono,
-    },
+    variant_emit.VariantEmitFns.{ emit_atom, atom_val_type, atom_mono },
   )
 }
 
@@ -2399,11 +2380,11 @@ fn emit_array_literal(
     ctx,
     buf,
     array_emit.ArrayEmitFns.{
-      emit_atom: emit_atom,
-      atom_val_type: atom_val_type,
-      atom_mono: atom_mono,
-      emit_checked_i32_narrow: emit_checked_i32_narrow,
-      emit_erased_container_ingress: emit_erased_container_ingress,
+      emit_atom,
+      atom_val_type,
+      atom_mono,
+      emit_checked_i32_narrow,
+      emit_erased_container_ingress,
     },
   )
 }
@@ -2426,11 +2407,11 @@ fn emit_index_op(
     ctx,
     buf,
     array_emit.ArrayEmitFns.{
-      emit_atom: emit_atom,
-      atom_val_type: atom_val_type,
-      atom_mono: atom_mono,
-      emit_checked_i32_narrow: emit_checked_i32_narrow,
-      emit_erased_container_ingress: emit_erased_container_ingress,
+      emit_atom,
+      atom_val_type,
+      atom_mono,
+      emit_checked_i32_narrow,
+      emit_erased_container_ingress,
     },
   )
 }
@@ -2455,7 +2436,7 @@ fn emit_if_op(
     result_mono,
     ctx,
     buf,
-    control_emit.ControlEmitFns.{ emit_atom: emit_atom, emit_expr: emit_expr },
+    control_emit.ControlEmitFns.{ emit_atom, emit_expr },
   )
 }
 
@@ -2472,7 +2453,7 @@ fn emit_loop_op(
     result_vt,
     ctx,
     buf,
-    control_emit.ControlEmitFns.{ emit_atom: emit_atom, emit_expr: emit_expr },
+    control_emit.ControlEmitFns.{ emit_atom, emit_expr },
   )
 }
 
@@ -2495,11 +2476,11 @@ fn emit_match_op(
     ctx,
     buf,
     match_emit.MatchEmitFns.{
-      emit_atom: emit_atom,
-      emit_expr: emit_expr,
-      match_scrutinee_mono: match_scrutinee_mono,
-      emit_pattern_condition: emit_pattern_condition,
-      emit_pattern_bindings: emit_pattern_bindings,
+      emit_atom,
+      emit_expr,
+      match_scrutinee_mono,
+      emit_pattern_condition,
+      emit_pattern_bindings,
     },
   )
 }
@@ -2727,7 +2708,7 @@ fn emit_closure_call(
     result_mono,
     ctx,
     buf,
-    closure_emit.ClosureEmitFns.{ emit_atom: emit_atom, atom_mono: atom_mono },
+    closure_emit.ClosureEmitFns.{ emit_atom, atom_mono },
   )
 }
 

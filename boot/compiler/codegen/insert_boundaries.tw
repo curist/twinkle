@@ -181,14 +181,14 @@ fn rewrite_func(
 
   next = next + 1
   ctx := BCtx.{
-    registry: registry,
-    builtins: builtins,
-    env: env,
-    local_types: local_types,
+    registry,
+    builtins,
+    env,
+    local_types,
     next_local: next,
     current_return_mono: func.return_ty,
-    func_param_types: func_param_types,
-    func_monos: func_monos,
+    func_param_types,
+    func_monos,
   }
   result := rewrite_expr(func.body, ctx)
   // Build updated op_result_mono: original entries + new locals from boundary insertion.
@@ -226,10 +226,10 @@ fn rewrite_expr(expr: AnfExpr, ctx: BCtx) RewriteResult {
       op_result := rewrite_op(local, op, body, ctx)
       op_result
     },
-    .Atom(a) => RewriteResult.{ expr: .Atom(a), ctx: ctx },
+    .Atom(a) => RewriteResult.{ expr: .Atom(a), ctx },
     .Return(a) => rewrite_return_expr(a, ctx),
-    .Break(a) => RewriteResult.{ expr: .Break(a), ctx: ctx },
-    .Continue => RewriteResult.{ expr: .Continue, ctx: ctx },
+    .Break(a) => RewriteResult.{ expr: .Break(a), ctx },
+    .Continue => RewriteResult.{ expr: .Continue, ctx },
   }
 }
 
@@ -243,10 +243,10 @@ fn rewrite_return_expr(atom: Atom?, ctx: BCtx) RewriteResult {
           expr: .Let(pair.temp, .AMakeClosure(pair.fid, []), .Return(.Some(.ALocal(pair.temp)))),
           ctx: pair.ctx,
         },
-        .None => RewriteResult.{ expr: .Return(atom), ctx: ctx },
+        .None => RewriteResult.{ expr: .Return(atom), ctx },
       }
     },
-    .None => RewriteResult.{ expr: .Return(atom), ctx: ctx },
+    .None => RewriteResult.{ expr: .Return(atom), ctx },
   }
 }
 
@@ -463,7 +463,7 @@ fn materialize_atoms_for_expected_mono(atoms: Vector<Atom>, expected: MonoType?,
     }
   }
 
-  .{ atoms: new_atoms, closure_lets: closure_lets, ctx: cur_ctx }
+  .{ atoms: new_atoms, closure_lets, ctx: cur_ctx }
 }
 
 fn record_field_mono_for_tid(tid: TypeId, record_mono: MonoType, field_idx: Int, env: ResolvedEnv) MonoType {
@@ -560,7 +560,7 @@ fn materialize_global_func_for_expected_mono(atom: Atom, expected_mono: MonoType
           .None => expected_mono,
         }
         new_ctx.local_types[tmp.id] = tmp_mono
-        .Some(.{ temp: tmp, fid: fid, ctx: new_ctx })
+        .Some(.{ temp: tmp, fid, ctx: new_ctx })
       } else {
         .None
       }

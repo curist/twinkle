@@ -40,7 +40,7 @@ fn build_lets(accum: Vector<LetBinding>, tail: AnfExpr) AnfExpr {
 type PushResult = .{ accum: Vector<LetBinding>, state: LowerState }
 
 fn push_accum(accum: Vector<LetBinding>, state: LowerState, local: LocalId, op: AnfOp, ty: MonoType) PushResult {
-  new_accum := accum.append(.{ local: local, op: op })
+  new_accum := accum.append(.{ local, op })
   new_mono := state.op_result_mono
   new_mono[local.id] = ty
   .{ accum: new_accum, state: .{ next_temp: state.next_temp, op_result_mono: new_mono } }
@@ -206,7 +206,7 @@ pub fn lower_module(module: CoreModule) AnfModule {
 
   for func in module.functions {
     next_temp := max_local_id_in_func(func) + 1
-    state := LowerState.{ next_temp: next_temp, op_result_mono: Dict.new() }
+    state := LowerState.{ next_temp, op_result_mono: Dict.new() }
     result := lower_expr_top(func.body, state)
     fdef := AnfFunctionDef.{
       func_id: func.func_id,
@@ -220,11 +220,7 @@ pub fn lower_module(module: CoreModule) AnfModule {
     functions = .append(fdef)
   }
 
-  AnfModule.{
-    functions: functions,
-    init_func_id: module.init_func_id,
-    extern_imports: module.extern_imports,
-  }
+  AnfModule.{ functions, init_func_id: module.init_func_id, extern_imports: module.extern_imports }
 }
 
 // ── lower_expr_top ──────────────────────────────────────────────────
@@ -424,7 +420,7 @@ fn lower_expr(expr: CoreExpr, state: LowerState, accum: Vector<LetBinding>) Expr
         },
         _ => {
           // Terminal (Return/Break/Continue) — body is unreachable
-          .{ expr: build_lets(vr.accum, vr.expr), state: vr.state, accum: accum }
+          .{ expr: build_lets(vr.accum, vr.expr), state: vr.state, accum }
         },
       }
     },
@@ -694,7 +690,7 @@ fn flatten_into_accum(
 ) FlatResult {
   case anf {
     .Let(local, op, body) => {
-      new_accum := accum.append(.{ local: local, op: op })
+      new_accum := accum.append(.{ local, op })
       flatten_into_accum(body, new_accum, result_local, state, result_ty)
     },
     .Atom(atom) => {

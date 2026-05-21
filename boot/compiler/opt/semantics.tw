@@ -119,7 +119,7 @@ pub fn make_prelude_optimizer_semantics(b: BuiltinRegistry) OptimizerSemantics {
     cow_base_arg: .None,
     in_place_equivalent: .None,
   }
-  OptimizerSemantics.{ call_semantics: calls, builder: builder }
+  OptimizerSemantics.{ call_semantics: calls, builder }
 }
 
 pub fn call_info(semantics: OptimizerSemantics, func_id: FuncId) CallSemantics? {
@@ -136,7 +136,7 @@ pub fn cow_config_from_semantics(semantics: OptimizerSemantics) CowConfig {
 
     case info.cow_base_arg {
       .Some(base_arg) => {
-        cow_ops[func_id] = CowOpEntry.{ base_arg: base_arg, in_place_id: info.in_place_equivalent }
+        cow_ops[func_id] = CowOpEntry.{ base_arg, in_place_id: info.in_place_equivalent }
       },
       .None => {},
     }
@@ -149,12 +149,7 @@ pub fn cow_config_from_semantics(semantics: OptimizerSemantics) CowConfig {
     }
   }
 
-  CowConfig.{
-    cow_ops: cow_ops,
-    fresh_producer_ids: fresh_producer_ids,
-    read_only_ids: read_only_ids,
-    builder: semantics.builder,
-  }
+  CowConfig.{ cow_ops, fresh_producer_ids, read_only_ids, builder: semantics.builder }
 }
 
 pub fn optimizer_semantics_from_cow_config(config: CowConfig) OptimizerSemantics {

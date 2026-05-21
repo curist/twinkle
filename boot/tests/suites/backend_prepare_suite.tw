@@ -67,7 +67,7 @@ fn empty_builtins() BuiltinRegistry { make_builtin_registry() }
 
 fn no_captures() Dict<Int, Vector<CaptureParam>> { Dict.new() }
 
-fn mk_param(id: Int, ty: MonoType) Param { Param.{ local: lid(id), ty: ty } }
+fn mk_param(id: Int, ty: MonoType) Param { Param.{ local: lid(id), ty } }
 
 fn mk_mono_map(entries: Vector<Int>, types: Vector<MonoType>) Dict<Int, MonoType> {
   d: Dict<Int, MonoType> = Dict.new()
@@ -85,10 +85,10 @@ fn mk_func_def(
 ) AnfFunctionDef {
   AnfFunctionDef.{
     func_id: fid(id),
-    name: name,
-    params: params,
+    name,
+    params,
     op_result_mono: mono_map,
-    body: body,
+    body,
     return_ty: ret,
     is_init: false,
   }

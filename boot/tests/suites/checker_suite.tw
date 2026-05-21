@@ -29,11 +29,11 @@ fn builtin_sig(
   ret: mono_type.MonoType?,
 ) resolver.FunctionSig {
   resolver.FunctionSig.{
-    name: name,
+    name,
     type_params: [],
     param_names: params,
     params: param_tys,
-    ret: ret,
+    ret,
     doc: .None,
     extern_module: .None,
   }

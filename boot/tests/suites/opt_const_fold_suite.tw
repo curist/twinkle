@@ -6,7 +6,7 @@ use tests.assert
 use tests.runner
 
 // ── Helpers ─────────────────────────────────────────────────────────
-fn lid(id: Int) LocalId { LocalId.{ id: id } }
+fn lid(id: Int) LocalId { LocalId.{ id } }
 
 // ── constant_fold: int arithmetic ───────────────────────────────────
 fn test_fold_int_add() Result<Void, String> {

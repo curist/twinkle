@@ -444,7 +444,7 @@ fn add_string_candidate_to_buckets(buckets: Vector<LengthBucket>, len: Int, cand
     }
   }
 
-  out.append(LengthBucket.{ len: len, candidates: [cand] })
+  out.append(LengthBucket.{ len, candidates: [cand] })
 }
 
 fn emit_string_length_dispatch(
@@ -571,7 +571,7 @@ fn build_string_trie(
 
   for group in groups {
     child := build_string_trie(group.candidates, next_used, literal_len)
-    branches = .append(TrieBranch.{ byte: group.byte, child: child })
+    branches = .append(TrieBranch.{ byte: group.byte, child })
   }
 
   .Branch(best_pos, branches)
@@ -629,7 +629,7 @@ fn add_candidate_to_byte_groups(
     }
   }
 
-  out.append(ByteCandidateGroup.{ byte: byte, candidates: [cand] })
+  out.append(ByteCandidateGroup.{ byte, candidates: [cand] })
 }
 
 fn emit_trie_node(
@@ -646,7 +646,7 @@ fn emit_trie_node(
 ) Vector<Instr> {
   case node {
     .Leaf(literal, arm_index) => emit_string_candidate_chain(
-      [StringCandidate.{ literal: literal, arm_index: arm_index }],
+      [StringCandidate.{ literal, arm_index }],
       arms,
       scrutinee_instrs,
       scrutinee_mono,

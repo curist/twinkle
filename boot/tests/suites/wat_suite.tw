@@ -26,7 +26,7 @@ fn mod_with_types(types: Vector<TypeDef>) WasmModule {
   m := empty_module()
   WasmModule.{
     namespace: m.namespace,
-    types: types,
+    types,
     imports: m.imports,
     funcs: m.funcs,
     globals: m.globals,
@@ -43,7 +43,7 @@ fn mod_with_imports(imports: Vector<ImportDef>) WasmModule {
   WasmModule.{
     namespace: m.namespace,
     types: m.types,
-    imports: imports,
+    imports,
     funcs: m.funcs,
     globals: m.globals,
     tables: m.tables,
@@ -60,7 +60,7 @@ fn mod_with_funcs(funcs: Vector<FuncDef>) WasmModule {
     namespace: m.namespace,
     types: m.types,
     imports: m.imports,
-    funcs: funcs,
+    funcs,
     globals: m.globals,
     tables: m.tables,
     elems: m.elems,
@@ -77,7 +77,7 @@ fn mod_with_globals(globals: Vector<GlobalDef>) WasmModule {
     types: m.types,
     imports: m.imports,
     funcs: m.funcs,
-    globals: globals,
+    globals,
     tables: m.tables,
     elems: m.elems,
     exports: m.exports,
@@ -97,7 +97,7 @@ fn mod_with_data(data: Vector<DataSegment>) WasmModule {
     tables: m.tables,
     elems: m.elems,
     exports: m.exports,
-    data: data,
+    data,
     start: m.start,
   }
 }
@@ -112,7 +112,7 @@ fn mod_with_exports(exports: Vector<ExportDef>) WasmModule {
     globals: m.globals,
     tables: m.tables,
     elems: m.elems,
-    exports: exports,
+    exports,
     data: m.data,
     start: m.start,
   }
@@ -124,13 +124,13 @@ fn mod_with_funcs_and_start(funcs: Vector<FuncDef>, start: String?) WasmModule {
     namespace: m.namespace,
     types: m.types,
     imports: m.imports,
-    funcs: funcs,
+    funcs,
     globals: m.globals,
     tables: m.tables,
     elems: m.elems,
     exports: m.exports,
     data: m.data,
-    start: start,
+    start,
   }
 }
 

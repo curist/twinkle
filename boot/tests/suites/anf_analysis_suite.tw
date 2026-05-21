@@ -9,7 +9,7 @@ use tests.assert
 use tests.runner
 
 // ── Helpers ─────────────────────────────────────────────────────────
-fn lid(id: Int) LocalId { LocalId.{ id: id } }
+fn lid(id: Int) LocalId { LocalId.{ id } }
 
 fn empty_set() Dict<Int, Bool> { Dict.new() }
 

@@ -56,10 +56,7 @@ pub fn emit_loop_op(
   break_label := "\$break_${depth}"
   cont_label := "\$continue_${depth}"
   // Push labels onto label_stack
-  new_labels := ctx.label_stack.append(LabelPair.{
-    break_label: break_label,
-    continue_label: cont_label,
-  })
+  new_labels := ctx.label_stack.append(LabelPair.{ break_label, continue_label: cont_label })
   loop_ctx := EmitCtx.{
     registry: ctx.registry,
     builtins: ctx.builtins,

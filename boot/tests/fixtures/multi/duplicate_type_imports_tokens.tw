@@ -1,5 +1,5 @@
 pub type Token = .{ kind: Int }
 
-pub fn make(kind: Int) Token { Token.{ kind: kind } }
+pub fn make(kind: Int) Token { Token.{ kind } }
 
 pub fn token_kind(token: Token) Int { token.kind }

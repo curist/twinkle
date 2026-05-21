@@ -110,8 +110,8 @@ pub fn assign_slots(
     slots[next_slot] = SlotInfo.{
       slot: sid,
       source_local: LocalId.{ id: lid },
-      role: role,
-      mono: mono,
+      role,
+      mono,
       repr: .OpaqueAnyref,
       wasm_type: .Anyref,
     }
@@ -127,7 +127,7 @@ pub fn assign_slots(
     captures: capture_slots,
     params: param_slots,
     locals: local_slots,
-    slots: slots,
+    slots,
     body: lower_expr(func.body, local_to_slot, func.name),
     return_mono: func.return_ty,
   }

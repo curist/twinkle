@@ -48,7 +48,7 @@ fn dead_let_inner(
         changed: op_result.changed or body_result.changed,
       }
     },
-    _ => ElimResult.{ expr: expr, changed: false },
+    _ => ElimResult.{ expr, changed: false },
   }
 }
 
@@ -76,7 +76,7 @@ fn dead_let_op(
         if r.changed { changed = true }
         AnfMatchArm.{ pattern: arm.pattern, body: r.expr }
       }
-      OpElimResult.{ op: .AMatch(scrutinee, new_arms), changed: changed }
+      OpElimResult.{ op: .AMatch(scrutinee, new_arms), changed }
     },
     .ALoop(body) => {
       r := dead_let_inner(body, uses, assigned, semantics)
@@ -86,6 +86,6 @@ fn dead_let_op(
       r := dead_let_inner(inner, uses, assigned, semantics)
       OpElimResult.{ op: .ADefer(r.expr), changed: r.changed }
     },
-    _ => OpElimResult.{ op: op, changed: false },
+    _ => OpElimResult.{ op, changed: false },
   }
 }

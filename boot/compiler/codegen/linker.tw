@@ -404,7 +404,7 @@ pub fn link(modules: Vector<WasmModule>, entry: String?) Result<LinkedModule, Ve
       elems: out_elems,
       exports: out_exports,
       data: out_data,
-      start: start,
+      start,
     },
   )
 }

@@ -79,7 +79,7 @@ pub fn module() WasmModule {
         results: [],
       },
     ],
-    funcs: funcs,
+    funcs,
     globals: [
       GlobalDef.{
         name: "sched_queue",
@@ -94,7 +94,7 @@ pub fn module() WasmModule {
     ],
     tables: [],
     elems: [],
-    exports: exports,
+    exports,
     data: [],
     start: .Some("sched_init"),
   }

@@ -45,7 +45,7 @@ pub fn new_ctx(check_result: CheckResult, reg: BuiltinRegistry) LowerCtx {
     type_map: check_result.type_map,
     env: check_result.env,
     builtins: reg,
-    func_table: func_table,
+    func_table,
     locals: [Dict.new()],
     next_local: 0,
     next_func: reg.next_id,

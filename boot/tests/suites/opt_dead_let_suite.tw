@@ -10,9 +10,9 @@ use tests.assert
 use tests.runner
 
 // ── Helpers ─────────────────────────────────────────────────────────
-fn lid(id: Int) LocalId { LocalId.{ id: id } }
+fn lid(id: Int) LocalId { LocalId.{ id } }
 
-fn fid(id: Int) FuncId { FuncId.{ id: id } }
+fn fid(id: Int) FuncId { FuncId.{ id } }
 
 fn uses_for(uses: Dict<Int, Int>, id: Int) Int { uses[id].unwrap_or(0) }
 

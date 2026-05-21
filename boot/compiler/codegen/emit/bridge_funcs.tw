@@ -49,7 +49,7 @@ pub fn emit_sum_to_variant_helper(sum_mono: MonoType, env: ResolvedEnv) FuncDef 
     params: [sum_ref],
     results: [variant_ref],
     locals: [.I32],
-    body: body,
+    body,
   }
 }
 
@@ -97,7 +97,7 @@ pub fn emit_variant_to_sum_helper(sum_mono: MonoType, env: ResolvedEnv) FuncDef 
     params: [ValType.Ref(true, .Named("rt_types__Variant"))],
     results: [sum_ref],
     locals: [.I32, ValType.Ref(true, .Named("rt_types__Array"))],
-    body: body,
+    body,
   }
 }
 

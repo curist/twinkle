@@ -5,9 +5,9 @@ use tests.assert
 use tests.runner
 
 // ── Helpers ─────────────────────────────────────────────────────────
-fn lid(id: Int) LocalId { LocalId.{ id: id } }
+fn lid(id: Int) LocalId { LocalId.{ id } }
 
-fn fid(id: Int) FuncId { FuncId.{ id: id } }
+fn fid(id: Int) FuncId { FuncId.{ id } }
 
 fn make_func(body: AnfExpr) AnfFunctionDef {
   AnfFunctionDef.{
@@ -16,7 +16,7 @@ fn make_func(body: AnfExpr) AnfFunctionDef {
     is_init: false,
     params: [],
     op_result_mono: Dict.new(),
-    body: body,
+    body,
     return_ty: .Void,
   }
 }
@@ -26,9 +26,9 @@ fn make_func_with_params(params: Vector<Param>, body: AnfExpr) AnfFunctionDef {
     func_id: fid(1),
     name: "test",
     is_init: false,
-    params: params,
+    params,
     op_result_mono: Dict.new(),
-    body: body,
+    body,
     return_ty: .Void,
   }
 }

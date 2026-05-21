@@ -53,7 +53,7 @@ pub fn emit_string_pool_getters(reg: WasmTypeRegistry) Vector<FuncDef> {
             params: [],
             results: [.Ref(false, .Named("rt_types__String"))],
             locals: [],
-            body: body,
+            body,
           },
         )
       },

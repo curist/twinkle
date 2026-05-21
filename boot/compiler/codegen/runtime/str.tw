@@ -38,11 +38,11 @@ pub fn module() WasmModule {
         results: [str_ref()],
       },
     ],
-    funcs: funcs,
+    funcs,
     globals: [],
     tables: [],
     elems: [],
-    exports: exports,
+    exports,
     data: [],
     start: .None,
   }

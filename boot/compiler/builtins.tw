@@ -171,10 +171,10 @@ pub fn runtime_with_abi(
 
   fid := FuncId.{ id: reg.next_id }
   entry := BuiltinEntry.{
-    name: name,
+    name,
     canonical_name: .None,
     func_id: fid,
-    kind: .Runtime(.{ wasm_module: wasm_module, wasm_name: wasm_name }),
+    kind: .Runtime(.{ wasm_module, wasm_name }),
     abi: builtin_abi,
   }
   by_name := reg.by_name
@@ -182,8 +182,8 @@ pub fn runtime_with_abi(
   by_name[name] = entry
   by_id[fid.id] = entry
   BuiltinRegistry.{
-    by_name: by_name,
-    by_id: by_id,
+    by_name,
+    by_id,
     by_canonical: reg.by_canonical,
     entries: reg.entries.append(entry),
     next_id: reg.next_id + 1,
@@ -202,7 +202,7 @@ pub fn intrinsic_with_abi(reg: BuiltinRegistry, name: String, builtin_abi: AbiCo
 
   fid := FuncId.{ id: reg.next_id }
   entry := BuiltinEntry.{
-    name: name,
+    name,
     canonical_name: .None,
     func_id: fid,
     kind: .Intrinsic,
@@ -213,8 +213,8 @@ pub fn intrinsic_with_abi(reg: BuiltinRegistry, name: String, builtin_abi: AbiCo
   by_name[name] = entry
   by_id[fid.id] = entry
   BuiltinRegistry.{
-    by_name: by_name,
-    by_id: by_id,
+    by_name,
+    by_id,
     by_canonical: reg.by_canonical,
     entries: reg.entries.append(entry),
     next_id: reg.next_id + 1,
@@ -255,13 +255,7 @@ pub fn with_canonical(reg: BuiltinRegistry, canonical: String, internal: String)
   entries := collect e in reg.entries {
     if e.name == internal { updated } else { e }
   }
-  BuiltinRegistry.{
-    by_name: by_name,
-    by_id: by_id,
-    by_canonical: by_canonical,
-    entries: entries,
-    next_id: reg.next_id,
-  }
+  BuiltinRegistry.{ by_name, by_id, by_canonical, entries, next_id: reg.next_id }
 }
 
 pub fn id_by_canonical(reg: BuiltinRegistry, canonical: String) FuncId {

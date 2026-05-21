@@ -216,13 +216,7 @@ fn emit_builtin_universal_trampoline(
         },
       }
 
-      FuncDef.{
-        name: tramp_sym,
-        params: [.Anyref, .Anyref],
-        results: [.Anyref],
-        locals: [],
-        body: body,
-      }
+      FuncDef.{ name: tramp_sym, params: [.Anyref, .Anyref], results: [.Anyref], locals: [], body }
     },
   }
 }
@@ -268,7 +262,7 @@ fn emit_builtin_cell_update_universal_trampoline(
     params: [.Anyref, .Anyref],
     results: [.Anyref],
     locals: [cell_vt, closure_vt],
-    body: body,
+    body,
   }
 }
 
@@ -290,13 +284,7 @@ fn emit_builtin_iterator_unfold_universal_trampoline(
     .I32Const(1),
   ).append(.ArrayGet("rt_types__Array"))
   body = emit_unbox_from_anyref(step_mono, ctx.env, body).append(.StructNew("rt_types__IterState"))
-  FuncDef.{
-    name: tramp_sym,
-    params: [.Anyref, .Anyref],
-    results: [.Anyref],
-    locals: [],
-    body: body,
-  }
+  FuncDef.{ name: tramp_sym, params: [.Anyref, .Anyref], results: [.Anyref], locals: [], body }
 }
 
 fn emit_builtin_host_write_bytes_universal_trampoline(
@@ -318,13 +306,7 @@ fn emit_builtin_host_write_bytes_universal_trampoline(
   body = emit_unbox_from_anyref(bytes_mono, ctx.env, body).append(.Call("rt_arr__to_array"))
   body = emit_builtin_trampoline_target(entry, .Some(.HostWriteBytes), body)
   body = .append(.I32Const(0)).append(.RefI31)
-  FuncDef.{
-    name: tramp_sym,
-    params: [.Anyref, .Anyref],
-    results: [.Anyref],
-    locals: [],
-    body: body,
-  }
+  FuncDef.{ name: tramp_sym, params: [.Anyref, .Anyref], results: [.Anyref], locals: [], body }
 }
 
 fn emit_builtin_trampoline_target(
@@ -390,11 +372,5 @@ fn emit_universal_trampoline(func: PreparedFunc, sig: FuncSigEntry, ctx: EmitCtx
     },
   }
 
-  FuncDef.{
-    name: tramp_sym,
-    params: [.Anyref, .Anyref],
-    results: [.Anyref],
-    locals: locals,
-    body: body,
-  }
+  FuncDef.{ name: tramp_sym, params: [.Anyref, .Anyref], results: [.Anyref], locals, body }
 }

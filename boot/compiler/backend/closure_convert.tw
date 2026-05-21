@@ -26,7 +26,7 @@ pub type ClosureConversion = .{ anf: AnfModule, captures: Dict<Int, Vector<Captu
 // and capture metadata must travel together.
 pub fn convert_closures(anf: AnfModule, env: ResolvedEnv) ClosureConversion {
   next_local := max_local_id_module(anf) + 1
-  state := ConversionState.{ captures: Dict.new(), next_local: next_local }
+  state := ConversionState.{ captures: Dict.new(), next_local }
   i := anf.functions.len() - 1
 
   for _ in 0..anf.functions.len() {
@@ -102,7 +102,7 @@ fn record_captures(
 
 fn rewrite_module(anf: AnfModule, captures: Dict<Int, Vector<CaptureParam>>) AnfModule {
   functions := collect func in anf.functions { rewrite_func(func, captures) }
-  .{ functions: functions, init_func_id: anf.init_func_id, extern_imports: anf.extern_imports }
+  .{ functions, init_func_id: anf.init_func_id, extern_imports: anf.extern_imports }
 }
 
 fn rewrite_func(func: AnfFunctionDef, captures: Dict<Int, Vector<CaptureParam>>) AnfFunctionDef {

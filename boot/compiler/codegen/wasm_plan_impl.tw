@@ -150,7 +150,7 @@ pub fn plan_wasm_types_impl(
         if !reg.module_globals.has(k) {
           reg.module_globals_order = reg.module_globals_order.append(k)
         }
-        reg.module_globals[k] = ModuleGlobalEntry.{ sym: "global_local_${k}", mono: mono }
+        reg.module_globals[k] = ModuleGlobalEntry.{ sym: "global_local_${k}", mono }
       }
     },
     .None => {},
@@ -394,10 +394,10 @@ fn with_type_defs_and_index(
   type_index: Dict<String, Int>,
 ) WasmTypeRegistry {
   .{
-    type_defs: type_defs,
+    type_defs,
     layout_cache: reg.layout_cache,
     in_progress: reg.in_progress,
-    type_index: type_index,
+    type_index,
     concrete_func_sigs: reg.concrete_func_sigs,
     closure_materialized_funcs: reg.closure_materialized_funcs,
     typed_closure_funcs: reg.typed_closure_funcs,
@@ -578,7 +578,7 @@ fn register_string(reg: WasmTypeRegistry, s: String) WasmTypeRegistry {
         getter_sym: "\$str_${idx}_get",
         data_segment_name: "\$data_strings",
         byte_offset: reg.string_pool_next_offset,
-        byte_len: byte_len,
+        byte_len,
       }
       reg.string_pool[s] = entry
       reg.string_pool_order = reg.string_pool_order.append(s)

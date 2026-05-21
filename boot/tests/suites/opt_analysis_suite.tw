@@ -11,11 +11,11 @@ use compiler.opt.semantics.{CallSemantics, OptimizerSemantics}
 use tests.assert
 use tests.runner
 
-fn lid(id: Int) LocalId { LocalId.{ id: id } }
+fn lid(id: Int) LocalId { LocalId.{ id } }
 
-fn fid(id: Int) FuncId { FuncId.{ id: id } }
+fn fid(id: Int) FuncId { FuncId.{ id } }
 
-fn tid(id: Int) TypeId { TypeId.{ id: id } }
+fn tid(id: Int) TypeId { TypeId.{ id } }
 
 fn mock_vec_set() FuncId { fid(200) }
 
@@ -54,7 +54,7 @@ fn make_func(body: AnfExpr) AnfFunctionDef {
     name: "test",
     params: [],
     op_result_mono: Dict.new(),
-    body: body,
+    body,
     return_ty: .Void,
     is_init: false,
   }
@@ -64,9 +64,9 @@ fn make_func_with_params(params: Vector<Param>, body: AnfExpr) AnfFunctionDef {
   AnfFunctionDef.{
     func_id: fid(1),
     name: "test",
-    params: params,
+    params,
     op_result_mono: Dict.new(),
-    body: body,
+    body,
     return_ty: .Void,
     is_init: false,
   }

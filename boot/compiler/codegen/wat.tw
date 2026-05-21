@@ -263,10 +263,7 @@ fn register_functype(reg: FuncTypeRegistry, params: Vector<ValType>, results: Ve
     return reg
   }
   idx := reg.entries.len()
-  .{
-    entries: reg.entries.append(.{ params: params, results: results }),
-    keys: reg.keys.set(key, idx),
-  }
+  .{ entries: reg.entries.append(.{ params, results }), keys: reg.keys.set(key, idx) }
 }
 
 fn lookup_functype(reg: FuncTypeRegistry, params: Vector<ValType>, results: Vector<ValType>) Int {

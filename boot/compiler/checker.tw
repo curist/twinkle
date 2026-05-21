@@ -170,7 +170,7 @@ fn zonk_with_meta(ty: MonoType, subst: Dict<Int, MonoType>) ZonkMetaOut {
     .MetaVar(id) => {
       case subst[id] {
         .Some(resolved) => zonk_with_meta(resolved, subst),
-        .None => .{ ty: ty, has_meta: true },
+        .None => .{ ty, has_meta: true },
       }
     },
     .Vector(inner) => {
@@ -214,9 +214,9 @@ fn zonk_with_meta(ty: MonoType, subst: Dict<Int, MonoType>) ZonkMetaOut {
         if ar.has_meta { has_meta = true }
       }
 
-      .{ ty: MonoType.Named(tid, zonked_args), has_meta: has_meta }
+      .{ ty: MonoType.Named(tid, zonked_args), has_meta }
     },
-    _ => .{ ty: ty, has_meta: false },
+    _ => .{ ty, has_meta: false },
   }
 }
 

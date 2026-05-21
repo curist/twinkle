@@ -113,14 +113,14 @@ pub fn rewrite_loop_region(
     .FromBase(base)
   }
   region := BuilderRegion.{
-    bind_local: bind_local,
+    bind_local,
     base_local: base,
-    builder_local: builder_local,
-    freeze_local: freeze_local,
-    assign_local: assign_local,
-    init: init,
+    builder_local,
+    freeze_local,
+    assign_local,
+    init,
     loop_body: rewritten_body,
-    cont: cont,
+    cont,
   }
   mono_updates: Dict<Int, MonoType> = Dict.new()
   mono_updates[builder_local.id] = base_mono
@@ -129,7 +129,7 @@ pub fn rewrite_loop_region(
   .Some(
     LoopRewrite.{
       expr: lower_builder_region(region, builder),
-      mono_updates: mono_updates,
+      mono_updates,
       next_local: next_local + 3,
     },
   )

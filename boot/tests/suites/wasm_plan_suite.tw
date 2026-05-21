@@ -49,10 +49,10 @@ fn mk_func_def(
 ) AnfFunctionDef {
   f: AnfFunctionDef = AnfFunctionDef.{
     func_id: mk_func(id),
-    name: name,
-    params: params,
+    name,
+    params,
     op_result_mono: mono_map,
-    body: body,
+    body,
     return_ty: ret,
     is_init: false,
   }

@@ -113,7 +113,7 @@ fn build_command_plan(parsed: ParseResult) CommandPlan!String {
           return .Err("internal error: unsupported command '${cmd}'")
         },
       }
-      .Ok(.{ cmd: cmd, detail: detail })
+      .Ok(.{ cmd, detail })
     },
     .None => .Err(usage_hint),
   }

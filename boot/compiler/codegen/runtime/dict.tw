@@ -186,11 +186,11 @@ pub fn module() WasmModule {
         results: [pvec_ref()],
       },
     ],
-    funcs: funcs,
+    funcs,
     globals: [GlobalDef.{ name: "was_replace", mutable: true, ty: .I32, init: [.I32Const(0)] }],
     tables: [],
     elems: [],
-    exports: exports,
+    exports,
     data: [],
     start: .None,
   }
@@ -540,7 +540,7 @@ fn hash_i64_fn() FuncDef {
     params: [.I64],
     results: [.I64],
     locals: [.I64, .I64, .I64, .I64, .I64, .I64, .I64, .I64, .I64],
-    body: body,
+    body,
   }
 }
 
@@ -793,7 +793,7 @@ fn hash_string_fn() FuncDef {
       .I64,
       .I64,
     ],
-    body: body,
+    body,
   }
 }
 

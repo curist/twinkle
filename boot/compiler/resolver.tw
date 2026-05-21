@@ -1841,7 +1841,7 @@ fn resolve_extern_function_decl(env: ResolvedEnv, decl: ExternFunctionDecl) Reso
   new_env := env.add_function(.{
     name: qualified,
     type_params: [],
-    param_names: param_names,
+    param_names,
     params: param_types,
     ret: ret_ty,
     doc: .None,
@@ -1885,8 +1885,8 @@ fn resolve_function_decl(env: ResolvedEnv, decl: FunctionDecl) ResolveResult {
   }
   new_env := env.add_function(.{
     name: decl.name,
-    type_params: type_params,
-    param_names: param_names,
+    type_params,
+    param_names,
     params: param_types,
     ret: ret_ty,
     doc: decl.doc,

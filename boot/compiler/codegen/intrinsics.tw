@@ -42,11 +42,11 @@ pub fn module() WasmModule {
         results: [.F64, .I32],
       },
     ],
-    funcs: funcs,
+    funcs,
     globals: [],
     tables: [],
     elems: [],
-    exports: exports,
+    exports,
     data: [],
     start: .None,
   }

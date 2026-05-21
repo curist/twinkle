@@ -115,8 +115,8 @@ fn add_pass_timing(a: PassTiming, b: PassTiming) PassTiming {
 fn optimizer_context(module: AnfModule, semantics: OptimizerSemantics?, cow_config: CowConfig?) OptimizerContext {
   OptimizerContext.{
     pinned: compute_pinned(module),
-    semantics: semantics,
-    cow_config: cow_config,
+    semantics,
+    cow_config,
     consumed_params: collect_consumed_params(module),
     fresh_record_helpers: collect_fresh_record_helpers(module),
   }
@@ -125,8 +125,8 @@ fn optimizer_context(module: AnfModule, semantics: OptimizerSemantics?, cow_conf
 // ── optimize_func ───────────────────────────────────────────────────
 fn optimize_func(func: AnfFunctionDef, pinned: Dict<Int, Bool>, semantics: OptimizerSemantics?) AnfFunctionDef {
   ctx := OptimizerContext.{
-    pinned: pinned,
-    semantics: semantics,
+    pinned,
+    semantics,
     cow_config: .None,
     consumed_params: Dict.new(),
     fresh_record_helpers: Dict.new(),
@@ -141,7 +141,7 @@ fn rebuild_func_with_body(func: AnfFunctionDef, body: AnfExpr) AnfFunctionDef {
     is_init: func.is_init,
     params: func.params,
     op_result_mono: func.op_result_mono,
-    body: body,
+    body,
     return_ty: func.return_ty,
   }
 }
@@ -176,12 +176,7 @@ fn optimize_function_with_context(func: AnfFunctionDef, ctx: OptimizerContext) F
   }
   tb2 := date.now()
   timing.uniqueness = timing.uniqueness + (tb2 - ta2)
-  FunctionOptimizeResult.{
-    func: optimized,
-    timing: timing,
-    rounds: fixed.rounds,
-    at_cap: fixed.at_cap,
-  }
+  FunctionOptimizeResult.{ func: optimized, timing, rounds: fixed.rounds, at_cap: fixed.at_cap }
 }
 
 fn run_fixed_point_simplifications(expr: AnfExpr, ctx: OptimizerContext) FixedPointResult {
@@ -215,7 +210,7 @@ fn run_fixed_point_simplifications(expr: AnfExpr, ctx: OptimizerContext) FixedPo
     if !r1.changed and !r2.changed and !r3.changed and !r4.changed { break }
   }
 
-  FixedPointResult.{ expr: cur, rounds: round, at_cap: round >= cap, timing: timing }
+  FixedPointResult.{ expr: cur, rounds: round, at_cap: round >= cap, timing }
 }
 
 // ── prelude CowConfig ─────────────────────────────────────────────

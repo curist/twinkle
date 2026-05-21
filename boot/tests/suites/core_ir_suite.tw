@@ -471,7 +471,7 @@ pub fn suite() runner.Suite {
         func_id: core_ir.FuncId.{ id: 1 },
         name: "test",
         params: [core_ir.Param.{ local: core_ir.LocalId.{ id: 0 }, ty: mono_type.MonoType.Int }],
-        body: body,
+        body,
         return_ty: mono_type.MonoType.Int,
         is_init: false,
       }

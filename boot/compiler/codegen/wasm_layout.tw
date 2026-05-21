@@ -202,7 +202,7 @@ fn layout_of_named(tid: TypeId, args: Vector<MonoType>, env: ResolvedEnv) WasmLa
           val_type: val_type_of_mono(field_ty, env),
         }
       }
-      .Record(WasmRecordLayout.{ type_id: tid, sym: sym, fields: field_layouts })
+      .Record(WasmRecordLayout.{ type_id: tid, sym, fields: field_layouts })
     },
     .Sum(name, type_params, variants) => {
       if args.len() < type_params.len() {
@@ -243,13 +243,13 @@ fn layout_of_sum_def(
     vl := WasmVariantLayout.{
       variant_id: .{ id: i },
       name: v.name,
-      payload_types: payload_types,
+      payload_types,
       struct_field_offset: offset,
     }
     offset = offset + payload_types.len()
     vl
   }
-  .Sum(WasmSumLayout.{ type_id: tid, sym: sym, tag_type: .I32, variants: var_layouts })
+  .Sum(WasmSumLayout.{ type_id: tid, sym, tag_type: .I32, variants: var_layouts })
 }
 
 fn layout_of_optional(inner: MonoType, env: ResolvedEnv) WasmLayout {
@@ -266,7 +266,7 @@ fn layout_of_optional(inner: MonoType, env: ResolvedEnv) WasmLayout {
   .Sum(
     WasmSumLayout.{
       type_id: TypeId.{ id: -1 },
-      sym: sym,
+      sym,
       tag_type: .I32,
       variants: [
         WasmVariantLayout.{
@@ -293,7 +293,7 @@ fn layout_of_result(ok: MonoType, err: MonoType, env: ResolvedEnv) WasmLayout {
   .Sum(
     WasmSumLayout.{
       type_id: TypeId.{ id: -1 },
-      sym: sym,
+      sym,
       tag_type: .I32,
       variants: [
         WasmVariantLayout.{

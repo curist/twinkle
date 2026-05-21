@@ -24,7 +24,7 @@ pub fn constant_fold(expr: AnfExpr) FoldResult {
         },
       }
     },
-    _ => FoldResult.{ expr: expr, changed: false },
+    _ => FoldResult.{ expr, changed: false },
   }
 }
 
@@ -158,7 +158,7 @@ fn constant_fold_op(op: AnfOp) OpFoldResult {
         if r.changed { changed = true }
         AnfMatchArm.{ pattern: arm.pattern, body: r.expr }
       }
-      OpFoldResult.{ op: .AMatch(scrutinee, new_arms), changed: changed }
+      OpFoldResult.{ op: .AMatch(scrutinee, new_arms), changed }
     },
     .ALoop(body) => {
       r := constant_fold(body)
@@ -168,6 +168,6 @@ fn constant_fold_op(op: AnfOp) OpFoldResult {
       r := constant_fold(inner)
       OpFoldResult.{ op: .ADefer(r.expr), changed: r.changed }
     },
-    _ => OpFoldResult.{ op: op, changed: false },
+    _ => OpFoldResult.{ op, changed: false },
   }
 }

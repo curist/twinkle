@@ -270,9 +270,9 @@ fn load_group_from_source(src: String, receiver: String?, env: ResolvedEnv) Resu
         sig := FunctionSig.{
           name: decl.name,
           type_params: resolved_type_params,
-          param_names: param_names,
+          param_names,
           params: param_tys,
-          ret: ret,
+          ret,
           doc: extract_doc_comment(src, decl.span.start),
           extern_module: .None,
         }
@@ -282,7 +282,7 @@ fn load_group_from_source(src: String, receiver: String?, env: ResolvedEnv) Resu
     }
   }
 
-  .Ok(SignatureGroup.{ receiver: receiver, sigs: sigs })
+  .Ok(SignatureGroup.{ receiver, sigs })
 }
 
 // ── public API ───────────────────────────────────────────────────────────────

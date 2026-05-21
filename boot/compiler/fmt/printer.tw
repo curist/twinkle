@@ -1210,7 +1210,16 @@ fn format_literal_expr(expr: Expr, tm: TriviaMap) Doc {
 
 fn format_record_entry(entry: RecordEntry, tm: TriviaMap) Doc {
   case entry.value {
-    .Some(val) => doc.concat([doc.text("${entry.name}: "), format_expr(val, tm)]),
+    .Some(val) => {
+      case val.kind {
+        .Ident(name) => {
+          if name == entry.name { doc.text(entry.name) } else {
+            doc.concat([doc.text("${entry.name}: "), format_expr(val, tm)])
+          }
+        },
+        _ => doc.concat([doc.text("${entry.name}: "), format_expr(val, tm)]),
+      }
+    },
     .None => doc.text(entry.name),
   }
 }

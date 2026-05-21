@@ -223,11 +223,11 @@ fn mk_func_def(
 ) AnfFunctionDef {
   AnfFunctionDef.{
     func_id: fid(id),
-    name: name,
+    name,
     is_init: false,
-    params: params,
+    params,
     op_result_mono: mono_map,
-    body: body,
+    body,
     return_ty: ret,
   }
 }
@@ -242,7 +242,7 @@ fn mk_mono_map(entries: Vector<Int>, types: Vector<MonoType>) Dict<Int, MonoType
   d
 }
 
-fn mk_param(id: Int, ty: MonoType) Param { Param.{ local: lid(id), ty: ty } }
+fn mk_param(id: Int, ty: MonoType) Param { Param.{ local: lid(id), ty } }
 
 fn prepared_pf(params: Vector<Param>, body: AnfExpr, mono_map: Dict<Int, MonoType>, ret: MonoType) PreparedFunc {
   func := mk_func_def(1, "f", params, ret, body, mono_map)

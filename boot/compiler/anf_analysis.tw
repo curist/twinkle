@@ -55,17 +55,17 @@ fn collect_free_expr(expr: AnfExpr, declared: Dict<Int, Bool>, free: Dict<Int, B
       new_declared := set_add(st.declared, local.id)
       collect_free_expr(body, new_declared, st.free)
     },
-    .Atom(atom) => free_atom(atom, .{ declared: declared, free: free }),
-    .Return(.Some(atom)) => free_atom(atom, .{ declared: declared, free: free }),
-    .Break(.Some(atom)) => free_atom(atom, .{ declared: declared, free: free }),
-    .Return(.None) => .{ declared: declared, free: free },
-    .Break(.None) => .{ declared: declared, free: free },
-    .Continue => .{ declared: declared, free: free },
+    .Atom(atom) => free_atom(atom, .{ declared, free }),
+    .Return(.Some(atom)) => free_atom(atom, .{ declared, free }),
+    .Break(.Some(atom)) => free_atom(atom, .{ declared, free }),
+    .Return(.None) => .{ declared, free },
+    .Break(.None) => .{ declared, free },
+    .Continue => .{ declared, free },
   }
 }
 
 fn collect_free_op(op: AnfOp, declared: Dict<Int, Bool>, free: Dict<Int, Bool>) FreeState {
-  st := FreeState.{ declared: declared, free: free }
+  st := FreeState.{ declared, free }
 
   case op {
     .ACall(callee, args) => {

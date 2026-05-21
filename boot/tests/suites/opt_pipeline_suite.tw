@@ -7,9 +7,9 @@ use tests.assert
 use tests.runner
 
 // ── Helpers ─────────────────────────────────────────────────────────
-fn lid(id: Int) LocalId { LocalId.{ id: id } }
+fn lid(id: Int) LocalId { LocalId.{ id } }
 
-fn fid(id: Int) FuncId { FuncId.{ id: id } }
+fn fid(id: Int) FuncId { FuncId.{ id } }
 
 fn make_init_func(id: Int, body: AnfExpr) AnfFunctionDef {
   AnfFunctionDef.{
@@ -18,7 +18,7 @@ fn make_init_func(id: Int, body: AnfExpr) AnfFunctionDef {
     is_init: true,
     params: [],
     op_result_mono: Dict.new(),
-    body: body,
+    body,
     return_ty: .Void,
   }
 }
@@ -26,11 +26,11 @@ fn make_init_func(id: Int, body: AnfExpr) AnfFunctionDef {
 fn make_func(id: Int, name: String, body: AnfExpr) AnfFunctionDef {
   AnfFunctionDef.{
     func_id: fid(id),
-    name: name,
+    name,
     is_init: false,
     params: [],
     op_result_mono: Dict.new(),
-    body: body,
+    body,
     return_ty: .Void,
   }
 }
@@ -38,11 +38,11 @@ fn make_func(id: Int, name: String, body: AnfExpr) AnfFunctionDef {
 fn make_func_with_params(id: Int, name: String, params: Vector<Param>, body: AnfExpr) AnfFunctionDef {
   AnfFunctionDef.{
     func_id: fid(id),
-    name: name,
+    name,
     is_init: false,
-    params: params,
+    params,
     op_result_mono: Dict.new(),
-    body: body,
+    body,
     return_ty: .Void,
   }
 }

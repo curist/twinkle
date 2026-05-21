@@ -72,12 +72,12 @@ fn test_param_local_id_can_overlap_module_global_id() Result<Void, String> {
     captures: [],
     params: [sid(0)],
     locals: [],
-    slots: slots,
+    slots,
     body: PreparedExpr.Atom(PreparedAtom.ASlot(sid(0))),
     return_mono: MonoType.Int,
     is_init: false,
   }
-  prepared := PreparedModule.{ anf: anf, closure_captures: Dict.new(), funcs: [prepared_func] }
+  prepared := PreparedModule.{ anf, closure_captures: Dict.new(), funcs: [prepared_func] }
   wasm := emit_module(prepared, reg, make_builtin_registry(), resolver.empty_env())
   wat := emit_wat_unlinked_for_test(wasm)
   try assert.str_contains(wat, "global \$global_local_0")
