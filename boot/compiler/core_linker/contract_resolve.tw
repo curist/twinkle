@@ -1,50 +1,39 @@
 // Contract target resolution for DCE.
 //
-// Maps a (BuiltinContract, receiver_type, method_name) triple to the
-// concrete function name that implements the contract for that type.
-use compiler.contracts.{BuiltinContract}
+// Maps a (receiver_type, method_name) pair to the concrete function that
+// implements the contract method for that type.
 use compiler.core_ir.{FuncId}
 use compiler.mono_type.{MonoType}
-use compiler.resolver.{ResolvedEnv}
 
-pub fn resolve_contract_target_name(
-  contract: BuiltinContract,
-  receiver_ty: MonoType,
-  method_name: String,
-  env: ResolvedEnv,
-) String? {
-  case contract {
-    .Stringify => resolve_for_receiver(receiver_ty, method_name, env),
-    .Eq => resolve_for_receiver(receiver_ty, method_name, env),
-    .Ord => resolve_for_receiver(receiver_ty, method_name, env),
-  }
-}
-
-fn resolve_for_receiver(receiver_ty: MonoType, method_name: String, env: ResolvedEnv) String? {
-  case receiver_ty {
-    .Int => env.lookup_method("Int", method_name),
-    .Float => env.lookup_method("Float", method_name),
-    .Bool => env.lookup_method("Bool", method_name),
-    .Byte => env.lookup_method("Byte", method_name),
-    .String => env.lookup_method("String", method_name),
-    .Vector(_) => env.lookup_method("Vector", method_name),
-    .Dict(_, _) => env.lookup_method("Dict", method_name),
-    .Optional(_) => env.lookup_method("Option", method_name),
-    .Result(_, _) => env.lookup_method("Result", method_name),
-    .Named(tid, _) => env.lookup_type_method(tid, method_name),
+fn method_table_key(receiver_ty: MonoType, method_name: String) String? {
+  receiver_key: String? = case receiver_ty {
+    .Int => .Some("Int"),
+    .Float => .Some("Float"),
+    .Bool => .Some("Bool"),
+    .Byte => .Some("Byte"),
+    .String => .Some("String"),
+    .Vector(_) => .Some("Vector"),
+    .Dict(_, _) => .Some("Dict"),
+    .Optional(_) => .Some("Option"),
+    .Result(_, _) => .Some("Result"),
+    .Named(tid, _) => .Some("t${tid.id}"),
+    .ExternRef(tid) => .Some("t${tid.id}"),
     _ => .None,
+  }
+
+  case receiver_key {
+    .Some(k) => .Some("${k}::${method_name}"),
+    .None => .None,
   }
 }
 
 pub fn exact_contract_ref(
-  contract: BuiltinContract,
   receiver_ty: MonoType,
   method_name: String,
-  env: ResolvedEnv,
-  func_table: Dict<String, FuncId>,
+  method_table: Dict<String, FuncId>,
 ) FuncId? {
-  case resolve_contract_target_name(contract, receiver_ty, method_name, env) {
-    .Some(target_name) => func_table[target_name],
+  case method_table_key(receiver_ty, method_name) {
+    .Some(key) => method_table[key],
     .None => .None,
   }
 }

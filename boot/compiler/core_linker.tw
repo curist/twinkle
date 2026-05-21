@@ -18,6 +18,15 @@ use lib.source.span.{Span}
 
 use .core_linker.dce.{collect_func_refs, compute_reachable}
 
+fn is_builtin_method_type(type_name: String) Bool {
+  type_name == "Int" or type_name == "Float" or type_name == "Bool" or type_name == "Byte"
+  or type_name == "String"
+  or type_name == "Vector"
+  or type_name == "Dict"
+  or type_name == "Option"
+  or type_name == "Result"
+}
+
 // ── Public API ──────────────────────────────────────────────────────
 /// Link all compiled modules into a single CoreModule.
 ///
@@ -123,6 +132,7 @@ pub fn link(
   entry_func_ids: Vector<Int> = []
   // Accumulate method table entries from all modules during linking.
   pre_dce_method_table: Dict<String, FuncId> = Dict.new()
+  pre_dce_method_names: Dict<String, String> = Dict.new()
 
   for m in modules {
     // This remap already includes:
@@ -212,10 +222,25 @@ pub fn link(
           for entry in entries {
             case m.func_table[entry.function_name] {
               .Some(local_fid) => {
-                global_fid := remap_func_id(local_fid, remap)
-                key := "t${canonical_tid}::${entry.method_name}"
+                if local_fid.id < builtin_count
+                or remap.has(local_fid.id) and !m.external_refs.has(local_fid.id) {
+                  global_fid := remap_func_id(local_fid, remap)
+                  key := "t${canonical_tid}::${entry.method_name}"
 
-                if !pre_dce_method_table.has(key) { pre_dce_method_table[key] = global_fid }
+                  case pre_dce_method_names[key] {
+                    .Some(existing_name) => {
+                      if existing_name != entry.function_name {
+                        error(
+                          "linker: ambiguous method metadata for '${key}': '${existing_name}' and '${entry.function_name}' both implement method '${entry.method_name}' on type ${canonical_tid} (module ${m.path})",
+                        )
+                      }
+                    },
+                    .None => {
+                      pre_dce_method_names[key] = entry.function_name
+                      pre_dce_method_table[key] = global_fid
+                    },
+                  }
+                }
               },
               .None => {
                 eprintln(
@@ -236,10 +261,26 @@ pub fn link(
           for entry in entries {
             case m.func_table[entry.function_name] {
               .Some(local_fid) => {
-                global_fid := remap_func_id(local_fid, remap)
-                key := "${type_name}::${entry.method_name}"
+                if local_fid.id < builtin_count
+                or remap.has(local_fid.id)
+                and (!m.external_refs.has(local_fid.id) or is_builtin_method_type(type_name)) {
+                  global_fid := remap_func_id(local_fid, remap)
+                  key := "${type_name}::${entry.method_name}"
 
-                if !pre_dce_method_table.has(key) { pre_dce_method_table[key] = global_fid }
+                  case pre_dce_method_names[key] {
+                    .Some(existing_name) => {
+                      if existing_name != entry.function_name {
+                        error(
+                          "linker: ambiguous method metadata for '${key}': '${existing_name}' and '${entry.function_name}' both implement method '${type_name}.${entry.method_name}' (module ${m.path})",
+                        )
+                      }
+                    },
+                    .None => {
+                      pre_dce_method_names[key] = entry.function_name
+                      pre_dce_method_table[key] = global_fid
+                    },
+                  }
+                }
               },
               .None => {
                 eprintln(

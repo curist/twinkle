@@ -1624,8 +1624,10 @@ pub fn suite() runner.Suite {
       func_map[42] = exact
       func_map[99] = fallback
       func_table: Dict<String, core_ir.FuncId> = Dict.new()
-      func_table["int_to_string"] = core_ir.FuncId.{ id: 42 }
-      refs := dce.collect_func_refs(body, builtin_env(), func_table, func_map, Dict.new())
+      method_table: Dict<String, core_ir.FuncId> = Dict.new()
+      method_table["Int::to_string"] = core_ir.FuncId.{ id: 42 }
+      method_table["Other::to_string"] = core_ir.FuncId.{ id: 99 }
+      refs := dce.collect_func_refs(body, builtin_env(), func_table, func_map, method_table)
       try assert.equal(refs.len(), 1)
       try assert.equal(refs[0], 42)
       .Ok({})

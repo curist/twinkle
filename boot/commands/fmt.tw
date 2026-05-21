@@ -2,7 +2,7 @@ use @std.fs
 // Format command: format Twinkle source code.
 use @std.proc
 
-use commands.common.{exit_usage_error, fs_error_message, get_positional}
+use commands.common.{exit_usage_error, fs_error_message}
 use compiler.fmt.formatter
 use compiler.lexer
 use compiler.parser
@@ -11,38 +11,45 @@ use lib.argparse.app.{ParseResult}
 use lib.source.registry
 
 pub fn run_fmt_command(parsed: ParseResult) {
-  file := case get_positional(parsed, 0, "file") {
-    .Ok(path) => path,
-    .Err(msg) => { exit_usage_error(msg) },
+  if parsed.positional.len() == 0 {
+    exit_usage_error("missing required positional argument 'file'")
   }
-  source := case fs.read_text(file) {
-    .Ok(text) => text,
-    .Err(err) => {
-      eprintln("error: failed to read '${file}': ${fs_error_message(err)}")
-      proc.exit(1)
-    },
-  }
-  reg := registry.empty()
-  added := registry.add_file(reg, file, source)
-  file_id := added.file_id
-  lexed := lexer.lex(source, file_id)
-  parsed_mod := parser.parse_tokens(source, file_id, lexed.value, lexed.diagnostics)
-  formatted := formatter.format(parsed_mod.value, lexed.value)
 
-  if app.has_flag(parsed, "check") {
-    if source != formatted {
-      eprintln("Would reformat: ${file}")
-      proc.exit(1)
+  check := app.has_flag(parsed, "check")
+  needs_reformat := false
+
+  for file in parsed.positional {
+    source := case fs.read_text(file) {
+      .Ok(text) => text,
+      .Err(err) => {
+        eprintln("error: failed to read '${file}': ${fs_error_message(err)}")
+        proc.exit(1)
+      },
     }
-  } else {
-    if source != formatted {
-      case fs.write_text(file, formatted) {
-        .Ok(_) => println("Formatted: ${file}"),
-        .Err(err) => {
-          eprintln("error: failed to write '${file}': ${fs_error_message(err)}")
-          proc.exit(1)
-        },
+    reg := registry.empty()
+    added := registry.add_file(reg, file, source)
+    file_id := added.file_id
+    lexed := lexer.lex(source, file_id)
+    parsed_mod := parser.parse_tokens(source, file_id, lexed.value, lexed.diagnostics)
+    formatted := formatter.format(parsed_mod.value, lexed.value)
+
+    if check {
+      if source != formatted {
+        eprintln("Would reformat: ${file}")
+        needs_reformat = true
+      }
+    } else {
+      if source != formatted {
+        case fs.write_text(file, formatted) {
+          .Ok(_) => println("Formatted: ${file}"),
+          .Err(err) => {
+            eprintln("error: failed to write '${file}': ${fs_error_message(err)}")
+            proc.exit(1)
+          },
+        }
       }
     }
   }
+
+  if needs_reformat { proc.exit(1) }
 }

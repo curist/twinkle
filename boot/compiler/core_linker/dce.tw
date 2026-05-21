@@ -3,7 +3,6 @@
 // BFS-based reachability analysis starting from init + entry functions.
 // Collects FuncId references from expression trees and resolves contract
 // calls to their concrete implementations.
-use compiler.contracts.{BuiltinContract}
 use compiler.core_ir.{CoreExpr, FuncId, FunctionDef}
 use compiler.mono_type.{MonoType}
 use compiler.resolver.{ResolvedEnv}
@@ -133,31 +132,27 @@ fn get_body_refs(
 // For concrete receivers, uses exact resolution. For generic receivers (Var),
 // returns all method table entries matching ::method_name so monomorphization
 // can later pick the correct one.
-fn contract_call_refs(
-  contract: BuiltinContract,
-  method_name: String,
-  receiver_ty: MonoType,
-  env: ResolvedEnv,
-  func_table: Dict<String, FuncId>,
-  index: ReachabilityIndex,
-) Vector<Int> {
-  case exact_contract_ref(contract, receiver_ty, method_name, env, func_table) {
+fn contract_call_refs(method_name: String, receiver_ty: MonoType, index: ReachabilityIndex) Vector<Int> {
+  case exact_contract_ref(receiver_ty, method_name, index.method_table) {
     .Some(fid) => [fid.id],
-    .None => {
-      // Generic receiver: collect all method table entries for this method name.
-      suffix := "::${method_name}"
-      refs: Vector<Int> = []
+    .None => case receiver_ty {
+      .Var(_) => {
+        // Generic receiver: collect all method table entries for this method name.
+        suffix := "::${method_name}"
+        refs: Vector<Int> = []
 
-      for key in index.method_table.keys() {
-        if key.ends_with(suffix) {
-          case index.method_table[key] {
-            .Some(fid) => { refs = .append(fid.id) },
-            .None => {},
+        for key in index.method_table.keys() {
+          if key.ends_with(suffix) {
+            case index.method_table[key] {
+              .Some(fid) => { refs = .append(fid.id) },
+              .None => {},
+            }
           }
         }
-      }
 
-      refs
+        refs
+      },
+      _ => [],
     },
   }
 }
@@ -202,8 +197,8 @@ fn collect_func_refs_into(
       r := collect_func_refs_into(callee, refs, env, func_table, index)
       collect_func_refs_list(args, r, env, func_table, index)
     },
-    .ContractCall(contract, method_name, receiver, args) => {
-      r := contract_call_refs(contract, method_name, receiver.ty, env, func_table, index).fold(
+    .ContractCall(_, method_name, receiver, args) => {
+      r := contract_call_refs(method_name, receiver.ty, index).fold(
         refs,
         fn(out, id) { out.append(id) },
       )

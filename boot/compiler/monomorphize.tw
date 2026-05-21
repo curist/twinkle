@@ -2,7 +2,6 @@
 //
 // Specializes generic functions per unique concrete instantiation.
 // Algorithm: BFS seed → specialize → rewrite → drop generics.
-use .contracts.{BuiltinContract}
 use .core_ir.{
   CoreExpr, CoreExprKind, CoreModule, FieldInit, FuncId, FunctionDef, LocalId, MatchArm, Param,
 }
@@ -540,55 +539,21 @@ fn method_table_key(receiver_ty: MonoType, method_name: String) String? {
   }
 }
 
-fn resolve_method_for_receiver(receiver_ty: MonoType, method_name: String, env: ResolvedEnv) String? {
-  case receiver_ty {
-    .Int => env.lookup_method("Int", method_name),
-    .Float => env.lookup_method("Float", method_name),
-    .Bool => env.lookup_method("Bool", method_name),
-    .Byte => env.lookup_method("Byte", method_name),
-    .String => env.lookup_method("String", method_name),
-    .Vector(_) => env.lookup_method("Vector", method_name),
-    .Dict(_, _) => env.lookup_method("Dict", method_name),
-    .Optional(_) => env.lookup_method("Option", method_name),
-    .Result(_, _) => env.lookup_method("Result", method_name),
-    .Named(tid, _) => env.lookup_type_method(tid, method_name),
-    _ => .None,
-  }
-}
-
-fn resolve_contract_target_id(
-  receiver_ty: MonoType,
-  method_name: String,
-  contract: BuiltinContract,
-  ctx: MonoCtx,
-) FuncId? {
-  // Primary path: exact lookup via method table built at link time.
+fn resolve_contract_target_id(receiver_ty: MonoType, method_name: String, ctx: MonoCtx) FuncId? {
   case method_table_key(receiver_ty, method_name) {
-    .Some(key) => case ctx.method_table[key] {
-      .Some(fid) => {
-        return .Some(fid)
-      },
-      .None => {},
-    },
-    .None => {},
-  }
-
-  // Secondary path: name-based resolution via env metadata + func_table.
-  case resolve_method_for_receiver(receiver_ty, method_name, ctx.env) {
-    .Some(target_name) => ctx.func_table[target_name],
+    .Some(key) => ctx.method_table[key],
     .None => .None,
   }
 }
 
 fn lower_resolved_contract_call(
   parent: CoreExpr,
-  contract: BuiltinContract,
   method_name: String,
   receiver: CoreExpr,
   args: Vector<CoreExpr>,
   ctx: MonoCtx,
 ) CoreExprKind {
-  fid := case resolve_contract_target_id(receiver.ty, method_name, contract, ctx) {
+  fid := case resolve_contract_target_id(receiver.ty, method_name, ctx) {
     .Some(id) => id,
     .None => error(
       "monomorphize: unresolved contract call for ${ctx.env.ty_to_string_env(receiver.ty)}.${method_name}",
@@ -635,8 +600,8 @@ fn collect_instantiations(
         },
       }
     },
-    .ContractCall(contract, method_name, receiver, args) => {
-      case resolve_contract_target_id(receiver.ty, method_name, contract, ctx) {
+    .ContractCall(_, method_name, receiver, args) => {
+      case resolve_contract_target_id(receiver.ty, method_name, ctx) {
         .Some(fid) => {
           if ctx.generic_ids.has(fid.id) {
             case ctx.func_map[fid.id] {
@@ -935,21 +900,14 @@ fn rewrite_calls_kind(
         _ => .Call(rewrite_calls(callee, spec_map, ctx, local_types), new_args),
       }
     },
-    .ContractCall(contract, method_name, receiver, args) => {
+    .ContractCall(_, method_name, receiver, args) => {
       new_receiver := rewrite_calls(receiver, spec_map, ctx, local_types)
       new_args: Vector<CoreExpr> = []
 
       for a in args { new_args = .append(rewrite_calls(a, spec_map, ctx, local_types)) }
 
       lowered := CoreExpr.{
-        kind: lower_resolved_contract_call(
-          parent,
-          contract,
-          method_name,
-          new_receiver,
-          new_args,
-          ctx,
-        ),
+        kind: lower_resolved_contract_call(parent, method_name, new_receiver, new_args, ctx),
         ty: parent.ty,
         span: parent.span,
       }

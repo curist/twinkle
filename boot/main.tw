@@ -40,10 +40,10 @@ build_cmd := file_command("build", "Compile to linked WAT or Wasm").add_short_op
   "Output path (.wat or .wasm)",
 )
 lsp_cmd := command.make("lsp", "Start the Language Server Protocol server")
-fmt_cmd := file_command("fmt", "Format source").add_flag(
-  "check",
-  "Check whether source is formatted",
-)
+fmt_cmd := command.make("fmt", "Format source").add_required_positional(
+  "file",
+  "Path to a .tw source file (may be repeated)",
+).add_flag("check", "Check whether source is formatted")
 cli := app.make("twk", "Twinkle compiler").add_commands([
   run_cmd,
   check_cmd,
