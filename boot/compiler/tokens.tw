@@ -81,6 +81,7 @@ pub type Token = .{
   span: Span,
   preceded_by_newline: Bool,
   leading_trivia: Vector<Trivia>,
+  trailing_trivia: Vector<Trivia>,
 }
 
 pub fn make(
@@ -97,7 +98,14 @@ pub fn make_with_trivia(
   preceded_by_newline: Bool,
   leading_trivia: Vector<Trivia>,
 ) Token {
-  .{ kind, text, span: token_span, preceded_by_newline, leading_trivia }
+  .{
+    kind,
+    text,
+    span: token_span,
+    preceded_by_newline,
+    leading_trivia,
+    trailing_trivia: [],
+  }
 }
 
 pub fn eof(file_id: Int, offset: Int, preceded_by_newline: Bool) Token {

@@ -21,36 +21,47 @@ pub fn render(doc: Doc) String { render_with_width(doc, 80) }
 pub fn render_with_width(doc: Doc, width: Int) String {
   buf: Vector<String> = []
   col := 0
+  pending_indent := -1
   stack: Vector<StackEntry> = [StackEntry.{ indent: 0, mode: .Break, doc }]
   top := stack.len()
-  
+
   for top > 0 {
     top = top - 1
     entry := stack[top]
-    
+
     case entry.doc {
       .Nil => {},
       .Text(s) => {
+        if pending_indent >= 0 {
+          buf = .append(spaces(pending_indent))
+          col = pending_indent
+          pending_indent = -1
+        }
+
         buf = .append(s)
         col = col + s.len()
       },
       .Line => {
         case entry.mode {
           .Flat => {
+            if pending_indent >= 0 {
+              buf = .append(spaces(pending_indent))
+              col = pending_indent
+              pending_indent = -1
+            }
+
             buf = .append(" ")
             col = col + 1
           },
           .Break => {
             buf = .append("\n")
-            buf = .append(spaces(entry.indent))
-            col = entry.indent
+            pending_indent = entry.indent
           },
         }
       },
       .HardLine => {
         buf = .append("\n")
-        buf = .append(spaces(entry.indent))
-        col = entry.indent
+        pending_indent = entry.indent
       },
       .Indent(n, inner) => {
         pushed := push_stack(
@@ -79,7 +90,7 @@ pub fn render_with_width(doc: Doc, width: Int) String {
       },
       .Seq(docs) => {
         idx := docs.len() - 1
-        
+
         for idx >= 0 {
           pushed := push_stack(
             stack,
@@ -138,7 +149,7 @@ pub fn render_with_width(doc: Doc, width: Int) String {
       },
     }
   }
-  
+
   buf.join("")
 }
 
@@ -146,16 +157,16 @@ pub fn render_with_width(doc: Doc, width: Int) String {
 fn fits(doc: Doc, indent: Int, remaining: Int) Bool {
   fit_stack: Vector<Doc> = [doc]
   rem := remaining
-  
+
   for fit_stack.len() > 0 {
     if rem < 0 {
       return false
     }
-    
+
     last := fit_stack.len() - 1
     d := fit_stack[last]
     fit_stack = .slice(0, last)
-    
+
     case d {
       .Nil => {},
       .Text(s) => { rem = rem - s.len() },
@@ -174,7 +185,7 @@ fn fits(doc: Doc, indent: Int, remaining: Int) Bool {
       },
       .Seq(docs) => {
         idx := docs.len() - 1
-        
+
         for idx >= 0 {
           fit_stack = .append(docs[idx])
           idx = idx - 1
@@ -190,7 +201,7 @@ fn fits(doc: Doc, indent: Int, remaining: Int) Bool {
       },
     }
   }
-  
+
   rem >= 0
 }
 
@@ -198,14 +209,14 @@ fn spaces(n: Int) String {
   if n <= 0 {
     return ""
   }
-  
+
   buf: Vector<String> = []
   i := 0
-  
+
   for i < n {
     buf = .append(" ")
     i = i + 1
   }
-  
+
   buf.join("")
 }
