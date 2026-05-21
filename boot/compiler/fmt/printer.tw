@@ -13,11 +13,13 @@ use lib.source.span.{Span}
 type TriviaMap = .{
   leading: Dict<Int, Vector<Trivia>>,
   trailing: Dict<Int, Vector<Trivia>>,
+  literal_text: Dict<Int, String>,
 }
 
 fn build_trivia_map(tokens: Vector<Token>) TriviaMap {
   leading: Dict<Int, Vector<Trivia>> = Dict.new()
   trailing: Dict<Int, Vector<Trivia>> = Dict.new()
+  literal_text: Dict<Int, String> = Dict.new()
 
   for tok in tokens {
     if tok.leading_trivia.len() > 0 {
@@ -27,9 +29,13 @@ fn build_trivia_map(tokens: Vector<Token>) TriviaMap {
     if tok.trailing_trivia.len() > 0 {
       trailing[tok.span.end] = tok.trailing_trivia
     }
+
+    if tok.kind == .IntLit or tok.kind == .FloatLit {
+      literal_text[tok.span.start] = tok.text
+    }
   }
 
-  TriviaMap.{ leading, trailing }
+  TriviaMap.{ leading, trailing, literal_text }
 }
 
 fn get_trivia(tm: TriviaMap, offset: Int) Vector<Trivia> {
@@ -867,17 +873,27 @@ fn format_defer(s: DeferStmt, tm: TriviaMap) Doc {
 fn format_expr(expr: Expr, tm: TriviaMap) Doc {
   case expr.kind {
     .Ident(name) => doc.text(name),
-    .IntLit(n) => doc.text(Int.to_string(n)),
-    .FloatLit(f) => doc.text(format_float_literal(f)),
+    .IntLit(n) => {
+      case tm.literal_text.get(expr.span.start) {
+        .Some(raw) => doc.text(raw),
+        .None => doc.text(Int.to_string(n)),
+      }
+    },
+    .FloatLit(f) => {
+      case tm.literal_text.get(expr.span.start) {
+        .Some(raw) => doc.text(raw),
+        .None => doc.text(format_float_literal(f)),
+      }
+    },
     .StringLit(s) => doc.text("\"${escape_string(s)}\""),
     .StringInterp(parts) => format_string_interp(parts, tm),
     .BoolLit(b) => doc.text(if b { "true" } else { "false" }),
     .Unary(op, inner) => format_unary(op, inner, tm),
     .Binary(op, lhs, rhs) => format_binary(op, lhs, rhs, tm),
     .Call(callee, args) => format_call(callee, args, tm),
-    .Field(obj, name) => doc.concat([format_expr(obj, tm), doc.text(".${name}")]),
+    .Field(obj, name) => doc.concat([format_receiver(obj, tm), doc.text(".${name}")]),
     .Index(obj, idx) => doc.concat([
-      format_expr(obj, tm),
+      format_receiver(obj, tm),
       doc.text("["),
       format_expr(idx, tm),
       doc.text("]"),
@@ -1122,23 +1138,23 @@ fn format_case(scrutinee: Expr, arms: Vector<CaseArm>, tm: TriviaMap) Doc {
 fn format_case_arm(arm: CaseArm, tm: TriviaMap) Doc {
   doc.group(
     doc.concat([
-      format_pattern(arm.pattern),
+      format_pattern(arm.pattern, tm),
       doc.text(" => "),
       format_expr(arm.expr, tm),
     ]),
   )
 }
 
-fn format_pattern(pat: Pattern) Doc {
+fn format_pattern(pat: Pattern, tm: TriviaMap) Doc {
   case pat.kind {
     .Wildcard => doc.text("_"),
     .Ident(name) => doc.text(name),
-    .Literal(expr) => format_expr_no_trivia(expr),
+    .Literal(expr) => format_literal_expr(expr, tm),
     .Variant(name, fields) => {
       if fields.len() == 0 {
         doc.text(".${name}")
       } else {
-        field_docs := collect f in fields { format_pattern(f) }
+        field_docs := collect f in fields { format_pattern(f, tm) }
         doc.concat([
           doc.text(".${name}"),
           doc.tight_bracketed("(", ")", field_docs),
@@ -1151,7 +1167,7 @@ fn format_pattern(pat: Pattern) Doc {
       if fields.len() == 0 {
         doc.text("${prefix}.${name}")
       } else {
-        field_docs := collect f in fields { format_pattern(f) }
+        field_docs := collect f in fields { format_pattern(f, tm) }
         doc.concat([
           doc.text("${prefix}.${name}"),
           doc.tight_bracketed("(", ")", field_docs),
@@ -1162,18 +1178,27 @@ fn format_pattern(pat: Pattern) Doc {
   }
 }
 
-// Format an expression without trivia lookup (used in patterns where
-// the expr is a literal and trivia doesn't apply).
-fn format_expr_no_trivia(expr: Expr) Doc {
+// Format a literal expression (used in patterns).
+fn format_literal_expr(expr: Expr, tm: TriviaMap) Doc {
   case expr.kind {
-    .IntLit(n) => doc.text(Int.to_string(n)),
-    .FloatLit(f) => doc.text(format_float_literal(f)),
+    .IntLit(n) => {
+      case tm.literal_text.get(expr.span.start) {
+        .Some(raw) => doc.text(raw),
+        .None => doc.text(Int.to_string(n)),
+      }
+    },
+    .FloatLit(f) => {
+      case tm.literal_text.get(expr.span.start) {
+        .Some(raw) => doc.text(raw),
+        .None => doc.text(format_float_literal(f)),
+      }
+    },
     .StringLit(s) => doc.text("\"${escape_string(s)}\""),
     .BoolLit(b) => doc.text(if b { "true" } else { "false" }),
     .Unary(op, inner) => {
       case op {
-        .Neg => doc.concat([doc.text("-"), format_expr_no_trivia(inner)]),
-        .Not => doc.concat([doc.text("!"), format_expr_no_trivia(inner)]),
+        .Neg => doc.concat([doc.text("-"), format_literal_expr(inner, tm)]),
+        .Not => doc.concat([doc.text("!"), format_literal_expr(inner, tm)]),
         _ => doc.text("/* error */"),
       }
     },
@@ -1340,6 +1365,36 @@ fn is_simple_expr(expr: Expr) Bool {
     .Record(entries) => are_simple_record_entries(entries),
     .NamedRecord(_, entries) => are_simple_record_entries(entries),
     _ => false,
+  }
+}
+
+/// Check if an expression needs parentheses when used as a receiver for
+/// dot-access (`.field` or `.method()`). Binary, unary, if, case, etc.
+/// all need parens; ident, call, field, index, literals do not.
+fn needs_receiver_parens(expr: Expr) Bool {
+  case expr.kind {
+    .Ident(_) => false,
+    .IntLit(_) => false,
+    .FloatLit(_) => false,
+    .StringLit(_) => false,
+    .StringInterp(_) => false,
+    .BoolLit(_) => false,
+    .Call(_, _) => false,
+    .Field(_, _) => false,
+    .Index(_, _) => false,
+    .Array(_) => false,
+    .Record(_) => false,
+    .NamedRecord(_, _) => false,
+    .Variant(_, _) => false,
+    _ => true,
+  }
+}
+
+fn format_receiver(obj: Expr, tm: TriviaMap) Doc {
+  if needs_receiver_parens(obj) {
+    doc.concat([doc.text("("), format_expr(obj, tm), doc.text(")")])
+  } else {
+    format_expr(obj, tm)
   }
 }
 
