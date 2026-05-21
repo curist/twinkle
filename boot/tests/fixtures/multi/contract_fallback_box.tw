@@ -1,0 +1,11 @@
+type Box<T> = .{ value: T }
+
+fn to_string<T: Stringify>(b: Box<T>) String {
+  "Box(${b.value})"
+}
+
+fn show<T: Stringify>(x: T) String {
+  "${x}"
+}
+
+pub fn show_box() String { show(Box.{ value: 42 }) }

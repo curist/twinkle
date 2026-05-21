@@ -1,0 +1,5 @@
+use lib.json
+
+use .contract_fallback_box
+
+fn main() String { contract_fallback_box.show_box() }

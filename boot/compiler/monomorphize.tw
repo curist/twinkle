@@ -587,7 +587,11 @@ fn fallback_contract_target_id(
         subst := match_type_against(recv_pattern, receiver_ty, Dict.new())
         type_params := collect_type_params(func)
 
-        if type_params.len() == 0 or subst_covers(type_params, subst) or !contains_var(recv_pattern) {
+        if type_params.len() == 0 {
+          if recv_pattern == receiver_ty {
+            return .Some(func.func_id)
+          }
+        } else if subst_covers(type_params, subst) {
           return .Some(func.func_id)
         }
       },
