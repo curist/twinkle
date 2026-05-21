@@ -2,7 +2,7 @@ use lib.source.span
 use lib.source.diagnostics.{DiagKind, StageResult}
 use lib.source.diagnostics as diag
 use .tokens
-use .tokens.{Token, TokenKind}
+use .tokens.{Token, TokenKind, Trivia, TriviaKind}
 
 type ScanStringResult = .{
   next_index: Int,
@@ -61,12 +61,12 @@ fn is_ident_continue(c: Byte) Bool {
   is_ident_start(c) or c.is_digit()
 }
 
-fn make_token(kind: TokenKind, source: String, start: Int, end: Int, file_id: Int, preceded_by_newline: Bool) Token {
-  kind.make(source.slice(start, end), span.new(file_id, start, end), preceded_by_newline)
+fn make_token(kind: TokenKind, source: String, start: Int, end: Int, file_id: Int, preceded_by_newline: Bool, leading_trivia: Vector<Trivia>) Token {
+  tokens.make_with_trivia(kind, source.slice(start, end), span.new(file_id, start, end), preceded_by_newline, leading_trivia)
 }
 
-fn make_token_text(kind: TokenKind, text: String, start: Int, end: Int, file_id: Int, preceded_by_newline: Bool) Token {
-  kind.make(text, span.new(file_id, start, end), preceded_by_newline)
+fn make_token_text(kind: TokenKind, text: String, start: Int, end: Int, file_id: Int, preceded_by_newline: Bool, leading_trivia: Vector<Trivia>) Token {
+  tokens.make_with_trivia(kind, text, span.new(file_id, start, end), preceded_by_newline, leading_trivia)
 }
 
 
@@ -200,12 +200,22 @@ pub fn lex(source: String, file_id: Int) StageResult<Vector<Token>> {
   saw_newline := false
   n := source.len()
   interp_depths: Vector<Int> = []
+  trivia_buf: Vector<Trivia> = []
+  blank_pending := false
 
   for i < n {
     c := source[i]
 
     if c.is_space() {
       if c.is_newline() {
+        if saw_newline and !blank_pending {
+          trivia_buf = trivia_buf.append(Trivia.{
+            kind: .BlankLine,
+            text: "",
+            span: span.new(file_id, i, i + 1),
+          })
+          blank_pending = true
+        }
         saw_newline = true
       }
       i = i + 1
@@ -213,30 +223,43 @@ pub fn lex(source: String, file_id: Int) StageResult<Vector<Token>> {
     }
 
     if is_byte(c, "/") and i + 1 < n and is_byte(source[i + 1], "/") {
+      comment_start := i
+      kind := TriviaKind.LineComment
+      if i + 2 < n and is_byte(source[i + 2], "/") {
+        kind = .DocComment
+      }
       i = i + 2
       for i < n and !source[i].is_newline() {
         i = i + 1
       }
+      trivia_buf = trivia_buf.append(Trivia.{
+        kind,
+        text: source.slice(comment_start, i),
+        span: span.new(file_id, comment_start, i),
+      })
       continue
     }
 
     token_start := i
     preceded_by_newline := saw_newline
     saw_newline = false
+    leading_trivia := trivia_buf
+    trivia_buf = []
+    blank_pending = false
 
     if interp_depths.len() > 0 {
       depth := interp_depths[interp_depths.len() - 1]
       if is_byte(c, "{") {
         i = i + 1
         interp_depths = .slice(0, interp_depths.len() - 1).append(depth + 1)
-        out = .append(make_token(.LBrace, source, token_start, i, file_id, preceded_by_newline))
+        out = .append(make_token(.LBrace, source, token_start, i, file_id, preceded_by_newline, leading_trivia))
         continue
       }
       if is_byte(c, "}") {
         if depth > 1 {
           i = i + 1
           interp_depths = .slice(0, interp_depths.len() - 1).append(depth - 1)
-          out = .append(make_token(.RBrace, source, token_start, i, file_id, preceded_by_newline))
+          out = .append(make_token(.RBrace, source, token_start, i, file_id, preceded_by_newline, leading_trivia))
           continue
         }
 
@@ -253,6 +276,7 @@ pub fn lex(source: String, file_id: Int) StageResult<Vector<Token>> {
             i,
             file_id,
             preceded_by_newline,
+            leading_trivia,
           ))
           interp_depths = .append(1)
           continue
@@ -272,6 +296,7 @@ pub fn lex(source: String, file_id: Int) StageResult<Vector<Token>> {
           i,
           file_id,
           preceded_by_newline,
+          leading_trivia,
         ))
         continue
       }
@@ -283,11 +308,12 @@ pub fn lex(source: String, file_id: Int) StageResult<Vector<Token>> {
         i = i + 1
       }
       text := source.slice(token_start, i)
-      out = .append(tokens.make(
+      out = .append(tokens.make_with_trivia(
         keyword_or_ident(text),
         text,
         span.new(file_id, token_start, i),
         preceded_by_newline,
+        leading_trivia,
       ))
       continue
     }
@@ -299,7 +325,7 @@ pub fn lex(source: String, file_id: Int) StageResult<Vector<Token>> {
         for i < n and source[i].is_hex_digit() {
           i = i + 1
         }
-        out = .append(make_token(.IntLit, source, token_start, i, file_id, preceded_by_newline))
+        out = .append(make_token(.IntLit, source, token_start, i, file_id, preceded_by_newline, leading_trivia))
         continue
       }
 
@@ -317,7 +343,7 @@ pub fn lex(source: String, file_id: Int) StageResult<Vector<Token>> {
         }
       }
 
-      out = .append(make_token(kind, source, token_start, i, file_id, preceded_by_newline))
+      out = .append(make_token(kind, source, token_start, i, file_id, preceded_by_newline, leading_trivia))
       continue
     }
 
@@ -334,6 +360,7 @@ pub fn lex(source: String, file_id: Int) StageResult<Vector<Token>> {
           i,
           file_id,
           preceded_by_newline,
+          leading_trivia,
         ))
         interp_depths = .append(1)
         continue
@@ -346,13 +373,13 @@ pub fn lex(source: String, file_id: Int) StageResult<Vector<Token>> {
         ))
       }
 
-      out = .append(make_token_text(.StringLit, scanned.text, token_start, i, file_id, preceded_by_newline))
+      out = .append(make_token_text(.StringLit, scanned.text, token_start, i, file_id, preceded_by_newline, leading_trivia))
       continue
     }
 
     if is_byte(c, ":") and i + 1 < n and is_byte(source[i + 1], "=") {
       i = i + 2
-      out = .append(make_token(.ColonEq, source, token_start, i, file_id, preceded_by_newline))
+      out = .append(make_token(.ColonEq, source, token_start, i, file_id, preceded_by_newline, leading_trivia))
       continue
     }
 
@@ -360,55 +387,55 @@ pub fn lex(source: String, file_id: Int) StageResult<Vector<Token>> {
       c1 := source[i + 1]
       if is_byte(c1, "=") {
         i = i + 2
-        out = .append(make_token(.EqEq, source, token_start, i, file_id, preceded_by_newline))
+        out = .append(make_token(.EqEq, source, token_start, i, file_id, preceded_by_newline, leading_trivia))
         continue
       }
       if is_byte(c1, ">") {
         i = i + 2
-        out = .append(make_token(.FatArrow, source, token_start, i, file_id, preceded_by_newline))
+        out = .append(make_token(.FatArrow, source, token_start, i, file_id, preceded_by_newline, leading_trivia))
         continue
       }
     }
 
     if is_byte(c, "!") and i + 1 < n and is_byte(source[i + 1], "=") {
       i = i + 2
-      out = .append(make_token(.BangEq, source, token_start, i, file_id, preceded_by_newline))
+      out = .append(make_token(.BangEq, source, token_start, i, file_id, preceded_by_newline, leading_trivia))
       continue
     }
 
     if is_byte(c, "<") and i + 1 < n and is_byte(source[i + 1], "=") {
       i = i + 2
-      out = .append(make_token(.LtEq, source, token_start, i, file_id, preceded_by_newline))
+      out = .append(make_token(.LtEq, source, token_start, i, file_id, preceded_by_newline, leading_trivia))
       continue
     }
 
     if is_byte(c, "<") and i + 1 < n and is_byte(source[i + 1], "<") {
       i = i + 2
-      out = .append(make_token(.LtLt, source, token_start, i, file_id, preceded_by_newline))
+      out = .append(make_token(.LtLt, source, token_start, i, file_id, preceded_by_newline, leading_trivia))
       continue
     }
 
     if is_byte(c, ">") and i + 1 < n and is_byte(source[i + 1], "=") {
       i = i + 2
-      out = .append(make_token(.GtEq, source, token_start, i, file_id, preceded_by_newline))
+      out = .append(make_token(.GtEq, source, token_start, i, file_id, preceded_by_newline, leading_trivia))
       continue
     }
 
     if is_byte(c, "&") and i + 1 < n and is_byte(source[i + 1], "&") {
       i = i + 2
-      out = .append(make_token(.AmpAmp, source, token_start, i, file_id, preceded_by_newline))
+      out = .append(make_token(.AmpAmp, source, token_start, i, file_id, preceded_by_newline, leading_trivia))
       continue
     }
 
     if is_byte(c, "|") and i + 1 < n and is_byte(source[i + 1], "|") {
       i = i + 2
-      out = .append(make_token(.PipePipe, source, token_start, i, file_id, preceded_by_newline))
+      out = .append(make_token(.PipePipe, source, token_start, i, file_id, preceded_by_newline, leading_trivia))
       continue
     }
 
     if is_byte(c, ".") and i + 1 < n and is_byte(source[i + 1], ".") {
       i = i + 2
-      out = .append(make_token(.DotDot, source, token_start, i, file_id, preceded_by_newline))
+      out = .append(make_token(.DotDot, source, token_start, i, file_id, preceded_by_newline, leading_trivia))
       continue
     }
 
@@ -447,7 +474,7 @@ pub fn lex(source: String, file_id: Int) StageResult<Vector<Token>> {
     case kind {
       .Some(k) => {
         i = i + 1
-        out = .append(make_token(k, source, token_start, i, file_id, preceded_by_newline))
+        out = .append(make_token(k, source, token_start, i, file_id, preceded_by_newline, leading_trivia))
       },
       .None => {
         i = i + 1
@@ -455,12 +482,12 @@ pub fn lex(source: String, file_id: Int) StageResult<Vector<Token>> {
           span.new(file_id, token_start, i),
           "unexpected character in source",
         ))
-        out = .append(make_token(.Error, source, token_start, i, file_id, preceded_by_newline))
+        out = .append(make_token(.Error, source, token_start, i, file_id, preceded_by_newline, leading_trivia))
       },
     }
   }
 
-  out = .append(tokens.eof(file_id, n, saw_newline))
+  out = .append(tokens.eof_with_trivia(file_id, n, saw_newline, trivia_buf))
   StageResult.{ value: out, diagnostics: diagnostics_out }
 }
 

@@ -1,0 +1,10 @@
+use compiler.ast.{Module}
+use compiler.fmt.layout
+use compiler.fmt.printer
+use compiler.tokens.{Token}
+
+/// Format a module AST into a canonical source string.
+pub fn format(module: Module, tokens: Vector<Token>) String {
+  d := printer.format_module(module, tokens)
+  layout.render(d)
+}

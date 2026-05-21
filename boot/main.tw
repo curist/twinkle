@@ -10,6 +10,7 @@ use commands.ir.{run_ir_command}
 use commands.build.{run_build_command, resolve_build_output}
 use commands.run.{run_command_impl}
 use commands.lsp.{run_lsp_command}
+use commands.fmt.{run_fmt_command}
 
 fn file_command(name: String, help: String) {
   command.make(name, help).add_required_positional("file", "Path to the .tw source file")
@@ -36,12 +37,16 @@ build_cmd := file_command("build", "Compile to linked WAT or Wasm")
 
 lsp_cmd := command.make("lsp", "Start the Language Server Protocol server")
 
+fmt_cmd := file_command("fmt", "Format source")
+  .add_flag("check", "Check whether source is formatted")
+
 cli := app.make("twk", "Twinkle compiler").add_commands([
   run_cmd,
   check_cmd,
   build_cmd,
   ir_cmd,
   parse_cmd,
+  fmt_cmd,
   lsp_cmd,
 ])
 
@@ -78,6 +83,7 @@ fn build_command_plan(parsed: ParseResult) CommandPlan!String {
           "Would build '${file}' to '${output}'."
         },
         "lsp" => "Would start the LSP server.",
+        "fmt" => try file_detail(parsed, fn(file) { "Would format '${file}'." }),
         _ => { return .Err("internal error: unsupported command '${cmd}'") },
       }
       .Ok(.{ cmd: cmd, detail: detail })
@@ -93,6 +99,7 @@ fn run_command(parsed: ParseResult) {
     .Some("ir") => run_ir_command(parsed),
     .Some("build") => run_build_command(parsed),
     .Some("lsp") => run_lsp_command(parsed),
+    .Some("fmt") => run_fmt_command(parsed),
     .Some("run") => {
       file := case get_positional(parsed, 0, "file") {
         .Ok(path) => path,

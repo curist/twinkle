@@ -1,0 +1,119 @@
+pub type Doc = {
+  Nil,
+  Text(String),
+  Line,
+  HardLine,
+  Indent(Int, Doc),
+  Concat(Doc, Doc),
+  Group(Doc),
+  IfBreak(Doc, Doc),
+}
+
+pub fn text(s: String) Doc {
+  .Text(s)
+}
+
+pub fn line() Doc { .Line }
+
+pub fn hard_line() Doc { .HardLine }
+
+pub fn nil() Doc { .Nil }
+
+pub fn group(d: Doc) Doc {
+  .Group(d)
+}
+
+pub fn if_break(broken: Doc, flat: Doc) Doc {
+  .IfBreak(broken, flat)
+}
+
+pub fn indent(d: Doc) Doc {
+  .Indent(2, d)
+}
+
+pub fn indent_by(n: Int, d: Doc) Doc {
+  .Indent(n, d)
+}
+
+pub fn concat(docs: Vector<Doc>) Doc {
+  docs.fold(
+    Doc.Nil,
+    fn(acc, d) {
+      case acc {
+        .Nil => d,
+        _ => .Concat(acc, d),
+      }
+    },
+  )
+}
+
+pub fn join(docs: Vector<Doc>, sep: Doc) Doc {
+  result := Doc.Nil
+  for d, i in docs {
+    if i > 0 {
+      result = .Concat(result, .Concat(sep, d))
+    } else {
+      result = d
+    }
+  }
+  result
+}
+
+/// Tight brackets: "foo(a, b, c)" flat, or:
+/// foo(
+///   a,
+///   b,
+///   c,
+/// )
+pub fn tight_bracketed(open: String, close: String, docs: Vector<Doc>) Doc {
+  if docs.len() == 0 {
+    return text("${open}${close}")
+  }
+  group(
+    concat(
+      [
+        text(open),
+        indent(
+          concat(
+            [
+              if_break(hard_line(), nil()),
+              join(docs, concat([text(","), line()])),
+              if_break(text(","), nil()),
+            ],
+          ),
+        ),
+        if_break(hard_line(), nil()),
+        text(close),
+      ],
+    ),
+  )
+}
+
+/// Spaced brackets: ".{ x: 1, y: 2 }" flat, or:
+/// .{
+///   x: 1,
+///   y: 2,
+/// }
+pub fn spaced_bracketed(open: String, close: String, docs: Vector<Doc>) Doc {
+  if docs.len() == 0 {
+    return text("${open}${close}")
+  }
+  group(
+    concat(
+      [
+        text(open),
+        indent(
+          concat(
+            [
+              line(),
+              join(docs, concat([text(","), line()])),
+              if_break(text(","), nil()),
+            ],
+          ),
+        ),
+        line(),
+        text(close),
+      ],
+    ),
+  )
+}

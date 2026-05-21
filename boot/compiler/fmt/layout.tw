@@ -1,0 +1,146 @@
+use compiler.fmt.doc.{Doc}
+
+type Mode = { Flat, Break }
+
+type StackEntry = .{ indent: Int, mode: Mode, doc: Doc }
+
+/// Render a Doc tree to a string with default 80-column width.
+pub fn render(doc: Doc) String { render_with_width(doc, 80) }
+
+pub fn render_with_width(doc: Doc, width: Int) String {
+  buf: Vector<String> = []
+  col := 0
+  stack: Vector<StackEntry> = [StackEntry.{ indent: 0, mode: .Break, doc }]
+  
+  for stack.len() > 0 {
+    last := stack.len() - 1
+    entry := stack[last]
+    stack = stack.slice(0, last)
+    
+    case entry.doc {
+      .Nil => {},
+      .Text(s) => {
+        buf = buf.append(s)
+        col = col + s.len()
+      },
+      .Line => {
+        case entry.mode {
+          .Flat => {
+            buf = buf.append(" ")
+            col = col + 1
+          },
+          .Break => {
+            buf = buf.append("\n")
+            buf = buf.append(spaces(entry.indent))
+            col = entry.indent
+          },
+        }
+      },
+      .HardLine => {
+        buf = buf.append("\n")
+        buf = buf.append(spaces(entry.indent))
+        col = entry.indent
+      },
+      .Indent(n, inner) => {
+        stack = stack.append(
+          StackEntry.{ indent: entry.indent + n, mode: entry.mode, doc: inner },
+        )
+      },
+      .Concat(a, b) => {
+        stack = stack.append(
+          StackEntry.{ indent: entry.indent, mode: entry.mode, doc: b },
+        )
+        stack = stack.append(
+          StackEntry.{ indent: entry.indent, mode: entry.mode, doc: a },
+        )
+      },
+      .Group(inner) => {
+        if fits(inner, entry.indent, width - col) {
+          stack = stack.append(
+            StackEntry.{ indent: entry.indent, mode: .Flat, doc: inner },
+          )
+        } else {
+          stack = stack.append(
+            StackEntry.{ indent: entry.indent, mode: .Break, doc: inner },
+          )
+        }
+      },
+      .IfBreak(broken, flat) => {
+        case entry.mode {
+          .Flat => {
+            stack = stack.append(
+              StackEntry.{ indent: entry.indent, mode: entry.mode, doc: flat },
+            )
+          },
+          .Break => {
+            stack = stack.append(
+              StackEntry.{ indent: entry.indent, mode: entry.mode, doc: broken },
+            )
+          },
+        }
+      },
+    }
+  }
+  
+  buf.join("")
+}
+
+/// Check whether a doc fits in `remaining` columns when rendered flat.
+fn fits(doc: Doc, indent: Int, remaining: Int) Bool {
+  fit_stack: Vector<Doc> = [doc]
+  rem := remaining
+  
+  for fit_stack.len() > 0 {
+    if rem < 0 {
+      return false
+    }
+    last := fit_stack.len() - 1
+    d := fit_stack[last]
+    fit_stack = fit_stack.slice(0, last)
+    
+    case d {
+      .Nil => {},
+      .Text(s) => {
+        rem = rem - s.len()
+      },
+      .Line => {
+        // In flat mode, Line becomes a single space
+        rem = rem - 1
+      },
+      .HardLine => {
+        // HardLine can never be rendered flat
+        return false
+      },
+      .Indent(n, inner) => {
+        fit_stack = fit_stack.append(inner)
+      },
+      .Concat(a, b) => {
+        fit_stack = fit_stack.append(b)
+        fit_stack = fit_stack.append(a)
+      },
+      .Group(inner) => {
+        // Nested groups in flat mode stay flat
+        fit_stack = fit_stack.append(inner)
+      },
+      .IfBreak(broken, flat) => {
+        // In flat mode, use the flat branch
+        fit_stack = fit_stack.append(flat)
+      },
+    }
+  }
+  
+  rem >= 0
+}
+
+fn spaces(n: Int) String {
+  if n <= 0 {
+    return ""
+  }
+  buf: Vector<String> = []
+  i := 0
+  for i < n {
+    buf = buf.append(" ")
+    i = i + 1
+  }
+  buf.join("")
+}

@@ -71,19 +71,40 @@ pub type TokenKind = {
   Error,
 }
 
+pub type TriviaKind = {
+  LineComment,
+  DocComment,
+  BlankLine,
+}
+
+pub type Trivia = .{
+  kind: TriviaKind,
+  text: String,
+  span: Span,
+}
+
 pub type Token = .{
   kind: TokenKind,
   text: String,
   span: Span,
   preceded_by_newline: Bool,
+  leading_trivia: Vector<Trivia>,
 }
 
 pub fn make(kind: TokenKind, text: String, token_span: Span, preceded_by_newline: Bool) Token {
-  .{ kind, text, span: token_span, preceded_by_newline }
+  make_with_trivia(kind, text, token_span, preceded_by_newline, [])
+}
+
+pub fn make_with_trivia(kind: TokenKind, text: String, token_span: Span, preceded_by_newline: Bool, leading_trivia: Vector<Trivia>) Token {
+  .{ kind, text, span: token_span, preceded_by_newline, leading_trivia }
 }
 
 pub fn eof(file_id: Int, offset: Int, preceded_by_newline: Bool) Token {
-  make(.Eof, "", span.new(file_id, offset, offset), preceded_by_newline)
+  eof_with_trivia(file_id, offset, preceded_by_newline, [])
+}
+
+pub fn eof_with_trivia(file_id: Int, offset: Int, preceded_by_newline: Bool, leading_trivia: Vector<Trivia>) Token {
+  make_with_trivia(.Eof, "", span.new(file_id, offset, offset), preceded_by_newline, leading_trivia)
 }
 
 pub fn name(kind: TokenKind) String {
