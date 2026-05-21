@@ -33,6 +33,7 @@ pub fn run_fmt_command(parsed: ParseResult) {
     lexed.diagnostics,
   )
   formatted := formatter.format(parsed_mod.value, lexed.value)
+  
   if app.has_flag(parsed, "check") {
     if source != formatted {
       eprintln("Would reformat: ${file}")

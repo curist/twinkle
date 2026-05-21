@@ -1,6 +1,7 @@
-use lib.source.span
-use lib.source.diagnostics.{DiagKind, StageResult}
 use lib.source.diagnostics as diag
+use lib.source.diagnostics.{DiagKind, StageResult}
+use lib.source.span
+
 use .tokens
 use .tokens.{Token, TokenKind, Trivia, TriviaKind}
 
@@ -39,75 +40,109 @@ fn keyword_or_ident(text: String) TokenKind {
   }
 }
 
-
-fn is_byte(c: Byte, literal: String) Bool {
-  c == literal[0]
-}
+fn is_byte(c: Byte, literal: String) Bool { c == literal[0] }
 
 // c in [start, end]
 fn in_byte_range(c: Byte, start: String, end: String) Bool {
   c >= start[0] and c <= end[0]
 }
 
-fn byte_value(s: String) Byte {
-  s[0]
+fn byte_value(s: String) Byte { s[0] }
+
+fn is_ident_start(c: Byte) Bool { c.is_upper() or c.is_lower() or c == 95 }
+
+fn is_ident_continue(c: Byte) Bool { is_ident_start(c) or c.is_digit() }
+
+fn make_token(
+  kind: TokenKind,
+  source: String,
+  start: Int,
+  end: Int,
+  file_id: Int,
+  preceded_by_newline: Bool,
+  leading_trivia: Vector<Trivia>,
+) Token {
+  tokens.make_with_trivia(
+    kind,
+    source.slice(start, end),
+    span.new(file_id, start, end),
+    preceded_by_newline,
+    leading_trivia,
+  )
 }
 
-fn is_ident_start(c: Byte) Bool {
-  c.is_upper() or c.is_lower() or c == 0x5F
+fn make_token_text(
+  kind: TokenKind,
+  text: String,
+  start: Int,
+  end: Int,
+  file_id: Int,
+  preceded_by_newline: Bool,
+  leading_trivia: Vector<Trivia>,
+) Token {
+  tokens.make_with_trivia(
+    kind,
+    text,
+    span.new(file_id, start, end),
+    preceded_by_newline,
+    leading_trivia,
+  )
 }
-
-fn is_ident_continue(c: Byte) Bool {
-  is_ident_start(c) or c.is_digit()
-}
-
-fn make_token(kind: TokenKind, source: String, start: Int, end: Int, file_id: Int, preceded_by_newline: Bool, leading_trivia: Vector<Trivia>) Token {
-  tokens.make_with_trivia(kind, source.slice(start, end), span.new(file_id, start, end), preceded_by_newline, leading_trivia)
-}
-
-fn make_token_text(kind: TokenKind, text: String, start: Int, end: Int, file_id: Int, preceded_by_newline: Bool, leading_trivia: Vector<Trivia>) Token {
-  tokens.make_with_trivia(kind, text, span.new(file_id, start, end), preceded_by_newline, leading_trivia)
-}
-
 
 fn unescape_string(raw: String) String {
   // Fast path: no backslash → return as-is
   has_escape := false
   k := 0
+  
   for k < raw.len() {
     if is_byte(raw[k], "\\") {
       has_escape = true
       break
     }
+    
     k = k + 1
   }
-  if !has_escape { return raw }
-
+  
+  if !has_escape {
+    return raw
+  }
+  
   // Build unescaped parts, then join via interpolation
   parts: Vector<String> = []
   i := 0
   seg_start := 0
   n := raw.len()
+  
   for i < n {
     ch := raw[i]
+    
     if is_byte(ch, "\\") and i + 1 < n {
       // Flush segment before this escape
-      if i > seg_start {
-        parts = .append(raw.slice(seg_start, i))
-      }
+      if i > seg_start { parts = .append(raw.slice(seg_start, i)) }
+      
       next := raw[i + 1]
-      if is_byte(next, "n") { parts = .append("\n") }
-      else if is_byte(next, "t") { parts = .append("\t") }
-      else if is_byte(next, "r") { parts = .append("\r") }
-      else if is_byte(next, "\\") { parts = .append("\\") }
-      else if is_byte(next, "\"") { parts = .append("\"") }
-      else if is_byte(next, "\$") { parts = .append("\$") }
-      else if is_byte(next, "e") { parts = .append("\e") }
-      else if is_byte(next, "x") and i + 3 < n {
+      
+      if is_byte(next, "n") {
+        parts = .append("\n")
+      } else if is_byte(next, "t") {
+        parts = .append("\t")
+      } else if is_byte(next, "r") {
+        parts = .append("\r")
+      } else if is_byte(next, "\\") {
+        parts = .append("\\")
+      } else if is_byte(next, "\"") {
+        parts = .append("\"")
+      } else if is_byte(next, "\$") {
+        parts = .append("\$")
+      } else if is_byte(next, "e") {
+        parts = .append("\e")
+      } else if is_byte(next, "x") and i + 3 < n {
         hi := hex_digit_value(raw[i + 2])
         lo := hex_digit_value(raw[i + 3])
+        
         if hi >= 0 and lo >= 0 {
           code := hi * 16 + lo
+          
           case String.from_code_point(code) {
             .Some(s) => {
               parts = .append(s)
@@ -115,9 +150,7 @@ fn unescape_string(raw: String) String {
               seg_start = i
               continue
             },
-            .None => {
-              parts = .append(raw.slice(i, i + 2))
-            },
+            .None => { parts = .append(raw.slice(i, i + 2)) },
           }
         } else {
           parts = .append(raw.slice(i, i + 2))
@@ -126,43 +159,50 @@ fn unescape_string(raw: String) String {
         // Unknown escape — keep both chars
         parts = .append(raw.slice(i, i + 2))
       }
+      
       i = i + 2
       seg_start = i
     } else {
       i = i + 1
     }
   }
+  
   // Flush trailing segment
-  if seg_start < n {
-    parts = .append(raw.slice(seg_start, n))
-  }
+  if seg_start < n { parts = .append(raw.slice(seg_start, n)) }
+  
   parts.join("")
 }
 
 fn hex_digit_value(ch: Byte) Int {
-  if in_byte_range(ch, "0", "9") { ch - byte_value("0") }
-  else if in_byte_range(ch, "A", "F") { ch - byte_value("A") + 10 }
-  else if in_byte_range(ch, "a", "f") { ch - byte_value("a") + 10 }
-  else { -1 }
+  if in_byte_range(ch, "0", "9") {
+    ch - byte_value("0")
+  } else if in_byte_range(ch, "A", "F") {
+    ch - byte_value("A") + 10
+  } else if in_byte_range(ch, "a", "f") { ch - byte_value("a") + 10 } else {
+    -1
+  }
 }
 
 fn scan_string_segment(source: String, from: Int, content_start: Int) ScanStringResult {
   i := from
   n := source.len()
   escaped := false
-
+  
   for i < n {
     ch := source[i]
+    
     if escaped {
       escaped = false
       i = i + 1
       continue
     }
+    
     if is_byte(ch, "\\") {
       escaped = true
       i = i + 1
       continue
     }
+    
     if is_byte(ch, "\"") {
       return ScanStringResult.{
         next_index: i + 1,
@@ -171,7 +211,8 @@ fn scan_string_segment(source: String, from: Int, content_start: Int) ScanString
         found_interp: false,
       }
     }
-    if is_byte(ch, "$") and i + 1 < n and is_byte(source[i + 1], "{") {
+    
+    if is_byte(ch, "\$") and i + 1 < n and is_byte(source[i + 1], "{") {
       return ScanStringResult.{
         next_index: i + 2,
         text: unescape_string(source.slice(content_start, i)),
@@ -179,12 +220,12 @@ fn scan_string_segment(source: String, from: Int, content_start: Int) ScanString
         found_interp: true,
       }
     }
-    if is_byte(ch, "\n") {
-      break
-    }
+    
+    if is_byte(ch, "\n") { break }
+    
     i = i + 1
   }
-
+  
   ScanStringResult.{
     next_index: i,
     text: source.slice(content_start, i),
@@ -202,246 +243,417 @@ pub fn lex(source: String, file_id: Int) StageResult<Vector<Token>> {
   interp_depths: Vector<Int> = []
   trivia_buf: Vector<Trivia> = []
   blank_pending := false
-
+  
   for i < n {
     c := source[i]
-
+    
     if c.is_space() {
       if c.is_newline() {
         if saw_newline and !blank_pending {
-          trivia_buf = trivia_buf.append(Trivia.{
-            kind: .BlankLine,
-            text: "",
-            span: span.new(file_id, i, i + 1),
-          })
+          trivia_buf = .append(
+            Trivia.{
+              kind: .BlankLine,
+              text: "",
+              span: span.new(file_id, i, i + 1),
+            },
+          )
           blank_pending = true
         }
+        
         saw_newline = true
       }
+      
       i = i + 1
       continue
     }
-
+    
     if is_byte(c, "/") and i + 1 < n and is_byte(source[i + 1], "/") {
       comment_start := i
       kind := TriviaKind.LineComment
-      if i + 2 < n and is_byte(source[i + 2], "/") {
-        kind = .DocComment
-      }
+      
+      if i + 2 < n and is_byte(source[i + 2], "/") { kind = .DocComment }
+      
       i = i + 2
-      for i < n and !source[i].is_newline() {
-        i = i + 1
-      }
-      trivia_buf = trivia_buf.append(Trivia.{
-        kind,
-        text: source.slice(comment_start, i),
-        span: span.new(file_id, comment_start, i),
-      })
+      
+      for i < n and !source[i].is_newline() { i = i + 1 }
+      
+      trivia_buf = .append(
+        Trivia.{
+          kind,
+          text: source.slice(comment_start, i),
+          span: span.new(file_id, comment_start, i),
+        },
+      )
       // Let the comment's trailing newline establish preceded_by_newline.
       // Do not combine it with the newline before the comment as a blank line.
       saw_newline = false
       continue
     }
-
+    
     token_start := i
     preceded_by_newline := saw_newline
     saw_newline = false
     leading_trivia := trivia_buf
     trivia_buf = []
     blank_pending = false
-
+    
     if interp_depths.len() > 0 {
       depth := interp_depths[interp_depths.len() - 1]
+      
       if is_byte(c, "{") {
         i = i + 1
         interp_depths = .slice(0, interp_depths.len() - 1).append(depth + 1)
-        out = .append(make_token(.LBrace, source, token_start, i, file_id, preceded_by_newline, leading_trivia))
+        out = .append(
+          make_token(
+            .LBrace,
+            source,
+            token_start,
+            i,
+            file_id,
+            preceded_by_newline,
+            leading_trivia,
+          ),
+        )
         continue
       }
+      
       if is_byte(c, "}") {
         if depth > 1 {
           i = i + 1
           interp_depths = .slice(0, interp_depths.len() - 1).append(depth - 1)
-          out = .append(make_token(.RBrace, source, token_start, i, file_id, preceded_by_newline, leading_trivia))
+          out = .append(
+            make_token(
+              .RBrace,
+              source,
+              token_start,
+              i,
+              file_id,
+              preceded_by_newline,
+              leading_trivia,
+            ),
+          )
           continue
         }
-
+        
         interp_depths = .slice(0, interp_depths.len() - 1)
         i = i + 1
         scanned := scan_string_segment(source, i, i)
         i = scanned.next_index
-
+        
         if scanned.found_interp {
-          out = .append(make_token_text(
-            .StringContinue,
+          out = .append(
+            make_token_text(
+              .StringContinue,
+              scanned.text,
+              token_start,
+              i,
+              file_id,
+              preceded_by_newline,
+              leading_trivia,
+            ),
+          )
+          interp_depths = .append(1)
+          continue
+        }
+        
+        if !scanned.terminated {
+          diagnostics_out = .append(
+            diag.error(
+              span.new(file_id, token_start, i),
+              "unterminated string literal",
+            ),
+          )
+        }
+        
+        out = .append(
+          make_token_text(
+            .StringEnd,
             scanned.text,
             token_start,
             i,
             file_id,
             preceded_by_newline,
             leading_trivia,
-          ))
-          interp_depths = .append(1)
-          continue
-        }
-
-        if !scanned.terminated {
-          diagnostics_out = .append(diag.error(
-            span.new(file_id, token_start, i),
-            "unterminated string literal",
-          ))
-        }
-
-        out = .append(make_token_text(
-          .StringEnd,
-          scanned.text,
-          token_start,
-          i,
-          file_id,
-          preceded_by_newline,
-          leading_trivia,
-        ))
+          ),
+        )
         continue
       }
     }
-
+    
     if is_ident_start(c) {
       i = i + 1
-      for i < n and is_ident_continue(source[i]) {
-        i = i + 1
-      }
+      
+      for i < n and is_ident_continue(source[i]) { i = i + 1 }
+      
       text := source.slice(token_start, i)
-      out = .append(tokens.make_with_trivia(
-        keyword_or_ident(text),
-        text,
-        span.new(file_id, token_start, i),
-        preceded_by_newline,
-        leading_trivia,
-      ))
+      out = .append(
+        tokens.make_with_trivia(
+          keyword_or_ident(text),
+          text,
+          span.new(file_id, token_start, i),
+          preceded_by_newline,
+          leading_trivia,
+        ),
+      )
       continue
     }
-
+    
     if c.is_digit() {
       // Check for hex literal: 0x...
       if is_byte(c, "0") and i + 1 < n and is_byte(source[i + 1], "x") {
         i = i + 2
-        for i < n and source[i].is_hex_digit() {
-          i = i + 1
-        }
-        out = .append(make_token(.IntLit, source, token_start, i, file_id, preceded_by_newline, leading_trivia))
+        
+        for i < n and source[i].is_hex_digit() { i = i + 1 }
+        
+        out = .append(
+          make_token(
+            .IntLit,
+            source,
+            token_start,
+            i,
+            file_id,
+            preceded_by_newline,
+            leading_trivia,
+          ),
+        )
         continue
       }
-
+      
       i = i + 1
-      for i < n and source[i].is_digit() {
-        i = i + 1
-      }
-
+      
+      for i < n and source[i].is_digit() { i = i + 1 }
+      
       kind := TokenKind.IntLit
+      
       if i + 1 < n and is_byte(source[i], ".") and source[i + 1].is_digit() {
         kind = .FloatLit
         i = i + 1
-        for i < n and source[i].is_digit() {
-          i = i + 1
-        }
+        
+        for i < n and source[i].is_digit() { i = i + 1 }
       }
-
-      out = .append(make_token(kind, source, token_start, i, file_id, preceded_by_newline, leading_trivia))
+      
+      out = .append(
+        make_token(
+          kind,
+          source,
+          token_start,
+          i,
+          file_id,
+          preceded_by_newline,
+          leading_trivia,
+        ),
+      )
       continue
     }
-
+    
     if is_byte(c, "\"") {
       i = i + 1
       scanned := scan_string_segment(source, i, i)
       i = scanned.next_index
-
+      
       if scanned.found_interp {
-        out = .append(make_token_text(
-          .StringStart,
+        out = .append(
+          make_token_text(
+            .StringStart,
+            scanned.text,
+            token_start,
+            i,
+            file_id,
+            preceded_by_newline,
+            leading_trivia,
+          ),
+        )
+        interp_depths = .append(1)
+        continue
+      }
+      
+      if !scanned.terminated {
+        diagnostics_out = .append(
+          diag.error(
+            span.new(file_id, token_start, i),
+            "unterminated string literal",
+          ),
+        )
+      }
+      
+      out = .append(
+        make_token_text(
+          .StringLit,
           scanned.text,
           token_start,
           i,
           file_id,
           preceded_by_newline,
           leading_trivia,
-        ))
-        interp_depths = .append(1)
-        continue
-      }
-
-      if !scanned.terminated {
-        diagnostics_out = .append(diag.error(
-          span.new(file_id, token_start, i),
-          "unterminated string literal",
-        ))
-      }
-
-      out = .append(make_token_text(.StringLit, scanned.text, token_start, i, file_id, preceded_by_newline, leading_trivia))
+        ),
+      )
       continue
     }
-
+    
     if is_byte(c, ":") and i + 1 < n and is_byte(source[i + 1], "=") {
       i = i + 2
-      out = .append(make_token(.ColonEq, source, token_start, i, file_id, preceded_by_newline, leading_trivia))
+      out = .append(
+        make_token(
+          .ColonEq,
+          source,
+          token_start,
+          i,
+          file_id,
+          preceded_by_newline,
+          leading_trivia,
+        ),
+      )
       continue
     }
-
+    
     if is_byte(c, "=") and i + 1 < n {
       c1 := source[i + 1]
+      
       if is_byte(c1, "=") {
         i = i + 2
-        out = .append(make_token(.EqEq, source, token_start, i, file_id, preceded_by_newline, leading_trivia))
+        out = .append(
+          make_token(
+            .EqEq,
+            source,
+            token_start,
+            i,
+            file_id,
+            preceded_by_newline,
+            leading_trivia,
+          ),
+        )
         continue
       }
+      
       if is_byte(c1, ">") {
         i = i + 2
-        out = .append(make_token(.FatArrow, source, token_start, i, file_id, preceded_by_newline, leading_trivia))
+        out = .append(
+          make_token(
+            .FatArrow,
+            source,
+            token_start,
+            i,
+            file_id,
+            preceded_by_newline,
+            leading_trivia,
+          ),
+        )
         continue
       }
     }
-
+    
     if is_byte(c, "!") and i + 1 < n and is_byte(source[i + 1], "=") {
       i = i + 2
-      out = .append(make_token(.BangEq, source, token_start, i, file_id, preceded_by_newline, leading_trivia))
+      out = .append(
+        make_token(
+          .BangEq,
+          source,
+          token_start,
+          i,
+          file_id,
+          preceded_by_newline,
+          leading_trivia,
+        ),
+      )
       continue
     }
-
+    
     if is_byte(c, "<") and i + 1 < n and is_byte(source[i + 1], "=") {
       i = i + 2
-      out = .append(make_token(.LtEq, source, token_start, i, file_id, preceded_by_newline, leading_trivia))
+      out = .append(
+        make_token(
+          .LtEq,
+          source,
+          token_start,
+          i,
+          file_id,
+          preceded_by_newline,
+          leading_trivia,
+        ),
+      )
       continue
     }
-
+    
     if is_byte(c, "<") and i + 1 < n and is_byte(source[i + 1], "<") {
       i = i + 2
-      out = .append(make_token(.LtLt, source, token_start, i, file_id, preceded_by_newline, leading_trivia))
+      out = .append(
+        make_token(
+          .LtLt,
+          source,
+          token_start,
+          i,
+          file_id,
+          preceded_by_newline,
+          leading_trivia,
+        ),
+      )
       continue
     }
-
+    
     if is_byte(c, ">") and i + 1 < n and is_byte(source[i + 1], "=") {
       i = i + 2
-      out = .append(make_token(.GtEq, source, token_start, i, file_id, preceded_by_newline, leading_trivia))
+      out = .append(
+        make_token(
+          .GtEq,
+          source,
+          token_start,
+          i,
+          file_id,
+          preceded_by_newline,
+          leading_trivia,
+        ),
+      )
       continue
     }
-
+    
     if is_byte(c, "&") and i + 1 < n and is_byte(source[i + 1], "&") {
       i = i + 2
-      out = .append(make_token(.AmpAmp, source, token_start, i, file_id, preceded_by_newline, leading_trivia))
+      out = .append(
+        make_token(
+          .AmpAmp,
+          source,
+          token_start,
+          i,
+          file_id,
+          preceded_by_newline,
+          leading_trivia,
+        ),
+      )
       continue
     }
-
+    
     if is_byte(c, "|") and i + 1 < n and is_byte(source[i + 1], "|") {
       i = i + 2
-      out = .append(make_token(.PipePipe, source, token_start, i, file_id, preceded_by_newline, leading_trivia))
+      out = .append(
+        make_token(
+          .PipePipe,
+          source,
+          token_start,
+          i,
+          file_id,
+          preceded_by_newline,
+          leading_trivia,
+        ),
+      )
       continue
     }
-
+    
     if is_byte(c, ".") and i + 1 < n and is_byte(source[i + 1], ".") {
       i = i + 2
-      out = .append(make_token(.DotDot, source, token_start, i, file_id, preceded_by_newline, leading_trivia))
+      out = .append(
+        make_token(
+          .DotDot,
+          source,
+          token_start,
+          i,
+          file_id,
+          preceded_by_newline,
+          leading_trivia,
+        ),
+      )
       continue
     }
-
+    
     kind: TokenKind? = case String.from_byte(c) {
       .Some(ch) => case ch {
         "@" => .Some(.At),
@@ -473,23 +685,45 @@ pub fn lex(source: String, file_id: Int) StageResult<Vector<Token>> {
       },
       .None => .None,
     }
-
+    
     case kind {
       .Some(k) => {
         i = i + 1
-        out = .append(make_token(k, source, token_start, i, file_id, preceded_by_newline, leading_trivia))
+        out = .append(
+          make_token(
+            k,
+            source,
+            token_start,
+            i,
+            file_id,
+            preceded_by_newline,
+            leading_trivia,
+          ),
+        )
       },
       .None => {
         i = i + 1
-        diagnostics_out = .append(diag.error(
-          span.new(file_id, token_start, i),
-          "unexpected character in source",
-        ))
-        out = .append(make_token(.Error, source, token_start, i, file_id, preceded_by_newline, leading_trivia))
+        diagnostics_out = .append(
+          diag.error(
+            span.new(file_id, token_start, i),
+            "unexpected character in source",
+          ),
+        )
+        out = .append(
+          make_token(
+            .Error,
+            source,
+            token_start,
+            i,
+            file_id,
+            preceded_by_newline,
+            leading_trivia,
+          ),
+        )
       },
     }
   }
-
+  
   out = .append(tokens.eof_with_trivia(file_id, n, saw_newline, trivia_buf))
   StageResult.{ value: out, diagnostics: diagnostics_out }
 }
@@ -497,42 +731,63 @@ pub fn lex(source: String, file_id: Int) StageResult<Vector<Token>> {
 /// Lex source and inject a CursorHole token at the given byte offset.
 /// The cursor hole is a zero-width token that acts as a syntactic fence
 /// during completion-mode parsing.
-pub fn lex_with_cursor(source: String, file_id: Int, cursor_offset: Int) StageResult<Vector<Token>> {
+pub fn lex_with_cursor(source: String, file_id: Int, cursor_offset: Int) StageResult<
+  Vector<Token>,
+> {
   lexed := lex(source, file_id)
   result: Vector<Token> = []
   inserted := false
-
+  
   for tk in lexed.value {
     // Insert cursor hole before the first token that starts at or after the cursor
     if !inserted and tk.span.start >= cursor_offset {
-      result = .append(tokens.make(
-        .CursorHole, "", span.new(file_id, cursor_offset, cursor_offset), tk.preceded_by_newline,
-      ))
+      result = .append(
+        tokens.make(
+          .CursorHole,
+          "",
+          span.new(file_id, cursor_offset, cursor_offset),
+          tk.preceded_by_newline,
+        ),
+      )
       inserted = true
     }
+    
     // If cursor falls inside this token (e.g., mid-identifier), split:
     // emit cursor hole just before this token
-    if !inserted and tk.span.start < cursor_offset and tk.span.end > cursor_offset {
-      result = .append(tokens.make(
-        .CursorHole, "", span.new(file_id, cursor_offset, cursor_offset), tk.preceded_by_newline,
-      ))
+    if !inserted and tk.span.start < cursor_offset
+    and tk.span.end > cursor_offset {
+      result = .append(
+        tokens.make(
+          .CursorHole,
+          "",
+          span.new(file_id, cursor_offset, cursor_offset),
+          tk.preceded_by_newline,
+        ),
+      )
       inserted = true
     }
+    
     result = .append(tk)
   }
-
+  
   if !inserted {
     // Cursor is at the very end — insert before Eof
     n := result.len()
+    
     if n > 0 {
       eof_tok := result[n - 1]
       result = .slice(0, n - 1)
-      result = .append(tokens.make(
-        .CursorHole, "", span.new(file_id, cursor_offset, cursor_offset), eof_tok.preceded_by_newline,
-      ))
+      result = .append(
+        tokens.make(
+          .CursorHole,
+          "",
+          span.new(file_id, cursor_offset, cursor_offset),
+          eof_tok.preceded_by_newline,
+        ),
+      )
       result = .append(eof_tok)
     }
   }
-
+  
   StageResult.{ value: result, diagnostics: lexed.diagnostics }
 }

@@ -23,31 +23,33 @@ pub fn render_with_width(doc: Doc, width: Int) String {
   col := 0
   stack: Vector<StackEntry> = [StackEntry.{ indent: 0, mode: .Break, doc }]
   top := stack.len()
+  
   for top > 0 {
     top = top - 1
     entry := stack[top]
+    
     case entry.doc {
       .Nil => {},
       .Text(s) => {
-        buf = buf.append(s)
+        buf = .append(s)
         col = col + s.len()
       },
       .Line => {
         case entry.mode {
           .Flat => {
-            buf = buf.append(" ")
+            buf = .append(" ")
             col = col + 1
           },
           .Break => {
-            buf = buf.append("\n")
-            buf = buf.append(spaces(entry.indent))
+            buf = .append("\n")
+            buf = .append(spaces(entry.indent))
             col = entry.indent
           },
         }
       },
       .HardLine => {
-        buf = buf.append("\n")
-        buf = buf.append(spaces(entry.indent))
+        buf = .append("\n")
+        buf = .append(spaces(entry.indent))
         col = entry.indent
       },
       .Indent(n, inner) => {
@@ -77,6 +79,7 @@ pub fn render_with_width(doc: Doc, width: Int) String {
       },
       .Seq(docs) => {
         idx := docs.len() - 1
+        
         for idx >= 0 {
           pushed := push_stack(
             stack,
@@ -135,6 +138,7 @@ pub fn render_with_width(doc: Doc, width: Int) String {
       },
     }
   }
+  
   buf.join("")
 }
 
@@ -142,16 +146,19 @@ pub fn render_with_width(doc: Doc, width: Int) String {
 fn fits(doc: Doc, indent: Int, remaining: Int) Bool {
   fit_stack: Vector<Doc> = [doc]
   rem := remaining
+  
   for fit_stack.len() > 0 {
-    if rem < 0 { return false }
+    if rem < 0 {
+      return false
+    }
+    
     last := fit_stack.len() - 1
     d := fit_stack[last]
-    fit_stack = fit_stack.slice(0, last)
+    fit_stack = .slice(0, last)
+    
     case d {
       .Nil => {},
-      .Text(s) => {
-        rem = rem - s.len()
-      },
+      .Text(s) => { rem = rem - s.len() },
       .Line => {
         // In flat mode, Line becomes a single space
         rem = rem - 1
@@ -160,40 +167,45 @@ fn fits(doc: Doc, indent: Int, remaining: Int) Bool {
         // HardLine can never be rendered flat
         return false
       },
-      .Indent(n, inner) => {
-        fit_stack = fit_stack.append(inner)
-      },
+      .Indent(n, inner) => { fit_stack = .append(inner) },
       .Concat(a, b) => {
-        fit_stack = fit_stack.append(b)
-        fit_stack = fit_stack.append(a)
+        fit_stack = .append(b)
+        fit_stack = .append(a)
       },
       .Seq(docs) => {
         idx := docs.len() - 1
+        
         for idx >= 0 {
-          fit_stack = fit_stack.append(docs[idx])
+          fit_stack = .append(docs[idx])
           idx = idx - 1
         }
       },
       .Group(inner, _) => {
         // Nested groups in flat mode stay flat
-        fit_stack = fit_stack.append(inner)
+        fit_stack = .append(inner)
       },
       .IfBreak(broken, flat) => {
         // In flat mode, use the flat branch
-        fit_stack = fit_stack.append(flat)
+        fit_stack = .append(flat)
       },
     }
   }
+  
   rem >= 0
 }
 
 fn spaces(n: Int) String {
-  if n <= 0 { return "" }
+  if n <= 0 {
+    return ""
+  }
+  
   buf: Vector<String> = []
   i := 0
+  
   for i < n {
-    buf = buf.append(" ")
+    buf = .append(" ")
     i = i + 1
   }
+  
   buf.join("")
 }
