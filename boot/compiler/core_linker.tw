@@ -19,12 +19,15 @@ use lib.source.span.{Span}
 use .core_linker.dce.{collect_func_refs, compute_reachable}
 
 fn is_builtin_method_type(type_name: String) Bool {
-  type_name == "Int" or type_name == "Float" or type_name == "Bool" or type_name == "Byte"
-  or type_name == "String"
-  or type_name == "Vector"
-  or type_name == "Dict"
-  or type_name == "Option"
-  or type_name == "Result"
+  type_name == "Int"
+    or type_name == "Float"
+    or type_name == "Bool"
+    or type_name == "Byte"
+    or type_name == "String"
+    or type_name == "Vector"
+    or type_name == "Dict"
+    or type_name == "Option"
+    or type_name == "Result"
 }
 
 // ── Public API ──────────────────────────────────────────────────────
@@ -223,7 +226,8 @@ pub fn link(
             case m.func_table[entry.function_name] {
               .Some(local_fid) => {
                 if local_fid.id < builtin_count
-                or remap.has(local_fid.id) and !m.external_refs.has(local_fid.id) {
+                  or remap.has(local_fid.id)
+                  and !m.external_refs.has(local_fid.id) {
                   global_fid := remap_func_id(local_fid, remap)
                   key := "t${canonical_tid}::${entry.method_name}"
 
@@ -262,8 +266,8 @@ pub fn link(
             case m.func_table[entry.function_name] {
               .Some(local_fid) => {
                 if local_fid.id < builtin_count
-                or remap.has(local_fid.id)
-                and (!m.external_refs.has(local_fid.id) or is_builtin_method_type(type_name)) {
+                  or remap.has(local_fid.id)
+                  and (!m.external_refs.has(local_fid.id) or is_builtin_method_type(type_name)) {
                   global_fid := remap_func_id(local_fid, remap)
                   key := "${type_name}::${entry.method_name}"
 

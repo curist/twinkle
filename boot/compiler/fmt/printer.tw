@@ -15,6 +15,10 @@ type TriviaMap = .{
   literal_text: Dict<Int, String>,
 }
 
+type LogicalPiece = .{ op: BinOp, expr: Expr }
+
+type LogicalChain = .{ first: Expr, pieces: Vector<LogicalPiece> }
+
 fn build_trivia_map(tokens: Vector<Token>) TriviaMap {
   leading: Dict<Int, Vector<Trivia>> = Dict.new()
   trailing: Dict<Int, Vector<Trivia>> = Dict.new()
@@ -894,9 +898,17 @@ fn format_unary(op: UnOp, inner: Expr, tm: TriviaMap) Doc {
 }
 
 fn format_binary(op: BinOp, lhs: Expr, rhs: Expr, tm: TriviaMap) Doc {
+  format_binary_inner(op, lhs, rhs, tm, true)
+}
+
+fn format_binary_inner(op: BinOp, lhs: Expr, rhs: Expr, tm: TriviaMap, indent_continuation: Bool) Doc {
+  if is_logical_op(op) {
+    return format_logical_binary(op, lhs, rhs, tm, indent_continuation)
+  }
+
   op_str := binop_str(op)
-  lhs_doc := format_binary_child(op, lhs, false, tm)
-  rhs_doc := format_binary_child(op, rhs, true, tm)
+  lhs_doc := format_binary_child(op, lhs, false, tm, false)
+  rhs_doc := format_binary_child(op, rhs, true, tm, false)
 
   case op {
     .Range => {
@@ -904,18 +916,79 @@ fn format_binary(op: BinOp, lhs: Expr, rhs: Expr, tm: TriviaMap) Doc {
       doc.concat([lhs_doc, doc.text(op_str), rhs_doc])
     },
     .Assign => { doc.concat([lhs_doc, doc.text(" ${op_str} "), rhs_doc]) },
-    _ => { doc.group(doc.concat([lhs_doc, doc.line(), doc.text("${op_str} "), rhs_doc])) },
+    _ => {
+      continuation := doc.concat([doc.line(), doc.text("${op_str} "), rhs_doc])
+      body := if indent_continuation { doc.concat([lhs_doc, doc.indent(continuation)]) } else {
+        doc.concat([lhs_doc, continuation])
+      }
+      doc.group(body)
+    },
   }
 }
 
-fn format_binary_child(parent: BinOp, child: Expr, is_right: Bool, tm: TriviaMap) Doc {
+fn format_logical_binary(op: BinOp, lhs: Expr, rhs: Expr, tm: TriviaMap, indent_continuation: Bool) Doc {
+  chain := collect_logical_chain(op, lhs, rhs)
+  parts: Vector<Doc> = [format_binary_child(op, chain.first, false, tm, false)]
+
+  for piece in chain.pieces {
+    parts = .append(doc.line())
+    parts = .append(doc.text("${binop_str(piece.op)} "))
+    parts = .append(format_binary_child(piece.op, piece.expr, true, tm, false))
+  }
+
+  body := if indent_continuation {
+    doc.concat([parts[0], doc.indent(doc.concat(parts.slice(1, parts.len())))])
+  } else { doc.concat(parts) }
+  doc.group(body)
+}
+
+fn collect_logical_chain(op: BinOp, lhs: Expr, rhs: Expr) LogicalChain {
+  first := lhs
+  pieces: Vector<LogicalPiece> = []
+
+  case lhs.kind {
+    .Binary(child_op, child_lhs, child_rhs) => {
+      if is_logical_op(child_op) and binop_prec(child_op) >= binop_prec(op) {
+        left_chain := collect_logical_chain(child_op, child_lhs, child_rhs)
+        first = left_chain.first
+        pieces = left_chain.pieces
+      }
+    },
+    _ => {},
+  }
+
+  case rhs.kind {
+    .Binary(child_op, child_lhs, child_rhs) => {
+      if is_logical_op(child_op) and binop_prec(child_op) >= binop_prec(op) {
+        right_chain := collect_logical_chain(child_op, child_lhs, child_rhs)
+        pieces = .append(LogicalPiece.{ op, expr: right_chain.first })
+        pieces = .concat(right_chain.pieces)
+      } else {
+        pieces = .append(LogicalPiece.{ op, expr: rhs })
+      }
+    },
+    _ => { pieces = .append(LogicalPiece.{ op, expr: rhs }) },
+  }
+
+  LogicalChain.{ first, pieces }
+}
+
+fn is_logical_op(op: BinOp) Bool { op == .LogicalOr or op == .LogicalAnd }
+
+fn format_binary_child(
+  parent: BinOp,
+  child: Expr,
+  is_right: Bool,
+  tm: TriviaMap,
+  indent_continuation: Bool,
+) Doc {
   child_doc := format_expr(child, tm)
 
   case child.kind {
-    .Binary(child_op, _, _) => {
+    .Binary(child_op, child_lhs, child_rhs) => {
       if needs_binary_parens(parent, child_op, is_right) {
         doc.concat([doc.text("("), child_doc, doc.text(")")])
-      } else { child_doc }
+      } else { format_binary_inner(child_op, child_lhs, child_rhs, tm, indent_continuation) }
     },
     _ => child_doc,
   }
@@ -1007,7 +1080,7 @@ fn format_if(cond: Expr, then_block: Block, else_expr: Expr?, tm: TriviaMap) Doc
     .Some(el) => {
       case el.kind {
         .BlockExpr(block) => is_simple_tail_block(then_block, tm)
-        and is_simple_tail_block(block, tm),
+          and is_simple_tail_block(block, tm),
         _ => false,
       }
     },
