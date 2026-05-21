@@ -659,7 +659,10 @@ fn format_block_with_options(
         .Some(expr) => {
           trivia := get_trivia(tm, expr.span.start)
 
-          if is_simple_expr(expr) and trivia.len() == 0 {
+          trailing_t := get_trailing_trivia(tm, expr.span.end)
+
+          if is_simple_expr(expr) and trivia.len() == 0
+          and trailing_t.len() == 0 {
             return doc.group(
               doc.concat([
                 doc.text("{"),
@@ -675,8 +678,10 @@ fn format_block_with_options(
     } else if block.stmts.len() == 1 and allow_simple_tail_inline {
       stmt := block.stmts[0]
       trivia := get_trivia(tm, stmt_span(stmt).start)
+      trailing_t := get_trailing_trivia(tm, stmt_span(stmt).end)
 
-      if is_simple_stmt(stmt, allow_return_inline) and trivia.len() == 0 {
+      if is_simple_stmt(stmt, allow_return_inline) and trivia.len() == 0
+      and trailing_t.len() == 0 {
         return doc.group(
           doc.concat([
             doc.text("{"),
