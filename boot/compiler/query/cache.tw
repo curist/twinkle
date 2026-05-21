@@ -114,7 +114,6 @@ pub fn note_source_hash(store: Store, module: String, source_hash: Int) Store {
     .None => {
       store.revision = store.revision + 1
       store.source_hashes[module] = source_hash
-
       return store
     },
   }

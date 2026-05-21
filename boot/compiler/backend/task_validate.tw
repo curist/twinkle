@@ -264,7 +264,7 @@ fn op_contains_suspension(op: AnfOp, await_fid: FuncId, yield_fid: FuncId) Bool 
   case op {
     .AIf(_, then_e, else_e) => {
       contains_suspension(then_e, await_fid, yield_fid)
-      or contains_suspension(else_e, await_fid, yield_fid)
+        or contains_suspension(else_e, await_fid, yield_fid)
     },
     .AMatch(_, arms) => {
       for arm in arms {

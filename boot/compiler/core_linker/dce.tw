@@ -132,7 +132,9 @@ fn get_body_refs(
 // For concrete receivers, uses exact resolution. For generic receivers (Var),
 // returns all method table entries matching ::method_name so monomorphization
 // can later pick the correct one.
-fn contract_call_refs(method_name: String, receiver_ty: MonoType, index: ReachabilityIndex) Vector<Int> {
+fn contract_call_refs(method_name: String, receiver_ty: MonoType, index: ReachabilityIndex) Vector<
+  Int,
+> {
   case exact_contract_ref(receiver_ty, method_name, index.method_table) {
     .Some(fid) => [fid.id],
     .None => case receiver_ty {

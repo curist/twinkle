@@ -12,21 +12,11 @@ use compiler.codegen.wasm_plan.{plan_wasm_types}
 use compiler.pipeline
 use compiler.resolver.{ResolvedEnv}
 
-pub type CodegenInputs = .{
-  anf: AnfModule,
-  env: ResolvedEnv,
-  builtins: BuiltinRegistry,
-}
+pub type CodegenInputs = .{ anf: AnfModule, env: ResolvedEnv, builtins: BuiltinRegistry }
 
 pub fn codegen_inputs(src: String) Result<CodegenInputs, String> {
   artifacts := try pipeline.compile_source(src)
-  .Ok(
-    CodegenInputs.{
-      anf: artifacts.opt,
-      env: artifacts.env,
-      builtins: artifacts.builtins,
-    },
-  )
+  .Ok(CodegenInputs.{ anf: artifacts.opt, env: artifacts.env, builtins: artifacts.builtins })
 }
 
 pub fn codegen_src(src: String) Result<String, String> {

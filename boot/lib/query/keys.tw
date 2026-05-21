@@ -26,7 +26,7 @@ fn wymix(a: Int, b: Int) Int {
   t2 := a_hi * b_lo
   cross := (a_lo * b_lo >> 32 & 0xffffffff) + (t1 & 0xffffffff) + (t2 & 0xffffffff)
   high := a_hi * b_hi + (t1 >> 32 & 0xffffffff) + (t2 >> 32 & 0xffffffff)
-  + (cross >> 32 & 0xffffffff)
+    + (cross >> 32 & 0xffffffff)
   low := a * b
   low ^ high
 }
@@ -34,13 +34,13 @@ fn wymix(a: Int, b: Int) Int {
 // Read 3 bytes for short keys (1-3 bytes).
 fn wyr3(bytes: Vector<Byte>, off: Int, len: Int) Int {
   Byte.to_int(bytes[off]) << 16 | Byte.to_int(bytes[off + (len >> 1)]) << 8
-  | Byte.to_int(bytes[off + len - 1])
+    | Byte.to_int(bytes[off + len - 1])
 }
 
 // Read 4 LE bytes as u64.
 fn wyr4(bytes: Vector<Byte>, off: Int) Int {
   Byte.to_int(bytes[off]) | Byte.to_int(bytes[off + 1]) << 8 | Byte.to_int(bytes[off + 2]) << 16
-  | Byte.to_int(bytes[off + 3]) << 24
+    | Byte.to_int(bytes[off + 3]) << 24
 }
 
 // Read 8 LE bytes as u64.
@@ -59,7 +59,9 @@ fn wyhash(bytes: Vector<Byte>, seed: Int) Int {
       mid := len >> 3 << 2
       a = wyr4(bytes, 0) << 32 | wyr4(bytes, mid)
       b = wyr4(bytes, len - 4) << 32 | wyr4(bytes, len - 4 - mid)
-    } else if len > 0 { a = wyr3(bytes, 0, len) }
+    } else if len > 0 {
+      a = wyr3(bytes, 0, len)
+    }
 
     wymix(secret_1() ^ len, wymix(a ^ secret_1(), b ^ seed))
   } else {
@@ -195,7 +197,11 @@ pub fn context_hash(entries: Vector<DepEntry>) Int {
     fn(a: DepEntry, b: DepEntry) Order {
       if a.path < b.path {
         .Lt
-      } else if a.path > b.path { .Gt } else { .Eq }
+      } else if a.path > b.path {
+        .Gt
+      } else {
+        .Eq
+      }
     },
   )
   chunks: Vector<Int> = [hash_text("ctx")]

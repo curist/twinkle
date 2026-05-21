@@ -167,7 +167,6 @@ pub fn register_methods(
     .Some(v) => v,
     .None => {
       methods[type_name] = entries
-
       return methods
     },
   }
@@ -192,7 +191,6 @@ pub fn register_type_methods(
     .Some(v) => v,
     .None => {
       methods[tid.id] = entries
-
       return methods
     },
   }
@@ -1207,9 +1205,10 @@ fn prelude_internal_function_name(alias: String, exported_name: String) String {
   }
 
   if stem == "string" {
-    if exported_name == "char_code_at" or exported_name == "from_char_code"
-    or exported_name == "from_byte"
-    or exported_name == "from_code_point" {
+    if exported_name == "char_code_at"
+      or exported_name == "from_char_code"
+      or exported_name == "from_byte"
+      or exported_name == "from_code_point" {
       return exported_name
     }
   }
@@ -1728,10 +1727,10 @@ fn resolve_type_decl(env: ResolvedEnv, decl: TypeDecl) ResolveResult {
 
       for variant in variants {
         is_anon_record := variant.fields.len() == 1
-        and case variant.fields[0].kind {
-          .Record(_) => true,
-          _ => false,
-        }
+          and case variant.fields[0].kind {
+            .Record(_) => true,
+            _ => false,
+          }
 
         if is_anon_record {
           record_fields := case variant.fields[0].kind {
@@ -2055,7 +2054,6 @@ fn resolve_type_path(
 
   if path.segments.len() == 1 {
     name := path.segments[0]
-
     return env.resolve_single_name(name, args, type_vars, path.span)
   }
 
@@ -2603,7 +2601,6 @@ fn add_name_index(name: String, names: Vector<String>, acc: TypeRefs) TypeRefs {
 
       acc.seen[i] = true
       acc.indices = acc.indices.append(i)
-
       return acc
     }
   }
@@ -2678,9 +2675,9 @@ fn mono_contains_circular(env: ResolvedEnv, ty: MonoType, visited: Dict<String, 
     .Optional(inner) => mono_contains_circular(env, inner, visited),
     .Vector(inner) => mono_contains_circular(env, inner, visited),
     .Dict(k, v) => mono_contains_circular(env, k, visited)
-    or mono_contains_circular(env, v, visited),
+      or mono_contains_circular(env, v, visited),
     .Result(ok, err) => mono_contains_circular(env, ok, visited)
-    or mono_contains_circular(env, err, visited),
+      or mono_contains_circular(env, err, visited),
     .Function(params, ret) => {
       for p in params {
         if mono_contains_circular(env, p, visited) {

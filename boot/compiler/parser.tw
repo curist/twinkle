@@ -593,7 +593,6 @@ fn parse_type_expr_base(c: Cursor) TypeParse {
 
     if c.kind() != .LParen {
       diagnostics_out = .append(diag.error(c.span(), "expected '(' in function type"))
-
       return .{ value: error_type(fn_start_span), cursor: c, diagnostics: diagnostics_out }
     }
 
@@ -641,7 +640,6 @@ fn parse_type_expr_base(c: Cursor) TypeParse {
     }
 
     diagnostics_out = .append(diag.error(c.span(), "expected '}' to close record type"))
-
     return .{ value: error_type(start_span), cursor: c, diagnostics: diagnostics_out }
   }
 
@@ -667,13 +665,11 @@ fn parse_type_expr_base(c: Cursor) TypeParse {
     }
 
     diagnostics_out = .append(diag.error(c.span(), "expected '}' to close sum type"))
-
     return .{ value: error_type(start_span), cursor: c, diagnostics: diagnostics_out }
   }
 
   if k != .Ident {
     diagnostics_out = .append(diag.error(c.span(), "expected type"))
-
     return .{ value: error_type(c.span()), cursor: c.advance(), diagnostics: diagnostics_out }
   }
 
@@ -726,7 +722,6 @@ fn parse_import_items(c: Cursor) ImportItemsParse {
 
   if c.kind() == .RBrace {
     diagnostics_out = .append(diag.error(c.span(), "import destructuring list cannot be empty"))
-
     return .{ value: items, cursor: c, diagnostics: diagnostics_out }
   }
 
@@ -908,7 +903,6 @@ fn parse_param(c: Cursor) ParamParse {
   if c.kind() != .Ident {
     diagnostics_out = .append(diag.error(c.span(), "expected parameter name"))
     param := Param.{ name: "", ty: .None, name_span: c.span(), span: c.span() }
-
     return .{ value: param, cursor: c.advance(), diagnostics: diagnostics_out }
   }
 
@@ -1210,9 +1204,12 @@ fn parse_extern_sig(c: Cursor, is_pub: Bool, module_name: String, start_span: Sp
 
   return_type: TypeExpr? = .None
 
-  if c.kind() != .Eof and c.kind() != .Fn and c.kind() != .RBrace and c.kind() != .Pub
-  and c.kind() != .Extern
-  and !c.preceded_by_newline() {
+  if c.kind() != .Eof
+    and c.kind() != .Fn
+    and c.kind() != .RBrace
+    and c.kind() != .Pub
+    and c.kind() != .Extern
+    and !c.preceded_by_newline() {
     parsed_ret := parse_type_expr(c)
     diagnostics_out = .concat(parsed_ret.diagnostics)
     return_type = .Some(parsed_ret.value)
@@ -1373,7 +1370,6 @@ fn parse_pattern(c: Cursor) PatternParse {
     if c.kind() != .Ident {
       diagnostics_out = .append(diag.error(c.span(), "expected variant name after '.' in pattern"))
       patt := Pattern.{ kind: .ErrorPattern, span: dot_span }
-
       return .{ value: patt, cursor: c, diagnostics: diagnostics_out }
     }
 
@@ -1405,7 +1401,6 @@ fn parse_pattern(c: Cursor) PatternParse {
 
     if ident == "_" {
       patt := Pattern.{ kind: .Wildcard, span: c.span() }
-
       return .{ value: patt, cursor: c.advance(), diagnostics: diagnostics_out }
     }
 
@@ -1816,7 +1811,6 @@ fn parse_prefix(c: Cursor) ExprParse {
 
       if c.kind() == .RParen {
         c = .advance()
-
         return .{ value: parsed_inner.value, cursor: c, diagnostics: diagnostics_out }
       }
 
@@ -1890,7 +1884,6 @@ fn parse_closure_expr(c: Cursor) ExprParse {
   if c.kind() != .LParen {
     diagnostics_out = .append(diag.error(c.span(), "expected '(' after 'fn' in closure expression"))
     expr := error_expr(start_span)
-
     return .{ value: expr, cursor: c, diagnostics: diagnostics_out }
   }
 
@@ -2130,9 +2123,14 @@ fn parse_expr_bp(c: Cursor, min_bp: Int) ExprParse {
     k := c.kind()
 
     // Hard stop tokens in expression context.
-    if k == .Eof or k == .RParen or k == .RBracket or k == .RBrace or k == .Comma or k == .Semi
-    or k == .FatArrow
-    or k == .CursorHole { break }
+    if k == .Eof
+      or k == .RParen
+      or k == .RBracket
+      or k == .RBrace
+      or k == .Comma
+      or k == .Semi
+      or k == .FatArrow
+      or k == .CursorHole { break }
 
     // Detect >> as shift: two adjacent Gt tokens with no whitespace
     if k == .Gt and c.pos + 1 < c.tokens.len() and c.at(1).kind() == .Gt {
@@ -2180,11 +2178,12 @@ fn parse_expr_bp(c: Cursor, min_bp: Int) ExprParse {
 
         // Rebinding receiver shorthand: x = .method(args) => x = x.method(args)
         rhs_cursor := c.advance()
-        is_receiver_shorthand := info.op == .Assign and rhs_cursor.kind() == .Dot
-        and !rhs_cursor.preceded_by_newline()
-        and rhs_cursor.at(1).kind() == .Ident
-        and !is_upper_ascii_name(rhs_cursor.at(1).text())
-        and rhs_cursor.at(2).kind() == .LParen
+        is_receiver_shorthand := info.op == .Assign
+          and rhs_cursor.kind() == .Dot
+          and !rhs_cursor.preceded_by_newline()
+          and rhs_cursor.at(1).kind() == .Ident
+          and !is_upper_ascii_name(rhs_cursor.at(1).text())
+          and rhs_cursor.at(2).kind() == .LParen
 
         if is_receiver_shorthand {
           // Use LHS as implicit receiver, then parse postfix chain
@@ -2269,9 +2268,12 @@ fn parse_binding_stmt_with_pub(c: Cursor, is_pub: Bool) StmtParse {
   }
 
   // Rebinding receiver shorthand: name = .method(args) => name = name.method(args)
-  if is_rebind and c.kind() == .Dot and !c.preceded_by_newline() and c.at(1).kind() == .Ident
-  and !is_upper_ascii_name(c.at(1).text())
-  and c.at(2).kind() == .LParen {
+  if is_rebind
+    and c.kind() == .Dot
+    and !c.preceded_by_newline()
+    and c.at(1).kind() == .Ident
+    and !is_upper_ascii_name(c.at(1).text())
+    and c.at(2).kind() == .LParen {
     receiver := Expr.{ id: c.alloc_expr_id(), kind: .Ident(name), span: name_span }
     parsed_value := parse_postfix(c, receiver)
     diagnostics_out = .concat(parsed_value.diagnostics)
@@ -2467,7 +2469,6 @@ fn parse_block(c: Cursor) BlockParse {
   if c.kind() != .LBrace {
     diagnostics_out = .append(diag.error(c.span(), "expected '{'"))
     block := Block.{ stmts, tail, span: c.span() }
-
     return .{ value: block, cursor: c.advance(), diagnostics: diagnostics_out }
   }
 
@@ -2528,7 +2529,6 @@ fn parse_block(c: Cursor) BlockParse {
   if c.kind() != .RBrace {
     diagnostics_out = .append(diag.error(c.span(), "expected '}' to close block"))
     block := Block.{ stmts, tail, span: c.span_from(start_pos) }
-
     return .{ value: block, cursor: c, diagnostics: diagnostics_out }
   }
 
@@ -2626,7 +2626,8 @@ fn step(self: ParseState) ParseState {
   prev_pos := self.cursor.pos
 
   if self.cursor.kind() == .Extern
-  or self.cursor.kind() == .Pub and self.cursor.at(1).kind() == .Extern {
+    or self.cursor.kind() == .Pub
+    and self.cursor.at(1).kind() == .Extern {
     parsed_items := parse_extern(self.cursor)
     next_cursor := parsed_items.cursor
 

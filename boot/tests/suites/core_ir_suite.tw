@@ -159,9 +159,9 @@ fn has_make_closure_capture(expr: core_ir.CoreExpr, target_local_id: Int) Bool {
       false
     },
     .Let(_, val, body) => has_make_closure_capture(val, target_local_id)
-    or has_make_closure_capture(body, target_local_id),
+      or has_make_closure_capture(body, target_local_id),
     .If(_, then_e, else_e) => has_make_closure_capture(then_e, target_local_id)
-    or has_make_closure_capture(else_e, target_local_id),
+      or has_make_closure_capture(else_e, target_local_id),
     .Match(_, arms) => {
       for arm in arms {
         if has_make_closure_capture(arm.body, target_local_id) {
@@ -284,8 +284,9 @@ fn has_terminal_in_let_value(expr: core_ir.CoreExpr) Bool {
       }
     },
     .If(cond, then_e, else_e) => {
-      has_terminal_in_let_value(cond) or has_terminal_in_let_value(then_e)
-      or has_terminal_in_let_value(else_e)
+      has_terminal_in_let_value(cond)
+        or has_terminal_in_let_value(then_e)
+        or has_terminal_in_let_value(else_e)
     },
     .Match(scrut, arms) => {
       if has_terminal_in_let_value(scrut) {
@@ -331,8 +332,9 @@ fn has_func_id(expr: core_ir.CoreExpr, target_id: Int) Bool {
     },
     .GlobalFunc(fid) => fid.id == target_id,
     .Let(_, val, body) => has_func_id(val, target_id) or has_func_id(body, target_id),
-    .If(cond, then_e, else_e) => has_func_id(cond, target_id) or has_func_id(then_e, target_id)
-    or has_func_id(else_e, target_id),
+    .If(cond, then_e, else_e) => has_func_id(cond, target_id)
+      or has_func_id(then_e, target_id)
+      or has_func_id(else_e, target_id),
     .Match(scrut, arms) => {
       if has_func_id(scrut, target_id) {
         return true

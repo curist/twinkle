@@ -59,9 +59,11 @@ fn classify_context(source: String, offset: Int) CompletionContext {
       before_dot := tokens[cursor_idx - 2]
 
       // Dot in prefix position (after {, =>, ,) → variant
-      if before_dot.kind == .LBrace or before_dot.kind == .FatArrow or before_dot.kind == .Comma
-      or before_dot.kind == .ColonEq
-      or before_dot.kind == .Eq {
+      if before_dot.kind == .LBrace
+        or before_dot.kind == .FatArrow
+        or before_dot.kind == .Comma
+        or before_dot.kind == .ColonEq
+        or before_dot.kind == .Eq {
         return .Variant
       }
     } else {

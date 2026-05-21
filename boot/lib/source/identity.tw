@@ -108,9 +108,16 @@ fn percent_encode_path(s: String) String {
 }
 
 fn is_unreserved_uri_byte(n: Int) Bool {
-  n >= 65 and n <= 90 or n >= 97 and n <= 122 or n >= 48 and n <= 57 or n == 45 or n == 46
-  or n == 95
-  or n == 126
+  n >= 65
+    and n <= 90
+    or n >= 97
+    and n <= 122
+    or n >= 48
+    and n <= 57
+    or n == 45
+    or n == 46
+    or n == 95
+    or n == 126
 }
 
 fn byte_to_string(n: Int) String {

@@ -171,7 +171,11 @@ fn hex_digit_value(ch: Byte) Int {
     ch - byte_value("0")
   } else if in_byte_range(ch, "A", "F") {
     ch - byte_value("A") + 10
-  } else if in_byte_range(ch, "a", "f") { ch - byte_value("a") + 10 } else { -1 }
+  } else if in_byte_range(ch, "a", "f") {
+    ch - byte_value("a") + 10
+  } else {
+    -1
+  }
 }
 
 fn scan_string_segment(source: String, from: Int, content_start: Int) ScanStringResult {

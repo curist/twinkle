@@ -4,8 +4,4 @@ use tests.suites.semantic_tree_stringify_suite
 
 // Regression: cross-module Vector<runner.Suite> aggregation must not trip
 // illegal cast. Each suite passes alone and combined.
-
-runner.run_all([
-  semantic_suite.suite(),
-  semantic_tree_stringify_suite.suite(),
-])
+runner.run_all([semantic_suite.suite(), semantic_tree_stringify_suite.suite()])

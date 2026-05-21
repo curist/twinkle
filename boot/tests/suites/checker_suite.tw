@@ -1909,8 +1909,10 @@ pub fn suite() runner.Suite {
 
       for m in msgs {
         if m.contains("to_string")
-        and (m.contains("receiver") or m.contains("shape") or m.contains("missing")
-        or m.contains("Stringify")) { found = true }
+          and (m.contains("receiver")
+            or m.contains("shape")
+            or m.contains("missing")
+            or m.contains("Stringify")) { found = true }
       }
 
       try assert.is_true(found)

@@ -355,7 +355,6 @@ pub fn next_poll_timeout_ms(state: State) Int? {
 pub fn publish_due_diagnostics(state: State) Step {
   if state.diagnostics_pending and date.now() >= state.diagnostics_deadline_ms {
     state.diagnostics_pending = false
-
     return publish_workspace_diagnostics(state, true)
   }
 
@@ -425,7 +424,7 @@ fn publish_workspace_diagnostics(state: State, suppress_duplicates: Bool) Step {
       case document_by_identity_uri(state.documents, group.uri) {
         .Some(group_doc) => {
           if !published.has(group.uri)
-          and should_publish_diagnostics(state, group_doc, suppress_duplicates) {
+            and should_publish_diagnostics(state, group_doc, suppress_duplicates) {
             outgoing = .append(
               lsp_diagnostics.publish_diagnostics(
                 group_doc.uri,
@@ -459,7 +458,7 @@ fn publish_workspace_diagnostics(state: State, suppress_duplicates: Bool) Step {
         case document_by_identity_uri(state.documents, group.uri) {
           .Some(group_doc) => {
             if !published.has(group.uri)
-            and should_publish_diagnostics(state, group_doc, suppress_duplicates) {
+              and should_publish_diagnostics(state, group_doc, suppress_duplicates) {
               outgoing = .append(
                 lsp_diagnostics.publish_diagnostics(
                   group_doc.uri,

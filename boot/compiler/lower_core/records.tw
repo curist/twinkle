@@ -23,7 +23,6 @@ pub fn lower_named_record(
     .Some(id) => id,
     .None => {
       ctx = .emit_error(s, "unknown type: ${type_name}")
-
       return .{ expr: void_expr(s), ctx }
     },
   }
@@ -41,7 +40,6 @@ pub fn lower_anon_record(
     .Some(id) => id,
     .None => {
       ctx = .emit_error(s, "cannot determine record type")
-
       return .{ expr: void_expr(s), ctx }
     },
   }
@@ -158,7 +156,6 @@ pub fn lower_field(
     .Some(id) => id,
     .None => {
       ctx2 := br.ctx.emit_error(s, "cannot determine record type for field access")
-
       return .{ expr: void_expr(s), ctx: ctx2 }
     },
   }

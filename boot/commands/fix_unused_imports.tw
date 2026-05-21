@@ -116,7 +116,11 @@ pub fn apply_fixes(edits_by_file: Dict<String, Vector<ImportFix>>) Vector<ApplyR
       fn(a: ImportFix, b: ImportFix) Order {
         if b.use_start < a.use_start {
           .Lt
-        } else if b.use_start > a.use_start { .Gt } else { .Eq }
+        } else if b.use_start > a.use_start {
+          .Gt
+        } else {
+          .Eq
+        }
       },
     )
     result := source

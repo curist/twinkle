@@ -130,9 +130,11 @@ pub fn loop_push_reassign_elem(
 ) Atom? {
   case op {
     .ACall(.AGlobalFunc(f), args) => {
-      if f.id == push_id.id and args.len() == 2 and atom_is_local(args[0], base)
-      and !atom_is_local(args[1], base)
-      and is_consume_reassign(body, base, result) {
+      if f.id == push_id.id
+        and args.len() == 2
+        and atom_is_local(args[0], base)
+        and !atom_is_local(args[1], base)
+        and is_consume_reassign(body, base, result) {
         .Some(args[1])
       } else {
         .None
@@ -403,7 +405,7 @@ pub fn op_uses_local_non_recursive(op: AnfOp, local: LocalId) Bool {
     },
     .ARecordGet(target, _, _) => atom_is_local(target, local),
     .ARecordUpdate(base, _, value, _, _) => atom_is_local(base, local)
-    or atom_is_local(value, local),
+      or atom_is_local(value, local),
     .AVariant(_, _, args) => {
       for a in args {
         if atom_is_local(a, local) {
@@ -437,7 +439,7 @@ pub fn op_uses_local_non_recursive(op: AnfOp, local: LocalId) Bool {
 pub fn count_global_call_sites(expr: AnfExpr, func_id: FuncId) Int {
   case expr {
     .Let(_, op, body) => count_global_call_sites_in_op(op, func_id)
-    + count_global_call_sites(body, func_id),
+      + count_global_call_sites(body, func_id),
     _ => 0,
   }
 }
@@ -446,7 +448,7 @@ fn count_global_call_sites_in_op(op: AnfOp, func_id: FuncId) Int {
   case op {
     .ACall(.AGlobalFunc(f), _) => if f.id == func_id.id { 1 } else { 0 },
     .AIf(_, then_e, else_e) => count_global_call_sites(then_e, func_id)
-    + count_global_call_sites(else_e, func_id),
+      + count_global_call_sites(else_e, func_id),
     .AMatch(_, arms) => {
       c := 0
 

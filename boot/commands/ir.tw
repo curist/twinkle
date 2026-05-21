@@ -8,10 +8,12 @@ use lib.argparse.app
 use lib.argparse.app.{ParseResult}
 
 fn has_any_ir_flag(parsed: ParseResult) Bool {
-  app.has_flag(parsed, "core") or app.has_flag(parsed, "mono") or app.has_flag(parsed, "anf")
-  or app.has_flag(parsed, "opt")
-  or app.has_flag(parsed, "wat")
-  or app.has_flag(parsed, "all")
+  app.has_flag(parsed, "core")
+    or app.has_flag(parsed, "mono")
+    or app.has_flag(parsed, "anf")
+    or app.has_flag(parsed, "opt")
+    or app.has_flag(parsed, "wat")
+    or app.has_flag(parsed, "all")
 }
 
 fn should_show_ir(parsed: ParseResult, name: String) Bool {

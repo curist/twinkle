@@ -181,7 +181,7 @@ pub fn is_pure_with_optimizer_semantics(op: AnfOp, body: AnfExpr, semantics: Opt
 fn expr_is_pure_with_semantics(expr: AnfExpr, semantics: OptimizerSemantics) Bool {
   case expr {
     .Let(_, op, body) => is_pure_with_semantics(op, semantics)
-    and expr_is_pure_with_semantics(body, semantics),
+      and expr_is_pure_with_semantics(body, semantics),
     .Atom(_) => true,
     .Return(_) => false,
     .Break(_) => false,

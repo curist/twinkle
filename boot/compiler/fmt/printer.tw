@@ -208,7 +208,11 @@ fn import_sort_key(decl: UseDecl) String {
 fn import_group(decl: UseDecl) Int {
   if decl.is_stdlib {
     0
-  } else if decl.is_relative { 2 } else { 1 }
+  } else if decl.is_relative {
+    2
+  } else {
+    1
+  }
 }
 
 fn import_variant_order(decl: UseDecl) Int {
@@ -369,7 +373,9 @@ fn format_use(decl: UseDecl) Doc {
 
   if decl.is_stdlib {
     parts = .append(doc.text("@"))
-  } else if decl.is_relative { parts = .append(doc.text(".")) }
+  } else if decl.is_relative {
+    parts = .append(doc.text("."))
+  }
 
   parts = .append(doc.text(decl.path.join(".")))
 
@@ -666,7 +672,11 @@ fn join_block_docs(block: Block, docs: Vector<Doc>) Doc {
         .None => false,
       }
     }
-    sep := if prev_flow or cur_flow { doc.concat([doc.hard_line(), doc.hard_line()]) } else {
+    sep := if should_use_compact_flow_separator(block, i) {
+      doc.hard_line()
+    } else if prev_flow or cur_flow {
+      doc.concat([doc.hard_line(), doc.hard_line()])
+    } else {
       doc.hard_line()
     }
     result = doc.concat([result, sep, docs[i]])
@@ -675,6 +685,24 @@ fn join_block_docs(block: Block, docs: Vector<Doc>) Doc {
   }
 
   result
+}
+
+fn should_use_compact_flow_separator(block: Block, cur_index: Int) Bool {
+  if cur_index >= block.stmts.len() or cur_index == 0 {
+    return false
+  }
+
+  prev := block.stmts[cur_index - 1]
+  cur := block.stmts[cur_index]
+  is_simple_stmt(prev, true) and is_simple_terminal_stmt(cur)
+}
+
+fn is_simple_terminal_stmt(stmt: Stmt) Bool {
+  case stmt {
+    .Return(_) => is_simple_stmt(stmt, true),
+    .Break(_) => is_simple_stmt(stmt, true),
+    _ => false,
+  }
 }
 
 fn is_flow_stmt(stmt: Stmt) Bool {
@@ -1076,16 +1104,27 @@ fn format_call(callee: Expr, args: Vector<Expr>, tm: TriviaMap) Doc {
 }
 
 fn format_if(cond: Expr, then_block: Block, else_expr: Expr?, tm: TriviaMap) Doc {
-  allow_inline_branches := case else_expr {
-    .Some(el) => {
-      case el.kind {
-        .BlockExpr(block) => is_simple_tail_block(then_block, tm)
-          and is_simple_tail_block(block, tm),
-        _ => false,
-      }
-    },
-    .None => true,
-  }
+  format_if_with_options(cond, then_block, else_expr, tm, true)
+}
+
+fn format_if_with_options(
+  cond: Expr,
+  then_block: Block,
+  else_expr: Expr?,
+  tm: TriviaMap,
+  allow_inline_blocks: Bool,
+) Doc {
+  allow_inline_branches := allow_inline_blocks
+    and case else_expr {
+      .Some(el) => {
+        case el.kind {
+          .BlockExpr(block) => is_simple_tail_block(then_block, tm)
+            and is_simple_tail_block(block, tm),
+          _ => false,
+        }
+      },
+      .None => true,
+    }
   parts: Vector<Doc> = [
     doc.text("if "),
     format_expr(cond, tm),
@@ -1099,7 +1138,9 @@ fn format_if(cond: Expr, then_block: Block, else_expr: Expr?, tm: TriviaMap) Doc
 
       // Check if it's another if (else-if chain)
       case el.kind {
-        .If(cond2, then2, else2) => { parts = .append(format_if(cond2, then2, else2, tm)) },
+        .If(cond2, then2, else2) => {
+          parts = .append(format_if_with_options(cond2, then2, else2, tm, false))
+        },
         .BlockExpr(block) => {
           parts = .append(format_block_with_options(block, tm, allow_inline_branches, false))
         },

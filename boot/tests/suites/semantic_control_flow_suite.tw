@@ -62,7 +62,11 @@ fn classify(n: Int) String {
     "negative"
   } else if n == 0 {
     "zero"
-  } else if n < 10 { "small" } else { "big" }
+  } else if n < 10 {
+    "small"
+  } else {
+    "big"
+  }
 }
 
 pub fn suite() runner.Suite {

@@ -149,9 +149,8 @@ fn copy_prop_inner(
           use_count := uses[local.id].unwrap_or(0)
 
           if !set_has(free_var_uses, local.id)
-          and can_propagate(lit, use_count, set_has(assigned, local.id), assigned) {
+            and can_propagate(lit, use_count, set_has(assigned, local.id), assigned) {
             new_body := subst_atom(body, local, lit)
-
             return PropResult.{ expr: new_body, changed: true }
           }
 

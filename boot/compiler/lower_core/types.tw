@@ -99,12 +99,20 @@ pub fn variant_index(ty: MonoType, name: String, env: ResolvedEnv) Int {
     .Optional(_) => {
       if name == "None" {
         0
-      } else if name == "Some" { 1 } else { -1 }
+      } else if name == "Some" {
+        1
+      } else {
+        -1
+      }
     },
     .Result(_, _) => {
       if name == "Ok" {
         0
-      } else if name == "Err" { 1 } else { -1 }
+      } else if name == "Err" {
+        1
+      } else {
+        -1
+      }
     },
     .Named(tid, _) => find_variant_index(env, tid, name),
     _ => -1,

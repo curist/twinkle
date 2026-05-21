@@ -432,8 +432,9 @@ fn plan_dependencies(
     state.project_root,
     fn(path_str: String) Bool {
       dep_id := identity.from_path(imports.canonical_module_path(path_str, state.canonical_roots))
-      state.overlay.documents.has(dep_id.path) or core_lib.exists(dep_id.path)
-      or fs.exists(dep_id.path)
+      state.overlay.documents.has(dep_id.path)
+        or core_lib.exists(dep_id.path)
+        or fs.exists(dep_id.path)
     },
   ) {
     .Ok(plan) => plan,
@@ -518,7 +519,7 @@ fn analyze_dependencies(
     + dep_interface.exports.support_types.len()
     + dep_interface.exports.functions.len()
     + dep_interface.exports.support_functions.len()
-    + dep_interface.exports.values.len()
+      + dep_interface.exports.values.len()
 
     if cur.timed {
       cur.counts.import_edges = cur.counts.import_edges + 1

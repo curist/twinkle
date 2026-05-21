@@ -235,7 +235,7 @@ pub fn emit_iterator_next_helper(result_mono: MonoType, env: ResolvedEnv) FuncDe
     _ => .Void,
   }
   some_payload_vt := if option_layout.variants.len() > 1
-  and option_layout.variants[1].payload_types.len() > 0 {
+    and option_layout.variants[1].payload_types.len() > 0 {
     option_layout.variants[1].payload_types[0]
   } else { .Anyref }
   none_body: Vector<Instr> = [.I32Const(0)]

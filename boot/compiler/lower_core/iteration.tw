@@ -114,7 +114,6 @@ fn build_range_loop(setup: IterSetup, inner_action: CoreExpr, s: Span) ExprOut {
     .Some(tid) => tid,
     .None => {
       ctx = .emit_error(s, "internal error: expected Range type for range loop")
-
       return .{ expr: void_expr(s), ctx }
     },
   }
@@ -248,7 +247,6 @@ fn build_iterator_loop(setup: IterSetup, inner_action: CoreExpr, s: Span) ExprOu
     .Some(tid) => tid,
     .None => {
       ctx = .emit_error(s, "internal error: missing IterItem type")
-
       return .{ expr: void_expr(s), ctx }
     },
   }

@@ -285,7 +285,11 @@ fn hex_value(c: Byte) Int {
     c - 0x30
   } else if c >= 0x41 and c <= 0x46 {
     c - 0x41 + 0x0A
-  } else if c >= 0x61 and c <= 0x66 { c - 0x61 + 0x0A } else { -1 }
+  } else if c >= 0x61 and c <= 0x66 {
+    c - 0x61 + 0x0A
+  } else {
+    -1
+  }
 }
 
 fn code_point_string(code: Int) String {

@@ -26,7 +26,6 @@ fn rewrite_loop_expr(
           case body {
             .Let(assign_local, _, rest) => {
               new_assign := AnfOp.AInit(.ALitVoid)
-
               return AnfExpr.Let(
                 local,
                 new_op,

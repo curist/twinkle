@@ -372,8 +372,9 @@ fn dependency_path_for_alias(snap: SemanticSnapshot, parsed: cache.ParsedModule,
         path_str,
         imports.make_canonical_roots(snap.project_root),
       )
-      core_lib.exists(canonical) or fs.exists(canonical)
-      or cache.latest_parsed(snap.cache, canonical) != .None
+      core_lib.exists(canonical)
+        or fs.exists(canonical)
+        or cache.latest_parsed(snap.cache, canonical) != .None
     },
   ) {
     .Ok(p) => p,
@@ -1005,7 +1006,6 @@ fn variant_pattern_name_contains(s: Span, prefix: Vector<String>, name: String, 
     // possible name starts so bare uppercase patterns include their first char.
     bare := Span.{ file_id: s.file_id, start: s.start, end: s.start + name.len() }
     dotted := Span.{ file_id: s.file_id, start: s.start + 1, end: s.start + 1 + name.len() }
-
     return bare.contains(offset) or dotted.contains(offset)
   }
 

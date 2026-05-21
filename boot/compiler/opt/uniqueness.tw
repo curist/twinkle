@@ -369,7 +369,7 @@ fn op_uses_local_non_recursive(op: AnfOp, local: LocalId) Bool {
     },
     .ARecordGet(target, _, _) => atom_is_local(target, local),
     .ARecordUpdate(base, _, value, _, _) => atom_is_local(base, local)
-    or atom_is_local(value, local),
+      or atom_is_local(value, local),
     .AVariant(_, _, args) => {
       for a in args {
         if atom_is_local(a, local) {
@@ -472,7 +472,7 @@ fn record_update_stores_value(expr: AnfExpr, value_local: LocalId) Bool {
     .Let(_, .ARecordUpdate(_, _, .ALocal(v), _, _), _) => v.id == value_local.id,
     .Let(_, op, body) => {
       if op_has_local_in_nested_scope(op, value_local)
-      or op_uses_local_non_recursive(op, value_local) { false } else {
+        or op_uses_local_non_recursive(op, value_local) { false } else {
         record_update_stores_value(body, value_local)
       }
     },
@@ -489,7 +489,7 @@ fn is_field_borrow_and_update(field_local: LocalId, body: AnfExpr, semantics: Op
             .Some(base_arg) => {
               if info.in_place_equivalent != .None and base_arg < args.len() {
                 if atom_is_local(args[base_arg], field_local)
-                and !set_has(live_after(rest), field_local.id) {
+                  and !set_has(live_after(rest), field_local.id) {
                   record_update_stores_value(rest, new_field)
                 } else { false }
               } else {
@@ -504,7 +504,7 @@ fn is_field_borrow_and_update(field_local: LocalId, body: AnfExpr, semantics: Op
     },
     .Let(_, op, body2) => {
       if op_has_local_in_nested_scope(op, field_local)
-      or op_uses_local_non_recursive(op, field_local) { false } else {
+        or op_uses_local_non_recursive(op, field_local) { false } else {
         is_field_borrow_and_update(field_local, body2, semantics)
       }
     },
@@ -535,13 +535,13 @@ fn rewrite_reusable_update(
           // consumed_params is a separate gate: we do NOT add these to the
           // ownership set to prevent Gap 1 propagation to collection fields.
           can_reuse := (local_has_shell_ownership(st, site.base_local)
-          or set_has(consumed_params, site.base_local.id))
-          and base_reusable_after_binding_with_live(
-            body,
-            site.base_local,
-            bind_local,
-            live_after_body,
-          )
+            or set_has(consumed_params, site.base_local.id))
+            and base_reusable_after_binding_with_live(
+              body,
+              site.base_local,
+              bind_local,
+              live_after_body,
+            )
 
           if can_reuse {
             case new_op {
@@ -554,12 +554,12 @@ fn rewrite_reusable_update(
         },
         .Call => {
           if local_is_deep_owned(st, site.base_local)
-          and base_reusable_after_binding_with_live(
-            body,
-            site.base_local,
-            bind_local,
-            live_after_body,
-          ) {
+            and base_reusable_after_binding_with_live(
+              body,
+              site.base_local,
+              bind_local,
+              live_after_body,
+            ) {
             case site.in_place_equivalent {
               .Some(in_place) => {
                 case new_op {
@@ -661,7 +661,7 @@ fn rewrite_expr(expr: AnfExpr, st: RwState, consumed_params: Dict<Int, Bool>) Ex
           if local_has_shell_ownership(st, source) and !set_has(live_after_body, source.id) {
             st = with_local_ownership(st, local, .Shallow)
           } else if set_has(st.fresh_records, source.id)
-          and can_move_fresh_record_field(source, field_id, body) {
+            and can_move_fresh_record_field(source, field_id, body) {
             st = with_local_ownership(st, local, .Deep)
             st = RwState.{
               tainted: st.tainted,
@@ -676,7 +676,7 @@ fn rewrite_expr(expr: AnfExpr, st: RwState, consumed_params: Dict<Int, Bool>) Ex
               monos: st.monos,
             }
           } else if local_has_shell_ownership(st, source)
-          and is_field_borrow_and_update(local, body, st.config) {
+            and is_field_borrow_and_update(local, body, st.config) {
             st = with_local_ownership(st, local, .Deep)
           }
         },

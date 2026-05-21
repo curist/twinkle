@@ -1,4 +1,5 @@
 use @std.proc
+
 use tests.helpers.codegen_harness
 
 fn fail(msg: String) {
@@ -8,17 +9,12 @@ fn fail(msg: String) {
 
 fn main() {
   args := proc.args()
-  if args.len() < 2 {
-    fail("usage: emit_boot_wat.tw <source.tw>")
-  }
+
+  if args.len() < 2 { fail("usage: emit_boot_wat.tw <source.tw>") }
 
   case codegen_harness.codegen_path(args[1]) {
-    .Ok(wat) => {
-      print(wat)
-    },
-    .Err(msg) => {
-      fail(msg)
-    },
+    .Ok(wat) => { print(wat) },
+    .Err(msg) => { fail(msg) },
   }
 }
 

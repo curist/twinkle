@@ -281,7 +281,7 @@ pub fn link(modules: Vector<WasmModule>, entry: String?) Result<LinkedModule, Ve
 
     for imp in m.imports {
       if !import_redirects.has(imp.as_sym)
-      and !import_redirects.has(qualify(m.namespace, imp.as_sym)) {
+        and !import_redirects.has(qualify(m.namespace, imp.as_sym)) {
         out_imports = .append(
           ImportDef.{
             module: imp.module,
@@ -383,10 +383,10 @@ pub fn link(modules: Vector<WasmModule>, entry: String?) Result<LinkedModule, Ve
   }
 
   if init_calls.len() == 0 {} else if init_calls.len() == 1
-  and case entry {
-    .None => true,
-    _ => false,
-  } {
+    and case entry {
+      .None => true,
+      _ => false,
+    } {
     // Single start, no entry → export it directly as __twinkle_start
     out_exports = .append(ExportDef.{ wasm_name: "__twinkle_start", func_sym: init_calls[0] })
   } else {

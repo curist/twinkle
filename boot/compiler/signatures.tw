@@ -60,9 +60,10 @@ pub fn to_internal_name(receiver: String?, canonical_name: String) String {
       // string_ prefix because their canonical names are already globally
       // unique (char_code_at, from_char_code, from_byte, from_code_point).
       if recv == "String" {
-        if canonical_name == "char_code_at" or canonical_name == "from_char_code"
-        or canonical_name == "from_byte"
-        or canonical_name == "from_code_point" {
+        if canonical_name == "char_code_at"
+          or canonical_name == "from_char_code"
+          or canonical_name == "from_byte"
+          or canonical_name == "from_code_point" {
           return canonical_name
         }
       }

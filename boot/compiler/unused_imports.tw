@@ -140,7 +140,11 @@ pub fn reconstruct_use_decl(decl: UseDecl, unused_names: Vector<String>) String 
   path_str := decl.path.join(".")
   prefix := if decl.is_stdlib {
     "@std."
-  } else if decl.is_relative { "." } else { "" }
+  } else if decl.is_relative {
+    "."
+  } else {
+    ""
+  }
 
   case decl.items {
     .Some(items) => {

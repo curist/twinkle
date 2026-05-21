@@ -9,7 +9,11 @@ fn parse_hex(s: String) Int {
       b.to_int() - 0x30
     } else if b >= 0x41 and b <= 0x46 {
       b.to_int() - 0x41 + 10
-    } else if b >= 0x61 and b <= 0x66 { b.to_int() - 0x61 + 10 } else { 0 }
+    } else if b >= 0x61 and b <= 0x66 {
+      b.to_int() - 0x61 + 10
+    } else {
+      0
+    }
     result = result * 16 + digit
     i = i + 1
   }

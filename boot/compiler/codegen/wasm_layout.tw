@@ -445,7 +445,11 @@ pub type EqTypeLayouts = .{ records: Vector<WasmRecordLayout>, sums: Vector<Wasm
 fn compare_strings(a: String, b: String) Order {
   if a < b {
     .Lt
-  } else if a > b { .Gt } else { .Eq }
+  } else if a > b {
+    .Gt
+  } else {
+    .Eq
+  }
 }
 
 pub fn collect_eq_type_layouts(layout_cache: Dict<String, WasmLayout>) EqTypeLayouts {

@@ -21,7 +21,6 @@ pub fn lower_variant(
     .Some(id) => id,
     .None => {
       ctx = .emit_error(s, "cannot determine variant type")
-
       return .{ expr: void_expr(s), ctx }
     },
   }

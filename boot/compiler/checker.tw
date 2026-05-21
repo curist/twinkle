@@ -381,7 +381,6 @@ fn unify(ctx: InferCtx, a: MonoType, b: MonoType, s: Span, diags: Vector<DiagKin
       case zb {
         .Dict(kb, vb) => {
           r := ctx.unify(ka, kb, s, diags)
-
           return r.ctx.unify(va, vb, s, r.diags)
         },
         _ => {},
@@ -397,7 +396,6 @@ fn unify(ctx: InferCtx, a: MonoType, b: MonoType, s: Span, diags: Vector<DiagKin
       case zb {
         .Result(ob, eb) => {
           r := ctx.unify(oa, ob, s, diags)
-
           return r.ctx.unify(ea, eb, s, r.diags)
         },
         _ => {},
@@ -1471,7 +1469,6 @@ fn synth_call(
               callee_ty := MonoType.Function(info.field_types, named_ty)
               cur_ctx = set_type_map(cur_ctx, base.id, named_ty)
               cur_ctx = set_type_map_span(cur_ctx, callee.id, callee.span.start, callee_ty)
-
               return .{ ty: named_ty, ctx: cur_ctx, diags: cur_diags }
             },
             _ => {},
@@ -2176,7 +2173,6 @@ fn synth_named_record(
     .Some(e) => e,
     .None => {
       m := fresh_meta(ctx)
-
       return .{
         ty: m.ty,
         ctx: m.ctx,
@@ -2353,7 +2349,6 @@ fn expr_needs_expected_type(expr: Expr) Bool {
 fn synth_array(elems: Vector<Expr>, s: Span, ctx: InferCtx, diags: Vector<DiagKind>) SynthOut {
   if elems.len() == 0 {
     m := fresh_meta(ctx)
-
     return .{ ty: MonoType.Vector(m.ty), ctx: m.ctx, diags }
   }
 
@@ -2399,32 +2394,26 @@ fn check_expr(ctx: InferCtx, expr: Expr, expected: MonoType, diags: Vector<DiagK
   case expr.kind {
     .BlockExpr(block) => {
       r := check_block(block, expected, ctx, diags)
-
       return .{ ctx: set_type_map_span(r.ctx, expr.id, expr.span.start, expected), diags: r.diags }
     },
     .If(cond, then_block, else_expr) => {
       r := check_if(cond, then_block, else_expr, expected, expr.span, ctx, diags)
-
       return .{ ctx: set_type_map_span(r.ctx, expr.id, expr.span.start, expected), diags: r.diags }
     },
     .Case(scrut, arms) => {
       r := check_case(scrut, arms, expected, expr.span, ctx, diags)
-
       return .{ ctx: set_type_map_span(r.ctx, expr.id, expr.span.start, expected), diags: r.diags }
     },
     .Record(entries) => {
       r := check_record_lit(entries, expected, expr.span, ctx, diags)
-
       return .{ ctx: set_type_map_span(r.ctx, expr.id, expr.span.start, expected), diags: r.diags }
     },
     .Variant(name, args) => {
       r := check_variant_lit(name, args, expected, expr.span, ctx, diags)
-
       return .{ ctx: set_type_map_span(r.ctx, expr.id, expr.span.start, expected), diags: r.diags }
     },
     .Closure(params, ret_ty, body) => {
       r := check_closure(params, ret_ty, body, expected, expr.span, ctx, diags)
-
       return .{ ctx: set_type_map_span(r.ctx, expr.id, expr.span.start, expected), diags: r.diags }
     },
     .Array(elems) => {
@@ -2452,7 +2441,6 @@ fn check_expr(ctx: InferCtx, expr: Expr, expected: MonoType, diags: Vector<DiagK
       case expand_alias(zonk(expected, ctx.subst), ctx.env, 0) {
         .Vector(elem_ty) => {
           r := check_collect(ce, elem_ty, expr.span, ctx, diags)
-
           return .{
             ctx: set_type_map_span(r.ctx, expr.id, expr.span.start, expected),
             diags: r.diags,
@@ -2468,7 +2456,6 @@ fn check_expr(ctx: InferCtx, expr: Expr, expected: MonoType, diags: Vector<DiagK
       call_ctx.call_expected_ret = .Some(expected)
       r := call_ctx.synth(expr, diags)
       u := r.ctx.unify(r.ty, expected, expr.span, r.diags)
-
       return .{ ctx: u.ctx, diags: u.diags }
     },
     _ => {},
@@ -2639,7 +2626,6 @@ fn synth_if(
       if then_r.ty == .Never {
         // Then diverges — synth else freely
         else_r := then_r.ctx.synth(else_e, then_r.diags)
-
         return .{ ty: else_r.ty, ctx: else_r.ctx, diags: else_r.diags }
       }
 
@@ -3257,6 +3243,27 @@ fn is_string(ty: MonoType) Bool {
   }
 }
 
+fn is_int(ty: MonoType) Bool {
+  case ty {
+    .Int => true,
+    _ => false,
+  }
+}
+
+fn is_float(ty: MonoType) Bool {
+  case ty {
+    .Float => true,
+    _ => false,
+  }
+}
+
+fn is_meta_var(ty: MonoType) Bool {
+  case ty {
+    .MetaVar(_) => true,
+    _ => false,
+  }
+}
+
 fn synth_binary(op: BinOp, lhs: Expr, rhs: Expr, s: Span, ctx: InferCtx, diags: Vector<DiagKind>) SynthOut {
   case op {
     .Assign => synth_assign_op(lhs, rhs, s, ctx, diags),
@@ -3514,26 +3521,12 @@ fn synth_arith_op(op: BinOp, lhs: Expr, rhs: Expr, s: Span, ctx: InferCtx, diags
   }
 
   // Int × Int → Int
-  if case left_z {
-    .Int => true,
-    _ => false,
-  }
-  and case right_z {
-    .Int => true,
-    _ => false,
-  } {
+  if is_int(left_z) and is_int(right_z) {
     return .{ ty: MonoType.Int, ctx: cur_ctx, diags: cur_diags }
   }
 
   // Float × Float → Float
-  if case left_z {
-    .Float => true,
-    _ => false,
-  }
-  and case right_z {
-    .Float => true,
-    _ => false,
-  } {
+  if is_float(left_z) and is_float(right_z) {
     return .{ ty: MonoType.Float, ctx: cur_ctx, diags: cur_diags }
   }
 
@@ -3548,17 +3541,14 @@ fn synth_arith_op(op: BinOp, lhs: Expr, rhs: Expr, s: Span, ctx: InferCtx, diags
       case right_z {
         .Int => {
           u := cur_ctx.unify(lr.ty, MonoType.Int, lhs.span, cur_diags)
-
           return .{ ty: MonoType.Int, ctx: u.ctx, diags: u.diags }
         },
         .Float => {
           u := cur_ctx.unify(lr.ty, MonoType.Float, lhs.span, cur_diags)
-
           return .{ ty: MonoType.Float, ctx: u.ctx, diags: u.diags }
         },
         .Byte => {
           u := cur_ctx.unify(lr.ty, MonoType.Int, lhs.span, cur_diags)
-
           return .{ ty: MonoType.Int, ctx: u.ctx, diags: u.diags }
         },
         _ => {},
@@ -3572,17 +3562,14 @@ fn synth_arith_op(op: BinOp, lhs: Expr, rhs: Expr, s: Span, ctx: InferCtx, diags
       case left_z {
         .Int => {
           u := cur_ctx.unify(rr.ty, MonoType.Int, rhs.span, cur_diags)
-
           return .{ ty: MonoType.Int, ctx: u.ctx, diags: u.diags }
         },
         .Float => {
           u := cur_ctx.unify(rr.ty, MonoType.Float, rhs.span, cur_diags)
-
           return .{ ty: MonoType.Float, ctx: u.ctx, diags: u.diags }
         },
         .Byte => {
           u := cur_ctx.unify(rr.ty, MonoType.Int, rhs.span, cur_diags)
-
           return .{ ty: MonoType.Int, ctx: u.ctx, diags: u.diags }
         },
         _ => {},
@@ -3592,16 +3579,8 @@ fn synth_arith_op(op: BinOp, lhs: Expr, rhs: Expr, s: Span, ctx: InferCtx, diags
   }
 
   // MetaVar × MetaVar: unify and return left type
-  if case left_z {
-    .MetaVar(_) => true,
-    _ => false,
-  }
-  and case right_z {
-    .MetaVar(_) => true,
-    _ => false,
-  } {
+  if is_meta_var(left_z) and is_meta_var(right_z) {
     u := cur_ctx.unify(lr.ty, rr.ty, s, cur_diags)
-
     return .{ ty: lr.ty, ctx: u.ctx, diags: u.diags }
   }
 
@@ -3759,11 +3738,7 @@ fn synth_unary(op: UnOp, operand: Expr, s: Span, ctx: InferCtx, diags: Vector<Di
     .Neg => {
       r := ctx.synth(operand, diags)
       zonked := zonk(r.ty, r.ctx.subst)
-      result_diags := if is_numeric(zonked)
-      or case zonked {
-        .MetaVar(_) => true,
-        _ => false,
-      } { r.diags } else {
+      result_diags := if is_numeric(zonked) or is_meta_var(zonked) { r.diags } else {
         r.diags.append(.Error(.InvalidOperand(.{ span: s, ty: zonked, operation: "negation" })))
       }
       .{ ty: r.ty, ctx: r.ctx, diags: result_diags }
@@ -3982,7 +3957,7 @@ fn synth_block(block: Block, ctx: InferCtx, diags: Vector<DiagKind>) SynthOut {
     .None => {
       // If the last statement diverges, the block type is Never, not Void
       block_ty := if block.stmts.len() > 0
-      and stmt_diverges(block.stmts[block.stmts.len() - 1], cur_ctx) { MonoType.Never } else {
+        and stmt_diverges(block.stmts[block.stmts.len() - 1], cur_ctx) { MonoType.Never } else {
         MonoType.Void
       }
       .{ ty: block_ty, ctx: pop_scope(cur_ctx), diags: cur_diags }
@@ -4188,12 +4163,10 @@ fn check_let(ls: LetStmt, ctx: InferCtx, diags: Vector<DiagKind>) CheckOut {
     case lookup_local(ctx, ls.name) {
       .Some(existing_ty) => {
         val_r := ctx.check_expr(ls.value, existing_ty, diags)
-
         return .{ ctx: val_r.ctx, diags: val_r.diags }
       },
       .None => {
         val_r := ctx.synth(ls.value, diags)
-
         return .{
           ctx: val_r.ctx,
           diags: val_r.diags.append(.Error(.UndefinedVar(.{ span: ls.span, name: ls.name }))),
