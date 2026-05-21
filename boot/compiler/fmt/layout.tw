@@ -15,8 +15,8 @@ fn push_stack(stack: Vector<StackEntry>, top: Int, entry: StackEntry) StackPush 
   }
 }
 
-/// Render a Doc tree to a string with default 80-column width.
-pub fn render(doc: Doc) String { render_with_width(doc, 80) }
+/// Render a Doc tree to a string with default 100-column width.
+pub fn render(doc: Doc) String { render_with_width(doc, 100) }
 
 pub fn render_with_width(doc: Doc, width: Int) String {
   buf: Vector<String> = []
