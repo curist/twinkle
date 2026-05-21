@@ -49,28 +49,28 @@ fn flat_width(d: Doc) Int {
     .Indent(_, inner) => flat_width(inner),
     .Concat(a, b) => {
       aw := flat_width(a)
-      
+
       if aw < 0 {
         -1
       } else {
         bw := flat_width(b)
-        
+
         if bw < 0 { -1 } else { aw + bw }
       }
     },
     .Seq(docs) => {
       total := 0
-      
+
       for child in docs {
         w := flat_width(child)
-        
+
         if w < 0 {
           return -1
         }
-        
+
         total = total + w
       }
-      
+
       total
     },
     .Group(_, cached) => cached,
@@ -80,7 +80,7 @@ fn flat_width(d: Doc) Int {
 
 pub fn concat(docs: Vector<Doc>) Doc {
   compact: Vector<Doc> = []
-  
+
   for d in docs {
     case d {
       .Nil => {},
@@ -88,7 +88,7 @@ pub fn concat(docs: Vector<Doc>) Doc {
       _ => { compact = .append(d) },
     }
   }
-  
+
   if compact.len() == 0 {
     .Nil
   } else if compact.len() == 1 {
@@ -102,15 +102,15 @@ pub fn join(docs: Vector<Doc>, sep: Doc) Doc {
   if docs.len() == 0 {
     return .Nil
   }
-  
+
   parts: Vector<Doc> = []
-  
+
   for d, i in docs {
     if i > 0 { parts = .append(sep) }
-    
+
     parts = .append(d)
   }
-  
+
   concat(parts)
 }
 
@@ -124,7 +124,7 @@ pub fn tight_bracketed(open: String, close: String, docs: Vector<Doc>) Doc {
   if docs.len() == 0 {
     return text("${open}${close}")
   }
-  
+
   group(
     concat([
       text(open),
@@ -150,7 +150,7 @@ pub fn spaced_bracketed(open: String, close: String, docs: Vector<Doc>) Doc {
   if docs.len() == 0 {
     return text("${open}${close}")
   }
-  
+
   group(
     concat([
       text(open),
