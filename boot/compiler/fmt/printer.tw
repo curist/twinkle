@@ -79,10 +79,14 @@ fn get_eof_trivia(tokens: Vector<Token>) Vector<Trivia> {
 /// BlankLine becomes HardLine (producing a blank line after the preceding newline).
 fn emit_trivia(trivia: Vector<Trivia>) Doc {
   result := Doc.Nil
-  for t in trivia {
+  for t, i in trivia {
     case t.kind {
       .BlankLine => {
-        result = .Concat(result, doc.hard_line())
+        prev_is_comment := i > 0 and is_comment_trivia(trivia[i - 1])
+        next_is_comment := i + 1 < trivia.len() and is_comment_trivia(trivia[i + 1])
+        if !(prev_is_comment and next_is_comment) {
+          result = .Concat(result, doc.hard_line())
+        }
       },
       .LineComment => {
         result = .Concat(result, .Concat(doc.text(t.text), doc.hard_line()))
@@ -93,6 +97,14 @@ fn emit_trivia(trivia: Vector<Trivia>) Doc {
     }
   }
   result
+}
+
+fn is_comment_trivia(t: Trivia) Bool {
+  case t.kind {
+    .LineComment => true,
+    .DocComment => true,
+    _ => false,
+  }
 }
 
 fn is_blank_trivia(t: Trivia) Bool {
@@ -221,12 +233,30 @@ pub fn format_module(module: Module, tokens: Vector<Token>) Doc {
   
   tm := build_trivia_map(tokens)
   result := Doc.Nil
+  original_first_start := item_span(module.items[0]).start
+  leading_file_trivia := get_trivia(tm, original_first_start)
+  if leading_file_trivia.len() > 0 {
+    start := 0
+    for start < leading_file_trivia.len() and is_blank_trivia(leading_file_trivia[start]) {
+      start = start + 1
+    }
+    if start < leading_file_trivia.len() {
+      result = .Concat(
+        result,
+        emit_trivia(leading_file_trivia.slice(start, leading_file_trivia.len())),
+      )
+    }
+  }
   prev_kind := ""
   prev_import_group := -1
   
   for item, i in items {
     cur_kind := item_kind_name(item)
-    trivia := get_trivia(tm, item_span(item).start)
+    trivia := if item_span(item).start == original_first_start {
+      []
+    } else {
+      get_trivia(tm, item_span(item).start)
+    }
     cur_import_group := case item {
       .Use(decl) => import_group(decl),
       _ => -1,
@@ -251,20 +281,6 @@ pub fn format_module(module: Module, tokens: Vector<Token>) Doc {
       } else {
         if needs_blank {
           result = .Concat(result, doc.hard_line())
-        }
-      }
-    } else {
-      // First item — emit leading trivia if any (skip leading blank lines)
-      if trivia.len() > 0 {
-        start := 0
-        for start < trivia.len() and is_blank_trivia(trivia[start]) {
-          start = start + 1
-        }
-        if start < trivia.len() {
-          result = .Concat(
-            result,
-            emit_trivia(trivia.slice(start, trivia.len())),
-          )
         }
       }
     }
@@ -780,28 +796,81 @@ fn format_unary(op: UnOp, inner: Expr, tm: Dict<Int, Vector<Trivia>>) Doc {
 
 fn format_binary(op: BinOp, lhs: Expr, rhs: Expr, tm: Dict<Int, Vector<Trivia>>) Doc {
   op_str := binop_str(op)
+  lhs_doc := format_binary_child(op, lhs, false, tm)
+  rhs_doc := format_binary_child(op, rhs, true, tm)
   case op {
     .Range => {
       // Range has no spaces
-      doc.concat([format_expr(lhs, tm), doc.text(op_str), format_expr(rhs, tm)])
+      doc.concat([lhs_doc, doc.text(op_str), rhs_doc])
     },
     .Assign => {
-      doc.concat(
-        [format_expr(lhs, tm), doc.text(" ${op_str} "), format_expr(rhs, tm)],
-      )
+      doc.concat([lhs_doc, doc.text(" ${op_str} "), rhs_doc])
     },
     _ => {
       doc.group(
         doc.concat(
           [
-            format_expr(lhs, tm),
+            lhs_doc,
             doc.line(),
             doc.text("${op_str} "),
-            format_expr(rhs, tm),
+            rhs_doc,
           ],
         ),
       )
     },
+  }
+}
+
+fn format_binary_child(parent: BinOp, child: Expr, is_right: Bool, tm: Dict<Int, Vector<Trivia>>) Doc {
+  child_doc := format_expr(child, tm)
+  case child.kind {
+    .Binary(child_op, _, _) => {
+      if needs_binary_parens(parent, child_op, is_right) {
+        doc.concat([doc.text("("), child_doc, doc.text(")")])
+      } else {
+        child_doc
+      }
+    },
+    _ => child_doc,
+  }
+}
+
+fn needs_binary_parens(parent: BinOp, child: BinOp, is_right: Bool) Bool {
+  parent_prec := binop_prec(parent)
+  child_prec := binop_prec(child)
+  if child_prec < parent_prec {
+    return true
+  }
+  if child_prec > parent_prec {
+    return false
+  }
+  // Preserve grouping for right-nested operators at the same precedence.
+  // This is required for non-associative ops and harmlessly explicit for others.
+  is_right
+}
+
+fn binop_prec(op: BinOp) Int {
+  case op {
+    .Assign => 1,
+    .Range => 2,
+    .LogicalOr => 4,
+    .LogicalAnd => 6,
+    .BitOr => 8,
+    .BitXor => 10,
+    .BitAnd => 12,
+    .Eq => 14,
+    .Ne => 14,
+    .Lt => 16,
+    .Le => 16,
+    .Gt => 16,
+    .Ge => 16,
+    .Shl => 18,
+    .Shr => 18,
+    .Add => 20,
+    .Sub => 20,
+    .Mul => 22,
+    .Div => 22,
+    .Mod => 22,
   }
 }
 
@@ -831,7 +900,7 @@ fn binop_str(op: BinOp) String {
 }
 
 fn format_call(callee: Expr, args: Vector<Expr>, tm: Dict<Int, Vector<Trivia>>) Doc {
-  if args.len() == 1 {
+  if args.len() == 1 and is_self_breaking_arg(args[0]) {
     return doc.concat(
       [format_expr(callee, tm), doc.text("("), format_expr(args[0], tm), doc.text(")")],
     )
@@ -1059,6 +1128,19 @@ fn format_float_literal(f: Float) String {
   }
 }
 
+fn is_self_breaking_arg(expr: Expr) Bool {
+  case expr.kind {
+    .Array(_) => true,
+    .Record(_) => true,
+    .NamedRecord(_, _) => true,
+    .BlockExpr(_) => true,
+    .If(_, _, _) => true,
+    .Case(_, _) => true,
+    .Collect(_) => true,
+    _ => false,
+  }
+}
+
 fn is_simple_stmt(stmt: Stmt) Bool {
   case stmt {
     .Return(s) => {
@@ -1092,8 +1174,27 @@ fn is_simple_expr(expr: Expr) Bool {
     .Call(_, _) => true,
     .Field(_, _) => true,
     .Index(_, _) => true,
+    .Record(entries) => are_simple_record_entries(entries),
+    .NamedRecord(_, entries) => are_simple_record_entries(entries),
     _ => false,
   }
+}
+
+fn are_simple_record_entries(entries: Vector<RecordEntry>) Bool {
+  if entries.len() > 4 {
+    return false
+  }
+  for entry in entries {
+    case entry.value {
+      .Some(expr) => {
+        if !is_simple_expr(expr) {
+          return false
+        }
+      },
+      .None => {},
+    }
+  }
+  true
 }
 
 fn escape_string(s: String) String {

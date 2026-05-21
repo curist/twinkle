@@ -237,6 +237,9 @@ pub fn lex(source: String, file_id: Int) StageResult<Vector<Token>> {
         text: source.slice(comment_start, i),
         span: span.new(file_id, comment_start, i),
       })
+      // Let the comment's trailing newline establish preceded_by_newline.
+      // Do not combine it with the newline before the comment as a blank line.
+      saw_newline = false
       continue
     }
 
