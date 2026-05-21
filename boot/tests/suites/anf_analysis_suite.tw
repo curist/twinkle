@@ -1,7 +1,7 @@
 use compiler.anf.{AnfExpr, AnfMatchArm}
 use compiler.anf_analysis.{
-  collect_assigned_locals, collect_bound_locals, collect_free_locals,
-  collect_pattern_bindings, expr_always_diverges, set_has,
+  collect_assigned_locals, collect_bound_locals, collect_free_locals, collect_pattern_bindings,
+  expr_always_diverges, set_has,
 }
 use compiler.core_ir.{CorePattern, FuncId, LocalId, VariantId}
 use compiler.mono_type.{TypeId}
@@ -39,10 +39,7 @@ fn test_pattern_nested_variant() Result<Void, String> {
   pat: CorePattern = .Variant(
     TypeId.{ id: 7 },
     VariantId.{ id: 2 },
-    [
-      .Var(lid(1)),
-      .Variant(TypeId.{ id: 8 }, VariantId.{ id: 1 }, [.Var(lid(3)), .Wildcard]),
-    ],
+    [.Var(lid(1)), .Variant(TypeId.{ id: 8 }, VariantId.{ id: 1 }, [.Var(lid(3)), .Wildcard])],
   )
   s := collect_pattern_bindings(pat, empty_set())
   try assert.is_true(set_has(s, 1))
@@ -102,11 +99,7 @@ fn test_free_match_pattern_declares() Result<Void, String> {
     pattern: .Variant(TypeId.{ id: 5 }, VariantId.{ id: 0 }, [.Var(lid(2))]),
     body: .Atom(.ALocal(lid(2))),
   }
-  expr: AnfExpr = .Let(
-    lid(1),
-    .AMatch(.ALocal(lid(0)), [arm]),
-    .Atom(.ALocal(lid(1))),
-  )
+  expr: AnfExpr = .Let(lid(1), .AMatch(.ALocal(lid(0)), [arm]), .Atom(.ALocal(lid(1))))
   free := collect_free_locals(expr, set_of1(0))
   assert.equal(free.len(), 0)
 }
@@ -150,11 +143,7 @@ fn test_bound_nested() Result<Void, String> {
     .AIf(
       .ALitBool(true),
       .Let(lid(1), .AInit(.ALitInt(1)), .Atom(.ALocal(lid(1)))),
-      .Let(
-        lid(2),
-        .ALoop(.Let(lid(3), .AInit(.ALitInt(2)), .Break(.None))),
-        .Atom(.ALocal(lid(2))),
-      ),
+      .Let(lid(2), .ALoop(.Let(lid(3), .AInit(.ALitInt(2)), .Break(.None))), .Atom(.ALocal(lid(2)))),
     ),
     .Atom(.ALocal(lid(0))),
   )
@@ -176,9 +165,7 @@ fn test_assigned_nested() Result<Void, String> {
       .Let(lid(1), .AAssign(lid(8), .ALitInt(10)), .Atom(.ALocal(lid(1)))),
       .Let(
         lid(2),
-        .ADefer(
-          .Let(lid(3), .AAssign(lid(9), .ALitInt(20)), .Atom(.ALocal(lid(3)))),
-        ),
+        .ADefer(.Let(lid(3), .AAssign(lid(9), .ALitInt(20)), .Atom(.ALocal(lid(3))))),
         .Atom(.ALocal(lid(2))),
       ),
     ),
@@ -199,9 +186,7 @@ fn test_diverges_break() Result<Void, String> {
   assert.is_true(expr_always_diverges(.Break(.None)))
 }
 
-fn test_diverges_continue() Result<Void, String> {
-  assert.is_true(expr_always_diverges(.Continue))
-}
+fn test_diverges_continue() Result<Void, String> { assert.is_true(expr_always_diverges(.Continue)) }
 
 fn test_diverges_atom_does_not() Result<Void, String> {
   assert.is_false(expr_always_diverges(.Atom(.ALitVoid)))

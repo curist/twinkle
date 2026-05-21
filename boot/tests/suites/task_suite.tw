@@ -1,45 +1,51 @@
-use tests.runner
 use tests.assert
 use tests.helpers.codegen_harness
+use tests.runner
 
 pub fn suite() runner.Suite {
-  runner.suite("task concurrency")
-    // ── Basic spawn + await ──
-    .test("spawn and await returns value", fn() {
+  runner.suite("task concurrency").test(
+    "spawn and await returns value",
+    fn() {
       t := Task.spawn(fn() Int { 42 })
       try assert.equal(t.await(), 42)
       .Ok({})
-    })
-    .test("spawn and await string", fn() {
+    },
+  ).test(
+    "spawn and await string",
+    fn() {
       t := Task.spawn(fn() String { "hello" })
       try assert.equal(t.await(), "hello")
       .Ok({})
-    })
-    .test("spawn and await bool", fn() {
+    },
+  ).test(
+    "spawn and await bool",
+    fn() {
       t := Task.spawn(fn() Bool { true })
       try assert.is_true(t.await())
       .Ok({})
-    })
-    .test("spawn and await float", fn() {
+    },
+  ).test(
+    "spawn and await float",
+    fn() {
       t := Task.spawn(fn() Float { 3.14 })
       result := t.await()
       // Float comparison: check it's close enough
       try assert.is_true(result > 3.13)
       try assert.is_true(result < 3.15)
       .Ok({})
-    })
-
-    // ── Void-returning tasks ──
-    .test("void task spawn and await", fn() {
+    },
+  ).test(
+    "void task spawn and await",
+    fn() {
       c := Cell.new(0)
       t := Task.spawn(fn() { c.set(1) })
       t.await()
       try assert.equal(c.get(), 1)
       .Ok({})
-    })
-
-    // ── Multiple tasks ──
-    .test("multiple spawns all execute", fn() {
+    },
+  ).test(
+    "multiple spawns all execute",
+    fn() {
       c := Cell.new(0)
       t1 := Task.spawn(fn() { c.update(fn(n) { n + 1 }) })
       t2 := Task.spawn(fn() { c.update(fn(n) { n + 10 }) })
@@ -49,17 +55,23 @@ pub fn suite() runner.Suite {
       t3.await()
       try assert.equal(c.get(), 111)
       .Ok({})
-    })
-    .test("awaiting first task runs it", fn() {
+    },
+  ).test(
+    "awaiting first task runs it",
+    fn() {
       c := Cell.new(0)
-      t1 := Task.spawn(fn() Int {
-        c.update(fn(n) { n + 1 })
-        10
-      })
-      t2 := Task.spawn(fn() Int {
-        c.update(fn(n) { n + 1 })
-        20
-      })
+      t1 := Task.spawn(
+        fn() Int {
+          c.update(fn(n) { n + 1 })
+          10
+        },
+      )
+      t2 := Task.spawn(
+        fn() Int {
+          c.update(fn(n) { n + 1 })
+          20
+        },
+      )
       // Awaiting t1 should run it (and possibly t2 too since scheduler drains)
       r1 := t1.await()
       try assert.equal(r1, 10)
@@ -67,14 +79,12 @@ pub fn suite() runner.Suite {
       try assert.equal(r2, 20)
       try assert.equal(c.get(), 2)
       .Ok({})
-    })
-
-    // ── Deferred execution (tasks don't run at spawn) ──
-    .test("task does not run immediately at spawn", fn() {
+    },
+  ).test(
+    "task does not run immediately at spawn",
+    fn() {
       c := Cell.new(0)
-      t := Task.spawn(fn() {
-        c.set(42)
-      })
+      t := Task.spawn(fn() { c.set(42) })
       // Before await, side effect hasn't happened yet
       // (it runs when we await or at drain)
       val_before := c.get()
@@ -83,156 +93,199 @@ pub fn suite() runner.Suite {
       try assert.equal(val_before, 0)
       try assert.equal(val_after, 42)
       .Ok({})
-    })
-
-    // ── Closure captures ──
-    .test("task closure captures variables", fn() {
+    },
+  ).test(
+    "task closure captures variables",
+    fn() {
       x := 10
       y := 20
       t := Task.spawn(fn() Int { x + y })
       try assert.equal(t.await(), 30)
       .Ok({})
-    })
-    .test("task closure captures mutable cell", fn() {
+    },
+  ).test(
+    "task closure captures mutable cell",
+    fn() {
       c := Cell.new("before")
-      t := Task.spawn(fn() String {
-        c.set("after")
-        c.get()
-      })
+      t := Task.spawn(
+        fn() String {
+          c.set("after")
+          c.get()
+        },
+      )
       result := t.await()
       try assert.equal(result, "after")
       try assert.equal(c.get(), "after")
       .Ok({})
-    })
-
-    // ── Multiple awaits on same task ──
-    .test("await same task twice returns same result", fn() {
+    },
+  ).test(
+    "await same task twice returns same result",
+    fn() {
       t := Task.spawn(fn() Int { 99 })
       r1 := t.await()
       r2 := t.await()
       try assert.equal(r1, 99)
       try assert.equal(r2, 99)
       .Ok({})
-    })
-
-    // ── Tasks returning complex types ──
-    .test("task returning vector", fn() {
-      t := Task.spawn(fn() Vector<Int> { [1, 2, 3] })
+    },
+  ).test(
+    "task returning vector",
+    fn() {
+      t := Task.spawn(
+        fn() Vector<Int> {
+          [1, 2, 3]
+        },
+      )
       result := t.await()
       try assert.equal(result.len(), 3)
       try assert.equal(result[0], 1)
       try assert.equal(result[2], 3)
       .Ok({})
-    })
-    .test("task returning optional", fn() {
-      t := Task.spawn(fn() Int? { .Some(5) })
+    },
+  ).test(
+    "task returning optional",
+    fn() {
+      t := Task.spawn(
+        fn() Int? {
+          .Some(5)
+        },
+      )
       result := t.await()
       try assert.is_some(result)
       .Ok({})
-    })
-
-    // ── Task.yield (state-machine transform) ──
-    .test("yield interleaves tasks", fn() {
+    },
+  ).test(
+    "yield interleaves tasks",
+    fn() {
       log := Cell.new("")
-      t1 := Task.spawn(fn() {
-        log.update(fn(s) { s.concat("A1") })
-        Task.yield()
-        log.update(fn(s) { s.concat("A2") })
-      })
-      t2 := Task.spawn(fn() {
-        log.update(fn(s) { s.concat("B1") })
-        Task.yield()
-        log.update(fn(s) { s.concat("B2") })
-      })
+      t1 := Task.spawn(
+        fn() {
+          log.update(fn(s) { s.concat("A1") })
+          Task.yield()
+          log.update(fn(s) { s.concat("A2") })
+        },
+      )
+      t2 := Task.spawn(
+        fn() {
+          log.update(fn(s) { s.concat("B1") })
+          Task.yield()
+          log.update(fn(s) { s.concat("B2") })
+        },
+      )
       t1.await()
       t2.await()
       try assert.equal(log.get(), "A1B1A2B2")
       .Ok({})
-    })
-
-    .test("yield with return value", fn() {
-      t := Task.spawn(fn() Int {
-        Task.yield()
-        42
-      })
+    },
+  ).test(
+    "yield with return value",
+    fn() {
+      t := Task.spawn(
+        fn() Int {
+          Task.yield()
+          42
+        },
+      )
       try assert.equal(t.await(), 42)
       .Ok({})
-    })
-    .test("multiple yields", fn() {
+    },
+  ).test(
+    "multiple yields",
+    fn() {
       log := Cell.new("")
-      t1 := Task.spawn(fn() {
-        log.update(fn(s) { s.concat("1") })
-        Task.yield()
-        log.update(fn(s) { s.concat("2") })
-        Task.yield()
-        log.update(fn(s) { s.concat("3") })
-      })
-      t2 := Task.spawn(fn() {
-        log.update(fn(s) { s.concat("a") })
-        Task.yield()
-        log.update(fn(s) { s.concat("b") })
-        Task.yield()
-        log.update(fn(s) { s.concat("c") })
-      })
+      t1 := Task.spawn(
+        fn() {
+          log.update(fn(s) { s.concat("1") })
+          Task.yield()
+          log.update(fn(s) { s.concat("2") })
+          Task.yield()
+          log.update(fn(s) { s.concat("3") })
+        },
+      )
+      t2 := Task.spawn(
+        fn() {
+          log.update(fn(s) { s.concat("a") })
+          Task.yield()
+          log.update(fn(s) { s.concat("b") })
+          Task.yield()
+          log.update(fn(s) { s.concat("c") })
+        },
+      )
       t1.await()
       t2.await()
       try assert.equal(log.get(), "1a2b3c")
       .Ok({})
-    })
-    .test("yield preserves captures", fn() {
+    },
+  ).test(
+    "yield preserves captures",
+    fn() {
       x := 10
       y := 20
-      t := Task.spawn(fn() Int {
-        Task.yield()
-        x + y
-      })
+      t := Task.spawn(
+        fn() Int {
+          Task.yield()
+          x + y
+        },
+      )
       try assert.equal(t.await(), 30)
       .Ok({})
-    })
-    .test("yield with cell mutation across suspend", fn() {
+    },
+  ).test(
+    "yield with cell mutation across suspend",
+    fn() {
       c := Cell.new(0)
-      t := Task.spawn(fn() Int {
-        c.set(1)
-        Task.yield()
-        c.set(c.get() + 10)
-        c.get()
-      })
+      t := Task.spawn(
+        fn() Int {
+          c.set(1)
+          Task.yield()
+          c.set(c.get() + 10)
+          c.get()
+        },
+      )
       try assert.equal(t.await(), 11)
       .Ok({})
-    })
-
-    // ── Task-body await (suspending await inside task) ──
-    .test("task-body await on completed task", fn() {
+    },
+  ).test(
+    "task-body await on completed task",
+    fn() {
       t1 := Task.spawn(fn() Int { 10 })
-      t2 := Task.spawn(fn() Int {
-        // t1 will be done by the time we run (FIFO, t1 first)
-        r := t1.await()
-        r + 5
-      })
+      t2 := Task.spawn(
+        fn() Int {
+          // t1 will be done by the time we run (FIFO, t1 first)
+          r := t1.await()
+          r + 5
+        },
+      )
       try assert.equal(t2.await(), 15)
       .Ok({})
-    })
-    .test("task-body await on pending task", fn() {
+    },
+  ).test(
+    "task-body await on pending task",
+    fn() {
       log := Cell.new("")
-      t1 := Task.spawn(fn() Int {
-        log.update(fn(s) { s.concat("A") })
-        Task.yield()
-        log.update(fn(s) { s.concat("B") })
-        42
-      })
-      t2 := Task.spawn(fn() Int {
-        // t1 is not done yet — will block until t1 finishes
-        r := t1.await()
-        log.update(fn(s) { s.concat("C") })
-        r + 1
-      })
+      t1 := Task.spawn(
+        fn() Int {
+          log.update(fn(s) { s.concat("A") })
+          Task.yield()
+          log.update(fn(s) { s.concat("B") })
+          42
+        },
+      )
+      t2 := Task.spawn(
+        fn() Int {
+          // t1 is not done yet — will block until t1 finishes
+          r := t1.await()
+          log.update(fn(s) { s.concat("C") })
+          r + 1
+        },
+      )
       try assert.equal(t2.await(), 43)
       try assert.equal(log.get(), "ABC")
       .Ok({})
-    })
-
-    // ── Spawn ordering ──
-    .test("tasks execute in FIFO order", fn() {
+    },
+  ).test(
+    "tasks execute in FIFO order",
+    fn() {
       log := Cell.new("")
       t1 := Task.spawn(fn() { log.update(fn(s) { s.concat("A") }) })
       t2 := Task.spawn(fn() { log.update(fn(s) { s.concat("B") }) })
@@ -242,34 +295,39 @@ pub fn suite() runner.Suite {
       t3.await()
       try assert.equal(log.get(), "ABC")
       .Ok({})
-    })
-
-    // ── Nested spawn ──
-    .test("task can spawn subtask", fn() {
-      t := Task.spawn(fn() Int {
-        inner := Task.spawn(fn() Int { 7 })
-        inner.await() * 6
-      })
+    },
+  ).test(
+    "task can spawn subtask",
+    fn() {
+      t := Task.spawn(
+        fn() Int {
+          inner := Task.spawn(fn() Int { 7 })
+          inner.await() * 6
+        },
+      )
       try assert.equal(t.await(), 42)
       .Ok({})
-    })
+    },
+  ).test(
+    "task with loop computation",
+    fn() {
+      t := Task.spawn(
+        fn() Int {
+          sum := Cell.new(0)
 
-    // ── Computed values ──
-    .test("task with loop computation", fn() {
-      t := Task.spawn(fn() Int {
-        sum := Cell.new(0)
-        for i in 0..10 {
-          sum.update(fn(n) { n + i })
-        }
-        sum.get()
-      })
+          for i in 0..10 { sum.update(fn(n) { n + i }) }
+
+          sum.get()
+        },
+      )
       try assert.equal(t.await(), 45)
       .Ok({})
-    })
-
-    // ── Validation: rejected positions ──
-    .test("reject yield in ordinary function", fn() {
+    },
+  ).test(
+    "reject yield in ordinary function",
+    fn() {
       result := codegen_harness.validate_task_src("fn bad() { Task.yield() }\nbad()")
+
       case result {
         .Ok(_) => .Err("expected validation error for yield in ordinary function"),
         .Err(msg) => {
@@ -277,9 +335,12 @@ pub fn suite() runner.Suite {
           .Ok({})
         },
       }
-    })
-    .test("reject yield in top-level code", fn() {
+    },
+  ).test(
+    "reject yield in top-level code",
+    fn() {
       result := codegen_harness.validate_task_src("Task.yield()")
+
       case result {
         .Ok(_) => .Err("expected validation error for yield in top-level code"),
         .Err(msg) => {
@@ -287,10 +348,13 @@ pub fn suite() runner.Suite {
           .Ok({})
         },
       }
-    })
-    .test("reject yield in Cell.update callback", fn() {
+    },
+  ).test(
+    "reject yield in Cell.update callback",
+    fn() {
       src := "c := Cell.new(0)\nt := Task.spawn(fn() {\n  c.update(fn(n) {\n    Task.yield()\n    n + 1\n  })\n})\nt.await()"
       result := codegen_harness.validate_task_src(src)
+
       case result {
         .Ok(_) => .Err("expected validation error for yield in Cell.update"),
         .Err(msg) => {
@@ -298,10 +362,13 @@ pub fn suite() runner.Suite {
           .Ok({})
         },
       }
-    })
-    .test("reject await in Cell.update callback", fn() {
+    },
+  ).test(
+    "reject await in Cell.update callback",
+    fn() {
       src := "c := Cell.new(0)\nt1 := Task.spawn(fn() Int { 42 })\nt2 := Task.spawn(fn() {\n  c.update(fn(n) {\n    r := t1.await()\n    n + r\n  })\n})\nt2.await()"
       result := codegen_harness.validate_task_src(src)
+
       case result {
         .Ok(_) => .Err("expected validation error for await in Cell.update"),
         .Err(msg) => {
@@ -309,10 +376,13 @@ pub fn suite() runner.Suite {
           .Ok({})
         },
       }
-    })
-    .test("reject yield inside if branch in task body", fn() {
+    },
+  ).test(
+    "reject yield inside if branch in task body",
+    fn() {
       src := "fn cond() Bool { true }\nt := Task.spawn(fn() {\n  if cond() {\n    Task.yield()\n  }\n})\nt.await()"
       result := codegen_harness.validate_task_src(src)
+
       case result {
         .Ok(_) => .Err("expected validation error for yield inside if branch"),
         .Err(msg) => {
@@ -321,5 +391,6 @@ pub fn suite() runner.Suite {
           .Ok({})
         },
       }
-    })
+    },
+  )
 }

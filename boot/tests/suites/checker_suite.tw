@@ -53,24 +53,9 @@ fn test_env() resolver.ResolvedEnv {
       [mono_type.MonoType.Int, mono_type.MonoType.Int],
       .Some(mono_type.MonoType.Vector(mono_type.MonoType.Int)),
     ),
-    builtin_sig(
-      "error",
-      ["msg"],
-      [mono_type.MonoType.String],
-      .Some(mono_type.MonoType.Never),
-    ),
-    builtin_sig(
-      "println",
-      ["s"],
-      [mono_type.MonoType.String],
-      .Some(mono_type.MonoType.Void),
-    ),
-    builtin_sig(
-      "int_to_string",
-      ["n"],
-      [mono_type.MonoType.Int],
-      .Some(mono_type.MonoType.String),
-    ),
+    builtin_sig("error", ["msg"], [mono_type.MonoType.String], .Some(mono_type.MonoType.Never)),
+    builtin_sig("println", ["s"], [mono_type.MonoType.String], .Some(mono_type.MonoType.Void)),
+    builtin_sig("int_to_string", ["n"], [mono_type.MonoType.Int], .Some(mono_type.MonoType.String)),
     builtin_sig(
       "bool_to_string",
       ["b"],
@@ -91,12 +76,7 @@ fn test_env() resolver.ResolvedEnv {
       resolver.ResolvedTypeDef.Sum(
         "Iterator",
         plain_resolved_type_params(["T"]),
-        [
-          resolver.ResolvedVariant.{
-            name: "Item",
-            fields: [mono_type.MonoType.Var("T")],
-          },
-        ],
+        [resolver.ResolvedVariant.{ name: "Item", fields: [mono_type.MonoType.Var("T")] }],
       ),
     ),
     span: span.Span.{ file_id: 0, start: 0, end: 0 },
@@ -164,10 +144,7 @@ fn check_ok(src: String) Result<checker.CheckResult, String> {
   .Ok(r)
 }
 
-fn check_ok_with_env(src: String, env: resolver.ResolvedEnv) Result<
-  checker.CheckResult,
-  String,
-> {
+fn check_ok_with_env(src: String, env: resolver.ResolvedEnv) Result<checker.CheckResult, String> {
   r := check_src_with_env(src, env)
 
   if r.diagnostics.len() > 0 {
@@ -191,10 +168,7 @@ fn check_errs(src: String) Result<Vector<String>, String> {
   .Ok(msgs)
 }
 
-fn check_errs_with_env(src: String, env: resolver.ResolvedEnv) Result<
-  Vector<String>,
-  String,
-> {
+fn check_errs_with_env(src: String, env: resolver.ResolvedEnv) Result<Vector<String>, String> {
   r := check_src_with_env(src, env)
 
   if r.diagnostics.len() == 0 {
@@ -232,10 +206,7 @@ fn find_id_by_span(result: checker.CheckResult, target_offset: Int) Int? {
   best
 }
 
-fn type_at(result: checker.CheckResult, src: String, needle: String) Result<
-  String,
-  String,
-> {
+fn type_at(result: checker.CheckResult, src: String, needle: String) Result<String, String> {
   offset := find_offset(src, needle)
 
   case offset {
@@ -244,9 +215,7 @@ fn type_at(result: checker.CheckResult, src: String, needle: String) Result<
         .Some(eid) => {
           case result.type_map[eid] {
             .Some(ty) => .Ok(rsuite.mono_to_string(ty)),
-            .None => .Err(
-              "no type at offset ${off} for '${needle}' (id=${eid})",
-            ),
+            .None => .Err("no type at offset ${off} for '${needle}' (id=${eid})"),
           }
         },
         .None => .Err("no expr id at offset ${off} for '${needle}'"),
@@ -256,9 +225,7 @@ fn type_at(result: checker.CheckResult, src: String, needle: String) Result<
   }
 }
 
-fn find_offset(src: String, needle: String) Int? {
-  find_offset_after(src, needle, 0)
-}
+fn find_offset(src: String, needle: String) Int? { find_offset_after(src, needle, 0) }
 
 fn find_offset_after(src: String, needle: String, start: Int) Int? {
   if needle.len() > src.len() {
@@ -310,14 +277,10 @@ fn type_at_nth(result: checker.CheckResult, src: String, needle: String, n: Int)
         .Some(eid) => {
           case result.type_map[eid] {
             .Some(ty) => .Ok(rsuite.mono_to_string(ty)),
-            .None => .Err(
-              "no type at offset ${off} for '${needle}' (occurrence ${n}, id=${eid})",
-            ),
+            .None => .Err("no type at offset ${off} for '${needle}' (occurrence ${n}, id=${eid})"),
           }
         },
-        .None => .Err(
-          "no expr id at offset ${off} for '${needle}' (occurrence ${n})",
-        ),
+        .None => .Err("no expr id at offset ${off} for '${needle}' (occurrence ${n})"),
       }
     },
     .None => .Err("'${needle}' occurrence ${n} not found in source"),
@@ -978,10 +941,7 @@ pub fn suite() runner.Suite {
     fn() {
       src := "fn inner() Result<Void, String> { .Ok({}) }\nfn run(f: fn() Void) Void { f() }\nrun(fn() { x := try inner()\n x })"
       msgs := try check_errs(src)
-      try assert.str_contains(
-        msgs[0],
-        "try on Result requires function to return Result",
-      )
+      try assert.str_contains(msgs[0], "try on Result requires function to return Result")
       .Ok({})
     },
   ).test(
@@ -1349,21 +1309,16 @@ pub fn suite() runner.Suite {
           resolver.ResolvedTypeDef.Sum(
             "Iterator",
             plain_resolved_type_params(["T"]),
-            [
-              resolver.ResolvedVariant.{
-                name: "Item",
-                fields: [mono_type.MonoType.Var("T")],
-              },
-            ],
+            [resolver.ResolvedVariant.{ name: "Item", fields: [mono_type.MonoType.Var("T")] }],
           ),
         ),
         span: span.Span.{ file_id: 0, start: 0, end: 0 },
         is_extern: false,
       }
-      env := resolver.empty_env().register_type_entry(
-        iter_entry,
-        "dep.Iterator",
-      ).bind_type("Iterator", iter_tid)
+      env := resolver.empty_env().register_type_entry(iter_entry, "dep.Iterator").bind_type(
+        "Iterator",
+        iter_tid,
+      )
       src := "fn f(it: Iterator<Int>) Void { for x in it { x } }"
       _ := try check_ok_with_env(src, env)
       .Ok({})
@@ -1490,9 +1445,7 @@ pub fn suite() runner.Suite {
       found := false
 
       for m in msgs {
-        if m.contains("ambiguous") or m.contains("cannot infer") {
-          found = true
-        }
+        if m.contains("ambiguous") or m.contains("cannot infer") { found = true }
       }
 
       try assert.is_true(found)
@@ -1538,9 +1491,7 @@ pub fn suite() runner.Suite {
       found := false
 
       for m in msgs {
-        if m.contains("unknown variant") or m.contains("variant") {
-          found = true
-        }
+        if m.contains("unknown variant") or m.contains("variant") { found = true }
       }
 
       try assert.is_true(found)
@@ -1841,9 +1792,7 @@ pub fn suite() runner.Suite {
       found := false
 
       for m in msgs {
-        if m.contains("Int.no_such") or m.contains("undefined variable") {
-          found = true
-        }
+        if m.contains("Int.no_such") or m.contains("undefined variable") { found = true }
       }
 
       try assert.is_true(found)
@@ -1856,9 +1805,7 @@ pub fn suite() runner.Suite {
       found := false
 
       for m in msgs {
-        if m.contains("undefined variable") or m.contains("bool_to_string") {
-          found = true
-        }
+        if m.contains("undefined variable") or m.contains("bool_to_string") { found = true }
       }
 
       try assert.is_true(found)
@@ -1962,8 +1909,7 @@ pub fn suite() runner.Suite {
 
       for m in msgs {
         if m.contains("to_string")
-        and (m.contains("receiver") or m.contains("shape")
-        or m.contains("missing")
+        and (m.contains("receiver") or m.contains("shape") or m.contains("missing")
         or m.contains("Stringify")) { found = true }
       }
 
@@ -1993,9 +1939,7 @@ pub fn suite() runner.Suite {
       found := false
 
       for m in msgs {
-        if m.contains("case") and (m.contains("sum") or m.contains("scrutinee")) {
-          found = true
-        }
+        if m.contains("case") and (m.contains("sum") or m.contains("scrutinee")) { found = true }
       }
 
       try assert.is_true(found)

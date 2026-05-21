@@ -117,11 +117,7 @@ fn test_live_loop_conservative() Result<Void, String> {
 fn test_live_closure_captures() Result<Void, String> {
   // Let(2, AMakeClosure(f, [0, 1]), Atom(ALocal(2)))
   // Free vars 0, 1 are live
-  expr: AnfExpr = .Let(
-    lid(2),
-    .AMakeClosure(fid(99), [lid(0), lid(1)]),
-    .Atom(.ALocal(lid(2))),
-  )
+  expr: AnfExpr = .Let(lid(2), .AMakeClosure(fid(99), [lid(0), lid(1)]), .Atom(.ALocal(lid(2))))
   live := live_after(expr)
   try assert.is_true(set_has(live, 0))
   try assert.is_true(set_has(live, 1))
@@ -212,9 +208,7 @@ fn test_annotate_base_dead() Result<Void, String> {
   result := annotate_in_place(func)
 
   case result.body {
-    .Let(_, .ARecordUpdate(_, _, _, can_reuse, _), _) => {
-      assert.is_true(can_reuse)
-    },
+    .Let(_, .ARecordUpdate(_, _, _, can_reuse, _), _) => { assert.is_true(can_reuse) },
     _ => .Err("expected ARecordUpdate"),
   }
 }
@@ -233,9 +227,7 @@ fn test_annotate_base_live() Result<Void, String> {
   result := annotate_in_place(func)
 
   case result.body {
-    .Let(_, .ARecordUpdate(_, _, _, can_reuse, _), _) => {
-      assert.is_true(!can_reuse)
-    },
+    .Let(_, .ARecordUpdate(_, _, _, can_reuse, _), _) => { assert.is_true(!can_reuse) },
     _ => .Err("expected ARecordUpdate"),
   }
 }
@@ -253,9 +245,7 @@ fn test_annotate_non_local_base() Result<Void, String> {
   result := annotate_in_place(func)
 
   case result.body {
-    .Let(_, .ARecordUpdate(_, _, _, can_reuse, _), _) => {
-      assert.is_true(!can_reuse)
-    },
+    .Let(_, .ARecordUpdate(_, _, _, can_reuse, _), _) => { assert.is_true(!can_reuse) },
     _ => .Err("expected ARecordUpdate"),
   }
 }
@@ -284,9 +274,7 @@ fn test_annotate_nested_in_if() Result<Void, String> {
   case result.body {
     .Let(_, .AIf(_, then_e, _), _) => {
       case then_e {
-        .Let(_, .ARecordUpdate(_, _, _, can_reuse, _), _) => {
-          assert.is_true(can_reuse)
-        },
+        .Let(_, .ARecordUpdate(_, _, _, can_reuse, _), _) => { assert.is_true(can_reuse) },
         _ => .Err("expected ARecordUpdate in then branch"),
       }
     },
@@ -308,9 +296,7 @@ fn test_annotate_param_base_dead() Result<Void, String> {
   result := annotate_in_place(func)
 
   case result.body {
-    .Let(_, .ARecordUpdate(_, _, _, can_reuse, _), _) => {
-      assert.is_true(!can_reuse)
-    },
+    .Let(_, .ARecordUpdate(_, _, _, can_reuse, _), _) => { assert.is_true(!can_reuse) },
     _ => .Err("expected ARecordUpdate"),
   }
 }
@@ -341,9 +327,7 @@ fn test_annotate_chained_updates() Result<Void, String> {
 
       // Second update: local 1 dead in continuation → true
       case rest {
-        .Let(_, .ARecordUpdate(_, _, _, can_reuse2, _), _) => {
-          assert.is_true(can_reuse2)
-        },
+        .Let(_, .ARecordUpdate(_, _, _, can_reuse2, _), _) => { assert.is_true(can_reuse2) },
         _ => .Err("expected second ARecordUpdate"),
       }
     },
@@ -356,11 +340,7 @@ fn test_live_assign_kills_target() Result<Void, String> {
   // Let(1, AAssign(0, ALocal(2)), Atom(ALocal(1)))
   // AAssign(0, ...) kills local 0, reads local 2
   // At entry: {2} (not 0, because 0 was killed by the assign)
-  expr: AnfExpr = .Let(
-    lid(1),
-    .AAssign(lid(0), .ALocal(lid(2))),
-    .Atom(.ALocal(lid(1))),
-  )
+  expr: AnfExpr = .Let(lid(1), .AAssign(lid(0), .ALocal(lid(2))), .Atom(.ALocal(lid(1))))
   live := live_after(expr)
   try assert.is_true(set_has(live, 2))
   assert.is_true(!set_has(live, 0))
@@ -371,11 +351,7 @@ fn test_live_assign_kills_old_value() Result<Void, String> {
   // The body reads local 0, but AAssign(0, ...) kills the OLD value of 0.
   // The body reads the NEW value (set by AAssign), not the old one.
   // So at entry, the old value of local 0 is NOT needed → live = {}
-  expr: AnfExpr = .Let(
-    lid(1),
-    .AAssign(lid(0), .ALitInt(99)),
-    .Atom(.ALocal(lid(0))),
-  )
+  expr: AnfExpr = .Let(lid(1), .AAssign(lid(0), .ALitInt(99)), .Atom(.ALocal(lid(0))))
   live := live_after(expr)
   assert.equal(live.len(), 0)
 }
@@ -397,9 +373,7 @@ fn test_annotate_consume_reassign() Result<Void, String> {
   result := annotate_in_place(func)
 
   case result.body {
-    .Let(_, .ARecordUpdate(_, _, _, can_reuse, _), _) => {
-      assert.is_true(can_reuse)
-    },
+    .Let(_, .ARecordUpdate(_, _, _, can_reuse, _), _) => { assert.is_true(can_reuse) },
     _ => .Err("expected ARecordUpdate"),
   }
 }

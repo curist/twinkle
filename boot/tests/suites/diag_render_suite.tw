@@ -27,9 +27,7 @@ pub fn suite() runner.Suite {
     "TypeMismatch: severity is Error",
     fn() {
       kind := DiagKind.Error(
-        .TypeMismatch(
-          .{ span: s(0, 5), expected: MonoType.Int, found: MonoType.Bool },
-        ),
+        .TypeMismatch(.{ span: s(0, 5), expected: MonoType.Int, found: MonoType.Bool }),
       )
       r := diag_render.to_report(kind, ctx())
 
@@ -44,9 +42,7 @@ pub fn suite() runner.Suite {
     "TypeMismatch: title is 'type mismatch'",
     fn() {
       kind := DiagKind.Error(
-        .TypeMismatch(
-          .{ span: s(0, 5), expected: MonoType.Int, found: MonoType.Bool },
-        ),
+        .TypeMismatch(.{ span: s(0, 5), expected: MonoType.Int, found: MonoType.Bool }),
       )
       r := diag_render.to_report(kind, ctx())
       try assert.equal(r.title, "type mismatch")
@@ -56,9 +52,7 @@ pub fn suite() runner.Suite {
     "TypeMismatch: primary label contains expected and found types",
     fn() {
       kind := DiagKind.Error(
-        .TypeMismatch(
-          .{ span: s(3, 8), expected: MonoType.Int, found: MonoType.String },
-        ),
+        .TypeMismatch(.{ span: s(3, 8), expected: MonoType.Int, found: MonoType.String }),
       )
       r := diag_render.to_report(kind, ctx())
       try assert.equal(r.labels.len(), 1)
@@ -96,9 +90,7 @@ pub fn suite() runner.Suite {
   ).test(
     "WrongArity: title contains expected and found counts",
     fn() {
-      kind := DiagKind.Error(
-        .WrongArity(.{ span: s(0, 10), expected: 2, found: 5 }),
-      )
+      kind := DiagKind.Error(.WrongArity(.{ span: s(0, 10), expected: 2, found: 5 }))
       r := diag_render.to_report(kind, ctx())
 
       case r.severity {
@@ -117,11 +109,7 @@ pub fn suite() runner.Suite {
     fn() {
       kind := DiagKind.Error(
         .MissingVariants(
-          .{
-            span: s(5, 20),
-            scrutinee_ty: MonoType.Bool,
-            missing: ["True", "False"],
-          },
+          .{ span: s(5, 20), scrutinee_ty: MonoType.Bool, missing: ["True", "False"] },
         ),
       )
       r := diag_render.to_report(kind, ctx())
@@ -148,9 +136,7 @@ pub fn suite() runner.Suite {
   ).test(
     "DuplicateField: title contains field name",
     fn() {
-      kind := DiagKind.Error(
-        .DuplicateField(.{ span: s(10, 15), name: "x", first: s(2, 7) }),
-      )
+      kind := DiagKind.Error(.DuplicateField(.{ span: s(10, 15), name: "x", first: s(2, 7) }))
       r := diag_render.to_report(kind, ctx())
 
       case r.severity {
@@ -164,9 +150,7 @@ pub fn suite() runner.Suite {
   ).test(
     "DuplicateField: primary label on duplicate span, secondary on first",
     fn() {
-      kind := DiagKind.Error(
-        .DuplicateField(.{ span: s(10, 15), name: "x", first: s(2, 7) }),
-      )
+      kind := DiagKind.Error(.DuplicateField(.{ span: s(10, 15), name: "x", first: s(2, 7) }))
       r := diag_render.to_report(kind, ctx())
       try assert.equal(r.labels.len(), 2)
       primary_lbl := r.labels[0]
@@ -201,11 +185,7 @@ pub fn suite() runner.Suite {
     fn() {
       kind := DiagKind.Error(
         .ParseError(
-          diag.GenericDiag.{
-            span: s(0, 5),
-            message: "something went wrong",
-            help_lines: [],
-          },
+          diag.GenericDiag.{ span: s(0, 5), message: "something went wrong", help_lines: [] },
         ),
       )
       r := diag_render.to_report(kind, ctx())
@@ -224,9 +204,7 @@ pub fn suite() runner.Suite {
   ).test(
     "UnusedImport: severity is Warning, title contains binding name",
     fn() {
-      kind := DiagKind.Warning(
-        .UnusedImport(.{ span: s(4, 11), binding: "my_mod" }),
-      )
+      kind := DiagKind.Warning(.UnusedImport(.{ span: s(4, 11), binding: "my_mod" }))
       r := diag_render.to_report(kind, ctx())
 
       case r.severity {
@@ -246,9 +224,7 @@ pub fn suite() runner.Suite {
     "MissingField with Named type falls back to Named(id) without snapshot",
     fn() {
       tid := MonoType.Named(.{ id: 99 }, [])
-      kind := DiagKind.Error(
-        .MissingField(.{ span: s(0, 10), name: "y", ty: tid }),
-      )
+      kind := DiagKind.Error(.MissingField(.{ span: s(0, 10), name: "y", ty: tid }))
       r := diag_render.to_report(kind, ctx())
       try assert.is_true(r.title.contains("Named(99)"))
       .Ok({})
@@ -257,9 +233,7 @@ pub fn suite() runner.Suite {
     "MissingField with Named type renders source name from snapshot",
     fn() {
       tid := MonoType.Named(.{ id: 99 }, [])
-      kind := DiagKind.Error(
-        .MissingField(.{ span: s(0, 10), name: "y", ty: tid }),
-      )
+      kind := DiagKind.Error(.MissingField(.{ span: s(0, 10), name: "y", ty: tid }))
       names: Dict<Int, String> = Dict.new()
       names[99] = "Point"
       snapshot_ctx := RenderCtx.{

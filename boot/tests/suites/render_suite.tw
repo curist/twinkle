@@ -46,12 +46,7 @@ pub fn suite() runner.Suite {
     "warning header only, no labels",
     fn() {
       reg := registry.empty()
-      report := Report.{
-        severity: .Warning,
-        title: "unused value",
-        labels: [],
-        help_lines: [],
-      }
+      report := Report.{ severity: .Warning, title: "unused value", labels: [], help_lines: [] }
       out := render.render(report, reg, no_color())
       try assert.equal(out, "warning: unused value")
       .Ok({})
@@ -111,9 +106,7 @@ pub fn suite() runner.Suite {
         severity: .Warning,
         title: "unused import `bar`",
         labels: [primary(sp(8, 11), .None)],
-        help_lines: [
-          "use `twk check --fix-unused-imports` to remove automatically",
-        ],
+        help_lines: ["use `twk check --fix-unused-imports` to remove automatically"],
       }
       out := render.render(report, reg, no_color())
       expected := lines([
@@ -196,12 +189,7 @@ pub fn suite() runner.Suite {
     "error header contains bold-red ANSI code when color enabled",
     fn() {
       reg := registry.empty()
-      report := Report.{
-        severity: .Error,
-        title: "something",
-        labels: [],
-        help_lines: [],
-      }
+      report := Report.{ severity: .Error, title: "something", labels: [], help_lines: [] }
       out := render.render(report, reg, with_color())
       // Bold-red escape for severity label
       try assert.is_true(out.contains("\e[31;1merror\e[0m"))
@@ -213,12 +201,7 @@ pub fn suite() runner.Suite {
     "warning header contains bold-yellow ANSI code when color enabled",
     fn() {
       reg := registry.empty()
-      report := Report.{
-        severity: .Warning,
-        title: "heads up",
-        labels: [],
-        help_lines: [],
-      }
+      report := Report.{ severity: .Warning, title: "heads up", labels: [], help_lines: [] }
       out := render.render(report, reg, with_color())
       try assert.is_true(out.contains("\e[33;1mwarning\e[0m"))
       .Ok({})

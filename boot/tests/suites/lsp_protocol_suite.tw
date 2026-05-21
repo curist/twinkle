@@ -1,73 +1,114 @@
-use tests.runner
-use tests.assert
 use lib.json
 use lib.lsp.protocol
+use tests.assert
+use tests.runner
 
 pub fn suite() runner.Suite {
-  runner.suite("lsp protocol")
-    .test("decode request message", fn() {
-      msg := try protocol.parse_message("{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"initialize\",\"params\":{}}")
+  runner.suite("lsp protocol").test(
+    "decode request message",
+    fn() {
+      msg := try protocol.parse_message(
+        "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"initialize\",\"params\":{}}",
+      )
+
       case msg {
         .Request(req) => {
           case req.id {
             .IntId(n) => try assert.equal(n, 1),
-            _ => { return .Err("expected int id") },
+            _ => {
+              return .Err("expected int id")
+            },
           }
+
           try assert.equal(req.method, "initialize")
           try assert.is_some(req.params)
         },
-        _ => { return .Err("expected request") },
+        _ => {
+          return .Err("expected request")
+        },
       }
+
       .Ok({})
-    })
-    .test("decode notification message", fn() {
-      msg := try protocol.parse_message("{\"jsonrpc\":\"2.0\",\"method\":\"initialized\"}");
+    },
+  ).test(
+    "decode notification message",
+    fn() {
+      msg := try protocol.parse_message("{\"jsonrpc\":\"2.0\",\"method\":\"initialized\"}")
+
       case msg {
         .Notification(note) => {
           try assert.equal(note.method, "initialized")
           try assert.is_none(note.params)
         },
-        _ => { return .Err("expected notification") },
+        _ => {
+          return .Err("expected notification")
+        },
       }
+
       .Ok({})
-    })
-    .test("decode response message", fn() {
-      msg := try protocol.parse_message("{\"jsonrpc\":\"2.0\",\"id\":\"abc\",\"result\":{\"ok\":true}}");
+    },
+  ).test(
+    "decode response message",
+    fn() {
+      msg := try protocol.parse_message(
+        "{\"jsonrpc\":\"2.0\",\"id\":\"abc\",\"result\":{\"ok\":true}}",
+      )
+
       case msg {
         .Response(resp) => {
           case resp.id {
             .StringId(s) => try assert.equal(s, "abc"),
-            _ => { return .Err("expected string id") },
+            _ => {
+              return .Err("expected string id")
+            },
           }
+
           try assert.is_some(resp.result)
           try assert.is_none(resp.error)
         },
-        _ => { return .Err("expected response") },
+        _ => {
+          return .Err("expected response")
+        },
       }
+
       .Ok({})
-    })
-    .test("make success response json", fn() {
+    },
+  ).test(
+    "make success response json",
+    fn() {
       out := protocol.success_response(.IntId(7), .Str("ok"))
       try assert.equal(try json.decode(out, json.field("jsonrpc", json.string())), "2.0")
       try assert.equal(try json.decode(out, json.field("id", json.int())), 7)
       try assert.equal(try json.decode(out, json.field("result", json.string())), "ok")
       .Ok({})
-    })
-    .test("make error response json", fn() {
+    },
+  ).test(
+    "make error response json",
+    fn() {
       err := protocol.RpcError.{ code: -32601, message: "not found", data: .None }
       out := protocol.error_response(.NullId, err)
       try assert.equal(try json.decode(out, json.field("jsonrpc", json.string())), "2.0")
+
       case try json.decode(out, json.field("id", json.raw())) {
         .Null => {},
-        _ => { return .Err("expected null id") },
+        _ => {
+          return .Err("expected null id")
+        },
       }
+
       error_obj := try json.decode(out, json.field("error", json.raw()))
       try assert.equal(try json.decode(error_obj, json.field("code", json.int())), -32601)
-      try assert.equal(try json.decode(error_obj, json.field("message", json.string())), "not found")
+      try assert.equal(
+        try json.decode(error_obj, json.field("message", json.string())),
+        "not found",
+      )
       .Ok({})
-    })
-    .test("rejects invalid jsonrpc version", fn() {
+    },
+  ).test(
+    "rejects invalid jsonrpc version",
+    fn() {
       try assert.is_err(protocol.parse_message("{\"jsonrpc\":\"1.0\",\"method\":\"x\"}"))
       .Ok({})
-    })
+    },
+  )
 }

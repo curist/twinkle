@@ -4,9 +4,7 @@
 // CaptureParam, Param, Local, PatternLocal, and DeadPlaceholder slots,
 // with correct ABI ordering and mono type resolution.
 use compiler.anf.{AnfExpr, AnfFunctionDef, AnfMatchArm}
-use compiler.backend.prepared_ir.{
-  CaptureParam, PreparedFunc, SlotInfo, SlotRole,
-}
+use compiler.backend.prepared_ir.{CaptureParam, PreparedFunc, SlotInfo, SlotRole}
 use compiler.backend.slot_assign.{assign_slots}
 use compiler.core_ir.{FuncId, LocalId, Param, VariantId}
 use compiler.mono_type.{MonoType, TypeId}
@@ -40,10 +38,7 @@ fn mk_func_def(
 
 fn no_captures() Dict<Int, Vector<CaptureParam>> { Dict.new() }
 
-fn captures_for(fid: Int, caps: Vector<CaptureParam>) Dict<
-  Int,
-  Vector<CaptureParam>,
-> {
+fn captures_for(fid: Int, caps: Vector<CaptureParam>) Dict<Int, Vector<CaptureParam>> {
   d: Dict<Int, Vector<CaptureParam>> = Dict.new()
   d[fid] = caps
   d
@@ -63,10 +58,7 @@ fn slot_for_local(pf: PreparedFunc, lid: Int) SlotInfo? {
 }
 
 // assert_slot_id: check that LocalId lid maps to slot with the given id.
-fn assert_slot_id(pf: PreparedFunc, lid: Int, expected_sid: Int) Result<
-  Void,
-  String,
-> {
+fn assert_slot_id(pf: PreparedFunc, lid: Int, expected_sid: Int) Result<Void, String> {
   case slot_for_local(pf, lid) {
     .Some(info) => assert.equal(info.slot.id, expected_sid),
     .None => assert.fail("L${lid} has no slot"),
@@ -74,10 +66,7 @@ fn assert_slot_id(pf: PreparedFunc, lid: Int, expected_sid: Int) Result<
 }
 
 // assert_role: check that the slot for LocalId lid has the given SlotRole.
-fn assert_role(pf: PreparedFunc, lid: Int, expected: SlotRole) Result<
-  Void,
-  String,
-> {
+fn assert_role(pf: PreparedFunc, lid: Int, expected: SlotRole) Result<Void, String> {
   case slot_for_local(pf, lid) {
     .None => assert.fail("no slot for L${lid}"),
     .Some(info) => {
@@ -114,10 +103,7 @@ fn assert_role(pf: PreparedFunc, lid: Int, expected: SlotRole) Result<
 }
 
 // assert_mono: check that the slot for LocalId lid has the given MonoType.
-fn assert_mono(pf: PreparedFunc, lid: Int, expected: MonoType) Result<
-  Void,
-  String,
-> {
+fn assert_mono(pf: PreparedFunc, lid: Int, expected: MonoType) Result<Void, String> {
   case slot_for_local(pf, lid) {
     .None => assert.fail("no slot for L${lid}"),
     .Some(info) => {
@@ -170,10 +156,7 @@ fn test_simple_params_and_local() Result<Void, String> {
   func := mk_func_def(
     100,
     "add",
-    [
-      Param.{ local: mk_local(0), ty: MonoType.Int },
-      Param.{ local: mk_local(1), ty: MonoType.Int },
-    ],
+    [Param.{ local: mk_local(0), ty: MonoType.Int }, Param.{ local: mk_local(1), ty: MonoType.Int }],
     MonoType.Int,
     .Let(
       mk_local(2),
@@ -214,13 +197,7 @@ fn test_capture_params_precede_declared_params() Result<Void, String> {
   )
   captures := captures_for(
     200,
-    [
-      CaptureParam.{
-        local_id: mk_local(5),
-        param_local: mk_local(50),
-        ty: MonoType.String,
-      },
-    ],
+    [CaptureParam.{ local_id: mk_local(5), param_local: mk_local(50), ty: MonoType.String }],
   )
   pf := assign_slots(func, captures, resolver.empty_env())
   try assert.equal(pf.captures.len(), 1)
@@ -237,32 +214,13 @@ fn test_capture_params_precede_declared_params() Result<Void, String> {
 
 // Multiple captures, ordering preserved.
 fn test_multiple_captures_ordered() Result<Void, String> {
-  func := mk_func_def(
-    300,
-    "use_both",
-    [],
-    MonoType.Int,
-    .Atom(.ALitInt(0)),
-    Dict.new(),
-  )
+  func := mk_func_def(300, "use_both", [], MonoType.Int, .Atom(.ALitInt(0)), Dict.new())
   captures := captures_for(
     300,
     [
-      CaptureParam.{
-        local_id: mk_local(1),
-        param_local: mk_local(21),
-        ty: MonoType.Int,
-      },
-      CaptureParam.{
-        local_id: mk_local(3),
-        param_local: mk_local(23),
-        ty: MonoType.Float,
-      },
-      CaptureParam.{
-        local_id: mk_local(7),
-        param_local: mk_local(27),
-        ty: MonoType.Bool,
-      },
+      CaptureParam.{ local_id: mk_local(1), param_local: mk_local(21), ty: MonoType.Int },
+      CaptureParam.{ local_id: mk_local(3), param_local: mk_local(23), ty: MonoType.Float },
+      CaptureParam.{ local_id: mk_local(7), param_local: mk_local(27), ty: MonoType.Bool },
     ],
   )
   pf := assign_slots(func, captures, resolver.empty_env())
@@ -308,11 +266,7 @@ fn test_assign_target_is_local() Result<Void, String> {
     .Let(
       mk_local(0),
       .AInit(.ALitInt(0)),
-      .Let(
-        mk_local(1),
-        .AAssign(mk_local(0), .ALitInt(1)),
-        .Atom(.ALocal(mk_local(0))),
-      ),
+      .Let(mk_local(1), .AAssign(mk_local(0), .ALitInt(1)), .Atom(.ALocal(mk_local(0)))),
     ),
     mono,
   )
@@ -341,11 +295,7 @@ fn test_pattern_local_in_match() Result<Void, String> {
         .ALocal(mk_local(0)),
         [
           AnfMatchArm.{
-            pattern: .Variant(
-              TypeId.{ id: -1 },
-              VariantId.{ id: 1 },
-              [.Var(mk_local(2))],
-            ),
+            pattern: .Variant(TypeId.{ id: -1 }, VariantId.{ id: 1 }, [.Var(mk_local(2))]),
             body: .Atom(.ALocal(mk_local(2))),
           },
           AnfMatchArm.{
@@ -457,11 +407,7 @@ fn test_collects_locals_inside_defer_body() Result<Void, String> {
         .Let(
           mk_local(2),
           .AInit(.ALitInt(1)),
-          .Let(
-            mk_local(3),
-            .AAssign(mk_local(2), .ALitInt(2)),
-            .Atom(.ALitVoid),
-          ),
+          .Let(mk_local(3), .AAssign(mk_local(2), .ALitInt(2)), .Atom(.ALitVoid)),
         ),
       ),
       .Atom(.ALitVoid),
@@ -482,12 +428,7 @@ fn test_nested_pattern_scrutinee_uses_pattern_mono() Result<Void, String> {
   func := mk_func_def(
     100,
     "nested_pattern_mono",
-    [
-      Param.{
-        local: mk_local(0),
-        ty: MonoType.Optional(MonoType.Optional(MonoType.Int)),
-      },
-    ],
+    [Param.{ local: mk_local(0), ty: MonoType.Optional(MonoType.Optional(MonoType.Int)) }],
     MonoType.Int,
     .Let(
       mk_local(1),
@@ -495,22 +436,14 @@ fn test_nested_pattern_scrutinee_uses_pattern_mono() Result<Void, String> {
         .ALocal(mk_local(0)),
         [
           AnfMatchArm.{
-            pattern: .Variant(
-              TypeId.{ id: 0 },
-              VariantId.{ id: 1 },
-              [.Var(mk_local(2))],
-            ),
+            pattern: .Variant(TypeId.{ id: 0 }, VariantId.{ id: 1 }, [.Var(mk_local(2))]),
             body: .Let(
               mk_local(4),
               .AMatch(
                 .ALocal(mk_local(2)),
                 [
                   AnfMatchArm.{
-                    pattern: .Variant(
-                      TypeId.{ id: 0 },
-                      VariantId.{ id: 1 },
-                      [.Var(mk_local(3))],
-                    ),
+                    pattern: .Variant(TypeId.{ id: 0 }, VariantId.{ id: 1 }, [.Var(mk_local(3))]),
                     body: .Atom(.ALocal(mk_local(3))),
                   },
                   AnfMatchArm.{
@@ -602,10 +535,7 @@ fn test_collects_arm_locals_used_as_closure_free_vars() Result<Void, String> {
 
 // ── Suite ────────────────────────────────────────────────────────────
 pub fn suite() runner.Suite {
-  runner.suite("slot assignment").test(
-    "simple params and local",
-    test_simple_params_and_local,
-  ).test(
+  runner.suite("slot assignment").test("simple params and local", test_simple_params_and_local).test(
     "capture params precede declared params",
     test_capture_params_precede_declared_params,
   ).test("multiple captures in order", test_multiple_captures_ordered).test(
@@ -614,13 +544,10 @@ pub fn suite() runner.Suite {
   ).test("assign target is Local", test_assign_target_is_local).test(
     "pattern local in match arm",
     test_pattern_local_in_match,
-  ).test(
-    "no slots for non-binding patterns",
-    test_no_slots_for_non_binding_patterns,
-  ).test("source locals are unique", test_source_locals_are_unique).test(
-    "collects locals inside defer body",
-    test_collects_locals_inside_defer_body,
-  ).test(
+  ).test("no slots for non-binding patterns", test_no_slots_for_non_binding_patterns).test(
+    "source locals are unique",
+    test_source_locals_are_unique,
+  ).test("collects locals inside defer body", test_collects_locals_inside_defer_body).test(
     "nested pattern scrutinee uses pattern mono",
     test_nested_pattern_scrutinee_uses_pattern_mono,
   ).test(

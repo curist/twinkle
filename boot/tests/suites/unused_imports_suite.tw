@@ -1,6 +1,5 @@
 use compiler.ast.{
-  Expr, ExprKind, ExprStmt, ImportItem, ImportTypeItem, ImportValueItem, Item,
-  Module, Stmt, UseDecl,
+  Expr, ExprKind, ExprStmt, ImportItem, ImportTypeItem, ImportValueItem, Item, Module, Stmt, UseDecl,
 }
 use compiler.unused_imports.{check_unused_imports, reconstruct_use_decl}
 use lib.source.span
@@ -24,14 +23,7 @@ fn make_type_item(name: String) ImportItem {
 }
 
 fn make_use_decl(path: Vector<String>, items: Vector<ImportItem>?) UseDecl {
-  UseDecl.{
-    is_stdlib: false,
-    is_relative: false,
-    path,
-    alias: .None,
-    items,
-    span: dummy_span(),
-  }
+  UseDecl.{ is_stdlib: false, is_relative: false, path, alias: .None, items, span: dummy_span() }
 }
 
 pub fn suite() runner.Suite {
@@ -40,9 +32,7 @@ pub fn suite() runner.Suite {
     fn() {
       decl := make_use_decl(
         ["foo"],
-        .Some(
-          [make_value_item("A"), make_value_item("B"), make_value_item("C")],
-        ),
+        .Some([make_value_item("A"), make_value_item("B"), make_value_item("C")]),
       )
       result := reconstruct_use_decl(decl, ["B"])
       try assert.equal(result, "use foo.{A, C}\n")
@@ -51,10 +41,7 @@ pub fn suite() runner.Suite {
   ).test(
     "reconstruct_use_decl: all items unused produces empty string",
     fn() {
-      decl := make_use_decl(
-        ["foo"],
-        .Some([make_value_item("A"), make_value_item("B")]),
-      )
+      decl := make_use_decl(["foo"], .Some([make_value_item("A"), make_value_item("B")]))
       result := reconstruct_use_decl(decl, ["A", "B"])
       try assert.equal(result, "")
       .Ok({})
@@ -62,10 +49,7 @@ pub fn suite() runner.Suite {
   ).test(
     "reconstruct_use_decl: single item kept uses brace syntax",
     fn() {
-      decl := make_use_decl(
-        ["foo", "bar"],
-        .Some([make_value_item("X"), make_value_item("Y")]),
-      )
+      decl := make_use_decl(["foo", "bar"], .Some([make_value_item("X"), make_value_item("Y")]))
       result := reconstruct_use_decl(decl, ["Y"])
       try assert.equal(result, "use foo.bar.{X}\n")
       .Ok({})
@@ -86,9 +70,7 @@ pub fn suite() runner.Suite {
     fn() {
       decl := make_use_decl(
         ["models"],
-        .Some(
-          [make_type_item("Foo"), make_type_item("Bar"), make_value_item("baz")],
-        ),
+        .Some([make_type_item("Foo"), make_type_item("Bar"), make_value_item("baz")]),
       )
       result := reconstruct_use_decl(decl, ["Bar"])
       try assert.equal(result, "use models.{Foo, baz}\n")
@@ -135,10 +117,7 @@ pub fn suite() runner.Suite {
   ).test(
     "reconstruct_use_decl: no items unused keeps all",
     fn() {
-      decl := make_use_decl(
-        ["foo"],
-        .Some([make_value_item("A"), make_value_item("B")]),
-      )
+      decl := make_use_decl(["foo"], .Some([make_value_item("A"), make_value_item("B")]))
       result := reconstruct_use_decl(decl, [])
       try assert.equal(result, "use foo.{A, B}\n")
       .Ok({})
@@ -158,10 +137,7 @@ pub fn suite() runner.Suite {
         span: span.Span.{ file_id: 0, start: 0, end: 20 },
       }
       call_expr := dummy_expr(
-        .Call(
-          dummy_expr(.Field(dummy_expr(.Ident("bar")), "remove")),
-          [dummy_expr(.Ident("x"))],
-        ),
+        .Call(dummy_expr(.Field(dummy_expr(.Ident("bar")), "remove")), [dummy_expr(.Ident("x"))]),
       )
       module := Module.{
         items: [
@@ -226,12 +202,7 @@ pub fn suite() runner.Suite {
       // get_items().transform()
       call_expr := dummy_expr(
         .Call(
-          dummy_expr(
-            .Field(
-              dummy_expr(.Call(dummy_expr(.Ident("get_items")), [])),
-              "transform",
-            ),
-          ),
+          dummy_expr(.Field(dummy_expr(.Call(dummy_expr(.Ident("get_items")), [])), "transform")),
           [],
         ),
       )
@@ -260,9 +231,7 @@ pub fn suite() runner.Suite {
         items: .Some([make_value_item("translate")]),
         span: span.Span.{ file_id: 0, start: 0, end: 30 },
       }
-      call_expr := dummy_expr(
-        .Call(dummy_expr(.Ident("translate")), [dummy_expr(.Ident("p"))]),
-      )
+      call_expr := dummy_expr(.Call(dummy_expr(.Ident("translate")), [dummy_expr(.Ident("p"))]))
       module := Module.{
         items: [
           Item.Use(foo_decl),

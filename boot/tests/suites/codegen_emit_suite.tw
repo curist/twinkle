@@ -45,10 +45,7 @@ fn test_param_local_id_can_overlap_module_global_id() Result<Void, String> {
   // ordinary function parameter also has source LocalId 0. A prepared ASlot is
   // always function-local; only explicit AGlobalLocal atoms should read globals.
   reg := empty_registry()
-  reg.module_globals[0] = ModuleGlobalEntry.{
-    sym: "global_local_0",
-    mono: MonoType.String,
-  }
+  reg.module_globals[0] = ModuleGlobalEntry.{ sym: "global_local_0", mono: MonoType.String }
   reg.module_globals_order = [0]
   func := AnfFunctionDef.{
     func_id: fid(10),
@@ -59,11 +56,7 @@ fn test_param_local_id_can_overlap_module_global_id() Result<Void, String> {
     return_ty: MonoType.Int,
     is_init: false,
   }
-  anf := AnfModule.{
-    functions: [func],
-    init_func_id: .None,
-    extern_imports: Dict.new(),
-  }
+  anf := AnfModule.{ functions: [func], init_func_id: .None, extern_imports: Dict.new() }
   slots: Dict<Int, SlotInfo> = Dict.new()
   slots[0] = SlotInfo.{
     slot: sid(0),
@@ -84,17 +77,8 @@ fn test_param_local_id_can_overlap_module_global_id() Result<Void, String> {
     return_mono: MonoType.Int,
     is_init: false,
   }
-  prepared := PreparedModule.{
-    anf: anf,
-    closure_captures: Dict.new(),
-    funcs: [prepared_func],
-  }
-  wasm := emit_module(
-    prepared,
-    reg,
-    make_builtin_registry(),
-    resolver.empty_env(),
-  )
+  prepared := PreparedModule.{ anf: anf, closure_captures: Dict.new(), funcs: [prepared_func] }
+  wasm := emit_module(prepared, reg, make_builtin_registry(), resolver.empty_env())
   wat := emit_wat_unlinked_for_test(wasm)
   try assert.str_contains(wat, "global \$global_local_0")
   try assert.str_contains(wat, "local.get \$p0")

@@ -1,11 +1,12 @@
-use tests.runner
-use tests.assert
 use lib.lsp.document_store
 use lib.text.line_index
+use tests.assert
+use tests.runner
 
 pub fn suite() runner.Suite {
-  runner.suite("lsp document store")
-    .test("opens and gets a document", fn() {
+  runner.suite("lsp document store").test(
+    "opens and gets a document",
+    fn() {
       store := document_store.open(document_store.empty(), "file:///a.tw", "one\ntwo", .Some(1))
       doc := try document_store.get(store, "file:///a.tw").ok_or("missing document")
       try assert.equal(doc.uri, "file:///a.tw")
@@ -16,8 +17,10 @@ pub fn suite() runner.Suite {
       try assert.equal(pos.line, 1)
       try assert.equal(pos.character, 0)
       .Ok({})
-    })
-    .test("changes full text and rebuilds index", fn() {
+    },
+  ).test(
+    "changes full text and rebuilds index",
+    fn() {
       store := document_store.open(document_store.empty(), "file:///a.tw", "old", .Some(1))
       changed := document_store.change_full_text(store, "file:///a.tw", "a𝄞b\ncd", .Some(2))
       doc := try document_store.get(changed, "file:///a.tw").ok_or("missing document")
@@ -26,22 +29,28 @@ pub fn suite() runner.Suite {
       pos := line_index.byte_offset_to_position(doc.index, 5, .Utf16)
       try assert.equal(pos.character, 3)
       .Ok({})
-    })
-    .test("updates do not mutate previous store", fn() {
+    },
+  ).test(
+    "updates do not mutate previous store",
+    fn() {
       original := document_store.empty()
       opened := document_store.open(original, "file:///a.tw", "text", .None)
       try assert.is_none(document_store.get(original, "file:///a.tw"))
       try assert.is_some(document_store.get(opened, "file:///a.tw"))
       .Ok({})
-    })
-    .test("closes a document", fn() {
+    },
+  ).test(
+    "closes a document",
+    fn() {
       store := document_store.open(document_store.empty(), "file:///a.tw", "text", .None)
       closed := document_store.close(store, "file:///a.tw")
       try assert.is_none(document_store.get(closed, "file:///a.tw"))
       try assert.is_some(document_store.get(store, "file:///a.tw"))
       .Ok({})
-    })
-    .test("exports overlay documents keyed by source identity", fn() {
+    },
+  ).test(
+    "exports overlay documents keyed by source identity",
+    fn() {
       store := document_store.open(document_store.empty(), "file:///tmp/a%20b.tw", "text", .Some(4))
       docs := document_store.overlay_documents(store)
       try assert.equal(docs.len(), 1)
@@ -49,5 +58,6 @@ pub fn suite() runner.Suite {
       try assert.equal(docs[0].text, "text")
       try assert.equal(try docs[0].version.ok_or("missing version"), 4)
       .Ok({})
-    })
+    },
+  )
 }

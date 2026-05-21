@@ -1,5 +1,5 @@
-use tests.runner
 use tests.assert
+use tests.runner
 
 fn try_divide(a: Int, b: Int) Result<Int, String> {
   if b == 0 {
@@ -32,19 +32,23 @@ fn find_positive(xs: Vector<Int>) Int? {
       return .Some(x)
     }
   }
+
   .None
 }
 
 pub fn suite() runner.Suite {
-  runner.suite("option and result")
-    .test("option some and none construction", fn() {
+  runner.suite("option and result").test(
+    "option some and none construction",
+    fn() {
       s: Int? = .Some(42)
       n: Int? = .None
       try assert.is_some(s)
       try assert.is_none(n)
       .Ok({})
-    })
-    .test("option pattern matching extracts value", fn() {
+    },
+  ).test(
+    "option pattern matching extracts value",
+    fn() {
       opt: Int? = .Some(10)
       result := case opt {
         .Some(v) => v + 1,
@@ -52,8 +56,10 @@ pub fn suite() runner.Suite {
       }
       try assert.equal(result, 11)
       .Ok({})
-    })
-    .test("option none branch in pattern match", fn() {
+    },
+  ).test(
+    "option none branch in pattern match",
+    fn() {
       opt: Int? = .None
       result := case opt {
         .Some(v) => v,
@@ -61,8 +67,10 @@ pub fn suite() runner.Suite {
       }
       try assert.equal(result, -1)
       .Ok({})
-    })
-    .test("nested option", fn() {
+    },
+  ).test(
+    "nested option",
+    fn() {
       inner: Int? = .Some(5)
       outer: Option<Int?> = .Some(inner)
       msg := case outer {
@@ -74,15 +82,19 @@ pub fn suite() runner.Suite {
       }
       try assert.equal(msg, "found 5")
       .Ok({})
-    })
-    .test("result ok and err construction", fn() {
+    },
+  ).test(
+    "result ok and err construction",
+    fn() {
       ok: Result<Int, String> = .Ok(1)
       err: Result<Int, String> = .Err("bad")
       try assert.is_ok(ok)
       try assert.is_err(err)
       .Ok({})
-    })
-    .test("result pattern matching extracts ok", fn() {
+    },
+  ).test(
+    "result pattern matching extracts ok",
+    fn() {
       r: Result<String, Int> = .Ok("hello")
       val := case r {
         .Ok(s) => s,
@@ -90,8 +102,10 @@ pub fn suite() runner.Suite {
       }
       try assert.equal(val, "hello")
       .Ok({})
-    })
-    .test("result pattern matching extracts err", fn() {
+    },
+  ).test(
+    "result pattern matching extracts err",
+    fn() {
       r: Result<String, Int> = .Err(404)
       val := case r {
         .Ok(s) => s,
@@ -99,14 +113,18 @@ pub fn suite() runner.Suite {
       }
       try assert.equal(val, "err: 404")
       .Ok({})
-    })
-    .test("try propagates err early", fn() {
+    },
+  ).test(
+    "try propagates err early",
+    fn() {
       r := try_both(100, 0, 5)
       try assert.is_err(r)
       try assert.err_eq(r, "division by zero")
       .Ok({})
-    })
-    .test("try propagates through chain on success", fn() {
+    },
+  ).test(
+    "try propagates through chain on success",
+    fn() {
       r := try_both(100, 2, 5)
       try assert.is_ok(r)
       val := case r {
@@ -115,19 +133,25 @@ pub fn suite() runner.Suite {
       }
       try assert.equal(val, 10)
       .Ok({})
-    })
-    .test("try propagates second err", fn() {
+    },
+  ).test(
+    "try propagates second err",
+    fn() {
       r := try_both(100, 5, 0)
       try assert.is_err(r)
       try assert.err_eq(r, "division by zero")
       .Ok({})
-    })
-    .test("option from function returning none", fn() {
+    },
+  ).test(
+    "option from function returning none",
+    fn() {
       empty: Vector<Int> = []
       try assert.is_none(find_positive(empty))
       .Ok({})
-    })
-    .test("option from function returning some", fn() {
+    },
+  ).test(
+    "option from function returning some",
+    fn() {
       nums: Vector<Int> = [-1, -2, 3, 4]
       opt := find_positive(nums)
       try assert.is_some(opt)
@@ -137,8 +161,10 @@ pub fn suite() runner.Suite {
       }
       try assert.equal(val, 3)
       .Ok({})
-    })
-    .test("ok_or converts Some to Ok", fn() {
+    },
+  ).test(
+    "ok_or converts Some to Ok",
+    fn() {
       opt: Int? = .Some(42)
       result := opt.ok_or("missing")
       try assert.is_ok(result)
@@ -148,34 +174,44 @@ pub fn suite() runner.Suite {
       }
       try assert.equal(val, 42)
       .Ok({})
-    })
-    .test("ok_or converts None to Err", fn() {
+    },
+  ).test(
+    "ok_or converts None to Err",
+    fn() {
       opt: Int? = .None
       result := opt.ok_or("missing")
       try assert.is_err(result)
       try assert.err_eq(result, "missing")
       .Ok({})
-    })
-    .test("ok_or with try in Result function", fn() {
+    },
+  ).test(
+    "ok_or with try in Result function",
+    fn() {
       opt: Int? = .Some(10)
       x := try opt.ok_or("no value")
       try assert.equal(x, 10)
       .Ok({})
-    })
-    .test("ok_or None with try propagates Err", fn() {
+    },
+  ).test(
+    "ok_or None with try propagates Err",
+    fn() {
       opt: Int? = .None
       r: Result<Int, String> = ok_or_try_helper(opt)
       try assert.is_err(r)
       try assert.err_eq(r, "was none")
       .Ok({})
-    })
-    .test("ok_or_else converts Some to Ok without calling closure", fn() {
+    },
+  ).test(
+    "ok_or_else converts Some to Ok without calling closure",
+    fn() {
       counter := Cell.new(0)
       opt: Int? = .Some(7)
-      result := opt.ok_or_else(fn() String {
-        counter.set(counter.get() + 1)
-        "fail"
-      })
+      result := opt.ok_or_else(
+        fn() String {
+          counter.set(counter.get() + 1)
+          "fail"
+        },
+      )
       try assert.is_ok(result)
       val := case result {
         .Ok(v) => v,
@@ -184,26 +220,34 @@ pub fn suite() runner.Suite {
       try assert.equal(val, 7)
       try assert.equal(counter.get(), 0)
       .Ok({})
-    })
-    .test("ok_or_else converts None to Err and calls closure once", fn() {
+    },
+  ).test(
+    "ok_or_else converts None to Err and calls closure once",
+    fn() {
       counter := Cell.new(0)
       opt: Int? = .None
-      result := opt.ok_or_else(fn() String {
-        counter.set(counter.get() + 1)
-        "computed error"
-      })
+      result := opt.ok_or_else(
+        fn() String {
+          counter.set(counter.get() + 1)
+          "computed error"
+        },
+      )
       try assert.is_err(result)
       try assert.err_eq(result, "computed error")
       try assert.equal(counter.get(), 1)
       .Ok({})
-    })
-    .test("ok_or_else with try in Result function", fn() {
+    },
+  ).test(
+    "ok_or_else with try in Result function",
+    fn() {
       opt: Int? = .Some(99)
       x := try opt.ok_or_else(fn() String { "lazy err" })
       try assert.equal(x, 99)
       .Ok({})
-    })
-    .test("try Option extracts Some value", fn() {
+    },
+  ).test(
+    "try Option extracts Some value",
+    fn() {
       result := first_some(.Some(3), .Some(7))
       try assert.is_some(result)
       val := case result {
@@ -212,23 +256,31 @@ pub fn suite() runner.Suite {
       }
       try assert.equal(val, 10)
       .Ok({})
-    })
-    .test("try Option propagates None on first arg", fn() {
+    },
+  ).test(
+    "try Option propagates None on first arg",
+    fn() {
       result := first_some(.None, .Some(7))
       try assert.is_none(result)
       .Ok({})
-    })
-    .test("try Option propagates None on second arg", fn() {
+    },
+  ).test(
+    "try Option propagates None on second arg",
+    fn() {
       result := first_some(.Some(3), .None)
       try assert.is_none(result)
       .Ok({})
-    })
-    .test("try Option both None propagates None", fn() {
+    },
+  ).test(
+    "try Option both None propagates None",
+    fn() {
       result := first_some(.None, .None)
       try assert.is_none(result)
       .Ok({})
-    })
-    .test("Option.transpose None becomes Ok(None)", fn() {
+    },
+  ).test(
+    "Option.transpose None becomes Ok(None)",
+    fn() {
       opt: Option<Result<Int, String>> = .None
       result := opt.transpose()
       try assert.is_ok(result)
@@ -238,8 +290,10 @@ pub fn suite() runner.Suite {
       }
       try assert.is_none(inner)
       .Ok({})
-    })
-    .test("Option.transpose Some(Ok(v)) becomes Ok(Some(v))", fn() {
+    },
+  ).test(
+    "Option.transpose Some(Ok(v)) becomes Ok(Some(v))",
+    fn() {
       opt: Option<Result<Int, String>> = .Some(.Ok(42))
       result := opt.transpose()
       try assert.is_ok(result)
@@ -254,15 +308,19 @@ pub fn suite() runner.Suite {
       }
       try assert.equal(val, 42)
       .Ok({})
-    })
-    .test("Option.transpose Some(Err(e)) becomes Err(e)", fn() {
+    },
+  ).test(
+    "Option.transpose Some(Err(e)) becomes Err(e)",
+    fn() {
       opt: Option<Result<Int, String>> = .Some(.Err("bad"))
       result := opt.transpose()
       try assert.is_err(result)
       try assert.err_eq(result, "bad")
       .Ok({})
-    })
-    .test("Option.transpose with try unwraps transposed result", fn() {
+    },
+  ).test(
+    "Option.transpose with try unwraps transposed result",
+    fn() {
       opt: Option<Result<Int, String>> = .Some(.Ok(10))
       inner := try opt.transpose()
       try assert.is_some(inner)
@@ -272,8 +330,10 @@ pub fn suite() runner.Suite {
       }
       try assert.equal(val, 10)
       .Ok({})
-    })
-    .test("Result.transpose Err(e) becomes Some(Err(e))", fn() {
+    },
+  ).test(
+    "Result.transpose Err(e) becomes Some(Err(e))",
+    fn() {
       res: Result<Int?, String> = .Err("fail")
       result := res.transpose()
       try assert.is_some(result)
@@ -284,14 +344,18 @@ pub fn suite() runner.Suite {
       try assert.is_err(inner)
       try assert.err_eq(inner, "fail")
       .Ok({})
-    })
-    .test("Result.transpose Ok(None) becomes None", fn() {
+    },
+  ).test(
+    "Result.transpose Ok(None) becomes None",
+    fn() {
       res: Result<Int?, String> = .Ok(.None)
       result := res.transpose()
       try assert.is_none(result)
       .Ok({})
-    })
-    .test("Result.transpose Ok(Some(v)) becomes Some(Ok(v))", fn() {
+    },
+  ).test(
+    "Result.transpose Ok(Some(v)) becomes Some(Ok(v))",
+    fn() {
       inner: Int? = .Some(42)
       res: Result<Int?, String> = .Ok(inner)
       result := res.transpose()
@@ -307,8 +371,10 @@ pub fn suite() runner.Suite {
       }
       try assert.equal(val, 42)
       .Ok({})
-    })
-    .test("Option.map transforms Some and passes through None", fn() {
+    },
+  ).test(
+    "Option.map transforms Some and passes through None",
+    fn() {
       some: Int? = .Some(10)
       none: Int? = .None
       mapped_some := some.map(fn(x: Int) { x * 3 })
@@ -321,16 +387,28 @@ pub fn suite() runner.Suite {
       }
       try assert.equal(val, 30)
       .Ok({})
-    })
-    .test("Option.and_then chains without nesting", fn() {
+    },
+  ).test(
+    "Option.and_then chains without nesting",
+    fn() {
       start: Int? = .Some(5)
-      chained := start
-        .and_then(fn(x: Int) {
-          if x > 0 { .Some(x + 1) } else { .None }
-        })
-        .and_then(fn(x: Int) {
-          if x % 2 == 0 { .Some(x * 2) } else { .None }
-        })
+      chained := start.and_then(
+        fn(x: Int) {
+          if x > 0 {
+            .Some(x + 1)
+          } else {
+            .None
+          }
+        },
+      ).and_then(
+        fn(x: Int) {
+          if x % 2 == 0 {
+            .Some(x * 2)
+          } else {
+            .None
+          }
+        },
+      )
       try assert.is_some(chained)
       val := case chained {
         .Some(v) => v,
@@ -338,14 +416,22 @@ pub fn suite() runner.Suite {
       }
       try assert.equal(val, 12)
       .Ok({})
-    })
-    .test("Option.and_then passes through None", fn() {
+    },
+  ).test(
+    "Option.and_then passes through None",
+    fn() {
       start: Int? = .None
-      out := start.and_then(fn(x: Int) { .Some(x + 1) })
+      out := start.and_then(
+        fn(x: Int) {
+          .Some(x + 1)
+        },
+      )
       try assert.is_none(out)
       .Ok({})
-    })
-    .test("Result.map transforms Ok and passes through Err", fn() {
+    },
+  ).test(
+    "Result.map transforms Ok and passes through Err",
+    fn() {
       ok: Result<Int, String> = .Ok(7)
       err: Result<Int, String> = .Err("bad")
       mapped_ok := ok.map(fn(x: Int) { x + 5 })
@@ -359,59 +445,86 @@ pub fn suite() runner.Suite {
       try assert.equal(val, 12)
       try assert.err_eq(mapped_err, "bad")
       .Ok({})
-    })
-    .test("Result.and_then chains and passes through Err", fn() {
+    },
+  ).test(
+    "Result.and_then chains and passes through Err",
+    fn() {
       start: Result<Int, String> = .Ok(20)
-      out := start
-        .and_then(fn(x: Int) {
-          if x % 2 == 0 { .Ok(x / 2) } else { .Err("not even") }
-        })
-        .and_then(fn(x: Int) {
-          if x > 5 { .Ok(x - 1) } else { .Err("too small") }
-        })
+      out := start.and_then(
+        fn(x: Int) {
+          if x % 2 == 0 {
+            .Ok(x / 2)
+          } else {
+            .Err("not even")
+          }
+        },
+      ).and_then(
+        fn(x: Int) {
+          if x > 5 {
+            .Ok(x - 1)
+          } else {
+            .Err("too small")
+          }
+        },
+      )
       try assert.is_ok(out)
       val := case out {
         .Ok(v) => v,
         .Err(_) => -1,
       }
       try assert.equal(val, 9)
-
       failed: Result<Int, String> = .Err("boom")
-      still_failed := failed.and_then(fn(x: Int) { .Ok(x + 1) })
+      still_failed := failed.and_then(
+        fn(x: Int) {
+          .Ok(x + 1)
+        },
+      )
       try assert.is_err(still_failed)
       try assert.err_eq(still_failed, "boom")
       .Ok({})
-    })
-    .test("Option.unwrap_or returns value from Some", fn() {
+    },
+  ).test(
+    "Option.unwrap_or returns value from Some",
+    fn() {
       opt: Int? = .Some(42)
       try assert.equal(opt.unwrap_or(0), 42)
       .Ok({})
-    })
-    .test("Option.unwrap_or returns default from None", fn() {
+    },
+  ).test(
+    "Option.unwrap_or returns default from None",
+    fn() {
       opt: Int? = .None
       try assert.equal(opt.unwrap_or(99), 99)
       .Ok({})
-    })
-    .test("Option.unwrap_or with string type", fn() {
+    },
+  ).test(
+    "Option.unwrap_or with string type",
+    fn() {
       some: String? = .Some("hello")
       none: String? = .None
       try assert.equal(some.unwrap_or("default"), "hello")
       try assert.equal(none.unwrap_or("default"), "default")
       .Ok({})
-    })
-    .test("Option.unwrap_or on dict indexing", fn() {
+    },
+  ).test(
+    "Option.unwrap_or on dict indexing",
+    fn() {
       d: Dict<String, Int> = Dict.new()
       d["x"] = 10
       try assert.equal(d["x"].unwrap_or(0), 10)
       try assert.equal(d["missing"].unwrap_or(-1), -1)
       .Ok({})
-    })
-    .test("Option.unwrap_or qualified call", fn() {
+    },
+  ).test(
+    "Option.unwrap_or qualified call",
+    fn() {
       opt: Int? = .None
       try assert.equal(Option.unwrap_or(opt, 7), 7)
       .Ok({})
-    })
-    .test("Option predicates and unwrap extract values", fn() {
+    },
+  ).test(
+    "Option predicates and unwrap extract values",
+    fn() {
       some: Int? = .Some(8)
       none: Int? = .None
       try assert.is_true(some.is_some())
@@ -420,24 +533,38 @@ pub fn suite() runner.Suite {
       try assert.is_true(none.is_none())
       try assert.equal(some.unwrap(), 8)
       .Ok({})
-    })
-    .test("Option.unwrap_or_else is lazy", fn() {
+    },
+  ).test(
+    "Option.unwrap_or_else is lazy",
+    fn() {
       called := Cell.new(0)
       some: Int? = .Some(3)
       none: Int? = .None
-      try assert.equal(some.unwrap_or_else(fn() {
-        called.set(called.get() + 1)
-        10
-      }), 3)
+      try assert.equal(
+        some.unwrap_or_else(
+          fn() {
+            called.set(called.get() + 1)
+            10
+          },
+        ),
+        3,
+      )
       try assert.equal(called.get(), 0)
-      try assert.equal(none.unwrap_or_else(fn() {
-        called.set(called.get() + 1)
-        10
-      }), 10)
+      try assert.equal(
+        none.unwrap_or_else(
+          fn() {
+            called.set(called.get() + 1)
+            10
+          },
+        ),
+        10,
+      )
       try assert.equal(called.get(), 1)
       .Ok({})
-    })
-    .test("Option.filter keeps matching Some", fn() {
+    },
+  ).test(
+    "Option.filter keeps matching Some",
+    fn() {
       some: Int? = .Some(6)
       kept := some.filter(fn(x: Int) { x % 2 == 0 })
       dropped := some.filter(fn(x: Int) { x > 10 })
@@ -446,8 +573,10 @@ pub fn suite() runner.Suite {
       try assert.is_none(dropped)
       try assert.is_none(none.filter(fn(x: Int) { x > 0 }))
       .Ok({})
-    })
-    .test("Option.flatten removes one layer", fn() {
+    },
+  ).test(
+    "Option.flatten removes one layer",
+    fn() {
       nested: Option<Int?> = .Some(.Some(5))
       inner_none: Option<Int?> = .Some(.None)
       outer_none: Option<Int?> = .None
@@ -455,41 +584,53 @@ pub fn suite() runner.Suite {
       try assert.is_none(inner_none.flatten())
       try assert.is_none(outer_none.flatten())
       .Ok({})
-    })
-    .test("Option.or_some and or_else choose fallbacks", fn() {
+    },
+  ).test(
+    "Option.or_some and or_else choose fallbacks",
+    fn() {
       some: Int? = .Some(1)
       none: Int? = .None
       called := Cell.new(0)
       try assert.equal(some.or_some(.Some(2)).unwrap_or(0), 1)
       try assert.equal(none.or_some(.Some(2)).unwrap_or(0), 2)
-      try assert.equal(some.or_else(fn() {
-        called.set(called.get() + 1)
-        .Some(3)
-      }).unwrap_or(0), 1)
+      try assert.equal(
+        some.or_else(
+          fn() {
+            called.set(called.get() + 1)
+            .Some(3)
+          },
+        ).unwrap_or(0),
+        1,
+      )
       try assert.equal(called.get(), 0)
-      try assert.equal(none.or_else(fn() {
-        called.set(called.get() + 1)
-        .Some(3)
-      }).unwrap_or(0), 3)
+      try assert.equal(
+        none.or_else(
+          fn() {
+            called.set(called.get() + 1)
+            .Some(3)
+          },
+        ).unwrap_or(0),
+        3,
+      )
       try assert.equal(called.get(), 1)
       .Ok({})
-    })
-    .test("Option.inspect observes Some without changing shape", fn() {
+    },
+  ).test(
+    "Option.inspect observes Some without changing shape",
+    fn() {
       seen := Cell.new(0)
       some: Int? = .Some(9)
       none: Int? = .None
-      observed := some.inspect(fn(x: Int) {
-        seen.set(x)
-      })
-      skipped := none.inspect(fn(x: Int) {
-        seen.set(x)
-      })
+      observed := some.inspect(fn(x: Int) { seen.set(x) })
+      skipped := none.inspect(fn(x: Int) { seen.set(x) })
       try assert.equal(observed.unwrap_or(0), 9)
       try assert.is_none(skipped)
       try assert.equal(seen.get(), 9)
       .Ok({})
-    })
-    .test("Result predicates unwrap and unwrap_or", fn() {
+    },
+  ).test(
+    "Result predicates unwrap and unwrap_or",
+    fn() {
       ok: Result<Int, String> = .Ok(11)
       err: Result<Int, String> = .Err("bad")
       try assert.is_true(ok.is_ok())
@@ -500,24 +641,38 @@ pub fn suite() runner.Suite {
       try assert.equal(ok.unwrap_or(0), 11)
       try assert.equal(err.unwrap_or(7), 7)
       .Ok({})
-    })
-    .test("Result.unwrap_or_else maps Err lazily", fn() {
+    },
+  ).test(
+    "Result.unwrap_or_else maps Err lazily",
+    fn() {
       ok: Result<Int, String> = .Ok(4)
       err: Result<Int, String> = .Err("oops")
       called := Cell.new(0)
-      try assert.equal(ok.unwrap_or_else(fn(e: String) {
-        called.set(called.get() + 1)
-        e.len()
-      }), 4)
+      try assert.equal(
+        ok.unwrap_or_else(
+          fn(e: String) {
+            called.set(called.get() + 1)
+            e.len()
+          },
+        ),
+        4,
+      )
       try assert.equal(called.get(), 0)
-      try assert.equal(err.unwrap_or_else(fn(e: String) {
-        called.set(called.get() + 1)
-        e.len()
-      }), 4)
+      try assert.equal(
+        err.unwrap_or_else(
+          fn(e: String) {
+            called.set(called.get() + 1)
+            e.len()
+          },
+        ),
+        4,
+      )
       try assert.equal(called.get(), 1)
       .Ok({})
-    })
-    .test("Result.map_err adapts error type", fn() {
+    },
+  ).test(
+    "Result.map_err adapts error type",
+    fn() {
       ok: Result<Int, String> = .Ok(2)
       err: Result<Int, String> = .Err("abcd")
       mapped_ok := ok.map_err(fn(e: String) { e.len() })
@@ -530,19 +685,31 @@ pub fn suite() runner.Suite {
       }
       try assert.equal(err_len, 4)
       .Ok({})
-    })
-    .test("Result.or_else recovers from Err", fn() {
+    },
+  ).test(
+    "Result.or_else recovers from Err",
+    fn() {
       ok: Result<Int, String> = .Ok(5)
       err: Result<Int, String> = .Err("no")
-      recovered_ok: Result<Int, Int> = ok.or_else(fn(e: String) { .Err(e.len()) })
-      recovered_err: Result<Int, Int> = err.or_else(fn(e: String) { .Ok(e.len()) })
+      recovered_ok: Result<Int, Int> = ok.or_else(
+        fn(e: String) {
+          .Err(e.len())
+        },
+      )
+      recovered_err: Result<Int, Int> = err.or_else(
+        fn(e: String) {
+          .Ok(e.len())
+        },
+      )
       try assert.is_ok(recovered_ok)
       try assert.is_ok(recovered_err)
       try assert.equal(recovered_ok.unwrap_or(0), 5)
       try assert.equal(recovered_err.unwrap_or(0), 2)
       .Ok({})
-    })
-    .test("Result.ok and err bridge to Option", fn() {
+    },
+  ).test(
+    "Result.ok and err bridge to Option",
+    fn() {
       ok: Result<Int, String> = .Ok(12)
       err: Result<Int, String> = .Err("lost")
       try assert.equal(ok.ok().unwrap_or(0), 12)
@@ -550,25 +717,40 @@ pub fn suite() runner.Suite {
       try assert.is_none(err.ok())
       try assert.equal(err.err().unwrap_or(""), "lost")
       .Ok({})
-    })
-    .test("Option and Result combinators support qualified calls", fn() {
+    },
+  ).test(
+    "Option and Result combinators support qualified calls",
+    fn() {
       o: Int? = .Some(3)
       om := Option.map(o, fn(x: Int) { x + 2 })
-      oa := Option.and_then(om, fn(x: Int) {
-        if x > 0 { .Some(x * 2) } else { .None }
-      })
+      oa := Option.and_then(
+        om,
+        fn(x: Int) {
+          if x > 0 {
+            .Some(x * 2)
+          } else {
+            .None
+          }
+        },
+      )
       try assert.is_some(oa)
       oval := case oa {
         .Some(v) => v,
         .None => -1,
       }
       try assert.equal(oval, 10)
-
       r: Result<Int, String> = .Ok(4)
       rm := Result.map(r, fn(x: Int) { x + 1 })
-      ra := Result.and_then(rm, fn(x: Int) {
-        if x < 10 { .Ok(x * 3) } else { .Err("too big") }
-      })
+      ra := Result.and_then(
+        rm,
+        fn(x: Int) {
+          if x < 10 {
+            .Ok(x * 3)
+          } else {
+            .Err("too big")
+          }
+        },
+      )
       try assert.is_ok(ra)
       rval := case ra {
         .Ok(v) => v,
@@ -576,5 +758,6 @@ pub fn suite() runner.Suite {
       }
       try assert.equal(rval, 15)
       .Ok({})
-    })
+    },
+  )
 }

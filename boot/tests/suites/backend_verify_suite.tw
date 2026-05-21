@@ -2,9 +2,7 @@
 use compiler.anf.{AnfExpr, AnfFunctionDef, AnfModule}
 use compiler.backend.prepare.{PreparedModule, prepare_backend}
 use compiler.backend.prepared_ir.{CaptureParam, PreparedFunc, SlotInfo}
-use compiler.backend.verify.{
-  verify_prepared_module, verify_prepared_module_with_level,
-}
+use compiler.backend.verify.{verify_prepared_module, verify_prepared_module_with_level}
 use compiler.base_env
 use compiler.builtins.{BuiltinRegistry, make_builtin_registry}
 use compiler.codegen.wasm_ir.{ValType}
@@ -48,10 +46,7 @@ fn no_captures() Dict<Int, Vector<CaptureParam>> { Dict.new() }
 
 fn mk_param(id: Int, ty: MonoType) Param { .{ local: lid(id), ty: ty } }
 
-fn mk_mono_map(entries: Vector<Int>, types: Vector<MonoType>) Dict<
-  Int,
-  MonoType,
-> {
+fn mk_mono_map(entries: Vector<Int>, types: Vector<MonoType>) Dict<Int, MonoType> {
   d: Dict<Int, MonoType> = Dict.new()
 
   for k, i in entries { d[k] = types[i] }
@@ -91,11 +86,7 @@ fn prepared_module(
 fn first_func(prepared: PreparedModule) PreparedFunc { prepared.funcs[0] }
 
 fn replace_func(prepared: PreparedModule, pf: PreparedFunc) PreparedModule {
-  .{
-    anf: prepared.anf,
-    closure_captures: prepared.closure_captures,
-    funcs: [pf],
-  }
+  .{ anf: prepared.anf, closure_captures: prepared.closure_captures, funcs: [pf] }
 }
 
 fn rewrite_func(pf: PreparedFunc, slots: Dict<Int, SlotInfo>) PreparedFunc {
@@ -104,10 +95,7 @@ fn rewrite_func(pf: PreparedFunc, slots: Dict<Int, SlotInfo>) PreparedFunc {
 }
 
 fn verify_err(prepared: PreparedModule, expected: String) Result<Void, String> {
-  assert.err_contains(
-    verify_prepared_module(prepared, empty_env(), empty_builtins()),
-    expected,
-  )
+  assert.err_contains(verify_prepared_module(prepared, empty_env(), empty_builtins()), expected)
 }
 
 fn verify_err_with_env(
@@ -119,11 +107,10 @@ fn verify_err_with_env(
   assert.err_contains(verify_prepared_module(prepared, env, builtins), expected)
 }
 
-fn verify_ok_with_env(
-  prepared: PreparedModule,
-  env: ResolvedEnv,
-  builtins: BuiltinRegistry,
-) Result<Void, String> {
+fn verify_ok_with_env(prepared: PreparedModule, env: ResolvedEnv, builtins: BuiltinRegistry) Result<
+  Void,
+  String,
+> {
   case verify_prepared_module(prepared, env, builtins) {
     .Ok(_) => .Ok({}),
     .Err(msg) => .Err("expected verify ok, got: ${msg}"),
@@ -145,10 +132,7 @@ fn slots_without(pf: PreparedFunc, skip_sid: Int) Dict<Int, SlotInfo> {
   out
 }
 
-fn slots_with_wasm_type(pf: PreparedFunc, target_sid: Int, wasm_type: ValType) Dict<
-  Int,
-  SlotInfo,
-> {
+fn slots_with_wasm_type(pf: PreparedFunc, target_sid: Int, wasm_type: ValType) Dict<Int, SlotInfo> {
   out: Dict<Int, SlotInfo> = Dict.new()
 
   for sid in pf.slots.keys() {
@@ -178,29 +162,19 @@ pub fn suite() runner.Suite {
   runner.suite("backend verify (Phase 5)").test(
     "valid prepared module passes verification",
     fn() {
-      body: AnfExpr = .Let(
-        lid(10),
-        .AInit(.ALocal(lid(0))),
-        .Atom(.ALocal(lid(10))),
-      )
+      body: AnfExpr = .Let(lid(10), .AInit(.ALocal(lid(0))), .Atom(.ALocal(lid(10))))
       prepared := prepared_module(
         [mk_param(0, .Int)],
         body,
         mk_mono_map([10], [MonoType.Int]),
         .Int,
       )
-      assert.is_ok(
-        verify_prepared_module(prepared, empty_env(), empty_builtins()),
-      )
+      assert.is_ok(verify_prepared_module(prepared, empty_env(), empty_builtins()))
     },
   ).test(
     "missing slot referenced from body is rejected",
     fn() {
-      body: AnfExpr = .Let(
-        lid(10),
-        .AInit(.ALocal(lid(0))),
-        .Atom(.ALocal(lid(10))),
-      )
+      body: AnfExpr = .Let(lid(10), .AInit(.ALocal(lid(0))), .Atom(.ALocal(lid(10))))
       prepared := prepared_module(
         [mk_param(0, .Int)],
         body,
@@ -224,12 +198,7 @@ pub fn suite() runner.Suite {
       body: AnfExpr = .Return(.Some(.ALitInt(1)))
       prepared := prepared_module([], body, Dict.new(), .Void)
       assert.is_ok(
-        verify_prepared_module_with_level(
-          prepared,
-          empty_env(),
-          empty_builtins(),
-          .Basic,
-        ),
+        verify_prepared_module_with_level(prepared, empty_env(), empty_builtins(), .Basic),
       )
     },
   ).test(
@@ -242,21 +211,9 @@ pub fn suite() runner.Suite {
   ).test(
     "break with value is rejected",
     fn() {
-      body: AnfExpr = .Let(
-        lid(10),
-        .ALoop(.Break(.Some(.ALitInt(1)))),
-        .Atom(.ALocal(lid(10))),
-      )
-      prepared := prepared_module(
-        [],
-        body,
-        mk_mono_map([10], [MonoType.Void]),
-        .Void,
-      )
-      verify_err(
-        prepared,
-        "break with value is not supported in prepared backend IR",
-      )
+      body: AnfExpr = .Let(lid(10), .ALoop(.Break(.Some(.ALitInt(1)))), .Atom(.ALocal(lid(10))))
+      prepared := prepared_module([], body, mk_mono_map([10], [MonoType.Void]), .Void)
+      verify_err(prepared, "break with value is not supported in prepared backend IR")
     },
   ).test(
     "dead placeholder used in live context is rejected",
@@ -264,11 +221,7 @@ pub fn suite() runner.Suite {
       body: AnfExpr = .Let(
         lid(10),
         .AInit(.ALitVoid),
-        .Let(
-          lid(11),
-          .ACall(.AGlobalFunc(fid(99)), [.ALocal(lid(10))]),
-          .Atom(.ALocal(lid(11))),
-        ),
+        .Let(lid(11), .ACall(.AGlobalFunc(fid(99)), [.ALocal(lid(10))]), .Atom(.ALocal(lid(11)))),
       )
       prepared := prepared_module(
         [],
@@ -283,11 +236,7 @@ pub fn suite() runner.Suite {
     fn() {
       body: AnfExpr = .Let(
         lid(10),
-        .AIf(
-          .ALitBool(true),
-          .Return(.Some(.ALitInt(1))),
-          .Return(.Some(.ALitInt(2))),
-        ),
+        .AIf(.ALitBool(true), .Return(.Some(.ALitInt(1))), .Return(.Some(.ALitInt(2)))),
         .Let(lid(11), .AInit(.ALocal(lid(10))), .Atom(.ALitInt(0))),
       )
       prepared := prepared_module(
@@ -296,9 +245,7 @@ pub fn suite() runner.Suite {
         mk_mono_map([10, 11], [MonoType.Never, MonoType.Never]),
         .Int,
       )
-      assert.is_ok(
-        verify_prepared_module(prepared, empty_env(), empty_builtins()),
-      )
+      assert.is_ok(verify_prepared_module(prepared, empty_env(), empty_builtins()))
     },
   ).test(
     "if condition with non-bool repr is rejected",
@@ -323,17 +270,8 @@ pub fn suite() runner.Suite {
   ).test(
     "init value mono mismatch is rejected",
     fn() {
-      body: AnfExpr = .Let(
-        lid(10),
-        .AInit(.ALitBool(true)),
-        .Atom(.ALocal(lid(10))),
-      )
-      prepared := prepared_module(
-        [],
-        body,
-        mk_mono_map([10], [MonoType.Int]),
-        .Int,
-      )
+      body: AnfExpr = .Let(lid(10), .AInit(.ALitBool(true)), .Atom(.ALocal(lid(10))))
+      prepared := prepared_module([], body, mk_mono_map([10], [MonoType.Int]), .Int)
       verify_err(prepared, "init value has mono Bool, expected Int")
     },
   ).test(
@@ -344,12 +282,7 @@ pub fn suite() runner.Suite {
         .ABinOp(.Add, .ALitBool(true), .ALitInt(1), .Int),
         .Atom(.ALocal(lid(10))),
       )
-      prepared := prepared_module(
-        [],
-        body,
-        mk_mono_map([10], [MonoType.Int]),
-        .Int,
-      )
+      prepared := prepared_module([], body, mk_mono_map([10], [MonoType.Int]), .Int)
       verify_err(prepared, "binary lhs must match Int op kind")
     },
   ).test(
@@ -371,19 +304,12 @@ pub fn suite() runner.Suite {
         mk_mono_map([10, 11], [MonoType.Anyref_, MonoType.Int]),
         .Int,
       )
-      verify_err(
-        prepared,
-        "record get target has incompatible repr OpaqueAnyref",
-      )
+      verify_err(prepared, "record get target has incompatible repr OpaqueAnyref")
     },
   ).test(
     "capture metadata mismatch is rejected",
     fn() {
-      outer_body: AnfExpr = .Let(
-        lid(10),
-        .AMakeClosure(fid(99), [lid(0)]),
-        .Atom(.ALocal(lid(10))),
-      )
+      outer_body: AnfExpr = .Let(lid(10), .AMakeClosure(fid(99), [lid(0)]), .Atom(.ALocal(lid(10))))
       outer := mk_func_def(
         1,
         "outer",
@@ -392,25 +318,11 @@ pub fn suite() runner.Suite {
         outer_body,
         mk_mono_map([10], [MonoType.Function([.Int], .Int)]),
       )
-      inner := mk_func_def(
-        99,
-        "inner",
-        [],
-        .Int,
-        .Atom(.ALocal(lid(0))),
-        Dict.new(),
-      )
+      inner := mk_func_def(99, "inner", [], .Int, .Atom(.ALocal(lid(0))), Dict.new())
       anf := mk_module([outer, inner])
-      prepared := prepare_backend(
-        anf,
-        empty_env(),
-        empty_builtins(),
-        no_captures(),
-      )
+      prepared := prepare_backend(anf, empty_env(), empty_builtins(), no_captures())
       bad_caps: Dict<Int, Vector<CaptureParam>> = Dict.new()
-      bad_caps[99] = [
-        CaptureParam.{ local_id: lid(1), param_local: lid(100), ty: .Int },
-      ]
+      bad_caps[99] = [CaptureParam.{ local_id: lid(1), param_local: lid(100), ty: .Int }]
       broken := PreparedModule.{
         anf: prepared.anf,
         closure_captures: bad_caps,
@@ -437,11 +349,7 @@ pub fn suite() runner.Suite {
   ).test(
     "closure call arity mismatch is rejected",
     fn() {
-      body: AnfExpr = .Let(
-        lid(10),
-        .ACall(.ALocal(lid(0)), []),
-        .Atom(.ALocal(lid(10))),
-      )
+      body: AnfExpr = .Let(lid(10), .ACall(.ALocal(lid(0)), []), .Atom(.ALocal(lid(10))))
       prepared := prepared_module(
         [mk_param(0, .Function([.Int], .Int))],
         body,
@@ -458,11 +366,7 @@ pub fn suite() runner.Suite {
         "caller",
         [],
         .Int,
-        .Let(
-          lid(10),
-          .ACall(.AGlobalFunc(fid(2)), [.ALitBool(true)]),
-          .Atom(.ALocal(lid(10))),
-        ),
+        .Let(lid(10), .ACall(.AGlobalFunc(fid(2)), [.ALitBool(true)]), .Atom(.ALocal(lid(10)))),
         mk_mono_map([10], [MonoType.Int]),
       )
       callee := mk_func_def(
@@ -479,10 +383,7 @@ pub fn suite() runner.Suite {
         empty_builtins(),
         no_captures(),
       )
-      verify_err(
-        prepared,
-        "direct call arg 0 to callee has mono Anyref_, expected Int",
-      )
+      verify_err(prepared, "direct call arg 0 to callee has mono Anyref_, expected Int")
     },
   ).test(
     "direct call arity mismatch is rejected",
@@ -509,10 +410,7 @@ pub fn suite() runner.Suite {
         empty_builtins(),
         no_captures(),
       )
-      verify_err(
-        prepared,
-        "direct call to callee (F2) passes 0 arg(s), expected 1",
-      )
+      verify_err(prepared, "direct call to callee (F2) passes 0 arg(s), expected 1")
     },
   ).test(
     "slot metadata mismatch is rejected",
@@ -532,11 +430,7 @@ pub fn suite() runner.Suite {
       env := base_env.builtin_env()
       builtins := empty_builtins()
       int_to_string := builtins.id("int_to_string")
-      body: AnfExpr = .Let(
-        lid(10),
-        .AMakeClosure(int_to_string, []),
-        .Atom(.ALocal(lid(10))),
-      )
+      body: AnfExpr = .Let(lid(10), .AMakeClosure(int_to_string, []), .Atom(.ALocal(lid(10))))
       func := mk_func_def(
         1,
         "f",
@@ -545,12 +439,7 @@ pub fn suite() runner.Suite {
         body,
         mk_mono_map([10], [MonoType.Function([.Int], .String)]),
       )
-      prepared := prepare_backend(
-        mk_module([func]),
-        env,
-        builtins,
-        no_captures(),
-      )
+      prepared := prepare_backend(mk_module([func]), env, builtins, no_captures())
       verify_ok_with_env(prepared, env, builtins)
     },
   ).test(
@@ -559,11 +448,7 @@ pub fn suite() runner.Suite {
       env := base_env.builtin_env()
       builtins := empty_builtins()
       byte_to_string := builtins.id("byte_to_string")
-      body: AnfExpr = .Let(
-        lid(10),
-        .AMakeClosure(byte_to_string, []),
-        .Atom(.ALocal(lid(10))),
-      )
+      body: AnfExpr = .Let(lid(10), .AMakeClosure(byte_to_string, []), .Atom(.ALocal(lid(10))))
       func := mk_func_def(
         1,
         "f",
@@ -572,12 +457,7 @@ pub fn suite() runner.Suite {
         body,
         mk_mono_map([10], [MonoType.Function([.Byte], .String)]),
       )
-      prepared := prepare_backend(
-        mk_module([func]),
-        env,
-        builtins,
-        no_captures(),
-      )
+      prepared := prepare_backend(mk_module([func]), env, builtins, no_captures())
       verify_ok_with_env(prepared, env, builtins)
     },
   ).test(
@@ -588,11 +468,7 @@ pub fn suite() runner.Suite {
       cell_update := builtins.id("cell_update")
       cell_int := MonoType.Named(TypeId.{ id: 16 }, [MonoType.Int])
       updater_ty := MonoType.Function([.Int], .Int)
-      body: AnfExpr = .Let(
-        lid(10),
-        .AMakeClosure(cell_update, []),
-        .Atom(.ALocal(lid(10))),
-      )
+      body: AnfExpr = .Let(lid(10), .AMakeClosure(cell_update, []), .Atom(.ALocal(lid(10))))
       func := mk_func_def(
         1,
         "f",
@@ -601,12 +477,7 @@ pub fn suite() runner.Suite {
         body,
         mk_mono_map([10], [MonoType.Function([cell_int, updater_ty], .Void)]),
       )
-      prepared := prepare_backend(
-        mk_module([func]),
-        env,
-        builtins,
-        no_captures(),
-      )
+      prepared := prepare_backend(mk_module([func]), env, builtins, no_captures())
       verify_ok_with_env(prepared, env, builtins)
     },
   ).test(
@@ -615,16 +486,9 @@ pub fn suite() runner.Suite {
       env := base_env.builtin_env()
       builtins := empty_builtins()
       iterator_unfold := builtins.id("iterator_unfold")
-      step_ty := MonoType.Function(
-        [.Int],
-        .Named(TypeId.{ id: 18 }, [MonoType.Int, MonoType.Int]),
-      )
+      step_ty := MonoType.Function([.Int], .Named(TypeId.{ id: 18 }, [MonoType.Int, MonoType.Int]))
       iter_ty := MonoType.Named(TypeId.{ id: 17 }, [MonoType.Int])
-      body: AnfExpr = .Let(
-        lid(10),
-        .AMakeClosure(iterator_unfold, []),
-        .Atom(.ALocal(lid(10))),
-      )
+      body: AnfExpr = .Let(lid(10), .AMakeClosure(iterator_unfold, []), .Atom(.ALocal(lid(10))))
       func := mk_func_def(
         1,
         "f",
@@ -633,12 +497,7 @@ pub fn suite() runner.Suite {
         body,
         mk_mono_map([10], [MonoType.Function([.Int, step_ty], iter_ty)]),
       )
-      prepared := prepare_backend(
-        mk_module([func]),
-        env,
-        builtins,
-        no_captures(),
-      )
+      prepared := prepare_backend(mk_module([func]), env, builtins, no_captures())
       verify_ok_with_env(prepared, env, builtins)
     },
   ).test(
@@ -647,11 +506,7 @@ pub fn suite() runner.Suite {
       env := base_env.builtin_env()
       builtins := empty_builtins()
       int_to_string := builtins.id("int_to_string")
-      body: AnfExpr = .Let(
-        lid(10),
-        .AMakeClosure(int_to_string, [lid(0)]),
-        .Atom(.ALocal(lid(10))),
-      )
+      body: AnfExpr = .Let(lid(10), .AMakeClosure(int_to_string, [lid(0)]), .Atom(.ALocal(lid(10))))
       func := mk_func_def(
         1,
         "f",
@@ -660,12 +515,7 @@ pub fn suite() runner.Suite {
         body,
         mk_mono_map([10], [MonoType.Function([.Int], .String)]),
       )
-      prepared := prepare_backend(
-        mk_module([func]),
-        env,
-        builtins,
-        no_captures(),
-      )
+      prepared := prepare_backend(mk_module([func]), env, builtins, no_captures())
       verify_err_with_env(prepared, env, builtins, "must not capture locals")
     },
   ).test(
@@ -674,11 +524,7 @@ pub fn suite() runner.Suite {
       env := base_env.add_internal_host_builtins(base_env.builtin_env())
       builtins := empty_builtins()
       host_write_bytes := builtins.id("host_write_bytes")
-      body: AnfExpr = .Let(
-        lid(10),
-        .AMakeClosure(host_write_bytes, []),
-        .Atom(.ALocal(lid(10))),
-      )
+      body: AnfExpr = .Let(lid(10), .AMakeClosure(host_write_bytes, []), .Atom(.ALocal(lid(10))))
       func := mk_func_def(
         1,
         "f",
@@ -687,12 +533,7 @@ pub fn suite() runner.Suite {
         body,
         mk_mono_map([10], [MonoType.Function([.String, .Vector(.Byte)], .Void)]),
       )
-      prepared := prepare_backend(
-        mk_module([func]),
-        env,
-        builtins,
-        no_captures(),
-      )
+      prepared := prepare_backend(mk_module([func]), env, builtins, no_captures())
       verify_ok_with_env(prepared, env, builtins)
     },
   )

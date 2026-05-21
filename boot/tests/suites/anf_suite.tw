@@ -1,6 +1,5 @@
 use compiler.anf.{
-  AnfExpr, AnfFunctionDef, AnfMatchArm, AnfModule, AnfOp, Atom, FieldAtom,
-  IndexKind, OpKind,
+  AnfExpr, AnfFunctionDef, AnfMatchArm, AnfModule, AnfOp, Atom, FieldAtom, IndexKind, OpKind,
 }
 use compiler.core_ir.{FieldId, FuncId, LocalId, Param, VariantId}
 use compiler.mono_type.{TypeId}
@@ -280,10 +279,7 @@ fn test_op_loop() Result<Void, String> {
 }
 
 fn test_op_make_closure() Result<Void, String> {
-  op: AnfOp = .AMakeClosure(
-    FuncId.{ id: 5 },
-    [LocalId.{ id: 1 }, LocalId.{ id: 2 }],
-  )
+  op: AnfOp = .AMakeClosure(FuncId.{ id: 5 }, [LocalId.{ id: 1 }, LocalId.{ id: 2 }])
 
   case op {
     .AMakeClosure(fid, fvs) => {
@@ -312,11 +308,7 @@ fn test_op_record() Result<Void, String> {
 }
 
 fn test_op_record_get() Result<Void, String> {
-  op: AnfOp = .ARecordGet(
-    .ALocal(LocalId.{ id: 0 }),
-    FieldId.{ id: 1 },
-    TypeId.{ id: 7 },
-  )
+  op: AnfOp = .ARecordGet(.ALocal(LocalId.{ id: 0 }), FieldId.{ id: 1 }, TypeId.{ id: 7 })
 
   case op {
     .ARecordGet(target, fid, tid) => {

@@ -99,11 +99,7 @@ fn test_fold_int_mod_by_zero_kept() Result<Void, String> {
 }
 
 fn test_fold_int_comparison() Result<Void, String> {
-  expr: AnfExpr = .Let(
-    lid(0),
-    .ABinOp(.Lt, .ALitInt(3), .ALitInt(5), .Int),
-    .Atom(.ALocal(lid(0))),
-  )
+  expr: AnfExpr = .Let(lid(0), .ABinOp(.Lt, .ALitInt(3), .ALitInt(5), .Int), .Atom(.ALocal(lid(0))))
   r := constant_fold(expr)
 
   case r.expr {
@@ -113,11 +109,7 @@ fn test_fold_int_comparison() Result<Void, String> {
 }
 
 fn test_fold_int_eq_false() Result<Void, String> {
-  expr: AnfExpr = .Let(
-    lid(0),
-    .ABinOp(.Eq, .ALitInt(3), .ALitInt(5), .Int),
-    .Atom(.ALocal(lid(0))),
-  )
+  expr: AnfExpr = .Let(lid(0), .ABinOp(.Eq, .ALitInt(3), .ALitInt(5), .Int), .Atom(.ALocal(lid(0))))
   r := constant_fold(expr)
 
   case r.expr {
@@ -179,11 +171,7 @@ fn test_fold_bool_or() Result<Void, String> {
 
 // ── constant_fold: unary ────────────────────────────────────────────
 fn test_fold_neg_int() Result<Void, String> {
-  expr: AnfExpr = .Let(
-    lid(0),
-    .AUnOp(.Neg, .ALitInt(5), .Int),
-    .Atom(.ALocal(lid(0))),
-  )
+  expr: AnfExpr = .Let(lid(0), .AUnOp(.Neg, .ALitInt(5), .Int), .Atom(.ALocal(lid(0))))
   r := constant_fold(expr)
 
   case r.expr {
@@ -193,11 +181,7 @@ fn test_fold_neg_int() Result<Void, String> {
 }
 
 fn test_fold_not_bool() Result<Void, String> {
-  expr: AnfExpr = .Let(
-    lid(0),
-    .AUnOp(.Not, .ALitBool(true), .Bool),
-    .Atom(.ALocal(lid(0))),
-  )
+  expr: AnfExpr = .Let(lid(0), .AUnOp(.Not, .ALitBool(true), .Bool), .Atom(.ALocal(lid(0))))
   r := constant_fold(expr)
 
   case r.expr {
@@ -338,18 +322,9 @@ pub fn suite() runner.Suite {
   // branch simplification
   s = .test("branch: true selects then", test_branch_true_selects_then)
   s = .test("branch: false selects else", test_branch_false_selects_else)
-  s = .test(
-    "branch: false with diverging then",
-    test_branch_diverging_drops_continuation,
-  )
-  s = .test(
-    "branch: true diverging drops body",
-    test_branch_true_diverging_drops_body,
-  )
-  s = .test(
-    "branch: non-literal unchanged",
-    test_branch_non_literal_cond_unchanged,
-  )
+  s = .test("branch: false with diverging then", test_branch_diverging_drops_continuation)
+  s = .test("branch: true diverging drops body", test_branch_true_diverging_drops_body)
+  s = .test("branch: non-literal unchanged", test_branch_non_literal_cond_unchanged)
   s = .test("branch: nested let in branch", test_branch_nested_let_in_branch)
   s
 }

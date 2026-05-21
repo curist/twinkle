@@ -20,10 +20,7 @@ fn resolve_src_with_env(src: String, env: resolver.ResolvedEnv) resolver.Resolve
   env.resolve(parsed.value)
 }
 
-fn resolve_ok_with_env(src: String, env: resolver.ResolvedEnv) Result<
-  resolver.ResolvedEnv,
-  String,
-> {
+fn resolve_ok_with_env(src: String, env: resolver.ResolvedEnv) Result<resolver.ResolvedEnv, String> {
   r := resolve_src_with_env(src, env)
 
   if r.diagnostics.len() > 0 {
@@ -115,11 +112,10 @@ pub fn mono_to_string(ty: mono_type.MonoType) String {
   }
 }
 
-fn get_field_type(
-  env: resolver.ResolvedEnv,
-  type_name: String,
-  field_name: String,
-) Result<String, String> {
+fn get_field_type(env: resolver.ResolvedEnv, type_name: String, field_name: String) Result<
+  String,
+  String,
+> {
   found: resolver.TypeEntry? = case resolver.lookup_type(env, type_name) {
     .Some(entry) => .Some(entry),
     .None => resolver.lookup_registered_type(env, type_name),
@@ -149,10 +145,7 @@ fn get_field_type(
   }
 }
 
-fn get_variant_count(env: resolver.ResolvedEnv, type_name: String) Result<
-  Int,
-  String,
-> {
+fn get_variant_count(env: resolver.ResolvedEnv, type_name: String) Result<Int, String> {
   case resolver.lookup_type(env, type_name) {
     .Some(entry) => {
       case entry.def {
@@ -169,10 +162,7 @@ fn get_variant_count(env: resolver.ResolvedEnv, type_name: String) Result<
   }
 }
 
-fn get_param_type(env: resolver.ResolvedEnv, fn_name: String, idx: Int) Result<
-  String,
-  String,
-> {
+fn get_param_type(env: resolver.ResolvedEnv, fn_name: String, idx: Int) Result<String, String> {
   case resolver.lookup_function(env, fn_name) {
     .Some(sig) => {
       if idx >= sig.params.len() {
@@ -185,10 +175,7 @@ fn get_param_type(env: resolver.ResolvedEnv, fn_name: String, idx: Int) Result<
   }
 }
 
-fn get_return_type(env: resolver.ResolvedEnv, fn_name: String) Result<
-  String,
-  String,
-> {
+fn get_return_type(env: resolver.ResolvedEnv, fn_name: String) Result<String, String> {
   case resolver.lookup_function(env, fn_name) {
     .Some(sig) => {
       case sig.ret {
@@ -289,10 +276,7 @@ pub fn suite() runner.Suite {
     fn() {
       src := "type Map = .{ data: Dict<String, Int> }"
       env := try resolve_ok(src)
-      try assert.equal(
-        try get_field_type(env, "Map", "data"),
-        "Dict<String, Int>",
-      )
+      try assert.equal(try get_field_type(env, "Map", "data"), "Dict<String, Int>")
       .Ok({})
     },
   ).test(
@@ -308,10 +292,7 @@ pub fn suite() runner.Suite {
     fn() {
       src := "type Callback = .{ handler: fn(Int) Bool }"
       env := try resolve_ok(src)
-      try assert.equal(
-        try get_field_type(env, "Callback", "handler"),
-        "fn(Int) Bool",
-      )
+      try assert.equal(try get_field_type(env, "Callback", "handler"), "fn(Int) Bool")
       .Ok({})
     },
   ).test(
@@ -457,10 +438,7 @@ pub fn suite() runner.Suite {
     fn() {
       src := "type Foo = .{ value: Result<Int, String> }"
       env := try resolve_ok(src)
-      try assert.equal(
-        try get_field_type(env, "Foo", "value"),
-        "Result<Int, String>",
-      )
+      try assert.equal(try get_field_type(env, "Foo", "value"), "Result<Int, String>")
       .Ok({})
     },
   ).test(
@@ -605,10 +583,7 @@ pub fn suite() runner.Suite {
     "manual method registration + lookup",
     fn() {
       env := resolver.empty_env()
-      entry := resolver.MethodEntry.{
-        method_name: "len",
-        function_name: "string_len",
-      }
+      entry := resolver.MethodEntry.{ method_name: "len", function_name: "string_len" }
       env.methods["String"] = [entry]
 
       case resolver.lookup_method(env, "String", "len") {
@@ -636,17 +611,12 @@ pub fn suite() runner.Suite {
         span: span.Span.{ file_id: 0, start: 0, end: 0 },
         is_extern: false,
       }
-      env := resolver.empty_env().register_type_entry(entry, "dep.Point").bind_type(
-        "Point",
-        tid,
-      ).register_bound_methods(
+      env := resolver.empty_env().register_type_entry(entry, "dep.Point").bind_type("Point", tid).register_bound_methods(
         "Point",
         [resolver.MethodEntry.{ method_name: "len", function_name: "len" }],
       )
       try assert.equal(
-        try resolver.find_type_name(env, tid).ok_or(
-          "preferred type name missing",
-        ),
+        try resolver.find_type_name(env, tid).ok_or("preferred type name missing"),
         "dep.Point",
       )
 
@@ -917,10 +887,7 @@ pub fn suite() runner.Suite {
         param_names: ["xs", "f"],
         params: [
           mono_type.MonoType.Vector(mono_type.MonoType.Var("A")),
-          mono_type.MonoType.Function(
-            [mono_type.MonoType.Var("A")],
-            mono_type.MonoType.Var("B"),
-          ),
+          mono_type.MonoType.Function([mono_type.MonoType.Var("A")], mono_type.MonoType.Var("B")),
         ],
         ret: .Some(mono_type.MonoType.Vector(mono_type.MonoType.Var("B"))),
         doc: .None,
@@ -1038,13 +1005,7 @@ pub fn suite() runner.Suite {
       entry := resolver.TypeEntry.{
         id: tid,
         arity: 0,
-        def: .Some(
-          resolver.ResolvedTypeDef.Alias(
-            "geom.Support",
-            [],
-            mono_type.MonoType.Int,
-          ),
-        ),
+        def: .Some(resolver.ResolvedTypeDef.Alias("geom.Support", [], mono_type.MonoType.Int)),
         span: span.Span.{ file_id: 0, start: 0, end: 0 },
         is_extern: false,
       }
@@ -1052,9 +1013,7 @@ pub fn suite() runner.Suite {
       try assert.equal(env.types.len(), 1)
       try assert.is_true(!resolver.has_type(env, "geom.Support"))
       try assert.equal(
-        try resolver.find_type_name(env, tid).ok_or(
-          "preferred type name missing",
-        ),
+        try resolver.find_type_name(env, tid).ok_or("preferred type name missing"),
         "geom.Support",
       )
 
@@ -1205,10 +1164,7 @@ pub fn suite() runner.Suite {
       // Pre-register a builtin "show" method on Point
       env := resolver.empty_env()
       env.methods["Point"] = [
-        resolver.MethodEntry.{
-          method_name: "show",
-          function_name: "__builtin_show",
-        },
+        resolver.MethodEntry.{ method_name: "show", function_name: "__builtin_show" },
       ]
       r := env.resolve(parsed.value)
       found := false
@@ -1246,9 +1202,9 @@ pub fn suite() runner.Suite {
       found := false
 
       for msg in msgs {
-        if msg.contains(
-          "inherent method 'step' conflicts with field 'step' on Counter",
-        ) { found = true }
+        if msg.contains("inherent method 'step' conflicts with field 'step' on Counter") {
+          found = true
+        }
       }
 
       try assert.is_true(found)
@@ -1299,10 +1255,7 @@ pub fn suite() runner.Suite {
                 .Sum(_, _, variants) => {
                   // Circle should have 1 field (ErrorType), not 0
                   try assert.equal(variants[0].fields.len(), 1)
-                  try assert.equal(
-                    mono_to_string(variants[0].fields[0]),
-                    "<error>",
-                  )
+                  try assert.equal(mono_to_string(variants[0].fields[0]), "<error>")
                   // Rect should still have 2 fields
                   try assert.equal(variants[1].fields.len(), 2)
                   .Ok({})
@@ -1481,13 +1434,7 @@ pub fn suite() runner.Suite {
       entry := resolver.TypeEntry.{
         id: tid,
         arity: 0,
-        def: .Some(
-          resolver.ResolvedTypeDef.Alias(
-            "dep.Support",
-            [],
-            mono_type.MonoType.Int,
-          ),
-        ),
+        def: .Some(resolver.ResolvedTypeDef.Alias("dep.Support", [], mono_type.MonoType.Int)),
         span: span.Span.{ file_id: 0, start: 0, end: 0 },
         is_extern: false,
       }
@@ -1501,9 +1448,7 @@ pub fn suite() runner.Suite {
         extern_module: .None,
       }
       parsed := parser.parse("pub fn expose(x: Int) Int { x }", 0)
-      env := resolver.empty_env().register_type_entry(entry, "dep.Support").with_functions([
-        sig,
-      ])
+      env := resolver.empty_env().register_type_entry(entry, "dep.Support").with_functions([sig])
       exports := resolver.extract_exports(env, parsed.value)
       try assert.equal(exports.visible_types.len(), 0)
       try assert.equal(exports.support_types.len(), 1)
@@ -1522,12 +1467,7 @@ pub fn suite() runner.Suite {
           resolver.ResolvedTypeDef.Record(
             "dep.Inner",
             [],
-            [
-              resolver.ResolvedField.{
-                name: "value",
-                ty: mono_type.MonoType.Int,
-              },
-            ],
+            [resolver.ResolvedField.{ name: "value", ty: mono_type.MonoType.Int }],
           ),
         ),
         span: span.Span.{ file_id: 0, start: 0, end: 0 },
@@ -1540,12 +1480,7 @@ pub fn suite() runner.Suite {
           resolver.ResolvedTypeDef.Record(
             "dep.Outer",
             [],
-            [
-              resolver.ResolvedField.{
-                name: "inner",
-                ty: mono_type.MonoType.Named(inner_tid, []),
-              },
-            ],
+            [resolver.ResolvedField.{ name: "inner", ty: mono_type.MonoType.Named(inner_tid, []) }],
           ),
         ),
         span: span.Span.{ file_id: 0, start: 0, end: 0 },
@@ -1585,12 +1520,7 @@ pub fn suite() runner.Suite {
           resolver.ResolvedTypeDef.Record(
             "dep.Support",
             [],
-            [
-              resolver.ResolvedField.{
-                name: "value",
-                ty: mono_type.MonoType.Int,
-              },
-            ],
+            [resolver.ResolvedField.{ name: "value", ty: mono_type.MonoType.Int }],
           ),
         ),
         span: span.Span.{ file_id: 0, start: 0, end: 0 },
@@ -1615,10 +1545,10 @@ pub fn suite() runner.Suite {
         is_extern: false,
       }
       parsed := parser.parse("pub type Wrapper = .{ inner: Int }", 0)
-      env := resolver.empty_env().register_type_entry(
-        support_entry,
-        "dep.Support",
-      ).add_type(wrapper_entry, "Wrapper")
+      env := resolver.empty_env().register_type_entry(support_entry, "dep.Support").add_type(
+        wrapper_entry,
+        "Wrapper",
+      )
       exports := resolver.extract_exports(env, parsed.value)
       try assert.equal(exports.visible_types.len(), 1)
       try assert.equal(exports.visible_types[0].name, "Wrapper")
@@ -1671,12 +1601,7 @@ pub fn suite() runner.Suite {
           resolver.ResolvedTypeDef.Record(
             "dep.Env",
             [],
-            [
-              resolver.ResolvedField.{
-                name: "value",
-                ty: mono_type.MonoType.Int,
-              },
-            ],
+            [resolver.ResolvedField.{ name: "value", ty: mono_type.MonoType.Int }],
           ),
         ),
         span: span.Span.{ file_id: 0, start: 0, end: 0 },
@@ -1700,24 +1625,14 @@ pub fn suite() runner.Suite {
         doc: .None,
         extern_module: .None,
       }
-      env := resolver.empty_env().register_type_entry(env_entry, "dep.Env").add_function(
-        make_sig,
-      ).register_function(resolve_sig).register_bound_methods(
+      env := resolver.empty_env().register_type_entry(env_entry, "dep.Env").add_function(make_sig).register_function(
+        resolve_sig,
+      ).register_bound_methods(
         "dep.Env",
-        [
-          resolver.MethodEntry.{
-            method_name: "resolve",
-            function_name: "dep.resolve",
-          },
-        ],
+        [resolver.MethodEntry.{ method_name: "resolve", function_name: "dep.resolve" }],
       ).register_receiver_methods(
         env_tid,
-        [
-          resolver.MethodEntry.{
-            method_name: "resolve",
-            function_name: "dep.resolve",
-          },
-        ],
+        [resolver.MethodEntry.{ method_name: "resolve", function_name: "dep.resolve" }],
       )
       parsed := parser.parse("pub fn make_env() Int { 0 }", 0)
       exports := resolver.extract_exports(env, parsed.value)
@@ -1731,9 +1646,7 @@ pub fn suite() runner.Suite {
           found := false
 
           for m in methods {
-            if m.method_name == "resolve" and m.function_name == "dep.resolve" {
-              found = true
-            }
+            if m.method_name == "resolve" and m.function_name == "dep.resolve" { found = true }
           }
 
           try assert.is_true(found)
@@ -1766,13 +1679,7 @@ pub fn suite() runner.Suite {
       entry := resolver.TypeEntry.{
         id: tid,
         arity: 0,
-        def: .Some(
-          resolver.ResolvedTypeDef.Alias(
-            "dep.Support",
-            [],
-            mono_type.MonoType.Int,
-          ),
-        ),
+        def: .Some(resolver.ResolvedTypeDef.Alias("dep.Support", [], mono_type.MonoType.Int)),
         span: span.Span.{ file_id: 0, start: 0, end: 0 },
         is_extern: false,
       }
@@ -1788,19 +1695,10 @@ pub fn suite() runner.Suite {
       exports := resolver.ModuleExports.{
         visible_types: [],
         support_types: [
-          resolver.ExportedType.{
-            name: "dep.Support",
-            entry,
-            origin: .Some("dep::Support"),
-          },
+          resolver.ExportedType.{ name: "dep.Support", entry, origin: .Some("dep::Support") },
         ],
         functions: [
-          resolver.ExportedFunction.{
-            name: "expose",
-            sig,
-            source_name: "expose",
-            origin: .None,
-          },
+          resolver.ExportedFunction.{ name: "expose", sig, source_name: "expose", origin: .None },
         ],
         support_functions: [],
         methods: Dict.new(),
@@ -1810,9 +1708,7 @@ pub fn suite() runner.Suite {
       try assert.is_true(!resolver.has_type(env, "dep.Support"))
       try assert.is_true(resolver.has_function(env, "mod.expose"))
       try assert.equal(
-        try resolver.find_type_name(env, mono_type.TypeId.{ id: 0 }).ok_or(
-          "support type missing",
-        ),
+        try resolver.find_type_name(env, mono_type.TypeId.{ id: 0 }).ok_or("support type missing"),
         "dep.Support",
       )
       .Ok({})
@@ -1895,9 +1791,7 @@ pub fn suite() runner.Suite {
       env := resolver.empty_env()
       env = .merge_selective_imports("diagnostic", "", exports, items)
       env = .merge_module_exports("diag", "", exports)
-      bare := try resolver.lookup_type(env, "Diagnostic").ok_or(
-        "missing selective type binding",
-      )
+      bare := try resolver.lookup_type(env, "Diagnostic").ok_or("missing selective type binding")
       aliased := try resolver.lookup_type(env, "diag.Diagnostic").ok_or(
         "missing aliased module type binding",
       )
@@ -1967,12 +1861,7 @@ pub fn suite() runner.Suite {
           },
         ),
       ]
-      env := resolver.empty_env().merge_selective_imports(
-        "math",
-        "",
-        exports,
-        items,
-      )
+      env := resolver.empty_env().merge_selective_imports("math", "", exports, items)
       try assert.is_true(resolver.has_function(env, "add"))
       try assert.is_true(!resolver.has_function(env, "math.add"))
       try assert.is_true(!resolver.has_function(env, "\$import\$.math.add"))
@@ -1982,9 +1871,7 @@ pub fn suite() runner.Suite {
         if sig.name == "math.add" { found_registered = true }
 
         if sig.name.starts_with("\$import\$.math.") {
-          return .Err(
-            "unexpected hidden selective-import function retained: ${sig.name}",
-          )
+          return .Err("unexpected hidden selective-import function retained: ${sig.name}")
         }
       }
 
@@ -1992,9 +1879,7 @@ pub fn suite() runner.Suite {
 
       for name in env.function_bindings.keys() {
         if name.starts_with("\$import\$.math.") {
-          return .Err(
-            "unexpected hidden selective-import function binding retained: ${name}",
-          )
+          return .Err("unexpected hidden selective-import function binding retained: ${name}")
         }
       }
 
@@ -2032,17 +1917,13 @@ pub fn suite() runner.Suite {
 
       for name in env.type_names {
         if name.starts_with("\$import\$.geom.") {
-          return .Err(
-            "unexpected hidden selective-import stored type retained: ${name}",
-          )
+          return .Err("unexpected hidden selective-import stored type retained: ${name}")
         }
       }
 
       for name in env.type_bindings.keys() {
         if name.starts_with("\$import\$.geom.") {
-          return .Err(
-            "unexpected hidden selective-import binding retained: ${name}",
-          )
+          return .Err("unexpected hidden selective-import binding retained: ${name}")
         }
       }
 
@@ -2190,11 +2071,7 @@ pub fn suite() runner.Suite {
       r := resolver.empty_env().resolve(parsed.value)
       exports := resolver.extract_exports(r.env, parsed.value)
       env := resolver.empty_env()
-      env = .merge_prelude_exports(
-        "__prelude_vector",
-        "prelude/vector.tw",
-        exports,
-      )
+      env = .merge_prelude_exports("__prelude_vector", "prelude/vector.tw", exports)
       // Verify origin exists
       try assert.is_some(resolver.lookup_function_origin(env, "filter"))
       // Now add a local function that shadows it
@@ -2212,9 +2089,7 @@ pub fn suite() runner.Suite {
 
       // Origin should be cleared for the now-local function
       case resolver.lookup_function_origin(env, "filter") {
-        .Some(_) => .Err(
-          "expected stale origin to be cleared after local shadow",
-        ),
+        .Some(_) => .Err("expected stale origin to be cleared after local shadow"),
         .None => .Ok({}),
       }
     },
@@ -2247,9 +2122,7 @@ pub fn suite() runner.Suite {
       env = .with_functions([local])
 
       case resolver.lookup_function_origin(env, "filter") {
-        .Some(_) => .Err(
-          "expected removed function origin to be dropped by with_functions",
-        ),
+        .Some(_) => .Err("expected removed function origin to be dropped by with_functions"),
         .None => .Ok({}),
       }
     },
@@ -2280,11 +2153,7 @@ pub fn suite() runner.Suite {
         methods: Dict.new(),
         values: [],
       }
-      env := resolver.empty_env().merge_module_exports(
-        "bridge",
-        "test/b.tw",
-        exports,
-      )
+      env := resolver.empty_env().merge_module_exports("bridge", "test/b.tw", exports)
 
       case resolver.lookup_function_origin(env, "bridge.foo") {
         .Some(origin) => {
@@ -2292,9 +2161,7 @@ pub fn suite() runner.Suite {
           try assert.equal(origin.func_name, "foo")
           .Ok({})
         },
-        .None => .Err(
-          "expected re-exported function to preserve original defining origin",
-        ),
+        .None => .Err("expected re-exported function to preserve original defining origin"),
       }
     },
   ).test(
@@ -2318,19 +2185,13 @@ pub fn suite() runner.Suite {
             name: "helper",
             sig: helper_sig,
             source_name: "helper",
-            origin: .Some(
-              .{ module_path: "test/support.tw", func_name: "helper" },
-            ),
+            origin: .Some(.{ module_path: "test/support.tw", func_name: "helper" }),
           },
         ],
         methods: Dict.new(),
         values: [],
       }
-      env := resolver.empty_env().merge_module_exports(
-        "support_mod",
-        "test/bridge.tw",
-        exports,
-      )
+      env := resolver.empty_env().merge_module_exports("support_mod", "test/bridge.tw", exports)
 
       case resolver.lookup_function_origin(env, "support_mod.helper") {
         .Some(origin) => {
@@ -2360,9 +2221,7 @@ pub fn suite() runner.Suite {
   ).test(
     "Option of extern type is accepted",
     fn() {
-      env := try resolve_ok(
-        "extern dom type Element\ntype MaybeElement = Element?",
-      )
+      env := try resolve_ok("extern dom type Element\ntype MaybeElement = Element?")
       try assert.is_true(resolver.has_type(env, "MaybeElement"))
       .Ok({})
     },

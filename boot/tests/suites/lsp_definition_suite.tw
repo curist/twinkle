@@ -22,12 +22,7 @@ fn state_with_doc(uri: String, text: String) server_core.State {
   }
 }
 
-fn state_with_two_docs(
-  uri_a: String,
-  text_a: String,
-  uri_b: String,
-  text_b: String,
-) server_core.State {
+fn state_with_two_docs(uri_a: String, text_a: String, uri_b: String, text_b: String) server_core.State {
   docs0 := document_store.open(document_store.empty(), uri_a, text_a, .Some(1))
   docs := document_store.open(docs0, uri_b, text_b, .Some(1))
   server_core.State.{
@@ -47,10 +42,7 @@ fn def_request(id: Int, uri: String, line: Int, character: Int) protocol.Message
     json.kv("textDocument", json.object([json.kv("uri", .Str(uri))])),
     json.kv(
       "position",
-      json.object([
-        json.kv("line", .Int(line)),
-        json.kv("character", .Int(character)),
-      ]),
+      json.object([json.kv("line", .Int(line)), json.kv("character", .Int(character))]),
     ),
   ])
   protocol.Message.Request(.{
@@ -60,12 +52,7 @@ fn def_request(id: Int, uri: String, line: Int, character: Int) protocol.Message
   })
 }
 
-type RangeInfo = .{
-  start_line: Int,
-  start_char: Int,
-  end_line: Int,
-  end_char: Int,
-}
+type RangeInfo = .{ start_line: Int, start_char: Int, end_line: Int, end_char: Int }
 
 fn def_result_range(step: server_core.Step) RangeInfo!String {
   if step.outgoing.len() != 1 {
@@ -117,10 +104,7 @@ pub fn suite() runner.Suite {
       //               ^^^^^  char 5-10
       src := "fn greet() String { \"hi\" }\nx := greet()\n"
       state := state_with_doc("file:///a.tw", src)
-      step := server_core.handle_message(
-        state,
-        def_request(1, "file:///a.tw", 1, 5),
-      )
+      step := server_core.handle_message(state, def_request(1, "file:///a.tw", 1, 5))
       r := try def_result_range(step)
       try assert.equal(r.start_line, 0)
       try assert.equal(r.start_char, 3)
@@ -138,10 +122,7 @@ pub fn suite() runner.Suite {
       src := "fn foo() Int {\n  a := 42\n  a\n}\n"
       state := state_with_doc("file:///a.tw", src)
       // "a" on line 2 char 2
-      step := server_core.handle_message(
-        state,
-        def_request(1, "file:///a.tw", 2, 2),
-      )
+      step := server_core.handle_message(state, def_request(1, "file:///a.tw", 2, 2))
       r := try def_result_range(step)
       // let binding is on line 1
       try assert.equal(r.start_line, 1)
@@ -155,10 +136,7 @@ pub fn suite() runner.Suite {
       src := "fn add(a: Int, b: Int) Int { a + b }\n"
       state := state_with_doc("file:///a.tw", src)
       // "a" in the body is at char 29
-      step := server_core.handle_message(
-        state,
-        def_request(1, "file:///a.tw", 0, 29),
-      )
+      step := server_core.handle_message(state, def_request(1, "file:///a.tw", 0, 29))
       r := try def_result_range(step)
       // param "a" starts at char 7
       try assert.equal(r.start_line, 0)
@@ -170,10 +148,7 @@ pub fn suite() runner.Suite {
     fn() {
       src := "type Msg = .{ text: String }\nfn make() Msg { .{ text: \"hi\" } }\n"
       state := state_with_doc("file:///a.tw", src)
-      step := server_core.handle_message(
-        state,
-        def_request(1, "file:///a.tw", 1, 10),
-      )
+      step := server_core.handle_message(state, def_request(1, "file:///a.tw", 1, 10))
       r := try def_result_range(step)
       try assert.equal(r.start_line, 0)
       try assert.equal(r.start_char, 5)
@@ -192,10 +167,7 @@ pub fn suite() runner.Suite {
         "file:///tmp/lsp-def/main.tw",
         main,
       )
-      step := server_core.handle_message(
-        state,
-        def_request(1, "file:///tmp/lsp-def/main.tw", 1, 9),
-      )
+      step := server_core.handle_message(state, def_request(1, "file:///tmp/lsp-def/main.tw", 1, 9))
       uri := try def_result_uri(step)
       try assert.equal(uri, "file:///tmp/lsp-def/dep.tw")
       r := try def_result_range(step)
@@ -275,10 +247,7 @@ pub fn suite() runner.Suite {
     fn() {
       src := "type Inner = { Foo(Int), Bar }\ntype Outer = { Wrap(Inner) }\nfn main(x: Outer) Int {\n  case x {\n    .Wrap(inner) => case inner { .Foo(v) => v, .Bar => 0 },\n  }\n}\n"
       state := state_with_doc("file:///nested-case-def.tw", src)
-      step := server_core.handle_message(
-        state,
-        def_request(1, "file:///nested-case-def.tw", 4, 34),
-      )
+      step := server_core.handle_message(state, def_request(1, "file:///nested-case-def.tw", 4, 34))
       r := try def_result_range(step)
       try assert.equal(r.start_line, 0)
       try assert.equal(r.start_char, 15)
@@ -290,10 +259,7 @@ pub fn suite() runner.Suite {
     fn() {
       src := "type Inner = { Foo(Int), Bar }\nfn main(x: Inner) Int {\n  case x {\n    Foo(v) => v,\n    Bar => 0,\n  }\n}\n"
       state := state_with_doc("file:///bare-case-def.tw", src)
-      step := server_core.handle_message(
-        state,
-        def_request(1, "file:///bare-case-def.tw", 3, 4),
-      )
+      step := server_core.handle_message(state, def_request(1, "file:///bare-case-def.tw", 3, 4))
       r := try def_result_range(step)
       try assert.equal(r.start_line, 0)
       try assert.equal(r.start_char, 15)
@@ -305,10 +271,7 @@ pub fn suite() runner.Suite {
     fn() {
       src := "type Counter = .{ n: Int }\nfn inc(c: Counter) Counter { .{ n: c.n + 1 } }\nfn main() Counter {\n  c := Counter.{ n: 1 }\n  c.inc()\n}\n"
       state := state_with_doc("file:///method.tw", src)
-      step := server_core.handle_message(
-        state,
-        def_request(1, "file:///method.tw", 4, 4),
-      )
+      step := server_core.handle_message(state, def_request(1, "file:///method.tw", 4, 4))
       r := try def_result_range(step)
       try assert.equal(r.start_line, 1)
       try assert.equal(r.start_char, 3)
@@ -321,10 +284,7 @@ pub fn suite() runner.Suite {
     fn() {
       src := "type Pair = .{ x: Int, y: Int }\nfn mk(x: Int, y: Int) Pair {\n  .{ x, y }\n}\n"
       state := state_with_doc("file:///record.tw", src)
-      step := server_core.handle_message(
-        state,
-        def_request(1, "file:///record.tw", 2, 5),
-      )
+      step := server_core.handle_message(state, def_request(1, "file:///record.tw", 2, 5))
       r := try def_result_range(step)
       try assert.equal(r.start_line, 1)
       try assert.equal(r.start_char, 6)
@@ -335,10 +295,7 @@ pub fn suite() runner.Suite {
     fn() {
       src := "type Pair = .{ x: Int, y: Int }\nfn mk(x: Int, y: Int) Pair {\n  Pair.{ x, y }\n}\n"
       state := state_with_doc("file:///record.tw", src)
-      step := server_core.handle_message(
-        state,
-        def_request(1, "file:///record.tw", 2, 9),
-      )
+      step := server_core.handle_message(state, def_request(1, "file:///record.tw", 2, 9))
       r := try def_result_range(step)
       try assert.equal(r.start_line, 1)
       try assert.equal(r.start_char, 6)
@@ -349,10 +306,7 @@ pub fn suite() runner.Suite {
     fn() {
       src := "type ParseError = { HelpRequested(String), Other }\nfn main(err: ParseError) String {\n  case err {\n    .HelpRequested(msg) => msg,\n    .Other => \"\",\n  }\n}\n"
       state := state_with_doc("file:///case-binding.tw", src)
-      step := server_core.handle_message(
-        state,
-        def_request(1, "file:///case-binding.tw", 3, 27),
-      )
+      step := server_core.handle_message(state, def_request(1, "file:///case-binding.tw", 3, 27))
       r := try def_result_range(step)
       try assert.equal(r.start_line, 3)
       try assert.equal(r.start_char, 19)
@@ -364,18 +318,12 @@ pub fn suite() runner.Suite {
     fn() {
       src := "fn main() Int {\n  xs := [1, 2]\n  total := 0\n  for x,i in xs {\n    total = total + x + i\n  }\n  total\n}\n"
       state := state_with_doc("file:///for-binding.tw", src)
-      x_step := server_core.handle_message(
-        state,
-        def_request(1, "file:///for-binding.tw", 4, 20),
-      )
+      x_step := server_core.handle_message(state, def_request(1, "file:///for-binding.tw", 4, 20))
       x_range := try def_result_range(x_step)
       try assert.equal(x_range.start_line, 3)
       try assert.equal(x_range.start_char, 6)
       try assert.equal(x_range.end_char, 7)
-      i_step := server_core.handle_message(
-        state,
-        def_request(2, "file:///for-binding.tw", 4, 24),
-      )
+      i_step := server_core.handle_message(state, def_request(2, "file:///for-binding.tw", 4, 24))
       i_range := try def_result_range(i_step)
       try assert.equal(i_range.start_line, 3)
       try assert.equal(i_range.start_char, 8)
@@ -387,10 +335,7 @@ pub fn suite() runner.Suite {
     fn() {
       src := "fn make_items() Vector<Int> { [1, 2] }\nfn main() Int {\n  total := 0\n  for x in make_items() {\n    total = total + x\n  }\n  total\n}\n"
       state := state_with_doc("file:///for-iter.tw", src)
-      step := server_core.handle_message(
-        state,
-        def_request(1, "file:///for-iter.tw", 3, 11),
-      )
+      step := server_core.handle_message(state, def_request(1, "file:///for-iter.tw", 3, 11))
       r := try def_result_range(step)
       try assert.equal(r.start_line, 0)
       try assert.equal(r.start_char, 3)
@@ -402,10 +347,7 @@ pub fn suite() runner.Suite {
     fn() {
       state := state_with_doc("file:///a.tw", "x := 42\n")
       // On "42" which is IntLit, not Ident
-      step := server_core.handle_message(
-        state,
-        def_request(1, "file:///a.tw", 0, 5),
-      )
+      step := server_core.handle_message(state, def_request(1, "file:///a.tw", 0, 5))
       try assert.is_true(try is_null_result(step))
       .Ok({})
     },
@@ -413,28 +355,19 @@ pub fn suite() runner.Suite {
     "goto def returns null for unknown document",
     fn() {
       state := state_with_doc("file:///a.tw", "x := 1\n")
-      step := server_core.handle_message(
-        state,
-        def_request(1, "file:///other.tw", 0, 0),
-      )
+      step := server_core.handle_message(state, def_request(1, "file:///other.tw", 0, 0))
       try assert.is_true(try is_null_result(step))
       .Ok({})
     },
   ).test(
     "initialize advertises definitionProvider",
     fn() {
-      msg := protocol.Message.Request(.{
-        id: .IntId(1),
-        method: "initialize",
-        params: .None,
-      })
+      msg := protocol.Message.Request(.{ id: .IntId(1), method: "initialize", params: .None })
       step := server_core.handle_message(server_core.initial_state(), msg)
       out := step.outgoing[0]
       result := try json.decode(out, json.field("result", json.raw()))
       caps := try json.decode(result, json.field("capabilities", json.raw()))
-      try assert.is_true(
-        try json.decode(caps, json.field("definitionProvider", json.bool())),
-      )
+      try assert.is_true(try json.decode(caps, json.field("definitionProvider", json.bool())))
       .Ok({})
     },
   )

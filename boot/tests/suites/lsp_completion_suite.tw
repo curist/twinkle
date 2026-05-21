@@ -1,46 +1,51 @@
-use tests.runner
 use lib.json
 use lib.lsp.protocol
 use lib.lsp.server_core
+use tests.runner
 
 // Simulate editor flow: didOpen with valid source, didChange with completion source, then complete.
 fn open_then_complete(valid_src: String, completion_src: String, line: Int, character: Int) server_core.Step {
   uri := "file:///a.tw"
-
   // didOpen with valid source to populate cache
   open_params := json.object([
-    json.kv("textDocument", json.object([
-      json.kv("uri", .Str(uri)),
-      json.kv("languageId", .Str("twinkle")),
-      json.kv("version", .Int(1)),
-      json.kv("text", .Str(valid_src)),
-    ])),
+    json.kv(
+      "textDocument",
+      json.object([
+        json.kv("uri", .Str(uri)),
+        json.kv("languageId", .Str("twinkle")),
+        json.kv("version", .Int(1)),
+        json.kv("text", .Str(valid_src)),
+      ]),
+    ),
   ])
-  open_msg := protocol.Message.Notification(.{ method: "textDocument/didOpen", params: .Some(open_params) })
+  open_msg := protocol.Message.Notification(.{
+    method: "textDocument/didOpen",
+    params: .Some(open_params),
+  })
   step1 := server_core.handle_message(server_core.initial_state(), open_msg)
-
   // didChange with incomplete source
   change_params := json.object([
-    json.kv("textDocument", json.object([
-      json.kv("uri", .Str(uri)),
-      json.kv("version", .Int(2)),
-    ])),
-    json.kv("contentChanges", json.array([
-      json.object([json.kv("text", .Str(completion_src))]),
-    ])),
+    json.kv("textDocument", json.object([json.kv("uri", .Str(uri)), json.kv("version", .Int(2))])),
+    json.kv("contentChanges", json.array([json.object([json.kv("text", .Str(completion_src))])])),
   ])
-  change_msg := protocol.Message.Notification(.{ method: "textDocument/didChange", params: .Some(change_params) })
+  change_msg := protocol.Message.Notification(.{
+    method: "textDocument/didChange",
+    params: .Some(change_params),
+  })
   step2 := server_core.handle_message(step1.state, change_msg)
-
   // completion request
   comp_params := json.object([
     json.kv("textDocument", json.object([json.kv("uri", .Str(uri))])),
-    json.kv("position", json.object([
-      json.kv("line", .Int(line)),
-      json.kv("character", .Int(character)),
-    ])),
+    json.kv(
+      "position",
+      json.object([json.kv("line", .Int(line)), json.kv("character", .Int(character))]),
+    ),
   ])
-  comp_msg := protocol.Message.Request(.{ id: .IntId(1), method: "textDocument/completion", params: .Some(comp_params) })
+  comp_msg := protocol.Message.Request(.{
+    id: .IntId(1),
+    method: "textDocument/completion",
+    params: .Some(comp_params),
+  })
   server_core.handle_message(step2.state, comp_msg)
 }
 
@@ -48,113 +53,155 @@ fn completion_labels(step: server_core.Step) Vector<String>!String {
   if step.outgoing.len() != 1 {
     return .Err("expected one outgoing message")
   }
+
   out := step.outgoing[0]
   result := try json.decode(out, json.field("result", json.raw()))
   items := case result {
     .Array(arr) => arr,
-    _ => { return .Err("expected array result") },
+    _ => {
+      return .Err("expected array result")
+    },
   }
   labels: Vector<String> = []
+
   for item in items {
     label := try json.decode(item, json.field("label", json.string()))
-    labels = labels.append(label)
+    labels = .append(label)
   }
+
   .Ok(labels)
 }
 
 fn has_label(labels: Vector<String>, target: String) Bool {
   for l in labels {
-    if l == target { return true }
+    if l == target {
+      return true
+    }
   }
+
   false
 }
 
 pub fn suite() runner.Suite {
-  runner.suite("lsp completion")
-    .test("member completion on vector shows len", fn() {
+  runner.suite("lsp completion").test(
+    "member completion on vector shows len",
+    fn() {
       valid := "xs := [1, 2, 3]\nxs\n"
       incomplete := "xs := [1, 2, 3]\nxs.\n"
       step := open_then_complete(valid, incomplete, 1, 3)
       labels := try completion_labels(step)
+
       if !has_label(labels, "len") {
         return .Err("expected 'len' in completions, got: ${labels}")
       }
+
       .Ok({})
-    })
-    .test("member completion on string shows len", fn() {
+    },
+  ).test(
+    "member completion on string shows len",
+    fn() {
       valid := "s := \"hello\"\ns\n"
       incomplete := "s := \"hello\"\ns.\n"
       step := open_then_complete(valid, incomplete, 1, 2)
       labels := try completion_labels(step)
+
       if !has_label(labels, "len") {
         return .Err("expected 'len' in completions, got: ${labels}")
       }
+
       .Ok({})
-    })
-    .test("member completion on record shows fields", fn() {
+    },
+  ).test(
+    "member completion on record shows fields",
+    fn() {
       valid := "type Point = .{ x: Int, y: Int }\np := Point.{ x: 1, y: 2 }\np\n"
       incomplete := "type Point = .{ x: Int, y: Int }\np := Point.{ x: 1, y: 2 }\np.\n"
       step := open_then_complete(valid, incomplete, 2, 2)
       labels := try completion_labels(step)
+
       if !has_label(labels, "x") or !has_label(labels, "y") {
         return .Err("expected 'x' and 'y' in completions, got: ${labels}")
       }
+
       .Ok({})
-    })
-    .test("variant completion in case shows scrutinee variants", fn() {
+    },
+  ).test(
+    "variant completion in case shows scrutinee variants",
+    fn() {
       valid := "type Color = { Red, Green, Blue }\nc := Color.Red\ncase c {\n  .Red => {},\n}\n"
       incomplete := "type Color = { Red, Green, Blue }\nc := Color.Red\ncase c {\n  .\n}\n"
       step := open_then_complete(valid, incomplete, 3, 3)
       labels := try completion_labels(step)
+
       if !has_label(labels, "Red") or !has_label(labels, "Green") or !has_label(labels, "Blue") {
         return .Err("expected Red, Green, Blue in completions, got: ${labels}")
       }
+
       .Ok({})
-    })
-    .test("variant completion excludes already matched arms", fn() {
+    },
+  ).test(
+    "variant completion excludes already matched arms",
+    fn() {
       valid := "type Color = { Red, Green, Blue }\nc := Color.Red\ncase c {\n  .Red => {},\n  .Green => {},\n}\n"
       incomplete := "type Color = { Red, Green, Blue }\nc := Color.Red\ncase c {\n  .Red => {},\n  .\n}\n"
       step := open_then_complete(valid, incomplete, 4, 3)
       labels := try completion_labels(step)
+
       if has_label(labels, "Red") {
         return .Err("expected 'Red' to be excluded, got: ${labels}")
       }
+
       if !has_label(labels, "Green") or !has_label(labels, "Blue") {
         return .Err("expected Green, Blue in completions, got: ${labels}")
       }
+
       .Ok({})
-    })
-    .test("variant completion for Option shows Some and None", fn() {
+    },
+  ).test(
+    "variant completion for Option shows Some and None",
+    fn() {
       valid := "x: Int? = .Some(1)\ncase x {\n  .Some(v) => {},\n}\n"
       incomplete := "x: Int? = .Some(1)\ncase x {\n  .\n}\n"
       step := open_then_complete(valid, incomplete, 2, 3)
       labels := try completion_labels(step)
+
       if !has_label(labels, "Some") or !has_label(labels, "None") {
         return .Err("expected Some, None in completions, got: ${labels}")
       }
+
       .Ok({})
-    })
-    .test("variant completion for Option excludes matched", fn() {
+    },
+  ).test(
+    "variant completion for Option excludes matched",
+    fn() {
       valid := "x: Int? = .Some(1)\ncase x {\n  .Some(v) => {},\n  .None => {},\n}\n"
       incomplete := "x: Int? = .Some(1)\ncase x {\n  .Some(v) => {},\n  .\n}\n"
       step := open_then_complete(valid, incomplete, 3, 3)
       labels := try completion_labels(step)
+
       if has_label(labels, "Some") {
         return .Err("expected 'Some' to be excluded, got: ${labels}")
       }
+
       if !has_label(labels, "None") {
         return .Err("expected 'None' in completions, got: ${labels}")
       }
+
       .Ok({})
-    })
-    .test("general completion includes keywords", fn() {
+    },
+  ).test(
+    "general completion includes keywords",
+    fn() {
       valid := "fn foo() Void {\n  1\n}\n"
       incomplete := "fn foo() Void {\n  \n}\n"
       step := open_then_complete(valid, incomplete, 1, 2)
       labels := try completion_labels(step)
+
       if !has_label(labels, "if") or !has_label(labels, "for") or !has_label(labels, "case") {
         return .Err("expected keywords in completions, got: ${labels}")
       }
+
       .Ok({})
-    })
+    },
+  )
 }

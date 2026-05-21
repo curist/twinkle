@@ -1,34 +1,43 @@
-use tests.runner
 use tests.assert
+use tests.runner
 
 pub fn suite() runner.Suite {
-  runner.suite("cell")
-    .test("new and get returns initial value", fn() {
+  runner.suite("cell").test(
+    "new and get returns initial value",
+    fn() {
       c := Cell.new(42)
       try assert.equal(c.get(), 42)
       .Ok({})
-    })
-    .test("set changes value", fn() {
+    },
+  ).test(
+    "set changes value",
+    fn() {
       c := Cell.new(1)
       c.set(2)
       try assert.equal(c.get(), 2)
       .Ok({})
-    })
-    .test("update applies function", fn() {
+    },
+  ).test(
+    "update applies function",
+    fn() {
       c := Cell.new(10)
       c.update(fn(n) { n * 2 })
       try assert.equal(c.get(), 20)
       .Ok({})
-    })
-    .test("multiple updates accumulate", fn() {
+    },
+  ).test(
+    "multiple updates accumulate",
+    fn() {
       c := Cell.new(0)
       c.update(fn(n) { n + 1 })
       c.update(fn(n) { n + 1 })
       c.update(fn(n) { n + 1 })
       try assert.equal(c.get(), 3)
       .Ok({})
-    })
-    .test("two references share same cell", fn() {
+    },
+  ).test(
+    "two references share same cell",
+    fn() {
       c := Cell.new(0)
       alias := c
       c.set(5)
@@ -36,8 +45,10 @@ pub fn suite() runner.Suite {
       alias.set(10)
       try assert.equal(c.get(), 10)
       .Ok({})
-    })
-    .test("closure captures cell reference", fn() {
+    },
+  ).test(
+    "closure captures cell reference",
+    fn() {
       c := Cell.new(0)
       inc := fn() { c.update(fn(n) { n + 1 }) }
       inc()
@@ -45,19 +56,24 @@ pub fn suite() runner.Suite {
       inc()
       try assert.equal(c.get(), 3)
       .Ok({})
-    })
-    .test("cell in loop as accumulator", fn() {
+    },
+  ).test(
+    "cell in loop as accumulator",
+    fn() {
       sum := Cell.new(0)
-      for i in 0..5 {
-        sum.update(fn(n) { n + i })
-      }
+
+      for i in 0..5 { sum.update(fn(n) { n + i }) }
+
       try assert.equal(sum.get(), 10)
       .Ok({})
-    })
-    .test("cell with string value", fn() {
+    },
+  ).test(
+    "cell with string value",
+    fn() {
       c := Cell.new("hello")
       c.set("world")
       try assert.equal(c.get(), "world")
       .Ok({})
-    })
+    },
+  )
 }

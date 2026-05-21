@@ -1,157 +1,228 @@
-use tests.runner
-use tests.assert
 use lib.json
+use tests.assert
+use tests.runner
 
 pub fn suite() runner.Suite {
-  runner.suite("lib json")
-
-    // --- to_string (Stringify contract) ---
-
-    .test("to_string equals stringify", fn() {
+  runner.suite("lib json").test(
+    "to_string equals stringify",
+    fn() {
       j: json.Json = .Array([.Int(1), .Str("x"), .Null])
       try assert.equal(json.to_string(j), json.stringify(j))
       .Ok({})
-    })
-
-    // --- stringify primitives ---
-
-    .test("stringify null", fn() {
+    },
+  ).test(
+    "stringify null",
+    fn() {
       try assert.equal(json.stringify(.Null), "null")
       .Ok({})
-    })
-    .test("stringify bool true", fn() {
+    },
+  ).test(
+    "stringify bool true",
+    fn() {
       try assert.equal(json.stringify(.Bool(true)), "true")
       .Ok({})
-    })
-    .test("stringify bool false", fn() {
+    },
+  ).test(
+    "stringify bool false",
+    fn() {
       try assert.equal(json.stringify(.Bool(false)), "false")
       .Ok({})
-    })
-    .test("stringify int", fn() {
+    },
+  ).test(
+    "stringify int",
+    fn() {
       try assert.equal(json.stringify(.Int(42)), "42")
       try assert.equal(json.stringify(.Int(0)), "0")
       try assert.equal(json.stringify(.Int(-1)), "-1")
       .Ok({})
-    })
-    .test("stringify float", fn() {
+    },
+  ).test(
+    "stringify float",
+    fn() {
       try assert.equal(json.stringify(.Float(3.14)), "3.14")
       .Ok({})
-    })
-    .test("stringify plain string", fn() {
+    },
+  ).test(
+    "stringify plain string",
+    fn() {
       try assert.equal(json.stringify(.Str("hello")), "\"hello\"")
       .Ok({})
-    })
-    .test("stringify string with double quote escape", fn() {
+    },
+  ).test(
+    "stringify string with double quote escape",
+    fn() {
       try assert.equal(json.stringify(.Str("a\"b")), "\"a\\\"b\"")
       .Ok({})
-    })
-    .test("stringify string with backslash escape", fn() {
+    },
+  ).test(
+    "stringify string with backslash escape",
+    fn() {
       try assert.equal(json.stringify(.Str("a\\b")), "\"a\\\\b\"")
       .Ok({})
-    })
-    .test("stringify string with newline escape", fn() {
+    },
+  ).test(
+    "stringify string with newline escape",
+    fn() {
       try assert.equal(json.stringify(.Str("a\nb")), "\"a\\nb\"")
       .Ok({})
-    })
-    .test("stringify string with tab escape", fn() {
+    },
+  ).test(
+    "stringify string with tab escape",
+    fn() {
       try assert.equal(json.stringify(.Str("a\tb")), "\"a\\tb\"")
       .Ok({})
-    })
-    .test("stringify string with json control escapes", fn() {
-      bs := case String.from_code_point(8) { .Some(s) => s, .None => "" }
-      ff := case String.from_code_point(12) { .Some(s) => s, .None => "" }
-      ctrl := case String.from_code_point(1) { .Some(s) => s, .None => "" }
+    },
+  ).test(
+    "stringify string with json control escapes",
+    fn() {
+      bs := case String.from_code_point(8) {
+        .Some(s) => s,
+        .None => "",
+      }
+      ff := case String.from_code_point(12) {
+        .Some(s) => s,
+        .None => "",
+      }
+      ctrl := case String.from_code_point(1) {
+        .Some(s) => s,
+        .None => "",
+      }
       try assert.equal(json.stringify(.Str("a${bs}b")), "\"a\\bb\"")
       try assert.equal(json.stringify(.Str("a${ff}b")), "\"a\\fb\"")
       try assert.equal(json.stringify(.Str("a${ctrl}b")), "\"a\\u0001b\"")
       .Ok({})
-    })
-    .test("stringify empty array", fn() {
+    },
+  ).test(
+    "stringify empty array",
+    fn() {
       arr: Vector<json.Json> = []
       try assert.equal(json.stringify(.Array(arr)), "[]")
       .Ok({})
-    })
-    .test("stringify array with elements", fn() {
+    },
+  ).test(
+    "stringify array with elements",
+    fn() {
       arr: Vector<json.Json> = [.Int(1), .Int(2), .Int(3)]
       try assert.equal(json.stringify(.Array(arr)), "[1,2,3]")
       .Ok({})
-    })
-    .test("stringify nested array", fn() {
+    },
+  ).test(
+    "stringify nested array",
+    fn() {
       inner: Vector<json.Json> = [.Bool(true), .Null]
       outer: Vector<json.Json> = [.Array(inner), .Str("x")]
       try assert.equal(json.stringify(.Array(outer)), "[[true,null],\"x\"]")
       .Ok({})
-    })
-    .test("stringify empty object", fn() {
+    },
+  ).test(
+    "stringify empty object",
+    fn() {
       d: Dict<String, json.Json> = Dict.new()
       try assert.equal(json.stringify(.Object(d)), "{}")
       .Ok({})
-    })
-    .test("stringify object with one field", fn() {
+    },
+  ).test(
+    "stringify object with one field",
+    fn() {
       d: Dict<String, json.Json> = Dict.new()
       d["x"] = .Int(1)
       try assert.equal(json.stringify(.Object(d)), "{\"x\":1}")
       .Ok({})
-    })
-
-    // --- parse ---
-
-    .test("parse primitives", fn() {
+    },
+  ).test(
+    "parse primitives",
+    fn() {
       case try json.parse("null") {
         .Null => {},
-        _ => { return .Err("expected null") },
+        _ => {
+          return .Err("expected null")
+        },
       }
+
       case try json.parse(" true ") {
         .Bool(b) => try assert.is_true(b),
-        _ => { return .Err("expected bool") },
+        _ => {
+          return .Err("expected bool")
+        },
       }
+
       case try json.parse("42") {
         .Int(n) => try assert.equal(n, 42),
-        _ => { return .Err("expected int") },
+        _ => {
+          return .Err("expected int")
+        },
       }
+
       case try json.parse("-1.5") {
         .Float(f) => try assert.is_true(f < 0.0),
-        _ => { return .Err("expected float") },
+        _ => {
+          return .Err("expected float")
+        },
       }
+
       case try json.parse("\"hi\\nthere\"") {
         .Str(s) => try assert.equal(s, "hi\nthere"),
-        _ => { return .Err("expected string") },
+        _ => {
+          return .Err("expected string")
+        },
       }
+
       .Ok({})
-    })
-    .test("parse arrays and objects", fn() {
+    },
+  ).test(
+    "parse arrays and objects",
+    fn() {
       parsed := try json.parse("{\"name\":\"Ada\",\"nums\":[1,2,null]}")
       name := try json.decode(parsed, json.field("name", json.string()))
       try assert.equal(name, "Ada")
       nums := try json.decode(parsed, json.field("nums", json.list(json.raw())))
       try assert.equal(nums.len(), 3)
+
       case nums[0] {
         .Int(n) => try assert.equal(n, 1),
-        _ => { return .Err("expected first array item to be int") },
+        _ => {
+          return .Err("expected first array item to be int")
+        },
       }
+
       case nums[2] {
         .Null => {},
-        _ => { return .Err("expected third array item to be null") },
+        _ => {
+          return .Err("expected third array item to be null")
+        },
       }
+
       .Ok({})
-    })
-    .test("parse unicode escapes", fn() {
+    },
+  ).test(
+    "parse unicode escapes",
+    fn() {
       case try json.parse("\"\\u0041\\u00df\"") {
         .Str(s) => try assert.equal(s, "Aß"),
-        _ => { return .Err("expected string") },
+        _ => {
+          return .Err("expected string")
+        },
       }
+
       case try json.parse("\"\\ud834\\udd1e\"") {
         .Str(s) => try assert.equal(s, "𝄞"),
-        _ => { return .Err("expected string") },
+        _ => {
+          return .Err("expected string")
+        },
       }
+
       .Ok({})
-    })
-    .test("parse_decode parses then decodes", fn() {
+    },
+  ).test(
+    "parse_decode parses then decodes",
+    fn() {
       name := try json.parse_decode("{\"name\":\"Ada\"}", json.field("name", json.string()))
       try assert.equal(name, "Ada")
       .Ok({})
-    })
-    .test("parse rejects malformed input", fn() {
+    },
+  ).test(
+    "parse rejects malformed input",
+    fn() {
       try assert.is_err(json.parse("[1,]"))
       try assert.is_err(json.parse("{\"x\" 1}"))
       try assert.is_err(json.parse("01"))
@@ -159,283 +230,429 @@ pub fn suite() runner.Suite {
       try assert.is_err(json.parse("\"\\ud834\""))
       try assert.is_err(json.parse("\"\\udd1e\""))
       .Ok({})
-    })
-
-    // --- construction helpers ---
-
-    .test("object and kv construct object values", fn() {
-      obj := json.object([
-        json.kv("jsonrpc", .Str("2.0")),
-        json.kv("id", .Int(1)),
-      ])
+    },
+  ).test(
+    "object and kv construct object values",
+    fn() {
+      obj := json.object([json.kv("jsonrpc", .Str("2.0")), json.kv("id", .Int(1))])
       version := try json.decode(obj, json.field("jsonrpc", json.string()))
       try assert.equal(version, "2.0")
       id := try json.decode(obj, json.field("id", json.int()))
       try assert.equal(id, 1)
       .Ok({})
-    })
-    .test("array constructs array values", fn() {
+    },
+  ).test(
+    "array constructs array values",
+    fn() {
       arr_json := json.array([.Str("a"), .Str("b")])
       values := try json.decode(arr_json, json.list(json.string()))
       try assert.equal(values.len(), 2)
       try assert.equal(values[0], "a")
       try assert.equal(values[1], "b")
       .Ok({})
-    })
-
-    // --- decoders: primitives ---
-
-    .test("decode raw returns json as-is", fn() {
+    },
+  ).test(
+    "decode raw returns json as-is",
+    fn() {
       j: json.Json = .Int(99)
       r := json.decode(j, json.raw())
       try assert.is_ok(r)
-      got := case r { .Ok(v) => v, .Err(_) => .Null }
+      got := case r {
+        .Ok(v) => v,
+        .Err(_) => .Null,
+      }
+
       case got {
         .Int(n) => try assert.equal(n, 99),
-        _ => { return .Err("expected Int variant") },
+        _ => {
+          return .Err("expected Int variant")
+        },
       }
+
       .Ok({})
-    })
-    .test("decode string success", fn() {
+    },
+  ).test(
+    "decode string success",
+    fn() {
       r := json.decode(.Str("hi"), json.string())
       try assert.is_ok(r)
-      s := case r { .Ok(v) => v, .Err(_) => "" }
+      s := case r {
+        .Ok(v) => v,
+        .Err(_) => "",
+      }
       try assert.equal(s, "hi")
       .Ok({})
-    })
-    .test("decode string failure on non-string", fn() {
+    },
+  ).test(
+    "decode string failure on non-string",
+    fn() {
       try assert.is_err(json.decode(.Int(1), json.string()))
       .Ok({})
-    })
-    .test("decode int success", fn() {
+    },
+  ).test(
+    "decode int success",
+    fn() {
       r := json.decode(.Int(7), json.int())
       try assert.is_ok(r)
-      n := case r { .Ok(v) => v, .Err(_) => -999 }
+      n := case r {
+        .Ok(v) => v,
+        .Err(_) => -999,
+      }
       try assert.equal(n, 7)
       .Ok({})
-    })
-    .test("decode int failure on non-int", fn() {
+    },
+  ).test(
+    "decode int failure on non-int",
+    fn() {
       try assert.is_err(json.decode(.Str("x"), json.int()))
       .Ok({})
-    })
-    .test("decode bool true", fn() {
+    },
+  ).test(
+    "decode bool true",
+    fn() {
       r := json.decode(.Bool(true), json.bool())
       try assert.is_ok(r)
-      b := case r { .Ok(v) => v, .Err(_) => false }
+      b := case r {
+        .Ok(v) => v,
+        .Err(_) => false,
+      }
       try assert.is_true(b)
       .Ok({})
-    })
-    .test("decode bool false", fn() {
+    },
+  ).test(
+    "decode bool false",
+    fn() {
       r := json.decode(.Bool(false), json.bool())
       try assert.is_ok(r)
-      b := case r { .Ok(v) => v, .Err(_) => true }
+      b := case r {
+        .Ok(v) => v,
+        .Err(_) => true,
+      }
       try assert.is_false(b)
       .Ok({})
-    })
-    .test("decode bool failure on non-bool", fn() {
+    },
+  ).test(
+    "decode bool failure on non-bool",
+    fn() {
       try assert.is_err(json.decode(.Null, json.bool()))
       .Ok({})
-    })
-    .test("decode float from Float", fn() {
+    },
+  ).test(
+    "decode float from Float",
+    fn() {
       r := json.decode(.Float(1.5), json.float())
       try assert.is_ok(r)
-      f := case r { .Ok(v) => v, .Err(_) => 0.0 }
+      f := case r {
+        .Ok(v) => v,
+        .Err(_) => 0.0,
+      }
       try assert.is_true(f > 1.0)
       .Ok({})
-    })
-    .test("decode float from Int (coercion)", fn() {
+    },
+  ).test(
+    "decode float from Int (coercion)",
+    fn() {
       r := json.decode(.Int(3), json.float())
       try assert.is_ok(r)
-      f := case r { .Ok(v) => v, .Err(_) => 0.0 }
+      f := case r {
+        .Ok(v) => v,
+        .Err(_) => 0.0,
+      }
       try assert.is_true(f == 3.0)
       .Ok({})
-    })
-    .test("decode float failure on string", fn() {
+    },
+  ).test(
+    "decode float failure on string",
+    fn() {
       try assert.is_err(json.decode(.Str("3.0"), json.float()))
       .Ok({})
-    })
-    .test("decode succeed always gives constant", fn() {
+    },
+  ).test(
+    "decode succeed always gives constant",
+    fn() {
       r := json.decode(.Null, json.succeed(42))
       try assert.is_ok(r)
-      n := case r { .Ok(v) => v, .Err(_) => -1 }
+      n := case r {
+        .Ok(v) => v,
+        .Err(_) => -1,
+      }
       try assert.equal(n, 42)
       .Ok({})
-    })
-    .test("decode fail always errors", fn() {
+    },
+  ).test(
+    "decode fail always errors",
+    fn() {
       r: Result<Int, String> = json.decode(.Null, json.fail("oops"))
       try assert.err_eq(r, "oops")
       .Ok({})
-    })
-
-    // --- transform ---
-
-    .test("map transforms decoded value", fn() {
+    },
+  ).test(
+    "map transforms decoded value",
+    fn() {
       d := json.map(fn(n: Int) { n * 2 }, json.int())
       r := json.decode(.Int(5), d)
       try assert.is_ok(r)
-      n := case r { .Ok(v) => v, .Err(_) => -1 }
+      n := case r {
+        .Ok(v) => v,
+        .Err(_) => -1,
+      }
       try assert.equal(n, 10)
       .Ok({})
-    })
-    .test("map propagates error", fn() {
+    },
+  ).test(
+    "map propagates error",
+    fn() {
       d := json.map(fn(n: Int) { n * 2 }, json.int())
       try assert.is_err(json.decode(.Str("x"), d))
       .Ok({})
-    })
-    .test("map2 combines two decoders on same value", fn() {
+    },
+  ).test(
+    "map2 combines two decoders on same value",
+    fn() {
       d := json.map2(fn(a: Int, b: Int) { a + b }, json.int(), json.int())
       r := json.decode(.Int(3), d)
       try assert.is_ok(r)
-      n := case r { .Ok(v) => v, .Err(_) => -1 }
+      n := case r {
+        .Ok(v) => v,
+        .Err(_) => -1,
+      }
       try assert.equal(n, 6)
       .Ok({})
-    })
-    .test("and_then chains decoders on success", fn() {
-      d := json.and_then(fn(n: Int) {
-        if n > 0 { json.succeed(n) } else { json.fail("must be positive") }
-      }, json.int())
+    },
+  ).test(
+    "and_then chains decoders on success",
+    fn() {
+      d := json.and_then(
+        fn(n: Int) {
+          if n > 0 { json.succeed(n) } else { json.fail("must be positive") }
+        },
+        json.int(),
+      )
       r := json.decode(.Int(5), d)
       try assert.is_ok(r)
-      n := case r { .Ok(v) => v, .Err(_) => -1 }
+      n := case r {
+        .Ok(v) => v,
+        .Err(_) => -1,
+      }
       try assert.equal(n, 5)
       .Ok({})
-    })
-    .test("and_then fails when inner fails", fn() {
-      d := json.and_then(fn(n: Int) {
-        if n > 0 { json.succeed(n) } else { json.fail("must be positive") }
-      }, json.int())
+    },
+  ).test(
+    "and_then fails when inner fails",
+    fn() {
+      d := json.and_then(
+        fn(n: Int) {
+          if n > 0 { json.succeed(n) } else { json.fail("must be positive") }
+        },
+        json.int(),
+      )
       try assert.is_err(json.decode(.Int(-1), d))
       .Ok({})
-    })
-
-    // --- structure ---
-
-    .test("field decodes required key", fn() {
+    },
+  ).test(
+    "field decodes required key",
+    fn() {
       d: Dict<String, json.Json> = Dict.new()
       d["age"] = .Int(30)
       r := json.decode(.Object(d), json.field("age", json.int()))
       try assert.is_ok(r)
-      n := case r { .Ok(v) => v, .Err(_) => -1 }
+      n := case r {
+        .Ok(v) => v,
+        .Err(_) => -1,
+      }
       try assert.equal(n, 30)
       .Ok({})
-    })
-    .test("field fails on missing key", fn() {
+    },
+  ).test(
+    "field fails on missing key",
+    fn() {
       d: Dict<String, json.Json> = Dict.new()
       try assert.is_err(json.decode(.Object(d), json.field("x", json.int())))
       .Ok({})
-    })
-    .test("field fails on non-object", fn() {
+    },
+  ).test(
+    "field fails on non-object",
+    fn() {
       try assert.is_err(json.decode(.Null, json.field("x", json.int())))
       .Ok({})
-    })
-    .test("field error message mentions key", fn() {
+    },
+  ).test(
+    "field error message mentions key",
+    fn() {
       d: Dict<String, json.Json> = Dict.new()
       r := json.decode(.Object(d), json.field("mykey", json.int()))
       try assert.err_contains(r, "mykey")
       .Ok({})
-    })
-    .test("optional_field returns some when present", fn() {
+    },
+  ).test(
+    "optional_field returns some when present",
+    fn() {
       d: Dict<String, json.Json> = Dict.new()
       d["k"] = .Str("v")
       r := json.decode(.Object(d), json.optional_field("k", json.string()))
       try assert.is_ok(r)
-      opt := case r { .Ok(v) => v, .Err(_) => .None }
+      opt := case r {
+        .Ok(v) => v,
+        .Err(_) => .None,
+      }
       try assert.is_some(opt)
-      s := case opt { .Some(v) => v, .None => "" }
+      s := case opt {
+        .Some(v) => v,
+        .None => "",
+      }
       try assert.equal(s, "v")
       .Ok({})
-    })
-    .test("optional_field returns none when missing", fn() {
+    },
+  ).test(
+    "optional_field returns none when missing",
+    fn() {
       d: Dict<String, json.Json> = Dict.new()
       r := json.decode(.Object(d), json.optional_field("k", json.string()))
       try assert.is_ok(r)
-      opt := case r { .Ok(v) => v, .Err(_) => .Some("x") }
+      opt := case r {
+        .Ok(v) => v,
+        .Err(_) => .Some("x"),
+      }
       try assert.is_none(opt)
       .Ok({})
-    })
-    .test("optional_field returns none for null value", fn() {
+    },
+  ).test(
+    "optional_field returns none for null value",
+    fn() {
       d: Dict<String, json.Json> = Dict.new()
       d["k"] = .Null
       r := json.decode(.Object(d), json.optional_field("k", json.string()))
       try assert.is_ok(r)
-      opt := case r { .Ok(v) => v, .Err(_) => .Some("x") }
+      opt := case r {
+        .Ok(v) => v,
+        .Err(_) => .Some("x"),
+      }
       try assert.is_none(opt)
       .Ok({})
-    })
-    .test("index decodes by position", fn() {
+    },
+  ).test(
+    "index decodes by position",
+    fn() {
       arr: Vector<json.Json> = [.Int(10), .Int(20), .Int(30)]
       r := json.decode(.Array(arr), json.index(1, json.int()))
       try assert.is_ok(r)
-      n := case r { .Ok(v) => v, .Err(_) => -1 }
+      n := case r {
+        .Ok(v) => v,
+        .Err(_) => -1,
+      }
       try assert.equal(n, 20)
       .Ok({})
-    })
-    .test("index fails out of bounds", fn() {
+    },
+  ).test(
+    "index fails out of bounds",
+    fn() {
       arr: Vector<json.Json> = [.Int(1)]
       try assert.is_err(json.decode(.Array(arr), json.index(5, json.int())))
       .Ok({})
-    })
-    .test("index fails on non-array", fn() {
+    },
+  ).test(
+    "index fails on non-array",
+    fn() {
       try assert.is_err(json.decode(.Null, json.index(0, json.int())))
       .Ok({})
-    })
-    .test("nullable returns none for null", fn() {
+    },
+  ).test(
+    "nullable returns none for null",
+    fn() {
       r := json.decode(.Null, json.nullable(json.int()))
       try assert.is_ok(r)
-      opt := case r { .Ok(v) => v, .Err(_) => .Some(-1) }
+      opt := case r {
+        .Ok(v) => v,
+        .Err(_) => .Some(-1),
+      }
       try assert.is_none(opt)
       .Ok({})
-    })
-    .test("nullable returns some for non-null", fn() {
+    },
+  ).test(
+    "nullable returns some for non-null",
+    fn() {
       r := json.decode(.Int(7), json.nullable(json.int()))
       try assert.is_ok(r)
-      opt := case r { .Ok(v) => v, .Err(_) => .None }
+      opt := case r {
+        .Ok(v) => v,
+        .Err(_) => .None,
+      }
       try assert.is_some(opt)
-      n := case opt { .Some(v) => v, .None => -1 }
+      n := case opt {
+        .Some(v) => v,
+        .None => -1,
+      }
       try assert.equal(n, 7)
       .Ok({})
-    })
-    .test("list decodes array elements", fn() {
+    },
+  ).test(
+    "list decodes array elements",
+    fn() {
       arr: Vector<json.Json> = [.Int(1), .Int(2), .Int(3)]
       r := json.decode(.Array(arr), json.list(json.int()))
       try assert.is_ok(r)
-      v := case r { .Ok(v) => v, .Err(_) => [] }
+      v := case r {
+        .Ok(v) => v,
+        .Err(_) => [],
+      }
       try assert.equal(v.len(), 3)
       try assert.equal(v[0], 1)
       try assert.equal(v[2], 3)
       .Ok({})
-    })
-    .test("list on empty array returns empty vector", fn() {
+    },
+  ).test(
+    "list on empty array returns empty vector",
+    fn() {
       arr: Vector<json.Json> = []
       r := json.decode(.Array(arr), json.list(json.int()))
       try assert.is_ok(r)
-      v := case r { .Ok(v) => v, .Err(_) => [] }
+      v := case r {
+        .Ok(v) => v,
+        .Err(_) => [],
+      }
       try assert.equal(v.len(), 0)
       .Ok({})
-    })
-    .test("list fails on bad element", fn() {
+    },
+  ).test(
+    "list fails on bad element",
+    fn() {
       arr: Vector<json.Json> = [.Int(1), .Str("oops"), .Int(3)]
       try assert.is_err(json.decode(.Array(arr), json.list(json.int())))
       .Ok({})
-    })
-    .test("list fails on non-array", fn() {
+    },
+  ).test(
+    "list fails on non-array",
+    fn() {
       try assert.is_err(json.decode(.Null, json.list(json.int())))
       .Ok({})
-    })
-    .test("dict decodes object values", fn() {
+    },
+  ).test(
+    "dict decodes object values",
+    fn() {
       d: Dict<String, json.Json> = Dict.new()
       d["a"] = .Int(1)
       d["b"] = .Int(2)
       r := json.decode(.Object(d), json.dict(json.int()))
       try assert.is_ok(r)
-      decoded := case r { .Ok(v) => v, .Err(_) => Dict.new() }
-      va := case decoded["a"] { .Some(v) => v, .None => -1 }
-      vb := case decoded["b"] { .Some(v) => v, .None => -1 }
+      decoded := case r {
+        .Ok(v) => v,
+        .Err(_) => Dict.new(),
+      }
+      va := case decoded["a"] {
+        .Some(v) => v,
+        .None => -1,
+      }
+      vb := case decoded["b"] {
+        .Some(v) => v,
+        .None => -1,
+      }
       try assert.equal(va, 1)
       try assert.equal(vb, 2)
       .Ok({})
-    })
-    .test("dict reports key decode failure", fn() {
+    },
+  ).test(
+    "dict reports key decode failure",
+    fn() {
       d: Dict<String, json.Json> = Dict.new()
       d["ok"] = .Int(1)
       d["bad"] = .Str("oops")
@@ -443,30 +660,42 @@ pub fn suite() runner.Suite {
       try assert.is_err(r)
       try assert.err_contains(r, "bad")
       .Ok({})
-    })
-    .test("dict fails on non-object", fn() {
+    },
+  ).test(
+    "dict fails on non-object",
+    fn() {
       try assert.is_err(json.decode(.Null, json.dict(json.int())))
       .Ok({})
-    })
-    .test("one_of picks first matching decoder", fn() {
+    },
+  ).test(
+    "one_of picks first matching decoder",
+    fn() {
       d: Vector<json.Decoder<String>> = [
         json.map(fn(n: Int) { n.to_string() }, json.int()),
         json.string(),
       ]
       r1 := json.decode(.Int(5), json.one_of(d))
       try assert.is_ok(r1)
-      s1 := case r1 { .Ok(v) => v, .Err(_) => "" }
+      s1 := case r1 {
+        .Ok(v) => v,
+        .Err(_) => "",
+      }
       try assert.equal(s1, "5")
-
       r2 := json.decode(.Str("hi"), json.one_of(d))
       try assert.is_ok(r2)
-      s2 := case r2 { .Ok(v) => v, .Err(_) => "" }
+      s2 := case r2 {
+        .Ok(v) => v,
+        .Err(_) => "",
+      }
       try assert.equal(s2, "hi")
       .Ok({})
-    })
-    .test("one_of fails when no decoder matches", fn() {
+    },
+  ).test(
+    "one_of fails when no decoder matches",
+    fn() {
       d: Vector<json.Decoder<Int>> = [json.int()]
       try assert.is_err(json.decode(.Str("x"), json.one_of(d)))
       .Ok({})
-    })
+    },
+  )
 }

@@ -19,9 +19,7 @@ use compiler.base_env.{builtin_env, builtin_type_env}
 use compiler.builtins.{make_builtin_registry}
 use compiler.checker
 use compiler.parser
-use compiler.resolver.{
-  lookup_function, lookup_method, lookup_registered_function,
-}
+use compiler.resolver.{lookup_function, lookup_method, lookup_registered_function}
 use compiler.signatures.{load_signatures, to_internal_name}
 use lib.module.loader
 use tests.assert
@@ -109,15 +107,11 @@ pub fn suite() runner.Suite {
     "signature entries may be prelude-owned without builtin registry entries",
     fn() {
       env := builtin_env()
-      try assert.is_none(
-        make_builtin_registry().entry_by_canonical("Vector.to_string"),
-      )
+      try assert.is_none(make_builtin_registry().entry_by_canonical("Vector.to_string"))
       internal := to_internal_name(.Some("Vector"), "to_string")
       try assert.is_some(lookup_registered_function(env, internal))
       try assert.equal(
-        try lookup_method(env, "Vector", "to_string").ok_or(
-          "missing Vector.to_string method",
-        ),
+        try lookup_method(env, "Vector", "to_string").ok_or("missing Vector.to_string method"),
         internal,
       )
       .Ok({})
@@ -148,9 +142,7 @@ pub fn suite() runner.Suite {
       }
 
       if spurious.len() > 0 {
-        return .Err(
-          "registry canonical '${spurious[0]}' has no matching prelude/signatures entry",
-        )
+        return .Err("registry canonical '${spurious[0]}' has no matching prelude/signatures entry")
       }
 
       .Ok({})
@@ -159,9 +151,7 @@ pub fn suite() runner.Suite {
     "vector__set_unsafe has no canonical name (internal-only)",
     fn() {
       reg := make_builtin_registry()
-      entry := try reg.entry(reg.id("vector__set_unsafe")).ok_or(
-        "missing vector__set_unsafe",
-      )
+      entry := try reg.entry(reg.id("vector__set_unsafe")).ok_or("missing vector__set_unsafe")
       try assert.is_none(entry.canonical_name)
       .Ok({})
     },
@@ -169,9 +159,7 @@ pub fn suite() runner.Suite {
     "string__substring has no canonical name (internal-only)",
     fn() {
       reg := make_builtin_registry()
-      entry := try reg.entry(reg.id("string__substring")).ok_or(
-        "missing string__substring",
-      )
+      entry := try reg.entry(reg.id("string__substring")).ok_or("missing string__substring")
       try assert.is_none(entry.canonical_name)
       .Ok({})
     },
@@ -179,9 +167,7 @@ pub fn suite() runner.Suite {
     "vector__builder_new has no canonical name (internal-only)",
     fn() {
       reg := make_builtin_registry()
-      entry := try reg.entry(reg.id("vector__builder_new")).ok_or(
-        "missing vector__builder_new",
-      )
+      entry := try reg.entry(reg.id("vector__builder_new")).ok_or("missing vector__builder_new")
       try assert.is_none(entry.canonical_name)
       .Ok({})
     },
@@ -189,9 +175,7 @@ pub fn suite() runner.Suite {
     "dict__get_unsafe has no canonical name (internal-only)",
     fn() {
       reg := make_builtin_registry()
-      entry := try reg.entry(reg.id("dict__get_unsafe")).ok_or(
-        "missing dict__get_unsafe",
-      )
+      entry := try reg.entry(reg.id("dict__get_unsafe")).ok_or("missing dict__get_unsafe")
       try assert.is_none(entry.canonical_name)
       .Ok({})
     },
@@ -246,9 +230,7 @@ pub fn suite() runner.Suite {
   ).test(
     "dot-method Vector.map type-checks without errors",
     fn() {
-      try check_ok_with_builtins(
-        "xs: Vector<Int> = [1, 2]\nys := xs.map(fn(x: Int) { x + 1 })",
-      )
+      try check_ok_with_builtins("xs: Vector<Int> = [1, 2]\nys := xs.map(fn(x: Int) { x + 1 })")
       .Ok({})
     },
   ).test(
@@ -260,17 +242,13 @@ pub fn suite() runner.Suite {
   ).test(
     "dot-method Iterator.unfold type-checks without errors",
     fn() {
-      try check_ok_with_builtins(
-        "it := Iterator.unfold(0, fn(s) { .Yield(s, s + 1) })",
-      )
+      try check_ok_with_builtins("it := Iterator.unfold(0, fn(s) { .Yield(s, s + 1) })")
       .Ok({})
     },
   ).test(
     "module-qualified Option.map type-checks without errors",
     fn() {
-      try check_ok_with_builtins(
-        "x := Option.map(.Some(1), fn(n: Int) { n + 1 })",
-      )
+      try check_ok_with_builtins("x := Option.map(.Some(1), fn(n: Int) { n + 1 })")
       .Ok({})
     },
   ).test(

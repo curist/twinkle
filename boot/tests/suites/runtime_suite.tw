@@ -776,10 +776,7 @@ fn test_rt_str_from_i64_special_cases() Result<Void, String> {
     }
   }
 
-  try assert.ok(
-    found_eqz,
-    "from_i64 should handle zero case with ArrayNewFixed 1",
-  )
+  try assert.ok(found_eqz, "from_i64 should handle zero case with ArrayNewFixed 1")
   try assert.ok(found_loop, "from_i64 should have digit extraction loop")
   .Ok({})
 }
@@ -839,14 +836,8 @@ fn test_rt_str_emits_wat() Result<Void, String> {
   m := rt_str.module()
   wat := emit_wat_unlinked_for_test(m)
   try assert.ok(contains(wat, "(func \$len"), "WAT should contain len func")
-  try assert.ok(
-    contains(wat, "(func \$concat"),
-    "WAT should contain concat func",
-  )
-  try assert.ok(
-    contains(wat, "(func \$from_i64"),
-    "WAT should contain from_i64 func",
-  )
+  try assert.ok(contains(wat, "(func \$concat"), "WAT should contain concat func")
+  try assert.ok(contains(wat, "(func \$from_i64"), "WAT should contain from_i64 func")
   .Ok({})
 }
 
@@ -893,10 +884,7 @@ fn test_rt_arr_has_internal_helpers() Result<Void, String> {
   try assert.ok(find_func(m.funcs, "tailoff") != .None, "should have tailoff")
   try assert.ok(find_func(m.funcs, "get_leaf") != .None, "should have get_leaf")
   try assert.ok(find_func(m.funcs, "new_path") != .None, "should have new_path")
-  try assert.ok(
-    find_func(m.funcs, "push_tail") != .None,
-    "should have push_tail",
-  )
+  try assert.ok(find_func(m.funcs, "push_tail") != .None, "should have push_tail")
   try assert.ok(find_func(m.funcs, "do_set") != .None, "should have do_set")
   try assert.ok(find_func(m.funcs, "push") != .None, "should have push")
   .Ok({})
@@ -905,10 +893,7 @@ fn test_rt_arr_has_internal_helpers() Result<Void, String> {
 fn test_rt_arr_has_bridge_helpers() Result<Void, String> {
   m := rt_arr.module()
   // Bridge helpers: from_array, to_array, from_read_file_result
-  try assert.ok(
-    find_func(m.funcs, "from_array") != .None,
-    "should have from_array",
-  )
+  try assert.ok(find_func(m.funcs, "from_array") != .None, "should have from_array")
   try assert.ok(find_func(m.funcs, "to_array") != .None, "should have to_array")
   try assert.ok(
     find_func(m.funcs, "from_read_file_result") != .None,
@@ -919,10 +904,7 @@ fn test_rt_arr_has_bridge_helpers() Result<Void, String> {
 
 fn test_rt_arr_has_builder_extend() Result<Void, String> {
   m := rt_arr.module()
-  try assert.ok(
-    find_func(m.funcs, "builder_extend") != .None,
-    "should have builder_extend",
-  )
+  try assert.ok(find_func(m.funcs, "builder_extend") != .None, "should have builder_extend")
   .Ok({})
 }
 
@@ -1185,18 +1167,13 @@ fn test_rt_arr_builder_push_tail() Result<Void, String> {
     }
   }
 
-  try assert.ok(
-    found_if,
-    "builder_push should have tail-full check with promote path",
-  )
+  try assert.ok(found_if, "builder_push should have tail-full check with promote path")
   .Ok({})
 }
 
 fn test_rt_arr_builder_freeze() Result<Void, String> {
   m := rt_arr.module()
-  f := try find_func(m.funcs, "builder_freeze").ok_or(
-    "missing builder_freeze func",
-  )
+  f := try find_func(m.funcs, "builder_freeze").ok_or("missing builder_freeze func")
   try assert.equal(f.params.len(), 1)
   try assert.ok(
     has_instr(
@@ -1229,10 +1206,7 @@ fn test_rt_arr_emits_wat() Result<Void, String> {
   m := rt_arr.module()
   wat := emit_wat_unlinked_for_test(m)
   try assert.ok(contains(wat, "(func \$make"), "WAT should contain make func")
-  try assert.ok(
-    contains(wat, "(func \$builder_push"),
-    "WAT should contain builder_push func",
-  )
+  try assert.ok(contains(wat, "(func \$builder_push"), "WAT should contain builder_push func")
   try assert.ok(contains(wat, "(func \$slice"), "WAT should contain slice func")
   .Ok({})
 }
@@ -1478,19 +1452,14 @@ fn test_rt_dict_set_in_place() Result<Void, String> {
   }
 
   try assert.ok(found_node_set, "set_in_place should call node_set")
-  try assert.ok(
-    found_struct_set,
-    "set_in_place should mutate PDict via StructSet",
-  )
+  try assert.ok(found_struct_set, "set_in_place should mutate PDict via StructSet")
   try assert.ok(!found_struct_new, "set_in_place should not allocate new PDict")
   .Ok({})
 }
 
 fn test_rt_dict_remove_in_place() Result<Void, String> {
   m := rt_dict.module()
-  f := try find_func(m.funcs, "remove_in_place").ok_or(
-    "missing remove_in_place func",
-  )
+  f := try find_func(m.funcs, "remove_in_place").ok_or("missing remove_in_place func")
   try assert.equal(f.params.len(), 2)
   // True in-place: calls node_remove, mutates PDict via StructSet (no StructNew)
   found_node_remove := false
@@ -1513,14 +1482,8 @@ fn test_rt_dict_remove_in_place() Result<Void, String> {
   }
 
   try assert.ok(found_node_remove, "remove_in_place should call node_remove")
-  try assert.ok(
-    found_struct_set,
-    "remove_in_place should mutate PDict via StructSet",
-  )
-  try assert.ok(
-    !found_struct_new,
-    "remove_in_place should not allocate new PDict",
-  )
+  try assert.ok(found_struct_set, "remove_in_place should mutate PDict via StructSet")
+  try assert.ok(!found_struct_new, "remove_in_place should not allocate new PDict")
   .Ok({})
 }
 
@@ -1582,35 +1545,29 @@ fn test_rt_dict_emits_wat() Result<Void, String> {
   wat := emit_wat_unlinked_for_test(m)
   try assert.ok(contains(wat, "(func \$make"), "WAT should contain make func")
   try assert.ok(contains(wat, "(func \$set"), "WAT should contain set func")
-  try assert.ok(
-    contains(wat, "(func \$remove"),
-    "WAT should contain remove func",
-  )
+  try assert.ok(contains(wat, "(func \$remove"), "WAT should contain remove func")
   try assert.ok(contains(wat, "core_eq"), "WAT should reference core_eq")
   .Ok({})
 }
 
 // ── Suite ───────────────────────────────────────────────────────────
 pub fn suite() runner.Suite {
-  runner.suite("runtime modules (M10)").test(
-    "rt.types: namespace",
-    test_rt_types_namespace,
-  ).test("rt.types: 18 type definitions", test_rt_types_count).test(
-    "rt.types: no funcs/imports/exports",
-    test_rt_types_no_funcs,
-  ).test("rt.types: Array is mutable anyref array", test_rt_types_array).test(
-    "rt.types: String is mutable i8 array",
-    test_rt_types_string,
-  ).test("rt.types: PDict has size/root/order fields", test_rt_types_pdict).test(
-    "rt.types: Closure is non-final",
-    test_rt_types_closure_non_final,
-  ).test("rt.types: Variant has 3 fields", test_rt_types_variant).test(
-    "rt.types: BoxedInt has i64 field",
-    test_rt_types_boxed_int,
-  ).test("rt.types: BoxedFloat has f64 field", test_rt_types_boxed_float).test(
-    "rt.types: IterState is non-final",
-    test_rt_types_iter_state_non_final,
-  ).test(
+  runner.suite("runtime modules (M10)").test("rt.types: namespace", test_rt_types_namespace).test(
+    "rt.types: 18 type definitions",
+    test_rt_types_count,
+  ).test("rt.types: no funcs/imports/exports", test_rt_types_no_funcs).test(
+    "rt.types: Array is mutable anyref array",
+    test_rt_types_array,
+  ).test("rt.types: String is mutable i8 array", test_rt_types_string).test(
+    "rt.types: PDict has size/root/order fields",
+    test_rt_types_pdict,
+  ).test("rt.types: Closure is non-final", test_rt_types_closure_non_final).test(
+    "rt.types: Variant has 3 fields",
+    test_rt_types_variant,
+  ).test("rt.types: BoxedInt has i64 field", test_rt_types_boxed_int).test(
+    "rt.types: BoxedFloat has f64 field",
+    test_rt_types_boxed_float,
+  ).test("rt.types: IterState is non-final", test_rt_types_iter_state_non_final).test(
     "rt.types: VecChildren is mutable eqref array",
     test_rt_types_vec_children,
   ).test("rt.types: VecInternal has children field", test_rt_types_vec_internal).test(
@@ -1670,16 +1627,10 @@ pub fn suite() runner.Suite {
   ).test("rt.arr: len reads PVec.len", test_rt_arr_len).test(
     "rt.arr: concat iterates and pushes",
     test_rt_arr_concat_iterates,
-  ).test(
-    "rt.arr: slice uses get_leaf and from_array",
-    test_rt_arr_slice_iterates,
-  ).test(
+  ).test("rt.arr: slice uses get_leaf and from_array", test_rt_arr_slice_iterates).test(
     "rt.arr: builder_new creates 3-element layout",
     test_rt_arr_builder_new_layout,
-  ).test(
-    "rt.arr: builder_from creates 3-element layout",
-    test_rt_arr_builder_from,
-  ).test(
+  ).test("rt.arr: builder_from creates 3-element layout", test_rt_arr_builder_from).test(
     "rt.arr: builder_push has tail-full path",
     test_rt_arr_builder_push_tail,
   ).test("rt.arr: builder_freeze constructs PVec", test_rt_arr_builder_freeze).test(
@@ -1697,22 +1648,16 @@ pub fn suite() runner.Suite {
   ).test("rt.dict: has calls core_eq in scan", test_rt_dict_has_calls_core_eq).test(
     "rt.dict: get returns null on miss",
     test_rt_dict_get_returns_null_on_miss,
-  ).test(
-    "rt.dict: get_option returns Variant",
-    test_rt_dict_get_option_returns_variant,
-  ).test("rt.dict: set is COW with DictEntry", test_rt_dict_set_cow).test(
-    "rt.dict: remove uses two-pass scan+copy",
-    test_rt_dict_remove_two_pass,
-  ).test(
+  ).test("rt.dict: get_option returns Variant", test_rt_dict_get_option_returns_variant).test(
+    "rt.dict: set is COW with DictEntry",
+    test_rt_dict_set_cow,
+  ).test("rt.dict: remove uses two-pass scan+copy", test_rt_dict_remove_two_pass).test(
     "rt.dict: set_in_place has in-place and append paths",
     test_rt_dict_set_in_place,
-  ).test(
-    "rt.dict: remove_in_place early-returns on miss",
-    test_rt_dict_remove_in_place,
-  ).test("rt.dict: emits valid WAT", test_rt_dict_emits_wat).test(
-    "rt.dict: node_get calls collision_get",
-    test_rt_dict_node_get_collision_path,
-  ).test(
+  ).test("rt.dict: remove_in_place early-returns on miss", test_rt_dict_remove_in_place).test(
+    "rt.dict: emits valid WAT",
+    test_rt_dict_emits_wat,
+  ).test("rt.dict: node_get calls collision_get", test_rt_dict_node_get_collision_path).test(
     "rt.dict: node_set calls collision_set",
     test_rt_dict_node_set_collision_path,
   ).test("rt.dict: hash_key returns i64", test_rt_dict_hash_key_i64)

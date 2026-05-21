@@ -29,11 +29,7 @@ fn anf_src(src: String) Result<AnfModule, String> {
     return .Err("check: ${check_result.diagnostics[0].message()}")
   }
 
-  lr := lower_core.lower_module(
-    parsed.value,
-    check_result,
-    make_builtin_registry(),
-  )
+  lr := lower_core.lower_module(parsed.value, check_result, make_builtin_registry())
   mono := monomorphize.monomorphize(lr.module)
   .Ok(lower_anf.lower_module(mono))
 }

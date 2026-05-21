@@ -52,9 +52,7 @@ fn parse_body_stmt(src: String, idx: Int) Result<ast.Stmt, String> {
   block := try parse_first_fn_body(src)
 
   if idx >= block.stmts.len() {
-    return .Err(
-      "expected stmt at index ${idx}, block has ${block.stmts.len()} stmts",
-    )
+    return .Err("expected stmt at index ${idx}, block has ${block.stmts.len()} stmts")
   }
 
   .Ok(block.stmts[idx])
@@ -135,9 +133,7 @@ fn assert_snapshot(fixture_path: String) Result<Void, String> {
           .Err(_) => .Err("failed to write snapshot: ${expected_path}"),
         }
       } else {
-        .Err(
-          "missing snapshot file: ${expected_path} (run with TWK_SNAP_UPDATE=1 to generate)",
-        )
+        .Err("missing snapshot file: ${expected_path} (run with TWK_SNAP_UPDATE=1 to generate)")
       }
     },
   }
@@ -314,9 +310,7 @@ pub fn suite() runner.Suite {
   ).test(
     "fn decl: generic type params",
     fn() {
-      item := try parse_first_item(
-        "fn map<A, B>(xs: Vector<A>, f: fn(A) B) Vector<B> {}",
-      )
+      item := try parse_first_item("fn map<A, B>(xs: Vector<A>, f: fn(A) B) Vector<B> {}")
 
       case item {
         .Function(f) => {
@@ -411,9 +405,7 @@ pub fn suite() runner.Suite {
   ).test(
     "type decl: multi-payload variant",
     fn() {
-      item := try parse_first_item(
-        "type Tree = { Leaf, Node(Tree, Int, Tree) }",
-      )
+      item := try parse_first_item("type Tree = { Leaf, Node(Tree, Int, Tree) }")
 
       case item {
         .Type(t) => {
@@ -1502,9 +1494,7 @@ pub fn suite() runner.Suite {
   ).test(
     "postfix: newline before [ or ( starts a new statement",
     fn() {
-      block := try parse_first_fn_body(
-        "fn f() { foo := \"asdf\"\n[1, 22, 3]\nbar\n(1) }",
-      )
+      block := try parse_first_fn_body("fn f() { foo := \"asdf\"\n[1, 22, 3]\nbar\n(1) }")
       try assert.equal(block.stmts.len(), 3)
 
       case block.stmts[0] {
@@ -1879,18 +1869,13 @@ pub fn suite() runner.Suite {
   ).test(
     "diagnostics: return in expression position",
     fn() {
-      parsed := parser.parse(
-        "fn f() Int { case 1 { 1 => return 1, _ => 0 } }",
-        0,
-      )
+      parsed := parser.parse("fn f() Int { case 1 { 1 => return 1, _ => 0 } }", 0)
       try assert.is_true(parsed.diagnostics.len() > 0)
       msg := parsed.diagnostics[0].message()
       try assert.is_true(msg.contains("is a statement"))
       try assert.is_true(msg.contains("where an expression is expected"))
       hints := parsed.diagnostics[0].help_lines()
-      assert.is_true(
-        hints.len() > 0 and hints[0].contains("wrap it in a block expression"),
-      )
+      assert.is_true(hints.len() > 0 and hints[0].contains("wrap it in a block expression"))
     },
   ).test(
     "diagnostics: break in expression position",
@@ -1901,9 +1886,7 @@ pub fn suite() runner.Suite {
       try assert.is_true(msg.contains("is a statement"))
       try assert.is_true(msg.contains("where an expression is expected"))
       hints := parsed.diagnostics[0].help_lines()
-      assert.is_true(
-        hints.len() > 0 and hints[0].contains("wrap it in a block expression"),
-      )
+      assert.is_true(hints.len() > 0 and hints[0].contains("wrap it in a block expression"))
     },
   ).test(
     "diagnostics: continue in expression position",
@@ -1914,41 +1897,29 @@ pub fn suite() runner.Suite {
       try assert.is_true(msg.contains("is a statement"))
       try assert.is_true(msg.contains("where an expression is expected"))
       hints := parsed.diagnostics[0].help_lines()
-      assert.is_true(
-        hints.len() > 0 and hints[0].contains("wrap it in a block expression"),
-      )
+      assert.is_true(hints.len() > 0 and hints[0].contains("wrap it in a block expression"))
     },
   ).test(
     "diagnostics: defer in expression position",
     fn() {
-      parsed := parser.parse(
-        "fn f() { case 1 { 1 => defer cleanup(), _ => {} } }",
-        0,
-      )
+      parsed := parser.parse("fn f() { case 1 { 1 => defer cleanup(), _ => {} } }", 0)
       try assert.is_true(parsed.diagnostics.len() > 0)
       msg := parsed.diagnostics[0].message()
       try assert.is_true(msg.contains("is a statement"))
       try assert.is_true(msg.contains("where an expression is expected"))
       hints := parsed.diagnostics[0].help_lines()
-      assert.is_true(
-        hints.len() > 0 and hints[0].contains("wrap it in a block expression"),
-      )
+      assert.is_true(hints.len() > 0 and hints[0].contains("wrap it in a block expression"))
     },
   ).test(
     "diagnostics: for in expression position",
     fn() {
-      parsed := parser.parse(
-        "fn f() { case 1 { 1 => for x in xs { }, _ => {} } }",
-        0,
-      )
+      parsed := parser.parse("fn f() { case 1 { 1 => for x in xs { }, _ => {} } }", 0)
       try assert.is_true(parsed.diagnostics.len() > 0)
       msg := parsed.diagnostics[0].message()
       try assert.is_true(msg.contains("is a statement"))
       try assert.is_true(msg.contains("where an expression is expected"))
       hints := parsed.diagnostics[0].help_lines()
-      assert.is_true(
-        hints.len() > 0 and hints[0].contains("wrap it in a block expression"),
-      )
+      assert.is_true(hints.len() > 0 and hints[0].contains("wrap it in a block expression"))
     },
   ).test(
     "diagnostics: return span points at keyword",
@@ -1982,10 +1953,7 @@ pub fn suite() runner.Suite {
   ).test(
     "diagnostics: statement in case arm mentions context",
     fn() {
-      parsed := parser.parse(
-        "fn f() Int { case 1 { 1 => return 1, _ => 0 } }",
-        0,
-      )
+      parsed := parser.parse("fn f() Int { case 1 { 1 => return 1, _ => 0 } }", 0)
       try assert.is_true(parsed.diagnostics.len() > 0)
       assert.is_true(parsed.diagnostics[0].message().contains("case arm body"))
     },
@@ -2008,9 +1976,7 @@ pub fn suite() runner.Suite {
     fn() {
       parsed := parser.parse("fn f() { (return 1) }", 0)
       try assert.is_true(parsed.diagnostics.len() > 0)
-      assert.is_true(
-        parsed.diagnostics[0].message().contains("grouped expression"),
-      )
+      assert.is_true(parsed.diagnostics[0].message().contains("grouped expression"))
     },
   ).test(
     "diagnostics: valid return in block has no statement-in-expr error",
@@ -2099,49 +2065,31 @@ pub fn suite() runner.Suite {
     },
   ).test(
     "snapshot: statement_in_expression_return",
-    fn() {
-      assert_snapshot("tests/parser_errors/statement_in_expression_return.tw")
-    },
+    fn() { assert_snapshot("tests/parser_errors/statement_in_expression_return.tw") },
   ).test(
     "snapshot: statement_in_expression_case_arm",
-    fn() {
-      assert_snapshot("tests/parser_errors/statement_in_expression_case_arm.tw")
-    },
+    fn() { assert_snapshot("tests/parser_errors/statement_in_expression_case_arm.tw") },
   ).test(
     "snapshot: statement_in_expression_break",
-    fn() {
-      assert_snapshot("tests/parser_errors/statement_in_expression_break.tw")
-    },
+    fn() { assert_snapshot("tests/parser_errors/statement_in_expression_break.tw") },
   ).test(
     "snapshot: statement_in_expression_continue",
-    fn() {
-      assert_snapshot("tests/parser_errors/statement_in_expression_continue.tw")
-    },
+    fn() { assert_snapshot("tests/parser_errors/statement_in_expression_continue.tw") },
   ).test(
     "snapshot: statement_in_expression_defer",
-    fn() {
-      assert_snapshot("tests/parser_errors/statement_in_expression_defer.tw")
-    },
+    fn() { assert_snapshot("tests/parser_errors/statement_in_expression_defer.tw") },
   ).test(
     "snapshot: statement_in_expression_for",
-    fn() {
-      assert_snapshot("tests/parser_errors/statement_in_expression_for.tw")
-    },
+    fn() { assert_snapshot("tests/parser_errors/statement_in_expression_for.tw") },
   ).test(
     "snapshot: statement_in_expression_call_arg",
-    fn() {
-      assert_snapshot("tests/parser_errors/statement_in_expression_call_arg.tw")
-    },
+    fn() { assert_snapshot("tests/parser_errors/statement_in_expression_call_arg.tw") },
   ).test(
     "snapshot: statement_in_expression_array",
-    fn() {
-      assert_snapshot("tests/parser_errors/statement_in_expression_array.tw")
-    },
+    fn() { assert_snapshot("tests/parser_errors/statement_in_expression_array.tw") },
   ).test(
     "snapshot: statement_in_expression_grouped",
-    fn() {
-      assert_snapshot("tests/parser_errors/statement_in_expression_grouped.tw")
-    },
+    fn() { assert_snapshot("tests/parser_errors/statement_in_expression_grouped.tw") },
   ).test(
     "snapshot: case_missing_comma",
     fn() { assert_snapshot("tests/parser_errors/case_missing_comma.tw") },

@@ -1,39 +1,52 @@
-use tests.runner
-use tests.assert
 use @std.fs
 use @std.proc
 
+use tests.assert
+use tests.runner
+
 pub fn suite() runner.Suite {
-  runner.suite("stdlib host")
-    .test("proc.args returns a vector", fn() {
+  runner.suite("stdlib host").test(
+    "proc.args returns a vector",
+    fn() {
       args := proc.args()
       // At minimum, the runner script path is present
       try assert.is_true(args.len() > 0)
       .Ok({})
-    })
-    .test("proc.cwd returns non-empty string", fn() {
+    },
+  ).test(
+    "proc.cwd returns non-empty string",
+    fn() {
       cwd := proc.cwd()
       try assert.is_true(String.len(cwd) > 0)
       try assert.is_true(cwd.starts_with("/"))
       .Ok({})
-    })
-    .test("proc.env returns none for absent var", fn() {
+    },
+  ).test(
+    "proc.env returns none for absent var",
+    fn() {
       result := proc.env("TWINKLE_TEST_NONEXISTENT_VAR_XYZ_123")
       try assert.is_none(result)
       .Ok({})
-    })
-    .test("fs.exists detects real path", fn() {
+    },
+  ).test(
+    "fs.exists detects real path",
+    fn() {
       // The test main file must exist
       try assert.is_true(fs.exists("boot/tests/main.tw"))
       .Ok({})
-    })
-    .test("fs.exists returns false for missing path", fn() {
+    },
+  ).test(
+    "fs.exists returns false for missing path",
+    fn() {
       try assert.is_false(fs.exists("__nonexistent_path_xyz__"))
       .Ok({})
-    })
-    .test("fs.read_text reads a known file", fn() {
+    },
+  ).test(
+    "fs.read_text reads a known file",
+    fn() {
       result := fs.read_text("boot/tests/assert.tw")
       try assert.is_ok(result)
+
       case result {
         .Ok(text) => {
           try assert.is_true(String.len(text) > 0)
@@ -42,15 +55,20 @@ pub fn suite() runner.Suite {
         },
         .Err(_) => assert.fail("unreachable"),
       }
-    })
-    .test("fs.read_text returns error for missing file", fn() {
+    },
+  ).test(
+    "fs.read_text returns error for missing file",
+    fn() {
       result := fs.read_text("__nonexistent_file_xyz__")
       try assert.is_err(result)
       .Ok({})
-    })
-    .test("fs.list_dir returns entries for existing dir", fn() {
+    },
+  ).test(
+    "fs.list_dir returns entries for existing dir",
+    fn() {
       result := fs.list_dir("boot/tests/suites")
       try assert.is_ok(result)
+
       case result {
         .Ok(entries) => {
           try assert.is_true(entries.len() > 0)
@@ -61,10 +79,13 @@ pub fn suite() runner.Suite {
         },
         .Err(_) => assert.fail("unreachable"),
       }
-    })
-    .test("fs.list_dir returns error for missing dir", fn() {
+    },
+  ).test(
+    "fs.list_dir returns error for missing dir",
+    fn() {
       result := fs.list_dir("__nonexistent_dir_xyz__")
       try assert.is_err(result)
       .Ok({})
-    })
+    },
+  )
 }

@@ -1,13 +1,16 @@
-use tests.runner
 use tests.assert
+use tests.runner
 
 type State = .{ items: Vector<Int>, name: String }
+
 type Inner = .{ count: Vector<Int> }
+
 type Outer = .{ inner: Inner }
 
 pub fn suite() runner.Suite {
-  runner.suite("receiver shorthand")
-    .test("basic method shorthand", fn() {
+  runner.suite("receiver shorthand").test(
+    "basic method shorthand",
+    fn() {
       xs: Vector<Int> = []
       xs = .append(1)
       xs = .append(2)
@@ -16,8 +19,10 @@ pub fn suite() runner.Suite {
       try assert.equal(xs[0], 1)
       try assert.equal(xs[2], 3)
       .Ok({})
-    })
-    .test("chained methods", fn() {
+    },
+  ).test(
+    "chained methods",
+    fn() {
       xs: Vector<Int> = [1, 2, 3, 4, 5]
       xs = .filter(fn(x) { x > 2 }).map(fn(x) { x * 10 })
       try assert.equal(xs.len(), 3)
@@ -25,37 +30,50 @@ pub fn suite() runner.Suite {
       try assert.equal(xs[1], 40)
       try assert.equal(xs[2], 50)
       .Ok({})
-    })
-    .test("record field target", fn() {
+    },
+  ).test(
+    "record field target",
+    fn() {
       s: State = .{ items: [], name: "test" }
-      s.items = .append(42)
-      s.items = .append(99)
+      s.items = s.items.append(42)
+      s.items = s.items.append(99)
       try assert.equal(s.items.len(), 2)
       try assert.equal(s.items[0], 42)
       try assert.equal(s.items[1], 99)
       .Ok({})
-    })
-    .test("concat shorthand", fn() {
+    },
+  ).test(
+    "concat shorthand",
+    fn() {
       buf: Vector<Int> = [1, 2]
       buf = .concat([3, 4])
       try assert.equal(buf.len(), 4)
       try assert.equal(buf[3], 4)
       .Ok({})
-    })
-    .test("variant literals still work after shorthand", fn() {
+    },
+  ).test(
+    "variant literals still work after shorthand",
+    fn() {
       x: Int? = .None
       x = .Some(42)
+
       case x {
         .Some(v) => try assert.equal(v, 42),
-        .None => { return .Err("expected Some") },
+        .None => {
+          return .Err("expected Some")
+        },
       }
+
       .Ok({})
-    })
-    .test("nested field target", fn() {
+    },
+  ).test(
+    "nested field target",
+    fn() {
       o: Outer = .{ inner: .{ count: [1] } }
-      o.inner.count = .append(2)
+      o.inner.count = o.inner.count.append(2)
       try assert.equal(o.inner.count.len(), 2)
       try assert.equal(o.inner.count[1], 2)
       .Ok({})
-    })
+    },
+  )
 }

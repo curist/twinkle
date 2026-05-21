@@ -35,12 +35,7 @@ fn make_func(id: Int, name: String, body: AnfExpr) AnfFunctionDef {
   }
 }
 
-fn make_func_with_params(
-  id: Int,
-  name: String,
-  params: Vector<Param>,
-  body: AnfExpr,
-) AnfFunctionDef {
+fn make_func_with_params(id: Int, name: String, params: Vector<Param>, body: AnfExpr) AnfFunctionDef {
   AnfFunctionDef.{
     func_id: fid(id),
     name: name,
@@ -69,11 +64,7 @@ fn test_cross_round_chain() Result<Void, String> {
     .Let(
       lid(1),
       .ABinOp(.Add, .ALocal(lid(0)), .ALitInt(2), .Int),
-      .Let(
-        lid(2),
-        .ABinOp(.Mul, .ALocal(lid(1)), .ALitInt(3), .Int),
-        .Atom(.ALocal(lid(2))),
-      ),
+      .Let(lid(2), .ABinOp(.Mul, .ALocal(lid(1)), .ALitInt(3), .Int), .Atom(.ALocal(lid(2)))),
     ),
   )
   func := make_func(1, "test", expr)
@@ -208,11 +199,7 @@ fn test_multiple_functions_optimized() Result<Void, String> {
 // ── Test: already optimal stays unchanged ───────────────────────────
 fn test_already_optimal() Result<Void, String> {
   // let x = ACall(f, []); Atom(x) — cannot optimize
-  body: AnfExpr = .Let(
-    lid(0),
-    .ACall(.AGlobalFunc(fid(99)), []),
-    .Atom(.ALocal(lid(0))),
-  )
+  body: AnfExpr = .Let(lid(0), .ACall(.AGlobalFunc(fid(99)), []), .Atom(.ALocal(lid(0))))
   func := make_func(1, "test", body)
   module: AnfModule = AnfModule.{
     functions: [func],
@@ -269,11 +256,7 @@ fn test_nested_multi_round() Result<Void, String> {
       .Let(
         lid(2),
         .ABinOp(.Add, .ALocal(lid(0)), .ALocal(lid(1)), .Int),
-        .Let(
-          lid(3),
-          .ABinOp(.Add, .ALocal(lid(2)), .ALitInt(4), .Int),
-          .Atom(.ALocal(lid(3))),
-        ),
+        .Let(lid(3), .ABinOp(.Add, .ALocal(lid(2)), .ALitInt(4), .Int), .Atom(.ALocal(lid(3)))),
       ),
     ),
   )
@@ -300,11 +283,7 @@ fn test_optimize_module_with_semantics_matches_default() Result<Void, String> {
     .Let(
       lid(1),
       .ABinOp(.Add, .ALocal(lid(0)), .ALitInt(2), .Int),
-      .Let(
-        lid(2),
-        .ABinOp(.Mul, .ALocal(lid(1)), .ALitInt(3), .Int),
-        .Atom(.ALocal(lid(2))),
-      ),
+      .Let(lid(2), .ABinOp(.Mul, .ALocal(lid(1)), .ALitInt(3), .Int), .Atom(.ALocal(lid(2)))),
     ),
   )
   func := make_func(1, "test", expr)

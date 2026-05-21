@@ -8,9 +8,7 @@ use compiler.codegen.wasm_plan_types.{WasmTypeRegistry}
 use compiler.core_ir.{FieldId, FuncId, LocalId, Param, VariantId}
 use compiler.mono_type.{MonoType, TypeId}
 use compiler.resolver
-use compiler.resolver.{
-  ResolvedEnv, ResolvedField, ResolvedTypeDef, ResolvedVariant, TypeEntry,
-}
+use compiler.resolver.{ResolvedEnv, ResolvedField, ResolvedTypeDef, ResolvedVariant, TypeEntry}
 use tests.assert
 use tests.runner
 
@@ -57,10 +55,7 @@ fn empty_builtins() BuiltinRegistry { make_builtin_registry() }
 
 fn mk_param(id: Int, ty: MonoType) Param { Param.{ local: lid(id), ty: ty } }
 
-fn mk_mono_map(entries: Vector<Int>, types: Vector<MonoType>) Dict<
-  Int,
-  MonoType,
-> {
+fn mk_mono_map(entries: Vector<Int>, types: Vector<MonoType>) Dict<Int, MonoType> {
   d: Dict<Int, MonoType> = Dict.new()
 
   for k, i in entries { d[k] = types[i] }
@@ -88,11 +83,7 @@ fn mk_func_def(
 }
 
 fn mk_module(funcs: Vector<AnfFunctionDef>) AnfModule {
-  AnfModule.{
-    functions: funcs,
-    init_func_id: .None,
-    extern_imports: Dict.new(),
-  }
+  AnfModule.{ functions: funcs, init_func_id: .None, extern_imports: Dict.new() }
 }
 
 fn mk_abi(params: Vector<ValType>, results: Vector<ValType>) AbiContract {
@@ -120,12 +111,7 @@ fn env_with_record_and_sum() ResolvedEnv {
       ResolvedTypeDef.Sum(
         "Box",
         [],
-        [
-          ResolvedVariant.{
-            name: "Wrap",
-            fields: [MonoType.Function([.Int], .Int)],
-          },
-        ],
+        [ResolvedVariant.{ name: "Wrap", fields: [MonoType.Function([.Int], .Int)] }],
       ),
     ),
     span: .{ file_id: 0, start: 0, end: 0 },
@@ -145,8 +131,7 @@ fn count_wraps_expr(expr: AnfExpr) Int {
 fn count_wraps_op(op: AnfOp) Int {
   case op {
     .AWrapAnyref(_, _) => 1,
-    .AIf(_, then_e, else_e) => count_wraps_expr(then_e)
-    + count_wraps_expr(else_e),
+    .AIf(_, then_e, else_e) => count_wraps_expr(then_e) + count_wraps_expr(else_e),
     .AMatch(_, arms) => {
       s := 0
 
@@ -162,8 +147,7 @@ fn count_wraps_op(op: AnfOp) Int {
 
 fn count_make_closures_expr(expr: AnfExpr) Int {
   case expr {
-    .Let(_, op, body) => count_make_closures_op(op)
-    + count_make_closures_expr(body),
+    .Let(_, op, body) => count_make_closures_op(op) + count_make_closures_expr(body),
     _ => 0,
   }
 }
@@ -171,8 +155,7 @@ fn count_make_closures_expr(expr: AnfExpr) Int {
 fn count_make_closures_op(op: AnfOp) Int {
   case op {
     .AMakeClosure(_, _) => 1,
-    .AIf(_, then_e, else_e) => count_make_closures_expr(then_e)
-    + count_make_closures_expr(else_e),
+    .AIf(_, then_e, else_e) => count_make_closures_expr(then_e) + count_make_closures_expr(else_e),
     .AMatch(_, arms) => {
       s := 0
 
@@ -196,8 +179,7 @@ fn count_unwraps_expr(expr: AnfExpr) Int {
 fn count_unwraps_op(op: AnfOp) Int {
   case op {
     .AUnwrapAnyref(_, _) => 1,
-    .AIf(_, then_e, else_e) => count_unwraps_expr(then_e)
-    + count_unwraps_expr(else_e),
+    .AIf(_, then_e, else_e) => count_unwraps_expr(then_e) + count_unwraps_expr(else_e),
     .AMatch(_, arms) => {
       s := 0
 
@@ -261,12 +243,7 @@ pub fn suite() runner.Suite {
     "empty module passthrough",
     fn() {
       anf := mk_module([])
-      result := insert_boundaries(
-        anf,
-        empty_registry(),
-        empty_builtins(),
-        empty_env(),
-      )
+      result := insert_boundaries(anf, empty_registry(), empty_builtins(), empty_env())
       try assert.equal(result.functions.len(), 0)
       .Ok({})
     },
@@ -302,14 +279,7 @@ pub fn suite() runner.Suite {
         .Atom(.ALocal(lid(10))),
       )
       mono := mk_mono_map([10], [MonoType.String])
-      func := mk_func_def(
-        1,
-        "f",
-        [mk_param(0, .String), mk_param(1, .Int)],
-        .String,
-        body,
-        mono,
-      )
+      func := mk_func_def(1, "f", [mk_param(0, .String), mk_param(1, .Int)], .String, body, mono)
       anf := mk_module([func])
       reg := registry_with_layouts([MonoType.Int, MonoType.String])
       builtins := empty_builtins().runtime_with_abi(
@@ -321,21 +291,11 @@ pub fn suite() runner.Suite {
       // Reconstruct with correct fid in the body
       body2: AnfExpr = .Let(
         lid(10),
-        .ACall(
-          .AGlobalFunc(builtins.id("test_builtin")),
-          [.ALocal(lid(0)), .ALocal(lid(1))],
-        ),
+        .ACall(.AGlobalFunc(builtins.id("test_builtin")), [.ALocal(lid(0)), .ALocal(lid(1))]),
         .Atom(.ALocal(lid(10))),
       )
       mono2 := mk_mono_map([10], [MonoType.String])
-      func2 := mk_func_def(
-        1,
-        "f",
-        [mk_param(0, .String), mk_param(1, .Int)],
-        .String,
-        body2,
-        mono2,
-      )
+      func2 := mk_func_def(1, "f", [mk_param(0, .String), mk_param(1, .Int)], .String, body2, mono2)
       anf2 := mk_module([func2])
       result := insert_boundaries(anf2, reg, builtins, empty_env())
       result_body := result.functions[0].body
@@ -373,9 +333,7 @@ pub fn suite() runner.Suite {
       result_body := result.functions[0].body
       // Result should be unwrapped from anyref to Int
       try assert.equal(count_unwraps_expr(result_body), 1)
-      unwrap_ty := try first_unwrap_mono(result_body).ok_or(
-        "no AUnwrapAnyref found",
-      )
+      unwrap_ty := try first_unwrap_mono(result_body).ok_or("no AUnwrapAnyref found")
 
       case unwrap_ty {
         .Int => .Ok({}),
@@ -430,14 +388,7 @@ pub fn suite() runner.Suite {
         .Atom(.ALocal(lid(10))),
       )
       mono := mk_mono_map([10], [MonoType.Vector(.Int)])
-      func := mk_func_def(
-        1,
-        "f",
-        [mk_param(0, .Vector(.Int))],
-        .Vector(.Int),
-        body,
-        mono,
-      )
+      func := mk_func_def(1, "f", [mk_param(0, .Vector(.Int))], .Vector(.Int), body, mono)
       anf := mk_module([func])
       reg := registry_with_layouts([MonoType.Int, MonoType.Vector(.Int)])
       result := insert_boundaries(anf, reg, builtins, empty_env())
@@ -458,22 +409,13 @@ pub fn suite() runner.Suite {
         .Atom(.ALocal(lid(10))),
       )
       mono := mk_mono_map([10], [MonoType.Int])
-      func := mk_func_def(
-        1,
-        "f",
-        [mk_param(0, .Vector(.Int)), mk_param(1, .Int)],
-        .Int,
-        body,
-        mono,
-      )
+      func := mk_func_def(1, "f", [mk_param(0, .Vector(.Int)), mk_param(1, .Int)], .Int, body, mono)
       anf := mk_module([func])
       reg := registry_with_layouts([MonoType.Int, MonoType.Vector(.Int)])
       result := insert_boundaries(anf, reg, empty_builtins(), empty_env())
       result_body := result.functions[0].body
       try assert.equal(count_unwraps_expr(result_body), 1)
-      unwrap_ty := try first_unwrap_mono(result_body).ok_or(
-        "no AUnwrapAnyref found",
-      )
+      unwrap_ty := try first_unwrap_mono(result_body).ok_or("no AUnwrapAnyref found")
 
       case unwrap_ty {
         .Int => .Ok({}),
@@ -516,20 +458,9 @@ pub fn suite() runner.Suite {
         .Atom(.ALocal(lid(10))),
       )
       mono := mk_mono_map([10], [MonoType.Byte])
-      func := mk_func_def(
-        1,
-        "f",
-        [mk_param(0, .String), mk_param(1, .Int)],
-        .Byte,
-        body,
-        mono,
-      )
+      func := mk_func_def(1, "f", [mk_param(0, .String), mk_param(1, .Int)], .Byte, body, mono)
       anf := mk_module([func])
-      reg := registry_with_layouts([
-        MonoType.String,
-        MonoType.Byte,
-        MonoType.Int,
-      ])
+      reg := registry_with_layouts([MonoType.String, MonoType.Byte, MonoType.Int])
       result := insert_boundaries(anf, reg, empty_builtins(), empty_env())
       result_body := result.functions[0].body
       try assert.equal(count_wraps_expr(result_body), 0)
@@ -582,14 +513,7 @@ pub fn suite() runner.Suite {
         .Atom(.ALocal(lid(10))),
       )
       mono := mk_mono_map([10], [MonoType.Int])
-      func := mk_func_def(
-        1,
-        "f",
-        [mk_param(0, .Vector(.Int))],
-        .Int,
-        body,
-        mono,
-      )
+      func := mk_func_def(1, "f", [mk_param(0, .Vector(.Int))], .Int, body, mono)
       anf := mk_module([func])
       reg := registry_with_layouts([MonoType.Int, MonoType.Vector(.Int)])
       result := insert_boundaries(anf, reg, builtins, empty_env())
@@ -610,18 +534,12 @@ pub fn suite() runner.Suite {
         "arr_set",
         "rt.arr",
         "set",
-        mk_abi(
-          [.Ref(true, .Named("\$Array")), .I32, .Anyref],
-          [.Ref(false, .Named("\$Array"))],
-        ),
+        mk_abi([.Ref(true, .Named("\$Array")), .I32, .Anyref], [.Ref(false, .Named("\$Array"))]),
       )
       set_fid := builtins.id("arr_set")
       body: AnfExpr = .Let(
         lid(10),
-        .ACall(
-          .AGlobalFunc(set_fid),
-          [.ALocal(lid(0)), .ALocal(lid(1)), .ALocal(lid(2))],
-        ),
+        .ACall(.AGlobalFunc(set_fid), [.ALocal(lid(0)), .ALocal(lid(1)), .ALocal(lid(2))]),
         .Atom(.ALocal(lid(10))),
       )
       mono := mk_mono_map([10], [MonoType.Vector(.Int)])
@@ -661,14 +579,7 @@ pub fn suite() runner.Suite {
         .Atom(.ALocal(lid(10))),
       )
       mono := mk_mono_map([10], [MonoType.Int])
-      func := mk_func_def(
-        1,
-        "f",
-        [mk_param(0, .Int), mk_param(1, .Int)],
-        .Int,
-        body,
-        mono,
-      )
+      func := mk_func_def(1, "f", [mk_param(0, .Int), mk_param(1, .Int)], .Int, body, mono)
       anf := mk_module([func])
       reg := registry_with_layouts([MonoType.Int])
       result := insert_boundaries(anf, reg, builtins, empty_env())
@@ -711,19 +622,13 @@ pub fn suite() runner.Suite {
 
       case result.functions[0].op_result_mono[11] {
         .Some(.Anyref_) => {},
-        .Some(_) => {
-          return assert.fail(
-            "expected wrap temp local 11 to be typed as Anyref_",
-          )
-        },
+        .Some(_) => { return assert.fail("expected wrap temp local 11 to be typed as Anyref_") },
         .None => { return assert.fail("missing wrap temp local 11") },
       }
 
       case result.functions[0].op_result_mono[12] {
         .Some(.Anyref_) => .Ok({}),
-        .Some(_) => assert.fail(
-          "expected raw result temp local 12 to be typed as Anyref_",
-        ),
+        .Some(_) => assert.fail("expected raw result temp local 12 to be typed as Anyref_"),
         .None => assert.fail("missing raw result temp local 12"),
       }
     },
@@ -784,9 +689,7 @@ pub fn suite() runner.Suite {
 
           case entry.abi.param_types[2] {
             .Anyref => {},
-            _ => {
-              return assert.fail("vector__set_unsafe param 2 should be anyref")
-            },
+            _ => { return assert.fail("vector__set_unsafe param 2 should be anyref") },
           }
         },
         .None => { return assert.fail("missing entry for vector__set_unsafe") },
@@ -884,20 +787,9 @@ pub fn suite() runner.Suite {
   ).test(
     "materializes global func at function-typed init boundary",
     fn() {
-      body: AnfExpr = .Let(
-        lid(10),
-        .AInit(.AGlobalFunc(fid(2))),
-        .Atom(.ALocal(lid(10))),
-      )
+      body: AnfExpr = .Let(lid(10), .AInit(.AGlobalFunc(fid(2))), .Atom(.ALocal(lid(10))))
       mono := mk_mono_map([10], [MonoType.Function([.Int], .Int)])
-      holder := mk_func_def(
-        1,
-        "holder",
-        [],
-        .Function([.Int], .Int),
-        body,
-        mono,
-      )
+      holder := mk_func_def(1, "holder", [], .Function([.Int], .Int), body, mono)
       target := mk_func_def(
         2,
         "target",
@@ -918,11 +810,7 @@ pub fn suite() runner.Suite {
   ).test(
     "materializes global func at function-typed assign boundary",
     fn() {
-      body: AnfExpr = .Let(
-        lid(11),
-        .AAssign(lid(0), .AGlobalFunc(fid(2))),
-        .Atom(.ALocal(lid(0))),
-      )
+      body: AnfExpr = .Let(lid(11), .AAssign(lid(0), .AGlobalFunc(fid(2))), .Atom(.ALocal(lid(0))))
       mono := mk_mono_map([11], [MonoType.Void])
       holder := mk_func_def(
         1,
@@ -952,23 +840,9 @@ pub fn suite() runner.Suite {
   ).test(
     "materializes global func in function-valued array literal",
     fn() {
-      body: AnfExpr = .Let(
-        lid(10),
-        .AArrayLit([.AGlobalFunc(fid(2))]),
-        .Atom(.ALocal(lid(10))),
-      )
-      mono := mk_mono_map(
-        [10],
-        [MonoType.Vector(MonoType.Function([.Int], .Int))],
-      )
-      holder := mk_func_def(
-        1,
-        "holder",
-        [],
-        .Vector(MonoType.Function([.Int], .Int)),
-        body,
-        mono,
-      )
+      body: AnfExpr = .Let(lid(10), .AArrayLit([.AGlobalFunc(fid(2))]), .Atom(.ALocal(lid(10))))
+      mono := mk_mono_map([10], [MonoType.Vector(MonoType.Function([.Int], .Int))])
+      holder := mk_func_def(1, "holder", [], .Vector(MonoType.Function([.Int], .Int)), body, mono)
       target := mk_func_def(
         2,
         "target",
@@ -1003,14 +877,7 @@ pub fn suite() runner.Suite {
         .Atom(.ALocal(lid(10))),
       )
       mono := mk_mono_map([10], [MonoType.Named(TypeId.{ id: 10 }, [])])
-      holder := mk_func_def(
-        1,
-        "holder",
-        [],
-        MonoType.Named(TypeId.{ id: 10 }, []),
-        body,
-        mono,
-      )
+      holder := mk_func_def(1, "holder", [], MonoType.Named(TypeId.{ id: 10 }, []), body, mono)
       target := mk_func_def(
         2,
         "target",
@@ -1075,22 +942,11 @@ pub fn suite() runner.Suite {
       env := env_with_record_and_sum()
       body: AnfExpr = .Let(
         lid(10),
-        .AVariant(
-          TypeId.{ id: 11 },
-          VariantId.{ id: 0 },
-          [.AGlobalFunc(fid(2))],
-        ),
+        .AVariant(TypeId.{ id: 11 }, VariantId.{ id: 0 }, [.AGlobalFunc(fid(2))]),
         .Atom(.ALocal(lid(10))),
       )
       mono := mk_mono_map([10], [MonoType.Named(TypeId.{ id: 11 }, [])])
-      holder := mk_func_def(
-        1,
-        "holder",
-        [],
-        MonoType.Named(TypeId.{ id: 11 }, []),
-        body,
-        mono,
-      )
+      holder := mk_func_def(1, "holder", [], MonoType.Named(TypeId.{ id: 11 }, []), body, mono)
       target := mk_func_def(
         2,
         "target",

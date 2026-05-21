@@ -69,10 +69,7 @@ fn no_captures() Dict<Int, Vector<CaptureParam>> { Dict.new() }
 
 fn mk_param(id: Int, ty: MonoType) Param { Param.{ local: lid(id), ty: ty } }
 
-fn mk_mono_map(entries: Vector<Int>, types: Vector<MonoType>) Dict<
-  Int,
-  MonoType,
-> {
+fn mk_mono_map(entries: Vector<Int>, types: Vector<MonoType>) Dict<Int, MonoType> {
   d: Dict<Int, MonoType> = Dict.new()
 
   for k, i in entries { d[k] = types[i] }
@@ -100,11 +97,7 @@ fn mk_func_def(
 }
 
 fn mk_module(funcs: Vector<AnfFunctionDef>) AnfModule {
-  AnfModule.{
-    functions: funcs,
-    init_func_id: .None,
-    extern_imports: Dict.new(),
-  }
+  AnfModule.{ functions: funcs, init_func_id: .None, extern_imports: Dict.new() }
 }
 
 fn mk_abi(params: Vector<ValType>, results: Vector<ValType>) AbiContract {
@@ -124,10 +117,7 @@ fn find_slot_id_by_local(pf: PreparedFunc, local_id: Int) Int {
   error("find_slot_id_by_local: missing slot for L${local_id}")
 }
 
-fn find_slot_id_by_local_result(pf: PreparedFunc, local_id: Int) Result<
-  Int,
-  String,
-> {
+fn find_slot_id_by_local_result(pf: PreparedFunc, local_id: Int) Result<Int, String> {
   for sid in pf.slots.keys() {
     case pf.slots[sid] {
       .Some(info) => if info.source_local.id == local_id {
@@ -151,8 +141,7 @@ fn count_wraps_expr(expr: AnfExpr) Int {
 fn count_wraps_op(op: AnfOp) Int {
   case op {
     .AWrapAnyref(_, _) => 1,
-    .AIf(_, then_e, else_e) => count_wraps_expr(then_e)
-    + count_wraps_expr(else_e),
+    .AIf(_, then_e, else_e) => count_wraps_expr(then_e) + count_wraps_expr(else_e),
     .AMatch(_, arms) => {
       s := 0
 
@@ -175,8 +164,7 @@ fn count_unwraps_expr(expr: AnfExpr) Int {
 fn count_unwraps_op(op: AnfOp) Int {
   case op {
     .AUnwrapAnyref(_, _) => 1,
-    .AIf(_, then_e, else_e) => count_unwraps_expr(then_e)
-    + count_unwraps_expr(else_e),
+    .AIf(_, then_e, else_e) => count_unwraps_expr(then_e) + count_unwraps_expr(else_e),
     .AMatch(_, arms) => {
       s := 0
 
@@ -218,12 +206,7 @@ pub fn suite() runner.Suite {
         mk_mono_map([10], [MonoType.Int]),
       )
       anf := mk_module([func])
-      prepared := prepare_backend(
-        anf,
-        empty_env(),
-        empty_builtins(),
-        no_captures(),
-      )
+      prepared := prepare_backend(anf, empty_env(), empty_builtins(), no_captures())
       result_body := prepared.anf.functions[0].body
       try assert.equal(count_wraps_expr(result_body), 0)
       try assert.equal(count_unwraps_expr(result_body), 0)
@@ -248,12 +231,7 @@ pub fn suite() runner.Suite {
         mk_mono_map([10], [MonoType.Int]),
       )
       anf := mk_module([func])
-      prepared := prepare_backend(
-        anf,
-        empty_env(),
-        empty_builtins(),
-        no_captures(),
-      )
+      prepared := prepare_backend(anf, empty_env(), empty_builtins(), no_captures())
       pf := prepared.funcs[0]
       try assert.equal(pf.params.len(), 1)
       try assert.equal(pf.locals.len(), 1)
@@ -411,11 +389,7 @@ pub fn suite() runner.Suite {
   ).test(
     "closure conversion rewrites hoisted body to explicit capture param",
     fn() {
-      outer_body: AnfExpr = .Let(
-        lid(10),
-        .AMakeClosure(fid(99), [lid(0)]),
-        .Atom(.ALocal(lid(10))),
-      )
+      outer_body: AnfExpr = .Let(lid(10), .AMakeClosure(fid(99), [lid(0)]), .Atom(.ALocal(lid(10))))
       outer := mk_func_def(
         1,
         "outer",
@@ -424,14 +398,7 @@ pub fn suite() runner.Suite {
         outer_body,
         mk_mono_map([10], [MonoType.Function([], .Int)]),
       )
-      inner := mk_func_def(
-        99,
-        "inner",
-        [],
-        .Int,
-        .Atom(.ALocal(lid(0))),
-        Dict.new(),
-      )
+      inner := mk_func_def(99, "inner", [], .Int, .Atom(.ALocal(lid(0))), Dict.new())
       converted := convert_closures(mk_module([outer, inner]), empty_env())
 
       case converted.captures[99] {
@@ -446,9 +413,7 @@ pub fn suite() runner.Suite {
           case rewritten.body {
             .Atom(.ALocal(l)) => try assert.equal(l.id, caps[0].param_local.id),
             _ => {
-              return .Err(
-                "rewritten hoisted body did not use the explicit capture param",
-              )
+              return .Err("rewritten hoisted body did not use the explicit capture param")
             },
           }
 
@@ -459,11 +424,7 @@ pub fn suite() runner.Suite {
   ).test(
     "closure conversion rewrites captured assign target to explicit capture param",
     fn() {
-      outer_body: AnfExpr = .Let(
-        lid(10),
-        .AMakeClosure(fid(99), [lid(0)]),
-        .Atom(.ALocal(lid(10))),
-      )
+      outer_body: AnfExpr = .Let(lid(10), .AMakeClosure(fid(99), [lid(0)]), .Atom(.ALocal(lid(10))))
       outer := mk_func_def(
         1,
         "outer",
@@ -472,19 +433,8 @@ pub fn suite() runner.Suite {
         outer_body,
         mk_mono_map([10], [MonoType.Function([], .Void)]),
       )
-      inner_body: AnfExpr = .Let(
-        lid(11),
-        .AAssign(lid(0), .ALitInt(42)),
-        .Atom(.ALocal(lid(11))),
-      )
-      inner := mk_func_def(
-        99,
-        "inner",
-        [],
-        .Void,
-        inner_body,
-        mk_mono_map([11], [MonoType.Void]),
-      )
+      inner_body: AnfExpr = .Let(lid(11), .AAssign(lid(0), .ALitInt(42)), .Atom(.ALocal(lid(11))))
+      inner := mk_func_def(99, "inner", [], .Void, inner_body, mk_mono_map([11], [MonoType.Void]))
       converted := convert_closures(mk_module([outer, inner]), empty_env())
 
       case converted.captures[99] {
@@ -493,14 +443,9 @@ pub fn suite() runner.Suite {
           rewritten := converted.anf.functions[1]
 
           case rewritten.body {
-            .Let(_, .AAssign(target, _), _) => try assert.equal(
-              target.id,
-              caps[0].param_local.id,
-            ),
+            .Let(_, .AAssign(target, _), _) => try assert.equal(target.id, caps[0].param_local.id),
             _ => {
-              return .Err(
-                "rewritten hoisted body did not rewrite captured assign target",
-              )
+              return .Err("rewritten hoisted body did not rewrite captured assign target")
             },
           }
 
@@ -511,11 +456,7 @@ pub fn suite() runner.Suite {
   ).test(
     "closure conversion rewrites nested closure free vars to rewritten capture params",
     fn() {
-      outer_body: AnfExpr = .Let(
-        lid(10),
-        .AMakeClosure(fid(99), [lid(0)]),
-        .Atom(.ALocal(lid(10))),
-      )
+      outer_body: AnfExpr = .Let(lid(10), .AMakeClosure(fid(99), [lid(0)]), .Atom(.ALocal(lid(10))))
       outer := mk_func_def(
         1,
         "outer",
@@ -537,18 +478,8 @@ pub fn suite() runner.Suite {
         middle_body,
         mk_mono_map([11], [MonoType.Function([], .Int)]),
       )
-      inner := mk_func_def(
-        100,
-        "inner",
-        [],
-        .Int,
-        .Atom(.ALocal(lid(0))),
-        Dict.new(),
-      )
-      converted := convert_closures(
-        mk_module([outer, middle, inner]),
-        empty_env(),
-      )
+      inner := mk_func_def(100, "inner", [], .Int, .Atom(.ALocal(lid(0))), Dict.new())
+      converted := convert_closures(mk_module([outer, middle, inner]), empty_env())
 
       case converted.captures[99] {
         .None => .Err("missing closure capture metadata for middle"),
@@ -561,9 +492,7 @@ pub fn suite() runner.Suite {
               try assert.equal(free_vars[0].id, middle_caps[0].param_local.id)
               .Ok({})
             },
-            _ => .Err(
-              "rewritten middle body did not preserve nested closure creation",
-            ),
+            _ => .Err("rewritten middle body did not preserve nested closure creation"),
           }
         },
       }
@@ -572,11 +501,7 @@ pub fn suite() runner.Suite {
     "closure conversion resolves captured pattern local mono",
     fn() {
       some_arm := AnfMatchArm.{
-        pattern: .Variant(
-          TypeId.{ id: 0 },
-          .{ id: 1 },
-          [CorePattern.Var(lid(1))],
-        ),
+        pattern: .Variant(TypeId.{ id: 0 }, .{ id: 1 }, [CorePattern.Var(lid(1))]),
         body: .Let(lid(11), .AMakeClosure(fid(99), [lid(1)]), .Atom(.ALitVoid)),
       }
       none_arm := AnfMatchArm.{
@@ -596,14 +521,7 @@ pub fn suite() runner.Suite {
         outer_body,
         mk_mono_map([10, 11], [MonoType.Void, MonoType.Function([], .String)]),
       )
-      inner := mk_func_def(
-        99,
-        "inner",
-        [],
-        .String,
-        .Atom(.ALocal(lid(0))),
-        Dict.new(),
-      )
+      inner := mk_func_def(99, "inner", [], .String, .Atom(.ALocal(lid(0))), Dict.new())
       converted := convert_closures(mk_module([outer, inner]), empty_env())
 
       case converted.captures[99] {
@@ -627,11 +545,7 @@ pub fn suite() runner.Suite {
       body: AnfExpr = .Atom(.ALitVoid)
       func := mk_func_def(1, "h", [], .Void, body, Dict.new())
       anf := mk_module([func])
-      cap: CaptureParam = CaptureParam.{
-        local_id: lid(0),
-        param_local: lid(100),
-        ty: .Int,
-      }
+      cap: CaptureParam = CaptureParam.{ local_id: lid(0), param_local: lid(100), ty: .Int }
       captures: Dict<Int, Vector<CaptureParam>> = Dict.new()
       captures[42] = [cap]
       prepared := prepare_backend(anf, empty_env(), empty_builtins(), captures)

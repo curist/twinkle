@@ -226,9 +226,7 @@ pub fn suite() runner.Suite {
         },
       ).ok_or("no range group")
       _ := try find_sig(range_group.sigs, "range").ok_or("no range sig")
-      _ := try find_sig(range_group.sigs, "range_step").ok_or(
-        "no range_step sig",
-      )
+      _ := try find_sig(range_group.sigs, "range_step").ok_or("no range_step sig")
       .Ok({})
     },
   ).test(

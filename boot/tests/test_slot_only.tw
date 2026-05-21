@@ -1,6 +1,4 @@
 use tests.runner
 use tests.suites.slot_assign_suite
 
-runner.run_all([
-  slot_assign_suite.suite(),
-])
+runner.run_all([slot_assign_suite.suite()])

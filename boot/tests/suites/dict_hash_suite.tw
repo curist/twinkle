@@ -2,116 +2,171 @@
 //
 // Verifies wyhash v3 migration correctness: known collision pair, insertion
 // order, generated-symbol workloads, and wyhash v3 parity vectors.
-
-use tests.runner
 use tests.assert
+use tests.runner
 
 pub fn suite() runner.Suite {
-  runner.suite("dict hash")
-
-    // -- FNV collision regression --
-    // These two strings collided under FNV-1a 32-bit, causing a real lookup bug.
-    // Under wyhash v3 64-bit they must not collide and both must retrieve correctly.
-
-    .test("FNV collision pair: both keys retrieve correctly", fn() {
+  runner.suite("dict hash").test(
+    "FNV collision pair: both keys retrieve correctly",
+    fn() {
       d: Dict<String, Int> = Dict.new()
-      d["user__$f2396_mark_published_version"] = 1
-      d["user__$str_333_get"] = 2
+      d["user__\$f2396_mark_published_version"] = 1
+      d["user__\$str_333_get"] = 2
       try assert.equal(d.len(), 2)
-      v1 := case d["user__$f2396_mark_published_version"] { .Some(v) => v, .None => -1 }
-      v2 := case d["user__$str_333_get"] { .Some(v) => v, .None => -1 }
+      v1 := case d["user__\$f2396_mark_published_version"] {
+        .Some(v) => v,
+        .None => -1,
+      }
+      v2 := case d["user__\$str_333_get"] {
+        .Some(v) => v,
+        .None => -1,
+      }
       try assert.equal(v1, 1)
       try assert.equal(v2, 2)
       .Ok({})
-    })
-
-    .test("FNV collision pair: update one preserves the other", fn() {
+    },
+  ).test(
+    "FNV collision pair: update one preserves the other",
+    fn() {
       d: Dict<String, Int> = Dict.new()
-      d["user__$f2396_mark_published_version"] = 1
-      d["user__$str_333_get"] = 2
-      d["user__$f2396_mark_published_version"] = 99
+      d["user__\$f2396_mark_published_version"] = 1
+      d["user__\$str_333_get"] = 2
+      d["user__\$f2396_mark_published_version"] = 99
       try assert.equal(d.len(), 2)
-      v1 := case d["user__$f2396_mark_published_version"] { .Some(v) => v, .None => -1 }
-      v2 := case d["user__$str_333_get"] { .Some(v) => v, .None => -1 }
+      v1 := case d["user__\$f2396_mark_published_version"] {
+        .Some(v) => v,
+        .None => -1,
+      }
+      v2 := case d["user__\$str_333_get"] {
+        .Some(v) => v,
+        .None => -1,
+      }
       try assert.equal(v1, 99)
       try assert.equal(v2, 2)
       .Ok({})
-    })
-
-    .test("FNV collision pair: remove one preserves the other", fn() {
+    },
+  ).test(
+    "FNV collision pair: remove one preserves the other",
+    fn() {
       d: Dict<String, Int> = Dict.new()
-      d["user__$f2396_mark_published_version"] = 1
-      d["user__$str_333_get"] = 2
-      d = d.remove("user__$f2396_mark_published_version")
+      d["user__\$f2396_mark_published_version"] = 1
+      d["user__\$str_333_get"] = 2
+      d = .remove("user__\$f2396_mark_published_version")
       try assert.equal(d.len(), 1)
-      try assert.is_none(d["user__$f2396_mark_published_version"])
-      v2 := case d["user__$str_333_get"] { .Some(v) => v, .None => -1 }
+      try assert.is_none(d["user__\$f2396_mark_published_version"])
+      v2 := case d["user__\$str_333_get"] {
+        .Some(v) => v,
+        .None => -1,
+      }
       try assert.equal(v2, 2)
       .Ok({})
-    })
-
-    // -- Insertion order --
-
-    .test("insertion order preserved through set/overwrite", fn() {
+    },
+  ).test(
+    "insertion order preserved through set/overwrite",
+    fn() {
       d: Dict<String, Int> = Dict.new()
       d["c"] = 3
       d["a"] = 1
       d["b"] = 2
-      d["a"] = 10  // overwrite doesn't change order
+      d["a"] = 10 // overwrite doesn't change order
       ks := d.keys()
       try assert.equal(ks.len(), 3)
       try assert.equal(ks[0], "c")
       try assert.equal(ks[1], "a")
       try assert.equal(ks[2], "b")
       .Ok({})
-    })
-
-    .test("insertion order preserved after remove", fn() {
+    },
+  ).test(
+    "insertion order preserved after remove",
+    fn() {
       d: Dict<String, Int> = Dict.new()
       d["x"] = 1
       d["y"] = 2
       d["z"] = 3
-      d = d.remove("y")
+      d = .remove("y")
       ks := d.keys()
       try assert.equal(ks.len(), 2)
       try assert.equal(ks[0], "x")
       try assert.equal(ks[1], "z")
       .Ok({})
-    })
-
-    // -- Generated-symbol workloads --
-
-    .test("generated symbol names survive large dict", fn() {
+    },
+  ).test(
+    "generated symbol names survive large dict",
+    fn() {
       // Simulates compiler linker workloads with $-prefixed generated names
       d: Dict<String, Int> = Dict.new()
       i := 0
+
       for i < 500 {
-        d["$f${i}_lambda"] = i
-        d["$str_${i}_get"] = i + 10000
+        d["\$f${i}_lambda"] = i
+        d["\$str_${i}_get"] = i + 10000
         i = i + 1
       }
+
       try assert.equal(d.len(), 1000)
       // Spot-check retrieval
-      try assert.equal(case d["$f0_lambda"] { .Some(v) => v, .None => -1 }, 0)
-      try assert.equal(case d["$f499_lambda"] { .Some(v) => v, .None => -1 }, 499)
-      try assert.equal(case d["$str_0_get"] { .Some(v) => v, .None => -1 }, 10000)
-      try assert.equal(case d["$str_499_get"] { .Some(v) => v, .None => -1 }, 10499)
+      try assert.equal(
+        case d["\$f0_lambda"] {
+          .Some(v) => v,
+          .None => -1,
+        },
+        0,
+      )
+      try assert.equal(
+        case d["\$f499_lambda"] {
+          .Some(v) => v,
+          .None => -1,
+        },
+        499,
+      )
+      try assert.equal(
+        case d["\$str_0_get"] {
+          .Some(v) => v,
+          .None => -1,
+        },
+        10000,
+      )
+      try assert.equal(
+        case d["\$str_499_get"] {
+          .Some(v) => v,
+          .None => -1,
+        },
+        10499,
+      )
       .Ok({})
-    })
-
-    // -- Int key coverage --
-
-    .test("int keys with wide value range", fn() {
+    },
+  ).test(
+    "int keys with wide value range",
+    fn() {
       d: Dict<Int, String> = Dict.new()
       d[0] = "zero"
       d[1] = "one"
       d[0 - 1] = "neg_one"
       d[42] = "forty_two"
-      d[9223372036854775807] = "max"  // i64 max
+      d[9223372036854775807] = "max" // i64 max
       try assert.equal(d.len(), 5)
-      try assert.equal(case d[0] { .Some(v) => v, .None => "" }, "zero")
-      try assert.equal(case d[0 - 1] { .Some(v) => v, .None => "" }, "neg_one")
-      try assert.equal(case d[9223372036854775807] { .Some(v) => v, .None => "" }, "max")
+      try assert.equal(
+        case d[0] {
+          .Some(v) => v,
+          .None => "",
+        },
+        "zero",
+      )
+      try assert.equal(
+        case d[0 - 1] {
+          .Some(v) => v,
+          .None => "",
+        },
+        "neg_one",
+      )
+      try assert.equal(
+        case d[9223372036854775807] {
+          .Some(v) => v,
+          .None => "",
+        },
+        "max",
+      )
       .Ok({})
-    })
+    },
+  )
 }

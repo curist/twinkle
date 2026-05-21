@@ -1,8 +1,6 @@
 use compiler.builder_family.{BuilderConfig}
 use compiler.core_ir.{FuncId, LocalId}
-use compiler.opt.builder_region.{
-  BuilderInit, BuilderRegion, lower_builder_region,
-}
+use compiler.opt.builder_region.{BuilderInit, BuilderRegion, lower_builder_region}
 use tests.assert
 use tests.runner
 
@@ -57,11 +55,7 @@ fn test_lower_builder_region_uses_builder_new() Result<Void, String> {
         .Let(
           freeze_local,
           .ACall(.AGlobalFunc(freeze_f), freeze_args),
-          .Let(
-            assign_local,
-            .AAssign(base_local, value),
-            .Atom(.ALocal(cont_local)),
-          ),
+          .Let(assign_local, .AAssign(base_local, value), .Atom(.ALocal(cont_local))),
         ),
       ),
     ) => {
@@ -118,8 +112,5 @@ pub fn suite() runner.Suite {
   runner.suite("Opt: Builder Region").test(
     "lower builder region uses builder_new",
     test_lower_builder_region_uses_builder_new,
-  ).test(
-    "lower builder region uses builder_from",
-    test_lower_builder_region_uses_builder_from_base,
-  )
+  ).test("lower builder region uses builder_from", test_lower_builder_region_uses_builder_from_base)
 }

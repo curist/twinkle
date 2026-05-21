@@ -1,6 +1,6 @@
 use compiler.codegen.wasm_ir.{
-  DataSegment, ExportDef, FieldDef, FuncDef, GlobalDef, HeapType, ImportDef,
-  Instr, TypeDef, ValType, WasmModule,
+  DataSegment, ExportDef, FieldDef, FuncDef, GlobalDef, HeapType, ImportDef, Instr, TypeDef, ValType,
+  WasmModule,
 }
 use compiler.codegen.wat.{emit_wat_unlinked_for_test}
 use tests.assert
@@ -172,18 +172,9 @@ fn test_struct_type_def() Result<Void, String> {
     ),
   ])
   wat := emit_wat_unlinked_for_test(m)
-  try assert.ok(
-    contains(wat, "(type \$Point (struct"),
-    "should have struct type",
-  )
-  try assert.ok(
-    contains(wat, "(field \$x (mut i64))"),
-    "should have mutable field x",
-  )
-  try assert.ok(
-    contains(wat, "(field \$y (mut i64))"),
-    "should have mutable field y",
-  )
+  try assert.ok(contains(wat, "(type \$Point (struct"), "should have struct type")
+  try assert.ok(contains(wat, "(field \$x (mut i64))"), "should have mutable field x")
+  try assert.ok(contains(wat, "(field \$y (mut i64))"), "should have mutable field y")
   .Ok({})
 }
 
@@ -203,30 +194,17 @@ fn test_struct_type_with_supertype() Result<Void, String> {
 
 fn test_non_final_struct_without_supertype() Result<Void, String> {
   m := mod_with_types([
-    TypeDef.Struct(
-      "Base",
-      [FieldDef.{ name: .None, mutable: false, ty: .I32 }],
-      .None,
-      false,
-    ),
+    TypeDef.Struct("Base", [FieldDef.{ name: .None, mutable: false, ty: .I32 }], .None, false),
   ])
   wat := emit_wat_unlinked_for_test(m)
-  try assert.ok(
-    contains(wat, "(type \$Base (sub (struct"),
-    "non-final should have sub wrapper",
-  )
+  try assert.ok(contains(wat, "(type \$Base (sub (struct"), "non-final should have sub wrapper")
   .Ok({})
 }
 
 fn test_array_type_def() Result<Void, String> {
-  m := mod_with_types([
-    TypeDef.Array("MyArr", FieldDef.{ name: .None, mutable: true, ty: .Anyref }),
-  ])
+  m := mod_with_types([TypeDef.Array("MyArr", FieldDef.{ name: .None, mutable: true, ty: .Anyref })])
   wat := emit_wat_unlinked_for_test(m)
-  try assert.ok(
-    contains(wat, "(type \$MyArr (array (mut anyref)))"),
-    "should have array type",
-  )
+  try assert.ok(contains(wat, "(type \$MyArr (array (mut anyref)))"), "should have array type")
   .Ok({})
 }
 
@@ -295,50 +273,26 @@ fn test_function_with_extra_locals() Result<Void, String> {
 
 fn test_global_emission() Result<Void, String> {
   m := mod_with_globals([
-    GlobalDef.{
-      name: "g1",
-      mutable: true,
-      ty: .I64,
-      init: [Instr.I64Const(42)],
-    },
-    GlobalDef.{
-      name: "g2",
-      mutable: false,
-      ty: .I32,
-      init: [Instr.I32Const(0)],
-    },
+    GlobalDef.{ name: "g1", mutable: true, ty: .I64, init: [Instr.I64Const(42)] },
+    GlobalDef.{ name: "g2", mutable: false, ty: .I32, init: [Instr.I32Const(0)] },
   ])
   wat := emit_wat_unlinked_for_test(m)
-  try assert.ok(
-    contains(wat, "(global \$g1 (mut i64) i64.const 42)"),
-    "mutable global",
-  )
-  try assert.ok(
-    contains(wat, "(global \$g2 i32 i32.const 0)"),
-    "immutable global",
-  )
+  try assert.ok(contains(wat, "(global \$g1 (mut i64) i64.const 42)"), "mutable global")
+  try assert.ok(contains(wat, "(global \$g2 i32 i32.const 0)"), "immutable global")
   .Ok({})
 }
 
 fn test_data_segment_passive() Result<Void, String> {
-  m := mod_with_data([
-    DataSegment.{ name: "d0", offset: [], bytes: [65, 66, 67] },
-  ])
+  m := mod_with_data([DataSegment.{ name: "d0", offset: [], bytes: [65, 66, 67] }])
   wat := emit_wat_unlinked_for_test(m)
-  try assert.ok(
-    contains(wat, "(data \$d0 \"\\41\\42\\43\")"),
-    "passive data with hex bytes",
-  )
+  try assert.ok(contains(wat, "(data \$d0 \"\\41\\42\\43\")"), "passive data with hex bytes")
   .Ok({})
 }
 
 fn test_export_emission() Result<Void, String> {
   m := mod_with_exports([ExportDef.{ wasm_name: "main", func_sym: "f_main" }])
   wat := emit_wat_unlinked_for_test(m)
-  try assert.ok(
-    contains(wat, "(export \"main\" (func \$f_main))"),
-    "should have export",
-  )
+  try assert.ok(contains(wat, "(export \"main\" (func \$f_main))"), "should have export")
   .Ok({})
 }
 
@@ -391,45 +345,21 @@ fn test_if_block_loop_emission() Result<Void, String> {
 
 fn test_ref_func_declarative_elem() Result<Void, String> {
   m := mod_with_funcs([
-    FuncDef.{
-      name: "f",
-      params: [],
-      results: [],
-      locals: [],
-      body: [Instr.RefFunc("target")],
-    },
+    FuncDef.{ name: "f", params: [], results: [], locals: [], body: [Instr.RefFunc("target")] },
   ])
   wat := emit_wat_unlinked_for_test(m)
-  try assert.ok(
-    contains(wat, "(elem declare func \$target)"),
-    "should have declarative elem",
-  )
+  try assert.ok(contains(wat, "(elem declare func \$target)"), "should have declarative elem")
   .Ok({})
 }
 
 fn test_functype_deduplication() Result<Void, String> {
   m := mod_with_funcs([
-    FuncDef.{
-      name: "f1",
-      params: [.I64],
-      results: [.I64],
-      locals: [],
-      body: [Instr.LocalGet(0)],
-    },
-    FuncDef.{
-      name: "f2",
-      params: [.I64],
-      results: [.I64],
-      locals: [],
-      body: [Instr.LocalGet(0)],
-    },
+    FuncDef.{ name: "f1", params: [.I64], results: [.I64], locals: [], body: [Instr.LocalGet(0)] },
+    FuncDef.{ name: "f2", params: [.I64], results: [.I64], locals: [], body: [Instr.LocalGet(0)] },
   ])
   wat := emit_wat_unlinked_for_test(m)
   try assert.ok(contains(wat, "\$functype_0"), "should have functype_0")
-  try assert.ok(
-    !contains(wat, "\$functype_1"),
-    "should NOT have functype_1 (deduped)",
-  )
+  try assert.ok(!contains(wat, "\$functype_1"), "should NOT have functype_1 (deduped)")
   .Ok({})
 }
 
@@ -438,16 +368,8 @@ fn test_ref_types_in_val_type() Result<Void, String> {
     TypeDef.Struct(
       "S",
       [
-        FieldDef.{
-          name: .None,
-          mutable: false,
-          ty: ValType.Ref(true, HeapType.Named("Foo")),
-        },
-        FieldDef.{
-          name: .None,
-          mutable: false,
-          ty: ValType.Ref(false, HeapType.Eq),
-        },
+        FieldDef.{ name: .None, mutable: false, ty: ValType.Ref(true, HeapType.Named("Foo")) },
+        FieldDef.{ name: .None, mutable: false, ty: ValType.Ref(false, HeapType.Eq) },
       ],
       .None,
       true,
@@ -484,35 +406,29 @@ fn test_struct_array_instructions() Result<Void, String> {
 
 // ── Suite ───────────────────────────────────────────────────────────
 pub fn suite() runner.Suite {
-  runner.suite("wat (M8)").test(
-    "empty module emits (module)",
-    test_empty_module,
-  ).test("struct type def", test_struct_type_def).test(
-    "struct type with supertype",
-    test_struct_type_with_supertype,
-  ).test(
+  runner.suite("wat (M8)").test("empty module emits (module)", test_empty_module).test(
+    "struct type def",
+    test_struct_type_def,
+  ).test("struct type with supertype", test_struct_type_with_supertype).test(
     "non-final struct without supertype",
     test_non_final_struct_without_supertype,
-  ).test("array type def", test_array_type_def).test(
-    "func type def",
-    test_func_type_def,
-  ).test("import emission", test_import_emission).test(
-    "function with body",
-    test_function_with_body,
-  ).test("function with extra locals", test_function_with_extra_locals).test(
-    "global emission",
-    test_global_emission,
-  ).test("data segment passive", test_data_segment_passive).test(
-    "export emission",
-    test_export_emission,
-  ).test("start function", test_start_function).test(
+  ).test("array type def", test_array_type_def).test("func type def", test_func_type_def).test(
+    "import emission",
+    test_import_emission,
+  ).test("function with body", test_function_with_body).test(
+    "function with extra locals",
+    test_function_with_extra_locals,
+  ).test("global emission", test_global_emission).test(
+    "data segment passive",
+    test_data_segment_passive,
+  ).test("export emission", test_export_emission).test("start function", test_start_function).test(
     "if/block/loop emission",
     test_if_block_loop_emission,
-  ).test(
-    "ref.func generates declarative elem segment",
-    test_ref_func_declarative_elem,
-  ).test("functype deduplication", test_functype_deduplication).test(
-    "ref types in val_type",
-    test_ref_types_in_val_type,
-  ).test("struct/array instructions", test_struct_array_instructions)
+  ).test("ref.func generates declarative elem segment", test_ref_func_declarative_elem).test(
+    "functype deduplication",
+    test_functype_deduplication,
+  ).test("ref types in val_type", test_ref_types_in_val_type).test(
+    "struct/array instructions",
+    test_struct_array_instructions,
+  )
 }

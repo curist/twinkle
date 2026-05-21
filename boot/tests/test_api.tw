@@ -1,21 +1,21 @@
 use tests.runner
-use tests.suites.lib_json_suite
-use tests.suites.assert_helpers_suite
-use tests.suites.api_option_result_suite
 use tests.suites.api_cell_suite
-use tests.suites.api_vector_suite
-use tests.suites.api_string_suite
 use tests.suites.api_dict_suite
+use tests.suites.api_option_result_suite
 use tests.suites.api_range_iterator_suite
-use tests.suites.stdlib_path_suite
-use tests.suites.stdlib_host_suite
-use tests.suites.source_suite
-use tests.suites.module_loader_suite
+use tests.suites.api_string_suite
+use tests.suites.api_vector_suite
+use tests.suites.assert_helpers_suite
 use tests.suites.dependency_graph_suite
-use tests.suites.query_keys_suite
-use tests.suites.query_analyze_suite
 use tests.suites.imports_suite
+use tests.suites.lib_json_suite
+use tests.suites.module_loader_suite
 use tests.suites.multi_module_suite
+use tests.suites.query_analyze_suite
+use tests.suites.query_keys_suite
+use tests.suites.source_suite
+use tests.suites.stdlib_host_suite
+use tests.suites.stdlib_path_suite
 
 runner.run_all([
   lib_json_suite.suite(),

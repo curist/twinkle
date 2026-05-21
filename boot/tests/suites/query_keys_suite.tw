@@ -1,55 +1,55 @@
-use tests.runner
-use tests.assert
 use lib.query.keys
+use tests.assert
+use tests.runner
 
 pub fn suite() runner.Suite {
-  runner.suite("query keys")
-
-    // -- hash_text: verified against Rust wyhash v3 reference --
-
-    .test("hash_text empty string matches reference", fn() {
+  runner.suite("query keys").test(
+    "hash_text empty string matches reference",
+    fn() {
       // Rust: hash_text("") = 4808886099364463827i64
       try assert.equal(keys.hash_text(""), 4808886099364463827)
       .Ok({})
-    })
-
-    .test("hash_text single char matches reference", fn() {
+    },
+  ).test(
+    "hash_text single char matches reference",
+    fn() {
       // Rust: hash_text("a") = 7852112099385141351i64
       try assert.equal(keys.hash_text("a"), 7852112099385141351)
       .Ok({})
-    })
-
-    .test("hash_text multi-char matches reference", fn() {
+    },
+  ).test(
+    "hash_text multi-char matches reference",
+    fn() {
       // Rust: hash_text("hello") = -383672018962587131i64
       try assert.equal(keys.hash_text("hello"), 0 - 383672018962587131)
       .Ok({})
-    })
-
-    .test("hash_text stage name matches reference", fn() {
+    },
+  ).test(
+    "hash_text stage name matches reference",
+    fn() {
       // Rust: hash_text("parse") = -7279295567456500006i64
       try assert.equal(keys.hash_text("parse"), 0 - 7279295567456500006)
       .Ok({})
-    })
-
-    // -- determinism --
-
-    .test("hash_text is deterministic", fn() {
+    },
+  ).test(
+    "hash_text is deterministic",
+    fn() {
       a := keys.hash_text("test string")
       b := keys.hash_text("test string")
       try assert.equal(a, b)
       .Ok({})
-    })
-
-    .test("hash_text different inputs produce different hashes", fn() {
+    },
+  ).test(
+    "hash_text different inputs produce different hashes",
+    fn() {
       a := keys.hash_text("foo")
       b := keys.hash_text("bar")
       try assert.is_true(a != b)
       .Ok({})
-    })
-
-    // -- parse_key: verified against Rust reference --
-
-    .test("parse_key matches reference", fn() {
+    },
+  ).test(
+    "parse_key matches reference",
+    fn() {
       source_hash := keys.hash_text("fn main() {}")
       // Verify source hash first
       try assert.equal(source_hash, 0 - 6247076241900209079)
@@ -57,56 +57,54 @@ pub fn suite() runner.Suite {
       // Rust: parse_key("test.tw", source_hash) = -8184021968052220895i64
       try assert.equal(pk, 0 - 8184021968052220895)
       .Ok({})
-    })
-
-    .test("parse_key differs for different paths", fn() {
+    },
+  ).test(
+    "parse_key differs for different paths",
+    fn() {
       sh := keys.hash_text("source")
       a := keys.parse_key("a.tw", sh)
       b := keys.parse_key("b.tw", sh)
       try assert.is_true(a != b)
       .Ok({})
-    })
-
-    .test("parse_key differs for different source", fn() {
+    },
+  ).test(
+    "parse_key differs for different source",
+    fn() {
       a := keys.parse_key("test.tw", keys.hash_text("v1"))
       b := keys.parse_key("test.tw", keys.hash_text("v2"))
       try assert.is_true(a != b)
       .Ok({})
-    })
-
-    // -- resolve_key --
-
-    .test("resolve_key includes deps_hash", fn() {
+    },
+  ).test(
+    "resolve_key includes deps_hash",
+    fn() {
       sh := keys.hash_text("source")
       a := keys.resolve_key("test.tw", sh, 100)
       b := keys.resolve_key("test.tw", sh, 200)
       try assert.is_true(a != b)
       .Ok({})
-    })
-
-    // -- typecheck_key --
-
-    .test("typecheck_key differs by allow_host_builtins", fn() {
+    },
+  ).test(
+    "typecheck_key differs by allow_host_builtins",
+    fn() {
       sh := keys.hash_text("source")
       a := keys.typecheck_key("test.tw", sh, 0, true)
       b := keys.typecheck_key("test.tw", sh, 0, false)
       try assert.is_true(a != b)
       .Ok({})
-    })
-
-    // -- lower_key --
-
-    .test("lower_key differs by next_global_local_id", fn() {
+    },
+  ).test(
+    "lower_key differs by next_global_local_id",
+    fn() {
       sh := keys.hash_text("source")
       a := keys.lower_key("test.tw", sh, 0, 100)
       b := keys.lower_key("test.tw", sh, 0, 200)
       try assert.is_true(a != b)
       .Ok({})
-    })
-
-    // -- deps_hash: verified against Rust reference --
-
-    .test("deps_hash matches reference", fn() {
+    },
+  ).test(
+    "deps_hash matches reference",
+    fn() {
       // Rust: deps_hash([("a.tw", 100), ("b.tw", 200)]) = -3408744791725452791i64
       entries: Vector<keys.DepEntry> = [
         keys.DepEntry.{ path: "a.tw", hash: 100 },
@@ -114,9 +112,10 @@ pub fn suite() runner.Suite {
       ]
       try assert.equal(keys.deps_hash(entries), 0 - 3408744791725452791)
       .Ok({})
-    })
-
-    .test("deps_hash is order-independent", fn() {
+    },
+  ).test(
+    "deps_hash is order-independent",
+    fn() {
       // Entries should be sorted by path internally
       forward: Vector<keys.DepEntry> = [
         keys.DepEntry.{ path: "a.tw", hash: 1 },
@@ -128,29 +127,28 @@ pub fn suite() runner.Suite {
       ]
       try assert.equal(keys.deps_hash(forward), keys.deps_hash(reversed))
       .Ok({})
-    })
-
-    .test("deps_hash empty entries", fn() {
+    },
+  ).test(
+    "deps_hash empty entries",
+    fn() {
       entries: Vector<keys.DepEntry> = []
       // Should still produce a valid hash (just hash_text("deps"))
       result := keys.deps_hash(entries)
       try assert.is_true(result != 0)
       .Ok({})
-    })
-
-    // -- module_hash: verified against Rust reference --
-
-    .test("module_hash matches reference", fn() {
+    },
+  ).test(
+    "module_hash matches reference",
+    fn() {
       source_hash := keys.hash_text("fn main() {}")
-      dh := 0 - 3408744791725452791  // from deps_hash test above
+      dh := 0 - 3408744791725452791 // from deps_hash test above
       // Rust: module_hash(source_hash, dh) = 5800117160120315122i64
       try assert.equal(keys.module_hash(source_hash, dh), 5800117160120315122)
       .Ok({})
-    })
-
-    // -- context_hash --
-
-    .test("context_hash is order-independent", fn() {
+    },
+  ).test(
+    "context_hash is order-independent",
+    fn() {
       a: Vector<keys.DepEntry> = [
         keys.DepEntry.{ path: "x.tw", hash: 10 },
         keys.DepEntry.{ path: "y.tw", hash: 20 },
@@ -161,35 +159,30 @@ pub fn suite() runner.Suite {
       ]
       try assert.equal(keys.context_hash(a), keys.context_hash(b))
       .Ok({})
-    })
-
-    .test("context_hash differs from deps_hash for same entries", fn() {
-      entries: Vector<keys.DepEntry> = [
-        keys.DepEntry.{ path: "a.tw", hash: 1 },
-      ]
+    },
+  ).test(
+    "context_hash differs from deps_hash for same entries",
+    fn() {
+      entries: Vector<keys.DepEntry> = [keys.DepEntry.{ path: "a.tw", hash: 1 }]
       // context_hash uses "ctx" tag, deps_hash uses "deps" tag
       try assert.is_true(keys.context_hash(entries) != keys.deps_hash(entries))
       .Ok({})
-    })
-
-    // -- with_context --
-
-    .test("with_context combines base and context", fn() {
+    },
+  ).test(
+    "with_context combines base and context",
+    fn() {
       base := keys.parse_key("test.tw", keys.hash_text("src"))
-      ctx := keys.context_hash([
-        keys.DepEntry.{ path: "dep.tw", hash: 42 },
-      ])
+      ctx := keys.context_hash([keys.DepEntry.{ path: "dep.tw", hash: 42 }])
       result := keys.with_context(base, ctx)
       // Should differ from base alone
       try assert.is_true(result != base)
       // Should be deterministic
       try assert.equal(result, keys.with_context(base, ctx))
       .Ok({})
-    })
-
-    // -- schema version sensitivity --
-
-    .test("keys change when schema version would change", fn() {
+    },
+  ).test(
+    "keys change when schema version would change",
+    fn() {
       // parse_key includes schema version in the mix
       // We can't change the version at runtime, but we verify
       // that the key incorporates it (same inputs, same output)
@@ -198,5 +191,6 @@ pub fn suite() runner.Suite {
       b := keys.parse_key("test.tw", sh)
       try assert.equal(a, b)
       .Ok({})
-    })
+    },
+  )
 }

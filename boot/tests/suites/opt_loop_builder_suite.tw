@@ -29,10 +29,7 @@ fn mock_builder_config() BuilderConfig {
   }
 }
 
-fn test_rewrite_loop_region_uses_builder_new_for_known_empty() Result<
-  Void,
-  String,
-> {
+fn test_rewrite_loop_region_uses_builder_new_for_known_empty() Result<Void, String> {
   loop_body: AnfExpr = .Let(
     lid(1),
     .ACall(.AGlobalFunc(mock_vec_push()), [.ALocal(lid(0)), .ALitInt(1)]),
@@ -63,10 +60,7 @@ fn test_rewrite_loop_region_uses_builder_new_for_known_empty() Result<
   }
 }
 
-fn test_rewrite_loop_region_uses_builder_from_for_non_empty() Result<
-  Void,
-  String,
-> {
+fn test_rewrite_loop_region_uses_builder_from_for_non_empty() Result<Void, String> {
   loop_body: AnfExpr = .Let(
     lid(1),
     .ACall(.AGlobalFunc(mock_vec_push()), [.ALocal(lid(0)), .ALitInt(1)]),
@@ -103,11 +97,7 @@ fn test_rewrite_loop_region_uses_builder_from_for_non_empty() Result<
 }
 
 fn test_rewrite_loop_region_rejects_non_push_base_use() Result<Void, String> {
-  loop_body: AnfExpr = .Let(
-    lid(1),
-    .ACall(.AGlobalFunc(fid(999)), [.ALocal(lid(0))]),
-    .Continue,
-  )
+  loop_body: AnfExpr = .Let(lid(1), .ACall(.AGlobalFunc(fid(999)), [.ALocal(lid(0))]), .Continue)
   cont: AnfExpr = .Atom(.ALocal(lid(0)))
 
   case rewrite_loop_region(

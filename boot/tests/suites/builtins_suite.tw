@@ -71,11 +71,7 @@ pub fn suite() runner.Suite {
   ).test(
     "runtime vector__set_in_place carries PVec ABI result",
     fn() {
-      reg := empty_registry().runtime(
-        "vector__set_in_place",
-        "rt.arr",
-        "set_in_place",
-      )
+      reg := empty_registry().runtime("vector__set_in_place", "rt.arr", "set_in_place")
       entry := try reg.entry(reg.id("vector__set_in_place")).ok_or("missing")
       try assert.equal(entry.abi.result_types.len(), 1)
 
@@ -85,17 +81,13 @@ pub fn suite() runner.Suite {
           try assert.equal(name, "rt_types__PVec")
           .Ok({})
         },
-        _ => .Err(
-          "expected vector__set_in_place ABI result to be non-null rt_types__PVec",
-        ),
+        _ => .Err("expected vector__set_in_place ABI result to be non-null rt_types__PVec"),
       }
     },
   ).test(
     "intrinsic registration assigns auto-incremented id",
     fn() {
-      reg := empty_registry().runtime("print", "rt.core", "print").intrinsic(
-        "string_to_string",
-      )
+      reg := empty_registry().runtime("print", "rt.core", "print").intrinsic("string_to_string")
       try assert.equal(reg.id("string_to_string").id, 1)
       .Ok({})
     },
@@ -130,11 +122,7 @@ pub fn suite() runner.Suite {
   ).test(
     "id lookup returns correct FuncId",
     fn() {
-      reg := empty_registry().runtime("a", "m", "a").intrinsic("b").runtime(
-        "c",
-        "m",
-        "c",
-      )
+      reg := empty_registry().runtime("a", "m", "a").intrinsic("b").runtime("c", "m", "c")
       try assert.equal(reg.id("a").id, 0)
       try assert.equal(reg.id("b").id, 1)
       try assert.equal(reg.id("c").id, 2)
@@ -143,9 +131,7 @@ pub fn suite() runner.Suite {
   ).test(
     "entry reverse lookup by FuncId",
     fn() {
-      reg := empty_registry().runtime("print", "rt.core", "print").intrinsic(
-        "string_get",
-      )
+      reg := empty_registry().runtime("print", "rt.core", "print").intrinsic("string_get")
       e0 := try reg.entry(reg.id("print")).ok_or("missing 0")
       try assert.equal(e0.name, "print")
       e1 := try reg.entry(reg.id("string_get")).ok_or("missing 1")
@@ -177,9 +163,7 @@ pub fn suite() runner.Suite {
       }
 
       // intrinsic check
-      sg_entry := try reg.entry(reg.id("string_get")).ok_or(
-        "missing string_get",
-      )
+      sg_entry := try reg.entry(reg.id("string_get")).ok_or("missing string_get")
 
       case sg_entry.kind {
         .Intrinsic => {},
@@ -211,9 +195,7 @@ pub fn suite() runner.Suite {
 
       // each entry's id matches its index
       for entry, i in reg.entries {
-        if entry.func_id.id != i {
-          error("entry ${i} has id ${entry.func_id.id}")
-        }
+        if entry.func_id.id != i { error("entry ${i} has id ${entry.func_id.id}") }
       }
 
       try assert.equal(reg.next_id, reg.entries.len())

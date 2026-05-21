@@ -9,10 +9,7 @@ fn parse_module(src: String) ast.Module { parser.parse(src, 0).value }
 
 fn get_project_root() String { loader.find_project_root("boot") }
 
-fn plan_deps(module: ast.Module, path: String, root: String) Result<
-  imports.DependencyPlan,
-  String,
-> {
+fn plan_deps(module: ast.Module, path: String, root: String) Result<imports.DependencyPlan, String> {
   case imports.plan_dependencies(module, path, root) {
     .Ok(p) => .Ok(p),
     .Err(e) => .Err(e.message),
@@ -168,11 +165,7 @@ pub fn suite() runner.Suite {
     "prelude skipped for stdlib files",
     fn() {
       module := parse_module("fn helper() { }")
-      plan := try plan_deps(
-        module,
-        "${loader.resolve_stdlib_root()}/fs.tw",
-        root,
-      )
+      plan := try plan_deps(module, "${loader.resolve_stdlib_root()}/fs.tw", root)
       try assert.is_true(plan.is_internal)
       prelude_count := 0
 
@@ -190,11 +183,7 @@ pub fn suite() runner.Suite {
     "prelude skipped for prelude files",
     fn() {
       module := parse_module("fn helper() { }")
-      plan := try plan_deps(
-        module,
-        "${loader.resolve_prelude_root()}/vector.tw",
-        root,
-      )
+      plan := try plan_deps(module, "${loader.resolve_prelude_root()}/vector.tw", root)
       try assert.is_true(plan.is_internal)
       prelude_count := 0
 
@@ -241,9 +230,7 @@ pub fn suite() runner.Suite {
 
         case first.kind {
           .Import => .Ok({}),
-          .Prelude => assert.fail(
-            "first dependency should be Import, not Prelude",
-          ),
+          .Prelude => assert.fail("first dependency should be Import, not Prelude"),
         }
       } else {
         assert.fail("expected at least one dependency")

@@ -1,8 +1,11 @@
 // Assertion helpers for test suites.
 // Each returns Result<Void, String> — Ok on pass, Err(message) on fail.
-
 pub fn ok(cond: Bool, msg: String) Result<Void, String> {
-  if cond { .Ok({}) } else { .Err(msg) }
+  if cond {
+    .Ok({})
+  } else {
+    .Err(msg)
+  }
 }
 
 pub fn fail(msg: String) Result<Void, String> {
@@ -42,11 +45,19 @@ pub fn equal<T: Eq + Stringify>(actual: T, expected: T) Result<Void, String> {
 }
 
 pub fn is_true(actual: Bool) Result<Void, String> {
-  if actual { .Ok({}) } else { .Err("expected true, got false") }
+  if actual {
+    .Ok({})
+  } else {
+    .Err("expected true, got false")
+  }
 }
 
 pub fn is_false(actual: Bool) Result<Void, String> {
-  if !actual { .Ok({}) } else { .Err("expected false, got true") }
+  if !actual {
+    .Ok({})
+  } else {
+    .Err("expected false, got true")
+  }
 }
 
 pub fn is_some<A>(opt: A?) Result<Void, String> {
@@ -101,7 +112,10 @@ pub fn vec_len<A>(v: Vector<A>, expected_len: Int) Result<Void, String> {
 
 pub fn vec_contains(v: Vector<String>, item: String) Result<Void, String> {
   for s in v {
-    if s == item { return .Ok({}) }
+    if s == item {
+      return .Ok({})
+    }
   }
+
   .Err("expected vector to contain \"${item}\"")
 }

@@ -30,19 +30,13 @@ pub fn suite() runner.Suite {
       try assert.is_true(result.diagnostics.len() > 0)
       try assert.equal(result.diagnostics[0].stage, "parse")
       try assert.equal(result.diagnostics[0].uri, "file:///main.tw")
-      try assert.equal(
-        try result.diagnostics[0].version.ok_or("missing version"),
-        1,
-      )
+      try assert.equal(try result.diagnostics[0].version.ok_or("missing version"), 1)
       .Ok({})
     },
   ).test(
     "reports resolve diagnostics",
     fn() {
-      result := diagnostics.analyze_document(
-        cache.empty(),
-        input("fn f(x: Missing) Void { }"),
-      )
+      result := diagnostics.analyze_document(cache.empty(), input("fn f(x: Missing) Void { }"))
       try assert.is_true(result.diagnostics.len() > 0)
       try assert.equal(result.diagnostics[0].stage, "resolve")
       try assert.str_contains(result.diagnostics[0].message, "undefined type")
@@ -51,10 +45,7 @@ pub fn suite() runner.Suite {
   ).test(
     "reports typecheck diagnostics",
     fn() {
-      result := diagnostics.analyze_document(
-        cache.empty(),
-        input("fn answer() String { 42 }"),
-      )
+      result := diagnostics.analyze_document(cache.empty(), input("fn answer() String { 42 }"))
       try assert.is_true(result.diagnostics.len() > 0)
       try assert.equal(result.diagnostics[0].stage, "check")
       try assert.str_contains(result.diagnostics[0].message, "type mismatch")
@@ -69,9 +60,7 @@ pub fn suite() runner.Suite {
         .{
           entry_uri: entry,
           project_root: "/tmp",
-          open_documents: [
-            doc(entry, "fn answer() Int { 42 }\nx := answer()\n", 5),
-          ],
+          open_documents: [doc(entry, "fn answer() Int { 42 }\nx := answer()\n", 5)],
         },
       )
       try assert.is_true(result.ok)
@@ -85,10 +74,7 @@ pub fn suite() runner.Suite {
     "semantic snapshot preserves partial artifacts on errors",
     fn() {
       entry := "file:///tmp/semantic-error.tw"
-      result := semantic.snapshot(
-        cache.empty(),
-        doc(entry, "fn answer() Missing { 42 }\n", 1),
-      )
+      result := semantic.snapshot(cache.empty(), doc(entry, "fn answer() Missing { 42 }\n", 1))
       try assert.is_false(result.ok)
       try assert.is_some(result.parsed)
       try assert.is_some(result.resolved)
@@ -135,14 +121,8 @@ pub fn suite() runner.Suite {
     "semantic snapshot stays usable across edits",
     fn() {
       entry := "file:///tmp/semantic-edit.tw"
-      first := semantic.snapshot(
-        cache.empty(),
-        doc(entry, "fn answer() Int { 1 }\n", 1),
-      )
-      second := semantic.snapshot(
-        first.cache,
-        doc(entry, "fn answer() Int { 2 }\n", 2),
-      )
+      first := semantic.snapshot(cache.empty(), doc(entry, "fn answer() Int { 1 }\n", 1))
+      second := semantic.snapshot(first.cache, doc(entry, "fn answer() Int { 2 }\n", 2))
       try assert.is_true(second.ok)
       try assert.equal(try second.version.ok_or("missing version"), 2)
       sym := try semantic.symbol_at_position(second, 4).ok_or("missing symbol")
@@ -155,17 +135,11 @@ pub fn suite() runner.Suite {
       entry := "file:///tmp/semantic-symbol.tw"
       result := semantic.snapshot(
         cache.empty(),
-        doc(
-          entry,
-          "type Point = .{ x: Int }\nfn answer() Int { 42 }\ny := answer()\n",
-          1,
-        ),
+        doc(entry, "type Point = .{ x: Int }\nfn answer() Int { 42 }\ny := answer()\n", 1),
       )
       sym := try semantic.symbol_at_position(result, 31).ok_or("missing symbol")
       try assert.equal(sym.name, "answer")
-      syntax := try semantic.enclosing_syntax(result, 55).ok_or(
-        "missing syntax",
-      )
+      syntax := try semantic.enclosing_syntax(result, 55).ok_or("missing syntax")
       try assert.equal(syntax.kind, "let")
       .Ok({})
     },
@@ -229,9 +203,7 @@ pub fn suite() runner.Suite {
         .{
           entry_uri: entry,
           project_root: root,
-          open_documents: [
-            doc(entry, "use @std.path\nx := path.join(\"a\", \"b\")\n", 1),
-          ],
+          open_documents: [doc(entry, "use @std.path\nx := path.join(\"a\", \"b\")\n", 1)],
         },
       )
       try assert.equal(result.diagnostics.len(), 0)
@@ -325,9 +297,7 @@ pub fn suite() runner.Suite {
       try assert.equal(result.diagnostics_by_uri.len(), 2)
 
       for group in result.diagnostics_by_uri {
-        if group.uri == entry {
-          try assert.is_true(group.diagnostics.len() > 0)
-        }
+        if group.uri == entry { try assert.is_true(group.diagnostics.len() > 0) }
 
         if group.uri == dep { try assert.equal(group.diagnostics.len(), 0) }
       }
@@ -353,10 +323,7 @@ pub fn suite() runner.Suite {
       try assert.is_true(result.diagnostics.len() > 0)
       try assert.equal(result.diagnostics[0].uri, dep)
       try assert.equal(result.diagnostics[0].stage, "check")
-      try assert.equal(
-        try result.diagnostics[0].version.ok_or("missing version"),
-        3,
-      )
+      try assert.equal(try result.diagnostics[0].version.ok_or("missing version"), 3)
       .Ok({})
     },
   ).test(
@@ -374,10 +341,7 @@ pub fn suite() runner.Suite {
       try assert.is_true(result.diagnostics.len() > 0)
       try assert.equal(result.diagnostics[0].uri, entry)
       try assert.equal(result.diagnostics[0].stage, "import")
-      try assert.str_contains(
-        result.diagnostics[0].message,
-        "Cannot resolve module",
-      )
+      try assert.str_contains(result.diagnostics[0].message, "Cannot resolve module")
       .Ok({})
     },
   ).test(
@@ -451,11 +415,7 @@ pub fn suite() runner.Suite {
           project_root: "/tmp",
           open_documents: [
             doc(entry, "use dep.{used_fn, unused_fn}\nx := used_fn()\n", 1),
-            doc(
-              dep,
-              "pub fn used_fn() Int { 1 }\npub fn unused_fn() Int { 2 }\n",
-              1,
-            ),
+            doc(dep, "pub fn used_fn() Int { 1 }\npub fn unused_fn() Int { 2 }\n", 1),
           ],
         },
       )
@@ -471,10 +431,7 @@ pub fn suite() runner.Suite {
             .Some(data) => {
               kind := try json.decode(data, json.field("kind", json.string()))
               try assert.equal(kind, "unused_import")
-              replacement := try json.decode(
-                data,
-                json.field("replacement", json.string()),
-              )
+              replacement := try json.decode(data, json.field("replacement", json.string()))
               try assert.str_contains(replacement, "used_fn")
             },
             .None => {

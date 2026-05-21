@@ -26,9 +26,7 @@ pub fn suite() runner.Suite {
     "has_errors is true when any error present",
     fn() {
       e := DiagKind.Error(
-        .ParseError(
-          diag.GenericDiag.{ span: s(0, 5), message: "oops", help_lines: [] },
-        ),
+        .ParseError(diag.GenericDiag.{ span: s(0, 5), message: "oops", help_lines: [] }),
       )
       try assert.is_true(diag.has_errors([e]))
       .Ok({})
@@ -37,9 +35,7 @@ pub fn suite() runner.Suite {
     "has_errors is true when errors mixed with warnings",
     fn() {
       e := DiagKind.Error(.UndefinedVar(.{ span: s(0, 3), name: "x" }))
-      w := DiagKind.Warning(
-        .UnusedImport(.{ span: s(4, 9), binding: "unused" }),
-      )
+      w := DiagKind.Warning(.UnusedImport(.{ span: s(4, 9), binding: "unused" }))
       try assert.is_true(diag.has_errors([w, e]))
       .Ok({})
     },
@@ -47,9 +43,7 @@ pub fn suite() runner.Suite {
     "span from Error.ParseError",
     fn() {
       k := DiagKind.Error(
-        .ParseError(
-          diag.GenericDiag.{ span: s(10, 20), message: "msg", help_lines: [] },
-        ),
+        .ParseError(diag.GenericDiag.{ span: s(10, 20), message: "msg", help_lines: [] }),
       )
       try assert.equal(k.span().start, 10)
       try assert.equal(k.span().end, 20)
@@ -66,9 +60,7 @@ pub fn suite() runner.Suite {
   ).test(
     "span from Error.WrongArity",
     fn() {
-      k := DiagKind.Error(
-        .WrongArity(.{ span: s(1, 4), expected: 2, found: 3 }),
-      )
+      k := DiagKind.Error(.WrongArity(.{ span: s(1, 4), expected: 2, found: 3 }))
       try assert.equal(k.span().start, 1)
       .Ok({})
     },
@@ -76,9 +68,7 @@ pub fn suite() runner.Suite {
     "span from Error.TypeMismatch",
     fn() {
       k := DiagKind.Error(
-        .TypeMismatch(
-          .{ span: s(3, 7), expected: MonoType.Int, found: MonoType.Bool },
-        ),
+        .TypeMismatch(.{ span: s(3, 7), expected: MonoType.Int, found: MonoType.Bool }),
       )
       try assert.equal(k.span().start, 3)
       try assert.equal(k.span().end, 7)
@@ -89,11 +79,7 @@ pub fn suite() runner.Suite {
     fn() {
       k := DiagKind.Error(
         .MissingVariants(
-          .{
-            span: s(2, 9),
-            scrutinee_ty: MonoType.Bool,
-            missing: ["True", "False"],
-          },
+          .{ span: s(2, 9), scrutinee_ty: MonoType.Bool, missing: ["True", "False"] },
         ),
       )
       try assert.equal(k.span().start, 2)
@@ -102,9 +88,7 @@ pub fn suite() runner.Suite {
   ).test(
     "span from Error.DuplicateField",
     fn() {
-      k := DiagKind.Error(
-        .DuplicateField(.{ span: s(10, 15), name: "x", first: s(0, 5) }),
-      )
+      k := DiagKind.Error(.DuplicateField(.{ span: s(10, 15), name: "x", first: s(0, 5) }))
       try assert.equal(k.span().start, 10)
       .Ok({})
     },

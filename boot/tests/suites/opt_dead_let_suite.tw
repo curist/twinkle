@@ -3,9 +3,7 @@ use compiler.builtins.{make_builtin_registry}
 use compiler.core_ir.{FuncId, LocalId, VariantId}
 use compiler.mono_type.{TypeId}
 use compiler.opt.copy_prop.{copy_propagate, subst_atom}
-use compiler.opt.dead_let.{
-  dead_let_elim, dead_let_elim_with_pinned_and_semantics,
-}
+use compiler.opt.dead_let.{dead_let_elim, dead_let_elim_with_pinned_and_semantics}
 use compiler.opt.semantics.{make_prelude_optimizer_semantics}
 use compiler.opt.use_count.{count_uses, count_uses_excluding_free_vars, is_pure}
 use tests.assert
@@ -50,11 +48,7 @@ fn test_count_uses_assign_target_not_counted() Result<Void, String> {
 fn test_count_uses_closure_free_vars() Result<Void, String> {
   // Let(0, AMakeClosure(99, [1, 2]), Atom(ALocal(0)))
   // locals 1 and 2 each used once (as free vars)
-  expr: AnfExpr = .Let(
-    lid(0),
-    .AMakeClosure(fid(99), [lid(1), lid(2)]),
-    .Atom(.ALocal(lid(0))),
-  )
+  expr: AnfExpr = .Let(lid(0), .AMakeClosure(fid(99), [lid(1), lid(2)]), .Atom(.ALocal(lid(0))))
   uses := count_uses(expr)
   try assert.equal(uses_for(uses, 1), 1)
   try assert.equal(uses_for(uses, 2), 1)
@@ -76,10 +70,7 @@ fn test_count_uses_excluding_free_vars() Result<Void, String> {
   .Ok({})
 }
 
-fn test_count_uses_excluding_free_vars_nested_control_flow() Result<
-  Void,
-  String,
-> {
+fn test_count_uses_excluding_free_vars_nested_control_flow() Result<Void, String> {
   expr: AnfExpr = .Let(
     lid(1),
     .AInit(.ALitInt(10)),
@@ -115,11 +106,7 @@ fn test_count_uses_closure_free_var_inside_match_arm() Result<Void, String> {
           body: .Let(
             lid(1),
             .AInit(.ALitStr("interp")),
-            .Let(
-              lid(2),
-              .AMakeClosure(fid(99), [lid(1)]),
-              .Atom(.ALocal(lid(2))),
-            ),
+            .Let(lid(2), .AMakeClosure(fid(99), [lid(1)]), .Atom(.ALocal(lid(2)))),
           ),
         },
         AnfMatchArm.{ pattern: .Wildcard, body: .Atom(.ALitVoid) },
@@ -147,9 +134,7 @@ fn test_count_uses_multiple_refs() Result<Void, String> {
 }
 
 // ── is_pure ─────────────────────────────────────────────────────────
-fn test_is_pure_init() Result<Void, String> {
-  assert.is_true(is_pure(.AInit(.ALitInt(42))))
-}
+fn test_is_pure_init() Result<Void, String> { assert.is_true(is_pure(.AInit(.ALitInt(42)))) }
 
 fn test_is_pure_binop_add() Result<Void, String> {
   assert.is_true(is_pure(.ABinOp(.Add, .ALitInt(1), .ALitInt(2), .Int)))
@@ -164,9 +149,7 @@ fn test_is_pure_int_mod_impure() Result<Void, String> {
 }
 
 fn test_is_pure_float_div_pure() Result<Void, String> {
-  assert.is_true(
-    is_pure(.ABinOp(.Div, .ALitFloat(1.0), .ALitFloat(0.0), .Float)),
-  )
+  assert.is_true(is_pure(.ABinOp(.Div, .ALitFloat(1.0), .ALitFloat(0.0), .Float)))
 }
 
 fn test_is_pure_call_impure() Result<Void, String> {
@@ -201,11 +184,7 @@ fn test_is_pure_unop() Result<Void, String> {
 fn test_dead_let_drops_unused_pure() Result<Void, String> {
   // Let(0, ABinOp(Add, 1, 2, Int), Atom(ALitInt(42)))
   // local 0 is unused, op is pure → should be eliminated
-  expr: AnfExpr = .Let(
-    lid(0),
-    .ABinOp(.Add, .ALitInt(1), .ALitInt(2), .Int),
-    .Atom(.ALitInt(42)),
-  )
+  expr: AnfExpr = .Let(lid(0), .ABinOp(.Add, .ALitInt(1), .ALitInt(2), .Int), .Atom(.ALitInt(42)))
   result := dead_let_elim(expr)
   try assert.is_true(result.changed)
 
@@ -231,11 +210,7 @@ fn test_dead_let_keeps_used() Result<Void, String> {
 fn test_dead_let_keeps_impure() Result<Void, String> {
   // Let(0, ACall(...), Atom(ALitVoid))
   // local 0 is unused, but ACall is impure → should be kept
-  expr: AnfExpr = .Let(
-    lid(0),
-    .ACall(.AGlobalFunc(fid(1)), []),
-    .Atom(.ALitVoid),
-  )
+  expr: AnfExpr = .Let(lid(0), .ACall(.AGlobalFunc(fid(1)), []), .Atom(.ALitVoid))
   result := dead_let_elim(expr)
   try assert.is_false(result.changed)
 
@@ -248,11 +223,7 @@ fn test_dead_let_keeps_impure() Result<Void, String> {
 fn test_dead_let_keeps_int_div() Result<Void, String> {
   // Let(0, ABinOp(Div, 1, 0, Int), Atom(ALitInt(42)))
   // unused but int div is impure (may trap) → keep
-  expr: AnfExpr = .Let(
-    lid(0),
-    .ABinOp(.Div, .ALitInt(1), .ALitInt(0), .Int),
-    .Atom(.ALitInt(42)),
-  )
+  expr: AnfExpr = .Let(lid(0), .ABinOp(.Div, .ALitInt(1), .ALitInt(0), .Int), .Atom(.ALitInt(42)))
   result := dead_let_elim(expr)
   try assert.is_false(result.changed)
 
@@ -279,10 +250,7 @@ fn test_dead_let_keeps_assigned() Result<Void, String> {
   }
 }
 
-fn test_dead_let_keeps_match_arm_binding_used_by_closure_free_var() Result<
-  Void,
-  String,
-> {
+fn test_dead_let_keeps_match_arm_binding_used_by_closure_free_var() Result<Void, String> {
   expr: AnfExpr = .Let(
     lid(4),
     .AMatch(
@@ -293,11 +261,7 @@ fn test_dead_let_keeps_match_arm_binding_used_by_closure_free_var() Result<
           body: .Let(
             lid(1),
             .AInit(.ALitStr("interp")),
-            .Let(
-              lid(2),
-              .AMakeClosure(fid(99), [lid(1)]),
-              .Atom(.ALocal(lid(2))),
-            ),
+            .Let(lid(2), .AMakeClosure(fid(99), [lid(1)]), .Atom(.ALocal(lid(2)))),
           ),
         },
         AnfMatchArm.{ pattern: .Wildcard, body: .Atom(.ALitVoid) },
@@ -352,11 +316,7 @@ fn test_subst_atom_leaves_other() Result<Void, String> {
 fn test_subst_atom_does_not_enter_closure_free_vars() Result<Void, String> {
   // Let(0, AMakeClosure(99, [5]), Atom(ALocal(0)))
   // subst 5 with ALitInt(42) → free_vars should remain [5] unchanged
-  expr: AnfExpr = .Let(
-    lid(0),
-    .AMakeClosure(fid(99), [lid(5)]),
-    .Atom(.ALocal(lid(0))),
-  )
+  expr: AnfExpr = .Let(lid(0), .AMakeClosure(fid(99), [lid(5)]), .Atom(.ALocal(lid(0))))
   result := subst_atom(expr, lid(5), .ALitInt(42))
 
   case result {
@@ -388,11 +348,7 @@ fn test_copy_prop_inlines_literal() Result<Void, String> {
 
 fn test_copy_prop_inlines_global_func() Result<Void, String> {
   // Let(1, AInit(AGlobalFunc(99)), Atom(ALocal(1)))
-  expr: AnfExpr = .Let(
-    lid(1),
-    .AInit(.AGlobalFunc(fid(99))),
-    .Atom(.ALocal(lid(1))),
-  )
+  expr: AnfExpr = .Let(lid(1), .AInit(.AGlobalFunc(fid(99))), .Atom(.ALocal(lid(1))))
   result := copy_propagate(expr)
   try assert.is_true(result.changed)
 
@@ -438,11 +394,7 @@ fn test_copy_prop_inlines_multi_use_literal() Result<Void, String> {
   expr: AnfExpr = .Let(
     lid(1),
     .AInit(.ALitInt(42)),
-    .Let(
-      lid(0),
-      .ABinOp(.Add, .ALocal(lid(1)), .ALocal(lid(1)), .Int),
-      .Atom(.ALocal(lid(0))),
-    ),
+    .Let(lid(0), .ABinOp(.Add, .ALocal(lid(1)), .ALocal(lid(1)), .Int), .Atom(.ALocal(lid(0)))),
   )
   result := copy_propagate(expr)
   try assert.is_true(result.changed)
@@ -525,34 +477,22 @@ fn test_is_pure_if_pure_branches() Result<Void, String> {
 
 fn test_is_pure_if_impure_branch() Result<Void, String> {
   // AIf(cond, Let(_, ACall(...), Atom(..)), Atom(..)) — then has call → impure
-  then_e: AnfExpr = .Let(
-    lid(1),
-    .ACall(.AGlobalFunc(fid(99)), []),
-    .Atom(.ALocal(lid(1))),
-  )
+  then_e: AnfExpr = .Let(lid(1), .ACall(.AGlobalFunc(fid(99)), []), .Atom(.ALocal(lid(1))))
   op: AnfOp = .AIf(.ALocal(lid(0)), then_e, .Atom(.ALitInt(2)))
   assert.is_false(is_pure(op))
 }
 
 fn test_is_pure_match_pure_arms() Result<Void, String> {
   // AMatch with all pure arm bodies → pure
-  arms: Vector<AnfMatchArm> = [
-    AnfMatchArm.{ pattern: .Wildcard, body: .Atom(.ALitInt(1)) },
-  ]
+  arms: Vector<AnfMatchArm> = [AnfMatchArm.{ pattern: .Wildcard, body: .Atom(.ALitInt(1)) }]
   op: AnfOp = .AMatch(.ALocal(lid(0)), arms)
   assert.is_true(is_pure(op))
 }
 
 fn test_is_pure_match_impure_arm() Result<Void, String> {
   // AMatch with an impure arm body → impure
-  impure_body: AnfExpr = .Let(
-    lid(1),
-    .ACall(.AGlobalFunc(fid(99)), []),
-    .Atom(.ALocal(lid(1))),
-  )
-  arms: Vector<AnfMatchArm> = [
-    AnfMatchArm.{ pattern: .Wildcard, body: impure_body },
-  ]
+  impure_body: AnfExpr = .Let(lid(1), .ACall(.AGlobalFunc(fid(99)), []), .Atom(.ALocal(lid(1))))
+  arms: Vector<AnfMatchArm> = [AnfMatchArm.{ pattern: .Wildcard, body: impure_body }]
   op: AnfOp = .AMatch(.ALocal(lid(0)), arms)
   assert.is_false(is_pure(op))
 }
@@ -577,16 +517,8 @@ fn test_dead_let_drops_unused_pure_if() Result<Void, String> {
 fn test_dead_let_keeps_unused_impure_if() Result<Void, String> {
   // Let(0, AIf(cond, Let(_, ACall(...), ...), ...), Atom(ALitVoid))
   // Local 0 unused, but AIf has a call → should NOT be eliminated
-  then_e: AnfExpr = .Let(
-    lid(1),
-    .ACall(.AGlobalFunc(fid(99)), []),
-    .Atom(.ALocal(lid(1))),
-  )
-  expr: AnfExpr = .Let(
-    lid(0),
-    .AIf(.ALocal(lid(5)), then_e, .Atom(.ALitInt(2))),
-    .Atom(.ALitVoid),
-  )
+  then_e: AnfExpr = .Let(lid(1), .ACall(.AGlobalFunc(fid(99)), []), .Atom(.ALocal(lid(1))))
+  expr: AnfExpr = .Let(lid(0), .AIf(.ALocal(lid(5)), then_e, .Atom(.ALitInt(2))), .Atom(.ALitVoid))
   result := dead_let_elim(expr)
 
   case result.expr {
@@ -600,10 +532,7 @@ fn test_dead_let_semantics_keeps_read_only_call_parity() Result<Void, String> {
   // dead-let behavior: unused calls are still retained.
   expr: AnfExpr = .Let(
     lid(0),
-    .ACall(
-      .AGlobalFunc(make_builtin_registry().id("vector_len")),
-      [.ALocal(lid(9))],
-    ),
+    .ACall(.AGlobalFunc(make_builtin_registry().id("vector_len")), [.ALocal(lid(9))]),
     .Atom(.ALitVoid),
   )
   semantics := make_prelude_optimizer_semantics(make_builtin_registry())
@@ -624,10 +553,7 @@ pub fn suite() runner.Suite {
   // count_uses
   s = .test("uses: simple", test_count_uses_simple)
   s = .test("uses: binder not counted", test_count_uses_let_binder_not_counted)
-  s = .test(
-    "uses: assign target not counted",
-    test_count_uses_assign_target_not_counted,
-  )
+  s = .test("uses: assign target not counted", test_count_uses_assign_target_not_counted)
   s = .test("uses: closure free vars", test_count_uses_closure_free_vars)
   s = .test("uses: excluding free vars", test_count_uses_excluding_free_vars)
   s = .test(
@@ -667,14 +593,8 @@ pub fn suite() runner.Suite {
     test_dead_let_keeps_match_arm_binding_used_by_closure_free_var,
   )
   s = .test("dead_let: nested in if", test_dead_let_nested_in_if)
-  s = .test(
-    "dead_let: drops unused pure if",
-    test_dead_let_drops_unused_pure_if,
-  )
-  s = .test(
-    "dead_let: keeps unused impure if",
-    test_dead_let_keeps_unused_impure_if,
-  )
+  s = .test("dead_let: drops unused pure if", test_dead_let_drops_unused_pure_if)
+  s = .test("dead_let: keeps unused impure if", test_dead_let_keeps_unused_impure_if)
   s = .test(
     "dead_let: semantics keeps read-only call parity",
     test_dead_let_semantics_keeps_read_only_call_parity,
@@ -682,29 +602,14 @@ pub fn suite() runner.Suite {
   // subst_atom
   s = .test("subst: replaces target", test_subst_atom_replaces)
   s = .test("subst: leaves other", test_subst_atom_leaves_other)
-  s = .test(
-    "subst: skips closure free_vars",
-    test_subst_atom_does_not_enter_closure_free_vars,
-  )
+  s = .test("subst: skips closure free_vars", test_subst_atom_does_not_enter_closure_free_vars)
   // copy_propagate
   s = .test("copy_prop: inlines literal", test_copy_prop_inlines_literal)
-  s = .test(
-    "copy_prop: inlines global func",
-    test_copy_prop_inlines_global_func,
-  )
+  s = .test("copy_prop: inlines global func", test_copy_prop_inlines_global_func)
   s = .test("copy_prop: forwards local", test_copy_prop_forwards_local)
-  s = .test(
-    "copy_prop: keeps local when assigned",
-    test_copy_prop_keeps_local_when_assigned,
-  )
-  s = .test(
-    "copy_prop: inlines multi-use literal",
-    test_copy_prop_inlines_multi_use_literal,
-  )
-  s = .test(
-    "copy_prop: keeps closure-only use",
-    test_copy_prop_keeps_closure_only_use,
-  )
+  s = .test("copy_prop: keeps local when assigned", test_copy_prop_keeps_local_when_assigned)
+  s = .test("copy_prop: inlines multi-use literal", test_copy_prop_inlines_multi_use_literal)
+  s = .test("copy_prop: keeps closure-only use", test_copy_prop_keeps_closure_only_use)
   s = .test(
     "copy_prop: keeps local alias used by closure",
     test_copy_prop_keeps_local_alias_used_by_closure,

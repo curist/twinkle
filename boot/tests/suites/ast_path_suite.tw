@@ -88,19 +88,13 @@ pub fn suite() runner.Suite {
       // root should be FnDecl
       case path.nodes[0] {
         .FnDecl(d) => try assert.equal(d.name, "foo"),
-        other => {
-          return assert.fail(
-            "expected FnDecl at root, got ${node_tag(.Some(other))}",
-          )
-        },
+        other => { return assert.fail("expected FnDecl at root, got ${node_tag(.Some(other))}") },
       }
 
       // deepest should be an Expr (int literal)
       case ast_path.deepest(path) {
         .Some(.Expr(_)) => {},
-        other => {
-          return assert.fail("expected Expr deepest, got ${node_tag(other)}")
-        },
+        other => { return assert.fail("expected Expr deepest, got ${node_tag(other)}") },
       }
 
       .Ok({})
@@ -140,18 +134,12 @@ pub fn suite() runner.Suite {
 
       case path.nodes[0] {
         .FnDecl(_) => {},
-        other => {
-          return assert.fail(
-            "expected FnDecl at root, got ${node_tag(.Some(other))}",
-          )
-        },
+        other => { return assert.fail("expected FnDecl at root, got ${node_tag(.Some(other))}") },
       }
 
       case ast_path.deepest(path) {
         .Some(.Expr(_)) => {},
-        other => {
-          return assert.fail("expected Expr deepest, got ${node_tag(other)}")
-        },
+        other => { return assert.fail("expected Expr deepest, got ${node_tag(other)}") },
       }
 
       .Ok({})
@@ -166,9 +154,7 @@ pub fn suite() runner.Suite {
 
       case ast_path.deepest(path) {
         .Some(.Pattern(_)) => {},
-        other => {
-          return assert.fail("expected Pattern deepest, got ${node_tag(other)}")
-        },
+        other => { return assert.fail("expected Pattern deepest, got ${node_tag(other)}") },
       }
 
       .Ok({})
@@ -193,9 +179,7 @@ pub fn suite() runner.Suite {
 
       case ast_path.deepest(path) {
         .Some(.Expr(_)) => {},
-        other => {
-          return assert.fail("expected Expr deepest, got ${node_tag(other)}")
-        },
+        other => { return assert.fail("expected Expr deepest, got ${node_tag(other)}") },
       }
 
       .Ok({})
@@ -210,9 +194,7 @@ pub fn suite() runner.Suite {
 
       case ast_path.deepest(path) {
         .Some(.TypeDecl(_)) => {},
-        other => {
-          return assert.fail("expected TypeDecl, got ${node_tag(other)}")
-        },
+        other => { return assert.fail("expected TypeDecl, got ${node_tag(other)}") },
       }
 
       .Ok({})
@@ -227,9 +209,7 @@ pub fn suite() runner.Suite {
 
       case ast_path.deepest(path) {
         .Some(.UseDecl(_)) => {},
-        other => {
-          return assert.fail("expected UseDecl, got ${node_tag(other)}")
-        },
+        other => { return assert.fail("expected UseDecl, got ${node_tag(other)}") },
       }
 
       .Ok({})

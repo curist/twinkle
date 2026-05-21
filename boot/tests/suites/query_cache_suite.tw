@@ -1,8 +1,8 @@
-use tests.runner
-use tests.assert
 use compiler.parser
 use compiler.query.cache
 use lib.query.keys
+use tests.assert
+use tests.runner
 
 fn parsed(text: String) cache.ParsedModule {
   p := parser.parse(text, 0)
@@ -10,8 +10,9 @@ fn parsed(text: String) cache.ParsedModule {
 }
 
 pub fn suite() runner.Suite {
-  runner.suite("query cache")
-    .test("parsed lookup hits when key matches", fn() {
+  runner.suite("query cache").test(
+    "parsed lookup hits when key matches",
+    fn() {
       path := "/virtual/main.tw"
       key := keys.parse_key(path, keys.hash_text("x := 1"))
       store := cache.put_parsed(cache.empty(), path, key, parsed("x := 1"))
@@ -22,8 +23,10 @@ pub fn suite() runner.Suite {
       try assert.equal(st.parse_hits, 1)
       try assert.equal(st.parse_misses, 0)
       .Ok({})
-    })
-    .test("parsed lookup misses when key changes", fn() {
+    },
+  ).test(
+    "parsed lookup misses when key changes",
+    fn() {
       path := "/virtual/main.tw"
       old_key := keys.parse_key(path, keys.hash_text("x := 1"))
       new_key := keys.parse_key(path, keys.hash_text("x := 2"))
@@ -34,8 +37,10 @@ pub fn suite() runner.Suite {
       st := cache.get_stats(lookup.store)
       try assert.equal(st.parse_misses, 1)
       .Ok({})
-    })
-    .test("invalidating changed module clears dependent stage entries", fn() {
+    },
+  ).test(
+    "invalidating changed module clears dependent stage entries",
+    fn() {
       dep := "/virtual/dep.tw"
       main := "/virtual/main.tw"
       key := 1
@@ -53,5 +58,6 @@ pub fn suite() runner.Suite {
       lookup := cache.get_parsed(store, main, key)
       try assert.is_true(lookup.cache_hit)
       .Ok({})
-    })
+    },
+  )
 }

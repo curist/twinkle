@@ -5,8 +5,7 @@
 // unintended regression during the refactor is caught immediately.
 use compiler.base_env.{builtin_env}
 use compiler.resolver.{
-  FunctionSig, lookup_function, lookup_function_origin, lookup_method,
-  lookup_registered_function,
+  FunctionSig, lookup_function, lookup_function_origin, lookup_method, lookup_registered_function,
 }
 use tests.assert
 use tests.runner

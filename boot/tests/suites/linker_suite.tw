@@ -1,7 +1,7 @@
 use compiler.codegen.linker.{LinkedModule, link}
 use compiler.codegen.wasm_ir.{
-  DataSegment, ElemDef, ExportDef, FieldDef, FuncDef, GlobalDef, HeapType,
-  ImportDef, Instr, TableDef, TypeDef, ValType, WasmModule,
+  DataSegment, ElemDef, ExportDef, FieldDef, FuncDef, GlobalDef, HeapType, ImportDef, Instr,
+  TableDef, TypeDef, ValType, WasmModule,
 }
 use tests.assert
 use tests.runner
@@ -40,10 +40,7 @@ fn contains(haystack: String, needle: String) Bool {
   false
 }
 
-fn link_ok(modules: Vector<WasmModule>, entry: String?) Result<
-  LinkedModule,
-  String,
-> {
+fn link_ok(modules: Vector<WasmModule>, entry: String?) Result<LinkedModule, String> {
   case link(modules, entry) {
     .Ok(linked) => .Ok(linked),
     .Err(errors) => .Err("link failed with errors"),
@@ -274,14 +271,7 @@ fn test_link_single_module_qualifies_globals() Result<Void, String> {
     types: m.types,
     imports: m.imports,
     funcs: m.funcs,
-    globals: [
-      GlobalDef.{
-        name: "counter",
-        mutable: true,
-        ty: .I64,
-        init: [Instr.I64Const(0)],
-      },
-    ],
+    globals: [GlobalDef.{ name: "counter", mutable: true, ty: .I64, init: [Instr.I64Const(0)] }],
     tables: m.tables,
     elems: m.elems,
     exports: m.exports,
@@ -322,13 +312,7 @@ fn test_link_rewrites_call_in_func_body() Result<Void, String> {
     types: [],
     imports: [],
     funcs: [
-      FuncDef.{
-        name: "f",
-        params: [],
-        results: [],
-        locals: [],
-        body: [Instr.Call("g")],
-      },
+      FuncDef.{ name: "f", params: [], results: [], locals: [], body: [Instr.Call("g")] },
       FuncDef.{ name: "g", params: [], results: [], locals: [], body: [] },
     ],
     globals: [],
@@ -340,10 +324,7 @@ fn test_link_rewrites_call_in_func_body() Result<Void, String> {
   }
   linked := try link_ok([m], .None)
   f := try find_func(linked, "a__f").ok_or("missing a__f")
-  try assert.ok(
-    instr_has_call(f.body, "a__g"),
-    "call should be rewritten to a__g",
-  )
+  try assert.ok(instr_has_call(f.body, "a__g"), "call should be rewritten to a__g")
   .Ok({})
 }
 
@@ -367,14 +348,7 @@ fn test_link_rewrites_global_get_set() Result<Void, String> {
         ],
       },
     ],
-    globals: [
-      GlobalDef.{
-        name: "counter",
-        mutable: true,
-        ty: .I64,
-        init: [Instr.I64Const(0)],
-      },
-    ],
+    globals: [GlobalDef.{ name: "counter", mutable: true, ty: .I64, init: [Instr.I64Const(0)] }],
     tables: [],
     elems: [],
     exports: [],
@@ -408,12 +382,7 @@ fn test_link_rewrites_struct_new_and_get() Result<Void, String> {
   m := WasmModule.{
     namespace: "mod",
     types: [
-      TypeDef.Struct(
-        "Pt",
-        [FieldDef.{ name: .Some("x"), mutable: false, ty: .I64 }],
-        .None,
-        true,
-      ),
+      TypeDef.Struct("Pt", [FieldDef.{ name: .Some("x"), mutable: false, ty: .I64 }], .None, true),
     ],
     imports: [],
     funcs: [
@@ -422,11 +391,7 @@ fn test_link_rewrites_struct_new_and_get() Result<Void, String> {
         params: [],
         results: [.I64],
         locals: [],
-        body: [
-          Instr.I64Const(1),
-          Instr.StructNew("Pt"),
-          Instr.StructGet("Pt", 0),
-        ],
+        body: [Instr.I64Const(1), Instr.StructNew("Pt"), Instr.StructGet("Pt", 0)],
       },
     ],
     globals: [],
@@ -438,10 +403,7 @@ fn test_link_rewrites_struct_new_and_get() Result<Void, String> {
   }
   linked := try link_ok([m], .None)
   f := try find_func(linked, "mod__mk").ok_or("missing mod__mk")
-  try assert.ok(
-    instr_has_struct_new(f.body, "mod__Pt"),
-    "StructNew should be rewritten",
-  )
+  try assert.ok(instr_has_struct_new(f.body, "mod__Pt"), "StructNew should be rewritten")
   // Check StructGet
   found := false
 
@@ -613,9 +575,7 @@ fn test_link_resolves_import_to_export() Result<Void, String> {
     namespace: "lib",
     types: [],
     imports: [],
-    funcs: [
-      FuncDef.{ name: "helper", params: [], results: [], locals: [], body: [] },
-    ],
+    funcs: [FuncDef.{ name: "helper", params: [], results: [], locals: [], body: [] }],
     globals: [],
     tables: [],
     elems: [],
@@ -628,13 +588,7 @@ fn test_link_resolves_import_to_export() Result<Void, String> {
     namespace: "app",
     types: [],
     imports: [
-      ImportDef.{
-        module: "lib",
-        name: "helper",
-        as_sym: "lib_helper",
-        params: [],
-        results: [],
-      },
+      ImportDef.{ module: "lib", name: "helper", as_sym: "lib_helper", params: [], results: [] },
     ],
     funcs: [
       FuncDef.{
@@ -654,16 +608,10 @@ fn test_link_resolves_import_to_export() Result<Void, String> {
   }
   linked := try link_ok([lib, app], .None)
   // The import should be resolved — not present in linked imports
-  try assert.ok(
-    !has_import(linked, "lib", "helper"),
-    "inter-module import should be resolved",
-  )
+  try assert.ok(!has_import(linked, "lib", "helper"), "inter-module import should be resolved")
   // The call in "main" should now target the qualified export symbol
   f := try find_func(linked, "app__main").ok_or("missing app__main")
-  try assert.ok(
-    instr_has_call(f.body, "lib__helper"),
-    "call should target lib__helper",
-  )
+  try assert.ok(instr_has_call(f.body, "lib__helper"), "call should target lib__helper")
   .Ok({})
 }
 
@@ -698,10 +646,7 @@ fn test_link_preserves_host_imports() Result<Void, String> {
   }
   linked := try link_ok([m], .None)
   // Host import should be preserved (but qualified)
-  try assert.ok(
-    has_import(linked, "host", "print"),
-    "host import should be preserved",
-  )
+  try assert.ok(has_import(linked, "host", "print"), "host import should be preserved")
   .Ok({})
 }
 
@@ -710,13 +655,7 @@ fn test_link_unresolved_import_is_external() Result<Void, String> {
     namespace: "app",
     types: [],
     imports: [
-      ImportDef.{
-        module: "missing_lib",
-        name: "foo",
-        as_sym: "foo",
-        params: [],
-        results: [],
-      },
+      ImportDef.{ module: "missing_lib", name: "foo", as_sym: "foo", params: [], results: [] },
     ],
     funcs: [],
     globals: [],
@@ -740,9 +679,7 @@ fn test_link_synthesizes_init_from_multiple_starts() Result<Void, String> {
     namespace: "a",
     types: [],
     imports: [],
-    funcs: [
-      FuncDef.{ name: "init_a", params: [], results: [], locals: [], body: [] },
-    ],
+    funcs: [FuncDef.{ name: "init_a", params: [], results: [], locals: [], body: [] }],
     globals: [],
     tables: [],
     elems: [],
@@ -754,9 +691,7 @@ fn test_link_synthesizes_init_from_multiple_starts() Result<Void, String> {
     namespace: "b",
     types: [],
     imports: [],
-    funcs: [
-      FuncDef.{ name: "init_b", params: [], results: [], locals: [], body: [] },
-    ],
+    funcs: [FuncDef.{ name: "init_b", params: [], results: [], locals: [], body: [] }],
     globals: [],
     tables: [],
     elems: [],
@@ -766,21 +701,11 @@ fn test_link_synthesizes_init_from_multiple_starts() Result<Void, String> {
   }
   linked := try link_ok([a, b], .None)
   // Should have a synthesized __linked_init exported as __twinkle_start
-  exp := try find_export(linked, "__twinkle_start").ok_or(
-    "missing __twinkle_start export",
-  )
+  exp := try find_export(linked, "__twinkle_start").ok_or("missing __twinkle_start export")
   try assert.equal(exp.func_sym, "__linked_init")
-  init_fn := try find_func(linked, "__linked_init").ok_or(
-    "missing __linked_init",
-  )
-  try assert.ok(
-    instr_has_call(init_fn.body, "a__init_a"),
-    "should call a__init_a",
-  )
-  try assert.ok(
-    instr_has_call(init_fn.body, "b__init_b"),
-    "should call b__init_b",
-  )
+  init_fn := try find_func(linked, "__linked_init").ok_or("missing __linked_init")
+  try assert.ok(instr_has_call(init_fn.body, "a__init_a"), "should call a__init_a")
+  try assert.ok(instr_has_call(init_fn.body, "b__init_b"), "should call b__init_b")
   .Ok({})
 }
 
@@ -789,9 +714,7 @@ fn test_link_single_start_no_synth() Result<Void, String> {
     namespace: "app",
     types: [],
     imports: [],
-    funcs: [
-      FuncDef.{ name: "init", params: [], results: [], locals: [], body: [] },
-    ],
+    funcs: [FuncDef.{ name: "init", params: [], results: [], locals: [], body: [] }],
     globals: [],
     tables: [],
     elems: [],
@@ -801,9 +724,7 @@ fn test_link_single_start_no_synth() Result<Void, String> {
   }
   linked := try link_ok([m], .None)
   // Single start → exported directly as __twinkle_start, no __linked_init needed
-  exp := try find_export(linked, "__twinkle_start").ok_or(
-    "missing __twinkle_start export",
-  )
+  exp := try find_export(linked, "__twinkle_start").ok_or("missing __twinkle_start export")
   try assert.equal(exp.func_sym, "app__init")
   .Ok({})
 }
@@ -826,17 +747,9 @@ fn test_link_entry_appended_to_init() Result<Void, String> {
   }
   linked := try link_ok([m], .Some("app__main"))
   // With entry, we need __linked_init that calls init then main
-  init_fn := try find_func(linked, "__linked_init").ok_or(
-    "missing __linked_init",
-  )
-  try assert.ok(
-    instr_has_call(init_fn.body, "app__init"),
-    "should call app__init",
-  )
-  try assert.ok(
-    instr_has_call(init_fn.body, "app__main"),
-    "should call app__main",
-  )
+  init_fn := try find_func(linked, "__linked_init").ok_or("missing __linked_init")
+  try assert.ok(instr_has_call(init_fn.body, "app__init"), "should call app__init")
+  try assert.ok(instr_has_call(init_fn.body, "app__main"), "should call app__main")
   .Ok({})
 }
 
@@ -846,9 +759,7 @@ fn test_link_dots_in_namespace_replaced() Result<Void, String> {
     namespace: "rt.arr",
     types: [],
     imports: [],
-    funcs: [
-      FuncDef.{ name: "get", params: [], results: [], locals: [], body: [] },
-    ],
+    funcs: [FuncDef.{ name: "get", params: [], results: [], locals: [], body: [] }],
     globals: [],
     tables: [],
     elems: [],
@@ -901,16 +812,8 @@ fn test_link_rewrites_elem_func_syms() Result<Void, String> {
       FuncDef.{ name: "f2", params: [], results: [], locals: [], body: [] },
     ],
     globals: [],
-    tables: [
-      TableDef.{ name: "tbl", elem_type: .Funcref, min: 2, max: .Some(2) },
-    ],
-    elems: [
-      ElemDef.{
-        table: "tbl",
-        offset: [Instr.I32Const(0)],
-        func_syms: ["f1", "f2"],
-      },
-    ],
+    tables: [TableDef.{ name: "tbl", elem_type: .Funcref, min: 2, max: .Some(2) }],
+    elems: [ElemDef.{ table: "tbl", offset: [Instr.I32Const(0)], func_syms: ["f1", "f2"] }],
     exports: [],
     data: [],
     start: .None,
@@ -929,9 +832,7 @@ fn test_link_qualifies_exports() Result<Void, String> {
     namespace: "app",
     types: [],
     imports: [],
-    funcs: [
-      FuncDef.{ name: "main", params: [], results: [], locals: [], body: [] },
-    ],
+    funcs: [FuncDef.{ name: "main", params: [], results: [], locals: [], body: [] }],
     globals: [],
     tables: [],
     elems: [],
@@ -988,9 +889,7 @@ fn test_link_rewrites_ref_func() Result<Void, String> {
 fn test_link_rewrites_array_new_data() Result<Void, String> {
   m := WasmModule.{
     namespace: "ns",
-    types: [
-      TypeDef.Array("Bytes", FieldDef.{ name: .None, mutable: false, ty: .I8 }),
-    ],
+    types: [TypeDef.Array("Bytes", FieldDef.{ name: .None, mutable: false, ty: .I8 })],
     imports: [],
     funcs: [
       FuncDef.{
@@ -998,11 +897,7 @@ fn test_link_rewrites_array_new_data() Result<Void, String> {
         params: [],
         results: [.Anyref],
         locals: [],
-        body: [
-          Instr.I32Const(0),
-          Instr.I32Const(3),
-          Instr.ArrayNewData("Bytes", "d0"),
-        ],
+        body: [Instr.I32Const(0), Instr.I32Const(3), Instr.ArrayNewData("Bytes", "d0")],
       },
     ],
     globals: [],
@@ -1031,16 +926,10 @@ fn test_link_rewrites_array_new_data() Result<Void, String> {
 
 // ── Suite ───────────────────────────────────────────────────────────
 pub fn suite() runner.Suite {
-  runner.suite("linker (M9)").test(
-    "link empty modules",
-    test_link_empty_modules,
-  ).test(
+  runner.suite("linker (M9)").test("link empty modules", test_link_empty_modules).test(
     "single module qualifies funcs",
     test_link_single_module_qualifies_funcs,
-  ).test(
-    "single module qualifies types",
-    test_link_single_module_qualifies_types,
-  ).test(
+  ).test("single module qualifies types", test_link_single_module_qualifies_types).test(
     "single module qualifies globals",
     test_link_single_module_qualifies_globals,
   ).test("qualifies data segments", test_link_qualifies_data_segments).test(
@@ -1052,10 +941,7 @@ pub fn suite() runner.Suite {
   ).test("rewrites StructNew/StructGet", test_link_rewrites_struct_new_and_get).test(
     "rewrites RefCast heap type",
     test_link_rewrites_ref_cast_type,
-  ).test(
-    "rewrites if/block/loop result types",
-    test_link_rewrites_if_block_loop_result_types,
-  ).test(
+  ).test("rewrites if/block/loop result types", test_link_rewrites_if_block_loop_result_types).test(
     "rewrites func param/result/local types",
     test_link_rewrites_func_param_result_types,
   ).test("rewrites RefFunc", test_link_rewrites_ref_func).test(

@@ -1,12 +1,12 @@
 use .runner
+use .suites.base_env_guardrail_suite
+use .suites.checker_coverage_suite
+use .suites.checker_suite
 use .suites.parser_suite
 use .suites.resolver_suite
-use .suites.checker_suite
-use .suites.checker_coverage_suite
-use .suites.semantic_suite
 use .suites.semantic_closure_rebinding_suite
 use .suites.semantic_control_flow_suite
-use .suites.base_env_guardrail_suite
+use .suites.semantic_suite
 use .suites.signature_loader_suite
 
 runner.run_all([

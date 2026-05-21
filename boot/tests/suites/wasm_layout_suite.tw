@@ -1,6 +1,5 @@
 use compiler.codegen.wasm_layout.{
-  WasmRecordLayout, WasmValType, layout_of, mono_to_key, val_type_of,
-  val_type_of_mono,
+  WasmRecordLayout, WasmValType, layout_of, mono_to_key, val_type_of, val_type_of_mono,
 }
 use compiler.mono_type.{MonoType, TypeId}
 use compiler.resolver
@@ -37,22 +36,11 @@ fn env_with_sum(name: String, type_id: Int, variants: Vector<ResolvedVariant>) R
   resolver.empty_env().add_type(entry, name)
 }
 
-fn env_with_alias(
-  name: String,
-  type_id: Int,
-  type_params: Vector<String>,
-  target: MonoType,
-) ResolvedEnv {
+fn env_with_alias(name: String, type_id: Int, type_params: Vector<String>, target: MonoType) ResolvedEnv {
   entry := TypeEntry.{
     id: TypeId.{ id: type_id },
     arity: type_params.len(),
-    def: .Some(
-      ResolvedTypeDef.Alias(
-        name,
-        plain_resolved_type_params(type_params),
-        target,
-      ),
-    ),
+    def: .Some(ResolvedTypeDef.Alias(name, plain_resolved_type_params(type_params), target)),
     span: dummy_span(),
     is_extern: false,
   }
@@ -134,10 +122,7 @@ fn test_layout_record() Result<Void, String> {
   env := env_with_record(
     "Point",
     10,
-    [
-      ResolvedField.{ name: "x", ty: .Int },
-      ResolvedField.{ name: "y", ty: .Int },
-    ],
+    [ResolvedField.{ name: "x", ty: .Int }, ResolvedField.{ name: "y", ty: .Int }],
   )
   l := layout_of(.Named(TypeId.{ id: 10 }, []), env)
 
@@ -272,9 +257,7 @@ fn test_layout_generic_alias_substitutes_args() Result<Void, String> {
 
       case ok_payload[0] {
         .I64 => .Ok({}),
-        _ => assert.fail(
-          "expected generic alias payload to substitute Int -> I64",
-        ),
+        _ => assert.fail("expected generic alias payload to substitute Int -> I64"),
       }
     },
     _ => assert.fail("expected alias to resolve to Result sum layout"),
@@ -289,9 +272,7 @@ fn test_layout_closure_never_return() Result<Void, String> {
     .Closure(c) => {
       case c.result_type {
         .None => .Ok({}),
-        .Some(_) => assert.fail(
-          "expected closure with Never return to have no result type",
-        ),
+        .Some(_) => assert.fail("expected closure with Never return to have no result type"),
       }
     },
     _ => assert.fail("expected Closure layout"),
@@ -336,11 +317,7 @@ fn test_val_type_of_scalar_anyref() Result<Void, String> {
 }
 
 fn test_val_type_of_record() Result<Void, String> {
-  rec := WasmRecordLayout.{
-    type_id: TypeId.{ id: 10 },
-    sym: "\$Point",
-    fields: [],
-  }
+  rec := WasmRecordLayout.{ type_id: TypeId.{ id: 10 }, sym: "\$Point", fields: [] }
   vt := val_type_of(.Record(rec))
 
   case vt {
@@ -475,31 +452,22 @@ fn test_mono_to_key_stable() Result<Void, String> {
 
 // ── Suite ───────────────────────────────────────────────────────────
 pub fn suite() runner.Suite {
-  runner.suite("wasm layout").test(
-    "WasmValType variants",
-    test_wasm_val_type_variants,
-  ).test("layout_of Int", test_layout_int).test(
-    "layout_of Float",
-    test_layout_float,
-  ).test("layout_of Bool", test_layout_bool).test(
+  runner.suite("wasm layout").test("WasmValType variants", test_wasm_val_type_variants).test(
+    "layout_of Int",
+    test_layout_int,
+  ).test("layout_of Float", test_layout_float).test("layout_of Bool", test_layout_bool).test(
     "layout_of Byte",
     test_layout_byte,
-  ).test("layout_of Void", test_layout_void).test(
-    "layout_of String",
-    test_layout_string,
-  ).test("layout_of Record", test_layout_record).test(
-    "layout_of Sum",
-    test_layout_sum,
-  ).test("layout_of Optional", test_layout_optional).test(
+  ).test("layout_of Void", test_layout_void).test("layout_of String", test_layout_string).test(
+    "layout_of Record",
+    test_layout_record,
+  ).test("layout_of Sum", test_layout_sum).test("layout_of Optional", test_layout_optional).test(
     "layout_of Result",
     test_layout_result,
-  ).test("layout_of Vector", test_layout_vector).test(
-    "layout_of Dict",
-    test_layout_dict,
-  ).test("layout_of Closure", test_layout_closure).test(
-    "layout_of generic Alias substitutes args",
-    test_layout_generic_alias_substitutes_args,
-  ).test(
+  ).test("layout_of Vector", test_layout_vector).test("layout_of Dict", test_layout_dict).test(
+    "layout_of Closure",
+    test_layout_closure,
+  ).test("layout_of generic Alias substitutes args", test_layout_generic_alias_substitutes_args).test(
     "layout_of Closure handles Never return",
     test_layout_closure_never_return,
   ).test("val_type_of Scalar I64", test_val_type_of_scalar_i64).test(

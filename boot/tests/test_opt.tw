@@ -1,14 +1,14 @@
 use tests.runner
-use tests.suites.opt_builder_region_suite
-use tests.suites.opt_dead_let_suite
-use tests.suites.opt_const_fold_suite
 use tests.suites.opt_analysis_suite
+use tests.suites.opt_builder_region_suite
+use tests.suites.opt_const_fold_suite
+use tests.suites.opt_dead_let_suite
+use tests.suites.opt_defer_elim_suite
+use tests.suites.opt_liveness_suite
 use tests.suites.opt_loop_builder_suite
 use tests.suites.opt_pipeline_suite
-use tests.suites.opt_liveness_suite
 use tests.suites.opt_semantics_suite
 use tests.suites.opt_uniqueness_suite
-use tests.suites.opt_defer_elim_suite
 
 runner.run_all([
   opt_builder_region_suite.suite(),

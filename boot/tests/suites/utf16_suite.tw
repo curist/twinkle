@@ -1,17 +1,20 @@
-use tests.runner
-use tests.assert
 use lib.utf16
+use tests.assert
+use tests.runner
 
 pub fn suite() runner.Suite {
-  runner.suite("utf16")
-    .test("code unit length follows scalar range", fn() {
+  runner.suite("utf16").test(
+    "code unit length follows scalar range",
+    fn() {
       try assert.equal(utf16.code_unit_len(0x41), 1)
       try assert.equal(utf16.code_unit_len(0xFFFF), 1)
       try assert.equal(utf16.code_unit_len(0x10000), 2)
       try assert.equal(utf16.code_unit_len(0x1D11E), 2)
       .Ok({})
-    })
-    .test("code_points iterates scalars with byte ranges", fn() {
+    },
+  ).test(
+    "code_points iterates scalars with byte ranges",
+    fn() {
       cps := collect cp in utf16.code_points("a𝄞b") { cp }
       try assert.equal(cps.len(), 3)
       try assert.equal(cps[0].value, 0x61)
@@ -24,22 +27,28 @@ pub fn suite() runner.Suite {
       try assert.equal(cps[2].byte_start, 5)
       try assert.equal(cps[2].byte_end, 6)
       .Ok({})
-    })
-    .test("count_code_units counts surrogate pairs", fn() {
+    },
+  ).test(
+    "count_code_units counts surrogate pairs",
+    fn() {
       try assert.equal(utf16.count_code_units("abc"), 3)
       try assert.equal(utf16.count_code_units("a𝄞b"), 4)
       try assert.equal(utf16.count_code_units("𝄞"), 2)
       .Ok({})
-    })
-    .test("byte offsets convert to utf16 code units", fn() {
+    },
+  ).test(
+    "byte offsets convert to utf16 code units",
+    fn() {
       s := "a𝄞b"
       try assert.equal(utf16.byte_offset_to_code_units(s, 0), 0)
       try assert.equal(utf16.byte_offset_to_code_units(s, 1), 1)
       try assert.equal(utf16.byte_offset_to_code_units(s, 5), 3)
       try assert.equal(utf16.byte_offset_to_code_units(s, 6), 4)
       .Ok({})
-    })
-    .test("utf16 code units convert to byte offsets", fn() {
+    },
+  ).test(
+    "utf16 code units convert to byte offsets",
+    fn() {
       s := "a𝄞b"
       try assert.equal(try utf16.code_units_to_byte_offset(s, 0).ok_or("missing offset"), 0)
       try assert.equal(try utf16.code_units_to_byte_offset(s, 1).ok_or("missing offset"), 1)
@@ -48,5 +57,6 @@ pub fn suite() runner.Suite {
       try assert.equal(try utf16.code_units_to_byte_offset(s, 4).ok_or("missing offset"), 6)
       try assert.is_none(utf16.code_units_to_byte_offset(s, 5))
       .Ok({})
-    })
+    },
+  )
 }
