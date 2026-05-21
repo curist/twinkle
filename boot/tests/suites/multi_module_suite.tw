@@ -478,6 +478,15 @@ pub fn suite() runner.Suite {
       .Ok({})
     },
   ).test(
+    "contract fallback ignores unrelated generic methods loaded earlier",
+    fn() {
+      wat := try codegen_harness.codegen_path(
+        "${dir}/contract_generic_fallback_main.tw",
+      )
+      try assert.str_contains(wat, "to_string__Int")
+      .Ok({})
+    },
+  ).test(
     "cross-module pub value emits global.set in per-module \$init",
     fn() {
       wat := try codegen_harness.codegen_path(

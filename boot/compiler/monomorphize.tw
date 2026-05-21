@@ -566,6 +566,141 @@ fn contract_expected_return(contract: BuiltinContract) MonoType {
   }
 }
 
+type TypeMatch = .{ matched: Bool, subst: Dict<String, MonoType> }
+
+type ContractCandidate = .{ func_id: FuncId, score: Int }
+
+fn match_receiver_type(pattern: MonoType, concrete: MonoType, subst: Dict<String, MonoType>) TypeMatch {
+  case pattern {
+    .Var(name) => {
+      case subst[name] {
+        .Some(existing) => TypeMatch.{ matched: existing == concrete, subst },
+        .None => {
+          subst[name] = concrete
+          TypeMatch.{ matched: true, subst }
+        },
+      }
+    },
+    .Vector(elem_p) => case concrete {
+      .Vector(elem_c) => match_receiver_type(elem_p, elem_c, subst),
+      _ => TypeMatch.{ matched: false, subst },
+    },
+    .Dict(kp, vp) => case concrete {
+      .Dict(kc, vc) => {
+        km := match_receiver_type(kp, kc, subst)
+
+        if !km.matched {
+          return km
+        }
+
+        match_receiver_type(vp, vc, km.subst)
+      },
+      _ => TypeMatch.{ matched: false, subst },
+    },
+    .Function(pp, rp) => case concrete {
+      .Function(pc, rc) => {
+        if pp.len() != pc.len() {
+          return TypeMatch.{ matched: false, subst }
+        }
+
+        cur := TypeMatch.{ matched: true, subst }
+        i := 0
+
+        for i < pp.len() {
+          cur = match_receiver_type(pp[i], pc[i], cur.subst)
+
+          if !cur.matched {
+            return cur
+          }
+
+          i = i + 1
+        }
+
+        match_receiver_type(rp, rc, cur.subst)
+      },
+      _ => TypeMatch.{ matched: false, subst },
+    },
+    .Named(tid_p, ap) => case concrete {
+      .Named(tid_c, ac) => {
+        if tid_p.id != tid_c.id or ap.len() != ac.len() {
+          return TypeMatch.{ matched: false, subst }
+        }
+
+        cur := TypeMatch.{ matched: true, subst }
+        i := 0
+
+        for i < ap.len() {
+          cur = match_receiver_type(ap[i], ac[i], cur.subst)
+
+          if !cur.matched {
+            return cur
+          }
+
+          i = i + 1
+        }
+
+        cur
+      },
+      _ => TypeMatch.{ matched: false, subst },
+    },
+    .Optional(inner_p) => case concrete {
+      .Optional(inner_c) => match_receiver_type(inner_p, inner_c, subst),
+      _ => TypeMatch.{ matched: false, subst },
+    },
+    .Result(ok_p, err_p) => case concrete {
+      .Result(ok_c, err_c) => {
+        ok_m := match_receiver_type(ok_p, ok_c, subst)
+
+        if !ok_m.matched {
+          return ok_m
+        }
+
+        match_receiver_type(err_p, err_c, ok_m.subst)
+      },
+      _ => TypeMatch.{ matched: false, subst },
+    },
+    _ => TypeMatch.{ matched: pattern == concrete, subst },
+  }
+}
+
+fn receiver_specificity(ty: MonoType) Int {
+  case ty {
+    .Var(_) => 0,
+    .Vector(elem) => 20 + receiver_specificity(elem),
+    .Dict(k, v) => 20 + receiver_specificity(k) + receiver_specificity(v),
+    .Function(params, ret) => {
+      score := 20 + receiver_specificity(ret)
+
+      for p in params { score = score + receiver_specificity(p) }
+
+      score
+    },
+    .Named(_, args) => {
+      score := 30
+
+      for arg in args { score = score + receiver_specificity(arg) }
+
+      score
+    },
+    .Optional(inner) => 20 + receiver_specificity(inner),
+    .Result(ok, err) => 20 + receiver_specificity(ok) + receiver_specificity(err),
+    _ => 10,
+  }
+}
+
+fn better_contract_candidate(current: ContractCandidate?, candidate: ContractCandidate) ContractCandidate? {
+  case current {
+    .Some(best) => {
+      if candidate.score > best.score {
+        .Some(candidate)
+      } else {
+        .Some(best)
+      }
+    },
+    .None => .Some(candidate),
+  }
+}
+
 fn fallback_contract_target_id(
   receiver_ty: MonoType,
   method_name: String,
@@ -573,6 +708,7 @@ fn fallback_contract_target_id(
   func_map: Dict<Int, FunctionDef>,
 ) FuncId? {
   expected_ret := contract_expected_return(contract)
+  best: ContractCandidate? = .None
 
   for fid in func_map.keys() {
     case func_map[fid] {
@@ -584,22 +720,27 @@ fn fallback_contract_target_id(
         if func.return_ty != expected_ret { continue }
 
         recv_pattern := func.params[0].ty
-        subst := match_type_against(recv_pattern, receiver_ty, Dict.new())
+        matched := match_receiver_type(recv_pattern, receiver_ty, Dict.new())
+
+        if !matched.matched { continue }
+
         type_params := collect_type_params(func)
 
-        if type_params.len() == 0 {
-          if recv_pattern == receiver_ty {
-            return .Some(func.func_id)
-          }
-        } else if subst_covers(type_params, subst) {
-          return .Some(func.func_id)
-        }
+        if !subst_covers(type_params, matched.subst) { continue }
+
+        best = better_contract_candidate(
+          best,
+          ContractCandidate.{ func_id: func.func_id, score: receiver_specificity(recv_pattern) },
+        )
       },
       .None => {},
     }
   }
 
-  .None
+  case best {
+    .Some(candidate) => .Some(candidate.func_id),
+    .None => .None,
+  }
 }
 
 fn resolve_contract_target_id(
