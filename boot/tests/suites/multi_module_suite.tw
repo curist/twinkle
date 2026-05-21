@@ -466,6 +466,44 @@ pub fn suite() runner.Suite {
       .Ok({})
     },
   ).test(
+    "method table maps Box.to_string by receiver TypeId after linking",
+    fn() {
+      artifacts := case module_compiler.compile_entry("${dir}/contract_generic_fallback_main.tw") {
+        .Ok(value) => value,
+        .Err(err) => {
+          return .Err("expected fixture to compile, got: ${format_compile_error(err)}")
+        },
+      }
+      // Find the Box type's TypeId in the linked environment.
+      box_tid := case artifacts.core.type_env.lookup_registered_type("Box") {
+        .Some(entry) => entry.id,
+        .None => {
+          return .Err("Box type not found in linked env")
+        },
+      }
+      key := "t${box_tid.id}::to_string"
+
+      case artifacts.core.method_table[key] {
+        .Some(fid) => {
+          // Verify the FuncId points at a function with Box receiver.
+          found := artifacts.core.functions.any(
+            fn(func) {
+              func.func_id.id == fid.id and has_box_to_string_param(artifacts.core.type_env, func)
+            },
+          )
+
+          if !found {
+            return .Err(
+              "method_table[${key}] = FuncId(${fid.id}) but no matching Box.to_string function found",
+            )
+          }
+
+          .Ok({})
+        },
+        .None => .Err("method_table missing key '${key}' for Box.to_string"),
+      }
+    },
+  ).test(
     "cross-module pub value emits global.set in per-module \$init",
     fn() {
       wat := try codegen_harness.codegen_path("${dir}/module_global_init_main.tw")

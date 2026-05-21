@@ -112,6 +112,7 @@ pub type CoreModule = .{
   init_func_id: FuncId?,
   func_table: Dict<String, FuncId>,
   extern_imports: Dict<Int, ExternImport>,
+  method_table: Dict<String, FuncId>,
 }
 
 // ── Linker types ────────────────────────────────────────────────────

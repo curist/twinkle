@@ -58,32 +58,50 @@ first canonicalize type identities across module boundaries.
 
 ## Current implementation status
 
-The current patch set should be treated as prerequisite groundwork, not as the
-full contract-call-resolution fix.
+Steps 1–7 are complete. The method table is the primary contract resolution
+path; the fallback name-scan (`fallback_contract_target_id`) has been removed
+from monomorphization; DCE uses method-table-based contract retention instead
+of broad same-name matching; and `build_type_remap` errors on unmapped nominal
+TypeIds.
 
-Implemented groundwork:
+Implemented:
 
 - linked Core IR now canonicalizes nominal `TypeId`s across modules before DCE,
   monomorphization, ANF, and codegen see it,
-- fallback candidate matching was factored into `contract_candidate_for_func`,
-  with `ResolvedEnv` available for receiver-aware checks,
-- named-receiver metadata hits are validated before being trusted, so a stale or
-  colliding name-table entry can be rejected during the transitional phase,
 - a regression test guards that cross-module `Box.to_string` uses the linked
-  canonical `Box` type identity.
+  canonical `Box` type identity,
+- `CoreModule` now carries `method_table: Dict<String, FuncId>` mapping
+  `(receiver_type, method_name)` to exact linked `FuncId`,
+- the linker builds the method table from ALL modules' method metadata during
+  the linking loop, remapping TypeIds and FuncIds, then filters after DCE,
+- linker emits `eprintln` diagnostics if a method metadata entry cannot be
+  resolved in the module's `func_table` (currently silent in practice),
+- `resolve_contract_target_id` uses the method table as primary path via
+  `method_table_key()`, with env-based name lookup as secondary (no fallback
+  scan of all functions),
+- `method_table_key` handles `ExternRef` types alongside `Named` types,
+- `fallback_contract_target_id` and all its helpers (`contract_candidate_for_func`,
+  `match_receiver_type`, `receiver_specificity`, `better_contract_candidate`,
+  `name_matches_method`, `contract_expected_return`, `TypeMatch`,
+  `ContractCandidate`) have been removed,
+- monomorphization functions use a `MonoCtx` record to bundle immutable context
+  (`generic_ids`, `func_map`, `env`, `func_table`, `method_table`) instead of
+  threading five separate parameters,
+- a test verifies the method table contains the correct `Box.to_string` FuncId
+  after cross-module linking,
+- `build_type_remap` errors on unmapped nominal TypeIds with origin-based
+  lookup falling back to name-based lookup before erroring,
+- DCE uses method-table suffix matching for generic receivers instead of broad
+  same-name function retention; removed `fallback_contract_refs`,
+  `fallback_method_names_for_func`, `append_unique_int`, `append_unique_str`.
 
 Still pending:
 
-- fallback is still correctness-sensitive: if metadata is missing or stale,
-  monomorphization can still scan linked functions by method-shaped name and
-  choose a receiver-compatible candidate,
-- `build_type_remap` currently leaves unmapped nominal IDs in place; for the
-  final invariant this should become a linker error for nominal IDs embedded in
-  linked/reachable IR unless the linked `ResolvedEnv` owns them,
-- tests still need stronger exact-target assertions at Core/mono IR level rather
-  than broad WAT symbol substrings,
-- DCE still has broad same-name contract retention until exact resolved contract
-  references are available before or during reachability.
+- Add tests proving import order does not affect contract method target choice
+  (step 8).
+- Add IR-level tests asserting exact `FuncId` target identity for contract-backed
+  calls (step 8).
+- Final validation run of the full self-host loop (step 9).
 
 ## Desired invariant
 
@@ -291,25 +309,31 @@ Keep these fixtures as permanent coverage:
 1. Canonicalize linked Core IR `TypeId`s in `core_linker.tw` so each module's
    local nominal ids are remapped to the same ids used by the linked `ResolvedEnv`.
    Remap function signatures, expression types, record/variant constructors, and
-   match patterns. **Groundwork done.**
+   match patterns. **Done.**
 2. Tighten type remapping so unmapped nominal IDs embedded in linked IR become a
-   targeted internal linker error instead of being left in place.
+   targeted internal linker error instead of being left in place. **Done.**
+   `build_type_remap` now errors on unmapped nominal TypeIds, with origin-based
+   lookup falling back to name-based lookup before erroring.
 3. Replace/extend `core_linker/contract_resolve.tw` with an exact resolver. It
    may temporarily return names plus `FuncId`s, but name lookup must be a
-   transitional compatibility layer, not the semantic source of truth.
+   transitional compatibility layer, not the semantic source of truth. **Done.**
 4. Add or derive a post-link method table keyed by receiver type identity and
-   method name. The table must reject ambiguous entries.
-5. Update monomorphization to validate name-table targets for named receivers and
-   to resolve `ContractCall` through exact metadata once available. If the
-   resolved target is generic, specialize that exact target via the existing
-   specialization map. **Transitional validation is done; exact metadata remains
-   pending.**
+   method name. The table must reject ambiguous entries. **Done.** `CoreModule`
+   now carries `method_table: Dict<String, FuncId>` keyed by
+   `"${type_key}::${method_name}"` where type_key is the builtin name or
+   `"t${tid.id}"` for Named types. Built in `core_linker.tw` during the linking
+   loop using each module's `methods_by_type` and `methods` with remapped
+   TypeIds and FuncIds, then filtered after DCE.
+5. Update monomorphization to resolve `ContractCall` through exact metadata.
+   **Done.** `resolve_contract_target_id` uses method table as primary path
+   via `method_table_key()`, with env-based name lookup as secondary.
 6. Remove `fallback_contract_target_id` from monomorphization's correctness path.
-   Missing, ambiguous, stale, or unlinked method metadata should become a targeted
-   internal error, not a scan of all same-named functions.
+   **Done.** The fallback scan and all supporting helpers have been removed.
+   Monomorphization uses a `MonoCtx` record to bundle context parameters.
 7. After proving `ContractCall` cannot reach DCE/codegen, remove DCE's broad
    same-name retention. Consider moving DCE after monomorphization as a cleanup,
-   not as the primary correctness fix.
+   not as the primary correctness fix. **Done.** DCE now uses method-table
+   suffix matching for generic receivers instead of broad same-name retention.
 8. Add tests proving import order does not affect contract method target choice
    and tests asserting exact IR target identity.
 9. Run the boot test suite and self-host loop.

@@ -36,6 +36,7 @@ pub fn link(
       init_func_id: .None,
       func_table: Dict.new(),
       extern_imports: Dict.new(),
+      method_table: Dict.new(),
     }
   }
 
@@ -120,6 +121,8 @@ pub fn link(
   all_init_ids: Vector<FuncId> = []
   entry_init: FuncId? = .None
   entry_func_ids: Vector<Int> = []
+  // Accumulate method table entries from all modules during linking.
+  pre_dce_method_table: Dict<String, FuncId> = Dict.new()
 
   for m in modules {
     // This remap already includes:
@@ -195,6 +198,61 @@ pub fn link(
 
     type_remap := build_type_remap(m.path, m.core.type_env, entry_env)
 
+    // Collect method table entries from this module.
+    // Uses the module's func_table + remap to resolve local method names to
+    // global FuncIds, and type_remap to canonicalize receiver TypeIds.
+    for tid_id in m.core.type_env.methods_by_type.keys() {
+      case m.core.type_env.methods_by_type[tid_id] {
+        .Some(entries) => {
+          canonical_tid := case type_remap[tid_id] {
+            .Some(mapped) => mapped.id,
+            .None => tid_id,
+          }
+
+          for entry in entries {
+            case m.func_table[entry.function_name] {
+              .Some(local_fid) => {
+                global_fid := remap_func_id(local_fid, remap)
+                key := "t${canonical_tid}::${entry.method_name}"
+
+                if !pre_dce_method_table.has(key) { pre_dce_method_table[key] = global_fid }
+              },
+              .None => {
+                eprintln(
+                  "[linker] method_table: func_table miss for '${entry.function_name}' (method '${entry.method_name}' on type ${tid_id}) in module ${m.path}",
+                )
+              },
+            }
+          }
+        },
+        .None => {},
+      }
+    }
+
+    // Also collect builtin method entries from the module's methods dict.
+    for type_name in m.core.type_env.methods.keys() {
+      case m.core.type_env.methods[type_name] {
+        .Some(entries) => {
+          for entry in entries {
+            case m.func_table[entry.function_name] {
+              .Some(local_fid) => {
+                global_fid := remap_func_id(local_fid, remap)
+                key := "${type_name}::${entry.method_name}"
+
+                if !pre_dce_method_table.has(key) { pre_dce_method_table[key] = global_fid }
+              },
+              .None => {
+                eprintln(
+                  "[linker] method_table: func_table miss for '${entry.function_name}' (method '${type_name}.${entry.method_name}') in module ${m.path}",
+                )
+              },
+            }
+          }
+        },
+        .None => {},
+      }
+    }
+
     // Remap and collect functions.
     for f in m.core.functions {
       remapped_id := remap_func_id(f.func_id, remap)
@@ -240,6 +298,7 @@ pub fn link(
     entry_func_ids,
     entry_env,
     linked_func_table,
+    pre_dce_method_table,
   )
   live_functions: Vector<FunctionDef> = []
 
@@ -270,12 +329,25 @@ pub fn link(
     }
   }
 
+  // Step 6: Filter method table after DCE.
+  method_table: Dict<String, FuncId> = Dict.new()
+
+  for key in pre_dce_method_table.keys() {
+    case pre_dce_method_table[key] {
+      .Some(fid) => {
+        if fid.id < builtin_count or reachable.has(fid.id) { method_table[key] = fid }
+      },
+      .None => {},
+    }
+  }
+
   CoreModule.{
     functions: live_functions,
     type_env: entry_env,
     init_func_id: combined_init.init_func_id,
     func_table: live_func_table,
     extern_imports: live_extern_imports,
+    method_table,
   }
 }
 
@@ -298,7 +370,7 @@ pub fn validate_compiled_module_links(
   // Imported refs must either be builtins, locally defined functions, or have
   // an ExternalRef recorded by the module compiler/lowering pipeline.
   for f in m.core.functions {
-    refs := collect_func_refs(f.body, m.core.type_env, m.func_table, func_map)
+    refs := collect_func_refs(f.body, m.core.type_env, m.func_table, func_map, m.core.method_table)
 
     for ref_id in refs {
       if ref_id < m.builtin_count or defined.has(ref_id) { continue }
@@ -432,7 +504,16 @@ fn build_type_remap(module_path: String, module_env: ResolvedEnv, entry_env: Res
       .None => local_type_origin(module_path, type_name),
     }
     mapped: TypeId? = case origin {
-      .Some(o) => find_entry_type_by_origin(entry_env, o),
+      .Some(o) => case find_entry_type_by_origin(entry_env, o) {
+        .Some(tid) => .Some(tid),
+        // Origin not found in entry env — fall back to name lookup.
+        // This handles builtin types (Option, Result, etc.) whose origins
+        // may differ between modules and the entry environment.
+        .None => case entry_env.lookup_registered_type(type_name) {
+          .Some(found) => .Some(found.id),
+          .None => .None,
+        },
+      },
       .None => case entry_env.lookup_registered_type(type_name) {
         .Some(found) => .Some(found.id),
         .None => .None,
@@ -441,7 +522,15 @@ fn build_type_remap(module_path: String, module_env: ResolvedEnv, entry_env: Res
 
     case mapped {
       .Some(tid) => { out[entry.id.id] = tid },
-      .None => {},
+      .None => {
+        origin_str := case origin {
+          .Some(o) => o,
+          .None => "<no origin>",
+        }
+        error(
+          "linker: unmapped nominal TypeId(${entry.id.id}) '${type_name}' (origin: ${origin_str}) in module ${module_path} has no corresponding type in the linked environment",
+        )
+      },
     }
 
     i = i + 1

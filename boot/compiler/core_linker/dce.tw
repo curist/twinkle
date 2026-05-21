@@ -14,7 +14,7 @@ pub type BfsState = .{ queue: Vector<Int>, reachable: Dict<Int, Bool> }
 
 pub type ReachabilityIndex = .{
   funcs_by_id: Dict<Int, FunctionDef>,
-  fallback_methods: Dict<String, Vector<Int>>,
+  method_table: Dict<String, FuncId>,
 }
 
 /// Compute the set of reachable FuncIds starting from init + entry functions.
@@ -24,8 +24,9 @@ pub fn compute_reachable(
   entry_func_ids: Vector<Int>,
   env: ResolvedEnv,
   func_table: Dict<String, FuncId>,
+  method_table: Dict<String, FuncId>,
 ) Dict<Int, Bool> {
-  index := build_reachability_index(functions)
+  index := build_reachability_index(functions, method_table)
   reachable: Dict<Int, Bool> = Dict.new()
   queue: Vector<Int> = []
 
@@ -57,6 +58,7 @@ pub fn collect_func_refs(
   env: ResolvedEnv,
   func_table: Dict<String, FuncId>,
   func_map: Dict<Int, FunctionDef>,
+  method_table: Dict<String, FuncId>,
 ) Vector<Int> {
   functions: Vector<FunctionDef> = []
 
@@ -67,7 +69,12 @@ pub fn collect_func_refs(
     }
   }
 
-  collect_func_refs_indexed(expr, env, func_table, build_reachability_index(functions))
+  collect_func_refs_indexed(
+    expr,
+    env,
+    func_table,
+    build_reachability_index(functions, method_table),
+  )
 }
 
 fn bfs_reachable(
@@ -102,58 +109,12 @@ fn maybe_add_ref(state: BfsState, ref_id: Int) BfsState {
 
 fn add_refs(state: BfsState, refs: Vector<Int>) BfsState { refs.fold(state, maybe_add_ref) }
 
-pub fn build_reachability_index(functions: Vector<FunctionDef>) ReachabilityIndex {
+pub fn build_reachability_index(functions: Vector<FunctionDef>, method_table: Dict<String, FuncId>) ReachabilityIndex {
   funcs_by_id: Dict<Int, FunctionDef> = Dict.new()
-  fallback_methods: Dict<String, Vector<Int>> = Dict.new()
 
-  for f in functions {
-    funcs_by_id[f.func_id.id] = f
+  for f in functions { funcs_by_id[f.func_id.id] = f }
 
-    for method_name in fallback_method_names_for_func(f.name) {
-      existing := case fallback_methods[method_name] {
-        .Some(ids) => ids,
-        .None => [],
-      }
-      fallback_methods[method_name] = append_unique_int(existing, f.func_id.id)
-    }
-  }
-
-  .{ funcs_by_id, fallback_methods }
-}
-
-fn append_unique_int(items: Vector<Int>, value: Int) Vector<Int> {
-  for item in items {
-    if item == value {
-      return items
-    }
-  }
-
-  items.append(value)
-}
-
-fn append_unique_str(items: Vector<String>, value: String) Vector<String> {
-  for item in items {
-    if item == value {
-      return items
-    }
-  }
-
-  items.append(value)
-}
-
-fn fallback_method_names_for_func(fn_name: String) Vector<String> {
-  names: Vector<String> = [fn_name]
-  i := 0
-
-  for i < fn_name.len() {
-    if fn_name[i].to_int() == 46 and i + 1 < fn_name.len() {
-      names = append_unique_str(names, fn_name.slice(i + 1, fn_name.len()))
-    }
-
-    i = i + 1
-  }
-
-  names
+  .{ funcs_by_id, method_table }
 }
 
 fn get_body_refs(
@@ -168,17 +129,10 @@ fn get_body_refs(
   }
 }
 
-fn fallback_contract_refs(method_name: String, index: ReachabilityIndex) Vector<Int> {
-  case index.fallback_methods[method_name] {
-    .Some(refs) => refs,
-    .None => [],
-  }
-}
-
-// Contract calls should normally resolve through the typed receiver and linked
-// function table. The fallback index is intentionally conservative: it keeps
-// method-shaped functions reachable when older lowering/linking paths have not
-// preserved enough exact target information yet.
+// Resolve contract call references for DCE reachability.
+// For concrete receivers, uses exact resolution. For generic receivers (Var),
+// returns all method table entries matching ::method_name so monomorphization
+// can later pick the correct one.
 fn contract_call_refs(
   contract: BuiltinContract,
   method_name: String,
@@ -189,7 +143,22 @@ fn contract_call_refs(
 ) Vector<Int> {
   case exact_contract_ref(contract, receiver_ty, method_name, env, func_table) {
     .Some(fid) => [fid.id],
-    .None => fallback_contract_refs(method_name, index),
+    .None => {
+      // Generic receiver: collect all method table entries for this method name.
+      suffix := "::${method_name}"
+      refs: Vector<Int> = []
+
+      for key in index.method_table.keys() {
+        if key.ends_with(suffix) {
+          case index.method_table[key] {
+            .Some(fid) => { refs = .append(fid.id) },
+            .None => {},
+          }
+        }
+      }
+
+      refs
+    },
   }
 }
 
