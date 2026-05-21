@@ -85,14 +85,14 @@ fn emit_trivia(trivia: Vector<Trivia>) Doc {
         prev_is_comment := i > 0 and is_comment_trivia(trivia[i - 1])
         next_is_comment := i + 1 < trivia.len() and is_comment_trivia(trivia[i + 1])
         if !(prev_is_comment and next_is_comment) {
-          result = .Concat(result, doc.hard_line())
+          result = doc.concat([result, doc.hard_line()])
         }
       },
       .LineComment => {
-        result = .Concat(result, .Concat(doc.text(t.text), doc.hard_line()))
+        result = doc.concat([result, doc.text(t.text), doc.hard_line()])
       },
       .DocComment => {
-        result = .Concat(result, .Concat(doc.text(t.text), doc.hard_line()))
+        result = doc.concat([result, doc.text(t.text), doc.hard_line()])
       },
     }
   }
@@ -241,9 +241,8 @@ pub fn format_module(module: Module, tokens: Vector<Token>) Doc {
       start = start + 1
     }
     if start < leading_file_trivia.len() {
-      result = .Concat(
-        result,
-        emit_trivia(leading_file_trivia.slice(start, leading_file_trivia.len())),
+      result = doc.concat(
+        [result, emit_trivia(leading_file_trivia.slice(start, leading_file_trivia.len()))],
       )
     }
   }
@@ -263,7 +262,7 @@ pub fn format_module(module: Module, tokens: Vector<Token>) Doc {
     }
     
     if i > 0 {
-      result = .Concat(result, doc.hard_line())
+      result = doc.concat([result, doc.hard_line()])
       
       // Determine if a blank line is needed
       needs_blank := should_blank_between(prev_kind, cur_kind)
@@ -275,17 +274,17 @@ pub fn format_module(module: Module, tokens: Vector<Token>) Doc {
       
       if trivia.len() > 0 {
         if needs_blank and !is_blank_trivia(trivia[0]) {
-          result = .Concat(result, doc.hard_line())
+          result = doc.concat([result, doc.hard_line()])
         }
-        result = .Concat(result, emit_trivia(trivia))
+        result = doc.concat([result, emit_trivia(trivia)])
       } else {
         if needs_blank {
-          result = .Concat(result, doc.hard_line())
+          result = doc.concat([result, doc.hard_line()])
         }
       }
     }
     
-    result = .Concat(result, format_item(item, tm))
+    result = doc.concat([result, format_item(item, tm)])
     prev_kind = cur_kind
     prev_import_group = cur_import_group
   }
@@ -293,11 +292,10 @@ pub fn format_module(module: Module, tokens: Vector<Token>) Doc {
   // EOF trailing trivia (comments at end of file)
   eof_trivia := get_eof_trivia(tokens)
   if eof_trivia.len() > 0 {
-    result = .Concat(result, doc.hard_line())
-    result = .Concat(result, emit_trivia(eof_trivia))
+    result = doc.concat([result, doc.hard_line(), emit_trivia(eof_trivia)])
   } else {
     // Ensure trailing newline
-    result = .Concat(result, doc.hard_line())
+    result = doc.concat([result, doc.hard_line()])
   }
   
   result
@@ -567,7 +565,7 @@ fn format_block(block: Block, tm: Dict<Int, Vector<Trivia>>) Doc {
     trivia := get_trivia(tm, stmt_span(stmt).start)
     stmt_doc := format_stmt(stmt, tm)
     if trivia.len() > 0 {
-      stmt_doc = .Concat(emit_trivia(trivia), stmt_doc)
+      stmt_doc = doc.concat([emit_trivia(trivia), stmt_doc])
     }
     body_docs = body_docs.append(stmt_doc)
   }
@@ -577,7 +575,7 @@ fn format_block(block: Block, tm: Dict<Int, Vector<Trivia>>) Doc {
       trivia := get_trivia(tm, expr.span.start)
       tail_doc := format_expr(expr, tm)
       if trivia.len() > 0 {
-        tail_doc = .Concat(emit_trivia(trivia), tail_doc)
+        tail_doc = doc.concat([emit_trivia(trivia), tail_doc])
       }
       body_docs = body_docs.append(tail_doc)
     },
@@ -954,7 +952,7 @@ fn format_case(
     trivia := get_trivia(tm, arm.span.start)
     arm_doc := format_case_arm(arm, tm)
     if trivia.len() > 0 {
-      arm_doc = .Concat(emit_trivia(trivia), arm_doc)
+      arm_doc = doc.concat([emit_trivia(trivia), arm_doc])
     }
     arm_docs = arm_docs.append(arm_doc)
   }

@@ -5,6 +5,7 @@ pub type Doc = {
   HardLine,
   Indent(Int, Doc),
   Concat(Doc, Doc),
+  Seq(Vector<Doc>),
   Group(Doc, Int),
   IfBreak(Doc, Doc),
 }
@@ -55,33 +56,56 @@ fn flat_width(d: Doc) Int {
         if bw < 0 { -1 } else { aw + bw }
       }
     },
+    .Seq(docs) => {
+      total := 0
+      for child in docs {
+        w := flat_width(child)
+        if w < 0 {
+          return -1
+        }
+        total = total + w
+      }
+      total
+    },
     .Group(_, cached) => cached,
     .IfBreak(_, flat) => flat_width(flat),
   }
 }
 
 pub fn concat(docs: Vector<Doc>) Doc {
-  docs.fold(
-    Doc.Nil,
-    fn(acc, d) {
-      case acc {
-        .Nil => d,
-        _ => .Concat(acc, d),
-      }
-    },
-  )
+  compact: Vector<Doc> = []
+  for d in docs {
+    case d {
+      .Nil => {},
+      .Seq(children) => {
+        compact = compact.concat(children)
+      },
+      _ => {
+        compact = compact.append(d)
+      },
+    }
+  }
+  if compact.len() == 0 {
+    .Nil
+  } else if compact.len() == 1 {
+    compact[0]
+  } else {
+    .Seq(compact)
+  }
 }
 
 pub fn join(docs: Vector<Doc>, sep: Doc) Doc {
-  result := Doc.Nil
+  if docs.len() == 0 {
+    return .Nil
+  }
+  parts: Vector<Doc> = []
   for d, i in docs {
     if i > 0 {
-      result = .Concat(result, .Concat(sep, d))
-    } else {
-      result = d
+      parts = parts.append(sep)
     }
+    parts = parts.append(d)
   }
-  result
+  concat(parts)
 }
 
 /// Tight brackets: "foo(a, b, c)" flat, or:

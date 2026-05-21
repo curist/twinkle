@@ -4,6 +4,17 @@ type Mode = { Flat, Break }
 
 type StackEntry = .{ indent: Int, mode: Mode, doc: Doc }
 
+type StackPush = .{ stack: Vector<StackEntry>, top: Int }
+
+fn push_stack(stack: Vector<StackEntry>, top: Int, entry: StackEntry) StackPush {
+  if top == stack.len() {
+    .{ stack: stack.append(entry), top: top + 1 }
+  } else {
+    stack[top] = entry
+    .{ stack, top: top + 1 }
+  }
+}
+
 /// Render a Doc tree to a string with default 80-column width.
 pub fn render(doc: Doc) String { render_with_width(doc, 80) }
 
@@ -11,11 +22,11 @@ pub fn render_with_width(doc: Doc, width: Int) String {
   buf: Vector<String> = []
   col := 0
   stack: Vector<StackEntry> = [StackEntry.{ indent: 0, mode: .Break, doc }]
+  top := stack.len()
   
-  for stack.len() > 0 {
-    last := stack.len() - 1
-    entry := stack[last]
-    stack = stack.slice(0, last)
+  for top > 0 {
+    top = top - 1
+    entry := stack[top]
     
     case entry.doc {
       .Nil => {},
@@ -42,40 +53,81 @@ pub fn render_with_width(doc: Doc, width: Int) String {
         col = entry.indent
       },
       .Indent(n, inner) => {
-        stack = stack.append(
+        pushed := push_stack(
+          stack,
+          top,
           StackEntry.{ indent: entry.indent + n, mode: entry.mode, doc: inner },
         )
+        stack = pushed.stack
+        top = pushed.top
       },
       .Concat(a, b) => {
-        stack = stack.append(
+        pushed_b := push_stack(
+          stack,
+          top,
           StackEntry.{ indent: entry.indent, mode: entry.mode, doc: b },
         )
-        stack = stack.append(
+        stack = pushed_b.stack
+        top = pushed_b.top
+        pushed_a := push_stack(
+          stack,
+          top,
           StackEntry.{ indent: entry.indent, mode: entry.mode, doc: a },
         )
+        stack = pushed_a.stack
+        top = pushed_a.top
+      },
+      .Seq(docs) => {
+        idx := docs.len() - 1
+        for idx >= 0 {
+          pushed := push_stack(
+            stack,
+            top,
+            StackEntry.{ indent: entry.indent, mode: entry.mode, doc: docs[idx] },
+          )
+          stack = pushed.stack
+          top = pushed.top
+          idx = idx - 1
+        }
       },
       .Group(inner, flat_width) => {
         if flat_width >= 0 and flat_width <= width - col {
-          stack = stack.append(
+          pushed := push_stack(
+            stack,
+            top,
             StackEntry.{ indent: entry.indent, mode: .Flat, doc: inner },
           )
+          stack = pushed.stack
+          top = pushed.top
         } else {
-          stack = stack.append(
+          pushed := push_stack(
+            stack,
+            top,
             StackEntry.{ indent: entry.indent, mode: .Break, doc: inner },
           )
+          stack = pushed.stack
+          top = pushed.top
         }
       },
       .IfBreak(broken, flat) => {
         case entry.mode {
           .Flat => {
-            stack = stack.append(
+            pushed := push_stack(
+              stack,
+              top,
               StackEntry.{ indent: entry.indent, mode: entry.mode, doc: flat },
             )
+            stack = pushed.stack
+            top = pushed.top
           },
           .Break => {
-            stack = stack.append(
+            pushed := push_stack(
+              stack,
+              top,
               StackEntry.{ indent: entry.indent, mode: entry.mode, doc: broken },
             )
+            stack = pushed.stack
+            top = pushed.top
           },
         }
       },
@@ -117,6 +169,13 @@ fn fits(doc: Doc, indent: Int, remaining: Int) Bool {
       .Concat(a, b) => {
         fit_stack = fit_stack.append(b)
         fit_stack = fit_stack.append(a)
+      },
+      .Seq(docs) => {
+        idx := docs.len() - 1
+        for idx >= 0 {
+          fit_stack = fit_stack.append(docs[idx])
+          idx = idx - 1
+        }
       },
       .Group(inner, _) => {
         // Nested groups in flat mode stay flat
