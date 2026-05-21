@@ -6,16 +6,10 @@ use compiler.opt.use_count.{count_uses, is_pure_with_optimizer_semantics}
 
 pub type ElimResult = .{ expr: AnfExpr, changed: Bool }
 
-pub fn dead_let_elim(expr: AnfExpr) ElimResult {
-  dead_let_elim_with_pinned(expr, Dict.new())
-}
+pub fn dead_let_elim(expr: AnfExpr) ElimResult { dead_let_elim_with_pinned(expr, Dict.new()) }
 
 pub fn dead_let_elim_with_pinned(expr: AnfExpr, pinned: Dict<Int, Bool>) ElimResult {
-  dead_let_elim_with_pinned_and_semantics(
-    expr,
-    pinned,
-    empty_optimizer_semantics(),
-  )
+  dead_let_elim_with_pinned_and_semantics(expr, pinned, empty_optimizer_semantics())
 }
 
 pub fn dead_let_elim_with_pinned_and_semantics(

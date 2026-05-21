@@ -3,9 +3,7 @@ use compiler.backend.prepared_ir.{PreparedAtom, PreparedFieldAtom}
 use compiler.codegen.emit.coercions.{emit_coerce_stack}
 use compiler.codegen.emit.context.{EmitCtx}
 use compiler.codegen.emit.defaults.{emit_default_value}
-use compiler.codegen.emit.layout_helpers.{
-  find_field_index, record_layout_of_ctx,
-}
+use compiler.codegen.emit.layout_helpers.{find_field_index, record_layout_of_ctx}
 use compiler.codegen.wasm_ir.{Instr, ValType}
 use compiler.codegen.wasm_layout.{val_type_of_mono}
 use compiler.core_ir.{FieldId}

@@ -77,9 +77,7 @@ pub fn emit_coerce_stack(
   buf
 }
 
-pub fn adapt_runtime_result(fid: FuncId, result_mono: MonoType, ctx: EmitCtx) Vector<
-  Instr,
-> {
+pub fn adapt_runtime_result(fid: FuncId, result_mono: MonoType, ctx: EmitCtx) Vector<Instr> {
   abi_opt: AbiContract? = case ctx.builtins.by_id[fid.id] {
     .Some(entry) => .Some(entry.abi),
     .None => .None,

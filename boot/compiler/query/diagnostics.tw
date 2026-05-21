@@ -30,16 +30,9 @@ pub type Diagnostic = .{
 
 pub type DocumentInput = .{ uri: String, text: String, version: Int? }
 
-pub type AnalysisResult = .{
-  cache: cache.Store,
-  diagnostics: Vector<Diagnostic>,
-}
+pub type AnalysisResult = .{ cache: cache.Store, diagnostics: Vector<Diagnostic> }
 
-pub type DiagnosticGroup = .{
-  uri: String,
-  version: Int?,
-  diagnostics: Vector<Diagnostic>,
-}
+pub type DiagnosticGroup = .{ uri: String, version: Int?, diagnostics: Vector<Diagnostic> }
 
 pub type WorkspaceAnalysisResult = .{
   cache: cache.Store,
@@ -67,12 +60,7 @@ pub fn analyze_document(store: cache.Store, input: DocumentInput) AnalysisResult
     }
   }
 
-  resolved_out := stage_runner.resolve(
-    runner,
-    cur_cache,
-    parsed,
-    base_env.builtin_env(),
-  )
+  resolved_out := stage_runner.resolve(runner, cur_cache, parsed, base_env.builtin_env())
   cur_cache = resolved_out.store
   resolved := resolved_out.value
 
@@ -94,11 +82,7 @@ pub fn analyze_document(store: cache.Store, input: DocumentInput) AnalysisResult
     }
   }
 
-  cur_cache = cache.set_module_hash(
-    cur_cache,
-    input.uri,
-    keys.module_hash(source_hash, 0),
-  )
+  cur_cache = cache.set_module_hash(cur_cache, input.uri, keys.module_hash(source_hash, 0))
   .{ cache: cur_cache, diagnostics: [] }
 }
 
@@ -138,9 +122,7 @@ pub fn analyze_workspace(store: cache.Store, input: WorkspaceInput) WorkspaceAna
 }
 
 // ── Helpers ─────────────────────────────────────────────────────────
-fn convert_analysis_diags(diags: Vector<analyze.AnalysisDiag>) Vector<
-  Diagnostic,
-> {
+fn convert_analysis_diags(diags: Vector<analyze.AnalysisDiag>) Vector<Diagnostic> {
   collect d in diags {
     Diagnostic.{
       uri: d.identity.uri,
@@ -217,10 +199,9 @@ fn kind_to_message(kind: DiagKind) String {
   }
 }
 
-fn group_diagnostics(
-  diagnostics: Vector<Diagnostic>,
-  open_documents: Vector<DocumentInput>,
-) Vector<DiagnosticGroup> {
+fn group_diagnostics(diagnostics: Vector<Diagnostic>, open_documents: Vector<DocumentInput>) Vector<
+  DiagnosticGroup,
+> {
   groups: Vector<DiagnosticGroup> = []
 
   for d in diagnostics {
@@ -234,9 +215,7 @@ fn group_diagnostics(
       }
     }
 
-    if !found {
-      groups = .append(.{ uri: d.uri, version: d.version, diagnostics: [d] })
-    }
+    if !found { groups = .append(.{ uri: d.uri, version: d.version, diagnostics: [d] }) }
   }
 
   for doc in open_documents {
@@ -253,28 +232,19 @@ fn group_diagnostics(
       }
     }
 
-    if !found {
-      groups = .append(.{ uri, version: doc.version, diagnostics: [] })
-    }
+    if !found { groups = .append(.{ uri, version: doc.version, diagnostics: [] }) }
   }
 
   groups
 }
 
-fn synthetic_diagnostic(
-  uri: String,
-  version: Int?,
-  stage: String,
-  message: String,
-) Diagnostic {
+fn synthetic_diagnostic(uri: String, version: Int?, stage: String, message: String) Diagnostic {
   .{ uri, version, span: .None, severity: .Error, message, stage, data: .None }
 }
 
-pub fn convert_diagnostics(
-  input: DocumentInput,
-  stage: String,
-  diagnostics: Vector<DiagKind>,
-) Vector<Diagnostic> {
+pub fn convert_diagnostics(input: DocumentInput, stage: String, diagnostics: Vector<DiagKind>) Vector<
+  Diagnostic,
+> {
   collect d in diagnostics {
     .{
       uri: input.uri,

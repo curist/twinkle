@@ -28,16 +28,7 @@ use compiler.opt.analysis.{next_local_id}
 pub fn eliminate_defers(func: AnfFunctionDef) AnfFunctionDef {
   next := Cell.new(next_local_id(func))
   snap_types: Cell<Dict<Int, MonoType>> = Cell.new(Dict.new())
-  body := elim(
-    func.body,
-    [],
-    [],
-    .None,
-    false,
-    next,
-    func.op_result_mono,
-    snap_types,
-  )
+  body := elim(func.body, [], [], .None, false, next, func.op_result_mono, snap_types)
   // Merge snapshot local types into op_result_mono
   new_mono := func.op_result_mono
   st := snap_types.get()
@@ -86,9 +77,7 @@ fn elim(
         .ADefer(d) => {
           // Capture-by-value: snapshot each free local at registration time
           captures := compute_captures(d, next)
-          deferred := if captures.remap.len() == 0 { d } else {
-            remap_expr(d, captures.remap)
-          }
+          deferred := if captures.remap.len() == 0 { d } else { remap_expr(d, captures.remap) }
           // Register snapshot types
           register_snapshot_types(captures.snapshots, type_map, snap_types)
           // Add to loop_defers (fn_defers is set by the loop handler)
@@ -108,16 +97,7 @@ fn elim(
         // ── ALoop: reset loop_defers; fold old into fn_defers ─
         .ALoop(loop_body) => {
           inner_fn := fn_defers.concat(loop_defers)
-          new_loop_body := elim(
-            loop_body,
-            inner_fn,
-            [],
-            .None,
-            true,
-            next,
-            type_map,
-            snap_types,
-          )
+          new_loop_body := elim(loop_body, inner_fn, [], .None, true, next, type_map, snap_types)
           new_body := elim(
             body,
             fn_defers,
@@ -132,15 +112,7 @@ fn elim(
         },
         // ── General Let: recurse into op sub-expressions and body
         _ => {
-          new_op := elim_op(
-            op,
-            fn_defers,
-            loop_defers,
-            in_loop,
-            next,
-            type_map,
-            snap_types,
-          )
+          new_op := elim_op(op, fn_defers, loop_defers, in_loop, next, type_map, snap_types)
           new_body := elim(
             body,
             fn_defers,
@@ -202,26 +174,8 @@ fn elim_op(
       bs: Option<Int> = .Some(loop_defers.len())
       .AIf(
         cond,
-        elim(
-          then_e,
-          fn_defers,
-          loop_defers,
-          bs,
-          in_loop,
-          next,
-          type_map,
-          snap_types,
-        ),
-        elim(
-          else_e,
-          fn_defers,
-          loop_defers,
-          bs,
-          in_loop,
-          next,
-          type_map,
-          snap_types,
-        ),
+        elim(then_e, fn_defers, loop_defers, bs, in_loop, next, type_map, snap_types),
+        elim(else_e, fn_defers, loop_defers, bs, in_loop, next, type_map, snap_types),
       )
     },
     .AMatch(scrutinee, arms) => {
@@ -229,16 +183,7 @@ fn elim_op(
       new_arms := collect arm in arms {
         AnfMatchArm.{
           pattern: arm.pattern,
-          body: elim(
-            arm.body,
-            fn_defers,
-            loop_defers,
-            bs,
-            in_loop,
-            next,
-            type_map,
-            snap_types,
-          ),
+          body: elim(arm.body, fn_defers, loop_defers, bs, in_loop, next, type_map, snap_types),
         }
       }
       .AMatch(scrutinee, new_arms)
@@ -249,9 +194,7 @@ fn elim_op(
       .ALoop(elim(body, inner_fn, [], .None, true, next, type_map, snap_types))
     },
     // ADefer in op position — invalid ANF
-    .ADefer(_) => error(
-      "ADefer in op position — invalid ANF; should always appear as Let op",
-    ),
+    .ADefer(_) => error("ADefer in op position — invalid ANF; should always appear as Let op"),
     other => other,
   }
 }
@@ -267,11 +210,7 @@ fn prepend_defers(defers: Vector<AnfExpr>, tail: AnfExpr) AnfExpr {
 fn splice_defer_before(deferred: AnfExpr, continuation: AnfExpr) AnfExpr {
   case deferred {
     .Atom(_) => continuation,
-    .Let(local, op, body) => .Let(
-      local,
-      op,
-      splice_defer_before(body, continuation),
-    ),
+    .Let(local, op, body) => .Let(local, op, splice_defer_before(body, continuation)),
     // Diverging terminal in a deferred expression — should not happen after
     // type checking, but keep the terminal as a safe fallback.
     terminal => terminal,
@@ -281,10 +220,7 @@ fn splice_defer_before(deferred: AnfExpr, continuation: AnfExpr) AnfExpr {
 // ── Capture semantics ──────────────────────────────────────────────
 type SnapshotBinding = .{ src: LocalId, snap: LocalId }
 
-type CaptureResult = .{
-  remap: Dict<Int, Int>,
-  snapshots: Vector<SnapshotBinding>,
-}
+type CaptureResult = .{ remap: Dict<Int, Int>, snapshots: Vector<SnapshotBinding> }
 
 fn compute_captures(expr: AnfExpr, next: Cell<Int>) CaptureResult {
   free := collect_free_locals(expr, Dict.new())
@@ -298,10 +234,7 @@ fn compute_captures(expr: AnfExpr, next: Cell<Int>) CaptureResult {
     next.set(snap_id + 1)
     remap[src_id] = snap_id
     snapshots = .append(
-      SnapshotBinding.{
-        src: LocalId.{ id: src_id },
-        snap: LocalId.{ id: snap_id },
-      },
+      SnapshotBinding.{ src: LocalId.{ id: src_id }, snap: LocalId.{ id: snap_id } },
     )
   }
 
@@ -353,11 +286,7 @@ fn remap_atom(atom: Atom, remap: Dict<Int, Int>) Atom {
 
 fn remap_expr(expr: AnfExpr, remap: Dict<Int, Int>) AnfExpr {
   case expr {
-    .Let(local, op, body) => .Let(
-      local,
-      remap_op(op, remap),
-      remap_expr(body, remap),
-    ),
+    .Let(local, op, body) => .Let(local, remap_op(op, remap), remap_expr(body, remap)),
     .Atom(a) => .Atom(remap_atom(a, remap)),
     .Return(.Some(a)) => .Return(.Some(remap_atom(a, remap))),
     .Return(.None) => .Return(.None),
@@ -393,16 +322,12 @@ fn remap_op(op: AnfOp, remap: Dict<Int, Int>) AnfOp {
     ),
     .AUnOp(unop, inner, kind) => .AUnOp(unop, remap_atom(inner, remap), kind),
     .AMakeClosure(func_id, free_vars) => {
-      new_vars := collect v in free_vars {
-        LocalId.{ id: remap_local(v.id, remap) }
-      }
+      new_vars := collect v in free_vars { LocalId.{ id: remap_local(v.id, remap) } }
       .AMakeClosure(func_id, new_vars)
     },
     .ARecord(type_id, fields) => .ARecord(
       type_id,
-      collect f in fields {
-        FieldAtom.{ field: f.field, value: remap_atom(f.value, remap) }
-      },
+      collect f in fields { FieldAtom.{ field: f.field, value: remap_atom(f.value, remap) } },
     ),
     .ARecordGet(target, field_id, type_id) => .ARecordGet(
       remap_atom(target, remap),
@@ -430,10 +355,7 @@ fn remap_op(op: AnfOp, remap: Dict<Int, Int>) AnfOp {
     ),
     .AInit(value) => .AInit(remap_atom(value, remap)),
     .AAssign(local, value) => {
-      .AAssign(
-        LocalId.{ id: remap_local(local.id, remap) },
-        remap_atom(value, remap),
-      )
+      .AAssign(LocalId.{ id: remap_local(local.id, remap) }, remap_atom(value, remap))
     },
     .ADefer(body) => .ADefer(remap_expr(body, remap)),
     .AWrapAnyref(a, mono) => .AWrapAnyref(remap_atom(a, remap), mono),

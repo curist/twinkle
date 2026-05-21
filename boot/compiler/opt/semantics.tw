@@ -5,9 +5,7 @@
 // - expose effect classification for passes
 // - preserve current dead-let purity behavior (calls remain non-eliminable)
 use compiler.anf.{AnfExpr, AnfOp}
-use compiler.builder_family.{
-  BuilderConfig, empty_builder_config, vector_builder_config,
-}
+use compiler.builder_family.{BuilderConfig, empty_builder_config, vector_builder_config}
 use compiler.builtins.{BuiltinRegistry}
 use compiler.core_ir.{FuncId, LocalId}
 
@@ -37,10 +35,7 @@ pub type ReusableUpdateSite = .{
   in_place_equivalent: FuncId?,
 }
 
-pub type OptimizerSemantics = .{
-  call_semantics: Dict<Int, CallSemantics>,
-  builder: BuilderConfig,
-}
+pub type OptimizerSemantics = .{ call_semantics: Dict<Int, CallSemantics>, builder: BuilderConfig }
 
 fn control_call() CallSemantics {
   CallSemantics.{
@@ -52,10 +47,7 @@ fn control_call() CallSemantics {
 }
 
 pub fn empty_optimizer_semantics() OptimizerSemantics {
-  OptimizerSemantics.{
-    call_semantics: Dict.new(),
-    builder: empty_builder_config(),
-  }
+  OptimizerSemantics.{ call_semantics: Dict.new(), builder: empty_builder_config() }
 }
 
 pub fn make_prelude_optimizer_semantics(b: BuiltinRegistry) OptimizerSemantics {
@@ -144,10 +136,7 @@ pub fn cow_config_from_semantics(semantics: OptimizerSemantics) CowConfig {
 
     case info.cow_base_arg {
       .Some(base_arg) => {
-        cow_ops[func_id] = CowOpEntry.{
-          base_arg: base_arg,
-          in_place_id: info.in_place_equivalent,
-        }
+        cow_ops[func_id] = CowOpEntry.{ base_arg: base_arg, in_place_id: info.in_place_equivalent }
       },
       .None => {},
     }
@@ -172,10 +161,7 @@ pub fn optimizer_semantics_from_cow_config(config: CowConfig) OptimizerSemantics
   calls: Dict<Int, CallSemantics> = Dict.new()
 
   for func_id in config.cow_ops.keys() {
-    info := config.cow_ops[func_id].unwrap_or(CowOpEntry.{
-      base_arg: 0,
-      in_place_id: .None,
-    })
+    info := config.cow_ops[func_id].unwrap_or(CowOpEntry.{ base_arg: 0, in_place_id: .None })
     calls[func_id] = CallSemantics.{
       effect: .Update,
       fresh_result: false,
@@ -187,9 +173,7 @@ pub fn optimizer_semantics_from_cow_config(config: CowConfig) OptimizerSemantics
   for func_id in config.fresh_producer_ids.keys() {
     current := calls[func_id].unwrap_or(control_call())
     calls[func_id] = CallSemantics.{
-      effect: if current.effect == .Control { .Allocate } else {
-        current.effect
-      },
+      effect: if current.effect == .Control { .Allocate } else { current.effect },
       fresh_result: true,
       cow_base_arg: current.cow_base_arg,
       in_place_equivalent: current.in_place_equivalent,
@@ -233,9 +217,7 @@ pub fn op_effect(op: AnfOp, semantics: OptimizerSemantics) EffectKind {
     .AMakeClosure(_, _) => .Allocate,
     .AIf(_, then_e, else_e) => {
       if expr_is_pure_with_semantics(then_e, semantics)
-      and expr_is_pure_with_semantics(else_e, semantics) { .Pure } else {
-        .Control
-      }
+      and expr_is_pure_with_semantics(else_e, semantics) { .Pure } else { .Control }
     },
     .AMatch(_, arms) => {
       for arm in arms {
@@ -282,11 +264,7 @@ pub fn reusable_update_site(op: AnfOp, semantics: OptimizerSemantics) ReusableUp
   case op {
     .ARecordUpdate(.ALocal(base), _, _, _, _) => {
       .Some(
-        ReusableUpdateSite.{
-          kind: .RecordUpdate,
-          base_local: base,
-          in_place_equivalent: .None,
-        },
+        ReusableUpdateSite.{ kind: .RecordUpdate, base_local: base, in_place_equivalent: .None },
       )
     },
     .ACall(.AGlobalFunc(func_id), args) => {

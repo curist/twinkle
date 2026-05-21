@@ -8,12 +8,7 @@ use compiler.resolver as resolver
 use compiler.resolver.{ResolvedEnv}
 
 // Which dedicated wrapper trampoline a builtin closure needs
-pub type WrapperKind = {
-  ByteToString,
-  CellUpdate,
-  IteratorUnfold,
-  HostWriteBytes,
-}
+pub type WrapperKind = { ByteToString, CellUpdate, IteratorUnfold, HostWriteBytes }
 
 // How a callable's direct calls are lowered
 pub type DirectCallPolicy = { UserCompiled, RuntimeImport, Intrinsic }
@@ -37,9 +32,7 @@ pub fn callable_target(
   case funcs_by_id[fid.id] {
     .Some(func) => .Some(
       CallableTargetInfo.{
-        semantic_params: collect sid in func.params {
-          facts.slot_info(func, sid).mono
-        },
+        semantic_params: collect sid in func.params { facts.slot_info(func, sid).mono },
         semantic_ret: func.return_mono,
         builtin_name: .None,
         closure_materializable: true,
@@ -79,15 +72,9 @@ fn builtin_target(fid: FuncId, builtins: BuiltinRegistry, env: ResolvedEnv) Call
   sig := case resolver.lookup_registered_function(env, entry.name) {
     .Some(s) => s,
     .None => case entry.canonical_name {
-      .Some(canonical) => case resolver.lookup_registered_function(
-        env,
-        canonical,
-      ) {
+      .Some(canonical) => case resolver.lookup_registered_function(env, canonical) {
         .Some(s) => s,
-        .None => case resolver.lookup_registered_function(
-          env,
-          "__${entry.name}",
-        ) {
+        .None => case resolver.lookup_registered_function(env, "__${entry.name}") {
           .Some(s) => s,
           .None => { return .None },
         },
@@ -147,7 +134,6 @@ pub fn builtin_wrapper_kind(name: String) WrapperKind? {
 }
 
 fn builtin_generic_closure_materializable(name: String) Bool {
-  name == "int_to_string" or name == "float_to_string"
-  or name == "bool_to_string"
+  name == "int_to_string" or name == "float_to_string" or name == "bool_to_string"
   or name == "string_to_string"
 }

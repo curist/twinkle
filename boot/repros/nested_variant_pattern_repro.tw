@@ -1,4 +1,5 @@
 type Inner = { Num(Int), Nope }
+
 type Outer = { Empty, Wrap(Inner) }
 
 fn describe_nested(opt: Option<Result<Int, String>>) String {
@@ -14,6 +15,7 @@ fn describe_two_step(opt: Option<Result<Int, String>>) String {
     .Some(v) => v,
     .None => { return "none" },
   }
+
   case value {
     .Ok(n) => "ok ${n}",
     .Err(msg) => "err ${msg}",
@@ -33,6 +35,7 @@ fn outer_two_step(value: Outer) Int {
     .Wrap(v) => v,
     .Empty => { return 0 },
   }
+
   case inner {
     .Num(n) => n,
     .Nope => -1,
@@ -52,6 +55,7 @@ fn classify_two_step(opt: Option<Result<Int, String>>) Int {
     .Some(v) => v,
     .None => { return 0 },
   }
+
   case value {
     .Ok(_) => 1,
     .Err(msg) => msg.len(),
@@ -59,36 +63,18 @@ fn classify_two_step(opt: Option<Result<Int, String>>) Int {
 }
 
 fn expect_str(actual: String, expected: String, label: String) {
-  if actual != expected {
-    error("${label}: expected ${expected}, got ${actual}")
-  }
+  if actual != expected { error("${label}: expected ${expected}, got ${actual}") }
 }
 
 fn expect_int(actual: Int, expected: Int, label: String) {
-  if actual != expected {
-    error("${label}: expected ${expected}, got ${actual}")
-  }
+  if actual != expected { error("${label}: expected ${expected}, got ${actual}") }
 }
 
-samples: Vector<Option<Result<Int, String>>> = [
-  .Some(.Ok(7)),
-  .Some(.Err("bad")),
-  .None,
-]
-
-for sample,i in samples {
+samples: Vector<Option<Result<Int, String>>> = [.Some(.Ok(7)), .Some(.Err("bad")), .None]
+for sample, i in samples {
   expect_str(describe_nested(sample), describe_two_step(sample), "describe_${i}")
   expect_int(classify_nested(sample), classify_two_step(sample), "classify_${i}")
 }
-
-outers: Vector<Outer> = [
-  .Wrap(.Num(9)),
-  .Wrap(.Nope),
-  .Empty,
-]
-
-for sample,i in outers {
-  expect_int(outer_nested(sample), outer_two_step(sample), "outer_${i}")
-}
-
+outers: Vector<Outer> = [.Wrap(.Num(9)), .Wrap(.Nope), .Empty]
+for sample, i in outers { expect_int(outer_nested(sample), outer_two_step(sample), "outer_${i}") }
 println("nested-pattern-repro: ok")

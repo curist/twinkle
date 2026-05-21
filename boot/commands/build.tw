@@ -4,8 +4,7 @@ use @std.path
 use @std.proc
 
 use commands.common.{
-  exit_usage_error, format_compile_error, fs_error_message, get_positional,
-  print_warnings,
+  exit_usage_error, format_compile_error, fs_error_message, get_positional, print_warnings,
 }
 use compiler.pipeline
 use lib.argparse.app

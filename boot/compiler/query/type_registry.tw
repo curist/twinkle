@@ -10,9 +10,7 @@ pub type TypeRegistry = .{ assignments: Dict<String, Int>, next_id: Int }
 
 pub type AssignResult = .{ registry: TypeRegistry, id: TypeId }
 
-pub fn empty(start_id: Int) TypeRegistry {
-  .{ assignments: Dict.new(), next_id: start_id }
-}
+pub fn empty(start_id: Int) TypeRegistry { .{ assignments: Dict.new(), next_id: start_id } }
 
 /// Look up or assign a stable TypeId for a type defined in a module.
 /// Returns the same TypeId on repeated calls with the same key.

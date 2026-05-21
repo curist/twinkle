@@ -6,11 +6,9 @@ use compiler.codegen.wasm_layout.{val_type_of_mono}
 use compiler.codegen.wasm_plan_types.{WasmTypeRegistry}
 use compiler.resolver.{ResolvedEnv}
 
-pub fn emit_module_globals(
-  reg: WasmTypeRegistry,
-  anf: AnfModule,
-  env: ResolvedEnv,
-) Vector<GlobalDef> {
+pub fn emit_module_globals(reg: WasmTypeRegistry, anf: AnfModule, env: ResolvedEnv) Vector<
+  GlobalDef,
+> {
   globals: Vector<GlobalDef> = []
 
   for k in reg.module_globals_order {
@@ -18,12 +16,7 @@ pub fn emit_module_globals(
       .Some(gentry) => {
         vt := val_type_of_mono(gentry.mono, env)
         globals = .append(
-          GlobalDef.{
-            name: gentry.sym,
-            mutable: true,
-            ty: vt,
-            init: emit_default_value(vt, []),
-          },
+          GlobalDef.{ name: gentry.sym, mutable: true, ty: vt, init: emit_default_value(vt, []) },
         )
       },
       .None => {},

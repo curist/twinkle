@@ -97,11 +97,7 @@ pub fn render_with_width(doc: Doc, width: Int) String {
           pushed := push_stack(
             stack,
             top,
-            StackEntry.{
-              indent: entry.indent,
-              mode: entry.mode,
-              doc: docs[idx],
-            },
+            StackEntry.{ indent: entry.indent, mode: entry.mode, doc: docs[idx] },
           )
           stack = pushed.stack
           top = pushed.top
@@ -180,11 +176,7 @@ pub fn render_with_width(doc: Doc, width: Int) String {
           sep_pushed := push_stack(
             stack,
             top,
-            StackEntry.{
-              indent: entry.indent,
-              mode: sep_mode,
-              doc: children[1],
-            },
+            StackEntry.{ indent: entry.indent, mode: sep_mode, doc: children[1] },
           )
           stack = sep_pushed.stack
           top = sep_pushed.top

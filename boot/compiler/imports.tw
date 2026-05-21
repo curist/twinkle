@@ -29,10 +29,7 @@ pub type PlannedDep = .{
 /// Error returned when a `use` statement cannot be resolved to a file.
 pub type ImportError = .{ message: String, span: Span }
 
-pub type DependencyPlan = .{
-  dependencies: Vector<PlannedDep>,
-  is_internal: Bool,
-}
+pub type DependencyPlan = .{ dependencies: Vector<PlannedDep>, is_internal: Bool }
 
 pub type CanonicalRoots = .{ prelude_root: String, stdlib_root: String }
 
@@ -42,18 +39,15 @@ pub type CanonicalRoots = .{ prelude_root: String, stdlib_root: String }
 /// Returns dependencies in source order (explicit imports first),
 /// then auto-injected prelude modules (sorted, deduplicated).
 /// Internal modules (stdlib/prelude) skip prelude injection.
-pub fn plan_dependencies(
-  module: Module,
-  file_path: String,
-  project_root: String,
-) Result<DependencyPlan, ImportError> {
+pub fn plan_dependencies(module: Module, file_path: String, project_root: String) Result<
+  DependencyPlan,
+  ImportError,
+> {
   plan_dependencies_with_exists(
     module,
     file_path,
     project_root,
-    fn(path_str: String) Bool {
-      core_lib.exists(path_str) or fs.exists(path_str)
-    },
+    fn(path_str: String) Bool { core_lib.exists(path_str) or fs.exists(path_str) },
   )
 }
 
@@ -93,13 +87,7 @@ pub fn plan_dependencies_with_exists(
         alias := module_alias(decl)
         canonical_paths = .append(dep_path)
         deps = .append(
-          .{
-            canonical_path: dep_path,
-            alias,
-            kind: .Import,
-            items: decl.items,
-            span: decl.span,
-          },
+          .{ canonical_path: dep_path, alias, kind: .Import, items: decl.items, span: decl.span },
         )
       },
       _ => {},
@@ -110,8 +98,7 @@ pub fn plan_dependencies_with_exists(
   norm_file := canonical_module_path(file_path, roots)
   norm_stdlib := canonical_module_path(stdlib_root, roots)
   norm_prelude := canonical_module_path(prelude_root, roots)
-  is_internal := norm_file.starts_with(norm_stdlib)
-  or norm_file.starts_with(norm_prelude)
+  is_internal := norm_file.starts_with(norm_stdlib) or norm_file.starts_with(norm_prelude)
 
   // Auto-inject prelude modules for non-internal files
   if !is_internal {
@@ -158,9 +145,9 @@ fn resolve_import_path(
 ) String {
   if decl.is_stdlib {
     loader.resolve_stdlib_module_path(stdlib_root, decl.path)
-  } else if decl.is_relative {
-    loader.resolve_relative_module_path(importing_file, decl.path)
-  } else { loader.resolve_module_path(import_root, decl.path) }
+  } else if decl.is_relative { loader.resolve_relative_module_path(importing_file, decl.path) } else {
+    loader.resolve_module_path(import_root, decl.path)
+  }
 }
 
 pub fn canonical_module_path(path_str: String, roots: CanonicalRoots) String {
@@ -170,9 +157,7 @@ pub fn canonical_module_path(path_str: String, roots: CanonicalRoots) String {
 /// Compute the effective module alias from a UseDecl.
 /// Uses explicit `as alias` if present, otherwise the last path segment.
 fn module_alias(decl: UseDecl) String {
-  fallback := if decl.path.len() > 0 { decl.path[decl.path.len() - 1] } else {
-    ""
-  }
+  fallback := if decl.path.len() > 0 { decl.path[decl.path.len() - 1] } else { "" }
   decl.alias.unwrap_or(fallback)
 }
 

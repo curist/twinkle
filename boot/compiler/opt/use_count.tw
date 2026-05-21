@@ -9,9 +9,7 @@
 //
 // Dict is COW in Twinkle, so every function threads and returns the updated dict.
 use compiler.anf.{AnfExpr, AnfOp, Atom}
-use compiler.opt.semantics.{
-  OptimizerSemantics, empty_optimizer_semantics, is_pure_with_semantics,
-}
+use compiler.opt.semantics.{OptimizerSemantics, empty_optimizer_semantics, is_pure_with_semantics}
 
 fn inc(uses: Dict<Int, Int>, id: Int) Dict<Int, Int> {
   uses[id] = uses[id].unwrap_or(0) + 1
@@ -119,10 +117,7 @@ fn count_op(op: AnfOp, uses: Dict<Int, Int>) Dict<Int, Int> {
 }
 
 // ── count_uses_excluding_free_vars ──────────────────────────────────
-pub type UsesAndFreeVars = .{
-  uses: Dict<Int, Int>,
-  free_var_uses: Dict<Int, Bool>,
-}
+pub type UsesAndFreeVars = .{ uses: Dict<Int, Int>, free_var_uses: Dict<Int, Bool> }
 
 pub fn count_uses_excluding_free_vars(expr: AnfExpr) Dict<Int, Int> {
   count_uses_and_free_var_flags(expr).uses
@@ -134,26 +129,16 @@ pub fn count_uses_and_free_var_flags(expr: AnfExpr) UsesAndFreeVars {
   count_expr_ex(expr, uses, free_var_uses)
 }
 
-fn count_expr_ex(
-  expr: AnfExpr,
-  uses: Dict<Int, Int>,
-  free_var_uses: Dict<Int, Bool>,
-) UsesAndFreeVars {
+fn count_expr_ex(expr: AnfExpr, uses: Dict<Int, Int>, free_var_uses: Dict<Int, Bool>) UsesAndFreeVars {
   case expr {
     .Let(_, op, body) => {
       op_result := count_op_ex(op, uses, free_var_uses)
       count_expr_ex(body, op_result.uses, op_result.free_var_uses)
     },
     .Atom(a) => .{ uses: count_atom(a, uses), free_var_uses: free_var_uses },
-    .Return(.Some(a)) => .{
-      uses: count_atom(a, uses),
-      free_var_uses: free_var_uses,
-    },
+    .Return(.Some(a)) => .{ uses: count_atom(a, uses), free_var_uses: free_var_uses },
     .Return(.None) => .{ uses: uses, free_var_uses: free_var_uses },
-    .Break(.Some(a)) => .{
-      uses: count_atom(a, uses),
-      free_var_uses: free_var_uses,
-    },
+    .Break(.Some(a)) => .{ uses: count_atom(a, uses), free_var_uses: free_var_uses },
     .Break(.None) => .{ uses: uses, free_var_uses: free_var_uses },
     .Continue => .{ uses: uses, free_var_uses: free_var_uses },
   }
@@ -174,14 +159,9 @@ fn count_op_ex(op: AnfOp, uses: Dict<Int, Int>, free_var_uses: Dict<Int, Bool>) 
       count_expr_ex(else_e, then_result.uses, then_result.free_var_uses)
     },
     .AMatch(scrutinee, arms) => {
-      result := UsesAndFreeVars.{
-        uses: count_atom(scrutinee, uses),
-        free_var_uses: free_var_uses,
-      }
+      result := UsesAndFreeVars.{ uses: count_atom(scrutinee, uses), free_var_uses: free_var_uses }
 
-      for arm in arms {
-        result = count_expr_ex(arm.body, result.uses, result.free_var_uses)
-      }
+      for arm in arms { result = count_expr_ex(arm.body, result.uses, result.free_var_uses) }
 
       result
     },
@@ -192,17 +172,10 @@ fn count_op_ex(op: AnfOp, uses: Dict<Int, Int>, free_var_uses: Dict<Int, Bool>) 
 }
 
 // ── is_pure ─────────────────────────────────────────────────────────
-pub fn is_pure(op: AnfOp) Bool {
-  is_pure_with_semantics(op, empty_optimizer_semantics())
-}
+pub fn is_pure(op: AnfOp) Bool { is_pure_with_semantics(op, empty_optimizer_semantics()) }
 
-pub fn is_pure_with_optimizer_semantics(
-  op: AnfOp,
-  body: AnfExpr,
-  semantics: OptimizerSemantics,
-) Bool {
-  is_pure_with_semantics(op, semantics)
-  and expr_is_pure_with_semantics(body, semantics)
+pub fn is_pure_with_optimizer_semantics(op: AnfOp, body: AnfExpr, semantics: OptimizerSemantics) Bool {
+  is_pure_with_semantics(op, semantics) and expr_is_pure_with_semantics(body, semantics)
 }
 
 fn expr_is_pure_with_semantics(expr: AnfExpr, semantics: OptimizerSemantics) Bool {

@@ -13,8 +13,7 @@ use compiler.contracts.{resolve_builtin_contract_name}
 use compiler.mono_type.{MonoType}
 use compiler.parser
 use compiler.resolver.{
-  FunctionSig, MethodEntry, ResolvedContractRef, ResolvedEnv, ResolvedTypeParam,
-  resolve_type_expr,
+  FunctionSig, MethodEntry, ResolvedContractRef, ResolvedEnv, ResolvedTypeParam, resolve_type_expr,
 }
 use lib.module.core_lib
 
@@ -61,8 +60,7 @@ pub fn to_internal_name(receiver: String?, canonical_name: String) String {
       // string_ prefix because their canonical names are already globally
       // unique (char_code_at, from_char_code, from_byte, from_code_point).
       if recv == "String" {
-        if canonical_name == "char_code_at"
-        or canonical_name == "from_char_code"
+        if canonical_name == "char_code_at" or canonical_name == "from_char_code"
         or canonical_name == "from_byte"
         or canonical_name == "from_code_point" {
           return canonical_name
@@ -131,10 +129,7 @@ pub fn group_method_entries(group: SignatureGroup) Vector<MethodEntry> {
 }
 
 // ── type resolution ──────────────────────────────────────────────────────────
-fn resolve_type_params(ast_params: Vector<TypeParam>) Result<
-  Vector<ResolvedTypeParam>,
-  String,
-> {
+fn resolve_type_params(ast_params: Vector<TypeParam>) Result<Vector<ResolvedTypeParam>, String> {
   resolved: Vector<ResolvedTypeParam> = []
 
   for tp in ast_params {
@@ -170,9 +165,7 @@ fn resolve_param_type(env: ResolvedEnv, param: Param, type_vars: Vector<String>)
         .Some(mono) => .Ok(mono),
         .None => {
           case r.diagnostics.get(0) {
-            .Some(d) => .Err(
-              "type error in param '${param.name}': ${d.message()}",
-            ),
+            .Some(d) => .Err("type error in param '${param.name}': ${d.message()}"),
             .None => .Err("unknown type error in param '${param.name}'"),
           }
         },
@@ -181,11 +174,10 @@ fn resolve_param_type(env: ResolvedEnv, param: Param, type_vars: Vector<String>)
   }
 }
 
-fn resolve_return_type(
-  env: ResolvedEnv,
-  ret_expr: TypeExpr?,
-  type_vars: Vector<String>,
-) Result<MonoType?, String> {
+fn resolve_return_type(env: ResolvedEnv, ret_expr: TypeExpr?, type_vars: Vector<String>) Result<
+  MonoType?,
+  String,
+> {
   case ret_expr {
     .None => .Ok(.None),
     .Some(ty_expr) => {
@@ -217,9 +209,7 @@ fn extract_doc_comment(source: String, decl_start: Int) String? {
   for pos >= 0 {
     line_start := pos
 
-    for line_start > 0 and source.char_code_at(line_start - 1) != 10 {
-      line_start = line_start - 1
-    }
+    for line_start > 0 and source.char_code_at(line_start - 1) != 10 { line_start = line_start - 1 }
 
     line := source.slice(line_start, pos + 1)
     trimmed := line.trim()

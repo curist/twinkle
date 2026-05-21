@@ -9,10 +9,7 @@ use compiler.query.analyze.{AnalysisDiag}
 use compiler.resolver.{ResolvedEnv}
 
 /// Diagnostics payload bundled with the env needed to resolve type names.
-pub type DiagnosticsError = .{
-  diagnostics: Vector<AnalysisDiag>,
-  env: ResolvedEnv,
-}
+pub type DiagnosticsError = .{ diagnostics: Vector<AnalysisDiag>, env: ResolvedEnv }
 
 /// Structured compile error returned from the compiler library.
 /// CLI commands format these for display; tooling can inspect them directly.

@@ -12,10 +12,7 @@ pub fn constant_fold(expr: AnfExpr) FoldResult {
       case try_fold_op(op) {
         .Some(folded) => {
           body_r := constant_fold(body)
-          FoldResult.{
-            expr: .Let(local, .AInit(folded), body_r.expr),
-            changed: true,
-          }
+          FoldResult.{ expr: .Let(local, .AInit(folded), body_r.expr), changed: true }
         },
         .None => {
           op_r := constant_fold_op(op)

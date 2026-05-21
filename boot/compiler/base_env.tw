@@ -4,8 +4,7 @@ use compiler.imports
 use compiler.mono_type.{MonoType, TypeId}
 use compiler.resolver
 use compiler.resolver.{
-  FunctionSig, ResolvedEnv, ResolvedTypeDef, TypeEntry,
-  plain_resolved_type_params,
+  FunctionSig, ResolvedEnv, ResolvedTypeDef, TypeEntry, plain_resolved_type_params,
 }
 use compiler.signatures
 use lib.module.loader
@@ -16,9 +15,7 @@ fn builtin_sig(
   param_names: Vector<String>,
   params: Vector<MonoType>,
   ret: MonoType?,
-) FunctionSig {
-  builtin_doc_sig(name, type_params, param_names, params, ret, .None)
-}
+) FunctionSig { builtin_doc_sig(name, type_params, param_names, params, ret, .None) }
 
 fn builtin_doc_sig(
   name: String,
@@ -83,20 +80,12 @@ fn builtin_type_entries() Vector<TypeEntry> {
     builtin_type_entry(
       next_type_id,
       1,
-      .Sum(
-        "Option",
-        rtp_t,
-        [.{ name: "None", fields: [] }, .{ name: "Some", fields: [t] }],
-      ),
+      .Sum("Option", rtp_t, [.{ name: "None", fields: [] }, .{ name: "Some", fields: [t] }]),
     ),
     builtin_type_entry(
       next_type_id,
       2,
-      .Sum(
-        "Result",
-        rtp_te,
-        [.{ name: "Ok", fields: [t] }, .{ name: "Err", fields: [e] }],
-      ),
+      .Sum("Result", rtp_te, [.{ name: "Ok", fields: [t] }, .{ name: "Err", fields: [e] }]),
     ),
     builtin_type_entry(next_type_id, 1, .Record("Cell", rtp_t, [])),
     builtin_type_entry(
@@ -105,11 +94,7 @@ fn builtin_type_entries() Vector<TypeEntry> {
       .Record(
         "Range",
         [],
-        [
-          .{ name: "start", ty: .Int },
-          .{ name: "end", ty: .Int },
-          .{ name: "step", ty: .Int },
-        ],
+        [.{ name: "start", ty: .Int }, .{ name: "end", ty: .Int }, .{ name: "step", ty: .Int }],
       ),
     ),
   ]
@@ -123,10 +108,7 @@ fn builtin_type_entries() Vector<TypeEntry> {
         .Record(
           "IterItem",
           rtp_t,
-          [
-            .{ name: "value", ty: t },
-            .{ name: "rest", ty: .Named(iterator_tid, [t]) },
-          ],
+          [.{ name: "value", ty: t }, .{ name: "rest", ty: .Named(iterator_tid, [t]) }],
         ),
       ),
       builtin_type_entry(
@@ -144,11 +126,7 @@ fn builtin_type_entries() Vector<TypeEntry> {
         .Sum(
           "Order",
           [],
-          [
-            .{ name: "Lt", fields: [] },
-            .{ name: "Eq", fields: [] },
-            .{ name: "Gt", fields: [] },
-          ],
+          [.{ name: "Lt", fields: [] }, .{ name: "Eq", fields: [] }, .{ name: "Gt", fields: [] }],
         ),
       ),
       builtin_type_entry(next_type_id, 1, .Record("Task", rtp_t, [])),
@@ -168,10 +146,7 @@ pub fn builtin_type_env() ResolvedEnv {
 }
 
 // ── method registration from signature groups ────────────────────────────────
-fn register_methods_from_groups(
-  env: ResolvedEnv,
-  groups: Vector<signatures.SignatureGroup>,
-) ResolvedEnv {
+fn register_methods_from_groups(env: ResolvedEnv, groups: Vector<signatures.SignatureGroup>) ResolvedEnv {
   cur := env
 
   for group in groups {
@@ -226,10 +201,7 @@ fn set_prelude_function_origins(
 
     for sig in group.sigs {
       internal_name := signatures.to_internal_name(group.receiver, sig.name)
-      cur = .set_function_origin(
-        internal_name,
-        .{ module_path, func_name: sig.name },
-      )
+      cur = .set_function_origin(internal_name, .{ module_path, func_name: sig.name })
     }
   }
 
@@ -270,10 +242,7 @@ pub fn builtin_env() ResolvedEnv {
   // Load public signatures from the actual prelude modules as well. These
   // provide the prelude-backed methods like Vector.map and Option.map that are
   // not represented in prelude/signatures/*.tw.
-  prelude_groups := case signatures.load_signatures(
-    prelude_dir,
-    builtin_type_env(),
-  ) {
+  prelude_groups := case signatures.load_signatures(prelude_dir, builtin_type_env()) {
     .Ok(g) => g,
     .Err(msg) => error("builtin_env: failed to load prelude sources: ${msg}"),
   }
@@ -284,14 +253,7 @@ pub fn builtin_env() ResolvedEnv {
   // vector builders, and host ops.
   t := MonoType.Var("T")
   hardcoded := [
-    builtin_doc_sig(
-      "print",
-      [],
-      ["s"],
-      [.String],
-      .Some(.Void),
-      .Some("Print a string to stdout."),
-    ),
+    builtin_doc_sig("print", [], ["s"], [.String], .Some(.Void), .Some("Print a string to stdout.")),
     builtin_doc_sig(
       "println",
       [],
@@ -332,55 +294,19 @@ pub fn builtin_env() ResolvedEnv {
       .Some(.String),
     ),
     builtin_sig("vector__builder_new", ["T"], [], [], .Some(.Vector(t))),
-    builtin_sig(
-      "vector__builder_push",
-      ["T"],
-      ["xs", "value"],
-      [.Vector(t), t],
-      .Some(.Void),
-    ),
-    builtin_sig(
-      "vector__builder_freeze",
-      ["T"],
-      ["xs"],
-      [.Vector(t)],
-      .Some(.Vector(t)),
-    ),
-    builtin_sig(
-      "vector__builder_from",
-      ["T"],
-      ["xs"],
-      [.Vector(t)],
-      .Some(.Vector(t)),
-    ),
+    builtin_sig("vector__builder_push", ["T"], ["xs", "value"], [.Vector(t), t], .Some(.Void)),
+    builtin_sig("vector__builder_freeze", ["T"], ["xs"], [.Vector(t)], .Some(.Vector(t))),
+    builtin_sig("vector__builder_from", ["T"], ["xs"], [.Vector(t)], .Some(.Vector(t))),
     builtin_sig("host_read_file", [], ["path"], [.String], .Some(.String)),
-    builtin_sig(
-      "host_write_file",
-      [],
-      ["path", "text"],
-      [.String, .String],
-      .Some(.Void),
-    ),
+    builtin_sig("host_write_file", [], ["path", "text"], [.String, .String], .Some(.Void)),
     builtin_sig("host_mkdirp", [], ["path"], [.String], .Some(.Void)),
-    builtin_sig(
-      "host_list_dir",
-      [],
-      ["path"],
-      [.String],
-      .Some(.Vector(.String)),
-    ),
+    builtin_sig("host_list_dir", [], ["path"], [.String], .Some(.Vector(.String))),
     builtin_sig("host_exists", [], ["path"], [.String], .Some(.Bool)),
     builtin_sig("host_args", [], [], [], .Some(.Vector(.String))),
     builtin_sig("host_env", [], ["name"], [.String], .Some(.Vector(.String))),
     builtin_sig("host_cwd", [], [], [], .Some(.String)),
     builtin_sig("host_exit", [], ["code"], [.Int], .Some(.Never)),
-    builtin_sig(
-      "host_stdin_read_chunk",
-      [],
-      ["max_bytes"],
-      [.Int],
-      .Some(.Vector(.Byte)),
-    ),
+    builtin_sig("host_stdin_read_chunk", [], ["max_bytes"], [.Int], .Some(.Vector(.Byte))),
     builtin_sig(
       "host_stdin_read_timeout",
       [],
@@ -389,30 +315,18 @@ pub fn builtin_env() ResolvedEnv {
       .Some(.Vector(.Byte)),
     ),
     builtin_sig("host_stdin_eof", [], [], [], .Some(.Bool)),
-    builtin_sig(
-      "host_stdout_write_bytes",
-      [],
-      ["bytes"],
-      [.Vector(.Byte)],
-      .Some(.Void),
-    ),
+    builtin_sig("host_stdout_write_bytes", [], ["bytes"], [.Vector(.Byte)], .Some(.Void)),
   ]
   builtin_named_types := builtin_type_entries()
   builtin_named_type_names := builtin_type_names(builtin_named_types)
-  env := resolver.empty_env().with_types(
-    builtin_named_types,
-    builtin_named_type_names,
-  ).with_registered_functions(sig_fns.concat(prelude_fns).concat(hardcoded))
+  env := resolver.empty_env().with_types(builtin_named_types, builtin_named_type_names).with_registered_functions(
+    sig_fns.concat(prelude_fns).concat(hardcoded),
+  )
   env = bind_public_free_builtins(env)
   // Actual prelude module functions should carry canonical imported origins in
   // the builtin environment so internal/prelude modules can link through the
   // same imported-function identity model as user modules.
-  env = set_prelude_function_origins(
-    env,
-    prelude_groups,
-    prelude_dir,
-    canonical_roots,
-  )
+  env = set_prelude_function_origins(env, prelude_groups, prelude_dir, canonical_roots)
   // First register methods derived from signature groups (these take priority
   // under the deduplication rule in register_methods).
   env = register_methods_from_groups(env, groups)
@@ -432,13 +346,7 @@ pub fn add_internal_host_builtins(env: ResolvedEnv) ResolvedEnv {
       .Some(.Result(.Vector(.Byte), .String)),
     ),
   ).add_function(
-    builtin_sig(
-      "__host_write_file",
-      [],
-      ["path", "text"],
-      [.String, .String],
-      .Some(.Void),
-    ),
+    builtin_sig("__host_write_file", [], ["path", "text"], [.String, .String], .Some(.Void)),
   ).add_function(
     builtin_sig(
       "__host_write_bytes",
@@ -447,25 +355,15 @@ pub fn add_internal_host_builtins(env: ResolvedEnv) ResolvedEnv {
       [.String, .Vector(.Byte)],
       .Some(.Void),
     ),
-  ).add_function(
-    builtin_sig("__host_mkdirp", [], ["path"], [.String], .Some(.Void)),
-  ).add_function(
-    builtin_sig(
-      "__host_list_dir",
-      [],
-      ["path"],
-      [.String],
-      .Some(.Vector(.String)),
-    ),
-  ).add_function(
-    builtin_sig("__host_exists", [], ["path"], [.String], .Some(.Bool)),
-  ).add_function(
+  ).add_function(builtin_sig("__host_mkdirp", [], ["path"], [.String], .Some(.Void))).add_function(
+    builtin_sig("__host_list_dir", [], ["path"], [.String], .Some(.Vector(.String))),
+  ).add_function(builtin_sig("__host_exists", [], ["path"], [.String], .Some(.Bool))).add_function(
     builtin_sig("__host_args", [], [], [], .Some(.Vector(.String))),
+  ).add_function(builtin_sig("__host_env", [], ["name"], [.String], .Some(.Vector(.String)))).add_function(
+    builtin_sig("__host_cwd", [], [], [], .Some(.String)),
+  ).add_function(builtin_sig("__host_exit", [], ["code"], [.Int], .Some(.Never))).add_function(
+    builtin_sig("__host_now", [], [], [], .Some(.Float)),
   ).add_function(
-    builtin_sig("__host_env", [], ["name"], [.String], .Some(.Vector(.String))),
-  ).add_function(builtin_sig("__host_cwd", [], [], [], .Some(.String))).add_function(
-    builtin_sig("__host_exit", [], ["code"], [.Int], .Some(.Never)),
-  ).add_function(builtin_sig("__host_now", [], [], [], .Some(.Float))).add_function(
     builtin_sig(
       "__host_run_wasm",
       [],
@@ -474,13 +372,7 @@ pub fn add_internal_host_builtins(env: ResolvedEnv) ResolvedEnv {
       .Some(.Int),
     ),
   ).add_function(
-    builtin_sig(
-      "__host_stdin_read_chunk",
-      [],
-      ["max_bytes"],
-      [.Int],
-      .Some(.Vector(.Byte)),
-    ),
+    builtin_sig("__host_stdin_read_chunk", [], ["max_bytes"], [.Int], .Some(.Vector(.Byte))),
   ).add_function(
     builtin_sig(
       "__host_stdin_read_timeout",
@@ -490,12 +382,6 @@ pub fn add_internal_host_builtins(env: ResolvedEnv) ResolvedEnv {
       .Some(.Vector(.Byte)),
     ),
   ).add_function(builtin_sig("__host_stdin_eof", [], [], [], .Some(.Bool))).add_function(
-    builtin_sig(
-      "__host_stdout_write_bytes",
-      [],
-      ["bytes"],
-      [.Vector(.Byte)],
-      .Some(.Void),
-    ),
+    builtin_sig("__host_stdout_write_bytes", [], ["bytes"], [.Vector(.Byte)], .Some(.Void)),
   )
 }

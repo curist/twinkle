@@ -1,7 +1,6 @@
 // Dependency graph for module compilation ordering and invalidation.
 //
 // Reference: src/query/graph.rs
-
 pub type DependencyGraph = .{
   forward: Dict<String, Vector<String>>,
   reverse: Dict<String, Vector<String>>,
@@ -10,22 +9,15 @@ pub type DependencyGraph = .{
 pub type GraphError = { Cycle(Vector<String>) }
 
 /// Create an empty dependency graph.
-pub fn empty() DependencyGraph {
-  DependencyGraph.{
-    forward: Dict.new(),
-    reverse: Dict.new(),
-  }
-}
+pub fn empty() DependencyGraph { DependencyGraph.{ forward: Dict.new(), reverse: Dict.new() } }
 
 /// Set the dependencies for a module, updating forward and reverse maps.
 /// Returns a new graph with the updated state.
 pub fn set_dependencies(g: DependencyGraph, module: String, deps: Vector<String>) DependencyGraph {
   fwd := g.forward
   rev := g.reverse
-
   // Deduplicate incoming deps (match Rust HashSet semantics)
   deps := dedup(deps)
-
   // Get previous deps for this module (empty if new)
   prev: Vector<String> = case fwd[module] {
     .Some(v) => v,
@@ -34,16 +26,12 @@ pub fn set_dependencies(g: DependencyGraph, module: String, deps: Vector<String>
 
   // Remove reverse entries for deps no longer present
   for old_dep in prev {
-    if !vec_contains(deps, old_dep) {
-      rev = remove_from_reverse(rev, old_dep, module)
-    }
+    if !vec_contains(deps, old_dep) { rev = remove_from_reverse(rev, old_dep, module) }
   }
 
   // Add reverse entries for newly added deps
   for new_dep in deps {
-    if !vec_contains(prev, new_dep) {
-      rev = add_to_reverse(rev, new_dep, module)
-    }
+    if !vec_contains(prev, new_dep) { rev = add_to_reverse(rev, new_dep, module) }
   }
 
   // Update forward map
@@ -93,17 +81,18 @@ pub fn topo_sort(g: DependencyGraph, roots: Vector<String>) Result<Vector<String
   reachable: Dict<String, Bool> = Dict.new()
   stack: Vector<String> = roots
   si := 0
+
   for si < stack.len() {
     node := stack[si]
     si = si + 1
+
     if !reachable.has(node) {
       reachable[node] = true
+
       case g.forward[node] {
         .Some(deps) => {
           for dep in deps {
-            if !reachable.has(dep) {
-              stack = .append(dep)
-            }
+            if !reachable.has(dep) { stack = .append(dep) }
           }
         },
         .None => {},
@@ -115,29 +104,37 @@ pub fn topo_sort(g: DependencyGraph, roots: Vector<String>) Result<Vector<String
   // A node with dep_count 0 has no dependencies and can be processed first.
   dep_count: Dict<String, Int> = Dict.new()
   all_nodes := reachable.keys()
+
   for node in all_nodes {
     count := 0
+
     case g.forward[node] {
       .Some(deps) => {
         for dep in deps {
-          if reachable.has(dep) {
-            count = count + 1
-          }
+          if reachable.has(dep) { count = count + 1 }
         }
       },
       .None => {},
     }
+
     dep_count[node] = count
   }
 
   // Kahn's algorithm: process nodes with dep_count 0 (no dependencies)
   // Use a sorted queue for deterministic output
   queue: Vector<String> = collect node in all_nodes {
-    deg := case dep_count[node] { .Some(n) => n, .None => 0 }
-    if deg == 0 { node } else { continue }
+    deg := case dep_count[node] {
+      .Some(n) => n,
+      .None => 0,
+    }
+
+    if deg == 0 {
+      node
+    } else {
+      continue
+    }
   }
   queue = .sort()
-
   result: Vector<String> = []
   qi := 0
 
@@ -151,16 +148,20 @@ pub fn topo_sort(g: DependencyGraph, roots: Vector<String>) Result<Vector<String
     case g.reverse[node] {
       .Some(dependents) => {
         freed: Vector<String> = []
+
         for dep in dependents {
           if reachable.has(dep) {
-            deg := case dep_count[dep] { .Some(n) => n, .None => 0 }
+            deg := case dep_count[dep] {
+              .Some(n) => n,
+              .None => 0,
+            }
             deg = deg - 1
             dep_count[dep] = deg
-            if deg == 0 {
-              freed = .append(dep)
-            }
+
+            if deg == 0 { freed = .append(dep) }
           }
         }
+
         freed = .sort()
         queue = .concat(freed)
       },
@@ -171,16 +172,24 @@ pub fn topo_sort(g: DependencyGraph, roots: Vector<String>) Result<Vector<String
   if result.len() < reachable.keys().len() {
     // Collect unprocessed nodes (blocked or in a cycle)
     unprocessed: Dict<String, Bool> = Dict.new()
+
     for node in all_nodes {
-      deg := case dep_count[node] { .Some(n) => n, .None => 0 }
-      if deg > 0 {
-        unprocessed[node] = true
+      deg := case dep_count[node] {
+        .Some(n) => n,
+        .None => 0,
       }
+
+      if deg > 0 { unprocessed[node] = true }
     }
+
     // Filter to only nodes actually in a cycle: those that can reach
     // themselves through forward edges restricted to unprocessed nodes.
     cycle_nodes := collect node in unprocessed.keys() {
-      if can_reach_self(g, node, unprocessed) { node } else { continue }
+      if can_reach_self(g, node, unprocessed) {
+        node
+      } else {
+        continue
+      }
     }
     cycle_nodes = .sort()
     .Err(GraphError.Cycle(cycle_nodes))
@@ -190,7 +199,6 @@ pub fn topo_sort(g: DependencyGraph, roots: Vector<String>) Result<Vector<String
 }
 
 // -- helpers --
-
 /// Check if `start` can reach itself via forward edges restricted to `allowed` nodes.
 fn can_reach_self(g: DependencyGraph, start: String, allowed: Dict<String, Bool>) Bool {
   visited: Dict<String, Bool> = Dict.new()
@@ -200,39 +208,45 @@ fn can_reach_self(g: DependencyGraph, start: String, allowed: Dict<String, Bool>
   case g.forward[start] {
     .Some(deps) => {
       for dep in deps {
-        if allowed.has(dep) {
-          stack = .append(dep)
-        }
+        if allowed.has(dep) { stack = .append(dep) }
       }
     },
     .None => {},
   }
 
   si := 0
+
   for si < stack.len() {
     cur := stack[si]
     si = si + 1
-    if cur == start { return true }
+
+    if cur == start {
+      return true
+    }
+
     if visited.has(cur) { continue }
+
     visited[cur] = true
+
     case g.forward[cur] {
       .Some(deps) => {
         for dep in deps {
-          if allowed.has(dep) and !visited.has(dep) {
-            stack = .append(dep)
-          }
+          if allowed.has(dep) and !visited.has(dep) { stack = .append(dep) }
         }
       },
       .None => {},
     }
   }
+
   false
 }
 
 fn dedup(v: Vector<String>) Vector<String> {
   seen: Dict<String, Bool> = Dict.new()
+
   collect item in v {
     if seen.has(item) { continue }
+
     seen[item] = true
     item
   }
@@ -240,17 +254,28 @@ fn dedup(v: Vector<String>) Vector<String> {
 
 fn vec_contains(v: Vector<String>, item: String) Bool {
   for s in v {
-    if s == item { return true }
+    if s == item {
+      return true
+    }
   }
+
   false
 }
 
-fn remove_from_reverse(rev: Dict<String, Vector<String>>, dep: String, module: String) Dict<String, Vector<String>> {
+fn remove_from_reverse(rev: Dict<String, Vector<String>>, dep: String, module: String) Dict<
+  String,
+  Vector<String>,
+> {
   case rev[dep] {
     .Some(dependents) => {
       filtered := collect d in dependents {
-        if d != module { d } else { continue }
+        if d != module {
+          d
+        } else {
+          continue
+        }
       }
+
       if filtered.len() == 0 {
         rev.remove(dep)
       } else {
@@ -262,7 +287,10 @@ fn remove_from_reverse(rev: Dict<String, Vector<String>>, dep: String, module: S
   }
 }
 
-fn add_to_reverse(rev: Dict<String, Vector<String>>, dep: String, module: String) Dict<String, Vector<String>> {
+fn add_to_reverse(rev: Dict<String, Vector<String>>, dep: String, module: String) Dict<
+  String,
+  Vector<String>,
+> {
   case rev[dep] {
     .Some(dependents) => {
       rev[dep] = dependents.append(module)

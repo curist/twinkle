@@ -170,13 +170,7 @@ pub fn spaced_bracketed(open: String, close: String, docs: Vector<Doc>) Doc {
   group(
     concat([
       text(open),
-      indent(
-        concat([
-          line(),
-          join(docs, concat([text(","), line()])),
-          if_break(text(","), nil()),
-        ]),
-      ),
+      indent(concat([line(), join(docs, concat([text(","), line()])), if_break(text(","), nil())])),
       line(),
       text(close),
     ]),

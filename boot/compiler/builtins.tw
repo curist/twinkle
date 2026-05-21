@@ -190,20 +190,11 @@ pub fn runtime_with_abi(
   }
 }
 
-pub fn runtime(
-  reg: BuiltinRegistry,
-  name: String,
-  wasm_module: String,
-  wasm_name: String,
-) BuiltinRegistry {
+pub fn runtime(reg: BuiltinRegistry, name: String, wasm_module: String, wasm_name: String) BuiltinRegistry {
   runtime_with_abi(reg, name, wasm_module, wasm_name, builtin_abi(name))
 }
 
-pub fn intrinsic_with_abi(
-  reg: BuiltinRegistry,
-  name: String,
-  builtin_abi: AbiContract,
-) BuiltinRegistry {
+pub fn intrinsic_with_abi(reg: BuiltinRegistry, name: String, builtin_abi: AbiContract) BuiltinRegistry {
   case reg.by_name[name] {
     .Some(_) => error("duplicate builtin registration: ${name}"),
     .None => {},
@@ -241,9 +232,7 @@ pub fn id(reg: BuiltinRegistry, name: String) FuncId {
   }
 }
 
-pub fn entry(reg: BuiltinRegistry, func_id: FuncId) BuiltinEntry? {
-  reg.by_id[func_id.id]
-}
+pub fn entry(reg: BuiltinRegistry, func_id: FuncId) BuiltinEntry? { reg.by_id[func_id.id] }
 
 pub fn with_canonical(reg: BuiltinRegistry, canonical: String, internal: String) BuiltinRegistry {
   base_entry := case reg.by_name[internal] {
@@ -293,19 +282,13 @@ pub fn entry_by_canonical(reg: BuiltinRegistry, canonical: String) BuiltinEntry?
 // the signature drift tests derive from this table.
 pub type BuiltinDispatch = { Runtime(String, String), Intrinsic }
 
-pub type BuiltinSpec = .{
-  name: String,
-  canonical: String?,
-  dispatch: BuiltinDispatch,
-}
+pub type BuiltinSpec = .{ name: String, canonical: String?, dispatch: BuiltinDispatch }
 
 fn rt(name: String, wasm_module: String, wasm_name: String, canonical: String?) BuiltinSpec {
   .{ name, canonical, dispatch: .Runtime(wasm_module, wasm_name) }
 }
 
-fn intr(name: String, canonical: String?) BuiltinSpec {
-  .{ name, canonical, dispatch: .Intrinsic }
-}
+fn intr(name: String, canonical: String?) BuiltinSpec { .{ name, canonical, dispatch: .Intrinsic } }
 
 /// The single authoritative table of all builtins.
 /// Order determines FuncId assignment (0-based, sequential).
@@ -414,11 +397,7 @@ pub fn make_builtin_registry() BuiltinRegistry {
 
   for spec in specs {
     cur = case spec.dispatch {
-      .Runtime(wasm_module, wasm_name) => cur.runtime(
-        spec.name,
-        wasm_module,
-        wasm_name,
-      ),
+      .Runtime(wasm_module, wasm_name) => cur.runtime(spec.name, wasm_module, wasm_name),
       .Intrinsic => cur.intrinsic(spec.name),
     }
 

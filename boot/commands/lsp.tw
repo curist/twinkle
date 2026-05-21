@@ -62,9 +62,7 @@ pub fn run_lsp_command(_parsed: ParseResult) {
     step := server_core.publish_due_diagnostics(state)
     state = step.state
 
-    for out in step.outgoing {
-      io.write_stdout_text(framing.encode_message(json.stringify(out)))
-    }
+    for out in step.outgoing { io.write_stdout_text(framing.encode_message(json.stringify(out))) }
   }
 
   if state.should_exit and !state.shutdown_requested { proc.exit(1) }

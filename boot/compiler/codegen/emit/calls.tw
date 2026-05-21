@@ -6,9 +6,8 @@ use compiler.codegen.emit.coercions.{adapt_runtime_result, emit_coerce_stack}
 use compiler.codegen.emit.context.{EmitCtx, lookup_func_sym}
 use compiler.codegen.emit.defaults.{emit_default_value}
 use compiler.codegen.emit.runtime_abi.{
-  emit_builder_arg_shim, emit_host_arg_shim, emit_host_result_shim,
-  is_host_vector_arg, is_vector_builder_array_arg, is_vector_builder_push,
-  is_vector_builder_seed,
+  emit_builder_arg_shim, emit_host_arg_shim, emit_host_result_shim, is_host_vector_arg,
+  is_vector_builder_array_arg, is_vector_builder_push, is_vector_builder_seed,
 }
 use compiler.codegen.wasm_ir.{AbiContract, Instr, ValType}
 use compiler.codegen.wasm_layout.{val_type_of_mono}
@@ -19,9 +18,7 @@ pub type CallEmitFns = .{
   emit_atom: fn(PreparedAtom, EmitCtx, Vector<Instr>) Vector<Instr>,
   atom_val_type: fn(PreparedAtom, EmitCtx) ValType,
   atom_mono: fn(PreparedAtom, EmitCtx) MonoType,
-  emit_checked_i32_narrow: fn(PreparedAtom, EmitCtx, Vector<Instr>) Vector<
-    Instr,
-  >,
+  emit_checked_i32_narrow: fn(PreparedAtom, EmitCtx, Vector<Instr>) Vector<Instr>,
   emit_intrinsic_call: fn(
     FuncId,
     String,
@@ -86,15 +83,7 @@ pub fn emit_call(
     },
     .ASlot(sid) => {
       // Closure call — indirect
-      fns.emit_closure_call(
-        callee,
-        sid,
-        args,
-        result_idx,
-        result_mono,
-        ctx,
-        buf,
-      )
+      fns.emit_closure_call(callee, sid, args, result_idx, result_mono, ctx, buf)
     },
     _ => error("emit_call: unexpected callee atom"),
   }
@@ -214,9 +203,7 @@ fn emit_runtime_call(
   }
   out := buf
 
-  for a, i in args {
-    out = emit_runtime_arg(a, abi, i, entry_name, ctx, out, fns)
-  }
+  for a, i in args { out = emit_runtime_arg(a, abi, i, entry_name, ctx, out, fns) }
 
   out = .append(.Call(import_sym))
   // ABI shim: reshape host results back into PVec representation.

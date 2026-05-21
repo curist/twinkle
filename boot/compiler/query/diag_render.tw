@@ -67,13 +67,9 @@ fn resolve_type_name(id: Int, ctx: RenderCtx) String {
   "Named(${id})"
 }
 
-fn primary(span: Span, label: String?) SpanLabel {
-  SpanLabel.{ span, label, is_primary: true }
-}
+fn primary(span: Span, label: String?) SpanLabel { SpanLabel.{ span, label, is_primary: true } }
 
-fn secondary(span: Span, label: String?) SpanLabel {
-  SpanLabel.{ span, label, is_primary: false }
-}
+fn secondary(span: Span, label: String?) SpanLabel { SpanLabel.{ span, label, is_primary: false } }
 
 // ── Public API ────────────────────────────────────────────────────────
 pub fn to_report(kind: DiagKind, ctx: RenderCtx) Report {
@@ -89,12 +85,7 @@ fn error_to_report(e: ErrorDiag, ctx: RenderCtx) Report {
       severity: .Error,
       title: "type mismatch",
       labels: [
-        primary(
-          d.span,
-          .Some(
-            "expected ${fmt_ty(d.expected, ctx)}, found ${fmt_ty(d.found, ctx)}",
-          ),
-        ),
+        primary(d.span, .Some("expected ${fmt_ty(d.expected, ctx)}, found ${fmt_ty(d.found, ctx)}")),
       ],
       help_lines: [],
     },
@@ -119,19 +110,14 @@ fn error_to_report(e: ErrorDiag, ctx: RenderCtx) Report {
     .DuplicateField(d) => .{
       severity: .Error,
       title: "duplicate field `${d.name}`",
-      labels: [
-        primary(d.span, .Some("duplicate")),
-        secondary(d.first, .Some("first defined here")),
-      ],
+      labels: [primary(d.span, .Some("duplicate")), secondary(d.first, .Some("first defined here"))],
       help_lines: [],
     },
     .InfiniteType(d) => .{
       severity: .Error,
       title: "infinite type",
       labels: [primary(d.span, .Some("recursive type has infinite size"))],
-      help_lines: [
-        "use indirection (e.g. wrap in a record or closure) to break the cycle",
-      ],
+      help_lines: ["use indirection (e.g. wrap in a record or closure) to break the cycle"],
     },
     .UndefinedType(d) => .{
       severity: .Error,
@@ -171,10 +157,7 @@ fn error_to_report(e: ErrorDiag, ctx: RenderCtx) Report {
     },
     .MissingField(d) => .{
       severity: .Error,
-      title: "missing field `${d.name}` in record literal for `${fmt_ty(
-        d.ty,
-        ctx,
-      )}`",
+      title: "missing field `${d.name}` in record literal for `${fmt_ty(d.ty, ctx)}`",
       labels: [primary(d.span, .Some("missing field `${d.name}`"))],
       help_lines: [],
     },
@@ -199,9 +182,7 @@ fn error_to_report(e: ErrorDiag, ctx: RenderCtx) Report {
     .InvalidMethodSig(d) => .{
       severity: .Error,
       title: "invalid method signature for `${d.name}`",
-      labels: [
-        primary(d.span, .Some("method must have at least one parameter")),
-      ],
+      labels: [primary(d.span, .Some("method must have at least one parameter"))],
       help_lines: [],
     },
     .NotARecord(d) => .{
@@ -226,9 +207,7 @@ fn error_to_report(e: ErrorDiag, ctx: RenderCtx) Report {
       severity: .Error,
       title: "cannot match on `${fmt_ty(d.ty, ctx)}`",
       labels: [primary(d.span, .Some("not a sum type or primitive"))],
-      help_lines: [
-        "case scrutinee must be a sum type (enum) or Int, Bool, String",
-      ],
+      help_lines: ["case scrutinee must be a sum type (enum) or Int, Bool, String"],
     },
     .QualifierMismatch(d) => .{
       severity: .Error,
@@ -239,12 +218,7 @@ fn error_to_report(e: ErrorDiag, ctx: RenderCtx) Report {
     .IteratorNoIndex(d) => .{
       severity: .Error,
       title: "Iterator<T> does not support indexed loop bindings",
-      labels: [
-        primary(
-          d.span,
-          .Some("use `for x in iter` instead of `for x, i in iter`"),
-        ),
-      ],
+      labels: [primary(d.span, .Some("use `for x in iter` instead of `for x, i in iter`"))],
       help_lines: [],
     },
     .PublicRebind(d) => .{
@@ -257,9 +231,7 @@ fn error_to_report(e: ErrorDiag, ctx: RenderCtx) Report {
       severity: .Error,
       title: "invalid assignment target",
       labels: [primary(d.span, .None)],
-      help_lines: [
-        "only variables, record fields, and array/dict indices can be assigned",
-      ],
+      help_lines: ["only variables, record fields, and array/dict indices can be assigned"],
     },
     .InvalidOperand(d) => .{
       severity: .Error,
@@ -270,12 +242,7 @@ fn error_to_report(e: ErrorDiag, ctx: RenderCtx) Report {
     .StringConcatOperator(d) => .{
       severity: .Error,
       title: "cannot concatenate strings with `+`",
-      labels: [
-        primary(
-          d.span,
-          .Some("`+` is numeric addition, not string concatenation"),
-        ),
-      ],
+      labels: [primary(d.span, .Some("`+` is numeric addition, not string concatenation"))],
       help_lines: [
         "prefer string interpolation (`\"\${...}\"`); use `String.concat(a, b)` for explicit function calls",
       ],
@@ -301,21 +268,14 @@ fn error_to_report(e: ErrorDiag, ctx: RenderCtx) Report {
     .DeferDiverge(d) => .{
       severity: .Error,
       title: "defer body cannot diverge",
-      labels: [
-        primary(
-          d.span,
-          .Some("return, break, continue, or error() not allowed in defer"),
-        ),
-      ],
+      labels: [primary(d.span, .Some("return, break, continue, or error() not allowed in defer"))],
       help_lines: [],
     },
     .CompilerBug(d) => .{
       severity: .Error,
       title: "compiler bug: ${d.message}",
       labels: [primary(d.span, .Some("internal error"))],
-      help_lines: [
-        "please report this at https://github.com/twinkle-lang/twinkle/issues",
-      ],
+      help_lines: ["please report this at https://github.com/twinkle-lang/twinkle/issues"],
     },
     .ReservedTypeName(d) => .{
       severity: .Error,
@@ -386,10 +346,7 @@ fn error_to_report(e: ErrorDiag, ctx: RenderCtx) Report {
     .MissingArmSeparator(d) => .{
       severity: .Error,
       title: "missing `,` after case arm",
-      labels: [
-        primary(d.span, .None),
-        secondary(d.next_span, .Some("next arm starts here")),
-      ],
+      labels: [primary(d.span, .None), secondary(d.next_span, .Some("next arm starts here"))],
       help_lines: [],
     },
     .CStyleLogicalOp(d) => .{
@@ -419,9 +376,7 @@ fn warning_to_report(w: WarningDiag, ctx: RenderCtx) Report {
       severity: .Warning,
       title: "unused import `${d.binding}`",
       labels: [primary(d.span, .None)],
-      help_lines: [
-        "use `twk check --fix-unused-imports` to remove automatically",
-      ],
+      help_lines: ["use `twk check --fix-unused-imports` to remove automatically"],
     },
   }
 }

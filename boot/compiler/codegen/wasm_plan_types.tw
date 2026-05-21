@@ -4,10 +4,7 @@ use compiler.codegen.wasm_layout.{WasmLayout}
 use compiler.core_ir.{LocalId}
 use compiler.mono_type.{MonoType}
 
-pub type FuncSigEntry = .{
-  param_types: Vector<MonoType>,
-  return_type: MonoType,
-}
+pub type FuncSigEntry = .{ param_types: Vector<MonoType>, return_type: MonoType }
 
 pub type CaptureEntry = .{ local_id: LocalId, ty: MonoType }
 

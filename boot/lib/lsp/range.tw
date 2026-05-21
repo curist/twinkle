@@ -1,7 +1,6 @@
 // Shared LSP range/position JSON helpers.
 //
 // Used by diagnostics, hover, definition, and code action adapters.
-
 use lib.json
 use lib.text.line_index
 
@@ -13,10 +12,7 @@ pub fn range_to_json(range: line_index.TextRange) json.Json {
 }
 
 pub fn position_to_json(pos: line_index.Position) json.Json {
-  json.object([
-    json.kv("line", .Int(pos.line)),
-    json.kv("character", .Int(pos.character)),
-  ])
+  json.object([json.kv("line", .Int(pos.line)), json.kv("character", .Int(pos.character))])
 }
 
 /// Build a range JSON object from byte offsets using line index.

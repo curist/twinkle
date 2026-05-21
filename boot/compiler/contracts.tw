@@ -3,20 +3,11 @@
 /// This module defines the builtin contracts (starting with Stringify) and
 /// exposes queries for contract metadata. It intentionally does not depend on
 /// resolver-owned types such as MonoType to avoid a contracts↔resolver cycle.
-
-pub type BuiltinContract = {
-  Stringify,
-  Eq,
-  Ord,
-}
+pub type BuiltinContract = { Stringify, Eq, Ord }
 
 /// The return shape of a contract method requirement.
 /// Kept separate from MonoType to avoid a dependency cycle with the resolver.
-pub type ContractReturnShape = {
-  String,
-  Bool,
-  Order,
-}
+pub type ContractReturnShape = { String, Bool, Order }
 
 pub type ContractMethodRequirement = .{
   method_name: String,
@@ -25,39 +16,37 @@ pub type ContractMethodRequirement = .{
   ret: ContractReturnShape,
 }
 
-pub type ContractSpec = .{
-  name: String,
-  methods: Vector<ContractMethodRequirement>,
-}
+pub type ContractSpec = .{ name: String, methods: Vector<ContractMethodRequirement> }
 
 pub fn spec(contract: BuiltinContract) ContractSpec {
   case contract {
     .Stringify => .{
       name: "Stringify",
-      methods: [.{
-        method_name: "to_string",
-        receiver_param_count: 1,
-        arg_count_without_receiver: 0,
-        ret: .String,
-      }],
+      methods: [
+        .{
+          method_name: "to_string",
+          receiver_param_count: 1,
+          arg_count_without_receiver: 0,
+          ret: .String,
+        },
+      ],
     },
     .Eq => .{
       name: "Eq",
-      methods: [.{
-        method_name: "eq",
-        receiver_param_count: 1,
-        arg_count_without_receiver: 1,
-        ret: .Bool,
-      }],
+      methods: [
+        .{ method_name: "eq", receiver_param_count: 1, arg_count_without_receiver: 1, ret: .Bool },
+      ],
     },
     .Ord => .{
       name: "Ord",
-      methods: [.{
-        method_name: "compare",
-        receiver_param_count: 1,
-        arg_count_without_receiver: 1,
-        ret: .Order,
-      }],
+      methods: [
+        .{
+          method_name: "compare",
+          receiver_param_count: 1,
+          arg_count_without_receiver: 1,
+          ret: .Order,
+        },
+      ],
     },
   }
 }

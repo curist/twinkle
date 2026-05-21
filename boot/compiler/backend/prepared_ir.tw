@@ -19,11 +19,7 @@ use compiler.mono_type.{MonoType, TypeId}
 // The ordering of CaptureParams in a function's capture list is canonical:
 // it matches the free_vars order from AMakeClosure at the construction site.
 // All backend passes must use this ordering — never reorder or re-derive.
-pub type CaptureParam = .{
-  local_id: LocalId,
-  param_local: LocalId,
-  ty: MonoType,
-}
+pub type CaptureParam = .{ local_id: LocalId, param_local: LocalId, ty: MonoType }
 
 // ── Slot types ──────────────────────────────────────────────────────
 // SlotId is the physical backend identifier for a function's parameter or local.
@@ -32,13 +28,7 @@ pub type CaptureParam = .{
 pub type SlotId = .{ id: Int }
 
 // SlotRole classifies the purpose of a backend slot.
-pub type SlotRole = {
-  Param,
-  CaptureParam,
-  Local,
-  PatternLocal,
-  DeadPlaceholder,
-}
+pub type SlotRole = { Param, CaptureParam, Local, PatternLocal, DeadPlaceholder }
 
 // ── Runtime representation kinds ────────────────────────────────────
 // ReprKind is the runtime representation category for a prepared slot.

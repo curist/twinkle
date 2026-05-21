@@ -20,8 +20,8 @@
 //   Fallback: .Void (indicates a missing type; should not occur for live locals)
 use compiler.anf.{AnfExpr, AnfFunctionDef, AnfOp, Atom}
 use compiler.backend.prepared_ir.{
-  CaptureParam, PreparedAtom, PreparedExpr, PreparedFieldAtom, PreparedFunc,
-  PreparedMatchArm, PreparedOp, PreparedPattern, SlotId, SlotInfo, SlotRole,
+  CaptureParam, PreparedAtom, PreparedExpr, PreparedFieldAtom, PreparedFunc, PreparedMatchArm,
+  PreparedOp, PreparedPattern, SlotId, SlotInfo, SlotRole,
 }
 use compiler.core_ir.{CorePattern, LocalId, VariantId}
 use compiler.mono_type.{MonoType, TypeId}
@@ -135,11 +135,7 @@ pub fn assign_slots(
   }
 }
 
-fn lower_expr(
-  expr: AnfExpr,
-  local_to_slot: Dict<Int, SlotId>,
-  func_name: String,
-) PreparedExpr {
+fn lower_expr(expr: AnfExpr, local_to_slot: Dict<Int, SlotId>, func_name: String) PreparedExpr {
   case expr {
     .Let(local, op, body) => .Let(
       lookup_slot_for(local_to_slot, local.id, "let result", func_name),
@@ -180,11 +176,7 @@ fn lower_op(op: AnfOp, local_to_slot: Dict<Int, SlotId>, func_name: String) Prep
       lower_atom(rhs, local_to_slot),
       kind,
     ),
-    .AUnOp(uop, atom, kind) => .AUnOp(
-      uop,
-      lower_atom(atom, local_to_slot),
-      kind,
-    ),
+    .AUnOp(uop, atom, kind) => .AUnOp(uop, lower_atom(atom, local_to_slot), kind),
     .AMakeClosure(fid, free_vars) => .AMakeClosure(
       fid,
       collect fv in free_vars {
@@ -194,17 +186,10 @@ fn lower_op(op: AnfOp, local_to_slot: Dict<Int, SlotId>, func_name: String) Prep
     .ARecord(tid, fields) => .ARecord(
       tid,
       collect field in fields {
-        PreparedFieldAtom.{
-          field: field.field,
-          value: lower_atom(field.value, local_to_slot),
-        }
+        PreparedFieldAtom.{ field: field.field, value: lower_atom(field.value, local_to_slot) }
       },
     ),
-    .ARecordGet(target, fid, tid) => .ARecordGet(
-      lower_atom(target, local_to_slot),
-      fid,
-      tid,
-    ),
+    .ARecordGet(target, fid, tid) => .ARecordGet(lower_atom(target, local_to_slot), fid, tid),
     .ARecordUpdate(base, fid, value, can_reuse, tid) => .ARecordUpdate(
       lower_atom(base, local_to_slot),
       fid,
@@ -217,9 +202,7 @@ fn lower_op(op: AnfOp, local_to_slot: Dict<Int, SlotId>, func_name: String) Prep
       vid,
       collect arg in args { lower_atom(arg, local_to_slot) },
     ),
-    .AArrayLit(items) => .AArrayLit(
-      collect item in items { lower_atom(item, local_to_slot) },
-    ),
+    .AArrayLit(items) => .AArrayLit(collect item in items { lower_atom(item, local_to_slot) }),
     .AIndex(base, index, kind, mono) => .AIndex(
       lower_atom(base, local_to_slot),
       lower_atom(index, local_to_slot),
@@ -232,14 +215,8 @@ fn lower_op(op: AnfOp, local_to_slot: Dict<Int, SlotId>, func_name: String) Prep
       lower_atom(atom, local_to_slot),
     ),
     .ADefer(body) => .ADefer(lower_expr(body, local_to_slot, func_name)),
-    .AWrapAnyref(atom, mono) => .AWrapAnyref(
-      lower_atom(atom, local_to_slot),
-      mono,
-    ),
-    .AUnwrapAnyref(atom, mono) => .AUnwrapAnyref(
-      lower_atom(atom, local_to_slot),
-      mono,
-    ),
+    .AWrapAnyref(atom, mono) => .AWrapAnyref(lower_atom(atom, local_to_slot), mono),
+    .AUnwrapAnyref(atom, mono) => .AUnwrapAnyref(lower_atom(atom, local_to_slot), mono),
   }
 }
 
@@ -258,16 +235,10 @@ fn lower_atom(atom: Atom, local_to_slot: Dict<Int, SlotId>) PreparedAtom {
   }
 }
 
-fn lower_pattern(
-  pattern: CorePattern,
-  local_to_slot: Dict<Int, SlotId>,
-  func_name: String,
-) PreparedPattern {
+fn lower_pattern(pattern: CorePattern, local_to_slot: Dict<Int, SlotId>, func_name: String) PreparedPattern {
   case pattern {
     .Wildcard => .Wildcard,
-    .Var(lid) => .Var(
-      lookup_slot_for(local_to_slot, lid.id, "pattern binding", func_name),
-    ),
+    .Var(lid) => .Var(lookup_slot_for(local_to_slot, lid.id, "pattern binding", func_name)),
     .LitInt(n) => .LitInt(n),
     .LitBool(b) => .LitBool(b),
     .LitStr(s) => .LitStr(s),
@@ -286,17 +257,10 @@ fn lower_atom_opt(atom: Atom?, local_to_slot: Dict<Int, SlotId>) PreparedAtom? {
   }
 }
 
-fn lookup_slot_for(
-  local_to_slot: Dict<Int, SlotId>,
-  lid: Int,
-  context: String,
-  func_name: String,
-) SlotId {
+fn lookup_slot_for(local_to_slot: Dict<Int, SlotId>, lid: Int, context: String, func_name: String) SlotId {
   case local_to_slot[lid] {
     .Some(sid) => sid,
-    .None => error(
-      "assign_slots: function ${func_name}: missing slot for L${lid} (${context})",
-    ),
+    .None => error("assign_slots: function ${func_name}: missing slot for L${lid} (${context})"),
   }
 }
 
@@ -315,9 +279,7 @@ fn resolve_local_mono(func: AnfFunctionDef, lid: LocalId) MonoType {
 }
 
 // ── Body scanning: all let-bound local ids (in encounter order) ──────
-fn collect_all_let_locals(expr: AnfExpr) Vector<Int> {
-  collect_let_expr(expr, [])
-}
+fn collect_all_let_locals(expr: AnfExpr) Vector<Int> { collect_let_expr(expr, []) }
 
 fn collect_let_expr(expr: AnfExpr, out: Vector<Int>) Vector<Int> {
   case expr {
@@ -364,10 +326,7 @@ fn collect_pattern_lids(pattern: CorePattern, out: Vector<Int>) Vector<Int> {
 }
 
 // ── Pattern mono derivation (needs env for variant field types) ──────
-fn collect_pattern_local_set(expr: AnfExpr, out: Dict<Int, Bool>) Dict<
-  Int,
-  Bool,
-> {
+fn collect_pattern_local_set(expr: AnfExpr, out: Dict<Int, Bool>) Dict<Int, Bool> {
   case expr {
     .Let(_, op, body) => {
       out = collect_pattern_local_set_op(op, out)
@@ -481,11 +440,7 @@ fn collect_binding_monos(
   }
 }
 
-fn atom_mono(
-  func: AnfFunctionDef,
-  atom: Atom,
-  pattern_monos: Dict<Int, MonoType>,
-) MonoType {
+fn atom_mono(func: AnfFunctionDef, atom: Atom, pattern_monos: Dict<Int, MonoType>) MonoType {
   case atom {
     .ALocal(lid) => case pattern_monos[lid.id] {
       .Some(mono) => mono,

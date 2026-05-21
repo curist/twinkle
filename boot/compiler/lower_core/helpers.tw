@@ -18,13 +18,7 @@ pub fn record_get_expr(base: CoreExpr, field: FieldId, ty: MonoType, s: Span) Co
   .{ kind: .RecordGet(base, field), ty, span: s }
 }
 
-pub fn variant_expr(
-  tid: TypeId,
-  vid: Int,
-  args: Vector<CoreExpr>,
-  ty: MonoType,
-  s: Span,
-) CoreExpr {
+pub fn variant_expr(tid: TypeId, vid: Int, args: Vector<CoreExpr>, ty: MonoType, s: Span) CoreExpr {
   .{ kind: .Variant(tid, .{ id: vid }, args), ty, span: s }
 }
 

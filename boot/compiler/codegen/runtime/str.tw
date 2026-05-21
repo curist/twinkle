@@ -1,9 +1,7 @@
 // rt.str — string operations.
 //
 // Mirrors stage0 src/runtime/str.rs.
-use compiler.codegen.wasm_ir.{
-  ExportDef, FuncDef, HeapType, ImportDef, ValType, WasmModule,
-}
+use compiler.codegen.wasm_ir.{ExportDef, FuncDef, HeapType, ImportDef, ValType, WasmModule}
 
 // Cross-module qualified names (already linked form)
 fn str_null() ValType {
@@ -27,9 +25,7 @@ pub fn module() WasmModule {
     from_f64_fn(),
     from_bool_fn(),
   ]
-  exports := collect f in funcs {
-    ExportDef.{ wasm_name: f.name, func_sym: f.name }
-  }
+  exports := collect f in funcs { ExportDef.{ wasm_name: f.name, func_sym: f.name } }
   .{
     namespace: "rt.str",
     types: [],
@@ -452,13 +448,7 @@ fn from_bool_fn() FuncDef {
       .LocalGet(0),
       .If(
         .Some(str_ref()),
-        [
-          .I32Const(116),
-          .I32Const(114),
-          .I32Const(117),
-          .I32Const(101),
-          .ArrayNewFixed(ts, 4),
-        ],
+        [.I32Const(116), .I32Const(114), .I32Const(117), .I32Const(101), .ArrayNewFixed(ts, 4)],
         [
           .I32Const(102),
           .I32Const(97),

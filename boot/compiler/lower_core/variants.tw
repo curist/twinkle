@@ -35,10 +35,7 @@ pub fn lower_variant(
     cur_ctx = r.ctx
   }
 
-  .{
-    expr: .{ kind: .Variant(tid, .{ id: vid_idx }, lowered_args), ty, span: s },
-    ctx: cur_ctx,
-  }
+  .{ expr: .{ kind: .Variant(tid, .{ id: vid_idx }, lowered_args), ty, span: s }, ctx: cur_ctx }
 }
 
 pub fn lower_case(

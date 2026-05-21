@@ -5,8 +5,8 @@ use compiler.core_ir.{CoreExpr, FieldId, FieldInit, VariantId}
 use compiler.lower_core.context.{ExprOut, LowerCtx}
 use compiler.lower_core.helpers.{extract_type_name_expr, void_expr}
 use compiler.lower_core.types.{
-  find_field_index, find_field_index_in_type, find_field_type_in_type,
-  find_variant_index, resolve_type_id, type_id_from_mono,
+  find_field_index, find_field_index_in_type, find_field_type_in_type, find_variant_index,
+  resolve_type_id, type_id_from_mono,
 }
 use compiler.mono_type.{MonoType, TypeId}
 use lib.source.span.{Span}
@@ -73,11 +73,7 @@ pub fn lower_record_fields(
         case ctx.lookup_local(entry.name) {
           .Some(local_id) => {
             val_ty := find_field_type_in_type(ctx.env, ty, entry.name)
-            val := CoreExpr.{
-              kind: .Local(local_id),
-              ty: val_ty,
-              span: entry.span,
-            }
+            val := CoreExpr.{ kind: .Local(local_id), ty: val_ty, span: entry.span }
             fields = .append(.{ field, value: val })
           },
           .None => {
@@ -110,11 +106,7 @@ pub fn lower_field(
 
           if vid_idx >= 0 {
             return .{
-              expr: .{
-                kind: .Variant(entry.id, VariantId.{ id: vid_idx }, []),
-                ty,
-                span: s,
-              },
+              expr: .{ kind: .Variant(entry.id, VariantId.{ id: vid_idx }, []), ty, span: s },
               ctx,
             }
           }
@@ -165,17 +157,11 @@ pub fn lower_field(
   tid := case type_id_from_mono(base_ty) {
     .Some(id) => id,
     .None => {
-      ctx2 := br.ctx.emit_error(
-        s,
-        "cannot determine record type for field access",
-      )
+      ctx2 := br.ctx.emit_error(s, "cannot determine record type for field access")
 
       return .{ expr: void_expr(s), ctx: ctx2 }
     },
   }
   fid_idx := find_field_index(br.ctx.env, tid, field_name)
-  .{
-    expr: .{ kind: .RecordGet(br.expr, .{ id: fid_idx }), ty, span: s },
-    ctx: br.ctx,
-  }
+  .{ expr: .{ kind: .RecordGet(br.expr, .{ id: fid_idx }), ty, span: s }, ctx: br.ctx }
 }

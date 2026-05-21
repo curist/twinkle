@@ -38,15 +38,11 @@ pub fn emit_if_op(
     // because it ends with Unreachable/Br
     then_body := then_instrs
 
-    if !then_div {
-      then_body = append_result_store(then_body, result_idx, result_mono)
-    }
+    if !then_div { then_body = append_result_store(then_body, result_idx, result_mono) }
 
     else_body := else_instrs
 
-    if !else_div {
-      else_body = append_result_store(else_body, result_idx, result_mono)
-    }
+    if !else_div { else_body = append_result_store(else_body, result_idx, result_mono) }
 
     out.append(.If(.None, then_body, else_body))
   }
@@ -95,11 +91,9 @@ pub fn emit_loop_op(
   out.append(.I32Const(0)).append(.RefI31).append(.LocalSet(result_idx))
 }
 
-pub fn append_result_store(
-  body: Vector<Instr>,
-  result_idx: Int,
-  result_mono: MonoType,
-) Vector<Instr> {
+pub fn append_result_store(body: Vector<Instr>, result_idx: Int, result_mono: MonoType) Vector<
+  Instr,
+> {
   case result_mono {
     .Void => {
       out := body.append(.I32Const(0))

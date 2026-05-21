@@ -69,9 +69,7 @@ pub fn resolve_receiver_method_target(
       env.lookup_method(name, method_name).unwrap_or(fallback)
     },
     .None => case base_ty {
-      .Named(tid, _) => env.lookup_type_method(tid, method_name).unwrap_or(
-        fallback,
-      ),
+      .Named(tid, _) => env.lookup_type_method(tid, method_name).unwrap_or(fallback),
       _ => fallback,
     },
   }
@@ -98,11 +96,7 @@ pub fn lower_contract_call(
   }
 
   .{
-    expr: .{
-      kind: .ContractCall(contract, method_name, rr.expr, lowered_args),
-      ty,
-      span: s,
-    },
+    expr: .{ kind: .ContractCall(contract, method_name, rr.expr, lowered_args), ty, span: s },
     ctx: cur_ctx,
   }
 }
@@ -135,11 +129,7 @@ pub fn lower_call(
                 }
 
                 return .{
-                  expr: .{
-                    kind: .Variant(entry.id, .{ id: vid_idx }, lowered_args),
-                    ty,
-                    span: s,
-                  },
+                  expr: .{ kind: .Variant(entry.id, .{ id: vid_idx }, lowered_args), ty, span: s },
                   ctx: cur_ctx,
                 }
               }
@@ -214,19 +204,9 @@ pub fn lower_call(
                   ty: callee_ty,
                   span: callee_expr.span,
                 }
-                .{
-                  expr: .{ kind: .Call(callee_core, lowered_args), ty, span: s },
-                  ctx: cur_ctx,
-                }
+                .{ expr: .{ kind: .Call(callee_core, lowered_args), ty, span: s }, ctx: cur_ctx }
               },
-              _ => lower_call_generic(
-                ctx,
-                callee_expr,
-                args,
-                ty,
-                s,
-                lower_expr_fn,
-              ),
+              _ => lower_call_generic(ctx, callee_expr, args, ty, s, lower_expr_fn),
             }
           } else {
             // Module-qualified call: Mod.func(args) → Call(GlobalFunc, args)
@@ -244,20 +224,10 @@ pub fn lower_call(
               ty: callee_ty,
               span: callee_expr.span,
             }
-            .{
-              expr: .{ kind: .Call(callee_core, lowered_args), ty, span: s },
-              ctx: cur_ctx,
-            }
+            .{ expr: .{ kind: .Call(callee_core, lowered_args), ty, span: s }, ctx: cur_ctx }
           }
         },
-        .None => lower_call_generic(
-          ctx,
-          callee_expr,
-          args,
-          ty,
-          s,
-          lower_expr_fn,
-        ),
+        .None => lower_call_generic(ctx, callee_expr, args, ty, s, lower_expr_fn),
       }
     },
     .None => lower_call_generic(ctx, callee_expr, args, ty, s, lower_expr_fn),

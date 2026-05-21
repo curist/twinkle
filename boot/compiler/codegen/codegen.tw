@@ -39,9 +39,7 @@ fn timings_enabled() Bool {
   }
 }
 
-fn log_time(label: String, ms: Float) {
-  eprintln("[time] ${label}: ${Float.to_string(ms)}ms")
-}
+fn log_time(label: String, ms: Float) { eprintln("[time] ${label}: ${Float.to_string(ms)}ms") }
 
 fn verify_level_from_env() VerifyLevel {
   case proc.env("TWINKLE_VERIFY_LEVEL") {
@@ -78,23 +76,13 @@ pub fn link_program(anf: AnfModule, env: ResolvedEnv, builtins: BuiltinRegistry)
   }
 
   // 2. Prepare backend IR.
-  prepared := prepare_backend(
-    closure_conversion.anf,
-    env,
-    builtins,
-    closure_conversion.captures,
-  )
+  prepared := prepare_backend(closure_conversion.anf, env, builtins, closure_conversion.captures)
   t2 := date.now()
 
   if timed { log_time("prepare_backend", t2 - t1) }
 
   // 3. Verify prepared backend IR.
-  case verify_prepared_module_with_level(
-    prepared,
-    env,
-    builtins,
-    verify_level_from_env(),
-  ) {
+  case verify_prepared_module_with_level(prepared, env, builtins, verify_level_from_env()) {
     .Ok(_) => {},
     .Err(msg) => error(msg),
   }
@@ -145,9 +133,7 @@ pub fn codegen(anf: AnfModule, env: ResolvedEnv, builtins: BuiltinRegistry) Stri
   emit_wat(link_program(anf, env, builtins))
 }
 
-pub fn codegen_wasm(anf: AnfModule, env: ResolvedEnv, builtins: BuiltinRegistry) Vector<
-  Byte,
-> {
+pub fn codegen_wasm(anf: AnfModule, env: ResolvedEnv, builtins: BuiltinRegistry) Vector<Byte> {
   linked := link_program(anf, env, builtins)
   timed := timings_enabled()
   t0 := date.now()

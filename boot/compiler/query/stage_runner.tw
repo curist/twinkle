@@ -21,13 +21,7 @@ pub type Runner = .{
 
 pub type StageOut<T> = .{ store: cache.Store, value: T, cache_hit: Bool }
 
-pub fn new(
-  path: String,
-  source_hash: Int,
-  deps_hash: Int,
-  context_hash: Int,
-  is_internal: Bool,
-) Runner {
+pub fn new(path: String, source_hash: Int, deps_hash: Int, context_hash: Int, is_internal: Bool) Runner {
   .{ path, source_hash, deps_hash, context_hash, is_internal }
 }
 
@@ -57,20 +51,12 @@ pub fn resolve(
   module: cache.ParsedModule,
   env: resolver.ResolvedEnv,
 ) StageOut<resolver.ResolveResult> {
-  base_key := keys.resolve_key(
-    runner.path,
-    runner.source_hash,
-    runner.deps_hash,
-  )
+  base_key := keys.resolve_key(runner.path, runner.source_hash, runner.deps_hash)
   key := keys.with_context(base_key, runner.context_hash)
   lookup := cache.get_resolved(store, runner.path, key)
 
   case lookup.value {
-    .Some(resolved) => .{
-      store: lookup.store,
-      value: resolved,
-      cache_hit: true,
-    },
+    .Some(resolved) => .{ store: lookup.store, value: resolved, cache_hit: true },
     .None => {
       resolved := env.resolve(module.module)
       next := cache.put_resolved(lookup.store, runner.path, key, resolved)
@@ -111,12 +97,7 @@ pub fn lower(
   typed: checker.CheckResult,
   builtins: BuiltinRegistry,
 ) StageOut<lower_core.LowerResult> {
-  base_key := keys.lower_key(
-    runner.path,
-    runner.source_hash,
-    runner.deps_hash,
-    0,
-  )
+  base_key := keys.lower_key(runner.path, runner.source_hash, runner.deps_hash, 0)
   key := keys.with_context(base_key, runner.context_hash)
   lookup := cache.get_lowered(store, runner.path, key)
 

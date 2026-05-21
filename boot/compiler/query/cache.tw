@@ -95,18 +95,14 @@ pub fn set_module_hash(store: Store, module: String, hash: Int) Store {
   store
 }
 
-pub fn module_hash(store: Store, module: String) Int? {
-  store.module_hashes[module]
-}
+pub fn module_hash(store: Store, module: String) Int? { store.module_hashes[module] }
 
 pub fn set_exports_fingerprint(store: Store, module: String, fingerprint: Int) Store {
   store.exports_fingerprints[module] = fingerprint
   store
 }
 
-pub fn exports_fingerprint(store: Store, module: String) Int? {
-  store.exports_fingerprints[module]
-}
+pub fn exports_fingerprint(store: Store, module: String) Int? { store.exports_fingerprints[module] }
 
 pub fn note_source_hash(store: Store, module: String, source_hash: Int) Store {
   case store.source_hashes[module] {
@@ -212,18 +208,11 @@ pub fn get_parsed(store: Store, module: String, key: Int) Lookup<ParsedModule> {
 }
 
 pub fn put_parsed(store: Store, module: String, key: Int, value: ParsedModule) Store {
-  store.parsed[module] = .{
-    key,
-    value,
-    verified_at: store.revision,
-    changed_at: store.revision,
-  }
+  store.parsed[module] = .{ key, value, verified_at: store.revision, changed_at: store.revision }
   store
 }
 
-pub fn get_resolved(store: Store, module: String, key: Int) Lookup<
-  resolver.ResolveResult,
-> {
+pub fn get_resolved(store: Store, module: String, key: Int) Lookup<resolver.ResolveResult> {
   case store.resolved[module] {
     .Some(entry) => {
       if entry.key == key {
@@ -245,24 +234,12 @@ pub fn get_resolved(store: Store, module: String, key: Int) Lookup<
   .{ store, value: .None, cache_hit: false }
 }
 
-pub fn put_resolved(
-  store: Store,
-  module: String,
-  key: Int,
-  value: resolver.ResolveResult,
-) Store {
-  store.resolved[module] = .{
-    key,
-    value,
-    verified_at: store.revision,
-    changed_at: store.revision,
-  }
+pub fn put_resolved(store: Store, module: String, key: Int, value: resolver.ResolveResult) Store {
+  store.resolved[module] = .{ key, value, verified_at: store.revision, changed_at: store.revision }
   store
 }
 
-pub fn get_typed(store: Store, module: String, key: Int) Lookup<
-  checker.CheckResult,
-> {
+pub fn get_typed(store: Store, module: String, key: Int) Lookup<checker.CheckResult> {
   case store.typed[module] {
     .Some(entry) => {
       if entry.key == key {
@@ -284,24 +261,12 @@ pub fn get_typed(store: Store, module: String, key: Int) Lookup<
   .{ store, value: .None, cache_hit: false }
 }
 
-pub fn put_typed(
-  store: Store,
-  module: String,
-  key: Int,
-  value: checker.CheckResult,
-) Store {
-  store.typed[module] = .{
-    key,
-    value,
-    verified_at: store.revision,
-    changed_at: store.revision,
-  }
+pub fn put_typed(store: Store, module: String, key: Int, value: checker.CheckResult) Store {
+  store.typed[module] = .{ key, value, verified_at: store.revision, changed_at: store.revision }
   store
 }
 
-pub fn get_lowered(store: Store, module: String, key: Int) Lookup<
-  lower_core.LowerResult,
-> {
+pub fn get_lowered(store: Store, module: String, key: Int) Lookup<lower_core.LowerResult> {
   case store.lowered[module] {
     .Some(entry) => {
       if entry.key == key {
@@ -323,18 +288,8 @@ pub fn get_lowered(store: Store, module: String, key: Int) Lookup<
   .{ store, value: .None, cache_hit: false }
 }
 
-pub fn put_lowered(
-  store: Store,
-  module: String,
-  key: Int,
-  value: lower_core.LowerResult,
-) Store {
-  store.lowered[module] = .{
-    key,
-    value,
-    verified_at: store.revision,
-    changed_at: store.revision,
-  }
+pub fn put_lowered(store: Store, module: String, key: Int, value: lower_core.LowerResult) Store {
+  store.lowered[module] = .{ key, value, verified_at: store.revision, changed_at: store.revision }
   store
 }
 

@@ -43,11 +43,7 @@ pub fn lower_lvalue_assign(
                 .None => .Local(root_local),
               }
               update := CoreExpr.{
-                kind: .RecordUpdate(
-                  .{ kind: base_kind, ty: base_ty, span: s },
-                  fid,
-                  rhs_core,
-                ),
+                kind: .RecordUpdate(.{ kind: base_kind, ty: base_ty, span: s }, fid, rhs_core),
                 ty: base_ty,
                 span: s,
               }
@@ -102,11 +98,7 @@ pub fn lower_lvalue_assign(
               update := CoreExpr.{
                 kind: .Call(
                   .{ kind: .GlobalFunc(func_id), ty: .Void, span: s },
-                  [
-                    CoreExpr.{ kind: base_kind, ty: base_ty, span: s },
-                    ir.expr,
-                    rhs_core,
-                  ],
+                  [CoreExpr.{ kind: base_kind, ty: base_ty, span: s }, ir.expr, rhs_core],
                 ),
                 ty: base_ty,
                 span: s,

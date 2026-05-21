@@ -6,11 +6,7 @@ pub fn find_field_index(env: ResolvedEnv, tid: TypeId, field_name: String) Int {
   find_field_index_in_type(env, .Named(tid, []), field_name)
 }
 
-pub fn find_field_index_in_type(
-  env: ResolvedEnv,
-  ty: MonoType,
-  field_name: String,
-) Int {
+pub fn find_field_index_in_type(env: ResolvedEnv, ty: MonoType, field_name: String) Int {
   case ty {
     .Named(tid, args) => {
       case env.lookup_type_def(tid) {
@@ -38,11 +34,7 @@ pub fn find_field_type(env: ResolvedEnv, tid: TypeId, field_name: String) MonoTy
   find_field_type_in_type(env, .Named(tid, []), field_name)
 }
 
-pub fn find_field_type_in_type(
-  env: ResolvedEnv,
-  ty: MonoType,
-  field_name: String,
-) MonoType {
+pub fn find_field_type_in_type(env: ResolvedEnv, ty: MonoType, field_name: String) MonoType {
   case ty {
     .Named(tid, args) => {
       case env.lookup_type_def(tid) {
@@ -128,10 +120,10 @@ pub fn type_id_from_mono(ty: MonoType) TypeId? {
   }
 }
 
-pub fn build_var_map(
-  type_params: Vector<ResolvedTypeParam>,
-  type_args: Vector<MonoType>,
-) Dict<String, MonoType> {
+pub fn build_var_map(type_params: Vector<ResolvedTypeParam>, type_args: Vector<MonoType>) Dict<
+  String,
+  MonoType,
+> {
   m: Dict<String, MonoType> = Dict.new()
 
   for i in 0..type_params.len() {
@@ -156,10 +148,7 @@ pub fn subst_vars(ty: MonoType, var_map: Dict<String, MonoType>) MonoType {
       .Function(inst_params, subst_vars(ret, var_map))
     },
     .Optional(inner) => .Optional(subst_vars(inner, var_map)),
-    .Result(ok, err) => .Result(
-      subst_vars(ok, var_map),
-      subst_vars(err, var_map),
-    ),
+    .Result(ok, err) => .Result(subst_vars(ok, var_map), subst_vars(err, var_map)),
     .Named(tid, args) => {
       inst_args := collect a in args { subst_vars(a, var_map) }
       .Named(tid, inst_args)
@@ -170,9 +159,7 @@ pub fn subst_vars(ty: MonoType, var_map: Dict<String, MonoType>) MonoType {
 
 // Extract variant field types for Option/Result given the MonoType.
 // User-defined sums go through the env; builtins have hard-coded field types.
-pub fn variant_field_types(ty: MonoType, name: String, env: ResolvedEnv) Vector<
-  MonoType,
-> {
+pub fn variant_field_types(ty: MonoType, name: String, env: ResolvedEnv) Vector<MonoType> {
   case ty {
     .Optional(inner) => {
       if name == "Some" {

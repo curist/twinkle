@@ -1,17 +1,14 @@
 // IR command: compile and print IR stages.
 use @std.proc
 
-use commands.common.{
-  exit_usage_error, format_compile_error, get_positional, print_warnings,
-}
+use commands.common.{exit_usage_error, format_compile_error, get_positional, print_warnings}
 use compiler.ir_print
 use compiler.pipeline
 use lib.argparse.app
 use lib.argparse.app.{ParseResult}
 
 fn has_any_ir_flag(parsed: ParseResult) Bool {
-  app.has_flag(parsed, "core") or app.has_flag(parsed, "mono")
-  or app.has_flag(parsed, "anf")
+  app.has_flag(parsed, "core") or app.has_flag(parsed, "mono") or app.has_flag(parsed, "anf")
   or app.has_flag(parsed, "opt")
   or app.has_flag(parsed, "wat")
   or app.has_flag(parsed, "all")
@@ -55,11 +52,7 @@ pub fn run_ir_command(parsed: ParseResult) {
   first := true
 
   if should_show_ir(parsed, "core") {
-    first = print_ir_stage(
-      "Core IR",
-      ir_print.render_core_module(artifacts.core),
-      first,
-    )
+    first = print_ir_stage("Core IR", ir_print.render_core_module(artifacts.core), first)
   }
 
   if should_show_ir(parsed, "mono") {

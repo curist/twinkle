@@ -43,10 +43,7 @@ pub fn clear_diagnostics(uri: String, version: Int?) json.Json {
   )
 }
 
-fn diagnostic_to_json(
-  index: line_index.LineIndex,
-  d: query_diagnostics.Diagnostic,
-) json.Json {
+fn diagnostic_to_json(index: line_index.LineIndex, d: query_diagnostics.Diagnostic) json.Json {
   fields: Vector<json.Field> = [
     json.kv("range", range_to_json(diagnostic_range(index, d))),
     json.kv("severity", .Int(severity_to_lsp(d.severity))),
@@ -62,10 +59,7 @@ fn diagnostic_to_json(
   json.object(fields)
 }
 
-fn diagnostic_range(
-  index: line_index.LineIndex,
-  d: query_diagnostics.Diagnostic,
-) line_index.TextRange {
+fn diagnostic_range(index: line_index.LineIndex, d: query_diagnostics.Diagnostic) line_index.TextRange {
   case d.span {
     .Some(sp) => line_index.byte_range_to_range(index, sp.start, sp.end, .Utf16),
     .None => line_index.byte_range_to_range(index, 0, 0, .Utf16),

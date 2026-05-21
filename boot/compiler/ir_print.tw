@@ -1,18 +1,14 @@
-use compiler.anf.{
-  AnfExpr, AnfFunctionDef, AnfModule, AnfOp, Atom, IndexKind, OpKind,
-}
+use compiler.anf.{AnfExpr, AnfFunctionDef, AnfModule, AnfOp, Atom, IndexKind, OpKind}
 use compiler.codegen.linker.{LinkedModule}
 use compiler.codegen.wasm_ir.{WasmModule}
 use compiler.codegen.wat.{emit_wat, emit_wat_unlinked_for_test}
 use compiler.contracts.{BuiltinContract}
-use compiler.core_ir.{
-  BinOp, CoreExpr, CoreModule, CorePattern, FieldId, Param, UnOp, VariantId,
-}
+use compiler.core_ir.{BinOp, CoreExpr, CoreModule, CorePattern, FieldId, Param, UnOp, VariantId}
 use compiler.mono_type.{MonoType, TypeId}
 use compiler.resolver
 use compiler.resolver.{ResolvedEnv, ResolvedTypeDef}
 
-fn pad(indent: Int) String { collect _ in 0..indent { " " }.join("") }
+fn pad(indent: Int) String { (collect _ in 0..indent { " " }).join("") }
 
 fn line(lines: Vector<String>, indent: Int, text: String) Vector<String> {
   lines.append("${pad(indent)}${text}")
@@ -75,9 +71,7 @@ fn variant_name(env: ResolvedEnv, tid: TypeId, vid: VariantId) String {
   }
 }
 
-fn mono(ty_env: ResolvedEnv, ty: MonoType) String {
-  resolver.ty_to_string_env(ty_env, ty)
-}
+fn mono(ty_env: ResolvedEnv, ty: MonoType) String { resolver.ty_to_string_env(ty_env, ty) }
 
 fn param_strings(ty_env: ResolvedEnv, params: Vector<Param>) Vector<String> {
   collect p in params {
@@ -165,12 +159,9 @@ fn index_kind_name(kind: IndexKind) String {
   }
 }
 
-pub fn render_core_expr(
-  lines: Vector<String>,
-  env: ResolvedEnv,
-  expr: CoreExpr,
-  indent: Int,
-) Vector<String> {
+pub fn render_core_expr(lines: Vector<String>, env: ResolvedEnv, expr: CoreExpr, indent: Int) Vector<
+  String,
+> {
   ty := mono(env, expr.ty)
 
   case expr.kind {
@@ -180,16 +171,8 @@ pub fn render_core_expr(
     .LitStr(s) => line(lines, indent, "LitStr(\"${s}\") : ${ty}"),
     .LitVoid => line(lines, indent, "LitVoid"),
     .Local(local) => line(lines, indent, "Local(L${local.id}) : ${ty}"),
-    .GlobalLocal(local) => line(
-      lines,
-      indent,
-      "GlobalLocal(L${local.id}) : ${ty}",
-    ),
-    .GlobalFunc(func_id) => line(
-      lines,
-      indent,
-      "GlobalFunc(Fn${func_id.id}) : ${ty}",
-    ),
+    .GlobalLocal(local) => line(lines, indent, "GlobalLocal(L${local.id}) : ${ty}"),
+    .GlobalFunc(func_id) => line(lines, indent, "GlobalFunc(Fn${func_id.id}) : ${ty}"),
     .Let(local, value, body) => {
       out := line(lines, indent, "Let L${local.id} =")
       out = render_core_expr(out, env, value, indent + 2)
@@ -211,36 +194,20 @@ pub fn render_core_expr(
     },
     .Call(callee, args) => {
       args.fold(
-        render_core_expr(
-          line(lines, indent, "Call : ${ty}"),
-          env,
-          callee,
-          indent + 2,
-        ),
+        render_core_expr(line(lines, indent, "Call : ${ty}"), env, callee, indent + 2),
         fn(out, arg) { render_core_expr(out, env, arg, indent + 4) },
       )
     },
     .ContractCall(contract, method_name, receiver, args) => {
-      out := line(
-        lines,
-        indent,
-        "ContractCall ${contract_name(contract)}.${method_name} : ${ty}",
-      )
+      out := line(lines, indent, "ContractCall ${contract_name(contract)}.${method_name} : ${ty}")
       out = render_core_expr(out, env, receiver, indent + 2)
-      args.fold(
-        out,
-        fn(inner_out, arg) { render_core_expr(inner_out, env, arg, indent + 4) },
-      )
+      args.fold(out, fn(inner_out, arg) { render_core_expr(inner_out, env, arg, indent + 4) })
     },
     .MakeClosure(func_id, free_vars) => {
       captures := collect local in free_vars {
         "L${local.id}"
       }
-      line(
-        lines,
-        indent,
-        "MakeClosure Fn${func_id.id} free_vars=[${captures.join(", ")}]",
-      )
+      line(lines, indent, "MakeClosure Fn${func_id.id} free_vars=[${captures.join(", ")}]")
     },
     .If(cond, then_branch, else_branch) => {
       out := line(lines, indent, "If : ${ty}")
@@ -256,11 +223,7 @@ pub fn render_core_expr(
       out = render_core_expr(out, env, scrutinee, indent + 2)
 
       for arm in arms {
-        out = line(
-          out,
-          indent,
-          "  arm ${core_pattern_string(env, arm.pattern)} =>",
-        )
+        out = line(out, indent, "  arm ${core_pattern_string(env, arm.pattern)} =>")
         out = render_core_expr(out, env, arm.body, indent + 4)
       }
 
@@ -394,11 +357,7 @@ fn render_anf_op(
       out := line(lines, indent, "match ${atom_string(scrutinee)}")
 
       for arm in arms {
-        out = line(
-          out,
-          indent,
-          "  arm ${core_pattern_string(env, arm.pattern)} =>",
-        )
+        out = line(out, indent, "  arm ${core_pattern_string(env, arm.pattern)} =>")
         out = render_anf_expr(out, env, func, arm.body, indent + 4)
       }
 
@@ -411,9 +370,7 @@ fn render_anf_op(
     .ABinOp(op, left, right, kind) => line(
       lines,
       indent,
-      "${op_kind_name(kind)}.${binop_name(op)} ${atom_string(left)}, ${atom_string(
-        right,
-      )}",
+      "${op_kind_name(kind)}.${binop_name(op)} ${atom_string(left)}, ${atom_string(right)}",
     ),
     .AUnOp(op, atom, kind) => line(
       lines,
@@ -424,21 +381,13 @@ fn render_anf_op(
       captures := collect local in free_vars {
         "L${local.id}"
       }
-      line(
-        lines,
-        indent,
-        "make_closure Fn${func_id.id} [${captures.join(", ")}]",
-      )
+      line(lines, indent, "make_closure Fn${func_id.id} [${captures.join(", ")}]")
     },
     .ARecord(tid, fields) => {
       parts := collect field in fields {
         "${field_name(env, tid, field.field)}=${atom_string(field.value)}"
       }
-      line(
-        lines,
-        indent,
-        "record ${type_name(env, tid)} { ${parts.join(", ")} }",
-      )
+      line(lines, indent, "record ${type_name(env, tid)} { ${parts.join(", ")} }")
     },
     .ARecordGet(atom, field, tid) => line(
       lines,
@@ -448,18 +397,16 @@ fn render_anf_op(
     .ARecordUpdate(atom, field, value, in_place, tid) => line(
       lines,
       indent,
-      "record_update ${atom_string(atom)} .${field_name(env, tid, field)} = ${atom_string(
-        value,
-      )} [in_place=${bool_name(in_place)}]",
+      "record_update ${atom_string(atom)} .${field_name(env, tid, field)} = ${atom_string(value)} [in_place=${bool_name(
+        in_place,
+      )}]",
     ),
     .AVariant(tid, vid, args) => {
       rendered := collect arg in args { atom_string(arg) }
       line(
         lines,
         indent,
-        "variant ${type_name(env, tid)}.${variant_name(env, tid, vid)}(${rendered.join(
-          ", ",
-        )})",
+        "variant ${type_name(env, tid)}.${variant_name(env, tid, vid)}(${rendered.join(", ")})",
       )
     },
     .AArrayLit(elements) => {
@@ -469,16 +416,13 @@ fn render_anf_op(
     .AIndex(base, index, kind, base_ty) => line(
       lines,
       indent,
-      "index[${index_kind_name(kind)}] ${atom_string(base)}, ${atom_string(
-        index,
-      )} : ${mono(env, base_ty)}",
+      "index[${index_kind_name(kind)}] ${atom_string(base)}, ${atom_string(index)} : ${mono(
+        env,
+        base_ty,
+      )}",
     ),
     .AInit(atom) => line(lines, indent, "init ${atom_string(atom)}"),
-    .AAssign(local, atom) => line(
-      lines,
-      indent,
-      "assign L${local.id} = ${atom_string(atom)}",
-    ),
+    .AAssign(local, atom) => line(lines, indent, "assign L${local.id} = ${atom_string(atom)}"),
     .ADefer(expr) => {
       out := line(lines, indent, "defer")
       render_anf_expr(out, env, func, expr, indent + 2)
@@ -496,11 +440,7 @@ fn render_anf_op(
   }
 }
 
-fn render_anf_function(
-  lines: Vector<String>,
-  env: ResolvedEnv,
-  func: AnfFunctionDef,
-) Vector<String> {
+fn render_anf_function(lines: Vector<String>, env: ResolvedEnv, func: AnfFunctionDef) Vector<String> {
   params := param_strings(env, func.params)
   out := line(
     lines,
@@ -514,10 +454,7 @@ fn render_anf_function(
 }
 
 pub fn render_core_module(module: CoreModule) String {
-  lines: Vector<String> = [
-    "// Core IR",
-    "// ${module.functions.len()} function(s)",
-  ]
+  lines: Vector<String> = ["// Core IR", "// ${module.functions.len()} function(s)"]
 
   case module.init_func_id {
     .Some(init_id) => { lines = .append("// init = FuncId(${init_id.id})") },
@@ -528,9 +465,7 @@ pub fn render_core_module(module: CoreModule) String {
 
   for func in module.functions {
     params := param_strings(module.type_env, func.params)
-    lines = .append(
-      "fn ${func.name} [FuncId(${func.func_id.id})] params=[${params.join(", ")}]",
-    )
+    lines = .append("fn ${func.name} [FuncId(${func.func_id.id})] params=[${params.join(", ")}]")
     lines = .append("  return_ty: ${mono(module.type_env, func.return_ty)}")
     lines = .append("  body:")
     lines = render_core_expr(lines, module.type_env, func.body, 4)
@@ -541,10 +476,7 @@ pub fn render_core_module(module: CoreModule) String {
 }
 
 pub fn render_anf_module(env: ResolvedEnv, module: AnfModule) String {
-  lines: Vector<String> = [
-    "// ANF IR",
-    "// ${module.functions.len()} function(s)",
-  ]
+  lines: Vector<String> = ["// ANF IR", "// ${module.functions.len()} function(s)"]
 
   case module.init_func_id {
     .Some(init_id) => { lines = .append("// init = FuncId(${init_id.id})") },
@@ -558,10 +490,6 @@ pub fn render_anf_module(env: ResolvedEnv, module: AnfModule) String {
   join_lines(lines)
 }
 
-pub fn render_user_module_wat(module: WasmModule) String {
-  emit_wat_unlinked_for_test(module)
-}
+pub fn render_user_module_wat(module: WasmModule) String { emit_wat_unlinked_for_test(module) }
 
-pub fn render_linked_module_wat(linked: LinkedModule) String {
-  emit_wat(linked)
-}
+pub fn render_linked_module_wat(linked: LinkedModule) String { emit_wat(linked) }

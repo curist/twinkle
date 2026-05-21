@@ -18,9 +18,7 @@ pub fn lower_string_interp(
 
   for part in parts {
     case part {
-      .Literal(text) => {
-        str_parts = .append(.{ kind: .LitStr(text), ty: str_ty, span: s })
-      },
+      .Literal(text) => { str_parts = .append(.{ kind: .LitStr(text), ty: str_ty, span: s }) },
       .Interpolation(expr) => {
         r := lower_expr_fn(cur_ctx, expr)
         cur_ctx = r.ctx
@@ -42,10 +40,7 @@ pub fn lower_string_interp(
                       .None => cur_ctx.builtins.id("string_to_string"),
                     }
                     .{
-                      kind: .Call(
-                        .{ kind: .GlobalFunc(fid), ty: .Void, span: s },
-                        [r.expr],
-                      ),
+                      kind: .Call(.{ kind: .GlobalFunc(fid), ty: .Void, span: s }, [r.expr]),
                       ty: str_ty,
                       span: s,
                     }
@@ -83,11 +78,7 @@ pub fn lower_string_interp(
   for i < str_parts.len() {
     acc = .{
       kind: .Call(
-        .{
-          kind: .GlobalFunc(cur_ctx.builtins.id("string_concat")),
-          ty: .Void,
-          span: s,
-        },
+        .{ kind: .GlobalFunc(cur_ctx.builtins.id("string_concat")), ty: .Void, span: s },
         [acc, str_parts[i]],
       ),
       ty: str_ty,

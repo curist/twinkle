@@ -1,12 +1,8 @@
 // rt.core — equality, trap, and host I/O bindings.
 //
 // Mirrors stage0 src/runtime/core.rs.
-use compiler.codegen.wasm_ir.{
-  ExportDef, FuncDef, HeapType, ImportDef, Instr, ValType, WasmModule,
-}
-use compiler.codegen.wasm_layout.{
-  EqTypeLayouts, WasmRecordLayout, WasmSumLayout,
-}
+use compiler.codegen.wasm_ir.{ExportDef, FuncDef, HeapType, ImportDef, Instr, ValType, WasmModule}
+use compiler.codegen.wasm_layout.{EqTypeLayouts, WasmRecordLayout, WasmSumLayout}
 
 fn str_null() ValType { ValType.Ref(true, HeapType.Named("rt_types__String")) }
 
@@ -20,9 +16,7 @@ fn pvec_ref() ValType { ValType.Ref(false, HeapType.Named("rt_types__PVec")) }
 
 fn pdict_ref() ValType { ValType.Ref(false, HeapType.Named("rt_types__PDict")) }
 
-fn variant_ref() ValType {
-  ValType.Ref(false, HeapType.Named("rt_types__Variant"))
-}
+fn variant_ref() ValType { ValType.Ref(false, HeapType.Named("rt_types__Variant")) }
 
 fn t_array() String { "rt_types__Array" }
 
@@ -62,9 +56,7 @@ pub fn module(eq_layouts: EqTypeLayouts) WasmModule {
     eq_dict_fn(),
     eq_variant_fn(),
   ].concat(rec_eq_funcs).concat(sum_eq_funcs).append(eq_fn(eq_layouts))
-  exports := collect f in funcs {
-    ExportDef.{ wasm_name: f.name, func_sym: f.name }
-  }
+  exports := collect f in funcs { ExportDef.{ wasm_name: f.name, func_sym: f.name } }
   WasmModule.{
     namespace: "rt.core",
     types: [],
@@ -449,9 +441,7 @@ fn rec_eq_func_name(rec: WasmRecordLayout) String {
   "eq_rec_${rec.sym}"
 }
 
-fn field_eq_instrs(qualified_sym: String, field_idx: Int, vt: ValType) Vector<
-  Instr,
-> {
+fn field_eq_instrs(qualified_sym: String, field_idx: Int, vt: ValType) Vector<Instr> {
   // Extern ref fields need any.convert_extern before calling eq (anyref params)
   is_extern := case vt {
     .Ref(_, .Extern) => true,
@@ -492,9 +482,7 @@ fn gen_record_eq_fn(rec: WasmRecordLayout) FuncDef {
   ref_ty := ValType.Ref(false, HeapType.Named(qsym))
   body: Vector<Instr> = []
 
-  for f, i in rec.fields {
-    body = .concat(field_eq_instrs(qsym, i, f.val_type))
-  }
+  for f, i in rec.fields { body = .concat(field_eq_instrs(qsym, i, f.val_type)) }
 
   body = .append(Instr.I32Const(1))
   FuncDef.{
@@ -771,9 +759,7 @@ fn eq_fn(eq_layouts: EqTypeLayouts) FuncDef {
         ],
         [],
       ),
-    ].concat(record_eq_dispatch(eq_layouts.records)).concat(
-      sum_eq_dispatch(eq_layouts.sums),
-    ).concat([
+    ].concat(record_eq_dispatch(eq_layouts.records)).concat(sum_eq_dispatch(eq_layouts.sums)).concat([
       Instr.LocalGet(0),
       Instr.RefCast(true, HeapType.Eq),
       Instr.LocalGet(1),

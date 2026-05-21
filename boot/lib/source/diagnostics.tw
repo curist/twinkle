@@ -14,11 +14,7 @@ pub type Severity = { Error, Warning, Hint, Info }
 
 // ── Shared payload type ───────────────────────────────────────────────
 /// Used by ParseError and LowerError where the message is already a string.
-pub type GenericDiag = .{
-  span: Span,
-  message: String,
-  help_lines: Vector<String>,
-}
+pub type GenericDiag = .{ span: Span, message: String, help_lines: Vector<String> }
 
 // ── Diagnostic enums ─────────────────────────────────────────────────
 pub type ErrorDiag = {
@@ -27,9 +23,7 @@ pub type ErrorDiag = {
   UndefinedType(.{ span: Span, name: String }),
   WrongArity(.{ span: Span, expected: Int, found: Int }),
   TypeArityMismatch(.{ span: Span, name: String, expected: Int, found: Int }),
-  MissingVariants(
-    .{ span: Span, scrutinee_ty: MonoType, missing: Vector<String> },
-  ),
+  MissingVariants(.{ span: Span, scrutinee_ty: MonoType, missing: Vector<String> }),
   DuplicateField(.{ span: Span, name: String, first: Span }),
   InfiniteType(.{ span: Span }),
   NoField(.{ span: Span, name: String, ty: MonoType }),
@@ -37,15 +31,7 @@ pub type ErrorDiag = {
   NotIndexable(.{ span: Span, ty: MonoType }),
   NoMethod(.{ span: Span, ty: MonoType, name: String }),
   MissingField(.{ span: Span, name: String, ty: MonoType }),
-  ContractViolation(
-    .{
-      span: Span,
-      ty: MonoType,
-      contract: String,
-      owner: String,
-      reason: String,
-    },
-  ),
+  ContractViolation(.{ span: Span, ty: MonoType, contract: String, owner: String, reason: String }),
   CannotSynthesize(.{ span: Span }),
   AmbiguousType(.{ span: Span }),
   InvalidMethodSig(.{ span: Span, name: String }),
@@ -66,9 +52,7 @@ pub type ErrorDiag = {
   CompilerBug(.{ span: Span, message: String }),
   ReservedTypeName(.{ span: Span, name: String }),
   DuplicateName(.{ span: Span, kind: String, name: String }),
-  FieldMethodCollision(
-    .{ span: Span, type_name: String, name: String, method_span: Span },
-  ),
+  FieldMethodCollision(.{ span: Span, type_name: String, name: String, method_span: Span }),
   DuplicateTypeParam(.{ span: Span, name: String }),
   UnknownContract(.{ span: Span, name: String }),
   ExternBoundaryType(.{ span: Span }),
@@ -182,39 +166,31 @@ pub fn message(kind: DiagKind) String {
       .UndefinedType(d) => "undefined type: ${d.name}",
       .WrongArity(d) => "expected ${d.expected} arguments, got ${d.found}",
       .TypeArityMismatch(d) => "${d.name} expects ${d.expected} type argument(s), got ${d.found}",
-      .MissingVariants(d) => "non-exhaustive match on `${ty_to_string(
-        d.scrutinee_ty,
-      )}`, missing: ${d.missing.join(", ")}",
+      .MissingVariants(d) => "non-exhaustive match on `${ty_to_string(d.scrutinee_ty)}`, missing: ${d.missing.join(
+        ", ",
+      )}",
       .DuplicateField(d) => "duplicate field: ${d.name}",
       .InfiniteType(_) => "infinite type (occurs check)",
       .NoField(d) => "no field `${d.name}` on type ${ty_to_string(d.ty)}",
       .NotIterable(d) => "cannot iterate over ${ty_to_string(d.ty)}",
       .NotIndexable(d) => "cannot index into ${ty_to_string(d.ty)}",
       .NoMethod(d) => "type ${ty_to_string(d.ty)} has no method '${d.name}'",
-      .MissingField(d) => "missing field '${d.name}' in record literal for ${ty_to_string(
-        d.ty,
-      )}",
+      .MissingField(d) => "missing field '${d.name}' in record literal for ${ty_to_string(d.ty)}",
       .ContractViolation(d) => "type argument ${ty_to_string(d.ty)} does not satisfy ${d.contract} required by ${d.owner}: ${d.reason}",
       .CannotSynthesize(_) => "cannot synthesize type for this expression",
       .AmbiguousType(_) => "cannot infer type for this expression",
       .InvalidMethodSig(d) => "invalid method signature for '${d.name}'",
       .NotARecord(d) => "expected a record type, got ${ty_to_string(d.ty)}",
-      .VariantTypeMismatch(d) => "variant .${d.name} used where ${ty_to_string(
-        d.ty,
-      )} expected",
+      .VariantTypeMismatch(d) => "variant .${d.name} used where ${ty_to_string(d.ty)} expected",
       .ByteOutOfRange(d) => "integer literal ${d.value.to_string()} is out of range for Byte (0..255)",
       .InvalidScrutinee(d) => "cannot match on ${ty_to_string(d.ty)}: case scrutinee must be a sum type or primitive (Int, Bool, String)",
       .QualifierMismatch(d) => "qualifier ${d.qualifier} does not match scrutinee type ${d.scrutinee_type}",
       .IteratorNoIndex(_) => "Iterator<T> does not support indexed bindings",
       .PublicRebind(d) => "cannot rebind public binding '${d.name}'",
       .InvalidAssignTarget(_) => "invalid assignment target",
-      .InvalidOperand(d) => "${d.operation} not supported for ${ty_to_string(
-        d.ty,
-      )}",
+      .InvalidOperand(d) => "${d.operation} not supported for ${ty_to_string(d.ty)}",
       .StringConcatOperator(_) => "cannot concatenate strings with `+`",
-      .TryOperandError(d) => "try requires Option or Result, got ${ty_to_string(
-        d.ty,
-      )}",
+      .TryOperandError(d) => "try requires Option or Result, got ${ty_to_string(d.ty)}",
       .TryReturnMismatch(d) => "try on ${d.expected_kind} requires function to return ${d.expected_kind}",
       .CannotInterpolate(d) => "cannot interpolate ${ty_to_string(d.ty)}: ${d.reason}",
       .DeferDiverge(_) => "defer body cannot diverge (return, break, continue, or error(...))",

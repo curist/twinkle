@@ -1,5 +1,4 @@
 // Argv normalization for the twk CLI.
-
 fn is_program_path(s: String) Bool {
   s.ends_with(".tw") or s.ends_with(".wat") or s.ends_with(".wasm")
 }
@@ -20,11 +19,13 @@ pub fn normalize_argv(raw: Vector<String>) Vector<String> {
 
   prog_idx: Int? = .None
   i := 0
+
   for i < raw.len() {
     if is_program_path(raw[i]) {
       prog_idx = .Some(i)
       break
     }
+
     i = i + 1
   }
 

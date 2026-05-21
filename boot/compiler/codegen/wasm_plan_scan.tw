@@ -6,9 +6,7 @@
 // - direct builtin FuncIds from ACall callee sites
 // - explicit module-global references from non-init prepared bodies
 use compiler.backend.prepare.{PreparedModule}
-use compiler.backend.prepared_ir.{
-  PreparedAtom, PreparedExpr, PreparedOp, PreparedPattern,
-}
+use compiler.backend.prepared_ir.{PreparedAtom, PreparedExpr, PreparedOp, PreparedPattern}
 use compiler.builtins as bi
 use compiler.builtins.{BuiltinRegistry}
 
@@ -27,19 +25,12 @@ pub fn scan_module_bodies(input: PreparedModule, builtins: BuiltinRegistry) Scan
     module_globals: Dict.new(),
   }
 
-  for func in input.funcs {
-    out = scan_expr(func.body, builtins, func.is_init, out)
-  }
+  for func in input.funcs { out = scan_expr(func.body, builtins, func.is_init, out) }
 
   out
 }
 
-fn scan_expr(
-  expr: PreparedExpr,
-  builtins: BuiltinRegistry,
-  is_init: Bool,
-  out: ScanResult,
-) ScanResult {
+fn scan_expr(expr: PreparedExpr, builtins: BuiltinRegistry, is_init: Bool, out: ScanResult) ScanResult {
   case expr {
     .Let(_, op, body) => {
       cur := scan_op(op, builtins, is_init, out)
@@ -54,12 +45,7 @@ fn scan_expr(
   }
 }
 
-fn scan_op(
-  op: PreparedOp,
-  builtins: BuiltinRegistry,
-  is_init: Bool,
-  out: ScanResult,
-) ScanResult {
+fn scan_op(op: PreparedOp, builtins: BuiltinRegistry, is_init: Bool, out: ScanResult) ScanResult {
   case op {
     .ACall(callee, args) => {
       cur := scan_atom(callee, is_init, out)

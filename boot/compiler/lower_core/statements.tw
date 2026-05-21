@@ -32,10 +32,7 @@ pub fn lower_stmts(
           target := case r.ctx.lookup_local_or_global(ls.name) {
             .Some(id) => id,
             .None => {
-              r.ctx = r.ctx.emit_error(
-                ls.span,
-                "undefined variable for assign: ${ls.name}",
-              )
+              r.ctx = r.ctx.emit_error(ls.span, "undefined variable for assign: ${ls.name}")
               LocalId.{ id: -1 }
             },
           }
@@ -74,11 +71,7 @@ pub fn lower_stmts(
             lower_block_fn,
           )
           .{
-            expr: .{
-              kind: .Let(lo.local, r.expr, rest.expr),
-              ty: rest.expr.ty,
-              span: ls.span,
-            },
+            expr: .{ kind: .Let(lo.local, r.expr, rest.expr), ty: rest.expr.ty, span: ls.span },
             ctx: rest.ctx,
           }
         }
@@ -89,13 +82,7 @@ pub fn lower_stmts(
           .Binary(.Assign, lhs, rhs) => {
             rhs_r := lower_expr_fn(ctx, rhs)
 
-            case lower_lvalue_assign(
-              rhs_r.ctx,
-              lhs,
-              rhs_r.expr,
-              es.span,
-              lower_expr_fn,
-            ) {
+            case lower_lvalue_assign(rhs_r.ctx, lhs, rhs_r.expr, es.span, lower_expr_fn) {
               .Some(lv) => {
                 rest := lower_stmts(
                   lv.ctx,
@@ -111,11 +98,7 @@ pub fn lower_stmts(
                   expr: .{
                     kind: .Let(
                       ao.local,
-                      .{
-                        kind: .Assign(lv.root, lv.update),
-                        ty: .Void,
-                        span: es.span,
-                      },
+                      .{ kind: .Assign(lv.root, lv.update), ty: .Void, span: es.span },
                       rest.expr,
                     ),
                     ty: rest.expr.ty,
@@ -171,11 +154,7 @@ pub fn lower_stmts(
               )
               ao := rest.ctx.alloc_anon_local()
               .{
-                expr: .{
-                  kind: .Let(ao.local, r.expr, rest.expr),
-                  ty: rest.expr.ty,
-                  span: es.span,
-                },
+                expr: .{ kind: .Let(ao.local, r.expr, rest.expr), ty: rest.expr.ty, span: es.span },
                 ctx: ao.ctx,
               }
             }
@@ -211,38 +190,21 @@ pub fn lower_stmts(
         case bs.value {
           .Some(val_expr) => {
             r := lower_expr_fn(ctx, val_expr)
-            .{
-              expr: .{ kind: .Break(.Some(r.expr)), ty: .Void, span: bs.span },
-              ctx: r.ctx,
-            }
+            .{ expr: .{ kind: .Break(.Some(r.expr)), ty: .Void, span: bs.span }, ctx: r.ctx }
           },
           .None => {
             .{ expr: .{ kind: .Break(.None), ty: .Void, span: bs.span }, ctx }
           },
         }
       },
-      .Continue(_) => {
-        .{ expr: .{ kind: .Continue, ty: .Void, span: block_span }, ctx }
-      },
+      .Continue(_) => { .{ expr: .{ kind: .Continue, ty: .Void, span: block_span }, ctx } },
       .Defer(ds) => {
         r := lower_expr_fn(ctx, ds.expr)
-        rest := lower_stmts(
-          r.ctx,
-          stmts,
-          idx + 1,
-          tail,
-          block_span,
-          lower_expr_fn,
-          lower_block_fn,
-        )
+        rest := lower_stmts(r.ctx, stmts, idx + 1, tail, block_span, lower_expr_fn, lower_block_fn)
         ao := rest.ctx.alloc_anon_local()
         .{
           expr: .{
-            kind: .Let(
-              ao.local,
-              .{ kind: .Defer(r.expr), ty: .Void, span: ds.span },
-              rest.expr,
-            ),
+            kind: .Let(ao.local, .{ kind: .Defer(r.expr), ty: .Void, span: ds.span }, rest.expr),
             ty: rest.expr.ty,
             span: ds.span,
           },
@@ -251,36 +213,16 @@ pub fn lower_stmts(
       },
       .For(for_stmt) => {
         r := lower_for(ctx, for_stmt, lower_expr_fn, lower_block_fn)
-        rest := lower_stmts(
-          r.ctx,
-          stmts,
-          idx + 1,
-          tail,
-          block_span,
-          lower_expr_fn,
-          lower_block_fn,
-        )
+        rest := lower_stmts(r.ctx, stmts, idx + 1, tail, block_span, lower_expr_fn, lower_block_fn)
         ao := rest.ctx.alloc_anon_local()
         .{
-          expr: .{
-            kind: .Let(ao.local, r.expr, rest.expr),
-            ty: rest.expr.ty,
-            span: for_stmt.span,
-          },
+          expr: .{ kind: .Let(ao.local, r.expr, rest.expr), ty: rest.expr.ty, span: for_stmt.span },
           ctx: ao.ctx,
         }
       },
       _ => {
         ctx = .emit_error(block_span, "unsupported statement kind")
-        lower_stmts(
-          ctx,
-          stmts,
-          idx + 1,
-          tail,
-          block_span,
-          lower_expr_fn,
-          lower_block_fn,
-        )
+        lower_stmts(ctx, stmts, idx + 1, tail, block_span, lower_expr_fn, lower_block_fn)
       },
     }
   }

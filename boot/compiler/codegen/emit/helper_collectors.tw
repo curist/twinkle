@@ -7,10 +7,9 @@ use compiler.core_ir.{FuncId}
 use compiler.mono_type.{MonoType}
 use compiler.resolver.{ResolvedEnv}
 
-pub fn collect_iterator_next_helpers(
-  funcs: Vector<PreparedFunc>,
-  builtins: BuiltinRegistry,
-) Vector<MonoType> {
+pub fn collect_iterator_next_helpers(funcs: Vector<PreparedFunc>, builtins: BuiltinRegistry) Vector<
+  MonoType,
+> {
   want_fid := bi.id(builtins, "iterator_next")
   seen: Dict<String, MonoType> = Dict.new()
   order: Vector<String> = []
@@ -36,11 +35,9 @@ pub fn collect_iterator_next_helpers(
   }
 }
 
-fn collect_iterator_next_helpers_expr(
-  expr: PreparedExpr,
-  func: PreparedFunc,
-  want_fid: FuncId,
-) Vector<MonoType> {
+fn collect_iterator_next_helpers_expr(expr: PreparedExpr, func: PreparedFunc, want_fid: FuncId) Vector<
+  MonoType,
+> {
   // Iterative Let-chain traversal avoids O(N) recursive calls for deep ANF bodies.
   out: Vector<MonoType> = []
   cur_expr := expr
@@ -73,11 +70,9 @@ fn collect_iterator_next_helpers_expr(
   out
 }
 
-fn collect_iterator_next_helpers_op(
-  op: PreparedOp,
-  func: PreparedFunc,
-  want_fid: FuncId,
-) Vector<MonoType> {
+fn collect_iterator_next_helpers_op(op: PreparedOp, func: PreparedFunc, want_fid: FuncId) Vector<
+  MonoType,
+> {
   case op {
     .AIf(_, then_e, else_e) => {
       out := collect_iterator_next_helpers_expr(then_e, func, want_fid)
@@ -104,10 +99,9 @@ fn collect_iterator_next_helpers_op(
   }
 }
 
-pub fn collect_dict_get_inner_types(
-  funcs: Vector<PreparedFunc>,
-  builtins: BuiltinRegistry,
-) Vector<MonoType> {
+pub fn collect_dict_get_inner_types(funcs: Vector<PreparedFunc>, builtins: BuiltinRegistry) Vector<
+  MonoType,
+> {
   want_fid := bi.id(builtins, "dict_get")
   seen: Dict<String, MonoType> = Dict.new()
   order: Vector<String> = []
@@ -133,11 +127,9 @@ pub fn collect_dict_get_inner_types(
   }
 }
 
-fn collect_dict_get_inner_types_expr(
-  expr: PreparedExpr,
-  func: PreparedFunc,
-  want_fid: FuncId,
-) Vector<MonoType> {
+fn collect_dict_get_inner_types_expr(expr: PreparedExpr, func: PreparedFunc, want_fid: FuncId) Vector<
+  MonoType,
+> {
   out: Vector<MonoType> = []
   cur_expr := expr
 
@@ -175,11 +167,9 @@ fn collect_dict_get_inner_types_expr(
   out
 }
 
-fn collect_dict_get_inner_types_op(
-  op: PreparedOp,
-  func: PreparedFunc,
-  want_fid: FuncId,
-) Vector<MonoType> {
+fn collect_dict_get_inner_types_op(op: PreparedOp, func: PreparedFunc, want_fid: FuncId) Vector<
+  MonoType,
+> {
   case op {
     .AIf(_, then_e, else_e) => {
       out := collect_dict_get_inner_types_expr(then_e, func, want_fid)
@@ -218,10 +208,7 @@ pub fn is_sum_mono(mono: MonoType, env: ResolvedEnv) Bool {
   }
 }
 
-pub fn collect_sum_variant_helpers(
-  funcs: Vector<PreparedFunc>,
-  env: ResolvedEnv,
-) Vector<MonoType> {
+pub fn collect_sum_variant_helpers(funcs: Vector<PreparedFunc>, env: ResolvedEnv) Vector<MonoType> {
   seen: Dict<String, MonoType> = Dict.new()
   // Cache is_sum_mono results per mono_to_key to avoid repeated layout_of calls
   // (layout_of → find_type_entry does a linear scan of env.types per call).

@@ -19,10 +19,7 @@ pub type ImportFix = .{ use_start: Int, use_end: Int, replacement: String }
 pub type ApplyResult = .{ path: String, count: Int }
 
 /// Extract unused-import fixes from analysis diagnostics, grouped by file path.
-pub fn collect_fixes(diagnostics: Vector<analyze.AnalysisDiag>) Dict<
-  String,
-  Vector<ImportFix>,
-> {
+pub fn collect_fixes(diagnostics: Vector<analyze.AnalysisDiag>) Dict<String, Vector<ImportFix>> {
   edits_by_file: Dict<String, Vector<ImportFix>> = Dict.new()
 
   for d in diagnostics {
@@ -43,10 +40,7 @@ pub fn collect_fixes(diagnostics: Vector<analyze.AnalysisDiag>) Dict<
           .Ok(e) => e,
           .Err(_) => { continue },
         }
-        replacement := case json.decode(
-          data,
-          json.field("replacement", json.string()),
-        ) {
+        replacement := case json.decode(data, json.field("replacement", json.string())) {
           .Ok(r) => r,
           .Err(_) => { continue },
         }
@@ -85,12 +79,7 @@ pub fn fix_unused_imports(file: String) {
   canonical_entry := imports.canonical_module_path(file, canonical_roots)
   base_env := builtin_env()
   entry_id := identity.from_path(canonical_entry)
-  a_state := analyze.new_state(
-    base_env,
-    query_cache.empty(),
-    overlay.empty(),
-    project_root,
-  )
+  a_state := analyze.new_state(base_env, query_cache.empty(), overlay.empty(), project_root)
   a_result := analyze.analyze_module(entry_id, "__entry", base_env, a_state, [])
   edits := collect_fixes(a_result.diagnostics)
 
@@ -106,9 +95,7 @@ pub fn fix_unused_imports(file: String) {
 }
 
 /// Apply fixes to source files on disk. Returns list of results.
-pub fn apply_fixes(edits_by_file: Dict<String, Vector<ImportFix>>) Vector<
-  ApplyResult,
-> {
+pub fn apply_fixes(edits_by_file: Dict<String, Vector<ImportFix>>) Vector<ApplyResult> {
   results: Vector<ApplyResult> = []
 
   for file_path in edits_by_file.keys() {
@@ -141,9 +128,7 @@ pub fn apply_fixes(edits_by_file: Dict<String, Vector<ImportFix>>) Vector<
     }
 
     case fs.write_text(file_path, result) {
-      .Ok(_) => {
-        results = .append(ApplyResult.{ path: file_path, count: fixes.len() })
-      },
+      .Ok(_) => { results = .append(ApplyResult.{ path: file_path, count: fixes.len() }) },
       .Err(_) => eprintln("error: could not write '${file_path}'"),
     }
   }

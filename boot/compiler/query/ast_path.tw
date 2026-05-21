@@ -8,8 +8,8 @@
 // Contrast with ast_walk.find_node_in_block, which starts from a block and
 // returns only the deepest NodeContext — no parent chain, no module-level items.
 use compiler.ast.{
-  Block, CaseArm, CollectExpr, Expr, FunctionDecl, Module, Pattern, RecordEntry,
-  Stmt, TypeDecl, UseDecl,
+  Block, CaseArm, CollectExpr, Expr, FunctionDecl, Module, Pattern, RecordEntry, Stmt, TypeDecl,
+  UseDecl,
 }
 use lib.source.span.{Span}
 

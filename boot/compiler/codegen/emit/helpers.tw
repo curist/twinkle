@@ -1,23 +1,17 @@
 // Small general helpers for Wasm emission.
-use compiler.backend.prepared_ir.{
-  PreparedExpr, PreparedMatchArm, PreparedPattern, ReprKind,
-}
+use compiler.backend.prepared_ir.{PreparedExpr, PreparedMatchArm, PreparedPattern, ReprKind}
 use compiler.codegen.wasm_ir.{Instr}
-use compiler.codegen.wasm_layout.{
-  WasmSumLayout, WasmVariantLayout, layout_of, mono_to_key,
-}
+use compiler.codegen.wasm_layout.{WasmSumLayout, WasmVariantLayout, layout_of, mono_to_key}
 use compiler.core_ir.{VariantId}
 use compiler.mono_type.{MonoType, TypeId}
 use compiler.resolver.{ResolvedEnv}
 use compiler.type_util.{subst_type_params}
 
 pub fn sanitize_name(name: String) String {
-  // Replace non-alphanumeric chars with _
-  collect b in name {
+  (collect b in name {
     c := b.to_int()
 
-    if c >= 48 and c <= 57 or c >= 65 and c <= 90 or c >= 97 and c <= 122
-    or c == 95 {
+    if c >= 48 and c <= 57 or c >= 65 and c <= 90 or c >= 97 and c <= 122 or c == 95 {
       case String.from_char_code(c) {
         .Some(ch) => ch,
         .None => "_",
@@ -25,7 +19,7 @@ pub fn sanitize_name(name: String) String {
     } else {
       "_"
     }
-  }.join("")
+  }).join("")
 }
 
 pub fn repr_name(repr: ReprKind) String {
@@ -79,9 +73,7 @@ pub fn get_sum_layout(mono: MonoType, env: ResolvedEnv) WasmSumLayout {
 
   case layout {
     .Sum(s) => s,
-    _ => error(
-      "get_sum_layout: expected Sum, got other for ${mono_to_key(mono)}",
-    ),
+    _ => error("get_sum_layout: expected Sum, got other for ${mono_to_key(mono)}"),
   }
 }
 
@@ -123,21 +115,14 @@ pub fn variant_field_mono(
     .Named(tid, args) => {
       case env.lookup_type_def(tid) {
         .Some(.Alias(_, type_params, target)) => {
-          variant_field_mono(
-            subst_type_params(target, type_params, args),
-            vid,
-            field_idx,
-            env,
-          )
+          variant_field_mono(subst_type_params(target, type_params, args), vid, field_idx, env)
         },
         _ => resolve_named_variant_field(tid, args, vid, field_idx, env),
       }
     },
     .Void => .Void,
     _ => error(
-      "variant_field_mono: unexpected scrutinee type ${mono_to_key(
-        scrutinee_mono,
-      )} for variant ${vid.id} field ${field_idx}",
+      "variant_field_mono: unexpected scrutinee type ${mono_to_key(scrutinee_mono)} for variant ${vid.id} field ${field_idx}",
     ),
   }
 }

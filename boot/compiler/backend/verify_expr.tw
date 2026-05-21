@@ -4,13 +4,12 @@ use compiler.backend.callable_targets as callable_targets
 use compiler.backend.facts as facts
 use compiler.backend.prepared_ir.{PreparedFieldAtom, PreparedMatchArm}
 use compiler.backend.prepared_ir.{
-  CaptureParam, PreparedAtom, PreparedExpr, PreparedFunc, PreparedOp,
-  PreparedPattern, ReprKind, SlotInfo,
+  CaptureParam, PreparedAtom, PreparedExpr, PreparedFunc, PreparedOp, PreparedPattern, ReprKind,
+  SlotInfo,
 }
 use compiler.backend.repr_assign.{repr_of_mono}
 use compiler.backend.verify_common.{
-  fail_func, fail_slot, mono_eq, mono_name, repr_name, slot_role_name,
-  val_type_name,
+  fail_func, fail_slot, mono_eq, mono_name, repr_name, slot_role_name, val_type_name,
 }
 use compiler.builtins.{BuiltinRegistry}
 use compiler.codegen.wasm_ir.{ValType}
@@ -50,15 +49,7 @@ pub fn verify_prepared_func_expr(
   module_globals: Dict<Int, MonoType>,
   builtins: BuiltinRegistry,
 ) Result<Void, String> {
-  verify_expr(
-    pf,
-    closure_captures,
-    funcs_by_id,
-    env,
-    module_globals,
-    builtins,
-    pf.body,
-  )
+  verify_expr(pf, closure_captures, funcs_by_id, env, module_globals, builtins, pf.body)
 }
 
 fn verify_expr(
@@ -83,25 +74,10 @@ fn verify_expr(
         result_info,
         op,
       )
-      verify_expr(
-        pf,
-        closure_captures,
-        funcs_by_id,
-        env,
-        module_globals,
-        builtins,
-        body,
-      )
+      verify_expr(pf, closure_captures, funcs_by_id, env, module_globals, builtins, body)
     },
     .Atom(atom) => verify_atom_mapped(pf, atom, "atom", module_globals),
-    .Return(atom) => verify_return_expr(
-      pf,
-      atom,
-      funcs_by_id,
-      module_globals,
-      env,
-      builtins,
-    ),
+    .Return(atom) => verify_return_expr(pf, atom, funcs_by_id, module_globals, env, builtins),
     .Break(atom) => verify_break_expr(pf, atom),
     .Continue => .Ok({}),
   }
@@ -121,42 +97,16 @@ fn verify_op(
     .ACall(callee, args) => {
       try verify_call_callee(pf, callee, module_globals)
 
-      for arg in args {
-        try verify_atom_use(pf, arg, "call arg", module_globals)
-      }
+      for arg in args { try verify_atom_use(pf, arg, "call arg", module_globals) }
 
-      try verify_call_shape(
-        pf,
-        callee,
-        args,
-        funcs_by_id,
-        module_globals,
-        env,
-        builtins,
-      )
+      try verify_call_shape(pf, callee, args, funcs_by_id, module_globals, env, builtins)
       .Ok({})
     },
     .AIf(cond, then_e, else_e) => {
       try verify_atom_use(pf, cond, "if condition", module_globals)
       try verify_condition_atom(pf, cond, module_globals, env)
-      try verify_expr(
-        pf,
-        closure_captures,
-        funcs_by_id,
-        env,
-        module_globals,
-        builtins,
-        then_e,
-      )
-      verify_expr(
-        pf,
-        closure_captures,
-        funcs_by_id,
-        env,
-        module_globals,
-        builtins,
-        else_e,
-      )
+      try verify_expr(pf, closure_captures, funcs_by_id, env, module_globals, builtins, then_e)
+      verify_expr(pf, closure_captures, funcs_by_id, env, module_globals, builtins, else_e)
     },
     .AMatch(scrutinee, arms) => {
       try verify_atom_use(pf, scrutinee, "match scrutinee", module_globals)
@@ -174,15 +124,7 @@ fn verify_op(
 
       for arm in arms {
         try verify_pattern_bindings(pf, arm.pattern)
-        try verify_expr(
-          pf,
-          closure_captures,
-          funcs_by_id,
-          env,
-          module_globals,
-          builtins,
-          arm.body,
-        )
+        try verify_expr(pf, closure_captures, funcs_by_id, env, module_globals, builtins, arm.body)
       }
 
       .Ok({})
@@ -207,19 +149,10 @@ fn verify_op(
       verify_opkind_atom(pf, atom, kind, "unary operand", module_globals, env)
     },
     .AMakeClosure(fid, free_vars) => {
-      target := case callable_targets.callable_target(
-        fid,
-        funcs_by_id,
-        builtins,
-        env,
-      ) {
+      target := case callable_targets.callable_target(fid, funcs_by_id, builtins, env) {
         .Some(info) => info,
         .None => {
-          return fail_slot(
-            pf,
-            result_info,
-            "AMakeClosure targets unknown callable F${fid.id}",
-          )
+          return fail_slot(pf, result_info, "AMakeClosure targets unknown callable F${fid.id}")
         },
       }
 
@@ -229,9 +162,7 @@ fn verify_op(
           return fail_slot(
             pf,
             result_info,
-            "AMakeClosure result must have ClosureRef repr, got ${repr_name(
-              result_info.repr,
-            )}",
+            "AMakeClosure result must have ClosureRef repr, got ${repr_name(result_info.repr)}",
           )
         },
       }
@@ -283,11 +214,7 @@ fn verify_op(
           for fv, i in free_vars {
             info := try facts.slot_info_result(pf, fv, "closure capture")
             cap := caps[i]
-            source_local := canonical_capture_source_local(
-              pf,
-              closure_captures,
-              info,
-            )
+            source_local := canonical_capture_source_local(pf, closure_captures, info)
 
             if source_local.id != cap.local_id.id {
               return fail_slot(
@@ -315,16 +242,9 @@ fn verify_op(
       }
     },
     .ARecord(_, fields) => {
-      for field in fields {
-        try verify_atom_use(pf, field.value, "record field", module_globals)
-      }
+      for field in fields { try verify_atom_use(pf, field.value, "record field", module_globals) }
 
-      try require_result_repr(
-        pf,
-        result_info,
-        [.TypedRef(.Void)],
-        "record literal result",
-      )
+      try require_result_repr(pf, result_info, [.TypedRef(.Void)], "record literal result")
       try verify_record_field_payloads(
         pf,
         result_info,
@@ -358,56 +278,21 @@ fn verify_op(
         module_globals,
         env,
       )
-      try require_result_repr(
-        pf,
-        result_info,
-        [.TypedRef(.Void)],
-        "record update result",
-      )
-      try verify_record_update_value(
-        pf,
-        result_info,
-        fid,
-        value,
-        funcs_by_id,
-        module_globals,
-        env,
-      )
+      try require_result_repr(pf, result_info, [.TypedRef(.Void)], "record update result")
+      try verify_record_update_value(pf, result_info, fid, value, funcs_by_id, module_globals, env)
       .Ok({})
     },
     .AVariant(_, vid, args) => {
-      for arg in args {
-        try verify_atom_use(pf, arg, "variant arg", module_globals)
-      }
+      for arg in args { try verify_atom_use(pf, arg, "variant arg", module_globals) }
 
-      try require_result_repr(
-        pf,
-        result_info,
-        [.TypedSum(.Void)],
-        "variant result",
-      )
-      try verify_variant_payloads(
-        pf,
-        result_info,
-        vid,
-        args,
-        funcs_by_id,
-        module_globals,
-        env,
-      )
+      try require_result_repr(pf, result_info, [.TypedSum(.Void)], "variant result")
+      try verify_variant_payloads(pf, result_info, vid, args, funcs_by_id, module_globals, env)
       .Ok({})
     },
     .AArrayLit(items) => {
-      for item in items {
-        try verify_atom_use(pf, item, "array item", module_globals)
-      }
+      for item in items { try verify_atom_use(pf, item, "array item", module_globals) }
 
-      try require_result_repr(
-        pf,
-        result_info,
-        [.TypedRef(.Void)],
-        "array literal result",
-      )
+      try require_result_repr(pf, result_info, [.TypedRef(.Void)], "array literal result")
       .Ok({})
     },
     .AIndex(base, index, _, _) => {
@@ -492,18 +377,10 @@ fn verify_op(
 
       case result_info.repr {
         .OpaqueAnyref => {
-          fail_slot(
-            pf,
-            result_info,
-            "unwrap result must not remain OpaqueAnyref",
-          )
+          fail_slot(pf, result_info, "unwrap result must not remain OpaqueAnyref")
         },
-        .ErasedSum => {
-          fail_slot(pf, result_info, "unwrap result must not remain ErasedSum")
-        },
-        .DeadValue => {
-          fail_slot(pf, result_info, "unwrap result must not be DeadValue")
-        },
+        .ErasedSum => { fail_slot(pf, result_info, "unwrap result must not remain ErasedSum") },
+        .DeadValue => { fail_slot(pf, result_info, "unwrap result must not be DeadValue") },
         _ => .Ok({}),
       }
     },
@@ -548,19 +425,13 @@ fn subst_mono_vars(ty: MonoType, var_map: Dict<String, MonoType>) MonoType {
       }
     },
     .Vector(inner) => .Vector(subst_mono_vars(inner, var_map)),
-    .Dict(k, v) => .Dict(
-      subst_mono_vars(k, var_map),
-      subst_mono_vars(v, var_map),
-    ),
+    .Dict(k, v) => .Dict(subst_mono_vars(k, var_map), subst_mono_vars(v, var_map)),
     .Function(params, ret) => {
       inst_params := collect p in params { subst_mono_vars(p, var_map) }
       .Function(inst_params, subst_mono_vars(ret, var_map))
     },
     .Optional(inner) => .Optional(subst_mono_vars(inner, var_map)),
-    .Result(ok, err) => .Result(
-      subst_mono_vars(ok, var_map),
-      subst_mono_vars(err, var_map),
-    ),
+    .Result(ok, err) => .Result(subst_mono_vars(ok, var_map), subst_mono_vars(err, var_map)),
     .Named(tid, type_args) => {
       inst_args := collect a in type_args { subst_mono_vars(a, var_map) }
       MonoType.Named(tid, inst_args)
@@ -619,19 +490,12 @@ fn verify_call_shape(
         _ => fail_slot(
           pf,
           info,
-          "closure call callee must have Function mono, got ${mono_name(
-            info.mono,
-          )}",
+          "closure call callee must have Function mono, got ${mono_name(info.mono)}",
         ),
       }
     },
     .AGlobalFunc(fid) => {
-      target := case callable_targets.callable_target(
-        fid,
-        funcs_by_id,
-        builtins,
-        env,
-      ) {
+      target := case callable_targets.callable_target(fid, funcs_by_id, builtins, env) {
         .Some(target) => target,
         .None => {
           return .Ok({})
@@ -751,28 +615,16 @@ fn verify_return_expr(
       .None => .Ok({}),
     },
     .Never => case atom {
-      .Some(_) => fail_func(
-        pf,
-        "never-returning function must not return a value",
-      ),
+      .Some(_) => fail_func(pf, "never-returning function must not return a value"),
       .None => .Ok({}),
     },
     _ => {
       a := case atom {
         .Some(a) => a,
-        .None => {
-          return fail_func(pf, "non-void function must return a value")
-        },
+        .None => { return fail_func(pf, "non-void function must return a value") },
       }
       try verify_atom_use(pf, a, "return", module_globals)
-      try verify_return_value_type(
-        pf,
-        a,
-        funcs_by_id,
-        module_globals,
-        env,
-        builtins,
-      )
+      try verify_return_value_type(pf, a, funcs_by_id, module_globals, env, builtins)
       .Ok({})
     },
   }
@@ -780,10 +632,7 @@ fn verify_return_expr(
 
 fn verify_break_expr(pf: PreparedFunc, atom: PreparedAtom?) Result<Void, String> {
   case atom {
-    .Some(_) => fail_func(
-      pf,
-      "break with value is not supported in prepared backend IR",
-    ),
+    .Some(_) => fail_func(pf, "break with value is not supported in prepared backend IR"),
     .None => .Ok({}),
   }
 }
@@ -803,9 +652,7 @@ fn verify_return_value_type(
       } else {
         fail_func(
           pf,
-          "return value has mono ${mono_name(actual)}, expected ${mono_name(
-            pf.return_mono,
-          )}",
+          "return value has mono ${mono_name(actual)}, expected ${mono_name(pf.return_mono)}",
         )
       }
     },
@@ -853,9 +700,9 @@ fn describe_atom(
   case atom {
     .ASlot(sid) => {
       case pf.slots[sid.id] {
-        .Some(info) => "ASlot(S${sid.id}, L${info.source_local.id}, role=${slot_role_name(
-          info.role,
-        )}, mono=${mono_name(info.mono)}, repr=${repr_name(info.repr)})",
+        .Some(info) => "ASlot(S${sid.id}, L${info.source_local.id}, role=${slot_role_name(info.role)}, mono=${mono_name(
+          info.mono,
+        )}, repr=${repr_name(info.repr)})",
         .None => "ASlot(S${sid.id}, missing)",
       }
     },
@@ -890,15 +737,8 @@ fn infer_atom_mono(
   case facts.atom_mono(atom, pf) {
     .Some(mono) => .Some(mono),
     .None => case atom {
-      .AGlobalFunc(fid) => case callable_targets.semantic_sig(
-        fid,
-        funcs_by_id,
-        builtins,
-        env,
-      ) {
-        .Some(target) => .Some(
-          .Function(target.semantic_params, target.semantic_ret),
-        ),
+      .AGlobalFunc(fid) => case callable_targets.semantic_sig(fid, funcs_by_id, builtins, env) {
+        .Some(target) => .Some(.Function(target.semantic_params, target.semantic_ret)),
         .None => .None,
       },
       .AGlobalLocal(lid) => module_globals[lid.id],
@@ -1017,12 +857,7 @@ fn verify_atom_coercible_to_val_type(
     pf,
     "${context} has unsupported physical edge ${val_type_name(actual_vt)} -> ${val_type_name(
       expected_vt,
-    )} [mono=${actual_mono}, arg=${describe_atom(
-      pf,
-      atom,
-      funcs_by_id,
-      module_globals,
-    )}]",
+    )} [mono=${actual_mono}, arg=${describe_atom(pf, atom, funcs_by_id, module_globals)}]",
   )
 }
 
@@ -1051,18 +886,10 @@ fn verify_record_field_payloads(
   context: String,
 ) Result<Void, String> {
   for field in fields {
-    expected_vt := case record_field_val_type(
-      result_info.mono,
-      field.field.id,
-      env,
-    ) {
+    expected_vt := case record_field_val_type(result_info.mono, field.field.id, env) {
       .Some(vt) => vt,
       .None => {
-        return fail_slot(
-          pf,
-          result_info,
-          "record field ${field.field.id} missing from layout",
-        )
+        return fail_slot(pf, result_info, "record field ${field.field.id} missing from layout")
       },
     }
     try verify_atom_coercible_to_val_type(
@@ -1091,11 +918,7 @@ fn verify_record_update_value(
   expected_vt := case record_field_val_type(result_info.mono, fid.id, env) {
     .Some(vt) => vt,
     .None => {
-      return fail_slot(
-        pf,
-        result_info,
-        "record update field ${fid.id} missing from layout",
-      )
+      return fail_slot(pf, result_info, "record update field ${fid.id} missing from layout")
     },
   }
   verify_atom_coercible_to_val_type(
@@ -1135,15 +958,9 @@ fn verify_variant_payloads(
         }
       }
 
-      return fail_slot(
-        pf,
-        result_info,
-        "variant ${vid.id} missing from sum layout",
-      )
+      return fail_slot(pf, result_info, "variant ${vid.id} missing from sum layout")
     },
-    _ => {
-      return fail_slot(pf, result_info, "variant result has non-sum layout")
-    },
+    _ => { return fail_slot(pf, result_info, "variant result has non-sum layout") },
   }
   payload_types
   .Ok({})
@@ -1182,11 +999,10 @@ fn verify_variant_payloads_for_types(
   .Ok({})
 }
 
-fn verify_call_callee(
-  pf: PreparedFunc,
-  atom: PreparedAtom,
-  module_globals: Dict<Int, MonoType>,
-) Result<Void, String> {
+fn verify_call_callee(pf: PreparedFunc, atom: PreparedAtom, module_globals: Dict<Int, MonoType>) Result<
+  Void,
+  String,
+> {
   try verify_atom_use(pf, atom, "call callee", module_globals)
 
   case atom {
@@ -1220,10 +1036,7 @@ fn verify_atom_mapped(
     .AGlobalLocal(lid) => {
       case module_globals[lid.id] {
         .Some(_) => .Ok({}),
-        .None => fail_func(
-          pf,
-          "${context} references unknown module global L${lid.id}",
-        ),
+        .None => fail_func(pf, "${context} references unknown module global L${lid.id}"),
       }
     },
     _ => .Ok({}),
@@ -1244,31 +1057,21 @@ fn verify_atom_use(
     .AGlobalLocal(lid) => {
       case module_globals[lid.id] {
         .Some(_) => .Ok({}),
-        .None => fail_func(
-          pf,
-          "${context} references unknown module global L${lid.id}",
-        ),
+        .None => fail_func(pf, "${context} references unknown module global L${lid.id}"),
       }
     },
     _ => .Ok({}),
   }
 }
 
-fn verify_pattern_bindings(pf: PreparedFunc, pattern: PreparedPattern) Result<
-  Void,
-  String,
-> {
+fn verify_pattern_bindings(pf: PreparedFunc, pattern: PreparedPattern) Result<Void, String> {
   case pattern {
     .Var(sid) => {
       info := try facts.slot_info_result(pf, sid, "pattern binding")
 
       case info.role {
         .PatternLocal => .Ok({}),
-        _ => fail_slot(
-          pf,
-          info,
-          "pattern binding must target PatternLocal slot",
-        ),
+        _ => fail_slot(pf, info, "pattern binding must target PatternLocal slot"),
       }
     },
     .Variant(_, _, fields) => {
@@ -1355,9 +1158,7 @@ fn verify_value_for_slot(
         fail_slot(
           pf,
           target,
-          "${context} has mono ${mono_name(actual)}, expected ${mono_name(
-            target.mono,
-          )}",
+          "${context} has mono ${mono_name(actual)}, expected ${mono_name(target.mono)}",
         )
       }
     },
@@ -1390,9 +1191,7 @@ fn verify_opkind_atom(
         fail_slot(
           pf,
           info,
-          "${context} has incompatible repr ${repr_name(info.repr)} for ${op_kind_name(
-            kind,
-          )} op",
+          "${context} has incompatible repr ${repr_name(info.repr)} for ${op_kind_name(kind)} op",
         )
       }
     },
@@ -1412,20 +1211,14 @@ fn verify_opkind_atom(
       .Str => .Ok({}),
       _ => fail_func(pf, "${context} must match ${op_kind_name(kind)} op kind"),
     },
-    .ALitVoid => fail_func(
-      pf,
-      "${context} must not be Void in ${op_kind_name(kind)} op",
-    ),
+    .ALitVoid => fail_func(pf, "${context} must not be Void in ${op_kind_name(kind)} op"),
     .AGlobalFunc(_) => fail_func(
       pf,
       "${context} must not be a function value in ${op_kind_name(kind)} op",
     ),
     .AGlobalLocal(lid) => {
       case module_globals[lid.id] {
-        .None => fail_func(
-          pf,
-          "${context} references unknown module global L${lid.id}",
-        ),
+        .None => fail_func(pf, "${context} references unknown module global L${lid.id}"),
         .Some(mono) => {
           actual_repr := repr_of_mono(mono, env)
 
@@ -1434,9 +1227,9 @@ fn verify_opkind_atom(
           } else {
             fail_func(
               pf,
-              "${context} module global L${lid.id} has incompatible repr ${repr_name(
-                actual_repr,
-              )} for ${op_kind_name(kind)} op",
+              "${context} module global L${lid.id} has incompatible repr ${repr_name(actual_repr)} for ${op_kind_name(
+                kind,
+              )} op",
             )
           }
         },
@@ -1458,20 +1251,13 @@ fn verify_condition_atom(
       if repr_matches_category(info.repr, .I32) {
         .Ok({})
       } else {
-        fail_slot(
-          pf,
-          info,
-          "if condition has incompatible repr ${repr_name(info.repr)}",
-        )
+        fail_slot(pf, info, "if condition has incompatible repr ${repr_name(info.repr)}")
       }
     },
     .ALitBool(_) => .Ok({}),
     .AGlobalLocal(lid) => {
       case module_globals[lid.id] {
-        .None => fail_func(
-          pf,
-          "if condition references unknown module global L${lid.id}",
-        ),
+        .None => fail_func(pf, "if condition references unknown module global L${lid.id}"),
         .Some(mono) => {
           actual_repr := repr_of_mono(mono, env)
 
@@ -1480,9 +1266,7 @@ fn verify_condition_atom(
           } else {
             fail_func(
               pf,
-              "if condition module global L${lid.id} has incompatible repr ${repr_name(
-                actual_repr,
-              )}",
+              "if condition module global L${lid.id} has incompatible repr ${repr_name(actual_repr)}",
             )
           }
         },
@@ -1492,20 +1276,14 @@ fn verify_condition_atom(
   }
 }
 
-fn require_result_repr(
-  pf: PreparedFunc,
-  info: SlotInfo,
-  allowed: Vector<ReprKind>,
-  context: String,
-) Result<Void, String> {
+fn require_result_repr(pf: PreparedFunc, info: SlotInfo, allowed: Vector<ReprKind>, context: String) Result<
+  Void,
+  String,
+> {
   if repr_matches_any(info.repr, allowed) {
     .Ok({})
   } else {
-    fail_slot(
-      pf,
-      info,
-      "${context} has incompatible repr ${repr_name(info.repr)}",
-    )
+    fail_slot(pf, info, "${context} has incompatible repr ${repr_name(info.repr)}")
   }
 }
 
@@ -1524,19 +1302,12 @@ fn require_local_repr_if_local(
       if repr_matches_any(info.repr, allowed) {
         .Ok({})
       } else {
-        fail_slot(
-          pf,
-          info,
-          "${context} has incompatible repr ${repr_name(info.repr)}",
-        )
+        fail_slot(pf, info, "${context} has incompatible repr ${repr_name(info.repr)}")
       }
     },
     .AGlobalLocal(lid) => {
       case module_globals[lid.id] {
-        .None => fail_func(
-          pf,
-          "${context} references unknown module global L${lid.id}",
-        ),
+        .None => fail_func(pf, "${context} references unknown module global L${lid.id}"),
         .Some(mono) => {
           actual_repr := repr_of_mono(mono, env)
 
@@ -1545,9 +1316,7 @@ fn require_local_repr_if_local(
           } else {
             fail_func(
               pf,
-              "${context} module global L${lid.id} has incompatible repr ${repr_name(
-                actual_repr,
-              )}",
+              "${context} module global L${lid.id} has incompatible repr ${repr_name(actual_repr)}",
             )
           }
         },
@@ -1608,10 +1377,7 @@ fn repr_matches_category(actual: ReprKind, expected: ReprKind) Bool {
   }
 }
 
-fn reject_dead_use(pf: PreparedFunc, info: SlotInfo, context: String) Result<
-  Void,
-  String,
-> {
+fn reject_dead_use(pf: PreparedFunc, info: SlotInfo, context: String) Result<Void, String> {
   case info.repr {
     .DeadValue => fail_slot(pf, info, "${context} uses dead placeholder slot"),
     _ => .Ok({}),

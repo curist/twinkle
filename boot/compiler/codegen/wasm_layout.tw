@@ -5,20 +5,11 @@
 use compiler.codegen.wasm_ir.{ValType}
 use compiler.core_ir.{FieldId, VariantId}
 use compiler.mono_type.{MonoType, TypeId}
-use compiler.resolver.{
-  ResolvedEnv, ResolvedTypeParam, ResolvedVariant, TypeEntry,
-}
+use compiler.resolver.{ResolvedEnv, ResolvedTypeParam, ResolvedVariant, TypeEntry}
 use compiler.type_util.{subst_type_params}
 
 // ── Wasm value type (simplified for layout) ─────────────────────────
-pub type WasmValType = {
-  WI32,
-  WI64,
-  WF64,
-  WAnyref,
-  WExternref,
-  WNullableExternref,
-}
+pub type WasmValType = { WI32, WI64, WF64, WAnyref, WExternref, WNullableExternref }
 
 // ── Layout types ────────────────────────────────────────────────────
 pub type WasmLayout = {
@@ -32,17 +23,9 @@ pub type WasmLayout = {
   Cell_(WasmLayout),
 }
 
-pub type WasmRecordLayout = .{
-  type_id: TypeId,
-  sym: String,
-  fields: Vector<WasmFieldLayout>,
-}
+pub type WasmRecordLayout = .{ type_id: TypeId, sym: String, fields: Vector<WasmFieldLayout> }
 
-pub type WasmFieldLayout = .{
-  field_id: FieldId,
-  name: String,
-  val_type: ValType,
-}
+pub type WasmFieldLayout = .{ field_id: FieldId, name: String, val_type: ValType }
 
 pub type WasmSumLayout = .{
   type_id: TypeId,
@@ -67,11 +50,7 @@ pub type WasmClosureLayout = .{
   result_type: ValType?,
 }
 
-pub type WasmIteratorLayout = .{
-  state_sym: String,
-  step_sym: String,
-  yield_layout: WasmLayout,
-}
+pub type WasmIteratorLayout = .{ state_sym: String, step_sym: String, yield_layout: WasmLayout }
 
 // ── mono_to_key ─────────────────────────────────────────────────────
 pub fn mono_to_key(ty: MonoType) String {
@@ -120,9 +99,7 @@ pub fn layout_of(ty: MonoType, env: ResolvedEnv) WasmLayout {
     .Anyref_ => .Scalar(.WAnyref),
     .ExternRef(_) => .Scalar(.WExternref),
     .String => .Scalar(.WAnyref),
-    .Never => error(
-      "layout_of called on Never — must be handled as unreachable",
-    ),
+    .Never => error("layout_of called on Never — must be handled as unreachable"),
     .Named(tid, args) => layout_of_named(tid, args, env),
     .Vector(elem) => .Vector_(layout_hint_of(elem, env)),
     .Dict(k, v) => .Dict_(layout_hint_of(k, env), layout_hint_of(v, env)),
@@ -228,9 +205,7 @@ fn layout_of_named(tid: TypeId, args: Vector<MonoType>, env: ResolvedEnv) WasmLa
           val_type: val_type_of_mono(field_ty, env),
         }
       }
-      .Record(
-        WasmRecordLayout.{ type_id: tid, sym: sym, fields: field_layouts },
-      )
+      .Record(WasmRecordLayout.{ type_id: tid, sym: sym, fields: field_layouts })
     },
     .Sum(name, type_params, variants) => {
       if args.len() < type_params.len() {
@@ -279,14 +254,7 @@ fn layout_of_sum_def(
     offset = offset + payload_types.len()
     vl
   }
-  .Sum(
-    WasmSumLayout.{
-      type_id: tid,
-      sym: sym,
-      tag_type: .I32,
-      variants: var_layouts,
-    },
-  )
+  .Sum(WasmSumLayout.{ type_id: tid, sym: sym, tag_type: .I32, variants: var_layouts })
 }
 
 fn layout_of_optional(inner: MonoType, env: ResolvedEnv) WasmLayout {
@@ -419,9 +387,7 @@ fn val_type_key(layout: WasmLayout) String {
 // ── val_type_of_mono ────────────────────────────────────────────────
 pub fn val_type_of_mono(ty: MonoType, env: ResolvedEnv) ValType {
   case ty {
-    .Never => error(
-      "val_type_of_mono called on Never — callers must check first",
-    ),
+    .Never => error("val_type_of_mono called on Never — callers must check first"),
     .Int => .I64,
     .Float => .F64,
     .Bool => .I32,
@@ -452,14 +418,8 @@ pub fn val_type_of_mono(ty: MonoType, env: ResolvedEnv) ValType {
       }
 
       case def {
-        .Record(name, _, _) => .Ref(
-          true,
-          .Named("\$${name}_${mono_to_key(.Named(tid, args))}"),
-        ),
-        .Sum(name, _, _) => .Ref(
-          true,
-          .Named("\$${name}_${mono_to_key(.Named(tid, args))}"),
-        ),
+        .Record(name, _, _) => .Ref(true, .Named("\$${name}_${mono_to_key(.Named(tid, args))}")),
+        .Sum(name, _, _) => .Ref(true, .Named("\$${name}_${mono_to_key(.Named(tid, args))}")),
         .Alias(_, type_params, target) => val_type_of_mono(
           subst_type_params(target, type_params, args),
           env,
@@ -473,22 +433,14 @@ pub fn val_type_of_mono(ty: MonoType, env: ResolvedEnv) ValType {
       .ExternRef(_) => .Ref(true, .Extern),
       _ => .Ref(true, .Named("\$Option_${mono_to_key(.Optional(inner))}")),
     },
-    .Result(ok, err) => .Ref(
-      true,
-      .Named("\$Result_${mono_to_key(.Result(ok, err))}"),
-    ),
+    .Result(ok, err) => .Ref(true, .Named("\$Result_${mono_to_key(.Result(ok, err))}")),
     .Var(_) => error("val_type_of_mono called on Var — must be monomorphized"),
-    .MetaVar(_) => error(
-      "val_type_of_mono called on MetaVar — must be resolved",
-    ),
+    .MetaVar(_) => error("val_type_of_mono called on MetaVar — must be resolved"),
     .ErrorType => error("val_type_of_mono called on ErrorType"),
   }
 }
 
-pub type EqTypeLayouts = .{
-  records: Vector<WasmRecordLayout>,
-  sums: Vector<WasmSumLayout>,
-}
+pub type EqTypeLayouts = .{ records: Vector<WasmRecordLayout>, sums: Vector<WasmSumLayout> }
 
 fn compare_strings(a: String, b: String) Order {
   if a < b {
@@ -509,14 +461,8 @@ pub fn collect_eq_type_layouts(layout_cache: Dict<String, WasmLayout>) EqTypeLay
   }
 
   records = .sort_by(
-    fn(a: WasmRecordLayout, b: WasmRecordLayout) Order {
-      compare_strings(a.sym, b.sym)
-    },
+    fn(a: WasmRecordLayout, b: WasmRecordLayout) Order { compare_strings(a.sym, b.sym) },
   )
-  sums = .sort_by(
-    fn(a: WasmSumLayout, b: WasmSumLayout) Order {
-      compare_strings(a.sym, b.sym)
-    },
-  )
+  sums = .sort_by(fn(a: WasmSumLayout, b: WasmSumLayout) Order { compare_strings(a.sym, b.sym) })
   .{ records, sums }
 }

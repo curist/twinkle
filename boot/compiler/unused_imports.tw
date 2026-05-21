@@ -6,10 +6,7 @@
 use lib.source.diagnostics.{DiagKind}
 use lib.source.span.{Span}
 
-use .ast.{
-  Block, Expr, FunctionDecl, Module, Pattern, Stmt, TypeDecl, TypeExpr, TypePath,
-  UseDecl,
-}
+use .ast.{Block, Expr, FunctionDecl, Module, Pattern, Stmt, TypeDecl, TypeExpr, TypePath, UseDecl}
 
 // ── Edit types ─────────────────────────────────────────────────────
 /// Byte span of the entire `use` statement + replacement text.
@@ -48,9 +45,7 @@ pub fn check_unused_imports(module: Module) UnusedImportResult {
                     .None => v.name,
                   }
 
-                  if !final_used.has(binding) {
-                    unused_in_decl = .append(binding)
-                  }
+                  if !final_used.has(binding) { unused_in_decl = .append(binding) }
                 },
                 .Type(t) => {
                   binding := case t.alias {
@@ -58,9 +53,7 @@ pub fn check_unused_imports(module: Module) UnusedImportResult {
                     .None => t.name,
                   }
 
-                  if !final_used.has(binding) {
-                    unused_in_decl = .append(binding)
-                  }
+                  if !final_used.has(binding) { unused_in_decl = .append(binding) }
                 },
               }
             }
@@ -82,9 +75,7 @@ pub fn check_unused_imports(module: Module) UnusedImportResult {
                     if !final_used.has(binding) {
                       result_items = .append(
                         UnusedImportDiag.{
-                          kind: .Warning(
-                            .UnusedImport(.{ span: v.span, binding }),
-                          ),
+                          kind: .Warning(.UnusedImport(.{ span: v.span, binding })),
                           edit,
                         },
                       )
@@ -99,9 +90,7 @@ pub fn check_unused_imports(module: Module) UnusedImportResult {
                     if !final_used.has(binding) {
                       result_items = .append(
                         UnusedImportDiag.{
-                          kind: .Warning(
-                            .UnusedImport(.{ span: t.span, binding }),
-                          ),
+                          kind: .Warning(.UnusedImport(.{ span: t.span, binding })),
                           edit,
                         },
                       )
@@ -115,18 +104,14 @@ pub fn check_unused_imports(module: Module) UnusedImportResult {
             // Full module import: check if alias is used
             alias := case decl.alias {
               .Some(a) => a,
-              .None => if decl.path.len() > 0 { decl.path[decl.path.len() - 1] } else {
-                ""
-              },
+              .None => if decl.path.len() > 0 { decl.path[decl.path.len() - 1] } else { "" },
             }
 
             if alias != "" and !final_used.has(alias) {
               edit := ImportEdit.{ use_span: decl.span, replacement: "" }
               result_items = .append(
                 UnusedImportDiag.{
-                  kind: .Warning(
-                    .UnusedImport(.{ span: decl.span, binding: alias }),
-                  ),
+                  kind: .Warning(.UnusedImport(.{ span: decl.span, binding: alias })),
                   edit,
                 },
               )
@@ -231,10 +216,7 @@ fn collect_used_names_module(module: Module, used: Cell<Dict<String, Bool>>) {
   }
 }
 
-fn collect_used_names_function(
-  decl: FunctionDecl,
-  used: Cell<Dict<String, Bool>>,
-) {
+fn collect_used_names_function(decl: FunctionDecl, used: Cell<Dict<String, Bool>>) {
   for p in decl.params {
     case p.ty {
       .Some(te) => collect_used_names_type_expr(te, used),

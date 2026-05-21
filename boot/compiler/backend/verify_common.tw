@@ -9,10 +9,7 @@ pub fn fail_func(pf: PreparedFunc, msg: String) Result<Void, String> {
   .Err("backend verifier: function ${pf.name} (F${pf.func_id.id}): ${msg}")
 }
 
-pub fn fail_slot(pf: PreparedFunc, info: SlotInfo, msg: String) Result<
-  Void,
-  String,
-> {
+pub fn fail_slot(pf: PreparedFunc, info: SlotInfo, msg: String) Result<Void, String> {
   .Err(
     "backend verifier: function ${pf.name} (F${pf.func_id.id}), slot S${info.slot.id} / local L${info.source_local.id}: ${msg}",
   )
@@ -180,8 +177,7 @@ pub fn mono_eq(a: MonoType, b: MonoType) Bool {
       _ => false,
     },
     .Named(tid_a, args_a) => case b {
-      .Named(tid_b, args_b) => tid_a.id == tid_b.id
-      and mono_vec_eq(args_a, args_b),
+      .Named(tid_b, args_b) => tid_a.id == tid_b.id and mono_vec_eq(args_a, args_b),
       _ => false,
     },
     .Vector(inner_a) => case b {

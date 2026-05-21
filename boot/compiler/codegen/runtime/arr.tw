@@ -100,21 +100,14 @@ pub fn module() WasmModule {
     from_read_file_result_fn(),
     make_empty_fn(),
   ]
-  exports := collect f in funcs {
-    ExportDef.{ wasm_name: f.name, func_sym: f.name }
-  }
+  exports := collect f in funcs { ExportDef.{ wasm_name: f.name, func_sym: f.name } }
   .{
     namespace: "rt.arr",
     types: [],
     imports: [],
     funcs: funcs,
     globals: [
-      .{
-        name: "empty_leaf",
-        mutable: false,
-        ty: arr_ref(),
-        init: [.ArrayNewFixed(t_array(), 0)],
-      },
+      .{ name: "empty_leaf", mutable: false, ty: arr_ref(), init: [.ArrayNewFixed(t_array(), 0)] },
       .{
         name: "empty_pvec",
         mutable: false,
@@ -154,15 +147,7 @@ fn tailoff_fn() FuncDef {
       .If(
         .Some(.I32),
         [.I32Const(0)],
-        [
-          .LocalGet(0),
-          .I32Const(1),
-          .I32Sub,
-          .I32Const(b_()),
-          .I32ShrU,
-          .I32Const(b_()),
-          .I32Shl,
-        ],
+        [.LocalGet(0), .I32Const(1), .I32Sub, .I32Const(b_()), .I32ShrU, .I32Const(b_()), .I32Shl],
       ),
     ],
   }
@@ -342,13 +327,7 @@ fn push_tail_fn() FuncDef {
       .I32Eq,
       .If(
         .None,
-        [
-          .LocalGet(4),
-          .RefAsNonNull,
-          .LocalGet(5),
-          .LocalGet(3),
-          .ArraySet(t_vec_children()),
-        ],
+        [.LocalGet(4), .RefAsNonNull, .LocalGet(5), .LocalGet(3), .ArraySet(t_vec_children())],
         [
           .LocalGet(2),
           .RefAsNonNull,
@@ -360,13 +339,7 @@ fn push_tail_fn() FuncDef {
           .RefIsNull,
           .If(
             .Some(ref_eq_()),
-            [
-              .LocalGet(1),
-              .I32Const(b_()),
-              .I32Sub,
-              .LocalGet(3),
-              .Call("new_path"),
-            ],
+            [.LocalGet(1), .I32Const(b_()), .I32Sub, .LocalGet(3), .Call("new_path")],
             [
               .LocalGet(0),
               .LocalGet(1),
@@ -1051,14 +1024,7 @@ fn slice_fn() FuncDef {
                   .I32LtS,
                   .If(
                     .None,
-                    [
-                      .LocalGet(6),
-                      .RefAsNonNull,
-                      .ArrayLen,
-                      .LocalGet(7),
-                      .I32Sub,
-                      .LocalSet(8),
-                    ],
+                    [.LocalGet(6), .RefAsNonNull, .ArrayLen, .LocalGet(7), .I32Sub, .LocalSet(8)],
                     [],
                   ),
                   .LocalGet(4),

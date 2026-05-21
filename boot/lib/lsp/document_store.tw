@@ -3,10 +3,9 @@
 // This module intentionally avoids transport and compiler dependencies so query
 // code (hover, goto definition, diagnostics) can be tested against in-memory
 // documents before being wired into the server loop.
-
-use lib.text.line_index
 use lib.source.identity
 use lib.source.overlay
+use lib.text.line_index
 
 pub type Document = .{
   uri: String,
@@ -16,13 +15,9 @@ pub type Document = .{
   index: line_index.LineIndex,
 }
 
-pub type Store = .{
-  docs: Dict<String, Document>,
-}
+pub type Store = .{ docs: Dict<String, Document> }
 
-pub fn empty() Store {
-  .{ docs: Dict.new() }
-}
+pub fn empty() Store { .{ docs: Dict.new() } }
 
 pub fn open(store: Store, uri: String, text: String, version: Int?) Store {
   put(store, make_document(uri, text, version))
@@ -32,13 +27,9 @@ pub fn change_full_text(store: Store, uri: String, text: String, version: Int?) 
   put(store, make_document(uri, text, version))
 }
 
-pub fn close(store: Store, uri: String) Store {
-  .{ docs: store.docs.remove(uri) }
-}
+pub fn close(store: Store, uri: String) Store { .{ docs: store.docs.remove(uri) } }
 
-pub fn get(store: Store, uri: String) Document? {
-  store.docs[uri]
-}
+pub fn get(store: Store, uri: String) Document? { store.docs[uri] }
 
 pub fn overlay_documents(store: Store) Vector<overlay.OverlayDocument> {
   collect doc in store.docs.values() {
@@ -56,9 +47,9 @@ fn make_document(uri: String, text: String, version: Int?) Document {
 
 fn put(store: Store, doc: Document) Store {
   docs: Dict<String, Document> = Dict.new()
-  for uri, existing in store.docs {
-    docs[uri] = existing
-  }
+
+  for uri, existing in store.docs { docs[uri] = existing }
+
   docs[doc.uri] = doc
   .{ docs }
 }

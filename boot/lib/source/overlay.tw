@@ -2,16 +2,13 @@
 //
 // Open editor buffers take precedence over disk, while query/cache keys use the
 // canonical source identity path.
-
 use @std.fs
+
 use lib.module.core_lib
+
 use .identity
 
-pub type OverlayDocument = .{
-  identity: identity.SourceIdentity,
-  text: String,
-  version: Int?,
-}
+pub type OverlayDocument = .{ identity: identity.SourceIdentity, text: String, version: Int? }
 
 pub type SourceText = .{
   identity: identity.SourceIdentity,
@@ -20,19 +17,15 @@ pub type SourceText = .{
   from_overlay: Bool,
 }
 
-pub type Overlay = .{
-  documents: Dict<String, OverlayDocument>,
-}
+pub type Overlay = .{ documents: Dict<String, OverlayDocument> }
 
-pub fn empty() Overlay {
-  .{ documents: Dict.new() }
-}
+pub fn empty() Overlay { .{ documents: Dict.new() } }
 
 pub fn from_documents(documents: Vector<OverlayDocument>) Overlay {
   docs: Dict<String, OverlayDocument> = Dict.new()
-  for doc in documents {
-    docs[doc.identity.path] = doc
-  }
+
+  for doc in documents { docs[doc.identity.path] = doc }
+
   .{ documents: docs }
 }
 
@@ -48,20 +41,12 @@ pub fn remove(overlay: Overlay, id: identity.SourceIdentity) Overlay {
 
 pub fn lookup(overlay: Overlay, id: identity.SourceIdentity) Result<SourceText, String> {
   case overlay.documents[id.path] {
-    .Some(doc) => .Ok(.{
-      identity: doc.identity,
-      text: doc.text,
-      version: doc.version,
-      from_overlay: true,
-    }),
+    .Some(doc) => .Ok(
+      .{ identity: doc.identity, text: doc.text, version: doc.version, from_overlay: true },
+    ),
     .None => {
       text := try read_disk_text(id.path)
-      .Ok(.{
-        identity: id,
-        text,
-        version: .None,
-        from_overlay: false,
-      })
+      .Ok(.{ identity: id, text, version: .None, from_overlay: false })
     },
   }
 }

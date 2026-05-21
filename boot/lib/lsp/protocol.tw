@@ -1,41 +1,17 @@
 // Minimal JSON-RPC/LSP protocol envelope helpers.
-
 use lib.json
 
-pub type RequestId = {
-  IntId(Int),
-  StringId(String),
-  NullId,
-}
+pub type RequestId = { IntId(Int), StringId(String), NullId }
 
-pub type RpcError = .{
-  code: Int,
-  message: String,
-  data: json.Json?,
-}
+pub type RpcError = .{ code: Int, message: String, data: json.Json? }
 
-pub type Request = .{
-  id: RequestId,
-  method: String,
-  params: json.Json?,
-}
+pub type Request = .{ id: RequestId, method: String, params: json.Json? }
 
-pub type Notification = .{
-  method: String,
-  params: json.Json?,
-}
+pub type Notification = .{ method: String, params: json.Json? }
 
-pub type Response = .{
-  id: RequestId,
-  result: json.Json?,
-  error: RpcError?,
-}
+pub type Response = .{ id: RequestId, result: json.Json?, error: RpcError? }
 
-pub type Message = {
-  Request(Request),
-  Notification(Notification),
-  Response(Response),
-}
+pub type Message = { Request(Request), Notification(Notification), Response(Response) }
 
 pub fn parse_message(input: String) Result<Message, String> {
   value := try json.parse(input)
@@ -44,6 +20,7 @@ pub fn parse_message(input: String) Result<Message, String> {
 
 pub fn decode_message(value: json.Json) Result<Message, String> {
   version := try json.decode(value, json.field("jsonrpc", json.string()))
+
   if version != "2.0" {
     return .Err("expected jsonrpc 2.0")
   }
@@ -58,8 +35,12 @@ pub fn decode_message(value: json.Json) Result<Message, String> {
       if has_method {
         method := try json.decode(value, json.field("method", json.string()))
         params := optional_raw(obj, "params")
+
         if has_id {
-          id_value := case obj["id"] { .Some(v) => v, .None => json.Json.Null }
+          id_value := case obj["id"] {
+            .Some(v) => v,
+            .None => json.Json.Null,
+          }
           id := try decode_request_id(id_value)
           .Ok(.Request(.{ id, method, params }))
         } else {
@@ -69,14 +50,23 @@ pub fn decode_message(value: json.Json) Result<Message, String> {
         if !has_id {
           return .Err("response missing id")
         }
-        id_value := case obj["id"] { .Some(v) => v, .None => json.Json.Null }
+
+        id_value := case obj["id"] {
+          .Some(v) => v,
+          .None => json.Json.Null,
+        }
         id := try decode_request_id(id_value)
         result := optional_raw(obj, "result")
         err: RpcError? = .None
+
         if has_error {
-          error_value := case obj["error"] { .Some(v) => v, .None => json.Json.Null }
+          error_value := case obj["error"] {
+            .Some(v) => v,
+            .None => json.Json.Null,
+          }
           err = .Some(try decode_rpc_error(error_value))
         }
+
         .Ok(.Response(.{ id, result, error: err }))
       } else {
         .Err("expected request, notification, or response")
@@ -120,14 +110,13 @@ pub fn error_response(id: RequestId, err: RpcError) json.Json {
 }
 
 pub fn notification(method: String, params: json.Json?) json.Json {
-  fields: Vector<json.Field> = [
-    json.kv("jsonrpc", .Str("2.0")),
-    json.kv("method", .Str(method)),
-  ]
+  fields: Vector<json.Field> = [json.kv("jsonrpc", .Str("2.0")), json.kv("method", .Str(method))]
+
   case params {
     .Some(p) => fields = fields.append(json.kv("params", p)),
     .None => {},
   }
+
   json.object(fields)
 }
 
@@ -137,10 +126,12 @@ pub fn request(id: RequestId, method: String, params: json.Json?) json.Json {
     json.kv("id", request_id_to_json(id)),
     json.kv("method", .Str(method)),
   ]
+
   case params {
     .Some(p) => fields = fields.append(json.kv("params", p)),
     .None => {},
   }
+
   json.object(fields)
 }
 
@@ -149,10 +140,12 @@ pub fn rpc_error_to_json(err: RpcError) json.Json {
     json.kv("code", .Int(err.code)),
     json.kv("message", .Str(err.message)),
   ]
+
   case err.data {
     .Some(data) => fields = fields.append(json.kv("data", data)),
     .None => {},
   }
+
   json.object(fields)
 }
 

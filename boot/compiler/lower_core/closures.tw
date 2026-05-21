@@ -6,15 +6,9 @@ use compiler.lower_core.types.{expand_alias_for_iter}
 use compiler.mono_type.{MonoType}
 use lib.source.span.{Span}
 
-type FreeVarState = .{
-  bound: Dict<Int, Bool>,
-  captured: Dict<Int, Bool>,
-  result: Vector<LocalId>,
-}
+type FreeVarState = .{ bound: Dict<Int, Bool>, captured: Dict<Int, Bool>, result: Vector<LocalId> }
 
-pub fn collect_free_vars(expr: CoreExpr, exclude: Dict<Int, Bool>) Vector<
-  LocalId,
-> {
+pub fn collect_free_vars(expr: CoreExpr, exclude: Dict<Int, Bool>) Vector<LocalId> {
   captured: Dict<Int, Bool> = Dict.new()
   result: Vector<LocalId> = []
   out := collect_free_vars_inner(expr, exclude, captured, result)
@@ -61,15 +55,11 @@ fn collect_free_vars_inner(
       st := collect_free_vars_inner(lhs, bound, captured, result)
       collect_free_vars_inner(rhs, st.bound, st.captured, st.result)
     },
-    .UnOp(_, inner) => {
-      collect_free_vars_inner(inner, bound, captured, result)
-    },
+    .UnOp(_, inner) => { collect_free_vars_inner(inner, bound, captured, result) },
     .Call(callee, args) => {
       args.fold(
         collect_free_vars_inner(callee, bound, captured, result),
-        fn(st, arg) {
-          collect_free_vars_inner(arg, st.bound, st.captured, st.result)
-        },
+        fn(st, arg) { collect_free_vars_inner(arg, st.bound, st.captured, st.result) },
       )
     },
     .If(cond, then_e, else_e) => {
@@ -82,12 +72,7 @@ fn collect_free_vars_inner(
 
       for arm in arms {
         arm_bound := collect_pattern_bound(arm.pattern, st.bound)
-        st = collect_free_vars_inner(
-          arm.body,
-          arm_bound,
-          st.captured,
-          st.result,
-        )
+        st = collect_free_vars_inner(arm.body, arm_bound, st.captured, st.result)
       }
 
       st
@@ -108,14 +93,10 @@ fn collect_free_vars_inner(
     .Record(_, fields) => {
       fields.fold(
         FreeVarState.{ bound, captured, result },
-        fn(st, fi) {
-          collect_free_vars_inner(fi.value, st.bound, st.captured, st.result)
-        },
+        fn(st, fi) { collect_free_vars_inner(fi.value, st.bound, st.captured, st.result) },
       )
     },
-    .RecordGet(target, _) => {
-      collect_free_vars_inner(target, bound, captured, result)
-    },
+    .RecordGet(target, _) => { collect_free_vars_inner(target, bound, captured, result) },
     .RecordUpdate(base, _, value) => {
       st := collect_free_vars_inner(base, bound, captured, result)
       collect_free_vars_inner(value, st.bound, st.captured, st.result)
@@ -123,17 +104,13 @@ fn collect_free_vars_inner(
     .Variant(_, _, args) => {
       args.fold(
         FreeVarState.{ bound, captured, result },
-        fn(st, a) {
-          collect_free_vars_inner(a, st.bound, st.captured, st.result)
-        },
+        fn(st, a) { collect_free_vars_inner(a, st.bound, st.captured, st.result) },
       )
     },
     .ArrayLit(elems) => {
       elems.fold(
         FreeVarState.{ bound, captured, result },
-        fn(st, e) {
-          collect_free_vars_inner(e, st.bound, st.captured, st.result)
-        },
+        fn(st, e) { collect_free_vars_inner(e, st.bound, st.captured, st.result) },
       )
     },
     .Index(base, idx) => {
@@ -155,10 +132,7 @@ fn collect_free_vars_inner(
   }
 }
 
-fn collect_pattern_bound(pattern: CorePattern, bound: Dict<Int, Bool>) Dict<
-  Int,
-  Bool,
-> {
+fn collect_pattern_bound(pattern: CorePattern, bound: Dict<Int, Bool>) Dict<Int, Bool> {
   case pattern {
     .Var(id) => {
       bound[id.id] = true
@@ -217,10 +191,7 @@ pub fn lower_closure(
       i := 0
 
       for i < lambda_params.len() and i < param_tys.len() {
-        case lambda_params.set(
-          i,
-          .{ local: lambda_params[i].local, ty: param_tys[i] },
-        ) {
+        case lambda_params.set(i, .{ local: lambda_params[i].local, ty: param_tys[i] }) {
           .Some(new_params) => { lambda_params = new_params },
           .None => {},
         }
@@ -254,8 +225,5 @@ pub fn lower_closure(
   }
   ctx.hoisted = ctx.hoisted.append(hoisted_def)
   // 8. Emit MakeClosure
-  .{
-    expr: .{ kind: .MakeClosure(lambda_func_id, free_vars), ty, span: s },
-    ctx,
-  }
+  .{ expr: .{ kind: .MakeClosure(lambda_func_id, free_vars), ty, span: s }, ctx }
 }

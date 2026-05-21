@@ -3,9 +3,7 @@
 // Mirrors stage0 src/runtime/dict.rs.
 // Key comparison uses rt.core.eq (structural equality).
 // Key types: Int (BoxedInt or I31/Byte), String.
-use compiler.codegen.wasm_ir.{
-  ExportDef, FuncDef, GlobalDef, Instr, ValType, WasmModule,
-}
+use compiler.codegen.wasm_ir.{ExportDef, FuncDef, GlobalDef, Instr, ValType, WasmModule}
 
 // ── ValType helpers ──────────────────────────────────────────────────────────
 fn pdict_null() ValType {
@@ -139,9 +137,7 @@ pub fn module() WasmModule {
     set_in_place_fn(),
     remove_in_place_fn(),
   ]
-  exports := collect f in funcs {
-    ExportDef.{ wasm_name: f.name, func_sym: f.name }
-  }
+  exports := collect f in funcs { ExportDef.{ wasm_name: f.name, func_sym: f.name } }
   .{
     namespace: "rt.dict",
     types: [],
@@ -160,13 +156,7 @@ pub fn module() WasmModule {
         params: [pvec_ref(), .Anyref],
         results: [pvec_ref()],
       },
-      .{
-        module: "rt.arr",
-        name: "len",
-        as_sym: "arr_len",
-        params: [pvec_null()],
-        results: [.I32],
-      },
+      .{ module: "rt.arr", name: "len", as_sym: "arr_len", params: [pvec_null()], results: [.I32] },
       .{
         module: "rt.arr",
         name: "get",
@@ -197,14 +187,7 @@ pub fn module() WasmModule {
       },
     ],
     funcs: funcs,
-    globals: [
-      GlobalDef.{
-        name: "was_replace",
-        mutable: true,
-        ty: .I32,
-        init: [.I32Const(0)],
-      },
-    ],
+    globals: [GlobalDef.{ name: "was_replace", mutable: true, ty: .I32, init: [.I32Const(0)] }],
     tables: [],
     elems: [],
     exports: exports,
@@ -524,9 +507,7 @@ fn wyr4_instrs(str_local: Int, off_local: Int) Vector<Instr> {
 // Inline wyr8: reads 8 bytes LE as u64. off_scratch holds base offset; clobbered.
 fn wyr8_instrs(str_local: Int, off_scratch: Int) Vector<Instr> {
   result := wyr4_instrs(str_local, off_scratch)
-  result = .concat(
-    [.LocalGet(off_scratch), .I32Const(4), .I32Add, .LocalSet(off_scratch)],
-  )
+  result = .concat([.LocalGet(off_scratch), .I32Const(4), .I32Add, .LocalSet(off_scratch)])
   result = .concat(wyr4_instrs(str_local, off_scratch))
   result.concat([.I64Const(32), .I64Shl, .I64Or])
 }
@@ -682,61 +663,29 @@ fn hash_string_fn() FuncDef {
   ]
   long_loop = .concat(wyr8_instrs(0, 8))
   long_loop = .concat(
-    [
-      .I64Const(-1800455987208640293),
-      .I64Xor,
-      .LocalGet(5),
-      .I32Const(8),
-      .I32Add,
-      .LocalSet(8),
-    ],
+    [.I64Const(-1800455987208640293), .I64Xor, .LocalGet(5), .I32Const(8), .I32Add, .LocalSet(8)],
   )
   long_loop = .concat(wyr8_instrs(0, 8))
   long_loop = .concat([.LocalGet(2), .I64Xor])
   long_loop = .concat(mix)
-  long_loop = .concat(
-    [.LocalSet(2), .LocalGet(5), .I32Const(16), .I32Add, .LocalSet(8)],
-  )
+  long_loop = .concat([.LocalSet(2), .LocalGet(5), .I32Const(16), .I32Add, .LocalSet(8)])
   long_loop = .concat(wyr8_instrs(0, 8))
   long_loop = .concat(
-    [
-      .I64Const(-8167223561372836125),
-      .I64Xor,
-      .LocalGet(5),
-      .I32Const(24),
-      .I32Add,
-      .LocalSet(8),
-    ],
+    [.I64Const(-8167223561372836125), .I64Xor, .LocalGet(5), .I32Const(24), .I32Add, .LocalSet(8)],
   )
   long_loop = .concat(wyr8_instrs(0, 8))
   long_loop = .concat([.LocalGet(6), .I64Xor])
   long_loop = .concat(mix)
-  long_loop = .concat(
-    [.LocalSet(6), .LocalGet(5), .I32Const(32), .I32Add, .LocalSet(8)],
-  )
+  long_loop = .concat([.LocalSet(6), .LocalGet(5), .I32Const(32), .I32Add, .LocalSet(8)])
   long_loop = .concat(wyr8_instrs(0, 8))
   long_loop = .concat(
-    [
-      .I64Const(6380440055042464963),
-      .I64Xor,
-      .LocalGet(5),
-      .I32Const(40),
-      .I32Add,
-      .LocalSet(8),
-    ],
+    [.I64Const(6380440055042464963), .I64Xor, .LocalGet(5), .I32Const(40), .I32Add, .LocalSet(8)],
   )
   long_loop = .concat(wyr8_instrs(0, 8))
   long_loop = .concat([.LocalGet(7), .I64Xor])
   long_loop = .concat(mix)
   long_loop = .concat(
-    [
-      .LocalSet(7),
-      .LocalGet(5),
-      .I32Const(48),
-      .I32Add,
-      .LocalSet(5),
-      .Br("long_loop"),
-    ],
+    [.LocalSet(7), .LocalGet(5), .I32Const(48), .I32Add, .LocalSet(5), .Br("long_loop")],
   )
   long_then: Vector<Instr> = [
     .LocalGet(2),
@@ -766,39 +715,18 @@ fn hash_string_fn() FuncDef {
   ]
   med_loop = .concat(wyr8_instrs(0, 8))
   med_loop = .concat(
-    [
-      .I64Const(-1800455987208640293),
-      .I64Xor,
-      .LocalGet(5),
-      .I32Const(8),
-      .I32Add,
-      .LocalSet(8),
-    ],
+    [.I64Const(-1800455987208640293), .I64Xor, .LocalGet(5), .I32Const(8), .I32Add, .LocalSet(8)],
   )
   med_loop = .concat(wyr8_instrs(0, 8))
   med_loop = .concat([.LocalGet(2), .I64Xor])
   med_loop = .concat(mix)
   med_loop = .concat(
-    [
-      .LocalSet(2),
-      .LocalGet(5),
-      .I32Const(16),
-      .I32Add,
-      .LocalSet(5),
-      .Br("med_loop"),
-    ],
+    [.LocalSet(2), .LocalGet(5), .I32Const(16), .I32Add, .LocalSet(5), .Br("med_loop")],
   )
   // ── final: a = wyr8(p + n - 16), b = wyr8(p + n - 8) ──
-  final_part: Vector<Instr> = [
-    .LocalGet(1),
-    .I32Const(16),
-    .I32Sub,
-    .LocalSet(8),
-  ]
+  final_part: Vector<Instr> = [.LocalGet(1), .I32Const(16), .I32Sub, .LocalSet(8)]
   final_part = .concat(wyr8_instrs(0, 8))
-  final_part = .concat(
-    [.LocalSet(3), .LocalGet(1), .I32Const(8), .I32Sub, .LocalSet(8)],
-  )
+  final_part = .concat([.LocalSet(3), .LocalGet(1), .I32Const(8), .I32Sub, .LocalSet(8)])
   final_part = .concat(wyr8_instrs(0, 8))
   final_part = .concat(
     [
@@ -881,14 +809,7 @@ fn hash_key_fn() FuncDef {
       .RefTest(false, .I31),
       .If(
         .None,
-        [
-          .LocalGet(0),
-          .RefCast(false, .I31),
-          .I31GetU,
-          .I64ExtendI32U,
-          .Call("hash_i64"),
-          .Return,
-        ],
+        [.LocalGet(0), .RefCast(false, .I31), .I31GetU, .I64ExtendI32U, .Call("hash_i64"), .Return],
         [],
       ),
       .LocalGet(0),
@@ -952,11 +873,7 @@ fn collision_get_fn() FuncDef {
               .StructGet(t_hamt_entry(), he_key()),
               .LocalGet(1),
               .Call("core_eq"),
-              .If(
-                .None,
-                [.LocalGet(5), .StructGet(t_hamt_entry(), he_val()), .Return],
-                [],
-              ),
+              .If(.None, [.LocalGet(5), .StructGet(t_hamt_entry(), he_val()), .Return], []),
               .LocalGet(4),
               .I32Const(1),
               .I32Add,
@@ -1853,11 +1770,7 @@ fn order_remove_key_fn() FuncDef {
               .LocalGet(7),
               .LocalGet(1),
               .Call("core_eq"),
-              .If(
-                .None,
-                [.LocalGet(8), .I32Const(1), .I32Add, .LocalSet(8)],
-                [],
-              ),
+              .If(.None, [.LocalGet(8), .I32Const(1), .I32Add, .LocalSet(8)], []),
               .LocalGet(5),
               .I32Const(1),
               .I32Add,
@@ -2034,12 +1947,7 @@ fn get_option_fn() FuncDef {
       .RefIsNull,
       .If(
         .Some(variant_ref()),
-        [
-          .I32Const(0),
-          .I32Const(0),
-          .RefNull(.Named(t_array())),
-          .StructNew(t_variant()),
-        ],
+        [.I32Const(0), .I32Const(0), .RefNull(.Named(t_array())), .StructNew(t_variant())],
         [
           .I32Const(0),
           .I32Const(1),
@@ -2083,17 +1991,7 @@ fn set_fn() FuncDef {
       .LocalSet(6),
       .LocalGet(5),
       .I32Eqz,
-      .If(
-        .None,
-        [
-          .LocalGet(6),
-          .RefAsNonNull,
-          .LocalGet(1),
-          .Call("arr_push"),
-          .LocalSet(6),
-        ],
-        [],
-      ),
+      .If(.None, [.LocalGet(6), .RefAsNonNull, .LocalGet(1), .Call("arr_push"), .LocalSet(6)], []),
       .LocalGet(0),
       .RefAsNonNull,
       .StructGet(t_pdict(), pd_size()),
@@ -2142,13 +2040,7 @@ fn remove_fn() FuncDef {
       .LocalGet(5),
       .If(
         .None,
-        [
-          .LocalGet(6),
-          .RefAsNonNull,
-          .LocalGet(1),
-          .Call("order_remove_key"),
-          .LocalSet(6),
-        ],
+        [.LocalGet(6), .RefAsNonNull, .LocalGet(1), .Call("order_remove_key"), .LocalSet(6)],
         [],
       ),
       .LocalGet(0),

@@ -4,21 +4,17 @@ use @std.date
 use @std.proc
 
 use compiler.anf.{AnfExpr, AnfFunctionDef, AnfModule}
-use compiler.anf_analysis.{
-  collect_free_locals, collect_init_binding_locals, set_has,
-}
+use compiler.anf_analysis.{collect_free_locals, collect_init_binding_locals, set_has}
 use compiler.builtins.{BuiltinRegistry, make_builtin_registry}
 use compiler.opt.analysis.{collect_consumed_params}
 use compiler.opt.branch_simp.{branch_simplify}
 use compiler.opt.const_fold.{constant_fold}
 use compiler.opt.copy_prop.{copy_propagate_with_pinned}
-use compiler.opt.dead_let.{
-  dead_let_elim_with_pinned, dead_let_elim_with_pinned_and_semantics,
-}
+use compiler.opt.dead_let.{dead_let_elim_with_pinned, dead_let_elim_with_pinned_and_semantics}
 use compiler.opt.defer_elim.{eliminate_defers}
 use compiler.opt.semantics.{
-  CowConfig, OptimizerSemantics, cow_config_from_semantics,
-  make_prelude_optimizer_semantics, optimizer_semantics_from_cow_config,
+  CowConfig, OptimizerSemantics, cow_config_from_semantics, make_prelude_optimizer_semantics,
+  optimizer_semantics_from_cow_config,
 }
 use compiler.opt.uniqueness.{
   collect_fresh_record_helpers, uniqueness_rewrite,
@@ -89,12 +85,7 @@ type PassTiming = .{
   defer_elim: Float,
 }
 
-type FixedPointResult = .{
-  expr: AnfExpr,
-  rounds: Int,
-  at_cap: Bool,
-  timing: PassTiming,
-}
+type FixedPointResult = .{ expr: AnfExpr, rounds: Int, at_cap: Bool, timing: PassTiming }
 
 type FunctionOptimizeResult = .{
   func: AnfFunctionDef,
@@ -125,11 +116,7 @@ fn add_pass_timing(a: PassTiming, b: PassTiming) PassTiming {
   }
 }
 
-fn optimizer_context(
-  module: AnfModule,
-  semantics: OptimizerSemantics?,
-  cow_config: CowConfig?,
-) OptimizerContext {
+fn optimizer_context(module: AnfModule, semantics: OptimizerSemantics?, cow_config: CowConfig?) OptimizerContext {
   OptimizerContext.{
     pinned: compute_pinned(module),
     semantics: semantics,
@@ -140,11 +127,7 @@ fn optimizer_context(
 }
 
 // ── optimize_func ───────────────────────────────────────────────────
-fn optimize_func(
-  func: AnfFunctionDef,
-  pinned: Dict<Int, Bool>,
-  semantics: OptimizerSemantics?,
-) AnfFunctionDef {
+fn optimize_func(func: AnfFunctionDef, pinned: Dict<Int, Bool>, semantics: OptimizerSemantics?) AnfFunctionDef {
   ctx := OptimizerContext.{
     pinned: pinned,
     semantics: semantics,
@@ -215,11 +198,7 @@ fn run_fixed_point_simplifications(expr: AnfExpr, ctx: OptimizerContext) FixedPo
     round = round + 1
     ta := date.now()
     r1 := case ctx.semantics {
-      .Some(sem) => dead_let_elim_with_pinned_and_semantics(
-        cur,
-        ctx.pinned,
-        sem,
-      ),
+      .Some(sem) => dead_let_elim_with_pinned_and_semantics(cur, ctx.pinned, sem),
       .None => dead_let_elim_with_pinned(cur, ctx.pinned),
     }
     cur = r1.expr
@@ -241,12 +220,7 @@ fn run_fixed_point_simplifications(expr: AnfExpr, ctx: OptimizerContext) FixedPo
     if !r1.changed and !r2.changed and !r3.changed and !r4.changed { break }
   }
 
-  FixedPointResult.{
-    expr: cur,
-    rounds: round,
-    at_cap: round >= cap,
-    timing: timing,
-  }
+  FixedPointResult.{ expr: cur, rounds: round, at_cap: round >= cap, timing: timing }
 }
 
 // ── prelude CowConfig ─────────────────────────────────────────────
@@ -263,10 +237,9 @@ pub fn optimize_module(module: AnfModule) AnfModule {
   optimize_module_with_semantics(module, .Some(semantics))
 }
 
-pub fn optimize_module_with_semantics(
-  module: AnfModule,
-  semantics: OptimizerSemantics?,
-) AnfModule { optimize_module_internal(module, semantics, .None) }
+pub fn optimize_module_with_semantics(module: AnfModule, semantics: OptimizerSemantics?) AnfModule {
+  optimize_module_internal(module, semantics, .None)
+}
 
 pub fn optimize_module_with_config(module: AnfModule, cow_config: CowConfig?) AnfModule {
   semantics: OptimizerSemantics? = case cow_config {
@@ -303,9 +276,9 @@ fn optimize_module_internal(
     n := module.functions.len()
     avg_rounds := Float.to_string(Int.to_float(total_rounds) / Int.to_float(n))
     eprintln(
-      "[time:opt] funcs=${Int.to_string(n)}  total_rounds=${Int.to_string(
-        total_rounds,
-      )}  avg_rounds=${avg_rounds}  at_cap=${Int.to_string(funcs_at_cap)}",
+      "[time:opt] funcs=${Int.to_string(n)}  total_rounds=${Int.to_string(total_rounds)}  avg_rounds=${avg_rounds}  at_cap=${Int.to_string(
+        funcs_at_cap,
+      )}",
     )
     eprintln(
       "[time:opt] dead_let=${Float.to_string(timing.dead_let)}ms  copy_prop=${Float.to_string(

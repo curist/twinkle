@@ -1,9 +1,7 @@
 // Array/vector and index operation emission helpers.
 use compiler.anf.{IndexKind}
 use compiler.backend.prepared_ir.{PreparedAtom}
-use compiler.codegen.emit.anyref.{
-  emit_box_to_anyref, emit_erased_container_egress,
-}
+use compiler.codegen.emit.anyref.{emit_box_to_anyref, emit_erased_container_egress}
 use compiler.codegen.emit.coercions.{emit_coerce_stack}
 use compiler.codegen.emit.context.{EmitCtx}
 use compiler.codegen.emit.defaults.{emit_default_value}
@@ -17,12 +15,8 @@ pub type ArrayEmitFns = .{
   emit_atom: fn(PreparedAtom, EmitCtx, Vector<Instr>) Vector<Instr>,
   atom_val_type: fn(PreparedAtom, EmitCtx) ValType,
   atom_mono: fn(PreparedAtom, EmitCtx) MonoType,
-  emit_checked_i32_narrow: fn(PreparedAtom, EmitCtx, Vector<Instr>) Vector<
-    Instr,
-  >,
-  emit_erased_container_ingress: fn(PreparedAtom, EmitCtx, Vector<Instr>) Vector<
-    Instr,
-  >,
+  emit_checked_i32_narrow: fn(PreparedAtom, EmitCtx, Vector<Instr>) Vector<Instr>,
+  emit_erased_container_ingress: fn(PreparedAtom, EmitCtx, Vector<Instr>) Vector<Instr>,
 }
 
 pub fn emit_array_literal(
@@ -35,11 +29,7 @@ pub fn emit_array_literal(
   n := items.len()
   elem_mono := case result_mono {
     .Vector(inner) => inner,
-    _ => error(
-      "emit_array_literal: expected Vector result, got ${mono_to_key(
-        result_mono,
-      )}",
-    ),
+    _ => error("emit_array_literal: expected Vector result, got ${mono_to_key(result_mono)}"),
   }
   elem_vt := val_type_of_mono(elem_mono, ctx.env)
 
@@ -61,9 +51,7 @@ pub fn emit_array_literal(
       out = emit_box_to_anyref(elem_mono, ctx.env, out)
     }
 
-    return out.append(.ArrayNewFixed("rt_types__Array", n)).append(
-      .StructNew("rt_types__PVec"),
-    )
+    return out.append(.ArrayNewFixed("rt_types__Array", n)).append(.StructNew("rt_types__PVec"))
   }
 
   // Larger literals must populate the trie prefix as elements spill past the
@@ -71,9 +59,7 @@ pub fn emit_array_literal(
   // correct root/tail shape.
   out := buf.append(.I32Const(0)).append(.I32Const(0)).append(
     .RefNull(.Named("rt_types__VecInternal")),
-  ).append(.ArrayNewFixed("rt_types__Array", 0)).append(
-    .StructNew("rt_types__PVec"),
-  )
+  ).append(.ArrayNewFixed("rt_types__Array", 0)).append(.StructNew("rt_types__PVec"))
 
   for item in items {
     out = fns.emit_atom(item, ctx, out)
@@ -110,11 +96,9 @@ pub fn emit_index_op(
       out := fns.emit_atom(index, ctx, buf).append(.I64Const(0)).append(.I64GeS)
       out = fns.emit_atom(index, ctx, out)
       out = fns.emit_atom(base, ctx, out)
-      out = .append(.RefAsNonNull).append(.StructGet("rt_types__PVec", 0)).append(
-        .I64ExtendI32U,
-      ).append(.I64LtS).append(.I32And).append(.I32Eqz).append(
-        .If(.None, [.Unreachable], []),
-      )
+      out = .append(.RefAsNonNull).append(.StructGet("rt_types__PVec", 0)).append(.I64ExtendI32U).append(
+        .I64LtS,
+      ).append(.I32And).append(.I32Eqz).append(.If(.None, [.Unreachable], []))
       // Get element
       out = fns.emit_atom(base, ctx, out)
       out = fns.emit_checked_i32_narrow(index, ctx, out)
@@ -122,9 +106,7 @@ pub fn emit_index_op(
 
       // Erased container egress: coerce anyref element to the expected typed slot.
       case result_vt {
-        .Some(expected_vt) => {
-          emit_coerce_stack(.Anyref, expected_vt, result_ty, ctx, out)
-        },
+        .Some(expected_vt) => { emit_coerce_stack(.Anyref, expected_vt, result_ty, ctx, out) },
         .None => out,
       }
     },
@@ -145,9 +127,7 @@ pub fn emit_index_op(
           value_mono := case result_ty {
             .Optional(inner) => inner,
             _ => error(
-              "emit_index_op: dict index expected Optional result, got ${mono_to_key(
-                result_ty,
-              )}",
+              "emit_index_op: dict index expected Optional result, got ${mono_to_key(result_ty)}",
             ),
           }
 
@@ -156,17 +136,9 @@ pub fn emit_index_op(
             result_vt_ext := ValType.Ref(true, .Extern)
             none_instrs: Vector<Instr> = [.RefNull(.Extern)]
             some_instrs: Vector<Instr> = fns.emit_atom(base, ctx, [])
-            some_instrs = fns.emit_erased_container_ingress(
-              index,
-              ctx,
-              some_instrs,
-            )
+            some_instrs = fns.emit_erased_container_ingress(index, ctx, some_instrs)
             some_instrs = .append(.Call("rt_dict__get"))
-            some_instrs = emit_erased_container_egress(
-              value_mono,
-              ctx.env,
-              some_instrs,
-            )
+            some_instrs = emit_erased_container_egress(value_mono, ctx.env, some_instrs)
             out := fns.emit_atom(base, ctx, buf)
             out = fns.emit_erased_container_ingress(index, ctx, out)
             out.append(.Call("rt_dict__get")).append(.RefIsNull).append(
@@ -179,33 +151,20 @@ pub fn emit_index_op(
             some_variant := sum_layout.variants[1]
 
             if some_variant.payload_types.len() > 0 {
-              none_instrs = emit_default_value(
-                some_variant.payload_types[0],
-                none_instrs,
-              )
+              none_instrs = emit_default_value(some_variant.payload_types[0], none_instrs)
             }
 
             none_instrs = .append(.StructNew(sum_layout.sym))
             some_instrs: Vector<Instr> = [.I32Const(1)]
             some_instrs = .concat(fns.emit_atom(base, ctx, []))
-            some_instrs = .concat(
-              fns.emit_erased_container_ingress(index, ctx, []),
-            )
+            some_instrs = .concat(fns.emit_erased_container_ingress(index, ctx, []))
             some_instrs = .append(.Call("rt_dict__get"))
-            some_instrs = emit_erased_container_egress(
-              value_mono,
-              ctx.env,
-              some_instrs,
-            )
+            some_instrs = emit_erased_container_egress(value_mono, ctx.env, some_instrs)
             some_instrs = .append(.StructNew(sum_layout.sym))
             out := fns.emit_atom(base, ctx, buf)
             out = fns.emit_erased_container_ingress(index, ctx, out)
             out.append(.Call("rt_dict__get")).append(.RefIsNull).append(
-              .If(
-                .Some(.Ref(false, .Named(sum_layout.sym))),
-                none_instrs,
-                some_instrs,
-              ),
+              .If(.Some(.Ref(false, .Named(sum_layout.sym))), none_instrs, some_instrs),
             )
           }
         },
@@ -218,9 +177,9 @@ pub fn emit_index_op(
       out = .append(.I64Const(0)).append(.I64GeS)
       out = fns.emit_atom(index, ctx, out)
       out = fns.emit_atom(base, ctx, out)
-      out = .append(.ArrayLen).append(.I64ExtendI32U).append(.I64LtS).append(
-        .I32And,
-      ).append(.I32Eqz).append(.If(.None, [.Unreachable], []))
+      out = .append(.ArrayLen).append(.I64ExtendI32U).append(.I64LtS).append(.I32And).append(
+        .I32Eqz,
+      ).append(.If(.None, [.Unreachable], []))
       // Get byte
       out = fns.emit_atom(base, ctx, out)
       out = fns.emit_checked_i32_narrow(index, ctx, out)

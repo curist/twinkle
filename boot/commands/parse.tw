@@ -25,9 +25,7 @@ pub fn run_parse_command(parsed: ParseResult) {
   parsed_mod := parser.parse(source, added.file_id)
   item_count := parsed_mod.value.items.len()
   diag_count := parsed_mod.diagnostics.len()
-  println(
-    "parsed ${item_count} top-level item(s) with ${diag_count} diagnostic(s)",
-  )
+  println("parsed ${item_count} top-level item(s) with ${diag_count} diagnostic(s)")
 
   for d in parsed_mod.diagnostics {
     sp := d.span()
@@ -38,9 +36,7 @@ pub fn run_parse_command(parsed: ParseResult) {
     msg := d.message()
 
     case registry.line_col(reg, sp) {
-      .Some(pos) => eprintln(
-        "${file}:${pos.line}:${pos.column}: ${label}: ${msg}",
-      ),
+      .Some(pos) => eprintln("${file}:${pos.line}:${pos.column}: ${label}: ${msg}"),
       .None => eprintln("${file}:${sp.start}: ${label}: ${msg}"),
     }
   }

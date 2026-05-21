@@ -7,9 +7,7 @@
 //
 // The actual resume function emission happens in emit.tw using emit_expr.
 use compiler.backend.facts as facts
-use compiler.backend.prepared_ir.{
-  PreparedAtom, PreparedExpr, PreparedFunc, PreparedOp, SlotId,
-}
+use compiler.backend.prepared_ir.{PreparedAtom, PreparedExpr, PreparedFunc, PreparedOp, SlotId}
 use compiler.builtins as bi
 use compiler.builtins.{BuiltinRegistry}
 use compiler.codegen.emit.helpers.{sanitize_name}
@@ -41,21 +39,13 @@ pub type SuspendKind = { Yield, Await }
 pub type ClosureInfo = .{ body_fid: FuncId, captures: Vector<SlotId> }
 
 // ── Public API ──
-pub fn analyze_task_body(
-  func: PreparedFunc,
-  builtins: BuiltinRegistry,
-  env: ResolvedEnv,
-) TaskResumeInfo {
+pub fn analyze_task_body(func: PreparedFunc, builtins: BuiltinRegistry, env: ResolvedEnv) TaskResumeInfo {
   yield_fid := bi.id(builtins, "task_yield")
   await_fid := bi.id(builtins, "task_await")
   // 1. Flatten the let-chain
   flat := flatten_inner(func.body, [])
   // 2. Find suspension points
-  suspension_points := find_suspension_points(
-    flat.bindings,
-    yield_fid,
-    await_fid,
-  )
+  suspension_points := find_suspension_points(flat.bindings, yield_fid, await_fid)
 
   if suspension_points.len() == 0 {
     error("analyze_task_body: no suspension points in ${func.name}")
@@ -146,27 +136,19 @@ pub fn analyze_task_body(
 
   // 7. Build frame type
   frame_sym := "\$rt_frame_${func.func_id.id}"
-  frame_fields: Vector<FieldDef> = [
-    FieldDef.{ name: .Some("pc"), mutable: true, ty: .I32 },
-  ]
+  frame_fields: Vector<FieldDef> = [FieldDef.{ name: .Some("pc"), mutable: true, ty: .I32 }]
 
   for slot_sid in hoisted_slots {
     info := facts.slot_info(func, slot_sid)
     vt := val_type_of_mono(info.mono, env)
     frame_fields = .append(
-      FieldDef.{
-        name: .Some("s${slot_sid.id}"),
-        mutable: true,
-        ty: make_nullable(vt),
-      },
+      FieldDef.{ name: .Some("s${slot_sid.id}"), mutable: true, ty: make_nullable(vt) },
     )
   }
 
   for af_idx in await_target_fields {
     if af_idx >= 0 {
-      frame_fields = .append(
-        FieldDef.{ name: .Some("await_target"), mutable: true, ty: .Anyref },
-      )
+      frame_fields = .append(FieldDef.{ name: .Some("await_target"), mutable: true, ty: .Anyref })
     }
   }
 
@@ -211,9 +193,7 @@ type FlatChain = .{ bindings: Vector<LetBinding>, tail: PreparedAtom }
 
 fn flatten_inner(expr: PreparedExpr, acc: Vector<LetBinding>) FlatChain {
   case expr {
-    .Let(slot, op, body) => {
-      flatten_inner(body, acc.append(LetBinding.{ slot: slot, op: op }))
-    },
+    .Let(slot, op, body) => { flatten_inner(body, acc.append(LetBinding.{ slot: slot, op: op })) },
     .Atom(atom) => FlatChain.{ bindings: acc, tail: atom },
     .Return(.Some(atom)) => FlatChain.{ bindings: acc, tail: atom },
     .Return(.None) => FlatChain.{ bindings: acc, tail: .ALitVoid },
@@ -221,19 +201,15 @@ fn flatten_inner(expr: PreparedExpr, acc: Vector<LetBinding>) FlatChain {
   }
 }
 
-fn find_suspension_points(
-  bindings: Vector<LetBinding>,
-  yield_fid: FuncId,
-  await_fid: FuncId,
-) Vector<SuspensionPoint> {
+fn find_suspension_points(bindings: Vector<LetBinding>, yield_fid: FuncId, await_fid: FuncId) Vector<
+  SuspensionPoint,
+> {
   result: Vector<SuspensionPoint> = []
 
   for binding, i in bindings {
     case classify_op(binding.op, yield_fid, await_fid) {
       .Some(kind) => {
-        result = .append(
-          SuspensionPoint.{ slot: binding.slot, kind: kind, index: i },
-        )
+        result = .append(SuspensionPoint.{ slot: binding.slot, kind: kind, index: i })
       },
       .None => {},
     }
@@ -264,10 +240,7 @@ fn classify_op(op: PreparedOp, yield_fid: FuncId, await_fid: FuncId) SuspendKind
   }
 }
 
-fn track_uses_in_op(op: PreparedOp, seg: Int, uses: Dict<Int, Int>) Dict<
-  Int,
-  Int,
-> {
+fn track_uses_in_op(op: PreparedOp, seg: Int, uses: Dict<Int, Int>) Dict<Int, Int> {
   case op {
     .ACall(callee, args) => {
       uses = track_uses_in_atom(callee, seg, uses)
@@ -324,20 +297,14 @@ fn track_uses_in_op(op: PreparedOp, seg: Int, uses: Dict<Int, Int>) Dict<
   }
 }
 
-fn track_uses_in_atom(atom: PreparedAtom, seg: Int, uses: Dict<Int, Int>) Dict<
-  Int,
-  Int,
-> {
+fn track_uses_in_atom(atom: PreparedAtom, seg: Int, uses: Dict<Int, Int>) Dict<Int, Int> {
   case atom {
     .ASlot(sid) => track_uses_in_slot(sid, seg, uses),
     _ => uses,
   }
 }
 
-fn track_uses_in_slot(sid: SlotId, seg: Int, uses: Dict<Int, Int>) Dict<
-  Int,
-  Int,
-> {
+fn track_uses_in_slot(sid: SlotId, seg: Int, uses: Dict<Int, Int>) Dict<Int, Int> {
   cur := case uses[sid.id] {
     .Some(s) => s,
     .None => -1,

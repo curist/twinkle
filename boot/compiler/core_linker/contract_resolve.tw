@@ -20,11 +20,7 @@ pub fn resolve_contract_target_name(
   }
 }
 
-fn resolve_for_receiver(
-  receiver_ty: MonoType,
-  method_name: String,
-  env: ResolvedEnv,
-) String? {
+fn resolve_for_receiver(receiver_ty: MonoType, method_name: String, env: ResolvedEnv) String? {
   case receiver_ty {
     .Int => env.lookup_method("Int", method_name),
     .Float => env.lookup_method("Float", method_name),

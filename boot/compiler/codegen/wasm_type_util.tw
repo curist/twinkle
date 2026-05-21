@@ -68,8 +68,7 @@ pub fn val_type_eq(a: ValType, b: ValType) Bool {
       _ => false,
     },
     .Ref(nullable_a, heap_a) => case b {
-      .Ref(nullable_b, heap_b) => nullable_a == nullable_b
-      and heap_type_eq(heap_a, heap_b),
+      .Ref(nullable_b, heap_b) => nullable_a == nullable_b and heap_type_eq(heap_a, heap_b),
       _ => false,
     },
   }

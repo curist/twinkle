@@ -9,8 +9,8 @@
 //
 // Reference: src/module/mod.rs (link, remap_func_id, remap_expr_func_ids)
 use compiler.core_ir.{
-  CompiledModule, CoreExpr, CoreExprKind, CoreModule, ExternImport, FieldInit,
-  FuncId, FunctionDef, LocalId, MatchArm,
+  CompiledModule, CoreExpr, CoreExprKind, CoreModule, ExternImport, FieldInit, FuncId, FunctionDef,
+  LocalId, MatchArm,
 }
 use compiler.mono_type.{MonoType}
 use compiler.resolver.{ResolvedEnv}
@@ -103,9 +103,7 @@ pub fn link(
         .Some(local_id) => {
           case local_to_global[local_id] {
             .Some(gid) => { name_to_id[name] = gid },
-            .None => error(
-              "link: value export points at missing local GlobalLocal",
-            ),
+            .None => error("link: value export points at missing local GlobalLocal"),
           }
         },
         .None => {},
@@ -191,9 +189,7 @@ pub fn link(
     for name in m.func_table.keys() {
       case m.func_table[name] {
         .Some(fid) => { linked_func_table[name] = remap_func_id(fid, remap) },
-        .None => error(
-          "link: func_table key '${name}' missing during iteration",
-        ),
+        .None => error("link: func_table key '${name}' missing during iteration"),
       }
     }
 
@@ -214,9 +210,7 @@ pub fn link(
 
     // Track entry module function IDs for DCE roots.
     if m.path == entry_path {
-      for f in m.core.functions {
-        entry_func_ids = .append(remap_func_id(f.func_id, remap).id)
-      }
+      for f in m.core.functions { entry_func_ids = .append(remap_func_id(f.func_id, remap).id) }
     }
 
     // Track init functions.
@@ -255,13 +249,9 @@ pub fn link(
   for name in linked_func_table.keys() {
     case linked_func_table[name] {
       .Some(fid) => {
-        if fid.id < builtin_count or reachable.has(fid.id) {
-          live_func_table[name] = fid
-        }
+        if fid.id < builtin_count or reachable.has(fid.id) { live_func_table[name] = fid }
       },
-      .None => error(
-        "link: linked_func_table key '${name}' missing during DCE filtering",
-      ),
+      .None => error("link: linked_func_table key '${name}' missing during DCE filtering"),
     }
   }
 
@@ -272,9 +262,7 @@ pub fn link(
     if reachable.has(id) {
       case linked_extern_imports[id] {
         .Some(ext) => { live_extern_imports[id] = ext },
-        .None => error(
-          "link: linked_extern_imports key ${id} missing during DCE filtering",
-        ),
+        .None => error("link: linked_extern_imports key ${id} missing during DCE filtering"),
       }
     }
   }
@@ -397,10 +385,7 @@ fn build_combined_init(init_ids: Vector<FuncId>, next_global: Int) CombinedInit 
 
 fn make_call(func_id: FuncId, s: Span) CoreExpr {
   CoreExpr.{
-    kind: .Call(
-      CoreExpr.{ kind: .GlobalFunc(func_id), ty: MonoType.Void, span: s },
-      [],
-    ),
+    kind: .Call(CoreExpr.{ kind: .GlobalFunc(func_id), ty: MonoType.Void, span: s }, []),
     ty: MonoType.Void,
     span: s,
   }
@@ -421,11 +406,7 @@ fn remap_local_id(id: LocalId, global_remap: Dict<Int, Int>) LocalId {
   }
 }
 
-fn remap_expr(
-  expr: CoreExpr,
-  remap: Dict<Int, Int>,
-  global_remap: Dict<Int, Int>,
-) CoreExpr {
+fn remap_expr(expr: CoreExpr, remap: Dict<Int, Int>, global_remap: Dict<Int, Int>) CoreExpr {
   new_kind: CoreExprKind = case expr.kind {
     .LitInt(_) => expr.kind,
     .LitFloat(_) => expr.kind,
@@ -436,17 +417,10 @@ fn remap_expr(
     .GlobalLocal(id) => .GlobalLocal(remap_local_id(id, global_remap)),
     .GlobalFunc(id) => .GlobalFunc(remap_func_id(id, remap)),
     .Let(local, value, body) => {
-      .Let(
-        local,
-        remap_expr(value, remap, global_remap),
-        remap_expr(body, remap, global_remap),
-      )
+      .Let(local, remap_expr(value, remap, global_remap), remap_expr(body, remap, global_remap))
     },
     .Assign(local, value) => {
-      .Assign(
-        remap_local_id(local, global_remap),
-        remap_expr(value, remap, global_remap),
-      )
+      .Assign(remap_local_id(local, global_remap), remap_expr(value, remap, global_remap))
     },
     .BinOp(op, lhs, rhs) => .BinOp(
       op,
@@ -455,10 +429,7 @@ fn remap_expr(
     ),
     .UnOp(op, operand) => .UnOp(op, remap_expr(operand, remap, global_remap)),
     .Call(callee, args) => {
-      .Call(
-        remap_expr(callee, remap, global_remap),
-        remap_exprs(args, remap, global_remap),
-      )
+      .Call(remap_expr(callee, remap, global_remap), remap_exprs(args, remap, global_remap))
     },
     .ContractCall(contract, method_name, receiver, args) => {
       .ContractCall(
@@ -469,9 +440,7 @@ fn remap_expr(
       )
     },
     .MakeClosure(func_id, captures) => {
-      remapped_captures := collect c in captures {
-        remap_local_id(c, global_remap)
-      }
+      remapped_captures := collect c in captures { remap_local_id(c, global_remap) }
       .MakeClosure(remap_func_id(func_id, remap), remapped_captures)
     },
     .If(cond, then_br, else_br) => {
@@ -483,10 +452,7 @@ fn remap_expr(
     },
     .Match(scrutinee, arms) => {
       new_arms := collect arm in arms {
-        MatchArm.{
-          pattern: arm.pattern,
-          body: remap_expr(arm.body, remap, global_remap),
-        }
+        MatchArm.{ pattern: arm.pattern, body: remap_expr(arm.body, remap, global_remap) }
       }
       .Match(remap_expr(scrutinee, remap, global_remap), new_arms)
     },
@@ -507,17 +473,11 @@ fn remap_expr(
     .Defer(body) => .Defer(remap_expr(body, remap, global_remap)),
     .Record(type_id, fields) => {
       new_fields := collect fi in fields {
-        FieldInit.{
-          field: fi.field,
-          value: remap_expr(fi.value, remap, global_remap),
-        }
+        FieldInit.{ field: fi.field, value: remap_expr(fi.value, remap, global_remap) }
       }
       .Record(type_id, new_fields)
     },
-    .RecordGet(rec, field) => .RecordGet(
-      remap_expr(rec, remap, global_remap),
-      field,
-    ),
+    .RecordGet(rec, field) => .RecordGet(remap_expr(rec, remap, global_remap), field),
     .RecordUpdate(rec, field, value) => {
       .RecordUpdate(
         remap_expr(rec, remap, global_remap),
@@ -537,11 +497,9 @@ fn remap_expr(
   CoreExpr.{ kind: new_kind, ty: expr.ty, span: expr.span }
 }
 
-fn remap_exprs(
-  exprs: Vector<CoreExpr>,
-  remap: Dict<Int, Int>,
-  global_remap: Dict<Int, Int>,
-) Vector<CoreExpr> {
+fn remap_exprs(exprs: Vector<CoreExpr>, remap: Dict<Int, Int>, global_remap: Dict<Int, Int>) Vector<
+  CoreExpr,
+> {
   collect e in exprs { remap_expr(e, remap, global_remap) }
 }
 

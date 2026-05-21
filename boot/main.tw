@@ -14,10 +14,7 @@ use lib.argparse.argv.{normalize_argv}
 use lib.argparse.command
 
 fn file_command(name: String, help: String) {
-  command.make(name, help).add_required_positional(
-    "file",
-    "Path to the .tw source file",
-  )
+  command.make(name, help).add_required_positional("file", "Path to the .tw source file")
 }
 
 parse_cmd := file_command("parse", "Parse source and print diagnostics")
@@ -28,13 +25,10 @@ check_cmd := file_command("check", "Type-check source").add_flag(
 ir_cmd := file_command("ir", "Compile and print compiler IR").add_flag(
   "core",
   "Print lowered Core IR",
-).add_flag("mono", "Print monomorphized Core IR").add_flag(
-  "anf",
-  "Print unoptimized ANF IR",
-).add_flag("opt", "Print optimized ANF IR").add_flag(
-  "wat",
-  "Print final linked WAT",
-).add_flag("all", "Print all available IR stages")
+).add_flag("mono", "Print monomorphized Core IR").add_flag("anf", "Print unoptimized ANF IR").add_flag(
+  "opt",
+  "Print optimized ANF IR",
+).add_flag("wat", "Print final linked WAT").add_flag("all", "Print all available IR stages")
 run_cmd := file_command("run", "Run program").add_short_flag(
   "interpreter",
   "i",

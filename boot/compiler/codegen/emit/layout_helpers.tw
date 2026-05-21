@@ -51,14 +51,10 @@ pub fn record_layout_of_ctx(mono: MonoType, ctx: EmitCtx) WasmRecordLayout {
               subst_type_params(target, type_params, args),
               ctx,
             ),
-            _ => error(
-              "record_layout_of: expected Record layout for ${mono_to_key(mono)}",
-            ),
+            _ => error("record_layout_of: expected Record layout for ${mono_to_key(mono)}"),
           }
         },
-        _ => error(
-          "record_layout_of: expected Record layout for ${mono_to_key(mono)}",
-        ),
+        _ => error("record_layout_of: expected Record layout for ${mono_to_key(mono)}"),
       }
     },
   }
@@ -77,14 +73,10 @@ pub fn record_layout_of(mono: MonoType, env: ResolvedEnv) WasmRecordLayout {
               subst_type_params(target, type_params, args),
               env,
             ),
-            _ => error(
-              "record_layout_of: expected Record layout for ${mono_to_key(mono)}",
-            ),
+            _ => error("record_layout_of: expected Record layout for ${mono_to_key(mono)}"),
           }
         },
-        _ => error(
-          "record_layout_of: expected Record layout for ${mono_to_key(mono)}",
-        ),
+        _ => error("record_layout_of: expected Record layout for ${mono_to_key(mono)}"),
       }
     },
   }
@@ -95,9 +87,7 @@ pub fn get_sum_layout_ctx(mono: MonoType, ctx: EmitCtx) WasmSumLayout {
 
   case layout {
     .Sum(s) => s,
-    _ => error(
-      "get_sum_layout: expected Sum, got other for ${mono_to_key(mono)}",
-    ),
+    _ => error("get_sum_layout: expected Sum, got other for ${mono_to_key(mono)}"),
   }
 }
 

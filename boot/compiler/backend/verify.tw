@@ -23,11 +23,7 @@ use compiler.resolver.{ResolvedEnv}
 
 pub type VerifyLevel = { Basic, Full }
 
-pub fn verify_prepared_module(
-  prepared: PreparedModule,
-  env: ResolvedEnv,
-  builtins: BuiltinRegistry,
-) Void!String {
+pub fn verify_prepared_module(prepared: PreparedModule, env: ResolvedEnv, builtins: BuiltinRegistry) Void!String {
   verify_prepared_module_with_level(prepared, env, builtins, .Full)
 }
 
@@ -47,9 +43,7 @@ pub fn verify_prepared_module_with_level(
 
   for fid in prepared.closure_captures.keys() {
     if !funcs_by_id.has(fid) {
-      return .Err(
-        "backend verifier: closure capture entry for unknown function F${fid}",
-      )
+      return .Err("backend verifier: closure capture entry for unknown function F${fid}")
     }
   }
 

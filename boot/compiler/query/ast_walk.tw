@@ -26,30 +26,20 @@ pub fn find_node_in_block(block: Block, offset: Int) NodeContext? {
 
 pub fn find_node_in_stmt(stmt: Stmt, offset: Int) NodeContext? {
   case stmt {
-    .Let(ls) => if ls.span.contains(offset) {
-      find_node_in_expr(ls.value, offset)
-    } else { .None },
+    .Let(ls) => if ls.span.contains(offset) { find_node_in_expr(ls.value, offset) } else { .None },
     .For(fs) => {
       if !fs.span.contains(offset) {
         return .None
       }
 
-      find_in_opt_expr(fs.iter, offset).or_else(
-        fn() { find_in_opt_expr(fs.condition, offset) },
-      ).or_else(fn() { find_node_in_block(fs.body, offset) })
+      find_in_opt_expr(fs.iter, offset).or_else(fn() { find_in_opt_expr(fs.condition, offset) }).or_else(
+        fn() { find_node_in_block(fs.body, offset) },
+      )
     },
-    .Return(rs) => if rs.span.contains(offset) {
-      find_in_opt_expr(rs.value, offset)
-    } else { .None },
-    .Break(bs) => if bs.span.contains(offset) {
-      find_in_opt_expr(bs.value, offset)
-    } else { .None },
-    .Defer(ds) => if ds.span.contains(offset) {
-      find_node_in_expr(ds.expr, offset)
-    } else { .None },
-    .Expr(es) => if es.span.contains(offset) {
-      find_node_in_expr(es.expr, offset)
-    } else { .None },
+    .Return(rs) => if rs.span.contains(offset) { find_in_opt_expr(rs.value, offset) } else { .None },
+    .Break(bs) => if bs.span.contains(offset) { find_in_opt_expr(bs.value, offset) } else { .None },
+    .Defer(ds) => if ds.span.contains(offset) { find_node_in_expr(ds.expr, offset) } else { .None },
+    .Expr(es) => if es.span.contains(offset) { find_node_in_expr(es.expr, offset) } else { .None },
     _ => .None,
   }
 }

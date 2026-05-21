@@ -7,14 +7,11 @@
 use @std.fs
 
 use compiler.ast.{
-  Block, Expr, FunctionDecl, Item, Pattern, RecordEntry, Stmt, TypeDecl, TypeDef,
-  TypeExpr, TypePath,
+  Block, Expr, FunctionDecl, Item, Pattern, RecordEntry, Stmt, TypeDecl, TypeDef, TypeExpr, TypePath,
 }
 use compiler.imports
 use compiler.mono_type.{TypeId}
-use compiler.query.ast_walk.{
-  NodeContext, find_node_in_block, find_node_in_expr, find_node_in_stmt,
-}
+use compiler.query.ast_walk.{NodeContext, find_node_in_block, find_node_in_expr, find_node_in_stmt}
 use compiler.query.cache
 use compiler.query.semantic.{SemanticSnapshot}
 use compiler.resolver.{ResolvedEnv}
@@ -129,11 +126,7 @@ fn resolve_ref(snap: SemanticSnapshot, ref: Ref, byte_offset: Int) DefinitionRes
           .Some(entries) => {
             for entry in entries {
               if entry.method_name == field {
-                return resolve_registered_function(
-                  snap,
-                  typed.env,
-                  entry.function_name,
-                )
+                return resolve_registered_function(snap, typed.env, entry.function_name)
               }
             }
 
@@ -152,12 +145,7 @@ fn resolve_ref(snap: SemanticSnapshot, ref: Ref, byte_offset: Int) DefinitionRes
         .None => resolve_type_name(snap, typed.env, name),
       }
     },
-    .Variant(name, scrutinee) => resolve_variant_name(
-      snap,
-      typed.env,
-      name,
-      scrutinee,
-    ),
+    .Variant(name, scrutinee) => resolve_variant_name(snap, typed.env, name, scrutinee),
   }
 }
 
@@ -169,22 +157,10 @@ fn resolve_function_name(snap: SemanticSnapshot, env: ResolvedEnv, name: String)
   resolve_registered_function(snap, env, registered)
 }
 
-fn resolve_registered_function(
-  snap: SemanticSnapshot,
-  env: ResolvedEnv,
-  registered: String,
-) DefinitionResult? {
+fn resolve_registered_function(snap: SemanticSnapshot, env: ResolvedEnv, registered: String) DefinitionResult? {
   case env.function_origins[registered] {
-    .Some(origin) => find_function_in_module(
-      snap,
-      origin.module_path,
-      origin.func_name,
-    ),
-    .None => find_function_in_module(
-      snap,
-      snap.canonical_path,
-      local_name(registered),
-    ),
+    .Some(origin) => find_function_in_module(snap, origin.module_path, origin.func_name),
+    .None => find_function_in_module(snap, snap.canonical_path, local_name(registered)),
   }
 }
 
@@ -224,12 +200,7 @@ fn resolve_import_alias(snap: SemanticSnapshot, alias: String) DefinitionResult?
   .Some(.{ uri: identity.from_path(dep_path).uri, span: target.module.span })
 }
 
-fn resolve_variant_name(
-  snap: SemanticSnapshot,
-  env: ResolvedEnv,
-  name: String,
-  scrutinee: Expr?,
-) DefinitionResult? {
+fn resolve_variant_name(snap: SemanticSnapshot, env: ResolvedEnv, name: String, scrutinee: Expr?) DefinitionResult? {
   // Prefer the scrutinee's concrete sum type.  This handles shorthand patterns
   // (`.Some`) without relying on globally unique variant names.
   typed := case snap.typed {
@@ -239,12 +210,7 @@ fn resolve_variant_name(
 
   case scrutinee {
     .Some(expr) => case typed.type_map[expr.id] {
-      .Some(.Named(tid, _)) => case find_variant_by_type_id(
-        snap,
-        env,
-        tid,
-        name,
-      ) {
+      .Some(.Named(tid, _)) => case find_variant_by_type_id(snap, env, tid, name) {
         .Some(target) => {
           return .Some(target)
         },
@@ -307,11 +273,7 @@ fn local_name(name: String) String {
   if parts.len() == 0 { name } else { parts[parts.len() - 1] }
 }
 
-fn find_function_in_module(
-  snap: SemanticSnapshot,
-  module_path: String,
-  name: String,
-) DefinitionResult? {
+fn find_function_in_module(snap: SemanticSnapshot, module_path: String, name: String) DefinitionResult? {
   parsed := case cache.latest_parsed(snap.cache, module_path) {
     .Some(p) => p,
     .None => { return .None },
@@ -320,12 +282,7 @@ fn find_function_in_module(
   for item in parsed.module.items {
     case item {
       .Function(decl) => if decl.name == name {
-        return .Some(
-          .{
-            uri: identity.from_path(module_path).uri,
-            span: function_name_span(decl),
-          },
-        )
+        return .Some(.{ uri: identity.from_path(module_path).uri, span: function_name_span(decl) })
       },
       _ => {},
     }
@@ -334,11 +291,7 @@ fn find_function_in_module(
   .None
 }
 
-fn find_type_in_module(
-  snap: SemanticSnapshot,
-  module_path: String,
-  name: String,
-) DefinitionResult? {
+fn find_type_in_module(snap: SemanticSnapshot, module_path: String, name: String) DefinitionResult? {
   parsed := case cache.latest_parsed(snap.cache, module_path) {
     .Some(p) => p,
     .None => { return .None },
@@ -347,12 +300,7 @@ fn find_type_in_module(
   for item in parsed.module.items {
     case item {
       .Type(decl) => if decl.name == name {
-        return .Some(
-          .{
-            uri: identity.from_path(module_path).uri,
-            span: type_name_span(decl),
-          },
-        )
+        return .Some(.{ uri: identity.from_path(module_path).uri, span: type_name_span(decl) })
       },
       _ => {},
     }
@@ -414,11 +362,7 @@ fn type_name_span(decl: TypeDecl) Span {
   .{ file_id: decl.span.file_id, start, end: start + decl.name.len() }
 }
 
-fn dependency_path_for_alias(
-  snap: SemanticSnapshot,
-  parsed: cache.ParsedModule,
-  alias: String,
-) String? {
+fn dependency_path_for_alias(snap: SemanticSnapshot, parsed: cache.ParsedModule, alias: String) String? {
   plan := case imports.plan_dependencies_with_exists(
     parsed.module,
     snap.canonical_path,
@@ -468,9 +412,9 @@ fn find_import_ref(items: Vector<Item>, offset: Int) Ref? {
           .None => {},
         }
 
-        alias := decl.alias.unwrap_or(if decl.path.len() > 0 {
-          decl.path[decl.path.len() - 1]
-        } else { "" })
+        alias := decl.alias.unwrap_or(if decl.path.len() > 0 { decl.path[decl.path.len() - 1] } else {
+          ""
+        })
 
         return .Some(.ImportModule(alias))
       },
@@ -731,11 +675,7 @@ fn find_type_ref_in_expr(expr: Expr, offset: Int) Ref? {
 fn find_pattern_variant_ref(items: Vector<Item>, offset: Int) Ref? {
   for item in items {
     case item {
-      .Function(decl) => case find_pattern_variant_in_block(
-        decl.body,
-        offset,
-        .None,
-      ) {
+      .Function(decl) => case find_pattern_variant_in_block(decl.body, offset, .None) {
         .Some(r) => {
           return .Some(r)
         },
@@ -803,11 +743,7 @@ fn find_pattern_variant_in_expr(expr: Expr, offset: Int) Ref? {
       }
 
       for arm in arms {
-        case find_pattern_variant_in_pattern(
-          arm.pattern,
-          offset,
-          .Some(scrutinee),
-        ) {
+        case find_pattern_variant_in_pattern(arm.pattern, offset, .Some(scrutinee)) {
           .Some(r) => {
             return .Some(r)
           },
@@ -825,10 +761,7 @@ fn find_pattern_variant_in_expr(expr: Expr, offset: Int) Ref? {
       .None
     },
     .BlockExpr(b) => find_pattern_variant_in_block(b, offset, .None),
-    .If(cond, then_block, else_expr) => case find_pattern_variant_in_expr(
-      cond,
-      offset,
-    ) {
+    .If(cond, then_block, else_expr) => case find_pattern_variant_in_expr(cond, offset) {
       .Some(r) => .Some(r),
       .None => case find_pattern_variant_in_block(then_block, offset, .None) {
         .Some(r) => .Some(r),
@@ -1064,27 +997,14 @@ fn find_expr_ref_in_pattern(pat: Pattern, offset: Int) Ref? {
   }
 }
 
-fn variant_pattern_name_contains(
-  s: Span,
-  prefix: Vector<String>,
-  name: String,
-  offset: Int,
-) Bool {
+fn variant_pattern_name_contains(s: Span, prefix: Vector<String>, name: String, offset: Int) Bool {
   if prefix.len() == 0 {
     // Unqualified variants can be parsed either as `.Foo(...)`, where the
     // pattern span starts at the dot, or as bare `Foo(...)`, where it starts at
     // the name.  Without source text in the definition query, accept both
     // possible name starts so bare uppercase patterns include their first char.
-    bare := Span.{
-      file_id: s.file_id,
-      start: s.start,
-      end: s.start + name.len(),
-    }
-    dotted := Span.{
-      file_id: s.file_id,
-      start: s.start + 1,
-      end: s.start + 1 + name.len(),
-    }
+    bare := Span.{ file_id: s.file_id, start: s.start, end: s.start + name.len() }
+    dotted := Span.{ file_id: s.file_id, start: s.start + 1, end: s.start + 1 + name.len() }
 
     return bare.contains(offset) or dotted.contains(offset)
   }

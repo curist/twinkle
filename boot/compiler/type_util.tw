@@ -27,10 +27,7 @@ pub fn subst_type_params(
       ty
     },
     .Named(tid, inner_args) => {
-      .Named(
-        tid,
-        collect a in inner_args { subst_type_params(a, type_params, args) },
-      )
+      .Named(tid, collect a in inner_args { subst_type_params(a, type_params, args) })
     },
     .Vector(elem) => .Vector(subst_type_params(elem, type_params, args)),
     .Dict(k, v) => .Dict(

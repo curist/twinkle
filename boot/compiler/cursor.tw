@@ -5,9 +5,7 @@ use .tokens.{Token, TokenKind}
 
 pub type Cursor = .{ tokens: Vector<Token>, pos: Int, next_expr_id: Cell<Int> }
 
-pub fn new(tokens: Vector<Token>) Cursor {
-  .{ tokens, pos: 0, next_expr_id: Cell.new(0) }
-}
+pub fn new(tokens: Vector<Token>) Cursor { .{ tokens, pos: 0, next_expr_id: Cell.new(0) } }
 
 pub fn alloc_expr_id(c: Cursor) Int {
   id := c.next_expr_id.get()
@@ -24,17 +22,13 @@ pub fn text(c: Cursor) String {
 }
 
 pub fn span(c: Cursor) Span {
-  if c.pos < 0 or c.pos >= c.tokens.len() { span.new(0, 0, 0) } else {
-    c.tokens[c.pos].span
-  }
+  if c.pos < 0 or c.pos >= c.tokens.len() { span.new(0, 0, 0) } else { c.tokens[c.pos].span }
 }
 
 pub fn token(c: Cursor) Token? { c.tokens.get(c.pos) }
 
 pub fn preceded_by_newline(c: Cursor) Bool {
-  if c.pos < 0 or c.pos >= c.tokens.len() { false } else {
-    c.tokens[c.pos].preceded_by_newline
-  }
+  if c.pos < 0 or c.pos >= c.tokens.len() { false } else { c.tokens[c.pos].preceded_by_newline }
 }
 
 pub fn advance(c: Cursor) Cursor {
@@ -56,9 +50,7 @@ pub fn span_from(c: Cursor, from_pos: Int) Span {
     return span.new(0, 0, 0)
   }
 
-  end_pos := if c.pos - 1 >= c.tokens.len() { c.tokens.len() - 1 } else {
-    c.pos - 1
-  }
+  end_pos := if c.pos - 1 >= c.tokens.len() { c.tokens.len() - 1 } else { c.pos - 1 }
 
   if end_pos < from_pos {
     return c.tokens[from_pos].span

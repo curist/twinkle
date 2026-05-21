@@ -66,9 +66,7 @@ pub fn module() WasmModule {
     sched_wake_waiters_fn(),
     resume_rtc_fn(),
   ]
-  exports := collect f in funcs {
-    ExportDef.{ wasm_name: f.name, func_sym: f.name }
-  }
+  exports := collect f in funcs { ExportDef.{ wasm_name: f.name, func_sym: f.name } }
   WasmModule.{
     namespace: "rt.sched",
     types: [.FuncType("ResumeFn", [task_ref()], [.I32])],
@@ -89,30 +87,10 @@ pub fn module() WasmModule {
         ty: arr_null(),
         init: [Instr.RefNull(HeapType.Named("rt_types__Array"))],
       },
-      GlobalDef.{
-        name: "sched_head",
-        mutable: true,
-        ty: .I32,
-        init: [Instr.I32Const(0)],
-      },
-      GlobalDef.{
-        name: "sched_tail",
-        mutable: true,
-        ty: .I32,
-        init: [Instr.I32Const(0)],
-      },
-      GlobalDef.{
-        name: "sched_size",
-        mutable: true,
-        ty: .I32,
-        init: [Instr.I32Const(0)],
-      },
-      GlobalDef.{
-        name: "sched_blocked",
-        mutable: true,
-        ty: .I32,
-        init: [Instr.I32Const(0)],
-      },
+      GlobalDef.{ name: "sched_head", mutable: true, ty: .I32, init: [Instr.I32Const(0)] },
+      GlobalDef.{ name: "sched_tail", mutable: true, ty: .I32, init: [Instr.I32Const(0)] },
+      GlobalDef.{ name: "sched_size", mutable: true, ty: .I32, init: [Instr.I32Const(0)] },
+      GlobalDef.{ name: "sched_blocked", mutable: true, ty: .I32, init: [Instr.I32Const(0)] },
     ],
     tables: [],
     elems: [],

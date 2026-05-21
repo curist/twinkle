@@ -32,14 +32,9 @@ fn add_atom(a: Atom, live: Dict<Int, Bool>) Dict<Int, Bool> {
 
 // ── live_after ──────────────────────────────────────────────────────
 // Compute the set of locals live at the entry of an expression.
-type LiveScan = .{
-  live_in: Dict<Int, Bool>,
-  by_binding: Dict<Int, Dict<Int, Bool>>,
-}
+type LiveScan = .{ live_in: Dict<Int, Bool>, by_binding: Dict<Int, Dict<Int, Bool>> }
 
-pub fn live_after(expr: AnfExpr) Dict<Int, Bool> {
-  compute_live(expr, Dict.new())
-}
+pub fn live_after(expr: AnfExpr) Dict<Int, Bool> { compute_live(expr, Dict.new()) }
 
 pub fn live_after_by_binding(expr: AnfExpr) Dict<Int, Dict<Int, Bool>> {
   compute_live_map(expr, Dict.new(), Dict.new()).by_binding
@@ -64,21 +59,14 @@ fn compute_live(expr: AnfExpr, live: Dict<Int, Bool>) Dict<Int, Bool> {
   }
 }
 
-fn compute_live_map(
-  expr: AnfExpr,
-  live: Dict<Int, Bool>,
-  by_binding: Dict<Int, Dict<Int, Bool>>,
-) LiveScan {
+fn compute_live_map(expr: AnfExpr, live: Dict<Int, Bool>, by_binding: Dict<Int, Dict<Int, Bool>>) LiveScan {
   case expr {
     .Let(local, op, body) => {
       body_r := compute_live_map(body, live, by_binding)
       by_binding = body_r.by_binding
       by_binding[local.id] = body_r.live_in
       live_before_op := set_remove(body_r.live_in, local.id)
-      LiveScan.{
-        live_in: live_in_op_with_live_out(op, live_before_op),
-        by_binding,
-      }
+      LiveScan.{ live_in: live_in_op_with_live_out(op, live_before_op), by_binding }
     },
     .Atom(a) => LiveScan.{ live_in: add_atom(a, live), by_binding },
     .Return(.Some(a)) => LiveScan.{ live_in: add_atom(a, live), by_binding },
@@ -89,10 +77,7 @@ fn compute_live_map(
   }
 }
 
-pub fn live_in_op_with_live_out(op: AnfOp, live: Dict<Int, Bool>) Dict<
-  Int,
-  Bool,
-> {
+pub fn live_in_op_with_live_out(op: AnfOp, live: Dict<Int, Bool>) Dict<Int, Bool> {
   case op {
     .ACall(callee, args) => {
       result := add_atom(callee, live)
@@ -231,18 +216,11 @@ fn annotate_expr(expr: AnfExpr, param_locals: Dict<Int, Bool>) AnfExpr {
 fn annotate_op(op: AnfOp, param_locals: Dict<Int, Bool>) AnfOp {
   case op {
     .AIf(cond, then_e, else_e) => {
-      AnfOp.AIf(
-        cond,
-        annotate_expr(then_e, param_locals),
-        annotate_expr(else_e, param_locals),
-      )
+      AnfOp.AIf(cond, annotate_expr(then_e, param_locals), annotate_expr(else_e, param_locals))
     },
     .AMatch(scrutinee, arms) => {
       new_arms: Vector<AnfMatchArm> = collect arm in arms {
-        AnfMatchArm.{
-          pattern: arm.pattern,
-          body: annotate_expr(arm.body, param_locals),
-        }
+        AnfMatchArm.{ pattern: arm.pattern, body: annotate_expr(arm.body, param_locals) }
       }
       AnfOp.AMatch(scrutinee, new_arms)
     },

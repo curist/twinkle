@@ -3,13 +3,9 @@
 // Query stages use canonical paths as stable cache keys. LSP keeps the original
 // URI for protocol output, but source lookup and dependency planning should
 // converge on SourceIdentity.path.
-
 use @std.path
 
-pub type SourceIdentity = .{
-  path: String,
-  uri: String,
-}
+pub type SourceIdentity = .{ path: String, uri: String }
 
 pub fn from_path(path_str: String) SourceIdentity {
   normalized := normalize_path(path_str)
@@ -21,9 +17,7 @@ pub fn from_file_uri(uri: String) Result<SourceIdentity, String> {
   .Ok(from_path(p))
 }
 
-pub fn normalize_path(path_str: String) String {
-  path.normalize(path_str)
-}
+pub fn normalize_path(path_str: String) String { path.normalize(path_str) }
 
 pub fn file_uri_to_path(uri: String) Result<String, String> {
   if !uri.starts_with("file://") {
@@ -37,15 +31,20 @@ pub fn file_uri_to_path(uri: String) Result<String, String> {
     path_part = rest.slice("localhost".len(), rest.len())
   } else if !rest.starts_with("/") {
     slash := rest.index_of("/")
+
     case slash {
       .Some(i) => {
         host := rest.slice(0, i)
+
         if host != "" {
           return .Err("unsupported file URI host '${host}'")
         }
+
         path_part = rest.slice(i, rest.len())
       },
-      .None => { return .Err("file URI missing path") },
+      .None => {
+        return .Err("file URI missing path")
+      },
     }
   }
 
@@ -60,18 +59,25 @@ pub fn path_to_file_uri(path_str: String) String {
 fn percent_decode(s: String) Result<String, String> {
   out: Vector<Byte> = []
   i := 0
+
   for i < s.len() {
     b := s[i].to_int()
-    if b == 37 { // '%'
+
+    if b == 37 {
       if i + 2 >= s.len() {
         return .Err("truncated percent escape")
       }
+
       hi := try hex_value(s[i + 1].to_int())
       lo := try hex_value(s[i + 2].to_int())
+
       case Byte.from_int(hi * 16 + lo) {
-        .Some(byte) => out = .append(byte),
-        .None => { return .Err("invalid percent escape") },
+        .Some(byte) => out = out.append(byte),
+        .None => {
+          return .Err("invalid percent escape")
+        },
       }
+
       i = i + 3
     } else {
       out = .append(s[i])
@@ -87,22 +93,24 @@ fn percent_decode(s: String) Result<String, String> {
 
 fn percent_encode_path(s: String) String {
   out := ""
+
   for b in s.utf8_bytes() {
     n := b.to_int()
-    if is_unreserved_uri_byte(n) or n == 47 { // '/'
+
+    if is_unreserved_uri_byte(n) or n == 47 {
       out = "${out}${byte_to_string(n)}"
     } else {
       out = "${out}%${hex_digit(n / 16)}${hex_digit(n % 16)}"
     }
   }
+
   out
 }
 
 fn is_unreserved_uri_byte(n: Int) Bool {
-  (n >= 65 and n <= 90) or
-  (n >= 97 and n <= 122) or
-  (n >= 48 and n <= 57) or
-  n == 45 or n == 46 or n == 95 or n == 126
+  n >= 65 and n <= 90 or n >= 97 and n <= 122 or n >= 48 and n <= 57 or n == 45 or n == 46
+  or n == 95
+  or n == 126
 }
 
 fn byte_to_string(n: Int) String {
@@ -134,8 +142,17 @@ fn hex_digit(n: Int) String {
 }
 
 fn hex_value(n: Int) Result<Int, String> {
-  if n >= 48 and n <= 57 { return .Ok(n - 48) }
-  if n >= 65 and n <= 70 { return .Ok(n - 65 + 10) }
-  if n >= 97 and n <= 102 { return .Ok(n - 97 + 10) }
+  if n >= 48 and n <= 57 {
+    return .Ok(n - 48)
+  }
+
+  if n >= 65 and n <= 70 {
+    return .Ok(n - 65 + 10)
+  }
+
+  if n >= 97 and n <= 102 {
+    return .Ok(n - 97 + 10)
+  }
+
   .Err("invalid percent escape")
 }

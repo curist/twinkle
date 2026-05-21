@@ -23,9 +23,7 @@ pub fn type_def_deps(td: TypeDef) Vector<String> {
         .None => {},
       }
 
-      for field in fields {
-        deps = append_unique(deps, val_type_deps(field.ty))
-      }
+      for field in fields { deps = append_unique(deps, val_type_deps(field.ty)) }
     },
     .Array(_, field) => deps = append_unique(deps, val_type_deps(field.ty)),
     .FuncType(_, params, results) => {
@@ -159,16 +157,8 @@ fn tarjan_visit(
       cur_on_stack = result.on_stack
       cur_stack = result.stack
       cur_components = result.components
-      dep_low := dict_int(
-        cur_lowlinks,
-        dep,
-        "type_order: tarjan_visit dep lowlink",
-      )
-      self_low := dict_int(
-        cur_lowlinks,
-        name,
-        "type_order: tarjan_visit self lowlink",
-      )
+      dep_low := dict_int(cur_lowlinks, dep, "type_order: tarjan_visit dep lowlink")
+      self_low := dict_int(cur_lowlinks, name, "type_order: tarjan_visit self lowlink")
 
       if dep_low < self_low { cur_lowlinks[name] = dep_low }
     } else {
@@ -178,16 +168,8 @@ fn tarjan_visit(
       }
 
       if is_on_stack {
-        dep_idx := dict_int(
-          cur_indices,
-          dep,
-          "type_order: tarjan_visit dep index",
-        )
-        self_low := dict_int(
-          cur_lowlinks,
-          name,
-          "type_order: tarjan_visit self lowlink",
-        )
+        dep_idx := dict_int(cur_indices, dep, "type_order: tarjan_visit dep index")
+        self_low := dict_int(cur_lowlinks, name, "type_order: tarjan_visit self lowlink")
 
         if dep_idx < self_low { cur_lowlinks[name] = dep_idx }
       }
@@ -290,18 +272,14 @@ pub fn compute_type_order(types: Vector<TypeDef>) Vector<Vector<String>> {
     for member in comp {
       td := case types_by_name[member] {
         .Some(t) => t,
-        .None => error(
-          "type_order: compute_type_order: missing type '${member}'",
-        ),
+        .None => error("type_order: compute_type_order: missing type '${member}'"),
       }
 
       for dep in type_def_deps(td) {
         if type_name_set.has(dep) {
           dep_cid := case name_to_comp_id[dep] {
             .Some(c) => c,
-            .None => error(
-              "type_order: compute_type_order: missing comp for '${dep}'",
-            ),
+            .None => error("type_order: compute_type_order: missing comp for '${dep}'"),
           }
 
           if dep_cid != cid { deps = append_unique(deps, [dep_cid]) }
@@ -340,9 +318,7 @@ pub fn compute_type_order(types: Vector<TypeDef>) Vector<Vector<String>> {
       }
     }
 
-    if !progress {
-      error("type_order: compute_type_order: cyclic component ordering failure")
-    }
+    if !progress { error("type_order: compute_type_order: cyclic component ordering failure") }
   }
 
   result: Vector<Vector<String>> = []
@@ -350,9 +326,7 @@ pub fn compute_type_order(types: Vector<TypeDef>) Vector<Vector<String>> {
   for cid in ordered {
     comp := case comp_members[cid] {
       .Some(c) => c,
-      .None => error(
-        "type_order: compute_type_order: missing component '${cid}'",
-      ),
+      .None => error("type_order: compute_type_order: missing component '${cid}'"),
     }
     result = .append(comp)
   }

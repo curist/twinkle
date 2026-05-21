@@ -18,10 +18,7 @@ type TaintScan = .{
   by_binding: Dict<Int, Dict<Int, Bool>>,
 }
 
-type TaintOpScan = .{
-  tainted: Dict<Int, Bool>,
-  by_binding: Dict<Int, Dict<Int, Bool>>,
-}
+type TaintOpScan = .{ tainted: Dict<Int, Bool>, by_binding: Dict<Int, Dict<Int, Bool>> }
 
 fn set_add(s: Dict<Int, Bool>, k: Int) Dict<Int, Bool> {
   s[k] = true
@@ -40,10 +37,10 @@ fn add_atom_live(a: Atom, live: Dict<Int, Bool>) Dict<Int, Bool> {
   }
 }
 
-fn merge_by_binding(
-  a: Dict<Int, Dict<Int, Bool>>,
-  b: Dict<Int, Dict<Int, Bool>>,
-) Dict<Int, Dict<Int, Bool>> {
+fn merge_by_binding(a: Dict<Int, Dict<Int, Bool>>, b: Dict<Int, Dict<Int, Bool>>) Dict<
+  Int,
+  Dict<Int, Bool>,
+> {
   for k in b.keys() {
     case b[k] {
       .Some(v) => { a[k] = v },
@@ -70,11 +67,7 @@ fn taint_atoms(args: Vector<Atom>, tainted: Dict<Int, Bool>) Dict<Int, Bool> {
   tainted
 }
 
-fn taint_non_base_args(
-  args: Vector<Atom>,
-  base_arg: Int,
-  tainted: Dict<Int, Bool>,
-) Dict<Int, Bool> {
+fn taint_non_base_args(args: Vector<Atom>, base_arg: Int, tainted: Dict<Int, Bool>) Dict<Int, Bool> {
   idx := 0
 
   for a in args {
@@ -86,10 +79,7 @@ fn taint_non_base_args(
   tainted
 }
 
-pub fn collect_tainted(func: AnfFunctionDef, semantics: OptimizerSemantics) Dict<
-  Int,
-  Bool,
-> {
+pub fn collect_tainted(func: AnfFunctionDef, semantics: OptimizerSemantics) Dict<Int, Bool> {
   tainted: Dict<Int, Bool> = Dict.new()
 
   // Function params come from outside the function and are never unique.
@@ -102,15 +92,9 @@ pub fn collect_tainted(func: AnfFunctionDef, semantics: OptimizerSemantics) Dict
 
 // Fused taint + liveness: single backward pass returning both the taint set
 // and the per-binding liveness map (live set at entry of each Let body).
-pub type TaintWithLive = .{
-  tainted: Dict<Int, Bool>,
-  by_binding: Dict<Int, Dict<Int, Bool>>,
-}
+pub type TaintWithLive = .{ tainted: Dict<Int, Bool>, by_binding: Dict<Int, Dict<Int, Bool>> }
 
-pub fn collect_tainted_and_live(
-  func: AnfFunctionDef,
-  semantics: OptimizerSemantics,
-) TaintWithLive {
+pub fn collect_tainted_and_live(func: AnfFunctionDef, semantics: OptimizerSemantics) TaintWithLive {
   tainted: Dict<Int, Bool> = Dict.new()
 
   for p in func.params { tainted[p.local.id] = true }
@@ -127,15 +111,9 @@ pub fn base_reusable_after_binding_with_live(
   base: LocalId,
   result: LocalId,
   live_after_body: Dict<Int, Bool>,
-) Bool {
-  is_consume_reassign(body, base, result) or !set_has(live_after_body, base.id)
-}
+) Bool { is_consume_reassign(body, base, result) or !set_has(live_after_body, base.id) }
 
-pub fn base_reusable_after_binding(
-  body: AnfExpr,
-  base: LocalId,
-  result: LocalId,
-) Bool {
+pub fn base_reusable_after_binding(body: AnfExpr, base: LocalId, result: LocalId) Bool {
   base_reusable_after_binding_with_live(body, base, result, live_after(body))
 }
 
@@ -216,17 +194,9 @@ fn scan_tainted_expr(
       }
 
       live_before_op := set_remove(live_after_body, local.id)
-      TaintScan.{
-        tainted,
-        live_in: live_in_op_with_live_out(op, live_before_op),
-        by_binding,
-      }
+      TaintScan.{ tainted, live_in: live_in_op_with_live_out(op, live_before_op), by_binding }
     },
-    .Atom(a) => TaintScan.{
-      tainted,
-      live_in: add_atom_live(a, live_out),
-      by_binding: Dict.new(),
-    },
+    .Atom(a) => TaintScan.{ tainted, live_in: add_atom_live(a, live_out), by_binding: Dict.new() },
     .Return(.Some(a)) => TaintScan.{
       tainted,
       live_in: add_atom_live(a, live_out),
@@ -237,21 +207,9 @@ fn scan_tainted_expr(
       live_in: add_atom_live(a, live_out),
       by_binding: Dict.new(),
     },
-    .Return(.None) => TaintScan.{
-      tainted,
-      live_in: live_out,
-      by_binding: Dict.new(),
-    },
-    .Break(.None) => TaintScan.{
-      tainted,
-      live_in: live_out,
-      by_binding: Dict.new(),
-    },
-    .Continue => TaintScan.{
-      tainted,
-      live_in: live_out,
-      by_binding: Dict.new(),
-    },
+    .Return(.None) => TaintScan.{ tainted, live_in: live_out, by_binding: Dict.new() },
+    .Break(.None) => TaintScan.{ tainted, live_in: live_out, by_binding: Dict.new() },
+    .Continue => TaintScan.{ tainted, live_in: live_out, by_binding: Dict.new() },
   }
 }
 
@@ -284,9 +242,7 @@ fn scan_tainted_op(
       case call_info(semantics, func_id) {
         .Some(info) => {
           case info.cow_base_arg {
-            .Some(base_arg) => {
-              tainted = taint_non_base_args(args, base_arg, tainted)
-            },
+            .Some(base_arg) => { tainted = taint_non_base_args(args, base_arg, tainted) },
             .None => {
               case info.effect {
                 .ReadOnly => {},
@@ -300,10 +256,7 @@ fn scan_tainted_op(
 
       TaintOpScan.{ tainted, by_binding: Dict.new() }
     },
-    .ACall(_, args) => TaintOpScan.{
-      tainted: taint_atoms(args, tainted),
-      by_binding: Dict.new(),
-    },
+    .ACall(_, args) => TaintOpScan.{ tainted: taint_atoms(args, tainted), by_binding: Dict.new() },
     .AIf(_, then_e, else_e) => {
       then_r := scan_tainted_expr(then_e, tainted, live_out, semantics)
       else_r := scan_tainted_expr(else_e, then_r.tainted, live_out, semantics)
@@ -428,8 +381,7 @@ pub fn op_uses_local_non_recursive(op: AnfOp, local: LocalId) Bool {
 
       false
     },
-    .ABinOp(_, left, right, _) => atom_is_local(left, local)
-    or atom_is_local(right, local),
+    .ABinOp(_, left, right, _) => atom_is_local(left, local) or atom_is_local(right, local),
     .AUnOp(_, inner, _) => atom_is_local(inner, local),
     .AMakeClosure(_, free_vars) => {
       for v in free_vars {
@@ -470,11 +422,9 @@ pub fn op_uses_local_non_recursive(op: AnfOp, local: LocalId) Bool {
 
       false
     },
-    .AIndex(base, index, _, _) => atom_is_local(base, local)
-    or atom_is_local(index, local),
+    .AIndex(base, index, _, _) => atom_is_local(base, local) or atom_is_local(index, local),
     .AInit(value) => atom_is_local(value, local),
-    .AAssign(target, value) => target.id == local.id
-    or atom_is_local(value, local),
+    .AAssign(target, value) => target.id == local.id or atom_is_local(value, local),
     .AIf(cond, _, _) => atom_is_local(cond, local),
     .AMatch(scrutinee, _) => atom_is_local(scrutinee, local),
     .ALoop(_) => false,
@@ -512,9 +462,7 @@ fn count_global_call_sites_in_op(op: AnfOp, func_id: FuncId) Int {
 
 fn is_consume_reassign(body: AnfExpr, base: LocalId, result: LocalId) Bool {
   case body {
-    .Let(_, .AAssign(target, .ALocal(v)), _) => {
-      target.id == base.id and v.id == result.id
-    },
+    .Let(_, .AAssign(target, .ALocal(v)), _) => { target.id == base.id and v.id == result.id },
     _ => false,
   }
 }
@@ -537,12 +485,7 @@ pub fn collect_consumed_params(module: AnfModule) Dict<Int, Dict<Int, Bool>> {
   has_external_call: Dict<Int, Bool> = Dict.new()
 
   for func in module.functions {
-    r := scan_consume_sites_expr(
-      func.body,
-      func.func_id,
-      non_consuming,
-      has_external_call,
-    )
+    r := scan_consume_sites_expr(func.body, func.func_id, non_consuming, has_external_call)
     non_consuming = r.non_consuming
     has_external_call = r.has_external_call
   }
@@ -607,12 +550,7 @@ fn scan_consume_sites_expr(
         _ => {},
       }
 
-      r := scan_consume_sites_op(
-        op,
-        caller_id,
-        non_consuming,
-        has_external_call,
-      )
+      r := scan_consume_sites_op(op, caller_id, non_consuming, has_external_call)
       non_consuming = r.non_consuming
       has_external_call = r.has_external_call
       scan_consume_sites_expr(body, caller_id, non_consuming, has_external_call)
@@ -629,45 +567,20 @@ fn scan_consume_sites_op(
 ) ConsumeSiteScan {
   case op {
     .AIf(_, then_e, else_e) => {
-      r1 := scan_consume_sites_expr(
-        then_e,
-        caller_id,
-        non_consuming,
-        has_external_call,
-      )
-      scan_consume_sites_expr(
-        else_e,
-        caller_id,
-        r1.non_consuming,
-        r1.has_external_call,
-      )
+      r1 := scan_consume_sites_expr(then_e, caller_id, non_consuming, has_external_call)
+      scan_consume_sites_expr(else_e, caller_id, r1.non_consuming, r1.has_external_call)
     },
     .AMatch(_, arms) => {
       r := ConsumeSiteScan.{ non_consuming, has_external_call }
 
       for arm in arms {
-        r = scan_consume_sites_expr(
-          arm.body,
-          caller_id,
-          r.non_consuming,
-          r.has_external_call,
-        )
+        r = scan_consume_sites_expr(arm.body, caller_id, r.non_consuming, r.has_external_call)
       }
 
       r
     },
-    .ALoop(body) => scan_consume_sites_expr(
-      body,
-      caller_id,
-      non_consuming,
-      has_external_call,
-    ),
-    .ADefer(body) => scan_consume_sites_expr(
-      body,
-      caller_id,
-      non_consuming,
-      has_external_call,
-    ),
+    .ALoop(body) => scan_consume_sites_expr(body, caller_id, non_consuming, has_external_call),
+    .ADefer(body) => scan_consume_sites_expr(body, caller_id, non_consuming, has_external_call),
     _ => ConsumeSiteScan.{ non_consuming, has_external_call },
   }
 }

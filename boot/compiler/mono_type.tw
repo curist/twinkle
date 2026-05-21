@@ -2,7 +2,6 @@
 //
 // Extracted from resolver.tw so that both lib/source/diagnostics.tw and
 // compiler/resolver.tw can import MonoType without circular dependency.
-
 pub type TypeId = .{ id: Int }
 
 pub type MonoType = {
@@ -12,8 +11,8 @@ pub type MonoType = {
   Byte,
   String,
   Void,
-  Anyref_,   // backend-internal explicit anyref carrier (inserted after ANF lowering)
-  ExternRef(TypeId),  // opaque host handle backed by Wasm externref
+  Anyref_,
+  ExternRef(TypeId),
   Var(String),
   Named(TypeId, Vector<MonoType>),
   Vector(MonoType),

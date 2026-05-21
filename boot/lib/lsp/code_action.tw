@@ -14,18 +14,11 @@ pub fn text_edit(range: json.Json, new_text: String) json.Json {
 
 /// Build a WorkspaceEdit with changes for a single file.
 pub fn workspace_edit(uri: String, edits: Vector<json.Json>) json.Json {
-  json.object([
-    json.kv("changes", json.object([json.kv(uri, json.array(edits))])),
-  ])
+  json.object([json.kv("changes", json.object([json.kv(uri, json.array(edits))]))])
 }
 
 /// Build a CodeAction JSON object.
-pub fn code_action(
-  title: String,
-  kind: String,
-  edit: json.Json,
-  diagnostics: Vector<json.Json>,
-) json.Json {
+pub fn code_action(title: String, kind: String, edit: json.Json, diagnostics: Vector<json.Json>) json.Json {
   json.object([
     json.kv("title", .Str(title)),
     json.kv("kind", .Str(kind)),
@@ -71,10 +64,7 @@ pub fn unused_import_actions(
       .Ok(e) => e,
       .Err(_) => { continue },
     }
-    replacement := case json.decode(
-      data,
-      json.field("replacement", json.string()),
-    ) {
+    replacement := case json.decode(data, json.field("replacement", json.string())) {
       .Ok(r) => r,
       .Err(_) => { continue },
     }
@@ -93,12 +83,7 @@ pub fn unused_import_actions(
       import_name := if message.starts_with("unused import: ") {
         message.substring(15, message.len())
       } else { message }
-      action := code_action(
-        "Remove unused import '${import_name}'",
-        "quickfix",
-        ws_edit,
-        [diag],
-      )
+      action := code_action("Remove unused import '${import_name}'", "quickfix", ws_edit, [diag])
       actions = .append(action)
       bulk_edits = .append(edit_json)
       bulk_diags = .append(diag)
@@ -108,12 +93,7 @@ pub fn unused_import_actions(
   // Bulk action when more than one
   if actions.len() > 1 {
     bulk_ws_edit := workspace_edit(uri, bulk_edits)
-    bulk := code_action(
-      "Remove all unused imports",
-      "quickfix",
-      bulk_ws_edit,
-      bulk_diags,
-    )
+    bulk := code_action("Remove all unused imports", "quickfix", bulk_ws_edit, bulk_diags)
     actions = .append(bulk)
   }
 

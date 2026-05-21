@@ -5,11 +5,7 @@ use lib.source.span
 
 fn dummy_span() span.Span { span.Span.{ file_id: 0, start: 0, end: 0 } }
 
-fn subst_type_params(
-  ty: MonoType,
-  type_params: Vector<String>,
-  args: Vector<MonoType>,
-) MonoType {
+fn subst_type_params(ty: MonoType, type_params: Vector<String>, args: Vector<MonoType>) MonoType {
   case ty {
     .Var(name) => {
       for param, i in type_params {
@@ -21,10 +17,7 @@ fn subst_type_params(
       ty
     },
     .Named(tid, inner_args) => {
-      .Named(
-        tid,
-        collect arg in inner_args { subst_type_params(arg, type_params, args) },
-      )
+      .Named(tid, collect arg in inner_args { subst_type_params(arg, type_params, args) })
     },
     .Vector(inner) => .Vector(subst_type_params(inner, type_params, args)),
     .Dict(k, v) => .Dict(
@@ -87,58 +80,32 @@ fn build_env() ResolvedEnv {
   alias_entry := TypeEntry.{
     id: alias_tid,
     arity: 1,
-    def: .Some(
-      ResolvedTypeDef.Alias(
-        "InnerAlias",
-        ["A"],
-        .Named(sum_tid, [MonoType.Var("A")]),
-      ),
-    ),
+    def: .Some(ResolvedTypeDef.Alias("InnerAlias", ["A"], .Named(sum_tid, [MonoType.Var("A")]))),
     span: dummy_span(),
     is_extern: false,
   }
   wrapper_entry := TypeEntry.{
     id: wrapper_tid,
     arity: 1,
-    def: .Some(
-      ResolvedTypeDef.Alias(
-        "WrapperAlias",
-        ["B"],
-        .Named(alias_tid, [MonoType.Var("B")]),
-      ),
-    ),
+    def: .Some(ResolvedTypeDef.Alias("WrapperAlias", ["B"], .Named(alias_tid, [MonoType.Var("B")]))),
     span: dummy_span(),
     is_extern: false,
   }
-  resolver.empty_env().add_type(sum_entry, "InnerDef").add_type(
-    alias_entry,
-    "InnerAlias",
-  ).add_type(wrapper_entry, "WrapperAlias")
+  resolver.empty_env().add_type(sum_entry, "InnerDef").add_type(alias_entry, "InnerAlias").add_type(
+    wrapper_entry,
+    "WrapperAlias",
+  )
 }
 
 fn expect(actual: Bool, expected: Bool, label: String) {
-  if actual != expected {
-    error("${label}: expected ${expected}, got ${actual}")
-  }
+  if actual != expected { error("${label}: expected ${expected}, got ${actual}") }
 }
 
 env := build_env()
 expect(can_match_variant_pattern(.Optional(.Int), env), true, "optional")
 expect(can_match_variant_pattern(.Result(.Int, .String), env), true, "result")
-expect(
-  can_match_variant_pattern(.Named(TypeId.{ id: 100 }, [.Int]), env),
-  true,
-  "sum",
-)
-expect(
-  can_match_variant_pattern(.Named(TypeId.{ id: 101 }, [.Int]), env),
-  true,
-  "alias",
-)
-expect(
-  can_match_variant_pattern(.Named(TypeId.{ id: 102 }, [.Int]), env),
-  true,
-  "alias_chain",
-)
+expect(can_match_variant_pattern(.Named(TypeId.{ id: 100 }, [.Int]), env), true, "sum")
+expect(can_match_variant_pattern(.Named(TypeId.{ id: 101 }, [.Int]), env), true, "alias")
+expect(can_match_variant_pattern(.Named(TypeId.{ id: 102 }, [.Int]), env), true, "alias_chain")
 expect(can_match_variant_pattern(.Vector(.Int), env), false, "vector")
 println("faithful-nested-repro: ok")

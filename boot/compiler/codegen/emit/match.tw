@@ -1,12 +1,8 @@
 // Pattern-match control-flow emission helpers.
-use compiler.backend.prepared_ir.{
-  PreparedAtom, PreparedExpr, PreparedMatchArm, PreparedPattern,
-}
+use compiler.backend.prepared_ir.{PreparedAtom, PreparedExpr, PreparedMatchArm, PreparedPattern}
 use compiler.codegen.emit.context.{EmitCtx}
 use compiler.codegen.emit.control_flow.{append_result_store}
-use compiler.codegen.emit.helpers.{
-  all_arms_diverge, expr_always_diverges, pattern_is_trivial,
-}
+use compiler.codegen.emit.helpers.{all_arms_diverge, expr_always_diverges, pattern_is_trivial}
 use compiler.codegen.emit.layout_helpers.{cached_layout_of, get_sum_layout_ctx}
 use compiler.codegen.wasm_ir.{Instr, ValType}
 use compiler.mono_type.{MonoType}
@@ -15,16 +11,10 @@ pub type MatchEmitFns = .{
   emit_atom: fn(PreparedAtom, EmitCtx, Vector<Instr>) Vector<Instr>,
   emit_expr: fn(PreparedExpr, MonoType, EmitCtx, Vector<Instr>) Vector<Instr>,
   match_scrutinee_mono: fn(PreparedAtom, EmitCtx) MonoType,
-  emit_pattern_condition: fn(
-    PreparedPattern,
-    Vector<Instr>,
-    MonoType,
-    EmitCtx,
-    Vector<Instr>,
-  ) Vector<Instr>,
-  emit_pattern_bindings: fn(PreparedPattern, Vector<Instr>, MonoType, EmitCtx) Vector<
+  emit_pattern_condition: fn(PreparedPattern, Vector<Instr>, MonoType, EmitCtx, Vector<Instr>) Vector<
     Instr,
   >,
+  emit_pattern_bindings: fn(PreparedPattern, Vector<Instr>, MonoType, EmitCtx) Vector<Instr>,
 }
 
 type StringCandidate = .{ literal: String, arm_index: Int }
@@ -78,16 +68,7 @@ pub fn emit_match_op(
       fns,
     )
   } else {
-    emit_arm_chain(
-      scrutinee_instrs,
-      scrutinee_mono,
-      arms,
-      result_idx,
-      result_mono,
-      ctx,
-      buf,
-      fns,
-    )
+    emit_arm_chain(scrutinee_instrs, scrutinee_mono, arms, result_idx, result_mono, ctx, buf, fns)
   }
 }
 
@@ -108,26 +89,15 @@ fn emit_arm_chain(
   head := arms[0]
   tail: Vector<PreparedMatchArm> = arms.slice(1, arms.len())
   // Pattern condition is used as sub-body content — use fresh []
-  cond_instrs := fns.emit_pattern_condition(
-    head.pattern,
-    scrutinee_instrs,
-    scrutinee_mono,
-    ctx,
-    [],
-  )
+  cond_instrs := fns.emit_pattern_condition(head.pattern, scrutinee_instrs, scrutinee_mono, ctx, [])
   // Then: bindings + body + store result — all fresh [] (sub-body)
-  bindings := fns.emit_pattern_bindings(
-    head.pattern,
-    scrutinee_instrs,
-    scrutinee_mono,
-    ctx,
-  )
+  bindings := fns.emit_pattern_bindings(head.pattern, scrutinee_instrs, scrutinee_mono, ctx)
   body_instrs := fns.emit_expr(head.body, result_mono, ctx, [])
   head_div := expr_always_diverges(head.body)
   then_body := bindings.concat(body_instrs)
-  then_body = if !head_div {
-    append_result_store(then_body, result_idx, result_mono)
-  } else { then_body }
+  then_body = if !head_div { append_result_store(then_body, result_idx, result_mono) } else {
+    then_body
+  }
   // Else: recurse on tail — fresh [] (sub-body)
   else_body := emit_arm_chain(
     scrutinee_instrs,
@@ -148,11 +118,7 @@ fn emit_arm_chain(
   out
 }
 
-fn is_br_table_eligible(
-  arms: Vector<PreparedMatchArm>,
-  scrutinee_mono: MonoType,
-  ctx: EmitCtx,
-) Bool {
+fn is_br_table_eligible(arms: Vector<PreparedMatchArm>, scrutinee_mono: MonoType, ctx: EmitCtx) Bool {
   layout := cached_layout_of(scrutinee_mono, ctx)
   variant_count := case layout {
     .Sum(s) => s.variants.len(),
@@ -296,9 +262,9 @@ fn emit_br_table_match(
 
     if !expr_always_diverges(arm.body) { arm_body = .append(.Br(end_label)) }
 
-    nested_body = [
-      Instr.Block(case_arm_label(result_idx, tag), .None, nested_body),
-    ].concat(arm_body)
+    nested_body = [Instr.Block(case_arm_label(result_idx, tag), .None, nested_body)].concat(
+      arm_body,
+    )
   }
 
   default_body: Vector<Instr> = []
@@ -318,9 +284,7 @@ fn emit_br_table_match(
     default_body = .append(.Unreachable)
   }
 
-  match_body := [Instr.Block(default_label, .None, nested_body)].concat(
-    default_body,
-  )
+  match_body := [Instr.Block(default_label, .None, nested_body)].concat(default_body)
   out := buf.append(.Block(end_label, .None, match_body))
 
   if all_arms_diverge(arms) { out = .append(.Unreachable) }
@@ -337,26 +301,16 @@ fn emit_match_arm_body(
   ctx: EmitCtx,
   fns: MatchEmitFns,
 ) Vector<Instr> {
-  bindings := fns.emit_pattern_bindings(
-    arm.pattern,
-    scrutinee_instrs,
-    scrutinee_mono,
-    ctx,
-  )
+  bindings := fns.emit_pattern_bindings(arm.pattern, scrutinee_instrs, scrutinee_mono, ctx)
   body_instrs := fns.emit_expr(arm.body, result_mono, ctx, [])
   out := bindings.concat(body_instrs)
 
-  if !expr_always_diverges(arm.body) {
-    out = append_result_store(out, result_idx, result_mono)
-  }
+  if !expr_always_diverges(arm.body) { out = append_result_store(out, result_idx, result_mono) }
 
   out
 }
 
-fn is_string_trie_eligible(
-  arms: Vector<PreparedMatchArm>,
-  scrutinee_mono: MonoType,
-) Bool {
+fn is_string_trie_eligible(arms: Vector<PreparedMatchArm>, scrutinee_mono: MonoType) Bool {
   case scrutinee_mono {
     .String => {},
     _ => { return false },
@@ -456,12 +410,7 @@ fn emit_string_trie_match(
 
   default_label := string_case_default_label(result_idx)
   end_label := string_case_end_label(result_idx)
-  dispatch := emit_string_length_dispatch(
-    scrutinee_instrs,
-    buckets,
-    default_label,
-    result_idx,
-  )
+  dispatch := emit_string_length_dispatch(scrutinee_instrs, buckets, default_label, result_idx)
   nested_body := dispatch
 
   for bucket in buckets {
@@ -477,13 +426,9 @@ fn emit_string_trie_match(
       default_label,
       end_label,
     )
-    nested_body = [
-      Instr.Block(
-        string_case_len_label(result_idx, bucket.len),
-        .None,
-        nested_body,
-      ),
-    ].concat(bucket_body)
+    nested_body = [Instr.Block(string_case_len_label(result_idx, bucket.len), .None, nested_body)].concat(
+      bucket_body,
+    )
   }
 
   default_body: Vector<Instr> = []
@@ -503,9 +448,7 @@ fn emit_string_trie_match(
     default_body = .append(.Unreachable)
   }
 
-  match_body := [Instr.Block(default_label, .None, nested_body)].concat(
-    default_body,
-  )
+  match_body := [Instr.Block(default_label, .None, nested_body)].concat(default_body)
   out := buf.append(.Block(end_label, .None, match_body))
 
   if all_arms_diverge(arms) { out = .append(.Unreachable) }
@@ -513,11 +456,9 @@ fn emit_string_trie_match(
   out
 }
 
-fn add_string_candidate_to_buckets(
-  buckets: Vector<LengthBucket>,
-  len: Int,
-  cand: StringCandidate,
-) Vector<LengthBucket> {
+fn add_string_candidate_to_buckets(buckets: Vector<LengthBucket>, len: Int, cand: StringCandidate) Vector<
+  LengthBucket,
+> {
   out := buckets
 
   for bucket, i in out {
@@ -541,9 +482,9 @@ fn emit_string_length_dispatch(
   if buckets.len() == 1 {
     len := buckets[0].len
 
-    return scrutinee_instrs.append(.RefAsNonNull).append(.ArrayLen).append(
-      .I32Const(len),
-    ).append(.I32Ne).append(.BrIf(default_label))
+    return scrutinee_instrs.append(.RefAsNonNull).append(.ArrayLen).append(.I32Const(len)).append(
+      .I32Ne,
+    ).append(.BrIf(default_label))
   }
 
   min_len := buckets[0].len
@@ -561,22 +502,15 @@ fn emit_string_length_dispatch(
     labels: Vector<String> = []
 
     for len in min_len..max_len + 1 {
-      labels = .append(
-        label_for_string_length(buckets, len, default_label, result_idx),
-      )
+      labels = .append(label_for_string_length(buckets, len, default_label, result_idx))
     }
 
-    return scrutinee_instrs.append(.RefAsNonNull).append(.ArrayLen).append(
-      .I32Const(min_len),
-    ).append(.I32Sub).append(.BrTable(labels, default_label))
+    return scrutinee_instrs.append(.RefAsNonNull).append(.ArrayLen).append(.I32Const(min_len)).append(
+      .I32Sub,
+    ).append(.BrTable(labels, default_label))
   }
 
-  emit_sparse_length_dispatch(
-    scrutinee_instrs,
-    buckets,
-    default_label,
-    result_idx,
-  )
+  emit_sparse_length_dispatch(scrutinee_instrs, buckets, default_label, result_idx)
 }
 
 fn label_for_string_length(
@@ -605,9 +539,7 @@ fn emit_sparse_length_dispatch(
   for bucket in buckets {
     out = .concat(scrutinee_instrs).append(.RefAsNonNull).append(.ArrayLen).append(
       .I32Const(bucket.len),
-    ).append(.I32Eq).append(
-      .BrIf(string_case_len_label(result_idx, bucket.len)),
-    )
+    ).append(.I32Eq).append(.BrIf(string_case_len_label(result_idx, bucket.len)))
   }
 
   out.append(.Br(default_label))
@@ -655,11 +587,7 @@ fn build_string_trie(
     return .Chain(candidates)
   }
 
-  best_pos := choose_best_string_position(
-    candidates,
-    used_positions,
-    literal_len,
-  )
+  best_pos := choose_best_string_position(candidates, used_positions, literal_len)
 
   if best_pos < 0 {
     return .Chain(candidates)
@@ -668,11 +596,7 @@ fn build_string_trie(
   groups: Vector<ByteCandidateGroup> = []
 
   for cand in candidates {
-    groups = add_candidate_to_byte_groups(
-      groups,
-      string_byte_at(cand.literal, best_pos),
-      cand,
-    )
+    groups = add_candidate_to_byte_groups(groups, string_byte_at(cand.literal, best_pos), cand)
   }
 
   branches: Vector<TrieBranch> = []
@@ -893,17 +817,13 @@ fn emit_string_candidate_chain(
   cond.append(.If(.None, then_body, else_body))
 }
 
-fn emit_string_eq_condition(
-  scrutinee_instrs: Vector<Instr>,
-  literal: String,
-  ctx: EmitCtx,
-) Vector<Instr> {
+fn emit_string_eq_condition(scrutinee_instrs: Vector<Instr>, literal: String, ctx: EmitCtx) Vector<
+  Instr,
+> {
   out := scrutinee_instrs
 
   case ctx.registry.string_pool[literal] {
-    .Some(entry) => out.append(.Call(entry.getter_sym)).append(
-      .Call("rt_str__eq"),
-    ),
+    .Some(entry) => out.append(.Call(entry.getter_sym)).append(.Call("rt_str__eq")),
     .None => error("emit_string_eq_condition: string not in pool"),
   }
 }

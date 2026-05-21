@@ -7,18 +7,7 @@ use lib.text.line_index
 
 use .range.{range_to_json}
 
-pub fn definition_response(
-  index: line_index.LineIndex,
-  result: query_definition.DefinitionResult,
-) json.Json {
-  range := line_index.byte_range_to_range(
-    index,
-    result.span.start,
-    result.span.end,
-    .Utf16,
-  )
-  json.object([
-    json.kv("uri", .Str(result.uri)),
-    json.kv("range", range_to_json(range)),
-  ])
+pub fn definition_response(index: line_index.LineIndex, result: query_definition.DefinitionResult) json.Json {
+  range := line_index.byte_range_to_range(index, result.span.start, result.span.end, .Utf16)
+  json.object([json.kv("uri", .Str(result.uri)), json.kv("range", range_to_json(range))])
 }

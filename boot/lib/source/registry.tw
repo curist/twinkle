@@ -98,8 +98,8 @@ pub fn line_text(reg: FileRegistry, s: Span) String? {
   f := try get_file(reg, s.file_id)
   line_index := find_line_index(f.line_starts, s.start)
   line_start := f.line_starts[line_index]
-  line_end := if line_index + 1 < f.line_starts.len() {
-    f.line_starts[line_index + 1]
-  } else { f.source.len() }
+  line_end := if line_index + 1 < f.line_starts.len() { f.line_starts[line_index + 1] } else {
+    f.source.len()
+  }
   .Some(f.source.slice(line_start, line_end))
 }

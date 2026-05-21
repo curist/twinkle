@@ -12,12 +12,7 @@ pub type Item = {
   ErrorItem(Span),
 }
 
-pub type ExternTypeDecl = .{
-  is_pub: Bool,
-  module: String,
-  name: String,
-  span: Span,
-}
+pub type ExternTypeDecl = .{ is_pub: Bool, module: String, name: String, span: Span }
 
 pub type UseDecl = .{
   is_stdlib: Bool,
@@ -80,12 +75,7 @@ pub type TypeDef = {
   ErrorDef(Span),
 }
 
-pub type RecordField = .{
-  name: String,
-  ty: TypeExpr,
-  span: Span,
-  name_span: Span,
-}
+pub type RecordField = .{ name: String, ty: TypeExpr, span: Span, name_span: Span }
 
 pub type VariantDecl = .{ name: String, fields: Vector<TypeExpr>, span: Span }
 

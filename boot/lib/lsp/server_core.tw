@@ -2,29 +2,29 @@
 //
 // Transport code owns framing and I/O. This module owns protocol state and
 // responses so server behavior can be tested without stdio.
-
 use @std.date
 use @std.fs
 use @std.path
+
 use compiler.imports
 use compiler.query.cache as query_cache
 use compiler.query.completion as query_completion
-use compiler.query.diagnostics as query_diagnostics
 use compiler.query.definition as query_definition
+use compiler.query.diagnostics as query_diagnostics
 use compiler.query.hover as query_hover
 use compiler.query.semantic
 use lib.json
-use lib.module.loader
-use lib.query.keys
-use lib.source.identity
 use lib.lsp.code_action as lsp_code_action
 use lib.lsp.completion as lsp_completion
+use lib.lsp.definition as lsp_definition
 use lib.lsp.diagnostics as lsp_diagnostics
 use lib.lsp.document_store
-use lib.lsp.definition as lsp_definition
 use lib.lsp.hover as lsp_hover
 use lib.lsp.params
 use lib.lsp.protocol
+use lib.module.loader
+use lib.query.keys
+use lib.source.identity
 use lib.text.line_index
 
 pub type State = .{
@@ -38,10 +38,7 @@ pub type State = .{
   last_published_versions: Dict<String, Int>,
 }
 
-pub type Step = .{
-  state: State,
-  outgoing: Vector<json.Json>,
-}
+pub type Step = .{ state: State, outgoing: Vector<json.Json> }
 
 pub fn initial_state() State {
   .{
@@ -68,19 +65,21 @@ fn handle_request(state: State, req: protocol.Request) Step {
   case req.method {
     "initialize" => {
       result := json.object([
-        json.kv("capabilities", json.object([
-          json.kv("positionEncoding", .Str("utf-16")),
-          json.kv("textDocumentSync", .Int(1)),
-          json.kv("hoverProvider", .Bool(true)),
-          json.kv("definitionProvider", .Bool(true)),
-          json.kv("completionProvider", json.object([
-            json.kv("triggerCharacters", json.array([.Str(".")])),
-          ])),
-          json.kv("codeActionProvider", .Bool(true)),
-        ])),
-        json.kv("serverInfo", json.object([
-          json.kv("name", .Str("twinkle-lsp")),
-        ])),
+        json.kv(
+          "capabilities",
+          json.object([
+            json.kv("positionEncoding", .Str("utf-16")),
+            json.kv("textDocumentSync", .Int(1)),
+            json.kv("hoverProvider", .Bool(true)),
+            json.kv("definitionProvider", .Bool(true)),
+            json.kv(
+              "completionProvider",
+              json.object([json.kv("triggerCharacters", json.array([.Str(".")]))]),
+            ),
+            json.kv("codeActionProvider", .Bool(true)),
+          ]),
+        ),
+        json.kv("serverInfo", json.object([json.kv("name", .Str("twinkle-lsp"))])),
       ])
       .{ state, outgoing: [protocol.success_response(req.id, result)] }
     },
@@ -133,9 +132,15 @@ fn handle_did_change(state: State, note: protocol.Notification) Step {
       if change.content_changes.len() == 0 {
         return .{ state, outgoing: [] }
       }
+
       full := change.content_changes[change.content_changes.len() - 1]
       doc := change.text_document
-      state.documents = document_store.change_full_text(state.documents, doc.uri, full.text, doc.version)
+      state.documents = document_store.change_full_text(
+        state.documents,
+        doc.uri,
+        full.text,
+        doc.version,
+      )
       state = note_changed_document_source(state, doc.uri, full.text)
       mark_diagnostics_pending(state)
     },
@@ -160,6 +165,7 @@ fn handle_did_close(state: State, note: protocol.Notification) Step {
 
 fn workspace_snapshot(state: State, doc: document_store.Document) semantic.SemanticSnapshot {
   input := workspace_input(state, doc)
+
   case semantic.snapshot_workspace_from_cache(state.query_cache, input) {
     .Some(snap) => snap,
     .None => semantic.snapshot_workspace(state.query_cache, input),
@@ -169,27 +175,34 @@ fn workspace_snapshot(state: State, doc: document_store.Document) semantic.Seman
 fn completion_snapshot(state: State, doc: document_store.Document) semantic.SemanticSnapshot {
   // Try cached snapshot first (fast path — nothing changed)
   input := workspace_input(state, doc)
+
   case semantic.snapshot_workspace_from_cache(state.query_cache, input) {
     .Some(snap) => { return snap },
     .None => {},
   }
+
   // Run full analysis
   snap := semantic.snapshot_workspace(state.query_cache, input)
+
   // If typed is available, use it directly
   case snap.typed {
     .Some(_) => { return snap },
     .None => {},
   }
+
   // Typed failed — try to recover stale typed/resolved from cache
   id := case identity.from_file_uri(doc.uri) {
     .Ok(parsed) => parsed,
     .Err(_) => identity.from_path(doc.uri),
   }
-  canonical := imports.canonical_module_path(id.path, imports.make_canonical_roots(input.project_root))
+  canonical := imports.canonical_module_path(
+    id.path,
+    imports.make_canonical_roots(input.project_root),
+  )
   snap.typed = query_cache.latest_typed(snap.cache, canonical)
-  if snap.resolved == .None {
-    snap.resolved = query_cache.latest_resolved(snap.cache, canonical)
-  }
+
+  if snap.resolved == .None { snap.resolved = query_cache.latest_resolved(snap.cache, canonical) }
+
   snap
 }
 
@@ -218,12 +231,15 @@ fn handle_hover(state: State, req: protocol.Request) Step {
     .Some(o) => o,
     .None => { return null_response_step(state, req) },
   }
-
   snap := workspace_snapshot(state, doc)
   state.query_cache = snap.cache
+
   case query_hover.hover(snap, offset, doc.text) {
     .Some(result) => {
-      .{ state, outgoing: [protocol.success_response(req.id, lsp_hover.hover_response(doc.index, result))] }
+      .{
+        state,
+        outgoing: [protocol.success_response(req.id, lsp_hover.hover_response(doc.index, result))],
+      }
     },
     .None => null_response_step(state, req),
   }
@@ -242,13 +258,21 @@ fn handle_definition(state: State, req: protocol.Request) Step {
     .Some(o) => o,
     .None => { return null_response_step(state, req) },
   }
-
   snap := workspace_snapshot(state, doc)
   state.query_cache = snap.cache
+
   case query_definition.definition(snap, offset) {
     .Some(result) => {
       target_index := definition_target_index(state.documents, result.uri, doc.index)
-      .{ state, outgoing: [protocol.success_response(req.id, lsp_definition.definition_response(target_index, result))] }
+      .{
+        state,
+        outgoing: [
+          protocol.success_response(
+            req.id,
+            lsp_definition.definition_response(target_index, result),
+          ),
+        ],
+      }
     },
     .None => null_response_step(state, req),
   }
@@ -267,11 +291,13 @@ fn handle_completion(state: State, req: protocol.Request) Step {
     .Some(o) => o,
     .None => { return empty_array_response_step(state, req) },
   }
-
   snap := completion_snapshot(state, doc)
   state.query_cache = snap.cache
   items := query_completion.complete(snap, offset, doc.text)
-  .{ state, outgoing: [protocol.success_response(req.id, lsp_completion.completion_response(items))] }
+  .{
+    state,
+    outgoing: [protocol.success_response(req.id, lsp_completion.completion_response(items))],
+  }
 }
 
 fn handle_code_action(state: State, req: protocol.Request) Step {
@@ -283,13 +309,20 @@ fn handle_code_action(state: State, req: protocol.Request) Step {
     .Some(d) => d,
     .None => { return empty_array_response_step(state, req) },
   }
-
-  actions := lsp_code_action.unused_import_actions(doc.uri, doc.index, action_params.context_diagnostics)
+  actions := lsp_code_action.unused_import_actions(
+    doc.uri,
+    doc.index,
+    action_params.context_diagnostics,
+  )
   .{ state, outgoing: [protocol.success_response(req.id, json.array(actions))] }
 }
 
 fn position_offset(index: line_index.LineIndex, position: params.Position) Int? {
-  line_index.position_to_byte_offset(index, .{ line: position.line, character: position.character }, .Utf16)
+  line_index.position_to_byte_offset(
+    index,
+    .{ line: position.line, character: position.character },
+    .Utf16,
+  )
 }
 
 fn null_response_step(state: State, req: protocol.Request) Step {
@@ -303,6 +336,7 @@ fn empty_array_response_step(state: State, req: protocol.Request) Step {
 fn project_root_for_document(file_path: String) String {
   dir := path.dirname(file_path)
   root := loader.find_project_root(dir)
+
   if root == path.normalize(".") { dir } else { root }
 }
 
@@ -310,6 +344,7 @@ pub fn next_poll_timeout_ms(state: State) Int? {
   if !state.diagnostics_pending {
     return .None
   }
+
   if date.now() >= state.diagnostics_deadline_ms {
     .Some(0)
   } else {
@@ -320,8 +355,10 @@ pub fn next_poll_timeout_ms(state: State) Int? {
 pub fn publish_due_diagnostics(state: State) Step {
   if state.diagnostics_pending and date.now() >= state.diagnostics_deadline_ms {
     state.diagnostics_pending = false
+
     return publish_workspace_diagnostics(state, true)
   }
+
   .{ state, outgoing: [] }
 }
 
@@ -338,7 +375,11 @@ fn note_changed_document_source(state: State, uri: String, text: String) State {
   }
   root := project_root_for_document(id.path)
   canonical := imports.canonical_module_path(id.path, imports.make_canonical_roots(root))
-  state.query_cache = query_cache.note_source_hash(state.query_cache, canonical, keys.hash_text(text))
+  state.query_cache = query_cache.note_source_hash(
+    state.query_cache,
+    canonical,
+    keys.hash_text(text),
+  )
   state
 }
 
@@ -347,10 +388,10 @@ fn publish_workspace_diagnostics(state: State, suppress_duplicates: Bool) Step {
   overlay_docs := collect doc in open_docs {
     query_diagnostics.DocumentInput.{ uri: doc.uri, text: doc.text, version: doc.version }
   }
-
   // Group open docs by project root so we run one analysis per project
   // instead of one per open document.
   by_project: Dict<String, Vector<document_store.Document>> = Dict.new()
+
   for doc in open_docs {
     root := project_root_for_document(doc.identity.path)
     existing := case by_project[root] {
@@ -369,25 +410,30 @@ fn publish_workspace_diagnostics(state: State, suppress_duplicates: Bool) Step {
       .Some(ds) => ds,
       .None => { continue },
     }
-
     // Use first doc as entry — analysis walks all deps anyway.
     // Track which open-doc URIs are covered by this analysis.
     entry := docs[0]
-    result := query_diagnostics.analyze_workspace(cur_cache, .{
-      entry_uri: entry.uri,
-      project_root: root,
-      open_documents: overlay_docs,
-    })
+    result := query_diagnostics.analyze_workspace(
+      cur_cache,
+      .{ entry_uri: entry.uri, project_root: root, open_documents: overlay_docs },
+    )
     cur_cache = result.cache
 
     for group in result.diagnostics_by_uri {
-      if group.diagnostics.len() == 0 and group.uri != entry.identity.uri {
-        continue
-      }
+      if group.diagnostics.len() == 0 and group.uri != entry.identity.uri { continue }
+
       case document_by_identity_uri(state.documents, group.uri) {
         .Some(group_doc) => {
-          if !published.has(group.uri) and should_publish_diagnostics(state, group_doc, suppress_duplicates) {
-            outgoing = .append(lsp_diagnostics.publish_diagnostics(group_doc.uri, group_doc.version, group_doc.index, group.diagnostics))
+          if !published.has(group.uri)
+          and should_publish_diagnostics(state, group_doc, suppress_duplicates) {
+            outgoing = .append(
+              lsp_diagnostics.publish_diagnostics(
+                group_doc.uri,
+                group_doc.version,
+                group_doc.index,
+                group.diagnostics,
+              ),
+            )
             state = mark_published_version(state, group_doc)
             published[group.uri] = true
           }
@@ -399,25 +445,29 @@ fn publish_workspace_diagnostics(state: State, suppress_duplicates: Bool) Step {
     // If any open docs in this project weren't covered, analyze them
     // as separate entries to catch disjoint dependency graphs.
     for doc in docs {
-      if published.has(doc.identity.uri) {
-        continue
-      }
+      if published.has(doc.identity.uri) { continue }
 
-      extra := query_diagnostics.analyze_workspace(cur_cache, .{
-        entry_uri: doc.uri,
-        project_root: root,
-        open_documents: overlay_docs,
-      })
+      extra := query_diagnostics.analyze_workspace(
+        cur_cache,
+        .{ entry_uri: doc.uri, project_root: root, open_documents: overlay_docs },
+      )
       cur_cache = extra.cache
 
       for group in extra.diagnostics_by_uri {
-        if group.diagnostics.len() == 0 and group.uri != doc.identity.uri {
-          continue
-        }
+        if group.diagnostics.len() == 0 and group.uri != doc.identity.uri { continue }
+
         case document_by_identity_uri(state.documents, group.uri) {
           .Some(group_doc) => {
-            if !published.has(group.uri) and should_publish_diagnostics(state, group_doc, suppress_duplicates) {
-              outgoing = .append(lsp_diagnostics.publish_diagnostics(group_doc.uri, group_doc.version, group_doc.index, group.diagnostics))
+            if !published.has(group.uri)
+            and should_publish_diagnostics(state, group_doc, suppress_duplicates) {
+              outgoing = .append(
+                lsp_diagnostics.publish_diagnostics(
+                  group_doc.uri,
+                  group_doc.version,
+                  group_doc.index,
+                  group.diagnostics,
+                ),
+              )
               state = mark_published_version(state, group_doc)
               published[group.uri] = true
             }
@@ -436,6 +486,7 @@ fn should_publish_diagnostics(state: State, doc: document_store.Document, suppre
   if !suppress_duplicates {
     return true
   }
+
   case doc.version {
     .Some(version) => {
       case state.last_published_versions[doc.identity.uri] {
@@ -452,6 +503,7 @@ fn mark_published_version(state: State, doc: document_store.Document) State {
     .Some(version) => { state.last_published_versions[doc.identity.uri] = version },
     .None => {},
   }
+
   state
 }
 
@@ -461,10 +513,15 @@ fn document_by_identity_uri(store: document_store.Store, identity_uri: String) d
       return .Some(doc)
     }
   }
+
   .None
 }
 
-fn definition_target_index(store: document_store.Store, target_uri: String, fallback: line_index.LineIndex) line_index.LineIndex {
+fn definition_target_index(
+  store: document_store.Store,
+  target_uri: String,
+  fallback: line_index.LineIndex,
+) line_index.LineIndex {
   case document_by_identity_uri(store, target_uri) {
     .Some(target_doc) => { return target_doc.index },
     .None => {},
@@ -474,6 +531,7 @@ fn definition_target_index(store: document_store.Store, target_uri: String, fall
     .Some(p) => p,
     .None => { return fallback },
   }
+
   case fs.read_text(target_path) {
     .Ok(text) => line_index.new(text),
     .Err(_) => fallback,

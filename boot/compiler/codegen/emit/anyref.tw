@@ -24,9 +24,7 @@ fn is_task_mono(mono: MonoType, env: ResolvedEnv) Bool {
   }
 }
 
-pub fn emit_box_to_anyref(mono: MonoType, env: ResolvedEnv, buf: Vector<Instr>) Vector<
-  Instr,
-> {
+pub fn emit_box_to_anyref(mono: MonoType, env: ResolvedEnv, buf: Vector<Instr>) Vector<Instr> {
   case mono {
     .Never => { return buf },
     .Void => { return buf },
@@ -55,17 +53,11 @@ pub fn emit_box_to_anyref(mono: MonoType, env: ResolvedEnv, buf: Vector<Instr>) 
   }
 }
 
-pub fn emit_erased_container_egress(
-  mono: MonoType,
-  env: ResolvedEnv,
-  buf: Vector<Instr>,
-) Vector<Instr> { emit_unbox_from_anyref(mono, env, buf) }
+pub fn emit_erased_container_egress(mono: MonoType, env: ResolvedEnv, buf: Vector<Instr>) Vector<
+  Instr,
+> { emit_unbox_from_anyref(mono, env, buf) }
 
-pub fn emit_unbox_from_anyref(
-  mono: MonoType,
-  env: ResolvedEnv,
-  buf: Vector<Instr>,
-) Vector<Instr> {
+pub fn emit_unbox_from_anyref(mono: MonoType, env: ResolvedEnv, buf: Vector<Instr>) Vector<Instr> {
   case mono {
     .Never => { return buf.append(.Unreachable) },
     .Void => { return buf.append(.Drop).append(.I32Const(0)).append(.RefI31) },
@@ -83,9 +75,9 @@ pub fn emit_unbox_from_anyref(
     .Scalar(.WI64) => buf.append(.RefCast(false, .Named("rt_types__BoxedInt"))).append(
       .StructGet("rt_types__BoxedInt", 0),
     ),
-    .Scalar(.WF64) => buf.append(
-      .RefCast(false, .Named("rt_types__BoxedFloat")),
-    ).append(.StructGet("rt_types__BoxedFloat", 0)),
+    .Scalar(.WF64) => buf.append(.RefCast(false, .Named("rt_types__BoxedFloat"))).append(
+      .StructGet("rt_types__BoxedFloat", 0),
+    ),
     .Scalar(.WI32) => {
       // Could be Bool or Byte — both use i31ref
       out := buf.append(.RefCast(false, .I31))

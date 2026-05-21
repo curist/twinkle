@@ -11,19 +11,10 @@ pub fn module() WasmModule {
     types: [
       .Array("Array", .{ name: .None, mutable: true, ty: .Anyref }),
       .Array("String", .{ name: .None, mutable: true, ty: .I8 }),
-      .Array(
-        "VecChildren",
-        .{ name: .None, mutable: true, ty: .Ref(true, .Eq) },
-      ),
+      .Array("VecChildren", .{ name: .None, mutable: true, ty: .Ref(true, .Eq) }),
       .Struct(
         "VecInternal",
-        [
-          .{
-            name: .Some("children"),
-            mutable: false,
-            ty: .Ref(false, .Named("VecChildren")),
-          },
-        ],
+        [.{ name: .Some("children"), mutable: false, ty: .Ref(false, .Named("VecChildren")) }],
         .None,
         true,
       ),
@@ -32,16 +23,8 @@ pub fn module() WasmModule {
         [
           .{ name: .Some("len"), mutable: false, ty: .I32 },
           .{ name: .Some("shift"), mutable: false, ty: .I32 },
-          .{
-            name: .Some("root"),
-            mutable: false,
-            ty: .Ref(true, .Named("VecInternal")),
-          },
-          .{
-            name: .Some("tail"),
-            mutable: false,
-            ty: .Ref(false, .Named("Array")),
-          },
+          .{ name: .Some("root"), mutable: false, ty: .Ref(true, .Named("VecInternal")) },
+          .{ name: .Some("tail"), mutable: false, ty: .Ref(false, .Named("Array")) },
         ],
         .None,
         true,
@@ -60,11 +43,7 @@ pub fn module() WasmModule {
         "HamtNode",
         [
           .{ name: .Some("bitmap"), mutable: false, ty: .I32 },
-          .{
-            name: .Some("entries"),
-            mutable: false,
-            ty: .Ref(false, .Named("Array")),
-          },
+          .{ name: .Some("entries"), mutable: false, ty: .Ref(false, .Named("Array")) },
         ],
         .None,
         true,
@@ -74,11 +53,7 @@ pub fn module() WasmModule {
         [
           .{ name: .Some("tag"), mutable: false, ty: .I32 },
           .{ name: .Some("hash"), mutable: false, ty: .I64 },
-          .{
-            name: .Some("entries"),
-            mutable: false,
-            ty: .Ref(false, .Named("Array")),
-          },
+          .{ name: .Some("entries"), mutable: false, ty: .Ref(false, .Named("Array")) },
         ],
         .None,
         true,
@@ -87,16 +62,8 @@ pub fn module() WasmModule {
         "PDict",
         [
           .{ name: .Some("size"), mutable: true, ty: .I32 },
-          .{
-            name: .Some("root"),
-            mutable: true,
-            ty: .Ref(true, .Named("HamtNode")),
-          },
-          .{
-            name: .Some("order"),
-            mutable: true,
-            ty: .Ref(false, .Named("PVec")),
-          },
+          .{ name: .Some("root"), mutable: true, ty: .Ref(true, .Named("HamtNode")) },
+          .{ name: .Some("order"), mutable: true, ty: .Ref(false, .Named("PVec")) },
         ],
         .None,
         true,
@@ -106,16 +73,8 @@ pub fn module() WasmModule {
       .Struct(
         "Closure",
         [
-          .{
-            name: .Some("func_ref"),
-            mutable: false,
-            ty: .Ref(true, .Named("ClosureFunc")),
-          },
-          .{
-            name: .Some("env"),
-            mutable: false,
-            ty: .Ref(true, .Named("ClosureEnv")),
-          },
+          .{ name: .Some("func_ref"), mutable: false, ty: .Ref(true, .Named("ClosureFunc")) },
+          .{ name: .Some("env"), mutable: false, ty: .Ref(true, .Named("ClosureEnv")) },
         ],
         .None,
         false,
@@ -125,27 +84,13 @@ pub fn module() WasmModule {
         [
           .{ name: .Some("type_id"), mutable: false, ty: .I32 },
           .{ name: .Some("variant_id"), mutable: false, ty: .I32 },
-          .{
-            name: .Some("payload"),
-            mutable: false,
-            ty: .Ref(true, .Named("Array")),
-          },
+          .{ name: .Some("payload"), mutable: false, ty: .Ref(true, .Named("Array")) },
         ],
         .None,
         true,
       ),
-      .Struct(
-        "BoxedInt",
-        [.{ name: .Some("v"), mutable: false, ty: .I64 }],
-        .None,
-        true,
-      ),
-      .Struct(
-        "BoxedFloat",
-        [.{ name: .Some("v"), mutable: false, ty: .F64 }],
-        .None,
-        true,
-      ),
+      .Struct("BoxedInt", [.{ name: .Some("v"), mutable: false, ty: .I64 }], .None, true),
+      .Struct("BoxedFloat", [.{ name: .Some("v"), mutable: false, ty: .F64 }], .None, true),
       .Struct(
         "IterState",
         [
@@ -162,21 +107,12 @@ pub fn module() WasmModule {
           .{ name: .Some("frame"), mutable: true, ty: .Anyref },
           .{ name: .Some("resume"), mutable: true, ty: .Funcref },
           .{ name: .Some("result"), mutable: true, ty: .Anyref },
-          .{
-            name: .Some("waiters"),
-            mutable: true,
-            ty: .Ref(true, .Named("Array")),
-          },
+          .{ name: .Some("waiters"), mutable: true, ty: .Ref(true, .Named("Array")) },
         ],
         .None,
         true,
       ),
-      .Struct(
-        "FrameRtc",
-        [.{ name: .Some("closure"), mutable: true, ty: .Anyref }],
-        .None,
-        true,
-      ),
+      .Struct("FrameRtc", [.{ name: .Some("closure"), mutable: true, ty: .Anyref }], .None, true),
     ],
     imports: [],
     funcs: [],

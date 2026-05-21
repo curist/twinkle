@@ -34,9 +34,9 @@ pub fn add_command(a: App, cmd: command.Command) App {
 
 pub fn add_commands(a: App, cmds: Vector<command.Command>) App {
   out := a
-  for c in cmds {
-    out = .add_command(c)
-  }
+
+  for c in cmds { out = .add_command(c) }
+
   out
 }
 
@@ -47,12 +47,11 @@ pub fn has_flag(r: ParseResult, name: String) Bool {
   }
 }
 
-pub fn get_option(r: ParseResult, name: String) String? {
-  r.options[name]
-}
+pub fn get_option(r: ParseResult, name: String) String? { r.options[name] }
 
 pub fn error_message(e: ParseError) String {
   label := style.bold(style.red("error:"))
+
   case e {
     .UnknownFlag(f) => "${label} unknown flag '${f}'",
     .MissingValue(f) => "${label} missing value for '${f}'",
@@ -63,40 +62,48 @@ pub fn error_message(e: ParseError) String {
 }
 
 // --- Private helpers ---
-
 fn find_by_long(args: Vector<arg.Arg>, name: String) arg.Arg? {
   args.find(fn(a: arg.Arg) Bool { a.name == name })
 }
 
 fn find_by_short(args: Vector<arg.Arg>, s: String) arg.Arg? {
-  args.find(fn(a: arg.Arg) Bool {
-    case a.short_name {
-      .Some(sn) => sn == s,
-      .None => false,
-    }
-  })
+  args.find(
+    fn(a: arg.Arg) Bool {
+      case a.short_name {
+        .Some(sn) => sn == s,
+        .None => false,
+      }
+    },
+  )
 }
 
 fn pad(s: String, width: Int) String {
   n := width - s.len()
+
   if n < 2 { n = 2 }
+
   out := s
+
   for n > 0 {
     out = .concat(" ")
     n = n - 1
   }
+
   out
 }
 
 fn format_arg_help(a: arg.Arg) String {
   label := case a.kind {
     .Positional => {
-      tag := if a.is_required { "<".concat(a.name).concat(">") } else { "[".concat(a.name).concat("]") }
+      tag := if a.is_required { "<".concat(a.name).concat(">") } else {
+        "[".concat(a.name).concat("]")
+      }
       styled := if a.is_required { style.bold(tag) } else { style.dim(tag) }
       "  ".concat(styled)
     },
     .Flag => {
       long := style.bold("--".concat(a.name))
+
       case a.short_name {
         .Some(s) => "  ".concat(style.bold("-".concat(s))).concat(", ").concat(long),
         .None => "      ".concat(long),
@@ -105,8 +112,11 @@ fn format_arg_help(a: arg.Arg) String {
     .Opt => {
       long := style.bold("--".concat(a.name))
       val := style.dim("<value>")
+
       case a.short_name {
-        .Some(s) => "  ".concat(style.bold("-".concat(s))).concat(", ").concat(long).concat(" ").concat(val),
+        .Some(s) => "  ".concat(style.bold("-".concat(s))).concat(", ").concat(long).concat(" ").concat(
+          val,
+        ),
         .None => "      ".concat(long).concat(" ").concat(val),
       }
     },
@@ -128,12 +138,16 @@ fn format_arg_help(a: arg.Arg) String {
     },
   }
   extra := 28 - raw_len
+
   if extra < 2 { extra = 2 }
+
   spaces := ""
+
   for extra > 0 {
     spaces = .concat(" ")
     extra = extra - 1
   }
+
   label.concat(spaces).concat(a.help)
 }
 
@@ -144,9 +158,11 @@ fn format_help(a: App, cmd_name: String?) String {
   case cmd_name {
     .Some(name) => {
       cmd := a.commands.find(fn(c: command.Command) Bool { c.name == name })
+
       case cmd {
         .Some(c) => {
           out = .concat(usage_label).concat(" ${a.name} ${name}")
+
           for def in c.args {
             case def.kind {
               .Positional => {
@@ -159,32 +175,31 @@ fn format_help(a: App, cmd_name: String?) String {
               _ => {},
             }
           }
+
           out = .concat(" [options]\n\n")
-          for def in c.args {
-            out = .concat(format_arg_help(def)).concat("\n")
-          }
+
+          for def in c.args { out = .concat(format_arg_help(def)).concat("\n") }
         },
-        .None => {
-          out = .concat("Unknown command: ${name}\n")
-        },
+        .None => { out = .concat("Unknown command: ${name}\n") },
       }
     },
     .None => {
       if a.commands.len() > 0 {
         out = .concat(usage_label).concat(" ${a.name} <command> [options]\n\n")
         out = .concat(style.bold(style.yellow("Commands:"))).concat("\n")
+
         for cmd in a.commands {
           out = .concat("  ").concat(style.bold(cmd.name))
           out = pad(out, out.len() + 20 - cmd.name.len())
           out = .concat(cmd.help).concat("\n")
         }
+
         hint := a.name.concat(" <command> --help")
         out = .concat("\nRun '").concat(style.bold(hint)).concat("' for more information.\n")
       } else {
         out = .concat(usage_label).concat(" ${a.name} [options]\n\n")
-        for def in a.args {
-          out = .concat(format_arg_help(def)).concat("\n")
-        }
+
+        for def in a.args { out = .concat(format_arg_help(def)).concat("\n") }
       }
     },
   }
@@ -193,26 +208,28 @@ fn format_help(a: App, cmd_name: String?) String {
 }
 
 // --- Main parse function ---
-
 pub fn parse(a: App, argv: Vector<String>) ParseResult!ParseError {
   flags: Dict<String, Bool> = Dict.new()
   options: Dict<String, String> = Dict.new()
   pos: Vector<String> = []
   cmd_name: String? = .None
   active_args := a.args
-
-  i := 1  // skip argv[0] (program name)
+  i := 1 // skip argv[0] (program name)
   past_flags := false
 
   // If we have commands, match the first arg as a subcommand
   if a.commands.len() > 0 and i < argv.len() {
     first := argv[i]
+
     if first == "--help" or first == "-h" {
       return .Err(.HelpRequested(format_help(a, .None)))
     }
+
     c := case a.commands.find(fn(c: command.Command) Bool { c.name == first }) {
       .Some(cmd) => cmd,
-      .None => { return .Err(.UnknownCommand(first)) },
+      .None => {
+        return .Err(.UnknownCommand(first))
+      },
     }
     cmd_name = .Some(first)
     active_args = c.args
@@ -241,30 +258,40 @@ pub fn parse(a: App, argv: Vector<String>) ParseResult!ParseError {
 
     if current.starts_with("--") {
       name := current.slice(2, current.len())
+
       case name.index_of("=") {
         .Some(eq) => {
           key := name.slice(0, eq)
           val := name.slice(eq + 1, name.len())
           def := case find_by_long(active_args, key) {
             .Some(arg) => arg,
-            .None => { return .Err(.UnknownFlag("--${key}")) },
+            .None => {
+              return .Err(.UnknownFlag("--${key}"))
+            },
           }
+
           case def.kind {
             .Opt => options[key] = val,
-            _ => { return .Err(.UnknownFlag("--${key}")) },
+            _ => {
+              return .Err(.UnknownFlag("--${key}"))
+            },
           }
         },
         .None => {
           def := case find_by_long(active_args, name) {
             .Some(arg) => arg,
-            .None => { return .Err(.UnknownFlag("--${name}")) },
+            .None => {
+              return .Err(.UnknownFlag("--${name}"))
+            },
           }
+
           case def.kind {
             .Flag => flags[name] = true,
             .Opt => {
               if i + 1 >= argv.len() {
                 return .Err(.MissingValue("--${name}"))
               }
+
               i = i + 1
               options[name] = argv[i]
             },
@@ -276,14 +303,18 @@ pub fn parse(a: App, argv: Vector<String>) ParseResult!ParseError {
       s := current.slice(1, current.len())
       def := case find_by_short(active_args, s) {
         .Some(arg) => arg,
-        .None => { return .Err(.UnknownFlag("-${s}")) },
+        .None => {
+          return .Err(.UnknownFlag("-${s}"))
+        },
       }
+
       case def.kind {
         .Flag => flags[def.name] = true,
         .Opt => {
           if i + 1 >= argv.len() {
             return .Err(.MissingValue("-${s}"))
           }
+
           i = i + 1
           options[def.name] = argv[i]
         },
@@ -298,6 +329,7 @@ pub fn parse(a: App, argv: Vector<String>) ParseResult!ParseError {
 
   // Validate required args
   pos_idx := 0
+
   for def in active_args {
     if def.is_required {
       case def.kind {
@@ -308,13 +340,16 @@ pub fn parse(a: App, argv: Vector<String>) ParseResult!ParseError {
         },
         .Opt => {
           case options[def.name] {
-            .None => { return .Err(.MissingRequired(def.name)) },
+            .None => {
+              return .Err(.MissingRequired(def.name))
+            },
             .Some(_) => {},
           }
         },
         .Flag => {},
       }
     }
+
     case def.kind {
       .Positional => pos_idx = pos_idx + 1,
       _ => {},

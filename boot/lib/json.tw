@@ -3,8 +3,6 @@
 // Decoder<A> is a thin record wrapper around fn(Json) Result<A, String>.
 // Because it is transparent, users can write plain functions as decoders
 // without any special wrapping — they just need to match the signature.
-
-
 pub type Json = {
   Null,
   Bool(Bool),
@@ -15,32 +13,22 @@ pub type Json = {
   Object(Dict<String, Json>),
 }
 
-pub type Decoder<A> = .{
-  run: fn(Json) Result<A, String>,
-}
+pub type Decoder<A> = .{ run: fn(Json) Result<A, String> }
 
-pub type Field = .{
-  key: String,
-  value: Json,
-}
+pub type Field = .{ key: String, value: Json }
 
-fn make<A>(f: fn(Json) Result<A, String>) Decoder<A> {
-  .{ run: f }
-}
+fn make<A>(f: fn(Json) Result<A, String>) Decoder<A> { .{ run: f } }
 
-type ParseResult<A> = .{
-  value: A,
-  next: Int,
-}
+type ParseResult<A> = .{ value: A, next: Int }
 
 // ---------------------------------------------------------------------------
 // Parse
 // ---------------------------------------------------------------------------
-
 pub fn parse(input: String) Result<Json, String> {
   start := skip_ws(input, 0)
   parsed := try parse_value(input, start)
   end := skip_ws(input, parsed.next)
+
   if end != input.len() {
     .Err("unexpected trailing input at ${end}")
   } else {
@@ -55,30 +43,39 @@ pub fn parse_decode<A>(input: String, da: Decoder<A>) Result<A, String> {
 
 fn skip_ws(input: String, i: Int) Int {
   j := i
-  for j < input.len() and input[j].is_space() {
-    j = j + 1
-  }
+
+  for j < input.len() and input[j].is_space() { j = j + 1 }
+
   j
 }
 
 fn parse_value(input: String, i: Int) Result<ParseResult<Json>, String> {
   j := skip_ws(input, i)
+
   if j >= input.len() {
     return .Err("unexpected end of input")
   }
 
   c := input[j]
-  if c == 0x6E { parse_null(input, j) }       // n
-  else if c == 0x74 { parse_true(input, j) }  // t
-  else if c == 0x66 { parse_false(input, j) } // f
-  else if c == 0x22 {                          // "
+
+  if c == 0x6E {
+    parse_null(input, j)
+  } else if c == 0x74 {
+    parse_true(input, j)
+  } else if c == 0x66 {
+    parse_false(input, j)
+  } else if c == 0x22 {
     s := try parse_json_string(input, j)
     .Ok(.{ value: Json.Str(s.value), next: s.next })
+  } else if c == 0x5B {
+    parse_array(input, j)
+  } else if c == 0x7B {
+    parse_object(input, j)
+  } else if c == 0x2D or c.is_digit() {
+    parse_number(input, j)
+  } else {
+    .Err("unexpected character at ${j}")
   }
-  else if c == 0x5B { parse_array(input, j) }  // [
-  else if c == 0x7B { parse_object(input, j) } // {
-  else if c == 0x2D or c.is_digit() { parse_number(input, j) }
-  else { .Err("unexpected character at ${j}") }
 }
 
 fn starts_with_at(input: String, i: Int, text: String) Bool {
@@ -114,9 +111,7 @@ fn parse_number(input: String, i: Int) Result<ParseResult<Json>, String> {
   j := i
   has_float_part := false
 
-  if j < input.len() and input[j] == 0x2D {
-    j = j + 1
-  }
+  if j < input.len() and input[j] == 0x2D { j = j + 1 }
 
   if j >= input.len() or !input[j].is_digit() {
     return .Err("expected number at ${i}")
@@ -125,37 +120,35 @@ fn parse_number(input: String, i: Int) Result<ParseResult<Json>, String> {
   if input[j] == 0x30 {
     j = j + 1
   } else {
-    for j < input.len() and input[j].is_digit() {
-      j = j + 1
-    }
+    for j < input.len() and input[j].is_digit() { j = j + 1 }
   }
 
   if j < input.len() and input[j] == 0x2E {
     has_float_part = true
     j = j + 1
+
     if j >= input.len() or !input[j].is_digit() {
       return .Err("expected digit after decimal point at ${j}")
     }
-    for j < input.len() and input[j].is_digit() {
-      j = j + 1
-    }
+
+    for j < input.len() and input[j].is_digit() { j = j + 1 }
   }
 
   if j < input.len() and (input[j] == 0x65 or input[j] == 0x45) {
     has_float_part = true
     j = j + 1
-    if j < input.len() and (input[j] == 0x2B or input[j] == 0x2D) {
-      j = j + 1
-    }
+
+    if j < input.len() and (input[j] == 0x2B or input[j] == 0x2D) { j = j + 1 }
+
     if j >= input.len() or !input[j].is_digit() {
       return .Err("expected digit in exponent at ${j}")
     }
-    for j < input.len() and input[j].is_digit() {
-      j = j + 1
-    }
+
+    for j < input.len() and input[j].is_digit() { j = j + 1 }
   }
 
   text := input.slice(i, j)
+
   if has_float_part {
     case Float.from_string(text) {
       .Some(f) => .Ok(.{ value: Json.Float(f), next: j }),
@@ -176,17 +169,25 @@ fn parse_json_string(input: String, i: Int) Result<ParseResult<String>, String> 
 
   out: Vector<Byte> = []
   j := i + 1
+
   for j < input.len() {
     c := input[j]
+
     if c == 0x22 {
       case String.from_utf8(out) {
-        .Some(s) => { return .Ok(.{ value: s, next: j + 1 }) },
-        .None => { return .Err("invalid utf-8 in string at ${i}") },
+        .Some(s) => {
+          return .Ok(.{ value: s, next: j + 1 })
+        },
+        .None => {
+          return .Err("invalid utf-8 in string at ${i}")
+        },
       }
     }
+
     if c < 0x20 {
       return .Err("unescaped control character in string at ${j}")
     }
+
     if c == 0x5C {
       esc := try parse_escape(input, j)
       out = .concat(esc.value.utf8_bytes())
@@ -196,6 +197,7 @@ fn parse_json_string(input: String, i: Int) Result<ParseResult<String>, String> 
       j = j + 1
     }
   }
+
   .Err("unterminated string at ${i}")
 }
 
@@ -203,17 +205,30 @@ fn parse_escape(input: String, i: Int) Result<ParseResult<String>, String> {
   if i + 1 >= input.len() or input[i] != 0x5C {
     return .Err("expected escape at ${i}")
   }
+
   c := input[i + 1]
-  if c == 0x22 { .Ok(.{ value: "\"", next: i + 2 }) }
-  else if c == 0x5C { .Ok(.{ value: "\\", next: i + 2 }) }
-  else if c == 0x2F { .Ok(.{ value: "/", next: i + 2 }) }
-  else if c == 0x62 { .Ok(.{ value: code_point_string(0x08), next: i + 2 }) }
-  else if c == 0x66 { .Ok(.{ value: code_point_string(0x0C), next: i + 2 }) }
-  else if c == 0x6E { .Ok(.{ value: "\n", next: i + 2 }) }
-  else if c == 0x72 { .Ok(.{ value: "\r", next: i + 2 }) }
-  else if c == 0x74 { .Ok(.{ value: "\t", next: i + 2 }) }
-  else if c == 0x75 { parse_unicode_escape(input, i) }
-  else { .Err("invalid escape at ${i}") }
+
+  if c == 0x22 {
+    .Ok(.{ value: "\"", next: i + 2 })
+  } else if c == 0x5C {
+    .Ok(.{ value: "\\", next: i + 2 })
+  } else if c == 0x2F {
+    .Ok(.{ value: "/", next: i + 2 })
+  } else if c == 0x62 {
+    .Ok(.{ value: code_point_string(0x08), next: i + 2 })
+  } else if c == 0x66 {
+    .Ok(.{ value: code_point_string(0x0C), next: i + 2 })
+  } else if c == 0x6E {
+    .Ok(.{ value: "\n", next: i + 2 })
+  } else if c == 0x72 {
+    .Ok(.{ value: "\r", next: i + 2 })
+  } else if c == 0x74 {
+    .Ok(.{ value: "\t", next: i + 2 })
+  } else if c == 0x75 {
+    parse_unicode_escape(input, i)
+  } else {
+    .Err("invalid escape at ${i}")
+  }
 }
 
 fn parse_unicode_escape(input: String, i: Int) Result<ParseResult<String>, String> {
@@ -221,14 +236,19 @@ fn parse_unicode_escape(input: String, i: Int) Result<ParseResult<String>, Strin
 
   if code >= 0xD800 and code <= 0xDBFF {
     next := i + 6
+
     if next + 5 >= input.len() or input[next] != 0x5C or input[next + 1] != 0x75 {
       return .Err("expected low surrogate after high surrogate at ${i}")
     }
+
     low := try read_unicode_code_unit(input, next)
+
     if low < 0xDC00 or low > 0xDFFF {
       return .Err("invalid low surrogate at ${next}")
     }
-    scalar := 0x10000 + ((code - 0xD800) * 0x400) + (low - 0xDC00)
+
+    scalar := 0x10000 + (code - 0xD800) * 0x400 + (low - 0xDC00)
+
     case String.from_code_point(scalar) {
       .Some(s) => .Ok(.{ value: s, next: next + 6 }),
       .None => .Err("invalid unicode code point at ${i}"),
@@ -247,21 +267,25 @@ fn read_unicode_code_unit(input: String, i: Int) Result<Int, String> {
   if i + 5 >= input.len() {
     return .Err("incomplete unicode escape at ${i}")
   }
+
   a := hex_value(input[i + 2])
   b := hex_value(input[i + 3])
   c := hex_value(input[i + 4])
   d := hex_value(input[i + 5])
+
   if a < 0 or b < 0 or c < 0 or d < 0 {
     return .Err("invalid unicode escape at ${i}")
   }
+
   .Ok(((a * 0x10 + b) * 0x10 + c) * 0x10 + d)
 }
 
 fn hex_value(c: Byte) Int {
-  if c >= 0x30 and c <= 0x39 { c - 0x30 }
-  else if c >= 0x41 and c <= 0x46 { c - 0x41 + 0x0A }
-  else if c >= 0x61 and c <= 0x66 { c - 0x61 + 0x0A }
-  else { -1 }
+  if c >= 0x30 and c <= 0x39 {
+    c - 0x30
+  } else if c >= 0x41 and c <= 0x46 {
+    c - 0x41 + 0x0A
+  } else if c >= 0x61 and c <= 0x66 { c - 0x61 + 0x0A } else { -1 }
 }
 
 fn code_point_string(code: Int) String {
@@ -289,14 +313,17 @@ fn parse_array(input: String, i: Int) Result<ParseResult<Json>, String> {
     }
 
     c := input[j]
+
     if c == 0x5D {
       return .Ok(.{ value: Json.Array(items), next: j + 1 })
     }
+
     if c != 0x2C {
       return .Err("expected ',' or ']' at ${j}")
     }
 
     j = skip_ws(input, j + 1)
+
     if j < input.len() and input[j] == 0x5D {
       return .Err("trailing comma in array at ${j}")
     }
@@ -334,14 +361,17 @@ fn parse_object(input: String, i: Int) Result<ParseResult<Json>, String> {
     }
 
     c := input[j]
+
     if c == 0x7D {
       return .Ok(.{ value: Json.Object(obj), next: j + 1 })
     }
+
     if c != 0x2C {
       return .Err("expected ',' or '}' at ${j}")
     }
 
     j = skip_ws(input, j + 1)
+
     if j < input.len() and input[j] == 0x7D {
       return .Err("trailing comma in object at ${j}")
     }
@@ -353,16 +383,13 @@ fn parse_object(input: String, i: Int) Result<ParseResult<Json>, String> {
 // ---------------------------------------------------------------------------
 // Construction helpers
 // ---------------------------------------------------------------------------
-
-pub fn kv(key: String, value: Json) Field {
-  .{ key, value }
-}
+pub fn kv(key: String, value: Json) Field { .{ key, value } }
 
 pub fn object(fields: Vector<Field>) Json {
   obj: Dict<String, Json> = Dict.new()
-  for field in fields {
-    obj[field.key] = field.value
-  }
+
+  for field in fields { obj[field.key] = field.value }
+
   .Object(obj)
 }
 
@@ -373,228 +400,273 @@ pub fn array(items: Vector<Json>) Json {
 // ---------------------------------------------------------------------------
 // Primitives
 // ---------------------------------------------------------------------------
-
 pub fn raw() Decoder<Json> {
-  make(fn(json: Json) Result<Json, String> { .Ok(json) })
+  make(
+    fn(json: Json) Result<Json, String> {
+      .Ok(json)
+    },
+  )
 }
 
 pub fn string() Decoder<String> {
-  make(fn(json: Json) Result<String, String> {
-    case json {
-      .Str(s) => .Ok(s),
-      _ => .Err("expected string"),
-    }
-  })
+  make(
+    fn(json: Json) Result<String, String> {
+      case json {
+        .Str(s) => .Ok(s),
+        _ => .Err("expected string"),
+      }
+    },
+  )
 }
 
 pub fn int() Decoder<Int> {
-  make(fn(json: Json) Result<Int, String> {
-    case json {
-      .Int(n) => .Ok(n),
-      _ => .Err("expected int"),
-    }
-  })
+  make(
+    fn(json: Json) Result<Int, String> {
+      case json {
+        .Int(n) => .Ok(n),
+        _ => .Err("expected int"),
+      }
+    },
+  )
 }
 
 pub fn bool() Decoder<Bool> {
-  make(fn(json: Json) Result<Bool, String> {
-    case json {
-      .Bool(b) => .Ok(b),
-      _ => .Err("expected bool"),
-    }
-  })
+  make(
+    fn(json: Json) Result<Bool, String> {
+      case json {
+        .Bool(b) => .Ok(b),
+        _ => .Err("expected bool"),
+      }
+    },
+  )
 }
 
 pub fn float() Decoder<Float> {
-  make(fn(json: Json) Result<Float, String> {
-    case json {
-      .Float(f) => .Ok(f),
-      .Int(n)   => .Ok(n.to_float()),
-      _ => .Err("expected number"),
-    }
-  })
+  make(
+    fn(json: Json) Result<Float, String> {
+      case json {
+        .Float(f) => .Ok(f),
+        .Int(n) => .Ok(n.to_float()),
+        _ => .Err("expected number"),
+      }
+    },
+  )
 }
 
 // Always succeed with a constant, ignoring the Json value.
 pub fn succeed<A>(value: A) Decoder<A> {
-  make(fn(_: Json) { .Ok(value) })
+  make(
+    fn(_: Json) {
+      .Ok(value)
+    },
+  )
 }
 
 // Always fail with a message.
 pub fn fail<A>(message: String) Decoder<A> {
-  make(fn(_: Json) { .Err(message) })
+  make(
+    fn(_: Json) {
+      .Err(message)
+    },
+  )
 }
 
 // ---------------------------------------------------------------------------
 // Transform
 // ---------------------------------------------------------------------------
-
 pub fn map<A, B>(f: fn(A) B, da: Decoder<A>) Decoder<B> {
-  make(fn(json: Json) {
-    case da.run(json) {
-      .Ok(a)  => .Ok(f(a)),
-      .Err(e) => .Err(e),
-    }
-  })
+  make(
+    fn(json: Json) {
+      case da.run(json) {
+        .Ok(a) => .Ok(f(a)),
+        .Err(e) => .Err(e),
+      }
+    },
+  )
 }
 
 pub fn map2<A, B, C>(f: fn(A, B) C, da: Decoder<A>, db: Decoder<B>) Decoder<C> {
-  make(fn(json: Json) {
-    case da.run(json) {
-      .Err(e) => .Err(e),
-      .Ok(a)  => case db.run(json) {
+  make(
+    fn(json: Json) {
+      case da.run(json) {
         .Err(e) => .Err(e),
-        .Ok(b)  => .Ok(f(a, b)),
-      },
-    }
-  })
+        .Ok(a) => case db.run(json) {
+          .Err(e) => .Err(e),
+          .Ok(b) => .Ok(f(a, b)),
+        },
+      }
+    },
+  )
 }
 
-pub fn map3<A, B, C, D>(
-  f: fn(A, B, C) D,
-  da: Decoder<A>,
-  db: Decoder<B>,
-  dc: Decoder<C>,
-) Decoder<D> {
-  make(fn(json: Json) {
-    case da.run(json) {
-      .Err(e) => .Err(e),
-      .Ok(a)  => case db.run(json) {
+pub fn map3<A, B, C, D>(f: fn(A, B, C) D, da: Decoder<A>, db: Decoder<B>, dc: Decoder<C>) Decoder<D> {
+  make(
+    fn(json: Json) {
+      case da.run(json) {
         .Err(e) => .Err(e),
-        .Ok(b)  => case dc.run(json) {
+        .Ok(a) => case db.run(json) {
           .Err(e) => .Err(e),
-          .Ok(c)  => .Ok(f(a, b, c)),
+          .Ok(b) => case dc.run(json) {
+            .Err(e) => .Err(e),
+            .Ok(c) => .Ok(f(a, b, c)),
+          },
         },
-      },
-    }
-  })
+      }
+    },
+  )
 }
 
 // Chain: decode a, then use the decoded value to pick the next decoder.
 // The second decoder still runs against the same original json.
 pub fn and_then<A, B>(f: fn(A) Decoder<B>, da: Decoder<A>) Decoder<B> {
-  make(fn(json: Json) {
-    case da.run(json) {
-      .Err(e) => .Err(e),
-      .Ok(a)  => f(a).run(json),
-    }
-  })
+  make(
+    fn(json: Json) {
+      case da.run(json) {
+        .Err(e) => .Err(e),
+        .Ok(a) => f(a).run(json),
+      }
+    },
+  )
 }
 
 // ---------------------------------------------------------------------------
 // Structure
 // ---------------------------------------------------------------------------
-
 // Decode a required object field.
 pub fn field<A>(key: String, da: Decoder<A>) Decoder<A> {
-  make(fn(json: Json) {
-    case json {
-      .Object(obj) => case obj[key] {
-        .Some(value) => case da.run(value) {
-          .Ok(a)  => .Ok(a),
-          .Err(e) => .Err("field '${key}': ${e}"),
+  make(
+    fn(json: Json) {
+      case json {
+        .Object(obj) => case obj[key] {
+          .Some(value) => case da.run(value) {
+            .Ok(a) => .Ok(a),
+            .Err(e) => .Err("field '${key}': ${e}"),
+          },
+          .None => .Err("missing field '${key}'"),
         },
-        .None => .Err("missing field '${key}'"),
-      },
-      _ => .Err("expected object for field '${key}'"),
-    }
-  })
+        _ => .Err("expected object for field '${key}'"),
+      }
+    },
+  )
 }
 
 // Decode an optional field: missing or null both become None.
 pub fn optional_field<A>(key: String, da: Decoder<A>) Decoder<A?> {
-  make(fn(json: Json) {
-    case json {
-      .Object(obj) => case obj[key] {
-        .None        => .Ok(.None),
-        .Some(.Null) => .Ok(.None),
-        .Some(value) => case da.run(value) {
-          .Ok(a)  => .Ok(.Some(a)),
-          .Err(e) => .Err("field '${key}': ${e}"),
+  make(
+    fn(json: Json) {
+      case json {
+        .Object(obj) => case obj[key] {
+          .None => .Ok(.None),
+          .Some(.Null) => .Ok(.None),
+          .Some(value) => case da.run(value) {
+            .Ok(a) => .Ok(.Some(a)),
+            .Err(e) => .Err("field '${key}': ${e}"),
+          },
         },
-      },
-      _ => .Err("expected object"),
-    }
-  })
+        _ => .Err("expected object"),
+      }
+    },
+  )
 }
 
 // Decode an array element by index.
 pub fn index<A>(i: Int, da: Decoder<A>) Decoder<A> {
-  make(fn(json: Json) {
-    case json {
-      .Array(arr) => {
-        if i < 0 or i >= arr.len() {
-          return .Err("index ${i} out of bounds (length ${arr.len()})")
-        }
-        case da.run(arr[i]) {
-          .Ok(a)  => .Ok(a),
-          .Err(e) => .Err("index ${i}: ${e}"),
-        }
-      },
-      _ => .Err("expected array"),
-    }
-  })
+  make(
+    fn(json: Json) {
+      case json {
+        .Array(arr) => {
+          if i < 0 or i >= arr.len() {
+            return .Err("index ${i} out of bounds (length ${arr.len()})")
+          }
+
+          case da.run(arr[i]) {
+            .Ok(a) => .Ok(a),
+            .Err(e) => .Err("index ${i}: ${e}"),
+          }
+        },
+        _ => .Err("expected array"),
+      }
+    },
+  )
 }
 
 // Decode an optional value: null becomes None.
 pub fn nullable<A>(da: Decoder<A>) Decoder<A?> {
-  make(fn(json: Json) {
-    case json {
-      .Null => .Ok(.None),
-      _     => case da.run(json) {
-        .Ok(a)  => .Ok(.Some(a)),
-        .Err(e) => .Err(e),
-      },
-    }
-  })
+  make(
+    fn(json: Json) {
+      case json {
+        .Null => .Ok(.None),
+        _ => case da.run(json) {
+          .Ok(a) => .Ok(.Some(a)),
+          .Err(e) => .Err(e),
+        },
+      }
+    },
+  )
 }
 
 // Decode every element of a JSON array.
 pub fn list<A>(da: Decoder<A>) Decoder<Vector<A>> {
-  make(fn(json: Json) {
-    case json {
-      .Array(arr) => {
-        if arr.len() == 0 {
-          return .Ok([])
-        }
-        // Decode the first element to bootstrap the output vector's type.
-        out := case da.run(arr[0]) {
-          .Ok(a)  => [a],
-          .Err(e) => { return .Err("index 0: ${e}") },
-        }
-        i := 1
-        for i < arr.len() {
-          case da.run(arr[i]) {
-            .Ok(a)  => out = out.append(a),
-            .Err(e) => { return .Err("index ${i}: ${e}") },
+  make(
+    fn(json: Json) {
+      case json {
+        .Array(arr) => {
+          if arr.len() == 0 {
+            return .Ok([])
           }
-          i = i + 1
-        }
-        .Ok(out)
-      },
-      _ => .Err("expected array"),
-    }
-  })
+
+          // Decode the first element to bootstrap the output vector's type.
+          out := case da.run(arr[0]) {
+            .Ok(a) => [a],
+            .Err(e) => {
+              return .Err("index 0: ${e}")
+            },
+          }
+          i := 1
+
+          for i < arr.len() {
+            case da.run(arr[i]) {
+              .Ok(a) => out = out.append(a),
+              .Err(e) => {
+                return .Err("index ${i}: ${e}")
+              },
+            }
+
+            i = i + 1
+          }
+
+          .Ok(out)
+        },
+        _ => .Err("expected array"),
+      }
+    },
+  )
 }
 
 // Decode every value of a JSON object, preserving the original keys.
 pub fn dict<A>(da: Decoder<A>) Decoder<Dict<String, A>> {
-  make(fn(json: Json) {
-    decode_dict_values(json, da)
-  })
+  make(fn(json: Json) { decode_dict_values(json, da) })
 }
 
 fn decode_dict_values<A>(json: Json, da: Decoder<A>) Result<Dict<String, A>, String> {
   case json {
     .Object(obj) => {
       out: Dict<String, A> = Dict.new()
+
       for key in obj.keys() {
-        value := case obj[key] { .Some(v) => v, .None => Json.Null }
+        value := case obj[key] {
+          .Some(v) => v,
+          .None => Json.Null,
+        }
+
         case da.run(value) {
-          .Ok(a)  => out[key] = a,
-          .Err(e) => { return .Err("key '${key}': ${e}") },
+          .Ok(a) => out[key] = a,
+          .Err(e) => {
+            return .Err("key '${key}': ${e}")
+          },
         }
       }
+
       .Ok(out)
     },
     _ => .Err("expected object"),
@@ -603,97 +675,114 @@ fn decode_dict_values<A>(json: Json, da: Decoder<A>) Result<Dict<String, A>, Str
 
 // Try each decoder in order; return first success.
 pub fn one_of<A>(decoders: Vector<Decoder<A>>) Decoder<A> {
-  make(fn(json: Json) {
-    i := 0
-    for i < decoders.len() {
-      case decoders[i].run(json) {
-        .Ok(a)  => { return .Ok(a) },
-        .Err(_) => {},
+  make(
+    fn(json: Json) {
+      i := 0
+
+      for i < decoders.len() {
+        case decoders[i].run(json) {
+          .Ok(a) => {
+            return .Ok(a)
+          },
+          .Err(_) => {},
+        }
+
+        i = i + 1
       }
-      i = i + 1
-    }
-    .Err("no decoder matched")
-  })
+
+      .Err("no decoder matched")
+    },
+  )
 }
 
 // ---------------------------------------------------------------------------
 // Run
 // ---------------------------------------------------------------------------
-
-pub fn decode<A>(json: Json, da: Decoder<A>) Result<A, String> {
-  da.run(json)
-}
+pub fn decode<A>(json: Json, da: Decoder<A>) Result<A, String> { da.run(json) }
 
 // ---------------------------------------------------------------------------
 // Encode (stringify)
 // ---------------------------------------------------------------------------
-
 // to_string satisfies the Stringify contract, enabling Json values in
 // string interpolation ("value=${json}") and generic stringification.
 pub fn to_string(json: Json) String {
   case json {
-    .Null     => "null",
-    .Bool(b)  => if b { "true" } else { "false" },
-    .Int(n)   => n.to_string(),
+    .Null => "null",
+    .Bool(b) => if b { "true" } else { "false" },
+    .Int(n) => n.to_string(),
     .Float(f) => f.to_string(),
-    .Str(s)   => quote_string(s),
+    .Str(s) => quote_string(s),
     .Array(arr) => {
       if arr.len() == 0 {
         return "[]"
       }
+
       parts: Vector<String> = []
-      for item in arr {
-        parts = .append(to_string(item))
-      }
+
+      for item in arr { parts = .append(to_string(item)) }
+
       "[".concat(parts.join(",")).concat("]")
     },
     .Object(obj) => {
       keys := obj.keys()
+
       if keys.len() == 0 {
         return "{}"
       }
+
       parts: Vector<String> = []
+
       for key in keys {
-        val := case obj[key] { .Some(v) => v, .None => Json.Null }
+        val := case obj[key] {
+          .Some(v) => v,
+          .None => Json.Null,
+        }
         entry := quote_string(key).concat(":").concat(to_string(val))
         parts = .append(entry)
       }
+
       "{".concat(parts.join(",")).concat("}")
     },
   }
 }
 
 // stringify is a conventional alias for to_string (mirrors JSON.stringify).
-pub fn stringify(json: Json) String {
-  to_string(json)
-}
+pub fn stringify(json: Json) String { to_string(json) }
 
 fn quote_string(s: String) String {
   // Build the escaped content as bytes, then decode once at the end.
   // Byte.to_string() returns a decimal integer, not a char, so we collect
   // raw bytes and convert the whole buffer via String.from_utf8.
   buf: Vector<Byte> = []
+
   for b in s.utf8_bytes() {
     n := Byte.to_int(b)
     escape := case n {
-      0x22 => "\\\"", // "
-      0x5C => "\\\\", // \
-      0x08 => "\\b",  // backspace
-      0x0C => "\\f",  // form feed
-      0x0A => "\\n",  // newline
-      0x0D => "\\r",  // carriage return
-      0x09 => "\\t",  // tab
-      _ => if n < 0x20 { "\\u00${hex_digit(n / 0x10)}${hex_digit(n % 0x10)}" } else { "" },
+      0x22 => "\\\"",
+      0x5C => "\\\\",
+      0x08 => "\\b",
+      0x0C => "\\f",
+      0x0A => "\\n",
+      0x0D => "\\r",
+      0x09 => "\\t",
+      _ => if n < 0x20 {
+        "\\u00${hex_digit(n / 0x10)}${hex_digit(n % 0x10)}"
+      } else {
+        ""
+      },
     }
+
     if escape == "" {
       buf = .append(b)
     } else {
-      for eb in escape.utf8_bytes() {
-        buf = .append(eb)
-      }
+      for eb in escape.utf8_bytes() { buf = .append(eb) }
     }
   }
-  inner := case String.from_utf8(buf) { .Some(s) => s, .None => "" }
+
+  inner := case String.from_utf8(buf) {
+    .Some(s) => s,
+    .None => "",
+  }
   "\"".concat(inner).concat("\"")
 }
 

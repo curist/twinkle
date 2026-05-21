@@ -10,31 +10,17 @@ use compiler.codegen.wasm_plan_impl as impl
 use compiler.codegen.wasm_plan_types.{CaptureEntry, WasmTypeRegistry}
 use compiler.resolver.{ResolvedEnv}
 
-pub fn plan_wasm_types(
-  input: PreparedModule,
-  env: ResolvedEnv,
-  builtins: BuiltinRegistry,
-) WasmTypeRegistry {
-  impl.plan_wasm_types_impl(
-    input,
-    env,
-    builtins,
-    to_capture_entries(input.closure_captures),
-  )
+pub fn plan_wasm_types(input: PreparedModule, env: ResolvedEnv, builtins: BuiltinRegistry) WasmTypeRegistry {
+  impl.plan_wasm_types_impl(input, env, builtins, to_capture_entries(input.closure_captures))
 }
 
-fn to_capture_entries(precomputed: Dict<Int, Vector<CaptureParam>>) Dict<
-  Int,
-  Vector<CaptureEntry>,
-> {
+fn to_capture_entries(precomputed: Dict<Int, Vector<CaptureParam>>) Dict<Int, Vector<CaptureEntry>> {
   out: Dict<Int, Vector<CaptureEntry>> = Dict.new()
 
   for fid in precomputed.keys() {
     case precomputed[fid] {
       .Some(caps) => {
-        out[fid] = collect cap in caps {
-          CaptureEntry.{ local_id: cap.local_id, ty: cap.ty }
-        }
+        out[fid] = collect cap in caps { CaptureEntry.{ local_id: cap.local_id, ty: cap.ty } }
       },
       .None => {},
     }

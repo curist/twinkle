@@ -1,10 +1,6 @@
 use .arg
 
-pub type Command = .{
-  name: String,
-  help: String,
-  args: Vector<arg.Arg>,
-}
+pub type Command = .{ name: String, help: String, args: Vector<arg.Arg> }
 
 pub fn make(name: String, help: String) Command {
   Command.{ name, help, args: [] }
@@ -16,9 +12,9 @@ pub fn add_arg(cmd: Command, a: arg.Arg) Command {
 
 pub fn add_args(cmd: Command, args: Vector<arg.Arg>) Command {
   out := cmd
-  for a in args {
-    out = out.add_arg(a)
-  }
+
+  for a in args { out = .add_arg(a) }
+
   out
 }
 

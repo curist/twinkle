@@ -46,19 +46,12 @@ pub fn compile_entry(entry_path: String) Result<PipelineArtifacts, CompileError>
   // Uses the shared analyze module (same path as LSP diagnostics).
   t_modules_start := date.now()
   entry_id := identity.from_path(canonical_entry)
-  a_state := analyze.new_state(
-    base_env,
-    query_cache.empty(),
-    overlay.empty(),
-    project_root,
-  )
+  a_state := analyze.new_state(base_env, query_cache.empty(), overlay.empty(), project_root)
   a_result := analyze.analyze_module(entry_id, "__entry", base_env, a_state, [])
 
   if !a_result.ok {
     if a_result.diagnostics.len() > 0 {
-      return .Err(
-        .Diagnostics(.{ diagnostics: a_result.diagnostics, env: a_result.env }),
-      )
+      return .Err(.Diagnostics(.{ diagnostics: a_result.diagnostics, env: a_result.env }))
     }
 
     return .Err(.Internal("analysis failed"))
@@ -84,17 +77,13 @@ pub fn compile_entry(entry_path: String) Result<PipelineArtifacts, CompileError>
     parsed := case query_cache.latest_parsed(cur_cache, module_path) {
       .Some(p) => p,
       .None => {
-        return .Err(
-          .Internal("internal: missing parsed cache for '${module_path}'"),
-        )
+        return .Err(.Internal("internal: missing parsed cache for '${module_path}'"))
       },
     }
     typed := case query_cache.latest_typed(cur_cache, module_path) {
       .Some(t) => t,
       .None => {
-        return .Err(
-          .Internal("internal: missing typed cache for '${module_path}'"),
-        )
+        return .Err(.Internal("internal: missing typed cache for '${module_path}'"))
       },
     }
     runner := case a_result.state.module_runners[module_path] {
@@ -104,13 +93,7 @@ pub fn compile_entry(entry_path: String) Result<PipelineArtifacts, CompileError>
       },
     }
     t_lower0 := date.now()
-    lowered_out := stage_runner.lower(
-      runner,
-      cur_cache,
-      parsed,
-      typed,
-      builtins,
-    )
+    lowered_out := stage_runner.lower(runner, cur_cache, parsed, typed, builtins)
     cur_cache = lowered_out.store
 
     if timed { lower_total_ms = lower_total_ms + (date.now() - t_lower0) }
@@ -130,9 +113,7 @@ pub fn compile_entry(entry_path: String) Result<PipelineArtifacts, CompileError>
         }
       }
 
-      return .Err(
-        .Diagnostics(.{ diagnostics: lower_diags, env: a_result.env }),
-      )
+      return .Err(.Diagnostics(.{ diagnostics: lower_diags, env: a_result.env }))
     }
 
     // Build external_refs from lowering's canonical imported origins.
@@ -191,9 +172,7 @@ pub fn compile_entry(entry_path: String) Result<PipelineArtifacts, CompileError>
     n := compiled_modules.len()
     ft := a_result.state.timings
     fc := a_result.state.counts
-    eprintln(
-      "[time] compile_modules (${n} modules): ${t_modules_end - t_modules_start}ms",
-    )
+    eprintln("[time] compile_modules (${n} modules): ${t_modules_end - t_modules_start}ms")
     eprintln(
       "[time:frontend] load=${ft.load_source}ms  parse=${ft.parse}ms  plan_deps=${ft.plan_deps}ms  dep_hashes=${ft.dep_hashes}ms",
     )
@@ -209,9 +188,7 @@ pub fn compile_entry(entry_path: String) Result<PipelineArtifacts, CompileError>
     eprintln(
       "[time:imports] edges=${fc.import_edges}  module=${fc.import_module_edges}  selective=${fc.import_selective_edges}  prelude=${fc.import_prelude_edges}  export_entries=${fc.import_export_entries}",
     )
-    top_imports := a_result.state.import_timings.sort_by(
-      fn(a, b) { Float.compare(a.ms, b.ms) },
-    )
+    top_imports := a_result.state.import_timings.sort_by(fn(a, b) { Float.compare(a.ms, b.ms) })
     top_n := if top_imports.len() < 8 { top_imports.len() } else { 8 }
 
     for i in 0..top_n {
@@ -228,12 +205,7 @@ pub fn compile_entry(entry_path: String) Result<PipelineArtifacts, CompileError>
 
   // Phase 3: Link, monomorphize, ANF lower, optimize
   t0 := date.now()
-  core := core_linker.link(
-    compiled_modules,
-    canonical_entry,
-    a_result.env,
-    builtins.next_id,
-  )
+  core := core_linker.link(compiled_modules, canonical_entry, a_result.env, builtins.next_id)
   t1 := date.now()
 
   if timed { eprintln("[time] core_link: ${t1 - t0}ms") }
@@ -253,15 +225,5 @@ pub fn compile_entry(entry_path: String) Result<PipelineArtifacts, CompileError>
 
   if timed { eprintln("[time] optimize: ${t4 - t3}ms") }
 
-  .Ok(
-    .{
-      env: a_result.env,
-      builtins,
-      core,
-      mono,
-      anf,
-      opt,
-      warnings: compile_warnings,
-    },
-  )
+  .Ok(.{ env: a_result.env, builtins, core, mono, anf, opt, warnings: compile_warnings })
 }

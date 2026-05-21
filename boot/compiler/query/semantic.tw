@@ -32,10 +32,7 @@ pub type SymbolAtPosition = .{ name: String, kind: SymbolKind, span: Span }
 
 pub type EnclosingSyntax = .{ kind: String, span: Span }
 
-pub fn snapshot_workspace_from_cache(
-  store: cache.Store,
-  input: diagnostics.WorkspaceInput,
-) SemanticSnapshot? {
+pub fn snapshot_workspace_from_cache(store: cache.Store, input: diagnostics.WorkspaceInput) SemanticSnapshot? {
   id := case identity.from_file_uri(input.entry_uri) {
     .Ok(parsed) => parsed,
     .Err(_) => identity.from_path(input.entry_uri),
@@ -163,21 +160,12 @@ pub fn snapshot(store: cache.Store, input: diagnostics.DocumentInput) SemanticSn
       parsed: .Some(parsed),
       resolved: .None,
       typed: .None,
-      diagnostics: diagnostics.convert_diagnostics(
-        input,
-        "parse",
-        parsed.diagnostics,
-      ),
+      diagnostics: diagnostics.convert_diagnostics(input, "parse", parsed.diagnostics),
       ok: false,
     }
   }
 
-  resolved_out := stage_runner.resolve(
-    runner,
-    cur_cache,
-    parsed,
-    base_env.builtin_env(),
-  )
+  resolved_out := stage_runner.resolve(runner, cur_cache, parsed, base_env.builtin_env())
   cur_cache = resolved_out.store
   resolved := resolved_out.value
 
@@ -191,11 +179,7 @@ pub fn snapshot(store: cache.Store, input: diagnostics.DocumentInput) SemanticSn
       parsed: .Some(parsed),
       resolved: .Some(resolved),
       typed: .None,
-      diagnostics: diagnostics.convert_diagnostics(
-        input,
-        "resolve",
-        resolved.diagnostics,
-      ),
+      diagnostics: diagnostics.convert_diagnostics(input, "resolve", resolved.diagnostics),
       ok: false,
     }
   }
@@ -214,21 +198,13 @@ pub fn snapshot(store: cache.Store, input: diagnostics.DocumentInput) SemanticSn
       parsed: .Some(parsed),
       resolved: .Some(resolved),
       typed: .Some(checked),
-      diagnostics: diagnostics.convert_diagnostics(
-        input,
-        "check",
-        checked.diagnostics,
-      ),
+      diagnostics: diagnostics.convert_diagnostics(input, "check", checked.diagnostics),
       ok: false,
     }
   }
 
   .{
-    cache: cache.set_module_hash(
-      cur_cache,
-      id.path,
-      keys.module_hash(source_hash, 0),
-    ),
+    cache: cache.set_module_hash(cur_cache, id.path, keys.module_hash(source_hash, 0)),
     uri: id.uri,
     canonical_path: id.path,
     project_root: "",
@@ -252,42 +228,24 @@ pub fn symbol_at_position(snap: SemanticSnapshot, byte_offset: Int) SymbolAtPosi
       .Use(decl) => {
         if decl.span.contains(byte_offset) {
           return .Some(
-            SymbolAtPosition.{
-              name: decl.path.join("."),
-              kind: .Import,
-              span: decl.span,
-            },
+            SymbolAtPosition.{ name: decl.path.join("."), kind: .Import, span: decl.span },
           )
         }
       },
       .Type(decl) => {
         if decl.span.contains(byte_offset) {
-          return .Some(
-            SymbolAtPosition.{ name: decl.name, kind: .Type, span: decl.span },
-          )
+          return .Some(SymbolAtPosition.{ name: decl.name, kind: .Type, span: decl.span })
         }
       },
       .Function(decl) => {
         if decl.span.contains(byte_offset) {
-          return .Some(
-            SymbolAtPosition.{
-              name: decl.name,
-              kind: .Function,
-              span: decl.span,
-            },
-          )
+          return .Some(SymbolAtPosition.{ name: decl.name, kind: .Function, span: decl.span })
         }
       },
       .Stmt(stmt) => case stmt {
         .Let(let_stmt) => {
           if let_stmt.span.contains(byte_offset) {
-            return .Some(
-              SymbolAtPosition.{
-                name: let_stmt.name,
-                kind: .Let,
-                span: let_stmt.span,
-              },
-            )
+            return .Some(SymbolAtPosition.{ name: let_stmt.name, kind: .Let, span: let_stmt.span })
           }
         },
         _ => {},

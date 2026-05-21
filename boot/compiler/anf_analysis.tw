@@ -13,10 +13,7 @@ fn set_add(s: Dict<Int, Bool>, k: Int) Dict<Int, Bool> {
 }
 
 // ── collect_pattern_bindings ────────────────────────────────────────
-pub fn collect_pattern_bindings(pattern: CorePattern, out: Dict<Int, Bool>) Dict<
-  Int,
-  Bool,
-> {
+pub fn collect_pattern_bindings(pattern: CorePattern, out: Dict<Int, Bool>) Dict<Int, Bool> {
   case pattern {
     .Var(id) => set_add(out, id.id),
     .Variant(_, _, fields) => {
@@ -34,10 +31,7 @@ pub fn collect_pattern_bindings(pattern: CorePattern, out: Dict<Int, Bool>) Dict
 }
 
 // ── collect_free_locals ─────────────────────────────────────────────
-pub fn collect_free_locals(expr: AnfExpr, declared: Dict<Int, Bool>) Dict<
-  Int,
-  Bool,
-> {
+pub fn collect_free_locals(expr: AnfExpr, declared: Dict<Int, Bool>) Dict<Int, Bool> {
   free: Dict<Int, Bool> = Dict.new()
   r := collect_free_expr(expr, declared, free)
   r.free
@@ -48,19 +42,15 @@ type FreeState = .{ declared: Dict<Int, Bool>, free: Dict<Int, Bool> }
 fn free_atom(atom: Atom, st: FreeState) FreeState {
   case atom {
     .ALocal(id) => {
-      if !set_has(st.declared, id.id) {
-        .{ declared: st.declared, free: set_add(st.free, id.id) }
-      } else { st }
+      if !set_has(st.declared, id.id) { .{ declared: st.declared, free: set_add(st.free, id.id) } } else {
+        st
+      }
     },
     _ => st,
   }
 }
 
-fn collect_free_expr(
-  expr: AnfExpr,
-  declared: Dict<Int, Bool>,
-  free: Dict<Int, Bool>,
-) FreeState {
+fn collect_free_expr(expr: AnfExpr, declared: Dict<Int, Bool>, free: Dict<Int, Bool>) FreeState {
   case expr {
     .Let(local, op, body) => {
       st := collect_free_op(op, declared, free)
@@ -164,9 +154,7 @@ fn collect_free_op(op: AnfOp, declared: Dict<Int, Bool>, free: Dict<Int, Bool>) 
 }
 
 // ── collect_bound_locals ────────────────────────────────────────────
-pub fn collect_bound_locals(expr: AnfExpr) Dict<Int, Bool> {
-  collect_bound_expr(expr, Dict.new())
-}
+pub fn collect_bound_locals(expr: AnfExpr) Dict<Int, Bool> { collect_bound_expr(expr, Dict.new()) }
 
 fn collect_bound_expr(expr: AnfExpr, out: Dict<Int, Bool>) Dict<Int, Bool> {
   case expr {
@@ -206,10 +194,7 @@ pub fn collect_init_binding_locals(expr: AnfExpr) Dict<Int, Bool> {
   collect_init_binding_expr(expr, Dict.new())
 }
 
-fn collect_init_binding_expr(expr: AnfExpr, out: Dict<Int, Bool>) Dict<
-  Int,
-  Bool,
-> {
+fn collect_init_binding_expr(expr: AnfExpr, out: Dict<Int, Bool>) Dict<Int, Bool> {
   case expr {
     .Let(local, op, body) => {
       result := if is_init_op(op) { set_add(out, local.id) } else { out }
@@ -294,8 +279,7 @@ pub fn expr_always_diverges(expr: AnfExpr) Bool {
 
 pub fn op_always_diverges(op: AnfOp) Bool {
   case op {
-    .AIf(_, then_e, else_e) => expr_always_diverges(then_e)
-    and expr_always_diverges(else_e),
+    .AIf(_, then_e, else_e) => expr_always_diverges(then_e) and expr_always_diverges(else_e),
     .AMatch(_, arms) => {
       if arms.len() == 0 {
         return true

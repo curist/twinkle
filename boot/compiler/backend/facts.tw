@@ -3,9 +3,7 @@
 // These helpers are deliberately limited to facts already materialized in
 // PreparedFunc and related prepared-IR records. They should not rediscover
 // semantic ANF facts or depend on Wasm planning/emission state.
-use compiler.backend.prepared_ir.{
-  PreparedAtom, PreparedFunc, ReprKind, SlotId, SlotInfo,
-}
+use compiler.backend.prepared_ir.{PreparedAtom, PreparedFunc, ReprKind, SlotId, SlotInfo}
 use compiler.codegen.wasm_ir.{ValType}
 use compiler.mono_type.{MonoType}
 
@@ -18,10 +16,7 @@ pub fn slot_info(func: PreparedFunc, sid: SlotId) SlotInfo {
   }
 }
 
-pub fn slot_info_result(func: PreparedFunc, sid: SlotId, context: String) Result<
-  SlotInfo,
-  String,
-> {
+pub fn slot_info_result(func: PreparedFunc, sid: SlotId, context: String) Result<SlotInfo, String> {
   case func.slots[sid.id] {
     .Some(info) => .Ok(info),
     .None => .Err(
@@ -43,11 +38,10 @@ pub fn find_slot_by_source_local(func: PreparedFunc, local_id: Int) SlotInfo? {
   .None
 }
 
-pub fn slot_by_source_local_result(
-  func: PreparedFunc,
-  local_id: Int,
-  context: String,
-) Result<SlotInfo, String> {
+pub fn slot_by_source_local_result(func: PreparedFunc, local_id: Int, context: String) Result<
+  SlotInfo,
+  String,
+> {
   case find_slot_by_source_local(func, local_id) {
     .Some(info) => .Ok(info),
     .None => .Err(

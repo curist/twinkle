@@ -4,21 +4,11 @@
 // Content-Length: <byte-count>\r\n
 // \r\n
 // <body>
+pub type Frame = .{ headers: Dict<String, String>, body: String }
 
-pub type Frame = .{
-  headers: Dict<String, String>,
-  body: String,
-}
+pub type DecodeFrameResult = { NeedMore, Decoded(Frame, String) }
 
-pub type DecodeFrameResult = {
-  NeedMore,
-  Decoded(Frame, String),
-}
-
-pub type DecodeByteFrameResult = {
-  NeedMoreBytes,
-  DecodedBytes(Frame, Vector<Byte>),
-}
+pub type DecodeByteFrameResult = { NeedMoreBytes, DecodedBytes(Frame, Vector<Byte>) }
 
 pub fn content_length_header(body: String) String {
   "Content-Length: ${body.len()}\r\n"
@@ -31,14 +21,15 @@ pub fn encode_message(body: String) String {
 pub fn try_decode_frame(buffer: String) Result<DecodeFrameResult, String> {
   header_end := case buffer.index_of("\r\n\r\n") {
     .Some(i) => i,
-    .None => { return .Ok(.NeedMore) },
+    .None => {
+      return .Ok(.NeedMore)
+    },
   }
-
   headers := try parse_headers(buffer.slice(0, header_end))
   content_len := try content_length(headers)
-
   body_start := header_end + 4
   body_end := body_start + content_len
+
   if buffer.len() < body_end {
     return .Ok(.NeedMore)
   }
@@ -50,6 +41,7 @@ pub fn try_decode_frame(buffer: String) Result<DecodeFrameResult, String> {
 
 pub fn try_decode_frame_bytes(buffer: Vector<Byte>) Result<DecodeByteFrameResult, String> {
   header_end := find_header_end_bytes(buffer)
+
   if header_end < 0 {
     return .Ok(.NeedMoreBytes)
   }
@@ -57,9 +49,9 @@ pub fn try_decode_frame_bytes(buffer: Vector<Byte>) Result<DecodeByteFrameResult
   header_text := try bytes_to_string(buffer.slice(0, header_end), "invalid UTF-8 in frame headers")
   headers := try parse_headers(header_text)
   content_len := try content_length(headers)
-
   body_start := header_end + 4
   body_end := body_start + content_len
+
   if buffer.len() < body_end {
     return .Ok(.NeedMoreBytes)
   }
@@ -72,15 +64,21 @@ pub fn try_decode_frame_bytes(buffer: Vector<Byte>) Result<DecodeByteFrameResult
 fn content_length(headers: Dict<String, String>) Result<Int, String> {
   len_text := case lookup_content_length(headers) {
     .Some(v) => v,
-    .None => { return .Err("missing Content-Length header") },
+    .None => {
+      return .Err("missing Content-Length header")
+    },
   }
   content_len := case Int.from_string(len_text.trim()) {
     .Some(n) => n,
-    .None => { return .Err("invalid Content-Length header") },
+    .None => {
+      return .Err("invalid Content-Length header")
+    },
   }
+
   if content_len < 0 {
     return .Err("invalid Content-Length header")
   }
+
   .Ok(content_len)
 }
 
@@ -90,17 +88,17 @@ fn find_header_end_bytes(buffer: Vector<Byte>) Int {
   // buffer can fail; trim from the end until the prefix is valid UTF-8, then
   // search that prefix. The separator's byte offset is unchanged.
   end := buffer.len()
+
   for end >= 0 {
     case String.from_utf8(buffer.slice(0, end)) {
       .Some(text) => case text.index_of("\r\n\r\n") {
         .Some(i) => { return i },
         .None => { return -1 },
       },
-      .None => {
-        end = end - 1
-      },
+      .None => { end = end - 1 },
     }
   }
+
   -1
 }
 
@@ -113,34 +111,41 @@ fn bytes_to_string(bytes: Vector<Byte>, err: String) Result<String, String> {
 
 fn parse_headers(header_text: String) Result<Dict<String, String>, String> {
   headers: Dict<String, String> = Dict.new()
+
   if header_text == "" {
     return .Ok(headers)
   }
 
   for line in header_text.split("\r\n") {
-    if line == "" {
-      // Tolerate extra empty header lines before the separator.
-    } else {
+    if line == "" {} else {
       colon := case line.index_of(":") {
         .Some(i) => i,
-        .None => { return .Err("invalid header line") },
+        .None => {
+          return .Err("invalid header line")
+        },
       }
       name := line.slice(0, colon).trim()
       value := line.slice(colon + 1, line.len()).trim()
+
       if name == "" {
         return .Err("invalid header line")
       }
+
       headers[name] = value
     }
   }
+
   .Ok(headers)
 }
 
 fn lookup_content_length(headers: Dict<String, String>) String? {
   case headers["Content-Length"] {
-    .Some(v) => { return .Some(v) },
+    .Some(v) => {
+      return .Some(v)
+    },
     .None => {},
   }
+
   // Be forgiving for clients that vary header casing.
   case headers["content-length"] {
     .Some(v) => .Some(v),
