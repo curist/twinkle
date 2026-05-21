@@ -9,10 +9,10 @@
 //
 // Reference: src/module/mod.rs (link, remap_func_id, remap_expr_func_ids)
 use compiler.core_ir.{
-  CompiledModule, CoreExpr, CoreExprKind, CoreModule, ExternImport, FieldInit, FuncId, FunctionDef,
-  LocalId, MatchArm,
+  CompiledModule, CoreExpr, CoreExprKind, CoreModule, CorePattern, ExternImport, FieldInit, FuncId,
+  FunctionDef, LocalId, MatchArm, Param,
 }
-use compiler.mono_type.{MonoType}
+use compiler.mono_type.{MonoType, TypeId}
 use compiler.resolver.{ResolvedEnv}
 use lib.source.span.{Span}
 
@@ -193,17 +193,20 @@ pub fn link(
       }
     }
 
+    type_remap := build_type_remap(m.path, m.core.type_env, entry_env)
+
     // Remap and collect functions.
     for f in m.core.functions {
       remapped_id := remap_func_id(f.func_id, remap)
+      remapped_func := remap_function_types(f, type_remap)
       all_functions = .append(
         .{
           func_id: remapped_id,
-          name: f.name,
-          is_init: f.is_init,
-          params: f.params,
-          body: remap_expr(f.body, remap, global_remap),
-          return_ty: f.return_ty,
+          name: remapped_func.name,
+          is_init: remapped_func.is_init,
+          params: remapped_func.params,
+          body: remap_expr(remapped_func.body, remap, global_remap),
+          return_ty: remapped_func.return_ty,
         },
       )
     }
@@ -388,6 +391,189 @@ fn make_call(func_id: FuncId, s: Span) CoreExpr {
     kind: .Call(CoreExpr.{ kind: .GlobalFunc(func_id), ty: MonoType.Void, span: s }, []),
     ty: MonoType.Void,
     span: s,
+  }
+}
+
+// ── TypeId remapping ────────────────────────────────────────────────
+fn find_entry_type_by_origin(env: ResolvedEnv, origin: String) TypeId? {
+  for tid in env.type_origins.keys() {
+    case env.type_origins[tid] {
+      .Some(existing) => {
+        if existing == origin {
+          return .Some(TypeId.{ id: tid })
+        }
+      },
+      .None => {},
+    }
+  }
+
+  .None
+}
+
+fn local_type_origin(module_path: String, type_name: String) String? {
+  if module_path == "" {
+    .None
+  } else {
+    .Some("${module_path}::${type_name}")
+  }
+}
+
+fn build_type_remap(module_path: String, module_env: ResolvedEnv, entry_env: ResolvedEnv) Dict<
+  Int,
+  TypeId,
+> {
+  out: Dict<Int, TypeId> = Dict.new()
+  i := 0
+
+  for entry in module_env.types {
+    type_name := module_env.type_names[i]
+    origin := case module_env.type_origins[entry.id.id] {
+      .Some(o) => .Some(o),
+      .None => local_type_origin(module_path, type_name),
+    }
+    mapped: TypeId? = case origin {
+      .Some(o) => find_entry_type_by_origin(entry_env, o),
+      .None => case entry_env.lookup_registered_type(type_name) {
+        .Some(found) => .Some(found.id),
+        .None => .None,
+      },
+    }
+
+    case mapped {
+      .Some(tid) => { out[entry.id.id] = tid },
+      .None => {},
+    }
+
+    i = i + 1
+  }
+
+  out
+}
+
+fn remap_type_id(tid: TypeId, type_remap: Dict<Int, TypeId>) TypeId {
+  case type_remap[tid.id] {
+    .Some(mapped) => mapped,
+    .None => tid,
+  }
+}
+
+fn remap_mono_type(ty: MonoType, type_remap: Dict<Int, TypeId>) MonoType {
+  case ty {
+    .Named(tid, args) => {
+      remapped_args := collect arg in args { remap_mono_type(arg, type_remap) }
+      MonoType.Named(remap_type_id(tid, type_remap), remapped_args)
+    },
+    .ExternRef(tid) => MonoType.ExternRef(remap_type_id(tid, type_remap)),
+    .Vector(inner) => MonoType.Vector(remap_mono_type(inner, type_remap)),
+    .Dict(k, v) => MonoType.Dict(remap_mono_type(k, type_remap), remap_mono_type(v, type_remap)),
+    .Function(params, ret) => {
+      remapped_params := collect param in params { remap_mono_type(param, type_remap) }
+      MonoType.Function(remapped_params, remap_mono_type(ret, type_remap))
+    },
+    .Optional(inner) => MonoType.Optional(remap_mono_type(inner, type_remap)),
+    .Result(ok, err) => MonoType.Result(
+      remap_mono_type(ok, type_remap),
+      remap_mono_type(err, type_remap),
+    ),
+    _ => ty,
+  }
+}
+
+fn remap_pattern_types(pattern: CorePattern, type_remap: Dict<Int, TypeId>) CorePattern {
+  case pattern {
+    .Variant(tid, vid, fields) => {
+      remapped_fields := collect field in fields { remap_pattern_types(field, type_remap) }
+      .Variant(remap_type_id(tid, type_remap), vid, remapped_fields)
+    },
+    _ => pattern,
+  }
+}
+
+fn remap_expr_types(expr: CoreExpr, type_remap: Dict<Int, TypeId>) CoreExpr {
+  new_kind: CoreExprKind = case expr.kind {
+    .Let(local, value, body) => .Let(
+      local,
+      remap_expr_types(value, type_remap),
+      remap_expr_types(body, type_remap),
+    ),
+    .Assign(local, value) => .Assign(local, remap_expr_types(value, type_remap)),
+    .BinOp(op, lhs, rhs) => .BinOp(
+      op,
+      remap_expr_types(lhs, type_remap),
+      remap_expr_types(rhs, type_remap),
+    ),
+    .UnOp(op, operand) => .UnOp(op, remap_expr_types(operand, type_remap)),
+    .Call(callee, args) => {
+      .Call(remap_expr_types(callee, type_remap), remap_expr_types_list(args, type_remap))
+    },
+    .ContractCall(contract, method_name, receiver, args) => .ContractCall(
+      contract,
+      method_name,
+      remap_expr_types(receiver, type_remap),
+      remap_expr_types_list(args, type_remap),
+    ),
+    .If(cond, then_br, else_br) => .If(
+      remap_expr_types(cond, type_remap),
+      remap_expr_types(then_br, type_remap),
+      remap_expr_types(else_br, type_remap),
+    ),
+    .Match(scrutinee, arms) => {
+      new_arms := collect arm in arms {
+        MatchArm.{
+          pattern: remap_pattern_types(arm.pattern, type_remap),
+          body: remap_expr_types(arm.body, type_remap),
+        }
+      }
+      .Match(remap_expr_types(scrutinee, type_remap), new_arms)
+    },
+    .Loop(body) => .Loop(remap_expr_types(body, type_remap)),
+    .Break(val) => case val {
+      .Some(v) => .Break(.Some(remap_expr_types(v, type_remap))),
+      .None => expr.kind,
+    },
+    .Return(val) => case val {
+      .Some(v) => .Return(.Some(remap_expr_types(v, type_remap))),
+      .None => expr.kind,
+    },
+    .Defer(body) => .Defer(remap_expr_types(body, type_remap)),
+    .Record(type_id, fields) => {
+      new_fields := collect fi in fields {
+        FieldInit.{ field: fi.field, value: remap_expr_types(fi.value, type_remap) }
+      }
+      .Record(remap_type_id(type_id, type_remap), new_fields)
+    },
+    .RecordGet(rec, field) => .RecordGet(remap_expr_types(rec, type_remap), field),
+    .RecordUpdate(rec, field, value) => .RecordUpdate(
+      remap_expr_types(rec, type_remap),
+      field,
+      remap_expr_types(value, type_remap),
+    ),
+    .Variant(type_id, variant_id, args) => .Variant(
+      remap_type_id(type_id, type_remap),
+      variant_id,
+      remap_expr_types_list(args, type_remap),
+    ),
+    .ArrayLit(elems) => .ArrayLit(remap_expr_types_list(elems, type_remap)),
+    .Index(arr, idx) => .Index(remap_expr_types(arr, type_remap), remap_expr_types(idx, type_remap)),
+    _ => expr.kind,
+  }
+  CoreExpr.{ kind: new_kind, ty: remap_mono_type(expr.ty, type_remap), span: expr.span }
+}
+
+fn remap_expr_types_list(exprs: Vector<CoreExpr>, type_remap: Dict<Int, TypeId>) Vector<CoreExpr> {
+  collect expr in exprs { remap_expr_types(expr, type_remap) }
+}
+
+fn remap_function_types(func: FunctionDef, type_remap: Dict<Int, TypeId>) FunctionDef {
+  FunctionDef.{
+    func_id: func.func_id,
+    name: func.name,
+    is_init: func.is_init,
+    params: collect p in func.params {
+      Param.{ local: p.local, ty: remap_mono_type(p.ty, type_remap) }
+    },
+    body: remap_expr_types(func.body, type_remap),
+    return_ty: remap_mono_type(func.return_ty, type_remap),
   }
 }
 

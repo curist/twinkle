@@ -701,37 +701,55 @@ fn better_contract_candidate(current: ContractCandidate?, candidate: ContractCan
   }
 }
 
+fn contract_candidate_for_func(
+  env: ResolvedEnv,
+  func: FunctionDef,
+  receiver_ty: MonoType,
+  method_name: String,
+  contract: BuiltinContract,
+) ContractCandidate? {
+  if !name_matches_method(func.name, method_name) {
+    return .None
+  }
+
+  if func.params.len() == 0 {
+    return .None
+  }
+
+  if func.return_ty != contract_expected_return(contract) {
+    return .None
+  }
+
+  recv_pattern := func.params[0].ty
+  matched := match_receiver_type(recv_pattern, receiver_ty, Dict.new())
+
+  if !matched.matched {
+    return .None
+  }
+
+  type_params := collect_type_params(func)
+
+  if !subst_covers(type_params, matched.subst) {
+    return .None
+  }
+
+  .Some(ContractCandidate.{ func_id: func.func_id, score: receiver_specificity(recv_pattern) })
+}
+
 fn fallback_contract_target_id(
+  env: ResolvedEnv,
   receiver_ty: MonoType,
   method_name: String,
   contract: BuiltinContract,
   func_map: Dict<Int, FunctionDef>,
 ) FuncId? {
-  expected_ret := contract_expected_return(contract)
   best: ContractCandidate? = .None
 
   for fid in func_map.keys() {
     case func_map[fid] {
-      .Some(func) => {
-        if !name_matches_method(func.name, method_name) { continue }
-
-        if func.params.len() == 0 { continue }
-
-        if func.return_ty != expected_ret { continue }
-
-        recv_pattern := func.params[0].ty
-        matched := match_receiver_type(recv_pattern, receiver_ty, Dict.new())
-
-        if !matched.matched { continue }
-
-        type_params := collect_type_params(func)
-
-        if !subst_covers(type_params, matched.subst) { continue }
-
-        best = better_contract_candidate(
-          best,
-          ContractCandidate.{ func_id: func.func_id, score: receiver_specificity(recv_pattern) },
-        )
+      .Some(func) => case contract_candidate_for_func(env, func, receiver_ty, method_name, contract) {
+        .Some(candidate) => { best = better_contract_candidate(best, candidate) },
+        .None => {},
       },
       .None => {},
     }
@@ -754,11 +772,32 @@ fn resolve_contract_target_id(
   case resolve_method_for_receiver(receiver_ty, method_name, env) {
     .Some(target_name) => {
       case func_table[target_name] {
-        .Some(id) => .Some(id),
-        .None => fallback_contract_target_id(receiver_ty, method_name, contract, func_map),
+        .Some(id) => case receiver_ty {
+          .Named(_, _) => case func_map[id.id] {
+            .Some(func) => case contract_candidate_for_func(
+              env,
+              func,
+              receiver_ty,
+              method_name,
+              contract,
+            ) {
+              .Some(_) => .Some(id),
+              .None => fallback_contract_target_id(
+                env,
+                receiver_ty,
+                method_name,
+                contract,
+                func_map,
+              ),
+            },
+            .None => .Some(id),
+          },
+          _ => .Some(id),
+        },
+        .None => fallback_contract_target_id(env, receiver_ty, method_name, contract, func_map),
       }
     },
-    .None => fallback_contract_target_id(receiver_ty, method_name, contract, func_map),
+    .None => fallback_contract_target_id(env, receiver_ty, method_name, contract, func_map),
   }
 }
 
