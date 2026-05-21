@@ -13,24 +13,30 @@ type TriviaMap = .{
   leading: Dict<Int, Vector<Trivia>>,
   trailing: Dict<Int, Vector<Trivia>>,
   literal_text: Dict<Int, String>,
+  leading_positions: Vector<Int>,
 }
 
-type LogicalPiece = .{ op: BinOp, expr: Expr }
+type BinaryPiece = .{ op: BinOp, expr: Expr }
 
-type LogicalChain = .{ first: Expr, pieces: Vector<LogicalPiece> }
+type BinaryChain = .{ first: Expr, pieces: Vector<BinaryPiece> }
 
 fn build_trivia_map(tokens: Vector<Token>) TriviaMap {
   leading: Dict<Int, Vector<Trivia>> = Dict.new()
   trailing: Dict<Int, Vector<Trivia>> = Dict.new()
   literal_text: Dict<Int, String> = Dict.new()
+  leading_positions: Vector<Int> = []
 
   for tok in tokens {
-    if tok.leading_trivia.len() > 0 { leading[tok.span.start] = tok.leading_trivia }
+    if tok.leading_trivia.len() > 0 {
+      leading[tok.span.start] = tok.leading_trivia
+      leading_positions = .append(tok.span.start)
+    }
+
     if tok.trailing_trivia.len() > 0 { trailing[tok.span.end] = tok.trailing_trivia }
     if tok.kind == .IntLit or tok.kind == .FloatLit { literal_text[tok.span.start] = tok.text }
   }
 
-  TriviaMap.{ leading, trailing, literal_text }
+  TriviaMap.{ leading, trailing, literal_text, leading_positions }
 }
 
 fn get_trivia(tm: TriviaMap, offset: Int) Vector<Trivia> {
@@ -38,6 +44,24 @@ fn get_trivia(tm: TriviaMap, offset: Int) Vector<Trivia> {
     .Some(trivia) => trivia,
     .None => [],
   }
+}
+
+// Collect all leading trivia at positions in (start, end) exclusive.
+// leading_positions is already sorted (tokens are appended in order).
+fn get_trivia_in_range(tm: TriviaMap, start: Int, end: Int) Vector<Trivia> {
+  result: Vector<Trivia> = []
+
+  for pos in tm.leading_positions {
+    if pos <= start { continue }
+    if pos >= end { break }
+
+    case tm.leading.get(pos) {
+      .Some(trivia) => { result = .concat(trivia) },
+      .None => {},
+    }
+  }
+
+  result
 }
 
 fn get_trailing_trivia(tm: TriviaMap, offset: Int) Vector<Trivia> {
@@ -906,53 +930,66 @@ fn format_binary(op: BinOp, lhs: Expr, rhs: Expr, tm: TriviaMap) Doc {
 }
 
 fn format_binary_inner(op: BinOp, lhs: Expr, rhs: Expr, tm: TriviaMap, indent_continuation: Bool) Doc {
-  if is_logical_op(op) {
-    return format_logical_binary(op, lhs, rhs, tm, indent_continuation)
-  }
   op_str := binop_str(op)
-  lhs_doc := format_binary_child(op, lhs, false, tm, false)
-  rhs_doc := format_binary_child(op, rhs, true, tm, false)
 
   case op {
     .Range => {
       // Range has no spaces
+      lhs_doc := format_binary_child(op, lhs, false, tm, false)
+      rhs_doc := format_binary_child(op, rhs, true, tm, false)
       doc.concat([lhs_doc, doc.text(op_str), rhs_doc])
     },
-    .Assign => { doc.concat([lhs_doc, doc.text(" ${op_str} "), rhs_doc]) },
-    _ => {
-      continuation := doc.concat([doc.line(), doc.text("${op_str} "), rhs_doc])
-      body := if indent_continuation { doc.concat([lhs_doc, doc.indent(continuation)]) } else {
-        doc.concat([lhs_doc, continuation])
-      }
-      doc.group(body)
+    .Assign => {
+      lhs_doc := format_binary_child(op, lhs, false, tm, false)
+      rhs_doc := format_binary_child(op, rhs, true, tm, false)
+      doc.concat([lhs_doc, doc.text(" ${op_str} "), rhs_doc])
     },
+    _ => format_chained_binary(op, lhs, rhs, tm, indent_continuation),
   }
 }
 
-fn format_logical_binary(op: BinOp, lhs: Expr, rhs: Expr, tm: TriviaMap, indent_continuation: Bool) Doc {
-  chain := collect_logical_chain(op, lhs, rhs)
-  parts: Vector<Doc> = [format_binary_child(op, chain.first, false, tm, false)]
+fn format_chained_binary(op: BinOp, lhs: Expr, rhs: Expr, tm: TriviaMap, indent_continuation: Bool) Doc {
+  chain := collect_binary_chain(op, lhs, rhs)
+  first_doc := format_binary_child(op, chain.first, false, tm, false)
+  prev_end := chain.first.span.end
+  // Build Fill children: [item, sep, item, sep, ..., item]
+  // Items after the first include the operator prefix.
+  // Separators are soft line breaks, or hard line breaks when comments exist.
+  fill_children: Vector<Doc> = [first_doc]
 
   for piece in chain.pieces {
-    parts = .append(doc.line())
-    parts = .append(doc.text("${binop_str(piece.op)} "))
-    parts = .append(format_binary_child(piece.op, piece.expr, true, tm, false))
+    trivia := non_blank_trivia(get_trivia_in_range(tm, prev_end, piece.expr.span.end))
+    sep := if trivia.len() > 0 { doc.concat([doc.hard_line(), emit_trivia(trivia)]) } else {
+      doc.line()
+    }
+    fill_children = .append(sep)
+    piece_doc := doc.concat([
+      doc.text("${binop_str(piece.op)} "),
+      format_binary_child(piece.op, piece.expr, true, tm, false),
+    ])
+    fill_children = .append(piece_doc)
+    prev_end = piece.expr.span.end
   }
 
-  body := if indent_continuation {
-    doc.concat([parts[0], doc.indent(doc.concat(parts.slice(1, parts.len())))])
-  } else { doc.concat(parts) }
-  doc.group(body)
+  if indent_continuation and fill_children.len() >= 3 {
+    // fill_children = [first_doc, sep1, item1, sep2, item2, ...]
+    // Extract sep1 as the break point, then Fill the rest starting with item1.
+    first_sep := fill_children[1]
+    remaining := Doc.Fill(fill_children.slice(2, fill_children.len()))
+    doc.group(doc.concat([first_doc, doc.indent(doc.concat([first_sep, remaining]))]))
+  } else {
+    doc.group(Doc.Fill(fill_children))
+  }
 }
 
-fn collect_logical_chain(op: BinOp, lhs: Expr, rhs: Expr) LogicalChain {
+fn collect_binary_chain(op: BinOp, lhs: Expr, rhs: Expr) BinaryChain {
   first := lhs
-  pieces: Vector<LogicalPiece> = []
+  pieces: Vector<BinaryPiece> = []
 
   case lhs.kind {
     .Binary(child_op, child_lhs, child_rhs) => {
-      if is_logical_op(child_op) and binop_prec(child_op) >= binop_prec(op) {
-        left_chain := collect_logical_chain(child_op, child_lhs, child_rhs)
+      if child_op == op {
+        left_chain := collect_binary_chain(child_op, child_lhs, child_rhs)
         first = left_chain.first
         pieces = left_chain.pieces
       }
@@ -962,21 +999,19 @@ fn collect_logical_chain(op: BinOp, lhs: Expr, rhs: Expr) LogicalChain {
 
   case rhs.kind {
     .Binary(child_op, child_lhs, child_rhs) => {
-      if is_logical_op(child_op) and binop_prec(child_op) >= binop_prec(op) {
-        right_chain := collect_logical_chain(child_op, child_lhs, child_rhs)
-        pieces = .append(LogicalPiece.{ op, expr: right_chain.first })
+      if child_op == op {
+        right_chain := collect_binary_chain(child_op, child_lhs, child_rhs)
+        pieces = .append(BinaryPiece.{ op, expr: right_chain.first })
         pieces = .concat(right_chain.pieces)
       } else {
-        pieces = .append(LogicalPiece.{ op, expr: rhs })
+        pieces = .append(BinaryPiece.{ op, expr: rhs })
       }
     },
-    _ => { pieces = .append(LogicalPiece.{ op, expr: rhs }) },
+    _ => { pieces = .append(BinaryPiece.{ op, expr: rhs }) },
   }
 
-  LogicalChain.{ first, pieces }
+  BinaryChain.{ first, pieces }
 }
-
-fn is_logical_op(op: BinOp) Bool { op == .LogicalOr or op == .LogicalAnd }
 
 fn format_binary_child(
   parent: BinOp,
@@ -1085,12 +1120,13 @@ fn format_if_with_options(
   tm: TriviaMap,
   allow_inline_blocks: Bool,
 ) Doc {
-  allow_inline_branches := allow_inline_blocks
-    and case else_expr {
+  allow_inline_branches := allow_inline_blocks and case else_expr {
       .Some(el) => {
         case el.kind {
-          .BlockExpr(block) => is_simple_tail_block(then_block, tm)
-            and is_simple_tail_block(block, tm),
+          .BlockExpr(block) => is_simple_tail_block(then_block, tm) and is_simple_tail_block(
+              block,
+              tm,
+            ),
           _ => false,
         }
       },

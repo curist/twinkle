@@ -1,4 +1,4 @@
-.PHONY: help test boot-test rust-test stage0 stage2 bundle-cli quick-bundle-cli cli playground playground-dev playground-wasm clean
+.PHONY: help test boot-test rust-test stage0 stage2 bundle-cli quick-bundle-cli cli playground playground-dev playground-wasm fmt clean
 
 STAGE1_WASM ?= target/boot-stage1.wasm
 STAGE2_WASM ?= target/boot.wasm
@@ -22,6 +22,7 @@ help:
 	@printf '  make stage2            Rebuild target/boot.wasm via self-host loop\n'
 	@printf '  make bundle-cli        Rebuild stage2 payload and build Node SEA target/twk\n'
 	@printf '  make cli               Alias for bundle-cli\n'
+	@printf '  make fmt               Format boot compiler .tw source files\n'
 	@printf '  make playground        Build playground (all deps + vite build)\n'
 	@printf '  make playground-dev    Start playground dev server (all deps + vite dev)\n'
 	@printf '  make playground-wasm   Build target/playground.wasm (slim compiler for browser)\n'
@@ -125,6 +126,10 @@ playground: target/playground.wasm tools/bridge.wasm tree-sitter-twinkle/tree-si
 # Copy artifacts and start the vite dev server
 playground-dev: target/playground.wasm tools/bridge.wasm tree-sitter-twinkle/tree-sitter-twinkle.wasm playground/node_modules
 	cd playground && node scripts/copy-assets.mjs && npx vite
+
+# Format all .tw source files (boot only; prelude/stdlib excluded).
+fmt: target/twk
+	@find boot -name '*.tw' | xargs target/twk fmt
 
 clean:
 	cargo clean

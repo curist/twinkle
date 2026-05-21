@@ -1734,17 +1734,21 @@ fn parse_prefix(c: Cursor) ExprParse {
       .{ value: expr, cursor: c.advance(), diagnostics: diagnostics_out }
     },
     .LParen => {
+      open_span := c.span()
       parsed_inner := parse_expr_in(c.advance(), "grouped expression")
       diagnostics_out = .concat(parsed_inner.diagnostics)
       c = parsed_inner.cursor
+      expr := parsed_inner.value
 
       if c.kind() == .RParen {
+        expr.span = open_span.merge(c.span())
         c = .advance()
-        return .{ value: parsed_inner.value, cursor: c, diagnostics: diagnostics_out }
+        return .{ value: expr, cursor: c, diagnostics: diagnostics_out }
       }
 
       diagnostics_out = .append(diag.error(c.span(), "expected ')'"))
-      .{ value: parsed_inner.value, cursor: c, diagnostics: diagnostics_out }
+      expr.span.start = open_span.start
+      .{ value: expr, cursor: c, diagnostics: diagnostics_out }
     },
     .LBracket => {
       start_pos := c.pos
@@ -2541,8 +2545,7 @@ fn step(self: ParseState) ParseState {
   prev_pos := self.cursor.pos
 
   if self.cursor.kind() == .Extern
-    or self.cursor.kind() == .Pub
-    and self.cursor.at(1).kind() == .Extern {
+    or self.cursor.kind() == .Pub and self.cursor.at(1).kind() == .Extern {
     parsed_items := parse_extern(self.cursor)
     next_cursor := parsed_items.cursor
     if next_cursor.pos <= prev_pos { next_cursor = self.cursor.advance() }
