@@ -23,11 +23,9 @@ pub fn render_with_width(doc: Doc, width: Int) String {
   col := 0
   stack: Vector<StackEntry> = [StackEntry.{ indent: 0, mode: .Break, doc }]
   top := stack.len()
-  
   for top > 0 {
     top = top - 1
     entry := stack[top]
-    
     case entry.doc {
       .Nil => {},
       .Text(s) => {
@@ -83,7 +81,11 @@ pub fn render_with_width(doc: Doc, width: Int) String {
           pushed := push_stack(
             stack,
             top,
-            StackEntry.{ indent: entry.indent, mode: entry.mode, doc: docs[idx] },
+            StackEntry.{
+              indent: entry.indent,
+              mode: entry.mode,
+              doc: docs[idx],
+            },
           )
           stack = pushed.stack
           top = pushed.top
@@ -133,7 +135,6 @@ pub fn render_with_width(doc: Doc, width: Int) String {
       },
     }
   }
-  
   buf.join("")
 }
 
@@ -141,15 +142,11 @@ pub fn render_with_width(doc: Doc, width: Int) String {
 fn fits(doc: Doc, indent: Int, remaining: Int) Bool {
   fit_stack: Vector<Doc> = [doc]
   rem := remaining
-  
   for fit_stack.len() > 0 {
-    if rem < 0 {
-      return false
-    }
+    if rem < 0 { return false }
     last := fit_stack.len() - 1
     d := fit_stack[last]
     fit_stack = fit_stack.slice(0, last)
-    
     case d {
       .Nil => {},
       .Text(s) => {
@@ -187,14 +184,11 @@ fn fits(doc: Doc, indent: Int, remaining: Int) Bool {
       },
     }
   }
-  
   rem >= 0
 }
 
 fn spaces(n: Int) String {
-  if n <= 0 {
-    return ""
-  }
+  if n <= 0 { return "" }
   buf: Vector<String> = []
   i := 0
   for i < n {

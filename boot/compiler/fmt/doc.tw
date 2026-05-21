@@ -60,9 +60,7 @@ fn flat_width(d: Doc) Int {
       total := 0
       for child in docs {
         w := flat_width(child)
-        if w < 0 {
-          return -1
-        }
+        if w < 0 { return -1 }
         total = total + w
       }
       total
@@ -95,9 +93,7 @@ pub fn concat(docs: Vector<Doc>) Doc {
 }
 
 pub fn join(docs: Vector<Doc>, sep: Doc) Doc {
-  if docs.len() == 0 {
-    return .Nil
-  }
+  if docs.len() == 0 { return .Nil }
   parts: Vector<Doc> = []
   for d, i in docs {
     if i > 0 {
@@ -115,26 +111,20 @@ pub fn join(docs: Vector<Doc>, sep: Doc) Doc {
 ///   c,
 /// )
 pub fn tight_bracketed(open: String, close: String, docs: Vector<Doc>) Doc {
-  if docs.len() == 0 {
-    return text("${open}${close}")
-  }
+  if docs.len() == 0 { return text("${open}${close}") }
   group(
-    concat(
-      [
-        text(open),
-        indent(
-          concat(
-            [
-              if_break(hard_line(), nil()),
-              join(docs, concat([text(","), line()])),
-              if_break(text(","), nil()),
-            ],
-          ),
-        ),
-        if_break(hard_line(), nil()),
-        text(close),
-      ],
-    ),
+    concat([
+      text(open),
+      indent(
+        concat([
+          if_break(hard_line(), nil()),
+          join(docs, concat([text(","), line()])),
+          if_break(text(","), nil()),
+        ]),
+      ),
+      if_break(hard_line(), nil()),
+      text(close),
+    ]),
   )
 }
 
@@ -144,25 +134,19 @@ pub fn tight_bracketed(open: String, close: String, docs: Vector<Doc>) Doc {
 ///   y: 2,
 /// }
 pub fn spaced_bracketed(open: String, close: String, docs: Vector<Doc>) Doc {
-  if docs.len() == 0 {
-    return text("${open}${close}")
-  }
+  if docs.len() == 0 { return text("${open}${close}") }
   group(
-    concat(
-      [
-        text(open),
-        indent(
-          concat(
-            [
-              line(),
-              join(docs, concat([text(","), line()])),
-              if_break(text(","), nil()),
-            ],
-          ),
-        ),
-        line(),
-        text(close),
-      ],
-    ),
+    concat([
+      text(open),
+      indent(
+        concat([
+          line(),
+          join(docs, concat([text(","), line()])),
+          if_break(text(","), nil()),
+        ]),
+      ),
+      line(),
+      text(close),
+    ]),
   )
 }

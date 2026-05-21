@@ -34,7 +34,6 @@ use compiler.tokens.{Token, Trivia}
 use lib.source.span.{Span}
 
 // --- Trivia helpers ---
-
 fn build_trivia_map(tokens: Vector<Token>) Dict<Int, Vector<Trivia>> {
   m: Dict<Int, Vector<Trivia>> = Dict.new()
   for tok in tokens {
@@ -64,9 +63,7 @@ fn get_eof_trivia(tokens: Vector<Token>) Vector<Trivia> {
           .BlankLine => {
             trivia = trivia.slice(0, trivia.len() - 1)
           },
-          _ => {
-            break
-          },
+          _ => { break },
         }
       }
       trivia
@@ -83,8 +80,9 @@ fn emit_trivia(trivia: Vector<Trivia>) Doc {
     case t.kind {
       .BlankLine => {
         prev_is_comment := i > 0 and is_comment_trivia(trivia[i - 1])
-        next_is_comment := i + 1 < trivia.len() and is_comment_trivia(trivia[i + 1])
-        if !(prev_is_comment and next_is_comment) {
+        next_is_comment := i + 1 < trivia.len()
+        and is_comment_trivia(trivia[i + 1])
+        if !prev_is_comment and next_is_comment {
           result = doc.concat([result, doc.hard_line()])
         }
       },
@@ -114,6 +112,16 @@ fn is_blank_trivia(t: Trivia) Bool {
   }
 }
 
+fn non_blank_trivia(trivia: Vector<Trivia>) Vector<Trivia> {
+  out: Vector<Trivia> = []
+  for t in trivia {
+    if !is_blank_trivia(t) {
+      out = out.append(t)
+    }
+  }
+  out
+}
+
 fn item_span(item: Item) Span {
   case item {
     .Use(decl) => decl.span,
@@ -140,7 +148,6 @@ fn stmt_span(stmt: Stmt) Span {
 }
 
 // --- Import sorting ---
-
 fn sort_import_blocks(items: Vector<Item>) Vector<Item> {
   result: Vector<Item> = []
   i := 0
@@ -155,9 +162,7 @@ fn sort_import_blocks(items: Vector<Item>) Vector<Item> {
               uses = uses.append(sort_selective_items(decl))
               i = i + 1
             },
-            _ => {
-              break
-            },
+            _ => { break },
           }
         }
         sorted := sort_uses(uses)
@@ -188,7 +193,9 @@ fn import_sort_key(decl: UseDecl) String {
 }
 
 fn import_group(decl: UseDecl) Int {
-  if decl.is_stdlib { 0 } else if decl.is_relative { 2 } else { 1 }
+  if decl.is_stdlib {
+    0
+  } else if decl.is_relative { 2 } else { 1 }
 }
 
 fn import_variant_order(decl: UseDecl) Int {
@@ -224,31 +231,28 @@ fn import_item_name(item: ImportItem) String {
 }
 
 // --- Module ---
-
 pub fn format_module(module: Module, tokens: Vector<Token>) Doc {
   items := sort_import_blocks(module.items)
-  if items.len() == 0 {
-    return doc.nil()
-  }
-  
+  if items.len() == 0 { return doc.nil() }
   tm := build_trivia_map(tokens)
   result := Doc.Nil
   original_first_start := item_span(module.items[0]).start
   leading_file_trivia := get_trivia(tm, original_first_start)
   if leading_file_trivia.len() > 0 {
     start := 0
-    for start < leading_file_trivia.len() and is_blank_trivia(leading_file_trivia[start]) {
+    for start < leading_file_trivia.len()
+    and is_blank_trivia(leading_file_trivia[start]) {
       start = start + 1
     }
     if start < leading_file_trivia.len() {
-      result = doc.concat(
-        [result, emit_trivia(leading_file_trivia.slice(start, leading_file_trivia.len()))],
-      )
+      result = doc.concat([
+        result,
+        emit_trivia(leading_file_trivia.slice(start, leading_file_trivia.len())),
+      ])
     }
   }
   prev_kind := ""
   prev_import_group := -1
-  
   for item, i in items {
     cur_kind := item_kind_name(item)
     trivia := if item_span(item).start == original_first_start {
@@ -260,7 +264,6 @@ pub fn format_module(module: Module, tokens: Vector<Token>) Doc {
       .Use(decl) => import_group(decl),
       _ => -1,
     }
-    
     if i > 0 {
       result = doc.concat([result, doc.hard_line()])
       
@@ -271,19 +274,14 @@ pub fn format_module(module: Module, tokens: Vector<Token>) Doc {
       and prev_import_group != cur_import_group {
         needs_blank = true
       }
-      
-      if trivia.len() > 0 {
-        if needs_blank and !is_blank_trivia(trivia[0]) {
-          result = doc.concat([result, doc.hard_line()])
-        }
-        result = doc.concat([result, emit_trivia(trivia)])
-      } else {
-        if needs_blank {
-          result = doc.concat([result, doc.hard_line()])
-        }
+      if needs_blank {
+        result = doc.concat([result, doc.hard_line()])
+      }
+      comments := non_blank_trivia(trivia)
+      if comments.len() > 0 {
+        result = doc.concat([result, emit_trivia(comments)])
       }
     }
-    
     result = doc.concat([result, format_item(item, tm)])
     prev_kind = cur_kind
     prev_import_group = cur_import_group
@@ -297,7 +295,6 @@ pub fn format_module(module: Module, tokens: Vector<Token>) Doc {
     // Ensure trailing newline
     result = doc.concat([result, doc.hard_line()])
   }
-  
   result
 }
 
@@ -315,13 +312,9 @@ fn item_kind_name(item: Item) String {
 
 fn should_blank_between(prev: String, cur: String) Bool {
   // Consecutive use statements: no blank line
-  if prev == "use" and cur == "use" {
-    return false
-  }
+  if prev == "use" and cur == "use" { return false }
   // Between statements: no blank line required
-  if prev == "stmt" and cur == "stmt" {
-    return false
-  }
+  if prev == "stmt" and cur == "stmt" { return false }
   // Otherwise: blank line between different declaration kinds
   true
 }
@@ -339,25 +332,20 @@ fn format_item(item: Item, tm: Dict<Int, Vector<Trivia>>) Doc {
 }
 
 // --- Imports ---
-
 fn format_use(decl: UseDecl) Doc {
   parts: Vector<Doc> = [doc.text("use ")]
-  
   if decl.is_stdlib {
     parts = parts.append(doc.text("@"))
   } else if decl.is_relative {
     parts = parts.append(doc.text("."))
   }
-  
   parts = parts.append(doc.text(decl.path.join(".")))
-  
   case decl.alias {
     .Some(alias) => {
       parts = parts.append(doc.text(" as ${alias}"))
     },
     .None => {},
   }
-  
   case decl.items {
     .Some(items) => {
       item_docs := collect item in items { format_import_item(item) }
@@ -366,7 +354,6 @@ fn format_use(decl: UseDecl) Doc {
     },
     .None => {},
   }
-  
   doc.concat(parts)
 }
 
@@ -388,21 +375,16 @@ fn format_import_item(item: ImportItem) Doc {
 }
 
 // --- Type Declarations ---
-
 fn format_type_decl(decl: TypeDecl) Doc {
   parts: Vector<Doc> = []
-  
   if decl.is_pub {
     parts = parts.append(doc.text("pub "))
   }
   parts = parts.append(doc.text("type ${decl.name}"))
-  
   if decl.type_params.len() > 0 {
     parts = parts.append(format_type_params(decl.type_params))
   }
-  
   parts = parts.append(doc.text(" = "))
-  
   case decl.def {
     .Record(fields) => {
       field_docs := collect f in fields { format_record_field(f) }
@@ -419,7 +401,6 @@ fn format_type_decl(decl: TypeDecl) Doc {
       parts = parts.append(doc.text("/* error */"))
     },
   }
-  
   doc.concat(parts)
 }
 
@@ -429,7 +410,9 @@ fn format_type_params(params: Vector<TypeParam>) Doc {
 }
 
 fn format_type_param(param: TypeParam) Doc {
-  if param.bounds.len() == 0 { doc.text(param.name) } else {
+  if param.bounds.len() == 0 {
+    doc.text(param.name)
+  } else {
     bound_strs := collect b in param.bounds { b.segments.join(".") }
     doc.text("${param.name}: ${bound_strs.join(" + ")}")
   }
@@ -440,36 +423,33 @@ fn format_record_field(field: RecordField) Doc {
 }
 
 fn format_variant_decl(v: VariantDecl) Doc {
-  if v.fields.len() == 0 { doc.text(v.name) } else {
+  if v.fields.len() == 0 {
+    doc.text(v.name)
+  } else {
     field_docs := collect f in v.fields { format_type_expr(f) }
     doc.concat([doc.text(v.name), doc.tight_bracketed("(", ")", field_docs)])
   }
 }
 
 // --- Type Expressions ---
-
 fn format_type_expr(ty: TypeExpr) Doc {
   case ty.kind {
     .Path(path) => doc.text(path.segments.join(".")),
     .Applied(path, args) => {
       arg_docs := collect a in args { format_type_expr(a) }
-      doc.concat(
-        [
-          doc.text(path.segments.join(".")),
-          doc.tight_bracketed("<", ">", arg_docs),
-        ],
-      )
+      doc.concat([
+        doc.text(path.segments.join(".")),
+        doc.tight_bracketed("<", ">", arg_docs),
+      ])
     },
     .Function(params, ret) => {
       param_docs := collect p in params { format_type_expr(p) }
-      doc.concat(
-        [
-          doc.text("fn"),
-          doc.tight_bracketed("(", ")", param_docs),
-          doc.text(" "),
-          format_type_expr(ret),
-        ],
-      )
+      doc.concat([
+        doc.text("fn"),
+        doc.tight_bracketed("(", ")", param_docs),
+        doc.text(" "),
+        format_type_expr(ret),
+      ])
     },
     .Record(fields) => {
       field_docs := collect f in fields { format_record_field(f) }
@@ -488,22 +468,17 @@ fn format_type_expr(ty: TypeExpr) Doc {
 }
 
 // --- Functions ---
-
 fn format_function(decl: FunctionDecl, tm: Dict<Int, Vector<Trivia>>) Doc {
   parts: Vector<Doc> = []
-  
   if decl.is_pub {
     parts = parts.append(doc.text("pub "))
   }
   parts = parts.append(doc.text("fn ${decl.name}"))
-  
   if decl.type_params.len() > 0 {
     parts = parts.append(format_type_params(decl.type_params))
   }
-  
   param_docs := collect p in decl.params { format_param(p) }
   parts = parts.append(doc.tight_bracketed("(", ")", param_docs))
-  
   case decl.return_type {
     .Some(ret) => {
       parts = parts.append(doc.text(" "))
@@ -511,24 +486,19 @@ fn format_function(decl: FunctionDecl, tm: Dict<Int, Vector<Trivia>>) Doc {
     },
     .None => {},
   }
-  
   parts = parts.append(doc.text(" "))
   parts = parts.append(format_block(decl.body, tm))
-  
   doc.concat(parts)
 }
 
 fn format_extern_fn(decl: ExternFunctionDecl) Doc {
   parts: Vector<Doc> = []
-  
   if decl.is_pub {
     parts = parts.append(doc.text("pub "))
   }
   parts = parts.append(doc.text("extern fn \"${decl.module}\" ${decl.name}"))
-  
   param_docs := collect p in decl.params { format_param(p) }
   parts = parts.append(doc.tight_bracketed("(", ")", param_docs))
-  
   case decl.return_type {
     .Some(ret) => {
       parts = parts.append(doc.text(" "))
@@ -536,7 +506,6 @@ fn format_extern_fn(decl: ExternFunctionDecl) Doc {
     },
     .None => {},
   }
-  
   doc.concat(parts)
 }
 
@@ -557,10 +526,16 @@ fn format_param(p: Param) Doc {
 }
 
 // --- Blocks & Statements ---
-
 fn format_block(block: Block, tm: Dict<Int, Vector<Trivia>>) Doc {
+  format_block_with_options(block, tm, true)
+}
+
+fn format_block_with_options(
+  block: Block,
+  tm: Dict<Int, Vector<Trivia>>,
+  allow_simple_tail_inline: Bool,
+) Doc {
   body_docs: Vector<Doc> = []
-  
   for stmt in block.stmts {
     trivia := get_trivia(tm, stmt_span(stmt).start)
     stmt_doc := format_stmt(stmt, tm)
@@ -569,7 +544,6 @@ fn format_block(block: Block, tm: Dict<Int, Vector<Trivia>>) Doc {
     }
     body_docs = body_docs.append(stmt_doc)
   }
-  
   case block.tail {
     .Some(expr) => {
       trivia := get_trivia(tm, expr.span.start)
@@ -581,27 +555,22 @@ fn format_block(block: Block, tm: Dict<Int, Vector<Trivia>>) Doc {
     },
     .None => {},
   }
-  
-  if body_docs.len() == 0 {
-    return doc.text("{}")
-  }
+  if body_docs.len() == 0 { return doc.text("{}") }
   
   // Try simple one-entry blocks on one line (only when no trivia)
   if body_docs.len() == 1 {
-    if block.stmts.len() == 0 {
+    if block.stmts.len() == 0 and allow_simple_tail_inline {
       case block.tail {
         .Some(expr) => {
           trivia := get_trivia(tm, expr.span.start)
           if is_simple_expr(expr) and trivia.len() == 0 {
             return doc.group(
-              doc.concat(
-                [
-                  doc.text("{"),
-                  doc.indent(doc.concat([doc.line(), body_docs[0]])),
-                  doc.line(),
-                  doc.text("}"),
-                ],
-              ),
+              doc.concat([
+                doc.text("{"),
+                doc.indent(doc.concat([doc.line(), body_docs[0]])),
+                doc.line(),
+                doc.text("}"),
+              ]),
             )
           }
         },
@@ -612,28 +581,23 @@ fn format_block(block: Block, tm: Dict<Int, Vector<Trivia>>) Doc {
       trivia := get_trivia(tm, stmt_span(stmt).start)
       if is_simple_stmt(stmt) and trivia.len() == 0 {
         return doc.group(
-          doc.concat(
-            [
-              doc.text("{"),
-              doc.indent(doc.concat([doc.line(), body_docs[0]])),
-              doc.line(),
-              doc.text("}"),
-            ],
-          ),
+          doc.concat([
+            doc.text("{"),
+            doc.indent(doc.concat([doc.line(), body_docs[0]])),
+            doc.line(),
+            doc.text("}"),
+          ]),
         )
       }
     }
   }
-  
   inner := doc.join(body_docs, doc.hard_line())
-  doc.concat(
-    [
-      doc.text("{"),
-      doc.indent(doc.concat([doc.hard_line(), inner])),
-      doc.hard_line(),
-      doc.text("}"),
-    ],
-  )
+  doc.concat([
+    doc.text("{"),
+    doc.indent(doc.concat([doc.hard_line(), inner])),
+    doc.hard_line(),
+    doc.text("}"),
+  ])
 }
 
 fn format_stmt(stmt: Stmt, tm: Dict<Int, Vector<Trivia>>) Doc {
@@ -651,11 +615,9 @@ fn format_stmt(stmt: Stmt, tm: Dict<Int, Vector<Trivia>>) Doc {
 
 fn format_let(s: LetStmt, tm: Dict<Int, Vector<Trivia>>) Doc {
   parts: Vector<Doc> = []
-  
   if s.is_pub {
     parts = parts.append(doc.text("pub "))
   }
-  
   case s.ty {
     .Some(ty) => {
       parts = parts.append(doc.text("${s.name}: "))
@@ -670,14 +632,12 @@ fn format_let(s: LetStmt, tm: Dict<Int, Vector<Trivia>>) Doc {
       }
     },
   }
-  
   parts = parts.append(format_expr(s.value, tm))
   doc.concat(parts)
 }
 
 fn format_for(s: ForStmt, tm: Dict<Int, Vector<Trivia>>) Doc {
   parts: Vector<Doc> = [doc.text("for ")]
-  
   case s.iter {
     .Some(iter) => {
       case s.pattern {
@@ -704,7 +664,6 @@ fn format_for(s: ForStmt, tm: Dict<Int, Vector<Trivia>>) Doc {
       }
     },
   }
-  
   parts = parts.append(doc.text(" "))
   parts = parts.append(format_block(s.body, tm))
   doc.concat(parts)
@@ -729,7 +688,6 @@ fn format_defer(s: DeferStmt, tm: Dict<Int, Vector<Trivia>>) Doc {
 }
 
 // --- Expressions ---
-
 fn format_expr(expr: Expr, tm: Dict<Int, Vector<Trivia>>) Doc {
   case expr.kind {
     .Ident(name) => doc.text(name),
@@ -741,12 +699,13 @@ fn format_expr(expr: Expr, tm: Dict<Int, Vector<Trivia>>) Doc {
     .Unary(op, inner) => format_unary(op, inner, tm),
     .Binary(op, lhs, rhs) => format_binary(op, lhs, rhs, tm),
     .Call(callee, args) => format_call(callee, args, tm),
-    .Field(obj, name) => doc.concat(
-      [format_expr(obj, tm), doc.text(".${name}")],
-    ),
-    .Index(obj, idx) => doc.concat(
-      [format_expr(obj, tm), doc.text("["), format_expr(idx, tm), doc.text("]")],
-    ),
+    .Field(obj, name) => doc.concat([format_expr(obj, tm), doc.text(".${name}")]),
+    .Index(obj, idx) => doc.concat([
+      format_expr(obj, tm),
+      doc.text("["),
+      format_expr(idx, tm),
+      doc.text("]"),
+    ]),
     .BlockExpr(block) => format_block(block, tm),
     .If(cond, then_block, else_expr) => format_if(
       cond,
@@ -765,16 +724,20 @@ fn format_expr(expr: Expr, tm: Dict<Int, Vector<Trivia>>) Doc {
     },
     .NamedRecord(name, entries) => {
       entry_docs := collect e in entries { format_record_entry(e, tm) }
-      doc.concat(
-        [doc.text("${name}"), doc.spaced_bracketed(".{", "}", entry_docs)],
-      )
+      doc.concat([
+        doc.text("${name}"),
+        doc.spaced_bracketed(".{", "}", entry_docs),
+      ])
     },
     .Variant(name, fields) => {
-      if fields.len() == 0 { doc.text(".${name}") } else {
+      if fields.len() == 0 {
+        doc.text(".${name}")
+      } else {
         field_docs := collect f in fields { format_expr(f, tm) }
-        doc.concat(
-          [doc.text(".${name}"), doc.tight_bracketed("(", ")", field_docs)],
-        )
+        doc.concat([
+          doc.text(".${name}"),
+          doc.tight_bracketed("(", ")", field_docs),
+        ])
       }
     },
     .Closure(params, ret_ty, body) => format_closure(params, ret_ty, body, tm),
@@ -801,33 +764,27 @@ fn format_binary(op: BinOp, lhs: Expr, rhs: Expr, tm: Dict<Int, Vector<Trivia>>)
       // Range has no spaces
       doc.concat([lhs_doc, doc.text(op_str), rhs_doc])
     },
-    .Assign => {
-      doc.concat([lhs_doc, doc.text(" ${op_str} "), rhs_doc])
-    },
+    .Assign => { doc.concat([lhs_doc, doc.text(" ${op_str} "), rhs_doc]) },
     _ => {
       doc.group(
-        doc.concat(
-          [
-            lhs_doc,
-            doc.line(),
-            doc.text("${op_str} "),
-            rhs_doc,
-          ],
-        ),
+        doc.concat([lhs_doc, doc.line(), doc.text("${op_str} "), rhs_doc]),
       )
     },
   }
 }
 
-fn format_binary_child(parent: BinOp, child: Expr, is_right: Bool, tm: Dict<Int, Vector<Trivia>>) Doc {
+fn format_binary_child(
+  parent: BinOp,
+  child: Expr,
+  is_right: Bool,
+  tm: Dict<Int, Vector<Trivia>>,
+) Doc {
   child_doc := format_expr(child, tm)
   case child.kind {
     .Binary(child_op, _, _) => {
       if needs_binary_parens(parent, child_op, is_right) {
         doc.concat([doc.text("("), child_doc, doc.text(")")])
-      } else {
-        child_doc
-      }
+      } else { child_doc }
     },
     _ => child_doc,
   }
@@ -836,12 +793,8 @@ fn format_binary_child(parent: BinOp, child: Expr, is_right: Bool, tm: Dict<Int,
 fn needs_binary_parens(parent: BinOp, child: BinOp, is_right: Bool) Bool {
   parent_prec := binop_prec(parent)
   child_prec := binop_prec(child)
-  if child_prec < parent_prec {
-    return true
-  }
-  if child_prec > parent_prec {
-    return false
-  }
+  if child_prec < parent_prec { return true }
+  if child_prec > parent_prec { return false }
   // Preserve grouping for right-nested operators at the same precedence.
   // This is required for non-associative ops and harmlessly explicit for others.
   is_right
@@ -899,9 +852,12 @@ fn binop_str(op: BinOp) String {
 
 fn format_call(callee: Expr, args: Vector<Expr>, tm: Dict<Int, Vector<Trivia>>) Doc {
   if args.len() == 1 and is_self_breaking_arg(args[0]) {
-    return doc.concat(
-      [format_expr(callee, tm), doc.text("("), format_expr(args[0], tm), doc.text(")")],
-    )
+    return doc.concat([
+      format_expr(callee, tm),
+      doc.text("("),
+      format_expr(args[0], tm),
+      doc.text(")"),
+    ])
   }
   arg_docs := collect a in args { format_expr(a, tm) }
   doc.concat([format_expr(callee, tm), doc.tight_bracketed("(", ")", arg_docs)])
@@ -913,13 +869,22 @@ fn format_if(
   else_expr: Expr?,
   tm: Dict<Int, Vector<Trivia>>,
 ) Doc {
+  allow_inline_branches := case else_expr {
+    .Some(el) => {
+      case el.kind {
+        .BlockExpr(block) => is_simple_tail_block(then_block, tm)
+        and is_simple_tail_block(block, tm),
+        _ => false,
+      }
+    },
+    .None => true,
+  }
   parts: Vector<Doc> = [
     doc.text("if "),
     format_expr(cond, tm),
     doc.text(" "),
-    format_block(then_block, tm),
+    format_block_with_options(then_block, tm, allow_inline_branches),
   ]
-  
   case else_expr {
     .Some(el) => {
       parts = parts.append(doc.text(" else "))
@@ -929,7 +894,9 @@ fn format_if(
           parts = parts.append(format_if(cond2, then2, else2, tm))
         },
         .BlockExpr(block) => {
-          parts = parts.append(format_block(block, tm))
+          parts = parts.append(
+            format_block_with_options(block, tm, allow_inline_branches),
+          )
         },
         _ => {
           parts = parts.append(format_expr(el, tm))
@@ -938,7 +905,6 @@ fn format_if(
     },
     .None => {},
   }
-  
   doc.concat(parts)
 }
 
@@ -957,24 +923,23 @@ fn format_case(
     arm_docs = arm_docs.append(arm_doc)
   }
   inner := doc.join(arm_docs, doc.concat([doc.text(","), doc.hard_line()]))
-  
-  doc.concat(
-    [
-      doc.text("case "),
-      format_expr(scrutinee, tm),
-      doc.text(" {"),
-      doc.indent(doc.concat([doc.hard_line(), inner, doc.text(",")])),
-      doc.hard_line(),
-      doc.text("}"),
-    ],
-  )
+  doc.concat([
+    doc.text("case "),
+    format_expr(scrutinee, tm),
+    doc.text(" {"),
+    doc.indent(doc.concat([doc.hard_line(), inner, doc.text(",")])),
+    doc.hard_line(),
+    doc.text("}"),
+  ])
 }
 
 fn format_case_arm(arm: CaseArm, tm: Dict<Int, Vector<Trivia>>) Doc {
   doc.group(
-    doc.concat(
-      [format_pattern(arm.pattern), doc.text(" => "), format_expr(arm.expr, tm)],
-    ),
+    doc.concat([
+      format_pattern(arm.pattern),
+      doc.text(" => "),
+      format_expr(arm.expr, tm),
+    ]),
   )
 }
 
@@ -984,23 +949,26 @@ fn format_pattern(pat: Pattern) Doc {
     .Ident(name) => doc.text(name),
     .Literal(expr) => format_expr_no_trivia(expr),
     .Variant(name, fields) => {
-      if fields.len() == 0 { doc.text(".${name}") } else {
+      if fields.len() == 0 {
+        doc.text(".${name}")
+      } else {
         field_docs := collect f in fields { format_pattern(f) }
-        doc.concat(
-          [doc.text(".${name}"), doc.tight_bracketed("(", ")", field_docs)],
-        )
+        doc.concat([
+          doc.text(".${name}"),
+          doc.tight_bracketed("(", ")", field_docs),
+        ])
       }
     },
     .QualifiedVariant(path, name, fields) => {
       prefix := path.join(".")
-      if fields.len() == 0 { doc.text("${prefix}.${name}") } else {
+      if fields.len() == 0 {
+        doc.text("${prefix}.${name}")
+      } else {
         field_docs := collect f in fields { format_pattern(f) }
-        doc.concat(
-          [
-            doc.text("${prefix}.${name}"),
-            doc.tight_bracketed("(", ")", field_docs),
-          ],
-        )
+        doc.concat([
+          doc.text("${prefix}.${name}"),
+          doc.tight_bracketed("(", ")", field_docs),
+        ])
       }
     },
     .ErrorPattern => doc.text("/* error */"),
@@ -1028,9 +996,7 @@ fn format_expr_no_trivia(expr: Expr) Doc {
 
 fn format_record_entry(entry: RecordEntry, tm: Dict<Int, Vector<Trivia>>) Doc {
   case entry.value {
-    .Some(val) => doc.concat(
-      [doc.text("${entry.name}: "), format_expr(val, tm)],
-    ),
+    .Some(val) => doc.concat([doc.text("${entry.name}: "), format_expr(val, tm)]),
     .None => doc.text(entry.name),
   }
 }
@@ -1042,10 +1008,8 @@ fn format_closure(
   tm: Dict<Int, Vector<Trivia>>,
 ) Doc {
   parts: Vector<Doc> = [doc.text("fn")]
-  
   param_docs := collect p in params { format_param(p) }
   parts = parts.append(doc.tight_bracketed("(", ")", param_docs))
-  
   case ret_ty {
     .Some(ty) => {
       parts = parts.append(doc.text(" "))
@@ -1053,7 +1017,6 @@ fn format_closure(
     },
     .None => {},
   }
-  
   parts = parts.append(doc.text(" "))
   parts = parts.append(format_block(body, tm))
   doc.concat(parts)
@@ -1061,7 +1024,6 @@ fn format_closure(
 
 fn format_collect(coll: CollectExpr, tm: Dict<Int, Vector<Trivia>>) Doc {
   parts: Vector<Doc> = [doc.text("collect ")]
-  
   case coll.iter {
     .Some(iter) => {
       case coll.pattern {
@@ -1088,7 +1050,6 @@ fn format_collect(coll: CollectExpr, tm: Dict<Int, Vector<Trivia>>) Doc {
       }
     },
   }
-  
   parts = parts.append(doc.text(" "))
   parts = parts.append(format_block(coll.body, tm))
   doc.concat(parts)
@@ -1116,13 +1077,21 @@ fn format_string_interp(
 }
 
 // --- Helpers ---
-
 fn format_float_literal(f: Float) String {
   s := Float.to_string(f)
   if s.contains(".") or s.contains("e") or s.contains("E") {
     s
   } else {
     "${s}.0"
+  }
+}
+
+fn is_simple_tail_block(block: Block, tm: Dict<Int, Vector<Trivia>>) Bool {
+  if block.stmts.len() > 0 { return false }
+  case block.tail {
+    .Some(expr) => is_simple_expr(expr)
+    and get_trivia(tm, expr.span.start).len() == 0,
+    .None => false,
   }
 }
 
@@ -1179,15 +1148,11 @@ fn is_simple_expr(expr: Expr) Bool {
 }
 
 fn are_simple_record_entries(entries: Vector<RecordEntry>) Bool {
-  if entries.len() > 4 {
-    return false
-  }
+  if entries.len() > 4 { return false }
   for entry in entries {
     case entry.value {
       .Some(expr) => {
-        if !is_simple_expr(expr) {
-          return false
-        }
+        if !is_simple_expr(expr) { return false }
       },
       .None => {},
     }
@@ -1221,7 +1186,6 @@ fn escape_string(s: String) String {
     } else if b == 27 {
       escape = .Some("\\e")
     }
-    
     case escape {
       .Some(esc) => {
         if i > seg_start {
@@ -1249,7 +1213,9 @@ fn hex_byte(b: Byte) String {
 }
 
 fn hex_digit(n: Int) String {
-  if n < 10 { Int.to_string(n) } else {
+  if n < 10 {
+    Int.to_string(n)
+  } else {
     case String.from_code_point(n - 10 + 97) {
       .Some(s) => s,
       .None => "?",
