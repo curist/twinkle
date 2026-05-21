@@ -8,6 +8,7 @@ pub type Doc = {
   Seq(Vector<Doc>),
   Group(Doc, Int),
   IfBreak(Doc, Doc),
+  Fill(Vector<Doc>),
 }
 
 pub fn text(s: String) Doc {
@@ -40,7 +41,7 @@ pub fn indent_by(n: Int, d: Doc) Doc {
 /// contains a hard line and therefore can never fit flat. Group nodes cache
 /// this value so the layout engine does not repeatedly walk the same subtree
 /// while deciding whether enclosing groups fit.
-fn flat_width(d: Doc) Int {
+pub fn flat_width(d: Doc) Int {
   case d {
     .Nil => 0,
     .Text(s) => s.len(),
@@ -75,6 +76,21 @@ fn flat_width(d: Doc) Int {
     },
     .Group(_, cached) => cached,
     .IfBreak(_, flat) => flat_width(flat),
+    .Fill(children) => {
+      total := 0
+
+      for child in children {
+        w := flat_width(child)
+
+        if w < 0 {
+          return -1
+        }
+
+        total = total + w
+      }
+
+      total
+    },
   }
 }
 
@@ -162,6 +178,55 @@ pub fn spaced_bracketed(open: String, close: String, docs: Vector<Doc>) Doc {
         ]),
       ),
       line(),
+      text(close),
+    ]),
+  )
+}
+
+/// Build a Fill doc: alternating [item, sep, item, sep, ..., item].
+/// The layout engine decides per-separator whether to break or stay flat.
+pub fn fill_sep(docs: Vector<Doc>, sep: Doc) Doc {
+  if docs.len() == 0 {
+    return .Nil
+  }
+
+  if docs.len() == 1 {
+    return docs[0]
+  }
+
+  children: Vector<Doc> = []
+
+  for d, i in docs {
+    if i > 0 { children = .append(sep) }
+
+    children = .append(d)
+  }
+
+  .Fill(children)
+}
+
+/// Fill brackets: "{a, b, c}" flat, or:
+/// {
+///   a, b, c,
+///   d, e,
+/// }
+/// Items pack as many per line as fit before wrapping.
+pub fn fill_bracketed(open: String, close: String, docs: Vector<Doc>) Doc {
+  if docs.len() == 0 {
+    return text("${open}${close}")
+  }
+
+  group(
+    concat([
+      text(open),
+      indent(
+        concat([
+          if_break(hard_line(), nil()),
+          fill_sep(docs, concat([text(","), line()])),
+          if_break(text(","), nil()),
+        ]),
+      ),
+      if_break(hard_line(), nil()),
       text(close),
     ]),
   )

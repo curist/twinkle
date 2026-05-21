@@ -416,7 +416,7 @@ fn format_use(decl: UseDecl) Doc {
     .Some(items) => {
       item_docs := collect item in items { format_import_item(item) }
       parts = .append(doc.text("."))
-      parts = .append(doc.tight_bracketed("{", "}", item_docs))
+      parts = .append(doc.fill_bracketed("{", "}", item_docs))
     },
     .None => {},
   }

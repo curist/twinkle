@@ -1,4 +1,4 @@
-use compiler.fmt.doc.{Doc}
+use compiler.fmt.doc.{Doc, flat_width}
 
 type Mode = { Flat, Break }
 
@@ -56,12 +56,14 @@ pub fn render_with_width(doc: Doc, width: Int) String {
           .Break => {
             buf = .append("\n")
             pending_indent = entry.indent
+            col = entry.indent
           },
         }
       },
       .HardLine => {
         buf = .append("\n")
         pending_indent = entry.indent
+        col = entry.indent
       },
       .Indent(n, inner) => {
         pushed := push_stack(
@@ -147,6 +149,73 @@ pub fn render_with_width(doc: Doc, width: Int) String {
           },
         }
       },
+      .Fill(children) => {
+        if children.len() == 1 {
+          pushed := push_stack(
+            stack,
+            top,
+            StackEntry.{ indent: entry.indent, mode: .Flat, doc: children[0] },
+          )
+          stack = pushed.stack
+          top = pushed.top
+        } else if children.len() >= 3 {
+          // Push remaining Fill (processed after current item + sep)
+          rest_pushed := push_stack(
+            stack,
+            top,
+            StackEntry.{
+              indent: entry.indent,
+              mode: entry.mode,
+              doc: Doc.Fill(children.slice(2, children.len())),
+            },
+          )
+          stack = rest_pushed.stack
+          top = rest_pushed.top
+
+          // Decide separator mode: does item + sep + next_item fit?
+          item_w := flat_width(children[0])
+          sep_w := flat_width(children[1])
+          next_w := flat_width(children[2])
+          sep_mode: Mode = if item_w >= 0 and sep_w >= 0 and next_w >= 0
+          and col + item_w + sep_w + next_w <= width {
+            .Flat
+          } else {
+            .Break
+          }
+
+          sep_pushed := push_stack(
+            stack,
+            top,
+            StackEntry.{ indent: entry.indent, mode: sep_mode, doc: children[1] },
+          )
+          stack = sep_pushed.stack
+          top = sep_pushed.top
+
+          item_pushed := push_stack(
+            stack,
+            top,
+            StackEntry.{ indent: entry.indent, mode: .Flat, doc: children[0] },
+          )
+          stack = item_pushed.stack
+          top = item_pushed.top
+        } else if children.len() == 2 {
+          sep_pushed := push_stack(
+            stack,
+            top,
+            StackEntry.{ indent: entry.indent, mode: .Flat, doc: children[1] },
+          )
+          stack = sep_pushed.stack
+          top = sep_pushed.top
+
+          item_pushed := push_stack(
+            stack,
+            top,
+            StackEntry.{ indent: entry.indent, mode: .Flat, doc: children[0] },
+          )
+          stack = item_pushed.stack
+          top = item_pushed.top
+        }
+      },
     }
   }
 
@@ -198,6 +267,15 @@ fn fits(doc: Doc, indent: Int, remaining: Int) Bool {
       .IfBreak(broken, flat) => {
         // In flat mode, use the flat branch
         fit_stack = .append(flat)
+      },
+      .Fill(children) => {
+        // In flat mode, Fill acts like Seq
+        idx := children.len() - 1
+
+        for idx >= 0 {
+          fit_stack = .append(children[idx])
+          idx = idx - 1
+        }
       },
     }
   }
