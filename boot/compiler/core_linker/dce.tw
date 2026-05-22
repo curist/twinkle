@@ -5,7 +5,6 @@
 // calls to their concrete implementations.
 use compiler.core_ir.{CoreExpr, FuncId, FunctionDef}
 use compiler.mono_type.{MonoType}
-use compiler.resolver.{ResolvedEnv}
 
 use .contract_resolve.{exact_contract_ref}
 
@@ -21,8 +20,6 @@ pub fn compute_reachable(
   functions: Vector<FunctionDef>,
   init_id: FuncId?,
   entry_func_ids: Vector<Int>,
-  env: ResolvedEnv,
-  func_table: Dict<String, FuncId>,
   method_table: Dict<String, FuncId>,
 ) Dict<Int, Bool> {
   index := build_reachability_index(functions, method_table)
@@ -47,49 +44,28 @@ pub fn compute_reachable(
   }
 
   // BFS: find all reachable functions
-  bfs_result := bfs_reachable(index, queue, reachable, env, func_table)
+  bfs_result := bfs_reachable(index, queue, reachable)
   bfs_result.reachable
 }
 
 /// Collect all FuncId references from an expression tree.
 pub fn collect_func_refs(
   expr: CoreExpr,
-  env: ResolvedEnv,
-  func_table: Dict<String, FuncId>,
   func_map: Dict<Int, FunctionDef>,
   method_table: Dict<String, FuncId>,
 ) Vector<Int> {
-  functions: Vector<FunctionDef> = []
-
-  for fid in func_map.keys() {
-    case func_map[fid] {
-      .Some(func) => { functions = .append(func) },
-      .None => {},
-    }
-  }
-
-  collect_func_refs_indexed(
-    expr,
-    env,
-    func_table,
-    build_reachability_index(functions, method_table),
-  )
+  index := ReachabilityIndex.{ funcs_by_id: func_map, method_table }
+  collect_func_refs_indexed(expr, index)
 }
 
-fn bfs_reachable(
-  index: ReachabilityIndex,
-  queue: Vector<Int>,
-  reachable: Dict<Int, Bool>,
-  env: ResolvedEnv,
-  func_table: Dict<String, FuncId>,
-) BfsState {
+fn bfs_reachable(index: ReachabilityIndex, queue: Vector<Int>, reachable: Dict<Int, Bool>) BfsState {
   state := BfsState.{ queue, reachable }
   qi := 0
 
   for qi < state.queue.len() {
     fid := state.queue[qi]
     qi = qi + 1
-    refs := get_body_refs(index, fid, env, func_table)
+    refs := get_body_refs(index, fid)
     state = add_refs(state, refs)
   }
 
@@ -113,14 +89,9 @@ pub fn build_reachability_index(functions: Vector<FunctionDef>, method_table: Di
   .{ funcs_by_id, method_table }
 }
 
-fn get_body_refs(
-  index: ReachabilityIndex,
-  fid: Int,
-  env: ResolvedEnv,
-  func_table: Dict<String, FuncId>,
-) Vector<Int> {
+fn get_body_refs(index: ReachabilityIndex, fid: Int) Vector<Int> {
   case index.funcs_by_id[fid] {
-    .Some(func) => collect_func_refs_indexed(func.body, env, func_table, index),
+    .Some(func) => collect_func_refs_indexed(func.body, index),
     .None => [],
   }
 }
@@ -156,23 +127,12 @@ fn contract_call_refs(method_name: String, receiver_ty: MonoType, index: Reachab
   }
 }
 
-fn collect_func_refs_indexed(
-  expr: CoreExpr,
-  env: ResolvedEnv,
-  func_table: Dict<String, FuncId>,
-  index: ReachabilityIndex,
-) Vector<Int> {
+fn collect_func_refs_indexed(expr: CoreExpr, index: ReachabilityIndex) Vector<Int> {
   refs: Vector<Int> = []
-  collect_func_refs_into(expr, refs, env, func_table, index)
+  collect_func_refs_into(expr, refs, index)
 }
 
-fn collect_func_refs_into(
-  expr: CoreExpr,
-  refs: Vector<Int>,
-  env: ResolvedEnv,
-  func_table: Dict<String, FuncId>,
-  index: ReachabilityIndex,
-) Vector<Int> {
+fn collect_func_refs_into(expr: CoreExpr, refs: Vector<Int>, index: ReachabilityIndex) Vector<Int> {
   case expr.kind {
     .LitInt(_) => refs,
     .LitFloat(_) => refs,
@@ -183,77 +143,71 @@ fn collect_func_refs_into(
     .GlobalLocal(_) => refs,
     .GlobalFunc(id) => refs.append(id.id),
     .Let(_, value, body) => {
-      r := collect_func_refs_into(value, refs, env, func_table, index)
-      collect_func_refs_into(body, r, env, func_table, index)
+      r := collect_func_refs_into(value, refs, index)
+      collect_func_refs_into(body, r, index)
     },
-    .Assign(_, value) => collect_func_refs_into(value, refs, env, func_table, index),
+    .Assign(_, value) => collect_func_refs_into(value, refs, index),
     .BinOp(_, lhs, rhs) => {
-      r := collect_func_refs_into(lhs, refs, env, func_table, index)
-      collect_func_refs_into(rhs, r, env, func_table, index)
+      r := collect_func_refs_into(lhs, refs, index)
+      collect_func_refs_into(rhs, r, index)
     },
-    .UnOp(_, operand) => collect_func_refs_into(operand, refs, env, func_table, index),
+    .UnOp(_, operand) => collect_func_refs_into(operand, refs, index),
     .Call(callee, args) => {
-      r := collect_func_refs_into(callee, refs, env, func_table, index)
-      collect_func_refs_list(args, r, env, func_table, index)
+      r := collect_func_refs_into(callee, refs, index)
+      collect_func_refs_list(args, r, index)
     },
     .ContractCall(_, method_name, receiver, args) => {
       r := contract_call_refs(method_name, receiver.ty, index).fold(
         refs,
         fn(out, id) { out.append(id) },
       )
-      r = collect_func_refs_into(receiver, r, env, func_table, index)
-      collect_func_refs_list(args, r, env, func_table, index)
+      r = collect_func_refs_into(receiver, r, index)
+      collect_func_refs_list(args, r, index)
     },
     .MakeClosure(func_id, _) => refs.append(func_id.id),
     .If(cond, then_br, else_br) => {
-      r := collect_func_refs_into(cond, refs, env, func_table, index)
-      r = collect_func_refs_into(then_br, r, env, func_table, index)
-      collect_func_refs_into(else_br, r, env, func_table, index)
+      r := collect_func_refs_into(cond, refs, index)
+      r = collect_func_refs_into(then_br, r, index)
+      collect_func_refs_into(else_br, r, index)
     },
     .Match(scrutinee, arms) => {
       arms.fold(
-        collect_func_refs_into(scrutinee, refs, env, func_table, index),
-        fn(r, arm) { collect_func_refs_into(arm.body, r, env, func_table, index) },
+        collect_func_refs_into(scrutinee, refs, index),
+        fn(r, arm) { collect_func_refs_into(arm.body, r, index) },
       )
     },
-    .Loop(body) => collect_func_refs_into(body, refs, env, func_table, index),
+    .Loop(body) => collect_func_refs_into(body, refs, index),
     .Break(val) => {
       case val {
-        .Some(v) => collect_func_refs_into(v, refs, env, func_table, index),
+        .Some(v) => collect_func_refs_into(v, refs, index),
         .None => refs,
       }
     },
     .Continue => refs,
     .Return(val) => {
       case val {
-        .Some(v) => collect_func_refs_into(v, refs, env, func_table, index),
+        .Some(v) => collect_func_refs_into(v, refs, index),
         .None => refs,
       }
     },
-    .Defer(body) => collect_func_refs_into(body, refs, env, func_table, index),
+    .Defer(body) => collect_func_refs_into(body, refs, index),
     .Record(_, fields) => {
-      fields.fold(refs, fn(r, fi) { collect_func_refs_into(fi.value, r, env, func_table, index) })
+      fields.fold(refs, fn(r, fi) { collect_func_refs_into(fi.value, r, index) })
     },
-    .RecordGet(rec, _) => collect_func_refs_into(rec, refs, env, func_table, index),
+    .RecordGet(rec, _) => collect_func_refs_into(rec, refs, index),
     .RecordUpdate(rec, _, value) => {
-      r := collect_func_refs_into(rec, refs, env, func_table, index)
-      collect_func_refs_into(value, r, env, func_table, index)
+      r := collect_func_refs_into(rec, refs, index)
+      collect_func_refs_into(value, r, index)
     },
-    .Variant(_, _, args) => collect_func_refs_list(args, refs, env, func_table, index),
-    .ArrayLit(elems) => collect_func_refs_list(elems, refs, env, func_table, index),
+    .Variant(_, _, args) => collect_func_refs_list(args, refs, index),
+    .ArrayLit(elems) => collect_func_refs_list(elems, refs, index),
     .Index(arr, idx) => {
-      r := collect_func_refs_into(arr, refs, env, func_table, index)
-      collect_func_refs_into(idx, r, env, func_table, index)
+      r := collect_func_refs_into(arr, refs, index)
+      collect_func_refs_into(idx, r, index)
     },
   }
 }
 
-fn collect_func_refs_list(
-  exprs: Vector<CoreExpr>,
-  refs: Vector<Int>,
-  env: ResolvedEnv,
-  func_table: Dict<String, FuncId>,
-  index: ReachabilityIndex,
-) Vector<Int> {
-  exprs.fold(refs, fn(r, e) { collect_func_refs_into(e, r, env, func_table, index) })
-}
+fn collect_func_refs_list(exprs: Vector<CoreExpr>, refs: Vector<Int>, index: ReachabilityIndex) Vector<
+  Int,
+> { exprs.fold(refs, fn(r, e) { collect_func_refs_into(e, r, index) }) }

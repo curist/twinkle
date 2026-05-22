@@ -1,0 +1,6 @@
+// Same as contract_generic_fallback_main but with reversed import order.
+// Contract resolution must pick the same target regardless of import order.
+use .contract_generic_fallback_box
+use .contract_generic_fallback_provider
+
+fn main() String { contract_generic_fallback_box.show_box() }

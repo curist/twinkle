@@ -1,5 +1,5 @@
 use commands.common.{format_compile_error}
-use compiler.core_ir.{FunctionDef}
+use compiler.core_ir.{CoreExpr, FunctionDef}
 use compiler.module_compiler
 use compiler.pipeline
 use compiler.resolver.{ResolvedEnv}
@@ -23,6 +23,129 @@ fn has_box_to_string_param(env: ResolvedEnv, func: FunctionDef) Bool {
     return false
   }
   env.ty_to_string_env(func.params[0].ty).starts_with("Box")
+}
+
+// Recursively check whether any ContractCall node remains in an expression tree.
+fn has_contract_call(expr: CoreExpr) Bool {
+  case expr.kind {
+    .ContractCall(_, _, _, _) => true,
+    .Let(_, value, body) => has_contract_call(value) or has_contract_call(body),
+    .Assign(_, value) => has_contract_call(value),
+    .BinOp(_, lhs, rhs) => has_contract_call(lhs) or has_contract_call(rhs),
+    .UnOp(_, inner) => has_contract_call(inner),
+    .Call(callee, args) => {
+      if has_contract_call(callee) {
+        return true
+      }
+
+      for a in args {
+        if has_contract_call(a) {
+          return true
+        }
+      }
+
+      false
+    },
+    .If(cond, then_e, else_e) => has_contract_call(cond)
+      or has_contract_call(then_e)
+      or has_contract_call(else_e),
+    .Match(scrut, arms) => {
+      if has_contract_call(scrut) {
+        return true
+      }
+
+      for arm in arms {
+        if has_contract_call(arm.body) {
+          return true
+        }
+      }
+
+      false
+    },
+    .Loop(body) => has_contract_call(body),
+    .Break(val) => case val {
+      .Some(v) => has_contract_call(v),
+      .None => false,
+    },
+    .Return(val) => case val {
+      .Some(v) => has_contract_call(v),
+      .None => false,
+    },
+    .Defer(inner) => has_contract_call(inner),
+    .Record(_, fields) => {
+      for fi in fields {
+        if has_contract_call(fi.value) {
+          return true
+        }
+      }
+
+      false
+    },
+    .RecordGet(target, _) => has_contract_call(target),
+    .RecordUpdate(base, _, value) => has_contract_call(base) or has_contract_call(value),
+    .Variant(_, _, args) => {
+      for a in args {
+        if has_contract_call(a) {
+          return true
+        }
+      }
+
+      false
+    },
+    .ArrayLit(elems) => {
+      for e in elems {
+        if has_contract_call(e) {
+          return true
+        }
+      }
+
+      false
+    },
+    .Index(base, idx) => has_contract_call(base) or has_contract_call(idx),
+    _ => false,
+  }
+}
+
+// Check whether the expression tree contains a Call targeting the given FuncId.
+fn has_call_to(expr: CoreExpr, target_id: Int) Bool {
+  case expr.kind {
+    .Call(callee, args) => {
+      case callee.kind {
+        .GlobalFunc(fid) => {
+          if fid.id == target_id {
+            return true
+          }
+        },
+        _ => {},
+      }
+
+      if has_call_to(callee, target_id) {
+        return true
+      }
+
+      for a in args {
+        if has_call_to(a, target_id) {
+          return true
+        }
+      }
+
+      false
+    },
+    .Let(_, value, body) => has_call_to(value, target_id) or has_call_to(body, target_id),
+    .Assign(_, value) => has_call_to(value, target_id),
+    .If(_, then_e, else_e) => has_call_to(then_e, target_id) or has_call_to(else_e, target_id),
+    .Match(_, arms) => {
+      for arm in arms {
+        if has_call_to(arm.body, target_id) {
+          return true
+        }
+      }
+
+      false
+    },
+    .Loop(body) => has_call_to(body, target_id),
+    _ => false,
+  }
 }
 
 pub fn suite() runner.Suite {
@@ -517,6 +640,101 @@ pub fn suite() runner.Suite {
         .Ok(_) => .Ok({}),
         .Err(err) => .Err("expected success, got: ${format_compile_error(err)}"),
       }
+    },
+  ).test(
+    "import order does not affect contract method target choice",
+    fn() {
+      // Compile with original order (box first, provider second)
+      wat_original := try codegen_harness.codegen_path("${dir}/contract_generic_fallback_main.tw")
+      // Compile with reversed order (provider first, box second)
+      wat_reversed := try codegen_harness.codegen_path("${dir}/contract_order_reversed_main.tw")
+      // Both must produce the correct Box.to_string specialization
+      try assert.str_contains(wat_original, "to_string__Int")
+      try assert.str_contains(wat_reversed, "to_string__Int")
+      .Ok({})
+    },
+  ).test(
+    "no ContractCall survives monomorphization",
+    fn() {
+      artifacts := case pipeline.compile_entry_path("${dir}/contract_generic_fallback_main.tw") {
+        .Ok(a) => a,
+        .Err(err) => {
+          return .Err("compile failed: ${format_compile_error(err)}")
+        },
+      }
+
+      // After monomorphization, no ContractCall should remain in any function body.
+      for func in artifacts.mono.functions {
+        if has_contract_call(func.body) {
+          return .Err(
+            "ContractCall survived monomorphization in function '${func.name}' (FuncId ${func.func_id.id})",
+          )
+        }
+      }
+
+      .Ok({})
+    },
+  ).test(
+    "monomorphized show(Box<Int>) calls exact Box.to_string FuncId",
+    fn() {
+      artifacts := case pipeline.compile_entry_path("${dir}/contract_generic_fallback_main.tw") {
+        .Ok(a) => a,
+        .Err(err) => {
+          return .Err("compile failed: ${format_compile_error(err)}")
+        },
+      }
+      // Find the Box.to_string FuncId from the method table.
+      box_tid := case artifacts.mono.type_env.lookup_registered_type("Box") {
+        .Some(entry) => entry.id,
+        .None => {
+          return .Err("Box type not found in linked env")
+        },
+      }
+      key := "t${box_tid.id}::to_string"
+
+      if !artifacts.mono.method_table.has(key) {
+        return .Err("method_table missing key '${key}'")
+      }
+
+      // Find the specialized show__T* function in the mono IR.
+      show_func: FunctionDef? = .None
+
+      for func in artifacts.mono.functions {
+        if func.name.starts_with("show__") {
+          show_func = .Some(func)
+        }
+      }
+
+      func := case show_func {
+        .Some(f) => f,
+        .None => {
+          return .Err("no specialized show__* function found in mono IR")
+        },
+      }
+      // The specialized show function should call the Box.to_string specialization.
+      // After monomorphization, the specialized to_string gets a new FuncId, but
+      // it should be a specialization of the original Box.to_string generic function.
+      // Verify the specialized show calls a to_string__* specialization (not the
+      // provider's unrelated to_string).
+      found_to_string := false
+
+      for mono_func in artifacts.mono.functions {
+        if mono_func.name.starts_with("to_string__") and mono_func.params.len() > 0 {
+          // Check this to_string specialization has a Box receiver param.
+          param_ty_str := artifacts.mono.type_env.ty_to_string_env(mono_func.params[0].ty)
+
+          if param_ty_str.starts_with("Box") {
+            // Verify show__* calls this exact FuncId.
+            if has_call_to(func.body, mono_func.func_id.id) { found_to_string = true }
+          }
+        }
+      }
+
+      if !found_to_string {
+        return .Err("specialized show function does not call the Box.to_string specialization")
+      }
+
+      .Ok({})
     },
   )
 }

@@ -340,8 +340,6 @@ pub fn link(
     linked_functions,
     combined_init.init_func_id,
     entry_func_ids,
-    entry_env,
-    linked_func_table,
     pre_dce_method_table,
   )
   live_functions: Vector<FunctionDef> = []
@@ -411,7 +409,7 @@ pub fn validate_compiled_module_links(
   // Imported refs must either be builtins, locally defined functions, or have
   // an ExternalRef recorded by the module compiler/lowering pipeline.
   for f in m.core.functions {
-    refs := collect_func_refs(f.body, m.core.type_env, m.func_table, func_map, m.core.method_table)
+    refs := collect_func_refs(f.body, func_map, m.core.method_table)
 
     for ref_id in refs {
       if ref_id < m.builtin_count or defined.has(ref_id) { continue }

@@ -482,30 +482,8 @@ fn collect_instantiations_func(func: FunctionDef, ctx: MonoCtx, queue: InstQueue
   collect_instantiations(func.body, ctx, queue, local_types)
 }
 
-fn method_table_key(receiver_ty: MonoType, method_name: String) String? {
-  receiver_key: String? = case receiver_ty {
-    .Int => .Some("Int"),
-    .Float => .Some("Float"),
-    .Bool => .Some("Bool"),
-    .Byte => .Some("Byte"),
-    .String => .Some("String"),
-    .Vector(_) => .Some("Vector"),
-    .Dict(_, _) => .Some("Dict"),
-    .Optional(_) => .Some("Option"),
-    .Result(_, _) => .Some("Result"),
-    .Named(tid, _) => .Some("t${tid.id}"),
-    .ExternRef(tid) => .Some("t${tid.id}"),
-    _ => .None,
-  }
-
-  case receiver_key {
-    .Some(k) => .Some("${k}::${method_name}"),
-    .None => .None,
-  }
-}
-
 fn resolve_contract_target_id(receiver_ty: MonoType, method_name: String, ctx: MonoCtx) FuncId? {
-  case method_table_key(receiver_ty, method_name) {
+  case receiver_ty.method_table_key(method_name) {
     .Some(key) => ctx.method_table[key],
     .None => .None,
   }

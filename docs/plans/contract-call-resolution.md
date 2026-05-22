@@ -95,13 +95,7 @@ Implemented:
   same-name function retention; removed `fallback_contract_refs`,
   `fallback_method_names_for_func`, `append_unique_int`, `append_unique_str`.
 
-Still pending:
-
-- Add tests proving import order does not affect contract method target choice
-  (step 8).
-- Add IR-level tests asserting exact `FuncId` target identity for contract-backed
-  calls (step 8).
-- Final validation run of the full self-host loop (step 9).
+All steps complete.
 
 ## Desired invariant
 
@@ -335,8 +329,12 @@ Keep these fixtures as permanent coverage:
    not as the primary correctness fix. **Done.** DCE now uses method-table
    suffix matching for generic receivers instead of broad same-name retention.
 8. Add tests proving import order does not affect contract method target choice
-   and tests asserting exact IR target identity.
-9. Run the boot test suite and self-host loop.
+   and tests asserting exact IR target identity. **Done.** Added three tests:
+   import-order invariance (reversed import fixture produces same WAT output),
+   no `ContractCall` survives monomorphization, and specialized `show(Box<Int>)`
+   calls the exact `Box.to_string` specialization by FuncId in mono IR.
+9. Run the boot test suite and self-host loop. **Done.** All 2040 boot tests
+   pass, Rust tests pass, stage2 is up to date.
 
 ## Non-goals
 

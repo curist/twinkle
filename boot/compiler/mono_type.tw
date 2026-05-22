@@ -25,6 +25,30 @@ pub type MonoType = {
   ErrorType,
 }
 
+// Build a method table key for contract resolution keyed by receiver type.
+// Returns e.g. "Int::to_string", "t42::eq", "Vector::to_string".
+pub fn method_table_key(receiver_ty: MonoType, method_name: String) String? {
+  receiver_key: String? = case receiver_ty {
+    .Int => .Some("Int"),
+    .Float => .Some("Float"),
+    .Bool => .Some("Bool"),
+    .Byte => .Some("Byte"),
+    .String => .Some("String"),
+    .Vector(_) => .Some("Vector"),
+    .Dict(_, _) => .Some("Dict"),
+    .Optional(_) => .Some("Option"),
+    .Result(_, _) => .Some("Result"),
+    .Named(tid, _) => .Some("t${tid.id}"),
+    .ExternRef(tid) => .Some("t${tid.id}"),
+    _ => .None,
+  }
+
+  case receiver_key {
+    .Some(k) => .Some("${k}::${method_name}"),
+    .None => .None,
+  }
+}
+
 // Debug-only type stringifier — Named types render as raw ids (e.g. "Named(3)").
 // Prefer ty_to_string_env (in resolver) for user-facing diagnostics.
 pub fn ty_to_string(ty: MonoType) String {
