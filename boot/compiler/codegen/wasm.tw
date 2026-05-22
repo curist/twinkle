@@ -10,7 +10,7 @@ use compiler.codegen.linker.{LinkedModule}
 use compiler.codegen.type_order.{compute_type_order, type_def_has_self_edge, type_def_name}
 use compiler.codegen.wasm_ir.{
   DataSegment, ElemDef, ExportDef, FieldDef, FuncDef, GlobalDef, HeapType, ImportDef, Instr,
-  TableDef, TypeDef, ValType, WasmModule,
+  MemoryDef, MemoryExportDef, TableDef, TypeDef, ValType, WasmModule,
 }
 use compiler.codegen.wasm_type_util.{val_type_eq}
 
@@ -493,13 +493,43 @@ fn encode_global_section_payload(globals: Vector<GlobalDef>, ctx: WasmCtx) Vecto
   payload
 }
 
-fn encode_export_section_payload(exports: Vector<ExportDef>, ctx: WasmCtx) Vector<Byte> {
-  payload := emit_u32_leb([], exports.len())
+fn encode_memory_section_payload(memories: Vector<MemoryDef>) Vector<Byte> {
+  payload := emit_u32_leb([], memories.len())
+
+  for mem in memories {
+    case mem.max_pages {
+      .Some(max) => {
+        payload = emit_u8(payload, 0x01) // has max
+        payload = emit_u32_leb(payload, mem.min_pages)
+        payload = emit_u32_leb(payload, max)
+      },
+      .None => {
+        payload = emit_u8(payload, 0x00) // no max
+        payload = emit_u32_leb(payload, mem.min_pages)
+      },
+    }
+  }
+
+  payload
+}
+
+fn encode_export_section_payload(
+  exports: Vector<ExportDef>,
+  memory_exports: Vector<MemoryExportDef>,
+  ctx: WasmCtx,
+) Vector<Byte> {
+  payload := emit_u32_leb([], exports.len() + memory_exports.len())
 
   for exp in exports {
     payload = emit_name(payload, exp.wasm_name)
     payload = emit_u8(payload, 0x00) // func export
     payload = emit_u32_leb(payload, func_idx_of(ctx, exp.func_sym))
+  }
+
+  for mexp in memory_exports {
+    payload = emit_name(payload, mexp.wasm_name)
+    payload = emit_u8(payload, 0x02) // memory export
+    payload = emit_u32_leb(payload, mexp.memory_idx)
   }
 
   payload
@@ -1113,6 +1143,20 @@ fn encode_instr_cached(
       result := encode_instrs_cached(out, body, label_ctx_enter_named(label_ctx, label), ctx, cache)
       .{ buf: emit_u8(result.buf, 0x0B), cache: result.cache }
     },
+    // Memory instructions
+    .I32Load8U(align, offset) => {
+      out := emit_u8(buf, 0x2D) // i32.load8_u
+      out = emit_u32_leb(out, align)
+      .{ buf: emit_u32_leb(out, offset), cache }
+    },
+    .I32Store8(align, offset) => {
+      out := emit_u8(buf, 0x3A) // i32.store8
+      out = emit_u32_leb(out, align)
+      .{ buf: emit_u32_leb(out, offset), cache }
+    },
+    .MemoryGrow => {
+      .{ buf: emit_u8(emit_u8(buf, 0x40), 0x00), cache } // memory.grow mem=0
+    },
   }
 }
 
@@ -1126,6 +1170,8 @@ pub fn emit_wasm(module: WasmModule) Vector<Byte> {
     module.tables,
     module.elems,
     module.exports,
+    module.memory_exports,
+    module.memories,
     module.data,
     module.start,
   )
@@ -1140,6 +1186,8 @@ pub fn emit_linked_wasm(linked: LinkedModule) Vector<Byte> {
     linked.tables,
     linked.elems,
     linked.exports,
+    linked.memory_exports,
+    linked.memories,
     linked.data,
     linked.start,
   )
@@ -1153,6 +1201,8 @@ fn emit_wasm_parts(
   tables: Vector<TableDef>,
   elems: Vector<ElemDef>,
   exports: Vector<ExportDef>,
+  memory_exports: Vector<MemoryExportDef>,
+  memories: Vector<MemoryDef>,
   data: Vector<DataSegment>,
   start: String?,
 ) Vector<Byte> {
@@ -1199,14 +1249,15 @@ fn emit_wasm_parts(
   }
   // 4. Table section (id=4)
   if tables.len() > 0 { buf = emit_section_into(buf, 4, encode_table_section_payload(tables, ctx)) }
-  // (5 = memory — not used by Twinkle)
+  // 5. Memory section (id=5)
+  if memories.len() > 0 { buf = emit_section_into(buf, 5, encode_memory_section_payload(memories)) }
   // 6. Global section (id=6)
   if globals.len() > 0 {
     buf = emit_section_into(buf, 6, encode_global_section_payload(globals, ctx))
   }
   // 7. Export section (id=7)
-  if exports.len() > 0 {
-    buf = emit_section_into(buf, 7, encode_export_section_payload(exports, ctx))
+  if exports.len() > 0 or memory_exports.len() > 0 {
+    buf = emit_section_into(buf, 7, encode_export_section_payload(exports, memory_exports, ctx))
   }
 
   // 8. Start section (id=8)

@@ -37,19 +37,34 @@ export class HostExit extends Error {
 const textDecoder = new TextDecoder();
 const textEncoder = new TextEncoder();
 
+const PAGE_SIZE = 65536;
+
+// Ensure the bridge's linear memory can hold at least `needed` bytes.
+// Returns a Uint8Array view of the memory (may be invalidated by future grows).
+function ensureMemory(b, needed) {
+  const buf = b.memory.buffer;
+  if (buf.byteLength >= needed) return new Uint8Array(buf);
+  const pages = Math.ceil((needed - buf.byteLength) / PAGE_SIZE);
+  b.memory.grow(pages);
+  return new Uint8Array(b.memory.buffer);
+}
+
 function decodeString(b, ref) {
   if (!ref) return "";
   const len = b.string_len(ref);
-  const bytes = new Uint8Array(len);
-  for (let i = 0; i < len; i++) bytes[i] = b.string_get(ref, i);
-  return textDecoder.decode(bytes);
+  if (len === 0) return "";
+  ensureMemory(b, len);
+  b.bulk_string_read(ref);
+  const view = new Uint8Array(b.memory.buffer, 0, len);
+  return textDecoder.decode(view);
 }
 
 function encodeString(b, str) {
   const bytes = textEncoder.encode(str);
-  const ref = b.string_new(bytes.length);
-  for (let i = 0; i < bytes.length; i++) b.string_set(ref, i, bytes[i]);
-  return ref;
+  if (bytes.length === 0) return b.string_new(0);
+  const mem = ensureMemory(b, bytes.length);
+  mem.set(bytes);
+  return b.bulk_string_new(bytes.length);
 }
 
 function makeResultOk(b, value) {
@@ -73,11 +88,10 @@ function makeStringArray(b, strings) {
 }
 
 function makeByteArray(b, bytes) {
-  const arr = b.array_new(bytes.length);
-  for (let i = 0; i < bytes.length; i++) {
-    b.array_set(arr, i, b.i31_new(bytes[i]));
-  }
-  return arr;
+  if (bytes.length === 0) return b.array_new(0);
+  const mem = ensureMemory(b, bytes.length);
+  mem.set(bytes);
+  return b.bulk_bytes_new(bytes.length);
 }
 
 function decodeStringArray(b, arrRef) {
@@ -91,11 +105,11 @@ function decodeStringArray(b, arrRef) {
 
 function decodeByteArray(b, arrRef) {
   const len = b.array_len(arrRef);
-  const out = Buffer.alloc(len);
-  for (let i = 0; i < len; i++) {
-    out[i] = b.i31_get(b.array_get(arrRef, i));
-  }
-  return out;
+  if (len === 0) return Buffer.alloc(0);
+  ensureMemory(b, len);
+  b.bulk_bytes_read(arrRef);
+  // ArrayBuffer.slice copies (unlike Buffer.slice which creates a view)
+  return Buffer.from(b.memory.buffer.slice(0, len));
 }
 
 // ---------------------------------------------------------------------------

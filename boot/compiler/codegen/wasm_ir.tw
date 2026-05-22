@@ -129,6 +129,9 @@ pub type Instr = {
   Br(String),
   BrIf(String),
   BrTable(Vector<String>, String),
+  I32Load8U(Int, Int),
+  I32Store8(Int, Int),
+  MemoryGrow,
 }
 
 // ── Function definitions ────────────────────────────────────────────
@@ -155,6 +158,11 @@ pub type GlobalDef = .{ name: String, mutable: Bool, ty: ValType, init: Vector<I
 // ── Exports ─────────────────────────────────────────────────────────
 pub type ExportDef = .{ wasm_name: String, func_sym: String }
 
+// ── Memories ────────────────────────────────────────────────────────
+pub type MemoryDef = .{ name: String, min_pages: Int, max_pages: Int? }
+
+pub type MemoryExportDef = .{ wasm_name: String, memory_idx: Int }
+
 // ── Tables & Elements ───────────────────────────────────────────────
 pub type TableDef = .{ name: String, elem_type: ValType, min: Int, max: Int? }
 
@@ -173,6 +181,8 @@ pub type WasmModule = .{
   tables: Vector<TableDef>,
   elems: Vector<ElemDef>,
   exports: Vector<ExportDef>,
+  memory_exports: Vector<MemoryExportDef>,
+  memories: Vector<MemoryDef>,
   data: Vector<DataSegment>,
   start: String?,
 }

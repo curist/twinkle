@@ -17,6 +17,8 @@ fn empty_module(ns: String) WasmModule {
     tables: [],
     elems: [],
     exports: [],
+    memory_exports: [],
+    memories: [],
     data: [],
     start: .None,
   }
@@ -220,6 +222,8 @@ fn test_link_single_module_qualifies_funcs() Result<Void, String> {
     tables: m.tables,
     elems: m.elems,
     exports: m.exports,
+    memory_exports: m.memory_exports,
+    memories: m.memories,
     data: m.data,
     start: m.start,
   }
@@ -247,6 +251,8 @@ fn test_link_single_module_qualifies_types() Result<Void, String> {
     tables: m.tables,
     elems: m.elems,
     exports: m.exports,
+    memory_exports: m.memory_exports,
+    memories: m.memories,
     data: m.data,
     start: m.start,
   }
@@ -272,6 +278,8 @@ fn test_link_single_module_qualifies_globals() Result<Void, String> {
     tables: m.tables,
     elems: m.elems,
     exports: m.exports,
+    memory_exports: m.memory_exports,
+    memories: m.memories,
     data: m.data,
     start: m.start,
   }
@@ -292,6 +300,8 @@ fn test_link_qualifies_data_segments() Result<Void, String> {
     tables: m.tables,
     elems: m.elems,
     exports: m.exports,
+    memory_exports: m.memory_exports,
+    memories: m.memories,
     data: [DataSegment.{ name: "d0", offset: [], bytes: [65, 66] }],
     start: m.start,
   }
@@ -316,6 +326,8 @@ fn test_link_rewrites_call_in_func_body() Result<Void, String> {
     tables: [],
     elems: [],
     exports: [],
+    memory_exports: [],
+    memories: [],
     data: [],
     start: .None,
   }
@@ -349,6 +361,8 @@ fn test_link_rewrites_global_get_set() Result<Void, String> {
     tables: [],
     elems: [],
     exports: [],
+    memory_exports: [],
+    memories: [],
     data: [],
     start: .None,
   }
@@ -395,6 +409,8 @@ fn test_link_rewrites_struct_new_and_get() Result<Void, String> {
     tables: [],
     elems: [],
     exports: [],
+    memory_exports: [],
+    memories: [],
     data: [],
     start: .None,
   }
@@ -435,6 +451,8 @@ fn test_link_rewrites_ref_cast_type() Result<Void, String> {
     tables: [],
     elems: [],
     exports: [],
+    memory_exports: [],
+    memories: [],
     data: [],
     start: .None,
   }
@@ -487,6 +505,8 @@ fn test_link_rewrites_if_block_loop_result_types() Result<Void, String> {
     tables: [],
     elems: [],
     exports: [],
+    memory_exports: [],
+    memories: [],
     data: [],
     start: .None,
   }
@@ -540,6 +560,8 @@ fn test_link_rewrites_func_param_result_types() Result<Void, String> {
     tables: [],
     elems: [],
     exports: [],
+    memory_exports: [],
+    memories: [],
     data: [],
     start: .None,
   }
@@ -577,6 +599,8 @@ fn test_link_resolves_import_to_export() Result<Void, String> {
     tables: [],
     elems: [],
     exports: [ExportDef.{ wasm_name: "helper", func_sym: "helper" }],
+    memory_exports: [],
+    memories: [],
     data: [],
     start: .None,
   }
@@ -600,6 +624,8 @@ fn test_link_resolves_import_to_export() Result<Void, String> {
     tables: [],
     elems: [],
     exports: [],
+    memory_exports: [],
+    memories: [],
     data: [],
     start: .None,
   }
@@ -638,6 +664,8 @@ fn test_link_preserves_host_imports() Result<Void, String> {
     tables: [],
     elems: [],
     exports: [],
+    memory_exports: [],
+    memories: [],
     data: [],
     start: .None,
   }
@@ -659,6 +687,8 @@ fn test_link_unresolved_import_is_external() Result<Void, String> {
     tables: [],
     elems: [],
     exports: [],
+    memory_exports: [],
+    memories: [],
     data: [],
     start: .None,
   }
@@ -681,6 +711,8 @@ fn test_link_synthesizes_init_from_multiple_starts() Result<Void, String> {
     tables: [],
     elems: [],
     exports: [],
+    memory_exports: [],
+    memories: [],
     data: [],
     start: .Some("init_a"),
   }
@@ -693,6 +725,8 @@ fn test_link_synthesizes_init_from_multiple_starts() Result<Void, String> {
     tables: [],
     elems: [],
     exports: [],
+    memory_exports: [],
+    memories: [],
     data: [],
     start: .Some("init_b"),
   }
@@ -716,6 +750,8 @@ fn test_link_single_start_no_synth() Result<Void, String> {
     tables: [],
     elems: [],
     exports: [],
+    memory_exports: [],
+    memories: [],
     data: [],
     start: .Some("init"),
   }
@@ -739,6 +775,8 @@ fn test_link_entry_appended_to_init() Result<Void, String> {
     tables: [],
     elems: [],
     exports: [],
+    memory_exports: [],
+    memories: [],
     data: [],
     start: .Some("init"),
   }
@@ -761,6 +799,8 @@ fn test_link_dots_in_namespace_replaced() Result<Void, String> {
     tables: [],
     elems: [],
     exports: [],
+    memory_exports: [],
+    memories: [],
     data: [],
     start: .None,
   }
@@ -783,6 +823,8 @@ fn test_link_rewrites_struct_supertype() Result<Void, String> {
     tables: [],
     elems: [],
     exports: [],
+    memory_exports: [],
+    memories: [],
     data: [],
     start: .None,
   }
@@ -812,6 +854,8 @@ fn test_link_rewrites_elem_func_syms() Result<Void, String> {
     tables: [TableDef.{ name: "tbl", elem_type: .Funcref, min: 2, max: .Some(2) }],
     elems: [ElemDef.{ table: "tbl", offset: [Instr.I32Const(0)], func_syms: ["f1", "f2"] }],
     exports: [],
+    memory_exports: [],
+    memories: [],
     data: [],
     start: .None,
   }
@@ -834,6 +878,8 @@ fn test_link_qualifies_exports() Result<Void, String> {
     tables: [],
     elems: [],
     exports: [ExportDef.{ wasm_name: "main", func_sym: "main" }],
+    memory_exports: [],
+    memories: [],
     data: [],
     start: .None,
   }
@@ -863,6 +909,8 @@ fn test_link_rewrites_ref_func() Result<Void, String> {
     tables: [],
     elems: [],
     exports: [],
+    memory_exports: [],
+    memories: [],
     data: [],
     start: .None,
   }
@@ -901,6 +949,8 @@ fn test_link_rewrites_array_new_data() Result<Void, String> {
     tables: [],
     elems: [],
     exports: [],
+    memory_exports: [],
+    memories: [],
     data: [DataSegment.{ name: "d0", offset: [], bytes: [1, 2, 3] }],
     start: .None,
   }

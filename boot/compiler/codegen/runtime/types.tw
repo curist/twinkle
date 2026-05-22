@@ -120,6 +120,8 @@ pub fn module() WasmModule {
     tables: [],
     elems: [],
     exports: [],
+    memory_exports: [],
+    memories: [],
     data: [],
     start: .None,
   }

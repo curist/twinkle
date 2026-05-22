@@ -151,6 +151,8 @@ pub fn module(eq_layouts: EqTypeLayouts) WasmModule {
     tables: [],
     elems: [],
     exports,
+    memory_exports: [],
+    memories: [],
     data: [],
     start: .None,
   }

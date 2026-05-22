@@ -3,7 +3,7 @@
 // This is the Twinkle-owned source of truth for the helper module that lets
 // JS construct/read the GC values used by Twinkle's host ABI.
 use compiler.codegen.wasm_ir.{
-  ExportDef, FieldDef, FuncDef, HeapType, Instr, TypeDef, ValType, WasmModule,
+  ExportDef, FieldDef, FuncDef, MemoryDef, MemoryExportDef, TypeDef, ValType, WasmModule,
 }
 
 fn string_null() ValType {
@@ -131,8 +131,202 @@ fn funcs() Vector<FuncDef> {
   ]
 }
 
+// Bulk transfer: create GC String from linear memory[0..len]
+// params: (0) len: i32
+// locals: (1) i: i32, (2) str: ref String
+fn bulk_string_new_fn() FuncDef {
+  .{
+    name: "bulk_string_new",
+    params: [.I32],
+    results: [string_ref()],
+    locals: [.I32, string_ref()],
+    body: [
+      .I32Const(0),
+      .LocalGet(0),
+      .ArrayNew("String"),
+      .LocalSet(2),
+      .I32Const(0),
+      .LocalSet(1),
+      .Block(
+        "break",
+        .None,
+        [
+          .Loop(
+            "loop",
+            .None,
+            [
+              .LocalGet(1),
+              .LocalGet(0),
+              .I32GeU,
+              .BrIf("break"),
+              .LocalGet(2),
+              .LocalGet(1),
+              .LocalGet(1),
+              .I32Load8U(0, 0),
+              .ArraySet("String"),
+              .LocalGet(1),
+              .I32Const(1),
+              .I32Add,
+              .LocalSet(1),
+              .Br("loop"),
+            ],
+          ),
+        ],
+      ),
+      .LocalGet(2),
+    ],
+  }
+}
+
+// Bulk transfer: copy GC String bytes to linear memory[0..], return length
+// params: (0) str: ref null String
+// locals: (1) len: i32, (2) i: i32
+fn bulk_string_read_fn() FuncDef {
+  .{
+    name: "bulk_string_read",
+    params: [string_null()],
+    results: [.I32],
+    locals: [.I32, .I32],
+    body: [
+      .LocalGet(0),
+      .ArrayLen,
+      .LocalSet(1),
+      .I32Const(0),
+      .LocalSet(2),
+      .Block(
+        "break",
+        .None,
+        [
+          .Loop(
+            "loop",
+            .None,
+            [
+              .LocalGet(2),
+              .LocalGet(1),
+              .I32GeU,
+              .BrIf("break"),
+              .LocalGet(2),
+              .LocalGet(0),
+              .LocalGet(2),
+              .ArrayGetU("String"),
+              .I32Store8(0, 0),
+              .LocalGet(2),
+              .I32Const(1),
+              .I32Add,
+              .LocalSet(2),
+              .Br("loop"),
+            ],
+          ),
+        ],
+      ),
+      .LocalGet(1),
+    ],
+  }
+}
+
+// Bulk transfer: create GC Array of i31refs from linear memory[0..len]
+// params: (0) len: i32
+// locals: (1) i: i32, (2) arr: ref Array
+fn bulk_bytes_new_fn() FuncDef {
+  .{
+    name: "bulk_bytes_new",
+    params: [.I32],
+    results: [array_ref()],
+    locals: [.I32, array_ref()],
+    body: [
+      .RefNull(.Any),
+      .LocalGet(0),
+      .ArrayNew("Array"),
+      .LocalSet(2),
+      .I32Const(0),
+      .LocalSet(1),
+      .Block(
+        "break",
+        .None,
+        [
+          .Loop(
+            "loop",
+            .None,
+            [
+              .LocalGet(1),
+              .LocalGet(0),
+              .I32GeU,
+              .BrIf("break"),
+              .LocalGet(2),
+              .LocalGet(1),
+              .LocalGet(1),
+              .I32Load8U(0, 0),
+              .RefI31,
+              .ArraySet("Array"),
+              .LocalGet(1),
+              .I32Const(1),
+              .I32Add,
+              .LocalSet(1),
+              .Br("loop"),
+            ],
+          ),
+        ],
+      ),
+      .LocalGet(2),
+    ],
+  }
+}
+
+// Bulk transfer: extract i31ref values from GC Array to linear memory, return length
+// params: (0) arr: ref null Array
+// locals: (1) len: i32, (2) i: i32
+fn bulk_bytes_read_fn() FuncDef {
+  .{
+    name: "bulk_bytes_read",
+    params: [array_null()],
+    results: [.I32],
+    locals: [.I32, .I32],
+    body: [
+      .LocalGet(0),
+      .ArrayLen,
+      .LocalSet(1),
+      .I32Const(0),
+      .LocalSet(2),
+      .Block(
+        "break",
+        .None,
+        [
+          .Loop(
+            "loop",
+            .None,
+            [
+              .LocalGet(2),
+              .LocalGet(1),
+              .I32GeU,
+              .BrIf("break"),
+              .LocalGet(2),
+              .LocalGet(0),
+              .LocalGet(2),
+              .ArrayGet("Array"),
+              .RefCast(false, .I31),
+              .I31GetS,
+              .I32Store8(0, 0),
+              .LocalGet(2),
+              .I32Const(1),
+              .I32Add,
+              .LocalSet(2),
+              .Br("loop"),
+            ],
+          ),
+        ],
+      ),
+      .LocalGet(1),
+    ],
+  }
+}
+
 pub fn module() WasmModule {
-  fs := funcs()
+  fs := funcs().concat([
+    bulk_string_new_fn(),
+    bulk_string_read_fn(),
+    bulk_bytes_new_fn(),
+    bulk_bytes_read_fn(),
+  ])
   .{
     namespace: "bridge",
     types: types(),
@@ -142,6 +336,8 @@ pub fn module() WasmModule {
     tables: [],
     elems: [],
     exports: collect f in fs { export(f) },
+    memory_exports: [MemoryExportDef.{ wasm_name: "memory", memory_idx: 0 }],
+    memories: [MemoryDef.{ name: "staging", min_pages: 1, max_pages: .None }],
     data: [],
     start: .None,
   }

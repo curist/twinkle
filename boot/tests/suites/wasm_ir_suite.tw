@@ -339,6 +339,8 @@ fn test_wasm_module_empty() Result<Void, String> {
     tables: [],
     elems: [],
     exports: [],
+    memory_exports: [],
+    memories: [],
     data: [],
     start: .None,
   }
@@ -365,6 +367,8 @@ fn test_wasm_module_with_func() Result<Void, String> {
     tables: [],
     elems: [],
     exports: [ExportDef.{ wasm_name: "_start", func_sym: "\$main" }],
+    memory_exports: [],
+    memories: [],
     data: [],
     start: .Some("\$main"),
   }

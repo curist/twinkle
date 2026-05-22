@@ -303,6 +303,8 @@ pub fn emit_module(
     tables: [],
     elems: [],
     exports: [],
+    memory_exports: [],
+    memories: [],
     data,
     start,
   }

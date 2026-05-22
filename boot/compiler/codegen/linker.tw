@@ -12,7 +12,7 @@
 //   5. Synthesize __linked_init and export as __twinkle_start
 use compiler.codegen.wasm_ir.{
   DataSegment, ElemDef, ExportDef, FieldDef, FuncDef, GlobalDef, HeapType, ImportDef, Instr,
-  TableDef, TypeDef, ValType, WasmModule,
+  MemoryDef, MemoryExportDef, TableDef, TypeDef, ValType, WasmModule,
 }
 
 // ── Types ──────────────────────────────────────────────────────────────
@@ -24,6 +24,8 @@ pub type LinkedModule = .{
   tables: Vector<TableDef>,
   elems: Vector<ElemDef>,
   exports: Vector<ExportDef>,
+  memory_exports: Vector<MemoryExportDef>,
+  memories: Vector<MemoryDef>,
   data: Vector<DataSegment>,
   start: String?,
 }
@@ -267,6 +269,8 @@ pub fn link(modules: Vector<WasmModule>, entry: String?) Result<LinkedModule, Ve
   out_tables: Vector<TableDef> = []
   out_elems: Vector<ElemDef> = []
   out_exports: Vector<ExportDef> = []
+  out_memory_exports: Vector<MemoryExportDef> = []
+  out_memories: Vector<MemoryDef> = []
   out_data: Vector<DataSegment> = []
   start_funcs: Vector<String> = []
 
@@ -346,6 +350,9 @@ pub fn link(modules: Vector<WasmModule>, entry: String?) Result<LinkedModule, Ve
       }
     }
 
+    // Memories
+    out_memories = .concat(m.memories)
+    out_memory_exports = .concat(m.memory_exports)
     // Data segments
     for d in m.data {
       out_data = .append(
@@ -403,6 +410,8 @@ pub fn link(modules: Vector<WasmModule>, entry: String?) Result<LinkedModule, Ve
       tables: out_tables,
       elems: out_elems,
       exports: out_exports,
+      memory_exports: out_memory_exports,
+      memories: out_memories,
       data: out_data,
       start,
     },

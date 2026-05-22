@@ -6,7 +6,7 @@ use compiler.codegen.linker.{LinkedModule}
 use compiler.codegen.type_order.{compute_type_order, find_type_def, type_def_has_self_edge}
 use compiler.codegen.wasm_ir.{
   DataSegment, ElemDef, ExportDef, FieldDef, FuncDef, GlobalDef, HeapType, ImportDef, Instr,
-  TableDef, TypeDef, ValType, WasmModule,
+  MemoryDef, MemoryExportDef, TableDef, TypeDef, ValType, WasmModule,
 }
 
 // ── Helpers ────────────────────────────────────────────────────────────
@@ -35,6 +35,8 @@ pub fn emit_wat(linked: LinkedModule) String {
     linked.tables,
     linked.elems,
     linked.exports,
+    linked.memory_exports,
+    linked.memories,
     linked.data,
     linked.start,
   )
@@ -50,6 +52,8 @@ pub fn emit_wat_unlinked_for_test(module: WasmModule) String {
     module.tables,
     module.elems,
     module.exports,
+    module.memory_exports,
+    module.memories,
     module.data,
     module.start,
   )
@@ -63,6 +67,8 @@ fn emit_wat_parts(
   tables: Vector<TableDef>,
   elems: Vector<ElemDef>,
   exports: Vector<ExportDef>,
+  memory_exports: Vector<MemoryExportDef>,
+  memories: Vector<MemoryDef>,
   data: Vector<DataSegment>,
   start: String?,
 ) String {
@@ -90,6 +96,15 @@ fn emit_wat_parts(
     s := sym(tbl.name)
     vt := emit_val_type(tbl.elem_type)
     lines = .append("  (table ${s} ${tbl.min}${max_str} ${vt})")
+  }
+
+  for mem in memories {
+    ms := sym(mem.name)
+
+    case mem.max_pages {
+      .Some(max) => { lines = .append("  (memory ${ms} ${mem.min_pages} ${max})") },
+      .None => { lines = .append("  (memory ${ms} ${mem.min_pages})") },
+    }
   }
 
   for g in globals {
@@ -144,6 +159,10 @@ fn emit_wat_parts(
   for e in exports {
     fs := sym(e.func_sym)
     lines = .append("  (export \"${e.wasm_name}\" (func ${fs}))")
+  }
+
+  for me in memory_exports {
+    lines = .append("  (export \"${me.wasm_name}\" (memory ${me.memory_idx}))")
   }
 
   case start {
@@ -553,6 +572,10 @@ fn emit_instr(instr: Instr, indent: Int) Vector<String> {
       lines = .append("${pad})")
       lines
     },
+    // Memory instructions
+    .I32Load8U(align, offset) => ["${pad}i32.load8_u offset=${offset} align=${1 << align}"],
+    .I32Store8(align, offset) => ["${pad}i32.store8 offset=${offset} align=${1 << align}"],
+    .MemoryGrow => ["${pad}memory.grow"],
   }
 }
 
