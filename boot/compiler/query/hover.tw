@@ -50,13 +50,33 @@ fn hover_item(item: Item, offset: Int, typed: CheckResult, items: Vector<Item>, 
 }
 
 fn hover_import(decl: UseDecl, offset: Int, typed: CheckResult) HoverResult? {
-  import_items := try decl.items
-  find_map(
-    import_items,
-    fn(it) {
-      hover_import_item(it, offset, typed)
+  case decl.items {
+    .Some(items) => {
+      result := find_map(
+        items,
+        fn(it) {
+          hover_import_item(it, offset, typed)
+        },
+      )
+
+      case result {
+        .Some(_) => result,
+        .None => hover_import_module(decl, typed),
+      }
     },
-  )
+    .None => hover_import_module(decl, typed),
+  }
+}
+
+fn hover_import_module(decl: UseDecl, typed: CheckResult) HoverResult? {
+  alias := if decl.path.len() > 0 {
+    decl.alias.unwrap_or(decl.path[decl.path.len() - 1])
+  } else {
+    return .None
+  }
+
+  doc := try typed.env.module_docs[alias]
+  .Some(.{ content: append_doc("module ${alias}", .Some(doc)), span: decl.span })
 }
 
 fn hover_import_item(it: ImportItem, offset: Int, typed: CheckResult) HoverResult? {

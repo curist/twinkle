@@ -1,0 +1,8 @@
+/// This module provides utilities.
+/// It handles various tasks.
+
+use @std.fs
+
+fn foo() Int {
+  42
+}

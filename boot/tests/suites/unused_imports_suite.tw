@@ -154,6 +154,7 @@ pub fn suite() runner.Suite {
           .Call(dummy_expr(.Field(dummy_expr(.Ident("bar")), "remove")), [dummy_expr(.Ident("x"))]),
         )
         module := Module.{
+          doc: .None,
           items: [
             Item.Use(bar_decl),
             Item.Use(foo_decl),
@@ -191,6 +192,7 @@ pub fn suite() runner.Suite {
           ),
         )
         module := Module.{
+          doc: .None,
           items: [
             Item.Use(foo_decl),
             Item.Stmt(Stmt.Expr(ExprStmt.{ expr: call_expr, span: dummy_span() })),
@@ -227,6 +229,7 @@ pub fn suite() runner.Suite {
           ),
         )
         module := Module.{
+          doc: .None,
           items: [
             Item.Use(foo_decl),
             Item.Stmt(Stmt.Expr(ExprStmt.{ expr: call_expr, span: dummy_span() })),
@@ -254,6 +257,7 @@ pub fn suite() runner.Suite {
         }
         call_expr := dummy_expr(.Call(dummy_expr(.Ident("translate")), [dummy_expr(.Ident("p"))]))
         module := Module.{
+          doc: .None,
           items: [
             Item.Use(foo_decl),
             Item.Stmt(Stmt.Expr(ExprStmt.{ expr: call_expr, span: dummy_span() })),
@@ -268,7 +272,7 @@ pub fn suite() runner.Suite {
     .test(
       "check_unused_imports: empty module returns empty result",
       fn() {
-        module := Module.{ items: [], span: dummy_span() }
+        module := Module.{ doc: .None, items: [], span: dummy_span() }
         result := check_unused_imports(module)
         try assert.equal(result.items.len(), 0)
         .Ok({})
@@ -299,6 +303,7 @@ pub fn suite() runner.Suite {
         // Module that uses `used_fn` but not `unused_fn`
         call_expr := dummy_expr(.Call(dummy_expr(.Ident("used_fn")), []))
         module := Module.{
+          doc: .None,
           items: [
             Item.Use(decl),
             Item.Stmt(Stmt.Expr(ExprStmt.{ expr: call_expr, span: dummy_span() })),

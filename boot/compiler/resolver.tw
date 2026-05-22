@@ -77,6 +77,7 @@ pub type ExportedFunction = .{
 pub type ExportedValue = .{ name: String, ty: MonoType }
 
 pub type ModuleExports = .{
+  doc: String?,
   visible_types: Vector<ExportedType>,
   support_types: Vector<ExportedType>,
   functions: Vector<ExportedFunction>,
@@ -106,6 +107,7 @@ pub type ResolvedEnv = .{
   extern_namespaces: Dict<String, Bool>,
   value_bindings: Dict<String, MonoType>,
   value_origins: Dict<String, FunctionOrigin>,
+  module_docs: Dict<String, String>,
 }
 
 pub fn empty_env() ResolvedEnv {
@@ -125,6 +127,7 @@ pub fn empty_env() ResolvedEnv {
     extern_namespaces: Dict.new(),
     value_bindings: Dict.new(),
     value_origins: Dict.new(),
+    module_docs: Dict.new(),
   }
 }
 
@@ -873,6 +876,7 @@ pub fn extract_exports_for_module(
     }
 
     for exported in all_exported_types(.{
+      doc: .None,
       visible_types,
       support_types,
       functions: exported_functions,
@@ -990,6 +994,7 @@ pub fn extract_exports_for_module(
   }
 
   ModuleExports.{
+    doc: module.doc,
     visible_types,
     support_types,
     functions: exported_functions,
@@ -1080,7 +1085,14 @@ pub fn merge_selective_imports(
   exports: ModuleExports,
   items: Vector<ImportItem>,
 ) ResolvedEnv {
-  merge_selective_via_registration(env, alias, module_path, exports, items)
+  result := merge_selective_via_registration(env, alias, module_path, exports, items)
+
+  case exports.doc {
+    .Some(doc) => result.module_docs[alias] = doc,
+    .None => {},
+  }
+
+  result
 }
 
 fn visible_function_names(exports: ModuleExports) Dict<String, Bool> {
@@ -1158,6 +1170,11 @@ pub fn merge_module_exports(
     qualified := qualify_name(alias, v.name)
     cur.value_bindings[qualified] = v.ty
     cur.value_origins[qualified] = FunctionOrigin.{ module_path, func_name: v.name }
+  }
+
+  case exports.doc {
+    .Some(doc) => cur.module_docs[alias] = doc,
+    .None => {},
   }
 
   cur.with_methods(methods)

@@ -1847,6 +1847,7 @@ pub fn suite() runner.Suite {
           extern_module: .None,
         }
         exports := resolver.ModuleExports.{
+          doc: .None,
           visible_types: [],
           support_types: [
             resolver.ExportedType.{ name: "dep.Support", entry, origin: .Some("dep::Support") },
@@ -2318,6 +2319,7 @@ pub fn suite() runner.Suite {
           extern_module: .None,
         }
         exports := resolver.ModuleExports.{
+          doc: .None,
           visible_types: [],
           support_types: [],
           functions: [
@@ -2357,6 +2359,7 @@ pub fn suite() runner.Suite {
           extern_module: .None,
         }
         exports := resolver.ModuleExports.{
+          doc: .None,
           visible_types: [],
           support_types: [],
           functions: [],

@@ -136,8 +136,10 @@ fn emit_trivia(trivia: Vector<Trivia>) Doc {
       .BlankLine => {
         prev_is_comment := i > 0 and is_comment_trivia(trivia[i - 1])
         next_is_comment := i + 1 < trivia.len() and is_comment_trivia(trivia[i + 1])
+        prev_is_doc := i > 0 and is_doc_trivia(trivia[i - 1])
+        next_is_doc := i + 1 < trivia.len() and is_doc_trivia(trivia[i + 1])
 
-        if !prev_is_comment and next_is_comment {
+        if !prev_is_comment and next_is_comment or prev_is_doc and next_is_doc {
           result = doc.concat([result, doc.hard_line()])
         }
       },
@@ -161,11 +163,28 @@ fn is_comment_trivia(t: Trivia) Bool {
   }
 }
 
+fn is_doc_trivia(t: Trivia) Bool {
+  case t.kind {
+    .DocComment => true,
+    _ => false,
+  }
+}
+
 fn is_blank_trivia(t: Trivia) Bool {
   case t.kind {
     .BlankLine => true,
     _ => false,
   }
+}
+
+fn has_doc_in_trivia(trivia: Vector<Trivia>) Bool {
+  for t in trivia {
+    if is_doc_trivia(t) {
+      return true
+    }
+  }
+
+  false
 }
 
 fn has_blank_in_trivia(trivia: Vector<Trivia>) Bool {
@@ -344,6 +363,11 @@ pub fn format_module(module: Module, tokens: Vector<Token>) Doc {
         result,
         emit_trivia(leading_file_trivia.slice(start, leading_file_trivia.len())),
       ])
+
+      // Insert blank line after module doc comments to visually separate them from code.
+      if has_doc_in_trivia(leading_file_trivia) {
+        result = doc.concat([result, doc.hard_line()])
+      }
     }
   }
 

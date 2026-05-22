@@ -1,6 +1,6 @@
 use lib.source.span.{Span}
 
-pub type Module = .{ items: Vector<Item>, span: Span }
+pub type Module = .{ items: Vector<Item>, doc: String?, span: Span }
 
 pub type Item = {
   Use(UseDecl),
