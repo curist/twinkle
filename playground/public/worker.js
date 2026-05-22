@@ -27,7 +27,14 @@ const PRELUDE_SIG_FILES = [
 ];
 const STDLIB_FILES = ['date.tw', 'fs.tw', 'io.tw', 'path.tw', 'proc.tw'];
 
-async function loadResources() {
+let loadResourcesPromise = null;
+
+function loadResources() {
+  if (!loadResourcesPromise) loadResourcesPromise = doLoadResources();
+  return loadResourcesPromise;
+}
+
+async function doLoadResources() {
   if (cachedBridgeBytes && cachedBootBytes && cachedPrelude) return;
 
   self.postMessage({ type: 'status', text: 'Loading compiler…' });
@@ -643,6 +650,7 @@ function setupCanvasGlobals(offscreen) {
 // ---------------------------------------------------------------------------
 
 self.postMessage({ type: 'ready' });
+loadResources();
 
 self.onmessage = async (event) => {
   const { type, code, offscreenCanvas } = event.data;
