@@ -136,6 +136,8 @@ editorEl.addEventListener('blur', () => { window.scrollTo(0, 0) })
 initTreeSitter().catch(e => console.warn('tree-sitter unavailable:', e.message))
 
 examples.addEventListener('change', async () => {
+  if (running) stop()
+  output.innerHTML = ''
   const code = await loadExample(examples.value)
   if (code) jar.updateCode(code)
 })
