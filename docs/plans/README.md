@@ -42,7 +42,6 @@ Self-hosting is complete. Historical design and status docs live in
 | Boot performance | Track current compiler bottlenecks and optimization wins | In Progress | [boot-compiler-perf.md](boot-compiler-perf.md) |
 | Unreachable case arms | Diagnose case arms shadowed by earlier catch-all, literal, or covering variant patterns | Planned | [unreachable-case-arms.md](unreachable-case-arms.md) |
 | Task concurrency | Add library-first cooperative `Task<T>` concurrency without new syntax | Planned | [task-concurrency.md](task-concurrency.md) |
-| Contract call resolution | Resolve builtin contract method calls through exact nominal method identity instead of fallback name scans | Planned | [contract-call-resolution.md](contract-call-resolution.md) |
 
 
 ### Later — Tooling & Ecosystem
