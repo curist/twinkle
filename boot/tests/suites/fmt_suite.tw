@@ -42,14 +42,16 @@ fn assert_fmt_case(name: String) Result<Void, String> {
 }
 
 pub fn suite() runner.Suite {
-  runner.suite("fmt").test(
-    "preserves right-nested non-associative binary parens",
-    fn() { assert_fmt_case("binary_parens") },
-  ).test("breaks logical or chains by alternative", fn() { assert_fmt_case("logical_or_chain") }).test(
-    "formats declarations and top-level spacing",
-    fn() { assert_fmt_case("declarations") },
-  ).test("formats literals and wrapped calls", fn() { assert_fmt_case("literals_and_calls") }).test(
-    "formats control-flow blocks",
-    fn() { assert_fmt_case("control_flow") },
-  ).test("preserves interleaved binary comments", fn() { assert_fmt_case("interleaved_comments") })
+  runner.suite("fmt")
+    .test(
+      "preserves right-nested non-associative binary parens",
+      fn() { assert_fmt_case("binary_parens") },
+    )
+    .test("breaks logical or chains by alternative", fn() { assert_fmt_case("logical_or_chain") })
+    .test("formats declarations and top-level spacing", fn() { assert_fmt_case("declarations") })
+    .test("formats literals and wrapped calls", fn() { assert_fmt_case("literals_and_calls") })
+    .test("formats control-flow blocks", fn() { assert_fmt_case("control_flow") })
+    .test("preserves interleaved binary comments", fn() { assert_fmt_case("interleaved_comments") })
+    .test("groups extern declarations by module", fn() { assert_fmt_case("extern_decls") })
+    .test("breaks method chains consistently", fn() { assert_fmt_case("method_chain") })
 }

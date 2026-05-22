@@ -1,0 +1,13 @@
+extern Math {
+  fn sqrt(x: Float) Float
+  fn floor(x: Float) Float
+  fn ceil(x: Float) Float
+}
+
+extern console fn log(msg: String)
+
+extern canvas {
+  type CanvasContext
+  fn get_context(id: String) CanvasContext?
+  fn fill_rect(ctx: CanvasContext, x: Float, y: Float, w: Float, h: Float)
+}

@@ -291,8 +291,10 @@ pub fn format_module(module: Module, tokens: Vector<Token>) Doc {
 
   prev_kind := ""
   prev_import_group := -1
+  skip_until := 0
 
   for item, i in items {
+    if i < skip_until { continue }
     cur_kind := item_kind_name(item)
     trivia := if item_span(item).start == original_first_start {
       []
@@ -315,6 +317,39 @@ pub fn format_module(module: Module, tokens: Vector<Token>) Doc {
       if needs_blank { result = doc.concat([result, doc.hard_line()]) }
       comments := non_blank_trivia(trivia)
       if comments.len() > 0 { result = doc.concat([result, emit_trivia(comments)]) }
+    }
+
+    // Group consecutive extern items with the same module into a block
+    mod_name := extern_module_name(item)
+
+    if mod_name != "" {
+      // Collect consecutive externs with the same module
+      group_end := i + 1
+
+      for group_end < items.len() {
+        next_mod := extern_module_name(items[group_end])
+        if next_mod != mod_name { break }
+        group_end = group_end + 1
+      }
+
+      group_items := items.slice(i, group_end)
+
+      if group_items.len() == 1 {
+        // Single extern: emit standalone
+        item_doc := format_item(item, tm)
+        trailing := get_trailing_trivia(tm, item_span(item).end)
+        if trailing.len() > 0 { item_doc = doc.concat([item_doc, emit_trailing_trivia(trailing)]) }
+        result = doc.concat([result, item_doc])
+      } else {
+        // Multiple externs with same module: emit as block
+        item_doc := format_extern_block(mod_name, group_items, tm)
+        result = doc.concat([result, item_doc])
+      }
+
+      skip_until = group_end
+      prev_kind = cur_kind
+      prev_import_group = cur_import_group
+      continue
     }
 
     item_doc := format_item(item, tm)
@@ -343,8 +378,8 @@ fn item_kind_name(item: Item) String {
     .Use(_) => "use",
     .Type(_) => "type",
     .Function(_) => "fn",
-    .ExternFunction(_) => "extern_fn",
-    .ExternType(_) => "extern_type",
+    .ExternFunction(_) => "extern",
+    .ExternType(_) => "extern",
     .Stmt(_) => "stmt",
     .ErrorItem(_) => "error",
   }
@@ -525,10 +560,76 @@ fn format_function(decl: FunctionDecl, tm: TriviaMap) Doc {
   doc.concat(parts)
 }
 
+fn extern_module_name(item: Item) String {
+  case item {
+    .ExternFunction(decl) => decl.module,
+    .ExternType(decl) => decl.module,
+    _ => "",
+  }
+}
+
+fn format_extern_block(module: String, items: Vector<Item>, tm: TriviaMap) Doc {
+  parts: Vector<Doc> = []
+  // Check if any item in the group is pub
+  is_pub := false
+
+  for item in items {
+    case item {
+      .ExternFunction(decl) => {
+        if decl.is_pub { is_pub = true }
+      },
+      .ExternType(decl) => {
+        if decl.is_pub { is_pub = true }
+      },
+      _ => {},
+    }
+  }
+
+  if is_pub { parts = .append(doc.text("pub ")) }
+  parts = .append(doc.text("extern ${module} {"))
+  inner_parts: Vector<Doc> = []
+
+  for item in items {
+    inner_parts = .append(doc.hard_line())
+    body := case item {
+      .ExternFunction(decl) => format_extern_fn_body(decl),
+      .ExternType(decl) => format_extern_type_body(decl),
+      _ => doc.nil(),
+    }
+    inner_parts = .append(body)
+    trailing := get_trailing_trivia(tm, item_span(item).end)
+    if trailing.len() > 0 { inner_parts = .append(emit_trailing_trivia(trailing)) }
+  }
+
+  parts = .append(doc.indent(doc.concat(inner_parts)))
+  parts = .append(doc.hard_line())
+  parts = .append(doc.text("}"))
+  doc.concat(parts)
+}
+
+fn format_extern_fn_body(decl: ExternFunctionDecl) Doc {
+  parts: Vector<Doc> = []
+  parts = .append(doc.text("fn ${decl.name}"))
+  param_docs := collect p in decl.params { format_param(p) }
+  parts = .append(doc.tight_bracketed("(", ")", param_docs))
+
+  case decl.return_type {
+    .Some(ret) => {
+      parts = .append(doc.text(" "))
+      parts = .append(format_type_expr(ret))
+    },
+    .None => {},
+  }
+
+  doc.concat(parts)
+}
+
+fn format_extern_type_body(decl: ExternTypeDecl) Doc { doc.text("type ${decl.name}") }
+
 fn format_extern_fn(decl: ExternFunctionDecl) Doc {
   parts: Vector<Doc> = []
   if decl.is_pub { parts = .append(doc.text("pub ")) }
-  parts = .append(doc.text("extern fn \"${decl.module}\" ${decl.name}"))
+  parts = .append(doc.text("extern ${decl.module} fn ${decl.name}"))
   param_docs := collect p in decl.params { format_param(p) }
   parts = .append(doc.tight_bracketed("(", ")", param_docs))
 
@@ -546,7 +647,7 @@ fn format_extern_fn(decl: ExternFunctionDecl) Doc {
 fn format_extern_type(decl: ExternTypeDecl) Doc {
   parts: Vector<Doc> = []
   if decl.is_pub { parts = .append(doc.text("pub ")) }
-  parts = .append(doc.text("extern type \"${decl.module}\" ${decl.name}"))
+  parts = .append(doc.text("extern ${decl.module} type ${decl.name}"))
   doc.concat(parts)
 }
 
@@ -1131,7 +1232,89 @@ fn binop_str(op: BinOp) String {
   }
 }
 
+type ChainSegment = .{ name: String, args: Vector<Expr> }
+
+type ChainResult = .{ base: Expr, segments: Vector<ChainSegment> }
+
+fn collect_method_chain(callee: Expr, args: Vector<Expr>) ChainResult? {
+  // Walk a Call(Field(obj, name), args) chain and collect segments.
+  // Returns .None if this isn't a method chain (fewer than 2 segments).
+  segments: Vector<ChainSegment> = []
+  cur_callee := callee
+  cur_args := args
+
+  for true {
+    case cur_callee.kind {
+      .Field(obj, name) => {
+        segments = .append(.{ name, args: cur_args })
+
+        case obj.kind {
+          .Call(inner_callee, inner_args) => {
+            cur_callee = inner_callee
+            cur_args = inner_args
+          },
+          _ => {
+            // obj is the base expression
+            if segments.len() < 2 {
+              return .None
+            }
+            // Reverse segments (collected outermost-first)
+            reversed: Vector<ChainSegment> = []
+            i := segments.len() - 1
+
+            for i >= 0 {
+              reversed = .append(segments[i])
+              i = i - 1
+            }
+
+            return .Some(.{ base: obj, segments: reversed })
+          },
+        }
+      },
+      _ => { return .None },
+    }
+  }
+
+  .None
+}
+
+fn format_chain_segment(seg: ChainSegment, tm: TriviaMap) Doc {
+  parts: Vector<Doc> = [doc.text(".${seg.name}")]
+
+  if seg.args.len() == 1 and is_self_breaking_arg(seg.args[0]) {
+    parts = .append(doc.text("("))
+    parts = .append(format_expr(seg.args[0], tm))
+    parts = .append(doc.text(")"))
+  } else {
+    arg_docs := collect a in seg.args { format_expr(a, tm) }
+    parts = .append(doc.tight_bracketed("(", ")", arg_docs))
+  }
+
+  doc.concat(parts)
+}
+
 fn format_call(callee: Expr, args: Vector<Expr>, tm: TriviaMap) Doc {
+  // Check for method chain: Call(Field(obj, name), args) with 2+ segments
+  case collect_method_chain(callee, args) {
+    .Some(chain) => {
+      // First segment stays attached to the base
+      first := chain.segments[0]
+      head_doc := doc.concat([
+        format_receiver(chain.base, tm),
+        format_chain_segment(first, tm),
+      ])
+      // Remaining segments break together
+      tail_parts: Vector<Doc> = []
+      for seg, i in chain.segments {
+        if i == 0 { continue }
+        tail_parts = .append(doc.if_break(doc.hard_line(), doc.nil()))
+        tail_parts = .append(format_chain_segment(seg, tm))
+      }
+      return doc.concat([head_doc, doc.group(doc.indent(doc.concat(tail_parts)))])
+    },
+    .None => {},
+  }
+
   if args.len() == 1 and is_self_breaking_arg(args[0]) {
     return doc.concat([
       format_expr(callee, tm),
