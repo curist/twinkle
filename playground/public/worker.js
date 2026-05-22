@@ -642,13 +642,15 @@ function setupCanvasGlobals(offscreen) {
 // Message handler
 // ---------------------------------------------------------------------------
 
+self.postMessage({ type: 'ready' });
+
 self.onmessage = async (event) => {
   const { type, code, offscreenCanvas } = event.data;
   if (type !== 'run') return;
 
-  if (offscreenCanvas) setupCanvasGlobals(offscreenCanvas);
-
   try {
+    if (offscreenCanvas) setupCanvasGlobals(offscreenCanvas);
+
     await loadResources();
 
     // Build virtual FS: prelude/stdlib + user input

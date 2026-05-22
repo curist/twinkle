@@ -211,10 +211,20 @@ document.addEventListener('touchend', onDragEnd)
 // Worker
 // ---------------------------------------------------------------------------
 let worker = null
+let workerReady = null
 let running = false
 
 function initWorker() {
   worker = new Worker('./worker.js')
+  workerReady = new Promise((resolve) => {
+    function onReady(e) {
+      if (e.data?.type === 'ready') {
+        worker.removeEventListener('message', onReady)
+        resolve()
+      }
+    }
+    worker.addEventListener('message', onReady)
+  })
 
   worker.onmessage = (e) => {
     const { type, text, exitCode, message } = e.data
@@ -247,7 +257,7 @@ function initWorker() {
 
   worker.onerror = (e) => {
     setRunning(false)
-    appendOutput('out-error', `\nWorker error: ${e.message}`)
+    appendOutput('out-error', `\nWorker error: ${e.message ?? e.type ?? 'Unknown error'}`)
     status.textContent = 'Error'
   }
 }
@@ -266,12 +276,14 @@ function stop() {
   status.textContent = 'Stopped'
 }
 
-function run() {
+async function run() {
   if (running) { stop(); return }
 
   output.innerHTML = ''
   setRunning(true)
   status.textContent = 'Starting…'
+
+  await workerReady
 
   const code = jar.toString()
   const needsCanvas = /extern\s+\w+\s+type\s+\w*Canvas\w*|extern\s+canvas\b/.test(code)
