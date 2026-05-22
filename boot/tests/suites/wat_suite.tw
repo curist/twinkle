@@ -421,29 +421,23 @@ fn test_struct_array_instructions() Result<Void, String> {
 
 // ── Suite ───────────────────────────────────────────────────────────
 pub fn suite() runner.Suite {
-  runner.suite("wat (M8)").test("empty module emits (module)", test_empty_module).test(
-    "struct type def",
-    test_struct_type_def,
-  ).test("struct type with supertype", test_struct_type_with_supertype).test(
-    "non-final struct without supertype",
-    test_non_final_struct_without_supertype,
-  ).test("array type def", test_array_type_def).test("func type def", test_func_type_def).test(
-    "import emission",
-    test_import_emission,
-  ).test("function with body", test_function_with_body).test(
-    "function with extra locals",
-    test_function_with_extra_locals,
-  ).test("global emission", test_global_emission).test(
-    "data segment passive",
-    test_data_segment_passive,
-  ).test("export emission", test_export_emission).test("start function", test_start_function).test(
-    "if/block/loop emission",
-    test_if_block_loop_emission,
-  ).test("ref.func generates declarative elem segment", test_ref_func_declarative_elem).test(
-    "functype deduplication",
-    test_functype_deduplication,
-  ).test("ref types in val_type", test_ref_types_in_val_type).test(
-    "struct/array instructions",
-    test_struct_array_instructions,
-  )
+  runner.suite("wat (M8)")
+    .test("empty module emits (module)", test_empty_module)
+    .test("struct type def", test_struct_type_def)
+    .test("struct type with supertype", test_struct_type_with_supertype)
+    .test("non-final struct without supertype", test_non_final_struct_without_supertype)
+    .test("array type def", test_array_type_def)
+    .test("func type def", test_func_type_def)
+    .test("import emission", test_import_emission)
+    .test("function with body", test_function_with_body)
+    .test("function with extra locals", test_function_with_extra_locals)
+    .test("global emission", test_global_emission)
+    .test("data segment passive", test_data_segment_passive)
+    .test("export emission", test_export_emission)
+    .test("start function", test_start_function)
+    .test("if/block/loop emission", test_if_block_loop_emission)
+    .test("ref.func generates declarative elem segment", test_ref_func_declarative_elem)
+    .test("functype deduplication", test_functype_deduplication)
+    .test("ref types in val_type", test_ref_types_in_val_type)
+    .test("struct/array instructions", test_struct_array_instructions)
 }

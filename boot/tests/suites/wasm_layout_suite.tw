@@ -452,50 +452,39 @@ fn test_mono_to_key_stable() Result<Void, String> {
 
 // ── Suite ───────────────────────────────────────────────────────────
 pub fn suite() runner.Suite {
-  runner.suite("wasm layout").test("WasmValType variants", test_wasm_val_type_variants).test(
-    "layout_of Int",
-    test_layout_int,
-  ).test("layout_of Float", test_layout_float).test("layout_of Bool", test_layout_bool).test(
-    "layout_of Byte",
-    test_layout_byte,
-  ).test("layout_of Void", test_layout_void).test("layout_of String", test_layout_string).test(
-    "layout_of Record",
-    test_layout_record,
-  ).test("layout_of Sum", test_layout_sum).test("layout_of Optional", test_layout_optional).test(
-    "layout_of Result",
-    test_layout_result,
-  ).test("layout_of Vector", test_layout_vector).test("layout_of Dict", test_layout_dict).test(
-    "layout_of Closure",
-    test_layout_closure,
-  ).test("layout_of generic Alias substitutes args", test_layout_generic_alias_substitutes_args).test(
-    "layout_of Closure handles Never return",
-    test_layout_closure_never_return,
-  ).test("val_type_of Scalar I64", test_val_type_of_scalar_i64).test(
-    "val_type_of Scalar I32",
-    test_val_type_of_scalar_i32,
-  ).test("val_type_of Scalar F64", test_val_type_of_scalar_f64).test(
-    "val_type_of Scalar Anyref",
-    test_val_type_of_scalar_anyref,
-  ).test("val_type_of Record", test_val_type_of_record).test(
-    "val_type_of Vector",
-    test_val_type_of_vector,
-  ).test("val_type_of Dict", test_val_type_of_dict).test(
-    "val_type_of_mono Int",
-    test_val_type_of_mono_int,
-  ).test("val_type_of_mono Bool", test_val_type_of_mono_bool).test(
-    "val_type_of_mono Anyref marker",
-    test_val_type_of_mono_anyref_marker,
-  ).test("mono_to_key primitives", test_mono_to_key_primitives).test(
-    "mono_to_key Named",
-    test_mono_to_key_named,
-  ).test("mono_to_key Vector", test_mono_to_key_vector).test(
-    "mono_to_key Dict",
-    test_mono_to_key_dict,
-  ).test("mono_to_key Function", test_mono_to_key_function).test(
-    "mono_to_key Optional",
-    test_mono_to_key_optional,
-  ).test("mono_to_key Result", test_mono_to_key_result).test(
-    "mono_to_key stable",
-    test_mono_to_key_stable,
-  )
+  runner.suite("wasm layout")
+    .test("WasmValType variants", test_wasm_val_type_variants)
+    .test("layout_of Int", test_layout_int)
+    .test("layout_of Float", test_layout_float)
+    .test("layout_of Bool", test_layout_bool)
+    .test("layout_of Byte", test_layout_byte)
+    .test("layout_of Void", test_layout_void)
+    .test("layout_of String", test_layout_string)
+    .test("layout_of Record", test_layout_record)
+    .test("layout_of Sum", test_layout_sum)
+    .test("layout_of Optional", test_layout_optional)
+    .test("layout_of Result", test_layout_result)
+    .test("layout_of Vector", test_layout_vector)
+    .test("layout_of Dict", test_layout_dict)
+    .test("layout_of Closure", test_layout_closure)
+    .test("layout_of generic Alias substitutes args", test_layout_generic_alias_substitutes_args)
+    .test("layout_of Closure handles Never return", test_layout_closure_never_return)
+    .test("val_type_of Scalar I64", test_val_type_of_scalar_i64)
+    .test("val_type_of Scalar I32", test_val_type_of_scalar_i32)
+    .test("val_type_of Scalar F64", test_val_type_of_scalar_f64)
+    .test("val_type_of Scalar Anyref", test_val_type_of_scalar_anyref)
+    .test("val_type_of Record", test_val_type_of_record)
+    .test("val_type_of Vector", test_val_type_of_vector)
+    .test("val_type_of Dict", test_val_type_of_dict)
+    .test("val_type_of_mono Int", test_val_type_of_mono_int)
+    .test("val_type_of_mono Bool", test_val_type_of_mono_bool)
+    .test("val_type_of_mono Anyref marker", test_val_type_of_mono_anyref_marker)
+    .test("mono_to_key primitives", test_mono_to_key_primitives)
+    .test("mono_to_key Named", test_mono_to_key_named)
+    .test("mono_to_key Vector", test_mono_to_key_vector)
+    .test("mono_to_key Dict", test_mono_to_key_dict)
+    .test("mono_to_key Function", test_mono_to_key_function)
+    .test("mono_to_key Optional", test_mono_to_key_optional)
+    .test("mono_to_key Result", test_mono_to_key_result)
+    .test("mono_to_key stable", test_mono_to_key_stable)
 }

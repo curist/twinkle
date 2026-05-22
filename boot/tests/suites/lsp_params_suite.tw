@@ -13,49 +13,53 @@ fn text_doc_item(uri: String, version: Int, text: String) json.Json {
 }
 
 pub fn suite() runner.Suite {
-  runner.suite("lsp params").test(
-    "decodes didOpen params",
-    fn() {
-      value := json.object([json.kv("textDocument", text_doc_item("file:///a.tw", 3, "one"))])
-      decoded := try params.decode_did_open(.Some(value))
-      try assert.equal(decoded.text_document.uri, "file:///a.tw")
-      try assert.equal(decoded.text_document.language_id, "twinkle")
-      try assert.equal(decoded.text_document.version, 3)
-      try assert.equal(decoded.text_document.text, "one")
-      .Ok({})
-    },
-  ).test(
-    "decodes didChange params",
-    fn() {
-      value := json.object([
-        json.kv(
-          "textDocument",
-          json.object([json.kv("uri", .Str("file:///a.tw")), json.kv("version", .Int(4))]),
-        ),
-        json.kv("contentChanges", json.array([json.object([json.kv("text", .Str("two"))])])),
-      ])
-      decoded := try params.decode_did_change(.Some(value))
-      try assert.equal(decoded.text_document.uri, "file:///a.tw")
-      try assert.equal(try decoded.text_document.version.ok_or("missing version"), 4)
-      try assert.equal(decoded.content_changes.len(), 1)
-      try assert.equal(decoded.content_changes[0].text, "two")
-      .Ok({})
-    },
-  ).test(
-    "decodes didClose params",
-    fn() {
-      value := json.object([
-        json.kv("textDocument", json.object([json.kv("uri", .Str("file:///a.tw"))])),
-      ])
-      decoded := try params.decode_did_close(.Some(value))
-      try assert.equal(decoded.text_document.uri, "file:///a.tw")
-      .Ok({})
-    },
-  ).test(
-    "rejects missing params",
-    fn() {
-      try assert.is_err(params.decode_did_open(.None))
-      .Ok({})
-    },
-  )
+  runner.suite("lsp params")
+    .test(
+      "decodes didOpen params",
+      fn() {
+        value := json.object([json.kv("textDocument", text_doc_item("file:///a.tw", 3, "one"))])
+        decoded := try params.decode_did_open(.Some(value))
+        try assert.equal(decoded.text_document.uri, "file:///a.tw")
+        try assert.equal(decoded.text_document.language_id, "twinkle")
+        try assert.equal(decoded.text_document.version, 3)
+        try assert.equal(decoded.text_document.text, "one")
+        .Ok({})
+      },
+    )
+    .test(
+      "decodes didChange params",
+      fn() {
+        value := json.object([
+          json.kv(
+            "textDocument",
+            json.object([json.kv("uri", .Str("file:///a.tw")), json.kv("version", .Int(4))]),
+          ),
+          json.kv("contentChanges", json.array([json.object([json.kv("text", .Str("two"))])])),
+        ])
+        decoded := try params.decode_did_change(.Some(value))
+        try assert.equal(decoded.text_document.uri, "file:///a.tw")
+        try assert.equal(try decoded.text_document.version.ok_or("missing version"), 4)
+        try assert.equal(decoded.content_changes.len(), 1)
+        try assert.equal(decoded.content_changes[0].text, "two")
+        .Ok({})
+      },
+    )
+    .test(
+      "decodes didClose params",
+      fn() {
+        value := json.object([
+          json.kv("textDocument", json.object([json.kv("uri", .Str("file:///a.tw"))])),
+        ])
+        decoded := try params.decode_did_close(.Some(value))
+        try assert.equal(decoded.text_document.uri, "file:///a.tw")
+        .Ok({})
+      },
+    )
+    .test(
+      "rejects missing params",
+      fn() {
+        try assert.is_err(params.decode_did_open(.None))
+        .Ok({})
+      },
+    )
 }

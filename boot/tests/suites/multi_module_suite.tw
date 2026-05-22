@@ -151,590 +151,634 @@ fn has_call_to(expr: CoreExpr, target_id: Int) Bool {
 pub fn suite() runner.Suite {
   dir := fixtures_dir()
   root := project_root()
-  runner.suite("multi-module compilation").test(
-    "compile single file with no imports",
-    fn() {
-      result := module_compiler.compile_entry("${dir}/math_lib.tw")
+  runner.suite("multi-module compilation")
+    .test(
+      "compile single file with no imports",
+      fn() {
+        result := module_compiler.compile_entry("${dir}/math_lib.tw")
 
-      case result {
-        .Ok(_) => .Ok({}),
-        .Err(err) => .Err("expected success, got: ${format_compile_error(err)}"),
-      }
-    },
-  ).test(
-    "compile file importing relative module (functions)",
-    fn() {
-      result := module_compiler.compile_entry("${dir}/uses_math.tw")
+        case result {
+          .Ok(_) => .Ok({}),
+          .Err(err) => .Err("expected success, got: ${format_compile_error(err)}"),
+        }
+      },
+    )
+    .test(
+      "compile file importing relative module (functions)",
+      fn() {
+        result := module_compiler.compile_entry("${dir}/uses_math.tw")
 
-      case result {
-        .Ok(_) => .Ok({}),
-        .Err(err) => .Err("expected success, got: ${format_compile_error(err)}"),
-      }
-    },
-  ).test(
-    "compile file importing relative module (types)",
-    fn() {
-      result := module_compiler.compile_entry("${dir}/uses_types.tw")
+        case result {
+          .Ok(_) => .Ok({}),
+          .Err(err) => .Err("expected success, got: ${format_compile_error(err)}"),
+        }
+      },
+    )
+    .test(
+      "compile file importing relative module (types)",
+      fn() {
+        result := module_compiler.compile_entry("${dir}/uses_types.tw")
 
-      case result {
-        .Ok(_) => .Ok({}),
-        .Err(err) => .Err("expected success, got: ${format_compile_error(err)}"),
-      }
-    },
-  ).test(
-    "mixed full and selective import reuses exported type ids",
-    fn() {
-      result := module_compiler.compile_entry("${dir}/duplicate_type_imports_main.tw")
+        case result {
+          .Ok(_) => .Ok({}),
+          .Err(err) => .Err("expected success, got: ${format_compile_error(err)}"),
+        }
+      },
+    )
+    .test(
+      "mixed full and selective import reuses exported type ids",
+      fn() {
+        result := module_compiler.compile_entry("${dir}/duplicate_type_imports_main.tw")
 
-      case result {
-        .Ok(_) => .Ok({}),
-        .Err(err) => .Err("expected success, got: ${format_compile_error(err)}"),
-      }
-    },
-  ).test(
-    "vector get supports optional return annotations",
-    fn() {
-      result := module_compiler.compile_entry("${dir}/vector_get_optional_return.tw")
+        case result {
+          .Ok(_) => .Ok({}),
+          .Err(err) => .Err("expected success, got: ${format_compile_error(err)}"),
+        }
+      },
+    )
+    .test(
+      "vector get supports optional return annotations",
+      fn() {
+        result := module_compiler.compile_entry("${dir}/vector_get_optional_return.tw")
 
-      case result {
-        .Ok(_) => .Ok({}),
-        .Err(err) => .Err("expected success, got: ${format_compile_error(err)}"),
-      }
-    },
-  ).test(
-    "selective-only imported sum types resolve shorthand variants",
-    fn() {
-      result := module_compiler.compile_entry("${dir}/selective_only_variants_main.tw")
+        case result {
+          .Ok(_) => .Ok({}),
+          .Err(err) => .Err("expected success, got: ${format_compile_error(err)}"),
+        }
+      },
+    )
+    .test(
+      "selective-only imported sum types resolve shorthand variants",
+      fn() {
+        result := module_compiler.compile_entry("${dir}/selective_only_variants_main.tw")
 
-      case result {
-        .Ok(_) => .Ok({}),
-        .Err(err) => .Err("expected success, got: ${format_compile_error(err)}"),
-      }
-    },
-  ).test(
-    "type from full import flows correctly through exported function signature",
-    fn() {
-      result := module_compiler.compile_entry("${dir}/type_flow_consumer.tw")
+        case result {
+          .Ok(_) => .Ok({}),
+          .Err(err) => .Err("expected success, got: ${format_compile_error(err)}"),
+        }
+      },
+    )
+    .test(
+      "type from full import flows correctly through exported function signature",
+      fn() {
+        result := module_compiler.compile_entry("${dir}/type_flow_consumer.tw")
 
-      case result {
-        .Ok(_) => .Ok({}),
-        .Err(err) => .Err("expected success, got: ${format_compile_error(err)}"),
-      }
-    },
-  ).test(
-    "function from source module accepts value obtained via full-import bridge",
-    fn() {
-      result := module_compiler.compile_entry("${dir}/type_flow_method_consumer.tw")
+        case result {
+          .Ok(_) => .Ok({}),
+          .Err(err) => .Err("expected success, got: ${format_compile_error(err)}"),
+        }
+      },
+    )
+    .test(
+      "function from source module accepts value obtained via full-import bridge",
+      fn() {
+        result := module_compiler.compile_entry("${dir}/type_flow_method_consumer.tw")
 
-      case result {
-        .Ok(_) => .Ok({}),
-        .Err(err) => .Err("expected success, got: ${format_compile_error(err)}"),
-      }
-    },
-  ).test(
-    "type from full import flows through record type in lex/parse topology",
-    fn() {
-      result := module_compiler.compile_entry("${dir}/lex_sim_parser.tw")
+        case result {
+          .Ok(_) => .Ok({}),
+          .Err(err) => .Err("expected success, got: ${format_compile_error(err)}"),
+        }
+      },
+    )
+    .test(
+      "type from full import flows through record type in lex/parse topology",
+      fn() {
+        result := module_compiler.compile_entry("${dir}/lex_sim_parser.tw")
 
-      case result {
-        .Ok(_) => .Ok({}),
-        .Err(err) => .Err("expected success, got: ${format_compile_error(err)}"),
-      }
-    },
-  ).test(
-    "same source module imported selectively and under an alias reuses type identity",
-    fn() {
-      result := module_compiler.compile_entry("${dir}/alias_type_bridge.tw")
+        case result {
+          .Ok(_) => .Ok({}),
+          .Err(err) => .Err("expected success, got: ${format_compile_error(err)}"),
+        }
+      },
+    )
+    .test(
+      "same source module imported selectively and under an alias reuses type identity",
+      fn() {
+        result := module_compiler.compile_entry("${dir}/alias_type_bridge.tw")
 
-      case result {
-        .Ok(_) => .Ok({}),
-        .Err(err) => .Err(
-          "expected alias import topology to preserve type identity, got: ${format_compile_error(
-            err,
-          )}",
-        ),
-      }
-    },
-  ).test(
-    "same source module imported under a full alias before selective import reuses type identity",
-    fn() {
-      result := module_compiler.compile_entry("${dir}/alias_type_bridge_full_first.tw")
+        case result {
+          .Ok(_) => .Ok({}),
+          .Err(err) => .Err(
+            "expected alias import topology to preserve type identity, got: ${format_compile_error(
+              err,
+            )}",
+          ),
+        }
+      },
+    )
+    .test(
+      "same source module imported under a full alias before selective import reuses type identity",
+      fn() {
+        result := module_compiler.compile_entry("${dir}/alias_type_bridge_full_first.tw")
 
-      case result {
-        .Ok(_) => .Ok({}),
-        .Err(err) => .Err(
-          "expected reversed alias import topology to preserve type identity, got: ${format_compile_error(
-            err,
-          )}",
-        ),
-      }
-    },
-  ).test(
-    "aliased imported support type remains valid through exported signatures downstream",
-    fn() {
-      result := module_compiler.compile_entry("${dir}/alias_type_main.tw")
+        case result {
+          .Ok(_) => .Ok({}),
+          .Err(err) => .Err(
+            "expected reversed alias import topology to preserve type identity, got: ${format_compile_error(
+              err,
+            )}",
+          ),
+        }
+      },
+    )
+    .test(
+      "aliased imported support type remains valid through exported signatures downstream",
+      fn() {
+        result := module_compiler.compile_entry("${dir}/alias_type_main.tw")
 
-      case result {
-        .Ok(_) => .Ok({}),
-        .Err(err) => .Err(
-          "expected downstream alias topology to preserve exported support types, got: ${format_compile_error(
-            err,
-          )}",
-        ),
-      }
-    },
-  ).test(
-    "independent alias bridges preserve support type identity downstream",
-    fn() {
-      result := module_compiler.compile_entry("${dir}/alias_type_transitive_main.tw")
+        case result {
+          .Ok(_) => .Ok({}),
+          .Err(err) => .Err(
+            "expected downstream alias topology to preserve exported support types, got: ${format_compile_error(
+              err,
+            )}",
+          ),
+        }
+      },
+    )
+    .test(
+      "independent alias bridges preserve support type identity downstream",
+      fn() {
+        result := module_compiler.compile_entry("${dir}/alias_type_transitive_main.tw")
 
-      case result {
-        .Ok(_) => .Ok({}),
-        .Err(err) => .Err(
-          "expected transitive alias bridges to preserve exported support types, got: ${format_compile_error(
-            err,
-          )}",
-        ),
-      }
-    },
-  ).test(
-    "support type methods remain callable downstream through exported signatures",
-    fn() {
-      result := module_compiler.compile_entry("${dir}/support_method_main.tw")
+        case result {
+          .Ok(_) => .Ok({}),
+          .Err(err) => .Err(
+            "expected transitive alias bridges to preserve exported support types, got: ${format_compile_error(
+              err,
+            )}",
+          ),
+        }
+      },
+    )
+    .test(
+      "support type methods remain callable downstream through exported signatures",
+      fn() {
+        result := module_compiler.compile_entry("${dir}/support_method_main.tw")
 
-      case result {
-        .Ok(_) => .Ok({}),
-        .Err(err) => .Err(
-          "expected support type method surface to survive downstream import, got: ${format_compile_error(
-            err,
-          )}",
-        ),
-      }
-    },
-  ).test(
-    "downstream sees inferred Never returns from imported modules",
-    fn() {
-      result := module_compiler.compile_entry("${dir}/never_main.tw")
+        case result {
+          .Ok(_) => .Ok({}),
+          .Err(err) => .Err(
+            "expected support type method surface to survive downstream import, got: ${format_compile_error(
+              err,
+            )}",
+          ),
+        }
+      },
+    )
+    .test(
+      "downstream sees inferred Never returns from imported modules",
+      fn() {
+        result := module_compiler.compile_entry("${dir}/never_main.tw")
 
-      case result {
-        .Ok(_) => .Ok({}),
-        .Err(err) => .Err(
-          "expected imported inferred Never return to survive downstream import, got: ${format_compile_error(
-            err,
-          )}",
-        ),
-      }
-    },
-  ).test(
-    "real boot lexer module typechecks through compiler import topology",
-    fn() {
-      result := module_compiler.compile_entry("${root}/compiler/lexer.tw")
+        case result {
+          .Ok(_) => .Ok({}),
+          .Err(err) => .Err(
+            "expected imported inferred Never return to survive downstream import, got: ${format_compile_error(
+              err,
+            )}",
+          ),
+        }
+      },
+    )
+    .test(
+      "real boot lexer module typechecks through compiler import topology",
+      fn() {
+        result := module_compiler.compile_entry("${root}/compiler/lexer.tw")
 
-      case result {
-        .Ok(_) => .Ok({}),
-        .Err(err) => .Err(
-          "expected boot compiler lexer module to compile, got: ${format_compile_error(err)}",
-        ),
-      }
-    },
-  ).test(
-    "method call works: bridge full-import then source full-import",
-    fn() {
-      result := module_compiler.compile_entry("${dir}/method_call_consumer_full.tw")
+        case result {
+          .Ok(_) => .Ok({}),
+          .Err(err) => .Err(
+            "expected boot compiler lexer module to compile, got: ${format_compile_error(err)}",
+          ),
+        }
+      },
+    )
+    .test(
+      "method call works: bridge full-import then source full-import",
+      fn() {
+        result := module_compiler.compile_entry("${dir}/method_call_consumer_full.tw")
 
-      case result {
-        .Ok(_) => .Ok({}),
-        .Err(err) => .Err("expected success, got: ${format_compile_error(err)}"),
-      }
-    },
-  ).test(
-    "method call works: bridge full-import then source selective-import",
-    fn() {
-      result := module_compiler.compile_entry("${dir}/method_call_consumer.tw")
+        case result {
+          .Ok(_) => .Ok({}),
+          .Err(err) => .Err("expected success, got: ${format_compile_error(err)}"),
+        }
+      },
+    )
+    .test(
+      "method call works: bridge full-import then source selective-import",
+      fn() {
+        result := module_compiler.compile_entry("${dir}/method_call_consumer.tw")
 
-      case result {
-        .Ok(_) => .Ok({}),
-        .Err(err) => .Err("expected success, got: ${format_compile_error(err)}"),
-      }
-    },
-  ).test(
-    "method call works: source selective-import then bridge full-import",
-    fn() {
-      result := module_compiler.compile_entry("${dir}/method_call_consumer_rev.tw")
+        case result {
+          .Ok(_) => .Ok({}),
+          .Err(err) => .Err("expected success, got: ${format_compile_error(err)}"),
+        }
+      },
+    )
+    .test(
+      "method call works: source selective-import then bridge full-import",
+      fn() {
+        result := module_compiler.compile_entry("${dir}/method_call_consumer_rev.tw")
 
-      case result {
-        .Ok(_) => .Ok({}),
-        .Err(err) => .Err("expected success, got: ${format_compile_error(err)}"),
-      }
-    },
-  ).test(
-    "compile transitive dependency chain (a -> b -> c)",
-    fn() {
-      result := module_compiler.compile_entry("${dir}/transitive_a.tw")
+        case result {
+          .Ok(_) => .Ok({}),
+          .Err(err) => .Err("expected success, got: ${format_compile_error(err)}"),
+        }
+      },
+    )
+    .test(
+      "compile transitive dependency chain (a -> b -> c)",
+      fn() {
+        result := module_compiler.compile_entry("${dir}/transitive_a.tw")
 
-      case result {
-        .Ok(_) => .Ok({}),
-        .Err(err) => .Err("expected success, got: ${format_compile_error(err)}"),
-      }
-    },
-  ).test(
-    "selective import does not bring parent module into scope",
-    fn() {
-      result := module_compiler.compile_entry("${dir}/selective_no_parent_scope.tw")
+        case result {
+          .Ok(_) => .Ok({}),
+          .Err(err) => .Err("expected success, got: ${format_compile_error(err)}"),
+        }
+      },
+    )
+    .test(
+      "selective import does not bring parent module into scope",
+      fn() {
+        result := module_compiler.compile_entry("${dir}/selective_no_parent_scope.tw")
 
-      case result {
-        .Ok(_) => .Err("expected selective import to reject parent module access"),
-        .Err(err) => {
-          msg := format_compile_error(err)
-          try assert.is_true(msg.contains("math_lib.add") or msg.contains("math_lib"))
-          .Ok({})
-        },
-      }
-    },
-  ).test(
-    "circular import detected",
-    fn() {
-      result := module_compiler.compile_entry("${dir}/circular_a.tw")
+        case result {
+          .Ok(_) => .Err("expected selective import to reject parent module access"),
+          .Err(err) => {
+            msg := format_compile_error(err)
+            try assert.is_true(msg.contains("math_lib.add") or msg.contains("math_lib"))
+            .Ok({})
+          },
+        }
+      },
+    )
+    .test(
+      "circular import detected",
+      fn() {
+        result := module_compiler.compile_entry("${dir}/circular_a.tw")
 
-      case result {
-        .Ok(_) => .Err("expected circular import error"),
-        .Err(err) => {
-          msg := format_compile_error(err)
-          try assert.is_true(msg.contains("Circular import"))
-          .Ok({})
-        },
-      }
-    },
-  ).test(
-    "linked output contains functions from all modules",
-    fn() {
-      result := module_compiler.compile_entry("${dir}/uses_math.tw")
+        case result {
+          .Ok(_) => .Err("expected circular import error"),
+          .Err(err) => {
+            msg := format_compile_error(err)
+            try assert.is_true(msg.contains("Circular import"))
+            .Ok({})
+          },
+        }
+      },
+    )
+    .test(
+      "linked output contains functions from all modules",
+      fn() {
+        result := module_compiler.compile_entry("${dir}/uses_math.tw")
 
-      case result {
-        .Ok(artifacts) => {
-          // After linking, Core IR should have functions from both modules.
-          // math_lib defines: add, multiply, internal_helper
-          // uses_math defines: main (plus $init)
-          names := collect f in artifacts.core.functions { f.name }
-          try assert.vec_contains(names, "add")
-          try assert.vec_contains(names, "multiply")
-          try assert.vec_contains(names, "main")
-          .Ok({})
-        },
-        .Err(err) => .Err("expected success, got: ${format_compile_error(err)}"),
-      }
-    },
-  ).test(
-    "compile_entry handles program with init code calling cross-module functions",
-    fn() {
-      result := module_compiler.compile_entry("${dir}/entry_calls_lib.tw")
+        case result {
+          .Ok(artifacts) => {
+            // After linking, Core IR should have functions from both modules.
+            // math_lib defines: add, multiply, internal_helper
+            // uses_math defines: main (plus $init)
+            names := collect f in artifacts.core.functions { f.name }
+            try assert.vec_contains(names, "add")
+            try assert.vec_contains(names, "multiply")
+            try assert.vec_contains(names, "main")
+            .Ok({})
+          },
+          .Err(err) => .Err("expected success, got: ${format_compile_error(err)}"),
+        }
+      },
+    )
+    .test(
+      "compile_entry handles program with init code calling cross-module functions",
+      fn() {
+        result := module_compiler.compile_entry("${dir}/entry_calls_lib.tw")
 
-      case result {
-        .Ok(artifacts) => {
-          names := collect f in artifacts.core.functions { f.name }
-          try assert.vec_contains(names, "add")
-          try assert.vec_contains(names, "\$init")
-          .Ok({})
-        },
-        .Err(err) => .Err("expected success, got: ${format_compile_error(err)}"),
-      }
-    },
-  ).test(
-    "pipeline.compile_entry_path handles multi-module entry file",
-    fn() {
-      result := pipeline.compile_entry_path("${dir}/entry_calls_lib.tw")
+        case result {
+          .Ok(artifacts) => {
+            names := collect f in artifacts.core.functions { f.name }
+            try assert.vec_contains(names, "add")
+            try assert.vec_contains(names, "\$init")
+            .Ok({})
+          },
+          .Err(err) => .Err("expected success, got: ${format_compile_error(err)}"),
+        }
+      },
+    )
+    .test(
+      "pipeline.compile_entry_path handles multi-module entry file",
+      fn() {
+        result := pipeline.compile_entry_path("${dir}/entry_calls_lib.tw")
 
-      case result {
-        .Ok(artifacts) => {
-          names := collect f in artifacts.core.functions { f.name }
-          try assert.vec_contains(names, "add")
-          try assert.vec_contains(names, "\$init")
-          .Ok({})
-        },
-        .Err(err) => .Err("expected success, got: ${format_compile_error(err)}"),
-      }
-    },
-  ).test(
-    "compile_entry reports every diagnostic with source locations",
-    fn() {
-      result := module_compiler.compile_entry("${dir}/two_type_errors.tw")
+        case result {
+          .Ok(artifacts) => {
+            names := collect f in artifacts.core.functions { f.name }
+            try assert.vec_contains(names, "add")
+            try assert.vec_contains(names, "\$init")
+            .Ok({})
+          },
+          .Err(err) => .Err("expected success, got: ${format_compile_error(err)}"),
+        }
+      },
+    )
+    .test(
+      "compile_entry reports every diagnostic with source locations",
+      fn() {
+        result := module_compiler.compile_entry("${dir}/two_type_errors.tw")
 
-      case result {
-        .Ok(_) => .Err("expected checker diagnostics"),
-        .Err(err) => {
-          msg := format_compile_error(err)
-          try assert.str_contains(msg, "check:\n")
-          try assert.str_contains(msg, "${dir}/two_type_errors.tw:2:")
-          try assert.str_contains(msg, "${dir}/two_type_errors.tw:3:")
-          try assert.is_false(msg.contains("(and "))
-          .Ok({})
-        },
-      }
-    },
-  ).test(
-    "prelude function aliases converge through canonical origins",
-    fn() {
-      result := module_compiler.compile_entry("${dir}/func_identity_prelude_alias.tw")
+        case result {
+          .Ok(_) => .Err("expected checker diagnostics"),
+          .Err(err) => {
+            msg := format_compile_error(err)
+            try assert.str_contains(msg, "check:\n")
+            try assert.str_contains(msg, "${dir}/two_type_errors.tw:2:")
+            try assert.str_contains(msg, "${dir}/two_type_errors.tw:3:")
+            try assert.is_false(msg.contains("(and "))
+            .Ok({})
+          },
+        }
+      },
+    )
+    .test(
+      "prelude function aliases converge through canonical origins",
+      fn() {
+        result := module_compiler.compile_entry("${dir}/func_identity_prelude_alias.tw")
 
-      case result {
-        .Ok(_) => .Ok({}),
-        .Err(err) => .Err("expected prelude alias convergence, got: ${format_compile_error(err)}"),
-      }
-    },
-  ).test(
-    "selective and qualified imports of same function converge",
-    fn() {
-      result := module_compiler.compile_entry("${dir}/func_identity_selective_qualified.tw")
+        case result {
+          .Ok(_) => .Ok({}),
+          .Err(err) => .Err("expected prelude alias convergence, got: ${format_compile_error(err)}"),
+        }
+      },
+    )
+    .test(
+      "selective and qualified imports of same function converge",
+      fn() {
+        result := module_compiler.compile_entry("${dir}/func_identity_selective_qualified.tw")
 
-      case result {
-        .Ok(_) => .Ok({}),
-        .Err(err) => .Err(
-          "expected selective+qualified convergence, got: ${format_compile_error(err)}",
-        ),
-      }
-    },
-  ).test(
-    "qualified access to cross-module pub value compiles",
-    fn() {
-      result := module_compiler.compile_entry("${dir}/uses_pub_value.tw")
+        case result {
+          .Ok(_) => .Ok({}),
+          .Err(err) => .Err(
+            "expected selective+qualified convergence, got: ${format_compile_error(err)}",
+          ),
+        }
+      },
+    )
+    .test(
+      "qualified access to cross-module pub value compiles",
+      fn() {
+        result := module_compiler.compile_entry("${dir}/uses_pub_value.tw")
 
-      case result {
-        .Ok(_) => .Ok({}),
-        .Err(err) => .Err("expected pub value access to compile, got: ${format_compile_error(err)}"),
-      }
-    },
-  ).test(
-    "selective import of cross-module pub value compiles",
-    fn() {
-      result := module_compiler.compile_entry("${dir}/uses_pub_value_selective.tw")
+        case result {
+          .Ok(_) => .Ok({}),
+          .Err(err) => .Err(
+            "expected pub value access to compile, got: ${format_compile_error(err)}",
+          ),
+        }
+      },
+    )
+    .test(
+      "selective import of cross-module pub value compiles",
+      fn() {
+        result := module_compiler.compile_entry("${dir}/uses_pub_value_selective.tw")
 
-      case result {
-        .Ok(_) => .Ok({}),
-        .Err(err) => .Err(
-          "expected selective pub value import to compile, got: ${format_compile_error(err)}",
-        ),
-      }
-    },
-  ).test(
-    "pub value accessed in top-level init code compiles",
-    fn() {
-      result := module_compiler.compile_entry("${dir}/uses_pub_value_toplevel.tw")
+        case result {
+          .Ok(_) => .Ok({}),
+          .Err(err) => .Err(
+            "expected selective pub value import to compile, got: ${format_compile_error(err)}",
+          ),
+        }
+      },
+    )
+    .test(
+      "pub value accessed in top-level init code compiles",
+      fn() {
+        result := module_compiler.compile_entry("${dir}/uses_pub_value_toplevel.tw")
 
-      case result {
-        .Ok(_) => .Ok({}),
-        .Err(err) => .Err(
-          "expected top-level pub value access to compile, got: ${format_compile_error(err)}",
-        ),
-      }
-    },
-  ).test(
-    "pub value and function from same module both accessible",
-    fn() {
-      result := module_compiler.compile_entry("${dir}/uses_pub_value_with_fn.tw")
+        case result {
+          .Ok(_) => .Ok({}),
+          .Err(err) => .Err(
+            "expected top-level pub value access to compile, got: ${format_compile_error(err)}",
+          ),
+        }
+      },
+    )
+    .test(
+      "pub value and function from same module both accessible",
+      fn() {
+        result := module_compiler.compile_entry("${dir}/uses_pub_value_with_fn.tw")
 
-      case result {
-        .Ok(_) => .Ok({}),
-        .Err(err) => .Err(
-          "expected mixed pub value+function access to compile, got: ${format_compile_error(err)}",
-        ),
-      }
-    },
-  ).test(
-    "cross-module anonymous record variant construction and use",
-    fn() {
-      result := module_compiler.compile_entry("${dir}/anon_record_variant_consumer.tw")
+        case result {
+          .Ok(_) => .Ok({}),
+          .Err(err) => .Err(
+            "expected mixed pub value+function access to compile, got: ${format_compile_error(err)}",
+          ),
+        }
+      },
+    )
+    .test(
+      "cross-module anonymous record variant construction and use",
+      fn() {
+        result := module_compiler.compile_entry("${dir}/anon_record_variant_consumer.tw")
 
-      case result {
-        .Ok(_) => .Ok({}),
-        .Err(err) => .Err(
-          "expected anon record variant cross-module to compile, got: ${format_compile_error(err)}",
-        ),
-      }
-    },
-  ).test(
-    "linked core remaps cross-module TypeIds for contract receiver methods",
-    fn() {
-      artifacts := case module_compiler.compile_entry("${dir}/contract_fallback_main.tw") {
-        .Ok(value) => value,
-        .Err(err) => {
-          return .Err(
-            "expected contract fallback fixture to compile, got: ${format_compile_error(err)}",
-          )
-        },
-      }
-      found := artifacts.core.functions.any(
-        fn(func) { has_box_to_string_param(artifacts.core.type_env, func) },
-      )
-
-      if !found {
-        return .Err("expected linked Box.to_string param to use canonical Box TypeId")
-      }
-
-      .Ok({})
-    },
-  ).test(
-    "contract fallback ignores unrelated methods loaded earlier",
-    fn() {
-      wat := try codegen_harness.codegen_path("${dir}/contract_fallback_main.tw")
-      try assert.str_contains(wat, "show_box")
-      .Ok({})
-    },
-  ).test(
-    "contract fallback ignores unrelated generic methods loaded earlier",
-    fn() {
-      wat := try codegen_harness.codegen_path("${dir}/contract_generic_fallback_main.tw")
-      try assert.str_contains(wat, "to_string__Int")
-      .Ok({})
-    },
-  ).test(
-    "method table maps Box.to_string by receiver TypeId after linking",
-    fn() {
-      artifacts := case module_compiler.compile_entry("${dir}/contract_generic_fallback_main.tw") {
-        .Ok(value) => value,
-        .Err(err) => {
-          return .Err("expected fixture to compile, got: ${format_compile_error(err)}")
-        },
-      }
-      // Find the Box type's TypeId in the linked environment.
-      box_tid := case artifacts.core.type_env.lookup_registered_type("Box") {
-        .Some(entry) => entry.id,
-        .None => {
-          return .Err("Box type not found in linked env")
-        },
-      }
-      key := "t${box_tid.id}::to_string"
-
-      case artifacts.core.method_table[key] {
-        .Some(fid) => {
-          // Verify the FuncId points at a function with Box receiver.
-          found := artifacts.core.functions.any(
-            fn(func) {
-              func.func_id.id == fid.id and has_box_to_string_param(artifacts.core.type_env, func)
-            },
-          )
-
-          if !found {
+        case result {
+          .Ok(_) => .Ok({}),
+          .Err(err) => .Err(
+            "expected anon record variant cross-module to compile, got: ${format_compile_error(err)}",
+          ),
+        }
+      },
+    )
+    .test(
+      "linked core remaps cross-module TypeIds for contract receiver methods",
+      fn() {
+        artifacts := case module_compiler.compile_entry("${dir}/contract_fallback_main.tw") {
+          .Ok(value) => value,
+          .Err(err) => {
             return .Err(
-              "method_table[${key}] = FuncId(${fid.id}) but no matching Box.to_string function found",
+              "expected contract fallback fixture to compile, got: ${format_compile_error(err)}",
+            )
+          },
+        }
+        found := artifacts.core.functions.any(
+          fn(func) { has_box_to_string_param(artifacts.core.type_env, func) },
+        )
+
+        if !found {
+          return .Err("expected linked Box.to_string param to use canonical Box TypeId")
+        }
+
+        .Ok({})
+      },
+    )
+    .test(
+      "contract fallback ignores unrelated methods loaded earlier",
+      fn() {
+        wat := try codegen_harness.codegen_path("${dir}/contract_fallback_main.tw")
+        try assert.str_contains(wat, "show_box")
+        .Ok({})
+      },
+    )
+    .test(
+      "contract fallback ignores unrelated generic methods loaded earlier",
+      fn() {
+        wat := try codegen_harness.codegen_path("${dir}/contract_generic_fallback_main.tw")
+        try assert.str_contains(wat, "to_string__Int")
+        .Ok({})
+      },
+    )
+    .test(
+      "method table maps Box.to_string by receiver TypeId after linking",
+      fn() {
+        artifacts := case module_compiler.compile_entry("${dir}/contract_generic_fallback_main.tw") {
+          .Ok(value) => value,
+          .Err(err) => {
+            return .Err("expected fixture to compile, got: ${format_compile_error(err)}")
+          },
+        }
+        // Find the Box type's TypeId in the linked environment.
+        box_tid := case artifacts.core.type_env.lookup_registered_type("Box") {
+          .Some(entry) => entry.id,
+          .None => {
+            return .Err("Box type not found in linked env")
+          },
+        }
+        key := "t${box_tid.id}::to_string"
+
+        case artifacts.core.method_table[key] {
+          .Some(fid) => {
+            // Verify the FuncId points at a function with Box receiver.
+            found := artifacts.core.functions.any(
+              fn(func) {
+                func.func_id.id == fid.id and has_box_to_string_param(artifacts.core.type_env, func)
+              },
+            )
+
+            if !found {
+              return .Err(
+                "method_table[${key}] = FuncId(${fid.id}) but no matching Box.to_string function found",
+              )
+            }
+
+            .Ok({})
+          },
+          .None => .Err("method_table missing key '${key}' for Box.to_string"),
+        }
+      },
+    )
+    .test(
+      "cross-module pub value emits global.set in per-module \$init",
+      fn() {
+        wat := try codegen_harness.codegen_path("${dir}/module_global_init_main.tw")
+        try assert.str_contains(wat, "global.set \$user__global_local_")
+        .Ok({})
+      },
+    )
+    .test(
+      "record shorthand with module function across modules",
+      fn() {
+        result := module_compiler.compile_entry("${dir}/record_shorthand_main.tw")
+
+        case result {
+          .Ok(_) => .Ok({}),
+          .Err(err) => .Err("expected success, got: ${format_compile_error(err)}"),
+        }
+      },
+    )
+    .test(
+      "import order does not affect contract method target choice",
+      fn() {
+        // Compile with original order (box first, provider second)
+        wat_original := try codegen_harness.codegen_path("${dir}/contract_generic_fallback_main.tw")
+        // Compile with reversed order (provider first, box second)
+        wat_reversed := try codegen_harness.codegen_path("${dir}/contract_order_reversed_main.tw")
+        // Both must produce the correct Box.to_string specialization
+        try assert.str_contains(wat_original, "to_string__Int")
+        try assert.str_contains(wat_reversed, "to_string__Int")
+        .Ok({})
+      },
+    )
+    .test(
+      "no ContractCall survives monomorphization",
+      fn() {
+        artifacts := case pipeline.compile_entry_path("${dir}/contract_generic_fallback_main.tw") {
+          .Ok(a) => a,
+          .Err(err) => {
+            return .Err("compile failed: ${format_compile_error(err)}")
+          },
+        }
+
+        // After monomorphization, no ContractCall should remain in any function body.
+        for func in artifacts.mono.functions {
+          if has_contract_call(func.body) {
+            return .Err(
+              "ContractCall survived monomorphization in function '${func.name}' (FuncId ${func.func_id.id})",
             )
           }
-
-          .Ok({})
-        },
-        .None => .Err("method_table missing key '${key}' for Box.to_string"),
-      }
-    },
-  ).test(
-    "cross-module pub value emits global.set in per-module \$init",
-    fn() {
-      wat := try codegen_harness.codegen_path("${dir}/module_global_init_main.tw")
-      try assert.str_contains(wat, "global.set \$user__global_local_")
-      .Ok({})
-    },
-  ).test(
-    "record shorthand with module function across modules",
-    fn() {
-      result := module_compiler.compile_entry("${dir}/record_shorthand_main.tw")
-
-      case result {
-        .Ok(_) => .Ok({}),
-        .Err(err) => .Err("expected success, got: ${format_compile_error(err)}"),
-      }
-    },
-  ).test(
-    "import order does not affect contract method target choice",
-    fn() {
-      // Compile with original order (box first, provider second)
-      wat_original := try codegen_harness.codegen_path("${dir}/contract_generic_fallback_main.tw")
-      // Compile with reversed order (provider first, box second)
-      wat_reversed := try codegen_harness.codegen_path("${dir}/contract_order_reversed_main.tw")
-      // Both must produce the correct Box.to_string specialization
-      try assert.str_contains(wat_original, "to_string__Int")
-      try assert.str_contains(wat_reversed, "to_string__Int")
-      .Ok({})
-    },
-  ).test(
-    "no ContractCall survives monomorphization",
-    fn() {
-      artifacts := case pipeline.compile_entry_path("${dir}/contract_generic_fallback_main.tw") {
-        .Ok(a) => a,
-        .Err(err) => {
-          return .Err("compile failed: ${format_compile_error(err)}")
-        },
-      }
-
-      // After monomorphization, no ContractCall should remain in any function body.
-      for func in artifacts.mono.functions {
-        if has_contract_call(func.body) {
-          return .Err(
-            "ContractCall survived monomorphization in function '${func.name}' (FuncId ${func.func_id.id})",
-          )
         }
-      }
 
-      .Ok({})
-    },
-  ).test(
-    "monomorphized show(Box<Int>) calls exact Box.to_string FuncId",
-    fn() {
-      artifacts := case pipeline.compile_entry_path("${dir}/contract_generic_fallback_main.tw") {
-        .Ok(a) => a,
-        .Err(err) => {
-          return .Err("compile failed: ${format_compile_error(err)}")
-        },
-      }
-      // Find the Box.to_string FuncId from the method table.
-      box_tid := case artifacts.mono.type_env.lookup_registered_type("Box") {
-        .Some(entry) => entry.id,
-        .None => {
-          return .Err("Box type not found in linked env")
-        },
-      }
-      key := "t${box_tid.id}::to_string"
-
-      if !artifacts.mono.method_table.has(key) {
-        return .Err("method_table missing key '${key}'")
-      }
-
-      // Find the specialized show__T* function in the mono IR.
-      show_func: FunctionDef? = .None
-
-      for func in artifacts.mono.functions {
-        if func.name.starts_with("show__") {
-          show_func = .Some(func)
+        .Ok({})
+      },
+    )
+    .test(
+      "monomorphized show(Box<Int>) calls exact Box.to_string FuncId",
+      fn() {
+        artifacts := case pipeline.compile_entry_path("${dir}/contract_generic_fallback_main.tw") {
+          .Ok(a) => a,
+          .Err(err) => {
+            return .Err("compile failed: ${format_compile_error(err)}")
+          },
         }
-      }
+        // Find the Box.to_string FuncId from the method table.
+        box_tid := case artifacts.mono.type_env.lookup_registered_type("Box") {
+          .Some(entry) => entry.id,
+          .None => {
+            return .Err("Box type not found in linked env")
+          },
+        }
+        key := "t${box_tid.id}::to_string"
 
-      func := case show_func {
-        .Some(f) => f,
-        .None => {
-          return .Err("no specialized show__* function found in mono IR")
-        },
-      }
-      // The specialized show function should call the Box.to_string specialization.
-      // After monomorphization, the specialized to_string gets a new FuncId, but
-      // it should be a specialization of the original Box.to_string generic function.
-      // Verify the specialized show calls a to_string__* specialization (not the
-      // provider's unrelated to_string).
-      found_to_string := false
+        if !artifacts.mono.method_table.has(key) {
+          return .Err("method_table missing key '${key}'")
+        }
 
-      for mono_func in artifacts.mono.functions {
-        if mono_func.name.starts_with("to_string__") and mono_func.params.len() > 0 {
-          // Check this to_string specialization has a Box receiver param.
-          param_ty_str := artifacts.mono.type_env.ty_to_string_env(mono_func.params[0].ty)
+        // Find the specialized show__T* function in the mono IR.
+        show_func: FunctionDef? = .None
 
-          if param_ty_str.starts_with("Box") {
-            // Verify show__* calls this exact FuncId.
-            if has_call_to(func.body, mono_func.func_id.id) { found_to_string = true }
+        for func in artifacts.mono.functions {
+          if func.name.starts_with("show__") {
+            show_func = .Some(func)
           }
         }
-      }
 
-      if !found_to_string {
-        return .Err("specialized show function does not call the Box.to_string specialization")
-      }
+        func := case show_func {
+          .Some(f) => f,
+          .None => {
+            return .Err("no specialized show__* function found in mono IR")
+          },
+        }
+        // The specialized show function should call the Box.to_string specialization.
+        // After monomorphization, the specialized to_string gets a new FuncId, but
+        // it should be a specialization of the original Box.to_string generic function.
+        // Verify the specialized show calls a to_string__* specialization (not the
+        // provider's unrelated to_string).
+        found_to_string := false
 
-      .Ok({})
-    },
-  )
+        for mono_func in artifacts.mono.functions {
+          if mono_func.name.starts_with("to_string__") and mono_func.params.len() > 0 {
+            // Check this to_string specialization has a Box receiver param.
+            param_ty_str := artifacts.mono.type_env.ty_to_string_env(mono_func.params[0].ty)
+
+            if param_ty_str.starts_with("Box") {
+              // Verify show__* calls this exact FuncId.
+              if has_call_to(func.body, mono_func.func_id.id) { found_to_string = true }
+            }
+          }
+        }
+
+        if !found_to_string {
+          return .Err("specialized show function does not call the Box.to_string specialization")
+        }
+
+        .Ok({})
+      },
+    )
 }

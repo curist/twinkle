@@ -239,61 +239,70 @@ pub fn emit_module(
     as_sym: "int_from_string_helper",
     params: [.Ref(true, .Named("rt_types__String"))],
     results: [.Anyref],
-  }).append(.{
-    module: "codegen.intrinsics",
-    name: "from_code_point_helper",
-    as_sym: "from_code_point_helper",
-    params: [.I32],
-    results: [.Anyref],
-  }).append(.{
-    module: "codegen.intrinsics",
-    name: "string_utf8_bytes_helper",
-    as_sym: "string_utf8_bytes_helper",
-    params: [.Ref(true, .Named("rt_types__String"))],
-    results: [.Ref(false, .Named("rt_types__Array"))],
-  }).append(.{
-    module: "codegen.intrinsics",
-    name: "string_from_utf8_helper",
-    as_sym: "string_from_utf8_helper",
-    params: [.Ref(true, .Named("rt_types__Array"))],
-    results: [.Anyref],
-  }).append(.{
-    module: "codegen.intrinsics",
-    name: "float_from_string_helper",
-    as_sym: "float_from_string_helper",
-    params: [.Ref(true, .Named("rt_types__String"))],
-    results: [.Anyref],
-  }).append(.{
-    module: "rt.sched",
-    name: "sched_enqueue",
-    as_sym: "sched_enqueue",
-    params: [.Ref(false, .Named("rt_types__Task"))],
-    results: [],
-  }).append(.{
-    module: "rt.sched",
-    name: "sched_run_until",
-    as_sym: "sched_run_until",
-    params: [.Ref(false, .Named("rt_types__Task"))],
-    results: [.Anyref],
-  }).append(.{
-    module: "rt.sched",
-    name: "sched_drain",
-    as_sym: "sched_drain",
-    params: [],
-    results: [],
-  }).append(.{
-    module: "rt.sched",
-    name: "resume_rtc",
-    as_sym: "resume_rtc",
-    params: [.Ref(false, .Named("rt_types__Task"))],
-    results: [.I32],
-  }).append(.{
-    module: "rt.sched",
-    name: "sched_append_waiter",
-    as_sym: "sched_append_waiter",
-    params: [.Ref(false, .Named("rt_types__Task")), .Ref(false, .Named("rt_types__Task"))],
-    results: [],
   })
+    .append(.{
+      module: "codegen.intrinsics",
+      name: "from_code_point_helper",
+      as_sym: "from_code_point_helper",
+      params: [.I32],
+      results: [.Anyref],
+    })
+    .append(.{
+      module: "codegen.intrinsics",
+      name: "string_utf8_bytes_helper",
+      as_sym: "string_utf8_bytes_helper",
+      params: [.Ref(true, .Named("rt_types__String"))],
+      results: [.Ref(false, .Named("rt_types__Array"))],
+    })
+    .append(.{
+      module: "codegen.intrinsics",
+      name: "string_from_utf8_helper",
+      as_sym: "string_from_utf8_helper",
+      params: [.Ref(true, .Named("rt_types__Array"))],
+      results: [.Anyref],
+    })
+    .append(.{
+      module: "codegen.intrinsics",
+      name: "float_from_string_helper",
+      as_sym: "float_from_string_helper",
+      params: [.Ref(true, .Named("rt_types__String"))],
+      results: [.Anyref],
+    })
+    .append(.{
+      module: "rt.sched",
+      name: "sched_enqueue",
+      as_sym: "sched_enqueue",
+      params: [.Ref(false, .Named("rt_types__Task"))],
+      results: [],
+    })
+    .append(.{
+      module: "rt.sched",
+      name: "sched_run_until",
+      as_sym: "sched_run_until",
+      params: [.Ref(false, .Named("rt_types__Task"))],
+      results: [.Anyref],
+    })
+    .append(.{
+      module: "rt.sched",
+      name: "sched_drain",
+      as_sym: "sched_drain",
+      params: [],
+      results: [],
+    })
+    .append(.{
+      module: "rt.sched",
+      name: "resume_rtc",
+      as_sym: "resume_rtc",
+      params: [.Ref(false, .Named("rt_types__Task"))],
+      results: [.I32],
+    })
+    .append(.{
+      module: "rt.sched",
+      name: "sched_append_waiter",
+      as_sym: "sched_append_waiter",
+      params: [.Ref(false, .Named("rt_types__Task")), .Ref(false, .Named("rt_types__Task"))],
+      results: [],
+    })
   WasmModule.{
     namespace: "user",
     types: type_defs,
@@ -1144,15 +1153,17 @@ fn emit_intrinsic_call(
     "iterator_unfold" => emit_intrinsic_iterator_unfold(args, result_idx, result_mono, ctx, buf),
     "int_from_string" => {
       buf2 := emit_atom(args[0], ctx, buf)
-      buf2.append(.Call("int_from_string_helper")).append(
-        .RefCast(true, .Named("rt_types__Variant")),
-      ).append(.Call(option_from_variant_helper_sym(MonoType.Int))).append(.LocalSet(result_idx))
+      buf2.append(.Call("int_from_string_helper"))
+        .append(.RefCast(true, .Named("rt_types__Variant")))
+        .append(.Call(option_from_variant_helper_sym(MonoType.Int)))
+        .append(.LocalSet(result_idx))
     },
     "float_from_string" => {
       buf2 := emit_atom(args[0], ctx, buf)
-      buf2.append(.Call("float_from_string_helper")).append(
-        .RefCast(true, .Named("rt_types__Variant")),
-      ).append(.Call(option_from_variant_helper_sym(MonoType.Float))).append(.LocalSet(result_idx))
+      buf2.append(.Call("float_from_string_helper"))
+        .append(.RefCast(true, .Named("rt_types__Variant")))
+        .append(.Call(option_from_variant_helper_sym(MonoType.Float)))
+        .append(.LocalSet(result_idx))
     },
     _ => error("emit_intrinsic_call: unknown intrinsic '${name}'"),
   }
@@ -1203,11 +1214,13 @@ fn emit_intrinsic_vector_get(
     buf3 := buf2.append(.I64Const(0)).append(.I64GeS)
     buf4 := emit_atom(args[1], ctx, buf3)
     buf5 := emit_atom(args[0], ctx, buf4)
-    return buf5.append(.RefAsNonNull).append(.StructGet("rt_types__PVec", 0)).append(.I64ExtendI32U).append(
-      .I64LtS,
-    ).append(.I32And).append(.If(.Some(result_vt), then_instrs, else_instrs)).append(
-      .LocalSet(result_idx),
-    )
+    return buf5.append(.RefAsNonNull)
+      .append(.StructGet("rt_types__PVec", 0))
+      .append(.I64ExtendI32U)
+      .append(.I64LtS)
+      .append(.I32And)
+      .append(.If(.Some(result_vt), then_instrs, else_instrs))
+      .append(.LocalSet(result_idx))
   }
 
   // Result is Option<T> → typed sum struct
@@ -1220,24 +1233,25 @@ fn emit_intrinsic_vector_get(
   }
   result_ref := ValType.Ref(false, .Named(sum_layout.sym))
   // Nested sub-bodies must use fresh []
-  then_instrs: Vector<Instr> = [Instr.I32Const(1)].concat(emit_atom(args[0], ctx, [])).concat(
-    emit_checked_i32_narrow(args[1], ctx, []),
-  ).concat([.Call("rt_arr__get")]).concat(emit_erased_container_egress(elem_mono, ctx.env, [])).concat([
-    .StructNew(sum_layout.sym),
-  ])
-  else_instrs: Vector<Instr> = [Instr.I32Const(0)].concat(default_payload).concat([
-    .StructNew(sum_layout.sym),
-  ])
+  then_instrs: Vector<Instr> = [Instr.I32Const(1)].concat(emit_atom(args[0], ctx, []))
+    .concat(emit_checked_i32_narrow(args[1], ctx, []))
+    .concat([.Call("rt_arr__get")])
+    .concat(emit_erased_container_egress(elem_mono, ctx.env, []))
+    .concat([.StructNew(sum_layout.sym)])
+  else_instrs: Vector<Instr> = [Instr.I32Const(0)].concat(default_payload)
+    .concat([.StructNew(sum_layout.sym)])
   // Bounds check: 0 <= index < len (index is i64, len is i32)
   buf2 := emit_atom(args[1], ctx, buf)
   buf3 := buf2.append(.I64Const(0)).append(.I64GeS) // index >= 0
   buf4 := emit_atom(args[1], ctx, buf3)
   buf5 := emit_atom(args[0], ctx, buf4)
-  buf5.append(.RefAsNonNull).append(.StructGet("rt_types__PVec", 0)).append(.I64ExtendI32U).append(
-    .I64LtS,
-  ).append(.I32And).append(.If(.Some(result_ref), then_instrs, else_instrs)).append(
-    .LocalSet(result_idx),
-  )
+  buf5.append(.RefAsNonNull)
+    .append(.StructGet("rt_types__PVec", 0))
+    .append(.I64ExtendI32U)
+    .append(.I64LtS)
+    .append(.I32And)
+    .append(.If(.Some(result_ref), then_instrs, else_instrs))
+    .append(.LocalSet(result_idx))
 }
 
 // ── vector_set: bounds-checked COW → Option<Vector<T>> ─────────────────
@@ -1257,24 +1271,23 @@ fn emit_intrinsic_vector_set(
   }
   result_ref := ValType.Ref(false, .Named(sum_layout.sym))
   // Nested sub-bodies must use fresh []
-  then_instrs: Vector<Instr> = [Instr.I32Const(1)].concat(emit_atom(args[0], ctx, [])).concat(
-    emit_checked_i32_narrow(args[1], ctx, []),
-  ).concat(emit_erased_container_ingress(args[2], ctx, [])).concat([
-    .Call("rt_arr__set"),
-    .StructNew(sum_layout.sym),
-  ])
-  else_instrs: Vector<Instr> = [Instr.I32Const(0)].concat(default_payload).concat([
-    .StructNew(sum_layout.sym),
-  ])
+  then_instrs: Vector<Instr> = [Instr.I32Const(1)].concat(emit_atom(args[0], ctx, []))
+    .concat(emit_checked_i32_narrow(args[1], ctx, []))
+    .concat(emit_erased_container_ingress(args[2], ctx, []))
+    .concat([.Call("rt_arr__set"), .StructNew(sum_layout.sym)])
+  else_instrs: Vector<Instr> = [Instr.I32Const(0)].concat(default_payload)
+    .concat([.StructNew(sum_layout.sym)])
   buf2 := emit_atom(args[1], ctx, buf) // index (i64)
   buf3 := buf2.append(.I64Const(0)).append(.I64GeS)
   buf4 := emit_atom(args[1], ctx, buf3)
   buf5 := emit_atom(args[0], ctx, buf4)
-  buf5.append(.RefAsNonNull).append(.StructGet("rt_types__PVec", 0)).append(.I64ExtendI32U).append(
-    .I64LtS,
-  ).append(.I32And).append(.If(.Some(result_ref), then_instrs, else_instrs)).append(
-    .LocalSet(result_idx),
-  )
+  buf5.append(.RefAsNonNull)
+    .append(.StructGet("rt_types__PVec", 0))
+    .append(.I64ExtendI32U)
+    .append(.I64LtS)
+    .append(.I32And)
+    .append(.If(.Some(result_ref), then_instrs, else_instrs))
+    .append(.LocalSet(result_idx))
 }
 
 // ── vector_make: make(size, default) ───────────────────────────────────
@@ -1303,9 +1316,10 @@ fn emit_intrinsic_dict_get(
   }
   buf = emit_atom(args[0], ctx, buf) // dict
   buf = emit_erased_container_ingress(args[1], ctx, buf) // key (erased)
-  buf.append(.Call("rt_dict__get_option")).append(.RefCast(true, .Named("rt_types__Variant"))).append(
-    .Call(option_from_variant_helper_sym(inner_mono)),
-  ).append(.LocalSet(result_idx))
+  buf.append(.Call("rt_dict__get_option"))
+    .append(.RefCast(true, .Named("rt_types__Variant")))
+    .append(.Call(option_from_variant_helper_sym(inner_mono)))
+    .append(.LocalSet(result_idx))
 }
 
 // ── dict_get_unsafe ────────────────────────────────────────────────────
@@ -1340,20 +1354,22 @@ fn emit_intrinsic_string_get(
   }
   result_ref := ValType.Ref(false, .Named(sum_layout.sym))
   // Nested sub-bodies must use fresh []
-  then_instrs: Vector<Instr> = [Instr.I32Const(1)].concat(emit_atom(args[0], ctx, [])).concat(
-    emit_checked_i32_narrow(args[1], ctx, []),
-  ).concat([.ArrayGetU("rt_types__String"), .StructNew(sum_layout.sym)])
-  else_instrs: Vector<Instr> = [Instr.I32Const(0)].concat(default_payload).concat([
-    .StructNew(sum_layout.sym),
-  ])
+  then_instrs: Vector<Instr> = [Instr.I32Const(1)].concat(emit_atom(args[0], ctx, []))
+    .concat(emit_checked_i32_narrow(args[1], ctx, []))
+    .concat([.ArrayGetU("rt_types__String"), .StructNew(sum_layout.sym)])
+  else_instrs: Vector<Instr> = [Instr.I32Const(0)].concat(default_payload)
+    .concat([.StructNew(sum_layout.sym)])
   // Bounds check in i64 domain
   buf2 := emit_atom(args[1], ctx, buf) // index (i64)
   buf3 := buf2.append(.I64Const(0)).append(.I64GeS)
   buf4 := emit_atom(args[1], ctx, buf3)
   buf5 := emit_atom(args[0], ctx, buf4) // string
-  buf5.append(.ArrayLen).append(.I64ExtendI32U).append(.I64LtS).append(.I32And).append(
-    .If(.Some(result_ref), then_instrs, else_instrs),
-  ).append(.LocalSet(result_idx))
+  buf5.append(.ArrayLen)
+    .append(.I64ExtendI32U)
+    .append(.I64LtS)
+    .append(.I32And)
+    .append(.If(.Some(result_ref), then_instrs, else_instrs))
+    .append(.LocalSet(result_idx))
 }
 
 // ── string_slice: s.slice(start, end) ──────────────────────────────────
@@ -1391,16 +1407,21 @@ fn emit_utf8_boundary_check(
   // The check sub-body is a nested Wasm control flow body — use fresh []
   check_buf1 := emit_atom(str_atom, ctx, [])
   check_buf2 := emit_checked_i32_narrow(idx_atom, ctx, check_buf1)
-  check: Vector<Instr> = check_buf2.append(.ArrayGetU("rt_types__String")).append(.I32Const(192)).append(
-    .I32And,
-  ).append(.I32Const(128)).append(.I32Eq).append(.If(.None, [.Unreachable], []))
+  check: Vector<Instr> = check_buf2.append(.ArrayGetU("rt_types__String"))
+    .append(.I32Const(192))
+    .append(.I32And)
+    .append(.I32Const(128))
+    .append(.I32Eq)
+    .append(.If(.None, [.Unreachable], []))
   buf2 := emit_atom(idx_atom, ctx, buf)
   buf3 := buf2.append(.I64Const(0)).append(.I64GtS) // idx > 0
   buf4 := emit_atom(idx_atom, ctx, buf3)
   buf5 := emit_atom(str_atom, ctx, buf4)
-  buf5.append(.ArrayLen).append(.I64ExtendI32U).append(.I64LtS).append(.I32And).append(
-    .If(.None, check, []),
-  )
+  buf5.append(.ArrayLen)
+    .append(.I64ExtendI32U)
+    .append(.I64LtS)
+    .append(.I32And)
+    .append(.If(.None, check, []))
 }
 
 fn emit_utf8_boundary_check_clamped(
@@ -1414,9 +1435,12 @@ fn emit_utf8_boundary_check_clamped(
   // Build the check body
   check_buf1 := emit_atom(str_atom, ctx, [])
   check_buf2 := emit_clamped_i32(idx_atom, ctx, check_buf1)
-  check: Vector<Instr> = check_buf2.append(.ArrayGetU("rt_types__String")).append(.I32Const(192)).append(
-    .I32And,
-  ).append(.I32Const(128)).append(.I32Eq).append(.If(.None, [.Unreachable], []))
+  check: Vector<Instr> = check_buf2.append(.ArrayGetU("rt_types__String"))
+    .append(.I32Const(192))
+    .append(.I32And)
+    .append(.I32Const(128))
+    .append(.I32Eq)
+    .append(.If(.None, [.Unreachable], []))
   // Condition: clamped > 0 && clamped < len
   buf2 := emit_clamped_i32(idx_atom, ctx, buf)
   buf3 := buf2.append(.I32Const(0)).append(.I32GtU)
@@ -1437,9 +1461,11 @@ fn emit_intrinsic_char_code_at(
   buf3 := buf2.append(.I64Const(0)).append(.I64GeS)
   buf4 := emit_atom(args[1], ctx, buf3)
   buf5 := emit_atom(args[0], ctx, buf4)
-  buf6 := buf5.append(.ArrayLen).append(.I64ExtendI32U).append(.I64LtS).append(.I32And).append(
-    .I32Eqz,
-  )
+  buf6 := buf5.append(.ArrayLen)
+    .append(.I64ExtendI32U)
+    .append(.I64LtS)
+    .append(.I32And)
+    .append(.I32Eqz)
   buf7 := buf6.append(.If(.None, [.Unreachable], []))
   buf8 := emit_atom(args[0], ctx, buf7)
   buf9 := emit_checked_i32_narrow(args[1], ctx, buf8)
@@ -1463,21 +1489,19 @@ fn emit_intrinsic_from_char_code(
   }
   result_ref := ValType.Ref(false, .Named(sum_layout.sym))
   // Nested sub-bodies must use fresh []
-  then_instrs: Vector<Instr> = [Instr.I32Const(1)].concat(emit_atom(args[0], ctx, [])).concat([
-    .I32WrapI64,
-    .ArrayNewFixed("rt_types__String", 1),
-    .StructNew(sum_layout.sym),
-  ])
-  else_instrs: Vector<Instr> = [Instr.I32Const(0)].concat(default_payload).concat([
-    .StructNew(sum_layout.sym),
-  ])
+  then_instrs: Vector<Instr> = [Instr.I32Const(1)].concat(emit_atom(args[0], ctx, []))
+    .concat([.I32WrapI64, .ArrayNewFixed("rt_types__String", 1), .StructNew(sum_layout.sym)])
+  else_instrs: Vector<Instr> = [Instr.I32Const(0)].concat(default_payload)
+    .concat([.StructNew(sum_layout.sym)])
   // Check 0 <= code < 128
   buf2 := emit_atom(args[0], ctx, buf)
   buf3 := buf2.append(.I64Const(0)).append(.I64GeS)
   buf4 := emit_atom(args[0], ctx, buf3)
-  buf4.append(.I64Const(128)).append(.I64LtS).append(.I32And).append(
-    .If(.Some(result_ref), then_instrs, else_instrs),
-  ).append(.LocalSet(result_idx))
+  buf4.append(.I64Const(128))
+    .append(.I64LtS)
+    .append(.I32And)
+    .append(.If(.Some(result_ref), then_instrs, else_instrs))
+    .append(.LocalSet(result_idx))
 }
 
 // ── from_byte: Byte → Option<String> ───────────────────────────────────
@@ -1496,18 +1520,16 @@ fn emit_intrinsic_from_byte(
     []
   }
   result_ref := ValType.Ref(false, .Named(sum_layout.sym))
-  then_instrs: Vector<Instr> = [Instr.I32Const(1)].concat(emit_atom(args[0], ctx, [])).concat([
-    .ArrayNewFixed("rt_types__String", 1),
-    .StructNew(sum_layout.sym),
-  ])
-  else_instrs: Vector<Instr> = [Instr.I32Const(0)].concat(default_payload).concat([
-    .StructNew(sum_layout.sym),
-  ])
+  then_instrs: Vector<Instr> = [Instr.I32Const(1)].concat(emit_atom(args[0], ctx, []))
+    .concat([.ArrayNewFixed("rt_types__String", 1), .StructNew(sum_layout.sym)])
+  else_instrs: Vector<Instr> = [Instr.I32Const(0)].concat(default_payload)
+    .concat([.StructNew(sum_layout.sym)])
   // Only ASCII bytes are valid one-byte UTF-8 scalars.
   buf2 := emit_atom(args[0], ctx, buf)
-  buf2.append(.I32Const(128)).append(.I32LtU).append(
-    .If(.Some(result_ref), then_instrs, else_instrs),
-  ).append(.LocalSet(result_idx))
+  buf2.append(.I32Const(128))
+    .append(.I32LtU)
+    .append(.If(.Some(result_ref), then_instrs, else_instrs))
+    .append(.LocalSet(result_idx))
 }
 
 // ── from_code_point: Int → Option<String> ──────────────────────────────
@@ -1521,9 +1543,10 @@ fn emit_intrinsic_from_code_point(
   // Helper returns the generic runtime Variant encoding for Option<String>.
   // Adapt it to the concrete Option<String> layout used by the current module.
   buf2 := emit_checked_i32_narrow(args[0], ctx, buf)
-  buf2.append(.Call("from_code_point_helper")).append(.RefCast(true, .Named("rt_types__Variant"))).append(
-    .Call(option_from_variant_helper_sym(MonoType.String)),
-  ).append(.LocalSet(result_idx))
+  buf2.append(.Call("from_code_point_helper"))
+    .append(.RefCast(true, .Named("rt_types__Variant")))
+    .append(.Call(option_from_variant_helper_sym(MonoType.String)))
+    .append(.LocalSet(result_idx))
 }
 
 // ── string_utf8_bytes ──────────────────────────────────────────────────
@@ -1535,9 +1558,9 @@ fn emit_intrinsic_string_utf8_bytes(
 ) Vector<Instr> {
   // Helper returns flat $Array; wrap to PVec
   buf2 := emit_atom(args[0], ctx, buf)
-  buf2.append(.Call("string_utf8_bytes_helper")).append(.Call("rt_arr__from_array")).append(
-    .LocalSet(result_idx),
-  )
+  buf2.append(.Call("string_utf8_bytes_helper"))
+    .append(.Call("rt_arr__from_array"))
+    .append(.LocalSet(result_idx))
 }
 
 // ── string_from_utf8 ──────────────────────────────────────────────────
@@ -1550,9 +1573,11 @@ fn emit_intrinsic_string_from_utf8(
 ) Vector<Instr> {
   // User passes PVec; helper expects flat $Array
   buf2 := emit_atom(args[0], ctx, buf)
-  buf2.append(.Call("rt_arr__to_array")).append(.Call("string_from_utf8_helper")).append(
-    .RefCast(true, .Named("rt_types__Variant")),
-  ).append(.Call(option_from_variant_helper_sym(MonoType.String))).append(.LocalSet(result_idx))
+  buf2.append(.Call("rt_arr__to_array"))
+    .append(.Call("string_from_utf8_helper"))
+    .append(.RefCast(true, .Named("rt_types__Variant")))
+    .append(.Call(option_from_variant_helper_sym(MonoType.String)))
+    .append(.LocalSet(result_idx))
 }
 
 // ── byte_from_int: Int → Option<Byte> ──────────────────────────────────
@@ -1572,20 +1597,19 @@ fn emit_intrinsic_byte_from_int(
   }
   result_ref := ValType.Ref(false, .Named(sum_layout.sym))
   // Nested sub-bodies must use fresh []
-  then_instrs: Vector<Instr> = [Instr.I32Const(1)].concat(emit_atom(args[0], ctx, [])).concat([
-    .I32WrapI64,
-    .StructNew(sum_layout.sym),
-  ])
-  else_instrs: Vector<Instr> = [Instr.I32Const(0)].concat(default_payload).concat([
-    .StructNew(sum_layout.sym),
-  ])
+  then_instrs: Vector<Instr> = [Instr.I32Const(1)].concat(emit_atom(args[0], ctx, []))
+    .concat([.I32WrapI64, .StructNew(sum_layout.sym)])
+  else_instrs: Vector<Instr> = [Instr.I32Const(0)].concat(default_payload)
+    .concat([.StructNew(sum_layout.sym)])
   // Check 0 <= n <= 255
   buf2 := emit_atom(args[0], ctx, buf)
   buf3 := buf2.append(.I64Const(0)).append(.I64GeS)
   buf4 := emit_atom(args[0], ctx, buf3)
-  buf4.append(.I64Const(256)).append(.I64LtS).append(.I32And).append(
-    .If(.Some(result_ref), then_instrs, else_instrs),
-  ).append(.LocalSet(result_idx))
+  buf4.append(.I64Const(256))
+    .append(.I64LtS)
+    .append(.I32And)
+    .append(.If(.Some(result_ref), then_instrs, else_instrs))
+    .append(.LocalSet(result_idx))
 }
 
 // ── Cell intrinsics ────────────────────────────────────────────────────
@@ -1684,9 +1708,10 @@ fn emit_intrinsic_cell_update(
   buf11 := if sym != "\$Cell_anyref" { emit_unbox_from_anyref(inner_mono, ctx.env, buf10) } else {
     buf10
   }
-  buf11.append(.StructSet(sym, 0)).append(.I32Const(0)).append(.RefI31).append(
-    .LocalSet(result_idx),
-  ) // return void
+  buf11.append(.StructSet(sym, 0))
+    .append(.I32Const(0))
+    .append(.RefI31)
+    .append(.LocalSet(result_idx)) // return void
 }
 
 // ── Task intrinsics (Phase 2: scheduler-based) ────────────────────────
@@ -2581,9 +2606,9 @@ fn emit_variant_pattern_condition(
 
   sum_layout := get_sum_layout_ctx(scrutinee_mono, ctx)
   // Tag check — build as a separate small vector, then prepend to buf
-  tag_check := scrutinee_instrs.append(.StructGet(sum_layout.sym, 0)).append(.I32Const(vid.id)).append(
-    .I32Eq,
-  )
+  tag_check := scrutinee_instrs.append(.StructGet(sum_layout.sym, 0))
+    .append(.I32Const(vid.id))
+    .append(.I32Eq)
   // Check for non-trivial sub-patterns
   has_inner := false
 

@@ -141,1978 +141,2119 @@ fn assert_snapshot(fixture_path: String) Result<Void, String> {
 
 // ── Suite ────────────────────────────────────────────────────────────
 pub fn suite() runner.Suite {
-  runner.suite("parser").test(
-    "import: bare use",
-    fn() {
-      item := try parse_first_item("use foo.bar")
+  runner.suite("parser")
+    .test(
+      "import: bare use",
+      fn() {
+        item := try parse_first_item("use foo.bar")
+
+        case item {
+          .Use(d) => {
+            try assert.is_false(d.is_stdlib)
+            try assert.is_false(d.is_relative)
+            try assert.equal(d.path.len(), 2)
+            try assert.equal(d.path[0], "foo")
+            try assert.equal(d.path[1], "bar")
+            try assert.is_none(d.alias)
+            assert.is_none(d.items)
+          },
+          _ => assert.fail("expected use declaration"),
+        }
+      },
+    )
+    .test(
+      "import: aliased use",
+      fn() {
+        item := try parse_first_item("use foo.bar as baz")
+
+        case item {
+          .Use(d) => {
+            try assert.equal(d.path[0], "foo")
+            try assert.equal(d.path[1], "bar")
+
+            case d.alias {
+              .Some(a) => assert.equal(a, "baz"),
+              .None => assert.fail("expected alias"),
+            }
+          },
+          _ => assert.fail("expected use declaration"),
+        }
+      },
+    )
+    .test(
+      "import: stdlib use",
+      fn() {
+        item := try parse_first_item("use @std.fs")
+
+        case item {
+          .Use(d) => {
+            try assert.is_true(d.is_stdlib)
+            try assert.is_false(d.is_relative)
+            try assert.equal(d.path.len(), 2)
+            try assert.equal(d.path[0], "std")
+            assert.equal(d.path[1], "fs")
+          },
+          _ => assert.fail("expected use declaration"),
+        }
+      },
+    )
+    .test(
+      "import: relative use",
+      fn() {
+        item := try parse_first_item("use .helper")
+
+        case item {
+          .Use(d) => {
+            try assert.is_false(d.is_stdlib)
+            try assert.is_true(d.is_relative)
+            try assert.equal(d.path.len(), 1)
+            assert.equal(d.path[0], "helper")
+          },
+          _ => assert.fail("expected use declaration"),
+        }
+      },
+    )
+    .test(
+      "import: relative nested",
+      fn() {
+        item := try parse_first_item("use .sub.mod")
+
+        case item {
+          .Use(d) => {
+            try assert.is_true(d.is_relative)
+            try assert.equal(d.path.len(), 2)
+            try assert.equal(d.path[0], "sub")
+            assert.equal(d.path[1], "mod")
+          },
+          _ => assert.fail("expected use declaration"),
+        }
+      },
+    )
+    .test(
+      "import: destructuring with value, type, and aliases",
+      fn() {
+        src := "use math.vec.{add as plus, Vec2 as V2}"
+        parsed := parser.parse(src, 0)
+        try assert.equal(parsed.diagnostics.len(), 0)
+        try assert.equal(parsed.value.items.len(), 1)
+
+        case parsed.value.items[0] {
+          .Use(decl) => {
+            try assert.is_false(decl.is_stdlib)
+            try assert.is_false(decl.is_relative)
+            try assert.equal(decl.path.len(), 2)
+            try assert.equal(decl.path[0], "math")
+            try assert.equal(decl.path[1], "vec")
+
+            case decl.items {
+              .Some(items) => {
+                try assert.equal(items.len(), 2)
+                try case items[0] {
+                  .Value(v) => {
+                    try assert.equal(v.name, "add")
+
+                    case v.alias {
+                      .Some(a) => assert.equal(a, "plus"),
+                      .None => assert.fail("expected alias on value import"),
+                    }
+                  },
+                  _ => assert.fail("expected value import"),
+                }
+
+                case items[1] {
+                  .Type(t) => {
+                    try assert.equal(t.name, "Vec2")
+
+                    case t.alias {
+                      .Some(a) => assert.equal(a, "V2"),
+                      .None => assert.fail("expected alias on type import"),
+                    }
+                  },
+                  _ => assert.fail("expected type import"),
+                }
+              },
+              .None => assert.fail("expected destructuring import items"),
+            }
+          },
+          _ => assert.fail("expected use declaration"),
+        }
+      },
+    )
+    .test(
+      "fn decl: basic with typed params and return type",
+      fn() {
+        src := "fn add(x: Int, y: Int) Int {\n  x +\n  y\n}"
+        item := try parse_first_item(src)
 
-      case item {
-        .Use(d) => {
-          try assert.is_false(d.is_stdlib)
-          try assert.is_false(d.is_relative)
-          try assert.equal(d.path.len(), 2)
-          try assert.equal(d.path[0], "foo")
-          try assert.equal(d.path[1], "bar")
-          try assert.is_none(d.alias)
-          assert.is_none(d.items)
-        },
-        _ => assert.fail("expected use declaration"),
-      }
-    },
-  ).test(
-    "import: aliased use",
-    fn() {
-      item := try parse_first_item("use foo.bar as baz")
-
-      case item {
-        .Use(d) => {
-          try assert.equal(d.path[0], "foo")
-          try assert.equal(d.path[1], "bar")
-
-          case d.alias {
-            .Some(a) => assert.equal(a, "baz"),
-            .None => assert.fail("expected alias"),
-          }
-        },
-        _ => assert.fail("expected use declaration"),
-      }
-    },
-  ).test(
-    "import: stdlib use",
-    fn() {
-      item := try parse_first_item("use @std.fs")
-
-      case item {
-        .Use(d) => {
-          try assert.is_true(d.is_stdlib)
-          try assert.is_false(d.is_relative)
-          try assert.equal(d.path.len(), 2)
-          try assert.equal(d.path[0], "std")
-          assert.equal(d.path[1], "fs")
-        },
-        _ => assert.fail("expected use declaration"),
-      }
-    },
-  ).test(
-    "import: relative use",
-    fn() {
-      item := try parse_first_item("use .helper")
-
-      case item {
-        .Use(d) => {
-          try assert.is_false(d.is_stdlib)
-          try assert.is_true(d.is_relative)
-          try assert.equal(d.path.len(), 1)
-          assert.equal(d.path[0], "helper")
-        },
-        _ => assert.fail("expected use declaration"),
-      }
-    },
-  ).test(
-    "import: relative nested",
-    fn() {
-      item := try parse_first_item("use .sub.mod")
-
-      case item {
-        .Use(d) => {
-          try assert.is_true(d.is_relative)
-          try assert.equal(d.path.len(), 2)
-          try assert.equal(d.path[0], "sub")
-          assert.equal(d.path[1], "mod")
-        },
-        _ => assert.fail("expected use declaration"),
-      }
-    },
-  ).test(
-    "import: destructuring with value, type, and aliases",
-    fn() {
-      src := "use math.vec.{add as plus, Vec2 as V2}"
-      parsed := parser.parse(src, 0)
-      try assert.equal(parsed.diagnostics.len(), 0)
-      try assert.equal(parsed.value.items.len(), 1)
-
-      case parsed.value.items[0] {
-        .Use(decl) => {
-          try assert.is_false(decl.is_stdlib)
-          try assert.is_false(decl.is_relative)
-          try assert.equal(decl.path.len(), 2)
-          try assert.equal(decl.path[0], "math")
-          try assert.equal(decl.path[1], "vec")
-
-          case decl.items {
-            .Some(items) => {
-              try assert.equal(items.len(), 2)
-              try case items[0] {
-                .Value(v) => {
-                  try assert.equal(v.name, "add")
-
-                  case v.alias {
-                    .Some(a) => assert.equal(a, "plus"),
-                    .None => assert.fail("expected alias on value import"),
-                  }
-                },
-                _ => assert.fail("expected value import"),
-              }
-
-              case items[1] {
-                .Type(t) => {
-                  try assert.equal(t.name, "Vec2")
-
-                  case t.alias {
-                    .Some(a) => assert.equal(a, "V2"),
-                    .None => assert.fail("expected alias on type import"),
-                  }
-                },
-                _ => assert.fail("expected type import"),
-              }
-            },
-            .None => assert.fail("expected destructuring import items"),
-          }
-        },
-        _ => assert.fail("expected use declaration"),
-      }
-    },
-  ).test(
-    "fn decl: basic with typed params and return type",
-    fn() {
-      src := "fn add(x: Int, y: Int) Int {\n  x +\n  y\n}"
-      item := try parse_first_item(src)
-
-      case item {
-        .Function(f) => {
-          try assert.equal(f.name, "add")
-          try assert.is_false(f.is_pub)
-          try assert.equal(f.params.len(), 2)
-          try assert.equal(f.params[0].name, "x")
-          try assert.equal(f.params[1].name, "y")
-
-          case f.return_type {
-            .Some(rt) => assert.is_true(type_is_path(rt, "Int")),
-            .None => assert.fail("expected return type"),
-          }
-        },
-        _ => assert.fail("expected function"),
-      }
-    },
-  ).test(
-    "fn decl: pub visibility",
-    fn() {
-      item := try parse_first_item("pub fn greet() {}")
-
-      case item {
-        .Function(f) => {
-          try assert.is_true(f.is_pub)
-          assert.equal(f.name, "greet")
-        },
-        _ => assert.fail("expected function"),
-      }
-    },
-  ).test(
-    "fn decl: generic type params",
-    fn() {
-      item := try parse_first_item("fn map<A, B>(xs: Vector<A>, f: fn(A) B) Vector<B> {}")
-
-      case item {
-        .Function(f) => {
-          try assert.equal(f.name, "map")
-          try assert.equal(f.type_params.len(), 2)
-          try assert.equal(f.type_params[0].name, "A")
-          assert.equal(f.type_params[1].name, "B")
-        },
-        _ => assert.fail("expected function"),
-      }
-    },
-  ).test(
-    "fn decl: no return type (void)",
-    fn() {
-      item := try parse_first_item("fn do_stuff(x: Int) {}")
-
-      case item {
-        .Function(f) => {
-          try assert.equal(f.name, "do_stuff")
-          assert.is_none(f.return_type)
-        },
-        _ => assert.fail("expected function"),
-      }
-    },
-  ).test(
-    "fn decl: no params",
-    fn() {
-      item := try parse_first_item("fn hello() {}")
-
-      case item {
-        .Function(f) => assert.equal(f.params.len(), 0),
-        _ => assert.fail("expected function"),
-      }
-    },
-  ).test(
-    "type decl: record, sum, and alias",
-    fn() {
-      src := "type Point<T> = .{ x: T, y: T }\n"
-      src = "${src}type Option<T> = { None, Some(T) }\n"
-      src = "${src}type Id = Int"
-      mod := try parse_ok(src)
-      try assert.equal(mod.items.len(), 3)
-      try case mod.items[0] {
-        .Type(t) => {
-          try assert.equal(t.name, "Point")
-          try assert.equal(t.type_params.len(), 1)
-
-          case t.def {
-            .Record(fields) => assert.equal(fields.len(), 2),
-            _ => assert.fail("expected record type def"),
-          }
-        },
-        _ => assert.fail("expected type declaration"),
-      }
-      try case mod.items[1] {
-        .Type(t) => {
-          try assert.equal(t.name, "Option")
-
-          case t.def {
-            .Sum(variants) => assert.equal(variants.len(), 2),
-            _ => assert.fail("expected sum type def"),
-          }
-        },
-        _ => assert.fail("expected type declaration"),
-      }
-
-      case mod.items[2] {
-        .Type(t) => {
-          try assert.equal(t.name, "Id")
-
-          case t.def {
-            .Alias(ty) => assert.is_true(type_is_path(ty, "Int")),
-            _ => assert.fail("expected alias type def"),
-          }
-        },
-        _ => assert.fail("expected type declaration"),
-      }
-    },
-  ).test(
-    "type decl: pub visibility",
-    fn() {
-      item := try parse_first_item("pub type Color = { Red, Green, Blue }")
-
-      case item {
-        .Type(t) => {
-          try assert.is_true(t.is_pub)
-          assert.equal(t.name, "Color")
-        },
-        _ => assert.fail("expected type declaration"),
-      }
-    },
-  ).test(
-    "type decl: multi-payload variant",
-    fn() {
-      item := try parse_first_item("type Tree = { Leaf, Node(Tree, Int, Tree) }")
-
-      case item {
-        .Type(t) => {
-          case t.def {
-            .Sum(variants) => {
-              try assert.equal(variants.len(), 2)
-              try assert.equal(variants[0].name, "Leaf")
-              try assert.equal(variants[0].fields.len(), 0)
-              try assert.equal(variants[1].name, "Node")
-              assert.equal(variants[1].fields.len(), 3)
-            },
-            _ => assert.fail("expected sum type def"),
-          }
-        },
-        _ => assert.fail("expected type declaration"),
-      }
-    },
-  ).test(
-    "expr: integer literal",
-    fn() {
-      expr := try parse_body_tail("fn f() Int { 42 }")
-
-      case expr.kind {
-        .IntLit(n) => assert.equal(n, 42),
-        _ => assert.fail("expected IntLit"),
-      }
-    },
-  ).test(
-    "expr: float literal",
-    fn() {
-      expr := try parse_body_tail("fn f() Float { 3.14 }")
-
-      case expr.kind {
-        .FloatLit(f) => assert.equal(f.to_string(), "3.14"),
-        _ => assert.fail("expected FloatLit"),
-      }
-    },
-  ).test(
-    "expr: string literal",
-    fn() {
-      expr := try parse_body_tail("fn f() String { \"hello\" }")
-
-      case expr.kind {
-        .StringLit(s) => {
-          // lexer preserves surrounding quotes in token text
-          try assert.is_true(s.contains("hello"))
-          .Ok({})
-        },
-        _ => assert.fail("expected StringLit"),
-      }
-    },
-  ).test(
-    "expr: string interpolation",
-    fn() {
-      dollar := "\$"
-      expr := try parse_body_tail("fn f() String { \"a ${dollar}{x} b\" }")
-
-      case expr.kind {
-        .StringInterp(parts) => assert.equal(parts.len(), 3),
-        _ => assert.fail("expected StringInterp"),
-      }
-    },
-  ).test(
-    "expr: bool literals",
-    fn() {
-      t := try parse_body_tail("fn f() Bool { true }")
-      try case t.kind {
-        .BoolLit(v) => assert.is_true(v),
-        _ => assert.fail("expected BoolLit true"),
-      }
-      f := try parse_body_tail("fn f() Bool { false }")
-
-      case f.kind {
-        .BoolLit(v) => assert.is_false(v),
-        _ => assert.fail("expected BoolLit false"),
-      }
-    },
-  ).test(
-    "expr: hex integer literal",
-    fn() {
-      expr := try parse_body_tail("fn f() Int { 0xFF }")
-
-      case expr.kind {
-        .IntLit(n) => assert.equal(n, 255),
-        _ => assert.fail("expected IntLit"),
-      }
-    },
-  ).test(
-    "expr: identifier",
-    fn() {
-      expr := try parse_body_tail("fn f() Int { x }")
-
-      case expr.kind {
-        .Ident(name) => assert.equal(name, "x"),
-        _ => assert.fail("expected Ident"),
-      }
-    },
-  ).test(
-    "expr: parenthesized grouping",
-    fn() {
-      expr := try parse_body_tail("fn f() Int { (x) }")
-
-      case expr.kind {
-        .Ident(name) => assert.equal(name, "x"),
-        _ => assert.fail("expected Ident through parens"),
-      }
-    },
-  ).test(
-    "expr: arithmetic operators",
-    fn() {
-      add := try parse_body_tail("fn f() Int { a + b }")
-      try case add.kind {
-        .Binary(op, _, _) => assert.is_true(op == .Add),
-        _ => assert.fail("expected Binary Add"),
-      }
-      sub := try parse_body_tail("fn f() Int { a - b }")
-      try case sub.kind {
-        .Binary(op, _, _) => assert.is_true(op == .Sub),
-        _ => assert.fail("expected Binary Sub"),
-      }
-      mul := try parse_body_tail("fn f() Int { a * b }")
-      try case mul.kind {
-        .Binary(op, _, _) => assert.is_true(op == .Mul),
-        _ => assert.fail("expected Binary Mul"),
-      }
-      div := try parse_body_tail("fn f() Int { a / b }")
-      try case div.kind {
-        .Binary(op, _, _) => assert.is_true(op == .Div),
-        _ => assert.fail("expected Binary Div"),
-      }
-      mod := try parse_body_tail("fn f() Int { a % b }")
-
-      case mod.kind {
-        .Binary(op, _, _) => assert.is_true(op == .Mod),
-        _ => assert.fail("expected Binary Mod"),
-      }
-    },
-  ).test(
-    "expr: comparison operators",
-    fn() {
-      eq := try parse_body_tail("fn f() Bool { a == b }")
-      try case eq.kind {
-        .Binary(op, _, _) => assert.is_true(op == .Eq),
-        _ => assert.fail("expected Eq"),
-      }
-      ne := try parse_body_tail("fn f() Bool { a != b }")
-      try case ne.kind {
-        .Binary(op, _, _) => assert.is_true(op == .Ne),
-        _ => assert.fail("expected Ne"),
-      }
-      lt := try parse_body_tail("fn f() Bool { a < b }")
-      try case lt.kind {
-        .Binary(op, _, _) => assert.is_true(op == .Lt),
-        _ => assert.fail("expected Lt"),
-      }
-      le := try parse_body_tail("fn f() Bool { a <= b }")
-      try case le.kind {
-        .Binary(op, _, _) => assert.is_true(op == .Le),
-        _ => assert.fail("expected Le"),
-      }
-      gt := try parse_body_tail("fn f() Bool { a > b }")
-      try case gt.kind {
-        .Binary(op, _, _) => assert.is_true(op == .Gt),
-        _ => assert.fail("expected Gt"),
-      }
-      ge := try parse_body_tail("fn f() Bool { a >= b }")
-
-      case ge.kind {
-        .Binary(op, _, _) => assert.is_true(op == .Ge),
-        _ => assert.fail("expected Ge"),
-      }
-    },
-  ).test(
-    "expr: logical operators",
-    fn() {
-      a := try parse_body_tail("fn f() Bool { a and b }")
-      try case a.kind {
-        .Binary(op, _, _) => assert.is_true(op == .LogicalAnd),
-        _ => assert.fail("expected LogicalAnd"),
-      }
-      o := try parse_body_tail("fn f() Bool { a or b }")
-
-      case o.kind {
-        .Binary(op, _, _) => assert.is_true(op == .LogicalOr),
-        _ => assert.fail("expected LogicalOr"),
-      }
-    },
-  ).test(
-    "expr: bitwise operators",
-    fn() {
-      band := try parse_body_tail("fn f() Int { a & b }")
-      try case band.kind {
-        .Binary(op, _, _) => assert.is_true(op == .BitAnd),
-        _ => assert.fail("expected BitAnd"),
-      }
-      bor := try parse_body_tail("fn f() Int { a | b }")
-      try case bor.kind {
-        .Binary(op, _, _) => assert.is_true(op == .BitOr),
-        _ => assert.fail("expected BitOr"),
-      }
-      bxor := try parse_body_tail("fn f() Int { a ^ b }")
-
-      case bxor.kind {
-        .Binary(op, _, _) => assert.is_true(op == .BitXor),
-        _ => assert.fail("expected BitXor"),
-      }
-    },
-  ).test(
-    "expr: range operator",
-    fn() {
-      expr := try parse_body_tail("fn f() { a .. b }")
-
-      case expr.kind {
-        .Binary(op, _, _) => assert.is_true(op == .Range),
-        _ => assert.fail("expected Range"),
-      }
-    },
-  ).test(
-    "expr: range precedence (arithmetic binds tighter)",
-    fn() {
-      // 1 + 2..3 + 4 should parse as (1 + 2)..(3 + 4)
-      expr := try parse_body_tail("fn f() { 1 + 2..3 + 4 }")
-
-      case expr.kind {
-        .Binary(op, lhs, rhs) => {
-          try assert.is_true(op == .Range)
-          try assert_expr_kind(lhs, "Binary")
-          assert_expr_kind(rhs, "Binary")
-        },
-        _ => assert.fail("expected Binary Range at top"),
-      }
-    },
-  ).test(
-    "expr: range in assign rhs",
-    fn() {
-      // a = m..n should parse as a = (m..n), not (a = m)..n
-      // In the boot parser, `a = expr` is parsed as LetStmt with is_rebind=true.
-      // The RHS value should be the Range expression.
-      stmt := try parse_body_stmt("fn f() { a = 1..10 }", 0)
-
-      case stmt {
-        .Let(s) => {
-          try assert.is_true(s.is_rebind)
-
-          case s.value.kind {
-            .Binary(rop, _, _) => assert.is_true(rop == .Range),
-            _ => assert.fail("expected Range as value of rebind"),
-          }
-        },
-        _ => assert.fail("expected Let (rebind) stmt"),
-      }
-    },
-  ).test(
-    "expr: operator precedence (mul before add)",
-    fn() {
-      // a + b * c should parse as a + (b * c)
-      expr := try parse_body_tail("fn f() Int { a + b * c }")
-
-      case expr.kind {
-        .Binary(op, lhs, rhs) => {
-          try assert.is_true(op == .Add)
-          try assert_expr_kind(lhs, "Ident")
-          assert_expr_kind(rhs, "Binary")
-        },
-        _ => assert.fail("expected Binary"),
-      }
-    },
-  ).test(
-    "expr: operator precedence (comparison vs logical)",
-    fn() {
-      // a > b and c < d should parse as (a > b) and (c < d)
-      expr := try parse_body_tail("fn f() Bool { a > b and c < d }")
-
-      case expr.kind {
-        .Binary(op, lhs, rhs) => {
-          try assert.is_true(op == .LogicalAnd)
-          try assert_expr_kind(lhs, "Binary")
-          assert_expr_kind(rhs, "Binary")
-        },
-        _ => assert.fail("expected Binary LogicalAnd at top"),
-      }
-    },
-  ).test(
-    "expr: unary negation",
-    fn() {
-      expr := try parse_body_tail("fn f() Int { -x }")
-
-      case expr.kind {
-        .Unary(op, inner) => {
-          try assert.is_true(op == .Neg)
-          assert_expr_kind(inner, "Ident")
-        },
-        _ => assert.fail("expected Unary"),
-      }
-    },
-  ).test(
-    "expr: unary not",
-    fn() {
-      expr := try parse_body_tail("fn f() Bool { !x }")
-
-      case expr.kind {
-        .Unary(op, _) => assert.is_true(op == .Not),
-        _ => assert.fail("expected Unary"),
-      }
-    },
-  ).test(
-    "expr: unary bitwise not",
-    fn() {
-      expr := try parse_body_tail("fn f() Int { ~x }")
-
-      case expr.kind {
-        .Unary(op, _) => assert.is_true(op == .BitNot),
-        _ => assert.fail("expected Unary"),
-      }
-    },
-  ).test(
-    "expr: try prefix",
-    fn() {
-      expr := try parse_body_tail("fn f() Int { try foo() }")
-
-      case expr.kind {
-        .Unary(op, inner) => {
-          try assert.is_true(op == .Try)
-          assert_expr_kind(inner, "Call")
-        },
-        _ => assert.fail("expected Unary Try"),
-      }
-    },
-  ).test(
-    "expr: function call",
-    fn() {
-      expr := try parse_body_tail("fn f() Int { foo(1, 2) }")
-
-      case expr.kind {
-        .Call(callee, args) => {
-          try assert_expr_kind(callee, "Ident")
-          assert.equal(args.len(), 2)
-        },
-        _ => assert.fail("expected Call"),
-      }
-    },
-  ).test(
-    "expr: field access",
-    fn() {
-      expr := try parse_body_tail("fn f() Int { p.x }")
-
-      case expr.kind {
-        .Field(base, name) => {
-          try assert_expr_kind(base, "Ident")
-          assert.equal(name, "x")
-        },
-        _ => assert.fail("expected Field"),
-      }
-    },
-  ).test(
-    "expr: index access",
-    fn() {
-      expr := try parse_body_tail("fn f() Int { arr[0] }")
-
-      case expr.kind {
-        .Index(base, idx) => {
-          try assert_expr_kind(base, "Ident")
-          assert_expr_kind(idx, "IntLit")
-        },
-        _ => assert.fail("expected Index"),
-      }
-    },
-  ).test(
-    "expr: method call chain",
-    fn() {
-      expr := try parse_body_tail("fn f() Int { a.foo(1).bar(2) }")
-
-      case expr.kind {
-        .Call(callee, args) => {
-          try assert.equal(args.len(), 1)
-
-          // callee should be Field(Call(Field(a, foo), [1]), bar)
-          case callee.kind {
-            .Field(inner_call, name) => {
-              try assert.equal(name, "bar")
-              assert_expr_kind(inner_call, "Call")
-            },
-            _ => assert.fail("expected Field as callee of outer call"),
-          }
-        },
-        _ => assert.fail("expected Call"),
-      }
-    },
-  ).test(
-    "expr: if/else",
-    fn() {
-      expr := try parse_body_tail("fn f() Int { if x { 1 } else { 2 } }")
-
-      case expr.kind {
-        .If(cond, then_block, else_expr) => {
-          try assert_expr_kind(cond, "Ident")
-          try assert.is_some(then_block.tail)
-          assert.is_some(else_expr)
-        },
-        _ => assert.fail("expected If"),
-      }
-    },
-  ).test(
-    "expr: if/else if/else chain",
-    fn() {
-      src := "fn f() Int { if a { 1 } else if b { 2 } else { 3 } }"
-      expr := try parse_body_tail(src)
-
-      case expr.kind {
-        .If(_, _, else_expr) => {
-          case else_expr {
-            .Some(e) => assert_expr_kind(e, "If"),
-            .None => assert.fail("expected else branch"),
-          }
-        },
-        _ => assert.fail("expected If"),
-      }
-    },
-  ).test(
-    "expr: case with pattern arms",
-    fn() {
-      src := "fn f() Int {\n  case x {\n    .Some(v) => v,\n    .None => 0,\n  }\n}"
-      expr := try parse_body_tail(src)
-
-      case expr.kind {
-        .Case(scrutinee, arms) => {
-          try assert_expr_kind(scrutinee, "Ident")
-          try assert.equal(arms.len(), 2)
-
-          case arms[0].pattern.kind {
-            .Variant(name, pats) => {
-              try assert.equal(name, "Some")
-              assert.equal(pats.len(), 1)
-            },
-            _ => assert.fail("expected Variant pattern"),
-          }
-        },
-        _ => assert.fail("expected Case"),
-      }
-    },
-  ).test(
-    "expr: array literal",
-    fn() {
-      expr := try parse_body_tail("fn f() { [1, 2, 3] }")
-
-      case expr.kind {
-        .Array(elems) => assert.equal(elems.len(), 3),
-        _ => assert.fail("expected Array"),
-      }
-    },
-  ).test(
-    "expr: record literal with fields",
-    fn() {
-      expr := try parse_body_tail("fn f() { .{ x: 1, y: 2 } }")
-
-      case expr.kind {
-        .Record(entries) => {
-          try assert.equal(entries.len(), 2)
-          try assert.equal(entries[0].name, "x")
-          assert.equal(entries[1].name, "y")
-        },
-        _ => assert.fail("expected Record"),
-      }
-    },
-  ).test(
-    "expr: record literal field punning",
-    fn() {
-      src := "fn f() { .{ x, y } }"
-      expr := try parse_body_tail(src)
-
-      case expr.kind {
-        .Record(entries) => {
-          try assert.equal(entries.len(), 2)
-          try assert.equal(entries[0].name, "x")
-          try assert.is_none(entries[0].value)
-          try assert.equal(entries[1].name, "y")
-          assert.is_none(entries[1].value)
-        },
-        _ => assert.fail("expected Record"),
-      }
-    },
-  ).test(
-    "expr: variant no-payload and with-payload",
-    fn() {
-      none := try parse_body_tail("fn f() { .None }")
-      try case none.kind {
-        .Variant(name, args) => {
-          try assert.equal(name, "None")
-          assert.equal(args.len(), 0)
-        },
-        _ => assert.fail("expected Variant"),
-      }
-      some := try parse_body_tail("fn f() { .Some(1) }")
-
-      case some.kind {
-        .Variant(name, args) => {
-          try assert.equal(name, "Some")
-          assert.equal(args.len(), 1)
-        },
-        _ => assert.fail("expected Variant"),
-      }
-    },
-  ).test(
-    "expr: closure",
-    fn() {
-      expr := try parse_body_tail("fn f() { fn(x: Int) Int { x + 1 } }")
-
-      case expr.kind {
-        .Closure(params, ret_type, body) => {
-          try assert.equal(params.len(), 1)
-          try assert.equal(params[0].name, "x")
-          try assert.is_some(ret_type)
-          assert.is_some(body.tail)
-        },
-        _ => assert.fail("expected Closure"),
-      }
-    },
-  ).test(
-    "expr: closure without return type",
-    fn() {
-      expr := try parse_body_tail("fn f() { fn(x) { x } }")
-
-      case expr.kind {
-        .Closure(params, ret_type, _) => {
-          try assert.equal(params.len(), 1)
-          assert.is_none(ret_type)
-        },
-        _ => assert.fail("expected Closure"),
-      }
-    },
-  ).test(
-    "expr: block expression",
-    fn() {
-      expr := try parse_body_tail("fn f() Int { { 42 } }")
-
-      case expr.kind {
-        .BlockExpr(block) => {
-          case block.tail {
-            .Some(e) => assert_expr_kind(e, "IntLit"),
-            .None => assert.fail("expected tail in block"),
-          }
-        },
-        _ => assert.fail("expected BlockExpr"),
-      }
-    },
-  ).test(
-    "stmt: let with inferred type",
-    fn() {
-      stmt := try parse_body_stmt("fn f() { x := 1 }", 0)
-
-      case stmt {
-        .Let(bind) => {
-          try assert.equal(bind.name, "x")
-          try assert.is_false(bind.is_rebind)
-          try assert.is_none(bind.ty)
-          assert_expr_kind(bind.value, "IntLit")
-        },
-        _ => assert.fail("expected Let"),
-      }
-    },
-  ).test(
-    "stmt: let with explicit type",
-    fn() {
-      stmt := try parse_body_stmt("fn f() { x: Int = 1 }", 0)
-
-      case stmt {
-        .Let(bind) => {
-          try assert.equal(bind.name, "x")
-          try assert.is_false(bind.is_rebind)
-
-          case bind.ty {
-            .Some(ty) => assert.is_true(type_is_path(ty, "Int")),
-            .None => assert.fail("expected explicit type"),
-          }
-        },
-        _ => assert.fail("expected Let"),
-      }
-    },
-  ).test(
-    "stmt: rebind",
-    fn() {
-      src := "fn f() { x := 1\nx = 2 }"
-      stmt := try parse_body_stmt(src, 1)
-
-      case stmt {
-        .Let(bind) => {
-          try assert.equal(bind.name, "x")
-          assert.is_true(bind.is_rebind)
-        },
-        _ => assert.fail("expected Let rebind"),
-      }
-    },
-  ).test(
-    "stmt: for-in loop",
-    fn() {
-      stmt := try parse_body_stmt("fn f() { for x in items { } }", 0)
-
-      case stmt {
-        .For(s) => {
-          case s.pattern {
-            .Some(p) => try assert.equal(p, "x"),
-            .None => { return assert.fail("expected pattern") },
-          }
-
-          try assert.is_none(s.index)
-          try assert.is_some(s.iter)
-          assert.is_none(s.condition)
-        },
-        _ => assert.fail("expected For"),
-      }
-    },
-  ).test(
-    "stmt: for-in with index",
-    fn() {
-      stmt := try parse_body_stmt("fn f() { for x, i in items { } }", 0)
-
-      case stmt {
-        .For(s) => {
-          case s.pattern {
-            .Some(p) => try assert.equal(p, "x"),
-            .None => { return assert.fail("expected pattern") },
-          }
-
-          case s.index {
-            .Some(idx) => assert.equal(idx, "i"),
-            .None => assert.fail("expected index"),
-          }
-        },
-        _ => assert.fail("expected For"),
-      }
-    },
-  ).test(
-    "stmt: for-condition (while-style)",
-    fn() {
-      stmt := try parse_body_stmt("fn f() { for x > 0 { } }", 0)
-
-      case stmt {
-        .For(s) => {
-          try assert.is_none(s.pattern)
-          try assert.is_none(s.iter)
-          assert.is_some(s.condition)
-        },
-        _ => assert.fail("expected For"),
-      }
-    },
-  ).test(
-    "stmt: return with and without value",
-    fn() {
-      r1 := try parse_body_stmt("fn f() Int { return 42 }", 0)
-      try case r1 {
-        .Return(s) => assert.is_some(s.value),
-        _ => assert.fail("expected Return"),
-      }
-      // bare return before closing brace
-      r2 := try parse_body_stmt("fn f() { return }", 0)
-
-      case r2 {
-        .Return(s) => assert.is_none(s.value),
-        _ => assert.fail("expected Return"),
-      }
-    },
-  ).test(
-    "stmt: break and continue",
-    fn() {
-      brk := try parse_body_stmt("fn f() { for true { break } }", 0)
-      try case brk {
-        .For(s) => {
-          try assert.equal(s.body.stmts.len(), 1)
-
-          case s.body.stmts[0] {
-            .Break(_) => .Ok({}),
-            _ => assert.fail("expected Break"),
-          }
-        },
-        _ => assert.fail("expected For"),
-      }
-      cont := try parse_body_stmt("fn f() { for true { continue } }", 0)
-
-      case cont {
-        .For(s) => {
-          try assert.equal(s.body.stmts.len(), 1)
-
-          case s.body.stmts[0] {
-            .Continue(_) => .Ok({}),
-            _ => assert.fail("expected Continue"),
-          }
-        },
-        _ => assert.fail("expected For"),
-      }
-    },
-  ).test(
-    "stmt: defer",
-    fn() {
-      stmt := try parse_body_stmt("fn f() { defer cleanup() }", 0)
-
-      case stmt {
-        .Defer(s) => assert_expr_kind(s.expr, "Call"),
-        _ => assert.fail("expected Defer"),
-      }
-    },
-  ).test(
-    "type expr: generic applied type",
-    fn() {
-      item := try parse_first_item("fn f(xs: Vector<Int>) {}")
-
-      case item {
-        .Function(f) => {
-          case f.params[0].ty {
-            .Some(ty) => {
-              case ty.kind {
-                .Applied(path, args) => {
-                  try assert.equal(path.segments[0], "Vector")
-                  try assert.equal(args.len(), 1)
-                  assert.is_true(type_is_path(args[0], "Int"))
-                },
-                _ => assert.fail("expected Applied type"),
-              }
-            },
-            .None => assert.fail("expected param type"),
-          }
-        },
-        _ => assert.fail("expected function"),
-      }
-    },
-  ).test(
-    "type expr: function type",
-    fn() {
-      item := try parse_first_item("fn f(cb: fn(Int) Bool) {}")
-
-      case item {
-        .Function(f) => {
-          case f.params[0].ty {
-            .Some(ty) => {
-              case ty.kind {
-                .Function(params, ret) => {
-                  try assert.equal(params.len(), 1)
-                  assert.is_true(type_is_path(ret, "Bool"))
-                },
-                _ => assert.fail("expected Function type"),
-              }
-            },
-            .None => assert.fail("expected param type"),
-          }
-        },
-        _ => assert.fail("expected function"),
-      }
-    },
-  ).test(
-    "type expr: optional T?",
-    fn() {
-      item := try parse_first_item("fn f(x: Int?) {}")
-
-      case item {
-        .Function(f) => {
-          case f.params[0].ty {
-            .Some(ty) => {
-              case ty.kind {
-                .Optional(inner) => assert.is_true(type_is_path(inner, "Int")),
-                _ => assert.fail("expected Optional type"),
-              }
-            },
-            .None => assert.fail("expected param type"),
-          }
-        },
-        _ => assert.fail("expected function"),
-      }
-    },
-  ).test(
-    "type expr: result T!E",
-    fn() {
-      item := try parse_first_item("fn f() Int!String {}")
-
-      case item {
-        .Function(f) => {
-          case f.return_type {
-            .Some(ty) => {
-              case ty.kind {
-                .Result(ok_ty, err_ty) => {
-                  try assert.is_true(type_is_path(ok_ty, "Int"))
-                  assert.is_true(type_is_path(err_ty, "String"))
-                },
-                _ => assert.fail("expected Result type"),
-              }
-            },
-            .None => assert.fail("expected return type"),
-          }
-        },
-        _ => assert.fail("expected function"),
-      }
-    },
-  ).test(
-    "type expr: void result !E",
-    fn() {
-      item := try parse_first_item("fn f() !String {}")
-
-      case item {
-        .Function(f) => {
-          case f.return_type {
-            .Some(ty) => {
-              case ty.kind {
-                .Result(ok_ty, err_ty) => {
-                  // ok side should be Void (or a path to Void)
-                  try assert.is_true(type_is_path(err_ty, "String"))
-                  .Ok({})
-                },
-                _ => assert.fail("expected Result type"),
-              }
-            },
-            .None => assert.fail("expected return type"),
-          }
-        },
-        _ => assert.fail("expected function"),
-      }
-    },
-  ).test(
-    "type expr: nested generic Dict<String, Vector<Int>>",
-    fn() {
-      item := try parse_first_item("fn f(d: Dict<String, Vector<Int>>) {}")
-
-      case item {
-        .Function(f) => {
-          case f.params[0].ty {
-            .Some(ty) => {
-              case ty.kind {
-                .Applied(path, args) => {
-                  try assert.equal(path.segments[0], "Dict")
-                  try assert.equal(args.len(), 2)
-                  try assert.is_true(type_is_path(args[0], "String"))
-
-                  case args[1].kind {
-                    .Applied(inner_path, inner_args) => {
-                      try assert.equal(inner_path.segments[0], "Vector")
-                      assert.equal(inner_args.len(), 1)
-                    },
-                    _ => assert.fail("expected Applied for inner type"),
-                  }
-                },
-                _ => assert.fail("expected Applied type"),
-              }
-            },
-            .None => assert.fail("expected param type"),
-          }
-        },
-        _ => assert.fail("expected function"),
-      }
-    },
-  ).test(
-    "pattern: wildcard and identifier binding",
-    fn() {
-      src := "fn f() {\n  case x {\n    _ => 0,\n    y => y,\n  }\n}"
-      expr := try parse_body_tail(src)
-
-      case expr.kind {
-        .Case(_, arms) => {
-          try case arms[0].pattern.kind {
-            .Wildcard => .Ok({}),
-            _ => assert.fail("expected Wildcard pattern"),
-          }
-
-          case arms[1].pattern.kind {
-            .Ident(name) => assert.equal(name, "y"),
-            _ => assert.fail("expected Ident pattern"),
-          }
-        },
-        _ => assert.fail("expected Case"),
-      }
-    },
-  ).test(
-    "pattern: literal int and bool",
-    fn() {
-      src := "fn f() {\n  case n {\n    0 => 1,\n    true => 2,\n    _ => 3,\n  }\n}"
-      expr := try parse_body_tail(src)
-
-      case expr.kind {
-        .Case(_, arms) => {
-          try case arms[0].pattern.kind {
-            .Literal(e) => assert_expr_kind(e, "IntLit"),
-            _ => assert.fail("expected Literal pattern"),
-          }
-
-          case arms[1].pattern.kind {
-            .Literal(e) => assert_expr_kind(e, "BoolLit"),
-            _ => assert.fail("expected Literal pattern"),
-          }
-        },
-        _ => assert.fail("expected Case"),
-      }
-    },
-  ).test(
-    "pattern: variant with nested patterns",
-    fn() {
-      src := "fn f() {\n  case x {\n    .Some(.Some(v)) => v,\n    _ => 0,\n  }\n}"
-      expr := try parse_body_tail(src)
-
-      case expr.kind {
-        .Case(_, arms) => {
-          case arms[0].pattern.kind {
-            .Variant(name, pats) => {
-              try assert.equal(name, "Some")
-              try assert.equal(pats.len(), 1)
-
-              case pats[0].kind {
-                .Variant(inner_name, _) => assert.equal(inner_name, "Some"),
-                _ => assert.fail("expected nested Variant pattern"),
-              }
-            },
-            _ => assert.fail("expected Variant pattern"),
-          }
-        },
-        _ => assert.fail("expected Case"),
-      }
-    },
-  ).test(
-    "pattern: qualified variant",
-    fn() {
-      src := "fn f() {\n  case r {\n    Result.Ok(v) => v,\n    _ => 0,\n  }\n}"
-      expr := try parse_body_tail(src)
-
-      case expr.kind {
-        .Case(_, arms) => {
-          case arms[0].pattern.kind {
-            .QualifiedVariant(path, name, pats) => {
-              try assert.equal(path.len(), 1)
-              try assert.equal(path[0], "Result")
-              try assert.equal(name, "Ok")
-              assert.equal(pats.len(), 1)
-            },
-            _ => assert.fail("expected QualifiedVariant pattern"),
-          }
-        },
-        _ => assert.fail("expected Case"),
-      }
-    },
-  ).test(
-    "expr: collect comprehension",
-    fn() {
-      src := "fn f() { collect x in items { x * 2 } }"
-      mod := try parse_ok(src)
-      // collect should parse without diagnostics
-      assert.equal(mod.items.len(), 1)
-    },
-  ).test(
-    "multiline: top-level expression continuity and rebind",
-    fn() {
-      src := "x := 1\n"
-      src = "${src}x = x +\n"
-      src = "${src}  2\n"
-      src = "${src}x"
-      mod := try parse_ok(src)
-      try assert.equal(mod.items.len(), 3)
-      try case mod.items[1] {
-        .Stmt(stmt) => {
-          case stmt {
-            .Let(bind) => {
-              try assert.is_true(bind.is_rebind)
-
-              case bind.value.kind {
-                .Binary(op, _, _) => assert.is_true(op == .Add),
-                _ => assert.fail("expected Binary Add in rebind"),
-              }
-            },
-            _ => assert.fail("expected Let/rebind stmt"),
-          }
-        },
-        _ => assert.fail("expected Stmt"),
-      }
-
-      case mod.items[2] {
-        .Stmt(_) => .Ok({}),
-        _ => assert.fail("expected third item to be stmt"),
-      }
-    },
-  ).test(
-    "lexer: newline boundaries on tokens",
-    fn() {
-      src := "use foo\nfn main() {}"
-      lexed := lexer.lex(src, 0)
-      try assert.equal(lexed.diagnostics.len(), 0)
-      try assert.is_true(lexed.value.len() >= 4)
-      try assert.is_true(lexed.value[2].kind == .Fn)
-      assert.is_true(lexed.value[2].preceded_by_newline)
-    },
-  ).test(
-    "lexer: float, multichar operators, and interpolation tokens",
-    fn() {
-      dollar := "\$"
-      src := "1.5 == 2 && 3 != 4 || 5 <= 6 >= 7 .. 8\n\"a ${dollar}{x + 1} b\""
-      lexed := lexer.lex(src, 0)
-      try assert.equal(lexed.diagnostics.len(), 0)
-      try assert.is_true(lexed.value[0].kind == .FloatLit)
-      try assert.is_true(lexed.value[1].kind == .EqEq)
-      try assert.is_true(lexed.value[3].kind == .AmpAmp)
-      try assert.is_true(lexed.value[5].kind == .BangEq)
-      try assert.is_true(lexed.value[7].kind == .PipePipe)
-      try assert.is_true(lexed.value[9].kind == .LtEq)
-      try assert.is_true(lexed.value[11].kind == .GtEq)
-      try assert.is_true(lexed.value[13].kind == .DotDot)
-      try assert.is_true(lexed.value[15].kind == .StringStart)
-      try assert.is_true(lexed.value[16].kind == .Ident)
-      try assert.is_true(lexed.value[17].kind == .Plus)
-      try assert.is_true(lexed.value[18].kind == .IntLit)
-      assert.is_true(lexed.value[19].kind == .StringEnd)
-    },
-  ).test(
-    "lexer: utf8 in comment does not trap",
-    fn() {
-      src := "// 你好\nfn main() {}"
-      lexed := lexer.lex(src, 0)
-      try assert.equal(lexed.diagnostics.len(), 0)
-      try assert.is_true(lexed.value.len() >= 2)
-      try assert.is_true(lexed.value[0].kind == .Fn)
-      assert.is_true(lexed.value[0].preceded_by_newline)
-    },
-  ).test(
-    "lexer: utf8 plain string literal does not trap",
-    fn() {
-      src := "\"你好\""
-      lexed := lexer.lex(src, 0)
-      try assert.equal(lexed.diagnostics.len(), 0)
-      try assert.is_true(lexed.value.len() >= 2)
-      assert.is_true(lexed.value[0].kind == .StringLit)
-    },
-  ).test(
-    "lexer: utf8 string interpolation segments do not trap",
-    fn() {
-      dollar := "\$"
-      src := "\"你好 ${dollar}{x} 世界\""
-      lexed := lexer.lex(src, 0)
-      try assert.equal(lexed.diagnostics.len(), 0)
-      try assert.is_true(lexed.value.len() >= 4)
-      try assert.is_true(lexed.value[0].kind == .StringStart)
-      try assert.is_true(lexed.value[1].kind == .Ident)
-      assert.is_true(lexed.value[2].kind == .StringEnd)
-    },
-  ).test(
-    "expr: shift left parses as BinOp.Shl",
-    fn() {
-      parsed := parser.parse("fn f() Int { a << b }", 0)
-      assert.is_true(parsed.diagnostics.len() == 0)
-    },
-  ).test(
-    "expr: shift right parses as BinOp.Shr",
-    fn() {
-      parsed := parser.parse("fn f() Int { a >> b }", 0)
-      assert.is_true(parsed.diagnostics.len() == 0)
-    },
-  ).test(
-    "expr: named record literal Point.{ x: 1, y: 2 }",
-    fn() {
-      // Point.{ x: 1, y: 2 } parses as Ident("Point") then postfix .{ record }
-      expr := try parse_body_tail("fn f() { Point.{ x: 1, y: 2 } }")
-
-      // The outer expression should be a NamedRecord preserving the type name
-      case expr.kind {
-        .NamedRecord(name, entries) => {
-          try assert.equal(name, "Point")
-          try assert.equal(entries.len(), 2)
-          try assert.equal(entries[0].name, "x")
-          assert.equal(entries[1].name, "y")
-        },
-        _ => assert.fail("expected NamedRecord, got ${expr.kind.name()}"),
-      }
-    },
-  ).test(
-    "naming: uppercase function name parses without error (no enforcement in boot)",
-    fn() {
-      // The boot parser does not enforce naming conventions, unlike the Rust parser
-      parsed := parser.parse("fn Greet() {}", 0)
-      // Boot parser currently allows this — no diagnostics
-      assert.equal(parsed.diagnostics.len(), 0)
-    },
-  ).test(
-    "postfix: x.Some parses as field access (no rejection in boot)",
-    fn() {
-      // The boot parser does not reject .Uppercase in postfix position
-      expr := try parse_body_tail("fn f() { x.Some }")
-
-      case expr.kind {
-        .Field(base, name) => {
-          try assert_expr_kind(base, "Ident")
-          assert.equal(name, "Some")
-        },
-        _ => assert.fail("expected Field, got ${expr.kind.name()}"),
-      }
-    },
-  ).test(
-    "postfix: newline before [ or ( starts a new statement",
-    fn() {
-      block := try parse_first_fn_body("fn f() { foo := \"asdf\"\n[1, 22, 3]\nbar\n(1) }")
-      try assert.equal(block.stmts.len(), 3)
-
-      case block.stmts[0] {
-        .Let(_) => {},
-        _ => try assert.fail("expected let stmt"),
-      }
-
-      case block.stmts[1] {
-        .Expr(es) => {
-          case es.expr.kind {
-            .Array(items) => try assert.equal(items.len(), 3),
-            _ => try assert.fail("expected array expr stmt"),
-          }
-        },
-        _ => try assert.fail("expected expr stmt"),
-      }
-
-      case block.stmts[2] {
-        .Expr(es) => {
-          case es.expr.kind {
-            .Ident(name) => try assert.equal(name, "bar"),
-            _ => try assert.fail("expected ident expr stmt"),
-          }
-        },
-        _ => try assert.fail("expected expr stmt"),
-      }
-
-      case block.tail {
-        .Some(expr) => {
-          case expr.kind {
-            .IntLit(n) => try assert.equal(n, 1),
-            _ => try assert.fail("expected grouped int tail expr"),
-          }
-        },
-        .None => try assert.fail("expected tail expr"),
-      }
-
-      .Ok({})
-    },
-  ).test(
-    "postfix: newline before lowercase . keeps method chaining in boot",
-    fn() {
-      expr := try parse_body_tail("fn f() { foo\n.bar() }")
-
-      case expr.kind {
-        .Call(callee, args) => {
-          try assert.equal(args.len(), 0)
-
-          case callee.kind {
-            .Field(base, name) => {
-              try assert.equal(name, "bar")
-              try assert_expr_kind(base, "Ident")
-            },
-            _ => try assert.fail("expected field callee"),
-          }
-        },
-        _ => try assert.fail("expected call expr"),
-      }
-
-      .Ok({})
-    },
-  ).test(
-    "pub let: pub on top-level binding parses as stmt",
-    fn() {
-      parsed := parser.parse("pub x := 42", 0)
-      try assert.equal(parsed.diagnostics.len(), 0)
-      try assert.equal(parsed.value.items.len(), 1)
-
-      case parsed.value.items[0] {
-        .Stmt(stmt) => {
-          case stmt {
-            .Let(ls) => {
-              try assert.equal(ls.name, "x")
-              try assert.is_true(ls.is_pub)
-              assert.is_true(!ls.is_rebind)
-            },
-            _ => assert.fail("expected Let stmt"),
-          }
-        },
-        _ => assert.fail("expected Stmt item"),
-      }
-    },
-  ).test(
-    "import: empty destructuring braces produces diagnostic",
-    fn() {
-      parsed := parser.parse("use foo.bar.{}", 0)
-      assert.is_true(parsed.diagnostics.len() > 0)
-    },
-  ).test(
-    "import: trailing comma in destructuring",
-    fn() {
-      src := "use foo.bar.{add, Vec,}"
-      parsed := parser.parse(src, 0)
-      try assert.equal(parsed.diagnostics.len(), 0)
-
-      case parsed.value.items[0] {
-        .Use(d) => {
-          case d.items {
-            .Some(items) => assert.equal(items.len(), 2),
-            .None => assert.fail("expected destructuring items"),
-          }
-        },
-        _ => assert.fail("expected use declaration"),
-      }
-    },
-  ).test(
-    "import: relative path with destructuring",
-    fn() {
-      src := "use .util.{helper, Config}"
-      parsed := parser.parse(src, 0)
-      try assert.equal(parsed.diagnostics.len(), 0)
-
-      case parsed.value.items[0] {
-        .Use(d) => {
-          try assert.is_true(d.is_relative)
-          try assert.equal(d.path.len(), 1)
-          try assert.equal(d.path[0], "util")
-
-          case d.items {
-            .Some(items) => {
-              try assert.equal(items.len(), 2)
-              try case items[0] {
-                .Value(v) => assert.equal(v.name, "helper"),
-                _ => assert.fail("expected value import"),
-              }
-
-              case items[1] {
-                .Type(t) => assert.equal(t.name, "Config"),
-                _ => assert.fail("expected type import"),
-              }
-            },
-            .None => assert.fail("expected destructuring items"),
-          }
-        },
-        _ => assert.fail("expected use declaration"),
-      }
-    },
-  ).test(
-    "error recovery: missing operand in expression",
-    fn() {
-      parsed := parser.parse("fn f() { 1 + }", 0)
-      assert.is_true(parsed.diagnostics.len() > 0)
-    },
-  ).test(
-    "error recovery: unterminated string",
-    fn() {
-      parsed := parser.parse("fn f() { \"hello }", 0)
-      assert.is_true(parsed.diagnostics.len() > 0)
-    },
-  ).test(
-    "error recovery: malformed use, parse continues",
-    fn() {
-      src := "use foo.\nfn ok() {}"
-      parsed := parser.parse(src, 0)
-      try assert.is_true(parsed.diagnostics.len() > 0)
-      try assert.equal(parsed.value.items.len(), 2)
-      try case parsed.value.items[0] {
-        .ErrorItem(_) => .Ok({}),
-        _ => assert.fail("expected error node"),
-      }
-
-      case parsed.value.items[1] {
-        .Function(fn_decl) => assert.equal(fn_decl.name, "ok"),
-        _ => assert.fail("expected function after error"),
-      }
-    },
-  ).test(
-    "error recovery: fn missing name recovers to next fn",
-    fn() {
-      src := "fn () {}\nfn ok() {}"
-      parsed := parser.parse(src, 0)
-      try assert.is_true(parsed.diagnostics.len() > 0)
-      // should recover and parse the second function
-      found_ok := false
-
-      for item in parsed.value.items {
         case item {
           .Function(f) => {
-            if f.name == "ok" { found_ok = true }
+            try assert.equal(f.name, "add")
+            try assert.is_false(f.is_pub)
+            try assert.equal(f.params.len(), 2)
+            try assert.equal(f.params[0].name, "x")
+            try assert.equal(f.params[1].name, "y")
+
+            case f.return_type {
+              .Some(rt) => assert.is_true(type_is_path(rt, "Int")),
+              .None => assert.fail("expected return type"),
+            }
           },
-          _ => {},
+          _ => assert.fail("expected function"),
         }
-      }
+      },
+    )
+    .test(
+      "fn decl: pub visibility",
+      fn() {
+        item := try parse_first_item("pub fn greet() {}")
 
-      assert.is_true(found_ok)
-    },
-  ).test(
-    "error recovery: fn missing opening brace recovers next fn",
-    fn() {
-      src := "fn bad() Int\nfn ok() {}"
-      parsed := parser.parse(src, 0)
-      try assert.is_true(parsed.diagnostics.len() > 0)
-      // Parser should recover and find the second valid function
-      found_ok := false
-
-      for item in parsed.value.items {
         case item {
           .Function(f) => {
-            if f.name == "ok" { found_ok = true }
+            try assert.is_true(f.is_pub)
+            assert.equal(f.name, "greet")
           },
-          _ => {},
+          _ => assert.fail("expected function"),
         }
-      }
+      },
+    )
+    .test(
+      "fn decl: generic type params",
+      fn() {
+        item := try parse_first_item("fn map<A, B>(xs: Vector<A>, f: fn(A) B) Vector<B> {}")
 
-      assert.is_true(found_ok)
-    },
-  ).test(
-    "error recovery: fn missing closing paren recovers next fn",
-    fn() {
-      src := "fn bad(x: Int {}\nfn ok() {}"
-      parsed := parser.parse(src, 0)
-      try assert.is_true(parsed.diagnostics.len() > 0)
-      // Parser should recover and find the second valid function
-      found_ok := false
-
-      for item in parsed.value.items {
         case item {
           .Function(f) => {
-            if f.name == "ok" { found_ok = true }
+            try assert.equal(f.name, "map")
+            try assert.equal(f.type_params.len(), 2)
+            try assert.equal(f.type_params[0].name, "A")
+            assert.equal(f.type_params[1].name, "B")
           },
-          _ => {},
+          _ => assert.fail("expected function"),
         }
-      }
+      },
+    )
+    .test(
+      "fn decl: no return type (void)",
+      fn() {
+        item := try parse_first_item("fn do_stuff(x: Int) {}")
 
-      assert.is_true(found_ok)
-    },
-  ).test(
-    "error recovery: type missing name",
-    fn() {
-      src := "type = { A, B }\nfn ok() {}"
-      parsed := parser.parse(src, 0)
-      try assert.is_true(parsed.diagnostics.len() > 0)
-      found_ok := false
-
-      for item in parsed.value.items {
         case item {
           .Function(f) => {
-            if f.name == "ok" { found_ok = true }
+            try assert.equal(f.name, "do_stuff")
+            assert.is_none(f.return_type)
           },
-          _ => {},
+          _ => assert.fail("expected function"),
         }
-      }
+      },
+    )
+    .test(
+      "fn decl: no params",
+      fn() {
+        item := try parse_first_item("fn hello() {}")
 
-      assert.is_true(found_ok)
-    },
-  ).test(
-    "error recovery: type missing equals sign",
-    fn() {
-      src := "type Foo { A, B }\nfn ok() {}"
-      parsed := parser.parse(src, 0)
-      try assert.is_true(parsed.diagnostics.len() > 0)
-      found_ok := false
+        case item {
+          .Function(f) => assert.equal(f.params.len(), 0),
+          _ => assert.fail("expected function"),
+        }
+      },
+    )
+    .test(
+      "type decl: record, sum, and alias",
+      fn() {
+        src := "type Point<T> = .{ x: T, y: T }\n"
+        src = "${src}type Option<T> = { None, Some(T) }\n"
+        src = "${src}type Id = Int"
+        mod := try parse_ok(src)
+        try assert.equal(mod.items.len(), 3)
+        try case mod.items[0] {
+          .Type(t) => {
+            try assert.equal(t.name, "Point")
+            try assert.equal(t.type_params.len(), 1)
 
-      for item in parsed.value.items {
+            case t.def {
+              .Record(fields) => assert.equal(fields.len(), 2),
+              _ => assert.fail("expected record type def"),
+            }
+          },
+          _ => assert.fail("expected type declaration"),
+        }
+        try case mod.items[1] {
+          .Type(t) => {
+            try assert.equal(t.name, "Option")
+
+            case t.def {
+              .Sum(variants) => assert.equal(variants.len(), 2),
+              _ => assert.fail("expected sum type def"),
+            }
+          },
+          _ => assert.fail("expected type declaration"),
+        }
+
+        case mod.items[2] {
+          .Type(t) => {
+            try assert.equal(t.name, "Id")
+
+            case t.def {
+              .Alias(ty) => assert.is_true(type_is_path(ty, "Int")),
+              _ => assert.fail("expected alias type def"),
+            }
+          },
+          _ => assert.fail("expected type declaration"),
+        }
+      },
+    )
+    .test(
+      "type decl: pub visibility",
+      fn() {
+        item := try parse_first_item("pub type Color = { Red, Green, Blue }")
+
+        case item {
+          .Type(t) => {
+            try assert.is_true(t.is_pub)
+            assert.equal(t.name, "Color")
+          },
+          _ => assert.fail("expected type declaration"),
+        }
+      },
+    )
+    .test(
+      "type decl: multi-payload variant",
+      fn() {
+        item := try parse_first_item("type Tree = { Leaf, Node(Tree, Int, Tree) }")
+
+        case item {
+          .Type(t) => {
+            case t.def {
+              .Sum(variants) => {
+                try assert.equal(variants.len(), 2)
+                try assert.equal(variants[0].name, "Leaf")
+                try assert.equal(variants[0].fields.len(), 0)
+                try assert.equal(variants[1].name, "Node")
+                assert.equal(variants[1].fields.len(), 3)
+              },
+              _ => assert.fail("expected sum type def"),
+            }
+          },
+          _ => assert.fail("expected type declaration"),
+        }
+      },
+    )
+    .test(
+      "expr: integer literal",
+      fn() {
+        expr := try parse_body_tail("fn f() Int { 42 }")
+
+        case expr.kind {
+          .IntLit(n) => assert.equal(n, 42),
+          _ => assert.fail("expected IntLit"),
+        }
+      },
+    )
+    .test(
+      "expr: float literal",
+      fn() {
+        expr := try parse_body_tail("fn f() Float { 3.14 }")
+
+        case expr.kind {
+          .FloatLit(f) => assert.equal(f.to_string(), "3.14"),
+          _ => assert.fail("expected FloatLit"),
+        }
+      },
+    )
+    .test(
+      "expr: string literal",
+      fn() {
+        expr := try parse_body_tail("fn f() String { \"hello\" }")
+
+        case expr.kind {
+          .StringLit(s) => {
+            // lexer preserves surrounding quotes in token text
+            try assert.is_true(s.contains("hello"))
+            .Ok({})
+          },
+          _ => assert.fail("expected StringLit"),
+        }
+      },
+    )
+    .test(
+      "expr: string interpolation",
+      fn() {
+        dollar := "\$"
+        expr := try parse_body_tail("fn f() String { \"a ${dollar}{x} b\" }")
+
+        case expr.kind {
+          .StringInterp(parts) => assert.equal(parts.len(), 3),
+          _ => assert.fail("expected StringInterp"),
+        }
+      },
+    )
+    .test(
+      "expr: bool literals",
+      fn() {
+        t := try parse_body_tail("fn f() Bool { true }")
+        try case t.kind {
+          .BoolLit(v) => assert.is_true(v),
+          _ => assert.fail("expected BoolLit true"),
+        }
+        f := try parse_body_tail("fn f() Bool { false }")
+
+        case f.kind {
+          .BoolLit(v) => assert.is_false(v),
+          _ => assert.fail("expected BoolLit false"),
+        }
+      },
+    )
+    .test(
+      "expr: hex integer literal",
+      fn() {
+        expr := try parse_body_tail("fn f() Int { 0xFF }")
+
+        case expr.kind {
+          .IntLit(n) => assert.equal(n, 255),
+          _ => assert.fail("expected IntLit"),
+        }
+      },
+    )
+    .test(
+      "expr: identifier",
+      fn() {
+        expr := try parse_body_tail("fn f() Int { x }")
+
+        case expr.kind {
+          .Ident(name) => assert.equal(name, "x"),
+          _ => assert.fail("expected Ident"),
+        }
+      },
+    )
+    .test(
+      "expr: parenthesized grouping",
+      fn() {
+        expr := try parse_body_tail("fn f() Int { (x) }")
+
+        case expr.kind {
+          .Ident(name) => assert.equal(name, "x"),
+          _ => assert.fail("expected Ident through parens"),
+        }
+      },
+    )
+    .test(
+      "expr: arithmetic operators",
+      fn() {
+        add := try parse_body_tail("fn f() Int { a + b }")
+        try case add.kind {
+          .Binary(op, _, _) => assert.is_true(op == .Add),
+          _ => assert.fail("expected Binary Add"),
+        }
+        sub := try parse_body_tail("fn f() Int { a - b }")
+        try case sub.kind {
+          .Binary(op, _, _) => assert.is_true(op == .Sub),
+          _ => assert.fail("expected Binary Sub"),
+        }
+        mul := try parse_body_tail("fn f() Int { a * b }")
+        try case mul.kind {
+          .Binary(op, _, _) => assert.is_true(op == .Mul),
+          _ => assert.fail("expected Binary Mul"),
+        }
+        div := try parse_body_tail("fn f() Int { a / b }")
+        try case div.kind {
+          .Binary(op, _, _) => assert.is_true(op == .Div),
+          _ => assert.fail("expected Binary Div"),
+        }
+        mod := try parse_body_tail("fn f() Int { a % b }")
+
+        case mod.kind {
+          .Binary(op, _, _) => assert.is_true(op == .Mod),
+          _ => assert.fail("expected Binary Mod"),
+        }
+      },
+    )
+    .test(
+      "expr: comparison operators",
+      fn() {
+        eq := try parse_body_tail("fn f() Bool { a == b }")
+        try case eq.kind {
+          .Binary(op, _, _) => assert.is_true(op == .Eq),
+          _ => assert.fail("expected Eq"),
+        }
+        ne := try parse_body_tail("fn f() Bool { a != b }")
+        try case ne.kind {
+          .Binary(op, _, _) => assert.is_true(op == .Ne),
+          _ => assert.fail("expected Ne"),
+        }
+        lt := try parse_body_tail("fn f() Bool { a < b }")
+        try case lt.kind {
+          .Binary(op, _, _) => assert.is_true(op == .Lt),
+          _ => assert.fail("expected Lt"),
+        }
+        le := try parse_body_tail("fn f() Bool { a <= b }")
+        try case le.kind {
+          .Binary(op, _, _) => assert.is_true(op == .Le),
+          _ => assert.fail("expected Le"),
+        }
+        gt := try parse_body_tail("fn f() Bool { a > b }")
+        try case gt.kind {
+          .Binary(op, _, _) => assert.is_true(op == .Gt),
+          _ => assert.fail("expected Gt"),
+        }
+        ge := try parse_body_tail("fn f() Bool { a >= b }")
+
+        case ge.kind {
+          .Binary(op, _, _) => assert.is_true(op == .Ge),
+          _ => assert.fail("expected Ge"),
+        }
+      },
+    )
+    .test(
+      "expr: logical operators",
+      fn() {
+        a := try parse_body_tail("fn f() Bool { a and b }")
+        try case a.kind {
+          .Binary(op, _, _) => assert.is_true(op == .LogicalAnd),
+          _ => assert.fail("expected LogicalAnd"),
+        }
+        o := try parse_body_tail("fn f() Bool { a or b }")
+
+        case o.kind {
+          .Binary(op, _, _) => assert.is_true(op == .LogicalOr),
+          _ => assert.fail("expected LogicalOr"),
+        }
+      },
+    )
+    .test(
+      "expr: bitwise operators",
+      fn() {
+        band := try parse_body_tail("fn f() Int { a & b }")
+        try case band.kind {
+          .Binary(op, _, _) => assert.is_true(op == .BitAnd),
+          _ => assert.fail("expected BitAnd"),
+        }
+        bor := try parse_body_tail("fn f() Int { a | b }")
+        try case bor.kind {
+          .Binary(op, _, _) => assert.is_true(op == .BitOr),
+          _ => assert.fail("expected BitOr"),
+        }
+        bxor := try parse_body_tail("fn f() Int { a ^ b }")
+
+        case bxor.kind {
+          .Binary(op, _, _) => assert.is_true(op == .BitXor),
+          _ => assert.fail("expected BitXor"),
+        }
+      },
+    )
+    .test(
+      "expr: range operator",
+      fn() {
+        expr := try parse_body_tail("fn f() { a .. b }")
+
+        case expr.kind {
+          .Binary(op, _, _) => assert.is_true(op == .Range),
+          _ => assert.fail("expected Range"),
+        }
+      },
+    )
+    .test(
+      "expr: range precedence (arithmetic binds tighter)",
+      fn() {
+        // 1 + 2..3 + 4 should parse as (1 + 2)..(3 + 4)
+        expr := try parse_body_tail("fn f() { 1 + 2..3 + 4 }")
+
+        case expr.kind {
+          .Binary(op, lhs, rhs) => {
+            try assert.is_true(op == .Range)
+            try assert_expr_kind(lhs, "Binary")
+            assert_expr_kind(rhs, "Binary")
+          },
+          _ => assert.fail("expected Binary Range at top"),
+        }
+      },
+    )
+    .test(
+      "expr: range in assign rhs",
+      fn() {
+        // a = m..n should parse as a = (m..n), not (a = m)..n
+        // In the boot parser, `a = expr` is parsed as LetStmt with is_rebind=true.
+        // The RHS value should be the Range expression.
+        stmt := try parse_body_stmt("fn f() { a = 1..10 }", 0)
+
+        case stmt {
+          .Let(s) => {
+            try assert.is_true(s.is_rebind)
+
+            case s.value.kind {
+              .Binary(rop, _, _) => assert.is_true(rop == .Range),
+              _ => assert.fail("expected Range as value of rebind"),
+            }
+          },
+          _ => assert.fail("expected Let (rebind) stmt"),
+        }
+      },
+    )
+    .test(
+      "expr: operator precedence (mul before add)",
+      fn() {
+        // a + b * c should parse as a + (b * c)
+        expr := try parse_body_tail("fn f() Int { a + b * c }")
+
+        case expr.kind {
+          .Binary(op, lhs, rhs) => {
+            try assert.is_true(op == .Add)
+            try assert_expr_kind(lhs, "Ident")
+            assert_expr_kind(rhs, "Binary")
+          },
+          _ => assert.fail("expected Binary"),
+        }
+      },
+    )
+    .test(
+      "expr: operator precedence (comparison vs logical)",
+      fn() {
+        // a > b and c < d should parse as (a > b) and (c < d)
+        expr := try parse_body_tail("fn f() Bool { a > b and c < d }")
+
+        case expr.kind {
+          .Binary(op, lhs, rhs) => {
+            try assert.is_true(op == .LogicalAnd)
+            try assert_expr_kind(lhs, "Binary")
+            assert_expr_kind(rhs, "Binary")
+          },
+          _ => assert.fail("expected Binary LogicalAnd at top"),
+        }
+      },
+    )
+    .test(
+      "expr: unary negation",
+      fn() {
+        expr := try parse_body_tail("fn f() Int { -x }")
+
+        case expr.kind {
+          .Unary(op, inner) => {
+            try assert.is_true(op == .Neg)
+            assert_expr_kind(inner, "Ident")
+          },
+          _ => assert.fail("expected Unary"),
+        }
+      },
+    )
+    .test(
+      "expr: unary not",
+      fn() {
+        expr := try parse_body_tail("fn f() Bool { !x }")
+
+        case expr.kind {
+          .Unary(op, _) => assert.is_true(op == .Not),
+          _ => assert.fail("expected Unary"),
+        }
+      },
+    )
+    .test(
+      "expr: unary bitwise not",
+      fn() {
+        expr := try parse_body_tail("fn f() Int { ~x }")
+
+        case expr.kind {
+          .Unary(op, _) => assert.is_true(op == .BitNot),
+          _ => assert.fail("expected Unary"),
+        }
+      },
+    )
+    .test(
+      "expr: try prefix",
+      fn() {
+        expr := try parse_body_tail("fn f() Int { try foo() }")
+
+        case expr.kind {
+          .Unary(op, inner) => {
+            try assert.is_true(op == .Try)
+            assert_expr_kind(inner, "Call")
+          },
+          _ => assert.fail("expected Unary Try"),
+        }
+      },
+    )
+    .test(
+      "expr: function call",
+      fn() {
+        expr := try parse_body_tail("fn f() Int { foo(1, 2) }")
+
+        case expr.kind {
+          .Call(callee, args) => {
+            try assert_expr_kind(callee, "Ident")
+            assert.equal(args.len(), 2)
+          },
+          _ => assert.fail("expected Call"),
+        }
+      },
+    )
+    .test(
+      "expr: field access",
+      fn() {
+        expr := try parse_body_tail("fn f() Int { p.x }")
+
+        case expr.kind {
+          .Field(base, name) => {
+            try assert_expr_kind(base, "Ident")
+            assert.equal(name, "x")
+          },
+          _ => assert.fail("expected Field"),
+        }
+      },
+    )
+    .test(
+      "expr: index access",
+      fn() {
+        expr := try parse_body_tail("fn f() Int { arr[0] }")
+
+        case expr.kind {
+          .Index(base, idx) => {
+            try assert_expr_kind(base, "Ident")
+            assert_expr_kind(idx, "IntLit")
+          },
+          _ => assert.fail("expected Index"),
+        }
+      },
+    )
+    .test(
+      "expr: method call chain",
+      fn() {
+        expr := try parse_body_tail("fn f() Int { a.foo(1).bar(2) }")
+
+        case expr.kind {
+          .Call(callee, args) => {
+            try assert.equal(args.len(), 1)
+
+            // callee should be Field(Call(Field(a, foo), [1]), bar)
+            case callee.kind {
+              .Field(inner_call, name) => {
+                try assert.equal(name, "bar")
+                assert_expr_kind(inner_call, "Call")
+              },
+              _ => assert.fail("expected Field as callee of outer call"),
+            }
+          },
+          _ => assert.fail("expected Call"),
+        }
+      },
+    )
+    .test(
+      "expr: if/else",
+      fn() {
+        expr := try parse_body_tail("fn f() Int { if x { 1 } else { 2 } }")
+
+        case expr.kind {
+          .If(cond, then_block, else_expr) => {
+            try assert_expr_kind(cond, "Ident")
+            try assert.is_some(then_block.tail)
+            assert.is_some(else_expr)
+          },
+          _ => assert.fail("expected If"),
+        }
+      },
+    )
+    .test(
+      "expr: if/else if/else chain",
+      fn() {
+        src := "fn f() Int { if a { 1 } else if b { 2 } else { 3 } }"
+        expr := try parse_body_tail(src)
+
+        case expr.kind {
+          .If(_, _, else_expr) => {
+            case else_expr {
+              .Some(e) => assert_expr_kind(e, "If"),
+              .None => assert.fail("expected else branch"),
+            }
+          },
+          _ => assert.fail("expected If"),
+        }
+      },
+    )
+    .test(
+      "expr: case with pattern arms",
+      fn() {
+        src := "fn f() Int {\n  case x {\n    .Some(v) => v,\n    .None => 0,\n  }\n}"
+        expr := try parse_body_tail(src)
+
+        case expr.kind {
+          .Case(scrutinee, arms) => {
+            try assert_expr_kind(scrutinee, "Ident")
+            try assert.equal(arms.len(), 2)
+
+            case arms[0].pattern.kind {
+              .Variant(name, pats) => {
+                try assert.equal(name, "Some")
+                assert.equal(pats.len(), 1)
+              },
+              _ => assert.fail("expected Variant pattern"),
+            }
+          },
+          _ => assert.fail("expected Case"),
+        }
+      },
+    )
+    .test(
+      "expr: array literal",
+      fn() {
+        expr := try parse_body_tail("fn f() { [1, 2, 3] }")
+
+        case expr.kind {
+          .Array(elems) => assert.equal(elems.len(), 3),
+          _ => assert.fail("expected Array"),
+        }
+      },
+    )
+    .test(
+      "expr: record literal with fields",
+      fn() {
+        expr := try parse_body_tail("fn f() { .{ x: 1, y: 2 } }")
+
+        case expr.kind {
+          .Record(entries) => {
+            try assert.equal(entries.len(), 2)
+            try assert.equal(entries[0].name, "x")
+            assert.equal(entries[1].name, "y")
+          },
+          _ => assert.fail("expected Record"),
+        }
+      },
+    )
+    .test(
+      "expr: record literal field punning",
+      fn() {
+        src := "fn f() { .{ x, y } }"
+        expr := try parse_body_tail(src)
+
+        case expr.kind {
+          .Record(entries) => {
+            try assert.equal(entries.len(), 2)
+            try assert.equal(entries[0].name, "x")
+            try assert.is_none(entries[0].value)
+            try assert.equal(entries[1].name, "y")
+            assert.is_none(entries[1].value)
+          },
+          _ => assert.fail("expected Record"),
+        }
+      },
+    )
+    .test(
+      "expr: variant no-payload and with-payload",
+      fn() {
+        none := try parse_body_tail("fn f() { .None }")
+        try case none.kind {
+          .Variant(name, args) => {
+            try assert.equal(name, "None")
+            assert.equal(args.len(), 0)
+          },
+          _ => assert.fail("expected Variant"),
+        }
+        some := try parse_body_tail("fn f() { .Some(1) }")
+
+        case some.kind {
+          .Variant(name, args) => {
+            try assert.equal(name, "Some")
+            assert.equal(args.len(), 1)
+          },
+          _ => assert.fail("expected Variant"),
+        }
+      },
+    )
+    .test(
+      "expr: closure",
+      fn() {
+        expr := try parse_body_tail("fn f() { fn(x: Int) Int { x + 1 } }")
+
+        case expr.kind {
+          .Closure(params, ret_type, body) => {
+            try assert.equal(params.len(), 1)
+            try assert.equal(params[0].name, "x")
+            try assert.is_some(ret_type)
+            assert.is_some(body.tail)
+          },
+          _ => assert.fail("expected Closure"),
+        }
+      },
+    )
+    .test(
+      "expr: closure without return type",
+      fn() {
+        expr := try parse_body_tail("fn f() { fn(x) { x } }")
+
+        case expr.kind {
+          .Closure(params, ret_type, _) => {
+            try assert.equal(params.len(), 1)
+            assert.is_none(ret_type)
+          },
+          _ => assert.fail("expected Closure"),
+        }
+      },
+    )
+    .test(
+      "expr: block expression",
+      fn() {
+        expr := try parse_body_tail("fn f() Int { { 42 } }")
+
+        case expr.kind {
+          .BlockExpr(block) => {
+            case block.tail {
+              .Some(e) => assert_expr_kind(e, "IntLit"),
+              .None => assert.fail("expected tail in block"),
+            }
+          },
+          _ => assert.fail("expected BlockExpr"),
+        }
+      },
+    )
+    .test(
+      "stmt: let with inferred type",
+      fn() {
+        stmt := try parse_body_stmt("fn f() { x := 1 }", 0)
+
+        case stmt {
+          .Let(bind) => {
+            try assert.equal(bind.name, "x")
+            try assert.is_false(bind.is_rebind)
+            try assert.is_none(bind.ty)
+            assert_expr_kind(bind.value, "IntLit")
+          },
+          _ => assert.fail("expected Let"),
+        }
+      },
+    )
+    .test(
+      "stmt: let with explicit type",
+      fn() {
+        stmt := try parse_body_stmt("fn f() { x: Int = 1 }", 0)
+
+        case stmt {
+          .Let(bind) => {
+            try assert.equal(bind.name, "x")
+            try assert.is_false(bind.is_rebind)
+
+            case bind.ty {
+              .Some(ty) => assert.is_true(type_is_path(ty, "Int")),
+              .None => assert.fail("expected explicit type"),
+            }
+          },
+          _ => assert.fail("expected Let"),
+        }
+      },
+    )
+    .test(
+      "stmt: rebind",
+      fn() {
+        src := "fn f() { x := 1\nx = 2 }"
+        stmt := try parse_body_stmt(src, 1)
+
+        case stmt {
+          .Let(bind) => {
+            try assert.equal(bind.name, "x")
+            assert.is_true(bind.is_rebind)
+          },
+          _ => assert.fail("expected Let rebind"),
+        }
+      },
+    )
+    .test(
+      "stmt: for-in loop",
+      fn() {
+        stmt := try parse_body_stmt("fn f() { for x in items { } }", 0)
+
+        case stmt {
+          .For(s) => {
+            case s.pattern {
+              .Some(p) => try assert.equal(p, "x"),
+              .None => { return assert.fail("expected pattern") },
+            }
+
+            try assert.is_none(s.index)
+            try assert.is_some(s.iter)
+            assert.is_none(s.condition)
+          },
+          _ => assert.fail("expected For"),
+        }
+      },
+    )
+    .test(
+      "stmt: for-in with index",
+      fn() {
+        stmt := try parse_body_stmt("fn f() { for x, i in items { } }", 0)
+
+        case stmt {
+          .For(s) => {
+            case s.pattern {
+              .Some(p) => try assert.equal(p, "x"),
+              .None => { return assert.fail("expected pattern") },
+            }
+
+            case s.index {
+              .Some(idx) => assert.equal(idx, "i"),
+              .None => assert.fail("expected index"),
+            }
+          },
+          _ => assert.fail("expected For"),
+        }
+      },
+    )
+    .test(
+      "stmt: for-condition (while-style)",
+      fn() {
+        stmt := try parse_body_stmt("fn f() { for x > 0 { } }", 0)
+
+        case stmt {
+          .For(s) => {
+            try assert.is_none(s.pattern)
+            try assert.is_none(s.iter)
+            assert.is_some(s.condition)
+          },
+          _ => assert.fail("expected For"),
+        }
+      },
+    )
+    .test(
+      "stmt: return with and without value",
+      fn() {
+        r1 := try parse_body_stmt("fn f() Int { return 42 }", 0)
+        try case r1 {
+          .Return(s) => assert.is_some(s.value),
+          _ => assert.fail("expected Return"),
+        }
+        // bare return before closing brace
+        r2 := try parse_body_stmt("fn f() { return }", 0)
+
+        case r2 {
+          .Return(s) => assert.is_none(s.value),
+          _ => assert.fail("expected Return"),
+        }
+      },
+    )
+    .test(
+      "stmt: break and continue",
+      fn() {
+        brk := try parse_body_stmt("fn f() { for true { break } }", 0)
+        try case brk {
+          .For(s) => {
+            try assert.equal(s.body.stmts.len(), 1)
+
+            case s.body.stmts[0] {
+              .Break(_) => .Ok({}),
+              _ => assert.fail("expected Break"),
+            }
+          },
+          _ => assert.fail("expected For"),
+        }
+        cont := try parse_body_stmt("fn f() { for true { continue } }", 0)
+
+        case cont {
+          .For(s) => {
+            try assert.equal(s.body.stmts.len(), 1)
+
+            case s.body.stmts[0] {
+              .Continue(_) => .Ok({}),
+              _ => assert.fail("expected Continue"),
+            }
+          },
+          _ => assert.fail("expected For"),
+        }
+      },
+    )
+    .test(
+      "stmt: defer",
+      fn() {
+        stmt := try parse_body_stmt("fn f() { defer cleanup() }", 0)
+
+        case stmt {
+          .Defer(s) => assert_expr_kind(s.expr, "Call"),
+          _ => assert.fail("expected Defer"),
+        }
+      },
+    )
+    .test(
+      "type expr: generic applied type",
+      fn() {
+        item := try parse_first_item("fn f(xs: Vector<Int>) {}")
+
         case item {
           .Function(f) => {
-            if f.name == "ok" { found_ok = true }
+            case f.params[0].ty {
+              .Some(ty) => {
+                case ty.kind {
+                  .Applied(path, args) => {
+                    try assert.equal(path.segments[0], "Vector")
+                    try assert.equal(args.len(), 1)
+                    assert.is_true(type_is_path(args[0], "Int"))
+                  },
+                  _ => assert.fail("expected Applied type"),
+                }
+              },
+              .None => assert.fail("expected param type"),
+            }
           },
-          _ => {},
+          _ => assert.fail("expected function"),
         }
-      }
+      },
+    )
+    .test(
+      "type expr: function type",
+      fn() {
+        item := try parse_first_item("fn f(cb: fn(Int) Bool) {}")
 
-      assert.is_true(found_ok)
-    },
-  ).test(
-    "error recovery: unclosed paren in expression",
-    fn() {
-      parsed := parser.parse("fn f() { (1 + 2 }", 0)
-      assert.is_true(parsed.diagnostics.len() > 0)
-    },
-  ).test(
-    "error recovery: unclosed bracket in array",
-    fn() {
-      parsed := parser.parse("fn f() { [1, 2 }", 0)
-      assert.is_true(parsed.diagnostics.len() > 0)
-    },
-  ).test(
-    "error recovery: unclosed call args",
-    fn() {
-      parsed := parser.parse("fn f() { foo(1, 2 }", 0)
-      assert.is_true(parsed.diagnostics.len() > 0)
-    },
-  ).test(
-    "error recovery: double operator produces diagnostic",
-    fn() {
-      parsed := parser.parse("fn f() { 1 + + 2 }", 0)
-      // '+' is not a valid prefix operator, so the parser should emit a diagnostic
-      try assert.is_true(parsed.diagnostics.len() > 0)
-      // Should still produce the function item
-      assert.equal(parsed.value.items.len(), 1)
-    },
-  ).test(
-    "error recovery: missing case arm body",
-    fn() {
-      src := "fn f() {\n  case x {\n    .A =>,\n    .B => 2,\n  }\n}"
-      parsed := parser.parse(src, 0)
-      assert.is_true(parsed.diagnostics.len() > 0)
-    },
-  ).test(
-    "error recovery: let missing value",
-    fn() {
-      src := "fn f() { x :=\ny := 1 }"
-      parsed := parser.parse(src, 0)
-      // should produce a diagnostic for the missing value
-      assert.is_true(parsed.diagnostics.len() > 0)
-    },
-  ).test(
-    "error recovery: for missing body",
-    fn() {
-      src := "fn f() { for x in items\nreturn 1 }"
-      parsed := parser.parse(src, 0)
-      assert.is_true(parsed.diagnostics.len() > 0)
-    },
-  ).test(
-    "error recovery: multiple bad items, all recovered",
-    fn() {
-      src := "use bad.\ntype =\nfn ok() {}"
-      parsed := parser.parse(src, 0)
-      try assert.is_true(parsed.diagnostics.len() >= 2)
-      // parser should still produce items and reach the valid fn
-      found_ok := false
-
-      for item in parsed.value.items {
         case item {
           .Function(f) => {
-            if f.name == "ok" { found_ok = true }
+            case f.params[0].ty {
+              .Some(ty) => {
+                case ty.kind {
+                  .Function(params, ret) => {
+                    try assert.equal(params.len(), 1)
+                    assert.is_true(type_is_path(ret, "Bool"))
+                  },
+                  _ => assert.fail("expected Function type"),
+                }
+              },
+              .None => assert.fail("expected param type"),
+            }
           },
-          _ => {},
+          _ => assert.fail("expected function"),
         }
-      }
+      },
+    )
+    .test(
+      "type expr: optional T?",
+      fn() {
+        item := try parse_first_item("fn f(x: Int?) {}")
 
-      assert.is_true(found_ok)
-    },
-  ).test(
-    "error recovery: garbage between valid items",
-    fn() {
-      src := "fn a() {}\n!@#\nfn b() {}"
-      parsed := parser.parse(src, 0)
-      try assert.is_true(parsed.diagnostics.len() > 0)
-      fn_names: Vector<String> = []
-
-      for item in parsed.value.items {
-        case item {
-          .Function(f) => { fn_names = .append(f.name) },
-          _ => {},
-        }
-      }
-
-      try assert.is_true(fn_names.contains("a"))
-      assert.is_true(fn_names.contains("b"))
-    },
-  ).test(
-    "error recovery: empty source",
-    fn() {
-      parsed := parser.parse("", 0)
-      try assert.equal(parsed.diagnostics.len(), 0)
-      assert.equal(parsed.value.items.len(), 0)
-    },
-  ).test(
-    "error recovery: only whitespace and comments",
-    fn() {
-      parsed := parser.parse("  \n// just a comment\n  ", 0)
-      try assert.equal(parsed.diagnostics.len(), 0)
-      assert.equal(parsed.value.items.len(), 0)
-    },
-  ).test(
-    "error recovery: single unknown token",
-    fn() {
-      parsed := parser.parse("#", 0)
-      assert.is_true(parsed.diagnostics.len() > 0)
-    },
-  ).test(
-    "diagnostics: return in expression position",
-    fn() {
-      parsed := parser.parse("fn f() Int { case 1 { 1 => return 1, _ => 0 } }", 0)
-      try assert.is_true(parsed.diagnostics.len() > 0)
-      msg := parsed.diagnostics[0].message()
-      try assert.is_true(msg.contains("is a statement"))
-      try assert.is_true(msg.contains("where an expression is expected"))
-      hints := parsed.diagnostics[0].help_lines()
-      assert.is_true(hints.len() > 0 and hints[0].contains("wrap it in a block expression"))
-    },
-  ).test(
-    "diagnostics: break in expression position",
-    fn() {
-      parsed := parser.parse("fn f() { case 1 { 1 => break, _ => {} } }", 0)
-      try assert.is_true(parsed.diagnostics.len() > 0)
-      msg := parsed.diagnostics[0].message()
-      try assert.is_true(msg.contains("is a statement"))
-      try assert.is_true(msg.contains("where an expression is expected"))
-      hints := parsed.diagnostics[0].help_lines()
-      assert.is_true(hints.len() > 0 and hints[0].contains("wrap it in a block expression"))
-    },
-  ).test(
-    "diagnostics: continue in expression position",
-    fn() {
-      parsed := parser.parse("fn f() { case 1 { 1 => continue, _ => {} } }", 0)
-      try assert.is_true(parsed.diagnostics.len() > 0)
-      msg := parsed.diagnostics[0].message()
-      try assert.is_true(msg.contains("is a statement"))
-      try assert.is_true(msg.contains("where an expression is expected"))
-      hints := parsed.diagnostics[0].help_lines()
-      assert.is_true(hints.len() > 0 and hints[0].contains("wrap it in a block expression"))
-    },
-  ).test(
-    "diagnostics: defer in expression position",
-    fn() {
-      parsed := parser.parse("fn f() { case 1 { 1 => defer cleanup(), _ => {} } }", 0)
-      try assert.is_true(parsed.diagnostics.len() > 0)
-      msg := parsed.diagnostics[0].message()
-      try assert.is_true(msg.contains("is a statement"))
-      try assert.is_true(msg.contains("where an expression is expected"))
-      hints := parsed.diagnostics[0].help_lines()
-      assert.is_true(hints.len() > 0 and hints[0].contains("wrap it in a block expression"))
-    },
-  ).test(
-    "diagnostics: for in expression position",
-    fn() {
-      parsed := parser.parse("fn f() { case 1 { 1 => for x in xs { }, _ => {} } }", 0)
-      try assert.is_true(parsed.diagnostics.len() > 0)
-      msg := parsed.diagnostics[0].message()
-      try assert.is_true(msg.contains("is a statement"))
-      try assert.is_true(msg.contains("where an expression is expected"))
-      hints := parsed.diagnostics[0].help_lines()
-      assert.is_true(hints.len() > 0 and hints[0].contains("wrap it in a block expression"))
-    },
-  ).test(
-    "diagnostics: return span points at keyword",
-    fn() {
-      src := "fn f() Int { case 1 { 1 => return 1, _ => 0 } }"
-      parsed := parser.parse(src, 0)
-      try assert.is_true(parsed.diagnostics.len() > 0)
-      diag_span := parsed.diagnostics[0].span()
-      // The span should cover the 'return' keyword (6 chars)
-      assert.equal(diag_span.end - diag_span.start, 6)
-    },
-  ).test(
-    "diagnostics: statement-in-expr recovers to next fn",
-    fn() {
-      src := "fn bad() Int { case 1 { 1 => return 1, _ => 0 } }\nfn ok() {}"
-      parsed := parser.parse(src, 0)
-      try assert.is_true(parsed.diagnostics.len() > 0)
-      found_ok := false
-
-      for item in parsed.value.items {
         case item {
           .Function(f) => {
-            if f.name == "ok" { found_ok = true }
+            case f.params[0].ty {
+              .Some(ty) => {
+                case ty.kind {
+                  .Optional(inner) => assert.is_true(type_is_path(inner, "Int")),
+                  _ => assert.fail("expected Optional type"),
+                }
+              },
+              .None => assert.fail("expected param type"),
+            }
           },
-          _ => {},
+          _ => assert.fail("expected function"),
         }
-      }
+      },
+    )
+    .test(
+      "type expr: result T!E",
+      fn() {
+        item := try parse_first_item("fn f() Int!String {}")
 
-      assert.is_true(found_ok)
-    },
-  ).test(
-    "diagnostics: statement in case arm mentions context",
-    fn() {
-      parsed := parser.parse("fn f() Int { case 1 { 1 => return 1, _ => 0 } }", 0)
-      try assert.is_true(parsed.diagnostics.len() > 0)
-      assert.is_true(parsed.diagnostics[0].message().contains("case arm body"))
-    },
-  ).test(
-    "diagnostics: statement in call arg mentions context",
-    fn() {
-      parsed := parser.parse("fn f() { foo(return 1) }", 0)
-      try assert.is_true(parsed.diagnostics.len() > 0)
-      assert.is_true(parsed.diagnostics[0].message().contains("call argument"))
-    },
-  ).test(
-    "diagnostics: statement in array element mentions context",
-    fn() {
-      parsed := parser.parse("fn f() { [return 1] }", 0)
-      try assert.is_true(parsed.diagnostics.len() > 0)
-      assert.is_true(parsed.diagnostics[0].message().contains("array element"))
-    },
-  ).test(
-    "diagnostics: statement in grouped expr mentions context",
-    fn() {
-      parsed := parser.parse("fn f() { (return 1) }", 0)
-      try assert.is_true(parsed.diagnostics.len() > 0)
-      assert.is_true(parsed.diagnostics[0].message().contains("grouped expression"))
-    },
-  ).test(
-    "diagnostics: valid return in block has no statement-in-expr error",
-    fn() {
-      parsed := parser.parse("fn f() Int { return 1 }", 0)
-      assert.equal(parsed.diagnostics.len(), 0)
-    },
-  ).test(
-    "diagnostics: valid for loop has no statement-in-expr error",
-    fn() {
-      parsed := parser.parse("fn f() { for x in xs { continue } }", 0)
-      assert.equal(parsed.diagnostics.len(), 0)
-    },
-  ).test(
-    "error recovery: unclosed sum type stops at next fn",
-    fn() {
-      src := "type FB = { Fizz, Buzz, FizzBuzz, Num(Int)\n\nfn classify(i: Int) FB {\n  .Fizz\n}"
-      parsed := parser.parse(src, 0)
-      try assert.is_true(parsed.diagnostics.len() > 0)
-      // The parser should recover and parse the fn declaration
-      found_fn := false
-
-      for item in parsed.value.items {
         case item {
           .Function(f) => {
-            if f.name == "classify" { found_fn = true }
+            case f.return_type {
+              .Some(ty) => {
+                case ty.kind {
+                  .Result(ok_ty, err_ty) => {
+                    try assert.is_true(type_is_path(ok_ty, "Int"))
+                    assert.is_true(type_is_path(err_ty, "String"))
+                  },
+                  _ => assert.fail("expected Result type"),
+                }
+              },
+              .None => assert.fail("expected return type"),
+            }
           },
-          _ => {},
+          _ => assert.fail("expected function"),
         }
-      }
+      },
+    )
+    .test(
+      "type expr: void result !E",
+      fn() {
+        item := try parse_first_item("fn f() !String {}")
 
-      assert.is_true(found_fn)
-    },
-  ).test(
-    "error recovery: unclosed sum type limits error count",
-    fn() {
-      src := "type FB = { Fizz, Buzz, FizzBuzz, Num(Int)\n\nfn classify(i: Int) FB {\n  .Fizz\n}\n\nfn other() {}"
-      parsed := parser.parse(src, 0)
-      // Should NOT produce a wall of errors — just a couple about the unclosed type
-      try assert.is_true(parsed.diagnostics.len() > 0)
-      assert.is_true(parsed.diagnostics.len() < 5)
-    },
-  ).test(
-    "error recovery: unclosed record type stops at next fn",
-    fn() {
-      src := "type Point = .{ x: Int, y: Int\n\nfn origin() Point {\n  Point.{ x: 0, y: 0 }\n}"
-      parsed := parser.parse(src, 0)
-      try assert.is_true(parsed.diagnostics.len() > 0)
-      found_fn := false
-
-      for item in parsed.value.items {
         case item {
           .Function(f) => {
-            if f.name == "origin" { found_fn = true }
+            case f.return_type {
+              .Some(ty) => {
+                case ty.kind {
+                  .Result(ok_ty, err_ty) => {
+                    // ok side should be Void (or a path to Void)
+                    try assert.is_true(type_is_path(err_ty, "String"))
+                    .Ok({})
+                  },
+                  _ => assert.fail("expected Result type"),
+                }
+              },
+              .None => assert.fail("expected return type"),
+            }
           },
-          _ => {},
+          _ => assert.fail("expected function"),
         }
-      }
+      },
+    )
+    .test(
+      "type expr: nested generic Dict<String, Vector<Int>>",
+      fn() {
+        item := try parse_first_item("fn f(d: Dict<String, Vector<Int>>) {}")
 
-      assert.is_true(found_fn)
-    },
-  ).test(
-    "error recovery: unclosed record type limits error count",
-    fn() {
-      src := "type Point = .{ x: Int, y: Int\n\nfn origin() Point {\n  Point.{ x: 0, y: 0 }\n}"
-      parsed := parser.parse(src, 0)
-      try assert.is_true(parsed.diagnostics.len() > 0)
-      assert.is_true(parsed.diagnostics.len() < 5)
-    },
-  ).test(
-    "error recovery: unclosed sum type before type decl",
-    fn() {
-      src := "type A = { X, Y\n\ntype B = { P, Q }"
-      parsed := parser.parse(src, 0)
-      try assert.is_true(parsed.diagnostics.len() > 0)
-      type_count := 0
-
-      for item in parsed.value.items {
         case item {
-          .Type(_) => { type_count = type_count + 1 },
-          _ => {},
-        }
-      }
+          .Function(f) => {
+            case f.params[0].ty {
+              .Some(ty) => {
+                case ty.kind {
+                  .Applied(path, args) => {
+                    try assert.equal(path.segments[0], "Dict")
+                    try assert.equal(args.len(), 2)
+                    try assert.is_true(type_is_path(args[0], "String"))
 
-      assert.is_true(type_count == 2)
-    },
-  ).test(
-    "snapshot: statement_in_expression_return",
-    fn() { assert_snapshot("tests/parser_errors/statement_in_expression_return.tw") },
-  ).test(
-    "snapshot: statement_in_expression_case_arm",
-    fn() { assert_snapshot("tests/parser_errors/statement_in_expression_case_arm.tw") },
-  ).test(
-    "snapshot: statement_in_expression_break",
-    fn() { assert_snapshot("tests/parser_errors/statement_in_expression_break.tw") },
-  ).test(
-    "snapshot: statement_in_expression_continue",
-    fn() { assert_snapshot("tests/parser_errors/statement_in_expression_continue.tw") },
-  ).test(
-    "snapshot: statement_in_expression_defer",
-    fn() { assert_snapshot("tests/parser_errors/statement_in_expression_defer.tw") },
-  ).test(
-    "snapshot: statement_in_expression_for",
-    fn() { assert_snapshot("tests/parser_errors/statement_in_expression_for.tw") },
-  ).test(
-    "snapshot: statement_in_expression_call_arg",
-    fn() { assert_snapshot("tests/parser_errors/statement_in_expression_call_arg.tw") },
-  ).test(
-    "snapshot: statement_in_expression_array",
-    fn() { assert_snapshot("tests/parser_errors/statement_in_expression_array.tw") },
-  ).test(
-    "snapshot: statement_in_expression_grouped",
-    fn() { assert_snapshot("tests/parser_errors/statement_in_expression_grouped.tw") },
-  ).test(
-    "snapshot: case_missing_comma",
-    fn() { assert_snapshot("tests/parser_errors/case_missing_comma.tw") },
-  ).test(
-    "snapshot: missing_operand",
-    fn() { assert_snapshot("tests/parser_errors/missing_operand.tw") },
-  ).test(
-    "snapshot: missing_paren",
-    fn() { assert_snapshot("tests/parser_errors/missing_paren.tw") },
-  ).test(
-    "snapshot: unterminated_string",
-    fn() { assert_snapshot("tests/parser_errors/unterminated_string.tw") },
-  ).test(
-    "snapshot: invalid_hex_escape",
-    fn() { assert_snapshot("tests/parser_errors/invalid_hex_escape.tw") },
-  ).test(
-    "snapshot: invalid_unicode_escape",
-    fn() { assert_snapshot("tests/parser_errors/invalid_unicode_escape.tw") },
-  ).test(
-    "snapshot: unclosed_sum_type",
-    fn() { assert_snapshot("tests/parser_errors/unclosed_sum_type.tw") },
-  ).test(
-    "snapshot: unclosed_record_type",
-    fn() { assert_snapshot("tests/parser_errors/unclosed_record_type.tw") },
-  )
+                    case args[1].kind {
+                      .Applied(inner_path, inner_args) => {
+                        try assert.equal(inner_path.segments[0], "Vector")
+                        assert.equal(inner_args.len(), 1)
+                      },
+                      _ => assert.fail("expected Applied for inner type"),
+                    }
+                  },
+                  _ => assert.fail("expected Applied type"),
+                }
+              },
+              .None => assert.fail("expected param type"),
+            }
+          },
+          _ => assert.fail("expected function"),
+        }
+      },
+    )
+    .test(
+      "pattern: wildcard and identifier binding",
+      fn() {
+        src := "fn f() {\n  case x {\n    _ => 0,\n    y => y,\n  }\n}"
+        expr := try parse_body_tail(src)
+
+        case expr.kind {
+          .Case(_, arms) => {
+            try case arms[0].pattern.kind {
+              .Wildcard => .Ok({}),
+              _ => assert.fail("expected Wildcard pattern"),
+            }
+
+            case arms[1].pattern.kind {
+              .Ident(name) => assert.equal(name, "y"),
+              _ => assert.fail("expected Ident pattern"),
+            }
+          },
+          _ => assert.fail("expected Case"),
+        }
+      },
+    )
+    .test(
+      "pattern: literal int and bool",
+      fn() {
+        src := "fn f() {\n  case n {\n    0 => 1,\n    true => 2,\n    _ => 3,\n  }\n}"
+        expr := try parse_body_tail(src)
+
+        case expr.kind {
+          .Case(_, arms) => {
+            try case arms[0].pattern.kind {
+              .Literal(e) => assert_expr_kind(e, "IntLit"),
+              _ => assert.fail("expected Literal pattern"),
+            }
+
+            case arms[1].pattern.kind {
+              .Literal(e) => assert_expr_kind(e, "BoolLit"),
+              _ => assert.fail("expected Literal pattern"),
+            }
+          },
+          _ => assert.fail("expected Case"),
+        }
+      },
+    )
+    .test(
+      "pattern: variant with nested patterns",
+      fn() {
+        src := "fn f() {\n  case x {\n    .Some(.Some(v)) => v,\n    _ => 0,\n  }\n}"
+        expr := try parse_body_tail(src)
+
+        case expr.kind {
+          .Case(_, arms) => {
+            case arms[0].pattern.kind {
+              .Variant(name, pats) => {
+                try assert.equal(name, "Some")
+                try assert.equal(pats.len(), 1)
+
+                case pats[0].kind {
+                  .Variant(inner_name, _) => assert.equal(inner_name, "Some"),
+                  _ => assert.fail("expected nested Variant pattern"),
+                }
+              },
+              _ => assert.fail("expected Variant pattern"),
+            }
+          },
+          _ => assert.fail("expected Case"),
+        }
+      },
+    )
+    .test(
+      "pattern: qualified variant",
+      fn() {
+        src := "fn f() {\n  case r {\n    Result.Ok(v) => v,\n    _ => 0,\n  }\n}"
+        expr := try parse_body_tail(src)
+
+        case expr.kind {
+          .Case(_, arms) => {
+            case arms[0].pattern.kind {
+              .QualifiedVariant(path, name, pats) => {
+                try assert.equal(path.len(), 1)
+                try assert.equal(path[0], "Result")
+                try assert.equal(name, "Ok")
+                assert.equal(pats.len(), 1)
+              },
+              _ => assert.fail("expected QualifiedVariant pattern"),
+            }
+          },
+          _ => assert.fail("expected Case"),
+        }
+      },
+    )
+    .test(
+      "expr: collect comprehension",
+      fn() {
+        src := "fn f() { collect x in items { x * 2 } }"
+        mod := try parse_ok(src)
+        // collect should parse without diagnostics
+        assert.equal(mod.items.len(), 1)
+      },
+    )
+    .test(
+      "multiline: top-level expression continuity and rebind",
+      fn() {
+        src := "x := 1\n"
+        src = "${src}x = x +\n"
+        src = "${src}  2\n"
+        src = "${src}x"
+        mod := try parse_ok(src)
+        try assert.equal(mod.items.len(), 3)
+        try case mod.items[1] {
+          .Stmt(stmt) => {
+            case stmt {
+              .Let(bind) => {
+                try assert.is_true(bind.is_rebind)
+
+                case bind.value.kind {
+                  .Binary(op, _, _) => assert.is_true(op == .Add),
+                  _ => assert.fail("expected Binary Add in rebind"),
+                }
+              },
+              _ => assert.fail("expected Let/rebind stmt"),
+            }
+          },
+          _ => assert.fail("expected Stmt"),
+        }
+
+        case mod.items[2] {
+          .Stmt(_) => .Ok({}),
+          _ => assert.fail("expected third item to be stmt"),
+        }
+      },
+    )
+    .test(
+      "lexer: newline boundaries on tokens",
+      fn() {
+        src := "use foo\nfn main() {}"
+        lexed := lexer.lex(src, 0)
+        try assert.equal(lexed.diagnostics.len(), 0)
+        try assert.is_true(lexed.value.len() >= 4)
+        try assert.is_true(lexed.value[2].kind == .Fn)
+        assert.is_true(lexed.value[2].preceded_by_newline)
+      },
+    )
+    .test(
+      "lexer: float, multichar operators, and interpolation tokens",
+      fn() {
+        dollar := "\$"
+        src := "1.5 == 2 && 3 != 4 || 5 <= 6 >= 7 .. 8\n\"a ${dollar}{x + 1} b\""
+        lexed := lexer.lex(src, 0)
+        try assert.equal(lexed.diagnostics.len(), 0)
+        try assert.is_true(lexed.value[0].kind == .FloatLit)
+        try assert.is_true(lexed.value[1].kind == .EqEq)
+        try assert.is_true(lexed.value[3].kind == .AmpAmp)
+        try assert.is_true(lexed.value[5].kind == .BangEq)
+        try assert.is_true(lexed.value[7].kind == .PipePipe)
+        try assert.is_true(lexed.value[9].kind == .LtEq)
+        try assert.is_true(lexed.value[11].kind == .GtEq)
+        try assert.is_true(lexed.value[13].kind == .DotDot)
+        try assert.is_true(lexed.value[15].kind == .StringStart)
+        try assert.is_true(lexed.value[16].kind == .Ident)
+        try assert.is_true(lexed.value[17].kind == .Plus)
+        try assert.is_true(lexed.value[18].kind == .IntLit)
+        assert.is_true(lexed.value[19].kind == .StringEnd)
+      },
+    )
+    .test(
+      "lexer: utf8 in comment does not trap",
+      fn() {
+        src := "// 你好\nfn main() {}"
+        lexed := lexer.lex(src, 0)
+        try assert.equal(lexed.diagnostics.len(), 0)
+        try assert.is_true(lexed.value.len() >= 2)
+        try assert.is_true(lexed.value[0].kind == .Fn)
+        assert.is_true(lexed.value[0].preceded_by_newline)
+      },
+    )
+    .test(
+      "lexer: utf8 plain string literal does not trap",
+      fn() {
+        src := "\"你好\""
+        lexed := lexer.lex(src, 0)
+        try assert.equal(lexed.diagnostics.len(), 0)
+        try assert.is_true(lexed.value.len() >= 2)
+        assert.is_true(lexed.value[0].kind == .StringLit)
+      },
+    )
+    .test(
+      "lexer: utf8 string interpolation segments do not trap",
+      fn() {
+        dollar := "\$"
+        src := "\"你好 ${dollar}{x} 世界\""
+        lexed := lexer.lex(src, 0)
+        try assert.equal(lexed.diagnostics.len(), 0)
+        try assert.is_true(lexed.value.len() >= 4)
+        try assert.is_true(lexed.value[0].kind == .StringStart)
+        try assert.is_true(lexed.value[1].kind == .Ident)
+        assert.is_true(lexed.value[2].kind == .StringEnd)
+      },
+    )
+    .test(
+      "expr: shift left parses as BinOp.Shl",
+      fn() {
+        parsed := parser.parse("fn f() Int { a << b }", 0)
+        assert.is_true(parsed.diagnostics.len() == 0)
+      },
+    )
+    .test(
+      "expr: shift right parses as BinOp.Shr",
+      fn() {
+        parsed := parser.parse("fn f() Int { a >> b }", 0)
+        assert.is_true(parsed.diagnostics.len() == 0)
+      },
+    )
+    .test(
+      "expr: named record literal Point.{ x: 1, y: 2 }",
+      fn() {
+        // Point.{ x: 1, y: 2 } parses as Ident("Point") then postfix .{ record }
+        expr := try parse_body_tail("fn f() { Point.{ x: 1, y: 2 } }")
+
+        // The outer expression should be a NamedRecord preserving the type name
+        case expr.kind {
+          .NamedRecord(name, entries) => {
+            try assert.equal(name, "Point")
+            try assert.equal(entries.len(), 2)
+            try assert.equal(entries[0].name, "x")
+            assert.equal(entries[1].name, "y")
+          },
+          _ => assert.fail("expected NamedRecord, got ${expr.kind.name()}"),
+        }
+      },
+    )
+    .test(
+      "naming: uppercase function name parses without error (no enforcement in boot)",
+      fn() {
+        // The boot parser does not enforce naming conventions, unlike the Rust parser
+        parsed := parser.parse("fn Greet() {}", 0)
+        // Boot parser currently allows this — no diagnostics
+        assert.equal(parsed.diagnostics.len(), 0)
+      },
+    )
+    .test(
+      "postfix: x.Some parses as field access (no rejection in boot)",
+      fn() {
+        // The boot parser does not reject .Uppercase in postfix position
+        expr := try parse_body_tail("fn f() { x.Some }")
+
+        case expr.kind {
+          .Field(base, name) => {
+            try assert_expr_kind(base, "Ident")
+            assert.equal(name, "Some")
+          },
+          _ => assert.fail("expected Field, got ${expr.kind.name()}"),
+        }
+      },
+    )
+    .test(
+      "postfix: newline before [ or ( starts a new statement",
+      fn() {
+        block := try parse_first_fn_body("fn f() { foo := \"asdf\"\n[1, 22, 3]\nbar\n(1) }")
+        try assert.equal(block.stmts.len(), 3)
+
+        case block.stmts[0] {
+          .Let(_) => {},
+          _ => try assert.fail("expected let stmt"),
+        }
+
+        case block.stmts[1] {
+          .Expr(es) => {
+            case es.expr.kind {
+              .Array(items) => try assert.equal(items.len(), 3),
+              _ => try assert.fail("expected array expr stmt"),
+            }
+          },
+          _ => try assert.fail("expected expr stmt"),
+        }
+
+        case block.stmts[2] {
+          .Expr(es) => {
+            case es.expr.kind {
+              .Ident(name) => try assert.equal(name, "bar"),
+              _ => try assert.fail("expected ident expr stmt"),
+            }
+          },
+          _ => try assert.fail("expected expr stmt"),
+        }
+
+        case block.tail {
+          .Some(expr) => {
+            case expr.kind {
+              .IntLit(n) => try assert.equal(n, 1),
+              _ => try assert.fail("expected grouped int tail expr"),
+            }
+          },
+          .None => try assert.fail("expected tail expr"),
+        }
+
+        .Ok({})
+      },
+    )
+    .test(
+      "postfix: newline before lowercase . keeps method chaining in boot",
+      fn() {
+        expr := try parse_body_tail("fn f() { foo\n.bar() }")
+
+        case expr.kind {
+          .Call(callee, args) => {
+            try assert.equal(args.len(), 0)
+
+            case callee.kind {
+              .Field(base, name) => {
+                try assert.equal(name, "bar")
+                try assert_expr_kind(base, "Ident")
+              },
+              _ => try assert.fail("expected field callee"),
+            }
+          },
+          _ => try assert.fail("expected call expr"),
+        }
+
+        .Ok({})
+      },
+    )
+    .test(
+      "pub let: pub on top-level binding parses as stmt",
+      fn() {
+        parsed := parser.parse("pub x := 42", 0)
+        try assert.equal(parsed.diagnostics.len(), 0)
+        try assert.equal(parsed.value.items.len(), 1)
+
+        case parsed.value.items[0] {
+          .Stmt(stmt) => {
+            case stmt {
+              .Let(ls) => {
+                try assert.equal(ls.name, "x")
+                try assert.is_true(ls.is_pub)
+                assert.is_true(!ls.is_rebind)
+              },
+              _ => assert.fail("expected Let stmt"),
+            }
+          },
+          _ => assert.fail("expected Stmt item"),
+        }
+      },
+    )
+    .test(
+      "import: empty destructuring braces produces diagnostic",
+      fn() {
+        parsed := parser.parse("use foo.bar.{}", 0)
+        assert.is_true(parsed.diagnostics.len() > 0)
+      },
+    )
+    .test(
+      "import: trailing comma in destructuring",
+      fn() {
+        src := "use foo.bar.{add, Vec,}"
+        parsed := parser.parse(src, 0)
+        try assert.equal(parsed.diagnostics.len(), 0)
+
+        case parsed.value.items[0] {
+          .Use(d) => {
+            case d.items {
+              .Some(items) => assert.equal(items.len(), 2),
+              .None => assert.fail("expected destructuring items"),
+            }
+          },
+          _ => assert.fail("expected use declaration"),
+        }
+      },
+    )
+    .test(
+      "import: relative path with destructuring",
+      fn() {
+        src := "use .util.{helper, Config}"
+        parsed := parser.parse(src, 0)
+        try assert.equal(parsed.diagnostics.len(), 0)
+
+        case parsed.value.items[0] {
+          .Use(d) => {
+            try assert.is_true(d.is_relative)
+            try assert.equal(d.path.len(), 1)
+            try assert.equal(d.path[0], "util")
+
+            case d.items {
+              .Some(items) => {
+                try assert.equal(items.len(), 2)
+                try case items[0] {
+                  .Value(v) => assert.equal(v.name, "helper"),
+                  _ => assert.fail("expected value import"),
+                }
+
+                case items[1] {
+                  .Type(t) => assert.equal(t.name, "Config"),
+                  _ => assert.fail("expected type import"),
+                }
+              },
+              .None => assert.fail("expected destructuring items"),
+            }
+          },
+          _ => assert.fail("expected use declaration"),
+        }
+      },
+    )
+    .test(
+      "error recovery: missing operand in expression",
+      fn() {
+        parsed := parser.parse("fn f() { 1 + }", 0)
+        assert.is_true(parsed.diagnostics.len() > 0)
+      },
+    )
+    .test(
+      "error recovery: unterminated string",
+      fn() {
+        parsed := parser.parse("fn f() { \"hello }", 0)
+        assert.is_true(parsed.diagnostics.len() > 0)
+      },
+    )
+    .test(
+      "error recovery: malformed use, parse continues",
+      fn() {
+        src := "use foo.\nfn ok() {}"
+        parsed := parser.parse(src, 0)
+        try assert.is_true(parsed.diagnostics.len() > 0)
+        try assert.equal(parsed.value.items.len(), 2)
+        try case parsed.value.items[0] {
+          .ErrorItem(_) => .Ok({}),
+          _ => assert.fail("expected error node"),
+        }
+
+        case parsed.value.items[1] {
+          .Function(fn_decl) => assert.equal(fn_decl.name, "ok"),
+          _ => assert.fail("expected function after error"),
+        }
+      },
+    )
+    .test(
+      "error recovery: fn missing name recovers to next fn",
+      fn() {
+        src := "fn () {}\nfn ok() {}"
+        parsed := parser.parse(src, 0)
+        try assert.is_true(parsed.diagnostics.len() > 0)
+        // should recover and parse the second function
+        found_ok := false
+
+        for item in parsed.value.items {
+          case item {
+            .Function(f) => {
+              if f.name == "ok" { found_ok = true }
+            },
+            _ => {},
+          }
+        }
+
+        assert.is_true(found_ok)
+      },
+    )
+    .test(
+      "error recovery: fn missing opening brace recovers next fn",
+      fn() {
+        src := "fn bad() Int\nfn ok() {}"
+        parsed := parser.parse(src, 0)
+        try assert.is_true(parsed.diagnostics.len() > 0)
+        // Parser should recover and find the second valid function
+        found_ok := false
+
+        for item in parsed.value.items {
+          case item {
+            .Function(f) => {
+              if f.name == "ok" { found_ok = true }
+            },
+            _ => {},
+          }
+        }
+
+        assert.is_true(found_ok)
+      },
+    )
+    .test(
+      "error recovery: fn missing closing paren recovers next fn",
+      fn() {
+        src := "fn bad(x: Int {}\nfn ok() {}"
+        parsed := parser.parse(src, 0)
+        try assert.is_true(parsed.diagnostics.len() > 0)
+        // Parser should recover and find the second valid function
+        found_ok := false
+
+        for item in parsed.value.items {
+          case item {
+            .Function(f) => {
+              if f.name == "ok" { found_ok = true }
+            },
+            _ => {},
+          }
+        }
+
+        assert.is_true(found_ok)
+      },
+    )
+    .test(
+      "error recovery: type missing name",
+      fn() {
+        src := "type = { A, B }\nfn ok() {}"
+        parsed := parser.parse(src, 0)
+        try assert.is_true(parsed.diagnostics.len() > 0)
+        found_ok := false
+
+        for item in parsed.value.items {
+          case item {
+            .Function(f) => {
+              if f.name == "ok" { found_ok = true }
+            },
+            _ => {},
+          }
+        }
+
+        assert.is_true(found_ok)
+      },
+    )
+    .test(
+      "error recovery: type missing equals sign",
+      fn() {
+        src := "type Foo { A, B }\nfn ok() {}"
+        parsed := parser.parse(src, 0)
+        try assert.is_true(parsed.diagnostics.len() > 0)
+        found_ok := false
+
+        for item in parsed.value.items {
+          case item {
+            .Function(f) => {
+              if f.name == "ok" { found_ok = true }
+            },
+            _ => {},
+          }
+        }
+
+        assert.is_true(found_ok)
+      },
+    )
+    .test(
+      "error recovery: unclosed paren in expression",
+      fn() {
+        parsed := parser.parse("fn f() { (1 + 2 }", 0)
+        assert.is_true(parsed.diagnostics.len() > 0)
+      },
+    )
+    .test(
+      "error recovery: unclosed bracket in array",
+      fn() {
+        parsed := parser.parse("fn f() { [1, 2 }", 0)
+        assert.is_true(parsed.diagnostics.len() > 0)
+      },
+    )
+    .test(
+      "error recovery: unclosed call args",
+      fn() {
+        parsed := parser.parse("fn f() { foo(1, 2 }", 0)
+        assert.is_true(parsed.diagnostics.len() > 0)
+      },
+    )
+    .test(
+      "error recovery: double operator produces diagnostic",
+      fn() {
+        parsed := parser.parse("fn f() { 1 + + 2 }", 0)
+        // '+' is not a valid prefix operator, so the parser should emit a diagnostic
+        try assert.is_true(parsed.diagnostics.len() > 0)
+        // Should still produce the function item
+        assert.equal(parsed.value.items.len(), 1)
+      },
+    )
+    .test(
+      "error recovery: missing case arm body",
+      fn() {
+        src := "fn f() {\n  case x {\n    .A =>,\n    .B => 2,\n  }\n}"
+        parsed := parser.parse(src, 0)
+        assert.is_true(parsed.diagnostics.len() > 0)
+      },
+    )
+    .test(
+      "error recovery: let missing value",
+      fn() {
+        src := "fn f() { x :=\ny := 1 }"
+        parsed := parser.parse(src, 0)
+        // should produce a diagnostic for the missing value
+        assert.is_true(parsed.diagnostics.len() > 0)
+      },
+    )
+    .test(
+      "error recovery: for missing body",
+      fn() {
+        src := "fn f() { for x in items\nreturn 1 }"
+        parsed := parser.parse(src, 0)
+        assert.is_true(parsed.diagnostics.len() > 0)
+      },
+    )
+    .test(
+      "error recovery: multiple bad items, all recovered",
+      fn() {
+        src := "use bad.\ntype =\nfn ok() {}"
+        parsed := parser.parse(src, 0)
+        try assert.is_true(parsed.diagnostics.len() >= 2)
+        // parser should still produce items and reach the valid fn
+        found_ok := false
+
+        for item in parsed.value.items {
+          case item {
+            .Function(f) => {
+              if f.name == "ok" { found_ok = true }
+            },
+            _ => {},
+          }
+        }
+
+        assert.is_true(found_ok)
+      },
+    )
+    .test(
+      "error recovery: garbage between valid items",
+      fn() {
+        src := "fn a() {}\n!@#\nfn b() {}"
+        parsed := parser.parse(src, 0)
+        try assert.is_true(parsed.diagnostics.len() > 0)
+        fn_names: Vector<String> = []
+
+        for item in parsed.value.items {
+          case item {
+            .Function(f) => { fn_names = .append(f.name) },
+            _ => {},
+          }
+        }
+
+        try assert.is_true(fn_names.contains("a"))
+        assert.is_true(fn_names.contains("b"))
+      },
+    )
+    .test(
+      "error recovery: empty source",
+      fn() {
+        parsed := parser.parse("", 0)
+        try assert.equal(parsed.diagnostics.len(), 0)
+        assert.equal(parsed.value.items.len(), 0)
+      },
+    )
+    .test(
+      "error recovery: only whitespace and comments",
+      fn() {
+        parsed := parser.parse("  \n// just a comment\n  ", 0)
+        try assert.equal(parsed.diagnostics.len(), 0)
+        assert.equal(parsed.value.items.len(), 0)
+      },
+    )
+    .test(
+      "error recovery: single unknown token",
+      fn() {
+        parsed := parser.parse("#", 0)
+        assert.is_true(parsed.diagnostics.len() > 0)
+      },
+    )
+    .test(
+      "diagnostics: return in expression position",
+      fn() {
+        parsed := parser.parse("fn f() Int { case 1 { 1 => return 1, _ => 0 } }", 0)
+        try assert.is_true(parsed.diagnostics.len() > 0)
+        msg := parsed.diagnostics[0].message()
+        try assert.is_true(msg.contains("is a statement"))
+        try assert.is_true(msg.contains("where an expression is expected"))
+        hints := parsed.diagnostics[0].help_lines()
+        assert.is_true(hints.len() > 0 and hints[0].contains("wrap it in a block expression"))
+      },
+    )
+    .test(
+      "diagnostics: break in expression position",
+      fn() {
+        parsed := parser.parse("fn f() { case 1 { 1 => break, _ => {} } }", 0)
+        try assert.is_true(parsed.diagnostics.len() > 0)
+        msg := parsed.diagnostics[0].message()
+        try assert.is_true(msg.contains("is a statement"))
+        try assert.is_true(msg.contains("where an expression is expected"))
+        hints := parsed.diagnostics[0].help_lines()
+        assert.is_true(hints.len() > 0 and hints[0].contains("wrap it in a block expression"))
+      },
+    )
+    .test(
+      "diagnostics: continue in expression position",
+      fn() {
+        parsed := parser.parse("fn f() { case 1 { 1 => continue, _ => {} } }", 0)
+        try assert.is_true(parsed.diagnostics.len() > 0)
+        msg := parsed.diagnostics[0].message()
+        try assert.is_true(msg.contains("is a statement"))
+        try assert.is_true(msg.contains("where an expression is expected"))
+        hints := parsed.diagnostics[0].help_lines()
+        assert.is_true(hints.len() > 0 and hints[0].contains("wrap it in a block expression"))
+      },
+    )
+    .test(
+      "diagnostics: defer in expression position",
+      fn() {
+        parsed := parser.parse("fn f() { case 1 { 1 => defer cleanup(), _ => {} } }", 0)
+        try assert.is_true(parsed.diagnostics.len() > 0)
+        msg := parsed.diagnostics[0].message()
+        try assert.is_true(msg.contains("is a statement"))
+        try assert.is_true(msg.contains("where an expression is expected"))
+        hints := parsed.diagnostics[0].help_lines()
+        assert.is_true(hints.len() > 0 and hints[0].contains("wrap it in a block expression"))
+      },
+    )
+    .test(
+      "diagnostics: for in expression position",
+      fn() {
+        parsed := parser.parse("fn f() { case 1 { 1 => for x in xs { }, _ => {} } }", 0)
+        try assert.is_true(parsed.diagnostics.len() > 0)
+        msg := parsed.diagnostics[0].message()
+        try assert.is_true(msg.contains("is a statement"))
+        try assert.is_true(msg.contains("where an expression is expected"))
+        hints := parsed.diagnostics[0].help_lines()
+        assert.is_true(hints.len() > 0 and hints[0].contains("wrap it in a block expression"))
+      },
+    )
+    .test(
+      "diagnostics: return span points at keyword",
+      fn() {
+        src := "fn f() Int { case 1 { 1 => return 1, _ => 0 } }"
+        parsed := parser.parse(src, 0)
+        try assert.is_true(parsed.diagnostics.len() > 0)
+        diag_span := parsed.diagnostics[0].span()
+        // The span should cover the 'return' keyword (6 chars)
+        assert.equal(diag_span.end - diag_span.start, 6)
+      },
+    )
+    .test(
+      "diagnostics: statement-in-expr recovers to next fn",
+      fn() {
+        src := "fn bad() Int { case 1 { 1 => return 1, _ => 0 } }\nfn ok() {}"
+        parsed := parser.parse(src, 0)
+        try assert.is_true(parsed.diagnostics.len() > 0)
+        found_ok := false
+
+        for item in parsed.value.items {
+          case item {
+            .Function(f) => {
+              if f.name == "ok" { found_ok = true }
+            },
+            _ => {},
+          }
+        }
+
+        assert.is_true(found_ok)
+      },
+    )
+    .test(
+      "diagnostics: statement in case arm mentions context",
+      fn() {
+        parsed := parser.parse("fn f() Int { case 1 { 1 => return 1, _ => 0 } }", 0)
+        try assert.is_true(parsed.diagnostics.len() > 0)
+        assert.is_true(parsed.diagnostics[0].message().contains("case arm body"))
+      },
+    )
+    .test(
+      "diagnostics: statement in call arg mentions context",
+      fn() {
+        parsed := parser.parse("fn f() { foo(return 1) }", 0)
+        try assert.is_true(parsed.diagnostics.len() > 0)
+        assert.is_true(parsed.diagnostics[0].message().contains("call argument"))
+      },
+    )
+    .test(
+      "diagnostics: statement in array element mentions context",
+      fn() {
+        parsed := parser.parse("fn f() { [return 1] }", 0)
+        try assert.is_true(parsed.diagnostics.len() > 0)
+        assert.is_true(parsed.diagnostics[0].message().contains("array element"))
+      },
+    )
+    .test(
+      "diagnostics: statement in grouped expr mentions context",
+      fn() {
+        parsed := parser.parse("fn f() { (return 1) }", 0)
+        try assert.is_true(parsed.diagnostics.len() > 0)
+        assert.is_true(parsed.diagnostics[0].message().contains("grouped expression"))
+      },
+    )
+    .test(
+      "diagnostics: valid return in block has no statement-in-expr error",
+      fn() {
+        parsed := parser.parse("fn f() Int { return 1 }", 0)
+        assert.equal(parsed.diagnostics.len(), 0)
+      },
+    )
+    .test(
+      "diagnostics: valid for loop has no statement-in-expr error",
+      fn() {
+        parsed := parser.parse("fn f() { for x in xs { continue } }", 0)
+        assert.equal(parsed.diagnostics.len(), 0)
+      },
+    )
+    .test(
+      "error recovery: unclosed sum type stops at next fn",
+      fn() {
+        src := "type FB = { Fizz, Buzz, FizzBuzz, Num(Int)\n\nfn classify(i: Int) FB {\n  .Fizz\n}"
+        parsed := parser.parse(src, 0)
+        try assert.is_true(parsed.diagnostics.len() > 0)
+        // The parser should recover and parse the fn declaration
+        found_fn := false
+
+        for item in parsed.value.items {
+          case item {
+            .Function(f) => {
+              if f.name == "classify" { found_fn = true }
+            },
+            _ => {},
+          }
+        }
+
+        assert.is_true(found_fn)
+      },
+    )
+    .test(
+      "error recovery: unclosed sum type limits error count",
+      fn() {
+        src := "type FB = { Fizz, Buzz, FizzBuzz, Num(Int)\n\nfn classify(i: Int) FB {\n  .Fizz\n}\n\nfn other() {}"
+        parsed := parser.parse(src, 0)
+        // Should NOT produce a wall of errors — just a couple about the unclosed type
+        try assert.is_true(parsed.diagnostics.len() > 0)
+        assert.is_true(parsed.diagnostics.len() < 5)
+      },
+    )
+    .test(
+      "error recovery: unclosed record type stops at next fn",
+      fn() {
+        src := "type Point = .{ x: Int, y: Int\n\nfn origin() Point {\n  Point.{ x: 0, y: 0 }\n}"
+        parsed := parser.parse(src, 0)
+        try assert.is_true(parsed.diagnostics.len() > 0)
+        found_fn := false
+
+        for item in parsed.value.items {
+          case item {
+            .Function(f) => {
+              if f.name == "origin" { found_fn = true }
+            },
+            _ => {},
+          }
+        }
+
+        assert.is_true(found_fn)
+      },
+    )
+    .test(
+      "error recovery: unclosed record type limits error count",
+      fn() {
+        src := "type Point = .{ x: Int, y: Int\n\nfn origin() Point {\n  Point.{ x: 0, y: 0 }\n}"
+        parsed := parser.parse(src, 0)
+        try assert.is_true(parsed.diagnostics.len() > 0)
+        assert.is_true(parsed.diagnostics.len() < 5)
+      },
+    )
+    .test(
+      "error recovery: unclosed sum type before type decl",
+      fn() {
+        src := "type A = { X, Y\n\ntype B = { P, Q }"
+        parsed := parser.parse(src, 0)
+        try assert.is_true(parsed.diagnostics.len() > 0)
+        type_count := 0
+
+        for item in parsed.value.items {
+          case item {
+            .Type(_) => { type_count = type_count + 1 },
+            _ => {},
+          }
+        }
+
+        assert.is_true(type_count == 2)
+      },
+    )
+    .test(
+      "snapshot: statement_in_expression_return",
+      fn() { assert_snapshot("tests/parser_errors/statement_in_expression_return.tw") },
+    )
+    .test(
+      "snapshot: statement_in_expression_case_arm",
+      fn() { assert_snapshot("tests/parser_errors/statement_in_expression_case_arm.tw") },
+    )
+    .test(
+      "snapshot: statement_in_expression_break",
+      fn() { assert_snapshot("tests/parser_errors/statement_in_expression_break.tw") },
+    )
+    .test(
+      "snapshot: statement_in_expression_continue",
+      fn() { assert_snapshot("tests/parser_errors/statement_in_expression_continue.tw") },
+    )
+    .test(
+      "snapshot: statement_in_expression_defer",
+      fn() { assert_snapshot("tests/parser_errors/statement_in_expression_defer.tw") },
+    )
+    .test(
+      "snapshot: statement_in_expression_for",
+      fn() { assert_snapshot("tests/parser_errors/statement_in_expression_for.tw") },
+    )
+    .test(
+      "snapshot: statement_in_expression_call_arg",
+      fn() { assert_snapshot("tests/parser_errors/statement_in_expression_call_arg.tw") },
+    )
+    .test(
+      "snapshot: statement_in_expression_array",
+      fn() { assert_snapshot("tests/parser_errors/statement_in_expression_array.tw") },
+    )
+    .test(
+      "snapshot: statement_in_expression_grouped",
+      fn() { assert_snapshot("tests/parser_errors/statement_in_expression_grouped.tw") },
+    )
+    .test(
+      "snapshot: case_missing_comma",
+      fn() { assert_snapshot("tests/parser_errors/case_missing_comma.tw") },
+    )
+    .test(
+      "snapshot: missing_operand",
+      fn() { assert_snapshot("tests/parser_errors/missing_operand.tw") },
+    )
+    .test(
+      "snapshot: missing_paren",
+      fn() { assert_snapshot("tests/parser_errors/missing_paren.tw") },
+    )
+    .test(
+      "snapshot: unterminated_string",
+      fn() { assert_snapshot("tests/parser_errors/unterminated_string.tw") },
+    )
+    .test(
+      "snapshot: invalid_hex_escape",
+      fn() { assert_snapshot("tests/parser_errors/invalid_hex_escape.tw") },
+    )
+    .test(
+      "snapshot: invalid_unicode_escape",
+      fn() { assert_snapshot("tests/parser_errors/invalid_unicode_escape.tw") },
+    )
+    .test(
+      "snapshot: unclosed_sum_type",
+      fn() { assert_snapshot("tests/parser_errors/unclosed_sum_type.tw") },
+    )
+    .test(
+      "snapshot: unclosed_record_type",
+      fn() { assert_snapshot("tests/parser_errors/unclosed_record_type.tw") },
+    )
 }

@@ -34,293 +34,330 @@ fn require_method(type_name: String, method_name: String) Result<String, String>
 
 // ── function signature presence ──────────────────────────────────────────────
 pub fn suite() runner.Suite {
-  runner.suite("base_env guardrails").test(
-    "builtin_env has string_len",
-    fn() {
-      sig := try require_registered_sig("string_len")
-      try assert.equal(sig.params.len(), 1)
-      try assert.equal(sig.type_params.len(), 0)
-      .Ok({})
-    },
-  ).test(
-    "builtin_env has string_concat with two params",
-    fn() {
-      sig := try require_registered_sig("string_concat")
-      try assert.equal(sig.params.len(), 2)
-      .Ok({})
-    },
-  ).test(
-    "builtin_env has string_get returning Option<Byte>",
-    fn() {
-      sig := try require_registered_sig("string_get")
-      try assert.equal(sig.params.len(), 2)
-      inner := try sig.ret.ok_or("expected Some")
+  runner.suite("base_env guardrails")
+    .test(
+      "builtin_env has string_len",
+      fn() {
+        sig := try require_registered_sig("string_len")
+        try assert.equal(sig.params.len(), 1)
+        try assert.equal(sig.type_params.len(), 0)
+        .Ok({})
+      },
+    )
+    .test(
+      "builtin_env has string_concat with two params",
+      fn() {
+        sig := try require_registered_sig("string_concat")
+        try assert.equal(sig.params.len(), 2)
+        .Ok({})
+      },
+    )
+    .test(
+      "builtin_env has string_get returning Option<Byte>",
+      fn() {
+        sig := try require_registered_sig("string_get")
+        try assert.equal(sig.params.len(), 2)
+        inner := try sig.ret.ok_or("expected Some")
 
-      case inner {
-        .Optional(.Byte) => .Ok({}),
-        _ => .Err("expected Optional(Byte)"),
-      }
-    },
-  ).test(
-    "builtin_env has vector_append with type param T",
-    fn() {
-      sig := try require_registered_sig("vector_append")
-      try assert.equal(sig.type_params.len(), 1)
-      try assert.equal(sig.type_params[0].name, "T")
-      try assert.equal(sig.params.len(), 2)
-      .Ok({})
-    },
-  ).test(
-    "builtin_env has vector_get returning Option<T>",
-    fn() {
-      sig := try require_registered_sig("vector_get")
-      try assert.equal(sig.type_params.len(), 1)
-      inner := try sig.ret.ok_or("expected Some")
+        case inner {
+          .Optional(.Byte) => .Ok({}),
+          _ => .Err("expected Optional(Byte)"),
+        }
+      },
+    )
+    .test(
+      "builtin_env has vector_append with type param T",
+      fn() {
+        sig := try require_registered_sig("vector_append")
+        try assert.equal(sig.type_params.len(), 1)
+        try assert.equal(sig.type_params[0].name, "T")
+        try assert.equal(sig.params.len(), 2)
+        .Ok({})
+      },
+    )
+    .test(
+      "builtin_env has vector_get returning Option<T>",
+      fn() {
+        sig := try require_registered_sig("vector_get")
+        try assert.equal(sig.type_params.len(), 1)
+        inner := try sig.ret.ok_or("expected Some")
 
-      case inner {
-        .Optional(.Var(_)) => .Ok({}),
-        _ => .Err("expected Optional(Var(_))"),
-      }
-    },
-  ).test(
-    "builtin_env has vector_map",
-    fn() {
-      sig := try require_registered_sig("vector_map")
-      try assert.equal(sig.type_params.len(), 2)
-      try assert.equal(sig.params.len(), 2)
-      .Ok({})
-    },
-  ).test(
-    "builtin_env has dict_new with two type params",
-    fn() {
-      sig := try require_registered_sig("dict_new")
-      try assert.equal(sig.type_params.len(), 2)
-      .Ok({})
-    },
-  ).test(
-    "builtin_env has dict_set",
-    fn() {
-      _ := try require_registered_sig("dict_set")
-      .Ok({})
-    },
-  ).test(
-    "builtin_env has range_from",
-    fn() {
-      sig := try require_sig("range_from")
-      try assert.equal(sig.params.len(), 2)
-      try assert.equal(sig.type_params.len(), 0)
-      .Ok({})
-    },
-  ).test(
-    "builtin_env has range",
-    fn() {
-      sig := try require_sig("range")
-      try assert.equal(sig.params.len(), 1)
-      .Ok({})
-    },
-  ).test(
-    "builtin_env has range_step with three params",
-    fn() {
-      sig := try require_sig("range_step")
-      try assert.equal(sig.params.len(), 3)
-      .Ok({})
-    },
-  ).test(
-    "builtin_env has cell_new",
-    fn() {
-      sig := try require_registered_sig("cell_new")
-      try assert.equal(sig.type_params.len(), 1)
-      .Ok({})
-    },
-  ).test(
-    "builtin_env has cell_set",
-    fn() {
-      sig := try require_registered_sig("cell_set")
-      try assert.equal(sig.params.len(), 2)
-      .Ok({})
-    },
-  ).test(
-    "builtin_env has iterator_unfold",
-    fn() {
-      sig := try require_registered_sig("iterator_unfold")
-      try assert.equal(sig.type_params.len(), 2)
-      .Ok({})
-    },
-  ).test(
-    "builtin_env records canonical origin for prelude-backed functions",
-    fn() {
-      case lookup_function_origin(builtin_env(), "vector_map") {
-        .Some(origin) => {
-          try assert.str_contains(origin.module_path, "prelude/vector.tw")
-          try assert.equal(origin.func_name, "map")
-          .Ok({})
-        },
-        .None => .Err("expected builtin_env to record origin for vector_map"),
-      }
-    },
-  ).test(
-    "builtin_env has iterator_map",
-    fn() {
-      sig := try require_registered_sig("iterator_map")
-      try assert.equal(sig.type_params.len(), 2)
-      try assert.equal(sig.params.len(), 2)
-      .Ok({})
-    },
-  ).test(
-    "builtin_env has option_map",
-    fn() {
-      sig := try require_registered_sig("option_map")
-      try assert.equal(sig.type_params.len(), 2)
-      try assert.equal(sig.params.len(), 2)
-      .Ok({})
-    },
-  ).test(
-    "builtin_env has result_map",
-    fn() {
-      sig := try require_registered_sig("result_map")
-      try assert.equal(sig.type_params.len(), 3)
-      try assert.equal(sig.params.len(), 2)
-      .Ok({})
-    },
-  ).test(
-    "builtin_env has byte_to_int",
-    fn() {
-      sig := try require_registered_sig("byte_to_int")
-      try assert.equal(sig.params.len(), 1)
-      .Ok({})
-    },
-  ).test(
-    "builtin_env has byte_from_int returning Option<Byte>",
-    fn() {
-      sig := try require_registered_sig("byte_from_int")
-      inner := try sig.ret.ok_or("expected Some")
+        case inner {
+          .Optional(.Var(_)) => .Ok({}),
+          _ => .Err("expected Optional(Var(_))"),
+        }
+      },
+    )
+    .test(
+      "builtin_env has vector_map",
+      fn() {
+        sig := try require_registered_sig("vector_map")
+        try assert.equal(sig.type_params.len(), 2)
+        try assert.equal(sig.params.len(), 2)
+        .Ok({})
+      },
+    )
+    .test(
+      "builtin_env has dict_new with two type params",
+      fn() {
+        sig := try require_registered_sig("dict_new")
+        try assert.equal(sig.type_params.len(), 2)
+        .Ok({})
+      },
+    )
+    .test(
+      "builtin_env has dict_set",
+      fn() {
+        _ := try require_registered_sig("dict_set")
+        .Ok({})
+      },
+    )
+    .test(
+      "builtin_env has range_from",
+      fn() {
+        sig := try require_sig("range_from")
+        try assert.equal(sig.params.len(), 2)
+        try assert.equal(sig.type_params.len(), 0)
+        .Ok({})
+      },
+    )
+    .test(
+      "builtin_env has range",
+      fn() {
+        sig := try require_sig("range")
+        try assert.equal(sig.params.len(), 1)
+        .Ok({})
+      },
+    )
+    .test(
+      "builtin_env has range_step with three params",
+      fn() {
+        sig := try require_sig("range_step")
+        try assert.equal(sig.params.len(), 3)
+        .Ok({})
+      },
+    )
+    .test(
+      "builtin_env has cell_new",
+      fn() {
+        sig := try require_registered_sig("cell_new")
+        try assert.equal(sig.type_params.len(), 1)
+        .Ok({})
+      },
+    )
+    .test(
+      "builtin_env has cell_set",
+      fn() {
+        sig := try require_registered_sig("cell_set")
+        try assert.equal(sig.params.len(), 2)
+        .Ok({})
+      },
+    )
+    .test(
+      "builtin_env has iterator_unfold",
+      fn() {
+        sig := try require_registered_sig("iterator_unfold")
+        try assert.equal(sig.type_params.len(), 2)
+        .Ok({})
+      },
+    )
+    .test(
+      "builtin_env records canonical origin for prelude-backed functions",
+      fn() {
+        case lookup_function_origin(builtin_env(), "vector_map") {
+          .Some(origin) => {
+            try assert.str_contains(origin.module_path, "prelude/vector.tw")
+            try assert.equal(origin.func_name, "map")
+            .Ok({})
+          },
+          .None => .Err("expected builtin_env to record origin for vector_map"),
+        }
+      },
+    )
+    .test(
+      "builtin_env has iterator_map",
+      fn() {
+        sig := try require_registered_sig("iterator_map")
+        try assert.equal(sig.type_params.len(), 2)
+        try assert.equal(sig.params.len(), 2)
+        .Ok({})
+      },
+    )
+    .test(
+      "builtin_env has option_map",
+      fn() {
+        sig := try require_registered_sig("option_map")
+        try assert.equal(sig.type_params.len(), 2)
+        try assert.equal(sig.params.len(), 2)
+        .Ok({})
+      },
+    )
+    .test(
+      "builtin_env has result_map",
+      fn() {
+        sig := try require_registered_sig("result_map")
+        try assert.equal(sig.type_params.len(), 3)
+        try assert.equal(sig.params.len(), 2)
+        .Ok({})
+      },
+    )
+    .test(
+      "builtin_env has byte_to_int",
+      fn() {
+        sig := try require_registered_sig("byte_to_int")
+        try assert.equal(sig.params.len(), 1)
+        .Ok({})
+      },
+    )
+    .test(
+      "builtin_env has byte_from_int returning Option<Byte>",
+      fn() {
+        sig := try require_registered_sig("byte_from_int")
+        inner := try sig.ret.ok_or("expected Some")
 
-      case inner {
-        .Optional(.Byte) => .Ok({}),
-        _ => .Err("expected Optional(Byte)"),
-      }
-    },
-  ).test(
-    "builtin_env has int_to_string",
-    fn() {
-      _ := try require_registered_sig("int_to_string")
-      .Ok({})
-    },
-  ).test(
-    "builtin_env has float_to_string",
-    fn() {
-      _ := try require_registered_sig("float_to_string")
-      .Ok({})
-    },
-  ).test(
-    "builtin_env hides internal implementation names from free namespace",
-    fn() {
-      try assert.is_none(lookup_function(builtin_env(), "bool_to_string"))
-      try assert.is_none(lookup_function(builtin_env(), "int_to_string"))
-      try assert.is_none(lookup_function(builtin_env(), "string_len"))
-      try assert.is_none(lookup_function(builtin_env(), "dict_new"))
-      try assert.is_none(lookup_function(builtin_env(), "string__substring"))
-      try assert.is_none(lookup_function(builtin_env(), "vector__builder_new"))
-      try assert.is_none(lookup_function(builtin_env(), "host_read_file"))
-      .Ok({})
-    },
-  ).test(
-    "String.len resolves to string_len",
-    fn() {
-      fn_name := try require_method("String", "len")
-      try assert.equal(fn_name, "string_len")
-      .Ok({})
-    },
-  ).test(
-    "String.get resolves to string_get",
-    fn() {
-      fn_name := try require_method("String", "get")
-      try assert.equal(fn_name, "string_get")
-      .Ok({})
-    },
-  ).test(
-    "String.concat resolves to string_concat",
-    fn() {
-      fn_name := try require_method("String", "concat")
-      try assert.equal(fn_name, "string_concat")
-      .Ok({})
-    },
-  ).test(
-    "Vector.len resolves to vector_len",
-    fn() {
-      fn_name := try require_method("Vector", "len")
-      try assert.equal(fn_name, "vector_len")
-      .Ok({})
-    },
-  ).test(
-    "Vector.append resolves to vector_append",
-    fn() {
-      fn_name := try require_method("Vector", "append")
-      try assert.equal(fn_name, "vector_append")
-      .Ok({})
-    },
-  ).test(
-    "Vector.map resolves to vector_map",
-    fn() {
-      fn_name := try require_method("Vector", "map")
-      try assert.equal(fn_name, "vector_map")
-      .Ok({})
-    },
-  ).test(
-    "Dict.get resolves to dict_get",
-    fn() {
-      fn_name := try require_method("Dict", "get")
-      try assert.equal(fn_name, "dict_get")
-      .Ok({})
-    },
-  ).test(
-    "Cell.set resolves to cell_set",
-    fn() {
-      fn_name := try require_method("Cell", "set")
-      try assert.equal(fn_name, "cell_set")
-      .Ok({})
-    },
-  ).test(
-    "Int.to_string resolves to int_to_string",
-    fn() {
-      fn_name := try require_method("Int", "to_string")
-      try assert.equal(fn_name, "int_to_string")
-      .Ok({})
-    },
-  ).test(
-    "Byte.to_int resolves to byte_to_int",
-    fn() {
-      fn_name := try require_method("Byte", "to_int")
-      try assert.equal(fn_name, "byte_to_int")
-      .Ok({})
-    },
-  ).test(
-    "Iterator.unfold resolves to iterator_unfold",
-    fn() {
-      fn_name := try require_method("Iterator", "unfold")
-      try assert.equal(fn_name, "iterator_unfold")
-      .Ok({})
-    },
-  ).test(
-    "Iterator.map resolves to iterator_map",
-    fn() {
-      fn_name := try require_method("Iterator", "map")
-      try assert.equal(fn_name, "iterator_map")
-      .Ok({})
-    },
-  ).test(
-    "Option.map resolves to option_map",
-    fn() {
-      fn_name := try require_method("Option", "map")
-      try assert.equal(fn_name, "option_map")
-      .Ok({})
-    },
-  ).test(
-    "Result.map resolves to result_map",
-    fn() {
-      fn_name := try require_method("Result", "map")
-      try assert.equal(fn_name, "result_map")
-      .Ok({})
-    },
-  )
+        case inner {
+          .Optional(.Byte) => .Ok({}),
+          _ => .Err("expected Optional(Byte)"),
+        }
+      },
+    )
+    .test(
+      "builtin_env has int_to_string",
+      fn() {
+        _ := try require_registered_sig("int_to_string")
+        .Ok({})
+      },
+    )
+    .test(
+      "builtin_env has float_to_string",
+      fn() {
+        _ := try require_registered_sig("float_to_string")
+        .Ok({})
+      },
+    )
+    .test(
+      "builtin_env hides internal implementation names from free namespace",
+      fn() {
+        try assert.is_none(lookup_function(builtin_env(), "bool_to_string"))
+        try assert.is_none(lookup_function(builtin_env(), "int_to_string"))
+        try assert.is_none(lookup_function(builtin_env(), "string_len"))
+        try assert.is_none(lookup_function(builtin_env(), "dict_new"))
+        try assert.is_none(lookup_function(builtin_env(), "string__substring"))
+        try assert.is_none(lookup_function(builtin_env(), "vector__builder_new"))
+        try assert.is_none(lookup_function(builtin_env(), "host_read_file"))
+        .Ok({})
+      },
+    )
+    .test(
+      "String.len resolves to string_len",
+      fn() {
+        fn_name := try require_method("String", "len")
+        try assert.equal(fn_name, "string_len")
+        .Ok({})
+      },
+    )
+    .test(
+      "String.get resolves to string_get",
+      fn() {
+        fn_name := try require_method("String", "get")
+        try assert.equal(fn_name, "string_get")
+        .Ok({})
+      },
+    )
+    .test(
+      "String.concat resolves to string_concat",
+      fn() {
+        fn_name := try require_method("String", "concat")
+        try assert.equal(fn_name, "string_concat")
+        .Ok({})
+      },
+    )
+    .test(
+      "Vector.len resolves to vector_len",
+      fn() {
+        fn_name := try require_method("Vector", "len")
+        try assert.equal(fn_name, "vector_len")
+        .Ok({})
+      },
+    )
+    .test(
+      "Vector.append resolves to vector_append",
+      fn() {
+        fn_name := try require_method("Vector", "append")
+        try assert.equal(fn_name, "vector_append")
+        .Ok({})
+      },
+    )
+    .test(
+      "Vector.map resolves to vector_map",
+      fn() {
+        fn_name := try require_method("Vector", "map")
+        try assert.equal(fn_name, "vector_map")
+        .Ok({})
+      },
+    )
+    .test(
+      "Dict.get resolves to dict_get",
+      fn() {
+        fn_name := try require_method("Dict", "get")
+        try assert.equal(fn_name, "dict_get")
+        .Ok({})
+      },
+    )
+    .test(
+      "Cell.set resolves to cell_set",
+      fn() {
+        fn_name := try require_method("Cell", "set")
+        try assert.equal(fn_name, "cell_set")
+        .Ok({})
+      },
+    )
+    .test(
+      "Int.to_string resolves to int_to_string",
+      fn() {
+        fn_name := try require_method("Int", "to_string")
+        try assert.equal(fn_name, "int_to_string")
+        .Ok({})
+      },
+    )
+    .test(
+      "Byte.to_int resolves to byte_to_int",
+      fn() {
+        fn_name := try require_method("Byte", "to_int")
+        try assert.equal(fn_name, "byte_to_int")
+        .Ok({})
+      },
+    )
+    .test(
+      "Iterator.unfold resolves to iterator_unfold",
+      fn() {
+        fn_name := try require_method("Iterator", "unfold")
+        try assert.equal(fn_name, "iterator_unfold")
+        .Ok({})
+      },
+    )
+    .test(
+      "Iterator.map resolves to iterator_map",
+      fn() {
+        fn_name := try require_method("Iterator", "map")
+        try assert.equal(fn_name, "iterator_map")
+        .Ok({})
+      },
+    )
+    .test(
+      "Option.map resolves to option_map",
+      fn() {
+        fn_name := try require_method("Option", "map")
+        try assert.equal(fn_name, "option_map")
+        .Ok({})
+      },
+    )
+    .test(
+      "Result.map resolves to result_map",
+      fn() {
+        fn_name := try require_method("Result", "map")
+        try assert.equal(fn_name, "result_map")
+        .Ok({})
+      },
+    )
 }

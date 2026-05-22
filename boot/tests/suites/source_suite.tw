@@ -7,324 +7,352 @@ use tests.assert
 use tests.runner
 
 pub fn suite() runner.Suite {
-  runner.suite("source").test(
-    "span len computes byte length",
-    fn() {
-      s := span.new(0, 10, 20)
-      try assert.equal(s.len(), 10)
-      .Ok({})
-    },
-  ).test(
-    "span is_empty for zero-width span",
-    fn() {
-      s := span.new(0, 5, 5)
-      try assert.is_true(s.is_empty())
-      .Ok({})
-    },
-  ).test(
-    "span is_empty for non-empty span",
-    fn() {
-      s := span.new(0, 5, 10)
-      try assert.is_false(s.is_empty())
-      .Ok({})
-    },
-  ).test(
-    "span contains inside",
-    fn() {
-      s := span.new(0, 10, 20)
-      try assert.is_true(s.contains(10))
-      try assert.is_true(s.contains(15))
-      try assert.is_true(s.contains(19))
-      .Ok({})
-    },
-  ).test(
-    "span contains outside",
-    fn() {
-      s := span.new(0, 10, 20)
-      try assert.is_false(s.contains(9))
-      try assert.is_false(s.contains(20))
-      .Ok({})
-    },
-  ).test(
-    "span merge covers both spans",
-    fn() {
-      a := span.new(0, 10, 20)
-      b := span.new(0, 15, 25)
-      m := a.merge(b)
-      try assert.equal(m.start, 10)
-      try assert.equal(m.end, 25)
-      .Ok({})
-    },
-  ).test(
-    "span merge reversed order",
-    fn() {
-      a := span.new(0, 15, 25)
-      b := span.new(0, 10, 20)
-      m := a.merge(b)
-      try assert.equal(m.start, 10)
-      try assert.equal(m.end, 25)
-      .Ok({})
-    },
-  ).test(
-    "add_file returns sequential file ids",
-    fn() {
-      reg := registry.empty()
-      r1 := registry.add_file(reg, "a.tw", "hello")
-      r2 := registry.add_file(reg, "b.tw", "world")
-      try assert.equal(r1.file_id, 0)
-      try assert.equal(r2.file_id, 1)
-      .Ok({})
-    },
-  ).test(
-    "snippet extracts text by span",
-    fn() {
-      reg := registry.empty()
-      r := registry.add_file(reg, "test.tw", "hello world")
-      s := span.new(r.file_id, 6, 11)
-      snip := case registry.snippet(reg, s) {
-        .Some(x) => x,
-        .None => "NONE",
-      }
-      try assert.equal(snip, "world")
-      .Ok({})
-    },
-  ).test(
-    "snippet returns None for invalid file_id",
-    fn() {
-      reg := registry.empty()
-      s := span.new(99, 0, 5)
-      try assert.is_none(registry.snippet(reg, s))
-      .Ok({})
-    },
-  ).test(
-    "line_col single line",
-    fn() {
-      reg := registry.empty()
-      r := registry.add_file(reg, "test.tw", "hello")
-      s := span.new(r.file_id, 0, 5)
-      lc := registry.line_col(reg, s)
+  runner.suite("source")
+    .test(
+      "span len computes byte length",
+      fn() {
+        s := span.new(0, 10, 20)
+        try assert.equal(s.len(), 10)
+        .Ok({})
+      },
+    )
+    .test(
+      "span is_empty for zero-width span",
+      fn() {
+        s := span.new(0, 5, 5)
+        try assert.is_true(s.is_empty())
+        .Ok({})
+      },
+    )
+    .test(
+      "span is_empty for non-empty span",
+      fn() {
+        s := span.new(0, 5, 10)
+        try assert.is_false(s.is_empty())
+        .Ok({})
+      },
+    )
+    .test(
+      "span contains inside",
+      fn() {
+        s := span.new(0, 10, 20)
+        try assert.is_true(s.contains(10))
+        try assert.is_true(s.contains(15))
+        try assert.is_true(s.contains(19))
+        .Ok({})
+      },
+    )
+    .test(
+      "span contains outside",
+      fn() {
+        s := span.new(0, 10, 20)
+        try assert.is_false(s.contains(9))
+        try assert.is_false(s.contains(20))
+        .Ok({})
+      },
+    )
+    .test(
+      "span merge covers both spans",
+      fn() {
+        a := span.new(0, 10, 20)
+        b := span.new(0, 15, 25)
+        m := a.merge(b)
+        try assert.equal(m.start, 10)
+        try assert.equal(m.end, 25)
+        .Ok({})
+      },
+    )
+    .test(
+      "span merge reversed order",
+      fn() {
+        a := span.new(0, 15, 25)
+        b := span.new(0, 10, 20)
+        m := a.merge(b)
+        try assert.equal(m.start, 10)
+        try assert.equal(m.end, 25)
+        .Ok({})
+      },
+    )
+    .test(
+      "add_file returns sequential file ids",
+      fn() {
+        reg := registry.empty()
+        r1 := registry.add_file(reg, "a.tw", "hello")
+        r2 := registry.add_file(reg, "b.tw", "world")
+        try assert.equal(r1.file_id, 0)
+        try assert.equal(r2.file_id, 1)
+        .Ok({})
+      },
+    )
+    .test(
+      "snippet extracts text by span",
+      fn() {
+        reg := registry.empty()
+        r := registry.add_file(reg, "test.tw", "hello world")
+        s := span.new(r.file_id, 6, 11)
+        snip := case registry.snippet(reg, s) {
+          .Some(x) => x,
+          .None => "NONE",
+        }
+        try assert.equal(snip, "world")
+        .Ok({})
+      },
+    )
+    .test(
+      "snippet returns None for invalid file_id",
+      fn() {
+        reg := registry.empty()
+        s := span.new(99, 0, 5)
+        try assert.is_none(registry.snippet(reg, s))
+        .Ok({})
+      },
+    )
+    .test(
+      "line_col single line",
+      fn() {
+        reg := registry.empty()
+        r := registry.add_file(reg, "test.tw", "hello")
+        s := span.new(r.file_id, 0, 5)
+        lc := registry.line_col(reg, s)
 
-      case lc {
-        .Some(pos) => {
-          try assert.equal(pos.line, 1)
-          try assert.equal(pos.column, 1)
-          .Ok({})
-        },
-        .None => assert.fail("expected Some"),
-      }
-    },
-  ).test(
-    "line_col second line",
-    fn() {
-      reg := registry.empty()
-      // "line 1\nline 2" — 'l' of "line 2" is at offset 7
-      r := registry.add_file(reg, "test.tw", "line 1\nline 2")
-      s := span.new(r.file_id, 7, 13)
-      lc := registry.line_col(reg, s)
+        case lc {
+          .Some(pos) => {
+            try assert.equal(pos.line, 1)
+            try assert.equal(pos.column, 1)
+            .Ok({})
+          },
+          .None => assert.fail("expected Some"),
+        }
+      },
+    )
+    .test(
+      "line_col second line",
+      fn() {
+        reg := registry.empty()
+        // "line 1\nline 2" — 'l' of "line 2" is at offset 7
+        r := registry.add_file(reg, "test.tw", "line 1\nline 2")
+        s := span.new(r.file_id, 7, 13)
+        lc := registry.line_col(reg, s)
 
-      case lc {
-        .Some(pos) => {
-          try assert.equal(pos.line, 2)
-          try assert.equal(pos.column, 1)
-          .Ok({})
-        },
-        .None => assert.fail("expected Some"),
-      }
-    },
-  ).test(
-    "line_col mid-line offset",
-    fn() {
-      reg := registry.empty()
-      // offset 3 in "hello" → line 1, column 4
-      r := registry.add_file(reg, "test.tw", "hello")
-      s := span.new(r.file_id, 3, 5)
-      lc := registry.line_col(reg, s)
+        case lc {
+          .Some(pos) => {
+            try assert.equal(pos.line, 2)
+            try assert.equal(pos.column, 1)
+            .Ok({})
+          },
+          .None => assert.fail("expected Some"),
+        }
+      },
+    )
+    .test(
+      "line_col mid-line offset",
+      fn() {
+        reg := registry.empty()
+        // offset 3 in "hello" → line 1, column 4
+        r := registry.add_file(reg, "test.tw", "hello")
+        s := span.new(r.file_id, 3, 5)
+        lc := registry.line_col(reg, s)
 
-      case lc {
-        .Some(pos) => {
-          try assert.equal(pos.line, 1)
-          try assert.equal(pos.column, 4)
-          .Ok({})
-        },
-        .None => assert.fail("expected Some"),
-      }
-    },
-  ).test(
-    "line_col third line",
-    fn() {
-      reg := registry.empty()
-      r := registry.add_file(reg, "test.tw", "aaa\nbbb\nccc")
-      // "ccc" starts at offset 8
-      s := span.new(r.file_id, 9, 10)
-      lc := registry.line_col(reg, s)
+        case lc {
+          .Some(pos) => {
+            try assert.equal(pos.line, 1)
+            try assert.equal(pos.column, 4)
+            .Ok({})
+          },
+          .None => assert.fail("expected Some"),
+        }
+      },
+    )
+    .test(
+      "line_col third line",
+      fn() {
+        reg := registry.empty()
+        r := registry.add_file(reg, "test.tw", "aaa\nbbb\nccc")
+        // "ccc" starts at offset 8
+        s := span.new(r.file_id, 9, 10)
+        lc := registry.line_col(reg, s)
 
-      case lc {
-        .Some(pos) => {
-          try assert.equal(pos.line, 3)
-          try assert.equal(pos.column, 2)
-          .Ok({})
-        },
-        .None => assert.fail("expected Some"),
-      }
-    },
-  ).test(
-    "line_col counts characters not bytes for column",
-    fn() {
-      reg := registry.empty()
-      // "café x" — 'é' is 2 bytes, so 'x' is at byte offset 6 but character column 6
-      r := registry.add_file(reg, "test.tw", "café x")
-      // byte offset of 'x' is 6 (c=1, a=1, f=1, é=2, space=1)
-      s := span.new(r.file_id, 6, 7)
-      lc := registry.line_col(reg, s)
+        case lc {
+          .Some(pos) => {
+            try assert.equal(pos.line, 3)
+            try assert.equal(pos.column, 2)
+            .Ok({})
+          },
+          .None => assert.fail("expected Some"),
+        }
+      },
+    )
+    .test(
+      "line_col counts characters not bytes for column",
+      fn() {
+        reg := registry.empty()
+        // "café x" — 'é' is 2 bytes, so 'x' is at byte offset 6 but character column 6
+        r := registry.add_file(reg, "test.tw", "café x")
+        // byte offset of 'x' is 6 (c=1, a=1, f=1, é=2, space=1)
+        s := span.new(r.file_id, 6, 7)
+        lc := registry.line_col(reg, s)
 
-      case lc {
-        .Some(pos) => {
-          try assert.equal(pos.line, 1)
-          // character column should be 6, not 7
-          try assert.equal(pos.column, 6)
-          .Ok({})
-        },
-        .None => assert.fail("expected Some"),
-      }
-    },
-  ).test(
-    "line_col with CJK characters",
-    fn() {
-      reg := registry.empty()
-      // "你好x" — each CJK char is 3 bytes, 'x' at byte offset 6 but char column 3
-      r := registry.add_file(reg, "test.tw", "你好x")
-      s := span.new(r.file_id, 6, 7)
-      lc := registry.line_col(reg, s)
+        case lc {
+          .Some(pos) => {
+            try assert.equal(pos.line, 1)
+            // character column should be 6, not 7
+            try assert.equal(pos.column, 6)
+            .Ok({})
+          },
+          .None => assert.fail("expected Some"),
+        }
+      },
+    )
+    .test(
+      "line_col with CJK characters",
+      fn() {
+        reg := registry.empty()
+        // "你好x" — each CJK char is 3 bytes, 'x' at byte offset 6 but char column 3
+        r := registry.add_file(reg, "test.tw", "你好x")
+        s := span.new(r.file_id, 6, 7)
+        lc := registry.line_col(reg, s)
 
-      case lc {
-        .Some(pos) => {
-          try assert.equal(pos.line, 1)
-          try assert.equal(pos.column, 3)
-          .Ok({})
-        },
-        .None => assert.fail("expected Some"),
-      }
-    },
-  ).test(
-    "line_text returns full line",
-    fn() {
-      reg := registry.empty()
-      r := registry.add_file(reg, "test.tw", "line 1\nline 2\nline 3")
-      s := span.new(r.file_id, 7, 13)
-      lt := registry.line_text(reg, s)
-      // line_text includes the newline
-      text := case lt {
-        .Some(x) => x,
-        .None => "NONE",
-      }
-      try assert.equal(text, "line 2\n")
-      .Ok({})
-    },
-  ).test(
-    "line_text last line no trailing newline",
-    fn() {
-      reg := registry.empty()
-      r := registry.add_file(reg, "test.tw", "aaa\nbbb")
-      s := span.new(r.file_id, 4, 7)
-      lt := registry.line_text(reg, s)
-      text := case lt {
-        .Some(x) => x,
-        .None => "NONE",
-      }
-      try assert.equal(text, "bbb")
-      .Ok({})
-    },
-  ).test(
-    "line_col returns None for invalid file_id",
-    fn() {
-      reg := registry.empty()
-      s := span.new(99, 0, 1)
-      try assert.is_none(registry.line_col(reg, s))
-      .Ok({})
-    },
-  ).test(
-    "line_col returns None for negative offset",
-    fn() {
-      reg := registry.empty()
-      registry.add_file(reg, "test.tw", "hello")
-      s := span.new(0, -1, 5)
-      try assert.is_none(registry.line_col(reg, s))
-      .Ok({})
-    },
-  ).test(
-    "line_text returns None for negative offset",
-    fn() {
-      reg := registry.empty()
-      registry.add_file(reg, "test.tw", "hello")
-      s := span.new(0, -1, 5)
-      try assert.is_none(registry.line_text(reg, s))
-      .Ok({})
-    },
-  ).test(
-    "file URI decoding normalizes paths",
-    fn() {
-      id := try identity.from_file_uri("file:///tmp/twinkle%20space/../source.tw")
-      try assert.equal(id.path, "/tmp/source.tw")
-      try assert.equal(id.uri, "file:///tmp/source.tw")
-      .Ok({})
-    },
-  ).test(
-    "file URI decoding accepts localhost",
-    fn() {
-      id := try identity.from_file_uri("file://localhost/tmp/source.tw")
-      try assert.equal(id.path, "/tmp/source.tw")
-      .Ok({})
-    },
-  ).test(
-    "file URI decoding rejects remote hosts",
-    fn() {
-      res := identity.from_file_uri("file://example.com/tmp/source.tw")
-      try assert.is_err(res)
-      .Ok({})
-    },
-  ).test(
-    "path to file URI percent-encodes reserved bytes",
-    fn() {
-      uri := identity.path_to_file_uri("/tmp/a b#c.tw")
-      try assert.equal(uri, "file:///tmp/a%20b%23c.tw")
-      .Ok({})
-    },
-  ).test(
-    "source overlay prefers open document text",
-    fn() {
-      id := identity.from_path("boot/tests/fixtures/multi/type_flow_source.tw")
-      ov := overlay.from_documents([
-        overlay.OverlayDocument.{ identity: id, text: "open text", version: .Some(7) },
-      ])
-      source := try overlay.lookup(ov, id)
-      try assert.equal(source.text, "open text")
-      try assert.is_true(source.from_overlay)
+        case lc {
+          .Some(pos) => {
+            try assert.equal(pos.line, 1)
+            try assert.equal(pos.column, 3)
+            .Ok({})
+          },
+          .None => assert.fail("expected Some"),
+        }
+      },
+    )
+    .test(
+      "line_text returns full line",
+      fn() {
+        reg := registry.empty()
+        r := registry.add_file(reg, "test.tw", "line 1\nline 2\nline 3")
+        s := span.new(r.file_id, 7, 13)
+        lt := registry.line_text(reg, s)
+        // line_text includes the newline
+        text := case lt {
+          .Some(x) => x,
+          .None => "NONE",
+        }
+        try assert.equal(text, "line 2\n")
+        .Ok({})
+      },
+    )
+    .test(
+      "line_text last line no trailing newline",
+      fn() {
+        reg := registry.empty()
+        r := registry.add_file(reg, "test.tw", "aaa\nbbb")
+        s := span.new(r.file_id, 4, 7)
+        lt := registry.line_text(reg, s)
+        text := case lt {
+          .Some(x) => x,
+          .None => "NONE",
+        }
+        try assert.equal(text, "bbb")
+        .Ok({})
+      },
+    )
+    .test(
+      "line_col returns None for invalid file_id",
+      fn() {
+        reg := registry.empty()
+        s := span.new(99, 0, 1)
+        try assert.is_none(registry.line_col(reg, s))
+        .Ok({})
+      },
+    )
+    .test(
+      "line_col returns None for negative offset",
+      fn() {
+        reg := registry.empty()
+        registry.add_file(reg, "test.tw", "hello")
+        s := span.new(0, -1, 5)
+        try assert.is_none(registry.line_col(reg, s))
+        .Ok({})
+      },
+    )
+    .test(
+      "line_text returns None for negative offset",
+      fn() {
+        reg := registry.empty()
+        registry.add_file(reg, "test.tw", "hello")
+        s := span.new(0, -1, 5)
+        try assert.is_none(registry.line_text(reg, s))
+        .Ok({})
+      },
+    )
+    .test(
+      "file URI decoding normalizes paths",
+      fn() {
+        id := try identity.from_file_uri("file:///tmp/twinkle%20space/../source.tw")
+        try assert.equal(id.path, "/tmp/source.tw")
+        try assert.equal(id.uri, "file:///tmp/source.tw")
+        .Ok({})
+      },
+    )
+    .test(
+      "file URI decoding accepts localhost",
+      fn() {
+        id := try identity.from_file_uri("file://localhost/tmp/source.tw")
+        try assert.equal(id.path, "/tmp/source.tw")
+        .Ok({})
+      },
+    )
+    .test(
+      "file URI decoding rejects remote hosts",
+      fn() {
+        res := identity.from_file_uri("file://example.com/tmp/source.tw")
+        try assert.is_err(res)
+        .Ok({})
+      },
+    )
+    .test(
+      "path to file URI percent-encodes reserved bytes",
+      fn() {
+        uri := identity.path_to_file_uri("/tmp/a b#c.tw")
+        try assert.equal(uri, "file:///tmp/a%20b%23c.tw")
+        .Ok({})
+      },
+    )
+    .test(
+      "source overlay prefers open document text",
+      fn() {
+        id := identity.from_path("boot/tests/fixtures/multi/type_flow_source.tw")
+        ov := overlay.from_documents([
+          overlay.OverlayDocument.{ identity: id, text: "open text", version: .Some(7) },
+        ])
+        source := try overlay.lookup(ov, id)
+        try assert.equal(source.text, "open text")
+        try assert.is_true(source.from_overlay)
 
-      case source.version {
-        .Some(v) => try assert.equal(v, 7),
-        .None => { return assert.fail("expected overlay version") },
-      }
+        case source.version {
+          .Some(v) => try assert.equal(v, 7),
+          .None => { return assert.fail("expected overlay version") },
+        }
 
-      .Ok({})
-    },
-  ).test(
-    "diagnostic construction",
-    fn() {
-      s := span.new(0, 0, 5)
-      d := diag.error(s, "something went wrong")
-      try assert.equal(d.message(), "something went wrong")
-      try assert.equal(d.span().start, 0)
-      try assert.equal(d.span().end, 5)
-      .Ok({})
-    },
-  ).test(
-    "stage_result holds value and diagnostics",
-    fn() {
-      d := diag.error(span.new(0, 0, 1), "warn")
-      sr := diag.stage_result(42, [d])
-      try assert.equal(sr.value, 42)
-      try assert.equal(sr.diagnostics.len(), 1)
-      .Ok({})
-    },
-  )
+        .Ok({})
+      },
+    )
+    .test(
+      "diagnostic construction",
+      fn() {
+        s := span.new(0, 0, 5)
+        d := diag.error(s, "something went wrong")
+        try assert.equal(d.message(), "something went wrong")
+        try assert.equal(d.span().start, 0)
+        try assert.equal(d.span().end, 5)
+        .Ok({})
+      },
+    )
+    .test(
+      "stage_result holds value and diagnostics",
+      fn() {
+        d := diag.error(span.new(0, 0, 1), "warn")
+        sr := diag.stage_result(42, [d])
+        try assert.equal(sr.value, 42)
+        try assert.equal(sr.diagnostics.len(), 1)
+        .Ok({})
+      },
+    )
 }

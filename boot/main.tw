@@ -40,19 +40,11 @@ build_cmd := file_command("build", "Compile to linked WAT or Wasm").add_short_op
   "Output path (.wat or .wasm)",
 )
 lsp_cmd := command.make("lsp", "Start the Language Server Protocol server")
-fmt_cmd := command.make("fmt", "Format source").add_required_positional(
-  "file",
-  "Path to a .tw source file (may be repeated)",
-).add_flag("check", "Check whether source is formatted")
-cli := app.make("twk", "Twinkle compiler").add_commands([
-  run_cmd,
-  check_cmd,
-  build_cmd,
-  ir_cmd,
-  parse_cmd,
-  fmt_cmd,
-  lsp_cmd,
-])
+fmt_cmd := command.make("fmt", "Format source")
+  .add_required_positional("file", "Path to a .tw source file (may be repeated)")
+  .add_flag("check", "Check whether source is formatted")
+cli := app.make("twk", "Twinkle compiler")
+  .add_commands([run_cmd, check_cmd, build_cmd, ir_cmd, parse_cmd, fmt_cmd, lsp_cmd])
 
 type CommandPlan = .{ cmd: String, detail: String }
 

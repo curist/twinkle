@@ -92,9 +92,9 @@ fn emit_universal_closure_call(
   fns: ClosureEmitFns,
 ) Vector<Instr> {
   // Get env (field 1)
-  out := buf.append(.LocalGet(entry.index)).append(.RefCast(true, .Named("rt_types__Closure"))).append(
-    .StructGet("rt_types__Closure", 1),
-  )
+  out := buf.append(.LocalGet(entry.index))
+    .append(.RefCast(true, .Named("rt_types__Closure")))
+    .append(.StructGet("rt_types__Closure", 1))
   // Pack args into anyref array
   out = if args.len() > 0 {
     for a in args {
@@ -119,9 +119,8 @@ fn emit_universal_closure_call(
     .Never => out,
     _ => {
       out = if is_sum_mono(result_mono, ctx.env) {
-        out.append(.RefCast(true, .Named("rt_types__Variant"))).append(
-          .Call(variant_to_sum_helper_sym(result_mono)),
-        )
+        out.append(.RefCast(true, .Named("rt_types__Variant")))
+          .append(.Call(variant_to_sum_helper_sym(result_mono)))
       } else { emit_unbox_from_anyref(result_mono, ctx.env, out) }
       out.append(.LocalSet(result_idx))
     },

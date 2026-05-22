@@ -96,10 +96,10 @@ fn build_env() ResolvedEnv {
     span: dummy_span(),
     is_extern: false,
   }
-  resolver.empty_env().add_type(sum_entry, "InnerDef").add_type(alias_entry, "InnerAlias").add_type(
-    wrapper_entry,
-    "WrapperAlias",
-  )
+  resolver.empty_env()
+    .add_type(sum_entry, "InnerDef")
+    .add_type(alias_entry, "InnerAlias")
+    .add_type(wrapper_entry, "WrapperAlias")
 }
 
 fn expect(actual: Bool, expected: Bool, label: String) {

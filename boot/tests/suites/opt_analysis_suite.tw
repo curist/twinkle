@@ -260,47 +260,61 @@ fn test_loop_push_reassign_elem_rejects_base_as_element() Result<Void, String> {
 }
 
 pub fn suite() runner.Suite {
-  runner.suite("Opt: Analysis").test(
-    "op uses local non-recursive direct operand",
-    test_op_uses_local_non_recursive_direct_operand,
-  ).test(
-    "op uses local non-recursive ignores nested branches",
-    test_op_uses_local_non_recursive_ignores_nested_branches,
-  ).test("count global call sites recursive", test_count_global_call_sites_recursive).test(
-    "next local id accounts for pattern bindings",
-    test_next_local_id_accounts_for_pattern_bindings,
-  ).test("collect tainted marks params", test_collect_tainted_marks_params).test(
-    "collect tainted skips cow base arg",
-    test_collect_tainted_skips_cow_base_arg,
-  ).test("collect tainted marks non-base cow arg", test_collect_tainted_marks_non_base_cow_arg).test(
-    "collect tainted marks branch alias escape",
-    test_collect_tainted_marks_branch_alias_escape,
-  ).test(
-    "analyze loop push sites counts valid pushes",
-    test_analyze_loop_push_sites_counts_valid_pushes,
-  ).test(
-    "analyze loop push sites counts branch pushes",
-    test_analyze_loop_push_sites_counts_branch_pushes,
-  ).test(
-    "analyze loop push sites rejects non-push base use",
-    test_analyze_loop_push_sites_rejects_non_push_base_use,
-  ).test(
-    "analyze loop push sites rejects terminal base escape",
-    test_analyze_loop_push_sites_rejects_base_escape_in_terminal_atom,
-  ).test(
-    "base reusable after binding when base dead",
-    test_base_reusable_after_binding_when_base_dead,
-  ).test(
-    "base reusable after binding with consume-reassign",
-    test_base_reusable_after_binding_with_consume_reassign,
-  ).test(
-    "base reusable after binding rejects live base",
-    test_base_reusable_after_binding_rejects_live_base,
-  ).test(
-    "loop push reassign elem matches valid pattern",
-    test_loop_push_reassign_elem_matches_valid_pattern,
-  ).test(
-    "loop push reassign elem rejects base as element",
-    test_loop_push_reassign_elem_rejects_base_as_element,
-  )
+  runner.suite("Opt: Analysis")
+    .test(
+      "op uses local non-recursive direct operand",
+      test_op_uses_local_non_recursive_direct_operand,
+    )
+    .test(
+      "op uses local non-recursive ignores nested branches",
+      test_op_uses_local_non_recursive_ignores_nested_branches,
+    )
+    .test("count global call sites recursive", test_count_global_call_sites_recursive)
+    .test(
+      "next local id accounts for pattern bindings",
+      test_next_local_id_accounts_for_pattern_bindings,
+    )
+    .test("collect tainted marks params", test_collect_tainted_marks_params)
+    .test("collect tainted skips cow base arg", test_collect_tainted_skips_cow_base_arg)
+    .test("collect tainted marks non-base cow arg", test_collect_tainted_marks_non_base_cow_arg)
+    .test(
+      "collect tainted marks branch alias escape",
+      test_collect_tainted_marks_branch_alias_escape,
+    )
+    .test(
+      "analyze loop push sites counts valid pushes",
+      test_analyze_loop_push_sites_counts_valid_pushes,
+    )
+    .test(
+      "analyze loop push sites counts branch pushes",
+      test_analyze_loop_push_sites_counts_branch_pushes,
+    )
+    .test(
+      "analyze loop push sites rejects non-push base use",
+      test_analyze_loop_push_sites_rejects_non_push_base_use,
+    )
+    .test(
+      "analyze loop push sites rejects terminal base escape",
+      test_analyze_loop_push_sites_rejects_base_escape_in_terminal_atom,
+    )
+    .test(
+      "base reusable after binding when base dead",
+      test_base_reusable_after_binding_when_base_dead,
+    )
+    .test(
+      "base reusable after binding with consume-reassign",
+      test_base_reusable_after_binding_with_consume_reassign,
+    )
+    .test(
+      "base reusable after binding rejects live base",
+      test_base_reusable_after_binding_rejects_live_base,
+    )
+    .test(
+      "loop push reassign elem matches valid pattern",
+      test_loop_push_reassign_elem_matches_valid_pattern,
+    )
+    .test(
+      "loop push reassign elem rejects base as element",
+      test_loop_push_reassign_elem_rejects_base_as_element,
+    )
 }

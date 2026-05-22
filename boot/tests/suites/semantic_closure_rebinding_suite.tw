@@ -14,169 +14,184 @@ fn make_counter() fn() Int {
 }
 
 pub fn suite() runner.Suite {
-  runner.suite("closure and rebinding").test(
-    "capture by value freezes at definition",
-    fn() {
-      x := 1
-      f := fn() Int { x }
-      x = 99
-      try assert.equal(f(), 1)
-      .Ok({})
-    },
-  ).test(
-    "closure captures innermost shadow",
-    fn() {
-      x := 1
-      inner := {
-        x := 10
-        fn() Int { x }
-      }
-      try assert.equal(inner(), 10)
-      try assert.equal(x, 1)
-      .Ok({})
-    },
-  ).test(
-    "rebinding after closure does not affect it",
-    fn() {
-      x := 1
-      f := fn() Int { x }
-      x = 2
-      x = 3
-      try assert.equal(f(), 1)
-      try assert.equal(x, 3)
-      .Ok({})
-    },
-  ).test(
-    "two closures capture different snapshots",
-    fn() {
-      x := 10
-      f := fn() Int { x }
-      x = 20
-      g := fn() Int { x }
-      try assert.equal(f(), 10)
-      try assert.equal(g(), 20)
-      .Ok({})
-    },
-  ).test(
-    "loop closures capture per-iteration value",
-    fn() {
-      fns := collect i in 0..4 {
-        fn() Int { i }
-      }
-      try assert.equal(fns[0](), 0)
-      try assert.equal(fns[1](), 1)
-      try assert.equal(fns[2](), 2)
-      try assert.equal(fns[3](), 3)
-      .Ok({})
-    },
-  ).test(
-    "loop closures capture vector element",
-    fn() {
-      names: Vector<String> = ["alice", "bob", "carol"]
-      greeters := collect name in names {
-        fn() String {
-          "hi ${name}"
+  runner.suite("closure and rebinding")
+    .test(
+      "capture by value freezes at definition",
+      fn() {
+        x := 1
+        f := fn() Int { x }
+        x = 99
+        try assert.equal(f(), 1)
+        .Ok({})
+      },
+    )
+    .test(
+      "closure captures innermost shadow",
+      fn() {
+        x := 1
+        inner := {
+          x := 10
+          fn() Int { x }
         }
-      }
-      try assert.equal(greeters[0](), "hi alice")
-      try assert.equal(greeters[1](), "hi bob")
-      try assert.equal(greeters[2](), "hi carol")
-      .Ok({})
-    },
-  ).test(
-    "nested closures capture correctly",
-    fn() {
-      x := 5
-      outer := fn() fn() Int {
-        fn() Int { x }
-      }
-      inner := outer()
-      try assert.equal(inner(), 5)
-      .Ok({})
-    },
-  ).test(
-    "closure factory captures argument",
-    fn() {
-      add5 := make_adder(5)
-      add100 := make_adder(100)
-      try assert.equal(add5(1), 6)
-      try assert.equal(add100(1), 101)
-      try assert.equal(add5(add100(0)), 105)
-      .Ok({})
-    },
-  ).test(
-    "closures share state via cell",
-    fn() {
-      count := make_counter()
-      try assert.equal(count(), 1)
-      try assert.equal(count(), 2)
-      try assert.equal(count(), 3)
-      .Ok({})
-    },
-  ).test(
-    "two closures sharing same cell see mutations",
-    fn() {
-      c := Cell.new(0)
-      inc := fn() { c.update(fn(n) { n + 1 }) }
-      get := fn() Int { c.get() }
-      inc()
-      inc()
-      try assert.equal(get(), 2)
-      inc()
-      try assert.equal(get(), 3)
-      .Ok({})
-    },
-  ).test(
-    "rebinding in for loop accumulates",
-    fn() {
-      acc := 0
-      for x in [1, 2, 3, 4, 5] { acc = acc + x }
-      try assert.equal(acc, 15)
-      .Ok({})
-    },
-  ).test(
-    "rebinding inside if affects outer binding",
-    fn() {
-      x := 1
-      if true { x = 42 }
-      try assert.equal(x, 42)
-      .Ok({})
-    },
-  ).test(
-    "new binding inside if shadows but does not affect outer",
-    fn() {
-      x := 1
+        try assert.equal(inner(), 10)
+        try assert.equal(x, 1)
+        .Ok({})
+      },
+    )
+    .test(
+      "rebinding after closure does not affect it",
+      fn() {
+        x := 1
+        f := fn() Int { x }
+        x = 2
+        x = 3
+        try assert.equal(f(), 1)
+        try assert.equal(x, 3)
+        .Ok({})
+      },
+    )
+    .test(
+      "two closures capture different snapshots",
+      fn() {
+        x := 10
+        f := fn() Int { x }
+        x = 20
+        g := fn() Int { x }
+        try assert.equal(f(), 10)
+        try assert.equal(g(), 20)
+        .Ok({})
+      },
+    )
+    .test(
+      "loop closures capture per-iteration value",
+      fn() {
+        fns := collect i in 0..4 {
+          fn() Int { i }
+        }
+        try assert.equal(fns[0](), 0)
+        try assert.equal(fns[1](), 1)
+        try assert.equal(fns[2](), 2)
+        try assert.equal(fns[3](), 3)
+        .Ok({})
+      },
+    )
+    .test(
+      "loop closures capture vector element",
+      fn() {
+        names: Vector<String> = ["alice", "bob", "carol"]
+        greeters := collect name in names {
+          fn() String {
+            "hi ${name}"
+          }
+        }
+        try assert.equal(greeters[0](), "hi alice")
+        try assert.equal(greeters[1](), "hi bob")
+        try assert.equal(greeters[2](), "hi carol")
+        .Ok({})
+      },
+    )
+    .test(
+      "nested closures capture correctly",
+      fn() {
+        x := 5
+        outer := fn() fn() Int {
+          fn() Int { x }
+        }
+        inner := outer()
+        try assert.equal(inner(), 5)
+        .Ok({})
+      },
+    )
+    .test(
+      "closure factory captures argument",
+      fn() {
+        add5 := make_adder(5)
+        add100 := make_adder(100)
+        try assert.equal(add5(1), 6)
+        try assert.equal(add100(1), 101)
+        try assert.equal(add5(add100(0)), 105)
+        .Ok({})
+      },
+    )
+    .test(
+      "closures share state via cell",
+      fn() {
+        count := make_counter()
+        try assert.equal(count(), 1)
+        try assert.equal(count(), 2)
+        try assert.equal(count(), 3)
+        .Ok({})
+      },
+    )
+    .test(
+      "two closures sharing same cell see mutations",
+      fn() {
+        c := Cell.new(0)
+        inc := fn() { c.update(fn(n) { n + 1 }) }
+        get := fn() Int { c.get() }
+        inc()
+        inc()
+        try assert.equal(get(), 2)
+        inc()
+        try assert.equal(get(), 3)
+        .Ok({})
+      },
+    )
+    .test(
+      "rebinding in for loop accumulates",
+      fn() {
+        acc := 0
+        for x in [1, 2, 3, 4, 5] { acc = acc + x }
+        try assert.equal(acc, 15)
+        .Ok({})
+      },
+    )
+    .test(
+      "rebinding inside if affects outer binding",
+      fn() {
+        x := 1
+        if true { x = 42 }
+        try assert.equal(x, 42)
+        .Ok({})
+      },
+    )
+    .test(
+      "new binding inside if shadows but does not affect outer",
+      fn() {
+        x := 1
 
-      if true {
-        x := 99
-        try assert.equal(x, 99)
-      }
+        if true {
+          x := 99
+          try assert.equal(x, 99)
+        }
 
-      try assert.equal(x, 1)
-      .Ok({})
-    },
-  ).test(
-    "pattern-bound name shadows outer binding",
-    fn() {
-      x := 100
-      opt: Int? = .Some(7)
-      val := case opt {
-        .Some(x) => x,
-        .None => -1,
-      }
-      try assert.equal(val, 7)
-      try assert.equal(x, 100)
-      .Ok({})
-    },
-  ).test(
-    "rebinding does not affect aliases",
-    fn() {
-      xs: Vector<Int> = [1, 2, 3]
-      ys := xs
-      xs = .append(4)
-      try assert.equal(ys.len(), 3)
-      try assert.equal(xs.len(), 4)
-      .Ok({})
-    },
-  )
+        try assert.equal(x, 1)
+        .Ok({})
+      },
+    )
+    .test(
+      "pattern-bound name shadows outer binding",
+      fn() {
+        x := 100
+        opt: Int? = .Some(7)
+        val := case opt {
+          .Some(x) => x,
+          .None => -1,
+        }
+        try assert.equal(val, 7)
+        try assert.equal(x, 100)
+        .Ok({})
+      },
+    )
+    .test(
+      "rebinding does not affect aliases",
+      fn() {
+        xs: Vector<Int> = [1, 2, 3]
+        ys := xs
+        xs = .append(4)
+        try assert.equal(ys.len(), 3)
+        try assert.equal(xs.len(), 4)
+        .Ok({})
+      },
+    )
 }

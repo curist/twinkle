@@ -1538,113 +1538,78 @@ fn test_rt_dict_emits_wat() Result<Void, String> {
 
 // ── Suite ───────────────────────────────────────────────────────────
 pub fn suite() runner.Suite {
-  runner.suite("runtime modules (M10)").test("rt.types: namespace", test_rt_types_namespace).test(
-    "rt.types: 18 type definitions",
-    test_rt_types_count,
-  ).test("rt.types: no funcs/imports/exports", test_rt_types_no_funcs).test(
-    "rt.types: Array is mutable anyref array",
-    test_rt_types_array,
-  ).test("rt.types: String is mutable i8 array", test_rt_types_string).test(
-    "rt.types: PDict has size/root/order fields",
-    test_rt_types_pdict,
-  ).test("rt.types: Closure is non-final", test_rt_types_closure_non_final).test(
-    "rt.types: Variant has 3 fields",
-    test_rt_types_variant,
-  ).test("rt.types: BoxedInt has i64 field", test_rt_types_boxed_int).test(
-    "rt.types: BoxedFloat has f64 field",
-    test_rt_types_boxed_float,
-  ).test("rt.types: IterState is non-final", test_rt_types_iter_state_non_final).test(
-    "rt.types: VecChildren is mutable eqref array",
-    test_rt_types_vec_children,
-  ).test("rt.types: VecInternal has children field", test_rt_types_vec_internal).test(
-    "rt.types: PVec has len/shift/root/tail",
-    test_rt_types_pvec,
-  ).test("rt.types: emits valid WAT", test_rt_types_emits_wat).test(
-    "rt.core: namespace",
-    test_rt_core_namespace,
-  ).test("rt.core: 10 functions", test_rt_core_func_count).test(
-    "rt.core: exports all funcs",
-    test_rt_core_exports_all_funcs,
-  ).test("rt.core: 5 host imports", test_rt_core_host_imports).test(
-    "rt.core: imports equality helpers",
-    test_rt_core_eq_imports,
-  ).test("rt.core: print delegates to host", test_rt_core_print_delegates).test(
-    "rt.core: trap ends with unreachable",
-    test_rt_core_trap_unreachable,
-  ).test("rt.core: eq uses ref.test dispatch", test_rt_core_eq_uses_ref_test).test(
-    "rt.core: emits valid WAT",
-    test_rt_core_emits_wat,
-  ).test("rt.str: namespace", test_rt_str_namespace).test(
-    "rt.str: 8 functions",
-    test_rt_str_func_count,
-  ).test("rt.str: exports all funcs", test_rt_str_exports_all_funcs).test(
-    "rt.str: imports host.f64_to_string",
-    test_rt_str_host_f64_import,
-  ).test("rt.str: len uses array.len", test_rt_str_len).test(
-    "rt.str: concat uses array.copy twice",
-    test_rt_str_concat_uses_array_copy,
-  ).test("rt.str: substring clamps bounds", test_rt_str_substring_clamps).test(
-    "rt.str: eq has comparison loop",
-    test_rt_str_eq_loop,
-  ).test("rt.str: cmp returns ordering", test_rt_str_cmp_returns_ordering).test(
-    "rt.str: from_i64 handles zero and digit loop",
-    test_rt_str_from_i64_special_cases,
-  ).test("rt.str: from_f64 delegates to host", test_rt_str_from_f64_delegates).test(
-    "rt.str: from_bool emits true/false literals",
-    test_rt_str_from_bool_literals,
-  ).test("rt.str: emits valid WAT", test_rt_str_emits_wat).test(
-    "rt.arr: namespace",
-    test_rt_arr_namespace,
-  ).test("rt.arr: exports all funcs", test_rt_arr_exports_all_funcs).test(
-    "rt.arr: no imports",
-    test_rt_arr_no_imports,
-  ).test("rt.arr: has empty_leaf/empty_pvec globals", test_rt_arr_has_globals).test(
-    "rt.arr: has internal trie helpers",
-    test_rt_arr_has_internal_helpers,
-  ).test("rt.arr: has bridge helpers", test_rt_arr_has_bridge_helpers).test(
-    "rt.arr: has builder_extend",
-    test_rt_arr_has_builder_extend,
-  ).test("rt.arr: make calls push", test_rt_arr_make).test(
-    "rt.arr: get navigates trie",
-    test_rt_arr_get,
-  ).test("rt.arr: set is persistent", test_rt_arr_set_persistent).test(
-    "rt.arr: set_in_place mutates leaf via get_leaf",
-    test_rt_arr_set_in_place,
-  ).test("rt.arr: len reads PVec.len", test_rt_arr_len).test(
-    "rt.arr: concat iterates and pushes",
-    test_rt_arr_concat_iterates,
-  ).test("rt.arr: slice uses get_leaf and from_array", test_rt_arr_slice_iterates).test(
-    "rt.arr: builder_new creates 3-element layout",
-    test_rt_arr_builder_new_layout,
-  ).test("rt.arr: builder_from creates 3-element layout", test_rt_arr_builder_from).test(
-    "rt.arr: builder_push has tail-full path",
-    test_rt_arr_builder_push_tail,
-  ).test("rt.arr: builder_freeze constructs PVec", test_rt_arr_builder_freeze).test(
-    "rt.arr: emits valid WAT",
-    test_rt_arr_emits_wat,
-  ).test("rt.dict: namespace", test_rt_dict_namespace).test(
-    "rt.dict: exports all funcs",
-    test_rt_dict_exports_all_funcs,
-  ).test("rt.dict: imports rt.core.eq", test_rt_dict_imports_core_eq).test(
-    "rt.dict: make creates empty dict",
-    test_rt_dict_make_empty,
-  ).test("rt.dict: len uses array.len", test_rt_dict_len).test(
-    "rt.dict: keys returns pdict.order via StructGet",
-    test_rt_dict_keys_loop,
-  ).test("rt.dict: has calls core_eq in scan", test_rt_dict_has_calls_core_eq).test(
-    "rt.dict: get returns null on miss",
-    test_rt_dict_get_returns_null_on_miss,
-  ).test("rt.dict: get_option returns Variant", test_rt_dict_get_option_returns_variant).test(
-    "rt.dict: set is COW with DictEntry",
-    test_rt_dict_set_cow,
-  ).test("rt.dict: remove uses two-pass scan+copy", test_rt_dict_remove_two_pass).test(
-    "rt.dict: set_in_place has in-place and append paths",
-    test_rt_dict_set_in_place,
-  ).test("rt.dict: remove_in_place early-returns on miss", test_rt_dict_remove_in_place).test(
-    "rt.dict: emits valid WAT",
-    test_rt_dict_emits_wat,
-  ).test("rt.dict: node_get calls collision_get", test_rt_dict_node_get_collision_path).test(
-    "rt.dict: node_set calls collision_set",
-    test_rt_dict_node_set_collision_path,
-  ).test("rt.dict: hash_key returns i64", test_rt_dict_hash_key_i64)
+  runner.suite("runtime modules (M10)")
+    .test("rt.types: namespace", test_rt_types_namespace)
+    .test("rt.types: 18 type definitions", test_rt_types_count)
+    .test("rt.types: no funcs/imports/exports", test_rt_types_no_funcs)
+    .test("rt.types: Array is mutable anyref array", test_rt_types_array)
+    .test("rt.types: String is mutable i8 array", test_rt_types_string)
+    .test("rt.types: PDict has size/root/order fields", test_rt_types_pdict)
+    .test("rt.types: Closure is non-final", test_rt_types_closure_non_final)
+    .test("rt.types: Variant has 3 fields", test_rt_types_variant)
+    .test("rt.types: BoxedInt has i64 field", test_rt_types_boxed_int)
+    .test("rt.types: BoxedFloat has f64 field", test_rt_types_boxed_float)
+    .test("rt.types: IterState is non-final", test_rt_types_iter_state_non_final)
+    .test("rt.types: VecChildren is mutable eqref array", test_rt_types_vec_children)
+    .test("rt.types: VecInternal has children field", test_rt_types_vec_internal)
+    .test("rt.types: PVec has len/shift/root/tail", test_rt_types_pvec)
+    .test("rt.types: emits valid WAT", test_rt_types_emits_wat)
+    .test("rt.core: namespace", test_rt_core_namespace)
+    .test("rt.core: 10 functions", test_rt_core_func_count)
+    .test("rt.core: exports all funcs", test_rt_core_exports_all_funcs)
+    .test("rt.core: 5 host imports", test_rt_core_host_imports)
+    .test("rt.core: imports equality helpers", test_rt_core_eq_imports)
+    .test("rt.core: print delegates to host", test_rt_core_print_delegates)
+    .test("rt.core: trap ends with unreachable", test_rt_core_trap_unreachable)
+    .test("rt.core: eq uses ref.test dispatch", test_rt_core_eq_uses_ref_test)
+    .test("rt.core: emits valid WAT", test_rt_core_emits_wat)
+    .test("rt.str: namespace", test_rt_str_namespace)
+    .test("rt.str: 8 functions", test_rt_str_func_count)
+    .test("rt.str: exports all funcs", test_rt_str_exports_all_funcs)
+    .test("rt.str: imports host.f64_to_string", test_rt_str_host_f64_import)
+    .test("rt.str: len uses array.len", test_rt_str_len)
+    .test("rt.str: concat uses array.copy twice", test_rt_str_concat_uses_array_copy)
+    .test("rt.str: substring clamps bounds", test_rt_str_substring_clamps)
+    .test("rt.str: eq has comparison loop", test_rt_str_eq_loop)
+    .test("rt.str: cmp returns ordering", test_rt_str_cmp_returns_ordering)
+    .test("rt.str: from_i64 handles zero and digit loop", test_rt_str_from_i64_special_cases)
+    .test("rt.str: from_f64 delegates to host", test_rt_str_from_f64_delegates)
+    .test("rt.str: from_bool emits true/false literals", test_rt_str_from_bool_literals)
+    .test("rt.str: emits valid WAT", test_rt_str_emits_wat)
+    .test("rt.arr: namespace", test_rt_arr_namespace)
+    .test("rt.arr: exports all funcs", test_rt_arr_exports_all_funcs)
+    .test("rt.arr: no imports", test_rt_arr_no_imports)
+    .test("rt.arr: has empty_leaf/empty_pvec globals", test_rt_arr_has_globals)
+    .test("rt.arr: has internal trie helpers", test_rt_arr_has_internal_helpers)
+    .test("rt.arr: has bridge helpers", test_rt_arr_has_bridge_helpers)
+    .test("rt.arr: has builder_extend", test_rt_arr_has_builder_extend)
+    .test("rt.arr: make calls push", test_rt_arr_make)
+    .test("rt.arr: get navigates trie", test_rt_arr_get)
+    .test("rt.arr: set is persistent", test_rt_arr_set_persistent)
+    .test("rt.arr: set_in_place mutates leaf via get_leaf", test_rt_arr_set_in_place)
+    .test("rt.arr: len reads PVec.len", test_rt_arr_len)
+    .test("rt.arr: concat iterates and pushes", test_rt_arr_concat_iterates)
+    .test("rt.arr: slice uses get_leaf and from_array", test_rt_arr_slice_iterates)
+    .test("rt.arr: builder_new creates 3-element layout", test_rt_arr_builder_new_layout)
+    .test("rt.arr: builder_from creates 3-element layout", test_rt_arr_builder_from)
+    .test("rt.arr: builder_push has tail-full path", test_rt_arr_builder_push_tail)
+    .test("rt.arr: builder_freeze constructs PVec", test_rt_arr_builder_freeze)
+    .test("rt.arr: emits valid WAT", test_rt_arr_emits_wat)
+    .test("rt.dict: namespace", test_rt_dict_namespace)
+    .test("rt.dict: exports all funcs", test_rt_dict_exports_all_funcs)
+    .test("rt.dict: imports rt.core.eq", test_rt_dict_imports_core_eq)
+    .test("rt.dict: make creates empty dict", test_rt_dict_make_empty)
+    .test("rt.dict: len uses array.len", test_rt_dict_len)
+    .test("rt.dict: keys returns pdict.order via StructGet", test_rt_dict_keys_loop)
+    .test("rt.dict: has calls core_eq in scan", test_rt_dict_has_calls_core_eq)
+    .test("rt.dict: get returns null on miss", test_rt_dict_get_returns_null_on_miss)
+    .test("rt.dict: get_option returns Variant", test_rt_dict_get_option_returns_variant)
+    .test("rt.dict: set is COW with DictEntry", test_rt_dict_set_cow)
+    .test("rt.dict: remove uses two-pass scan+copy", test_rt_dict_remove_two_pass)
+    .test("rt.dict: set_in_place has in-place and append paths", test_rt_dict_set_in_place)
+    .test("rt.dict: remove_in_place early-returns on miss", test_rt_dict_remove_in_place)
+    .test("rt.dict: emits valid WAT", test_rt_dict_emits_wat)
+    .test("rt.dict: node_get calls collision_get", test_rt_dict_node_get_collision_path)
+    .test("rt.dict: node_set calls collision_set", test_rt_dict_node_set_collision_path)
+    .test("rt.dict: hash_key returns i64", test_rt_dict_hash_key_i64)
 }

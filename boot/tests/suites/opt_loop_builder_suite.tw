@@ -116,14 +116,17 @@ fn test_rewrite_loop_region_rejects_non_push_base_use() Result<Void, String> {
 }
 
 pub fn suite() runner.Suite {
-  runner.suite("Opt: Loop Builder").test(
-    "rewrite loop region uses builder_new for known empty",
-    test_rewrite_loop_region_uses_builder_new_for_known_empty,
-  ).test(
-    "rewrite loop region uses builder_from for non-empty",
-    test_rewrite_loop_region_uses_builder_from_for_non_empty,
-  ).test(
-    "rewrite loop region rejects non-push base use",
-    test_rewrite_loop_region_rejects_non_push_base_use,
-  )
+  runner.suite("Opt: Loop Builder")
+    .test(
+      "rewrite loop region uses builder_new for known empty",
+      test_rewrite_loop_region_uses_builder_new_for_known_empty,
+    )
+    .test(
+      "rewrite loop region uses builder_from for non-empty",
+      test_rewrite_loop_region_uses_builder_from_for_non_empty,
+    )
+    .test(
+      "rewrite loop region rejects non-push base use",
+      test_rewrite_loop_region_rejects_non_push_base_use,
+    )
 }

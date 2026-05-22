@@ -15,74 +15,81 @@ fn exports_for(source: String) ModuleExports {
 }
 
 pub fn suite() runner.Suite {
-  runner.suite("fingerprint").test(
-    "same source produces same fingerprint",
-    fn() {
-      src := "pub fn add(a: Int, b: Int) Int { a + b }"
-      fp1 := fingerprint.fingerprint_exports(exports_for(src))
-      fp2 := fingerprint.fingerprint_exports(exports_for(src))
-      try assert.equal(fp1, fp2)
-      .Ok({})
-    },
-  ).test(
-    "body change does not change fingerprint",
-    fn() {
-      src1 := "pub fn add(a: Int, b: Int) Int { a + b }"
-      src2 := "pub fn add(a: Int, b: Int) Int { b + a }"
-      fp1 := fingerprint.fingerprint_exports(exports_for(src1))
-      fp2 := fingerprint.fingerprint_exports(exports_for(src2))
-      try assert.equal(fp1, fp2)
-      .Ok({})
-    },
-  ).test(
-    "signature change produces different fingerprint",
-    fn() {
-      src1 := "pub fn add(a: Int, b: Int) Int { a + b }"
-      src2 := "pub fn add(a: Int, b: Int, c: Int) Int { a + b + c }"
-      fp1 := fingerprint.fingerprint_exports(exports_for(src1))
-      fp2 := fingerprint.fingerprint_exports(exports_for(src2))
-      try assert.is_true(fp1 != fp2)
-      .Ok({})
-    },
-  ).test(
-    "return type change produces different fingerprint",
-    fn() {
-      src1 := "pub fn greet() String { \"hello\" }"
-      src2 := "pub fn greet() Int { 42 }"
-      fp1 := fingerprint.fingerprint_exports(exports_for(src1))
-      fp2 := fingerprint.fingerprint_exports(exports_for(src2))
-      try assert.is_true(fp1 != fp2)
-      .Ok({})
-    },
-  ).test(
-    "adding a function changes fingerprint",
-    fn() {
-      src1 := "pub fn foo() Int { 1 }"
-      src2 := "pub fn foo() Int { 1 }\npub fn bar() Int { 2 }"
-      fp1 := fingerprint.fingerprint_exports(exports_for(src1))
-      fp2 := fingerprint.fingerprint_exports(exports_for(src2))
-      try assert.is_true(fp1 != fp2)
-      .Ok({})
-    },
-  ).test(
-    "private function change does not change fingerprint",
-    fn() {
-      src1 := "fn helper() Int { 1 }\npub fn foo() Int { helper() }"
-      src2 := "fn helper() Int { 999 }\npub fn foo() Int { helper() }"
-      fp1 := fingerprint.fingerprint_exports(exports_for(src1))
-      fp2 := fingerprint.fingerprint_exports(exports_for(src2))
-      try assert.equal(fp1, fp2)
-      .Ok({})
-    },
-  ).test(
-    "type definition change produces different fingerprint",
-    fn() {
-      src1 := "pub type Point = .{ x: Int, y: Int }"
-      src2 := "pub type Point = .{ x: Int, y: Int, z: Int }"
-      fp1 := fingerprint.fingerprint_exports(exports_for(src1))
-      fp2 := fingerprint.fingerprint_exports(exports_for(src2))
-      try assert.is_true(fp1 != fp2)
-      .Ok({})
-    },
-  )
+  runner.suite("fingerprint")
+    .test(
+      "same source produces same fingerprint",
+      fn() {
+        src := "pub fn add(a: Int, b: Int) Int { a + b }"
+        fp1 := fingerprint.fingerprint_exports(exports_for(src))
+        fp2 := fingerprint.fingerprint_exports(exports_for(src))
+        try assert.equal(fp1, fp2)
+        .Ok({})
+      },
+    )
+    .test(
+      "body change does not change fingerprint",
+      fn() {
+        src1 := "pub fn add(a: Int, b: Int) Int { a + b }"
+        src2 := "pub fn add(a: Int, b: Int) Int { b + a }"
+        fp1 := fingerprint.fingerprint_exports(exports_for(src1))
+        fp2 := fingerprint.fingerprint_exports(exports_for(src2))
+        try assert.equal(fp1, fp2)
+        .Ok({})
+      },
+    )
+    .test(
+      "signature change produces different fingerprint",
+      fn() {
+        src1 := "pub fn add(a: Int, b: Int) Int { a + b }"
+        src2 := "pub fn add(a: Int, b: Int, c: Int) Int { a + b + c }"
+        fp1 := fingerprint.fingerprint_exports(exports_for(src1))
+        fp2 := fingerprint.fingerprint_exports(exports_for(src2))
+        try assert.is_true(fp1 != fp2)
+        .Ok({})
+      },
+    )
+    .test(
+      "return type change produces different fingerprint",
+      fn() {
+        src1 := "pub fn greet() String { \"hello\" }"
+        src2 := "pub fn greet() Int { 42 }"
+        fp1 := fingerprint.fingerprint_exports(exports_for(src1))
+        fp2 := fingerprint.fingerprint_exports(exports_for(src2))
+        try assert.is_true(fp1 != fp2)
+        .Ok({})
+      },
+    )
+    .test(
+      "adding a function changes fingerprint",
+      fn() {
+        src1 := "pub fn foo() Int { 1 }"
+        src2 := "pub fn foo() Int { 1 }\npub fn bar() Int { 2 }"
+        fp1 := fingerprint.fingerprint_exports(exports_for(src1))
+        fp2 := fingerprint.fingerprint_exports(exports_for(src2))
+        try assert.is_true(fp1 != fp2)
+        .Ok({})
+      },
+    )
+    .test(
+      "private function change does not change fingerprint",
+      fn() {
+        src1 := "fn helper() Int { 1 }\npub fn foo() Int { helper() }"
+        src2 := "fn helper() Int { 999 }\npub fn foo() Int { helper() }"
+        fp1 := fingerprint.fingerprint_exports(exports_for(src1))
+        fp2 := fingerprint.fingerprint_exports(exports_for(src2))
+        try assert.equal(fp1, fp2)
+        .Ok({})
+      },
+    )
+    .test(
+      "type definition change produces different fingerprint",
+      fn() {
+        src1 := "pub type Point = .{ x: Int, y: Int }"
+        src2 := "pub type Point = .{ x: Int, y: Int, z: Int }"
+        fp1 := fingerprint.fingerprint_exports(exports_for(src1))
+        fp2 := fingerprint.fingerprint_exports(exports_for(src2))
+        try assert.is_true(fp1 != fp2)
+        .Ok({})
+      },
+    )
 }

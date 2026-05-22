@@ -22,217 +22,236 @@ fn linker_stress_key(i: Int) String {
 }
 
 pub fn suite() runner.Suite {
-  runner.suite("dict").test(
-    "new creates empty dict",
-    fn() {
-      d: Dict<String, Int> = Dict.new()
-      try assert.equal(d.len(), 0)
-      .Ok({})
-    },
-  ).test(
-    "is_empty detects empty and non-empty dicts",
-    fn() {
-      empty: Dict<String, Int> = Dict.new()
-      full := make_dict()
-      try assert.is_true(empty.is_empty())
-      try assert.is_false(full.is_empty())
-      try assert.is_true(Dict.is_empty(empty))
-      .Ok({})
-    },
-  ).test(
-    "assignment and lookup",
-    fn() {
-      d: Dict<String, Int> = Dict.new()
-      d["x"] = 42
-      val := d["x"]
-      try assert.is_some(val)
-      v := case val {
-        .Some(x) => x,
-        .None => -1,
-      }
-      try assert.equal(v, 42)
-      .Ok({})
-    },
-  ).test(
-    "multiple assignments grow len",
-    fn() {
-      d := make_dict()
-      try assert.equal(d.len(), 3)
-      .Ok({})
-    },
-  ).test(
-    "assignment overwrites existing key",
-    fn() {
-      d: Dict<String, Int> = Dict.new()
-      d["k"] = 1
-      d["k"] = 2
-      try assert.equal(d.len(), 1)
-      v := case d["k"] {
-        .Some(x) => x,
-        .None => -1,
-      }
-      try assert.equal(v, 2)
-      .Ok({})
-    },
-  ).test(
-    "has checks key existence",
-    fn() {
-      d := make_dict()
-      try assert.is_true(d.has("a"))
-      try assert.is_false(d.has("z"))
-      .Ok({})
-    },
-  ).test(
-    "lookup returns none for missing key",
-    fn() {
-      d: Dict<String, Int> = Dict.new()
-      try assert.is_none(d["missing"])
-      .Ok({})
-    },
-  ).test(
-    "remove deletes key",
-    fn() {
-      d := make_dict()
-      d2 := d.remove("a")
-      try assert.equal(d.len(), 3)
-      try assert.equal(d2.len(), 2)
-      try assert.is_none(d2["a"])
-      try assert.is_some(d2["b"])
-      .Ok({})
-    },
-  ).test(
-    "keys returns all keys",
-    fn() {
-      d := make_dict()
-      ks := d.keys()
-      try assert.equal(ks.len(), 3)
-      try assert.is_true(ks.contains("a"))
-      try assert.is_true(ks.contains("b"))
-      try assert.is_true(ks.contains("c"))
-      .Ok({})
-    },
-  ).test(
-    "values returns all values",
-    fn() {
-      d := make_dict()
-      vs := d.values()
-      try assert.equal(vs.len(), 3)
-      .Ok({})
-    },
-  ).test(
-    "int keys work",
-    fn() {
-      d: Dict<Int, String> = Dict.new()
-      d[1] = "one"
-      d[2] = "two"
-      v := case d[1] {
-        .Some(x) => x,
-        .None => "missing",
-      }
-      try assert.equal(v, "one")
-      try assert.equal(d.len(), 2)
-      .Ok({})
-    },
-  ).test(
-    "linker-shaped string keys stress HAMT indexing",
-    fn() {
-      d: Dict<String, String> = Dict.new()
-      i := 0
+  runner.suite("dict")
+    .test(
+      "new creates empty dict",
+      fn() {
+        d: Dict<String, Int> = Dict.new()
+        try assert.equal(d.len(), 0)
+        .Ok({})
+      },
+    )
+    .test(
+      "is_empty detects empty and non-empty dicts",
+      fn() {
+        empty: Dict<String, Int> = Dict.new()
+        full := make_dict()
+        try assert.is_true(empty.is_empty())
+        try assert.is_false(full.is_empty())
+        try assert.is_true(Dict.is_empty(empty))
+        .Ok({})
+      },
+    )
+    .test(
+      "assignment and lookup",
+      fn() {
+        d: Dict<String, Int> = Dict.new()
+        d["x"] = 42
+        val := d["x"]
+        try assert.is_some(val)
+        v := case val {
+          .Some(x) => x,
+          .None => -1,
+        }
+        try assert.equal(v, 42)
+        .Ok({})
+      },
+    )
+    .test(
+      "multiple assignments grow len",
+      fn() {
+        d := make_dict()
+        try assert.equal(d.len(), 3)
+        .Ok({})
+      },
+    )
+    .test(
+      "assignment overwrites existing key",
+      fn() {
+        d: Dict<String, Int> = Dict.new()
+        d["k"] = 1
+        d["k"] = 2
+        try assert.equal(d.len(), 1)
+        v := case d["k"] {
+          .Some(x) => x,
+          .None => -1,
+        }
+        try assert.equal(v, 2)
+        .Ok({})
+      },
+    )
+    .test(
+      "has checks key existence",
+      fn() {
+        d := make_dict()
+        try assert.is_true(d.has("a"))
+        try assert.is_false(d.has("z"))
+        .Ok({})
+      },
+    )
+    .test(
+      "lookup returns none for missing key",
+      fn() {
+        d: Dict<String, Int> = Dict.new()
+        try assert.is_none(d["missing"])
+        .Ok({})
+      },
+    )
+    .test(
+      "remove deletes key",
+      fn() {
+        d := make_dict()
+        d2 := d.remove("a")
+        try assert.equal(d.len(), 3)
+        try assert.equal(d2.len(), 2)
+        try assert.is_none(d2["a"])
+        try assert.is_some(d2["b"])
+        .Ok({})
+      },
+    )
+    .test(
+      "keys returns all keys",
+      fn() {
+        d := make_dict()
+        ks := d.keys()
+        try assert.equal(ks.len(), 3)
+        try assert.is_true(ks.contains("a"))
+        try assert.is_true(ks.contains("b"))
+        try assert.is_true(ks.contains("c"))
+        .Ok({})
+      },
+    )
+    .test(
+      "values returns all values",
+      fn() {
+        d := make_dict()
+        vs := d.values()
+        try assert.equal(vs.len(), 3)
+        .Ok({})
+      },
+    )
+    .test(
+      "int keys work",
+      fn() {
+        d: Dict<Int, String> = Dict.new()
+        d[1] = "one"
+        d[2] = "two"
+        v := case d[1] {
+          .Some(x) => x,
+          .None => "missing",
+        }
+        try assert.equal(v, "one")
+        try assert.equal(d.len(), 2)
+        .Ok({})
+      },
+    )
+    .test(
+      "linker-shaped string keys stress HAMT indexing",
+      fn() {
+        d: Dict<String, String> = Dict.new()
+        i := 0
 
-      for i < 9000 {
-        key := linker_stress_key(i)
-        d[key] = key
-        i = i + 1
-      }
+        for i < 9000 {
+          key := linker_stress_key(i)
+          d[key] = key
+          i = i + 1
+        }
 
-      try assert.equal(d.len(), 9000)
-      i = 0
+        try assert.equal(d.len(), 9000)
+        i = 0
 
-      for i < 9000 {
-        key := linker_stress_key(i)
-        try assert.equal(
-          case d[key] {
-            .Some(value) => value,
-            .None => "missing",
-          },
-          key,
-        )
-        i = i + 1
-      }
+        for i < 9000 {
+          key := linker_stress_key(i)
+          try assert.equal(
+            case d[key] {
+              .Some(value) => value,
+              .None => "missing",
+            },
+            key,
+          )
+          i = i + 1
+        }
 
-      .Ok({})
-    },
-  ).test(
-    "for iterates key-value pairs",
-    fn() {
-      d := make_dict()
-      sum := Cell.new(0)
-      for _, v in d { sum.update(fn(n) { n + v }) }
-      try assert.equal(sum.get(), 6)
-      .Ok({})
-    },
-  ).test(
-    "for iterates keys only",
-    fn() {
-      d := make_dict()
-      count := 0
-      for _ in d { count = count + 1 }
-      try assert.equal(count, 3)
-      .Ok({})
-    },
-  ).test(
-    "get returns Some for existing key",
-    fn() {
-      d := make_dict()
-      v := d.get("a")
-      try assert.is_some(v)
-      val := case v {
-        .Some(x) => x,
-        .None => -1,
-      }
-      try assert.equal(val, 1)
-      .Ok({})
-    },
-  ).test(
-    "get returns None for missing key",
-    fn() {
-      d := make_dict()
-      try assert.is_none(d.get("z"))
-      .Ok({})
-    },
-  ).test(
-    "get works with int values",
-    fn() {
-      d: Dict<String, Int> = Dict.new()
-      d["x"] = 42
-      val := case d.get("x") {
-        .Some(x) => x,
-        .None => -1,
-      }
-      try assert.equal(val, 42)
-      .Ok({})
-    },
-  ).test(
-    "get works with string values",
-    fn() {
-      d: Dict<Int, String> = Dict.new()
-      d[1] = "hello"
-      val := case d.get(1) {
-        .Some(x) => x,
-        .None => "",
-      }
-      try assert.equal(val, "hello")
-      .Ok({})
-    },
-  ).test(
-    "collect from dict",
-    fn() {
-      d := make_dict()
-      entries := collect k, v in d {
-        "${k}=${v}"
-      }
-      try assert.equal(entries.len(), 3)
-      .Ok({})
-    },
-  )
+        .Ok({})
+      },
+    )
+    .test(
+      "for iterates key-value pairs",
+      fn() {
+        d := make_dict()
+        sum := Cell.new(0)
+        for _, v in d { sum.update(fn(n) { n + v }) }
+        try assert.equal(sum.get(), 6)
+        .Ok({})
+      },
+    )
+    .test(
+      "for iterates keys only",
+      fn() {
+        d := make_dict()
+        count := 0
+        for _ in d { count = count + 1 }
+        try assert.equal(count, 3)
+        .Ok({})
+      },
+    )
+    .test(
+      "get returns Some for existing key",
+      fn() {
+        d := make_dict()
+        v := d.get("a")
+        try assert.is_some(v)
+        val := case v {
+          .Some(x) => x,
+          .None => -1,
+        }
+        try assert.equal(val, 1)
+        .Ok({})
+      },
+    )
+    .test(
+      "get returns None for missing key",
+      fn() {
+        d := make_dict()
+        try assert.is_none(d.get("z"))
+        .Ok({})
+      },
+    )
+    .test(
+      "get works with int values",
+      fn() {
+        d: Dict<String, Int> = Dict.new()
+        d["x"] = 42
+        val := case d.get("x") {
+          .Some(x) => x,
+          .None => -1,
+        }
+        try assert.equal(val, 42)
+        .Ok({})
+      },
+    )
+    .test(
+      "get works with string values",
+      fn() {
+        d: Dict<Int, String> = Dict.new()
+        d[1] = "hello"
+        val := case d.get(1) {
+          .Some(x) => x,
+          .None => "",
+        }
+        try assert.equal(val, "hello")
+        .Ok({})
+      },
+    )
+    .test(
+      "collect from dict",
+      fn() {
+        d := make_dict()
+        entries := collect k, v in d {
+          "${k}=${v}"
+        }
+        try assert.equal(entries.len(), 3)
+        .Ok({})
+      },
+    )
 }

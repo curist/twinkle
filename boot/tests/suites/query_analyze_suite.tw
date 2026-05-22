@@ -11,254 +11,270 @@ fn ov_doc(path: String, text: String) overlay.OverlayDocument {
 }
 
 pub fn suite() runner.Suite {
-  runner.suite("query analyze (shared path)").test(
-    "single module analysis succeeds via overlay",
-    fn() {
-      ov := overlay.from_documents([ov_doc("/tmp/analyze/main.tw", "pub fn answer() Int { 42 }\n")])
-      state := analyze.new_state(base_env.builtin_env(), cache.empty(), ov, "/tmp/analyze")
-      id := identity.from_path("/tmp/analyze/main.tw")
-      result := analyze.analyze_module(id, "__entry", base_env.builtin_env(), state, [])
-      try assert.is_true(result.ok)
-      try assert.equal(result.diagnostics.len(), 0)
-      try assert.is_true(result.state.exports.has("/tmp/analyze/main.tw"))
-      .Ok({})
-    },
-  ).test(
-    "cross-module analysis resolves imports via overlay",
-    fn() {
-      ov := overlay.from_documents([
-        ov_doc("/tmp/analyze/main.tw", "use dep\nx := dep.answer()\n"),
-        ov_doc("/tmp/analyze/dep.tw", "pub fn answer() Int { 42 }\n"),
-      ])
-      state := analyze.new_state(base_env.builtin_env(), cache.empty(), ov, "/tmp/analyze")
-      id := identity.from_path("/tmp/analyze/main.tw")
-      result := analyze.analyze_module(id, "__entry", base_env.builtin_env(), state, [])
-      try assert.is_true(result.ok)
-      try assert.equal(result.diagnostics.len(), 0)
-      try assert.is_true(result.state.exports.has("/tmp/analyze/dep.tw"))
-      try assert.is_true(result.state.exports.has("/tmp/analyze/main.tw"))
-      .Ok({})
-    },
-  ).test(
-    "analysis detects circular imports",
-    fn() {
-      ov := overlay.from_documents([
-        ov_doc("/tmp/analyze/a.tw", "use b\npub fn a() Int { b.b() }\n"),
-        ov_doc("/tmp/analyze/b.tw", "use a\npub fn b() Int { a.a() }\n"),
-      ])
-      state := analyze.new_state(base_env.builtin_env(), cache.empty(), ov, "/tmp/analyze")
-      id := identity.from_path("/tmp/analyze/a.tw")
-      result := analyze.analyze_module(id, "__entry", base_env.builtin_env(), state, [])
-      try assert.is_false(result.ok)
-      try assert.is_true(result.diagnostics.len() > 0)
-      msg := result.diagnostics[0].kind.message()
-      try assert.str_contains(msg, "Circular import")
-      .Ok({})
-    },
-  ).test(
-    "analysis reports parse errors",
-    fn() {
-      ov := overlay.from_documents([ov_doc("/tmp/analyze/bad.tw", "fn f( {")])
-      state := analyze.new_state(base_env.builtin_env(), cache.empty(), ov, "/tmp/analyze")
-      id := identity.from_path("/tmp/analyze/bad.tw")
-      result := analyze.analyze_module(id, "__entry", base_env.builtin_env(), state, [])
-      try assert.is_false(result.ok)
-      try assert.is_true(result.diagnostics.len() > 0)
-      try assert.equal(result.diagnostics[0].stage, "parse")
-      .Ok({})
-    },
-  ).test(
-    "analysis reports typecheck errors",
-    fn() {
-      ov := overlay.from_documents([ov_doc("/tmp/analyze/err.tw", "fn answer() String { 42 }")])
-      state := analyze.new_state(base_env.builtin_env(), cache.empty(), ov, "/tmp/analyze")
-      id := identity.from_path("/tmp/analyze/err.tw")
-      result := analyze.analyze_module(id, "__entry", base_env.builtin_env(), state, [])
-      try assert.is_false(result.ok)
-      try assert.is_true(result.diagnostics.len() > 0)
-      try assert.equal(result.diagnostics[0].stage, "check")
-      .Ok({})
-    },
-  ).test(
-    "analysis caches stages on re-analysis",
-    fn() {
-      ov := overlay.from_documents([ov_doc("/tmp/analyze/cached.tw", "x := 1\n")])
-      state := analyze.new_state(base_env.builtin_env(), cache.empty(), ov, "/tmp/analyze")
-      id := identity.from_path("/tmp/analyze/cached.tw")
-      first := analyze.analyze_module(id, "__entry", base_env.builtin_env(), state, [])
-      try assert.is_true(first.ok)
-      // Re-analyze with same source — should get cache hits
-      state2 := analyze.new_state(base_env.builtin_env(), first.state.cache, ov, "/tmp/analyze")
-      second := analyze.analyze_module(id, "__entry", base_env.builtin_env(), state2, [])
-      try assert.is_true(second.ok)
-      stats := cache.get_stats(second.state.cache)
-      try assert.is_true(stats.parse_hits > 0)
-      try assert.is_true(stats.resolve_hits > 0)
-      try assert.is_true(stats.typecheck_hits > 0)
-      .Ok({})
-    },
-  ).test(
-    "analysis tracks module order for downstream consumers",
-    fn() {
-      ov := overlay.from_documents([
-        ov_doc("/tmp/analyze/main.tw", "use dep\nx := dep.answer()\n"),
-        ov_doc("/tmp/analyze/dep.tw", "pub fn answer() Int { 42 }\n"),
-      ])
-      state := analyze.new_state(base_env.builtin_env(), cache.empty(), ov, "/tmp/analyze")
-      id := identity.from_path("/tmp/analyze/main.tw")
-      result := analyze.analyze_module(id, "__entry", base_env.builtin_env(), state, [])
-      try assert.is_true(result.ok)
-      // dep should come before main (dependency order), with bundled prelude modules allowed.
-      dep_index := -1
-      main_index := -1
-      i := 0
+  runner.suite("query analyze (shared path)")
+    .test(
+      "single module analysis succeeds via overlay",
+      fn() {
+        ov := overlay.from_documents([
+          ov_doc("/tmp/analyze/main.tw", "pub fn answer() Int { 42 }\n"),
+        ])
+        state := analyze.new_state(base_env.builtin_env(), cache.empty(), ov, "/tmp/analyze")
+        id := identity.from_path("/tmp/analyze/main.tw")
+        result := analyze.analyze_module(id, "__entry", base_env.builtin_env(), state, [])
+        try assert.is_true(result.ok)
+        try assert.equal(result.diagnostics.len(), 0)
+        try assert.is_true(result.state.exports.has("/tmp/analyze/main.tw"))
+        .Ok({})
+      },
+    )
+    .test(
+      "cross-module analysis resolves imports via overlay",
+      fn() {
+        ov := overlay.from_documents([
+          ov_doc("/tmp/analyze/main.tw", "use dep\nx := dep.answer()\n"),
+          ov_doc("/tmp/analyze/dep.tw", "pub fn answer() Int { 42 }\n"),
+        ])
+        state := analyze.new_state(base_env.builtin_env(), cache.empty(), ov, "/tmp/analyze")
+        id := identity.from_path("/tmp/analyze/main.tw")
+        result := analyze.analyze_module(id, "__entry", base_env.builtin_env(), state, [])
+        try assert.is_true(result.ok)
+        try assert.equal(result.diagnostics.len(), 0)
+        try assert.is_true(result.state.exports.has("/tmp/analyze/dep.tw"))
+        try assert.is_true(result.state.exports.has("/tmp/analyze/main.tw"))
+        .Ok({})
+      },
+    )
+    .test(
+      "analysis detects circular imports",
+      fn() {
+        ov := overlay.from_documents([
+          ov_doc("/tmp/analyze/a.tw", "use b\npub fn a() Int { b.b() }\n"),
+          ov_doc("/tmp/analyze/b.tw", "use a\npub fn b() Int { a.a() }\n"),
+        ])
+        state := analyze.new_state(base_env.builtin_env(), cache.empty(), ov, "/tmp/analyze")
+        id := identity.from_path("/tmp/analyze/a.tw")
+        result := analyze.analyze_module(id, "__entry", base_env.builtin_env(), state, [])
+        try assert.is_false(result.ok)
+        try assert.is_true(result.diagnostics.len() > 0)
+        msg := result.diagnostics[0].kind.message()
+        try assert.str_contains(msg, "Circular import")
+        .Ok({})
+      },
+    )
+    .test(
+      "analysis reports parse errors",
+      fn() {
+        ov := overlay.from_documents([ov_doc("/tmp/analyze/bad.tw", "fn f( {")])
+        state := analyze.new_state(base_env.builtin_env(), cache.empty(), ov, "/tmp/analyze")
+        id := identity.from_path("/tmp/analyze/bad.tw")
+        result := analyze.analyze_module(id, "__entry", base_env.builtin_env(), state, [])
+        try assert.is_false(result.ok)
+        try assert.is_true(result.diagnostics.len() > 0)
+        try assert.equal(result.diagnostics[0].stage, "parse")
+        .Ok({})
+      },
+    )
+    .test(
+      "analysis reports typecheck errors",
+      fn() {
+        ov := overlay.from_documents([ov_doc("/tmp/analyze/err.tw", "fn answer() String { 42 }")])
+        state := analyze.new_state(base_env.builtin_env(), cache.empty(), ov, "/tmp/analyze")
+        id := identity.from_path("/tmp/analyze/err.tw")
+        result := analyze.analyze_module(id, "__entry", base_env.builtin_env(), state, [])
+        try assert.is_false(result.ok)
+        try assert.is_true(result.diagnostics.len() > 0)
+        try assert.equal(result.diagnostics[0].stage, "check")
+        .Ok({})
+      },
+    )
+    .test(
+      "analysis caches stages on re-analysis",
+      fn() {
+        ov := overlay.from_documents([ov_doc("/tmp/analyze/cached.tw", "x := 1\n")])
+        state := analyze.new_state(base_env.builtin_env(), cache.empty(), ov, "/tmp/analyze")
+        id := identity.from_path("/tmp/analyze/cached.tw")
+        first := analyze.analyze_module(id, "__entry", base_env.builtin_env(), state, [])
+        try assert.is_true(first.ok)
+        // Re-analyze with same source — should get cache hits
+        state2 := analyze.new_state(base_env.builtin_env(), first.state.cache, ov, "/tmp/analyze")
+        second := analyze.analyze_module(id, "__entry", base_env.builtin_env(), state2, [])
+        try assert.is_true(second.ok)
+        stats := cache.get_stats(second.state.cache)
+        try assert.is_true(stats.parse_hits > 0)
+        try assert.is_true(stats.resolve_hits > 0)
+        try assert.is_true(stats.typecheck_hits > 0)
+        .Ok({})
+      },
+    )
+    .test(
+      "analysis tracks module order for downstream consumers",
+      fn() {
+        ov := overlay.from_documents([
+          ov_doc("/tmp/analyze/main.tw", "use dep\nx := dep.answer()\n"),
+          ov_doc("/tmp/analyze/dep.tw", "pub fn answer() Int { 42 }\n"),
+        ])
+        state := analyze.new_state(base_env.builtin_env(), cache.empty(), ov, "/tmp/analyze")
+        id := identity.from_path("/tmp/analyze/main.tw")
+        result := analyze.analyze_module(id, "__entry", base_env.builtin_env(), state, [])
+        try assert.is_true(result.ok)
+        // dep should come before main (dependency order), with bundled prelude modules allowed.
+        dep_index := -1
+        main_index := -1
+        i := 0
 
-      for p in result.state.module_order {
-        if p == "/tmp/analyze/dep.tw" { dep_index = i }
-        if p == "/tmp/analyze/main.tw" { main_index = i }
-        i = i + 1
-      }
+        for p in result.state.module_order {
+          if p == "/tmp/analyze/dep.tw" { dep_index = i }
+          if p == "/tmp/analyze/main.tw" { main_index = i }
+          i = i + 1
+        }
 
-      try assert.is_true(dep_index >= 0)
-      try assert.is_true(main_index >= 0)
-      try assert.is_true(dep_index < main_index)
-      .Ok({})
-    },
-  ).test(
-    "dep typecheck error reports diagnostic with dep path",
-    fn() {
-      ov := overlay.from_documents([
-        ov_doc("/tmp/analyze/main.tw", "use dep\nx := dep.answer()\n"),
-        ov_doc("/tmp/analyze/dep.tw", "pub fn answer() String { 42 }\n"),
-      ])
-      state := analyze.new_state(base_env.builtin_env(), cache.empty(), ov, "/tmp/analyze")
-      id := identity.from_path("/tmp/analyze/main.tw")
-      result := analyze.analyze_module(id, "__entry", base_env.builtin_env(), state, [])
-      try assert.is_false(result.ok)
-      try assert.is_true(result.diagnostics.len() > 0)
-      // Diagnostic should point to the dep file, not the entry
-      try assert.equal(result.diagnostics[0].identity.path, "/tmp/analyze/dep.tw")
-      try assert.equal(result.diagnostics[0].stage, "check")
-      try assert.is_true(result.diagnostics[0].kind.span().start >= 0)
-      .Ok({})
-    },
-  ).test(
-    "missing dep reports source error",
-    fn() {
-      ov := overlay.from_documents([ov_doc("/tmp/analyze/main.tw", "use missing\nx := 1\n")])
-      state := analyze.new_state(base_env.builtin_env(), cache.empty(), ov, "/tmp/analyze")
-      id := identity.from_path("/tmp/analyze/main.tw")
-      result := analyze.analyze_module(id, "__entry", base_env.builtin_env(), state, [])
-      try assert.is_false(result.ok)
-      try assert.is_true(result.diagnostics.len() > 0)
-      try assert.equal(result.diagnostics[0].stage, "import")
-      .Ok({})
-    },
-  ).test(
-    "missing dep diagnostic span points to the use statement",
-    fn() {
-      // "use missing" occupies bytes 0..11; span.end should be > 0, not the
-      // old zero sentinel that was emitted before import spans were tracked.
-      ov := overlay.from_documents([ov_doc("/tmp/analyze/main.tw", "use missing\nx := 1\n")])
-      state := analyze.new_state(base_env.builtin_env(), cache.empty(), ov, "/tmp/analyze")
-      id := identity.from_path("/tmp/analyze/main.tw")
-      result := analyze.analyze_module(id, "__entry", base_env.builtin_env(), state, [])
-      try assert.is_false(result.ok)
-      d := result.diagnostics[0]
-      // Identity should be the importing file
-      try assert.equal(d.identity.path, "/tmp/analyze/main.tw")
-      // Span should be non-zero (points to `use missing`, not the old zero sentinel)
-      try assert.is_true(d.kind.span().end > 0)
-      .Ok({})
-    },
-  ).test(
-    "circular import diagnostic points to importing file's use statement",
-    fn() {
-      // a.tw has `use b` at bytes 0..5; b.tw has `use a` at bytes 0..5.
-      // The circularity is detected when b tries to re-import a.
-      // Diagnostic should be attributed to b.tw at its `use a` span.
-      ov := overlay.from_documents([
-        ov_doc("/tmp/analyze/a.tw", "use b\npub fn a() Int { b.b() }\n"),
-        ov_doc("/tmp/analyze/b.tw", "use a\npub fn b() Int { a.a() }\n"),
-      ])
-      state := analyze.new_state(base_env.builtin_env(), cache.empty(), ov, "/tmp/analyze")
-      id := identity.from_path("/tmp/analyze/a.tw")
-      result := analyze.analyze_module(id, "__entry", base_env.builtin_env(), state, [])
-      try assert.is_false(result.ok)
-      try assert.is_true(result.diagnostics.len() > 0)
-      d := result.diagnostics[0]
-      // b.tw triggers the circular detection when it imports a.tw
-      try assert.equal(d.identity.path, "/tmp/analyze/b.tw")
-      // Span should point to `use a` in b.tw, not the zero sentinel
-      try assert.is_true(d.kind.span().end > 0)
-      .Ok({})
-    },
-  ).test(
-    "module_runners populated for all analyzed modules",
-    fn() {
-      ov := overlay.from_documents([
-        ov_doc("/tmp/analyze/main.tw", "use dep\nx := dep.answer()\n"),
-        ov_doc("/tmp/analyze/dep.tw", "pub fn answer() Int { 42 }\n"),
-      ])
-      state := analyze.new_state(base_env.builtin_env(), cache.empty(), ov, "/tmp/analyze")
-      id := identity.from_path("/tmp/analyze/main.tw")
-      result := analyze.analyze_module(id, "__entry", base_env.builtin_env(), state, [])
-      try assert.is_true(result.ok)
-      // Every module in module_order should have a runner
-      for mod_path in result.state.module_order {
-        try assert.is_true(result.state.module_runners.has(mod_path))
-      }
-      .Ok({})
-    },
-  ).test(
-    "early cutoff: dep body change preserves importer cache hits",
-    fn() {
-      ov1 := overlay.from_documents([
-        ov_doc("/tmp/analyze/main.tw", "use helper\nx := helper.value()\n"),
-        ov_doc("/tmp/analyze/helper.tw", "pub fn value() Int { 1 }\n"),
-      ])
-      state := analyze.new_state(base_env.builtin_env(), cache.empty(), ov1, "/tmp/analyze")
-      id := identity.from_path("/tmp/analyze/main.tw")
-      first := analyze.analyze_module(id, "__entry", base_env.builtin_env(), state, [])
-      try assert.is_true(first.ok)
-      // Change dep body but keep same signature
-      ov2 := overlay.from_documents([
-        ov_doc("/tmp/analyze/main.tw", "use helper\nx := helper.value()\n"),
-        ov_doc("/tmp/analyze/helper.tw", "pub fn value() Int { 999 }\n"),
-      ])
-      state2 := analyze.new_state(base_env.builtin_env(), first.state.cache, ov2, "/tmp/analyze")
-      second := analyze.analyze_module(id, "__entry", base_env.builtin_env(), state2, [])
-      try assert.is_true(second.ok)
-      stats := cache.get_stats(second.state.cache)
-      // Importer should get resolve+typecheck cache hits
-      try assert.is_true(stats.resolve_hits > 0)
-      try assert.is_true(stats.typecheck_hits > 0)
-      .Ok({})
-    },
-  ).test(
-    "early cutoff: dep export change invalidates importer typecheck",
-    fn() {
-      ov1 := overlay.from_documents([
-        ov_doc("/tmp/analyze/main.tw", "use helper\nx: Int = helper.value()\n"),
-        ov_doc("/tmp/analyze/helper.tw", "pub fn value() Int { 1 }\n"),
-      ])
-      state := analyze.new_state(base_env.builtin_env(), cache.empty(), ov1, "/tmp/analyze")
-      id := identity.from_path("/tmp/analyze/main.tw")
-      first := analyze.analyze_module(id, "__entry", base_env.builtin_env(), state, [])
-      try assert.is_true(first.ok)
-      first_changed := cache.changed_at(first.state.cache, "/tmp/analyze/main.tw", .Typed)
-      ov2 := overlay.from_documents([
-        ov_doc("/tmp/analyze/main.tw", "use helper\nx: Int = helper.value()\n"),
-        ov_doc("/tmp/analyze/helper.tw", "pub fn value() String { \"one\" }\n"),
-      ])
-      state2 := analyze.new_state(base_env.builtin_env(), first.state.cache, ov2, "/tmp/analyze")
-      second := analyze.analyze_module(id, "__entry", base_env.builtin_env(), state2, [])
-      try assert.is_false(second.ok)
-      try assert.is_true(second.diagnostics.len() > 0)
-      try assert.is_true(
-        cache.changed_at(second.state.cache, "/tmp/analyze/main.tw", .Typed) != first_changed,
-      )
-      .Ok({})
-    },
-  )
+        try assert.is_true(dep_index >= 0)
+        try assert.is_true(main_index >= 0)
+        try assert.is_true(dep_index < main_index)
+        .Ok({})
+      },
+    )
+    .test(
+      "dep typecheck error reports diagnostic with dep path",
+      fn() {
+        ov := overlay.from_documents([
+          ov_doc("/tmp/analyze/main.tw", "use dep\nx := dep.answer()\n"),
+          ov_doc("/tmp/analyze/dep.tw", "pub fn answer() String { 42 }\n"),
+        ])
+        state := analyze.new_state(base_env.builtin_env(), cache.empty(), ov, "/tmp/analyze")
+        id := identity.from_path("/tmp/analyze/main.tw")
+        result := analyze.analyze_module(id, "__entry", base_env.builtin_env(), state, [])
+        try assert.is_false(result.ok)
+        try assert.is_true(result.diagnostics.len() > 0)
+        // Diagnostic should point to the dep file, not the entry
+        try assert.equal(result.diagnostics[0].identity.path, "/tmp/analyze/dep.tw")
+        try assert.equal(result.diagnostics[0].stage, "check")
+        try assert.is_true(result.diagnostics[0].kind.span().start >= 0)
+        .Ok({})
+      },
+    )
+    .test(
+      "missing dep reports source error",
+      fn() {
+        ov := overlay.from_documents([ov_doc("/tmp/analyze/main.tw", "use missing\nx := 1\n")])
+        state := analyze.new_state(base_env.builtin_env(), cache.empty(), ov, "/tmp/analyze")
+        id := identity.from_path("/tmp/analyze/main.tw")
+        result := analyze.analyze_module(id, "__entry", base_env.builtin_env(), state, [])
+        try assert.is_false(result.ok)
+        try assert.is_true(result.diagnostics.len() > 0)
+        try assert.equal(result.diagnostics[0].stage, "import")
+        .Ok({})
+      },
+    )
+    .test(
+      "missing dep diagnostic span points to the use statement",
+      fn() {
+        // "use missing" occupies bytes 0..11; span.end should be > 0, not the
+        // old zero sentinel that was emitted before import spans were tracked.
+        ov := overlay.from_documents([ov_doc("/tmp/analyze/main.tw", "use missing\nx := 1\n")])
+        state := analyze.new_state(base_env.builtin_env(), cache.empty(), ov, "/tmp/analyze")
+        id := identity.from_path("/tmp/analyze/main.tw")
+        result := analyze.analyze_module(id, "__entry", base_env.builtin_env(), state, [])
+        try assert.is_false(result.ok)
+        d := result.diagnostics[0]
+        // Identity should be the importing file
+        try assert.equal(d.identity.path, "/tmp/analyze/main.tw")
+        // Span should be non-zero (points to `use missing`, not the old zero sentinel)
+        try assert.is_true(d.kind.span().end > 0)
+        .Ok({})
+      },
+    )
+    .test(
+      "circular import diagnostic points to importing file's use statement",
+      fn() {
+        // a.tw has `use b` at bytes 0..5; b.tw has `use a` at bytes 0..5.
+        // The circularity is detected when b tries to re-import a.
+        // Diagnostic should be attributed to b.tw at its `use a` span.
+        ov := overlay.from_documents([
+          ov_doc("/tmp/analyze/a.tw", "use b\npub fn a() Int { b.b() }\n"),
+          ov_doc("/tmp/analyze/b.tw", "use a\npub fn b() Int { a.a() }\n"),
+        ])
+        state := analyze.new_state(base_env.builtin_env(), cache.empty(), ov, "/tmp/analyze")
+        id := identity.from_path("/tmp/analyze/a.tw")
+        result := analyze.analyze_module(id, "__entry", base_env.builtin_env(), state, [])
+        try assert.is_false(result.ok)
+        try assert.is_true(result.diagnostics.len() > 0)
+        d := result.diagnostics[0]
+        // b.tw triggers the circular detection when it imports a.tw
+        try assert.equal(d.identity.path, "/tmp/analyze/b.tw")
+        // Span should point to `use a` in b.tw, not the zero sentinel
+        try assert.is_true(d.kind.span().end > 0)
+        .Ok({})
+      },
+    )
+    .test(
+      "module_runners populated for all analyzed modules",
+      fn() {
+        ov := overlay.from_documents([
+          ov_doc("/tmp/analyze/main.tw", "use dep\nx := dep.answer()\n"),
+          ov_doc("/tmp/analyze/dep.tw", "pub fn answer() Int { 42 }\n"),
+        ])
+        state := analyze.new_state(base_env.builtin_env(), cache.empty(), ov, "/tmp/analyze")
+        id := identity.from_path("/tmp/analyze/main.tw")
+        result := analyze.analyze_module(id, "__entry", base_env.builtin_env(), state, [])
+        try assert.is_true(result.ok)
+        // Every module in module_order should have a runner
+        for mod_path in result.state.module_order {
+          try assert.is_true(result.state.module_runners.has(mod_path))
+        }
+        .Ok({})
+      },
+    )
+    .test(
+      "early cutoff: dep body change preserves importer cache hits",
+      fn() {
+        ov1 := overlay.from_documents([
+          ov_doc("/tmp/analyze/main.tw", "use helper\nx := helper.value()\n"),
+          ov_doc("/tmp/analyze/helper.tw", "pub fn value() Int { 1 }\n"),
+        ])
+        state := analyze.new_state(base_env.builtin_env(), cache.empty(), ov1, "/tmp/analyze")
+        id := identity.from_path("/tmp/analyze/main.tw")
+        first := analyze.analyze_module(id, "__entry", base_env.builtin_env(), state, [])
+        try assert.is_true(first.ok)
+        // Change dep body but keep same signature
+        ov2 := overlay.from_documents([
+          ov_doc("/tmp/analyze/main.tw", "use helper\nx := helper.value()\n"),
+          ov_doc("/tmp/analyze/helper.tw", "pub fn value() Int { 999 }\n"),
+        ])
+        state2 := analyze.new_state(base_env.builtin_env(), first.state.cache, ov2, "/tmp/analyze")
+        second := analyze.analyze_module(id, "__entry", base_env.builtin_env(), state2, [])
+        try assert.is_true(second.ok)
+        stats := cache.get_stats(second.state.cache)
+        // Importer should get resolve+typecheck cache hits
+        try assert.is_true(stats.resolve_hits > 0)
+        try assert.is_true(stats.typecheck_hits > 0)
+        .Ok({})
+      },
+    )
+    .test(
+      "early cutoff: dep export change invalidates importer typecheck",
+      fn() {
+        ov1 := overlay.from_documents([
+          ov_doc("/tmp/analyze/main.tw", "use helper\nx: Int = helper.value()\n"),
+          ov_doc("/tmp/analyze/helper.tw", "pub fn value() Int { 1 }\n"),
+        ])
+        state := analyze.new_state(base_env.builtin_env(), cache.empty(), ov1, "/tmp/analyze")
+        id := identity.from_path("/tmp/analyze/main.tw")
+        first := analyze.analyze_module(id, "__entry", base_env.builtin_env(), state, [])
+        try assert.is_true(first.ok)
+        first_changed := cache.changed_at(first.state.cache, "/tmp/analyze/main.tw", .Typed)
+        ov2 := overlay.from_documents([
+          ov_doc("/tmp/analyze/main.tw", "use helper\nx: Int = helper.value()\n"),
+          ov_doc("/tmp/analyze/helper.tw", "pub fn value() String { \"one\" }\n"),
+        ])
+        state2 := analyze.new_state(base_env.builtin_env(), first.state.cache, ov2, "/tmp/analyze")
+        second := analyze.analyze_module(id, "__entry", base_env.builtin_env(), state2, [])
+        try assert.is_false(second.ok)
+        try assert.is_true(second.diagnostics.len() > 0)
+        try assert.is_true(
+          cache.changed_at(second.state.cache, "/tmp/analyze/main.tw", .Typed) != first_changed,
+        )
+        .Ok({})
+      },
+    )
 }

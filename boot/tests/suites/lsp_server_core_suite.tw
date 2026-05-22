@@ -40,590 +40,617 @@ fn publish_due_now(step: server_core.Step) server_core.Step {
 }
 
 pub fn suite() runner.Suite {
-  runner.suite("lsp server core").test(
-    "initialize returns minimal capabilities",
-    fn() {
-      msg := protocol.Message.Request(.{ id: .IntId(1), method: "initialize", params: .None })
-      step := server_core.handle_message(server_core.initial_state(), msg)
-      out := try only_out(step)
-      result := try json.decode(out, json.field("result", json.raw()))
-      caps := try json.decode(result, json.field("capabilities", json.raw()))
-      try assert.equal(
-        try json.decode(caps, json.field("positionEncoding", json.string())),
-        "utf-16",
-      )
-      try assert.equal(try json.decode(caps, json.field("textDocumentSync", json.int())), 1)
-      info := try json.decode(result, json.field("serverInfo", json.raw()))
-      try assert.equal(try json.decode(info, json.field("name", json.string())), "twinkle-lsp")
-      .Ok({})
-    },
-  ).test(
-    "initialized notification updates state without response",
-    fn() {
-      msg := protocol.Message.Notification(.{ method: "initialized", params: .None })
-      step := server_core.handle_message(server_core.initial_state(), msg)
-      try assert.is_true(step.state.initialized)
-      try assert.equal(step.outgoing.len(), 0)
-      .Ok({})
-    },
-  ).test(
-    "shutdown responds null and marks state",
-    fn() {
-      msg := protocol.Message.Request(.{ id: .StringId("s"), method: "shutdown", params: .None })
-      step := server_core.handle_message(server_core.initial_state(), msg)
-      try assert.is_true(step.state.shutdown_requested)
-      out := try only_out(step)
+  runner.suite("lsp server core")
+    .test(
+      "initialize returns minimal capabilities",
+      fn() {
+        msg := protocol.Message.Request(.{ id: .IntId(1), method: "initialize", params: .None })
+        step := server_core.handle_message(server_core.initial_state(), msg)
+        out := try only_out(step)
+        result := try json.decode(out, json.field("result", json.raw()))
+        caps := try json.decode(result, json.field("capabilities", json.raw()))
+        try assert.equal(
+          try json.decode(caps, json.field("positionEncoding", json.string())),
+          "utf-16",
+        )
+        try assert.equal(try json.decode(caps, json.field("textDocumentSync", json.int())), 1)
+        info := try json.decode(result, json.field("serverInfo", json.raw()))
+        try assert.equal(try json.decode(info, json.field("name", json.string())), "twinkle-lsp")
+        .Ok({})
+      },
+    )
+    .test(
+      "initialized notification updates state without response",
+      fn() {
+        msg := protocol.Message.Notification(.{ method: "initialized", params: .None })
+        step := server_core.handle_message(server_core.initial_state(), msg)
+        try assert.is_true(step.state.initialized)
+        try assert.equal(step.outgoing.len(), 0)
+        .Ok({})
+      },
+    )
+    .test(
+      "shutdown responds null and marks state",
+      fn() {
+        msg := protocol.Message.Request(.{ id: .StringId("s"), method: "shutdown", params: .None })
+        step := server_core.handle_message(server_core.initial_state(), msg)
+        try assert.is_true(step.state.shutdown_requested)
+        out := try only_out(step)
 
-      case try json.decode(out, json.field("result", json.raw())) {
-        .Null => .Ok({}),
-        _ => assert.fail("expected null result"),
-      }
-    },
-  ).test(
-    "exit notification requests exit",
-    fn() {
-      msg := protocol.Message.Notification(.{ method: "exit", params: .None })
-      step := server_core.handle_message(server_core.initial_state(), msg)
-      try assert.is_true(step.state.should_exit)
-      try assert.equal(step.outgoing.len(), 0)
-      .Ok({})
-    },
-  ).test(
-    "unknown request returns method not found",
-    fn() {
-      msg := protocol.Message.Request(.{ id: .IntId(9), method: "twinkle/nope", params: .None })
-      step := server_core.handle_message(server_core.initial_state(), msg)
-      out := try only_out(step)
-      err := try json.decode(out, json.field("error", json.raw()))
-      try assert.equal(try json.decode(err, json.field("code", json.int())), -32601)
-      try assert.equal(
-        try json.decode(err, json.field("message", json.string())),
-        "method not found",
-      )
-      .Ok({})
-    },
-  ).test(
-    "didOpen stores the document",
-    fn() {
-      params := json.object([
-        json.kv(
-          "textDocument",
-          json.object([
-            json.kv("uri", .Str("file:///a.tw")),
-            json.kv("languageId", .Str("twinkle")),
-            json.kv("version", .Int(1)),
-            json.kv("text", .Str("x := 1\n")),
-          ]),
-        ),
-      ])
-      msg := protocol.Message.Notification(.{
-        method: "textDocument/didOpen",
-        params: .Some(params),
-      })
-      step := server_core.handle_message(server_core.initial_state(), msg)
-      doc := try document_store.get(step.state.documents, "file:///a.tw").ok_or("missing document")
-      try assert.equal(doc.text, "x := 1\n")
-      try assert.equal(try doc.version.ok_or("missing version"), 1)
-      out := try only_out(step)
-      try assert.equal(
-        try json.decode(out, json.field("method", json.string())),
-        "textDocument/publishDiagnostics",
-      )
-      params_out := try json.decode(out, json.field("params", json.raw()))
-      try assert.equal(
-        try json.decode(params_out, json.field("uri", json.string())),
-        "file:///a.tw",
-      )
-      try assert.equal(try json.decode(params_out, json.field("version", json.int())), 1)
-      .Ok({})
-    },
-  ).test(
-    "didChange replaces full document text",
-    fn() {
-      opened := document_store.open(document_store.empty(), "file:///a.tw", "old", .Some(1))
-      state := server_core.State.{
-        initialized: true,
-        shutdown_requested: false,
-        should_exit: false,
-        documents: opened,
-        query_cache: query_cache.empty(),
-        diagnostics_pending: false,
-        diagnostics_deadline_ms: 0.0,
-        last_published_versions: Dict.new(),
-      }
-      params := json.object([
-        json.kv(
-          "textDocument",
-          json.object([json.kv("uri", .Str("file:///a.tw")), json.kv("version", .Int(2))]),
-        ),
-        json.kv("contentChanges", json.array([json.object([json.kv("text", .Str("new"))])])),
-      ])
-      msg := protocol.Message.Notification(.{
-        method: "textDocument/didChange",
-        params: .Some(params),
-      })
-      step := server_core.handle_message(state, msg)
-      doc := try document_store.get(step.state.documents, "file:///a.tw").ok_or("missing document")
-      try assert.equal(doc.text, "new")
-      try assert.equal(try doc.version.ok_or("missing version"), 2)
-      try assert.is_true(step.state.diagnostics_pending)
-      try assert.equal(step.outgoing.len(), 0)
-      .Ok({})
-    },
-  ).test(
-    "didChange publishes diagnostics for open importers",
-    fn() {
-      docs := document_store.empty().open(
-        "file:///tmp/a.tw",
-        "use dep\nx: Int = dep.answer()\n",
-        .Some(1),
-      ).open("file:///tmp/dep.tw", "pub fn answer() Int { 1 }\n", .Some(1))
-      state := server_core.State.{
-        initialized: true,
-        shutdown_requested: false,
-        should_exit: false,
-        documents: docs,
-        query_cache: query_cache.empty(),
-        diagnostics_pending: false,
-        diagnostics_deadline_ms: 0.0,
-        last_published_versions: Dict.new(),
-      }
-      params := json.object([
-        json.kv(
-          "textDocument",
-          json.object([json.kv("uri", .Str("file:///tmp/dep.tw")), json.kv("version", .Int(2))]),
-        ),
-        json.kv(
-          "contentChanges",
-          json.array([json.object([json.kv("text", .Str("pub fn answer() String { \"nope\" }\n"))])]),
-        ),
-      ])
-      msg := protocol.Message.Notification(.{
-        method: "textDocument/didChange",
-        params: .Some(params),
-      })
-      step := publish_due_now(server_core.handle_message(state, msg))
-      try assert.equal(step.outgoing.len(), 2)
-      importer_out := try published_for(step, "file:///tmp/a.tw")
-      try assert.is_true(try diagnostic_count(importer_out) > 0)
-      dep_out := try published_for(step, "file:///tmp/dep.tw")
-      try assert.equal(try diagnostic_count(dep_out), 0)
-      .Ok({})
-    },
-  ).test(
-    "missing import publishes diagnostics without breaking state",
-    fn() {
-      params := json.object([
-        json.kv(
-          "textDocument",
-          json.object([
-            json.kv("uri", .Str("file:///tmp/missing_import.tw")),
-            json.kv("languageId", .Str("twinkle")),
-            json.kv("version", .Int(1)),
-            json.kv("text", .Str("use missing\nx := 1\n")),
-          ]),
-        ),
-      ])
-      msg := protocol.Message.Notification(.{
-        method: "textDocument/didOpen",
-        params: .Some(params),
-      })
-      step := server_core.handle_message(server_core.initial_state(), msg)
-      try assert.is_false(step.state.should_exit)
-      out := try published_for(step, "file:///tmp/missing_import.tw")
-      try assert.is_true(try diagnostic_count(out) > 0)
-      .Ok({})
-    },
-  ).test(
-    "supports repeated open change close cycles for same uri",
-    fn() {
-      uri := "file:///tmp/reopen.tw"
-      open_params := json.object([
-        json.kv(
-          "textDocument",
-          json.object([
-            json.kv("uri", .Str(uri)),
-            json.kv("languageId", .Str("twinkle")),
-            json.kv("version", .Int(1)),
-            json.kv("text", .Str("x := 1\n")),
-          ]),
-        ),
-      ])
-      open_step := server_core.handle_message(
-        server_core.initial_state(),
-        protocol.Message.Notification(.{
+        case try json.decode(out, json.field("result", json.raw())) {
+          .Null => .Ok({}),
+          _ => assert.fail("expected null result"),
+        }
+      },
+    )
+    .test(
+      "exit notification requests exit",
+      fn() {
+        msg := protocol.Message.Notification(.{ method: "exit", params: .None })
+        step := server_core.handle_message(server_core.initial_state(), msg)
+        try assert.is_true(step.state.should_exit)
+        try assert.equal(step.outgoing.len(), 0)
+        .Ok({})
+      },
+    )
+    .test(
+      "unknown request returns method not found",
+      fn() {
+        msg := protocol.Message.Request(.{ id: .IntId(9), method: "twinkle/nope", params: .None })
+        step := server_core.handle_message(server_core.initial_state(), msg)
+        out := try only_out(step)
+        err := try json.decode(out, json.field("error", json.raw()))
+        try assert.equal(try json.decode(err, json.field("code", json.int())), -32601)
+        try assert.equal(
+          try json.decode(err, json.field("message", json.string())),
+          "method not found",
+        )
+        .Ok({})
+      },
+    )
+    .test(
+      "didOpen stores the document",
+      fn() {
+        params := json.object([
+          json.kv(
+            "textDocument",
+            json.object([
+              json.kv("uri", .Str("file:///a.tw")),
+              json.kv("languageId", .Str("twinkle")),
+              json.kv("version", .Int(1)),
+              json.kv("text", .Str("x := 1\n")),
+            ]),
+          ),
+        ])
+        msg := protocol.Message.Notification(.{
           method: "textDocument/didOpen",
-          params: .Some(open_params),
-        }),
-      )
-      try assert.is_some(document_store.get(open_step.state.documents, uri))
-      close_params := json.object([
-        json.kv("textDocument", json.object([json.kv("uri", .Str(uri))])),
-      ])
-      close_step := server_core.handle_message(
-        open_step.state,
-        protocol.Message.Notification(.{
+          params: .Some(params),
+        })
+        step := server_core.handle_message(server_core.initial_state(), msg)
+        doc := try document_store.get(step.state.documents, "file:///a.tw")
+          .ok_or("missing document")
+        try assert.equal(doc.text, "x := 1\n")
+        try assert.equal(try doc.version.ok_or("missing version"), 1)
+        out := try only_out(step)
+        try assert.equal(
+          try json.decode(out, json.field("method", json.string())),
+          "textDocument/publishDiagnostics",
+        )
+        params_out := try json.decode(out, json.field("params", json.raw()))
+        try assert.equal(
+          try json.decode(params_out, json.field("uri", json.string())),
+          "file:///a.tw",
+        )
+        try assert.equal(try json.decode(params_out, json.field("version", json.int())), 1)
+        .Ok({})
+      },
+    )
+    .test(
+      "didChange replaces full document text",
+      fn() {
+        opened := document_store.open(document_store.empty(), "file:///a.tw", "old", .Some(1))
+        state := server_core.State.{
+          initialized: true,
+          shutdown_requested: false,
+          should_exit: false,
+          documents: opened,
+          query_cache: query_cache.empty(),
+          diagnostics_pending: false,
+          diagnostics_deadline_ms: 0.0,
+          last_published_versions: Dict.new(),
+        }
+        params := json.object([
+          json.kv(
+            "textDocument",
+            json.object([json.kv("uri", .Str("file:///a.tw")), json.kv("version", .Int(2))]),
+          ),
+          json.kv("contentChanges", json.array([json.object([json.kv("text", .Str("new"))])])),
+        ])
+        msg := protocol.Message.Notification(.{
+          method: "textDocument/didChange",
+          params: .Some(params),
+        })
+        step := server_core.handle_message(state, msg)
+        doc := try document_store.get(step.state.documents, "file:///a.tw")
+          .ok_or("missing document")
+        try assert.equal(doc.text, "new")
+        try assert.equal(try doc.version.ok_or("missing version"), 2)
+        try assert.is_true(step.state.diagnostics_pending)
+        try assert.equal(step.outgoing.len(), 0)
+        .Ok({})
+      },
+    )
+    .test(
+      "didChange publishes diagnostics for open importers",
+      fn() {
+        docs := document_store.empty()
+          .open("file:///tmp/a.tw", "use dep\nx: Int = dep.answer()\n", .Some(1))
+          .open("file:///tmp/dep.tw", "pub fn answer() Int { 1 }\n", .Some(1))
+        state := server_core.State.{
+          initialized: true,
+          shutdown_requested: false,
+          should_exit: false,
+          documents: docs,
+          query_cache: query_cache.empty(),
+          diagnostics_pending: false,
+          diagnostics_deadline_ms: 0.0,
+          last_published_versions: Dict.new(),
+        }
+        params := json.object([
+          json.kv(
+            "textDocument",
+            json.object([json.kv("uri", .Str("file:///tmp/dep.tw")), json.kv("version", .Int(2))]),
+          ),
+          json.kv(
+            "contentChanges",
+            json.array([
+              json.object([json.kv("text", .Str("pub fn answer() String { \"nope\" }\n"))]),
+            ]),
+          ),
+        ])
+        msg := protocol.Message.Notification(.{
+          method: "textDocument/didChange",
+          params: .Some(params),
+        })
+        step := publish_due_now(server_core.handle_message(state, msg))
+        try assert.equal(step.outgoing.len(), 2)
+        importer_out := try published_for(step, "file:///tmp/a.tw")
+        try assert.is_true(try diagnostic_count(importer_out) > 0)
+        dep_out := try published_for(step, "file:///tmp/dep.tw")
+        try assert.equal(try diagnostic_count(dep_out), 0)
+        .Ok({})
+      },
+    )
+    .test(
+      "missing import publishes diagnostics without breaking state",
+      fn() {
+        params := json.object([
+          json.kv(
+            "textDocument",
+            json.object([
+              json.kv("uri", .Str("file:///tmp/missing_import.tw")),
+              json.kv("languageId", .Str("twinkle")),
+              json.kv("version", .Int(1)),
+              json.kv("text", .Str("use missing\nx := 1\n")),
+            ]),
+          ),
+        ])
+        msg := protocol.Message.Notification(.{
+          method: "textDocument/didOpen",
+          params: .Some(params),
+        })
+        step := server_core.handle_message(server_core.initial_state(), msg)
+        try assert.is_false(step.state.should_exit)
+        out := try published_for(step, "file:///tmp/missing_import.tw")
+        try assert.is_true(try diagnostic_count(out) > 0)
+        .Ok({})
+      },
+    )
+    .test(
+      "supports repeated open change close cycles for same uri",
+      fn() {
+        uri := "file:///tmp/reopen.tw"
+        open_params := json.object([
+          json.kv(
+            "textDocument",
+            json.object([
+              json.kv("uri", .Str(uri)),
+              json.kv("languageId", .Str("twinkle")),
+              json.kv("version", .Int(1)),
+              json.kv("text", .Str("x := 1\n")),
+            ]),
+          ),
+        ])
+        open_step := server_core.handle_message(
+          server_core.initial_state(),
+          protocol.Message.Notification(.{
+            method: "textDocument/didOpen",
+            params: .Some(open_params),
+          }),
+        )
+        try assert.is_some(document_store.get(open_step.state.documents, uri))
+        close_params := json.object([
+          json.kv("textDocument", json.object([json.kv("uri", .Str(uri))])),
+        ])
+        close_step := server_core.handle_message(
+          open_step.state,
+          protocol.Message.Notification(.{
+            method: "textDocument/didClose",
+            params: .Some(close_params),
+          }),
+        )
+        try assert.is_none(document_store.get(close_step.state.documents, uri))
+        reopen_params := json.object([
+          json.kv(
+            "textDocument",
+            json.object([
+              json.kv("uri", .Str(uri)),
+              json.kv("languageId", .Str("twinkle")),
+              json.kv("version", .Int(2)),
+              json.kv("text", .Str("x := 2\n")),
+            ]),
+          ),
+        ])
+        reopen_step := server_core.handle_message(
+          close_step.state,
+          protocol.Message.Notification(.{
+            method: "textDocument/didOpen",
+            params: .Some(reopen_params),
+          }),
+        )
+        doc := try document_store.get(reopen_step.state.documents, uri)
+          .ok_or("missing reopened document")
+        try assert.equal(try doc.version.ok_or("missing version"), 2)
+        change_params := json.object([
+          json.kv(
+            "textDocument",
+            json.object([json.kv("uri", .Str(uri)), json.kv("version", .Int(3))]),
+          ),
+          json.kv("contentChanges", json.array([json.object([json.kv("text", .Str("x := 3\n"))])])),
+        ])
+        change_step := server_core.handle_message(
+          reopen_step.state,
+          protocol.Message.Notification(.{
+            method: "textDocument/didChange",
+            params: .Some(change_params),
+          }),
+        )
+        changed := try document_store.get(change_step.state.documents, uri)
+          .ok_or("missing changed document")
+        try assert.equal(changed.text, "x := 3\n")
+        try assert.equal(try changed.version.ok_or("missing version"), 3)
+        try assert.is_false(change_step.state.should_exit)
+        .Ok({})
+      },
+    )
+    .test(
+      "didChange clears stale importer diagnostics",
+      fn() {
+        docs := document_store.empty()
+          .open("file:///tmp/a.tw", "use dep\nx: Int = dep.answer()\n", .Some(1))
+          .open("file:///tmp/dep.tw", "pub fn answer() String { \"nope\" }\n", .Some(1))
+        state := server_core.State.{
+          initialized: true,
+          shutdown_requested: false,
+          should_exit: false,
+          documents: docs,
+          query_cache: query_cache.empty(),
+          diagnostics_pending: false,
+          diagnostics_deadline_ms: 0.0,
+          last_published_versions: Dict.new(),
+        }
+        params := json.object([
+          json.kv(
+            "textDocument",
+            json.object([json.kv("uri", .Str("file:///tmp/dep.tw")), json.kv("version", .Int(2))]),
+          ),
+          json.kv(
+            "contentChanges",
+            json.array([json.object([json.kv("text", .Str("pub fn answer() Int { 1 }\n"))])]),
+          ),
+        ])
+        msg := protocol.Message.Notification(.{
+          method: "textDocument/didChange",
+          params: .Some(params),
+        })
+        step := publish_due_now(server_core.handle_message(state, msg))
+        try assert.equal(step.outgoing.len(), 2)
+        importer_out := try published_for(step, "file:///tmp/a.tw")
+        try assert.equal(try diagnostic_count(importer_out), 0)
+        .Ok({})
+      },
+    )
+    .test(
+      "didClose removes the document",
+      fn() {
+        opened := document_store.open(document_store.empty(), "file:///a.tw", "old", .Some(1))
+        state := server_core.State.{
+          initialized: true,
+          shutdown_requested: false,
+          should_exit: false,
+          documents: opened,
+          query_cache: query_cache.empty(),
+          diagnostics_pending: false,
+          diagnostics_deadline_ms: 0.0,
+          last_published_versions: Dict.new(),
+        }
+        params := json.object([
+          json.kv("textDocument", json.object([json.kv("uri", .Str("file:///a.tw"))])),
+        ])
+        msg := protocol.Message.Notification(.{
           method: "textDocument/didClose",
-          params: .Some(close_params),
-        }),
-      )
-      try assert.is_none(document_store.get(close_step.state.documents, uri))
-      reopen_params := json.object([
-        json.kv(
-          "textDocument",
-          json.object([
-            json.kv("uri", .Str(uri)),
-            json.kv("languageId", .Str("twinkle")),
-            json.kv("version", .Int(2)),
-            json.kv("text", .Str("x := 2\n")),
-          ]),
-        ),
-      ])
-      reopen_step := server_core.handle_message(
-        close_step.state,
-        protocol.Message.Notification(.{
-          method: "textDocument/didOpen",
-          params: .Some(reopen_params),
-        }),
-      )
-      doc := try document_store.get(reopen_step.state.documents, uri).ok_or(
-        "missing reopened document",
-      )
-      try assert.equal(try doc.version.ok_or("missing version"), 2)
-      change_params := json.object([
-        json.kv(
-          "textDocument",
-          json.object([json.kv("uri", .Str(uri)), json.kv("version", .Int(3))]),
-        ),
-        json.kv("contentChanges", json.array([json.object([json.kv("text", .Str("x := 3\n"))])])),
-      ])
-      change_step := server_core.handle_message(
-        reopen_step.state,
-        protocol.Message.Notification(.{
+          params: .Some(params),
+        })
+        step := server_core.handle_message(state, msg)
+        try assert.is_none(document_store.get(step.state.documents, "file:///a.tw"))
+        out := try only_out(step)
+        try assert.equal(
+          try json.decode(out, json.field("method", json.string())),
+          "textDocument/publishDiagnostics",
+        )
+        params_out := try json.decode(out, json.field("params", json.raw()))
+        diagnostics := try json.decode(params_out, json.field("diagnostics", json.list(json.raw())))
+        try assert.equal(diagnostics.len(), 0)
+        .Ok({})
+      },
+    )
+    .test(
+      "malformed document notification is ignored",
+      fn() {
+        msg := protocol.Message.Notification(.{ method: "textDocument/didOpen", params: .None })
+        step := server_core.handle_message(server_core.initial_state(), msg)
+        try assert.equal(step.outgoing.len(), 0)
+        try assert.is_false(step.state.should_exit)
+        try assert.is_none(document_store.get(step.state.documents, "file:///a.tw"))
+        .Ok({})
+      },
+    )
+    .test(
+      "unknown notification is ignored",
+      fn() {
+        msg := protocol.Message.Notification(.{ method: "twinkle/nope", params: .None })
+        step := server_core.handle_message(server_core.initial_state(), msg)
+        try assert.equal(step.outgoing.len(), 0)
+        try assert.is_false(step.state.should_exit)
+        .Ok({})
+      },
+    )
+    .test(
+      "initialize advertises codeActionProvider",
+      fn() {
+        msg := protocol.Message.Request(.{ id: .IntId(1), method: "initialize", params: .None })
+        step := server_core.handle_message(server_core.initial_state(), msg)
+        out := try only_out(step)
+        result := try json.decode(out, json.field("result", json.raw()))
+        caps := try json.decode(result, json.field("capabilities", json.raw()))
+        try assert.is_true(try json.decode(caps, json.field("codeActionProvider", json.bool())))
+        .Ok({})
+      },
+    )
+    .test(
+      "codeAction returns quickfix for unused import diagnostic data",
+      fn() {
+        // Set up a document with an unused import
+        docs := document_store.empty()
+          .open("file:///tmp/action.tw", "use foo.{A, B}\nx := A\n", .Some(1))
+        state := server_core.State.{
+          initialized: true,
+          shutdown_requested: false,
+          should_exit: false,
+          documents: docs,
+          query_cache: query_cache.empty(),
+          diagnostics_pending: false,
+          diagnostics_deadline_ms: 0.0,
+          last_published_versions: Dict.new(),
+        }
+        // Build a codeAction request with a diagnostic carrying edit data
+        diag_data := json.object([
+          json.kv("kind", .Str("unused_import")),
+          json.kv("use_start", .Int(0)),
+          json.kv("use_end", .Int(15)),
+          json.kv("replacement", .Str("use foo.{A}\n")),
+        ])
+        diag_json := json.object([
+          json.kv(
+            "range",
+            json.object([
+              json.kv(
+                "start",
+                json.object([json.kv("line", .Int(0)), json.kv("character", .Int(12))]),
+              ),
+              json.kv(
+                "end",
+                json.object([json.kv("line", .Int(0)), json.kv("character", .Int(13))]),
+              ),
+            ]),
+          ),
+          json.kv("severity", .Int(2)),
+          json.kv("source", .Str("twinkle")),
+          json.kv("message", .Str("unused import: B")),
+          json.kv("data", diag_data),
+        ])
+        params := json.object([
+          json.kv("textDocument", json.object([json.kv("uri", .Str("file:///tmp/action.tw"))])),
+          json.kv(
+            "range",
+            json.object([
+              json.kv(
+                "start",
+                json.object([json.kv("line", .Int(0)), json.kv("character", .Int(12))]),
+              ),
+              json.kv(
+                "end",
+                json.object([json.kv("line", .Int(0)), json.kv("character", .Int(13))]),
+              ),
+            ]),
+          ),
+          json.kv("context", json.object([json.kv("diagnostics", json.array([diag_json]))])),
+        ])
+        msg := protocol.Message.Request(.{
+          id: .IntId(2),
+          method: "textDocument/codeAction",
+          params: .Some(params),
+        })
+        step := server_core.handle_message(state, msg)
+        out := try only_out(step)
+        result := try json.decode(out, json.field("result", json.raw()))
+        // Should return an array of code actions
+        actions := try json.decode(result, json.list(json.raw()))
+        try assert.is_true(actions.len() > 0)
+        action := actions[0]
+        try assert.equal(try json.decode(action, json.field("kind", json.string())), "quickfix")
+        try assert.equal(
+          try json.decode(action, json.field("title", json.string())),
+          "Remove unused import 'B'",
+        )
+        // Should have a workspace edit
+        edit := try json.decode(action, json.field("edit", json.raw()))
+        changes := try json.decode(edit, json.field("changes", json.raw()))
+        file_edits := try json.decode(
+          changes,
+          json.field("file:///tmp/action.tw", json.list(json.raw())),
+        )
+        try assert.is_true(file_edits.len() > 0)
+        text_edit := file_edits[0]
+        try assert.equal(
+          try json.decode(text_edit, json.field("newText", json.string())),
+          "use foo.{A}\n",
+        )
+        .Ok({})
+      },
+    )
+    .test(
+      "didOpen publishes unused import diagnostics with data for code actions",
+      fn() {
+        // Open two files: dep defines something, main imports but doesn't use one
+        docs := document_store.empty()
+          .open(
+            "file:///tmp/dep.tw",
+            "pub fn used_fn() Int { 1 }\npub fn unused_fn() Int { 2 }\n",
+            .Some(1),
+          )
+          .open(
+            "file:///tmp/main_import.tw",
+            "use dep.{used_fn, unused_fn}\nx := used_fn()\n",
+            .Some(1),
+          )
+        state := server_core.State.{
+          initialized: true,
+          shutdown_requested: false,
+          should_exit: false,
+          documents: docs,
+          query_cache: query_cache.empty(),
+          diagnostics_pending: false,
+          diagnostics_deadline_ms: 0.0,
+          last_published_versions: Dict.new(),
+        }
+        // Trigger diagnostics via didChange on the main file
+        change_params := json.object([
+          json.kv(
+            "textDocument",
+            json.object([
+              json.kv("uri", .Str("file:///tmp/main_import.tw")),
+              json.kv("version", .Int(2)),
+            ]),
+          ),
+          json.kv(
+            "contentChanges",
+            json.array([
+              json.object([json.kv("text", .Str("use dep.{used_fn, unused_fn}\nx := used_fn()\n"))]),
+            ]),
+          ),
+        ])
+        msg := protocol.Message.Notification(.{
           method: "textDocument/didChange",
           params: .Some(change_params),
-        }),
-      )
-      changed := try document_store.get(change_step.state.documents, uri).ok_or(
-        "missing changed document",
-      )
-      try assert.equal(changed.text, "x := 3\n")
-      try assert.equal(try changed.version.ok_or("missing version"), 3)
-      try assert.is_false(change_step.state.should_exit)
-      .Ok({})
-    },
-  ).test(
-    "didChange clears stale importer diagnostics",
-    fn() {
-      docs := document_store.empty().open(
-        "file:///tmp/a.tw",
-        "use dep\nx: Int = dep.answer()\n",
-        .Some(1),
-      ).open("file:///tmp/dep.tw", "pub fn answer() String { \"nope\" }\n", .Some(1))
-      state := server_core.State.{
-        initialized: true,
-        shutdown_requested: false,
-        should_exit: false,
-        documents: docs,
-        query_cache: query_cache.empty(),
-        diagnostics_pending: false,
-        diagnostics_deadline_ms: 0.0,
-        last_published_versions: Dict.new(),
-      }
-      params := json.object([
-        json.kv(
-          "textDocument",
-          json.object([json.kv("uri", .Str("file:///tmp/dep.tw")), json.kv("version", .Int(2))]),
-        ),
-        json.kv(
-          "contentChanges",
-          json.array([json.object([json.kv("text", .Str("pub fn answer() Int { 1 }\n"))])]),
-        ),
-      ])
-      msg := protocol.Message.Notification(.{
-        method: "textDocument/didChange",
-        params: .Some(params),
-      })
-      step := publish_due_now(server_core.handle_message(state, msg))
-      try assert.equal(step.outgoing.len(), 2)
-      importer_out := try published_for(step, "file:///tmp/a.tw")
-      try assert.equal(try diagnostic_count(importer_out), 0)
-      .Ok({})
-    },
-  ).test(
-    "didClose removes the document",
-    fn() {
-      opened := document_store.open(document_store.empty(), "file:///a.tw", "old", .Some(1))
-      state := server_core.State.{
-        initialized: true,
-        shutdown_requested: false,
-        should_exit: false,
-        documents: opened,
-        query_cache: query_cache.empty(),
-        diagnostics_pending: false,
-        diagnostics_deadline_ms: 0.0,
-        last_published_versions: Dict.new(),
-      }
-      params := json.object([
-        json.kv("textDocument", json.object([json.kv("uri", .Str("file:///a.tw"))])),
-      ])
-      msg := protocol.Message.Notification(.{
-        method: "textDocument/didClose",
-        params: .Some(params),
-      })
-      step := server_core.handle_message(state, msg)
-      try assert.is_none(document_store.get(step.state.documents, "file:///a.tw"))
-      out := try only_out(step)
-      try assert.equal(
-        try json.decode(out, json.field("method", json.string())),
-        "textDocument/publishDiagnostics",
-      )
-      params_out := try json.decode(out, json.field("params", json.raw()))
-      diagnostics := try json.decode(params_out, json.field("diagnostics", json.list(json.raw())))
-      try assert.equal(diagnostics.len(), 0)
-      .Ok({})
-    },
-  ).test(
-    "malformed document notification is ignored",
-    fn() {
-      msg := protocol.Message.Notification(.{ method: "textDocument/didOpen", params: .None })
-      step := server_core.handle_message(server_core.initial_state(), msg)
-      try assert.equal(step.outgoing.len(), 0)
-      try assert.is_false(step.state.should_exit)
-      try assert.is_none(document_store.get(step.state.documents, "file:///a.tw"))
-      .Ok({})
-    },
-  ).test(
-    "unknown notification is ignored",
-    fn() {
-      msg := protocol.Message.Notification(.{ method: "twinkle/nope", params: .None })
-      step := server_core.handle_message(server_core.initial_state(), msg)
-      try assert.equal(step.outgoing.len(), 0)
-      try assert.is_false(step.state.should_exit)
-      .Ok({})
-    },
-  ).test(
-    "initialize advertises codeActionProvider",
-    fn() {
-      msg := protocol.Message.Request(.{ id: .IntId(1), method: "initialize", params: .None })
-      step := server_core.handle_message(server_core.initial_state(), msg)
-      out := try only_out(step)
-      result := try json.decode(out, json.field("result", json.raw()))
-      caps := try json.decode(result, json.field("capabilities", json.raw()))
-      try assert.is_true(try json.decode(caps, json.field("codeActionProvider", json.bool())))
-      .Ok({})
-    },
-  ).test(
-    "codeAction returns quickfix for unused import diagnostic data",
-    fn() {
-      // Set up a document with an unused import
-      docs := document_store.empty().open(
-        "file:///tmp/action.tw",
-        "use foo.{A, B}\nx := A\n",
-        .Some(1),
-      )
-      state := server_core.State.{
-        initialized: true,
-        shutdown_requested: false,
-        should_exit: false,
-        documents: docs,
-        query_cache: query_cache.empty(),
-        diagnostics_pending: false,
-        diagnostics_deadline_ms: 0.0,
-        last_published_versions: Dict.new(),
-      }
-      // Build a codeAction request with a diagnostic carrying edit data
-      diag_data := json.object([
-        json.kv("kind", .Str("unused_import")),
-        json.kv("use_start", .Int(0)),
-        json.kv("use_end", .Int(15)),
-        json.kv("replacement", .Str("use foo.{A}\n")),
-      ])
-      diag_json := json.object([
-        json.kv(
-          "range",
-          json.object([
-            json.kv(
-              "start",
-              json.object([json.kv("line", .Int(0)), json.kv("character", .Int(12))]),
-            ),
-            json.kv("end", json.object([json.kv("line", .Int(0)), json.kv("character", .Int(13))])),
-          ]),
-        ),
-        json.kv("severity", .Int(2)),
-        json.kv("source", .Str("twinkle")),
-        json.kv("message", .Str("unused import: B")),
-        json.kv("data", diag_data),
-      ])
-      params := json.object([
-        json.kv("textDocument", json.object([json.kv("uri", .Str("file:///tmp/action.tw"))])),
-        json.kv(
-          "range",
-          json.object([
-            json.kv(
-              "start",
-              json.object([json.kv("line", .Int(0)), json.kv("character", .Int(12))]),
-            ),
-            json.kv("end", json.object([json.kv("line", .Int(0)), json.kv("character", .Int(13))])),
-          ]),
-        ),
-        json.kv("context", json.object([json.kv("diagnostics", json.array([diag_json]))])),
-      ])
-      msg := protocol.Message.Request(.{
-        id: .IntId(2),
-        method: "textDocument/codeAction",
-        params: .Some(params),
-      })
-      step := server_core.handle_message(state, msg)
-      out := try only_out(step)
-      result := try json.decode(out, json.field("result", json.raw()))
-      // Should return an array of code actions
-      actions := try json.decode(result, json.list(json.raw()))
-      try assert.is_true(actions.len() > 0)
-      action := actions[0]
-      try assert.equal(try json.decode(action, json.field("kind", json.string())), "quickfix")
-      try assert.equal(
-        try json.decode(action, json.field("title", json.string())),
-        "Remove unused import 'B'",
-      )
-      // Should have a workspace edit
-      edit := try json.decode(action, json.field("edit", json.raw()))
-      changes := try json.decode(edit, json.field("changes", json.raw()))
-      file_edits := try json.decode(
-        changes,
-        json.field("file:///tmp/action.tw", json.list(json.raw())),
-      )
-      try assert.is_true(file_edits.len() > 0)
-      text_edit := file_edits[0]
-      try assert.equal(
-        try json.decode(text_edit, json.field("newText", json.string())),
-        "use foo.{A}\n",
-      )
-      .Ok({})
-    },
-  ).test(
-    "didOpen publishes unused import diagnostics with data for code actions",
-    fn() {
-      // Open two files: dep defines something, main imports but doesn't use one
-      docs := document_store.empty().open(
-        "file:///tmp/dep.tw",
-        "pub fn used_fn() Int { 1 }\npub fn unused_fn() Int { 2 }\n",
-        .Some(1),
-      ).open(
-        "file:///tmp/main_import.tw",
-        "use dep.{used_fn, unused_fn}\nx := used_fn()\n",
-        .Some(1),
-      )
-      state := server_core.State.{
-        initialized: true,
-        shutdown_requested: false,
-        should_exit: false,
-        documents: docs,
-        query_cache: query_cache.empty(),
-        diagnostics_pending: false,
-        diagnostics_deadline_ms: 0.0,
-        last_published_versions: Dict.new(),
-      }
-      // Trigger diagnostics via didChange on the main file
-      change_params := json.object([
-        json.kv(
-          "textDocument",
-          json.object([
-            json.kv("uri", .Str("file:///tmp/main_import.tw")),
-            json.kv("version", .Int(2)),
-          ]),
-        ),
-        json.kv(
-          "contentChanges",
-          json.array([
-            json.object([json.kv("text", .Str("use dep.{used_fn, unused_fn}\nx := used_fn()\n"))]),
-          ]),
-        ),
-      ])
-      msg := protocol.Message.Notification(.{
-        method: "textDocument/didChange",
-        params: .Some(change_params),
-      })
-      step := publish_due_now(server_core.handle_message(state, msg))
-      // Find diagnostics for main_import.tw
-      main_out := try published_for(step, "file:///tmp/main_import.tw")
-      params_out := try json.decode(main_out, json.field("params", json.raw()))
-      items := try json.decode(params_out, json.field("diagnostics", json.list(json.raw())))
-      // Should have an unused import warning for unused_fn
-      found_unused := false
+        })
+        step := publish_due_now(server_core.handle_message(state, msg))
+        // Find diagnostics for main_import.tw
+        main_out := try published_for(step, "file:///tmp/main_import.tw")
+        params_out := try json.decode(main_out, json.field("params", json.raw()))
+        items := try json.decode(params_out, json.field("diagnostics", json.list(json.raw())))
+        // Should have an unused import warning for unused_fn
+        found_unused := false
 
-      for item in items {
-        msg_str := case json.decode(item, json.field("message", json.string())) {
-          .Ok(m) => m,
-          .Err(_) => { continue },
+        for item in items {
+          msg_str := case json.decode(item, json.field("message", json.string())) {
+            .Ok(m) => m,
+            .Err(_) => { continue },
+          }
+
+          if msg_str.contains("unused_fn") {
+            found_unused = true
+            // Should have data with unused_import kind
+            data := try json.decode(item, json.field("data", json.raw()))
+            try assert.equal(
+              try json.decode(data, json.field("kind", json.string())),
+              "unused_import",
+            )
+            // Should have replacement that keeps only used_fn
+            replacement := try json.decode(data, json.field("replacement", json.string()))
+            try assert.str_contains(replacement, "used_fn")
+            try assert.is_false(replacement.contains("unused_fn"))
+          }
         }
 
-        if msg_str.contains("unused_fn") {
-          found_unused = true
-          // Should have data with unused_import kind
-          data := try json.decode(item, json.field("data", json.raw()))
-          try assert.equal(
-            try json.decode(data, json.field("kind", json.string())),
-            "unused_import",
-          )
-          // Should have replacement that keeps only used_fn
-          replacement := try json.decode(data, json.field("replacement", json.string()))
-          try assert.str_contains(replacement, "used_fn")
-          try assert.is_false(replacement.contains("unused_fn"))
+        try assert.is_true(found_unused)
+        .Ok({})
+      },
+    )
+    .test(
+      "codeAction ignores diagnostics without unused_import data",
+      fn() {
+        docs := document_store.empty().open("file:///tmp/noaction.tw", "x := 1\n", .Some(1))
+        state := server_core.State.{
+          initialized: true,
+          shutdown_requested: false,
+          should_exit: false,
+          documents: docs,
+          query_cache: query_cache.empty(),
+          diagnostics_pending: false,
+          diagnostics_deadline_ms: 0.0,
+          last_published_versions: Dict.new(),
         }
-      }
-
-      try assert.is_true(found_unused)
-      .Ok({})
-    },
-  ).test(
-    "codeAction ignores diagnostics without unused_import data",
-    fn() {
-      docs := document_store.empty().open("file:///tmp/noaction.tw", "x := 1\n", .Some(1))
-      state := server_core.State.{
-        initialized: true,
-        shutdown_requested: false,
-        should_exit: false,
-        documents: docs,
-        query_cache: query_cache.empty(),
-        diagnostics_pending: false,
-        diagnostics_deadline_ms: 0.0,
-        last_published_versions: Dict.new(),
-      }
-      // Diagnostic without data
-      diag_json := json.object([
-        json.kv(
-          "range",
-          json.object([
-            json.kv("start", json.object([json.kv("line", .Int(0)), json.kv("character", .Int(0))])),
-            json.kv("end", json.object([json.kv("line", .Int(0)), json.kv("character", .Int(1))])),
-          ]),
-        ),
-        json.kv("severity", .Int(1)),
-        json.kv("message", .Str("some error")),
-      ])
-      params := json.object([
-        json.kv("textDocument", json.object([json.kv("uri", .Str("file:///tmp/noaction.tw"))])),
-        json.kv(
-          "range",
-          json.object([
-            json.kv("start", json.object([json.kv("line", .Int(0)), json.kv("character", .Int(0))])),
-            json.kv("end", json.object([json.kv("line", .Int(0)), json.kv("character", .Int(1))])),
-          ]),
-        ),
-        json.kv("context", json.object([json.kv("diagnostics", json.array([diag_json]))])),
-      ])
-      msg := protocol.Message.Request(.{
-        id: .IntId(3),
-        method: "textDocument/codeAction",
-        params: .Some(params),
-      })
-      step := server_core.handle_message(state, msg)
-      out := try only_out(step)
-      result := try json.decode(out, json.field("result", json.raw()))
-      actions := try json.decode(result, json.list(json.raw()))
-      try assert.equal(actions.len(), 0)
-      .Ok({})
-    },
-  )
+        // Diagnostic without data
+        diag_json := json.object([
+          json.kv(
+            "range",
+            json.object([
+              json.kv(
+                "start",
+                json.object([json.kv("line", .Int(0)), json.kv("character", .Int(0))]),
+              ),
+              json.kv("end", json.object([json.kv("line", .Int(0)), json.kv("character", .Int(1))])),
+            ]),
+          ),
+          json.kv("severity", .Int(1)),
+          json.kv("message", .Str("some error")),
+        ])
+        params := json.object([
+          json.kv("textDocument", json.object([json.kv("uri", .Str("file:///tmp/noaction.tw"))])),
+          json.kv(
+            "range",
+            json.object([
+              json.kv(
+                "start",
+                json.object([json.kv("line", .Int(0)), json.kv("character", .Int(0))]),
+              ),
+              json.kv("end", json.object([json.kv("line", .Int(0)), json.kv("character", .Int(1))])),
+            ]),
+          ),
+          json.kv("context", json.object([json.kv("diagnostics", json.array([diag_json]))])),
+        ])
+        msg := protocol.Message.Request(.{
+          id: .IntId(3),
+          method: "textDocument/codeAction",
+          params: .Some(params),
+        })
+        step := server_core.handle_message(state, msg)
+        out := try only_out(step)
+        result := try json.decode(out, json.field("result", json.raw()))
+        actions := try json.decode(result, json.list(json.raw()))
+        try assert.equal(actions.len(), 0)
+        .Ok({})
+      },
+    )
 }

@@ -69,220 +69,246 @@ fn check_ok_with_builtins(src: String) Result<Bool, String> {
 
 // ── suite ─────────────────────────────────────────────────────────────────────
 pub fn suite() runner.Suite {
-  runner.suite("signature drift").test(
-    "every signature-file function appears in builtin_env by surface binding or registered target",
-    fn() {
-      groups := try load_signatures(signatures_dir(), builtin_type_env())
-      env := builtin_env()
-      missing: Vector<String> = []
+  runner.suite("signature drift")
+    .test(
+      "every signature-file function appears in builtin_env by surface binding or registered target",
+      fn() {
+        groups := try load_signatures(signatures_dir(), builtin_type_env())
+        env := builtin_env()
+        missing: Vector<String> = []
 
-      for group in groups {
-        for sig in group.sigs {
-          internal := to_internal_name(group.receiver, sig.name)
-          found := case group.receiver {
-            .None => case lookup_function(env, internal) {
-              .Some(_) => true,
-              .None => false,
-            },
-            .Some(recv) => case lookup_registered_function(env, internal) {
-              .Some(_) => case lookup_method(env, recv, sig.name) {
-                .Some(target) => target == internal,
+        for group in groups {
+          for sig in group.sigs {
+            internal := to_internal_name(group.receiver, sig.name)
+            found := case group.receiver {
+              .None => case lookup_function(env, internal) {
+                .Some(_) => true,
                 .None => false,
               },
-              .None => false,
-            },
+              .Some(recv) => case lookup_registered_function(env, internal) {
+                .Some(_) => case lookup_method(env, recv, sig.name) {
+                  .Some(target) => target == internal,
+                  .None => false,
+                },
+                .None => false,
+              },
+            }
+            if !found { missing = .append(internal) }
           }
-          if !found { missing = .append(internal) }
         }
-      }
 
-      if missing.len() > 0 {
-        return .Err("builtin_env missing: ${missing[0]}")
-      }
-
-      .Ok({})
-    },
-  ).test(
-    "signature entries may be prelude-owned without builtin registry entries",
-    fn() {
-      env := builtin_env()
-      try assert.is_none(make_builtin_registry().entry_by_canonical("Vector.to_string"))
-      internal := to_internal_name(.Some("Vector"), "to_string")
-      try assert.is_some(lookup_registered_function(env, internal))
-      try assert.equal(
-        try lookup_method(env, "Vector", "to_string").ok_or("missing Vector.to_string method"),
-        internal,
-      )
-      .Ok({})
-    },
-  ).test(
-    "every registry canonical name traces back to a signature-file entry",
-    fn() {
-      groups := try load_signatures(signatures_dir(), builtin_type_env())
-      // Build set of all expected canonical names from signature files.
-      expected: Dict<String, Bool> = Dict.new()
-
-      for group in groups {
-        for sig in group.sigs {
-          cn := canonical_name(group.receiver, sig.name)
-          expected[cn] = true
+        if missing.len() > 0 {
+          return .Err("builtin_env missing: ${missing[0]}")
         }
-      }
 
-      // Every canonical in the registry must be in the expected set.
-      reg := make_builtin_registry()
-      spurious: Vector<String> = []
+        .Ok({})
+      },
+    )
+    .test(
+      "signature entries may be prelude-owned without builtin registry entries",
+      fn() {
+        env := builtin_env()
+        try assert.is_none(make_builtin_registry().entry_by_canonical("Vector.to_string"))
+        internal := to_internal_name(.Some("Vector"), "to_string")
+        try assert.is_some(lookup_registered_function(env, internal))
+        try assert.equal(
+          try lookup_method(env, "Vector", "to_string").ok_or("missing Vector.to_string method"),
+          internal,
+        )
+        .Ok({})
+      },
+    )
+    .test(
+      "every registry canonical name traces back to a signature-file entry",
+      fn() {
+        groups := try load_signatures(signatures_dir(), builtin_type_env())
+        // Build set of all expected canonical names from signature files.
+        expected: Dict<String, Bool> = Dict.new()
 
-      for cn in reg.by_canonical.keys() {
-        case expected[cn] {
-          .None => { spurious = .append(cn) },
-          .Some(_) => {},
+        for group in groups {
+          for sig in group.sigs {
+            cn := canonical_name(group.receiver, sig.name)
+            expected[cn] = true
+          }
         }
-      }
 
-      if spurious.len() > 0 {
-        return .Err("registry canonical '${spurious[0]}' has no matching prelude/signatures entry")
-      }
+        // Every canonical in the registry must be in the expected set.
+        reg := make_builtin_registry()
+        spurious: Vector<String> = []
 
-      .Ok({})
-    },
-  ).test(
-    "vector__set_unsafe has no canonical name (internal-only)",
-    fn() {
-      reg := make_builtin_registry()
-      entry := try reg.entry(reg.id("vector__set_unsafe")).ok_or("missing vector__set_unsafe")
-      try assert.is_none(entry.canonical_name)
-      .Ok({})
-    },
-  ).test(
-    "string__substring has no canonical name (internal-only)",
-    fn() {
-      reg := make_builtin_registry()
-      entry := try reg.entry(reg.id("string__substring")).ok_or("missing string__substring")
-      try assert.is_none(entry.canonical_name)
-      .Ok({})
-    },
-  ).test(
-    "vector__builder_new has no canonical name (internal-only)",
-    fn() {
-      reg := make_builtin_registry()
-      entry := try reg.entry(reg.id("vector__builder_new")).ok_or("missing vector__builder_new")
-      try assert.is_none(entry.canonical_name)
-      .Ok({})
-    },
-  ).test(
-    "dict__get_unsafe has no canonical name (internal-only)",
-    fn() {
-      reg := make_builtin_registry()
-      entry := try reg.entry(reg.id("dict__get_unsafe")).ok_or("missing dict__get_unsafe")
-      try assert.is_none(entry.canonical_name)
-      .Ok({})
-    },
-  ).test(
-    "module-qualified String.len resolves without errors",
-    fn() {
-      try resolve_ok_with_builtins("x := String.len(\"hi\")")
-      .Ok({})
-    },
-  ).test(
-    "module-qualified Vector.append resolves without errors",
-    fn() {
-      try resolve_ok_with_builtins("x: Vector<Int> = Vector.append([], 1)")
-      .Ok({})
-    },
-  ).test(
-    "module-qualified Dict.new resolves without errors",
-    fn() {
-      try resolve_ok_with_builtins("x: Dict<String, Int> = Dict.new()")
-      .Ok({})
-    },
-  ).test(
-    "module-qualified Int.to_string resolves without errors",
-    fn() {
-      try resolve_ok_with_builtins("x := Int.to_string(42)")
-      .Ok({})
-    },
-  ).test(
-    "module-qualified Int.from_string resolves without errors",
-    fn() {
-      try resolve_ok_with_builtins("x := Int.from_string(\"42\")")
-      .Ok({})
-    },
-  ).test(
-    "module-qualified Float.from_string resolves without errors",
-    fn() {
-      try resolve_ok_with_builtins("x := Float.from_string(\"3.14\")")
-      .Ok({})
-    },
-  ).test(
-    "dot-method String.len resolves without errors",
-    fn() {
-      try resolve_ok_with_builtins("x := \"hi\".len()")
-      .Ok({})
-    },
-  ).test(
-    "dot-method Vector.append resolves without errors",
-    fn() {
-      try resolve_ok_with_builtins("v: Vector<Int> = []\nx := v.append(1)")
-      .Ok({})
-    },
-  ).test(
-    "dot-method Vector.map type-checks without errors",
-    fn() {
-      try check_ok_with_builtins("xs: Vector<Int> = [1, 2]\nys := xs.map(fn(x: Int) { x + 1 })")
-      .Ok({})
-    },
-  ).test(
-    "dot-method Cell.get resolves without errors",
-    fn() {
-      try resolve_ok_with_builtins("c := Cell.new(0)\nx := c.get()")
-      .Ok({})
-    },
-  ).test(
-    "dot-method Iterator.unfold type-checks without errors",
-    fn() {
-      try check_ok_with_builtins("it := Iterator.unfold(0, fn(s) { .Yield(s, s + 1) })")
-      .Ok({})
-    },
-  ).test(
-    "module-qualified Option.map type-checks without errors",
-    fn() {
-      try check_ok_with_builtins("x := Option.map(.Some(1), fn(n: Int) { n + 1 })")
-      .Ok({})
-    },
-  ).test(
-    "module-qualified Result.map type-checks without errors",
-    fn() {
-      try check_ok_with_builtins(
-        "x: Result<Int, String> = Result.map(.Ok(1), fn(n: Int) { n + 1 })",
-      )
-      .Ok({})
-    },
-  ).test(
-    "module-qualified String.compare is valid as a function value",
-    fn() {
-      try check_ok_with_builtins(
-        "xs: Vector<String> = [\"b\", \"a\"]\nys := xs.sort_by(String.compare)",
-      )
-      .Ok({})
-    },
-  ).test(
-    "free function range_from resolves without errors",
-    fn() {
-      try resolve_ok_with_builtins("r := range_from(0, 10)")
-      .Ok({})
-    },
-  ).test(
-    "free function range resolves without errors",
-    fn() {
-      try resolve_ok_with_builtins("r := range(5)")
-      .Ok({})
-    },
-  ).test(
-    "free function range_step resolves without errors",
-    fn() {
-      try resolve_ok_with_builtins("r := range_step(0, 10, 2)")
-      .Ok({})
-    },
-  )
+        for cn in reg.by_canonical.keys() {
+          case expected[cn] {
+            .None => { spurious = .append(cn) },
+            .Some(_) => {},
+          }
+        }
+
+        if spurious.len() > 0 {
+          return .Err(
+            "registry canonical '${spurious[0]}' has no matching prelude/signatures entry",
+          )
+        }
+
+        .Ok({})
+      },
+    )
+    .test(
+      "vector__set_unsafe has no canonical name (internal-only)",
+      fn() {
+        reg := make_builtin_registry()
+        entry := try reg.entry(reg.id("vector__set_unsafe")).ok_or("missing vector__set_unsafe")
+        try assert.is_none(entry.canonical_name)
+        .Ok({})
+      },
+    )
+    .test(
+      "string__substring has no canonical name (internal-only)",
+      fn() {
+        reg := make_builtin_registry()
+        entry := try reg.entry(reg.id("string__substring")).ok_or("missing string__substring")
+        try assert.is_none(entry.canonical_name)
+        .Ok({})
+      },
+    )
+    .test(
+      "vector__builder_new has no canonical name (internal-only)",
+      fn() {
+        reg := make_builtin_registry()
+        entry := try reg.entry(reg.id("vector__builder_new")).ok_or("missing vector__builder_new")
+        try assert.is_none(entry.canonical_name)
+        .Ok({})
+      },
+    )
+    .test(
+      "dict__get_unsafe has no canonical name (internal-only)",
+      fn() {
+        reg := make_builtin_registry()
+        entry := try reg.entry(reg.id("dict__get_unsafe")).ok_or("missing dict__get_unsafe")
+        try assert.is_none(entry.canonical_name)
+        .Ok({})
+      },
+    )
+    .test(
+      "module-qualified String.len resolves without errors",
+      fn() {
+        try resolve_ok_with_builtins("x := String.len(\"hi\")")
+        .Ok({})
+      },
+    )
+    .test(
+      "module-qualified Vector.append resolves without errors",
+      fn() {
+        try resolve_ok_with_builtins("x: Vector<Int> = Vector.append([], 1)")
+        .Ok({})
+      },
+    )
+    .test(
+      "module-qualified Dict.new resolves without errors",
+      fn() {
+        try resolve_ok_with_builtins("x: Dict<String, Int> = Dict.new()")
+        .Ok({})
+      },
+    )
+    .test(
+      "module-qualified Int.to_string resolves without errors",
+      fn() {
+        try resolve_ok_with_builtins("x := Int.to_string(42)")
+        .Ok({})
+      },
+    )
+    .test(
+      "module-qualified Int.from_string resolves without errors",
+      fn() {
+        try resolve_ok_with_builtins("x := Int.from_string(\"42\")")
+        .Ok({})
+      },
+    )
+    .test(
+      "module-qualified Float.from_string resolves without errors",
+      fn() {
+        try resolve_ok_with_builtins("x := Float.from_string(\"3.14\")")
+        .Ok({})
+      },
+    )
+    .test(
+      "dot-method String.len resolves without errors",
+      fn() {
+        try resolve_ok_with_builtins("x := \"hi\".len()")
+        .Ok({})
+      },
+    )
+    .test(
+      "dot-method Vector.append resolves without errors",
+      fn() {
+        try resolve_ok_with_builtins("v: Vector<Int> = []\nx := v.append(1)")
+        .Ok({})
+      },
+    )
+    .test(
+      "dot-method Vector.map type-checks without errors",
+      fn() {
+        try check_ok_with_builtins("xs: Vector<Int> = [1, 2]\nys := xs.map(fn(x: Int) { x + 1 })")
+        .Ok({})
+      },
+    )
+    .test(
+      "dot-method Cell.get resolves without errors",
+      fn() {
+        try resolve_ok_with_builtins("c := Cell.new(0)\nx := c.get()")
+        .Ok({})
+      },
+    )
+    .test(
+      "dot-method Iterator.unfold type-checks without errors",
+      fn() {
+        try check_ok_with_builtins("it := Iterator.unfold(0, fn(s) { .Yield(s, s + 1) })")
+        .Ok({})
+      },
+    )
+    .test(
+      "module-qualified Option.map type-checks without errors",
+      fn() {
+        try check_ok_with_builtins("x := Option.map(.Some(1), fn(n: Int) { n + 1 })")
+        .Ok({})
+      },
+    )
+    .test(
+      "module-qualified Result.map type-checks without errors",
+      fn() {
+        try check_ok_with_builtins(
+          "x: Result<Int, String> = Result.map(.Ok(1), fn(n: Int) { n + 1 })",
+        )
+        .Ok({})
+      },
+    )
+    .test(
+      "module-qualified String.compare is valid as a function value",
+      fn() {
+        try check_ok_with_builtins(
+          "xs: Vector<String> = [\"b\", \"a\"]\nys := xs.sort_by(String.compare)",
+        )
+        .Ok({})
+      },
+    )
+    .test(
+      "free function range_from resolves without errors",
+      fn() {
+        try resolve_ok_with_builtins("r := range_from(0, 10)")
+        .Ok({})
+      },
+    )
+    .test(
+      "free function range resolves without errors",
+      fn() {
+        try resolve_ok_with_builtins("r := range(5)")
+        .Ok({})
+      },
+    )
+    .test(
+      "free function range_step resolves without errors",
+      fn() {
+        try resolve_ok_with_builtins("r := range_step(0, 10, 2)")
+        .Ok({})
+      },
+    )
 }

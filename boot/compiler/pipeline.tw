@@ -30,11 +30,8 @@ pub fn compile_source(src: String) Result<PipelineArtifacts, String> {
   virtual_path := "/__virtual__/input.tw"
   virtual_id := identity.from_path(virtual_path)
   // Put the source in an overlay so analyze_module finds it without disk access.
-  ov := overlay.empty().put(overlay.OverlayDocument.{
-    identity: virtual_id,
-    text: src,
-    version: .None,
-  })
+  ov := overlay.empty()
+    .put(overlay.OverlayDocument.{ identity: virtual_id, text: src, version: .None })
   builtins := make_builtin_registry()
   base_env := builtin_env()
   project_root := loader.find_project_root(".")

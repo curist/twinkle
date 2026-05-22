@@ -127,26 +127,25 @@ fn test_builder_config_matches_shared_family_config() Result<Void, String> {
 }
 
 pub fn suite() runner.Suite {
-  runner.suite("Opt: Semantics").test(
-    "vector_len effect is read-only",
-    test_vector_len_effect_is_read_only,
-  ).test(
-    "vector_set_unsafe has in-place equivalent",
-    test_vector_set_unsafe_has_in_place_equivalent,
-  ).test("vector_make is fresh producer", test_vector_make_is_fresh_producer).test(
-    "array lit has fresh result",
-    test_array_lit_has_fresh_result,
-  ).test("vector_make call has fresh result", test_vector_make_call_has_fresh_result).test(
-    "vector_len call not fresh result",
-    test_vector_len_call_not_fresh_result,
-  ).test("record update has fresh result", test_record_update_has_fresh_result).test(
-    "vector_set reusable update site",
-    test_vector_set_reusable_update_site,
-  ).test("record update reusable update site", test_record_update_reusable_update_site).test(
-    "read-only call stays impure for stage1 dead-let parity",
-    test_read_only_call_stays_impure_for_dead_let_stage1,
-  ).test(
-    "builder config matches shared family config",
-    test_builder_config_matches_shared_family_config,
-  )
+  runner.suite("Opt: Semantics")
+    .test("vector_len effect is read-only", test_vector_len_effect_is_read_only)
+    .test(
+      "vector_set_unsafe has in-place equivalent",
+      test_vector_set_unsafe_has_in_place_equivalent,
+    )
+    .test("vector_make is fresh producer", test_vector_make_is_fresh_producer)
+    .test("array lit has fresh result", test_array_lit_has_fresh_result)
+    .test("vector_make call has fresh result", test_vector_make_call_has_fresh_result)
+    .test("vector_len call not fresh result", test_vector_len_call_not_fresh_result)
+    .test("record update has fresh result", test_record_update_has_fresh_result)
+    .test("vector_set reusable update site", test_vector_set_reusable_update_site)
+    .test("record update reusable update site", test_record_update_reusable_update_site)
+    .test(
+      "read-only call stays impure for stage1 dead-let parity",
+      test_read_only_call_stays_impure_for_dead_let_stage1,
+    )
+    .test(
+      "builder config matches shared family config",
+      test_builder_config_matches_shared_family_config,
+    )
 }

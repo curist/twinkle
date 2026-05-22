@@ -990,41 +990,42 @@ pub fn test_plan_recursive_record_terminates() Result<Void, String> {
 
 // ── Suite ───────────────────────────────────────────────────────────
 pub fn suite() runner.Suite {
-  runner.suite("wasm plan").test("FuncSigEntry construction", test_func_sig_entry).test(
-    "CaptureEntry construction",
-    test_capture_entry,
-  ).test("StringPoolEntry construction", test_string_pool_entry).test(
-    "WasmTypeRegistry empty",
-    test_registry_empty,
-  ).test("plan empty module", test_plan_empty_module).test(
-    "plan primitive func",
-    test_plan_primitive_func,
-  ).test("plan record type", test_plan_record_type).test(
-    "plan string literals",
-    test_plan_string_literals,
-  ).test("plan string pool byte offsets", test_plan_string_offsets).test(
-    "plan closure",
-    test_plan_closure,
-  ).test("plan closure registers functype", test_plan_closure_registers_func_type).test(
-    "plan closure capture types",
-    test_plan_capture_types,
-  ).test("plan closure populates concrete_func_sigs", test_plan_closure_func_sigs).test(
-    "plan bare higher-order global function arg registers concrete func sig",
-    test_plan_higher_order_global_function_arg_registers_func_sig,
-  ).test(
-    "plan builtin higher-order global function arg registers concrete func sig",
-    test_plan_builtin_higher_order_global_function_arg_registers_func_sig,
-  ).test(
-    "plan callable separation tracks closure and direct calls",
-    test_plan_callable_separation_tracks_closure_and_direct_calls,
-  ).test("plan runtime imports", test_plan_runtime_imports).test(
-    "plan optional type",
-    test_plan_optional_type,
-  ).test(
-    "plan higher-order global func does not synthesize capture layout",
-    test_plan_higher_order_global_func_does_not_synthesize_capture_layout,
-  ).test("plan module globals", test_plan_module_globals).test(
-    "plan nested record dependencies are ordered",
-    test_plan_nested_record_dependencies_are_ordered,
-  ).test("plan recursive record terminates", test_plan_recursive_record_terminates)
+  runner.suite("wasm plan")
+    .test("FuncSigEntry construction", test_func_sig_entry)
+    .test("CaptureEntry construction", test_capture_entry)
+    .test("StringPoolEntry construction", test_string_pool_entry)
+    .test("WasmTypeRegistry empty", test_registry_empty)
+    .test("plan empty module", test_plan_empty_module)
+    .test("plan primitive func", test_plan_primitive_func)
+    .test("plan record type", test_plan_record_type)
+    .test("plan string literals", test_plan_string_literals)
+    .test("plan string pool byte offsets", test_plan_string_offsets)
+    .test("plan closure", test_plan_closure)
+    .test("plan closure registers functype", test_plan_closure_registers_func_type)
+    .test("plan closure capture types", test_plan_capture_types)
+    .test("plan closure populates concrete_func_sigs", test_plan_closure_func_sigs)
+    .test(
+      "plan bare higher-order global function arg registers concrete func sig",
+      test_plan_higher_order_global_function_arg_registers_func_sig,
+    )
+    .test(
+      "plan builtin higher-order global function arg registers concrete func sig",
+      test_plan_builtin_higher_order_global_function_arg_registers_func_sig,
+    )
+    .test(
+      "plan callable separation tracks closure and direct calls",
+      test_plan_callable_separation_tracks_closure_and_direct_calls,
+    )
+    .test("plan runtime imports", test_plan_runtime_imports)
+    .test("plan optional type", test_plan_optional_type)
+    .test(
+      "plan higher-order global func does not synthesize capture layout",
+      test_plan_higher_order_global_func_does_not_synthesize_capture_layout,
+    )
+    .test("plan module globals", test_plan_module_globals)
+    .test(
+      "plan nested record dependencies are ordered",
+      test_plan_nested_record_dependencies_are_ordered,
+    )
+    .test("plan recursive record terminates", test_plan_recursive_record_terminates)
 }

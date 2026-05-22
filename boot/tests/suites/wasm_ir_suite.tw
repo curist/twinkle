@@ -383,29 +383,28 @@ fn test_wasm_module_with_func() Result<Void, String> {
 
 // ── Suite ───────────────────────────────────────────────────────────
 pub fn suite() runner.Suite {
-  runner.suite("wasm ir types").test("HeapType Named", test_heap_type_named).test(
-    "HeapType all variants",
-    test_heap_type_variants,
-  ).test("ValType scalars", test_val_type_scalars).test("ValType Ref", test_val_type_ref).test(
-    "FieldDef construction",
-    test_field_def,
-  ).test("TypeDef Struct", test_type_def_struct).test("TypeDef Array", test_type_def_array).test(
-    "TypeDef FuncType",
-    test_type_def_func_type,
-  ).test("Instr constants", test_instr_constants).test("Instr local ops", test_instr_local_ops).test(
-    "Instr struct ops",
-    test_instr_struct_ops,
-  ).test("Instr call", test_instr_call).test("Instr control flow Block", test_instr_control_flow).test(
-    "Instr If",
-    test_instr_if,
-  ).test("FuncDef construction", test_func_def).test("ImportDef construction", test_import_def).test(
-    "GlobalDef construction",
-    test_global_def,
-  ).test("ExportDef construction", test_export_def).test("TableDef construction", test_table_def).test(
-    "ElemDef construction",
-    test_elem_def,
-  ).test("DataSegment construction", test_data_segment).test(
-    "WasmModule empty",
-    test_wasm_module_empty,
-  ).test("WasmModule with func", test_wasm_module_with_func)
+  runner.suite("wasm ir types")
+    .test("HeapType Named", test_heap_type_named)
+    .test("HeapType all variants", test_heap_type_variants)
+    .test("ValType scalars", test_val_type_scalars)
+    .test("ValType Ref", test_val_type_ref)
+    .test("FieldDef construction", test_field_def)
+    .test("TypeDef Struct", test_type_def_struct)
+    .test("TypeDef Array", test_type_def_array)
+    .test("TypeDef FuncType", test_type_def_func_type)
+    .test("Instr constants", test_instr_constants)
+    .test("Instr local ops", test_instr_local_ops)
+    .test("Instr struct ops", test_instr_struct_ops)
+    .test("Instr call", test_instr_call)
+    .test("Instr control flow Block", test_instr_control_flow)
+    .test("Instr If", test_instr_if)
+    .test("FuncDef construction", test_func_def)
+    .test("ImportDef construction", test_import_def)
+    .test("GlobalDef construction", test_global_def)
+    .test("ExportDef construction", test_export_def)
+    .test("TableDef construction", test_table_def)
+    .test("ElemDef construction", test_elem_def)
+    .test("DataSegment construction", test_data_segment)
+    .test("WasmModule empty", test_wasm_module_empty)
+    .test("WasmModule with func", test_wasm_module_with_func)
 }

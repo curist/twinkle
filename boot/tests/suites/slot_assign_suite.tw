@@ -535,23 +535,22 @@ fn test_collects_arm_locals_used_as_closure_free_vars() Result<Void, String> {
 
 // ── Suite ────────────────────────────────────────────────────────────
 pub fn suite() runner.Suite {
-  runner.suite("slot assignment").test("simple params and local", test_simple_params_and_local).test(
-    "capture params precede declared params",
-    test_capture_params_precede_declared_params,
-  ).test("multiple captures in order", test_multiple_captures_ordered).test(
-    "never local is dead placeholder",
-    test_dead_placeholder_for_never_local,
-  ).test("assign target is Local", test_assign_target_is_local).test(
-    "pattern local in match arm",
-    test_pattern_local_in_match,
-  ).test("no slots for non-binding patterns", test_no_slots_for_non_binding_patterns).test(
-    "source locals are unique",
-    test_source_locals_are_unique,
-  ).test("collects locals inside defer body", test_collects_locals_inside_defer_body).test(
-    "nested pattern scrutinee uses pattern mono",
-    test_nested_pattern_scrutinee_uses_pattern_mono,
-  ).test(
-    "collects arm locals used as closure free vars",
-    test_collects_arm_locals_used_as_closure_free_vars,
-  )
+  runner.suite("slot assignment")
+    .test("simple params and local", test_simple_params_and_local)
+    .test("capture params precede declared params", test_capture_params_precede_declared_params)
+    .test("multiple captures in order", test_multiple_captures_ordered)
+    .test("never local is dead placeholder", test_dead_placeholder_for_never_local)
+    .test("assign target is Local", test_assign_target_is_local)
+    .test("pattern local in match arm", test_pattern_local_in_match)
+    .test("no slots for non-binding patterns", test_no_slots_for_non_binding_patterns)
+    .test("source locals are unique", test_source_locals_are_unique)
+    .test("collects locals inside defer body", test_collects_locals_inside_defer_body)
+    .test(
+      "nested pattern scrutinee uses pattern mono",
+      test_nested_pattern_scrutinee_uses_pattern_mono,
+    )
+    .test(
+      "collects arm locals used as closure free vars",
+      test_collects_arm_locals_used_as_closure_free_vars,
+    )
 }

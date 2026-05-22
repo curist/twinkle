@@ -6,44 +6,46 @@ use tests.assert
 use tests.runner
 
 pub fn suite() runner.Suite {
-  runner.suite("query stage runner").test(
-    "parse uses cache on second run",
-    fn() {
-      path := "/virtual/main.tw"
-      source := "x := 1\n"
-      r := stage_runner.new(path, keys.hash_text(source), 0, 0, false)
-      first := stage_runner.parse(r, cache.empty(), source, 0)
-      second := stage_runner.parse(r, first.store, source, 0)
-      try assert.is_false(first.cache_hit)
-      try assert.is_true(second.cache_hit)
-      try assert.equal(second.value.diagnostics.len(), 0)
-      st := cache.get_stats(second.store)
-      try assert.equal(st.parse_hits, 1)
-      try assert.equal(st.parse_misses, 1)
-      .Ok({})
-    },
-  ).test(
-    "resolve and typecheck use cache on second run",
-    fn() {
-      path := "/virtual/main.tw"
-      source := "x := 1\n"
-      r := stage_runner.new(path, keys.hash_text(source), 0, 0, false)
-      parsed := stage_runner.parse(r, cache.empty(), source, 0)
-      env := base_env.builtin_env()
-      resolved1 := stage_runner.resolve(r, parsed.store, parsed.value, env)
-      resolved2 := stage_runner.resolve(r, resolved1.store, parsed.value, env)
-      try assert.is_false(resolved1.cache_hit)
-      try assert.is_true(resolved2.cache_hit)
-      try assert.equal(resolved2.value.diagnostics.len(), 0)
-      typed1 := stage_runner.typecheck(r, resolved2.store, parsed.value, resolved2.value)
-      typed2 := stage_runner.typecheck(r, typed1.store, parsed.value, resolved2.value)
-      try assert.is_false(typed1.cache_hit)
-      try assert.is_true(typed2.cache_hit)
-      try assert.equal(typed2.value.diagnostics.len(), 0)
-      st := cache.get_stats(typed2.store)
-      try assert.equal(st.resolve_hits, 1)
-      try assert.equal(st.typecheck_hits, 1)
-      .Ok({})
-    },
-  )
+  runner.suite("query stage runner")
+    .test(
+      "parse uses cache on second run",
+      fn() {
+        path := "/virtual/main.tw"
+        source := "x := 1\n"
+        r := stage_runner.new(path, keys.hash_text(source), 0, 0, false)
+        first := stage_runner.parse(r, cache.empty(), source, 0)
+        second := stage_runner.parse(r, first.store, source, 0)
+        try assert.is_false(first.cache_hit)
+        try assert.is_true(second.cache_hit)
+        try assert.equal(second.value.diagnostics.len(), 0)
+        st := cache.get_stats(second.store)
+        try assert.equal(st.parse_hits, 1)
+        try assert.equal(st.parse_misses, 1)
+        .Ok({})
+      },
+    )
+    .test(
+      "resolve and typecheck use cache on second run",
+      fn() {
+        path := "/virtual/main.tw"
+        source := "x := 1\n"
+        r := stage_runner.new(path, keys.hash_text(source), 0, 0, false)
+        parsed := stage_runner.parse(r, cache.empty(), source, 0)
+        env := base_env.builtin_env()
+        resolved1 := stage_runner.resolve(r, parsed.store, parsed.value, env)
+        resolved2 := stage_runner.resolve(r, resolved1.store, parsed.value, env)
+        try assert.is_false(resolved1.cache_hit)
+        try assert.is_true(resolved2.cache_hit)
+        try assert.equal(resolved2.value.diagnostics.len(), 0)
+        typed1 := stage_runner.typecheck(r, resolved2.store, parsed.value, resolved2.value)
+        typed2 := stage_runner.typecheck(r, typed1.store, parsed.value, resolved2.value)
+        try assert.is_false(typed1.cache_hit)
+        try assert.is_true(typed2.cache_hit)
+        try assert.equal(typed2.value.diagnostics.len(), 0)
+        st := cache.get_stats(typed2.store)
+        try assert.equal(st.resolve_hits, 1)
+        try assert.equal(st.typecheck_hits, 1)
+        .Ok({})
+      },
+    )
 }

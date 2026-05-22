@@ -317,9 +317,9 @@ pub fn builtin_env() ResolvedEnv {
   ]
   builtin_named_types := builtin_type_entries()
   builtin_named_type_names := builtin_type_names(builtin_named_types)
-  env := resolver.empty_env().with_types(builtin_named_types, builtin_named_type_names).with_registered_functions(
-    sig_fns.concat(prelude_fns).concat(hardcoded),
-  )
+  env := resolver.empty_env()
+    .with_types(builtin_named_types, builtin_named_type_names)
+    .with_registered_functions(sig_fns.concat(prelude_fns).concat(hardcoded))
   env = bind_public_free_builtins(env)
   // Actual prelude module functions should carry canonical imported origins in
   // the builtin environment so internal/prelude modules can link through the
@@ -343,43 +343,50 @@ pub fn add_internal_host_builtins(env: ResolvedEnv) ResolvedEnv {
       [.String],
       .Some(.Result(.Vector(.Byte), .String)),
     ),
-  ).add_function(
-    builtin_sig("__host_write_file", [], ["path", "text"], [.String, .String], .Some(.Void)),
-  ).add_function(
-    builtin_sig(
-      "__host_write_bytes",
-      [],
-      ["path", "bytes"],
-      [.String, .Vector(.Byte)],
-      .Some(.Void),
-    ),
-  ).add_function(builtin_sig("__host_mkdirp", [], ["path"], [.String], .Some(.Void))).add_function(
-    builtin_sig("__host_list_dir", [], ["path"], [.String], .Some(.Vector(.String))),
-  ).add_function(builtin_sig("__host_exists", [], ["path"], [.String], .Some(.Bool))).add_function(
-    builtin_sig("__host_args", [], [], [], .Some(.Vector(.String))),
-  ).add_function(builtin_sig("__host_env", [], ["name"], [.String], .Some(.Vector(.String)))).add_function(
-    builtin_sig("__host_cwd", [], [], [], .Some(.String)),
-  ).add_function(builtin_sig("__host_exit", [], ["code"], [.Int], .Some(.Never))).add_function(
-    builtin_sig("__host_now", [], [], [], .Some(.Float)),
-  ).add_function(
-    builtin_sig(
-      "__host_run_wasm",
-      [],
-      ["bytes", "argv"],
-      [.Vector(.Byte), .Vector(.String)],
-      .Some(.Int),
-    ),
-  ).add_function(
-    builtin_sig("__host_stdin_read_chunk", [], ["max_bytes"], [.Int], .Some(.Vector(.Byte))),
-  ).add_function(
-    builtin_sig(
-      "__host_stdin_read_timeout",
-      [],
-      ["max_bytes", "timeout_ms"],
-      [.Int, .Int],
-      .Some(.Vector(.Byte)),
-    ),
-  ).add_function(builtin_sig("__host_stdin_eof", [], [], [], .Some(.Bool))).add_function(
-    builtin_sig("__host_stdout_write_bytes", [], ["bytes"], [.Vector(.Byte)], .Some(.Void)),
   )
+    .add_function(
+      builtin_sig("__host_write_file", [], ["path", "text"], [.String, .String], .Some(.Void)),
+    )
+    .add_function(
+      builtin_sig(
+        "__host_write_bytes",
+        [],
+        ["path", "bytes"],
+        [.String, .Vector(.Byte)],
+        .Some(.Void),
+      ),
+    )
+    .add_function(builtin_sig("__host_mkdirp", [], ["path"], [.String], .Some(.Void)))
+    .add_function(builtin_sig("__host_list_dir", [], ["path"], [.String], .Some(.Vector(.String))))
+    .add_function(builtin_sig("__host_exists", [], ["path"], [.String], .Some(.Bool)))
+    .add_function(builtin_sig("__host_args", [], [], [], .Some(.Vector(.String))))
+    .add_function(builtin_sig("__host_env", [], ["name"], [.String], .Some(.Vector(.String))))
+    .add_function(builtin_sig("__host_cwd", [], [], [], .Some(.String)))
+    .add_function(builtin_sig("__host_exit", [], ["code"], [.Int], .Some(.Never)))
+    .add_function(builtin_sig("__host_now", [], [], [], .Some(.Float)))
+    .add_function(
+      builtin_sig(
+        "__host_run_wasm",
+        [],
+        ["bytes", "argv"],
+        [.Vector(.Byte), .Vector(.String)],
+        .Some(.Int),
+      ),
+    )
+    .add_function(
+      builtin_sig("__host_stdin_read_chunk", [], ["max_bytes"], [.Int], .Some(.Vector(.Byte))),
+    )
+    .add_function(
+      builtin_sig(
+        "__host_stdin_read_timeout",
+        [],
+        ["max_bytes", "timeout_ms"],
+        [.Int, .Int],
+        .Some(.Vector(.Byte)),
+      ),
+    )
+    .add_function(builtin_sig("__host_stdin_eof", [], [], [], .Some(.Bool)))
+    .add_function(
+      builtin_sig("__host_stdout_write_bytes", [], ["bytes"], [.Vector(.Byte)], .Some(.Void)),
+    )
 }

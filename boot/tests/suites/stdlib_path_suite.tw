@@ -4,132 +4,149 @@ use tests.assert
 use tests.runner
 
 pub fn suite() runner.Suite {
-  runner.suite("stdlib path").test(
-    "is_absolute detects leading slash",
-    fn() {
-      try assert.is_true(path.is_absolute("/usr/bin"))
-      try assert.is_false(path.is_absolute("usr/bin"))
-      try assert.is_false(path.is_absolute(""))
-      .Ok({})
-    },
-  ).test(
-    "join two segments",
-    fn() {
-      try assert.equal(path.join("a", "b"), "a/b")
-      try assert.equal(path.join("a/", "b"), "a/b")
-      try assert.equal(path.join("a", "/b"), "a/b")
-      try assert.equal(path.join("a/", "/b"), "a/b")
-      .Ok({})
-    },
-  ).test(
-    "join with empty segment",
-    fn() {
-      try assert.equal(path.join("", "b"), "b")
-      try assert.equal(path.join("a", ""), "a")
-      .Ok({})
-    },
-  ).test(
-    "join_all combines multiple parts",
-    fn() {
-      parts: Vector<String> = ["usr", "local", "bin"]
-      try assert.equal(path.join_all(parts), "usr/local/bin")
-      .Ok({})
-    },
-  ).test(
-    "join_all with single part",
-    fn() {
-      parts: Vector<String> = ["only"]
-      try assert.equal(path.join_all(parts), "only")
-      .Ok({})
-    },
-  ).test(
-    "join_all empty returns empty",
-    fn() {
-      parts: Vector<String> = []
-      try assert.equal(path.join_all(parts), "")
-      .Ok({})
-    },
-  ).test(
-    "dirname of nested path",
-    fn() {
-      try assert.equal(path.dirname("/usr/local/bin"), "/usr/local")
-      try assert.equal(path.dirname("/usr"), "/")
-      try assert.equal(path.dirname("a/b"), "a")
-      .Ok({})
-    },
-  ).test(
-    "dirname of bare name returns dot",
-    fn() {
-      try assert.equal(path.dirname("file.txt"), ".")
-      try assert.equal(path.dirname(""), ".")
-      .Ok({})
-    },
-  ).test(
-    "basename extracts filename",
-    fn() {
-      try assert.equal(path.basename("/usr/local/bin"), "bin")
-      try assert.equal(path.basename("a/b.txt"), "b.txt")
-      try assert.equal(path.basename("solo"), "solo")
-      .Ok({})
-    },
-  ).test(
-    "basename of empty is empty",
-    fn() {
-      try assert.equal(path.basename(""), "")
-      .Ok({})
-    },
-  ).test(
-    "stem strips extension",
-    fn() {
-      try assert.equal(path.stem("file.txt"), "file")
-      try assert.equal(path.stem("/a/b.tar.gz"), "b.tar")
-      try assert.equal(path.stem("noext"), "noext")
-      .Ok({})
-    },
-  ).test(
-    "extension extracts dot suffix",
-    fn() {
-      try assert.equal(path.extension("file.txt"), ".txt")
-      try assert.equal(path.extension("archive.tar.gz"), ".gz")
-      try assert.equal(path.extension("noext"), "")
-      .Ok({})
-    },
-  ).test(
-    "normalize removes dot segments",
-    fn() {
-      try assert.equal(path.normalize("a/./b"), "a/b")
-      try assert.equal(path.normalize("a/b/../c"), "a/c")
-      try assert.equal(path.normalize("./a"), "a")
-      .Ok({})
-    },
-  ).test(
-    "normalize collapses double slashes",
-    fn() {
-      try assert.equal(path.normalize("a//b//c"), "a/b/c")
-      .Ok({})
-    },
-  ).test(
-    "normalize absolute path stays absolute",
-    fn() {
-      try assert.equal(path.normalize("/a/b/../c"), "/a/c")
-      try assert.equal(path.normalize("/.."), "/")
-      try assert.equal(path.normalize("/a/../../b"), "/b")
-      .Ok({})
-    },
-  ).test(
-    "normalize relative dotdot preserved",
-    fn() {
-      try assert.equal(path.normalize("../a"), "../a")
-      try assert.equal(path.normalize("../../a"), "../../a")
-      .Ok({})
-    },
-  ).test(
-    "normalize empty and dot",
-    fn() {
-      try assert.equal(path.normalize(""), ".")
-      try assert.equal(path.normalize("."), ".")
-      try assert.equal(path.normalize("/"), "/")
-      .Ok({})
-    },
-  )
+  runner.suite("stdlib path")
+    .test(
+      "is_absolute detects leading slash",
+      fn() {
+        try assert.is_true(path.is_absolute("/usr/bin"))
+        try assert.is_false(path.is_absolute("usr/bin"))
+        try assert.is_false(path.is_absolute(""))
+        .Ok({})
+      },
+    )
+    .test(
+      "join two segments",
+      fn() {
+        try assert.equal(path.join("a", "b"), "a/b")
+        try assert.equal(path.join("a/", "b"), "a/b")
+        try assert.equal(path.join("a", "/b"), "a/b")
+        try assert.equal(path.join("a/", "/b"), "a/b")
+        .Ok({})
+      },
+    )
+    .test(
+      "join with empty segment",
+      fn() {
+        try assert.equal(path.join("", "b"), "b")
+        try assert.equal(path.join("a", ""), "a")
+        .Ok({})
+      },
+    )
+    .test(
+      "join_all combines multiple parts",
+      fn() {
+        parts: Vector<String> = ["usr", "local", "bin"]
+        try assert.equal(path.join_all(parts), "usr/local/bin")
+        .Ok({})
+      },
+    )
+    .test(
+      "join_all with single part",
+      fn() {
+        parts: Vector<String> = ["only"]
+        try assert.equal(path.join_all(parts), "only")
+        .Ok({})
+      },
+    )
+    .test(
+      "join_all empty returns empty",
+      fn() {
+        parts: Vector<String> = []
+        try assert.equal(path.join_all(parts), "")
+        .Ok({})
+      },
+    )
+    .test(
+      "dirname of nested path",
+      fn() {
+        try assert.equal(path.dirname("/usr/local/bin"), "/usr/local")
+        try assert.equal(path.dirname("/usr"), "/")
+        try assert.equal(path.dirname("a/b"), "a")
+        .Ok({})
+      },
+    )
+    .test(
+      "dirname of bare name returns dot",
+      fn() {
+        try assert.equal(path.dirname("file.txt"), ".")
+        try assert.equal(path.dirname(""), ".")
+        .Ok({})
+      },
+    )
+    .test(
+      "basename extracts filename",
+      fn() {
+        try assert.equal(path.basename("/usr/local/bin"), "bin")
+        try assert.equal(path.basename("a/b.txt"), "b.txt")
+        try assert.equal(path.basename("solo"), "solo")
+        .Ok({})
+      },
+    )
+    .test(
+      "basename of empty is empty",
+      fn() {
+        try assert.equal(path.basename(""), "")
+        .Ok({})
+      },
+    )
+    .test(
+      "stem strips extension",
+      fn() {
+        try assert.equal(path.stem("file.txt"), "file")
+        try assert.equal(path.stem("/a/b.tar.gz"), "b.tar")
+        try assert.equal(path.stem("noext"), "noext")
+        .Ok({})
+      },
+    )
+    .test(
+      "extension extracts dot suffix",
+      fn() {
+        try assert.equal(path.extension("file.txt"), ".txt")
+        try assert.equal(path.extension("archive.tar.gz"), ".gz")
+        try assert.equal(path.extension("noext"), "")
+        .Ok({})
+      },
+    )
+    .test(
+      "normalize removes dot segments",
+      fn() {
+        try assert.equal(path.normalize("a/./b"), "a/b")
+        try assert.equal(path.normalize("a/b/../c"), "a/c")
+        try assert.equal(path.normalize("./a"), "a")
+        .Ok({})
+      },
+    )
+    .test(
+      "normalize collapses double slashes",
+      fn() {
+        try assert.equal(path.normalize("a//b//c"), "a/b/c")
+        .Ok({})
+      },
+    )
+    .test(
+      "normalize absolute path stays absolute",
+      fn() {
+        try assert.equal(path.normalize("/a/b/../c"), "/a/c")
+        try assert.equal(path.normalize("/.."), "/")
+        try assert.equal(path.normalize("/a/../../b"), "/b")
+        .Ok({})
+      },
+    )
+    .test(
+      "normalize relative dotdot preserved",
+      fn() {
+        try assert.equal(path.normalize("../a"), "../a")
+        try assert.equal(path.normalize("../../a"), "../../a")
+        .Ok({})
+      },
+    )
+    .test(
+      "normalize empty and dot",
+      fn() {
+        try assert.equal(path.normalize(""), ".")
+        try assert.equal(path.normalize("."), ".")
+        try assert.equal(path.normalize("/"), "/")
+        .Ok({})
+      },
+    )
 }

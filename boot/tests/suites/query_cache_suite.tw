@@ -10,54 +10,57 @@ fn parsed(text: String) cache.ParsedModule {
 }
 
 pub fn suite() runner.Suite {
-  runner.suite("query cache").test(
-    "parsed lookup hits when key matches",
-    fn() {
-      path := "/virtual/main.tw"
-      key := keys.parse_key(path, keys.hash_text("x := 1"))
-      store := cache.put_parsed(cache.empty(), path, key, parsed("x := 1"))
-      lookup := cache.get_parsed(store, path, key)
-      try assert.is_true(lookup.cache_hit)
-      try assert.is_some(lookup.value)
-      st := cache.get_stats(lookup.store)
-      try assert.equal(st.parse_hits, 1)
-      try assert.equal(st.parse_misses, 0)
-      .Ok({})
-    },
-  ).test(
-    "parsed lookup misses when key changes",
-    fn() {
-      path := "/virtual/main.tw"
-      old_key := keys.parse_key(path, keys.hash_text("x := 1"))
-      new_key := keys.parse_key(path, keys.hash_text("x := 2"))
-      store := cache.put_parsed(cache.empty(), path, old_key, parsed("x := 1"))
-      lookup := cache.get_parsed(store, path, new_key)
-      try assert.is_false(lookup.cache_hit)
-      try assert.is_none(lookup.value)
-      st := cache.get_stats(lookup.store)
-      try assert.equal(st.parse_misses, 1)
-      .Ok({})
-    },
-  ).test(
-    "invalidating changed module clears dependent stage entries",
-    fn() {
-      dep := "/virtual/dep.tw"
-      main := "/virtual/main.tw"
-      key := 1
-      p := parsed("x := 1")
-      store := cache.empty()
-      store = cache.set_dependencies(store, main, [dep])
-      store = cache.set_module_hash(store, dep, 10)
-      store = cache.set_module_hash(store, main, 20)
-      store = cache.put_parsed(store, main, key, p)
-      // Reuse parsed payload as a lightweight way to keep the parse cache
-      // populated; invalidation intentionally preserves parse entries.
-      store = cache.invalidate_changed_module(store, dep)
-      try assert.is_none(cache.module_hash(store, dep))
-      try assert.is_none(cache.module_hash(store, main))
-      lookup := cache.get_parsed(store, main, key)
-      try assert.is_true(lookup.cache_hit)
-      .Ok({})
-    },
-  )
+  runner.suite("query cache")
+    .test(
+      "parsed lookup hits when key matches",
+      fn() {
+        path := "/virtual/main.tw"
+        key := keys.parse_key(path, keys.hash_text("x := 1"))
+        store := cache.put_parsed(cache.empty(), path, key, parsed("x := 1"))
+        lookup := cache.get_parsed(store, path, key)
+        try assert.is_true(lookup.cache_hit)
+        try assert.is_some(lookup.value)
+        st := cache.get_stats(lookup.store)
+        try assert.equal(st.parse_hits, 1)
+        try assert.equal(st.parse_misses, 0)
+        .Ok({})
+      },
+    )
+    .test(
+      "parsed lookup misses when key changes",
+      fn() {
+        path := "/virtual/main.tw"
+        old_key := keys.parse_key(path, keys.hash_text("x := 1"))
+        new_key := keys.parse_key(path, keys.hash_text("x := 2"))
+        store := cache.put_parsed(cache.empty(), path, old_key, parsed("x := 1"))
+        lookup := cache.get_parsed(store, path, new_key)
+        try assert.is_false(lookup.cache_hit)
+        try assert.is_none(lookup.value)
+        st := cache.get_stats(lookup.store)
+        try assert.equal(st.parse_misses, 1)
+        .Ok({})
+      },
+    )
+    .test(
+      "invalidating changed module clears dependent stage entries",
+      fn() {
+        dep := "/virtual/dep.tw"
+        main := "/virtual/main.tw"
+        key := 1
+        p := parsed("x := 1")
+        store := cache.empty()
+        store = cache.set_dependencies(store, main, [dep])
+        store = cache.set_module_hash(store, dep, 10)
+        store = cache.set_module_hash(store, main, 20)
+        store = cache.put_parsed(store, main, key, p)
+        // Reuse parsed payload as a lightweight way to keep the parse cache
+        // populated; invalidation intentionally preserves parse entries.
+        store = cache.invalidate_changed_module(store, dep)
+        try assert.is_none(cache.module_hash(store, dep))
+        try assert.is_none(cache.module_hash(store, main))
+        lookup := cache.get_parsed(store, main, key)
+        try assert.is_true(lookup.cache_hit)
+        .Ok({})
+      },
+    )
 }

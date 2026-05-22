@@ -94,97 +94,109 @@ fn type_at(result: checker.CheckResult, src: String, needle: String) Result<Stri
 
 // ── Suite ────────────────────────────────────────────────────────────
 pub fn suite() runner.Suite {
-  runner.suite("checker coverage").test(
-    "function as value",
-    fn() {
-      src := "fn add_one(x: Int) Int { x + 1 }\nfn wrap() fn(Int) Int { add_one }"
-      r := try check_ok(src)
-      .Ok({})
-    },
-  ).test(
-    "bare return in void function",
-    fn() {
-      src := "fn f() Void { return }"
-      r := try check_ok(src)
-      .Ok({})
-    },
-  ).test(
-    "collect with index",
-    fn() {
-      src := "fn f(xs: Vector<Int>) Vector<Int> { collect x, i in xs { x + i } }"
-      r := try check_ok(src)
-      .Ok({})
-    },
-  ).test(
-    "for over Dict iterates keys",
-    fn() {
-      src := "fn f(d: Dict<String, Int>) String {\nresult := \"\"\nfor k in d { result = k }\nresult\n}"
-      r := try check_ok(src)
-      .Ok({})
-    },
-  ).test(
-    "for over String iterates Bytes",
-    fn() {
-      src := "fn f(s: String) Int {\ncount := 0\nfor b in s { count = count + 1 }\ncount\n}"
-      r := try check_ok(src)
-      .Ok({})
-    },
-  ).test(
-    "function as value",
-    fn() {
-      src := "fn add_one(x: Int) Int { x + 1 }\nfn wrap() fn(Int) Int { add_one }"
-      r := try check_ok(src)
-      .Ok({})
-    },
-  ).test(
-    "bare return in void function",
-    fn() {
-      src := "fn f() Void { return }"
-      r := try check_ok(src)
-      .Ok({})
-    },
-  ).test(
-    "range literal produces Range type",
-    fn() {
-      // Range is TypeId(3), so mono_to_string renders it as "Named(3)"
-      src := "fn f() { x := 0..10\nx }"
-      r := try check_ok(src)
-      ty := try type_at(r, src, "0..10")
-      assert.equal(ty, "Named(3)")
-    },
-  ).test(
-    "range literal rejects non-Int operand",
-    fn() {
-      src := "fn f() { \"a\"..10 }"
-      errs := try check_errs(src)
-      has_mismatch := false
+  runner.suite("checker coverage")
+    .test(
+      "function as value",
+      fn() {
+        src := "fn add_one(x: Int) Int { x + 1 }\nfn wrap() fn(Int) Int { add_one }"
+        r := try check_ok(src)
+        .Ok({})
+      },
+    )
+    .test(
+      "bare return in void function",
+      fn() {
+        src := "fn f() Void { return }"
+        r := try check_ok(src)
+        .Ok({})
+      },
+    )
+    .test(
+      "collect with index",
+      fn() {
+        src := "fn f(xs: Vector<Int>) Vector<Int> { collect x, i in xs { x + i } }"
+        r := try check_ok(src)
+        .Ok({})
+      },
+    )
+    .test(
+      "for over Dict iterates keys",
+      fn() {
+        src := "fn f(d: Dict<String, Int>) String {\nresult := \"\"\nfor k in d { result = k }\nresult\n}"
+        r := try check_ok(src)
+        .Ok({})
+      },
+    )
+    .test(
+      "for over String iterates Bytes",
+      fn() {
+        src := "fn f(s: String) Int {\ncount := 0\nfor b in s { count = count + 1 }\ncount\n}"
+        r := try check_ok(src)
+        .Ok({})
+      },
+    )
+    .test(
+      "function as value",
+      fn() {
+        src := "fn add_one(x: Int) Int { x + 1 }\nfn wrap() fn(Int) Int { add_one }"
+        r := try check_ok(src)
+        .Ok({})
+      },
+    )
+    .test(
+      "bare return in void function",
+      fn() {
+        src := "fn f() Void { return }"
+        r := try check_ok(src)
+        .Ok({})
+      },
+    )
+    .test(
+      "range literal produces Range type",
+      fn() {
+        // Range is TypeId(3), so mono_to_string renders it as "Named(3)"
+        src := "fn f() { x := 0..10\nx }"
+        r := try check_ok(src)
+        ty := try type_at(r, src, "0..10")
+        assert.equal(ty, "Named(3)")
+      },
+    )
+    .test(
+      "range literal rejects non-Int operand",
+      fn() {
+        src := "fn f() { \"a\"..10 }"
+        errs := try check_errs(src)
+        has_mismatch := false
 
-      for msg in errs {
-        if msg.len() > 0 { has_mismatch = true }
-      }
+        for msg in errs {
+          if msg.len() > 0 { has_mismatch = true }
+        }
 
-      assert.is_true(has_mismatch)
-    },
-  ).test(
-    "infer return type from body when annotation omitted",
-    fn() {
-      src := "fn make() { 42 }\nfn use_it() Int { make() }"
-      r := try check_ok(src)
-      .Ok({})
-    },
-  ).test(
-    "inferred return type used in method chain",
-    fn() {
-      src := "type Foo = .{ x: Int }\nfn make() { Foo.{ x: 1 } }\nfn get() Int { make().x }"
-      r := try check_ok(src)
-      .Ok({})
-    },
-  ).test(
-    "inferred return type used in top-level binding",
-    fn() {
-      src := "fn make() { 42 }\nx := make()\nfn use_it() Int { x }"
-      r := try check_ok(src)
-      .Ok({})
-    },
-  )
+        assert.is_true(has_mismatch)
+      },
+    )
+    .test(
+      "infer return type from body when annotation omitted",
+      fn() {
+        src := "fn make() { 42 }\nfn use_it() Int { make() }"
+        r := try check_ok(src)
+        .Ok({})
+      },
+    )
+    .test(
+      "inferred return type used in method chain",
+      fn() {
+        src := "type Foo = .{ x: Int }\nfn make() { Foo.{ x: 1 } }\nfn get() Int { make().x }"
+        r := try check_ok(src)
+        .Ok({})
+      },
+    )
+    .test(
+      "inferred return type used in top-level binding",
+      fn() {
+        src := "fn make() { 42 }\nx := make()\nfn use_it() Int { x }"
+        r := try check_ok(src)
+        .Ok({})
+      },
+    )
 }

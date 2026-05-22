@@ -69,194 +69,214 @@ fn classify(n: Int) String {
 }
 
 pub fn suite() runner.Suite {
-  runner.suite("control flow").test(
-    "if-else returns value",
-    fn() {
-      x := if true { 1 } else { 2 }
-      try assert.equal(x, 1)
-      y := if false { 1 } else { 2 }
-      try assert.equal(y, 2)
-      .Ok({})
-    },
-  ).test(
-    "chained if-else-if",
-    fn() {
-      try assert.equal(classify(-5), "negative")
-      try assert.equal(classify(0), "zero")
-      try assert.equal(classify(7), "small")
-      try assert.equal(classify(100), "big")
-      .Ok({})
-    },
-  ).test(
-    "case matches enum variants",
-    fn() {
-      try assert.equal(describe(.Circle(3.0)), "circle")
-      try assert.equal(describe(.Rect(2.0, 4.0)), "rect")
-      try assert.equal(describe(.UnitSquare), "unit")
-      .Ok({})
-    },
-  ).test(
-    "nested case expressions",
-    fn() {
-      opt: Option<Shape> = .Some(.Circle(1.5))
-      msg := case opt {
-        .Some(s) => case s {
-          .Circle(_) => "got circle",
-          _ => "other shape",
-        },
-        .None => "nothing",
-      }
-      try assert.equal(msg, "got circle")
-      .Ok({})
-    },
-  ).test(
-    "case wildcard catches remaining variants",
-    fn() {
-      s: Shape = .UnitSquare
-      msg := case s {
-        .Circle(_) => "circle",
-        _ => "not circle",
-      }
-      try assert.equal(msg, "not circle")
-      .Ok({})
-    },
-  ).test(
-    "break exits loop early",
-    fn() {
-      result := sum_until_negative([3, 5, 2, -1, 10])
-      try assert.equal(result, 10)
-      .Ok({})
-    },
-  ).test(
-    "break not triggered processes all",
-    fn() {
-      result := sum_until_negative([1, 2, 3])
-      try assert.equal(result, 6)
-      .Ok({})
-    },
-  ).test(
-    "continue skips elements in collect",
-    fn() {
-      result := collect_positives([3, -1, 4, -2, 5])
-      try assert.equal(result.len(), 3)
-      try assert.equal(result[0], 3)
-      try assert.equal(result[1], 4)
-      try assert.equal(result[2], 5)
-      .Ok({})
-    },
-  ).test(
-    "collect with all skipped produces empty vector",
-    fn() {
-      result := collect_positives([-1, -2, -3])
-      try assert.equal(result.len(), 0)
-      .Ok({})
-    },
-  ).test(
-    "return from inside for loop",
-    fn() {
-      try assert.equal(first_even([1, 3, 4, 6]), "even: 4")
-      try assert.equal(first_even([1, 3, 5]), "none")
-      .Ok({})
-    },
-  ).test(
-    "while-style for loop",
-    fn() {
-      n := 1
-      for n < 100 { n = n * 2 }
-      try assert.equal(n, 128)
-      .Ok({})
-    },
-  ).test(
-    "for over range",
-    fn() {
-      sum := 0
-      for i in 0..5 { sum = sum + i }
-      try assert.equal(sum, 10)
-      .Ok({})
-    },
-  ).test(
-    "for over range_from",
-    fn() {
-      sum := 0
-      for i in 3..6 { sum = sum + i }
-      try assert.equal(sum, 12)
-      .Ok({})
-    },
-  ).test(
-    "collect from range with transform",
-    fn() {
-      doubled := collect i in 0..4 { i * 2 }
-      try assert.equal(doubled.len(), 4)
-      try assert.equal(doubled[0], 0)
-      try assert.equal(doubled[1], 2)
-      try assert.equal(doubled[3], 6)
-      .Ok({})
-    },
-  ).test(
-    "try propagation success",
-    fn() {
-      r := chain_div(100, 5, 2)
-      try assert.is_ok(r)
-      val := case r {
-        .Ok(v) => v,
-        .Err(_) => -1,
-      }
-      try assert.equal(val, 10)
-      .Ok({})
-    },
-  ).test(
-    "try propagation first error",
-    fn() {
-      r := chain_div(100, 0, 2)
-      try assert.err_eq(r, "div/0")
-      .Ok({})
-    },
-  ).test(
-    "try propagation second error",
-    fn() {
-      r := chain_div(100, 5, 0)
-      try assert.err_eq(r, "div/0")
-      .Ok({})
-    },
-  ).test(
-    "for loop indexed form",
-    fn() {
-      xs: Vector<String> = ["a", "b", "c"]
-      pairs := Cell.new("")
-      for x, i in xs {
-        pairs.update(
-          fn(s) {
-            "${s}${i}:${x} "
+  runner.suite("control flow")
+    .test(
+      "if-else returns value",
+      fn() {
+        x := if true { 1 } else { 2 }
+        try assert.equal(x, 1)
+        y := if false { 1 } else { 2 }
+        try assert.equal(y, 2)
+        .Ok({})
+      },
+    )
+    .test(
+      "chained if-else-if",
+      fn() {
+        try assert.equal(classify(-5), "negative")
+        try assert.equal(classify(0), "zero")
+        try assert.equal(classify(7), "small")
+        try assert.equal(classify(100), "big")
+        .Ok({})
+      },
+    )
+    .test(
+      "case matches enum variants",
+      fn() {
+        try assert.equal(describe(.Circle(3.0)), "circle")
+        try assert.equal(describe(.Rect(2.0, 4.0)), "rect")
+        try assert.equal(describe(.UnitSquare), "unit")
+        .Ok({})
+      },
+    )
+    .test(
+      "nested case expressions",
+      fn() {
+        opt: Option<Shape> = .Some(.Circle(1.5))
+        msg := case opt {
+          .Some(s) => case s {
+            .Circle(_) => "got circle",
+            _ => "other shape",
           },
-        )
-      }
-      try assert.equal(pairs.get(), "0:a 1:b 2:c ")
-      .Ok({})
-    },
-  ).test(
-    "collect with index",
-    fn() {
-      xs: Vector<String> = ["x", "y", "z"]
-      indexed := collect s, i in xs {
-        "${i}-${s}"
-      }
-      try assert.equal(indexed[0], "0-x")
-      try assert.equal(indexed[1], "1-y")
-      try assert.equal(indexed[2], "2-z")
-      .Ok({})
-    },
-  ).test(
-    "diverging branch with return does not affect case type",
-    fn() {
-      opt: Int? = .Some(42)
-      x := case opt {
-        .Some(v) => v,
-        .None => {
-          return .Ok({})
-        },
-      }
-      try assert.equal(x, 42)
-      .Ok({})
-    },
-  )
+          .None => "nothing",
+        }
+        try assert.equal(msg, "got circle")
+        .Ok({})
+      },
+    )
+    .test(
+      "case wildcard catches remaining variants",
+      fn() {
+        s: Shape = .UnitSquare
+        msg := case s {
+          .Circle(_) => "circle",
+          _ => "not circle",
+        }
+        try assert.equal(msg, "not circle")
+        .Ok({})
+      },
+    )
+    .test(
+      "break exits loop early",
+      fn() {
+        result := sum_until_negative([3, 5, 2, -1, 10])
+        try assert.equal(result, 10)
+        .Ok({})
+      },
+    )
+    .test(
+      "break not triggered processes all",
+      fn() {
+        result := sum_until_negative([1, 2, 3])
+        try assert.equal(result, 6)
+        .Ok({})
+      },
+    )
+    .test(
+      "continue skips elements in collect",
+      fn() {
+        result := collect_positives([3, -1, 4, -2, 5])
+        try assert.equal(result.len(), 3)
+        try assert.equal(result[0], 3)
+        try assert.equal(result[1], 4)
+        try assert.equal(result[2], 5)
+        .Ok({})
+      },
+    )
+    .test(
+      "collect with all skipped produces empty vector",
+      fn() {
+        result := collect_positives([-1, -2, -3])
+        try assert.equal(result.len(), 0)
+        .Ok({})
+      },
+    )
+    .test(
+      "return from inside for loop",
+      fn() {
+        try assert.equal(first_even([1, 3, 4, 6]), "even: 4")
+        try assert.equal(first_even([1, 3, 5]), "none")
+        .Ok({})
+      },
+    )
+    .test(
+      "while-style for loop",
+      fn() {
+        n := 1
+        for n < 100 { n = n * 2 }
+        try assert.equal(n, 128)
+        .Ok({})
+      },
+    )
+    .test(
+      "for over range",
+      fn() {
+        sum := 0
+        for i in 0..5 { sum = sum + i }
+        try assert.equal(sum, 10)
+        .Ok({})
+      },
+    )
+    .test(
+      "for over range_from",
+      fn() {
+        sum := 0
+        for i in 3..6 { sum = sum + i }
+        try assert.equal(sum, 12)
+        .Ok({})
+      },
+    )
+    .test(
+      "collect from range with transform",
+      fn() {
+        doubled := collect i in 0..4 { i * 2 }
+        try assert.equal(doubled.len(), 4)
+        try assert.equal(doubled[0], 0)
+        try assert.equal(doubled[1], 2)
+        try assert.equal(doubled[3], 6)
+        .Ok({})
+      },
+    )
+    .test(
+      "try propagation success",
+      fn() {
+        r := chain_div(100, 5, 2)
+        try assert.is_ok(r)
+        val := case r {
+          .Ok(v) => v,
+          .Err(_) => -1,
+        }
+        try assert.equal(val, 10)
+        .Ok({})
+      },
+    )
+    .test(
+      "try propagation first error",
+      fn() {
+        r := chain_div(100, 0, 2)
+        try assert.err_eq(r, "div/0")
+        .Ok({})
+      },
+    )
+    .test(
+      "try propagation second error",
+      fn() {
+        r := chain_div(100, 5, 0)
+        try assert.err_eq(r, "div/0")
+        .Ok({})
+      },
+    )
+    .test(
+      "for loop indexed form",
+      fn() {
+        xs: Vector<String> = ["a", "b", "c"]
+        pairs := Cell.new("")
+        for x, i in xs {
+          pairs.update(
+            fn(s) {
+              "${s}${i}:${x} "
+            },
+          )
+        }
+        try assert.equal(pairs.get(), "0:a 1:b 2:c ")
+        .Ok({})
+      },
+    )
+    .test(
+      "collect with index",
+      fn() {
+        xs: Vector<String> = ["x", "y", "z"]
+        indexed := collect s, i in xs {
+          "${i}-${s}"
+        }
+        try assert.equal(indexed[0], "0-x")
+        try assert.equal(indexed[1], "1-y")
+        try assert.equal(indexed[2], "2-z")
+        .Ok({})
+      },
+    )
+    .test(
+      "diverging branch with return does not affect case type",
+      fn() {
+        opt: Int? = .Some(42)
+        x := case opt {
+          .Some(v) => v,
+          .None => {
+            return .Ok({})
+          },
+        }
+        try assert.equal(x, 42)
+        .Ok({})
+      },
+    )
 }

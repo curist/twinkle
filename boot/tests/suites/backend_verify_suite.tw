@@ -157,382 +157,417 @@ fn slots_with_wasm_type(pf: PreparedFunc, target_sid: Int, wasm_type: ValType) D
 }
 
 pub fn suite() runner.Suite {
-  runner.suite("backend verify (Phase 5)").test(
-    "valid prepared module passes verification",
-    fn() {
-      body: AnfExpr = .Let(lid(10), .AInit(.ALocal(lid(0))), .Atom(.ALocal(lid(10))))
-      prepared := prepared_module(
-        [mk_param(0, .Int)],
-        body,
-        mk_mono_map([10], [MonoType.Int]),
-        .Int,
-      )
-      assert.is_ok(verify_prepared_module(prepared, empty_env(), empty_builtins()))
-    },
-  ).test(
-    "missing slot referenced from body is rejected",
-    fn() {
-      body: AnfExpr = .Let(lid(10), .AInit(.ALocal(lid(0))), .Atom(.ALocal(lid(10))))
-      prepared := prepared_module(
-        [mk_param(0, .Int)],
-        body,
-        mk_mono_map([10], [MonoType.Int]),
-        .Int,
-      )
-      pf := first_func(prepared)
-      broken := rewrite_func(pf, slots_without(pf, 1))
-      verify_err(replace_func(prepared, broken), "references missing slot S1")
-    },
-  ).test(
-    "void function returning value is rejected",
-    fn() {
-      body: AnfExpr = .Return(.Some(.ALitInt(1)))
-      prepared := prepared_module([], body, Dict.new(), .Void)
-      verify_err(prepared, "void function must not return a value")
-    },
-  ).test(
-    "basic verification skips expression-only invariants",
-    fn() {
-      body: AnfExpr = .Return(.Some(.ALitInt(1)))
-      prepared := prepared_module([], body, Dict.new(), .Void)
-      assert.is_ok(
-        verify_prepared_module_with_level(prepared, empty_env(), empty_builtins(), .Basic),
-      )
-    },
-  ).test(
-    "non-void function missing return value is rejected",
-    fn() {
-      body: AnfExpr = .Return(.None)
-      prepared := prepared_module([], body, Dict.new(), .Int)
-      verify_err(prepared, "non-void function must return a value")
-    },
-  ).test(
-    "break with value is rejected",
-    fn() {
-      body: AnfExpr = .Let(lid(10), .ALoop(.Break(.Some(.ALitInt(1)))), .Atom(.ALocal(lid(10))))
-      prepared := prepared_module([], body, mk_mono_map([10], [MonoType.Void]), .Void)
-      verify_err(prepared, "break with value is not supported in prepared backend IR")
-    },
-  ).test(
-    "dead placeholder used in live context is rejected",
-    fn() {
-      body: AnfExpr = .Let(
-        lid(10),
-        .AInit(.ALitVoid),
-        .Let(lid(11), .ACall(.AGlobalFunc(fid(99)), [.ALocal(lid(10))]), .Atom(.ALocal(lid(11)))),
-      )
-      prepared := prepared_module(
-        [],
-        body,
-        mk_mono_map([10, 11], [MonoType.Never, MonoType.Void]),
-        .Void,
-      )
-      verify_err(prepared, "uses dead placeholder slot")
-    },
-  ).test(
-    "dead placeholder init into dead placeholder is allowed",
-    fn() {
-      body: AnfExpr = .Let(
-        lid(10),
-        .AIf(.ALitBool(true), .Return(.Some(.ALitInt(1))), .Return(.Some(.ALitInt(2)))),
-        .Let(lid(11), .AInit(.ALocal(lid(10))), .Atom(.ALitInt(0))),
-      )
-      prepared := prepared_module(
-        [],
-        body,
-        mk_mono_map([10, 11], [MonoType.Never, MonoType.Never]),
-        .Int,
-      )
-      assert.is_ok(verify_prepared_module(prepared, empty_env(), empty_builtins()))
-    },
-  ).test(
-    "if condition with non-bool repr is rejected",
-    fn() {
-      body: AnfExpr = .Let(
-        lid(10),
-        .AInit(.ALitVoid),
-        .Let(
-          lid(11),
-          .AIf(.ALocal(lid(10)), .Atom(.ALitInt(1)), .Atom(.ALitInt(2))),
-          .Atom(.ALocal(lid(11))),
-        ),
-      )
-      prepared := prepared_module(
-        [],
-        body,
-        mk_mono_map([10, 11], [MonoType.Anyref_, MonoType.Int]),
-        .Int,
-      )
-      verify_err(prepared, "if condition has incompatible repr OpaqueAnyref")
-    },
-  ).test(
-    "init value mono mismatch is rejected",
-    fn() {
-      body: AnfExpr = .Let(lid(10), .AInit(.ALitBool(true)), .Atom(.ALocal(lid(10))))
-      prepared := prepared_module([], body, mk_mono_map([10], [MonoType.Int]), .Int)
-      verify_err(prepared, "init value has mono Bool, expected Int")
-    },
-  ).test(
-    "binary operand repr mismatch is rejected",
-    fn() {
-      body: AnfExpr = .Let(
-        lid(10),
-        .ABinOp(.Add, .ALitBool(true), .ALitInt(1), .Int),
-        .Atom(.ALocal(lid(10))),
-      )
-      prepared := prepared_module([], body, mk_mono_map([10], [MonoType.Int]), .Int)
-      verify_err(prepared, "binary lhs must match Int op kind")
-    },
-  ).test(
-    "typed layout op on opaque anyref is rejected",
-    fn() {
-      // let r: Anyref_ = init(void); let x: Int = record_get(r, ...)
-      body: AnfExpr = .Let(
-        lid(10),
-        .AInit(.ALitVoid),
-        .Let(
-          lid(11),
-          .ARecordGet(.ALocal(lid(10)), FieldId.{ id: 0 }, TypeId.{ id: 0 }),
-          .Atom(.ALocal(lid(11))),
-        ),
-      )
-      prepared := prepared_module(
-        [],
-        body,
-        mk_mono_map([10, 11], [MonoType.Anyref_, MonoType.Int]),
-        .Int,
-      )
-      verify_err(prepared, "record get target has incompatible repr OpaqueAnyref")
-    },
-  ).test(
-    "capture metadata mismatch is rejected",
-    fn() {
-      outer_body: AnfExpr = .Let(lid(10), .AMakeClosure(fid(99), [lid(0)]), .Atom(.ALocal(lid(10))))
-      outer := mk_func_def(
-        1,
-        "outer",
-        [mk_param(0, .Int)],
-        .Function([.Int], .Int),
-        outer_body,
-        mk_mono_map([10], [MonoType.Function([.Int], .Int)]),
-      )
-      inner := mk_func_def(99, "inner", [], .Int, .Atom(.ALocal(lid(0))), Dict.new())
-      anf := mk_module([outer, inner])
-      prepared := prepare_backend(anf, empty_env(), empty_builtins(), no_captures())
-      bad_caps: Dict<Int, Vector<CaptureParam>> = Dict.new()
-      bad_caps[99] = [CaptureParam.{ local_id: lid(1), param_local: lid(100), ty: .Int }]
-      broken := PreparedModule.{
-        anf: prepared.anf,
-        closure_captures: bad_caps,
-        funcs: prepared.funcs,
-      }
-      verify_err(broken, "capture 0 uses L0, expected L1")
-    },
-  ).test(
-    "closure call arg type mismatch is rejected",
-    fn() {
-      body: AnfExpr = .Let(
-        lid(10),
-        .ACall(.ALocal(lid(0)), [.ALitBool(true)]),
-        .Atom(.ALocal(lid(10))),
-      )
-      prepared := prepared_module(
-        [mk_param(0, .Function([.Int], .Int))],
-        body,
-        mk_mono_map([10], [MonoType.Int]),
-        .Int,
-      )
-      verify_err(prepared, "closure call arg 0 has mono Bool, expected Int")
-    },
-  ).test(
-    "closure call arity mismatch is rejected",
-    fn() {
-      body: AnfExpr = .Let(lid(10), .ACall(.ALocal(lid(0)), []), .Atom(.ALocal(lid(10))))
-      prepared := prepared_module(
-        [mk_param(0, .Function([.Int], .Int))],
-        body,
-        mk_mono_map([10], [MonoType.Int]),
-        .Int,
-      )
-      verify_err(prepared, "closure call passes 0 arg(s), expected 1")
-    },
-  ).test(
-    "direct call arg type mismatch is rejected",
-    fn() {
-      caller := mk_func_def(
-        1,
-        "caller",
-        [],
-        .Int,
-        .Let(lid(10), .ACall(.AGlobalFunc(fid(2)), [.ALitBool(true)]), .Atom(.ALocal(lid(10)))),
-        mk_mono_map([10], [MonoType.Int]),
-      )
-      callee := mk_func_def(
-        2,
-        "callee",
-        [mk_param(0, .Int)],
-        .Int,
-        .Atom(.ALocal(lid(0))),
-        Dict.new(),
-      )
-      prepared := prepare_backend(
-        mk_module([caller, callee]),
-        empty_env(),
-        empty_builtins(),
-        no_captures(),
-      )
-      verify_err(prepared, "direct call arg 0 to callee has mono Anyref_, expected Int")
-    },
-  ).test(
-    "direct call arity mismatch is rejected",
-    fn() {
-      caller := mk_func_def(
-        1,
-        "caller",
-        [],
-        .Int,
-        .Let(lid(10), .ACall(.AGlobalFunc(fid(2)), []), .Atom(.ALocal(lid(10)))),
-        mk_mono_map([10], [MonoType.Int]),
-      )
-      callee := mk_func_def(
-        2,
-        "callee",
-        [mk_param(0, .Int)],
-        .Int,
-        .Atom(.ALocal(lid(0))),
-        Dict.new(),
-      )
-      prepared := prepare_backend(
-        mk_module([caller, callee]),
-        empty_env(),
-        empty_builtins(),
-        no_captures(),
-      )
-      verify_err(prepared, "direct call to callee (F2) passes 0 arg(s), expected 1")
-    },
-  ).test(
-    "slot metadata mismatch is rejected",
-    fn() {
-      body: AnfExpr = .Atom(.ALocal(lid(0)))
-      prepared := prepared_module([mk_param(0, .Int)], body, Dict.new(), .Int)
-      pf := first_func(prepared)
-      broken := rewrite_func(pf, slots_with_wasm_type(pf, 0, .Anyref))
-      verify_err(
-        replace_func(prepared, broken),
-        "wasm_type Anyref does not match repr I64 / mono Int",
-      )
-    },
-  ).test(
-    "supported builtin AMakeClosure is accepted",
-    fn() {
-      env := base_env.builtin_env()
-      builtins := empty_builtins()
-      int_to_string := builtins.id("int_to_string")
-      body: AnfExpr = .Let(lid(10), .AMakeClosure(int_to_string, []), .Atom(.ALocal(lid(10))))
-      func := mk_func_def(
-        1,
-        "f",
-        [],
-        .Function([.Int], .String),
-        body,
-        mk_mono_map([10], [MonoType.Function([.Int], .String)]),
-      )
-      prepared := prepare_backend(mk_module([func]), env, builtins, no_captures())
-      verify_ok_with_env(prepared, env, builtins)
-    },
-  ).test(
-    "wrapper-backed builtin AMakeClosure is accepted",
-    fn() {
-      env := base_env.builtin_env()
-      builtins := empty_builtins()
-      byte_to_string := builtins.id("byte_to_string")
-      body: AnfExpr = .Let(lid(10), .AMakeClosure(byte_to_string, []), .Atom(.ALocal(lid(10))))
-      func := mk_func_def(
-        1,
-        "f",
-        [],
-        .Function([.Byte], .String),
-        body,
-        mk_mono_map([10], [MonoType.Function([.Byte], .String)]),
-      )
-      prepared := prepare_backend(mk_module([func]), env, builtins, no_captures())
-      verify_ok_with_env(prepared, env, builtins)
-    },
-  ).test(
-    "wrapper-backed cell_update AMakeClosure is accepted",
-    fn() {
-      env := base_env.builtin_env()
-      builtins := empty_builtins()
-      cell_update := builtins.id("cell_update")
-      cell_int := MonoType.Named(TypeId.{ id: 16 }, [MonoType.Int])
-      updater_ty := MonoType.Function([.Int], .Int)
-      body: AnfExpr = .Let(lid(10), .AMakeClosure(cell_update, []), .Atom(.ALocal(lid(10))))
-      func := mk_func_def(
-        1,
-        "f",
-        [],
-        .Function([cell_int, updater_ty], .Void),
-        body,
-        mk_mono_map([10], [MonoType.Function([cell_int, updater_ty], .Void)]),
-      )
-      prepared := prepare_backend(mk_module([func]), env, builtins, no_captures())
-      verify_ok_with_env(prepared, env, builtins)
-    },
-  ).test(
-    "wrapper-backed iterator_unfold AMakeClosure is accepted",
-    fn() {
-      env := base_env.builtin_env()
-      builtins := empty_builtins()
-      iterator_unfold := builtins.id("iterator_unfold")
-      step_ty := MonoType.Function([.Int], .Named(TypeId.{ id: 18 }, [MonoType.Int, MonoType.Int]))
-      iter_ty := MonoType.Named(TypeId.{ id: 17 }, [MonoType.Int])
-      body: AnfExpr = .Let(lid(10), .AMakeClosure(iterator_unfold, []), .Atom(.ALocal(lid(10))))
-      func := mk_func_def(
-        1,
-        "f",
-        [],
-        .Function([.Int, step_ty], iter_ty),
-        body,
-        mk_mono_map([10], [MonoType.Function([.Int, step_ty], iter_ty)]),
-      )
-      prepared := prepare_backend(mk_module([func]), env, builtins, no_captures())
-      verify_ok_with_env(prepared, env, builtins)
-    },
-  ).test(
-    "builtin AMakeClosure with captures is rejected explicitly",
-    fn() {
-      env := base_env.builtin_env()
-      builtins := empty_builtins()
-      int_to_string := builtins.id("int_to_string")
-      body: AnfExpr = .Let(lid(10), .AMakeClosure(int_to_string, [lid(0)]), .Atom(.ALocal(lid(10))))
-      func := mk_func_def(
-        1,
-        "f",
-        [mk_param(0, .Int)],
-        .Function([.Int], .String),
-        body,
-        mk_mono_map([10], [MonoType.Function([.Int], .String)]),
-      )
-      prepared := prepare_backend(mk_module([func]), env, builtins, no_captures())
-      verify_err_with_env(prepared, env, builtins, "must not capture locals")
-    },
-  ).test(
-    "host_write_bytes builtin AMakeClosure is accepted",
-    fn() {
-      env := base_env.add_internal_host_builtins(base_env.builtin_env())
-      builtins := empty_builtins()
-      host_write_bytes := builtins.id("host_write_bytes")
-      body: AnfExpr = .Let(lid(10), .AMakeClosure(host_write_bytes, []), .Atom(.ALocal(lid(10))))
-      func := mk_func_def(
-        1,
-        "f",
-        [],
-        .Function([.String, .Vector(.Byte)], .Void),
-        body,
-        mk_mono_map([10], [MonoType.Function([.String, .Vector(.Byte)], .Void)]),
-      )
-      prepared := prepare_backend(mk_module([func]), env, builtins, no_captures())
-      verify_ok_with_env(prepared, env, builtins)
-    },
-  )
+  runner.suite("backend verify (Phase 5)")
+    .test(
+      "valid prepared module passes verification",
+      fn() {
+        body: AnfExpr = .Let(lid(10), .AInit(.ALocal(lid(0))), .Atom(.ALocal(lid(10))))
+        prepared := prepared_module(
+          [mk_param(0, .Int)],
+          body,
+          mk_mono_map([10], [MonoType.Int]),
+          .Int,
+        )
+        assert.is_ok(verify_prepared_module(prepared, empty_env(), empty_builtins()))
+      },
+    )
+    .test(
+      "missing slot referenced from body is rejected",
+      fn() {
+        body: AnfExpr = .Let(lid(10), .AInit(.ALocal(lid(0))), .Atom(.ALocal(lid(10))))
+        prepared := prepared_module(
+          [mk_param(0, .Int)],
+          body,
+          mk_mono_map([10], [MonoType.Int]),
+          .Int,
+        )
+        pf := first_func(prepared)
+        broken := rewrite_func(pf, slots_without(pf, 1))
+        verify_err(replace_func(prepared, broken), "references missing slot S1")
+      },
+    )
+    .test(
+      "void function returning value is rejected",
+      fn() {
+        body: AnfExpr = .Return(.Some(.ALitInt(1)))
+        prepared := prepared_module([], body, Dict.new(), .Void)
+        verify_err(prepared, "void function must not return a value")
+      },
+    )
+    .test(
+      "basic verification skips expression-only invariants",
+      fn() {
+        body: AnfExpr = .Return(.Some(.ALitInt(1)))
+        prepared := prepared_module([], body, Dict.new(), .Void)
+        assert.is_ok(
+          verify_prepared_module_with_level(prepared, empty_env(), empty_builtins(), .Basic),
+        )
+      },
+    )
+    .test(
+      "non-void function missing return value is rejected",
+      fn() {
+        body: AnfExpr = .Return(.None)
+        prepared := prepared_module([], body, Dict.new(), .Int)
+        verify_err(prepared, "non-void function must return a value")
+      },
+    )
+    .test(
+      "break with value is rejected",
+      fn() {
+        body: AnfExpr = .Let(lid(10), .ALoop(.Break(.Some(.ALitInt(1)))), .Atom(.ALocal(lid(10))))
+        prepared := prepared_module([], body, mk_mono_map([10], [MonoType.Void]), .Void)
+        verify_err(prepared, "break with value is not supported in prepared backend IR")
+      },
+    )
+    .test(
+      "dead placeholder used in live context is rejected",
+      fn() {
+        body: AnfExpr = .Let(
+          lid(10),
+          .AInit(.ALitVoid),
+          .Let(lid(11), .ACall(.AGlobalFunc(fid(99)), [.ALocal(lid(10))]), .Atom(.ALocal(lid(11)))),
+        )
+        prepared := prepared_module(
+          [],
+          body,
+          mk_mono_map([10, 11], [MonoType.Never, MonoType.Void]),
+          .Void,
+        )
+        verify_err(prepared, "uses dead placeholder slot")
+      },
+    )
+    .test(
+      "dead placeholder init into dead placeholder is allowed",
+      fn() {
+        body: AnfExpr = .Let(
+          lid(10),
+          .AIf(.ALitBool(true), .Return(.Some(.ALitInt(1))), .Return(.Some(.ALitInt(2)))),
+          .Let(lid(11), .AInit(.ALocal(lid(10))), .Atom(.ALitInt(0))),
+        )
+        prepared := prepared_module(
+          [],
+          body,
+          mk_mono_map([10, 11], [MonoType.Never, MonoType.Never]),
+          .Int,
+        )
+        assert.is_ok(verify_prepared_module(prepared, empty_env(), empty_builtins()))
+      },
+    )
+    .test(
+      "if condition with non-bool repr is rejected",
+      fn() {
+        body: AnfExpr = .Let(
+          lid(10),
+          .AInit(.ALitVoid),
+          .Let(
+            lid(11),
+            .AIf(.ALocal(lid(10)), .Atom(.ALitInt(1)), .Atom(.ALitInt(2))),
+            .Atom(.ALocal(lid(11))),
+          ),
+        )
+        prepared := prepared_module(
+          [],
+          body,
+          mk_mono_map([10, 11], [MonoType.Anyref_, MonoType.Int]),
+          .Int,
+        )
+        verify_err(prepared, "if condition has incompatible repr OpaqueAnyref")
+      },
+    )
+    .test(
+      "init value mono mismatch is rejected",
+      fn() {
+        body: AnfExpr = .Let(lid(10), .AInit(.ALitBool(true)), .Atom(.ALocal(lid(10))))
+        prepared := prepared_module([], body, mk_mono_map([10], [MonoType.Int]), .Int)
+        verify_err(prepared, "init value has mono Bool, expected Int")
+      },
+    )
+    .test(
+      "binary operand repr mismatch is rejected",
+      fn() {
+        body: AnfExpr = .Let(
+          lid(10),
+          .ABinOp(.Add, .ALitBool(true), .ALitInt(1), .Int),
+          .Atom(.ALocal(lid(10))),
+        )
+        prepared := prepared_module([], body, mk_mono_map([10], [MonoType.Int]), .Int)
+        verify_err(prepared, "binary lhs must match Int op kind")
+      },
+    )
+    .test(
+      "typed layout op on opaque anyref is rejected",
+      fn() {
+        // let r: Anyref_ = init(void); let x: Int = record_get(r, ...)
+        body: AnfExpr = .Let(
+          lid(10),
+          .AInit(.ALitVoid),
+          .Let(
+            lid(11),
+            .ARecordGet(.ALocal(lid(10)), FieldId.{ id: 0 }, TypeId.{ id: 0 }),
+            .Atom(.ALocal(lid(11))),
+          ),
+        )
+        prepared := prepared_module(
+          [],
+          body,
+          mk_mono_map([10, 11], [MonoType.Anyref_, MonoType.Int]),
+          .Int,
+        )
+        verify_err(prepared, "record get target has incompatible repr OpaqueAnyref")
+      },
+    )
+    .test(
+      "capture metadata mismatch is rejected",
+      fn() {
+        outer_body: AnfExpr = .Let(
+          lid(10),
+          .AMakeClosure(fid(99), [lid(0)]),
+          .Atom(.ALocal(lid(10))),
+        )
+        outer := mk_func_def(
+          1,
+          "outer",
+          [mk_param(0, .Int)],
+          .Function([.Int], .Int),
+          outer_body,
+          mk_mono_map([10], [MonoType.Function([.Int], .Int)]),
+        )
+        inner := mk_func_def(99, "inner", [], .Int, .Atom(.ALocal(lid(0))), Dict.new())
+        anf := mk_module([outer, inner])
+        prepared := prepare_backend(anf, empty_env(), empty_builtins(), no_captures())
+        bad_caps: Dict<Int, Vector<CaptureParam>> = Dict.new()
+        bad_caps[99] = [CaptureParam.{ local_id: lid(1), param_local: lid(100), ty: .Int }]
+        broken := PreparedModule.{
+          anf: prepared.anf,
+          closure_captures: bad_caps,
+          funcs: prepared.funcs,
+        }
+        verify_err(broken, "capture 0 uses L0, expected L1")
+      },
+    )
+    .test(
+      "closure call arg type mismatch is rejected",
+      fn() {
+        body: AnfExpr = .Let(
+          lid(10),
+          .ACall(.ALocal(lid(0)), [.ALitBool(true)]),
+          .Atom(.ALocal(lid(10))),
+        )
+        prepared := prepared_module(
+          [mk_param(0, .Function([.Int], .Int))],
+          body,
+          mk_mono_map([10], [MonoType.Int]),
+          .Int,
+        )
+        verify_err(prepared, "closure call arg 0 has mono Bool, expected Int")
+      },
+    )
+    .test(
+      "closure call arity mismatch is rejected",
+      fn() {
+        body: AnfExpr = .Let(lid(10), .ACall(.ALocal(lid(0)), []), .Atom(.ALocal(lid(10))))
+        prepared := prepared_module(
+          [mk_param(0, .Function([.Int], .Int))],
+          body,
+          mk_mono_map([10], [MonoType.Int]),
+          .Int,
+        )
+        verify_err(prepared, "closure call passes 0 arg(s), expected 1")
+      },
+    )
+    .test(
+      "direct call arg type mismatch is rejected",
+      fn() {
+        caller := mk_func_def(
+          1,
+          "caller",
+          [],
+          .Int,
+          .Let(lid(10), .ACall(.AGlobalFunc(fid(2)), [.ALitBool(true)]), .Atom(.ALocal(lid(10)))),
+          mk_mono_map([10], [MonoType.Int]),
+        )
+        callee := mk_func_def(
+          2,
+          "callee",
+          [mk_param(0, .Int)],
+          .Int,
+          .Atom(.ALocal(lid(0))),
+          Dict.new(),
+        )
+        prepared := prepare_backend(
+          mk_module([caller, callee]),
+          empty_env(),
+          empty_builtins(),
+          no_captures(),
+        )
+        verify_err(prepared, "direct call arg 0 to callee has mono Anyref_, expected Int")
+      },
+    )
+    .test(
+      "direct call arity mismatch is rejected",
+      fn() {
+        caller := mk_func_def(
+          1,
+          "caller",
+          [],
+          .Int,
+          .Let(lid(10), .ACall(.AGlobalFunc(fid(2)), []), .Atom(.ALocal(lid(10)))),
+          mk_mono_map([10], [MonoType.Int]),
+        )
+        callee := mk_func_def(
+          2,
+          "callee",
+          [mk_param(0, .Int)],
+          .Int,
+          .Atom(.ALocal(lid(0))),
+          Dict.new(),
+        )
+        prepared := prepare_backend(
+          mk_module([caller, callee]),
+          empty_env(),
+          empty_builtins(),
+          no_captures(),
+        )
+        verify_err(prepared, "direct call to callee (F2) passes 0 arg(s), expected 1")
+      },
+    )
+    .test(
+      "slot metadata mismatch is rejected",
+      fn() {
+        body: AnfExpr = .Atom(.ALocal(lid(0)))
+        prepared := prepared_module([mk_param(0, .Int)], body, Dict.new(), .Int)
+        pf := first_func(prepared)
+        broken := rewrite_func(pf, slots_with_wasm_type(pf, 0, .Anyref))
+        verify_err(
+          replace_func(prepared, broken),
+          "wasm_type Anyref does not match repr I64 / mono Int",
+        )
+      },
+    )
+    .test(
+      "supported builtin AMakeClosure is accepted",
+      fn() {
+        env := base_env.builtin_env()
+        builtins := empty_builtins()
+        int_to_string := builtins.id("int_to_string")
+        body: AnfExpr = .Let(lid(10), .AMakeClosure(int_to_string, []), .Atom(.ALocal(lid(10))))
+        func := mk_func_def(
+          1,
+          "f",
+          [],
+          .Function([.Int], .String),
+          body,
+          mk_mono_map([10], [MonoType.Function([.Int], .String)]),
+        )
+        prepared := prepare_backend(mk_module([func]), env, builtins, no_captures())
+        verify_ok_with_env(prepared, env, builtins)
+      },
+    )
+    .test(
+      "wrapper-backed builtin AMakeClosure is accepted",
+      fn() {
+        env := base_env.builtin_env()
+        builtins := empty_builtins()
+        byte_to_string := builtins.id("byte_to_string")
+        body: AnfExpr = .Let(lid(10), .AMakeClosure(byte_to_string, []), .Atom(.ALocal(lid(10))))
+        func := mk_func_def(
+          1,
+          "f",
+          [],
+          .Function([.Byte], .String),
+          body,
+          mk_mono_map([10], [MonoType.Function([.Byte], .String)]),
+        )
+        prepared := prepare_backend(mk_module([func]), env, builtins, no_captures())
+        verify_ok_with_env(prepared, env, builtins)
+      },
+    )
+    .test(
+      "wrapper-backed cell_update AMakeClosure is accepted",
+      fn() {
+        env := base_env.builtin_env()
+        builtins := empty_builtins()
+        cell_update := builtins.id("cell_update")
+        cell_int := MonoType.Named(TypeId.{ id: 16 }, [MonoType.Int])
+        updater_ty := MonoType.Function([.Int], .Int)
+        body: AnfExpr = .Let(lid(10), .AMakeClosure(cell_update, []), .Atom(.ALocal(lid(10))))
+        func := mk_func_def(
+          1,
+          "f",
+          [],
+          .Function([cell_int, updater_ty], .Void),
+          body,
+          mk_mono_map([10], [MonoType.Function([cell_int, updater_ty], .Void)]),
+        )
+        prepared := prepare_backend(mk_module([func]), env, builtins, no_captures())
+        verify_ok_with_env(prepared, env, builtins)
+      },
+    )
+    .test(
+      "wrapper-backed iterator_unfold AMakeClosure is accepted",
+      fn() {
+        env := base_env.builtin_env()
+        builtins := empty_builtins()
+        iterator_unfold := builtins.id("iterator_unfold")
+        step_ty := MonoType.Function(
+          [.Int],
+          .Named(TypeId.{ id: 18 }, [MonoType.Int, MonoType.Int]),
+        )
+        iter_ty := MonoType.Named(TypeId.{ id: 17 }, [MonoType.Int])
+        body: AnfExpr = .Let(lid(10), .AMakeClosure(iterator_unfold, []), .Atom(.ALocal(lid(10))))
+        func := mk_func_def(
+          1,
+          "f",
+          [],
+          .Function([.Int, step_ty], iter_ty),
+          body,
+          mk_mono_map([10], [MonoType.Function([.Int, step_ty], iter_ty)]),
+        )
+        prepared := prepare_backend(mk_module([func]), env, builtins, no_captures())
+        verify_ok_with_env(prepared, env, builtins)
+      },
+    )
+    .test(
+      "builtin AMakeClosure with captures is rejected explicitly",
+      fn() {
+        env := base_env.builtin_env()
+        builtins := empty_builtins()
+        int_to_string := builtins.id("int_to_string")
+        body: AnfExpr = .Let(
+          lid(10),
+          .AMakeClosure(int_to_string, [lid(0)]),
+          .Atom(.ALocal(lid(10))),
+        )
+        func := mk_func_def(
+          1,
+          "f",
+          [mk_param(0, .Int)],
+          .Function([.Int], .String),
+          body,
+          mk_mono_map([10], [MonoType.Function([.Int], .String)]),
+        )
+        prepared := prepare_backend(mk_module([func]), env, builtins, no_captures())
+        verify_err_with_env(prepared, env, builtins, "must not capture locals")
+      },
+    )
+    .test(
+      "host_write_bytes builtin AMakeClosure is accepted",
+      fn() {
+        env := base_env.add_internal_host_builtins(base_env.builtin_env())
+        builtins := empty_builtins()
+        host_write_bytes := builtins.id("host_write_bytes")
+        body: AnfExpr = .Let(lid(10), .AMakeClosure(host_write_bytes, []), .Atom(.ALocal(lid(10))))
+        func := mk_func_def(
+          1,
+          "f",
+          [],
+          .Function([.String, .Vector(.Byte)], .Void),
+          body,
+          mk_mono_map([10], [MonoType.Function([.String, .Vector(.Byte)], .Void)]),
+        )
+        prepared := prepare_backend(mk_module([func]), env, builtins, no_captures())
+        verify_ok_with_env(prepared, env, builtins)
+      },
+    )
 }

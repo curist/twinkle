@@ -110,9 +110,11 @@ fn format_arg_help(a: arg.Arg) String {
       val := style.dim("<value>")
 
       case a.short_name {
-        .Some(s) => "  ".concat(style.bold("-".concat(s))).concat(", ").concat(long).concat(" ").concat(
-          val,
-        ),
+        .Some(s) => "  ".concat(style.bold("-".concat(s)))
+          .concat(", ")
+          .concat(long)
+          .concat(" ")
+          .concat(val),
         .None => "      ".concat(long).concat(" ").concat(val),
       }
     },

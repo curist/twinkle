@@ -87,8 +87,9 @@ fn test_param_local_id_can_overlap_module_global_id() Result<Void, String> {
 }
 
 pub fn suite() runner.Suite {
-  runner.suite("codegen emit").test(
-    "function slots are not reinterpreted as module globals",
-    test_param_local_id_can_overlap_module_global_id,
-  )
+  runner.suite("codegen emit")
+    .test(
+      "function slots are not reinterpreted as module globals",
+      test_param_local_id_can_overlap_module_global_id,
+    )
 }

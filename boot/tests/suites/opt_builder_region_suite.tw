@@ -109,8 +109,10 @@ fn test_lower_builder_region_uses_builder_from_base() Result<Void, String> {
 }
 
 pub fn suite() runner.Suite {
-  runner.suite("Opt: Builder Region").test(
-    "lower builder region uses builder_new",
-    test_lower_builder_region_uses_builder_new,
-  ).test("lower builder region uses builder_from", test_lower_builder_region_uses_builder_from_base)
+  runner.suite("Opt: Builder Region")
+    .test("lower builder region uses builder_new", test_lower_builder_region_uses_builder_new)
+    .test(
+      "lower builder region uses builder_from",
+      test_lower_builder_region_uses_builder_from_base,
+    )
 }

@@ -280,2132 +280,2388 @@ fn type_at_nth(result: checker.CheckResult, src: String, needle: String, n: Int)
 
 // ── Suite ────────────────────────────────────────────────────────────
 pub fn suite() runner.Suite {
-  runner.suite("checker").test(
-    "int literal",
-    fn() {
-      src := "fn answer() Int { 42 }"
-      r := try check_ok(src)
-      try assert.equal(try type_at(r, src, "42"), "Int")
-      .Ok({})
-    },
-  ).test(
-    "string literal",
-    fn() {
-      src := "fn greeting() String { \"hello\" }"
-      r := try check_ok(src)
-      try assert.equal(try type_at(r, src, "\"hello\""), "String")
-      .Ok({})
-    },
-  ).test(
-    "bool literal",
-    fn() {
-      src := "fn flag() Bool { true }"
-      r := try check_ok(src)
-      try assert.equal(try type_at(r, src, "true"), "Bool")
-      .Ok({})
-    },
-  ).test(
-    "float literal",
-    fn() {
-      src := "fn ratio() Float { 3.14 }"
-      r := try check_ok(src)
-      try assert.equal(try type_at(r, src, "3.14"), "Float")
-      .Ok({})
-    },
-  ).test(
-    "return type mismatch",
-    fn() {
-      src := "fn answer() String { 42 }"
-      msgs := try check_errs(src)
-      try assert.str_contains(msgs[0], "type mismatch")
-      .Ok({})
-    },
-  ).test(
-    "annotated let",
-    fn() {
-      src := "fn f() Int { x: Int = 5\n x }"
-      r := try check_ok(src)
-      try assert.equal(try type_at(r, src, "5"), "Int")
-      .Ok({})
-    },
-  ).test(
-    "inferred let",
-    fn() {
-      src := "fn f() Int { x := 42\n x }"
-      r := try check_ok(src)
-      try assert.equal(try type_at(r, src, "42"), "Int")
-      .Ok({})
-    },
-  ).test(
-    "annotated let type mismatch",
-    fn() {
-      src := "fn f() Int { x: Bool = 5\n x }"
-      msgs := try check_errs(src)
-      try assert.str_contains(msgs[0], "type mismatch")
-      .Ok({})
-    },
-  ).test(
-    "ident resolves param",
-    fn() {
-      src := "fn f(x: Int) Int { x }"
-      r := try check_ok(src)
-      try assert.equal(try type_at(r, src, "x }"), "Int")
-      .Ok({})
-    },
-  ).test(
-    "function call",
-    fn() {
-      src := "fn add(a: Int, b: Int) Int { a }\nfn main() Int { add(1, 2) }"
-      r := try check_ok(src)
-      try assert.equal(try type_at(r, src, "add(1"), "Int")
-      .Ok({})
-    },
-  ).test(
-    "wrong arg count",
-    fn() {
-      src := "fn add(a: Int, b: Int) Int { a }\nfn main() Int { add(1) }"
-      msgs := try check_errs(src)
-      try assert.str_contains(msgs[0], "expected 2 arguments")
-      .Ok({})
-    },
-  ).test(
-    "arithmetic int",
-    fn() {
-      src := "fn f() Int { 1 + 2 }"
-      r := try check_ok(src)
-      try assert.equal(try type_at(r, src, "1 + 2"), "Int")
-      .Ok({})
-    },
-  ).test(
-    "comparison",
-    fn() {
-      src := "fn f() Bool { 1 < 2 }"
-      r := try check_ok(src)
-      try assert.equal(try type_at(r, src, "1 < 2"), "Bool")
-      .Ok({})
-    },
-  ).test(
-    "logical and",
-    fn() {
-      src := "fn f() Bool { true and false }"
-      r := try check_ok(src)
-      try assert.equal(try type_at(r, src, "true and false"), "Bool")
-      .Ok({})
-    },
-  ).test(
-    "negate int",
-    fn() {
-      src := "fn f() Int { -5 }"
-      r := try check_ok(src)
-      try assert.equal(try type_at(r, src, "-5"), "Int")
-      .Ok({})
-    },
-  ).test(
-    "not bool",
-    fn() {
-      src := "fn f() Bool { !true }"
-      r := try check_ok(src)
-      try assert.equal(try type_at(r, src, "!true"), "Bool")
-      .Ok({})
-    },
-  ).test(
-    "bool plus int error",
-    fn() {
-      src := "fn f() Int { true + 1 }"
-      msgs := try check_errs(src)
-      try assert.str_contains(msgs[0], "operator not supported")
-      .Ok({})
-    },
-  ).test(
-    "string plus suggests concat or interpolation",
-    fn() {
-      src := "fn f() String { \"hello\" + \"world\" }"
-      msgs := try check_errs(src)
-      try assert.str_contains(msgs[0], "cannot concatenate strings with `+`")
-      .Ok({})
-    },
-  ).test(
-    "equality",
-    fn() {
-      src := "fn f() Bool { 1 == 2 }"
-      r := try check_ok(src)
-      try assert.equal(try type_at(r, src, "1 == 2"), "Bool")
-      .Ok({})
-    },
-  ).test(
-    "record field access",
-    fn() {
-      src := "type Point = .{ x: Int, y: Int }\nfn get_x(p: Point) Int { p.x }"
-      r := try check_ok(src)
-      try assert.equal(try type_at(r, src, "p.x"), "Int")
-      .Ok({})
-    },
-  ).test(
-    "record bad field",
-    fn() {
-      src := "type Point = .{ x: Int, y: Int }\nfn get_z(p: Point) Int { p.z }"
-      msgs := try check_errs(src)
-      try assert.str_contains(msgs[0], "no field `z`")
-      .Ok({})
-    },
-  ).test(
-    "anonymous record lit check mode",
-    fn() {
-      src := "type Point = .{ x: Int, y: Int }\nfn make() Point { .{ x: 1, y: 2 } }"
-      r := try check_ok(src)
-      .Ok({})
-    },
-  ).test(
-    "record missing field",
-    fn() {
-      src := "type Point = .{ x: Int, y: Int }\nfn make() Point { .{ x: 1 } }"
-      msgs := try check_errs(src)
-      try assert.str_contains(msgs[0], "missing field 'y'")
-      .Ok({})
-    },
-  ).test(
-    "option some check",
-    fn() {
-      src := "fn wrap(x: Int) Int? { .Some(x) }"
-      r := try check_ok(src)
-      .Ok({})
-    },
-  ).test(
-    "option none check",
-    fn() {
-      src := "fn nothing() Int? { .None }"
-      r := try check_ok(src)
-      .Ok({})
-    },
-  ).test(
-    "result ok check",
-    fn() {
-      src := "fn ok_val(x: Int) Result<Int, String> { .Ok(x) }"
-      r := try check_ok(src)
-      .Ok({})
-    },
-  ).test(
-    "result err check",
-    fn() {
-      src := "fn err_val() Result<Int, String> { .Err(\"bad\") }"
-      r := try check_ok(src)
-      .Ok({})
-    },
-  ).test(
-    "array literal",
-    fn() {
-      src := "fn nums() Vector<Int> { [1, 2, 3] }"
-      r := try check_ok(src)
-      .Ok({})
-    },
-  ).test(
-    "array element mismatch",
-    fn() {
-      src := "fn bad() Vector<Int> { [1, \"two\", 3] }"
-      msgs := try check_errs(src)
-      try assert.str_contains(msgs[0], "type mismatch")
-      .Ok({})
-    },
-  ).test(
-    "generic identity",
-    fn() {
-      src := "fn identity<A>(x: A) A { x }\nfn main() Int { identity(42) }"
-      r := try check_ok(src)
-      try assert.equal(try type_at(r, src, "identity(42)"), "Int")
-      .Ok({})
-    },
-  ).test(
-    "generic with array",
-    fn() {
-      src := "fn first<T>(xs: Vector<T>) T { xs[0] }\nfn main() Int { first([1, 2, 3]) }"
-      r := try check_ok(src)
-      try assert.equal(try type_at(r, src, "first([1"), "Int")
-      .Ok({})
-    },
-  ).test(
-    "generic type mismatch",
-    fn() {
-      src := "fn identity<A>(x: A) A { x }\nfn main() String { identity(42) }"
-      msgs := try check_errs(src)
-      try assert.str_contains(msgs[0], "type mismatch")
-      .Ok({})
-    },
-  ).test(
-    "generic two params",
-    fn() {
-      src := "fn pair<A, B>(a: A, b: B) A { a }\nfn main() Int { pair(1, \"hi\") }"
-      r := try check_ok(src)
-      try assert.equal(try type_at(r, src, "pair(1"), "Int")
-      .Ok({})
-    },
-  ).test(
-    "generic type variable in nested local annotation",
-    fn() {
-      src := "fn keep<A>(d: Dict<String, A>) Dict<String, A> {\n  out: Dict<String, A> = d\n  out\n}\nfn main(d: Dict<String, Int>) Dict<String, Int> { keep(d) }"
-      _ := try check_ok(src)
-      .Ok({})
-    },
-  ).test(
-    "bounded type parameter method lookup",
-    fn() {
-      src := "fn show<T: Stringify>(x: T) String { x.to_string() }"
-      r := try check_ok(src)
-      try assert.equal(try type_at(r, src, "x.to_string()"), "String")
-      .Ok({})
-    },
-  ).test(
-    "generic bound satisfied by primitive",
-    fn() {
-      src := "fn show<T: Stringify>(x: T) String { x.to_string() }\nfn main() String { show(42) }"
-      r := try check_ok(src)
-      try assert.equal(try type_at(r, src, "show(42)"), "String")
-      .Ok({})
-    },
-  ).test(
-    "generic bound satisfied by inherent witness",
-    fn() {
-      src := "type User = .{ name: String }\nfn to_string(u: User) String { u.name }\nfn show<T: Stringify>(x: T) String { x.to_string() }\nfn main() String { show(User.{ name: \"Ada\" }) }"
-      r := try check_ok(src)
-      try assert.equal(try type_at(r, src, "show(User"), "String")
-      .Ok({})
-    },
-  ).test(
-    "generic bound satisfaction recurses through witness bounds",
-    fn() {
-      src := "type Box<T> = .{ value: T }\nfn to_string<T: Stringify>(b: Box<T>) String { b.value.to_string() }\nfn show<T: Stringify>(x: T) String { x.to_string() }\nfn main() String { show(Box.{ value: 42 }) }"
-      r := try check_ok(src)
-      try assert.equal(try type_at(r, src, "show(Box"), "String")
-      .Ok({})
-    },
-  ).test(
-    "generic bound rejects unsatisfied type argument",
-    fn() {
-      src := "type Foo = .{}\nfn show<T: Stringify>(x: T) String { x.to_string() }\nfn main() String { show(Foo.{}) }"
-      msgs := try check_errs(src)
-      try assert.str_contains(msgs[0], "does not satisfy Stringify")
-      .Ok({})
-    },
-  ).test(
-    "bounded type declaration allows satisfying record construction",
-    fn() {
-      src := "type Box<T: Stringify> = .{ value: T }\nfn main() Box<Int> { Box.{ value: 1 } }"
-      r := try check_ok(src)
-      try assert.equal(try type_at(r, src, "Box.{ value: 1 }"), "Named(0)<Int>")
-      .Ok({})
-    },
-  ).test(
-    "bounded type declaration rejects record construction",
-    fn() {
-      src := "type Foo = .{}\ntype Box<T: Stringify> = .{ value: T }\nfn main() Box<Foo> { Box.{ value: Foo.{} } }"
-      msgs := try check_errs(src)
-      try assert.str_contains(msgs[0], "required by Box<T: Stringify>")
-      .Ok({})
-    },
-  ).test(
-    "bounded type declaration rejects annotation",
-    fn() {
-      src := "type Foo = .{}\ntype Box<T: Stringify> = .{ value: T }\nfn main() Void { x: Box<Foo> = error(\"boom\") }"
-      msgs := try check_errs(src)
-      try assert.str_contains(msgs[0], "required by Box<T: Stringify>")
-      .Ok({})
-    },
-  ).test(
-    "bounded sum declaration rejects named variant construction",
-    fn() {
-      src := "type Foo = .{}\ntype Wrap<T: Stringify> = { Wrap(T) }\nfn main() Wrap<Foo> { Wrap.Wrap(Foo.{}) }"
-      msgs := try check_errs(src)
-      try assert.str_contains(msgs[0], "required by Wrap<T: Stringify>")
-      .Ok({})
-    },
-  ).test(
-    "generic interpolation checks Stringify bound",
-    fn() {
-      dollar := "\$"
-      src := "fn show<T: Stringify>(x: T) String { \"${dollar}{x}\" }\nfn main() String { show(42) }"
-      r := try check_ok(src)
-      try assert.equal(try type_at(r, src, "show(42)"), "String")
-      .Ok({})
-    },
-  ).test(
-    "vector stringify witness comes from bounded prelude method",
-    fn() {
-      src := "fn main() String { xs: Vector<Int> = [1, 2]\n xs.to_string() }"
-      r := try check_ok_with_env(src, base_env.builtin_env())
-      try assert.equal(try type_at(r, src, "xs.to_string()"), "String")
-      .Ok({})
-    },
-  ).test(
-    "vector stringify rejects unsatisfied element type",
-    fn() {
-      src := "type Foo = .{}\nfn main() String { xs: Vector<Foo> = [Foo.{}]\n xs.to_string() }"
-      msgs := try check_errs_with_env(src, base_env.builtin_env())
-      try assert.str_contains(msgs[0], "does not satisfy Stringify")
-      .Ok({})
-    },
-  ).test(
-    "multiple contract bounds on type parameter",
-    fn() {
-      src := "fn show_eq<T: Stringify + Eq>(a: T, b: T) String { if a.eq(b) { a.to_string() } else { \"ne\" } }"
-      r := try check_ok(src)
-      try assert.equal(try type_at(r, src, "a.to_string()"), "String")
-      try assert.equal(try type_at(r, src, "a.eq(b)"), "Bool")
-      .Ok({})
-    },
-  ).test(
-    "Eq bound satisfied by primitive",
-    fn() {
-      src := "fn same<T: Eq>(a: T, b: T) Bool { a.eq(b) }\nfn main() Bool { same(1, 2) }"
-      r := try check_ok(src)
-      try assert.equal(try type_at(r, src, "same(1, 2)"), "Bool")
-      .Ok({})
-    },
-  ).test(
-    "Eq bound satisfied by record with all-Eq fields (auto-derive)",
-    fn() {
-      src := "type Point = .{ x: Int, y: Int }\nfn same<T: Eq>(a: T, b: T) Bool { a.eq(b) }\nfn main() Bool { same(Point.{ x: 1, y: 2 }, Point.{ x: 3, y: 4 }) }"
-      r := try check_ok(src)
-      try assert.equal(try type_at(r, src, "same(Point"), "Bool")
-      .Ok({})
-    },
-  ).test(
-    "Eq bound rejected for record with closure field",
-    fn() {
-      src := "type Wrapper = .{ f: fn(Int) Int }\nfn same<T: Eq>(a: T, b: T) Bool { a.eq(b) }\nfn main() Bool { same(Wrapper.{ f: fn(x) { x } }, Wrapper.{ f: fn(x) { x } }) }"
-      msgs := try check_errs(src)
-      try assert.str_contains(msgs[0], "does not satisfy Eq")
-      .Ok({})
-    },
-  ).test(
-    "Eq bound satisfied by enum with all-Eq payloads (auto-derive)",
-    fn() {
-      src := "type Shape = { Circle(Int), Square(Int, Int) }\nfn same<T: Eq>(a: T, b: T) Bool { a.eq(b) }\nfn main() Bool { same(Shape.Circle(1), Shape.Square(2, 3)) }"
-      r := try check_ok(src)
-      try assert.equal(try type_at(r, src, "same(Shape"), "Bool")
-      .Ok({})
-    },
-  ).test(
-    "Eq bound rejected for enum with closure payload",
-    fn() {
-      src := "type Action = { Run(fn() Void) }\nfn same<T: Eq>(a: T, b: T) Bool { a.eq(b) }\nfn main() Bool { same(Action.Run(fn() {}), Action.Run(fn() {})) }"
-      msgs := try check_errs(src)
-      try assert.str_contains(msgs[0], "does not satisfy Eq")
-      .Ok({})
-    },
-  ).test(
-    "Eq auto-derive for recursive enum (coinductive)",
-    fn() {
-      src := "type List = { Nil, Cons(Int, List) }\nfn same<T: Eq>(a: T, b: T) Bool { a.eq(b) }\nfn main() Bool { same(List.Nil, List.Cons(1, List.Nil)) }"
-      r := try check_ok(src)
-      try assert.equal(try type_at(r, src, "same(List"), "Bool")
-      .Ok({})
-    },
-  ).test(
-    "Eq explicit method takes priority over auto-derive",
-    fn() {
-      src := "type Point = .{ x: Int, y: Int }\nfn eq(a: Point, b: Point) Bool { a.x == b.x }\nfn same<T: Eq>(a: T, b: T) Bool { a.eq(b) }\nfn main() Bool { same(Point.{ x: 1, y: 2 }, Point.{ x: 1, y: 3 }) }"
-      r := try check_ok(src)
-      try assert.equal(try type_at(r, src, "same(Point"), "Bool")
-      .Ok({})
-    },
-  ).test(
-    "== on record with closure field is type error",
-    fn() {
-      src := "type Bad = .{ f: fn(Int) Int }\nfn test(a: Bad, b: Bad) Bool { a == b }"
-      msgs := try check_errs(src)
-      try assert.str_contains(msgs[0], "does not satisfy Eq")
-      .Ok({})
-    },
-  ).test(
-    "== on record auto-derives Eq",
-    fn() {
-      src := "type Point = .{ x: Int, y: Int }\nfn test(a: Point, b: Point) Bool { a == b }"
-      r := try check_ok(src)
-      try assert.equal(r.diagnostics.len(), 0)
-      .Ok({})
-    },
-  ).test(
-    "!= uses Eq contract",
-    fn() {
-      src := "type Bad = .{ f: fn(Int) Int }\nfn test(a: Bad, b: Bad) Bool { a != b }"
-      msgs := try check_errs(src)
-      try assert.str_contains(msgs[0], "does not satisfy Eq")
-      .Ok({})
-    },
-  ).test(
-    "Ord bound satisfied by Int",
-    fn() {
-      src := "fn min<T: Ord>(a: T, b: T) T { if a.compare(b) == .Lt { a } else { b } }\nfn main() Int { min(1, 2) }"
-      r := try check_ok_builtins(src)
-      .Ok({})
-    },
-  ).test(
-    "Ord bound satisfied by String",
-    fn() {
-      src := "fn min<T: Ord>(a: T, b: T) T { if a.compare(b) == .Lt { a } else { b } }\nfn main() String { min(\"a\", \"b\") }"
-      r := try check_ok_builtins(src)
-      .Ok({})
-    },
-  ).test(
-    "Ord bound rejected for Bool",
-    fn() {
-      src := "fn min<T: Ord>(a: T, b: T) T { if a.compare(b) == .Lt { a } else { b } }\nfn main() Bool { min(true, false) }"
-      msgs := try check_errs_builtins(src)
-      try assert.str_contains(msgs[0], "does not satisfy Ord")
-      .Ok({})
-    },
-  ).test(
-    "Ord bound rejected for record without compare",
-    fn() {
-      src := "type Point = .{ x: Int, y: Int }\nfn min<T: Ord>(a: T, b: T) T { if a.compare(b) == .Lt { a } else { b } }\nfn main() Point { min(Point.{ x: 1, y: 2 }, Point.{ x: 3, y: 4 }) }"
-      msgs := try check_errs_builtins(src)
-      try assert.str_contains(msgs[0], "does not satisfy Ord")
-      .Ok({})
-    },
-  ).test(
-    "Ord bound satisfied by record with explicit compare",
-    fn() {
-      src := "type Point = .{ x: Int, y: Int }\nfn compare(a: Point, b: Point) Order { Int.compare(a.x, b.x) }\nfn min<T: Ord>(a: T, b: T) T { if a.compare(b) == .Lt { a } else { b } }\nfn main() Point { min(Point.{ x: 1, y: 2 }, Point.{ x: 3, y: 4 }) }"
-      r := try check_ok_builtins(src)
-      .Ok({})
-    },
-  ).test(
-    "Ord does not auto-derive for records",
-    fn() {
-      src := "type Pair = .{ a: Int, b: Int }\nfn sorted<T: Ord>(a: T, b: T) T { a }\nfn main() Pair { sorted(Pair.{ a: 1, b: 2 }, Pair.{ a: 3, b: 4 }) }"
-      msgs := try check_errs_builtins(src)
-      try assert.str_contains(msgs[0], "does not satisfy Ord")
-      .Ok({})
-    },
-  ).test(
-    "< on primitives still works",
-    fn() {
-      src := "fn test() Bool { 1 < 2 }"
-      r := try check_ok_builtins(src)
-      .Ok({})
-    },
-  ).test(
-    "< on record without Ord is error",
-    fn() {
-      src := "type Point = .{ x: Int, y: Int }\nfn test(a: Point, b: Point) Bool { a < b }"
-      msgs := try check_errs_builtins(src)
-      try assert.str_contains(msgs[0], "does not satisfy Ord")
-      .Ok({})
-    },
-  ).test(
-    "< on record with Ord works",
-    fn() {
-      src := "type Weight = .{ value: Int }\nfn compare(a: Weight, b: Weight) Order { Int.compare(a.value, b.value) }\nfn test(a: Weight, b: Weight) Bool { a < b }"
-      r := try check_ok_builtins(src)
-      .Ok({})
-    },
-  ).test(
-    "multiple bounds with Ord",
-    fn() {
-      src := "fn show_min<T: Stringify + Ord>(a: T, b: T) String { if a.compare(b) == .Lt { a.to_string() } else { b.to_string() } }"
-      r := try check_ok_builtins(src)
-      .Ok({})
-    },
-  ).test(
-    "if else unify",
-    fn() {
-      src := "fn abs(x: Int) Int { if x < 0 { -x } else { x } }"
-      r := try check_ok(src)
-      .Ok({})
-    },
-  ).test(
-    "if else pushes expected type into sum variants",
-    fn() {
-      src := "type Cmp = { Lt, Eq, Gt }\nfn cmp(a: Int, b: Int) Cmp { if a < b { .Lt } else if a > b { .Gt } else { .Eq } }"
-      r := try check_ok(src)
-      .Ok({})
-    },
-  ).test(
-    "collect continue branch diverges in check mode",
-    fn() {
-      src := "fn f(xs: Vector<Int>) Vector<Int> { collect x in xs { if x > 0 { x } else { continue } } }"
-      r := try check_ok(src)
-      .Ok({})
-    },
-  ).test(
-    "if no else is void",
-    fn() {
-      src := "fn f(x: Int) Void { if x > 0 { x } }"
-      r := try check_ok(src)
-      .Ok({})
-    },
-  ).test(
-    "if branch mismatch",
-    fn() {
-      src := "fn f(x: Int) Int { if x > 0 { 1 } else { \"no\" } }"
-      msgs := try check_errs(src)
-      try assert.str_contains(msgs[0], "type mismatch")
-      .Ok({})
-    },
-  ).test(
-    "case option with wildcard",
-    fn() {
-      src := "fn unwrap(o: Int?) Int { case o { .Some(x) => x, _ => 0 } }"
-      r := try check_ok(src)
-      try assert.equal(try type_at(r, src, "case o"), "Int")
-      .Ok({})
-    },
-  ).test(
-    "case binds pattern var",
-    fn() {
-      src := "fn unwrap(o: Int?) Int { case o { .Some(x) => x, _ => 0 } }"
-      r := try check_ok(src)
-      .Ok({})
-    },
-  ).test(
-    "case non-exhaustive",
-    fn() {
-      src := "type Color = { Red, Green, Blue }\nfn f(c: Color) Int { case c { .Red => 1 } }"
-      msgs := try check_errs(src)
-      try assert.str_contains(msgs[0], "non-exhaustive")
-      .Ok({})
-    },
-  ).test(
-    "case wildcard exhaustive",
-    fn() {
-      src := "type Color = { Red, Green, Blue }\nfn f(c: Color) Int { case c { .Red => 1, _ => 0 } }"
-      r := try check_ok(src)
-      .Ok({})
-    },
-  ).test(
-    "for condition",
-    fn() {
-      src := "fn f() Void { x := 0\n for x < 10 { x = x + 1 } }"
-      r := try check_ok(src)
-      .Ok({})
-    },
-  ).test(
-    "for in vector",
-    fn() {
-      src := "fn sum(xs: Vector<Int>) Int { s := 0\n for x in xs { s = s + x }\n s }"
-      r := try check_ok(src)
-      .Ok({})
-    },
-  ).test(
-    "for with index",
-    fn() {
-      src := "fn f(xs: Vector<Int>) Int { s := 0\n for x, i in xs { s = s + i }\n s }"
-      r := try check_ok(src)
-      .Ok({})
-    },
-  ).test(
-    "closure annotated",
-    fn() {
-      src := "fn apply(f: fn(Int) Int, x: Int) Int { f(x) }\nfn main() Int { apply(fn(x: Int) Int { x + 1 }, 5) }"
-      r := try check_ok(src)
-      .Ok({})
-    },
-  ).test(
-    "closure inferred from context",
-    fn() {
-      src := "fn apply(f: fn(Int) Int, x: Int) Int { f(x) }\nfn main() Int { apply(fn(x) { x + 1 }, 5) }"
-      r := try check_ok(src)
-      .Ok({})
-    },
-  ).test(
-    "try option",
-    fn() {
-      src := "fn get(o: Int?) Int? {\n  x := try o\n  r: Int? = .Some(x + 1)\n  r\n}"
-      r := try check_ok(src)
-      .Ok({})
-    },
-  ).test(
-    "try result",
-    fn() {
-      src := "fn inc(r: Result<Int, String>) Result<Int, String> {\n  x := try r\n  out: Result<Int, String> = .Ok(x + 1)\n  out\n}"
-      r := try check_ok(src)
-      .Ok({})
-    },
-  ).test(
-    "try inside annotated closure passed as an argument",
-    fn() {
-      src := "fn inner() Result<Void, String> { .Ok({}) }\nfn run(f: fn() Result<Void, String>) Result<Void, String> { f() }\nrun(fn() Result<Void, String> { x := try inner()\n .Ok(x) })"
-      r := try check_ok(src)
-      .Ok({})
-    },
-  ).test(
-    "try inside non-Result closure errors",
-    fn() {
-      src := "fn inner() Result<Void, String> { .Ok({}) }\nfn run(f: fn() Void) Void { f() }\nrun(fn() { x := try inner()\n x })"
-      msgs := try check_errs(src)
-      try assert.str_contains(msgs[0], "try on Result requires function to return Result")
-      .Ok({})
-    },
-  ).test(
-    "try on non-option",
-    fn() {
-      src := "fn f(x: Int) Int { try x }"
-      msgs := try check_errs(src)
-      try assert.str_contains(msgs[0], "try requires Option or Result")
-      .Ok({})
-    },
-  ).test(
-    "collect",
-    fn() {
-      src := "fn squares(xs: Vector<Int>) Vector<Int> { collect x in xs { x * x } }"
-      r := try check_ok(src)
-      .Ok({})
-    },
-  ).test(
-    "empty array annotated",
-    fn() {
-      src := "fn empty() Vector<Int> { [] }"
-      r := try check_ok(src)
-      .Ok({})
-    },
-  ).test(
-    "case option exhaustive without wildcard",
-    fn() {
-      src := "fn unwrap_or(o: Int?, d: Int) Int { case o { .Some(x) => x, .None => d } }"
-      r := try check_ok(src)
-      try assert.equal(try type_at(r, src, "case o"), "Int")
-      .Ok({})
-    },
-  ).test(
-    "case result exhaustive without wildcard",
-    fn() {
-      src := "fn handle(r: Result<Int, String>) Int { case r { .Ok(x) => x, .Err(e) => 0 } }"
-      r := try check_ok(src)
-      .Ok({})
-    },
-  ).test(
-    "case diverging arm with error",
-    fn() {
-      src := "fn unwrap(o: Int?) Int { case o { .None => error(\"missing\"), .Some(x) => x } }"
-      r := try check_ok_builtins(src)
-      try assert.equal(try type_at(r, src, "case o"), "Int")
-      .Ok({})
-    },
-  ).test(
-    "case all arms diverge is Never",
-    fn() {
-      src := "fn boom(o: Int?) Int { case o { .None => error(\"a\"), .Some(x) => error(\"b\") } }"
-      r := try check_ok_builtins(src)
-      .Ok({})
-    },
-  ).test(
-    "collect with range",
-    fn() {
-      src := "fn squares(n: Int) Vector<Int> { collect i in 0..n { i * i } }"
-      r := try check_ok_builtins(src)
-      .Ok({})
-    },
-  ).test(
-    "error returns Never",
-    fn() {
-      src := "fn fail() Int { error(\"boom\") }"
-      r := try check_ok_builtins(src)
-      .Ok({})
-    },
-  ).test(
-    "call println",
-    fn() {
-      src := "fn greet() Void { println(\"hi\") }"
-      r := try check_ok_builtins(src)
-      .Ok({})
-    },
-  ).test(
-    "integration no errors",
-    fn() {
-      src := "type Point = .{ x: Int, y: Int }\nfn dist(p: Point) Int { p.x + p.y }\nfn main() Int { dist(.{ x: 1, y: 2 }) }"
-      r := try check_ok(src)
-      try assert.equal(try type_at(r, src, "dist(.{"), "Int")
-      .Ok({})
-    },
-  ).test(
-    "integration partial typemap on error",
-    fn() {
-      src := "fn f() Int { x := 42\n y: Bool = x\n x }"
-      r := check_src(src)
+  runner.suite("checker")
+    .test(
+      "int literal",
+      fn() {
+        src := "fn answer() Int { 42 }"
+        r := try check_ok(src)
+        try assert.equal(try type_at(r, src, "42"), "Int")
+        .Ok({})
+      },
+    )
+    .test(
+      "string literal",
+      fn() {
+        src := "fn greeting() String { \"hello\" }"
+        r := try check_ok(src)
+        try assert.equal(try type_at(r, src, "\"hello\""), "String")
+        .Ok({})
+      },
+    )
+    .test(
+      "bool literal",
+      fn() {
+        src := "fn flag() Bool { true }"
+        r := try check_ok(src)
+        try assert.equal(try type_at(r, src, "true"), "Bool")
+        .Ok({})
+      },
+    )
+    .test(
+      "float literal",
+      fn() {
+        src := "fn ratio() Float { 3.14 }"
+        r := try check_ok(src)
+        try assert.equal(try type_at(r, src, "3.14"), "Float")
+        .Ok({})
+      },
+    )
+    .test(
+      "return type mismatch",
+      fn() {
+        src := "fn answer() String { 42 }"
+        msgs := try check_errs(src)
+        try assert.str_contains(msgs[0], "type mismatch")
+        .Ok({})
+      },
+    )
+    .test(
+      "annotated let",
+      fn() {
+        src := "fn f() Int { x: Int = 5\n x }"
+        r := try check_ok(src)
+        try assert.equal(try type_at(r, src, "5"), "Int")
+        .Ok({})
+      },
+    )
+    .test(
+      "inferred let",
+      fn() {
+        src := "fn f() Int { x := 42\n x }"
+        r := try check_ok(src)
+        try assert.equal(try type_at(r, src, "42"), "Int")
+        .Ok({})
+      },
+    )
+    .test(
+      "annotated let type mismatch",
+      fn() {
+        src := "fn f() Int { x: Bool = 5\n x }"
+        msgs := try check_errs(src)
+        try assert.str_contains(msgs[0], "type mismatch")
+        .Ok({})
+      },
+    )
+    .test(
+      "ident resolves param",
+      fn() {
+        src := "fn f(x: Int) Int { x }"
+        r := try check_ok(src)
+        try assert.equal(try type_at(r, src, "x }"), "Int")
+        .Ok({})
+      },
+    )
+    .test(
+      "function call",
+      fn() {
+        src := "fn add(a: Int, b: Int) Int { a }\nfn main() Int { add(1, 2) }"
+        r := try check_ok(src)
+        try assert.equal(try type_at(r, src, "add(1"), "Int")
+        .Ok({})
+      },
+    )
+    .test(
+      "wrong arg count",
+      fn() {
+        src := "fn add(a: Int, b: Int) Int { a }\nfn main() Int { add(1) }"
+        msgs := try check_errs(src)
+        try assert.str_contains(msgs[0], "expected 2 arguments")
+        .Ok({})
+      },
+    )
+    .test(
+      "arithmetic int",
+      fn() {
+        src := "fn f() Int { 1 + 2 }"
+        r := try check_ok(src)
+        try assert.equal(try type_at(r, src, "1 + 2"), "Int")
+        .Ok({})
+      },
+    )
+    .test(
+      "comparison",
+      fn() {
+        src := "fn f() Bool { 1 < 2 }"
+        r := try check_ok(src)
+        try assert.equal(try type_at(r, src, "1 < 2"), "Bool")
+        .Ok({})
+      },
+    )
+    .test(
+      "logical and",
+      fn() {
+        src := "fn f() Bool { true and false }"
+        r := try check_ok(src)
+        try assert.equal(try type_at(r, src, "true and false"), "Bool")
+        .Ok({})
+      },
+    )
+    .test(
+      "negate int",
+      fn() {
+        src := "fn f() Int { -5 }"
+        r := try check_ok(src)
+        try assert.equal(try type_at(r, src, "-5"), "Int")
+        .Ok({})
+      },
+    )
+    .test(
+      "not bool",
+      fn() {
+        src := "fn f() Bool { !true }"
+        r := try check_ok(src)
+        try assert.equal(try type_at(r, src, "!true"), "Bool")
+        .Ok({})
+      },
+    )
+    .test(
+      "bool plus int error",
+      fn() {
+        src := "fn f() Int { true + 1 }"
+        msgs := try check_errs(src)
+        try assert.str_contains(msgs[0], "operator not supported")
+        .Ok({})
+      },
+    )
+    .test(
+      "string plus suggests concat or interpolation",
+      fn() {
+        src := "fn f() String { \"hello\" + \"world\" }"
+        msgs := try check_errs(src)
+        try assert.str_contains(msgs[0], "cannot concatenate strings with `+`")
+        .Ok({})
+      },
+    )
+    .test(
+      "equality",
+      fn() {
+        src := "fn f() Bool { 1 == 2 }"
+        r := try check_ok(src)
+        try assert.equal(try type_at(r, src, "1 == 2"), "Bool")
+        .Ok({})
+      },
+    )
+    .test(
+      "record field access",
+      fn() {
+        src := "type Point = .{ x: Int, y: Int }\nfn get_x(p: Point) Int { p.x }"
+        r := try check_ok(src)
+        try assert.equal(try type_at(r, src, "p.x"), "Int")
+        .Ok({})
+      },
+    )
+    .test(
+      "record bad field",
+      fn() {
+        src := "type Point = .{ x: Int, y: Int }\nfn get_z(p: Point) Int { p.z }"
+        msgs := try check_errs(src)
+        try assert.str_contains(msgs[0], "no field `z`")
+        .Ok({})
+      },
+    )
+    .test(
+      "anonymous record lit check mode",
+      fn() {
+        src := "type Point = .{ x: Int, y: Int }\nfn make() Point { .{ x: 1, y: 2 } }"
+        r := try check_ok(src)
+        .Ok({})
+      },
+    )
+    .test(
+      "record missing field",
+      fn() {
+        src := "type Point = .{ x: Int, y: Int }\nfn make() Point { .{ x: 1 } }"
+        msgs := try check_errs(src)
+        try assert.str_contains(msgs[0], "missing field 'y'")
+        .Ok({})
+      },
+    )
+    .test(
+      "option some check",
+      fn() {
+        src := "fn wrap(x: Int) Int? { .Some(x) }"
+        r := try check_ok(src)
+        .Ok({})
+      },
+    )
+    .test(
+      "option none check",
+      fn() {
+        src := "fn nothing() Int? { .None }"
+        r := try check_ok(src)
+        .Ok({})
+      },
+    )
+    .test(
+      "result ok check",
+      fn() {
+        src := "fn ok_val(x: Int) Result<Int, String> { .Ok(x) }"
+        r := try check_ok(src)
+        .Ok({})
+      },
+    )
+    .test(
+      "result err check",
+      fn() {
+        src := "fn err_val() Result<Int, String> { .Err(\"bad\") }"
+        r := try check_ok(src)
+        .Ok({})
+      },
+    )
+    .test(
+      "array literal",
+      fn() {
+        src := "fn nums() Vector<Int> { [1, 2, 3] }"
+        r := try check_ok(src)
+        .Ok({})
+      },
+    )
+    .test(
+      "array element mismatch",
+      fn() {
+        src := "fn bad() Vector<Int> { [1, \"two\", 3] }"
+        msgs := try check_errs(src)
+        try assert.str_contains(msgs[0], "type mismatch")
+        .Ok({})
+      },
+    )
+    .test(
+      "generic identity",
+      fn() {
+        src := "fn identity<A>(x: A) A { x }\nfn main() Int { identity(42) }"
+        r := try check_ok(src)
+        try assert.equal(try type_at(r, src, "identity(42)"), "Int")
+        .Ok({})
+      },
+    )
+    .test(
+      "generic with array",
+      fn() {
+        src := "fn first<T>(xs: Vector<T>) T { xs[0] }\nfn main() Int { first([1, 2, 3]) }"
+        r := try check_ok(src)
+        try assert.equal(try type_at(r, src, "first([1"), "Int")
+        .Ok({})
+      },
+    )
+    .test(
+      "generic type mismatch",
+      fn() {
+        src := "fn identity<A>(x: A) A { x }\nfn main() String { identity(42) }"
+        msgs := try check_errs(src)
+        try assert.str_contains(msgs[0], "type mismatch")
+        .Ok({})
+      },
+    )
+    .test(
+      "generic two params",
+      fn() {
+        src := "fn pair<A, B>(a: A, b: B) A { a }\nfn main() Int { pair(1, \"hi\") }"
+        r := try check_ok(src)
+        try assert.equal(try type_at(r, src, "pair(1"), "Int")
+        .Ok({})
+      },
+    )
+    .test(
+      "generic type variable in nested local annotation",
+      fn() {
+        src := "fn keep<A>(d: Dict<String, A>) Dict<String, A> {\n  out: Dict<String, A> = d\n  out\n}\nfn main(d: Dict<String, Int>) Dict<String, Int> { keep(d) }"
+        _ := try check_ok(src)
+        .Ok({})
+      },
+    )
+    .test(
+      "bounded type parameter method lookup",
+      fn() {
+        src := "fn show<T: Stringify>(x: T) String { x.to_string() }"
+        r := try check_ok(src)
+        try assert.equal(try type_at(r, src, "x.to_string()"), "String")
+        .Ok({})
+      },
+    )
+    .test(
+      "generic bound satisfied by primitive",
+      fn() {
+        src := "fn show<T: Stringify>(x: T) String { x.to_string() }\nfn main() String { show(42) }"
+        r := try check_ok(src)
+        try assert.equal(try type_at(r, src, "show(42)"), "String")
+        .Ok({})
+      },
+    )
+    .test(
+      "generic bound satisfied by inherent witness",
+      fn() {
+        src := "type User = .{ name: String }\nfn to_string(u: User) String { u.name }\nfn show<T: Stringify>(x: T) String { x.to_string() }\nfn main() String { show(User.{ name: \"Ada\" }) }"
+        r := try check_ok(src)
+        try assert.equal(try type_at(r, src, "show(User"), "String")
+        .Ok({})
+      },
+    )
+    .test(
+      "generic bound satisfaction recurses through witness bounds",
+      fn() {
+        src := "type Box<T> = .{ value: T }\nfn to_string<T: Stringify>(b: Box<T>) String { b.value.to_string() }\nfn show<T: Stringify>(x: T) String { x.to_string() }\nfn main() String { show(Box.{ value: 42 }) }"
+        r := try check_ok(src)
+        try assert.equal(try type_at(r, src, "show(Box"), "String")
+        .Ok({})
+      },
+    )
+    .test(
+      "generic bound rejects unsatisfied type argument",
+      fn() {
+        src := "type Foo = .{}\nfn show<T: Stringify>(x: T) String { x.to_string() }\nfn main() String { show(Foo.{}) }"
+        msgs := try check_errs(src)
+        try assert.str_contains(msgs[0], "does not satisfy Stringify")
+        .Ok({})
+      },
+    )
+    .test(
+      "bounded type declaration allows satisfying record construction",
+      fn() {
+        src := "type Box<T: Stringify> = .{ value: T }\nfn main() Box<Int> { Box.{ value: 1 } }"
+        r := try check_ok(src)
+        try assert.equal(try type_at(r, src, "Box.{ value: 1 }"), "Named(0)<Int>")
+        .Ok({})
+      },
+    )
+    .test(
+      "bounded type declaration rejects record construction",
+      fn() {
+        src := "type Foo = .{}\ntype Box<T: Stringify> = .{ value: T }\nfn main() Box<Foo> { Box.{ value: Foo.{} } }"
+        msgs := try check_errs(src)
+        try assert.str_contains(msgs[0], "required by Box<T: Stringify>")
+        .Ok({})
+      },
+    )
+    .test(
+      "bounded type declaration rejects annotation",
+      fn() {
+        src := "type Foo = .{}\ntype Box<T: Stringify> = .{ value: T }\nfn main() Void { x: Box<Foo> = error(\"boom\") }"
+        msgs := try check_errs(src)
+        try assert.str_contains(msgs[0], "required by Box<T: Stringify>")
+        .Ok({})
+      },
+    )
+    .test(
+      "bounded sum declaration rejects named variant construction",
+      fn() {
+        src := "type Foo = .{}\ntype Wrap<T: Stringify> = { Wrap(T) }\nfn main() Wrap<Foo> { Wrap.Wrap(Foo.{}) }"
+        msgs := try check_errs(src)
+        try assert.str_contains(msgs[0], "required by Wrap<T: Stringify>")
+        .Ok({})
+      },
+    )
+    .test(
+      "generic interpolation checks Stringify bound",
+      fn() {
+        dollar := "\$"
+        src := "fn show<T: Stringify>(x: T) String { \"${dollar}{x}\" }\nfn main() String { show(42) }"
+        r := try check_ok(src)
+        try assert.equal(try type_at(r, src, "show(42)"), "String")
+        .Ok({})
+      },
+    )
+    .test(
+      "vector stringify witness comes from bounded prelude method",
+      fn() {
+        src := "fn main() String { xs: Vector<Int> = [1, 2]\n xs.to_string() }"
+        r := try check_ok_with_env(src, base_env.builtin_env())
+        try assert.equal(try type_at(r, src, "xs.to_string()"), "String")
+        .Ok({})
+      },
+    )
+    .test(
+      "vector stringify rejects unsatisfied element type",
+      fn() {
+        src := "type Foo = .{}\nfn main() String { xs: Vector<Foo> = [Foo.{}]\n xs.to_string() }"
+        msgs := try check_errs_with_env(src, base_env.builtin_env())
+        try assert.str_contains(msgs[0], "does not satisfy Stringify")
+        .Ok({})
+      },
+    )
+    .test(
+      "multiple contract bounds on type parameter",
+      fn() {
+        src := "fn show_eq<T: Stringify + Eq>(a: T, b: T) String { if a.eq(b) { a.to_string() } else { \"ne\" } }"
+        r := try check_ok(src)
+        try assert.equal(try type_at(r, src, "a.to_string()"), "String")
+        try assert.equal(try type_at(r, src, "a.eq(b)"), "Bool")
+        .Ok({})
+      },
+    )
+    .test(
+      "Eq bound satisfied by primitive",
+      fn() {
+        src := "fn same<T: Eq>(a: T, b: T) Bool { a.eq(b) }\nfn main() Bool { same(1, 2) }"
+        r := try check_ok(src)
+        try assert.equal(try type_at(r, src, "same(1, 2)"), "Bool")
+        .Ok({})
+      },
+    )
+    .test(
+      "Eq bound satisfied by record with all-Eq fields (auto-derive)",
+      fn() {
+        src := "type Point = .{ x: Int, y: Int }\nfn same<T: Eq>(a: T, b: T) Bool { a.eq(b) }\nfn main() Bool { same(Point.{ x: 1, y: 2 }, Point.{ x: 3, y: 4 }) }"
+        r := try check_ok(src)
+        try assert.equal(try type_at(r, src, "same(Point"), "Bool")
+        .Ok({})
+      },
+    )
+    .test(
+      "Eq bound rejected for record with closure field",
+      fn() {
+        src := "type Wrapper = .{ f: fn(Int) Int }\nfn same<T: Eq>(a: T, b: T) Bool { a.eq(b) }\nfn main() Bool { same(Wrapper.{ f: fn(x) { x } }, Wrapper.{ f: fn(x) { x } }) }"
+        msgs := try check_errs(src)
+        try assert.str_contains(msgs[0], "does not satisfy Eq")
+        .Ok({})
+      },
+    )
+    .test(
+      "Eq bound satisfied by enum with all-Eq payloads (auto-derive)",
+      fn() {
+        src := "type Shape = { Circle(Int), Square(Int, Int) }\nfn same<T: Eq>(a: T, b: T) Bool { a.eq(b) }\nfn main() Bool { same(Shape.Circle(1), Shape.Square(2, 3)) }"
+        r := try check_ok(src)
+        try assert.equal(try type_at(r, src, "same(Shape"), "Bool")
+        .Ok({})
+      },
+    )
+    .test(
+      "Eq bound rejected for enum with closure payload",
+      fn() {
+        src := "type Action = { Run(fn() Void) }\nfn same<T: Eq>(a: T, b: T) Bool { a.eq(b) }\nfn main() Bool { same(Action.Run(fn() {}), Action.Run(fn() {})) }"
+        msgs := try check_errs(src)
+        try assert.str_contains(msgs[0], "does not satisfy Eq")
+        .Ok({})
+      },
+    )
+    .test(
+      "Eq auto-derive for recursive enum (coinductive)",
+      fn() {
+        src := "type List = { Nil, Cons(Int, List) }\nfn same<T: Eq>(a: T, b: T) Bool { a.eq(b) }\nfn main() Bool { same(List.Nil, List.Cons(1, List.Nil)) }"
+        r := try check_ok(src)
+        try assert.equal(try type_at(r, src, "same(List"), "Bool")
+        .Ok({})
+      },
+    )
+    .test(
+      "Eq explicit method takes priority over auto-derive",
+      fn() {
+        src := "type Point = .{ x: Int, y: Int }\nfn eq(a: Point, b: Point) Bool { a.x == b.x }\nfn same<T: Eq>(a: T, b: T) Bool { a.eq(b) }\nfn main() Bool { same(Point.{ x: 1, y: 2 }, Point.{ x: 1, y: 3 }) }"
+        r := try check_ok(src)
+        try assert.equal(try type_at(r, src, "same(Point"), "Bool")
+        .Ok({})
+      },
+    )
+    .test(
+      "== on record with closure field is type error",
+      fn() {
+        src := "type Bad = .{ f: fn(Int) Int }\nfn test(a: Bad, b: Bad) Bool { a == b }"
+        msgs := try check_errs(src)
+        try assert.str_contains(msgs[0], "does not satisfy Eq")
+        .Ok({})
+      },
+    )
+    .test(
+      "== on record auto-derives Eq",
+      fn() {
+        src := "type Point = .{ x: Int, y: Int }\nfn test(a: Point, b: Point) Bool { a == b }"
+        r := try check_ok(src)
+        try assert.equal(r.diagnostics.len(), 0)
+        .Ok({})
+      },
+    )
+    .test(
+      "!= uses Eq contract",
+      fn() {
+        src := "type Bad = .{ f: fn(Int) Int }\nfn test(a: Bad, b: Bad) Bool { a != b }"
+        msgs := try check_errs(src)
+        try assert.str_contains(msgs[0], "does not satisfy Eq")
+        .Ok({})
+      },
+    )
+    .test(
+      "Ord bound satisfied by Int",
+      fn() {
+        src := "fn min<T: Ord>(a: T, b: T) T { if a.compare(b) == .Lt { a } else { b } }\nfn main() Int { min(1, 2) }"
+        r := try check_ok_builtins(src)
+        .Ok({})
+      },
+    )
+    .test(
+      "Ord bound satisfied by String",
+      fn() {
+        src := "fn min<T: Ord>(a: T, b: T) T { if a.compare(b) == .Lt { a } else { b } }\nfn main() String { min(\"a\", \"b\") }"
+        r := try check_ok_builtins(src)
+        .Ok({})
+      },
+    )
+    .test(
+      "Ord bound rejected for Bool",
+      fn() {
+        src := "fn min<T: Ord>(a: T, b: T) T { if a.compare(b) == .Lt { a } else { b } }\nfn main() Bool { min(true, false) }"
+        msgs := try check_errs_builtins(src)
+        try assert.str_contains(msgs[0], "does not satisfy Ord")
+        .Ok({})
+      },
+    )
+    .test(
+      "Ord bound rejected for record without compare",
+      fn() {
+        src := "type Point = .{ x: Int, y: Int }\nfn min<T: Ord>(a: T, b: T) T { if a.compare(b) == .Lt { a } else { b } }\nfn main() Point { min(Point.{ x: 1, y: 2 }, Point.{ x: 3, y: 4 }) }"
+        msgs := try check_errs_builtins(src)
+        try assert.str_contains(msgs[0], "does not satisfy Ord")
+        .Ok({})
+      },
+    )
+    .test(
+      "Ord bound satisfied by record with explicit compare",
+      fn() {
+        src := "type Point = .{ x: Int, y: Int }\nfn compare(a: Point, b: Point) Order { Int.compare(a.x, b.x) }\nfn min<T: Ord>(a: T, b: T) T { if a.compare(b) == .Lt { a } else { b } }\nfn main() Point { min(Point.{ x: 1, y: 2 }, Point.{ x: 3, y: 4 }) }"
+        r := try check_ok_builtins(src)
+        .Ok({})
+      },
+    )
+    .test(
+      "Ord does not auto-derive for records",
+      fn() {
+        src := "type Pair = .{ a: Int, b: Int }\nfn sorted<T: Ord>(a: T, b: T) T { a }\nfn main() Pair { sorted(Pair.{ a: 1, b: 2 }, Pair.{ a: 3, b: 4 }) }"
+        msgs := try check_errs_builtins(src)
+        try assert.str_contains(msgs[0], "does not satisfy Ord")
+        .Ok({})
+      },
+    )
+    .test(
+      "< on primitives still works",
+      fn() {
+        src := "fn test() Bool { 1 < 2 }"
+        r := try check_ok_builtins(src)
+        .Ok({})
+      },
+    )
+    .test(
+      "< on record without Ord is error",
+      fn() {
+        src := "type Point = .{ x: Int, y: Int }\nfn test(a: Point, b: Point) Bool { a < b }"
+        msgs := try check_errs_builtins(src)
+        try assert.str_contains(msgs[0], "does not satisfy Ord")
+        .Ok({})
+      },
+    )
+    .test(
+      "< on record with Ord works",
+      fn() {
+        src := "type Weight = .{ value: Int }\nfn compare(a: Weight, b: Weight) Order { Int.compare(a.value, b.value) }\nfn test(a: Weight, b: Weight) Bool { a < b }"
+        r := try check_ok_builtins(src)
+        .Ok({})
+      },
+    )
+    .test(
+      "multiple bounds with Ord",
+      fn() {
+        src := "fn show_min<T: Stringify + Ord>(a: T, b: T) String { if a.compare(b) == .Lt { a.to_string() } else { b.to_string() } }"
+        r := try check_ok_builtins(src)
+        .Ok({})
+      },
+    )
+    .test(
+      "if else unify",
+      fn() {
+        src := "fn abs(x: Int) Int { if x < 0 { -x } else { x } }"
+        r := try check_ok(src)
+        .Ok({})
+      },
+    )
+    .test(
+      "if else pushes expected type into sum variants",
+      fn() {
+        src := "type Cmp = { Lt, Eq, Gt }\nfn cmp(a: Int, b: Int) Cmp { if a < b { .Lt } else if a > b { .Gt } else { .Eq } }"
+        r := try check_ok(src)
+        .Ok({})
+      },
+    )
+    .test(
+      "collect continue branch diverges in check mode",
+      fn() {
+        src := "fn f(xs: Vector<Int>) Vector<Int> { collect x in xs { if x > 0 { x } else { continue } } }"
+        r := try check_ok(src)
+        .Ok({})
+      },
+    )
+    .test(
+      "if no else is void",
+      fn() {
+        src := "fn f(x: Int) Void { if x > 0 { x } }"
+        r := try check_ok(src)
+        .Ok({})
+      },
+    )
+    .test(
+      "if branch mismatch",
+      fn() {
+        src := "fn f(x: Int) Int { if x > 0 { 1 } else { \"no\" } }"
+        msgs := try check_errs(src)
+        try assert.str_contains(msgs[0], "type mismatch")
+        .Ok({})
+      },
+    )
+    .test(
+      "case option with wildcard",
+      fn() {
+        src := "fn unwrap(o: Int?) Int { case o { .Some(x) => x, _ => 0 } }"
+        r := try check_ok(src)
+        try assert.equal(try type_at(r, src, "case o"), "Int")
+        .Ok({})
+      },
+    )
+    .test(
+      "case binds pattern var",
+      fn() {
+        src := "fn unwrap(o: Int?) Int { case o { .Some(x) => x, _ => 0 } }"
+        r := try check_ok(src)
+        .Ok({})
+      },
+    )
+    .test(
+      "case non-exhaustive",
+      fn() {
+        src := "type Color = { Red, Green, Blue }\nfn f(c: Color) Int { case c { .Red => 1 } }"
+        msgs := try check_errs(src)
+        try assert.str_contains(msgs[0], "non-exhaustive")
+        .Ok({})
+      },
+    )
+    .test(
+      "case wildcard exhaustive",
+      fn() {
+        src := "type Color = { Red, Green, Blue }\nfn f(c: Color) Int { case c { .Red => 1, _ => 0 } }"
+        r := try check_ok(src)
+        .Ok({})
+      },
+    )
+    .test(
+      "for condition",
+      fn() {
+        src := "fn f() Void { x := 0\n for x < 10 { x = x + 1 } }"
+        r := try check_ok(src)
+        .Ok({})
+      },
+    )
+    .test(
+      "for in vector",
+      fn() {
+        src := "fn sum(xs: Vector<Int>) Int { s := 0\n for x in xs { s = s + x }\n s }"
+        r := try check_ok(src)
+        .Ok({})
+      },
+    )
+    .test(
+      "for with index",
+      fn() {
+        src := "fn f(xs: Vector<Int>) Int { s := 0\n for x, i in xs { s = s + i }\n s }"
+        r := try check_ok(src)
+        .Ok({})
+      },
+    )
+    .test(
+      "closure annotated",
+      fn() {
+        src := "fn apply(f: fn(Int) Int, x: Int) Int { f(x) }\nfn main() Int { apply(fn(x: Int) Int { x + 1 }, 5) }"
+        r := try check_ok(src)
+        .Ok({})
+      },
+    )
+    .test(
+      "closure inferred from context",
+      fn() {
+        src := "fn apply(f: fn(Int) Int, x: Int) Int { f(x) }\nfn main() Int { apply(fn(x) { x + 1 }, 5) }"
+        r := try check_ok(src)
+        .Ok({})
+      },
+    )
+    .test(
+      "try option",
+      fn() {
+        src := "fn get(o: Int?) Int? {\n  x := try o\n  r: Int? = .Some(x + 1)\n  r\n}"
+        r := try check_ok(src)
+        .Ok({})
+      },
+    )
+    .test(
+      "try result",
+      fn() {
+        src := "fn inc(r: Result<Int, String>) Result<Int, String> {\n  x := try r\n  out: Result<Int, String> = .Ok(x + 1)\n  out\n}"
+        r := try check_ok(src)
+        .Ok({})
+      },
+    )
+    .test(
+      "try inside annotated closure passed as an argument",
+      fn() {
+        src := "fn inner() Result<Void, String> { .Ok({}) }\nfn run(f: fn() Result<Void, String>) Result<Void, String> { f() }\nrun(fn() Result<Void, String> { x := try inner()\n .Ok(x) })"
+        r := try check_ok(src)
+        .Ok({})
+      },
+    )
+    .test(
+      "try inside non-Result closure errors",
+      fn() {
+        src := "fn inner() Result<Void, String> { .Ok({}) }\nfn run(f: fn() Void) Void { f() }\nrun(fn() { x := try inner()\n x })"
+        msgs := try check_errs(src)
+        try assert.str_contains(msgs[0], "try on Result requires function to return Result")
+        .Ok({})
+      },
+    )
+    .test(
+      "try on non-option",
+      fn() {
+        src := "fn f(x: Int) Int { try x }"
+        msgs := try check_errs(src)
+        try assert.str_contains(msgs[0], "try requires Option or Result")
+        .Ok({})
+      },
+    )
+    .test(
+      "collect",
+      fn() {
+        src := "fn squares(xs: Vector<Int>) Vector<Int> { collect x in xs { x * x } }"
+        r := try check_ok(src)
+        .Ok({})
+      },
+    )
+    .test(
+      "empty array annotated",
+      fn() {
+        src := "fn empty() Vector<Int> { [] }"
+        r := try check_ok(src)
+        .Ok({})
+      },
+    )
+    .test(
+      "case option exhaustive without wildcard",
+      fn() {
+        src := "fn unwrap_or(o: Int?, d: Int) Int { case o { .Some(x) => x, .None => d } }"
+        r := try check_ok(src)
+        try assert.equal(try type_at(r, src, "case o"), "Int")
+        .Ok({})
+      },
+    )
+    .test(
+      "case result exhaustive without wildcard",
+      fn() {
+        src := "fn handle(r: Result<Int, String>) Int { case r { .Ok(x) => x, .Err(e) => 0 } }"
+        r := try check_ok(src)
+        .Ok({})
+      },
+    )
+    .test(
+      "case diverging arm with error",
+      fn() {
+        src := "fn unwrap(o: Int?) Int { case o { .None => error(\"missing\"), .Some(x) => x } }"
+        r := try check_ok_builtins(src)
+        try assert.equal(try type_at(r, src, "case o"), "Int")
+        .Ok({})
+      },
+    )
+    .test(
+      "case all arms diverge is Never",
+      fn() {
+        src := "fn boom(o: Int?) Int { case o { .None => error(\"a\"), .Some(x) => error(\"b\") } }"
+        r := try check_ok_builtins(src)
+        .Ok({})
+      },
+    )
+    .test(
+      "collect with range",
+      fn() {
+        src := "fn squares(n: Int) Vector<Int> { collect i in 0..n { i * i } }"
+        r := try check_ok_builtins(src)
+        .Ok({})
+      },
+    )
+    .test(
+      "error returns Never",
+      fn() {
+        src := "fn fail() Int { error(\"boom\") }"
+        r := try check_ok_builtins(src)
+        .Ok({})
+      },
+    )
+    .test(
+      "call println",
+      fn() {
+        src := "fn greet() Void { println(\"hi\") }"
+        r := try check_ok_builtins(src)
+        .Ok({})
+      },
+    )
+    .test(
+      "integration no errors",
+      fn() {
+        src := "type Point = .{ x: Int, y: Int }\nfn dist(p: Point) Int { p.x + p.y }\nfn main() Int { dist(.{ x: 1, y: 2 }) }"
+        r := try check_ok(src)
+        try assert.equal(try type_at(r, src, "dist(.{"), "Int")
+        .Ok({})
+      },
+    )
+    .test(
+      "integration partial typemap on error",
+      fn() {
+        src := "fn f() Int { x := 42\n y: Bool = x\n x }"
+        r := check_src(src)
 
-      // Should have diagnostics (type mismatch) but still have type info for 42
-      if r.diagnostics.len() == 0 {
-        return .Err("expected diagnostics")
-      }
+        // Should have diagnostics (type mismatch) but still have type info for 42
+        if r.diagnostics.len() == 0 {
+          return .Err("expected diagnostics")
+        }
 
-      try assert.equal(try type_at(r, src, "42"), "Int")
-      .Ok({})
-    },
-  ).test(
-    "interpolation of Int is ok",
-    fn() {
-      dollar := "\$"
-      src := "fn f(n: Int) String { \"hello ${dollar}{n}\" }"
-      r := try check_ok_builtins(src)
-      .Ok({})
-    },
-  ).test(
-    "interpolation of Named without to_string errors",
-    fn() {
-      dollar := "\$"
-      src := "type Point = .{ x: Int, y: Int }\nfn f(p: Point) String { \"at ${dollar}{p}\" }"
-      msgs := try check_errs_builtins(src)
-      found := false
+        try assert.equal(try type_at(r, src, "42"), "Int")
+        .Ok({})
+      },
+    )
+    .test(
+      "interpolation of Int is ok",
+      fn() {
+        dollar := "\$"
+        src := "fn f(n: Int) String { \"hello ${dollar}{n}\" }"
+        r := try check_ok_builtins(src)
+        .Ok({})
+      },
+    )
+    .test(
+      "interpolation of Named without to_string errors",
+      fn() {
+        dollar := "\$"
+        src := "type Point = .{ x: Int, y: Int }\nfn f(p: Point) String { \"at ${dollar}{p}\" }"
+        msgs := try check_errs_builtins(src)
+        found := false
 
-      for m in msgs {
-        if m.contains("to_string") { found = true }
-      }
+        for m in msgs {
+          if m.contains("to_string") { found = true }
+        }
 
-      try assert.is_true(found)
-      .Ok({})
-    },
-  ).test(
-    "interpolation of Named with to_string registered is ok",
-    fn() {
-      dollar := "\$"
-      src := "type Point = .{ x: Int, y: Int }\nfn to_string(p: Point) String { \"\" }\nfn f(p: Point) String { \"at ${dollar}{p}\" }"
-      r := try check_ok_builtins(src)
-      .Ok({})
-    },
-  ).test(
-    "multifunction program",
-    fn() {
-      src := "fn add(a: Int, b: Int) Int { a + b }\nfn double(x: Int) Int { add(x, x) }\nfn main() Int { double(21) }"
-      r := try check_ok(src)
-      try assert.equal(try type_at(r, src, "double(21)"), "Int")
-      try assert.equal(try type_at(r, src, "add(x"), "Int")
-      .Ok({})
-    },
-  ).test(
-    "F2 bool case exhaustive",
-    fn() {
-      src := "fn f(b: Bool) Int { case b { true => 1, false => 0 } }"
-      r := try check_ok(src)
-      .Ok({})
-    },
-  ).test(
-    "F2 bool case non-exhaustive",
-    fn() {
-      src := "fn f(b: Bool) Int { case b { true => 1 } }"
-      msgs := try check_errs(src)
-      try assert.str_contains(msgs[0], "non-exhaustive")
-      .Ok({})
-    },
-  ).test(
-    "F2 bool case with wildcard",
-    fn() {
-      src := "fn f(b: Bool) Int { case b { true => 1, _ => 0 } }"
-      r := try check_ok(src)
-      .Ok({})
-    },
-  ).test(
-    "F3 try option in option-returning fn ok",
-    fn() {
-      src := "fn find(x: Int?) Int? { v := try x\nresult: Int? = .Some(v)\n result }"
-      r := try check_ok(src)
-      .Ok({})
-    },
-  ).test(
-    "F3 try option in int-returning fn errors",
-    fn() {
-      src := "fn find(x: Int?) Int { try x }"
-      msgs := try check_errs(src)
-      found := false
+        try assert.is_true(found)
+        .Ok({})
+      },
+    )
+    .test(
+      "interpolation of Named with to_string registered is ok",
+      fn() {
+        dollar := "\$"
+        src := "type Point = .{ x: Int, y: Int }\nfn to_string(p: Point) String { \"\" }\nfn f(p: Point) String { \"at ${dollar}{p}\" }"
+        r := try check_ok_builtins(src)
+        .Ok({})
+      },
+    )
+    .test(
+      "multifunction program",
+      fn() {
+        src := "fn add(a: Int, b: Int) Int { a + b }\nfn double(x: Int) Int { add(x, x) }\nfn main() Int { double(21) }"
+        r := try check_ok(src)
+        try assert.equal(try type_at(r, src, "double(21)"), "Int")
+        try assert.equal(try type_at(r, src, "add(x"), "Int")
+        .Ok({})
+      },
+    )
+    .test(
+      "F2 bool case exhaustive",
+      fn() {
+        src := "fn f(b: Bool) Int { case b { true => 1, false => 0 } }"
+        r := try check_ok(src)
+        .Ok({})
+      },
+    )
+    .test(
+      "F2 bool case non-exhaustive",
+      fn() {
+        src := "fn f(b: Bool) Int { case b { true => 1 } }"
+        msgs := try check_errs(src)
+        try assert.str_contains(msgs[0], "non-exhaustive")
+        .Ok({})
+      },
+    )
+    .test(
+      "F2 bool case with wildcard",
+      fn() {
+        src := "fn f(b: Bool) Int { case b { true => 1, _ => 0 } }"
+        r := try check_ok(src)
+        .Ok({})
+      },
+    )
+    .test(
+      "F3 try option in option-returning fn ok",
+      fn() {
+        src := "fn find(x: Int?) Int? { v := try x\nresult: Int? = .Some(v)\n result }"
+        r := try check_ok(src)
+        .Ok({})
+      },
+    )
+    .test(
+      "F3 try option in int-returning fn errors",
+      fn() {
+        src := "fn find(x: Int?) Int { try x }"
+        msgs := try check_errs(src)
+        found := false
 
-      for m in msgs {
-        if m.contains("try") { found = true }
-      }
+        for m in msgs {
+          if m.contains("try") { found = true }
+        }
 
-      try assert.is_true(found)
-      .Ok({})
-    },
-  ).test(
-    "F3 try result in int-returning fn errors",
-    fn() {
-      src := "fn parse(x: Result<Int, String>) Int { try x }"
-      msgs := try check_errs(src)
-      found := false
+        try assert.is_true(found)
+        .Ok({})
+      },
+    )
+    .test(
+      "F3 try result in int-returning fn errors",
+      fn() {
+        src := "fn parse(x: Result<Int, String>) Int { try x }"
+        msgs := try check_errs(src)
+        found := false
 
-      for m in msgs {
-        if m.contains("try") { found = true }
-      }
+        for m in msgs {
+          if m.contains("try") { found = true }
+        }
 
-      try assert.is_true(found)
-      .Ok({})
-    },
-  ).test(
-    "F4 inferred return type propagates",
-    fn() {
-      src := "fn double(x: Int) { x * 2 }\nfn use_it() Int { double(3) }"
-      r := try check_ok(src)
-      try assert.equal(try type_at(r, src, "double(3)"), "Int")
-      .Ok({})
-    },
-  ).test(
-    "F4 inferred void return",
-    fn() {
-      src := "fn noop() { }"
-      r := try check_ok(src)
-      .Ok({})
-    },
-  ).test(
-    "F5 qualified variant correct type",
-    fn() {
-      src := "type Color = { Red, Green, Blue }\nfn f(c: Color) Int { case c { Color.Red => 1, Color.Green => 2, Color.Blue => 3 } }"
-      r := try check_ok(src)
-      .Ok({})
-    },
-  ).test(
-    "F5 qualified variant constructor checks nested shorthand argument with expected type",
-    fn() {
-      src := "type Inner = { Wrap(Int) }\ntype Outer = { Make(Inner) }\nfn f(x: Int) Outer { Outer.Make(.Wrap(x)) }"
-      _ := try check_ok(src)
-      .Ok({})
-    },
-  ).test(
-    "F5 array check mode pushes expected element type into shorthand variants",
-    fn() {
-      src := "type Atom = { Int(Int) }\nfn f(x: Int) Vector<Atom> { [.Int(x)] }"
-      _ := try check_ok(src)
-      .Ok({})
-    },
-  ).test(
-    "F8 second function independent of first",
-    fn() {
-      src := "fn first() Int { 1 }\nfn second() String { \"hello\" }"
-      r := try check_ok(src)
-      try assert.equal(try type_at(r, src, "\"hello\""), "String")
-      .Ok({})
-    },
-  ).test(
-    "F9 return has Never type",
-    fn() {
-      src := "fn f() Int { return 42 }"
-      r := try check_ok(src)
-      .Ok({})
-    },
-  ).test(
-    "F9 if-else with returns in both branches diverges",
-    fn() {
-      src := "fn f(x: Bool) Int {\nif x { return 1 } else { return 2 }\n}"
-      r := try check_ok(src)
-      .Ok({})
-    },
-  ).test(
-    "F9 error() call diverges",
-    fn() {
-      src := "fn f(x: Bool) Int {\nif x { return 1 } else { error(\"fail\") }\n}"
-      r := try check_ok_builtins(src)
-      .Ok({})
-    },
-  ).test(
-    "F9 inferred Never helper call diverges in case arm",
-    fn() {
-      src := "fn abort() { error(\"fail\") }\nfn f(x: Bool) Int { case x { true => 1, false => { abort() } } }"
-      r := try check_ok_builtins(src)
-      try assert.equal(try type_at(r, src, "case x"), "Int")
-      .Ok({})
-    },
-  ).test(
-    "F3 try on Result threads error type unification",
-    fn() {
-      // Verify that try on Result properly threads u.ctx so MetaVar substitutions are preserved
-      src := "type E = { Bad }\nfn inner() Result<Int, E> { .Ok(1) }\nfn outer() Result<Int, E> { x := try inner(); .Ok(x) }"
-      r := try check_ok(src)
-      .Ok({})
-    },
-  ).test(
-    "F3 try on Result in non-Result function errors",
-    fn() {
-      src := "type E = { Bad }\nfn inner() Result<Int, E> { .Ok(1) }\nfn outer() Int {\ntry inner()\n}"
-      msgs := try check_errs(src)
-      try assert.is_true(msgs[0].contains("try on Result requires"))
-      .Ok({})
-    },
-  ).test(
-    "F5 correct qualifier accepted",
-    fn() {
-      src := "type Color = { Red, Green, Blue }\nfn f(c: Color) Int {\ncase c {\nColor.Red => 1,\nColor.Green => 2,\nColor.Blue => 3,\n}\n}"
-      r := try check_ok(src)
-      .Ok({})
-    },
-  ).test(
-    "F5 wrong qualifier produces diagnostic",
-    fn() {
-      src := "type Color = { Red, Green, Blue }\ntype Shape = { Red, Circle }\nfn f(c: Color) Int {\ncase c {\nShape.Red => 1,\n_ => 0,\n}\n}"
-      msgs := try check_errs(src)
-      try assert.is_true(msgs[0].contains("does not match"))
-      .Ok({})
-    },
-  ).test(
-    "F5 qualifier follows visible binding rather than preferred stored name",
-    fn() {
-      color_tid := mono_type.TypeId.{ id: 61 }
-      color_entry := resolver.TypeEntry.{
-        id: color_tid,
-        arity: 0,
-        def: .Some(
-          resolver.ResolvedTypeDef.Sum(
-            "Color",
-            [],
-            [
-              resolver.ResolvedVariant.{ name: "Red", fields: [] },
-              resolver.ResolvedVariant.{ name: "Blue", fields: [] },
-            ],
+        try assert.is_true(found)
+        .Ok({})
+      },
+    )
+    .test(
+      "F4 inferred return type propagates",
+      fn() {
+        src := "fn double(x: Int) { x * 2 }\nfn use_it() Int { double(3) }"
+        r := try check_ok(src)
+        try assert.equal(try type_at(r, src, "double(3)"), "Int")
+        .Ok({})
+      },
+    )
+    .test(
+      "F4 inferred void return",
+      fn() {
+        src := "fn noop() { }"
+        r := try check_ok(src)
+        .Ok({})
+      },
+    )
+    .test(
+      "F5 qualified variant correct type",
+      fn() {
+        src := "type Color = { Red, Green, Blue }\nfn f(c: Color) Int { case c { Color.Red => 1, Color.Green => 2, Color.Blue => 3 } }"
+        r := try check_ok(src)
+        .Ok({})
+      },
+    )
+    .test(
+      "F5 qualified variant constructor checks nested shorthand argument with expected type",
+      fn() {
+        src := "type Inner = { Wrap(Int) }\ntype Outer = { Make(Inner) }\nfn f(x: Int) Outer { Outer.Make(.Wrap(x)) }"
+        _ := try check_ok(src)
+        .Ok({})
+      },
+    )
+    .test(
+      "F5 array check mode pushes expected element type into shorthand variants",
+      fn() {
+        src := "type Atom = { Int(Int) }\nfn f(x: Int) Vector<Atom> { [.Int(x)] }"
+        _ := try check_ok(src)
+        .Ok({})
+      },
+    )
+    .test(
+      "F8 second function independent of first",
+      fn() {
+        src := "fn first() Int { 1 }\nfn second() String { \"hello\" }"
+        r := try check_ok(src)
+        try assert.equal(try type_at(r, src, "\"hello\""), "String")
+        .Ok({})
+      },
+    )
+    .test(
+      "F9 return has Never type",
+      fn() {
+        src := "fn f() Int { return 42 }"
+        r := try check_ok(src)
+        .Ok({})
+      },
+    )
+    .test(
+      "F9 if-else with returns in both branches diverges",
+      fn() {
+        src := "fn f(x: Bool) Int {\nif x { return 1 } else { return 2 }\n}"
+        r := try check_ok(src)
+        .Ok({})
+      },
+    )
+    .test(
+      "F9 error() call diverges",
+      fn() {
+        src := "fn f(x: Bool) Int {\nif x { return 1 } else { error(\"fail\") }\n}"
+        r := try check_ok_builtins(src)
+        .Ok({})
+      },
+    )
+    .test(
+      "F9 inferred Never helper call diverges in case arm",
+      fn() {
+        src := "fn abort() { error(\"fail\") }\nfn f(x: Bool) Int { case x { true => 1, false => { abort() } } }"
+        r := try check_ok_builtins(src)
+        try assert.equal(try type_at(r, src, "case x"), "Int")
+        .Ok({})
+      },
+    )
+    .test(
+      "F3 try on Result threads error type unification",
+      fn() {
+        // Verify that try on Result properly threads u.ctx so MetaVar substitutions are preserved
+        src := "type E = { Bad }\nfn inner() Result<Int, E> { .Ok(1) }\nfn outer() Result<Int, E> { x := try inner(); .Ok(x) }"
+        r := try check_ok(src)
+        .Ok({})
+      },
+    )
+    .test(
+      "F3 try on Result in non-Result function errors",
+      fn() {
+        src := "type E = { Bad }\nfn inner() Result<Int, E> { .Ok(1) }\nfn outer() Int {\ntry inner()\n}"
+        msgs := try check_errs(src)
+        try assert.is_true(msgs[0].contains("try on Result requires"))
+        .Ok({})
+      },
+    )
+    .test(
+      "F5 correct qualifier accepted",
+      fn() {
+        src := "type Color = { Red, Green, Blue }\nfn f(c: Color) Int {\ncase c {\nColor.Red => 1,\nColor.Green => 2,\nColor.Blue => 3,\n}\n}"
+        r := try check_ok(src)
+        .Ok({})
+      },
+    )
+    .test(
+      "F5 wrong qualifier produces diagnostic",
+      fn() {
+        src := "type Color = { Red, Green, Blue }\ntype Shape = { Red, Circle }\nfn f(c: Color) Int {\ncase c {\nShape.Red => 1,\n_ => 0,\n}\n}"
+        msgs := try check_errs(src)
+        try assert.is_true(msgs[0].contains("does not match"))
+        .Ok({})
+      },
+    )
+    .test(
+      "F5 qualifier follows visible binding rather than preferred stored name",
+      fn() {
+        color_tid := mono_type.TypeId.{ id: 61 }
+        color_entry := resolver.TypeEntry.{
+          id: color_tid,
+          arity: 0,
+          def: .Some(
+            resolver.ResolvedTypeDef.Sum(
+              "Color",
+              [],
+              [
+                resolver.ResolvedVariant.{ name: "Red", fields: [] },
+                resolver.ResolvedVariant.{ name: "Blue", fields: [] },
+              ],
+            ),
           ),
-        ),
-        span: span.Span.{ file_id: 0, start: 0, end: 0 },
-        is_extern: false,
-      }
-      env := resolver.empty_env().register_type_entry(color_entry, "dep.Color").bind_type(
-        "Color",
-        color_tid,
-      )
-      src := "fn f(c: Color) Int {\ncase c {\nColor.Red => 1,\nColor.Blue => 2,\n}\n}"
-      _ := try check_ok_with_env(src, env)
-      .Ok({})
-    },
-  ).test(
-    "C1 alias field access",
-    fn() {
-      src := "type Pt = .{ x: Int, y: Int }\ntype MyPt = Pt\nfn get_x(p: MyPt) Int { p.x }"
-      r := try check_ok(src)
-      try assert.equal(try type_at(r, src, "p.x"), "Int")
-      .Ok({})
-    },
-  ).test(
-    "C1 alias variant pattern match",
-    fn() {
-      src := "type MaybeInt = Int?\nfn unwrap(m: MaybeInt) Int {\ncase m { .Some(x) => x, .None => 0 }\n}"
-      r := try check_ok(src)
-      .Ok({})
-    },
-  ).test(
-    "C2 for over range produces Int",
-    fn() {
-      src := "fn f() Int {\nx := 0\nfor i in 0..10 { x = i }\nx\n}"
-      r := try check_ok_builtins(src)
-      .Ok({})
-    },
-  ).test(
-    "C2 for over non-iterable produces diagnostic",
-    fn() {
-      src := "fn f() Void { for x in 42 { x } }"
-      msgs := try check_errs(src)
-      try assert.is_true(msgs[0].contains("cannot iterate"))
-      .Ok({})
-    },
-  ).test(
-    "C2 iterator recognition follows type definition rather than preferred stored name",
-    fn() {
-      iter_tid := mono_type.TypeId.{ id: 62 }
-      iter_entry := resolver.TypeEntry.{
-        id: iter_tid,
-        arity: 1,
-        def: .Some(
-          resolver.ResolvedTypeDef.Sum(
-            "Iterator",
-            plain_resolved_type_params(["T"]),
-            [resolver.ResolvedVariant.{ name: "Item", fields: [mono_type.MonoType.Var("T")] }],
+          span: span.Span.{ file_id: 0, start: 0, end: 0 },
+          is_extern: false,
+        }
+        env := resolver.empty_env()
+          .register_type_entry(color_entry, "dep.Color")
+          .bind_type("Color", color_tid)
+        src := "fn f(c: Color) Int {\ncase c {\nColor.Red => 1,\nColor.Blue => 2,\n}\n}"
+        _ := try check_ok_with_env(src, env)
+        .Ok({})
+      },
+    )
+    .test(
+      "C1 alias field access",
+      fn() {
+        src := "type Pt = .{ x: Int, y: Int }\ntype MyPt = Pt\nfn get_x(p: MyPt) Int { p.x }"
+        r := try check_ok(src)
+        try assert.equal(try type_at(r, src, "p.x"), "Int")
+        .Ok({})
+      },
+    )
+    .test(
+      "C1 alias variant pattern match",
+      fn() {
+        src := "type MaybeInt = Int?\nfn unwrap(m: MaybeInt) Int {\ncase m { .Some(x) => x, .None => 0 }\n}"
+        r := try check_ok(src)
+        .Ok({})
+      },
+    )
+    .test(
+      "C2 for over range produces Int",
+      fn() {
+        src := "fn f() Int {\nx := 0\nfor i in 0..10 { x = i }\nx\n}"
+        r := try check_ok_builtins(src)
+        .Ok({})
+      },
+    )
+    .test(
+      "C2 for over non-iterable produces diagnostic",
+      fn() {
+        src := "fn f() Void { for x in 42 { x } }"
+        msgs := try check_errs(src)
+        try assert.is_true(msgs[0].contains("cannot iterate"))
+        .Ok({})
+      },
+    )
+    .test(
+      "C2 iterator recognition follows type definition rather than preferred stored name",
+      fn() {
+        iter_tid := mono_type.TypeId.{ id: 62 }
+        iter_entry := resolver.TypeEntry.{
+          id: iter_tid,
+          arity: 1,
+          def: .Some(
+            resolver.ResolvedTypeDef.Sum(
+              "Iterator",
+              plain_resolved_type_params(["T"]),
+              [resolver.ResolvedVariant.{ name: "Item", fields: [mono_type.MonoType.Var("T")] }],
+            ),
           ),
-        ),
-        span: span.Span.{ file_id: 0, start: 0, end: 0 },
-        is_extern: false,
-      }
-      env := resolver.empty_env().register_type_entry(iter_entry, "dep.Iterator").bind_type(
-        "Iterator",
-        iter_tid,
-      )
-      src := "fn f(it: Iterator<Int>) Void { for x in it { x } }"
-      _ := try check_ok_with_env(src, env)
-      .Ok({})
-    },
-  ).test(
-    "C3 break in for loop ok",
-    fn() {
-      src := "fn f() Void {\nfor i in 0..10 { if i > 5 { break } }\n}"
-      r := try check_ok_builtins(src)
-      .Ok({})
-    },
-  ).test(
-    "C3 defer synths body",
-    fn() {
-      src := "fn f() Void { defer 42 + true }"
-      msgs := try check_errs(src)
-      try assert.is_true(msgs.len() > 0)
-      .Ok({})
-    },
-  ).test(
-    "C3 assign checks type",
-    fn() {
-      src := "fn f() Void {\nx := 42\nx = \"hi\"\n}"
-      msgs := try check_errs(src)
-      try assert.is_true(msgs[0].contains("type mismatch"))
-      .Ok({})
-    },
-  ).test(
-    "C3 assign matching type ok",
-    fn() {
-      src := "fn f() Void {\nx := 42\nx = 99\n}"
-      r := try check_ok(src)
-      .Ok({})
-    },
-  ).test(
-    "C4 top-level let populates type map",
-    fn() {
-      src := "x := 42"
-      r := try check_ok(src)
-      try assert.equal(try type_at(r, src, "42"), "Int")
-      .Ok({})
-    },
-  ).test(
-    "C4 top-level type mismatch",
-    fn() {
-      src := "x: Bool = 42"
-      msgs := try check_errs(src)
-      try assert.is_true(msgs[0].contains("type mismatch"))
-      .Ok({})
-    },
-  ).test(
-    "C6 non-exhaustive lists missing variants",
-    fn() {
-      src := "type Shape = { Circle, Rect, UnitSquare }\nfn f(s: Shape) Int {\ncase s { .Circle => 1 }\n}"
-      msgs := try check_errs(src)
-      try assert.is_true(msgs[0].contains("Rect"))
-      .Ok({})
-    },
-  ).test(
-    "C9 no uninstantiated Var in existing tests",
-    fn() {
-      // Regression guard: basic generic call should not produce Var errors
-      src := "fn identity<T>(x: T) T { x }\nfn f() Int { identity(42) }"
-      r := try check_ok(src)
-      .Ok({})
-    },
-  ).test(
-    "C5 closure call basic",
-    fn() {
-      src := "fn f() Int { g := fn(x: Int) Int { x + 1 }\n g(5) }"
-      r := try check_ok(src)
-      try assert.equal(try type_at(r, src, "g(5)"), "Int")
-      .Ok({})
-    },
-  ).test(
-    "C5 closure call pushes expected type to record arg",
-    fn() {
-      src := "type Pt = .{ x: Int, y: Int }\nfn f() Int { g := fn(p: Pt) Int { p.x }\n g(.{ x: 1, y: 2 }) }"
-      r := try check_ok(src)
-      .Ok({})
-    },
-  ).test(
-    "C5 closure call pushes expected type to variant arg",
-    fn() {
-      src := "fn f() Int { g := fn(o: Int?) Int { case o { .Some(x) => x, .None => 0 } }\n g(.Some(42)) }"
-      r := try check_ok(src)
-      .Ok({})
-    },
-  ).test(
-    "C7 named record constructor synth",
-    fn() {
-      src := "type Point = .{ x: Int, y: Int }\nfn f() Point { p := Point.{ x: 1, y: 2 }\n p }"
-      r := try check_ok(src)
-      .Ok({})
-    },
-  ).test(
-    "C7 named record missing field",
-    fn() {
-      src := "type Point = .{ x: Int, y: Int }\nfn f() Point { Point.{ x: 1 } }"
-      msgs := try check_errs(src)
-      try assert.str_contains(msgs[0], "missing field 'y'")
-      .Ok({})
-    },
-  ).test(
-    "C7 named record unknown type",
-    fn() {
-      src := "fn f() Void { Nonexistent.{ x: 1 } }"
-      msgs := try check_errs(src)
-      try assert.str_contains(msgs[0], "undefined type")
-      .Ok({})
-    },
-  ).test(
-    "C8 solved MetaVar no diagnostic",
-    fn() {
-      src := "fn identity<T>(x: T) T { x }\nfn f() Int { identity(42) }"
-      r := try check_ok(src)
-      .Ok({})
-    },
-  ).test(
-    "C8 unsolved MetaVar produces diagnostic",
-    fn() {
-      src := "fn identity<T>(x: T) T { x }\nfn f() Void { identity(identity(identity([]))) }"
-      msgs := try check_errs(src)
-      found := false
+          span: span.Span.{ file_id: 0, start: 0, end: 0 },
+          is_extern: false,
+        }
+        env := resolver.empty_env()
+          .register_type_entry(iter_entry, "dep.Iterator")
+          .bind_type("Iterator", iter_tid)
+        src := "fn f(it: Iterator<Int>) Void { for x in it { x } }"
+        _ := try check_ok_with_env(src, env)
+        .Ok({})
+      },
+    )
+    .test(
+      "C3 break in for loop ok",
+      fn() {
+        src := "fn f() Void {\nfor i in 0..10 { if i > 5 { break } }\n}"
+        r := try check_ok_builtins(src)
+        .Ok({})
+      },
+    )
+    .test(
+      "C3 defer synths body",
+      fn() {
+        src := "fn f() Void { defer 42 + true }"
+        msgs := try check_errs(src)
+        try assert.is_true(msgs.len() > 0)
+        .Ok({})
+      },
+    )
+    .test(
+      "C3 assign checks type",
+      fn() {
+        src := "fn f() Void {\nx := 42\nx = \"hi\"\n}"
+        msgs := try check_errs(src)
+        try assert.is_true(msgs[0].contains("type mismatch"))
+        .Ok({})
+      },
+    )
+    .test(
+      "C3 assign matching type ok",
+      fn() {
+        src := "fn f() Void {\nx := 42\nx = 99\n}"
+        r := try check_ok(src)
+        .Ok({})
+      },
+    )
+    .test(
+      "C4 top-level let populates type map",
+      fn() {
+        src := "x := 42"
+        r := try check_ok(src)
+        try assert.equal(try type_at(r, src, "42"), "Int")
+        .Ok({})
+      },
+    )
+    .test(
+      "C4 top-level type mismatch",
+      fn() {
+        src := "x: Bool = 42"
+        msgs := try check_errs(src)
+        try assert.is_true(msgs[0].contains("type mismatch"))
+        .Ok({})
+      },
+    )
+    .test(
+      "C6 non-exhaustive lists missing variants",
+      fn() {
+        src := "type Shape = { Circle, Rect, UnitSquare }\nfn f(s: Shape) Int {\ncase s { .Circle => 1 }\n}"
+        msgs := try check_errs(src)
+        try assert.is_true(msgs[0].contains("Rect"))
+        .Ok({})
+      },
+    )
+    .test(
+      "C9 no uninstantiated Var in existing tests",
+      fn() {
+        // Regression guard: basic generic call should not produce Var errors
+        src := "fn identity<T>(x: T) T { x }\nfn f() Int { identity(42) }"
+        r := try check_ok(src)
+        .Ok({})
+      },
+    )
+    .test(
+      "C5 closure call basic",
+      fn() {
+        src := "fn f() Int { g := fn(x: Int) Int { x + 1 }\n g(5) }"
+        r := try check_ok(src)
+        try assert.equal(try type_at(r, src, "g(5)"), "Int")
+        .Ok({})
+      },
+    )
+    .test(
+      "C5 closure call pushes expected type to record arg",
+      fn() {
+        src := "type Pt = .{ x: Int, y: Int }\nfn f() Int { g := fn(p: Pt) Int { p.x }\n g(.{ x: 1, y: 2 }) }"
+        r := try check_ok(src)
+        .Ok({})
+      },
+    )
+    .test(
+      "C5 closure call pushes expected type to variant arg",
+      fn() {
+        src := "fn f() Int { g := fn(o: Int?) Int { case o { .Some(x) => x, .None => 0 } }\n g(.Some(42)) }"
+        r := try check_ok(src)
+        .Ok({})
+      },
+    )
+    .test(
+      "C7 named record constructor synth",
+      fn() {
+        src := "type Point = .{ x: Int, y: Int }\nfn f() Point { p := Point.{ x: 1, y: 2 }\n p }"
+        r := try check_ok(src)
+        .Ok({})
+      },
+    )
+    .test(
+      "C7 named record missing field",
+      fn() {
+        src := "type Point = .{ x: Int, y: Int }\nfn f() Point { Point.{ x: 1 } }"
+        msgs := try check_errs(src)
+        try assert.str_contains(msgs[0], "missing field 'y'")
+        .Ok({})
+      },
+    )
+    .test(
+      "C7 named record unknown type",
+      fn() {
+        src := "fn f() Void { Nonexistent.{ x: 1 } }"
+        msgs := try check_errs(src)
+        try assert.str_contains(msgs[0], "undefined type")
+        .Ok({})
+      },
+    )
+    .test(
+      "C8 solved MetaVar no diagnostic",
+      fn() {
+        src := "fn identity<T>(x: T) T { x }\nfn f() Int { identity(42) }"
+        r := try check_ok(src)
+        .Ok({})
+      },
+    )
+    .test(
+      "C8 unsolved MetaVar produces diagnostic",
+      fn() {
+        src := "fn identity<T>(x: T) T { x }\nfn f() Void { identity(identity(identity([]))) }"
+        msgs := try check_errs(src)
+        found := false
 
-      for m in msgs {
-        if m.contains("ambiguous") or m.contains("cannot infer") { found = true }
-      }
+        for m in msgs {
+          if m.contains("ambiguous") or m.contains("cannot infer") { found = true }
+        }
 
-      try assert.is_true(found)
-      .Ok({})
-    },
-  ).test(
-    "T2 wrong variant arg count: Some(1,2)",
-    fn() {
-      src := "fn f() Int? { .Some(1, 2) }"
-      msgs := try check_errs(src)
-      try assert.str_contains(msgs[0], "expected 1 arguments, got 2")
-      .Ok({})
-    },
-  ).test(
-    "T2 wrong variant arg count: None(1)",
-    fn() {
-      src := "fn f() Int? { .None(1) }"
-      msgs := try check_errs(src)
-      try assert.str_contains(msgs[0], "expected 0 arguments, got 1")
-      .Ok({})
-    },
-  ).test(
-    "T2 wrong variant arg count: Ok()",
-    fn() {
-      src := "fn f() Result<Int, String> { .Ok() }"
-      msgs := try check_errs(src)
-      try assert.str_contains(msgs[0], "expected 1 arguments, got 0")
-      .Ok({})
-    },
-  ).test(
-    "T2 wrong variant arg count: Err(1,2)",
-    fn() {
-      src := "fn f() Result<Int, String> { .Err(1, 2) }"
-      msgs := try check_errs(src)
-      try assert.str_contains(msgs[0], "expected 1 arguments, got 2")
-      .Ok({})
-    },
-  ).test(
-    "T2 unknown variant for Option",
-    fn() {
-      src := "fn f() Int? { .Foo(1) }"
-      msgs := try check_errs(src)
-      found := false
+        try assert.is_true(found)
+        .Ok({})
+      },
+    )
+    .test(
+      "T2 wrong variant arg count: Some(1,2)",
+      fn() {
+        src := "fn f() Int? { .Some(1, 2) }"
+        msgs := try check_errs(src)
+        try assert.str_contains(msgs[0], "expected 1 arguments, got 2")
+        .Ok({})
+      },
+    )
+    .test(
+      "T2 wrong variant arg count: None(1)",
+      fn() {
+        src := "fn f() Int? { .None(1) }"
+        msgs := try check_errs(src)
+        try assert.str_contains(msgs[0], "expected 0 arguments, got 1")
+        .Ok({})
+      },
+    )
+    .test(
+      "T2 wrong variant arg count: Ok()",
+      fn() {
+        src := "fn f() Result<Int, String> { .Ok() }"
+        msgs := try check_errs(src)
+        try assert.str_contains(msgs[0], "expected 1 arguments, got 0")
+        .Ok({})
+      },
+    )
+    .test(
+      "T2 wrong variant arg count: Err(1,2)",
+      fn() {
+        src := "fn f() Result<Int, String> { .Err(1, 2) }"
+        msgs := try check_errs(src)
+        try assert.str_contains(msgs[0], "expected 1 arguments, got 2")
+        .Ok({})
+      },
+    )
+    .test(
+      "T2 unknown variant for Option",
+      fn() {
+        src := "fn f() Int? { .Foo(1) }"
+        msgs := try check_errs(src)
+        found := false
 
-      for m in msgs {
-        if m.contains("unknown variant") or m.contains("variant") { found = true }
-      }
+        for m in msgs {
+          if m.contains("unknown variant") or m.contains("variant") { found = true }
+        }
 
-      try assert.is_true(found)
-      .Ok({})
-    },
-  ).test(
-    "T2 user sum variant in check mode",
-    fn() {
-      src := "type Shape = { Circle(Float), Rect(Float, Float) }\nfn f() Shape { .Circle(1.0) }"
-      r := try check_ok(src)
-      .Ok({})
-    },
-  ).test(
-    "T2 user sum pattern",
-    fn() {
-      src := "type Shape = { Circle(Float), Rect(Float, Float) }\nfn f(s: Shape) Float {\ncase s { .Circle(r) => r, .Rect(w, h) => w }\n}"
-      r := try check_ok(src)
-      .Ok({})
-    },
-  ).test(
-    "T2 wrong sub-pattern count in user sum",
-    fn() {
-      src := "type Shape = { Circle(Float) }\nfn f(s: Shape) Float {\ncase s { .Circle(r, s) => r }\n}"
-      msgs := try check_errs(src)
-      found := false
+        try assert.is_true(found)
+        .Ok({})
+      },
+    )
+    .test(
+      "T2 user sum variant in check mode",
+      fn() {
+        src := "type Shape = { Circle(Float), Rect(Float, Float) }\nfn f() Shape { .Circle(1.0) }"
+        r := try check_ok(src)
+        .Ok({})
+      },
+    )
+    .test(
+      "T2 user sum pattern",
+      fn() {
+        src := "type Shape = { Circle(Float), Rect(Float, Float) }\nfn f(s: Shape) Float {\ncase s { .Circle(r) => r, .Rect(w, h) => w }\n}"
+        r := try check_ok(src)
+        .Ok({})
+      },
+    )
+    .test(
+      "T2 wrong sub-pattern count in user sum",
+      fn() {
+        src := "type Shape = { Circle(Float) }\nfn f(s: Shape) Float {\ncase s { .Circle(r, s) => r }\n}"
+        msgs := try check_errs(src)
+        found := false
 
-      for m in msgs {
-        if m.contains("expected 1 arguments, got 2") { found = true }
-      }
+        for m in msgs {
+          if m.contains("expected 1 arguments, got 2") { found = true }
+        }
 
-      try assert.is_true(found)
-      .Ok({})
-    },
-  ).test(
-    "T2 field access on sum type",
-    fn() {
-      src := "type Shape = { Circle(Float) }\nfn f(s: Shape) Float { s.foo }"
-      msgs := try check_errs(src)
-      try assert.is_true(msgs.len() > 0)
-      .Ok({})
-    },
-  ).test(
-    "T2 field access on primitive",
-    fn() {
-      src := "fn f(x: Int) Int { x.foo }"
-      msgs := try check_errs(src)
-      found := false
+        try assert.is_true(found)
+        .Ok({})
+      },
+    )
+    .test(
+      "T2 field access on sum type",
+      fn() {
+        src := "type Shape = { Circle(Float) }\nfn f(s: Shape) Float { s.foo }"
+        msgs := try check_errs(src)
+        try assert.is_true(msgs.len() > 0)
+        .Ok({})
+      },
+    )
+    .test(
+      "T2 field access on primitive",
+      fn() {
+        src := "fn f(x: Int) Int { x.foo }"
+        msgs := try check_errs(src)
+        found := false
 
-      for m in msgs {
-        if m.contains("field") or m.contains("cannot access") { found = true }
-      }
+        for m in msgs {
+          if m.contains("field") or m.contains("cannot access") { found = true }
+        }
 
-      try assert.is_true(found)
-      .Ok({})
-    },
-  ).test(
-    "T2 record lit with extra field",
-    fn() {
-      src := "type Point = .{ x: Int, y: Int }\nfn make() Point { .{ x: 1, y: 2, z: 3 } }"
-      msgs := try check_errs(src)
-      try assert.str_contains(msgs[0], "no field `z`")
-      .Ok({})
-    },
-  ).test(
-    "T2 record literal in non-Named context",
-    fn() {
-      src := "fn f() Int { .{ x: 1 } }"
-      msgs := try check_errs(src)
-      try assert.is_true(msgs.len() > 0)
-      .Ok({})
-    },
-  ).test(
-    "T2 dict indexing",
-    fn() {
-      src := "fn f(d: Dict<String, Int>) Int? { d[\"key\"] }"
-      r := try check_ok(src)
-      .Ok({})
-    },
-  ).test(
-    "T2 string indexing",
-    fn() {
-      src := "fn f(s: String) Byte { s[0] }"
-      r := try check_ok(src)
-      .Ok({})
-    },
-  ).test(
-    "T2 indexing non-indexable",
-    fn() {
-      src := "fn f(x: Int) Int { x[0] }"
-      msgs := try check_errs(src)
-      try assert.str_contains(msgs[0], "cannot index")
-      .Ok({})
-    },
-  ).test(
-    "T2 range operator",
-    fn() {
-      src := "fn f() { x := 1..10\nx }"
-      r := try check_ok_builtins(src)
-      try assert.equal(try type_at(r, src, "1..10"), "Named(3)")
-      .Ok({})
-    },
-  ).test(
-    "T2 bitwise and",
-    fn() {
-      src := "fn f(a: Int, b: Int) Int { a & b }"
-      r := try check_ok(src)
-      .Ok({})
-    },
-  ).test(
-    "T2 bitwise or",
-    fn() {
-      src := "fn f(a: Int, b: Int) Int { a | b }"
-      r := try check_ok(src)
-      .Ok({})
-    },
-  ).test(
-    "T2 bitwise xor",
-    fn() {
-      src := "fn f(a: Int, b: Int) Int { a ^ b }"
-      r := try check_ok(src)
-      .Ok({})
-    },
-  ).test(
-    "T2 bitwise not",
-    fn() {
-      src := "fn f(a: Int) Int { ~a }"
-      r := try check_ok(src)
-      try assert.equal(try type_at(r, src, "~a"), "Int")
-      .Ok({})
-    },
-  ).test(
-    "T2 self-application type error",
-    fn() {
-      src := "fn f<T>(x: T) T { f(f) }"
-      msgs := try check_errs(src)
-      try assert.is_true(msgs.len() > 0)
-      .Ok({})
-    },
-  ).test(
-    "T2 scope shadowing",
-    fn() {
-      src := "fn f() Int {\nx := 42\nif true {\nx := \"hello\"\nx\n}\nx\n}"
-      r := try check_ok(src)
-      try assert.equal(try type_at(r, src, "42"), "Int")
-      .Ok({})
-    },
-  ).test(
-    "T2 literal pattern in case",
-    fn() {
-      src := "fn f(x: Int) String {\ncase x {\n1 => \"one\",\n_ => \"other\",\n}\n}"
-      r := try check_ok(src)
-      .Ok({})
-    },
-  ).test(
-    "T3 field access on generic record",
-    fn() {
-      src := "type Box<T> = .{ value: T }\nfn get_val(b: Box<Int>) Int { b.value }"
-      r := try check_ok(src)
-      try assert.equal(try type_at(r, src, "b.value"), "Int")
-      .Ok({})
-    },
-  ).test(
-    "P1 assignment rejects non-lvalue target",
-    fn() {
-      src := "fn f() Void { 1 = 2 }"
-      msgs := try check_errs(src)
-      found := false
+        try assert.is_true(found)
+        .Ok({})
+      },
+    )
+    .test(
+      "T2 record lit with extra field",
+      fn() {
+        src := "type Point = .{ x: Int, y: Int }\nfn make() Point { .{ x: 1, y: 2, z: 3 } }"
+        msgs := try check_errs(src)
+        try assert.str_contains(msgs[0], "no field `z`")
+        .Ok({})
+      },
+    )
+    .test(
+      "T2 record literal in non-Named context",
+      fn() {
+        src := "fn f() Int { .{ x: 1 } }"
+        msgs := try check_errs(src)
+        try assert.is_true(msgs.len() > 0)
+        .Ok({})
+      },
+    )
+    .test(
+      "T2 dict indexing",
+      fn() {
+        src := "fn f(d: Dict<String, Int>) Int? { d[\"key\"] }"
+        r := try check_ok(src)
+        .Ok({})
+      },
+    )
+    .test(
+      "T2 string indexing",
+      fn() {
+        src := "fn f(s: String) Byte { s[0] }"
+        r := try check_ok(src)
+        .Ok({})
+      },
+    )
+    .test(
+      "T2 indexing non-indexable",
+      fn() {
+        src := "fn f(x: Int) Int { x[0] }"
+        msgs := try check_errs(src)
+        try assert.str_contains(msgs[0], "cannot index")
+        .Ok({})
+      },
+    )
+    .test(
+      "T2 range operator",
+      fn() {
+        src := "fn f() { x := 1..10\nx }"
+        r := try check_ok_builtins(src)
+        try assert.equal(try type_at(r, src, "1..10"), "Named(3)")
+        .Ok({})
+      },
+    )
+    .test(
+      "T2 bitwise and",
+      fn() {
+        src := "fn f(a: Int, b: Int) Int { a & b }"
+        r := try check_ok(src)
+        .Ok({})
+      },
+    )
+    .test(
+      "T2 bitwise or",
+      fn() {
+        src := "fn f(a: Int, b: Int) Int { a | b }"
+        r := try check_ok(src)
+        .Ok({})
+      },
+    )
+    .test(
+      "T2 bitwise xor",
+      fn() {
+        src := "fn f(a: Int, b: Int) Int { a ^ b }"
+        r := try check_ok(src)
+        .Ok({})
+      },
+    )
+    .test(
+      "T2 bitwise not",
+      fn() {
+        src := "fn f(a: Int) Int { ~a }"
+        r := try check_ok(src)
+        try assert.equal(try type_at(r, src, "~a"), "Int")
+        .Ok({})
+      },
+    )
+    .test(
+      "T2 self-application type error",
+      fn() {
+        src := "fn f<T>(x: T) T { f(f) }"
+        msgs := try check_errs(src)
+        try assert.is_true(msgs.len() > 0)
+        .Ok({})
+      },
+    )
+    .test(
+      "T2 scope shadowing",
+      fn() {
+        src := "fn f() Int {\nx := 42\nif true {\nx := \"hello\"\nx\n}\nx\n}"
+        r := try check_ok(src)
+        try assert.equal(try type_at(r, src, "42"), "Int")
+        .Ok({})
+      },
+    )
+    .test(
+      "T2 literal pattern in case",
+      fn() {
+        src := "fn f(x: Int) String {\ncase x {\n1 => \"one\",\n_ => \"other\",\n}\n}"
+        r := try check_ok(src)
+        .Ok({})
+      },
+    )
+    .test(
+      "T3 field access on generic record",
+      fn() {
+        src := "type Box<T> = .{ value: T }\nfn get_val(b: Box<Int>) Int { b.value }"
+        r := try check_ok(src)
+        try assert.equal(try type_at(r, src, "b.value"), "Int")
+        .Ok({})
+      },
+    )
+    .test(
+      "P1 assignment rejects non-lvalue target",
+      fn() {
+        src := "fn f() Void { 1 = 2 }"
+        msgs := try check_errs(src)
+        found := false
 
-      for m in msgs {
-        if m.contains("assignment") or m.contains("target") { found = true }
-      }
+        for m in msgs {
+          if m.contains("assignment") or m.contains("target") { found = true }
+        }
 
-      try assert.is_true(found)
-      .Ok({})
-    },
-  ).test(
-    "P1 private top-level rebinding is allowed",
-    fn() {
-      src := "x := 1\nx = 2"
-      r := try check_ok(src)
-      .Ok({})
-    },
-  ).test(
-    "P1 private top-level rebinding in for loop is allowed",
-    fn() {
-      src := "sum := 0\nfor i in 0..10 {\n  sum = sum + i\n}"
-      r := try check_ok_builtins(src)
-      .Ok({})
-    },
-  ).test(
-    "P1 pub binding rebinding is rejected",
-    fn() {
-      src := "pub x := 1\nx = 2"
-      msgs := try check_errs(src)
-      found := false
+        try assert.is_true(found)
+        .Ok({})
+      },
+    )
+    .test(
+      "P1 private top-level rebinding is allowed",
+      fn() {
+        src := "x := 1\nx = 2"
+        r := try check_ok(src)
+        .Ok({})
+      },
+    )
+    .test(
+      "P1 private top-level rebinding in for loop is allowed",
+      fn() {
+        src := "sum := 0\nfor i in 0..10 {\n  sum = sum + i\n}"
+        r := try check_ok_builtins(src)
+        .Ok({})
+      },
+    )
+    .test(
+      "P1 pub binding rebinding is rejected",
+      fn() {
+        src := "pub x := 1\nx = 2"
+        msgs := try check_errs(src)
+        found := false
 
-      for m in msgs {
-        if m.contains("public") or m.contains("pub") { found = true }
-      }
+        for m in msgs {
+          if m.contains("public") or m.contains("pub") { found = true }
+        }
 
-      try assert.is_true(found)
-      .Ok({})
-    },
-  ).test(
-    "P1 field assignment happy path",
-    fn() {
-      src := "type Point = .{ x: Int }\nfn f(p: Point) Void { p.x = 1 }"
-      r := try check_ok(src)
-      .Ok({})
-    },
-  ).test(
-    "P1 vector index assignment validates index and value types",
-    fn() {
-      src := "fn f(xs: Vector<Int>) Void { xs[0] = 1 }"
-      r := try check_ok(src)
-      .Ok({})
-    },
-  ).test(
-    "P1 dict index assignment validates key and value types",
-    fn() {
-      src := "fn f(m: Dict<String, Int>) Void { m[\"k\"] = 1 }"
-      r := try check_ok(src)
-      .Ok({})
-    },
-  ).test(
-    "P2 receiver method call dispatches through method registry",
-    fn() {
-      src := "type Point = .{ x: Int }\nfn len(p: Point) Int { p.x }\nfn f(p: Point) Int { p.len() }"
-      r := try check_ok(src)
-      try assert.equal(try type_at(r, src, "p.len()"), "Int")
-      .Ok({})
-    },
-  ).test(
-    "P2 receiver method lookup follows receiver identity rather than preferred name",
-    fn() {
-      point_tid := mono_type.TypeId.{ id: 41 }
-      point_entry := resolver.TypeEntry.{
-        id: point_tid,
-        arity: 0,
-        def: .Some(
-          resolver.ResolvedTypeDef.Record(
-            "dep.Point",
-            [],
-            [resolver.ResolvedField.{ name: "x", ty: mono_type.MonoType.Int }],
+        try assert.is_true(found)
+        .Ok({})
+      },
+    )
+    .test(
+      "P1 field assignment happy path",
+      fn() {
+        src := "type Point = .{ x: Int }\nfn f(p: Point) Void { p.x = 1 }"
+        r := try check_ok(src)
+        .Ok({})
+      },
+    )
+    .test(
+      "P1 vector index assignment validates index and value types",
+      fn() {
+        src := "fn f(xs: Vector<Int>) Void { xs[0] = 1 }"
+        r := try check_ok(src)
+        .Ok({})
+      },
+    )
+    .test(
+      "P1 dict index assignment validates key and value types",
+      fn() {
+        src := "fn f(m: Dict<String, Int>) Void { m[\"k\"] = 1 }"
+        r := try check_ok(src)
+        .Ok({})
+      },
+    )
+    .test(
+      "P2 receiver method call dispatches through method registry",
+      fn() {
+        src := "type Point = .{ x: Int }\nfn len(p: Point) Int { p.x }\nfn f(p: Point) Int { p.len() }"
+        r := try check_ok(src)
+        try assert.equal(try type_at(r, src, "p.len()"), "Int")
+        .Ok({})
+      },
+    )
+    .test(
+      "P2 receiver method lookup follows receiver identity rather than preferred name",
+      fn() {
+        point_tid := mono_type.TypeId.{ id: 41 }
+        point_entry := resolver.TypeEntry.{
+          id: point_tid,
+          arity: 0,
+          def: .Some(
+            resolver.ResolvedTypeDef.Record(
+              "dep.Point",
+              [],
+              [resolver.ResolvedField.{ name: "x", ty: mono_type.MonoType.Int }],
+            ),
           ),
-        ),
-        span: span.Span.{ file_id: 0, start: 0, end: 0 },
-        is_extern: false,
-      }
-      len_sig := resolver.FunctionSig.{
-        name: "len",
-        type_params: [],
-        param_names: ["p"],
-        params: [mono_type.MonoType.Named(point_tid, [])],
-        ret: .Some(mono_type.MonoType.Int),
-        doc: .None,
-        extern_module: .None,
-      }
-      env := resolver.empty_env().register_type_entry(point_entry, "dep.Point").bind_type(
-        "Point",
-        point_tid,
-      ).add_function(len_sig).register_bound_methods(
-        "Point",
-        [resolver.MethodEntry.{ method_name: "len", function_name: "len" }],
-      )
-      src := "fn f(p: Point) Int { p.len() }"
-      r := try check_ok_with_env(src, env)
-      try assert.equal(try type_at(r, src, "p.len()"), "Int")
-      .Ok({})
-    },
-  ).test(
-    "P2 module qualified call is gated by module alias set",
-    fn() {
-      src := "fn f() String { Int.to_string(1) }"
-      r := try check_ok_builtins(src)
-      try assert.equal(try type_at(r, src, "Int.to_string(1)"), "String")
-      .Ok({})
-    },
-  ).test(
-    "P2 missing method on known receiver emits method diagnostic",
-    fn() {
-      src := "type Point = .{ x: Int }\nfn f(p: Point) Int { p.nope() }"
-      msgs := try check_errs(src)
-      found := false
+          span: span.Span.{ file_id: 0, start: 0, end: 0 },
+          is_extern: false,
+        }
+        len_sig := resolver.FunctionSig.{
+          name: "len",
+          type_params: [],
+          param_names: ["p"],
+          params: [mono_type.MonoType.Named(point_tid, [])],
+          ret: .Some(mono_type.MonoType.Int),
+          doc: .None,
+          extern_module: .None,
+        }
+        env := resolver.empty_env()
+          .register_type_entry(point_entry, "dep.Point")
+          .bind_type("Point", point_tid)
+          .add_function(len_sig)
+          .register_bound_methods(
+            "Point",
+            [resolver.MethodEntry.{ method_name: "len", function_name: "len" }],
+          )
+        src := "fn f(p: Point) Int { p.len() }"
+        r := try check_ok_with_env(src, env)
+        try assert.equal(try type_at(r, src, "p.len()"), "Int")
+        .Ok({})
+      },
+    )
+    .test(
+      "P2 module qualified call is gated by module alias set",
+      fn() {
+        src := "fn f() String { Int.to_string(1) }"
+        r := try check_ok_builtins(src)
+        try assert.equal(try type_at(r, src, "Int.to_string(1)"), "String")
+        .Ok({})
+      },
+    )
+    .test(
+      "P2 missing method on known receiver emits method diagnostic",
+      fn() {
+        src := "type Point = .{ x: Int }\nfn f(p: Point) Int { p.nope() }"
+        msgs := try check_errs(src)
+        found := false
 
-      for m in msgs {
-        if m.contains("no method") or m.contains("no field") { found = true }
-      }
+        for m in msgs {
+          if m.contains("no method") or m.contains("no field") { found = true }
+        }
 
-      try assert.is_true(found)
-      .Ok({})
-    },
-  ).test(
-    "P2 module alias lookup miss emits module-qualified diagnostic",
-    fn() {
-      src := "fn f() Void { Int.no_such(1) }"
-      msgs := try check_errs_builtins(src)
-      found := false
+        try assert.is_true(found)
+        .Ok({})
+      },
+    )
+    .test(
+      "P2 module alias lookup miss emits module-qualified diagnostic",
+      fn() {
+        src := "fn f() Void { Int.no_such(1) }"
+        msgs := try check_errs_builtins(src)
+        found := false
 
-      for m in msgs {
-        if m.contains("Int.no_such") or m.contains("undefined variable") { found = true }
-      }
+        for m in msgs {
+          if m.contains("Int.no_such") or m.contains("undefined variable") { found = true }
+        }
 
-      try assert.is_true(found)
-      .Ok({})
-    },
-  ).test(
-    "P2 internal builtin method target is not a free function",
-    fn() {
-      msgs := try check_errs_builtins("fn f() String { bool_to_string(true) }")
-      found := false
+        try assert.is_true(found)
+        .Ok({})
+      },
+    )
+    .test(
+      "P2 internal builtin method target is not a free function",
+      fn() {
+        msgs := try check_errs_builtins("fn f() String { bool_to_string(true) }")
+        found := false
 
-      for m in msgs {
-        if m.contains("undefined variable") or m.contains("bool_to_string") { found = true }
-      }
+        for m in msgs {
+          if m.contains("undefined variable") or m.contains("bool_to_string") { found = true }
+        }
 
-      try assert.is_true(found)
-      .Ok({})
-    },
-  ).test(
-    "P2 canonical builtin method remains callable",
-    fn() {
-      _ := try check_ok_builtins("fn f() String { Bool.to_string(true) }")
-      _ := try check_ok_builtins("fn f(b: Bool) String { b.to_string() }")
-      .Ok({})
-    },
-  ).test(
-    "P2 method value reference synthesizes function value",
-    fn() {
-      src := "type Point = .{ x: Int }\nfn len(p: Point) Int { p.x }\nfn apply(g: fn() Int) Int { g() }\nfn f(p: Point) Int { apply(p.len) }"
-      r := try check_ok(src)
-      try assert.equal(try type_at(r, src, "p.len"), "fn() Int")
-      .Ok({})
-    },
-  ).test(
-    "P3 bitwise Byte and Byte yields Int",
-    fn() {
-      src := "fn f(a: Byte, b: Byte) Int { a & b }"
-      r := try check_ok(src)
-      try assert.equal(try type_at(r, src, "a & b"), "Int")
-      .Ok({})
-    },
-  ).test(
-    "P3 bitwise Byte and Int is allowed",
-    fn() {
-      src := "fn f(a: Byte, b: Int) Int { a & b }"
-      r := try check_ok(src)
-      .Ok({})
-    },
-  ).test(
-    "P3 unary bitwise not on Byte yields Int",
-    fn() {
-      src := "fn f(a: Byte) Int { ~a }"
-      r := try check_ok(src)
-      try assert.equal(try type_at(r, src, "~a"), "Int")
-      .Ok({})
-    },
-  ).test(
-    "P3 bitwise rejects non-Int/Byte operands",
-    fn() {
-      src := "fn f(a: Bool, b: Bool) Int { a & b }"
-      msgs := try check_errs(src)
-      found := false
+        try assert.is_true(found)
+        .Ok({})
+      },
+    )
+    .test(
+      "P2 canonical builtin method remains callable",
+      fn() {
+        _ := try check_ok_builtins("fn f() String { Bool.to_string(true) }")
+        _ := try check_ok_builtins("fn f(b: Bool) String { b.to_string() }")
+        .Ok({})
+      },
+    )
+    .test(
+      "P2 method value reference synthesizes function value",
+      fn() {
+        src := "type Point = .{ x: Int }\nfn len(p: Point) Int { p.x }\nfn apply(g: fn() Int) Int { g() }\nfn f(p: Point) Int { apply(p.len) }"
+        r := try check_ok(src)
+        try assert.equal(try type_at(r, src, "p.len"), "fn() Int")
+        .Ok({})
+      },
+    )
+    .test(
+      "P3 bitwise Byte and Byte yields Int",
+      fn() {
+        src := "fn f(a: Byte, b: Byte) Int { a & b }"
+        r := try check_ok(src)
+        try assert.equal(try type_at(r, src, "a & b"), "Int")
+        .Ok({})
+      },
+    )
+    .test(
+      "P3 bitwise Byte and Int is allowed",
+      fn() {
+        src := "fn f(a: Byte, b: Int) Int { a & b }"
+        r := try check_ok(src)
+        .Ok({})
+      },
+    )
+    .test(
+      "P3 unary bitwise not on Byte yields Int",
+      fn() {
+        src := "fn f(a: Byte) Int { ~a }"
+        r := try check_ok(src)
+        try assert.equal(try type_at(r, src, "~a"), "Int")
+        .Ok({})
+      },
+    )
+    .test(
+      "P3 bitwise rejects non-Int/Byte operands",
+      fn() {
+        src := "fn f(a: Bool, b: Bool) Int { a & b }"
+        msgs := try check_errs(src)
+        found := false
 
-      for m in msgs {
-        if m.contains("bitwise") { found = true }
-      }
+        for m in msgs {
+          if m.contains("bitwise") { found = true }
+        }
 
-      try assert.is_true(found)
-      .Ok({})
-    },
-  ).test(
-    "P4 for over Dict binds second variable to value type",
-    fn() {
-      src := "fn f(d: Dict<String, Bool>) Bool {\nacc := false\nfor k, v in d { acc = acc or v }\nacc\n}"
-      r := try check_ok(src)
-      .Ok({})
-    },
-  ).test(
-    "P4 collect over Dict binds second variable to value type",
-    fn() {
-      src := "fn f(d: Dict<String, Bool>) Vector<Bool> { collect k, v in d { v } }"
-      r := try check_ok(src)
-      .Ok({})
-    },
-  ).test(
-    "P4 indexed for over Iterator is accepted",
-    fn() {
-      src := "fn f(it: Iterator<Int>) Void { for x, i in it { x } }"
-      _ := try check_ok_builtins(src)
-      .Ok({})
-    },
-  ).test(
-    "P4 indexed collect over Iterator is accepted",
-    fn() {
-      src := "fn f(it: Iterator<Int>) Vector<Int> { collect x, i in it { x } }"
-      _ := try check_ok_builtins(src)
-      .Ok({})
-    },
-  ).test(
-    "P5 functions can read later top-level lets",
-    fn() {
-      src := "fn use_x() Int { x }\nx := 42\nfn main() Int { use_x() }"
-      r := try check_ok(src)
-      try assert.equal(try type_at_nth(r, src, "use_x()", 1), "Int")
-      .Ok({})
-    },
-  ).test(
-    "P6 interpolation requires to_string receiver-only shape",
-    fn() {
-      dollar := "\$"
-      src := "type Point = .{ x: Int }\nfn to_string(p: Point, n: Int) String { \"\" }\nfn f(p: Point) String { \"p=${dollar}{p}\" }"
-      msgs := try check_errs(src)
-      found := false
+        try assert.is_true(found)
+        .Ok({})
+      },
+    )
+    .test(
+      "P4 for over Dict binds second variable to value type",
+      fn() {
+        src := "fn f(d: Dict<String, Bool>) Bool {\nacc := false\nfor k, v in d { acc = acc or v }\nacc\n}"
+        r := try check_ok(src)
+        .Ok({})
+      },
+    )
+    .test(
+      "P4 collect over Dict binds second variable to value type",
+      fn() {
+        src := "fn f(d: Dict<String, Bool>) Vector<Bool> { collect k, v in d { v } }"
+        r := try check_ok(src)
+        .Ok({})
+      },
+    )
+    .test(
+      "P4 indexed for over Iterator is accepted",
+      fn() {
+        src := "fn f(it: Iterator<Int>) Void { for x, i in it { x } }"
+        _ := try check_ok_builtins(src)
+        .Ok({})
+      },
+    )
+    .test(
+      "P4 indexed collect over Iterator is accepted",
+      fn() {
+        src := "fn f(it: Iterator<Int>) Vector<Int> { collect x, i in it { x } }"
+        _ := try check_ok_builtins(src)
+        .Ok({})
+      },
+    )
+    .test(
+      "P5 functions can read later top-level lets",
+      fn() {
+        src := "fn use_x() Int { x }\nx := 42\nfn main() Int { use_x() }"
+        r := try check_ok(src)
+        try assert.equal(try type_at_nth(r, src, "use_x()", 1), "Int")
+        .Ok({})
+      },
+    )
+    .test(
+      "P6 interpolation requires to_string receiver-only shape",
+      fn() {
+        dollar := "\$"
+        src := "type Point = .{ x: Int }\nfn to_string(p: Point, n: Int) String { \"\" }\nfn f(p: Point) String { \"p=${dollar}{p}\" }"
+        msgs := try check_errs(src)
+        found := false
 
-      for m in msgs {
-        if m.contains("to_string")
-          and (m.contains("receiver")
-            or m.contains("shape")
-            or m.contains("missing")
-            or m.contains("Stringify")) { found = true }
-      }
+        for m in msgs {
+          if m.contains("to_string")
+            and (m.contains("receiver")
+              or m.contains("shape")
+              or m.contains("missing")
+              or m.contains("Stringify")) { found = true }
+        }
 
-      try assert.is_true(found)
-      .Ok({})
-    },
-  ).test(
-    "P6 interpolation requires to_string to return String",
-    fn() {
-      dollar := "\$"
-      src := "type Point = .{ x: Int }\nfn to_string(p: Point) Int { 0 }\nfn f(p: Point) String { \"p=${dollar}{p}\" }"
-      msgs := try check_errs(src)
-      found := false
+        try assert.is_true(found)
+        .Ok({})
+      },
+    )
+    .test(
+      "P6 interpolation requires to_string to return String",
+      fn() {
+        dollar := "\$"
+        src := "type Point = .{ x: Int }\nfn to_string(p: Point) Int { 0 }\nfn f(p: Point) String { \"p=${dollar}{p}\" }"
+        msgs := try check_errs(src)
+        found := false
 
-      for m in msgs {
-        if m.contains("to_string") and m.contains("String") { found = true }
-      }
+        for m in msgs {
+          if m.contains("to_string") and m.contains("String") { found = true }
+        }
 
-      try assert.is_true(found)
-      .Ok({})
-    },
-  ).test(
-    "P7 case scrutinee must be sum or primitive",
-    fn() {
-      src := "type Point = .{ x: Int }\nfn f(p: Point) Int { case p { _ => 1 } }"
-      msgs := try check_errs(src)
-      found := false
+        try assert.is_true(found)
+        .Ok({})
+      },
+    )
+    .test(
+      "P7 case scrutinee must be sum or primitive",
+      fn() {
+        src := "type Point = .{ x: Int }\nfn f(p: Point) Int { case p { _ => 1 } }"
+        msgs := try check_errs(src)
+        found := false
 
-      for m in msgs {
-        if m.contains("case") and (m.contains("sum") or m.contains("scrutinee")) { found = true }
-      }
+        for m in msgs {
+          if m.contains("case") and (m.contains("sum") or m.contains("scrutinee")) { found = true }
+        }
 
-      try assert.is_true(found)
-      .Ok({})
-    },
-  ).test(
-    "P7 check mode pushes expected element type into collect body",
-    fn() {
-      src := "type Point = .{ x: Int, y: Int }\nfn f(xs: Vector<Int>) Vector<Point> { collect x in xs { .{ x: x, y: x } } }"
-      r := try check_ok(src)
-      .Ok({})
-    },
-  ).test(
-    "P8 check mode narrows int literal to Byte",
-    fn() {
-      src := "fn f() Byte { b: Byte = 255\nb }"
-      r := try check_ok(src)
-      try assert.equal(try type_at(r, src, "255"), "Byte")
-      .Ok({})
-    },
-  ).test(
-    "D9 range operator produces Named(3) not Vector<Int>",
-    fn() {
-      src := "fn f() { x := 1..10\nx }"
-      r := try check_ok_builtins(src)
-      try assert.equal(try type_at(r, src, "1..10"), "Named(3)")
-      .Ok({})
-    },
-  ).test(
-    "D10 Byte + Int promotes to Int",
-    fn() {
-      src := "fn f(b: Byte) Int { b + 1 }"
-      r := try check_ok(src)
-      try assert.equal(try type_at(r, src, "b + 1"), "Int")
-      .Ok({})
-    },
-  ).test(
-    "D10 Int - Byte promotes to Int",
-    fn() {
-      src := "fn f(n: Int, b: Byte) Int { n - b }"
-      r := try check_ok(src)
-      try assert.equal(try type_at(r, src, "n - b"), "Int")
-      .Ok({})
-    },
-  ).test(
-    "D10 Byte * Byte promotes to Int",
-    fn() {
-      src := "fn f(a: Byte, b: Byte) Int { a * b }"
-      r := try check_ok(src)
-      try assert.equal(try type_at(r, src, "a * b"), "Int")
-      .Ok({})
-    },
-  ).test(
-    "D10 Byte comparison with Int allowed",
-    fn() {
-      src := "fn f(b: Byte) Bool { b < 128 }"
-      r := try check_ok(src)
-      .Ok({})
-    },
-  ).test(
-    "D15 defer with error() is rejected",
-    fn() {
-      src := "fn f() { defer error(\"cleanup\")\n1 }"
-      msgs := try check_errs_builtins(src)
-      found := false
+        try assert.is_true(found)
+        .Ok({})
+      },
+    )
+    .test(
+      "P7 check mode pushes expected element type into collect body",
+      fn() {
+        src := "type Point = .{ x: Int, y: Int }\nfn f(xs: Vector<Int>) Vector<Point> { collect x in xs { .{ x: x, y: x } } }"
+        r := try check_ok(src)
+        .Ok({})
+      },
+    )
+    .test(
+      "P8 check mode narrows int literal to Byte",
+      fn() {
+        src := "fn f() Byte { b: Byte = 255\nb }"
+        r := try check_ok(src)
+        try assert.equal(try type_at(r, src, "255"), "Byte")
+        .Ok({})
+      },
+    )
+    .test(
+      "D9 range operator produces Named(3) not Vector<Int>",
+      fn() {
+        src := "fn f() { x := 1..10\nx }"
+        r := try check_ok_builtins(src)
+        try assert.equal(try type_at(r, src, "1..10"), "Named(3)")
+        .Ok({})
+      },
+    )
+    .test(
+      "D10 Byte + Int promotes to Int",
+      fn() {
+        src := "fn f(b: Byte) Int { b + 1 }"
+        r := try check_ok(src)
+        try assert.equal(try type_at(r, src, "b + 1"), "Int")
+        .Ok({})
+      },
+    )
+    .test(
+      "D10 Int - Byte promotes to Int",
+      fn() {
+        src := "fn f(n: Int, b: Byte) Int { n - b }"
+        r := try check_ok(src)
+        try assert.equal(try type_at(r, src, "n - b"), "Int")
+        .Ok({})
+      },
+    )
+    .test(
+      "D10 Byte * Byte promotes to Int",
+      fn() {
+        src := "fn f(a: Byte, b: Byte) Int { a * b }"
+        r := try check_ok(src)
+        try assert.equal(try type_at(r, src, "a * b"), "Int")
+        .Ok({})
+      },
+    )
+    .test(
+      "D10 Byte comparison with Int allowed",
+      fn() {
+        src := "fn f(b: Byte) Bool { b < 128 }"
+        r := try check_ok(src)
+        .Ok({})
+      },
+    )
+    .test(
+      "D15 defer with error() is rejected",
+      fn() {
+        src := "fn f() { defer error(\"cleanup\")\n1 }"
+        msgs := try check_errs_builtins(src)
+        found := false
 
-      for m in msgs {
-        if m.contains("defer") and m.contains("diverge") { found = true }
-      }
+        for m in msgs {
+          if m.contains("defer") and m.contains("diverge") { found = true }
+        }
 
-      try assert.is_true(found)
-      .Ok({})
-    },
-  ).test(
-    "D15 defer with normal expr is ok",
-    fn() {
-      src := "fn f() { defer println(\"done\")\n1 }"
-      r := try check_ok_builtins(src)
-      .Ok({})
-    },
-  ).test(
-    "D11 left shift Int produces Int",
-    fn() {
-      src := "fn f(x: Int) Int { x << 2 }"
-      r := try check_ok(src)
-      try assert.equal(try type_at(r, src, "x << 2"), "Int")
-      .Ok({})
-    },
-  ).test(
-    "D11 right shift Byte produces Int",
-    fn() {
-      src := "fn f(b: Byte) Int { b >> 1 }"
-      r := try check_ok(src)
-      try assert.equal(try type_at(r, src, "b >> 1"), "Int")
-      .Ok({})
-    },
-  ).test(
-    "D11 shift rejects non-Int/Byte operands",
-    fn() {
-      src := "fn f() Int { 1.0 << 2 }"
-      msgs := try check_errs(src)
-      try assert.str_contains(msgs[0], "bitwise")
-      .Ok({})
-    },
-  ).test(
-    "D12 collect-while produces Vector of body type",
-    fn() {
-      src := "fn f() Vector<Int> { x := 0\ncollect x < 10 { x } }"
-      r := try check_ok(src)
-      .Ok({})
-    },
-  ).test(
-    "D14 equality pushes left type into anonymous variant on right",
-    fn() {
-      src := "type Kind = { A, B }\nfn f(k: Kind) Bool { k == .A }"
-      r := try check_ok(src)
-      .Ok({})
-    },
-  ).test(
-    "D14 equality pushes right type into anonymous variant on left",
-    fn() {
-      src := "type Kind = { A, B }\nfn f(k: Kind) Bool { .A == k }"
-      r := try check_ok(src)
-      .Ok({})
-    },
-  ).test(
-    "D16 type alias record constructor",
-    fn() {
-      src := "type Point = .{ x: Int, y: Int }\ntype Pt = Point\nfn f() Pt { Pt.{ x: 1, y: 2 } }"
-      r := try check_ok(src)
-      .Ok({})
-    },
-  ).test(
-    "D13 generic call solves return type from annotation context",
-    fn() {
-      // identity<T>(x: T) T — when called in annotated binding,
-      // expected return type should solve T before checking arg
-      src := "fn identity<T>(x: T) T { x }\nfn f() { v: Int = identity(42)\nv }"
-      r := try check_ok(src)
-      .Ok({})
-    },
-  ).test(
-    "D13 generic call with anonymous record arg needs return-type context",
-    fn() {
-      // make<T>(x: T) Vector<T> — when T is only solvable from return context
-      src := "type Pair = .{ a: Int, b: Int }\nfn wrap<T>(x: T) Vector<T> { [x] }\nfn f() Vector<Pair> { wrap(.{ a: 1, b: 2 }) }"
-      r := try check_ok(src)
-      .Ok({})
-    },
-  ).test(
-    "D13 method call pre-unifies return type for generic methods",
-    fn() {
-      // wrap_thing<T>(self: Thing, x: T) Vector<T> — method on Thing
-      // When called as thing.wrap_thing(.{ a: 1 }), T needs return-type context
-      src := "type Pair = .{ a: Int, b: Int }\ntype Thing = .{ id: Int }\nfn wrap_thing<T>(self: Thing, x: T) Vector<T> { [x] }\nfn f(t: Thing) Vector<Pair> { t.wrap_thing(.{ a: 1, b: 2 }) }"
-      r := try check_ok(src)
-      .Ok({})
-    },
-  ).test(
-    "G1 block expr yields tail type",
-    fn() {
-      src := "fn f() Int { { 1 + 2 } }"
-      r := try check_ok(src)
-      .Ok({})
-    },
-  ).test(
-    "G1 block expr no tail yields Void",
-    fn() {
-      src := "fn f() Void { { x := 1 } }"
-      r := try check_ok(src)
-      .Ok({})
-    },
-  ).test(
-    "G2 if-else with one Never branch yields other type",
-    fn() {
-      src := "fn f(x: Int) Int { if x < 0 { return 0 } else { x + 1 } }"
-      r := try check_ok(src)
-      .Ok({})
-    },
-  ).test(
-    "G2 case with Never arm yields non-Never arm type",
-    fn() {
-      src := "fn f(x: Int?) Int {\ncase x { .Some(v) => v, .None => error(\"none\") }\n}"
-      r := try check_ok_builtins(src)
-      .Ok({})
-    },
-  ).test(
-    "G3 variant lit without context produces error",
-    fn() {
-      src := "fn f() { x := .Some(1) }"
-      msgs := try check_errs(src)
-      .Ok({})
-    },
-  ).test(
-    "G4 modulo operator produces Int",
-    fn() {
-      src := "fn f(a: Int, b: Int) Int { a % b }"
-      r := try check_ok(src)
-      .Ok({})
-    },
-  ).test(
-    "G4 float addition produces Float",
-    fn() {
-      src := "fn f(a: Float, b: Float) Float { a + b }"
-      r := try check_ok(src)
-      .Ok({})
-    },
-  ).test(
-    "G4 float multiplication produces Float",
-    fn() {
-      src := "fn f(a: Float, b: Float) Float { a * b }"
-      r := try check_ok(src)
-      .Ok({})
-    },
-  ).test(
-    "G4 float subtraction produces Float",
-    fn() {
-      src := "fn f(a: Float, b: Float) Float { a - b }"
-      r := try check_ok(src)
-      .Ok({})
-    },
-  ).test(
-    "G4 float division produces Float",
-    fn() {
-      src := "fn f(a: Float, b: Float) Float { a / b }"
-      r := try check_ok(src)
-      .Ok({})
-    },
-  ).test(
-    "G5 not-equal operator",
-    fn() {
-      src := "fn f(a: Int, b: Int) Bool { a != b }"
-      r := try check_ok(src)
-      .Ok({})
-    },
-  ).test(
-    "G5 less-or-equal operator",
-    fn() {
-      src := "fn f(a: Int, b: Int) Bool { a <= b }"
-      r := try check_ok(src)
-      .Ok({})
-    },
-  ).test(
-    "G5 greater-than operator",
-    fn() {
-      src := "fn f(a: Int, b: Int) Bool { a > b }"
-      r := try check_ok(src)
-      .Ok({})
-    },
-  ).test(
-    "G5 greater-or-equal operator",
-    fn() {
-      src := "fn f(a: Int, b: Int) Bool { a >= b }"
-      r := try check_ok(src)
-      .Ok({})
-    },
-  ).test(
-    "G5 float comparison",
-    fn() {
-      src := "fn f(a: Float, b: Float) Bool { a < b }"
-      r := try check_ok(src)
-      .Ok({})
-    },
-  ).test(
-    "G5 string ordering comparison",
-    fn() {
-      src := "fn f(a: String, b: String) Bool { a < b }"
-      _ := try check_ok(src)
-      .Ok({})
-    },
-  ).test(
-    "G6 return matching type",
-    fn() {
-      src := "fn f() Int { return 42 }"
-      r := try check_ok(src)
-      .Ok({})
-    },
-  ).test(
-    "G6 return mismatched type",
-    fn() {
-      src := "fn f() Int { return \"hello\" }"
-      msgs := try check_errs(src)
-      try assert.str_contains(msgs[0], "type mismatch")
-      .Ok({})
-    },
-  ).test(
-    "G6 return in void function with value",
-    fn() {
-      src := "fn f() Void { return 42 }"
-      msgs := try check_errs(src)
-      try assert.str_contains(msgs[0], "type mismatch")
-      .Ok({})
-    },
-  ).test(
-    "G7 break in for loop",
-    fn() {
-      src := "fn f(xs: Vector<Int>) Void {\nfor x in xs { if x > 10 { break } }\n}"
-      r := try check_ok(src)
-      .Ok({})
-    },
-  ).test(
-    "G7 continue in for loop",
-    fn() {
-      src := "fn f(xs: Vector<Int>) Int {\nsum := 0\nfor x in xs { if x < 0 { continue }\nsum = sum + x }\nsum\n}"
-      r := try check_ok(src)
-      .Ok({})
-    },
-  ).test(
-    "G8 closure unannotated params inferred from context",
-    fn() {
-      src := "fn apply(f: fn(Int) Int, x: Int) Int { f(x) }\nfn g() Int { apply(fn(x) { x + 1 }, 10) }"
-      r := try check_ok(src)
-      .Ok({})
-    },
-  ).test(
-    "G8 closure return annotation mismatch",
-    fn() {
-      src := "fn f() { g: fn(Int) Int = fn(x: Int) String { \"bad\" } }"
-      msgs := try check_errs(src)
-      try assert.str_contains(msgs[0], "type mismatch")
-      .Ok({})
-    },
-  ).test(
-    "G8 inline closure does not leak return context",
-    fn() {
-      src := "pub type E = { Err(String), Ok(Int) }\nfn ignore(f: fn(Int) Bool, x: Int) Int? { .Some(1) }\nfn f() E {\n  c := case ignore(fn(n: Int) Bool { n == 1 }, 1) {\n    .Some(v) => v,\n    .None => { return .Err(\"x\") },\n  }\n  .Ok(c)\n}"
-      r := try check_ok(src)
-      .Ok({})
-    },
-  ).test(
-    "G8 closure param annotation mismatch",
-    fn() {
-      src := "fn f() { g: fn(Int) Int = fn(x: String) Int { 1 } }"
-      msgs := try check_errs(src)
-      try assert.str_contains(msgs[0], "type mismatch")
-      .Ok({})
-    },
-  ).test(
-    "G9 collect-while with non-Bool condition errors",
-    fn() {
-      src := "fn f() Vector<Int> { collect 42 { 1 } }"
-      msgs := try check_errs(src)
-      try assert.str_contains(msgs[0], "type mismatch")
-      .Ok({})
-    },
-  ).test(
-    "G9 collect over String yields Byte elements",
-    fn() {
-      src := "fn f(s: String) Vector<Int> { collect b in s { b + 0 } }"
-      r := try check_ok(src)
-      .Ok({})
-    },
-  ).test(
-    "G9 collect over Dict yields key elements",
-    fn() {
-      src := "fn f(d: Dict<String, Int>) Vector<String> { collect k in d { k } }"
-      r := try check_ok(src)
-      .Ok({})
-    },
-  ).test(
-    "G9 collect over Dict with index yields value",
-    fn() {
-      src := "fn f(d: Dict<String, Int>) Vector<Int> { collect k, v in d { v } }"
-      r := try check_ok(src)
-      .Ok({})
-    },
-  ).test(
-    "G10 string literal pattern in case",
-    fn() {
-      src := "fn f(s: String) Int {\ncase s { \"hello\" => 1, \"world\" => 2, _ => 0 }\n}"
-      r := try check_ok(src)
-      .Ok({})
-    },
-  ).test(
-    "G10 bool literal pattern in case",
-    fn() {
-      src := "fn f(b: Bool) Int {\ncase b { true => 1, false => 0 }\n}"
-      r := try check_ok(src)
-      .Ok({})
-    },
-  ).test(
-    "G11 generic call result in arithmetic",
-    fn() {
-      src := "fn identity<T>(x: T) T { x }\nfn f() Int { identity(1) + 2 }"
-      r := try check_ok(src)
-      .Ok({})
-    },
-  ).test(
-    "G11 negation on Float",
-    fn() {
-      src := "fn f(x: Float) Float { -x }"
-      r := try check_ok(src)
-      .Ok({})
-    },
-  ).test(
-    "G11 negation on non-numeric errors",
-    fn() {
-      src := "fn f(x: Bool) Bool { -x }"
-      msgs := try check_errs(src)
-      try assert.str_contains(msgs[0], "negation")
-      .Ok({})
-    },
-  ).test(
-    "G11 logical not on non-Bool errors",
-    fn() {
-      src := "fn f(x: Int) Bool { !x }"
-      msgs := try check_errs(src)
-      try assert.str_contains(msgs[0], "type mismatch")
-      .Ok({})
-    },
-  ).test(
-    "G12 method chain on user types",
-    fn() {
-      src := "type Builder = .{ count: Int }\nfn inc(b: Builder) Builder { Builder.{ count: b.count + 1 } }\nfn value(b: Builder) Int { b.count }\nfn f() Int {\nb := Builder.{ count: 0 }\nb.inc().inc().value()\n}"
-      r := try check_ok(src)
-      .Ok({})
-    },
-  ).test(
-    "G13 if-else else branch resolves variant shorthand from then type",
-    fn() {
-      src := "type Mono = { Void, Int }\nfn f(flag: Bool, args: Vector<Mono>) { if flag { args[0] } else { .Void } }"
-      r := try check_ok(src)
-      .Ok({})
-    },
-  ).test(
-    "G13 if-else else branch resolves Option shorthand from then type",
-    fn() {
-      src := "type MaybeInt = { Some(Int), None }\nfn f(flag: Bool, xs: Vector<Int>) { if flag { MaybeInt.Some(xs[0]) } else { .None } }"
-      r := try check_ok(src)
-      .Ok({})
-    },
-  ).test(
-    "G14 case arm resolves variant shorthand from later arm",
-    fn() {
-      src := "type Mono = { Void, Int }\nfn f(flag: Bool, xs: Vector<Mono>) Mono { case flag { true => .Void, _ => xs[0] } }"
-      r := try check_ok(src)
-      .Ok({})
-    },
-  ).test(
-    "G14 case arm block tail resolves variant shorthand from later arm",
-    fn() {
-      src := "type Mono = { Void, Int }\nfn f(flag: Bool, xs: Vector<Mono>) Mono { case flag { true => { .Void }, _ => xs[0] } }"
-      r := try check_ok(src)
-      .Ok({})
-    },
-  ).test(
-    "G13 if-else branch mismatch still errors",
-    fn() {
-      src := "fn f(x: Int) Int { if x > 0 { 1 } else { \"no\" } }"
-      msgs := try check_errs(src)
-      try assert.str_contains(msgs[0], "type mismatch")
-      .Ok({})
-    },
-  ).test(
-    "anon record variant construction and pattern match",
-    fn() {
-      src := "type Msg = { Hello(.{ name: String }), Bye } fn greet(m: Msg) String { case m { .Hello(h) => h.name, .Bye => \"bye\" } }"
-      r := try check_ok(src)
-      .Ok({})
-    },
-  ).test(
-    "anon record variant with shorthand literal",
-    fn() {
-      src := "type Msg = { Data(.{ x: Int, y: Int }) } fn f() Msg { .Data(.{ x: 1, y: 2 }) }"
-      r := try check_ok(src)
-      .Ok({})
-    },
-  ).test(
-    "anon record variant mixed with regular variants",
-    fn() {
-      src := "type Shape = { Circle(.{ r: Float }), Square(Float), Unit } fn f(s: Shape) Float { case s { .Circle(c) => c.r, .Square(side) => side, .Unit => 0.0 } }"
-      r := try check_ok(src)
-      .Ok({})
-    },
-  )
+        try assert.is_true(found)
+        .Ok({})
+      },
+    )
+    .test(
+      "D15 defer with normal expr is ok",
+      fn() {
+        src := "fn f() { defer println(\"done\")\n1 }"
+        r := try check_ok_builtins(src)
+        .Ok({})
+      },
+    )
+    .test(
+      "D11 left shift Int produces Int",
+      fn() {
+        src := "fn f(x: Int) Int { x << 2 }"
+        r := try check_ok(src)
+        try assert.equal(try type_at(r, src, "x << 2"), "Int")
+        .Ok({})
+      },
+    )
+    .test(
+      "D11 right shift Byte produces Int",
+      fn() {
+        src := "fn f(b: Byte) Int { b >> 1 }"
+        r := try check_ok(src)
+        try assert.equal(try type_at(r, src, "b >> 1"), "Int")
+        .Ok({})
+      },
+    )
+    .test(
+      "D11 shift rejects non-Int/Byte operands",
+      fn() {
+        src := "fn f() Int { 1.0 << 2 }"
+        msgs := try check_errs(src)
+        try assert.str_contains(msgs[0], "bitwise")
+        .Ok({})
+      },
+    )
+    .test(
+      "D12 collect-while produces Vector of body type",
+      fn() {
+        src := "fn f() Vector<Int> { x := 0\ncollect x < 10 { x } }"
+        r := try check_ok(src)
+        .Ok({})
+      },
+    )
+    .test(
+      "D14 equality pushes left type into anonymous variant on right",
+      fn() {
+        src := "type Kind = { A, B }\nfn f(k: Kind) Bool { k == .A }"
+        r := try check_ok(src)
+        .Ok({})
+      },
+    )
+    .test(
+      "D14 equality pushes right type into anonymous variant on left",
+      fn() {
+        src := "type Kind = { A, B }\nfn f(k: Kind) Bool { .A == k }"
+        r := try check_ok(src)
+        .Ok({})
+      },
+    )
+    .test(
+      "D16 type alias record constructor",
+      fn() {
+        src := "type Point = .{ x: Int, y: Int }\ntype Pt = Point\nfn f() Pt { Pt.{ x: 1, y: 2 } }"
+        r := try check_ok(src)
+        .Ok({})
+      },
+    )
+    .test(
+      "D13 generic call solves return type from annotation context",
+      fn() {
+        // identity<T>(x: T) T — when called in annotated binding,
+        // expected return type should solve T before checking arg
+        src := "fn identity<T>(x: T) T { x }\nfn f() { v: Int = identity(42)\nv }"
+        r := try check_ok(src)
+        .Ok({})
+      },
+    )
+    .test(
+      "D13 generic call with anonymous record arg needs return-type context",
+      fn() {
+        // make<T>(x: T) Vector<T> — when T is only solvable from return context
+        src := "type Pair = .{ a: Int, b: Int }\nfn wrap<T>(x: T) Vector<T> { [x] }\nfn f() Vector<Pair> { wrap(.{ a: 1, b: 2 }) }"
+        r := try check_ok(src)
+        .Ok({})
+      },
+    )
+    .test(
+      "D13 method call pre-unifies return type for generic methods",
+      fn() {
+        // wrap_thing<T>(self: Thing, x: T) Vector<T> — method on Thing
+        // When called as thing.wrap_thing(.{ a: 1 }), T needs return-type context
+        src := "type Pair = .{ a: Int, b: Int }\ntype Thing = .{ id: Int }\nfn wrap_thing<T>(self: Thing, x: T) Vector<T> { [x] }\nfn f(t: Thing) Vector<Pair> { t.wrap_thing(.{ a: 1, b: 2 }) }"
+        r := try check_ok(src)
+        .Ok({})
+      },
+    )
+    .test(
+      "G1 block expr yields tail type",
+      fn() {
+        src := "fn f() Int { { 1 + 2 } }"
+        r := try check_ok(src)
+        .Ok({})
+      },
+    )
+    .test(
+      "G1 block expr no tail yields Void",
+      fn() {
+        src := "fn f() Void { { x := 1 } }"
+        r := try check_ok(src)
+        .Ok({})
+      },
+    )
+    .test(
+      "G2 if-else with one Never branch yields other type",
+      fn() {
+        src := "fn f(x: Int) Int { if x < 0 { return 0 } else { x + 1 } }"
+        r := try check_ok(src)
+        .Ok({})
+      },
+    )
+    .test(
+      "G2 case with Never arm yields non-Never arm type",
+      fn() {
+        src := "fn f(x: Int?) Int {\ncase x { .Some(v) => v, .None => error(\"none\") }\n}"
+        r := try check_ok_builtins(src)
+        .Ok({})
+      },
+    )
+    .test(
+      "G3 variant lit without context produces error",
+      fn() {
+        src := "fn f() { x := .Some(1) }"
+        msgs := try check_errs(src)
+        .Ok({})
+      },
+    )
+    .test(
+      "G4 modulo operator produces Int",
+      fn() {
+        src := "fn f(a: Int, b: Int) Int { a % b }"
+        r := try check_ok(src)
+        .Ok({})
+      },
+    )
+    .test(
+      "G4 float addition produces Float",
+      fn() {
+        src := "fn f(a: Float, b: Float) Float { a + b }"
+        r := try check_ok(src)
+        .Ok({})
+      },
+    )
+    .test(
+      "G4 float multiplication produces Float",
+      fn() {
+        src := "fn f(a: Float, b: Float) Float { a * b }"
+        r := try check_ok(src)
+        .Ok({})
+      },
+    )
+    .test(
+      "G4 float subtraction produces Float",
+      fn() {
+        src := "fn f(a: Float, b: Float) Float { a - b }"
+        r := try check_ok(src)
+        .Ok({})
+      },
+    )
+    .test(
+      "G4 float division produces Float",
+      fn() {
+        src := "fn f(a: Float, b: Float) Float { a / b }"
+        r := try check_ok(src)
+        .Ok({})
+      },
+    )
+    .test(
+      "G5 not-equal operator",
+      fn() {
+        src := "fn f(a: Int, b: Int) Bool { a != b }"
+        r := try check_ok(src)
+        .Ok({})
+      },
+    )
+    .test(
+      "G5 less-or-equal operator",
+      fn() {
+        src := "fn f(a: Int, b: Int) Bool { a <= b }"
+        r := try check_ok(src)
+        .Ok({})
+      },
+    )
+    .test(
+      "G5 greater-than operator",
+      fn() {
+        src := "fn f(a: Int, b: Int) Bool { a > b }"
+        r := try check_ok(src)
+        .Ok({})
+      },
+    )
+    .test(
+      "G5 greater-or-equal operator",
+      fn() {
+        src := "fn f(a: Int, b: Int) Bool { a >= b }"
+        r := try check_ok(src)
+        .Ok({})
+      },
+    )
+    .test(
+      "G5 float comparison",
+      fn() {
+        src := "fn f(a: Float, b: Float) Bool { a < b }"
+        r := try check_ok(src)
+        .Ok({})
+      },
+    )
+    .test(
+      "G5 string ordering comparison",
+      fn() {
+        src := "fn f(a: String, b: String) Bool { a < b }"
+        _ := try check_ok(src)
+        .Ok({})
+      },
+    )
+    .test(
+      "G6 return matching type",
+      fn() {
+        src := "fn f() Int { return 42 }"
+        r := try check_ok(src)
+        .Ok({})
+      },
+    )
+    .test(
+      "G6 return mismatched type",
+      fn() {
+        src := "fn f() Int { return \"hello\" }"
+        msgs := try check_errs(src)
+        try assert.str_contains(msgs[0], "type mismatch")
+        .Ok({})
+      },
+    )
+    .test(
+      "G6 return in void function with value",
+      fn() {
+        src := "fn f() Void { return 42 }"
+        msgs := try check_errs(src)
+        try assert.str_contains(msgs[0], "type mismatch")
+        .Ok({})
+      },
+    )
+    .test(
+      "G7 break in for loop",
+      fn() {
+        src := "fn f(xs: Vector<Int>) Void {\nfor x in xs { if x > 10 { break } }\n}"
+        r := try check_ok(src)
+        .Ok({})
+      },
+    )
+    .test(
+      "G7 continue in for loop",
+      fn() {
+        src := "fn f(xs: Vector<Int>) Int {\nsum := 0\nfor x in xs { if x < 0 { continue }\nsum = sum + x }\nsum\n}"
+        r := try check_ok(src)
+        .Ok({})
+      },
+    )
+    .test(
+      "G8 closure unannotated params inferred from context",
+      fn() {
+        src := "fn apply(f: fn(Int) Int, x: Int) Int { f(x) }\nfn g() Int { apply(fn(x) { x + 1 }, 10) }"
+        r := try check_ok(src)
+        .Ok({})
+      },
+    )
+    .test(
+      "G8 closure return annotation mismatch",
+      fn() {
+        src := "fn f() { g: fn(Int) Int = fn(x: Int) String { \"bad\" } }"
+        msgs := try check_errs(src)
+        try assert.str_contains(msgs[0], "type mismatch")
+        .Ok({})
+      },
+    )
+    .test(
+      "G8 inline closure does not leak return context",
+      fn() {
+        src := "pub type E = { Err(String), Ok(Int) }\nfn ignore(f: fn(Int) Bool, x: Int) Int? { .Some(1) }\nfn f() E {\n  c := case ignore(fn(n: Int) Bool { n == 1 }, 1) {\n    .Some(v) => v,\n    .None => { return .Err(\"x\") },\n  }\n  .Ok(c)\n}"
+        r := try check_ok(src)
+        .Ok({})
+      },
+    )
+    .test(
+      "G8 closure param annotation mismatch",
+      fn() {
+        src := "fn f() { g: fn(Int) Int = fn(x: String) Int { 1 } }"
+        msgs := try check_errs(src)
+        try assert.str_contains(msgs[0], "type mismatch")
+        .Ok({})
+      },
+    )
+    .test(
+      "G9 collect-while with non-Bool condition errors",
+      fn() {
+        src := "fn f() Vector<Int> { collect 42 { 1 } }"
+        msgs := try check_errs(src)
+        try assert.str_contains(msgs[0], "type mismatch")
+        .Ok({})
+      },
+    )
+    .test(
+      "G9 collect over String yields Byte elements",
+      fn() {
+        src := "fn f(s: String) Vector<Int> { collect b in s { b + 0 } }"
+        r := try check_ok(src)
+        .Ok({})
+      },
+    )
+    .test(
+      "G9 collect over Dict yields key elements",
+      fn() {
+        src := "fn f(d: Dict<String, Int>) Vector<String> { collect k in d { k } }"
+        r := try check_ok(src)
+        .Ok({})
+      },
+    )
+    .test(
+      "G9 collect over Dict with index yields value",
+      fn() {
+        src := "fn f(d: Dict<String, Int>) Vector<Int> { collect k, v in d { v } }"
+        r := try check_ok(src)
+        .Ok({})
+      },
+    )
+    .test(
+      "G10 string literal pattern in case",
+      fn() {
+        src := "fn f(s: String) Int {\ncase s { \"hello\" => 1, \"world\" => 2, _ => 0 }\n}"
+        r := try check_ok(src)
+        .Ok({})
+      },
+    )
+    .test(
+      "G10 bool literal pattern in case",
+      fn() {
+        src := "fn f(b: Bool) Int {\ncase b { true => 1, false => 0 }\n}"
+        r := try check_ok(src)
+        .Ok({})
+      },
+    )
+    .test(
+      "G11 generic call result in arithmetic",
+      fn() {
+        src := "fn identity<T>(x: T) T { x }\nfn f() Int { identity(1) + 2 }"
+        r := try check_ok(src)
+        .Ok({})
+      },
+    )
+    .test(
+      "G11 negation on Float",
+      fn() {
+        src := "fn f(x: Float) Float { -x }"
+        r := try check_ok(src)
+        .Ok({})
+      },
+    )
+    .test(
+      "G11 negation on non-numeric errors",
+      fn() {
+        src := "fn f(x: Bool) Bool { -x }"
+        msgs := try check_errs(src)
+        try assert.str_contains(msgs[0], "negation")
+        .Ok({})
+      },
+    )
+    .test(
+      "G11 logical not on non-Bool errors",
+      fn() {
+        src := "fn f(x: Int) Bool { !x }"
+        msgs := try check_errs(src)
+        try assert.str_contains(msgs[0], "type mismatch")
+        .Ok({})
+      },
+    )
+    .test(
+      "G12 method chain on user types",
+      fn() {
+        src := "type Builder = .{ count: Int }\nfn inc(b: Builder) Builder { Builder.{ count: b.count + 1 } }\nfn value(b: Builder) Int { b.count }\nfn f() Int {\nb := Builder.{ count: 0 }\nb.inc().inc().value()\n}"
+        r := try check_ok(src)
+        .Ok({})
+      },
+    )
+    .test(
+      "G13 if-else else branch resolves variant shorthand from then type",
+      fn() {
+        src := "type Mono = { Void, Int }\nfn f(flag: Bool, args: Vector<Mono>) { if flag { args[0] } else { .Void } }"
+        r := try check_ok(src)
+        .Ok({})
+      },
+    )
+    .test(
+      "G13 if-else else branch resolves Option shorthand from then type",
+      fn() {
+        src := "type MaybeInt = { Some(Int), None }\nfn f(flag: Bool, xs: Vector<Int>) { if flag { MaybeInt.Some(xs[0]) } else { .None } }"
+        r := try check_ok(src)
+        .Ok({})
+      },
+    )
+    .test(
+      "G14 case arm resolves variant shorthand from later arm",
+      fn() {
+        src := "type Mono = { Void, Int }\nfn f(flag: Bool, xs: Vector<Mono>) Mono { case flag { true => .Void, _ => xs[0] } }"
+        r := try check_ok(src)
+        .Ok({})
+      },
+    )
+    .test(
+      "G14 case arm block tail resolves variant shorthand from later arm",
+      fn() {
+        src := "type Mono = { Void, Int }\nfn f(flag: Bool, xs: Vector<Mono>) Mono { case flag { true => { .Void }, _ => xs[0] } }"
+        r := try check_ok(src)
+        .Ok({})
+      },
+    )
+    .test(
+      "G13 if-else branch mismatch still errors",
+      fn() {
+        src := "fn f(x: Int) Int { if x > 0 { 1 } else { \"no\" } }"
+        msgs := try check_errs(src)
+        try assert.str_contains(msgs[0], "type mismatch")
+        .Ok({})
+      },
+    )
+    .test(
+      "anon record variant construction and pattern match",
+      fn() {
+        src := "type Msg = { Hello(.{ name: String }), Bye } fn greet(m: Msg) String { case m { .Hello(h) => h.name, .Bye => \"bye\" } }"
+        r := try check_ok(src)
+        .Ok({})
+      },
+    )
+    .test(
+      "anon record variant with shorthand literal",
+      fn() {
+        src := "type Msg = { Data(.{ x: Int, y: Int }) } fn f() Msg { .Data(.{ x: 1, y: 2 }) }"
+        r := try check_ok(src)
+        .Ok({})
+      },
+    )
+    .test(
+      "anon record variant mixed with regular variants",
+      fn() {
+        src := "type Shape = { Circle(.{ r: Float }), Square(Float), Unit } fn f(s: Shape) Float { case s { .Circle(c) => c.r, .Square(side) => side, .Unit => 0.0 } }"
+        r := try check_ok(src)
+        .Ok({})
+      },
+    )
 }

@@ -2,397 +2,427 @@ use tests.assert
 use tests.runner
 
 pub fn suite() runner.Suite {
-  runner.suite("range and iterator").test(
-    "range produces 0 to n-1",
-    fn() {
-      sum := 0
-      for i in 0..5 { sum = sum + i }
-      try assert.equal(sum, 10)
-      .Ok({})
-    },
-  ).test(
-    "0..0 produces empty iteration",
-    fn() {
-      count := 0
-      for _ in 0..0 { count = count + 1 }
-      try assert.equal(count, 0)
-      .Ok({})
-    },
-  ).test(
-    "range_from produces start to end-1",
-    fn() {
-      vals := collect i in 3..7 { i }
-      try assert.equal(vals.len(), 4)
-      try assert.equal(vals[0], 3)
-      try assert.equal(vals[3], 6)
-      .Ok({})
-    },
-  ).test(
-    "range_step with custom step",
-    fn() {
-      vals := collect i in range_step(0, 10, 3) { i }
-      try assert.equal(vals.len(), 4)
-      try assert.equal(vals[0], 0)
-      try assert.equal(vals[1], 3)
-      try assert.equal(vals[2], 6)
-      try assert.equal(vals[3], 9)
-      .Ok({})
-    },
-  ).test(
-    "range with indexed for",
-    fn() {
-      indices := collect val, idx in 10..13 { idx }
-      try assert.equal(indices[0], 0)
-      try assert.equal(indices[1], 1)
-      try assert.equal(indices[2], 2)
-      .Ok({})
-    },
-  ).test(
-    "collect from range",
-    fn() {
-      squares := collect i in 0..5 { i * i }
-      try assert.equal(squares.len(), 5)
-      try assert.equal(squares[0], 0)
-      try assert.equal(squares[4], 16)
-      .Ok({})
-    },
-  ).test(
-    "collect with continue filters",
-    fn() {
-      evens := collect i in 0..10 {
-        if i % 2 == 0 {
+  runner.suite("range and iterator")
+    .test(
+      "range produces 0 to n-1",
+      fn() {
+        sum := 0
+        for i in 0..5 { sum = sum + i }
+        try assert.equal(sum, 10)
+        .Ok({})
+      },
+    )
+    .test(
+      "0..0 produces empty iteration",
+      fn() {
+        count := 0
+        for _ in 0..0 { count = count + 1 }
+        try assert.equal(count, 0)
+        .Ok({})
+      },
+    )
+    .test(
+      "range_from produces start to end-1",
+      fn() {
+        vals := collect i in 3..7 { i }
+        try assert.equal(vals.len(), 4)
+        try assert.equal(vals[0], 3)
+        try assert.equal(vals[3], 6)
+        .Ok({})
+      },
+    )
+    .test(
+      "range_step with custom step",
+      fn() {
+        vals := collect i in range_step(0, 10, 3) { i }
+        try assert.equal(vals.len(), 4)
+        try assert.equal(vals[0], 0)
+        try assert.equal(vals[1], 3)
+        try assert.equal(vals[2], 6)
+        try assert.equal(vals[3], 9)
+        .Ok({})
+      },
+    )
+    .test(
+      "range with indexed for",
+      fn() {
+        indices := collect val, idx in 10..13 { idx }
+        try assert.equal(indices[0], 0)
+        try assert.equal(indices[1], 1)
+        try assert.equal(indices[2], 2)
+        .Ok({})
+      },
+    )
+    .test(
+      "collect from range",
+      fn() {
+        squares := collect i in 0..5 { i * i }
+        try assert.equal(squares.len(), 5)
+        try assert.equal(squares[0], 0)
+        try assert.equal(squares[4], 16)
+        .Ok({})
+      },
+    )
+    .test(
+      "collect with continue filters",
+      fn() {
+        evens := collect i in 0..10 {
+          if i % 2 == 0 {
+            i
+          } else {
+            continue
+          }
+        }
+        try assert.equal(evens.len(), 5)
+        try assert.equal(evens[0], 0)
+        try assert.equal(evens[4], 8)
+        .Ok({})
+      },
+    )
+    .test(
+      "collect with break stops early",
+      fn() {
+        vals := collect i in 0..100 {
+          if i >= 3 { break }
           i
-        } else {
-          continue
         }
-      }
-      try assert.equal(evens.len(), 5)
-      try assert.equal(evens[0], 0)
-      try assert.equal(evens[4], 8)
-      .Ok({})
-    },
-  ).test(
-    "collect with break stops early",
-    fn() {
-      vals := collect i in 0..100 {
-        if i >= 3 { break }
-        i
-      }
-      try assert.equal(vals.len(), 3)
-      try assert.equal(vals[0], 0)
-      try assert.equal(vals[2], 2)
-      .Ok({})
-    },
-  ).test(
-    "iterator unfold produces sequence",
-    fn() {
-      it := Iterator.unfold(
-        0,
-        fn(s: Int) {
-          if s >= 5 { UnfoldStep.Done } else { UnfoldStep.Yield(s, s + 1) }
-        },
-      )
-      vals := collect x in it { x }
-      try assert.equal(vals.len(), 5)
-      try assert.equal(vals[0], 0)
-      try assert.equal(vals[4], 4)
-      .Ok({})
-    },
-  ).test(
-    "iterator next returns item with continuation",
-    fn() {
-      it := Iterator.unfold(
-        0,
-        fn(s: Int) {
-          if s >= 3 { UnfoldStep.Done } else { UnfoldStep.Yield(s * 10, s + 1) }
-        },
-      )
-      item := Iterator.next(it)
-      try assert.is_some(item)
-      first := case item {
-        .Some(i) => i.value,
-        .None => -1,
-      }
-      try assert.equal(first, 0)
-      .Ok({})
-    },
-  ).test(
-    "empty iterator produces no values",
-    fn() {
-      it := Iterator.unfold(0, fn(_s: Int) UnfoldStep<Int, Int> { UnfoldStep.Done })
-      vals := collect x in it { x }
-      try assert.equal(vals.len(), 0)
-      .Ok({})
-    },
-  ).test(
-    "for over iterator consumes all",
-    fn() {
-      it := Iterator.unfold(
-        1,
-        fn(s: Int) {
-          if s > 4 { UnfoldStep.Done } else { UnfoldStep.Yield(s, s + 1) }
-        },
-      )
-      sum := 0
-      for x in it { sum = sum + x }
-      try assert.equal(sum, 10)
-      .Ok({})
-    },
-  ).test(
-    "indexed for over iterator",
-    fn() {
-      it := Iterator.unfold(
-        0,
-        fn(s: Int) {
-          if s >= 3 { UnfoldStep.Done } else { UnfoldStep.Yield(s * 10, s + 1) }
-        },
-      )
-      indices := 0
-      values := 0
-
-      for x, idx in it {
-        indices = indices + idx
-        values = values + x
-      }
-
-      try assert.equal(indices, 3) // 0 + 1 + 2
-      try assert.equal(values, 30) // 0 + 10 + 20
-      .Ok({})
-    },
-  ).test(
-    "indexed collect over iterator",
-    fn() {
-      it := Iterator.unfold(
-        10,
-        fn(s: Int) {
-          if s >= 13 { UnfoldStep.Done } else { UnfoldStep.Yield(s, s + 1) }
-        },
-      )
-      result := collect val, idx in it { idx * 100 + val }
-      try assert.equal(result.len(), 3)
-      try assert.equal(result[0], 10) // 0*100 + 10
-      try assert.equal(result[1], 111) // 1*100 + 11
-      try assert.equal(result[2], 212) // 2*100 + 12
-      .Ok({})
-    },
-  ).test(
-    "indexed for over empty iterator",
-    fn() {
-      it := Iterator.unfold(0, fn(_s: Int) UnfoldStep<Int, Int> { UnfoldStep.Done })
-      count := 0
-      for _, idx in it { count = count + 1 }
-      try assert.equal(count, 0)
-      .Ok({})
-    },
-  ).test(
-    "iterator is persistent (non-consuming)",
-    fn() {
-      it := Iterator.unfold(
-        0,
-        fn(s: Int) {
-          if s >= 3 { UnfoldStep.Done } else { UnfoldStep.Yield(s, s + 1) }
-        },
-      )
-      first := collect x in it { x }
-      second := collect x in it { x }
-      try assert.equal(first.len(), 3)
-      try assert.equal(second.len(), 3)
-      try assert.equal(first[0], second[0])
-      .Ok({})
-    },
-  ).test(
-    "to_vector materializes iterator",
-    fn() {
-      it := Iterator.unfold(
-        0,
-        fn(s: Int) {
-          if s >= 5 { UnfoldStep.Done } else { UnfoldStep.Yield(s * 2, s + 1) }
-        },
-      )
-      v := it.to_vector()
-      try assert.equal(v.len(), 5)
-      try assert.equal(v[0], 0)
-      try assert.equal(v[2], 4)
-      try assert.equal(v[4], 8)
-      .Ok({})
-    },
-  ).test(
-    "to_vector on empty iterator returns empty vector",
-    fn() {
-      it := Iterator.unfold(0, fn(_s: Int) UnfoldStep<Int, Int> { UnfoldStep.Done })
-      v := it.to_vector()
-      try assert.equal(v.len(), 0)
-      .Ok({})
-    },
-  ).test(
-    "to_vector equals collect identity",
-    fn() {
-      it := Iterator.unfold(
-        1,
-        fn(s: Int) {
-          if s > 4 { UnfoldStep.Done } else { UnfoldStep.Yield(s, s + 1) }
-        },
-      )
-      via_collect := collect x in it { x }
-      via_method := it.to_vector()
-      try assert.equal(via_collect.len(), via_method.len())
-      try assert.equal(via_collect[0], via_method[0])
-      try assert.equal(via_collect[3], via_method[3])
-      .Ok({})
-    },
-  ).test(
-    "string chars returns iterator",
-    fn() {
-      chars := collect c in "abc".chars() { c }
-      try assert.equal(chars.len(), 3)
-      try assert.equal(chars[0], "a")
-      try assert.equal(chars[1], "b")
-      try assert.equal(chars[2], "c")
-      .Ok({})
-    },
-  ).test(
-    "iterator map transforms lazily when consumed",
-    fn() {
-      seen := Cell.new(0)
-      base := Iterator.unfold(
-        0,
-        fn(i: Int) {
-          if i >= 5 { UnfoldStep.Done } else { UnfoldStep.Yield(i, i + 1) }
-        },
-      )
-      mapped := base.map(
-        fn(x: Int) {
-          seen.set(seen.get() + 1)
-          x * 10
-        },
-      )
-      try assert.equal(seen.get(), 0)
-      vals := mapped.take(2).to_vector()
-      try assert.equal(vals.len(), 2)
-      try assert.equal(vals[0], 0)
-      try assert.equal(vals[1], 10)
-      try assert.equal(seen.get(), 2)
-      .Ok({})
-    },
-  ).test(
-    "iterator filter keeps matching values",
-    fn() {
-      base := Iterator.unfold(
-        0,
-        fn(i: Int) {
-          if i >= 8 { UnfoldStep.Done } else { UnfoldStep.Yield(i, i + 1) }
-        },
-      )
-      evens := base.filter(fn(x: Int) { x % 2 == 0 }).to_vector()
-      try assert.equal(evens.len(), 4)
-      try assert.equal(evens[0], 0)
-      try assert.equal(evens[1], 2)
-      try assert.equal(evens[2], 4)
-      try assert.equal(evens[3], 6)
-      .Ok({})
-    },
-  ).test(
-    "iterator filter handles long reject runs",
-    fn() {
-      base := Iterator.unfold(
-        0,
-        fn(i: Int) {
-          if i >= 50000 { UnfoldStep.Done } else { UnfoldStep.Yield(i, i + 1) }
-        },
-      )
-      out := base.filter(fn(x: Int) { x == 49999 }).to_vector()
-      try assert.equal(out.len(), 1)
-      try assert.equal(out[0], 49999)
-      .Ok({})
-    },
-  ).test(
-    "iterator take limits traversal and handles non-positive n",
-    fn() {
-      seen := Cell.new(0)
-      base := Iterator.unfold(
-        0,
-        fn(i: Int) {
-          if i >= 10 { UnfoldStep.Done } else { UnfoldStep.Yield(i, i + 1) }
-        },
-      )
-      out := base.map(
-        fn(x: Int) {
-          seen.set(seen.get() + 1)
-          x
-        },
-      ).take(3).to_vector()
-      try assert.equal(out.len(), 3)
-      try assert.equal(out[0], 0)
-      try assert.equal(out[2], 2)
-      try assert.equal(seen.get(), 3)
-      none_a := base.take(0).to_vector()
-      none_b := base.take(-4).to_vector()
-      try assert.equal(none_a.len(), 0)
-      try assert.equal(none_b.len(), 0)
-      .Ok({})
-    },
-  ).test(
-    "iterator map filter take compose and match collect parity",
-    fn() {
-      base := Iterator.unfold(
-        0,
-        fn(i: Int) {
-          if i >= 20 { UnfoldStep.Done } else { UnfoldStep.Yield(i, i + 1) }
-        },
-      )
-      piped := base.map(fn(x: Int) { x + 1 }).filter(fn(x: Int) { x % 3 == 0 }).take(4).to_vector()
-      via_collect := collect x in 0..20 {
-        y := x + 1
-
-        if y % 3 == 0 and y <= 12 {
-          y
-        } else {
-          continue
+        try assert.equal(vals.len(), 3)
+        try assert.equal(vals[0], 0)
+        try assert.equal(vals[2], 2)
+        .Ok({})
+      },
+    )
+    .test(
+      "iterator unfold produces sequence",
+      fn() {
+        it := Iterator.unfold(
+          0,
+          fn(s: Int) {
+            if s >= 5 { UnfoldStep.Done } else { UnfoldStep.Yield(s, s + 1) }
+          },
+        )
+        vals := collect x in it { x }
+        try assert.equal(vals.len(), 5)
+        try assert.equal(vals[0], 0)
+        try assert.equal(vals[4], 4)
+        .Ok({})
+      },
+    )
+    .test(
+      "iterator next returns item with continuation",
+      fn() {
+        it := Iterator.unfold(
+          0,
+          fn(s: Int) {
+            if s >= 3 { UnfoldStep.Done } else { UnfoldStep.Yield(s * 10, s + 1) }
+          },
+        )
+        item := Iterator.next(it)
+        try assert.is_some(item)
+        first := case item {
+          .Some(i) => i.value,
+          .None => -1,
         }
-      }
-      try assert.equal(piped.len(), via_collect.len())
-      try assert.equal(piped[0], via_collect[0])
-      try assert.equal(piped[1], via_collect[1])
-      try assert.equal(piped[2], via_collect[2])
-      try assert.equal(piped[3], via_collect[3])
-      .Ok({})
-    },
-  ).test(
-    "iterator combinators preserve persistence",
-    fn() {
-      base := Iterator.unfold(
-        0,
-        fn(i: Int) {
-          if i >= 6 { UnfoldStep.Done } else { UnfoldStep.Yield(i, i + 1) }
-        },
-      )
-      adapted := base.map(fn(x: Int) { x + 1 }).filter(fn(x: Int) { x % 2 == 0 }).take(2)
-      first := adapted.to_vector()
-      second := adapted.to_vector()
-      try assert.equal(first.len(), 2)
-      try assert.equal(second.len(), 2)
-      try assert.equal(first[0], second[0])
-      try assert.equal(first[1], second[1])
-      .Ok({})
-    },
-  ).test(
-    "iterator combinators support qualified calls",
-    fn() {
-      base := Iterator.unfold(
-        0,
-        fn(i: Int) {
-          if i >= 10 { UnfoldStep.Done } else { UnfoldStep.Yield(i, i + 1) }
-        },
-      )
-      out := Iterator.take(
-        Iterator.filter(Iterator.map(base, fn(x: Int) { x + 1 }), fn(x: Int) { x % 2 == 0 }),
-        3,
-      ).to_vector()
-      try assert.equal(out.len(), 3)
-      try assert.equal(out[0], 2)
-      try assert.equal(out[1], 4)
-      try assert.equal(out[2], 6)
-      .Ok({})
-    },
-  )
+        try assert.equal(first, 0)
+        .Ok({})
+      },
+    )
+    .test(
+      "empty iterator produces no values",
+      fn() {
+        it := Iterator.unfold(0, fn(_s: Int) UnfoldStep<Int, Int> { UnfoldStep.Done })
+        vals := collect x in it { x }
+        try assert.equal(vals.len(), 0)
+        .Ok({})
+      },
+    )
+    .test(
+      "for over iterator consumes all",
+      fn() {
+        it := Iterator.unfold(
+          1,
+          fn(s: Int) {
+            if s > 4 { UnfoldStep.Done } else { UnfoldStep.Yield(s, s + 1) }
+          },
+        )
+        sum := 0
+        for x in it { sum = sum + x }
+        try assert.equal(sum, 10)
+        .Ok({})
+      },
+    )
+    .test(
+      "indexed for over iterator",
+      fn() {
+        it := Iterator.unfold(
+          0,
+          fn(s: Int) {
+            if s >= 3 { UnfoldStep.Done } else { UnfoldStep.Yield(s * 10, s + 1) }
+          },
+        )
+        indices := 0
+        values := 0
+
+        for x, idx in it {
+          indices = indices + idx
+          values = values + x
+        }
+
+        try assert.equal(indices, 3) // 0 + 1 + 2
+        try assert.equal(values, 30) // 0 + 10 + 20
+        .Ok({})
+      },
+    )
+    .test(
+      "indexed collect over iterator",
+      fn() {
+        it := Iterator.unfold(
+          10,
+          fn(s: Int) {
+            if s >= 13 { UnfoldStep.Done } else { UnfoldStep.Yield(s, s + 1) }
+          },
+        )
+        result := collect val, idx in it { idx * 100 + val }
+        try assert.equal(result.len(), 3)
+        try assert.equal(result[0], 10) // 0*100 + 10
+        try assert.equal(result[1], 111) // 1*100 + 11
+        try assert.equal(result[2], 212) // 2*100 + 12
+        .Ok({})
+      },
+    )
+    .test(
+      "indexed for over empty iterator",
+      fn() {
+        it := Iterator.unfold(0, fn(_s: Int) UnfoldStep<Int, Int> { UnfoldStep.Done })
+        count := 0
+        for _, idx in it { count = count + 1 }
+        try assert.equal(count, 0)
+        .Ok({})
+      },
+    )
+    .test(
+      "iterator is persistent (non-consuming)",
+      fn() {
+        it := Iterator.unfold(
+          0,
+          fn(s: Int) {
+            if s >= 3 { UnfoldStep.Done } else { UnfoldStep.Yield(s, s + 1) }
+          },
+        )
+        first := collect x in it { x }
+        second := collect x in it { x }
+        try assert.equal(first.len(), 3)
+        try assert.equal(second.len(), 3)
+        try assert.equal(first[0], second[0])
+        .Ok({})
+      },
+    )
+    .test(
+      "to_vector materializes iterator",
+      fn() {
+        it := Iterator.unfold(
+          0,
+          fn(s: Int) {
+            if s >= 5 { UnfoldStep.Done } else { UnfoldStep.Yield(s * 2, s + 1) }
+          },
+        )
+        v := it.to_vector()
+        try assert.equal(v.len(), 5)
+        try assert.equal(v[0], 0)
+        try assert.equal(v[2], 4)
+        try assert.equal(v[4], 8)
+        .Ok({})
+      },
+    )
+    .test(
+      "to_vector on empty iterator returns empty vector",
+      fn() {
+        it := Iterator.unfold(0, fn(_s: Int) UnfoldStep<Int, Int> { UnfoldStep.Done })
+        v := it.to_vector()
+        try assert.equal(v.len(), 0)
+        .Ok({})
+      },
+    )
+    .test(
+      "to_vector equals collect identity",
+      fn() {
+        it := Iterator.unfold(
+          1,
+          fn(s: Int) {
+            if s > 4 { UnfoldStep.Done } else { UnfoldStep.Yield(s, s + 1) }
+          },
+        )
+        via_collect := collect x in it { x }
+        via_method := it.to_vector()
+        try assert.equal(via_collect.len(), via_method.len())
+        try assert.equal(via_collect[0], via_method[0])
+        try assert.equal(via_collect[3], via_method[3])
+        .Ok({})
+      },
+    )
+    .test(
+      "string chars returns iterator",
+      fn() {
+        chars := collect c in "abc".chars() { c }
+        try assert.equal(chars.len(), 3)
+        try assert.equal(chars[0], "a")
+        try assert.equal(chars[1], "b")
+        try assert.equal(chars[2], "c")
+        .Ok({})
+      },
+    )
+    .test(
+      "iterator map transforms lazily when consumed",
+      fn() {
+        seen := Cell.new(0)
+        base := Iterator.unfold(
+          0,
+          fn(i: Int) {
+            if i >= 5 { UnfoldStep.Done } else { UnfoldStep.Yield(i, i + 1) }
+          },
+        )
+        mapped := base.map(
+          fn(x: Int) {
+            seen.set(seen.get() + 1)
+            x * 10
+          },
+        )
+        try assert.equal(seen.get(), 0)
+        vals := mapped.take(2).to_vector()
+        try assert.equal(vals.len(), 2)
+        try assert.equal(vals[0], 0)
+        try assert.equal(vals[1], 10)
+        try assert.equal(seen.get(), 2)
+        .Ok({})
+      },
+    )
+    .test(
+      "iterator filter keeps matching values",
+      fn() {
+        base := Iterator.unfold(
+          0,
+          fn(i: Int) {
+            if i >= 8 { UnfoldStep.Done } else { UnfoldStep.Yield(i, i + 1) }
+          },
+        )
+        evens := base.filter(fn(x: Int) { x % 2 == 0 }).to_vector()
+        try assert.equal(evens.len(), 4)
+        try assert.equal(evens[0], 0)
+        try assert.equal(evens[1], 2)
+        try assert.equal(evens[2], 4)
+        try assert.equal(evens[3], 6)
+        .Ok({})
+      },
+    )
+    .test(
+      "iterator filter handles long reject runs",
+      fn() {
+        base := Iterator.unfold(
+          0,
+          fn(i: Int) {
+            if i >= 50000 { UnfoldStep.Done } else { UnfoldStep.Yield(i, i + 1) }
+          },
+        )
+        out := base.filter(fn(x: Int) { x == 49999 }).to_vector()
+        try assert.equal(out.len(), 1)
+        try assert.equal(out[0], 49999)
+        .Ok({})
+      },
+    )
+    .test(
+      "iterator take limits traversal and handles non-positive n",
+      fn() {
+        seen := Cell.new(0)
+        base := Iterator.unfold(
+          0,
+          fn(i: Int) {
+            if i >= 10 { UnfoldStep.Done } else { UnfoldStep.Yield(i, i + 1) }
+          },
+        )
+        out := base.map(
+          fn(x: Int) {
+            seen.set(seen.get() + 1)
+            x
+          },
+        ).take(3).to_vector()
+        try assert.equal(out.len(), 3)
+        try assert.equal(out[0], 0)
+        try assert.equal(out[2], 2)
+        try assert.equal(seen.get(), 3)
+        none_a := base.take(0).to_vector()
+        none_b := base.take(-4).to_vector()
+        try assert.equal(none_a.len(), 0)
+        try assert.equal(none_b.len(), 0)
+        .Ok({})
+      },
+    )
+    .test(
+      "iterator map filter take compose and match collect parity",
+      fn() {
+        base := Iterator.unfold(
+          0,
+          fn(i: Int) {
+            if i >= 20 { UnfoldStep.Done } else { UnfoldStep.Yield(i, i + 1) }
+          },
+        )
+        piped := base.map(fn(x: Int) { x + 1 })
+          .filter(fn(x: Int) { x % 3 == 0 })
+          .take(4)
+          .to_vector()
+        via_collect := collect x in 0..20 {
+          y := x + 1
+
+          if y % 3 == 0 and y <= 12 {
+            y
+          } else {
+            continue
+          }
+        }
+        try assert.equal(piped.len(), via_collect.len())
+        try assert.equal(piped[0], via_collect[0])
+        try assert.equal(piped[1], via_collect[1])
+        try assert.equal(piped[2], via_collect[2])
+        try assert.equal(piped[3], via_collect[3])
+        .Ok({})
+      },
+    )
+    .test(
+      "iterator combinators preserve persistence",
+      fn() {
+        base := Iterator.unfold(
+          0,
+          fn(i: Int) {
+            if i >= 6 { UnfoldStep.Done } else { UnfoldStep.Yield(i, i + 1) }
+          },
+        )
+        adapted := base.map(fn(x: Int) { x + 1 }).filter(fn(x: Int) { x % 2 == 0 }).take(2)
+        first := adapted.to_vector()
+        second := adapted.to_vector()
+        try assert.equal(first.len(), 2)
+        try assert.equal(second.len(), 2)
+        try assert.equal(first[0], second[0])
+        try assert.equal(first[1], second[1])
+        .Ok({})
+      },
+    )
+    .test(
+      "iterator combinators support qualified calls",
+      fn() {
+        base := Iterator.unfold(
+          0,
+          fn(i: Int) {
+            if i >= 10 { UnfoldStep.Done } else { UnfoldStep.Yield(i, i + 1) }
+          },
+        )
+        out := Iterator.take(
+          Iterator.filter(Iterator.map(base, fn(x: Int) { x + 1 }), fn(x: Int) { x % 2 == 0 }),
+          3,
+        ).to_vector()
+        try assert.equal(out.len(), 3)
+        try assert.equal(out[0], 2)
+        try assert.equal(out[1], 4)
+        try assert.equal(out[2], 6)
+        .Ok({})
+      },
+    )
 }

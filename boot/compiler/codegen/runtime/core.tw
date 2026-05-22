@@ -473,10 +473,8 @@ fn field_eq_instrs(qualified_sym: String, field_idx: Int, vt: ValType) Vector<In
     .F64 => [Instr.F64Eq],
     _ => [Instr.Call("eq")],
   }
-  get_both.concat(compare).concat([
-    Instr.I32Eqz,
-    Instr.If(.None, [Instr.I32Const(0), Instr.Return], []),
-  ])
+  get_both.concat(compare)
+    .concat([Instr.I32Eqz, Instr.If(.None, [Instr.I32Const(0), Instr.Return], [])])
 }
 
 fn gen_record_eq_fn(rec: WasmRecordLayout) FuncDef {
@@ -759,12 +757,14 @@ fn eq_fn(eq_layouts: EqTypeLayouts) FuncDef {
         ],
         [],
       ),
-    ].concat(record_eq_dispatch(eq_layouts.records)).concat(sum_eq_dispatch(eq_layouts.sums)).concat([
-      Instr.LocalGet(0),
-      Instr.RefCast(true, HeapType.Eq),
-      Instr.LocalGet(1),
-      Instr.RefCast(true, HeapType.Eq),
-      Instr.RefEq,
-    ]),
+    ].concat(record_eq_dispatch(eq_layouts.records))
+      .concat(sum_eq_dispatch(eq_layouts.sums))
+      .concat([
+        Instr.LocalGet(0),
+        Instr.RefCast(true, HeapType.Eq),
+        Instr.LocalGet(1),
+        Instr.RefCast(true, HeapType.Eq),
+        Instr.RefEq,
+      ]),
   }
 }
