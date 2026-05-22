@@ -1,0 +1,25 @@
+fn process(data: Vector<Int>) Int {
+  total := 0
+  count := 0
+
+  for x in data { total = total + x }
+  for x in data { count = count + 1 }
+
+  // compute average
+  avg := total / count
+  result := avg * 2
+  result
+}
+
+fn no_blanks(x: Int) Int {
+  a := x + 1
+  b := a * 2
+  b
+}
+
+fn author_blanks_preserved(x: Int) Int {
+  a := x + 1
+
+  b := a * 2
+  b
+}

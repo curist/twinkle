@@ -145,6 +145,26 @@ fn is_blank_trivia(t: Trivia) Bool {
   }
 }
 
+fn has_blank_in_trivia(trivia: Vector<Trivia>) Bool {
+  for t in trivia {
+    if is_blank_trivia(t) {
+      return true
+    }
+  }
+
+  false
+}
+
+fn has_comment_in_trivia(trivia: Vector<Trivia>) Bool {
+  for t in trivia {
+    if is_comment_trivia(t) {
+      return true
+    }
+  }
+
+  false
+}
+
 fn non_blank_trivia(trivia: Vector<Trivia>) Vector<Trivia> {
   out: Vector<Trivia> = []
 
@@ -664,9 +684,14 @@ fn format_block_with_options(
   allow_return_inline: Bool,
 ) Doc {
   body_docs: Vector<Doc> = []
+  has_author_blank: Vector<Bool> = []
+  has_leading_comment: Vector<Bool> = []
 
-  for stmt in block.stmts {
-    trivia := non_blank_trivia(get_trivia(tm, stmt_span(stmt).start))
+  for stmt, i in block.stmts {
+    raw_trivia := get_trivia(tm, stmt_span(stmt).start)
+    trivia := non_blank_trivia(raw_trivia)
+    has_author_blank = .append(i > 0 and has_blank_in_trivia(raw_trivia))
+    has_leading_comment = .append(i > 0 and has_comment_in_trivia(raw_trivia))
     stmt_doc := format_stmt(stmt, tm)
     if trivia.len() > 0 { stmt_doc = doc.concat([emit_trivia(trivia), stmt_doc]) }
     trailing := get_trailing_trivia(tm, stmt_span(stmt).end)
@@ -676,7 +701,10 @@ fn format_block_with_options(
 
   case block.tail {
     .Some(expr) => {
-      trivia := non_blank_trivia(get_trivia(tm, expr.span.start))
+      raw_trivia := get_trivia(tm, expr.span.start)
+      trivia := non_blank_trivia(raw_trivia)
+      has_author_blank = .append(block.stmts.len() > 0 and has_blank_in_trivia(raw_trivia))
+      has_leading_comment = .append(block.stmts.len() > 0 and has_comment_in_trivia(raw_trivia))
       tail_doc := format_expr(expr, tm)
       if trivia.len() > 0 { tail_doc = doc.concat([emit_trivia(trivia), tail_doc]) }
       trailing := get_trailing_trivia(tm, expr.span.end)
@@ -727,7 +755,7 @@ fn format_block_with_options(
     }
   }
 
-  inner := join_block_docs(block, body_docs)
+  inner := join_block_docs(block, body_docs, has_author_blank, has_leading_comment)
   doc.concat([
     doc.text("{"),
     doc.indent(doc.concat([doc.hard_line(), inner])),
@@ -736,7 +764,12 @@ fn format_block_with_options(
   ])
 }
 
-fn join_block_docs(block: Block, docs: Vector<Doc>) Doc {
+fn join_block_docs(
+  block: Block,
+  docs: Vector<Doc>,
+  has_author_blank: Vector<Bool>,
+  has_leading_comment: Vector<Bool>,
+) Doc {
   result := docs[0]
   prev_flow := false
   if block.stmts.len() > 0 { prev_flow = is_flow_stmt(block.stmts[0]) }
@@ -751,7 +784,10 @@ fn join_block_docs(block: Block, docs: Vector<Doc>) Doc {
         .None => false,
       }
     }
-    sep := if should_use_compact_flow_separator(block, i) {
+    wants_blank := has_author_blank[i] or has_leading_comment[i]
+    sep := if wants_blank {
+      doc.concat([doc.hard_line(), doc.hard_line()])
+    } else if should_use_compact_flow_separator(block, i) {
       doc.hard_line()
     } else if prev_flow or cur_flow {
       doc.concat([doc.hard_line(), doc.hard_line()])
@@ -1610,7 +1646,15 @@ fn is_simple_expr(expr: Expr) Bool {
     .Variant(_, fields) => fields.len() == 0,
     .Unary(_, _) => true,
     .Binary(_, _, _) => true,
-    .Call(_, _) => true,
+    .Call(_, args) => {
+      for arg in args {
+        if !is_simple_expr(arg) {
+          return false
+        }
+      }
+
+      true
+    },
     .Field(_, _) => true,
     .Index(_, _) => true,
     .Record(entries) => are_simple_record_entries(entries),

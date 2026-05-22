@@ -1,0 +1,21 @@
+fn example(items: Vector<Int>, trivia: Vector<Doc>) {
+  result := Doc.Nil
+
+  if trivia.len() > 0 {
+    result = doc.concat([result, emit_trivia(trivia)])
+  }
+
+  if items.len() > 0 { total = total + 1 }
+
+  for item in items {
+    result = doc.concat([result, format(item)])
+  }
+
+  for item in items { count = count + 1 }
+  if x > 0 {
+    return ok(compute(x))
+  }
+  if x > 0 {
+    return result
+  }
+}
