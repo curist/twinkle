@@ -139,7 +139,10 @@ fn emit_trivia(trivia: Vector<Trivia>) Doc {
         prev_is_doc := i > 0 and is_doc_trivia(trivia[i - 1])
         next_is_doc := i + 1 < trivia.len() and is_doc_trivia(trivia[i + 1])
 
-        if !prev_is_comment and next_is_comment or prev_is_doc and next_is_doc {
+        starts_comment_group := !prev_is_comment and next_is_comment
+        separates_doc_comments := prev_is_doc and next_is_doc
+
+        if starts_comment_group or separates_doc_comments {
           result = doc.concat([result, doc.hard_line()])
         }
       },

@@ -2843,6 +2843,28 @@ fn attach_doc_comments(source: String, items: Vector<Item>) Vector<Item> {
   }
 }
 
+fn doc_line_text(line: String) String? {
+  trimmed := line.trim()
+
+  if trimmed.len() < 3 or trimmed.slice(0, 3) != "///" {
+    return .None
+  }
+
+  if trimmed.len() > 3 and trimmed.slice(3, 4) == " " {
+    .Some(trimmed.slice(4, trimmed.len()))
+  } else {
+    .Some(trimmed.slice(3, trimmed.len()))
+  }
+}
+
+fn finish_doc_lines(lines: Vector<String>) String? {
+  if lines.len() == 0 {
+    .None
+  } else {
+    .Some(lines.join("\n"))
+  }
+}
+
 fn extract_doc_comment(source: String, decl_start: Int) String? {
   pos := decl_start - 1
 
@@ -2864,31 +2886,22 @@ fn extract_doc_comment(source: String, decl_start: Int) String? {
     }
 
     line := source.slice(line_start, pos + 1)
-    trimmed := line.trim()
 
-    if trimmed.len() >= 3 and trimmed.slice(0, 3) == "///" {
-      rest := if trimmed.len() > 3 and trimmed.slice(3, 4) == " " {
-        trimmed.slice(4, trimmed.len())
-      } else {
-        trimmed.slice(3, trimmed.len())
-      }
-      lines = [rest].concat(lines)
+    case doc_line_text(line) {
+      .Some(rest) => {
+        lines = [rest].concat(lines)
 
-      if line_start == 0 {
-        break
-      }
+        if line_start == 0 {
+          break
+        }
 
-      pos = line_start - 2
-    } else {
-      break
+        pos = line_start - 2
+      },
+      .None => { break },
     }
   }
 
-  if lines.len() == 0 {
-    .None
-  } else {
-    .Some(lines.join("\n"))
-  }
+  finish_doc_lines(lines)
 }
 
 fn extract_module_doc(source: String) String? {
@@ -2903,28 +2916,20 @@ fn extract_module_doc(source: String) String? {
       line_end = line_end + 1
     }
 
-    line := source.slice(pos, line_end).trim()
+    line := source.slice(pos, line_end)
 
-    if line.len() >= 3 and line.slice(0, 3) == "///" {
-      rest := if line.len() > 3 and line.slice(3, 4) == " " {
-        line.slice(4, line.len())
-      } else {
-        line.slice(3, line.len())
-      }
-      lines = .append(rest)
-      pos = if line_end < len {
-        line_end + 1
-      } else {
-        line_end
-      }
-    } else {
-      break
+    case doc_line_text(line) {
+      .Some(rest) => {
+        lines = .append(rest)
+        pos = if line_end < len {
+          line_end + 1
+        } else {
+          line_end
+        }
+      },
+      .None => { break },
     }
   }
 
-  if lines.len() == 0 {
-    .None
-  } else {
-    .Some(lines.join("\n"))
-  }
+  finish_doc_lines(lines)
 }

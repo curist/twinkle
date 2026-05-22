@@ -6,8 +6,10 @@ use compiler.ast.{
 }
 use compiler.checker.{CheckResult}
 use compiler.contracts.{BuiltinContract, resolve_builtin_contract_name}
+use compiler.imports
 use compiler.mono_type.{MonoType, TypeId}
 use compiler.query.ast_walk.{NodeContext, find_node_in_block, find_node_in_expr, find_node_in_stmt}
+use compiler.query.cache
 use compiler.query.semantic.{SemanticSnapshot}
 use compiler.query.util.{find_map, find_map_indexed}
 use compiler.resolver.{
@@ -23,15 +25,22 @@ pub fn hover(snap: SemanticSnapshot, byte_offset: Int, source: String) HoverResu
   find_map(
     parsed.module.items,
     fn(item) {
-      hover_item(item, byte_offset, typed, parsed.module.items, source)
+      hover_item(item, byte_offset, snap, typed, parsed.module.items, source)
     },
   )
 }
 
-fn hover_item(item: Item, offset: Int, typed: CheckResult, items: Vector<Item>, source: String) HoverResult? {
+fn hover_item(
+  item: Item,
+  offset: Int,
+  snap: SemanticSnapshot,
+  typed: CheckResult,
+  items: Vector<Item>,
+  source: String,
+) HoverResult? {
   case item {
     .Use(decl) => if decl.span.contains(offset) {
-      hover_import(decl, offset, typed)
+      hover_import(decl, offset, snap, typed)
     } else {
       .None
     },
@@ -50,7 +59,7 @@ fn hover_item(item: Item, offset: Int, typed: CheckResult, items: Vector<Item>, 
   }
 }
 
-fn hover_import(decl: UseDecl, offset: Int, typed: CheckResult) HoverResult? {
+fn hover_import(decl: UseDecl, offset: Int, snap: SemanticSnapshot, typed: CheckResult) HoverResult? {
   case decl.items {
     .Some(items) => {
       result := find_map(
@@ -62,21 +71,39 @@ fn hover_import(decl: UseDecl, offset: Int, typed: CheckResult) HoverResult? {
 
       case result {
         .Some(_) => result,
-        .None => hover_import_module(decl, typed),
+        .None => hover_import_module(decl, snap),
       }
     },
-    .None => hover_import_module(decl, typed),
+    .None => hover_import_module(decl, snap),
   }
 }
 
-fn hover_import_module(decl: UseDecl, typed: CheckResult) HoverResult? {
-  alias := if decl.path.len() > 0 {
-    decl.alias.unwrap_or(decl.path[decl.path.len() - 1])
-  } else {
-    return .None
+fn imported_module_doc(decl: UseDecl, snap: SemanticSnapshot) String? {
+  parsed := try snap.parsed
+  plan := case imports.plan_dependencies(parsed.module, snap.canonical_path, snap.project_root) {
+    .Ok(value) => value,
+    .Err(_) => { return .None },
   }
 
-  doc := try typed.env.module_docs[alias]
+  for dep in plan.dependencies {
+    if dep.kind != .Import or dep.span.start != decl.span.start or dep.span.end != decl.span.end {
+      continue
+    }
+
+    dep_parsed := try cache.latest_parsed(snap.cache, dep.canonical_path)
+    return dep_parsed.module.doc
+  }
+
+  .None
+}
+
+fn hover_import_module(decl: UseDecl, snap: SemanticSnapshot) HoverResult? {
+  if decl.path.len() == 0 {
+    error("UseDecl path should not be empty")
+  }
+
+  alias := decl.alias.unwrap_or(decl.path[decl.path.len() - 1])
+  doc := try imported_module_doc(decl, snap)
   .Some(.{ content: append_doc("module ${alias}", .Some(doc)), span: decl.span })
 }
 

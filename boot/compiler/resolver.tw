@@ -108,7 +108,6 @@ pub type ResolvedEnv = .{
   extern_namespaces: Dict<String, Bool>,
   value_bindings: Dict<String, MonoType>,
   value_origins: Dict<String, FunctionOrigin>,
-  module_docs: Dict<String, String>,
 }
 
 pub fn empty_env() ResolvedEnv {
@@ -128,7 +127,6 @@ pub fn empty_env() ResolvedEnv {
     extern_namespaces: Dict.new(),
     value_bindings: Dict.new(),
     value_origins: Dict.new(),
-    module_docs: Dict.new(),
   }
 }
 
@@ -1086,14 +1084,7 @@ pub fn merge_selective_imports(
   exports: ModuleExports,
   items: Vector<ImportItem>,
 ) ResolvedEnv {
-  result := merge_selective_via_registration(env, alias, module_path, exports, items)
-
-  case exports.doc {
-    .Some(doc) => result.module_docs[alias] = doc,
-    .None => {},
-  }
-
-  result
+  merge_selective_via_registration(env, alias, module_path, exports, items)
 }
 
 fn visible_function_names(exports: ModuleExports) Dict<String, Bool> {
@@ -1171,11 +1162,6 @@ pub fn merge_module_exports(
     qualified := qualify_name(alias, v.name)
     cur.value_bindings[qualified] = v.ty
     cur.value_origins[qualified] = FunctionOrigin.{ module_path, func_name: v.name }
-  }
-
-  case exports.doc {
-    .Some(doc) => cur.module_docs[alias] = doc,
-    .None => {},
   }
 
   cur.with_methods(methods)
