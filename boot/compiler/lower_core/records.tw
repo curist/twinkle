@@ -142,9 +142,7 @@ pub fn lower_field(
 
       case fn_name {
         .Some(fn_name) => case ctx.func_table[fn_name] {
-          .Some(fid) => {
-            return .{ expr: .{ kind: .GlobalFunc(fid), ty, span: s }, ctx }
-          },
+          .Some(fid) => { return .{ expr: .{ kind: .GlobalFunc(fid), ty, span: s }, ctx } },
           .None => {},
         },
         .None => {
@@ -152,9 +150,7 @@ pub fn lower_field(
           qualified := "${name}.${field_name}"
 
           case ctx.module_globals[qualified] {
-            .Some(gid) => {
-              return .{ expr: .{ kind: .GlobalLocal(gid), ty, span: s }, ctx }
-            },
+            .Some(gid) => { return .{ expr: .{ kind: .GlobalLocal(gid), ty, span: s }, ctx } },
             .None => {},
           }
         },

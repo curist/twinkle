@@ -138,9 +138,7 @@ fn resolve_type_params(ast_params: Vector<TypeParam>) Result<Vector<ResolvedType
       seg := bound_path.segments[0]
       bound := case resolve_builtin_contract_name(seg) {
         .Some(c) => ResolvedContractRef.Builtin(c),
-        .None => {
-          return .Err("unknown contract '${seg}'")
-        },
+        .None => { return .Err("unknown contract '${seg}'") },
       }
       bounds = .append(bound)
     }
@@ -319,9 +317,7 @@ pub fn load_signatures(signatures_dir: String, type_env: ResolvedEnv) Result<
       .Ok(es) => collect entry in es {
         entry.name
       },
-      .Err(_) => {
-        return .Err("cannot read signatures directory: ${signatures_dir}")
-      },
+      .Err(_) => { return .Err("cannot read signatures directory: ${signatures_dir}") },
     },
   }
 
@@ -345,9 +341,7 @@ pub fn load_signatures(signatures_dir: String, type_env: ResolvedEnv) Result<
       .Some(s) => s,
       .None => case fs.read_text(file_path) {
         .Ok(s) => s,
-        .Err(_) => {
-          return .Err("cannot read ${file_path}")
-        },
+        .Err(_) => { return .Err("cannot read ${file_path}") },
       },
     }
     group := try load_group_from_source(src, receiver, type_env)

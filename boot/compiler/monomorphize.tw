@@ -979,9 +979,7 @@ fn rewrite_calls_kind(
             key := spec_key(fid, type_args)
 
             case spec_map[key] {
-              .Some(new_fid) => {
-                return .GlobalFunc(new_fid)
-              },
+              .Some(new_fid) => { return .GlobalFunc(new_fid) },
               .None => {},
             }
           },
@@ -1014,9 +1012,7 @@ fn rewrite_calls_kind(
               key := spec_key(fid, type_args)
 
               case spec_map[key] {
-                .Some(new_fid) => {
-                  return .MakeClosure(new_fid, free_vars)
-                },
+                .Some(new_fid) => { return .MakeClosure(new_fid, free_vars) },
                 .None => {},
               }
             }

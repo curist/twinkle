@@ -189,12 +189,8 @@ fn parse_json_string(input: String, i: Int) Result<ParseResult<String>, String> 
 
     if c == 0x22 {
       case String.from_utf8(out) {
-        .Some(s) => {
-          return .Ok(.{ value: s, next: j + 1 })
-        },
-        .None => {
-          return .Err("invalid utf-8 in string at ${i}")
-        },
+        .Some(s) => { return .Ok(.{ value: s, next: j + 1 }) },
+        .None => { return .Err("invalid utf-8 in string at ${i}") },
       }
     }
 
@@ -640,18 +636,14 @@ pub fn list<A>(da: Decoder<A>) Decoder<Vector<A>> {
           // Decode the first element to bootstrap the output vector's type.
           out := case da.run(arr[0]) {
             .Ok(a) => [a],
-            .Err(e) => {
-              return .Err("index 0: ${e}")
-            },
+            .Err(e) => { return .Err("index 0: ${e}") },
           }
           i := 1
 
           for i < arr.len() {
             case da.run(arr[i]) {
               .Ok(a) => out = out.append(a),
-              .Err(e) => {
-                return .Err("index ${i}: ${e}")
-              },
+              .Err(e) => { return .Err("index ${i}: ${e}") },
             }
 
             i = i + 1
@@ -687,9 +679,7 @@ fn decode_dict_values<A>(json: Json, da: Decoder<A>) Result<Dict<String, A>, Str
 
         case da.run(value) {
           .Ok(a) => out[key] = a,
-          .Err(e) => {
-            return .Err("key '${key}': ${e}")
-          },
+          .Err(e) => { return .Err("key '${key}': ${e}") },
         }
       }
 
@@ -707,9 +697,7 @@ pub fn one_of<A>(decoders: Vector<Decoder<A>>) Decoder<A> {
 
       for i < decoders.len() {
         case decoders[i].run(json) {
-          .Ok(a) => {
-            return .Ok(a)
-          },
+          .Ok(a) => { return .Ok(a) },
           .Err(_) => {},
         }
 

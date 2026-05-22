@@ -336,9 +336,7 @@ pub fn suite() runner.Suite {
 
         case source.version {
           .Some(v) => try assert.equal(v, 7),
-          .None => {
-            return assert.fail("expected overlay version")
-          },
+          .None => { return assert.fail("expected overlay version") },
         }
 
         .Ok({})

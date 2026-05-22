@@ -63,9 +63,7 @@ fn collect_iterator_next_helpers_expr(expr: PreparedExpr, func: PreparedFunc, wa
 
         cur_expr = body
       },
-      _ => {
-        return out
-      },
+      _ => { return out },
     }
   }
 
@@ -166,9 +164,7 @@ fn collect_dict_get_inner_types_expr(expr: PreparedExpr, func: PreparedFunc, wan
 
         cur_expr = body
       },
-      _ => {
-        return out
-      },
+      _ => { return out },
     }
   }
 

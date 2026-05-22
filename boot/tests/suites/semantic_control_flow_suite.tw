@@ -298,9 +298,7 @@ pub fn suite() runner.Suite {
         opt: Int? = .Some(42)
         x := case opt {
           .Some(v) => v,
-          .None => {
-            return .Ok({})
-          },
+          .None => { return .Ok({}) },
         }
         try assert.equal(x, 42)
         .Ok({})

@@ -203,23 +203,17 @@ fn test_binop_add() Result<Void, String> {
     .ABinOp(binop, left, right, kind) => {
       case binop {
         .Add => {},
-        _ => {
-          return .Err("expected Add")
-        },
+        _ => { return .Err("expected Add") },
       }
 
       case left {
         .ALitInt(n) => try assert.equal(n, 1),
-        _ => {
-          return .Err("expected ALitInt(1)")
-        },
+        _ => { return .Err("expected ALitInt(1)") },
       }
 
       case right {
         .ALitInt(n) => try assert.equal(n, 2),
-        _ => {
-          return .Err("expected ALitInt(2)")
-        },
+        _ => { return .Err("expected ALitInt(2)") },
       }
 
       case kind {
@@ -240,9 +234,7 @@ fn test_unop_neg() Result<Void, String> {
     .AUnOp(unop, atom, kind) => {
       case unop {
         .Neg => {},
-        _ => {
-          return .Err("expected Neg")
-        },
+        _ => { return .Err("expected Neg") },
       }
 
       case kind {

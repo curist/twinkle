@@ -171,9 +171,7 @@ fn verify_slot_metadata(pf: PreparedFunc, info: SlotInfo, env: ResolvedEnv) Void
   }
 
   case info.repr {
-    .DeadValue => {
-      return fail_slot(pf, info, "live slot cannot have DeadValue repr")
-    },
+    .DeadValue => { return fail_slot(pf, info, "live slot cannot have DeadValue repr") },
     _ => {},
   }
 

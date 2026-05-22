@@ -137,9 +137,7 @@ fn resolve_named_variant_field(
 ) MonoType {
   def := case env.lookup_type_def(tid) {
     .Some(d) => d,
-    .None => {
-      return .Void
-    },
+    .None => { return .Void },
   }
 
   case def {

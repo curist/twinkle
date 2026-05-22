@@ -37,9 +37,7 @@ pub fn run_lsp_command(_parsed: ParseResult) {
         }
 
         case decoded {
-          .NeedMoreBytes => {
-            break
-          },
+          .NeedMoreBytes => { break },
           .DecodedBytes(frame, rest) => {
             message := case protocol.parse_message(frame.body) {
               .Ok(msg) => msg,

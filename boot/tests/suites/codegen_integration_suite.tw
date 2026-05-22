@@ -47,9 +47,7 @@ fn test_emit_wat_basic() Result<Void, String> {
       try assert.str_contains(wat, "\$rt_types__Array")
       try assert.str_contains(wat, "\$rt_types__String")
     },
-    .Err(_) => {
-      return assert.fail("link should succeed for single module")
-    },
+    .Err(_) => { return assert.fail("link should succeed for single module") },
   }
 
   .Ok({})
@@ -108,9 +106,7 @@ fn test_phase3_bool_case() Result<Void, String> {
 fn test_phase4_record_field_access() Result<Void, String> {
   dollar: String = case String.from_code_point(36) {
     .Some(d) => d,
-    .None => {
-      return .Err("failed to create dollar sign")
-    },
+    .None => { return .Err("failed to create dollar sign") },
   }
   src: String = "type Pair = .{ x: Int, y: Int }\nfn main() Void { p := Pair.{ x: 41, y: 1 }\nprintln(\"".concat(
     dollar,
@@ -185,9 +181,7 @@ fn test_link_runtime_resolves_imports() Result<Void, String> {
       }
     },
     .Err(errors) => case errors[0] {
-      .MissingExport(m, n) => {
-        return assert.fail("link failed: missing ${m}.${n}")
-      },
+      .MissingExport(m, n) => { return assert.fail("link failed: missing ${m}.${n}") },
     },
   }
 
@@ -212,9 +206,7 @@ fn test_link_runtime_emits_valid_wat() Result<Void, String> {
       try assert.str_contains(wat, "rt_types__Array")
       try assert.str_contains(wat, "rt_types__String")
     },
-    .Err(_) => {
-      return assert.fail("link should succeed")
-    },
+    .Err(_) => { return assert.fail("link should succeed") },
   }
 
   .Ok({})
@@ -254,9 +246,7 @@ fn test_link_runtime_host_imports_preserved() Result<Void, String> {
       try assert.ok(found_println, "should preserve host.println import")
       try assert.ok(found_f64, "should preserve host.f64_to_string import")
     },
-    .Err(_) => {
-      return assert.fail("link should succeed")
-    },
+    .Err(_) => { return assert.fail("link should succeed") },
   }
 
   .Ok({})
@@ -274,9 +264,7 @@ fn test_link_runtime_no_start_function() Result<Void, String> {
       },
       "runtime-only link should have no start function",
     ),
-    .Err(_) => {
-      return assert.fail("link should succeed")
-    },
+    .Err(_) => { return assert.fail("link should succeed") },
   }
 
   .Ok({})

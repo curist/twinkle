@@ -463,9 +463,7 @@ pub fn suite() runner.Suite {
                 replacement := try json.decode(data, json.field("replacement", json.string()))
                 try assert.str_contains(replacement, "used_fn")
               },
-              .None => {
-                return .Err("expected data on unused import diagnostic")
-              },
+              .None => { return .Err("expected data on unused import diagnostic") },
             }
           }
         }

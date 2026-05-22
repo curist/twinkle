@@ -581,9 +581,7 @@ pub fn suite() runner.Suite {
         for item in items {
           msg_str := case json.decode(item, json.field("message", json.string())) {
             .Ok(m) => m,
-            .Err(_) => {
-              continue
-            },
+            .Err(_) => { continue },
           }
 
           if msg_str.contains("unused_fn") {

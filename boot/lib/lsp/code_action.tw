@@ -49,15 +49,11 @@ pub fn unused_import_actions(
   for diag in context_diagnostics {
     data := case json.decode(diag, json.field("data", json.raw())) {
       .Ok(d) => d,
-      .Err(_) => {
-        continue
-      },
+      .Err(_) => { continue },
     }
     kind := case json.decode(data, json.field("kind", json.string())) {
       .Ok(k) => k,
-      .Err(_) => {
-        continue
-      },
+      .Err(_) => { continue },
     }
 
     if kind != "unused_import" {
@@ -66,21 +62,15 @@ pub fn unused_import_actions(
 
     use_start := case json.decode(data, json.field("use_start", json.int())) {
       .Ok(s) => s,
-      .Err(_) => {
-        continue
-      },
+      .Err(_) => { continue },
     }
     use_end := case json.decode(data, json.field("use_end", json.int())) {
       .Ok(e) => e,
-      .Err(_) => {
-        continue
-      },
+      .Err(_) => { continue },
     }
     replacement := case json.decode(data, json.field("replacement", json.string())) {
       .Ok(r) => r,
-      .Err(_) => {
-        continue
-      },
+      .Err(_) => { continue },
     }
     message := case json.decode(diag, json.field("message", json.string())) {
       .Ok(m) => m,

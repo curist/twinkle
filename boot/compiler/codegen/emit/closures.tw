@@ -170,9 +170,7 @@ pub fn emit_builtin_trampolines(ctx: EmitCtx) Vector<FuncDef> {
       ctx.env,
     ) {
       .Some(info) => info,
-      .None => {
-        continue
-      },
+      .None => { continue },
     }
 
     if !target.closure_materializable {
@@ -181,15 +179,11 @@ pub fn emit_builtin_trampolines(ctx: EmitCtx) Vector<FuncDef> {
 
     entry := case bi.entry(ctx.builtins, func_id) {
       .Some(e) => e,
-      .None => {
-        continue
-      },
+      .None => { continue },
     }
     sig := case ctx.registry.concrete_func_sigs[fid] {
       .Some(s) => s,
-      .None => {
-        continue
-      },
+      .None => { continue },
     }
     out = .append(emit_builtin_universal_trampoline(entry, sig, target.wrapper_kind, ctx))
   }

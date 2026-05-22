@@ -83,9 +83,7 @@ fn test_lower_builder_region_uses_builder_new() Result<Void, String> {
 
       case freeze_args[0] {
         .ALocal(id) => try assert.equal(id.id, 10),
-        _ => {
-          return .Err("expected freeze(builder_local)")
-        },
+        _ => { return .Err("expected freeze(builder_local)") },
       }
 
       try assert.equal(assign_local.id, 12)
@@ -93,9 +91,7 @@ fn test_lower_builder_region_uses_builder_new() Result<Void, String> {
 
       case value {
         .ALocal(id) => try assert.equal(id.id, 11),
-        _ => {
-          return .Err("expected assign from freeze local")
-        },
+        _ => { return .Err("expected assign from freeze local") },
       }
 
       assert.equal(cont_local.id, 0)

@@ -19,30 +19,22 @@ pub fn emit_coerce_stack(
   }
 
   case to {
-    .Anyref => {
-      return emit_box_to_anyref(mono, ctx.env, buf)
-    },
+    .Anyref => { return emit_box_to_anyref(mono, ctx.env, buf) },
     _ => {},
   }
 
   case from {
-    .Anyref => {
-      return emit_unbox_from_anyref(mono, ctx.env, buf)
-    },
+    .Anyref => { return emit_unbox_from_anyref(mono, ctx.env, buf) },
     _ => {},
   }
 
   case from {
     .I32 => case to {
-      .I64 => {
-        return buf.append(.I64ExtendI32S)
-      },
+      .I64 => { return buf.append(.I64ExtendI32S) },
       _ => {},
     },
     .I64 => case to {
-      .I32 => {
-        return buf.append(.I32WrapI64)
-      },
+      .I32 => { return buf.append(.I32WrapI64) },
       _ => {},
     },
     .Ref(false, from_heap) => case to {
@@ -62,9 +54,7 @@ pub fn emit_coerce_stack(
 
   case from {
     .Ref(_, _) => case to {
-      .Ref(nullable, heap) => {
-        return buf.append(.RefCast(nullable, heap))
-      },
+      .Ref(nullable, heap) => { return buf.append(.RefCast(nullable, heap)) },
       _ => {},
     },
     _ => {},

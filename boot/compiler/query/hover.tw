@@ -398,16 +398,12 @@ fn hover_ident_expr(
 
 fn hover_closure_expr(expr: Expr, params: Vector<Param>, offset: Int, typed: CheckResult) HoverResult? {
   case hover_closure_param_names(expr, params, offset, typed) {
-    .Some(r) => {
-      return .Some(r)
-    },
+    .Some(r) => { return .Some(r) },
     .None => {},
   }
 
   case hover_closure_param_types(params, offset, typed) {
-    .Some(r) => {
-      return .Some(r)
-    },
+    .Some(r) => { return .Some(r) },
     .None => {},
   }
 
@@ -456,9 +452,7 @@ fn hover_variant_expr(expr: Expr, name: String, offset: Int, typed: CheckResult)
     ty := try typed.type_map[expr.id]
 
     case variant_hover_for_type(typed.env, ty, name, name_span) {
-      .Some(r) => {
-        return .Some(r)
-      },
+      .Some(r) => { return .Some(r) },
       .None => {},
     }
   }
@@ -482,9 +476,7 @@ fn hover_recorded_method(callee_id: Int, base: Expr, method_span: Span, typed: C
 
         return .Some(.{ content, span: method_span })
       },
-      .None => {
-        return .None
-      },
+      .None => { return .None },
     }
   }
 
@@ -520,9 +512,7 @@ fn hover_named_method(base: Expr, method: String, method_span: Span, typed: Chec
 fn method_function_name(base: Expr, method: String, typed: CheckResult) String? {
   case typed.type_map[base.id] {
     .Some(ty) => case method_function_name_for_type(ty, method, typed.env) {
-      .Some(func_name) => {
-        return .Some(func_name)
-      },
+      .Some(func_name) => { return .Some(func_name) },
       .None => {},
     },
     .None => {},
@@ -663,9 +653,7 @@ fn hover_type_path(path: TypePath, offset: Int, typed: CheckResult) HoverResult?
 
   case typed.env.lookup_type(name) {
     .Some(entry) => case entry.def {
-      .Some(def) => {
-        return type_def_hover(def, path.span)
-      },
+      .Some(def) => { return type_def_hover(def, path.span) },
       .None => {},
     },
     .None => {},

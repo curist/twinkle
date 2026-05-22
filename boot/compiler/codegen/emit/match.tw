@@ -130,9 +130,7 @@ fn is_br_table_eligible(arms: Vector<PreparedMatchArm>, scrutinee_mono: MonoType
   layout := cached_layout_of(scrutinee_mono, ctx)
   variant_count := case layout {
     .Sum(s) => s.variants.len(),
-    _ => {
-      return false
-    },
+    _ => { return false },
   }
 
   if variant_count == 0 {
@@ -192,15 +190,9 @@ fn is_br_table_eligible(arms: Vector<PreparedMatchArm>, scrutinee_mono: MonoType
 
         catch_all_seen = true
       },
-      .LitInt(_) => {
-        return false
-      },
-      .LitBool(_) => {
-        return false
-      },
-      .LitStr(_) => {
-        return false
-      },
+      .LitInt(_) => { return false },
+      .LitBool(_) => { return false },
+      .LitStr(_) => { return false },
     }
   }
 
@@ -338,9 +330,7 @@ fn emit_match_arm_body(
 fn is_string_trie_eligible(arms: Vector<PreparedMatchArm>, scrutinee_mono: MonoType) Bool {
   case scrutinee_mono {
     .String => {},
-    _ => {
-      return false
-    },
+    _ => { return false },
   }
 
   seen: Dict<String, Bool> = Dict.new()
@@ -384,9 +374,7 @@ fn is_string_trie_eligible(arms: Vector<PreparedMatchArm>, scrutinee_mono: MonoT
 
         catch_all_seen = true
       },
-      _ => {
-        return false
-      },
+      _ => { return false },
     }
   }
 

@@ -190,9 +190,7 @@ fn test_multiple_functions_optimized() Result<Void, String> {
   // Check func1: fully reduces to Atom(3)
   case result.functions[0].body {
     .Atom(.ALitInt(n)) => try assert.equal(n, 3),
-    _ => {
-      return .Err("func1: expected Atom(3)")
-    },
+    _ => { return .Err("func1: expected Atom(3)") },
   }
 
   // Check func2: fully reduces to Atom(7)
@@ -310,9 +308,7 @@ fn test_optimize_module_with_semantics_matches_default() Result<Void, String> {
         try assert.equal(n1, 9)
         assert.equal(n2, 9)
       },
-      _ => {
-        return .Err("default optimize_module did not reduce to Atom(9)")
-      },
+      _ => { return .Err("default optimize_module did not reduce to Atom(9)") },
     },
     _ => .Err("optimize_module_with_semantics did not reduce to Atom(9)"),
   }

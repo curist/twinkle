@@ -719,9 +719,7 @@ fn emit_let(
             cur_op = next_op
             cur_body = next_body
           },
-          _ => {
-            return emit_expr(cur_body, expected_ty, ctx, buf)
-          },
+          _ => { return emit_expr(cur_body, expected_ty, ctx, buf) },
         }
       },
     }
@@ -871,9 +869,7 @@ fn emit_atom(atom: PreparedAtom, ctx: EmitCtx, buf: Vector<Instr>) Vector<Instr>
 fn atom_mono(atom: PreparedAtom, ctx: EmitCtx) MonoType {
   case current_prepared_func(ctx) {
     .Some(pf) => case facts.atom_mono(atom, pf) {
-      .Some(mono) => {
-        return mono
-      },
+      .Some(mono) => { return mono },
       .None => {},
     },
     .None => {},
@@ -900,9 +896,7 @@ fn atom_mono(atom: PreparedAtom, ctx: EmitCtx) MonoType {
 fn atom_repr(atom: PreparedAtom, ctx: EmitCtx) ReprKind {
   case current_prepared_func(ctx) {
     .Some(pf) => case facts.atom_repr(atom, pf) {
-      .Some(repr) => {
-        return repr
-      },
+      .Some(repr) => { return repr },
       .None => {},
     },
     .None => {},
@@ -929,9 +923,7 @@ fn atom_repr(atom: PreparedAtom, ctx: EmitCtx) ReprKind {
 fn atom_val_type(atom: PreparedAtom, ctx: EmitCtx) ValType {
   case current_prepared_func(ctx) {
     .Some(pf) => case facts.atom_val_type(atom, pf) {
-      .Some(vt) => {
-        return vt
-      },
+      .Some(vt) => { return vt },
       .None => {},
     },
     .None => {},

@@ -27,13 +27,9 @@ fn canonical_capture_source_local(
   caps := case info.role {
     .CaptureParam => case closure_captures[pf.func_id.id] {
       .Some(caps) => caps,
-      .None => {
-        return info.source_local
-      },
+      .None => { return info.source_local },
     },
-    _ => {
-      return info.source_local
-    },
+    _ => { return info.source_local },
   }
 
   for cap in caps {
@@ -507,9 +503,7 @@ fn verify_call_shape(
     .AGlobalFunc(fid) => {
       target := case callable_targets.callable_target(fid, funcs_by_id, builtins, env) {
         .Some(target) => target,
-        .None => {
-          return .Ok({})
-        },
+        .None => { return .Ok({}) },
       }
 
       case target.builtin_name {
@@ -580,9 +574,7 @@ fn verify_builtin_call_shape(
 ) Result<Void, String> {
   entry := case builtins.by_id[fid] {
     .Some(entry) => entry,
-    .None => {
-      return .Ok({})
-    },
+    .None => { return .Ok({}) },
   }
 
   if !abi_has_types(entry.abi.param_types, entry.abi.result_types) {
@@ -631,9 +623,7 @@ fn verify_return_expr(
     _ => {
       a := case atom {
         .Some(a) => a,
-        .None => {
-          return fail_func(pf, "non-void function must return a value")
-        },
+        .None => { return fail_func(pf, "non-void function must return a value") },
       }
       try verify_atom_use(pf, a, "return", module_globals)
       try verify_return_value_type(pf, a, funcs_by_id, module_globals, env, builtins)
@@ -828,9 +818,7 @@ fn verify_atom_coercible_to_val_type(
 
   actual_vt := case infer_atom_val_type(pf, atom, module_globals, env) {
     .Some(vt) => vt,
-    .None => {
-      return .Ok({})
-    },
+    .None => { return .Ok({}) },
   }
 
   if can_emit_coerce_stack(actual_vt, expected_vt) {
@@ -964,9 +952,7 @@ fn verify_variant_payloads(
 
       return fail_slot(pf, result_info, "variant ${vid.id} missing from sum layout")
     },
-    _ => {
-      return fail_slot(pf, result_info, "variant result has non-sum layout")
-    },
+    _ => { return fail_slot(pf, result_info, "variant result has non-sum layout") },
   }
   payload_types
   .Ok({})
@@ -1115,9 +1101,7 @@ fn verify_dead_placeholder_value(
   context: String,
 ) Result<Void, String> {
   case atom {
-    .ALitVoid => {
-      return .Ok({})
-    },
+    .ALitVoid => { return .Ok({}) },
     _ => {},
   }
 
@@ -1146,9 +1130,7 @@ fn verify_value_for_slot(
   context: String,
 ) Result<Void, String> {
   case atom {
-    .ALitVoid => {
-      return .Ok({})
-    },
+    .ALitVoid => { return .Ok({}) },
     _ => {},
   }
 

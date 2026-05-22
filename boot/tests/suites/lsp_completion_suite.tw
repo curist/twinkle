@@ -61,9 +61,7 @@ fn completion_labels(step: server_core.Step) Vector<String>!String {
   result := try json.decode(out, json.field("result", json.raw()))
   items := case result {
     .Array(arr) => arr,
-    _ => {
-      return .Err("expected array result")
-    },
+    _ => { return .Err("expected array result") },
   }
   labels: Vector<String> = []
 

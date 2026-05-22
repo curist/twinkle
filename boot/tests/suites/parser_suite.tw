@@ -1052,9 +1052,7 @@ pub fn suite() runner.Suite {
           .For(s) => {
             case s.pattern {
               .Some(p) => try assert.equal(p, "x"),
-              .None => {
-                return assert.fail("expected pattern")
-              },
+              .None => { return assert.fail("expected pattern") },
             }
 
             try assert.is_none(s.index)
@@ -1074,9 +1072,7 @@ pub fn suite() runner.Suite {
           .For(s) => {
             case s.pattern {
               .Some(p) => try assert.equal(p, "x"),
-              .None => {
-                return assert.fail("expected pattern")
-              },
+              .None => { return assert.fail("expected pattern") },
             }
 
             case s.index {

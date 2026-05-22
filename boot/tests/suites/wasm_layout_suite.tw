@@ -219,9 +219,7 @@ fn test_layout_dict() Result<Void, String> {
     .Dict_(kl, vl) => {
       case kl {
         .Scalar(.WAnyref) => {},
-        _ => {
-          return assert.fail("expected key Scalar(WAnyref)")
-        },
+        _ => { return assert.fail("expected key Scalar(WAnyref)") },
       }
 
       case vl {

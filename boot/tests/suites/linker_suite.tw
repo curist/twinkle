@@ -557,23 +557,17 @@ fn test_link_rewrites_func_param_result_types() Result<Void, String> {
   // Check param type rewritten
   case f.params[0] {
     .Ref(_, .Named(name)) => try assert.equal(name, "ns__Rec"),
-    _ => {
-      return assert.fail("param should be ref to ns__Rec")
-    },
+    _ => { return assert.fail("param should be ref to ns__Rec") },
   }
 
   case f.results[0] {
     .Ref(_, .Named(name)) => try assert.equal(name, "ns__Rec"),
-    _ => {
-      return assert.fail("result should be ref to ns__Rec")
-    },
+    _ => { return assert.fail("result should be ref to ns__Rec") },
   }
 
   case f.locals[0] {
     .Ref(_, .Named(name)) => try assert.equal(name, "ns__Rec"),
-    _ => {
-      return assert.fail("local should be ref to ns__Rec")
-    },
+    _ => { return assert.fail("local should be ref to ns__Rec") },
   }
 
   .Ok({})
@@ -832,12 +826,8 @@ fn test_link_rewrites_struct_supertype() Result<Void, String> {
   // Child's supertype should be rewritten to ns__Base
   case find_type(linked, "ns__Child") {
     .Some(.Struct(_, _, .Some(sup), _)) => try assert.equal(sup, "ns__Base"),
-    .Some(_) => {
-      return assert.fail("Child should have supertype")
-    },
-    .None => {
-      return assert.fail("missing ns__Child")
-    },
+    .Some(_) => { return assert.fail("Child should have supertype") },
+    .None => { return assert.fail("missing ns__Child") },
   }
 
   .Ok({})

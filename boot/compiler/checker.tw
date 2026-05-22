@@ -109,9 +109,7 @@ fn lookup_local(ctx: InferCtx, name: String) MonoType? {
 
   for i >= 0 {
     case ctx.locals[i][name] {
-      .Some(ty) => {
-        return .Some(ty)
-      },
+      .Some(ty) => { return .Some(ty) },
       .None => {},
     }
 
@@ -299,16 +297,12 @@ fn unify(ctx: InferCtx, a: MonoType, b: MonoType, s: Span, diags: Vector<DiagKin
 
   // Never unifies with anything
   case za {
-    .Never => {
-      return .{ ctx, diags }
-    },
+    .Never => { return .{ ctx, diags } },
     _ => {},
   }
 
   case zb {
-    .Never => {
-      return .{ ctx, diags }
-    },
+    .Never => { return .{ ctx, diags } },
     _ => {},
   }
 
@@ -338,51 +332,35 @@ fn unify(ctx: InferCtx, a: MonoType, b: MonoType, s: Span, diags: Vector<DiagKin
   // Structural matching
   case za {
     .Int => case zb {
-      .Int => {
-        return .{ ctx, diags }
-      },
+      .Int => { return .{ ctx, diags } },
       _ => {},
     },
     .Float => case zb {
-      .Float => {
-        return .{ ctx, diags }
-      },
+      .Float => { return .{ ctx, diags } },
       _ => {},
     },
     .Bool => case zb {
-      .Bool => {
-        return .{ ctx, diags }
-      },
+      .Bool => { return .{ ctx, diags } },
       _ => {},
     },
     .Byte => case zb {
-      .Byte => {
-        return .{ ctx, diags }
-      },
+      .Byte => { return .{ ctx, diags } },
       _ => {},
     },
     .String => case zb {
-      .String => {
-        return .{ ctx, diags }
-      },
+      .String => { return .{ ctx, diags } },
       _ => {},
     },
     .Void => case zb {
-      .Void => {
-        return .{ ctx, diags }
-      },
+      .Void => { return .{ ctx, diags } },
       _ => {},
     },
     .Anyref_ => case zb {
-      .Anyref_ => {
-        return .{ ctx, diags }
-      },
+      .Anyref_ => { return .{ ctx, diags } },
       _ => {},
     },
     .Vector(ia) => case zb {
-      .Vector(ib) => {
-        return ctx.unify(ia, ib, s, diags)
-      },
+      .Vector(ib) => { return ctx.unify(ia, ib, s, diags) },
       _ => {},
     },
     .Dict(ka, va) => case zb {
@@ -393,9 +371,7 @@ fn unify(ctx: InferCtx, a: MonoType, b: MonoType, s: Span, diags: Vector<DiagKin
       _ => {},
     },
     .Optional(ia) => case zb {
-      .Optional(ib) => {
-        return ctx.unify(ia, ib, s, diags)
-      },
+      .Optional(ib) => { return ctx.unify(ia, ib, s, diags) },
       _ => {},
     },
     .Result(oa, ea) => case zb {
@@ -608,9 +584,7 @@ fn lookup_scoped_type_param(scope: Vector<ResolvedTypeParam>, name: String) Reso
 fn type_var_has_contract(name: String, contract: BuiltinContract, scope: Vector<ResolvedTypeParam>) Bool {
   tp := case lookup_scoped_type_param(scope, name) {
     .Some(found) => found,
-    .None => {
-      return false
-    },
+    .None => { return false },
   }
 
   for bound in tp.bounds {
@@ -633,15 +607,11 @@ fn lookup_scoped_contract_method(
 ) ScopedContractMatch? {
   name := case base_ty {
     .Var(n) => n,
-    _ => {
-      return .None
-    },
+    _ => { return .None },
   }
   tp := case lookup_scoped_type_param(scope, name) {
     .Some(found) => found,
-    .None => {
-      return .None
-    },
+    .None => { return .None },
   }
 
   for bound in tp.bounds {
@@ -706,15 +676,11 @@ fn prove_contract_method(
 ) Result<InferCtx, String> {
   fn_name := case resolve_method_func_name(ty, req.method_name, ctx.env) {
     .Some(name) => name,
-    .None => {
-      return .Err("missing ${contract_requirement_summary(req)}")
-    },
+    .None => { return .Err("missing ${contract_requirement_summary(req)}") },
   }
   sig := case ctx.env.lookup_registered_function(fn_name) {
     .Some(found) => found,
-    .None => {
-      return .Err("missing ${contract_requirement_summary(req)}")
-    },
+    .None => { return .Err("missing ${contract_requirement_summary(req)}") },
   }
   inst := instantiate(sig, ctx)
   expected_param_count := req.receiver_param_count + req.arg_count_without_receiver
@@ -731,9 +697,7 @@ fn prove_contract_method(
 
   recv_ctx := case silent_unify(inst.ctx, ty, inst.params[0]) {
     .Some(next_ctx) => next_ctx,
-    .None => {
-      return .Err("${req.method_name} does not apply to ${ctx.env.ty_to_string_env(ty)}")
-    },
+    .None => { return .Err("${req.method_name} does not apply to ${ctx.env.ty_to_string_env(ty)}") },
   }
 
   // Validate non-receiver parameters also match the target type
@@ -779,9 +743,7 @@ fn prove_contract_method(
             .Ok(next_ctx) => {
               cur_ctx = next_ctx
             },
-            .Err(reason) => {
-              return .Err(reason)
-            },
+            .Err(reason) => { return .Err(reason) },
           }
         },
       }
@@ -844,9 +806,7 @@ fn try_auto_derive_eq(ty: MonoType, ctx: InferCtx, active: Dict<String, Bool>) R
               .Ok(next_ctx) => {
                 cur_ctx = next_ctx
               },
-              .Err(reason) => {
-                return .Some(.Err(reason))
-              },
+              .Err(reason) => { return .Some(.Err(reason)) },
             }
           }
 
@@ -863,9 +823,7 @@ fn try_auto_derive_eq(ty: MonoType, ctx: InferCtx, active: Dict<String, Bool>) R
                 .Ok(next_ctx) => {
                   cur_ctx = next_ctx
                 },
-                .Err(reason) => {
-                  return .Some(.Err(reason))
-                },
+                .Err(reason) => { return .Some(.Err(reason)) },
               }
             }
           }
@@ -1143,9 +1101,7 @@ fn check_type_instantiation_bounds(
 
       def := case cur_ctx.env.lookup_type_def(tid) {
         .Some(found) => found,
-        .None => {
-          return .{ ctx: cur_ctx, diags: cur_diags }
-        },
+        .None => { return .{ ctx: cur_ctx, diags: cur_diags } },
       }
 
       case def {
@@ -1289,9 +1245,7 @@ fn expand_alias(ty: MonoType, env: ResolvedEnv, depth: Int) MonoType {
     .Named(tid, type_args) => {
       def := case env.lookup_type_def(tid) {
         .Some(d) => d,
-        .None => {
-          return ty
-        },
+        .None => { return ty },
       }
 
       case def {
@@ -1419,9 +1373,7 @@ fn synth_call(
           )
 
           case module_call {
-            .Some(r) => {
-              return r
-            },
+            .Some(r) => { return r },
             .None => {
               return .{
                 ty: .Void,
@@ -1646,9 +1598,7 @@ fn resolve_method_func_name(base_ty: MonoType, method_name: String, env: Resolve
 fn lookup_method_sig(base_ty: MonoType, method_name: String, env: ResolvedEnv) FunctionSig? {
   fn_name := case resolve_method_func_name(base_ty, method_name, env) {
     .Some(name) => name,
-    .None => {
-      return .None
-    },
+    .None => { return .None },
   }
   env.lookup_registered_function(fn_name)
 }
@@ -1658,9 +1608,7 @@ fn named_function_field_exists(base_ty: MonoType, field_name: String, env: Resol
     .Named(tid, type_args) => {
       def := case env.lookup_type_def(tid) {
         .Some(d) => d,
-        .None => {
-          return false
-        },
+        .None => { return false },
       }
 
       case def {
@@ -1675,12 +1623,8 @@ fn named_function_field_exists(base_ty: MonoType, field_name: String, env: Resol
             field_ty := subst_vars(f.ty, var_map)
 
             case field_ty {
-              .Function(_, _) => {
-                return true
-              },
-              _ => {
-                return false
-              },
+              .Function(_, _) => { return true },
+              _ => { return false },
             }
           }
 
@@ -1705,9 +1649,7 @@ fn type_def_name(env: ResolvedEnv, tid: TypeId) String? {
 fn resolve_named_type_id(env: ResolvedEnv, name: String) TypeId? {
   entry := case env.lookup_type(name) {
     .Some(found) => found,
-    .None => {
-      return .None
-    },
+    .None => { return .None },
   }
 
   case entry.def {
@@ -1736,12 +1678,8 @@ fn try_synth_module_qualified_value(
         .None => {
           // Check for an imported module-level value binding.
           case ctx.env.value_bindings[qualified] {
-            .Some(ty) => {
-              return .Some(.{ ty, ctx, diags })
-            },
-            .None => {
-              return .None
-            },
+            .Some(ty) => { return .Some(.{ ty, ctx, diags }) },
+            .None => { return .None },
           }
         },
       }
@@ -1749,9 +1687,7 @@ fn try_synth_module_qualified_value(
   }
   sig := case ctx.env.lookup_registered_function(fn_name) {
     .Some(s) => s,
-    .None => {
-      return .None
-    },
+    .None => { return .None },
   }
   inst := instantiate(sig, ctx)
   .Some(.{ ty: MonoType.Function(inst.params, inst.ret), ctx: inst.ctx, diags })
@@ -1776,17 +1712,13 @@ fn try_synth_module_qualified_call(
 
       case ctx.env.lookup_function(qualified) {
         .Some(_) => qualified,
-        .None => {
-          return .None
-        },
+        .None => { return .None },
       }
     },
   }
   sig := case ctx.env.lookup_registered_function(fn_name) {
     .Some(s) => s,
-    .None => {
-      return .None
-    },
+    .None => { return .None },
   }
   inst := instantiate(sig, ctx)
   pu := pre_unify_return(inst.ctx, inst.ret, call_expected, callee_span, diags)
@@ -1865,9 +1797,7 @@ fn try_synth_method_call(
       owner := method_owner_name(base_ty, br.ctx.env)
 
       case owner {
-        .None => {
-          return .None
-        },
+        .None => { return .None },
         .Some(_) => {
           if named_function_field_exists(base_ty, method_name, br.ctx.env) {
             return .None
@@ -1956,9 +1886,7 @@ fn try_synth_method_value(
 
   sig := case lookup_method_sig(base_ty, method_name, ctx.env) {
     .Some(found) => found,
-    .None => {
-      return .None
-    },
+    .None => { return .None },
   }
   inst := instantiate(sig, ctx)
   cur_ctx := inst.ctx
@@ -2114,9 +2042,7 @@ fn synth_field(base: Expr, field_name: String, s: Span, ctx: InferCtx, diags: Ve
       module_value := try_synth_module_qualified_value(alias, field_name, ctx, diags)
 
       case module_value {
-        .Some(r) => {
-          return r
-        },
+        .Some(r) => { return r },
         .None => {},
       }
     },
@@ -2142,9 +2068,7 @@ fn synth_field(base: Expr, field_name: String, s: Span, ctx: InferCtx, diags: Ve
       case def {
         .Record(_, type_params, fields) => {
           case find_record_field_type(fields, type_params, type_args, field_name) {
-            .Some(fty) => {
-              return .{ ty: fty, ctx: br.ctx, diags: br.diags }
-            },
+            .Some(fty) => { return .{ ty: fty, ctx: br.ctx, diags: br.diags } },
             .None => {},
           }
 
@@ -2734,9 +2658,7 @@ fn is_case_scrutinee_supported(ty: MonoType, ctx: InferCtx) Bool {
     .Named(tid, _) => {
       def := case ctx.env.lookup_type_def(tid) {
         .Some(d) => d,
-        .None => {
-          return false
-        },
+        .None => { return false },
       }
 
       case def {
@@ -3010,12 +2932,8 @@ fn check_exhaustiveness(
   // Check if any arm is a wildcard or ident (covers all)
   for arm in arms {
     case arm.pattern.kind {
-      .Wildcard => {
-        return diags
-      },
-      .Ident(_) => {
-        return diags
-      },
+      .Wildcard => { return diags },
+      .Ident(_) => { return diags },
       _ => {},
     }
   }
@@ -3043,13 +2961,9 @@ fn check_exhaustiveness(
             } else {
               "false"
             },
-            _ => {
-              continue
-            },
+            _ => { continue },
           },
-          _ => {
-            continue
-          },
+          _ => { continue },
         }
       }
 
@@ -3690,9 +3604,7 @@ fn synth_eq_op(lhs: Expr, rhs: Expr, s: Span, ctx: InferCtx, diags: Vector<DiagK
   r1 := try_eq_directional(lhs, rhs, s, ctx, diags)
 
   case r1 {
-    .Some(r) => {
-      return check_eq_contract(r.operand_ty, r.ctx, r.diags, s)
-    },
+    .Some(r) => { return check_eq_contract(r.operand_ty, r.ctx, r.diags, s) },
     .None => {},
   }
 
@@ -3700,9 +3612,7 @@ fn synth_eq_op(lhs: Expr, rhs: Expr, s: Span, ctx: InferCtx, diags: Vector<DiagK
   r2 := try_eq_directional(rhs, lhs, s, ctx, diags)
 
   case r2 {
-    .Some(r) => {
-      return check_eq_contract(r.operand_ty, r.ctx, r.diags, s)
-    },
+    .Some(r) => { return check_eq_contract(r.operand_ty, r.ctx, r.diags, s) },
     .None => {},
   }
 
@@ -3731,9 +3641,7 @@ fn check_eq_contract(operand_ty: MonoType, ctx: InferCtx, diags: Vector<DiagKind
   }
 
   case zonked {
-    .MetaVar(_) => {
-      return .{ ty: MonoType.Bool, ctx, diags }
-    },
+    .MetaVar(_) => { return .{ ty: MonoType.Bool, ctx, diags } },
     _ => {},
   }
 
@@ -3921,12 +3829,8 @@ fn check_interpolation_expr(expr: Expr, expr_ty: MonoType, ctx: InferCtx, diags:
   zonked := expand_alias(zonk(expr_ty, ctx.subst), ctx.env, 0)
 
   case zonked {
-    .String => {
-      return .{ ctx, diags }
-    },
-    .MetaVar(_) => {
-      return .{ ctx, diags }
-    },
+    .String => { return .{ ctx, diags } },
+    .MetaVar(_) => { return .{ ctx, diags } },
     _ => {},
   }
 
@@ -4096,9 +4000,7 @@ fn call_diverges(callee: Expr, ctx: InferCtx) Bool {
 
         fn_name := case ctx.env.lookup_method(alias, method_name) {
           .Some(found) => found,
-          .None => {
-            return false
-          },
+          .None => { return false },
         }
 
         case ctx.env.lookup_registered_function(fn_name) {
@@ -4339,9 +4241,7 @@ fn collect_module_aliases(module: Module) Dict<String, Bool> {
     case item {
       .Use(decl) => {
         case decl.items {
-          .Some(_) => {
-            continue
-          },
+          .Some(_) => { continue },
           .None => {},
         }
 

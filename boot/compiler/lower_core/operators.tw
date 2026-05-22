@@ -82,13 +82,9 @@ fn explicit_eq_func_id(ctx: LowerCtx, ty: MonoType) FuncId? {
   fn_name := case ty {
     .Named(tid, _) => case ctx.env.lookup_type_method(tid, "eq") {
       .Some(name) => name,
-      .None => {
-        return .None
-      },
+      .None => { return .None },
     },
-    _ => {
-      return .None
-    },
+    _ => { return .None },
   }
   lookup_func(ctx, fn_name)
 }
@@ -316,19 +312,13 @@ fn explicit_compare_func_id(ctx: LowerCtx, ty: MonoType) FuncId? {
   fn_name := case ty {
     .Named(tid, _) => case ctx.env.lookup_type_method(tid, "compare") {
       .Some(name) => name,
-      .None => {
-        return .None
-      },
+      .None => { return .None },
     },
     .Vector(_) => case ctx.env.lookup_method("Vector", "compare") {
       .Some(name) => name,
-      .None => {
-        return .None
-      },
+      .None => { return .None },
     },
-    _ => {
-      return .None
-    },
+    _ => { return .None },
   }
   lookup_func(ctx, fn_name)
 }
@@ -476,9 +466,7 @@ pub fn lower_binary(
           }
 
           case lower_ord_cmp(rr.ctx, ast_op, lr.expr, rr.expr, s) {
-            .Some(kind) => {
-              return .{ expr: .{ kind, ty, span: s }, ctx: rr.ctx }
-            },
+            .Some(kind) => { return .{ expr: .{ kind, ty, span: s }, ctx: rr.ctx } },
             .None => {},
           }
 

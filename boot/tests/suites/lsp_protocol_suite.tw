@@ -16,17 +16,13 @@ pub fn suite() runner.Suite {
           .Request(req) => {
             case req.id {
               .IntId(n) => try assert.equal(n, 1),
-              _ => {
-                return .Err("expected int id")
-              },
+              _ => { return .Err("expected int id") },
             }
 
             try assert.equal(req.method, "initialize")
             try assert.is_some(req.params)
           },
-          _ => {
-            return .Err("expected request")
-          },
+          _ => { return .Err("expected request") },
         }
 
         .Ok({})
@@ -42,9 +38,7 @@ pub fn suite() runner.Suite {
             try assert.equal(note.method, "initialized")
             try assert.is_none(note.params)
           },
-          _ => {
-            return .Err("expected notification")
-          },
+          _ => { return .Err("expected notification") },
         }
 
         .Ok({})
@@ -61,17 +55,13 @@ pub fn suite() runner.Suite {
           .Response(resp) => {
             case resp.id {
               .StringId(s) => try assert.equal(s, "abc"),
-              _ => {
-                return .Err("expected string id")
-              },
+              _ => { return .Err("expected string id") },
             }
 
             try assert.is_some(resp.result)
             try assert.is_none(resp.error)
           },
-          _ => {
-            return .Err("expected response")
-          },
+          _ => { return .Err("expected response") },
         }
 
         .Ok({})
@@ -96,9 +86,7 @@ pub fn suite() runner.Suite {
 
         case try json.decode(out, json.field("id", json.raw())) {
           .Null => {},
-          _ => {
-            return .Err("expected null id")
-          },
+          _ => { return .Err("expected null id") },
         }
 
         error_obj := try json.decode(out, json.field("error", json.raw()))

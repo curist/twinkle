@@ -15,9 +15,7 @@ use .core_lib
 /// If `TWINKLE_ROOT` env var is set, uses that instead.
 pub fn find_project_root(start: String) String {
   case proc.env("TWINKLE_ROOT") {
-    .Some(root) => {
-      return root
-    },
+    .Some(root) => { return root },
     .None => {},
   }
 
@@ -87,9 +85,7 @@ pub fn list_prelude_modules(prelude_root: String) Vector<String> {
       .Ok(entries) => collect entry in entries {
         entry.name
       },
-      .Err(_) => {
-        return []
-      },
+      .Err(_) => { return [] },
     },
   }
   filtered: Vector<String> = []

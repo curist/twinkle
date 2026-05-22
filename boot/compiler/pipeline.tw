@@ -50,21 +50,15 @@ pub fn compile_source(src: String) Result<PipelineArtifacts, String> {
   canonical := imports.canonical_module_path(virtual_path, a_result.state.canonical_roots)
   parsed := case query_cache.latest_parsed(cur_cache, canonical) {
     .Some(p) => p,
-    .None => {
-      return .Err("internal: missing parsed cache")
-    },
+    .None => { return .Err("internal: missing parsed cache") },
   }
   typed := case query_cache.latest_typed(cur_cache, canonical) {
     .Some(t) => t,
-    .None => {
-      return .Err("internal: missing typed cache")
-    },
+    .None => { return .Err("internal: missing typed cache") },
   }
   runner := case a_result.state.module_runners[canonical] {
     .Some(r) => r,
-    .None => {
-      return .Err("internal: missing runner")
-    },
+    .None => { return .Err("internal: missing runner") },
   }
   lowered_out := stage_runner.lower(runner, cur_cache, parsed, typed, builtins)
   cur_cache = lowered_out.store

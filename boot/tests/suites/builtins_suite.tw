@@ -170,9 +170,7 @@ pub fn suite() runner.Suite {
             try assert.equal(info.wasm_module, "rt.core")
             try assert.equal(info.wasm_name, "print")
           },
-          .Intrinsic => {
-            return .Err("print should be Runtime")
-          },
+          .Intrinsic => { return .Err("print should be Runtime") },
         }
 
         // intrinsic check
@@ -180,9 +178,7 @@ pub fn suite() runner.Suite {
 
         case sg_entry.kind {
           .Intrinsic => {},
-          .Runtime(_) => {
-            return .Err("string_get should be Intrinsic")
-          },
+          .Runtime(_) => { return .Err("string_get should be Intrinsic") },
         }
 
         // vector ops

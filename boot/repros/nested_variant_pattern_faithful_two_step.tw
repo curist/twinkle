@@ -51,9 +51,7 @@ fn can_match_variant_pattern(ty: MonoType, env: ResolvedEnv) Bool {
     .Named(tid, args) => {
       def := case env.lookup_type_def(tid) {
         .Some(d) => d,
-        .None => {
-          return false
-        },
+        .None => { return false },
       }
 
       case def {

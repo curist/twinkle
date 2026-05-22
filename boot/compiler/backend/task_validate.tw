@@ -63,9 +63,7 @@ pub fn validate_tasks(anf: AnfModule, builtins: BuiltinRegistry) Result<Void, St
       anf,
     ) {
       .Ok(_) => {},
-      .Err(msg) => {
-        return .Err(msg)
-      },
+      .Err(msg) => { return .Err(msg) },
     }
   }
 
@@ -339,9 +337,7 @@ fn validate_suspending_letchain(
         // Check that the op doesn't contain suspension in nested positions
         case validate_no_suspension_in_nested(op, func_name, await_fid, yield_fid) {
           .Ok(_) => {},
-          .Err(msg) => {
-            return .Err(msg)
-          },
+          .Err(msg) => { return .Err(msg) },
         }
       }
 
@@ -361,9 +357,7 @@ fn validate_no_suspension_in_nested(
     .AIf(_, then_e, else_e) => {
       case validate_no_suspension_expr(then_e, func_name, "if branch", await_fid, yield_fid) {
         .Ok(_) => {},
-        .Err(msg) => {
-          return .Err(msg)
-        },
+        .Err(msg) => { return .Err(msg) },
       }
 
       validate_no_suspension_expr(else_e, func_name, "if branch", await_fid, yield_fid)
@@ -372,9 +366,7 @@ fn validate_no_suspension_in_nested(
       for arm in arms {
         case validate_no_suspension_expr(arm.body, func_name, "match arm", await_fid, yield_fid) {
           .Ok(_) => {},
-          .Err(msg) => {
-            return .Err(msg)
-          },
+          .Err(msg) => { return .Err(msg) },
         }
       }
 
@@ -424,9 +416,7 @@ fn validate_no_suspension_expr(
 
       case validate_no_suspension_in_nested(op, func_name, await_fid, yield_fid) {
         .Ok(_) => {},
-        .Err(msg) => {
-          return .Err(msg)
-        },
+        .Err(msg) => { return .Err(msg) },
       }
 
       validate_no_suspension_expr(body, func_name, context, await_fid, yield_fid)
@@ -459,9 +449,7 @@ fn validate_no_yield_in_expr(expr: AnfExpr, func_name: String, await_fid: FuncId
 
       case validate_no_yield_in_op(op, func_name, await_fid, yield_fid) {
         .Ok(_) => {},
-        .Err(msg) => {
-          return .Err(msg)
-        },
+        .Err(msg) => { return .Err(msg) },
       }
 
       validate_no_yield_in_expr(body, func_name, await_fid, yield_fid)
@@ -478,9 +466,7 @@ fn validate_no_yield_in_op(op: AnfOp, func_name: String, await_fid: FuncId, yiel
     .AIf(_, then_e, else_e) => {
       case validate_no_yield_in_expr(then_e, func_name, await_fid, yield_fid) {
         .Ok(_) => {},
-        .Err(msg) => {
-          return .Err(msg)
-        },
+        .Err(msg) => { return .Err(msg) },
       }
 
       validate_no_yield_in_expr(else_e, func_name, await_fid, yield_fid)
@@ -489,9 +475,7 @@ fn validate_no_yield_in_op(op: AnfOp, func_name: String, await_fid: FuncId, yiel
       for arm in arms {
         case validate_no_yield_in_expr(arm.body, func_name, await_fid, yield_fid) {
           .Ok(_) => {},
-          .Err(msg) => {
-            return .Err(msg)
-          },
+          .Err(msg) => { return .Err(msg) },
         }
       }
 
@@ -550,9 +534,7 @@ fn validate_no_suspend_in_any(
 
       case validate_no_suspend_in_any_op(op, func_name, await_fid, yield_fid) {
         .Ok(_) => {},
-        .Err(msg) => {
-          return .Err(msg)
-        },
+        .Err(msg) => { return .Err(msg) },
       }
 
       validate_no_suspend_in_any(body, func_name, await_fid, yield_fid)
@@ -569,9 +551,7 @@ fn validate_no_suspend_in_any_op(op: AnfOp, func_name: String, await_fid: FuncId
     .AIf(_, then_e, else_e) => {
       case validate_no_suspend_in_any(then_e, func_name, await_fid, yield_fid) {
         .Ok(_) => {},
-        .Err(msg) => {
-          return .Err(msg)
-        },
+        .Err(msg) => { return .Err(msg) },
       }
 
       validate_no_suspend_in_any(else_e, func_name, await_fid, yield_fid)
@@ -580,9 +560,7 @@ fn validate_no_suspend_in_any_op(op: AnfOp, func_name: String, await_fid: FuncId
       for arm in arms {
         case validate_no_suspend_in_any(arm.body, func_name, await_fid, yield_fid) {
           .Ok(_) => {},
-          .Err(msg) => {
-            return .Err(msg)
-          },
+          .Err(msg) => { return .Err(msg) },
         }
       }
 
@@ -612,9 +590,7 @@ fn validate_no_yield_in_any(expr: AnfExpr, func_name: String, yield_fid: FuncId)
 
       case validate_no_yield_in_any_op(op, func_name, yield_fid) {
         .Ok(_) => {},
-        .Err(msg) => {
-          return .Err(msg)
-        },
+        .Err(msg) => { return .Err(msg) },
       }
 
       validate_no_yield_in_any(body, func_name, yield_fid)
@@ -628,9 +604,7 @@ fn validate_no_yield_in_any_op(op: AnfOp, func_name: String, yield_fid: FuncId) 
     .AIf(_, then_e, else_e) => {
       case validate_no_yield_in_any(then_e, func_name, yield_fid) {
         .Ok(_) => {},
-        .Err(msg) => {
-          return .Err(msg)
-        },
+        .Err(msg) => { return .Err(msg) },
       }
 
       validate_no_yield_in_any(else_e, func_name, yield_fid)
@@ -639,9 +613,7 @@ fn validate_no_yield_in_any_op(op: AnfOp, func_name: String, yield_fid: FuncId) 
       for arm in arms {
         case validate_no_yield_in_any(arm.body, func_name, yield_fid) {
           .Ok(_) => {},
-          .Err(msg) => {
-            return .Err(msg)
-          },
+          .Err(msg) => { return .Err(msg) },
         }
       }
 

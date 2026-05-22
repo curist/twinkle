@@ -136,15 +136,11 @@ fn member_completions(snap: SemanticSnapshot, dot_offset: Int, source: String) V
 > {
   typed := case snap.typed {
     .Some(v) => v,
-    .None => {
-      return []
-    },
+    .None => { return [] },
   }
   parsed := case snap.parsed {
     .Some(v) => v,
-    .None => {
-      return []
-    },
+    .None => { return [] },
   }
 
   // Find the receiver expression before the dot.
@@ -453,9 +449,7 @@ fn fn_sig_to_detail(env: ResolvedEnv, sig: FunctionSig) String {
 fn import_completions(snap: SemanticSnapshot) Vector<lsp_completion.CompletionItem> {
   resolved := case snap.resolved {
     .Some(r) => r,
-    .None => {
-      return []
-    },
+    .None => { return [] },
   }
 
   collect ns in resolved.env.extern_namespaces.keys() {
@@ -472,15 +466,11 @@ fn import_completions(snap: SemanticSnapshot) Vector<lsp_completion.CompletionIt
 fn variant_completions(snap: SemanticSnapshot, offset: Int) Vector<lsp_completion.CompletionItem> {
   typed := case snap.typed {
     .Some(v) => v,
-    .None => {
-      return all_variant_completions(snap)
-    },
+    .None => { return all_variant_completions(snap) },
   }
   parsed := case snap.parsed {
     .Some(v) => v,
-    .None => {
-      return all_variant_completions(snap)
-    },
+    .None => { return all_variant_completions(snap) },
   }
 
   // Try to find the enclosing case expression's scrutinee type and existing arms
@@ -500,15 +490,11 @@ fn variant_completions(snap: SemanticSnapshot, offset: Int) Vector<lsp_completio
   )
   ci := case info {
     .Some(ci) => ci,
-    .None => {
-      return all_variant_completions(snap)
-    },
+    .None => { return all_variant_completions(snap) },
   }
   ty := case typed.type_map[ci.scrutinee.id] {
     .Some(ty) => ty,
-    .None => {
-      return all_variant_completions(snap)
-    },
+    .None => { return all_variant_completions(snap) },
   }
   covered := covered_variant_names(ci.arms)
   items := variants_for_type(typed.env, ty)
@@ -578,9 +564,7 @@ fn all_variant_completions(snap: SemanticSnapshot) Vector<lsp_completion.Complet
     .Some(typed) => typed.env,
     .None => case snap.resolved {
       .Some(resolved) => resolved.env,
-      .None => {
-        return []
-      },
+      .None => { return [] },
     },
   }
   items: Vector<lsp_completion.CompletionItem> = []
@@ -718,9 +702,7 @@ fn find_case_info_in_expr(expr: Expr, offset: Int) CaseInfo? {
       for arm in arms {
         if arm.span.contains(offset) {
           case find_case_info_in_expr(arm.expr, offset) {
-            .Some(s) => {
-              return .Some(s)
-            },
+            .Some(s) => { return .Some(s) },
             .None => {},
           }
 

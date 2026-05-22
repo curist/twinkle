@@ -230,9 +230,7 @@ fn analyze_module_impl(
 
   // Already analyzed? Return cached exports.
   case state.exports[canonical] {
-    .Some(_) => {
-      return .{ env: base, state, diagnostics: [], ok: true }
-    },
+    .Some(_) => { return .{ env: base, state, diagnostics: [], ok: true } },
     .None => {},
   }
 
@@ -345,9 +343,7 @@ fn analyze_module_impl(
     deps.diagnostics,
   ) {
     .Ok(value) => value,
-    .Err(err) => {
-      return .{ env, state: err.state, diagnostics: err.diagnostics, ok: false }
-    },
+    .Err(err) => { return .{ env, state: err.state, diagnostics: err.diagnostics, ok: false } },
   }
   t_publish0 := date.now()
   cur = publish_interface(

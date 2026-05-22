@@ -200,9 +200,7 @@ fn set_prelude_function_origins(
   for group in groups {
     stem := case prelude_module_stem(group.receiver) {
       .Some(s) => s,
-      .None => {
-        continue
-      },
+      .None => { continue },
     }
     module_path := imports.canonical_module_path(
       path.join(prelude_dir, "${stem}.tw"),

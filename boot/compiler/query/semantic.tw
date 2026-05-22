@@ -43,21 +43,15 @@ pub fn snapshot_workspace_from_cache(store: cache.Store, input: diagnostics.Work
   )
   parsed := case cache.latest_parsed(store, canonical) {
     .Some(value) => value,
-    .None => {
-      return .None
-    },
+    .None => { return .None },
   }
   resolved := case cache.latest_resolved(store, canonical) {
     .Some(value) => value,
-    .None => {
-      return .None
-    },
+    .None => { return .None },
   }
   typed := case cache.latest_typed(store, canonical) {
     .Some(value) => value,
-    .None => {
-      return .None
-    },
+    .None => { return .None },
   }
   version: Int? = .None
 
@@ -229,9 +223,7 @@ pub fn snapshot(store: cache.Store, input: diagnostics.DocumentInput) SemanticSn
 pub fn symbol_at_position(snap: SemanticSnapshot, byte_offset: Int) SymbolAtPosition? {
   parsed := case snap.parsed {
     .Some(value) => value,
-    .None => {
-      return .None
-    },
+    .None => { return .None },
   }
 
   for item in parsed.module.items {
@@ -261,9 +253,7 @@ pub fn symbol_at_position(snap: SemanticSnapshot, byte_offset: Int) SymbolAtPosi
 pub fn enclosing_syntax(snap: SemanticSnapshot, byte_offset: Int) EnclosingSyntax? {
   parsed := case snap.parsed {
     .Some(value) => value,
-    .None => {
-      return .None
-    },
+    .None => { return .None },
   }
 
   for item in parsed.module.items {

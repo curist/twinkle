@@ -298,16 +298,12 @@ pub fn test_plan_string_literals() Result<Void, String> {
 
   case reg.string_pool["hello"] {
     .Some(entry) => try assert.equal(entry.byte_len, 5),
-    .None => {
-      return assert.fail("missing 'hello' in string pool")
-    },
+    .None => { return assert.fail("missing 'hello' in string pool") },
   }
 
   case reg.string_pool["world"] {
     .Some(entry) => try assert.equal(entry.byte_len, 5),
-    .None => {
-      return assert.fail("missing 'world' in string pool")
-    },
+    .None => { return assert.fail("missing 'world' in string pool") },
   }
 
   .Ok({})
@@ -342,9 +338,7 @@ pub fn test_plan_string_offsets() Result<Void, String> {
       try assert.equal(e.byte_offset, 0)
       try assert.equal(e.byte_len, 2)
     },
-    .None => {
-      return assert.fail("missing 'ab'")
-    },
+    .None => { return assert.fail("missing 'ab'") },
   }
 
   case reg.string_pool["cde"] {
@@ -352,9 +346,7 @@ pub fn test_plan_string_offsets() Result<Void, String> {
       try assert.equal(e.byte_offset, 2)
       try assert.equal(e.byte_len, 3)
     },
-    .None => {
-      return assert.fail("missing 'cde'")
-    },
+    .None => { return assert.fail("missing 'cde'") },
   }
 
   case reg.string_pool["f"] {
@@ -362,9 +354,7 @@ pub fn test_plan_string_offsets() Result<Void, String> {
       try assert.equal(e.byte_offset, 5)
       try assert.equal(e.byte_len, 1)
     },
-    .None => {
-      return assert.fail("missing 'f'")
-    },
+    .None => { return assert.fail("missing 'f'") },
   }
 
   .Ok({})
@@ -969,9 +959,7 @@ pub fn test_plan_module_globals() Result<Void, String> {
       }
       result
     },
-    .None => {
-      return assert.fail("expected local 0 in module_globals")
-    },
+    .None => { return assert.fail("expected local 0 in module_globals") },
   }
 
   // local 1 should NOT be a module global (not referenced outside init)

@@ -79,21 +79,15 @@ pub fn compile_entry(entry_path: String) Result<PipelineArtifacts, CompileError>
     // Retrieve cached artifacts
     parsed := case query_cache.latest_parsed(cur_cache, module_path) {
       .Some(p) => p,
-      .None => {
-        return .Err(.Internal("internal: missing parsed cache for '${module_path}'"))
-      },
+      .None => { return .Err(.Internal("internal: missing parsed cache for '${module_path}'")) },
     }
     typed := case query_cache.latest_typed(cur_cache, module_path) {
       .Some(t) => t,
-      .None => {
-        return .Err(.Internal("internal: missing typed cache for '${module_path}'"))
-      },
+      .None => { return .Err(.Internal("internal: missing typed cache for '${module_path}'")) },
     }
     runner := case a_result.state.module_runners[module_path] {
       .Some(r) => r,
-      .None => {
-        return .Err(.Internal("internal: missing runner for '${module_path}'"))
-      },
+      .None => { return .Err(.Internal("internal: missing runner for '${module_path}'")) },
     }
     t_lower0 := date.now()
     lowered_out := stage_runner.lower(runner, cur_cache, parsed, typed, builtins)

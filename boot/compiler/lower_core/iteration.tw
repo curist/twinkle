@@ -372,15 +372,9 @@ fn build_indexed_loop(setup: IterSetup, inner_action: CoreExpr, s: Span) ExprOut
 
   case expanded_iter_ty {
     .Named(tid, _) => case ctx.env.lookup_type_def(tid) {
-      .Some(.Record("Range", _, _)) => {
-        return build_range_loop(setup, inner_action, s)
-      },
-      .Some(.Record("Iterator", _, _)) => {
-        return build_iterator_loop(setup, inner_action, s)
-      },
-      .Some(.Sum("Iterator", _, _)) => {
-        return build_iterator_loop(setup, inner_action, s)
-      },
+      .Some(.Record("Range", _, _)) => { return build_range_loop(setup, inner_action, s) },
+      .Some(.Record("Iterator", _, _)) => { return build_iterator_loop(setup, inner_action, s) },
+      .Some(.Sum("Iterator", _, _)) => { return build_iterator_loop(setup, inner_action, s) },
       _ => {},
     },
     _ => {},

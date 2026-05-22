@@ -71,9 +71,7 @@ pub fn is_closure_materializable(
 fn builtin_target(fid: FuncId, builtins: BuiltinRegistry, env: ResolvedEnv) CallableTargetInfo? {
   entry := case bi.entry(builtins, fid) {
     .Some(e) => e,
-    .None => {
-      return .None
-    },
+    .None => { return .None },
   }
   sig := case resolver.lookup_registered_function(env, entry.name) {
     .Some(s) => s,
@@ -82,24 +80,18 @@ fn builtin_target(fid: FuncId, builtins: BuiltinRegistry, env: ResolvedEnv) Call
         .Some(s) => s,
         .None => case resolver.lookup_registered_function(env, "__${entry.name}") {
           .Some(s) => s,
-          .None => {
-            return .None
-          },
+          .None => { return .None },
         },
       },
       .None => case resolver.lookup_registered_function(env, "__${entry.name}") {
         .Some(s) => s,
-        .None => {
-          return .None
-        },
+        .None => { return .None },
       },
     },
   }
   ret := case sig.ret {
     .Some(r) => r,
-    .None => {
-      return .None
-    },
+    .None => { return .None },
   }
   wk := builtin_wrapper_kind(entry.name)
   materializable := case wk {

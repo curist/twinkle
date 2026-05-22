@@ -21,9 +21,7 @@ pub fn encode_message(body: String) String {
 pub fn try_decode_frame(buffer: String) Result<DecodeFrameResult, String> {
   header_end := case buffer.index_of("\r\n\r\n") {
     .Some(i) => i,
-    .None => {
-      return .Ok(.NeedMore)
-    },
+    .None => { return .Ok(.NeedMore) },
   }
   headers := try parse_headers(buffer.slice(0, header_end))
   content_len := try content_length(headers)
@@ -64,15 +62,11 @@ pub fn try_decode_frame_bytes(buffer: Vector<Byte>) Result<DecodeByteFrameResult
 fn content_length(headers: Dict<String, String>) Result<Int, String> {
   len_text := case lookup_content_length(headers) {
     .Some(v) => v,
-    .None => {
-      return .Err("missing Content-Length header")
-    },
+    .None => { return .Err("missing Content-Length header") },
   }
   content_len := case Int.from_string(len_text.trim()) {
     .Some(n) => n,
-    .None => {
-      return .Err("invalid Content-Length header")
-    },
+    .None => { return .Err("invalid Content-Length header") },
   }
 
   if content_len < 0 {
@@ -92,12 +86,8 @@ fn find_header_end_bytes(buffer: Vector<Byte>) Int {
   for end >= 0 {
     case String.from_utf8(buffer.slice(0, end)) {
       .Some(text) => case text.index_of("\r\n\r\n") {
-        .Some(i) => {
-          return i
-        },
-        .None => {
-          return -1
-        },
+        .Some(i) => { return i },
+        .None => { return -1 },
       },
       .None => {
         end = end - 1
@@ -126,9 +116,7 @@ fn parse_headers(header_text: String) Result<Dict<String, String>, String> {
     if line == "" {} else {
       colon := case line.index_of(":") {
         .Some(i) => i,
-        .None => {
-          return .Err("invalid header line")
-        },
+        .None => { return .Err("invalid header line") },
       }
       name := line.slice(0, colon).trim()
       value := line.slice(colon + 1, line.len()).trim()
@@ -146,9 +134,7 @@ fn parse_headers(header_text: String) Result<Dict<String, String>, String> {
 
 fn lookup_content_length(headers: Dict<String, String>) String? {
   case headers["Content-Length"] {
-    .Some(v) => {
-      return .Some(v)
-    },
+    .Some(v) => { return .Some(v) },
     .None => {},
   }
 

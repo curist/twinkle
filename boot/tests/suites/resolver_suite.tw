@@ -1236,16 +1236,12 @@ pub fn suite() runner.Suite {
         try assert.equal(r.diagnostics.len(), 0)
         box_entry := case resolver.lookup_type(r.env, "Box") {
           .Some(e) => e,
-          .None => {
-            return .Err("Box not found")
-          },
+          .None => { return .Err("Box not found") },
         }
         try assert.equal(box_entry.arity, 1)
         pair_entry := case resolver.lookup_type(r.env, "Pair") {
           .Some(e) => e,
-          .None => {
-            return .Err("Pair not found")
-          },
+          .None => { return .Err("Pair not found") },
         }
         try assert.equal(pair_entry.arity, 2)
         .Ok({})

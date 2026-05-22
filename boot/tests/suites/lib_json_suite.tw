@@ -152,37 +152,27 @@ pub fn suite() runner.Suite {
       fn() {
         case try json.parse("null") {
           .Null => {},
-          _ => {
-            return .Err("expected null")
-          },
+          _ => { return .Err("expected null") },
         }
 
         case try json.parse(" true ") {
           .Bool(b) => try assert.is_true(b),
-          _ => {
-            return .Err("expected bool")
-          },
+          _ => { return .Err("expected bool") },
         }
 
         case try json.parse("42") {
           .Int(n) => try assert.equal(n, 42),
-          _ => {
-            return .Err("expected int")
-          },
+          _ => { return .Err("expected int") },
         }
 
         case try json.parse("-1.5") {
           .Float(f) => try assert.is_true(f < 0.0),
-          _ => {
-            return .Err("expected float")
-          },
+          _ => { return .Err("expected float") },
         }
 
         case try json.parse("\"hi\\nthere\"") {
           .Str(s) => try assert.equal(s, "hi\nthere"),
-          _ => {
-            return .Err("expected string")
-          },
+          _ => { return .Err("expected string") },
         }
 
         .Ok({})
@@ -199,16 +189,12 @@ pub fn suite() runner.Suite {
 
         case nums[0] {
           .Int(n) => try assert.equal(n, 1),
-          _ => {
-            return .Err("expected first array item to be int")
-          },
+          _ => { return .Err("expected first array item to be int") },
         }
 
         case nums[2] {
           .Null => {},
-          _ => {
-            return .Err("expected third array item to be null")
-          },
+          _ => { return .Err("expected third array item to be null") },
         }
 
         .Ok({})
@@ -219,16 +205,12 @@ pub fn suite() runner.Suite {
       fn() {
         case try json.parse("\"\\u0041\\u00df\"") {
           .Str(s) => try assert.equal(s, "Aß"),
-          _ => {
-            return .Err("expected string")
-          },
+          _ => { return .Err("expected string") },
         }
 
         case try json.parse("\"\\ud834\\udd1e\"") {
           .Str(s) => try assert.equal(s, "𝄞"),
-          _ => {
-            return .Err("expected string")
-          },
+          _ => { return .Err("expected string") },
         }
 
         .Ok({})
@@ -289,9 +271,7 @@ pub fn suite() runner.Suite {
 
         case got {
           .Int(n) => try assert.equal(n, 99),
-          _ => {
-            return .Err("expected Int variant")
-          },
+          _ => { return .Err("expected Int variant") },
         }
 
         .Ok({})

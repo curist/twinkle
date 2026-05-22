@@ -254,9 +254,7 @@ pub fn parse(a: App, argv: Vector<String>) ParseResult!ParseError {
       },
     ) {
       .Some(cmd) => cmd,
-      .None => {
-        return .Err(.UnknownCommand(first))
-      },
+      .None => { return .Err(.UnknownCommand(first)) },
     }
     cmd_name = .Some(first)
     active_args = c.args
@@ -292,24 +290,18 @@ pub fn parse(a: App, argv: Vector<String>) ParseResult!ParseError {
           val := name.slice(eq + 1, name.len())
           def := case find_by_long(active_args, key) {
             .Some(arg) => arg,
-            .None => {
-              return .Err(.UnknownFlag("--${key}"))
-            },
+            .None => { return .Err(.UnknownFlag("--${key}")) },
           }
 
           case def.kind {
             .Opt => options[key] = val,
-            _ => {
-              return .Err(.UnknownFlag("--${key}"))
-            },
+            _ => { return .Err(.UnknownFlag("--${key}")) },
           }
         },
         .None => {
           def := case find_by_long(active_args, name) {
             .Some(arg) => arg,
-            .None => {
-              return .Err(.UnknownFlag("--${name}"))
-            },
+            .None => { return .Err(.UnknownFlag("--${name}")) },
           }
 
           case def.kind {
@@ -330,9 +322,7 @@ pub fn parse(a: App, argv: Vector<String>) ParseResult!ParseError {
       s := current.slice(1, current.len())
       def := case find_by_short(active_args, s) {
         .Some(arg) => arg,
-        .None => {
-          return .Err(.UnknownFlag("-${s}"))
-        },
+        .None => { return .Err(.UnknownFlag("-${s}")) },
       }
 
       case def.kind {
@@ -364,9 +354,7 @@ pub fn parse(a: App, argv: Vector<String>) ParseResult!ParseError {
           return .Err(.MissingRequired(def.name))
         },
         .Opt => case options[def.name] {
-          .None => {
-            return .Err(.MissingRequired(def.name))
-          },
+          .None => { return .Err(.MissingRequired(def.name)) },
           .Some(_) => {},
         },
         .Flag => {},

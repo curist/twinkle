@@ -13,9 +13,7 @@ fn describe_nested(opt: Option<Result<Int, String>>) String {
 fn describe_two_step(opt: Option<Result<Int, String>>) String {
   value := case opt {
     .Some(v) => v,
-    .None => {
-      return "none"
-    },
+    .None => { return "none" },
   }
 
   case value {
@@ -35,9 +33,7 @@ fn outer_nested(value: Outer) Int {
 fn outer_two_step(value: Outer) Int {
   inner := case value {
     .Wrap(v) => v,
-    .Empty => {
-      return 0
-    },
+    .Empty => { return 0 },
   }
 
   case inner {
@@ -57,9 +53,7 @@ fn classify_nested(opt: Option<Result<Int, String>>) Int {
 fn classify_two_step(opt: Option<Result<Int, String>>) Int {
   value := case opt {
     .Some(v) => v,
-    .None => {
-      return 0
-    },
+    .None => { return 0 },
   }
 
   case value {

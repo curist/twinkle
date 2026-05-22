@@ -191,9 +191,7 @@ fn with_fresh_record_local(st: RwState, local: LocalId) RwState {
 fn transfer_owned_local(st: RwState, source: LocalId, target: LocalId) RwState {
   moved := case st.ownership_of(source) {
     .Some(value) => value,
-    .None => {
-      return without_local_ownership(st, target)
-    },
+    .None => { return without_local_ownership(st, target) },
   }
   source_was_fresh_record := set_has(st.fresh_records, source.id)
   st = without_local_ownership(st, target)

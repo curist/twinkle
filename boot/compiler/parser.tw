@@ -123,9 +123,7 @@ fn recover_to_next_item(c: Cursor) Cursor {
     k := cur.kind()
 
     case k {
-      .Eof => {
-        return cur
-      },
+      .Eof => { return cur },
       _ => {},
     }
 
@@ -2353,9 +2351,7 @@ fn parse_expr_bp(c: Cursor, min_bp: Int) ExprParse {
           c = parsed_postfix_rhs.cursor
         }
       },
-      .None => {
-        break
-      },
+      .None => { break },
     }
   }
 
@@ -2581,9 +2577,7 @@ fn parse_stmt(c: Cursor) StmtParse {
 
         case parsed_bind.value {
           .ErrorStmt(_) => {},
-          _ => {
-            return parsed_bind
-          },
+          _ => { return parsed_bind },
         }
       }
 

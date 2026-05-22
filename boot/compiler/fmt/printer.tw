@@ -116,9 +116,7 @@ fn get_eof_trivia(tokens: Vector<Token>) Vector<Trivia> {
           .BlankLine => {
             trivia = .slice(0, trivia.len() - 1)
           },
-          _ => {
-            break
-          },
+          _ => { break },
         }
       }
 
@@ -244,9 +242,7 @@ fn sort_import_blocks(items: Vector<Item>) Vector<Item> {
               uses = .append(sort_selective_items(decl))
               i = i + 1
             },
-            _ => {
-              break
-            },
+            _ => { break },
           }
         }
 
@@ -915,6 +911,15 @@ fn should_use_compact_flow_separator(block: Block, cur_index: Int) Bool {
   is_simple_stmt(prev, true) and is_simple_terminal_stmt(cur)
 }
 
+fn is_arm_inline_stmt(stmt: Stmt) Bool {
+  case stmt {
+    .Continue(_) => true,
+    .Break(_) => true,
+    .Return(_) => true,
+    _ => false,
+  }
+}
+
 fn is_simple_terminal_stmt(stmt: Stmt) Bool {
   case stmt {
     .Return(_) => is_simple_stmt(stmt, true),
@@ -1403,9 +1408,7 @@ fn collect_method_chain(callee: Expr, args: Vector<Expr>) ChainResult? {
           },
         }
       },
-      _ => {
-        return .None
-      },
+      _ => { return .None },
     }
   }
 
@@ -1532,25 +1535,36 @@ fn format_case(scrutinee: Expr, arms: Vector<CaseArm>, tm: TriviaMap) Doc {
 
 fn format_case_arm(arm: CaseArm, tm: TriviaMap) Doc {
   body := case arm.expr.kind {
-    .BlockExpr(block) => {
+    .BlockExpr(block) => if block.stmts.len() == 0 {
       // Unwrap single-expression blocks: { expr } => expr
-      if block.stmts.len() == 0 {
-        case block.tail {
-          .Some(expr) => {
-            trivia := get_trivia(tm, expr.span.start)
-            trailing_t := get_trailing_trivia(tm, expr.span.end)
+      case block.tail {
+        .Some(expr) => {
+          trivia := get_trivia(tm, expr.span.start)
+          trailing_t := get_trailing_trivia(tm, expr.span.end)
 
-            if trivia.len() == 0 and trailing_t.len() == 0 {
-              format_expr(expr, tm)
-            } else {
-              format_block(block, tm)
-            }
-          },
-          .None => format_block(block, tm),
-        }
-      } else {
-        format_block(block, tm)
+          if trivia.len() == 0 and trailing_t.len() == 0 {
+            format_expr(expr, tm)
+          } else {
+            format_block(block, tm)
+          }
+        },
+        .None => format_block(block, tm),
       }
+    } else if block.stmts.len() == 1
+      and block.tail.is_none() and is_arm_inline_stmt(block.stmts[0])
+      and get_trivia(tm, stmt_span(block.stmts[0]).start).len() == 0 {
+      // Inline terminal statements: { continue }, { return expr }
+      stmt_doc := format_stmt(block.stmts[0], tm)
+      doc.group(
+        doc.concat([
+          doc.text("{"),
+          doc.indent(doc.concat([doc.line(), stmt_doc])),
+          doc.line(),
+          doc.text("}"),
+        ]),
+      )
+    } else {
+      format_block(block, tm)
     },
     _ => format_expr(arm.expr, tm),
   }

@@ -44,9 +44,7 @@ pub fn file_uri_to_path(uri: String) Result<String, String> {
 
         path_part = rest.slice(i, rest.len())
       },
-      .None => {
-        return .Err("file URI missing path")
-      },
+      .None => { return .Err("file URI missing path") },
     }
   }
 
@@ -75,9 +73,7 @@ fn percent_decode(s: String) Result<String, String> {
 
       case Byte.from_int(hi * 16 + lo) {
         .Some(byte) => out = out.append(byte),
-        .None => {
-          return .Err("invalid percent escape")
-        },
+        .None => { return .Err("invalid percent escape") },
       }
 
       i = i + 3

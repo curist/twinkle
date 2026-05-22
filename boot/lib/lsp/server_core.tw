@@ -177,9 +177,7 @@ fn completion_snapshot(state: State, doc: document_store.Document) semantic.Sema
   input := workspace_input(state, doc)
 
   case semantic.snapshot_workspace_from_cache(state.query_cache, input) {
-    .Some(snap) => {
-      return snap
-    },
+    .Some(snap) => { return snap },
     .None => {},
   }
 
@@ -188,9 +186,7 @@ fn completion_snapshot(state: State, doc: document_store.Document) semantic.Sema
 
   // If typed is available, use it directly
   case snap.typed {
-    .Some(_) => {
-      return snap
-    },
+    .Some(_) => { return snap },
     .None => {},
   }
 
@@ -227,21 +223,15 @@ fn workspace_input(state: State, doc: document_store.Document) query_diagnostics
 fn handle_hover(state: State, req: protocol.Request) Step {
   hover_params := case params.decode_hover(req.params) {
     .Ok(p) => p,
-    .Err(_) => {
-      return null_response_step(state, req)
-    },
+    .Err(_) => { return null_response_step(state, req) },
   }
   doc := case document_store.get(state.documents, hover_params.text_document.uri) {
     .Some(d) => d,
-    .None => {
-      return null_response_step(state, req)
-    },
+    .None => { return null_response_step(state, req) },
   }
   offset := case position_offset(doc.index, hover_params.position) {
     .Some(o) => o,
-    .None => {
-      return null_response_step(state, req)
-    },
+    .None => { return null_response_step(state, req) },
   }
   snap := workspace_snapshot(state, doc)
   state.query_cache = snap.cache
@@ -258,21 +248,15 @@ fn handle_hover(state: State, req: protocol.Request) Step {
 fn handle_definition(state: State, req: protocol.Request) Step {
   def_params := case params.decode_definition(req.params) {
     .Ok(p) => p,
-    .Err(_) => {
-      return null_response_step(state, req)
-    },
+    .Err(_) => { return null_response_step(state, req) },
   }
   doc := case document_store.get(state.documents, def_params.text_document.uri) {
     .Some(d) => d,
-    .None => {
-      return null_response_step(state, req)
-    },
+    .None => { return null_response_step(state, req) },
   }
   offset := case position_offset(doc.index, def_params.position) {
     .Some(o) => o,
-    .None => {
-      return null_response_step(state, req)
-    },
+    .None => { return null_response_step(state, req) },
   }
   snap := workspace_snapshot(state, doc)
   state.query_cache = snap.cache
@@ -297,21 +281,15 @@ fn handle_definition(state: State, req: protocol.Request) Step {
 fn handle_completion(state: State, req: protocol.Request) Step {
   comp_params := case params.decode_completion(req.params) {
     .Ok(p) => p,
-    .Err(_) => {
-      return empty_array_response_step(state, req)
-    },
+    .Err(_) => { return empty_array_response_step(state, req) },
   }
   doc := case document_store.get(state.documents, comp_params.text_document.uri) {
     .Some(d) => d,
-    .None => {
-      return empty_array_response_step(state, req)
-    },
+    .None => { return empty_array_response_step(state, req) },
   }
   offset := case position_offset(doc.index, comp_params.position) {
     .Some(o) => o,
-    .None => {
-      return empty_array_response_step(state, req)
-    },
+    .None => { return empty_array_response_step(state, req) },
   }
   snap := completion_snapshot(state, doc)
   state.query_cache = snap.cache
@@ -325,15 +303,11 @@ fn handle_completion(state: State, req: protocol.Request) Step {
 fn handle_code_action(state: State, req: protocol.Request) Step {
   action_params := case params.decode_code_action(req.params) {
     .Ok(p) => p,
-    .Err(_) => {
-      return empty_array_response_step(state, req)
-    },
+    .Err(_) => { return empty_array_response_step(state, req) },
   }
   doc := case document_store.get(state.documents, action_params.text_document.uri) {
     .Some(d) => d,
-    .None => {
-      return empty_array_response_step(state, req)
-    },
+    .None => { return empty_array_response_step(state, req) },
   }
   actions := lsp_code_action.unused_import_actions(
     doc.uri,
@@ -438,9 +412,7 @@ fn publish_workspace_diagnostics(state: State, suppress_duplicates: Bool) Step {
   for root in by_project.keys() {
     docs := case by_project[root] {
       .Some(ds) => ds,
-      .None => {
-        continue
-      },
+      .None => { continue },
     }
 
     // Use first doc as entry — analysis walks all deps anyway.
@@ -556,17 +528,13 @@ fn definition_target_index(
   fallback: line_index.LineIndex,
 ) line_index.LineIndex {
   case document_by_identity_uri(store, target_uri) {
-    .Some(target_doc) => {
-      return target_doc.index
-    },
+    .Some(target_doc) => { return target_doc.index },
     .None => {},
   }
 
   target_path := case identity_path_from_uri(target_uri) {
     .Some(p) => p,
-    .None => {
-      return fallback
-    },
+    .None => { return fallback },
   }
 
   case fs.read_text(target_path) {

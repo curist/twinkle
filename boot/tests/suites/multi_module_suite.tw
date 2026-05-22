@@ -648,9 +648,7 @@ pub fn suite() runner.Suite {
         // Find the Box type's TypeId in the linked environment.
         box_tid := case artifacts.core.type_env.lookup_registered_type("Box") {
           .Some(entry) => entry.id,
-          .None => {
-            return .Err("Box type not found in linked env")
-          },
+          .None => { return .Err("Box type not found in linked env") },
         }
         key := "t${box_tid.id}::to_string"
 
@@ -714,9 +712,7 @@ pub fn suite() runner.Suite {
       fn() {
         artifacts := case pipeline.compile_entry_path("${dir}/contract_generic_fallback_main.tw") {
           .Ok(a) => a,
-          .Err(err) => {
-            return .Err("compile failed: ${format_compile_error(err)}")
-          },
+          .Err(err) => { return .Err("compile failed: ${format_compile_error(err)}") },
         }
 
         // After monomorphization, no ContractCall should remain in any function body.
@@ -736,17 +732,13 @@ pub fn suite() runner.Suite {
       fn() {
         artifacts := case pipeline.compile_entry_path("${dir}/contract_generic_fallback_main.tw") {
           .Ok(a) => a,
-          .Err(err) => {
-            return .Err("compile failed: ${format_compile_error(err)}")
-          },
+          .Err(err) => { return .Err("compile failed: ${format_compile_error(err)}") },
         }
 
         // Find the Box.to_string FuncId from the method table.
         box_tid := case artifacts.mono.type_env.lookup_registered_type("Box") {
           .Some(entry) => entry.id,
-          .None => {
-            return .Err("Box type not found in linked env")
-          },
+          .None => { return .Err("Box type not found in linked env") },
         }
         key := "t${box_tid.id}::to_string"
 
@@ -765,9 +757,7 @@ pub fn suite() runner.Suite {
 
         func := case show_func {
           .Some(f) => f,
-          .None => {
-            return .Err("no specialized show__* function found in mono IR")
-          },
+          .None => { return .Err("no specialized show__* function found in mono IR") },
         }
 
         // The specialized show function should call the Box.to_string specialization.

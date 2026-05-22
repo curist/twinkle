@@ -27,9 +27,7 @@ pub fn collect_fixes(diagnostics: Vector<analyze.AnalysisDiag>) Dict<String, Vec
       .Some(data) => {
         kind := case json.decode(data, json.field("kind", json.string())) {
           .Ok(k) => k,
-          .Err(_) => {
-            continue
-          },
+          .Err(_) => { continue },
         }
 
         if kind != "unused_import" {
@@ -38,21 +36,15 @@ pub fn collect_fixes(diagnostics: Vector<analyze.AnalysisDiag>) Dict<String, Vec
 
         use_start := case json.decode(data, json.field("use_start", json.int())) {
           .Ok(s) => s,
-          .Err(_) => {
-            continue
-          },
+          .Err(_) => { continue },
         }
         use_end := case json.decode(data, json.field("use_end", json.int())) {
           .Ok(e) => e,
-          .Err(_) => {
-            continue
-          },
+          .Err(_) => { continue },
         }
         replacement := case json.decode(data, json.field("replacement", json.string())) {
           .Ok(r) => r,
-          .Err(_) => {
-            continue
-          },
+          .Err(_) => { continue },
         }
         fix := ImportFix.{ use_start, use_end, replacement }
         file_path := d.identity.path
@@ -115,9 +107,7 @@ pub fn apply_fixes(edits_by_file: Dict<String, Vector<ImportFix>>) Vector<ApplyR
   for file_path in edits_by_file.keys() {
     fixes := case edits_by_file[file_path] {
       .Some(f) => f,
-      .None => {
-        continue
-      },
+      .None => { continue },
     }
     source := case fs.read_text(file_path) {
       .Ok(text) => text,

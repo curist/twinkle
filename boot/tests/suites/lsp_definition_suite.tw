@@ -199,9 +199,7 @@ pub fn suite() runner.Suite {
 
         case fs.write_text("/tmp/lsp_def_disk_dep.tw", dep) {
           .Ok(_) => {},
-          .Err(_) => {
-            return .Err("failed to write disk dependency")
-          },
+          .Err(_) => { return .Err("failed to write disk dependency") },
         }
 
         main := "use lsp_def_disk_dep\nx := lsp_def_disk_dep.answer()\n"

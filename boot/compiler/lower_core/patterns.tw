@@ -25,9 +25,7 @@ pub fn lower_pattern(ctx: LowerCtx, pat: ast.Pattern, scrut_ty: MonoType) Patter
     .Variant(name, sub_pats) => {
       tid := case type_id_from_mono(scrut_ty) {
         .Some(id) => id,
-        .None => {
-          return .{ pattern: .Wildcard, ctx }
-        },
+        .None => { return .{ pattern: .Wildcard, ctx } },
       }
       vid_idx := variant_index(scrut_ty, name, ctx.env)
       field_tys := variant_field_types(scrut_ty, name, ctx.env)
@@ -58,9 +56,7 @@ pub fn lower_pattern(ctx: LowerCtx, pat: ast.Pattern, scrut_ty: MonoType) Patter
         .Some(id) => id,
         .None => case type_id_from_mono(scrut_ty) {
           .Some(id) => id,
-          .None => {
-            return .{ pattern: .Wildcard, ctx }
-          },
+          .None => { return .{ pattern: .Wildcard, ctx } },
         },
       }
       vid_idx := variant_index(scrut_ty, name, ctx.env)

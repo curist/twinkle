@@ -61,9 +61,7 @@ pub fn resolve_receiver_method_target(
   case type_name {
     .Some(name) => {
       case prelude_method_alias(name, method_name) {
-        .Some(alias) => {
-          return alias
-        },
+        .Some(alias) => { return alias },
         .None => {},
       }
 

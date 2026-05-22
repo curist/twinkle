@@ -185,9 +185,7 @@ pub fn find_closure_for_slot(body: PreparedExpr, target_slot_id: Int) ClosureInf
     .Let(slot, op, cont) => {
       if slot.id == target_slot_id {
         case op {
-          .AMakeClosure(body_fid, captures) => {
-            return .Some(ClosureInfo.{ body_fid, captures })
-          },
+          .AMakeClosure(body_fid, captures) => { return .Some(ClosureInfo.{ body_fid, captures }) },
           _ => {},
         }
       }

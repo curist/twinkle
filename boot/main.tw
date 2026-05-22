@@ -103,9 +103,7 @@ fn build_command_plan(parsed: ParseResult) CommandPlan!String {
             "Would format '${file}'."
           },
         ),
-        _ => {
-          return .Err("internal error: unsupported command '${cmd}'")
-        },
+        _ => { return .Err("internal error: unsupported command '${cmd}'") },
       }
       .Ok(.{ cmd, detail })
     },
