@@ -1,12 +1,29 @@
 fn suite() Suite {
   runner.suite("fmt")
-    .test("short name", fn() { do_a() })
-    .test("another short name", fn() { do_b() })
+    .test(
+      "short name",
+      fn() {
+        do_a()
+      },
+    )
+    .test(
+      "another short name",
+      fn() {
+        do_b()
+      },
+    )
     .test(
       "a longer test name that forces the arguments to wrap onto the next line",
-      fn() { do_c() },
+      fn() {
+        do_c()
+      },
     )
-    .test("yet another test case", fn() { do_d() })
+    .test(
+      "yet another test case",
+      fn() {
+        do_d()
+      },
+    )
 }
 
 fn suite2() Suite {

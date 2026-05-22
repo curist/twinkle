@@ -1,7 +1,9 @@
 use .alias_type_bridge
 use .alias_type_source.{Diagnostic}
 
-fn read(d: Diagnostic) String { d.message }
+fn read(d: Diagnostic) String {
+  d.message
+}
 
 fn main() {
   single := alias_type_bridge.make("boom")

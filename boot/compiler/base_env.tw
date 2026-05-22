@@ -15,7 +15,9 @@ fn builtin_sig(
   param_names: Vector<String>,
   params: Vector<MonoType>,
   ret: MonoType?,
-) FunctionSig { builtin_doc_sig(name, type_params, param_names, params, ret, .None) }
+) FunctionSig {
+  builtin_doc_sig(name, type_params, param_names, params, ret, .None)
+}
 
 fn builtin_doc_sig(
   name: String,
@@ -62,7 +64,11 @@ fn builtin_type_name(entry: TypeEntry) String {
 }
 
 fn builtin_type_names(types: Vector<TypeEntry>) Vector<String> {
-  types.map(fn(entry) { builtin_type_name(entry) })
+  types.map(
+    fn(entry) {
+      builtin_type_name(entry)
+    },
+  )
 }
 
 fn builtin_type_entries() Vector<TypeEntry> {
@@ -154,7 +160,9 @@ fn register_methods_from_groups(env: ResolvedEnv, groups: Vector<signatures.Sign
 
     case group.receiver {
       .None => {},
-      .Some(recv) => { cur = .register_bound_methods(recv, entries) },
+      .Some(recv) => {
+        cur = .register_bound_methods(recv, entries)
+      },
     }
   }
 
@@ -192,7 +200,9 @@ fn set_prelude_function_origins(
   for group in groups {
     stem := case prelude_module_stem(group.receiver) {
       .Some(s) => s,
-      .None => { continue },
+      .None => {
+        continue
+      },
     }
     module_path := imports.canonical_module_path(
       path.join(prelude_dir, "${stem}.tw"),
@@ -210,6 +220,7 @@ fn set_prelude_function_origins(
 
 fn bind_public_free_builtins(env: ResolvedEnv) ResolvedEnv {
   cur := env
+
   for name in [
     "print",
     "println",
@@ -219,7 +230,10 @@ fn bind_public_free_builtins(env: ResolvedEnv) ResolvedEnv {
     "range",
     "range_from",
     "range_step",
-  ] { cur = .bind_function(name, name) }
+  ] {
+    cur = .bind_function(name, name)
+  }
+
   cur
 }
 
@@ -231,12 +245,14 @@ pub fn builtin_env() ResolvedEnv {
   prelude_dir := loader.resolve_prelude_root()
   sigs_dir := path.join(prelude_dir, "signatures")
   canonical_roots := imports.make_canonical_roots(root)
+
   // Load and resolve builtin/runtime signature stubs (parse + type-resolve only,
   // no codegen).
   groups := case signatures.load_signatures(sigs_dir, builtin_type_env()) {
     .Ok(g) => g,
     .Err(msg) => error("builtin_env: failed to load prelude signatures: ${msg}"),
   }
+
   // Load public signatures from the actual prelude modules as well. These
   // provide the prelude-backed methods like Vector.map and Option.map that are
   // not represented in prelude/signatures/*.tw.
@@ -244,9 +260,11 @@ pub fn builtin_env() ResolvedEnv {
     .Ok(g) => g,
     .Err(msg) => error("builtin_env: failed to load prelude sources: ${msg}"),
   }
+
   // Derive FunctionSigs with internal names from the signature groups.
   sig_fns := signatures.all_internal_sigs(groups)
   prelude_fns := signatures.all_internal_sigs(prelude_groups)
+
   // Functions NOT covered by any signature file: I/O builtins, string_substring,
   // vector builders, and host ops.
   t := MonoType.Var("T")
@@ -321,14 +339,17 @@ pub fn builtin_env() ResolvedEnv {
     .with_types(builtin_named_types, builtin_named_type_names)
     .with_registered_functions(sig_fns.concat(prelude_fns).concat(hardcoded))
   env = bind_public_free_builtins(env)
+
   // Actual prelude module functions should carry canonical imported origins in
   // the builtin environment so internal/prelude modules can link through the
   // same imported-function identity model as user modules.
   env = set_prelude_function_origins(env, prelude_groups, prelude_dir, canonical_roots)
+
   // First register methods derived from signature groups (these take priority
   // under the deduplication rule in register_methods).
   env = register_methods_from_groups(env, groups)
   env = register_methods_from_groups(env, prelude_groups)
+
   // Then register remaining prelude-backed methods (compare, map, filter, etc.).
   env = .register_builtin_methods()
   env

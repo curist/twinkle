@@ -52,28 +52,26 @@ pub fn emit_call(
     .AGlobalFunc(fid) => {
       // Check if it's a builtin
       case bi.entry(ctx.builtins, fid) {
-        .Some(entry) => {
-          case entry.kind {
-            .Runtime(info) => emit_runtime_call(
-              fid,
-              info,
-              args,
-              result_idx,
-              result_mono,
-              ctx,
-              buf,
-              fns,
-            ),
-            .Intrinsic => fns.emit_intrinsic_call(
-              fid,
-              entry.name,
-              args,
-              result_idx,
-              result_mono,
-              ctx,
-              buf,
-            ),
-          }
+        .Some(entry) => case entry.kind {
+          .Runtime(info) => emit_runtime_call(
+            fid,
+            info,
+            args,
+            result_idx,
+            result_mono,
+            ctx,
+            buf,
+            fns,
+          ),
+          .Intrinsic => fns.emit_intrinsic_call(
+            fid,
+            entry.name,
+            args,
+            result_idx,
+            result_mono,
+            ctx,
+            buf,
+          ),
         },
         .None => {
           // User function — direct call
@@ -100,7 +98,11 @@ fn emit_direct_call(
 ) Vector<Instr> {
   sym := lookup_func_sym(ctx.func_sym_map, fid)
   out := buf
-  for a in args { out = fns.emit_atom(a, ctx, out) }
+
+  for a in args {
+    out = fns.emit_atom(a, ctx, out)
+  }
+
   out = .append(.Call(sym))
 
   case result_mono {
@@ -124,15 +126,14 @@ fn emit_runtime_arg(
   fns: CallEmitFns,
 ) Vector<Instr> {
   param_vt: ValType? = case abi {
-    .Some(ab) => {
-      if index < ab.param_types.len() {
-        .Some(ab.param_types[index])
-      } else {
-        .None
-      }
+    .Some(ab) => if index < ab.param_types.len() {
+      .Some(ab.param_types[index])
+    } else {
+      .None
     },
     .None => .None,
   }
+
   // ABI shim: checked i64→i32 narrowing with trap for runtime functions that take I32.
   // This is not coercion — it traps on out-of-range values.
   needs_narrow := case param_vt {
@@ -142,10 +143,13 @@ fn emit_runtime_arg(
     },
     _ => false,
   }
+
   if needs_narrow {
     return fns.emit_checked_i32_narrow(a, ctx, buf)
   }
+
   out := fns.emit_atom(a, ctx, buf)
+
   // Builder regions keep transient Array builders in erased anyref slots even
   // though the surrounding Twinkle surface type is Vector<T>. For the builder
   // buffer argument, cast directly back to Array and skip the generic
@@ -153,6 +157,7 @@ fn emit_runtime_arg(
   if is_vector_builder_array_arg(entry_name, index) {
     return emit_builder_arg_shim(entry_name, index, out)
   }
+
   // Host boundary: host_write_bytes is surface-typed as Vector<Byte> / PVec,
   // but the raw host ABI takes a flat Array. The explicit shim performs the
   // PVec -> Array conversion, so the generic ABI coercion must not run first or
@@ -160,6 +165,7 @@ fn emit_runtime_arg(
   if is_host_vector_arg(entry_name, index) {
     return emit_host_arg_shim(entry_name, index, out)
   }
+
   // Coercion: adapt actual physical type to expected ABI param type via canonical path.
   out2 := case param_vt {
     .Some(expected_vt) => emit_coerce_stack(
@@ -171,6 +177,7 @@ fn emit_runtime_arg(
     ),
     .None => out,
   }
+
   // ABI shims: representation reshaping for specific runtime/host surfaces.
   emit_host_arg_shim(entry_name, index, out2)
 }
@@ -195,8 +202,13 @@ fn emit_runtime_call(
     .None => "",
   }
   out := buf
-  for a, i in args { out = emit_runtime_arg(a, abi, i, entry_name, ctx, out, fns) }
+
+  for a, i in args {
+    out = emit_runtime_arg(a, abi, i, entry_name, ctx, out, fns)
+  }
+
   out = .append(.Call(import_sym))
+
   // ABI shim: reshape host results back into PVec representation.
   out = emit_host_result_shim(entry_name, out)
 

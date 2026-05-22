@@ -5,7 +5,9 @@ use .anf.{AnfExpr, AnfOp, Atom}
 use .core_ir.{CorePattern}
 
 // ── Set helpers (Dict<Int, Bool> as set) ────────────────────────────
-pub fn set_has(s: Dict<Int, Bool>, k: Int) Bool { s.has(k) }
+pub fn set_has(s: Dict<Int, Bool>, k: Int) Bool {
+  s.has(k)
+}
 
 fn set_add(s: Dict<Int, Bool>, k: Int) Dict<Int, Bool> {
   s[k] = true
@@ -18,7 +20,11 @@ pub fn collect_pattern_bindings(pattern: CorePattern, out: Dict<Int, Bool>) Dict
     .Var(id) => set_add(out, id.id),
     .Variant(_, _, fields) => {
       result := out
-      for f in fields { result = collect_pattern_bindings(f, result) }
+
+      for f in fields {
+        result = collect_pattern_bindings(f, result)
+      }
+
       result
     },
     .Wildcard => out,
@@ -39,10 +45,10 @@ type FreeState = .{ declared: Dict<Int, Bool>, free: Dict<Int, Bool> }
 
 fn free_atom(atom: Atom, st: FreeState) FreeState {
   case atom {
-    .ALocal(id) => {
-      if !set_has(st.declared, id.id) { .{ declared: st.declared, free: set_add(st.free, id.id) } } else {
-        st
-      }
+    .ALocal(id) => if !set_has(st.declared, id.id) {
+      .{ declared: st.declared, free: set_add(st.free, id.id) }
+    } else {
+      st
     },
     _ => st,
   }
@@ -70,7 +76,11 @@ fn collect_free_op(op: AnfOp, declared: Dict<Int, Bool>, free: Dict<Int, Bool>) 
   case op {
     .ACall(callee, args) => {
       st = free_atom(callee, st)
-      for a in args { st = free_atom(a, st) }
+
+      for a in args {
+        st = free_atom(a, st)
+      }
+
       st
     },
     .AIf(cond, then_e, else_e) => {
@@ -113,7 +123,10 @@ fn collect_free_op(op: AnfOp, declared: Dict<Int, Bool>, free: Dict<Int, Bool>) 
       st
     },
     .ARecord(_, fields) => {
-      for f in fields { st = free_atom(f.value, st) }
+      for f in fields {
+        st = free_atom(f.value, st)
+      }
+
       st
     },
     .ARecordGet(target, _, _) => free_atom(target, st),
@@ -122,11 +135,17 @@ fn collect_free_op(op: AnfOp, declared: Dict<Int, Bool>, free: Dict<Int, Bool>) 
       free_atom(value, st)
     },
     .AVariant(_, _, args) => {
-      for a in args { st = free_atom(a, st) }
+      for a in args {
+        st = free_atom(a, st)
+      }
+
       st
     },
     .AArrayLit(elems) => {
-      for a in elems { st = free_atom(a, st) }
+      for a in elems {
+        st = free_atom(a, st)
+      }
+
       st
     },
     .AIndex(base, index, _, _) => {
@@ -138,6 +157,7 @@ fn collect_free_op(op: AnfOp, declared: Dict<Int, Bool>, free: Dict<Int, Bool>) 
       if !set_has(st.declared, local.id) {
         st = .{ declared: st.declared, free: set_add(st.free, local.id) }
       }
+
       free_atom(value, st)
     },
     .AWrapAnyref(a, _) => free_atom(a, st),
@@ -146,7 +166,9 @@ fn collect_free_op(op: AnfOp, declared: Dict<Int, Bool>, free: Dict<Int, Bool>) 
 }
 
 // ── collect_bound_locals ────────────────────────────────────────────
-pub fn collect_bound_locals(expr: AnfExpr) Dict<Int, Bool> { collect_bound_expr(expr, Dict.new()) }
+pub fn collect_bound_locals(expr: AnfExpr) Dict<Int, Bool> {
+  collect_bound_expr(expr, Dict.new())
+}
 
 fn collect_bound_expr(expr: AnfExpr, out: Dict<Int, Bool>) Dict<Int, Bool> {
   case expr {
@@ -167,7 +189,11 @@ fn collect_bound_op(op: AnfOp, out: Dict<Int, Bool>) Dict<Int, Bool> {
     },
     .AMatch(_, arms) => {
       result := out
-      for arm in arms { result = collect_bound_expr(arm.body, result) }
+
+      for arm in arms {
+        result = collect_bound_expr(arm.body, result)
+      }
+
       result
     },
     .ALoop(body) => collect_bound_expr(body, out),
@@ -187,7 +213,11 @@ pub fn collect_init_binding_locals(expr: AnfExpr) Dict<Int, Bool> {
 fn collect_init_binding_expr(expr: AnfExpr, out: Dict<Int, Bool>) Dict<Int, Bool> {
   case expr {
     .Let(local, op, body) => {
-      result := if is_init_op(op) { set_add(out, local.id) } else { out }
+      result := if is_init_op(op) {
+        set_add(out, local.id)
+      } else {
+        out
+      }
       result = collect_init_binding_op(op, result)
       collect_init_binding_expr(body, result)
     },
@@ -203,7 +233,11 @@ fn collect_init_binding_op(op: AnfOp, out: Dict<Int, Bool>) Dict<Int, Bool> {
     },
     .AMatch(_, arms) => {
       result := out
-      for arm in arms { result = collect_init_binding_expr(arm.body, result) }
+
+      for arm in arms {
+        result = collect_init_binding_expr(arm.body, result)
+      }
+
       result
     },
     .ALoop(body) => collect_init_binding_expr(body, out),
@@ -243,7 +277,11 @@ fn collect_assigned_op(op: AnfOp, out: Dict<Int, Bool>) Dict<Int, Bool> {
     },
     .AMatch(_, arms) => {
       result := out
-      for arm in arms { result = collect_assigned_expr(arm.body, result) }
+
+      for arm in arms {
+        result = collect_assigned_expr(arm.body, result)
+      }
+
       result
     },
     .ALoop(body) => collect_assigned_expr(body, out),

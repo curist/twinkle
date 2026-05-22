@@ -4,47 +4,89 @@
 use compiler.codegen.wasm_ir.{ExportDef, FuncDef, HeapType, ImportDef, Instr, ValType, WasmModule}
 use compiler.codegen.wasm_layout.{EqTypeLayouts, WasmRecordLayout, WasmSumLayout}
 
-fn str_null() ValType { ValType.Ref(true, HeapType.Named("rt_types__String")) }
+fn str_null() ValType {
+  ValType.Ref(true, HeapType.Named("rt_types__String"))
+}
 
-fn str_ref() ValType { ValType.Ref(false, HeapType.Named("rt_types__String")) }
+fn str_ref() ValType {
+  ValType.Ref(false, HeapType.Named("rt_types__String"))
+}
 
-fn arr_null() ValType { ValType.Ref(true, HeapType.Named("rt_types__Array")) }
+fn arr_null() ValType {
+  ValType.Ref(true, HeapType.Named("rt_types__Array"))
+}
 
-fn arr_ref() ValType { ValType.Ref(false, HeapType.Named("rt_types__Array")) }
+fn arr_ref() ValType {
+  ValType.Ref(false, HeapType.Named("rt_types__Array"))
+}
 
-fn pvec_ref() ValType { ValType.Ref(false, HeapType.Named("rt_types__PVec")) }
+fn pvec_ref() ValType {
+  ValType.Ref(false, HeapType.Named("rt_types__PVec"))
+}
 
-fn pdict_ref() ValType { ValType.Ref(false, HeapType.Named("rt_types__PDict")) }
+fn pdict_ref() ValType {
+  ValType.Ref(false, HeapType.Named("rt_types__PDict"))
+}
 
-fn variant_ref() ValType { ValType.Ref(false, HeapType.Named("rt_types__Variant")) }
+fn variant_ref() ValType {
+  ValType.Ref(false, HeapType.Named("rt_types__Variant"))
+}
 
-fn t_array() String { "rt_types__Array" }
+fn t_array() String {
+  "rt_types__Array"
+}
 
-fn t_string() String { "rt_types__String" }
+fn t_string() String {
+  "rt_types__String"
+}
 
-fn t_pvec() String { "rt_types__PVec" }
+fn t_pvec() String {
+  "rt_types__PVec"
+}
 
-fn t_pdict() String { "rt_types__PDict" }
+fn t_pdict() String {
+  "rt_types__PDict"
+}
 
-fn t_variant() String { "rt_types__Variant" }
+fn t_variant() String {
+  "rt_types__Variant"
+}
 
-fn t_boxed_int() String { "rt_types__BoxedInt" }
+fn t_boxed_int() String {
+  "rt_types__BoxedInt"
+}
 
-fn t_boxed_float() String { "rt_types__BoxedFloat" }
+fn t_boxed_float() String {
+  "rt_types__BoxedFloat"
+}
 
-fn pv_len() Int { 0 }
+fn pv_len() Int {
+  0
+}
 
-fn pd_size() Int { 0 }
+fn pd_size() Int {
+  0
+}
 
-fn v_type_id() Int { 0 }
+fn v_type_id() Int {
+  0
+}
 
-fn v_variant_id() Int { 1 }
+fn v_variant_id() Int {
+  1
+}
 
-fn v_payload() Int { 2 }
+fn v_payload() Int {
+  2
+}
 
 pub fn module(eq_layouts: EqTypeLayouts) WasmModule {
-  rec_eq_funcs := collect rec in eq_layouts.records { gen_record_eq_fn(rec) }
-  sum_eq_funcs := collect sum in eq_layouts.sums { gen_sum_eq_fn(sum) }
+  rec_eq_funcs := collect rec in eq_layouts.records {
+    gen_record_eq_fn(rec)
+  }
+  sum_eq_funcs := collect sum in eq_layouts.sums {
+    gen_sum_eq_fn(sum)
+  }
   funcs := [
     print_fn(),
     println_fn(),
@@ -56,7 +98,9 @@ pub fn module(eq_layouts: EqTypeLayouts) WasmModule {
     eq_dict_fn(),
     eq_variant_fn(),
   ].concat(rec_eq_funcs).concat(sum_eq_funcs).append(eq_fn(eq_layouts))
-  exports := collect f in funcs { ExportDef.{ wasm_name: f.name, func_sym: f.name } }
+  exports := collect f in funcs {
+    ExportDef.{ wasm_name: f.name, func_sym: f.name }
+  }
   WasmModule.{
     namespace: "rt.core",
     types: [],
@@ -481,7 +525,11 @@ fn gen_record_eq_fn(rec: WasmRecordLayout) FuncDef {
   qsym := qualified_rec_sym(rec)
   ref_ty := ValType.Ref(false, HeapType.Named(qsym))
   body: Vector<Instr> = []
-  for f, i in rec.fields { body = .concat(field_eq_instrs(qsym, i, f.val_type)) }
+
+  for f, i in rec.fields {
+    body = .concat(field_eq_instrs(qsym, i, f.val_type))
+  }
+
   body = .append(Instr.I32Const(1))
   FuncDef.{
     name: rec_eq_func_name(rec),
@@ -504,6 +552,7 @@ fn sum_eq_func_name(sum: WasmSumLayout) String {
 fn gen_sum_eq_fn(sum: WasmSumLayout) FuncDef {
   qsym := qualified_sum_sym(sum)
   ref_ty := ValType.Ref(false, HeapType.Named(qsym))
+
   // Compare tags (field 0)
   body: Vector<Instr> = [
     Instr.LocalGet(0),
@@ -513,11 +562,14 @@ fn gen_sum_eq_fn(sum: WasmSumLayout) FuncDef {
     Instr.I32Ne,
     Instr.If(.None, [Instr.I32Const(0), Instr.Return], []),
   ]
+
   // For each variant with payloads, compare fields when tag matches
   has_payload_variants := false
 
   for v in sum.variants {
-    if v.payload_types.len() > 0 { has_payload_variants = true }
+    if v.payload_types.len() > 0 {
+      has_payload_variants = true
+    }
   }
 
   if has_payload_variants {

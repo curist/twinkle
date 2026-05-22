@@ -22,9 +22,13 @@ fn byte(n: Int) Byte {
   }
 }
 
-fn emit_u8(buf: Vector<Byte>, b: Int) Vector<Byte> { buf.append(byte(b)) }
+fn emit_u8(buf: Vector<Byte>, b: Int) Vector<Byte> {
+  buf.append(byte(b))
+}
 
-fn emit_bytes(buf: Vector<Byte>, bytes: Vector<Byte>) Vector<Byte> { buf.concat(bytes) }
+fn emit_bytes(buf: Vector<Byte>, bytes: Vector<Byte>) Vector<Byte> {
+  buf.concat(bytes)
+}
 
 // Unsigned LEB128 for u32 (all values must be >= 0).
 fn emit_u32_leb(buf: Vector<Byte>, n: Int) Vector<Byte> {
@@ -70,12 +74,18 @@ fn emit_sleb128(buf: Vector<Byte>, n: Int) Vector<Byte> {
   result
 }
 
-fn emit_i32_leb(buf: Vector<Byte>, n: Int) Vector<Byte> { emit_sleb128(buf, n) }
+fn emit_i32_leb(buf: Vector<Byte>, n: Int) Vector<Byte> {
+  emit_sleb128(buf, n)
+}
 
-fn emit_i64_leb(buf: Vector<Byte>, n: Int) Vector<Byte> { emit_sleb128(buf, n) }
+fn emit_i64_leb(buf: Vector<Byte>, n: Int) Vector<Byte> {
+  emit_sleb128(buf, n)
+}
 
 // Positive s33 for named type indices in heap type positions.
-fn emit_s33_leb(buf: Vector<Byte>, n: Int) Vector<Byte> { emit_sleb128(buf, n) }
+fn emit_s33_leb(buf: Vector<Byte>, n: Int) Vector<Byte> {
+  emit_sleb128(buf, n)
+}
 
 // Wasm name: u32 byte length + UTF-8 bytes.
 fn emit_name(buf: Vector<Byte>, s: String) Vector<Byte> {
@@ -205,8 +215,12 @@ fn heap_type_key(ht: HeapType) String {
 }
 
 fn ft_sig_key(params: Vector<ValType>, results: Vector<ValType>) String {
-  p := collect vt in params { val_type_key(vt) }
-  r := collect vt in results { val_type_key(vt) }
+  p := collect vt in params {
+    val_type_key(vt)
+  }
+  r := collect vt in results {
+    val_type_key(vt)
+  }
   "P(${p.join(",")})R(${r.join(",")})"
 }
 
@@ -251,6 +265,7 @@ fn build_ctx(
   }
 
   anon_ft_base := next_type_idx
+
   // Anonymous func types (deduplicated) for imports and funcs.
   anon_ft: Vector<FuncSigPair> = []
   anon_ft_idx: Dict<String, Int> = Dict.new()
@@ -283,18 +298,32 @@ fn build_ctx(
 
   // Global indices.
   global_idx: Dict<String, Int> = Dict.new()
-  for global, i in globals { global_idx[global.name] = i }
+
+  for global, i in globals {
+    global_idx[global.name] = i
+  }
+
   // Table indices.
   table_idx: Dict<String, Int> = Dict.new()
-  for table, i in tables { table_idx[table.name] = i }
+
+  for table, i in tables {
+    table_idx[table.name] = i
+  }
+
   // Data segment indices.
   data_idx: Dict<String, Int> = Dict.new()
-  for d, i in data { data_idx[d.name] = i }
+
+  for d, i in data {
+    data_idx[d.name] = i
+  }
+
   .{ type_idx, anon_ft, anon_ft_idx, anon_ft_base, func_idx, global_idx, table_idx, data_idx }
 }
 
 // ── Type encoding ──────────────────────────────────────────────────────
-fn encode_heap_type(ht: HeapType, ctx: WasmCtx) Vector<Byte> { encode_heap_type_into([], ht, ctx) }
+fn encode_heap_type(ht: HeapType, ctx: WasmCtx) Vector<Byte> {
+  encode_heap_type_into([], ht, ctx)
+}
 
 fn encode_heap_type_into(buf: Vector<Byte>, ht: HeapType, ctx: WasmCtx) Vector<Byte> {
   case ht {
@@ -308,7 +337,9 @@ fn encode_heap_type_into(buf: Vector<Byte>, ht: HeapType, ctx: WasmCtx) Vector<B
   }
 }
 
-fn encode_val_type(vt: ValType, ctx: WasmCtx) Vector<Byte> { encode_val_type_into([], vt, ctx) }
+fn encode_val_type(vt: ValType, ctx: WasmCtx) Vector<Byte> {
+  encode_val_type_into([], vt, ctx)
+}
 
 fn encode_val_type_into(buf: Vector<Byte>, vt: ValType, ctx: WasmCtx) Vector<Byte> {
   case vt {
@@ -320,7 +351,11 @@ fn encode_val_type_into(buf: Vector<Byte>, vt: ValType, ctx: WasmCtx) Vector<Byt
     .I31ref => emit_u8(buf, 0x6C),
     .Funcref => emit_u8(buf, 0x70),
     .Ref(nullable, ht) => {
-      prefix := if nullable { 0x63 } else { 0x64 }
+      prefix := if nullable {
+        0x63
+      } else {
+        0x64
+      }
       encode_heap_type_into(emit_u8(buf, prefix), ht, ctx)
     },
   }
@@ -335,7 +370,14 @@ fn encode_storage_type_into(buf: Vector<Byte>, vt: ValType, ctx: WasmCtx) Vector
 }
 
 fn encode_field_type_into(buf: Vector<Byte>, f: FieldDef, ctx: WasmCtx) Vector<Byte> {
-  emit_u8(encode_storage_type_into(buf, f.ty, ctx), if f.mutable { 0x01 } else { 0x00 })
+  emit_u8(
+    encode_storage_type_into(buf, f.ty, ctx),
+    if f.mutable {
+      0x01
+    } else {
+      0x00
+    },
+  )
 }
 
 fn encode_func_comptype_into(
@@ -346,9 +388,17 @@ fn encode_func_comptype_into(
 ) Vector<Byte> {
   buf = emit_u8(buf, 0x60)
   buf = emit_u32_leb(buf, params.len())
-  for p in params { buf = encode_val_type_into(buf, p, ctx) }
+
+  for p in params {
+    buf = encode_val_type_into(buf, p, ctx)
+  }
+
   buf = emit_u32_leb(buf, results.len())
-  for r in results { buf = encode_val_type_into(buf, r, ctx) }
+
+  for r in results {
+    buf = encode_val_type_into(buf, r, ctx)
+  }
+
   buf
 }
 
@@ -357,7 +407,11 @@ fn encode_comptype_into(buf: Vector<Byte>, td: TypeDef, ctx: WasmCtx) Vector<Byt
     .Struct(_, fields, _, _) => {
       buf = emit_u8(buf, 0x5F)
       buf = emit_u32_leb(buf, fields.len())
-      for f in fields { buf = encode_field_type_into(buf, f, ctx) }
+
+      for f in fields {
+        buf = encode_field_type_into(buf, f, ctx)
+      }
+
       buf
     },
     .Array(_, field) => encode_field_type_into(emit_u8(buf, 0x5E), field, ctx),
@@ -369,25 +423,25 @@ fn encode_comptype_into(buf: Vector<Byte>, td: TypeDef, ctx: WasmCtx) Vector<Byt
 // Shorthand (just comptype) is used for final types with no supertypes.
 fn encode_subtype_into(buf: Vector<Byte>, td: TypeDef, ctx: WasmCtx) Vector<Byte> {
   case td {
-    .Struct(_, _, super_type, is_final) => {
-      case super_type {
-        .None => {
-          if is_final {
-            encode_comptype_into(buf, td, ctx) // shorthand: final struct, no supers
-          } else {
-            buf = emit_u8(buf, 0x50)
-            buf = emit_u32_leb(buf, 0)
-            encode_comptype_into(buf, td, ctx)
-          }
-        },
-        .Some(parent) => {
-          tag := if is_final { 0x4F } else { 0x50 }
-          buf = emit_u8(buf, tag)
-          buf = emit_u32_leb(buf, 1)
-          buf = emit_u32_leb(buf, type_idx_of(ctx, parent))
-          encode_comptype_into(buf, td, ctx)
-        },
-      }
+    .Struct(_, _, super_type, is_final) => case super_type {
+      .None => if is_final {
+        encode_comptype_into(buf, td, ctx) // shorthand: final struct, no supers
+      } else {
+        buf = emit_u8(buf, 0x50)
+        buf = emit_u32_leb(buf, 0)
+        encode_comptype_into(buf, td, ctx)
+      },
+      .Some(parent) => {
+        tag := if is_final {
+          0x4F
+        } else {
+          0x50
+        }
+        buf = emit_u8(buf, tag)
+        buf = emit_u32_leb(buf, 1)
+        buf = emit_u32_leb(buf, type_idx_of(ctx, parent))
+        encode_comptype_into(buf, td, ctx)
+      },
     },
     // Arrays and FuncTypes have no supertype flag in the IR — treat as final.
     .Array(_, _) => encode_comptype_into(buf, td, ctx),
@@ -404,7 +458,11 @@ fn encode_type_section_payload(
   ctx: WasmCtx,
 ) Vector<Byte> {
   types_by_name: Dict<String, TypeDef> = Dict.new()
-  for td in types { types_by_name[type_def_name(td)] = td }
+
+  for td in types {
+    types_by_name[type_def_name(td)] = td
+  }
+
   entry_count := ordered_sccs.len() + anon_ft.len()
   payload := emit_u32_leb([], entry_count)
 
@@ -434,7 +492,10 @@ fn encode_type_section_payload(
     }
   }
 
-  for ft in anon_ft { payload = encode_func_comptype_into(payload, ft.params, ft.results, ctx) }
+  for ft in anon_ft {
+    payload = encode_func_comptype_into(payload, ft.params, ft.results, ctx)
+  }
+
   payload
 }
 
@@ -454,7 +515,11 @@ fn encode_import_section_payload(imports: Vector<ImportDef>, ctx: WasmCtx) Vecto
 
 fn encode_function_section_payload(funcs: Vector<FuncDef>, ctx: WasmCtx) Vector<Byte> {
   payload := emit_u32_leb([], funcs.len())
-  for f in funcs { payload = emit_u32_leb(payload, anon_ft_idx_of(ctx, f.params, f.results)) }
+
+  for f in funcs {
+    payload = emit_u32_leb(payload, anon_ft_idx_of(ctx, f.params, f.results))
+  }
+
   payload
 }
 
@@ -485,7 +550,14 @@ fn encode_global_section_payload(globals: Vector<GlobalDef>, ctx: WasmCtx) Vecto
 
   for g in globals {
     payload = encode_val_type_into(payload, g.ty, ctx)
-    payload = emit_u8(payload, if g.mutable { 0x01 } else { 0x00 })
+    payload = emit_u8(
+      payload,
+      if g.mutable {
+        0x01
+      } else {
+        0x00
+      },
+    )
     payload = encode_instrs(payload, g.init, [], ctx)
     payload = emit_u8(payload, 0x0B) // end
   }
@@ -543,11 +615,15 @@ fn collect_ref_func_syms(funcs: Vector<FuncDef>, elems: Vector<ElemDef>) Vector<
   seen: Dict<String, Bool> = Dict.new()
 
   for f in funcs {
-    for instr in f.body { seen = collect_ref_funcs_instr(instr, seen) }
+    for instr in f.body {
+      seen = collect_ref_funcs_instr(instr, seen)
+    }
   }
 
   for elem in elems {
-    for s in elem.func_syms { seen = .remove(s) }
+    for s in elem.func_syms {
+      seen = .remove(s)
+    }
   }
 
   seen.keys().sort()
@@ -558,18 +634,33 @@ fn collect_ref_funcs_instr(instr: Instr, seen: Dict<String, Bool>) Dict<String, 
     .RefFunc(s) => seen.set(s, true),
     .If(_, then_body, else_body) => {
       s := seen
-      for i in then_body { s = collect_ref_funcs_instr(i, s) }
-      for i in else_body { s = collect_ref_funcs_instr(i, s) }
+
+      for i in then_body {
+        s = collect_ref_funcs_instr(i, s)
+      }
+
+      for i in else_body {
+        s = collect_ref_funcs_instr(i, s)
+      }
+
       s
     },
     .Block(_, _, body) => {
       s := seen
-      for i in body { s = collect_ref_funcs_instr(i, s) }
+
+      for i in body {
+        s = collect_ref_funcs_instr(i, s)
+      }
+
       s
     },
     .Loop(_, _, body) => {
       s := seen
-      for i in body { s = collect_ref_funcs_instr(i, s) }
+
+      for i in body {
+        s = collect_ref_funcs_instr(i, s)
+      }
+
       s
     },
     _ => seen,
@@ -581,7 +672,11 @@ fn encode_elem_section_payload_with_refs(
   ref_func_syms: Vector<String>,
   ctx: WasmCtx,
 ) Vector<Byte> {
-  extra_decl_count := if ref_func_syms.len() > 0 { 1 } else { 0 }
+  extra_decl_count := if ref_func_syms.len() > 0 {
+    1
+  } else {
+    0
+  }
   payload := emit_u32_leb([], elems.len() + extra_decl_count)
 
   for elem in elems {
@@ -592,7 +687,10 @@ fn encode_elem_section_payload_with_refs(
     payload = emit_u8(payload, 0x0B) // end
     payload = emit_u8(payload, 0x00) // elemkind: funcref
     payload = emit_u32_leb(payload, elem.func_syms.len())
-    for sym in elem.func_syms { payload = emit_u32_leb(payload, func_idx_of(ctx, sym)) }
+
+    for sym in elem.func_syms {
+      payload = emit_u32_leb(payload, func_idx_of(ctx, sym))
+    }
   }
 
   if ref_func_syms.len() > 0 {
@@ -600,7 +698,10 @@ fn encode_elem_section_payload_with_refs(
     payload = emit_u32_leb(payload, 3)
     payload = emit_u8(payload, 0x00)
     payload = emit_u32_leb(payload, ref_func_syms.len())
-    for sym in ref_func_syms { payload = emit_u32_leb(payload, func_idx_of(ctx, sym)) }
+
+    for sym in ref_func_syms {
+      payload = emit_u32_leb(payload, func_idx_of(ctx, sym))
+    }
   }
 
   payload
@@ -630,7 +731,9 @@ fn empty_code_section_cache() CodeSectionCache {
   }
 }
 
-fn empty_label_ctx() LabelCtx { .{ depth: 0, named_levels: Dict.new() } }
+fn empty_label_ctx() LabelCtx {
+  .{ depth: 0, named_levels: Dict.new() }
+}
 
 fn label_ctx_enter_if(ctx: LabelCtx) LabelCtx {
   .{ depth: ctx.depth + 1, named_levels: ctx.named_levels }
@@ -764,6 +867,7 @@ fn encode_code_section_payload(funcs: Vector<FuncDef>, ctx: WasmCtx) Vector<Byte
     body_buf = instr_result.buf
     cache = instr_result.cache
     body_buf = emit_u8(body_buf, 0x0B) // end
+
     // Prefix entry with u32 byte size.
     payload = emit_u32_leb(payload, body_buf.len())
     payload = emit_bytes(payload, body_buf)
@@ -807,6 +911,7 @@ fn find_label_depth(label_stack: Vector<String>, label: String) Int {
     if label_stack[i] == label {
       return n - 1 - i
     }
+
     i = i - 1
   }
 
@@ -831,7 +936,11 @@ fn encode_instrs(
   ctx: WasmCtx,
 ) Vector<Byte> {
   out := buf
-  for instr in instrs { out = encode_instr(out, instr, label_stack, ctx) }
+
+  for instr in instrs {
+    out = encode_instr(out, instr, label_stack, ctx)
+  }
+
   out
 }
 
@@ -1006,11 +1115,19 @@ fn encode_instr_cached(
     .I31GetS => .{ buf: emit_u32_leb(emit_u8(buf, 0xFB), 29), cache },
     .I31GetU => .{ buf: emit_u32_leb(emit_u8(buf, 0xFB), 30), cache },
     .RefTest(nullable, ht) => {
-      sub := if nullable { 21 } else { 20 }
+      sub := if nullable {
+        21
+      } else {
+        20
+      }
       encode_heap_type_into_cached(emit_u32_leb(emit_u8(buf, 0xFB), sub), ht, ctx, cache)
     },
     .RefCast(nullable, ht) => {
-      sub := if nullable { 23 } else { 22 }
+      sub := if nullable {
+        23
+      } else {
+        22
+      }
       encode_heap_type_into_cached(emit_u32_leb(emit_u8(buf, 0xFB), sub), ht, ctx, cache)
     },
     // Struct
@@ -1114,7 +1231,11 @@ fn encode_instr_cached(
     },
     .BrTable(labels, default_label) => {
       out := emit_u32_leb(emit_u8(buf, 0x0E), labels.len())
-      for lbl in labels { out = emit_u32_leb(out, label_depth_of(label_ctx, lbl)) }
+
+      for lbl in labels {
+        out = emit_u32_leb(out, label_depth_of(label_ctx, lbl))
+      }
+
       .{ buf: emit_u32_leb(out, label_depth_of(label_ctx, default_label)), cache }
     },
     .If(bt, then_body, else_body) => {
@@ -1213,10 +1334,18 @@ fn emit_wasm_parts(
   t0 := date.now()
   ordered_sccs := compute_type_order(types)
   t_scc := date.now()
-  if timed { eprintln("[time:wasm] type_order=${Float.to_string(t_scc - t0)}ms") }
+
+  if timed {
+    eprintln("[time:wasm] type_order=${Float.to_string(t_scc - t0)}ms")
+  }
+
   ctx := build_ctx(ordered_sccs, imports, funcs, globals, tables, data)
   t1 := date.now()
-  if timed { eprintln("[time:wasm] build_ctx=${Float.to_string(t1 - t_scc)}ms") }
+
+  if timed {
+    eprintln("[time:wasm] build_ctx=${Float.to_string(t1 - t_scc)}ms")
+  }
+
   // Module header: magic + version
   buf: Vector<Byte> = [
     byte(0x00),
@@ -1228,8 +1357,10 @@ fn emit_wasm_parts(
     byte(0x00),
     byte(0x00),
   ]
+
   // 1. Type section (id=1)
   total_types := ctx.anon_ft_base + ctx.anon_ft.len()
+
   if total_types > 0 {
     buf = emit_section_into(
       buf,
@@ -1237,24 +1368,38 @@ fn emit_wasm_parts(
       encode_type_section_payload(ordered_sccs, types, ctx.anon_ft, ctx),
     )
   }
+
   t2 := date.now()
-  if timed { eprintln("[time:wasm] type_section=${Float.to_string(t2 - t1)}ms") }
+
+  if timed {
+    eprintln("[time:wasm] type_section=${Float.to_string(t2 - t1)}ms")
+  }
+
   // 2. Import section (id=2)
   if imports.len() > 0 {
     buf = emit_section_into(buf, 2, encode_import_section_payload(imports, ctx))
   }
+
   // 3. Function section (id=3)
   if funcs.len() > 0 {
     buf = emit_section_into(buf, 3, encode_function_section_payload(funcs, ctx))
   }
+
   // 4. Table section (id=4)
-  if tables.len() > 0 { buf = emit_section_into(buf, 4, encode_table_section_payload(tables, ctx)) }
+  if tables.len() > 0 {
+    buf = emit_section_into(buf, 4, encode_table_section_payload(tables, ctx))
+  }
+
   // 5. Memory section (id=5)
-  if memories.len() > 0 { buf = emit_section_into(buf, 5, encode_memory_section_payload(memories)) }
+  if memories.len() > 0 {
+    buf = emit_section_into(buf, 5, encode_memory_section_payload(memories))
+  }
+
   // 6. Global section (id=6)
   if globals.len() > 0 {
     buf = emit_section_into(buf, 6, encode_global_section_payload(globals, ctx))
   }
+
   // 7. Export section (id=7)
   if exports.len() > 0 or memory_exports.len() > 0 {
     buf = emit_section_into(buf, 7, encode_export_section_payload(exports, memory_exports, ctx))
@@ -1262,24 +1407,45 @@ fn emit_wasm_parts(
 
   // 8. Start section (id=8)
   case start {
-    .Some(name) => { buf = emit_section_into(buf, 8, encode_start_section_payload(name, ctx)) },
+    .Some(name) => {
+      buf = emit_section_into(buf, 8, encode_start_section_payload(name, ctx))
+    },
     .None => {},
   }
 
   // 9. Element section (id=9)
   ref_syms := collect_ref_func_syms(funcs, elems)
+
   if elems.len() > 0 or ref_syms.len() > 0 {
     buf = emit_section_into(buf, 9, encode_elem_section_payload_with_refs(elems, ref_syms, ctx))
   }
+
   t3 := date.now()
-  if timed { eprintln("[time:wasm] small_sections=${Float.to_string(t3 - t2)}ms") }
+
+  if timed {
+    eprintln("[time:wasm] small_sections=${Float.to_string(t3 - t2)}ms")
+  }
+
   // 12. Data count section (id=12) — required before code when data segments exist
-  if data.len() > 0 { buf = emit_section_into(buf, 12, encode_data_count_section_payload(data)) }
+  if data.len() > 0 {
+    buf = emit_section_into(buf, 12, encode_data_count_section_payload(data))
+  }
+
   // 10. Code section (id=10)
-  if funcs.len() > 0 { buf = emit_section_into(buf, 10, encode_code_section_payload(funcs, ctx)) }
+  if funcs.len() > 0 {
+    buf = emit_section_into(buf, 10, encode_code_section_payload(funcs, ctx))
+  }
+
   t4 := date.now()
-  if timed { eprintln("[time:wasm] code_section=${Float.to_string(t4 - t3)}ms") }
+
+  if timed {
+    eprintln("[time:wasm] code_section=${Float.to_string(t4 - t3)}ms")
+  }
+
   // 11. Data section (id=11)
-  if data.len() > 0 { buf = emit_section_into(buf, 11, encode_data_section_payload(data, ctx)) }
+  if data.len() > 0 {
+    buf = emit_section_into(buf, 11, encode_data_section_payload(data, ctx))
+  }
+
   buf
 }

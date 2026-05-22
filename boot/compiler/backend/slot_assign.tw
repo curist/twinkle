@@ -35,7 +35,9 @@ pub fn assign_slots_for_module(
   precomputed_captures: Dict<Int, Vector<CaptureParam>>,
   env: ResolvedEnv,
 ) Vector<PreparedFunc> {
-  collect f in functions { assign_slots(f, precomputed_captures, env) }
+  collect f in functions {
+    assign_slots(f, precomputed_captures, env)
+  }
 }
 
 // assign_slots builds the explicit slot map for a single function.
@@ -74,7 +76,10 @@ pub fn assign_slots(
 
   // ── 2. Declared params ──────────────────────────────────────────────
   for p in func.params {
-    if local_to_slot.has(p.local.id) { continue }
+    if local_to_slot.has(p.local.id) {
+      continue
+    }
+
     sid := SlotId.{ id: next_slot }
     slots[next_slot] = SlotInfo.{
       slot: sid,
@@ -97,14 +102,21 @@ pub fn assign_slots(
   all_lids := collect_all_let_locals(func.body)
 
   for lid in all_lids {
-    if local_to_slot.has(lid) { continue } // already a capture or param slot
+    if local_to_slot.has(lid) {
+      continue
+    } // already a capture or param slot
+
     mono := case pattern_monos[lid] {
       .Some(m) => m,
       .None => resolve_local_mono(func, LocalId.{ id: lid }),
     }
     role: SlotRole = case mono {
       .Never => .DeadPlaceholder,
-      _ => if pattern_locals.has(lid) { .PatternLocal } else { .Local },
+      _ => if pattern_locals.has(lid) {
+        .PatternLocal
+      } else {
+        .Local
+      },
     }
     sid := SlotId.{ id: next_slot }
     slots[next_slot] = SlotInfo.{
@@ -151,7 +163,9 @@ fn lower_op(op: AnfOp, local_to_slot: Dict<Int, SlotId>, func_name: String) Prep
   case op {
     .ACall(callee, args) => .ACall(
       lower_atom(callee, local_to_slot),
-      collect arg in args { lower_atom(arg, local_to_slot) },
+      collect arg in args {
+        lower_atom(arg, local_to_slot)
+      },
     ),
     .AIf(cond, then_e, else_e) => .AIf(
       lower_atom(cond, local_to_slot),
@@ -198,9 +212,15 @@ fn lower_op(op: AnfOp, local_to_slot: Dict<Int, SlotId>, func_name: String) Prep
     .AVariant(tid, vid, args) => .AVariant(
       tid,
       vid,
-      collect arg in args { lower_atom(arg, local_to_slot) },
+      collect arg in args {
+        lower_atom(arg, local_to_slot)
+      },
     ),
-    .AArrayLit(items) => .AArrayLit(collect item in items { lower_atom(item, local_to_slot) }),
+    .AArrayLit(items) => .AArrayLit(
+      collect item in items {
+        lower_atom(item, local_to_slot)
+      },
+    ),
     .AIndex(base, index, kind, mono) => .AIndex(
       lower_atom(base, local_to_slot),
       lower_atom(index, local_to_slot),
@@ -243,7 +263,9 @@ fn lower_pattern(pattern: CorePattern, local_to_slot: Dict<Int, SlotId>, func_na
     .Variant(tid, vid, fields) => .Variant(
       tid,
       vid,
-      collect field in fields { lower_pattern(field, local_to_slot, func_name) },
+      collect field in fields {
+        lower_pattern(field, local_to_slot, func_name)
+      },
     ),
   }
 }
@@ -277,7 +299,9 @@ fn resolve_local_mono(func: AnfFunctionDef, lid: LocalId) MonoType {
 }
 
 // ── Body scanning: all let-bound local ids (in encounter order) ──────
-fn collect_all_let_locals(expr: AnfExpr) Vector<Int> { collect_let_expr(expr, []) }
+fn collect_all_let_locals(expr: AnfExpr) Vector<Int> {
+  collect_let_expr(expr, [])
+}
 
 fn collect_let_expr(expr: AnfExpr, out: Vector<Int>) Vector<Int> {
   case expr {
@@ -315,7 +339,10 @@ fn collect_pattern_lids(pattern: CorePattern, out: Vector<Int>) Vector<Int> {
   case pattern {
     .Var(lid) => out.append(lid.id),
     .Variant(_, _, fields) => {
-      for f in fields { out = collect_pattern_lids(f, out) }
+      for f in fields {
+        out = collect_pattern_lids(f, out)
+      }
+
       out
     },
     _ => out,
@@ -360,7 +387,10 @@ fn mark_pattern_lids(pattern: CorePattern, out: Dict<Int, Bool>) Dict<Int, Bool>
       out
     },
     .Variant(_, _, fields) => {
-      for f in fields { out = mark_pattern_lids(f, out) }
+      for f in fields {
+        out = mark_pattern_lids(f, out)
+      }
+
       out
     },
     _ => out,
@@ -420,17 +450,15 @@ fn collect_binding_monos(
       out[lid.id] = scrutinee_mono
       out
     },
-    .Variant(_, vid, fields) => {
-      if !is_matchable_sum(scrutinee_mono, env) {
-        out
-      } else {
-        for field, i in fields {
-          field_mono := get_variant_field_mono(scrutinee_mono, vid, i, env)
-          out = collect_binding_monos(field, field_mono, env, out)
-        }
-
-        out
+    .Variant(_, vid, fields) => if !is_matchable_sum(scrutinee_mono, env) {
+      out
+    } else {
+      for field, i in fields {
+        field_mono := get_variant_field_mono(scrutinee_mono, vid, i, env)
+        out = collect_binding_monos(field, field_mono, env, out)
       }
+
+      out
     },
     _ => out,
   }
@@ -456,18 +484,16 @@ fn is_matchable_sum(mono: MonoType, env: ResolvedEnv) Bool {
   case mono {
     .Optional(_) => true,
     .Result(_, _) => true,
-    .Named(tid, args) => {
-      case lookup_type_def(env, tid) {
-        .Some(def) => case def {
-          .Sum(_, _, _) => true,
-          .Alias(_, type_params, target) => is_matchable_sum(
-            subst_type_params(target, type_params, args),
-            env,
-          ),
-          _ => false,
-        },
-        .None => false,
-      }
+    .Named(tid, args) => case lookup_type_def(env, tid) {
+      .Some(def) => case def {
+        .Sum(_, _, _) => true,
+        .Alias(_, type_params, target) => is_matchable_sum(
+          subst_type_params(target, type_params, args),
+          env,
+        ),
+        _ => false,
+      },
+      .None => false,
     },
     _ => false,
   }
@@ -484,30 +510,31 @@ fn get_variant_field_mono(
       if vid.id == 1 and field_idx == 0 {
         return inner
       }
+
       .Void
     },
     .Result(ok, err) => {
       if vid.id == 0 and field_idx == 0 {
         return ok
       }
+
       if vid.id == 1 and field_idx == 0 {
         return err
       }
+
       .Void
     },
-    .Named(tid, args) => {
-      case lookup_type_def(env, tid) {
-        .Some(def) => case def {
-          .Alias(_, type_params, target) => get_variant_field_mono(
-            subst_type_params(target, type_params, args),
-            vid,
-            field_idx,
-            env,
-          ),
-          _ => resolve_named_variant_field(tid, args, vid, field_idx, env),
-        },
-        .None => resolve_named_variant_field(tid, args, vid, field_idx, env),
-      }
+    .Named(tid, args) => case lookup_type_def(env, tid) {
+      .Some(def) => case def {
+        .Alias(_, type_params, target) => get_variant_field_mono(
+          subst_type_params(target, type_params, args),
+          vid,
+          field_idx,
+          env,
+        ),
+        _ => resolve_named_variant_field(tid, args, vid, field_idx, env),
+      },
+      .None => resolve_named_variant_field(tid, args, vid, field_idx, env),
     },
     _ => .Void,
   }

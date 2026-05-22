@@ -19,8 +19,8 @@ fn to_capture_entries(precomputed: Dict<Int, Vector<CaptureParam>>) Dict<Int, Ve
 
   for fid in precomputed.keys() {
     case precomputed[fid] {
-      .Some(caps) => {
-        out[fid] = collect cap in caps { CaptureEntry.{ local_id: cap.local_id, ty: cap.ty } }
+      .Some(caps) => out[fid] = collect cap in caps {
+        CaptureEntry.{ local_id: cap.local_id, ty: cap.ty }
       },
       .None => {},
     }

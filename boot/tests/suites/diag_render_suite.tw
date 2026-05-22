@@ -10,7 +10,9 @@ use lib.source.span.{Span}
 use tests.assert
 use tests.runner
 
-fn s(start: Int, end: Int) Span { span.new(0, start, end) }
+fn s(start: Int, end: Int) Span {
+  span.new(0, start, end)
+}
 
 fn ctx() RenderCtx {
   RenderCtx.{
@@ -34,7 +36,9 @@ pub fn suite() runner.Suite {
 
         case r.severity {
           .Error => {},
-          .Warning => { return assert.fail("expected Error severity") },
+          .Warning => {
+            return assert.fail("expected Error severity")
+          },
         }
 
         .Ok({})
@@ -81,7 +85,9 @@ pub fn suite() runner.Suite {
 
         case r.severity {
           .Error => {},
-          .Warning => { return assert.fail("expected Error severity") },
+          .Warning => {
+            return assert.fail("expected Error severity")
+          },
         }
 
         try assert.is_true(r.title.contains("foo"))
@@ -100,7 +106,9 @@ pub fn suite() runner.Suite {
 
         case r.severity {
           .Error => {},
-          .Warning => { return assert.fail("expected Error severity") },
+          .Warning => {
+            return assert.fail("expected Error severity")
+          },
         }
 
         try assert.is_true(r.title.contains("2"))
@@ -122,7 +130,9 @@ pub fn suite() runner.Suite {
 
         case r.severity {
           .Error => {},
-          .Warning => { return assert.fail("expected Error severity") },
+          .Warning => {
+            return assert.fail("expected Error severity")
+          },
         }
 
         try assert.is_true(r.title.contains("Bool"))
@@ -131,7 +141,9 @@ pub fn suite() runner.Suite {
 
         case r.labels[0].label {
           .Some(text) => try assert.equal(text, "missing variants"),
-          .None => { return assert.fail("expected label") },
+          .None => {
+            return assert.fail("expected label")
+          },
         }
 
         try assert.equal(r.help_lines.len(), 1)
@@ -148,7 +160,9 @@ pub fn suite() runner.Suite {
 
         case r.severity {
           .Error => {},
-          .Warning => { return assert.fail("expected Error severity") },
+          .Warning => {
+            return assert.fail("expected Error severity")
+          },
         }
 
         try assert.is_true(r.title.contains("x"))
@@ -170,7 +184,9 @@ pub fn suite() runner.Suite {
 
         case secondary_lbl.label {
           .Some(text) => try assert.is_true(text.contains("first")),
-          .None => { return assert.fail("expected secondary label") },
+          .None => {
+            return assert.fail("expected secondary label")
+          },
         }
 
         .Ok({})
@@ -202,7 +218,9 @@ pub fn suite() runner.Suite {
 
         case r.severity {
           .Error => {},
-          .Warning => { return assert.fail("expected Error severity") },
+          .Warning => {
+            return assert.fail("expected Error severity")
+          },
         }
 
         try assert.equal(r.title, "something went wrong")
@@ -220,7 +238,9 @@ pub fn suite() runner.Suite {
 
         case r.severity {
           .Warning => {},
-          .Error => { return assert.fail("expected Warning severity") },
+          .Error => {
+            return assert.fail("expected Warning severity")
+          },
         }
 
         try assert.is_true(r.title.contains("my_mod"))

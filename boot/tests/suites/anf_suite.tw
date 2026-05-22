@@ -68,11 +68,9 @@ fn test_expr_atom() Result<Void, String> {
   e: AnfExpr = .Atom(.ALitInt(1))
 
   case e {
-    .Atom(a) => {
-      case a {
-        .ALitInt(n) => assert.equal(n, 1),
-        _ => assert.fail("expected ALitInt"),
-      }
+    .Atom(a) => case a {
+      .ALitInt(n) => assert.equal(n, 1),
+      _ => assert.fail("expected ALitInt"),
     },
     _ => assert.fail("expected Atom expr"),
   }
@@ -90,13 +88,11 @@ fn test_expr_let_chain() Result<Void, String> {
       try assert.equal(local.id, 100)
 
       case op {
-        .AInit(a) => {
-          case a {
-            .ALitInt(n) => try assert.equal(n, 1),
-            _ => {
-              return .Err("expected ALitInt")
-            },
-          }
+        .AInit(a) => case a {
+          .ALitInt(n) => try assert.equal(n, 1),
+          _ => {
+            return .Err("expected ALitInt")
+          },
         },
         _ => {
           return .Err("expected AInit")
@@ -268,11 +264,9 @@ fn test_op_loop() Result<Void, String> {
   op: AnfOp = .ALoop(.Atom(.ALitVoid))
 
   case op {
-    .ALoop(body) => {
-      case body {
-        .Atom(.ALitVoid) => .Ok({}),
-        _ => assert.fail("expected Atom(LitVoid)"),
-      }
+    .ALoop(body) => case body {
+      .Atom(.ALitVoid) => .Ok({}),
+      _ => assert.fail("expected Atom(LitVoid)"),
     },
     _ => assert.fail("expected ALoop"),
   }
@@ -386,13 +380,11 @@ fn test_op_init_assign() Result<Void, String> {
   assign_op: AnfOp = .AAssign(LocalId.{ id: 0 }, .ALitInt(99))
 
   case init_op {
-    .AInit(a) => {
-      case a {
-        .ALitInt(n) => try assert.equal(n, 42),
-        _ => {
-          return .Err("expected ALitInt")
-        },
-      }
+    .AInit(a) => case a {
+      .ALitInt(n) => try assert.equal(n, 42),
+      _ => {
+        return .Err("expected ALitInt")
+      },
     },
     _ => {
       return .Err("expected AInit")
@@ -416,11 +408,9 @@ fn test_op_defer() Result<Void, String> {
   op: AnfOp = .ADefer(.Atom(.ALitVoid))
 
   case op {
-    .ADefer(inner) => {
-      case inner {
-        .Atom(.ALitVoid) => .Ok({}),
-        _ => assert.fail("expected Atom(LitVoid)"),
-      }
+    .ADefer(inner) => case inner {
+      .Atom(.ALitVoid) => .Ok({}),
+      _ => assert.fail("expected Atom(LitVoid)"),
     },
     _ => assert.fail("expected ADefer"),
   }

@@ -19,7 +19,11 @@ fn sym(s: String) String {
   }
 }
 
-fn make_pad(indent: Int) String { (collect _ in 0..indent { " " }).join("") }
+fn make_pad(indent: Int) String {
+  (collect _ in 0..indent {
+    " "
+  }).join("")
+}
 
 fn join_lines(lines: Vector<String>) String {
   "${lines.join("\n")}\n"
@@ -73,7 +77,11 @@ fn emit_wat_parts(
   start: String?,
 ) String {
   lines: Vector<String> = ["(module"]
-  for block in emit_typedef_blocks(types) { lines = .concat(block) }
+
+  for block in emit_typedef_blocks(types) {
+    lines = .concat(block)
+  }
+
   ft_registry := build_functype_registry(imports, funcs)
 
   for i in 0..ft_registry.entries.len() {
@@ -102,8 +110,12 @@ fn emit_wat_parts(
     ms := sym(mem.name)
 
     case mem.max_pages {
-      .Some(max) => { lines = .append("  (memory ${ms} ${mem.min_pages} ${max})") },
-      .None => { lines = .append("  (memory ${ms} ${mem.min_pages})") },
+      .Some(max) => {
+        lines = .append("  (memory ${ms} ${mem.min_pages} ${max})")
+      },
+      .None => {
+        lines = .append("  (memory ${ms} ${mem.min_pages})")
+      },
     }
   }
 
@@ -122,12 +134,17 @@ fn emit_wat_parts(
   for f in funcs {
     idx := lookup_functype(ft_registry, f.params, f.results)
     func_lines := emit_func_def(f, idx)
-    for fl in func_lines { lines = .append(fl) }
+
+    for fl in func_lines {
+      lines = .append(fl)
+    }
   }
 
   for elem in elems {
     offset_str := emit_instrs_inline(elem.offset)
-    syms_str := (collect s in elem.func_syms { sym(s) }).join(" ")
+    syms_str := (collect s in elem.func_syms {
+      sym(s)
+    }).join(" ")
     ts := sym(elem.table)
 
     if syms_str.len() > 0 {
@@ -140,7 +157,9 @@ fn emit_wat_parts(
   ref_func_syms := collect_ref_func_syms(funcs, elems)
 
   if ref_func_syms.len() > 0 {
-    syms_str := (collect s in ref_func_syms { sym(s) }).join(" ")
+    syms_str := (collect s in ref_func_syms {
+      sym(s)
+    }).join(" ")
     lines = .append("  (elem declare func ${syms_str})")
   }
 
@@ -208,7 +227,9 @@ fn emit_typedef_line(td: TypeDef, indent: Int) String {
 
   case td {
     .Struct(name, fields, super_type, is_final) => {
-      field_defs := collect f in fields { emit_field_def(f) }
+      field_defs := collect f in fields {
+        emit_field_def(f)
+      }
       body := if field_defs.len() > 0 {
         "(struct ${field_defs.join(" ")})"
       } else {
@@ -221,12 +242,10 @@ fn emit_typedef_line(td: TypeDef, indent: Int) String {
           ps := sym(parent)
           "${pad}(type ${ns} (sub ${ps} ${body}))"
         },
-        .None => {
-          if is_final {
-            "${pad}(type ${ns} ${body})"
-          } else {
-            "${pad}(type ${ns} (sub ${body}))"
-          }
+        .None => if is_final {
+          "${pad}(type ${ns} ${body})"
+        } else {
+          "${pad}(type ${ns} (sub ${body}))"
         },
       }
     },
@@ -272,15 +291,27 @@ type FuncTypeRegistry = .{ entries: Vector<FuncSigPair>, keys: Dict<String, Int>
 
 fn build_functype_registry(imports: Vector<ImportDef>, funcs: Vector<FuncDef>) FuncTypeRegistry {
   init := FuncTypeRegistry.{ entries: [], keys: Dict.new() }
-  reg := imports.fold(init, fn(r, imp) { register_functype(r, imp.params, imp.results) })
-  funcs.fold(reg, fn(r, f) { register_functype(r, f.params, f.results) })
+  reg := imports.fold(
+    init,
+    fn(r, imp) {
+      register_functype(r, imp.params, imp.results)
+    },
+  )
+  funcs.fold(
+    reg,
+    fn(r, f) {
+      register_functype(r, f.params, f.results)
+    },
+  )
 }
 
 fn register_functype(reg: FuncTypeRegistry, params: Vector<ValType>, results: Vector<ValType>) FuncTypeRegistry {
   key := sig_key(params, results)
+
   if reg.keys.has(key) {
     return reg
   }
+
   idx := reg.entries.len()
   .{ entries: reg.entries.append(.{ params, results }), keys: reg.keys.set(key, idx) }
 }
@@ -295,8 +326,12 @@ fn lookup_functype(reg: FuncTypeRegistry, params: Vector<ValType>, results: Vect
 }
 
 fn sig_key(params: Vector<ValType>, results: Vector<ValType>) String {
-  p := collect vt in params { emit_val_type(vt) }
-  r := collect vt in results { emit_val_type(vt) }
+  p := collect vt in params {
+    emit_val_type(vt)
+  }
+  r := collect vt in results {
+    emit_val_type(vt)
+  }
   "P(${p.join(",")})R(${r.join(",")})"
 }
 
@@ -310,12 +345,16 @@ fn emit_func_sig(params: Vector<ValType>, results: Vector<ValType>) String {
   out := ""
 
   if params.len() > 0 {
-    ps := collect vt in params { emit_val_type(vt) }
+    ps := collect vt in params {
+      emit_val_type(vt)
+    }
     out = "${out} (param ${ps.join(" ")})"
   }
 
   if results.len() > 0 {
-    rs := collect vt in results { emit_val_type(vt) }
+    rs := collect vt in results {
+      emit_val_type(vt)
+    }
     out = "${out} (result ${rs.join(" ")})"
   }
 
@@ -327,6 +366,7 @@ fn emit_func_def(f: FuncDef, type_idx: Int) Vector<String> {
   ns := sym(f.name)
   ft := sym("functype_${type_idx}")
   lines: Vector<String> = ["  (func ${ns} (type ${ft})"]
+
   // Params
   idx := 0
 
@@ -354,7 +394,10 @@ fn emit_func_def(f: FuncDef, type_idx: Int) Vector<String> {
   // Body instructions
   for instr in f.body {
     instr_lines := emit_instr(instr, 4)
-    for il in instr_lines { lines = .append(il) }
+
+    for il in instr_lines {
+      lines = .append(il)
+    }
   }
 
   lines = .append("  )")
@@ -502,7 +545,9 @@ fn emit_instr(instr: Instr, indent: Int) Vector<String> {
     .Br(label) => ["${pad}br ${sym(label)}"],
     .BrIf(label) => ["${pad}br_if ${sym(label)}"],
     .BrTable(labels, default_label) => {
-      lbl_str := (collect l in labels { sym(l) }).join(" ")
+      lbl_str := (collect l in labels {
+        sym(l)
+      }).join(" ")
       ds := sym(default_label)
 
       if lbl_str.len() > 0 {
@@ -521,7 +566,10 @@ fn emit_instr(instr: Instr, indent: Int) Vector<String> {
 
       for i in then_body {
         inner := emit_instr(i, indent + 4)
-        for il in inner { lines = .append(il) }
+
+        for il in inner {
+          lines = .append(il)
+        }
       }
 
       lines = .append("${pad}  )")
@@ -531,7 +579,10 @@ fn emit_instr(instr: Instr, indent: Int) Vector<String> {
 
         for i in else_body {
           inner := emit_instr(i, indent + 4)
-          for il in inner { lines = .append(il) }
+
+          for il in inner {
+            lines = .append(il)
+          }
         }
 
         lines = .append("${pad}  )")
@@ -550,7 +601,10 @@ fn emit_instr(instr: Instr, indent: Int) Vector<String> {
 
       for i in body {
         inner := emit_instr(i, indent + 2)
-        for il in inner { lines = .append(il) }
+
+        for il in inner {
+          lines = .append(il)
+        }
       }
 
       lines = .append("${pad})")
@@ -566,7 +620,10 @@ fn emit_instr(instr: Instr, indent: Int) Vector<String> {
 
       for i in body {
         inner := emit_instr(i, indent + 2)
-        for il in inner { lines = .append(il) }
+
+        for il in inner {
+          lines = .append(il)
+        }
       }
 
       lines = .append("${pad})")
@@ -619,17 +676,22 @@ fn emit_f64(v: Float) String {
   if v != v {
     return "nan"
   }
+
   // Check string repr for infinity
   s := v.to_string()
+
   if s == "inf" or s == "Infinity" {
     return "inf"
   }
+
   if s == "-inf" or s == "-Infinity" {
     return "-inf"
   }
+
   if s == "NaN" {
     return "nan"
   }
+
   s
 }
 
@@ -666,12 +728,16 @@ fn collect_ref_func_syms(funcs: Vector<FuncDef>, elems: Vector<ElemDef>) Vector<
   seen: Dict<String, Bool> = Dict.new()
 
   for f in funcs {
-    for instr in f.body { seen = collect_ref_funcs_instr(instr, seen) }
+    for instr in f.body {
+      seen = collect_ref_funcs_instr(instr, seen)
+    }
   }
 
   // Remove syms already in active elem segments
   for elem in elems {
-    for s in elem.func_syms { seen = .remove(s) }
+    for s in elem.func_syms {
+      seen = .remove(s)
+    }
   }
 
   seen.keys().sort()
@@ -682,18 +748,33 @@ fn collect_ref_funcs_instr(instr: Instr, seen: Dict<String, Bool>) Dict<String, 
     .RefFunc(s) => seen.set(s, true),
     .If(_, then_body, else_body) => {
       s := seen
-      for i in then_body { s = collect_ref_funcs_instr(i, s) }
-      for i in else_body { s = collect_ref_funcs_instr(i, s) }
+
+      for i in then_body {
+        s = collect_ref_funcs_instr(i, s)
+      }
+
+      for i in else_body {
+        s = collect_ref_funcs_instr(i, s)
+      }
+
       s
     },
     .Block(_, _, body) => {
       s := seen
-      for i in body { s = collect_ref_funcs_instr(i, s) }
+
+      for i in body {
+        s = collect_ref_funcs_instr(i, s)
+      }
+
       s
     },
     .Loop(_, _, body) => {
       s := seen
-      for i in body { s = collect_ref_funcs_instr(i, s) }
+
+      for i in body {
+        s = collect_ref_funcs_instr(i, s)
+      }
+
       s
     },
     _ => seen,
@@ -702,13 +783,19 @@ fn collect_ref_funcs_instr(instr: Instr, seen: Dict<String, Bool>) Dict<String, 
 
 // ── Inline instruction emission (for globals, data offsets, etc.) ──────
 fn emit_instrs_inline(instrs: Vector<Instr>) String {
-  (collect instr in instrs { emit_instr_flat(instr) }).join(" ")
+  (collect instr in instrs {
+    emit_instr_flat(instr)
+  }).join(" ")
 }
 
 fn emit_instr_flat(instr: Instr) String {
   lines := emit_instr(instr, 0)
+
   if lines.len() == 0 {
     return ""
   }
-  (collect l in lines { l.trim() }).join(" ")
+
+  (collect l in lines {
+    l.trim()
+  }).join(" ")
 }

@@ -70,15 +70,15 @@ fn assert_expr_kind(expr: ast.Expr, expected: String) Result<Void, String> {
 
 fn type_is_path(ty: ast.TypeExpr, expected_last_seg: String) Bool {
   case ty.kind {
-    .Path(path) => {
-      if path.segments.len() == 0 { false } else {
-        path.segments[path.segments.len() - 1] == expected_last_seg
-      }
+    .Path(path) => if path.segments.len() == 0 {
+      false
+    } else {
+      path.segments[path.segments.len() - 1] == expected_last_seg
     },
-    .Applied(path, _) => {
-      if path.segments.len() == 0 { false } else {
-        path.segments[path.segments.len() - 1] == expected_last_seg
-      }
+    .Applied(path, _) => if path.segments.len() == 0 {
+      false
+    } else {
+      path.segments[path.segments.len() - 1] == expected_last_seg
     },
     _ => false,
   }
@@ -126,15 +126,13 @@ fn assert_snapshot(fixture_path: String) Result<Void, String> {
         )
       }
     },
-    .Err(_) => {
-      if update {
-        case fs.write_text(expected_path, "${actual}\n") {
-          .Ok(_) => .Ok({}),
-          .Err(_) => .Err("failed to write snapshot: ${expected_path}"),
-        }
-      } else {
-        .Err("missing snapshot file: ${expected_path} (run with TWK_SNAP_UPDATE=1 to generate)")
+    .Err(_) => if update {
+      case fs.write_text(expected_path, "${actual}\n") {
+        .Ok(_) => .Ok({}),
+        .Err(_) => .Err("failed to write snapshot: ${expected_path}"),
       }
+    } else {
+      .Err("missing snapshot file: ${expected_path} (run with TWK_SNAP_UPDATE=1 to generate)")
     },
   }
 }
@@ -422,17 +420,15 @@ pub fn suite() runner.Suite {
         item := try parse_first_item("type Tree = { Leaf, Node(Tree, Int, Tree) }")
 
         case item {
-          .Type(t) => {
-            case t.def {
-              .Sum(variants) => {
-                try assert.equal(variants.len(), 2)
-                try assert.equal(variants[0].name, "Leaf")
-                try assert.equal(variants[0].fields.len(), 0)
-                try assert.equal(variants[1].name, "Node")
-                assert.equal(variants[1].fields.len(), 3)
-              },
-              _ => assert.fail("expected sum type def"),
-            }
+          .Type(t) => case t.def {
+            .Sum(variants) => {
+              try assert.equal(variants.len(), 2)
+              try assert.equal(variants[0].name, "Leaf")
+              try assert.equal(variants[0].fields.len(), 0)
+              try assert.equal(variants[1].name, "Node")
+              assert.equal(variants[1].fields.len(), 3)
+            },
+            _ => assert.fail("expected sum type def"),
           },
           _ => assert.fail("expected type declaration"),
         }
@@ -856,11 +852,9 @@ pub fn suite() runner.Suite {
         expr := try parse_body_tail(src)
 
         case expr.kind {
-          .If(_, _, else_expr) => {
-            case else_expr {
-              .Some(e) => assert_expr_kind(e, "If"),
-              .None => assert.fail("expected else branch"),
-            }
+          .If(_, _, else_expr) => case else_expr {
+            .Some(e) => assert_expr_kind(e, "If"),
+            .None => assert.fail("expected else branch"),
           },
           _ => assert.fail("expected If"),
         }
@@ -991,11 +985,9 @@ pub fn suite() runner.Suite {
         expr := try parse_body_tail("fn f() Int { { 42 } }")
 
         case expr.kind {
-          .BlockExpr(block) => {
-            case block.tail {
-              .Some(e) => assert_expr_kind(e, "IntLit"),
-              .None => assert.fail("expected tail in block"),
-            }
+          .BlockExpr(block) => case block.tail {
+            .Some(e) => assert_expr_kind(e, "IntLit"),
+            .None => assert.fail("expected tail in block"),
           },
           _ => assert.fail("expected BlockExpr"),
         }
@@ -1060,7 +1052,9 @@ pub fn suite() runner.Suite {
           .For(s) => {
             case s.pattern {
               .Some(p) => try assert.equal(p, "x"),
-              .None => { return assert.fail("expected pattern") },
+              .None => {
+                return assert.fail("expected pattern")
+              },
             }
 
             try assert.is_none(s.index)
@@ -1080,7 +1074,9 @@ pub fn suite() runner.Suite {
           .For(s) => {
             case s.pattern {
               .Some(p) => try assert.equal(p, "x"),
-              .None => { return assert.fail("expected pattern") },
+              .None => {
+                return assert.fail("expected pattern")
+              },
             }
 
             case s.index {
@@ -1115,6 +1111,7 @@ pub fn suite() runner.Suite {
           .Return(s) => assert.is_some(s.value),
           _ => assert.fail("expected Return"),
         }
+
         // bare return before closing brace
         r2 := try parse_body_stmt("fn f() { return }", 0)
 
@@ -1171,20 +1168,16 @@ pub fn suite() runner.Suite {
         item := try parse_first_item("fn f(xs: Vector<Int>) {}")
 
         case item {
-          .Function(f) => {
-            case f.params[0].ty {
-              .Some(ty) => {
-                case ty.kind {
-                  .Applied(path, args) => {
-                    try assert.equal(path.segments[0], "Vector")
-                    try assert.equal(args.len(), 1)
-                    assert.is_true(type_is_path(args[0], "Int"))
-                  },
-                  _ => assert.fail("expected Applied type"),
-                }
+          .Function(f) => case f.params[0].ty {
+            .Some(ty) => case ty.kind {
+              .Applied(path, args) => {
+                try assert.equal(path.segments[0], "Vector")
+                try assert.equal(args.len(), 1)
+                assert.is_true(type_is_path(args[0], "Int"))
               },
-              .None => assert.fail("expected param type"),
-            }
+              _ => assert.fail("expected Applied type"),
+            },
+            .None => assert.fail("expected param type"),
           },
           _ => assert.fail("expected function"),
         }
@@ -1196,19 +1189,15 @@ pub fn suite() runner.Suite {
         item := try parse_first_item("fn f(cb: fn(Int) Bool) {}")
 
         case item {
-          .Function(f) => {
-            case f.params[0].ty {
-              .Some(ty) => {
-                case ty.kind {
-                  .Function(params, ret) => {
-                    try assert.equal(params.len(), 1)
-                    assert.is_true(type_is_path(ret, "Bool"))
-                  },
-                  _ => assert.fail("expected Function type"),
-                }
+          .Function(f) => case f.params[0].ty {
+            .Some(ty) => case ty.kind {
+              .Function(params, ret) => {
+                try assert.equal(params.len(), 1)
+                assert.is_true(type_is_path(ret, "Bool"))
               },
-              .None => assert.fail("expected param type"),
-            }
+              _ => assert.fail("expected Function type"),
+            },
+            .None => assert.fail("expected param type"),
           },
           _ => assert.fail("expected function"),
         }
@@ -1220,16 +1209,12 @@ pub fn suite() runner.Suite {
         item := try parse_first_item("fn f(x: Int?) {}")
 
         case item {
-          .Function(f) => {
-            case f.params[0].ty {
-              .Some(ty) => {
-                case ty.kind {
-                  .Optional(inner) => assert.is_true(type_is_path(inner, "Int")),
-                  _ => assert.fail("expected Optional type"),
-                }
-              },
-              .None => assert.fail("expected param type"),
-            }
+          .Function(f) => case f.params[0].ty {
+            .Some(ty) => case ty.kind {
+              .Optional(inner) => assert.is_true(type_is_path(inner, "Int")),
+              _ => assert.fail("expected Optional type"),
+            },
+            .None => assert.fail("expected param type"),
           },
           _ => assert.fail("expected function"),
         }
@@ -1241,19 +1226,15 @@ pub fn suite() runner.Suite {
         item := try parse_first_item("fn f() Int!String {}")
 
         case item {
-          .Function(f) => {
-            case f.return_type {
-              .Some(ty) => {
-                case ty.kind {
-                  .Result(ok_ty, err_ty) => {
-                    try assert.is_true(type_is_path(ok_ty, "Int"))
-                    assert.is_true(type_is_path(err_ty, "String"))
-                  },
-                  _ => assert.fail("expected Result type"),
-                }
+          .Function(f) => case f.return_type {
+            .Some(ty) => case ty.kind {
+              .Result(ok_ty, err_ty) => {
+                try assert.is_true(type_is_path(ok_ty, "Int"))
+                assert.is_true(type_is_path(err_ty, "String"))
               },
-              .None => assert.fail("expected return type"),
-            }
+              _ => assert.fail("expected Result type"),
+            },
+            .None => assert.fail("expected return type"),
           },
           _ => assert.fail("expected function"),
         }
@@ -1265,20 +1246,16 @@ pub fn suite() runner.Suite {
         item := try parse_first_item("fn f() !String {}")
 
         case item {
-          .Function(f) => {
-            case f.return_type {
-              .Some(ty) => {
-                case ty.kind {
-                  .Result(ok_ty, err_ty) => {
-                    // ok side should be Void (or a path to Void)
-                    try assert.is_true(type_is_path(err_ty, "String"))
-                    .Ok({})
-                  },
-                  _ => assert.fail("expected Result type"),
-                }
+          .Function(f) => case f.return_type {
+            .Some(ty) => case ty.kind {
+              .Result(ok_ty, err_ty) => {
+                // ok side should be Void (or a path to Void)
+                try assert.is_true(type_is_path(err_ty, "String"))
+                .Ok({})
               },
-              .None => assert.fail("expected return type"),
-            }
+              _ => assert.fail("expected Result type"),
+            },
+            .None => assert.fail("expected return type"),
           },
           _ => assert.fail("expected function"),
         }
@@ -1290,28 +1267,24 @@ pub fn suite() runner.Suite {
         item := try parse_first_item("fn f(d: Dict<String, Vector<Int>>) {}")
 
         case item {
-          .Function(f) => {
-            case f.params[0].ty {
-              .Some(ty) => {
-                case ty.kind {
-                  .Applied(path, args) => {
-                    try assert.equal(path.segments[0], "Dict")
-                    try assert.equal(args.len(), 2)
-                    try assert.is_true(type_is_path(args[0], "String"))
+          .Function(f) => case f.params[0].ty {
+            .Some(ty) => case ty.kind {
+              .Applied(path, args) => {
+                try assert.equal(path.segments[0], "Dict")
+                try assert.equal(args.len(), 2)
+                try assert.is_true(type_is_path(args[0], "String"))
 
-                    case args[1].kind {
-                      .Applied(inner_path, inner_args) => {
-                        try assert.equal(inner_path.segments[0], "Vector")
-                        assert.equal(inner_args.len(), 1)
-                      },
-                      _ => assert.fail("expected Applied for inner type"),
-                    }
+                case args[1].kind {
+                  .Applied(inner_path, inner_args) => {
+                    try assert.equal(inner_path.segments[0], "Vector")
+                    assert.equal(inner_args.len(), 1)
                   },
-                  _ => assert.fail("expected Applied type"),
+                  _ => assert.fail("expected Applied for inner type"),
                 }
               },
-              .None => assert.fail("expected param type"),
-            }
+              _ => assert.fail("expected Applied type"),
+            },
+            .None => assert.fail("expected param type"),
           },
           _ => assert.fail("expected function"),
         }
@@ -1368,19 +1341,17 @@ pub fn suite() runner.Suite {
         expr := try parse_body_tail(src)
 
         case expr.kind {
-          .Case(_, arms) => {
-            case arms[0].pattern.kind {
-              .Variant(name, pats) => {
-                try assert.equal(name, "Some")
-                try assert.equal(pats.len(), 1)
+          .Case(_, arms) => case arms[0].pattern.kind {
+            .Variant(name, pats) => {
+              try assert.equal(name, "Some")
+              try assert.equal(pats.len(), 1)
 
-                case pats[0].kind {
-                  .Variant(inner_name, _) => assert.equal(inner_name, "Some"),
-                  _ => assert.fail("expected nested Variant pattern"),
-                }
-              },
-              _ => assert.fail("expected Variant pattern"),
-            }
+              case pats[0].kind {
+                .Variant(inner_name, _) => assert.equal(inner_name, "Some"),
+                _ => assert.fail("expected nested Variant pattern"),
+              }
+            },
+            _ => assert.fail("expected Variant pattern"),
           },
           _ => assert.fail("expected Case"),
         }
@@ -1393,16 +1364,14 @@ pub fn suite() runner.Suite {
         expr := try parse_body_tail(src)
 
         case expr.kind {
-          .Case(_, arms) => {
-            case arms[0].pattern.kind {
-              .QualifiedVariant(path, name, pats) => {
-                try assert.equal(path.len(), 1)
-                try assert.equal(path[0], "Result")
-                try assert.equal(name, "Ok")
-                assert.equal(pats.len(), 1)
-              },
-              _ => assert.fail("expected QualifiedVariant pattern"),
-            }
+          .Case(_, arms) => case arms[0].pattern.kind {
+            .QualifiedVariant(path, name, pats) => {
+              try assert.equal(path.len(), 1)
+              try assert.equal(path[0], "Result")
+              try assert.equal(name, "Ok")
+              assert.equal(pats.len(), 1)
+            },
+            _ => assert.fail("expected QualifiedVariant pattern"),
           },
           _ => assert.fail("expected Case"),
         }
@@ -1413,6 +1382,7 @@ pub fn suite() runner.Suite {
       fn() {
         src := "fn f() { collect x in items { x * 2 } }"
         mod := try parse_ok(src)
+
         // collect should parse without diagnostics
         assert.equal(mod.items.len(), 1)
       },
@@ -1427,18 +1397,16 @@ pub fn suite() runner.Suite {
         mod := try parse_ok(src)
         try assert.equal(mod.items.len(), 3)
         try case mod.items[1] {
-          .Stmt(stmt) => {
-            case stmt {
-              .Let(bind) => {
-                try assert.is_true(bind.is_rebind)
+          .Stmt(stmt) => case stmt {
+            .Let(bind) => {
+              try assert.is_true(bind.is_rebind)
 
-                case bind.value.kind {
-                  .Binary(op, _, _) => assert.is_true(op == .Add),
-                  _ => assert.fail("expected Binary Add in rebind"),
-                }
-              },
-              _ => assert.fail("expected Let/rebind stmt"),
-            }
+              case bind.value.kind {
+                .Binary(op, _, _) => assert.is_true(op == .Add),
+                _ => assert.fail("expected Binary Add in rebind"),
+              }
+            },
+            _ => assert.fail("expected Let/rebind stmt"),
           },
           _ => assert.fail("expected Stmt"),
         }
@@ -1553,6 +1521,7 @@ pub fn suite() runner.Suite {
       fn() {
         // The boot parser does not enforce naming conventions, unlike the Rust parser
         parsed := parser.parse("fn Greet() {}", 0)
+
         // Boot parser currently allows this — no diagnostics
         assert.equal(parsed.diagnostics.len(), 0)
       },
@@ -1584,31 +1553,25 @@ pub fn suite() runner.Suite {
         }
 
         case block.stmts[1] {
-          .Expr(es) => {
-            case es.expr.kind {
-              .Array(items) => try assert.equal(items.len(), 3),
-              _ => try assert.fail("expected array expr stmt"),
-            }
+          .Expr(es) => case es.expr.kind {
+            .Array(items) => try assert.equal(items.len(), 3),
+            _ => try assert.fail("expected array expr stmt"),
           },
           _ => try assert.fail("expected expr stmt"),
         }
 
         case block.stmts[2] {
-          .Expr(es) => {
-            case es.expr.kind {
-              .Ident(name) => try assert.equal(name, "bar"),
-              _ => try assert.fail("expected ident expr stmt"),
-            }
+          .Expr(es) => case es.expr.kind {
+            .Ident(name) => try assert.equal(name, "bar"),
+            _ => try assert.fail("expected ident expr stmt"),
           },
           _ => try assert.fail("expected expr stmt"),
         }
 
         case block.tail {
-          .Some(expr) => {
-            case expr.kind {
-              .IntLit(n) => try assert.equal(n, 1),
-              _ => try assert.fail("expected grouped int tail expr"),
-            }
+          .Some(expr) => case expr.kind {
+            .IntLit(n) => try assert.equal(n, 1),
+            _ => try assert.fail("expected grouped int tail expr"),
           },
           .None => try assert.fail("expected tail expr"),
         }
@@ -1647,15 +1610,13 @@ pub fn suite() runner.Suite {
         try assert.equal(parsed.value.items.len(), 1)
 
         case parsed.value.items[0] {
-          .Stmt(stmt) => {
-            case stmt {
-              .Let(ls) => {
-                try assert.equal(ls.name, "x")
-                try assert.is_true(ls.is_pub)
-                assert.is_true(!ls.is_rebind)
-              },
-              _ => assert.fail("expected Let stmt"),
-            }
+          .Stmt(stmt) => case stmt {
+            .Let(ls) => {
+              try assert.equal(ls.name, "x")
+              try assert.is_true(ls.is_pub)
+              assert.is_true(!ls.is_rebind)
+            },
+            _ => assert.fail("expected Let stmt"),
           },
           _ => assert.fail("expected Stmt item"),
         }
@@ -1676,11 +1637,9 @@ pub fn suite() runner.Suite {
         try assert.equal(parsed.diagnostics.len(), 0)
 
         case parsed.value.items[0] {
-          .Use(d) => {
-            case d.items {
-              .Some(items) => assert.equal(items.len(), 2),
-              .None => assert.fail("expected destructuring items"),
-            }
+          .Use(d) => case d.items {
+            .Some(items) => assert.equal(items.len(), 2),
+            .None => assert.fail("expected destructuring items"),
           },
           _ => assert.fail("expected use declaration"),
         }
@@ -1757,13 +1716,14 @@ pub fn suite() runner.Suite {
         src := "fn () {}\nfn ok() {}"
         parsed := parser.parse(src, 0)
         try assert.is_true(parsed.diagnostics.len() > 0)
+
         // should recover and parse the second function
         found_ok := false
 
         for item in parsed.value.items {
           case item {
-            .Function(f) => {
-              if f.name == "ok" { found_ok = true }
+            .Function(f) => if f.name == "ok" {
+              found_ok = true
             },
             _ => {},
           }
@@ -1778,13 +1738,14 @@ pub fn suite() runner.Suite {
         src := "fn bad() Int\nfn ok() {}"
         parsed := parser.parse(src, 0)
         try assert.is_true(parsed.diagnostics.len() > 0)
+
         // Parser should recover and find the second valid function
         found_ok := false
 
         for item in parsed.value.items {
           case item {
-            .Function(f) => {
-              if f.name == "ok" { found_ok = true }
+            .Function(f) => if f.name == "ok" {
+              found_ok = true
             },
             _ => {},
           }
@@ -1799,13 +1760,14 @@ pub fn suite() runner.Suite {
         src := "fn bad(x: Int {}\nfn ok() {}"
         parsed := parser.parse(src, 0)
         try assert.is_true(parsed.diagnostics.len() > 0)
+
         // Parser should recover and find the second valid function
         found_ok := false
 
         for item in parsed.value.items {
           case item {
-            .Function(f) => {
-              if f.name == "ok" { found_ok = true }
+            .Function(f) => if f.name == "ok" {
+              found_ok = true
             },
             _ => {},
           }
@@ -1824,8 +1786,8 @@ pub fn suite() runner.Suite {
 
         for item in parsed.value.items {
           case item {
-            .Function(f) => {
-              if f.name == "ok" { found_ok = true }
+            .Function(f) => if f.name == "ok" {
+              found_ok = true
             },
             _ => {},
           }
@@ -1844,8 +1806,8 @@ pub fn suite() runner.Suite {
 
         for item in parsed.value.items {
           case item {
-            .Function(f) => {
-              if f.name == "ok" { found_ok = true }
+            .Function(f) => if f.name == "ok" {
+              found_ok = true
             },
             _ => {},
           }
@@ -1879,8 +1841,10 @@ pub fn suite() runner.Suite {
       "error recovery: double operator produces diagnostic",
       fn() {
         parsed := parser.parse("fn f() { 1 + + 2 }", 0)
+
         // '+' is not a valid prefix operator, so the parser should emit a diagnostic
         try assert.is_true(parsed.diagnostics.len() > 0)
+
         // Should still produce the function item
         assert.equal(parsed.value.items.len(), 1)
       },
@@ -1898,6 +1862,7 @@ pub fn suite() runner.Suite {
       fn() {
         src := "fn f() { x :=\ny := 1 }"
         parsed := parser.parse(src, 0)
+
         // should produce a diagnostic for the missing value
         assert.is_true(parsed.diagnostics.len() > 0)
       },
@@ -1916,13 +1881,14 @@ pub fn suite() runner.Suite {
         src := "use bad.\ntype =\nfn ok() {}"
         parsed := parser.parse(src, 0)
         try assert.is_true(parsed.diagnostics.len() >= 2)
+
         // parser should still produce items and reach the valid fn
         found_ok := false
 
         for item in parsed.value.items {
           case item {
-            .Function(f) => {
-              if f.name == "ok" { found_ok = true }
+            .Function(f) => if f.name == "ok" {
+              found_ok = true
             },
             _ => {},
           }
@@ -1941,7 +1907,9 @@ pub fn suite() runner.Suite {
 
         for item in parsed.value.items {
           case item {
-            .Function(f) => { fn_names = .append(f.name) },
+            .Function(f) => {
+              fn_names = .append(f.name)
+            },
             _ => {},
           }
         }
@@ -2040,6 +2008,7 @@ pub fn suite() runner.Suite {
         parsed := parser.parse(src, 0)
         try assert.is_true(parsed.diagnostics.len() > 0)
         diag_span := parsed.diagnostics[0].span()
+
         // The span should cover the 'return' keyword (6 chars)
         assert.equal(diag_span.end - diag_span.start, 6)
       },
@@ -2054,8 +2023,8 @@ pub fn suite() runner.Suite {
 
         for item in parsed.value.items {
           case item {
-            .Function(f) => {
-              if f.name == "ok" { found_ok = true }
+            .Function(f) => if f.name == "ok" {
+              found_ok = true
             },
             _ => {},
           }
@@ -2116,13 +2085,14 @@ pub fn suite() runner.Suite {
         src := "type FB = { Fizz, Buzz, FizzBuzz, Num(Int)\n\nfn classify(i: Int) FB {\n  .Fizz\n}"
         parsed := parser.parse(src, 0)
         try assert.is_true(parsed.diagnostics.len() > 0)
+
         // The parser should recover and parse the fn declaration
         found_fn := false
 
         for item in parsed.value.items {
           case item {
-            .Function(f) => {
-              if f.name == "classify" { found_fn = true }
+            .Function(f) => if f.name == "classify" {
+              found_fn = true
             },
             _ => {},
           }
@@ -2136,6 +2106,7 @@ pub fn suite() runner.Suite {
       fn() {
         src := "type FB = { Fizz, Buzz, FizzBuzz, Num(Int)\n\nfn classify(i: Int) FB {\n  .Fizz\n}\n\nfn other() {}"
         parsed := parser.parse(src, 0)
+
         // Should NOT produce a wall of errors — just a couple about the unclosed type
         try assert.is_true(parsed.diagnostics.len() > 0)
         assert.is_true(parsed.diagnostics.len() < 5)
@@ -2151,8 +2122,8 @@ pub fn suite() runner.Suite {
 
         for item in parsed.value.items {
           case item {
-            .Function(f) => {
-              if f.name == "origin" { found_fn = true }
+            .Function(f) => if f.name == "origin" {
+              found_fn = true
             },
             _ => {},
           }
@@ -2180,7 +2151,9 @@ pub fn suite() runner.Suite {
 
         for item in parsed.value.items {
           case item {
-            .Type(_) => { type_count = type_count + 1 },
+            .Type(_) => {
+              type_count = type_count + 1
+            },
             _ => {},
           }
         }
@@ -2190,70 +2163,104 @@ pub fn suite() runner.Suite {
     )
     .test(
       "snapshot: statement_in_expression_return",
-      fn() { assert_snapshot("tests/parser_errors/statement_in_expression_return.tw") },
+      fn() {
+        assert_snapshot("tests/parser_errors/statement_in_expression_return.tw")
+      },
     )
     .test(
       "snapshot: statement_in_expression_case_arm",
-      fn() { assert_snapshot("tests/parser_errors/statement_in_expression_case_arm.tw") },
+      fn() {
+        assert_snapshot("tests/parser_errors/statement_in_expression_case_arm.tw")
+      },
     )
     .test(
       "snapshot: statement_in_expression_break",
-      fn() { assert_snapshot("tests/parser_errors/statement_in_expression_break.tw") },
+      fn() {
+        assert_snapshot("tests/parser_errors/statement_in_expression_break.tw")
+      },
     )
     .test(
       "snapshot: statement_in_expression_continue",
-      fn() { assert_snapshot("tests/parser_errors/statement_in_expression_continue.tw") },
+      fn() {
+        assert_snapshot("tests/parser_errors/statement_in_expression_continue.tw")
+      },
     )
     .test(
       "snapshot: statement_in_expression_defer",
-      fn() { assert_snapshot("tests/parser_errors/statement_in_expression_defer.tw") },
+      fn() {
+        assert_snapshot("tests/parser_errors/statement_in_expression_defer.tw")
+      },
     )
     .test(
       "snapshot: statement_in_expression_for",
-      fn() { assert_snapshot("tests/parser_errors/statement_in_expression_for.tw") },
+      fn() {
+        assert_snapshot("tests/parser_errors/statement_in_expression_for.tw")
+      },
     )
     .test(
       "snapshot: statement_in_expression_call_arg",
-      fn() { assert_snapshot("tests/parser_errors/statement_in_expression_call_arg.tw") },
+      fn() {
+        assert_snapshot("tests/parser_errors/statement_in_expression_call_arg.tw")
+      },
     )
     .test(
       "snapshot: statement_in_expression_array",
-      fn() { assert_snapshot("tests/parser_errors/statement_in_expression_array.tw") },
+      fn() {
+        assert_snapshot("tests/parser_errors/statement_in_expression_array.tw")
+      },
     )
     .test(
       "snapshot: statement_in_expression_grouped",
-      fn() { assert_snapshot("tests/parser_errors/statement_in_expression_grouped.tw") },
+      fn() {
+        assert_snapshot("tests/parser_errors/statement_in_expression_grouped.tw")
+      },
     )
     .test(
       "snapshot: case_missing_comma",
-      fn() { assert_snapshot("tests/parser_errors/case_missing_comma.tw") },
+      fn() {
+        assert_snapshot("tests/parser_errors/case_missing_comma.tw")
+      },
     )
     .test(
       "snapshot: missing_operand",
-      fn() { assert_snapshot("tests/parser_errors/missing_operand.tw") },
+      fn() {
+        assert_snapshot("tests/parser_errors/missing_operand.tw")
+      },
     )
     .test(
       "snapshot: missing_paren",
-      fn() { assert_snapshot("tests/parser_errors/missing_paren.tw") },
+      fn() {
+        assert_snapshot("tests/parser_errors/missing_paren.tw")
+      },
     )
     .test(
       "snapshot: unterminated_string",
-      fn() { assert_snapshot("tests/parser_errors/unterminated_string.tw") },
+      fn() {
+        assert_snapshot("tests/parser_errors/unterminated_string.tw")
+      },
     )
     .test(
       "snapshot: invalid_hex_escape",
-      fn() { assert_snapshot("tests/parser_errors/invalid_hex_escape.tw") },
+      fn() {
+        assert_snapshot("tests/parser_errors/invalid_hex_escape.tw")
+      },
     )
     .test(
       "snapshot: invalid_unicode_escape",
-      fn() { assert_snapshot("tests/parser_errors/invalid_unicode_escape.tw") },
+      fn() {
+        assert_snapshot("tests/parser_errors/invalid_unicode_escape.tw")
+      },
     )
     .test(
       "snapshot: unclosed_sum_type",
-      fn() { assert_snapshot("tests/parser_errors/unclosed_sum_type.tw") },
+      fn() {
+        assert_snapshot("tests/parser_errors/unclosed_sum_type.tw")
+      },
     )
     .test(
       "snapshot: unclosed_record_type",
-      fn() { assert_snapshot("tests/parser_errors/unclosed_record_type.tw") },
+      fn() {
+        assert_snapshot("tests/parser_errors/unclosed_record_type.tw")
+      },
     )
 }

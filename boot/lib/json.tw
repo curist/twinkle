@@ -17,7 +17,9 @@ pub type Decoder<A> = .{ run: fn(Json) Result<A, String> }
 
 pub type Field = .{ key: String, value: Json }
 
-fn make<A>(f: fn(Json) Result<A, String>) Decoder<A> { .{ run: f } }
+fn make<A>(f: fn(Json) Result<A, String>) Decoder<A> {
+  .{ run: f }
+}
 
 type ParseResult<A> = .{ value: A, next: Int }
 
@@ -43,7 +45,11 @@ pub fn parse_decode<A>(input: String, da: Decoder<A>) Result<A, String> {
 
 fn skip_ws(input: String, i: Int) Int {
   j := i
-  for j < input.len() and input[j].is_space() { j = j + 1 }
+
+  for j < input.len() and input[j].is_space() {
+    j = j + 1
+  }
+
   j
 }
 
@@ -108,7 +114,10 @@ fn parse_false(input: String, i: Int) Result<ParseResult<Json>, String> {
 fn parse_number(input: String, i: Int) Result<ParseResult<Json>, String> {
   j := i
   has_float_part := false
-  if j < input.len() and input[j] == 0x2D { j = j + 1 }
+
+  if j < input.len() and input[j] == 0x2D {
+    j = j + 1
+  }
 
   if j >= input.len() or !input[j].is_digit() {
     return .Err("expected number at ${i}")
@@ -117,7 +126,9 @@ fn parse_number(input: String, i: Int) Result<ParseResult<Json>, String> {
   if input[j] == 0x30 {
     j = j + 1
   } else {
-    for j < input.len() and input[j].is_digit() { j = j + 1 }
+    for j < input.len() and input[j].is_digit() {
+      j = j + 1
+    }
   }
 
   if j < input.len() and input[j] == 0x2E {
@@ -128,19 +139,26 @@ fn parse_number(input: String, i: Int) Result<ParseResult<Json>, String> {
       return .Err("expected digit after decimal point at ${j}")
     }
 
-    for j < input.len() and input[j].is_digit() { j = j + 1 }
+    for j < input.len() and input[j].is_digit() {
+      j = j + 1
+    }
   }
 
   if j < input.len() and (input[j] == 0x65 or input[j] == 0x45) {
     has_float_part = true
     j = j + 1
-    if j < input.len() and (input[j] == 0x2B or input[j] == 0x2D) { j = j + 1 }
+
+    if j < input.len() and (input[j] == 0x2B or input[j] == 0x2D) {
+      j = j + 1
+    }
 
     if j >= input.len() or !input[j].is_digit() {
       return .Err("expected digit in exponent at ${j}")
     }
 
-    for j < input.len() and input[j].is_digit() { j = j + 1 }
+    for j < input.len() and input[j].is_digit() {
+      j = j + 1
+    }
   }
 
   text := input.slice(i, j)
@@ -383,11 +401,17 @@ fn parse_object(input: String, i: Int) Result<ParseResult<Json>, String> {
 // ---------------------------------------------------------------------------
 // Construction helpers
 // ---------------------------------------------------------------------------
-pub fn kv(key: String, value: Json) Field { .{ key, value } }
+pub fn kv(key: String, value: Json) Field {
+  .{ key, value }
+}
 
 pub fn object(fields: Vector<Field>) Json {
   obj: Dict<String, Json> = Dict.new()
-  for field in fields { obj[field.key] = field.value }
+
+  for field in fields {
+    obj[field.key] = field.value
+  }
+
   .Object(obj)
 }
 
@@ -643,7 +667,11 @@ pub fn list<A>(da: Decoder<A>) Decoder<Vector<A>> {
 
 // Decode every value of a JSON object, preserving the original keys.
 pub fn dict<A>(da: Decoder<A>) Decoder<Dict<String, A>> {
-  make(fn(json: Json) { decode_dict_values(json, da) })
+  make(
+    fn(json: Json) {
+      decode_dict_values(json, da)
+    },
+  )
 }
 
 fn decode_dict_values<A>(json: Json, da: Decoder<A>) Result<Dict<String, A>, String> {
@@ -696,7 +724,9 @@ pub fn one_of<A>(decoders: Vector<Decoder<A>>) Decoder<A> {
 // ---------------------------------------------------------------------------
 // Run
 // ---------------------------------------------------------------------------
-pub fn decode<A>(json: Json, da: Decoder<A>) Result<A, String> { da.run(json) }
+pub fn decode<A>(json: Json, da: Decoder<A>) Result<A, String> {
+  da.run(json)
+}
 
 // ---------------------------------------------------------------------------
 // Encode (stringify)
@@ -706,7 +736,11 @@ pub fn decode<A>(json: Json, da: Decoder<A>) Result<A, String> { da.run(json) }
 pub fn to_string(json: Json) String {
   case json {
     .Null => "null",
-    .Bool(b) => if b { "true" } else { "false" },
+    .Bool(b) => if b {
+      "true"
+    } else {
+      "false"
+    },
     .Int(n) => n.to_string(),
     .Float(f) => f.to_string(),
     .Str(s) => quote_string(s),
@@ -714,15 +748,22 @@ pub fn to_string(json: Json) String {
       if arr.len() == 0 {
         return "[]"
       }
+
       parts: Vector<String> = []
-      for item in arr { parts = .append(to_string(item)) }
+
+      for item in arr {
+        parts = .append(to_string(item))
+      }
+
       "[".concat(parts.join(",")).concat("]")
     },
     .Object(obj) => {
       keys := obj.keys()
+
       if keys.len() == 0 {
         return "{}"
       }
+
       parts: Vector<String> = []
 
       for key in keys {
@@ -740,7 +781,9 @@ pub fn to_string(json: Json) String {
 }
 
 // stringify is a conventional alias for to_string (mirrors JSON.stringify).
-pub fn stringify(json: Json) String { to_string(json) }
+pub fn stringify(json: Json) String {
+  to_string(json)
+}
 
 fn quote_string(s: String) String {
   // Build the escaped content as bytes, then decode once at the end.
@@ -768,7 +811,9 @@ fn quote_string(s: String) String {
     if escape == "" {
       buf = .append(b)
     } else {
-      for eb in escape.utf8_bytes() { buf = .append(eb) }
+      for eb in escape.utf8_bytes() {
+        buf = .append(eb)
+      }
     }
   }
 
@@ -780,5 +825,9 @@ fn quote_string(s: String) String {
 }
 
 fn hex_digit(n: Int) String {
-  if n < 0x0A { code_point_string(0x30 + n) } else { code_point_string(0x57 + n) }
+  if n < 0x0A {
+    code_point_string(0x30 + n)
+  } else {
+    code_point_string(0x57 + n)
+  }
 }

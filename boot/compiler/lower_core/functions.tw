@@ -18,6 +18,7 @@ pub fn lower_function(
   for p in decl.params {
     lo := ctx.alloc_local(p.name)
     ctx = lo.ctx
+
     // Look up param type from checker — params don't have expr.id,
     // so we look up the function sig from env
     param_ty := MonoType.Void // placeholder; refined below
@@ -31,7 +32,9 @@ pub fn lower_function(
 
       for i < params.len() and i < sig.params.len() {
         case params.set(i, .{ local: params[i].local, ty: sig.params[i] }) {
-          .Some(new_params) => { params = new_params },
+          .Some(new_params) => {
+            params = new_params
+          },
           .None => {},
         }
 
@@ -43,11 +46,9 @@ pub fn lower_function(
 
   // Set current_fn_return_type for try desugaring
   ret_ty_for_try: MonoType? = case ctx.env.lookup_function(decl.name) {
-    .Some(sig) => {
-      case sig.ret {
-        .Some(t) => .Some(t),
-        .None => .Some(.Void),
-      }
+    .Some(sig) => case sig.ret {
+      .Some(t) => .Some(t),
+      .None => .Some(.Void),
     },
     .None => .None,
   }
@@ -57,13 +58,12 @@ pub fn lower_function(
   ctx = body_r.ctx
   ctx = .pop_scope()
   ctx.current_fn_return_type = saved_return_type
+
   // Get return type from signature
   ret_ty := case ctx.env.lookup_function(decl.name) {
-    .Some(sig) => {
-      case sig.ret {
-        .Some(t) => t,
-        .None => .Void,
-      }
+    .Some(sig) => case sig.ret {
+      .Some(t) => t,
+      .None => .Void,
     },
     .None => body_r.expr.ty,
   }

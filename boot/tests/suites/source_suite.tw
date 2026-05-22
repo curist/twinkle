@@ -129,6 +129,7 @@ pub fn suite() runner.Suite {
       "line_col second line",
       fn() {
         reg := registry.empty()
+
         // "line 1\nline 2" — 'l' of "line 2" is at offset 7
         r := registry.add_file(reg, "test.tw", "line 1\nline 2")
         s := span.new(r.file_id, 7, 13)
@@ -148,6 +149,7 @@ pub fn suite() runner.Suite {
       "line_col mid-line offset",
       fn() {
         reg := registry.empty()
+
         // offset 3 in "hello" → line 1, column 4
         r := registry.add_file(reg, "test.tw", "hello")
         s := span.new(r.file_id, 3, 5)
@@ -168,6 +170,7 @@ pub fn suite() runner.Suite {
       fn() {
         reg := registry.empty()
         r := registry.add_file(reg, "test.tw", "aaa\nbbb\nccc")
+
         // "ccc" starts at offset 8
         s := span.new(r.file_id, 9, 10)
         lc := registry.line_col(reg, s)
@@ -186,8 +189,10 @@ pub fn suite() runner.Suite {
       "line_col counts characters not bytes for column",
       fn() {
         reg := registry.empty()
+
         // "café x" — 'é' is 2 bytes, so 'x' is at byte offset 6 but character column 6
         r := registry.add_file(reg, "test.tw", "café x")
+
         // byte offset of 'x' is 6 (c=1, a=1, f=1, é=2, space=1)
         s := span.new(r.file_id, 6, 7)
         lc := registry.line_col(reg, s)
@@ -195,6 +200,7 @@ pub fn suite() runner.Suite {
         case lc {
           .Some(pos) => {
             try assert.equal(pos.line, 1)
+
             // character column should be 6, not 7
             try assert.equal(pos.column, 6)
             .Ok({})
@@ -207,6 +213,7 @@ pub fn suite() runner.Suite {
       "line_col with CJK characters",
       fn() {
         reg := registry.empty()
+
         // "你好x" — each CJK char is 3 bytes, 'x' at byte offset 6 but char column 3
         r := registry.add_file(reg, "test.tw", "你好x")
         s := span.new(r.file_id, 6, 7)
@@ -229,6 +236,7 @@ pub fn suite() runner.Suite {
         r := registry.add_file(reg, "test.tw", "line 1\nline 2\nline 3")
         s := span.new(r.file_id, 7, 13)
         lt := registry.line_text(reg, s)
+
         // line_text includes the newline
         text := case lt {
           .Some(x) => x,
@@ -328,7 +336,9 @@ pub fn suite() runner.Suite {
 
         case source.version {
           .Some(v) => try assert.equal(v, 7),
-          .None => { return assert.fail("expected overlay version") },
+          .None => {
+            return assert.fail("expected overlay version")
+          },
         }
 
         .Ok({})

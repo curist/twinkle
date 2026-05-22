@@ -16,20 +16,18 @@ pub fn lower_pattern(ctx: LowerCtx, pat: ast.Pattern, scrut_ty: MonoType) Patter
       lo := ctx.alloc_local(name)
       .{ pattern: .Var(lo.local), ctx: lo.ctx }
     },
-    .Literal(expr) => {
-      case expr.kind {
-        .IntLit(n) => .{ pattern: .LitInt(n), ctx },
-        .BoolLit(b) => .{ pattern: .LitBool(b), ctx },
-        .StringLit(val) => {
-          .{ pattern: .LitStr(val), ctx }
-        },
-        _ => .{ pattern: .Wildcard, ctx },
-      }
+    .Literal(expr) => case expr.kind {
+      .IntLit(n) => .{ pattern: .LitInt(n), ctx },
+      .BoolLit(b) => .{ pattern: .LitBool(b), ctx },
+      .StringLit(val) => .{ pattern: .LitStr(val), ctx },
+      _ => .{ pattern: .Wildcard, ctx },
     },
     .Variant(name, sub_pats) => {
       tid := case type_id_from_mono(scrut_ty) {
         .Some(id) => id,
-        .None => { return .{ pattern: .Wildcard, ctx } },
+        .None => {
+          return .{ pattern: .Wildcard, ctx }
+        },
       }
       vid_idx := variant_index(scrut_ty, name, ctx.env)
       field_tys := variant_field_types(scrut_ty, name, ctx.env)
@@ -37,7 +35,11 @@ pub fn lower_pattern(ctx: LowerCtx, pat: ast.Pattern, scrut_ty: MonoType) Patter
       cur_ctx := ctx
 
       for i in 0..sub_pats.len() {
-        sub_ty := if i < field_tys.len() { field_tys[i] } else { .Void }
+        sub_ty := if i < field_tys.len() {
+          field_tys[i]
+        } else {
+          .Void
+        }
         pr := lower_pattern(cur_ctx, sub_pats[i], sub_ty)
         lowered_pats = .append(pr.pattern)
         cur_ctx = pr.ctx
@@ -47,14 +49,18 @@ pub fn lower_pattern(ctx: LowerCtx, pat: ast.Pattern, scrut_ty: MonoType) Patter
     },
     .QualifiedVariant(qualifier, name, sub_pats) => {
       // Resolve TypeId from qualifier path; fall back to scrutinee type
-      qual_name := if qualifier.len() > 0 { qualifier[qualifier.len() - 1] } else { "" }
+      qual_name := if qualifier.len() > 0 {
+        qualifier[qualifier.len() - 1]
+      } else {
+        ""
+      }
       tid := case resolve_type_id(ctx.env, qual_name) {
         .Some(id) => id,
-        .None => {
-          case type_id_from_mono(scrut_ty) {
-            .Some(id) => id,
-            .None => { return .{ pattern: .Wildcard, ctx } },
-          }
+        .None => case type_id_from_mono(scrut_ty) {
+          .Some(id) => id,
+          .None => {
+            return .{ pattern: .Wildcard, ctx }
+          },
         },
       }
       vid_idx := variant_index(scrut_ty, name, ctx.env)
@@ -63,7 +69,11 @@ pub fn lower_pattern(ctx: LowerCtx, pat: ast.Pattern, scrut_ty: MonoType) Patter
       cur_ctx := ctx
 
       for i in 0..sub_pats.len() {
-        sub_ty := if i < field_tys.len() { field_tys[i] } else { .Void }
+        sub_ty := if i < field_tys.len() {
+          field_tys[i]
+        } else {
+          .Void
+        }
         pr := lower_pattern(cur_ctx, sub_pats[i], sub_ty)
         lowered_pats = .append(pr.pattern)
         cur_ctx = pr.ctx

@@ -12,7 +12,9 @@ fn str_ref() ValType {
   .Ref(false, HeapType.Named("rt_types__String"))
 }
 
-fn t_string() String { "rt_types__String" }
+fn t_string() String {
+  "rt_types__String"
+}
 
 pub fn module() WasmModule {
   funcs := [
@@ -25,7 +27,9 @@ pub fn module() WasmModule {
     from_f64_fn(),
     from_bool_fn(),
   ]
-  exports := collect f in funcs { ExportDef.{ wasm_name: f.name, func_sym: f.name } }
+  exports := collect f in funcs {
+    ExportDef.{ wasm_name: f.name, func_sym: f.name }
+  }
   .{
     namespace: "rt.str",
     types: [],
@@ -64,6 +68,7 @@ fn len_fn() FuncDef {
 // concat(a: String?, b: String?) -> String
 fn concat_fn() FuncDef {
   ts := t_string()
+
   // Locals: p2=len_a, p3=len_b, p4=total, p5=result
   FuncDef.{
     name: "concat",
@@ -112,6 +117,7 @@ fn concat_fn() FuncDef {
 // substring(s: String?, start: i32, end: i32) -> String
 fn substring_fn() FuncDef {
   ts := t_string()
+
   // Locals: p3=len/new_len, p4=result
   FuncDef.{
     name: "substring",
@@ -168,6 +174,7 @@ fn substring_fn() FuncDef {
 // eq(a: String?, b: String?) -> i32 — byte-by-byte equality
 fn eq_fn() FuncDef {
   ts := t_string()
+
   // Locals: p2=len, p3=i
   FuncDef.{
     name: "eq",
@@ -226,6 +233,7 @@ fn eq_fn() FuncDef {
 // cmp(a: String?, b: String?) -> i32 — returns -1, 0, or 1 (lexicographic)
 fn cmp_fn() FuncDef {
   ts := t_string()
+
   // Locals: p2=min_len, p3=i, p4=byte_a, p5=byte_b, p6=len_a, p7=len_b
   FuncDef.{
     name: "cmp",

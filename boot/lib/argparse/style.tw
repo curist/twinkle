@@ -17,14 +17,26 @@ fn paint(code: String, s: String) String {
   }
 }
 
-pub fn bold(s: String) String { paint("1", s) }
+pub fn bold(s: String) String {
+  paint("1", s)
+}
 
-pub fn dim(s: String) String { paint("2", s) }
+pub fn dim(s: String) String {
+  paint("2", s)
+}
 
-pub fn yellow(s: String) String { paint("33", s) }
+pub fn yellow(s: String) String {
+  paint("33", s)
+}
 
-pub fn red(s: String) String { paint("31", s) }
+pub fn red(s: String) String {
+  paint("31", s)
+}
 
-pub fn green(s: String) String { paint("32", s) }
+pub fn green(s: String) String {
+  paint("32", s)
+}
 
-pub fn cyan(s: String) String { paint("36", s) }
+pub fn cyan(s: String) String {
+  paint("36", s)
+}

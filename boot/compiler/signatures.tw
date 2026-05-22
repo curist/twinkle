@@ -118,12 +118,10 @@ pub fn all_internal_sigs(groups: Vector<SignatureGroup>) Vector<FunctionSig> {
 pub fn group_method_entries(group: SignatureGroup) Vector<MethodEntry> {
   case group.receiver {
     .None => [],
-    .Some(_) => {
-      collect sig in group.sigs {
-        MethodEntry.{
-          method_name: sig.name,
-          function_name: to_internal_name(group.receiver, sig.name),
-        }
+    .Some(_) => collect sig in group.sigs {
+      MethodEntry.{
+        method_name: sig.name,
+        function_name: to_internal_name(group.receiver, sig.name),
       }
     },
   }
@@ -164,11 +162,9 @@ fn resolve_param_type(env: ResolvedEnv, param: Param, type_vars: Vector<String>)
 
       case r.ty {
         .Some(mono) => .Ok(mono),
-        .None => {
-          case r.diagnostics.get(0) {
-            .Some(d) => .Err("type error in param '${param.name}': ${d.message()}"),
-            .None => .Err("unknown type error in param '${param.name}'"),
-          }
+        .None => case r.diagnostics.get(0) {
+          .Some(d) => .Err("type error in param '${param.name}': ${d.message()}"),
+          .None => .Err("unknown type error in param '${param.name}'"),
         },
       }
     },
@@ -186,11 +182,9 @@ fn resolve_return_type(env: ResolvedEnv, ret_expr: TypeExpr?, type_vars: Vector<
 
       case r.ty {
         .Some(mono) => .Ok(.Some(mono)),
-        .None => {
-          case r.diagnostics.get(0) {
-            .Some(d) => .Err("type error in return type: ${d.message()}"),
-            .None => .Err("unknown type error in return type"),
-          }
+        .None => case r.diagnostics.get(0) {
+          .Some(d) => .Err("type error in return type: ${d.message()}"),
+          .None => .Err("unknown type error in return type"),
         },
       }
     },
@@ -200,22 +194,39 @@ fn resolve_return_type(env: ResolvedEnv, ret_expr: TypeExpr?, type_vars: Vector<
 // ── per-file loading ─────────────────────────────────────────────────────────
 fn extract_doc_comment(source: String, decl_start: Int) String? {
   pos := decl_start - 1
-  for pos > 0 and source.char_code_at(pos) != 10 { pos = pos - 1 }
-  if pos > 0 { pos = pos - 1 }
+
+  for pos > 0 and source.char_code_at(pos) != 10 {
+    pos = pos - 1
+  }
+
+  if pos > 0 {
+    pos = pos - 1
+  }
+
   lines: Vector<String> = []
 
   for pos >= 0 {
     line_start := pos
-    for line_start > 0 and source.char_code_at(line_start - 1) != 10 { line_start = line_start - 1 }
+
+    for line_start > 0 and source.char_code_at(line_start - 1) != 10 {
+      line_start = line_start - 1
+    }
+
     line := source.slice(line_start, pos + 1)
     trimmed := line.trim()
 
     if trimmed.len() >= 3 and trimmed.slice(0, 3) == "///" {
       rest := if trimmed.len() > 3 and trimmed.slice(3, 4) == " " {
         trimmed.slice(4, trimmed.len())
-      } else { trimmed.slice(3, trimmed.len()) }
+      } else {
+        trimmed.slice(3, trimmed.len())
+      }
       lines = [rest].concat(lines)
-      if line_start == 0 { break }
+
+      if line_start == 0 {
+        break
+      }
+
       pos = line_start - 2
     } else {
       break
@@ -244,7 +255,10 @@ fn load_group_from_source(src: String, receiver: String?, env: ResolvedEnv) Resu
   for item in parsed.value.items {
     case item {
       .Function(decl) => {
-        if !decl.is_pub { continue }
+        if !decl.is_pub {
+          continue
+        }
+
         resolved_type_params := try resolve_type_params(decl.type_params)
         type_vars := type_param_names(decl.type_params)
         param_tys: Vector<MonoType> = []
@@ -265,7 +279,10 @@ fn load_group_from_source(src: String, receiver: String?, env: ResolvedEnv) Resu
           }
         }
 
-        if !ok { continue }
+        if !ok {
+          continue
+        }
+
         ret := try resolve_return_type(env, decl.return_type, type_vars)
         sig := FunctionSig.{
           name: decl.name,
@@ -299,17 +316,22 @@ pub fn load_signatures(signatures_dir: String, type_env: ResolvedEnv) Result<
   entries := case core_lib.list_dir(signatures_dir) {
     .Some(es) => es,
     .None => case fs.list_dir(signatures_dir) {
-      .Ok(es) => collect entry in es { entry.name },
+      .Ok(es) => collect entry in es {
+        entry.name
+      },
       .Err(_) => {
         return .Err("cannot read signatures directory: ${signatures_dir}")
       },
     },
   }
+
   // collect .tw files and sort for determinism
   tw_files: Vector<String> = []
 
   for name in entries {
-    if path.extension(name) == ".tw" { tw_files = .append(name) }
+    if path.extension(name) == ".tw" {
+      tw_files = .append(name)
+    }
   }
 
   tw_files = .sort()

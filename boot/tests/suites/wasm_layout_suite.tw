@@ -12,7 +12,9 @@ use tests.assert
 use tests.runner
 
 // ── Helpers ─────────────────────────────────────────────────────────
-fn dummy_span() Span { .{ file_id: 0, start: 0, end: 0 } }
+fn dummy_span() Span {
+  .{ file_id: 0, start: 0, end: 0 }
+}
 
 fn env_with_record(name: String, type_id: Int, fields: Vector<ResolvedField>) ResolvedEnv {
   entry := TypeEntry.{
@@ -201,11 +203,9 @@ fn test_layout_vector() Result<Void, String> {
   l := layout_of(.Vector(.Int), env)
 
   case l {
-    .Vector_(inner) => {
-      case inner {
-        .Scalar(.WI64) => .Ok({}),
-        _ => assert.fail("expected inner Scalar(WI64)"),
-      }
+    .Vector_(inner) => case inner {
+      .Scalar(.WI64) => .Ok({}),
+      _ => assert.fail("expected inner Scalar(WI64)"),
     },
     _ => assert.fail("expected Vector_ layout"),
   }
@@ -219,7 +219,9 @@ fn test_layout_dict() Result<Void, String> {
     .Dict_(kl, vl) => {
       case kl {
         .Scalar(.WAnyref) => {},
-        _ => { return assert.fail("expected key Scalar(WAnyref)") },
+        _ => {
+          return assert.fail("expected key Scalar(WAnyref)")
+        },
       }
 
       case vl {
@@ -269,11 +271,9 @@ fn test_layout_closure_never_return() Result<Void, String> {
   l := layout_of(.Function([.Int], .Never), env)
 
   case l {
-    .Closure(c) => {
-      case c.result_type {
-        .None => .Ok({}),
-        .Some(_) => assert.fail("expected closure with Never return to have no result type"),
-      }
+    .Closure(c) => case c.result_type {
+      .None => .Ok({}),
+      .Some(_) => assert.fail("expected closure with Never return to have no result type"),
     },
     _ => assert.fail("expected Closure layout"),
   }

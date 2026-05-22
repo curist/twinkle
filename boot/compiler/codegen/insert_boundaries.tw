@@ -101,12 +101,15 @@ fn is_raw_anyref_mono(ty: MonoType) Bool {
   }
 }
 
-fn mono_val_type(ty: MonoType, env: ResolvedEnv) ValType { val_type_of_mono(ty, env) }
+fn mono_val_type(ty: MonoType, env: ResolvedEnv) ValType {
+  val_type_of_mono(ty, env)
+}
 
 fn needs_wrap(semantic_mono: MonoType, abi_type: ValType, env: ResolvedEnv) Bool {
   if !is_anyref_subtype(abi_type) {
     return false
   }
+
   vt := mono_val_type(semantic_mono, env)
   !is_anyref_subtype(vt)
 }
@@ -115,11 +118,14 @@ fn needs_unwrap(semantic_mono: MonoType, abi_type: ValType, env: ResolvedEnv) Bo
   if !is_anyref_exact(abi_type) {
     return false
   }
+
   vt := mono_val_type(semantic_mono, env)
   !is_anyref_exact(vt)
 }
 
-fn has_abi(abi: AbiContract) Bool { abi.param_types.len() > 0 or abi.result_types.len() > 0 }
+fn has_abi(abi: AbiContract) Bool {
+  abi.param_types.len() > 0 or abi.result_types.len() > 0
+}
 
 // ── Entry point ─────────────────────────────────────────────────────
 pub fn insert_boundaries(
@@ -132,7 +138,9 @@ pub fn insert_boundaries(
   func_monos: Dict<Int, MonoType> = Dict.new()
 
   for func in anf.functions {
-    params := collect p in func.params { p.ty }
+    params := collect p in func.params {
+      p.ty
+    }
     func_param_types[func.func_id.id] = params
     func_monos[func.func_id.id] = .Function(params, func.return_ty)
   }
@@ -157,11 +165,14 @@ fn rewrite_func(
 ) AnfFunctionDef {
   // Build local type map from params + op_result_mono
   local_types: Dict<Int, MonoType> = Dict.new()
-  for p in func.params { local_types[p.local.id] = p.ty }
+
+  for p in func.params {
+    local_types[p.local.id] = p.ty
+  }
 
   for k in func.op_result_mono.keys() {
     case func.op_result_mono[k] {
-      .Some(ty) => { local_types[k] = ty },
+      .Some(ty) => local_types[k] = ty,
       .None => {},
     }
   }
@@ -172,11 +183,15 @@ fn rewrite_func(
   next := find_max_local_expr(func.body, 0)
 
   for p in func.params {
-    if p.local.id > next { next = p.local.id }
+    if p.local.id > next {
+      next = p.local.id
+    }
   }
 
   for k in func.op_result_mono.keys() {
-    if k > next { next = k }
+    if k > next {
+      next = k
+    }
   }
 
   next = next + 1
@@ -191,16 +206,21 @@ fn rewrite_func(
     func_monos,
   }
   result := rewrite_expr(func.body, ctx)
+
   // Build updated op_result_mono: original entries + new locals from boundary insertion.
   // Skip param locals (they're not in op_result_mono).
   param_ids: Dict<Int, Bool> = Dict.new()
-  for p in func.params { param_ids[p.local.id] = true }
+
+  for p in func.params {
+    param_ids[p.local.id] = true
+  }
+
   new_mono := func.op_result_mono
 
   for k in result.ctx.local_types.keys() {
     if !new_mono.has(k) and !param_ids.has(k) {
       case result.ctx.local_types[k] {
-        .Some(ty) => { new_mono[k] = ty },
+        .Some(ty) => new_mono[k] = ty,
         .None => {},
       }
     }
@@ -345,7 +365,9 @@ fn rewrite_record(
         new_fields = .append(FieldAtom.{ field: field.field, value: .ALocal(pair.temp) })
         closure_lets = .append(ClosureLet.{ local: pair.temp, fid: pair.fid })
       },
-      .None => { new_fields = .append(field) },
+      .None => {
+        new_fields = .append(field)
+      },
     }
   }
 
@@ -426,7 +448,9 @@ fn rewrite_variant(
         new_args = .append(.ALocal(pair.temp))
         closure_lets = .append(ClosureLet.{ local: pair.temp, fid: pair.fid })
       },
-      .None => { new_args = .append(arg) },
+      .None => {
+        new_args = .append(arg)
+      },
     }
   }
 
@@ -456,10 +480,14 @@ fn materialize_atoms_for_expected_mono(atoms: Vector<Atom>, expected: MonoType?,
             new_atoms = .append(.ALocal(pair.temp))
             closure_lets = .append(ClosureLet.{ local: pair.temp, fid: pair.fid })
           },
-          .None => { new_atoms = .append(atom) },
+          .None => {
+            new_atoms = .append(atom)
+          },
         }
       },
-      .None => { new_atoms = .append(atom) },
+      .None => {
+        new_atoms = .append(atom)
+      },
     }
   }
 
@@ -476,19 +504,17 @@ fn record_field_mono_for_tid(tid: TypeId, record_mono: MonoType, field_idx: Int,
 
 fn record_field_mono(record_mono: MonoType, field_idx: Int, env: ResolvedEnv) MonoType {
   case record_mono {
-    .Named(tid, args) => {
-      case lookup_type_def(env, tid) {
-        .Some(.Alias(_, type_params, target)) => record_field_mono(
-          subst_type_params(target, type_params, args),
-          field_idx,
-          env,
-        ),
-        .Some(.Record(_, type_params, fields)) => {
-          field_ty := fields[field_idx].ty
-          subst_type_params(field_ty, type_params, args)
-        },
-        _ => .Void,
-      }
+    .Named(tid, args) => case lookup_type_def(env, tid) {
+      .Some(.Alias(_, type_params, target)) => record_field_mono(
+        subst_type_params(target, type_params, args),
+        field_idx,
+        env,
+      ),
+      .Some(.Record(_, type_params, fields)) => {
+        field_ty := fields[field_idx].ty
+        subst_type_params(field_ty, type_params, args)
+      },
+      _ => .Void,
     },
     _ => .Void,
   }
@@ -512,30 +538,34 @@ fn variant_payload_mono_for_tid(
 
 fn variant_payload_mono(sum_mono: MonoType, vid: Int, field_idx: Int, env: ResolvedEnv) MonoType {
   case sum_mono {
-    .Optional(inner) => if vid == 1 and field_idx == 0 { inner } else { .Void },
+    .Optional(inner) => if vid == 1 and field_idx == 0 {
+      inner
+    } else {
+      .Void
+    },
     .Result(ok, err) => {
       if vid == 0 and field_idx == 0 {
         return ok
       }
+
       if vid == 1 and field_idx == 0 {
         return err
       }
+
       .Void
     },
-    .Named(tid, args) => {
-      case lookup_type_def(env, tid) {
-        .Some(.Alias(_, type_params, target)) => variant_payload_mono(
-          subst_type_params(target, type_params, args),
-          vid,
-          field_idx,
-          env,
-        ),
-        .Some(.Sum(_, type_params, variants)) => {
-          field_ty := variants[vid].fields[field_idx]
-          subst_type_params(field_ty, type_params, args)
-        },
-        _ => .Void,
-      }
+    .Named(tid, args) => case lookup_type_def(env, tid) {
+      .Some(.Alias(_, type_params, target)) => variant_payload_mono(
+        subst_type_params(target, type_params, args),
+        vid,
+        field_idx,
+        env,
+      ),
+      .Some(.Sum(_, type_params, variants)) => {
+        field_ty := variants[vid].fields[field_idx]
+        subst_type_params(field_ty, type_params, args)
+      },
+      _ => .Void,
     },
     _ => .Void,
   }
@@ -550,20 +580,18 @@ fn array_elem_mono(mono: MonoType) MonoType? {
 
 fn materialize_global_func_for_expected_mono(atom: Atom, expected_mono: MonoType, ctx: BCtx) MaterializeResult? {
   case atom {
-    .AGlobalFunc(fid) => {
-      if mono_is_function(expected_mono) {
-        pair := alloc_local(ctx)
-        tmp := pair.local
-        new_ctx := pair.ctx
-        tmp_mono := case atom_mono(atom, ctx) {
-          .Some(m) => m,
-          .None => expected_mono,
-        }
-        new_ctx.local_types[tmp.id] = tmp_mono
-        .Some(.{ temp: tmp, fid, ctx: new_ctx })
-      } else {
-        .None
+    .AGlobalFunc(fid) => if mono_is_function(expected_mono) {
+      pair := alloc_local(ctx)
+      tmp := pair.local
+      new_ctx := pair.ctx
+      tmp_mono := case atom_mono(atom, ctx) {
+        .Some(m) => m,
+        .None => expected_mono,
       }
+      new_ctx.local_types[tmp.id] = tmp_mono
+      .Some(.{ temp: tmp, fid, ctx: new_ctx })
+    } else {
+      .None
     },
     _ => .None,
   }
@@ -673,23 +701,24 @@ fn rewrite_call(result_local: LocalId, callee: Atom, args: Vector<Atom>, body: A
 
       for arg, i in args {
         case arg {
-          .AGlobalFunc(arg_fid) => {
-            if i < expected_param_monos.len() and mono_is_function(expected_param_monos[i]) {
-              pair := alloc_local(cur_ctx)
-              tmp := pair.local
-              cur_ctx = pair.ctx
-              tmp_mono := case atom_mono(arg, cur_ctx) {
-                .Some(m) => m,
-                .None => expected_param_monos[i],
-              }
-              cur_ctx.local_types[tmp.id] = tmp_mono
-              new_args = .append(.ALocal(tmp))
-              closure_lets = .append(ClosureLet.{ local: tmp, fid: arg_fid })
-            } else {
-              new_args = .append(arg)
+          .AGlobalFunc(arg_fid) => if i < expected_param_monos.len()
+            and mono_is_function(expected_param_monos[i]) {
+            pair := alloc_local(cur_ctx)
+            tmp := pair.local
+            cur_ctx = pair.ctx
+            tmp_mono := case atom_mono(arg, cur_ctx) {
+              .Some(m) => m,
+              .None => expected_param_monos[i],
             }
+            cur_ctx.local_types[tmp.id] = tmp_mono
+            new_args = .append(.ALocal(tmp))
+            closure_lets = .append(ClosureLet.{ local: tmp, fid: arg_fid })
+          } else {
+            new_args = .append(arg)
           },
-          _ => { new_args = .append(arg) },
+          _ => {
+            new_args = .append(arg)
+          },
         }
       }
 
@@ -705,6 +734,7 @@ fn rewrite_call(result_local: LocalId, callee: Atom, args: Vector<Atom>, body: A
     },
     .Some(abi) => {
       cur_ctx := ctx
+
       // Phase 1: materialize builtin/user global function values and wrap args that need it
       new_args: Vector<Atom> = []
       closure_lets: Vector<ClosureLet> = []
@@ -718,21 +748,20 @@ fn rewrite_call(result_local: LocalId, callee: Atom, args: Vector<Atom>, body: A
             .None => false,
           }
           materialized_arg: Atom = case arg {
-            .AGlobalFunc(arg_fid) => {
-              if i < expected_param_monos.len() and mono_is_function(expected_param_monos[i]) {
-                pair := alloc_local(cur_ctx)
-                tmp := pair.local
-                cur_ctx = pair.ctx
-                tmp_mono := case atom_mono(arg, cur_ctx) {
-                  .Some(m) => m,
-                  .None => expected_param_monos[i],
-                }
-                cur_ctx.local_types[tmp.id] = tmp_mono
-                closure_lets = .append(ClosureLet.{ local: tmp, fid: arg_fid })
-                .ALocal(tmp)
-              } else {
-                arg
+            .AGlobalFunc(arg_fid) => if i < expected_param_monos.len()
+              and mono_is_function(expected_param_monos[i]) {
+              pair := alloc_local(cur_ctx)
+              tmp := pair.local
+              cur_ctx = pair.ctx
+              tmp_mono := case atom_mono(arg, cur_ctx) {
+                .Some(m) => m,
+                .None => expected_param_monos[i],
               }
+              cur_ctx.local_types[tmp.id] = tmp_mono
+              closure_lets = .append(ClosureLet.{ local: tmp, fid: arg_fid })
+              .ALocal(tmp)
+            } else {
+              arg
             },
             _ => arg,
           }
@@ -770,19 +799,21 @@ fn rewrite_call(result_local: LocalId, callee: Atom, args: Vector<Atom>, body: A
         false
       } else {
         case result_mono {
-          .Some(mono) => {
-            if abi.result_types.len() > 0 { needs_unwrap(mono, abi.result_types[0], cur_ctx.env) } else {
-              false
-            }
+          .Some(mono) => if abi.result_types.len() > 0 {
+            needs_unwrap(mono, abi.result_types[0], cur_ctx.env)
+          } else {
+            false
           },
           .None => false,
         }
       }
+
       // Phase 3: build the rewritten let-chain
       // Work backwards: body first, then unwrap, then call, then wraps
       body_r := rewrite_expr(body, cur_ctx)
       inner_expr := body_r.expr
       final_ctx := body_r.ctx
+
       // If result needs unwrap: insert intermediate local for raw anyref result
       call_result_local := result_local
 
@@ -795,6 +826,7 @@ fn rewrite_call(result_local: LocalId, callee: Atom, args: Vector<Atom>, body: A
           .None => .Void,
         }
         final_ctx.local_types[raw_local.id] = .Anyref_
+
         // let result_local = AUnwrapAnyref(ALocal(raw_local), mono); inner_expr
         inner_expr = .Let(result_local, .AUnwrapAnyref(.ALocal(raw_local), mono), inner_expr)
         call_result_local = raw_local
@@ -802,6 +834,7 @@ fn rewrite_call(result_local: LocalId, callee: Atom, args: Vector<Atom>, body: A
 
       // The call itself
       inner_expr = .Let(call_result_local, .ACall(callee, new_args), inner_expr)
+
       // Prepend wrap lets (in forward order)
       wrap_idx := 0
 
@@ -809,12 +842,11 @@ fn rewrite_call(result_local: LocalId, callee: Atom, args: Vector<Atom>, body: A
         if i < abi.param_types.len() {
           abi_param := abi.param_types[i]
           arg0: Atom = case arg {
-            .AGlobalFunc(arg_fid) => {
-              if i < expected_param_monos.len() and mono_is_function(expected_param_monos[i]) {
-                .ALocal(closure_lets[closure_index_for_arg(args, expected_param_monos, i)].local)
-              } else {
-                arg
-              }
+            .AGlobalFunc(arg_fid) => if i < expected_param_monos.len()
+              and mono_is_function(expected_param_monos[i]) {
+              .ALocal(closure_lets[closure_index_for_arg(args, expected_param_monos, i)].local)
+            } else {
+              arg
             },
             _ => arg,
           }
@@ -829,6 +861,7 @@ fn rewrite_call(result_local: LocalId, callee: Atom, args: Vector<Atom>, body: A
               .Some(m) => m,
               .None => .Void,
             }
+
             // The wrap local was allocated earlier; reconstruct its id
             // wrap locals start at ctx.next_local + wrap_idx
             wrap_local := LocalId.{ id: ctx.next_local + wrap_idx }
@@ -856,14 +889,12 @@ fn mono_is_function(mono: MonoType) Bool {
 
 fn call_expected_param_monos(callee: Atom, ctx: BCtx) Vector<MonoType> {
   case callee {
-    .AGlobalFunc(fid) => {
-      case ctx.func_param_types[fid.id] {
-        .Some(params) => params,
-        .None => case callable_targets.semantic_sig(fid, Dict.new(), ctx.builtins, ctx.env) {
-          .Some(target) => target.semantic_params,
-          .None => [],
-        },
-      }
+    .AGlobalFunc(fid) => case ctx.func_param_types[fid.id] {
+      .Some(params) => params,
+      .None => case callable_targets.semantic_sig(fid, Dict.new(), ctx.builtins, ctx.env) {
+        .Some(target) => target.semantic_params,
+        .None => [],
+      },
     },
     .ALocal(lid) => case ctx.local_types[lid.id] {
       .Some(.Function(params, _)) => params,
@@ -878,13 +909,13 @@ fn closure_index_for_arg(args: Vector<Atom>, expected_param_monos: Vector<MonoTy
 
   for arg, i in args {
     case arg {
-      .AGlobalFunc(_) => {
-        if i < expected_param_monos.len() and mono_is_function(expected_param_monos[i]) {
-          if i == want_i {
-            return idx
-          }
-          idx = idx + 1
+      .AGlobalFunc(_) => if i < expected_param_monos.len()
+        and mono_is_function(expected_param_monos[i]) {
+        if i == want_i {
+          return idx
         }
+
+        idx = idx + 1
       },
       _ => {},
     }
@@ -1024,7 +1055,11 @@ fn rewrite_index(
 fn find_max_local_expr(expr: AnfExpr, m: Int) Int {
   case expr {
     .Let(local, op, body) => {
-      r := if local.id > m { local.id } else { m }
+      r := if local.id > m {
+        local.id
+      } else {
+        m
+      }
       r = find_max_local_op(op, r)
       find_max_local_expr(body, r)
     },
@@ -1041,7 +1076,11 @@ fn find_max_local_op(op: AnfOp, m: Int) Int {
   case op {
     .ACall(callee, args) => {
       r := find_max_local_atom(callee, m)
-      for a in args { r = find_max_local_atom(a, r) }
+
+      for a in args {
+        r = find_max_local_atom(a, r)
+      }
+
       r
     },
     .AIf(_, then_e, else_e) => {
@@ -1050,7 +1089,11 @@ fn find_max_local_op(op: AnfOp, m: Int) Int {
     },
     .AMatch(_, arms) => {
       r := m
-      for arm in arms { r = find_max_local_expr(arm.body, r) }
+
+      for arm in arms {
+        r = find_max_local_expr(arm.body, r)
+      }
+
       r
     },
     .ALoop(body) => find_max_local_expr(body, m),
@@ -1064,14 +1107,22 @@ fn find_max_local_op(op: AnfOp, m: Int) Int {
       r := m
 
       for v in free_vars {
-        r = if v.id > r { v.id } else { r }
+        r = if v.id > r {
+          v.id
+        } else {
+          r
+        }
       }
 
       r
     },
     .ARecord(_, fields) => {
       r := m
-      for f in fields { r = find_max_local_atom(f.value, r) }
+
+      for f in fields {
+        r = find_max_local_atom(f.value, r)
+      }
+
       r
     },
     .ARecordGet(target, _, _) => find_max_local_atom(target, m),
@@ -1081,12 +1132,20 @@ fn find_max_local_op(op: AnfOp, m: Int) Int {
     },
     .AVariant(_, _, args) => {
       r := m
-      for a in args { r = find_max_local_atom(a, r) }
+
+      for a in args {
+        r = find_max_local_atom(a, r)
+      }
+
       r
     },
     .AArrayLit(elems) => {
       r := m
-      for a in elems { r = find_max_local_atom(a, r) }
+
+      for a in elems {
+        r = find_max_local_atom(a, r)
+      }
+
       r
     },
     .AIndex(base, index, _, _) => {
@@ -1095,7 +1154,11 @@ fn find_max_local_op(op: AnfOp, m: Int) Int {
     },
     .AInit(value) => find_max_local_atom(value, m),
     .AAssign(target, value) => {
-      r := if target.id > m { target.id } else { m }
+      r := if target.id > m {
+        target.id
+      } else {
+        m
+      }
       find_max_local_atom(value, r)
     },
     .AWrapAnyref(a, _) => find_max_local_atom(a, m),
@@ -1105,7 +1168,11 @@ fn find_max_local_op(op: AnfOp, m: Int) Int {
 
 fn find_max_local_atom(atom: Atom, m: Int) Int {
   case atom {
-    .ALocal(lid) => if lid.id > m { lid.id } else { m },
+    .ALocal(lid) => if lid.id > m {
+      lid.id
+    } else {
+      m
+    },
     _ => m,
   }
 }

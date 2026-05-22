@@ -9,9 +9,13 @@ use tests.assert
 use tests.runner
 
 // ── Helpers ─────────────────────────────────────────────────────────
-fn lid(id: Int) LocalId { LocalId.{ id } }
+fn lid(id: Int) LocalId {
+  LocalId.{ id }
+}
 
-fn empty_set() Dict<Int, Bool> { Dict.new() }
+fn empty_set() Dict<Int, Bool> {
+  Dict.new()
+}
 
 fn set_of1(a: Int) Dict<Int, Bool> {
   s: Dict<Int, Bool> = Dict.new()
@@ -186,7 +190,9 @@ fn test_diverges_break() Result<Void, String> {
   assert.is_true(expr_always_diverges(.Break(.None)))
 }
 
-fn test_diverges_continue() Result<Void, String> { assert.is_true(expr_always_diverges(.Continue)) }
+fn test_diverges_continue() Result<Void, String> {
+  assert.is_true(expr_always_diverges(.Continue))
+}
 
 fn test_diverges_atom_does_not() Result<Void, String> {
   assert.is_false(expr_always_diverges(.Atom(.ALitVoid)))
@@ -227,10 +233,12 @@ fn test_diverges_loop_conservative() Result<Void, String> {
 // ── Suite ───────────────────────────────────────────────────────────
 pub fn suite() runner.Suite {
   s := runner.suite("ANF Analysis")
+
   // pattern bindings
   s = .test("pattern: var", test_pattern_var)
   s = .test("pattern: nested variant", test_pattern_nested_variant)
   s = .test("pattern: wildcard/lit", test_pattern_wildcard_lit)
+
   // free locals
   s = .test("free: simple let", test_free_simple_let)
   s = .test("free: declared not free", test_free_declared_not_free)
@@ -239,10 +247,13 @@ pub fn suite() runner.Suite {
   s = .test("free: assign target", test_free_assign_target)
   s = .test("free: make_closure", test_free_make_closure)
   s = .test("free: return/break atoms", test_free_return_break_atoms)
+
   // bound locals
   s = .test("bound: nested", test_bound_nested)
+
   // assigned locals
   s = .test("assigned: nested", test_assigned_nested)
+
   // divergence
   s = .test("diverges: return", test_diverges_return)
   s = .test("diverges: break", test_diverges_break)

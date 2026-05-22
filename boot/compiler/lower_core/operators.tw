@@ -82,9 +82,13 @@ fn explicit_eq_func_id(ctx: LowerCtx, ty: MonoType) FuncId? {
   fn_name := case ty {
     .Named(tid, _) => case ctx.env.lookup_type_method(tid, "eq") {
       .Some(name) => name,
-      .None => { return .None },
+      .None => {
+        return .None
+      },
     },
-    _ => { return .None },
+    _ => {
+      return .None
+    },
   }
   lookup_func(ctx, fn_name)
 }
@@ -103,19 +107,21 @@ type UnitVariantTag = .{ tid: TypeId, vid: Int }
 
 fn unit_variant_tag(expr: CoreExpr) UnitVariantTag? {
   case expr.kind {
-    .Variant(tid, vid, args) => {
-      if args.len() == 0 {
-        .Some(.{ tid, vid: vid.id })
-      } else {
-        .None
-      }
+    .Variant(tid, vid, args) => if args.len() == 0 {
+      .Some(.{ tid, vid: vid.id })
+    } else {
+      .None
     },
     _ => .None,
   }
 }
 
 fn build_unit_variant_compare(ast_op: AstBinOp, scrutinee: CoreExpr, tid: TypeId, vid: Int, s: Span) CoreExprKind {
-  on_match := if ast_op == .Eq { true } else { false }
+  on_match := if ast_op == .Eq {
+    true
+  } else {
+    false
+  }
   on_other := !on_match
   .Match(
     scrutinee,
@@ -141,6 +147,7 @@ fn unit_sum_variant_ids(env: ResolvedEnv, tid: TypeId) Vector<Int>? {
         if variants[i].fields.len() != 0 {
           return .None
         }
+
         ids = .append(i)
       }
 
@@ -159,6 +166,7 @@ fn build_unit_sum_compare(
   s: Span,
 ) CoreExprKind {
   arms: Vector<MatchArm> = []
+
   for vid in variants {
     arms = .append(
       MatchArm.{
@@ -171,7 +179,12 @@ fn build_unit_sum_compare(
       },
     )
   }
-  fallback := if ast_op == .Eq { false } else { true }
+
+  fallback := if ast_op == .Eq {
+    false
+  } else {
+    true
+  }
   arms = .append(
     MatchArm.{
       pattern: .Wildcard,
@@ -193,48 +206,36 @@ pub fn lower_unit_variant_compare(
   }
 
   case unit_variant_tag(right) {
-    .Some(tag) => {
-      case type_id_from_mono(left.ty) {
-        .Some(lhs_tid) => {
-          if lhs_tid.id == tag.tid.id {
-            return .Some(build_unit_variant_compare(ast_op, left, tag.tid, tag.vid, s))
-          }
-        },
-        .None => {},
-      }
+    .Some(tag) => case type_id_from_mono(left.ty) {
+      .Some(lhs_tid) => if lhs_tid.id == tag.tid.id {
+        return .Some(build_unit_variant_compare(ast_op, left, tag.tid, tag.vid, s))
+      },
+      .None => {},
     },
     .None => {},
   }
 
   case unit_variant_tag(left) {
-    .Some(tag) => {
-      case type_id_from_mono(right.ty) {
-        .Some(rhs_tid) => {
-          if rhs_tid.id == tag.tid.id {
-            return .Some(build_unit_variant_compare(ast_op, right, tag.tid, tag.vid, s))
-          }
-        },
-        .None => {},
-      }
+    .Some(tag) => case type_id_from_mono(right.ty) {
+      .Some(rhs_tid) => if rhs_tid.id == tag.tid.id {
+        return .Some(build_unit_variant_compare(ast_op, right, tag.tid, tag.vid, s))
+      },
+      .None => {},
     },
     .None => {},
   }
 
   case left.ty {
-    .Named(lhs_tid, _) => {
-      case right.ty {
-        .Named(rhs_tid, _) => {
-          if lhs_tid.id == rhs_tid.id {
-            case unit_sum_variant_ids(env, lhs_tid) {
-              .Some(variants) => {
-                return .Some(build_unit_sum_compare(ast_op, left, right, lhs_tid, variants, s))
-              },
-              .None => {},
-            }
-          }
-        },
-        _ => {},
-      }
+    .Named(lhs_tid, _) => case right.ty {
+      .Named(rhs_tid, _) => if lhs_tid.id == rhs_tid.id {
+        case unit_sum_variant_ids(env, lhs_tid) {
+          .Some(variants) => {
+            return .Some(build_unit_sum_compare(ast_op, left, right, lhs_tid, variants, s))
+          },
+          .None => {},
+        }
+      },
+      _ => {},
     },
     _ => {},
   }
@@ -264,9 +265,13 @@ fn is_cmp_op(op: AstBinOp) Bool {
 }
 
 // Order TypeId = 7, variants: Lt=0, Eq=1, Gt=2
-fn order_type_id() TypeId { TypeId.{ id: 7 } }
+fn order_type_id() TypeId {
+  TypeId.{ id: 7 }
+}
 
-fn order_type() MonoType { MonoType.Named(order_type_id(), []) }
+fn order_type() MonoType {
+  MonoType.Named(order_type_id(), [])
+}
 
 fn build_cmp_match(ast_op: AstBinOp, compare_expr: CoreExpr, s: Span) CoreExpr {
   // a < b  => case compare(a,b) { .Lt => true, _ => false }
@@ -311,13 +316,19 @@ fn explicit_compare_func_id(ctx: LowerCtx, ty: MonoType) FuncId? {
   fn_name := case ty {
     .Named(tid, _) => case ctx.env.lookup_type_method(tid, "compare") {
       .Some(name) => name,
-      .None => { return .None },
+      .None => {
+        return .None
+      },
     },
     .Vector(_) => case ctx.env.lookup_method("Vector", "compare") {
       .Some(name) => name,
-      .None => { return .None },
+      .None => {
+        return .None
+      },
     },
-    _ => { return .None },
+    _ => {
+      return .None
+    },
   }
   lookup_func(ctx, fn_name)
 }
@@ -389,9 +400,7 @@ pub fn lower_binary(
       rr := lower_expr_fn(ctx, rhs)
 
       case lower_lvalue_assign(rr.ctx, lhs, rr.expr, s, lower_expr_fn) {
-        .Some(lv) => {
-          .{ expr: .{ kind: .Assign(lv.root, lv.update), ty, span: s }, ctx: lv.ctx }
-        },
+        .Some(lv) => .{ expr: .{ kind: .Assign(lv.root, lv.update), ty, span: s }, ctx: lv.ctx },
         .None => {
           bad_ctx := rr.ctx.emit_error(s, "invalid assignment target")
           .{ expr: void_expr(s), ctx: bad_ctx }
@@ -439,7 +448,7 @@ pub fn lower_binary(
       rr := lower_expr_fn(lr.ctx, rhs)
 
       case lower_unit_variant_compare(rr.ctx.env, ast_op, lr.expr, rr.expr, s) {
-        .Some(kind) => { .{ expr: .{ kind, ty, span: s }, ctx: rr.ctx } },
+        .Some(kind) => .{ expr: .{ kind, ty, span: s }, ctx: rr.ctx },
         .None => {
           if ast_op == .Eq or ast_op == .Ne {
             case explicit_eq_func_id(rr.ctx, lr.expr.ty) {
@@ -467,7 +476,9 @@ pub fn lower_binary(
           }
 
           case lower_ord_cmp(rr.ctx, ast_op, lr.expr, rr.expr, s) {
-            .Some(kind) => { return .{ expr: .{ kind, ty, span: s }, ctx: rr.ctx } },
+            .Some(kind) => {
+              return .{ expr: .{ kind, ty, span: s }, ctx: rr.ctx }
+            },
             .None => {},
           }
 

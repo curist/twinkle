@@ -19,7 +19,9 @@ fn describe_color_nested(opt: Option<Color>) String {
 fn describe_color_two_step(opt: Option<Color>) String {
   c := case opt {
     .Some(c) => c,
-    .None => { return "none" },
+    .None => {
+      return "none"
+    },
   }
 
   case c {
@@ -41,7 +43,9 @@ fn describe_shape_nested(opt: Option<Shape>) String {
 fn describe_shape_two_step(opt: Option<Shape>) String {
   s := case opt {
     .Some(s) => s,
-    .None => { return "none" },
+    .None => {
+      return "none"
+    },
   }
 
   case s {
@@ -63,7 +67,9 @@ fn describe_animal_nested(opt: Option<Animal>) String {
 fn describe_animal_two_step(opt: Option<Animal>) String {
   a := case opt {
     .Some(a) => a,
-    .None => { return "none" },
+    .None => {
+      return "none"
+    },
   }
 
   case a {
@@ -108,7 +114,9 @@ fn describe_opt_opt_nested(opt: Option<Option<Int>>) String {
 fn describe_opt_opt_two_step(opt: Option<Option<Int>>) String {
   inner := case opt {
     .Some(i) => i,
-    .None => { return "outer none" },
+    .None => {
+      return "outer none"
+    },
   }
 
   case inner {
@@ -131,7 +139,9 @@ fn check_nested(opt: Option<TypeDef>) String {
 fn check_two_step(opt: Option<TypeDef>) String {
   d := case opt {
     .Some(d) => d,
-    .None => { return "other" },
+    .None => {
+      return "other"
+    },
   }
 
   case d {
@@ -142,10 +152,14 @@ fn check_two_step(opt: Option<TypeDef>) String {
 
 // ── Runner ───────────────────────────────────────────────────────────
 fn assert_eq(actual: String, expected: String, label: String) {
-  if actual != expected { error("FAIL ${label}: expected '${expected}', got '${actual}'") }
+  if actual != expected {
+    error("FAIL ${label}: expected '${expected}', got '${actual}'")
+  }
 }
 
-fn test_pair(label: String, nested: String, two_step: String) { assert_eq(nested, two_step, label) }
+fn test_pair(label: String, nested: String, two_step: String) {
+  assert_eq(nested, two_step, label)
+}
 
 // Test 1: Color
 test_pair("color-red", describe_color_nested(.Some(.Red)), describe_color_two_step(.Some(.Red)))

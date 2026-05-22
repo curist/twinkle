@@ -10,22 +10,24 @@ pub type SimpResult = .{ expr: AnfExpr, changed: Bool }
 
 pub fn branch_simplify(expr: AnfExpr) SimpResult {
   case expr {
-    .Let(local, op, body) => {
-      case op {
-        .AIf(.ALitBool(b), then_e, else_e) => {
-          selected := if b { then_e } else { else_e }
-          spliced := splice_branch(selected, local, body)
-          SimpResult.{ expr: spliced, changed: true }
-        },
-        _ => {
-          op_r := branch_simplify_op(op)
-          body_r := branch_simplify(body)
-          SimpResult.{
-            expr: .Let(local, op_r.op, body_r.expr),
-            changed: op_r.changed or body_r.changed,
-          }
-        },
-      }
+    .Let(local, op, body) => case op {
+      .AIf(.ALitBool(b), then_e, else_e) => {
+        selected := if b {
+          then_e
+        } else {
+          else_e
+        }
+        spliced := splice_branch(selected, local, body)
+        SimpResult.{ expr: spliced, changed: true }
+      },
+      _ => {
+        op_r := branch_simplify_op(op)
+        body_r := branch_simplify(body)
+        SimpResult.{
+          expr: .Let(local, op_r.op, body_r.expr),
+          changed: op_r.changed or body_r.changed,
+        }
+      },
     },
     _ => SimpResult.{ expr, changed: false },
   }
@@ -40,9 +42,7 @@ fn splice_branch(branch: AnfExpr, result_local: LocalId, continuation: AnfExpr) 
     .Return(_) => branch,
     .Break(_) => branch,
     .Continue => branch,
-    .Let(local, op, body) => {
-      AnfExpr.Let(local, op, splice_branch(body, result_local, continuation))
-    },
+    .Let(local, op, body) => AnfExpr.Let(local, op, splice_branch(body, result_local, continuation)),
   }
 }
 
@@ -63,7 +63,11 @@ fn branch_simplify_op(op: AnfOp) OpSimpResult {
       changed := false
       new_arms: Vector<AnfMatchArm> = collect arm in arms {
         r := branch_simplify(arm.body)
-        if r.changed { changed = true }
+
+        if r.changed {
+          changed = true
+        }
+
         AnfMatchArm.{ pattern: arm.pattern, body: r.expr }
       }
       OpSimpResult.{ op: .AMatch(scrutinee, new_arms), changed }

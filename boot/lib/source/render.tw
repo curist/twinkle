@@ -22,13 +22,21 @@ fn paint(config: RenderConfig, code: String, s: String) String {
   }
 }
 
-fn bold(config: RenderConfig, s: String) String { paint(config, "1", s) }
+fn bold(config: RenderConfig, s: String) String {
+  paint(config, "1", s)
+}
 
-fn bold_red(config: RenderConfig, s: String) String { paint(config, "31;1", s) }
+fn bold_red(config: RenderConfig, s: String) String {
+  paint(config, "31;1", s)
+}
 
-fn bold_yellow(config: RenderConfig, s: String) String { paint(config, "33;1", s) }
+fn bold_yellow(config: RenderConfig, s: String) String {
+  paint(config, "33;1", s)
+}
 
-fn cyan(config: RenderConfig, s: String) String { paint(config, "36", s) }
+fn cyan(config: RenderConfig, s: String) String {
+  paint(config, "36", s)
+}
 
 // ── String helpers ────────────────────────────────────────────────────
 fn repeat_str(s: String, n: Int) String {
@@ -45,9 +53,11 @@ fn repeat_str(s: String, n: Int) String {
 
 fn pad_left(s: String, width: Int) String {
   extra := width - s.char_len()
+
   if extra <= 0 {
     return s
   }
+
   "${repeat_str(" ", extra)}${s}"
 }
 
@@ -61,7 +71,11 @@ fn severity_label(sev: ReportSeverity) String {
 fn strip_newline(s: String) String {
   line := s.split("\n")[0]
 
-  if line.ends_with("\r") { line.substring(0, line.char_len() - 1) } else { line }
+  if line.ends_with("\r") {
+    line.substring(0, line.char_len() - 1)
+  } else {
+    line
+  }
 }
 
 // ── Gutter helpers ────────────────────────────────────────────────────
@@ -69,6 +83,7 @@ fn digit_count(n: Int) Int {
   if n <= 0 {
     return 1
   }
+
   count := 0
   v := n
 
@@ -87,8 +102,8 @@ fn max_label_line(labels: Vector<SpanLabel>, reg: registry.FileRegistry) Int {
 
   for l in labels {
     case registry.line_col(reg, l.span) {
-      .Some(lc) => {
-        if lc.line > max { max = lc.line }
+      .Some(lc) => if lc.line > max {
+        max = lc.line
       },
       .None => {},
     }
@@ -114,7 +129,11 @@ fn underline_len(reg: registry.FileRegistry, s: Span) Int {
       first := text.split("\n")[0]
       l := first.char_len()
 
-      if l == 0 { 1 } else { l }
+      if l == 0 {
+        1
+      } else {
+        l
+      }
     },
     .None => 1,
   }
@@ -123,6 +142,7 @@ fn underline_len(reg: registry.FileRegistry, s: Span) Int {
 // ── Public render API ─────────────────────────────────────────────────
 pub fn render(report: Report, reg: registry.FileRegistry, config: RenderConfig) String {
   lines: Vector<String> = []
+
   // ── 1. Severity header ────────────────────────────────────────────
   sev_str := severity_label(report.severity)
   sev_colored := case report.severity {
@@ -134,61 +154,68 @@ pub fn render(report: Report, reg: registry.FileRegistry, config: RenderConfig) 
   // ── 2. Source context (only when labels are present) ─────────────
   case find_primary(report.labels) {
     .None => {},
-    .Some(pl) => {
-      case registry.line_col(reg, pl.span) {
-        .None => {},
-        .Some(primary_lc) => {
-          fname := case registry.file_name(reg, pl.span.file_id) {
-            .Some(n) => n,
-            .None => "<unknown>",
-          }
-          max_line := max_label_line(report.labels, reg)
-          gutter_w := digit_count(max_line)
-          pad := repeat_str(" ", gutter_w)
-          // Location line: one position left of the gutter `|`
-          lines = .append("${pad}--> ${fname}:${primary_lc.line}:${primary_lc.column}")
-          // Opening gutter separator
-          lines = .append(cyan(config, "${pad} |"))
-          // Each label: source line + underline
-          prev_line := 0
+    .Some(pl) => case registry.line_col(reg, pl.span) {
+      .None => {},
+      .Some(primary_lc) => {
+        fname := case registry.file_name(reg, pl.span.file_id) {
+          .Some(n) => n,
+          .None => "<unknown>",
+        }
+        max_line := max_label_line(report.labels, reg)
+        gutter_w := digit_count(max_line)
+        pad := repeat_str(" ", gutter_w)
 
-          for l, idx in report.labels {
-            case registry.line_col(reg, l.span) {
+        // Location line: one position left of the gutter `|`
+        lines = .append("${pad}--> ${fname}:${primary_lc.line}:${primary_lc.column}")
+
+        // Opening gutter separator
+        lines = .append(cyan(config, "${pad} |"))
+
+        // Each label: source line + underline
+        prev_line := 0
+
+        for l, idx in report.labels {
+          case registry.line_col(reg, l.span) {
+            .None => {},
+            .Some(lc) => case registry.line_text(reg, l.span) {
               .None => {},
-              .Some(lc) => {
-                case registry.line_text(reg, l.span) {
-                  .None => {},
-                  .Some(line_raw) => {
-                    // Blank separator only when labels are non-adjacent
-                    if idx > 0 and lc.line > prev_line + 1 {
-                      lines = .append(cyan(config, "${pad} |"))
-                    }
-                    prev_line = lc.line
-                    line_str := strip_newline(line_raw)
-                    num_str := pad_left(Int.to_string(lc.line), gutter_w)
-                    lines = .append("${cyan(config, "${num_str} |")} ${line_str}")
-                    // Underline below the source line
-                    col_zero := lc.column - 1
-                    ulen := underline_len(reg, l.span)
-                    underline_char := if l.is_primary { "^" } else { "-" }
-                    carets := repeat_str(underline_char, ulen)
-                    label_suffix := case l.label {
-                      .Some(lbl) => " ${lbl}",
-                      .None => "",
-                    }
-                    caret_str := "${carets}${label_suffix}"
-                    styled_caret := if l.is_primary { bold_red(config, caret_str) } else {
-                      caret_str
-                    }
-                    spacing := repeat_str(" ", col_zero)
-                    lines = .append("${cyan(config, "${pad} |")} ${spacing}${styled_caret}")
-                  },
+              .Some(line_raw) => {
+                // Blank separator only when labels are non-adjacent
+                if idx > 0 and lc.line > prev_line + 1 {
+                  lines = .append(cyan(config, "${pad} |"))
                 }
+
+                prev_line = lc.line
+                line_str := strip_newline(line_raw)
+                num_str := pad_left(Int.to_string(lc.line), gutter_w)
+                lines = .append("${cyan(config, "${num_str} |")} ${line_str}")
+
+                // Underline below the source line
+                col_zero := lc.column - 1
+                ulen := underline_len(reg, l.span)
+                underline_char := if l.is_primary {
+                  "^"
+                } else {
+                  "-"
+                }
+                carets := repeat_str(underline_char, ulen)
+                label_suffix := case l.label {
+                  .Some(lbl) => " ${lbl}",
+                  .None => "",
+                }
+                caret_str := "${carets}${label_suffix}"
+                styled_caret := if l.is_primary {
+                  bold_red(config, caret_str)
+                } else {
+                  caret_str
+                }
+                spacing := repeat_str(" ", col_zero)
+                lines = .append("${cyan(config, "${pad} |")} ${spacing}${styled_caret}")
               },
-            }
+            },
           }
-        },
-      }
+        }
+      },
     },
   }
 
@@ -197,7 +224,10 @@ pub fn render(report: Report, reg: registry.FileRegistry, config: RenderConfig) 
     max_line := max_label_line(report.labels, reg)
     gutter_w := digit_count(max_line)
     pad := repeat_str(" ", gutter_w)
-    for h in report.help_lines { lines = .append("${pad} = help: ${h}") }
+
+    for h in report.help_lines {
+      lines = .append("${pad} = help: ${h}")
+    }
   }
 
   lines.join("\n")

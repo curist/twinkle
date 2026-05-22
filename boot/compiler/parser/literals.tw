@@ -25,6 +25,7 @@ pub fn parse_int_literal(raw: String) Int {
   if raw.starts_with("0x") or raw.starts_with("0X") {
     return parse_hex(raw)
   }
+
   result := 0
   neg := false
   start := 0
@@ -48,7 +49,11 @@ pub fn parse_int_literal(raw: String) Int {
     i = i + 1
   }
 
-  if neg { 0 - result } else { result }
+  if neg {
+    0 - result
+  } else {
+    result
+  }
 }
 
 pub fn parse_float_literal(raw: String) Float {
@@ -85,5 +90,9 @@ pub fn parse_float_literal(raw: String) Float {
 
   result := int_part + frac_part
 
-  if neg { 0.0 - result } else { result }
+  if neg {
+    0.0 - result
+  } else {
+    result
+  }
 }

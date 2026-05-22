@@ -2,18 +2,28 @@
 //
 // Uses wyhash v3 for stable, reproducible keys across runs.
 // Reference: src/query/keys.rs
-pub fn cache_schema_version() Int { 2 }
+pub fn cache_schema_version() Int {
+  2
+}
 
 // -- wyhash v3 constants --
 // Source: https://github.com/wangyi-fudan/wyhash (v3 final, commit 991aa3d)
 // Must match src/query/keys.rs and src/runtime/dict.rs.
-fn secret_0() Int { 0xa0761d64 << 32 | 0x78bd642f }
+fn secret_0() Int {
+  0xa0761d64 << 32 | 0x78bd642f
+}
 
-fn secret_1() Int { 0xe7037ed1 << 32 | 0xa0b428db }
+fn secret_1() Int {
+  0xe7037ed1 << 32 | 0xa0b428db
+}
 
-fn secret_2() Int { 0x8ebc6af0 << 32 | 0x9c88c6e3 }
+fn secret_2() Int {
+  0x8ebc6af0 << 32 | 0x9c88c6e3
+}
 
-fn secret_3() Int { 0x589965cc << 32 | 0x75374cc3 }
+fn secret_3() Int {
+  0x589965cc << 32 | 0x75374cc3
+}
 
 // -- wyhash v3 helpers --
 // 64x64→128 multiply via 32-bit decomposition, XOR high and low halves.
@@ -45,7 +55,9 @@ fn wyr4(bytes: Vector<Byte>, off: Int) Int {
 }
 
 // Read 8 LE bytes as u64.
-fn wyr8(bytes: Vector<Byte>, off: Int) Int { wyr4(bytes, off) | wyr4(bytes, off + 4) << 32 }
+fn wyr8(bytes: Vector<Byte>, off: Int) Int {
+  wyr4(bytes, off) | wyr4(bytes, off + 4) << 32
+}
 
 // Full wyhash v3 on a byte vector with given seed.
 fn wyhash(bytes: Vector<Byte>, seed: Int) Int {
@@ -72,6 +84,7 @@ fn wyhash(bytes: Vector<Byte>, seed: Int) Int {
     if i > 48 {
       see1 := seed
       see2 := seed
+
       // First block (do-while: always runs at least once)
       seed = wymix(wyr8(bytes, p) ^ secret_1(), wyr8(bytes, p + 8) ^ seed)
       see1 = wymix(wyr8(bytes, p + 16) ^ secret_2(), wyr8(bytes, p + 24) ^ see1)
@@ -103,10 +116,14 @@ fn wyhash(bytes: Vector<Byte>, seed: Int) Int {
 }
 
 /// Hash a string's UTF-8 bytes using wyhash v3.
-pub fn hash_text(text: String) Int { wyhash(text.utf8_bytes(), 0) }
+pub fn hash_text(text: String) Int {
+  wyhash(text.utf8_bytes(), 0)
+}
 
 /// Mix a word into a running hash using wymix.
-pub fn mix_word(h: Int, word: Int) Int { wymix(h ^ word, secret_1()) }
+pub fn mix_word(h: Int, word: Int) Int {
+  wymix(h ^ word, secret_1())
+}
 
 fn to_byte(n: Int) Byte {
   case Byte.from_int(n) {
@@ -134,7 +151,9 @@ fn words_to_bytes(words: Vector<Int>) Vector<Byte> {
 }
 
 /// Mix multiple Int values into a single hash using wyhash v3.
-fn mix_many(words: Vector<Int>) Int { wyhash(words_to_bytes(words), 0) }
+fn mix_many(words: Vector<Int>) Int {
+  wyhash(words_to_bytes(words), 0)
+}
 
 // -- Stage keys --
 /// Cache key for parsed module.
@@ -149,7 +168,11 @@ pub fn resolve_key(path: String, source_hash: Int, deps_hash: Int) Int {
 
 /// Cache key for type-checked module.
 pub fn typecheck_key(path: String, source_hash: Int, deps_hash: Int, allow_host_builtins: Bool) Int {
-  flag := if allow_host_builtins { 1 } else { 0 }
+  flag := if allow_host_builtins {
+    1
+  } else {
+    0
+  }
   mix_many([
     cache_schema_version(),
     hash_text("typecheck"),
@@ -176,7 +199,11 @@ pub fn lower_key(path: String, source_hash: Int, deps_hash: Int, next_global_loc
 // -- Composite hashes --
 /// Hash a sorted set of (path, hash) dependency entries.
 pub fn deps_hash(entries: Vector<DepEntry>) Int {
-  sorted := entries.sort_by(fn(a, b) { String.compare(a.path, b.path) })
+  sorted := entries.sort_by(
+    fn(a, b) {
+      String.compare(a.path, b.path)
+    },
+  )
   chunks: Vector<Int> = [hash_text("deps")]
 
   for entry in sorted {

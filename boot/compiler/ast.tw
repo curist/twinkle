@@ -34,7 +34,9 @@ pub type TypeParam = .{ name: String, bounds: Vector<TypePath>, span: Span }
 /// Extract plain type-parameter names from a list of TypeParam.
 /// Used for migration: most existing code works with Vector<String>.
 pub fn type_param_names(params: Vector<TypeParam>) Vector<String> {
-  collect p in params { p.name }
+  collect p in params {
+    p.name
+  }
 }
 
 pub type FunctionDecl = .{

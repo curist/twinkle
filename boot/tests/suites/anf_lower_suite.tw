@@ -74,12 +74,10 @@ fn tail_of(expr: AnfExpr) AnfExpr {
 // Get the Nth let binding's op (0-indexed)
 fn nth_op(expr: AnfExpr, n: Int) AnfOp? {
   case expr {
-    .Let(_, op, body) => {
-      if n == 0 {
-        .Some(op)
-      } else {
-        nth_op(body, n - 1)
-      }
+    .Let(_, op, body) => if n == 0 {
+      .Some(op)
+    } else {
+      nth_op(body, n - 1)
     },
     _ => .None,
   }
@@ -88,11 +86,9 @@ fn nth_op(expr: AnfExpr, n: Int) AnfOp? {
 // Check if any let-binding contains a specific op kind
 fn has_binop(expr: AnfExpr) Bool {
   case expr {
-    .Let(_, op, body) => {
-      case op {
-        .ABinOp(_, _, _, _) => true,
-        _ => has_binop(body),
-      }
+    .Let(_, op, body) => case op {
+      .ABinOp(_, _, _, _) => true,
+      _ => has_binop(body),
     },
     _ => false,
   }
@@ -100,11 +96,9 @@ fn has_binop(expr: AnfExpr) Bool {
 
 fn has_call(expr: AnfExpr) Bool {
   case expr {
-    .Let(_, op, body) => {
-      case op {
-        .ACall(_, _) => true,
-        _ => has_call(body),
-      }
+    .Let(_, op, body) => case op {
+      .ACall(_, _) => true,
+      _ => has_call(body),
     },
     _ => false,
   }
@@ -112,11 +106,9 @@ fn has_call(expr: AnfExpr) Bool {
 
 fn has_if(expr: AnfExpr) Bool {
   case expr {
-    .Let(_, op, body) => {
-      case op {
-        .AIf(_, _, _) => true,
-        _ => has_if(body),
-      }
+    .Let(_, op, body) => case op {
+      .AIf(_, _, _) => true,
+      _ => has_if(body),
     },
     _ => false,
   }
@@ -124,11 +116,9 @@ fn has_if(expr: AnfExpr) Bool {
 
 fn has_loop(expr: AnfExpr) Bool {
   case expr {
-    .Let(_, op, body) => {
-      case op {
-        .ALoop(_) => true,
-        _ => has_loop(body),
-      }
+    .Let(_, op, body) => case op {
+      .ALoop(_) => true,
+      _ => has_loop(body),
     },
     _ => false,
   }
@@ -136,11 +126,9 @@ fn has_loop(expr: AnfExpr) Bool {
 
 fn has_init(expr: AnfExpr) Bool {
   case expr {
-    .Let(_, op, body) => {
-      case op {
-        .AInit(_) => true,
-        _ => has_init(body),
-      }
+    .Let(_, op, body) => case op {
+      .AInit(_) => true,
+      _ => has_init(body),
     },
     _ => false,
   }
@@ -148,11 +136,9 @@ fn has_init(expr: AnfExpr) Bool {
 
 fn has_assign(expr: AnfExpr) Bool {
   case expr {
-    .Let(_, op, body) => {
-      case op {
-        .AAssign(_, _) => true,
-        _ => has_assign(body),
-      }
+    .Let(_, op, body) => case op {
+      .AAssign(_, _) => true,
+      _ => has_assign(body),
     },
     _ => false,
   }
@@ -160,11 +146,9 @@ fn has_assign(expr: AnfExpr) Bool {
 
 fn has_match(expr: AnfExpr) Bool {
   case expr {
-    .Let(_, op, body) => {
-      case op {
-        .AMatch(_, _) => true,
-        _ => has_match(body),
-      }
+    .Let(_, op, body) => case op {
+      .AMatch(_, _) => true,
+      _ => has_match(body),
     },
     _ => false,
   }
@@ -210,6 +194,7 @@ fn test_literal_void() Result<Void, String> {
 
 fn test_binop_add() Result<Void, String> {
   body := try anf_body("fn f() Int { 1 + 2 }")
+
   // Should be: Let(tmp, ABinOp(Add, ALitInt(1), ALitInt(2), Int), Atom(ALocal(tmp)))
   try assert.equal(count_lets(body), 1)
   op := try nth_op(body, 0).ok_or("no op")
@@ -271,6 +256,7 @@ fn test_unop_neg() Result<Void, String> {
 
 fn test_call() Result<Void, String> {
   module := try anf_src("fn g(x: Int) Int { x }\nfn f() Int { g(42) }")
+
   // f is the second function (index 1)
   body := module.functions[1].body
   try assert.is_true(has_call(body))
@@ -328,9 +314,11 @@ fn test_match() Result<Void, String> {
 // ── M4: Let, Assign, Defer ─────────────────────────────────────────
 fn test_let_binding() Result<Void, String> {
   body := try anf_body("fn f() Int { x := 1 + 2\nx }")
+
   // Should have: Let(tmp, ABinOp(Add,1,2,Int), Let(x, AInit(ALocal(tmp)), Atom(ALocal(x))))
   try assert.is_true(has_init(body))
   try assert.is_true(has_binop(body))
+
   // Tail should be an Atom referencing the let-bound local
   tail := tail_of(body)
 
@@ -342,6 +330,7 @@ fn test_let_binding() Result<Void, String> {
 
 fn test_let_chain() Result<Void, String> {
   body := try anf_body("fn f() Int { x := 1\ny := 2\nx + y }")
+
   // 2 inits + 1 binop = at least 3 let-bindings
   try assert.is_true(count_lets(body) >= 3)
   .Ok({})
@@ -369,6 +358,7 @@ fn test_let_terminal_value() Result<Void, String> {
 // ── op_result_mono metadata ─────────────────────────────────────────
 fn test_op_result_mono() Result<Void, String> {
   fdef := try anf_func("fn f() Int { 1 + 2 }")
+
   // The ABinOp's temp should have an entry in op_result_mono
   try assert.is_true(fdef.op_result_mono.len() > 0)
   .Ok({})
@@ -377,6 +367,7 @@ fn test_op_result_mono() Result<Void, String> {
 // ── Suite ───────────────────────────────────────────────────────────
 pub fn suite() runner.Suite {
   s := runner.suite("ANF Lowering")
+
   // M2: Atoms & simple ops
   s = .test("literal int", test_literal_int)
   s = .test("literal bool", test_literal_bool)
@@ -387,16 +378,19 @@ pub fn suite() runner.Suite {
   s = .test("call", test_call)
   s = .test("array lit", test_array_lit)
   s = .test("nested binop", test_nested_binop)
+
   // M3: Control flow
   s = .test("if expr", test_if_expr)
   s = .test("return", test_return)
   s = .test("loop/break", test_loop_break)
   s = .test("match", test_match)
+
   // M4: Let, Assign, Defer
   s = .test("let binding", test_let_binding)
   s = .test("let chain", test_let_chain)
   s = .test("assign", test_assign)
   s = .test("let terminal value", test_let_terminal_value)
+
   // Metadata
   s = .test("op_result_mono populated", test_op_result_mono)
   s

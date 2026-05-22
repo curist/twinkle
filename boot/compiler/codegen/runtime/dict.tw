@@ -70,46 +70,86 @@ fn vec_internal_null() ValType {
   .Ref(true, .Named("rt_types__VecInternal"))
 }
 
-fn t_pdict() String { "rt_types__PDict" }
+fn t_pdict() String {
+  "rt_types__PDict"
+}
 
-fn t_hamt_node() String { "rt_types__HamtNode" }
+fn t_hamt_node() String {
+  "rt_types__HamtNode"
+}
 
-fn t_hamt_entry() String { "rt_types__HamtEntry" }
+fn t_hamt_entry() String {
+  "rt_types__HamtEntry"
+}
 
-fn t_hamt_collision() String { "rt_types__HamtCollision" }
+fn t_hamt_collision() String {
+  "rt_types__HamtCollision"
+}
 
-fn t_array() String { "rt_types__Array" }
+fn t_array() String {
+  "rt_types__Array"
+}
 
-fn t_pvec() String { "rt_types__PVec" }
+fn t_pvec() String {
+  "rt_types__PVec"
+}
 
-fn t_variant() String { "rt_types__Variant" }
+fn t_variant() String {
+  "rt_types__Variant"
+}
 
-fn t_string() String { "rt_types__String" }
+fn t_string() String {
+  "rt_types__String"
+}
 
-fn t_boxed_int() String { "rt_types__BoxedInt" }
+fn t_boxed_int() String {
+  "rt_types__BoxedInt"
+}
 
-fn t_vec_internal() String { "rt_types__VecInternal" }
+fn t_vec_internal() String {
+  "rt_types__VecInternal"
+}
 
 // Field indices
-fn he_hash() Int { 0 }
+fn he_hash() Int {
+  0
+}
 
-fn he_key() Int { 1 }
+fn he_key() Int {
+  1
+}
 
-fn he_val() Int { 2 }
+fn he_val() Int {
+  2
+}
 
-fn hn_bitmap() Int { 0 }
+fn hn_bitmap() Int {
+  0
+}
 
-fn hn_entries() Int { 1 }
+fn hn_entries() Int {
+  1
+}
 
-fn hc_hash() Int { 1 }
+fn hc_hash() Int {
+  1
+}
 
-fn hc_entries() Int { 2 }
+fn hc_entries() Int {
+  2
+}
 
-fn pd_size() Int { 0 }
+fn pd_size() Int {
+  0
+}
 
-fn pd_root() Int { 1 }
+fn pd_root() Int {
+  1
+}
 
-fn pd_order() Int { 2 }
+fn pd_order() Int {
+  2
+}
 
 pub fn module() WasmModule {
   funcs := [
@@ -137,7 +177,9 @@ pub fn module() WasmModule {
     set_in_place_fn(),
     remove_in_place_fn(),
   ]
-  exports := collect f in funcs { ExportDef.{ wasm_name: f.name, func_sym: f.name } }
+  exports := collect f in funcs {
+    ExportDef.{ wasm_name: f.name, func_sym: f.name }
+  }
   .{
     namespace: "rt.dict",
     types: [],
@@ -553,6 +595,7 @@ fn hash_string_fn() FuncDef {
   // L5=i(i32), L6=see1(i64), L7=see2(i64),
   // L8=off_scratch(i32), L9-L17=wymix scratch
   mix := wymix_instrs(9, 10, 11, 12, 13, 14, 15, 16, 17)
+
   // ── len == 0 ──
   len0: Vector<Instr> = [
     .I64Const(-1800455987208640293),
@@ -560,6 +603,7 @@ fn hash_string_fn() FuncDef {
     .LocalGet(2),
   ]
   len0 = .concat(mix).concat(mix).concat([.Return])
+
   // ── len 1-3 ──
   len1_3: Vector<Instr> = [
     .LocalGet(0),
@@ -600,6 +644,7 @@ fn hash_string_fn() FuncDef {
     .I64Xor,
   ]
   len1_3 = .concat(mix).concat(mix).concat([.Return])
+
   // ── len 4-16 ──
   len4_16: Vector<Instr> = [.I32Const(0), .LocalSet(8)]
   len4_16 = .concat(wyr4_instrs(0, 8))
@@ -652,6 +697,7 @@ fn hash_string_fn() FuncDef {
     ],
   )
   len4_16 = .concat(mix).concat(mix).concat([.Return])
+
   // ── long loop body (len > 48) ──
   long_loop: Vector<Instr> = [
     .LocalGet(5),
@@ -704,6 +750,7 @@ fn hash_string_fn() FuncDef {
     .I64Xor,
     .LocalSet(2),
   ]
+
   // ── medium loop ──
   med_loop: Vector<Instr> = [
     .LocalGet(1),
@@ -725,6 +772,7 @@ fn hash_string_fn() FuncDef {
   med_loop = .concat(
     [.LocalSet(2), .LocalGet(5), .I32Const(16), .I32Add, .LocalSet(5), .Br("med_loop")],
   )
+
   // ── final: a = wyr8(p + n - 16), b = wyr8(p + n - 8) ──
   final_part: Vector<Instr> = [.LocalGet(1), .I32Const(16), .I32Sub, .LocalSet(8)]
   final_part = .concat(wyr8_instrs(0, 8))
@@ -746,6 +794,7 @@ fn hash_string_fn() FuncDef {
     ],
   )
   final_part = .concat(mix).concat(mix)
+
   // ── Assemble body ──
   body: Vector<Instr> = [
     .LocalGet(0),

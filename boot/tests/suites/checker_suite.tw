@@ -68,6 +68,7 @@ fn test_env() resolver.ResolvedEnv {
   env = .bind_function("range_from", "range_from")
   env = .bind_function("error", "error")
   env = .bind_function("println", "println")
+
   // Register Iterator type so checker can look it up by name for iteration checks
   iter_entry := resolver.TypeEntry.{
     id: mono_type.TypeId.{ id: 0 },
@@ -83,6 +84,7 @@ fn test_env() resolver.ResolvedEnv {
     is_extern: false,
   }
   env = .add_type(iter_entry, "Iterator")
+
   // Register Range type (TypeId 3 in stage0) so range operator tests work
   range_entry := resolver.TypeEntry.{
     id: mono_type.TypeId.{ id: 3 },
@@ -128,7 +130,11 @@ fn check_errs_builtins(src: String) Result<Vector<String>, String> {
   }
 
   msgs: Vector<String> = []
-  for d in r.diagnostics { msgs = .append(d.message()) }
+
+  for d in r.diagnostics {
+    msgs = .append(d.message())
+  }
+
   .Ok(msgs)
 }
 
@@ -160,7 +166,11 @@ fn check_errs(src: String) Result<Vector<String>, String> {
   }
 
   msgs: Vector<String> = []
-  for d in r.diagnostics { msgs = .append(d.message()) }
+
+  for d in r.diagnostics {
+    msgs = .append(d.message())
+  }
+
   .Ok(msgs)
 }
 
@@ -172,7 +182,11 @@ fn check_errs_with_env(src: String, env: resolver.ResolvedEnv) Result<Vector<Str
   }
 
   msgs: Vector<String> = []
-  for d in r.diagnostics { msgs = .append(d.message()) }
+
+  for d in r.diagnostics {
+    msgs = .append(d.message())
+  }
+
   .Ok(msgs)
 }
 
@@ -181,16 +195,14 @@ fn find_id_by_span(result: checker.CheckResult, target_offset: Int) Int? {
 
   for eid in result.expr_spans.keys() {
     case result.expr_spans[eid] {
-      .Some(span_start) => {
-        if span_start == target_offset {
-          best = case best {
-            .None => .Some(eid),
-            .Some(prev) => if eid > prev {
-              .Some(eid)
-            } else {
-              .Some(prev)
-            },
-          }
+      .Some(span_start) => if span_start == target_offset {
+        best = case best {
+          .None => .Some(eid),
+          .Some(prev) => if eid > prev {
+            .Some(eid)
+          } else {
+            .Some(prev)
+          },
         }
       },
       .None => {},
@@ -204,27 +216,26 @@ fn type_at(result: checker.CheckResult, src: String, needle: String) Result<Stri
   offset := find_offset(src, needle)
 
   case offset {
-    .Some(off) => {
-      case find_id_by_span(result, off) {
-        .Some(eid) => {
-          case result.type_map[eid] {
-            .Some(ty) => .Ok(rsuite.mono_to_string(ty)),
-            .None => .Err("no type at offset ${off} for '${needle}' (id=${eid})"),
-          }
-        },
-        .None => .Err("no expr id at offset ${off} for '${needle}'"),
-      }
+    .Some(off) => case find_id_by_span(result, off) {
+      .Some(eid) => case result.type_map[eid] {
+        .Some(ty) => .Ok(rsuite.mono_to_string(ty)),
+        .None => .Err("no type at offset ${off} for '${needle}' (id=${eid})"),
+      },
+      .None => .Err("no expr id at offset ${off} for '${needle}'"),
     },
     .None => .Err("'${needle}' not found in source"),
   }
 }
 
-fn find_offset(src: String, needle: String) Int? { find_offset_after(src, needle, 0) }
+fn find_offset(src: String, needle: String) Int? {
+  find_offset_after(src, needle, 0)
+}
 
 fn find_offset_after(src: String, needle: String, start: Int) Int? {
   if needle.len() > src.len() {
     return .None
   }
+
   limit := src.len() - needle.len()
 
   for i in 0..limit + 1 {
@@ -238,9 +249,11 @@ fn find_offset_after(src: String, needle: String, start: Int) Int? {
 
 fn find_offset_nth(src: String, needle: String, n: Int) Int? {
   count := 0
+
   if needle.len() > src.len() {
     return .None
   }
+
   limit := src.len() - needle.len()
 
   for i in 0..limit + 1 {
@@ -263,16 +276,12 @@ fn type_at_nth(result: checker.CheckResult, src: String, needle: String, n: Int)
   offset := find_offset_nth(src, needle, n)
 
   case offset {
-    .Some(off) => {
-      case find_id_by_span(result, off) {
-        .Some(eid) => {
-          case result.type_map[eid] {
-            .Some(ty) => .Ok(rsuite.mono_to_string(ty)),
-            .None => .Err("no type at offset ${off} for '${needle}' (occurrence ${n}, id=${eid})"),
-          }
-        },
-        .None => .Err("no expr id at offset ${off} for '${needle}' (occurrence ${n})"),
-      }
+    .Some(off) => case find_id_by_span(result, off) {
+      .Some(eid) => case result.type_map[eid] {
+        .Some(ty) => .Ok(rsuite.mono_to_string(ty)),
+        .None => .Err("no type at offset ${off} for '${needle}' (occurrence ${n}, id=${eid})"),
+      },
+      .None => .Err("no expr id at offset ${off} for '${needle}' (occurrence ${n})"),
     },
     .None => .Err("'${needle}' occurrence ${n} not found in source"),
   }
@@ -1146,7 +1155,9 @@ pub fn suite() runner.Suite {
         found := false
 
         for m in msgs {
-          if m.contains("to_string") { found = true }
+          if m.contains("to_string") {
+            found = true
+          }
         }
 
         try assert.is_true(found)
@@ -1213,7 +1224,9 @@ pub fn suite() runner.Suite {
         found := false
 
         for m in msgs {
-          if m.contains("try") { found = true }
+          if m.contains("try") {
+            found = true
+          }
         }
 
         try assert.is_true(found)
@@ -1228,7 +1241,9 @@ pub fn suite() runner.Suite {
         found := false
 
         for m in msgs {
-          if m.contains("try") { found = true }
+          if m.contains("try") {
+            found = true
+          }
         }
 
         try assert.is_true(found)
@@ -1577,7 +1592,9 @@ pub fn suite() runner.Suite {
         found := false
 
         for m in msgs {
-          if m.contains("ambiguous") or m.contains("cannot infer") { found = true }
+          if m.contains("ambiguous") or m.contains("cannot infer") {
+            found = true
+          }
         }
 
         try assert.is_true(found)
@@ -1628,7 +1645,9 @@ pub fn suite() runner.Suite {
         found := false
 
         for m in msgs {
-          if m.contains("unknown variant") or m.contains("variant") { found = true }
+          if m.contains("unknown variant") or m.contains("variant") {
+            found = true
+          }
         }
 
         try assert.is_true(found)
@@ -1659,7 +1678,9 @@ pub fn suite() runner.Suite {
         found := false
 
         for m in msgs {
-          if m.contains("expected 1 arguments, got 2") { found = true }
+          if m.contains("expected 1 arguments, got 2") {
+            found = true
+          }
         }
 
         try assert.is_true(found)
@@ -1683,7 +1704,9 @@ pub fn suite() runner.Suite {
         found := false
 
         for m in msgs {
-          if m.contains("field") or m.contains("cannot access") { found = true }
+          if m.contains("field") or m.contains("cannot access") {
+            found = true
+          }
         }
 
         try assert.is_true(found)
@@ -1818,7 +1841,9 @@ pub fn suite() runner.Suite {
         found := false
 
         for m in msgs {
-          if m.contains("assignment") or m.contains("target") { found = true }
+          if m.contains("assignment") or m.contains("target") {
+            found = true
+          }
         }
 
         try assert.is_true(found)
@@ -1849,7 +1874,9 @@ pub fn suite() runner.Suite {
         found := false
 
         for m in msgs {
-          if m.contains("public") or m.contains("pub") { found = true }
+          if m.contains("public") or m.contains("pub") {
+            found = true
+          }
         }
 
         try assert.is_true(found)
@@ -1946,7 +1973,9 @@ pub fn suite() runner.Suite {
         found := false
 
         for m in msgs {
-          if m.contains("no method") or m.contains("no field") { found = true }
+          if m.contains("no method") or m.contains("no field") {
+            found = true
+          }
         }
 
         try assert.is_true(found)
@@ -1961,7 +1990,9 @@ pub fn suite() runner.Suite {
         found := false
 
         for m in msgs {
-          if m.contains("Int.no_such") or m.contains("undefined variable") { found = true }
+          if m.contains("Int.no_such") or m.contains("undefined variable") {
+            found = true
+          }
         }
 
         try assert.is_true(found)
@@ -1975,7 +2006,9 @@ pub fn suite() runner.Suite {
         found := false
 
         for m in msgs {
-          if m.contains("undefined variable") or m.contains("bool_to_string") { found = true }
+          if m.contains("undefined variable") or m.contains("bool_to_string") {
+            found = true
+          }
         }
 
         try assert.is_true(found)
@@ -2033,7 +2066,9 @@ pub fn suite() runner.Suite {
         found := false
 
         for m in msgs {
-          if m.contains("bitwise") { found = true }
+          if m.contains("bitwise") {
+            found = true
+          }
         }
 
         try assert.is_true(found)
@@ -2094,7 +2129,9 @@ pub fn suite() runner.Suite {
             and (m.contains("receiver")
               or m.contains("shape")
               or m.contains("missing")
-              or m.contains("Stringify")) { found = true }
+              or m.contains("Stringify")) {
+            found = true
+          }
         }
 
         try assert.is_true(found)
@@ -2110,7 +2147,9 @@ pub fn suite() runner.Suite {
         found := false
 
         for m in msgs {
-          if m.contains("to_string") and m.contains("String") { found = true }
+          if m.contains("to_string") and m.contains("String") {
+            found = true
+          }
         }
 
         try assert.is_true(found)
@@ -2125,7 +2164,9 @@ pub fn suite() runner.Suite {
         found := false
 
         for m in msgs {
-          if m.contains("case") and (m.contains("sum") or m.contains("scrutinee")) { found = true }
+          if m.contains("case") and (m.contains("sum") or m.contains("scrutinee")) {
+            found = true
+          }
         }
 
         try assert.is_true(found)
@@ -2201,7 +2242,9 @@ pub fn suite() runner.Suite {
         found := false
 
         for m in msgs {
-          if m.contains("defer") and m.contains("diverge") { found = true }
+          if m.contains("defer") and m.contains("diverge") {
+            found = true
+          }
         }
 
         try assert.is_true(found)

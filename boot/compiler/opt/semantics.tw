@@ -135,16 +135,19 @@ pub fn cow_config_from_semantics(semantics: OptimizerSemantics) CowConfig {
     info := semantics.call_semantics[func_id].unwrap_or(control_call())
 
     case info.cow_base_arg {
-      .Some(base_arg) => {
-        cow_ops[func_id] = CowOpEntry.{ base_arg, in_place_id: info.in_place_equivalent }
+      .Some(base_arg) => cow_ops[func_id] = CowOpEntry.{
+        base_arg,
+        in_place_id: info.in_place_equivalent,
       },
       .None => {},
     }
 
-    if info.fresh_result { fresh_producer_ids[func_id] = true }
+    if info.fresh_result {
+      fresh_producer_ids[func_id] = true
+    }
 
     case info.effect {
-      .ReadOnly => { read_only_ids[func_id] = true },
+      .ReadOnly => read_only_ids[func_id] = true,
       _ => {},
     }
   }
@@ -168,7 +171,11 @@ pub fn optimizer_semantics_from_cow_config(config: CowConfig) OptimizerSemantics
   for func_id in config.fresh_producer_ids.keys() {
     current := calls[func_id].unwrap_or(control_call())
     calls[func_id] = CallSemantics.{
-      effect: if current.effect == .Control { .Allocate } else { current.effect },
+      effect: if current.effect == .Control {
+        .Allocate
+      } else {
+        current.effect
+      },
       fresh_result: true,
       cow_base_arg: current.cow_base_arg,
       in_place_equivalent: current.in_place_equivalent,
@@ -190,17 +197,13 @@ pub fn optimizer_semantics_from_cow_config(config: CowConfig) OptimizerSemantics
 
 pub fn op_effect(op: AnfOp, semantics: OptimizerSemantics) EffectKind {
   case op {
-    .ABinOp(binop, _, _, kind) => {
-      case kind {
-        .Int => {
-          case binop {
-            .Div => .Control,
-            .Mod => .Control,
-            _ => .Pure,
-          }
-        },
+    .ABinOp(binop, _, _, kind) => case kind {
+      .Int => case binop {
+        .Div => .Control,
+        .Mod => .Control,
         _ => .Pure,
-      }
+      },
+      _ => .Pure,
     },
     .AInit(_) => .Pure,
     .AUnOp(_, _, _) => .Pure,
@@ -210,9 +213,11 @@ pub fn op_effect(op: AnfOp, semantics: OptimizerSemantics) EffectKind {
     .AVariant(_, _, _) => .Allocate,
     .AArrayLit(_) => .Allocate,
     .AMakeClosure(_, _) => .Allocate,
-    .AIf(_, then_e, else_e) => {
-      if expr_is_pure_with_semantics(then_e, semantics)
-        and expr_is_pure_with_semantics(else_e, semantics) { .Pure } else { .Control }
+    .AIf(_, then_e, else_e) => if expr_is_pure_with_semantics(then_e, semantics)
+      and expr_is_pure_with_semantics(else_e, semantics) {
+      .Pure
+    } else {
+      .Control
     },
     .AMatch(_, arms) => {
       for arm in arms {
@@ -223,11 +228,9 @@ pub fn op_effect(op: AnfOp, semantics: OptimizerSemantics) EffectKind {
 
       .Pure
     },
-    .ACall(.AGlobalFunc(func_id), _) => {
-      case call_info(semantics, func_id) {
-        .Some(info) => info.effect,
-        .None => .Control,
-      }
+    .ACall(.AGlobalFunc(func_id), _) => case call_info(semantics, func_id) {
+      .Some(info) => info.effect,
+      .None => .Control,
     },
     .ACall(_, _) => .Control,
     .AAssign(_, _) => .Control,
@@ -245,11 +248,9 @@ pub fn op_has_fresh_result(op: AnfOp, semantics: OptimizerSemantics) Bool {
     .ARecord(_, _) => true,
     .ARecordUpdate(_, _, _, _, _) => true,
     .AVariant(_, _, _) => true,
-    .ACall(.AGlobalFunc(func_id), _) => {
-      case call_info(semantics, func_id) {
-        .Some(info) => info.fresh_result,
-        .None => false,
-      }
+    .ACall(.AGlobalFunc(func_id), _) => case call_info(semantics, func_id) {
+      .Some(info) => info.fresh_result,
+      .None => false,
     },
     _ => false,
   }
@@ -257,38 +258,30 @@ pub fn op_has_fresh_result(op: AnfOp, semantics: OptimizerSemantics) Bool {
 
 pub fn reusable_update_site(op: AnfOp, semantics: OptimizerSemantics) ReusableUpdateSite? {
   case op {
-    .ARecordUpdate(.ALocal(base), _, _, _, _) => {
-      .Some(
-        ReusableUpdateSite.{ kind: .RecordUpdate, base_local: base, in_place_equivalent: .None },
-      )
-    },
-    .ACall(.AGlobalFunc(func_id), args) => {
-      case call_info(semantics, func_id) {
-        .Some(info) => {
-          case info.cow_base_arg {
-            .Some(base_arg) => {
-              if base_arg >= args.len() {
-                return .None
-              }
+    .ARecordUpdate(.ALocal(base), _, _, _, _) => .Some(
+      ReusableUpdateSite.{ kind: .RecordUpdate, base_local: base, in_place_equivalent: .None },
+    ),
+    .ACall(.AGlobalFunc(func_id), args) => case call_info(semantics, func_id) {
+      .Some(info) => case info.cow_base_arg {
+        .Some(base_arg) => {
+          if base_arg >= args.len() {
+            return .None
+          }
 
-              case args[base_arg] {
-                .ALocal(base) => {
-                  .Some(
-                    ReusableUpdateSite.{
-                      kind: .Call,
-                      base_local: base,
-                      in_place_equivalent: info.in_place_equivalent,
-                    },
-                  )
-                },
-                _ => .None,
-              }
-            },
-            .None => .None,
+          case args[base_arg] {
+            .ALocal(base) => .Some(
+              ReusableUpdateSite.{
+                kind: .Call,
+                base_local: base,
+                in_place_equivalent: info.in_place_equivalent,
+              },
+            ),
+            _ => .None,
           }
         },
         .None => .None,
-      }
+      },
+      .None => .None,
     },
     _ => .None,
   }
@@ -309,12 +302,10 @@ pub fn is_pure_with_semantics(op: AnfOp, semantics: OptimizerSemantics) Bool {
 
       true
     },
-    _ => {
-      case op_effect(op, semantics) {
-        .Pure => true,
-        .Allocate => true,
-        _ => false,
-      }
+    _ => case op_effect(op, semantics) {
+      .Pure => true,
+      .Allocate => true,
+      _ => false,
     },
   }
 }

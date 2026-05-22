@@ -443,6 +443,7 @@ pub fn suite() runner.Suite {
           diagnostics_deadline_ms: 0.0,
           last_published_versions: Dict.new(),
         }
+
         // Build a codeAction request with a diagnostic carrying edit data
         diag_data := json.object([
           json.kv("kind", .Str("unused_import")),
@@ -494,6 +495,7 @@ pub fn suite() runner.Suite {
         step := server_core.handle_message(state, msg)
         out := try only_out(step)
         result := try json.decode(out, json.field("result", json.raw()))
+
         // Should return an array of code actions
         actions := try json.decode(result, json.list(json.raw()))
         try assert.is_true(actions.len() > 0)
@@ -503,6 +505,7 @@ pub fn suite() runner.Suite {
           try json.decode(action, json.field("title", json.string())),
           "Remove unused import 'B'",
         )
+
         // Should have a workspace edit
         edit := try json.decode(action, json.field("edit", json.raw()))
         changes := try json.decode(edit, json.field("changes", json.raw()))
@@ -544,6 +547,7 @@ pub fn suite() runner.Suite {
           diagnostics_deadline_ms: 0.0,
           last_published_versions: Dict.new(),
         }
+
         // Trigger diagnostics via didChange on the main file
         change_params := json.object([
           json.kv(
@@ -565,27 +569,33 @@ pub fn suite() runner.Suite {
           params: .Some(change_params),
         })
         step := publish_due_now(server_core.handle_message(state, msg))
+
         // Find diagnostics for main_import.tw
         main_out := try published_for(step, "file:///tmp/main_import.tw")
         params_out := try json.decode(main_out, json.field("params", json.raw()))
         items := try json.decode(params_out, json.field("diagnostics", json.list(json.raw())))
+
         // Should have an unused import warning for unused_fn
         found_unused := false
 
         for item in items {
           msg_str := case json.decode(item, json.field("message", json.string())) {
             .Ok(m) => m,
-            .Err(_) => { continue },
+            .Err(_) => {
+              continue
+            },
           }
 
           if msg_str.contains("unused_fn") {
             found_unused = true
+
             // Should have data with unused_import kind
             data := try json.decode(item, json.field("data", json.raw()))
             try assert.equal(
               try json.decode(data, json.field("kind", json.string())),
               "unused_import",
             )
+
             // Should have replacement that keeps only used_fn
             replacement := try json.decode(data, json.field("replacement", json.string()))
             try assert.str_contains(replacement, "used_fn")
@@ -611,6 +621,7 @@ pub fn suite() runner.Suite {
           diagnostics_deadline_ms: 0.0,
           last_published_versions: Dict.new(),
         }
+
         // Diagnostic without data
         diag_json := json.object([
           json.kv(

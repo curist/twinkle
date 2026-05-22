@@ -26,6 +26,7 @@ pub fn emit_record_literal(
 ) Vector<Instr> {
   rec_layout := record_layout_of_ctx(result_mono, ctx)
   sym := rec_layout.sym
+
   // Emit fields in order of the struct definition
   out := buf
 
@@ -46,7 +47,9 @@ pub fn emit_record_literal(
       }
     }
 
-    if !found { out = emit_default_value(fl.val_type, out) }
+    if !found {
+      out = emit_default_value(fl.val_type, out)
+    }
   }
 
   out.append(.StructNew(sym))
@@ -129,6 +132,7 @@ pub fn emit_record_update(
       buf,
     )
     buf = .append(.StructSet(rec.sym, field_idx))
+
     // Return the mutated struct
     fns.emit_atom(base, ctx, buf)
   } else {

@@ -180,7 +180,15 @@ pub fn suite() runner.Suite {
       fn() {
         d := make_dict()
         sum := Cell.new(0)
-        for _, v in d { sum.update(fn(n) { n + v }) }
+
+        for _, v in d {
+          sum.update(
+            fn(n) {
+              n + v
+            },
+          )
+        }
+
         try assert.equal(sum.get(), 6)
         .Ok({})
       },
@@ -190,7 +198,11 @@ pub fn suite() runner.Suite {
       fn() {
         d := make_dict()
         count := 0
-        for _ in d { count = count + 1 }
+
+        for _ in d {
+          count = count + 1
+        }
+
         try assert.equal(count, 3)
         .Ok({})
       },

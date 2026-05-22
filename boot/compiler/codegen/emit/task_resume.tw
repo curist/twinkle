@@ -42,14 +42,19 @@ pub type ClosureInfo = .{ body_fid: FuncId, captures: Vector<SlotId> }
 pub fn analyze_task_body(func: PreparedFunc, builtins: BuiltinRegistry, env: ResolvedEnv) TaskResumeInfo {
   yield_fid := bi.id(builtins, "task_yield")
   await_fid := bi.id(builtins, "task_await")
+
   // 1. Flatten the let-chain
   flat := flatten_inner(func.body, [])
+
   // 2. Find suspension points
   suspension_points := find_suspension_points(flat.bindings, yield_fid, await_fid)
+
   if suspension_points.len() == 0 {
     error("analyze_task_body: no suspension points in ${func.name}")
   }
+
   num_segments := suspension_points.len() + 1
+
   // 3. Compute segment membership for each binding
   slot_def_segment: Dict<Int, Int> = Dict.new()
   seg := 0
@@ -66,8 +71,14 @@ pub fn analyze_task_body(func: PreparedFunc, builtins: BuiltinRegistry, env: Res
     slot_def_segment[binding.slot.id] = seg
   }
 
-  for cap_sid in func.captures { slot_def_segment[cap_sid.id] = -1 }
-  for param_sid in func.params { slot_def_segment[param_sid.id] = -1 }
+  for cap_sid in func.captures {
+    slot_def_segment[cap_sid.id] = -1
+  }
+
+  for param_sid in func.params {
+    slot_def_segment[param_sid.id] = -1
+  }
+
   // 4. Track uses: max segment where each slot is used
   slot_max_use: Dict<Int, Int> = Dict.new()
   seg = 0
@@ -85,6 +96,7 @@ pub fn analyze_task_body(func: PreparedFunc, builtins: BuiltinRegistry, env: Res
   }
 
   slot_max_use = track_uses_in_atom(flat.tail, num_segments - 1, slot_max_use)
+
   // 5. Determine hoisted slots
   hoisted_slots: Vector<SlotId> = []
   hoisted_set: Dict<Int, Int> = Dict.new()
@@ -126,7 +138,9 @@ pub fn analyze_task_body(func: PreparedFunc, builtins: BuiltinRegistry, env: Res
         await_target_fields = .append(frame_field_idx)
         frame_field_idx = frame_field_idx + 1
       },
-      .Yield => { await_target_fields = .append(-1) },
+      .Yield => {
+        await_target_fields = .append(-1)
+      },
     }
   }
 
@@ -189,7 +203,7 @@ type FlatChain = .{ bindings: Vector<LetBinding>, tail: PreparedAtom }
 
 fn flatten_inner(expr: PreparedExpr, acc: Vector<LetBinding>) FlatChain {
   case expr {
-    .Let(slot, op, body) => { flatten_inner(body, acc.append(LetBinding.{ slot, op })) },
+    .Let(slot, op, body) => flatten_inner(body, acc.append(LetBinding.{ slot, op })),
     .Atom(atom) => FlatChain.{ bindings: acc, tail: atom },
     .Return(.Some(atom)) => FlatChain.{ bindings: acc, tail: atom },
     .Return(.None) => FlatChain.{ bindings: acc, tail: .ALitVoid },
@@ -204,7 +218,9 @@ fn find_suspension_points(bindings: Vector<LetBinding>, yield_fid: FuncId, await
 
   for binding, i in bindings {
     case classify_op(binding.op, yield_fid, await_fid) {
-      .Some(kind) => { result = .append(SuspensionPoint.{ slot: binding.slot, kind, index: i }) },
+      .Some(kind) => {
+        result = .append(SuspensionPoint.{ slot: binding.slot, kind, index: i })
+      },
       .None => {},
     }
   }
@@ -214,21 +230,19 @@ fn find_suspension_points(bindings: Vector<LetBinding>, yield_fid: FuncId, await
 
 fn classify_op(op: PreparedOp, yield_fid: FuncId, await_fid: FuncId) SuspendKind? {
   case op {
-    .ACall(callee, _) => {
-      case callee {
-        .AGlobalFunc(fid) => {
-          if fid.id == yield_fid.id {
-            return .Some(.Yield)
-          }
+    .ACall(callee, _) => case callee {
+      .AGlobalFunc(fid) => {
+        if fid.id == yield_fid.id {
+          return .Some(.Yield)
+        }
 
-          if fid.id == await_fid.id {
-            return .Some(.Await)
-          }
+        if fid.id == await_fid.id {
+          return .Some(.Await)
+        }
 
-          .None
-        },
-        _ => .None,
-      }
+        .None
+      },
+      _ => .None,
     },
     _ => .None,
   }
@@ -238,7 +252,11 @@ fn track_uses_in_op(op: PreparedOp, seg: Int, uses: Dict<Int, Int>) Dict<Int, In
   case op {
     .ACall(callee, args) => {
       uses = track_uses_in_atom(callee, seg, uses)
-      for a in args { uses = track_uses_in_atom(a, seg, uses) }
+
+      for a in args {
+        uses = track_uses_in_atom(a, seg, uses)
+      }
+
       uses
     },
     .AIf(cond, _, _) => track_uses_in_atom(cond, seg, uses),
@@ -249,11 +267,17 @@ fn track_uses_in_op(op: PreparedOp, seg: Int, uses: Dict<Int, Int>) Dict<Int, In
     },
     .AUnOp(_, a, _) => track_uses_in_atom(a, seg, uses),
     .AMakeClosure(_, captures) => {
-      for c in captures { uses = track_uses_in_slot(c, seg, uses) }
+      for c in captures {
+        uses = track_uses_in_slot(c, seg, uses)
+      }
+
       uses
     },
     .ARecord(_, fields) => {
-      for f in fields { uses = track_uses_in_atom(f.value, seg, uses) }
+      for f in fields {
+        uses = track_uses_in_atom(f.value, seg, uses)
+      }
+
       uses
     },
     .ARecordGet(a, _, _) => track_uses_in_atom(a, seg, uses),
@@ -262,11 +286,17 @@ fn track_uses_in_op(op: PreparedOp, seg: Int, uses: Dict<Int, Int>) Dict<Int, In
       track_uses_in_atom(b, seg, uses)
     },
     .AVariant(_, _, args) => {
-      for a in args { uses = track_uses_in_atom(a, seg, uses) }
+      for a in args {
+        uses = track_uses_in_atom(a, seg, uses)
+      }
+
       uses
     },
     .AArrayLit(elems) => {
-      for e in elems { uses = track_uses_in_atom(e, seg, uses) }
+      for e in elems {
+        uses = track_uses_in_atom(e, seg, uses)
+      }
+
       uses
     },
     .AIndex(a, b, _, _) => {
@@ -297,7 +327,11 @@ fn track_uses_in_slot(sid: SlotId, seg: Int, uses: Dict<Int, Int>) Dict<Int, Int
     .Some(s) => s,
     .None => -1,
   }
-  if seg > cur { uses[sid.id] = seg }
+
+  if seg > cur {
+    uses[sid.id] = seg
+  }
+
   uses
 }
 

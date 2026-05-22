@@ -3,6 +3,7 @@
 pub fn find_map<A, B>(xs: Vector<A>, f: fn(A) B?) B? {
   for x in xs {
     v := f(x)
+
     if v.is_some() {
       return v
     }
@@ -15,6 +16,7 @@ pub fn find_map<A, B>(xs: Vector<A>, f: fn(A) B?) B? {
 pub fn find_map_indexed<A, B>(xs: Vector<A>, f: fn(A, Int) B?) B? {
   for x, i in xs {
     v := f(x, i)
+
     if v.is_some() {
       return v
     }

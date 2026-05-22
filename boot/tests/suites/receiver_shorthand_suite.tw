@@ -26,7 +26,15 @@ pub fn suite() runner.Suite {
       "chained methods",
       fn() {
         xs: Vector<Int> = [1, 2, 3, 4, 5]
-        xs = .filter(fn(x) { x > 2 }).map(fn(x) { x * 10 })
+        xs = .filter(
+          fn(x) {
+            x > 2
+          },
+        ).map(
+          fn(x) {
+            x * 10
+          },
+        )
         try assert.equal(xs.len(), 3)
         try assert.equal(xs[0], 30)
         try assert.equal(xs[1], 40)

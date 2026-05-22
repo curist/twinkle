@@ -66,16 +66,22 @@ pub fn mono_to_key(ty: MonoType) String {
     .Never => "never",
     .Named(tid, args) => {
       base := "t${tid.id}"
+
       if args.len() == 0 {
         return base
       }
-      parts := collect a in args { mono_to_key(a) }
+
+      parts := collect a in args {
+        mono_to_key(a)
+      }
       "${base}_${parts.join("_")}"
     },
     .Vector(elem) => "vec_${mono_to_key(elem)}",
     .Dict(k, v) => "dict_${mono_to_key(k)}_${mono_to_key(v)}",
     .Function(params, ret) => {
-      parts := collect p in params { mono_to_key(p) }
+      parts := collect p in params {
+        mono_to_key(p)
+      }
       "fn_${parts.join("_")}_${mono_to_key(ret)}"
     },
     .Optional(inner) => "opt_${mono_to_key(inner)}",
@@ -151,7 +157,11 @@ fn is_iterator_type(env: ResolvedEnv, tid: TypeId) Bool {
 }
 
 fn layout_of_iterator(args: Vector<MonoType>, env: ResolvedEnv) WasmLayout {
-  yield_ty := if args.len() > 0 { args[0] } else { MonoType.Void }
+  yield_ty := if args.len() > 0 {
+    args[0]
+  } else {
+    MonoType.Void
+  }
   .Iterator_(
     WasmIteratorLayout.{
       state_sym: "rt_types__IterState",
@@ -163,7 +173,11 @@ fn layout_of_iterator(args: Vector<MonoType>, env: ResolvedEnv) WasmLayout {
 
 fn layout_of_named(tid: TypeId, args: Vector<MonoType>, env: ResolvedEnv) WasmLayout {
   if is_cell_type(env, tid) {
-    inner := if args.len() > 0 { args[0] } else { MonoType.Void }
+    inner := if args.len() > 0 {
+      args[0]
+    } else {
+      MonoType.Void
+    }
 
     return .Cell_(layout_hint_of(inner, env))
   }
@@ -192,6 +206,7 @@ fn layout_of_named(tid: TypeId, args: Vector<MonoType>, env: ResolvedEnv) WasmLa
           "layout_of_named: ${name} expected ${type_params.len()} type arg(s), got ${args.len()}",
         )
       }
+
       sym := "\$${name}_${mono_to_key(.Named(tid, args))}"
       field_layouts := collect f, i in fields {
         // Substitute type params with concrete args
@@ -210,6 +225,7 @@ fn layout_of_named(tid: TypeId, args: Vector<MonoType>, env: ResolvedEnv) WasmLa
           "layout_of_named: ${name} expected ${type_params.len()} type arg(s), got ${args.len()}",
         )
       }
+
       layout_of_sum_def(tid, args, name, type_params, variants, env)
     },
     .Alias(name, type_params, target) => {
@@ -218,6 +234,7 @@ fn layout_of_named(tid: TypeId, args: Vector<MonoType>, env: ResolvedEnv) WasmLa
           "layout_of_named: ${name} expected ${type_params.len()} type arg(s), got ${args.len()}",
         )
       }
+
       // Resolve alias and compute layout of the target
       layout_of(subst_type_params(target, type_params, args), env)
     },
@@ -233,6 +250,7 @@ fn layout_of_sum_def(
   env: ResolvedEnv,
 ) WasmLayout {
   sym := "\$${name}_${mono_to_key(.Named(tid, args))}"
+
   // Build variant layouts
   offset := 1 // field 0 is the tag
   var_layouts := collect v, i in variants {
@@ -314,7 +332,9 @@ fn layout_of_result(ok: MonoType, err: MonoType, env: ResolvedEnv) WasmLayout {
 }
 
 fn layout_of_function(params: Vector<MonoType>, ret: MonoType, env: ResolvedEnv) WasmLayout {
-  param_vts := collect p in params { val_type_of_mono(p, env) }
+  param_vts := collect p in params {
+    val_type_of_mono(p, env)
+  }
   ret_vt: ValType? = case ret {
     .Never => .None,
     .Void => .None,
@@ -393,7 +413,11 @@ pub fn val_type_of_mono(ty: MonoType, env: ResolvedEnv) ValType {
     .String => .Ref(true, .Named("rt_types__String")),
     .Named(tid, args) => {
       if is_cell_type(env, tid) {
-        inner := if args.len() > 0 { args[0] } else { MonoType.Void }
+        inner := if args.len() > 0 {
+          args[0]
+        } else {
+          MonoType.Void
+        }
 
         return val_type_of(.Cell_(layout_hint_of(inner, env)))
       }
@@ -453,15 +477,25 @@ pub fn collect_eq_type_layouts(layout_cache: Dict<String, WasmLayout>) EqTypeLay
 
   for key in layout_cache.keys() {
     case layout_cache[key] {
-      .Some(.Record(rec)) => { records = .append(rec) },
-      .Some(.Sum(sum)) => { sums = .append(sum) },
+      .Some(.Record(rec)) => {
+        records = .append(rec)
+      },
+      .Some(.Sum(sum)) => {
+        sums = .append(sum)
+      },
       _ => {},
     }
   }
 
   records = .sort_by(
-    fn(a: WasmRecordLayout, b: WasmRecordLayout) Order { compare_strings(a.sym, b.sym) },
+    fn(a: WasmRecordLayout, b: WasmRecordLayout) Order {
+      compare_strings(a.sym, b.sym)
+    },
   )
-  sums = .sort_by(fn(a: WasmSumLayout, b: WasmSumLayout) Order { compare_strings(a.sym, b.sym) })
+  sums = .sort_by(
+    fn(a: WasmSumLayout, b: WasmSumLayout) Order {
+      compare_strings(a.sym, b.sym)
+    },
+  )
   .{ records, sums }
 }

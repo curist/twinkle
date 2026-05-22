@@ -1,2 +1,4 @@
 // Bottom of the chain: no imports.
-pub fn base_value() Int { 100 }
+pub fn base_value() Int {
+  100
+}

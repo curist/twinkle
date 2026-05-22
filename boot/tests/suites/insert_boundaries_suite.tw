@@ -13,11 +13,17 @@ use tests.assert
 use tests.runner
 
 // ── Helpers ─────────────────────────────────────────────────────────
-fn lid(n: Int) LocalId { LocalId.{ id: n } }
+fn lid(n: Int) LocalId {
+  LocalId.{ id: n }
+}
 
-fn fid(n: Int) FuncId { FuncId.{ id: n } }
+fn fid(n: Int) FuncId {
+  FuncId.{ id: n }
+}
 
-fn empty_env() ResolvedEnv { resolver.empty_env() }
+fn empty_env() ResolvedEnv {
+  resolver.empty_env()
+}
 
 fn empty_registry() WasmTypeRegistry {
   WasmTypeRegistry.{
@@ -51,13 +57,21 @@ fn registry_with_layouts(types: Vector<MonoType>) WasmTypeRegistry {
   reg
 }
 
-fn empty_builtins() BuiltinRegistry { make_builtin_registry() }
+fn empty_builtins() BuiltinRegistry {
+  make_builtin_registry()
+}
 
-fn mk_param(id: Int, ty: MonoType) Param { Param.{ local: lid(id), ty } }
+fn mk_param(id: Int, ty: MonoType) Param {
+  Param.{ local: lid(id), ty }
+}
 
 fn mk_mono_map(entries: Vector<Int>, types: Vector<MonoType>) Dict<Int, MonoType> {
   d: Dict<Int, MonoType> = Dict.new()
-  for k, i in entries { d[k] = types[i] }
+
+  for k, i in entries {
+    d[k] = types[i]
+  }
+
   d
 }
 
@@ -132,7 +146,11 @@ fn count_wraps_op(op: AnfOp) Int {
     .AIf(_, then_e, else_e) => count_wraps_expr(then_e) + count_wraps_expr(else_e),
     .AMatch(_, arms) => {
       s := 0
-      for arm in arms { s = s + count_wraps_expr(arm.body) }
+
+      for arm in arms {
+        s = s + count_wraps_expr(arm.body)
+      }
+
       s
     },
     .ALoop(inner) => count_wraps_expr(inner),
@@ -154,7 +172,11 @@ fn count_make_closures_op(op: AnfOp) Int {
     .AIf(_, then_e, else_e) => count_make_closures_expr(then_e) + count_make_closures_expr(else_e),
     .AMatch(_, arms) => {
       s := 0
-      for arm in arms { s = s + count_make_closures_expr(arm.body) }
+
+      for arm in arms {
+        s = s + count_make_closures_expr(arm.body)
+      }
+
       s
     },
     .ALoop(inner) => count_make_closures_expr(inner),
@@ -176,7 +198,11 @@ fn count_unwraps_op(op: AnfOp) Int {
     .AIf(_, then_e, else_e) => count_unwraps_expr(then_e) + count_unwraps_expr(else_e),
     .AMatch(_, arms) => {
       s := 0
-      for arm in arms { s = s + count_unwraps_expr(arm.body) }
+
+      for arm in arms {
+        s = s + count_unwraps_expr(arm.body)
+      }
+
       s
     },
     .ALoop(inner) => count_unwraps_expr(inner),
@@ -283,6 +309,7 @@ pub fn suite() runner.Suite {
           "test",
           mk_abi([.Anyref, .Anyref], [.Anyref]),
         )
+
         // Reconstruct with correct fid in the body
         body2: AnfExpr = .Let(
           lid(10),
@@ -301,8 +328,10 @@ pub fn suite() runner.Suite {
         anf2 := mk_module([func2])
         result := insert_boundaries(anf2, reg, builtins, empty_env())
         result_body := result.functions[0].body
+
         // Int arg should be wrapped (String arg should not)
         try assert.equal(count_wraps_expr(result_body), 1)
+
         // Check the wrap is for Int
         wrap_ty := try first_wrap_mono(result_body).ok_or("no AWrapAnyref found")
 
@@ -334,6 +363,7 @@ pub fn suite() runner.Suite {
         reg := registry_with_layouts([MonoType.Int, MonoType.String])
         result := insert_boundaries(anf, reg, builtins, empty_env())
         result_body := result.functions[0].body
+
         // Result should be unwrapped from anyref to Int
         try assert.equal(count_unwraps_expr(result_body), 1)
         unwrap_ty := try first_unwrap_mono(result_body).ok_or("no AUnwrapAnyref found")
@@ -368,6 +398,7 @@ pub fn suite() runner.Suite {
         reg := registry_with_layouts([MonoType.String])
         result := insert_boundaries(anf, reg, builtins, empty_env())
         result_body := result.functions[0].body
+
         // String → anyref needs no wrap (subtype), anyref → String needs unwrap (ref.cast)
         try assert.equal(count_wraps_expr(result_body), 0)
         try assert.equal(count_unwraps_expr(result_body), 1)
@@ -398,6 +429,7 @@ pub fn suite() runner.Suite {
         reg := registry_with_layouts([MonoType.Int, MonoType.Vector(.Int)])
         result := insert_boundaries(anf, reg, builtins, empty_env())
         result_body := result.functions[0].body
+
         // Vector → anyref needs no wrap (subtype), anyref → Vector needs unwrap (ref.cast)
         try assert.equal(count_wraps_expr(result_body), 0)
         try assert.equal(count_unwraps_expr(result_body), 1)
@@ -536,6 +568,7 @@ pub fn suite() runner.Suite {
         result := insert_boundaries(anf, reg, builtins, empty_env())
         result_body := result.functions[0].body
         try assert.equal(count_wraps_expr(result_body), 0)
+
         // i32 result to Int (i64) is a conversion, not an anyref boundary
         try assert.equal(count_unwraps_expr(result_body), 0)
         .Ok({})
@@ -573,8 +606,10 @@ pub fn suite() runner.Suite {
         reg := registry_with_layouts([MonoType.Int, MonoType.Vector(.Int)])
         result := insert_boundaries(anf, reg, builtins, empty_env())
         result_body := result.functions[0].body
+
         // Only elem (3rd arg, Int at anyref position) should be wrapped
         try assert.equal(count_wraps_expr(result_body), 1)
+
         // Result is ref $Array, not anyref → no unwrap
         try assert.equal(count_unwraps_expr(result_body), 0)
         .Ok({})
@@ -603,17 +638,21 @@ pub fn suite() runner.Suite {
         reg := registry_with_layouts([MonoType.Int])
         result := insert_boundaries(anf, reg, builtins, empty_env())
         result_body := result.functions[0].body
+
         // Should have 2 wraps + 1 unwrap
         try assert.equal(count_wraps_expr(result_body), 2)
         try assert.equal(count_unwraps_expr(result_body), 1)
+
         // All let-bound locals should be unique (no ID collision)
         locals := collect_let_locals(result_body)
         seen: Dict<Int, Bool> = Dict.new()
 
         for id in locals {
           case seen[id] {
-            .Some(_) => { return assert.fail("duplicate local ID: ${id}") },
-            .None => { seen[id] = true },
+            .Some(_) => {
+              return assert.fail("duplicate local ID: ${id}")
+            },
+            .None => seen[id] = true,
           }
         }
 
@@ -642,8 +681,12 @@ pub fn suite() runner.Suite {
 
         case result.functions[0].op_result_mono[11] {
           .Some(.Anyref_) => {},
-          .Some(_) => { return assert.fail("expected wrap temp local 11 to be typed as Anyref_") },
-          .None => { return assert.fail("missing wrap temp local 11") },
+          .Some(_) => {
+            return assert.fail("expected wrap temp local 11 to be typed as Anyref_")
+          },
+          .None => {
+            return assert.fail("missing wrap temp local 11")
+          },
         }
 
         case result.functions[0].op_result_mono[12] {
@@ -657,6 +700,7 @@ pub fn suite() runner.Suite {
       "builtin registry ABI covers all runtime builtins",
       fn() {
         builtins := bi.make_builtin_registry()
+
         // Spot-check a few key entries via builtins.by_id
         // println: (ref null $String) → void
         println_fid := bi.id(builtins, "println")
@@ -666,7 +710,9 @@ pub fn suite() runner.Suite {
             try assert.equal(entry.abi.param_types.len(), 1)
             try assert.equal(entry.abi.result_types.len(), 0)
           },
-          .None => { return assert.fail("missing entry for println") },
+          .None => {
+            return assert.fail("missing entry for println")
+          },
         }
 
         // dict_set: (ref null $Dict, anyref, anyref) → (ref $Dict)
@@ -680,10 +726,14 @@ pub fn suite() runner.Suite {
             // Second param should be anyref (key)
             case entry.abi.param_types[1] {
               .Anyref => {},
-              _ => { return assert.fail("dict_set param 1 should be anyref") },
+              _ => {
+                return assert.fail("dict_set param 1 should be anyref")
+              },
             }
           },
-          .None => { return assert.fail("missing entry for dict_set") },
+          .None => {
+            return assert.fail("missing entry for dict_set")
+          },
         }
 
         // int_to_string: (i64) → (ref $String)
@@ -695,10 +745,14 @@ pub fn suite() runner.Suite {
 
             case entry.abi.param_types[0] {
               .I64 => {},
-              _ => { return assert.fail("int_to_string param should be I64") },
+              _ => {
+                return assert.fail("int_to_string param should be I64")
+              },
             }
           },
-          .None => { return assert.fail("missing entry for int_to_string") },
+          .None => {
+            return assert.fail("missing entry for int_to_string")
+          },
         }
 
         // vector__set_unsafe: (ref null $Array, i32, anyref) → (ref $Array)
@@ -710,10 +764,14 @@ pub fn suite() runner.Suite {
 
             case entry.abi.param_types[2] {
               .Anyref => {},
-              _ => { return assert.fail("vector__set_unsafe param 2 should be anyref") },
+              _ => {
+                return assert.fail("vector__set_unsafe param 2 should be anyref")
+              },
             }
           },
-          .None => { return assert.fail("missing entry for vector__set_unsafe") },
+          .None => {
+            return assert.fail("missing entry for vector__set_unsafe")
+          },
         }
 
         .Ok({})

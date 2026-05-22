@@ -57,13 +57,11 @@ fn rewrite_loop_op_subexpr(
   builder_push_id: FuncId,
 ) AnfOp {
   case op {
-    .AIf(cond, then_e, else_e) => {
-      AnfOp.AIf(
-        cond,
-        rewrite_loop_expr(then_e, base, builder, push_id, builder_push_id),
-        rewrite_loop_expr(else_e, base, builder, push_id, builder_push_id),
-      )
-    },
+    .AIf(cond, then_e, else_e) => AnfOp.AIf(
+      cond,
+      rewrite_loop_expr(then_e, base, builder, push_id, builder_push_id),
+      rewrite_loop_expr(else_e, base, builder, push_id, builder_push_id),
+    ),
     .AMatch(scrutinee, arms) => {
       new_arms: Vector<AnfMatchArm> = collect arm in arms {
         AnfMatchArm.{
@@ -90,9 +88,11 @@ pub fn rewrite_loop_region(
   builder: BuilderConfig,
 ) LoopRewrite? {
   sites := try analyze_loop_push_sites(loop_body, base, builder.push_id)
+
   if sites == 0 {
     return .None
   }
+
   builder_local := LocalId.{ id: next_local }
   freeze_local := LocalId.{ id: next_local + 1 }
   assign_local := LocalId.{ id: next_local + 2 }
@@ -104,9 +104,11 @@ pub fn rewrite_loop_region(
     builder.builder_push_id,
   )
   rewritten_sites := count_global_call_sites(rewritten_body, builder.builder_push_id)
+
   if rewritten_sites == 0 or rewritten_sites != sites {
     return .None
   }
+
   init: BuilderInit = if use_builder_new {
     .New
   } else {

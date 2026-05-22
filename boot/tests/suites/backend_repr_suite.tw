@@ -26,11 +26,17 @@ use tests.assert
 use tests.runner
 
 // ── Helpers ──────────────────────────────────────────────────────────
-fn lid(n: Int) LocalId { LocalId.{ id: n } }
+fn lid(n: Int) LocalId {
+  LocalId.{ id: n }
+}
 
-fn fid(n: Int) FuncId { FuncId.{ id: n } }
+fn fid(n: Int) FuncId {
+  FuncId.{ id: n }
+}
 
-fn empty_env() ResolvedEnv { resolver.empty_env() }
+fn empty_env() ResolvedEnv {
+  resolver.empty_env()
+}
 
 fn empty_registry() WasmTypeRegistry {
   WasmTypeRegistry.{
@@ -52,9 +58,13 @@ fn empty_registry() WasmTypeRegistry {
   }
 }
 
-fn empty_builtins() BuiltinRegistry { make_builtin_registry() }
+fn empty_builtins() BuiltinRegistry {
+  make_builtin_registry()
+}
 
-fn no_captures() Dict<Int, Vector<CaptureParam>> { Dict.new() }
+fn no_captures() Dict<Int, Vector<CaptureParam>> {
+  Dict.new()
+}
 
 fn mk_abi(params: Vector<ValType>, results: Vector<ValType>) AbiContract {
   AbiContract.{ param_types: params, result_types: results }
@@ -238,11 +248,17 @@ fn mk_module(funcs: Vector<AnfFunctionDef>) AnfModule {
 
 fn mk_mono_map(entries: Vector<Int>, types: Vector<MonoType>) Dict<Int, MonoType> {
   d: Dict<Int, MonoType> = Dict.new()
-  for k, i in entries { d[k] = types[i] }
+
+  for k, i in entries {
+    d[k] = types[i]
+  }
+
   d
 }
 
-fn mk_param(id: Int, ty: MonoType) Param { Param.{ local: lid(id), ty } }
+fn mk_param(id: Int, ty: MonoType) Param {
+  Param.{ local: lid(id), ty }
+}
 
 fn prepared_pf(params: Vector<Param>, body: AnfExpr, mono_map: Dict<Int, MonoType>, ret: MonoType) PreparedFunc {
   func := mk_func_def(1, "f", params, ret, body, mono_map)
@@ -254,28 +270,84 @@ fn prepared_pf(params: Vector<Param>, body: AnfExpr, mono_map: Dict<Int, MonoTyp
 // ── repr_of_mono tests ────────────────────────────────────────────────
 pub fn suite() runner.Suite {
   runner.suite("backend repr assign (Phase 4b)")
-    .test("Int → I64", fn() { assert_repr(.Int, .I64) })
-    .test("Float → F64", fn() { assert_repr(.Float, .F64) })
-    .test("Bool → I32", fn() { assert_repr(.Bool, .I32) })
-    .test("Byte → I32", fn() { assert_repr(.Byte, .I32) })
-    .test("String → TypedRef", fn() { assert_repr(.String, .TypedRef(.String)) })
-    .test("Vector<Int> → TypedRef", fn() { assert_repr(.Vector(.Int), .TypedRef(.Vector(.Int))) })
+    .test(
+      "Int → I64",
+      fn() {
+        assert_repr(.Int, .I64)
+      },
+    )
+    .test(
+      "Float → F64",
+      fn() {
+        assert_repr(.Float, .F64)
+      },
+    )
+    .test(
+      "Bool → I32",
+      fn() {
+        assert_repr(.Bool, .I32)
+      },
+    )
+    .test(
+      "Byte → I32",
+      fn() {
+        assert_repr(.Byte, .I32)
+      },
+    )
+    .test(
+      "String → TypedRef",
+      fn() {
+        assert_repr(.String, .TypedRef(.String))
+      },
+    )
+    .test(
+      "Vector<Int> → TypedRef",
+      fn() {
+        assert_repr(.Vector(.Int), .TypedRef(.Vector(.Int)))
+      },
+    )
     .test(
       "Dict<String,Int> → TypedRef",
-      fn() { assert_repr(.Dict(.String, .Int), .TypedRef(.Dict(.String, .Int))) },
+      fn() {
+        assert_repr(.Dict(.String, .Int), .TypedRef(.Dict(.String, .Int)))
+      },
     )
     .test(
       "Optional<Int> → TypedSum",
-      fn() { assert_repr(.Optional(.Int), .TypedSum(.Optional(.Int))) },
+      fn() {
+        assert_repr(.Optional(.Int), .TypedSum(.Optional(.Int)))
+      },
     )
     .test(
       "Result<Int,String> → TypedSum",
-      fn() { assert_repr(.Result(.Int, .String), .TypedSum(.Result(.Int, .String))) },
+      fn() {
+        assert_repr(.Result(.Int, .String), .TypedSum(.Result(.Int, .String)))
+      },
     )
-    .test("Function → ClosureRef", fn() { assert_repr(.Function([.Int], .Bool), .ClosureRef) })
-    .test("Void → OpaqueAnyref", fn() { assert_repr(.Void, .OpaqueAnyref) })
-    .test("Anyref_ → OpaqueAnyref", fn() { assert_repr(.Anyref_, .OpaqueAnyref) })
-    .test("Never → DeadValue", fn() { assert_repr(.Never, .DeadValue) })
+    .test(
+      "Function → ClosureRef",
+      fn() {
+        assert_repr(.Function([.Int], .Bool), .ClosureRef)
+      },
+    )
+    .test(
+      "Void → OpaqueAnyref",
+      fn() {
+        assert_repr(.Void, .OpaqueAnyref)
+      },
+    )
+    .test(
+      "Anyref_ → OpaqueAnyref",
+      fn() {
+        assert_repr(.Anyref_, .OpaqueAnyref)
+      },
+    )
+    .test(
+      "Never → DeadValue",
+      fn() {
+        assert_repr(.Never, .DeadValue)
+      },
+    )
     .test(
       "Int param slot gets I64 repr and I64 wasm_type",
       fn() {
@@ -358,6 +430,7 @@ pub fn suite() runner.Suite {
         anf := mk_module([func])
         prepared := prepare_backend(anf, empty_env(), builtins, no_captures())
         pf := prepared.funcs[0]
+
         // The wrap temp (allocated after L10) must be OpaqueAnyref
         // Scan all let locals for AWrapAnyref
         has_opaque_wrap := false
@@ -365,11 +438,11 @@ pub fn suite() runner.Suite {
         for sid_int in pf.slots.keys() {
           case pf.slots[sid_int] {
             .None => {},
-            .Some(info) => {
-              case info.repr {
-                .OpaqueAnyref => { has_opaque_wrap = true },
-                _ => {},
-              }
+            .Some(info) => case info.repr {
+              .OpaqueAnyref => {
+                has_opaque_wrap = true
+              },
+              _ => {},
             },
           }
         }
@@ -409,6 +482,7 @@ pub fn suite() runner.Suite {
         anf := mk_module([func])
         prepared := prepare_backend(anf, empty_env(), builtins, no_captures())
         pf := prepared.funcs[0]
+
         // L10 was the call result (now replaced by unwrap chain):
         // insert_boundaries produces: raw = call(...); L10 = AUnwrapAnyref(raw, Int)
         // So L10 should get I64 repr (from AUnwrapAnyref target mono = Int)

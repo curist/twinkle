@@ -96,24 +96,37 @@ pub fn plan_wasm_types_impl(
 
   t2 := date.now()
   funcs_by_id: Dict<Int, PreparedFunc> = Dict.new()
-  for func in input.funcs { funcs_by_id[func.func_id.id] = func }
-  for s in scan.strings.keys() { reg = register_string(reg, s) }
+
+  for func in input.funcs {
+    funcs_by_id[func.func_id.id] = func
+  }
+
+  for s in scan.strings.keys() {
+    reg = register_string(reg, s)
+  }
 
   for fid in scan.closure_materialized_funcs.keys() {
     reg.closure_materialized_funcs[fid] = true
     target := case callable_targets.callable_target(FuncId.{ id: fid }, funcs_by_id, builtins, env) {
       .Some(info) => info,
-      .None => { continue },
+      .None => {
+        continue
+      },
     }
     reg = register_func_sig_by_id(reg, FuncId.{ id: fid }, funcs_by_id, builtins, env)
-    if target.typed_closure_support { reg.typed_closure_funcs[fid] = true }
+
+    if target.typed_closure_support {
+      reg.typed_closure_funcs[fid] = true
+    }
   }
 
   for fid in scan.direct_builtin_calls.keys() {
     reg.direct_builtin_calls[fid] = true
 
     case bi.entry(builtins, FuncId.{ id: fid }) {
-      .Some(entry) => { reg = analyze_builtin_call(reg, entry) },
+      .Some(entry) => {
+        reg = analyze_builtin_call(reg, entry)
+      },
       .None => {},
     }
   }
@@ -133,7 +146,7 @@ pub fn plan_wasm_types_impl(
         if pf.is_init {
           for sid_int in pf.slots.keys() {
             case pf.slots[sid_int] {
-              .Some(info) => { all_init_slots[info.source_local.id] = info.mono },
+              .Some(info) => all_init_slots[info.source_local.id] = info.mono,
               .None => {},
             }
           }
@@ -147,9 +160,11 @@ pub fn plan_wasm_types_impl(
             "resolve_module_global_mono: no init function has slot for module global L${k}",
           ),
         }
+
         if !reg.module_globals.has(k) {
           reg.module_globals_order = reg.module_globals_order.append(k)
         }
+
         reg.module_globals[k] = ModuleGlobalEntry.{ sym: "global_local_${k}", mono }
       }
     },
@@ -158,6 +173,7 @@ pub fn plan_wasm_types_impl(
 
   // Always register Array ↔ PVec boundary helpers (needed for host boundary)
   reg = ensure_boundary_imports(reg)
+
   // always-emitted helpers (emit.tw lines 127-130) — ensure their types are registered
   reg = register_mono(reg, MonoType.Result(MonoType.Vector(MonoType.Byte), MonoType.String), env)
   reg = register_mono(reg, MonoType.Optional(MonoType.String), env)
@@ -195,10 +211,14 @@ fn validate_concrete_mono(ty: MonoType, env: ResolvedEnv, context: String) {
         .Some(.Alias(n, _, _)) => n,
         .None => "TypeId ${tid.id}",
       }
+
       if args.len() < entry.arity {
         error("${context}: ${name} expects ${entry.arity} type arg(s), got ${args.len()}")
       }
-      for arg in args { validate_concrete_mono(arg, env, context) }
+
+      for arg in args {
+        validate_concrete_mono(arg, env, context)
+      }
     },
     .Vector(inner) => validate_concrete_mono(inner, env, context),
     .Dict(k, v) => {
@@ -206,7 +226,10 @@ fn validate_concrete_mono(ty: MonoType, env: ResolvedEnv, context: String) {
       validate_concrete_mono(v, env, context)
     },
     .Function(params, ret) => {
-      for param in params { validate_concrete_mono(param, env, context) }
+      for param in params {
+        validate_concrete_mono(param, env, context)
+      }
+
       validate_concrete_mono(ret, env, context)
     },
     .Optional(inner) => validate_concrete_mono(inner, env, context),
@@ -261,10 +284,14 @@ fn ensure_boundary_imports(reg: WasmTypeRegistry) WasmTypeRegistry {
     already := false
 
     for existing in reg.runtime_imports {
-      if existing.as_sym == imp.as_sym { already = true }
+      if existing.as_sym == imp.as_sym {
+        already = true
+      }
     }
 
-    if !already { reg.runtime_imports = reg.runtime_imports.append(imp) }
+    if !already {
+      reg.runtime_imports = reg.runtime_imports.append(imp)
+    }
   }
 
   reg
@@ -282,7 +309,9 @@ fn register_mono(reg: WasmTypeRegistry, ty: MonoType, env: ResolvedEnv) WasmType
         .Some(_) => reg,
         .None => {
           case reg.in_progress[key] {
-            .Some(true) => { return reg },
+            .Some(true) => {
+              return reg
+            },
             _ => {},
           }
 
@@ -343,8 +372,13 @@ fn register_named_dependencies(
           "register_named_dependencies: ${name} expected ${type_params.len()} type arg(s), got ${args.len()}",
         )
       }
+
       cur := reg
-      for f in fields { cur = register_mono(cur, subst_type_params(f.ty, type_params, args), env) }
+
+      for f in fields {
+        cur = register_mono(cur, subst_type_params(f.ty, type_params, args), env)
+      }
+
       cur
     },
     .Sum(name, type_params, variants) => {
@@ -353,6 +387,7 @@ fn register_named_dependencies(
           "register_named_dependencies: ${name} expected ${type_params.len()} type arg(s), got ${args.len()}",
         )
       }
+
       cur := reg
 
       for v in variants {
@@ -369,13 +404,19 @@ fn register_named_dependencies(
           "register_named_dependencies: ${name} expected ${type_params.len()} type arg(s), got ${args.len()}",
         )
       }
+
       register_mono(reg, subst_type_params(target, type_params, args), env)
     },
   }
 }
 
 fn register_mono_list(reg: WasmTypeRegistry, types: Vector<MonoType>, env: ResolvedEnv) WasmTypeRegistry {
-  types.fold(reg, fn(cur, ty) { register_mono(cur, ty, env) })
+  types.fold(
+    reg,
+    fn(cur, ty) {
+      register_mono(cur, ty, env)
+    },
+  )
 }
 
 fn find_type_entry(env: ResolvedEnv, tid: TypeId) TypeEntry {
@@ -421,35 +462,31 @@ fn append_type_def(reg: WasmTypeRegistry, sym: String, td: TypeDef) WasmTypeRegi
 
 fn register_layout_type_def(reg: WasmTypeRegistry, layout: WasmLayout) WasmTypeRegistry {
   case layout {
-    .Record(rec) => {
-      case reg.type_index[rec.sym] {
-        .Some(_) => reg,
-        .None => {
-          fields := collect f in rec.fields {
-            FieldDef.{ name: .Some(f.name), mutable: true, ty: f.val_type }
-          }
-          td: TypeDef = .Struct(rec.sym, fields, .None, false)
-          append_type_def(reg, rec.sym, td)
-        },
-      }
+    .Record(rec) => case reg.type_index[rec.sym] {
+      .Some(_) => reg,
+      .None => {
+        fields := collect f in rec.fields {
+          FieldDef.{ name: .Some(f.name), mutable: true, ty: f.val_type }
+        }
+        td: TypeDef = .Struct(rec.sym, fields, .None, false)
+        append_type_def(reg, rec.sym, td)
+      },
     },
-    .Sum(sum) => {
-      case reg.type_index[sum.sym] {
-        .Some(_) => reg,
-        .None => {
-          // Sum struct: tag (i32) + all payload fields
-          fields: Vector<FieldDef> = [.{ name: .Some("tag"), mutable: false, ty: .I32 }]
+    .Sum(sum) => case reg.type_index[sum.sym] {
+      .Some(_) => reg,
+      .None => {
+        // Sum struct: tag (i32) + all payload fields
+        fields: Vector<FieldDef> = [.{ name: .Some("tag"), mutable: false, ty: .I32 }]
 
-          for v in sum.variants {
-            for pt, i in v.payload_types {
-              fields = .append(.{ name: .Some("${v.name}_${i}"), mutable: false, ty: pt })
-            }
+        for v in sum.variants {
+          for pt, i in v.payload_types {
+            fields = .append(.{ name: .Some("${v.name}_${i}"), mutable: false, ty: pt })
           }
+        }
 
-          td := TypeDef.Struct(sum.sym, fields, .None, false)
-          append_type_def(reg, sum.sym, td)
-        },
-      }
+        td := TypeDef.Struct(sum.sym, fields, .None, false)
+        append_type_def(reg, sum.sym, td)
+      },
     },
     .Closure(c) => {
       reg = register_closure_func_type(reg, c)
@@ -613,8 +650,13 @@ fn topo_sort_type_defs(reg: WasmTypeRegistry) WasmTypeRegistry {
   if reg.type_defs.len() <= 1 {
     return reg
   }
+
   defs_by_name: Dict<String, TypeDef> = Dict.new()
-  for td in reg.type_defs { defs_by_name[type_def_name(td)] = td }
+
+  for td in reg.type_defs {
+    defs_by_name[type_def_name(td)] = td
+  }
+
   ordered_names: Vector<String> = []
   emitted: Dict<String, Bool> = Dict.new()
   remaining := reg.type_defs.len()
@@ -632,11 +674,11 @@ fn topo_sort_type_defs(reg: WasmTypeRegistry) WasmTypeRegistry {
 
           for dep in type_def_deps(td) {
             case defs_by_name[dep] {
-              .Some(_) => {
-                case emitted[dep] {
-                  .Some(_) => {},
-                  .None => { ready = false },
-                }
+              .Some(_) => case emitted[dep] {
+                .Some(_) => {},
+                .None => {
+                  ready = false
+                },
               },
               .None => {},
             }
@@ -718,12 +760,21 @@ fn type_def_deps(td: TypeDef) Vector<String> {
         .None => {},
       }
 
-      for field in fields { deps = append_unique(deps, val_type_deps(field.ty)) }
+      for field in fields {
+        deps = append_unique(deps, val_type_deps(field.ty))
+      }
     },
-    .Array(_, elem) => { deps = append_unique(deps, val_type_deps(elem.ty)) },
+    .Array(_, elem) => {
+      deps = append_unique(deps, val_type_deps(elem.ty))
+    },
     .FuncType(_, params, results) => {
-      for vt in params { deps = append_unique(deps, val_type_deps(vt)) }
-      for vt in results { deps = append_unique(deps, val_type_deps(vt)) }
+      for vt in params {
+        deps = append_unique(deps, val_type_deps(vt))
+      }
+
+      for vt in results {
+        deps = append_unique(deps, val_type_deps(vt))
+      }
     },
   }
 
@@ -744,10 +795,14 @@ fn append_unique(base: Vector<String>, extra: Vector<String>) Vector<String> {
     seen := false
 
     for existing in out {
-      if existing == name { seen = true }
+      if existing == name {
+        seen = true
+      }
     }
 
-    if !seen { out = .append(name) }
+    if !seen {
+      out = .append(name)
+    }
   }
 
   out

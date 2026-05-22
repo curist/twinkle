@@ -1,3 +1,5 @@
 use .method_call_src
 
-pub fn origin() method_call_src.Point { method_call_src.Point.{ x: 0, y: 0 } }
+pub fn origin() method_call_src.Point {
+  method_call_src.Point.{ x: 0, y: 0 }
+}

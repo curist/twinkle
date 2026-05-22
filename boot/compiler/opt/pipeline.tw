@@ -26,6 +26,7 @@ use compiler.opt.uniqueness.{
 // These must not be eliminated or propagated away.
 fn compute_pinned(module: AnfModule) Dict<Int, Bool> {
   pinned: Dict<Int, Bool> = Dict.new()
+
   // Collect source-level bindings from all init functions. After module linking
   // there may be multiple per-module init functions, and `init_func_id` may name
   // only the synthesized entry init.
@@ -35,7 +36,11 @@ fn compute_pinned(module: AnfModule) Dict<Int, Bool> {
   for f in module.functions {
     if f.is_init {
       bindings := collect_init_binding_locals(f.body)
-      for k in bindings.keys() { init_bound[k] = true }
+
+      for k in bindings.keys() {
+        init_bound[k] = true
+      }
+
       found_init = true
     }
   }
@@ -48,12 +53,18 @@ fn compute_pinned(module: AnfModule) Dict<Int, Bool> {
   for f in module.functions {
     if !f.is_init {
       declared: Dict<Int, Bool> = Dict.new()
-      for p in f.params { declared[p.local.id] = true }
+
+      for p in f.params {
+        declared[p.local.id] = true
+      }
+
       free := collect_free_locals(f.body, declared)
 
       // Intersect with init's source-level bindings.
       for k in free.keys() {
-        if set_has(init_bound, k) { pinned[k] = true }
+        if set_has(init_bound, k) {
+          pinned[k] = true
+        }
       }
     }
   }
@@ -62,7 +73,9 @@ fn compute_pinned(module: AnfModule) Dict<Int, Bool> {
 }
 
 // ── pass manager data ───────────────────────────────────────────────
-fn fixed_point_cap() Int { 10 }
+fn fixed_point_cap() Int {
+  10
+}
 
 type OptimizerContext = .{
   pinned: Dict<Int, Bool>,
@@ -148,6 +161,7 @@ fn rebuild_func_with_body(func: AnfFunctionDef, body: AnfExpr) AnfFunctionDef {
 
 fn optimize_function_with_context(func: AnfFunctionDef, ctx: OptimizerContext) FunctionOptimizeResult {
   timing := zero_pass_timing()
+
   // eliminate_defers first: branch_simplify would otherwise hoist ADefer nodes
   // out of constant-condition branches, breaking block-scoped defer semantics.
   ta0 := date.now()
@@ -207,7 +221,10 @@ fn run_fixed_point_simplifications(expr: AnfExpr, ctx: OptimizerContext) FixedPo
     cur = r4.expr
     te := date.now()
     timing.branch_simp = timing.branch_simp + (te - td)
-    if !r1.changed and !r2.changed and !r3.changed and !r4.changed { break }
+
+    if !r1.changed and !r2.changed and !r3.changed and !r4.changed {
+      break
+    }
   }
 
   FixedPointResult.{ expr: cur, rounds: round, at_cap: round >= cap, timing }
@@ -256,7 +273,11 @@ fn optimize_module_internal(
     result := optimize_function_with_context(f, ctx)
     timing = add_pass_timing(timing, result.timing)
     total_rounds = total_rounds + result.rounds
-    if result.at_cap { funcs_at_cap = funcs_at_cap + 1 }
+
+    if result.at_cap {
+      funcs_at_cap = funcs_at_cap + 1
+    }
+
     result.func
   }
 

@@ -21,10 +21,13 @@ pub fn validate_tasks(anf: AnfModule, builtins: BuiltinRegistry) Result<Void, St
   await_fid := builtins.id("task_await")
   yield_fid := builtins.id("task_yield")
   cell_update_fid := builtins.id("cell_update")
+
   // Step 1: Find all Task.spawn call sites and identify task body FuncIds.
   task_bodies := scan_module_for_task_bodies(anf, spawn_fid)
+
   // Step 1b: Find all Cell.update callback FuncIds.
   cell_update_cbs := scan_module_for_callback_bodies(anf, cell_update_fid)
+
   // Step 2: Check which task bodies contain suspension points.
   suspending_set: Dict<Int, Int> = Dict.new()
 
@@ -79,7 +82,9 @@ pub fn classify_task_bodies(anf: AnfModule, builtins: BuiltinRegistry) Vector<Fu
 
   for f in anf.functions {
     if task_bodies.has(f.func_id.id) {
-      if contains_suspension(f.body, await_fid, yield_fid) { result = .append(f.func_id) }
+      if contains_suspension(f.body, await_fid, yield_fid) {
+        result = .append(f.func_id)
+      }
     }
   }
 
@@ -95,7 +100,11 @@ pub fn classify_task_bodies(anf: AnfModule, builtins: BuiltinRegistry) Vector<Fu
 // using that local, we record the body_fid.
 fn scan_module_for_task_bodies(anf: AnfModule, spawn_fid: FuncId) Dict<Int, Int> {
   result: Dict<Int, Int> = Dict.new()
-  for f in anf.functions { result = scan_letchain_for_spawn_pattern(f.body, spawn_fid, result) }
+
+  for f in anf.functions {
+    result = scan_letchain_for_spawn_pattern(f.body, spawn_fid, result)
+  }
+
   result
 }
 
@@ -117,36 +126,40 @@ fn scan_letchain_inner(
   case expr {
     .Let(local, op, body) => {
       case op {
-        .AMakeClosure(body_fid, _) => { closure_locals = .set(local.id, body_fid) },
-        .ACall(callee, args) => {
-          case callee {
-            .AGlobalFunc(fid) => {
-              if fid.id == spawn_fid.id {
-                if args.len() > 0 {
-                  case args[0] {
-                    .ALocal(arg_local) => {
-                      case closure_locals[arg_local.id] {
-                        .Some(body_fid) => { acc = .set(body_fid.id, 1) },
-                        .None => {},
-                      }
-                    },
-                    _ => {},
-                  }
-                }
+        .AMakeClosure(body_fid, _) => {
+          closure_locals = .set(local.id, body_fid)
+        },
+        .ACall(callee, args) => case callee {
+          .AGlobalFunc(fid) => if fid.id == spawn_fid.id {
+            if args.len() > 0 {
+              case args[0] {
+                .ALocal(arg_local) => case closure_locals[arg_local.id] {
+                  .Some(body_fid) => {
+                    acc = .set(body_fid.id, 1)
+                  },
+                  .None => {},
+                },
+                _ => {},
               }
-            },
-            _ => {},
-          }
+            }
+          },
+          _ => {},
         },
         .AIf(_, then_e, else_e) => {
           acc = scan_letchain_for_spawn_pattern(then_e, spawn_fid, acc)
           acc = scan_letchain_for_spawn_pattern(else_e, spawn_fid, acc)
         },
         .AMatch(_, arms) => {
-          for arm in arms { acc = scan_letchain_for_spawn_pattern(arm.body, spawn_fid, acc) }
+          for arm in arms {
+            acc = scan_letchain_for_spawn_pattern(arm.body, spawn_fid, acc)
+          }
         },
-        .ALoop(loop_body) => { acc = scan_letchain_for_spawn_pattern(loop_body, spawn_fid, acc) },
-        .ADefer(defer_body) => { acc = scan_letchain_for_spawn_pattern(defer_body, spawn_fid, acc) },
+        .ALoop(loop_body) => {
+          acc = scan_letchain_for_spawn_pattern(loop_body, spawn_fid, acc)
+        },
+        .ADefer(defer_body) => {
+          acc = scan_letchain_for_spawn_pattern(defer_body, spawn_fid, acc)
+        },
         _ => {},
       }
 
@@ -161,7 +174,11 @@ fn scan_letchain_inner(
 // the closure is the second argument: Cell.update(cell, fn(v) { ... })
 fn scan_module_for_callback_bodies(anf: AnfModule, target_fid: FuncId) Dict<Int, Int> {
   result: Dict<Int, Int> = Dict.new()
-  for f in anf.functions { result = scan_letchain_for_callback_pattern(f.body, target_fid, result) }
+
+  for f in anf.functions {
+    result = scan_letchain_for_callback_pattern(f.body, target_fid, result)
+  }
+
   result
 }
 
@@ -182,34 +199,36 @@ fn scan_callback_inner(
   case expr {
     .Let(local, op, body) => {
       case op {
-        .AMakeClosure(body_fid, _) => { closure_locals = .set(local.id, body_fid) },
-        .ACall(callee, args) => {
-          case callee {
-            .AGlobalFunc(fid) => {
-              // Cell.update(cell, callback) — callback is args[1]
-              if fid.id == target_fid.id {
-                if args.len() > 1 {
-                  case args[1] {
-                    .ALocal(arg_local) => {
-                      case closure_locals[arg_local.id] {
-                        .Some(body_fid) => { acc = .set(body_fid.id, 1) },
-                        .None => {},
-                      }
+        .AMakeClosure(body_fid, _) => {
+          closure_locals = .set(local.id, body_fid)
+        },
+        .ACall(callee, args) => case callee {
+          .AGlobalFunc(fid) => {
+            // Cell.update(cell, callback) — callback is args[1]
+            if fid.id == target_fid.id {
+              if args.len() > 1 {
+                case args[1] {
+                  .ALocal(arg_local) => case closure_locals[arg_local.id] {
+                    .Some(body_fid) => {
+                      acc = .set(body_fid.id, 1)
                     },
-                    _ => {},
-                  }
+                    .None => {},
+                  },
+                  _ => {},
                 }
               }
-            },
-            _ => {},
-          }
+            }
+          },
+          _ => {},
         },
         .AIf(_, then_e, else_e) => {
           acc = scan_letchain_for_callback_pattern(then_e, target_fid, acc)
           acc = scan_letchain_for_callback_pattern(else_e, target_fid, acc)
         },
         .AMatch(_, arms) => {
-          for arm in arms { acc = scan_letchain_for_callback_pattern(arm.body, target_fid, acc) }
+          for arm in arms {
+            acc = scan_letchain_for_callback_pattern(arm.body, target_fid, acc)
+          }
         },
         .ALoop(loop_body) => {
           acc = scan_letchain_for_callback_pattern(loop_body, target_fid, acc)
@@ -233,9 +252,11 @@ fn contains_suspension(expr: AnfExpr, await_fid: FuncId, yield_fid: FuncId) Bool
       if op_is_suspension(op, await_fid, yield_fid) {
         return true
       }
+
       if op_contains_suspension(op, await_fid, yield_fid) {
         return true
       }
+
       contains_suspension(body, await_fid, yield_fid)
     },
     _ => false,
@@ -244,11 +265,9 @@ fn contains_suspension(expr: AnfExpr, await_fid: FuncId, yield_fid: FuncId) Bool
 
 fn op_is_suspension(op: AnfOp, await_fid: FuncId, yield_fid: FuncId) Bool {
   case op {
-    .ACall(callee, _) => {
-      case callee {
-        .AGlobalFunc(fid) => fid.id == await_fid.id or fid.id == yield_fid.id,
-        _ => false,
-      }
+    .ACall(callee, _) => case callee {
+      .AGlobalFunc(fid) => fid.id == await_fid.id or fid.id == yield_fid.id,
+      _ => false,
     },
     _ => false,
   }
@@ -256,10 +275,8 @@ fn op_is_suspension(op: AnfOp, await_fid: FuncId, yield_fid: FuncId) Bool {
 
 fn op_contains_suspension(op: AnfOp, await_fid: FuncId, yield_fid: FuncId) Bool {
   case op {
-    .AIf(_, then_e, else_e) => {
-      contains_suspension(then_e, await_fid, yield_fid)
-        or contains_suspension(else_e, await_fid, yield_fid)
-    },
+    .AIf(_, then_e, else_e) => contains_suspension(then_e, await_fid, yield_fid)
+      or contains_suspension(else_e, await_fid, yield_fid),
     .AMatch(_, arms) => {
       for arm in arms {
         if contains_suspension(arm.body, await_fid, yield_fid) {
@@ -363,12 +380,14 @@ fn validate_no_suspension_in_nested(
 
       .Ok({})
     },
-    .ALoop(body) => {
-      validate_no_suspension_expr(body, func_name, "loop body", await_fid, yield_fid)
-    },
-    .ADefer(body) => {
-      validate_no_suspension_expr(body, func_name, "defer body", await_fid, yield_fid)
-    },
+    .ALoop(body) => validate_no_suspension_expr(body, func_name, "loop body", await_fid, yield_fid),
+    .ADefer(body) => validate_no_suspension_expr(
+      body,
+      func_name,
+      "defer body",
+      await_fid,
+      yield_fid,
+    ),
     .AMakeClosure(_, _) => {
       // Nested closure inside task body — suspension not allowed
       // (The closure body itself is a separate function and will be validated there)
@@ -388,19 +407,17 @@ fn validate_no_suspension_expr(
   case expr {
     .Let(_, op, body) => {
       case op {
-        .ACall(callee, _) => {
-          case callee {
-            .AGlobalFunc(fid) => {
-              if fid.id == yield_fid.id {
-                return .Err("Task.yield() inside ${context} is not supported in ${func_name}")
-              }
+        .ACall(callee, _) => case callee {
+          .AGlobalFunc(fid) => {
+            if fid.id == yield_fid.id {
+              return .Err("Task.yield() inside ${context} is not supported in ${func_name}")
+            }
 
-              if fid.id == await_fid.id {
-                return .Err("Task.await() inside ${context} is not supported in ${func_name}")
-              }
-            },
-            _ => {},
-          }
+            if fid.id == await_fid.id {
+              return .Err("Task.await() inside ${context} is not supported in ${func_name}")
+            }
+          },
+          _ => {},
         },
         _ => {},
       }
@@ -431,15 +448,11 @@ fn validate_no_yield_in_expr(expr: AnfExpr, func_name: String, await_fid: FuncId
   case expr {
     .Let(_, op, body) => {
       case op {
-        .ACall(callee, _) => {
-          case callee {
-            .AGlobalFunc(fid) => {
-              if fid.id == yield_fid.id {
-                return .Err("Task.yield() is not valid in top-level code")
-              }
-            },
-            _ => {},
-          }
+        .ACall(callee, _) => case callee {
+          .AGlobalFunc(fid) => if fid.id == yield_fid.id {
+            return .Err("Task.yield() is not valid in top-level code")
+          },
+          _ => {},
         },
         _ => {},
       }
@@ -518,21 +531,19 @@ fn validate_no_suspend_in_any(
   case expr {
     .Let(_, op, body) => {
       case op {
-        .ACall(callee, _) => {
-          case callee {
-            .AGlobalFunc(fid) => {
-              if fid.id == yield_fid.id {
-                return .Err("Task.yield() is only valid directly inside a Task.spawn closure body")
-              }
+        .ACall(callee, _) => case callee {
+          .AGlobalFunc(fid) => {
+            if fid.id == yield_fid.id {
+              return .Err("Task.yield() is only valid directly inside a Task.spawn closure body")
+            }
 
-              if fid.id == await_fid.id {
-                return .Err(
-                  "Task.await() is not valid in ordinary functions — use it at top level or directly inside a Task.spawn body (in ${func_name})",
-                )
-              }
-            },
-            _ => {},
-          }
+            if fid.id == await_fid.id {
+              return .Err(
+                "Task.await() is not valid in ordinary functions — use it at top level or directly inside a Task.spawn body (in ${func_name})",
+              )
+            }
+          },
+          _ => {},
         },
         _ => {},
       }
@@ -590,15 +601,11 @@ fn validate_no_yield_in_any(expr: AnfExpr, func_name: String, yield_fid: FuncId)
   case expr {
     .Let(_, op, body) => {
       case op {
-        .ACall(callee, _) => {
-          case callee {
-            .AGlobalFunc(fid) => {
-              if fid.id == yield_fid.id {
-                return .Err("Task.yield() is only valid directly inside a Task.spawn closure body")
-              }
-            },
-            _ => {},
-          }
+        .ACall(callee, _) => case callee {
+          .AGlobalFunc(fid) => if fid.id == yield_fid.id {
+            return .Err("Task.yield() is only valid directly inside a Task.spawn closure body")
+          },
+          _ => {},
         },
         _ => {},
       }

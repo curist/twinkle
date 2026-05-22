@@ -10,11 +10,17 @@ use tests.assert
 use tests.runner
 
 // ── Helpers ─────────────────────────────────────────────────────────
-fn lid(id: Int) LocalId { LocalId.{ id } }
+fn lid(id: Int) LocalId {
+  LocalId.{ id }
+}
 
-fn fid(id: Int) FuncId { FuncId.{ id } }
+fn fid(id: Int) FuncId {
+  FuncId.{ id }
+}
 
-fn uses_for(uses: Dict<Int, Int>, id: Int) Int { uses[id].unwrap_or(0) }
+fn uses_for(uses: Dict<Int, Int>, id: Int) Int {
+  uses[id].unwrap_or(0)
+}
 
 // ── count_uses ──────────────────────────────────────────────────────
 fn test_count_uses_simple() Result<Void, String> {
@@ -134,7 +140,9 @@ fn test_count_uses_multiple_refs() Result<Void, String> {
 }
 
 // ── is_pure ─────────────────────────────────────────────────────────
-fn test_is_pure_init() Result<Void, String> { assert.is_true(is_pure(.AInit(.ALitInt(42)))) }
+fn test_is_pure_init() Result<Void, String> {
+  assert.is_true(is_pure(.AInit(.ALitInt(42))))
+}
 
 fn test_is_pure_binop_add() Result<Void, String> {
   assert.is_true(is_pure(.ABinOp(.Add, .ALitInt(1), .ALitInt(2), .Int)))
@@ -320,13 +328,11 @@ fn test_subst_atom_does_not_enter_closure_free_vars() Result<Void, String> {
   result := subst_atom(expr, lid(5), .ALitInt(42))
 
   case result {
-    .Let(_, op, _) => {
-      case op {
-        .AMakeClosure(_, free_vars) => assert.equal(free_vars[0].id, 5),
-        _ => {
-          return .Err("expected AMakeClosure")
-        },
-      }
+    .Let(_, op, _) => case op {
+      .AMakeClosure(_, free_vars) => assert.equal(free_vars[0].id, 5),
+      _ => {
+        return .Err("expected AMakeClosure")
+      },
     },
     _ => .Err("expected Let"),
   }
@@ -540,9 +546,10 @@ fn test_dead_let_semantics_keeps_read_only_call_parity() Result<Void, String> {
   try assert.is_false(result.changed)
 
   case result.expr {
-    .Let(_, .ACall(.AGlobalFunc(f), _), _) => {
-      assert.equal(f.id, make_builtin_registry().id("vector_len").id)
-    },
+    .Let(_, .ACall(.AGlobalFunc(f), _), _) => assert.equal(
+      f.id,
+      make_builtin_registry().id("vector_len").id,
+    ),
     _ => .Err("expected unused read-only call to be preserved"),
   }
 }
@@ -550,6 +557,7 @@ fn test_dead_let_semantics_keeps_read_only_call_parity() Result<Void, String> {
 // ── Suite ───────────────────────────────────────────────────────────
 pub fn suite() runner.Suite {
   s := runner.suite("Opt: Dead Let & Copy Prop")
+
   // count_uses
   s = .test("uses: simple", test_count_uses_simple)
   s = .test("uses: binder not counted", test_count_uses_let_binder_not_counted)
@@ -565,6 +573,7 @@ pub fn suite() runner.Suite {
     test_count_uses_closure_free_var_inside_match_arm,
   )
   s = .test("uses: multiple refs", test_count_uses_multiple_refs)
+
   // is_pure
   s = .test("pure: init", test_is_pure_init)
   s = .test("pure: binop add", test_is_pure_binop_add)
@@ -582,6 +591,7 @@ pub fn suite() runner.Suite {
   s = .test("pure: if impure branch", test_is_pure_if_impure_branch)
   s = .test("pure: match pure arms", test_is_pure_match_pure_arms)
   s = .test("pure: match impure arm", test_is_pure_match_impure_arm)
+
   // dead_let_elim
   s = .test("dead_let: drops unused pure", test_dead_let_drops_unused_pure)
   s = .test("dead_let: keeps used", test_dead_let_keeps_used)
@@ -599,10 +609,12 @@ pub fn suite() runner.Suite {
     "dead_let: semantics keeps read-only call parity",
     test_dead_let_semantics_keeps_read_only_call_parity,
   )
+
   // subst_atom
   s = .test("subst: replaces target", test_subst_atom_replaces)
   s = .test("subst: leaves other", test_subst_atom_leaves_other)
   s = .test("subst: skips closure free_vars", test_subst_atom_does_not_enter_closure_free_vars)
+
   // copy_propagate
   s = .test("copy_prop: inlines literal", test_copy_prop_inlines_literal)
   s = .test("copy_prop: inlines global func", test_copy_prop_inlines_global_func)

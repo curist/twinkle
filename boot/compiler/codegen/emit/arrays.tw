@@ -101,6 +101,7 @@ pub fn emit_index_op(
       out = .append(.RefAsNonNull).append(.StructGet("rt_types__PVec", 0)).append(.I64ExtendI32U).append(
         .I64LtS,
       ).append(.I32And).append(.I32Eqz).append(.If(.None, [.Unreachable], []))
+
       // Get element
       out = fns.emit_atom(base, ctx, out)
       out = fns.emit_checked_i32_narrow(index, ctx, out)
@@ -108,7 +109,7 @@ pub fn emit_index_op(
 
       // Erased container egress: coerce anyref element to the expected typed slot.
       case result_vt {
-        .Some(expected_vt) => { emit_coerce_stack(.Anyref, expected_vt, result_ty, ctx, out) },
+        .Some(expected_vt) => emit_coerce_stack(.Anyref, expected_vt, result_ty, ctx, out),
         .None => out,
       }
     },
@@ -148,12 +149,15 @@ pub fn emit_index_op(
               .append(.If(.Some(result_vt_ext), none_instrs, some_instrs))
           } else {
             sum_layout := get_sum_layout_ctx(result_ty, ctx)
+
             // Nested sub-bodies must use fresh []
             none_instrs: Vector<Instr> = [.I32Const(0)]
             some_variant := sum_layout.variants[1]
+
             if some_variant.payload_types.len() > 0 {
               none_instrs = emit_default_value(some_variant.payload_types[0], none_instrs)
             }
+
             none_instrs = .append(.StructNew(sum_layout.sym))
             some_instrs: Vector<Instr> = [.I32Const(1)]
             some_instrs = .concat(fns.emit_atom(base, ctx, []))
@@ -180,6 +184,7 @@ pub fn emit_index_op(
       out = .append(.ArrayLen).append(.I64ExtendI32U).append(.I64LtS).append(.I32And).append(
         .I32Eqz,
       ).append(.If(.None, [.Unreachable], []))
+
       // Get byte
       out = fns.emit_atom(base, ctx, out)
       out = fns.emit_checked_i32_narrow(index, ctx, out)

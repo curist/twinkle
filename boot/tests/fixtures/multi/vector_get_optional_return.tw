@@ -1,3 +1,7 @@
-fn token_at(xs: Vector<Int>, pos: Int) Int? { xs.get(pos) }
+fn token_at(xs: Vector<Int>, pos: Int) Int? {
+  xs.get(pos)
+}
 
-fn main() { token_at([1, 2, 3], 1) }
+fn main() {
+  token_at([1, 2, 3], 1)
+}

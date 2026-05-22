@@ -47,7 +47,9 @@ fn test_emit_wat_basic() Result<Void, String> {
       try assert.str_contains(wat, "\$rt_types__Array")
       try assert.str_contains(wat, "\$rt_types__String")
     },
-    .Err(_) => { return assert.fail("link should succeed for single module") },
+    .Err(_) => {
+      return assert.fail("link should succeed for single module")
+    },
   }
 
   .Ok({})
@@ -155,7 +157,9 @@ fn test_runtime_modules_count() Result<Void, String> {
 
 fn test_runtime_modules_namespaces() Result<Void, String> {
   mods := runtime_modules(empty_eq_layouts())
-  names := collect m in mods { m.namespace }
+  names := collect m in mods {
+    m.namespace
+  }
   try assert.ok(names[0] == "rt.types", "first module should be rt.types")
   try assert.ok(names[1] == "rt.str", "second module should be rt.str")
   try assert.ok(names[2] == "rt.arr", "third module should be rt.arr")
@@ -180,10 +184,10 @@ fn test_link_runtime_resolves_imports() Result<Void, String> {
         )
       }
     },
-    .Err(errors) => {
-      case errors[0] {
-        .MissingExport(m, n) => { return assert.fail("link failed: missing ${m}.${n}") },
-      }
+    .Err(errors) => case errors[0] {
+      .MissingExport(m, n) => {
+        return assert.fail("link failed: missing ${m}.${n}")
+      },
     },
   }
 
@@ -197,16 +201,20 @@ fn test_link_runtime_emits_valid_wat() Result<Void, String> {
     .Ok(linked) => {
       wat := emit_wat(linked)
       try assert.str_contains(wat, "(module")
+
       // Should contain qualified runtime function names
       try assert.str_contains(wat, "rt_core__print")
       try assert.str_contains(wat, "rt_str__len")
       try assert.str_contains(wat, "rt_arr__make")
       try assert.str_contains(wat, "rt_dict__set")
+
       // Should contain qualified type names
       try assert.str_contains(wat, "rt_types__Array")
       try assert.str_contains(wat, "rt_types__String")
     },
-    .Err(_) => { return assert.fail("link should succeed") },
+    .Err(_) => {
+      return assert.fail("link should succeed")
+    },
   }
 
   .Ok({})
@@ -219,22 +227,36 @@ fn test_link_runtime_host_imports_preserved() Result<Void, String> {
     .Ok(linked) => {
       // Should have host imports for print, println, error, eprint, eprintln, f64_to_string
       host_names: Vector<String> = []
-      for imp in linked.imports { host_names = .append(imp.name) }
+
+      for imp in linked.imports {
+        host_names = .append(imp.name)
+      }
+
       found_print := false
       found_println := false
       found_f64 := false
 
       for n in host_names {
-        if n == "print" { found_print = true }
-        if n == "println" { found_println = true }
-        if n == "f64_to_string" { found_f64 = true }
+        if n == "print" {
+          found_print = true
+        }
+
+        if n == "println" {
+          found_println = true
+        }
+
+        if n == "f64_to_string" {
+          found_f64 = true
+        }
       }
 
       try assert.ok(found_print, "should preserve host.print import")
       try assert.ok(found_println, "should preserve host.println import")
       try assert.ok(found_f64, "should preserve host.f64_to_string import")
     },
-    .Err(_) => { return assert.fail("link should succeed") },
+    .Err(_) => {
+      return assert.fail("link should succeed")
+    },
   }
 
   .Ok({})
@@ -245,16 +267,16 @@ fn test_link_runtime_no_start_function() Result<Void, String> {
   mods := runtime_modules(empty_eq_layouts())
 
   case link(mods, .None) {
-    .Ok(linked) => {
-      try assert.ok(
-        case linked.start {
-          .None => true,
-          _ => false,
-        },
-        "runtime-only link should have no start function",
-      )
+    .Ok(linked) => try assert.ok(
+      case linked.start {
+        .None => true,
+        _ => false,
+      },
+      "runtime-only link should have no start function",
+    ),
+    .Err(_) => {
+      return assert.fail("link should succeed")
     },
-    .Err(_) => { return assert.fail("link should succeed") },
   }
 
   .Ok({})
@@ -482,6 +504,7 @@ fn test_match_wildcard_and_var_binding() Result<Void, String> {
     "fn id(x: Int) Int { case x { y => y } }\nprintln(Int.to_string(id(42)))\n",
     "match wildcard/var",
   )
+
   // Var binding emits local.set for the bound variable
   try assert.str_contains(wat, "local.set")
   .Ok({})
@@ -524,6 +547,7 @@ fn test_match_result_ok_err() Result<Void, String> {
     "fn unwrap_or(r: Result<Int, String>, d: Int) Int {\n  case r {\n    .Ok(v) => v,\n    .Err(_) => d,\n  }\n}\nres: Result<Int, String> = .Ok(42)\nprintln(Int.to_string(unwrap_or(res, 0)))\n",
     "match result ok/err",
   )
+
   // Variant dispatch reads the tag field
   try assert.str_contains(wat, "struct.get")
   .Ok({})
@@ -546,6 +570,7 @@ fn test_match_all_diverging_arms() Result<Void, String> {
     "fn crash(opt: Int?) Int {\n  case opt {\n    .Some(_) => error(\"some\"),\n    .None => error(\"none\"),\n  }\n}\nprintln(Int.to_string(crash(.Some(1))))\n",
     "match all-diverging arms",
   )
+
   // Both arms trap; the if block should have no result type
   try assert.str_contains(wat, "unreachable")
   .Ok({})
@@ -557,6 +582,7 @@ fn test_match_named_sum_multi_variant() Result<Void, String> {
     "type Shape = { Circle(Float), Rect(Float, Float) }\nfn area(s: Shape) Float {\n  case s {\n    .Circle(r) => 3.14 * r * r,\n    .Rect(w, h) => w * h,\n  }\n}\nprintln(Float.to_string(area(.Circle(1.0))))\n",
     "match named sum multi-variant",
   )
+
   // Tag check and payload extraction
   try assert.str_contains(wat, "struct.get")
   try assert.str_contains(wat, "f64.mul")
@@ -605,25 +631,20 @@ fn has_type_named(linked: LinkedModule, name: String) Bool {
 fn instr_has_call(instrs: Vector<Instr>, target: String) Bool {
   for instr in instrs {
     case instr {
-      .Call(sym) => {
-        if sym == target {
-          return true
-        }
+      .Call(sym) => if sym == target {
+        return true
       },
-      .Block(_, _, body) => {
-        if instr_has_call(body, target) {
-          return true
-        }
+      .Block(_, _, body) => if instr_has_call(body, target) {
+        return true
       },
-      .Loop(_, _, body) => {
-        if instr_has_call(body, target) {
-          return true
-        }
+      .Loop(_, _, body) => if instr_has_call(body, target) {
+        return true
       },
       .If(_, then_body, else_body) => {
         if instr_has_call(then_body, target) {
           return true
         }
+
         if instr_has_call(else_body, target) {
           return true
         }
@@ -638,25 +659,20 @@ fn instr_has_call(instrs: Vector<Instr>, target: String) Bool {
 fn instr_has_struct_new(instrs: Vector<Instr>, target: String) Bool {
   for instr in instrs {
     case instr {
-      .StructNew(sym) => {
-        if sym == target {
-          return true
-        }
+      .StructNew(sym) => if sym == target {
+        return true
       },
-      .Block(_, _, body) => {
-        if instr_has_struct_new(body, target) {
-          return true
-        }
+      .Block(_, _, body) => if instr_has_struct_new(body, target) {
+        return true
       },
-      .Loop(_, _, body) => {
-        if instr_has_struct_new(body, target) {
-          return true
-        }
+      .Loop(_, _, body) => if instr_has_struct_new(body, target) {
+        return true
       },
       .If(_, then_body, else_body) => {
         if instr_has_struct_new(then_body, target) {
           return true
         }
+
         if instr_has_struct_new(else_body, target) {
           return true
         }
@@ -693,7 +709,9 @@ fn test_structural_user_func_present() Result<Void, String> {
   found := false
 
   for f in linked.funcs {
-    if f.name.starts_with("user__") { found = true }
+    if f.name.starts_with("user__") {
+      found = true
+    }
   }
 
   try assert.ok(found, "expected at least one user function in linked module")
@@ -703,12 +721,14 @@ fn test_structural_user_func_present() Result<Void, String> {
 fn test_structural_host_imports_are_host_only() Result<Void, String> {
   // After linking, all remaining imports must come from "host" module.
   linked := try codegen_harness.codegen_linked("println(\"hi\")")
+
   for imp in linked.imports {
     try assert.ok(
       imp.module == "host",
       "non-host import survived linking: ${imp.module}.${imp.name}",
     )
   }
+
   .Ok({})
 }
 
@@ -721,8 +741,8 @@ fn test_structural_option_produces_typed_sum_struct() Result<Void, String> {
 
   for t in linked.types {
     case t {
-      .Struct(name, _, _, _) => {
-        if name.starts_with("user__\$Option_") { found_option = true }
+      .Struct(name, _, _, _) => if name.starts_with("user__\$Option_") {
+        found_option = true
       },
       _ => {},
     }
@@ -741,9 +761,17 @@ fn test_dict_index_materializes_typed_option() Result<Void, String> {
   found_option_struct := false
 
   for f in linked.funcs {
-    if instr_has_call(f.body, "rt_dict__get") { found_get = true }
-    if instr_has_call(f.body, "rt_dict__get_option") { found_get_option = true }
-    if instr_has_struct_new(f.body, "user__\$Option_opt_i64") { found_option_struct = true }
+    if instr_has_call(f.body, "rt_dict__get") {
+      found_get = true
+    }
+
+    if instr_has_call(f.body, "rt_dict__get_option") {
+      found_get_option = true
+    }
+
+    if instr_has_struct_new(f.body, "user__\$Option_opt_i64") {
+      found_option_struct = true
+    }
   }
 
   try assert.ok(found_get, "expected dict indexing to call rt_dict__get")

@@ -42,6 +42,7 @@ pub fn compile_entry(entry_path: String) Result<PipelineArtifacts, CompileError>
     .Some(_) => true,
     .None => false,
   }
+
   // Phase 1: Frontend analysis (parse → resolve → typecheck → exports)
   // Uses the shared analyze module (same path as LSP diagnostics).
   t_modules_start := date.now()
@@ -62,7 +63,9 @@ pub fn compile_entry(entry_path: String) Result<PipelineArtifacts, CompileError>
 
   for d in a_result.diagnostics {
     case d.kind {
-      .Warning(_) => { compile_warnings = .append(d) },
+      .Warning(_) => {
+        compile_warnings = .append(d)
+      },
       .Error(_) => {},
     }
   }
@@ -95,7 +98,11 @@ pub fn compile_entry(entry_path: String) Result<PipelineArtifacts, CompileError>
     t_lower0 := date.now()
     lowered_out := stage_runner.lower(runner, cur_cache, parsed, typed, builtins)
     cur_cache = lowered_out.store
-    if timed { lower_total_ms = lower_total_ms + (date.now() - t_lower0) }
+
+    if timed {
+      lower_total_ms = lower_total_ms + (date.now() - t_lower0)
+    }
+
     lowered := lowered_out.value
 
     if lowered.diagnostics.len() > 0 {
@@ -119,11 +126,9 @@ pub fn compile_entry(entry_path: String) Result<PipelineArtifacts, CompileError>
 
     for fid in lowered.imported_func_origins.keys() {
       case lowered.imported_func_origins[fid] {
-        .Some(origin) => {
-          external_refs[fid] = ExternalRef.{
-            module_path: origin.module_path,
-            func_name: origin.func_name,
-          }
+        .Some(origin) => external_refs[fid] = ExternalRef.{
+          module_path: origin.module_path,
+          func_name: origin.func_name,
         },
         .None => {},
       }
@@ -134,7 +139,7 @@ pub fn compile_entry(entry_path: String) Result<PipelineArtifacts, CompileError>
 
     for name in lowered.pub_value_globals.keys() {
       case lowered.pub_value_globals[name] {
-        .Some(lid) => { value_exports[name] = lid.id },
+        .Some(lid) => value_exports[name] = lid.id,
         .None => {},
       }
     }
@@ -144,7 +149,7 @@ pub fn compile_entry(entry_path: String) Result<PipelineArtifacts, CompileError>
 
     for lid in lowered.imported_value_origins.keys() {
       case lowered.imported_value_origins[lid] {
-        .Some(origin) => { value_refs[lid] = origin },
+        .Some(origin) => value_refs[lid] = origin,
         .None => {},
       }
     }
@@ -186,8 +191,16 @@ pub fn compile_entry(entry_path: String) Result<PipelineArtifacts, CompileError>
     eprintln(
       "[time:imports] edges=${fc.import_edges}  module=${fc.import_module_edges}  selective=${fc.import_selective_edges}  prelude=${fc.import_prelude_edges}  export_entries=${fc.import_export_entries}",
     )
-    top_imports := a_result.state.import_timings.sort_by(fn(a, b) { Float.compare(a.ms, b.ms) })
-    top_n := if top_imports.len() < 8 { top_imports.len() } else { 8 }
+    top_imports := a_result.state.import_timings.sort_by(
+      fn(a, b) {
+        Float.compare(a.ms, b.ms)
+      },
+    )
+    top_n := if top_imports.len() < 8 {
+      top_imports.len()
+    } else {
+      8
+    }
 
     for i in 0..top_n {
       it := top_imports[i]
@@ -205,15 +218,31 @@ pub fn compile_entry(entry_path: String) Result<PipelineArtifacts, CompileError>
   t0 := date.now()
   core := core_linker.link(compiled_modules, canonical_entry, a_result.env, builtins.next_id)
   t1 := date.now()
-  if timed { eprintln("[time] core_link: ${t1 - t0}ms") }
+
+  if timed {
+    eprintln("[time] core_link: ${t1 - t0}ms")
+  }
+
   mono := monomorphize.monomorphize(core)
   t2 := date.now()
-  if timed { eprintln("[time] monomorphize: ${t2 - t1}ms") }
+
+  if timed {
+    eprintln("[time] monomorphize: ${t2 - t1}ms")
+  }
+
   anf := lower_anf.lower_module(mono)
   t3 := date.now()
-  if timed { eprintln("[time] lower_anf: ${t3 - t2}ms") }
+
+  if timed {
+    eprintln("[time] lower_anf: ${t3 - t2}ms")
+  }
+
   opt := optimize_module(anf)
   t4 := date.now()
-  if timed { eprintln("[time] optimize: ${t4 - t3}ms") }
+
+  if timed {
+    eprintln("[time] optimize: ${t4 - t3}ms")
+  }
+
   .Ok(.{ env: a_result.env, builtins, core, mono, anf, opt, warnings: compile_warnings })
 }

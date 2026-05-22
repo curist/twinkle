@@ -38,7 +38,10 @@ pub fn verify_prepared_module_with_level(
     .None => false,
   }
   funcs_by_id: Dict<Int, PreparedFunc> = Dict.new()
-  for pf in prepared.funcs { funcs_by_id[pf.func_id.id] = pf }
+
+  for pf in prepared.funcs {
+    funcs_by_id[pf.func_id.id] = pf
+  }
 
   for fid in prepared.closure_captures.keys() {
     if !funcs_by_id.has(fid) {
@@ -62,16 +65,14 @@ pub fn verify_prepared_module_with_level(
 
     case level {
       .Basic => {},
-      .Full => {
-        try verify_prepared_func_expr(
-          pf,
-          prepared.closure_captures,
-          funcs_by_id,
-          env,
-          module_globals,
-          builtins,
-        )
-      },
+      .Full => try verify_prepared_func_expr(
+        pf,
+        prepared.closure_captures,
+        funcs_by_id,
+        env,
+        module_globals,
+        builtins,
+      ),
     }
 
     tc := date.now()
@@ -101,7 +102,7 @@ fn build_module_globals(prepared: PreparedModule) Dict<Int, MonoType> {
     if pf.is_init {
       for sid_int in pf.slots.keys() {
         case pf.slots[sid_int] {
-          .Some(info) => { out[info.source_local.id] = info.mono },
+          .Some(info) => out[info.source_local.id] = info.mono,
           .None => {},
         }
       }

@@ -4,19 +4,33 @@ use compiler.opt.builder_region.{BuilderInit, BuilderRegion, lower_builder_regio
 use tests.assert
 use tests.runner
 
-fn lid(id: Int) LocalId { LocalId.{ id } }
+fn lid(id: Int) LocalId {
+  LocalId.{ id }
+}
 
-fn fid(id: Int) FuncId { FuncId.{ id } }
+fn fid(id: Int) FuncId {
+  FuncId.{ id }
+}
 
-fn mock_vec_push() FuncId { fid(204) }
+fn mock_vec_push() FuncId {
+  fid(204)
+}
 
-fn mock_builder_new() FuncId { fid(230) }
+fn mock_builder_new() FuncId {
+  fid(230)
+}
 
-fn mock_builder_from() FuncId { fid(231) }
+fn mock_builder_from() FuncId {
+  fid(231)
+}
 
-fn mock_builder_push() FuncId { fid(232) }
+fn mock_builder_push() FuncId {
+  fid(232)
+}
 
-fn mock_builder_freeze() FuncId { fid(233) }
+fn mock_builder_freeze() FuncId {
+  fid(233)
+}
 
 fn mock_builder_config() BuilderConfig {
   BuilderConfig.{
@@ -68,7 +82,7 @@ fn test_lower_builder_region_uses_builder_new() Result<Void, String> {
       try assert.equal(freeze_args.len(), 1)
 
       case freeze_args[0] {
-        .ALocal(id) => { try assert.equal(id.id, 10) },
+        .ALocal(id) => try assert.equal(id.id, 10),
         _ => {
           return .Err("expected freeze(builder_local)")
         },
@@ -78,7 +92,7 @@ fn test_lower_builder_region_uses_builder_new() Result<Void, String> {
       try assert.equal(base_local.id, 0)
 
       case value {
-        .ALocal(id) => { try assert.equal(id.id, 11) },
+        .ALocal(id) => try assert.equal(id.id, 11),
         _ => {
           return .Err("expected assign from freeze local")
         },

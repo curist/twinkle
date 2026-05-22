@@ -5,7 +5,9 @@ use .tokens.{Token, TokenKind}
 
 pub type Cursor = .{ tokens: Vector<Token>, pos: Int, next_expr_id: Cell<Int> }
 
-pub fn new(tokens: Vector<Token>) Cursor { .{ tokens, pos: 0, next_expr_id: Cell.new(0) } }
+pub fn new(tokens: Vector<Token>) Cursor {
+  .{ tokens, pos: 0, next_expr_id: Cell.new(0) }
+}
 
 pub fn alloc_expr_id(c: Cursor) Int {
   id := c.next_expr_id.get()
@@ -14,21 +16,39 @@ pub fn alloc_expr_id(c: Cursor) Int {
 }
 
 pub fn kind(c: Cursor) TokenKind {
-  if c.pos < 0 or c.pos >= c.tokens.len() { .Eof } else { c.tokens[c.pos].kind }
+  if c.pos < 0 or c.pos >= c.tokens.len() {
+    .Eof
+  } else {
+    c.tokens[c.pos].kind
+  }
 }
 
 pub fn text(c: Cursor) String {
-  if c.pos < 0 or c.pos >= c.tokens.len() { "" } else { c.tokens[c.pos].text }
+  if c.pos < 0 or c.pos >= c.tokens.len() {
+    ""
+  } else {
+    c.tokens[c.pos].text
+  }
 }
 
 pub fn span(c: Cursor) Span {
-  if c.pos < 0 or c.pos >= c.tokens.len() { span.new(0, 0, 0) } else { c.tokens[c.pos].span }
+  if c.pos < 0 or c.pos >= c.tokens.len() {
+    span.new(0, 0, 0)
+  } else {
+    c.tokens[c.pos].span
+  }
 }
 
-pub fn token(c: Cursor) Token? { c.tokens.get(c.pos) }
+pub fn token(c: Cursor) Token? {
+  c.tokens.get(c.pos)
+}
 
 pub fn preceded_by_newline(c: Cursor) Bool {
-  if c.pos < 0 or c.pos >= c.tokens.len() { false } else { c.tokens[c.pos].preceded_by_newline }
+  if c.pos < 0 or c.pos >= c.tokens.len() {
+    false
+  } else {
+    c.tokens[c.pos].preceded_by_newline
+  }
 }
 
 pub fn advance(c: Cursor) Cursor {
@@ -43,16 +63,25 @@ pub fn with_pos(c: Cursor, new_pos: Int) Cursor {
   .{ tokens: c.tokens, pos: new_pos, next_expr_id: c.next_expr_id }
 }
 
-pub fn is_eof(c: Cursor) Bool { c.pos >= c.tokens.len() or c.kind() == .Eof }
+pub fn is_eof(c: Cursor) Bool {
+  c.pos >= c.tokens.len() or c.kind() == .Eof
+}
 
 pub fn span_from(c: Cursor, from_pos: Int) Span {
   if from_pos < 0 or from_pos >= c.tokens.len() {
     return span.new(0, 0, 0)
   }
-  end_pos := if c.pos - 1 >= c.tokens.len() { c.tokens.len() - 1 } else { c.pos - 1 }
+
+  end_pos := if c.pos - 1 >= c.tokens.len() {
+    c.tokens.len() - 1
+  } else {
+    c.pos - 1
+  }
+
   if end_pos < from_pos {
     return c.tokens[from_pos].span
   }
+
   c.tokens[from_pos].span.merge(c.tokens[end_pos].span)
 }
 
@@ -60,9 +89,16 @@ pub fn span_through(c: Cursor, from_pos: Int) Span {
   if from_pos < 0 or from_pos >= c.tokens.len() {
     return span.new(0, 0, 0)
   }
-  end_pos := if c.pos >= c.tokens.len() { c.tokens.len() - 1 } else { c.pos }
+
+  end_pos := if c.pos >= c.tokens.len() {
+    c.tokens.len() - 1
+  } else {
+    c.pos
+  }
+
   if end_pos < from_pos {
     return c.tokens[from_pos].span
   }
+
   c.tokens[from_pos].span.merge(c.tokens[end_pos].span)
 }

@@ -5,24 +5,42 @@
 use compiler.codegen.wasm_ir.{ExportDef, FuncDef, ValType, WasmModule}
 
 // ── Constants ───────────────────────────────────────────────────────
-fn b_() Int { 5 } // bits per level
+fn b_() Int {
+  5
+} // bits per level
 
-fn bf() Int { 32 } // branching factor = 1 << 5
+fn bf() Int {
+  32
+} // branching factor = 1 << 5
 
-fn mask() Int { 31 } // bf - 1
+fn mask() Int {
+  31
+} // bf - 1
 
 // ── Qualified type names (after linking) ────────────────────────────
-fn t_array() String { "rt_types__Array" }
+fn t_array() String {
+  "rt_types__Array"
+}
 
-fn t_pvec() String { "rt_types__PVec" }
+fn t_pvec() String {
+  "rt_types__PVec"
+}
 
-fn t_vec_children() String { "rt_types__VecChildren" }
+fn t_vec_children() String {
+  "rt_types__VecChildren"
+}
 
-fn t_vec_internal() String { "rt_types__VecInternal" }
+fn t_vec_internal() String {
+  "rt_types__VecInternal"
+}
 
-fn t_boxed_int() String { "rt_types__BoxedInt" }
+fn t_boxed_int() String {
+  "rt_types__BoxedInt"
+}
 
-fn t_variant() String { "rt_types__Variant" }
+fn t_variant() String {
+  "rt_types__Variant"
+}
 
 // ── Ref type helpers ────────────────────────────────────────────────
 fn arr_null() ValType {
@@ -62,16 +80,26 @@ fn ref_eq_null() ValType {
 }
 
 // PVec field indices
-fn pv_len() Int { 0 }
+fn pv_len() Int {
+  0
+}
 
-fn pv_shift() Int { 1 }
+fn pv_shift() Int {
+  1
+}
 
-fn pv_root() Int { 2 }
+fn pv_root() Int {
+  2
+}
 
-fn pv_tail() Int { 3 }
+fn pv_tail() Int {
+  3
+}
 
 // VecInternal field index
-fn vi_children() Int { 0 }
+fn vi_children() Int {
+  0
+}
 
 // ── Module ──────────────────────────────────────────────────────────
 pub fn module() WasmModule {
@@ -100,7 +128,9 @@ pub fn module() WasmModule {
     from_read_file_result_fn(),
     make_empty_fn(),
   ]
-  exports := collect f in funcs { ExportDef.{ wasm_name: f.name, func_sym: f.name } }
+  exports := collect f in funcs {
+    ExportDef.{ wasm_name: f.name, func_sym: f.name }
+  }
   .{
     namespace: "rt.arr",
     types: [],
@@ -952,6 +982,7 @@ fn concat_fn() FuncDef {
 // slice(vec: PVec?, start: i32, end: i32) -> PVec
 fn slice_fn() FuncDef {
   ta := t_array()
+
   // p0=vec, p1=start, p2=end, L3=len, L4=temp, L5=i, L6=leaf, L7=leaf_off, L8=copy_count
   .{
     name: "slice",
@@ -1184,6 +1215,7 @@ fn builder_new_fn() FuncDef {
 // builder_from(vec: PVec?) -> Array
 fn builder_from_fn() FuncDef {
   ta := t_array()
+
   // p0=vec, L1=tail_data, L2=tail_len, L3=new_tail_buf, L4=trie_prefix
   .{
     name: "builder_from",
@@ -1246,6 +1278,7 @@ fn builder_from_fn() FuncDef {
 // builder_push(builder: Array?, elem: anyref) -> void
 fn builder_push_fn() FuncDef {
   ta := t_array()
+
   // p0=builder, p1=elem
   // L2=tail_buf, L3=tail_len, L4=pvec_so_far
   .{
@@ -1332,6 +1365,7 @@ fn builder_push_fn() FuncDef {
 // builder_extend(builder: Array?, vec: PVec?) -> void
 fn builder_extend_fn() FuncDef {
   ta := t_array()
+
   // p0=builder, p1=vec, L2=i, L3=vec_len, L4=flat
   .{
     name: "builder_extend",
@@ -1385,6 +1419,7 @@ fn builder_extend_fn() FuncDef {
 // builder_freeze(builder: Array?) -> PVec
 fn builder_freeze_fn() FuncDef {
   ta := t_array()
+
   // p0=builder, L1=pvec_so_far, L2=tail_len, L3=tail_buf, L4=final_tail
   .{
     name: "builder_freeze",
@@ -1455,6 +1490,7 @@ fn builder_freeze_fn() FuncDef {
 // from_array(arr: Array) -> PVec
 fn from_array_fn() FuncDef {
   ta := t_array()
+
   // p0=arr, L1=len, L2=pvec, L3=i, L4=leaf, L5=remaining, L6=tail
   FuncDef.{
     name: "from_array",
@@ -1576,6 +1612,7 @@ fn from_array_fn() FuncDef {
 // to_array(vec: PVec?) -> Array
 fn to_array_fn() FuncDef {
   ta := t_array()
+
   // p0=vec, L1=len, L2=result, L3=i, L4=tail, L5=tail_len, L6=trie_len
   FuncDef.{
     name: "to_array",
@@ -1662,6 +1699,7 @@ fn from_read_file_result_fn() FuncDef {
   ta := t_array()
   tv := t_variant()
   variant_ref := ValType.Ref(true, .Named(tv))
+
   // p0=v, L1=payload
   FuncDef.{
     name: "from_read_file_result",

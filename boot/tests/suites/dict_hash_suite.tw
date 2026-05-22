@@ -110,6 +110,7 @@ pub fn suite() runner.Suite {
         }
 
         try assert.equal(d.len(), 1000)
+
         // Spot-check retrieval
         try assert.equal(
           case d["\$f0_lambda"] {

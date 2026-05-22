@@ -1,7 +1,9 @@
 use .duplicate_type_imports_tokens
 use .duplicate_type_imports_tokens.{Token}
 
-fn bare_kind(token: Token) Int { token.kind }
+fn bare_kind(token: Token) Int {
+  token.kind
+}
 
 fn main() {
   from_module: Token = duplicate_type_imports_tokens.make(1)

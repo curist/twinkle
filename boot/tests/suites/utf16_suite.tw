@@ -17,7 +17,9 @@ pub fn suite() runner.Suite {
     .test(
       "code_points iterates scalars with byte ranges",
       fn() {
-        cps := collect cp in utf16.code_points("a𝄞b") { cp }
+        cps := collect cp in utf16.code_points("a𝄞b") {
+          cp
+        }
         try assert.equal(cps.len(), 3)
         try assert.equal(cps[0].value, 0x61)
         try assert.equal(cps[0].byte_start, 0)

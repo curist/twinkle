@@ -5,9 +5,13 @@ use lib.source.span
 use tests.assert
 use tests.runner
 
-fn no_color() RenderConfig { .{ color: false } }
+fn no_color() RenderConfig {
+  .{ color: false }
+}
 
-fn with_color() RenderConfig { .{ color: true } }
+fn with_color() RenderConfig {
+  .{ color: true }
+}
 
 fn make_reg(name: String, source: String) registry.FileRegistry {
   reg := registry.empty()
@@ -23,9 +27,13 @@ fn secondary(s: span.Span, lbl: String?) SpanLabel {
   SpanLabel.{ span: s, label: lbl, is_primary: false }
 }
 
-fn sp(start: Int, end: Int) span.Span { span.new(0, start, end) }
+fn sp(start: Int, end: Int) span.Span {
+  span.new(0, start, end)
+}
 
-fn lines(parts: Vector<String>) String { parts.join("\n") }
+fn lines(parts: Vector<String>) String {
+  parts.join("\n")
+}
 
 pub fn suite() runner.Suite {
   runner.suite("render")
@@ -179,6 +187,7 @@ pub fn suite() runner.Suite {
         // Build a 10-line source; each "line N\n" is 7 bytes (N=1..9), last is 7 chars.
         source := "line 1\nline 2\nline 3\nline 4\nline 5\nline 6\nline 7\nline 8\nline 9\nline 10"
         reg := make_reg("test.tw", source)
+
         // "line" on line 10 starts at byte 63, ends at byte 67
         report := Report.{
           severity: .Error,
@@ -187,6 +196,7 @@ pub fn suite() runner.Suite {
           help_lines: [],
         }
         out := render.render(report, reg, no_color())
+
         // Two-digit gutter: pad = "  " (two spaces)
         try assert.is_true(out.contains("  --> test.tw:10:1"))
         try assert.is_true(out.contains("10 | line 10"))
@@ -200,8 +210,10 @@ pub fn suite() runner.Suite {
         reg := registry.empty()
         report := Report.{ severity: .Error, title: "something", labels: [], help_lines: [] }
         out := render.render(report, reg, with_color())
+
         // Bold-red escape for severity label
         try assert.is_true(out.contains("\e[31;1merror\e[0m"))
+
         // Bold escape for title
         try assert.is_true(out.contains("\e[1msomething\e[0m"))
         .Ok({})
@@ -229,6 +241,7 @@ pub fn suite() runner.Suite {
           help_lines: [],
         }
         out := render.render(report, reg, with_color())
+
         // Gutter lines (separator | and source |) should use cyan
         try assert.is_true(out.contains("\e[36m"))
         .Ok({})
@@ -272,6 +285,7 @@ pub fn suite() runner.Suite {
         // Source with Windows-style line endings
         source := "let x = 1\r\nlet y = 2"
         reg := make_reg("test.tw", source)
+
         // Span covers "let" on line 1 (bytes 0..3)
         report := Report.{
           severity: .Error,
@@ -290,6 +304,7 @@ pub fn suite() runner.Suite {
       fn() {
         source := "foo()"
         reg := make_reg("test.tw", source)
+
         // Empty span at byte 3 (the opening paren position)
         report := Report.{
           severity: .Error,

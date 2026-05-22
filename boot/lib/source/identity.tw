@@ -17,7 +17,9 @@ pub fn from_file_uri(uri: String) Result<SourceIdentity, String> {
   .Ok(from_path(p))
 }
 
-pub fn normalize_path(path_str: String) String { path.normalize(path_str) }
+pub fn normalize_path(path_str: String) String {
+  path.normalize(path_str)
+}
 
 pub fn file_uri_to_path(uri: String) Result<String, String> {
   if !uri.starts_with("file://") {

@@ -7,9 +7,13 @@ use tests.assert
 use tests.runner
 
 // ── Helpers ─────────────────────────────────────────────────────────
-fn lid(id: Int) LocalId { LocalId.{ id } }
+fn lid(id: Int) LocalId {
+  LocalId.{ id }
+}
 
-fn fid(id: Int) FuncId { FuncId.{ id } }
+fn fid(id: Int) FuncId {
+  FuncId.{ id }
+}
 
 fn make_init_func(id: Int, body: AnfExpr) AnfFunctionDef {
   AnfFunctionDef.{
@@ -120,6 +124,7 @@ fn test_pinned_locals_preserved() Result<Void, String> {
   // $init: let x = 42; Atom(Void)
   init_body: AnfExpr = .Let(lid(0), .AInit(.ALitInt(42)), .Atom(.ALitVoid))
   init_func := make_init_func(100, init_body)
+
   // other func: body references local 0 (free variable from $init)
   other_body: AnfExpr = .Atom(.ALocal(lid(0)))
   other_func := make_func(101, "other", other_body)
@@ -167,6 +172,7 @@ fn test_multiple_functions_optimized() Result<Void, String> {
     .Atom(.ALocal(lid(0))),
   )
   func1 := make_func(1, "f1", body1)
+
   // func2: let y = 10 - 3; Atom(y) → let y = 7; Atom(y)
   body2: AnfExpr = .Let(
     lid(0),
@@ -225,6 +231,7 @@ fn test_copy_prop_respects_pinned() Result<Void, String> {
     .Let(lid(1), .AInit(.ALocal(lid(0))), .Atom(.ALocal(lid(1)))),
   )
   init_func := make_init_func(100, init_body)
+
   // other func references local 0 as free
   other_body: AnfExpr = .Atom(.ALocal(lid(0)))
   other_func := make_func(101, "other", other_body)
@@ -298,16 +305,14 @@ fn test_optimize_module_with_semantics_matches_default() Result<Void, String> {
   defaulted := optimize_module(module)
 
   case explicit.functions[0].body {
-    .Atom(.ALitInt(n1)) => {
-      case defaulted.functions[0].body {
-        .Atom(.ALitInt(n2)) => {
-          try assert.equal(n1, 9)
-          assert.equal(n2, 9)
-        },
-        _ => {
-          return .Err("default optimize_module did not reduce to Atom(9)")
-        },
-      }
+    .Atom(.ALitInt(n1)) => case defaulted.functions[0].body {
+      .Atom(.ALitInt(n2)) => {
+        try assert.equal(n1, 9)
+        assert.equal(n2, 9)
+      },
+      _ => {
+        return .Err("default optimize_module did not reduce to Atom(9)")
+      },
     },
     _ => .Err("optimize_module_with_semantics did not reduce to Atom(9)"),
   }

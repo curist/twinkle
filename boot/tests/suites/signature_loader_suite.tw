@@ -38,7 +38,11 @@ fn find_free_group(groups: Vector<SignatureGroup>) SignatureGroup? {
 }
 
 fn find_sig(sigs: Vector<FunctionSig>, name: String) FunctionSig? {
-  sigs.find(fn(s) { s.name == name })
+  sigs.find(
+    fn(s) {
+      s.name == name
+    },
+  )
 }
 
 fn signatures_dir() String {
@@ -62,6 +66,7 @@ pub fn suite() runner.Suite {
       "load_signatures returns one group per signature file",
       fn() {
         groups := try load_signatures(signatures_dir(), builtin_type_env())
+
         // 10 files: string, vector, dict, cell, iterator, int, float, bool, byte, range
         try assert.equal(groups.len() >= 10, true)
         .Ok({})
@@ -210,11 +215,9 @@ pub fn suite() runner.Suite {
         range_group := groups.find(
           fn(g) {
             case g.receiver {
-              .None => {
-                case find_sig(g.sigs, "range_from") {
-                  .Some(_) => true,
-                  .None => false,
-                }
+              .None => case find_sig(g.sigs, "range_from") {
+                .Some(_) => true,
+                .None => false,
               },
               .Some(_) => false,
             }
@@ -228,15 +231,14 @@ pub fn suite() runner.Suite {
       "range group has range and range_step",
       fn() {
         groups := try load_signatures(signatures_dir(), builtin_type_env())
+
         // find the group containing range_from
         range_group := try groups.find(
           fn(g) {
             case g.receiver {
-              .None => {
-                case find_sig(g.sigs, "range_from") {
-                  .Some(_) => true,
-                  .None => false,
-                }
+              .None => case find_sig(g.sigs, "range_from") {
+                .Some(_) => true,
+                .None => false,
               },
               .Some(_) => false,
             }

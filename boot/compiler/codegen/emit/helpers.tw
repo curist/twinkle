@@ -98,24 +98,28 @@ pub fn variant_field_mono(
       if vid.id == 1 and field_idx == 0 {
         return inner
       }
+
       .Void
     },
     .Result(ok, err) => {
       if vid.id == 0 and field_idx == 0 {
         return ok
       }
+
       if vid.id == 1 and field_idx == 0 {
         return err
       }
+
       .Void
     },
-    .Named(tid, args) => {
-      case env.lookup_type_def(tid) {
-        .Some(.Alias(_, type_params, target)) => {
-          variant_field_mono(subst_type_params(target, type_params, args), vid, field_idx, env)
-        },
-        _ => resolve_named_variant_field(tid, args, vid, field_idx, env),
-      }
+    .Named(tid, args) => case env.lookup_type_def(tid) {
+      .Some(.Alias(_, type_params, target)) => variant_field_mono(
+        subst_type_params(target, type_params, args),
+        vid,
+        field_idx,
+        env,
+      ),
+      _ => resolve_named_variant_field(tid, args, vid, field_idx, env),
     },
     .Void => .Void,
     _ => error(
@@ -133,7 +137,9 @@ fn resolve_named_variant_field(
 ) MonoType {
   def := case env.lookup_type_def(tid) {
     .Some(d) => d,
-    .None => { return .Void },
+    .None => {
+      return .Void
+    },
   }
 
   case def {
@@ -154,6 +160,7 @@ pub fn combine_and_checks(checks: Vector<Vector<Instr>>) Vector<Instr> {
   if checks.len() == 1 {
     return checks[0]
   }
+
   out := checks[0]
   idx := 1
 

@@ -5,7 +5,11 @@
 pub type CodePoint = .{ value: Int, byte_start: Int, byte_end: Int }
 
 pub fn code_unit_len(cp: Int) Int {
-  if cp <= 0xFFFF { 1 } else { 2 }
+  if cp <= 0xFFFF {
+    1
+  } else {
+    2
+  }
 }
 
 pub fn code_points(s: String) Iterator<CodePoint> {
@@ -43,15 +47,22 @@ pub fn byte_offset_to_code_units(s: String, byte_offset: Int) Int {
   if byte_offset <= 0 {
     return 0
   }
-  target := if byte_offset > s.len() { s.len() } else { byte_offset }
+
+  target := if byte_offset > s.len() {
+    s.len()
+  } else {
+    byte_offset
+  }
   count := 0
   pos := 0
 
   for pos < target {
     len := utf8_len_at(s, pos)
+
     if pos + len > target {
       return count
     }
+
     cp := decode_cp(s, pos)
     count = count + code_unit_len(cp)
     pos = pos + len
@@ -88,6 +99,7 @@ pub fn code_units_to_byte_offset(s: String, units: Int) Int? {
     if units > count and units < next_count {
       return .None
     }
+
     count = next_count
     pos = next_pos
   }

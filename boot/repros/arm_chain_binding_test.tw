@@ -30,11 +30,15 @@ fn get_circle_radius(s: Shape3) Int {
 }
 
 fn assert_eq_str(actual: String, expected: String, label: String) {
-  if actual != expected { error("FAIL ${label}: expected '${expected}', got '${actual}'") }
+  if actual != expected {
+    error("FAIL ${label}: expected '${expected}', got '${actual}'")
+  }
 }
 
 fn assert_eq_int(actual: Int, expected: Int, label: String) {
-  if actual != expected { error("FAIL ${label}: expected ${expected}, got ${actual}") }
+  if actual != expected {
+    error("FAIL ${label}: expected ${expected}, got ${actual}")
+  }
 }
 
 assert_eq_str(describe_partial(.Red), "red", "partial-red")

@@ -1,3 +1,5 @@
 use .alias_type_source as diag_b
 
-pub fn read(d: diag_b.Diagnostic) String { d.message }
+pub fn read(d: diag_b.Diagnostic) String {
+  d.message
+}

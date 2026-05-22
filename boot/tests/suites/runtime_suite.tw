@@ -13,6 +13,7 @@ fn contains(haystack: String, needle: String) Bool {
   if needle.len() > haystack.len() {
     return false
   }
+
   if needle.len() == 0 {
     return true
   }
@@ -29,20 +30,14 @@ fn contains(haystack: String, needle: String) Bool {
 fn find_type(types: Vector<TypeDef>, name: String) TypeDef? {
   for td in types {
     case td {
-      .Struct(n, _, _, _) => {
-        if n == name {
-          return .Some(td)
-        }
+      .Struct(n, _, _, _) => if n == name {
+        return .Some(td)
       },
-      .Array(n, _) => {
-        if n == name {
-          return .Some(td)
-        }
+      .Array(n, _) => if n == name {
+        return .Some(td)
       },
-      .FuncType(n, _, _) => {
-        if n == name {
-          return .Some(td)
-        }
+      .FuncType(n, _, _) => if n == name {
+        return .Some(td)
       },
     }
   }
@@ -50,7 +45,9 @@ fn find_type(types: Vector<TypeDef>, name: String) TypeDef? {
   .None
 }
 
-fn type_count(m: WasmModule) Int { m.types.len() }
+fn type_count(m: WasmModule) Int {
+  m.types.len()
+}
 
 // Recursively check if any instruction in a body (including nested blocks) matches a predicate.
 fn has_instr(body: Vector<Instr>, pred: fn(Instr) Bool) Bool {
@@ -64,19 +61,16 @@ fn has_instr(body: Vector<Instr>, pred: fn(Instr) Bool) Bool {
         if has_instr(then_body, pred) {
           return true
         }
+
         if has_instr(else_body, pred) {
           return true
         }
       },
-      .Block(_, _, inner) => {
-        if has_instr(inner, pred) {
-          return true
-        }
+      .Block(_, _, inner) => if has_instr(inner, pred) {
+        return true
       },
-      .Loop(_, _, inner) => {
-        if has_instr(inner, pred) {
-          return true
-        }
+      .Loop(_, _, inner) => if has_instr(inner, pred) {
+        return true
       },
       _ => {},
     }
@@ -108,6 +102,7 @@ fn test_rt_types_no_funcs() Result<Void, String> {
 
 fn test_rt_types_array() Result<Void, String> {
   m := rt_types.module()
+
   // First type should be Array
   td := m.types[0]
 
@@ -123,7 +118,9 @@ fn test_rt_types_array() Result<Void, String> {
         "Array elem should be anyref",
       )
     },
-    _ => { return assert.fail("first type should be Array") },
+    _ => {
+      return assert.fail("first type should be Array")
+    },
   }
 
   .Ok({})
@@ -131,6 +128,7 @@ fn test_rt_types_array() Result<Void, String> {
 
 fn test_rt_types_string() Result<Void, String> {
   m := rt_types.module()
+
   // Second type should be String
   td := m.types[1]
 
@@ -146,7 +144,9 @@ fn test_rt_types_string() Result<Void, String> {
         "String elem should be i8",
       )
     },
-    _ => { return assert.fail("second type should be String array") },
+    _ => {
+      return assert.fail("second type should be String array")
+    },
   }
 
   .Ok({})
@@ -180,7 +180,9 @@ fn test_rt_types_pdict() Result<Void, String> {
         "field 2 should be order",
       )
     },
-    _ => { return assert.fail("missing PDict type") },
+    _ => {
+      return assert.fail("missing PDict type")
+    },
   }
 
   .Ok({})
@@ -194,7 +196,9 @@ fn test_rt_types_closure_non_final() Result<Void, String> {
       try assert.ok(!is_final, "Closure should be non-final (sub)")
       try assert.equal(fields.len(), 2)
     },
-    _ => { return assert.fail("missing Closure type") },
+    _ => {
+      return assert.fail("missing Closure type")
+    },
   }
 
   .Ok({})
@@ -221,7 +225,9 @@ fn test_rt_types_variant() Result<Void, String> {
         "variant_id should be i32",
       )
     },
-    _ => { return assert.fail("missing Variant type") },
+    _ => {
+      return assert.fail("missing Variant type")
+    },
   }
 
   .Ok({})
@@ -241,7 +247,9 @@ fn test_rt_types_boxed_int() Result<Void, String> {
         "BoxedInt.v should be i64",
       )
     },
-    _ => { return assert.fail("missing BoxedInt type") },
+    _ => {
+      return assert.fail("missing BoxedInt type")
+    },
   }
 
   .Ok({})
@@ -261,7 +269,9 @@ fn test_rt_types_boxed_float() Result<Void, String> {
         "BoxedFloat.v should be f64",
       )
     },
-    _ => { return assert.fail("missing BoxedFloat type") },
+    _ => {
+      return assert.fail("missing BoxedFloat type")
+    },
   }
 
   .Ok({})
@@ -275,7 +285,9 @@ fn test_rt_types_iter_state_non_final() Result<Void, String> {
       try assert.ok(!is_final, "IterState should be non-final (sub)")
       try assert.equal(fields.len(), 2)
     },
-    _ => { return assert.fail("missing IterState type") },
+    _ => {
+      return assert.fail("missing IterState type")
+    },
   }
 
   .Ok({})
@@ -283,6 +295,7 @@ fn test_rt_types_iter_state_non_final() Result<Void, String> {
 
 fn test_rt_types_vec_children() Result<Void, String> {
   m := rt_types.module()
+
   // NOTE: uses two-step match instead of .Some(.Array(...)) due to a nested
   // pattern match codegen issue with .Some(.Array(...)) in large compilation units.
   td := try find_type(m.types, "VecChildren").ok_or("missing VecChildren type")
@@ -293,13 +306,15 @@ fn test_rt_types_vec_children() Result<Void, String> {
       try assert.ok(elem.mutable, "VecChildren should be mutable")
 
       case elem.ty {
-        .Ref(nullable, .Eq) => {
-          try assert.ok(nullable, "VecChildren elem should be nullable eqref")
+        .Ref(nullable, .Eq) => try assert.ok(nullable, "VecChildren elem should be nullable eqref"),
+        _ => {
+          return assert.fail("VecChildren elem should be ref null eq")
         },
-        _ => { return assert.fail("VecChildren elem should be ref null eq") },
       }
     },
-    _ => { return assert.fail("VecChildren should be an Array type") },
+    _ => {
+      return assert.fail("VecChildren should be an Array type")
+    },
   }
 
   .Ok({})
@@ -326,10 +341,14 @@ fn test_rt_types_vec_internal() Result<Void, String> {
           try assert.ok(!nullable, "children should be non-null ref")
           try assert.equal(n, "VecChildren")
         },
-        _ => { return assert.fail("children should be ref VecChildren") },
+        _ => {
+          return assert.fail("children should be ref VecChildren")
+        },
       }
     },
-    _ => { return assert.fail("VecInternal should be a Struct type") },
+    _ => {
+      return assert.fail("VecInternal should be a Struct type")
+    },
   }
 
   .Ok({})
@@ -384,7 +403,9 @@ fn test_rt_types_pvec() Result<Void, String> {
           try assert.ok(nullable, "root should be nullable")
           try assert.equal(n, "VecInternal")
         },
-        _ => { return assert.fail("root should be ref null VecInternal") },
+        _ => {
+          return assert.fail("root should be ref null VecInternal")
+        },
       }
 
       try assert.ok(
@@ -401,10 +422,14 @@ fn test_rt_types_pvec() Result<Void, String> {
           try assert.ok(!nullable, "tail should be non-null")
           try assert.equal(n, "Array")
         },
-        _ => { return assert.fail("tail should be ref Array") },
+        _ => {
+          return assert.fail("tail should be ref Array")
+        },
       }
     },
-    _ => { return assert.fail("PVec should be a Struct type") },
+    _ => {
+      return assert.fail("PVec should be a Struct type")
+    },
   }
 
   .Ok({})
@@ -441,7 +466,9 @@ fn test_rt_core_exports_all_funcs() Result<Void, String> {
     found := false
 
     for exp in m.exports {
-      if exp.func_sym == f.name { found = true }
+      if exp.func_sym == f.name {
+        found = true
+      }
     }
 
     try assert.ok(found, "function ${f.name} should be exported")
@@ -462,11 +489,26 @@ fn test_rt_core_host_imports() Result<Void, String> {
   for imp in m.imports {
     if imp.module == "host" {
       host_count = host_count + 1
-      if imp.name == "print" { found_print = true }
-      if imp.name == "println" { found_println = true }
-      if imp.name == "error" { found_error = true }
-      if imp.name == "eprint" { found_eprint = true }
-      if imp.name == "eprintln" { found_eprintln = true }
+
+      if imp.name == "print" {
+        found_print = true
+      }
+
+      if imp.name == "println" {
+        found_println = true
+      }
+
+      if imp.name == "error" {
+        found_error = true
+      }
+
+      if imp.name == "eprint" {
+        found_eprint = true
+      }
+
+      if imp.name == "eprintln" {
+        found_eprintln = true
+      }
     }
   }
 
@@ -496,11 +538,25 @@ fn test_rt_core_eq_imports() Result<Void, String> {
       try assert.equal(imp.results.len(), 1)
     }
 
-    if imp.module == "rt.arr" and imp.name == "len" { found_arr_len = true }
-    if imp.module == "rt.arr" and imp.name == "get" { found_arr_get = true }
-    if imp.module == "rt.dict" and imp.name == "len" { found_dict_len = true }
-    if imp.module == "rt.dict" and imp.name == "get" { found_dict_get = true }
-    if imp.module == "rt.dict" and imp.name == "keys" { found_dict_keys = true }
+    if imp.module == "rt.arr" and imp.name == "len" {
+      found_arr_len = true
+    }
+
+    if imp.module == "rt.arr" and imp.name == "get" {
+      found_arr_get = true
+    }
+
+    if imp.module == "rt.dict" and imp.name == "len" {
+      found_dict_len = true
+    }
+
+    if imp.module == "rt.dict" and imp.name == "get" {
+      found_dict_get = true
+    }
+
+    if imp.module == "rt.dict" and imp.name == "keys" {
+      found_dict_keys = true
+    }
   }
 
   try assert.ok(found_str, "should import rt.str.eq")
@@ -526,13 +582,14 @@ fn test_rt_core_print_delegates() Result<Void, String> {
   m := rt_core.module(.{ records: [], sums: [] })
   f := try find_func(m.funcs, "print").ok_or("missing print func")
   try assert.equal(f.params.len(), 1)
+
   // Body should call host_print
   found := false
 
   for instr in f.body {
     case instr {
-      .Call(sym) => {
-        if sym == "host_print" { found = true }
+      .Call(sym) => if sym == "host_print" {
+        found = true
       },
       _ => {},
     }
@@ -550,10 +607,12 @@ fn test_rt_core_trap_unreachable() Result<Void, String> {
 
   for instr in f.body {
     case instr {
-      .Call(sym) => {
-        if sym == "host_error" { found_call = true }
+      .Call(sym) => if sym == "host_error" {
+        found_call = true
       },
-      .Unreachable => { found_unreachable = true },
+      .Unreachable => {
+        found_unreachable = true
+      },
       _ => {},
     }
   }
@@ -577,12 +636,25 @@ fn test_rt_core_eq_uses_ref_test() Result<Void, String> {
   for instr in f.body {
     case instr {
       .RefTest(_, .Named(n)) => {
-        if n == "rt_types__BoxedInt" { found_boxed_int = true }
-        if n == "rt_types__PVec" { found_pvec = true }
-        if n == "rt_types__PDict" { found_pdict = true }
-        if n == "rt_types__Variant" { found_variant = true }
+        if n == "rt_types__BoxedInt" {
+          found_boxed_int = true
+        }
+
+        if n == "rt_types__PVec" {
+          found_pvec = true
+        }
+
+        if n == "rt_types__PDict" {
+          found_pdict = true
+        }
+
+        if n == "rt_types__Variant" {
+          found_variant = true
+        }
       },
-      .RefEq => { found_ref_eq = true },
+      .RefEq => {
+        found_ref_eq = true
+      },
       _ => {},
     }
   }
@@ -625,7 +697,9 @@ fn test_rt_str_exports_all_funcs() Result<Void, String> {
     found := false
 
     for exp in m.exports {
-      if exp.func_sym == f.name { found = true }
+      if exp.func_sym == f.name {
+        found = true
+      }
     }
 
     try assert.ok(found, "function ${f.name} should be exported")
@@ -654,12 +728,15 @@ fn test_rt_str_len() Result<Void, String> {
   f := try find_func(m.funcs, "len").ok_or("missing len func")
   try assert.equal(f.params.len(), 1)
   try assert.equal(f.results.len(), 1)
+
   // Body should contain ArrayLen
   found := false
 
   for instr in f.body {
     case instr {
-      .ArrayLen => { found = true },
+      .ArrayLen => {
+        found = true
+      },
       _ => {},
     }
   }
@@ -672,12 +749,15 @@ fn test_rt_str_concat_uses_array_copy() Result<Void, String> {
   m := rt_str.module()
   f := try find_func(m.funcs, "concat").ok_or("missing concat func")
   try assert.equal(f.params.len(), 2)
+
   // Should contain ArrayCopy
   count := 0
 
   for instr in f.body {
     case instr {
-      .ArrayCopy(_, _) => { count = count + 1 },
+      .ArrayCopy(_, _) => {
+        count = count + 1
+      },
       _ => {},
     }
   }
@@ -690,12 +770,15 @@ fn test_rt_str_substring_clamps() Result<Void, String> {
   m := rt_str.module()
   f := try find_func(m.funcs, "substring").ok_or("missing substring func")
   try assert.equal(f.params.len(), 3)
+
   // Should contain If for clamping
   if_count := 0
 
   for instr in f.body {
     case instr {
-      .If(_, _, _) => { if_count = if_count + 1 },
+      .If(_, _, _) => {
+        if_count = if_count + 1
+      },
       _ => {},
     }
   }
@@ -709,6 +792,7 @@ fn test_rt_str_eq_loop() Result<Void, String> {
   f := try find_func(m.funcs, "eq").ok_or("missing eq func")
   try assert.equal(f.params.len(), 2)
   try assert.equal(f.results.len(), 1)
+
   // Should contain a Loop for byte comparison
   found_loop := false
 
@@ -717,7 +801,9 @@ fn test_rt_str_eq_loop() Result<Void, String> {
       .Block(_, _, body) => {
         for inner in body {
           case inner {
-            .Loop(_, _, _) => { found_loop = true },
+            .Loop(_, _, _) => {
+              found_loop = true
+            },
             _ => {},
           }
         }
@@ -735,6 +821,7 @@ fn test_rt_str_cmp_returns_ordering() Result<Void, String> {
   f := try find_func(m.funcs, "cmp").ok_or("missing cmp func")
   try assert.equal(f.params.len(), 2)
   try assert.equal(f.results.len(), 1)
+
   // Should have locals for min_len, i, byte_a, byte_b, len_a, len_b
   try assert.equal(f.locals.len(), 6)
   .Ok({})
@@ -743,6 +830,7 @@ fn test_rt_str_cmp_returns_ordering() Result<Void, String> {
 fn test_rt_str_from_i64_special_cases() Result<Void, String> {
   m := rt_str.module()
   f := try find_func(m.funcs, "from_i64").ok_or("missing from_i64 func")
+
   // Should have I64Eqz check for zero and a digit loop
   found_eqz := false
   found_loop := false
@@ -752,12 +840,16 @@ fn test_rt_str_from_i64_special_cases() Result<Void, String> {
       .If(_, then_body, _) => {
         for t in then_body {
           case t {
-            .ArrayNewFixed(_, 1) => { found_eqz = true },
+            .ArrayNewFixed(_, 1) => {
+              found_eqz = true
+            },
             _ => {},
           }
         }
       },
-      .Loop(_, _, _) => { found_loop = true },
+      .Loop(_, _, _) => {
+        found_loop = true
+      },
       _ => {},
     }
   }
@@ -774,8 +866,8 @@ fn test_rt_str_from_f64_delegates() Result<Void, String> {
 
   for instr in f.body {
     case instr {
-      .Call(sym) => {
-        if sym == "host_f64_to_string" { found = true }
+      .Call(sym) => if sym == "host_f64_to_string" {
+        found = true
       },
       _ => {},
     }
@@ -788,6 +880,7 @@ fn test_rt_str_from_f64_delegates() Result<Void, String> {
 fn test_rt_str_from_bool_literals() Result<Void, String> {
   m := rt_str.module()
   f := try find_func(m.funcs, "from_bool").ok_or("missing from_bool func")
+
   // Should contain ArrayNewFixed for "true" (4 bytes) and "false" (5 bytes)
   found_4 := false
   found_5 := false
@@ -797,14 +890,18 @@ fn test_rt_str_from_bool_literals() Result<Void, String> {
       .If(_, then_body, else_body) => {
         for t in then_body {
           case t {
-            .ArrayNewFixed(_, 4) => { found_4 = true },
+            .ArrayNewFixed(_, 4) => {
+              found_4 = true
+            },
             _ => {},
           }
         }
 
         for e in else_body {
           case e {
-            .ArrayNewFixed(_, 5) => { found_5 = true },
+            .ArrayNewFixed(_, 5) => {
+              found_5 = true
+            },
             _ => {},
           }
         }
@@ -842,7 +939,9 @@ fn test_rt_arr_exports_all_funcs() Result<Void, String> {
     found := false
 
     for exp in m.exports {
-      if exp.func_sym == f.name { found = true }
+      if exp.func_sym == f.name {
+        found = true
+      }
     }
 
     try assert.ok(found, "function ${f.name} should be exported")
@@ -859,6 +958,7 @@ fn test_rt_arr_no_imports() Result<Void, String> {
 
 fn test_rt_arr_has_globals() Result<Void, String> {
   m := rt_arr.module()
+
   // empty_leaf and empty_pvec globals
   try assert.equal(m.globals.len(), 2)
   .Ok({})
@@ -866,6 +966,7 @@ fn test_rt_arr_has_globals() Result<Void, String> {
 
 fn test_rt_arr_has_internal_helpers() Result<Void, String> {
   m := rt_arr.module()
+
   // Internal helpers: tailoff, get_leaf, new_path, push_tail, do_set, push
   try assert.ok(find_func(m.funcs, "tailoff") != .None, "should have tailoff")
   try assert.ok(find_func(m.funcs, "get_leaf") != .None, "should have get_leaf")
@@ -878,6 +979,7 @@ fn test_rt_arr_has_internal_helpers() Result<Void, String> {
 
 fn test_rt_arr_has_bridge_helpers() Result<Void, String> {
   m := rt_arr.module()
+
   // Bridge helpers: from_array, to_array, from_read_file_result
   try assert.ok(find_func(m.funcs, "from_array") != .None, "should have from_array")
   try assert.ok(find_func(m.funcs, "to_array") != .None, "should have to_array")
@@ -1022,13 +1124,14 @@ fn test_rt_arr_len() Result<Void, String> {
   m := rt_arr.module()
   f := try find_func(m.funcs, "len").ok_or("missing len func")
   try assert.equal(f.params.len(), 1)
+
   // len reads PVec.len field via StructGet
   found := false
 
   for instr in f.body {
     case instr {
-      .StructGet(name, 0) => {
-        if name == "rt_types__PVec" { found = true }
+      .StructGet(name, 0) => if name == "rt_types__PVec" {
+        found = true
       },
       _ => {},
     }
@@ -1104,12 +1207,15 @@ fn test_rt_arr_builder_new_layout() Result<Void, String> {
   m := rt_arr.module()
   f := try find_func(m.funcs, "builder_new").ok_or("missing builder_new func")
   try assert.equal(f.params.len(), 0)
+
   // Should create [buf, len, cap] via ArrayNewFixed(_, 3)
   found := false
 
   for instr in f.body {
     case instr {
-      .ArrayNewFixed(_, 3) => { found = true },
+      .ArrayNewFixed(_, 3) => {
+        found = true
+      },
       _ => {},
     }
   }
@@ -1122,12 +1228,15 @@ fn test_rt_arr_builder_from() Result<Void, String> {
   m := rt_arr.module()
   f := try find_func(m.funcs, "builder_from").ok_or("missing builder_from func")
   try assert.equal(f.params.len(), 1)
+
   // Should create [buf, len, cap] via ArrayNewFixed(_, 3)
   found := false
 
   for instr in f.body {
     case instr {
-      .ArrayNewFixed(_, 3) => { found = true },
+      .ArrayNewFixed(_, 3) => {
+        found = true
+      },
       _ => {},
     }
   }
@@ -1141,13 +1250,14 @@ fn test_rt_arr_builder_push_tail() Result<Void, String> {
   f := try find_func(m.funcs, "builder_push").ok_or("missing builder_push func")
   try assert.equal(f.params.len(), 2)
   try assert.equal(f.results.len(), 0)
+
   // Transient builder: has in-place path (tail_len < 32) and promote path
   found_if := false
 
   for instr in f.body {
     case instr {
-      .If(_, _, else_body) => {
-        if else_body.len() > 0 { found_if = true }
+      .If(_, _, else_body) => if else_body.len() > 0 {
+        found_if = true
       },
       _ => {},
     }
@@ -1212,7 +1322,9 @@ fn test_rt_dict_exports_all_funcs() Result<Void, String> {
     found := false
 
     for exp in m.exports {
-      if exp.func_sym == f.name { found = true }
+      if exp.func_sym == f.name {
+        found = true
+      }
     }
 
     try assert.ok(found, "function ${f.name} should be exported")
@@ -1240,13 +1352,14 @@ fn test_rt_dict_make_empty() Result<Void, String> {
   m := rt_dict.module()
   f := try find_func(m.funcs, "make").ok_or("missing make func")
   try assert.equal(f.params.len(), 0)
+
   // Should create PDict via StructNew
   found := false
 
   for instr in f.body {
     case instr {
-      .StructNew(name) => {
-        if name == "rt_types__PDict" { found = true }
+      .StructNew(name) => if name == "rt_types__PDict" {
+        found = true
       },
       _ => {},
     }
@@ -1260,13 +1373,14 @@ fn test_rt_dict_len() Result<Void, String> {
   m := rt_dict.module()
   f := try find_func(m.funcs, "len").ok_or("missing len func")
   try assert.equal(f.params.len(), 1)
+
   // len reads PDict.size field via StructGet
   found := false
 
   for instr in f.body {
     case instr {
-      .StructGet(name, _) => {
-        if name == "rt_types__PDict" { found = true }
+      .StructGet(name, _) => if name == "rt_types__PDict" {
+        found = true
       },
       _ => {},
     }
@@ -1280,13 +1394,14 @@ fn test_rt_dict_keys_loop() Result<Void, String> {
   m := rt_dict.module()
   f := try find_func(m.funcs, "keys").ok_or("missing keys func")
   try assert.equal(f.params.len(), 1)
+
   // keys() returns pdict.order directly via StructGet (O(1), no loop needed)
   found := false
 
   for instr in f.body {
     case instr {
-      .StructGet(name, _) => {
-        if name == "rt_types__PDict" { found = true }
+      .StructGet(name, _) => if name == "rt_types__PDict" {
+        found = true
       },
       _ => {},
     }
@@ -1300,13 +1415,14 @@ fn test_rt_dict_has_calls_core_eq() Result<Void, String> {
   m := rt_dict.module()
   f := try find_func(m.funcs, "has").ok_or("missing has func")
   try assert.equal(f.params.len(), 2)
+
   // has delegates to node_get which uses core_eq
   found := false
 
   for instr in f.body {
     case instr {
-      .Call(sym) => {
-        if sym == "node_get" { found = true }
+      .Call(sym) => if sym == "node_get" {
+        found = true
       },
       _ => {},
     }
@@ -1320,13 +1436,14 @@ fn test_rt_dict_get_returns_null_on_miss() Result<Void, String> {
   m := rt_dict.module()
   f := try find_func(m.funcs, "get").ok_or("missing get func")
   try assert.equal(f.params.len(), 2)
+
   // get() delegates to node_get which returns null on miss
   found := false
 
   for instr in f.body {
     case instr {
-      .Call(sym) => {
-        if sym == "node_get" { found = true }
+      .Call(sym) => if sym == "node_get" {
+        found = true
       },
       _ => {},
     }
@@ -1340,6 +1457,7 @@ fn test_rt_dict_get_option_returns_variant() Result<Void, String> {
   m := rt_dict.module()
   f := try find_func(m.funcs, "get_option").ok_or("missing get_option func")
   try assert.equal(f.params.len(), 2)
+
   // Variant structs are created inside the if-else branches
   found_variant := false
 
@@ -1348,8 +1466,8 @@ fn test_rt_dict_get_option_returns_variant() Result<Void, String> {
       .If(_, then_b, _) => {
         for inner in then_b {
           case inner {
-            .StructNew(name) => {
-              if name == "rt_types__Variant" { found_variant = true }
+            .StructNew(name) => if name == "rt_types__Variant" {
+              found_variant = true
             },
             _ => {},
           }
@@ -1367,17 +1485,18 @@ fn test_rt_dict_set_cow() Result<Void, String> {
   m := rt_dict.module()
   f := try find_func(m.funcs, "set").ok_or("missing set func")
   try assert.equal(f.params.len(), 3)
+
   // Should create new PDict via StructNew and call node_set
   found_pdict := false
   found_node_set := false
 
   for instr in f.body {
     case instr {
-      .StructNew(name) => {
-        if name == "rt_types__PDict" { found_pdict = true }
+      .StructNew(name) => if name == "rt_types__PDict" {
+        found_pdict = true
       },
-      .Call(name) => {
-        if name == "node_set" { found_node_set = true }
+      .Call(name) => if name == "node_set" {
+        found_node_set = true
       },
       _ => {},
     }
@@ -1392,17 +1511,18 @@ fn test_rt_dict_remove_two_pass() Result<Void, String> {
   m := rt_dict.module()
   f := try find_func(m.funcs, "remove").ok_or("missing remove func")
   try assert.equal(f.params.len(), 2)
+
   // Should call node_remove and create new PDict
   found_node_remove := false
   found_pdict := false
 
   for instr in f.body {
     case instr {
-      .Call(name) => {
-        if name == "node_remove" { found_node_remove = true }
+      .Call(name) => if name == "node_remove" {
+        found_node_remove = true
       },
-      .StructNew(name) => {
-        if name == "rt_types__PDict" { found_pdict = true }
+      .StructNew(name) => if name == "rt_types__PDict" {
+        found_pdict = true
       },
       _ => {},
     }
@@ -1417,6 +1537,7 @@ fn test_rt_dict_set_in_place() Result<Void, String> {
   m := rt_dict.module()
   f := try find_func(m.funcs, "set_in_place").ok_or("missing set_in_place func")
   try assert.equal(f.params.len(), 3)
+
   // True in-place: calls node_set, mutates PDict via StructSet (no StructNew)
   found_node_set := false
   found_struct_set := false
@@ -1424,14 +1545,14 @@ fn test_rt_dict_set_in_place() Result<Void, String> {
 
   for instr in f.body {
     case instr {
-      .Call(name) => {
-        if name == "node_set" { found_node_set = true }
+      .Call(name) => if name == "node_set" {
+        found_node_set = true
       },
-      .StructSet(name, _) => {
-        if name == "rt_types__PDict" { found_struct_set = true }
+      .StructSet(name, _) => if name == "rt_types__PDict" {
+        found_struct_set = true
       },
-      .StructNew(name) => {
-        if name == "rt_types__PDict" { found_struct_new = true }
+      .StructNew(name) => if name == "rt_types__PDict" {
+        found_struct_new = true
       },
       _ => {},
     }
@@ -1447,6 +1568,7 @@ fn test_rt_dict_remove_in_place() Result<Void, String> {
   m := rt_dict.module()
   f := try find_func(m.funcs, "remove_in_place").ok_or("missing remove_in_place func")
   try assert.equal(f.params.len(), 2)
+
   // True in-place: calls node_remove, mutates PDict via StructSet (no StructNew)
   found_node_remove := false
   found_struct_set := false
@@ -1454,14 +1576,14 @@ fn test_rt_dict_remove_in_place() Result<Void, String> {
 
   for instr in f.body {
     case instr {
-      .Call(name) => {
-        if name == "node_remove" { found_node_remove = true }
+      .Call(name) => if name == "node_remove" {
+        found_node_remove = true
       },
-      .StructSet(name, _) => {
-        if name == "rt_types__PDict" { found_struct_set = true }
+      .StructSet(name, _) => if name == "rt_types__PDict" {
+        found_struct_set = true
       },
-      .StructNew(name) => {
-        if name == "rt_types__PDict" { found_struct_new = true }
+      .StructNew(name) => if name == "rt_types__PDict" {
+        found_struct_new = true
       },
       _ => {},
     }
@@ -1476,13 +1598,14 @@ fn test_rt_dict_remove_in_place() Result<Void, String> {
 fn test_rt_dict_node_get_collision_path() Result<Void, String> {
   m := rt_dict.module()
   f := try find_func(m.funcs, "node_get").ok_or("missing node_get func")
+
   // node_get must call collision_get for full-hash collision handling
   found := false
 
   for instr in f.body {
     case instr {
-      .Call(sym) => {
-        if sym == "collision_get" { found = true }
+      .Call(sym) => if sym == "collision_get" {
+        found = true
       },
       _ => {},
     }
@@ -1495,13 +1618,14 @@ fn test_rt_dict_node_get_collision_path() Result<Void, String> {
 fn test_rt_dict_node_set_collision_path() Result<Void, String> {
   m := rt_dict.module()
   f := try find_func(m.funcs, "node_set").ok_or("missing node_set func")
+
   // node_set must call collision_set for full-hash collision handling
   found := false
 
   for instr in f.body {
     case instr {
-      .Call(sym) => {
-        if sym == "collision_set" { found = true }
+      .Call(sym) => if sym == "collision_set" {
+        found = true
       },
       _ => {},
     }
@@ -1514,6 +1638,7 @@ fn test_rt_dict_node_set_collision_path() Result<Void, String> {
 fn test_rt_dict_hash_key_i64() Result<Void, String> {
   m := rt_dict.module()
   f := try find_func(m.funcs, "hash_key").ok_or("missing hash_key func")
+
   // hash_key should return i64 (wyhash v3 64-bit)
   try assert.equal(f.results.len(), 1)
   try assert.ok(

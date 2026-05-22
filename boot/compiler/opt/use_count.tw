@@ -48,7 +48,11 @@ fn count_op(op: AnfOp, uses: Dict<Int, Int>) Dict<Int, Int> {
   case op {
     .ACall(callee, args) => {
       u := count_atom(callee, uses)
-      for a in args { u = count_atom(a, u) }
+
+      for a in args {
+        u = count_atom(a, u)
+      }
+
       u
     },
     .AIf(cond, then_e, else_e) => {
@@ -58,7 +62,11 @@ fn count_op(op: AnfOp, uses: Dict<Int, Int>) Dict<Int, Int> {
     },
     .AMatch(scrutinee, arms) => {
       u := count_atom(scrutinee, uses)
-      for arm in arms { u = count_expr(arm.body, u) }
+
+      for arm in arms {
+        u = count_expr(arm.body, u)
+      }
+
       u
     },
     .ALoop(body) => count_expr(body, uses),
@@ -69,12 +77,20 @@ fn count_op(op: AnfOp, uses: Dict<Int, Int>) Dict<Int, Int> {
     .AUnOp(_, inner, _) => count_atom(inner, uses),
     .AMakeClosure(_, free_vars) => {
       u := uses
-      for v in free_vars { u = inc(u, v.id) }
+
+      for v in free_vars {
+        u = inc(u, v.id)
+      }
+
       u
     },
     .ARecord(_, fields) => {
       u := uses
-      for f in fields { u = count_atom(f.value, u) }
+
+      for f in fields {
+        u = count_atom(f.value, u)
+      }
+
       u
     },
     .ARecordGet(target, _, _) => count_atom(target, uses),
@@ -84,12 +100,20 @@ fn count_op(op: AnfOp, uses: Dict<Int, Int>) Dict<Int, Int> {
     },
     .AVariant(_, _, args) => {
       u := uses
-      for a in args { u = count_atom(a, u) }
+
+      for a in args {
+        u = count_atom(a, u)
+      }
+
       u
     },
     .AArrayLit(elems) => {
       u := uses
-      for a in elems { u = count_atom(a, u) }
+
+      for a in elems {
+        u = count_atom(a, u)
+      }
+
       u
     },
     .AIndex(base, index, _, _) => {
@@ -136,7 +160,11 @@ fn count_op_ex(op: AnfOp, uses: Dict<Int, Int>, free_var_uses: Dict<Int, Bool>) 
   case op {
     .AMakeClosure(_, free_vars) => {
       fv := free_var_uses
-      for v in free_vars { fv[v.id] = true }
+
+      for v in free_vars {
+        fv[v.id] = true
+      }
+
       .{ uses, free_var_uses: fv }
     },
     .AIf(cond, then_e, else_e) => {
@@ -146,7 +174,11 @@ fn count_op_ex(op: AnfOp, uses: Dict<Int, Int>, free_var_uses: Dict<Int, Bool>) 
     },
     .AMatch(scrutinee, arms) => {
       result := UsesAndFreeVars.{ uses: count_atom(scrutinee, uses), free_var_uses }
-      for arm in arms { result = count_expr_ex(arm.body, result.uses, result.free_var_uses) }
+
+      for arm in arms {
+        result = count_expr_ex(arm.body, result.uses, result.free_var_uses)
+      }
+
       result
     },
     .ALoop(body) => count_expr_ex(body, uses, free_var_uses),
@@ -156,7 +188,9 @@ fn count_op_ex(op: AnfOp, uses: Dict<Int, Int>, free_var_uses: Dict<Int, Bool>) 
 }
 
 // ── is_pure ─────────────────────────────────────────────────────────
-pub fn is_pure(op: AnfOp) Bool { is_pure_with_semantics(op, empty_optimizer_semantics()) }
+pub fn is_pure(op: AnfOp) Bool {
+  is_pure_with_semantics(op, empty_optimizer_semantics())
+}
 
 pub fn is_pure_with_optimizer_semantics(op: AnfOp, body: AnfExpr, semantics: OptimizerSemantics) Bool {
   is_pure_with_semantics(op, semantics) and expr_is_pure_with_semantics(body, semantics)

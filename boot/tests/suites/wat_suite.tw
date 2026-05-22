@@ -154,6 +154,7 @@ fn contains(haystack: String, needle: String) Bool {
   if needle.len() > haystack.len() {
     return false
   }
+
   if needle.len() == 0 {
     return true
   }

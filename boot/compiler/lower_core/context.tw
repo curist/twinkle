@@ -38,7 +38,10 @@ pub fn new_ctx(check_result: CheckResult, reg: BuiltinRegistry) LowerCtx {
 
   for entry in reg.entries {
     func_table[entry.name] = entry.func_id
-    if entry.name.starts_with("host_") { func_table["__${entry.name}"] = entry.func_id }
+
+    if entry.name.starts_with("host_") {
+      func_table["__${entry.name}"] = entry.func_id
+    }
   }
 
   .{
@@ -69,7 +72,7 @@ pub fn alloc_local(ctx: LowerCtx, name: String) LocalOut {
   scope[name] = id
 
   case ctx.locals.set(scope_idx, scope) {
-    .Some(new_locals) => { ctx.locals = new_locals },
+    .Some(new_locals) => ctx.locals = new_locals,
     .None => {},
   }
 
@@ -129,8 +132,10 @@ pub fn lookup_local_or_global(ctx: LowerCtx, name: String) LocalId? {
 pub fn lookup_func(ctx: LowerCtx, name: String) FuncId? {
   case ctx.func_table[name] {
     .Some(id) => .Some(id),
-    .None => {
-      if name.starts_with("__host_") { ctx.func_table[name.slice(2, name.len())] } else { .None }
+    .None => if name.starts_with("__host_") {
+      ctx.func_table[name.slice(2, name.len())]
+    } else {
+      .None
     },
   }
 }

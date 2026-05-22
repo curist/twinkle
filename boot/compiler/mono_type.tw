@@ -68,16 +68,18 @@ pub fn ty_to_string(ty: MonoType) String {
     .Dict(k, v) => "Dict<${ty_to_string(k)}, ${ty_to_string(v)}>",
     .Optional(inner) => "${ty_to_string(inner)}?",
     .Result(ok, err) => "Result<${ty_to_string(ok)}, ${ty_to_string(err)}>",
-    .Named(tid, args) => {
-      if args.len() == 0 {
-        "Named(${tid.id})"
-      } else {
-        joined := collect a in args { ty_to_string(a) }
-        "Named(${tid.id})<${joined.join(", ")}>"
+    .Named(tid, args) => if args.len() == 0 {
+      "Named(${tid.id})"
+    } else {
+      joined := collect a in args {
+        ty_to_string(a)
       }
+      "Named(${tid.id})<${joined.join(", ")}>"
     },
     .Function(params, ret) => {
-      joined := collect p in params { ty_to_string(p) }
+      joined := collect p in params {
+        ty_to_string(p)
+      }
       "fn(${joined.join(", ")}) ${ty_to_string(ret)}"
     },
     .ErrorType => "<error>",

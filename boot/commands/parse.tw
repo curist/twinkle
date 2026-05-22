@@ -11,7 +11,7 @@ use lib.source.registry
 pub fn run_parse_command(parsed: ParseResult) {
   file := case get_positional(parsed, 0, "file") {
     .Ok(path) => path,
-    .Err(msg) => { exit_usage_error(msg) },
+    .Err(msg) => exit_usage_error(msg),
   }
   source := case fs.read_text(file) {
     .Ok(text) => text,
@@ -41,5 +41,7 @@ pub fn run_parse_command(parsed: ParseResult) {
     }
   }
 
-  if diag.has_errors(parsed_mod.diagnostics) { proc.exit(1) }
+  if diag.has_errors(parsed_mod.diagnostics) {
+    proc.exit(1)
+  }
 }

@@ -1,3 +1,5 @@
 use .support_method_base.{make_env}
 
-pub fn run() Int { make_env(7).resolve() }
+pub fn run() Int {
+  make_env(7).resolve()
+}

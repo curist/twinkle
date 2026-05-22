@@ -22,8 +22,10 @@ pub fn cell_struct_sym(inner_mono: MonoType, env: ResolvedEnv) String {
 
 pub fn cell_inner_mono(cell_mono: MonoType) MonoType {
   case cell_mono {
-    .Named(_, type_args) => {
-      if type_args.len() > 0 { type_args[0] } else { MonoType.Void }
+    .Named(_, type_args) => if type_args.len() > 0 {
+      type_args[0]
+    } else {
+      MonoType.Void
     },
     _ => MonoType.Void,
   }
@@ -43,19 +45,15 @@ pub fn record_layout_of_ctx(mono: MonoType, ctx: EmitCtx) WasmRecordLayout {
 
   case layout {
     .Record(r) => r,
-    _ => {
-      case mono {
-        .Named(tid, args) => {
-          case ctx.env.lookup_type_def(tid) {
-            .Some(.Alias(_, type_params, target)) => record_layout_of_ctx(
-              subst_type_params(target, type_params, args),
-              ctx,
-            ),
-            _ => error("record_layout_of: expected Record layout for ${mono_to_key(mono)}"),
-          }
-        },
+    _ => case mono {
+      .Named(tid, args) => case ctx.env.lookup_type_def(tid) {
+        .Some(.Alias(_, type_params, target)) => record_layout_of_ctx(
+          subst_type_params(target, type_params, args),
+          ctx,
+        ),
         _ => error("record_layout_of: expected Record layout for ${mono_to_key(mono)}"),
-      }
+      },
+      _ => error("record_layout_of: expected Record layout for ${mono_to_key(mono)}"),
     },
   }
 }
@@ -65,19 +63,15 @@ pub fn record_layout_of(mono: MonoType, env: ResolvedEnv) WasmRecordLayout {
 
   case layout {
     .Record(r) => r,
-    _ => {
-      case mono {
-        .Named(tid, args) => {
-          case env.lookup_type_def(tid) {
-            .Some(.Alias(_, type_params, target)) => record_layout_of(
-              subst_type_params(target, type_params, args),
-              env,
-            ),
-            _ => error("record_layout_of: expected Record layout for ${mono_to_key(mono)}"),
-          }
-        },
+    _ => case mono {
+      .Named(tid, args) => case env.lookup_type_def(tid) {
+        .Some(.Alias(_, type_params, target)) => record_layout_of(
+          subst_type_params(target, type_params, args),
+          env,
+        ),
         _ => error("record_layout_of: expected Record layout for ${mono_to_key(mono)}"),
-      }
+      },
+      _ => error("record_layout_of: expected Record layout for ${mono_to_key(mono)}"),
     },
   }
 }

@@ -38,8 +38,10 @@ pub fn unused_import_actions(
   context_diagnostics: Vector<json.Json>,
 ) Vector<json.Json> {
   actions: Vector<json.Json> = []
+
   // Track use_spans we've already seen for dedup
   seen_spans: Dict<String, Bool> = Dict.new()
+
   // Collect all edits for the bulk action
   bulk_edits: Vector<json.Json> = []
   bulk_diags: Vector<json.Json> = []
@@ -47,24 +49,38 @@ pub fn unused_import_actions(
   for diag in context_diagnostics {
     data := case json.decode(diag, json.field("data", json.raw())) {
       .Ok(d) => d,
-      .Err(_) => { continue },
+      .Err(_) => {
+        continue
+      },
     }
     kind := case json.decode(data, json.field("kind", json.string())) {
       .Ok(k) => k,
-      .Err(_) => { continue },
+      .Err(_) => {
+        continue
+      },
     }
-    if kind != "unused_import" { continue }
+
+    if kind != "unused_import" {
+      continue
+    }
+
     use_start := case json.decode(data, json.field("use_start", json.int())) {
       .Ok(s) => s,
-      .Err(_) => { continue },
+      .Err(_) => {
+        continue
+      },
     }
     use_end := case json.decode(data, json.field("use_end", json.int())) {
       .Ok(e) => e,
-      .Err(_) => { continue },
+      .Err(_) => {
+        continue
+      },
     }
     replacement := case json.decode(data, json.field("replacement", json.string())) {
       .Ok(r) => r,
-      .Err(_) => { continue },
+      .Err(_) => {
+        continue
+      },
     }
     message := case json.decode(diag, json.field("message", json.string())) {
       .Ok(m) => m,
@@ -77,10 +93,13 @@ pub fn unused_import_actions(
       range := byte_range_to_lsp_range(index, use_start, use_end)
       edit_json := text_edit(range, replacement)
       ws_edit := workspace_edit(uri, [edit_json])
+
       // Strip the "unused import: " prefix to get the bare name for the title
       import_name := if message.starts_with("unused import: ") {
         message.substring(15, message.len())
-      } else { message }
+      } else {
+        message
+      }
       action := code_action("Remove unused import '${import_name}'", "quickfix", ws_edit, [diag])
       actions = .append(action)
       bulk_edits = .append(edit_json)

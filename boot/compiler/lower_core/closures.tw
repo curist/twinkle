@@ -55,13 +55,13 @@ fn collect_free_vars_inner(
       st := collect_free_vars_inner(lhs, bound, captured, result)
       collect_free_vars_inner(rhs, st.bound, st.captured, st.result)
     },
-    .UnOp(_, inner) => { collect_free_vars_inner(inner, bound, captured, result) },
-    .Call(callee, args) => {
-      args.fold(
-        collect_free_vars_inner(callee, bound, captured, result),
-        fn(st, arg) { collect_free_vars_inner(arg, st.bound, st.captured, st.result) },
-      )
-    },
+    .UnOp(_, inner) => collect_free_vars_inner(inner, bound, captured, result),
+    .Call(callee, args) => args.fold(
+      collect_free_vars_inner(callee, bound, captured, result),
+      fn(st, arg) {
+        collect_free_vars_inner(arg, st.bound, st.captured, st.result)
+      },
+    ),
     .If(cond, then_e, else_e) => {
       st := collect_free_vars_inner(cond, bound, captured, result)
       st = collect_free_vars_inner(then_e, st.bound, st.captured, st.result)
@@ -77,42 +77,38 @@ fn collect_free_vars_inner(
 
       st
     },
-    .Loop(body) => { collect_free_vars_inner(body, bound, captured, result) },
-    .Break(val) => {
-      case val {
-        .Some(v) => collect_free_vars_inner(v, bound, captured, result),
-        .None => .{ bound, captured, result },
-      }
+    .Loop(body) => collect_free_vars_inner(body, bound, captured, result),
+    .Break(val) => case val {
+      .Some(v) => collect_free_vars_inner(v, bound, captured, result),
+      .None => .{ bound, captured, result },
     },
-    .Return(val) => {
-      case val {
-        .Some(v) => collect_free_vars_inner(v, bound, captured, result),
-        .None => .{ bound, captured, result },
-      }
+    .Return(val) => case val {
+      .Some(v) => collect_free_vars_inner(v, bound, captured, result),
+      .None => .{ bound, captured, result },
     },
-    .Record(_, fields) => {
-      fields.fold(
-        FreeVarState.{ bound, captured, result },
-        fn(st, fi) { collect_free_vars_inner(fi.value, st.bound, st.captured, st.result) },
-      )
-    },
-    .RecordGet(target, _) => { collect_free_vars_inner(target, bound, captured, result) },
+    .Record(_, fields) => fields.fold(
+      FreeVarState.{ bound, captured, result },
+      fn(st, fi) {
+        collect_free_vars_inner(fi.value, st.bound, st.captured, st.result)
+      },
+    ),
+    .RecordGet(target, _) => collect_free_vars_inner(target, bound, captured, result),
     .RecordUpdate(base, _, value) => {
       st := collect_free_vars_inner(base, bound, captured, result)
       collect_free_vars_inner(value, st.bound, st.captured, st.result)
     },
-    .Variant(_, _, args) => {
-      args.fold(
-        FreeVarState.{ bound, captured, result },
-        fn(st, a) { collect_free_vars_inner(a, st.bound, st.captured, st.result) },
-      )
-    },
-    .ArrayLit(elems) => {
-      elems.fold(
-        FreeVarState.{ bound, captured, result },
-        fn(st, e) { collect_free_vars_inner(e, st.bound, st.captured, st.result) },
-      )
-    },
+    .Variant(_, _, args) => args.fold(
+      FreeVarState.{ bound, captured, result },
+      fn(st, a) {
+        collect_free_vars_inner(a, st.bound, st.captured, st.result)
+      },
+    ),
+    .ArrayLit(elems) => elems.fold(
+      FreeVarState.{ bound, captured, result },
+      fn(st, e) {
+        collect_free_vars_inner(e, st.bound, st.captured, st.result)
+      },
+    ),
     .Index(base, idx) => {
       st := collect_free_vars_inner(base, bound, captured, result)
       collect_free_vars_inner(idx, st.bound, st.captured, st.result)
@@ -127,7 +123,7 @@ fn collect_free_vars_inner(
 
       .{ bound, captured, result }
     },
-    .Defer(inner) => { collect_free_vars_inner(inner, bound, captured, result) },
+    .Defer(inner) => collect_free_vars_inner(inner, bound, captured, result),
     _ => .{ bound, captured, result },
   }
 }
@@ -140,7 +136,11 @@ fn collect_pattern_bound(pattern: CorePattern, bound: Dict<Int, Bool>) Dict<Int,
     },
     .Variant(_, _, sub_pats) => {
       cur := bound
-      for sp in sub_pats { cur = collect_pattern_bound(sp, cur) }
+
+      for sp in sub_pats {
+        cur = collect_pattern_bound(sp, cur)
+      }
+
       cur
     },
     _ => bound,
@@ -159,16 +159,20 @@ pub fn lower_closure(
   fid_out := ctx.alloc_func_id()
   ctx = fid_out.ctx
   lambda_func_id := fid_out.func_id
+
   // 2. Save/restore current_fn_return_type
   saved_return_type := ctx.current_fn_return_type
+
   // Expand type aliases so Named alias types are treated as Function types
   expanded_ty := expand_alias_for_iter(ty, ctx.env, 0)
+
   // Determine lambda return type from the closure's type
   lambda_ret_ty := case expanded_ty {
     .Function(_, ret) => ret,
     _ => .Void,
   }
   ctx.current_fn_return_type = .Some(lambda_ret_ty)
+
   // 3. Lower params in a new scope
   ctx = .push_scope()
   lambda_params: Vector<Param> = []
@@ -177,6 +181,7 @@ pub fn lower_closure(
   for p in params {
     lo := ctx.alloc_local(p.name)
     ctx = lo.ctx
+
     // Get param type from the closure's function type
     param_ty := MonoType.Void // placeholder
     lambda_params = .append(.{ local: lo.local, ty: param_ty })
@@ -190,7 +195,9 @@ pub fn lower_closure(
 
       for i < lambda_params.len() and i < param_tys.len() {
         case lambda_params.set(i, .{ local: lambda_params[i].local, ty: param_tys[i] }) {
-          .Some(new_params) => { lambda_params = new_params },
+          .Some(new_params) => {
+            lambda_params = new_params
+          },
           .None => {},
         }
 
@@ -204,12 +211,19 @@ pub fn lower_closure(
   body_r := lower_block_fn(ctx, body)
   ctx = body_r.ctx
   ctx = .pop_scope()
+
   // 5. Restore return type
   ctx.current_fn_return_type = saved_return_type
+
   // 6. Collect free variables from the lowered body
   param_set: Dict<Int, Bool> = Dict.new()
-  for pl in param_locals { param_set[pl.id] = true }
+
+  for pl in param_locals {
+    param_set[pl.id] = true
+  }
+
   free_vars := collect_free_vars(body_r.expr, param_set)
+
   // 7. Hoist the function definition
   hoisted_def := FunctionDef.{
     func_id: lambda_func_id,
@@ -220,6 +234,7 @@ pub fn lower_closure(
     return_ty: lambda_ret_ty,
   }
   ctx.hoisted = ctx.hoisted.append(hoisted_def)
+
   // 8. Emit MakeClosure
   .{ expr: .{ kind: .MakeClosure(lambda_func_id, free_vars), ty, span: s }, ctx }
 }

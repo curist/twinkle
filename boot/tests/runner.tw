@@ -22,13 +22,21 @@ fn paint(enabled: Bool, code: String, s: String) String {
   }
 }
 
-fn green(enabled: Bool, s: String) String { paint(enabled, "32", s) }
+fn green(enabled: Bool, s: String) String {
+  paint(enabled, "32", s)
+}
 
-fn red(enabled: Bool, s: String) String { paint(enabled, "31", s) }
+fn red(enabled: Bool, s: String) String {
+  paint(enabled, "31", s)
+}
 
-fn bold(enabled: Bool, s: String) String { paint(enabled, "1", s) }
+fn bold(enabled: Bool, s: String) String {
+  paint(enabled, "1", s)
+}
 
-fn dim(enabled: Bool, s: String) String { paint(enabled, "2", s) }
+fn dim(enabled: Bool, s: String) String {
+  paint(enabled, "2", s)
+}
 
 fn env_filter() String? {
   out: String? = .None
@@ -84,14 +92,23 @@ pub fn test(s: Suite, name: String, f: fn() Result<Void, String>) Suite {
   Suite.{ name: s.name, tests: s.tests.append(Test.{ name, run: f }) }
 }
 
-pub fn run(s: Suite) Bool { run_with(default_options(), s) }
+pub fn run(s: Suite) Bool {
+  run_with(default_options(), s)
+}
 
-pub fn run_with(opts: RunOptions, s: Suite) Bool { suite_stats_with(opts, s).failed == 0 }
+pub fn run_with(opts: RunOptions, s: Suite) Bool {
+  suite_stats_with(opts, s).failed == 0
+}
 
-pub fn suite_stats(s: Suite) RunStats { suite_stats_with(default_options(), s) }
+pub fn suite_stats(s: Suite) RunStats {
+  suite_stats_with(default_options(), s)
+}
 
 pub fn suite_stats_with(opts: RunOptions, s: Suite) RunStats {
-  if !opts.verbose { print_compact_filter(opts) }
+  if !opts.verbose {
+    print_compact_filter(opts)
+  }
+
   result := run_suite(opts, s)
 
   if !opts.verbose {
@@ -144,13 +161,18 @@ fn print_compact_filter(opts: RunOptions) Void {
 }
 
 fn print_compact_marker(opts: RunOptions, ok: Bool) Void {
-  if ok { print(green(opts.color, ".")) } else { print(red(opts.color, "x")) }
+  if ok {
+    print(green(opts.color, "."))
+  } else {
+    print(red(opts.color, "x"))
+  }
 }
 
 fn print_failures(opts: RunOptions, failures: Vector<FailedTest>) Void {
   if failures.len() == 0 {
     return
   }
+
   println("")
   println(bold(opts.color, "Failed tests:"))
 
@@ -163,12 +185,18 @@ fn print_failures(opts: RunOptions, failures: Vector<FailedTest>) Void {
 }
 
 fn finish_compact_run(opts: RunOptions, failures: Vector<FailedTest>, executed: Int) Void {
-  if executed > 0 { println("") }
+  if executed > 0 {
+    println("")
+  }
+
   print_failures(opts, failures)
 }
 
 fn run_suite(opts: RunOptions, s: Suite) SuiteRun {
-  if opts.verbose { print_suite_header(opts, s) }
+  if opts.verbose {
+    print_suite_header(opts, s)
+  }
+
   total := s.tests.len()
   passed := 0
   failed := 0
@@ -179,7 +207,9 @@ fn run_suite(opts: RunOptions, s: Suite) SuiteRun {
     if matches_filter(opts.filter, s.name, t.name) {
       case t.run() {
         .Ok(_) => {
-          if opts.verbose { println("  ${green(opts.color, "✓")} ${t.name}") } else {
+          if opts.verbose {
+            println("  ${green(opts.color, "✓")} ${t.name}")
+          } else {
             print_compact_marker(opts, true)
           }
 
@@ -188,7 +218,9 @@ fn run_suite(opts: RunOptions, s: Suite) SuiteRun {
         .Err(msg) => {
           if opts.verbose {
             println("  ${red(opts.color, "✗")} ${t.name} ${dim(opts.color, "→ ${msg}")}")
-          } else { print_compact_marker(opts, false) }
+          } else {
+            print_compact_marker(opts, false)
+          }
 
           failures = .append(FailedTest.{ suite_name: s.name, test_name: t.name, message: msg })
           failed = failed + 1
@@ -199,11 +231,16 @@ fn run_suite(opts: RunOptions, s: Suite) SuiteRun {
     }
   }
 
-  if opts.verbose { print_suite_summary(opts, passed, failed, filtered) }
+  if opts.verbose {
+    print_suite_summary(opts, passed, failed, filtered)
+  }
+
   SuiteRun.{ stats: RunStats.{ total, passed, failed, filtered }, failures }
 }
 
-pub fn run_all(suites: Vector<Suite>) Void { run_all_with(default_options(), suites) }
+pub fn run_all(suites: Vector<Suite>) Void {
+  run_all_with(default_options(), suites)
+}
 
 pub fn run_all_stats(suites: Vector<Suite>) RunStats {
   run_all_stats_with(default_options(), suites)
@@ -229,7 +266,10 @@ pub fn run_all_stats_with(opts: RunOptions, suites: Vector<Suite>) RunStats {
   failed := 0
   filtered := 0
   failures: Vector<FailedTest> = []
-  if !opts.verbose { print_compact_filter(opts) }
+
+  if !opts.verbose {
+    print_compact_filter(opts)
+  }
 
   for s in suites {
     result := run_suite(opts, s)
@@ -240,7 +280,9 @@ pub fn run_all_stats_with(opts: RunOptions, suites: Vector<Suite>) RunStats {
     failures = .concat(result.failures)
   }
 
-  if !opts.verbose { finish_compact_run(opts, failures, passed + failed) } else {
+  if !opts.verbose {
+    finish_compact_run(opts, failures, passed + failed)
+  } else {
     print_failures(opts, failures)
   }
 
@@ -250,5 +292,8 @@ pub fn run_all_stats_with(opts: RunOptions, suites: Vector<Suite>) RunStats {
 
 pub fn run_all_with(opts: RunOptions, suites: Vector<Suite>) Void {
   st := run_all_stats_with(opts, suites)
-  if st.failed > 0 { proc.exit(1) }
+
+  if st.failed > 0 {
+    proc.exit(1)
+  }
 }

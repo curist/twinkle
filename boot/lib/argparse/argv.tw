@@ -30,12 +30,10 @@ pub fn normalize_argv(raw: Vector<String>) Vector<String> {
   }
 
   case prog_idx {
-    .Some(idx) => {
-      if idx + 1 < raw.len() {
-        ["twk"].concat(raw.slice(idx + 1, raw.len()))
-      } else {
-        ["twk"]
-      }
+    .Some(idx) => if idx + 1 < raw.len() {
+      ["twk"].concat(raw.slice(idx + 1, raw.len()))
+    } else {
+      ["twk"]
     },
     .None => raw,
   }

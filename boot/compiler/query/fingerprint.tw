@@ -11,17 +11,33 @@ use lib.query.keys
 /// Same exports → same fingerprint → importers skip recomputation.
 pub fn fingerprint_exports(exports: ModuleExports) Int {
   h := keys.hash_text("exports")
+
   // Hash visible types
-  for t in exports.visible_types { h = mix_exported_type(h, t) }
+  for t in exports.visible_types {
+    h = mix_exported_type(h, t)
+  }
+
   // Hash support types
   h = mix_word(h, keys.hash_text("support_types"))
-  for t in exports.support_types { h = mix_exported_type(h, t) }
+
+  for t in exports.support_types {
+    h = mix_exported_type(h, t)
+  }
+
   // Hash functions
   h = mix_word(h, keys.hash_text("functions"))
-  for f in exports.functions { h = mix_exported_function(h, f) }
+
+  for f in exports.functions {
+    h = mix_exported_function(h, f)
+  }
+
   // Hash support functions
   h = mix_word(h, keys.hash_text("support_functions"))
-  for f in exports.support_functions { h = mix_exported_function(h, f) }
+
+  for f in exports.support_functions {
+    h = mix_exported_function(h, f)
+  }
+
   // Hash methods (order-independent: XOR per-key hashes to avoid
   // dependence on Dict insertion order)
   methods_h := 0
@@ -68,8 +84,14 @@ fn mix_exported_function(h: Int, f: ExportedFunction) Int {
 
 fn mix_sig(h: Int, sig: FunctionSig) Int {
   h = mix_word(h, keys.hash_text(sig.name))
-  for tp in sig.type_params { h = mix_word(h, keys.hash_text(tp.name)) }
-  for p in sig.params { h = mix_mono_type(h, p) }
+
+  for tp in sig.type_params {
+    h = mix_word(h, keys.hash_text(tp.name))
+  }
+
+  for p in sig.params {
+    h = mix_mono_type(h, p)
+  }
 
   case sig.ret {
     .Some(ret) => h = mix_mono_type(h, ret),
@@ -93,14 +115,22 @@ fn mix_mono_type(h: Int, ty: MonoType) Int {
     .Named(tid, args) => {
       h = mix_word(h, 9)
       h = mix_word(h, tid.id)
-      for arg in args { h = mix_mono_type(h, arg) }
+
+      for arg in args {
+        h = mix_mono_type(h, arg)
+      }
+
       h
     },
     .Vector(inner) => mix_mono_type(mix_word(h, 10), inner),
     .Dict(k, v) => mix_mono_type(mix_mono_type(mix_word(h, 11), k), v),
     .Function(params, ret) => {
       h = mix_word(h, 12)
-      for p in params { h = mix_mono_type(h, p) }
+
+      for p in params {
+        h = mix_mono_type(h, p)
+      }
+
       h = mix_mono_type(h, ret)
       h
     },
@@ -117,7 +147,10 @@ fn mix_type_def(h: Int, def: ResolvedTypeDef) Int {
     .Record(name, params, fields) => {
       h = mix_word(h, keys.hash_text("record"))
       h = mix_word(h, keys.hash_text(name))
-      for p in params { h = mix_word(h, keys.hash_text(p.name)) }
+
+      for p in params {
+        h = mix_word(h, keys.hash_text(p.name))
+      }
 
       for f in fields {
         h = mix_word(h, keys.hash_text(f.name))
@@ -129,11 +162,17 @@ fn mix_type_def(h: Int, def: ResolvedTypeDef) Int {
     .Sum(name, params, variants) => {
       h = mix_word(h, keys.hash_text("sum"))
       h = mix_word(h, keys.hash_text(name))
-      for p in params { h = mix_word(h, keys.hash_text(p.name)) }
+
+      for p in params {
+        h = mix_word(h, keys.hash_text(p.name))
+      }
 
       for v in variants {
         h = mix_word(h, keys.hash_text(v.name))
-        for field_ty in v.fields { h = mix_mono_type(h, field_ty) }
+
+        for field_ty in v.fields {
+          h = mix_mono_type(h, field_ty)
+        }
       }
 
       h
@@ -141,11 +180,17 @@ fn mix_type_def(h: Int, def: ResolvedTypeDef) Int {
     .Alias(name, params, ty) => {
       h = mix_word(h, keys.hash_text("alias"))
       h = mix_word(h, keys.hash_text(name))
-      for p in params { h = mix_word(h, keys.hash_text(p.name)) }
+
+      for p in params {
+        h = mix_word(h, keys.hash_text(p.name))
+      }
+
       h = mix_mono_type(h, ty)
       h
     },
   }
 }
 
-fn mix_word(h: Int, word: Int) Int { keys.mix_word(h, word) }
+fn mix_word(h: Int, word: Int) Int {
+  keys.mix_word(h, word)
+}

@@ -14,11 +14,17 @@ use compiler.resolver.{ResolvedEnv}
 use tests.assert
 use tests.runner
 
-fn lid(n: Int) LocalId { LocalId.{ id: n } }
+fn lid(n: Int) LocalId {
+  LocalId.{ id: n }
+}
 
-fn fid(n: Int) FuncId { FuncId.{ id: n } }
+fn fid(n: Int) FuncId {
+  FuncId.{ id: n }
+}
 
-fn empty_env() ResolvedEnv { resolver.empty_env() }
+fn empty_env() ResolvedEnv {
+  resolver.empty_env()
+}
 
 fn empty_registry() WasmTypeRegistry {
   .{
@@ -40,15 +46,25 @@ fn empty_registry() WasmTypeRegistry {
   }
 }
 
-fn empty_builtins() BuiltinRegistry { make_builtin_registry() }
+fn empty_builtins() BuiltinRegistry {
+  make_builtin_registry()
+}
 
-fn no_captures() Dict<Int, Vector<CaptureParam>> { Dict.new() }
+fn no_captures() Dict<Int, Vector<CaptureParam>> {
+  Dict.new()
+}
 
-fn mk_param(id: Int, ty: MonoType) Param { .{ local: lid(id), ty } }
+fn mk_param(id: Int, ty: MonoType) Param {
+  .{ local: lid(id), ty }
+}
 
 fn mk_mono_map(entries: Vector<Int>, types: Vector<MonoType>) Dict<Int, MonoType> {
   d: Dict<Int, MonoType> = Dict.new()
-  for k, i in entries { d[k] = types[i] }
+
+  for k, i in entries {
+    d[k] = types[i]
+  }
+
   d
 }
 
@@ -81,7 +97,9 @@ fn prepared_module(
   prepare_backend(anf, empty_env(), empty_builtins(), no_captures())
 }
 
-fn first_func(prepared: PreparedModule) PreparedFunc { prepared.funcs[0] }
+fn first_func(prepared: PreparedModule) PreparedFunc {
+  prepared.funcs[0]
+}
 
 fn replace_func(prepared: PreparedModule, pf: PreparedFunc) PreparedModule {
   .{ anf: prepared.anf, closure_captures: prepared.closure_captures, funcs: [pf] }
@@ -119,10 +137,12 @@ fn slots_without(pf: PreparedFunc, skip_sid: Int) Dict<Int, SlotInfo> {
   out: Dict<Int, SlotInfo> = Dict.new()
 
   for sid in pf.slots.keys() {
-    if sid == skip_sid { continue }
+    if sid == skip_sid {
+      continue
+    }
 
     case pf.slots[sid] {
-      .Some(info) => { out[sid] = info },
+      .Some(info) => out[sid] = info,
       .None => {},
     }
   }
@@ -135,19 +155,17 @@ fn slots_with_wasm_type(pf: PreparedFunc, target_sid: Int, wasm_type: ValType) D
 
   for sid in pf.slots.keys() {
     case pf.slots[sid] {
-      .Some(info) => {
-        out[sid] = if sid == target_sid {
-          .{
-            slot: info.slot,
-            source_local: info.source_local,
-            role: info.role,
-            mono: info.mono,
-            repr: info.repr,
-            wasm_type,
-          }
-        } else {
-          info
+      .Some(info) => out[sid] = if sid == target_sid {
+        .{
+          slot: info.slot,
+          source_local: info.source_local,
+          role: info.role,
+          mono: info.mono,
+          repr: info.repr,
+          wasm_type,
         }
+      } else {
+        info
       },
       .None => {},
     }

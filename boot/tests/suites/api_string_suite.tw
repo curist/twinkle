@@ -198,6 +198,7 @@ pub fn suite() runner.Suite {
       fn() {
         s := "abc"
         bytes := Cell.new("")
+
         for b in s {
           bytes.update(
             fn(acc) {
@@ -205,6 +206,7 @@ pub fn suite() runner.Suite {
             },
           )
         }
+
         try assert.equal(bytes.get(), "97 98 99 ")
         .Ok({})
       },

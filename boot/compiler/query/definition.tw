@@ -35,7 +35,9 @@ type Binding = .{ name: String, span: Span }
 pub fn definition(snap: SemanticSnapshot, byte_offset: Int) DefinitionResult? {
   parsed := case snap.parsed {
     .Some(value) => value,
-    .None => { return .None },
+    .None => {
+      return .None
+    },
   }
 
   // Imports and type syntax are not expression nodes, so check them before the
@@ -72,7 +74,9 @@ pub fn definition(snap: SemanticSnapshot, byte_offset: Int) DefinitionResult? {
 
   ref := case find_expr_ref_in_items(parsed.module.items, byte_offset) {
     .Some(r) => r,
-    .None => { return .None },
+    .None => {
+      return .None
+    },
   }
   resolve_ref(snap, ref, byte_offset)
 }
@@ -80,11 +84,15 @@ pub fn definition(snap: SemanticSnapshot, byte_offset: Int) DefinitionResult? {
 fn resolve_ref(snap: SemanticSnapshot, ref: Ref, byte_offset: Int) DefinitionResult? {
   parsed := case snap.parsed {
     .Some(p) => p,
-    .None => { return .None },
+    .None => {
+      return .None
+    },
   }
   typed := case snap.typed {
     .Some(t) => t,
-    .None => { return .None },
+    .None => {
+      return .None
+    },
   }
 
   case ref {
@@ -139,11 +147,9 @@ fn resolve_ref(snap: SemanticSnapshot, ref: Ref, byte_offset: Int) DefinitionRes
     },
     .TypeName(name) => resolve_type_name(snap, typed.env, name),
     .ImportModule(alias) => resolve_import_alias(snap, alias),
-    .ImportItem(name) => {
-      case resolve_function_name(snap, typed.env, name) {
-        .Some(target) => .Some(target),
-        .None => resolve_type_name(snap, typed.env, name),
-      }
+    .ImportItem(name) => case resolve_function_name(snap, typed.env, name) {
+      .Some(target) => .Some(target),
+      .None => resolve_type_name(snap, typed.env, name),
     },
     .Variant(name, scrutinee) => resolve_variant_name(snap, typed.env, name, scrutinee),
   }
@@ -152,7 +158,9 @@ fn resolve_ref(snap: SemanticSnapshot, ref: Ref, byte_offset: Int) DefinitionRes
 fn resolve_function_name(snap: SemanticSnapshot, env: ResolvedEnv, name: String) DefinitionResult? {
   registered := case env.function_bindings[name] {
     .Some(target) => target,
-    .None => { return .None },
+    .None => {
+      return .None
+    },
   }
   resolve_registered_function(snap, env, registered)
 }
@@ -167,15 +175,19 @@ fn resolve_registered_function(snap: SemanticSnapshot, env: ResolvedEnv, registe
 fn resolve_type_name(snap: SemanticSnapshot, env: ResolvedEnv, name: String) DefinitionResult? {
   entry := case env.lookup_type(name) {
     .Some(e) => e,
-    .None => { return .None },
+    .None => {
+      return .None
+    },
   }
 
   case env.type_origins[entry.id.id] {
     .Some(origin) => {
       parts := origin.split("::")
+
       if parts.len() >= 2 {
         return find_type_in_module(snap, parts[0], parts[1])
       }
+
       .None
     },
     .None => find_type_in_module(snap, snap.canonical_path, local_name(name)),
@@ -185,15 +197,21 @@ fn resolve_type_name(snap: SemanticSnapshot, env: ResolvedEnv, name: String) Def
 fn resolve_import_alias(snap: SemanticSnapshot, alias: String) DefinitionResult? {
   parsed := case snap.parsed {
     .Some(p) => p,
-    .None => { return .None },
+    .None => {
+      return .None
+    },
   }
   dep_path := case dependency_path_for_alias(snap, parsed, alias) {
     .Some(path) => path,
-    .None => { return .None },
+    .None => {
+      return .None
+    },
   }
   target := case cache.latest_parsed(snap.cache, dep_path) {
     .Some(p) => p,
-    .None => { return .None },
+    .None => {
+      return .None
+    },
   }
   .Some(.{ uri: identity.from_path(dep_path).uri, span: target.module.span })
 }
@@ -203,7 +221,9 @@ fn resolve_variant_name(snap: SemanticSnapshot, env: ResolvedEnv, name: String, 
   // (`.Some`) without relying on globally unique variant names.
   typed := case snap.typed {
     .Some(t) => t,
-    .None => { return .None },
+    .None => {
+      return .None
+    },
   }
 
   case scrutinee {
@@ -243,8 +263,12 @@ fn find_variant_by_type_id(
   type_name := ""
 
   case env.type_id_index[tid.id] {
-    .Some(idx) => { type_name = env.type_names[idx] },
-    .None => { return .None },
+    .Some(idx) => {
+      type_name = env.type_names[idx]
+    },
+    .None => {
+      return .None
+    },
   }
 
   module_path := snap.canonical_path
@@ -268,13 +292,19 @@ fn find_variant_by_type_id(
 fn local_name(name: String) String {
   parts := name.split(".")
 
-  if parts.len() == 0 { name } else { parts[parts.len() - 1] }
+  if parts.len() == 0 {
+    name
+  } else {
+    parts[parts.len() - 1]
+  }
 }
 
 fn find_function_in_module(snap: SemanticSnapshot, module_path: String, name: String) DefinitionResult? {
   parsed := case cache.latest_parsed(snap.cache, module_path) {
     .Some(p) => p,
-    .None => { return .None },
+    .None => {
+      return .None
+    },
   }
 
   for item in parsed.module.items {
@@ -292,7 +322,9 @@ fn find_function_in_module(snap: SemanticSnapshot, module_path: String, name: St
 fn find_type_in_module(snap: SemanticSnapshot, module_path: String, name: String) DefinitionResult? {
   parsed := case cache.latest_parsed(snap.cache, module_path) {
     .Some(p) => p,
-    .None => { return .None },
+    .None => {
+      return .None
+    },
   }
 
   for item in parsed.module.items {
@@ -315,13 +347,17 @@ fn find_variant_in_module(
 ) DefinitionResult? {
   parsed := case cache.latest_parsed(snap.cache, module_path) {
     .Some(p) => p,
-    .None => { return .None },
+    .None => {
+      return .None
+    },
   }
 
   for item in parsed.module.items {
     case item {
       .Type(decl) => {
-        if decl.name != type_name { continue }
+        if decl.name != type_name {
+          continue
+        }
 
         case decl.def {
           .Sum(variants) => {
@@ -351,12 +387,22 @@ fn find_variant_in_module(
 }
 
 fn function_name_span(decl: FunctionDecl) Span {
-  start := decl.span.start + if decl.is_pub { 7 } else { 3 }
+  start := decl.span.start
+    + if decl.is_pub {
+      7
+    } else {
+      3
+    }
   .{ file_id: decl.span.file_id, start, end: start + decl.name.len() }
 }
 
 fn type_name_span(decl: TypeDecl) Span {
-  start := decl.span.start + if decl.is_pub { 9 } else { 5 }
+  start := decl.span.start
+    + if decl.is_pub {
+      9
+    } else {
+      5
+    }
   .{ file_id: decl.span.file_id, start, end: start + decl.name.len() }
 }
 
@@ -376,7 +422,9 @@ fn dependency_path_for_alias(snap: SemanticSnapshot, parsed: cache.ParsedModule,
     },
   ) {
     .Ok(p) => p,
-    .Err(_) => { return .None },
+    .Err(_) => {
+      return .None
+    },
   }
 
   for dep in plan.dependencies {
@@ -393,7 +441,9 @@ fn find_import_ref(items: Vector<Item>, offset: Int) Ref? {
   for item in items {
     case item {
       .Use(decl) => {
-        if !decl.span.contains(offset) { continue }
+        if !decl.span.contains(offset) {
+          continue
+        }
 
         case decl.items {
           .Some(items2) => {
@@ -411,7 +461,9 @@ fn find_import_ref(items: Vector<Item>, offset: Int) Ref? {
           .None => {},
         }
 
-        alias := decl.alias.unwrap_or(if decl.path.len() > 0 { decl.path[decl.path.len() - 1] } else {
+        alias := decl.alias.unwrap_or(if decl.path.len() > 0 {
+          decl.path[decl.path.len() - 1]
+        } else {
           ""
         })
 
@@ -914,30 +966,28 @@ fn find_expr_ref_in_items(items: Vector<Item>, offset: Int) Ref? {
 
 fn expr_ref_from_node(ctx: NodeContext, offset: Int) Ref? {
   case ctx {
-    .ExprNode(expr) => {
-      case expr.kind {
-        .Ident(name) => .Some(.Ident(name)),
-        .Variant(name, _) => if on_suffix(expr.span, name, offset) {
-          .Some(.Variant(name, .None))
-        } else {
-          .None
-        },
-        .Record(entries) => find_shorthand_entry(entries, offset),
-        .NamedRecord(name, entries) => {
-          name_span := Span.{
-            file_id: expr.span.file_id,
-            start: expr.span.start,
-            end: expr.span.start + name.len(),
-          }
+    .ExprNode(expr) => case expr.kind {
+      .Ident(name) => .Some(.Ident(name)),
+      .Variant(name, _) => if on_suffix(expr.span, name, offset) {
+        .Some(.Variant(name, .None))
+      } else {
+        .None
+      },
+      .Record(entries) => find_shorthand_entry(entries, offset),
+      .NamedRecord(name, entries) => {
+        name_span := Span.{
+          file_id: expr.span.file_id,
+          start: expr.span.start,
+          end: expr.span.start + name.len(),
+        }
 
-          if name_span.contains(offset) {
-            return .Some(.TypeName(name))
-          }
+        if name_span.contains(offset) {
+          return .Some(.TypeName(name))
+        }
 
-          find_shorthand_entry(entries, offset)
-        },
-        _ => .None,
-      }
+        find_shorthand_entry(entries, offset)
+      },
+      _ => .None,
     },
     .FieldAccess(_, field, base) => .Some(.Field(base, field)),
     .PatternNode(pat, _) => find_expr_ref_in_pattern(pat, offset),
@@ -1038,10 +1088,8 @@ fn resolve_local_binding(items: Vector<Item>, name: String, ref_offset: Int) Bin
 
   for item in items {
     case item {
-      .Stmt(.Let(ls)) => {
-        if ls.name == name and ls.span.start < ref_offset {
-          found = .Some(.{ name, span: ls.name_span })
-        }
+      .Stmt(.Let(ls)) => if ls.name == name and ls.span.start < ref_offset {
+        found = .Some(.{ name, span: ls.name_span })
       },
       _ => {},
     }
@@ -1054,7 +1102,9 @@ fn find_local_in_block(block: Block, name: String, ref_offset: Int) Binding? {
   found: Binding? = .None
 
   for stmt in block.stmts {
-    if stmt_span(stmt).start >= ref_offset { break }
+    if stmt_span(stmt).start >= ref_offset {
+      break
+    }
 
     case stmt {
       .Let(ls) => {
@@ -1071,48 +1121,44 @@ fn find_local_in_block(block: Block, name: String, ref_offset: Int) Binding? {
           found = .Some(.{ name, span: ls.name_span })
         }
       },
-      .For(fs) => {
-        if fs.span.contains(ref_offset) {
-          case fs.pattern {
-            .Some(n) => if n == name {
-              case fs.pattern_span {
-                .Some(s) => {
-                  return .Some(.{ name, span: s })
-                },
-                .None => {},
-              }
-            },
-            .None => {},
-          }
+      .For(fs) => if fs.span.contains(ref_offset) {
+        case fs.pattern {
+          .Some(n) => if n == name {
+            case fs.pattern_span {
+              .Some(s) => {
+                return .Some(.{ name, span: s })
+              },
+              .None => {},
+            }
+          },
+          .None => {},
+        }
 
-          case fs.index {
-            .Some(n) => if n == name {
-              case fs.index_span {
-                .Some(s) => {
-                  return .Some(.{ name, span: s })
-                },
-                .None => {},
-              }
-            },
-            .None => {},
-          }
+        case fs.index {
+          .Some(n) => if n == name {
+            case fs.index_span {
+              .Some(s) => {
+                return .Some(.{ name, span: s })
+              },
+              .None => {},
+            }
+          },
+          .None => {},
+        }
 
-          case find_local_in_block(fs.body, name, ref_offset) {
-            .Some(b) => {
-              return .Some(b)
-            },
-            .None => {},
-          }
+        case find_local_in_block(fs.body, name, ref_offset) {
+          .Some(b) => {
+            return .Some(b)
+          },
+          .None => {},
         }
       },
-      _ => {
-        if stmt_span(stmt).contains(ref_offset) {
-          case find_scoped_binding_in_stmt(stmt, name, ref_offset) {
-            .Some(b) => {
-              return .Some(b)
-            },
-            .None => {},
-          }
+      _ => if stmt_span(stmt).contains(ref_offset) {
+        case find_scoped_binding_in_stmt(stmt, name, ref_offset) {
+          .Some(b) => {
+            return .Some(b)
+          },
+          .None => {},
         }
       },
     }
@@ -1180,6 +1226,7 @@ fn find_scoped_binding_in_expr(expr: Expr, name: String, ref_offset: Int) Bindin
       if cond.span.contains(ref_offset) {
         return .None
       }
+
       if then_block.span.contains(ref_offset) {
         return find_local_in_block(then_block, name, ref_offset)
       }

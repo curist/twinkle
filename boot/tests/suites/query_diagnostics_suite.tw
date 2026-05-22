@@ -313,8 +313,13 @@ pub fn suite() runner.Suite {
         try assert.equal(result.diagnostics_by_uri.len(), 2)
 
         for group in result.diagnostics_by_uri {
-          if group.uri == entry { try assert.is_true(group.diagnostics.len() > 0) }
-          if group.uri == dep { try assert.equal(group.diagnostics.len(), 0) }
+          if group.uri == entry {
+            try assert.is_true(group.diagnostics.len() > 0)
+          }
+
+          if group.uri == dep {
+            try assert.equal(group.diagnostics.len(), 0)
+          }
         }
 
         .Ok({})
@@ -389,6 +394,7 @@ pub fn suite() runner.Suite {
       fn() {
         entry := "file:///tmp/twinkle-cutoff/main.tw"
         dep := "file:///tmp/twinkle-cutoff/helper.tw"
+
         // First analysis: establish cache
         first := diagnostics.analyze_workspace(
           cache.empty(),
@@ -402,6 +408,7 @@ pub fn suite() runner.Suite {
           },
         )
         try assert.equal(first.diagnostics.len(), 0)
+
         // Second analysis: dep body changes but signature is same
         second := diagnostics.analyze_workspace(
           first.cache,
@@ -415,6 +422,7 @@ pub fn suite() runner.Suite {
           },
         )
         try assert.equal(second.diagnostics.len(), 0)
+
         // The importer (main) should get resolve+typecheck cache hits
         // because dep's exports fingerprint didn't change
         stats := cache.get_stats(second.cache)
@@ -439,6 +447,7 @@ pub fn suite() runner.Suite {
             ],
           },
         )
+
         // Should have an unused import diagnostic for unused_fn
         found := false
 

@@ -123,9 +123,11 @@ pub fn suite() runner.Suite {
         // Line 3: }
         src := "fn foo() Int {\n  a := 42\n  a\n}\n"
         state := state_with_doc("file:///a.tw", src)
+
         // "a" on line 2 char 2
         step := server_core.handle_message(state, def_request(1, "file:///a.tw", 2, 2))
         r := try def_result_range(step)
+
         // let binding is on line 1
         try assert.equal(r.start_line, 1)
         .Ok({})
@@ -138,9 +140,11 @@ pub fn suite() runner.Suite {
         //                               ^  char 29
         src := "fn add(a: Int, b: Int) Int { a + b }\n"
         state := state_with_doc("file:///a.tw", src)
+
         // "a" in the body is at char 29
         step := server_core.handle_message(state, def_request(1, "file:///a.tw", 0, 29))
         r := try def_result_range(step)
+
         // param "a" starts at char 7
         try assert.equal(r.start_line, 0)
         try assert.equal(r.start_char, 7)
@@ -369,6 +373,7 @@ pub fn suite() runner.Suite {
       "goto def returns null for non-identifier positions",
       fn() {
         state := state_with_doc("file:///a.tw", "x := 42\n")
+
         // On "42" which is IntLit, not Ident
         step := server_core.handle_message(state, def_request(1, "file:///a.tw", 0, 5))
         try assert.is_true(try is_null_result(step))

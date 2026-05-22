@@ -14,11 +14,17 @@ use compiler.resolver
 use tests.assert
 use tests.runner
 
-fn lid(n: Int) LocalId { LocalId.{ id: n } }
+fn lid(n: Int) LocalId {
+  LocalId.{ id: n }
+}
 
-fn fid(n: Int) FuncId { FuncId.{ id: n } }
+fn fid(n: Int) FuncId {
+  FuncId.{ id: n }
+}
 
-fn sid(n: Int) SlotId { SlotId.{ id: n } }
+fn sid(n: Int) SlotId {
+  SlotId.{ id: n }
+}
 
 fn empty_registry() WasmTypeRegistry {
   WasmTypeRegistry.{

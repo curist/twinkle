@@ -6,7 +6,9 @@ use lib.source.span.{Span}
 use tests.assert
 use tests.runner
 
-fn s(start: Int, end: Int) Span { span.new(0, start, end) }
+fn s(start: Int, end: Int) Span {
+  span.new(0, start, end)
+}
 
 pub fn suite() runner.Suite {
   runner.suite("diag")

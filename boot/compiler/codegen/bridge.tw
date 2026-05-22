@@ -30,7 +30,9 @@ fn i31_ref() ValType {
   .Ref(false, .I31)
 }
 
-fn export(f: FuncDef) ExportDef { .{ wasm_name: f.name, func_sym: f.name } }
+fn export(f: FuncDef) ExportDef {
+  .{ wasm_name: f.name, func_sym: f.name }
+}
 
 fn types() Vector<TypeDef> {
   [
@@ -335,7 +337,9 @@ pub fn module() WasmModule {
     globals: [],
     tables: [],
     elems: [],
-    exports: collect f in fs { export(f) },
+    exports: collect f in fs {
+      export(f)
+    },
     memory_exports: [MemoryExportDef.{ wasm_name: "memory", memory_idx: 0 }],
     memories: [MemoryDef.{ name: "staging", min_pages: 1, max_pages: .None }],
     data: [],

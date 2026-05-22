@@ -18,48 +18,42 @@ pub fn lower_string_interp(
 
   for part in parts {
     case part {
-      .Literal(text) => { str_parts = .append(.{ kind: .LitStr(text), ty: str_ty, span: s }) },
+      .Literal(text) => {
+        str_parts = .append(.{ kind: .LitStr(text), ty: str_ty, span: s })
+      },
       .Interpolation(expr) => {
         r := lower_expr_fn(cur_ctx, expr)
         cur_ctx = r.ctx
         part_ty := cur_ctx.expr_type(expr)
         str_expr: CoreExpr = case part_ty {
           .String => r.expr,
-          _ => {
-            case cur_ctx.method_calls[expr.id] {
-              .Some(info) => {
-                case info.contract {
-                  .Some(contract) => .{
-                    kind: .ContractCall(contract, info.method_name, r.expr, []),
-                    ty: str_ty,
-                    span: s,
-                  },
-                  .None => {
-                    fid := case cur_ctx.func_table[info.func_name] {
-                      .Some(id) => id,
-                      .None => cur_ctx.builtins.id("string_to_string"),
-                    }
-                    .{
-                      kind: .Call(.{ kind: .GlobalFunc(fid), ty: .Void, span: s }, [r.expr]),
-                      ty: str_ty,
-                      span: s,
-                    }
-                  },
-                }
-              },
-              .None => .{
-                kind: .Call(
-                  .{
-                    kind: .GlobalFunc(cur_ctx.builtins.id("string_to_string")),
-                    ty: .Void,
-                    span: s,
-                  },
-                  [r.expr],
-                ),
+          _ => case cur_ctx.method_calls[expr.id] {
+            .Some(info) => case info.contract {
+              .Some(contract) => .{
+                kind: .ContractCall(contract, info.method_name, r.expr, []),
                 ty: str_ty,
                 span: s,
               },
-            }
+              .None => {
+                fid := case cur_ctx.func_table[info.func_name] {
+                  .Some(id) => id,
+                  .None => cur_ctx.builtins.id("string_to_string"),
+                }
+                .{
+                  kind: .Call(.{ kind: .GlobalFunc(fid), ty: .Void, span: s }, [r.expr]),
+                  ty: str_ty,
+                  span: s,
+                }
+              },
+            },
+            .None => .{
+              kind: .Call(
+                .{ kind: .GlobalFunc(cur_ctx.builtins.id("string_to_string")), ty: .Void, span: s },
+                [r.expr],
+              ),
+              ty: str_ty,
+              span: s,
+            },
           },
         }
         str_parts = .append(str_expr)

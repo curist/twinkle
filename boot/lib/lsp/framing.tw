@@ -92,10 +92,16 @@ fn find_header_end_bytes(buffer: Vector<Byte>) Int {
   for end >= 0 {
     case String.from_utf8(buffer.slice(0, end)) {
       .Some(text) => case text.index_of("\r\n\r\n") {
-        .Some(i) => { return i },
-        .None => { return -1 },
+        .Some(i) => {
+          return i
+        },
+        .None => {
+          return -1
+        },
       },
-      .None => { end = end - 1 },
+      .None => {
+        end = end - 1
+      },
     }
   }
 

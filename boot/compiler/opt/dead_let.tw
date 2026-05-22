@@ -6,7 +6,9 @@ use compiler.opt.use_count.{count_uses, is_pure_with_optimizer_semantics}
 
 pub type ElimResult = .{ expr: AnfExpr, changed: Bool }
 
-pub fn dead_let_elim(expr: AnfExpr) ElimResult { dead_let_elim_with_pinned(expr, Dict.new()) }
+pub fn dead_let_elim(expr: AnfExpr) ElimResult {
+  dead_let_elim_with_pinned(expr, Dict.new())
+}
 
 pub fn dead_let_elim_with_pinned(expr: AnfExpr, pinned: Dict<Int, Bool>) ElimResult {
   dead_let_elim_with_pinned_and_semantics(expr, pinned, empty_optimizer_semantics())
@@ -19,8 +21,12 @@ pub fn dead_let_elim_with_pinned_and_semantics(
 ) ElimResult {
   uses := count_uses(expr)
   assigned := collect_assigned_locals(expr)
+
   // Merge pinned into assigned so pinned locals are never eliminated
-  for k in pinned.keys() { assigned[k] = true }
+  for k in pinned.keys() {
+    assigned[k] = true
+  }
+
   dead_let_inner(expr, uses, assigned, semantics)
 }
 
@@ -72,7 +78,11 @@ fn dead_let_op(
       changed := false
       new_arms: Vector<AnfMatchArm> = collect arm in arms {
         r := dead_let_inner(arm.body, uses, assigned, semantics)
-        if r.changed { changed = true }
+
+        if r.changed {
+          changed = true
+        }
+
         AnfMatchArm.{ pattern: arm.pattern, body: r.expr }
       }
       OpElimResult.{ op: .AMatch(scrutinee, new_arms), changed }

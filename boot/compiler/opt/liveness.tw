@@ -17,7 +17,10 @@ fn set_remove(s: Dict<Int, Bool>, k: Int) Dict<Int, Bool> {
 }
 
 fn set_union(a: Dict<Int, Bool>, b: Dict<Int, Bool>) Dict<Int, Bool> {
-  for k in b.keys() { a[k] = true }
+  for k in b.keys() {
+    a[k] = true
+  }
+
   a
 }
 
@@ -33,7 +36,9 @@ fn add_atom(a: Atom, live: Dict<Int, Bool>) Dict<Int, Bool> {
 // Compute the set of locals live at the entry of an expression.
 type LiveScan = .{ live_in: Dict<Int, Bool>, by_binding: Dict<Int, Dict<Int, Bool>> }
 
-pub fn live_after(expr: AnfExpr) Dict<Int, Bool> { compute_live(expr, Dict.new()) }
+pub fn live_after(expr: AnfExpr) Dict<Int, Bool> {
+  compute_live(expr, Dict.new())
+}
 
 pub fn live_after_by_binding(expr: AnfExpr) Dict<Int, Dict<Int, Bool>> {
   compute_live_map(expr, Dict.new(), Dict.new()).by_binding
@@ -44,8 +49,10 @@ fn compute_live(expr: AnfExpr, live: Dict<Int, Bool>) Dict<Int, Bool> {
     .Let(local, op, body) => {
       // Start from what's live after the body
       result := compute_live(body, live)
+
       // Kill the binding
       result = set_remove(result, local.id)
+
       // Add everything the op reads
       live_in_op_with_live_out(op, result)
     },
@@ -80,11 +87,16 @@ pub fn live_in_op_with_live_out(op: AnfOp, live: Dict<Int, Bool>) Dict<Int, Bool
   case op {
     .ACall(callee, args) => {
       result := add_atom(callee, live)
-      for a in args { result = add_atom(a, result) }
+
+      for a in args {
+        result = add_atom(a, result)
+      }
+
       result
     },
     .AIf(cond, then_e, else_e) => {
       result := add_atom(cond, live)
+
       // Both branches may execute; union their live sets conservatively
       then_live := compute_live(then_e, Dict.new())
       else_live := compute_live(else_e, Dict.new())
@@ -96,9 +108,14 @@ pub fn live_in_op_with_live_out(op: AnfOp, live: Dict<Int, Bool>) Dict<Int, Bool
 
       for arm in arms {
         arm_live := compute_live(arm.body, Dict.new())
+
         // Remove pattern bindings from arm's live set
         bindings := collect_pattern_bindings(arm.pattern, Dict.new())
-        for k in bindings.keys() { arm_live = set_remove(arm_live, k) }
+
+        for k in bindings.keys() {
+          arm_live = set_remove(arm_live, k)
+        }
+
         result = set_union(result, arm_live)
       }
 
@@ -116,12 +133,20 @@ pub fn live_in_op_with_live_out(op: AnfOp, live: Dict<Int, Bool>) Dict<Int, Bool
     .AUnOp(_, inner, _) => add_atom(inner, live),
     .AMakeClosure(_, free_vars) => {
       result := live
-      for v in free_vars { result = set_add(result, v.id) }
+
+      for v in free_vars {
+        result = set_add(result, v.id)
+      }
+
       result
     },
     .ARecord(_, fields) => {
       result := live
-      for f in fields { result = add_atom(f.value, result) }
+
+      for f in fields {
+        result = add_atom(f.value, result)
+      }
+
       result
     },
     .ARecordGet(target, _, _) => add_atom(target, live),
@@ -131,12 +156,20 @@ pub fn live_in_op_with_live_out(op: AnfOp, live: Dict<Int, Bool>) Dict<Int, Bool
     },
     .AVariant(_, _, args) => {
       result := live
-      for a in args { result = add_atom(a, result) }
+
+      for a in args {
+        result = add_atom(a, result)
+      }
+
       result
     },
     .AArrayLit(elems) => {
       result := live
-      for a in elems { result = add_atom(a, result) }
+
+      for a in elems {
+        result = add_atom(a, result)
+      }
+
       result
     },
     .AIndex(base, index, _, _) => {
@@ -164,7 +197,11 @@ pub fn live_in_op_with_live_out(op: AnfOp, live: Dict<Int, Bool>) Dict<Int, Bool
 // base local is dead in the continuation.
 pub fn annotate_in_place(func: AnfFunctionDef) AnfFunctionDef {
   param_locals: Dict<Int, Bool> = Dict.new()
-  for p in func.params { param_locals[p.local.id] = true }
+
+  for p in func.params {
+    param_locals[p.local.id] = true
+  }
+
   AnfFunctionDef.{
     func_id: func.func_id,
     name: func.name,
@@ -186,10 +223,13 @@ fn annotate_expr(expr: AnfExpr, param_locals: Dict<Int, Bool>) AnfExpr {
 
           if !set_has(live, r.id) and !set_has(param_locals, r.id) {
             AnfOp.ARecordUpdate(.ALocal(r), field, value, true, type_id)
-          } else { op }
+          } else {
+            op
+          }
         },
         _ => op,
       }
+
       // Recurse into sub-expressions of op, then into body
       new_op = annotate_op(new_op, param_locals)
       AnfExpr.Let(local, new_op, annotate_expr(body, param_locals))
@@ -200,9 +240,11 @@ fn annotate_expr(expr: AnfExpr, param_locals: Dict<Int, Bool>) AnfExpr {
 
 fn annotate_op(op: AnfOp, param_locals: Dict<Int, Bool>) AnfOp {
   case op {
-    .AIf(cond, then_e, else_e) => {
-      AnfOp.AIf(cond, annotate_expr(then_e, param_locals), annotate_expr(else_e, param_locals))
-    },
+    .AIf(cond, then_e, else_e) => AnfOp.AIf(
+      cond,
+      annotate_expr(then_e, param_locals),
+      annotate_expr(else_e, param_locals),
+    ),
     .AMatch(scrutinee, arms) => {
       new_arms: Vector<AnfMatchArm> = collect arm in arms {
         AnfMatchArm.{ pattern: arm.pattern, body: annotate_expr(arm.body, param_locals) }

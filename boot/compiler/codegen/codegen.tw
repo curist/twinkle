@@ -39,7 +39,9 @@ fn timings_enabled() Bool {
   }
 }
 
-fn log_time(label: String, ms: Float) { eprintln("[time] ${label}: ${Float.to_string(ms)}ms") }
+fn log_time(label: String, ms: Float) {
+  eprintln("[time] ${label}: ${Float.to_string(ms)}ms")
+}
 
 fn verify_level_from_env() VerifyLevel {
   case proc.env("TWINKLE_VERIFY_LEVEL") {
@@ -62,11 +64,15 @@ pub fn runtime_modules(eq_layouts: EqTypeLayouts) Vector<WasmModule> {
 
 pub fn link_program(anf: AnfModule, env: ResolvedEnv, builtins: BuiltinRegistry) LinkedModule {
   timed := timings_enabled()
+
   // 1. Final closure conversion.
   t0 := date.now()
   closure_conversion := convert_closures(anf, env)
   t1 := date.now()
-  if timed { log_time("closure_convert", t1 - t0) }
+
+  if timed {
+    log_time("closure_convert", t1 - t0)
+  }
 
   // 1b. Validate task suspension points.
   case validate_tasks(closure_conversion.anf, builtins) {
@@ -77,7 +83,10 @@ pub fn link_program(anf: AnfModule, env: ResolvedEnv, builtins: BuiltinRegistry)
   // 2. Prepare backend IR.
   prepared := prepare_backend(closure_conversion.anf, env, builtins, closure_conversion.captures)
   t2 := date.now()
-  if timed { log_time("prepare_backend", t2 - t1) }
+
+  if timed {
+    log_time("prepare_backend", t2 - t1)
+  }
 
   // 3. Verify prepared backend IR.
   case verify_prepared_module_with_level(prepared, env, builtins, verify_level_from_env()) {
@@ -86,15 +95,27 @@ pub fn link_program(anf: AnfModule, env: ResolvedEnv, builtins: BuiltinRegistry)
   }
 
   t3 := date.now()
-  if timed { log_time("verify", t3 - t2) }
+
+  if timed {
+    log_time("verify", t3 - t2)
+  }
+
   // 4. Plan Wasm types from prepared backend IR.
   registry := plan_wasm_types(prepared, env, builtins)
   t4 := date.now()
-  if timed { log_time("plan_wasm_types", t4 - t3) }
+
+  if timed {
+    log_time("plan_wasm_types", t4 - t3)
+  }
+
   // 5. Emit user module from prepared backend IR.
   user_module := emit_module(prepared, registry, builtins, env)
   t5 := date.now()
-  if timed { log_time("emit_module", t5 - t4) }
+
+  if timed {
+    log_time("emit_module", t5 - t4)
+  }
+
   // 6. Link with runtime
   eq_layouts := collect_eq_type_layouts(registry.layout_cache)
   modules := runtime_modules(eq_layouts).append(user_module)
@@ -115,7 +136,11 @@ pub fn link_program(anf: AnfModule, env: ResolvedEnv, builtins: BuiltinRegistry)
     },
   }
   t6 := date.now()
-  if timed { log_time("link", t6 - t5) }
+
+  if timed {
+    log_time("link", t6 - t5)
+  }
+
   linked
 }
 
@@ -129,6 +154,10 @@ pub fn codegen_wasm(anf: AnfModule, env: ResolvedEnv, builtins: BuiltinRegistry)
   t0 := date.now()
   bytes := emit_linked_wasm(linked)
   t1 := date.now()
-  if timed { log_time("emit_wasm_binary", t1 - t0) }
+
+  if timed {
+    log_time("emit_wasm_binary", t1 - t0)
+  }
+
   bytes
 }

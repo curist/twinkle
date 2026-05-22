@@ -25,55 +25,37 @@ pub fn lower_stmts(
     stmt := stmts[idx]
 
     case stmt {
-      .Let(ls) => {
-        if ls.is_rebind {
-          // x = expr  →  Let(_, Assign(x_local, lower(expr)), rest)
-          r := lower_expr_fn(ctx, ls.value)
-          target := case r.ctx.lookup_local_or_global(ls.name) {
-            .Some(id) => id,
-            .None => {
-              r.ctx = r.ctx.emit_error(ls.span, "undefined variable for assign: ${ls.name}")
-              LocalId.{ id: -1 }
-            },
-          }
-          rest := lower_stmts(
-            r.ctx,
-            stmts,
-            idx + 1,
-            tail,
-            block_span,
-            lower_expr_fn,
-            lower_block_fn,
-          )
-          ao := rest.ctx.alloc_anon_local()
-          .{
-            expr: .{
-              kind: .Let(
-                ao.local,
-                .{ kind: .Assign(target, r.expr), ty: .Void, span: ls.span },
-                rest.expr,
-              ),
-              ty: rest.expr.ty,
-              span: ls.span,
-            },
-            ctx: ao.ctx,
-          }
-        } else {
-          r := lower_expr_fn(ctx, ls.value)
-          lo := r.ctx.alloc_local(ls.name)
-          rest := lower_stmts(
-            lo.ctx,
-            stmts,
-            idx + 1,
-            tail,
-            block_span,
-            lower_expr_fn,
-            lower_block_fn,
-          )
-          .{
-            expr: .{ kind: .Let(lo.local, r.expr, rest.expr), ty: rest.expr.ty, span: ls.span },
-            ctx: rest.ctx,
-          }
+      .Let(ls) => if ls.is_rebind {
+        // x = expr  →  Let(_, Assign(x_local, lower(expr)), rest)
+        r := lower_expr_fn(ctx, ls.value)
+        target := case r.ctx.lookup_local_or_global(ls.name) {
+          .Some(id) => id,
+          .None => {
+            r.ctx = r.ctx.emit_error(ls.span, "undefined variable for assign: ${ls.name}")
+            LocalId.{ id: -1 }
+          },
+        }
+        rest := lower_stmts(r.ctx, stmts, idx + 1, tail, block_span, lower_expr_fn, lower_block_fn)
+        ao := rest.ctx.alloc_anon_local()
+        .{
+          expr: .{
+            kind: .Let(
+              ao.local,
+              .{ kind: .Assign(target, r.expr), ty: .Void, span: ls.span },
+              rest.expr,
+            ),
+            ty: rest.expr.ty,
+            span: ls.span,
+          },
+          ctx: ao.ctx,
+        }
+      } else {
+        r := lower_expr_fn(ctx, ls.value)
+        lo := r.ctx.alloc_local(ls.name)
+        rest := lower_stmts(lo.ctx, stmts, idx + 1, tail, block_span, lower_expr_fn, lower_block_fn)
+        .{
+          expr: .{ kind: .Let(lo.local, r.expr, rest.expr), ty: rest.expr.ty, span: ls.span },
+          ctx: rest.ctx,
         }
       },
       .Expr(es) => {
@@ -161,43 +143,36 @@ pub fn lower_stmts(
           },
         }
       },
-      .Return(rs) => {
-        case rs.value {
-          .Some(val_expr) => {
-            r := lower_expr_fn(ctx, val_expr)
-            // `return {}` in a void function: treat as bare return
-            .{
-              expr: .{
-                kind: .Return(
-                  if r.expr.ty == .Void {
-                    .None
-                  } else {
-                    .Some(r.expr)
-                  },
-                ),
-                ty: .Void,
-                span: rs.span,
-              },
-              ctx: r.ctx,
-            }
-          },
-          .None => {
-            .{ expr: .{ kind: .Return(.None), ty: .Void, span: rs.span }, ctx }
-          },
-        }
+      .Return(rs) => case rs.value {
+        .Some(val_expr) => {
+          r := lower_expr_fn(ctx, val_expr)
+
+          // `return {}` in a void function: treat as bare return
+          .{
+            expr: .{
+              kind: .Return(
+                if r.expr.ty == .Void {
+                  .None
+                } else {
+                  .Some(r.expr)
+                },
+              ),
+              ty: .Void,
+              span: rs.span,
+            },
+            ctx: r.ctx,
+          }
+        },
+        .None => .{ expr: .{ kind: .Return(.None), ty: .Void, span: rs.span }, ctx },
       },
-      .Break(bs) => {
-        case bs.value {
-          .Some(val_expr) => {
-            r := lower_expr_fn(ctx, val_expr)
-            .{ expr: .{ kind: .Break(.Some(r.expr)), ty: .Void, span: bs.span }, ctx: r.ctx }
-          },
-          .None => {
-            .{ expr: .{ kind: .Break(.None), ty: .Void, span: bs.span }, ctx }
-          },
-        }
+      .Break(bs) => case bs.value {
+        .Some(val_expr) => {
+          r := lower_expr_fn(ctx, val_expr)
+          .{ expr: .{ kind: .Break(.Some(r.expr)), ty: .Void, span: bs.span }, ctx: r.ctx }
+        },
+        .None => .{ expr: .{ kind: .Break(.None), ty: .Void, span: bs.span }, ctx },
       },
-      .Continue(_) => { .{ expr: .{ kind: .Continue, ty: .Void, span: block_span }, ctx } },
+      .Continue(_) => .{ expr: .{ kind: .Continue, ty: .Void, span: block_span }, ctx },
       .Defer(ds) => {
         r := lower_expr_fn(ctx, ds.expr)
         rest := lower_stmts(r.ctx, stmts, idx + 1, tail, block_span, lower_expr_fn, lower_block_fn)

@@ -6,9 +6,13 @@ use lib.source.span
 use tests.assert
 use tests.runner
 
-fn dummy_span() span.Span { span.Span.{ file_id: 0, start: 0, end: 0 } }
+fn dummy_span() span.Span {
+  span.Span.{ file_id: 0, start: 0, end: 0 }
+}
 
-fn dummy_expr(kind: ExprKind) Expr { Expr.{ id: 0, kind, span: dummy_span() } }
+fn dummy_expr(kind: ExprKind) Expr {
+  Expr.{ id: 0, kind, span: dummy_span() }
+}
 
 fn make_value_item(name: String) ImportItem {
   .Value(ImportValueItem.{ name, alias: .None, span: dummy_span() })
@@ -158,6 +162,7 @@ pub fn suite() runner.Suite {
           span: dummy_span(),
         }
         result := check_unused_imports(module)
+
         // "remove" from `use foo.{remove}` should be flagged as unused
         try assert.equal(result.items.len(), 1)
         try assert.str_contains(result.items[0].kind.message(), "remove")
@@ -177,6 +182,7 @@ pub fn suite() runner.Suite {
           items: .Some([make_value_item("translate")]),
           span: span.Span.{ file_id: 0, start: 0, end: 30 },
         }
+
         // p.translate(1, 2)
         call_expr := dummy_expr(
           .Call(
@@ -192,6 +198,7 @@ pub fn suite() runner.Suite {
           span: dummy_span(),
         }
         result := check_unused_imports(module)
+
         // "translate" from `use foo.{translate}` should be flagged as unused
         try assert.equal(result.items.len(), 1)
         try assert.str_contains(result.items[0].kind.message(), "translate")
@@ -211,6 +218,7 @@ pub fn suite() runner.Suite {
           items: .Some([make_value_item("transform")]),
           span: span.Span.{ file_id: 0, start: 0, end: 30 },
         }
+
         // get_items().transform()
         call_expr := dummy_expr(
           .Call(
@@ -287,6 +295,7 @@ pub fn suite() runner.Suite {
           ),
           span: use_span,
         }
+
         // Module that uses `used_fn` but not `unused_fn`
         call_expr := dummy_expr(.Call(dummy_expr(.Ident("used_fn")), []))
         module := Module.{
@@ -300,9 +309,11 @@ pub fn suite() runner.Suite {
         try assert.equal(result.items.len(), 1)
         diag := result.items[0]
         try assert.str_contains(diag.kind.message(), "unused_fn")
+
         // Edit should span the whole use statement
         try assert.equal(diag.edit.use_span.start, 0)
         try assert.equal(diag.edit.use_span.end, 25)
+
         // Replacement should reconstruct with only used_fn
         try assert.equal(diag.edit.replacement, "use foo.{used_fn}\n")
         .Ok({})

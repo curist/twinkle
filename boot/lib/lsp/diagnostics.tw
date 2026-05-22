@@ -17,7 +17,9 @@ pub fn publish_diagnostics(
   index: line_index.LineIndex,
   diagnostics: Vector<query_diagnostics.Diagnostic>,
 ) json.Json {
-  items := collect d in diagnostics { diagnostic_to_json(index, d) }
+  items := collect d in diagnostics {
+    diagnostic_to_json(index, d)
+  }
   protocol.notification(
     "textDocument/publishDiagnostics",
     .Some(
@@ -52,7 +54,9 @@ fn diagnostic_to_json(index: line_index.LineIndex, d: query_diagnostics.Diagnost
   ]
 
   case d.data {
-    .Some(data) => { fields = .append(json.kv("data", data)) },
+    .Some(data) => {
+      fields = .append(json.kv("data", data))
+    },
     .None => {},
   }
 

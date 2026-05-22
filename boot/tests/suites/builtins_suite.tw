@@ -161,6 +161,7 @@ pub fn suite() runner.Suite {
       "full registry has expected builtins",
       fn() {
         reg := make_builtin_registry()
+
         // Spot-check a few known entries exist and have correct kinds
         print_entry := try reg.entry(reg.id("print")).ok_or("missing print")
 
@@ -188,12 +189,15 @@ pub fn suite() runner.Suite {
         _ := reg.id("vector_len")
         _ := reg.id("vector_append")
         _ := reg.id("vector__set_unsafe")
+
         // dict ops
         _ := reg.id("dict_new")
         _ := reg.id("dict_set")
+
         // in-place variants
         _ := reg.id("vector__set_in_place")
         _ := reg.id("dict__set_in_place")
+
         // host ops
         _ := reg.id("host_read_file")
         _ := reg.id("host_exit")
@@ -208,7 +212,9 @@ pub fn suite() runner.Suite {
 
         // each entry's id matches its index
         for entry, i in reg.entries {
-          if entry.func_id.id != i { error("entry ${i} has id ${entry.func_id.id}") }
+          if entry.func_id.id != i {
+            error("entry ${i} has id ${entry.func_id.id}")
+          }
         }
 
         try assert.equal(reg.next_id, reg.entries.len())

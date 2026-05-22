@@ -68,11 +68,14 @@ pub fn emit_string_data_segment(reg: WasmTypeRegistry) DataSegment? {
   if reg.string_pool_order.len() == 0 {
     return .None
   }
+
   // Collect all string bytes in insertion order
   all_bytes: Vector<Byte> = []
 
   for k in reg.string_pool_order {
-    for b in k { all_bytes = .append(b) }
+    for b in k {
+      all_bytes = .append(b)
+    }
   }
 
   .Some(DataSegment.{ name: "\$data_strings", offset: [], bytes: all_bytes })

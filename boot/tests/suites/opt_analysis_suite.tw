@@ -11,19 +11,33 @@ use compiler.opt.semantics.{CallSemantics, OptimizerSemantics}
 use tests.assert
 use tests.runner
 
-fn lid(id: Int) LocalId { LocalId.{ id } }
+fn lid(id: Int) LocalId {
+  LocalId.{ id }
+}
 
-fn fid(id: Int) FuncId { FuncId.{ id } }
+fn fid(id: Int) FuncId {
+  FuncId.{ id }
+}
 
-fn tid(id: Int) TypeId { TypeId.{ id } }
+fn tid(id: Int) TypeId {
+  TypeId.{ id }
+}
 
-fn mock_vec_set() FuncId { fid(200) }
+fn mock_vec_set() FuncId {
+  fid(200)
+}
 
-fn mock_vec_push() FuncId { fid(204) }
+fn mock_vec_push() FuncId {
+  fid(204)
+}
 
-fn mock_vec_make() FuncId { fid(210) }
+fn mock_vec_make() FuncId {
+  fid(210)
+}
 
-fn mock_vec_len() FuncId { fid(220) }
+fn mock_vec_len() FuncId {
+  fid(220)
+}
 
 fn mock_semantics() OptimizerSemantics {
   calls: Dict<Int, CallSemantics> = Dict.new()

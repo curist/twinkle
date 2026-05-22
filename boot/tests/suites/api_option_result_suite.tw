@@ -260,7 +260,11 @@ pub fn suite() runner.Suite {
       "ok_or_else with try in Result function",
       fn() {
         opt: Int? = .Some(99)
-        x := try opt.ok_or_else(fn() String { "lazy err" })
+        x := try opt.ok_or_else(
+          fn() String {
+            "lazy err"
+          },
+        )
         try assert.equal(x, 99)
         .Ok({})
       },
@@ -408,8 +412,16 @@ pub fn suite() runner.Suite {
       fn() {
         some: Int? = .Some(10)
         none: Int? = .None
-        mapped_some := some.map(fn(x: Int) { x * 3 })
-        mapped_none := none.map(fn(x: Int) { x * 3 })
+        mapped_some := some.map(
+          fn(x: Int) {
+            x * 3
+          },
+        )
+        mapped_none := none.map(
+          fn(x: Int) {
+            x * 3
+          },
+        )
         try assert.is_some(mapped_some)
         try assert.is_none(mapped_none)
         val := case mapped_some {
@@ -469,8 +481,16 @@ pub fn suite() runner.Suite {
       fn() {
         ok: Result<Int, String> = .Ok(7)
         err: Result<Int, String> = .Err("bad")
-        mapped_ok := ok.map(fn(x: Int) { x + 5 })
-        mapped_err := err.map(fn(x: Int) { x + 5 })
+        mapped_ok := ok.map(
+          fn(x: Int) {
+            x + 5
+          },
+        )
+        mapped_err := err.map(
+          fn(x: Int) {
+            x + 5
+          },
+        )
         try assert.is_ok(mapped_ok)
         try assert.is_err(mapped_err)
         val := case mapped_ok {
@@ -611,12 +631,26 @@ pub fn suite() runner.Suite {
       "Option.filter keeps matching Some",
       fn() {
         some: Int? = .Some(6)
-        kept := some.filter(fn(x: Int) { x % 2 == 0 })
-        dropped := some.filter(fn(x: Int) { x > 10 })
+        kept := some.filter(
+          fn(x: Int) {
+            x % 2 == 0
+          },
+        )
+        dropped := some.filter(
+          fn(x: Int) {
+            x > 10
+          },
+        )
         none: Int? = .None
         try assert.is_some(kept)
         try assert.is_none(dropped)
-        try assert.is_none(none.filter(fn(x: Int) { x > 0 }))
+        try assert.is_none(
+          none.filter(
+            fn(x: Int) {
+              x > 0
+            },
+          ),
+        )
         .Ok({})
       },
     )
@@ -669,8 +703,16 @@ pub fn suite() runner.Suite {
         seen := Cell.new(0)
         some: Int? = .Some(9)
         none: Int? = .None
-        observed := some.inspect(fn(x: Int) { seen.set(x) })
-        skipped := none.inspect(fn(x: Int) { seen.set(x) })
+        observed := some.inspect(
+          fn(x: Int) {
+            seen.set(x)
+          },
+        )
+        skipped := none.inspect(
+          fn(x: Int) {
+            seen.set(x)
+          },
+        )
         try assert.equal(observed.unwrap_or(0), 9)
         try assert.is_none(skipped)
         try assert.equal(seen.get(), 9)
@@ -726,8 +768,16 @@ pub fn suite() runner.Suite {
       fn() {
         ok: Result<Int, String> = .Ok(2)
         err: Result<Int, String> = .Err("abcd")
-        mapped_ok := ok.map_err(fn(e: String) { e.len() })
-        mapped_err := err.map_err(fn(e: String) { e.len() })
+        mapped_ok := ok.map_err(
+          fn(e: String) {
+            e.len()
+          },
+        )
+        mapped_err := err.map_err(
+          fn(e: String) {
+            e.len()
+          },
+        )
         try assert.is_ok(mapped_ok)
         try assert.is_err(mapped_err)
         err_len := case mapped_err {
@@ -776,7 +826,12 @@ pub fn suite() runner.Suite {
       "Option and Result combinators support qualified calls",
       fn() {
         o: Int? = .Some(3)
-        om := Option.map(o, fn(x: Int) { x + 2 })
+        om := Option.map(
+          o,
+          fn(x: Int) {
+            x + 2
+          },
+        )
         oa := Option.and_then(
           om,
           fn(x: Int) {
@@ -794,7 +849,12 @@ pub fn suite() runner.Suite {
         }
         try assert.equal(oval, 10)
         r: Result<Int, String> = .Ok(4)
-        rm := Result.map(r, fn(x: Int) { x + 1 })
+        rm := Result.map(
+          r,
+          fn(x: Int) {
+            x + 1
+          },
+        )
         ra := Result.and_then(
           rm,
           fn(x: Int) {

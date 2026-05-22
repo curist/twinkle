@@ -23,6 +23,7 @@ pub fn lower_named_record(
     .Some(id) => id,
     .None => {
       ctx = .emit_error(s, "unknown type: ${type_name}")
+
       return .{ expr: void_expr(s), ctx }
     },
   }
@@ -76,25 +77,21 @@ pub fn lower_record_fields(
             val := CoreExpr.{ kind: .Local(local_id), ty: val_ty, span: entry.span }
             fields = .append(.{ field, value: val })
           },
-          .None => {
-            case ctx.module_globals[entry.name] {
-              .Some(gid) => {
-                val := CoreExpr.{ kind: .GlobalLocal(gid), ty: val_ty, span: entry.span }
+          .None => case ctx.module_globals[entry.name] {
+            .Some(gid) => {
+              val := CoreExpr.{ kind: .GlobalLocal(gid), ty: val_ty, span: entry.span }
+              fields = .append(.{ field, value: val })
+            },
+            .None => case ctx.lookup_func(entry.name) {
+              .Some(func_id) => {
+                val := CoreExpr.{ kind: .GlobalFunc(func_id), ty: val_ty, span: entry.span }
                 fields = .append(.{ field, value: val })
               },
               .None => {
-                case ctx.lookup_func(entry.name) {
-                  .Some(func_id) => {
-                    val := CoreExpr.{ kind: .GlobalFunc(func_id), ty: val_ty, span: entry.span }
-                    fields = .append(.{ field, value: val })
-                  },
-                  .None => {
-                    ctx = .emit_error(entry.span, "undefined variable: ${entry.name}")
-                    fields = .append(.{ field, value: void_expr(entry.span) })
-                  },
-                }
+                ctx = .emit_error(entry.span, "undefined variable: ${entry.name}")
+                fields = .append(.{ field, value: void_expr(entry.span) })
               },
-            }
+            },
           },
         }
       },
@@ -144,13 +141,11 @@ pub fn lower_field(
       }
 
       case fn_name {
-        .Some(fn_name) => {
-          case ctx.func_table[fn_name] {
-            .Some(fid) => {
-              return .{ expr: .{ kind: .GlobalFunc(fid), ty, span: s }, ctx }
-            },
-            .None => {},
-          }
+        .Some(fn_name) => case ctx.func_table[fn_name] {
+          .Some(fid) => {
+            return .{ expr: .{ kind: .GlobalFunc(fid), ty, span: s }, ctx }
+          },
+          .None => {},
         },
         .None => {
           // Check for an imported module-level value binding.

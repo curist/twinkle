@@ -4,7 +4,9 @@ use compiler.core_ir.{CoreExpr, CorePattern, FieldId, FuncId, LocalId}
 use compiler.mono_type.{MonoType, TypeId}
 use lib.source.span.{Span}
 
-pub fn void_expr(s: Span) CoreExpr { .{ kind: .LitVoid, ty: .Void, span: s } }
+pub fn void_expr(s: Span) CoreExpr {
+  .{ kind: .LitVoid, ty: .Void, span: s }
+}
 
 pub fn local_expr(local: LocalId, ty: MonoType, s: Span) CoreExpr {
   .{ kind: .Local(local), ty, span: s }

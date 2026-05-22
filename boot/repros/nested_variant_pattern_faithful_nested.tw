@@ -3,7 +3,9 @@ use compiler.resolver
 use compiler.resolver.{ResolvedEnv, ResolvedTypeDef, ResolvedVariant, TypeEntry}
 use lib.source.span
 
-fn dummy_span() span.Span { span.Span.{ file_id: 0, start: 0, end: 0 } }
+fn dummy_span() span.Span {
+  span.Span.{ file_id: 0, start: 0, end: 0 }
+}
 
 fn subst_type_params(ty: MonoType, type_params: Vector<String>, args: Vector<MonoType>) MonoType {
   case ty {
@@ -16,20 +18,23 @@ fn subst_type_params(ty: MonoType, type_params: Vector<String>, args: Vector<Mon
 
       ty
     },
-    .Named(tid, inner_args) => {
-      .Named(tid, collect arg in inner_args { subst_type_params(arg, type_params, args) })
-    },
+    .Named(tid, inner_args) => .Named(
+      tid,
+      collect arg in inner_args {
+        subst_type_params(arg, type_params, args)
+      },
+    ),
     .Vector(inner) => .Vector(subst_type_params(inner, type_params, args)),
     .Dict(k, v) => .Dict(
       subst_type_params(k, type_params, args),
       subst_type_params(v, type_params, args),
     ),
-    .Function(params, ret) => {
-      .Function(
-        collect param in params { subst_type_params(param, type_params, args) },
-        subst_type_params(ret, type_params, args),
-      )
-    },
+    .Function(params, ret) => .Function(
+      collect param in params {
+        subst_type_params(param, type_params, args)
+      },
+      subst_type_params(ret, type_params, args),
+    ),
     .Optional(inner) => .Optional(subst_type_params(inner, type_params, args)),
     .Result(ok, err) => .Result(
       subst_type_params(ok, type_params, args),
@@ -43,15 +48,13 @@ fn can_match_variant_pattern(ty: MonoType, env: ResolvedEnv) Bool {
   case ty {
     .Optional(_) => true,
     .Result(_, _) => true,
-    .Named(tid, args) => {
-      case env.lookup_type_def(tid) {
-        .Some(.Sum(_, _, _)) => true,
-        .Some(.Alias(_, type_params, target)) => can_match_variant_pattern(
-          subst_type_params(target, type_params, args),
-          env,
-        ),
-        _ => false,
-      }
+    .Named(tid, args) => case env.lookup_type_def(tid) {
+      .Some(.Sum(_, _, _)) => true,
+      .Some(.Alias(_, type_params, target)) => can_match_variant_pattern(
+        subst_type_params(target, type_params, args),
+        env,
+      ),
+      _ => false,
     },
     _ => false,
   }
@@ -98,7 +101,9 @@ fn build_env() ResolvedEnv {
 }
 
 fn expect(actual: Bool, expected: Bool, label: String) {
-  if actual != expected { error("${label}: expected ${expected}, got ${actual}") }
+  if actual != expected {
+    error("${label}: expected ${expected}, got ${actual}")
+  }
 }
 
 env := build_env()

@@ -5,9 +5,13 @@ use tests.assert
 use tests.runner
 
 // ── Helpers ─────────────────────────────────────────────────────────
-fn lid(id: Int) LocalId { LocalId.{ id } }
+fn lid(id: Int) LocalId {
+  LocalId.{ id }
+}
 
-fn fid(id: Int) FuncId { FuncId.{ id } }
+fn fid(id: Int) FuncId {
+  FuncId.{ id }
+}
 
 fn make_func(body: AnfExpr) AnfFunctionDef {
   AnfFunctionDef.{
@@ -86,6 +90,7 @@ fn test_basic_defer_at_function_exit() Result<Void, String> {
   input: AnfExpr = .Let(lid(0), .ADefer(defer_body), .Atom(.ALitVoid))
   func := make_func(input)
   result := eliminate_defers(func)
+
   // Should be: Let(1, ACall(f10, []), Atom(void))
   try assert.is_true(is_let_call(result.body))
 
@@ -127,6 +132,7 @@ fn test_defer_fires_at_return() Result<Void, String> {
   input: AnfExpr = .Let(lid(0), .ADefer(defer_body), .Return(.Some(.ALitInt(42))))
   func := make_func(input)
   result := eliminate_defers(func)
+
   // Let(1, ACall(...), Return(Some(42)))
   try assert.is_true(is_let_call(result.body))
 
@@ -164,7 +170,7 @@ fn test_lifo_ordering() Result<Void, String> {
       try assert.equal(f.id, 200)
 
       case rest {
-        .Let(_, .ACall(.AGlobalFunc(f2), _), .Atom(.ALitVoid)) => { assert.equal(f2.id, 100) },
+        .Let(_, .ACall(.AGlobalFunc(f2), _), .Atom(.ALitVoid)) => assert.equal(f2.id, 100),
         _ => assert.is_true(false),
       }
     },
@@ -201,9 +207,7 @@ fn test_defer_in_loop_fires_at_break() Result<Void, String> {
 
       // inner: Let(10, ACall(30, []), Break(Some(42)))
       case inner {
-        .Let(_, .ACall(.AGlobalFunc(f), _), .Break(.Some(.ALitInt(42)))) => {
-          assert.equal(f.id, 30)
-        },
+        .Let(_, .ACall(.AGlobalFunc(f), _), .Break(.Some(.ALitInt(42)))) => assert.equal(f.id, 30),
         _ => assert.is_true(false),
       }
     },
@@ -229,7 +233,7 @@ fn test_defer_in_loop_fires_at_continue() Result<Void, String> {
     .Let(_, .ALoop(inner), _) => {
       // inner: Let(10, ACall(30, []), Continue)
       case inner {
-        .Let(_, .ACall(.AGlobalFunc(f), _), .Continue) => { assert.equal(f.id, 30) },
+        .Let(_, .ACall(.AGlobalFunc(f), _), .Continue) => assert.equal(f.id, 30),
         _ => assert.is_true(false),
       }
     },
@@ -255,7 +259,7 @@ fn test_defer_in_loop_fires_at_iteration_end() Result<Void, String> {
     .Let(_, .ALoop(inner), _) => {
       // inner: Let(10, ACall(30, []), Atom(void))
       case inner {
-        .Let(_, .ACall(.AGlobalFunc(f), _), .Atom(.ALitVoid)) => { assert.equal(f.id, 30) },
+        .Let(_, .ACall(.AGlobalFunc(f), _), .Atom(.ALitVoid)) => assert.equal(f.id, 30),
         _ => assert.is_true(false),
       }
     },
@@ -296,9 +300,10 @@ fn test_return_in_loop_fires_all_defers() Result<Void, String> {
           try assert.equal(f1.id, 200)
 
           case rest1 {
-            .Let(_, .ACall(.AGlobalFunc(f2), _), .Return(.Some(.ALitInt(1)))) => {
-              assert.equal(f2.id, 100)
-            },
+            .Let(_, .ACall(.AGlobalFunc(f2), _), .Return(.Some(.ALitInt(1)))) => assert.equal(
+              f2.id,
+              100,
+            ),
             _ => assert.is_true(false),
           }
         },
@@ -380,6 +385,7 @@ fn test_capture_semantics() Result<Void, String> {
   case result.body {
     .Let(snap_local, .AInit(.ALocal(src)), rest) => {
       try assert.equal(src.id, 0)
+
       // snap_local should be a fresh ID (>= 1 since params go to 0)
       snap_id := snap_local.id
       try assert.is_true(snap_id >= 1)
@@ -392,6 +398,7 @@ fn test_capture_semantics() Result<Void, String> {
           case rest2 {
             .Let(_, .ACall(.AGlobalFunc(f), args), .Atom(.ALitVoid)) => {
               try assert.equal(f.id, 60)
+
               // The arg should reference the snapshot local, not original 0
               try assert.equal(args.len(), 1)
 
@@ -435,7 +442,7 @@ fn test_fn_defer_not_at_loop_iteration_end() Result<Void, String> {
 
       // rest (function tail) should have the fn defer
       case rest {
-        .Let(_, .ACall(.AGlobalFunc(f), _), .Atom(.ALitVoid)) => { assert.equal(f.id, 100) },
+        .Let(_, .ACall(.AGlobalFunc(f), _), .Atom(.ALitVoid)) => assert.equal(f.id, 100),
         _ => assert.is_true(false),
       }
     },

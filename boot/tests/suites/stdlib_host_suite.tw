@@ -10,6 +10,7 @@ pub fn suite() runner.Suite {
       "proc.args returns a vector",
       fn() {
         args := proc.args()
+
         // At minimum, the runner script path is present
         try assert.is_true(args.len() > 0)
         .Ok({})
@@ -80,9 +81,20 @@ pub fn suite() runner.Suite {
         case result {
           .Ok(entries) => {
             try assert.is_true(entries.len() > 0)
+
             // Find our own suite file in the listing
-            names := entries.map(fn(e: fs.DirEntry) { e.name })
-            try assert.is_true(names.any(fn(n) { n == "stdlib_host_suite.tw" }))
+            names := entries.map(
+              fn(e: fs.DirEntry) {
+                e.name
+              },
+            )
+            try assert.is_true(
+              names.any(
+                fn(n) {
+                  n == "stdlib_host_suite.tw"
+                },
+              ),
+            )
             .Ok({})
           },
           .Err(_) => assert.fail("unreachable"),

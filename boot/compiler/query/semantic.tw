@@ -43,15 +43,21 @@ pub fn snapshot_workspace_from_cache(store: cache.Store, input: diagnostics.Work
   )
   parsed := case cache.latest_parsed(store, canonical) {
     .Some(value) => value,
-    .None => { return .None },
+    .None => {
+      return .None
+    },
   }
   resolved := case cache.latest_resolved(store, canonical) {
     .Some(value) => value,
-    .None => { return .None },
+    .None => {
+      return .None
+    },
   }
   typed := case cache.latest_typed(store, canonical) {
     .Some(value) => value,
-    .None => { return .None },
+    .None => {
+      return .None
+    },
   }
   version: Int? = .None
 
@@ -88,14 +94,17 @@ pub fn snapshot_workspace(store: cache.Store, input: diagnostics.WorkspaceInput)
     .Ok(parsed) => parsed,
     .Err(_) => identity.from_path(input.entry_uri),
   }
+
   // Run full workspace analysis (resolves imports from disk/overlays).
   result := diagnostics.analyze_workspace(store, input)
   cur_cache := result.cache
+
   // Find the canonical path for this entry so we can look up cached artifacts.
   canonical := imports.canonical_module_path(
     id.path,
     imports.make_canonical_roots(input.project_root),
   )
+
   // Find diagnostics and version for this entry.
   version: Int? = .None
 
@@ -220,33 +229,25 @@ pub fn snapshot(store: cache.Store, input: diagnostics.DocumentInput) SemanticSn
 pub fn symbol_at_position(snap: SemanticSnapshot, byte_offset: Int) SymbolAtPosition? {
   parsed := case snap.parsed {
     .Some(value) => value,
-    .None => { return .None },
+    .None => {
+      return .None
+    },
   }
 
   for item in parsed.module.items {
     case item {
-      .Use(decl) => {
-        if decl.span.contains(byte_offset) {
-          return .Some(
-            SymbolAtPosition.{ name: decl.path.join("."), kind: .Import, span: decl.span },
-          )
-        }
+      .Use(decl) => if decl.span.contains(byte_offset) {
+        return .Some(SymbolAtPosition.{ name: decl.path.join("."), kind: .Import, span: decl.span })
       },
-      .Type(decl) => {
-        if decl.span.contains(byte_offset) {
-          return .Some(SymbolAtPosition.{ name: decl.name, kind: .Type, span: decl.span })
-        }
+      .Type(decl) => if decl.span.contains(byte_offset) {
+        return .Some(SymbolAtPosition.{ name: decl.name, kind: .Type, span: decl.span })
       },
-      .Function(decl) => {
-        if decl.span.contains(byte_offset) {
-          return .Some(SymbolAtPosition.{ name: decl.name, kind: .Function, span: decl.span })
-        }
+      .Function(decl) => if decl.span.contains(byte_offset) {
+        return .Some(SymbolAtPosition.{ name: decl.name, kind: .Function, span: decl.span })
       },
       .Stmt(stmt) => case stmt {
-        .Let(let_stmt) => {
-          if let_stmt.span.contains(byte_offset) {
-            return .Some(SymbolAtPosition.{ name: let_stmt.name, kind: .Let, span: let_stmt.span })
-          }
+        .Let(let_stmt) => if let_stmt.span.contains(byte_offset) {
+          return .Some(SymbolAtPosition.{ name: let_stmt.name, kind: .Let, span: let_stmt.span })
         },
         _ => {},
       },
@@ -260,7 +261,9 @@ pub fn symbol_at_position(snap: SemanticSnapshot, byte_offset: Int) SymbolAtPosi
 pub fn enclosing_syntax(snap: SemanticSnapshot, byte_offset: Int) EnclosingSyntax? {
   parsed := case snap.parsed {
     .Some(value) => value,
-    .None => { return .None },
+    .None => {
+      return .None
+    },
   }
 
   for item in parsed.module.items {

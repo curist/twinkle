@@ -25,11 +25,17 @@ use tests.assert
 use tests.runner
 
 // ── Construction helpers ─────────────────────────────────────────────
-fn lid(n: Int) LocalId { LocalId.{ id: n } }
+fn lid(n: Int) LocalId {
+  LocalId.{ id: n }
+}
 
-fn fid(n: Int) FuncId { FuncId.{ id: n } }
+fn fid(n: Int) FuncId {
+  FuncId.{ id: n }
+}
 
-fn empty_env() ResolvedEnv { resolver.empty_env() }
+fn empty_env() ResolvedEnv {
+  resolver.empty_env()
+}
 
 fn empty_registry() WasmTypeRegistry {
   WasmTypeRegistry.{
@@ -63,15 +69,25 @@ fn registry_with_layouts(types: Vector<MonoType>) WasmTypeRegistry {
   reg
 }
 
-fn empty_builtins() BuiltinRegistry { make_builtin_registry() }
+fn empty_builtins() BuiltinRegistry {
+  make_builtin_registry()
+}
 
-fn no_captures() Dict<Int, Vector<CaptureParam>> { Dict.new() }
+fn no_captures() Dict<Int, Vector<CaptureParam>> {
+  Dict.new()
+}
 
-fn mk_param(id: Int, ty: MonoType) Param { Param.{ local: lid(id), ty } }
+fn mk_param(id: Int, ty: MonoType) Param {
+  Param.{ local: lid(id), ty }
+}
 
 fn mk_mono_map(entries: Vector<Int>, types: Vector<MonoType>) Dict<Int, MonoType> {
   d: Dict<Int, MonoType> = Dict.new()
-  for k, i in entries { d[k] = types[i] }
+
+  for k, i in entries {
+    d[k] = types[i]
+  }
+
   d
 }
 
@@ -142,7 +158,11 @@ fn count_wraps_op(op: AnfOp) Int {
     .AIf(_, then_e, else_e) => count_wraps_expr(then_e) + count_wraps_expr(else_e),
     .AMatch(_, arms) => {
       s := 0
-      for arm in arms { s = s + count_wraps_expr(arm.body) }
+
+      for arm in arms {
+        s = s + count_wraps_expr(arm.body)
+      }
+
       s
     },
     .ALoop(inner) => count_wraps_expr(inner),
@@ -163,7 +183,11 @@ fn count_unwraps_op(op: AnfOp) Int {
     .AIf(_, then_e, else_e) => count_unwraps_expr(then_e) + count_unwraps_expr(else_e),
     .AMatch(_, arms) => {
       s := 0
-      for arm in arms { s = s + count_unwraps_expr(arm.body) }
+
+      for arm in arms {
+        s = s + count_unwraps_expr(arm.body)
+      }
+
       s
     },
     .ALoop(inner) => count_unwraps_expr(inner),
@@ -231,6 +255,7 @@ pub fn suite() runner.Suite {
         pf := prepared.funcs[0]
         try assert.equal(pf.params.len(), 1)
         try assert.equal(pf.locals.len(), 1)
+
         // L0 → slot 0 (Param), L10 → slot 1 (Local)
         try assert.equal(find_slot_id_by_local(pf, 0), 0)
         try assert.equal(find_slot_id_by_local(pf, 10), 1)
@@ -266,14 +291,21 @@ pub fn suite() runner.Suite {
         )
         anf := mk_module([func])
         prepared := prepare_backend(anf, empty_env(), builtins, no_captures())
+
         // Boundary insertion should have added one AWrapAnyref for the Int arg
         result_body := prepared.anf.functions[0].body
         try assert.equal(count_wraps_expr(result_body), 1)
+
         // The wrap temp local must be in the slot map
         all_lids := collect_let_lids_expr(result_body)
+
         // all_lids includes the wrap temp (allocated at next_local = 11) and t0
         pf := prepared.funcs[0]
-        for l in all_lids { _ := try find_slot_id_by_local_result(pf, l) }
+
+        for l in all_lids {
+          _ := try find_slot_id_by_local_result(pf, l)
+        }
+
         .Ok({})
       },
     )
@@ -305,6 +337,7 @@ pub fn suite() runner.Suite {
         prepared := prepare_backend(anf, empty_env(), builtins, no_captures())
         pf := prepared.funcs[0]
         total_slots := pf.captures.len() + pf.params.len() + pf.locals.len()
+
         // 0 captures + 1 param (x) + 3 locals: wrap temp (Int→anyref), raw call result (anyref),
         // t0 unwrap target (anyref→String, since String is a typed ref not anyref-exact) = 4
         try assert.equal(total_slots, 4)
@@ -344,7 +377,11 @@ pub fn suite() runner.Suite {
         try assert.equal(count_unwraps_expr(result_body), 1)
         all_lids := collect_let_lids_expr(result_body)
         pf := prepared.funcs[0]
-        for l in all_lids { _ := try find_slot_id_by_local_result(pf, l) }
+
+        for l in all_lids {
+          _ := try find_slot_id_by_local_result(pf, l)
+        }
+
         .Ok({})
       },
     )
@@ -376,8 +413,10 @@ pub fn suite() runner.Suite {
         )
         anf := mk_module([func])
         prepared := prepare_backend(anf, empty_env(), builtins, no_captures())
+
         // prepared.anf should show the boundary node
         try assert.equal(count_wraps_expr(prepared.anf.functions[0].body), 1)
+
         // The pre-boundary anf (original) has no wrap
         try assert.equal(count_wraps_expr(anf.functions[0].body), 0)
         .Ok({})

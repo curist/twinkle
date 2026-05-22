@@ -92,7 +92,9 @@ pub fn has_errors(diags: Vector<DiagKind>) Bool {
 
   for d in diags {
     case d {
-      .Error(_) => { found = true },
+      .Error(_) => {
+        found = true
+      },
       .Warning(_) => {},
     }
   }
@@ -245,7 +247,10 @@ pub fn format_diagnostics(reg: registry.FileRegistry, diags: Vector<DiagKind>) S
       .None => "?:?: ${label}: ${msg}",
     }
     lines = .append(line)
-    for h in help_lines(d) { lines = .append("hint: ${h}") }
+
+    for h in help_lines(d) {
+      lines = .append("hint: ${h}")
+    }
   }
 
   lines.join("\n")

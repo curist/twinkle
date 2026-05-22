@@ -15,10 +15,8 @@ fn get_vec(d: Dict<String, Vector<String>>, key: String) Vector<String> {
 fn unwrap_sorted(result: Result<Vector<String>, graph.GraphError>) Result<Vector<String>, String> {
   case result {
     .Ok(v) => .Ok(v),
-    .Err(e) => {
-      case e {
-        .Cycle(nodes) => .Err("unexpected cycle"),
-      }
+    .Err(e) => case e {
+      .Cycle(nodes) => .Err("unexpected cycle"),
     },
   }
 }
@@ -64,9 +62,11 @@ pub fn suite() runner.Suite {
         try assert.equal(fwd.len(), 2)
         try assert.vec_contains(fwd, "c")
         try assert.vec_contains(fwd, "d")
+
         // b should no longer have a as reverse dependent
         rev_b := get_vec(g.reverse, "b")
         try assert.equal(rev_b.len(), 0)
+
         // d should have a as reverse dependent
         rev_d := get_vec(g.reverse, "d")
         try assert.vec_contains(rev_d, "a")
@@ -91,6 +91,7 @@ pub fn suite() runner.Suite {
         try assert.equal(fwd.len(), 2)
         try assert.vec_contains(fwd, "b")
         try assert.vec_contains(fwd, "c")
+
         // reverse should have exactly one entry for a
         rev_b := get_vec(g.reverse, "b")
         try assert.equal(rev_b.len(), 1)
@@ -153,6 +154,7 @@ pub fn suite() runner.Suite {
           .set_dependencies("a", ["x"])
           .set_dependencies("m", ["x"])
         result := g.reverse_dependents_closure("x")
+
         // Should be sorted: a, m, x, z
         try assert.equal(result.len(), 4)
         try assert.equal(result[0], "a")
@@ -189,6 +191,7 @@ pub fn suite() runner.Suite {
         // c -> b -> a (c depends on b, b depends on a)
         g := graph.empty().set_dependencies("c", ["b"]).set_dependencies("b", ["a"])
         result := try unwrap_sorted(g.topo_sort(["c"]))
+
         // a first (no deps), then b, then c
         try assert.equal(result.len(), 3)
         try assert.equal(result[0], "a")
@@ -208,6 +211,7 @@ pub fn suite() runner.Suite {
         result := try unwrap_sorted(g.topo_sort(["d"]))
         try assert.equal(result.len(), 4)
         try assert.equal(result[0], "a")
+
         // b and c sorted deterministically
         try assert.equal(result[1], "b")
         try assert.equal(result[2], "c")
@@ -246,13 +250,11 @@ pub fn suite() runner.Suite {
 
         case result {
           .Ok(_) => assert.fail("expected cycle error"),
-          .Err(e) => {
-            case e {
-              .Cycle(nodes) => {
-                try assert.vec_contains(nodes, "a")
-                .Ok({})
-              },
-            }
+          .Err(e) => case e {
+            .Cycle(nodes) => {
+              try assert.vec_contains(nodes, "a")
+              .Ok({})
+            },
           },
         }
       },
@@ -269,16 +271,14 @@ pub fn suite() runner.Suite {
 
         case result {
           .Ok(_) => assert.fail("expected cycle error"),
-          .Err(e) => {
-            case e {
-              .Cycle(nodes) => {
-                try assert.vec_contains(nodes, "a")
-                try assert.vec_contains(nodes, "b")
-                try assert.vec_contains(nodes, "c")
-                try assert.equal(nodes.len(), 3)
-                .Ok({})
-              },
-            }
+          .Err(e) => case e {
+            .Cycle(nodes) => {
+              try assert.vec_contains(nodes, "a")
+              try assert.vec_contains(nodes, "b")
+              try assert.vec_contains(nodes, "c")
+              try assert.equal(nodes.len(), 3)
+              .Ok({})
+            },
           },
         }
       },
@@ -297,17 +297,16 @@ pub fn suite() runner.Suite {
 
         case result {
           .Ok(_) => assert.fail("expected cycle error"),
-          .Err(e) => {
-            case e {
-              .Cycle(nodes) => {
-                try assert.vec_contains(nodes, "a")
-                try assert.vec_contains(nodes, "b")
-                try assert.vec_contains(nodes, "c")
-                // d is NOT in the cycle — only blocked by it
-                try assert.equal(nodes.len(), 3)
-                .Ok({})
-              },
-            }
+          .Err(e) => case e {
+            .Cycle(nodes) => {
+              try assert.vec_contains(nodes, "a")
+              try assert.vec_contains(nodes, "b")
+              try assert.vec_contains(nodes, "c")
+
+              // d is NOT in the cycle — only blocked by it
+              try assert.equal(nodes.len(), 3)
+              .Ok({})
+            },
           },
         }
       },

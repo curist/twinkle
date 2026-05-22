@@ -56,9 +56,12 @@ fn scan_op(op: AnfOp, enclosing: AnfFunctionDef, env: ResolvedEnv, state: Conver
       state = scan_expr(then_e, enclosing, env, state)
       scan_expr(else_e, enclosing, env, state)
     },
-    .AMatch(_, arms) => {
-      arms.fold(state, fn(cur, arm) { scan_expr(arm.body, enclosing, env, cur) })
-    },
+    .AMatch(_, arms) => arms.fold(
+      state,
+      fn(cur, arm) {
+        scan_expr(arm.body, enclosing, env, cur)
+      },
+    ),
     .ALoop(body) => scan_expr(body, enclosing, env, state),
     .ADefer(body) => scan_expr(body, enclosing, env, state),
     _ => state,
@@ -95,13 +98,16 @@ fn record_captures(
       if !capture_params_eq(existing, params) {
         error("convert_closures: inconsistent capture layout for F${fid.id}")
       }
+
       .{ captures: state.captures, next_local: state.next_local }
     },
   }
 }
 
 fn rewrite_module(anf: AnfModule, captures: Dict<Int, Vector<CaptureParam>>) AnfModule {
-  functions := collect func in anf.functions { rewrite_func(func, captures) }
+  functions := collect func in anf.functions {
+    rewrite_func(func, captures)
+  }
   .{ functions, init_func_id: anf.init_func_id, extern_imports: anf.extern_imports }
 }
 
@@ -144,7 +150,9 @@ fn rewrite_op(op: AnfOp, rename: Dict<Int, LocalId>) AnfOp {
   case op {
     .ACall(callee, args) => .ACall(
       rewrite_atom(callee, rename),
-      collect arg in args { rewrite_atom(arg, rename) },
+      collect arg in args {
+        rewrite_atom(arg, rename)
+      },
     ),
     .AIf(cond, then_e, else_e) => .AIf(
       rewrite_atom(cond, rename),
@@ -167,7 +175,9 @@ fn rewrite_op(op: AnfOp, rename: Dict<Int, LocalId>) AnfOp {
     .AUnOp(uop, atom, kind) => .AUnOp(uop, rewrite_atom(atom, rename), kind),
     .AMakeClosure(fid, free_vars) => .AMakeClosure(
       fid,
-      collect fv in free_vars { rewrite_local(fv, rename) },
+      collect fv in free_vars {
+        rewrite_local(fv, rename)
+      },
     ),
     .ARecord(tid, fields) => .ARecord(
       tid,
@@ -186,9 +196,15 @@ fn rewrite_op(op: AnfOp, rename: Dict<Int, LocalId>) AnfOp {
     .AVariant(tid, vid, args) => .AVariant(
       tid,
       vid,
-      collect arg in args { rewrite_atom(arg, rename) },
+      collect arg in args {
+        rewrite_atom(arg, rename)
+      },
     ),
-    .AArrayLit(items) => .AArrayLit(collect item in items { rewrite_atom(item, rename) }),
+    .AArrayLit(items) => .AArrayLit(
+      collect item in items {
+        rewrite_atom(item, rename)
+      },
+    ),
     .AIndex(base, index, kind, mono) => .AIndex(
       rewrite_atom(base, rename),
       rewrite_atom(index, rename),
@@ -231,9 +247,11 @@ fn capture_params_eq(a: Vector<CaptureParam>, b: Vector<CaptureParam>) Bool {
 
   for cap, i in a {
     other := b[i]
+
     if cap.local_id.id != other.local_id.id {
       return false
     }
+
     if !mono_eq(cap.ty, other.ty) {
       return false
     }
@@ -244,14 +262,25 @@ fn capture_params_eq(a: Vector<CaptureParam>, b: Vector<CaptureParam>) Bool {
 
 fn max_local_id_module(anf: AnfModule) Int {
   max_id := -1
-  for func in anf.functions { max_id = max_int(max_id, max_local_id_func(func)) }
+
+  for func in anf.functions {
+    max_id = max_int(max_id, max_local_id_func(func))
+  }
+
   max_id
 }
 
 fn max_local_id_func(func: AnfFunctionDef) Int {
   max_id := -1
-  for p in func.params { max_id = max_int(max_id, p.local.id) }
-  for lid in func.op_result_mono.keys() { max_id = max_int(max_id, lid) }
+
+  for p in func.params {
+    max_id = max_int(max_id, p.local.id)
+  }
+
+  for lid in func.op_result_mono.keys() {
+    max_id = max_int(max_id, lid)
+  }
+
   max_int(max_id, max_local_id_expr(func.body))
 }
 
@@ -277,12 +306,14 @@ fn max_local_id_op(op: AnfOp) Int {
     ),
     .AMatch(scrutinee, arms) => {
       max_id := max_local_id_atom(scrutinee)
+
       for arm in arms {
         max_id = max_int(
           max_id,
           max_int(max_local_id_pattern(arm.pattern), max_local_id_expr(arm.body)),
         )
       }
+
       max_id
     },
     .ALoop(body) => max_local_id_expr(body),
@@ -290,12 +321,20 @@ fn max_local_id_op(op: AnfOp) Int {
     .AUnOp(_, atom, _) => max_local_id_atom(atom),
     .AMakeClosure(_, free_vars) => {
       max_id := -1
-      for lid in free_vars { max_id = max_int(max_id, lid.id) }
+
+      for lid in free_vars {
+        max_id = max_int(max_id, lid.id)
+      }
+
       max_id
     },
     .ARecord(_, fields) => {
       max_id := -1
-      for field in fields { max_id = max_int(max_id, max_local_id_atom(field.value)) }
+
+      for field in fields {
+        max_id = max_int(max_id, max_local_id_atom(field.value))
+      }
+
       max_id
     },
     .ARecordGet(target, _, _) => max_local_id_atom(target),
@@ -316,7 +355,11 @@ fn max_local_id_op(op: AnfOp) Int {
 
 fn max_local_id_atoms(atoms: Vector<Atom>) Int {
   max_id := -1
-  for atom in atoms { max_id = max_int(max_id, max_local_id_atom(atom)) }
+
+  for atom in atoms {
+    max_id = max_int(max_id, max_local_id_atom(atom))
+  }
+
   max_id
 }
 
@@ -339,7 +382,11 @@ fn max_local_id_pattern(pattern: CorePattern) Int {
     .Var(lid) => lid.id,
     .Variant(_, _, fields) => {
       max_id := -1
-      for field in fields { max_id = max_int(max_id, max_local_id_pattern(field)) }
+
+      for field in fields {
+        max_id = max_int(max_id, max_local_id_pattern(field))
+      }
+
       max_id
     },
     _ => -1,
@@ -347,7 +394,11 @@ fn max_local_id_pattern(pattern: CorePattern) Int {
 }
 
 fn max_int(a: Int, b: Int) Int {
-  if a > b { a } else { b }
+  if a > b {
+    a
+  } else {
+    b
+  }
 }
 
 fn collect_pattern_monos(
@@ -403,17 +454,15 @@ fn collect_binding_monos(
       out[lid.id] = scrutinee_mono
       out
     },
-    .Variant(_, vid, fields) => {
-      if !is_matchable_sum(scrutinee_mono, env) {
-        out
-      } else {
-        for field, i in fields {
-          field_mono := get_variant_field_mono(scrutinee_mono, vid, i, env)
-          out = collect_binding_monos(field, field_mono, env, out)
-        }
-
-        out
+    .Variant(_, vid, fields) => if !is_matchable_sum(scrutinee_mono, env) {
+      out
+    } else {
+      for field, i in fields {
+        field_mono := get_variant_field_mono(scrutinee_mono, vid, i, env)
+        out = collect_binding_monos(field, field_mono, env, out)
       }
+
+      out
     },
     _ => out,
   }
@@ -435,18 +484,16 @@ fn is_matchable_sum(mono: MonoType, env: ResolvedEnv) Bool {
   case mono {
     .Optional(_) => true,
     .Result(_, _) => true,
-    .Named(tid, args) => {
-      case lookup_type_def(env, tid) {
-        .Some(def) => case def {
-          .Sum(_, _, _) => true,
-          .Alias(_, type_params, target) => is_matchable_sum(
-            subst_type_params(target, type_params, args),
-            env,
-          ),
-          _ => false,
-        },
-        .None => false,
-      }
+    .Named(tid, args) => case lookup_type_def(env, tid) {
+      .Some(def) => case def {
+        .Sum(_, _, _) => true,
+        .Alias(_, type_params, target) => is_matchable_sum(
+          subst_type_params(target, type_params, args),
+          env,
+        ),
+        _ => false,
+      },
+      .None => false,
     },
     _ => false,
   }
@@ -463,30 +510,31 @@ fn get_variant_field_mono(
       if vid.id == 1 and field_idx == 0 {
         return inner
       }
+
       .Void
     },
     .Result(ok, err) => {
       if vid.id == 0 and field_idx == 0 {
         return ok
       }
+
       if vid.id == 1 and field_idx == 0 {
         return err
       }
+
       .Void
     },
-    .Named(tid, args) => {
-      case lookup_type_def(env, tid) {
-        .Some(def) => case def {
-          .Alias(_, type_params, target) => get_variant_field_mono(
-            subst_type_params(target, type_params, args),
-            vid,
-            field_idx,
-            env,
-          ),
-          _ => resolve_named_variant_field(tid, args, vid, field_idx, env),
-        },
-        .None => resolve_named_variant_field(tid, args, vid, field_idx, env),
-      }
+    .Named(tid, args) => case lookup_type_def(env, tid) {
+      .Some(def) => case def {
+        .Alias(_, type_params, target) => get_variant_field_mono(
+          subst_type_params(target, type_params, args),
+          vid,
+          field_idx,
+          env,
+        ),
+        _ => resolve_named_variant_field(tid, args, vid, field_idx, env),
+      },
+      .None => resolve_named_variant_field(tid, args, vid, field_idx, env),
     },
     _ => .Void,
   }
@@ -547,6 +595,7 @@ fn resolve_capture_type_with_captures(
   captures: Dict<Int, Vector<CaptureParam>>,
 ) MonoType {
   ty := resolve_capture_type(func, local, env)
+
   if ty != .Void {
     return ty
   }

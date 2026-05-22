@@ -10,7 +10,9 @@ fn to_string<T: Stringify>(t: Tree<T>) String {
   }
 }
 
-fn show<T: Stringify>(x: T) String { x.to_string() }
+fn show<T: Stringify>(x: T) String {
+  x.to_string()
+}
 
 fn sample_tree() Tree<Int> {
   empty: Tree<Int> = Tree.Empty

@@ -28,6 +28,7 @@ fn contains(haystack: String, needle: String) Bool {
   if needle.len() > haystack.len() {
     return false
   }
+
   if needle.len() == 0 {
     return true
   }
@@ -81,20 +82,14 @@ fn find_global(linked: LinkedModule, name: String) GlobalDef? {
 fn find_type(linked: LinkedModule, name: String) TypeDef? {
   for td in linked.types {
     case td {
-      .Struct(n, _, _, _) => {
-        if n == name {
-          return .Some(td)
-        }
+      .Struct(n, _, _, _) => if n == name {
+        return .Some(td)
       },
-      .Array(n, _) => {
-        if n == name {
-          return .Some(td)
-        }
+      .Array(n, _) => if n == name {
+        return .Some(td)
       },
-      .FuncType(n, _, _) => {
-        if n == name {
-          return .Some(td)
-        }
+      .FuncType(n, _, _) => if n == name {
+        return .Some(td)
       },
     }
   }
@@ -125,25 +120,20 @@ fn has_export(linked: LinkedModule, wasm_name: String) Bool {
 fn instr_has_call(instrs: Vector<Instr>, target: String) Bool {
   for instr in instrs {
     case instr {
-      .Call(sym) => {
-        if sym == target {
-          return true
-        }
+      .Call(sym) => if sym == target {
+        return true
       },
-      .Block(_, _, body) => {
-        if instr_has_call(body, target) {
-          return true
-        }
+      .Block(_, _, body) => if instr_has_call(body, target) {
+        return true
       },
-      .Loop(_, _, body) => {
-        if instr_has_call(body, target) {
-          return true
-        }
+      .Loop(_, _, body) => if instr_has_call(body, target) {
+        return true
       },
       .If(_, then_body, else_body) => {
         if instr_has_call(then_body, target) {
           return true
         }
+
         if instr_has_call(else_body, target) {
           return true
         }
@@ -158,25 +148,20 @@ fn instr_has_call(instrs: Vector<Instr>, target: String) Bool {
 fn instr_has_struct_new(instrs: Vector<Instr>, target: String) Bool {
   for instr in instrs {
     case instr {
-      .StructNew(sym) => {
-        if sym == target {
-          return true
-        }
+      .StructNew(sym) => if sym == target {
+        return true
       },
-      .Block(_, _, body) => {
-        if instr_has_struct_new(body, target) {
-          return true
-        }
+      .Block(_, _, body) => if instr_has_struct_new(body, target) {
+        return true
       },
-      .Loop(_, _, body) => {
-        if instr_has_struct_new(body, target) {
-          return true
-        }
+      .Loop(_, _, body) => if instr_has_struct_new(body, target) {
+        return true
       },
       .If(_, then_body, else_body) => {
         if instr_has_struct_new(then_body, target) {
           return true
         }
+
         if instr_has_struct_new(else_body, target) {
           return true
         }
@@ -368,17 +353,18 @@ fn test_link_rewrites_global_get_set() Result<Void, String> {
   }
   linked := try link_ok([m], .None)
   f := try find_func(linked, "ns__f").ok_or("missing ns__f")
+
   // Check GlobalGet was rewritten
   found_get := false
   found_set := false
 
   for instr in f.body {
     case instr {
-      .GlobalGet(sym) => {
-        if sym == "ns__counter" { found_get = true }
+      .GlobalGet(sym) => if sym == "ns__counter" {
+        found_get = true
       },
-      .GlobalSet(sym) => {
-        if sym == "ns__counter" { found_set = true }
+      .GlobalSet(sym) => if sym == "ns__counter" {
+        found_set = true
       },
       _ => {},
     }
@@ -417,13 +403,14 @@ fn test_link_rewrites_struct_new_and_get() Result<Void, String> {
   linked := try link_ok([m], .None)
   f := try find_func(linked, "mod__mk").ok_or("missing mod__mk")
   try assert.ok(instr_has_struct_new(f.body, "mod__Pt"), "StructNew should be rewritten")
+
   // Check StructGet
   found := false
 
   for instr in f.body {
     case instr {
-      .StructGet(sym, _) => {
-        if sym == "mod__Pt" { found = true }
+      .StructGet(sym, _) => if sym == "mod__Pt" {
+        found = true
       },
       _ => {},
     }
@@ -462,8 +449,8 @@ fn test_link_rewrites_ref_cast_type() Result<Void, String> {
 
   for instr in f.body {
     case instr {
-      .RefCast(_, .Named(name)) => {
-        if name == "ns__Foo" { found = true }
+      .RefCast(_, .Named(name)) => if name == "ns__Foo" {
+        found = true
       },
       _ => {},
     }
@@ -512,24 +499,23 @@ fn test_link_rewrites_if_block_loop_result_types() Result<Void, String> {
   }
   linked := try link_ok([m], .None)
   f := try find_func(linked, "ns__f").ok_or("missing ns__f")
+
   // Check Block result type was rewritten
   found_block := false
   found_if := false
 
   for instr in f.body {
     case instr {
-      .Block(_, .Some(.Ref(_, .Named(name))), body) => {
-        if name == "ns__Box" {
-          found_block = true
+      .Block(_, .Some(.Ref(_, .Named(name))), body) => if name == "ns__Box" {
+        found_block = true
 
-          // Check If inside block
-          for inner in body {
-            case inner {
-              .If(.Some(.Ref(_, .Named(if_name))), _, _) => {
-                if if_name == "ns__Box" { found_if = true }
-              },
-              _ => {},
-            }
+        // Check If inside block
+        for inner in body {
+          case inner {
+            .If(.Some(.Ref(_, .Named(if_name))), _, _) => if if_name == "ns__Box" {
+              found_if = true
+            },
+            _ => {},
           }
         }
       },
@@ -571,17 +557,23 @@ fn test_link_rewrites_func_param_result_types() Result<Void, String> {
   // Check param type rewritten
   case f.params[0] {
     .Ref(_, .Named(name)) => try assert.equal(name, "ns__Rec"),
-    _ => { return assert.fail("param should be ref to ns__Rec") },
+    _ => {
+      return assert.fail("param should be ref to ns__Rec")
+    },
   }
 
   case f.results[0] {
     .Ref(_, .Named(name)) => try assert.equal(name, "ns__Rec"),
-    _ => { return assert.fail("result should be ref to ns__Rec") },
+    _ => {
+      return assert.fail("result should be ref to ns__Rec")
+    },
   }
 
   case f.locals[0] {
     .Ref(_, .Named(name)) => try assert.equal(name, "ns__Rec"),
-    _ => { return assert.fail("local should be ref to ns__Rec") },
+    _ => {
+      return assert.fail("local should be ref to ns__Rec")
+    },
   }
 
   .Ok({})
@@ -604,6 +596,7 @@ fn test_link_resolves_import_to_export() Result<Void, String> {
     data: [],
     start: .None,
   }
+
   // Module "app" imports "helper" from "lib"
   app := WasmModule.{
     namespace: "app",
@@ -630,8 +623,10 @@ fn test_link_resolves_import_to_export() Result<Void, String> {
     start: .None,
   }
   linked := try link_ok([lib, app], .None)
+
   // The import should be resolved — not present in linked imports
   try assert.ok(!has_import(linked, "lib", "helper"), "inter-module import should be resolved")
+
   // The call in "main" should now target the qualified export symbol
   f := try find_func(linked, "app__main").ok_or("missing app__main")
   try assert.ok(instr_has_call(f.body, "lib__helper"), "call should target lib__helper")
@@ -670,6 +665,7 @@ fn test_link_preserves_host_imports() Result<Void, String> {
     start: .None,
   }
   linked := try link_ok([m], .None)
+
   // Host import should be preserved (but qualified)
   try assert.ok(has_import(linked, "host", "print"), "host import should be preserved")
   .Ok({})
@@ -731,6 +727,7 @@ fn test_link_synthesizes_init_from_multiple_starts() Result<Void, String> {
     start: .Some("init_b"),
   }
   linked := try link_ok([a, b], .None)
+
   // Should have a synthesized __linked_init exported as __twinkle_start
   exp := try find_export(linked, "__twinkle_start").ok_or("missing __twinkle_start export")
   try assert.equal(exp.func_sym, "__linked_init")
@@ -756,6 +753,7 @@ fn test_link_single_start_no_synth() Result<Void, String> {
     start: .Some("init"),
   }
   linked := try link_ok([m], .None)
+
   // Single start → exported directly as __twinkle_start, no __linked_init needed
   exp := try find_export(linked, "__twinkle_start").ok_or("missing __twinkle_start export")
   try assert.equal(exp.func_sym, "app__init")
@@ -781,6 +779,7 @@ fn test_link_entry_appended_to_init() Result<Void, String> {
     start: .Some("init"),
   }
   linked := try link_ok([m], .Some("app__main"))
+
   // With entry, we need __linked_init that calls init then main
   init_fn := try find_func(linked, "__linked_init").ok_or("missing __linked_init")
   try assert.ok(instr_has_call(init_fn.body, "app__init"), "should call app__init")
@@ -833,8 +832,12 @@ fn test_link_rewrites_struct_supertype() Result<Void, String> {
   // Child's supertype should be rewritten to ns__Base
   case find_type(linked, "ns__Child") {
     .Some(.Struct(_, _, .Some(sup), _)) => try assert.equal(sup, "ns__Base"),
-    .Some(_) => { return assert.fail("Child should have supertype") },
-    .None => { return assert.fail("missing ns__Child") },
+    .Some(_) => {
+      return assert.fail("Child should have supertype")
+    },
+    .None => {
+      return assert.fail("missing ns__Child")
+    },
   }
 
   .Ok({})
@@ -920,8 +923,8 @@ fn test_link_rewrites_ref_func() Result<Void, String> {
 
   for instr in f.body {
     case instr {
-      .RefFunc(sym) => {
-        if sym == "ns__target" { found = true }
+      .RefFunc(sym) => if sym == "ns__target" {
+        found = true
       },
       _ => {},
     }
@@ -960,8 +963,8 @@ fn test_link_rewrites_array_new_data() Result<Void, String> {
 
   for instr in f.body {
     case instr {
-      .ArrayNewData(ty_sym, data_sym) => {
-        if ty_sym == "ns__Bytes" and data_sym == "ns__d0" { found = true }
+      .ArrayNewData(ty_sym, data_sym) => if ty_sym == "ns__Bytes" and data_sym == "ns__d0" {
+        found = true
       },
       _ => {},
     }

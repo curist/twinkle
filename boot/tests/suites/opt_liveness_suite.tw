@@ -7,13 +7,21 @@ use tests.assert
 use tests.runner
 
 // ── Helpers ─────────────────────────────────────────────────────────
-fn lid(id: Int) LocalId { LocalId.{ id } }
+fn lid(id: Int) LocalId {
+  LocalId.{ id }
+}
 
-fn fid(id: Int) FuncId { FuncId.{ id } }
+fn fid(id: Int) FuncId {
+  FuncId.{ id }
+}
 
-fn field(id: Int) FieldId { FieldId.{ id } }
+fn field(id: Int) FieldId {
+  FieldId.{ id }
+}
 
-fn tid(id: Int) TypeId { TypeId.{ id } }
+fn tid(id: Int) TypeId {
+  TypeId.{ id }
+}
 
 fn make_func(body: AnfExpr) AnfFunctionDef {
   AnfFunctionDef.{
@@ -208,7 +216,7 @@ fn test_annotate_base_dead() Result<Void, String> {
   result := annotate_in_place(func)
 
   case result.body {
-    .Let(_, .ARecordUpdate(_, _, _, can_reuse, _), _) => { assert.is_true(can_reuse) },
+    .Let(_, .ARecordUpdate(_, _, _, can_reuse, _), _) => assert.is_true(can_reuse),
     _ => .Err("expected ARecordUpdate"),
   }
 }
@@ -227,7 +235,7 @@ fn test_annotate_base_live() Result<Void, String> {
   result := annotate_in_place(func)
 
   case result.body {
-    .Let(_, .ARecordUpdate(_, _, _, can_reuse, _), _) => { assert.is_true(!can_reuse) },
+    .Let(_, .ARecordUpdate(_, _, _, can_reuse, _), _) => assert.is_true(!can_reuse),
     _ => .Err("expected ARecordUpdate"),
   }
 }
@@ -245,7 +253,7 @@ fn test_annotate_non_local_base() Result<Void, String> {
   result := annotate_in_place(func)
 
   case result.body {
-    .Let(_, .ARecordUpdate(_, _, _, can_reuse, _), _) => { assert.is_true(!can_reuse) },
+    .Let(_, .ARecordUpdate(_, _, _, can_reuse, _), _) => assert.is_true(!can_reuse),
     _ => .Err("expected ARecordUpdate"),
   }
 }
@@ -272,11 +280,9 @@ fn test_annotate_nested_in_if() Result<Void, String> {
 
   // Check the then branch inside the AIf
   case result.body {
-    .Let(_, .AIf(_, then_e, _), _) => {
-      case then_e {
-        .Let(_, .ARecordUpdate(_, _, _, can_reuse, _), _) => { assert.is_true(can_reuse) },
-        _ => .Err("expected ARecordUpdate in then branch"),
-      }
+    .Let(_, .AIf(_, then_e, _), _) => case then_e {
+      .Let(_, .ARecordUpdate(_, _, _, can_reuse, _), _) => assert.is_true(can_reuse),
+      _ => .Err("expected ARecordUpdate in then branch"),
     },
     _ => .Err("expected AIf"),
   }
@@ -296,7 +302,7 @@ fn test_annotate_param_base_dead() Result<Void, String> {
   result := annotate_in_place(func)
 
   case result.body {
-    .Let(_, .ARecordUpdate(_, _, _, can_reuse, _), _) => { assert.is_true(!can_reuse) },
+    .Let(_, .ARecordUpdate(_, _, _, can_reuse, _), _) => assert.is_true(!can_reuse),
     _ => .Err("expected ARecordUpdate"),
   }
 }
@@ -327,7 +333,7 @@ fn test_annotate_chained_updates() Result<Void, String> {
 
       // Second update: local 1 dead in continuation → true
       case rest {
-        .Let(_, .ARecordUpdate(_, _, _, can_reuse2, _), _) => { assert.is_true(can_reuse2) },
+        .Let(_, .ARecordUpdate(_, _, _, can_reuse2, _), _) => assert.is_true(can_reuse2),
         _ => .Err("expected second ARecordUpdate"),
       }
     },
@@ -373,7 +379,7 @@ fn test_annotate_consume_reassign() Result<Void, String> {
   result := annotate_in_place(func)
 
   case result.body {
-    .Let(_, .ARecordUpdate(_, _, _, can_reuse, _), _) => { assert.is_true(can_reuse) },
+    .Let(_, .ARecordUpdate(_, _, _, can_reuse, _), _) => assert.is_true(can_reuse),
     _ => .Err("expected ARecordUpdate"),
   }
 }
@@ -381,6 +387,7 @@ fn test_annotate_consume_reassign() Result<Void, String> {
 // ── Suite ───────────────────────────────────────────────────────────
 pub fn suite() runner.Suite {
   s := runner.suite("Opt: Liveness & Annotate In-Place")
+
   // live_after
   s = .test("live: atom local", test_live_atom_local)
   s = .test("live: atom literal", test_live_atom_literal)
@@ -398,6 +405,7 @@ pub fn suite() runner.Suite {
   s = .test("live: index", test_live_index)
   s = .test("live: assign kills target", test_live_assign_kills_target)
   s = .test("live: assign kills old value", test_live_assign_kills_old_value)
+
   // annotate_in_place
   s = .test("annotate: base dead", test_annotate_base_dead)
   s = .test("annotate: base live", test_annotate_base_live)

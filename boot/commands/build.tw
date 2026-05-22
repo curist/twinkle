@@ -38,7 +38,7 @@ pub fn resolve_build_output(parsed: ParseResult, file: String) String!String {
 pub fn run_build_command(parsed: ParseResult) {
   file := case get_positional(parsed, 0, "file") {
     .Ok(path) => path,
-    .Err(msg) => { exit_usage_error(msg) },
+    .Err(msg) => exit_usage_error(msg),
   }
   out := case resolve_build_output(parsed, file) {
     .Ok(path) => path,
@@ -61,7 +61,7 @@ pub fn run_build_command(parsed: ParseResult) {
     bytes := pipeline.emit_wasm(artifacts)
 
     case fs.write_bytes(out, bytes) {
-      .Ok(_) => { println("WASM output: ${out}") },
+      .Ok(_) => println("WASM output: ${out}"),
       .Err(err) => {
         eprintln("error: failed to write '${out}': ${fs_error_message(err)}")
         proc.exit(1)
@@ -71,7 +71,7 @@ pub fn run_build_command(parsed: ParseResult) {
     wat := pipeline.emit_wat(artifacts)
 
     case fs.write_text(out, wat) {
-      .Ok(_) => { println("WAT output: ${out}") },
+      .Ok(_) => println("WAT output: ${out}"),
       .Err(err) => {
         eprintln("error: failed to write '${out}': ${fs_error_message(err)}")
         proc.exit(1)

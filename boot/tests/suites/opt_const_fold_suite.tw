@@ -6,7 +6,9 @@ use tests.assert
 use tests.runner
 
 // ── Helpers ─────────────────────────────────────────────────────────
-fn lid(id: Int) LocalId { LocalId.{ id } }
+fn lid(id: Int) LocalId {
+  LocalId.{ id }
+}
 
 // ── constant_fold: int arithmetic ───────────────────────────────────
 fn test_fold_int_add() Result<Void, String> {
@@ -20,11 +22,9 @@ fn test_fold_int_add() Result<Void, String> {
   try assert.is_true(r.changed)
 
   case r.expr {
-    .Let(_, op, _) => {
-      case op {
-        .AInit(.ALitInt(n)) => assert.equal(n, 3),
-        _ => .Err("expected AInit(3)"),
-      }
+    .Let(_, op, _) => case op {
+      .AInit(.ALitInt(n)) => assert.equal(n, 3),
+      _ => .Err("expected AInit(3)"),
     },
     _ => .Err("expected Let"),
   }
@@ -129,12 +129,10 @@ fn test_fold_float_add() Result<Void, String> {
   try assert.is_true(r.changed)
 
   case r.expr {
-    .Let(_, .AInit(.ALitFloat(f)), _) => {
-      if f == 4.0 {
-        .Ok({})
-      } else {
-        .Err("expected 4.0, got ${f}")
-      }
+    .Let(_, .AInit(.ALitFloat(f)), _) => if f == 4.0 {
+      .Ok({})
+    } else {
+      .Err("expected 4.0, got ${f}")
     },
     _ => .Err("expected folded to 4.0"),
   }
@@ -304,6 +302,7 @@ fn test_branch_nested_let_in_branch() Result<Void, String> {
 // ── Suite ───────────────────────────────────────────────────────────
 pub fn suite() runner.Suite {
   s := runner.suite("Opt: Const Fold & Branch Simp")
+
   // constant folding
   s = .test("fold: int add", test_fold_int_add)
   s = .test("fold: int sub", test_fold_int_sub)
@@ -319,6 +318,7 @@ pub fn suite() runner.Suite {
   s = .test("fold: neg int", test_fold_neg_int)
   s = .test("fold: not bool", test_fold_not_bool)
   s = .test("fold: non-literal unchanged", test_fold_non_literal_unchanged)
+
   // branch simplification
   s = .test("branch: true selects then", test_branch_true_selects_then)
   s = .test("branch: false selects else", test_branch_false_selects_else)

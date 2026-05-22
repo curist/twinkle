@@ -7,53 +7,97 @@ use compiler.codegen.wasm_ir.{
 }
 
 // ── Type helpers ──
-fn task_ref() ValType { ValType.Ref(false, HeapType.Named("rt_types__Task")) }
+fn task_ref() ValType {
+  ValType.Ref(false, HeapType.Named("rt_types__Task"))
+}
 
-fn task_null() ValType { ValType.Ref(true, HeapType.Named("rt_types__Task")) }
+fn task_null() ValType {
+  ValType.Ref(true, HeapType.Named("rt_types__Task"))
+}
 
-fn arr_ref() ValType { ValType.Ref(false, HeapType.Named("rt_types__Array")) }
+fn arr_ref() ValType {
+  ValType.Ref(false, HeapType.Named("rt_types__Array"))
+}
 
-fn arr_null() ValType { ValType.Ref(true, HeapType.Named("rt_types__Array")) }
+fn arr_null() ValType {
+  ValType.Ref(true, HeapType.Named("rt_types__Array"))
+}
 
-fn t_task() String { "rt_types__Task" }
+fn t_task() String {
+  "rt_types__Task"
+}
 
-fn t_array() String { "rt_types__Array" }
+fn t_array() String {
+  "rt_types__Array"
+}
 
-fn t_frame_rtc() String { "rt_types__FrameRtc" }
+fn t_frame_rtc() String {
+  "rt_types__FrameRtc"
+}
 
-fn t_closure() String { "rt_types__Closure" }
+fn t_closure() String {
+  "rt_types__Closure"
+}
 
-fn t_closure_func() String { "rt_types__ClosureFunc" }
+fn t_closure_func() String {
+  "rt_types__ClosureFunc"
+}
 
 // FuncType for call_ref on resume functions: (ref $Task) -> i32
-fn t_resume_fn() String { "ResumeFn" }
+fn t_resume_fn() String {
+  "ResumeFn"
+}
 
 // Task struct field indices
-fn f_state() Int { 0 }
+fn f_state() Int {
+  0
+}
 
-fn f_frame() Int { 1 }
+fn f_frame() Int {
+  1
+}
 
-fn f_resume() Int { 2 }
+fn f_resume() Int {
+  2
+}
 
-fn f_result() Int { 3 }
+fn f_result() Int {
+  3
+}
 
-fn f_waiters() Int { 4 }
+fn f_waiters() Int {
+  4
+}
 
 // Task states
-fn s_runnable() Int { 0 }
+fn s_runnable() Int {
+  0
+}
 
-fn s_running() Int { 1 }
+fn s_running() Int {
+  1
+}
 
-fn s_blocked() Int { 2 }
+fn s_blocked() Int {
+  2
+}
 
-fn s_done() Int { 3 }
+fn s_done() Int {
+  3
+}
 
 // Resume action codes
-fn a_complete() Int { 0 }
+fn a_complete() Int {
+  0
+}
 
-fn a_yield() Int { 1 }
+fn a_yield() Int {
+  1
+}
 
-fn a_await() Int { 2 }
+fn a_await() Int {
+  2
+}
 
 pub fn module() WasmModule {
   funcs := [
@@ -66,7 +110,9 @@ pub fn module() WasmModule {
     sched_wake_waiters_fn(),
     resume_rtc_fn(),
   ]
-  exports := collect f in funcs { ExportDef.{ wasm_name: f.name, func_sym: f.name } }
+  exports := collect f in funcs {
+    ExportDef.{ wasm_name: f.name, func_sym: f.name }
+  }
   WasmModule.{
     namespace: "rt.sched",
     types: [.FuncType("ResumeFn", [task_ref()], [.I32])],

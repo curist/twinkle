@@ -29,7 +29,10 @@ fn sum_until_negative(xs: Vector<Int>) Int {
   acc := 0
 
   for x in xs {
-    if x < 0 { break }
+    if x < 0 {
+      break
+    }
+
     acc = acc + x
   }
 
@@ -73,9 +76,17 @@ pub fn suite() runner.Suite {
     .test(
       "if-else returns value",
       fn() {
-        x := if true { 1 } else { 2 }
+        x := if true {
+          1
+        } else {
+          2
+        }
         try assert.equal(x, 1)
-        y := if false { 1 } else { 2 }
+        y := if false {
+          1
+        } else {
+          2
+        }
         try assert.equal(y, 2)
         .Ok({})
       },
@@ -173,7 +184,11 @@ pub fn suite() runner.Suite {
       "while-style for loop",
       fn() {
         n := 1
-        for n < 100 { n = n * 2 }
+
+        for n < 100 {
+          n = n * 2
+        }
+
         try assert.equal(n, 128)
         .Ok({})
       },
@@ -182,7 +197,11 @@ pub fn suite() runner.Suite {
       "for over range",
       fn() {
         sum := 0
-        for i in 0..5 { sum = sum + i }
+
+        for i in 0..5 {
+          sum = sum + i
+        }
+
         try assert.equal(sum, 10)
         .Ok({})
       },
@@ -191,7 +210,11 @@ pub fn suite() runner.Suite {
       "for over range_from",
       fn() {
         sum := 0
-        for i in 3..6 { sum = sum + i }
+
+        for i in 3..6 {
+          sum = sum + i
+        }
+
         try assert.equal(sum, 12)
         .Ok({})
       },
@@ -199,7 +222,9 @@ pub fn suite() runner.Suite {
     .test(
       "collect from range with transform",
       fn() {
-        doubled := collect i in 0..4 { i * 2 }
+        doubled := collect i in 0..4 {
+          i * 2
+        }
         try assert.equal(doubled.len(), 4)
         try assert.equal(doubled[0], 0)
         try assert.equal(doubled[1], 2)
@@ -241,6 +266,7 @@ pub fn suite() runner.Suite {
       fn() {
         xs: Vector<String> = ["a", "b", "c"]
         pairs := Cell.new("")
+
         for x, i in xs {
           pairs.update(
             fn(s) {
@@ -248,6 +274,7 @@ pub fn suite() runner.Suite {
             },
           )
         }
+
         try assert.equal(pairs.get(), "0:a 1:b 2:c ")
         .Ok({})
       },

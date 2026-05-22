@@ -30,7 +30,11 @@ fn check_errs(src: String) Result<Vector<String>, String> {
   }
 
   msgs: Vector<String> = []
-  for d in r.diagnostics { msgs = .append(d.message()) }
+
+  for d in r.diagnostics {
+    msgs = .append(d.message())
+  }
+
   .Ok(msgs)
 }
 
@@ -38,6 +42,7 @@ fn find_offset(src: String, needle: String) Int? {
   if needle.len() > src.len() {
     return .None
   }
+
   limit := src.len() - needle.len()
 
   for i in 0..limit + 1 {
@@ -54,16 +59,14 @@ fn find_id_by_span(result: checker.CheckResult, target_offset: Int) Int? {
 
   for eid in result.expr_spans.keys() {
     case result.expr_spans[eid] {
-      .Some(span_start) => {
-        if span_start == target_offset {
-          best = case best {
-            .None => .Some(eid),
-            .Some(prev) => if eid > prev {
-              .Some(eid)
-            } else {
-              .Some(prev)
-            },
-          }
+      .Some(span_start) => if span_start == target_offset {
+        best = case best {
+          .None => .Some(eid),
+          .Some(prev) => if eid > prev {
+            .Some(eid)
+          } else {
+            .Some(prev)
+          },
         }
       },
       .None => {},
@@ -77,16 +80,12 @@ fn type_at(result: checker.CheckResult, src: String, needle: String) Result<Stri
   offset := find_offset(src, needle)
 
   case offset {
-    .Some(off) => {
-      case find_id_by_span(result, off) {
-        .Some(eid) => {
-          case result.type_map[eid] {
-            .Some(ty) => .Ok(rsuite.mono_to_string(ty)),
-            .None => .Err("no type at offset ${off} for '${needle}' (id=${eid})"),
-          }
-        },
-        .None => .Err("no expr id at offset ${off} for '${needle}'"),
-      }
+    .Some(off) => case find_id_by_span(result, off) {
+      .Some(eid) => case result.type_map[eid] {
+        .Some(ty) => .Ok(rsuite.mono_to_string(ty)),
+        .None => .Err("no type at offset ${off} for '${needle}' (id=${eid})"),
+      },
+      .None => .Err("no expr id at offset ${off} for '${needle}'"),
     },
     .None => .Err("'${needle}' not found in source"),
   }
@@ -169,7 +168,9 @@ pub fn suite() runner.Suite {
         has_mismatch := false
 
         for msg in errs {
-          if msg.len() > 0 { has_mismatch = true }
+          if msg.len() > 0 {
+            has_mismatch = true
+          }
         }
 
         assert.is_true(has_mismatch)

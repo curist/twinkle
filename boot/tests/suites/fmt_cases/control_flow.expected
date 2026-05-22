@@ -2,13 +2,20 @@ fn classify(n: Int) String {
   if n < 0 {
     "negative"
   } else {
-    if n == 0 { "zero" } else { "positive" }
+    if n == 0 {
+      "zero"
+    } else {
+      "positive"
+    }
   }
 }
 
 fn sum(xs: Vector<Int>) Int {
   total := 0
-  for x, i in xs { total = total + x + i }
+
+  for x, i in xs {
+    total = total + x + i
+  }
 
   return total
 }

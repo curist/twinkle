@@ -13,9 +13,13 @@ use tests.assert
 use tests.runner
 
 // ── Helpers ─────────────────────────────────────────────────────────
-fn mk_local(n: Int) LocalId { LocalId.{ id: n } }
+fn mk_local(n: Int) LocalId {
+  LocalId.{ id: n }
+}
 
-fn mk_func(n: Int) FuncId { FuncId.{ id: n } }
+fn mk_func(n: Int) FuncId {
+  FuncId.{ id: n }
+}
 
 fn mk_func_def(
   id: Int,
@@ -36,7 +40,9 @@ fn mk_func_def(
   }
 }
 
-fn no_captures() Dict<Int, Vector<CaptureParam>> { Dict.new() }
+fn no_captures() Dict<Int, Vector<CaptureParam>> {
+  Dict.new()
+}
 
 fn captures_for(fid: Int, caps: Vector<CaptureParam>) Dict<Int, Vector<CaptureParam>> {
   d: Dict<Int, Vector<CaptureParam>> = Dict.new()
@@ -169,12 +175,15 @@ fn test_simple_params_and_local() Result<Void, String> {
   try assert.equal(pf.captures.len(), 0)
   try assert.equal(pf.params.len(), 2)
   try assert.equal(pf.locals.len(), 1)
+
   // params get Param role in ABI order
   try assert_role(pf, 0, .Param)
   try assert_role(pf, 1, .Param)
+
   // let-local gets Local role with correct mono
   try assert_role(pf, 2, .Local)
   try assert_mono(pf, 2, MonoType.Int)
+
   // slot ids: L0→slot 0, L1→slot 1, L2→slot 2
   try assert_slot_id(pf, 0, 0)
   try assert_slot_id(pf, 1, 1)
@@ -203,6 +212,7 @@ fn test_capture_params_precede_declared_params() Result<Void, String> {
   try assert.equal(pf.captures.len(), 1)
   try assert.equal(pf.params.len(), 1)
   try assert.equal(pf.locals.len(), 0)
+
   // rewritten capture param L50 → slot 0; user param L10 → slot 1
   try assert_slot_id(pf, 50, 0)
   try assert_role(pf, 50, .CaptureParam)
@@ -309,6 +319,7 @@ fn test_pattern_local_in_match() Result<Void, String> {
     mono,
   )
   pf := assign_slots(func, no_captures(), resolver.empty_env())
+
   // L0: Param, L1: Local (let result), L2: PatternLocal with mono=Int
   try assert_role(pf, 0, .Param)
   try assert_role(pf, 1, .Local)
@@ -340,6 +351,7 @@ fn test_no_slots_for_non_binding_patterns() Result<Void, String> {
     mono,
   )
   pf := assign_slots(func, no_captures(), resolver.empty_env())
+
   // Only param L0 and let-result L1 — no phantom pattern locals
   try assert.equal(pf.captures.len(), 0)
   try assert.equal(pf.params.len(), 1)
@@ -372,15 +384,13 @@ fn test_source_locals_are_unique() Result<Void, String> {
 
   for k in pf.slots.keys() {
     case pf.slots[k] {
-      .Some(info) => {
-        case seen[info.source_local.id] {
-          .Some(other_sid) => {
-            return assert.fail(
-              "L${info.source_local.id} appears in both slot ${other_sid} and slot ${info.slot.id}",
-            )
-          },
-          .None => { seen[info.source_local.id] = info.slot.id },
-        }
+      .Some(info) => case seen[info.source_local.id] {
+        .Some(other_sid) => {
+          return assert.fail(
+            "L${info.source_local.id} appears in both slot ${other_sid} and slot ${info.slot.id}",
+          )
+        },
+        .None => seen[info.source_local.id] = info.slot.id,
       },
       .None => {},
     }

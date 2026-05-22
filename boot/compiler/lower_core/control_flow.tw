@@ -24,9 +24,7 @@ pub fn lower_if(
       er := lower_expr_fn(tr.ctx, el)
       .{ expr: .{ kind: .If(cr.expr, tr.expr, er.expr), ty, span: s }, ctx: er.ctx }
     },
-    .None => {
-      .{ expr: .{ kind: .If(cr.expr, tr.expr, void_expr(s)), ty, span: s }, ctx: tr.ctx }
-    },
+    .None => .{ expr: .{ kind: .If(cr.expr, tr.expr, void_expr(s)), ty, span: s }, ctx: tr.ctx },
   }
 }
 
@@ -119,29 +117,25 @@ pub fn rewrite_index_loop_continue(expr: CoreExpr, before_continue: CoreExpr, ct
         ctx: cur,
       }
     },
-    .Break(value) => {
-      case value {
-        .Some(v) => {
-          value_r := rewrite_index_loop_continue(v, before_continue, ctx)
-          .{
-            expr: CoreExpr.{ kind: .Break(.Some(value_r.expr)), ty: expr.ty, span: expr.span },
-            ctx: value_r.ctx,
-          }
-        },
-        .None => .{ expr, ctx },
-      }
+    .Break(value) => case value {
+      .Some(v) => {
+        value_r := rewrite_index_loop_continue(v, before_continue, ctx)
+        .{
+          expr: CoreExpr.{ kind: .Break(.Some(value_r.expr)), ty: expr.ty, span: expr.span },
+          ctx: value_r.ctx,
+        }
+      },
+      .None => .{ expr, ctx },
     },
-    .Return(value) => {
-      case value {
-        .Some(v) => {
-          value_r := rewrite_index_loop_continue(v, before_continue, ctx)
-          .{
-            expr: CoreExpr.{ kind: .Return(.Some(value_r.expr)), ty: expr.ty, span: expr.span },
-            ctx: value_r.ctx,
-          }
-        },
-        .None => .{ expr, ctx },
-      }
+    .Return(value) => case value {
+      .Some(v) => {
+        value_r := rewrite_index_loop_continue(v, before_continue, ctx)
+        .{
+          expr: CoreExpr.{ kind: .Return(.Some(value_r.expr)), ty: expr.ty, span: expr.span },
+          ctx: value_r.ctx,
+        }
+      },
+      .None => .{ expr, ctx },
     },
     .Defer(inner) => {
       inner_r := rewrite_index_loop_continue(inner, before_continue, ctx)
@@ -230,6 +224,7 @@ pub fn lower_try(
 ) ExprOut {
   r := lower_expr_fn(ctx, operand)
   operand_ty := r.ctx.expr_type(operand)
+
   // TypeId(0) = Option, TypeId(1) = Result
   option_tid := TypeId.{ id: 0 }
   result_tid := TypeId.{ id: 1 }

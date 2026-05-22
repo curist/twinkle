@@ -10,7 +10,7 @@ use lib.argparse.app.{ParseResult}
 pub fn run_check_command(parsed: ParseResult) {
   file := case get_positional(parsed, 0, "file") {
     .Ok(path) => path,
-    .Err(msg) => { exit_usage_error(msg) },
+    .Err(msg) => exit_usage_error(msg),
   }
 
   if app.has_flag(parsed, "fix-unused-imports") {

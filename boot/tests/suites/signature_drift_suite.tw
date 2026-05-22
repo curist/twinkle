@@ -93,7 +93,10 @@ pub fn suite() runner.Suite {
                 .None => false,
               },
             }
-            if !found { missing = .append(internal) }
+
+            if !found {
+              missing = .append(internal)
+            }
           }
         }
 
@@ -122,6 +125,7 @@ pub fn suite() runner.Suite {
       "every registry canonical name traces back to a signature-file entry",
       fn() {
         groups := try load_signatures(signatures_dir(), builtin_type_env())
+
         // Build set of all expected canonical names from signature files.
         expected: Dict<String, Bool> = Dict.new()
 
@@ -138,7 +142,9 @@ pub fn suite() runner.Suite {
 
         for cn in reg.by_canonical.keys() {
           case expected[cn] {
-            .None => { spurious = .append(cn) },
+            .None => {
+              spurious = .append(cn)
+            },
             .Some(_) => {},
           }
         }

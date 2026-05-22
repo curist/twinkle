@@ -47,7 +47,9 @@ pub fn plan_dependencies(module: Module, file_path: String, project_root: String
     module,
     file_path,
     project_root,
-    fn(path_str: String) Bool { core_lib.exists(path_str) or fs.exists(path_str) },
+    fn(path_str: String) Bool {
+      core_lib.exists(path_str) or fs.exists(path_str)
+    },
   )
 }
 
@@ -106,9 +108,16 @@ pub fn plan_dependencies_with_exists(
 
     for prelude_path in prelude_modules {
       canonical_prelude := canonical_module_path(prelude_path, roots)
+
       // Skip if already explicitly imported
-      if canonical_paths.contains(canonical_prelude) { continue }
-      if !exists(canonical_prelude) { continue }
+      if canonical_paths.contains(canonical_prelude) {
+        continue
+      }
+
+      if !exists(canonical_prelude) {
+        continue
+      }
+
       stem := path.stem(canonical_prelude)
       canonical_paths = .append(canonical_prelude)
       deps = .append(
@@ -156,7 +165,11 @@ pub fn canonical_module_path(path_str: String, roots: CanonicalRoots) String {
 /// Compute the effective module alias from a UseDecl.
 /// Uses explicit `as alias` if present, otherwise the last path segment.
 fn module_alias(decl: UseDecl) String {
-  fallback := if decl.path.len() > 0 { decl.path[decl.path.len() - 1] } else { "" }
+  fallback := if decl.path.len() > 0 {
+    decl.path[decl.path.len() - 1]
+  } else {
+    ""
+  }
   decl.alias.unwrap_or(fallback)
 }
 

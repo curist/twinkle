@@ -24,29 +24,24 @@ fn has_cow_op_in_op(op: AnfOp, semantics: OptimizerSemantics) Bool {
   case op {
     .ARecordUpdate(.ALocal(_), _, _, _, _) => true,
     .ARecordUpdate(_, _, _, _, _) => false,
-    .ACall(.AGlobalFunc(func_id), args) => {
-      case call_info(semantics, func_id) {
-        .Some(info) => {
-          case info.cow_base_arg {
-            .Some(base_arg) => {
-              if base_arg >= args.len() {
-                return false
-              }
+    .ACall(.AGlobalFunc(func_id), args) => case call_info(semantics, func_id) {
+      .Some(info) => case info.cow_base_arg {
+        .Some(base_arg) => {
+          if base_arg >= args.len() {
+            return false
+          }
 
-              case args[base_arg] {
-                .ALocal(_) => true,
-                _ => false,
-              }
-            },
-            .None => false,
+          case args[base_arg] {
+            .ALocal(_) => true,
+            _ => false,
           }
         },
         .None => false,
-      }
+      },
+      .None => false,
     },
-    .AIf(_, then_expr, else_expr) => {
-      has_cow_op_in_expr(then_expr, semantics) or has_cow_op_in_expr(else_expr, semantics)
-    },
+    .AIf(_, then_expr, else_expr) => has_cow_op_in_expr(then_expr, semantics)
+      or has_cow_op_in_expr(else_expr, semantics),
     .AMatch(_, arms) => {
       for arm in arms {
         if has_cow_op_in_expr(arm.body, semantics) {
@@ -68,6 +63,7 @@ fn has_cow_op_in_expr(expr: AnfExpr, semantics: OptimizerSemantics) Bool {
       if has_cow_op_in_op(op, semantics) {
         return true
       }
+
       has_cow_op_in_expr(body, semantics)
     },
     _ => false,
@@ -90,17 +86,13 @@ fn classify_producer_ownership(op: AnfOp, semantics: OptimizerSemantics) Ownersh
     .ARecord(_, _) => .Some(.Shallow),
     .ARecordUpdate(_, _, _, _, _) => .Some(.Shallow),
     .AVariant(_, _, _) => .Some(.Shallow),
-    .ACall(.AGlobalFunc(func_id), _) => {
-      case call_info(semantics, func_id) {
-        .Some(info) => {
-          if info.fresh_result {
-            .Some(.Deep)
-          } else {
-            .None
-          }
-        },
-        .None => .None,
-      }
+    .ACall(.AGlobalFunc(func_id), _) => case call_info(semantics, func_id) {
+      .Some(info) => if info.fresh_result {
+        .Some(.Deep)
+      } else {
+        .None
+      },
+      .None => .None,
     },
     _ => .None,
   }
@@ -130,6 +122,7 @@ fn ownership_of(st: RwState, local: LocalId) Ownership? {
   if set_has(st.tainted, local.id) and !set_has(st.refreshed, local.id) {
     return .None
   }
+
   st.ownership[local.id]
 }
 
@@ -152,7 +145,7 @@ fn merge_mono_maps(base: Dict<Int, MonoType>, updates: Dict<Int, MonoType>) Dict
 
   for k in updates.keys() {
     case updates[k] {
-      .Some(ty) => { out[k] = ty },
+      .Some(ty) => out[k] = ty,
       .None => {},
     }
   }
@@ -198,16 +191,25 @@ fn with_fresh_record_local(st: RwState, local: LocalId) RwState {
 fn transfer_owned_local(st: RwState, source: LocalId, target: LocalId) RwState {
   moved := case st.ownership_of(source) {
     .Some(value) => value,
-    .None => { return without_local_ownership(st, target) },
+    .None => {
+      return without_local_ownership(st, target)
+    },
   }
   source_was_fresh_record := set_has(st.fresh_records, source.id)
   st = without_local_ownership(st, target)
   st.ownership = st.ownership.remove(source.id)
   st.ownership[target.id] = moved
   st.refreshed = st.refreshed.remove(source.id)
-  if set_has(st.tainted, target.id) { st.refreshed[target.id] = true }
+
+  if set_has(st.tainted, target.id) {
+    st.refreshed[target.id] = true
+  }
+
   st.fresh_records = st.fresh_records.remove(source.id)
-  if source_was_fresh_record { st.fresh_records[target.id] = true }
+
+  if source_was_fresh_record {
+    st.fresh_records[target.id] = true
+  }
 
   if set_has(st.known_empty, source.id) {
     st.known_empty = st.known_empty.remove(source.id)
@@ -219,7 +221,11 @@ fn transfer_owned_local(st: RwState, source: LocalId, target: LocalId) RwState {
 
 fn with_consumed_update_result(st: RwState, local: LocalId) RwState {
   st = with_local_ownership(st, local, .Deep)
-  if set_has(st.tainted, local.id) { st.refreshed[local.id] = true }
+
+  if set_has(st.tainted, local.id) {
+    st.refreshed[local.id] = true
+  }
+
   st.known_empty = st.known_empty.remove(local.id)
   st.fresh_records = st.fresh_records.remove(local.id)
   st
@@ -227,8 +233,10 @@ fn with_consumed_update_result(st: RwState, local: LocalId) RwState {
 
 fn tail_returns_local(expr: AnfExpr, current: LocalId) Bool {
   case expr {
-    .Let(local, .AInit(.ALocal(source)), body) => {
-      if source.id == current.id { tail_returns_local(body, local) } else { false }
+    .Let(local, .AInit(.ALocal(source)), body) => if source.id == current.id {
+      tail_returns_local(body, local)
+    } else {
+      false
     },
     .Atom(.ALocal(ret)) => ret.id == current.id,
     .Return(.Some(.ALocal(ret))) => ret.id == current.id,
@@ -238,8 +246,10 @@ fn tail_returns_local(expr: AnfExpr, current: LocalId) Bool {
 
 fn tail_is_fresh_record(expr: AnfExpr) Bool {
   case expr {
-    .Let(local, .ARecord(_, _), body) => {
-      if tail_returns_local(body, local) { true } else { tail_is_fresh_record(body) }
+    .Let(local, .ARecord(_, _), body) => if tail_returns_local(body, local) {
+      true
+    } else {
+      tail_is_fresh_record(body)
     },
     .Let(_, _, body) => tail_is_fresh_record(body),
     _ => false,
@@ -250,7 +260,9 @@ pub fn collect_fresh_record_helpers(module: AnfModule) Dict<Int, Bool> {
   fresh: Dict<Int, Bool> = Dict.new()
 
   for func in module.functions {
-    if tail_is_fresh_record(func.body) { fresh[func.func_id.id] = true }
+    if tail_is_fresh_record(func.body) {
+      fresh[func.func_id.id] = true
+    }
   }
 
   fresh
@@ -261,28 +273,31 @@ fn expr_always_terminates(expr: AnfExpr) Bool {
     .Return(_) => true,
     .Break(_) => true,
     .Continue => true,
-    .Let(_, op, body) => {
-      case op {
-        .AIf(_, then_e, else_e) => {
-          if expr_always_terminates(then_e) and expr_always_terminates(else_e) { true } else {
-            expr_always_terminates(body)
-          }
-        },
-        .AMatch(_, arms) => {
-          if arms.len() > 0 {
-            all_terminate := true
+    .Let(_, op, body) => case op {
+      .AIf(_, then_e, else_e) => if expr_always_terminates(then_e)
+        and expr_always_terminates(else_e) {
+        true
+      } else {
+        expr_always_terminates(body)
+      },
+      .AMatch(_, arms) => if arms.len() > 0 {
+        all_terminate := true
 
-            for arm in arms {
-              if !expr_always_terminates(arm.body) { all_terminate = false }
-            }
-
-            if all_terminate { true } else { expr_always_terminates(body) }
-          } else {
-            expr_always_terminates(body)
+        for arm in arms {
+          if !expr_always_terminates(arm.body) {
+            all_terminate = false
           }
-        },
-        _ => expr_always_terminates(body),
-      }
+        }
+
+        if all_terminate {
+          true
+        } else {
+          expr_always_terminates(body)
+        }
+      } else {
+        expr_always_terminates(body)
+      },
+      _ => expr_always_terminates(body),
     },
     _ => false,
   }
@@ -292,7 +307,9 @@ fn intersect_bool_sets(dst: Dict<Int, Bool>, other: Dict<Int, Bool>) Dict<Int, B
   keys := dst.keys()
 
   for k in keys {
-    if !set_has(other, k) { dst = .remove(k) }
+    if !set_has(other, k) {
+      dst = .remove(k)
+    }
   }
 
   dst
@@ -303,13 +320,13 @@ fn intersect_ownership(dst: Dict<Int, Ownership>, other: Dict<Int, Ownership>) D
 
   for k in keys {
     case dst[k] {
-      .Some(lhs) => {
-        case other[k] {
-          .Some(rhs) => {
-            if lhs != rhs { dst = .remove(k) }
-          },
-          .None => { dst = .remove(k) },
-        }
+      .Some(lhs) => case other[k] {
+        .Some(rhs) => if lhs != rhs {
+          dst = .remove(k)
+        },
+        .None => {
+          dst = .remove(k)
+        },
       },
       .None => {},
     }
@@ -399,9 +416,11 @@ fn expr_uses_local(expr: AnfExpr, local: LocalId) Bool {
       if op_uses_local_non_recursive(op, local) {
         return true
       }
+
       if op_has_local_in_nested_scope(op, local) {
         return true
       }
+
       expr_uses_local(body, local)
     },
     .Atom(atom) => atom_is_local(atom, local),
@@ -437,15 +456,12 @@ fn can_move_fresh_record_field(base: LocalId, moved_field: FieldId, expr: AnfExp
       }
 
       case op {
-        .ARecordGet(.ALocal(source), field, _) => {
-          if source.id == base.id and field.id == moved_field.id {
-            return false
-          }
+        .ARecordGet(.ALocal(source), field, _) => if source.id == base.id
+          and field.id == moved_field.id {
+          return false
         },
-        _ => {
-          if op_uses_local_non_recursive(op, base) {
-            return false
-          }
+        _ => if op_uses_local_non_recursive(op, base) {
+          return false
         },
       }
 
@@ -461,11 +477,11 @@ fn can_move_fresh_record_field(base: LocalId, moved_field: FieldId, expr: AnfExp
 fn record_update_stores_value(expr: AnfExpr, value_local: LocalId) Bool {
   case expr {
     .Let(_, .ARecordUpdate(_, _, .ALocal(v), _, _), _) => v.id == value_local.id,
-    .Let(_, op, body) => {
-      if op_has_local_in_nested_scope(op, value_local)
-        or op_uses_local_non_recursive(op, value_local) { false } else {
-        record_update_stores_value(body, value_local)
-      }
+    .Let(_, op, body) => if op_has_local_in_nested_scope(op, value_local)
+      or op_uses_local_non_recursive(op, value_local) {
+      false
+    } else {
+      record_update_stores_value(body, value_local)
     },
     _ => false,
   }
@@ -473,31 +489,27 @@ fn record_update_stores_value(expr: AnfExpr, value_local: LocalId) Bool {
 
 fn is_field_borrow_and_update(field_local: LocalId, body: AnfExpr, semantics: OptimizerSemantics) Bool {
   case body {
-    .Let(new_field, .ACall(.AGlobalFunc(func_id), args), rest) => {
-      case call_info(semantics, func_id) {
-        .Some(info) => {
-          case info.cow_base_arg {
-            .Some(base_arg) => {
-              if info.in_place_equivalent != .None and base_arg < args.len() {
-                if atom_is_local(args[base_arg], field_local)
-                  and !set_has(live_after(rest), field_local.id) {
-                  record_update_stores_value(rest, new_field)
-                } else { false }
-              } else {
-                false
-              }
-            },
-            .None => false,
+    .Let(new_field, .ACall(.AGlobalFunc(func_id), args), rest) => case call_info(semantics, func_id) {
+      .Some(info) => case info.cow_base_arg {
+        .Some(base_arg) => if info.in_place_equivalent != .None and base_arg < args.len() {
+          if atom_is_local(args[base_arg], field_local)
+            and !set_has(live_after(rest), field_local.id) {
+            record_update_stores_value(rest, new_field)
+          } else {
+            false
           }
+        } else {
+          false
         },
         .None => false,
-      }
+      },
+      .None => false,
     },
-    .Let(_, op, body2) => {
-      if op_has_local_in_nested_scope(op, field_local)
-        or op_uses_local_non_recursive(op, field_local) { false } else {
-        is_field_borrow_and_update(field_local, body2, semantics)
-      }
+    .Let(_, op, body2) => if op_has_local_in_nested_scope(op, field_local)
+      or op_uses_local_non_recursive(op, field_local) {
+      false
+    } else {
+      is_field_borrow_and_update(field_local, body2, semantics)
     },
     _ => false,
   }
@@ -518,53 +530,49 @@ fn rewrite_reusable_update(
   }
 
   case reusable_update_site(new_op, st.config) {
-    .Some(site) => {
-      case site.kind {
-        .RecordUpdate => {
-          // Allow in-place when base has shell ownership OR is an
-          // interprocedurally-consumed param (Gap 2, interproc-uniqueness.md).
-          // consumed_params is a separate gate: we do NOT add these to the
-          // ownership set to prevent Gap 1 propagation to collection fields.
-          can_reuse := (local_has_shell_ownership(st, site.base_local)
-            or set_has(consumed_params, site.base_local.id))
-            and base_reusable_after_binding_with_live(
-              body,
-              site.base_local,
-              bind_local,
-              live_after_body,
-            )
+    .Some(site) => case site.kind {
+      .RecordUpdate => {
+        // Allow in-place when base has shell ownership OR is an
+        // interprocedurally-consumed param (Gap 2, interproc-uniqueness.md).
+        // consumed_params is a separate gate: we do NOT add these to the
+        // ownership set to prevent Gap 1 propagation to collection fields.
+        can_reuse := (local_has_shell_ownership(st, site.base_local)
+          or set_has(consumed_params, site.base_local.id))
+          and base_reusable_after_binding_with_live(
+            body,
+            site.base_local,
+            bind_local,
+            live_after_body,
+          )
 
-          if can_reuse {
-            case new_op {
-              .ARecordUpdate(base, fld, value, _, type_id) => {
-                new_op = AnfOp.ARecordUpdate(base, fld, value, true, type_id)
-              },
-              _ => {},
-            }
+        if can_reuse {
+          case new_op {
+            .ARecordUpdate(base, fld, value, _, type_id) => {
+              new_op = AnfOp.ARecordUpdate(base, fld, value, true, type_id)
+            },
+            _ => {},
           }
-        },
-        .Call => {
-          if local_is_deep_owned(st, site.base_local)
-            and base_reusable_after_binding_with_live(
-              body,
-              site.base_local,
-              bind_local,
-              live_after_body,
-            ) {
-            case site.in_place_equivalent {
-              .Some(in_place) => {
-                case new_op {
-                  .ACall(_, args) => { new_op = AnfOp.ACall(.AGlobalFunc(in_place), args) },
-                  _ => {},
-                }
-              },
-              .None => {},
-            }
+        }
+      },
+      .Call => if local_is_deep_owned(st, site.base_local)
+        and base_reusable_after_binding_with_live(
+          body,
+          site.base_local,
+          bind_local,
+          live_after_body,
+        ) {
+        case site.in_place_equivalent {
+          .Some(in_place) => case new_op {
+            .ACall(_, args) => {
+              new_op = AnfOp.ACall(.AGlobalFunc(in_place), args)
+            },
+            _ => {},
+          },
+          .None => {},
+        }
 
-            st = with_consumed_update_result(st, bind_local)
-          }
-        },
-      }
+        st = with_consumed_update_result(st, bind_local)
+      },
     },
     _ => {},
   }
@@ -604,31 +612,37 @@ fn rewrite_expr(expr: AnfExpr, st: RwState, consumed_params: Dict<Int, Bool>) Ex
       }
 
       case classify_producer_ownership(op, st.config) {
-        .Some(ownership) => { st = with_local_ownership(st, local, ownership) },
+        .Some(ownership) => {
+          st = with_local_ownership(st, local, ownership)
+        },
         .None => {},
       }
 
       case op {
-        .ACall(.AGlobalFunc(func_id), _) => {
-          if set_has(st.fresh_helper_ids, func_id.id) {
-            st = with_local_ownership(st, local, .Shallow)
-            st = with_fresh_record_local(st, local)
-          }
+        .ACall(.AGlobalFunc(func_id), _) => if set_has(st.fresh_helper_ids, func_id.id) {
+          st = with_local_ownership(st, local, .Shallow)
+          st = with_fresh_record_local(st, local)
         },
         _ => {},
       }
 
-      if is_empty_array_lit(op) { st = with_known_empty_local(st, local) }
+      if is_empty_array_lit(op) {
+        st = with_known_empty_local(st, local)
+      }
 
       // AInit ownership transfer: let x = init(y) where y is owned → x inherits that ownership
       case op {
-        .AInit(.ALocal(source)) => { st = transfer_owned_local(st, source, local) },
+        .AInit(.ALocal(source)) => {
+          st = transfer_owned_local(st, source, local)
+        },
         _ => {},
       }
 
       // AAssign ownership transfer
       case op {
-        .AAssign(target, .ALocal(source)) => { st = transfer_owned_local(st, source, target) },
+        .AAssign(target, .ALocal(source)) => {
+          st = transfer_owned_local(st, source, target)
+        },
         .AAssign(target, _) => {
           // Non-local assign: kill ownership
           st = without_local_ownership(st, target)
@@ -745,6 +759,7 @@ fn has_rewritable_cow_op_in_op(op: AnfOp, tainted: Dict<Int, Bool>, semantics: O
       if has_rewritable_cow_op_in_expr(then_e, tainted, semantics) {
         return true
       }
+
       has_rewritable_cow_op_in_expr(else_e, tainted, semantics)
     },
     .AMatch(_, arms) => {
@@ -770,10 +785,8 @@ fn has_rewritable_cow_op_in_expr(
   case expr {
     .Let(_, op, body) => {
       case reusable_update_site(op, semantics) {
-        .Some(site) => {
-          if !set_has(tainted, site.base_local.id) {
-            return true
-          }
+        .Some(site) => if !set_has(tainted, site.base_local.id) {
+          return true
         },
         .None => {},
       }
@@ -781,6 +794,7 @@ fn has_rewritable_cow_op_in_expr(
       if has_rewritable_cow_op_in_op(op, tainted, semantics) {
         return true
       }
+
       has_rewritable_cow_op_in_expr(body, tainted, semantics)
     },
     _ => false,
@@ -821,7 +835,9 @@ pub fn uniqueness_rewrite_with_semantics_and_consumed_and_fresh(
   if !has_cow_op_in_expr(func.body, config) {
     return func
   }
+
   tl := collect_tainted_and_live(func, config)
+
   // Keep running the full pass whenever the function contains a candidate COW
   // op. Branch-sensitive refreshed/fresh-wrapper facts may make a base
   // rewriteable even when the initial pre-check sees only tainted params.

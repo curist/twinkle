@@ -48,7 +48,11 @@ fn resolve_errs(src: String) Result<Vector<String>, String> {
   }
 
   msgs: Vector<String> = []
-  for d in r.diagnostics { msgs = .append(d.message()) }
+
+  for d in r.diagnostics {
+    msgs = .append(d.message())
+  }
+
   .Ok(msgs)
 }
 
@@ -69,22 +73,20 @@ pub fn mono_to_string(ty: mono_type.MonoType) String {
     .Void => "Void",
     .Anyref_ => "Anyref",
     .Var(name) => "Var(${name})",
-    .Named(tid, args) => {
-      if args.len() == 0 {
-        "Named(${tid.id})"
-      } else {
-        joined := ""
+    .Named(tid, args) => if args.len() == 0 {
+      "Named(${tid.id})"
+    } else {
+      joined := ""
 
-        for a, i in args {
-          if i > 0 {
-            joined = "${joined}, "
-          }
-
-          joined = "${joined}${mono_to_string(a)}"
+      for a, i in args {
+        if i > 0 {
+          joined = "${joined}, "
         }
 
-        "Named(${tid.id})<${joined}>"
+        joined = "${joined}${mono_to_string(a)}"
       }
+
+      "Named(${tid.id})<${joined}>"
     },
     .Vector(inner) => "Vector<${mono_to_string(inner)}>",
     .Dict(k, v) => "Dict<${mono_to_string(k)}, ${mono_to_string(v)}>",
@@ -120,24 +122,20 @@ fn get_field_type(env: resolver.ResolvedEnv, type_name: String, field_name: Stri
   }
 
   case found {
-    .Some(entry) => {
-      case entry.def {
-        .Some(def) => {
-          case def {
-            .Record(_, _, fields) => {
-              for f in fields {
-                if f.name == field_name {
-                  return .Ok(mono_to_string(f.ty))
-                }
-              }
-
-              .Err("field ${field_name} not found in ${type_name}")
-            },
-            _ => .Err("${type_name} is not a record"),
+    .Some(entry) => case entry.def {
+      .Some(def) => case def {
+        .Record(_, _, fields) => {
+          for f in fields {
+            if f.name == field_name {
+              return .Ok(mono_to_string(f.ty))
+            }
           }
+
+          .Err("field ${field_name} not found in ${type_name}")
         },
-        .None => .Err("${type_name} has no definition"),
-      }
+        _ => .Err("${type_name} is not a record"),
+      },
+      .None => .Err("${type_name} has no definition"),
     },
     .None => .Err("type ${type_name} not found"),
   }
@@ -145,16 +143,12 @@ fn get_field_type(env: resolver.ResolvedEnv, type_name: String, field_name: Stri
 
 fn get_variant_count(env: resolver.ResolvedEnv, type_name: String) Result<Int, String> {
   case resolver.lookup_type(env, type_name) {
-    .Some(entry) => {
-      case entry.def {
-        .Some(def) => {
-          case def {
-            .Sum(_, _, variants) => .Ok(variants.len()),
-            _ => .Err("${type_name} is not a sum type"),
-          }
-        },
-        .None => .Err("${type_name} has no definition"),
-      }
+    .Some(entry) => case entry.def {
+      .Some(def) => case def {
+        .Sum(_, _, variants) => .Ok(variants.len()),
+        _ => .Err("${type_name} is not a sum type"),
+      },
+      .None => .Err("${type_name} has no definition"),
     },
     .None => .Err("type ${type_name} not found"),
   }
@@ -175,11 +169,9 @@ fn get_param_type(env: resolver.ResolvedEnv, fn_name: String, idx: Int) Result<S
 
 fn get_return_type(env: resolver.ResolvedEnv, fn_name: String) Result<String, String> {
   case resolver.lookup_function(env, fn_name) {
-    .Some(sig) => {
-      case sig.ret {
-        .Some(ty) => .Ok(mono_to_string(ty)),
-        .None => .Ok("(none)"),
-      }
+    .Some(sig) => case sig.ret {
+      .Some(ty) => .Ok(mono_to_string(ty)),
+      .None => .Ok("(none)"),
     },
     .None => .Err("function ${fn_name} not found"),
   }
@@ -431,7 +423,9 @@ pub fn suite() runner.Suite {
         found := false
 
         for m in msgs {
-          if m.contains("circular") { found = true }
+          if m.contains("circular") {
+            found = true
+          }
         }
 
         try assert.is_true(found)
@@ -447,8 +441,14 @@ pub fn suite() runner.Suite {
         for d in r.diagnostics {
           if d.message().contains("circular") {
             has_span := d.span().start > 0
-            if !has_span { has_span = d.span().end > 0 }
-            if has_span { found_circular = true }
+
+            if !has_span {
+              has_span = d.span().end > 0
+            }
+
+            if has_span {
+              found_circular = true
+            }
           }
         }
 
@@ -493,7 +493,9 @@ pub fn suite() runner.Suite {
         found := false
 
         for m in msgs {
-          if m.contains("expects 1 type argument") { found = true }
+          if m.contains("expects 1 type argument") {
+            found = true
+          }
         }
 
         try assert.is_true(found)
@@ -508,7 +510,9 @@ pub fn suite() runner.Suite {
         found := false
 
         for m in msgs {
-          if m.contains("expects 2 type argument") { found = true }
+          if m.contains("expects 2 type argument") {
+            found = true
+          }
         }
 
         try assert.is_true(found)
@@ -524,7 +528,9 @@ pub fn suite() runner.Suite {
         found := false
 
         for m in msgs {
-          if m.contains("expects 1 type argument") { found = true }
+          if m.contains("expects 1 type argument") {
+            found = true
+          }
         }
 
         try assert.is_true(found)
@@ -561,7 +567,9 @@ pub fn suite() runner.Suite {
         found := false
 
         for m in msgs {
-          if m.contains("circular") { found = true }
+          if m.contains("circular") {
+            found = true
+          }
         }
 
         try assert.is_true(found)
@@ -576,7 +584,9 @@ pub fn suite() runner.Suite {
         found := false
 
         for m in msgs {
-          if m.contains("circular") { found = true }
+          if m.contains("circular") {
+            found = true
+          }
         }
 
         try assert.is_true(found)
@@ -772,6 +782,7 @@ pub fn suite() runner.Suite {
       fn() {
         src := "fn foo(x: Nonexistent, y: Int) Int { 0 }"
         r := resolve_src(src)
+
         // Should have a diagnostic for the bad type
         try assert.is_true(r.diagnostics.len() > 0)
 
@@ -897,7 +908,9 @@ pub fn suite() runner.Suite {
         found := false
 
         for m in msgs {
-          if m.contains("circular") { found = true }
+          if m.contains("circular") {
+            found = true
+          }
         }
 
         try assert.is_true(found)
@@ -936,7 +949,9 @@ pub fn suite() runner.Suite {
         found := false
 
         for m in msgs {
-          if m.contains("undefined type") { found = true }
+          if m.contains("undefined type") {
+            found = true
+          }
         }
 
         try assert.is_true(found)
@@ -960,6 +975,7 @@ pub fn suite() runner.Suite {
           extern_module: .None,
         }
         env := resolver.empty_env().with_functions([prelude_sig])
+
         // User defines their own "map" — should shadow prelude's
         src := "fn map(x: Int) Int { x }"
         result_env := try resolve_ok_with_env(src, env)
@@ -988,6 +1004,7 @@ pub fn suite() runner.Suite {
           extern_module: .None,
         }
         env := resolver.empty_env().with_functions([prelude_sig])
+
         // User redefines to_string — should NOT produce a "duplicate" diagnostic
         src := "fn to_string(x: Float) String { \"\" }"
         r := resolve_src_with_env(src, env)
@@ -1000,6 +1017,7 @@ pub fn suite() runner.Suite {
       fn() {
         src := "fn foo(x, y: Int) Int { 0 }"
         r := resolve_src(src)
+
         // Should have a diagnostic for missing annotation
         try assert.is_true(r.diagnostics.len() > 0)
 
@@ -1138,6 +1156,7 @@ pub fn suite() runner.Suite {
           extern_module: .None,
         }
         env = .add_function(sig1)
+
         // Add another "foo" — should shadow the first
         sig2 := resolver.FunctionSig.{
           name: "foo",
@@ -1172,7 +1191,9 @@ pub fn suite() runner.Suite {
         found := false
 
         for m in msgs {
-          if m.contains("expects 1 type argument") { found = true }
+          if m.contains("expects 1 type argument") {
+            found = true
+          }
         }
 
         try assert.is_true(found)
@@ -1237,6 +1258,7 @@ pub fn suite() runner.Suite {
         // then user defines fn show(p: Point) — should conflict.
         src := "type Point = .{ x: Int }\nfn show(p: Point) String { \"\" }"
         parsed := parser.parse(src, 0)
+
         // Pre-register a builtin "show" method on Point
         env := resolver.empty_env()
         env.methods["Point"] = [
@@ -1246,7 +1268,9 @@ pub fn suite() runner.Suite {
         found := false
 
         for d in r.diagnostics {
-          if d.message().contains("show") { found = true }
+          if d.message().contains("show") {
+            found = true
+          }
         }
 
         try assert.is_true(found)
@@ -1260,12 +1284,15 @@ pub fn suite() runner.Suite {
         // The second should produce a diagnostic (currently silently ignored)
         src := "type Point = .{ x: Int }\nfn show(p: Point) String { \"\" }\nfn show(p: Point) String { \"\" }"
         r := resolve_src(src)
+
         // We expect TWO diagnostics: one for duplicate function, one for method collision
         // But at minimum the duplicate function diagnostic
         found_dup := false
 
         for d in r.diagnostics {
-          if d.message().contains("duplicate function") { found_dup = true }
+          if d.message().contains("duplicate function") {
+            found_dup = true
+          }
         }
 
         try assert.is_true(found_dup)
@@ -1294,27 +1321,24 @@ pub fn suite() runner.Suite {
       fn() {
         src := "type Foo = .{ x: Int, y: Nonexistent, z: Bool }"
         r := resolve_src(src)
+
         // Should have a diagnostic for the bad type
         try assert.is_true(r.diagnostics.len() > 0)
 
         // The record should still have 3 fields (y with ErrorType, not skipped)
         case resolver.lookup_type(r.env, "Foo") {
-          .Some(entry) => {
-            case entry.def {
-              .Some(def) => {
-                case def {
-                  .Record(_, _, fields) => {
-                    try assert.equal(fields.len(), 3)
-                    try assert.equal(mono_to_string(fields[0].ty), "Int")
-                    try assert.equal(mono_to_string(fields[1].ty), "<error>")
-                    try assert.equal(mono_to_string(fields[2].ty), "Bool")
-                    .Ok({})
-                  },
-                  _ => .Err("expected Record"),
-                }
+          .Some(entry) => case entry.def {
+            .Some(def) => case def {
+              .Record(_, _, fields) => {
+                try assert.equal(fields.len(), 3)
+                try assert.equal(mono_to_string(fields[0].ty), "Int")
+                try assert.equal(mono_to_string(fields[1].ty), "<error>")
+                try assert.equal(mono_to_string(fields[2].ty), "Bool")
+                .Ok({})
               },
-              .None => .Err("expected def to be populated"),
-            }
+              _ => .Err("expected Record"),
+            },
+            .None => .Err("expected def to be populated"),
           },
           .None => .Err("Foo not found"),
         }
@@ -1328,23 +1352,20 @@ pub fn suite() runner.Suite {
         try assert.is_true(r.diagnostics.len() > 0)
 
         case resolver.lookup_type(r.env, "Shape") {
-          .Some(entry) => {
-            case entry.def {
-              .Some(def) => {
-                case def {
-                  .Sum(_, _, variants) => {
-                    // Circle should have 1 field (ErrorType), not 0
-                    try assert.equal(variants[0].fields.len(), 1)
-                    try assert.equal(mono_to_string(variants[0].fields[0]), "<error>")
-                    // Rect should still have 2 fields
-                    try assert.equal(variants[1].fields.len(), 2)
-                    .Ok({})
-                  },
-                  _ => .Err("expected Sum"),
-                }
+          .Some(entry) => case entry.def {
+            .Some(def) => case def {
+              .Sum(_, _, variants) => {
+                // Circle should have 1 field (ErrorType), not 0
+                try assert.equal(variants[0].fields.len(), 1)
+                try assert.equal(mono_to_string(variants[0].fields[0]), "<error>")
+
+                // Rect should still have 2 fields
+                try assert.equal(variants[1].fields.len(), 2)
+                .Ok({})
               },
-              .None => .Err("expected def to be populated"),
-            }
+              _ => .Err("expected Sum"),
+            },
+            .None => .Err("expected def to be populated"),
           },
           .None => .Err("Shape not found"),
         }
@@ -1369,7 +1390,9 @@ pub fn suite() runner.Suite {
         found := false
 
         for m in msgs {
-          if m.contains("reserved") { found = true }
+          if m.contains("reserved") {
+            found = true
+          }
         }
 
         try assert.is_true(found)
@@ -1383,7 +1406,9 @@ pub fn suite() runner.Suite {
         found := false
 
         for m in msgs {
-          if m.contains("reserved") { found = true }
+          if m.contains("reserved") {
+            found = true
+          }
         }
 
         try assert.is_true(found)
@@ -1397,7 +1422,9 @@ pub fn suite() runner.Suite {
         found := false
 
         for m in msgs {
-          if m.contains("reserved") { found = true }
+          if m.contains("reserved") {
+            found = true
+          }
         }
 
         try assert.is_true(found)
@@ -1411,7 +1438,9 @@ pub fn suite() runner.Suite {
         found := false
 
         for m in msgs {
-          if m.contains("reserved") { found = true }
+          if m.contains("reserved") {
+            found = true
+          }
         }
 
         try assert.is_true(found)
@@ -1425,7 +1454,9 @@ pub fn suite() runner.Suite {
         found := false
 
         for m in msgs {
-          if m.contains("reserved") { found = true }
+          if m.contains("reserved") {
+            found = true
+          }
         }
 
         try assert.is_true(found)
@@ -1439,7 +1470,9 @@ pub fn suite() runner.Suite {
         found := false
 
         for m in msgs {
-          if m.contains("duplicate") and m.contains("field") { found = true }
+          if m.contains("duplicate") and m.contains("field") {
+            found = true
+          }
         }
 
         try assert.is_true(found)
@@ -1453,7 +1486,9 @@ pub fn suite() runner.Suite {
         found := false
 
         for m in msgs {
-          if m.contains("duplicate") and m.contains("variant") { found = true }
+          if m.contains("duplicate") and m.contains("variant") {
+            found = true
+          }
         }
 
         try assert.is_true(found)
@@ -1467,7 +1502,9 @@ pub fn suite() runner.Suite {
         found := false
 
         for m in msgs {
-          if m.contains("duplicate") and m.contains("param") { found = true }
+          if m.contains("duplicate") and m.contains("param") {
+            found = true
+          }
         }
 
         try assert.is_true(found)
@@ -1494,7 +1531,9 @@ pub fn suite() runner.Suite {
             count := 0
 
             for e in entries {
-              if e.method_name == "len" { count = count + 1 }
+              if e.method_name == "len" {
+                count = count + 1
+              }
             }
 
             try assert.equal(count, 1)
@@ -1513,8 +1552,11 @@ pub fn suite() runner.Suite {
         exports := resolver.extract_exports(r.env, parsed.value)
         try assert.equal(exports.visible_types.len(), 2)
         try assert.equal(exports.support_types.len(), 0)
+
         // Should have Foo and Baz, not Bar
-        names: Vector<String> = collect et in exports.visible_types { et.name }
+        names: Vector<String> = collect et in exports.visible_types {
+          et.name
+        }
         try assert.vec_contains(names, "Foo")
         try assert.vec_contains(names, "Baz")
         .Ok({})
@@ -1602,7 +1644,9 @@ pub fn suite() runner.Suite {
         exports := resolver.extract_exports(env, parsed.value)
         try assert.equal(exports.visible_types.len(), 0)
         try assert.equal(exports.support_types.len(), 2)
-        names: Vector<String> = collect et in exports.support_types { et.name }
+        names: Vector<String> = collect et in exports.support_types {
+          et.name
+        }
         try assert.vec_contains(names, "dep.Inner")
         try assert.vec_contains(names, "dep.Outer")
         .Ok({})
@@ -1682,7 +1726,9 @@ pub fn suite() runner.Suite {
             found := false
 
             for m in methods {
-              if m.method_name == "translate" { found = true }
+              if m.method_name == "translate" {
+                found = true
+              }
             }
 
             try assert.is_true(found)
@@ -1751,7 +1797,9 @@ pub fn suite() runner.Suite {
             found := false
 
             for m in methods {
-              if m.method_name == "resolve" and m.function_name == "dep.resolve" { found = true }
+              if m.method_name == "resolve" and m.function_name == "dep.resolve" {
+                found = true
+              }
             }
 
             try assert.is_true(found)
@@ -1769,11 +1817,14 @@ pub fn suite() runner.Suite {
         parsed := parser.parse(src, 0)
         r := resolver.empty_env().resolve(parsed.value)
         exports := resolver.extract_exports(r.env, parsed.value)
+
         // Merge into a fresh env under alias "m"
         env := resolver.empty_env()
         env = .merge_module_exports("m", "", exports)
+
         // Should be able to look up "m.Foo"
         try assert.is_true(resolver.has_type(env, "m.Foo"))
+
         // But not bare "Foo"
         try assert.is_true(!resolver.has_type(env, "Foo"))
         .Ok({})
@@ -1830,6 +1881,7 @@ pub fn suite() runner.Suite {
         exports := resolver.extract_exports(r.env, parsed.value)
         env := resolver.empty_env()
         env = .merge_module_exports("mymod", "", exports)
+
         // Should have "mymod.greet" as a function
         try assert.is_true(resolver.has_function(env, "mymod.greet"))
 
@@ -1839,7 +1891,9 @@ pub fn suite() runner.Suite {
             found := false
 
             for m in methods {
-              if m.method_name == "greet" { found = true }
+              if m.method_name == "greet" {
+                found = true
+              }
             }
 
             try assert.is_true(found)
@@ -1867,8 +1921,10 @@ pub fn suite() runner.Suite {
         ]
         env := resolver.empty_env()
         env = .merge_selective_imports("math", "", exports, items)
+
         // "add" should be available unqualified
         try assert.is_true(resolver.has_function(env, "add"))
+
         // Selective imports should not expose the parent module namespace.
         try assert.is_true(!resolver.has_function(env, "sub"))
         try assert.is_true(!resolver.has_function(env, "math.add"))
@@ -1949,6 +2005,7 @@ pub fn suite() runner.Suite {
         ]
         env := resolver.empty_env()
         env = .merge_selective_imports("mod", "", exports, items)
+
         // Should be available as "calc", not "calculate"
         try assert.is_true(resolver.has_function(env, "calc"))
         try assert.is_true(!resolver.has_function(env, "calculate"))
@@ -1978,7 +2035,9 @@ pub fn suite() runner.Suite {
         found_registered := false
 
         for sig in env.functions {
-          if sig.name == "math.add" { found_registered = true }
+          if sig.name == "math.add" {
+            found_registered = true
+          }
 
           if sig.name.starts_with("\$import\$.math.") {
             return .Err("unexpected hidden selective-import function retained: ${sig.name}")
@@ -2049,6 +2108,7 @@ pub fn suite() runner.Suite {
         exports := resolver.extract_exports(r.env, parsed.value)
         env := resolver.empty_env()
         env = .merge_prelude_exports("", "", exports)
+
         // Should be available as unqualified "helper"
         try assert.is_true(resolver.has_function(env, "helper"))
         .Ok({})
@@ -2068,6 +2128,7 @@ pub fn suite() runner.Suite {
           extern_module: .None,
         }
         env := resolver.empty_env().with_functions([builtin_sig])
+
         // Create prelude export with a different "len"
         src := "pub fn len(x: Int) Int { x }"
         parsed := parser.parse(src, 0)
@@ -2093,9 +2154,11 @@ pub fn suite() runner.Suite {
         parsed := parser.parse(src, 0)
         r := resolver.empty_env().resolve(parsed.value)
         exports := resolver.extract_exports(r.env, parsed.value)
+
         // Merge into env
         env := resolver.empty_env()
         env = .merge_module_exports("gfx", "", exports)
+
         // Now resolve a module that uses gfx.Color
         src2 := "type Canvas = .{ bg: gfx.Color }"
         r2 := env.resolve(parser.parse(src2, 0).value)
@@ -2189,8 +2252,10 @@ pub fn suite() runner.Suite {
         exports := resolver.extract_exports(r.env, parsed.value)
         env := resolver.empty_env()
         env = .merge_prelude_exports("__prelude_vector", "prelude/vector.tw", exports)
+
         // Verify origin exists
         try assert.is_some(resolver.lookup_function_origin(env, "filter"))
+
         // Now add a local function that shadows it
         env = .add_function(
           resolver.FunctionSig.{
@@ -2352,8 +2417,10 @@ pub fn suite() runner.Suite {
       fn() {
         src := "type Foo = { Bar(.{ x: Int, y: String }) }"
         env := try resolve_ok(src)
+
         // The parent enum should exist
         try assert.is_true(resolver.has_type(env, "Foo"))
+
         // The synthesized record type should be findable by display name
         try assert.equal(try get_field_type(env, "Foo.Bar", "x"), "Int")
         try assert.equal(try get_field_type(env, "Foo.Bar", "y"), "String")
@@ -2385,6 +2452,7 @@ pub fn suite() runner.Suite {
       fn() {
         src := "type Foo = { Bar(.{ x: Int }) }"
         env := try resolve_ok(src)
+
         // "Bar" should NOT be a user-accessible type name
         try assert.is_true(!resolver.has_type(env, "Bar"))
         .Ok({})

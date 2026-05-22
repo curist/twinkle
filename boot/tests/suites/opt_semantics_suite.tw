@@ -9,7 +9,9 @@ use compiler.opt.semantics.{
 use tests.assert
 use tests.runner
 
-fn lid(id: Int) LocalId { LocalId.{ id } }
+fn lid(id: Int) LocalId {
+  LocalId.{ id }
+}
 
 fn test_vector_len_effect_is_read_only() Result<Void, String> {
   reg := make_builtin_registry()

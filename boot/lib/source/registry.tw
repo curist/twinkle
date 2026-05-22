@@ -18,7 +18,9 @@ fn compute_line_starts(source: String) Vector<Int> {
   starts: Vector<Int> = [0]
 
   for b, i in source {
-    if b.is_newline() { starts = .append(i + 1) }
+    if b.is_newline() {
+      starts = .append(i + 1)
+    }
   }
 
   starts
@@ -75,6 +77,7 @@ pub fn line_col(reg: FileRegistry, s: Span) LineCol? {
   if s.start < 0 {
     return .None
   }
+
   f := try get_file(reg, s.file_id)
   line_index := find_line_index(f.line_starts, s.start)
   line := line_index + 1
@@ -93,10 +96,13 @@ pub fn line_text(reg: FileRegistry, s: Span) String? {
   if s.start < 0 {
     return .None
   }
+
   f := try get_file(reg, s.file_id)
   line_index := find_line_index(f.line_starts, s.start)
   line_start := f.line_starts[line_index]
-  line_end := if line_index + 1 < f.line_starts.len() { f.line_starts[line_index + 1] } else {
+  line_end := if line_index + 1 < f.line_starts.len() {
+    f.line_starts[line_index + 1]
+  } else {
     f.source.len()
   }
   .Some(f.source.slice(line_start, line_end))

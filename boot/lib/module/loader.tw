@@ -15,7 +15,9 @@ use .core_lib
 /// If `TWINKLE_ROOT` env var is set, uses that instead.
 pub fn find_project_root(start: String) String {
   case proc.env("TWINKLE_ROOT") {
-    .Some(root) => { return root },
+    .Some(root) => {
+      return root
+    },
     .None => {},
   }
 
@@ -25,10 +27,13 @@ pub fn find_project_root(start: String) String {
     if fs.exists(path.join(dir, "twinkle.toml")) {
       return dir
     }
+
     parent := path.dirname(dir)
+
     if parent == dir {
       return path.normalize(".")
     }
+
     dir = parent
   }
 
@@ -51,17 +56,25 @@ pub fn resolve_relative_module_path(importing_file: String, module_path: Vector<
 }
 
 /// Return the stdlib root bundled into the compiler.
-pub fn resolve_stdlib_root() String { path.join(core_lib.root(), "stdlib") }
+pub fn resolve_stdlib_root() String {
+  path.join(core_lib.root(), "stdlib")
+}
 
 /// Return the prelude root bundled into the compiler.
-pub fn resolve_prelude_root() String { path.join(core_lib.root(), "prelude") }
+pub fn resolve_prelude_root() String {
+  path.join(core_lib.root(), "prelude")
+}
 
 /// Resolve a stdlib import path from a given stdlib root.
 /// Strips leading "std" segment if present.
 /// e.g. stdlib_root + ["std", "path"] -> stdlib_root/path.tw
 pub fn resolve_stdlib_module_path(stdlib_root: String, module_path: Vector<String>) String {
   segments := module_path
-  if segments.len() > 0 and segments[0] == "std" { segments = .slice(1, segments.len()) }
+
+  if segments.len() > 0 and segments[0] == "std" {
+    segments = .slice(1, segments.len())
+  }
+
   resolve_module_path(stdlib_root, segments)
 }
 
@@ -71,7 +84,9 @@ pub fn list_prelude_modules(prelude_root: String) Vector<String> {
   names := case core_lib.list_dir(prelude_root) {
     .Some(entries) => entries,
     .None => case fs.list_dir(prelude_root) {
-      .Ok(entries) => collect entry in entries { entry.name },
+      .Ok(entries) => collect entry in entries {
+        entry.name
+      },
       .Err(_) => {
         return []
       },
@@ -80,7 +95,9 @@ pub fn list_prelude_modules(prelude_root: String) Vector<String> {
   filtered: Vector<String> = []
 
   for name in names {
-    if path.extension(name) == ".tw" { filtered = .append(path.join(prelude_root, name)) }
+    if path.extension(name) == ".tw" {
+      filtered = .append(path.join(prelude_root, name))
+    }
   }
 
   filtered.sort()

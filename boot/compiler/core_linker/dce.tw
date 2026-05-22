@@ -76,16 +76,23 @@ fn maybe_add_ref(state: BfsState, ref_id: Int) BfsState {
   if state.reachable.has(ref_id) {
     return state
   }
+
   new_reachable := state.reachable
   new_reachable[ref_id] = true
   BfsState.{ queue: state.queue.append(ref_id), reachable: new_reachable }
 }
 
-fn add_refs(state: BfsState, refs: Vector<Int>) BfsState { refs.fold(state, maybe_add_ref) }
+fn add_refs(state: BfsState, refs: Vector<Int>) BfsState {
+  refs.fold(state, maybe_add_ref)
+}
 
 pub fn build_reachability_index(functions: Vector<FunctionDef>, method_table: Dict<String, FuncId>) ReachabilityIndex {
   funcs_by_id: Dict<Int, FunctionDef> = Dict.new()
-  for f in functions { funcs_by_id[f.func_id.id] = f }
+
+  for f in functions {
+    funcs_by_id[f.func_id.id] = f
+  }
+
   .{ funcs_by_id, method_table }
 }
 
@@ -114,7 +121,9 @@ fn contract_call_refs(method_name: String, receiver_ty: MonoType, index: Reachab
         for key in index.method_table.keys() {
           if key.ends_with(suffix) {
             case index.method_table[key] {
-              .Some(fid) => { refs = .append(fid.id) },
+              .Some(fid) => {
+                refs = .append(fid.id)
+              },
               .None => {},
             }
           }
@@ -159,7 +168,9 @@ fn collect_func_refs_into(expr: CoreExpr, refs: Vector<Int>, index: Reachability
     .ContractCall(_, method_name, receiver, args) => {
       r := contract_call_refs(method_name, receiver.ty, index).fold(
         refs,
-        fn(out, id) { out.append(id) },
+        fn(out, id) {
+          out.append(id)
+        },
       )
       r = collect_func_refs_into(receiver, r, index)
       collect_func_refs_list(args, r, index)
@@ -170,30 +181,29 @@ fn collect_func_refs_into(expr: CoreExpr, refs: Vector<Int>, index: Reachability
       r = collect_func_refs_into(then_br, r, index)
       collect_func_refs_into(else_br, r, index)
     },
-    .Match(scrutinee, arms) => {
-      arms.fold(
-        collect_func_refs_into(scrutinee, refs, index),
-        fn(r, arm) { collect_func_refs_into(arm.body, r, index) },
-      )
-    },
+    .Match(scrutinee, arms) => arms.fold(
+      collect_func_refs_into(scrutinee, refs, index),
+      fn(r, arm) {
+        collect_func_refs_into(arm.body, r, index)
+      },
+    ),
     .Loop(body) => collect_func_refs_into(body, refs, index),
-    .Break(val) => {
-      case val {
-        .Some(v) => collect_func_refs_into(v, refs, index),
-        .None => refs,
-      }
+    .Break(val) => case val {
+      .Some(v) => collect_func_refs_into(v, refs, index),
+      .None => refs,
     },
     .Continue => refs,
-    .Return(val) => {
-      case val {
-        .Some(v) => collect_func_refs_into(v, refs, index),
-        .None => refs,
-      }
+    .Return(val) => case val {
+      .Some(v) => collect_func_refs_into(v, refs, index),
+      .None => refs,
     },
     .Defer(body) => collect_func_refs_into(body, refs, index),
-    .Record(_, fields) => {
-      fields.fold(refs, fn(r, fi) { collect_func_refs_into(fi.value, r, index) })
-    },
+    .Record(_, fields) => fields.fold(
+      refs,
+      fn(r, fi) {
+        collect_func_refs_into(fi.value, r, index)
+      },
+    ),
     .RecordGet(rec, _) => collect_func_refs_into(rec, refs, index),
     .RecordUpdate(rec, _, value) => {
       r := collect_func_refs_into(rec, refs, index)
@@ -210,4 +220,11 @@ fn collect_func_refs_into(expr: CoreExpr, refs: Vector<Int>, index: Reachability
 
 fn collect_func_refs_list(exprs: Vector<CoreExpr>, refs: Vector<Int>, index: ReachabilityIndex) Vector<
   Int,
-> { exprs.fold(refs, fn(r, e) { collect_func_refs_into(e, r, index) }) }
+> {
+  exprs.fold(
+    refs,
+    fn(r, e) {
+      collect_func_refs_into(e, r, index)
+    },
+  )
+}

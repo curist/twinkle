@@ -49,9 +49,11 @@ pub fn prepare_backend(
 ) PreparedModule {
   // Insert explicit wrap/unwrap nodes at every representation-crossing point.
   anf2 := insert_boundaries(anf, empty_registry(), builtins, env)
+
   // Assign slots after boundary insertion so wrap/unwrap temporaries are
   // included in the slot maps.
   funcs := assign_slots_for_module(anf2.functions, closure_captures, env)
+
   // Refine SlotInfo.repr and SlotInfo.wasm_type from the slot-assignment
   // defaults using MonoType and boundary-op overrides.
   funcs2 := assign_repr_for_module(funcs, env, builtins)

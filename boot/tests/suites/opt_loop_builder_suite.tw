@@ -5,19 +5,33 @@ use compiler.opt.loop_builder.{rewrite_loop_region}
 use tests.assert
 use tests.runner
 
-fn lid(id: Int) LocalId { LocalId.{ id } }
+fn lid(id: Int) LocalId {
+  LocalId.{ id }
+}
 
-fn fid(id: Int) FuncId { FuncId.{ id } }
+fn fid(id: Int) FuncId {
+  FuncId.{ id }
+}
 
-fn mock_vec_push() FuncId { fid(204) }
+fn mock_vec_push() FuncId {
+  fid(204)
+}
 
-fn mock_builder_new() FuncId { fid(230) }
+fn mock_builder_new() FuncId {
+  fid(230)
+}
 
-fn mock_builder_from() FuncId { fid(231) }
+fn mock_builder_from() FuncId {
+  fid(231)
+}
 
-fn mock_builder_push() FuncId { fid(232) }
+fn mock_builder_push() FuncId {
+  fid(232)
+}
 
-fn mock_builder_freeze() FuncId { fid(233) }
+fn mock_builder_freeze() FuncId {
+  fid(233)
+}
 
 fn mock_builder_config() BuilderConfig {
   BuilderConfig.{
@@ -47,14 +61,12 @@ fn test_rewrite_loop_region_uses_builder_new_for_known_empty() Result<Void, Stri
     true,
     mock_builder_config(),
   ) {
-    .Some(result) => {
-      case result.expr {
-        .Let(_, .ACall(.AGlobalFunc(f), args), _) => {
-          try assert.equal(f.id, mock_builder_new().id)
-          assert.equal(args.len(), 0)
-        },
-        _ => .Err("expected builder_new call at top of rewritten region"),
-      }
+    .Some(result) => case result.expr {
+      .Let(_, .ACall(.AGlobalFunc(f), args), _) => {
+        try assert.equal(f.id, mock_builder_new().id)
+        assert.equal(args.len(), 0)
+      },
+      _ => .Err("expected builder_new call at top of rewritten region"),
     },
     .None => .Err("expected loop region rewrite"),
   }
@@ -78,19 +90,17 @@ fn test_rewrite_loop_region_uses_builder_from_for_non_empty() Result<Void, Strin
     false,
     mock_builder_config(),
   ) {
-    .Some(result) => {
-      case result.expr {
-        .Let(_, .ACall(.AGlobalFunc(f), args), _) => {
-          try assert.equal(f.id, mock_builder_from().id)
-          try assert.equal(args.len(), 1)
+    .Some(result) => case result.expr {
+      .Let(_, .ACall(.AGlobalFunc(f), args), _) => {
+        try assert.equal(f.id, mock_builder_from().id)
+        try assert.equal(args.len(), 1)
 
-          case args[0] {
-            .ALocal(local) => assert.equal(local.id, 0),
-            _ => .Err("expected builder_from base arg"),
-          }
-        },
-        _ => .Err("expected builder_from call at top of rewritten region"),
-      }
+        case args[0] {
+          .ALocal(local) => assert.equal(local.id, 0),
+          _ => .Err("expected builder_from base arg"),
+        }
+      },
+      _ => .Err("expected builder_from call at top of rewritten region"),
     },
     .None => .Err("expected loop region rewrite"),
   }

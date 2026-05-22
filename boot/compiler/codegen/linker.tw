@@ -72,8 +72,10 @@ fn rename(map: Dict<String, String>, sym: String) String {
 fn rename_func(ns: String, redirects: Dict<String, String>, sym: String) String {
   case redirects[sym] {
     .Some(new) => new,
-    .None => {
-      if sym.starts_with("rt_") { sym } else { qualify(ns, sym) }
+    .None => if sym.starts_with("rt_") {
+      sym
+    } else {
+      qualify(ns, sym)
     },
   }
 }
@@ -90,7 +92,9 @@ fn rewrite_val_type(type_renames: Dict<String, String>, vt: ValType) ValType {
 }
 
 fn rewrite_val_types(type_renames: Dict<String, String>, vts: Vector<ValType>) Vector<ValType> {
-  collect vt in vts { rewrite_val_type(type_renames, vt) }
+  collect vt in vts {
+    rewrite_val_type(type_renames, vt)
+  }
 }
 
 fn rewrite_val_type_opt(type_renames: Dict<String, String>, vt: ValType?) ValType? {
@@ -115,7 +119,9 @@ fn rewrite_instrs(
   type_renames: Dict<String, String>,
   instrs: Vector<Instr>,
 ) Vector<Instr> {
-  collect instr in instrs { rewrite_instr(ns, import_redirects, type_renames, instr) }
+  collect instr in instrs {
+    rewrite_instr(ns, import_redirects, type_renames, instr)
+  }
 }
 
 fn rewrite_instr(
@@ -185,7 +191,9 @@ fn rewrite_field_def(type_renames: Dict<String, String>, fd: FieldDef) FieldDef 
 fn rewrite_type_def(type_renames: Dict<String, String>, td: TypeDef) TypeDef {
   case td {
     .Struct(name, fields, supertype, is_final) => {
-      new_fields := collect f in fields { rewrite_field_def(type_renames, f) }
+      new_fields := collect f in fields {
+        rewrite_field_def(type_renames, f)
+      }
       new_super: String? = case supertype {
         .Some(s) => .Some(rename(type_renames, s)),
         .None => .None,
@@ -225,9 +233,9 @@ pub fn link(modules: Vector<WasmModule>, entry: String?) Result<LinkedModule, Ve
     // Types
     for td in m.types {
       case td {
-        .Struct(name, _, _, _) => { type_renames[name] = qualify(m.namespace, name) },
-        .Array(name, _) => { type_renames[name] = qualify(m.namespace, name) },
-        .FuncType(name, _, _) => { type_renames[name] = qualify(m.namespace, name) },
+        .Struct(name, _, _, _) => type_renames[name] = qualify(m.namespace, name),
+        .Array(name, _) => type_renames[name] = qualify(m.namespace, name),
+        .FuncType(name, _, _) => type_renames[name] = qualify(m.namespace, name),
       }
     }
 
@@ -277,10 +285,13 @@ pub fn link(modules: Vector<WasmModule>, entry: String?) Result<LinkedModule, Ve
   for m, mi in modules {
     type_renames := all_type_renames[mi]
     import_redirects := all_import_redirects[mi]
+
     // Import redirects are the only function renames that cannot be derived
     // from the current module namespace. Avoid building and repeatedly reading
     // one huge function rename HAMT for the user module.
-    for td in m.types { out_types = .append(rewrite_type_def(type_renames, td)) }
+    for td in m.types {
+      out_types = .append(rewrite_type_def(type_renames, td))
+    }
 
     for imp in m.imports {
       if !import_redirects.has(imp.as_sym)
@@ -308,6 +319,7 @@ pub fn link(modules: Vector<WasmModule>, entry: String?) Result<LinkedModule, Ve
         },
       )
     }
+
     for g in m.globals {
       out_globals = .append(
         GlobalDef.{
@@ -318,6 +330,7 @@ pub fn link(modules: Vector<WasmModule>, entry: String?) Result<LinkedModule, Ve
         },
       )
     }
+
     for t in m.tables {
       out_tables = .append(
         TableDef.{
@@ -328,12 +341,15 @@ pub fn link(modules: Vector<WasmModule>, entry: String?) Result<LinkedModule, Ve
         },
       )
     }
+
     for e in m.elems {
       out_elems = .append(
         ElemDef.{
           table: qualify(m.namespace, e.table),
           offset: rewrite_instrs(m.namespace, import_redirects, type_renames, e.offset),
-          func_syms: collect sym in e.func_syms { rename_func(m.namespace, import_redirects, sym) },
+          func_syms: collect sym in e.func_syms {
+            rename_func(m.namespace, import_redirects, sym)
+          },
         },
       )
     }
@@ -353,6 +369,7 @@ pub fn link(modules: Vector<WasmModule>, entry: String?) Result<LinkedModule, Ve
     // Memories
     out_memories = .concat(m.memories)
     out_memory_exports = .concat(m.memory_exports)
+
     // Data segments
     for d in m.data {
       out_data = .append(
@@ -366,7 +383,9 @@ pub fn link(modules: Vector<WasmModule>, entry: String?) Result<LinkedModule, Ve
 
     // Collect start functions
     case m.start {
-      .Some(s) => { start_funcs = .append(rename_func(m.namespace, import_redirects, s)) },
+      .Some(s) => {
+        start_funcs = .append(rename_func(m.namespace, import_redirects, s))
+      },
       .None => {},
     }
   }
@@ -377,11 +396,14 @@ pub fn link(modules: Vector<WasmModule>, entry: String?) Result<LinkedModule, Ve
   // cannot be wrapped with WebAssembly.promising), we export the entry
   // function so the host can call it explicitly. This is required for JSPI.
   start: String? = .None
+
   // Collect all call targets: start funcs + entry
   init_calls: Vector<String> = start_funcs
 
   case entry {
-    .Some(e) => { init_calls = .append(e) },
+    .Some(e) => {
+      init_calls = .append(e)
+    },
     .None => {},
   }
 
@@ -394,7 +416,9 @@ pub fn link(modules: Vector<WasmModule>, entry: String?) Result<LinkedModule, Ve
     out_exports = .append(ExportDef.{ wasm_name: "__twinkle_start", func_sym: init_calls[0] })
   } else {
     // Multiple starts or entry specified → synthesize __linked_init
-    init_body: Vector<Instr> = collect sym in init_calls { Instr.Call(sym) }
+    init_body: Vector<Instr> = collect sym in init_calls {
+      Instr.Call(sym)
+    }
     out_funcs = .append(
       FuncDef.{ name: "__linked_init", params: [], results: [], locals: [], body: init_body },
     )

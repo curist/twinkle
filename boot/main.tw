@@ -55,7 +55,11 @@ fn file_detail(parsed: ParseResult, render: fn(String) String) String!String {
 
 fn not_implemented(cmd: String, detail: String) {
   eprintln("TODO: '${cmd}' is not implemented in boot/main.tw yet.")
-  if detail != "" { eprintln(detail) }
+
+  if detail != "" {
+    eprintln(detail)
+  }
+
   proc.exit(1)
 }
 
@@ -81,14 +85,12 @@ fn build_command_plan(parsed: ParseResult) CommandPlan!String {
             "Would print IR for '${file}'."
           },
         ),
-        "run" => {
-          try file_detail(
-            parsed,
-            fn(file) {
-              "Would run '${file}' via WASM backend."
-            },
-          )
-        },
+        "run" => try file_detail(
+          parsed,
+          fn(file) {
+            "Would run '${file}' via WASM backend."
+          },
+        ),
         "build" => {
           file := try get_positional(parsed, 0, "file")
           output := try resolve_build_output(parsed, file)
@@ -122,15 +124,13 @@ fn run_command(parsed: ParseResult) {
     .Some("run") => {
       file := case get_positional(parsed, 0, "file") {
         .Ok(path) => path,
-        .Err(msg) => { exit_usage_error(msg) },
+        .Err(msg) => exit_usage_error(msg),
       }
       run_command_impl(parsed, file)
     },
-    _ => {
-      case build_command_plan(parsed) {
-        .Ok(plan) => not_implemented(plan.cmd, plan.detail),
-        .Err(msg) => exit_usage_error(msg),
-      }
+    _ => case build_command_plan(parsed) {
+      .Ok(plan) => not_implemented(plan.cmd, plan.detail),
+      .Err(msg) => exit_usage_error(msg),
     },
   }
 }
@@ -138,10 +138,8 @@ fn run_command(parsed: ParseResult) {
 argv := normalize_argv(proc.args())
 case app.parse(cli, argv) {
   .Ok(parsed) => run_command(parsed),
-  .Err(err) => {
-    case err {
-      .HelpRequested(msg) => println(msg),
-      _ => exit_usage_error(app.error_message(err)),
-    }
+  .Err(err) => case err {
+    .HelpRequested(msg) => println(msg),
+    _ => exit_usage_error(app.error_message(err)),
   },
 }

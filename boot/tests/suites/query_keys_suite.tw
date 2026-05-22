@@ -58,9 +58,11 @@ pub fn suite() runner.Suite {
       "parse_key matches reference",
       fn() {
         source_hash := keys.hash_text("fn main() {}")
+
         // Verify source hash first
         try assert.equal(source_hash, 0 - 6247076241900209079)
         pk := keys.parse_key("test.tw", source_hash)
+
         // Rust: parse_key("test.tw", source_hash) = -8184021968052220895i64
         try assert.equal(pk, 0 - 8184021968052220895)
         .Ok({})
@@ -147,6 +149,7 @@ pub fn suite() runner.Suite {
       "deps_hash empty entries",
       fn() {
         entries: Vector<keys.DepEntry> = []
+
         // Should still produce a valid hash (just hash_text("deps"))
         result := keys.deps_hash(entries)
         try assert.is_true(result != 0)
@@ -158,6 +161,7 @@ pub fn suite() runner.Suite {
       fn() {
         source_hash := keys.hash_text("fn main() {}")
         dh := 0 - 3408744791725452791 // from deps_hash test above
+
         // Rust: module_hash(source_hash, dh) = 5800117160120315122i64
         try assert.equal(keys.module_hash(source_hash, dh), 5800117160120315122)
         .Ok({})
@@ -182,6 +186,7 @@ pub fn suite() runner.Suite {
       "context_hash differs from deps_hash for same entries",
       fn() {
         entries: Vector<keys.DepEntry> = [keys.DepEntry.{ path: "a.tw", hash: 1 }]
+
         // context_hash uses "ctx" tag, deps_hash uses "deps" tag
         try assert.is_true(keys.context_hash(entries) != keys.deps_hash(entries))
         .Ok({})
@@ -193,8 +198,10 @@ pub fn suite() runner.Suite {
         base := keys.parse_key("test.tw", keys.hash_text("src"))
         ctx := keys.context_hash([keys.DepEntry.{ path: "dep.tw", hash: 42 }])
         result := keys.with_context(base, ctx)
+
         // Should differ from base alone
         try assert.is_true(result != base)
+
         // Should be deterministic
         try assert.equal(result, keys.with_context(base, ctx))
         .Ok({})

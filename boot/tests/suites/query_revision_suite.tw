@@ -67,6 +67,7 @@ pub fn suite() runner.Suite {
         store := cache.empty()
         hash := keys.hash_text("x := 1")
         store = cache.note_source_hash(store, "/a.tw", hash)
+
         // revision is now 1
         key := keys.parse_key("/a.tw", hash)
         parsed := make_parsed("x := 1")
@@ -81,14 +82,17 @@ pub fn suite() runner.Suite {
         store := cache.empty()
         h1 := keys.hash_text("x := 1")
         store = cache.note_source_hash(store, "/a.tw", h1)
+
         // revision = 1
         key := keys.parse_key("/a.tw", h1)
         parsed := make_parsed("x := 1")
         store = cache.put_parsed(store, "/a.tw", key, parsed)
+
         // changed_at = 1, verified_at = 1
         // Simulate another module changing (bumps revision to 2)
         h2 := keys.hash_text("mod b")
         store = cache.note_source_hash(store, "/b.tw", h2)
+
         // revision = 2
         // Hit cache for /a.tw — verified_at should update to 2
         lookup := cache.get_parsed(store, "/a.tw", key)
@@ -106,14 +110,17 @@ pub fn suite() runner.Suite {
         store = cache.note_source_hash(store, dep, keys.hash_text("pub fn x() Int { 1 }"))
         store = cache.note_source_hash(store, main, keys.hash_text("use dep\nfn run() { dep.x() }"))
         store = cache.set_dependencies(store, main, [dep])
+
         // Populate main's resolved entry
         key := keys.resolve_key(main, keys.hash_text("use dep\nfn run() { dep.x() }"), 0)
         env := base_env.builtin_env()
         parsed := make_parsed("use dep\nfn run() { dep.x() }")
         resolved := env.resolve(parsed.module)
         store = cache.put_resolved(store, main, key, resolved)
+
         // Dep changes → invalidation
         store = cache.invalidate_changed_module(store, dep)
+
         // Entry should still be present (not eagerly removed)
         try assert.is_some(cache.latest_resolved(store, main))
         .Ok({})
@@ -128,14 +135,17 @@ pub fn suite() runner.Suite {
         store = cache.note_source_hash(store, dep, keys.hash_text("v1"))
         store = cache.note_source_hash(store, main, keys.hash_text("main"))
         store = cache.set_dependencies(store, main, [dep])
+
         // Populate main's typed entry with a dummy
         parsed := make_parsed("x := 1")
         env := base_env.builtin_env()
         resolved := env.resolve(parsed.module)
         typed := checker.check(parsed.module, resolved.env)
         store = cache.put_typed(store, main, 42, typed)
+
         // Dep changes → invalidation
         store = cache.invalidate_changed_module(store, dep)
+
         // Entry should still be present
         try assert.is_some(cache.latest_typed(store, main))
         .Ok({})
@@ -149,17 +159,21 @@ pub fn suite() runner.Suite {
         store := cache.empty()
         store = cache.note_source_hash(store, dep, keys.hash_text("v1"))
         store = cache.note_source_hash(store, main, keys.hash_text("main"))
+
         // revision = 2
         store = cache.set_dependencies(store, main, [dep])
+
         // Put resolved at current revision (2)
         env := base_env.builtin_env()
         parsed := make_parsed("x := 1")
         resolved := env.resolve(parsed.module)
         store = cache.put_resolved(store, main, 99, resolved)
         try assert.equal(cache.verified_at(store, main, .Resolved), 2)
+
         // Dep changes → revision bumps to 3
         store = cache.note_source_hash(store, dep, keys.hash_text("v2"))
         store = cache.invalidate_changed_module(store, dep)
+
         // main's resolved verified_at should be stale (< current revision)
         try assert.is_true(cache.verified_at(store, main, .Resolved) < store.revision)
         .Ok({})

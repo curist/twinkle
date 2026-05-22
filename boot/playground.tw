@@ -28,6 +28,7 @@ fn format_analysis_diags(env: ResolvedEnv, diags: Vector<analyze.AnalysisDiag>) 
   if diags.len() == 0 {
     return "compilation failed"
   }
+
   stage := diags[0].stage
   config := report.default_config()
   parts: Vector<String> = []
@@ -88,7 +89,10 @@ fn compile_and_run(file: String) {
   print_warnings(artifacts.warnings)
   wasm_bytes := pipeline.emit_wasm(artifacts)
   exit_code := proc.run_wasm(wasm_bytes, [file])
-  if exit_code != 0 { proc.exit(exit_code) }
+
+  if exit_code != 0 {
+    proc.exit(exit_code)
+  }
 }
 
 argv := proc.args()

@@ -79,7 +79,9 @@ fn max_local_id_in_func(func: FunctionDef) Int {
   max := 0
 
   for p in func.params {
-    if p.local.id > max { max = p.local.id }
+    if p.local.id > max {
+      max = p.local.id
+    }
   }
 
   max_local_id_in_expr(func.body, max)
@@ -87,22 +89,40 @@ fn max_local_id_in_func(func: FunctionDef) Int {
 
 fn max_local_id_in_expr(expr: CoreExpr, max: Int) Int {
   case expr.kind {
-    .Local(id) => if id.id > max { id.id } else { max },
-    .GlobalLocal(id) => if id.id > max { id.id } else { max },
+    .Local(id) => if id.id > max {
+      id.id
+    } else {
+      max
+    },
+    .GlobalLocal(id) => if id.id > max {
+      id.id
+    } else {
+      max
+    },
     .Let(local, value, body) => {
-      m := if local.id > max { local.id } else { max }
+      m := if local.id > max {
+        local.id
+      } else {
+        max
+      }
       m = max_local_id_in_expr(value, m)
       max_local_id_in_expr(body, m)
     },
     .Assign(local, value) => {
-      m := if local.id > max { local.id } else { max }
+      m := if local.id > max {
+        local.id
+      } else {
+        max
+      }
       max_local_id_in_expr(value, m)
     },
     .MakeClosure(_, free_vars) => {
       m := max
 
       for v in free_vars {
-        if v.id > m { m = v.id }
+        if v.id > m {
+          m = v.id
+        }
       }
 
       m
@@ -114,12 +134,20 @@ fn max_local_id_in_expr(expr: CoreExpr, max: Int) Int {
     .UnOp(_, inner) => max_local_id_in_expr(inner, max),
     .Call(callee, args) => {
       m := max_local_id_in_expr(callee, max)
-      for a in args { m = max_local_id_in_expr(a, m) }
+
+      for a in args {
+        m = max_local_id_in_expr(a, m)
+      }
+
       m
     },
     .ContractCall(_, _, receiver, args) => {
       m := max_local_id_in_expr(receiver, max)
-      for a in args { m = max_local_id_in_expr(a, m) }
+
+      for a in args {
+        m = max_local_id_in_expr(a, m)
+      }
+
       m
     },
     .If(cond, then_e, else_e) => {
@@ -138,21 +166,21 @@ fn max_local_id_in_expr(expr: CoreExpr, max: Int) Int {
       m
     },
     .Loop(body) => max_local_id_in_expr(body, max),
-    .Break(val) => {
-      case val {
-        .Some(v) => max_local_id_in_expr(v, max),
-        .None => max,
-      }
+    .Break(val) => case val {
+      .Some(v) => max_local_id_in_expr(v, max),
+      .None => max,
     },
-    .Return(val) => {
-      case val {
-        .Some(v) => max_local_id_in_expr(v, max),
-        .None => max,
-      }
+    .Return(val) => case val {
+      .Some(v) => max_local_id_in_expr(v, max),
+      .None => max,
     },
     .Record(_, fields) => {
       m := max
-      for f in fields { m = max_local_id_in_expr(f.value, m) }
+
+      for f in fields {
+        m = max_local_id_in_expr(f.value, m)
+      }
+
       m
     },
     .RecordGet(target, _) => max_local_id_in_expr(target, max),
@@ -162,12 +190,20 @@ fn max_local_id_in_expr(expr: CoreExpr, max: Int) Int {
     },
     .Variant(_, _, args) => {
       m := max
-      for a in args { m = max_local_id_in_expr(a, m) }
+
+      for a in args {
+        m = max_local_id_in_expr(a, m)
+      }
+
       m
     },
     .ArrayLit(elements) => {
       m := max
-      for e in elements { m = max_local_id_in_expr(e, m) }
+
+      for e in elements {
+        m = max_local_id_in_expr(e, m)
+      }
+
       m
     },
     .Index(base, index) => {
@@ -187,10 +223,18 @@ fn max_local_id_in_expr(expr: CoreExpr, max: Int) Int {
 
 fn max_local_id_in_pattern(pattern: CorePattern, max: Int) Int {
   case pattern {
-    .Var(id) => if id.id > max { id.id } else { max },
+    .Var(id) => if id.id > max {
+      id.id
+    } else {
+      max
+    },
     .Variant(_, _, fields) => {
       m := max
-      for f in fields { m = max_local_id_in_pattern(f, m) }
+
+      for f in fields {
+        m = max_local_id_in_pattern(f, m)
+      }
+
       m
     },
     .Wildcard => max,
@@ -398,6 +442,7 @@ fn lower_expr(expr: CoreExpr, state: LowerState, accum: Vector<LetBinding>) Expr
       r := fresh(va.state)
       tmp := r.local
       st := r.state
+
       // Record the assign target's type in op_result_mono so the emitter
       // can determine the mono type of module globals.
       st.op_result_mono[local.id] = value.ty
@@ -413,8 +458,13 @@ fn lower_expr(expr: CoreExpr, state: LowerState, accum: Vector<LetBinding>) Expr
         .Atom(atom) => {
           // Value reduced to atom — extend outer accum, push AInit
           merged := accum
-          for b in vr.accum { merged = .append(b) }
+
+          for b in vr.accum {
+            merged = .append(b)
+          }
+
           pa := push_accum(merged, vr.state, orig_local, .AInit(atom), value.ty)
+
           // Continue with body
           lower_expr(body, pa.state, pa.accum)
         },
@@ -460,24 +510,20 @@ fn lower_expr(expr: CoreExpr, state: LowerState, accum: Vector<LetBinding>) Expr
       .{ expr: .Atom(.ALocal(tmp)), state: pa.state, accum: pa.accum }
     },
     // ── Terminals ──
-    .Break(val) => {
-      case val {
-        .Some(v) => {
-          va := atomize(v, state, accum)
-          .{ expr: .Break(.Some(va.atom)), state: va.state, accum: va.accum }
-        },
-        .None => .{ expr: .Break(.None), state, accum },
-      }
+    .Break(val) => case val {
+      .Some(v) => {
+        va := atomize(v, state, accum)
+        .{ expr: .Break(.Some(va.atom)), state: va.state, accum: va.accum }
+      },
+      .None => .{ expr: .Break(.None), state, accum },
     },
     .Continue => .{ expr: .Continue, state, accum },
-    .Return(val) => {
-      case val {
-        .Some(v) => {
-          va := atomize(v, state, accum)
-          .{ expr: .Return(.Some(va.atom)), state: va.state, accum: va.accum }
-        },
-        .None => .{ expr: .Return(.None), state, accum },
-      }
+    .Return(val) => case val {
+      .Some(v) => {
+        va := atomize(v, state, accum)
+        .{ expr: .Return(.Some(va.atom)), state: va.state, accum: va.accum }
+      },
+      .None => .{ expr: .Return(.None), state, accum },
     },
   }
 }
@@ -665,6 +711,7 @@ fn atomize_structural(expr: CoreExpr, state: LowerState, accum: Vector<LetBindin
   r := fresh(anf_r.state)
   tmp := r.local
   st := r.state
+
   // Splice: replace the tail Atom with a binding to tmp, then flatten
   spliced := splice_atom_bind(anf_r.expr, tmp)
   flat := flatten_into_accum(spliced, accum, tmp, st, expr.ty)

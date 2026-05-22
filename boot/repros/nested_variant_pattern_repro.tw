@@ -13,7 +13,9 @@ fn describe_nested(opt: Option<Result<Int, String>>) String {
 fn describe_two_step(opt: Option<Result<Int, String>>) String {
   value := case opt {
     .Some(v) => v,
-    .None => { return "none" },
+    .None => {
+      return "none"
+    },
   }
 
   case value {
@@ -33,7 +35,9 @@ fn outer_nested(value: Outer) Int {
 fn outer_two_step(value: Outer) Int {
   inner := case value {
     .Wrap(v) => v,
-    .Empty => { return 0 },
+    .Empty => {
+      return 0
+    },
   }
 
   case inner {
@@ -53,7 +57,9 @@ fn classify_nested(opt: Option<Result<Int, String>>) Int {
 fn classify_two_step(opt: Option<Result<Int, String>>) Int {
   value := case opt {
     .Some(v) => v,
-    .None => { return 0 },
+    .None => {
+      return 0
+    },
   }
 
   case value {
@@ -63,11 +69,15 @@ fn classify_two_step(opt: Option<Result<Int, String>>) Int {
 }
 
 fn expect_str(actual: String, expected: String, label: String) {
-  if actual != expected { error("${label}: expected ${expected}, got ${actual}") }
+  if actual != expected {
+    error("${label}: expected ${expected}, got ${actual}")
+  }
 }
 
 fn expect_int(actual: Int, expected: Int, label: String) {
-  if actual != expected { error("${label}: expected ${expected}, got ${actual}") }
+  if actual != expected {
+    error("${label}: expected ${expected}, got ${actual}")
+  }
 }
 
 samples: Vector<Option<Result<Int, String>>> = [.Some(.Ok(7)), .Some(.Err("bad")), .None]
@@ -76,5 +86,7 @@ for sample, i in samples {
   expect_int(classify_nested(sample), classify_two_step(sample), "classify_${i}")
 }
 outers: Vector<Outer> = [.Wrap(.Num(9)), .Wrap(.Nope), .Empty]
-for sample, i in outers { expect_int(outer_nested(sample), outer_two_step(sample), "outer_${i}") }
+for sample, i in outers {
+  expect_int(outer_nested(sample), outer_two_step(sample), "outer_${i}")
+}
 println("nested-pattern-repro: ok")

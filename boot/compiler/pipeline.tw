@@ -29,12 +29,14 @@ use lib.source.report
 pub fn compile_source(src: String) Result<PipelineArtifacts, String> {
   virtual_path := "/__virtual__/input.tw"
   virtual_id := identity.from_path(virtual_path)
+
   // Put the source in an overlay so analyze_module finds it without disk access.
   ov := overlay.empty()
     .put(overlay.OverlayDocument.{ identity: virtual_id, text: src, version: .None })
   builtins := make_builtin_registry()
   base_env := builtin_env()
   project_root := loader.find_project_root(".")
+
   // Phase 1: Frontend analysis (parse → resolve → typecheck)
   a_state := analyze.new_state(base_env, query_cache.empty(), ov, project_root)
   a_result := analyze.analyze_module(virtual_id, "__input", base_env, a_state, [])
@@ -87,17 +89,21 @@ pub fn compile_source(src: String) Result<PipelineArtifacts, String> {
     value_refs,
     defined_global_count: lowered.next_global_local_id,
   }
+
   // Phase 3: Link, monomorphize, ANF lower, optimize
   core := core_linker.link([compiled_module], canonical, a_result.env, builtins.next_id)
   mono := monomorphize.monomorphize(core)
   anf := lower_anf.lower_module(mono)
   opt := optimize_module(anf)
+
   // Collect warnings
   warnings: Vector<analyze.AnalysisDiag> = []
 
   for d in a_result.diagnostics {
     case d.kind {
-      .Warning(_) => { warnings = .append(d) },
+      .Warning(_) => {
+        warnings = .append(d)
+      },
       .Error(_) => {},
     }
   }
@@ -110,8 +116,13 @@ fn format_analysis_diags_inline(env: ResolvedEnv, src: String, diags: Vector<ana
   if diags.len() == 0 {
     return "compilation failed"
   }
+
   parts: Vector<String> = []
-  for d in diags { parts = .append(format_analysis_diag_inline(env, src, d)) }
+
+  for d in diags {
+    parts = .append(format_analysis_diag_inline(env, src, d))
+  }
+
   parts.join("\n")
 }
 
@@ -134,6 +145,7 @@ fn format_diags_inline(env: ResolvedEnv, src: String, diags: Vector<diag.DiagKin
   if diags.len() == 0 {
     return "compilation failed"
   }
+
   reg := registry.empty()
   registry.add_file(reg, "<input>", src)
   config := report.default_config()

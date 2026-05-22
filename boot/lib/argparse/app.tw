@@ -34,7 +34,11 @@ pub fn add_command(a: App, cmd: command.Command) App {
 
 pub fn add_commands(a: App, cmds: Vector<command.Command>) App {
   out := a
-  for c in cmds { out = .add_command(c) }
+
+  for c in cmds {
+    out = .add_command(c)
+  }
+
   out
 }
 
@@ -45,7 +49,9 @@ pub fn has_flag(r: ParseResult, name: String) Bool {
   }
 }
 
-pub fn get_option(r: ParseResult, name: String) String? { r.options[name] }
+pub fn get_option(r: ParseResult, name: String) String? {
+  r.options[name]
+}
 
 pub fn error_message(e: ParseError) String {
   label := style.bold(style.red("error:"))
@@ -61,7 +67,11 @@ pub fn error_message(e: ParseError) String {
 
 // --- Private helpers ---
 fn find_by_long(args: Vector<arg.Arg>, name: String) arg.Arg? {
-  args.find(fn(a: arg.Arg) Bool { a.name == name })
+  args.find(
+    fn(a: arg.Arg) Bool {
+      a.name == name
+    },
+  )
 }
 
 fn find_by_short(args: Vector<arg.Arg>, s: String) arg.Arg? {
@@ -77,7 +87,11 @@ fn find_by_short(args: Vector<arg.Arg>, s: String) arg.Arg? {
 
 fn pad(s: String, width: Int) String {
   n := width - s.len()
-  if n < 2 { n = 2 }
+
+  if n < 2 {
+    n = 2
+  }
+
   out := s
 
   for n > 0 {
@@ -91,10 +105,16 @@ fn pad(s: String, width: Int) String {
 fn format_arg_help(a: arg.Arg) String {
   label := case a.kind {
     .Positional => {
-      tag := if a.is_required { "<".concat(a.name).concat(">") } else {
+      tag := if a.is_required {
+        "<".concat(a.name).concat(">")
+      } else {
         "[".concat(a.name).concat("]")
       }
-      styled := if a.is_required { style.bold(tag) } else { style.dim(tag) }
+      styled := if a.is_required {
+        style.bold(tag)
+      } else {
+        style.dim(tag)
+      }
       "  ".concat(styled)
     },
     .Flag => {
@@ -119,24 +139,25 @@ fn format_arg_help(a: arg.Arg) String {
       }
     },
   }
+
   // Pad based on raw length (name + punctuation, not ANSI codes)
   raw_len := case a.kind {
     .Positional => a.name.len() + 6,
-    .Flag => {
-      case a.short_name {
-        .Some(_) => a.name.len() + 10,
-        .None => a.name.len() + 8,
-      }
+    .Flag => case a.short_name {
+      .Some(_) => a.name.len() + 10,
+      .None => a.name.len() + 8,
     },
-    .Opt => {
-      case a.short_name {
-        .Some(_) => a.name.len() + 19,
-        .None => a.name.len() + 17,
-      }
+    .Opt => case a.short_name {
+      .Some(_) => a.name.len() + 19,
+      .None => a.name.len() + 17,
     },
   }
   extra := 28 - raw_len
-  if extra < 2 { extra = 2 }
+
+  if extra < 2 {
+    extra = 2
+  }
+
   spaces := ""
 
   for extra > 0 {
@@ -153,7 +174,11 @@ fn format_help(a: App, cmd_name: String?) String {
 
   case cmd_name {
     .Some(name) => {
-      cmd := a.commands.find(fn(c: command.Command) Bool { c.name == name })
+      cmd := a.commands.find(
+        fn(c: command.Command) Bool {
+          c.name == name
+        },
+      )
 
       case cmd {
         .Some(c) => {
@@ -161,39 +186,43 @@ fn format_help(a: App, cmd_name: String?) String {
 
           for def in c.args {
             case def.kind {
-              .Positional => {
-                if def.is_required {
-                  out = .concat(" <${def.name}>")
-                } else {
-                  out = .concat(" [${def.name}]")
-                }
+              .Positional => if def.is_required {
+                out = .concat(" <${def.name}>")
+              } else {
+                out = .concat(" [${def.name}]")
               },
               _ => {},
             }
           }
 
           out = .concat(" [options]\n\n")
-          for def in c.args { out = .concat(format_arg_help(def)).concat("\n") }
+
+          for def in c.args {
+            out = .concat(format_arg_help(def)).concat("\n")
+          }
         },
-        .None => { out = .concat("Unknown command: ${name}\n") },
+        .None => {
+          out = .concat("Unknown command: ${name}\n")
+        },
       }
     },
-    .None => {
-      if a.commands.len() > 0 {
-        out = .concat(usage_label).concat(" ${a.name} <command> [options]\n\n")
-        out = .concat(style.bold(style.yellow("Commands:"))).concat("\n")
+    .None => if a.commands.len() > 0 {
+      out = .concat(usage_label).concat(" ${a.name} <command> [options]\n\n")
+      out = .concat(style.bold(style.yellow("Commands:"))).concat("\n")
 
-        for cmd in a.commands {
-          out = .concat("  ").concat(style.bold(cmd.name))
-          out = pad(out, out.len() + 20 - cmd.name.len())
-          out = .concat(cmd.help).concat("\n")
-        }
+      for cmd in a.commands {
+        out = .concat("  ").concat(style.bold(cmd.name))
+        out = pad(out, out.len() + 20 - cmd.name.len())
+        out = .concat(cmd.help).concat("\n")
+      }
 
-        hint := a.name.concat(" <command> --help")
-        out = .concat("\nRun '").concat(style.bold(hint)).concat("' for more information.\n")
-      } else {
-        out = .concat(usage_label).concat(" ${a.name} [options]\n\n")
-        for def in a.args { out = .concat(format_arg_help(def)).concat("\n") }
+      hint := a.name.concat(" <command> --help")
+      out = .concat("\nRun '").concat(style.bold(hint)).concat("' for more information.\n")
+    } else {
+      out = .concat(usage_label).concat(" ${a.name} [options]\n\n")
+
+      for def in a.args {
+        out = .concat(format_arg_help(def)).concat("\n")
       }
     },
   }
@@ -219,7 +248,11 @@ pub fn parse(a: App, argv: Vector<String>) ParseResult!ParseError {
       return .Err(.HelpRequested(format_help(a, .None)))
     }
 
-    c := case a.commands.find(fn(c: command.Command) Bool { c.name == first }) {
+    c := case a.commands.find(
+      fn(c: command.Command) Bool {
+        c.name == first
+      },
+    ) {
       .Some(cmd) => cmd,
       .None => {
         return .Err(.UnknownCommand(first))
@@ -327,18 +360,14 @@ pub fn parse(a: App, argv: Vector<String>) ParseResult!ParseError {
   for def in active_args {
     if def.is_required {
       case def.kind {
-        .Positional => {
-          if pos_idx >= pos.len() {
-            return .Err(.MissingRequired(def.name))
-          }
+        .Positional => if pos_idx >= pos.len() {
+          return .Err(.MissingRequired(def.name))
         },
-        .Opt => {
-          case options[def.name] {
-            .None => {
-              return .Err(.MissingRequired(def.name))
-            },
-            .Some(_) => {},
-          }
+        .Opt => case options[def.name] {
+          .None => {
+            return .Err(.MissingRequired(def.name))
+          },
+          .Some(_) => {},
         },
         .Flag => {},
       }

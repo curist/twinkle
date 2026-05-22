@@ -5,9 +5,13 @@ use lib.module.loader
 use tests.assert
 use tests.runner
 
-fn parse_module(src: String) ast.Module { parser.parse(src, 0).value }
+fn parse_module(src: String) ast.Module {
+  parser.parse(src, 0).value
+}
 
-fn get_project_root() String { loader.find_project_root("boot") }
+fn get_project_root() String {
+  loader.find_project_root("boot")
+}
 
 fn plan_deps(module: ast.Module, path: String, root: String) Result<imports.DependencyPlan, String> {
   case imports.plan_dependencies(module, path, root) {
@@ -24,13 +28,16 @@ pub fn suite() runner.Suite {
       fn() {
         module := parse_module("fn main() { }")
         plan := try plan_deps(module, "${root}/tests/fixtures/empty.tw", root)
+
         // No explicit imports, but prelude modules should be auto-added
         // Check that no Import-kind deps exist
         import_count := 0
 
         for dep in plan.dependencies {
           case dep.kind {
-            .Import => { import_count = import_count + 1 },
+            .Import => {
+              import_count = import_count + 1
+            },
             .Prelude => {},
           }
         }
@@ -50,7 +57,9 @@ pub fn suite() runner.Suite {
         for dep in plan.dependencies {
           if dep.alias == "path" {
             case dep.kind {
-              .Import => { found = true },
+              .Import => {
+                found = true
+              },
               _ => {},
             }
 
@@ -70,7 +79,9 @@ pub fn suite() runner.Suite {
         found := false
 
         for dep in plan.dependencies {
-          if dep.alias == "p" { found = true }
+          if dep.alias == "p" {
+            found = true
+          }
         }
 
         try assert.is_true(found)
@@ -139,7 +150,9 @@ pub fn suite() runner.Suite {
 
         for dep in plan.dependencies {
           case dep.kind {
-            .Import => { import_count = import_count + 1 },
+            .Import => {
+              import_count = import_count + 1
+            },
             _ => {},
           }
         }
@@ -180,7 +193,9 @@ pub fn suite() runner.Suite {
 
         for dep in plan.dependencies {
           case dep.kind {
-            .Prelude => { prelude_count = prelude_count + 1 },
+            .Prelude => {
+              prelude_count = prelude_count + 1
+            },
             _ => {},
           }
         }
@@ -199,7 +214,9 @@ pub fn suite() runner.Suite {
 
         for dep in plan.dependencies {
           case dep.kind {
-            .Prelude => { prelude_count = prelude_count + 1 },
+            .Prelude => {
+              prelude_count = prelude_count + 1
+            },
             _ => {},
           }
         }
@@ -215,6 +232,7 @@ pub fn suite() runner.Suite {
         // We need to test with a prelude module path that matches
         module := parse_module("fn main() { }")
         plan := try plan_deps(module, "${root}/main.tw", root)
+
         // Count unique canonical paths
         paths: Dict<String, Bool> = Dict.new()
 

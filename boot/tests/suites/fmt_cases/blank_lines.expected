@@ -2,8 +2,13 @@ fn process(data: Vector<Int>) Int {
   total := 0
   count := 0
 
-  for x in data { total = total + x }
-  for x in data { count = count + 1 }
+  for x in data {
+    total = total + x
+  }
+
+  for x in data {
+    count = count + 1
+  }
 
   // compute average
   avg := total / count

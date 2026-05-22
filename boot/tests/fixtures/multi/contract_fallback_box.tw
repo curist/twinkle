@@ -8,4 +8,6 @@ fn show<T: Stringify>(x: T) String {
   "${x}"
 }
 
-pub fn show_box() String { show(Box.{ value: 42 }) }
+pub fn show_box() String {
+  show(Box.{ value: 42 })
+}

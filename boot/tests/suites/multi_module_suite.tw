@@ -13,15 +13,19 @@ fn fixtures_dir() String {
   "${root}/tests/fixtures/multi"
 }
 
-fn project_root() String { loader.find_project_root("boot") }
+fn project_root() String {
+  loader.find_project_root("boot")
+}
 
 fn has_box_to_string_param(env: ResolvedEnv, func: FunctionDef) Bool {
   if func.name != "to_string" {
     return false
   }
+
   if func.params.len() == 0 {
     return false
   }
+
   env.ty_to_string_env(func.params[0].ty).starts_with("Box")
 }
 
@@ -111,10 +115,8 @@ fn has_call_to(expr: CoreExpr, target_id: Int) Bool {
   case expr.kind {
     .Call(callee, args) => {
       case callee.kind {
-        .GlobalFunc(fid) => {
-          if fid.id == target_id {
-            return true
-          }
+        .GlobalFunc(fid) => if fid.id == target_id {
+          return true
         },
         _ => {},
       }
@@ -438,7 +440,9 @@ pub fn suite() runner.Suite {
             // After linking, Core IR should have functions from both modules.
             // math_lib defines: add, multiply, internal_helper
             // uses_math defines: main (plus $init)
-            names := collect f in artifacts.core.functions { f.name }
+            names := collect f in artifacts.core.functions {
+              f.name
+            }
             try assert.vec_contains(names, "add")
             try assert.vec_contains(names, "multiply")
             try assert.vec_contains(names, "main")
@@ -455,7 +459,9 @@ pub fn suite() runner.Suite {
 
         case result {
           .Ok(artifacts) => {
-            names := collect f in artifacts.core.functions { f.name }
+            names := collect f in artifacts.core.functions {
+              f.name
+            }
             try assert.vec_contains(names, "add")
             try assert.vec_contains(names, "\$init")
             .Ok({})
@@ -471,7 +477,9 @@ pub fn suite() runner.Suite {
 
         case result {
           .Ok(artifacts) => {
-            names := collect f in artifacts.core.functions { f.name }
+            names := collect f in artifacts.core.functions {
+              f.name
+            }
             try assert.vec_contains(names, "add")
             try assert.vec_contains(names, "\$init")
             .Ok({})
@@ -599,7 +607,9 @@ pub fn suite() runner.Suite {
           },
         }
         found := artifacts.core.functions.any(
-          fn(func) { has_box_to_string_param(artifacts.core.type_env, func) },
+          fn(func) {
+            has_box_to_string_param(artifacts.core.type_env, func)
+          },
         )
 
         if !found {
@@ -634,6 +644,7 @@ pub fn suite() runner.Suite {
             return .Err("expected fixture to compile, got: ${format_compile_error(err)}")
           },
         }
+
         // Find the Box type's TypeId in the linked environment.
         box_tid := case artifacts.core.type_env.lookup_registered_type("Box") {
           .Some(entry) => entry.id,
@@ -688,8 +699,10 @@ pub fn suite() runner.Suite {
       fn() {
         // Compile with original order (box first, provider second)
         wat_original := try codegen_harness.codegen_path("${dir}/contract_generic_fallback_main.tw")
+
         // Compile with reversed order (provider first, box second)
         wat_reversed := try codegen_harness.codegen_path("${dir}/contract_order_reversed_main.tw")
+
         // Both must produce the correct Box.to_string specialization
         try assert.str_contains(wat_original, "to_string__Int")
         try assert.str_contains(wat_reversed, "to_string__Int")
@@ -727,6 +740,7 @@ pub fn suite() runner.Suite {
             return .Err("compile failed: ${format_compile_error(err)}")
           },
         }
+
         // Find the Box.to_string FuncId from the method table.
         box_tid := case artifacts.mono.type_env.lookup_registered_type("Box") {
           .Some(entry) => entry.id,
@@ -755,6 +769,7 @@ pub fn suite() runner.Suite {
             return .Err("no specialized show__* function found in mono IR")
           },
         }
+
         // The specialized show function should call the Box.to_string specialization.
         // After monomorphization, the specialized to_string gets a new FuncId, but
         // it should be a specialization of the original Box.to_string generic function.
@@ -769,7 +784,9 @@ pub fn suite() runner.Suite {
 
             if param_ty_str.starts_with("Box") {
               // Verify show__* calls this exact FuncId.
-              if has_call_to(func.body, mono_func.func_id.id) { found_to_string = true }
+              if has_call_to(func.body, mono_func.func_id.id) {
+                found_to_string = true
+              }
             }
           }
         }

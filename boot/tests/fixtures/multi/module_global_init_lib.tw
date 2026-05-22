@@ -1,3 +1,5 @@
 pub hint := "expected value"
 
-pub fn check(msg: String) Bool { msg != hint }
+pub fn check(msg: String) Bool {
+  msg != hint
+}

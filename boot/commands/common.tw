@@ -23,7 +23,11 @@ pub fn get_positional(parsed: ParseResult, idx: Int, name: String) String!String
 
 pub fn exit_usage_error(msg: String) {
   eprintln(msg)
-  if msg != usage_hint { eprintln(usage_hint) }
+
+  if msg != usage_hint {
+    eprintln(usage_hint)
+  }
+
   proc.exit(2)
 }
 
@@ -49,6 +53,7 @@ fn format_analysis_diags(env: ResolvedEnv, diags: Vector<analyze.AnalysisDiag>) 
   if diags.len() == 0 {
     return "compilation failed"
   }
+
   stage := diags[0].stage
   config := report.default_config()
   parts: Vector<String> = []

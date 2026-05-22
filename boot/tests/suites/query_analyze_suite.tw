@@ -95,6 +95,7 @@ pub fn suite() runner.Suite {
         id := identity.from_path("/tmp/analyze/cached.tw")
         first := analyze.analyze_module(id, "__entry", base_env.builtin_env(), state, [])
         try assert.is_true(first.ok)
+
         // Re-analyze with same source — should get cache hits
         state2 := analyze.new_state(base_env.builtin_env(), first.state.cache, ov, "/tmp/analyze")
         second := analyze.analyze_module(id, "__entry", base_env.builtin_env(), state2, [])
@@ -117,14 +118,21 @@ pub fn suite() runner.Suite {
         id := identity.from_path("/tmp/analyze/main.tw")
         result := analyze.analyze_module(id, "__entry", base_env.builtin_env(), state, [])
         try assert.is_true(result.ok)
+
         // dep should come before main (dependency order), with bundled prelude modules allowed.
         dep_index := -1
         main_index := -1
         i := 0
 
         for p in result.state.module_order {
-          if p == "/tmp/analyze/dep.tw" { dep_index = i }
-          if p == "/tmp/analyze/main.tw" { main_index = i }
+          if p == "/tmp/analyze/dep.tw" {
+            dep_index = i
+          }
+
+          if p == "/tmp/analyze/main.tw" {
+            main_index = i
+          }
+
           i = i + 1
         }
 
@@ -146,6 +154,7 @@ pub fn suite() runner.Suite {
         result := analyze.analyze_module(id, "__entry", base_env.builtin_env(), state, [])
         try assert.is_false(result.ok)
         try assert.is_true(result.diagnostics.len() > 0)
+
         // Diagnostic should point to the dep file, not the entry
         try assert.equal(result.diagnostics[0].identity.path, "/tmp/analyze/dep.tw")
         try assert.equal(result.diagnostics[0].stage, "check")
@@ -177,8 +186,10 @@ pub fn suite() runner.Suite {
         result := analyze.analyze_module(id, "__entry", base_env.builtin_env(), state, [])
         try assert.is_false(result.ok)
         d := result.diagnostics[0]
+
         // Identity should be the importing file
         try assert.equal(d.identity.path, "/tmp/analyze/main.tw")
+
         // Span should be non-zero (points to `use missing`, not the old zero sentinel)
         try assert.is_true(d.kind.span().end > 0)
         .Ok({})
@@ -200,8 +211,10 @@ pub fn suite() runner.Suite {
         try assert.is_false(result.ok)
         try assert.is_true(result.diagnostics.len() > 0)
         d := result.diagnostics[0]
+
         // b.tw triggers the circular detection when it imports a.tw
         try assert.equal(d.identity.path, "/tmp/analyze/b.tw")
+
         // Span should point to `use a` in b.tw, not the zero sentinel
         try assert.is_true(d.kind.span().end > 0)
         .Ok({})
@@ -218,10 +231,12 @@ pub fn suite() runner.Suite {
         id := identity.from_path("/tmp/analyze/main.tw")
         result := analyze.analyze_module(id, "__entry", base_env.builtin_env(), state, [])
         try assert.is_true(result.ok)
+
         // Every module in module_order should have a runner
         for mod_path in result.state.module_order {
           try assert.is_true(result.state.module_runners.has(mod_path))
         }
+
         .Ok({})
       },
     )
@@ -236,6 +251,7 @@ pub fn suite() runner.Suite {
         id := identity.from_path("/tmp/analyze/main.tw")
         first := analyze.analyze_module(id, "__entry", base_env.builtin_env(), state, [])
         try assert.is_true(first.ok)
+
         // Change dep body but keep same signature
         ov2 := overlay.from_documents([
           ov_doc("/tmp/analyze/main.tw", "use helper\nx := helper.value()\n"),
@@ -245,6 +261,7 @@ pub fn suite() runner.Suite {
         second := analyze.analyze_module(id, "__entry", base_env.builtin_env(), state2, [])
         try assert.is_true(second.ok)
         stats := cache.get_stats(second.state.cache)
+
         // Importer should get resolve+typecheck cache hits
         try assert.is_true(stats.resolve_hits > 0)
         try assert.is_true(stats.typecheck_hits > 0)

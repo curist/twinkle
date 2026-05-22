@@ -9,7 +9,9 @@ use lib.json
 pub type CompletionItem = .{ label: String, kind: Int, detail: String?, documentation: String? }
 
 pub fn completion_response(items: Vector<CompletionItem>) json.Json {
-  json.array(collect item in items { item_to_json(item) })
+  json.array(collect item in items {
+    item_to_json(item)
+  })
 }
 
 fn item_to_json(item: CompletionItem) json.Json {
@@ -19,7 +21,9 @@ fn item_to_json(item: CompletionItem) json.Json {
   ]
 
   case item.detail {
-    .Some(d) => { fields = .append(json.kv("detail", .Str(d))) },
+    .Some(d) => {
+      fields = .append(json.kv("detail", .Str(d)))
+    },
     .None => {},
   }
 

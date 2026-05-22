@@ -17,6 +17,7 @@ pub fn subst_type_params(
           if i < args.len() {
             return args[i]
           }
+
           error(
             "subst_type_params: missing arg for type param '${name}' (index ${i}) with ${args.len()} arg(s)",
           )
@@ -25,20 +26,23 @@ pub fn subst_type_params(
 
       ty
     },
-    .Named(tid, inner_args) => {
-      .Named(tid, collect a in inner_args { subst_type_params(a, type_params, args) })
-    },
+    .Named(tid, inner_args) => .Named(
+      tid,
+      collect a in inner_args {
+        subst_type_params(a, type_params, args)
+      },
+    ),
     .Vector(elem) => .Vector(subst_type_params(elem, type_params, args)),
     .Dict(k, v) => .Dict(
       subst_type_params(k, type_params, args),
       subst_type_params(v, type_params, args),
     ),
-    .Function(ps, r) => {
-      .Function(
-        collect p in ps { subst_type_params(p, type_params, args) },
-        subst_type_params(r, type_params, args),
-      )
-    },
+    .Function(ps, r) => .Function(
+      collect p in ps {
+        subst_type_params(p, type_params, args)
+      },
+      subst_type_params(r, type_params, args),
+    ),
     .Optional(inner) => .Optional(subst_type_params(inner, type_params, args)),
     .Result(ok, err) => .Result(
       subst_type_params(ok, type_params, args),

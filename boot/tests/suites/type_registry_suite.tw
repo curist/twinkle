@@ -77,9 +77,11 @@ pub fn suite() runner.Suite {
         reg := registry.empty(8)
         out_a1 := registry.assign(reg, "/a.tw", "TypeA")
         out_b1 := registry.assign(out_a1.registry, "/b.tw", "TypeB")
+
         // Second compile: B then A (different order, same registry)
         out_b2 := registry.assign(out_b1.registry, "/b.tw", "TypeB")
         out_a2 := registry.assign(out_b2.registry, "/a.tw", "TypeA")
+
         // Same ids regardless of access order
         try assert.equal(out_a1.id.id, out_a2.id.id)
         try assert.equal(out_b1.id.id, out_b2.id.id)

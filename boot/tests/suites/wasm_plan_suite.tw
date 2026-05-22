@@ -17,7 +17,9 @@ use tests.assert
 use tests.runner
 
 // ── Helpers ─────────────────────────────────────────────────────────
-fn dummy_span() span.Span { span.Span.{ file_id: 0, start: 0, end: 0 } }
+fn dummy_span() span.Span {
+  span.Span.{ file_id: 0, start: 0, end: 0 }
+}
 
 fn empty_builtins() BuiltinRegistry {
   // Backend preparation now consults internal builder-family builtins even for
@@ -27,11 +29,17 @@ fn empty_builtins() BuiltinRegistry {
   make_builtin_registry()
 }
 
-fn simple_builtins() BuiltinRegistry { make_builtin_registry() }
+fn simple_builtins() BuiltinRegistry {
+  make_builtin_registry()
+}
 
-fn mk_local(n: Int) LocalId { LocalId.{ id: n } }
+fn mk_local(n: Int) LocalId {
+  LocalId.{ id: n }
+}
 
-fn mk_func(n: Int) FuncId { FuncId.{ id: n } }
+fn mk_func(n: Int) FuncId {
+  FuncId.{ id: n }
+}
 
 fn mono1(key: Int, val: MonoType) Dict<Int, MonoType> {
   d: Dict<Int, MonoType> = Dict.new()
@@ -198,6 +206,7 @@ pub fn test_plan_primitive_func() Result<Void, String> {
   env := resolver.empty_env()
   builtins := empty_builtins()
   reg := plan(anf, env, builtins)
+
   // Primitives don't need struct defs, so type_defs should be empty or minimal
   // But the layout cache should have entries
   key := mono_to_key(MonoType.Int)
@@ -240,13 +249,14 @@ pub fn test_plan_record_type() Result<Void, String> {
   anf := mk_module([f])
   builtins := empty_builtins()
   reg := plan(anf, env, builtins)
+
   // Should have a struct TypeDef for Point
   found := false
 
   for td in reg.type_defs {
     case td {
-      .Struct(name, _, _, _) => {
-        if name.contains("Point") { found = true }
+      .Struct(name, _, _, _) => if name.contains("Point") {
+        found = true
       },
       _ => {},
     }
@@ -282,17 +292,22 @@ pub fn test_plan_string_literals() Result<Void, String> {
   env := resolver.empty_env()
   builtins := empty_builtins()
   reg := plan(anf, env, builtins)
+
   // "hello" and "world" — 2 unique strings
   try assert.equal(reg.string_pool.len(), 2)
 
   case reg.string_pool["hello"] {
     .Some(entry) => try assert.equal(entry.byte_len, 5),
-    .None => { return assert.fail("missing 'hello' in string pool") },
+    .None => {
+      return assert.fail("missing 'hello' in string pool")
+    },
   }
 
   case reg.string_pool["world"] {
     .Some(entry) => try assert.equal(entry.byte_len, 5),
-    .None => { return assert.fail("missing 'world' in string pool") },
+    .None => {
+      return assert.fail("missing 'world' in string pool")
+    },
   }
 
   .Ok({})
@@ -327,7 +342,9 @@ pub fn test_plan_string_offsets() Result<Void, String> {
       try assert.equal(e.byte_offset, 0)
       try assert.equal(e.byte_len, 2)
     },
-    .None => { return assert.fail("missing 'ab'") },
+    .None => {
+      return assert.fail("missing 'ab'")
+    },
   }
 
   case reg.string_pool["cde"] {
@@ -335,7 +352,9 @@ pub fn test_plan_string_offsets() Result<Void, String> {
       try assert.equal(e.byte_offset, 2)
       try assert.equal(e.byte_len, 3)
     },
-    .None => { return assert.fail("missing 'cde'") },
+    .None => {
+      return assert.fail("missing 'cde'")
+    },
   }
 
   case reg.string_pool["f"] {
@@ -343,7 +362,9 @@ pub fn test_plan_string_offsets() Result<Void, String> {
       try assert.equal(e.byte_offset, 5)
       try assert.equal(e.byte_len, 1)
     },
-    .None => { return assert.fail("missing 'f'") },
+    .None => {
+      return assert.fail("missing 'f'")
+    },
   }
 
   .Ok({})
@@ -353,6 +374,7 @@ pub fn test_plan_string_offsets() Result<Void, String> {
 pub fn test_plan_closure() Result<Void, String> {
   // A function that creates a closure capturing local 0
   closure_mono := mono1(0, MonoType.Function([MonoType.Int], MonoType.Int))
+
   // The closure's target function (func_id 200)
   closure_fn := mk_func_def(
     200,
@@ -362,6 +384,7 @@ pub fn test_plan_closure() Result<Void, String> {
     .Atom(.ALocal(mk_local(10))),
     Dict.new(),
   )
+
   // The outer function that makes the closure
   outer := mk_func_def(
     100,
@@ -412,11 +435,11 @@ pub fn test_plan_closure_registers_func_type() Result<Void, String> {
 
   for td in reg.type_defs {
     case td {
-      .FuncType(name, _, _) => {
-        if name.contains("\$ft_") { found_func_type = true }
+      .FuncType(name, _, _) => if name.contains("\$ft_") {
+        found_func_type = true
       },
-      .Struct(name, _, _, _) => {
-        if name.contains("\$closure_") { found_closure_struct = true }
+      .Struct(name, _, _, _) => if name.contains("\$closure_") {
+        found_closure_struct = true
       },
       _ => {},
     }
@@ -465,6 +488,7 @@ pub fn test_plan_capture_types() Result<Void, String> {
   case reg.capture_layouts[200] {
     .Some(caps) => {
       try assert.equal(caps.len(), 2)
+
       // local 0 is Int (from param)
       try assert.ok(
         case caps[0].ty {
@@ -473,6 +497,7 @@ pub fn test_plan_capture_types() Result<Void, String> {
         },
         "expected capture 0 type Int, got other",
       )
+
       // local 1 is String (from op_result_mono)
       try assert.ok(
         case caps[1].ty {
@@ -498,6 +523,7 @@ pub fn test_plan_closure_func_sigs() Result<Void, String> {
     .Atom(.ALocal(mk_local(10))),
     Dict.new(),
   )
+
   // The outer function makes the closure
   closure_mono := mono1(0, MonoType.Function([MonoType.Int], MonoType.Int))
   outer := mk_func_def(
@@ -738,6 +764,7 @@ pub fn test_plan_callable_separation_tracks_closure_and_direct_calls() Result<Vo
 // ── plan_wasm_types: collects runtime imports ───────────────────────
 pub fn test_plan_runtime_imports() Result<Void, String> {
   builtins := simple_builtins()
+
   // A function that calls println (a runtime builtin)
   print_id := bi.id(builtins, "println")
   mono := mono1(0, MonoType.Void)
@@ -752,6 +779,7 @@ pub fn test_plan_runtime_imports() Result<Void, String> {
   anf := mk_module([f])
   env := resolver.empty_env()
   reg := plan(anf, env, builtins)
+
   // Should have runtime import for println with non-empty params
   found := false
 
@@ -799,13 +827,14 @@ pub fn test_plan_optional_type() Result<Void, String> {
   env := resolver.empty_env()
   builtins := empty_builtins()
   reg := plan(anf, env, builtins)
+
   // Should have a sum struct for Option<Int>
   found := false
 
   for td in reg.type_defs {
     case td {
-      .Struct(name, _, _, _) => {
-        if name.contains("Option") { found = true }
+      .Struct(name, _, _, _) => if name.contains("Option") {
+        found = true
       },
       _ => {},
     }
@@ -912,6 +941,7 @@ pub fn test_plan_module_globals() Result<Void, String> {
     init_mono,
   )
   init_fn.is_init = true
+
   // Another function references local 0 (a module global) but not local 1
   user_mono := mono1(10, MonoType.Int)
   user_fn := mk_func_def(
@@ -939,7 +969,9 @@ pub fn test_plan_module_globals() Result<Void, String> {
       }
       result
     },
-    .None => { return assert.fail("expected local 0 in module_globals") },
+    .None => {
+      return assert.fail("expected local 0 in module_globals")
+    },
   }
 
   // local 1 should NOT be a module global (not referenced outside init)
