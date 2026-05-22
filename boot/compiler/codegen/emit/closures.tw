@@ -1,4 +1,5 @@
-// Closure and trampoline emission helpers.
+/// Closure and trampoline emission helpers.
+
 use compiler.backend.callable_targets as callable_targets
 use compiler.backend.facts as facts
 use compiler.backend.prepared_ir.{PreparedAtom, PreparedFunc, SlotId}

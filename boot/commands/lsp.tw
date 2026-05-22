@@ -1,4 +1,5 @@
-// LSP command: start the Language Server Protocol server.
+/// LSP command: start the Language Server Protocol server.
+
 use @std.io
 use @std.proc
 

@@ -1,4 +1,5 @@
-// Regression test: Dict.get used to crash with "illegal cast" at runtime.
+/// Regression test: Dict.get used to crash with "illegal cast" at runtime.
+
 d: Dict<String, Int> = Dict.new()
 d["a"] = 42
 println(d.has("a").to_string()) // true

@@ -1,8 +1,9 @@
-// Typed decoders for LSP notification parameters.
-//
-// These records intentionally capture only fields the server currently needs.
-// Keeping JSON decoding at the protocol edge lets document/query code stay
-// independent from JSON-RPC shapes.
+/// Typed decoders for LSP notification parameters.
+///
+/// These records intentionally capture only fields the server currently needs.
+/// Keeping JSON decoding at the protocol edge lets document/query code stay
+/// independent from JSON-RPC shapes.
+
 use lib.json
 
 pub type TextDocumentItem = .{ uri: String, language_id: String, version: Int, text: String }

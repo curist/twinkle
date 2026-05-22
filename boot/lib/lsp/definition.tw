@@ -1,6 +1,7 @@
-// LSP definition response adapter.
-//
-// Converts internal DefinitionResult into an LSP Location JSON response.
+/// LSP definition response adapter.
+///
+/// Converts internal DefinitionResult into an LSP Location JSON response.
+
 use compiler.query.definition as query_definition
 use lib.json
 use lib.text.line_index

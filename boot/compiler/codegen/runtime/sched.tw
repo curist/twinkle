@@ -1,7 +1,8 @@
-// rt.sched — cooperative task scheduler runtime.
-//
-// Provides the scheduler trampoline, queue management, and the generic
-// run-to-completion resume function for non-suspending tasks.
+/// rt.sched — cooperative task scheduler runtime.
+///
+/// Provides the scheduler trampoline, queue management, and the generic
+/// run-to-completion resume function for non-suspending tasks.
+
 use compiler.codegen.wasm_ir.{
   ExportDef, FuncDef, GlobalDef, HeapType, ImportDef, Instr, ValType, WasmModule,
 }

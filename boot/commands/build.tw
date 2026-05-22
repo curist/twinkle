@@ -1,4 +1,5 @@
-// Build command: compile to linked WAT or Wasm.
+/// Build command: compile to linked WAT or Wasm.
+
 use @std.fs
 use @std.path
 use @std.proc

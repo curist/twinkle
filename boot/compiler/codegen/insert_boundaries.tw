@@ -1,8 +1,9 @@
-// Boundary insertion pass — inserts AWrapAnyref / AUnwrapAnyref nodes
-// at every point where a typed value crosses an anyref representation
-// boundary (calls to runtime helpers, container indexing).
-//
-// Phase D, Milestone 4.
+/// Boundary insertion pass — inserts AWrapAnyref / AUnwrapAnyref nodes
+/// at every point where a typed value crosses an anyref representation
+/// boundary (calls to runtime helpers, container indexing).
+///
+/// Phase D, Milestone 4.
+
 use compiler.anf.{
   AnfExpr, AnfFunctionDef, AnfMatchArm, AnfModule, AnfOp, Atom, FieldAtom, IndexKind,
 }

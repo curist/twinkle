@@ -1,4 +1,5 @@
-// ANSI terminal styling helpers
+/// ANSI terminal styling helpers
+
 use @std.proc
 
 fn color_enabled() Bool {

@@ -1,4 +1,5 @@
-// Check command: type-check source, optionally fix unused imports.
+/// Check command: type-check source, optionally fix unused imports.
+
 use @std.proc
 
 use commands.common.{exit_usage_error, format_compile_error, get_positional, print_warnings}

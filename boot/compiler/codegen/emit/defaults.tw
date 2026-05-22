@@ -1,4 +1,5 @@
-// Default-value instruction helpers for Wasm emission.
+/// Default-value instruction helpers for Wasm emission.
+
 use compiler.codegen.wasm_ir.{Instr, ValType}
 
 pub fn emit_default_value(vt: ValType, buf: Vector<Instr>) Vector<Instr> {

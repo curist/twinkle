@@ -1,7 +1,8 @@
-// Contract target resolution for DCE.
-//
-// Maps a (receiver_type, method_name) pair to the concrete function that
-// implements the contract method for that type.
+/// Contract target resolution for DCE.
+///
+/// Maps a (receiver_type, method_name) pair to the concrete function that
+/// implements the contract method for that type.
+
 use compiler.core_ir.{FuncId}
 use compiler.mono_type.{MonoType}
 

@@ -1,4 +1,5 @@
-// Call emission for direct, runtime, intrinsic, and closure calls.
+/// Call emission for direct, runtime, intrinsic, and closure calls.
+
 use compiler.backend.prepared_ir.{PreparedAtom, SlotId}
 use compiler.builtins as bi
 use compiler.builtins.{RuntimeInfo}

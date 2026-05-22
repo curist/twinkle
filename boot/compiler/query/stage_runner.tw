@@ -1,8 +1,9 @@
-// Cache-aware wrappers around pure compiler stages.
-//
-// This is the boot analogue of Rust's module StageRunner: it computes stable
-// query keys, checks an explicit cache, and runs the underlying stage only on a
-// miss. Diagnostics remain in each stage artifact instead of being formatted.
+/// Cache-aware wrappers around pure compiler stages.
+///
+/// This is the boot analogue of Rust's module StageRunner: it computes stable
+/// query keys, checks an explicit cache, and runs the underlying stage only on a
+/// miss. Diagnostics remain in each stage artifact instead of being formatted.
+
 use compiler.builtins.{BuiltinRegistry}
 use compiler.checker
 use compiler.lower_core

@@ -1,7 +1,8 @@
-// Phase D M8: WAT Emission — WasmModule to WAT text format
-//
-// Serializes the Wasm IR into S-expression text format.
-// Uses Vector<String> line buffer to avoid quadratic string concatenation.
+/// Phase D M8: WAT Emission — WasmModule to WAT text format
+///
+/// Serializes the Wasm IR into S-expression text format.
+/// Uses Vector<String> line buffer to avoid quadratic string concatenation.
+
 use compiler.codegen.linker.{LinkedModule}
 use compiler.codegen.type_order.{compute_type_order, find_type_def, type_def_has_self_edge}
 use compiler.codegen.wasm_ir.{

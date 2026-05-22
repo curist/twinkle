@@ -1,8 +1,9 @@
-// LSP diagnostic JSON adapter.
-//
-// Compiler query diagnostics stay plain and byte-span based. This module is the
-// protocol edge that translates them into LSP ranges and publishDiagnostics
-// notifications.
+/// LSP diagnostic JSON adapter.
+///
+/// Compiler query diagnostics stay plain and byte-span based. This module is the
+/// protocol edge that translates them into LSP ranges and publishDiagnostics
+/// notifications.
+
 use compiler.query.diagnostics as query_diagnostics
 use lib.json
 use lib.lsp.protocol

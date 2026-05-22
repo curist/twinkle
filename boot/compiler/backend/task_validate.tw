@@ -1,16 +1,17 @@
-// Task suspension validation pass.
-//
-// Runs after closure conversion, before the state-machine transform.
-// Validates that Task.yield() and Task.await() appear only in valid positions:
-//
-// - Task.yield(): only directly in a task body closure (passed to Task.spawn)
-// - Task.await(): only in top-level code or directly in a task body closure
-// - Neither may appear inside branches, loops, or nested closures within task bodies
-//
-// Also classifies each Task.spawn call site for the transform:
-// - Direct closure with suspension → state-machine transform
-// - Direct closure without suspension → run-to-completion
-// - Indirect (variable) → run-to-completion
+/// Task suspension validation pass.
+///
+/// Runs after closure conversion, before the state-machine transform.
+/// Validates that Task.yield() and Task.await() appear only in valid positions:
+///
+/// - Task.yield(): only directly in a task body closure (passed to Task.spawn)
+/// - Task.await(): only in top-level code or directly in a task body closure
+/// - Neither may appear inside branches, loops, or nested closures within task bodies
+///
+/// Also classifies each Task.spawn call site for the transform:
+/// - Direct closure with suspension → state-machine transform
+/// - Direct closure without suspension → run-to-completion
+/// - Indirect (variable) → run-to-completion
+
 use compiler.anf.{AnfExpr, AnfFunctionDef, AnfModule, AnfOp}
 use compiler.builtins.{BuiltinRegistry}
 use compiler.core_ir.{FuncId}

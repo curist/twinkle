@@ -1,7 +1,8 @@
-// Core monomorphic type representation for the Twinkle compiler.
-//
-// Extracted from resolver.tw so that both lib/source/diagnostics.tw and
-// compiler/resolver.tw can import MonoType without circular dependency.
+/// Core monomorphic type representation for the Twinkle compiler.
+///
+/// Extracted from resolver.tw so that both lib/source/diagnostics.tw and
+/// compiler/resolver.tw can import MonoType without circular dependency.
+
 pub type TypeId = .{ id: Int }
 
 pub type MonoType = {

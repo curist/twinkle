@@ -1,23 +1,24 @@
-// Backend slot assignment pass.
-//
-// assign_slots() takes an AnfFunctionDef and the precomputed closure captures
-// and produces a PreparedFunc with explicit, queryable slot metadata.
-//
-// Slot ABI order: captures → declared params → body locals.
-// This is the physical function-local ordering consumed by emission.
-//
-// Role classification:
-//   - CaptureParam:    locals from closure_captures[func_id]
-//   - Param:           declared params in func.params
-//   - PatternLocal:    locals bound by match-arm CorePattern.Var or Variant
-//   - DeadPlaceholder: Never-typed locals (allocated for Wasm validation)
-//   - Local:           all other let-bound locals and AAssign targets
-//
-// Mono resolution priority (mirrors emit.tw's collect_pattern_local_monos logic):
-//   1. Pattern-derived mono (from scrutinee type via env — needed for variant fields)
-//   2. op_result_mono (covers Let-bound and AAssign targets from lower_anf)
-//   3. params (checked first in resolve_local_mono fallback)
-//   Fallback: .Void (indicates a missing type; should not occur for live locals)
+/// Backend slot assignment pass.
+///
+/// assign_slots() takes an AnfFunctionDef and the precomputed closure captures
+/// and produces a PreparedFunc with explicit, queryable slot metadata.
+///
+/// Slot ABI order: captures → declared params → body locals.
+/// This is the physical function-local ordering consumed by emission.
+///
+/// Role classification:
+///   - CaptureParam:    locals from closure_captures[func_id]
+///   - Param:           declared params in func.params
+///   - PatternLocal:    locals bound by match-arm CorePattern.Var or Variant
+///   - DeadPlaceholder: Never-typed locals (allocated for Wasm validation)
+///   - Local:           all other let-bound locals and AAssign targets
+///
+/// Mono resolution priority (mirrors emit.tw's collect_pattern_local_monos logic):
+///   1. Pattern-derived mono (from scrutinee type via env — needed for variant fields)
+///   2. op_result_mono (covers Let-bound and AAssign targets from lower_anf)
+///   3. params (checked first in resolve_local_mono fallback)
+///   Fallback: .Void (indicates a missing type; should not occur for live locals)
+
 use compiler.anf.{AnfExpr, AnfFunctionDef, AnfOp, Atom}
 use compiler.backend.prepared_ir.{
   CaptureParam, PreparedAtom, PreparedExpr, PreparedFieldAtom, PreparedFunc, PreparedMatchArm,

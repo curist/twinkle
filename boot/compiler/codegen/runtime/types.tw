@@ -1,8 +1,9 @@
-// rt.types — shared Wasm GC type definitions for the Twinkle runtime.
-//
-// Mirrors stage0 src/runtime/types.rs.
-// This module defines no functions — only type definitions that all
-// other runtime modules reference.
+/// rt.types — shared Wasm GC type definitions for the Twinkle runtime.
+///
+/// Mirrors stage0 src/runtime/types.rs.
+/// This module defines no functions — only type definitions that all
+/// other runtime modules reference.
+
 use compiler.codegen.wasm_ir.{WasmModule}
 
 pub fn module() WasmModule {

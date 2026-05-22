@@ -1,6 +1,7 @@
-// rt.str — string operations.
-//
-// Mirrors stage0 src/runtime/str.rs.
+/// rt.str — string operations.
+///
+/// Mirrors stage0 src/runtime/str.rs.
+
 use compiler.codegen.wasm_ir.{ExportDef, FuncDef, HeapType, ImportDef, ValType, WasmModule}
 
 // Cross-module qualified names (already linked form)

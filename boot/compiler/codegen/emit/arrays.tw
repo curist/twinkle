@@ -1,4 +1,5 @@
-// Array/vector and index operation emission helpers.
+/// Array/vector and index operation emission helpers.
+
 use compiler.anf.{IndexKind}
 use compiler.backend.prepared_ir.{PreparedAtom}
 use compiler.codegen.emit.anyref.{emit_box_to_anyref, emit_erased_container_egress}

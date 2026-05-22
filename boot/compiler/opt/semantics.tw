@@ -1,9 +1,10 @@
-// Shared optimizer-facing semantics for builtin calls and structured ANF ops.
-//
-// Stage 1 scope:
-// - centralize builtin optimizer metadata in one module
-// - expose effect classification for passes
-// - preserve current dead-let purity behavior (calls remain non-eliminable)
+/// Shared optimizer-facing semantics for builtin calls and structured ANF ops.
+///
+/// Stage 1 scope:
+/// - centralize builtin optimizer metadata in one module
+/// - expose effect classification for passes
+/// - preserve current dead-let purity behavior (calls remain non-eliminable)
+
 use compiler.anf.{AnfExpr, AnfOp}
 use compiler.builder_family.{BuilderConfig, empty_builder_config, vector_builder_config}
 use compiler.builtins.{BuiltinRegistry}

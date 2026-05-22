@@ -1,9 +1,10 @@
-// Name resolver: two-pass resolution of type and function declarations.
-//
-// Pass 1: Collect all type and function names, detect duplicates.
-// Pass 2: Resolve type references, build resolved environments.
-//
-// Functional style: env is threaded through return values, never mutated in place.
+/// Name resolver: two-pass resolution of type and function declarations.
+///
+/// Pass 1: Collect all type and function names, detect duplicates.
+/// Pass 2: Resolve type references, build resolved environments.
+///
+/// Functional style: env is threaded through return values, never mutated in place.
+
 use lib.source.diagnostics as diag
 use lib.source.span.{Span}
 

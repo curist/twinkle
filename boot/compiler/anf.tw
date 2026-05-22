@@ -1,8 +1,9 @@
-// ANF (Administrative Normal Form) IR types for the boot compiler.
-//
-// ANF makes evaluation order explicit: every intermediate computation
-// is bound to a named local via Let, producing flat let-chains that
-// map directly to Wasm instructions.
+/// ANF (Administrative Normal Form) IR types for the boot compiler.
+///
+/// ANF makes evaluation order explicit: every intermediate computation
+/// is bound to a named local via Let, producing flat let-chains that
+/// map directly to Wasm instructions.
+
 use .core_ir.{BinOp, CorePattern, ExternImport, FieldId, FuncId, LocalId, Param, UnOp, VariantId}
 use .mono_type.{MonoType, TypeId}
 

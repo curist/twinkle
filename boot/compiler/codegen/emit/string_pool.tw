@@ -1,4 +1,5 @@
-// String-pool emission helpers.
+/// String-pool emission helpers.
+
 use compiler.codegen.wasm_ir.{DataSegment, FuncDef, GlobalDef, Instr}
 use compiler.codegen.wasm_plan_types.{WasmTypeRegistry}
 

@@ -1,7 +1,8 @@
-// Liveness analysis: backward dataflow computing which locals are live.
-// Used by uniqueness rewrite and by the standalone annotate_in_place helper.
-//
-// Uses Dict<Int, Bool> as a set (Twinkle has no HashSet).
+/// Liveness analysis: backward dataflow computing which locals are live.
+/// Used by uniqueness rewrite and by the standalone annotate_in_place helper.
+///
+/// Uses Dict<Int, Bool> as a set (Twinkle has no HashSet).
+
 use compiler.anf.{AnfExpr, AnfFunctionDef, AnfMatchArm, AnfOp, Atom}
 use compiler.anf_analysis.{collect_pattern_bindings, set_has}
 

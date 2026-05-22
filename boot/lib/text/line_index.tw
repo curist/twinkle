@@ -1,4 +1,5 @@
-// Byte/line/character position conversion for LSP-style text documents.
+/// Byte/line/character position conversion for LSP-style text documents.
+
 use lib.utf16
 
 pub type PositionEncoding = { Utf8, Utf16, Utf32 }

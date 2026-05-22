@@ -1,5 +1,6 @@
-// Builtin function registry — centralizes FuncId assignments and dispatch metadata.
-// See docs/plans/boot-builtin-registry.md for design.
+/// Builtin function registry — centralizes FuncId assignments and dispatch metadata.
+/// See docs/plans/boot-builtin-registry.md for design.
+
 use compiler.codegen.wasm_ir.{AbiContract, ValType}
 use compiler.core_ir.{FuncId}
 

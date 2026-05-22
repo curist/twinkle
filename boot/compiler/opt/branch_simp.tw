@@ -1,8 +1,9 @@
-// Branch simplification: eliminate AIf with literal bool condition.
-//
-// Let(t, AIf(ALitBool(b), then, else), body) → splice selected branch.
-// If the selected branch terminates (Return/Break/Continue), the
-// continuation body is unreachable and dropped.
+/// Branch simplification: eliminate AIf with literal bool condition.
+///
+/// Let(t, AIf(ALitBool(b), then, else), body) → splice selected branch.
+/// If the selected branch terminates (Return/Break/Continue), the
+/// continuation body is unreachable and dropped.
+
 use compiler.anf.{AnfExpr, AnfMatchArm, AnfOp}
 use compiler.core_ir.{LocalId}
 

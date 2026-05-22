@@ -1,7 +1,8 @@
-// Wasm layout types and the central `layout_of` function.
-//
-// Every concrete MonoType maps to exactly one WasmLayout.
-// This is the single source of truth — no shadow metadata.
+/// Wasm layout types and the central `layout_of` function.
+///
+/// Every concrete MonoType maps to exactly one WasmLayout.
+/// This is the single source of truth — no shadow metadata.
+
 use compiler.codegen.wasm_ir.{ValType}
 use compiler.core_ir.{FieldId, VariantId}
 use compiler.mono_type.{MonoType, TypeId}

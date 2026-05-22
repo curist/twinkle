@@ -1,8 +1,9 @@
-// Pure document state for LSP features.
-//
-// This module intentionally avoids transport and compiler dependencies so query
-// code (hover, goto definition, diagnostics) can be tested against in-memory
-// documents before being wired into the server loop.
+/// Pure document state for LSP features.
+///
+/// This module intentionally avoids transport and compiler dependencies so query
+/// code (hover, goto definition, diagnostics) can be tested against in-memory
+/// documents before being wired into the server loop.
+
 use lib.source.identity
 use lib.source.overlay
 use lib.text.line_index

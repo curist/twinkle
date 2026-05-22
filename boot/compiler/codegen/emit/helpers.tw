@@ -1,4 +1,5 @@
-// Small general helpers for Wasm emission.
+/// Small general helpers for Wasm emission.
+
 use compiler.backend.prepared_ir.{PreparedExpr, PreparedMatchArm, PreparedPattern, ReprKind}
 use compiler.codegen.wasm_ir.{Instr}
 use compiler.codegen.wasm_layout.{WasmSumLayout, WasmVariantLayout, layout_of, mono_to_key}

@@ -1,7 +1,8 @@
-// Pure LSP/JSON-RPC message handling.
-//
-// Transport code owns framing and I/O. This module owns protocol state and
-// responses so server behavior can be tested without stdio.
+/// Pure LSP/JSON-RPC message handling.
+///
+/// Transport code owns framing and I/O. This module owns protocol state and
+/// responses so server behavior can be tested without stdio.
+
 use @std.date
 use @std.fs
 use @std.path

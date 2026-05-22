@@ -1,4 +1,5 @@
-// Lvalue assignment lowering.
+/// Lvalue assignment lowering.
+
 use compiler.ast.{Expr}
 use compiler.core_ir.{CoreExpr, CoreExprKind, FieldId, LocalId}
 use compiler.lower_core.context.{ExprOut, LowerCtx}

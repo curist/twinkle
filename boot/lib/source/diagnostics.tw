@@ -1,8 +1,9 @@
-// Rich diagnostic kinds for compiler error reporting.
-//
-// DiagKind replaces the old flat Diagnostic (span + severity + message string).
-// Emission sites store structured data (zonked types, names, spans) — no string
-// formatting at emit time. Rendering happens at the CLI or LSP boundary.
+/// Rich diagnostic kinds for compiler error reporting.
+///
+/// DiagKind replaces the old flat Diagnostic (span + severity + message string).
+/// Emission sites store structured data (zonked types, names, spans) — no string
+/// formatting at emit time. Rendering happens at the CLI or LSP boundary.
+
 use compiler.mono_type.{MonoType, ty_to_string}
 
 use .registry

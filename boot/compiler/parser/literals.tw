@@ -1,4 +1,5 @@
-// Literal parsing helpers for the Twinkle parser.
+/// Literal parsing helpers for the Twinkle parser.
+
 fn parse_hex(s: String) Int {
   result := 0
   i := 2 // skip "0x" or "0X"

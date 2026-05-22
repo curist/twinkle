@@ -1,16 +1,17 @@
-// Tests for boot/compiler/backend/repr_assign.tw — Phase 4b.
-//
-// Verifies that repr_of_mono() and assign_repr_for_module() produce the
-// correct ReprKind and wasm_type for each slot category:
-//
-//   - Primitive scalars: Int→I64, Float→F64, Bool/Byte→I32
-//   - Typed refs: String, Vector, Dict → TypedRef
-//   - Typed sums: Optional, Result, user sums → TypedSum
-//   - Closures/functions → ClosureRef
-//   - Opaque anyref: Void, Anyref_ → OpaqueAnyref
-//   - Dead: Never → DeadValue (via DeadPlaceholder role)
-//   - Boundary overrides: AWrapAnyref result → OpaqueAnyref;
-//                         AUnwrapAnyref result → typed repr from target mono
+/// Tests for boot/compiler/backend/repr_assign.tw — Phase 4b.
+///
+/// Verifies that repr_of_mono() and assign_repr_for_module() produce the
+/// correct ReprKind and wasm_type for each slot category:
+///
+///   - Primitive scalars: Int→I64, Float→F64, Bool/Byte→I32
+///   - Typed refs: String, Vector, Dict → TypedRef
+///   - Typed sums: Optional, Result, user sums → TypedSum
+///   - Closures/functions → ClosureRef
+///   - Opaque anyref: Void, Anyref_ → OpaqueAnyref
+///   - Dead: Never → DeadValue (via DeadPlaceholder role)
+///   - Boundary overrides: AWrapAnyref result → OpaqueAnyref;
+///                         AUnwrapAnyref result → typed repr from target mono
+
 use compiler.anf.{AnfExpr, AnfFunctionDef, AnfModule}
 use compiler.backend.prepare.{prepare_backend}
 use compiler.backend.prepared_ir.{CaptureParam, PreparedFunc, ReprKind, SlotInfo}

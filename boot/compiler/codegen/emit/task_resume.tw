@@ -1,11 +1,12 @@
-// Task state-machine analysis for resume function generation.
-//
-// Analyzes suspending task bodies to extract:
-// - Flat let-chain bindings and suspension points
-// - Hoisted slots that live across suspension boundaries
-// - Frame type definition with pc + hoisted slots + await targets
-//
-// The actual resume function emission happens in emit.tw using emit_expr.
+/// Task state-machine analysis for resume function generation.
+///
+/// Analyzes suspending task bodies to extract:
+/// - Flat let-chain bindings and suspension points
+/// - Hoisted slots that live across suspension boundaries
+/// - Frame type definition with pc + hoisted slots + await targets
+///
+/// The actual resume function emission happens in emit.tw using emit_expr.
+
 use compiler.backend.facts as facts
 use compiler.backend.prepared_ir.{PreparedAtom, PreparedExpr, PreparedFunc, PreparedOp, SlotId}
 use compiler.builtins as bi

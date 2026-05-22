@@ -1,4 +1,5 @@
-// Variant, match, array, and index lowering helpers.
+/// Variant, match, array, and index lowering helpers.
+
 use compiler.ast as ast
 use compiler.ast.{Expr}
 use compiler.core_ir.{CoreExpr, MatchArm}

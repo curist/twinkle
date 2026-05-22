@@ -1,13 +1,14 @@
-// Core IR linker: combines multiple compiled modules into a single CoreModule.
-//
-// Each module independently assigns FuncIds starting from builtin_count,
-// so all user modules have overlapping FuncId spaces. The linker:
-// 1. Assigns globally unique FuncIds to all defined functions
-// 2. Remaps cross-module references (phantom FuncIds) to the correct targets
-// 3. Rewrites all GlobalFunc/MakeClosure references in expression trees
-// 4. Combines init functions in dependency order
-//
-// Reference: src/module/mod.rs (link, remap_func_id, remap_expr_func_ids)
+/// Core IR linker: combines multiple compiled modules into a single CoreModule.
+///
+/// Each module independently assigns FuncIds starting from builtin_count,
+/// so all user modules have overlapping FuncId spaces. The linker:
+/// 1. Assigns globally unique FuncIds to all defined functions
+/// 2. Remaps cross-module references (phantom FuncIds) to the correct targets
+/// 3. Rewrites all GlobalFunc/MakeClosure references in expression trees
+/// 4. Combines init functions in dependency order
+///
+/// Reference: src/module/mod.rs (link, remap_func_id, remap_expr_func_ids)
+
 use compiler.core_ir.{
   CompiledModule, CoreExpr, CoreExprKind, CoreModule, CorePattern, ExternImport, FieldInit, FuncId,
   FunctionDef, LocalId, MatchArm, Param,

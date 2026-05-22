@@ -1,4 +1,5 @@
-// selective source first, bridge second
+/// selective source first, bridge second
+
 use .method_call_bridge
 use .method_call_src.{Point}
 

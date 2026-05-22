@@ -1,4 +1,5 @@
-// Minimal test runner with colored output.
+/// Minimal test runner with colored output.
+
 use @std.proc
 
 pub type Test = .{ name: String, run: fn() Result<Void, String> }

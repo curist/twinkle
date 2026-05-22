@@ -1,4 +1,5 @@
-// Run command: compile and execute via Wasm backend.
+/// Run command: compile and execute via Wasm backend.
+
 use @std.proc
 
 use commands.common.{format_compile_error, print_warnings}

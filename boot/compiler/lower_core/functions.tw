@@ -1,4 +1,5 @@
-// Function lowering helpers.
+/// Function lowering helpers.
+
 use compiler.ast.{Block, FunctionDecl}
 use compiler.core_ir.{FuncId, FunctionDef, Param}
 use compiler.lower_core.context.{ExprOut, LowerCtx}

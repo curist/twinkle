@@ -1,9 +1,10 @@
-// Stable TypeId registry for incremental compilation.
-//
-// Maps (module_path, type_name) → TypeId so that recompiling a module
-// produces the same TypeIds regardless of compilation order.
-// New types get the next available ID; re-registered types get their
-// existing ID back.
+/// Stable TypeId registry for incremental compilation.
+///
+/// Maps (module_path, type_name) → TypeId so that recompiling a module
+/// produces the same TypeIds regardless of compilation order.
+/// New types get the next available ID; re-registered types get their
+/// existing ID back.
+
 use compiler.mono_type.{TypeId}
 
 pub type TypeRegistry = .{ assignments: Dict<String, Int>, next_id: Int }

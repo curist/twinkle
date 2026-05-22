@@ -1,10 +1,11 @@
-// Uniqueness rewrite: eliminate unnecessary COW allocations by proving single-ownership.
-// Stage 1.5: consume shared optimizer semantics directly, while preserving the
-// old CowConfig entry point as a compatibility wrapper.
-//
-// Phase 1 — Pre-scan: build tainted set of locals that cannot be unique
-// Phase 2 — Forward rewrite: track ownership, rewrite COW ops to in-place
-// Phase 3 — Loop region rewrite: accumulator pattern → builder new/push/freeze
+/// Uniqueness rewrite: eliminate unnecessary COW allocations by proving single-ownership.
+/// Stage 1.5: consume shared optimizer semantics directly, while preserving the
+/// old CowConfig entry point as a compatibility wrapper.
+///
+/// Phase 1 — Pre-scan: build tainted set of locals that cannot be unique
+/// Phase 2 — Forward rewrite: track ownership, rewrite COW ops to in-place
+/// Phase 3 — Loop region rewrite: accumulator pattern → builder new/push/freeze
+
 use compiler.anf.{AnfExpr, AnfFunctionDef, AnfMatchArm, AnfModule, AnfOp, Atom}
 use compiler.anf_analysis.{set_has}
 use compiler.core_ir.{FieldId, LocalId}

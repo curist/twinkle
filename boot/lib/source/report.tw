@@ -1,7 +1,8 @@
-// Rich diagnostic report types for terminal rendering.
-//
-// A Report is the render-time structure built from a DiagKind (M4).
-// For M3, reports are hand-constructed in tests and by the renderer itself.
+/// Rich diagnostic report types for terminal rendering.
+///
+/// A Report is the render-time structure built from a DiagKind (M4).
+/// For M3, reports are hand-constructed in tests and by the renderer itself.
+
 use @std.proc
 
 use .span.{Span}

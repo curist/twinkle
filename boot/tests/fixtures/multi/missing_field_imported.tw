@@ -1,5 +1,6 @@
-// Repro: missing-field diagnostic should render the imported type name,
-// not a raw Named(id).
+/// Repro: missing-field diagnostic should render the imported type name,
+/// not a raw Named(id).
+
 use .types_lib
 
 p := types_lib.Point.{ x: 1 }

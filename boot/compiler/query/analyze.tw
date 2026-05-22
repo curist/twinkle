@@ -1,8 +1,9 @@
-// Shared frontend analysis: parse → resolve → typecheck → exports.
-//
-// This is the single recursive module-graph analysis used by both
-// module_compiler (build) and diagnostics (LSP). The build path adds
-// lowering on top; the LSP path wraps with structured diagnostics.
+/// Shared frontend analysis: parse → resolve → typecheck → exports.
+///
+/// This is the single recursive module-graph analysis used by both
+/// module_compiler (build) and diagnostics (LSP). The build path adds
+/// lowering on top; the LSP path wraps with structured diagnostics.
+
 use @std.date
 use @std.fs
 use @std.proc

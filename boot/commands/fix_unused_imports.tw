@@ -1,7 +1,8 @@
-// Unused import fix logic.
-//
-// Extracts unused-import edits from analysis diagnostics and applies them
-// to source files on disk.
+/// Unused import fix logic.
+///
+/// Extracts unused-import edits from analysis diagnostics and applies them
+/// to source files on disk.
+
 use @std.fs
 use @std.path
 

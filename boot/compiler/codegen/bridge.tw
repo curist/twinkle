@@ -1,7 +1,8 @@
-// JS↔Wasm GC bridge module used by the Node.js Wasm runner (tools/js_runtime/runtime.mjs).
-//
-// This is the Twinkle-owned source of truth for the helper module that lets
-// JS construct/read the GC values used by Twinkle's host ABI.
+/// JS↔Wasm GC bridge module used by the Node.js Wasm runner (tools/js_runtime/runtime.mjs).
+///
+/// This is the Twinkle-owned source of truth for the helper module that lets
+/// JS construct/read the GC values used by Twinkle's host ABI.
+
 use compiler.codegen.wasm_ir.{
   ExportDef, FieldDef, FuncDef, MemoryDef, MemoryExportDef, TypeDef, ValType, WasmModule,
 }

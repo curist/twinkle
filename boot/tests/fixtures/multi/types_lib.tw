@@ -1,4 +1,5 @@
-// Type library for multi-module tests.
+/// Type library for multi-module tests.
+
 pub type Point = .{ x: Int, y: Int }
 
 pub fn translate(p: Point, dx: Int, dy: Int) Point {

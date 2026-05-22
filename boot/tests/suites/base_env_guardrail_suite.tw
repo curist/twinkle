@@ -1,8 +1,9 @@
-// Phase 0 guardrail tests: lock the current behaviour of builtin_env() and
-// register_builtin_methods() before the signature-source-of-truth refactor.
-//
-// These tests are meant to stay green throughout all phases so that any
-// unintended regression during the refactor is caught immediately.
+/// Phase 0 guardrail tests: lock the current behaviour of builtin_env() and
+/// register_builtin_methods() before the signature-source-of-truth refactor.
+///
+/// These tests are meant to stay green throughout all phases so that any
+/// unintended regression during the refactor is caught immediately.
+
 use compiler.base_env.{builtin_env}
 use compiler.resolver.{
   FunctionSig, lookup_function, lookup_function_origin, lookup_method, lookup_registered_function,

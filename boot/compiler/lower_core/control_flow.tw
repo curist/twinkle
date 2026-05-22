@@ -1,4 +1,5 @@
-// Control-flow Core lowering and rewriting helpers.
+/// Control-flow Core lowering and rewriting helpers.
+
 use compiler.ast.{Block, Expr}
 use compiler.core_ir.{CoreExpr, CorePattern, FieldInit, MatchArm}
 use compiler.lower_core.context.{ExprOut, LowerCtx}

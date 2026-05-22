@@ -1,4 +1,5 @@
-// Module-global emission helpers.
+/// Module-global emission helpers.
+
 use compiler.anf.{AnfModule}
 use compiler.codegen.emit.defaults.{emit_default_value}
 use compiler.codegen.wasm_ir.{GlobalDef}

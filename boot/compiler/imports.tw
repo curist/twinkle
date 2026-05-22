@@ -1,10 +1,11 @@
-// Import scanning and dependency planning for multi-module compilation.
-//
-// Scans a parsed module's UseDecl items, resolves file paths via the
-// module loader, and produces a DependencyPlan listing all dependencies
-// (explicit imports + auto-injected prelude modules).
-//
-// Reference: src/module/planner.rs
+/// Import scanning and dependency planning for multi-module compilation.
+///
+/// Scans a parsed module's UseDecl items, resolves file paths via the
+/// module loader, and produces a DependencyPlan listing all dependencies
+/// (explicit imports + auto-injected prelude modules).
+///
+/// Reference: src/module/planner.rs
+
 use @std.fs
 use @std.path
 

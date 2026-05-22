@@ -1,7 +1,8 @@
-// LSP code action JSON builders.
-//
-// Builds CodeAction, TextEdit, and WorkspaceEdit JSON objects for the
-// textDocument/codeAction response.
+/// LSP code action JSON builders.
+///
+/// Builds CodeAction, TextEdit, and WorkspaceEdit JSON objects for the
+/// textDocument/codeAction response.
+
 use lib.json
 use lib.text.line_index
 

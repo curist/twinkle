@@ -1,18 +1,19 @@
-// In-memory stage cache for query-friendly compiler entrypoints.
-//
-// The cache is explicit state: callers thread Store through query/stage APIs.
-// That keeps the boot compiler portable and lets long-lived hosts (like LSP)
-// decide cache lifetime and invalidation policy.
-//
-// Stage keys are intentionally layered:
-// - parse keys depend on the module source hash only;
-// - resolve/typecheck/lower keys depend on source plus dependency interface
-//   fingerprints, so implementation-only dependency edits can preserve
-//   downstream keys when the exported surface stays stable;
-// - context hashes mirror the dependency interface set used to construct the
-//   import environment;
-// - internal-module status is part of the typecheck key because internal host
-//   builtins are only visible for stdlib/prelude implementation modules.
+/// In-memory stage cache for query-friendly compiler entrypoints.
+///
+/// The cache is explicit state: callers thread Store through query/stage APIs.
+/// That keeps the boot compiler portable and lets long-lived hosts (like LSP)
+/// decide cache lifetime and invalidation policy.
+///
+/// Stage keys are intentionally layered:
+/// - parse keys depend on the module source hash only;
+/// - resolve/typecheck/lower keys depend on source plus dependency interface
+///   fingerprints, so implementation-only dependency edits can preserve
+///   downstream keys when the exported surface stays stable;
+/// - context hashes mirror the dependency interface set used to construct the
+///   import environment;
+/// - internal-module status is part of the typecheck key because internal host
+///   builtins are only visible for stdlib/prelude implementation modules.
+
 use compiler.ast
 use compiler.checker
 use compiler.lower_core

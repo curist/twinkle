@@ -1,4 +1,5 @@
-// Top of the chain: imports b (which imports c).
+/// Top of the chain: imports b (which imports c).
+
 use .transitive_b
 
 fn main() {

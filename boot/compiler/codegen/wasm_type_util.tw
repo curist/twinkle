@@ -1,7 +1,8 @@
-// Shared helpers for comparing Wasm IR value and heap types.
-//
-// Keep these helpers format-independent: WAT emission, binary emission, and
-// backend verification should agree on equality for the shared Wasm IR types.
+/// Shared helpers for comparing Wasm IR value and heap types.
+///
+/// Keep these helpers format-independent: WAT emission, binary emission, and
+/// backend verification should agree on equality for the shared Wasm IR types.
+
 use compiler.codegen.wasm_ir.{HeapType, ValType}
 
 pub fn heap_type_eq(a: HeapType, b: HeapType) Bool {

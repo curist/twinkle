@@ -1,4 +1,5 @@
-// Block statement chain lowering.
+/// Block statement chain lowering.
+
 use compiler.ast.{Block, Expr, Stmt}
 use compiler.core_ir.{LocalId}
 use compiler.lower_core.context.{ExprOut, LowerCtx}

@@ -1,6 +1,7 @@
-// Test: selective import and qualified import of same function converge.
-// Both "add" (selective) and "math_lib.add" (qualified) should resolve
-// to the same imported function identity.
+/// Test: selective import and qualified import of same function converge.
+/// Both "add" (selective) and "math_lib.add" (qualified) should resolve
+/// to the same imported function identity.
+
 use tests.fixtures.multi.math_lib
 use tests.fixtures.multi.math_lib.{add}
 

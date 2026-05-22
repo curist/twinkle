@@ -1,4 +1,5 @@
-// Shared vector-builder family metadata used by lowering and optimizer code.
+/// Shared vector-builder family metadata used by lowering and optimizer code.
+
 use compiler.builtins.{BuiltinRegistry}
 use compiler.core_ir.{FuncId}
 

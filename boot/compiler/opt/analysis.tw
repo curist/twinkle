@@ -1,4 +1,5 @@
-// Shared optimizer-oriented ANF analysis helpers.
+/// Shared optimizer-oriented ANF analysis helpers.
+
 use compiler.anf.{AnfExpr, AnfFunctionDef, AnfModule, AnfOp, Atom}
 use compiler.anf_analysis.{collect_pattern_bindings, set_has}
 use compiler.core_ir.{CorePattern, FuncId, LocalId}

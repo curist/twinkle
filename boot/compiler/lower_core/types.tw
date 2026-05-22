@@ -1,4 +1,5 @@
-// Type-shape helpers shared by Core lowering routines.
+/// Type-shape helpers shared by Core lowering routines.
+
 use compiler.mono_type.{MonoType, TypeId}
 use compiler.resolver.{ResolvedEnv, ResolvedTypeParam}
 

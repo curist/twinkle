@@ -1,8 +1,9 @@
-// JSON value type, decoder combinators, parse, and stringify.
-//
-// Decoder<A> is a thin record wrapper around fn(Json) Result<A, String>.
-// Because it is transparent, users can write plain functions as decoders
-// without any special wrapping — they just need to match the signature.
+/// JSON value type, decoder combinators, parse, and stringify.
+///
+/// Decoder<A> is a thin record wrapper around fn(Json) Result<A, String>.
+/// Because it is transparent, users can write plain functions as decoders
+/// without any special wrapping — they just need to match the signature.
+
 pub type Json = {
   Null,
   Bool(Bool),

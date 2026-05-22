@@ -1,7 +1,8 @@
-// Semantic snapshots for editor-oriented query features.
-//
-// This module exposes parsed/resolved/typed artifacts and lightweight source
-// lookup helpers without lowering or codegen.
+/// Semantic snapshots for editor-oriented query features.
+///
+/// This module exposes parsed/resolved/typed artifacts and lightweight source
+/// lookup helpers without lowering or codegen.
+
 use compiler.base_env
 use compiler.checker.{CheckResult}
 use compiler.imports

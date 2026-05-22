@@ -1,5 +1,6 @@
-// Wasm type registry and plan_wasm_types: pre-computes the complete set
-// of Wasm type definitions needed by the module before emission starts.
+/// Wasm type registry and plan_wasm_types: pre-computes the complete set
+/// of Wasm type definitions needed by the module before emission starts.
+
 use @std.date
 use @std.proc
 

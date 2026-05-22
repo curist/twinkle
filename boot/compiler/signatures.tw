@@ -1,10 +1,11 @@
-// Signature-only bootstrap loader.
-//
-// Parses and resolves prelude/signatures/*.tw files to derive FunctionSig
-// entries and method receiver groups.  Bodies in those files are stubs and are
-// never typechecked, lowered, or codegenned.
-//
-// This is the boot-side counterpart to src/intrinsics/signatures.rs.
+/// Signature-only bootstrap loader.
+///
+/// Parses and resolves prelude/signatures/*.tw files to derive FunctionSig
+/// entries and method receiver groups.  Bodies in those files are stubs and are
+/// never typechecked, lowered, or codegenned.
+///
+/// This is the boot-side counterpart to src/intrinsics/signatures.rs.
+
 use @std.fs
 use @std.path
 

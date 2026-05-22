@@ -1,6 +1,7 @@
-// rt.core — equality, trap, and host I/O bindings.
-//
-// Mirrors stage0 src/runtime/core.rs.
+/// rt.core — equality, trap, and host I/O bindings.
+///
+/// Mirrors stage0 src/runtime/core.rs.
+
 use compiler.codegen.wasm_ir.{ExportDef, FuncDef, HeapType, ImportDef, Instr, ValType, WasmModule}
 use compiler.codegen.wasm_layout.{EqTypeLayouts, WasmRecordLayout, WasmSumLayout}
 

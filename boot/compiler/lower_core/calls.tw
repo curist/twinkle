@@ -1,4 +1,5 @@
-// Call and method-name helpers for Core lowering.
+/// Call and method-name helpers for Core lowering.
+
 use compiler.ast.{Expr}
 use compiler.contracts.{BuiltinContract}
 use compiler.core_ir.{CoreExpr}

@@ -1,4 +1,5 @@
-// Access pub values via selective import.
+/// Access pub values via selective import.
+
 use .pub_value_lib.{greeting}
 
 fn main() String {

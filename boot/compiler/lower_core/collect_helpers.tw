@@ -1,4 +1,5 @@
-// Helpers for lowering collect comprehensions.
+/// Helpers for lowering collect comprehensions.
+
 use compiler.builder_family.{BuilderConfig}
 use compiler.core_ir.{CoreExpr, CoreExprKind, FuncId, LocalId}
 use compiler.mono_type.{MonoType}

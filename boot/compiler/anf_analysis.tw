@@ -1,6 +1,7 @@
-// ANF analysis utilities: free/bound/assigned locals, pattern bindings, divergence.
-//
-// Uses Dict<Int, Bool> as a set (Twinkle has no HashSet).
+/// ANF analysis utilities: free/bound/assigned locals, pattern bindings, divergence.
+///
+/// Uses Dict<Int, Bool> as a set (Twinkle has no HashSet).
+
 use .anf.{AnfExpr, AnfOp, Atom}
 use .core_ir.{CorePattern}
 

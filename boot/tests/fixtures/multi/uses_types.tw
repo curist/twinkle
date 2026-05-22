@@ -1,4 +1,5 @@
-// Module that imports types_lib and uses its type.
+/// Module that imports types_lib and uses its type.
+
 use .types_lib
 
 fn main() {

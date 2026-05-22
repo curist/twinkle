@@ -1,15 +1,16 @@
-// Backend verifier — Phase 5.
-//
-// Verifies prepared backend IR before Wasm planning/emission proceeds.
-// The verifier is intentionally strict: invalid prepared states should fail
-// here with readable diagnostics instead of surfacing later as emitter panics
-// or Wasm traps.
-//
-// Scope note: this pass only enforces invariants that are already explicit and
-// stable in the current prepared IR. It deliberately avoids trying to prove all
-// legacy semantic-ANF operand representation details; those tighter checks can
-// land later once planning/emission migration makes more operations fully
-// prepared-IR-driven.
+/// Backend verifier — Phase 5.
+///
+/// Verifies prepared backend IR before Wasm planning/emission proceeds.
+/// The verifier is intentionally strict: invalid prepared states should fail
+/// here with readable diagnostics instead of surfacing later as emitter panics
+/// or Wasm traps.
+///
+/// Scope note: this pass only enforces invariants that are already explicit and
+/// stable in the current prepared IR. It deliberately avoids trying to prove all
+/// legacy semantic-ANF operand representation details; those tighter checks can
+/// land later once planning/emission migration makes more operations fully
+/// prepared-IR-driven.
+
 use @std.date
 use @std.proc
 

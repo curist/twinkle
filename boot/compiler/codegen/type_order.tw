@@ -1,8 +1,9 @@
-// Shared Wasm GC type dependency and recursive-group ordering.
-//
-// This module is format-independent backend infrastructure. WAT and binary
-// emission both consume the same dependency-before-dependent SCC order so their
-// recursive type grouping cannot drift apart.
+/// Shared Wasm GC type dependency and recursive-group ordering.
+///
+/// This module is format-independent backend infrastructure. WAT and binary
+/// emission both consume the same dependency-before-dependent SCC order so their
+/// recursive type grouping cannot drift apart.
+
 use compiler.codegen.wasm_ir.{TypeDef, ValType}
 
 pub fn type_def_name(td: TypeDef) String {

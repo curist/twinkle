@@ -1,4 +1,5 @@
-// Record emission helpers.
+/// Record emission helpers.
+
 use compiler.backend.prepared_ir.{PreparedAtom, PreparedFieldAtom}
 use compiler.codegen.emit.coercions.{emit_coerce_stack}
 use compiler.codegen.emit.context.{EmitCtx}

@@ -1,10 +1,11 @@
-// Minimal entry point for the JS playground.
-//
-// Unlike boot/main.tw, this does NOT import the LSP server, IR debug printer,
-// argparse library, or other CLI-only features.  The result is a smaller wasm
-// that only contains the core compilation pipeline + diagnostic rendering.
-//
-// Usage:  playground.wasm <file> [args...]
+/// Minimal entry point for the JS playground.
+///
+/// Unlike boot/main.tw, this does NOT import the LSP server, IR debug printer,
+/// argparse library, or other CLI-only features.  The result is a smaller wasm
+/// that only contains the core compilation pipeline + diagnostic rendering.
+///
+/// Usage:  playground.wasm <file> [args...]
+
 use @std.fs
 use @std.proc
 

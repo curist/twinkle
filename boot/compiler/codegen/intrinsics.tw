@@ -1,8 +1,9 @@
-// codegen.intrinsics — internal helper functions for boot intrinsic lowering.
-//
-// These helpers support the backend's lowering strategy, but they are not part
-// of the public runtime module surface. Keeping them here lets emit.tw lower to
-// helper calls without also owning the helper implementations.
+/// codegen.intrinsics — internal helper functions for boot intrinsic lowering.
+///
+/// These helpers support the backend's lowering strategy, but they are not part
+/// of the public runtime module surface. Keeping them here lets emit.tw lower to
+/// helper calls without also owning the helper implementations.
+
 use compiler.codegen.wasm_ir.{ExportDef, FuncDef, ImportDef, Instr, ValType, WasmModule}
 
 fn str_null() ValType {

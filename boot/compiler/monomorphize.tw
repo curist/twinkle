@@ -1,7 +1,8 @@
-// Monomorphization pass for the boot compiler.
-//
-// Specializes generic functions per unique concrete instantiation.
-// Algorithm: BFS seed → specialize → rewrite → drop generics.
+/// Monomorphization pass for the boot compiler.
+///
+/// Specializes generic functions per unique concrete instantiation.
+/// Algorithm: BFS seed → specialize → rewrite → drop generics.
+
 use .core_ir.{
   CoreExpr, CoreExprKind, CoreModule, FieldInit, FuncId, FunctionDef, LocalId, MatchArm, Param,
 }
