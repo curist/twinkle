@@ -208,49 +208,65 @@ document.addEventListener('touchend', onDragEnd)
 // ---------------------------------------------------------------------------
 // Worker
 // ---------------------------------------------------------------------------
-const worker = new Worker('./worker.js')
+let worker = null
+let running = false
 
-worker.onmessage = (e) => {
-  const { type, text, exitCode, message } = e.data
-  switch (type) {
-    case 'status':
-      status.textContent = text
-      break
-    case 'stdout':
-      appendOutput('out-stdout', text)
-      break
-    case 'stderr':
-      appendOutput('out-stderr', text)
-      break
-    case 'done':
-      setRunning(false)
-      if (exitCode === 0) {
-        status.textContent = 'Done (exit 0)'
-      } else {
-        appendOutput('out-meta', `\n[exit code ${exitCode}]`)
-        status.textContent = `Done (exit ${exitCode})`
-      }
-      break
-    case 'error':
-      setRunning(false)
-      appendOutput('out-error', `\nInternal error: ${message}`)
-      status.textContent = 'Error'
-      break
+function initWorker() {
+  worker = new Worker('./worker.js')
+
+  worker.onmessage = (e) => {
+    const { type, text, exitCode, message } = e.data
+    switch (type) {
+      case 'status':
+        status.textContent = text
+        break
+      case 'stdout':
+        appendOutput('out-stdout', text)
+        break
+      case 'stderr':
+        appendOutput('out-stderr', text)
+        break
+      case 'done':
+        setRunning(false)
+        if (exitCode === 0) {
+          status.textContent = 'Done (exit 0)'
+        } else {
+          appendOutput('out-meta', `\n[exit code ${exitCode}]`)
+          status.textContent = `Done (exit ${exitCode})`
+        }
+        break
+      case 'error':
+        setRunning(false)
+        appendOutput('out-error', `\nInternal error: ${message}`)
+        status.textContent = 'Error'
+        break
+    }
+  }
+
+  worker.onerror = (e) => {
+    setRunning(false)
+    appendOutput('out-error', `\nWorker error: ${e.message}`)
+    status.textContent = 'Error'
   }
 }
 
-worker.onerror = (e) => {
-  setRunning(false)
-  appendOutput('out-error', `\nWorker error: ${e.message}`)
-  status.textContent = 'Error'
+initWorker()
+
+function setRunning(r) {
+  running = r
+  runBtn.textContent = running ? '⏹ Stop' : '▶ Run'
 }
 
-function setRunning(running) {
-  runBtn.disabled = running
-  runBtn.textContent = running ? '⏳ Run' : '▶ Run'
+function stop() {
+  worker.terminate()
+  initWorker()
+  setRunning(false)
+  status.textContent = 'Stopped'
 }
 
 function run() {
+  if (running) { stop(); return }
+
   output.innerHTML = ''
   setRunning(true)
   status.textContent = 'Starting…'
