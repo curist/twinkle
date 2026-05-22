@@ -13,12 +13,9 @@ pub fn is_host_vector_returning(name: String) Bool {
 pub fn is_host_read_file(name: String) Bool { name == "host_read_file" }
 
 pub fn is_host_vector_arg(name: String, index: Int) Bool {
-  name == "host_write_bytes"
-    and index == 1
-    or name == "host_stdout_write_bytes"
-    and index == 0
-    or name == "host_run_wasm"
-    and (index == 0 or index == 1)
+  name == "host_write_bytes" and index == 1
+    or name == "host_stdout_write_bytes" and index == 0
+    or name == "host_run_wasm" and (index == 0 or index == 1)
 }
 
 pub fn is_vector_builder_array_arg(name: String, index: Int) Bool {

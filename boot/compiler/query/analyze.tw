@@ -489,10 +489,8 @@ fn analyze_dependencies(
       cur.timings.import_lookup = cur.timings.import_lookup + (date.now() - t_lookup0)
     }
     export_entries := dep_interface.exports.visible_types.len()
-    + dep_interface.exports.support_types.len()
-    + dep_interface.exports.functions.len()
-    + dep_interface.exports.support_functions.len()
-      + dep_interface.exports.values.len()
+      + dep_interface.exports.support_types.len() + dep_interface.exports.functions.len()
+      + dep_interface.exports.support_functions.len() + dep_interface.exports.values.len()
 
     if cur.timed {
       cur.counts.import_edges = cur.counts.import_edges + 1

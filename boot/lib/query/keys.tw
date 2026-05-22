@@ -25,21 +25,22 @@ fn wymix(a: Int, b: Int) Int {
   t1 := a_lo * b_hi
   t2 := a_hi * b_lo
   cross := (a_lo * b_lo >> 32 & 0xffffffff) + (t1 & 0xffffffff) + (t2 & 0xffffffff)
-  high := a_hi * b_hi + (t1 >> 32 & 0xffffffff) + (t2 >> 32 & 0xffffffff)
-    + (cross >> 32 & 0xffffffff)
+  high := a_hi * b_hi
+    + (t1 >> 32 & 0xffffffff) + (t2 >> 32 & 0xffffffff) + (cross >> 32 & 0xffffffff)
   low := a * b
   low ^ high
 }
 
 // Read 3 bytes for short keys (1-3 bytes).
 fn wyr3(bytes: Vector<Byte>, off: Int, len: Int) Int {
-  Byte.to_int(bytes[off]) << 16 | Byte.to_int(bytes[off + (len >> 1)]) << 8
-    | Byte.to_int(bytes[off + len - 1])
+  Byte.to_int(bytes[off]) << 16
+    | Byte.to_int(bytes[off + (len >> 1)]) << 8 | Byte.to_int(bytes[off + len - 1])
 }
 
 // Read 4 LE bytes as u64.
 fn wyr4(bytes: Vector<Byte>, off: Int) Int {
-  Byte.to_int(bytes[off]) | Byte.to_int(bytes[off + 1]) << 8 | Byte.to_int(bytes[off + 2]) << 16
+  Byte.to_int(bytes[off])
+    | Byte.to_int(bytes[off + 1]) << 8 | Byte.to_int(bytes[off + 2]) << 16
     | Byte.to_int(bytes[off + 3]) << 24
 }
 

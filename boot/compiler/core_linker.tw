@@ -226,8 +226,7 @@ pub fn link(
             case m.func_table[entry.function_name] {
               .Some(local_fid) => {
                 if local_fid.id < builtin_count
-                  or remap.has(local_fid.id)
-                  and !m.external_refs.has(local_fid.id) {
+                  or remap.has(local_fid.id) and !m.external_refs.has(local_fid.id) {
                   global_fid := remap_func_id(local_fid, remap)
                   key := "t${canonical_tid}::${entry.method_name}"
 

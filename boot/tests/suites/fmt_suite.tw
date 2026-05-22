@@ -1,0 +1,55 @@
+use @std.fs
+
+use compiler.fmt.formatter
+use compiler.lexer
+use compiler.parser
+use tests.assert
+use tests.runner
+
+fn format_ok(src: String) Result<String, String> {
+  lexed := lexer.lex(src, 0)
+
+  if lexed.diagnostics.len() > 0 {
+    return .Err("expected no lexer diagnostics")
+  }
+
+  parsed := parser.parse(src, 0)
+
+  if parsed.diagnostics.len() > 0 {
+    return .Err("expected no parser diagnostics")
+  }
+
+  .Ok(formatter.format(parsed.value, lexed.value))
+}
+
+fn read_case(name: String, suffix: String) Result<String, String> {
+  path := "boot/tests/suites/fmt_cases/${name}.${suffix}"
+
+  case fs.read_text(path) {
+    .Ok(content) => .Ok(content),
+    .Err(_) => .Err("failed to read fixture: ${path}"),
+  }
+}
+
+fn assert_fmt_case(name: String) Result<Void, String> {
+  original := try read_case(name, "original")
+  expected := try read_case(name, "expected")
+  formatted := try format_ok(original)
+  try assert.equal(formatted, expected)
+  reformatted := try format_ok(expected)
+  try assert.equal(reformatted, expected)
+  .Ok({})
+}
+
+pub fn suite() runner.Suite {
+  runner.suite("fmt").test(
+    "preserves right-nested non-associative binary parens",
+    fn() { assert_fmt_case("binary_parens") },
+  ).test("breaks logical or chains by alternative", fn() { assert_fmt_case("logical_or_chain") }).test(
+    "formats declarations and top-level spacing",
+    fn() { assert_fmt_case("declarations") },
+  ).test("formats literals and wrapped calls", fn() { assert_fmt_case("literals_and_calls") }).test(
+    "formats control-flow blocks",
+    fn() { assert_fmt_case("control_flow") },
+  ).test("preserves interleaved binary comments", fn() { assert_fmt_case("interleaved_comments") })
+}

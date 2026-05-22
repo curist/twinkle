@@ -1150,10 +1150,7 @@ fn parse_extern_sig(c: Cursor, is_pub: Bool, module_name: String, start_span: Sp
   return_type: TypeExpr? = .None
 
   if c.kind() != .Eof
-    and c.kind() != .Fn
-    and c.kind() != .RBrace
-    and c.kind() != .Pub
-    and c.kind() != .Extern
+    and c.kind() != .Fn and c.kind() != .RBrace and c.kind() != .Pub and c.kind() != .Extern
     and !c.preceded_by_newline() {
     parsed_ret := parse_type_expr(c)
     diagnostics_out = .concat(parsed_ret.diagnostics)
@@ -2107,10 +2104,8 @@ fn parse_expr_bp(c: Cursor, min_bp: Int) ExprParse {
         // Rebinding receiver shorthand: x = .method(args) => x = x.method(args)
         rhs_cursor := c.advance()
         is_receiver_shorthand := info.op == .Assign
-          and rhs_cursor.kind() == .Dot
-          and !rhs_cursor.preceded_by_newline()
-          and rhs_cursor.at(1).kind() == .Ident
-          and !is_upper_ascii_name(rhs_cursor.at(1).text())
+          and rhs_cursor.kind() == .Dot and !rhs_cursor.preceded_by_newline()
+          and rhs_cursor.at(1).kind() == .Ident and !is_upper_ascii_name(rhs_cursor.at(1).text())
           and rhs_cursor.at(2).kind() == .LParen
 
         if is_receiver_shorthand {
@@ -2197,11 +2192,8 @@ fn parse_binding_stmt_with_pub(c: Cursor, is_pub: Bool) StmtParse {
 
   // Rebinding receiver shorthand: name = .method(args) => name = name.method(args)
   if is_rebind
-    and c.kind() == .Dot
-    and !c.preceded_by_newline()
-    and c.at(1).kind() == .Ident
-    and !is_upper_ascii_name(c.at(1).text())
-    and c.at(2).kind() == .LParen {
+    and c.kind() == .Dot and !c.preceded_by_newline() and c.at(1).kind() == .Ident
+    and !is_upper_ascii_name(c.at(1).text()) and c.at(2).kind() == .LParen {
     receiver := Expr.{ id: c.alloc_expr_id(), kind: .Ident(name), span: name_span }
     parsed_value := parse_postfix(c, receiver)
     diagnostics_out = .concat(parsed_value.diagnostics)

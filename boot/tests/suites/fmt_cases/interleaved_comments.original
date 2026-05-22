@@ -1,0 +1,6 @@
+ok := first_check
+  // alphabetic ranges
+  or n >= 65 and n <= 90
+  or n >= 97 and n <= 122
+  // punctuation
+  or n == 45

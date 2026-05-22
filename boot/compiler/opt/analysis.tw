@@ -125,9 +125,7 @@ pub fn loop_push_reassign_elem(
   case op {
     .ACall(.AGlobalFunc(f), args) => {
       if f.id == push_id.id
-        and args.len() == 2
-        and atom_is_local(args[0], base)
-        and !atom_is_local(args[1], base)
+        and args.len() == 2 and atom_is_local(args[0], base) and !atom_is_local(args[1], base)
         and is_consume_reassign(body, base, result) {
         .Some(args[1])
       } else {

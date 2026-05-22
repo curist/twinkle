@@ -35,8 +35,7 @@ fn dead_let_inner(
       use_count := uses[local.id].unwrap_or(0)
 
       if use_count == 0
-        and !set_has(assigned, local.id)
-        and is_pure_with_optimizer_semantics(op, body, semantics) {
+        and !set_has(assigned, local.id) and is_pure_with_optimizer_semantics(op, body, semantics) {
         result := dead_let_inner(body, uses, assigned, semantics)
         return ElimResult.{ expr: result.expr, changed: true }
       }

@@ -944,8 +944,43 @@ fn format_binary_inner(op: BinOp, lhs: Expr, rhs: Expr, tm: TriviaMap, indent_co
       rhs_doc := format_binary_child(op, rhs, true, tm, false)
       doc.concat([lhs_doc, doc.text(" ${op_str} "), rhs_doc])
     },
-    _ => format_chained_binary(op, lhs, rhs, tm, indent_continuation),
+    _ => {
+      if op == .LogicalOr { format_logical_or_binary(op, lhs, rhs, tm, indent_continuation) } else {
+        format_chained_binary(op, lhs, rhs, tm, indent_continuation)
+      }
+    },
   }
+}
+
+fn binary_chain_sep(tm: TriviaMap, prev_end: Int, next_end: Int) Doc {
+  trivia := non_blank_trivia(get_trivia_in_range(tm, prev_end, next_end))
+
+  if trivia.len() > 0 { doc.concat([doc.hard_line(), emit_trivia(trivia)]) } else { doc.line() }
+}
+
+fn format_logical_or_binary(
+  op: BinOp,
+  lhs: Expr,
+  rhs: Expr,
+  tm: TriviaMap,
+  indent_continuation: Bool,
+) Doc {
+  chain := collect_binary_chain(op, lhs, rhs)
+  first_doc := format_binary_child(op, chain.first, false, tm, false)
+  prev_end := chain.first.span.end
+  parts: Vector<Doc> = [first_doc]
+
+  for piece in chain.pieces {
+    parts = .append(binary_chain_sep(tm, prev_end, piece.expr.span.end))
+    parts = .append(doc.text("${binop_str(piece.op)} "))
+    parts = .append(format_binary_child(piece.op, piece.expr, true, tm, false))
+    prev_end = piece.expr.span.end
+  }
+
+  body := if indent_continuation and parts.len() > 1 {
+    doc.concat([parts[0], doc.indent(doc.concat(parts.slice(1, parts.len())))])
+  } else { doc.concat(parts) }
+  doc.group(body)
 }
 
 fn format_chained_binary(op: BinOp, lhs: Expr, rhs: Expr, tm: TriviaMap, indent_continuation: Bool) Doc {
@@ -958,11 +993,7 @@ fn format_chained_binary(op: BinOp, lhs: Expr, rhs: Expr, tm: TriviaMap, indent_
   fill_children: Vector<Doc> = [first_doc]
 
   for piece in chain.pieces {
-    trivia := non_blank_trivia(get_trivia_in_range(tm, prev_end, piece.expr.span.end))
-    sep := if trivia.len() > 0 { doc.concat([doc.hard_line(), emit_trivia(trivia)]) } else {
-      doc.line()
-    }
-    fill_children = .append(sep)
+    fill_children = .append(binary_chain_sep(tm, prev_end, piece.expr.span.end))
     piece_doc := doc.concat([
       doc.text("${binop_str(piece.op)} "),
       format_binary_child(piece.op, piece.expr, true, tm, false),
@@ -999,7 +1030,7 @@ fn collect_binary_chain(op: BinOp, lhs: Expr, rhs: Expr) BinaryChain {
 
   case rhs.kind {
     .Binary(child_op, child_lhs, child_rhs) => {
-      if child_op == op {
+      if child_op == op and can_flatten_right_binary(op) {
         right_chain := collect_binary_chain(child_op, child_lhs, child_rhs)
         pieces = .append(BinaryPiece.{ op, expr: right_chain.first })
         pieces = .concat(right_chain.pieces)
@@ -1011,6 +1042,10 @@ fn collect_binary_chain(op: BinOp, lhs: Expr, rhs: Expr) BinaryChain {
   }
 
   BinaryChain.{ first, pieces }
+}
+
+fn can_flatten_right_binary(op: BinOp) Bool {
+  op == .LogicalOr or op == .LogicalAnd or op == .BitOr or op == .BitAnd or op == .BitXor
 }
 
 fn format_binary_child(
@@ -1120,13 +1155,12 @@ fn format_if_with_options(
   tm: TriviaMap,
   allow_inline_blocks: Bool,
 ) Doc {
-  allow_inline_branches := allow_inline_blocks and case else_expr {
+  allow_inline_branches := allow_inline_blocks
+    and case else_expr {
       .Some(el) => {
         case el.kind {
-          .BlockExpr(block) => is_simple_tail_block(then_block, tm) and is_simple_tail_block(
-              block,
-              tm,
-            ),
+          .BlockExpr(block) => is_simple_tail_block(then_block, tm)
+            and is_simple_tail_block(block, tm),
           _ => false,
         }
       },

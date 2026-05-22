@@ -27,6 +27,7 @@ use .suites.dict_hash_suite
 use .suites.equality_matrix_suite
 use .suites.equality_repro_suite
 use .suites.fingerprint_suite
+use .suites.fmt_suite
 use .suites.imports_suite
 use .suites.insert_boundaries_suite
 use .suites.lib_json_suite
@@ -142,6 +143,7 @@ runner.run_all([
   fingerprint_suite.suite(),
   type_registry_suite.suite(),
   query_stage_runner_suite.suite(),
+  fmt_suite.suite(),
   query_analyze_suite.suite(),
   ast_path_suite.suite(),
   diag_render_suite.suite(),

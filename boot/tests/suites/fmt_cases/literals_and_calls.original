@@ -1,0 +1,4 @@
+type Point=.{x:Int,y:Int,label:String}
+point:Point=.{x:1,y:2,label:"origin"}
+nums:=[1,2,3,4,5,6,7,8,9,10,11,12]
+call_result:=some_really_long_function_name(first_argument,second_argument,third_argument,fourth_argument)
