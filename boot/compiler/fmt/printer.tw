@@ -323,12 +323,13 @@ pub fn format_module(module: Module, tokens: Vector<Token>) Doc {
     mod_name := extern_module_name(item)
 
     if mod_name != "" {
-      // Collect consecutive externs with the same module
+      // Collect consecutive externs with the same module and visibility
+      is_pub := extern_is_pub(item)
       group_end := i + 1
 
       for group_end < items.len() {
         next_mod := extern_module_name(items[group_end])
-        if next_mod != mod_name { break }
+        if next_mod != mod_name or extern_is_pub(items[group_end]) != is_pub { break }
         group_end = group_end + 1
       }
 
@@ -342,7 +343,7 @@ pub fn format_module(module: Module, tokens: Vector<Token>) Doc {
         result = doc.concat([result, item_doc])
       } else {
         // Multiple externs with same module: emit as block
-        item_doc := format_extern_block(mod_name, group_items, tm)
+        item_doc := format_extern_block(mod_name, is_pub, group_items, tm)
         result = doc.concat([result, item_doc])
       }
 
@@ -568,23 +569,16 @@ fn extern_module_name(item: Item) String {
   }
 }
 
-fn format_extern_block(module: String, items: Vector<Item>, tm: TriviaMap) Doc {
-  parts: Vector<Doc> = []
-  // Check if any item in the group is pub
-  is_pub := false
-
-  for item in items {
-    case item {
-      .ExternFunction(decl) => {
-        if decl.is_pub { is_pub = true }
-      },
-      .ExternType(decl) => {
-        if decl.is_pub { is_pub = true }
-      },
-      _ => {},
-    }
+fn extern_is_pub(item: Item) Bool {
+  case item {
+    .ExternFunction(decl) => decl.is_pub,
+    .ExternType(decl) => decl.is_pub,
+    _ => false,
   }
+}
 
+fn format_extern_block(module: String, is_pub: Bool, items: Vector<Item>, tm: TriviaMap) Doc {
+  parts: Vector<Doc> = []
   if is_pub { parts = .append(doc.text("pub ")) }
   parts = .append(doc.text("extern ${module} {"))
   inner_parts: Vector<Doc> = []
@@ -1299,17 +1293,16 @@ fn format_call(callee: Expr, args: Vector<Expr>, tm: TriviaMap) Doc {
     .Some(chain) => {
       // First segment stays attached to the base
       first := chain.segments[0]
-      head_doc := doc.concat([
-        format_receiver(chain.base, tm),
-        format_chain_segment(first, tm),
-      ])
+      head_doc := doc.concat([format_receiver(chain.base, tm), format_chain_segment(first, tm)])
       // Remaining segments break together
       tail_parts: Vector<Doc> = []
+
       for seg, i in chain.segments {
         if i == 0 { continue }
         tail_parts = .append(doc.if_break(doc.hard_line(), doc.nil()))
         tail_parts = .append(format_chain_segment(seg, tm))
       }
+
       return doc.concat([head_doc, doc.group(doc.indent(doc.concat(tail_parts)))])
     },
     .None => {},

@@ -11,3 +11,9 @@ extern canvas {
   fn get_context(id: String) CanvasContext?
   fn fill_rect(ctx: CanvasContext, x: Float, y: Float, w: Float, h: Float)
 }
+
+pub extern io fn read_file(path: String) String
+
+extern io fn internal_open(path: String) Int
+
+pub extern io fn write_file(path: String, data: String)
