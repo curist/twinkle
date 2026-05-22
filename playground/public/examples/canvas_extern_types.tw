@@ -3,11 +3,14 @@
 // Extern types let Twinkle code hold and pass host objects (like a Canvas 2D
 // context) without exposing their internals. The playground provides a canvas
 // element with the id "twinkle" and wires these extern calls to it.
-
+//
+// This example uses sleep_ms (JSPI) to animate twinkling stars.
 extern canvas type CanvasContext
 
 extern Math {
   fn floor(x: Float) Float
+  fn sin(x: Float) Float
+  fn random() Float
 }
 
 extern canvas {
@@ -20,46 +23,124 @@ extern canvas {
   fn arc(ctx: CanvasContext, x: Float, y: Float, r: Float, start: Float, end: Float)
   fn fill(ctx: CanvasContext)
   fn set_global_alpha(ctx: CanvasContext, a: Float)
+  fn close_path(ctx: CanvasContext)
+  fn move_to(ctx: CanvasContext, x: Float, y: Float)
+  fn line_to(ctx: CanvasContext, x: Float, y: Float)
+  fn stroke(ctx: CanvasContext)
+  fn set_stroke_style(ctx: CanvasContext, color: String)
+  fn set_line_width(ctx: CanvasContext, w: Float)
 }
 
-type Star = .{ nx: Float, ny: Float, r: Float, color: String }
+extern timer fn sleep_ms(ms: Int)
+
+type Star = .{ nx: Float, ny: Float, r: Float, color: String, speed: Float, phase: Float }
 
 fn draw_background(ctx: CanvasContext, w: Float, h: Float) {
-  ctx.set_fill_style("#0d1117")
+  ctx.set_fill_style("#0b0e17")
   ctx.fill_rect(0.0, 0.0, w, h)
 }
 
-fn draw_star(ctx: CanvasContext, star: Star, w: Float, h: Float, scale: Float, pi: Float) {
+fn draw_star(ctx: CanvasContext, star: Star, w: Float, h: Float, scale: Float, pi: Float, t: Float) {
   sx := star.nx * w
   sy := star.ny * h
-  sr := star.r * scale
+
+  // Twinkle: oscillate alpha using sin wave with per-star speed and phase
+  wave := Math.sin(t * star.speed + star.phase)
+
+  // Map sin [-1,1] to brightness [0.15, 1.0]
+  brightness := 0.575 + 0.425 * wave
+  sr := star.r * scale * (0.8 + 0.2 * wave)
 
   // Outer glow
-  ctx.set_global_alpha(0.15)
+  ctx.set_global_alpha(0.1 * brightness)
   ctx.set_fill_style(star.color)
   ctx.begin_path()
-  ctx.arc(sx, sy, sr * 4.0, 0.0, pi * 2.0)
+  ctx.arc(sx, sy, sr * 5.0, 0.0, pi * 2.0)
   ctx.fill()
 
   // Middle glow
-  ctx.set_global_alpha(0.4)
+  ctx.set_global_alpha(0.3 * brightness)
   ctx.begin_path()
-  ctx.arc(sx, sy, sr * 2.0, 0.0, pi * 2.0)
+  ctx.arc(sx, sy, sr * 2.5, 0.0, pi * 2.0)
   ctx.fill()
 
   // Bright core
-  ctx.set_global_alpha(1.0)
+  ctx.set_global_alpha(brightness)
   ctx.begin_path()
   ctx.arc(sx, sy, sr, 0.0, pi * 2.0)
   ctx.fill()
 }
 
-fn draw_grid(ctx: CanvasContext, w: Float, h: Float, scale: Float) {
+fn draw_ray(ctx: CanvasContext, x: Float, y: Float, len: Float, angle: Float, width: Float) {
+  // Draw a tapered ray: triangle from center outward
+  dx := Math.sin(angle)
+  dy := 0.0 - Math.sin(angle - 1.5707963)
+
+  // Perpendicular for the base width
+  px := 0.0 - dy
+  py := dx
+
+  ctx.begin_path()
+  ctx.move_to(x + px * width, y + py * width)
+  ctx.line_to(x + dx * len, y + dy * len)
+  ctx.line_to(x - px * width, y - py * width)
+  ctx.close_path()
+  ctx.fill()
+}
+
+fn draw_sparkle(
+  ctx: CanvasContext,
+  x: Float,
+  y: Float,
+  size: Float,
+  pi: Float,
+  alpha: Float,
+  t: Float,
+) {
+  // Rotate the sparkle slowly over time
+  rot := t * 0.8
+
+  // Soft glow halo
+  ctx.set_global_alpha(alpha * 0.25)
+  ctx.set_fill_style("#ffffff")
+  ctx.begin_path()
+  ctx.arc(x, y, size * 1.5, 0.0, pi * 2.0)
+  ctx.fill()
+
+  // 4 main rays (tapered triangles)
+  ctx.set_fill_style("#ffffff")
+  ctx.set_global_alpha(alpha * 0.9)
+
+  for i in range(4) {
+    angle := rot + i.to_float() * pi / 2.0
+    draw_ray(ctx, x, y, size * 2.5, angle, size * 0.15)
+  }
+
+  // 4 shorter diagonal rays
+  ctx.set_global_alpha(alpha * 0.5)
+
+  for i in range(4) {
+    angle := rot + pi / 4.0 + i.to_float() * pi / 2.0
+    draw_ray(ctx, x, y, size * 1.2, angle, size * 0.1)
+  }
+
+  // Bright center dot
+  ctx.set_global_alpha(alpha)
+  ctx.begin_path()
+  ctx.arc(x, y, size * 0.3, 0.0, pi * 2.0)
+  ctx.fill()
+}
+
+fn draw_grid(ctx: CanvasContext, w: Float, h: Float, scale: Float, t: Float) {
   colors := ["#ff7b72", "#ffa657", "#e3b341", "#56d364", "#58a6ff", "#d2a8ff"]
   size := 18.0 * scale
   gap := 3.0 * scale
   raw_cols := Math.floor((w - gap) / (size + gap)).to_int()
-  cols := if raw_cols < 1 { 1 } else { raw_cols }
+  cols := if raw_cols < 1 {
+    1
+  } else {
+    raw_cols
+  }
   grid_w := cols.to_float() * size + (cols.to_float() - 1.0) * gap
   start_x := (w - grid_w) / 2.0
   start_y := h - (size + gap) * 2.0 - gap
@@ -67,6 +148,11 @@ fn draw_grid(ctx: CanvasContext, w: Float, h: Float, scale: Float) {
   for row in range(2) {
     for col in range(cols) {
       color_idx := (row + col) % colors.len()
+
+      // Stagger wave across columns for a ripple effect
+      wave := Math.sin(t * 3.0 + col.to_float() * 0.4 + row.to_float() * 1.2)
+      alpha := 0.65 + 0.35 * wave
+      ctx.set_global_alpha(alpha)
       ctx.set_fill_style(colors[color_idx])
       x := start_x + col.to_float() * (size + gap)
       y := start_y + row.to_float() * (size + gap)
@@ -75,43 +161,116 @@ fn draw_grid(ctx: CanvasContext, w: Float, h: Float, scale: Float) {
   }
 }
 
-fn draw(ctx: CanvasContext) {
+fn draw_shooting_star(ctx: CanvasContext, w: Float, h: Float, t: Float) {
+  // A shooting star that streaks across periodically
+  cycle := 6.0
+  raw_phase := t / cycle
+  phase := raw_phase - Math.floor(raw_phase)
+
+  // Only visible for a brief window
+  if phase > 0.25 {
+    return
+  }
+
+  progress := phase / 0.25
+  x1 := w * (0.1 + 0.8 * progress)
+  y1 := h * (0.05 + 0.15 * progress)
+
+  tail_len := 60.0
+  x0 := x1 - tail_len
+  y0 := y1 - tail_len * 0.2
+
+  alpha := if progress < 0.5 {
+    progress * 2.0
+  } else {
+    (1.0 - progress) * 2.0
+  }
+
+  ctx.set_global_alpha(alpha * 0.8)
+  ctx.set_stroke_style("#ffffff")
+  ctx.set_line_width(1.5)
+  ctx.begin_path()
+  ctx.move_to(x0, y0)
+  ctx.line_to(x1, y1)
+  ctx.stroke()
+
+  // Bright head
+  ctx.set_global_alpha(alpha)
+  ctx.set_fill_style("#ffffff")
+  ctx.begin_path()
+  ctx.arc(x1, y1, 2.0, 0.0, 3.14159265 * 2.0)
+  ctx.fill()
+}
+
+fn draw_frame(ctx: CanvasContext, stars: Vector<Star>, t: Float) {
   w := canvas.get_width()
   h := canvas.get_height()
   pi := 3.14159265
 
-  scale := if w < h { w } else { h }
+  scale := if w < h {
+    w
+  } else {
+    h
+  }
   scale = scale / 400.0
 
-  stars: Vector<Star> = [
-    .{ nx: 0.13, ny: 0.15, r: 3.0, color: "#58a6ff" },
-    .{ nx: 0.33, ny: 0.10, r: 2.0, color: "#d2a8ff" },
-    .{ nx: 0.57, ny: 0.22, r: 4.0, color: "#ffa657" },
-    .{ nx: 0.83, ny: 0.12, r: 2.5, color: "#a5d6ff" },
-    .{ nx: 0.25, ny: 0.38, r: 1.5, color: "#c9d1d9" },
-    .{ nx: 0.75, ny: 0.32, r: 3.5, color: "#ff7b72" },
-    .{ nx: 0.08, ny: 0.50, r: 2.0, color: "#56d364" },
-    .{ nx: 0.47, ny: 0.45, r: 3.0, color: "#e3b341" },
-    .{ nx: 0.87, ny: 0.55, r: 2.0, color: "#58a6ff" },
-    .{ nx: 0.63, ny: 0.62, r: 1.5, color: "#d2a8ff" },
-    .{ nx: 0.20, ny: 0.70, r: 2.5, color: "#a5d6ff" },
-    .{ nx: 0.92, ny: 0.75, r: 2.0, color: "#ffa657" },
-    .{ nx: 0.40, ny: 0.28, r: 1.5, color: "#56d364" },
-    .{ nx: 0.05, ny: 0.85, r: 2.0, color: "#c9d1d9" },
-    .{ nx: 0.55, ny: 0.80, r: 3.0, color: "#ff7b72" },
-    .{ nx: 0.70, ny: 0.08, r: 2.0, color: "#e3b341" },
-  ]
-
   draw_background(ctx, w, h)
+
+  // Draw stars with twinkle animation
   for star in stars {
-    draw_star(ctx, star, w, h, scale, pi)
+    draw_star(ctx, star, w, h, scale, pi, t)
   }
+
+  // Draw sparkles on stars near their peak brightness
+  for star in stars {
+    wave := Math.sin(t * star.speed + star.phase)
+
+    if wave > 0.75 {
+      sparkle_alpha := (wave - 0.75) / 0.25
+      sx := star.nx * w
+      sy := star.ny * h
+      sparkle_size := star.r * scale * 2.5
+      draw_sparkle(ctx, sx, sy, sparkle_size, pi, sparkle_alpha, t)
+    }
+  }
+
+  draw_shooting_star(ctx, w, h, t)
+
   ctx.set_global_alpha(1.0)
-  draw_grid(ctx, w, h, scale)
+  draw_grid(ctx, w, h, scale, t)
 }
 
-// get_context returns CanvasContext? — gracefully handle missing canvas
+stars: Vector<Star> = [
+  .{ nx: 0.13, ny: 0.15, r: 3.0, color: "#58a6ff", speed: 2.2, phase: 0.0 },
+  .{ nx: 0.33, ny: 0.10, r: 2.0, color: "#d2a8ff", speed: 3.1, phase: 1.5 },
+  .{ nx: 0.57, ny: 0.22, r: 4.0, color: "#ffa657", speed: 1.8, phase: 3.0 },
+  .{ nx: 0.83, ny: 0.12, r: 2.5, color: "#a5d6ff", speed: 2.7, phase: 4.2 },
+  .{ nx: 0.25, ny: 0.38, r: 1.5, color: "#c9d1d9", speed: 3.5, phase: 0.8 },
+  .{ nx: 0.75, ny: 0.32, r: 3.5, color: "#ff7b72", speed: 1.5, phase: 2.1 },
+  .{ nx: 0.08, ny: 0.50, r: 2.0, color: "#56d364", speed: 2.9, phase: 5.0 },
+  .{ nx: 0.47, ny: 0.45, r: 3.0, color: "#e3b341", speed: 2.0, phase: 1.0 },
+  .{ nx: 0.87, ny: 0.55, r: 2.0, color: "#58a6ff", speed: 3.3, phase: 3.7 },
+  .{ nx: 0.63, ny: 0.62, r: 1.5, color: "#d2a8ff", speed: 2.5, phase: 2.5 },
+  .{ nx: 0.20, ny: 0.70, r: 2.5, color: "#a5d6ff", speed: 1.9, phase: 4.8 },
+  .{ nx: 0.92, ny: 0.75, r: 2.0, color: "#ffa657", speed: 3.0, phase: 0.3 },
+  .{ nx: 0.40, ny: 0.28, r: 1.5, color: "#56d364", speed: 2.4, phase: 5.5 },
+  .{ nx: 0.05, ny: 0.85, r: 2.0, color: "#c9d1d9", speed: 2.8, phase: 1.8 },
+  .{ nx: 0.55, ny: 0.80, r: 3.0, color: "#ff7b72", speed: 1.7, phase: 3.3 },
+  .{ nx: 0.70, ny: 0.08, r: 2.0, color: "#e3b341", speed: 3.2, phase: 4.5 },
+  .{ nx: 0.50, ny: 0.50, r: 3.5, color: "#ffffff", speed: 1.2, phase: 0.0 },
+  .{ nx: 0.15, ny: 0.92, r: 1.5, color: "#58a6ff", speed: 2.6, phase: 2.8 },
+  .{ nx: 0.78, ny: 0.88, r: 2.0, color: "#d2a8ff", speed: 3.4, phase: 5.2 },
+]
 case canvas.get_context("twinkle") {
   .None => println("no canvas available"),
-  .Some(ctx) => draw(ctx),
+  .Some(ctx) => {
+    frame := 0
+
+    for true {
+      t := frame.to_float() / 30.0
+      draw_frame(ctx, stars, t)
+      timer.sleep_ms(33)
+      frame = frame + 1
+    }
+  },
 }
