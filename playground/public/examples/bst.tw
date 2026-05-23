@@ -30,6 +30,46 @@ fn to_string(t: BST) String {
   "[${items.join(", ")}]"
 }
 
+fn is_empty(t: BST) Bool {
+  case t {
+    .Empty => true,
+    .Node(_, _, _) => false,
+  }
+}
+
+fn pretty_child(t: BST, prefix: String, is_last: Bool) String {
+  case t {
+    .Empty => "",
+    .Node(v, left, right) => {
+      branch := if is_last {
+        "└─ "
+      } else {
+        "├─ "
+      }
+      next_prefix := if is_last {
+        "   "
+      } else {
+        "│  "
+      }
+      left_last := right.is_empty()
+      "${prefix}${branch}${v}\n${left.pretty_child("${prefix}${next_prefix}", left_last)}${right.pretty_child(
+        "${prefix}${next_prefix}",
+        true,
+      )}"
+    },
+  }
+}
+
+fn pretty(t: BST) String {
+  case t {
+    .Empty => "Empty",
+    .Node(v, left, right) => "${v}\n${left.pretty_child("", right.is_empty())}${right.pretty_child(
+      "",
+      true,
+    )}",
+  }
+}
+
 fn inorder(t: BST) Vector<Int> {
   case t {
     .Empty => [],
@@ -56,6 +96,7 @@ for v in [5, 3, 8, 1, 4, 7, 9, 2, 6] {
 }
 sorted := tree.inorder()
 println("Tree:   ${tree}")
+println(tree.pretty())
 println("Sorted: ${sorted}")
 println("Has 4?  ${tree.contains(4)}")
 println("Has 10? ${tree.contains(10)}")
