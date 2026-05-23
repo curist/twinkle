@@ -1949,20 +1949,28 @@ fn escape_string(s: String) String {
     b := bytes[i]
     escape: String? = .None
 
-    if b == 34 {
-      escape = .Some("\\\"")
-    } else if b == 92 {
-      escape = .Some("\\\\")
-    } else if b == 10 {
-      escape = .Some("\\n")
-    } else if b == 13 {
-      escape = .Some("\\r")
-    } else if b == 9 {
-      escape = .Some("\\t")
-    } else if b == 36 {
-      escape = .Some("\\\$")
-    } else if b == 27 {
-      escape = .Some("\\e")
+    cond {
+      b == 34 => {
+        escape = .Some("\\\"")
+      },
+      b == 92 => {
+        escape = .Some("\\\\")
+      },
+      b == 10 => {
+        escape = .Some("\\n")
+      },
+      b == 13 => {
+        escape = .Some("\\r")
+      },
+      b == 9 => {
+        escape = .Some("\\t")
+      },
+      b == 36 => {
+        escape = .Some("\\\$")
+      },
+      b == 27 => {
+        escape = .Some("\\e")
+      },
     }
 
     case escape {

@@ -277,6 +277,7 @@ PrimaryExpr =
     | Block
     | IfExpr
     | CaseExpr
+    | CondExpr
     | CollectExpr
     | "(" Expr ")" ;
 
@@ -301,6 +302,23 @@ VariantExpr =
      http.Header.ContentType -- multi-segment qualification
    The chain terminates as soon as a segment is lowercase or a non-ident
    token follows the dot. *)
+
+(* ===== Cond Expression ===== *)
+
+CondExpr =
+    "cond" "{" CondArms "}" ;
+
+CondArms =
+    CondArm { "," CondArm } [ "," ] ;
+
+CondArm =
+      Expr "=>" Expr
+    | "_" "=>" Expr ;
+(* Implementation note:
+   - Each condition must have type Bool.
+   - The `_` arm is the default and must appear last when present.
+   - `cond {}` (empty) is a parse error.
+   - Desugars to nested If/Else in Core IR — no new IR nodes. *)
 
 (* ===== Pattern Matching ===== *)
 
@@ -693,7 +711,7 @@ Newline =
 (*
 Keywords (reserved):
   fn, if, else, true, false,
-  use, as, pub, type, case, try,
+  use, as, pub, type, case, cond, try,
   and, or, for, in, collect,
   break, continue, return, defer
 

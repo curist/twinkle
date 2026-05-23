@@ -19,7 +19,7 @@
 
 "pub" @keyword.modifier
 
-[ "if" "else" "case" "for" "in" "collect" ] @keyword.control
+[ "if" "else" "case" "cond" "for" "in" "collect" ] @keyword.control
 
 "try" @keyword.exception
 

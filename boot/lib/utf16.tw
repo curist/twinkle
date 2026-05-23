@@ -111,29 +111,24 @@ pub fn code_units_to_byte_offset(s: String, units: Int) Int? {
 fn utf8_len_at(s: String, pos: Int) Int {
   lead := Byte.to_int(s[pos])
 
-  if lead < 0x80 {
-    1
-  } else if lead < 0xE0 {
-    2
-  } else if lead < 0xF0 {
-    3
-  } else {
-    4
+  cond {
+    lead < 0x80 => 1,
+    lead < 0xE0 => 2,
+    lead < 0xF0 => 3,
+    _ => 4,
   }
 }
 
 fn decode_cp(s: String, pos: Int) Int {
   lead := Byte.to_int(s[pos])
 
-  if lead < 0x80 {
-    lead
-  } else if lead < 0xE0 {
-    (lead - 0xC0) * 64 + (Byte.to_int(s[pos + 1]) - 0x80)
-  } else if lead < 0xF0 {
-    (lead - 0xE0) * 4096 + (Byte.to_int(s[pos + 1]) - 0x80) * 64 + (Byte.to_int(s[pos + 2]) - 0x80)
-  } else {
-    (lead - 0xF0) * 262144
+  cond {
+    lead < 0x80 => lead,
+    lead < 0xE0 => (lead - 0xC0) * 64 + (Byte.to_int(s[pos + 1]) - 0x80),
+    lead < 0xF0 => (lead - 0xE0) * 4096
+      + (Byte.to_int(s[pos + 1]) - 0x80) * 64 + (Byte.to_int(s[pos + 2]) - 0x80),
+    _ => (lead - 0xF0) * 262144
       + (Byte.to_int(s[pos + 1]) - 0x80) * 4096 + (Byte.to_int(s[pos + 2]) - 0x80) * 64
-      + (Byte.to_int(s[pos + 3]) - 0x80)
+      + (Byte.to_int(s[pos + 3]) - 0x80),
   }
 }

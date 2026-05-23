@@ -304,6 +304,19 @@ fn print_expr(expr: &Expr, out: &mut String, indent: usize) {
                 print_expr(&arm.body, out, indent + 4);
             }
         }
+        ExprKind::Cond { arms } => {
+            writeln!(out, "{}Cond", prefix).unwrap();
+            for arm in arms {
+                if let Some(cond) = &arm.condition {
+                    writeln!(out, "{}  condition:", prefix).unwrap();
+                    print_expr(cond, out, indent + 4);
+                } else {
+                    writeln!(out, "{}  _ =>", prefix).unwrap();
+                }
+                writeln!(out, "{}  body:", prefix).unwrap();
+                print_expr(&arm.body, out, indent + 4);
+            }
+        }
         ExprKind::Array { elements } => {
             writeln!(out, "{}Array[{}]", prefix, elements.len()).unwrap();
             for expr in elements {

@@ -2531,6 +2531,37 @@ impl Lowerer {
                 })
             }
 
+            // --- Cond expression (desugar to nested If) ---
+            ExprKind::Cond { arms } => {
+                let mut result = CoreExpr {
+                    kind: CoreExprKind::LitVoid,
+                    ty: MonoType::Void,
+                    span,
+                };
+                for arm in arms.iter().rev() {
+                    match &arm.condition {
+                        Some(cond_expr) => {
+                            let cond_lowered = self.lower_expr(cond_expr)?;
+                            let body_lowered = self.lower_expr(&arm.body)?;
+                            result = CoreExpr {
+                                kind: CoreExprKind::If {
+                                    cond: Box::new(cond_lowered),
+                                    then_branch: Box::new(body_lowered),
+                                    else_branch: Box::new(result),
+                                },
+                                ty: ty.clone(),
+                                span,
+                            };
+                        }
+                        None => {
+                            // Default arm becomes the else
+                            result = self.lower_expr(&arm.body)?;
+                        }
+                    }
+                }
+                Some(result.kind)
+            }
+
             // --- Block expression ---
             ExprKind::Block(block) => {
                 self.local_allocator.push_scope();

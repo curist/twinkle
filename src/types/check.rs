@@ -9,8 +9,8 @@ use super::ty::{
 use super::type_map::TypeMap;
 use crate::module::artifacts::TypedModule;
 use crate::syntax::ast::{
-    BinOp, Block, Expr, ExprId, ExprKind, FunctionDecl, Item, Literal, Pattern, SourceFile, Stmt,
-    StringPart, Type as AstType, UnOp,
+    BinOp, Block, CondArm, Expr, ExprId, ExprKind, FunctionDecl, Item, Literal, Pattern,
+    SourceFile, Stmt, StringPart, Type as AstType, UnOp,
 };
 use crate::syntax::span::Span;
 use std::collections::{HashMap, HashSet, VecDeque};
@@ -767,6 +767,8 @@ impl TypeChecker {
                 else_branch,
             } => self.synth_if(cond, then_branch, else_branch.as_deref(), expr.span),
 
+            ExprKind::Cond { arms } => self.synth_cond(arms, expr.span),
+
             ExprKind::FieldAccess { base, field } => {
                 if let ExprKind::Ident(alias) = &base.kind {
                     if self.can_use_module_alias(alias) {
@@ -963,6 +965,21 @@ impl TypeChecker {
                 if let Some(else_b) = else_branch {
                     self.check_expr(else_b, expected)?;
                 } else {
+                    let _ = self.unify(&MonoType::Void, expected, expr.span);
+                }
+                Ok(())
+            }
+
+            // Cond: check each arm against expected type
+            ExprKind::Cond { arms } => {
+                let has_default = arms.last().map_or(false, |a| a.condition.is_none());
+                for arm in arms {
+                    if let Some(cond) = &arm.condition {
+                        self.check_expr(cond, &MonoType::Bool)?;
+                    }
+                    self.check_expr(&arm.body, expected)?;
+                }
+                if !has_default {
                     let _ = self.unify(&MonoType::Void, expected, expr.span);
                 }
                 Ok(())
@@ -2554,6 +2571,36 @@ impl TypeChecker {
         }
     }
 
+    fn synth_cond(&mut self, arms: &[CondArm], _span: Span) -> Result<MonoType, ()> {
+        let has_default = arms.last().map_or(false, |a| a.condition.is_none());
+        let mut result_ty: Option<MonoType> = None;
+
+        for arm in arms {
+            if let Some(cond) = &arm.condition {
+                self.check_expr(cond, &MonoType::Bool)?;
+            }
+            let arm_ty = self.synth_expr(&arm.body)?;
+            let arm_zonked = self.zonk(&arm_ty);
+            if arm_zonked == MonoType::Never {
+                continue;
+            }
+            match &result_ty {
+                Some(rt) => {
+                    self.unify(&arm_zonked, rt, arm.span)?;
+                }
+                None => {
+                    result_ty = Some(arm_zonked);
+                }
+            }
+        }
+
+        if !has_default {
+            Ok(MonoType::Void)
+        } else {
+            Ok(result_ty.unwrap_or(MonoType::Never))
+        }
+    }
+
     //
     // Field access
     //
@@ -4097,6 +4144,14 @@ fn collect_expr_refs(expr: &Expr, locals: &HashSet<String>, out: &mut HashSet<St
                 let mut arm_locals = locals.clone();
                 collect_pattern_names(&arm.pattern, &mut arm_locals);
                 collect_expr_refs(&arm.body, &arm_locals, out);
+            }
+        }
+        ExprKind::Cond { arms } => {
+            for arm in arms {
+                if let Some(cond) = &arm.condition {
+                    collect_expr_refs(cond, locals, out);
+                }
+                collect_expr_refs(&arm.body, locals, out);
             }
         }
         ExprKind::Block(block) => {

@@ -212,6 +212,9 @@ pub enum ExprKind {
         arms: Vec<CaseArm>,
     },
 
+    /// Cond expression (boolean dispatch)
+    Cond { arms: Vec<CondArm> },
+
     /// Block expression
     Block(Block),
 
@@ -312,6 +315,14 @@ pub enum UnOp {
 #[derive(Debug, Clone, PartialEq)]
 pub struct CaseArm {
     pub pattern: Pattern,
+    pub body: Expr,
+    pub span: Span,
+}
+
+/// Cond arm (condition is None for the wildcard `_` default arm)
+#[derive(Debug, Clone, PartialEq)]
+pub struct CondArm {
+    pub condition: Option<Expr>,
     pub body: Expr,
     pub span: Span,
 }

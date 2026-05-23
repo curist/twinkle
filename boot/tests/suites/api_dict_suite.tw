@@ -12,12 +12,10 @@ fn make_dict() Dict<String, Int> {
 fn linker_stress_key(i: Int) String {
   dollar := "\$"
 
-  if i % 3 == 0 {
-    "${dollar}f${i}___lambda"
-  } else if i % 3 == 1 {
-    "${dollar}str_${i}"
-  } else {
-    "${dollar}f${i}_empty"
+  cond {
+    i % 3 == 0 => "${dollar}f${i}___lambda",
+    i % 3 == 1 => "${dollar}str_${i}",
+    _ => "${dollar}f${i}_empty",
   }
 }
 

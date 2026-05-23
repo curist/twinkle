@@ -410,6 +410,7 @@ module.exports = grammar({
       $.block,
       $.if_expression,
       $.case_expression,
+      $.cond_expression,
       $.collect_expression,
       $.parenthesized_expression,
     ),
@@ -425,6 +426,27 @@ module.exports = grammar({
       field('variant', alias(token(/[A-Z][a-zA-Z0-9_]*/), $.identifier)),
       optional(seq('(', $.arguments, ')')),
     )),
+
+    // ===== Cond Expression =====
+
+    cond_expression: $ => seq(
+      'cond',
+      '{',
+      $.cond_arms,
+      '}',
+    ),
+
+    cond_arms: $ => seq(
+      $.cond_arm,
+      repeat(seq(',', $.cond_arm)),
+      optional(','),
+    ),
+
+    cond_arm: $ => seq(
+      field('condition', choice($._expression, $.wildcard_pattern)),
+      '=>',
+      field('value', choice($.break_statement, $.continue_statement, $._expression)),
+    ),
 
     // ===== Pattern Matching =====
 

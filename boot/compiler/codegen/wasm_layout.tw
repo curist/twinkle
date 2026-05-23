@@ -461,12 +461,10 @@ pub fn val_type_of_mono(ty: MonoType, env: ResolvedEnv) ValType {
 pub type EqTypeLayouts = .{ records: Vector<WasmRecordLayout>, sums: Vector<WasmSumLayout> }
 
 fn compare_strings(a: String, b: String) Order {
-  if a < b {
-    .Lt
-  } else if a > b {
-    .Gt
-  } else {
-    .Eq
+  cond {
+    a < b => .Lt,
+    a > b => .Gt,
+    _ => .Eq,
   }
 }
 

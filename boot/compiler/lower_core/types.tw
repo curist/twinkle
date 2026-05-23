@@ -91,19 +91,15 @@ pub fn resolve_type_id(env: ResolvedEnv, name: String) TypeId? {
 // Resolve variant index for any MonoType (including builtin Optional/Result).
 pub fn variant_index(ty: MonoType, name: String, env: ResolvedEnv) Int {
   case ty {
-    .Optional(_) => if name == "None" {
-      0
-    } else if name == "Some" {
-      1
-    } else {
-      -1
+    .Optional(_) => cond {
+      name == "None" => 0,
+      name == "Some" => 1,
+      _ => -1,
     },
-    .Result(_, _) => if name == "Ok" {
-      0
-    } else if name == "Err" {
-      1
-    } else {
-      -1
+    .Result(_, _) => cond {
+      name == "Ok" => 0,
+      name == "Err" => 1,
+      _ => -1,
     },
     .Named(tid, _) => find_variant_index(env, tid, name),
     _ => -1,

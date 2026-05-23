@@ -1143,6 +1143,7 @@ impl Parser {
             // Keywords
             TokenKind::If => self.parse_if(),
             TokenKind::Case => self.parse_case(),
+            TokenKind::Cond => self.parse_cond(),
             TokenKind::LBrace => self.parse_block_expr(),
             TokenKind::Fn => self.parse_function_expr(),
             TokenKind::Collect => self.parse_collect(),
@@ -1725,6 +1726,50 @@ impl Parser {
             body,
             span,
         })
+    }
+
+    fn parse_cond(&mut self) -> ParseResult<Expr> {
+        let start = self.expect(TokenKind::Cond)?;
+        self.expect(TokenKind::LBrace)?;
+
+        let mut arms = Vec::new();
+        while !self.peek_is(TokenKind::RBrace) && !self.is_eof() {
+            let arm_start = self.tokens[self.pos].span;
+            let condition = if self.peek_is(TokenKind::Ident) && self.tokens[self.pos].text == "_" {
+                self.advance();
+                None
+            } else {
+                Some(self.parse_expr()?)
+            };
+            self.expect(TokenKind::FatArrow)?;
+            let body = self.parse_expr_in("cond arm body")?;
+            let span = arm_start.merge(&body.span);
+            let is_default = condition.is_none();
+            arms.push(CondArm {
+                condition,
+                body,
+                span,
+            });
+
+            if self.peek_is(TokenKind::RBrace) {
+                self.consume_if(TokenKind::Comma);
+            } else {
+                self.expect(TokenKind::Comma)?;
+            }
+
+            if is_default {
+                break;
+            }
+        }
+
+        let end = self.expect(TokenKind::RBrace)?;
+        let span = start.span.merge(&end.span);
+
+        Ok(Expr::new(
+            self.alloc_expr_id(),
+            ExprKind::Cond { arms },
+            span,
+        ))
     }
 
     fn parse_block_expr(&mut self) -> ParseResult<Expr> {

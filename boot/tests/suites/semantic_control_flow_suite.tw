@@ -60,14 +60,11 @@ fn first_even(xs: Vector<Int>) String {
 }
 
 fn classify(n: Int) String {
-  if n < 0 {
-    "negative"
-  } else if n == 0 {
-    "zero"
-  } else if n < 10 {
-    "small"
-  } else {
-    "big"
+  cond {
+    n < 0 => "negative",
+    n == 0 => "zero",
+    n < 10 => "small",
+    _ => "big",
   }
 }
 

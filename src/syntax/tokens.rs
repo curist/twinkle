@@ -26,6 +26,7 @@ pub enum TokenKind {
     False,
     Defer,
     Extern,
+    Cond,
 
     // Literals
     IntLit,
@@ -117,6 +118,7 @@ impl TokenKind {
                 | TokenKind::False
                 | TokenKind::Defer
                 | TokenKind::Extern
+                | TokenKind::Cond
         )
     }
 
@@ -157,6 +159,7 @@ impl TokenKind {
             "false" => TokenKind::False,
             "defer" => TokenKind::Defer,
             "extern" => TokenKind::Extern,
+            "cond" => TokenKind::Cond,
             _ => return None,
         })
     }
@@ -185,6 +188,7 @@ impl TokenKind {
             TokenKind::False => "false",
             TokenKind::Defer => "defer",
             TokenKind::Extern => "extern",
+            TokenKind::Cond => "cond",
             TokenKind::IntLit => "integer literal",
             TokenKind::FloatLit => "float literal",
             TokenKind::StringLit => "string literal",

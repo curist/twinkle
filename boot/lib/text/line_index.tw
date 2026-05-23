@@ -143,11 +143,9 @@ fn scalars_to_byte_offset(s: String, scalar_count: Int) Int? {
 }
 
 fn clamp(value: Int, lo: Int, hi: Int) Int {
-  if value < lo {
-    lo
-  } else if value > hi {
-    hi
-  } else {
-    value
+  cond {
+    value < lo => lo,
+    value > hi => hi,
+    _ => value,
   }
 }

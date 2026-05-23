@@ -128,44 +128,54 @@ fn unescape_string(raw: String) String {
 
       next := raw[i + 1]
 
-      if is_byte(next, "n") {
-        parts = .append("\n")
-      } else if is_byte(next, "t") {
-        parts = .append("\t")
-      } else if is_byte(next, "r") {
-        parts = .append("\r")
-      } else if is_byte(next, "\\") {
-        parts = .append("\\")
-      } else if is_byte(next, "\"") {
-        parts = .append("\"")
-      } else if is_byte(next, "\$") {
-        parts = .append("\$")
-      } else if is_byte(next, "e") {
-        parts = .append("\e")
-      } else if is_byte(next, "x") and i + 3 < n {
-        hi := hex_digit_value(raw[i + 2])
-        lo := hex_digit_value(raw[i + 3])
+      cond {
+        is_byte(next, "n") => {
+          parts = .append("\n")
+        },
+        is_byte(next, "t") => {
+          parts = .append("\t")
+        },
+        is_byte(next, "r") => {
+          parts = .append("\r")
+        },
+        is_byte(next, "\\") => {
+          parts = .append("\\")
+        },
+        is_byte(next, "\"") => {
+          parts = .append("\"")
+        },
+        is_byte(next, "\$") => {
+          parts = .append("\$")
+        },
+        is_byte(next, "e") => {
+          parts = .append("\e")
+        },
+        is_byte(next, "x") and i + 3 < n => {
+          hi := hex_digit_value(raw[i + 2])
+          lo := hex_digit_value(raw[i + 3])
 
-        if hi >= 0 and lo >= 0 {
-          code := hi * 16 + lo
+          if hi >= 0 and lo >= 0 {
+            code := hi * 16 + lo
 
-          case String.from_code_point(code) {
-            .Some(s) => {
-              parts = .append(s)
-              i = i + 4
-              seg_start = i
-              continue
-            },
-            .None => {
-              parts = .append(raw.slice(i, i + 2))
-            },
+            case String.from_code_point(code) {
+              .Some(s) => {
+                parts = .append(s)
+                i = i + 4
+                seg_start = i
+                continue
+              },
+              .None => {
+                parts = .append(raw.slice(i, i + 2))
+              },
+            }
+          } else {
+            parts = .append(raw.slice(i, i + 2))
           }
-        } else {
+        },
+        _ => {
+          // Unknown escape — keep both chars
           parts = .append(raw.slice(i, i + 2))
-        }
-      } else {
-        // Unknown escape — keep both chars
-        parts = .append(raw.slice(i, i + 2))
+        },
       }
 
       i = i + 2

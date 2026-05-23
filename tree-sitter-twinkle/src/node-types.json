@@ -403,6 +403,10 @@
             "named": true
           },
           {
+            "type": "cond_expression",
+            "named": true
+          },
+          {
             "type": "field_access",
             "named": true
           },
@@ -634,6 +638,74 @@
       "types": [
         {
           "type": "shift_expression",
+          "named": true
+        }
+      ]
+    }
+  },
+  {
+    "type": "cond_arm",
+    "named": true,
+    "fields": {
+      "condition": {
+        "multiple": false,
+        "required": true,
+        "types": [
+          {
+            "type": "assignment_expression",
+            "named": true
+          },
+          {
+            "type": "wildcard_pattern",
+            "named": true
+          }
+        ]
+      },
+      "value": {
+        "multiple": false,
+        "required": true,
+        "types": [
+          {
+            "type": "assignment_expression",
+            "named": true
+          },
+          {
+            "type": "break_statement",
+            "named": true
+          },
+          {
+            "type": "continue_statement",
+            "named": true
+          }
+        ]
+      }
+    }
+  },
+  {
+    "type": "cond_arms",
+    "named": true,
+    "fields": {},
+    "children": {
+      "multiple": true,
+      "required": true,
+      "types": [
+        {
+          "type": "cond_arm",
+          "named": true
+        }
+      ]
+    }
+  },
+  {
+    "type": "cond_expression",
+    "named": true,
+    "fields": {},
+    "children": {
+      "multiple": false,
+      "required": true,
+      "types": [
+        {
+          "type": "cond_arms",
           "named": true
         }
       ]
@@ -968,6 +1040,10 @@
           },
           {
             "type": "collect_expression",
+            "named": true
+          },
+          {
+            "type": "cond_expression",
             "named": true
           },
           {
@@ -1381,6 +1457,10 @@
           },
           {
             "type": "collect_expression",
+            "named": true
+          },
+          {
+            "type": "cond_expression",
             "named": true
           },
           {
@@ -2455,6 +2535,10 @@
           "named": true
         },
         {
+          "type": "cond_expression",
+          "named": true
+        },
+        {
           "type": "field_access",
           "named": true
         },
@@ -2774,6 +2858,10 @@
     "type": "comment",
     "named": true,
     "extra": true
+  },
+  {
+    "type": "cond",
+    "named": false
   },
   {
     "type": "continue_statement",
