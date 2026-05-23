@@ -4,9 +4,8 @@ STAGE1_WASM ?= target/boot-stage1.wasm
 STAGE2_WASM ?= target/boot.wasm
 STAGE3_WASM ?= /tmp/twinkle-selfhost/stage3.wasm
 STAGE4_WASM ?= /tmp/twinkle-selfhost/stage4.wasm
-TWK_CLI     ?= node target/twk_cli_sea.cjs
-SEA_NODE_VERSION ?= 26
-SEA_NODE_BIN ?=
+DENO_BIN    ?= deno
+TWK_CLI     ?= $(DENO_BIN) run --allow-read --allow-write --allow-env tools/js_runtime/deno_main.mjs
 
 # Source file sets — used for dependency tracking.
 RUST_SRCS := $(shell find src -name '*.rs') Cargo.toml Cargo.lock
@@ -20,7 +19,7 @@ help:
 	@printf '  make rust-test         Run Rust test suite\n'
 	@printf '  make stage0            Build the Rust stage0 compiler\n'
 	@printf '  make stage2            Rebuild target/boot.wasm via self-host loop\n'
-	@printf '  make bundle-cli        Rebuild stage2 payload and build Node SEA target/twk\n'
+	@printf '  make bundle-cli        Rebuild stage2 payload and build Deno target/twk\n'
 	@printf '  make cli               Alias for bundle-cli\n'
 	@printf '  make fmt               Format boot compiler .tw source files\n'
 	@printf '  make playground        Build playground (all deps + vite build)\n'
@@ -52,13 +51,8 @@ stage2: $(STAGE2_WASM)
 boot/lib/module/core_lib.tw: $(CORE_LIB_SRCS) tools/generate_core_lib.tw target/release/twk
 	./target/release/twk run tools/generate_core_lib.tw
 
-# Bundle the shared JS runtime into the CJS entry used by the Node runner.
-target/twk_cli_sea.cjs: tools/js_runtime/runtime.mjs tools/js_runtime/sea_main.mjs
-	@mkdir -p target
-	npx --yes esbuild tools/js_runtime/sea_main.mjs --bundle --platform=node --format=cjs --outfile=target/twk_cli_sea.cjs
-
-$(STAGE2_WASM): $(BOOT_SRCS) $(CORE_LIB_SRCS) boot/lib/module/core_lib.tw target/release/twk target/twk_cli_sea.cjs
-	@printf '\n==> Build bridge module for Node runner\n'
+$(STAGE2_WASM): $(BOOT_SRCS) $(CORE_LIB_SRCS) boot/lib/module/core_lib.tw target/release/twk tools/js_runtime/runtime.mjs tools/js_runtime/deno_main.mjs
+	@printf '\n==> Build bridge module for Deno runner\n'
 	./target/release/twk run boot/tests/gen_bridge_wasm.tw
 	@printf '\n==> Build stage1 compiler with stage0 -> $(STAGE1_WASM)\n'
 	./target/release/twk build boot/main.tw -o $(STAGE1_WASM)
@@ -79,11 +73,11 @@ $(STAGE2_WASM): $(BOOT_SRCS) $(CORE_LIB_SRCS) boot/lib/module/core_lib.tw target
 		|| { printf 'error: fixed point mismatch; compare files: $(STAGE2_WASM) $(STAGE4_WASM)\n' >&2; exit 1; }
 	@printf '\nSelf-host loop completed successfully.\n'
 
-# Build the Node SEA standalone CLI from target/boot.wasm.
-target/twk: $(STAGE2_WASM) tools/build_node_sea_cli.sh tools/find_node_sea_bin.sh tools/js_runtime/runtime.mjs tools/js_runtime/sea_main.mjs
-	NODE_BIN="$$(tools/find_node_sea_bin.sh "$(SEA_NODE_VERSION)" "$(SEA_NODE_BIN)")" tools/build_node_sea_cli.sh
+# Build the Deno standalone CLI from target/boot.wasm.
+target/twk: $(STAGE2_WASM) tools/bridge.wasm tools/build_deno_cli.sh tools/js_runtime/runtime.mjs tools/js_runtime/deno_main.mjs
+	DENO_BIN="$(DENO_BIN)" tools/build_deno_cli.sh
 
-# Full standalone CLI rebuild: stage2 payload + Node SEA.
+# Full standalone CLI rebuild: stage2 payload + Deno compile.
 bundle-cli: stage2 target/twk
 
 cli: bundle-cli
@@ -91,7 +85,7 @@ cli: bundle-cli
 # Rebuild the standalone CLI from the existing target/boot.wasm without rebuilding
 # the self-hosted payload. This is only correct when target/boot.wasm is already fresh.
 quick-bundle-cli:
-	NODE_BIN="$$(tools/find_node_sea_bin.sh "$(SEA_NODE_VERSION)" "$(SEA_NODE_BIN)")" tools/build_node_sea_cli.sh
+	DENO_BIN="$(DENO_BIN)" tools/build_deno_cli.sh
 
 # ---------------------------------------------------------------------------
 # Playground
@@ -133,4 +127,4 @@ fmt: target/twk
 
 clean:
 	cargo clean
-	rm -f target/boot.wasm target/boot-stage1.wasm target/twk target/twk_cli_sea.cjs
+	rm -rf target/boot.wasm target/boot-stage1.wasm target/twk target/deno-assets

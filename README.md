@@ -76,7 +76,7 @@ case complete_named(todos, "build") {
 
 ## Building
 
-The compiler self-hosts. A Rust stage0 compiler bootstraps the Twinkle boot compiler, then the boot compiler rebuilds itself to a fixed point.
+The compiler self-hosts. A Rust stage0 compiler bootstraps the Twinkle boot compiler, then the boot compiler rebuilds itself to a fixed point. Building the standalone CLI uses `deno compile`.
 
 ```bash
 make bundle-cli  # rebuild target/boot.wasm, then build ./target/twk

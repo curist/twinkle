@@ -39,11 +39,11 @@ cargo run --release -- build boot/main.tw -o target/boot-main.wasm
 
 ### Build the standalone CLI
 `make bundle-cli` rebuilds the self-hosted compiler payload (`target/boot.wasm`) via the
-self-host loop and then builds `target/twk` as a Node.js SEA executable:
+self-host loop and then builds `target/twk` as a Deno standalone executable:
 ```bash
 make bundle-cli        # rebuild target/boot.wasm, then build ./target/twk
 make quick-bundle-cli  # rebuild ./target/twk from an already-fresh target/boot.wasm
-make stage2            # rebuild target/boot.wasm only (no SEA)
+make stage2            # rebuild target/boot.wasm only (no CLI bundle)
 ```
 
 ### Update the tree-sitter grammar

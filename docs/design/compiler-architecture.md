@@ -184,7 +184,7 @@ twinkle/
   stdlib/                 # @std modules
   playground/             # browser playground
   tree-sitter-twinkle/    # syntax grammar and highlighting queries
-  tools/                  # JS runtime, SEA bundling, generators
+  tools/                  # JS runtime, Deno bundling, generators
   tests/                  # Rust stage0 tests
   docs/                   # spec, design notes, internals, plans
 ```

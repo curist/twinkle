@@ -1,11 +1,11 @@
-// Shared Wasm GC runtime library for the Twinkle Node.js host.
+// Shared Wasm GC runtime library for the Twinkle JavaScript host.
 //
 // Provides the "host" imports that Twinkle's compiler emits, using a small
 // bridge Wasm module to create/read Wasm GC values (since JS cannot directly
 // construct or inspect Wasm GC arrays/structs).
 //
 // Used by:
-//   - tools/js_runtime/sea_main.mjs  (Node SEA standalone CLI, bundled via esbuild)
+//   - tools/js_runtime/deno_main.mjs  (Deno standalone CLI)
 
 import { readFileSync, writeFileSync, existsSync, readdirSync, mkdirSync, readSync, writeSync } from "node:fs";
 import { resolve } from "node:path";
