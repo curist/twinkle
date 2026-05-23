@@ -172,10 +172,10 @@ fn elim_op(
   case op {
     // Branches are block-scoped: pass branch_start=Some(loop_defers.len()) so
     // terminal Atom fires only defers registered inside this branch.
-    .AIf(cond, then_e, else_e) => {
+    .AIf(cond_e, then_e, else_e) => {
       bs: Option<Int> = .Some(loop_defers.len())
       .AIf(
-        cond,
+        cond_e,
         elim(then_e, fn_defers, loop_defers, bs, in_loop, next, type_map, snap_types),
         elim(else_e, fn_defers, loop_defers, bs, in_loop, next, type_map, snap_types),
       )
@@ -314,8 +314,8 @@ fn remap_op(op: AnfOp, remap: Dict<Int, Int>) AnfOp {
         remap_atom(a, remap)
       },
     ),
-    .AIf(cond, then_e, else_e) => .AIf(
-      remap_atom(cond, remap),
+    .AIf(cond_e, then_e, else_e) => .AIf(
+      remap_atom(cond_e, remap),
       remap_expr(then_e, remap),
       remap_expr(else_e, remap),
     ),

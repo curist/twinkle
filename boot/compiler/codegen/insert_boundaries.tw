@@ -629,12 +629,12 @@ fn rewrite_op(local: LocalId, op: AnfOp, body: AnfExpr, ctx: BCtx) RewriteResult
       body,
       ctx,
     ),
-    .AIf(cond, then_e, else_e) => {
+    .AIf(cond_e, then_e, else_e) => {
       then_r := rewrite_expr(then_e, ctx)
       else_r := rewrite_expr(else_e, then_r.ctx)
       body_r := rewrite_expr(body, else_r.ctx)
       RewriteResult.{
-        expr: .Let(local, .AIf(cond, then_r.expr, else_r.expr), body_r.expr),
+        expr: .Let(local, .AIf(cond_e, then_r.expr, else_r.expr), body_r.expr),
         ctx: body_r.ctx,
       }
     },

@@ -177,8 +177,8 @@ fn collect_func_refs_into(expr: CoreExpr, refs: Vector<Int>, index: Reachability
       collect_func_refs_list(args, r, index)
     },
     .MakeClosure(func_id, _) => refs.append(func_id.id),
-    .If(cond, then_br, else_br) => {
-      r := collect_func_refs_into(cond, refs, index)
+    .If(cond_e, then_br, else_br) => {
+      r := collect_func_refs_into(cond_e, refs, index)
       r = collect_func_refs_into(then_br, r, index)
       collect_func_refs_into(else_br, r, index)
     },

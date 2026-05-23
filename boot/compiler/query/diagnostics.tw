@@ -189,6 +189,8 @@ fn kind_to_message(kind: DiagKind) String {
       .AnonymousTypeNotAllowed(_) => "anonymous type not allowed here",
       .CircularAlias(d) => "circular type alias: ${d.name}",
       .EmptyTypePath(_) => "empty type path",
+      .MissingCondDefault(_) => "cond expression requires a default arm",
+      .CondDefaultNotLast(_) => "`_` arm must be last in cond",
       .MissingArmSeparator(_) => "missing `,` after case arm",
       .CStyleLogicalOp(d) => "use `${d.suggestion}` instead of `${d.operator}`",
       .ParseError(d) => d.message,

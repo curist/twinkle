@@ -725,7 +725,7 @@ fn find_pattern_variant_in_expr(expr: Expr, offset: Int) Ref? {
       .None
     },
     .BlockExpr(b) => find_pattern_variant_in_block(b, offset, .None),
-    .If(cond, then_block, else_expr) => case find_pattern_variant_in_expr(cond, offset) {
+    .If(cond_e, then_block, else_expr) => case find_pattern_variant_in_expr(cond_e, offset) {
       .Some(r) => .Some(r),
       .None => case find_pattern_variant_in_block(then_block, offset, .None) {
         .Some(r) => .Some(r),
@@ -734,6 +734,24 @@ fn find_pattern_variant_in_expr(expr: Expr, offset: Int) Ref? {
           .None => .None,
         },
       },
+    },
+    .Cond(arms) => {
+      for arm in arms {
+        case arm.condition {
+          .Some(cond_expr) => case find_pattern_variant_in_expr(cond_expr, offset) {
+            .Some(r) => { return .Some(r) },
+            .None => {},
+          },
+          .None => {},
+        }
+
+        case find_pattern_variant_in_expr(arm.body, offset) {
+          .Some(r) => { return .Some(r) },
+          .None => {},
+        }
+      }
+
+      .None
     },
     .Call(callee, args) => case find_pattern_variant_in_expr(callee, offset) {
       .Some(r) => .Some(r),
@@ -1101,8 +1119,8 @@ fn find_scoped_binding_in_expr(expr: Expr, name: String, ref_offset: Int) Bindin
       .None
     },
     .BlockExpr(block) => find_local_in_block(block, name, ref_offset),
-    .If(cond, then_block, else_expr) => {
-      if cond.span.contains(ref_offset) {
+    .If(cond_e, then_block, else_expr) => {
+      if cond_e.span.contains(ref_offset) {
         return .None
       }
 
@@ -1114,6 +1132,15 @@ fn find_scoped_binding_in_expr(expr: Expr, name: String, ref_offset: Int) Bindin
         .Some(e) => find_scoped_binding_in_expr(e, name, ref_offset),
         .None => .None,
       }
+    },
+    .Cond(arms) => {
+      for arm in arms {
+        if arm.span.contains(ref_offset) {
+          return find_scoped_binding_in_expr(arm.body, name, ref_offset)
+        }
+      }
+
+      .None
     },
     .Collect(col) => {
       case col.iter {

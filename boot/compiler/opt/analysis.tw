@@ -429,7 +429,7 @@ pub fn op_uses_local_non_recursive(op: AnfOp, local: LocalId) Bool {
     .AIndex(base, index, _, _) => atom_is_local(base, local) or atom_is_local(index, local),
     .AInit(value) => atom_is_local(value, local),
     .AAssign(target, value) => target.id == local.id or atom_is_local(value, local),
-    .AIf(cond, _, _) => atom_is_local(cond, local),
+    .AIf(cond_e, _, _) => atom_is_local(cond_e, local),
     .AMatch(scrutinee, _) => atom_is_local(scrutinee, local),
     .ALoop(_) => false,
     .ADefer(_) => false,
@@ -672,8 +672,8 @@ fn max_local_in_op(op: AnfOp, m: Int) Int {
 
       r
     },
-    .AIf(cond, then_e, else_e) => {
-      r := max_local_in_atom(cond, m)
+    .AIf(cond_e, then_e, else_e) => {
+      r := max_local_in_atom(cond_e, m)
       r = max_local_in_expr(then_e, r)
       max_local_in_expr(else_e, r)
     },

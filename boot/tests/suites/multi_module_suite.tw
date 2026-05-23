@@ -50,7 +50,7 @@ fn has_contract_call(expr: CoreExpr) Bool {
 
       false
     },
-    .If(cond, then_e, else_e) => has_contract_call(cond)
+    .If(cond_e, then_e, else_e) => has_contract_call(cond_e)
       or has_contract_call(then_e)
       or has_contract_call(else_e),
     .Match(scrut, arms) => {

@@ -18,6 +18,7 @@ fn keyword_or_ident(text: String) TokenKind {
     "if" => .If,
     "else" => .Else,
     "case" => .Case,
+    "cond" => .Cond,
     "for" => .For,
     "in" => .In,
     "collect" => .Collect,

@@ -291,7 +291,7 @@ fn has_terminal_in_let_value(expr: core_ir.CoreExpr) Bool {
       .Continue => true,
       _ => has_terminal_in_let_value(val) or has_terminal_in_let_value(body),
     },
-    .If(cond, then_e, else_e) => has_terminal_in_let_value(cond)
+    .If(cond_e, then_e, else_e) => has_terminal_in_let_value(cond_e)
       or has_terminal_in_let_value(then_e)
       or has_terminal_in_let_value(else_e),
     .Match(scrut, arms) => {
@@ -336,7 +336,7 @@ fn has_func_id(expr: core_ir.CoreExpr, target_id: Int) Bool {
     },
     .GlobalFunc(fid) => fid.id == target_id,
     .Let(_, val, body) => has_func_id(val, target_id) or has_func_id(body, target_id),
-    .If(cond, then_e, else_e) => has_func_id(cond, target_id)
+    .If(cond_e, then_e, else_e) => has_func_id(cond_e, target_id)
       or has_func_id(then_e, target_id)
       or has_func_id(else_e, target_id),
     .Match(scrut, arms) => {
@@ -590,7 +590,7 @@ pub fn suite() runner.Suite {
         body := try lower_fn_body("fn f() Int { if true { 1 } else { 2 } }")
 
         case body.kind {
-          .If(cond, then_e, else_e) => case cond.kind {
+          .If(cond_e, then_e, else_e) => case cond_e.kind {
             .LitBool(b) => {
               try assert.ok(b, "expected true")
 

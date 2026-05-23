@@ -1,7 +1,8 @@
 use compiler.ast.{
-  BinOp, Block, BreakStmt, CaseArm, CollectExpr, DeferStmt, Expr, ExternFunctionDecl, ExternTypeDecl,
-  ForStmt, FunctionDecl, ImportItem, Item, LetStmt, Module, Param, Pattern, RecordEntry, RecordField,
-  ReturnStmt, Stmt, StringPart, TypeDecl, TypeExpr, TypeParam, UnOp, UseDecl, VariantDecl,
+  BinOp, Block, BreakStmt, CaseArm, CollectExpr, CondArm, DeferStmt, Expr, ExternFunctionDecl,
+  ExternTypeDecl, ForStmt, FunctionDecl, ImportItem, Item, LetStmt, Module, Param, Pattern,
+  RecordEntry, RecordField, ReturnStmt, Stmt, StringPart, TypeDecl, TypeExpr, TypeParam, UnOp,
+  UseDecl, VariantDecl,
 }
 use compiler.fmt.doc
 use compiler.fmt.doc.{Doc}
@@ -969,6 +970,7 @@ fn is_flow_expr(expr: Expr) Bool {
   case expr.kind {
     .If(_, _, _) => true,
     .Case(_, _) => true,
+    .Cond(_) => true,
     .Collect(_) => true,
     .BlockExpr(_) => true,
     _ => false,
@@ -1078,8 +1080,8 @@ fn format_for(s: ForStmt, tm: TriviaMap) Doc {
       parts = .append(format_expr(iter, tm))
     },
     .None => case s.condition {
-      .Some(cond) => {
-        parts = .append(format_expr(cond, tm))
+      .Some(cond_e) => {
+        parts = .append(format_expr(cond_e, tm))
       },
       .None => {},
     },
@@ -1138,8 +1140,9 @@ fn format_expr(expr: Expr, tm: TriviaMap) Doc {
       doc.text("]"),
     ]),
     .BlockExpr(block) => format_block(block, tm),
-    .If(cond, then_block, else_expr) => format_if(cond, then_block, else_expr, tm),
+    .If(cond_e, then_block, else_expr) => format_if(cond_e, then_block, else_expr, tm),
     .Case(scrutinee, arms) => format_case(scrutinee, arms, tm),
+    .Cond(arms) => format_cond(arms, tm),
     .Array(elems) => {
       elem_docs := collect e in elems {
         format_expr(e, tm)
@@ -1499,10 +1502,10 @@ fn format_call(callee: Expr, args: Vector<Expr>, tm: TriviaMap) Doc {
   doc.concat([format_expr(callee, tm), doc.tight_bracketed("(", ")", arg_docs)])
 }
 
-fn format_if(cond: Expr, then_block: Block, else_expr: Expr?, tm: TriviaMap) Doc {
+fn format_if(cond_e: Expr, then_block: Block, else_expr: Expr?, tm: TriviaMap) Doc {
   parts: Vector<Doc> = [
     doc.text("if "),
-    format_expr(cond, tm),
+    format_expr(cond_e, tm),
     doc.text(" "),
     format_block(then_block, tm),
   ]
@@ -1596,6 +1599,75 @@ fn format_case_arm(arm: CaseArm, tm: TriviaMap) Doc {
     _ => format_expr(arm.expr, tm),
   }
   doc.group(doc.concat([format_pattern(arm.pattern, tm), doc.text(" => "), body]))
+}
+
+fn format_cond(arms: Vector<CondArm>, tm: TriviaMap) Doc {
+  arm_docs: Vector<Doc> = []
+
+  for arm in arms {
+    trivia := non_blank_trivia(get_trivia(tm, arm.span.start))
+    arm_doc := format_cond_arm(arm, tm)
+
+    if trivia.len() > 0 {
+      arm_doc = doc.concat([emit_trivia(trivia), arm_doc])
+    }
+
+    trailing := get_trailing_trivia(tm, arm.span.end)
+
+    if trailing.len() > 0 {
+      arm_doc = doc.concat([arm_doc, emit_trailing_trivia(trailing)])
+    }
+
+    arm_docs = .append(arm_doc)
+  }
+
+  inner := doc.join(arm_docs, doc.concat([doc.text(","), doc.hard_line()]))
+  doc.concat([
+    doc.text("cond {"),
+    doc.indent(doc.concat([doc.hard_line(), inner, doc.text(",")])),
+    doc.hard_line(),
+    doc.text("}"),
+  ])
+}
+
+fn format_cond_arm(arm: CondArm, tm: TriviaMap) Doc {
+  body := case arm.body.kind {
+    .BlockExpr(block) => if block.stmts.len() == 0 {
+      case block.tail {
+        .Some(expr) => {
+          trivia := get_trivia(tm, expr.span.start)
+          trailing_t := get_trailing_trivia(tm, expr.span.end)
+
+          if trivia.len() == 0 and trailing_t.len() == 0 {
+            format_expr(expr, tm)
+          } else {
+            format_block(block, tm)
+          }
+        },
+        .None => format_block(block, tm),
+      }
+    } else if block.stmts.len() == 1
+      and block.tail.is_none() and is_arm_inline_stmt(block.stmts[0])
+      and get_trivia(tm, stmt_span(block.stmts[0]).start).len() == 0 {
+      stmt_doc := format_stmt(block.stmts[0], tm)
+      doc.group(
+        doc.concat([
+          doc.text("{"),
+          doc.indent(doc.concat([doc.line(), stmt_doc])),
+          doc.line(),
+          doc.text("}"),
+        ]),
+      )
+    } else {
+      format_block(block, tm)
+    },
+    _ => format_expr(arm.body, tm),
+  }
+
+  case arm.condition {
+    .Some(cond_expr) => doc.group(doc.concat([format_expr(cond_expr, tm), doc.text(" => "), body])),
+    .None => doc.group(doc.concat([doc.text("_ => "), body])),
+  }
 }
 
 fn format_pattern(pat: Pattern, tm: TriviaMap) Doc {
@@ -1711,8 +1783,8 @@ fn format_collect(coll: CollectExpr, tm: TriviaMap) Doc {
       parts = .append(format_expr(iter, tm))
     },
     .None => case coll.condition {
-      .Some(cond) => {
-        parts = .append(format_expr(cond, tm))
+      .Some(cond_e) => {
+        parts = .append(format_expr(cond_e, tm))
       },
       .None => {},
     },

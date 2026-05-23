@@ -12,7 +12,7 @@ pub type ControlEmitFns = .{
 }
 
 pub fn emit_if_op(
-  cond: PreparedAtom,
+  cond_e: PreparedAtom,
   then_e: PreparedExpr,
   else_e: PreparedExpr,
   result_idx: Int,
@@ -22,7 +22,7 @@ pub fn emit_if_op(
   buf: Vector<Instr>,
   fns: ControlEmitFns,
 ) Vector<Instr> {
-  out := fns.emit_atom(cond, ctx, buf)
+  out := fns.emit_atom(cond_e, ctx, buf)
 
   // Nested sub-bodies must use fresh []
   then_instrs := fns.emit_expr(then_e, result_mono, ctx, [])

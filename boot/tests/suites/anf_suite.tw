@@ -189,8 +189,8 @@ fn test_op_if() Result<Void, String> {
   op: AnfOp = .AIf(.ALitBool(true), .Atom(.ALitInt(1)), .Atom(.ALitInt(2)))
 
   case op {
-    .AIf(cond, then_e, else_e) => {
-      case cond {
+    .AIf(cond_e, then_e, else_e) => {
+      case cond_e {
         .ALitBool(b) => try assert.equal(b, true),
         _ => { return .Err("expected ALitBool") },
       }

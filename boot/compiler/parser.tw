@@ -4,8 +4,8 @@ use lib.source.span
 use lib.source.span.{Span}
 
 use .ast.{
-  BinOp, Block, BreakStmt, CaseArm, CollectExpr, ContinueStmt, DeferStmt, Expr, ExprKind, ExprStmt,
-  ExternFunctionDecl, ExternTypeDecl, ForStmt, FunctionDecl, ImportItem, ImportTypeItem,
+  BinOp, Block, BreakStmt, CaseArm, CollectExpr, CondArm, ContinueStmt, DeferStmt, Expr, ExprKind,
+  ExprStmt, ExternFunctionDecl, ExternTypeDecl, ForStmt, FunctionDecl, ImportItem, ImportTypeItem,
   ImportValueItem, Item, LetStmt, Module, Param, Pattern, RecordEntry, RecordField, ReturnStmt, Stmt,
   StringPart, TypeDecl, TypeDef, TypeExpr, TypeParam, TypePath, UnOp, UseDecl, VariantDecl,
 }
@@ -1652,7 +1652,7 @@ fn parse_if_expr(c: Cursor) ExprParse {
   c = .advance()
   parsed_cond := parse_expr_bp(c, 0)
   diagnostics_out = .concat(parsed_cond.diagnostics)
-  cond := parsed_cond.value
+  cond_e := parsed_cond.value
   c = parsed_cond.cursor
   parsed_then := parse_block(c)
   diagnostics_out = .concat(parsed_then.diagnostics)
@@ -1680,7 +1680,7 @@ fn parse_if_expr(c: Cursor) ExprParse {
   }
   expr := Expr.{
     id: c.alloc_expr_id(),
-    kind: .If(cond, then_block, else_expr),
+    kind: .If(cond_e, then_block, else_expr),
     span: start_span.merge(end_span),
   }
   .{ value: expr, cursor: c, diagnostics: diagnostics_out }
@@ -1755,6 +1755,88 @@ fn parse_case_expr(c: Cursor) ExprParse {
 
   diagnostics_out = .append(diag.error(c.span(), "expected '}' to close case expression"))
   expr := Expr.{ id: c.alloc_expr_id(), kind: .Case(scrutinee, arms), span: c.span_from(start_pos) }
+  .{ value: expr, cursor: c, diagnostics: diagnostics_out }
+}
+
+fn parse_cond_expr(c: Cursor) ExprParse {
+  diagnostics_out: Vector<DiagKind> = []
+  start_pos := c.pos
+  start_span := c.span()
+  c = .advance()
+
+  if c.kind() != .LBrace {
+    diagnostics_out = .append(diag.error(c.span(), "expected '{' after cond"))
+    expr := Expr.{ id: c.alloc_expr_id(), kind: .Cond([]), span: c.span_through(start_pos) }
+
+    return .{ value: expr, cursor: c, diagnostics: diagnostics_out }
+  }
+
+  c = .advance()
+  arms: Vector<CondArm> = []
+
+  for c.pos < c.tokens.len() and c.kind() != .RBrace {
+    // Parse the wildcard arm or condition expression
+    condition: Expr? = .None
+    arm_start_span := c.span()
+
+    if c.text() == "_" and c.kind() == .Ident {
+      // Wildcard arm
+      c = .advance()
+    } else {
+      parsed_cond := parse_expr_bp(c, 0)
+      diagnostics_out = .concat(parsed_cond.diagnostics)
+      condition = .Some(parsed_cond.value)
+      c = parsed_cond.cursor
+    }
+
+    if c.kind() != .FatArrow {
+      diagnostics_out = .append(diag.error(c.span(), "expected '=>' in cond arm"))
+
+      if c.kind() == .Eof {
+        break
+      }
+    } else {
+      c = .advance()
+    }
+
+    parsed_body := parse_expr_in(c, "cond arm body")
+    diagnostics_out = .concat(parsed_body.diagnostics)
+    body := parsed_body.value
+    c = parsed_body.cursor
+    arm_span := case condition {
+      .Some(cond_expr) => cond_expr.span.merge(body.span),
+      .None => arm_start_span.merge(body.span),
+    }
+    arms = .append(CondArm.{ condition, body, span: arm_span })
+
+    if c.kind() == .Comma {
+      c = .advance()
+    } else if c.kind() != .RBrace {
+      eol_point := Span.{ file_id: arm_span.file_id, start: arm_span.end, end: arm_span.end }
+      diagnostics_out = .append(
+        .Error(.MissingArmSeparator(.{ span: eol_point, next_span: c.span() })),
+      )
+    }
+
+    // Wildcard must be the last arm
+    if condition.is_none() and c.kind() != .RBrace and c.pos < c.tokens.len() {
+      diagnostics_out = .append(.Error(.CondDefaultNotLast(.{ span: arm_start_span })))
+      break
+    }
+  }
+
+  if arms.len() == 0 {
+    diagnostics_out = .append(diag.error(start_span, "cond expression must have at least one arm"))
+  }
+
+  if c.kind() == .RBrace {
+    expr := Expr.{ id: c.alloc_expr_id(), kind: .Cond(arms), span: c.span_through(start_pos) }
+
+    return .{ value: expr, cursor: c.advance(), diagnostics: diagnostics_out }
+  }
+
+  diagnostics_out = .append(diag.error(c.span(), "expected '}' to close cond expression"))
+  expr := Expr.{ id: c.alloc_expr_id(), kind: .Cond(arms), span: c.span_from(start_pos) }
   .{ value: expr, cursor: c, diagnostics: diagnostics_out }
 }
 
@@ -1960,6 +2042,7 @@ fn parse_prefix(c: Cursor) ExprParse {
     .LBrace => parse_block_expr(c),
     .If => parse_if_expr(c),
     .Case => parse_case_expr(c),
+    .Cond => parse_cond_expr(c),
     .Minus => parse_unary_op(c, UnOp.Neg),
     .Bang => parse_unary_op(c, UnOp.Not),
     .Tilde => parse_unary_op(c, UnOp.BitNot),

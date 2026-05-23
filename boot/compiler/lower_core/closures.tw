@@ -63,8 +63,8 @@ fn collect_free_vars_inner(
         collect_free_vars_inner(arg, st.bound, st.captured, st.result)
       },
     ),
-    .If(cond, then_e, else_e) => {
-      st := collect_free_vars_inner(cond, bound, captured, result)
+    .If(cond_e, then_e, else_e) => {
+      st := collect_free_vars_inner(cond_e, bound, captured, result)
       st = collect_free_vars_inner(then_e, st.bound, st.captured, st.result)
       collect_free_vars_inner(else_e, st.bound, st.captured, st.result)
     },

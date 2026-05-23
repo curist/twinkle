@@ -128,11 +128,11 @@ type OpFoldResult = .{ op: AnfOp, changed: Bool }
 
 fn constant_fold_op(op: AnfOp) OpFoldResult {
   case op {
-    .AIf(cond, then_e, else_e) => {
+    .AIf(cond_e, then_e, else_e) => {
       then_r := constant_fold(then_e)
       else_r := constant_fold(else_e)
       OpFoldResult.{
-        op: .AIf(cond, then_r.expr, else_r.expr),
+        op: .AIf(cond_e, then_r.expr, else_r.expr),
         changed: then_r.changed or else_r.changed,
       }
     },

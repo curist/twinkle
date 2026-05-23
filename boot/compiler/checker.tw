@@ -7,8 +7,8 @@ use lib.source.diagnostics.{DiagKind}
 use lib.source.span.{Span}
 
 use .ast.{
-  BinOp, Block, CaseArm, CollectExpr, Expr, ForStmt, FunctionDecl, LetStmt, Module, Param, Pattern,
-  RecordEntry, ReturnStmt, Stmt, StringPart, TypeExpr, UnOp,
+  BinOp, Block, CaseArm, CollectExpr, CondArm, Expr, ForStmt, FunctionDecl, LetStmt, Module, Param,
+  Pattern, RecordEntry, ReturnStmt, Stmt, StringPart, TypeExpr, UnOp,
 }
 use .contracts.{BuiltinContract, ContractMethodRequirement, ContractReturnShape}
 use .mono_type.{MonoType, TypeId}
@@ -1282,8 +1282,16 @@ fn synth_inner(ctx: InferCtx, expr: Expr, diags: Vector<DiagKind>) SynthOut {
     .StringInterp(parts) => synth_string_interp(parts, ctx, diags),
     .Field(base, field_name) => synth_field(base, field_name, expr.span, ctx, diags),
     .Array(elems) => synth_array(elems, expr.span, ctx, diags),
-    .If(cond, then_block, else_expr) => synth_if(cond, then_block, else_expr, expr.span, ctx, diags),
+    .If(cond_e, then_block, else_expr) => synth_if(
+      cond_e,
+      then_block,
+      else_expr,
+      expr.span,
+      ctx,
+      diags,
+    ),
     .Case(scrut, arms) => synth_case(scrut, arms, expr.span, ctx, diags),
+    .Cond(arms) => synth_cond(arms, expr.span, ctx, diags),
     .Closure(params, ret_ty, body) => synth_closure(params, ret_ty, body, expr.span, ctx, diags),
     .Collect(ce) => synth_collect(ce, expr.span, ctx, diags),
     .NamedRecord(type_name, entries) => synth_named_record(
@@ -2353,12 +2361,16 @@ fn check_expr(ctx: InferCtx, expr: Expr, expected: MonoType, diags: Vector<DiagK
       r := check_block(block, expected, ctx, diags)
       return .{ ctx: set_type_map_span(r.ctx, expr.id, expr.span.start, expected), diags: r.diags }
     },
-    .If(cond, then_block, else_expr) => {
-      r := check_if(cond, then_block, else_expr, expected, expr.span, ctx, diags)
+    .If(cond_e, then_block, else_expr) => {
+      r := check_if(cond_e, then_block, else_expr, expected, expr.span, ctx, diags)
       return .{ ctx: set_type_map_span(r.ctx, expr.id, expr.span.start, expected), diags: r.diags }
     },
     .Case(scrut, arms) => {
       r := check_case(scrut, arms, expected, expr.span, ctx, diags)
+      return .{ ctx: set_type_map_span(r.ctx, expr.id, expr.span.start, expected), diags: r.diags }
+    },
+    .Cond(arms) => {
+      r := check_cond(arms, expected, expr.span, ctx, diags)
       return .{ ctx: set_type_map_span(r.ctx, expr.id, expr.span.start, expected), diags: r.diags }
     },
     .Record(entries) => {
@@ -2565,7 +2577,7 @@ fn check_closure(
 
 // ── If, Case, For ──────────────────────────────────────────────────
 fn synth_if(
-  cond: Expr,
+  cond_e: Expr,
   then_block: Block,
   else_expr: Expr?,
   s: Span,
@@ -2573,8 +2585,8 @@ fn synth_if(
   diags: Vector<DiagKind>,
 ) SynthOut {
   // Check condition is Bool
-  cr := ctx.synth(cond, diags)
-  u := cr.ctx.unify(cr.ty, MonoType.Bool, cond.span, cr.diags)
+  cr := ctx.synth(cond_e, diags)
+  u := cr.ctx.unify(cr.ty, MonoType.Bool, cond_e.span, cr.diags)
 
   // Synth then branch
   then_r := synth_block(then_block, u.ctx, u.diags)
@@ -2613,7 +2625,7 @@ fn synth_if(
 }
 
 fn check_if(
-  cond: Expr,
+  cond_e: Expr,
   then_block: Block,
   else_expr: Expr?,
   expected: MonoType,
@@ -2621,8 +2633,8 @@ fn check_if(
   ctx: InferCtx,
   diags: Vector<DiagKind>,
 ) CheckOut {
-  cr := ctx.synth(cond, diags)
-  u := cr.ctx.unify(cr.ty, .Bool, cond.span, cr.diags)
+  cr := ctx.synth(cond_e, diags)
+  u := cr.ctx.unify(cr.ty, .Bool, cond_e.span, cr.diags)
 
   case else_expr {
     .Some(else_e) => {
@@ -2645,6 +2657,133 @@ fn check_if(
       .{ ctx: u2.ctx, diags: u2.diags }
     },
   }
+}
+
+fn has_cond_default(arms: Vector<CondArm>) Bool {
+  if arms.len() == 0 {
+    return false
+  }
+
+  arms[arms.len() - 1].condition.is_none()
+}
+
+fn synth_cond(arms: Vector<CondArm>, s: Span, ctx: InferCtx, diags: Vector<DiagKind>) SynthOut {
+  cur_ctx := ctx
+  cur_diags := diags
+  result_ty: MonoType? = .None
+  deferred_arms: Vector<CondArm> = []
+  has_default := has_cond_default(arms)
+
+  for arm in arms {
+    // Check condition is Bool (if not wildcard)
+    case arm.condition {
+      .Some(cond_expr) => {
+        cr := cur_ctx.synth(cond_expr, cur_diags)
+        u := cr.ctx.unify(cr.ty, MonoType.Bool, cond_expr.span, cr.diags)
+        cur_ctx = u.ctx
+        cur_diags = u.diags
+      },
+      .None => {},
+    }
+
+    if expr_needs_expected_type(arm.body) {
+      deferred_arms = .append(arm)
+      continue
+    }
+
+    body_r := cur_ctx.synth(arm.body, cur_diags)
+    cur_ctx = body_r.ctx
+    cur_diags = body_r.diags
+    arm_ty := zonk(body_r.ty, cur_ctx.subst)
+
+    case arm_ty {
+      .Never => {},
+      _ => case result_ty {
+        .Some(rt) => {
+          u := cur_ctx.unify(arm_ty, rt, arm.span, cur_diags)
+          cur_ctx = u.ctx
+          cur_diags = u.diags
+        },
+        .None => {
+          result_ty = .Some(arm_ty)
+        },
+      },
+    }
+  }
+
+  case result_ty {
+    .Some(join_ty) => {
+      zonked_join := zonk(join_ty, cur_ctx.subst)
+
+      if deferred_arms.len() > 0 and !contains_meta(zonked_join) {
+        for arm in deferred_arms {
+          body_r := cur_ctx.check_expr(arm.body, zonked_join, cur_diags)
+          cur_ctx = body_r.ctx
+          cur_diags = body_r.diags
+        }
+      } else {
+        for arm in deferred_arms {
+          body_r := cur_ctx.synth(arm.body, cur_diags)
+          cur_ctx = body_r.ctx
+          cur_diags = body_r.diags
+        }
+      }
+
+      if !has_default {
+        // No default arm — result is Void (like if without else)
+        .{ ty: MonoType.Void, ctx: cur_ctx, diags: cur_diags }
+      } else {
+        .{ ty: zonked_join, ctx: cur_ctx, diags: cur_diags }
+      }
+    },
+    .None => {
+      if deferred_arms.len() > 0 {
+        for arm in deferred_arms {
+          body_r := cur_ctx.synth(arm.body, cur_diags)
+          cur_ctx = body_r.ctx
+          cur_diags = body_r.diags
+        }
+
+        return .{ ty: MonoType.Void, ctx: cur_ctx, diags: cur_diags }
+      }
+
+      .{ ty: MonoType.Void, ctx: cur_ctx, diags: cur_diags }
+    },
+  }
+}
+
+fn check_cond(
+  arms: Vector<CondArm>,
+  expected: MonoType,
+  s: Span,
+  ctx: InferCtx,
+  diags: Vector<DiagKind>,
+) CheckOut {
+  cur_ctx := ctx
+  cur_diags := diags
+  has_default := has_cond_default(arms)
+
+  for arm in arms {
+    case arm.condition {
+      .Some(cond_expr) => {
+        cr := cur_ctx.synth(cond_expr, cur_diags)
+        u := cr.ctx.unify(cr.ty, MonoType.Bool, cond_expr.span, cr.diags)
+        cur_ctx = u.ctx
+        cur_diags = u.diags
+      },
+      .None => {},
+    }
+
+    body_r := cur_ctx.check_expr(arm.body, expected, cur_diags)
+    cur_ctx = body_r.ctx
+    cur_diags = body_r.diags
+  }
+
+  if !has_default and expected != .Void {
+    cur_diags = .append(.Error(.MissingCondDefault(.{ span: s })))
+  }
+
+  .{ ctx: cur_ctx, diags: cur_diags }
 }
 
 fn is_case_scrutinee_supported(ty: MonoType, ctx: InferCtx) Bool {
@@ -3083,8 +3222,8 @@ fn bind_iterable_vars(
   .{ ctx: cur_ctx, diags: cur_diags, elem_ty: info.elem_ty }
 }
 
-fn check_optional_condition(cond: Expr?, ctx: InferCtx, diags: Vector<DiagKind>) CheckOut {
-  case cond {
+fn check_optional_condition(cond_e: Expr?, ctx: InferCtx, diags: Vector<DiagKind>) CheckOut {
+  case cond_e {
     .Some(c) => {
       cr := ctx.synth(c, diags)
       u := cr.ctx.unify(cr.ty, MonoType.Bool, c.span, cr.diags)

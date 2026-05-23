@@ -89,8 +89,8 @@ pub fn rewrite_index_loop_continue(expr: CoreExpr, before_continue: CoreExpr, ct
         ctx: cur,
       }
     },
-    .If(cond, then_e, else_e) => {
-      cond_r := rewrite_index_loop_continue(cond, before_continue, ctx)
+    .If(cond_e, then_e, else_e) => {
+      cond_r := rewrite_index_loop_continue(cond_e, before_continue, ctx)
       then_r := rewrite_index_loop_continue(then_e, before_continue, cond_r.ctx)
       else_r := rewrite_index_loop_continue(else_e, before_continue, then_r.ctx)
       .{

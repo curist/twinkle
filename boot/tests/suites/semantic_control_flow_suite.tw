@@ -343,4 +343,100 @@ pub fn suite() runner.Suite {
         .Ok({})
       },
     )
+    .test(
+      "cond basic expression",
+      fn() {
+        x := 5
+        result := cond {
+          x < 0 => "negative",
+          x == 0 => "zero",
+          x < 10 => "small",
+          _ => "big",
+        }
+        try assert.equal(result, "small")
+        .Ok({})
+      },
+    )
+    .test(
+      "cond hits default arm",
+      fn() {
+        x := 100
+        result := cond {
+          x < 0 => "negative",
+          x == 0 => "zero",
+          x < 10 => "small",
+          _ => "big",
+        }
+        try assert.equal(result, "big")
+        .Ok({})
+      },
+    )
+    .test(
+      "cond first match wins",
+      fn() {
+        x := 5
+        result := cond {
+          x > 0 => "first",
+          x > 3 => "second",
+          _ => "default",
+        }
+        try assert.equal(result, "first")
+        .Ok({})
+      },
+    )
+    .test(
+      "cond in statement position without default",
+      fn() {
+        x := 5
+        out := "none"
+
+        cond {
+          x < 0 => {
+            out = "negative"
+          },
+          x > 0 => {
+            out = "positive"
+          },
+        }
+
+        try assert.equal(out, "positive")
+        .Ok({})
+      },
+    )
+    .test(
+      "cond with block bodies",
+      fn() {
+        x := 15
+        result := cond {
+          x < 10 => {
+            y := x * 2
+            "small: ${y}"
+          },
+          x < 20 => {
+            y := x * 3
+            "medium: ${y}"
+          },
+          _ => "big",
+        }
+        try assert.equal(result, "medium: 45")
+        .Ok({})
+      },
+    )
+    .test(
+      "nested cond",
+      fn() {
+        x := 5
+        y := 10
+        result := cond {
+          x > 10 => "x big",
+          y > 5 => cond {
+            x > 3 => "y big, x medium",
+            _ => "y big, x small",
+          },
+          _ => "both small",
+        }
+        try assert.equal(result, "y big, x medium")
+        .Ok({})
+      },
+    )
 }

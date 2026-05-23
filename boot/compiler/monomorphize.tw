@@ -233,8 +233,8 @@ fn collect_vars_in_expr_types(expr: CoreExpr, seen: Dict<String, Bool>, result: 
 
       st
     },
-    .If(cond, then_e, else_e) => {
-      st = collect_vars_in_expr_types(cond, st.seen, st.result)
+    .If(cond_e, then_e, else_e) => {
+      st = collect_vars_in_expr_types(cond_e, st.seen, st.result)
       st = collect_vars_in_expr_types(then_e, st.seen, st.result)
       collect_vars_in_expr_types(else_e, st.seen, st.result)
     },
@@ -456,8 +456,8 @@ fn collect_local_types(expr: CoreExpr, out: Dict<Int, MonoType>) Dict<Int, MonoT
 
       out
     },
-    .If(cond, then_e, else_e) => {
-      out = collect_local_types(cond, out)
+    .If(cond_e, then_e, else_e) => {
+      out = collect_local_types(cond_e, out)
       out = collect_local_types(then_e, out)
       collect_local_types(else_e, out)
     },
@@ -692,8 +692,8 @@ fn collect_instantiations(
       collect_instantiations(rhs, ctx, queue, local_types)
     },
     .UnOp(_, inner) => collect_instantiations(inner, ctx, queue, local_types),
-    .If(cond, then_e, else_e) => {
-      queue = collect_instantiations(cond, ctx, queue, local_types)
+    .If(cond_e, then_e, else_e) => {
+      queue = collect_instantiations(cond_e, ctx, queue, local_types)
       queue = collect_instantiations(then_e, ctx, queue, local_types)
       collect_instantiations(else_e, ctx, queue, local_types)
     },
@@ -795,8 +795,8 @@ fn apply_subst_to_kind(kind: CoreExprKind, subst: Dict<String, MonoType>) CoreEx
       .ContractCall(contract, method_name, apply_subst_to_expr(receiver, subst), new_args)
     },
     .MakeClosure(fid, free_vars) => kind,
-    .If(cond, then_e, else_e) => .If(
-      apply_subst_to_expr(cond, subst),
+    .If(cond_e, then_e, else_e) => .If(
+      apply_subst_to_expr(cond_e, subst),
       apply_subst_to_expr(then_e, subst),
       apply_subst_to_expr(else_e, subst),
     ),
@@ -1037,8 +1037,8 @@ fn rewrite_calls_kind(
       rewrite_calls(rhs, spec_map, ctx, local_types),
     ),
     .UnOp(op, inner) => .UnOp(op, rewrite_calls(inner, spec_map, ctx, local_types)),
-    .If(cond, then_e, else_e) => .If(
-      rewrite_calls(cond, spec_map, ctx, local_types),
+    .If(cond_e, then_e, else_e) => .If(
+      rewrite_calls(cond_e, spec_map, ctx, local_types),
       rewrite_calls(then_e, spec_map, ctx, local_types),
       rewrite_calls(else_e, spec_map, ctx, local_types),
     ),

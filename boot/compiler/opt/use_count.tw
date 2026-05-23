@@ -56,8 +56,8 @@ fn count_op(op: AnfOp, uses: Dict<Int, Int>) Dict<Int, Int> {
 
       u
     },
-    .AIf(cond, then_e, else_e) => {
-      u := count_atom(cond, uses)
+    .AIf(cond_e, then_e, else_e) => {
+      u := count_atom(cond_e, uses)
       u = count_expr(then_e, u)
       count_expr(else_e, u)
     },
@@ -168,8 +168,8 @@ fn count_op_ex(op: AnfOp, uses: Dict<Int, Int>, free_var_uses: Dict<Int, Bool>) 
 
       .{ uses, free_var_uses: fv }
     },
-    .AIf(cond, then_e, else_e) => {
-      u := count_atom(cond, uses)
+    .AIf(cond_e, then_e, else_e) => {
+      u := count_atom(cond_e, uses)
       then_result := count_expr_ex(then_e, u, free_var_uses)
       count_expr_ex(else_e, then_result.uses, then_result.free_var_uses)
     },

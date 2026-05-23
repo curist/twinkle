@@ -105,9 +105,9 @@ fn verify_op(
       try verify_call_shape(pf, callee, args, funcs_by_id, module_globals, env, builtins)
       .Ok({})
     },
-    .AIf(cond, then_e, else_e) => {
-      try verify_atom_use(pf, cond, "if condition", module_globals)
-      try verify_condition_atom(pf, cond, module_globals, env)
+    .AIf(cond_e, then_e, else_e) => {
+      try verify_atom_use(pf, cond_e, "if condition", module_globals)
+      try verify_condition_atom(pf, cond_e, module_globals, env)
       try verify_expr(pf, closure_captures, funcs_by_id, env, module_globals, builtins, then_e)
       verify_expr(pf, closure_captures, funcs_by_id, env, module_globals, builtins, else_e)
     },

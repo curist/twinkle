@@ -565,7 +565,7 @@ pub fn suite() runner.Suite {
     .test(
       "reject yield inside if branch in task body",
       fn() {
-        src := "fn cond() Bool { true }\nt := Task.spawn(fn() {\n  if cond() {\n    Task.yield()\n  }\n})\nt.await()"
+        src := "fn check() Bool { true }\nt := Task.spawn(fn() {\n  if check() {\n    Task.yield()\n  }\n})\nt.await()"
         result := codegen_harness.validate_task_src(src)
 
         case result {

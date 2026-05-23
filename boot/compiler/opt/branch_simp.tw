@@ -52,11 +52,11 @@ type OpSimpResult = .{ op: AnfOp, changed: Bool }
 
 fn branch_simplify_op(op: AnfOp) OpSimpResult {
   case op {
-    .AIf(cond, then_e, else_e) => {
+    .AIf(cond_e, then_e, else_e) => {
       then_r := branch_simplify(then_e)
       else_r := branch_simplify(else_e)
       OpSimpResult.{
-        op: .AIf(cond, then_r.expr, else_r.expr),
+        op: .AIf(cond_e, then_r.expr, else_r.expr),
         changed: then_r.changed or else_r.changed,
       }
     },

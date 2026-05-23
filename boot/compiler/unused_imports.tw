@@ -396,8 +396,8 @@ fn collect_used_names_expr(expr: Expr, used: Cell<Dict<String, Bool>>) {
       collect_used_names_expr(idx, used)
     },
     .BlockExpr(block) => collect_used_names_block(block, used),
-    .If(cond, then_block, else_expr) => {
-      collect_used_names_expr(cond, used)
+    .If(cond_e, then_block, else_expr) => {
+      collect_used_names_expr(cond_e, used)
       collect_used_names_block(then_block, used)
 
       case else_expr {
@@ -411,6 +411,16 @@ fn collect_used_names_expr(expr: Expr, used: Cell<Dict<String, Bool>>) {
       for arm in arms {
         collect_used_names_pattern(arm.pattern, used)
         collect_used_names_expr(arm.expr, used)
+      }
+    },
+    .Cond(arms) => {
+      for arm in arms {
+        case arm.condition {
+          .Some(cond_expr) => collect_used_names_expr(cond_expr, used),
+          .None => {},
+        }
+
+        collect_used_names_expr(arm.body, used)
       }
     },
     .Array(elems) => {

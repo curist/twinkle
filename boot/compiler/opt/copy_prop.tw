@@ -56,8 +56,8 @@ fn subst_op(op: AnfOp, target: LocalId, replacement: Atom) AnfOp {
       }
       AnfOp.ACall(sa(callee), new_args)
     },
-    .AIf(cond, then_e, else_e) => AnfOp.AIf(
-      sa(cond),
+    .AIf(cond_e, then_e, else_e) => AnfOp.AIf(
+      sa(cond_e),
       subst_atom(then_e, target, replacement),
       subst_atom(else_e, target, replacement),
     ),
@@ -205,11 +205,11 @@ fn copy_prop_op(
   assigned: Dict<Int, Bool>,
 ) OpPropResult {
   case op {
-    .AIf(cond, then_e, else_e) => {
+    .AIf(cond_e, then_e, else_e) => {
       then_r := copy_prop_inner(then_e, uses, free_var_uses, assigned)
       else_r := copy_prop_inner(else_e, uses, free_var_uses, assigned)
       OpPropResult.{
-        op: .AIf(cond, then_r.expr, else_r.expr),
+        op: .AIf(cond_e, then_r.expr, else_r.expr),
         changed: then_r.changed or else_r.changed,
       }
     },

@@ -646,8 +646,8 @@ fn remap_expr_types(expr: CoreExpr, type_remap: Dict<Int, TypeId>) CoreExpr {
       remap_expr_types(receiver, type_remap),
       remap_expr_types_list(args, type_remap),
     ),
-    .If(cond, then_br, else_br) => .If(
-      remap_expr_types(cond, type_remap),
+    .If(cond_e, then_br, else_br) => .If(
+      remap_expr_types(cond_e, type_remap),
       remap_expr_types(then_br, type_remap),
       remap_expr_types(else_br, type_remap),
     ),
@@ -769,8 +769,8 @@ fn remap_expr(expr: CoreExpr, remap: Dict<Int, Int>, global_remap: Dict<Int, Int
       }
       .MakeClosure(remap_func_id(func_id, remap), remapped_captures)
     },
-    .If(cond, then_br, else_br) => .If(
-      remap_expr(cond, remap, global_remap),
+    .If(cond_e, then_br, else_br) => .If(
+      remap_expr(cond_e, remap, global_remap),
       remap_expr(then_br, remap, global_remap),
       remap_expr(else_br, remap, global_remap),
     ),

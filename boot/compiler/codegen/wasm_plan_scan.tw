@@ -68,8 +68,8 @@ fn scan_op(op: PreparedOp, builtins: BuiltinRegistry, is_init: Bool, out: ScanRe
         _ => cur,
       }
     },
-    .AIf(cond, then_e, else_e) => {
-      cur := scan_atom(cond, is_init, out)
+    .AIf(cond_e, then_e, else_e) => {
+      cur := scan_atom(cond_e, is_init, out)
       cur = scan_expr(then_e, builtins, is_init, cur)
       scan_expr(else_e, builtins, is_init, cur)
     },

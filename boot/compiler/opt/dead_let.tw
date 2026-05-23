@@ -67,11 +67,11 @@ fn dead_let_op(
   semantics: OptimizerSemantics,
 ) OpElimResult {
   case op {
-    .AIf(cond, then_e, else_e) => {
+    .AIf(cond_e, then_e, else_e) => {
       then_r := dead_let_inner(then_e, uses, assigned, semantics)
       else_r := dead_let_inner(else_e, uses, assigned, semantics)
       OpElimResult.{
-        op: .AIf(cond, then_r.expr, else_r.expr),
+        op: .AIf(cond_e, then_r.expr, else_r.expr),
         changed: then_r.changed or else_r.changed,
       }
     },

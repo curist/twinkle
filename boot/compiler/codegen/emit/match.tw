@@ -771,7 +771,7 @@ fn emit_byte_branch_chain(
 
   head := branches[0]
   tail := branches.slice(1, branches.len())
-  cond := scrutinee_instrs.append(.RefAsNonNull)
+  cond_e := scrutinee_instrs.append(.RefAsNonNull)
     .append(.I32Const(pos))
     .append(.ArrayGetU("rt_types__String"))
     .append(.I32Const(head.byte))
@@ -801,7 +801,7 @@ fn emit_byte_branch_chain(
     default_label,
     end_label,
   )
-  cond.append(.If(.None, then_body, else_body))
+  cond_e.append(.If(.None, then_body, else_body))
 }
 
 fn emit_string_candidate_chain(
@@ -822,7 +822,7 @@ fn emit_string_candidate_chain(
 
   head := candidates[0]
   tail := candidates.slice(1, candidates.len())
-  cond := emit_string_eq_condition(scrutinee_instrs, head.literal, ctx)
+  cond_e := emit_string_eq_condition(scrutinee_instrs, head.literal, ctx)
   arm := arms[head.arm_index]
   then_body := emit_match_arm_body(
     arm,
@@ -850,7 +850,7 @@ fn emit_string_candidate_chain(
     default_label,
     end_label,
   )
-  cond.append(.If(.None, then_body, else_body))
+  cond_e.append(.If(.None, then_body, else_body))
 }
 
 fn emit_string_eq_condition(scrutinee_instrs: Vector<Instr>, literal: String, ctx: EmitCtx) Vector<

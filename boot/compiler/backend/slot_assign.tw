@@ -168,8 +168,8 @@ fn lower_op(op: AnfOp, local_to_slot: Dict<Int, SlotId>, func_name: String) Prep
         lower_atom(arg, local_to_slot)
       },
     ),
-    .AIf(cond, then_e, else_e) => .AIf(
-      lower_atom(cond, local_to_slot),
+    .AIf(cond_e, then_e, else_e) => .AIf(
+      lower_atom(cond_e, local_to_slot),
       lower_expr(then_e, local_to_slot, func_name),
       lower_expr(else_e, local_to_slot, func_name),
     ),

@@ -275,8 +275,8 @@ fn path_in_expr_children(expr: Expr, offset: Int) Vector<NodeRef> {
       path_in_expr(idx, offset)
     },
     .BlockExpr(block) => path_in_block(block, offset),
-    .If(cond, then_block, else_expr) => {
-      c := path_in_expr(cond, offset)
+    .If(cond_e, then_block, else_expr) => {
+      c := path_in_expr(cond_e, offset)
 
       if c.len() > 0 {
         return c
@@ -315,6 +315,32 @@ fn path_in_expr_children(expr: Expr, offset: Int) Vector<NodeRef> {
           }
 
           return arm_prefix
+        }
+      }
+
+      []
+    },
+    .Cond(arms) => {
+      for arm in arms {
+        if arm.span.contains(offset) {
+          case arm.condition {
+            .Some(cond_expr) => {
+              c := path_in_expr(cond_expr, offset)
+
+              if c.len() > 0 {
+                return c
+              }
+            },
+            .None => {},
+          }
+
+          c := path_in_expr(arm.body, offset)
+
+          if c.len() > 0 {
+            return c
+          }
+
+          return []
         }
       }
 

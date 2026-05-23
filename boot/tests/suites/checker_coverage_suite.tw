@@ -200,4 +200,38 @@ pub fn suite() runner.Suite {
         .Ok({})
       },
     )
+    .test(
+      "cond expression position requires default arm",
+      fn() {
+        src := "fn f(x: Int) String { cond { x > 0 => \"pos\" } }"
+        msgs := try check_errs(src)
+        try assert.is_true(msgs[0].contains("default arm"))
+        .Ok({})
+      },
+    )
+    .test(
+      "cond statement position allows no default arm",
+      fn() {
+        src := "fn f(x: Int) { cond { x > 0 => { x } } }"
+        r := try check_ok(src)
+        .Ok({})
+      },
+    )
+    .test(
+      "cond with default arm type-checks",
+      fn() {
+        src := "fn f(x: Int) String { cond { x > 0 => \"pos\", _ => \"other\" } }"
+        r := try check_ok(src)
+        .Ok({})
+      },
+    )
+    .test(
+      "cond condition must be Bool",
+      fn() {
+        src := "fn f(x: Int) String { cond { x => \"pos\", _ => \"other\" } }"
+        msgs := try check_errs(src)
+        try assert.is_true(msgs[0].contains("type mismatch"))
+        .Ok({})
+      },
+    )
 }

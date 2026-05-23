@@ -155,8 +155,8 @@ fn rewrite_op(op: AnfOp, rename: Dict<Int, LocalId>) AnfOp {
         rewrite_atom(arg, rename)
       },
     ),
-    .AIf(cond, then_e, else_e) => .AIf(
-      rewrite_atom(cond, rename),
+    .AIf(cond_e, then_e, else_e) => .AIf(
+      rewrite_atom(cond_e, rename),
       rewrite_expr(then_e, rename),
       rewrite_expr(else_e, rename),
     ),
@@ -301,8 +301,8 @@ fn max_local_id_expr(expr: AnfExpr) Int {
 fn max_local_id_op(op: AnfOp) Int {
   case op {
     .ACall(callee, args) => max_int(max_local_id_atom(callee), max_local_id_atoms(args)),
-    .AIf(cond, then_e, else_e) => max_int(
-      max_local_id_atom(cond),
+    .AIf(cond_e, then_e, else_e) => max_int(
+      max_local_id_atom(cond_e),
       max_int(max_local_id_expr(then_e), max_local_id_expr(else_e)),
     ),
     .AMatch(scrutinee, arms) => {

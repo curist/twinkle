@@ -400,7 +400,7 @@ fn op_uses_local_non_recursive(op: AnfOp, local: LocalId) Bool {
     .AIndex(base, index, _, _) => atom_is_local(base, local) or atom_is_local(index, local),
     .AInit(value) => atom_is_local(value, local),
     .AAssign(target, value) => target.id == local.id or atom_is_local(value, local),
-    .AIf(cond, _, _) => atom_is_local(cond, local),
+    .AIf(cond_e, _, _) => atom_is_local(cond_e, local),
     .AMatch(scrutinee, _) => atom_is_local(scrutinee, local),
     .ALoop(_) => false,
     .ADefer(_) => false,
@@ -698,12 +698,12 @@ fn rewrite_expr(expr: AnfExpr, st: RwState, consumed_params: Dict<Int, Bool>) Ex
 
 fn rewrite_op(op: AnfOp, st: RwState, consumed_params: Dict<Int, Bool>) OpRewrite {
   case op {
-    .AIf(cond, then_e, else_e) => {
+    .AIf(cond_e, then_e, else_e) => {
       then_r := rewrite_expr(then_e, st, consumed_params)
       else_seed := st.with_metadata_from(then_r.st)
       else_r := rewrite_expr(else_e, else_seed, consumed_params)
       merged := else_seed.with_metadata_from(else_r.st)
-      .{ op: .AIf(cond, then_r.expr, else_r.expr), st: merged }
+      .{ op: .AIf(cond_e, then_r.expr, else_r.expr), st: merged }
     },
     .AMatch(scrutinee, arms) => {
       acc := st

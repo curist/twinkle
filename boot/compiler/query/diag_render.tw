@@ -350,6 +350,18 @@ fn error_to_report(e: ErrorDiag, ctx: RenderCtx) Report {
       labels: [primary(d.span, .None)],
       help_lines: [],
     },
+    .MissingCondDefault(d) => .{
+      severity: .Error,
+      title: "cond expression used as a value must have a default arm",
+      labels: [primary(d.span, .Some("missing `_ =>` arm"))],
+      help_lines: ["add a `_ => ...` arm as the last arm"],
+    },
+    .CondDefaultNotLast(d) => .{
+      severity: .Error,
+      title: "`_ =>` arm must be the last arm in a cond expression",
+      labels: [primary(d.span, .Some("`_` must be last"))],
+      help_lines: ["move the `_ => ...` arm to the end, or remove it"],
+    },
     .MissingArmSeparator(d) => .{
       severity: .Error,
       title: "missing `,` after case arm",

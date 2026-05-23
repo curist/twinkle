@@ -95,8 +95,8 @@ pub fn live_in_op_with_live_out(op: AnfOp, live: Dict<Int, Bool>) Dict<Int, Bool
 
       result
     },
-    .AIf(cond, then_e, else_e) => {
-      result := add_atom(cond, live)
+    .AIf(cond_e, then_e, else_e) => {
+      result := add_atom(cond_e, live)
 
       // Both branches may execute; union their live sets conservatively
       then_live := compute_live(then_e, Dict.new())
@@ -241,8 +241,8 @@ fn annotate_expr(expr: AnfExpr, param_locals: Dict<Int, Bool>) AnfExpr {
 
 fn annotate_op(op: AnfOp, param_locals: Dict<Int, Bool>) AnfOp {
   case op {
-    .AIf(cond, then_e, else_e) => AnfOp.AIf(
-      cond,
+    .AIf(cond_e, then_e, else_e) => AnfOp.AIf(
+      cond_e,
       annotate_expr(then_e, param_locals),
       annotate_expr(else_e, param_locals),
     ),

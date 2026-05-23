@@ -258,7 +258,7 @@ fn track_uses_in_op(op: PreparedOp, seg: Int, uses: Dict<Int, Int>) Dict<Int, In
 
       uses
     },
-    .AIf(cond, _, _) => track_uses_in_atom(cond, seg, uses),
+    .AIf(cond_e, _, _) => track_uses_in_atom(cond_e, seg, uses),
     .AMatch(scrutinee, _) => track_uses_in_atom(scrutinee, seg, uses),
     .ABinOp(_, l, r, _) => {
       uses = track_uses_in_atom(l, seg, uses)

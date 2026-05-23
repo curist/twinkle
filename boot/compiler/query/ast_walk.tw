@@ -3,7 +3,7 @@
 /// Finds the deepest AST node at a given byte offset, returning a NodeContext
 /// that both hover and definition can pattern-match on to do their specific work.
 
-use compiler.ast.{Block, CaseArm, Expr, Pattern, RecordEntry, Stmt, StringPart}
+use compiler.ast.{Block, CaseArm, CondArm, Expr, Pattern, RecordEntry, Stmt, StringPart}
 use compiler.query.util.{find_map}
 
 /// A node found at a byte offset, with context about where it sits.
@@ -123,7 +123,7 @@ fn find_child_node(expr: Expr, offset: Int) NodeContext? {
       },
     ),
     .BlockExpr(block) => find_node_in_block(block, offset),
-    .If(cond, then_block, else_expr) => find_node_in_expr(cond, offset).or_else(
+    .If(cond_e, then_block, else_expr) => find_node_in_expr(cond_e, offset).or_else(
       fn() {
         find_node_in_block(then_block, offset)
       },
@@ -137,6 +137,7 @@ fn find_child_node(expr: Expr, offset: Int) NodeContext? {
         find_node_in_case_arms(arms, scrutinee, offset)
       },
     ),
+    .Cond(arms) => find_node_in_cond_arms(arms, offset),
     .Array(elems) => find_node_in_exprs(elems, offset),
     .Record(entries) => find_node_in_entries(entries, offset),
     .NamedRecord(_, entries) => find_node_in_entries(entries, offset),
@@ -187,6 +188,31 @@ fn find_node_in_case_arms(arms: Vector<CaseArm>, scrutinee: Expr, offset: Int) N
       }
 
       find_node_in_expr(arm.expr, offset)
+    },
+  )
+}
+
+fn find_node_in_cond_arms(arms: Vector<CondArm>, offset: Int) NodeContext? {
+  find_map(
+    arms,
+    fn(arm) {
+      if !arm.span.contains(offset) {
+        return .None
+      }
+
+      case arm.condition {
+        .Some(cond_expr) => {
+          r := find_node_in_expr(cond_expr, offset)
+
+          case r {
+            .Some(_) => { return r },
+            .None => {},
+          }
+        },
+        .None => {},
+      }
+
+      find_node_in_expr(arm.body, offset)
     },
   )
 }

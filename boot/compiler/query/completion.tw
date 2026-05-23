@@ -716,7 +716,7 @@ fn find_case_info_in_expr(expr: Expr, offset: Int) CaseInfo? {
       .Some(.{ scrutinee, arms })
     },
     .BlockExpr(block) => find_case_info_in_block(block, offset),
-    .If(cond, then_block, else_expr) => find_case_info_in_expr(cond, offset).or_else(
+    .If(cond_e, then_block, else_expr) => find_case_info_in_expr(cond_e, offset).or_else(
       fn() {
         find_case_info_in_block(then_block, offset)
       },
@@ -728,6 +728,23 @@ fn find_case_info_in_expr(expr: Expr, offset: Int) CaseInfo? {
         }
       },
     ),
+    .Cond(arms) => {
+      for arm in arms {
+        if arm.span.contains(offset) {
+          case arm.condition {
+            .Some(cond_expr) => case find_case_info_in_expr(cond_expr, offset) {
+              .Some(s) => { return .Some(s) },
+              .None => {},
+            },
+            .None => {},
+          }
+
+          return find_case_info_in_expr(arm.body, offset)
+        }
+      }
+
+      .None
+    },
     .Closure(_, _, body) => find_case_info_in_block(body, offset),
     .Call(callee, args) => find_case_info_in_expr(callee, offset).or_else(
       fn() {

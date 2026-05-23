@@ -159,6 +159,7 @@ pub type ExprKind = {
   BlockExpr(Block),
   If(Expr, Block, Expr?),
   Case(Expr, Vector<CaseArm>),
+  Cond(Vector<CondArm>),
   Array(Vector<Expr>),
   Record(Vector<RecordEntry>),
   NamedRecord(String, Vector<RecordEntry>),
@@ -183,6 +184,8 @@ pub type StringPart = { Literal(String), Interpolation(Expr) }
 pub type RecordEntry = .{ name: String, value: Expr?, span: Span }
 
 pub type CaseArm = .{ pattern: Pattern, expr: Expr, span: Span }
+
+pub type CondArm = .{ condition: Expr?, body: Expr, span: Span }
 
 pub type Pattern = .{ kind: PatternKind, span: Span }
 
@@ -236,6 +239,7 @@ pub fn name(kind: ExprKind) String {
     .BlockExpr(_) => "BlockExpr",
     .If(_, _, _) => "If",
     .Case(_, _) => "Case",
+    .Cond(_) => "Cond",
     .Array(_) => "Array",
     .Record(_) => "Record",
     .NamedRecord(_, _) => "NamedRecord",

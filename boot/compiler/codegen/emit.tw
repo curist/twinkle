@@ -770,8 +770,8 @@ fn emit_op(
       buf2.append(.LocalSet(result_idx))
     },
     .ACall(callee, args) => emit_call(callee, args, result_idx, result_mono, ctx, buf),
-    .AIf(cond, then_e, else_e) => emit_if_op(
-      cond,
+    .AIf(cond_e, then_e, else_e) => emit_if_op(
+      cond_e,
       then_e,
       else_e,
       result_idx,
@@ -2604,7 +2604,7 @@ fn emit_index_op(
 
 // ── If emission ────────────────────────────────────────────────────────
 fn emit_if_op(
-  cond: PreparedAtom,
+  cond_e: PreparedAtom,
   then_e: PreparedExpr,
   else_e: PreparedExpr,
   result_idx: Int,
@@ -2614,7 +2614,7 @@ fn emit_if_op(
   buf: Vector<Instr>,
 ) Vector<Instr> {
   control_emit.emit_if_op(
-    cond,
+    cond_e,
     then_e,
     else_e,
     result_idx,

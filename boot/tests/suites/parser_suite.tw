@@ -836,8 +836,8 @@ pub fn suite() runner.Suite {
         expr := try parse_body_tail("fn f() Int { if x { 1 } else { 2 } }")
 
         case expr.kind {
-          .If(cond, then_block, else_expr) => {
-            try assert_expr_kind(cond, "Ident")
+          .If(cond_e, then_block, else_expr) => {
+            try assert_expr_kind(cond_e, "Ident")
             try assert.is_some(then_block.tail)
             assert.is_some(else_expr)
           },
@@ -2257,6 +2257,21 @@ pub fn suite() runner.Suite {
       "snapshot: unclosed_record_type",
       fn() {
         assert_snapshot("tests/parser_errors/unclosed_record_type.tw")
+      },
+    )
+    .test(
+      "cond wildcard arm must be last",
+      fn() {
+        src := "fn f(x: Int) Int { cond { _ => 0, x > 0 => 1 } }"
+        parsed := parser.parse(src, 0)
+
+        if parsed.diagnostics.len() == 0 {
+          return .Err("expected diagnostic for wildcard not last")
+        }
+
+        msg := parsed.diagnostics[0].message()
+        try assert.is_true(msg.contains("last arm"))
+        .Ok({})
       },
     )
 }

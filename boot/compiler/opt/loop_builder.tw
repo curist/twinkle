@@ -58,8 +58,8 @@ fn rewrite_loop_op_subexpr(
   builder_push_id: FuncId,
 ) AnfOp {
   case op {
-    .AIf(cond, then_e, else_e) => AnfOp.AIf(
-      cond,
+    .AIf(cond_e, then_e, else_e) => AnfOp.AIf(
+      cond_e,
       rewrite_loop_expr(then_e, base, builder, push_id, builder_push_id),
       rewrite_loop_expr(else_e, base, builder, push_id, builder_push_id),
     ),

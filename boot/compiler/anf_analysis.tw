@@ -84,8 +84,8 @@ fn collect_free_op(op: AnfOp, declared: Dict<Int, Bool>, free: Dict<Int, Bool>) 
 
       st
     },
-    .AIf(cond, then_e, else_e) => {
-      st = free_atom(cond, st)
+    .AIf(cond_e, then_e, else_e) => {
+      st = free_atom(cond_e, st)
       then_st := collect_free_expr(then_e, st.declared, st.free)
       else_st := collect_free_expr(else_e, st.declared, then_st.free)
       .{ declared: st.declared, free: else_st.free }
