@@ -6,37 +6,56 @@ type BST = { Empty, Node(Int, BST, BST) }
 fn insert(t: BST, n: Int) BST {
   case t {
     .Empty => .Node(n, .Empty, .Empty),
-    .Node(v, left, right) => {
-      if n < v { .Node(v, left.insert(n), right) }
-      else if n > v { .Node(v, left, right.insert(n)) }
-      else { t }
+    .Node(v, left, right) => if n < v {
+      .Node(v, left.insert(n), right)
+    } else if n > v {
+      .Node(v, left, right.insert(n))
+    } else {
+      t
     },
   }
+}
+
+fn values(t: BST) Vector<Int> {
+  case t {
+    .Empty => [],
+    .Node(v, left, right) => [v].concat(left.values()).concat(right.values()),
+  }
+}
+
+fn to_string(t: BST) String {
+  items := collect n in t.values() {
+    n.to_string()
+  }
+  "[${items.join(", ")}]"
 }
 
 fn inorder(t: BST) Vector<Int> {
   case t {
     .Empty => [],
-    .Node(v, left, right) =>
-      left.inorder().append(v).concat(right.inorder()),
+    .Node(v, left, right) => left.inorder().append(v).concat(right.inorder()),
   }
 }
 
 fn contains(t: BST, n: Int) Bool {
   case t {
     .Empty => false,
-    .Node(v, left, right) => {
-      if n == v { true }
-      else if n < v { left.contains(n) }
-      else { right.contains(n) }
+    .Node(v, left, right) => if n == v {
+      true
+    } else if n < v {
+      left.contains(n)
+    } else {
+      right.contains(n)
     },
   }
 }
 
 tree: BST = .Empty
-for v in [5, 3, 8, 1, 4, 7, 9, 2, 6] { tree = .insert(v) }
-
+for v in [5, 3, 8, 1, 4, 7, 9, 2, 6] {
+  tree = .insert(v)
+}
 sorted := tree.inorder()
+println("Tree:   ${tree}")
 println("Sorted: ${sorted}")
 println("Has 4?  ${tree.contains(4)}")
 println("Has 10? ${tree.contains(10)}")
