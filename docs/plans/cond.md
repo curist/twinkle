@@ -21,7 +21,18 @@ cond {
 Each arm is `bool_expr => body_expr`, separated by commas.  The wildcard `_`
 arm serves as the default and must appear last when present.
 
-Braces and commas follow the same rules as `case` arms.
+**Delimiter rules** (same as `case`):
+- Commas are **required** between arms; newlines alone are not sufficient.
+- A trailing comma before `}` is optional.
+- `=>` is not an operator in Twinkle, so there is no ambiguity between the
+  arm separator and expressions in the condition (e.g. `a and b => ...`).
+
+**Edge cases:**
+- `cond {}` (empty) is a **parse error** — an empty cond is always a mistake.
+- `cond { _ => x }` is permitted but discouraged; the formatter may simplify
+  it to just `x` in the future.
+- Nested `cond` (a `cond` as an arm body) is allowed — it desugars to nested
+  `If` like everything else.
 
 ---
 
@@ -197,4 +208,5 @@ ordinary `If` chains.
 Format `cond` with the same rules as `case`:
 - Arms aligned, one per line.
 - Trailing comma after each arm.
-- Short single-arm forms on one line if they fit.
+- A multi-arm `cond` where individual arm bodies are short may be
+  column-aligned for readability (as in the motivating examples above).
