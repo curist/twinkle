@@ -119,12 +119,10 @@ pub fn concat(docs: Vector<Doc>) Doc {
     }
   }
 
-  if compact.len() == 0 {
-    .Nil
-  } else if compact.len() == 1 {
-    compact[0]
-  } else {
-    .Seq(compact)
+  cond {
+    compact.len() == 0 => .Nil,
+    compact.len() == 1 => compact[0],
+    _ => .Seq(compact),
   }
 }
 

@@ -194,14 +194,11 @@ fn unescape_string(raw: String) String {
 }
 
 fn hex_digit_value(ch: Byte) Int {
-  if in_byte_range(ch, "0", "9") {
-    ch - byte_value("0")
-  } else if in_byte_range(ch, "A", "F") {
-    ch - byte_value("A") + 10
-  } else if in_byte_range(ch, "a", "f") {
-    ch - byte_value("a") + 10
-  } else {
-    -1
+  cond {
+    in_byte_range(ch, "0", "9") => ch - byte_value("0"),
+    in_byte_range(ch, "A", "F") => ch - byte_value("A") + 10,
+    in_byte_range(ch, "a", "f") => ch - byte_value("a") + 10,
+    _ => -1,
   }
 }
 
