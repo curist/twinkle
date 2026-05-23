@@ -2654,6 +2654,7 @@ fn is_case_scrutinee_supported(ty: MonoType, ctx: InferCtx) Bool {
     .Int => true,
     .Bool => true,
     .String => true,
+    .Byte => true,
     .Optional(_) => true,
     .Result(_, _) => true,
     .Named(tid, _) => {
@@ -2807,7 +2808,10 @@ fn check_pattern(pat: Pattern, expected: MonoType, ctx: InferCtx, diags: Vector<
   case pat.kind {
     .Wildcard => .{ ctx, diags },
     .Ident(name) => .{ ctx: bind_local(ctx, name, expected), diags },
-    .Literal(expr) => {
+    .Literal(expr) => if expected == .Byte {
+      // Route through check_expr so ByteOutOfRange fires for out-of-range literals
+      check_expr(ctx, expr, .Byte, diags)
+    } else {
       r := ctx.synth(expr, diags)
       u := r.ctx.unify(r.ty, expected, pat.span, r.diags)
       .{ ctx: u.ctx, diags: u.diags }

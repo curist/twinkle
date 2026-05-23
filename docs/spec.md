@@ -1150,7 +1150,7 @@ if cond { a } else { b }
 ### `case`
 
 On enums: exhaustive or `_ =>`.
-On primitives: must include `_`.
+On primitives (`Int`, `Bool`, `String`, `Byte`): must include `_`.
 
 ### Loops
 

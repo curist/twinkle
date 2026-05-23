@@ -49,6 +49,23 @@ impl<'a> PatternChecker<'a> {
                     Literal::String(_) => MonoType::String,
                 };
 
+                // Int literals are accepted for Byte scrutinees, with range check
+                if let (Literal::Int(n), MonoType::Byte) = (lit, expected) {
+                    if !(0..=255).contains(n) {
+                        self.errors.push(TypeError::TypeMismatch {
+                            expected: MonoType::Byte,
+                            actual: MonoType::Int,
+                            span: *span,
+                            note: Some(format!(
+                                "integer literal {} is out of range for Byte (0..255)",
+                                n
+                            )),
+                        });
+                        return Err(());
+                    }
+                    return Ok(());
+                }
+
                 if &lit_ty == expected {
                     Ok(())
                 } else {
@@ -182,7 +199,10 @@ impl<'a> PatternChecker<'a> {
         span: Span,
     ) -> Result<(), ()> {
         // For primitive types (Int, Bool, String), only a wildcard/identifier arm is exhaustive
-        if matches!(scrut_ty, MonoType::Int | MonoType::Bool | MonoType::String) {
+        if matches!(
+            scrut_ty,
+            MonoType::Int | MonoType::Bool | MonoType::String | MonoType::Byte
+        ) {
             let has_wildcard = arms
                 .iter()
                 .any(|arm| matches!(arm.pattern, Pattern::Wildcard(_) | Pattern::Ident(_, _)));

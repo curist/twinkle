@@ -61,25 +61,21 @@ fn parse_value(input: String, i: Int) Result<ParseResult<Json>, String> {
     return .Err("unexpected end of input")
   }
 
-  c := input[j]
-
-  if c == 0x6E {
-    parse_null(input, j)
-  } else if c == 0x74 {
-    parse_true(input, j)
-  } else if c == 0x66 {
-    parse_false(input, j)
-  } else if c == 0x22 {
-    s := try parse_json_string(input, j)
-    .Ok(.{ value: Json.Str(s.value), next: s.next })
-  } else if c == 0x5B {
-    parse_array(input, j)
-  } else if c == 0x7B {
-    parse_object(input, j)
-  } else if c == 0x2D or c.is_digit() {
-    parse_number(input, j)
-  } else {
-    .Err("unexpected character at ${j}")
+  case input[j] {
+    0x6E => parse_null(input, j),
+    0x74 => parse_true(input, j),
+    0x66 => parse_false(input, j),
+    0x22 => {
+      s := try parse_json_string(input, j)
+      .Ok(.{ value: Json.Str(s.value), next: s.next })
+    },
+    0x5B => parse_array(input, j),
+    0x7B => parse_object(input, j),
+    _ => if input[j] == 0x2D or input[j].is_digit() {
+      parse_number(input, j)
+    } else {
+      .Err("unexpected character at ${j}")
+    },
   }
 }
 
@@ -219,26 +215,17 @@ fn parse_escape(input: String, i: Int) Result<ParseResult<String>, String> {
 
   c := input[i + 1]
 
-  if c == 0x22 {
-    .Ok(.{ value: "\"", next: i + 2 })
-  } else if c == 0x5C {
-    .Ok(.{ value: "\\", next: i + 2 })
-  } else if c == 0x2F {
-    .Ok(.{ value: "/", next: i + 2 })
-  } else if c == 0x62 {
-    .Ok(.{ value: code_point_string(0x08), next: i + 2 })
-  } else if c == 0x66 {
-    .Ok(.{ value: code_point_string(0x0C), next: i + 2 })
-  } else if c == 0x6E {
-    .Ok(.{ value: "\n", next: i + 2 })
-  } else if c == 0x72 {
-    .Ok(.{ value: "\r", next: i + 2 })
-  } else if c == 0x74 {
-    .Ok(.{ value: "\t", next: i + 2 })
-  } else if c == 0x75 {
-    parse_unicode_escape(input, i)
-  } else {
-    .Err("invalid escape at ${i}")
+  case c {
+    0x22 => .Ok(.{ value: "\"", next: i + 2 }),
+    0x5C => .Ok(.{ value: "\\", next: i + 2 }),
+    0x2F => .Ok(.{ value: "/", next: i + 2 }),
+    0x62 => .Ok(.{ value: code_point_string(0x08), next: i + 2 }),
+    0x66 => .Ok(.{ value: code_point_string(0x0C), next: i + 2 }),
+    0x6E => .Ok(.{ value: "\n", next: i + 2 }),
+    0x72 => .Ok(.{ value: "\r", next: i + 2 }),
+    0x74 => .Ok(.{ value: "\t", next: i + 2 }),
+    0x75 => parse_unicode_escape(input, i),
+    _ => .Err("invalid escape at ${i}"),
   }
 }
 

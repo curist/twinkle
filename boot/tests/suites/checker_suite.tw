@@ -2707,4 +2707,21 @@ pub fn suite() runner.Suite {
         .Ok({})
       },
     )
+    .test(
+      "case on Byte scrutinee accepts in-range literals",
+      fn() {
+        src := "fn f(b: Byte) String { case b { 0x41 => \"A\", 0x00 => \"null\", 255 => \"max\", _ => \"other\" } }"
+        r := try check_ok(src)
+        .Ok({})
+      },
+    )
+    .test(
+      "case on Byte scrutinee rejects out-of-range literal",
+      fn() {
+        src := "fn f(b: Byte) String { case b { 999 => \"big\", _ => \"ok\" } }"
+        msgs := try check_errs(src)
+        try assert.str_contains(msgs[0], "out of range")
+        .Ok({})
+      },
+    )
 }

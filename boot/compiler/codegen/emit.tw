@@ -2697,7 +2697,11 @@ fn emit_pattern_condition(
   case pattern {
     .Wildcard => buf.append(.I32Const(1)),
     .Var(_) => buf.append(.I32Const(1)),
-    .LitInt(n) => buf.concat(scrutinee_instrs).append(.I64Const(n)).append(.I64Eq),
+    .LitInt(n) => if scrutinee_mono == .Byte {
+      buf.concat(scrutinee_instrs).append(.I32Const(n)).append(.I32Eq)
+    } else {
+      buf.concat(scrutinee_instrs).append(.I64Const(n)).append(.I64Eq)
+    },
     .LitBool(b) => buf.concat(scrutinee_instrs)
       .append(
         .I32Const(

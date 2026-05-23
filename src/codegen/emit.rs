@@ -1639,9 +1639,15 @@ fn emit_pattern_condition(
         CorePattern::Wildcard | CorePattern::Var(_) => vec![Instr::I32Const(1)],
         CorePattern::LitInt(n) => {
             let mut instrs = value_anyref_instrs.to_vec();
-            instrs.extend(emit_unbox_on_stack(&ValType::I64));
-            instrs.push(Instr::I64Const(*n));
-            instrs.push(Instr::I64Eq);
+            if expected_mono == Some(&MonoType::Byte) {
+                instrs.extend(emit_unbox_on_stack(&ValType::I32));
+                instrs.push(Instr::I32Const(*n as i32));
+                instrs.push(Instr::I32Eq);
+            } else {
+                instrs.extend(emit_unbox_on_stack(&ValType::I64));
+                instrs.push(Instr::I64Const(*n));
+                instrs.push(Instr::I64Eq);
+            }
             instrs
         }
         CorePattern::LitBool(b) => {

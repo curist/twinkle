@@ -304,4 +304,43 @@ pub fn suite() runner.Suite {
         .Ok({})
       },
     )
+    .test(
+      "case on Byte scrutinee matches literal arms",
+      fn() {
+        b: Byte = 0x41
+        result := case b {
+          0x41 => "A",
+          0x42 => "B",
+          _ => "other",
+        }
+        try assert.equal(result, "A")
+        .Ok({})
+      },
+    )
+    .test(
+      "case on Byte scrutinee falls through to wildcard",
+      fn() {
+        b: Byte = 0xFF
+        result := case b {
+          0x00 => "zero",
+          0x01 => "one",
+          _ => "other",
+        }
+        try assert.equal(result, "other")
+        .Ok({})
+      },
+    )
+    .test(
+      "case on Byte from string indexing",
+      fn() {
+        s := "hello"
+        result := case s[0] {
+          0x68 => "h",
+          0x65 => "e",
+          _ => "?",
+        }
+        try assert.equal(result, "h")
+        .Ok({})
+      },
+    )
 }

@@ -1664,22 +1664,14 @@ fn parse_if_expr(c: Cursor) ExprParse {
     c = .advance()
     k := c.kind()
 
-    if k == .If {
-      parsed_else := parse_if_expr(c)
-      diagnostics_out = .concat(parsed_else.diagnostics)
-      else_expr = .Some(parsed_else.value)
-      c = parsed_else.cursor
-    } else if k == .LBrace {
-      parsed_else := parse_block_expr(c)
-      diagnostics_out = .concat(parsed_else.diagnostics)
-      else_expr = .Some(parsed_else.value)
-      c = parsed_else.cursor
-    } else {
-      parsed_else := parse_expr_bp(c, 0)
-      diagnostics_out = .concat(parsed_else.diagnostics)
-      else_expr = .Some(parsed_else.value)
-      c = parsed_else.cursor
+    parsed_else := case k {
+      .If => parse_if_expr(c),
+      .LBrace => parse_block_expr(c),
+      _ => parse_expr_bp(c, 0),
     }
+    diagnostics_out = .concat(parsed_else.diagnostics)
+    else_expr = .Some(parsed_else.value)
+    c = parsed_else.cursor
   }
 
   end_span := case else_expr {
@@ -2375,30 +2367,35 @@ fn parse_binding_stmt_with_pub(c: Cursor, is_pub: Bool) StmtParse {
   is_rebind := false
   next_kind := c.kind()
 
-  if next_kind == .ColonEq {
-    c = .advance()
-  } else if next_kind == .Eq {
-    is_rebind = true
-    c = .advance()
-  } else if next_kind == .Colon {
-    c = .advance()
-    parsed_ty := parse_type_expr(c)
-    diagnostics_out = .concat(parsed_ty.diagnostics)
-    ty = .Some(parsed_ty.value)
-    c = parsed_ty.cursor
+  case next_kind {
+    .ColonEq => {
+      c = .advance()
+    },
+    .Eq => {
+      is_rebind = true
+      c = .advance()
+    },
+    .Colon => {
+      c = .advance()
+      parsed_ty := parse_type_expr(c)
+      diagnostics_out = .concat(parsed_ty.diagnostics)
+      ty = .Some(parsed_ty.value)
+      c = parsed_ty.cursor
 
-    if c.kind() != .Eq {
-      diagnostics_out = .append(diag.error(c.span(), "expected '=' after typed binding"))
+      if c.kind() != .Eq {
+        diagnostics_out = .append(diag.error(c.span(), "expected '=' after typed binding"))
+        stmt: Stmt = .ErrorStmt(c.span_through(start_pos))
+
+        return .{ value: stmt, cursor: c.advance(), diagnostics: diagnostics_out }
+      }
+
+      c = .advance()
+    },
+    _ => {
       stmt: Stmt = .ErrorStmt(c.span_through(start_pos))
 
-      return .{ value: stmt, cursor: c.advance(), diagnostics: diagnostics_out }
-    }
-
-    c = .advance()
-  } else {
-    stmt: Stmt = .ErrorStmt(c.span_through(start_pos))
-
-    return .{ value: stmt, cursor: c, diagnostics: diagnostics_out }
+      return .{ value: stmt, cursor: c, diagnostics: diagnostics_out }
+    },
   }
 
   // Rebinding receiver shorthand: name = .method(args) => name = name.method(args)
@@ -2745,24 +2742,24 @@ fn parse_item_at(c: Cursor) ItemParse {
     .Pub => {
       k1 := c.at(1).kind()
 
-      if k1 == .Type {
-        parse_type(c)
-      } else if k1 == .Fn {
-        parse_function(c)
-      } else if k1 == .Extern {
-        parsed := parse_extern(c)
+      case k1 {
+        .Type => parse_type(c),
+        .Fn => parse_function(c),
+        .Extern => {
+          parsed := parse_extern(c)
 
-        if parsed.value.len() > 0 {
-          .{ value: parsed.value[0], cursor: parsed.cursor, diagnostics: parsed.diagnostics }
-        } else {
-          .{ value: .ErrorItem(c.span()), cursor: parsed.cursor, diagnostics: parsed.diagnostics }
-        }
-      } else if k1 == .Ident {
-        // pub x := value — consume pub, parse as pub binding
-        pub_c := c.advance()
-        parse_pub_top_level_stmt(pub_c)
-      } else {
-        parse_top_level_stmt(c)
+          if parsed.value.len() > 0 {
+            .{ value: parsed.value[0], cursor: parsed.cursor, diagnostics: parsed.diagnostics }
+          } else {
+            .{ value: .ErrorItem(c.span()), cursor: parsed.cursor, diagnostics: parsed.diagnostics }
+          }
+        },
+        .Ident => {
+          // pub x := value — consume pub, parse as pub binding
+          pub_c := c.advance()
+          parse_pub_top_level_stmt(pub_c)
+        },
+        _ => parse_top_level_stmt(c),
       }
     },
     _ => parse_top_level_stmt(c),
