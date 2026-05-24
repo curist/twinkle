@@ -10,7 +10,7 @@ fn make_dict() Dict<String, Int> {
 }
 
 fn linker_stress_key(i: Int) String {
-  dollar := "\$"
+  dollar := "$"
 
   cond {
     i % 3 == 0 => "${dollar}f${i}___lambda",

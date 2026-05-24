@@ -188,9 +188,9 @@ fn test_struct_type_def() Result<Void, String> {
     ),
   ])
   wat := emit_wat_unlinked_for_test(m)
-  try assert.ok(contains(wat, "(type \$Point (struct"), "should have struct type")
-  try assert.ok(contains(wat, "(field \$x (mut i64))"), "should have mutable field x")
-  try assert.ok(contains(wat, "(field \$y (mut i64))"), "should have mutable field y")
+  try assert.ok(contains(wat, "(type $Point (struct"), "should have struct type")
+  try assert.ok(contains(wat, "(field $x (mut i64))"), "should have mutable field x")
+  try assert.ok(contains(wat, "(field $y (mut i64))"), "should have mutable field y")
   .Ok({})
 }
 
@@ -204,7 +204,7 @@ fn test_struct_type_with_supertype() Result<Void, String> {
     ),
   ])
   wat := emit_wat_unlinked_for_test(m)
-  try assert.ok(contains(wat, "(sub \$Parent"), "should have sub Parent")
+  try assert.ok(contains(wat, "(sub $Parent"), "should have sub Parent")
   .Ok({})
 }
 
@@ -213,14 +213,14 @@ fn test_non_final_struct_without_supertype() Result<Void, String> {
     TypeDef.Struct("Base", [FieldDef.{ name: .None, mutable: false, ty: .I32 }], .None, false),
   ])
   wat := emit_wat_unlinked_for_test(m)
-  try assert.ok(contains(wat, "(type \$Base (sub (struct"), "non-final should have sub wrapper")
+  try assert.ok(contains(wat, "(type $Base (sub (struct"), "non-final should have sub wrapper")
   .Ok({})
 }
 
 fn test_array_type_def() Result<Void, String> {
   m := mod_with_types([TypeDef.Array("MyArr", FieldDef.{ name: .None, mutable: true, ty: .Anyref })])
   wat := emit_wat_unlinked_for_test(m)
-  try assert.ok(contains(wat, "(type \$MyArr (array (mut anyref)))"), "should have array type")
+  try assert.ok(contains(wat, "(type $MyArr (array (mut anyref)))"), "should have array type")
   .Ok({})
 }
 
@@ -228,7 +228,7 @@ fn test_func_type_def() Result<Void, String> {
   m := mod_with_types([TypeDef.FuncType("MySig", [.I64, .I64], [.I64])])
   wat := emit_wat_unlinked_for_test(m)
   try assert.ok(
-    contains(wat, "(type \$MySig (func (param i64 i64) (result i64)))"),
+    contains(wat, "(type $MySig (func (param i64 i64) (result i64)))"),
     "should have functype",
   )
   .Ok({})
@@ -245,10 +245,7 @@ fn test_import_emission() Result<Void, String> {
     },
   ])
   wat := emit_wat_unlinked_for_test(m)
-  try assert.ok(
-    contains(wat, "(import \"host\" \"print\" (func \$host_print"),
-    "should have import",
-  )
+  try assert.ok(contains(wat, "(import \"host\" \"print\" (func $host_print"), "should have import")
   .Ok({})
 }
 
@@ -263,9 +260,9 @@ fn test_function_with_body() Result<Void, String> {
     },
   ])
   wat := emit_wat_unlinked_for_test(m)
-  try assert.ok(contains(wat, "(func \$add"), "should have func name")
-  try assert.ok(contains(wat, "local.get \$p0"), "should get param 0")
-  try assert.ok(contains(wat, "local.get \$p1"), "should get param 1")
+  try assert.ok(contains(wat, "(func $add"), "should have func name")
+  try assert.ok(contains(wat, "local.get $p0"), "should get param 0")
+  try assert.ok(contains(wat, "local.get $p1"), "should get param 1")
   try assert.ok(contains(wat, "i64.add"), "should have i64.add")
   .Ok({})
 }
@@ -281,9 +278,9 @@ fn test_function_with_extra_locals() Result<Void, String> {
     },
   ])
   wat := emit_wat_unlinked_for_test(m)
-  try assert.ok(contains(wat, "(param \$p0 i64)"), "param p0")
-  try assert.ok(contains(wat, "(local \$p1 i64)"), "local p1")
-  try assert.ok(contains(wat, "(local \$p2 anyref)"), "local p2")
+  try assert.ok(contains(wat, "(param $p0 i64)"), "param p0")
+  try assert.ok(contains(wat, "(local $p1 i64)"), "local p1")
+  try assert.ok(contains(wat, "(local $p2 anyref)"), "local p2")
   .Ok({})
 }
 
@@ -293,22 +290,22 @@ fn test_global_emission() Result<Void, String> {
     GlobalDef.{ name: "g2", mutable: false, ty: .I32, init: [Instr.I32Const(0)] },
   ])
   wat := emit_wat_unlinked_for_test(m)
-  try assert.ok(contains(wat, "(global \$g1 (mut i64) i64.const 42)"), "mutable global")
-  try assert.ok(contains(wat, "(global \$g2 i32 i32.const 0)"), "immutable global")
+  try assert.ok(contains(wat, "(global $g1 (mut i64) i64.const 42)"), "mutable global")
+  try assert.ok(contains(wat, "(global $g2 i32 i32.const 0)"), "immutable global")
   .Ok({})
 }
 
 fn test_data_segment_passive() Result<Void, String> {
   m := mod_with_data([DataSegment.{ name: "d0", offset: [], bytes: [65, 66, 67] }])
   wat := emit_wat_unlinked_for_test(m)
-  try assert.ok(contains(wat, "(data \$d0 \"\\41\\42\\43\")"), "passive data with hex bytes")
+  try assert.ok(contains(wat, "(data $d0 \"\\41\\42\\43\")"), "passive data with hex bytes")
   .Ok({})
 }
 
 fn test_export_emission() Result<Void, String> {
   m := mod_with_exports([ExportDef.{ wasm_name: "main", func_sym: "f_main" }])
   wat := emit_wat_unlinked_for_test(m)
-  try assert.ok(contains(wat, "(export \"main\" (func \$f_main))"), "should have export")
+  try assert.ok(contains(wat, "(export \"main\" (func $f_main))"), "should have export")
   .Ok({})
 }
 
@@ -318,7 +315,7 @@ fn test_start_function() Result<Void, String> {
     .Some("init"),
   )
   wat := emit_wat_unlinked_for_test(m)
-  try assert.ok(contains(wat, "(start \$init)"), "should have start")
+  try assert.ok(contains(wat, "(start $init)"), "should have start")
   .Ok({})
 }
 
@@ -350,12 +347,12 @@ fn test_if_block_loop_emission() Result<Void, String> {
     },
   ])
   wat := emit_wat_unlinked_for_test(m)
-  try assert.ok(contains(wat, "(block \$b0"), "should have block")
-  try assert.ok(contains(wat, "(loop \$l0"), "should have loop")
+  try assert.ok(contains(wat, "(block $b0"), "should have block")
+  try assert.ok(contains(wat, "(loop $l0"), "should have loop")
   try assert.ok(contains(wat, "(if (result i64)"), "should have if with result")
   try assert.ok(contains(wat, "(then"), "should have then")
   try assert.ok(contains(wat, "(else"), "should have else")
-  try assert.ok(contains(wat, "br \$l0"), "should have br")
+  try assert.ok(contains(wat, "br $l0"), "should have br")
   .Ok({})
 }
 
@@ -364,7 +361,7 @@ fn test_ref_func_declarative_elem() Result<Void, String> {
     FuncDef.{ name: "f", params: [], results: [], locals: [], body: [Instr.RefFunc("target")] },
   ])
   wat := emit_wat_unlinked_for_test(m)
-  try assert.ok(contains(wat, "(elem declare func \$target)"), "should have declarative elem")
+  try assert.ok(contains(wat, "(elem declare func $target)"), "should have declarative elem")
   .Ok({})
 }
 
@@ -374,8 +371,8 @@ fn test_functype_deduplication() Result<Void, String> {
     FuncDef.{ name: "f2", params: [.I64], results: [.I64], locals: [], body: [Instr.LocalGet(0)] },
   ])
   wat := emit_wat_unlinked_for_test(m)
-  try assert.ok(contains(wat, "\$functype_0"), "should have functype_0")
-  try assert.ok(!contains(wat, "\$functype_1"), "should NOT have functype_1 (deduped)")
+  try assert.ok(contains(wat, "$functype_0"), "should have functype_0")
+  try assert.ok(!contains(wat, "$functype_1"), "should NOT have functype_1 (deduped)")
   .Ok({})
 }
 
@@ -392,7 +389,7 @@ fn test_ref_types_in_val_type() Result<Void, String> {
     ),
   ])
   wat := emit_wat_unlinked_for_test(m)
-  try assert.ok(contains(wat, "(ref null \$Foo)"), "nullable ref")
+  try assert.ok(contains(wat, "(ref null $Foo)"), "nullable ref")
   try assert.ok(contains(wat, "(ref eq)"), "non-nullable ref")
   .Ok({})
 }
@@ -414,8 +411,8 @@ fn test_struct_array_instructions() Result<Void, String> {
     },
   ])
   wat := emit_wat_unlinked_for_test(m)
-  try assert.ok(contains(wat, "struct.new \$Pt"), "struct.new")
-  try assert.ok(contains(wat, "struct.get \$Pt 0"), "struct.get")
+  try assert.ok(contains(wat, "struct.new $Pt"), "struct.new")
+  try assert.ok(contains(wat, "struct.get $Pt 0"), "struct.get")
   try assert.ok(contains(wat, "array.len"), "array.len")
   .Ok({})
 }

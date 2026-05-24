@@ -103,7 +103,7 @@ fn builtin_abi(name: String) AbiContract {
     "bool$to_string" => abi([.I32], [str_()]),
     "string$len" => abi([str_n()], [.I32]),
     "string$concat" => abi([str_n(), str_n()], [str_()]),
-    "string$substring" => abi([str_n(), .I32, .I32], [str_()]),
+    "string$substring_raw" => abi([str_n(), .I32, .I32], [str_()]),
     "vector$len" => abi([pvec_n()], [.I32]),
     "vector$set_unsafe" => abi([pvec_n(), .I32, .Anyref], [pvec_()]),
     "vector$concat" => abi([pvec_n(), pvec_n()], [pvec_()]),
@@ -341,10 +341,11 @@ fn intr(name: String, canonical: String?) BuiltinSpec {
 /// The single authoritative table of all builtins.
 /// Order determines FuncId assignment (0-based, sequential).
 ///
-/// Naming convention: all receiver-based internal names use `$` as separator
-/// ({prefix}${name}), making them unrepresentable in user code.
-/// Free functions (print, println, range, etc.) keep plain names.
-/// Host functions keep their `host_` prefix.
+/// Naming convention: receiver-based internal display/linkage names use `$` as
+/// separator ({prefix}${name}). Semantic dispatch is keyed by FuncId and
+/// canonical names, not by these generated strings. Free functions (print,
+/// println, range, etc.) keep plain names. Host functions keep their `host_`
+/// prefix.
 pub fn builtin_specs() Vector<BuiltinSpec> {
   [
     rt("print", "rt.core", "print", .None),
@@ -359,7 +360,7 @@ pub fn builtin_specs() Vector<BuiltinSpec> {
     intr("string$to_string", .Some("String.to_string")),
     rt("string$len", "rt.str", "len", .Some("String.len")),
     rt("string$concat", "rt.str", "concat", .Some("String.concat")),
-    rt("string$substring", "rt.str", "substring", .None),
+    rt("string$substring_raw", "rt.str", "substring", .None),
     intr("string$get", .Some("String.get")),
     intr("string$slice", .Some("String.slice")),
     intr("string$from_code_point", .Some("String.from_code_point")),

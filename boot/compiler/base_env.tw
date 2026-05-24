@@ -263,7 +263,7 @@ pub fn builtin_env() ResolvedEnv {
   sig_fns := signatures.all_internal_sigs(groups)
   prelude_fns := signatures.all_internal_sigs(prelude_groups)
 
-  // Functions NOT covered by any signature file: I/O builtins, string_substring,
+  // Functions NOT covered by any signature file: I/O builtins, low-level
   // vector builders, and host ops.
   t := MonoType.Var("T")
   hardcoded := [
@@ -299,13 +299,6 @@ pub fn builtin_env() ResolvedEnv {
       [.String],
       .Some(.Void),
       .Some("Print a string to stderr followed by a newline."),
-    ),
-    builtin_sig(
-      "string$substring",
-      [],
-      ["s", "start", "end"],
-      [.String, .Int, .Int],
-      .Some(.String),
     ),
     builtin_sig("vector$builder_new", ["T"], [], [], .Some(.Vector(t))),
     builtin_sig("vector$builder_push", ["T"], ["xs", "value"], [.Vector(t), t], .Some(.Void)),

@@ -18,7 +18,7 @@ fn fid(id: Int) FuncId {
 fn make_init_func(id: Int, body: AnfExpr) AnfFunctionDef {
   AnfFunctionDef.{
     func_id: fid(id),
-    name: "\$init",
+    name: "$init",
     is_init: true,
     params: [],
     op_result_mono: Dict.new(),

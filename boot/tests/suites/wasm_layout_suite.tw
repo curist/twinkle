@@ -315,7 +315,7 @@ fn test_val_type_of_scalar_anyref() Result<Void, String> {
 }
 
 fn test_val_type_of_record() Result<Void, String> {
-  rec := WasmRecordLayout.{ type_id: TypeId.{ id: 10 }, sym: "\$Point", fields: [] }
+  rec := WasmRecordLayout.{ type_id: TypeId.{ id: 10 }, sym: "$Point", fields: [] }
   vt := val_type_of(.Record(rec))
 
   case vt {
@@ -323,7 +323,7 @@ fn test_val_type_of_record() Result<Void, String> {
       try assert.equal(nullable, true)
 
       case ht {
-        .Named(s) => assert.equal(s, "\$Point"),
+        .Named(s) => assert.equal(s, "$Point"),
         _ => assert.fail("expected Named"),
       }
     },

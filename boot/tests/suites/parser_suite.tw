@@ -485,7 +485,7 @@ pub fn suite() runner.Suite {
     .test(
       "expr: string interpolation",
       fn() {
-        dollar := "\$"
+        dollar := "$"
         expr := try parse_body_tail("fn f() String { \"a ${dollar}{x} b\" }")
 
         case expr.kind {
@@ -1438,7 +1438,7 @@ pub fn suite() runner.Suite {
     .test(
       "lexer: float, multichar operators, and interpolation tokens",
       fn() {
-        dollar := "\$"
+        dollar := "$"
         src := "1.5 == 2 && 3 != 4 || 5 <= 6 >= 7 .. 8\n\"a ${dollar}{x + 1} b\""
         lexed := lexer.lex(src, 0)
         try assert.equal(lexed.diagnostics.len(), 0)
@@ -1481,7 +1481,7 @@ pub fn suite() runner.Suite {
     .test(
       "lexer: utf8 string interpolation segments do not trap",
       fn() {
-        dollar := "\$"
+        dollar := "$"
         src := "\"你好 ${dollar}{x} 世界\""
         lexed := lexer.lex(src, 0)
         try assert.equal(lexed.diagnostics.len(), 0)

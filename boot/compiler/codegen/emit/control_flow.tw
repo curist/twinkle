@@ -63,8 +63,8 @@ pub fn emit_loop_op(
   fns: ControlEmitFns,
 ) Vector<Instr> {
   depth := ctx.loop_depth
-  break_label := "\$break_${depth}"
-  cont_label := "\$continue_${depth}"
+  break_label := "$break_${depth}"
+  cont_label := "$continue_${depth}"
 
   // Push labels onto label_stack
   new_labels := ctx.label_stack.append(LabelPair.{ break_label, continue_label: cont_label })
@@ -82,6 +82,7 @@ pub fn emit_loop_op(
     is_init_func: ctx.is_init_func,
     loop_depth: ctx.loop_depth + 1,
     suspending_bodies: ctx.suspending_bodies,
+    intrinsic_table: ctx.intrinsic_table,
   }
 
   // Loop body is a nested sub-body — use fresh []

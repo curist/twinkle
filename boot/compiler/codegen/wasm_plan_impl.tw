@@ -596,7 +596,7 @@ fn find_prepared_func(funcs_by_id: Dict<Int, PreparedFunc>, fid: FuncId) Prepare
 fn resolve_module_global_mono(init_func: PreparedFunc, local_id: Int) MonoType {
   case facts.find_slot_by_source_local(init_func, local_id) {
     .Some(info) => info.mono,
-    .None => error("resolve_module_global_mono: \$init has no slot for module global L${local_id}"),
+    .None => error("resolve_module_global_mono: $init has no slot for module global L${local_id}"),
   }
 }
 
@@ -608,9 +608,9 @@ fn register_string(reg: WasmTypeRegistry, s: String) WasmTypeRegistry {
       idx := reg.string_pool_order.len()
       byte_len := s.len()
       entry := StringPoolEntry.{
-        global_sym: "\$str_${idx}",
-        getter_sym: "\$str_${idx}_get",
-        data_segment_name: "\$data_strings",
+        global_sym: "$str_${idx}",
+        getter_sym: "$str_${idx}_get",
+        data_segment_name: "$data_strings",
         byte_offset: reg.string_pool_next_offset,
         byte_len,
       }

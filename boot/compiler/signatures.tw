@@ -43,11 +43,11 @@ fn receiver_for_stem(stem: String) String? {
 }
 
 // ── canonical → internal name mapping ───────────────────────────────────────
-/// Map a canonical signature name to its boot-internal function name.
-/// All receiver-based methods use `$` as the separator
-/// ({prefix}${name}) so compiler-only implementation targets cannot collide
-/// with user-defined function names — user identifiers cannot contain `$`.
-/// Free functions (receiver=None, e.g. range) are returned unchanged.
+/// Map a canonical signature name to its boot-internal display/linkage name.
+/// Receiver-based methods use `$` as the separator ({prefix}${name}); semantic
+/// builtin resolution uses BuiltinRegistry canonical identities instead of this
+/// generated string. Free functions (receiver=None, e.g. range) are returned
+/// unchanged.
 pub fn to_internal_name(receiver: String?, canonical_name: String) String {
   case receiver {
     .None => canonical_name,

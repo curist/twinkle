@@ -208,7 +208,7 @@ fn layout_of_named(tid: TypeId, args: Vector<MonoType>, env: ResolvedEnv) WasmLa
         )
       }
 
-      sym := "\$${name}_${mono_to_key(.Named(tid, args))}"
+      sym := "$${name}_${mono_to_key(.Named(tid, args))}"
       field_layouts := collect f, i in fields {
         // Substitute type params with concrete args
         field_ty := subst_type_params(f.ty, type_params, args)
@@ -250,7 +250,7 @@ fn layout_of_sum_def(
   variants: Vector<ResolvedVariant>,
   env: ResolvedEnv,
 ) WasmLayout {
-  sym := "\$${name}_${mono_to_key(.Named(tid, args))}"
+  sym := "$${name}_${mono_to_key(.Named(tid, args))}"
 
   // Build variant layouts
   offset := 1 // field 0 is the tag
@@ -279,7 +279,7 @@ fn layout_of_optional(inner: MonoType, env: ResolvedEnv) WasmLayout {
   }
 
   inner_vt := val_type_of_mono(inner, env)
-  sym := "\$Option_${mono_to_key(.Optional(inner))}"
+  sym := "$Option_${mono_to_key(.Optional(inner))}"
   .Sum(
     WasmSumLayout.{
       type_id: TypeId.{ id: -1 },
@@ -306,7 +306,7 @@ fn layout_of_optional(inner: MonoType, env: ResolvedEnv) WasmLayout {
 fn layout_of_result(ok: MonoType, err: MonoType, env: ResolvedEnv) WasmLayout {
   ok_vt := val_type_of_mono(ok, env)
   err_vt := val_type_of_mono(err, env)
-  sym := "\$Result_${mono_to_key(.Result(ok, err))}"
+  sym := "$Result_${mono_to_key(.Result(ok, err))}"
   .Sum(
     WasmSumLayout.{
       type_id: TypeId.{ id: -1 },
@@ -342,10 +342,10 @@ fn layout_of_function(params: Vector<MonoType>, ret: MonoType, env: ResolvedEnv)
   key := mono_to_key(.Function(params, ret))
   .Closure(
     WasmClosureLayout.{
-      closure_sym: "\$closure_${key}",
+      closure_sym: "$closure_${key}",
       universal_func_type_sym: "rt_types__ClosureFunc",
       env_sym: "rt_types__ClosureEnv",
-      typed_func_type_sym: "\$ft_${key}",
+      typed_func_type_sym: "$ft_${key}",
       param_types: param_vts,
       result_type: ret_vt,
     },
@@ -376,7 +376,7 @@ pub fn val_type_of(layout: WasmLayout) ValType {
     .Vector_(_) => .Ref(true, .Named("rt_types__PVec")),
     .Dict_(_, _) => .Ref(true, .Named("rt_types__PDict")),
     .Iterator_(it) => .Ref(true, .Named(it.state_sym)),
-    .Cell_(inner) => .Ref(true, .Named("\$Cell_${cell_layout_key(inner)}")),
+    .Cell_(inner) => .Ref(true, .Named("$Cell_${cell_layout_key(inner)}")),
   }
 }
 
@@ -436,8 +436,8 @@ pub fn val_type_of_mono(ty: MonoType, env: ResolvedEnv) ValType {
       }
 
       case def {
-        .Record(name, _, _) => .Ref(true, .Named("\$${name}_${mono_to_key(.Named(tid, args))}")),
-        .Sum(name, _, _) => .Ref(true, .Named("\$${name}_${mono_to_key(.Named(tid, args))}")),
+        .Record(name, _, _) => .Ref(true, .Named("$${name}_${mono_to_key(.Named(tid, args))}")),
+        .Sum(name, _, _) => .Ref(true, .Named("$${name}_${mono_to_key(.Named(tid, args))}")),
         .Alias(_, type_params, target) => val_type_of_mono(
           subst_type_params(target, type_params, args),
           env,
@@ -449,9 +449,9 @@ pub fn val_type_of_mono(ty: MonoType, env: ResolvedEnv) ValType {
     .Function(_, _) => .Ref(true, .Named("rt_types__Closure")),
     .Optional(inner) => case inner {
       .ExternRef(_) => .Ref(true, .Extern),
-      _ => .Ref(true, .Named("\$Option_${mono_to_key(.Optional(inner))}")),
+      _ => .Ref(true, .Named("$Option_${mono_to_key(.Optional(inner))}")),
     },
-    .Result(ok, err) => .Ref(true, .Named("\$Result_${mono_to_key(.Result(ok, err))}")),
+    .Result(ok, err) => .Ref(true, .Named("$Result_${mono_to_key(.Result(ok, err))}")),
     .Var(_) => error("val_type_of_mono called on Var — must be monomorphized"),
     .MetaVar(_) => error("val_type_of_mono called on MetaVar — must be resolved"),
     .ErrorType => error("val_type_of_mono called on ErrorType"),

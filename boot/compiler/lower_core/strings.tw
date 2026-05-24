@@ -1,10 +1,26 @@
 /// String interpolation lowering.
 
 use compiler.ast.{Expr, StringPart}
-use compiler.core_ir.{CoreExpr}
+use compiler.core_ir.{CoreExpr, FuncId}
+use compiler.lower_core.calls.{builtin_type_name}
 use compiler.lower_core.context.{ExprOut, LowerCtx}
 use compiler.mono_type.{MonoType}
 use lib.source.span.{Span}
+
+fn stringify_target_id(ctx: LowerCtx, part_ty: MonoType, func_name: String, method_name: String) FuncId {
+  case builtin_type_name(part_ty) {
+    .Some(type_name) => case ctx.builtins.try_method_id(type_name, method_name) {
+      .Some(id) => { return id },
+      .None => {},
+    },
+    .None => {},
+  }
+
+  case ctx.func_table[func_name] {
+    .Some(id) => id,
+    .None => ctx.builtins.method_id("String", "to_string"),
+  }
+}
 
 pub fn lower_string_interp(
   ctx: LowerCtx,
@@ -36,10 +52,7 @@ pub fn lower_string_interp(
                 span: s,
               },
               .None => {
-                fid := case cur_ctx.func_table[info.func_name] {
-                  .Some(id) => id,
-                  .None => cur_ctx.builtins.method_id("String", "to_string"),
-                }
+                fid := stringify_target_id(cur_ctx, part_ty, info.func_name, info.method_name)
                 .{
                   kind: .Call(.{ kind: .GlobalFunc(fid), ty: .Void, span: s }, [r.expr]),
                   ty: str_ty,

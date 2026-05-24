@@ -31,7 +31,7 @@ use compiler.codegen.emit.calls as call_emit
 use compiler.codegen.emit.closures as closure_emit
 use compiler.codegen.emit.coercions.{emit_coerce_stack}
 use compiler.codegen.emit.context.{
-  EmitCtx, LocalEntry, current_prepared_func, lookup_func_sym, lookup_slot,
+  EmitCtx, IntrinsicTag, LocalEntry, current_prepared_func, lookup_func_sym, lookup_slot,
 }
 use compiler.codegen.emit.control_flow as control_emit
 use compiler.codegen.emit.defaults.{emit_default_value}
@@ -111,6 +111,7 @@ pub fn emit_module(
   }
 
   // Base context (per-function state will be reset in emit_func)
+  intrinsic_table := build_intrinsic_table(builtins)
   base_ctx := EmitCtx.{
     registry: reg,
     builtins,
@@ -125,6 +126,7 @@ pub fn emit_module(
     is_init_func: false,
     loop_depth: 0,
     suspending_bodies,
+    intrinsic_table,
   }
 
   // Emit user functions
@@ -452,6 +454,7 @@ fn emit_func(func: AnfFunctionDef, prepared: PreparedFunc, base_ctx: EmitCtx) Fu
     is_init_func: func.is_init,
     loop_depth: 0,
     suspending_bodies: base_ctx.suspending_bodies,
+    intrinsic_table: base_ctx.intrinsic_table,
   }
   body_instrs := emit_expr(prepared.body, prepared.return_mono, ctx, [])
 
@@ -1197,92 +1200,127 @@ fn emit_call(
   )
 }
 
+// ── Intrinsic dispatch table ─────────────────────────────────────────
+pub fn build_intrinsic_table(b: BuiltinRegistry) Dict<Int, IntrinsicTag> {
+  t: Dict<Int, IntrinsicTag> = Dict.new()
+  t[b.method_id("String", "to_string").id] = .StringToString
+  t[b.method_id("Vector", "append").id] = .VectorAppend
+  t[b.method_id("Vector", "get").id] = .VectorGet
+  t[b.method_id("Vector", "set").id] = .VectorSet
+  t[b.method_id("Vector", "make").id] = .VectorMake
+  t[b.method_id("Dict", "get").id] = .DictGet
+  t[b.id("dict$get_unsafe").id] = .DictGetUnsafe
+  t[b.method_id("String", "get").id] = .StringGet
+  t[b.method_id("String", "slice").id] = .StringSlice
+  t[b.method_id("String", "char_code_at").id] = .StringCharCodeAt
+  t[b.method_id("String", "from_char_code").id] = .StringFromCharCode
+  t[b.method_id("String", "from_byte").id] = .StringFromByte
+  t[b.method_id("String", "from_code_point").id] = .StringFromCodePoint
+  t[b.method_id("String", "utf8_bytes").id] = .StringUtf8Bytes
+  t[b.method_id("String", "from_utf8").id] = .StringFromUtf8
+  t[b.method_id("Byte", "to_int").id] = .ByteToInt
+  t[b.method_id("Byte", "from_int").id] = .ByteFromInt
+  t[b.method_id("Byte", "to_string").id] = .ByteToString
+  t[b.method_id("Float", "bits").id] = .FloatBits
+  t[b.method_id("Task", "spawn").id] = .TaskSpawn
+  t[b.method_id("Task", "await").id] = .TaskAwait
+  t[b.method_id("Task", "yield").id] = .TaskYield
+  t[b.method_id("Cell", "new").id] = .CellNew
+  t[b.method_id("Cell", "get").id] = .CellGet
+  t[b.method_id("Cell", "set").id] = .CellSet
+  t[b.method_id("Cell", "update").id] = .CellUpdate
+  t[b.id("range_from").id] = .RangeFrom
+  t[b.id("range").id] = .Range
+  t[b.id("range_step").id] = .RangeStep
+  t[b.method_id("Iterator", "next").id] = .IteratorNext
+  t[b.method_id("Iterator", "unfold").id] = .IteratorUnfold
+  t[b.method_id("Int", "from_string").id] = .IntFromString
+  t[b.method_id("Float", "from_string").id] = .FloatFromString
+  t
+}
+
 // ── Intrinsic emission ─────────────────────────────────────────────────
 fn emit_intrinsic_call(
   fid: FuncId,
-  name: String,
   args: Vector<PreparedAtom>,
   result_idx: Int,
   result_mono: MonoType,
   ctx: EmitCtx,
   buf: Vector<Instr>,
 ) Vector<Instr> {
-  case name {
-    "string$to_string" => {
-      // Identity — just return the string
+  tag := case ctx.intrinsic_table[fid.id] {
+    .Some(t) => t,
+    .None => {
+      intrinsic_name := case bi.entry(ctx.builtins, fid) {
+        .Some(entry) => entry.name,
+        .None => "F${fid.id}",
+      }
+      error("emit_intrinsic_call: unknown intrinsic '${intrinsic_name}'")
+    },
+  }
+
+  case tag {
+    .StringToString => {
       buf2 := emit_atom(args[0], ctx, buf)
       buf2.append(.LocalSet(result_idx))
     },
-    "vector$append" => emit_intrinsic_vector_append(args, result_idx, ctx, buf),
-    "vector$get" => emit_intrinsic_vector_get(args, result_idx, result_mono, ctx, buf),
-    "vector$set" => emit_intrinsic_vector_set(args, result_idx, result_mono, ctx, buf),
-    "vector$make" => emit_intrinsic_vector_make(args, result_idx, ctx, buf),
-    "dict$get" => emit_intrinsic_dict_get(args, result_idx, result_mono, ctx, buf),
-    "dict$get_unsafe" => emit_intrinsic_dict_get_unsafe(args, result_idx, result_mono, ctx, buf),
-    "string$get" => emit_intrinsic_string_get(args, result_idx, result_mono, ctx, buf),
-    "string$slice" => emit_intrinsic_string_slice(args, result_idx, ctx, buf),
-    "string$char_code_at" => emit_intrinsic_char_code_at(args, result_idx, ctx, buf),
-    "string$from_char_code" => emit_intrinsic_from_char_code(
-      args,
-      result_idx,
-      result_mono,
-      ctx,
-      buf,
-    ),
-    "string$from_byte" => emit_intrinsic_from_byte(args, result_idx, result_mono, ctx, buf),
-    "string$from_code_point" => emit_intrinsic_from_code_point(
-      args,
-      result_idx,
-      result_mono,
-      ctx,
-      buf,
-    ),
-    "string$utf8_bytes" => emit_intrinsic_string_utf8_bytes(args, result_idx, ctx, buf),
-    "string$from_utf8" => emit_intrinsic_string_from_utf8(args, result_idx, result_mono, ctx, buf),
-    "byte$to_int" => {
+    .VectorAppend => emit_intrinsic_vector_append(args, result_idx, ctx, buf),
+    .VectorGet => emit_intrinsic_vector_get(args, result_idx, result_mono, ctx, buf),
+    .VectorSet => emit_intrinsic_vector_set(args, result_idx, result_mono, ctx, buf),
+    .VectorMake => emit_intrinsic_vector_make(args, result_idx, ctx, buf),
+    .DictGet => emit_intrinsic_dict_get(args, result_idx, result_mono, ctx, buf),
+    .DictGetUnsafe => emit_intrinsic_dict_get_unsafe(args, result_idx, result_mono, ctx, buf),
+    .StringGet => emit_intrinsic_string_get(args, result_idx, result_mono, ctx, buf),
+    .StringSlice => emit_intrinsic_string_slice(args, result_idx, ctx, buf),
+    .StringCharCodeAt => emit_intrinsic_char_code_at(args, result_idx, ctx, buf),
+    .StringFromCharCode => emit_intrinsic_from_char_code(args, result_idx, result_mono, ctx, buf),
+    .StringFromByte => emit_intrinsic_from_byte(args, result_idx, result_mono, ctx, buf),
+    .StringFromCodePoint => emit_intrinsic_from_code_point(args, result_idx, result_mono, ctx, buf),
+    .StringUtf8Bytes => emit_intrinsic_string_utf8_bytes(args, result_idx, ctx, buf),
+    .StringFromUtf8 => emit_intrinsic_string_from_utf8(args, result_idx, result_mono, ctx, buf),
+    .ByteToInt => {
       buf2 := emit_atom(args[0], ctx, buf)
       buf2.append(.I64ExtendI32U).append(.LocalSet(result_idx))
     },
-    "float$bits" => {
+    .FloatBits => {
       buf2 := emit_atom(args[0], ctx, buf)
       buf2.append(.I64ReinterpretF64).append(.LocalSet(result_idx))
     },
-    "byte$from_int" => emit_intrinsic_byte_from_int(args, result_idx, result_mono, ctx, buf),
-    "byte$to_string" => {
+    .ByteFromInt => emit_intrinsic_byte_from_int(args, result_idx, result_mono, ctx, buf),
+    .ByteToString => {
       // Zero-extend byte to i64, call int_to_string
       buf2 := emit_atom(args[0], ctx, buf)
       buf2.append(.I64ExtendI32U).append(.Call("rt_str__from_i64")).append(.LocalSet(result_idx))
     },
-    "task$spawn" => emit_intrinsic_task_spawn(args, result_idx, result_mono, ctx, buf),
-    "task$await" => emit_intrinsic_task_await(args, result_idx, result_mono, ctx, buf),
-    "task$yield" => {
+    .TaskSpawn => emit_intrinsic_task_spawn(args, result_idx, result_mono, ctx, buf),
+    .TaskAwait => emit_intrinsic_task_await(args, result_idx, result_mono, ctx, buf),
+    .TaskYield => {
       // Phase 2 stub for top-level yield: no-op (yield only meaningful in task bodies)
       buf.append(.I32Const(0)).append(.RefI31).append(.LocalSet(result_idx))
     },
-    "cell$new" => emit_intrinsic_cell_new(args, result_idx, result_mono, ctx, buf),
-    "cell$get" => emit_intrinsic_cell_get(args, result_idx, result_mono, ctx, buf),
-    "cell$set" => emit_intrinsic_cell_set(args, result_idx, ctx, buf),
-    "cell$update" => emit_intrinsic_cell_update(args, result_idx, ctx, buf),
-    "range_from" => emit_intrinsic_range_from(args, result_idx, result_mono, ctx, buf),
-    "range" => emit_intrinsic_range(args, result_idx, result_mono, ctx, buf),
-    "range_step" => emit_intrinsic_range_step(args, result_idx, result_mono, ctx, buf),
-    "iterator$next" => emit_intrinsic_iterator_next(args, result_idx, result_mono, ctx, buf),
-    "iterator$unfold" => emit_intrinsic_iterator_unfold(args, result_idx, result_mono, ctx, buf),
-    "int$from_string" => {
+    .CellNew => emit_intrinsic_cell_new(args, result_idx, result_mono, ctx, buf),
+    .CellGet => emit_intrinsic_cell_get(args, result_idx, result_mono, ctx, buf),
+    .CellSet => emit_intrinsic_cell_set(args, result_idx, ctx, buf),
+    .CellUpdate => emit_intrinsic_cell_update(args, result_idx, ctx, buf),
+    .RangeFrom => emit_intrinsic_range_from(args, result_idx, result_mono, ctx, buf),
+    .Range => emit_intrinsic_range(args, result_idx, result_mono, ctx, buf),
+    .RangeStep => emit_intrinsic_range_step(args, result_idx, result_mono, ctx, buf),
+    .IteratorNext => emit_intrinsic_iterator_next(args, result_idx, result_mono, ctx, buf),
+    .IteratorUnfold => emit_intrinsic_iterator_unfold(args, result_idx, result_mono, ctx, buf),
+    .IntFromString => {
       buf2 := emit_atom(args[0], ctx, buf)
       buf2.append(.Call("int_from_string_helper"))
         .append(.RefCast(true, .Named("rt_types__Variant")))
         .append(.Call(option_from_variant_helper_sym(MonoType.Int)))
         .append(.LocalSet(result_idx))
     },
-    "float$from_string" => {
+    .FloatFromString => {
       buf2 := emit_atom(args[0], ctx, buf)
       buf2.append(.Call("float_from_string_helper"))
         .append(.RefCast(true, .Named("rt_types__Variant")))
         .append(.Call(option_from_variant_helper_sym(MonoType.Float)))
         .append(.LocalSet(result_idx))
     },
-    _ => error("emit_intrinsic_call: unknown intrinsic '${name}'"),
   }
 }
 
@@ -2102,6 +2140,7 @@ fn emit_resume_func(info: TaskResumeInfo, func: PreparedFunc, base_ctx: EmitCtx)
     is_init_func: false,
     loop_depth: 0,
     suspending_bodies: base_ctx.suspending_bodies,
+    intrinsic_table: base_ctx.intrinsic_table,
   }
   body: Vector<Instr> = []
 

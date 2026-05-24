@@ -11,7 +11,6 @@ use .ast.{
   Pattern, RecordEntry, ReturnStmt, Stmt, StringPart, TypeExpr, UnOp,
 }
 use .contracts.{BuiltinContract, ContractMethodRequirement, ContractReturnShape}
-use .core_ir.{FuncId}
 use .mono_type.{MonoType, TypeId}
 use .resolver.{
   FunctionSig, ResolvedEnv, ResolvedField, ResolvedTypeParam, plain_resolved_type_params,
@@ -41,7 +40,6 @@ pub type MethodCallInfo = .{
   has_receiver: Bool,
   contract: BuiltinContract?,
   method_name: String,
-  builtin_func_id: FuncId?,
 }
 
 type SynthOut = .{ ty: MonoType, ctx: InferCtx, diags: Vector<DiagKind> }
@@ -1803,13 +1801,7 @@ fn try_synth_module_qualified_call(
   }
   inst := instantiate(sig, ctx)
   pu := pre_unify_return(inst.ctx, inst.ret, call_expected, callee_span, diags)
-  meta := MethodCallInfo.{
-    func_name: fn_name,
-    has_receiver: false,
-    contract: .None,
-    method_name,
-    builtin_func_id: .None,
-  }
+  meta := MethodCallInfo.{ func_name: fn_name, has_receiver: false, contract: .None, method_name }
   call_r := check_instantiated_call(
     pu.ctx,
     pu.diags,
@@ -1859,7 +1851,6 @@ fn try_synth_method_call(
         has_receiver: true,
         contract: .Some(m.contract),
         method_name,
-        builtin_func_id: .None,
       }
 
       return .Some(
@@ -1932,7 +1923,6 @@ fn try_synth_method_call(
     has_receiver: true,
     contract: .None,
     method_name,
-    builtin_func_id: .None,
   }
   call_r := check_instantiated_call(
     recv_u.ctx,
@@ -4074,7 +4064,6 @@ fn check_interpolation_expr(expr: Expr, expr_ty: MonoType, ctx: InferCtx, diags:
           has_receiver: true,
           contract: .Some(.Stringify),
           method_name: "to_string",
-          builtin_func_id: .None,
         },
         _ => {
           fn_name := case resolve_method_func_name(zonked, "to_string", proof_ctx.env) {
@@ -4093,7 +4082,6 @@ fn check_interpolation_expr(expr: Expr, expr_ty: MonoType, ctx: InferCtx, diags:
             has_receiver: true,
             contract: .None,
             method_name: "to_string",
-            builtin_func_id: .None,
           }
         },
       }

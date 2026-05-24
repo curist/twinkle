@@ -463,7 +463,7 @@ pub fn suite() runner.Suite {
               f.name
             }
             try assert.vec_contains(names, "add")
-            try assert.vec_contains(names, "\$init")
+            try assert.vec_contains(names, "$init")
             .Ok({})
           },
           .Err(err) => .Err("expected success, got: ${format_compile_error(err)}"),
@@ -481,7 +481,7 @@ pub fn suite() runner.Suite {
               f.name
             }
             try assert.vec_contains(names, "add")
-            try assert.vec_contains(names, "\$init")
+            try assert.vec_contains(names, "$init")
             .Ok({})
           },
           .Err(err) => .Err("expected success, got: ${format_compile_error(err)}"),
@@ -674,10 +674,10 @@ pub fn suite() runner.Suite {
       },
     )
     .test(
-      "cross-module pub value emits global.set in per-module \$init",
+      "cross-module pub value emits global.set in per-module $init",
       fn() {
         wat := try codegen_harness.codegen_path("${dir}/module_global_init_main.tw")
-        try assert.str_contains(wat, "global.set \$user__global_local_")
+        try assert.str_contains(wat, "global.set $user__global_local_")
         .Ok({})
       },
     )

@@ -10,35 +10,10 @@ use compiler.mono_type.{MonoType}
 use compiler.resolver.{ResolvedEnv}
 use lib.source.span.{Span}
 
-// Generates method-derived internal names using `$` as separator
-// ({prefix}${method_name}), matching the output of to_internal_name in
-// signatures.tw.  The `$` character cannot appear in user identifiers,
-// preventing collisions between user functions and builtin implementation targets.
-pub fn prelude_method_alias(type_name: String, method_name: String) String? {
-  case type_name {
-    "Bool" => .Some("bool$${method_name}"),
-    "Byte" => .Some("byte$${method_name}"),
-    "Cell" => .Some("cell$${method_name}"),
-    "Dict" => .Some("dict$${method_name}"),
-    "Float" => .Some("float$${method_name}"),
-    "Int" => .Some("int$${method_name}"),
-    "Iterator" => .Some("iterator$${method_name}"),
-    "Option" => .Some("option$${method_name}"),
-    "Result" => .Some("result$${method_name}"),
-    "Task" => .Some("task$${method_name}"),
-    "Vector" => .Some("vector$${method_name}"),
-    "String" => .Some("string$${method_name}"),
-    _ => .None,
-  }
-}
-
-pub fn resolve_receiver_method_target(
-  env: ResolvedEnv,
-  base_ty: MonoType,
-  method_name: String,
-  fallback: String,
-) String {
-  type_name: String? = case base_ty {
+/// Extract the canonical PascalCase type name for builtin registry lookup.
+/// Returns None for user-defined named types (which aren't in the builtin registry).
+pub fn builtin_type_name(ty: MonoType) String? {
+  case ty {
     .Int => .Some("Int"),
     .Float => .Some("Float"),
     .Bool => .Some("Bool"),
@@ -50,27 +25,23 @@ pub fn resolve_receiver_method_target(
     .Result(_, _) => .Some("Result"),
     _ => .None,
   }
+}
 
-  case type_name {
-    .Some(name) => {
-      case prelude_method_alias(name, method_name) {
-        .Some(alias) => { return alias },
-        .None => {},
-      }
-
-      env.lookup_method(name, method_name).unwrap_or(fallback)
-    },
+/// Resolve a non-builtin method target through the resolver method tables.
+/// Builtin methods must be resolved through BuiltinRegistry by canonical
+/// TypeName.method identity before this fallback is used.
+pub fn resolve_user_method_target(
+  env: ResolvedEnv,
+  base_ty: MonoType,
+  method_name: String,
+  fallback: String,
+) String {
+  case builtin_type_name(base_ty) {
+    .Some(name) => env.lookup_method(name, method_name).unwrap_or(fallback),
     .None => case base_ty {
       .Named(tid, _) => env.lookup_type_method(tid, method_name).unwrap_or(fallback),
       _ => fallback,
     },
-  }
-}
-
-pub fn builtin_target_id(ctx: LowerCtx, target_name: String) FuncId? {
-  case ctx.builtins.by_name[target_name] {
-    .Some(entry) => .Some(entry.func_id),
-    .None => .None,
   }
 }
 
@@ -160,13 +131,29 @@ pub fn lower_call(
         .None => {},
       }
 
-      // Prefer typed builtin identity from enrichment over string-based lookup
-      target_id: FuncId? = case info.builtin_func_id {
+      // Resolve builtin methods by canonical registry identity first, then
+      // fall back to the user/prelude function table.
+      builtin_fid: FuncId? = case callee_expr.kind {
+        .Field(receiver_or_type, method_name) => if info.has_receiver {
+          case builtin_type_name(ctx.expr_type(receiver_or_type)) {
+            .Some(type_name) => ctx.builtins.try_method_id(type_name, method_name),
+            .None => .None,
+          }
+        } else {
+          case extract_type_name_expr(receiver_or_type) {
+            .Some(type_name) => ctx.builtins.try_method_id(type_name, method_name),
+            .None => .None,
+          }
+        },
+        _ => .None,
+      }
+
+      target_id: FuncId? = case builtin_fid {
         .Some(fid) => .Some(fid),
         .None => {
           target_name := if info.has_receiver {
             case callee_expr.kind {
-              .Field(receiver, method_name) => resolve_receiver_method_target(
+              .Field(receiver, method_name) => resolve_user_method_target(
                 ctx.env,
                 ctx.expr_type(receiver),
                 method_name,
@@ -178,10 +165,7 @@ pub fn lower_call(
             info.func_name
           }
 
-          case builtin_target_id(ctx, target_name) {
-            .Some(fid) => .Some(fid),
-            .None => ctx.func_table[target_name],
-          }
+          ctx.func_table[target_name]
         },
       }
 

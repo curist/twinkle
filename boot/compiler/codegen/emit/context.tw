@@ -19,6 +19,43 @@ pub type LocalEntry = .{
 
 pub type LabelPair = .{ break_label: String, continue_label: String }
 
+// Typed tag for intrinsic dispatch — avoids string matching in emit_intrinsic_call.
+pub type IntrinsicTag = {
+  StringToString,
+  VectorAppend,
+  VectorGet,
+  VectorSet,
+  VectorMake,
+  DictGet,
+  DictGetUnsafe,
+  StringGet,
+  StringSlice,
+  StringCharCodeAt,
+  StringFromCharCode,
+  StringFromByte,
+  StringFromCodePoint,
+  StringUtf8Bytes,
+  StringFromUtf8,
+  ByteToInt,
+  ByteFromInt,
+  ByteToString,
+  FloatBits,
+  TaskSpawn,
+  TaskAwait,
+  TaskYield,
+  CellNew,
+  CellGet,
+  CellSet,
+  CellUpdate,
+  RangeFrom,
+  Range,
+  RangeStep,
+  IteratorNext,
+  IteratorUnfold,
+  IntFromString,
+  FloatFromString,
+}
+
 pub type EmitCtx = .{
   registry: WasmTypeRegistry,
   builtins: BuiltinRegistry,
@@ -33,6 +70,7 @@ pub type EmitCtx = .{
   is_init_func: Bool,
   loop_depth: Int,
   suspending_bodies: Dict<Int, TaskResumeInfo>,
+  intrinsic_table: Dict<Int, IntrinsicTag>,
 }
 
 pub fn current_prepared_func(ctx: EmitCtx) PreparedFunc? {

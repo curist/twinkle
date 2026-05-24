@@ -20,15 +20,9 @@ pub type CallEmitFns = .{
   atom_val_type: fn(PreparedAtom, EmitCtx) ValType,
   atom_mono: fn(PreparedAtom, EmitCtx) MonoType,
   emit_checked_i32_narrow: fn(PreparedAtom, EmitCtx, Vector<Instr>) Vector<Instr>,
-  emit_intrinsic_call: fn(
-    FuncId,
-    String,
-    Vector<PreparedAtom>,
-    Int,
-    MonoType,
-    EmitCtx,
-    Vector<Instr>,
-  ) Vector<Instr>,
+  emit_intrinsic_call: fn(FuncId, Vector<PreparedAtom>, Int, MonoType, EmitCtx, Vector<Instr>) Vector<
+    Instr,
+  >,
   emit_closure_call: fn(
     PreparedAtom,
     SlotId,
@@ -64,15 +58,7 @@ pub fn emit_call(
             buf,
             fns,
           ),
-          .Intrinsic => fns.emit_intrinsic_call(
-            fid,
-            entry.name,
-            args,
-            result_idx,
-            result_mono,
-            ctx,
-            buf,
-          ),
+          .Intrinsic => fns.emit_intrinsic_call(fid, args, result_idx, result_mono, ctx, buf),
         },
         .None => {
           // User function — direct call

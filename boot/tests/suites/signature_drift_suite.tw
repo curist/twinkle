@@ -169,10 +169,10 @@ pub fn suite() runner.Suite {
       },
     )
     .test(
-      "string$substring has no canonical name (internal-only)",
+      "string$substring_raw has no canonical name (internal-only)",
       fn() {
         reg := make_builtin_registry()
-        entry := try reg.entry(reg.id("string$substring")).ok_or("missing string$substring")
+        entry := try reg.entry(reg.id("string$substring_raw")).ok_or("missing string$substring_raw")
         try assert.is_none(entry.canonical_name)
         .Ok({})
       },

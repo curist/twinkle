@@ -217,7 +217,7 @@ fn emit_builtin_universal_trampoline(
         body = emit_unbox_from_anyref(mono, ctx.env, body)
       }
 
-      body = emit_builtin_trampoline_target(entry, wrapper_kind, body)
+      body = emit_builtin_trampoline_target(entry, wrapper_kind, ctx, body)
 
       case sig.return_type {
         .Void => {
@@ -325,7 +325,7 @@ fn emit_builtin_host_write_bytes_universal_trampoline(
     .I32Const(1),
   ).append(.ArrayGet("rt_types__Array"))
   body = emit_unbox_from_anyref(bytes_mono, ctx.env, body).append(.Call("rt_arr__to_array"))
-  body = emit_builtin_trampoline_target(entry, .Some(.HostWriteBytes), body)
+  body = emit_builtin_trampoline_target(entry, .Some(.HostWriteBytes), ctx, body)
   body = .append(.I32Const(0)).append(.RefI31)
   FuncDef.{ name: tramp_sym, params: [.Anyref, .Anyref], results: [.Anyref], locals: [], body }
 }
@@ -333,17 +333,19 @@ fn emit_builtin_host_write_bytes_universal_trampoline(
 fn emit_builtin_trampoline_target(
   entry: BuiltinEntry,
   wrapper_kind: callable_targets.WrapperKind?,
+  ctx: EmitCtx,
   body: Vector<Instr>,
 ) Vector<Instr> {
   case entry.kind {
     .Runtime(info) => body.append(.Call(builtin_import_sym(info))),
     .Intrinsic => case wrapper_kind {
       .Some(.ByteToString) => body.append(.I64ExtendI32U).append(.Call("rt_str__from_i64")),
-      _ => case entry.name {
-        "string$to_string" => body,
-        _ => error(
-          "emit_builtin_trampoline_target: unsupported builtin trampoline target ${entry.name}",
-        ),
+      _ => if entry.func_id == ctx.builtins.method_id("String", "to_string") {
+        body
+      } else {
+        error(
+          "emit_builtin_trampoline_target: unsupported builtin trampoline target F${entry.func_id.id}",
+        )
       },
     },
   }

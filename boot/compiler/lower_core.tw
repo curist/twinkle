@@ -160,9 +160,9 @@ pub fn lower_module(module: Module, check_result: CheckResult, builtins: Builtin
   ctx := new_ctx(check_result, builtins)
 
   // User declarations live in the source value namespace. If a user function
-  // reuses an internal builtin implementation name, reserve a normal user
-  // FuncId for it before importing visible signatures so it cannot be resolved
-  // as the builtin target through the flat compatibility func_table.
+  // reuses a builtin display/linkage name that is still representable in source
+  // (notably public free builtins or host helper names), reserve a normal user
+  // FuncId before importing visible signatures.
   for item in module.items {
     case item {
       .Function(decl) => if ctx.builtins.by_name.has(decl.name) {

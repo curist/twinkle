@@ -1336,10 +1336,10 @@ pub fn suite() runner.Suite {
         src := "fn f(xs: Vector<String>) Vector<String> { xs.sort_by(String.compare) }"
         lr := try lower_src_with_builtin_env(src)
         body := lr.module.functions[0].body
-        compare_id := try lr.func_table["string_compare"].ok_or(
-          "expected string_compare in func_table",
+        compare_id := try lr.func_table["string$compare"].ok_or(
+          "expected string$compare in func_table",
         )
-        try assert.ok(has_func_id(body, compare_id.id), "expected string_compare reference")
+        try assert.ok(has_func_id(body, compare_id.id), "expected string$compare reference")
         .Ok({})
       },
     )

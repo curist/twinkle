@@ -409,9 +409,9 @@ fn test_rt_types_emits_wat() Result<Void, String> {
   m := rt_types.module()
   wat := emit_wat_unlinked_for_test(m)
   try assert.ok(contains(wat, "(module"), "WAT should contain (module")
-  try assert.ok(contains(wat, "\$Array"), "WAT should contain Array type")
-  try assert.ok(contains(wat, "\$Closure"), "WAT should contain Closure type")
-  try assert.ok(contains(wat, "\$String"), "WAT should contain String type")
+  try assert.ok(contains(wat, "$Array"), "WAT should contain Array type")
+  try assert.ok(contains(wat, "$Closure"), "WAT should contain Closure type")
+  try assert.ok(contains(wat, "$String"), "WAT should contain String type")
   .Ok({})
 }
 
@@ -640,8 +640,8 @@ fn test_rt_core_eq_uses_ref_test() Result<Void, String> {
 fn test_rt_core_emits_wat() Result<Void, String> {
   m := rt_core.module(.{ records: [], sums: [] })
   wat := emit_wat_unlinked_for_test(m)
-  try assert.ok(contains(wat, "(func \$print"), "WAT should contain print func")
-  try assert.ok(contains(wat, "(func \$eq"), "WAT should contain eq func")
+  try assert.ok(contains(wat, "(func $print"), "WAT should contain print func")
+  try assert.ok(contains(wat, "(func $eq"), "WAT should contain eq func")
   try assert.ok(contains(wat, "ref.test"), "WAT should contain ref.test")
   .Ok({})
 }
@@ -888,9 +888,9 @@ fn test_rt_str_from_bool_literals() Result<Void, String> {
 fn test_rt_str_emits_wat() Result<Void, String> {
   m := rt_str.module()
   wat := emit_wat_unlinked_for_test(m)
-  try assert.ok(contains(wat, "(func \$len"), "WAT should contain len func")
-  try assert.ok(contains(wat, "(func \$concat"), "WAT should contain concat func")
-  try assert.ok(contains(wat, "(func \$from_i64"), "WAT should contain from_i64 func")
+  try assert.ok(contains(wat, "(func $len"), "WAT should contain len func")
+  try assert.ok(contains(wat, "(func $concat"), "WAT should contain concat func")
+  try assert.ok(contains(wat, "(func $from_i64"), "WAT should contain from_i64 func")
   .Ok({})
 }
 
@@ -1271,9 +1271,9 @@ fn test_rt_arr_builder_freeze() Result<Void, String> {
 fn test_rt_arr_emits_wat() Result<Void, String> {
   m := rt_arr.module()
   wat := emit_wat_unlinked_for_test(m)
-  try assert.ok(contains(wat, "(func \$make"), "WAT should contain make func")
-  try assert.ok(contains(wat, "(func \$builder_push"), "WAT should contain builder_push func")
-  try assert.ok(contains(wat, "(func \$slice"), "WAT should contain slice func")
+  try assert.ok(contains(wat, "(func $make"), "WAT should contain make func")
+  try assert.ok(contains(wat, "(func $builder_push"), "WAT should contain builder_push func")
+  try assert.ok(contains(wat, "(func $slice"), "WAT should contain slice func")
   .Ok({})
 }
 
@@ -1624,9 +1624,9 @@ fn test_rt_dict_hash_key_i64() Result<Void, String> {
 fn test_rt_dict_emits_wat() Result<Void, String> {
   m := rt_dict.module()
   wat := emit_wat_unlinked_for_test(m)
-  try assert.ok(contains(wat, "(func \$make"), "WAT should contain make func")
-  try assert.ok(contains(wat, "(func \$set"), "WAT should contain set func")
-  try assert.ok(contains(wat, "(func \$remove"), "WAT should contain remove func")
+  try assert.ok(contains(wat, "(func $make"), "WAT should contain make func")
+  try assert.ok(contains(wat, "(func $set"), "WAT should contain set func")
+  try assert.ok(contains(wat, "(func $remove"), "WAT should contain remove func")
   try assert.ok(contains(wat, "core_eq"), "WAT should reference core_eq")
   .Ok({})
 }

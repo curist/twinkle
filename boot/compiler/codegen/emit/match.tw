@@ -201,15 +201,15 @@ fn is_br_table_eligible(arms: Vector<PreparedMatchArm>, scrutinee_mono: MonoType
 }
 
 fn case_arm_label(result_idx: Int, tag: Int) String {
-  "\$case_${result_idx}_arm_${tag}"
+  "$case_${result_idx}_arm_${tag}"
 }
 
 fn case_default_label(result_idx: Int) String {
-  "\$case_${result_idx}_default"
+  "$case_${result_idx}_default"
 }
 
 fn case_end_label(result_idx: Int) String {
-  "\$case_${result_idx}_end"
+  "$case_${result_idx}_end"
 }
 
 fn emit_br_table_match(
@@ -383,15 +383,15 @@ fn is_string_trie_eligible(arms: Vector<PreparedMatchArm>, scrutinee_mono: MonoT
 }
 
 fn string_case_len_label(result_idx: Int, len: Int) String {
-  "\$string_case_${result_idx}_len_${len}"
+  "$string_case_${result_idx}_len_${len}"
 }
 
 fn string_case_default_label(result_idx: Int) String {
-  "\$string_case_${result_idx}_default"
+  "$string_case_${result_idx}_default"
 }
 
 fn string_case_end_label(result_idx: Int) String {
-  "\$string_case_${result_idx}_end"
+  "$string_case_${result_idx}_end"
 }
 
 fn string_utf8_len(s: String) Int {

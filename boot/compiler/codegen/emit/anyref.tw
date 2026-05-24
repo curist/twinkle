@@ -104,7 +104,7 @@ pub fn emit_unbox_from_anyref(mono: MonoType, env: ResolvedEnv, buf: Vector<Inst
         .Scalar(.WF64) => "f64",
         _ => "anyref",
       }
-      buf.append(.RefCast(false, .Named("\$Cell_${key}")))
+      buf.append(.RefCast(false, .Named("$Cell_${key}")))
     },
   }
 }

@@ -44,8 +44,8 @@ fn test_emit_wat_basic() Result<Void, String> {
     .Ok(linked) => {
       wat := emit_wat(linked)
       try assert.str_contains(wat, "(module")
-      try assert.str_contains(wat, "\$rt_types__Array")
-      try assert.str_contains(wat, "\$rt_types__String")
+      try assert.str_contains(wat, "$rt_types__Array")
+      try assert.str_contains(wat, "$rt_types__String")
     },
     .Err(_) => { return assert.fail("link should succeed for single module") },
   }
@@ -123,14 +123,14 @@ fn test_cell_record_field_uses_declared_typed_cell_symbol() Result<Void, String>
   )
   try assert.str_contains(
     wat,
-    "(type \$user__\$Cell_anyref (sub (struct (field \$value (mut anyref)))))",
+    "(type $user__$Cell_anyref (sub (struct (field $value (mut anyref)))))",
   )
-  try assert.str_contains(wat, "(field \$slot (mut (ref null \$user__\$Cell_anyref)))")
-  try assert.str_contains(wat, "struct.new \$user__\$Cell_anyref")
-  try assert.str_contains(wat, "struct.get \$user__\$Cell_anyref 0")
+  try assert.str_contains(wat, "(field $slot (mut (ref null $user__$Cell_anyref)))")
+  try assert.str_contains(wat, "struct.new $user__$Cell_anyref")
+  try assert.str_contains(wat, "struct.get $user__$Cell_anyref 0")
   try assert.ok(
-    !wat.contains("\$\$Cell_anyref"),
-    "cell codegen should not reference unqualified \$\$Cell_anyref",
+    !wat.contains("$$Cell_anyref"),
+    "cell codegen should not reference unqualified $$Cell_anyref",
   )
   .Ok({})
 }
@@ -307,7 +307,7 @@ fn test_large_vector_literal_uses_runtime_push() Result<Void, String> {
     "xs: Vector<Int> = [\n  0, 1, 2, 3, 4, 5, 6, 7, 8, 9,\n  10, 11, 12, 13, 14, 15, 16, 17, 18, 19,\n  20, 21, 22, 23, 24, 25, 26, 27, 28, 29,\n  30, 31, 32\n]\nprintln(xs[0].to_string())\nprintln(xs[31].to_string())\nprintln(xs[32].to_string())\n",
     "large vector literal uses runtime push",
   )
-  try assert.str_contains(wat, "call \$rt_arr__push")
+  try assert.str_contains(wat, "call $rt_arr__push")
   .Ok({})
 }
 
@@ -319,8 +319,8 @@ fn test_closure_first_class_function_arg() Result<Void, String> {
     "fn double(n: Int) Int { n * 2 }\nfn apply(f: fn(Int) Int, x: Int) Int { f(x) }\nprintln(Int.to_string(apply(double, 5)))\n",
     "first-class function arg",
   )
-  try assert.str_contains(wat, "struct.new \$rt_types__Closure")
-  try assert.str_contains(wat, "call_ref \$rt_types__ClosureFunc")
+  try assert.str_contains(wat, "struct.new $rt_types__Closure")
+  try assert.str_contains(wat, "call_ref $rt_types__ClosureFunc")
   .Ok({})
 }
 
@@ -330,7 +330,7 @@ fn test_closure_struct_is_subtype_of_base() Result<Void, String> {
     "fn inc(n: Int) Int { n + 1 }\nfn apply(f: fn(Int) Int, x: Int) Int { f(x) }\nprintln(Int.to_string(apply(inc, 5)))\n",
     "closure subtype",
   )
-  try assert.str_contains(wat, "sub \$rt_types__Closure")
+  try assert.str_contains(wat, "sub $rt_types__Closure")
   .Ok({})
 }
 
@@ -340,7 +340,7 @@ fn test_closure_call_uses_universal_funcref() Result<Void, String> {
     "fn neg(n: Int) Int { 0 - n }\nfn apply(f: fn(Int) Int, x: Int) Int { f(x) }\nprintln(Int.to_string(apply(neg, 5)))\n",
     "closure universal call",
   )
-  try assert.str_contains(wat, "call_ref \$rt_types__ClosureFunc")
+  try assert.str_contains(wat, "call_ref $rt_types__ClosureFunc")
   .Ok({})
 }
 
@@ -349,8 +349,8 @@ fn test_iterator_unfold_wraps_named_step_as_closure() Result<Void, String> {
     "fn step(i: Int) UnfoldStep<Int, Int> { if i >= 3 { UnfoldStep.Done } else { UnfoldStep.Yield(i, i + 1) } }\nit := Iterator.unfold(0, step)\nprintln(Int.to_string(it.take(2).to_vector().len()))\n",
     "iterator unfold named step",
   )
-  try assert.str_contains(wat, "\$tramp_")
-  try assert.str_contains(wat, "struct.new \$rt_types__Closure")
+  try assert.str_contains(wat, "$tramp_")
+  try assert.str_contains(wat, "struct.new $rt_types__Closure")
   .Ok({})
 }
 
@@ -359,8 +359,8 @@ fn test_cell_update_wraps_named_function_as_closure() Result<Void, String> {
     "fn inc(x: Int) Int { x + 1 }\nc := Cell.new(1)\nc.update(inc)\nprintln(Int.to_string(c.get()))\n",
     "cell update named function",
   )
-  try assert.str_contains(wat, "\$tramp_")
-  try assert.str_contains(wat, "struct.get \$rt_types__Closure 0")
+  try assert.str_contains(wat, "$tramp_")
+  try assert.str_contains(wat, "struct.get $rt_types__Closure 0")
   .Ok({})
 }
 
@@ -369,8 +369,8 @@ fn test_builtin_first_class_function_arg_uses_builtin_trampolines() Result<Void,
     "fn apply(f: fn(Int) String, x: Int) String { f(x) }\nprintln(apply(Int.to_string, 5))\n",
     "builtin first-class function arg",
   )
-  try assert.str_contains(wat, "struct.new \$rt_types__Closure")
-  try assert.str_contains(wat, "call \$rt_str__from_i64")
+  try assert.str_contains(wat, "struct.new $rt_types__Closure")
+  try assert.str_contains(wat, "call $rt_str__from_i64")
   .Ok({})
 }
 
@@ -382,9 +382,9 @@ fn test_wrapper_backed_builtin_first_class_function_arg_uses_wrapper_trampoline(
     "fn apply(f: fn(Byte) String, x: Byte) String { f(x) }\ncase Byte.from_int(42) {\n  .Some(b) => println(apply(Byte.to_string, b)),\n  .None => println(\"none\"),\n}\n",
     "wrapper-backed builtin first-class function arg",
   )
-  try assert.str_contains(wat, "struct.new \$rt_types__Closure")
+  try assert.str_contains(wat, "struct.new $rt_types__Closure")
   try assert.str_contains(wat, "i64.extend_i32_u")
-  try assert.str_contains(wat, "call \$rt_str__from_i64")
+  try assert.str_contains(wat, "call $rt_str__from_i64")
   .Ok({})
 }
 
@@ -396,9 +396,9 @@ fn test_host_write_bytes_builtin_first_class_function_arg_uses_wrapper_trampolin
     "fn apply(f: fn(String, Vector<Byte>) Void, path: String, bytes: Vector<Byte>) Void { f(path, bytes) }\napply(host.write_bytes, \"/tmp/twinkle.out\", [1, 2, 3])\n",
     "host write_bytes builtin first-class function arg",
   )
-  try assert.str_contains(wat, "struct.new \$rt_types__Closure")
-  try assert.str_contains(wat, "call \$host__write_bytes")
-  try assert.str_contains(wat, "call \$rt_arr__to_array")
+  try assert.str_contains(wat, "struct.new $rt_types__Closure")
+  try assert.str_contains(wat, "call $host__write_bytes")
+  try assert.str_contains(wat, "call $rt_arr__to_array")
   .Ok({})
 }
 
@@ -407,9 +407,9 @@ fn test_cell_update_builtin_first_class_function_arg_uses_wrapper_trampoline() R
     "fn inc(x: Int) Int { x + 1 }\nfn apply_update(f: fn(Cell<Int>, fn(Int) Int) Void, c: Cell<Int>, g: fn(Int) Int) Void { f(c, g) }\nc := Cell.new(1)\napply_update(Cell.update, c, inc)\nprintln(Int.to_string(c.get()))\n",
     "cell update builtin first-class function arg",
   )
-  try assert.str_contains(wat, "struct.new \$rt_types__Closure")
-  try assert.str_contains(wat, "call_ref \$rt_types__ClosureFunc")
-  try assert.str_contains(wat, "struct.set \$user__\$Cell_i64 0")
+  try assert.str_contains(wat, "struct.new $rt_types__Closure")
+  try assert.str_contains(wat, "call_ref $rt_types__ClosureFunc")
+  try assert.str_contains(wat, "struct.set $user__$Cell_i64 0")
   .Ok({})
 }
 
@@ -421,8 +421,8 @@ fn test_iterator_unfold_builtin_first_class_function_arg_uses_wrapper_trampoline
     "fn step(i: Int) UnfoldStep<Int, Int> { if i >= 3 { UnfoldStep.Done } else { UnfoldStep.Yield(i, i + 1) } }\nfn apply_unfold(f: fn(Int, fn(Int) UnfoldStep<Int, Int>) Iterator<Int>, seed: Int, g: fn(Int) UnfoldStep<Int, Int>) Iterator<Int> { f(seed, g) }\nit := apply_unfold(Iterator.unfold, 0, step)\nprintln(Int.to_string(it.take(2).to_vector().len()))\n",
     "iterator unfold builtin first-class function arg",
   )
-  try assert.str_contains(wat, "struct.new \$rt_types__Closure")
-  try assert.str_contains(wat, "struct.new \$rt_types__IterState")
+  try assert.str_contains(wat, "struct.new $rt_types__Closure")
+  try assert.str_contains(wat, "struct.new $rt_types__IterState")
   .Ok({})
 }
 
@@ -434,8 +434,8 @@ fn test_builtin_stored_in_local_then_called() Result<Void, String> {
     "f: fn(Int) String = Int.to_string\nprintln(f(42))\n",
     "builtin stored in local then called",
   )
-  try assert.str_contains(wat, "\$tramp_")
-  try assert.str_contains(wat, "struct.new \$rt_types__Closure")
+  try assert.str_contains(wat, "$tramp_")
+  try assert.str_contains(wat, "struct.new $rt_types__Closure")
   .Ok({})
 }
 
@@ -446,8 +446,8 @@ fn test_builtin_returned_from_function_then_called() Result<Void, String> {
     "fn get_converter() fn(Int) String { Int.to_string }\nf := get_converter()\nprintln(f(42))\n",
     "builtin returned from function then called",
   )
-  try assert.str_contains(wat, "\$tramp_")
-  try assert.str_contains(wat, "struct.new \$rt_types__Closure")
+  try assert.str_contains(wat, "$tramp_")
+  try assert.str_contains(wat, "struct.new $rt_types__Closure")
   .Ok({})
 }
 
@@ -458,8 +458,8 @@ fn test_builtin_stored_in_record_field_then_called() Result<Void, String> {
     "type Wrapper = .{ f: fn(Int) String }\nw := Wrapper.{ f: Int.to_string }\nprintln(w.f(42))\n",
     "builtin stored in record field then called",
   )
-  try assert.str_contains(wat, "\$tramp_")
-  try assert.str_contains(wat, "struct.new \$rt_types__Closure")
+  try assert.str_contains(wat, "$tramp_")
+  try assert.str_contains(wat, "struct.new $rt_types__Closure")
   .Ok({})
 }
 
@@ -468,8 +468,8 @@ fn test_user_function_stored_in_record_field_then_called() Result<Void, String> 
     "fn double(n: Int) Int { n * 2 }\ntype Wrapper = .{ f: fn(Int) Int }\nw := Wrapper.{ f: double }\nprintln(Int.to_string(w.f(21)))\n",
     "user function stored in record field then called",
   )
-  try assert.str_contains(wat, "struct.new \$rt_types__Closure")
-  try assert.str_contains(wat, "call_ref \$rt_types__ClosureFunc")
+  try assert.str_contains(wat, "struct.new $rt_types__Closure")
+  try assert.str_contains(wat, "call_ref $rt_types__ClosureFunc")
   .Ok({})
 }
 
@@ -478,8 +478,8 @@ fn test_user_function_returned_from_function_then_called() Result<Void, String> 
     "fn double(n: Int) Int { n * 2 }\nfn get_double() fn(Int) Int { double }\nf := get_double()\nprintln(Int.to_string(f(21)))\n",
     "user function returned from function then called",
   )
-  try assert.str_contains(wat, "struct.new \$rt_types__Closure")
-  try assert.str_contains(wat, "call_ref \$rt_types__ClosureFunc")
+  try assert.str_contains(wat, "struct.new $rt_types__Closure")
+  try assert.str_contains(wat, "call_ref $rt_types__ClosureFunc")
   .Ok({})
 }
 
@@ -514,7 +514,7 @@ fn test_match_string_trie_dispatch() Result<Void, String> {
     "match string trie dispatch",
   )
   try assert.str_contains(wat, "string_case")
-  try assert.str_contains(wat, "array.get_u \$rt_types__String")
+  try assert.str_contains(wat, "array.get_u $rt_types__String")
   try assert.str_contains(wat, "rt_str__eq")
   .Ok({})
 }
@@ -729,7 +729,7 @@ fn test_structural_option_produces_typed_sum_struct() Result<Void, String> {
 
   for t in linked.types {
     case t {
-      .Struct(name, _, _, _) => if name.starts_with("user__\$Option_") {
+      .Struct(name, _, _, _) => if name.starts_with("user__$Option_") {
         found_option = true
       },
       _ => {},
@@ -757,7 +757,7 @@ fn test_dict_index_materializes_typed_option() Result<Void, String> {
       found_get_option = true
     }
 
-    if instr_has_struct_new(f.body, "user__\$Option_opt_i64") {
+    if instr_has_struct_new(f.body, "user__$Option_opt_i64") {
       found_option_struct = true
     }
   }

@@ -489,7 +489,7 @@ fn build_combined_init(init_ids: Vector<FuncId>, next_global: Int) CombinedInit 
 
   combined := FunctionDef.{
     func_id: combined_id,
-    name: "\$combined_init",
+    name: "$combined_init",
     is_init: true,
     params: [],
     body,

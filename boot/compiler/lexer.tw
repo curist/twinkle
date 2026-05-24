@@ -144,8 +144,8 @@ fn unescape_string(raw: String) String {
         is_byte(next, "\"") => {
           parts = .append("\"")
         },
-        is_byte(next, "\$") => {
-          parts = .append("\$")
+        is_byte(next, "$") => {
+          parts = .append("$")
         },
         is_byte(next, "e") => {
           parts = .append("\e")
@@ -266,7 +266,7 @@ fn scan_string_segment(source: String, from: Int, content_start: Int) ScanString
       }
     }
 
-    if is_byte(ch, "\$") and i + 1 < n and is_byte(source[i + 1], "{") {
+    if is_byte(ch, "$") and i + 1 < n and is_byte(source[i + 1], "{") {
       return ScanStringResult.{
         next_index: i + 2,
         text: unescape_string(source.slice(content_start, i)),

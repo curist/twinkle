@@ -79,5 +79,5 @@ pub fn emit_string_data_segment(reg: WasmTypeRegistry) DataSegment? {
     }
   }
 
-  .Some(DataSegment.{ name: "\$data_strings", offset: [], bytes: all_bytes })
+  .Some(DataSegment.{ name: "$data_strings", offset: [], bytes: all_bytes })
 }

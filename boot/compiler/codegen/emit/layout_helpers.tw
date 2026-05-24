@@ -18,7 +18,7 @@ pub fn cell_struct_sym(inner_mono: MonoType, env: ResolvedEnv) String {
     .Scalar(.WAnyref) => "anyref",
     _ => "anyref",
   }
-  "\$Cell_${key}"
+  "$Cell_${key}"
 }
 
 pub fn cell_inner_mono(cell_mono: MonoType) MonoType {
