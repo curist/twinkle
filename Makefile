@@ -50,7 +50,11 @@ stage2: $(STAGE2_WASM)
 
 boot/lib/module/core_lib.tw: $(CORE_LIB_SRCS) tools/generate_core_lib.tw target/release/twk
 	./target/release/twk run tools/generate_core_lib.tw
-	target/twk fmt boot/lib/module/core_lib.tw
+	@if [ -x target/twk ]; then \
+		target/twk fmt boot/lib/module/core_lib.tw; \
+	else \
+		printf 'target/twk not available; skipping core_lib formatting during bootstrap\n'; \
+	fi
 
 $(STAGE2_WASM): $(BOOT_SRCS) $(CORE_LIB_SRCS) boot/lib/module/core_lib.tw target/release/twk tools/js_runtime/runtime.mjs tools/js_runtime/deno_main.mjs
 	@printf '\n==> Build bridge module for Deno runner\n'
