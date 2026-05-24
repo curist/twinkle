@@ -160,23 +160,29 @@ pub fn lower_call(
         .None => {},
       }
 
-      target_name := if info.has_receiver {
-        case callee_expr.kind {
-          .Field(receiver, method_name) => resolve_receiver_method_target(
-            ctx.env,
-            ctx.expr_type(receiver),
-            method_name,
-            info.func_name,
-          ),
-          _ => info.func_name,
-        }
-      } else {
-        info.func_name
-      }
-
-      target_id := case builtin_target_id(ctx, target_name) {
+      // Prefer typed builtin identity from enrichment over string-based lookup
+      target_id: FuncId? = case info.builtin_func_id {
         .Some(fid) => .Some(fid),
-        .None => ctx.func_table[target_name],
+        .None => {
+          target_name := if info.has_receiver {
+            case callee_expr.kind {
+              .Field(receiver, method_name) => resolve_receiver_method_target(
+                ctx.env,
+                ctx.expr_type(receiver),
+                method_name,
+                info.func_name,
+              ),
+              _ => info.func_name,
+            }
+          } else {
+            info.func_name
+          }
+
+          case builtin_target_id(ctx, target_name) {
+            .Some(fid) => .Some(fid),
+            .None => ctx.func_table[target_name],
+          }
+        },
       }
 
       case target_id {

@@ -45,6 +45,30 @@ pub fn new_ctx(check_result: CheckResult, reg: BuiltinRegistry) LowerCtx {
     }
   }
 
+  // Enrich method-call metadata with builtin FuncIds so the lowering stage
+  // can dispatch by typed identity instead of string lookup.
+  method_calls := check_result.method_calls
+
+  for expr_id in method_calls.keys() {
+    info := method_calls[expr_id].unwrap_or(MethodCallInfo.{
+      func_name: "",
+      has_receiver: false,
+      contract: .None,
+      method_name: "",
+      builtin_func_id: .None,
+    })
+
+    if info.func_name.len() > 0 {
+      case reg.by_name[info.func_name] {
+        .Some(entry) => {
+          info.builtin_func_id = .Some(entry.func_id)
+          method_calls[expr_id] = info
+        },
+        .None => {},
+      }
+    }
+  }
+
   .{
     type_map: check_result.type_map,
     env: check_result.env,
@@ -58,7 +82,7 @@ pub fn new_ctx(check_result: CheckResult, reg: BuiltinRegistry) LowerCtx {
     next_global: 0,
     current_fn_return_type: .None,
     errors: [],
-    method_calls: check_result.method_calls,
+    method_calls,
     imported_func_origins: Dict.new(),
     origin_cache: Dict.new(),
     extern_imports: Dict.new(),
