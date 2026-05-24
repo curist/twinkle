@@ -29,7 +29,8 @@ use compiler.opt.analysis.{next_local_id}
 pub fn eliminate_defers(func: AnfFunctionDef) AnfFunctionDef {
   next := Cell.new(next_local_id(func))
   snap_types: Cell<Dict<Int, MonoType>> = Cell.new(Dict.new())
-  body := elim(func.body, [], [], .None, false, next, func.op_result_mono, snap_types)
+  type_map := local_type_map(func)
+  body := elim(func.body, [], [], .None, false, next, type_map, snap_types)
 
   // Merge snapshot local types into op_result_mono
   new_mono := func.op_result_mono
@@ -51,6 +52,16 @@ pub fn eliminate_defers(func: AnfFunctionDef) AnfFunctionDef {
     body,
     return_ty: func.return_ty,
   }
+}
+
+fn local_type_map(func: AnfFunctionDef) Dict<Int, MonoType> {
+  result := func.op_result_mono
+
+  for p in func.params {
+    result[p.local.id] = p.ty
+  }
+
+  result
 }
 
 // ── Core recursive rewrite ─────────────────────────────────────────

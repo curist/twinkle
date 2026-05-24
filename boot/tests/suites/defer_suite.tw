@@ -1,0 +1,177 @@
+use tests.assert
+use tests.runner
+
+pub fn suite() runner.Suite {
+  runner.suite("defer")
+    .test(
+      "basic LIFO order",
+      fn() {
+        buf := Cell.new("")
+        run_basic(buf)
+        try assert.equal(buf.get(), "c,b,a")
+        .Ok({})
+      },
+    )
+    .test(
+      "defer fires on break",
+      fn() {
+        buf := Cell.new("")
+        run_break(buf)
+        try assert.equal(buf.get(), "loop done,after loop,fn done")
+        .Ok({})
+      },
+    )
+    .test(
+      "defer captures value at registration time",
+      fn() {
+        buf := Cell.new("")
+        run_capture(buf)
+        try assert.equal(buf.get(), "deferred: 1")
+        .Ok({})
+      },
+    )
+    .test(
+      "defer fires on continue",
+      fn() {
+        buf := Cell.new("")
+        run_continue(buf)
+        try assert.equal(
+          buf.get(),
+          "before 0,cleanup 0,before 1,after 1,cleanup 1,before 2,cleanup 2",
+        )
+        .Ok({})
+      },
+    )
+    .test(
+      "defer is block-scoped in if",
+      fn() {
+        buf := Cell.new("")
+        run_if_taken(buf)
+        try assert.equal(buf.get(), "inside if,after if")
+        buf2 := Cell.new("")
+        run_if_not_taken(buf2)
+        try assert.equal(buf2.get(), "branch not taken: no defer")
+        .Ok({})
+      },
+    )
+    .test(
+      "defer fires each loop iteration",
+      fn() {
+        buf := Cell.new("")
+        run_loop(buf)
+        try assert.equal(buf.get(), "end 0,end 1,end 2")
+        .Ok({})
+      },
+    )
+    .test(
+      "defer fires before return",
+      fn() {
+        buf := Cell.new("")
+        result := run_return(buf)
+        try assert.equal(result, 42)
+        try assert.equal(buf.get(), "cleanup")
+        .Ok({})
+      },
+    )
+    .test(
+      "defer order with return inside loop",
+      fn() {
+        buf := Cell.new("")
+        run_return_loop_order(buf)
+        try assert.equal(buf.get(), "inner,outer")
+        .Ok({})
+      },
+    )
+}
+
+fn append(buf: Cell<String>, s: String) {
+  buf.update(
+    fn(old) {
+      if old == "" {
+        s
+      } else {
+        "${old},${s}"
+      }
+    },
+  )
+}
+
+fn run_basic(buf: Cell<String>) {
+  defer append(buf, "a")
+
+  defer append(buf, "b")
+
+  defer append(buf, "c")
+}
+
+fn run_break(buf: Cell<String>) {
+  defer append(buf, "fn done")
+
+  for _ in range(3) {
+    defer append(buf, "loop done")
+
+    break
+  }
+
+  append(buf, "after loop")
+}
+
+fn run_capture(buf: Cell<String>) {
+  x := 1
+
+  defer append(buf, "deferred: ${x}")
+
+  x = 2
+}
+
+fn run_continue(buf: Cell<String>) {
+  for i in range(3) {
+    defer append(buf, "cleanup ${i}")
+
+    append(buf, "before ${i}")
+
+    if i % 2 == 0 {
+      continue
+    }
+
+    append(buf, "after ${i}")
+  }
+}
+
+fn run_if_taken(buf: Cell<String>) {
+  if true {
+    defer append(buf, "inside if")
+  }
+
+  append(buf, "after if")
+}
+
+fn run_if_not_taken(buf: Cell<String>) {
+  if false {
+    defer append(buf, "should not print")
+  }
+
+  append(buf, "branch not taken: no defer")
+}
+
+fn run_loop(buf: Cell<String>) {
+  for x in range(3) {
+    defer append(buf, "end ${x}")
+  }
+}
+
+fn run_return(buf: Cell<String>) Int {
+  defer append(buf, "cleanup")
+
+  return 42
+}
+
+fn run_return_loop_order(buf: Cell<String>) {
+  defer append(buf, "outer")
+
+  for i in range(1) {
+    defer append(buf, "inner")
+
+    return
+  }
+}

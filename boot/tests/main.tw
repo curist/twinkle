@@ -19,6 +19,7 @@ use .suites.builtins_suite
 use .suites.checker_coverage_suite
 use .suites.checker_suite
 use .suites.codegen_emit_suite
+use .suites.defer_suite
 use .suites.core_ir_suite
 use .suites.dependency_graph_suite
 use .suites.diag_render_suite
@@ -169,4 +170,5 @@ runner.run_all([
   unused_imports_suite.suite(),
   task_suite.suite(),
   receiver_shorthand_suite.suite(),
+  defer_suite.suite(),
 ])
