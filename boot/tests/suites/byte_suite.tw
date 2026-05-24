@@ -1,0 +1,121 @@
+use tests.assert
+use tests.runner
+
+pub fn suite() runner.Suite {
+  runner.suite("byte")
+    .test(
+      "arithmetic promotion to Int",
+      fn() {
+        a: Byte = "AB"[0]
+        b: Byte = "AB"[1]
+        try assert.equal(a + b, 131)
+        try assert.equal(a + 2, 67)
+        try assert.equal(2 + b, 68)
+        try assert.equal(b - a, 1)
+        try assert.equal(b * 2, 132)
+        try assert.equal(b / 2, 33)
+        try assert.equal(b % 7, 3)
+        try assert.equal(a + b + 2, 133)
+        .Ok({})
+      },
+    )
+    .test(
+      "comparison operators",
+      fn() {
+        a: Byte = "AB"[0]
+        b: Byte = "AB"[1]
+        try assert.is_true(a < b)
+        try assert.is_false(a == b)
+        try assert.is_true(a == a)
+        .Ok({})
+      },
+    )
+    .test(
+      "non-ASCII byte values promote consistently",
+      fn() {
+        c: Byte = "é"[0]
+        d: Byte = "é"[1]
+        try assert.equal(c + 0, 195)
+        try assert.equal(d + 0, 169)
+        try assert.equal(c + d, 364)
+        try assert.equal(100 + c, 295)
+        try assert.is_true(c > d)
+        .Ok({})
+      },
+    )
+    .test(
+      "contextual literals",
+      fn() {
+        b: Byte = 10
+        try assert.equal(b.to_int(), 10)
+        try assert.equal(b.to_string(), "10")
+        try assert.equal(byte_to_int(65), 65)
+        bytes: Vector<Byte> = [66, 67]
+        try assert.equal(bytes[0].to_int(), 66)
+        try assert.equal(bytes[1].to_int(), 67)
+        .Ok({})
+      },
+    )
+    .test(
+      "Byte and Int comparisons",
+      fn() {
+        a: Byte = "A"[0]
+        try assert.is_true(a < 66)
+        try assert.is_false(a > 66)
+        try assert.is_true(a <= 65)
+        try assert.is_false(a >= 66)
+        try assert.is_true(66 > a)
+        try assert.is_false(66 < a)
+        try assert.is_true(65 <= a)
+        try assert.is_false(66 <= a)
+        try assert.is_true(a == 65)
+        try assert.is_true(a != 66)
+        try assert.is_false(a == 66)
+        try assert.is_false(a != 65)
+        try assert.is_true(65 == a)
+        try assert.is_true(66 != a)
+        try assert.is_false(66 == a)
+        try assert.is_false(65 != a)
+        .Ok({})
+      },
+    )
+    .test(
+      "Byte.from_int round-trip and bounds",
+      fn() {
+        try assert_byte_from_int(65, 65)
+        try assert_byte_from_int(0, 0)
+        try assert_byte_from_int(255, 255)
+        try assert.is_none(Byte.from_int(-1))
+        try assert.is_none(Byte.from_int(256))
+        try assert.is_none(Byte.from_int(4294967297))
+        .Ok({})
+      },
+    )
+    .test(
+      "Byte.to_string",
+      fn() {
+        try assert_byte_to_string(42, "42")
+        try assert_byte_to_string(0, "0")
+        try assert_byte_to_string(255, "255")
+        .Ok({})
+      },
+    )
+}
+
+fn byte_to_int(n: Byte) Int {
+  n.to_int()
+}
+
+fn assert_byte_from_int(input: Int, expected: Int) Result<Void, String> {
+  case Byte.from_int(input) {
+    .Some(b) => assert.equal(b.to_int(), expected),
+    .None => assert.fail("expected Some for ${input}"),
+  }
+}
+
+fn assert_byte_to_string(input: Int, expected: String) Result<Void, String> {
+  case Byte.from_int(input) {
+    .Some(b) => assert.equal(b.to_string(), expected),
+    .None => assert.fail("expected Some for ${input}"),
+  }
+}

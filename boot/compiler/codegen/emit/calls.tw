@@ -100,8 +100,18 @@ fn emit_direct_call(
   sym := lookup_func_sym(ctx.func_sym_map, fid)
   out := buf
 
-  for a in args {
-    out = fns.emit_atom(a, ctx, out)
+  expected_params: Vector<MonoType> = case ctx.prepared_funcs[fid.id] {
+    .Some(pf) => collect sid in pf.params {
+      case pf.slots[sid.id] {
+        .Some(info) => info.mono,
+        .None => MonoType.Void,
+      }
+    },
+    .None => [],
+  }
+
+  for a, i in args {
+    out = emit_direct_arg(a, expected_params.get(i), ctx, out, fns)
   }
 
   out = .append(.Call(sym))
@@ -115,6 +125,24 @@ fn emit_direct_call(
     .Never => out,
     _ => out.append(.LocalSet(result_idx)),
   }
+}
+
+fn emit_direct_arg(
+  a: PreparedAtom,
+  expected: MonoType?,
+  ctx: EmitCtx,
+  buf: Vector<Instr>,
+  fns: CallEmitFns,
+) Vector<Instr> {
+  case expected {
+    .Some(.Byte) => case a {
+      .ALitInt(n) => { return buf.append(.I32Const(n)) },
+      _ => {},
+    },
+    _ => {},
+  }
+
+  fns.emit_atom(a, ctx, buf)
 }
 
 fn emit_runtime_arg(

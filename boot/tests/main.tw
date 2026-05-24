@@ -14,6 +14,7 @@ use .suites.backend_prepare_suite
 use .suites.backend_repr_suite
 use .suites.backend_verify_suite
 use .suites.base_env_guardrail_suite
+use .suites.byte_suite
 use .suites.builtins_canonical_suite
 use .suites.builtins_suite
 use .suites.checker_coverage_suite
@@ -173,4 +174,5 @@ runner.run_all([
   receiver_shorthand_suite.suite(),
   defer_suite.suite(),
   first_class_method_suite.suite(),
+  byte_suite.suite(),
 ])

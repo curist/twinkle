@@ -671,6 +671,18 @@ fn verify_call_arg_type(
   builtins: BuiltinRegistry,
   context: String,
 ) Result<Void, String> {
+  case atom {
+    .ALitInt(n) => case expected {
+      .Byte => if n >= 0 and n <= 255 {
+        return .Ok({})
+      } else {
+        return fail_func(pf, "${context} byte literal out of range")
+      },
+      _ => {},
+    },
+    _ => {},
+  }
+
   case infer_atom_mono(pf, atom, funcs_by_id, module_globals, env, builtins) {
     .Some(actual) => if mono_eq(actual, expected) {
       .Ok({})
@@ -1132,6 +1144,14 @@ fn verify_value_for_slot(
 ) Result<Void, String> {
   case atom {
     .ALitVoid => { return .Ok({}) },
+    .ALitInt(n) => case target.mono {
+      .Byte => if n >= 0 and n <= 255 {
+        return .Ok({})
+      } else {
+        return fail_slot(pf, target, "${context} byte literal out of range")
+      },
+      _ => {},
+    },
     _ => {},
   }
 

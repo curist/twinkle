@@ -7,10 +7,11 @@ use @std.proc
 use compiler.anf.{AnfExpr, AnfFunctionDef, AnfModule}
 use compiler.anf_analysis.{collect_free_locals, collect_init_binding_locals, set_has}
 use compiler.builtins.{BuiltinRegistry, make_builtin_registry}
+use compiler.mono_type.{MonoType}
 use compiler.opt.analysis.{collect_consumed_params}
 use compiler.opt.branch_simp.{branch_simplify}
 use compiler.opt.const_fold.{constant_fold}
-use compiler.opt.copy_prop.{copy_propagate_with_pinned}
+use compiler.opt.copy_prop.{copy_propagate_with_pinned_and_monos}
 use compiler.opt.dead_let.{dead_let_elim_with_pinned, dead_let_elim_with_pinned_and_semantics}
 use compiler.opt.defer_elim.{eliminate_defers}
 use compiler.opt.semantics.{
@@ -169,7 +170,7 @@ fn optimize_function_with_context(func: AnfFunctionDef, ctx: OptimizerContext) F
   deferred := eliminate_defers(func)
   tb0 := date.now()
   timing.defer_elim = timing.defer_elim + (tb0 - ta0)
-  fixed := run_fixed_point_simplifications(deferred.body, ctx)
+  fixed := run_fixed_point_simplifications(deferred.body, deferred.op_result_mono, ctx)
   timing = add_pass_timing(timing, fixed.timing)
   optimized := rebuild_func_with_body(deferred, fixed.expr)
   ta2 := date.now()
@@ -194,7 +195,11 @@ fn optimize_function_with_context(func: AnfFunctionDef, ctx: OptimizerContext) F
   FunctionOptimizeResult.{ func: optimized, timing, rounds: fixed.rounds, at_cap: fixed.at_cap }
 }
 
-fn run_fixed_point_simplifications(expr: AnfExpr, ctx: OptimizerContext) FixedPointResult {
+fn run_fixed_point_simplifications(
+  expr: AnfExpr,
+  op_result_mono: Dict<Int, MonoType>,
+  ctx: OptimizerContext,
+) FixedPointResult {
   timing := zero_pass_timing()
   cur := expr
   round := 0
@@ -210,7 +215,7 @@ fn run_fixed_point_simplifications(expr: AnfExpr, ctx: OptimizerContext) FixedPo
     cur = r1.expr
     tb := date.now()
     timing.dead_let = timing.dead_let + (tb - ta)
-    r2 := copy_propagate_with_pinned(cur, ctx.pinned)
+    r2 := copy_propagate_with_pinned_and_monos(cur, ctx.pinned, op_result_mono)
     cur = r2.expr
     tc := date.now()
     timing.copy_prop = timing.copy_prop + (tc - tb)
