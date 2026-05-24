@@ -11,7 +11,7 @@ use compiler.resolver.{ResolvedEnv}
 pub fn collect_iterator_next_helpers(funcs: Vector<PreparedFunc>, builtins: BuiltinRegistry) Vector<
   MonoType,
 > {
-  want_fid := bi.id(builtins, "iterator_next")
+  want_fid := bi.id(builtins, "iterator$next")
   seen: Dict<String, MonoType> = Dict.new()
   order: Vector<String> = []
 
@@ -107,7 +107,7 @@ fn collect_iterator_next_helpers_op(op: PreparedOp, func: PreparedFunc, want_fid
 pub fn collect_dict_get_inner_types(funcs: Vector<PreparedFunc>, builtins: BuiltinRegistry) Vector<
   MonoType,
 > {
-  want_fid := bi.id(builtins, "dict_get")
+  want_fid := bi.id(builtins, "dict$get")
   seen: Dict<String, MonoType> = Dict.new()
   order: Vector<String> = []
 

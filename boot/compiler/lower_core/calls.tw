@@ -2,7 +2,7 @@
 
 use compiler.ast.{Expr}
 use compiler.contracts.{BuiltinContract}
-use compiler.core_ir.{CoreExpr}
+use compiler.core_ir.{CoreExpr, FuncId}
 use compiler.lower_core.context.{ExprOut, LowerCtx}
 use compiler.lower_core.helpers.{extract_type_name_expr}
 use compiler.lower_core.types.{find_variant_index}
@@ -10,38 +10,24 @@ use compiler.mono_type.{MonoType}
 use compiler.resolver.{ResolvedEnv}
 use lib.source.span.{Span}
 
-// Generates method-derived internal names using a SINGLE underscore separator
-// ({prefix}_{method_name}), matching the output of to_internal_name in
-// signatures.tw.  Internal-only builtins (canonical=.None) that share a
-// receiver prefix intentionally use DOUBLE underscore ({prefix}__{name}) in
-// builtins.tw to avoid collisions with names produced here.
+// Generates method-derived internal names using `$` as separator
+// ({prefix}${method_name}), matching the output of to_internal_name in
+// signatures.tw.  The `$` character cannot appear in user identifiers,
+// preventing collisions between user functions and builtin implementation targets.
 pub fn prelude_method_alias(type_name: String, method_name: String) String? {
   case type_name {
-    "Bool" => .Some("bool_${method_name}"),
-    "Byte" => if method_name == "to_int"
-      or method_name == "from_int"
-      or method_name == "to_string" {
-      .Some("byte$${method_name}")
-    } else {
-      .Some("byte_${method_name}")
-    },
-    "Cell" => .Some("cell_${method_name}"),
-    "Dict" => .Some("dict_${method_name}"),
-    "Float" => .Some("float_${method_name}"),
-    "Int" => .Some("int_${method_name}"),
-    "Iterator" => .Some("iterator_${method_name}"),
-    "Option" => .Some("option_${method_name}"),
-    "Result" => .Some("result_${method_name}"),
-    "Task" => .Some("task_${method_name}"),
-    "Vector" => .Some("vector_${method_name}"),
-    "String" => if method_name == "char_code_at"
-      or method_name == "from_char_code"
-      or method_name == "from_byte"
-      or method_name == "from_code_point" {
-      .None
-    } else {
-      .Some("string_${method_name}")
-    },
+    "Bool" => .Some("bool$${method_name}"),
+    "Byte" => .Some("byte$${method_name}"),
+    "Cell" => .Some("cell$${method_name}"),
+    "Dict" => .Some("dict$${method_name}"),
+    "Float" => .Some("float$${method_name}"),
+    "Int" => .Some("int$${method_name}"),
+    "Iterator" => .Some("iterator$${method_name}"),
+    "Option" => .Some("option$${method_name}"),
+    "Result" => .Some("result$${method_name}"),
+    "Task" => .Some("task$${method_name}"),
+    "Vector" => .Some("vector$${method_name}"),
+    "String" => .Some("string$${method_name}"),
     _ => .None,
   }
 }
@@ -78,6 +64,13 @@ pub fn resolve_receiver_method_target(
       .Named(tid, _) => env.lookup_type_method(tid, method_name).unwrap_or(fallback),
       _ => fallback,
     },
+  }
+}
+
+pub fn builtin_target_id(ctx: LowerCtx, target_name: String) FuncId? {
+  case ctx.builtins.by_name[target_name] {
+    .Some(entry) => .Some(entry.func_id),
+    .None => .None,
   }
 }
 
@@ -181,7 +174,12 @@ pub fn lower_call(
         info.func_name
       }
 
-      case ctx.func_table[target_name] {
+      target_id := case builtin_target_id(ctx, target_name) {
+        .Some(fid) => .Some(fid),
+        .None => ctx.func_table[target_name],
+      }
+
+      case target_id {
         .Some(fid) => {
           callee_ty := ctx.expr_type(callee_expr)
 

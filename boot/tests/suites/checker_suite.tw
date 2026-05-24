@@ -55,9 +55,9 @@ fn test_env() resolver.ResolvedEnv {
     ),
     builtin_sig("error", ["msg"], [mono_type.MonoType.String], .Some(mono_type.MonoType.Never)),
     builtin_sig("println", ["s"], [mono_type.MonoType.String], .Some(mono_type.MonoType.Void)),
-    builtin_sig("int_to_string", ["n"], [mono_type.MonoType.Int], .Some(mono_type.MonoType.String)),
+    builtin_sig("int$to_string", ["n"], [mono_type.MonoType.Int], .Some(mono_type.MonoType.String)),
     builtin_sig(
-      "bool_to_string",
+      "bool$to_string",
       ["b"],
       [mono_type.MonoType.Bool],
       .Some(mono_type.MonoType.String),
@@ -673,7 +673,7 @@ pub fn suite() runner.Suite {
     .test(
       "generic interpolation checks Stringify bound",
       fn() {
-        dollar := "\$"
+        dollar := "$"
         src := "fn show<T: Stringify>(x: T) String { \"${dollar}{x}\" }\nfn main() String { show(42) }"
         r := try check_ok(src)
         try assert.equal(try type_at(r, src, "show(42)"), "String")
@@ -1140,7 +1140,7 @@ pub fn suite() runner.Suite {
     .test(
       "interpolation of Int is ok",
       fn() {
-        dollar := "\$"
+        dollar := "$"
         src := "fn f(n: Int) String { \"hello ${dollar}{n}\" }"
         r := try check_ok_builtins(src)
         .Ok({})
@@ -1149,7 +1149,7 @@ pub fn suite() runner.Suite {
     .test(
       "interpolation of Named without to_string errors",
       fn() {
-        dollar := "\$"
+        dollar := "$"
         src := "type Point = .{ x: Int, y: Int }\nfn f(p: Point) String { \"at ${dollar}{p}\" }"
         msgs := try check_errs_builtins(src)
         found := false
@@ -1167,7 +1167,7 @@ pub fn suite() runner.Suite {
     .test(
       "interpolation of Named with to_string registered is ok",
       fn() {
-        dollar := "\$"
+        dollar := "$"
         src := "type Point = .{ x: Int, y: Int }\nfn to_string(p: Point) String { \"\" }\nfn f(p: Point) String { \"at ${dollar}{p}\" }"
         r := try check_ok_builtins(src)
         .Ok({})
@@ -2119,7 +2119,7 @@ pub fn suite() runner.Suite {
     .test(
       "P6 interpolation requires to_string receiver-only shape",
       fn() {
-        dollar := "\$"
+        dollar := "$"
         src := "type Point = .{ x: Int }\nfn to_string(p: Point, n: Int) String { \"\" }\nfn f(p: Point) String { \"p=${dollar}{p}\" }"
         msgs := try check_errs(src)
         found := false
@@ -2141,7 +2141,7 @@ pub fn suite() runner.Suite {
     .test(
       "P6 interpolation requires to_string to return String",
       fn() {
-        dollar := "\$"
+        dollar := "$"
         src := "type Point = .{ x: Int }\nfn to_string(p: Point) Int { 0 }\nfn f(p: Point) String { \"p=${dollar}{p}\" }"
         msgs := try check_errs(src)
         found := false

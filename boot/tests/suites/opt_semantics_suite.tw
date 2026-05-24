@@ -16,11 +16,11 @@ fn lid(id: Int) LocalId {
 fn test_vector_len_effect_is_read_only() Result<Void, String> {
   reg := make_builtin_registry()
   semantics := make_prelude_optimizer_semantics(reg)
-  op: AnfOp = .ACall(.AGlobalFunc(reg.id("vector_len")), [.ALocal(lid(0))])
+  op: AnfOp = .ACall(.AGlobalFunc(reg.id("vector$len")), [.ALocal(lid(0))])
 
   case op_effect(op, semantics) {
     .ReadOnly => .Ok({}),
-    _ => .Err("expected vector_len effect to be ReadOnly"),
+    _ => .Err("expected vector$len effect to be ReadOnly"),
   }
 }
 
@@ -28,15 +28,15 @@ fn test_vector_set_unsafe_has_in_place_equivalent() Result<Void, String> {
   reg := make_builtin_registry()
   semantics := make_prelude_optimizer_semantics(reg)
 
-  case semantics.call_semantics[reg.id("vector__set_unsafe").id] {
+  case semantics.call_semantics[reg.id("vector$set_unsafe").id] {
     .Some(info) => {
       try assert.is_some(info.cow_base_arg)
       base_arg := try info.cow_base_arg.ok_or("missing cow_base_arg")
       try assert.equal(base_arg, 0)
       in_place := try info.in_place_equivalent.ok_or("missing in_place_equivalent")
-      assert.equal(in_place.id, reg.id("vector__set_in_place").id)
+      assert.equal(in_place.id, reg.id("vector$set_in_place").id)
     },
-    .None => .Err("missing vector__set_unsafe semantics"),
+    .None => .Err("missing vector$set_unsafe semantics"),
   }
 }
 
@@ -44,9 +44,9 @@ fn test_vector_make_is_fresh_producer() Result<Void, String> {
   reg := make_builtin_registry()
   semantics := make_prelude_optimizer_semantics(reg)
 
-  case semantics.call_semantics[reg.id("vector_make").id] {
+  case semantics.call_semantics[reg.id("vector$make").id] {
     .Some(info) => assert.is_true(info.fresh_result),
-    .None => .Err("missing vector_make semantics"),
+    .None => .Err("missing vector$make semantics"),
   }
 }
 
@@ -60,14 +60,14 @@ fn test_array_lit_has_fresh_result() Result<Void, String> {
 fn test_vector_make_call_has_fresh_result() Result<Void, String> {
   reg := make_builtin_registry()
   semantics := make_prelude_optimizer_semantics(reg)
-  op: AnfOp = .ACall(.AGlobalFunc(reg.id("vector_make")), [])
+  op: AnfOp = .ACall(.AGlobalFunc(reg.id("vector$make")), [])
   assert.is_true(op_has_fresh_result(op, semantics))
 }
 
 fn test_vector_len_call_not_fresh_result() Result<Void, String> {
   reg := make_builtin_registry()
   semantics := make_prelude_optimizer_semantics(reg)
-  op: AnfOp = .ACall(.AGlobalFunc(reg.id("vector_len")), [.ALocal(lid(0))])
+  op: AnfOp = .ACall(.AGlobalFunc(reg.id("vector$len")), [.ALocal(lid(0))])
   assert.is_false(op_has_fresh_result(op, semantics))
 }
 
@@ -82,7 +82,7 @@ fn test_vector_set_reusable_update_site() Result<Void, String> {
   reg := make_builtin_registry()
   semantics := make_prelude_optimizer_semantics(reg)
   op: AnfOp = .ACall(
-    .AGlobalFunc(reg.id("vector__set_unsafe")),
+    .AGlobalFunc(reg.id("vector$set_unsafe")),
     [.ALocal(lid(0)), .ALitInt(0), .ALitInt(1)],
   )
 
@@ -90,9 +90,9 @@ fn test_vector_set_reusable_update_site() Result<Void, String> {
     .Some(site) => {
       try assert.equal(site.base_local.id, 0)
       in_place := try site.in_place_equivalent.ok_or("missing in-place equivalent")
-      assert.equal(in_place.id, reg.id("vector__set_in_place").id)
+      assert.equal(in_place.id, reg.id("vector$set_in_place").id)
     },
-    .None => .Err("expected vector__set_unsafe reusable update site"),
+    .None => .Err("expected vector$set_unsafe reusable update site"),
   }
 }
 
@@ -113,7 +113,7 @@ fn test_record_update_reusable_update_site() Result<Void, String> {
 fn test_read_only_call_stays_impure_for_dead_let_stage1() Result<Void, String> {
   reg := make_builtin_registry()
   semantics := make_prelude_optimizer_semantics(reg)
-  op: AnfOp = .ACall(.AGlobalFunc(reg.id("vector_len")), [.ALocal(lid(0))])
+  op: AnfOp = .ACall(.AGlobalFunc(reg.id("vector$len")), [.ALocal(lid(0))])
   assert.is_false(is_pure_with_semantics(op, semantics))
 }
 
@@ -130,17 +130,17 @@ fn test_builder_config_matches_shared_family_config() Result<Void, String> {
 
 pub fn suite() runner.Suite {
   runner.suite("Opt: Semantics")
-    .test("vector_len effect is read-only", test_vector_len_effect_is_read_only)
+    .test("vector$len effect is read-only", test_vector_len_effect_is_read_only)
     .test(
-      "vector_set_unsafe has in-place equivalent",
+      "vector$set_unsafe has in-place equivalent",
       test_vector_set_unsafe_has_in_place_equivalent,
     )
-    .test("vector_make is fresh producer", test_vector_make_is_fresh_producer)
+    .test("vector$make is fresh producer", test_vector_make_is_fresh_producer)
     .test("array lit has fresh result", test_array_lit_has_fresh_result)
-    .test("vector_make call has fresh result", test_vector_make_call_has_fresh_result)
-    .test("vector_len call not fresh result", test_vector_len_call_not_fresh_result)
+    .test("vector$make call has fresh result", test_vector_make_call_has_fresh_result)
+    .test("vector$len call not fresh result", test_vector_len_call_not_fresh_result)
     .test("record update has fresh result", test_record_update_has_fresh_result)
-    .test("vector_set reusable update site", test_vector_set_reusable_update_site)
+    .test("vector$set reusable update site", test_vector_set_reusable_update_site)
     .test("record update reusable update site", test_record_update_reusable_update_site)
     .test(
       "read-only call stays impure for stage1 dead-let parity",

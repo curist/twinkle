@@ -165,13 +165,13 @@ pub fn test_capture_entry() Result<Void, String> {
 
 pub fn test_string_pool_entry() Result<Void, String> {
   e := StringPoolEntry.{
-    global_sym: "\$str_0",
-    getter_sym: "\$str_0_get",
-    data_segment_name: "\$data_strings",
+    global_sym: "$str_0",
+    getter_sym: "$str_0_get",
+    data_segment_name: "$data_strings",
     byte_offset: 0,
     byte_len: 5,
   }
-  try assert.equal(e.global_sym, "\$str_0")
+  try assert.equal(e.global_sym, "$str_0")
   try assert.equal(e.byte_len, 5)
   .Ok({})
 }
@@ -425,10 +425,10 @@ pub fn test_plan_closure_registers_func_type() Result<Void, String> {
 
   for td in reg.type_defs {
     case td {
-      .FuncType(name, _, _) => if name.contains("\$ft_") {
+      .FuncType(name, _, _) => if name.contains("$ft_") {
         found_func_type = true
       },
-      .Struct(name, _, _, _) => if name.contains("\$closure_") {
+      .Struct(name, _, _, _) => if name.contains("$closure_") {
         found_closure_struct = true
       },
       _ => {},
@@ -643,7 +643,7 @@ pub fn test_plan_builtin_higher_order_global_function_arg_registers_func_sig() R
       mk_local(11),
       .ACall(
         .AGlobalFunc(mk_func(200)),
-        [.ALitVoid, .AGlobalFunc(bi.id(builtins, "int_to_string"))],
+        [.ALitVoid, .AGlobalFunc(bi.id(builtins, "int$to_string"))],
       ),
       .Atom(.ALocal(mk_local(11))),
     ),
@@ -651,7 +651,7 @@ pub fn test_plan_builtin_higher_order_global_function_arg_registers_func_sig() R
   )
   reg := plan(mk_module([caller, map]), env, builtins)
 
-  case reg.concrete_func_sigs[bi.id(builtins, "int_to_string").id] {
+  case reg.concrete_func_sigs[bi.id(builtins, "int$to_string").id] {
     .Some(sig) => {
       try assert.equal(sig.param_types.len(), 1)
       try assert.ok(
@@ -703,11 +703,11 @@ pub fn test_plan_callable_separation_tracks_closure_and_direct_calls() Result<Vo
       mk_local(11),
       .ACall(
         .AGlobalFunc(mk_func(200)),
-        [.ALitVoid, .AGlobalFunc(bi.id(builtins, "int_to_string"))],
+        [.ALitVoid, .AGlobalFunc(bi.id(builtins, "int$to_string"))],
       ),
       .Let(
         mk_local(12),
-        .ACall(.AGlobalFunc(bi.id(builtins, "int_to_string")), [.ALitInt(7)]),
+        .ACall(.AGlobalFunc(bi.id(builtins, "int$to_string")), [.ALitInt(7)]),
         .Let(
           mk_local(13),
           .ACall(.AGlobalFunc(bi.id(builtins, "println")), [.ALocal(mk_local(12))]),
@@ -718,28 +718,28 @@ pub fn test_plan_callable_separation_tracks_closure_and_direct_calls() Result<Vo
     caller_mono,
   )
   reg := plan(mk_module([caller, map]), env, builtins)
-  int_to_string := bi.id(builtins, "int_to_string").id
+  int_to_string := bi.id(builtins, "int$to_string").id
   println_id := bi.id(builtins, "println").id
   try assert.ok(
     case reg.closure_materialized_funcs[int_to_string] {
       .Some(true) => true,
       _ => false,
     },
-    "expected int_to_string closure materialization",
+    "expected int$to_string closure materialization",
   )
   try assert.ok(
     case reg.typed_closure_funcs[int_to_string] {
       .Some(true) => true,
       _ => false,
     },
-    "expected int_to_string typed closure support",
+    "expected int$to_string typed closure support",
   )
   try assert.ok(
     case reg.direct_builtin_calls[int_to_string] {
       .Some(true) => true,
       _ => false,
     },
-    "expected int_to_string direct builtin call tracking",
+    "expected int$to_string direct builtin call tracking",
   )
   try assert.ok(
     case reg.direct_builtin_calls[println_id] {
@@ -784,7 +784,7 @@ pub fn test_plan_runtime_imports() Result<Void, String> {
           try assert.equal(name, "rt_types__String")
         },
         _ => {
-          return assert.fail("expected println import param to use builtin ABI ref null \$String")
+          return assert.fail("expected println import param to use builtin ABI ref null $String")
         },
       }
     }
@@ -920,7 +920,7 @@ pub fn test_plan_module_globals() Result<Void, String> {
   init_mono[1] = MonoType.String
   init_fn := mk_func_def(
     1,
-    "\$init",
+    "$init",
     [],
     MonoType.Void,
     .Let(
@@ -982,8 +982,8 @@ pub fn test_plan_nested_record_dependencies_are_ordered() Result<Void, String> {
     mono,
   )
   reg := plan(mk_module([f]), env, empty_builtins())
-  inner_idx := try reg.type_index["\$Inner_t10"].ok_or("missing Inner type index")
-  outer_idx := try reg.type_index["\$Outer_t11"].ok_or("missing Outer type index")
+  inner_idx := try reg.type_index["$Inner_t10"].ok_or("missing Inner type index")
+  outer_idx := try reg.type_index["$Outer_t11"].ok_or("missing Outer type index")
   try assert.ok(inner_idx < outer_idx, "expected Inner to be registered before Outer")
   .Ok({})
 }
@@ -1002,7 +1002,7 @@ pub fn test_plan_recursive_record_terminates() Result<Void, String> {
   )
   reg := plan(mk_module([f]), env, empty_builtins())
 
-  case reg.type_index["\$Node_t12"] {
+  case reg.type_index["$Node_t12"] {
     .Some(_) => .Ok({}),
     .None => assert.fail("expected recursive Node type to be registered"),
   }

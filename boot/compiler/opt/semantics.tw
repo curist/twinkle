@@ -54,29 +54,29 @@ pub fn empty_optimizer_semantics() OptimizerSemantics {
 pub fn make_prelude_optimizer_semantics(b: BuiltinRegistry) OptimizerSemantics {
   calls: Dict<Int, CallSemantics> = Dict.new()
   builder := vector_builder_config(b)
-  calls[b.id("vector_len").id] = CallSemantics.{
+  calls[b.id("vector$len").id] = CallSemantics.{
     effect: .ReadOnly,
     fresh_result: false,
     cow_base_arg: .None,
     in_place_equivalent: .None,
   }
-  calls[b.id("vector__set_unsafe").id] = CallSemantics.{
+  calls[b.id("vector$set_unsafe").id] = CallSemantics.{
     effect: .Update,
     fresh_result: false,
     cow_base_arg: .Some(0),
-    in_place_equivalent: .Some(b.id("vector__set_in_place")),
+    in_place_equivalent: .Some(b.id("vector$set_in_place")),
   }
-  calls[b.id("dict_set").id] = CallSemantics.{
+  calls[b.id("dict$set").id] = CallSemantics.{
     effect: .Update,
     fresh_result: false,
     cow_base_arg: .Some(0),
-    in_place_equivalent: .Some(b.id("dict__set_in_place")),
+    in_place_equivalent: .Some(b.id("dict$set_in_place")),
   }
-  calls[b.id("dict_remove").id] = CallSemantics.{
+  calls[b.id("dict$remove").id] = CallSemantics.{
     effect: .Update,
     fresh_result: false,
     cow_base_arg: .Some(0),
-    in_place_equivalent: .Some(b.id("dict__remove_in_place")),
+    in_place_equivalent: .Some(b.id("dict$remove_in_place")),
   }
   calls[builder.push_id.id] = CallSemantics.{
     effect: .Update,
@@ -84,13 +84,13 @@ pub fn make_prelude_optimizer_semantics(b: BuiltinRegistry) OptimizerSemantics {
     cow_base_arg: .Some(0),
     in_place_equivalent: .None,
   }
-  calls[b.id("vector_make").id] = CallSemantics.{
+  calls[b.id("vector$make").id] = CallSemantics.{
     effect: .Allocate,
     fresh_result: true,
     cow_base_arg: .None,
     in_place_equivalent: .None,
   }
-  calls[b.id("dict_new").id] = CallSemantics.{
+  calls[b.id("dict$new").id] = CallSemantics.{
     effect: .Allocate,
     fresh_result: true,
     cow_base_arg: .None,

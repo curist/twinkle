@@ -37,26 +37,26 @@ fn require_method(type_name: String, method_name: String) Result<String, String>
 pub fn suite() runner.Suite {
   runner.suite("base_env guardrails")
     .test(
-      "builtin_env has string_len",
+      "builtin_env has string$len",
       fn() {
-        sig := try require_registered_sig("string_len")
+        sig := try require_registered_sig("string$len")
         try assert.equal(sig.params.len(), 1)
         try assert.equal(sig.type_params.len(), 0)
         .Ok({})
       },
     )
     .test(
-      "builtin_env has string_concat with two params",
+      "builtin_env has string$concat with two params",
       fn() {
-        sig := try require_registered_sig("string_concat")
+        sig := try require_registered_sig("string$concat")
         try assert.equal(sig.params.len(), 2)
         .Ok({})
       },
     )
     .test(
-      "builtin_env has string_get returning Option<Byte>",
+      "builtin_env has string$get returning Option<Byte>",
       fn() {
-        sig := try require_registered_sig("string_get")
+        sig := try require_registered_sig("string$get")
         try assert.equal(sig.params.len(), 2)
         inner := try sig.ret.ok_or("expected Some")
 
@@ -67,9 +67,9 @@ pub fn suite() runner.Suite {
       },
     )
     .test(
-      "builtin_env has vector_append with type param T",
+      "builtin_env has vector$append with type param T",
       fn() {
-        sig := try require_registered_sig("vector_append")
+        sig := try require_registered_sig("vector$append")
         try assert.equal(sig.type_params.len(), 1)
         try assert.equal(sig.type_params[0].name, "T")
         try assert.equal(sig.params.len(), 2)
@@ -77,9 +77,9 @@ pub fn suite() runner.Suite {
       },
     )
     .test(
-      "builtin_env has vector_get returning Option<T>",
+      "builtin_env has vector$get returning Option<T>",
       fn() {
-        sig := try require_registered_sig("vector_get")
+        sig := try require_registered_sig("vector$get")
         try assert.equal(sig.type_params.len(), 1)
         inner := try sig.ret.ok_or("expected Some")
 
@@ -90,26 +90,26 @@ pub fn suite() runner.Suite {
       },
     )
     .test(
-      "builtin_env has vector_map",
+      "builtin_env has vector$map",
       fn() {
-        sig := try require_registered_sig("vector_map")
+        sig := try require_registered_sig("vector$map")
         try assert.equal(sig.type_params.len(), 2)
         try assert.equal(sig.params.len(), 2)
         .Ok({})
       },
     )
     .test(
-      "builtin_env has dict_new with two type params",
+      "builtin_env has dict$new with two type params",
       fn() {
-        sig := try require_registered_sig("dict_new")
+        sig := try require_registered_sig("dict$new")
         try assert.equal(sig.type_params.len(), 2)
         .Ok({})
       },
     )
     .test(
-      "builtin_env has dict_set",
+      "builtin_env has dict$set",
       fn() {
-        _ := try require_registered_sig("dict_set")
+        _ := try require_registered_sig("dict$set")
         .Ok({})
       },
     )
@@ -139,25 +139,25 @@ pub fn suite() runner.Suite {
       },
     )
     .test(
-      "builtin_env has cell_new",
+      "builtin_env has cell$new",
       fn() {
-        sig := try require_registered_sig("cell_new")
+        sig := try require_registered_sig("cell$new")
         try assert.equal(sig.type_params.len(), 1)
         .Ok({})
       },
     )
     .test(
-      "builtin_env has cell_set",
+      "builtin_env has cell$set",
       fn() {
-        sig := try require_registered_sig("cell_set")
+        sig := try require_registered_sig("cell$set")
         try assert.equal(sig.params.len(), 2)
         .Ok({})
       },
     )
     .test(
-      "builtin_env has iterator_unfold",
+      "builtin_env has iterator$unfold",
       fn() {
-        sig := try require_registered_sig("iterator_unfold")
+        sig := try require_registered_sig("iterator$unfold")
         try assert.equal(sig.type_params.len(), 2)
         .Ok({})
       },
@@ -165,38 +165,38 @@ pub fn suite() runner.Suite {
     .test(
       "builtin_env records canonical origin for prelude-backed functions",
       fn() {
-        case lookup_function_origin(builtin_env(), "vector_map") {
+        case lookup_function_origin(builtin_env(), "vector$map") {
           .Some(origin) => {
             try assert.str_contains(origin.module_path, "prelude/vector.tw")
             try assert.equal(origin.func_name, "map")
             .Ok({})
           },
-          .None => .Err("expected builtin_env to record origin for vector_map"),
+          .None => .Err("expected builtin_env to record origin for vector$map"),
         }
       },
     )
     .test(
-      "builtin_env has iterator_map",
+      "builtin_env has iterator$map",
       fn() {
-        sig := try require_registered_sig("iterator_map")
+        sig := try require_registered_sig("iterator$map")
         try assert.equal(sig.type_params.len(), 2)
         try assert.equal(sig.params.len(), 2)
         .Ok({})
       },
     )
     .test(
-      "builtin_env has option_map",
+      "builtin_env has option$map",
       fn() {
-        sig := try require_registered_sig("option_map")
+        sig := try require_registered_sig("option$map")
         try assert.equal(sig.type_params.len(), 2)
         try assert.equal(sig.params.len(), 2)
         .Ok({})
       },
     )
     .test(
-      "builtin_env has result_map",
+      "builtin_env has result$map",
       fn() {
-        sig := try require_registered_sig("result_map")
+        sig := try require_registered_sig("result$map")
         try assert.equal(sig.type_params.len(), 3)
         try assert.equal(sig.params.len(), 2)
         .Ok({})
@@ -223,101 +223,101 @@ pub fn suite() runner.Suite {
       },
     )
     .test(
-      "builtin_env has int_to_string",
+      "builtin_env has int$to_string",
       fn() {
-        _ := try require_registered_sig("int_to_string")
+        _ := try require_registered_sig("int$to_string")
         .Ok({})
       },
     )
     .test(
-      "builtin_env has float_to_string",
+      "builtin_env has float$to_string",
       fn() {
-        _ := try require_registered_sig("float_to_string")
+        _ := try require_registered_sig("float$to_string")
         .Ok({})
       },
     )
     .test(
       "builtin_env hides internal implementation names from free namespace",
       fn() {
-        try assert.is_none(lookup_function(builtin_env(), "bool_to_string"))
-        try assert.is_none(lookup_function(builtin_env(), "int_to_string"))
-        try assert.is_none(lookup_function(builtin_env(), "string_len"))
-        try assert.is_none(lookup_function(builtin_env(), "dict_new"))
-        try assert.is_none(lookup_function(builtin_env(), "string__substring"))
-        try assert.is_none(lookup_function(builtin_env(), "vector__builder_new"))
+        try assert.is_none(lookup_function(builtin_env(), "bool$to_string"))
+        try assert.is_none(lookup_function(builtin_env(), "int$to_string"))
+        try assert.is_none(lookup_function(builtin_env(), "string$len"))
+        try assert.is_none(lookup_function(builtin_env(), "dict$new"))
+        try assert.is_none(lookup_function(builtin_env(), "string$substring"))
+        try assert.is_none(lookup_function(builtin_env(), "vector$builder_new"))
         try assert.is_none(lookup_function(builtin_env(), "host_read_file"))
         .Ok({})
       },
     )
     .test(
-      "String.len resolves to string_len",
+      "String.len resolves to string$len",
       fn() {
         fn_name := try require_method("String", "len")
-        try assert.equal(fn_name, "string_len")
+        try assert.equal(fn_name, "string$len")
         .Ok({})
       },
     )
     .test(
-      "String.get resolves to string_get",
+      "String.get resolves to string$get",
       fn() {
         fn_name := try require_method("String", "get")
-        try assert.equal(fn_name, "string_get")
+        try assert.equal(fn_name, "string$get")
         .Ok({})
       },
     )
     .test(
-      "String.concat resolves to string_concat",
+      "String.concat resolves to string$concat",
       fn() {
         fn_name := try require_method("String", "concat")
-        try assert.equal(fn_name, "string_concat")
+        try assert.equal(fn_name, "string$concat")
         .Ok({})
       },
     )
     .test(
-      "Vector.len resolves to vector_len",
+      "Vector.len resolves to vector$len",
       fn() {
         fn_name := try require_method("Vector", "len")
-        try assert.equal(fn_name, "vector_len")
+        try assert.equal(fn_name, "vector$len")
         .Ok({})
       },
     )
     .test(
-      "Vector.append resolves to vector_append",
+      "Vector.append resolves to vector$append",
       fn() {
         fn_name := try require_method("Vector", "append")
-        try assert.equal(fn_name, "vector_append")
+        try assert.equal(fn_name, "vector$append")
         .Ok({})
       },
     )
     .test(
-      "Vector.map resolves to vector_map",
+      "Vector.map resolves to vector$map",
       fn() {
         fn_name := try require_method("Vector", "map")
-        try assert.equal(fn_name, "vector_map")
+        try assert.equal(fn_name, "vector$map")
         .Ok({})
       },
     )
     .test(
-      "Dict.get resolves to dict_get",
+      "Dict.get resolves to dict$get",
       fn() {
         fn_name := try require_method("Dict", "get")
-        try assert.equal(fn_name, "dict_get")
+        try assert.equal(fn_name, "dict$get")
         .Ok({})
       },
     )
     .test(
-      "Cell.set resolves to cell_set",
+      "Cell.set resolves to cell$set",
       fn() {
         fn_name := try require_method("Cell", "set")
-        try assert.equal(fn_name, "cell_set")
+        try assert.equal(fn_name, "cell$set")
         .Ok({})
       },
     )
     .test(
-      "Int.to_string resolves to int_to_string",
+      "Int.to_string resolves to int$to_string",
       fn() {
         fn_name := try require_method("Int", "to_string")
-        try assert.equal(fn_name, "int_to_string")
+        try assert.equal(fn_name, "int$to_string")
         .Ok({})
       },
     )
@@ -330,34 +330,34 @@ pub fn suite() runner.Suite {
       },
     )
     .test(
-      "Iterator.unfold resolves to iterator_unfold",
+      "Iterator.unfold resolves to iterator$unfold",
       fn() {
         fn_name := try require_method("Iterator", "unfold")
-        try assert.equal(fn_name, "iterator_unfold")
+        try assert.equal(fn_name, "iterator$unfold")
         .Ok({})
       },
     )
     .test(
-      "Iterator.map resolves to iterator_map",
+      "Iterator.map resolves to iterator$map",
       fn() {
         fn_name := try require_method("Iterator", "map")
-        try assert.equal(fn_name, "iterator_map")
+        try assert.equal(fn_name, "iterator$map")
         .Ok({})
       },
     )
     .test(
-      "Option.map resolves to option_map",
+      "Option.map resolves to option$map",
       fn() {
         fn_name := try require_method("Option", "map")
-        try assert.equal(fn_name, "option_map")
+        try assert.equal(fn_name, "option$map")
         .Ok({})
       },
     )
     .test(
-      "Result.map resolves to result_map",
+      "Result.map resolves to result$map",
       fn() {
         fn_name := try require_method("Result", "map")
-        try assert.equal(fn_name, "result_map")
+        try assert.equal(fn_name, "result$map")
         .Ok({})
       },
     )

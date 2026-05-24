@@ -3,7 +3,7 @@
 use compiler.ast as ast
 use compiler.ast.{Expr}
 use compiler.core_ir.{CoreExpr, FieldId, FieldInit, FunctionDef, Param, VariantId}
-use compiler.lower_core.calls.{resolve_receiver_method_target}
+use compiler.lower_core.calls.{builtin_target_id, resolve_receiver_method_target}
 use compiler.lower_core.context.{ExprOut, LowerCtx}
 use compiler.lower_core.helpers.{extract_type_name_expr, void_expr}
 use compiler.lower_core.types.{
@@ -143,9 +143,16 @@ pub fn lower_field(
       }
 
       case fn_name {
-        .Some(fn_name) => case ctx.func_table[fn_name] {
-          .Some(fid) => { return .{ expr: .{ kind: .GlobalFunc(fid), ty, span: s }, ctx } },
-          .None => {},
+        .Some(fn_name) => {
+          target_fid := case builtin_target_id(ctx, fn_name) {
+            .Some(fid) => .Some(fid),
+            .None => ctx.func_table[fn_name],
+          }
+
+          case target_fid {
+            .Some(fid) => { return .{ expr: .{ kind: .GlobalFunc(fid), ty, span: s }, ctx } },
+            .None => {},
+          }
         },
         .None => {
           // Check for an imported module-level value binding.
@@ -187,12 +194,15 @@ fn lower_method_value(
   s: Span,
 ) ExprOut {
   target_name := resolve_receiver_method_target(ctx.env, receiver_ty, method_name, method_name)
-  target_fid := case ctx.func_table[target_name] {
+  target_fid := case builtin_target_id(ctx, target_name) {
     .Some(fid) => fid,
-    .None => {
-      ctx2 := ctx.emit_error(s, "cannot resolve method value: ${method_name}")
+    .None => case ctx.func_table[target_name] {
+      .Some(fid) => fid,
+      .None => {
+        ctx2 := ctx.emit_error(s, "cannot resolve method value: ${method_name}")
 
-      return .{ expr: void_expr(s), ctx: ctx2 }
+        return .{ expr: void_expr(s), ctx: ctx2 }
+      },
     },
   }
 

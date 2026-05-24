@@ -24,10 +24,10 @@ pub fn empty_builder_config() BuilderConfig {
 
 pub fn vector_builder_config(b: BuiltinRegistry) BuilderConfig {
   BuilderConfig.{
-    push_id: b.id("vector_append"),
-    builder_new_id: b.id("vector__builder_new"),
-    builder_from_id: b.id("vector__builder_from"),
-    builder_push_id: b.id("vector__builder_push"),
-    builder_freeze_id: b.id("vector__builder_freeze"),
+    push_id: b.id("vector$append"),
+    builder_new_id: b.id("vector$builder_new"),
+    builder_from_id: b.id("vector$builder_from"),
+    builder_push_id: b.id("vector$builder_push"),
+    builder_freeze_id: b.id("vector$builder_freeze"),
   }
 }

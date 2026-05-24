@@ -13,7 +13,8 @@ use .ast.{
 use .contracts.{BuiltinContract, ContractMethodRequirement, ContractReturnShape}
 use .mono_type.{MonoType, TypeId}
 use .resolver.{
-  FunctionSig, ResolvedEnv, ResolvedField, ResolvedTypeParam, resolved_type_param_names,
+  FunctionSig, ResolvedEnv, ResolvedField, ResolvedTypeParam, plain_resolved_type_params,
+  resolved_type_param_names,
 }
 use .type_util.{subst_type_params}
 
@@ -1604,7 +1605,70 @@ fn resolve_method_func_name(base_ty: MonoType, method_name: String, env: Resolve
   }
 }
 
+fn builtin_sig(
+  name: String,
+  type_params: Vector<String>,
+  param_names: Vector<String>,
+  params: Vector<MonoType>,
+  ret: MonoType,
+) FunctionSig {
+  .{
+    name,
+    type_params: plain_resolved_type_params(type_params),
+    param_names,
+    params,
+    ret: .Some(ret),
+    doc: .None,
+    extern_module: .None,
+  }
+}
+
+fn builtin_method_sig(base_ty: MonoType, method_name: String) FunctionSig? {
+  t := MonoType.Var("T")
+  k := MonoType.Var("K")
+  v := MonoType.Var("V")
+
+  case base_ty {
+    .Int => if method_name == "to_string" {
+      return .Some(builtin_sig("int$to_string", [], ["n"], [.Int], .String))
+    },
+    .Bool => if method_name == "to_string" {
+      return .Some(builtin_sig("bool$to_string", [], ["b"], [.Bool], .String))
+    },
+    .Byte => if method_name == "to_int" {
+      return .Some(builtin_sig("byte$to_int", [], ["b"], [.Byte], .Int))
+    } else if method_name == "to_string" {
+      return .Some(builtin_sig("byte$to_string", [], ["b"], [.Byte], .String))
+    },
+    .Vector(_) => if method_name == "len" {
+      return .Some(builtin_sig("vector$len", ["T"], ["xs"], [.Vector(t)], .Int))
+    },
+    .Dict(_, _) => if method_name == "len" {
+      return .Some(builtin_sig("dict$len", ["K", "V"], ["d"], [.Dict(k, v)], .Int))
+    },
+    _ => {},
+  }
+
+  .None
+}
+
+fn builtin_type_method_sig(type_name: String, method_name: String) FunctionSig? {
+  k := MonoType.Var("K")
+  v := MonoType.Var("V")
+
+  if type_name == "Dict" and method_name == "new" {
+    return .Some(builtin_sig("dict$new", ["K", "V"], [], [], .Dict(k, v)))
+  }
+
+  .None
+}
+
 fn lookup_method_sig(base_ty: MonoType, method_name: String, env: ResolvedEnv) FunctionSig? {
+  case builtin_method_sig(base_ty, method_name) {
+    .Some(sig) => { return .Some(sig) },
+    .None => {},
+  }
+
   fn_name := case resolve_method_func_name(base_ty, method_name, env) {
     .Some(name) => name,
     .None => { return .None },
@@ -1694,9 +1758,12 @@ fn try_synth_module_qualified_value(
       }
     },
   }
-  sig := case ctx.env.lookup_registered_function(fn_name) {
+  sig := case builtin_type_method_sig(type_name, method_name) {
     .Some(s) => s,
-    .None => { return .None },
+    .None => case ctx.env.lookup_registered_function(fn_name) {
+      .Some(s) => s,
+      .None => { return .None },
+    },
   }
   inst := instantiate(sig, ctx)
   .Some(.{ ty: MonoType.Function(inst.params, inst.ret), ctx: inst.ctx, diags })
@@ -1725,9 +1792,12 @@ fn try_synth_module_qualified_call(
       }
     },
   }
-  sig := case ctx.env.lookup_registered_function(fn_name) {
+  sig := case builtin_type_method_sig(type_name, method_name) {
     .Some(s) => s,
-    .None => { return .None },
+    .None => case ctx.env.lookup_registered_function(fn_name) {
+      .Some(s) => s,
+      .None => { return .None },
+    },
   }
   inst := instantiate(sig, ctx)
   pu := pre_unify_return(inst.ctx, inst.ret, call_expected, callee_span, diags)
@@ -3999,11 +4069,11 @@ fn check_interpolation_expr(expr: Expr, expr_ty: MonoType, ctx: InferCtx, diags:
           fn_name := case resolve_method_func_name(zonked, "to_string", proof_ctx.env) {
             .Some(name) => name,
             .None => case zonked {
-              .Int => "int_to_string",
-              .Float => "float_to_string",
-              .Bool => "bool_to_string",
+              .Int => "int$to_string",
+              .Float => "float$to_string",
+              .Bool => "bool$to_string",
               .Byte => "byte$to_string",
-              .String => "string_to_string",
+              .String => "string$to_string",
               _ => "",
             },
           }

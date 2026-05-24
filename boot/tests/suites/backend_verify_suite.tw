@@ -469,7 +469,7 @@ pub fn suite() runner.Suite {
       fn() {
         env := base_env.builtin_env()
         builtins := empty_builtins()
-        int_to_string := builtins.id("int_to_string")
+        int_to_string := builtins.id("int$to_string")
         body: AnfExpr = .Let(lid(10), .AMakeClosure(int_to_string, []), .Atom(.ALocal(lid(10))))
         func := mk_func_def(
           1,
@@ -507,7 +507,7 @@ pub fn suite() runner.Suite {
       fn() {
         env := base_env.builtin_env()
         builtins := empty_builtins()
-        cell_update := builtins.id("cell_update")
+        cell_update := builtins.id("cell$update")
         cell_int := MonoType.Named(TypeId.{ id: 16 }, [MonoType.Int])
         updater_ty := MonoType.Function([.Int], .Int)
         body: AnfExpr = .Let(lid(10), .AMakeClosure(cell_update, []), .Atom(.ALocal(lid(10))))
@@ -528,7 +528,7 @@ pub fn suite() runner.Suite {
       fn() {
         env := base_env.builtin_env()
         builtins := empty_builtins()
-        iterator_unfold := builtins.id("iterator_unfold")
+        iterator_unfold := builtins.id("iterator$unfold")
         step_ty := MonoType.Function(
           [.Int],
           .Named(TypeId.{ id: 18 }, [MonoType.Int, MonoType.Int]),
@@ -552,7 +552,7 @@ pub fn suite() runner.Suite {
       fn() {
         env := base_env.builtin_env()
         builtins := empty_builtins()
-        int_to_string := builtins.id("int_to_string")
+        int_to_string := builtins.id("int$to_string")
         body: AnfExpr = .Let(
           lid(10),
           .AMakeClosure(int_to_string, [lid(0)]),

@@ -41,8 +41,8 @@ pub type ClosureInfo = .{ body_fid: FuncId, captures: Vector<SlotId> }
 
 // ── Public API ──
 pub fn analyze_task_body(func: PreparedFunc, builtins: BuiltinRegistry, env: ResolvedEnv) TaskResumeInfo {
-  yield_fid := bi.id(builtins, "task_yield")
-  await_fid := bi.id(builtins, "task_await")
+  yield_fid := bi.id(builtins, "task$yield")
+  await_fid := bi.id(builtins, "task$await")
 
   // 1. Flatten the let-chain
   flat := flatten_inner(func.body, [])
@@ -146,7 +146,7 @@ pub fn analyze_task_body(func: PreparedFunc, builtins: BuiltinRegistry, env: Res
   }
 
   // 7. Build frame type
-  frame_sym := "\$rt_frame_${func.func_id.id}"
+  frame_sym := "$rt_frame_${func.func_id.id}"
   frame_fields: Vector<FieldDef> = [FieldDef.{ name: .Some("pc"), mutable: true, ty: .I32 }]
 
   for slot_sid in hoisted_slots {
@@ -164,7 +164,7 @@ pub fn analyze_task_body(func: PreparedFunc, builtins: BuiltinRegistry, env: Res
   }
 
   frame_type := TypeDef.Struct(frame_sym, frame_fields, .None, true)
-  resume_sym := "\$resume_${func.func_id.id}_${sanitize_name(func.name)}"
+  resume_sym := "$resume_${func.func_id.id}_${sanitize_name(func.name)}"
   TaskResumeInfo.{
     frame_sym,
     resume_sym,

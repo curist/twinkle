@@ -711,8 +711,8 @@ fn test_loop_accumulator_from() Result<Void, String> {
 
 // ── Phase 2: Dict set rewrite ───────────────────────────────────────
 fn test_dict_set_rewrite() Result<Void, String> {
-  // let d = dict_new(); let r = dict_set(d, key, val); Atom(r)
-  // d is fresh → unique → rewrite to dict_set_in_place
+  // let d = dict$new(); let r = dict$set(d, key, val); Atom(r)
+  // d is fresh → unique → rewrite to dict$set_in_place
   body: AnfExpr = .Let(
     lid(0),
     .ACall(.AGlobalFunc(mock_dict_new()), []),

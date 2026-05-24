@@ -532,11 +532,11 @@ fn test_dead_let_keeps_unused_impure_if() Result<Void, String> {
 }
 
 fn test_dead_let_semantics_keeps_read_only_call_parity() Result<Void, String> {
-  // Semantics knows vector_len is read-only, but Stage 1 should preserve current
+  // Semantics knows vector$len is read-only, but Stage 1 should preserve current
   // dead-let behavior: unused calls are still retained.
   expr: AnfExpr = .Let(
     lid(0),
-    .ACall(.AGlobalFunc(make_builtin_registry().id("vector_len")), [.ALocal(lid(9))]),
+    .ACall(.AGlobalFunc(make_builtin_registry().id("vector$len")), [.ALocal(lid(9))]),
     .Atom(.ALitVoid),
   )
   semantics := make_prelude_optimizer_semantics(make_builtin_registry())
@@ -546,7 +546,7 @@ fn test_dead_let_semantics_keeps_read_only_call_parity() Result<Void, String> {
   case result.expr {
     .Let(_, .ACall(.AGlobalFunc(f), _), _) => assert.equal(
       f.id,
-      make_builtin_registry().id("vector_len").id,
+      make_builtin_registry().id("vector$len").id,
     ),
     _ => .Err("expected unused read-only call to be preserved"),
   }

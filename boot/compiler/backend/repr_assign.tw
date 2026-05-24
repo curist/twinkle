@@ -44,8 +44,8 @@ pub fn assign_repr_for_module(
   env: ResolvedEnv,
   builtins: BuiltinRegistry,
 ) Vector<PreparedFunc> {
-  builder_new := bi.id(builtins, "vector__builder_new")
-  builder_from := bi.id(builtins, "vector__builder_from")
+  builder_new := bi.id(builtins, "vector$builder_new")
+  builder_from := bi.id(builtins, "vector$builder_from")
   cache := ReprAssignCache.{
     repr_cache: Dict.new(),
     val_type_cache: Dict.new(),

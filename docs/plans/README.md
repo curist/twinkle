@@ -42,6 +42,7 @@ Self-hosting is complete. Historical design and status docs live in
 | Boot performance | Track current compiler bottlenecks and optimization wins | In Progress | [boot-compiler-perf.md](boot-compiler-perf.md) |
 | Unreachable case arms | Diagnose case arms shadowed by earlier catch-all, literal, or covering variant patterns | Planned | [unreachable-case-arms.md](unreachable-case-arms.md) |
 | Task concurrency | Add library-first cooperative `Task<T>` concurrency without new syntax | Planned | [task-concurrency.md](task-concurrency.md) |
+| Builtin identity resolution | Separate compiler-owned builtin identities from user function names throughout resolution and codegen | Planned | [builtin-identity-resolution.md](builtin-identity-resolution.md) |
 
 
 ### Later — Tooling & Ecosystem

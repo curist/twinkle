@@ -873,7 +873,7 @@ pub fn suite() runner.Suite {
         lr := try lower_src(src)
         body := lr.module.functions[0].body
 
-        // Should produce Call(string_concat, [...]) chain
+        // Should produce Call(string$concat, [...]) chain
         try assert.ok(has_call(body), "expected Call in string interpolation")
         .Ok({})
       },
@@ -889,15 +889,15 @@ pub fn suite() runner.Suite {
         // Should produce builder pattern with loop
         try assert.ok(has_loop(body), "expected Loop in collect desugaring")
         try assert.ok(
-          has_func_id(body, reg.id("vector__builder_new").id),
+          has_func_id(body, reg.id("vector$builder_new").id),
           "expected builder_new in collect lowering",
         )
         try assert.ok(
-          has_func_id(body, reg.id("vector__builder_push").id),
+          has_func_id(body, reg.id("vector$builder_push").id),
           "expected builder_push in collect lowering",
         )
         try assert.ok(
-          has_func_id(body, reg.id("vector__builder_freeze").id),
+          has_func_id(body, reg.id("vector$builder_freeze").id),
           "expected builder_freeze in collect lowering",
         )
         .Ok({})
@@ -912,15 +912,15 @@ pub fn suite() runner.Suite {
         reg := make_builtin_registry()
         try assert.ok(has_loop(body), "expected Loop in collect-while desugaring")
         try assert.ok(
-          has_func_id(body, reg.id("vector__builder_new").id),
+          has_func_id(body, reg.id("vector$builder_new").id),
           "expected builder_new in collect-while lowering",
         )
         try assert.ok(
-          has_func_id(body, reg.id("vector__builder_push").id),
+          has_func_id(body, reg.id("vector$builder_push").id),
           "expected builder_push in collect-while lowering",
         )
         try assert.ok(
-          has_func_id(body, reg.id("vector__builder_freeze").id),
+          has_func_id(body, reg.id("vector$builder_freeze").id),
           "expected builder_freeze in collect-while lowering",
         )
         .Ok({})
@@ -938,13 +938,13 @@ pub fn suite() runner.Suite {
       },
     )
     .test(
-      "lower module-level let with \$init",
+      "lower module-level let with $init",
       fn() Result<Void, String> {
         src := "x := 42\nfn f() Int { x }"
         lr := try lower_src(src)
 
         // Should have $init func + f
-        try assert.ok(lr.module.functions.len() >= 2, "expected functions for user code and \$init")
+        try assert.ok(lr.module.functions.len() >= 2, "expected functions for user code and $init")
 
         // init_func_id should be set
         case lr.module.init_func_id {
@@ -1209,7 +1209,7 @@ pub fn suite() runner.Suite {
         body := lr.module.functions[0].body
         try assert.ok(has_loop(body), "expected Loop in string for-in")
         reg := make_builtin_registry()
-        try assert.ok(has_func_id(body, reg.id("string_len").id), "expected string_len call")
+        try assert.ok(has_func_id(body, reg.id("string$len").id), "expected string$len call")
         .Ok({})
       },
     )
@@ -1351,7 +1351,7 @@ pub fn suite() runner.Suite {
         body := lr.module.functions[0].body
         try assert.ok(has_loop(body), "expected Loop in dict for-in")
         reg := make_builtin_registry()
-        try assert.ok(has_func_id(body, reg.id("dict_keys").id), "expected dict_keys call")
+        try assert.ok(has_func_id(body, reg.id("dict$keys").id), "expected dict$keys call")
         .Ok({})
       },
     )
@@ -1362,7 +1362,7 @@ pub fn suite() runner.Suite {
         lr := try lower_src(src)
         body := lr.module.functions[0].body
         reg := make_builtin_registry()
-        try assert.ok(has_func_id(body, reg.id("string_len").id), "expected string_len call")
+        try assert.ok(has_func_id(body, reg.id("string$len").id), "expected string$len call")
         .Ok({})
       },
     )
@@ -1373,7 +1373,7 @@ pub fn suite() runner.Suite {
         lr := try lower_src(src)
         body := lr.module.functions[0].body
         reg := make_builtin_registry()
-        try assert.ok(has_func_id(body, reg.id("dict_keys").id), "expected dict_keys call")
+        try assert.ok(has_func_id(body, reg.id("dict$keys").id), "expected dict$keys call")
         .Ok({})
       },
     )
@@ -1614,7 +1614,7 @@ pub fn suite() runner.Suite {
         }
         exact := core_ir.FunctionDef.{
           func_id: core_ir.FuncId.{ id: 42 },
-          name: "int_to_string",
+          name: "int$to_string",
           params: [],
           body: core_ir.CoreExpr.{ kind: .LitStr(""), ty: mono_type.MonoType.String, span: s },
           return_ty: mono_type.MonoType.String,

@@ -1,0 +1,38 @@
+use tests.assert
+use tests.runner
+
+pub fn suite() runner.Suite {
+  runner.suite("builtin identity collision")
+    .test(
+      "user functions may reuse internal builtin names",
+      fn() {
+        try assert.equal(byte_to_int(65), 165)
+        try assert.equal(int_to_string(7), "7!")
+        try assert.equal(bool_to_string(true), "true!")
+        try assert.equal(vector_len([1, 2, 3]), 103)
+        try assert.equal(dict_new(), 200)
+        .Ok({})
+      },
+    )
+}
+
+fn byte_to_int(n: Byte) Int {
+  n.to_int() + 100
+}
+
+fn int_to_string(n: Int) String {
+  n.to_string().concat("!")
+}
+
+fn bool_to_string(b: Bool) String {
+  b.to_string().concat("!")
+}
+
+fn vector_len(xs: Vector<Int>) Int {
+  xs.len() + 100
+}
+
+fn dict_new() Int {
+  d: Dict<String, Int> = Dict.new()
+  d.len() + 200
+}

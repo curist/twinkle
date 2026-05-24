@@ -553,7 +553,7 @@ pub fn suite() runner.Suite {
           "vec_len",
           "rt.arr",
           "len",
-          mk_abi([.Ref(true, .Named("\$Array"))], [.I32]),
+          mk_abi([.Ref(true, .Named("$Array"))], [.I32]),
         )
         len_fid := builtins.id("vec_len")
         body: AnfExpr = .Let(
@@ -585,7 +585,7 @@ pub fn suite() runner.Suite {
           "arr_set",
           "rt.arr",
           "set",
-          mk_abi([.Ref(true, .Named("\$Array")), .I32, .Anyref], [.Ref(false, .Named("\$Array"))]),
+          mk_abi([.Ref(true, .Named("$Array")), .I32, .Anyref], [.Ref(false, .Named("$Array"))]),
         )
         set_fid := builtins.id("arr_set")
         body: AnfExpr = .Let(
@@ -707,8 +707,8 @@ pub fn suite() runner.Suite {
           .None => { return assert.fail("missing entry for println") },
         }
 
-        // dict_set: (ref null $Dict, anyref, anyref) → (ref $Dict)
-        dict_set_fid := bi.id(builtins, "dict_set")
+        // dict$set: (ref null $Dict, anyref, anyref) → (ref $Dict)
+        dict_set_fid := bi.id(builtins, "dict$set")
 
         case builtins.by_id[dict_set_fid.id] {
           .Some(entry) => {
@@ -718,14 +718,14 @@ pub fn suite() runner.Suite {
             // Second param should be anyref (key)
             case entry.abi.param_types[1] {
               .Anyref => {},
-              _ => { return assert.fail("dict_set param 1 should be anyref") },
+              _ => { return assert.fail("dict$set param 1 should be anyref") },
             }
           },
-          .None => { return assert.fail("missing entry for dict_set") },
+          .None => { return assert.fail("missing entry for dict$set") },
         }
 
-        // int_to_string: (i64) → (ref $String)
-        its_fid := bi.id(builtins, "int_to_string")
+        // int$to_string: (i64) → (ref $String)
+        its_fid := bi.id(builtins, "int$to_string")
 
         case builtins.by_id[its_fid.id] {
           .Some(entry) => {
@@ -733,14 +733,14 @@ pub fn suite() runner.Suite {
 
             case entry.abi.param_types[0] {
               .I64 => {},
-              _ => { return assert.fail("int_to_string param should be I64") },
+              _ => { return assert.fail("int$to_string param should be I64") },
             }
           },
-          .None => { return assert.fail("missing entry for int_to_string") },
+          .None => { return assert.fail("missing entry for int$to_string") },
         }
 
-        // vector__set_unsafe: (ref null $Array, i32, anyref) → (ref $Array)
-        vs_fid := bi.id(builtins, "vector__set_unsafe")
+        // vector$set_unsafe: (ref null $Array, i32, anyref) → (ref $Array)
+        vs_fid := bi.id(builtins, "vector$set_unsafe")
 
         case builtins.by_id[vs_fid.id] {
           .Some(entry) => {
@@ -748,10 +748,10 @@ pub fn suite() runner.Suite {
 
             case entry.abi.param_types[2] {
               .Anyref => {},
-              _ => { return assert.fail("vector__set_unsafe param 2 should be anyref") },
+              _ => { return assert.fail("vector$set_unsafe param 2 should be anyref") },
             }
           },
-          .None => { return assert.fail("missing entry for vector__set_unsafe") },
+          .None => { return assert.fail("missing entry for vector$set_unsafe") },
         }
 
         .Ok({})

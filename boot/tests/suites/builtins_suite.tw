@@ -69,15 +69,15 @@ pub fn suite() runner.Suite {
             try assert.equal(name, "rt_types__String")
             .Ok({})
           },
-          _ => .Err("expected println ABI param to be ref null \$String"),
+          _ => .Err("expected println ABI param to be ref null $String"),
         }
       },
     )
     .test(
-      "runtime vector__set_in_place carries PVec ABI result",
+      "runtime vector$set_in_place carries PVec ABI result",
       fn() {
-        reg := empty_registry().runtime("vector__set_in_place", "rt.arr", "set_in_place")
-        entry := try reg.entry(reg.id("vector__set_in_place")).ok_or("missing")
+        reg := empty_registry().runtime("vector$set_in_place", "rt.arr", "set_in_place")
+        entry := try reg.entry(reg.id("vector$set_in_place")).ok_or("missing")
         try assert.equal(entry.abi.result_types.len(), 1)
 
         case entry.abi.result_types[0] {
@@ -86,23 +86,23 @@ pub fn suite() runner.Suite {
             try assert.equal(name, "rt_types__PVec")
             .Ok({})
           },
-          _ => .Err("expected vector__set_in_place ABI result to be non-null rt_types__PVec"),
+          _ => .Err("expected vector$set_in_place ABI result to be non-null rt_types__PVec"),
         }
       },
     )
     .test(
       "intrinsic registration assigns auto-incremented id",
       fn() {
-        reg := empty_registry().runtime("print", "rt.core", "print").intrinsic("string_to_string")
-        try assert.equal(reg.id("string_to_string").id, 1)
+        reg := empty_registry().runtime("print", "rt.core", "print").intrinsic("string$to_string")
+        try assert.equal(reg.id("string$to_string").id, 1)
         .Ok({})
       },
     )
     .test(
       "intrinsic entry has correct dispatch kind",
       fn() {
-        reg := empty_registry().intrinsic("string_get")
-        entry := try reg.entry(reg.id("string_get")).ok_or("missing")
+        reg := empty_registry().intrinsic("string$get")
+        entry := try reg.entry(reg.id("string$get")).ok_or("missing")
 
         case entry.kind {
           .Intrinsic => .Ok({}),
@@ -141,11 +141,11 @@ pub fn suite() runner.Suite {
     .test(
       "entry reverse lookup by FuncId",
       fn() {
-        reg := empty_registry().runtime("print", "rt.core", "print").intrinsic("string_get")
+        reg := empty_registry().runtime("print", "rt.core", "print").intrinsic("string$get")
         e0 := try reg.entry(reg.id("print")).ok_or("missing 0")
         try assert.equal(e0.name, "print")
-        e1 := try reg.entry(reg.id("string_get")).ok_or("missing 1")
-        try assert.equal(e1.name, "string_get")
+        e1 := try reg.entry(reg.id("string$get")).ok_or("missing 1")
+        try assert.equal(e1.name, "string$get")
         .Ok({})
       },
     )
@@ -174,25 +174,25 @@ pub fn suite() runner.Suite {
         }
 
         // intrinsic check
-        sg_entry := try reg.entry(reg.id("string_get")).ok_or("missing string_get")
+        sg_entry := try reg.entry(reg.id("string$get")).ok_or("missing string$get")
 
         case sg_entry.kind {
           .Intrinsic => {},
-          .Runtime(_) => { return .Err("string_get should be Intrinsic") },
+          .Runtime(_) => { return .Err("string$get should be Intrinsic") },
         }
 
         // vector ops
-        _ := reg.id("vector_len")
-        _ := reg.id("vector_append")
-        _ := reg.id("vector__set_unsafe")
+        _ := reg.id("vector$len")
+        _ := reg.id("vector$append")
+        _ := reg.id("vector$set_unsafe")
 
         // dict ops
-        _ := reg.id("dict_new")
-        _ := reg.id("dict_set")
+        _ := reg.id("dict$new")
+        _ := reg.id("dict$set")
 
         // in-place variants
-        _ := reg.id("vector__set_in_place")
-        _ := reg.id("dict__set_in_place")
+        _ := reg.id("vector$set_in_place")
+        _ := reg.id("dict$set_in_place")
 
         // host ops
         _ := reg.id("host_read_file")

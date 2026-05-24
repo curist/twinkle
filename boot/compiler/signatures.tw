@@ -44,41 +44,14 @@ fn receiver_for_stem(stem: String) String? {
 
 // ── canonical → internal name mapping ───────────────────────────────────────
 /// Map a canonical signature name to its boot-internal function name.
-/// For receiver groups the rule is <lowercase_receiver>_<canonical_name>,
-/// with a few String-receiver exceptions that keep their bare name. Byte uses
-/// `$` as the separator so compiler-only intrinsic targets cannot be written by
-/// user code.
+/// All receiver-based methods use `$` as the separator
+/// ({prefix}${name}) so compiler-only implementation targets cannot collide
+/// with user-defined function names — user identifiers cannot contain `$`.
 /// Free functions (receiver=None, e.g. range) are returned unchanged.
-///
-/// Invariant: names produced here always use a SINGLE underscore separator
-/// ({prefix}_{name}).  Internal-only builtins registered with canonical=.None
-/// in builtins.tw that share a receiver prefix MUST instead use DOUBLE
-/// underscore ({prefix}__{name}) to prevent future namespace collisions between
-/// the two classes.
 pub fn to_internal_name(receiver: String?, canonical_name: String) String {
   case receiver {
     .None => canonical_name,
     .Some(recv) => {
-      // String has a small set of functions that are registered without the
-      // string_ prefix because their canonical names are already globally
-      // unique (char_code_at, from_char_code, from_byte, from_code_point).
-      if recv == "String" {
-        if canonical_name == "char_code_at"
-          or canonical_name == "from_char_code"
-          or canonical_name == "from_byte"
-          or canonical_name == "from_code_point" {
-          return canonical_name
-        }
-      }
-
-      if recv == "Byte" {
-        if canonical_name == "to_int"
-          or canonical_name == "from_int"
-          or canonical_name == "to_string" {
-          return "byte$${canonical_name}"
-        }
-      }
-
       prefix := case recv {
         "String" => "string",
         "Vector" => "vector",
@@ -94,7 +67,7 @@ pub fn to_internal_name(receiver: String?, canonical_name: String) String {
         "Byte" => "byte",
         _ => recv,
       }
-      "${prefix}_${canonical_name}"
+      "${prefix}$${canonical_name}"
     },
   }
 }

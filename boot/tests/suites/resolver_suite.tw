@@ -629,12 +629,12 @@ pub fn suite() runner.Suite {
       "manual method registration + lookup",
       fn() {
         env := resolver.empty_env()
-        entry := resolver.MethodEntry.{ method_name: "len", function_name: "string_len" }
+        entry := resolver.MethodEntry.{ method_name: "len", function_name: "string$len" }
         env.methods["String"] = [entry]
 
         case resolver.lookup_method(env, "String", "len") {
           .Some(fn_name) => {
-            try assert.equal(fn_name, "string_len")
+            try assert.equal(fn_name, "string$len")
             .Ok({})
           },
           .None => .Err("expected Some"),
@@ -686,7 +686,7 @@ pub fn suite() runner.Suite {
 
         case resolver.lookup_method(env, "String", "len") {
           .Some(fn_name) => {
-            try assert.equal(fn_name, "string_len")
+            try assert.equal(fn_name, "string$len")
             .Ok({})
           },
           .None => .Err("expected Some"),
@@ -700,7 +700,7 @@ pub fn suite() runner.Suite {
 
         case resolver.lookup_method(env, "Vector", "append") {
           .Some(fn_name) => {
-            try assert.equal(fn_name, "vector_append")
+            try assert.equal(fn_name, "vector$append")
             .Ok({})
           },
           .None => .Err("expected Some"),
@@ -714,7 +714,7 @@ pub fn suite() runner.Suite {
 
         case resolver.lookup_method(env, "Int", "to_string") {
           .Some(fn_name) => {
-            try assert.equal(fn_name, "int_to_string")
+            try assert.equal(fn_name, "int$to_string")
             .Ok({})
           },
           .None => .Err("expected Some"),
@@ -728,7 +728,7 @@ pub fn suite() runner.Suite {
 
         case resolver.lookup_method(env, "Dict", "keys") {
           .Some(fn_name) => {
-            try assert.equal(fn_name, "dict_keys")
+            try assert.equal(fn_name, "dict$keys")
             .Ok({})
           },
           .None => .Err("expected Some"),
@@ -937,7 +937,7 @@ pub fn suite() runner.Suite {
 
         // Should still find the method (even if registered twice)
         case resolver.lookup_method(env2, "String", "len") {
-          .Some(fn_name) => assert.equal(fn_name, "string_len"),
+          .Some(fn_name) => assert.equal(fn_name, "string$len"),
           .None => .Err("expected String.len after double registration"),
         }
       },
@@ -1926,7 +1926,7 @@ pub fn suite() runner.Suite {
         try assert.is_true(!resolver.has_function(env, "sub"))
         try assert.is_true(!resolver.has_function(env, "math.add"))
         try assert.is_true(!resolver.has_function(env, "math.sub"))
-        try assert.is_true(!resolver.has_function(env, "\$import\$.math.add"))
+        try assert.is_true(!resolver.has_function(env, "$import$.math.add"))
         .Ok({})
       },
     )
@@ -2028,7 +2028,7 @@ pub fn suite() runner.Suite {
         env := resolver.empty_env().merge_selective_imports("math", "", exports, items)
         try assert.is_true(resolver.has_function(env, "add"))
         try assert.is_true(!resolver.has_function(env, "math.add"))
-        try assert.is_true(!resolver.has_function(env, "\$import\$.math.add"))
+        try assert.is_true(!resolver.has_function(env, "$import$.math.add"))
         found_registered := false
 
         for sig in env.functions {
@@ -2036,7 +2036,7 @@ pub fn suite() runner.Suite {
             found_registered = true
           }
 
-          if sig.name.starts_with("\$import\$.math.") {
+          if sig.name.starts_with("$import$.math.") {
             return .Err("unexpected hidden selective-import function retained: ${sig.name}")
           }
         }
@@ -2044,7 +2044,7 @@ pub fn suite() runner.Suite {
         try assert.is_true(found_registered)
 
         for name in env.function_bindings.keys() {
-          if name.starts_with("\$import\$.math.") {
+          if name.starts_with("$import$.math.") {
             return .Err("unexpected hidden selective-import function binding retained: ${name}")
           }
         }
@@ -2071,7 +2071,7 @@ pub fn suite() runner.Suite {
         env := resolver.empty_env()
         env = .merge_selective_imports("geom", "", exports, items)
         try assert.is_true(resolver.has_type(env, "Point"))
-        try assert.is_true(!resolver.has_type(env, "\$import\$.geom.Point"))
+        try assert.is_true(!resolver.has_type(env, "$import$.geom.Point"))
         try assert.is_true(!resolver.has_type(env, "geom.Point"))
         try assert.is_true(!resolver.has_type(env, "Line"))
         try assert.is_true(!resolver.has_type(env, "geom.Line"))
@@ -2082,13 +2082,13 @@ pub fn suite() runner.Suite {
         )
 
         for name in env.type_names {
-          if name.starts_with("\$import\$.geom.") {
+          if name.starts_with("$import$.geom.") {
             return .Err("unexpected hidden selective-import stored type retained: ${name}")
           }
         }
 
         for name in env.type_bindings.keys() {
-          if name.starts_with("\$import\$.geom.") {
+          if name.starts_with("$import$.geom.") {
             return .Err("unexpected hidden selective-import binding retained: ${name}")
           }
         }

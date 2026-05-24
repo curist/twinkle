@@ -62,7 +62,7 @@ pub fn emit_make_closure(fid: FuncId, free_vars: Vector<SlotId>, ctx: EmitCtx, b
 fn emit_materialized_closure(fid: FuncId, env_buf: Vector<Instr>, ctx: EmitCtx, buf: Vector<Instr>) Vector<
   Instr,
 > {
-  tramp_sym := "\$tramp_${fid.id}"
+  tramp_sym := "$tramp_${fid.id}"
   emit_universal_closure_value(tramp_sym, env_buf, buf)
 }
 
@@ -207,7 +207,7 @@ fn emit_builtin_universal_trampoline(
     .Some(.IteratorUnfold) => emit_builtin_iterator_unfold_universal_trampoline(entry, sig, ctx),
     .Some(.HostWriteBytes) => emit_builtin_host_write_bytes_universal_trampoline(entry, sig, ctx),
     _ => {
-      tramp_sym := "\$tramp_${entry.func_id.id}"
+      tramp_sym := "$tramp_${entry.func_id.id}"
       body: Vector<Instr> = []
 
       for mono, i in sig.param_types {
@@ -241,7 +241,7 @@ fn emit_builtin_cell_update_universal_trampoline(
   sig: FuncSigEntry,
   ctx: EmitCtx,
 ) FuncDef {
-  tramp_sym := "\$tramp_${entry.func_id.id}"
+  tramp_sym := "$tramp_${entry.func_id.id}"
   cell_mono := sig.param_types[0]
   closure_mono := sig.param_types[1]
   inner_mono := cell_inner_mono(cell_mono)
@@ -262,7 +262,7 @@ fn emit_builtin_cell_update_universal_trampoline(
   body = .append(.LocalGet(2))
   body = .append(.LocalGet(3)).append(.StructGet("rt_types__Closure", 1))
   body = .append(.LocalGet(2)).append(.StructGet(sym, 0))
-  body = if sym != "\$Cell_anyref" {
+  body = if sym != "$Cell_anyref" {
     emit_box_to_anyref(inner_mono, ctx.env, body)
   } else {
     body
@@ -271,7 +271,7 @@ fn emit_builtin_cell_update_universal_trampoline(
   body = .append(.LocalGet(3)).append(.StructGet("rt_types__Closure", 0)).append(
     .CallRef("rt_types__ClosureFunc"),
   )
-  body = if sym != "\$Cell_anyref" {
+  body = if sym != "$Cell_anyref" {
     emit_unbox_from_anyref(inner_mono, ctx.env, body)
   } else {
     body
@@ -292,7 +292,7 @@ fn emit_builtin_iterator_unfold_universal_trampoline(
   sig: FuncSigEntry,
   ctx: EmitCtx,
 ) FuncDef {
-  tramp_sym := "\$tramp_${entry.func_id.id}"
+  tramp_sym := "$tramp_${entry.func_id.id}"
   seed_mono := sig.param_types[0]
   step_mono := sig.param_types[1]
   body: Vector<Instr> = []
@@ -313,7 +313,7 @@ fn emit_builtin_host_write_bytes_universal_trampoline(
   sig: FuncSigEntry,
   ctx: EmitCtx,
 ) FuncDef {
-  tramp_sym := "\$tramp_${entry.func_id.id}"
+  tramp_sym := "$tramp_${entry.func_id.id}"
   path_mono := sig.param_types[0]
   bytes_mono := sig.param_types[1]
   body: Vector<Instr> = []
@@ -340,7 +340,7 @@ fn emit_builtin_trampoline_target(
     .Intrinsic => case wrapper_kind {
       .Some(.ByteToString) => body.append(.I64ExtendI32U).append(.Call("rt_str__from_i64")),
       _ => case entry.name {
-        "string_to_string" => body,
+        "string$to_string" => body,
         _ => error(
           "emit_builtin_trampoline_target: unsupported builtin trampoline target ${entry.name}",
         ),
@@ -351,7 +351,7 @@ fn emit_builtin_trampoline_target(
 
 fn emit_universal_trampoline(func: PreparedFunc, sig: FuncSigEntry, ctx: EmitCtx) FuncDef {
   // Universal trampoline: (env: anyref, args: anyref) → anyref
-  tramp_sym := "\$tramp_${func.func_id.id}"
+  tramp_sym := "$tramp_${func.func_id.id}"
   func_sym := lookup_func_sym(ctx.func_sym_map, func.func_id)
   body: Vector<Instr> = []
   locals: Vector<ValType> = []

@@ -271,7 +271,7 @@ fn build_iterator_loop(setup: IterSetup, inner_action: CoreExpr, s: Span) ExprOu
 
   next_call := CoreExpr.{
     kind: .Call(
-      global_func_expr(ctx.builtins.id("iterator_next"), s),
+      global_func_expr(ctx.builtins.id("iterator$next"), s),
       [local_expr(setup.arr_local, setup.iter_core.ty, s)],
     ),
     ty: next_ty,
@@ -426,7 +426,7 @@ fn build_indexed_loop(setup: IterSetup, inner_action: CoreExpr, s: Span) ExprOut
         key_local_expr := CoreExpr.{ kind: .Local(setup.elem_local), ty: setup.elem_ty, span: s }
         get_unsafe_call := CoreExpr.{
           kind: .Call(
-            .{ kind: .GlobalFunc(ctx.builtins.id("dict__get_unsafe")), ty: void_ty, span: s },
+            .{ kind: .GlobalFunc(ctx.builtins.id("dict$get_unsafe")), ty: void_ty, span: s },
             [dict_local_expr, key_local_expr],
           ),
           ty: val_ty,
@@ -490,7 +490,7 @@ fn build_indexed_loop(setup: IterSetup, inner_action: CoreExpr, s: Span) ExprOut
     .String => {
       len_call := CoreExpr.{
         kind: .Call(
-          .{ kind: .GlobalFunc(ctx.builtins.id("string_len")), ty: void_ty, span: s },
+          .{ kind: .GlobalFunc(ctx.builtins.id("string$len")), ty: void_ty, span: s },
           [CoreExpr.{ kind: CoreExprKind.Local(setup.arr_local), ty: iter_ty, span: s }],
         ),
         ty: int_ty,
@@ -504,7 +504,7 @@ fn build_indexed_loop(setup: IterSetup, inner_action: CoreExpr, s: Span) ExprOut
         keys_ty := MonoType.Vector(key_ty)
         keys_call := CoreExpr.{
           kind: .Call(
-            .{ kind: .GlobalFunc(ctx.builtins.id("dict_keys")), ty: void_ty, span: s },
+            .{ kind: .GlobalFunc(ctx.builtins.id("dict$keys")), ty: void_ty, span: s },
             [CoreExpr.{ kind: CoreExprKind.Local(setup.arr_local), ty: iter_ty, span: s }],
           ),
           ty: keys_ty,
@@ -512,7 +512,7 @@ fn build_indexed_loop(setup: IterSetup, inner_action: CoreExpr, s: Span) ExprOut
         }
         len_call := CoreExpr.{
           kind: .Call(
-            .{ kind: .GlobalFunc(ctx.builtins.id("vector_len")), ty: void_ty, span: s },
+            .{ kind: .GlobalFunc(ctx.builtins.id("vector$len")), ty: void_ty, span: s },
             [CoreExpr.{ kind: CoreExprKind.Local(keys_local), ty: keys_ty, span: s }],
           ),
           ty: int_ty,
@@ -529,7 +529,7 @@ fn build_indexed_loop(setup: IterSetup, inner_action: CoreExpr, s: Span) ExprOut
       .None => {
         len_call := CoreExpr.{
           kind: .Call(
-            .{ kind: .GlobalFunc(ctx.builtins.id("vector_len")), ty: void_ty, span: s },
+            .{ kind: .GlobalFunc(ctx.builtins.id("vector$len")), ty: void_ty, span: s },
             [CoreExpr.{ kind: CoreExprKind.Local(setup.arr_local), ty: iter_ty, span: s }],
           ),
           ty: int_ty,
@@ -546,7 +546,7 @@ fn build_indexed_loop(setup: IterSetup, inner_action: CoreExpr, s: Span) ExprOut
     _ => {
       len_call := CoreExpr.{
         kind: .Call(
-          .{ kind: .GlobalFunc(ctx.builtins.id("vector_len")), ty: void_ty, span: s },
+          .{ kind: .GlobalFunc(ctx.builtins.id("vector$len")), ty: void_ty, span: s },
           [CoreExpr.{ kind: CoreExprKind.Local(setup.arr_local), ty: iter_ty, span: s }],
         ),
         ty: int_ty,

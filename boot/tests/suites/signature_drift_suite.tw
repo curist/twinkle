@@ -160,37 +160,37 @@ pub fn suite() runner.Suite {
       },
     )
     .test(
-      "vector__set_unsafe has no canonical name (internal-only)",
+      "vector$set_unsafe has no canonical name (internal-only)",
       fn() {
         reg := make_builtin_registry()
-        entry := try reg.entry(reg.id("vector__set_unsafe")).ok_or("missing vector__set_unsafe")
+        entry := try reg.entry(reg.id("vector$set_unsafe")).ok_or("missing vector$set_unsafe")
         try assert.is_none(entry.canonical_name)
         .Ok({})
       },
     )
     .test(
-      "string__substring has no canonical name (internal-only)",
+      "string$substring has no canonical name (internal-only)",
       fn() {
         reg := make_builtin_registry()
-        entry := try reg.entry(reg.id("string__substring")).ok_or("missing string__substring")
+        entry := try reg.entry(reg.id("string$substring")).ok_or("missing string$substring")
         try assert.is_none(entry.canonical_name)
         .Ok({})
       },
     )
     .test(
-      "vector__builder_new has no canonical name (internal-only)",
+      "vector$builder_new has no canonical name (internal-only)",
       fn() {
         reg := make_builtin_registry()
-        entry := try reg.entry(reg.id("vector__builder_new")).ok_or("missing vector__builder_new")
+        entry := try reg.entry(reg.id("vector$builder_new")).ok_or("missing vector$builder_new")
         try assert.is_none(entry.canonical_name)
         .Ok({})
       },
     )
     .test(
-      "dict__get_unsafe has no canonical name (internal-only)",
+      "dict$get_unsafe has no canonical name (internal-only)",
       fn() {
         reg := make_builtin_registry()
-        entry := try reg.entry(reg.id("dict__get_unsafe")).ok_or("missing dict__get_unsafe")
+        entry := try reg.entry(reg.id("dict$get_unsafe")).ok_or("missing dict$get_unsafe")
         try assert.is_none(entry.canonical_name)
         .Ok({})
       },

@@ -122,11 +122,11 @@ pub fn builtin_wrapper_kind(name: String) WrapperKind? {
     return .Some(.ByteToString)
   }
 
-  if name == "cell_update" {
+  if name == "cell$update" {
     return .Some(.CellUpdate)
   }
 
-  if name == "iterator_unfold" {
+  if name == "iterator$unfold" {
     return .Some(.IteratorUnfold)
   }
 
@@ -138,8 +138,8 @@ pub fn builtin_wrapper_kind(name: String) WrapperKind? {
 }
 
 fn builtin_generic_closure_materializable(name: String) Bool {
-  name == "int_to_string"
-    or name == "float_to_string"
-    or name == "bool_to_string"
-    or name == "string_to_string"
+  name == "int$to_string"
+    or name == "float$to_string"
+    or name == "bool$to_string"
+    or name == "string$to_string"
 }
