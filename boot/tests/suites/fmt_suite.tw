@@ -43,11 +43,17 @@ fn assert_fmt_case(name: String) fn() Result<Void, String> {
   }
 }
 
+fn test_unicode_escape_formatting() Result<Void, String> {
+  formatted := try format_ok("fn f() String { \"\\u{0065}\" }")
+  assert.equal(formatted, "fn f() String {\n  \"e\"\n}\n")
+}
+
 pub fn suite() runner.Suite {
   runner.suite("fmt")
     .test("preserves right-nested non-associative binary parens", assert_fmt_case("binary_parens"))
     .test("breaks logical or chains by alternative", assert_fmt_case("logical_or_chain"))
     .test("formats declarations and top-level spacing", assert_fmt_case("declarations"))
+    .test("formats unicode escapes as scalars", test_unicode_escape_formatting)
     .test("formats literals and wrapped calls", assert_fmt_case("literals_and_calls"))
     .test("formats control-flow blocks", assert_fmt_case("control_flow"))
     .test("preserves interleaved binary comments", assert_fmt_case("interleaved_comments"))

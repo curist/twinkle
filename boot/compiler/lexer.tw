@@ -172,6 +172,41 @@ fn unescape_string(raw: String) String {
             parts = .append(raw.slice(i, i + 2))
           }
         },
+        is_byte(next, "u") and i + 2 < n and is_byte(raw[i + 2], "{") => {
+          j := i + 3
+          code := 0
+          digits := 0
+          valid := true
+
+          for j < n and !is_byte(raw[j], "}") {
+            digit := hex_digit_value(raw[j])
+
+            if digit < 0 {
+              valid = false
+            } else {
+              code = code * 16 + digit
+              digits = digits + 1
+            }
+
+            j = j + 1
+          }
+
+          if valid and digits > 0 and j < n and is_byte(raw[j], "}") {
+            case String.from_code_point(code) {
+              .Some(s) => {
+                parts = .append(s)
+                i = j + 1
+                seg_start = i
+                continue
+              },
+              .None => {
+                parts = .append(raw.slice(i, i + 2))
+              },
+            }
+          } else {
+            parts = .append(raw.slice(i, i + 2))
+          }
+        },
         _ => {
           // Unknown escape — keep both chars
           parts = .append(raw.slice(i, i + 2))

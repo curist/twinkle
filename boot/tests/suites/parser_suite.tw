@@ -472,6 +472,17 @@ pub fn suite() runner.Suite {
       },
     )
     .test(
+      "expr: unicode escape string literal",
+      fn() {
+        expr := try parse_body_tail("fn f() String { \"\\u{0065}\" }")
+
+        case expr.kind {
+          .StringLit(s) => assert.equal(s, "e"),
+          _ => assert.fail("expected StringLit"),
+        }
+      },
+    )
+    .test(
       "expr: string interpolation",
       fn() {
         dollar := "\$"

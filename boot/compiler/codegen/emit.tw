@@ -1630,8 +1630,19 @@ fn emit_intrinsic_from_code_point(
 ) Vector<Instr> {
   // Helper returns the generic runtime Variant encoding for Option<String>.
   // Adapt it to the concrete Option<String> layout used by the current module.
-  buf2 := emit_checked_i32_narrow(args[0], ctx, buf)
-  buf2.append(.Call("from_code_point_helper"))
+  // Unlike indexing intrinsics, invalid code points are recoverable and must
+  // return None instead of trapping during i64→i32 narrowing.
+  then_instrs: Vector<Instr> = emit_atom(args[0], ctx, []).concat([.I32WrapI64])
+  else_instrs: Vector<Instr> = [.I32Const(-1)]
+
+  buf2 := emit_atom(args[0], ctx, buf)
+  buf3 := buf2.append(.I64Const(0)).append(.I64GeS)
+  buf4 := emit_atom(args[0], ctx, buf3)
+  buf4.append(.I64Const(0x10FFFF))
+    .append(.I64LeS)
+    .append(.I32And)
+    .append(.If(.Some(.I32), then_instrs, else_instrs))
+    .append(.Call("from_code_point_helper"))
     .append(.RefCast(true, .Named("rt_types__Variant")))
     .append(.Call(option_from_variant_helper_sym(MonoType.String)))
     .append(.LocalSet(result_idx))
