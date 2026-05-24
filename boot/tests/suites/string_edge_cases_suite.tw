@@ -1,0 +1,323 @@
+use tests.assert
+use tests.runner
+
+pub fn suite() runner.Suite {
+  runner.suite("string edge cases")
+    .test(
+      "len returns byte length for multibyte",
+      fn() {
+        try assert.equal("abc".len(), 3)
+        try assert.equal("é".len(), 2)
+        try assert.equal("你".len(), 3)
+        try assert.equal("👍".len(), 4)
+        .Ok({})
+      },
+    )
+    .test(
+      "indexing returns raw byte",
+      fn() {
+        try assert.equal("abc"[0].to_int(), 97)
+        try assert.equal("é"[0].to_int(), 195) // first byte of U+00E9
+        .Ok({})
+      },
+    )
+    .test(
+      "string.get returns Option<Byte>",
+      fn() {
+        s := "hi"
+
+        case s.get(0) {
+          .Some(b) => try assert.equal(b.to_int(), 104),
+          .None => { return assert.fail("expected Some") },
+        }
+
+        case s.get(1) {
+          .Some(b) => try assert.equal(b.to_int(), 105),
+          .None => { return assert.fail("expected Some") },
+        }
+
+        try assert.is_none(s.get(99))
+        try assert.is_none(String.get(s, -1))
+        .Ok({})
+      },
+    )
+    .test(
+      "string.get with large index returns None",
+      fn() {
+        s := "ab"
+        try assert.is_none(s.get(4294967297))
+        try assert.is_none(String.get(s, 4294967297))
+
+        case s.get(1) {
+          .Some(b) => try assert.equal(b.to_int(), 98),
+          .None => { return assert.fail("expected Some") },
+        }
+
+        .Ok({})
+      },
+    )
+    .test(
+      "for-in iterates bytes with index",
+      fn() {
+        s := "hey"
+        buf := Cell.new("")
+
+        for b, i in s {
+          buf.update(
+            fn(acc) {
+              if acc == "" {
+                "${i}:${b.to_int()}"
+              } else {
+                "${acc} ${i}:${b.to_int()}"
+              }
+            },
+          )
+        }
+
+        try assert.equal(buf.get(), "0:104 1:101 2:121")
+        .Ok({})
+      },
+    )
+    .test(
+      "slice works with byte offsets",
+      fn() {
+        try assert.equal("hello".slice(0, 5), "hello")
+        try assert.equal("hello".slice(1, 4), "ell")
+        .Ok({})
+      },
+    )
+    .test(
+      "chars iterates unicode scalars",
+      fn() {
+        chars := collect ch in "abc".chars() {
+          ch
+        }
+        try assert.equal(chars.len(), 3)
+        try assert.equal(chars[0], "a")
+        try assert.equal(chars[1], "b")
+        try assert.equal(chars[2], "c")
+        .Ok({})
+      },
+    )
+    .test(
+      "chars handles multibyte scalars",
+      fn() {
+        chars := collect ch in "é你👍".chars() {
+          ch
+        }
+        try assert.equal(chars.len(), 3)
+        try assert.equal(chars[0], "é")
+        try assert.equal(chars[1], "你")
+        try assert.equal(chars[2], "👍")
+        .Ok({})
+      },
+    )
+    .test(
+      "chars handles mixed ASCII and multibyte",
+      fn() {
+        chars := collect ch in "aé你👍".chars() {
+          ch
+        }
+        try assert.equal(chars.len(), 4)
+        try assert.equal(chars[0], "a")
+        try assert.equal(chars[1], "é")
+        try assert.equal(chars[2], "你")
+        try assert.equal(chars[3], "👍")
+        .Ok({})
+      },
+    )
+    .test(
+      "char_len counts unicode scalars",
+      fn() {
+        try assert.equal("hello".char_len(), 5)
+        try assert.equal("aé你👍".char_len(), 4)
+        try assert.equal("".char_len(), 0)
+        .Ok({})
+      },
+    )
+    .test(
+      "code_point_at for ASCII",
+      fn() {
+        s := "abc"
+        try assert_cp(s, 0, 97)
+        try assert_cp(s, 1, 98)
+        try assert_cp(s, 2, 99)
+        try assert.is_none(s.code_point_at(3))
+        .Ok({})
+      },
+    )
+    .test(
+      "code_point_at for multibyte",
+      fn() {
+        try assert_cp("é", 0, 233)
+        try assert_cp("你", 0, 20320)
+        try assert_cp("👍", 0, 128077)
+        .Ok({})
+      },
+    )
+    .test(
+      "code_point_at for mixed string",
+      fn() {
+        mixed := "aé你👍"
+        try assert_cp(mixed, 0, 97)
+        try assert_cp(mixed, 1, 233)
+        try assert_cp(mixed, 2, 20320)
+        try assert_cp(mixed, 3, 128077)
+        try assert.is_none(mixed.code_point_at(4))
+        .Ok({})
+      },
+    )
+    .test(
+      "code_point_at negative index",
+      fn() {
+        try assert.is_none("abc".code_point_at(-1))
+        .Ok({})
+      },
+    )
+    .test(
+      "from_code_point valid values",
+      fn() {
+        try assert_fcp(97, "a")
+        try assert_fcp(65, "A")
+        try assert_fcp(233, "é")
+        try assert_fcp(20320, "你")
+        try assert_fcp(128077, "👍")
+        .Ok({})
+      },
+    )
+    .test(
+      "from_code_point invalid values",
+      fn() {
+        try assert.is_none(String.from_code_point(55296))
+        try assert.is_none(String.from_code_point(57343))
+        try assert.is_none(String.from_code_point(1114112))
+        try assert.is_none(String.from_code_point(-1))
+        .Ok({})
+      },
+    )
+    .test(
+      "from_code_point rejects large int wrapping",
+      fn() {
+        try assert.is_none(String.from_code_point(4294967361))
+        try assert.is_none(String.from_code_point(1114112))
+        try assert_fcp(65, "A")
+        .Ok({})
+      },
+    )
+    .test(
+      "code_point round-trip",
+      fn() {
+        cp := "你".code_point_at(0)
+
+        case cp {
+          .Some(n) => try assert_fcp(n, "你"),
+          .None => { return assert.fail("expected Some") },
+        }
+
+        case String.from_code_point(128077) {
+          .Some(emoji) => try assert_cp(emoji, 0, 128077),
+          .None => { return assert.fail("expected Some") },
+        }
+
+        .Ok({})
+      },
+    )
+    .test(
+      "graphemes for ASCII",
+      fn() {
+        gs := "hello".graphemes().to_vector()
+        try assert.equal(gs.len(), 5)
+        try assert.equal(gs[0], "h")
+        try assert.equal(gs[4], "o")
+        .Ok({})
+      },
+    )
+    .test(
+      "graphemes combining mark",
+      fn() {
+        combining := "é"
+        gs := combining.graphemes().to_vector()
+        try assert.equal(gs.len(), 1)
+        try assert.equal(gs[0].len(), 3)
+        .Ok({})
+      },
+    )
+    .test(
+      "graphemes emoji with skin tone modifier",
+      fn() {
+        gs := "👍🏽".graphemes().to_vector()
+        try assert.equal(gs.len(), 1)
+        .Ok({})
+      },
+    )
+    .test(
+      "graphemes regional indicator flag",
+      fn() {
+        gs := "🇺🇸".graphemes().to_vector()
+        try assert.equal(gs.len(), 1)
+        .Ok({})
+      },
+    )
+    .test(
+      "graphemes ZWJ family sequence",
+      fn() {
+        family := "👨‍👩‍👧‍👦"
+        gs := family.graphemes().to_vector()
+        try assert.equal(gs.len(), 1)
+        try assert.equal(gs[0].len(), 25)
+        .Ok({})
+      },
+    )
+    .test(
+      "graphemes ZWJ after non-ExtPict base does not merge",
+      fn() {
+        zwj_non_ep := "a‍😀"
+        gs := zwj_non_ep.graphemes().to_vector()
+        try assert.equal(gs.len(), 2)
+        .Ok({})
+      },
+    )
+    .test(
+      "graphemes mixed text",
+      fn() {
+        mixed := "aé👍🏽🇺🇸"
+        gs := mixed.graphemes().to_vector()
+        try assert.equal(gs.len(), 4)
+        .Ok({})
+      },
+    )
+    .test(
+      "graphemes empty string",
+      fn() {
+        gs := "".graphemes().to_vector()
+        try assert.equal(gs.len(), 0)
+        .Ok({})
+      },
+    )
+    .test(
+      "graphemes round-trip join",
+      fn() {
+        combining := "é"
+        try assert.equal(combining.graphemes().to_vector().join(""), combining)
+        rt_str := "aé👍🏽🇺🇸👨‍👩‍👧‍👦"
+        try assert.equal(rt_str.graphemes().to_vector().join(""), rt_str)
+        .Ok({})
+      },
+    )
+}
+
+/// Assert that s.code_point_at(idx) == Some(expected)
+fn assert_cp(s: String, idx: Int, expected: Int) Result<Void, String> {
+  case s.code_point_at(idx) {
+    .Some(n) => assert.equal(n, expected),
+    .None => assert.fail("expected Some(${expected}), got None"),
+  }
+}
+
+/// Assert that String.from_code_point(cp) == Some(expected)
+fn assert_fcp(cp: Int, expected: String) Result<Void, String> {
+  case String.from_code_point(cp) {
+    .Some(s) => assert.equal(s, expected),
+    .None => assert.fail("expected Some(\"${expected}\"), got None"),
+  }
+}

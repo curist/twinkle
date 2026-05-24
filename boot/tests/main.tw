@@ -77,6 +77,7 @@ use .suites.signature_loader_suite
 use .suites.slot_assign_suite
 use .suites.source_suite
 use .suites.stdlib_host_suite
+use .suites.string_edge_cases_suite
 use .suites.stdlib_path_suite
 use .suites.task_suite
 use .suites.type_registry_suite
@@ -175,4 +176,5 @@ runner.run_all([
   defer_suite.suite(),
   first_class_method_suite.suite(),
   byte_suite.suite(),
+  string_edge_cases_suite.suite(),
 ])
