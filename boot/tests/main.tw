@@ -28,6 +28,7 @@ use .suites.dict_hash_suite
 use .suites.equality_matrix_suite
 use .suites.equality_repro_suite
 use .suites.fingerprint_suite
+use .suites.first_class_method_suite
 use .suites.fmt_suite
 use .suites.imports_suite
 use .suites.insert_boundaries_suite
@@ -171,4 +172,5 @@ runner.run_all([
   task_suite.suite(),
   receiver_shorthand_suite.suite(),
   defer_suite.suite(),
+  first_class_method_suite.suite(),
 ])

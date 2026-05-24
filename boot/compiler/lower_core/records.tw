@@ -2,7 +2,8 @@
 
 use compiler.ast as ast
 use compiler.ast.{Expr}
-use compiler.core_ir.{CoreExpr, FieldId, FieldInit, VariantId}
+use compiler.core_ir.{CoreExpr, FieldId, FieldInit, FunctionDef, Param, VariantId}
+use compiler.lower_core.calls.{resolve_receiver_method_target}
 use compiler.lower_core.context.{ExprOut, LowerCtx}
 use compiler.lower_core.helpers.{extract_type_name_expr, void_expr}
 use compiler.lower_core.types.{
@@ -162,13 +163,80 @@ pub fn lower_field(
 
   br := lower_expr_fn(ctx, base_expr)
   base_ty := br.ctx.expr_type(base_expr)
-  tid := case type_id_from_mono(base_ty) {
-    .Some(id) => id,
+
+  case type_id_from_mono(base_ty) {
+    .Some(tid) => {
+      fid_idx := find_field_index(br.ctx.env, tid, field_name)
+
+      if fid_idx >= 0 {
+        return .{ expr: .{ kind: .RecordGet(br.expr, .{ id: fid_idx }), ty, span: s }, ctx: br.ctx }
+      }
+    },
+    .None => {},
+  }
+
+  lower_method_value(br.ctx, br.expr, base_ty, field_name, ty, s)
+}
+
+fn lower_method_value(
+  ctx: LowerCtx,
+  receiver: CoreExpr,
+  receiver_ty: MonoType,
+  method_name: String,
+  ty: MonoType,
+  s: Span,
+) ExprOut {
+  target_name := resolve_receiver_method_target(ctx.env, receiver_ty, method_name, method_name)
+  target_fid := case ctx.func_table[target_name] {
+    .Some(fid) => fid,
     .None => {
-      ctx2 := br.ctx.emit_error(s, "cannot determine record type for field access")
+      ctx2 := ctx.emit_error(s, "cannot resolve method value: ${method_name}")
+
       return .{ expr: void_expr(s), ctx: ctx2 }
     },
   }
-  fid_idx := find_field_index(br.ctx.env, tid, field_name)
-  .{ expr: .{ kind: .RecordGet(br.expr, .{ id: fid_idx }), ty, span: s }, ctx: br.ctx }
+
+  receiver_out := ctx.alloc_anon_local()
+  ctx = receiver_out.ctx
+  receiver_local := receiver_out.local
+
+  func_out := ctx.alloc_func_id()
+  ctx = func_out.ctx
+  lambda_func_id := func_out.func_id
+
+  params: Vector<Param> = []
+  args: Vector<CoreExpr> = [.{ kind: .Local(receiver_local), ty: receiver_ty, span: s }]
+  ret_ty := MonoType.Void
+
+  case ty {
+    .Function(param_tys, ret) => {
+      ret_ty = ret
+
+      for param_ty in param_tys {
+        param_out := ctx.alloc_anon_local()
+        ctx = param_out.ctx
+        param := Param.{ local: param_out.local, ty: param_ty }
+        params = .append(param)
+        args = .append(.{ kind: .Local(param.local), ty: param_ty, span: s })
+      }
+    },
+    _ => {},
+  }
+
+  body := CoreExpr.{
+    kind: .Call(.{ kind: .GlobalFunc(target_fid), ty: .Void, span: s }, args),
+    ty: ret_ty,
+    span: s,
+  }
+  ctx.hoisted = ctx.hoisted.append(FunctionDef.{
+    func_id: lambda_func_id,
+    name: "__method_value",
+    is_init: false,
+    params,
+    body,
+    return_ty: ret_ty,
+  })
+
+  closure := CoreExpr.{ kind: .MakeClosure(lambda_func_id, [receiver_local]), ty, span: s }
+  .{ expr: .{ kind: .Let(receiver_local, receiver, closure), ty, span: s }, ctx }
 }
