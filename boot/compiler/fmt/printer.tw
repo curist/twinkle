@@ -1965,8 +1965,8 @@ fn escape_string(s: String) String {
       b == 9 => {
         escape = .Some("\\t")
       },
-      b == 36 => {
-        escape = .Some("\\\$")
+      b == 36 and i + 1 < n and bytes[i + 1] == 123 => {
+        escape = .Some("\\$")
       },
       b == 27 => {
         escape = .Some("\\e")

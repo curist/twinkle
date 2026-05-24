@@ -48,12 +48,23 @@ fn test_unicode_escape_formatting() Result<Void, String> {
   assert.equal(formatted, "fn f() String {\n  \"e\"\n}\n")
 }
 
+fn test_dollar_string_formatting() Result<Void, String> {
+  formatted := try format_ok("fn f() String { \"byte$to_int\" }")
+  try assert.equal(formatted, "fn f() String {\n  \"byte$to_int\"\n}\n")
+
+  interpolation_source := "fn g() String { \"".concat("\\").concat("$").concat("{name}\" }")
+  interpolation_expected := "fn g() String {\n  \"".concat("\\").concat("$").concat("{name}\"\n}\n")
+  interpolation_sentinel := try format_ok(interpolation_source)
+  assert.equal(interpolation_sentinel, interpolation_expected)
+}
+
 pub fn suite() runner.Suite {
   runner.suite("fmt")
     .test("preserves right-nested non-associative binary parens", assert_fmt_case("binary_parens"))
     .test("breaks logical or chains by alternative", assert_fmt_case("logical_or_chain"))
     .test("formats declarations and top-level spacing", assert_fmt_case("declarations"))
     .test("formats unicode escapes as scalars", test_unicode_escape_formatting)
+    .test("formats dollar strings without changing meaning", test_dollar_string_formatting)
     .test("formats literals and wrapped calls", assert_fmt_case("literals_and_calls"))
     .test("formats control-flow blocks", assert_fmt_case("control_flow"))
     .test("preserves interleaved binary comments", assert_fmt_case("interleaved_comments"))
