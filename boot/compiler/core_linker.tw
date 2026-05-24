@@ -295,7 +295,7 @@ pub fn link(
           name: remapped_func.name,
           is_init: remapped_func.is_init,
           params: remapped_func.params,
-          body: remap_expr(remapped_func.body, remap, global_remap),
+          body: remap_expr(remapped_func.body, remap, global_remap, remapped_func.is_init),
           return_ty: remapped_func.return_ty,
         },
       )
@@ -728,7 +728,12 @@ fn remap_local_id(id: LocalId, global_remap: Dict<Int, Int>) LocalId {
   }
 }
 
-fn remap_expr(expr: CoreExpr, remap: Dict<Int, Int>, global_remap: Dict<Int, Int>) CoreExpr {
+fn remap_expr(
+  expr: CoreExpr,
+  remap: Dict<Int, Int>,
+  global_remap: Dict<Int, Int>,
+  remap_assign_targets: Bool,
+) CoreExpr {
   new_kind: CoreExprKind = case expr.kind {
     .LitInt(_) => expr.kind,
     .LitFloat(_) => expr.kind,
@@ -740,28 +745,32 @@ fn remap_expr(expr: CoreExpr, remap: Dict<Int, Int>, global_remap: Dict<Int, Int
     .GlobalFunc(id) => .GlobalFunc(remap_func_id(id, remap)),
     .Let(local, value, body) => .Let(
       local,
-      remap_expr(value, remap, global_remap),
-      remap_expr(body, remap, global_remap),
+      remap_expr(value, remap, global_remap, remap_assign_targets),
+      remap_expr(body, remap, global_remap, remap_assign_targets),
     ),
     .Assign(local, value) => .Assign(
-      remap_local_id(local, global_remap),
-      remap_expr(value, remap, global_remap),
+      if remap_assign_targets {
+        remap_local_id(local, global_remap)
+      } else {
+        local
+      },
+      remap_expr(value, remap, global_remap, remap_assign_targets),
     ),
     .BinOp(op, lhs, rhs) => .BinOp(
       op,
-      remap_expr(lhs, remap, global_remap),
-      remap_expr(rhs, remap, global_remap),
+      remap_expr(lhs, remap, global_remap, remap_assign_targets),
+      remap_expr(rhs, remap, global_remap, remap_assign_targets),
     ),
-    .UnOp(op, operand) => .UnOp(op, remap_expr(operand, remap, global_remap)),
+    .UnOp(op, operand) => .UnOp(op, remap_expr(operand, remap, global_remap, remap_assign_targets)),
     .Call(callee, args) => .Call(
-      remap_expr(callee, remap, global_remap),
-      remap_exprs(args, remap, global_remap),
+      remap_expr(callee, remap, global_remap, remap_assign_targets),
+      remap_exprs(args, remap, global_remap, remap_assign_targets),
     ),
     .ContractCall(contract, method_name, receiver, args) => .ContractCall(
       contract,
       method_name,
-      remap_expr(receiver, remap, global_remap),
-      remap_exprs(args, remap, global_remap),
+      remap_expr(receiver, remap, global_remap, remap_assign_targets),
+      remap_exprs(args, remap, global_remap, remap_assign_targets),
     ),
     .MakeClosure(func_id, captures) => {
       remapped_captures := collect c in captures {
@@ -770,58 +779,70 @@ fn remap_expr(expr: CoreExpr, remap: Dict<Int, Int>, global_remap: Dict<Int, Int
       .MakeClosure(remap_func_id(func_id, remap), remapped_captures)
     },
     .If(cond_e, then_br, else_br) => .If(
-      remap_expr(cond_e, remap, global_remap),
-      remap_expr(then_br, remap, global_remap),
-      remap_expr(else_br, remap, global_remap),
+      remap_expr(cond_e, remap, global_remap, remap_assign_targets),
+      remap_expr(then_br, remap, global_remap, remap_assign_targets),
+      remap_expr(else_br, remap, global_remap, remap_assign_targets),
     ),
     .Match(scrutinee, arms) => {
       new_arms := collect arm in arms {
-        MatchArm.{ pattern: arm.pattern, body: remap_expr(arm.body, remap, global_remap) }
+        MatchArm.{
+          pattern: arm.pattern,
+          body: remap_expr(arm.body, remap, global_remap, remap_assign_targets),
+        }
       }
-      .Match(remap_expr(scrutinee, remap, global_remap), new_arms)
+      .Match(remap_expr(scrutinee, remap, global_remap, remap_assign_targets), new_arms)
     },
-    .Loop(body) => .Loop(remap_expr(body, remap, global_remap)),
+    .Loop(body) => .Loop(remap_expr(body, remap, global_remap, remap_assign_targets)),
     .Break(val) => case val {
-      .Some(v) => .Break(.Some(remap_expr(v, remap, global_remap))),
+      .Some(v) => .Break(.Some(remap_expr(v, remap, global_remap, remap_assign_targets))),
       .None => expr.kind,
     },
     .Continue => expr.kind,
     .Return(val) => case val {
-      .Some(v) => .Return(.Some(remap_expr(v, remap, global_remap))),
+      .Some(v) => .Return(.Some(remap_expr(v, remap, global_remap, remap_assign_targets))),
       .None => expr.kind,
     },
-    .Defer(body) => .Defer(remap_expr(body, remap, global_remap)),
+    .Defer(body) => .Defer(remap_expr(body, remap, global_remap, remap_assign_targets)),
     .Record(type_id, fields) => {
       new_fields := collect fi in fields {
-        FieldInit.{ field: fi.field, value: remap_expr(fi.value, remap, global_remap) }
+        FieldInit.{
+          field: fi.field,
+          value: remap_expr(fi.value, remap, global_remap, remap_assign_targets),
+        }
       }
       .Record(type_id, new_fields)
     },
-    .RecordGet(rec, field) => .RecordGet(remap_expr(rec, remap, global_remap), field),
-    .RecordUpdate(rec, field, value) => .RecordUpdate(
-      remap_expr(rec, remap, global_remap),
+    .RecordGet(rec, field) => .RecordGet(
+      remap_expr(rec, remap, global_remap, remap_assign_targets),
       field,
-      remap_expr(value, remap, global_remap),
+    ),
+    .RecordUpdate(rec, field, value) => .RecordUpdate(
+      remap_expr(rec, remap, global_remap, remap_assign_targets),
+      field,
+      remap_expr(value, remap, global_remap, remap_assign_targets),
     ),
     .Variant(type_id, variant_id, args) => .Variant(
       type_id,
       variant_id,
-      remap_exprs(args, remap, global_remap),
+      remap_exprs(args, remap, global_remap, remap_assign_targets),
     ),
-    .ArrayLit(elems) => .ArrayLit(remap_exprs(elems, remap, global_remap)),
+    .ArrayLit(elems) => .ArrayLit(remap_exprs(elems, remap, global_remap, remap_assign_targets)),
     .Index(arr, idx) => .Index(
-      remap_expr(arr, remap, global_remap),
-      remap_expr(idx, remap, global_remap),
+      remap_expr(arr, remap, global_remap, remap_assign_targets),
+      remap_expr(idx, remap, global_remap, remap_assign_targets),
     ),
   }
   CoreExpr.{ kind: new_kind, ty: expr.ty, span: expr.span }
 }
 
-fn remap_exprs(exprs: Vector<CoreExpr>, remap: Dict<Int, Int>, global_remap: Dict<Int, Int>) Vector<
-  CoreExpr,
-> {
+fn remap_exprs(
+  exprs: Vector<CoreExpr>,
+  remap: Dict<Int, Int>,
+  global_remap: Dict<Int, Int>,
+  remap_assign_targets: Bool,
+) Vector<CoreExpr> {
   collect e in exprs {
-    remap_expr(e, remap, global_remap)
+    remap_expr(e, remap, global_remap, remap_assign_targets)
   }
 }
 

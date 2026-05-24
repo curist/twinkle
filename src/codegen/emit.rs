@@ -1255,7 +1255,11 @@ fn emit_let_binding(
 
     match op {
         AnfOp::AInit { value } => {
-            let global_sym = ctx.module_global_sym(local).cloned();
+            let global_sym = if ctx.in_init_func() {
+                ctx.module_global_sym(local).cloned()
+            } else {
+                None
+            };
             let preserve = can_preserve_typed_sum(local, value, ctx);
             let expected = if preserve { None } else { Some(&bind_ty) };
             let mut instrs = emit_atom(value, expected, ctx);
@@ -1271,7 +1275,11 @@ fn emit_let_binding(
             value,
         } => {
             let mut instrs = Vec::new();
-            let target_global_sym = ctx.module_global_sym(*target).cloned();
+            let target_global_sym = if ctx.in_init_func() {
+                ctx.module_global_sym(*target).cloned()
+            } else {
+                None
+            };
 
             if let Some((target_idx, target_ty)) = ctx.local(*target).cloned() {
                 let preserve = can_preserve_typed_sum(*target, value, ctx);
@@ -9283,6 +9291,69 @@ mod tests {
         };
 
         assert_eq!(collect_module_global_locals(&anf), vec![LocalId(1)]);
+    }
+
+    #[test]
+    fn non_init_local_collision_does_not_write_module_global() {
+        let type_env = TypeEnv::new();
+        let init = AnfFunctionDef {
+            func_id: FuncId(1),
+            name: "__init__".to_string(),
+            params: vec![],
+            param_tys: vec![],
+            body: AnfExpr::Let {
+                local: LocalId(1),
+                op: Box::new(AnfOp::AInit {
+                    value: Atom::ALitStr("module value".to_string()),
+                }),
+                body: Box::new(AnfExpr::Atom(Atom::ALitVoid)),
+            },
+            return_ty: MonoType::Void,
+            op_result_mono: HashMap::from([(LocalId(1), MonoType::String)]),
+        };
+        let user_func = AnfFunctionDef {
+            func_id: FuncId(2),
+            name: "local_id_collides_with_module_global".to_string(),
+            params: vec![],
+            param_tys: vec![],
+            body: AnfExpr::Let {
+                local: LocalId(1),
+                op: Box::new(AnfOp::AInit {
+                    value: Atom::ALitStr("ordinary local".to_string()),
+                }),
+                body: Box::new(AnfExpr::Atom(Atom::ALitVoid)),
+            },
+            return_ty: MonoType::Void,
+            op_result_mono: HashMap::from([(LocalId(1), MonoType::String)]),
+        };
+        let anf = AnfModule {
+            functions: vec![init, user_func],
+            init_func_id: Some(FuncId(1)),
+            all_init_func_ids: vec![FuncId(1)],
+            extern_imports: HashMap::new(),
+            module_global_locals: Some(HashSet::from([LocalId(1)])),
+        };
+
+        let module = emit_user_module(&anf, &type_env);
+        let init_func = module
+            .funcs
+            .iter()
+            .find(|f| f.name == "func_1")
+            .expect("missing emitted init function");
+        let user_func = module
+            .funcs
+            .iter()
+            .find(|f| f.name == "func_2")
+            .expect("missing emitted user function");
+
+        assert!(instr_tree_any(&init_func.body, &|i| matches!(
+            i,
+            Instr::GlobalSet(name) if name == "global_local_1"
+        )));
+        assert!(!instr_tree_any(&user_func.body, &|i| matches!(
+            i,
+            Instr::GlobalSet(name) if name == "global_local_1"
+        )));
     }
 
     #[test]

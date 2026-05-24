@@ -790,6 +790,10 @@ impl<'a> EmitCtx<'a> {
         self.capture_mono_by_func = capture_mono_by_func;
     }
 
+    pub fn in_init_func(&self) -> bool {
+        self.in_init_func
+    }
+
     pub fn module_global_sym(&self, local_id: LocalId) -> Option<&String> {
         self.module_globals.get(&local_id)
     }

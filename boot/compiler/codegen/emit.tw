@@ -704,16 +704,6 @@ fn emit_let(
       _ => {
         buf = emit_op(cur_op, entry.index, .Some(entry.val_type), result_mono, ctx, buf)
 
-        if ctx.is_init_func {
-          case ctx.registry.module_globals[entry.source_local.id] {
-            .Some(gentry) => {
-              buf = .append(.LocalGet(entry.index))
-              buf = .append(.GlobalSet(gentry.sym))
-            },
-            .None => {},
-          }
-        }
-
         case cur_body {
           .Let(next_local, next_op, next_body) => {
             cur_local = next_local
