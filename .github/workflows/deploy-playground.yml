@@ -43,6 +43,11 @@ jobs:
           cache: npm
           cache-dependency-path: playground/package-lock.json
 
+      - name: Set up Deno
+        uses: denoland/setup-deno@v2
+        with:
+          deno-version: v2.x
+
       - name: Build playground
         run: make playground
 
