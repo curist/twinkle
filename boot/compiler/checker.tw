@@ -4002,7 +4002,7 @@ fn check_interpolation_expr(expr: Expr, expr_ty: MonoType, ctx: InferCtx, diags:
               .Int => "int_to_string",
               .Float => "float_to_string",
               .Bool => "bool_to_string",
-              .Byte => "byte_to_string",
+              .Byte => "byte$to_string",
               .String => "string_to_string",
               _ => "",
             },

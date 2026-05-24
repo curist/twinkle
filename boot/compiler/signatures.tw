@@ -45,7 +45,9 @@ fn receiver_for_stem(stem: String) String? {
 // ── canonical → internal name mapping ───────────────────────────────────────
 /// Map a canonical signature name to its boot-internal function name.
 /// For receiver groups the rule is <lowercase_receiver>_<canonical_name>,
-/// with a few String-receiver exceptions that keep their bare name.
+/// with a few String-receiver exceptions that keep their bare name. Byte uses
+/// `$` as the separator so compiler-only intrinsic targets cannot be written by
+/// user code.
 /// Free functions (receiver=None, e.g. range) are returned unchanged.
 ///
 /// Invariant: names produced here always use a SINGLE underscore separator
@@ -66,6 +68,14 @@ pub fn to_internal_name(receiver: String?, canonical_name: String) String {
           or canonical_name == "from_byte"
           or canonical_name == "from_code_point" {
           return canonical_name
+        }
+      }
+
+      if recv == "Byte" {
+        if canonical_name == "to_int"
+          or canonical_name == "from_int"
+          or canonical_name == "to_string" {
+          return "byte$${canonical_name}"
         }
       }
 

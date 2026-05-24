@@ -18,7 +18,13 @@ use lib.source.span.{Span}
 pub fn prelude_method_alias(type_name: String, method_name: String) String? {
   case type_name {
     "Bool" => .Some("bool_${method_name}"),
-    "Byte" => .Some("byte_${method_name}"),
+    "Byte" => if method_name == "to_int"
+      or method_name == "from_int"
+      or method_name == "to_string" {
+      .Some("byte$${method_name}")
+    } else {
+      .Some("byte_${method_name}")
+    },
     "Cell" => .Some("cell_${method_name}"),
     "Dict" => .Some("dict_${method_name}"),
     "Float" => .Some("float_${method_name}"),

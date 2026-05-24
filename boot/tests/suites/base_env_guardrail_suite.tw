@@ -203,17 +203,17 @@ pub fn suite() runner.Suite {
       },
     )
     .test(
-      "builtin_env has byte_to_int",
+      "builtin_env has byte$to_int",
       fn() {
-        sig := try require_registered_sig("byte_to_int")
+        sig := try require_registered_sig("byte$to_int")
         try assert.equal(sig.params.len(), 1)
         .Ok({})
       },
     )
     .test(
-      "builtin_env has byte_from_int returning Option<Byte>",
+      "builtin_env has byte$from_int returning Option<Byte>",
       fn() {
-        sig := try require_registered_sig("byte_from_int")
+        sig := try require_registered_sig("byte$from_int")
         inner := try sig.ret.ok_or("expected Some")
 
         case inner {
@@ -322,10 +322,10 @@ pub fn suite() runner.Suite {
       },
     )
     .test(
-      "Byte.to_int resolves to byte_to_int",
+      "Byte.to_int resolves to byte$to_int",
       fn() {
         fn_name := try require_method("Byte", "to_int")
-        try assert.equal(fn_name, "byte_to_int")
+        try assert.equal(fn_name, "byte$to_int")
         .Ok({})
       },
     )

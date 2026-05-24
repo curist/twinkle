@@ -118,7 +118,7 @@ fn builtin_target(fid: FuncId, builtins: BuiltinRegistry, env: ResolvedEnv) Call
 // Returns the wrapper kind for builtins that need a dedicated closure trampoline.
 // None means the builtin uses the generic universal trampoline path (or is not materializable).
 pub fn builtin_wrapper_kind(name: String) WrapperKind? {
-  if name == "byte_to_string" {
+  if name == "byte$to_string" {
     return .Some(.ByteToString)
   }
 

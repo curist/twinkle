@@ -159,9 +159,9 @@ fn builtin_abi(name: String) AbiContract {
     "string_utf8_bytes" => abi([str_n()], [pvec_()]),
     "string_from_utf8" => abi([pvec_n()], [.Anyref]),
     // Byte intrinsics
-    "byte_to_int" => abi([.I32], [.I64]),
-    "byte_from_int" => abi([.I64], [.Anyref]),
-    "byte_to_string" => abi([.I32], [str_()]),
+    "byte$to_int" => abi([.I32], [.I64]),
+    "byte$from_int" => abi([.I64], [.Anyref]),
+    "byte$to_string" => abi([.I32], [str_()]),
     // Float intrinsics
     "float_bits" => abi([.F64], [.I64]),
     // Range intrinsics
@@ -386,9 +386,9 @@ pub fn builtin_specs() Vector<BuiltinSpec> {
     intr("task_spawn", .Some("Task.spawn")),
     intr("task_await", .Some("Task.await")),
     intr("task_yield", .Some("Task.yield")),
-    intr("byte_to_int", .Some("Byte.to_int")),
-    intr("byte_from_int", .Some("Byte.from_int")),
-    intr("byte_to_string", .Some("Byte.to_string")),
+    intr("byte$to_int", .Some("Byte.to_int")),
+    intr("byte$from_int", .Some("Byte.from_int")),
+    intr("byte$to_string", .Some("Byte.to_string")),
     intr("int_from_string", .Some("Int.from_string")),
     intr("float_from_string", .Some("Float.from_string")),
     rt("host_read_file", "host", "read_file", .None),

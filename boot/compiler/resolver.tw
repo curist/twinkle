@@ -604,9 +604,9 @@ pub fn register_builtin_methods(env: ResolvedEnv) ResolvedEnv {
   env = .register_bound_methods(
     "Byte",
     [
-      me("to_string", "byte_to_string"),
-      me("to_int", "byte_to_int"),
-      me("from_int", "byte_from_int"),
+      me("to_string", "byte$to_string"),
+      me("to_int", "byte$to_int"),
+      me("from_int", "byte$from_int"),
       me("compare", "compare"),
       me("in_range", "byte_in_range"),
       me("is_upper", "byte_is_upper"),

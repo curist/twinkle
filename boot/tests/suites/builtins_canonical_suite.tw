@@ -146,9 +146,9 @@ pub fn suite() runner.Suite {
       "full registry has canonical names for byte builtins",
       fn() {
         reg := make_builtin_registry()
-        try assert.equal(reg.id_by_canonical("Byte.to_int").id, reg.id("byte_to_int").id)
-        try assert.equal(reg.id_by_canonical("Byte.from_int").id, reg.id("byte_from_int").id)
-        try assert.equal(reg.id_by_canonical("Byte.to_string").id, reg.id("byte_to_string").id)
+        try assert.equal(reg.id_by_canonical("Byte.to_int").id, reg.id("byte$to_int").id)
+        try assert.equal(reg.id_by_canonical("Byte.from_int").id, reg.id("byte$from_int").id)
+        try assert.equal(reg.id_by_canonical("Byte.to_string").id, reg.id("byte$to_string").id)
         .Ok({})
       },
     )

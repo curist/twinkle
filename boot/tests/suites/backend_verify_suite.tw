@@ -488,7 +488,7 @@ pub fn suite() runner.Suite {
       fn() {
         env := base_env.builtin_env()
         builtins := empty_builtins()
-        byte_to_string := builtins.id("byte_to_string")
+        byte_to_string := builtins.id("byte$to_string")
         body: AnfExpr = .Let(lid(10), .AMakeClosure(byte_to_string, []), .Atom(.ALocal(lid(10))))
         func := mk_func_def(
           1,
