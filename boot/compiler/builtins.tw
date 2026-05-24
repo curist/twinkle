@@ -300,6 +300,27 @@ pub fn entry_by_canonical(reg: BuiltinRegistry, canonical: String) BuiltinEntry?
   reg.by_canonical[canonical]
 }
 
+/// Look up a builtin by receiver type and method name.
+/// E.g. method_id(reg, "String", "len") returns the FuncId for String.len.
+pub fn method_id(reg: BuiltinRegistry, type_name: String, method_name: String) FuncId {
+  canonical := "${type_name}.${method_name}"
+
+  case reg.by_canonical[canonical] {
+    .Some(entry) => entry.func_id,
+    .None => error("unknown builtin method: ${canonical}"),
+  }
+}
+
+/// Non-panicking variant of method_id.
+pub fn try_method_id(reg: BuiltinRegistry, type_name: String, method_name: String) FuncId? {
+  canonical := "${type_name}.${method_name}"
+
+  case reg.by_canonical[canonical] {
+    .Some(entry) => .Some(entry.func_id),
+    .None => .None,
+  }
+}
+
 // ── Canonical builtin table ──
 //
 // Single authoritative definition of all builtins: name, dispatch kind,

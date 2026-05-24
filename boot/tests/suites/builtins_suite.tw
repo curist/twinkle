@@ -201,6 +201,39 @@ pub fn suite() runner.Suite {
       },
     )
     .test(
+      "method_id looks up by Type.method canonical name",
+      fn() {
+        reg := make_builtin_registry()
+        try assert.equal(reg.method_id("String", "len").id, reg.id("string$len").id)
+        try assert.equal(reg.method_id("Vector", "append").id, reg.id("vector$append").id)
+        try assert.equal(reg.method_id("Dict", "new").id, reg.id("dict$new").id)
+        try assert.equal(reg.method_id("Cell", "update").id, reg.id("cell$update").id)
+        try assert.equal(reg.method_id("Iterator", "next").id, reg.id("iterator$next").id)
+        try assert.equal(reg.method_id("Task", "spawn").id, reg.id("task$spawn").id)
+        try assert.equal(reg.method_id("Byte", "to_int").id, reg.id("byte$to_int").id)
+        try assert.equal(reg.method_id("Int", "to_string").id, reg.id("int$to_string").id)
+        .Ok({})
+      },
+    )
+    .test(
+      "try_method_id returns None for unknown method",
+      fn() {
+        reg := make_builtin_registry()
+        try assert.is_none(reg.try_method_id("String", "nonexistent"))
+        try assert.is_none(reg.try_method_id("Nonexistent", "len"))
+        .Ok({})
+      },
+    )
+    .test(
+      "try_method_id returns Some for known method",
+      fn() {
+        reg := make_builtin_registry()
+        fid := try reg.try_method_id("Vector", "len").ok_or("expected Some")
+        try assert.equal(fid.id, reg.id("vector$len").id)
+        .Ok({})
+      },
+    )
+    .test(
       "full registry ids are contiguous from 0",
       fn() {
         reg := make_builtin_registry()

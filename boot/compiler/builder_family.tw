@@ -24,7 +24,7 @@ pub fn empty_builder_config() BuilderConfig {
 
 pub fn vector_builder_config(b: BuiltinRegistry) BuilderConfig {
   BuilderConfig.{
-    push_id: b.id("vector$append"),
+    push_id: b.method_id("Vector", "append"),
     builder_new_id: b.id("vector$builder_new"),
     builder_from_id: b.id("vector$builder_from"),
     builder_push_id: b.id("vector$builder_push"),

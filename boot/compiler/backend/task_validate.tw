@@ -18,10 +18,10 @@ use compiler.core_ir.{FuncId}
 
 // ── Public API ──
 pub fn validate_tasks(anf: AnfModule, builtins: BuiltinRegistry) Result<Void, String> {
-  spawn_fid := builtins.id("task$spawn")
-  await_fid := builtins.id("task$await")
-  yield_fid := builtins.id("task$yield")
-  cell_update_fid := builtins.id("cell$update")
+  spawn_fid := builtins.method_id("Task", "spawn")
+  await_fid := builtins.method_id("Task", "await")
+  yield_fid := builtins.method_id("Task", "yield")
+  cell_update_fid := builtins.method_id("Cell", "update")
 
   // Step 1: Find all Task.spawn call sites and identify task body FuncIds.
   task_bodies := scan_module_for_task_bodies(anf, spawn_fid)
@@ -73,9 +73,9 @@ pub fn validate_tasks(anf: AnfModule, builtins: BuiltinRegistry) Result<Void, St
 
 // Classify task bodies for the transform (called separately after validation).
 pub fn classify_task_bodies(anf: AnfModule, builtins: BuiltinRegistry) Vector<FuncId> {
-  spawn_fid := builtins.id("task$spawn")
-  await_fid := builtins.id("task$await")
-  yield_fid := builtins.id("task$yield")
+  spawn_fid := builtins.method_id("Task", "spawn")
+  await_fid := builtins.method_id("Task", "await")
+  yield_fid := builtins.method_id("Task", "yield")
   task_bodies := scan_module_for_task_bodies(anf, spawn_fid)
   result: Vector<FuncId> = []
 
