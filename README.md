@@ -1,6 +1,7 @@
 # Twinkle 🌟
 
 [![Test](https://github.com/curist/twinkle/actions/workflows/test.yml/badge.svg)](https://github.com/curist/twinkle/actions/workflows/test.yml)
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 
 Twinkle is a small, statically typed programming language for value-oriented programs that compile to WebAssembly GC.
 It is designed around immutable data, persistent collections, top-level executable code, and a self-hosted compiler written in Twinkle itself.
@@ -9,13 +10,13 @@ It is designed around immutable data, persistent collections, top-level executab
 
 ## Why Twinkle?
 
-Twinkle is inspired by functional and value-oriented languages such as Gleam, but aims for a more direct and lightweight programming style.
+Functional ideas, imperative feel:
 
-Immutable values, persistent collections, pattern matching, and higher-order functions are central to the language. Twinkle also embraces straightforward control flow: loops, rebinding, and early returns are all part of everyday programming.
-
-The goal is to make value-oriented programming practical and ergonomic without pushing programmers into ceremony when direct code is clearer.
-
-Twinkle also explores a compact WebAssembly GC–based runtime model with an emphasis on portability, tooling friendliness, and self-hosting.
+- **Values are immutable.** Rebinding syntax such as `todo = .complete()` and `updated = .append(todo)` creates new values while keeping transformation code direct.
+- **Records and enums are the core data model.** Records are nominal, enums pattern-match exhaustively, and both work naturally with generics.
+- **Persistent collections are ordinary values.** `Vector` and `Dict` use persistent-vector and HAMT-style structures, with update syntax and method calls for ergonomic transformations.
+- **Control flow is typed but familiar.** `Option`, `Result`, and `try` handle absence and recoverable errors; loops, early returns, and `case` expressions are part of everyday code.
+- **Modules define APIs.** Functions become method-style calls when their first parameter is a module-defined type, and contracts provide syntax hooks for interpolation, equality, and ordering.
 
 ## Quick Example
 
@@ -59,14 +60,6 @@ case complete_named(todos, "build") {
 }
 ```
 
-## Language Shape
-
-- **Values are immutable.** Rebinding syntax such as `todo = .complete()` and `updated = .append(todo)` creates new values while keeping transformation code direct.
-- **Records and enums are the core data model.** Records are nominal, enums pattern-match exhaustively, and both work naturally with generics.
-- **Persistent collections are ordinary values.** `Vector` and `Dict` use persistent-vector and HAMT-style structures, with update syntax and method calls for ergonomic transformations.
-- **Control flow is typed but familiar.** `Option`, `Result`, and `try` handle absence and recoverable errors; loops, early returns, and `case` expressions are part of everyday code.
-- **Modules define APIs.** Functions become method-style calls when their first parameter is a module-defined type, and contracts provide syntax hooks for interpolation, equality, and ordering.
-
 ## Documentation
 
 - **[Language Specification](docs/spec.md)** — complete language reference
@@ -99,6 +92,7 @@ Commands:
   build               Compile to linked WAT or Wasm
   ir                  Compile and print compiler IR
   parse               Parse source and print diagnostics
+  fmt                 Format source
   lsp                 Start the Language Server Protocol server
 
 Run 'twk <command> --help' for more information.
@@ -110,4 +104,4 @@ Run 'twk <command> --help' for more information.
 
 ## Acknowledgments
 
-Twinkle is built through iterative collaboration between human language design direction and AI-powered development tools.
+Twinkle is a human-directed, AI-assisted language project. The design, implementation, documentation, and tests were developed primarily through collaboration with LLM coding agents.
