@@ -210,7 +210,12 @@ Strings are immutable, UTF-8 encoded, and GC-managed. String interpolation: `"he
 | `.starts_with(prefix)` | `fn(s: String, prefix: String) Bool` | Prefix check |
 | `.ends_with(suffix)` | `fn(s: String, suffix: String) Bool` | Suffix check |
 | `.split(sep)` | `fn(s: String, sep: String) Vector<String>` | Split on separator (empty sep returns `[s]`) |
+| `.lines()` | `fn(s: String) Vector<String>` | Split on newlines (handles both `\n` and `\r\n`) |
 | `.trim()` | `fn(s: String) String` | Strip leading/trailing ASCII whitespace |
+| `.strip_prefix(prefix)` | `fn(s: String, prefix: String) Option<String>` | Remove prefix and return remainder, or `None` |
+| `.strip_suffix(suffix)` | `fn(s: String, suffix: String) Option<String>` | Remove suffix and return remainder, or `None` |
+| `.count(needle)` | `fn(s: String, needle: String) Int` | Count non-overlapping occurrences of `needle` |
+| `.replace(old, new)` | `fn(s: String, old: String, new_s: String) String` | Replace all non-overlapping occurrences |
 
 ### Unicode helpers (prelude)
 
@@ -246,6 +251,8 @@ Persistent (copy-on-write) vector. Literal syntax: `[1, 2, 3]`.
 | `.any(f)` | `fn<A>(xs: Vector<A>, f: fn(A) Bool) Bool` | True if any element matches |
 | `.all(f)` | `fn<A>(xs: Vector<A>, f: fn(A) Bool) Bool` | True if all elements match |
 | `.contains(elem)` | `fn<A>(xs: Vector<A>, elem: A) Bool` | True if `elem` is in the vector |
+| `.position(f)` | `fn<A>(xs: Vector<A>, f: fn(A) Bool) Option<Int>` | Index of first element matching predicate |
+| `.flat_map(f)` | `fn<A,B>(xs: Vector<A>, f: fn(A) Vector<B>) Vector<B>` | Map each element to a vector and flatten |
 | `.reverse()` | `fn<A>(xs: Vector<A>) Vector<A>` | Reverse order |
 | `.sort_by(cmp)` | `fn<T>(xs: Vector<T>, cmp: fn(T,T) Order) Vector<T>` | Return a new sorted vector using comparator (e.g. `xs.sort_by(Int.compare)`) |
 | `.join(sep)` | `fn(xs: Vector<String>, sep: String) String` | Join strings with separator |
