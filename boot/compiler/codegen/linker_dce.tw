@@ -9,41 +9,42 @@ use compiler.codegen.linker.{LinkedModule}
 use compiler.codegen.wasm_ir.{FuncDef, Instr}
 
 // ── Reachability analysis ─────────────────────────────────────────────
-fn collect_instr_refs(instr: Instr, out: Dict<String, Bool>) Dict<String, Bool> {
-  case instr {
-    .Call(sym) => {
-      out[sym] = true
-      out
-    },
-    .ReturnCall(sym) => {
-      out[sym] = true
-      out
-    },
-    .RefFunc(sym) => {
-      out[sym] = true
-      out
-    },
-    .If(_, then_body, else_body) => {
-      out = collect_instrs_refs(then_body, out)
-      collect_instrs_refs(else_body, out)
-    },
-    .Block(_, _, body) => collect_instrs_refs(body, out),
-    .Loop(_, _, body) => collect_instrs_refs(body, out),
-    _ => out,
+type BfsState = .{ queue: Vector<String>, reachable: Dict<String, Bool> }
+
+fn enqueue(state: BfsState, sym: String) BfsState {
+  if state.reachable.has(sym) {
+    state
+  } else {
+    state.queue = state.queue.append(sym)
+    state.reachable[sym] = true
+    state
   }
 }
 
-fn collect_instrs_refs(instrs: Vector<Instr>, out: Dict<String, Bool>) Dict<String, Bool> {
+fn enqueue_instr_targets(instr: Instr, state: BfsState) BfsState {
+  case instr {
+    .Call(sym) => enqueue(state, sym),
+    .ReturnCall(sym) => enqueue(state, sym),
+    .RefFunc(sym) => enqueue(state, sym),
+    .If(_, then_body, else_body) => {
+      state = enqueue_instrs_targets(then_body, state)
+      enqueue_instrs_targets(else_body, state)
+    },
+    .Block(_, _, body) => enqueue_instrs_targets(body, state),
+    .Loop(_, _, body) => enqueue_instrs_targets(body, state),
+    _ => state,
+  }
+}
+
+fn enqueue_instrs_targets(instrs: Vector<Instr>, state: BfsState) BfsState {
   for instr in instrs {
-    out = collect_instr_refs(instr, out)
+    state = enqueue_instr_targets(instr, state)
   }
 
-  out
+  state
 }
 
 fn compute_reachable(linked: LinkedModule) Dict<String, Bool> {
-  reachable: Dict<String, Bool> = Dict.new()
-
   // Build a lookup from func name → FuncDef for traversal
   func_map: Dict<String, FuncDef> = Dict.new()
 
@@ -51,53 +52,43 @@ fn compute_reachable(linked: LinkedModule) Dict<String, Bool> {
     func_map[f.name] = f
   }
 
-  // Seed: exports
-  worklist: Vector<String> = []
+  // Seed: exports, element segments (indirect call targets), and global
+  // initializers (may contain RefFunc). As in the Core linker DCE, mark
+  // functions reachable when they are queued so duplicates never enter the
+  // worklist.
+  state := BfsState.{ queue: [], reachable: Dict.new() }
 
   for exp in linked.exports {
-    worklist = .append(exp.func_sym)
+    state = enqueue(state, exp.func_sym)
   }
 
-  // Seed: element segments (indirect call targets)
   for elem in linked.elems {
     for sym in elem.func_syms {
-      worklist = .append(sym)
+      state = enqueue(state, sym)
     }
   }
-
-  // Seed: global initializers (may contain RefFunc)
-  global_refs: Dict<String, Bool> = Dict.new()
 
   for g in linked.globals {
-    global_refs = collect_instrs_refs(g.init, global_refs)
+    state = enqueue_instrs_targets(g.init, state)
   }
 
-  for key in global_refs.keys() {
-    worklist = .append(key)
-  }
+  // Worklist traversal. Use a cursor instead of repeatedly slicing the vector;
+  // slicing copies the remaining tail and turns traversal quadratic.
+  cursor := 0
 
-  // Worklist traversal (DFS order, but reachable set is the same either way)
-  for worklist.len() > 0 {
-    sym := worklist[worklist.len() - 1]
-    worklist = .slice(0, worklist.len() - 1)
+  for cursor < state.queue.len() {
+    sym := state.queue[cursor]
+    cursor = cursor + 1
 
-    if reachable.has(sym) {} else {
-      reachable[sym] = true
-
-      case func_map[sym] {
-        .Some(f) => {
-          func_refs := collect_instrs_refs(f.body, Dict.new())
-
-          for key in func_refs.keys() {
-            worklist = .append(key)
-          }
-        },
-        .None => {},
-      }
+    case func_map[sym] {
+      .Some(f) => {
+        state = enqueue_instrs_targets(f.body, state)
+      },
+      .None => {},
     }
   }
 
-  reachable
+  state.reachable
 }
 
 // ── Public API ────────────────────────────────────────────────────────
