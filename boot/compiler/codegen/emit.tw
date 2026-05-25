@@ -160,7 +160,11 @@ pub fn emit_module(
     funcs = .append(emit_iterator_next_helper(mono, env))
   }
 
-  sum_helpers := collect_sum_variant_helpers(prepared.funcs, env)
+  sum_helpers := collect_sum_variant_helpers(
+    prepared.funcs,
+    base_ctx.registry.concrete_func_sigs,
+    env,
+  )
 
   for mono in sum_helpers {
     funcs = .append(emit_sum_to_variant_helper(mono, env)).append(

@@ -3,7 +3,9 @@
 use compiler.backend.prepared_ir.{PreparedExpr, PreparedFunc, PreparedOp}
 use compiler.builtins as bi
 use compiler.builtins.{BuiltinRegistry}
+use compiler.codegen.emit.helpers.{get_sum_layout, variant_field_mono}
 use compiler.codegen.wasm_layout.{layout_of, mono_to_key}
+use compiler.codegen.wasm_plan_types.{FuncSigEntry}
 use compiler.core_ir.{FuncId}
 use compiler.mono_type.{MonoType}
 use compiler.resolver.{ResolvedEnv}
@@ -215,7 +217,45 @@ pub fn is_sum_mono(mono: MonoType, env: ResolvedEnv) Bool {
   }
 }
 
-pub fn collect_sum_variant_helpers(funcs: Vector<PreparedFunc>, env: ResolvedEnv) Vector<MonoType> {
+type SumHelperState = .{
+  seen: Dict<String, MonoType>,
+  is_sum: Dict<String, Bool>,
+  order: Vector<String>,
+}
+
+fn remember_sum_helper(mono: MonoType, env: ResolvedEnv, state: SumHelperState) SumHelperState {
+  key := mono_to_key(mono)
+  cached := case state.is_sum[key] {
+    .Some(b) => b,
+    .None => {
+      b := is_sum_mono(mono, env)
+      state.is_sum[key] = b
+      b
+    },
+  }
+
+  if cached and !state.seen.has(key) {
+    state.seen[key] = mono
+    state.order = state.order.append(key)
+
+    sum_layout := get_sum_layout(mono, env)
+
+    for variant in sum_layout.variants {
+      for i in 0..variant.payload_types.len() {
+        field_mono := variant_field_mono(mono, variant.variant_id, i, env)
+        state = remember_sum_helper(field_mono, env, state)
+      }
+    }
+  }
+
+  state
+}
+
+pub fn collect_sum_variant_helpers(
+  funcs: Vector<PreparedFunc>,
+  func_sigs: Dict<Int, FuncSigEntry>,
+  env: ResolvedEnv,
+) Vector<MonoType> {
   seen: Dict<String, MonoType> = Dict.new()
 
   // Cache is_sum_mono results per mono_to_key to avoid repeated layout_of calls
@@ -224,48 +264,39 @@ pub fn collect_sum_variant_helpers(funcs: Vector<PreparedFunc>, env: ResolvedEnv
   // ~N_total_slots calls down to ~N_unique_types calls.
   is_sum: Dict<String, Bool> = Dict.new()
   order: Vector<String> = []
+  state := SumHelperState.{ seen, is_sum, order }
 
   for func in funcs {
-    key := mono_to_key(func.return_mono)
-    cached := case is_sum[key] {
-      .Some(b) => b,
-      .None => {
-        b := is_sum_mono(func.return_mono, env)
-        is_sum[key] = b
-        b
-      },
-    }
-
-    if cached and !seen.has(key) {
-      seen[key] = func.return_mono
-      order = .append(key)
-    }
+    state = remember_sum_helper(func.return_mono, env, state)
 
     for sid in func.slots.keys() {
       case func.slots[sid] {
         .Some(info) => {
-          k := mono_to_key(info.mono)
-          cached2 := case is_sum[k] {
-            .Some(b) => b,
-            .None => {
-              b := is_sum_mono(info.mono, env)
-              is_sum[k] = b
-              b
-            },
-          }
-
-          if cached2 and !seen.has(k) {
-            seen[k] = info.mono
-            order = .append(k)
-          }
+          state = remember_sum_helper(info.mono, env, state)
         },
         .None => {},
       }
     }
   }
 
-  collect key in order {
-    case seen[key] {
+  // Universal builtin trampolines are emitted from concrete closure signatures
+  // rather than PreparedFunc slots. Their params/results can still cross erased
+  // anyref boundaries and therefore need typed sum bridge helpers.
+  for fid in func_sigs.keys() {
+    case func_sigs[fid] {
+      .Some(sig) => {
+        state = remember_sum_helper(sig.return_type, env, state)
+
+        for param in sig.param_types {
+          state = remember_sum_helper(param, env, state)
+        }
+      },
+      .None => {},
+    }
+  }
+
+  collect key in state.order {
+    case state.seen[key] {
       .Some(mono) => mono,
       .None => error("collect_sum_variant_helpers: missing mono for ${key}"),
     }
