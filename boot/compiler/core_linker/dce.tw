@@ -14,6 +14,7 @@ pub type BfsState = .{ queue: Vector<Int>, reachable: Dict<Int, Bool> }
 pub type ReachabilityIndex = .{
   funcs_by_id: Dict<Int, FunctionDef>,
   method_table: Dict<String, FuncId>,
+  method_refs_by_name: Dict<String, Vector<Int>>,
 }
 
 /// Compute the set of reachable FuncIds starting from init + entry functions.
@@ -55,7 +56,11 @@ pub fn collect_func_refs(
   func_map: Dict<Int, FunctionDef>,
   method_table: Dict<String, FuncId>,
 ) Vector<Int> {
-  index := ReachabilityIndex.{ funcs_by_id: func_map, method_table }
+  index := ReachabilityIndex.{
+    funcs_by_id: func_map,
+    method_table,
+    method_refs_by_name: build_method_refs_by_name(method_table),
+  }
   collect_func_refs_indexed(expr, index)
 }
 
@@ -94,7 +99,26 @@ pub fn build_reachability_index(functions: Vector<FunctionDef>, method_table: Di
     funcs_by_id[f.func_id.id] = f
   }
 
-  .{ funcs_by_id, method_table }
+  .{ funcs_by_id, method_table, method_refs_by_name: build_method_refs_by_name(method_table) }
+}
+
+fn build_method_refs_by_name(method_table: Dict<String, FuncId>) Dict<String, Vector<Int>> {
+  by_name: Dict<String, Vector<Int>> = Dict.new()
+
+  for key in method_table.keys() {
+    parts := key.split("::")
+    method_name := parts[parts.len() - 1]
+
+    case method_table[key] {
+      .Some(fid) => {
+        existing := by_name[method_name].unwrap_or([])
+        by_name[method_name] = existing.append(fid.id)
+      },
+      .None => {},
+    }
+  }
+
+  by_name
 }
 
 fn get_body_refs(index: ReachabilityIndex, fid: Int) Vector<Int> {
@@ -114,30 +138,13 @@ fn contract_call_refs(method_name: String, receiver_ty: MonoType, index: Reachab
   case exact_contract_ref(receiver_ty, method_name, index.method_table) {
     .Some(fid) => [fid.id],
     .None => case receiver_ty {
-      .Var(_) => {
-        // Generic receiver: collect all method table entries for this method name.
-        suffix := "::${method_name}"
-        refs: Vector<Int> = []
-
-        for key in index.method_table.keys() {
-          if key.ends_with(suffix) {
-            case index.method_table[key] {
-              .Some(fid) => {
-                refs = .append(fid.id)
-              },
-              .None => {},
-            }
-          }
-        }
-
-        refs
-      },
+      .Var(_) => index.method_refs_by_name[method_name].unwrap_or([]),
       _ => [],
     },
   }
 }
 
-fn collect_func_refs_indexed(expr: CoreExpr, index: ReachabilityIndex) Vector<Int> {
+pub fn collect_func_refs_indexed(expr: CoreExpr, index: ReachabilityIndex) Vector<Int> {
   refs: Vector<Int> = []
   collect_func_refs_into(expr, refs, index)
 }

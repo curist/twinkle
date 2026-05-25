@@ -17,7 +17,7 @@ use compiler.mono_type.{MonoType, TypeId}
 use compiler.resolver.{ResolvedEnv}
 use lib.source.span.{Span}
 
-use .core_linker.dce.{collect_func_refs, compute_reachable}
+use .core_linker.dce.{build_reachability_index, collect_func_refs_indexed, compute_reachable}
 
 fn is_builtin_method_type(type_name: String) Bool {
   type_name == "Int"
@@ -401,16 +401,12 @@ pub fn validate_compiled_module_links(
     defined[f.func_id.id] = true
   }
 
-  func_map: Dict<Int, FunctionDef> = Dict.new()
-
-  for f in m.core.functions {
-    func_map[f.func_id.id] = f
-  }
-
   // Imported refs must either be builtins, locally defined functions, or have
   // an ExternalRef recorded by the module compiler/lowering pipeline.
+  reachability_index := build_reachability_index(m.core.functions, m.core.method_table)
+
   for f in m.core.functions {
-    refs := collect_func_refs(f.body, func_map, m.core.method_table)
+    refs := collect_func_refs_indexed(f.body, reachability_index)
 
     for ref_id in refs {
       if ref_id < m.builtin_count or defined.has(ref_id) {
