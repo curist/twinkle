@@ -39,14 +39,6 @@ enum Commands {
         #[arg(long)]
         show_original: bool,
     },
-    /// Run a Twinkle program
-    Run {
-        /// Path to the .tw file
-        file: String,
-        /// Arguments passed to the Twinkle program (must come after `--`)
-        #[arg(last = true)]
-        args: Vec<String>,
-    },
     /// Compile a Twinkle program to WAT/Wasm
     Build {
         /// Path to the .tw file
@@ -86,9 +78,6 @@ fn main() -> Result<()> {
             let path = std::path::Path::new(&file);
             twinkle::cli::opt::cmd_opt(path, show_original)?;
         }
-        Commands::Run { file, args } => {
-            twinkle::cli::run_wasm::run_wasm_file_with_args(&file, &args)?;
-        }
         Commands::Build {
             file,
             output,
@@ -107,39 +96,6 @@ fn main() -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn run_subcommand_parses_file_and_args() {
-        let cli = Cli::try_parse_from(["twk", "run", "tests/run/hello.tw"]).expect("parse args");
-        match cli.command {
-            Commands::Run { file, args } => {
-                assert_eq!(file, "tests/run/hello.tw");
-                assert!(args.is_empty(), "run should default to no passthrough args");
-            }
-            _ => panic!("expected run subcommand"),
-        }
-    }
-
-    #[test]
-    fn run_subcommand_accepts_passthrough_args_after_double_dash() {
-        let cli = Cli::try_parse_from([
-            "twk",
-            "run",
-            "boot/main.tw",
-            "--",
-            "run",
-            "foo.tw",
-            "--emit-wat",
-        ])
-        .expect("parse args");
-        match cli.command {
-            Commands::Run { file, args } => {
-                assert_eq!(file, "boot/main.tw");
-                assert_eq!(args, vec!["run", "foo.tw", "--emit-wat"]);
-            }
-            _ => panic!("expected run subcommand"),
-        }
-    }
 
     #[test]
     fn unknown_runtime_subcommand_is_rejected() {

@@ -47,27 +47,6 @@ pub fn load_run_fixture(path: &Path) -> RunFixture {
     }
 }
 
-pub fn run_wasm_capture(path: &Path) -> anyhow::Result<(String, String)> {
-    let path_text = path.to_string_lossy();
-    twinkle::cli::run_wasm::run_wasm_capture(path_text.as_ref())
-}
-
-pub fn assert_wasm_fixture(path: &Path) {
-    let fixture = load_run_fixture(path);
-    match fixture.expectation {
-        FixtureExpectation::Output { stdout, stderr } => {
-            let (actual_stdout, actual_stderr) = run_wasm_capture(path)
-                .unwrap_or_else(|e| panic!("wasm run failed for {}: {e}", path.display()));
-            assert_output_lines(path, "stdout", &actual_stdout, &stdout);
-            assert_output_lines(path, "stderr", &actual_stderr, &stderr);
-        }
-        FixtureExpectation::Trap { .. } => {
-            run_wasm_capture(path)
-                .expect_err(&format!("expected wasm trap for {}", path.display()));
-        }
-    }
-}
-
 fn parse_fixture_expectation(source: &str) -> Option<FixtureExpectation> {
     if let Some(message) = source.lines().find_map(|line| {
         line.trim()

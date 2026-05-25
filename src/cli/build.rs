@@ -265,9 +265,7 @@ mod tests {
             "loading extern refs from Vector should convert anyref to externref:\n{wat}"
         );
 
-        let wasm = wat::parse_str(&wat).expect("extern type WAT should assemble");
-        let engine = crate::cli::run_wasm::build_engine().expect("wasmtime engine");
-        wasmtime::Module::new(&engine, &wasm).expect("extern type module should validate");
+        wat::parse_str(&wat).expect("extern type WAT should assemble");
     }
 
     #[test]
@@ -293,9 +291,7 @@ mod tests {
             "bridge should convert externref to anyref for Variant payload:\n{wat}"
         );
 
-        let wasm = wat::parse_str(&wat).expect("nullable extern type WAT should assemble");
-        let engine = crate::cli::run_wasm::build_engine().expect("wasmtime engine");
-        wasmtime::Module::new(&engine, &wasm).expect("nullable extern type module should validate");
+        wat::parse_str(&wat).expect("nullable extern type WAT should assemble");
     }
 
     #[test]

@@ -64,12 +64,3 @@ fn dce_renumbers_funcids_compactly() {
         ids
     );
 }
-
-#[test]
-fn dce_preserves_program_correctness() {
-    // Verify the program still produces correct output after DCE
-    let path = fixture("dce_test/main.tw");
-    let (stdout, _stderr) =
-        twinkle::cli::run_wasm::run_wasm_capture(&path).expect("wasm run should succeed");
-    assert_eq!(stdout.trim(), "6");
-}

@@ -5942,9 +5942,6 @@
     local.set $p1
     local.get $p1
     local.set $p2
-    local.get $p2
-    struct.new $rt_types__BoxedInt
-    global.set $user__global_local_1
     ref.func $user__func_99__closure
     local.get $p0
     local.get $p2

@@ -129,28 +129,6 @@ fn typed_closure_call_eliminates_arg_boxing() {
     );
 }
 
-/// Typed closure specialization must not change observable behaviour.
-/// Uses a small 10-element fold to keep the test fast.
-#[test]
-fn typed_closure_execution_produces_correct_output() {
-    use twinkle::cli::run_wasm::{build_engine, execute_module};
-    use wasmtime::Module;
-
-    let path = fixture("fold_small.tw");
-    let wat = build_wat(&path);
-    let wasm = wat::parse_str(&wat).expect("WAT parse failed");
-
-    let engine = build_engine().expect("engine");
-    let module = Module::new(&engine, &wasm).expect("module");
-    let (stdout, _stderr) = execute_module(&engine, &module).expect("execution failed");
-
-    assert_eq!(
-        stdout.trim(),
-        "45",
-        "fold_small.tw produced wrong output with typed closures"
-    );
-}
-
 /// The normal build pipeline should also use typed closure specialization,
 /// not just the explicit test-only emitter path.
 #[test]
@@ -527,19 +505,5 @@ fn typed_option_local_uses_specialized_struct() {
     assert!(
         !typed_window.contains("array.get $rt_types__Array"),
         "Expected typed Option<Int> match to avoid payload array indirection.\n{main_func}"
-    );
-}
-
-/// Typed local option specialization must preserve behaviour when values cross
-/// a function boundary that still expects universal Option layout.
-#[test]
-fn typed_option_boundary_call_preserves_behavior() {
-    let path = fixture("option_boundary_call.tw");
-    let (stdout, _stderr) =
-        twinkle::cli::run_wasm::run_wasm_capture(&path).expect("wasm run should succeed");
-    assert_eq!(
-        stdout.trim(),
-        "got 42\nnone",
-        "option boundary call output mismatch"
     );
 }

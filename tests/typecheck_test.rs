@@ -304,34 +304,6 @@ fn test_byte_literal_out_of_range_reports_note() {
     );
 }
 
-// Closure capture-by-value semantics (spec §7.7).
-// A closure must capture the value at definition time; later rebinding of
-// the source variable must not affect the captured value.
-//
-#[test]
-fn test_closure_capture_by_value() {
-    let src = r#"
-fn main() {
-    acc := 0
-    f := fn() Int { acc }
-    acc = acc + 1
-    println("${f()}")
-    println("${acc}")
-}
-main()
-"#;
-    let path = std::env::temp_dir().join(format!(
-        "twinkle_capture_by_value_{}.tw",
-        std::process::id()
-    ));
-    fs::write(&path, src).expect("write temp tw source");
-    let path_str = path.to_str().expect("temp path utf8");
-    let (stdout, _stderr) =
-        twinkle::cli::run_wasm::run_wasm_capture(path_str).expect("run capture_by_value snippet");
-    let _ = fs::remove_file(path);
-    assert_eq!(stdout, "0\n1\n");
-}
-
 #[test]
 fn test_missing_method_signature_reports_type_error_not_panic() {
     let src = r#"

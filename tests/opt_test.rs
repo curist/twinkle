@@ -579,47 +579,6 @@ fn op_count_calls_to(op: &AnfOp, func_id: FuncId) -> usize {
     }
 }
 
-fn run_and_capture(path: &str) -> String {
-    let (stdout, _stderr) = twinkle::cli::run_wasm::run_wasm_capture(path)
-        .unwrap_or_else(|e| panic!("run_wasm_capture failed for {path}: {e}"));
-    stdout
-}
-
-fn assert_runtime_output(path: &str, expected: &[&str]) {
-    let actual_raw = run_and_capture(path);
-    let actual: Vec<&str> = actual_raw.lines().collect();
-    assert_eq!(
-        actual,
-        expected,
-        "Runtime output mismatch for {path}\nExpected:\n{}\nActual:\n{}",
-        expected.join("\n"),
-        actual_raw
-    );
-}
-
-fn assert_runtime_matrix(matrix: &[(&str, &[&str])]) {
-    for (path, expected) in matrix {
-        assert_runtime_output(path, expected);
-    }
-}
-
-fn assert_runtime_output_wasm(path: &str, expected: &[&str]) {
-    let (stdout, stderr) = twinkle::cli::run_wasm::run_wasm_capture(path)
-        .unwrap_or_else(|e| panic!("run_wasm_capture failed for {path}: {e}"));
-    let actual: Vec<&str> = stdout.lines().collect();
-    assert_eq!(
-        actual,
-        expected,
-        "Wasm runtime output mismatch for {path}\nExpected:\n{}\nActual:\n{}",
-        expected.join("\n"),
-        stdout
-    );
-    assert!(
-        stderr.is_empty(),
-        "Expected empty stderr for {path}, got:\n{stderr}"
-    );
-}
-
 #[test]
 fn opt_vector_set_unique_rewritten_to_in_place() {
     // Fresh array, index update, base dead after → should rewrite
@@ -879,95 +838,6 @@ fn opt_vector_set_precise_call_counts() {
 }
 
 #[test]
-fn opt_vector_set_runtime_semantics_core_paths() {
-    let matrix: [(&str, &[&str]); 9] = [
-        ("tests/opt/vector_append_then_set.tw", &["99"]),
-        ("tests/opt/vector_set_unique.tw", &["99"]),
-        ("tests/opt/vector_set_param.tw", &["99"]),
-        ("tests/opt/vector_set_aliased.tw", &["1", "99"]),
-        ("tests/opt/vector_set_captured.tw", &["1", "99"]),
-        ("tests/opt/vector_set_alias_via_init.tw", &["1", "99"]),
-        ("tests/opt/vector_set_alias_via_assign.tw", &["1", "99"]),
-        ("tests/opt/vector_set_after_len.tw", &["3", "99"]),
-        ("tests/opt/vector_set_move_via_init_rebind.tw", &["99"]),
-    ];
-    assert_runtime_matrix(&matrix);
-}
-
-#[test]
-fn opt_vector_set_runtime_semantics_call_and_branch_paths() {
-    let matrix: [(&str, &[&str]); 10] = [
-        ("tests/opt/vector_set_move_via_assign_rebind.tw", &["99"]),
-        ("tests/opt/vector_set_from_make.tw", &["42"]),
-        ("tests/opt/vector_set_twice_chain.tw", &["20"]),
-        ("tests/opt/vector_set_in_if_branches.tw", &["1"]),
-        ("tests/opt/vector_set_after_user_call.tw", &["3", "99"]),
-        ("tests/opt/vector_set_after_indirect_call.tw", &["3", "99"]),
-        ("tests/opt/vector_set_after_get.tw", &["1", "99"]),
-        ("tests/opt/vector_set_stored_in_array.tw", &["1", "99"]),
-        (
-            "tests/opt/vector_set_after_append_then_user_call.tw",
-            &["4", "99"],
-        ),
-        ("tests/opt/vector_set_safe_option_not_rewritten.tw", &["99"]),
-    ];
-    assert_runtime_matrix(&matrix);
-}
-
-#[test]
-fn opt_vector_set_after_get_wasm_semantics() {
-    assert_runtime_output_wasm("tests/opt/vector_set_after_get.tw", &["1", "99"]);
-}
-
-#[test]
-fn opt_vector_set_runtime_semantics_escape_paths() {
-    let matrix: [(&str, &[&str]); 9] = [
-        ("tests/opt/vector_set_branch_alias_escape.tw", &["1", "99"]),
-        (
-            "tests/opt/vector_set_after_branch_local_alias.tw",
-            &["1", "99"],
-        ),
-        ("tests/opt/vector_set_after_len_in_branch.tw", &["3", "99"]),
-        ("tests/opt/vector_set_after_append_chain.tw", &["99"]),
-        ("tests/opt/vector_set_capture_in_branch.tw", &["1", "99"]),
-        (
-            "tests/opt/vector_set_init_alias_capture_escape_in_branch.tw",
-            &["1", "99"],
-        ),
-        (
-            "tests/opt/vector_set_stored_in_option_variant.tw",
-            &["1", "99"],
-        ),
-        ("tests/opt/vector_set_after_safe_set_call.tw", &["7", "99"]),
-        ("tests/opt/vector_set_after_concat.tw", &["4", "99"]),
-    ];
-    assert_runtime_matrix(&matrix);
-}
-
-#[test]
-fn opt_vector_set_runtime_semantics_slice_path() {
-    assert_runtime_output("tests/opt/vector_set_after_slice.tw", &["2", "99"]);
-}
-
-#[test]
-fn opt_vector_set_runtime_semantics_loop_branch_escape_path() {
-    assert_runtime_output(
-        "tests/opt/vector_set_cell_closure_loop_branch_escape_not_rewritten_interp.tw",
-        &["1", "99"],
-    );
-}
-
-#[test]
-fn opt_vector_set_init_alias_capture_escape_in_branch_wasm_semantics() {
-    // Regression guard: branch-local `ys := xs` captured into escaping closure
-    // must taint `xs`, preventing in-place rewrite.
-    assert_runtime_output_wasm(
-        "tests/opt/vector_set_init_alias_capture_escape_in_branch.tw",
-        &["1", "99"],
-    );
-}
-
-#[test]
 fn opt_vector_set_cell_closure_loop_branch_escape_not_rewritten() {
     // This fixture includes `collect range(...)` which can contribute legitimate
     // VECTOR_SET_IN_PLACE calls from collect lowering. Guard only the user update
@@ -978,25 +848,6 @@ fn opt_vector_set_cell_closure_loop_branch_escape_not_rewritten() {
         count_calls_to(&module, VECTOR_SET_UNSAFE),
         1,
         "Expected one VECTOR_SET_UNSAFE for user xs[0] update in stress fixture"
-    );
-}
-
-#[test]
-fn opt_vector_set_cell_closure_loop_branch_escape_wasm_semantics() {
-    // Stress case: loop + branch + Cell + closure-captured init alias.
-    // Must not rewrite vector set in place.
-    assert_runtime_output_wasm(
-        "tests/opt/vector_set_cell_closure_loop_branch_escape_not_rewritten.tw",
-        &["1", "99"],
-    );
-}
-
-#[test]
-fn opt_vector_set_cell_closure_loop_branch_escape_wasm_stress() {
-    // Stronger stress case with a larger loop count.
-    assert_runtime_output_wasm(
-        "tests/opt/vector_set_cell_closure_loop_branch_escape_wasm_stress.tw",
-        &["1", "99"],
     );
 }
 
@@ -1118,11 +969,6 @@ fn opt_vector_append_straight_line_rewritten_to_builder() {
 }
 
 #[test]
-fn opt_vector_append_straight_line_runtime_semantics() {
-    assert_runtime_output("tests/opt/vector_append_straight_line.tw", &["5", "50"]);
-}
-
-#[test]
 fn opt_vector_concat_after_refresh_rewritten() {
     let module = compile_opt("tests/opt/vector_concat_after_refresh_rewritten.tw");
     assert_eq!(
@@ -1144,14 +990,6 @@ fn opt_vector_concat_after_refresh_rewritten() {
         count_calls_to(&module, VECTOR_BUILDER_FREEZE),
         1,
         "Expected one VECTOR_BUILDER_FREEZE call"
-    );
-}
-
-#[test]
-fn opt_vector_concat_after_refresh_runtime_semantics() {
-    assert_runtime_output(
-        "tests/opt/vector_concat_after_refresh_rewritten.tw",
-        &["3", "6"],
     );
 }
 
@@ -1181,14 +1019,6 @@ fn opt_vector_concat_loop_after_refresh_rewritten() {
 }
 
 #[test]
-fn opt_vector_concat_loop_after_refresh_runtime_semantics() {
-    assert_runtime_output(
-        "tests/opt/vector_concat_loop_after_refresh_rewritten.tw",
-        &["4", "10"],
-    );
-}
-
-#[test]
 fn opt_vector_concat_single_straight_line_rewritten_to_builder_extend() {
     let module = compile_opt("tests/opt/vector_concat_single_straight_line.tw");
     assert_eq!(
@@ -1210,14 +1040,6 @@ fn opt_vector_concat_single_straight_line_rewritten_to_builder_extend() {
         count_calls_to(&module, VECTOR_BUILDER_FREEZE),
         1,
         "Expected one VECTOR_BUILDER_FREEZE call"
-    );
-}
-
-#[test]
-fn opt_vector_concat_single_straight_line_runtime_semantics() {
-    assert_runtime_output(
-        "tests/opt/vector_concat_single_straight_line.tw",
-        &["3", "6"],
     );
 }
 
@@ -1247,28 +1069,6 @@ fn opt_vector_concat_straight_line_rewritten_to_builder_extend() {
 }
 
 #[test]
-fn opt_vector_concat_straight_line_runtime_semantics() {
-    assert_runtime_output("tests/opt/vector_concat_straight_line.tw", &["5", "75"]);
-}
-
-#[test]
-fn opt_vector_concat_negative_self_not_rewritten() {
-    let module = compile_opt("tests/opt/vector_concat_self_not_rewritten.tw");
-    assert!(
-        has_call_to(&module, VECTOR_CONCAT),
-        "Expected VECTOR_CONCAT to remain for self-concat"
-    );
-    assert!(
-        !has_call_to(&module, VECTOR_BUILDER_EXTEND),
-        "Expected no VECTOR_BUILDER_EXTEND for self-concat"
-    );
-    assert_runtime_output(
-        "tests/opt/vector_concat_self_not_rewritten.tw",
-        &["4", "1", "2", "1", "2"],
-    );
-}
-
-#[test]
 fn opt_vector_concat_loop_rewritten_to_builder_extend() {
     let module = compile_opt("tests/opt/vector_concat_loop_unique.tw");
     assert_eq!(
@@ -1290,28 +1090,6 @@ fn opt_vector_concat_loop_rewritten_to_builder_extend() {
         count_calls_to(&module, VECTOR_BUILDER_FREEZE),
         1,
         "Expected one VECTOR_BUILDER_FREEZE for loop concat rewrite"
-    );
-}
-
-#[test]
-fn opt_vector_concat_loop_runtime_semantics() {
-    assert_runtime_output("tests/opt/vector_concat_loop_unique.tw", &["6", "36"]);
-}
-
-#[test]
-fn opt_vector_concat_loop_negative_self_not_rewritten() {
-    let module = compile_opt("tests/opt/vector_concat_loop_self_not_rewritten.tw");
-    assert!(
-        has_call_to(&module, VECTOR_CONCAT),
-        "Expected VECTOR_CONCAT to remain for loop self-concat"
-    );
-    assert!(
-        !has_call_to(&module, VECTOR_BUILDER_EXTEND),
-        "Expected no VECTOR_BUILDER_EXTEND for loop self-concat"
-    );
-    assert_runtime_output(
-        "tests/opt/vector_concat_loop_self_not_rewritten.tw",
-        &["4", "1", "2", "1", "2"],
     );
 }
 
@@ -1338,11 +1116,6 @@ fn opt_vector_concat_dead_base_rewritten_to_builder_extend() {
         1,
         "Expected one VECTOR_BUILDER_FREEZE for dead-base concat rewrite"
     );
-}
-
-#[test]
-fn opt_vector_concat_dead_base_runtime_semantics() {
-    assert_runtime_output("tests/opt/vector_concat_dead_base.tw", &["4", "10"]);
 }
 
 #[test]
@@ -1381,14 +1154,6 @@ fn opt_vector_builder_region_mixed_straight_line_rewritten() {
 }
 
 #[test]
-fn opt_vector_builder_region_mixed_straight_line_runtime_semantics() {
-    assert_runtime_output(
-        "tests/opt/vector_builder_region_mixed_straight_line.tw",
-        &["6", "63"],
-    );
-}
-
-#[test]
 fn opt_vector_builder_region_mixed_loop_rewritten() {
     let module = compile_opt("tests/opt/vector_builder_region_mixed_loop.tw");
     assert_eq!(
@@ -1420,37 +1185,6 @@ fn opt_vector_builder_region_mixed_loop_rewritten() {
         count_calls_to(&module, VECTOR_BUILDER_FREEZE),
         1,
         "Expected one VECTOR_BUILDER_FREEZE for mixed loop builder region"
-    );
-}
-
-#[test]
-fn opt_vector_builder_region_mixed_loop_runtime_semantics() {
-    assert_runtime_output("tests/opt/vector_builder_region_mixed_loop.tw", &["8", "6"]);
-}
-
-#[test]
-fn opt_vector_append_loop_runtime_semantics() {
-    assert_runtime_output("tests/opt/vector_append_loop_unique.tw", &["3", "6"]);
-    assert_runtime_output(
-        "tests/opt/vector_append_loop_seeded_not_rewritten.tw",
-        &["10", "4"],
-    );
-    assert_runtime_output(
-        "tests/opt/vector_append_loop_reads_acc_not_rewritten.tw",
-        &["0", "1", "2", "3"],
-    );
-    assert_runtime_output(
-        "tests/opt/vector_append_loop_captured_not_rewritten.tw",
-        &["0", "1", "2", "3"],
-    );
-}
-
-#[test]
-fn opt_vector_append_loop_seeded_runtime_wasm_semantics() {
-    // Regression guard for builder_from capacity correctness in Wasm runtime path.
-    assert_runtime_output_wasm(
-        "tests/opt/vector_append_loop_seeded_not_rewritten.tw",
-        &["10", "4"],
     );
 }
 
@@ -1547,44 +1281,6 @@ fn opt_dict_additional_negative_no_rewrite() {
     );
 }
 
-#[test]
-fn opt_dict_phase4_runtime_semantics() {
-    assert_runtime_output("tests/opt/dict_set_unique.tw", &["7", "1"]);
-    assert_runtime_output("tests/opt/dict_set_aliased_not_rewritten.tw", &["0", "1"]);
-    assert_runtime_output("tests/opt/dict_remove_unique.tw", &["1", "false", "true"]);
-    assert_runtime_output(
-        "tests/opt/dict_remove_captured_not_rewritten.tw",
-        &["1", "0"],
-    );
-}
-
-#[test]
-fn opt_dict_phase6_runtime_semantics() {
-    assert_runtime_output(
-        "tests/opt/dict_chain_unique_rewritten.tw",
-        &["1", "false", "true"],
-    );
-    assert_runtime_output("tests/opt/dict_after_user_call_not_rewritten.tw", &["1"]);
-    assert_runtime_output(
-        "tests/opt/dict_stored_in_array_not_rewritten.tw",
-        &["0", "1"],
-    );
-}
-
-#[test]
-fn opt_dict_phase4_wasm_semantics() {
-    assert_runtime_output_wasm("tests/opt/dict_set_unique.tw", &["7", "1"]);
-    assert_runtime_output_wasm("tests/opt/dict_remove_unique.tw", &["1", "false", "true"]);
-}
-
-#[test]
-fn opt_dict_phase6_wasm_semantics() {
-    assert_runtime_output_wasm(
-        "tests/opt/dict_chain_unique_rewritten.tw",
-        &["1", "false", "true"],
-    );
-}
-
 // ── Phase A: reassign-aware taint refinement ─────────────────────────────────
 
 #[test]
@@ -1615,30 +1311,6 @@ fn opt_phase_a_dict_set_chain_alias_mid_not_rewritten() {
     assert!(
         !has_call_to(&module, DICT_SET_IN_PLACE),
         "Expected no DICT_SET_IN_PLACE when dict is aliased mid-chain"
-    );
-}
-
-#[test]
-fn opt_phase_a_runtime_semantics() {
-    assert_runtime_output(
-        "tests/opt/dict_set_chain_escape_at_end.tw",
-        &["3", "10", "20", "30"],
-    );
-    assert_runtime_output(
-        "tests/opt/dict_set_chain_alias_mid_not_rewritten.tw",
-        &["0", "1"],
-    );
-}
-
-#[test]
-fn opt_phase_a_wasm_semantics() {
-    assert_runtime_output_wasm(
-        "tests/opt/dict_set_chain_escape_at_end.tw",
-        &["3", "10", "20", "30"],
-    );
-    assert_runtime_output_wasm(
-        "tests/opt/dict_set_chain_alias_mid_not_rewritten.tw",
-        &["0", "1"],
     );
 }
 
@@ -1674,24 +1346,6 @@ fn opt_phase_b_dict_set_param_result_aliased_not_rewritten() {
         count_calls_to(&module, DICT_SET_IN_PLACE),
         0,
         "Expected no DICT_SET_IN_PLACE when COW result is aliased"
-    );
-}
-
-#[test]
-fn opt_phase_b_runtime_semantics() {
-    assert_runtime_output("tests/opt/dict_set_param_then_set.tw", &["2", "10", "20"]);
-    assert_runtime_output(
-        "tests/opt/dict_set_param_result_aliased_not_rewritten.tw",
-        &["1", "2"],
-    );
-}
-
-#[test]
-fn opt_phase_b_wasm_semantics() {
-    assert_runtime_output_wasm("tests/opt/dict_set_param_then_set.tw", &["2", "10", "20"]);
-    assert_runtime_output_wasm(
-        "tests/opt/dict_set_param_result_aliased_not_rewritten.tw",
-        &["1", "2"],
     );
 }
 
@@ -1858,74 +1512,6 @@ fn opt_dict_set_after_if_join_propagates_post_join_uniqueness() {
     );
 }
 
-#[test]
-fn opt_characterization_runtime_semantics() {
-    assert_runtime_output(
-        "tests/opt/dict_set_param_assign_back_chain.tw",
-        &["2", "10", "20"],
-    );
-    assert_runtime_output(
-        "tests/opt/dict_set_param_forward_bind_chain.tw",
-        &["2", "10", "20"],
-    );
-    assert_runtime_output("tests/opt/vector_append_helper_wrapper.tw", &["3", "3"]);
-    assert_runtime_output(
-        "tests/opt/vector_append_helper_forward_wrapper.tw",
-        &["3", "3"],
-    );
-    assert_runtime_output("tests/opt/dict_set_helper_wrapper.tw", &["2", "10", "20"]);
-    assert_runtime_output(
-        "tests/opt/dict_set_helper_forward_wrapper.tw",
-        &["2", "10", "20"],
-    );
-    assert_runtime_output(
-        "tests/opt/dict_remove_helper_wrapper.tw",
-        &["1", "false", "true"],
-    );
-    assert_runtime_output(
-        "tests/opt/dict_remove_helper_forward_wrapper.tw",
-        &["1", "false", "true"],
-    );
-    assert_runtime_output(
-        "tests/opt/dict_set_after_if_join.tw",
-        &["2", "10", "30", "2", "20", "30"],
-    );
-}
-
-#[test]
-fn opt_characterization_wasm_semantics() {
-    assert_runtime_output_wasm(
-        "tests/opt/dict_set_param_assign_back_chain.tw",
-        &["2", "10", "20"],
-    );
-    assert_runtime_output_wasm(
-        "tests/opt/dict_set_param_forward_bind_chain.tw",
-        &["2", "10", "20"],
-    );
-    assert_runtime_output_wasm("tests/opt/vector_append_helper_wrapper.tw", &["3", "3"]);
-    assert_runtime_output_wasm(
-        "tests/opt/vector_append_helper_forward_wrapper.tw",
-        &["3", "3"],
-    );
-    assert_runtime_output_wasm("tests/opt/dict_set_helper_wrapper.tw", &["2", "10", "20"]);
-    assert_runtime_output_wasm(
-        "tests/opt/dict_set_helper_forward_wrapper.tw",
-        &["2", "10", "20"],
-    );
-    assert_runtime_output_wasm(
-        "tests/opt/dict_remove_helper_wrapper.tw",
-        &["1", "false", "true"],
-    );
-    assert_runtime_output_wasm(
-        "tests/opt/dict_remove_helper_forward_wrapper.tw",
-        &["1", "false", "true"],
-    );
-    assert_runtime_output_wasm(
-        "tests/opt/dict_set_after_if_join.tw",
-        &["2", "10", "30", "2", "20", "30"],
-    );
-}
-
 // ── Dict loop in-place rewrite ───────────────────────────────────────────────
 
 #[test]
@@ -2087,82 +1673,6 @@ fn opt_dict_remove_loop_helper_forward_wrapper_rewritten() {
 }
 
 #[test]
-fn opt_dict_loop_runtime_semantics() {
-    assert_runtime_output("tests/opt/dict_set_loop_unique.tw", &["10"]);
-    assert_runtime_output("tests/opt/dict_remove_loop_unique.tw", &["0"]);
-    assert_runtime_output(
-        "tests/opt/dict_set_loop_aliased_not_rewritten.tw",
-        &["0", "3"],
-    );
-    assert_runtime_output("tests/opt/dict_set_loop_after_refresh.tw", &["3", "1", "2"]);
-    assert_runtime_output("tests/opt/dict_set_loop_captured_not_rewritten.tw", &["3"]);
-    assert_runtime_output("tests/opt/dict_set_loop_multiple_ops.tw", &["20"]);
-    assert_runtime_output("tests/opt/dict_set_loop_with_read.tw", &["5"]);
-    assert_runtime_output("tests/opt/dict_set_loop_helper_wrapper.tw", &["10"]);
-    assert_runtime_output("tests/opt/dict_remove_loop_helper_wrapper.tw", &["0"]);
-    assert_runtime_output("tests/opt/dict_set_loop_helper_forward_wrapper.tw", &["10"]);
-    assert_runtime_output(
-        "tests/opt/dict_remove_loop_helper_forward_wrapper.tw",
-        &["0"],
-    );
-}
-
-#[test]
-fn opt_dict_loop_wasm_semantics() {
-    assert_runtime_output_wasm("tests/opt/dict_set_loop_unique.tw", &["10"]);
-    assert_runtime_output_wasm("tests/opt/dict_remove_loop_unique.tw", &["0"]);
-    assert_runtime_output_wasm(
-        "tests/opt/dict_set_loop_aliased_not_rewritten.tw",
-        &["0", "3"],
-    );
-    assert_runtime_output_wasm("tests/opt/dict_set_loop_multiple_ops.tw", &["20"]);
-    assert_runtime_output_wasm("tests/opt/dict_set_loop_with_read.tw", &["5"]);
-    assert_runtime_output_wasm("tests/opt/dict_set_loop_helper_wrapper.tw", &["10"]);
-    assert_runtime_output_wasm("tests/opt/dict_remove_loop_helper_wrapper.tw", &["0"]);
-    assert_runtime_output_wasm("tests/opt/dict_set_loop_helper_forward_wrapper.tw", &["10"]);
-    assert_runtime_output_wasm(
-        "tests/opt/dict_remove_loop_helper_forward_wrapper.tw",
-        &["0"],
-    );
-}
-
-#[test]
-fn opt_record_escape_runtime_semantics() {
-    assert_runtime_output("tests/opt/record_alias_escape_not_in_place.tw", &["1"]);
-    assert_runtime_output("tests/opt/record_capture_escape_not_in_place.tw", &["1"]);
-}
-
-#[test]
-fn opt_record_escape_wasm_semantics() {
-    assert_runtime_output_wasm("tests/opt/record_alias_escape_not_in_place.tw", &["1"]);
-    assert_runtime_output_wasm("tests/opt/record_capture_escape_not_in_place.tw", &["1"]);
-}
-
-#[test]
-fn opt_record_update_chain_runtime_semantics() {
-    assert_runtime_output(
-        "tests/opt/record_update_chain_escape_at_end.tw",
-        &["10", "20", "30", "4"],
-    );
-    assert_runtime_output(
-        "tests/opt/record_update_chain_alias_mid_not_in_place.tw",
-        &["2", "9"],
-    );
-}
-
-#[test]
-fn opt_record_update_chain_wasm_semantics() {
-    assert_runtime_output_wasm(
-        "tests/opt/record_update_chain_escape_at_end.tw",
-        &["10", "20", "30", "4"],
-    );
-    assert_runtime_output_wasm(
-        "tests/opt/record_update_chain_alias_mid_not_in_place.tw",
-        &["2", "9"],
-    );
-}
-
-#[test]
 fn opt_vector_concat_guard_fresh_rewritten_to_builder() {
     // An accumulator that is `[]` should survive an early-return guard branch
     // and still be eligible for concat builder rewrite on the continuation path.
@@ -2190,14 +1700,6 @@ fn opt_vector_concat_guard_fresh_rewritten_to_builder() {
 }
 
 #[test]
-fn opt_vector_concat_guard_fresh_runtime_semantics() {
-    assert_runtime_output(
-        "tests/opt/vector_concat_guard_fresh_rewritten.tw",
-        &["3", "6"],
-    );
-}
-
-#[test]
 fn opt_dict_set_fresh_first_in_place() {
     // Dict.new() should have its FIRST set rewritten to DICT_SET_IN_PLACE.
     // Before source_fresh, only the second+ set was in-place (via refreshed).
@@ -2211,14 +1713,6 @@ fn opt_dict_set_fresh_first_in_place() {
         count_calls_to(&module, DICT_SET_IN_PLACE),
         2,
         "Expected both dict sets to be DICT_SET_IN_PLACE via source_fresh"
-    );
-}
-
-#[test]
-fn opt_dict_set_fresh_first_in_place_runtime() {
-    assert_runtime_output(
-        "tests/opt/dict_set_fresh_first_in_place.tw",
-        &["2", "10", "20"],
     );
 }
 
@@ -2246,14 +1740,6 @@ fn opt_vector_append_nonempty_init_loop_rewritten_to_builder() {
         count_calls_to(&module, VECTOR_BUILDER_FREEZE),
         1,
         "Expected VECTOR_BUILDER_FREEZE after loop"
-    );
-}
-
-#[test]
-fn opt_vector_append_nonempty_init_loop_runtime_semantics() {
-    assert_runtime_output(
-        "tests/opt/vector_append_nonempty_init_loop.tw",
-        &["6", "15"],
     );
 }
 
@@ -2293,11 +1779,6 @@ fn opt_fresh_wrapper_destructure_reread_same_field_not_rewritten() {
     );
 }
 
-#[test]
-fn opt_fresh_wrapper_destructure_runtime_semantics() {
-    assert_runtime_output("tests/opt/fresh_wrapper_destructure_dict.tw", &["42"]);
-}
-
 // ── Field-borrow optimization tests ──────────────────────────────────────────
 
 /// Field-borrow: struct with dict fields, multiple compound updates.
@@ -2314,10 +1795,4 @@ fn opt_field_borrow_dict_second_and_third_updates_in_place() {
         in_place, 0,
         "Expected no DICT_SET_IN_PLACE (stage0 narrower gate for field-borrow)"
     );
-}
-
-/// Field-borrow runtime: value inserted in each dict field must be observable.
-#[test]
-fn opt_field_borrow_dict_runtime_semantics() {
-    assert_runtime_output("tests/opt/field_borrow_dict.tw", &["42"]);
 }
