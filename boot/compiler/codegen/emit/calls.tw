@@ -86,18 +86,20 @@ fn emit_direct_call(
   sym := lookup_func_sym(ctx.func_sym_map, fid)
   out := buf
 
-  expected_params: Vector<MonoType> = case ctx.prepared_funcs[fid.id] {
-    .Some(pf) => collect sid in pf.params {
-      case pf.slots[sid.id] {
-        .Some(info) => info.mono,
-        .None => MonoType.Void,
-      }
-    },
-    .None => [],
-  }
+  expected_func := ctx.prepared_funcs[fid.id]
 
   for a, i in args {
-    out = emit_direct_arg(a, expected_params.get(i), ctx, out, fns)
+    expected: MonoType? = case expected_func {
+      .Some(pf) => case pf.params.get(i) {
+        .Some(sid) => case pf.slots[sid.id] {
+          .Some(info) => .Some(info.mono),
+          .None => .None,
+        },
+        .None => .None,
+      },
+      .None => .None,
+    }
+    out = emit_direct_arg(a, expected, ctx, out, fns)
   }
 
   out = .append(.Call(sym))

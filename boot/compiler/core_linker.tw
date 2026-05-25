@@ -126,6 +126,7 @@ pub fn link(
   }
 
   // Step 3: Build remap tables, rewrite functions, and preserve linked name table.
+  entry_origin_index := build_type_origin_index(entry_env)
   all_functions: Vector<FunctionDef> = []
   linked_func_table: Dict<String, FuncId> = Dict.new()
   linked_extern_imports: Dict<Int, ExternImport> = Dict.new()
@@ -209,7 +210,7 @@ pub fn link(
       }
     }
 
-    type_remap := build_type_remap(m.path, m.core.type_env, entry_env)
+    type_remap := build_type_remap(m.path, m.core.type_env, entry_env, entry_origin_index)
 
     // Collect method table entries from this module.
     // Uses the module's func_table + remap to resolve local method names to
@@ -507,17 +508,17 @@ fn make_call(func_id: FuncId, s: Span) CoreExpr {
 }
 
 // ── TypeId remapping ────────────────────────────────────────────────
-fn find_entry_type_by_origin(env: ResolvedEnv, origin: String) TypeId? {
+fn build_type_origin_index(env: ResolvedEnv) Dict<String, TypeId> {
+  out: Dict<String, TypeId> = Dict.new()
+
   for tid in env.type_origins.keys() {
     case env.type_origins[tid] {
-      .Some(existing) => if existing == origin {
-        return .Some(TypeId.{ id: tid })
-      },
+      .Some(origin) => out[origin] = TypeId.{ id: tid },
       .None => {},
     }
   }
 
-  .None
+  out
 }
 
 fn local_type_origin(module_path: String, type_name: String) String? {
@@ -528,10 +529,12 @@ fn local_type_origin(module_path: String, type_name: String) String? {
   }
 }
 
-fn build_type_remap(module_path: String, module_env: ResolvedEnv, entry_env: ResolvedEnv) Dict<
-  Int,
-  TypeId,
-> {
+fn build_type_remap(
+  module_path: String,
+  module_env: ResolvedEnv,
+  entry_env: ResolvedEnv,
+  entry_origin_index: Dict<String, TypeId>,
+) Dict<Int, TypeId> {
   out: Dict<Int, TypeId> = Dict.new()
   i := 0
 
@@ -542,7 +545,7 @@ fn build_type_remap(module_path: String, module_env: ResolvedEnv, entry_env: Res
       .None => local_type_origin(module_path, type_name),
     }
     mapped: TypeId? = case origin {
-      .Some(o) => case find_entry_type_by_origin(entry_env, o) {
+      .Some(o) => case entry_origin_index[o] {
         .Some(tid) => .Some(tid),
         // Origin not found in entry env — fall back to name lookup.
         // This handles builtin types (Option, Result, etc.) whose origins
