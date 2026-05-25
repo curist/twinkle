@@ -8,12 +8,21 @@ pub type BuiltinKind = { Runtime(RuntimeInfo), Intrinsic }
 
 pub type RuntimeInfo = .{ wasm_module: String, wasm_name: String }
 
+pub type BuiltinClosureWrapper = { ByteToString, CellUpdate, IteratorUnfold, HostWriteBytes }
+
+pub type BuiltinClosurePolicy = {
+  NotMaterializable,
+  GenericClosure,
+  WrapperClosure(BuiltinClosureWrapper),
+}
+
 pub type BuiltinEntry = .{
   name: String,
   canonical_name: String?,
   func_id: FuncId,
   kind: BuiltinKind,
   abi: AbiContract,
+  closure_policy: BuiltinClosurePolicy,
 }
 
 pub type BuiltinRegistry = .{
@@ -182,11 +191,12 @@ fn builtin_abi(name: String) AbiContract {
   }
 }
 
-pub fn runtime_with_abi(
+pub fn runtime_with_policy_and_abi(
   reg: BuiltinRegistry,
   name: String,
   wasm_module: String,
   wasm_name: String,
+  closure_policy: BuiltinClosurePolicy,
   builtin_abi: AbiContract,
 ) BuiltinRegistry {
   case reg.by_name[name] {
@@ -201,6 +211,7 @@ pub fn runtime_with_abi(
     func_id: fid,
     kind: .Runtime(.{ wasm_module, wasm_name }),
     abi: builtin_abi,
+    closure_policy,
   }
   by_name := reg.by_name
   by_id := reg.by_id
@@ -215,11 +226,36 @@ pub fn runtime_with_abi(
   }
 }
 
+pub fn runtime_with_abi(
+  reg: BuiltinRegistry,
+  name: String,
+  wasm_module: String,
+  wasm_name: String,
+  builtin_abi: AbiContract,
+) BuiltinRegistry {
+  runtime_with_policy_and_abi(reg, name, wasm_module, wasm_name, .NotMaterializable, builtin_abi)
+}
+
+pub fn runtime_with_policy(
+  reg: BuiltinRegistry,
+  name: String,
+  wasm_module: String,
+  wasm_name: String,
+  closure_policy: BuiltinClosurePolicy,
+) BuiltinRegistry {
+  runtime_with_policy_and_abi(reg, name, wasm_module, wasm_name, closure_policy, builtin_abi(name))
+}
+
 pub fn runtime(reg: BuiltinRegistry, name: String, wasm_module: String, wasm_name: String) BuiltinRegistry {
   runtime_with_abi(reg, name, wasm_module, wasm_name, builtin_abi(name))
 }
 
-pub fn intrinsic_with_abi(reg: BuiltinRegistry, name: String, builtin_abi: AbiContract) BuiltinRegistry {
+pub fn intrinsic_with_policy_and_abi(
+  reg: BuiltinRegistry,
+  name: String,
+  closure_policy: BuiltinClosurePolicy,
+  builtin_abi: AbiContract,
+) BuiltinRegistry {
   case reg.by_name[name] {
     .Some(_) => error("duplicate builtin registration: ${name}"),
     .None => {},
@@ -232,6 +268,7 @@ pub fn intrinsic_with_abi(reg: BuiltinRegistry, name: String, builtin_abi: AbiCo
     func_id: fid,
     kind: .Intrinsic,
     abi: builtin_abi,
+    closure_policy,
   }
   by_name := reg.by_name
   by_id := reg.by_id
@@ -244,6 +281,18 @@ pub fn intrinsic_with_abi(reg: BuiltinRegistry, name: String, builtin_abi: AbiCo
     entries: reg.entries.append(entry),
     next_id: reg.next_id + 1,
   }
+}
+
+pub fn intrinsic_with_abi(reg: BuiltinRegistry, name: String, builtin_abi: AbiContract) BuiltinRegistry {
+  intrinsic_with_policy_and_abi(reg, name, .NotMaterializable, builtin_abi)
+}
+
+pub fn intrinsic_with_policy(
+  reg: BuiltinRegistry,
+  name: String,
+  closure_policy: BuiltinClosurePolicy,
+) BuiltinRegistry {
+  intrinsic_with_policy_and_abi(reg, name, closure_policy, builtin_abi(name))
 }
 
 pub fn intrinsic(reg: BuiltinRegistry, name: String) BuiltinRegistry {
@@ -266,13 +315,8 @@ pub fn with_canonical(reg: BuiltinRegistry, canonical: String, internal: String)
     .Some(e) => e,
     .None => error("with_canonical: unknown internal builtin: ${internal}"),
   }
-  updated := BuiltinEntry.{
-    name: base_entry.name,
-    canonical_name: .Some(canonical),
-    func_id: base_entry.func_id,
-    kind: base_entry.kind,
-    abi: base_entry.abi,
-  }
+  updated := base_entry
+  updated.canonical_name = .Some(canonical)
   by_name := reg.by_name
   by_id := reg.by_id
   by_canonical := reg.by_canonical
@@ -328,14 +372,33 @@ pub fn try_method_id(reg: BuiltinRegistry, type_name: String, method_name: Strin
 // the signature drift tests derive from this table.
 pub type BuiltinDispatch = { Runtime(String, String), Intrinsic }
 
-pub type BuiltinSpec = .{ name: String, canonical: String?, dispatch: BuiltinDispatch }
+pub type BuiltinSpec = .{
+  name: String,
+  canonical: String?,
+  dispatch: BuiltinDispatch,
+  closure_policy: BuiltinClosurePolicy,
+}
 
 fn rt(name: String, wasm_module: String, wasm_name: String, canonical: String?) BuiltinSpec {
-  .{ name, canonical, dispatch: .Runtime(wasm_module, wasm_name) }
+  rt_closure(name, wasm_module, wasm_name, canonical, .NotMaterializable)
+}
+
+fn rt_closure(
+  name: String,
+  wasm_module: String,
+  wasm_name: String,
+  canonical: String?,
+  closure_policy: BuiltinClosurePolicy,
+) BuiltinSpec {
+  .{ name, canonical, dispatch: .Runtime(wasm_module, wasm_name), closure_policy }
 }
 
 fn intr(name: String, canonical: String?) BuiltinSpec {
-  .{ name, canonical, dispatch: .Intrinsic }
+  intr_closure(name, canonical, .NotMaterializable)
+}
+
+fn intr_closure(name: String, canonical: String?, closure_policy: BuiltinClosurePolicy) BuiltinSpec {
+  .{ name, canonical, dispatch: .Intrinsic, closure_policy }
 }
 
 /// The single authoritative table of all builtins.
@@ -354,10 +417,10 @@ pub fn builtin_specs() Vector<BuiltinSpec> {
     rt("eprint", "rt.core", "eprint", .None),
     rt("eprintln", "rt.core", "eprintln", .None),
     rt("core_eq", "rt.core", "eq", .None),
-    rt("int$to_string", "rt.str", "from_i64", .Some("Int.to_string")),
-    rt("float$to_string", "rt.str", "from_f64", .Some("Float.to_string")),
-    rt("bool$to_string", "rt.str", "from_bool", .Some("Bool.to_string")),
-    intr("string$to_string", .Some("String.to_string")),
+    rt_closure("int$to_string", "rt.str", "from_i64", .Some("Int.to_string"), .GenericClosure),
+    rt_closure("float$to_string", "rt.str", "from_f64", .Some("Float.to_string"), .GenericClosure),
+    rt_closure("bool$to_string", "rt.str", "from_bool", .Some("Bool.to_string"), .GenericClosure),
+    intr_closure("string$to_string", .Some("String.to_string"), .GenericClosure),
     rt("string$len", "rt.str", "len", .Some("String.len")),
     rt("string$concat", "rt.str", "concat", .Some("String.concat")),
     rt("string$substring_raw", "rt.str", "substring", .None),
@@ -397,22 +460,22 @@ pub fn builtin_specs() Vector<BuiltinSpec> {
     intr("range", .Some("range")),
     intr("range_step", .Some("range_step")),
     intr("iterator$next", .Some("Iterator.next")),
-    intr("iterator$unfold", .Some("Iterator.unfold")),
+    intr_closure("iterator$unfold", .Some("Iterator.unfold"), .WrapperClosure(.IteratorUnfold)),
     intr("cell$new", .Some("Cell.new")),
     intr("cell$get", .Some("Cell.get")),
     intr("cell$set", .Some("Cell.set")),
-    intr("cell$update", .Some("Cell.update")),
+    intr_closure("cell$update", .Some("Cell.update"), .WrapperClosure(.CellUpdate)),
     intr("task$spawn", .Some("Task.spawn")),
     intr("task$await", .Some("Task.await")),
     intr("task$yield", .Some("Task.yield")),
     intr("byte$to_int", .Some("Byte.to_int")),
     intr("byte$from_int", .Some("Byte.from_int")),
-    intr("byte$to_string", .Some("Byte.to_string")),
+    intr_closure("byte$to_string", .Some("Byte.to_string"), .WrapperClosure(.ByteToString)),
     intr("int$from_string", .Some("Int.from_string")),
     intr("float$from_string", .Some("Float.from_string")),
     rt("host_read_file", "host", "read_file", .None),
     rt("host_write_file", "host", "write_file", .None),
-    rt("host_write_bytes", "host", "write_bytes", .None),
+    rt_closure("host_write_bytes", "host", "write_bytes", .None, .WrapperClosure(.HostWriteBytes)),
     rt("host_mkdirp", "host", "mkdirp", .None),
     rt("host_list_dir", "host", "list_dir", .None),
     rt("host_exists", "host", "exists", .None),
@@ -443,8 +506,13 @@ pub fn make_builtin_registry() BuiltinRegistry {
 
   for spec in specs {
     cur = case spec.dispatch {
-      .Runtime(wasm_module, wasm_name) => cur.runtime(spec.name, wasm_module, wasm_name),
-      .Intrinsic => cur.intrinsic(spec.name),
+      .Runtime(wasm_module, wasm_name) => cur.runtime_with_policy(
+        spec.name,
+        wasm_module,
+        wasm_name,
+        spec.closure_policy,
+      ),
+      .Intrinsic => cur.intrinsic_with_policy(spec.name, spec.closure_policy),
     }
 
     case spec.canonical {

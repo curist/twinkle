@@ -1,7 +1,7 @@
 use compiler.backend.facts as facts
 use compiler.backend.prepared_ir.{PreparedFunc}
 use compiler.builtins as bi
-use compiler.builtins.{BuiltinRegistry}
+use compiler.builtins.{BuiltinClosureWrapper, BuiltinRegistry}
 use compiler.core_ir.{FuncId}
 use compiler.mono_type.{MonoType}
 use compiler.resolver as resolver
@@ -93,11 +93,8 @@ fn builtin_target(fid: FuncId, builtins: BuiltinRegistry, env: ResolvedEnv) Call
     .Some(r) => r,
     .None => { return .None },
   }
-  wk := builtin_wrapper_kind(fid, builtins)
-  materializable := case wk {
-    .Some(_) => true,
-    .None => builtin_generic_closure_materializable(fid, builtins),
-  }
+  wk := wrapper_kind(entry.closure_policy)
+  materializable := builtin_closure_materializable(entry.closure_policy)
   dcp: DirectCallPolicy = case entry.kind {
     .Runtime(_) => .RuntimeImport,
     .Intrinsic => .Intrinsic,
@@ -115,31 +112,25 @@ fn builtin_target(fid: FuncId, builtins: BuiltinRegistry, env: ResolvedEnv) Call
   )
 }
 
-// Returns the wrapper kind for builtins that need a dedicated closure trampoline.
-// None means the builtin uses the generic universal trampoline path (or is not materializable).
-pub fn builtin_wrapper_kind(fid: FuncId, builtins: BuiltinRegistry) WrapperKind? {
-  if fid == builtins.method_id("Byte", "to_string") {
-    return .Some(.ByteToString)
+fn wrapper_kind(policy: bi.BuiltinClosurePolicy) WrapperKind? {
+  case policy {
+    .WrapperClosure(wrapper) => .Some(convert_wrapper(wrapper)),
+    _ => .None,
   }
-
-  if fid == builtins.method_id("Cell", "update") {
-    return .Some(.CellUpdate)
-  }
-
-  if fid == builtins.method_id("Iterator", "unfold") {
-    return .Some(.IteratorUnfold)
-  }
-
-  if fid == builtins.id("host_write_bytes") {
-    return .Some(.HostWriteBytes)
-  }
-
-  .None
 }
 
-fn builtin_generic_closure_materializable(fid: FuncId, builtins: BuiltinRegistry) Bool {
-  fid == builtins.method_id("Int", "to_string")
-    or fid == builtins.method_id("Float", "to_string")
-    or fid == builtins.method_id("Bool", "to_string")
-    or fid == builtins.method_id("String", "to_string")
+fn convert_wrapper(wrapper: BuiltinClosureWrapper) WrapperKind {
+  case wrapper {
+    .ByteToString => .ByteToString,
+    .CellUpdate => .CellUpdate,
+    .IteratorUnfold => .IteratorUnfold,
+    .HostWriteBytes => .HostWriteBytes,
+  }
+}
+
+fn builtin_closure_materializable(policy: bi.BuiltinClosurePolicy) Bool {
+  case policy {
+    .NotMaterializable => false,
+    _ => true,
+  }
 }

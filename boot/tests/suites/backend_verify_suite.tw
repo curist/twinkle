@@ -5,7 +5,7 @@ use compiler.backend.prepare.{PreparedModule, prepare_backend}
 use compiler.backend.prepared_ir.{CaptureParam, PreparedFunc, SlotInfo}
 use compiler.backend.verify.{verify_prepared_module, verify_prepared_module_with_level}
 use compiler.base_env
-use compiler.builtins.{BuiltinRegistry, make_builtin_registry}
+use compiler.builtins.{BuiltinClosurePolicy, BuiltinRegistry, make_builtin_registry}
 use compiler.codegen.wasm_ir.{ValType}
 use compiler.codegen.wasm_plan_types.{WasmTypeRegistry}
 use compiler.core_ir.{FieldId, FuncId, LocalId, Param}
@@ -53,6 +53,39 @@ fn empty_builtins() BuiltinRegistry {
 
 fn no_captures() Dict<Int, Vector<CaptureParam>> {
   Dict.new()
+}
+
+fn registry_with_closure_policy(
+  reg: BuiltinRegistry,
+  name: String,
+  closure_policy: BuiltinClosurePolicy,
+) BuiltinRegistry {
+  base_entry := case reg.by_name[name] {
+    .Some(entry) => entry,
+    .None => error("registry_with_closure_policy: unknown builtin: ${name}"),
+  }
+  updated := base_entry
+  updated.closure_policy = closure_policy
+
+  by_name := reg.by_name
+  by_id := reg.by_id
+  by_canonical := reg.by_canonical
+  by_name[name] = updated
+  by_id[updated.func_id.id] = updated
+
+  case updated.canonical_name {
+    .Some(canonical) => by_canonical[canonical] = updated,
+    .None => {},
+  }
+
+  entries := collect entry in reg.entries {
+    if entry.name == name {
+      updated
+    } else {
+      entry
+    }
+  }
+  BuiltinRegistry.{ by_name, by_id, by_canonical, entries, next_id: reg.next_id }
 }
 
 fn mk_param(id: Int, ty: MonoType) Param {
@@ -542,6 +575,25 @@ pub fn suite() runner.Suite {
           .Function([.Int, step_ty], iter_ty),
           body,
           mk_mono_map([10], [MonoType.Function([.Int, step_ty], iter_ty)]),
+        )
+        prepared := prepare_backend(mk_module([func]), env, builtins, no_captures())
+        verify_ok_with_env(prepared, env, builtins)
+      },
+    )
+    .test(
+      "builtin AMakeClosure materialization follows registry policy",
+      fn() {
+        env := base_env.builtin_env()
+        builtins := registry_with_closure_policy(empty_builtins(), "vector$len", .GenericClosure)
+        vector_len := builtins.id("vector$len")
+        body: AnfExpr = .Let(lid(10), .AMakeClosure(vector_len, []), .Atom(.ALocal(lid(10))))
+        func := mk_func_def(
+          1,
+          "f",
+          [],
+          .Function([.Vector(.Int)], .Int),
+          body,
+          mk_mono_map([10], [MonoType.Function([.Vector(.Int)], .Int)]),
         )
         prepared := prepare_backend(mk_module([func]), env, builtins, no_captures())
         verify_ok_with_env(prepared, env, builtins)

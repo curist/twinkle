@@ -201,6 +201,56 @@ pub fn suite() runner.Suite {
       },
     )
     .test(
+      "registration defaults closure policy to not materializable",
+      fn() {
+        reg := empty_registry().runtime("print", "rt.core", "print").intrinsic("string$get")
+        print_entry := try reg.entry(reg.id("print")).ok_or("missing print")
+        get_entry := try reg.entry(reg.id("string$get")).ok_or("missing string$get")
+
+        case print_entry.closure_policy {
+          .NotMaterializable => {},
+          _ => { return .Err("runtime helper should default to NotMaterializable") },
+        }
+
+        case get_entry.closure_policy {
+          .NotMaterializable => .Ok({}),
+          _ => .Err("intrinsic helper should default to NotMaterializable"),
+        }
+      },
+    )
+    .test(
+      "full registry carries builtin closure policies",
+      fn() {
+        reg := make_builtin_registry()
+        int_to_string := try reg.entry(reg.method_id("Int", "to_string"))
+          .ok_or("missing Int.to_string")
+        byte_to_string := try reg.entry(reg.method_id("Byte", "to_string"))
+          .ok_or("missing Byte.to_string")
+        cell_update := try reg.entry(reg.method_id("Cell", "update")).ok_or("missing Cell.update")
+        vector_len := try reg.entry(reg.method_id("Vector", "len")).ok_or("missing Vector.len")
+
+        case int_to_string.closure_policy {
+          .GenericClosure => {},
+          _ => { return .Err("Int.to_string should use generic closure policy") },
+        }
+
+        case byte_to_string.closure_policy {
+          .WrapperClosure(.ByteToString) => {},
+          _ => { return .Err("Byte.to_string should use wrapper closure policy") },
+        }
+
+        case cell_update.closure_policy {
+          .WrapperClosure(.CellUpdate) => {},
+          _ => { return .Err("Cell.update should use wrapper closure policy") },
+        }
+
+        case vector_len.closure_policy {
+          .NotMaterializable => .Ok({}),
+          _ => .Err("Vector.len should not be closure-materializable"),
+        }
+      },
+    )
+    .test(
       "method_id looks up by Type.method canonical name",
       fn() {
         reg := make_builtin_registry()
