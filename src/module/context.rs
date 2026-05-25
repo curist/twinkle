@@ -89,6 +89,10 @@ pub struct CompileState {
     pub entry_module_path: Option<PathBuf>,
     /// Content/dependency hash per module for query-stage cache keys.
     pub module_hashes: HashMap<PathBuf, u64>,
+    /// Whether prelude method signatures have been registered ahead of compiling
+    /// prelude bodies. This lets prelude modules call methods from later
+    /// alphabetically compiled prelude modules.
+    pub prelude_method_signatures_registered: bool,
 }
 
 pub fn default_func_table() -> HashMap<String, FuncId> {
@@ -128,6 +132,7 @@ impl CompileState {
             lowered_modules: Vec::new(),
             entry_module_path: None,
             module_hashes: HashMap::new(),
+            prelude_method_signatures_registered: false,
         }
     }
 

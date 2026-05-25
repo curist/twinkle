@@ -70,6 +70,8 @@ use .suites.receiver_shorthand_suite
 use .suites.render_suite
 use .suites.resolver_suite
 use .suites.runtime_suite
+use .suites.scripting_string_suite
+use .suites.scripting_vector_suite
 use .suites.semantic_closure_rebinding_suite
 use .suites.semantic_control_flow_suite
 use .suites.semantic_suite
@@ -181,4 +183,6 @@ runner.run_all([
   first_class_method_suite.suite(),
   byte_suite.suite(),
   string_edge_cases_suite.suite(),
+  scripting_string_suite.suite(),
+  scripting_vector_suite.suite(),
 ])

@@ -398,6 +398,86 @@ pub fn split(s: String, sep: String) Vector<String> {
   parts.append(s.slice(start, n))
 }
 
+/// Split on newlines, handling both \n and \r\n.
+pub fn lines(s: String) Vector<String> {
+  n := s.len()
+  if n == 0 {
+    return []
+  }
+  parts: Vector<String> = []
+  start := 0
+  i := 0
+  for i < n {
+    if s[i] == 10 {
+      end := if i > start and s[i - 1] == 13 { i - 1 } else { i }
+      parts = parts.append(s.slice(start, end))
+      start = i + 1
+    }
+    i = i + 1
+  }
+  // trailing segment (strip final \r if present)
+  end := if n > start and s[n - 1] == 13 { n - 1 } else { n }
+  parts.append(s.slice(start, end))
+}
+
+/// Remove prefix and return the remainder, or .None if s doesn't start with prefix.
+pub fn strip_prefix(s: String, prefix: String) String? {
+  m := prefix.len()
+  if m > s.len() { return .None }
+  if s.slice(0, m) == prefix {
+    .Some(s.slice(m, s.len()))
+  } else {
+    .None
+  }
+}
+
+/// Remove suffix and return the remainder, or .None if s doesn't end with suffix.
+pub fn strip_suffix(s: String, suffix: String) String? {
+  n := s.len()
+  m := suffix.len()
+  if m > n { return .None }
+  if s.slice(n - m, n) == suffix {
+    .Some(s.slice(0, n - m))
+  } else {
+    .None
+  }
+}
+
+/// Count non-overlapping occurrences of needle in s.
+pub fn count(s: String, needle: String) Int {
+  m := needle.len()
+  if m == 0 { return 0 }
+  n := s.len()
+  if m > n { return 0 }
+  c := 0
+  i := 0
+  last := n - m
+  for i <= last {
+    found := true
+    j := 0
+    for j < m {
+      if s[i + j] != needle[j] {
+        found = false
+        break
+      }
+      j = j + 1
+    }
+    if found {
+      c = c + 1
+      i = i + m
+    } else {
+      i = i + 1
+    }
+  }
+  c
+}
+
+/// Replace all non-overlapping occurrences of old with new_s.
+pub fn replace(s: String, old: String, new_s: String) String {
+  if old.len() == 0 { return s }
+  s.split(old).join(new_s)
+}
+
 /// Trim leading and trailing ASCII whitespace.
 pub fn trim(s: String) String {
   n := s.len()

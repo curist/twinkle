@@ -1,0 +1,209 @@
+use tests.assert
+use tests.runner
+
+pub fn suite() runner.Suite {
+  runner.suite("scripting: string")
+    .test(
+      "lines splits on newline",
+      fn() {
+        parts := "a\nb\nc".lines()
+        try assert.equal(parts.len(), 3)
+        try assert.equal(parts[0], "a")
+        try assert.equal(parts[1], "b")
+        try assert.equal(parts[2], "c")
+        .Ok({})
+      },
+    )
+    .test(
+      "lines handles \\r\\n",
+      fn() {
+        parts := "a\r\nb\r\nc".lines()
+        try assert.equal(parts.len(), 3)
+        try assert.equal(parts[0], "a")
+        try assert.equal(parts[1], "b")
+        try assert.equal(parts[2], "c")
+        .Ok({})
+      },
+    )
+    .test(
+      "lines trailing newline produces empty last element",
+      fn() {
+        parts := "a\nb\n".lines()
+        try assert.equal(parts.len(), 3)
+        try assert.equal(parts[2], "")
+        .Ok({})
+      },
+    )
+    .test(
+      "lines empty string returns empty vector",
+      fn() {
+        parts := "".lines()
+        try assert.equal(parts.len(), 0)
+        .Ok({})
+      },
+    )
+    .test(
+      "lines single line no newline",
+      fn() {
+        parts := "hello".lines()
+        try assert.equal(parts.len(), 1)
+        try assert.equal(parts[0], "hello")
+        .Ok({})
+      },
+    )
+    .test(
+      "lines mixed \\n and \\r\\n",
+      fn() {
+        parts := "a\r\nb\nc".lines()
+        try assert.equal(parts.len(), 3)
+        try assert.equal(parts[0], "a")
+        try assert.equal(parts[1], "b")
+        try assert.equal(parts[2], "c")
+        .Ok({})
+      },
+    )
+    .test(
+      "strip_prefix returns remainder on match",
+      fn() {
+        result := "fn hello()".strip_prefix("fn ")
+        try assert.is_some(result)
+        try assert.equal(try result.ok_or("none"), "hello()")
+        .Ok({})
+      },
+    )
+    .test(
+      "strip_prefix returns None on no match",
+      fn() {
+        try assert.is_none("hello".strip_prefix("world"))
+        .Ok({})
+      },
+    )
+    .test(
+      "strip_prefix empty prefix always matches",
+      fn() {
+        result := "hello".strip_prefix("")
+        try assert.is_some(result)
+        try assert.equal(try result.ok_or("none"), "hello")
+        .Ok({})
+      },
+    )
+    .test(
+      "strip_prefix exact match returns empty string",
+      fn() {
+        result := "hello".strip_prefix("hello")
+        try assert.is_some(result)
+        try assert.equal(try result.ok_or("none"), "")
+        .Ok({})
+      },
+    )
+    .test(
+      "strip_prefix longer prefix returns None",
+      fn() {
+        try assert.is_none("hi".strip_prefix("hello"))
+        .Ok({})
+      },
+    )
+    .test(
+      "strip_suffix returns remainder on match",
+      fn() {
+        result := "file.tw".strip_suffix(".tw")
+        try assert.is_some(result)
+        try assert.equal(try result.ok_or("none"), "file")
+        .Ok({})
+      },
+    )
+    .test(
+      "strip_suffix returns None on no match",
+      fn() {
+        try assert.is_none("file.tw".strip_suffix(".rs"))
+        .Ok({})
+      },
+    )
+    .test(
+      "strip_suffix empty suffix always matches",
+      fn() {
+        result := "hello".strip_suffix("")
+        try assert.is_some(result)
+        try assert.equal(try result.ok_or("none"), "hello")
+        .Ok({})
+      },
+    )
+    .test(
+      "strip_suffix exact match returns empty string",
+      fn() {
+        result := "hello".strip_suffix("hello")
+        try assert.is_some(result)
+        try assert.equal(try result.ok_or("none"), "")
+        .Ok({})
+      },
+    )
+    .test(
+      "count finds occurrences",
+      fn() {
+        try assert.equal("abcabc".count("abc"), 2)
+        try assert.equal("aaa".count("a"), 3)
+        try assert.equal("hello".count("xyz"), 0)
+        .Ok({})
+      },
+    )
+    .test(
+      "count non-overlapping",
+      fn() {
+        // "aaa" with needle "aa" should find 1 (non-overlapping)
+        try assert.equal("aaa".count("aa"), 1)
+        try assert.equal("aaaa".count("aa"), 2)
+        .Ok({})
+      },
+    )
+    .test(
+      "count empty needle returns 0",
+      fn() {
+        try assert.equal("hello".count(""), 0)
+        .Ok({})
+      },
+    )
+    .test(
+      "count single char braces",
+      fn() {
+        try assert.equal("fn() { { } }".count("{"), 2)
+        try assert.equal("fn() { { } }".count("}"), 2)
+        .Ok({})
+      },
+    )
+    .test(
+      "replace all occurrences",
+      fn() {
+        try assert.equal("a,b,c".replace(",", ";"), "a;b;c")
+        try assert.equal("hello world".replace("world", "there"), "hello there")
+        .Ok({})
+      },
+    )
+    .test(
+      "replace no match returns original",
+      fn() {
+        try assert.equal("hello".replace("xyz", "!"), "hello")
+        .Ok({})
+      },
+    )
+    .test(
+      "replace empty old returns original",
+      fn() {
+        try assert.equal("hello".replace("", "!"), "hello")
+        .Ok({})
+      },
+    )
+    .test(
+      "replace with empty new deletes occurrences",
+      fn() {
+        try assert.equal("a--b--c".replace("--", ""), "abc")
+        .Ok({})
+      },
+    )
+    .test(
+      "replace multiple adjacent occurrences",
+      fn() {
+        try assert.equal("aaa".replace("a", "bb"), "bbbbbb")
+        .Ok({})
+      },
+    )
+}

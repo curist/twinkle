@@ -233,6 +233,9 @@ pub fn preassign_module_function_ids(
             Item::Function(decl) => {
                 let qualified = format!("{}.{}", alias, decl.name);
                 let func_id = if let Some(&existing) = func_table.get(&qualified) {
+                    if existing.0 >= *next_func_id {
+                        *next_func_id = existing.0 + 1;
+                    }
                     existing
                 } else {
                     let id = FuncId(*next_func_id);

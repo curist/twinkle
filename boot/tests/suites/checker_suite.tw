@@ -381,6 +381,23 @@ pub fn suite() runner.Suite {
       },
     )
     .test(
+      "local closure shadows prelude function in call position",
+      fn() {
+        env := test_env().add_function(
+          builtin_sig(
+            "count",
+            ["s", "needle"],
+            [mono_type.MonoType.String, mono_type.MonoType.String],
+            .Some(mono_type.MonoType.Int),
+          ),
+        )
+        src := "fn main() Int {\n  count := fn(n: Int) Int { n + 1 }\n  count(41)\n}"
+        r := try check_ok_with_env(src, env)
+        try assert.equal(try type_at(r, src, "count(41"), "Int")
+        .Ok({})
+      },
+    )
+    .test(
       "wrong arg count",
       fn() {
         src := "fn add(a: Int, b: Int) Int { a }\nfn main() Int { add(1) }"

@@ -1470,27 +1470,8 @@ fn synth_call(
         ),
       }
     },
-    .Ident(name) => case clean_ctx.env.lookup_function(name) {
-      .Some(sig) => {
-        inst := instantiate(sig, clean_ctx)
-
-        // Pre-unify return type to solve MetaVars before checking arguments
-        pu := pre_unify_return(inst.ctx, inst.ret, call_expected, s, diags)
-        call_r := check_instantiated_call(
-          pu.ctx,
-          pu.diags,
-          inst.params,
-          inst.ret,
-          args,
-          s,
-          callee.id,
-          callee.span.start,
-          .None,
-        )
-        bounds_r := check_instantiated_bounds(sig, inst.type_args, s, call_r.ctx, call_r.diags)
-        .{ ty: call_r.ty, ctx: bounds_r.ctx, diags: bounds_r.diags }
-      },
-      .None => synth_call_general(
+    .Ident(name) => case lookup_local(clean_ctx, name) {
+      .Some(_) => synth_call_general(
         callee,
         args,
         call_id,
@@ -1500,6 +1481,37 @@ fn synth_call(
         diags,
         call_expected,
       ),
+      .None => case clean_ctx.env.lookup_function(name) {
+        .Some(sig) => {
+          inst := instantiate(sig, clean_ctx)
+
+          // Pre-unify return type to solve MetaVars before checking arguments
+          pu := pre_unify_return(inst.ctx, inst.ret, call_expected, s, diags)
+          call_r := check_instantiated_call(
+            pu.ctx,
+            pu.diags,
+            inst.params,
+            inst.ret,
+            args,
+            s,
+            callee.id,
+            callee.span.start,
+            .None,
+          )
+          bounds_r := check_instantiated_bounds(sig, inst.type_args, s, call_r.ctx, call_r.diags)
+          .{ ty: call_r.ty, ctx: bounds_r.ctx, diags: bounds_r.diags }
+        },
+        .None => synth_call_general(
+          callee,
+          args,
+          call_id,
+          s.start,
+          s,
+          clean_ctx,
+          diags,
+          call_expected,
+        ),
+      },
     },
     _ => synth_call_general(callee, args, call_id, s.start, s, clean_ctx, diags, call_expected),
   }

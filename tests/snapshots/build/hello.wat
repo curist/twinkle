@@ -5813,7 +5813,7 @@
     local.get $p57
     return
   )
-  (func $user__func_93 (type $functype_51)
+  (func $user__func_95 (type $functype_51)
     (local $p0 i32)
     call $user____str_lit_get_68656c6c6f2c205477696e6b6c6521
     return_call $rt_core__println
@@ -5834,11 +5834,11 @@
     ref.cast (ref null $rt_types__String)
     call $user__func_87
   )
-  (func $user__func_93__closure (type $functype_52)
+  (func $user__func_95__closure (type $functype_52)
     (param $p0 anyref)
     (param $p1 anyref)
     (result anyref)
-    call $user__func_93
+    call $user__func_95
     i32.const 0
     ref.i31
   )
@@ -6519,7 +6519,7 @@
         struct.new $rt_types__Variant))
   )
   (func $user____user_init (type $functype_51)
-    call $user__func_93
+    call $user__func_95
   )
   (func $user____str_lit_get_empty (type $functype_58)
     (result (ref $rt_types__String))

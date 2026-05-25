@@ -17,8 +17,8 @@ use crate::ir::core::{CoreExpr, CoreExprKind, FuncId, LocalId, MatchArm};
 use crate::ir::lower::LowerInput;
 use crate::ir::lower::prelude;
 use crate::query::api::{
-    QueryDiagnostic, QuerySpan, preassign_module_function_ids, resolve_stage_with_diagnostics,
-    typecheck_stage_with_diagnostics_and_options,
+    QueryDiagnostic, QuerySpan, preassign_module_function_ids, resolve_stage_internal,
+    resolve_stage_with_diagnostics, typecheck_stage_with_diagnostics_and_options,
 };
 use crate::query::cache::with_global_cache;
 use crate::query::keys as query_keys;
@@ -432,6 +432,149 @@ pub fn compile_module(
     )
 }
 
+fn cleanup_pre_registered_prelude_targets(state: &mut CompileState, internal_alias: &str) {
+    let prefix = format!("{}.", internal_alias);
+    state
+        .func_table
+        .retain(|name, _| !name.starts_with(&prefix));
+    state
+        .qualified_func_targets
+        .retain(|name, _| !name.starts_with(&prefix));
+}
+
+fn pre_register_prelude_exports_with_internal_methods(
+    state: &mut CompileState,
+    internal_alias: &str,
+    exports: &ModuleExports,
+) {
+    for (func_name, sig) in &exports.public_functions {
+        let Some(receiver_ty) = sig.params.first() else {
+            continue;
+        };
+        let Some(receiver_type_id) = method_receiver_type_id(receiver_ty) else {
+            continue;
+        };
+        let Some(alias_name) = builtin_method_alias(receiver_type_id) else {
+            continue;
+        };
+
+        let builtin_name = format!("{}.{}", alias_name, func_name);
+        let internal_name = format!("{}.{}", internal_alias, func_name);
+        let builtin_sig = FunctionSignature {
+            name: builtin_name.clone(),
+            type_params: sig.type_params.clone(),
+            type_param_bounds: sig.type_param_bounds.clone(),
+            param_names: sig.param_names.clone(),
+            params: sig.params.clone(),
+            ret: sig.ret.clone(),
+            doc: sig.doc.clone(),
+            extern_module: sig.extern_module.clone(),
+        };
+        state.value_env.add_function(builtin_sig);
+
+        if let Some(&func_id) = exports.public_func_ids.get(func_name) {
+            let target = ExternalFuncRef {
+                module_path: exports.canonical_path.clone(),
+                local_func_id: func_id,
+            };
+            state.func_table.insert(internal_name.clone(), func_id);
+            state
+                .qualified_func_targets
+                .insert(internal_name.clone(), target);
+        }
+
+        let method_sig = FunctionSignature {
+            name: internal_name.clone(),
+            type_params: sig.type_params.clone(),
+            type_param_bounds: sig.type_param_bounds.clone(),
+            param_names: sig.param_names.clone(),
+            params: sig.params.clone(),
+            ret: sig.ret.clone(),
+            doc: sig.doc.clone(),
+            extern_module: sig.extern_module.clone(),
+        };
+        state.type_env.add_method(
+            receiver_type_id,
+            func_name.clone(),
+            internal_name,
+            Some(method_sig),
+        );
+    }
+}
+
+fn ensure_prelude_method_signatures_registered<A: ModuleSourceAdapter>(
+    state: &mut CompileState,
+    adapter: &A,
+) -> Result<()> {
+    if state.prelude_method_signatures_registered {
+        return Ok(());
+    }
+
+    state.prelude_method_signatures_registered = true;
+
+    for prelude_path in adapter.list_prelude_modules() {
+        let canonical = adapter.canonicalize(&prelude_path);
+        if !adapter.exists(&canonical) {
+            continue;
+        }
+
+        let alias = format!(
+            "__prelude_{}",
+            prelude_path
+                .file_stem()
+                .and_then(|s| s.to_str())
+                .unwrap_or("unknown")
+        );
+        let source = adapter.read_source(&canonical)?;
+        let parsed = crate::query::api::parse_source_module(&source, &canonical)?;
+        let resolved = match resolve_stage_internal(
+            &parsed.ast,
+            state.type_env.clone(),
+            state.value_env.clone(),
+            true,
+        ) {
+            Ok(resolved) => resolved,
+            Err(errors) => {
+                let messages: Vec<String> = errors
+                    .iter()
+                    .map(|err| err.format(&parsed.file_registry, Some(&state.type_env)))
+                    .collect();
+                return Err(anyhow!(messages.join("\n")));
+            }
+        };
+
+        let mut func_table = HashMap::new();
+        let mut next_func_id = prelude::USER_FUNC_START;
+        preassign_module_function_ids(&parsed.ast, &alias, &mut func_table, &mut next_func_id);
+
+        let mut exports = ModuleExports::empty();
+        exports.canonical_path = canonical;
+        for item in &parsed.ast.items {
+            match item {
+                Item::Function(decl) if decl.is_pub => {
+                    if let Some(sig) = resolved.value_env.get_function(&decl.name).cloned() {
+                        exports.public_functions.insert(decl.name.clone(), sig);
+                    }
+                    let qualified = format!("{}.{}", alias, decl.name);
+                    if let Some(&func_id) = func_table.get(&qualified) {
+                        exports.public_func_ids.insert(decl.name.clone(), func_id);
+                    }
+                }
+                Item::TypeDecl(decl) if decl.is_pub => {
+                    if let Some(type_id) = resolved.type_env.lookup_type(&decl.name) {
+                        exports.public_types.insert(decl.name.clone(), type_id);
+                    }
+                }
+                _ => {}
+            }
+        }
+
+        pre_register_prelude_exports_with_internal_methods(state, &alias, &exports);
+    }
+
+    Ok(())
+}
+
 fn compile_module_with_adapter<A: ModuleSourceAdapter>(
     file_path: &Path,
     alias: &str,
@@ -483,6 +626,11 @@ fn compile_module_with_adapter<A: ModuleSourceAdapter>(
     // Compile dependencies from an explicit plan:
     // source-order imports, then deterministic prelude auto-imports.
     let dep_plan = plan_module_dependencies(file_path, &canonical, &ast, adapter)?;
+    let prelude_root_canonical = adapter.canonicalize(&adapter.prelude_root());
+    let is_prelude_module = canonical.starts_with(&prelude_root_canonical);
+    if is_prelude_module {
+        ensure_prelude_method_signatures_registered(state, adapter)?;
+    }
 
     importing_stack.push(canonical.clone());
 
@@ -723,6 +871,10 @@ fn compile_planned_dependencies<A: ModuleSourceAdapter>(
         // State outside the snapshot (for example global counters and hashes)
         // continues to accumulate across both phases.
         restore_compile_env(state, compile_snapshot.clone());
+        if matches!(dep.kind, PlannedDependencyKind::Prelude) {
+            state.prelude_method_signatures_registered = false;
+            ensure_prelude_method_signatures_registered(state, adapter)?;
+        }
         let result = compile_module_with_adapter(
             &dep.canonical_path,
             &dep.alias,
@@ -745,6 +897,9 @@ fn compile_planned_dependencies<A: ModuleSourceAdapter>(
                     PlannedDependencyKind::Prelude => DependencyProjection::Prelude,
                 };
                 project_dependency_exports(state, projection, &dep_exports)?;
+                if matches!(dep.kind, PlannedDependencyKind::Prelude) {
+                    cleanup_pre_registered_prelude_targets(state, &dep.alias);
+                }
                 projected_snapshot = snapshot_compile_env(state);
             }
             Err(err) => {
@@ -853,6 +1008,12 @@ fn maybe_lower_module(
             .entry(name.clone())
             .or_insert_with(|| ext_ref.clone());
     }
+    // Prelude method signatures are pre-registered before their defining
+    // modules are lowered. When lowering that defining module itself, prefer
+    // its local func_table entries over the pre-registered external targets;
+    // otherwise self-calls can be represented as external refs that collide
+    // with module-local FuncIds during linking.
+    merged_func_targets.retain(|_, ext_ref| ext_ref.module_path != canonical);
     let input = LowerInput {
         type_env: state.type_env.clone(),
         value_env: state.value_env.clone(),

@@ -1,0 +1,144 @@
+use tests.assert
+use tests.runner
+
+pub fn suite() runner.Suite {
+  runner.suite("scripting: vector")
+    .test(
+      "position finds first matching index",
+      fn() {
+        xs: Vector<Int> = [10, 20, 30, 40]
+        result := xs.position(
+          fn(x) {
+            x == 30
+          },
+        )
+        try assert.is_some(result)
+        try assert.equal(try result.ok_or("none"), 2)
+        .Ok({})
+      },
+    )
+    .test(
+      "position returns None when no match",
+      fn() {
+        xs: Vector<Int> = [1, 2, 3]
+        try assert.is_none(
+          xs.position(
+            fn(x) {
+              x > 10
+            },
+          ),
+        )
+        .Ok({})
+      },
+    )
+    .test(
+      "position returns first match not last",
+      fn() {
+        xs: Vector<Int> = [5, 10, 15, 10, 5]
+        result := xs.position(
+          fn(x) {
+            x == 10
+          },
+        )
+        try assert.is_some(result)
+        try assert.equal(try result.ok_or("none"), 1)
+        .Ok({})
+      },
+    )
+    .test(
+      "position on empty vector returns None",
+      fn() {
+        xs: Vector<Int> = []
+        try assert.is_none(
+          xs.position(
+            fn(x) {
+              x == 1
+            },
+          ),
+        )
+        .Ok({})
+      },
+    )
+    .test(
+      "position with predicate on strings",
+      fn() {
+        xs: Vector<String> = ["apple", "banana", "cherry"]
+        result := xs.position(
+          fn(s) {
+            s.starts_with("b")
+          },
+        )
+        try assert.is_some(result)
+        try assert.equal(try result.ok_or("none"), 1)
+        .Ok({})
+      },
+    )
+    .test(
+      "flat_map expands elements",
+      fn() {
+        xs: Vector<Int> = [1, 2, 3]
+        result := xs.flat_map(
+          fn(x) {
+            [x, x * 10]
+          },
+        )
+        try assert.equal(result.len(), 6)
+        try assert.equal(result[0], 1)
+        try assert.equal(result[1], 10)
+        try assert.equal(result[2], 2)
+        try assert.equal(result[3], 20)
+        try assert.equal(result[4], 3)
+        try assert.equal(result[5], 30)
+        .Ok({})
+      },
+    )
+    .test(
+      "flat_map can filter by returning empty",
+      fn() {
+        xs: Vector<Int> = [1, 2, 3, 4, 5]
+        evens := xs.flat_map(
+          fn(x) {
+            if x % 2 == 0 {
+              [x]
+            } else {
+              []
+            }
+          },
+        )
+        try assert.equal(evens.len(), 2)
+        try assert.equal(evens[0], 2)
+        try assert.equal(evens[1], 4)
+        .Ok({})
+      },
+    )
+    .test(
+      "flat_map on empty vector",
+      fn() {
+        xs: Vector<Int> = []
+        result := xs.flat_map(
+          fn(x) {
+            [x, x]
+          },
+        )
+        try assert.equal(result.len(), 0)
+        .Ok({})
+      },
+    )
+    .test(
+      "flat_map with strings",
+      fn() {
+        words: Vector<String> = ["hello world", "foo bar"]
+        parts := words.flat_map(
+          fn(w) {
+            w.split(" ")
+          },
+        )
+        try assert.equal(parts.len(), 4)
+        try assert.equal(parts[0], "hello")
+        try assert.equal(parts[1], "world")
+        try assert.equal(parts[2], "foo")
+        try assert.equal(parts[3], "bar")
+        .Ok({})
+      },
+    )
+}

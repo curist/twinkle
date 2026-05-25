@@ -157,6 +157,27 @@ pub fn sort<T: Ord>(xs: Vector<T>) Vector<T> {
   })
 }
 
+/// Return the index of the first element matching a predicate, or .None.
+pub fn position<A>(xs: Vector<A>, f: fn(A) Bool) Int? {
+  for x, i in xs {
+    if f(x) {
+      return .Some(i)
+    }
+  }
+  .None
+}
+
+/// Map each element to a vector and flatten the results.
+pub fn flat_map<A, B>(xs: Vector<A>, f: fn(A) Vector<B>) Vector<B> {
+  out: Vector<B> = []
+  for x in xs {
+    for y in f(x) {
+      out = out.append(y)
+    }
+  }
+  out
+}
+
 /// Lexicographic comparison of two vectors.
 pub fn compare<T: Ord>(a: Vector<T>, b: Vector<T>) Order {
   min_len := if a.len() < b.len() { a.len() } else { b.len() }

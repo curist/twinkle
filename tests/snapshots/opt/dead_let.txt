@@ -1,6 +1,6 @@
 // ANF Module
 // 2 function(s)
-// init = FuncId(93)
+// init = FuncId(95)
 
 fn __prelude_vector.join  [FuncId(87)]  params=[L0: Vector(String), L1: String]
   return_ty: String
@@ -97,7 +97,7 @@ fn __prelude_vector.join  [FuncId(87)]  params=[L0: Vector(String), L1: String]
     }
     L67
 
-fn __init__  [FuncId(93)]  params=[]
+fn __init__  [FuncId(95)]  params=[]
   return_ty: Void
   body:
     let L2 = call GlobalFunc(2) ("hello")
