@@ -21,6 +21,7 @@ use .suites.byte_suite
 use .suites.checker_coverage_suite
 use .suites.checker_suite
 use .suites.codegen_emit_suite
+use .suites.codegen_integration_suite
 use .suites.core_ir_suite
 use .suites.defer_suite
 use .suites.dependency_graph_suite
@@ -139,6 +140,7 @@ runner.run_all([
   backend_verify_suite.suite(),
   wat_suite.suite(),
   codegen_emit_suite.suite(),
+  codegen_integration_suite.suite(),
   linker_suite.suite(),
   runtime_suite.suite(),
   module_loader_suite.suite(),

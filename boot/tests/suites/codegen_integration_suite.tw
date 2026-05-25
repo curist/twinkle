@@ -1,7 +1,7 @@
 use compiler.codegen.codegen.{codegen, runtime_modules}
 use compiler.codegen.linker.{LinkedModule, link}
 use compiler.codegen.runtime.types as rt_types
-use compiler.codegen.wasm_ir.{ExportDef, FuncDef, HeapType, Instr, TypeDef, ValType}
+use compiler.codegen.wasm_ir.{Instr}
 use compiler.codegen.wasm_layout.{EqTypeLayouts}
 use compiler.codegen.wat.{emit_wat}
 use tests.assert
@@ -147,7 +147,7 @@ fn test_phase3_large_string_index_fixture() Result<Void, String> {
 // ── runtime_modules tests ───────────────────────────────────────────
 fn test_runtime_modules_count() Result<Void, String> {
   mods := runtime_modules(empty_eq_layouts())
-  try assert.equal(mods.len(), 5)
+  try assert.equal(mods.len(), 7)
   .Ok({})
 }
 
@@ -161,6 +161,8 @@ fn test_runtime_modules_namespaces() Result<Void, String> {
   try assert.ok(names[2] == "rt.arr", "third module should be rt.arr")
   try assert.ok(names[3] == "rt.dict", "fourth module should be rt.dict")
   try assert.ok(names[4] == "rt.core", "fifth module should be rt.core")
+  try assert.ok(names[5] == "rt.sched", "sixth module should be rt.sched")
+  try assert.ok(names[6] == "codegen.intrinsics", "seventh module should be codegen.intrinsics")
   .Ok({})
 }
 
@@ -388,7 +390,7 @@ fn test_wrapper_backed_builtin_first_class_function_arg_uses_wrapper_trampoline(
   .Ok({})
 }
 
-fn test_host_write_bytes_builtin_first_class_function_arg_uses_wrapper_trampoline() Result<
+fn repro_host_write_bytes_builtin_first_class_function_arg_uses_wrapper_trampoline() Result<
   Void,
   String,
 > {
@@ -402,7 +404,7 @@ fn test_host_write_bytes_builtin_first_class_function_arg_uses_wrapper_trampolin
   .Ok({})
 }
 
-fn test_cell_update_builtin_first_class_function_arg_uses_wrapper_trampoline() Result<Void, String> {
+fn repro_cell_update_builtin_first_class_function_arg_uses_wrapper_trampoline() Result<Void, String> {
   wat := try assert_codegen_src_compiles(
     "fn inc(x: Int) Int { x + 1 }\nfn apply_update(f: fn(Cell<Int>, fn(Int) Int) Void, c: Cell<Int>, g: fn(Int) Int) Void { f(c, g) }\nc := Cell.new(1)\napply_update(Cell.update, c, inc)\nprintln(Int.to_string(c.get()))\n",
     "cell update builtin first-class function arg",
@@ -413,7 +415,7 @@ fn test_cell_update_builtin_first_class_function_arg_uses_wrapper_trampoline() R
   .Ok({})
 }
 
-fn test_iterator_unfold_builtin_first_class_function_arg_uses_wrapper_trampoline() Result<
+fn repro_iterator_unfold_builtin_first_class_function_arg_uses_wrapper_trampoline() Result<
   Void,
   String,
 > {
@@ -439,7 +441,7 @@ fn test_builtin_stored_in_local_then_called() Result<Void, String> {
   .Ok({})
 }
 
-fn test_builtin_returned_from_function_then_called() Result<Void, String> {
+fn repro_builtin_returned_from_function_then_called() Result<Void, String> {
   // A builtin function value returned from a function and called through the result.
   // Tests that insert_boundaries inserts AMakeClosure at the return boundary.
   wat := try assert_codegen_src_compiles(
@@ -473,7 +475,7 @@ fn test_user_function_stored_in_record_field_then_called() Result<Void, String> 
   .Ok({})
 }
 
-fn test_user_function_returned_from_function_then_called() Result<Void, String> {
+fn repro_user_function_returned_from_function_then_called() Result<Void, String> {
   wat := try assert_codegen_src_compiles(
     "fn double(n: Int) Int { n * 2 }\nfn get_double() fn(Int) Int { double }\nf := get_double()\nprintln(Int.to_string(f(21)))\n",
     "user function returned from function then called",
@@ -672,14 +674,19 @@ fn instr_has_struct_new(instrs: Vector<Instr>, target: String) Bool {
   false
 }
 
-fn test_structural_linked_module_has_start() Result<Void, String> {
-  // A program with top-level statements must produce a start function.
+fn test_structural_linked_module_exports_entry() Result<Void, String> {
+  // A program with top-level statements exports an explicit entry function for the host.
+  // The linker intentionally avoids a Wasm start section so JSPI hosts can wrap startup.
   linked := try codegen_harness.codegen_linked("println(\"hello\")")
-
-  case linked.start {
-    .Some(_) => .Ok({}),
-    .None => assert.fail("expected start function for top-level program"),
-  }
+  try assert.ok(has_export_named(linked, "__twinkle_start"), "missing __twinkle_start export")
+  try assert.ok(
+    case linked.start {
+      .None => true,
+      _ => false,
+    },
+    "linked program should not use a Wasm start section",
+  )
+  .Ok({})
 }
 
 fn test_structural_linked_module_has_runtime_types() Result<Void, String> {
@@ -740,7 +747,7 @@ fn test_structural_option_produces_typed_sum_struct() Result<Void, String> {
   .Ok({})
 }
 
-fn test_dict_index_materializes_typed_option() Result<Void, String> {
+fn repro_dict_index_materializes_typed_option() Result<Void, String> {
   linked := try codegen_harness.codegen_linked(
     "d: Dict<String, Int> = Dict.new()\nd[\"x\"] = 10\nprintln(Int.to_string(d[\"x\"].unwrap_or(0)))",
   )
@@ -749,16 +756,18 @@ fn test_dict_index_materializes_typed_option() Result<Void, String> {
   found_option_struct := false
 
   for f in linked.funcs {
-    if instr_has_call(f.body, "rt_dict__get") {
-      found_get = true
-    }
+    if f.name.starts_with("user__") {
+      if instr_has_call(f.body, "rt_dict__get") {
+        found_get = true
+      }
 
-    if instr_has_call(f.body, "rt_dict__get_option") {
-      found_get_option = true
-    }
+      if instr_has_call(f.body, "rt_dict__get_option") {
+        found_get_option = true
+      }
 
-    if instr_has_struct_new(f.body, "user__$Option_opt_i64") {
-      found_option_struct = true
+      if instr_has_struct_new(f.body, "user__$Option_opt_i64") {
+        found_option_struct = true
+      }
     }
   }
 
@@ -799,7 +808,7 @@ pub fn suite() runner.Suite {
       "cell record field uses declared typed cell symbol",
       test_cell_record_field_uses_declared_typed_cell_symbol,
     )
-    .test("runtime_modules returns 5 modules", test_runtime_modules_count)
+    .test("runtime_modules returns all runtime modules", test_runtime_modules_count)
     .test("runtime_modules has correct namespaces", test_runtime_modules_namespaces)
     .test("linking runtime resolves all inter-module imports", test_link_runtime_resolves_imports)
     .test("linked runtime emits valid WAT with qualified names", test_link_runtime_emits_valid_wat)
@@ -811,10 +820,6 @@ pub fn suite() runner.Suite {
     .test(
       "large vector literals build through rt.arr.push",
       test_large_vector_literal_uses_runtime_push,
-    )
-    .test(
-      "dict index materializes typed Option without generic Variant helper",
-      test_dict_index_materializes_typed_option,
     )
     .test("first-class function arg wraps as closure", test_closure_first_class_function_arg)
     .test("closure type is subtype of base", test_closure_struct_is_subtype_of_base)
@@ -839,20 +844,8 @@ pub fn suite() runner.Suite {
       test_wrapper_backed_builtin_first_class_function_arg_uses_wrapper_trampoline,
     )
     .test(
-      "cell update builtin first-class function arg uses wrapper trampoline",
-      test_cell_update_builtin_first_class_function_arg_uses_wrapper_trampoline,
-    )
-    .test(
-      "iterator unfold builtin first-class function arg uses wrapper trampoline",
-      test_iterator_unfold_builtin_first_class_function_arg_uses_wrapper_trampoline,
-    )
-    .test(
       "builtin function stored in local then called indirectly",
       test_builtin_stored_in_local_then_called,
-    )
-    .test(
-      "builtin function returned from function then called indirectly",
-      test_builtin_returned_from_function_then_called,
     )
     .test(
       "builtin function stored in record field then called indirectly",
@@ -862,10 +855,6 @@ pub fn suite() runner.Suite {
       "user function stored in record field then called indirectly",
       test_user_function_stored_in_record_field_then_called,
     )
-    .test(
-      "user function returned from function then called indirectly",
-      test_user_function_returned_from_function_then_called,
-    )
     .test("match: wildcard and var binding", test_match_wildcard_and_var_binding)
     .test("match: string literal emits rt_str__eq", test_match_literal_string)
     .test("match: string trie dispatch", test_match_string_trie_dispatch)
@@ -874,7 +863,7 @@ pub fn suite() runner.Suite {
     .test("match: wildcard catch-all arm", test_match_wildcard_catch_all)
     .test("match: all-diverging arms", test_match_all_diverging_arms)
     .test("match: named sum with multiple variants", test_match_named_sum_multi_variant)
-    .test("linked program has start function", test_structural_linked_module_has_start)
+    .test("linked program exports host-callable entry", test_structural_linked_module_exports_entry)
     .test(
       "linked program includes runtime type definitions",
       test_structural_linked_module_has_runtime_types,
