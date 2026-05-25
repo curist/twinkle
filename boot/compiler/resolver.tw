@@ -2202,7 +2202,7 @@ fn build_type_origin_index(env: ResolvedEnv) Dict<String, TypeId> {
 
 fn plan_export_type_ids(env: ResolvedEnv, alias: String, exports: ModuleExports) Dict<Int, TypeId> {
   ids: Dict<Int, TypeId> = Dict.new()
-  next_id := next_available_type_id(env)
+  next_id := -1
   origin_index := build_type_origin_index(env)
 
   for exported in all_exported_types(exports) {
@@ -2218,6 +2218,10 @@ fn plan_export_type_ids(env: ResolvedEnv, alias: String, exports: ModuleExports)
     case existing_id {
       .Some(eid) => ids[exported.entry.id.id] = eid,
       .None => {
+        if next_id < 0 {
+          next_id = next_available_type_id(env)
+        }
+
         ids[exported.entry.id.id] = TypeId.{ id: next_id }
         next_id = next_id + 1
       },
