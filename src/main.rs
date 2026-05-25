@@ -1,115 +1,91 @@
-use anyhow::Result;
-use clap::{Parser, Subcommand};
+use anyhow::{Result, bail};
 
-#[derive(Parser)]
-#[command(name = "twk")]
-#[command(about = "Twinkle compiler - A statically typed language targeting WebAssembly GC", long_about = None)]
-struct Cli {
-    #[command(subcommand)]
-    command: Commands,
-}
-
-#[derive(Subcommand)]
-enum Commands {
-    /// Parse a Twinkle source file and display the AST
-    Parse {
-        /// Path to the .tw file
-        file: String,
-    },
-    /// Type-check a Twinkle source file
-    Check {
-        /// Path to the .tw file
-        file: String,
-    },
-    /// Lower a Twinkle source file to Core IR and display it
-    Lower {
-        /// Path to the .tw file
-        file: String,
-    },
-    /// Lower a Twinkle source file to ANF IR and display it
-    LowerAnf {
-        /// Path to the .tw file
-        file: String,
-    },
-    /// Optimise a Twinkle source file and display the resulting ANF IR
-    Opt {
-        /// Path to the .tw file
-        file: String,
-        /// Also print the unoptimized ANF before the optimized form
-        #[arg(long)]
-        show_original: bool,
-    },
-    /// Compile a Twinkle program to WAT/Wasm
-    Build {
-        /// Path to the .tw file
-        file: String,
-        /// Output file path
-        #[arg(short, long)]
-        output: Option<String>,
-        /// Also emit a sibling .wat file when outputting .wasm
-        #[arg(long)]
-        emit_wat: bool,
-    },
-    /// Dump the built-in runtime as linked WAT
-    RuntimeDump,
+fn print_usage() {
+    eprintln!("twk - Twinkle compiler (stage0 bootstrap)");
+    eprintln!();
+    eprintln!("Usage: twk <command> [options]");
+    eprintln!();
+    eprintln!("Commands:");
+    eprintln!("  parse <file>                    Parse and display AST");
+    eprintln!("  check <file>                    Type-check a source file");
+    eprintln!("  lower <file>                    Lower to Core IR");
+    eprintln!("  lower-anf <file>                Lower to ANF IR");
+    eprintln!("  opt <file> [--show-original]    Optimize and display ANF IR");
+    eprintln!("  build <file> [-o path] [--emit-wat]  Compile to WAT/Wasm");
 }
 
 fn main() -> Result<()> {
-    let cli = Cli::parse();
+    let args: Vec<String> = std::env::args().skip(1).collect();
 
-    match cli.command {
-        Commands::Parse { file } => {
+    if args.is_empty() {
+        print_usage();
+        std::process::exit(1);
+    }
+
+    let cmd = args[0].as_str();
+
+    match cmd {
+        "parse" => {
+            let file = require_file(&args, cmd)?;
             twinkle::cli::parse::parse_file(&file)?;
         }
-        Commands::Check { file } => {
+        "check" => {
+            let file = require_file(&args, cmd)?;
             twinkle::cli::check::check_file(&file)?;
         }
-        Commands::Lower { file } => {
+        "lower" => {
+            let file = require_file(&args, cmd)?;
             twinkle::cli::lower::lower_file(&file)?;
         }
-        Commands::LowerAnf { file } => {
+        "lower-anf" => {
+            let file = require_file(&args, cmd)?;
             let path = std::path::Path::new(&file);
             twinkle::cli::lower_anf::cmd_lower_anf(path)?;
         }
-        Commands::Opt {
-            file,
-            show_original,
-        } => {
+        "opt" => {
+            let file = require_file(&args, cmd)?;
+            let show_original = args[2..].contains(&"--show-original".to_string());
             let path = std::path::Path::new(&file);
             twinkle::cli::opt::cmd_opt(path, show_original)?;
         }
-        Commands::Build {
-            file,
-            output,
-            emit_wat,
-        } => {
+        "build" => {
+            let file = require_file(&args, cmd)?;
+            let mut output = None;
+            let mut emit_wat = false;
+            let mut i = 2;
+            while i < args.len() {
+                match args[i].as_str() {
+                    "-o" | "--output" => {
+                        i += 1;
+                        if i >= args.len() {
+                            bail!("-o requires a path argument");
+                        }
+                        output = Some(args[i].clone());
+                    }
+                    "--emit-wat" => emit_wat = true,
+                    other => bail!("unknown option for build: {other}"),
+                }
+                i += 1;
+            }
             twinkle::cli::build::build_file(&file, output.as_deref(), emit_wat)?;
         }
-        Commands::RuntimeDump => {
-            twinkle::cli::runtime_dump::runtime_dump()?;
+        "--help" | "-h" | "help" => {
+            print_usage();
+        }
+        other => {
+            eprintln!("unknown command: {other}");
+            eprintln!();
+            print_usage();
+            std::process::exit(1);
         }
     }
 
     Ok(())
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn unknown_runtime_subcommand_is_rejected() {
-        let parsed = Cli::try_parse_from(["twk", "runwasm", "tests/run/hello.tw"]);
-        match parsed {
-            Ok(_) => panic!("unknown subcommand should be rejected"),
-            Err(err) => {
-                let rendered = err.to_string();
-                assert!(
-                    rendered.contains("unrecognized subcommand")
-                        || rendered.contains("unknown subcommand"),
-                    "unexpected clap error: {rendered}"
-                );
-            }
-        }
+fn require_file(args: &[String], cmd: &str) -> Result<String> {
+    if args.len() < 2 {
+        bail!("{cmd} requires a <file> argument");
     }
+    Ok(args[1].clone())
 }

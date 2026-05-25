@@ -48,19 +48,19 @@ target/release/twk: $(RUST_SRCS)
 # encoder divergence in the stage2 vs stage3 comparison).
 stage2: $(STAGE2_WASM)
 
-boot/lib/module/core_lib.tw: $(CORE_LIB_SRCS) tools/generate_core_lib.tw target/release/twk
-	./target/release/twk run tools/generate_core_lib.tw
+boot/lib/module/core_lib.tw: $(CORE_LIB_SRCS) tools/generate_core_lib.py
+	python3 tools/generate_core_lib.py
 	@if [ -x target/twk ]; then \
 		target/twk fmt boot/lib/module/core_lib.tw; \
 	else \
-		printf 'target/twk not available; skipping core_lib formatting during bootstrap\n'; \
+		printf 'target/twk not available; skipping core_lib formatting\n'; \
 	fi
 
 $(STAGE2_WASM): $(BOOT_SRCS) $(CORE_LIB_SRCS) boot/lib/module/core_lib.tw target/release/twk tools/js_runtime/runtime.mjs tools/js_runtime/deno_main.mjs
-	@printf '\n==> Build bridge module for Deno runner\n'
-	./target/release/twk run boot/tests/gen_bridge_wasm.tw
 	@printf '\n==> Build stage1 compiler with stage0 -> $(STAGE1_WASM)\n'
 	./target/release/twk build boot/main.tw -o $(STAGE1_WASM)
+	@printf '\n==> Build bridge module via stage1\n'
+	BOOT_WASM=$(STAGE1_WASM) $(TWK_CLI) run boot/tests/gen_bridge_wasm.tw
 	@printf '\n==> Self-hosted check via stage1\n'
 	BOOT_WASM=$(STAGE1_WASM) $(TWK_CLI) check boot/main.tw
 	@printf '\n==> Build stage2 compiler with stage1 -> $(STAGE2_WASM)\n'
@@ -79,7 +79,7 @@ $(STAGE2_WASM): $(BOOT_SRCS) $(CORE_LIB_SRCS) boot/lib/module/core_lib.tw target
 	@printf '\nSelf-host loop completed successfully.\n'
 
 # Build the Deno standalone CLI from target/boot.wasm.
-target/twk: $(STAGE2_WASM) tools/bridge.wasm tools/build_deno_cli.sh tools/js_runtime/runtime.mjs tools/js_runtime/deno_main.mjs
+target/twk: $(STAGE2_WASM) tools/build_deno_cli.sh tools/js_runtime/runtime.mjs tools/js_runtime/deno_main.mjs
 	DENO_BIN="$(DENO_BIN)" tools/build_deno_cli.sh
 
 # Full standalone CLI rebuild: stage2 payload + Deno compile.
@@ -105,10 +105,6 @@ target/playground.wasm: $(STAGE2_WASM) $(PLAYGROUND_ENTRY)
 	BOOT_WASM=$(STAGE2_WASM) $(TWK_CLI) build $(PLAYGROUND_ENTRY) -o $(PLAYGROUND_WASM)
 
 playground-wasm: target/playground.wasm
-
-# Bridge module used by the JS runners
-tools/bridge.wasm: boot/tests/gen_bridge_wasm.tw target/release/twk
-	./target/release/twk run boot/tests/gen_bridge_wasm.tw
 
 # Tree-sitter grammar wasm (rebuild when grammar.js changes)
 tree-sitter-twinkle/tree-sitter-twinkle.wasm: tree-sitter-twinkle/grammar.js
