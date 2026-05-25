@@ -248,10 +248,22 @@ fn rewrite_expr(expr: AnfExpr, ctx: BCtx) RewriteResult {
       op_result := rewrite_op(local, op, body, ctx)
       op_result
     },
-    .Atom(a) => RewriteResult.{ expr: .Atom(a), ctx },
+    .Atom(a) => rewrite_tail_atom(a, ctx),
     .Return(a) => rewrite_return_expr(a, ctx),
     .Break(a) => RewriteResult.{ expr: .Break(a), ctx },
     .Continue => RewriteResult.{ expr: .Continue, ctx },
+  }
+}
+
+fn rewrite_tail_atom(atom: Atom, ctx: BCtx) RewriteResult {
+  mat := materialize_global_func_for_expected_mono(atom, ctx.current_return_mono, ctx)
+
+  case mat {
+    .Some(pair) => RewriteResult.{
+      expr: .Let(pair.temp, .AMakeClosure(pair.fid, []), .Atom(.ALocal(pair.temp))),
+      ctx: pair.ctx,
+    },
+    .None => RewriteResult.{ expr: .Atom(atom), ctx },
   }
 }
 
@@ -990,58 +1002,32 @@ fn rewrite_index(
         wrap_expr = .Some(.Let(key_local, .AWrapAnyref(index, mono), .Atom(.ALitVoid)))
       }
 
-      result_vt := mono_val_type(result_mono, cur_ctx.env)
-      unwrap_result := !is_anyref_exact(result_vt)
+      // Dict indexing semantically produces Option<V>. Keep that egress typed
+      // when the destination has a source-level optional mono, even if the next
+      // consumer is an erased prelude ABI slot; typed GC refs can flow to anyref
+      // at the call boundary. Only preserve the erased rt_dict__get_option path
+      // when the destination itself is explicitly raw anyref.
       body_r := rewrite_expr(body, cur_ctx)
       inner := body_r.expr
-      index_local := result_local
 
-      if unwrap_result {
-        pair := alloc_local(body_r.ctx)
-        raw_local := pair.local
-        final_ctx := pair.ctx
-        final_ctx.local_types[raw_local.id] = .Anyref_
-        inner = .Let(result_local, .AUnwrapAnyref(.ALocal(raw_local), result_mono), inner)
-        index_local = raw_local
-        inner = .Let(index_local, .AIndex(base, new_index, kind, result_mono), inner)
+      inner = .Let(result_local, .AIndex(base, new_index, kind, result_mono), inner)
 
-        case wrap_expr {
-          .Some(_) => {
-            // Prepend key wrap
-            key_lid := case new_index {
-              .ALocal(lid) => lid,
-              _ => error("expected ALocal for wrapped key"),
-            }
-            mono: MonoType = case index_mono {
-              .Some(m) => m,
-              .None => .Void,
-            }
-            inner = .Let(key_lid, .AWrapAnyref(index, mono), inner)
-          },
-          .None => {},
-        }
-
-        RewriteResult.{ expr: inner, ctx: final_ctx }
-      } else {
-        inner = .Let(result_local, .AIndex(base, new_index, kind, result_mono), inner)
-
-        case wrap_expr {
-          .Some(_) => {
-            key_lid := case new_index {
-              .ALocal(lid) => lid,
-              _ => error("expected ALocal for wrapped key"),
-            }
-            mono: MonoType = case index_mono {
-              .Some(m) => m,
-              .None => .Void,
-            }
-            inner = .Let(key_lid, .AWrapAnyref(index, mono), inner)
-          },
-          .None => {},
-        }
-
-        RewriteResult.{ expr: inner, ctx: body_r.ctx }
+      case wrap_expr {
+        .Some(_) => {
+          key_lid := case new_index {
+            .ALocal(lid) => lid,
+            _ => error("expected ALocal for wrapped key"),
+          }
+          mono: MonoType = case index_mono {
+            .Some(m) => m,
+            .None => .Void,
+          }
+          inner = .Let(key_lid, .AWrapAnyref(index, mono), inner)
+        },
+        .None => {},
       }
+
+      RewriteResult.{ expr: inner, ctx: body_r.ctx }
     },
     .Str => {
       // String indexing returns Byte (i32) — no anyref boundary

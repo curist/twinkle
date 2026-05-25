@@ -427,7 +427,7 @@ fn test_builtin_stored_in_local_then_called() Result<Void, String> {
   .Ok({})
 }
 
-fn repro_builtin_returned_from_function_then_called() Result<Void, String> {
+fn test_builtin_returned_from_function_then_called() Result<Void, String> {
   // A builtin function value returned from a function and called through the result.
   // Tests that insert_boundaries inserts AMakeClosure at the return boundary.
   wat := try assert_codegen_src_compiles(
@@ -461,7 +461,7 @@ fn test_user_function_stored_in_record_field_then_called() Result<Void, String> 
   .Ok({})
 }
 
-fn repro_user_function_returned_from_function_then_called() Result<Void, String> {
+fn test_user_function_returned_from_function_then_called() Result<Void, String> {
   wat := try assert_codegen_src_compiles(
     "fn double(n: Int) Int { n * 2 }\nfn get_double() fn(Int) Int { double }\nf := get_double()\nprintln(Int.to_string(f(21)))\n",
     "user function returned from function then called",
@@ -733,7 +733,7 @@ fn test_structural_option_produces_typed_sum_struct() Result<Void, String> {
   .Ok({})
 }
 
-fn repro_dict_index_materializes_typed_option() Result<Void, String> {
+fn test_dict_index_materializes_typed_option() Result<Void, String> {
   linked := try codegen_harness.codegen_linked(
     "d: Dict<String, Int> = Dict.new()\nd[\"x\"] = 10\nprintln(Int.to_string(d[\"x\"].unwrap_or(0)))",
   )
@@ -842,12 +842,20 @@ pub fn suite() runner.Suite {
       test_builtin_stored_in_local_then_called,
     )
     .test(
+      "builtin function returned from function then called indirectly",
+      test_builtin_returned_from_function_then_called,
+    )
+    .test(
       "builtin function stored in record field then called indirectly",
       test_builtin_stored_in_record_field_then_called,
     )
     .test(
       "user function stored in record field then called indirectly",
       test_user_function_stored_in_record_field_then_called,
+    )
+    .test(
+      "user function returned from function then called indirectly",
+      test_user_function_returned_from_function_then_called,
     )
     .test("match: wildcard and var binding", test_match_wildcard_and_var_binding)
     .test("match: string literal emits rt_str__eq", test_match_literal_string)
@@ -868,6 +876,7 @@ pub fn suite() runner.Suite {
       "Option usage produces typed sum struct",
       test_structural_option_produces_typed_sum_struct,
     )
+    .test("dict index materializes typed Option", test_dict_index_materializes_typed_option)
     .test(
       "anon record variant compiles to WAT",
       fn() {

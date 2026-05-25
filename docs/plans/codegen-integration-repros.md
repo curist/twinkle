@@ -4,9 +4,8 @@
 
 Restore the remaining disabled codegen integration repros in
 `boot/tests/suites/codegen_integration_suite.tw` without masking real compiler
-bugs. The suite is now wired into the main boot test runner; the remaining
-problem cases are kept as `repro_*` helpers so they stay easy to find while not
-breaking the active suite.
+bugs. The suite is now wired into the main boot test runner, and the former
+repro helpers have been restored as active coverage.
 
 ## Current status
 
@@ -21,16 +20,13 @@ prelude-backed methods real module origins in codegen integration tests, matchin
 entry-file compilation. With that structural fix, the iterator `to_vector` repro
 that passes a named step function now runs as an active test.
 
-The remaining repro helpers fall into a few bug clusters. Each structural issue
-has a focused follow-up plan. `Cell.update` and `Iterator.unfold` builtin method
-values are active again after boundary insertion and wasm planning were taught to
-carry the expected concrete function mono through closure materialization.
-
-| Repro helper | Symptom | Likely area | Follow-up plan |
-|--------------|---------|-------------|----------------|
-| `repro_dict_index_materializes_typed_option` | Link identity is fixed, but dict indexing in a prelude generic-call argument currently goes through the erased `rt_dict__get_option` path instead of materializing the typed `Option<Int>` in user code | boundary insertion / typed-vs-erased container egress for prelude generic call arguments | [Dict index typed option boundary](codegen-repro-dict-index-typed-option.md) |
-| `repro_builtin_returned_from_function_then_called` | Codegen lookup fails for the returned builtin function id | function-return boundary closure materialization for builtins | [Builtin function return closure materialization](codegen-repro-builtin-return-closure.md) |
-| `repro_user_function_returned_from_function_then_called` | Generated WAT returns a raw `ref.func` instead of allocating the expected closure | function-return boundary closure materialization for user functions | [User function return closure materialization](codegen-repro-user-return-closure.md) |
+The remaining repro helpers have been restored as active tests. `Cell.update` and
+`Iterator.unfold` builtin method values are active again after boundary insertion
+and wasm planning were taught to carry the expected concrete function mono
+through closure materialization. The dict-index and returned-function repros are
+also active: dict indexing now keeps typed `Option<V>` egress unless the
+destination is explicitly erased, and return-position function values are
+materialized as universal closure values.
 
 ## Investigation order
 
@@ -43,9 +39,8 @@ reference metadata as entry-file compilation, so prelude-backed methods can link
 through their real module origins.
 
 `Iterator.to_vector` with a named unfold step is active again. The dict indexing
-case still stays as a repro because it exposes a separate typed/erased boundary
-issue; continue that work in
-[codegen-repro-dict-index-typed-option.md](codegen-repro-dict-index-typed-option.md).
+case is also active after boundary insertion stopped forcing typed `Option<V>`
+egress through the erased `rt_dict__get_option` path.
 
 Tasks:
 
@@ -70,12 +65,9 @@ Expected result:
 
 ### Function return boundary closure materialization
 
-Returning a function value should produce the same closure representation as
-storing a function value in a local or record field. Local and record-field cases
-are active and passing; return-position cases are not. Track the builtin and user
-function variants in
-[codegen-repro-builtin-return-closure.md](codegen-repro-builtin-return-closure.md)
-and [codegen-repro-user-return-closure.md](codegen-repro-user-return-closure.md).
+Returning a function value now produces the same closure representation as
+storing a function value in a local or record field. Local, record-field, and
+return-position cases are active for both builtin and user functions.
 
 Tasks:
 
@@ -95,13 +87,10 @@ Expected result:
 
 ## Re-enabling policy
 
-For each fixed repro:
-
-- Rename the helper back from `repro_*` to `test_*`.
-- Add it back to `suite()` near the related active test.
-- Prefer a focused lower/backend test when a bug is fixed below full codegen.
-- Run `target/twk fmt` on edited `.tw` files.
-- Run `target/twk run boot/tests/main.tw` before considering the cleanup done.
+The former repro helpers have been renamed back to `test_*` and added to the
+active suite near related coverage. For future disabled repros, prefer a focused
+lower/backend test when a bug is fixed below full codegen, run the formatter on
+edited `.tw` files, and run the boot tests before considering the cleanup done.
 
 ## Non-goals
 
