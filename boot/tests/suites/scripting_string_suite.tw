@@ -63,6 +63,70 @@ pub fn suite() runner.Suite {
       },
     )
     .test(
+      "lines with multibyte utf8 characters",
+      fn() {
+        parts := "日本語\n中文\n한국어".lines()
+        try assert.equal(parts.len(), 3)
+        try assert.equal(parts[0], "日本語")
+        try assert.equal(parts[1], "中文")
+        try assert.equal(parts[2], "한국어")
+        .Ok({})
+      },
+    )
+    .test(
+      "lines with multibyte utf8 and \\r\\n",
+      fn() {
+        parts := "café\r\nnaïve\r\nrésumé".lines()
+        try assert.equal(parts.len(), 3)
+        try assert.equal(parts[0], "café")
+        try assert.equal(parts[1], "naïve")
+        try assert.equal(parts[2], "résumé")
+        .Ok({})
+      },
+    )
+    .test(
+      "lines with emoji",
+      fn() {
+        parts := "hello 🌟\nworld 🎉".lines()
+        try assert.equal(parts.len(), 2)
+        try assert.equal(parts[0], "hello 🌟")
+        try assert.equal(parts[1], "world 🎉")
+        .Ok({})
+      },
+    )
+    .test(
+      "lines consecutive newlines produce empty strings",
+      fn() {
+        parts := "a\n\n\nb".lines()
+        try assert.equal(parts.len(), 4)
+        try assert.equal(parts[0], "a")
+        try assert.equal(parts[1], "")
+        try assert.equal(parts[2], "")
+        try assert.equal(parts[3], "b")
+        .Ok({})
+      },
+    )
+    .test(
+      "lines only newlines",
+      fn() {
+        parts := "\n\n".lines()
+        try assert.equal(parts.len(), 3)
+        try assert.equal(parts[0], "")
+        try assert.equal(parts[1], "")
+        try assert.equal(parts[2], "")
+        .Ok({})
+      },
+    )
+    .test(
+      "lines bare \\r without \\n is not a line break",
+      fn() {
+        parts := "a\rb".lines()
+        try assert.equal(parts.len(), 1)
+        try assert.equal(parts[0], "a\rb")
+        .Ok({})
+      },
+    )
+    .test(
       "strip_prefix returns remainder on match",
       fn() {
         result := "fn hello()".strip_prefix("fn ")
@@ -104,6 +168,15 @@ pub fn suite() runner.Suite {
       },
     )
     .test(
+      "strip_prefix with multibyte utf8",
+      fn() {
+        result := "日本語テスト".strip_prefix("日本語")
+        try assert.is_some(result)
+        try assert.equal(try result.ok_or("none"), "テスト")
+        .Ok({})
+      },
+    )
+    .test(
       "strip_suffix returns remainder on match",
       fn() {
         result := "file.tw".strip_suffix(".tw")
@@ -138,11 +211,28 @@ pub fn suite() runner.Suite {
       },
     )
     .test(
+      "strip_suffix with multibyte utf8",
+      fn() {
+        result := "テスト完了".strip_suffix("完了")
+        try assert.is_some(result)
+        try assert.equal(try result.ok_or("none"), "テスト")
+        .Ok({})
+      },
+    )
+    .test(
       "count finds occurrences",
       fn() {
         try assert.equal("abcabc".count("abc"), 2)
         try assert.equal("aaa".count("a"), 3)
         try assert.equal("hello".count("xyz"), 0)
+        .Ok({})
+      },
+    )
+    .test(
+      "count with multibyte utf8 needle",
+      fn() {
+        try assert.equal("日本語と日本文化".count("日本"), 2)
+        try assert.equal("café café café".count("café"), 3)
         .Ok({})
       },
     )
@@ -203,6 +293,14 @@ pub fn suite() runner.Suite {
       "replace multiple adjacent occurrences",
       fn() {
         try assert.equal("aaa".replace("a", "bb"), "bbbbbb")
+        .Ok({})
+      },
+    )
+    .test(
+      "replace with multibyte utf8",
+      fn() {
+        try assert.equal("hello世界hello".replace("hello", "你好"), "你好世界你好")
+        try assert.equal("café".replace("é", "e"), "cafe")
         .Ok({})
       },
     )
