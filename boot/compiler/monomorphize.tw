@@ -10,7 +10,7 @@ use .mono_type.{MonoType}
 use .resolver.{ResolvedEnv}
 
 // ── Type helpers ──────────────────────────────────────────────────
-fn contains_var(ty: MonoType) Bool {
+pub fn contains_var(ty: MonoType) Bool {
   case ty {
     .Var(_) => true,
     .Vector(e) => contains_var(e),

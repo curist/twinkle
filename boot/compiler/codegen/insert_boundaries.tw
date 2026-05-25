@@ -15,6 +15,7 @@ use compiler.codegen.wasm_layout.{val_type_of_mono}
 use compiler.codegen.wasm_plan_types.{WasmTypeRegistry}
 use compiler.core_ir.{FieldId, FuncId, LocalId, VariantId}
 use compiler.mono_type.{MonoType, TypeId}
+use compiler.monomorphize.{contains_var}
 use compiler.resolver.{ResolvedEnv, lookup_type_def}
 use compiler.type_util.{subst_type_params}
 
@@ -585,16 +586,23 @@ fn materialize_global_func_for_expected_mono(atom: Atom, expected_mono: MonoType
       pair := alloc_local(ctx)
       tmp := pair.local
       new_ctx := pair.ctx
-      tmp_mono := case atom_mono(atom, ctx) {
-        .Some(m) => m,
-        .None => expected_mono,
-      }
-      new_ctx.local_types[tmp.id] = tmp_mono
+      new_ctx.local_types[tmp.id] = materialized_global_func_mono(atom, expected_mono, ctx)
       .Some(.{ temp: tmp, fid, ctx: new_ctx })
     } else {
       .None
     },
     _ => .None,
+  }
+}
+
+fn materialized_global_func_mono(atom: Atom, expected_mono: MonoType, ctx: BCtx) MonoType {
+  case atom_mono(atom, ctx) {
+    .Some(m) => if contains_var(m) {
+      expected_mono
+    } else {
+      m
+    },
+    .None => expected_mono,
   }
 }
 
@@ -706,11 +714,8 @@ fn rewrite_call(result_local: LocalId, callee: Atom, args: Vector<Atom>, body: A
             and mono_is_function(expected_param_monos[i]) {
             pair := alloc_local(cur_ctx)
             tmp := pair.local
+            tmp_mono := materialized_global_func_mono(arg, expected_param_monos[i], cur_ctx)
             cur_ctx = pair.ctx
-            tmp_mono := case atom_mono(arg, cur_ctx) {
-              .Some(m) => m,
-              .None => expected_param_monos[i],
-            }
             cur_ctx.local_types[tmp.id] = tmp_mono
             new_args = .append(.ALocal(tmp))
             closure_lets = .append(ClosureLet.{ local: tmp, fid: arg_fid })
@@ -753,11 +758,8 @@ fn rewrite_call(result_local: LocalId, callee: Atom, args: Vector<Atom>, body: A
               and mono_is_function(expected_param_monos[i]) {
               pair := alloc_local(cur_ctx)
               tmp := pair.local
+              tmp_mono := materialized_global_func_mono(arg, expected_param_monos[i], cur_ctx)
               cur_ctx = pair.ctx
-              tmp_mono := case atom_mono(arg, cur_ctx) {
-                .Some(m) => m,
-                .None => expected_param_monos[i],
-              }
               cur_ctx.local_types[tmp.id] = tmp_mono
               closure_lets = .append(ClosureLet.{ local: tmp, fid: arg_fid })
               .ALocal(tmp)

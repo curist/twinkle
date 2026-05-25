@@ -22,13 +22,13 @@ entry-file compilation. With that structural fix, the iterator `to_vector` repro
 that passes a named step function now runs as an active test.
 
 The remaining repro helpers fall into a few bug clusters. Each structural issue
-has a focused follow-up plan:
+has a focused follow-up plan. `Cell.update` and `Iterator.unfold` builtin method
+values are active again after boundary insertion and wasm planning were taught to
+carry the expected concrete function mono through closure materialization.
 
 | Repro helper | Symptom | Likely area | Follow-up plan |
 |--------------|---------|-------------|----------------|
 | `repro_dict_index_materializes_typed_option` | Link identity is fixed, but dict indexing in a prelude generic-call argument currently goes through the erased `rt_dict__get_option` path instead of materializing the typed `Option<Int>` in user code | boundary insertion / typed-vs-erased container egress for prelude generic call arguments | [Dict index typed option boundary](codegen-repro-dict-index-typed-option.md) |
-| `repro_iterator_unfold_builtin_first_class_function_arg_uses_wrapper_trampoline` | Backend verifier reports a generic `Iterator.unfold` function mono where the specialized expected function type is required | builtin method-value specialization / wrapper mono refinement | [Iterator.unfold method-value specialization](codegen-repro-iterator-unfold-method-value-specialization.md) |
-| `repro_cell_update_builtin_first_class_function_arg_uses_wrapper_trampoline` | Backend verifier reports a generic `Cell.update` function mono where a specialized mono is expected | builtin method-value specialization / wrapper mono refinement | [Cell.update method-value specialization](codegen-repro-cell-update-method-value-specialization.md) |
 | `repro_builtin_returned_from_function_then_called` | Codegen lookup fails for the returned builtin function id | function-return boundary closure materialization for builtins | [Builtin function return closure materialization](codegen-repro-builtin-return-closure.md) |
 | `repro_user_function_returned_from_function_then_called` | Generated WAT returns a raw `ref.func` instead of allocating the expected closure | function-return boundary closure materialization for user functions | [User function return closure materialization](codegen-repro-user-return-closure.md) |
 
@@ -67,30 +67,6 @@ Expected result:
   typed `Option<Int>` at the dict boundary, even when the value flows into a
   prelude generic call.
 - Iterator `to_vector` examples link through the boot codegen path.
-
-### Builtin method values with generic receiver types
-
-`Cell.update` and `Iterator.unfold` as first-class builtin methods currently
-reach backend verification with still-generic monos in specialized direct-call
-argument slots. Track the proper fixes in
-[codegen-repro-cell-update-method-value-specialization.md](codegen-repro-cell-update-method-value-specialization.md)
-and
-[codegen-repro-iterator-unfold-method-value-specialization.md](codegen-repro-iterator-unfold-method-value-specialization.md).
-
-Tasks:
-
-- Inspect method-value lowering for builtin methods used as first-class values.
-- Verify where type substitution is applied for `Cell.update` when the receiver
-  type is known from the expected function type.
-- Ensure wrapper/trampoline creation uses the instantiated mono, not the generic
-  signature from the builtin definition.
-- Add a focused lower/backend test if the fix is below full codegen.
-
-Expected result:
-
-- The backend verifier sees a specialized `fn(Cell<Int>, fn(Int) Int) Void`
-  value for `Cell.update` in the repro.
-- The codegen integration repro can be restored as an active test.
 
 ### Function return boundary closure materialization
 

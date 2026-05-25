@@ -7,13 +7,17 @@
 /// - explicit module-global references from non-init prepared bodies
 
 use compiler.backend.prepare.{PreparedModule}
-use compiler.backend.prepared_ir.{PreparedAtom, PreparedExpr, PreparedOp, PreparedPattern}
+use compiler.backend.prepared_ir.{
+  PreparedAtom, PreparedExpr, PreparedOp, PreparedPattern, SlotId, SlotInfo,
+}
 use compiler.builtins as bi
 use compiler.builtins.{BuiltinRegistry}
+use compiler.mono_type.{MonoType}
 
 pub type ScanResult = .{
   strings: Dict<String, Bool>,
   closure_materialized_funcs: Dict<Int, Bool>,
+  closure_materialized_monos: Dict<Int, MonoType>,
   direct_builtin_calls: Dict<Int, Bool>,
   module_globals: Dict<Int, Bool>,
 }
@@ -22,12 +26,19 @@ pub fn scan_module_bodies(input: PreparedModule, builtins: BuiltinRegistry) Scan
   out := ScanResult.{
     strings: Dict.new(),
     closure_materialized_funcs: Dict.new(),
+    closure_materialized_monos: Dict.new(),
     direct_builtin_calls: Dict.new(),
     module_globals: Dict.new(),
   }
 
   for func in input.funcs {
     out = scan_expr(func.body, builtins, func.is_init, out)
+  }
+
+  // Extract concrete monos from AMakeClosure slot info so that generic
+  // builtins (Cell.update, Iterator.unfold) get specialized signatures
+  for func in input.funcs {
+    out = extract_closure_monos(func.body, func.slots, out)
   }
 
   out
@@ -173,6 +184,53 @@ fn scan_pattern(pattern: PreparedPattern, out: ScanResult) ScanResult {
 
       cur
     },
+    _ => out,
+  }
+}
+
+// ── Closure mono extraction ────────────────────────────────────────
+// Second pass: walk prepared bodies to extract the concrete MonoType
+// from the slot that each AMakeClosure result is bound to. This gives
+// the planner specialized types for generic builtins.
+fn extract_closure_monos(expr: PreparedExpr, slots: Dict<Int, SlotInfo>, out: ScanResult) ScanResult {
+  case expr {
+    .Let(sid, op, body) => {
+      cur := extract_closure_monos_op(sid, op, slots, out)
+      extract_closure_monos(body, slots, cur)
+    },
+    _ => out,
+  }
+}
+
+fn extract_closure_monos_op(
+  sid: SlotId,
+  op: PreparedOp,
+  slots: Dict<Int, SlotInfo>,
+  out: ScanResult,
+) ScanResult {
+  case op {
+    .AMakeClosure(fid, _) => case slots[sid.id] {
+      .Some(info) => {
+        out.closure_materialized_monos[fid.id] = info.mono
+        out
+      },
+      .None => out,
+    },
+    .AIf(_, then_e, else_e) => {
+      cur := extract_closure_monos(then_e, slots, out)
+      extract_closure_monos(else_e, slots, cur)
+    },
+    .AMatch(_, arms) => {
+      cur := out
+
+      for arm in arms {
+        cur = extract_closure_monos(arm.body, slots, cur)
+      }
+
+      cur
+    },
+    .ALoop(body) => extract_closure_monos(body, slots, out),
+    .ADefer(body) => extract_closure_monos(body, slots, out),
     _ => out,
   }
 }
