@@ -481,12 +481,22 @@ pub fn link_with_extern_modules(
         return Err(errors);
     }
 
-    // Synthesize __linked_init if there are start functions or an entry point
-    let final_start = if !start_funcs.is_empty() || entry.is_some() {
-        let mut init_body: Vec<Instr> = start_funcs.into_iter().map(|s| Instr::Call(s)).collect();
-        if let Some(entry_sym) = entry {
-            init_body.push(Instr::Call(entry_sym));
-        }
+    // Export the linked entry point instead of using a Wasm start section.
+    // Start sections run during instantiation and cannot be wrapped with
+    // WebAssembly.promising, so modules that suspend through JSPI imports would
+    // trap before the host can enter a promising boundary.
+    let mut init_calls: Vec<FuncSym> = start_funcs;
+    if let Some(entry_sym) = entry {
+        init_calls.push(entry_sym);
+    }
+
+    if init_calls.len() == 1 {
+        merged_exports.push(ExportDef {
+            wasm_name: "__twinkle_start".into(),
+            func_sym: init_calls[0].clone(),
+        });
+    } else if !init_calls.is_empty() {
+        let init_body: Vec<Instr> = init_calls.into_iter().map(Instr::Call).collect();
         merged_funcs.push(FuncDef {
             name: "__linked_init".into(),
             params: Vec::new(),
@@ -494,10 +504,11 @@ pub fn link_with_extern_modules(
             locals: Vec::new(),
             body: init_body,
         });
-        Some("__linked_init".into())
-    } else {
-        None
-    };
+        merged_exports.push(ExportDef {
+            wasm_name: "__twinkle_start".into(),
+            func_sym: "__linked_init".into(),
+        });
+    }
 
     Ok(LinkedModuleIR {
         types: merged_types,
@@ -508,7 +519,7 @@ pub fn link_with_extern_modules(
         elems: merged_elems,
         exports: merged_exports,
         data: merged_data,
-        start: final_start,
+        start: None,
     })
 }
 
