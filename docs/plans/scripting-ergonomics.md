@@ -184,18 +184,30 @@ imperative scripts. Not proposing mutation — just noting the friction.
 - `fs.read_text` / `fs.write_text` — file I/O is clean
 - `proc.args()` — CLI args work
 - `String.split`, `.contains`, `.starts_with`, `.trim`, `.index_of` — core string ops are solid
+- `String.lines`, `.strip_prefix`, `.strip_suffix`, `.count`, `.replace` — Phase 1 done
 - `Vector.filter`, `.map`, `.fold`, `.join` — collection pipeline is good
+- `Vector.position`, `.flat_map` — Phase 1 done
 - `for x, i in vec` — indexed iteration already exists
 - `collect` comprehensions with `continue` for filtering — very nice
 - String interpolation `"${expr}"` — great for output formatting
 - `try` for error propagation — clean Result/Option handling
+- `eprint` / `eprintln` — stderr output already available as builtins
+
+### Current patterns for Phase 2 items
+
+Many Phase 2 items are already expressible with existing constructs:
+
+- **Set via Dict**: `keys.fold(Dict.new(), fn(d, k) { d.set(k, true) })` — add with `d[k] = true`, check with `d.has(k)`
+- **Iterator enumerate**: manual counter in a `for` loop — `i := 0; for x in it { ...; i = i + 1 }`
+- **Iterator skip**: consume with a loop — `for _ in 0..n { Iterator.next(it) }`
+- **Iterator take_while / skip_while**: `for` with `break` / `continue`
+- **Iterator collect_string**: `it.to_vector().join("")`
 
 ## Recommended implementation order
 
-**Phase 1** (unblocks most scripting): items 1-7
+**Phase 1** (unblocks most scripting): items 1-7 — **done**
 - `lines`, `strip_prefix`, `strip_suffix`, `count`, `replace` on String
 - `position` and `flat_map` on Vector
-- All are pure prelude additions, no compiler changes needed
 
 **Phase 2** (convenience): items 9-13
 - Set type or `Dict.from_keys`
@@ -203,4 +215,4 @@ imperative scripts. Not proposing mutation — just noting the friction.
 
 **Phase 3** (power features): items 14-16
 - Regex or pattern matching
-- stderr output
+- ~~stderr output~~ — `eprint` / `eprintln` already exist
