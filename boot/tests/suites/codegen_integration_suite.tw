@@ -54,7 +54,7 @@ fn test_emit_wat_basic() Result<Void, String> {
 }
 
 fn test_codegen_end_to_end_simple_program() Result<Void, String> {
-  wat := try assert_codegen_src_compiles("fn main() Int { 42 }", "simple program")
+  wat := try assert_codegen_src_compiles("fn main() Int { 42 }\nmain()", "simple program")
   try assert.str_contains(wat, "user__")
   try assert.str_contains(wat, "i64.const 42")
   try assert.str_contains(wat, "rt_types__String")

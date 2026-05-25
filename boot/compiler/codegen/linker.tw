@@ -59,7 +59,8 @@ fn retain_final_exports(ns: String) Bool {
   // Runtime module exports are only a linker-internal resolution surface.
   // Keeping them in the final flat module creates duplicate public export
   // names like `len` across rt.str / rt.arr / rt.dict.
-  !ns.starts_with("rt.")
+  // codegen.intrinsics exports are also internal-only helpers.
+  !ns.starts_with("rt.") and ns != "codegen.intrinsics"
 }
 
 // ── Rename map helpers ─────────────────────────────────────────────────

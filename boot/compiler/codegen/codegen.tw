@@ -20,6 +20,7 @@ use compiler.builtins.{BuiltinRegistry}
 use compiler.codegen.emit.{emit_module}
 use compiler.codegen.intrinsics as cg_intrinsics
 use compiler.codegen.linker.{LinkedModule, link}
+use compiler.codegen.linker_dce.{eliminate_dead_wasm}
 use compiler.codegen.runtime.arr as rt_arr
 use compiler.codegen.runtime.core as rt_core
 use compiler.codegen.runtime.dict as rt_dict
@@ -140,6 +141,14 @@ pub fn link_program(anf: AnfModule, env: ResolvedEnv, builtins: BuiltinRegistry)
 
   if timed {
     log_time("link", t6 - t5)
+  }
+
+  // 7. Wasm-level dead code elimination
+  linked = eliminate_dead_wasm(linked)
+  t7 := date.now()
+
+  if timed {
+    log_time("wasm_dce", t7 - t6)
   }
 
   linked

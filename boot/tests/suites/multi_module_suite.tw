@@ -624,6 +624,7 @@ pub fn suite() runner.Suite {
       fn() {
         wat := try codegen_harness.codegen_path("${dir}/contract_fallback_main.tw")
         try assert.str_contains(wat, "show_box")
+        try assert.ok(!wat.contains("json"), "unused json import should be eliminated by DCE")
         .Ok({})
       },
     )

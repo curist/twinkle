@@ -1,0 +1,126 @@
+/// Wasm-level dead code elimination.
+///
+/// Runs after linking to remove functions and imports that are not
+/// reachable from the final export surface. This catches runtime
+/// helpers, codegen intrinsics, and host imports that the Core IR
+/// DCE cannot see because they are introduced by codegen.
+
+use compiler.codegen.linker.{LinkedModule}
+use compiler.codegen.wasm_ir.{FuncDef, Instr}
+
+// ── Reachability analysis ─────────────────────────────────────────────
+fn collect_instr_refs(instr: Instr, out: Dict<String, Bool>) Dict<String, Bool> {
+  case instr {
+    .Call(sym) => {
+      out[sym] = true
+      out
+    },
+    .ReturnCall(sym) => {
+      out[sym] = true
+      out
+    },
+    .RefFunc(sym) => {
+      out[sym] = true
+      out
+    },
+    .If(_, then_body, else_body) => {
+      out = collect_instrs_refs(then_body, out)
+      collect_instrs_refs(else_body, out)
+    },
+    .Block(_, _, body) => collect_instrs_refs(body, out),
+    .Loop(_, _, body) => collect_instrs_refs(body, out),
+    _ => out,
+  }
+}
+
+fn collect_instrs_refs(instrs: Vector<Instr>, out: Dict<String, Bool>) Dict<String, Bool> {
+  for instr in instrs {
+    out = collect_instr_refs(instr, out)
+  }
+
+  out
+}
+
+fn compute_reachable(linked: LinkedModule) Dict<String, Bool> {
+  reachable: Dict<String, Bool> = Dict.new()
+
+  // Build a lookup from func name → FuncDef for traversal
+  func_map: Dict<String, FuncDef> = Dict.new()
+
+  for f in linked.funcs {
+    func_map[f.name] = f
+  }
+
+  // Seed: exports
+  worklist: Vector<String> = []
+
+  for exp in linked.exports {
+    worklist = .append(exp.func_sym)
+  }
+
+  // Seed: element segments (indirect call targets)
+  for elem in linked.elems {
+    for sym in elem.func_syms {
+      worklist = .append(sym)
+    }
+  }
+
+  // Seed: global initializers (may contain RefFunc)
+  global_refs: Dict<String, Bool> = Dict.new()
+
+  for g in linked.globals {
+    global_refs = collect_instrs_refs(g.init, global_refs)
+  }
+
+  for key in global_refs.keys() {
+    worklist = .append(key)
+  }
+
+  // Worklist traversal (DFS order, but reachable set is the same either way)
+  for worklist.len() > 0 {
+    sym := worklist[worklist.len() - 1]
+    worklist = .slice(0, worklist.len() - 1)
+
+    if reachable.has(sym) {} else {
+      reachable[sym] = true
+
+      case func_map[sym] {
+        .Some(f) => {
+          func_refs := collect_instrs_refs(f.body, Dict.new())
+
+          for key in func_refs.keys() {
+            worklist = .append(key)
+          }
+        },
+        .None => {},
+      }
+    }
+  }
+
+  reachable
+}
+
+// ── Public API ────────────────────────────────────────────────────────
+pub fn eliminate_dead_wasm(linked: LinkedModule) LinkedModule {
+  reachable := compute_reachable(linked)
+
+  filtered_funcs := collect f in linked.funcs {
+    if reachable.has(f.name) {
+      f
+    } else {
+      continue
+    }
+  }
+
+  filtered_imports := collect imp in linked.imports {
+    if reachable.has(imp.as_sym) {
+      imp
+    } else {
+      continue
+    }
+  }
+
+  linked.funcs = filtered_funcs
+  linked.imports = filtered_imports
+  linked
+}
