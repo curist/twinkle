@@ -605,20 +605,6 @@ fn analyze_builtin_call(reg: WasmTypeRegistry, entry: BuiltinEntry) WasmTypeRegi
   }
 }
 
-fn find_prepared_func(funcs_by_id: Dict<Int, PreparedFunc>, fid: FuncId) PreparedFunc {
-  case funcs_by_id[fid.id] {
-    .Some(func) => func,
-    .None => error("find_prepared_func: missing prepared function F${fid.id}"),
-  }
-}
-
-fn resolve_module_global_mono(init_func: PreparedFunc, local_id: Int) MonoType {
-  case facts.find_slot_by_source_local(init_func, local_id) {
-    .Some(info) => info.mono,
-    .None => error("resolve_module_global_mono: $init has no slot for module global L${local_id}"),
-  }
-}
-
 // ── String pool ─────────────────────────────────────────────────────
 fn register_string(reg: WasmTypeRegistry, s: String) WasmTypeRegistry {
   case reg.string_pool[s] {
