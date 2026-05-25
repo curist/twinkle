@@ -6803,9 +6803,6 @@
     global.get $user____str_lit_global_6e6f6e2d65786861757374697665206d6174636820696e205f5f7072656c7564655f766563746f722e6a6f696e202846756e6349642838372929
     ref.as_non_null
   )
-  (func $__linked_init (type $functype_52)
-    call $user____user_init
-  )
   (elem declare func $user__func_93__closure $user__func_93__typed_closure $user__func_95__closure $user__func_95__typed_closure)
   (export "rt_arr__tailoff" (func $rt_arr__tailoff))
   (export "rt_arr__get_leaf" (func $rt_arr__get_leaf))
@@ -6868,5 +6865,5 @@
   (export "rt_core__eq_dict" (func $rt_core__eq_dict))
   (export "rt_core__eq_variant" (func $rt_core__eq_variant))
   (export "rt_core__eq" (func $rt_core__eq))
-  (start $__linked_init)
+  (export "__twinkle_start" (func $user____user_init))
 )

@@ -8394,9 +8394,6 @@
     global.get $user____str_lit_global_f09f918d
     ref.as_non_null
   )
-  (func $__linked_init (type $functype_53)
-    call $user____user_init
-  )
   (export "rt_arr__tailoff" (func $rt_arr__tailoff))
   (export "rt_arr__get_leaf" (func $rt_arr__get_leaf))
   (export "rt_arr__new_path" (func $rt_arr__new_path))
@@ -8458,5 +8455,5 @@
   (export "rt_core__eq_dict" (func $rt_core__eq_dict))
   (export "rt_core__eq_variant" (func $rt_core__eq_variant))
   (export "rt_core__eq" (func $rt_core__eq))
-  (start $__linked_init)
+  (export "__twinkle_start" (func $user____user_init))
 )

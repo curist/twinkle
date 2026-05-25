@@ -14,5 +14,5 @@ expression: wat
     call $rt__rt_init
     call $user__user_init
   )
-  (start $__linked_init)
+  (export "__twinkle_start" (func $__linked_init))
 )

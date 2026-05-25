@@ -128,8 +128,8 @@ mod tests {
                 .unwrap_or_else(|e| panic!("build_wat failed for {}: {e}", path.display()));
             assert!(wat.contains("(module"), "missing module for {}", fixture);
             assert!(
-                wat.contains("(start $__linked_init)"),
-                "missing linked start for {}",
+                wat.contains("(export \"__twinkle_start\""),
+                "missing linked start export for {}",
                 fixture
             );
             assert!(

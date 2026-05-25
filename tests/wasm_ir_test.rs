@@ -161,7 +161,14 @@ fn test_link_synthesizes_init() {
     assert_eq!(init.body.len(), 2);
     assert_eq!(init.body[0], Instr::Call("rt__rt_init".into()));
     assert_eq!(init.body[1], Instr::Call("user__user_init".into()));
-    assert_eq!(linked.start, Some("__linked_init".into()));
+    assert_eq!(linked.start, None);
+    assert!(
+        linked
+            .exports
+            .iter()
+            .any(|e| e.wasm_name == "__twinkle_start" && e.func_sym == "__linked_init"),
+        "expected __twinkle_start export for __linked_init"
+    );
 
     let wat = emit_wat(&linked);
     insta::assert_snapshot!(wat);
