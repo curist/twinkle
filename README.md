@@ -1,5 +1,7 @@
 # Twinkle 🌟
 
+[![Test](https://github.com/curist/twinkle/actions/workflows/test.yml/badge.svg)](https://github.com/curist/twinkle/actions/workflows/test.yml)
+
 Twinkle is a small, statically typed programming language for value-oriented programs that compile to WebAssembly GC.
 It is designed around immutable data, persistent collections, top-level executable code, and a self-hosted compiler written in Twinkle itself.
 
