@@ -1,6 +1,5 @@
 /target
 
-tools/bridge.wasm
 boot/tests/*.wasm
 boot/lib/module/core_lib.tw
 
