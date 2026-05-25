@@ -31,7 +31,6 @@ has a focused follow-up plan:
 | `repro_cell_update_builtin_first_class_function_arg_uses_wrapper_trampoline` | Backend verifier reports a generic `Cell.update` function mono where a specialized mono is expected | builtin method-value specialization / wrapper mono refinement | [Cell.update method-value specialization](codegen-repro-cell-update-method-value-specialization.md) |
 | `repro_builtin_returned_from_function_then_called` | Codegen lookup fails for the returned builtin function id | function-return boundary closure materialization for builtins | [Builtin function return closure materialization](codegen-repro-builtin-return-closure.md) |
 | `repro_user_function_returned_from_function_then_called` | Generated WAT returns a raw `ref.func` instead of allocating the expected closure | function-return boundary closure materialization for user functions | [User function return closure materialization](codegen-repro-user-return-closure.md) |
-| `repro_host_write_bytes_builtin_first_class_function_arg_uses_wrapper_trampoline` | Resolver reports `host` as undefined | host namespace value exposure / test fixture shape | [Host write_bytes first-class fixture](codegen-repro-host-write-bytes-fixture.md) |
 
 ## Investigation order
 
@@ -117,28 +116,6 @@ Expected result:
 - Returning `Int.to_string` from a function emits a builtin trampoline closure.
 - Returning a user function emits a user closure allocation.
 - Both returned closures can be called indirectly after assignment to a local.
-
-### Host namespace first-class builtin fixture
-
-The `host.write_bytes` repro currently fails before codegen because `host` is not
-a resolvable value namespace in ordinary source. Track the fixture/API decision
-in [codegen-repro-host-write-bytes-fixture.md](codegen-repro-host-write-bytes-fixture.md).
-
-Tasks:
-
-- Decide whether host functions should be referenced as a module namespace from
-  Twinkle source, imported through a stdlib module, or tested through a lower-level
-  compiler fixture.
-- If source-level `host.write_bytes` is not intended syntax, rewrite the repro to
-  use the supported public API that lowers to the host helper.
-- If source-level host namespaces are intended, add resolver support and document
-  the syntax.
-
-Expected result:
-
-- The test either becomes a valid source-level codegen test using supported API,
-  or moves to a backend-level test that constructs the builtin function value
-  directly.
 
 ## Re-enabling policy
 
