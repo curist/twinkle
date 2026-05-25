@@ -2187,29 +2187,30 @@ fn merged_export_type_name(alias: String, name: String, origin: String?) String 
   }
 }
 
-fn find_by_origin(env: ResolvedEnv, origin: String) TypeId? {
+fn build_type_origin_index(env: ResolvedEnv) Dict<String, TypeId> {
+  out: Dict<String, TypeId> = Dict.new()
+
   for tid in env.type_origins.keys() {
     case env.type_origins[tid] {
-      .Some(existing) => if existing == origin {
-        return .Some(TypeId.{ id: tid })
-      },
+      .Some(origin) => out[origin] = TypeId.{ id: tid },
       .None => {},
     }
   }
 
-  .None
+  out
 }
 
 fn plan_export_type_ids(env: ResolvedEnv, alias: String, exports: ModuleExports) Dict<Int, TypeId> {
   ids: Dict<Int, TypeId> = Dict.new()
   next_id := next_available_type_id(env)
+  origin_index := build_type_origin_index(env)
 
   for exported in all_exported_types(exports) {
     target_name := merged_export_type_name(alias, exported.name, exported.origin)
     existing_id: TypeId? = case lookup_registered_type(env, target_name) {
       .Some(existing) => .Some(existing.id),
       .None => case exported.origin {
-        .Some(origin) => find_by_origin(env, origin),
+        .Some(origin) => origin_index[origin],
         .None => .None,
       },
     }
