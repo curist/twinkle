@@ -143,6 +143,8 @@ Options:
 - A `Set<T>` type backed by the same HAMT as Dict
 - Or just document the `Dict<K, Bool>` pattern and add `Dict.from_keys(vec)`
 
+**Location:** `boot/prelude/set.tw` — Phase 2 done
+
 #### 10. Indexed iterator loops — already supported
 Twinkle already supports indexed loops over iterators with `for x, i in iter` and
 indexed collects with `collect x, i in iter { ... }`, so a dedicated
@@ -162,9 +164,6 @@ needs.
 
 **Location:** `boot/prelude/iterator.tw` — Phase 2 done
 
-#### 13. `Iterator.collect_string() String`
-Materialize an `Iterator<String>` into a single concatenated string.
-More efficient than `.to_vector().join("")`.
 
 ### Tier 3 — Nice to have, larger effort
 
@@ -201,11 +200,11 @@ imperative scripts. Not proposing mutation — just noting the friction.
 
 Many Phase 2 items are already expressible with existing constructs:
 
-- **Set via Dict**: `keys.fold(Dict.new(), fn(d, k) { d.set(k, true) })` — add with `d[k] = true`, check with `d.has(k)`
+- **Set**: dedicated `Set<K>` type — Phase 2 done
 - **Iterator enumerate**: use Twinkle's indexed iterator loop directly — `for x, i in it { ... }`
 - **Iterator skip**: `it.skip(n)` — Phase 2 done
 - **Iterator take_while / skip_while**: `it.take_while(pred)` / `it.skip_while(pred)` — Phase 2 done
-- **Iterator collect_string**: `it.to_vector().join("")`
+- **String from iterator**: `it.to_vector().join("")`
 
 ## Recommended implementation order
 
@@ -213,9 +212,9 @@ Many Phase 2 items are already expressible with existing constructs:
 - `lines`, `strip_prefix`, `strip_suffix`, `count`, `replace` on String
 - `position` and `flat_map` on Vector
 
-**Phase 2** (convenience): items 9-13
-- Set type or `Dict.from_keys`
-- Iterator combinators: `skip`, `take_while`, and `skip_while` — **done**
+**Phase 2** (convenience): items 9-12 — **done**
+- `Set<K>` type backed by HAMT
+- Iterator combinators: `skip`, `take_while`, and `skip_while`
 - Indexed iterator loops use existing `for x, i in iter` syntax; no `enumerate` API needed
 
 **Phase 3** (power features): items 14-16

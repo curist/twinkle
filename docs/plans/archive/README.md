@@ -143,6 +143,7 @@ Related historical context outside this folder:
 | [module-relative-imports.md](module-relative-imports.md) | Explicit relative module imports via `use .foo` syntax |
 | [option-result-ergonomics.md](option-result-ergonomics.md) | `Option.ok_or` / `Option.ok_or_else` and `try Option` support |
 | [option-result-transpose.md](option-result-transpose.md) | Symmetric `Option.transpose` / `Result.transpose` conversions |
+| [scripting-ergonomics.md](scripting-ergonomics.md) | Scripting ergonomics API gaps — string helpers, vector combinators, Set type, iterator adapters |
 | [api-ergonomics-minimal.md](api-ergonomics-minimal.md) | Minimal ergonomic APIs: `Vector.sort_by`, lazy `Iterator.map/filter/take`, and `Option/Result map/and_then` |
 | [record-constructor-aliases.md](record-constructor-aliases.md) | Alias-based record constructors (`P.{ ... }` where `type P = Point`) |
 | [record-field-punning.md](record-field-punning.md) | Record literal field punning shorthand (`.{ x }` => `.{ x: x }`) with parser/tooling/docs alignment |
