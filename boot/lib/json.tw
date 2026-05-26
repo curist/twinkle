@@ -404,132 +404,110 @@ pub fn array(items: Vector<Json>) Json {
 // Primitives
 // ---------------------------------------------------------------------------
 pub fn raw() Decoder<Json> {
-  make(
-    fn(json: Json) Result<Json, String> {
-      .Ok(json)
-    },
-  )
+  make(fn(json: Json) Result<Json, String> {
+    .Ok(json)
+  })
 }
 
 pub fn string() Decoder<String> {
-  make(
-    fn(json: Json) Result<String, String> {
-      case json {
-        .Str(s) => .Ok(s),
-        _ => .Err("expected string"),
-      }
-    },
-  )
+  make(fn(json: Json) Result<String, String> {
+    case json {
+      .Str(s) => .Ok(s),
+      _ => .Err("expected string"),
+    }
+  })
 }
 
 pub fn int() Decoder<Int> {
-  make(
-    fn(json: Json) Result<Int, String> {
-      case json {
-        .Int(n) => .Ok(n),
-        _ => .Err("expected int"),
-      }
-    },
-  )
+  make(fn(json: Json) Result<Int, String> {
+    case json {
+      .Int(n) => .Ok(n),
+      _ => .Err("expected int"),
+    }
+  })
 }
 
 pub fn bool() Decoder<Bool> {
-  make(
-    fn(json: Json) Result<Bool, String> {
-      case json {
-        .Bool(b) => .Ok(b),
-        _ => .Err("expected bool"),
-      }
-    },
-  )
+  make(fn(json: Json) Result<Bool, String> {
+    case json {
+      .Bool(b) => .Ok(b),
+      _ => .Err("expected bool"),
+    }
+  })
 }
 
 pub fn float() Decoder<Float> {
-  make(
-    fn(json: Json) Result<Float, String> {
-      case json {
-        .Float(f) => .Ok(f),
-        .Int(n) => .Ok(n.to_float()),
-        _ => .Err("expected number"),
-      }
-    },
-  )
+  make(fn(json: Json) Result<Float, String> {
+    case json {
+      .Float(f) => .Ok(f),
+      .Int(n) => .Ok(n.to_float()),
+      _ => .Err("expected number"),
+    }
+  })
 }
 
 // Always succeed with a constant, ignoring the Json value.
 pub fn succeed<A>(value: A) Decoder<A> {
-  make(
-    fn(_: Json) {
-      .Ok(value)
-    },
-  )
+  make(fn(_: Json) {
+    .Ok(value)
+  })
 }
 
 // Always fail with a message.
 pub fn fail<A>(message: String) Decoder<A> {
-  make(
-    fn(_: Json) {
-      .Err(message)
-    },
-  )
+  make(fn(_: Json) {
+    .Err(message)
+  })
 }
 
 // ---------------------------------------------------------------------------
 // Transform
 // ---------------------------------------------------------------------------
 pub fn map<A, B>(f: fn(A) B, da: Decoder<A>) Decoder<B> {
-  make(
-    fn(json: Json) {
-      case da.run(json) {
-        .Ok(a) => .Ok(f(a)),
-        .Err(e) => .Err(e),
-      }
-    },
-  )
+  make(fn(json: Json) {
+    case da.run(json) {
+      .Ok(a) => .Ok(f(a)),
+      .Err(e) => .Err(e),
+    }
+  })
 }
 
 pub fn map2<A, B, C>(f: fn(A, B) C, da: Decoder<A>, db: Decoder<B>) Decoder<C> {
-  make(
-    fn(json: Json) {
-      case da.run(json) {
+  make(fn(json: Json) {
+    case da.run(json) {
+      .Err(e) => .Err(e),
+      .Ok(a) => case db.run(json) {
         .Err(e) => .Err(e),
-        .Ok(a) => case db.run(json) {
-          .Err(e) => .Err(e),
-          .Ok(b) => .Ok(f(a, b)),
-        },
-      }
-    },
-  )
+        .Ok(b) => .Ok(f(a, b)),
+      },
+    }
+  })
 }
 
 pub fn map3<A, B, C, D>(f: fn(A, B, C) D, da: Decoder<A>, db: Decoder<B>, dc: Decoder<C>) Decoder<D> {
-  make(
-    fn(json: Json) {
-      case da.run(json) {
+  make(fn(json: Json) {
+    case da.run(json) {
+      .Err(e) => .Err(e),
+      .Ok(a) => case db.run(json) {
         .Err(e) => .Err(e),
-        .Ok(a) => case db.run(json) {
+        .Ok(b) => case dc.run(json) {
           .Err(e) => .Err(e),
-          .Ok(b) => case dc.run(json) {
-            .Err(e) => .Err(e),
-            .Ok(c) => .Ok(f(a, b, c)),
-          },
+          .Ok(c) => .Ok(f(a, b, c)),
         },
-      }
-    },
-  )
+      },
+    }
+  })
 }
 
 // Chain: decode a, then use the decoded value to pick the next decoder.
 // The second decoder still runs against the same original json.
 pub fn and_then<A, B>(f: fn(A) Decoder<B>, da: Decoder<A>) Decoder<B> {
-  make(
-    fn(json: Json) {
-      case da.run(json) {
-        .Err(e) => .Err(e),
-        .Ok(a) => f(a).run(json),
-      }
-    },
-  )
+  make(fn(json: Json) {
+    case da.run(json) {
+      .Err(e) => .Err(e),
+      .Ok(a) => f(a).run(json),
+    }
+  })
 }
 
 // ---------------------------------------------------------------------------
@@ -537,118 +515,104 @@ pub fn and_then<A, B>(f: fn(A) Decoder<B>, da: Decoder<A>) Decoder<B> {
 // ---------------------------------------------------------------------------
 // Decode a required object field.
 pub fn field<A>(key: String, da: Decoder<A>) Decoder<A> {
-  make(
-    fn(json: Json) {
-      case json {
-        .Object(obj) => case obj[key] {
-          .Some(value) => case da.run(value) {
-            .Ok(a) => .Ok(a),
-            .Err(e) => .Err("field '${key}': ${e}"),
-          },
-          .None => .Err("missing field '${key}'"),
+  make(fn(json: Json) {
+    case json {
+      .Object(obj) => case obj[key] {
+        .Some(value) => case da.run(value) {
+          .Ok(a) => .Ok(a),
+          .Err(e) => .Err("field '${key}': ${e}"),
         },
-        _ => .Err("expected object for field '${key}'"),
-      }
-    },
-  )
+        .None => .Err("missing field '${key}'"),
+      },
+      _ => .Err("expected object for field '${key}'"),
+    }
+  })
 }
 
 // Decode an optional field: missing or null both become None.
 pub fn optional_field<A>(key: String, da: Decoder<A>) Decoder<A?> {
-  make(
-    fn(json: Json) {
-      case json {
-        .Object(obj) => case obj[key] {
-          .None => .Ok(.None),
-          .Some(.Null) => .Ok(.None),
-          .Some(value) => case da.run(value) {
-            .Ok(a) => .Ok(.Some(a)),
-            .Err(e) => .Err("field '${key}': ${e}"),
-          },
+  make(fn(json: Json) {
+    case json {
+      .Object(obj) => case obj[key] {
+        .None => .Ok(.None),
+        .Some(.Null) => .Ok(.None),
+        .Some(value) => case da.run(value) {
+          .Ok(a) => .Ok(.Some(a)),
+          .Err(e) => .Err("field '${key}': ${e}"),
         },
-        _ => .Err("expected object"),
-      }
-    },
-  )
+      },
+      _ => .Err("expected object"),
+    }
+  })
 }
 
 // Decode an array element by index.
 pub fn index<A>(i: Int, da: Decoder<A>) Decoder<A> {
-  make(
-    fn(json: Json) {
-      case json {
-        .Array(arr) => {
-          if i < 0 or i >= arr.len() {
-            return .Err("index ${i} out of bounds (length ${arr.len()})")
-          }
+  make(fn(json: Json) {
+    case json {
+      .Array(arr) => {
+        if i < 0 or i >= arr.len() {
+          return .Err("index ${i} out of bounds (length ${arr.len()})")
+        }
 
-          case da.run(arr[i]) {
-            .Ok(a) => .Ok(a),
-            .Err(e) => .Err("index ${i}: ${e}"),
-          }
-        },
-        _ => .Err("expected array"),
-      }
-    },
-  )
+        case da.run(arr[i]) {
+          .Ok(a) => .Ok(a),
+          .Err(e) => .Err("index ${i}: ${e}"),
+        }
+      },
+      _ => .Err("expected array"),
+    }
+  })
 }
 
 // Decode an optional value: null becomes None.
 pub fn nullable<A>(da: Decoder<A>) Decoder<A?> {
-  make(
-    fn(json: Json) {
-      case json {
-        .Null => .Ok(.None),
-        _ => case da.run(json) {
-          .Ok(a) => .Ok(.Some(a)),
-          .Err(e) => .Err(e),
-        },
-      }
-    },
-  )
+  make(fn(json: Json) {
+    case json {
+      .Null => .Ok(.None),
+      _ => case da.run(json) {
+        .Ok(a) => .Ok(.Some(a)),
+        .Err(e) => .Err(e),
+      },
+    }
+  })
 }
 
 // Decode every element of a JSON array.
 pub fn list<A>(da: Decoder<A>) Decoder<Vector<A>> {
-  make(
-    fn(json: Json) {
-      case json {
-        .Array(arr) => {
-          if arr.len() == 0 {
-            return .Ok([])
+  make(fn(json: Json) {
+    case json {
+      .Array(arr) => {
+        if arr.len() == 0 {
+          return .Ok([])
+        }
+
+        // Decode the first element to bootstrap the output vector's type.
+        out := case da.run(arr[0]) {
+          .Ok(a) => [a],
+          .Err(e) => { return .Err("index 0: ${e}") },
+        }
+        i := 1
+
+        for i < arr.len() {
+          case da.run(arr[i]) {
+            .Ok(a) => out = out.append(a),
+            .Err(e) => { return .Err("index ${i}: ${e}") },
           }
 
-          // Decode the first element to bootstrap the output vector's type.
-          out := case da.run(arr[0]) {
-            .Ok(a) => [a],
-            .Err(e) => { return .Err("index 0: ${e}") },
-          }
-          i := 1
+          i = i + 1
+        }
 
-          for i < arr.len() {
-            case da.run(arr[i]) {
-              .Ok(a) => out = out.append(a),
-              .Err(e) => { return .Err("index ${i}: ${e}") },
-            }
-
-            i = i + 1
-          }
-
-          .Ok(out)
-        },
-        _ => .Err("expected array"),
-      }
-    },
-  )
+        .Ok(out)
+      },
+      _ => .Err("expected array"),
+    }
+  })
 }
 
 // Decode every value of a JSON object, preserving the original keys.
 pub fn dict<A>(da: Decoder<A>) Decoder<Dict<String, A>> {
-  make(
-    fn(json: Json) {
-      decode_dict_values(json, da)
-    },
-  )
+  make(fn(json: Json) { decode_dict_values(json, da) })
 }
 
 fn decode_dict_values<A>(json: Json, da: Decoder<A>) Result<Dict<String, A>, String> {
@@ -676,22 +640,20 @@ fn decode_dict_values<A>(json: Json, da: Decoder<A>) Result<Dict<String, A>, Str
 
 // Try each decoder in order; return first success.
 pub fn one_of<A>(decoders: Vector<Decoder<A>>) Decoder<A> {
-  make(
-    fn(json: Json) {
-      i := 0
+  make(fn(json: Json) {
+    i := 0
 
-      for i < decoders.len() {
-        case decoders[i].run(json) {
-          .Ok(a) => { return .Ok(a) },
-          .Err(_) => {},
-        }
-
-        i = i + 1
+    for i < decoders.len() {
+      case decoders[i].run(json) {
+        .Ok(a) => { return .Ok(a) },
+        .Err(_) => {},
       }
 
-      .Err("no decoder matched")
-    },
-  )
+      i = i + 1
+    }
+
+    .Err("no decoder matched")
+  })
 }
 
 // ---------------------------------------------------------------------------

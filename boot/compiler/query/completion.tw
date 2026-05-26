@@ -643,19 +643,12 @@ fn covered_variant_names(arms: Vector<CaseArm>) Dict<String, Bool> {
 }
 
 fn find_case_info_in_block(block: Block, offset: Int) CaseInfo? {
-  find_map(
-    block.stmts,
-    fn(stmt) {
-      find_case_info_in_stmt(stmt, offset)
-    },
-  ).or_else(
-    fn() {
-      case block.tail {
-        .Some(expr) => find_case_info_in_expr(expr, offset),
-        .None => .None,
-      }
-    },
-  )
+  find_map(block.stmts, fn(stmt) { find_case_info_in_stmt(stmt, offset) }).or_else(fn() {
+    case block.tail {
+      .Some(expr) => find_case_info_in_expr(expr, offset),
+      .None => .None,
+    }
+  })
 }
 
 fn find_case_info_in_stmt(stmt: Stmt, offset: Int) CaseInfo? {
@@ -716,18 +709,15 @@ fn find_case_info_in_expr(expr: Expr, offset: Int) CaseInfo? {
       .Some(.{ scrutinee, arms })
     },
     .BlockExpr(block) => find_case_info_in_block(block, offset),
-    .If(cond_e, then_block, else_expr) => find_case_info_in_expr(cond_e, offset).or_else(
-      fn() {
-        find_case_info_in_block(then_block, offset)
-      },
-    ).or_else(
-      fn() {
-        case else_expr {
-          .Some(e) => find_case_info_in_expr(e, offset),
-          .None => .None,
-        }
-      },
-    ),
+    .If(cond_e, then_block, else_expr) => find_case_info_in_expr(cond_e, offset).or_else(fn() { find_case_info_in_block(
+      then_block,
+      offset,
+    ) }).or_else(fn() {
+      case else_expr {
+        .Some(e) => find_case_info_in_expr(e, offset),
+        .None => .None,
+      }
+    }),
     .Cond(arms) => {
       for arm in arms {
         if arm.span.contains(offset) {
@@ -746,27 +736,20 @@ fn find_case_info_in_expr(expr: Expr, offset: Int) CaseInfo? {
       .None
     },
     .Closure(_, _, body) => find_case_info_in_block(body, offset),
-    .Call(callee, args) => find_case_info_in_expr(callee, offset).or_else(
-      fn() {
-        find_case_info_in_exprs(args, offset)
-      },
-    ),
-    .Binary(_, lhs, rhs) => find_case_info_in_expr(lhs, offset).or_else(
-      fn() {
-        find_case_info_in_expr(rhs, offset)
-      },
-    ),
+    .Call(callee, args) => find_case_info_in_expr(callee, offset).or_else(fn() { find_case_info_in_exprs(
+      args,
+      offset,
+    ) }),
+    .Binary(_, lhs, rhs) => find_case_info_in_expr(lhs, offset).or_else(fn() { find_case_info_in_expr(
+      rhs,
+      offset,
+    ) }),
     _ => .None,
   }
 }
 
 fn find_case_info_in_exprs(exprs: Vector<Expr>, offset: Int) CaseInfo? {
-  find_map(
-    exprs,
-    fn(e) {
-      find_case_info_in_expr(e, offset)
-    },
-  )
+  find_map(exprs, fn(e) { find_case_info_in_expr(e, offset) })
 }
 
 // ── Type param substitution ─────────────────────────────────────────

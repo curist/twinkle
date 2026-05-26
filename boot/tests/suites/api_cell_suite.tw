@@ -24,11 +24,7 @@ pub fn suite() runner.Suite {
       "update applies function",
       fn() {
         c := Cell.new(10)
-        c.update(
-          fn(n) {
-            n * 2
-          },
-        )
+        c.update(fn(n) { n * 2 })
         try assert.equal(c.get(), 20)
         .Ok({})
       },
@@ -37,21 +33,9 @@ pub fn suite() runner.Suite {
       "multiple updates accumulate",
       fn() {
         c := Cell.new(0)
-        c.update(
-          fn(n) {
-            n + 1
-          },
-        )
-        c.update(
-          fn(n) {
-            n + 1
-          },
-        )
-        c.update(
-          fn(n) {
-            n + 1
-          },
-        )
+        c.update(fn(n) { n + 1 })
+        c.update(fn(n) { n + 1 })
+        c.update(fn(n) { n + 1 })
         try assert.equal(c.get(), 3)
         .Ok({})
       },
@@ -73,11 +57,7 @@ pub fn suite() runner.Suite {
       fn() {
         c := Cell.new(0)
         inc := fn() {
-          c.update(
-            fn(n) {
-              n + 1
-            },
-          )
+          c.update(fn(n) { n + 1 })
         }
         inc()
         inc()
@@ -92,11 +72,7 @@ pub fn suite() runner.Suite {
         sum := Cell.new(0)
 
         for i in 0..5 {
-          sum.update(
-            fn(n) {
-              n + i
-            },
-          )
+          sum.update(fn(n) { n + i })
         }
 
         try assert.equal(sum.get(), 10)

@@ -24,9 +24,7 @@ pub fn hover(snap: SemanticSnapshot, byte_offset: Int, source: String) HoverResu
   typed := try snap.typed
   find_map(
     parsed.module.items,
-    fn(item) {
-      hover_item(item, byte_offset, snap, typed, parsed.module.items, source)
-    },
+    fn(item) { hover_item(item, byte_offset, snap, typed, parsed.module.items, source) },
   )
 }
 
@@ -62,12 +60,7 @@ fn hover_item(
 fn hover_import(decl: UseDecl, offset: Int, snap: SemanticSnapshot, typed: CheckResult) HoverResult? {
   case decl.items {
     .Some(items) => {
-      result := find_map(
-        items,
-        fn(it) {
-          hover_import_item(it, offset, typed)
-        },
-      )
+      result := find_map(items, fn(it) { hover_import_item(it, offset, typed) })
 
       case result {
         .Some(_) => result,
@@ -146,11 +139,7 @@ fn hover_type_decl(decl: TypeDecl, offset: Int, typed: CheckResult, source: Stri
     return .Some(.{ content, span: name_span })
   }
 
-  hover_type_params(decl.type_params, offset).or_else(
-    fn() {
-      hover_type_def(decl.def, offset, typed)
-    },
-  )
+  hover_type_params(decl.type_params, offset).or_else(fn() { hover_type_def(decl.def, offset, typed) })
 }
 
 fn hover_function_decl(
@@ -177,28 +166,22 @@ fn hover_function_decl(
     }
   }
 
-  hover_type_params(decl.type_params, offset).or_else(
-    fn() {
-      hover_function_params(decl.params, sig, offset, typed)
-    },
-  ).or_else(
-    fn() {
-      hover_optional_type_expr(decl.return_type, offset, typed)
-    },
-  ).or_else(
-    fn() {
-      hover_block(decl.body, offset, typed, items, source)
-    },
-  )
+  hover_type_params(decl.type_params, offset).or_else(fn() { hover_function_params(
+    decl.params,
+    sig,
+    offset,
+    typed,
+  ) }).or_else(fn() { hover_optional_type_expr(decl.return_type, offset, typed) }).or_else(fn() { hover_block(
+    decl.body,
+    offset,
+    typed,
+    items,
+    source,
+  ) })
 }
 
 fn hover_function_params(params: Vector<Param>, sig: FunctionSig?, offset: Int, typed: CheckResult) HoverResult? {
-  find_map_indexed(
-    params,
-    fn(p, i) {
-      hover_function_param(p, i, sig, offset, typed)
-    },
-  )
+  find_map_indexed(params, fn(p, i) { hover_function_param(p, i, sig, offset, typed) })
 }
 
 fn hover_function_param(p: Param, i: Int, sig: FunctionSig?, offset: Int, typed: CheckResult) HoverResult? {
@@ -299,27 +282,18 @@ fn hover_type_params(params: Vector<TypeParam>, offset: Int) HoverResult? {
 // ── Shared walker integration ──────────────────────────────────────
 fn hover_block(block: Block, offset: Int, typed: CheckResult, items: Vector<Item>, source: String) HoverResult? {
   // Check stmt-level specials first (let names, for patterns/indices)
-  find_map(
-    block.stmts,
-    fn(stmt) {
-      hover_stmt_special(stmt, offset, typed)
-    },
-  ).or_else(
-    fn() {
-      // Shared walker for expr-level
-      ctx := try find_node_in_block(block, offset)
-      hover_for_node(ctx, offset, typed, items, source)
-    },
-  )
+  find_map(block.stmts, fn(stmt) { hover_stmt_special(stmt, offset, typed) }).or_else(fn() {
+    // Shared walker for expr-level
+    ctx := try find_node_in_block(block, offset)
+    hover_for_node(ctx, offset, typed, items, source)
+  })
 }
 
 fn hover_stmt(stmt: Stmt, offset: Int, typed: CheckResult, items: Vector<Item>, source: String) HoverResult? {
-  hover_stmt_special(stmt, offset, typed).or_else(
-    fn() {
-      ctx := try find_node_in_stmt(stmt, offset)
-      hover_for_node(ctx, offset, typed, items, source)
-    },
-  )
+  hover_stmt_special(stmt, offset, typed).or_else(fn() {
+    ctx := try find_node_in_stmt(stmt, offset)
+    hover_for_node(ctx, offset, typed, items, source)
+  })
 }
 
 fn hover_stmt_special(stmt: Stmt, offset: Int, typed: CheckResult) HoverResult? {
@@ -352,11 +326,7 @@ fn hover_for_stmt(fs: ForStmt, offset: Int, typed: CheckResult) HoverResult? {
     return .None
   }
 
-  hover_for_pattern(fs, offset, typed).or_else(
-    fn() {
-      hover_for_index(fs, offset, typed)
-    },
-  )
+  hover_for_pattern(fs, offset, typed).or_else(fn() { hover_for_index(fs, offset, typed) })
 }
 
 fn hover_for_pattern(fs: ForStmt, offset: Int, typed: CheckResult) HoverResult? {
@@ -406,15 +376,12 @@ fn hover_for_node(
         start: expr.span.end - field.len(),
         end: expr.span.end,
       }
-      hover_recorded_method(expr.id, base, field_span, typed).or_else(
-        fn() {
-          hover_method(base, field, field_span, typed)
-        },
-      ).or_else(
-        fn() {
-          expr_type(expr, typed)
-        },
-      )
+      hover_recorded_method(expr.id, base, field_span, typed).or_else(fn() { hover_method(
+        base,
+        field,
+        field_span,
+        typed,
+      ) }).or_else(fn() { expr_type(expr, typed) })
     },
     .PatternNode(pat, scrutinee) => {
       s := try scrutinee
@@ -459,21 +426,14 @@ fn hover_closure_expr(expr: Expr, params: Vector<Param>, offset: Int, typed: Che
 }
 
 fn hover_closure_param_types(params: Vector<Param>, offset: Int, typed: CheckResult) HoverResult? {
-  find_map(
-    params,
-    fn(p) {
-      hover_optional_type_expr(p.ty, offset, typed)
-    },
-  )
+  find_map(params, fn(p) { hover_optional_type_expr(p.ty, offset, typed) })
 }
 
 fn hover_closure_param_names(expr: Expr, params: Vector<Param>, offset: Int, typed: CheckResult) HoverResult? {
   case typed.type_map[expr.id] {
     .Some(.Function(param_types, _)) => find_map_indexed(
       params,
-      fn(p, i) {
-        hover_closure_param_name(p, i, param_types, offset, typed)
-      },
+      fn(p, i) { hover_closure_param_name(p, i, param_types, offset, typed) },
     ),
     _ => .None,
   }
@@ -538,11 +498,12 @@ fn hover_recorded_method(callee_id: Int, base: Expr, method_span: Span, typed: C
 }
 
 fn hover_method(base: Expr, method: String, method_span: Span, typed: CheckResult) HoverResult? {
-  hover_variant_method(base, method, method_span, typed).or_else(
-    fn() {
-      hover_named_method(base, method, method_span, typed)
-    },
-  )
+  hover_variant_method(base, method, method_span, typed).or_else(fn() { hover_named_method(
+    base,
+    method,
+    method_span,
+    typed,
+  ) })
 }
 
 fn hover_variant_method(base: Expr, method: String, method_span: Span, typed: CheckResult) HoverResult? {
@@ -666,30 +627,15 @@ fn hover_type_expr(t: TypeExpr, offset: Int, typed: CheckResult) HoverResult? {
 }
 
 fn hover_type_exprs(types: Vector<TypeExpr>, offset: Int, typed: CheckResult) HoverResult? {
-  find_map(
-    types,
-    fn(t) {
-      hover_type_expr(t, offset, typed)
-    },
-  )
+  find_map(types, fn(t) { hover_type_expr(t, offset, typed) })
 }
 
 fn hover_record_field_types(fields: Vector<RecordField>, offset: Int, typed: CheckResult) HoverResult? {
-  find_map(
-    fields,
-    fn(f) {
-      hover_type_expr(f.ty, offset, typed)
-    },
-  )
+  find_map(fields, fn(f) { hover_type_expr(f.ty, offset, typed) })
 }
 
 fn hover_variant_decl_types(vars: Vector<VariantDecl>, offset: Int, typed: CheckResult) HoverResult? {
-  find_map(
-    vars,
-    fn(v) {
-      hover_type_exprs(v.fields, offset, typed)
-    },
-  )
+  find_map(vars, fn(v) { hover_type_exprs(v.fields, offset, typed) })
 }
 
 fn hover_type_path(path: TypePath, offset: Int, typed: CheckResult) HoverResult? {

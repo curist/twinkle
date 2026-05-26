@@ -200,11 +200,9 @@ pub fn suite() runner.Suite {
         bytes := Cell.new("")
 
         for b in s {
-          bytes.update(
-            fn(acc) {
-              "${acc}${b.to_int()} "
-            },
-          )
+          bytes.update(fn(acc) {
+            "${acc}${b.to_int()} "
+          })
         }
 
         try assert.equal(bytes.get(), "97 98 99 ")

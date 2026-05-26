@@ -427,12 +427,7 @@ fn register_named_dependencies(
 }
 
 fn register_mono_list(reg: WasmTypeRegistry, types: Vector<MonoType>, env: ResolvedEnv) WasmTypeRegistry {
-  types.fold(
-    reg,
-    fn(cur, ty) {
-      register_mono(cur, ty, env)
-    },
-  )
+  types.fold(reg, fn(cur, ty) { register_mono(cur, ty, env) })
 }
 
 fn find_type_entry(env: ResolvedEnv, tid: TypeId) TypeEntry {

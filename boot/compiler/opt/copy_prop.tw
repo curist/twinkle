@@ -46,9 +46,7 @@ fn subst_atom_val(a: Atom, target: LocalId, replacement: Atom) Atom {
 }
 
 fn subst_op(op: AnfOp, target: LocalId, replacement: Atom) AnfOp {
-  sa := fn(a: Atom) Atom {
-    subst_atom_val(a, target, replacement)
-  }
+  sa := fn(a: Atom) Atom { subst_atom_val(a, target, replacement) }
 
   case op {
     .ACall(callee, args) => {

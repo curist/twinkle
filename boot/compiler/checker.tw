@@ -2316,11 +2316,7 @@ fn check_record_lit(
 
           // Check missing fields
           for f in fields {
-            if !entries.any(
-              fn(e) {
-                e.name == f.name
-              },
-            ) {
+            if !entries.any(fn(e) { e.name == f.name }) {
               cur_diags = .append(.Error(.MissingField(.{ span: s, name: f.name, ty: zonked })))
             }
           }
@@ -3195,11 +3191,7 @@ fn check_exhaustiveness(
 
       // Find uncovered variants
       missing := collect name in names {
-        if covered.any(
-          fn(c) {
-            c == name
-          },
-        ) {
+        if covered.any(fn(c) { c == name }) {
           continue
         }
 

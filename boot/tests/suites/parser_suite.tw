@@ -2170,105 +2170,71 @@ pub fn suite() runner.Suite {
     )
     .test(
       "snapshot: statement_in_expression_return",
-      fn() {
-        assert_snapshot("tests/parser_errors/statement_in_expression_return.tw")
-      },
+      fn() { assert_snapshot("tests/parser_errors/statement_in_expression_return.tw") },
     )
     .test(
       "snapshot: statement_in_expression_case_arm",
-      fn() {
-        assert_snapshot("tests/parser_errors/statement_in_expression_case_arm.tw")
-      },
+      fn() { assert_snapshot("tests/parser_errors/statement_in_expression_case_arm.tw") },
     )
     .test(
       "snapshot: statement_in_expression_break",
-      fn() {
-        assert_snapshot("tests/parser_errors/statement_in_expression_break.tw")
-      },
+      fn() { assert_snapshot("tests/parser_errors/statement_in_expression_break.tw") },
     )
     .test(
       "snapshot: statement_in_expression_continue",
-      fn() {
-        assert_snapshot("tests/parser_errors/statement_in_expression_continue.tw")
-      },
+      fn() { assert_snapshot("tests/parser_errors/statement_in_expression_continue.tw") },
     )
     .test(
       "snapshot: statement_in_expression_defer",
-      fn() {
-        assert_snapshot("tests/parser_errors/statement_in_expression_defer.tw")
-      },
+      fn() { assert_snapshot("tests/parser_errors/statement_in_expression_defer.tw") },
     )
     .test(
       "snapshot: statement_in_expression_for",
-      fn() {
-        assert_snapshot("tests/parser_errors/statement_in_expression_for.tw")
-      },
+      fn() { assert_snapshot("tests/parser_errors/statement_in_expression_for.tw") },
     )
     .test(
       "snapshot: statement_in_expression_call_arg",
-      fn() {
-        assert_snapshot("tests/parser_errors/statement_in_expression_call_arg.tw")
-      },
+      fn() { assert_snapshot("tests/parser_errors/statement_in_expression_call_arg.tw") },
     )
     .test(
       "snapshot: statement_in_expression_array",
-      fn() {
-        assert_snapshot("tests/parser_errors/statement_in_expression_array.tw")
-      },
+      fn() { assert_snapshot("tests/parser_errors/statement_in_expression_array.tw") },
     )
     .test(
       "snapshot: statement_in_expression_grouped",
-      fn() {
-        assert_snapshot("tests/parser_errors/statement_in_expression_grouped.tw")
-      },
+      fn() { assert_snapshot("tests/parser_errors/statement_in_expression_grouped.tw") },
     )
     .test(
       "snapshot: case_missing_comma",
-      fn() {
-        assert_snapshot("tests/parser_errors/case_missing_comma.tw")
-      },
+      fn() { assert_snapshot("tests/parser_errors/case_missing_comma.tw") },
     )
     .test(
       "snapshot: missing_operand",
-      fn() {
-        assert_snapshot("tests/parser_errors/missing_operand.tw")
-      },
+      fn() { assert_snapshot("tests/parser_errors/missing_operand.tw") },
     )
     .test(
       "snapshot: missing_paren",
-      fn() {
-        assert_snapshot("tests/parser_errors/missing_paren.tw")
-      },
+      fn() { assert_snapshot("tests/parser_errors/missing_paren.tw") },
     )
     .test(
       "snapshot: unterminated_string",
-      fn() {
-        assert_snapshot("tests/parser_errors/unterminated_string.tw")
-      },
+      fn() { assert_snapshot("tests/parser_errors/unterminated_string.tw") },
     )
     .test(
       "snapshot: invalid_hex_escape",
-      fn() {
-        assert_snapshot("tests/parser_errors/invalid_hex_escape.tw")
-      },
+      fn() { assert_snapshot("tests/parser_errors/invalid_hex_escape.tw") },
     )
     .test(
       "snapshot: invalid_unicode_escape",
-      fn() {
-        assert_snapshot("tests/parser_errors/invalid_unicode_escape.tw")
-      },
+      fn() { assert_snapshot("tests/parser_errors/invalid_unicode_escape.tw") },
     )
     .test(
       "snapshot: unclosed_sum_type",
-      fn() {
-        assert_snapshot("tests/parser_errors/unclosed_sum_type.tw")
-      },
+      fn() { assert_snapshot("tests/parser_errors/unclosed_sum_type.tw") },
     )
     .test(
       "snapshot: unclosed_record_type",
-      fn() {
-        assert_snapshot("tests/parser_errors/unclosed_record_type.tw")
-      },
+      fn() { assert_snapshot("tests/parser_errors/unclosed_record_type.tw") },
     )
     .test(
       "cond wildcard arm must be last",

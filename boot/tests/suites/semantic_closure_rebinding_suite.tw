@@ -2,19 +2,13 @@ use tests.assert
 use tests.runner
 
 fn make_adder(base: Int) fn(Int) Int {
-  fn(n: Int) Int {
-    base + n
-  }
+  fn(n: Int) Int { base + n }
 }
 
 fn make_counter() fn() Int {
   c := Cell.new(0)
   fn() Int {
-    c.update(
-      fn(n) {
-        n + 1
-      },
-    )
+    c.update(fn(n) { n + 1 })
     c.get()
   }
 }
@@ -25,9 +19,7 @@ pub fn suite() runner.Suite {
       "capture by value freezes at definition",
       fn() {
         x := 1
-        f := fn() Int {
-          x
-        }
+        f := fn() Int { x }
         x = 99
         try assert.equal(f(), 1)
         .Ok({})
@@ -39,9 +31,7 @@ pub fn suite() runner.Suite {
         x := 1
         inner := {
           x := 10
-          fn() Int {
-            x
-          }
+          fn() Int { x }
         }
         try assert.equal(inner(), 10)
         try assert.equal(x, 1)
@@ -52,9 +42,7 @@ pub fn suite() runner.Suite {
       "rebinding after closure does not affect it",
       fn() {
         x := 1
-        f := fn() Int {
-          x
-        }
+        f := fn() Int { x }
         x = 2
         x = 3
         try assert.equal(f(), 1)
@@ -66,13 +54,9 @@ pub fn suite() runner.Suite {
       "two closures capture different snapshots",
       fn() {
         x := 10
-        f := fn() Int {
-          x
-        }
+        f := fn() Int { x }
         x = 20
-        g := fn() Int {
-          x
-        }
+        g := fn() Int { x }
         try assert.equal(f(), 10)
         try assert.equal(g(), 20)
         .Ok({})
@@ -82,9 +66,7 @@ pub fn suite() runner.Suite {
       "loop closures capture per-iteration value",
       fn() {
         fns := collect i in 0..4 {
-          fn() Int {
-            i
-          }
+          fn() Int { i }
         }
         try assert.equal(fns[0](), 0)
         try assert.equal(fns[1](), 1)
@@ -113,9 +95,7 @@ pub fn suite() runner.Suite {
       fn() {
         x := 5
         outer := fn() fn() Int {
-          fn() Int {
-            x
-          }
+          fn() Int { x }
         }
         inner := outer()
         try assert.equal(inner(), 5)
@@ -148,15 +128,9 @@ pub fn suite() runner.Suite {
       fn() {
         c := Cell.new(0)
         inc := fn() {
-          c.update(
-            fn(n) {
-              n + 1
-            },
-          )
+          c.update(fn(n) { n + 1 })
         }
-        get := fn() Int {
-          c.get()
-        }
+        get := fn() Int { c.get() }
         inc()
         inc()
         try assert.equal(get(), 2)

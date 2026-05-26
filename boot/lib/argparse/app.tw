@@ -67,22 +67,16 @@ pub fn error_message(e: ParseError) String {
 
 // --- Private helpers ---
 fn find_by_long(args: Vector<arg.Arg>, name: String) arg.Arg? {
-  args.find(
-    fn(a: arg.Arg) Bool {
-      a.name == name
-    },
-  )
+  args.find(fn(a: arg.Arg) Bool { a.name == name })
 }
 
 fn find_by_short(args: Vector<arg.Arg>, s: String) arg.Arg? {
-  args.find(
-    fn(a: arg.Arg) Bool {
-      case a.short_name {
-        .Some(sn) => sn == s,
-        .None => false,
-      }
-    },
-  )
+  args.find(fn(a: arg.Arg) Bool {
+    case a.short_name {
+      .Some(sn) => sn == s,
+      .None => false,
+    }
+  })
 }
 
 fn pad(s: String, width: Int) String {
@@ -174,11 +168,7 @@ fn format_help(a: App, cmd_name: String?) String {
 
   case cmd_name {
     .Some(name) => {
-      cmd := a.commands.find(
-        fn(c: command.Command) Bool {
-          c.name == name
-        },
-      )
+      cmd := a.commands.find(fn(c: command.Command) Bool { c.name == name })
 
       case cmd {
         .Some(c) => {
@@ -248,11 +238,7 @@ pub fn parse(a: App, argv: Vector<String>) ParseResult!ParseError {
       return .Err(.HelpRequested(format_help(a, .None)))
     }
 
-    c := case a.commands.find(
-      fn(c: command.Command) Bool {
-        c.name == first
-      },
-    ) {
+    c := case a.commands.find(fn(c: command.Command) Bool { c.name == first }) {
       .Some(cmd) => cmd,
       .None => { return .Err(.UnknownCommand(first)) },
     }

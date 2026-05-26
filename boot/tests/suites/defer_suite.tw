@@ -85,15 +85,13 @@ pub fn suite() runner.Suite {
 }
 
 fn append(buf: Cell<String>, s: String) {
-  buf.update(
-    fn(old) {
-      if old == "" {
-        s
-      } else {
-        "${old},${s}"
-      }
-    },
-  )
+  buf.update(fn(old) {
+    if old == "" {
+      s
+    } else {
+      "${old},${s}"
+    }
+  })
 }
 
 fn run_basic(buf: Cell<String>) {

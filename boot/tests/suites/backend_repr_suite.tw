@@ -267,30 +267,10 @@ fn prepared_pf(params: Vector<Param>, body: AnfExpr, mono_map: Dict<Int, MonoTyp
 // ── repr_of_mono tests ────────────────────────────────────────────────
 pub fn suite() runner.Suite {
   runner.suite("backend repr assign (Phase 4b)")
-    .test(
-      "Int → I64",
-      fn() {
-        assert_repr(.Int, .I64)
-      },
-    )
-    .test(
-      "Float → F64",
-      fn() {
-        assert_repr(.Float, .F64)
-      },
-    )
-    .test(
-      "Bool → I32",
-      fn() {
-        assert_repr(.Bool, .I32)
-      },
-    )
-    .test(
-      "Byte → I32",
-      fn() {
-        assert_repr(.Byte, .I32)
-      },
-    )
+    .test("Int → I64", fn() { assert_repr(.Int, .I64) })
+    .test("Float → F64", fn() { assert_repr(.Float, .F64) })
+    .test("Bool → I32", fn() { assert_repr(.Bool, .I32) })
+    .test("Byte → I32", fn() { assert_repr(.Byte, .I32) })
     .test(
       "String → TypedRef",
       fn() {
@@ -327,24 +307,9 @@ pub fn suite() runner.Suite {
         assert_repr(.Function([.Int], .Bool), .ClosureRef)
       },
     )
-    .test(
-      "Void → OpaqueAnyref",
-      fn() {
-        assert_repr(.Void, .OpaqueAnyref)
-      },
-    )
-    .test(
-      "Anyref_ → OpaqueAnyref",
-      fn() {
-        assert_repr(.Anyref_, .OpaqueAnyref)
-      },
-    )
-    .test(
-      "Never → DeadValue",
-      fn() {
-        assert_repr(.Never, .DeadValue)
-      },
-    )
+    .test("Void → OpaqueAnyref", fn() { assert_repr(.Void, .OpaqueAnyref) })
+    .test("Anyref_ → OpaqueAnyref", fn() { assert_repr(.Anyref_, .OpaqueAnyref) })
+    .test("Never → DeadValue", fn() { assert_repr(.Never, .DeadValue) })
     .test(
       "Int param slot gets I64 repr and I64 wasm_type",
       fn() {

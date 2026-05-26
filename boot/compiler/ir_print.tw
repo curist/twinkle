@@ -204,19 +204,12 @@ pub fn render_core_expr(lines: Vector<String>, env: ResolvedEnv, expr: CoreExpr,
     },
     .Call(callee, args) => args.fold(
       render_core_expr(line(lines, indent, "Call : ${ty}"), env, callee, indent + 2),
-      fn(out, arg) {
-        render_core_expr(out, env, arg, indent + 4)
-      },
+      fn(out, arg) { render_core_expr(out, env, arg, indent + 4) },
     ),
     .ContractCall(contract, method_name, receiver, args) => {
       out := line(lines, indent, "ContractCall ${contract_name(contract)}.${method_name} : ${ty}")
       out = render_core_expr(out, env, receiver, indent + 2)
-      args.fold(
-        out,
-        fn(inner_out, arg) {
-          render_core_expr(inner_out, env, arg, indent + 4)
-        },
-      )
+      args.fold(out, fn(inner_out, arg) { render_core_expr(inner_out, env, arg, indent + 4) })
     },
     .MakeClosure(func_id, free_vars) => {
       captures := collect local in free_vars {
@@ -289,15 +282,11 @@ pub fn render_core_expr(lines: Vector<String>, env: ResolvedEnv, expr: CoreExpr,
     },
     .Variant(tid, vid, args) => args.fold(
       line(lines, indent, "Variant(${type_name(env, tid)}.${variant_name(env, tid, vid)}) : ${ty}"),
-      fn(out, arg) {
-        render_core_expr(out, env, arg, indent + 2)
-      },
+      fn(out, arg) { render_core_expr(out, env, arg, indent + 2) },
     ),
     .ArrayLit(elements) => elements.fold(
       line(lines, indent, "ArrayLit[${elements.len()}] : ${ty}"),
-      fn(out, elem) {
-        render_core_expr(out, env, elem, indent + 2)
-      },
+      fn(out, elem) { render_core_expr(out, env, elem, indent + 2) },
     ),
     .Index(base, index) => {
       out := line(lines, indent, "Index : ${ty}")

@@ -17,33 +17,25 @@ use tests.runner
 
 // ── helpers ──────────────────────────────────────────────────────────────────
 fn find_group(groups: Vector<SignatureGroup>, name: String) SignatureGroup? {
-  groups.find(
-    fn(g) {
-      case g.receiver {
-        .Some(r) => r == name,
-        .None => false,
-      }
-    },
-  )
+  groups.find(fn(g) {
+    case g.receiver {
+      .Some(r) => r == name,
+      .None => false,
+    }
+  })
 }
 
 fn find_free_group(groups: Vector<SignatureGroup>) SignatureGroup? {
-  groups.find(
-    fn(g) {
-      case g.receiver {
-        .None => true,
-        .Some(_) => false,
-      }
-    },
-  )
+  groups.find(fn(g) {
+    case g.receiver {
+      .None => true,
+      .Some(_) => false,
+    }
+  })
 }
 
 fn find_sig(sigs: Vector<FunctionSig>, name: String) FunctionSig? {
-  sigs.find(
-    fn(s) {
-      s.name == name
-    },
-  )
+  sigs.find(fn(s) { s.name == name })
 }
 
 fn signatures_dir() String {
@@ -213,17 +205,15 @@ pub fn suite() runner.Suite {
       "range_from is in a free-function group (no receiver)",
       fn() {
         groups := try load_signatures(signatures_dir(), builtin_type_env())
-        range_group := groups.find(
-          fn(g) {
-            case g.receiver {
-              .None => case find_sig(g.sigs, "range_from") {
-                .Some(_) => true,
-                .None => false,
-              },
-              .Some(_) => false,
-            }
-          },
-        )
+        range_group := groups.find(fn(g) {
+          case g.receiver {
+            .None => case find_sig(g.sigs, "range_from") {
+              .Some(_) => true,
+              .None => false,
+            },
+            .Some(_) => false,
+          }
+        })
         try assert.is_some(range_group)
         .Ok({})
       },
@@ -234,8 +224,8 @@ pub fn suite() runner.Suite {
         groups := try load_signatures(signatures_dir(), builtin_type_env())
 
         // find the group containing range_from
-        range_group := try groups.find(
-          fn(g) {
+        range_group := try groups
+          .find(fn(g) {
             case g.receiver {
               .None => case find_sig(g.sigs, "range_from") {
                 .Some(_) => true,
@@ -243,8 +233,8 @@ pub fn suite() runner.Suite {
               },
               .Some(_) => false,
             }
-          },
-        ).ok_or("no range group")
+          })
+          .ok_or("no range group")
         _ := try find_sig(range_group.sigs, "range").ok_or("no range sig")
         _ := try find_sig(range_group.sigs, "range_step").ok_or("no range_step sig")
         .Ok({})

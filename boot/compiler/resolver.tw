@@ -178,11 +178,7 @@ pub fn register_methods(
   }
   new_entries := collect e in entries {
     // Deduplicate: skip if method_name already registered
-    dup := existing.any(
-      fn(ex) {
-        ex.method_name == e.method_name
-      },
-    )
+    dup := existing.any(fn(ex) { ex.method_name == e.method_name })
 
     if dup {
       continue
@@ -207,11 +203,7 @@ pub fn register_type_methods(
     },
   }
   new_entries := collect e in entries {
-    dup := existing.any(
-      fn(ex) {
-        ex.method_name == e.method_name
-      },
-    )
+    dup := existing.any(fn(ex) { ex.method_name == e.method_name })
 
     if dup {
       continue
@@ -1646,11 +1638,7 @@ fn detect_inherent_methods(
     // Check for collision with record fields and already-registered methods.
     field_collision := case env.lookup_type_def(tid) {
       .Some(def) => case def {
-        .Record(_, _, fields) => fields.any(
-          fn(field) {
-            field.name == method_name
-          },
-        ),
+        .Record(_, _, fields) => fields.any(fn(field) { field.name == method_name }),
         _ => false,
       },
       .None => false,
@@ -1659,17 +1647,9 @@ fn detect_inherent_methods(
 
     if !collision {
       collision = case tm[tid.id] {
-        .Some(existing) => existing.any(
-          fn(e) {
-            e.method_name == method_name
-          },
-        ),
+        .Some(existing) => existing.any(fn(e) { e.method_name == method_name }),
         .None => case m[type_name] {
-          .Some(existing) => existing.any(
-            fn(e) {
-              e.method_name == method_name
-            },
-          ),
+          .Some(existing) => existing.any(fn(e) { e.method_name == method_name }),
           .None => false,
         },
       }
@@ -1677,11 +1657,7 @@ fn detect_inherent_methods(
 
     if !collision {
       collision = case m[type_name] {
-        .Some(existing) => existing.any(
-          fn(e) {
-            e.method_name == method_name
-          },
-        ),
+        .Some(existing) => existing.any(fn(e) { e.method_name == method_name }),
         .None => false,
       }
     }
@@ -2317,9 +2293,7 @@ fn collect_hidden_support_types_from_def(
   case def {
     .Record(_, _, fields) => fields.fold(
       needed,
-      fn(cur, field) {
-        collect_hidden_support_types(env, field.ty, cur)
-      },
+      fn(cur, field) { collect_hidden_support_types(env, field.ty, cur) },
     ),
     .Sum(_, _, variants) => {
       cur := needed

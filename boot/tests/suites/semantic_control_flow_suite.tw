@@ -265,11 +265,9 @@ pub fn suite() runner.Suite {
         pairs := Cell.new("")
 
         for x, i in xs {
-          pairs.update(
-            fn(s) {
-              "${s}${i}:${x} "
-            },
-          )
+          pairs.update(fn(s) {
+            "${s}${i}:${x} "
+          })
         }
 
         try assert.equal(pairs.get(), "0:a 1:b 2:c ")

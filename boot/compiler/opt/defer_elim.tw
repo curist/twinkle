@@ -215,12 +215,7 @@ fn elim_op(
 // ── prepend_defers: insert deferred exprs in LIFO order ────────────
 // Defers are in declaration order; fold so last-declared fires first.
 fn prepend_defers(defers: Vector<AnfExpr>, tail: AnfExpr) AnfExpr {
-  defers.fold(
-    tail,
-    fn(acc, d) {
-      splice_defer_before(d, acc)
-    },
-  )
+  defers.fold(tail, fn(acc, d) { splice_defer_before(d, acc) })
 }
 
 // Walk the let-chain of deferred and replace its terminal Atom with

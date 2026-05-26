@@ -606,11 +606,10 @@ pub fn suite() runner.Suite {
             )
           },
         }
-        found := artifacts.core.functions.any(
-          fn(func) {
-            has_box_to_string_param(artifacts.core.type_env, func)
-          },
-        )
+        found := artifacts.core.functions.any(fn(func) { has_box_to_string_param(
+          artifacts.core.type_env,
+          func,
+        ) })
 
         if !found {
           return .Err("expected linked Box.to_string param to use canonical Box TypeId")
@@ -656,11 +655,8 @@ pub fn suite() runner.Suite {
         case artifacts.core.method_table[key] {
           .Some(fid) => {
             // Verify the FuncId points at a function with Box receiver.
-            found := artifacts.core.functions.any(
-              fn(func) {
-                func.func_id.id == fid.id and has_box_to_string_param(artifacts.core.type_env, func)
-              },
-            )
+            found := artifacts.core.functions.any(fn(func) { func.func_id.id == fid.id
+              and has_box_to_string_param(artifacts.core.type_env, func) })
 
             if !found {
               return .Err(

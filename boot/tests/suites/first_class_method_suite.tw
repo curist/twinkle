@@ -100,11 +100,7 @@ pub fn suite() runner.Suite {
       fn() {
         xs := [1, 2, 3]
         f: fn(fn(Int) Int) Vector<Int> = xs.map
-        doubled := f(
-          fn(n: Int) Int {
-            n * 2
-          },
-        )
+        doubled := f(fn(n: Int) Int { n * 2 })
         try assert.equal(doubled.map(Int.to_string).join(","), "2,4,6")
         .Ok({})
       },
@@ -121,10 +117,6 @@ pub fn suite() runner.Suite {
 }
 
 fn make_foo(count: Cell<Int>) Foo {
-  count.update(
-    fn(n) {
-      n + 1
-    },
-  )
+  count.update(fn(n) { n + 1 })
   Foo.{ x: 1 }
 }

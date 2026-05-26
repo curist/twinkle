@@ -57,12 +57,7 @@ fn scan_op(op: AnfOp, enclosing: AnfFunctionDef, env: ResolvedEnv, state: Conver
       state = scan_expr(then_e, enclosing, env, state)
       scan_expr(else_e, enclosing, env, state)
     },
-    .AMatch(_, arms) => arms.fold(
-      state,
-      fn(cur, arm) {
-        scan_expr(arm.body, enclosing, env, cur)
-      },
-    ),
+    .AMatch(_, arms) => arms.fold(state, fn(cur, arm) { scan_expr(arm.body, enclosing, env, cur) }),
     .ALoop(body) => scan_expr(body, enclosing, env, state),
     .ADefer(body) => scan_expr(body, enclosing, env, state),
     _ => state,

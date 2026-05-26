@@ -63,15 +63,13 @@ pub fn suite() runner.Suite {
         buf := Cell.new("")
 
         for b, i in s {
-          buf.update(
-            fn(acc) {
-              if acc == "" {
-                "${i}:${b.to_int()}"
-              } else {
-                "${acc} ${i}:${b.to_int()}"
-              }
-            },
-          )
+          buf.update(fn(acc) {
+            if acc == "" {
+              "${i}:${b.to_int()}"
+            } else {
+              "${acc} ${i}:${b.to_int()}"
+            }
+          })
         }
 
         try assert.equal(buf.get(), "0:104 1:101 2:121")

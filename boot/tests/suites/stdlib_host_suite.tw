@@ -83,18 +83,8 @@ pub fn suite() runner.Suite {
             try assert.is_true(entries.len() > 0)
 
             // Find our own suite file in the listing
-            names := entries.map(
-              fn(e: fs.DirEntry) {
-                e.name
-              },
-            )
-            try assert.is_true(
-              names.any(
-                fn(n) {
-                  n == "stdlib_host_suite.tw"
-                },
-              ),
-            )
+            names := entries.map(fn(e: fs.DirEntry) { e.name })
+            try assert.is_true(names.any(fn(n) { n == "stdlib_host_suite.tw" }))
             .Ok({})
           },
           .Err(_) => assert.fail("unreachable"),

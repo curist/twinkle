@@ -189,17 +189,13 @@ fn collect_vars_in_order(ty: MonoType, seen: Dict<String, Bool>, result: Vector<
     .Function(params, ret) => {
       st := params.fold(
         VarCollectState.{ seen, result },
-        fn(st, p) {
-          collect_vars_in_order(p, st.seen, st.result)
-        },
+        fn(st, p) { collect_vars_in_order(p, st.seen, st.result) },
       )
       collect_vars_in_order(ret, st.seen, st.result)
     },
     .Named(_, args) => args.fold(
       VarCollectState.{ seen, result },
-      fn(st, a) {
-        collect_vars_in_order(a, st.seen, st.result)
-      },
+      fn(st, a) { collect_vars_in_order(a, st.seen, st.result) },
     ),
     .Optional(inner) => collect_vars_in_order(inner, seen, result),
     .Result(ok, err) => {
@@ -603,18 +599,11 @@ fn collect_instantiations(
           }
         }
 
-        args.fold(
-          queue,
-          fn(q, arg) {
-            collect_instantiations(arg, ctx, q, local_types)
-          },
-        )
+        args.fold(queue, fn(q, arg) { collect_instantiations(arg, ctx, q, local_types) })
       },
       _ => args.fold(
         collect_instantiations(callee, ctx, queue, local_types),
-        fn(q, arg) {
-          collect_instantiations(arg, ctx, q, local_types)
-        },
+        fn(q, arg) { collect_instantiations(arg, ctx, q, local_types) },
       ),
     },
     .ContractCall(_, method_name, receiver, args) => {
@@ -637,12 +626,7 @@ fn collect_instantiations(
       }
 
       queue = collect_instantiations(receiver, ctx, queue, local_types)
-      args.fold(
-        queue,
-        fn(q, a) {
-          collect_instantiations(a, ctx, q, local_types)
-        },
-      )
+      args.fold(queue, fn(q, a) { collect_instantiations(a, ctx, q, local_types) })
     },
     .GlobalFunc(fid) => {
       if ctx.generic_ids.has(fid.id) {
@@ -699,9 +683,7 @@ fn collect_instantiations(
     },
     .Match(scrut, arms) => arms.fold(
       collect_instantiations(scrut, ctx, queue, local_types),
-      fn(q, arm) {
-        collect_instantiations(arm.body, ctx, q, local_types)
-      },
+      fn(q, arm) { collect_instantiations(arm.body, ctx, q, local_types) },
     ),
     .Loop(body) => collect_instantiations(body, ctx, queue, local_types),
     .Break(val) => case val {
@@ -714,9 +696,7 @@ fn collect_instantiations(
     },
     .Record(_, fields) => fields.fold(
       queue,
-      fn(q, fi) {
-        collect_instantiations(fi.value, ctx, q, local_types)
-      },
+      fn(q, fi) { collect_instantiations(fi.value, ctx, q, local_types) },
     ),
     .RecordGet(target, _) => collect_instantiations(target, ctx, queue, local_types),
     .RecordUpdate(base, _, value) => {
@@ -725,15 +705,11 @@ fn collect_instantiations(
     },
     .Variant(_, _, args) => args.fold(
       queue,
-      fn(q, a) {
-        collect_instantiations(a, ctx, q, local_types)
-      },
+      fn(q, a) { collect_instantiations(a, ctx, q, local_types) },
     ),
     .ArrayLit(elems) => elems.fold(
       queue,
-      fn(q, e) {
-        collect_instantiations(e, ctx, q, local_types)
-      },
+      fn(q, e) { collect_instantiations(e, ctx, q, local_types) },
     ),
     .Index(base, idx) => {
       queue = collect_instantiations(base, ctx, queue, local_types)

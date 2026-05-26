@@ -64,11 +64,7 @@ fn builtin_type_name(entry: TypeEntry) String {
 }
 
 fn builtin_type_names(types: Vector<TypeEntry>) Vector<String> {
-  types.map(
-    fn(entry) {
-      builtin_type_name(entry)
-    },
-  )
+  types.map(fn(entry) { builtin_type_name(entry) })
 }
 
 fn builtin_type_entries() Vector<TypeEntry> {

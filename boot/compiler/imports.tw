@@ -48,9 +48,7 @@ pub fn plan_dependencies(module: Module, file_path: String, project_root: String
     module,
     file_path,
     project_root,
-    fn(path_str: String) Bool {
-      core_lib.exists(path_str) or fs.exists(path_str)
-    },
+    fn(path_str: String) Bool { core_lib.exists(path_str) or fs.exists(path_str) },
   )
 }
 

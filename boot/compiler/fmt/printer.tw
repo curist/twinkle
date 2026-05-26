@@ -286,9 +286,7 @@ fn sort_import_blocks(items: Vector<Item>) Vector<Item> {
 }
 
 fn sort_uses(uses: Vector<UseDecl>) Vector<UseDecl> {
-  uses.sort_by(fn(a, b) {
-    String.compare(import_sort_key(a), import_sort_key(b))
-  })
+  uses.sort_by(fn(a, b) { String.compare(import_sort_key(a), import_sort_key(b)) })
 }
 
 fn import_sort_key(decl: UseDecl) String {
@@ -321,9 +319,7 @@ fn import_variant_order(decl: UseDecl) Int {
 fn sort_selective_items(decl: UseDecl) UseDecl {
   case decl.items {
     .Some(items) => {
-      sorted := items.sort_by(fn(a, b) {
-        String.compare(import_item_name(a), import_item_name(b))
-      })
+      sorted := items.sort_by(fn(a, b) { String.compare(import_item_name(a), import_item_name(b)) })
       decl.items = .Some(sorted)
       decl
     },

@@ -485,14 +485,8 @@ pub fn collect_eq_type_layouts(layout_cache: Dict<String, WasmLayout>) EqTypeLay
   }
 
   records = .sort_by(
-    fn(a: WasmRecordLayout, b: WasmRecordLayout) Order {
-      compare_strings(a.sym, b.sym)
-    },
+    fn(a: WasmRecordLayout, b: WasmRecordLayout) Order { compare_strings(a.sym, b.sym) },
   )
-  sums = .sort_by(
-    fn(a: WasmSumLayout, b: WasmSumLayout) Order {
-      compare_strings(a.sym, b.sym)
-    },
-  )
+  sums = .sort_by(fn(a: WasmSumLayout, b: WasmSumLayout) Order { compare_strings(a.sym, b.sym) })
   .{ records, sums }
 }

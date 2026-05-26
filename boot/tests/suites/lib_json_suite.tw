@@ -407,12 +407,7 @@ pub fn suite() runner.Suite {
     .test(
       "map transforms decoded value",
       fn() {
-        d := json.map(
-          fn(n: Int) {
-            n * 2
-          },
-          json.int(),
-        )
+        d := json.map(fn(n: Int) { n * 2 }, json.int())
         r := json.decode(.Int(5), d)
         try assert.is_ok(r)
         n := case r {
@@ -426,12 +421,7 @@ pub fn suite() runner.Suite {
     .test(
       "map propagates error",
       fn() {
-        d := json.map(
-          fn(n: Int) {
-            n * 2
-          },
-          json.int(),
-        )
+        d := json.map(fn(n: Int) { n * 2 }, json.int())
         try assert.is_err(json.decode(.Str("x"), d))
         .Ok({})
       },
@@ -439,13 +429,7 @@ pub fn suite() runner.Suite {
     .test(
       "map2 combines two decoders on same value",
       fn() {
-        d := json.map2(
-          fn(a: Int, b: Int) {
-            a + b
-          },
-          json.int(),
-          json.int(),
-        )
+        d := json.map2(fn(a: Int, b: Int) { a + b }, json.int(), json.int())
         r := json.decode(.Int(3), d)
         try assert.is_ok(r)
         n := case r {
@@ -737,12 +721,7 @@ pub fn suite() runner.Suite {
       "one_of picks first matching decoder",
       fn() {
         d: Vector<json.Decoder<String>> = [
-          json.map(
-            fn(n: Int) {
-              n.to_string()
-            },
-            json.int(),
-          ),
+          json.map(fn(n: Int) { n.to_string() }, json.int()),
           json.string(),
         ]
         r1 := json.decode(.Int(5), json.one_of(d))

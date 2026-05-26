@@ -2,9 +2,7 @@ use tests.assert
 use tests.runner
 
 fn make_adder(base: Int) fn(Int) Int {
-  fn(n: Int) Int {
-    base + n
-  }
+  fn(n: Int) Int { base + n }
 }
 
 fn describe_option(x: Option<Int>) String {
@@ -22,11 +20,7 @@ fn describe_result(r: Result<String, Int>) String {
 }
 
 fn mark_true(counter: Cell<Int>) Bool {
-  counter.update(
-    fn(n) {
-      n + 1
-    },
-  )
+  counter.update(fn(n) { n + 1 })
   true
 }
 
@@ -66,9 +60,7 @@ pub fn suite() runner.Suite {
       "closure capture by value",
       fn() {
         acc := 0
-        f := fn() Int {
-          acc
-        }
+        f := fn() Int { acc }
         acc = acc + 1
         try assert.equal(f(), 0)
         try assert.equal(acc, 1)
@@ -79,9 +71,7 @@ pub fn suite() runner.Suite {
       "closure captures loop value per iteration",
       fn() {
         fns := collect i in [0, 1, 2] {
-          fn() Int {
-            i
-          }
+          fn() Int { i }
         }
         try assert.equal(fns[0](), 0)
         try assert.equal(fns[1](), 1)

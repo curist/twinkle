@@ -180,11 +180,7 @@ pub fn suite() runner.Suite {
         sum := Cell.new(0)
 
         for _, v in d {
-          sum.update(
-            fn(n) {
-              n + v
-            },
-          )
+          sum.update(fn(n) { n + v })
         }
 
         try assert.equal(sum.get(), 6)
