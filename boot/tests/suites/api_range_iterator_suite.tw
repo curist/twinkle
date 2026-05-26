@@ -469,7 +469,125 @@ pub fn suite() runner.Suite {
       },
     )
     .test(
-      "iterator map filter take compose and match collect parity",
+      "iterator skip drops prefix and handles non-positive n",
+      fn() {
+        base := Iterator.unfold(
+          0,
+          fn(i: Int) {
+            if i >= 6 {
+              UnfoldStep.Done
+            } else {
+              UnfoldStep.Yield(i, i + 1)
+            }
+          },
+        )
+        out := base.skip(2).to_vector()
+        try assert.equal(out.len(), 4)
+        try assert.equal(out[0], 2)
+        try assert.equal(out[3], 5)
+        all_a := base.skip(0).to_vector()
+        all_b := base.skip(-3).to_vector()
+        try assert.equal(all_a.len(), 6)
+        try assert.equal(all_b.len(), 6)
+        .Ok({})
+      },
+    )
+    .test(
+      "iterator skip past end returns empty",
+      fn() {
+        base := Iterator.unfold(
+          0,
+          fn(i: Int) {
+            if i >= 3 {
+              UnfoldStep.Done
+            } else {
+              UnfoldStep.Yield(i, i + 1)
+            }
+          },
+        )
+        out := base.skip(10).to_vector()
+        try assert.equal(out.len(), 0)
+        .Ok({})
+      },
+    )
+    .test(
+      "iterator take_while stops at first non-match",
+      fn() {
+        base := Iterator.unfold(
+          0,
+          fn(i: Int) {
+            if i >= 8 {
+              UnfoldStep.Done
+            } else {
+              UnfoldStep.Yield(i, i + 1)
+            }
+          },
+        )
+        out := base.take_while(
+          fn(x: Int) {
+            x < 4
+          },
+        ).to_vector()
+        try assert.equal(out.len(), 4)
+        try assert.equal(out[0], 0)
+        try assert.equal(out[3], 3)
+        .Ok({})
+      },
+    )
+    .test(
+      "iterator skip_while drops matching prefix",
+      fn() {
+        base := Iterator.unfold(
+          0,
+          fn(i: Int) {
+            if i >= 8 {
+              UnfoldStep.Done
+            } else {
+              UnfoldStep.Yield(i, i + 1)
+            }
+          },
+        )
+        out := base.skip_while(
+          fn(x: Int) {
+            x < 4
+          },
+        ).to_vector()
+        try assert.equal(out.len(), 4)
+        try assert.equal(out[0], 4)
+        try assert.equal(out[3], 7)
+        .Ok({})
+      },
+    )
+    .test(
+      "iterator while combinators handle empty results",
+      fn() {
+        base := Iterator.unfold(
+          0,
+          fn(i: Int) {
+            if i >= 4 {
+              UnfoldStep.Done
+            } else {
+              UnfoldStep.Yield(i, i + 1)
+            }
+          },
+        )
+        none_a := base.take_while(
+          fn(x: Int) {
+            x < 0
+          },
+        ).to_vector()
+        none_b := base.skip_while(
+          fn(x: Int) {
+            x < 10
+          },
+        ).to_vector()
+        try assert.equal(none_a.len(), 0)
+        try assert.equal(none_b.len(), 0)
+        .Ok({})
+      },
+    )
+    .test(
+      "iterator map filter skip take_while compose and match collect parity",
       fn() {
         base := Iterator.unfold(
           0,
@@ -491,12 +609,17 @@ pub fn suite() runner.Suite {
               x % 3 == 0
             },
           )
-          .take(4)
+          .skip(1)
+          .take_while(
+            fn(x: Int) {
+              x <= 15
+            },
+          )
           .to_vector()
         via_collect := collect x in 0..20 {
           y := x + 1
 
-          if y % 3 == 0 and y <= 12 {
+          if y % 3 == 0 and y > 3 and y <= 15 {
             y
           } else {
             continue
@@ -544,6 +667,43 @@ pub fn suite() runner.Suite {
       },
     )
     .test(
+      "iterator combinators support method chaining",
+      fn() {
+        base := Iterator.unfold(
+          0,
+          fn(i: Int) {
+            if i >= 10 {
+              UnfoldStep.Done
+            } else {
+              UnfoldStep.Yield(i, i + 1)
+            }
+          },
+        )
+        out := base.map(
+          fn(x: Int) {
+            x + 1
+          },
+        )
+          .filter(
+            fn(x: Int) {
+              x % 2 == 0
+            },
+          )
+          .take(4)
+          .skip(1)
+          .take_while(
+            fn(x: Int) {
+              x < 8
+            },
+          )
+          .to_vector()
+        try assert.equal(out.len(), 2)
+        try assert.equal(out[0], 4)
+        try assert.equal(out[1], 6)
+        .Ok({})
+      },
+    )
+    .test(
       "iterator combinators support qualified calls",
       fn() {
         base := Iterator.unfold(
@@ -556,24 +716,25 @@ pub fn suite() runner.Suite {
             }
           },
         )
-        out := Iterator.take(
-          Iterator.filter(
-            Iterator.map(
-              base,
-              fn(x: Int) {
-                x + 1
-              },
-            ),
-            fn(x: Int) {
-              x % 2 == 0
-            },
-          ),
-          3,
+        out := Iterator.skip(base, 8).to_vector()
+        rest := Iterator.skip_while(
+          base,
+          fn(x: Int) {
+            x < 8
+          },
         ).to_vector()
-        try assert.equal(out.len(), 3)
-        try assert.equal(out[0], 2)
-        try assert.equal(out[1], 4)
-        try assert.equal(out[2], 6)
+        head := Iterator.take_while(
+          base,
+          fn(x: Int) {
+            x < 3
+          },
+        ).to_vector()
+        try assert.equal(out.len(), 2)
+        try assert.equal(out[0], 8)
+        try assert.equal(rest.len(), 2)
+        try assert.equal(rest[0], 8)
+        try assert.equal(head.len(), 3)
+        try assert.equal(head[2], 2)
         .Ok({})
       },
     )

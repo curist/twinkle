@@ -38,8 +38,9 @@ same parsing as script 1 →
 use @std.fs
 use @std.proc
 
-fn main() {
-  path := proc.args()[0]
+fn main() Result<Void, String> {
+  args := proc.args()
+  path := args[1]
   content := try fs.read_text(path)
   lines := content.split("\n")
 
@@ -72,7 +73,8 @@ fn main() {
   result := collect i in range(lines.len()) {
     if keep[i] { lines[i] } else { continue }
   }
-  fs.write_text(path, result.join("\n"))
+  try fs.write_text(path, result.join("\n"))
+  .Ok({})
 }
 ```
 
@@ -141,22 +143,24 @@ Options:
 - A `Set<T>` type backed by the same HAMT as Dict
 - Or just document the `Dict<K, Bool>` pattern and add `Dict.from_keys(vec)`
 
-#### 10. `Iterator.enumerate() Iterator<.{ index: Int, value: T }>`
-Lazy version. Useful for "process lines with their line numbers" without
-materializing a full indexed vector.
+#### 10. Indexed iterator loops — already supported
+Twinkle already supports indexed loops over iterators with `for x, i in iter` and
+indexed collects with `collect x, i in iter { ... }`, so a dedicated
+`Iterator.enumerate()` is not needed for the common "process lines with line
+numbers" pattern.
 
-**Location:** `boot/prelude/iterator.tw`
+No API change needed.
 
-#### 11. `Iterator.skip(n)` / `Iterator.drop(n)`
+#### 11. `Iterator.skip(n)`
 Skip first n elements. Useful for "skip header lines" patterns.
 
-**Location:** `boot/prelude/iterator.tw`
+**Location:** `boot/prelude/iterator.tw` — Phase 2 done
 
 #### 12. `Iterator.take_while(pred)` / `Iterator.skip_while(pred)`
 Common for "consume until condition" patterns, which the brace-tracking logic
 needs.
 
-**Location:** `boot/prelude/iterator.tw`
+**Location:** `boot/prelude/iterator.tw` — Phase 2 done
 
 #### 13. `Iterator.collect_string() String`
 Materialize an `Iterator<String>` into a single concatenated string.
@@ -187,7 +191,7 @@ imperative scripts. Not proposing mutation — just noting the friction.
 - `String.lines`, `.strip_prefix`, `.strip_suffix`, `.count`, `.replace` — Phase 1 done
 - `Vector.filter`, `.map`, `.fold`, `.join` — collection pipeline is good
 - `Vector.position`, `.flat_map` — Phase 1 done
-- `for x, i in vec` — indexed iteration already exists
+- `for x, i in vec` and `for x, i in iter` — indexed iteration already exists
 - `collect` comprehensions with `continue` for filtering — very nice
 - String interpolation `"${expr}"` — great for output formatting
 - `try` for error propagation — clean Result/Option handling
@@ -198,9 +202,9 @@ imperative scripts. Not proposing mutation — just noting the friction.
 Many Phase 2 items are already expressible with existing constructs:
 
 - **Set via Dict**: `keys.fold(Dict.new(), fn(d, k) { d.set(k, true) })` — add with `d[k] = true`, check with `d.has(k)`
-- **Iterator enumerate**: manual counter in a `for` loop — `i := 0; for x in it { ...; i = i + 1 }`
-- **Iterator skip**: consume with a loop — `for _ in 0..n { Iterator.next(it) }`
-- **Iterator take_while / skip_while**: `for` with `break` / `continue`
+- **Iterator enumerate**: use Twinkle's indexed iterator loop directly — `for x, i in it { ... }`
+- **Iterator skip**: `it.skip(n)` — Phase 2 done
+- **Iterator take_while / skip_while**: `it.take_while(pred)` / `it.skip_while(pred)` — Phase 2 done
 - **Iterator collect_string**: `it.to_vector().join("")`
 
 ## Recommended implementation order
@@ -211,7 +215,8 @@ Many Phase 2 items are already expressible with existing constructs:
 
 **Phase 2** (convenience): items 9-13
 - Set type or `Dict.from_keys`
-- Iterator combinators (`enumerate`, `skip`, `take_while`)
+- Iterator combinators: `skip`, `take_while`, and `skip_while` — **done**
+- Indexed iterator loops use existing `for x, i in iter` syntax; no `enumerate` API needed
 
 **Phase 3** (power features): items 14-16
 - Regex or pattern matching

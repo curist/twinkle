@@ -102,6 +102,9 @@ Lazy iterator type.
 | `Iterator.map` | `fn<T,U>(it: Iterator<T>, f: fn(T) U) Iterator<U>` | Lazy adapter that transforms each yielded value |
 | `Iterator.filter` | `fn<T>(it: Iterator<T>, pred: fn(T) Bool) Iterator<T>` | Lazy adapter that yields only matching values |
 | `Iterator.take` | `fn<T>(it: Iterator<T>, n: Int) Iterator<T>` | Lazy adapter that yields at most `n` values (`n <= 0` yields empty) |
+| `Iterator.skip` | `fn<T>(it: Iterator<T>, n: Int) Iterator<T>` | Lazy adapter that skips the first `n` values (`n <= 0` skips none) |
+| `Iterator.take_while` | `fn<T>(it: Iterator<T>, pred: fn(T) Bool) Iterator<T>` | Lazy adapter that yields values until `pred` returns false |
+| `Iterator.skip_while` | `fn<T>(it: Iterator<T>, pred: fn(T) Bool) Iterator<T>` | Lazy adapter that skips values while `pred` returns true, then yields the rest |
 | `Iterator.to_vector` | `fn<T>(it: Iterator<T>) Vector<T>` | Materialize iterator into a vector. Equivalent to `collect x in it { x }`. Traverses the full iterator — infinite iterators will not terminate. O(n) memory. The iterator itself is persistent and can be reused. |
 
 Supporting types:
