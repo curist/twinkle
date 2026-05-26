@@ -7,5 +7,5 @@ fn suite2() Suite {
 }
 
 fn pipeline(base) {
-  out := base.map(fn(x: Int) { x + 1 }).filter(fn(x: Int) { x % 2 == 0 }).take_while(fn(x: Int) { x < 8 }).to_vector()
+  out := base.map(fn(x) { x + 1 }).filter(fn(x) { x % 2 == 0 }).take_while(fn(x) { x < 8 }).to_vector()
 }

@@ -358,7 +358,7 @@ pub fn suite() runner.Suite {
             }
           },
         )
-        mapped := base.map(fn(x: Int) {
+        mapped := base.map(fn(x) {
           seen.set(seen.get() + 1)
           x * 10
         })
@@ -385,7 +385,7 @@ pub fn suite() runner.Suite {
           },
         )
         evens := base
-          .filter(fn(x: Int) { x % 2 == 0 })
+          .filter(fn(x) { x % 2 == 0 })
           .to_vector()
         try assert.equal(evens.len(), 4)
         try assert.equal(evens[0], 0)
@@ -409,7 +409,7 @@ pub fn suite() runner.Suite {
           },
         )
         out := base
-          .filter(fn(x: Int) { x == 49999 })
+          .filter(fn(x) { x == 49999 })
           .to_vector()
         try assert.equal(out.len(), 1)
         try assert.equal(out[0], 49999)
@@ -431,7 +431,7 @@ pub fn suite() runner.Suite {
           },
         )
         out := base
-          .map(fn(x: Int) {
+          .map(fn(x) {
             seen.set(seen.get() + 1)
             x
           })
@@ -504,7 +504,7 @@ pub fn suite() runner.Suite {
           },
         )
         out := base
-          .take_while(fn(x: Int) { x < 4 })
+          .take_while(fn(x) { x < 4 })
           .to_vector()
         try assert.equal(out.len(), 4)
         try assert.equal(out[0], 0)
@@ -526,7 +526,7 @@ pub fn suite() runner.Suite {
           },
         )
         out := base
-          .skip_while(fn(x: Int) { x < 4 })
+          .skip_while(fn(x) { x < 4 })
           .to_vector()
         try assert.equal(out.len(), 4)
         try assert.equal(out[0], 4)
@@ -548,10 +548,10 @@ pub fn suite() runner.Suite {
           },
         )
         none_a := base
-          .take_while(fn(x: Int) { x < 0 })
+          .take_while(fn(x) { x < 0 })
           .to_vector()
         none_b := base
-          .skip_while(fn(x: Int) { x < 10 })
+          .skip_while(fn(x) { x < 10 })
           .to_vector()
         try assert.equal(none_a.len(), 0)
         try assert.equal(none_b.len(), 0)
@@ -572,10 +572,10 @@ pub fn suite() runner.Suite {
           },
         )
         piped := base
-          .map(fn(x: Int) { x + 1 })
-          .filter(fn(x: Int) { x % 3 == 0 })
+          .map(fn(x) { x + 1 })
+          .filter(fn(x) { x % 3 == 0 })
           .skip(1)
-          .take_while(fn(x: Int) { x <= 15 })
+          .take_while(fn(x) { x <= 15 })
           .to_vector()
         via_collect := collect x in 0..20 {
           y := x + 1
@@ -608,8 +608,8 @@ pub fn suite() runner.Suite {
           },
         )
         adapted := base
-          .map(fn(x: Int) { x + 1 })
-          .filter(fn(x: Int) { x % 2 == 0 })
+          .map(fn(x) { x + 1 })
+          .filter(fn(x) { x % 2 == 0 })
           .take(2)
         first := adapted.to_vector()
         second := adapted.to_vector()
@@ -634,11 +634,11 @@ pub fn suite() runner.Suite {
           },
         )
         out := base
-          .map(fn(x: Int) { x + 1 })
-          .filter(fn(x: Int) { x % 2 == 0 })
+          .map(fn(x) { x + 1 })
+          .filter(fn(x) { x % 2 == 0 })
           .take(4)
           .skip(1)
-          .take_while(fn(x: Int) { x < 8 })
+          .take_while(fn(x) { x < 8 })
           .to_vector()
         try assert.equal(out.len(), 2)
         try assert.equal(out[0], 4)
@@ -660,8 +660,8 @@ pub fn suite() runner.Suite {
           },
         )
         out := Iterator.skip(base, 8).to_vector()
-        rest := Iterator.skip_while(base, fn(x: Int) { x < 8 }).to_vector()
-        head := Iterator.take_while(base, fn(x: Int) { x < 3 }).to_vector()
+        rest := Iterator.skip_while(base, fn(x) { x < 8 }).to_vector()
+        head := Iterator.take_while(base, fn(x) { x < 3 }).to_vector()
         try assert.equal(out.len(), 2)
         try assert.equal(out[0], 8)
         try assert.equal(rest.len(), 2)
