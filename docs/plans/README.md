@@ -56,8 +56,6 @@ Self-hosting is complete. Historical design and status docs live in
 
 | Plan | Description |
 |------|-------------|
-| [persistent-dict.md](persistent-dict.md) | Replace linear assoc-list dict with persistent HAMT using existing `anyref` storage first, then typed specialization later |
-| [persistent-vector.md](persistent-vector.md) | Replace the current flat copy-on-write vector backing with a persistent vector runtime and specialized container families |
 | [backend-anyref-elimination.md](backend-anyref-elimination.md) | Make `anyref` exceptional rather than foundational in the Wasm backend, including typed container/helper families |
 | [wasm-tail-calls.md](wasm-tail-calls.md) | Add Wasm tail-call emission for eligible tail-position calls as a required target feature |
 | [static-uniqueness-plan.md](static-uniqueness-plan.md) | Extend the static uniqueness optimizer to cover more realistic linear-update patterns without changing the runtime model |
