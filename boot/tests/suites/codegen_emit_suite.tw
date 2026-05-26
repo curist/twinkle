@@ -1,16 +1,20 @@
 use compiler.anf.{AnfExpr, AnfFunctionDef, AnfModule}
 use compiler.backend.prepare.{PreparedModule}
 use compiler.backend.prepared_ir.{
-  PreparedAtom, PreparedExpr, PreparedFunc, ReprKind, SlotId, SlotInfo, SlotRole,
+  PreparedAtom, PreparedExpr, PreparedFunc, PreparedMatchArm, PreparedOp, PreparedPattern, ReprKind,
+  SlotId, SlotInfo, SlotRole,
 }
 use compiler.builtins.{make_builtin_registry}
 use compiler.codegen.emit.{emit_module}
-use compiler.codegen.wasm_ir.{ValType}
+use compiler.codegen.wasm_ir.{HeapType, ValType}
+use compiler.codegen.wasm_layout.{WasmLayout, WasmSumLayout, WasmVariantLayout, mono_to_key}
 use compiler.codegen.wasm_plan_types.{ModuleGlobalEntry, WasmTypeRegistry}
 use compiler.codegen.wat.{emit_wat_unlinked_for_test}
-use compiler.core_ir.{FuncId, LocalId, Param}
-use compiler.mono_type.{MonoType}
+use compiler.core_ir.{FuncId, LocalId, Param, VariantId}
+use compiler.mono_type.{MonoType, TypeId}
 use compiler.resolver
+use compiler.resolver.{ResolvedEnv, ResolvedVariant, TypeEntry}
+use lib.source.span.{Span}
 use tests.assert
 use tests.runner
 
@@ -92,10 +96,544 @@ fn test_param_local_id_can_overlap_module_global_id() Result<Void, String> {
   .Ok({})
 }
 
+// Helper: build a one-function PreparedModule with the given body and return type.
+fn make_one_func_module(
+  func_id: FuncId,
+  name: String,
+  params: Vector<SlotId>,
+  locals: Vector<SlotId>,
+  slots: Dict<Int, SlotInfo>,
+  body: PreparedExpr,
+  return_mono: MonoType,
+) PreparedModule {
+  func := AnfFunctionDef.{
+    func_id,
+    name,
+    params: collect p in params {
+      Param.{ local: lid(p.id), ty: slots[p.id].ok_or("").unwrap().mono }
+    },
+    op_result_mono: Dict.new(),
+    body: AnfExpr.Atom(.ALitVoid),
+    return_ty: return_mono,
+    is_init: false,
+  }
+  anf := AnfModule.{ functions: [func], init_func_id: .None, extern_imports: Dict.new() }
+  prepared_func := PreparedFunc.{
+    func_id,
+    name,
+    captures: [],
+    params,
+    locals,
+    slots,
+    body,
+    return_mono,
+    is_init: false,
+  }
+  PreparedModule.{ anf, closure_captures: Dict.new(), funcs: [prepared_func] }
+}
+
+fn test_tail_call_emits_return_call() Result<Void, String> {
+  // fn recurse(n: Int) Int { return recurse(n) }
+  // Body: Let(s1, ACall(recurse, [s0]), Return(Some(ASlot(s1))))
+  // Should emit return_call instead of call + return
+  func_id := fid(100)
+  slots: Dict<Int, SlotInfo> = Dict.new()
+  slots[0] = SlotInfo.{
+    slot: sid(0),
+    source_local: lid(0),
+    role: SlotRole.Param,
+    mono: MonoType.Int,
+    repr: ReprKind.I64,
+    wasm_type: ValType.I64,
+  }
+  slots[1] = SlotInfo.{
+    slot: sid(1),
+    source_local: lid(1),
+    role: SlotRole.Local,
+    mono: MonoType.Int,
+    repr: ReprKind.I64,
+    wasm_type: ValType.I64,
+  }
+  body := PreparedExpr.Let(
+    sid(1),
+    PreparedOp.ACall(PreparedAtom.AGlobalFunc(func_id), [PreparedAtom.ASlot(sid(0))]),
+    PreparedExpr.Return(.Some(PreparedAtom.ASlot(sid(1)))),
+  )
+  prepared := make_one_func_module(
+    func_id,
+    "recurse",
+    [sid(0)],
+    [sid(1)],
+    slots,
+    body,
+    MonoType.Int,
+  )
+  reg := empty_registry()
+  wasm := emit_module(prepared, reg, make_builtin_registry(), resolver.empty_env())
+  wat := emit_wat_unlinked_for_test(wasm)
+  try assert.str_contains(wat, "return_call $$f100_recurse")
+  .Ok({})
+}
+
+fn test_non_tail_call_no_return_call() Result<Void, String> {
+  // fn identity(n: Int) Int { identity(n) }
+  // Body: Let(s1, ACall(identity, [s0]), Atom(ASlot(s1)))
+  // Not a Return — should emit regular call, not return_call
+  func_id := fid(101)
+  slots: Dict<Int, SlotInfo> = Dict.new()
+  slots[0] = SlotInfo.{
+    slot: sid(0),
+    source_local: lid(0),
+    role: SlotRole.Param,
+    mono: MonoType.Int,
+    repr: ReprKind.I64,
+    wasm_type: ValType.I64,
+  }
+  slots[1] = SlotInfo.{
+    slot: sid(1),
+    source_local: lid(1),
+    role: SlotRole.Local,
+    mono: MonoType.Int,
+    repr: ReprKind.I64,
+    wasm_type: ValType.I64,
+  }
+  body := PreparedExpr.Let(
+    sid(1),
+    PreparedOp.ACall(PreparedAtom.AGlobalFunc(func_id), [PreparedAtom.ASlot(sid(0))]),
+    PreparedExpr.Atom(PreparedAtom.ASlot(sid(1))),
+  )
+  prepared := make_one_func_module(
+    func_id,
+    "identity",
+    [sid(0)],
+    [sid(1)],
+    slots,
+    body,
+    MonoType.Int,
+  )
+  reg := empty_registry()
+  wasm := emit_module(prepared, reg, make_builtin_registry(), resolver.empty_env())
+  wat := emit_wat_unlinked_for_test(wasm)
+  try assert.is_false(wat.contains("return_call"))
+  .Ok({})
+}
+
+fn test_tail_call_void_result_no_return_call() Result<Void, String> {
+  // fn fire(n: Int) Void { fire(n) }
+  // Void-returning calls have extra boxing (i32.const 0 + ref.i31 + local.set)
+  // so they should NOT be tail-called (result adaptation needed)
+  func_id := fid(102)
+  slots: Dict<Int, SlotInfo> = Dict.new()
+  slots[0] = SlotInfo.{
+    slot: sid(0),
+    source_local: lid(0),
+    role: SlotRole.Param,
+    mono: MonoType.Int,
+    repr: ReprKind.I64,
+    wasm_type: ValType.I64,
+  }
+  slots[1] = SlotInfo.{
+    slot: sid(1),
+    source_local: lid(1),
+    role: SlotRole.Local,
+    mono: MonoType.Void,
+    repr: ReprKind.OpaqueAnyref,
+    wasm_type: ValType.Anyref,
+  }
+  body := PreparedExpr.Let(
+    sid(1),
+    PreparedOp.ACall(PreparedAtom.AGlobalFunc(func_id), [PreparedAtom.ASlot(sid(0))]),
+    PreparedExpr.Return(.Some(PreparedAtom.ASlot(sid(1)))),
+  )
+  prepared := make_one_func_module(func_id, "fire", [sid(0)], [sid(1)], slots, body, MonoType.Void)
+  reg := empty_registry()
+  wasm := emit_module(prepared, reg, make_builtin_registry(), resolver.empty_env())
+  wat := emit_wat_unlinked_for_test(wasm)
+  try assert.is_false(wat.contains("return_call"))
+  .Ok({})
+}
+
+fn make_int_slot(id: Int, role: SlotRole) SlotInfo {
+  SlotInfo.{
+    slot: sid(id),
+    source_local: lid(id),
+    role,
+    mono: MonoType.Int,
+    repr: ReprKind.I64,
+    wasm_type: ValType.I64,
+  }
+}
+
+fn test_tail_call_in_if_branches() Result<Void, String> {
+  // fn dispatch(n: Int) Int {
+  //   if cond { callee(n) } else { dispatch(n) }
+  // }
+  // Both branches should emit return_call
+  dispatch_id := fid(100)
+  callee_id := fid(101)
+
+  slots: Dict<Int, SlotInfo> = Dict.new()
+  slots[0] = make_int_slot(0, .Param) // n
+  slots[1] = make_int_slot(1, .Local) // if result
+  slots[2] = make_int_slot(2, .Local) // then call result
+  slots[3] = make_int_slot(3, .Local) // else call result
+
+  then_branch := PreparedExpr.Let(
+    sid(2),
+    PreparedOp.ACall(PreparedAtom.AGlobalFunc(callee_id), [PreparedAtom.ASlot(sid(0))]),
+    PreparedExpr.Atom(PreparedAtom.ASlot(sid(2))),
+  )
+  else_branch := PreparedExpr.Let(
+    sid(3),
+    PreparedOp.ACall(PreparedAtom.AGlobalFunc(dispatch_id), [PreparedAtom.ASlot(sid(0))]),
+    PreparedExpr.Atom(PreparedAtom.ASlot(sid(3))),
+  )
+  body := PreparedExpr.Let(
+    sid(1),
+    PreparedOp.AIf(PreparedAtom.ASlot(sid(0)), then_branch, else_branch),
+    PreparedExpr.Return(.Some(PreparedAtom.ASlot(sid(1)))),
+  )
+
+  // Need two functions in the module
+  dispatch_func := AnfFunctionDef.{
+    func_id: dispatch_id,
+    name: "dispatch",
+    params: [Param.{ local: lid(0), ty: MonoType.Int }],
+    op_result_mono: Dict.new(),
+    body: AnfExpr.Atom(.ALitVoid),
+    return_ty: MonoType.Int,
+    is_init: false,
+  }
+  callee_func := AnfFunctionDef.{
+    func_id: callee_id,
+    name: "callee",
+    params: [Param.{ local: lid(0), ty: MonoType.Int }],
+    op_result_mono: Dict.new(),
+    body: AnfExpr.Atom(.ALitVoid),
+    return_ty: MonoType.Int,
+    is_init: false,
+  }
+  anf := AnfModule.{
+    functions: [dispatch_func, callee_func],
+    init_func_id: .None,
+    extern_imports: Dict.new(),
+  }
+
+  callee_slots: Dict<Int, SlotInfo> = Dict.new()
+  callee_slots[0] = make_int_slot(0, .Param)
+  prepared_dispatch := PreparedFunc.{
+    func_id: dispatch_id,
+    name: "dispatch",
+    captures: [],
+    params: [sid(0)],
+    locals: [sid(1), sid(2), sid(3)],
+    slots,
+    body,
+    return_mono: MonoType.Int,
+    is_init: false,
+  }
+  prepared_callee := PreparedFunc.{
+    func_id: callee_id,
+    name: "callee",
+    captures: [],
+    params: [sid(0)],
+    locals: [],
+    slots: callee_slots,
+    body: PreparedExpr.Atom(PreparedAtom.ASlot(sid(0))),
+    return_mono: MonoType.Int,
+    is_init: false,
+  }
+  prepared := PreparedModule.{
+    anf,
+    closure_captures: Dict.new(),
+    funcs: [prepared_dispatch, prepared_callee],
+  }
+  reg := empty_registry()
+  wasm := emit_module(prepared, reg, make_builtin_registry(), resolver.empty_env())
+  wat := emit_wat_unlinked_for_test(wasm)
+  try assert.str_contains(wat, "return_call $$f101_callee")
+  try assert.str_contains(wat, "return_call $$f100_dispatch")
+  .Ok({})
+}
+
+fn test_tail_call_in_case_arms() Result<Void, String> {
+  // fn dispatch(n: Int) Int {
+  //   case n { 0 => callee(n), _ => dispatch(n) }
+  // }
+  // Both arms should emit return_call
+  dispatch_id := fid(100)
+  callee_id := fid(101)
+
+  slots: Dict<Int, SlotInfo> = Dict.new()
+  slots[0] = make_int_slot(0, .Param) // n
+  slots[1] = make_int_slot(1, .Local) // match result
+  slots[2] = make_int_slot(2, .Local) // arm 0 call result
+  slots[3] = make_int_slot(3, .Local) // arm 1 call result
+
+  arm0_body := PreparedExpr.Let(
+    sid(2),
+    PreparedOp.ACall(PreparedAtom.AGlobalFunc(callee_id), [PreparedAtom.ASlot(sid(0))]),
+    PreparedExpr.Atom(PreparedAtom.ASlot(sid(2))),
+  )
+  arm1_body := PreparedExpr.Let(
+    sid(3),
+    PreparedOp.ACall(PreparedAtom.AGlobalFunc(dispatch_id), [PreparedAtom.ASlot(sid(0))]),
+    PreparedExpr.Atom(PreparedAtom.ASlot(sid(3))),
+  )
+  arms: Vector<PreparedMatchArm> = [
+    PreparedMatchArm.{ pattern: PreparedPattern.LitInt(0), body: arm0_body },
+    PreparedMatchArm.{ pattern: PreparedPattern.Wildcard, body: arm1_body },
+  ]
+  body := PreparedExpr.Let(
+    sid(1),
+    PreparedOp.AMatch(PreparedAtom.ASlot(sid(0)), arms),
+    PreparedExpr.Return(.Some(PreparedAtom.ASlot(sid(1)))),
+  )
+
+  dispatch_func := AnfFunctionDef.{
+    func_id: dispatch_id,
+    name: "dispatch",
+    params: [Param.{ local: lid(0), ty: MonoType.Int }],
+    op_result_mono: Dict.new(),
+    body: AnfExpr.Atom(.ALitVoid),
+    return_ty: MonoType.Int,
+    is_init: false,
+  }
+  callee_func := AnfFunctionDef.{
+    func_id: callee_id,
+    name: "callee",
+    params: [Param.{ local: lid(0), ty: MonoType.Int }],
+    op_result_mono: Dict.new(),
+    body: AnfExpr.Atom(.ALitVoid),
+    return_ty: MonoType.Int,
+    is_init: false,
+  }
+  anf := AnfModule.{
+    functions: [dispatch_func, callee_func],
+    init_func_id: .None,
+    extern_imports: Dict.new(),
+  }
+
+  callee_slots: Dict<Int, SlotInfo> = Dict.new()
+  callee_slots[0] = make_int_slot(0, .Param)
+  prepared_dispatch := PreparedFunc.{
+    func_id: dispatch_id,
+    name: "dispatch",
+    captures: [],
+    params: [sid(0)],
+    locals: [sid(1), sid(2), sid(3)],
+    slots,
+    body,
+    return_mono: MonoType.Int,
+    is_init: false,
+  }
+  prepared_callee := PreparedFunc.{
+    func_id: callee_id,
+    name: "callee",
+    captures: [],
+    params: [sid(0)],
+    locals: [],
+    slots: callee_slots,
+    body: PreparedExpr.Atom(PreparedAtom.ASlot(sid(0))),
+    return_mono: MonoType.Int,
+    is_init: false,
+  }
+  prepared := PreparedModule.{
+    anf,
+    closure_captures: Dict.new(),
+    funcs: [prepared_dispatch, prepared_callee],
+  }
+  reg := empty_registry()
+  wasm := emit_module(prepared, reg, make_builtin_registry(), resolver.empty_env())
+  wat := emit_wat_unlinked_for_test(wasm)
+  try assert.str_contains(wat, "return_call $$f101_callee")
+  try assert.str_contains(wat, "return_call $$f100_dispatch")
+  .Ok({})
+}
+
+/// Build a minimal ResolvedEnv containing a single sum type with the given variants.
+fn env_with_sum_type(tid: TypeId, name: String, variant_names: Vector<String>) ResolvedEnv {
+  variants: Vector<ResolvedVariant> = collect vn in variant_names {
+    ResolvedVariant.{ name: vn, fields: [] }
+  }
+  entry := TypeEntry.{
+    id: tid,
+    arity: 0,
+    def: .Some(.Sum(name, [], variants)),
+    span: Span.{ file_id: 0, start: 0, end: 0 },
+    is_extern: false,
+  }
+  env := resolver.empty_env()
+  env.types = [entry]
+  env.type_names = [name]
+  env.type_id_index[tid.id] = 0
+  env.type_index[name] = 0
+  env
+}
+
+fn test_tail_call_in_br_table_match() Result<Void, String> {
+  // Sum type with 3 variants: type Action = { A, B, C }
+  // fn dispatch(a: Action) Int { case a { .A => callee(a), .B => callee(a), .C => dispatch(a) } }
+  // br-table eligible (3+ variant patterns, trivial fields)
+  // All arms should emit return_call
+  dispatch_id := fid(100)
+  callee_id := fid(101)
+  action_tid := TypeId.{ id: 7 }
+  action_mono := MonoType.Named(action_tid, [])
+
+  // Pre-populate layout_cache with a sum layout for our type
+  reg := empty_registry()
+  sum_layout := WasmSumLayout.{
+    type_id: action_tid,
+    sym: "$Action",
+    tag_type: ValType.I32,
+    variants: [
+      WasmVariantLayout.{
+        variant_id: VariantId.{ id: 0 },
+        name: "A",
+        payload_types: [],
+        struct_field_offset: 1,
+      },
+      WasmVariantLayout.{
+        variant_id: VariantId.{ id: 1 },
+        name: "B",
+        payload_types: [],
+        struct_field_offset: 1,
+      },
+      WasmVariantLayout.{
+        variant_id: VariantId.{ id: 2 },
+        name: "C",
+        payload_types: [],
+        struct_field_offset: 1,
+      },
+    ],
+  }
+  reg.layout_cache[mono_to_key(action_mono)] = WasmLayout.Sum(sum_layout)
+
+  slots: Dict<Int, SlotInfo> = Dict.new()
+  slots[0] = SlotInfo.{
+    slot: sid(0),
+    source_local: lid(0),
+    role: SlotRole.Param,
+    mono: action_mono,
+    repr: ReprKind.TypedSum(action_mono),
+    wasm_type: ValType.Ref(false, HeapType.Named("$Action")),
+  }
+  slots[1] = make_int_slot(1, .Local) // match result
+  slots[2] = make_int_slot(2, .Local) // arm 0 result
+  slots[3] = make_int_slot(3, .Local) // arm 1 result
+  slots[4] = make_int_slot(4, .Local) // arm 2 result
+
+  arm0 := PreparedMatchArm.{
+    pattern: PreparedPattern.Variant(action_tid, VariantId.{ id: 0 }, []),
+    body: PreparedExpr.Let(
+      sid(2),
+      PreparedOp.ACall(PreparedAtom.AGlobalFunc(callee_id), [PreparedAtom.ASlot(sid(0))]),
+      PreparedExpr.Atom(PreparedAtom.ASlot(sid(2))),
+    ),
+  }
+  arm1 := PreparedMatchArm.{
+    pattern: PreparedPattern.Variant(action_tid, VariantId.{ id: 1 }, []),
+    body: PreparedExpr.Let(
+      sid(3),
+      PreparedOp.ACall(PreparedAtom.AGlobalFunc(callee_id), [PreparedAtom.ASlot(sid(0))]),
+      PreparedExpr.Atom(PreparedAtom.ASlot(sid(3))),
+    ),
+  }
+  arm2 := PreparedMatchArm.{
+    pattern: PreparedPattern.Variant(action_tid, VariantId.{ id: 2 }, []),
+    body: PreparedExpr.Let(
+      sid(4),
+      PreparedOp.ACall(PreparedAtom.AGlobalFunc(dispatch_id), [PreparedAtom.ASlot(sid(0))]),
+      PreparedExpr.Atom(PreparedAtom.ASlot(sid(4))),
+    ),
+  }
+  arms: Vector<PreparedMatchArm> = [arm0, arm1, arm2]
+  body := PreparedExpr.Let(
+    sid(1),
+    PreparedOp.AMatch(PreparedAtom.ASlot(sid(0)), arms),
+    PreparedExpr.Return(.Some(PreparedAtom.ASlot(sid(1)))),
+  )
+
+  dispatch_func := AnfFunctionDef.{
+    func_id: dispatch_id,
+    name: "dispatch",
+    params: [Param.{ local: lid(0), ty: action_mono }],
+    op_result_mono: Dict.new(),
+    body: AnfExpr.Atom(.ALitVoid),
+    return_ty: MonoType.Int,
+    is_init: false,
+  }
+  callee_func := AnfFunctionDef.{
+    func_id: callee_id,
+    name: "callee",
+    params: [Param.{ local: lid(0), ty: MonoType.Int }],
+    op_result_mono: Dict.new(),
+    body: AnfExpr.Atom(.ALitVoid),
+    return_ty: MonoType.Int,
+    is_init: false,
+  }
+  anf := AnfModule.{
+    functions: [dispatch_func, callee_func],
+    init_func_id: .None,
+    extern_imports: Dict.new(),
+  }
+
+  callee_slots: Dict<Int, SlotInfo> = Dict.new()
+  callee_slots[0] = make_int_slot(0, .Param)
+  prepared_dispatch := PreparedFunc.{
+    func_id: dispatch_id,
+    name: "dispatch",
+    captures: [],
+    params: [sid(0)],
+    locals: [sid(1), sid(2), sid(3), sid(4)],
+    slots,
+    body,
+    return_mono: MonoType.Int,
+    is_init: false,
+  }
+  prepared_callee := PreparedFunc.{
+    func_id: callee_id,
+    name: "callee",
+    captures: [],
+    params: [sid(0)],
+    locals: [],
+    slots: callee_slots,
+    body: PreparedExpr.Atom(PreparedAtom.ALitInt(42)),
+    return_mono: MonoType.Int,
+    is_init: false,
+  }
+  prepared := PreparedModule.{
+    anf,
+    closure_captures: Dict.new(),
+    funcs: [prepared_dispatch, prepared_callee],
+  }
+  env := env_with_sum_type(action_tid, "Action", ["A", "B", "C"])
+  wasm := emit_module(prepared, reg, make_builtin_registry(), env)
+  wat := emit_wat_unlinked_for_test(wasm)
+
+  // All three arms should use return_call
+  try assert.str_contains(wat, "return_call $$f101_callee")
+  try assert.str_contains(wat, "return_call $$f100_dispatch")
+
+  // Should also use br_table dispatch (not just if-chain)
+  try assert.str_contains(wat, "br_table")
+  .Ok({})
+}
+
 pub fn suite() runner.Suite {
   runner.suite("codegen emit")
     .test(
       "function slots are not reinterpreted as module globals",
       test_param_local_id_can_overlap_module_global_id,
     )
+    .test("tail-position direct call emits return_call", test_tail_call_emits_return_call)
+    .test("non-tail call does not emit return_call", test_non_tail_call_no_return_call)
+    .test(
+      "void-result tail call does not emit return_call",
+      test_tail_call_void_result_no_return_call,
+    )
+    .test("tail call in if branches emits return_call", test_tail_call_in_if_branches)
+    .test("tail call in case arms emits return_call", test_tail_call_in_case_arms)
+    .test("tail call in br-table match emits return_call", test_tail_call_in_br_table_match)
 }

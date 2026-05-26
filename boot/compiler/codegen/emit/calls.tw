@@ -115,6 +115,37 @@ fn emit_direct_call(
   }
 }
 
+/// Emit a direct tail call: pushes args then emits return_call.
+/// Caller must verify the call is in valid tail position with matching result type.
+pub fn emit_direct_tail_call(
+  fid: FuncId,
+  args: Vector<PreparedAtom>,
+  ctx: EmitCtx,
+  buf: Vector<Instr>,
+  fns: CallEmitFns,
+) Vector<Instr> {
+  sym := lookup_func_sym(ctx.func_sym_map, fid)
+  out := buf
+
+  expected_func := ctx.prepared_funcs[fid.id]
+
+  for a, i in args {
+    expected: MonoType? = case expected_func {
+      .Some(pf) => case pf.params.get(i) {
+        .Some(sid) => case pf.slots[sid.id] {
+          .Some(info) => .Some(info.mono),
+          .None => .None,
+        },
+        .None => .None,
+      },
+      .None => .None,
+    }
+    out = emit_direct_arg(a, expected, ctx, out, fns)
+  }
+
+  out.append(.ReturnCall(sym))
+}
+
 fn emit_direct_arg(
   a: PreparedAtom,
   expected: MonoType?,

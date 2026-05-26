@@ -12,7 +12,11 @@ other indirect call paths.
 
 ## Current State
 
-The backend already has partial plumbing:
+Phases 2–3 are complete. The boot compiler now emits `return_call` for direct
+calls in tail position, including propagation through `if` branches and `case`
+arms (both if-chain and br-table dispatch paths).
+
+Backend plumbing (pre-existing):
 
 - `boot/compiler/codegen/wasm_ir.tw` defines `ReturnCall` and `ReturnCallRef`.
 - `boot/compiler/codegen/wat.tw` prints them as `return_call` and
@@ -20,8 +24,19 @@ The backend already has partial plumbing:
 - `boot/compiler/codegen/wasm.tw` serializes them in the binary emitter.
 - `boot/compiler/codegen/linker.tw` rewrites them during symbol/type renaming.
 
-What is missing is a producer: normal codegen does not appear to choose these
-instructions for tail-position calls yet.
+Tail-call emission (new):
+
+- `emit.tw`: `try_emit_tail_op` detects `Let(slot, op, Return(ASlot(slot)))`
+  patterns and emits tail calls for `ACall`, `AIf`, and `AMatch` ops.
+  `emit_tail_expr` / `emit_tail_let` propagate return context so nested
+  expressions can also emit tail calls.
+- `emit/calls.tw`: `emit_direct_tail_call` pushes args then emits
+  `ReturnCall(sym)` instead of `Call(sym)` + result store.
+- `emit/match.tw`: `emit_tail_match_op` dispatches to either
+  `emit_tail_br_table_match` (3+ variant patterns) or `emit_tail_arm_chain`
+  (if-chain fallback), both using `emit_tail_expr` for arm bodies.
+
+Remaining work: Phase 4 (closure `return_call_ref`) and Phase 5 (adapter shims).
 
 ## Non-Goals
 
@@ -109,55 +124,40 @@ Acceptance criteria:
 - Project docs clearly describe tail calls as required target support.
 - There is no `--no-wasm-tail-calls` compatibility path in the design.
 
-### Phase 2: Direct-call tail emission
+### Phase 2: Direct-call tail emission ✓
 
-Find the code path that emits prepared direct calls and teach it to distinguish
-normal value context from return context.
+Implemented via `try_emit_tail_op` in `emit.tw`. Instead of an explicit
+`EmitContinuation` enum, tail detection works by pattern-matching the ANF shape:
+`Let(slot, ACall(f, args), Return(Some(ASlot(slot))))`. When the let-body
+immediately returns the same slot the call stores into, and the callee is a
+non-builtin user function, `emit_direct_tail_call` emits `ReturnCall(sym)`.
 
-Suggested shape:
+Void-returning and Never-returning calls are excluded (they need result
+boxing/adaptation after the call).
 
-- introduce an `EmitMode` or `Continuation` enum, such as:
+Tests in `boot/tests/suites/codegen_emit_suite.tw`:
+- tail-position direct call emits `return_call`
+- non-tail call does not emit `return_call`
+- void-result tail call does not emit `return_call`
 
-```tw
-type EmitContinuation = {
-  Value,
-  Return(Vector<ValType>),
-}
-```
+### Phase 3: Tail-position propagation through control flow ✓
 
-- when emitting the body of a function, emit the final expression/terminal in
-  `Return(...)` mode
-- when a direct call is emitted in `Return(...)` mode and its result signature
-  matches, emit `ReturnCall(sym)` instead of `Call(sym)` plus outer `Return`
-- when the call is not in tail position or still needs post-call adaptation,
-  keep the existing normal-call codegen
+`emit_tail_expr` and `emit_tail_let` propagate return context through nested
+expressions. `try_emit_tail_op` handles three op kinds:
 
-Acceptance criteria:
+- **AIf**: emits condition, then each branch via `emit_tail_expr`
+- **AMatch (if-chain)**: `emit_tail_arm_chain` emits pattern conditions and
+  bodies in tail context
+- **AMatch (br-table)**: `emit_tail_br_table_match` uses `StructGet + BrTable`
+  dispatch with tail-aware arm bodies (3+ variant patterns)
 
-- A simple tail-recursive function emits `return_call`.
-- A non-tail recursive function still emits `call`.
-- A function that must adapt the result representation after the call still
-  emits the current non-tail sequence.
+The `atom_is_return` flag allows `Atom(ASlot(s))` to count as a return when
+called from `emit_tail_let`, where trailing atoms are semantically returns.
 
-### Phase 3: Tail-position propagation through control flow
-
-Propagate return context through structured terminal constructs:
-
-- `if` branches whose result is the function result
-- `case` / match arms
-- block tail expressions after local bindings
-- loops only when the tail call is on an exit path, not when more loop work
-  remains
-
-The key rule is local: only pass `Return(...)` into subexpressions that are
-known to be the final value of the enclosing function.
-
-Acceptance criteria:
-
-- Tail calls inside both branches of an `if` can become `return_call`.
-- Tail calls inside match arms can become `return_call`.
-- Calls followed by arithmetic, wrapping, variant construction, field access, or
-  cleanup remain normal calls.
+Tests:
+- tail call in if branches emits `return_call`
+- tail call in case arms emits `return_call` (if-chain path)
+- tail call in br-table match emits `return_call` + `br_table`
 
 ### Phase 4: Closure and function-reference tail calls
 
@@ -262,9 +262,9 @@ backend work, especially reducing erased adapter chains and enabling
 
 ## Suggested Milestones
 
-1. Feature flag and no-op plumbing.
-2. Direct self-recursive `return_call` in simple function tails.
-3. Tail-position propagation through `if` and `case`.
+1. ✓ Feature flag and no-op plumbing.
+2. ✓ Direct self-recursive `return_call` in simple function tails.
+3. ✓ Tail-position propagation through `if` and `case` (including br-table).
 4. Runtime-gated deep recursion test.
 5. Closure `return_call_ref` support.
 6. Optional adapter shims for representation-boundary cases.

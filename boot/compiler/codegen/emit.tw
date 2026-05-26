@@ -685,6 +685,180 @@ fn emit_expr(expr: PreparedExpr, expected_ty: MonoType, ctx: EmitCtx, buf: Vecto
   }
 }
 
+// ── Tail-position expression emission ──────────────────────────────────
+// emit_tail_expr emits an expression in return-tail context: the result
+// of the expression will be returned from the enclosing function.
+// This enables tail-call detection for calls inside if/case branches.
+fn emit_tail_expr(expr: PreparedExpr, expected_ty: MonoType, ctx: EmitCtx, buf: Vector<Instr>) Vector<
+  Instr,
+> {
+  case expr {
+    .Let(local, op, body) => emit_tail_let(local, op, body, expected_ty, ctx, buf),
+    .Atom(atom) => {
+      buf2 := emit_atom(atom, ctx, buf)
+      buf2.append(.Return)
+    },
+    .Return(.Some(atom)) => {
+      buf2 := emit_atom(atom, ctx, buf)
+      buf2.append(.Return)
+    },
+    .Return(.None) => buf.append(.Return),
+    _ => emit_expr(expr, expected_ty, ctx, buf),
+  }
+}
+
+// emit_tail_let is like emit_let but the final expression is emitted in
+// return-tail context, enabling tail-call detection for the terminal op.
+fn emit_tail_let(
+  local: SlotId,
+  op: PreparedOp,
+  body: PreparedExpr,
+  expected_ty: MonoType,
+  ctx: EmitCtx,
+  buf: Vector<Instr>,
+) Vector<Instr> {
+  cur_local := local
+  cur_op := op
+  cur_body := body
+
+  for true {
+    entry := lookup_slot(ctx, cur_local)
+    result_mono := entry.mono
+
+    case result_mono {
+      .Never => {
+        buf = emit_op(cur_op, entry.index, .None, result_mono, ctx, buf)
+        return buf.append(.Unreachable)
+      },
+      .Void => {
+        buf = emit_op(cur_op, entry.index, .Some(entry.val_type), result_mono, ctx, buf)
+
+        case cur_body {
+          .Let(next_local, next_op, next_body) => {
+            cur_local = next_local
+            cur_op = next_op
+            cur_body = next_body
+          },
+          _ => { return emit_tail_expr(cur_body, expected_ty, ctx, buf) },
+        }
+      },
+      _ => {
+        // Check for tail-call patterns before normal emission
+        tail_emitted := try_emit_tail_op(cur_op, cur_body, cur_local, result_mono, true, ctx, buf)
+
+        case tail_emitted {
+          .Some(result) => { return result },
+          .None => {},
+        }
+
+        buf = emit_op(cur_op, entry.index, .Some(entry.val_type), result_mono, ctx, buf)
+
+        case cur_body {
+          .Let(next_local, next_op, next_body) => {
+            cur_local = next_local
+            cur_op = next_op
+            cur_body = next_body
+          },
+          _ => { return emit_tail_expr(cur_body, expected_ty, ctx, buf) },
+        }
+      },
+    }
+  }
+
+  buf
+}
+
+// ── Tail-call detection ────────────────────────────────────────────────
+// try_emit_tail_op checks if (op, body) form a tail-call pattern and emits
+// optimized code. Returns .Some(buf) if a tail call was emitted, .None otherwise.
+//
+// Patterns detected:
+// 1. Let(slot, ACall(AGlobalFunc(fid), args), Return(Some(ASlot(slot))))
+//    → direct return_call
+// 2. Let(slot, AIf(cond, then_e, else_e), Return(Some(ASlot(slot))))
+//    → if with tail-position branches
+// 3. Let(slot, AMatch(scrut, arms), Return(Some(ASlot(slot))))
+//    → match with tail-position arms
+fn try_emit_tail_op(
+  op: PreparedOp,
+  body: PreparedExpr,
+  local: SlotId,
+  result_mono: MonoType,
+  atom_is_return: Bool,
+  ctx: EmitCtx,
+  buf: Vector<Instr>,
+) Vector<Instr>? {
+  // Body must return the same local that the op stores into.
+  // Return(Some(ASlot(slot))) is always valid.
+  // Atom(ASlot(slot)) counts as a return only when atom_is_return is true,
+  // which is the case when called from emit_tail_let (where trailing atoms
+  // are emitted as returns). Callers from emit_let must pass false.
+  is_tail_of_local := case body {
+    .Return(.Some(.ASlot(ret_slot))) => ret_slot.id == local.id,
+    .Atom(.ASlot(ret_slot)) => atom_is_return and ret_slot.id == local.id,
+    _ => false,
+  }
+
+  if !is_tail_of_local {
+    return .None
+  }
+
+  case op {
+    .ACall(.AGlobalFunc(fid), args) => {
+      // Direct tail call — only for non-builtin functions
+      case bi.entry(ctx.builtins, fid) {
+        .None => .Some(
+          call_emit.emit_direct_tail_call(
+            fid,
+            args,
+            ctx,
+            buf,
+            call_emit.CallEmitFns.{
+              emit_atom,
+              atom_val_type,
+              atom_mono,
+              emit_checked_i32_narrow,
+              emit_intrinsic_call,
+              emit_closure_call,
+            },
+          ),
+        ),
+        _ => .None,
+      }
+    },
+    .AIf(cond_e, then_e, else_e) => {
+      // Emit condition, then each branch in tail context
+      out := emit_atom(cond_e, ctx, buf)
+      then_instrs := emit_tail_expr(then_e, result_mono, ctx, [])
+      else_instrs := emit_tail_expr(else_e, result_mono, ctx, [])
+      .Some(out.append(.If(.None, then_instrs, else_instrs)))
+    },
+    .AMatch(scrutinee, arms) => {
+      // Emit match with tail-position arms
+      scrutinee_instrs := emit_atom(scrutinee, ctx, [])
+      scrutinee_mono := atom_mono(scrutinee, ctx)
+      .Some(
+        match_emit.emit_tail_match_op(
+          scrutinee_instrs,
+          scrutinee_mono,
+          arms,
+          result_mono,
+          ctx,
+          buf,
+          match_emit.MatchEmitFns.{
+            emit_atom,
+            emit_expr: emit_tail_expr,
+            match_scrutinee_mono: fn(a: PreparedAtom, c: EmitCtx) MonoType { atom_mono(a, c) },
+            emit_pattern_condition,
+            emit_pattern_bindings,
+          },
+        ),
+      )
+    },
+    _ => .None,
+  }
+}
+
 // ── Let emission ───────────────────────────────────────────────────────
 fn emit_let(
   local: SlotId,
@@ -709,7 +883,27 @@ fn emit_let(
         buf = emit_op(cur_op, entry.index, .None, result_mono, ctx, buf)
         return buf.append(.Unreachable)
       },
+      .Void => {
+        buf = emit_op(cur_op, entry.index, .Some(entry.val_type), result_mono, ctx, buf)
+
+        case cur_body {
+          .Let(next_local, next_op, next_body) => {
+            cur_local = next_local
+            cur_op = next_op
+            cur_body = next_body
+          },
+          _ => { return emit_expr(cur_body, expected_ty, ctx, buf) },
+        }
+      },
       _ => {
+        // Check for tail-call patterns before normal emission
+        tail_result := try_emit_tail_op(cur_op, cur_body, cur_local, result_mono, false, ctx, buf)
+
+        case tail_result {
+          .Some(result) => { return result },
+          .None => {},
+        }
+
         buf = emit_op(cur_op, entry.index, .Some(entry.val_type), result_mono, ctx, buf)
 
         case cur_body {
