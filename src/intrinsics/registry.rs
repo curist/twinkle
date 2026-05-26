@@ -594,8 +594,8 @@ pub fn populate_func_table(
 
 pub fn builtin_module_aliases() -> &'static [&'static str] {
     &[
-        "Cell", "Dict", "Iterator", "Option", "Result", "Task", "Vector", "String", "Int", "Float",
-        "Bool", "Byte",
+        "Cell", "Dict", "Iterator", "Option", "Result", "Set", "Task", "Vector", "String", "Int",
+        "Float", "Bool", "Byte",
     ]
 }
 

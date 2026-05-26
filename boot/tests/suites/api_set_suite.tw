@@ -1,0 +1,168 @@
+use tests.assert
+use tests.runner
+
+pub fn suite() runner.Suite {
+  runner.suite("set")
+    .test(
+      "new creates empty set",
+      fn() {
+        s: Set<String> = Set.new()
+        try assert.equal(s.len(), 0)
+        try assert.is_true(s.is_empty())
+        .Ok({})
+      },
+    )
+    .test(
+      "insert and contains",
+      fn() {
+        s: Set<String> = Set.new()
+        s = .insert("hello")
+        try assert.is_true(s.contains("hello"))
+        try assert.is_false(s.contains("world"))
+        try assert.equal(s.len(), 1)
+        .Ok({})
+      },
+    )
+    .test(
+      "duplicate insert does not increase length",
+      fn() {
+        s: Set<String> = Set.new()
+        s = .insert("a")
+        s = .insert("a")
+        s = .insert("a")
+        try assert.equal(s.len(), 1)
+        .Ok({})
+      },
+    )
+    .test(
+      "remove existing member",
+      fn() {
+        s: Set<String> = Set.new()
+        s = .insert("a")
+        s = .insert("b")
+        s = .remove("a")
+        try assert.is_false(s.contains("a"))
+        try assert.is_true(s.contains("b"))
+        try assert.equal(s.len(), 1)
+        .Ok({})
+      },
+    )
+    .test(
+      "remove missing member is a no-op",
+      fn() {
+        s: Set<String> = Set.new()
+        s = .insert("a")
+        s = .remove("z")
+        try assert.equal(s.len(), 1)
+        try assert.is_true(s.contains("a"))
+        .Ok({})
+      },
+    )
+    .test(
+      "from_vector deduplicates",
+      fn() {
+        xs := ["a", "b", "a", "c", "b"]
+        s := Set.from_vector(xs)
+        try assert.equal(s.len(), 3)
+        try assert.is_true(s.contains("a"))
+        try assert.is_true(s.contains("b"))
+        try assert.is_true(s.contains("c"))
+        .Ok({})
+      },
+    )
+    .test(
+      "to_vector preserves insertion order",
+      fn() {
+        s: Set<String> = Set.new()
+        s = .insert("c")
+        s = .insert("a")
+        s = .insert("b")
+        vs := s.to_vector()
+        try assert.equal(vs.len(), 3)
+        try assert.equal(vs[0], "c")
+        try assert.equal(vs[1], "a")
+        try assert.equal(vs[2], "b")
+        .Ok({})
+      },
+    )
+    .test(
+      "union ordering and membership",
+      fn() {
+        a := Set.from_vector(["a", "b", "c"])
+        b := Set.from_vector(["b", "d"])
+        u := a.union(b)
+        try assert.equal(u.len(), 4)
+        vs := u.to_vector()
+        try assert.equal(vs[0], "a")
+        try assert.equal(vs[1], "b")
+        try assert.equal(vs[2], "c")
+        try assert.equal(vs[3], "d")
+        .Ok({})
+      },
+    )
+    .test(
+      "intersection ordering and membership",
+      fn() {
+        a := Set.from_vector(["a", "b", "c"])
+        b := Set.from_vector(["b", "c", "d"])
+        i := a.intersection(b)
+        try assert.equal(i.len(), 2)
+        vs := i.to_vector()
+        try assert.equal(vs[0], "b")
+        try assert.equal(vs[1], "c")
+        .Ok({})
+      },
+    )
+    .test(
+      "difference ordering and membership",
+      fn() {
+        a := Set.from_vector(["a", "b", "c"])
+        b := Set.from_vector(["b", "d"])
+        d := a.difference(b)
+        try assert.equal(d.len(), 2)
+        vs := d.to_vector()
+        try assert.equal(vs[0], "a")
+        try assert.equal(vs[1], "c")
+        .Ok({})
+      },
+    )
+    .test(
+      "is_subset true and false cases",
+      fn() {
+        a := Set.from_vector(["a", "b"])
+        b := Set.from_vector(["a", "b", "c"])
+        c := Set.from_vector(["a", "d"])
+        try assert.is_true(a.is_subset(b))
+        try assert.is_false(a.is_subset(c))
+        try assert.is_false(b.is_subset(a))
+        .Ok({})
+      },
+    )
+    .test(
+      "int keys",
+      fn() {
+        s: Set<Int> = Set.new()
+        s = .insert(1)
+        s = .insert(2)
+        s = .insert(3)
+        try assert.equal(s.len(), 3)
+        try assert.is_true(s.contains(2))
+        try assert.is_false(s.contains(4))
+        .Ok({})
+      },
+    )
+    .test(
+      "byte keys",
+      fn() {
+        s: Set<Byte> = Set.new()
+        s = .insert(97)
+        s = .insert(98)
+        s = .insert(97)
+        try assert.equal(s.len(), 2)
+        try assert.is_true(s.contains(97))
+        try assert.is_true(s.contains(98))
+        try assert.is_false(s.contains(99))
+        .Ok({})
+      },
+    )
+}

@@ -311,6 +311,13 @@ fn unify(ctx: InferCtx, a: MonoType, b: MonoType, s: Span, diags: Vector<DiagKin
   // MetaVar binding
   case za {
     .MetaVar(id) => {
+      case zb {
+        .MetaVar(other) => if id == other {
+          return .{ ctx, diags }
+        },
+        _ => {},
+      }
+
       if occurs(id, zb, ctx.subst) {
         return .{ ctx, diags: diags.append(.Error(.InfiniteType(.{ span: s }))) }
       }
@@ -4441,6 +4448,7 @@ fn collect_module_aliases(module: Module) Dict<String, Bool> {
     "Iterator",
     "Option",
     "Result",
+    "Set",
     "Task",
     "Vector",
     "String",

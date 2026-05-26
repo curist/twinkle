@@ -132,6 +132,11 @@ fn builtin_type_entries() Vector<TypeEntry> {
         ),
       ),
       builtin_type_entry(next_type_id, 1, .Record("Task", rtp_t, [])),
+      builtin_type_entry(
+        next_type_id,
+        1,
+        .Record("Set", rtp_t, [.{ name: "entries", ty: .Dict(t, .Void) }]),
+      ),
     ],
   )
   types
@@ -178,6 +183,7 @@ fn prelude_module_stem(receiver: String?) String? {
       "Iterator" => .Some("iterator"),
       "Option" => .Some("option"),
       "Result" => .Some("result"),
+      "Set" => .Some("set"),
       "String" => .Some("string"),
       "Vector" => .Some("vector"),
       _ => .None,

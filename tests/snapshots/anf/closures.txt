@@ -1,8 +1,8 @@
 // ANF Module
 // 7 function(s)
-// init = FuncId(100)
+// init = FuncId(118)
 
-fn __prelude_vector.join  [FuncId(87)]  params=[L0: Vector(String), L1: String]
+fn __prelude_vector.join  [FuncId(105)]  params=[L0: Vector(String), L1: String]
   return_ty: String
   body:
     let L29 = call GlobalFunc(10) (L0)
@@ -107,11 +107,11 @@ fn __prelude_vector.join  [FuncId(87)]  params=[L0: Vector(String), L1: String]
     }
     L67
 
-fn closures.test_capture  [FuncId(95)]  params=[]
+fn closures.test_capture  [FuncId(113)]  params=[]
   return_ty: Void
   body:
     let L2 = init(0)
-    let L6 = closure(FuncId(97), free=[L2])
+    let L6 = closure(FuncId(115), free=[L2])
     let L3 = init(L6)
     let L7 = binop(Add, L2, 1, Int)
     let L8 = assign(L2 = L7)
@@ -126,18 +126,18 @@ fn closures.test_capture  [FuncId(95)]  params=[]
     let L15 = call GlobalFunc(2) (L14)
     L15
 
-fn closures.make_adder  [FuncId(96)]  params=[L2: Int]
+fn closures.make_adder  [FuncId(114)]  params=[L2: Int]
   return_ty: Function { params: [Int], ret: Int }
   body:
-    let L3 = closure(FuncId(98), free=[L2])
+    let L3 = closure(FuncId(116), free=[L2])
     L3
 
-fn __init__  [FuncId(100)]  params=[]
+fn __init__  [FuncId(118)]  params=[]
   return_ty: Void
   body:
-    let L21 = call GlobalFunc(95) ()
+    let L21 = call GlobalFunc(113) ()
     let L20 = init(L21)
-    let L22 = call GlobalFunc(96) (10)
+    let L22 = call GlobalFunc(114) (10)
     let L0 = init(L22)
     let L23 = call L0 (0)
     let L24 = call GlobalFunc(4) (L23)
@@ -166,7 +166,7 @@ fn __init__  [FuncId(100)]  params=[]
         let L36 = binop(Add, L5, 1, Int)
         let L37 = assign(L5 = L36)
         let L9 = init(void)
-        let L38 = closure(FuncId(99), free=[L6])
+        let L38 = closure(FuncId(117), free=[L6])
         let L7 = init(L38)
         let L39 = call GlobalFunc(34) (L3, L7)
         let L8 = init(L39)
@@ -203,18 +203,18 @@ fn __init__  [FuncId(100)]  params=[]
     let L17 = init(L53)
     void
 
-fn <lambda@269>  [FuncId(97)]  params=[]
+fn <lambda@269>  [FuncId(115)]  params=[]
   return_ty: Int
   body:
     L2
 
-fn <lambda@544>  [FuncId(98)]  params=[L3: Int]
+fn <lambda@544>  [FuncId(116)]  params=[L3: Int]
   return_ty: Int
   body:
     let L4 = binop(Add, L2, L3, Int)
     L4
 
-fn <lambda@810>  [FuncId(99)]  params=[]
+fn <lambda@810>  [FuncId(117)]  params=[]
   return_ty: Int
   body:
     L6

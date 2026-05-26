@@ -5,8 +5,8 @@ use super::ty::{
     BUILTIN_BOOL_TYPE_ID, BUILTIN_BYTE_TYPE_ID, BUILTIN_DICT_TYPE_ID, BUILTIN_FLOAT_TYPE_ID,
     BUILTIN_INT_TYPE_ID, BUILTIN_STRING_TYPE_ID, BUILTIN_VECTOR_TYPE_ID, CELL_TYPE_ID,
     FunctionSignature, ITER_ITEM_TYPE_ID, ITERATOR_TYPE_ID, MonoType, OPTION_TYPE_ID,
-    ORDER_TYPE_ID, RANGE_TYPE_ID, RESULT_TYPE_ID, RecordField, TASK_TYPE_ID, TypeDef, TypeId,
-    UNFOLD_STEP_TYPE_ID, Variant,
+    ORDER_TYPE_ID, RANGE_TYPE_ID, RESULT_TYPE_ID, RecordField, SET_TYPE_ID, TASK_TYPE_ID, TypeDef,
+    TypeId, UNFOLD_STEP_TYPE_ID, Variant,
 };
 use crate::intrinsics::signatures;
 use crate::syntax::ast::Type as AstType;
@@ -227,6 +227,23 @@ impl TypeEnv {
             TASK_TYPE_ID,
         );
 
+        // TypeId(9) = Set<K> — persistent set backed by Dict<K, Void>
+        assert_eq!(
+            env.add_type(TypeDef::Record {
+                name: "Set".to_string(),
+                type_params: vec!["K".to_string()],
+                fields: vec![RecordField {
+                    name: "entries".to_string(),
+                    ty: MonoType::Dict(
+                        Box::new(MonoType::Var("K".to_string())),
+                        Box::new(MonoType::Void),
+                    ),
+                }],
+                doc: Some("Persistent set of unique values.".to_string()),
+            }),
+            SET_TYPE_ID,
+        );
+
         // Register all builtin method mappings.
         // These map (synthetic_type_id, method_name) → qualified function name
         // so that the env-driven resolution path works for all builtin types.
@@ -272,35 +289,9 @@ impl TypeEnv {
             (ITERATOR_TYPE_ID, "next", "Iterator.next"),
             // Task
             (TASK_TYPE_ID, "await", "Task.await"),
-            // Option
-            (OPTION_TYPE_ID, "is_some", "Option.is_some"),
-            (OPTION_TYPE_ID, "is_none", "Option.is_none"),
-            (OPTION_TYPE_ID, "unwrap", "Option.unwrap"),
-            (OPTION_TYPE_ID, "unwrap_or", "Option.unwrap_or"),
-            (OPTION_TYPE_ID, "unwrap_or_else", "Option.unwrap_or_else"),
-            (OPTION_TYPE_ID, "map", "Option.map"),
-            (OPTION_TYPE_ID, "and_then", "Option.and_then"),
-            (OPTION_TYPE_ID, "flatten", "Option.flatten"),
-            (OPTION_TYPE_ID, "filter", "Option.filter"),
-            (OPTION_TYPE_ID, "or_some", "Option.or_some"),
-            (OPTION_TYPE_ID, "or_else", "Option.or_else"),
-            (OPTION_TYPE_ID, "inspect", "Option.inspect"),
-            (OPTION_TYPE_ID, "ok_or", "Option.ok_or"),
-            (OPTION_TYPE_ID, "ok_or_else", "Option.ok_or_else"),
-            (OPTION_TYPE_ID, "transpose", "Option.transpose"),
-            // Result
-            (RESULT_TYPE_ID, "is_ok", "Result.is_ok"),
-            (RESULT_TYPE_ID, "is_err", "Result.is_err"),
-            (RESULT_TYPE_ID, "unwrap", "Result.unwrap"),
-            (RESULT_TYPE_ID, "unwrap_or", "Result.unwrap_or"),
-            (RESULT_TYPE_ID, "unwrap_or_else", "Result.unwrap_or_else"),
-            (RESULT_TYPE_ID, "map", "Result.map"),
-            (RESULT_TYPE_ID, "map_err", "Result.map_err"),
-            (RESULT_TYPE_ID, "and_then", "Result.and_then"),
-            (RESULT_TYPE_ID, "or_else", "Result.or_else"),
-            (RESULT_TYPE_ID, "ok", "Result.ok"),
-            (RESULT_TYPE_ID, "err", "Result.err"),
-            (RESULT_TYPE_ID, "transpose", "Result.transpose"),
+            // Option and Result methods are registered dynamically from
+            // prelude/option.tw and prelude/result.tw via
+            // ensure_prelude_method_signatures_registered.
             // Primitives
             (BUILTIN_INT_TYPE_ID, "to_string", "Int.to_string"),
             (BUILTIN_INT_TYPE_ID, "compare", "Int.compare"),

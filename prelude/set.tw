@@ -1,0 +1,96 @@
+/// Create an empty set.
+
+pub fn new<K>() Set<K> {
+  Set.{ entries: Dict.new() }
+}
+
+/// Return a new set with the element inserted.
+pub fn insert<K>(s: Set<K>, k: K) Set<K> {
+  s.entries = s.entries.set(k, {})
+  s
+}
+
+/// Return a new set with the element removed.
+pub fn remove<K>(s: Set<K>, k: K) Set<K> {
+  s.entries = s.entries.remove(k)
+  s
+}
+
+/// Return true if the set contains the element.
+pub fn contains<K>(s: Set<K>, k: K) Bool {
+  s.entries.has(k)
+}
+
+/// Return the number of elements in the set.
+pub fn len<K>(s: Set<K>) Int {
+  s.entries.len()
+}
+
+/// Return true when the set has no elements.
+pub fn is_empty<K>(s: Set<K>) Bool {
+  s.entries.len() == 0
+}
+
+/// Return all elements as a vector in insertion order.
+pub fn to_vector<K>(s: Set<K>) Vector<K> {
+  s.entries.keys()
+}
+
+/// Create a set from a vector, deduplicating elements.
+pub fn from_vector<K>(xs: Vector<K>) Set<K> {
+  s: Set<K> = Set.{ entries: Dict.new() }
+
+  for x in xs {
+    s = insert(s, x)
+  }
+
+  s
+}
+
+/// Return the union of two sets, preserving order from a then b.
+pub fn union<K>(a: Set<K>, b: Set<K>) Set<K> {
+  result := a
+
+  for k in b.entries {
+    result = insert(result, k)
+  }
+
+  result
+}
+
+/// Return elements present in both sets, preserving order from a.
+pub fn intersection<K>(a: Set<K>, b: Set<K>) Set<K> {
+  result: Set<K> = Set.{ entries: Dict.new() }
+
+  for k in a.entries {
+    if contains(b, k) {
+      result = insert(result, k)
+    }
+  }
+
+  result
+}
+
+/// Return elements in a but not in b, preserving order from a.
+pub fn difference<K>(a: Set<K>, b: Set<K>) Set<K> {
+  result: Set<K> = Set.{ entries: Dict.new() }
+
+  for k in a.entries {
+    if !contains(b, k) {
+      result = insert(result, k)
+    }
+  }
+
+  result
+}
+
+/// Return true if every element in a is also in b.
+pub fn is_subset<K>(a: Set<K>, b: Set<K>) Bool {
+  for k in a.entries {
+    if !contains(b, k) {
+      return false
+    }
+  }
+
+  true
+}
