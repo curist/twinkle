@@ -316,12 +316,12 @@ fn test_large_vector_literal_uses_runtime_push() Result<Void, String> {
 // ── Closure representation tests ────────────────────────────────────
 fn test_closure_first_class_function_arg() Result<Void, String> {
   // Passing a named function as an argument should wrap it as a closure.
-  // The correctness path uses the universal closure ABI.
+  // User functions create the concrete closure struct (3 fields with typed funcref).
   wat := try assert_codegen_src_compiles(
     "fn double(n: Int) Int { n * 2 }\nfn apply(f: fn(Int) Int, x: Int) Int { f(x) }\nprintln(Int.to_string(apply(double, 5)))\n",
     "first-class function arg",
   )
-  try assert.str_contains(wat, "struct.new $rt_types__Closure")
+  try assert.str_contains(wat, "struct.new $user__$closure_")
   try assert.str_contains(wat, "call_ref $rt_types__ClosureFunc")
   .Ok({})
 }
@@ -352,7 +352,7 @@ fn test_iterator_unfold_wraps_named_step_as_closure() Result<Void, String> {
     "iterator unfold named step",
   )
   try assert.str_contains(wat, "$tramp_")
-  try assert.str_contains(wat, "struct.new $rt_types__Closure")
+  try assert.str_contains(wat, "struct.new $user__$closure_")
   .Ok({})
 }
 
@@ -456,7 +456,7 @@ fn test_user_function_stored_in_record_field_then_called() Result<Void, String> 
     "fn double(n: Int) Int { n * 2 }\ntype Wrapper = .{ f: fn(Int) Int }\nw := Wrapper.{ f: double }\nprintln(Int.to_string(w.f(21)))\n",
     "user function stored in record field then called",
   )
-  try assert.str_contains(wat, "struct.new $rt_types__Closure")
+  try assert.str_contains(wat, "struct.new $user__$closure_")
   try assert.str_contains(wat, "call_ref $rt_types__ClosureFunc")
   .Ok({})
 }
@@ -466,7 +466,7 @@ fn test_user_function_returned_from_function_then_called() Result<Void, String> 
     "fn double(n: Int) Int { n * 2 }\nfn get_double() fn(Int) Int { double }\nf := get_double()\nprintln(Int.to_string(f(21)))\n",
     "user function returned from function then called",
   )
-  try assert.str_contains(wat, "struct.new $rt_types__Closure")
+  try assert.str_contains(wat, "struct.new $user__$closure_")
   try assert.str_contains(wat, "call_ref $rt_types__ClosureFunc")
   .Ok({})
 }

@@ -7,7 +7,9 @@ use compiler.backend.prepared_ir.{
 use compiler.builtins.{make_builtin_registry}
 use compiler.codegen.emit.{emit_module}
 use compiler.codegen.wasm_ir.{HeapType, ValType}
-use compiler.codegen.wasm_layout.{WasmLayout, WasmSumLayout, WasmVariantLayout, mono_to_key}
+use compiler.codegen.wasm_layout.{
+  WasmClosureLayout, WasmLayout, WasmSumLayout, WasmVariantLayout, mono_to_key,
+}
 use compiler.codegen.wasm_plan_types.{ModuleGlobalEntry, WasmTypeRegistry}
 use compiler.codegen.wat.{emit_wat_unlinked_for_test}
 use compiler.core_ir.{FuncId, LocalId, Param, VariantId}
@@ -136,7 +138,7 @@ fn test_tail_call_emits_return_call() Result<Void, String> {
   // fn recurse(n: Int) Int { return recurse(n) }
   // Body: Let(s1, ACall(recurse, [s0]), Return(Some(ASlot(s1))))
   // Should emit return_call instead of call + return
-  func_id := fid(100)
+  func_id := fid(0x100)
   slots: Dict<Int, SlotInfo> = Dict.new()
   slots[0] = SlotInfo.{
     slot: sid(0),
@@ -171,7 +173,7 @@ fn test_tail_call_emits_return_call() Result<Void, String> {
   reg := empty_registry()
   wasm := emit_module(prepared, reg, make_builtin_registry(), resolver.empty_env())
   wat := emit_wat_unlinked_for_test(wasm)
-  try assert.str_contains(wat, "return_call $$f100_recurse")
+  try assert.str_contains(wat, "return_call $$f256_recurse")
   .Ok({})
 }
 
@@ -179,7 +181,7 @@ fn test_non_tail_call_no_return_call() Result<Void, String> {
   // fn identity(n: Int) Int { identity(n) }
   // Body: Let(s1, ACall(identity, [s0]), Atom(ASlot(s1)))
   // Not a Return — should emit regular call, not return_call
-  func_id := fid(101)
+  func_id := fid(0x101)
   slots: Dict<Int, SlotInfo> = Dict.new()
   slots[0] = SlotInfo.{
     slot: sid(0),
@@ -222,7 +224,7 @@ fn test_tail_call_void_result_no_return_call() Result<Void, String> {
   // fn fire(n: Int) Void { fire(n) }
   // Void-returning calls have extra boxing (i32.const 0 + ref.i31 + local.set)
   // so they should NOT be tail-called (result adaptation needed)
-  func_id := fid(102)
+  func_id := fid(0x102)
   slots: Dict<Int, SlotInfo> = Dict.new()
   slots[0] = SlotInfo.{
     slot: sid(0),
@@ -269,8 +271,8 @@ fn test_tail_call_in_if_branches() Result<Void, String> {
   //   if cond { callee(n) } else { dispatch(n) }
   // }
   // Both branches should emit return_call
-  dispatch_id := fid(100)
-  callee_id := fid(101)
+  dispatch_id := fid(0x100)
+  callee_id := fid(0x101)
 
   slots: Dict<Int, SlotInfo> = Dict.new()
   slots[0] = make_int_slot(0, .Param) // n
@@ -351,8 +353,8 @@ fn test_tail_call_in_if_branches() Result<Void, String> {
   reg := empty_registry()
   wasm := emit_module(prepared, reg, make_builtin_registry(), resolver.empty_env())
   wat := emit_wat_unlinked_for_test(wasm)
-  try assert.str_contains(wat, "return_call $$f101_callee")
-  try assert.str_contains(wat, "return_call $$f100_dispatch")
+  try assert.str_contains(wat, "return_call $$f257_callee")
+  try assert.str_contains(wat, "return_call $$f256_dispatch")
   .Ok({})
 }
 
@@ -361,8 +363,8 @@ fn test_tail_call_in_case_arms() Result<Void, String> {
   //   case n { 0 => callee(n), _ => dispatch(n) }
   // }
   // Both arms should emit return_call
-  dispatch_id := fid(100)
-  callee_id := fid(101)
+  dispatch_id := fid(0x100)
+  callee_id := fid(0x101)
 
   slots: Dict<Int, SlotInfo> = Dict.new()
   slots[0] = make_int_slot(0, .Param) // n
@@ -446,8 +448,8 @@ fn test_tail_call_in_case_arms() Result<Void, String> {
   reg := empty_registry()
   wasm := emit_module(prepared, reg, make_builtin_registry(), resolver.empty_env())
   wat := emit_wat_unlinked_for_test(wasm)
-  try assert.str_contains(wat, "return_call $$f101_callee")
-  try assert.str_contains(wat, "return_call $$f100_dispatch")
+  try assert.str_contains(wat, "return_call $$f257_callee")
+  try assert.str_contains(wat, "return_call $$f256_dispatch")
   .Ok({})
 }
 
@@ -476,8 +478,8 @@ fn test_tail_call_in_br_table_match() Result<Void, String> {
   // fn dispatch(a: Action) Int { case a { .A => callee(a), .B => callee(a), .C => dispatch(a) } }
   // br-table eligible (3+ variant patterns, trivial fields)
   // All arms should emit return_call
-  dispatch_id := fid(100)
-  callee_id := fid(101)
+  dispatch_id := fid(0x100)
+  callee_id := fid(0x101)
   action_tid := TypeId.{ id: 7 }
   action_mono := MonoType.Named(action_tid, [])
 
@@ -613,11 +615,107 @@ fn test_tail_call_in_br_table_match() Result<Void, String> {
   wat := emit_wat_unlinked_for_test(wasm)
 
   // All three arms should use return_call
-  try assert.str_contains(wat, "return_call $$f101_callee")
-  try assert.str_contains(wat, "return_call $$f100_dispatch")
+  try assert.str_contains(wat, "return_call $$f257_callee")
+  try assert.str_contains(wat, "return_call $$f256_dispatch")
 
   // Should also use br_table dispatch (not just if-chain)
   try assert.str_contains(wat, "br_table")
+  .Ok({})
+}
+
+fn test_tail_closure_call_emits_return_call_ref() Result<Void, String> {
+  // fn apply(f: fn(Int) Int, n: Int) Int { f(n) }
+  // Body: Let(s2, ACall(ASlot(s0), [ASlot(s1)]), Return(Some(ASlot(s2))))
+  // Should emit return_call_ref with the typed functype
+  func_id := fid(0x100)
+  closure_mono := MonoType.Function([MonoType.Int], MonoType.Int)
+
+  slots: Dict<Int, SlotInfo> = Dict.new()
+  slots[0] = SlotInfo.{
+    slot: sid(0),
+    source_local: lid(0),
+    role: SlotRole.Param,
+    mono: closure_mono,
+    repr: ReprKind.ClosureRef,
+    wasm_type: ValType.Ref(true, HeapType.Named("rt_types__Closure")),
+  }
+  slots[1] = make_int_slot(1, .Param) // n
+  slots[2] = make_int_slot(2, .Local) // call result
+
+  body := PreparedExpr.Let(
+    sid(2),
+    PreparedOp.ACall(PreparedAtom.ASlot(sid(0)), [PreparedAtom.ASlot(sid(1))]),
+    PreparedExpr.Return(.Some(PreparedAtom.ASlot(sid(2)))),
+  )
+  prepared := make_one_func_module(
+    func_id,
+    "apply",
+    [sid(0), sid(1)],
+    [sid(2)],
+    slots,
+    body,
+    MonoType.Int,
+  )
+
+  // Register closure layout so emit can find the typed functype
+  reg := empty_registry()
+  closure_key := mono_to_key(closure_mono)
+  reg.layout_cache[closure_key] = WasmLayout.Closure(WasmClosureLayout.{
+    closure_sym: "$closure_${closure_key}",
+    universal_func_type_sym: "rt_types__ClosureFunc",
+    env_sym: "rt_types__ClosureEnv",
+    typed_func_type_sym: "$ft_${closure_key}",
+    param_types: [ValType.I64],
+    result_type: .Some(ValType.I64),
+  })
+
+  wasm := emit_module(prepared, reg, make_builtin_registry(), resolver.empty_env())
+  wat := emit_wat_unlinked_for_test(wasm)
+  try assert.str_contains(wat, "return_call_ref $$ft_fn_i64_i64")
+
+  // The ref.test fallback path still uses the universal call_ref
+  try assert.str_contains(wat, "ref.test")
+  .Ok({})
+}
+
+fn test_non_tail_closure_call_no_return_call_ref() Result<Void, String> {
+  // fn apply(f: fn(Int) Int, n: Int) Int { f(n) }
+  // Body: Let(s2, ACall(ASlot(s0), [ASlot(s1)]), Atom(ASlot(s2)))
+  // Not a Return — should emit regular call_ref, not return_call_ref
+  func_id := fid(0x101)
+  closure_mono := MonoType.Function([MonoType.Int], MonoType.Int)
+
+  slots: Dict<Int, SlotInfo> = Dict.new()
+  slots[0] = SlotInfo.{
+    slot: sid(0),
+    source_local: lid(0),
+    role: SlotRole.Param,
+    mono: closure_mono,
+    repr: ReprKind.ClosureRef,
+    wasm_type: ValType.Ref(true, HeapType.Named("rt_types__Closure")),
+  }
+  slots[1] = make_int_slot(1, .Param)
+  slots[2] = make_int_slot(2, .Local)
+
+  body := PreparedExpr.Let(
+    sid(2),
+    PreparedOp.ACall(PreparedAtom.ASlot(sid(0)), [PreparedAtom.ASlot(sid(1))]),
+    PreparedExpr.Atom(PreparedAtom.ASlot(sid(2))),
+  )
+  prepared := make_one_func_module(
+    func_id,
+    "apply",
+    [sid(0), sid(1)],
+    [sid(2)],
+    slots,
+    body,
+    MonoType.Int,
+  )
+  reg := empty_registry()
+  wasm := emit_module(prepared, reg, make_builtin_registry(), resolver.empty_env())
+  wat := emit_wat_unlinked_for_test(wasm)
+  try assert.is_false(wat.contains("return_call_ref"))
+  try assert.str_contains(wat, "call_ref $rt_types__ClosureFunc")
   .Ok({})
 }
 
@@ -636,4 +734,12 @@ pub fn suite() runner.Suite {
     .test("tail call in if branches emits return_call", test_tail_call_in_if_branches)
     .test("tail call in case arms emits return_call", test_tail_call_in_case_arms)
     .test("tail call in br-table match emits return_call", test_tail_call_in_br_table_match)
+    .test(
+      "tail-position closure call emits return_call_ref",
+      test_tail_closure_call_emits_return_call_ref,
+    )
+    .test(
+      "non-tail closure call does not emit return_call_ref",
+      test_non_tail_closure_call_no_return_call_ref,
+    )
 }

@@ -826,6 +826,17 @@ fn try_emit_tail_op(
         _ => .None,
       }
     },
+    .ACall(.ASlot(sid), args) => {
+      // Closure tail call — use typed funcref path
+      closure_emit.emit_closure_tail_call(
+        sid,
+        args,
+        result_mono,
+        ctx,
+        buf,
+        closure_emit.ClosureEmitFns.{ emit_atom, atom_mono },
+      )
+    },
     .AIf(cond_e, then_e, else_e) => {
       // Emit condition, then each branch in tail context
       out := emit_atom(cond_e, ctx, buf)

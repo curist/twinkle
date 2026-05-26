@@ -10,9 +10,9 @@ use compiler.codegen.emit.anyref.{
 }
 use compiler.codegen.emit.context.{EmitCtx, LocalEntry, lookup_func_sym, lookup_slot}
 use compiler.codegen.emit.helper_collectors.{is_sum_mono}
-use compiler.codegen.emit.layout_helpers.{cell_inner_mono, cell_struct_sym}
+use compiler.codegen.emit.layout_helpers.{cached_layout_of, cell_inner_mono, cell_struct_sym}
 use compiler.codegen.wasm_ir.{FuncDef, Instr, ValType}
-use compiler.codegen.wasm_layout.{val_type_of_mono}
+use compiler.codegen.wasm_layout.{layout_of, val_type_of_mono}
 use compiler.codegen.wasm_plan_types.{FuncSigEntry}
 use compiler.core_ir.{FuncId}
 use compiler.mono_type.{MonoType}
@@ -63,13 +63,35 @@ fn emit_materialized_closure(fid: FuncId, env_buf: Vector<Instr>, ctx: EmitCtx, 
   Instr,
 > {
   tramp_sym := "$tramp_${fid.id}"
-  emit_universal_closure_value(tramp_sym, env_buf, buf)
+
+  // Try to create the concrete 3-field struct with a typed funcref.
+  // This enables return_call_ref for tail-position closure calls.
+  case typed_closure_mono_for_func(fid, ctx) {
+    .Some(cl_mono) => case layout_of(cl_mono, ctx.env) {
+      .Closure(cl) => {
+        typed_tramp_sym := "$typed_tramp_${fid.id}"
+        buf.append(.RefFunc(tramp_sym))
+          .concat(env_buf)
+          .append(.RefFunc(typed_tramp_sym))
+          .append(.StructNew(cl.closure_sym))
+      },
+      _ => buf.append(.RefFunc(tramp_sym)).concat(env_buf).append(.StructNew("rt_types__Closure")),
+    },
+    .None => buf.append(.RefFunc(tramp_sym)).concat(env_buf).append(.StructNew("rt_types__Closure")),
+  }
 }
 
-fn emit_universal_closure_value(tramp_sym: String, env_buf: Vector<Instr>, buf: Vector<Instr>) Vector<
-  Instr,
-> {
-  buf.append(.RefFunc(tramp_sym)).concat(env_buf).append(.StructNew("rt_types__Closure"))
+/// Derive the closure MonoType for a user function that has a typed trampoline.
+/// Only user-compiled functions (in prepared_funcs) get typed trampolines.
+fn typed_closure_mono_for_func(fid: FuncId, ctx: EmitCtx) MonoType? {
+  if !ctx.prepared_funcs.has(fid.id) {
+    return .None
+  }
+
+  case ctx.registry.concrete_func_sigs[fid.id] {
+    .Some(sig) => .Some(MonoType.Function(sig.param_types, sig.return_type)),
+    .None => .None,
+  }
 }
 
 pub fn emit_closure_call(
@@ -136,11 +158,126 @@ fn emit_universal_closure_call(
   }
 }
 
+// ── Closure tail call ─────────────────────────────────────────────────
+/// Emit a tail-position closure call using the typed funcref (field 2).
+/// Uses ref.test to check for the concrete closure struct at runtime,
+/// falling back to the universal erased path when the closure was not
+/// created with a typed funcref (e.g., builtins).
+pub fn emit_closure_tail_call(
+  sid: SlotId,
+  args: Vector<PreparedAtom>,
+  result_mono: MonoType,
+  ctx: EmitCtx,
+  buf: Vector<Instr>,
+  fns: ClosureEmitFns,
+) Vector<Instr>? {
+  entry := lookup_slot(ctx, sid)
+
+  case entry.mono {
+    .Function(_, _) => {},
+    _ => { return .None },
+  }
+
+  layout := cached_layout_of(entry.mono, ctx)
+
+  case layout {
+    .Closure(cl) => {
+      // Typed path: return_call_ref with concrete functype
+      typed_buf: Vector<Instr> = []
+
+      // Push env (field 1) — first param of the typed functype
+      typed_buf = .append(.LocalGet(entry.index)).append(.RefCast(true, .Named(cl.closure_sym))).append(
+        .StructGet(cl.closure_sym, 1),
+      )
+
+      // Push concrete args (no boxing)
+      for a in args {
+        typed_buf = fns.emit_atom(a, ctx, typed_buf)
+      }
+
+      // Push typed funcref (field 2)
+      typed_buf = .append(.LocalGet(entry.index)).append(.RefCast(true, .Named(cl.closure_sym))).append(
+        .StructGet(cl.closure_sym, 2),
+      )
+
+      typed_buf = .append(.ReturnCallRef(cl.typed_func_type_sym))
+
+      // Fallback path: universal erased call + return
+      fallback_buf := emit_universal_closure_call_and_return(entry, args, result_mono, ctx, fns)
+
+      // Branch on whether the closure has the concrete struct
+      out := buf.append(.LocalGet(entry.index))
+        .append(.RefTest(true, .Named(cl.closure_sym)))
+        .append(.If(.None, typed_buf, fallback_buf))
+
+      .Some(out)
+    },
+    _ => .None,
+  }
+}
+
+/// Universal closure call that returns directly (for tail-call fallback).
+fn emit_universal_closure_call_and_return(
+  entry: LocalEntry,
+  args: Vector<PreparedAtom>,
+  result_mono: MonoType,
+  ctx: EmitCtx,
+  fns: ClosureEmitFns,
+) Vector<Instr> {
+  out: Vector<Instr> = []
+
+  // Get env (field 1)
+  out = .append(.LocalGet(entry.index)).append(.RefCast(true, .Named("rt_types__Closure"))).append(
+    .StructGet("rt_types__Closure", 1),
+  )
+
+  // Pack args into anyref array
+  out = if args.len() > 0 {
+    for a in args {
+      out = fns.emit_atom(a, ctx, out)
+      out = emit_box_to_anyref(fns.atom_mono(a, ctx), ctx.env, out)
+    }
+
+    out.append(.ArrayNewFixed("rt_types__Array", args.len()))
+  } else {
+    out.append(.RefNull(.None_))
+  }
+
+  // Get universal funcref (field 0)
+  out = .append(.LocalGet(entry.index)).append(.RefCast(true, .Named("rt_types__Closure"))).append(
+    .StructGet("rt_types__Closure", 0),
+  )
+
+  // call_ref with universal func type
+  out = .append(.CallRef("rt_types__ClosureFunc"))
+
+  // Unbox result and return
+  case result_mono {
+    .Void => error(
+      "emit_universal_closure_call_and_return: Void-returning closures should not reach tail-call path",
+    ),
+    .Never => out.append(.Unreachable),
+    _ => {
+      out = if is_sum_mono(result_mono, ctx.env) {
+        out.append(.RefCast(true, .Named("rt_types__Variant")))
+          .append(.Call(variant_to_sum_helper_sym(result_mono)))
+      } else {
+        emit_unbox_from_anyref(result_mono, ctx.env, out)
+      }
+      out.append(.Return)
+    },
+  }
+}
+
 // ── Trampoline emission ────────────────────────────────────────────────
 pub fn emit_trampolines_for_func(func: PreparedFunc, ctx: EmitCtx) Vector<FuncDef> {
   // Only generate trampolines for functions that are used as closures.
   case ctx.registry.concrete_func_sigs[func.func_id.id] {
-    .Some(sig) => [emit_universal_trampoline(func, sig, ctx)],
+    .Some(sig) => {
+      out: Vector<FuncDef> = [emit_universal_trampoline(func, sig, ctx)]
+      out = .append(emit_typed_trampoline(func, sig, ctx))
+      out
+    },
     .None => if func.captures.len() > 0 {
       sig := FuncSigEntry.{
         param_types: collect sid in func.params {
@@ -394,4 +531,44 @@ fn emit_universal_trampoline(func: PreparedFunc, sig: FuncSigEntry, ctx: EmitCtx
   }
 
   FuncDef.{ name: tramp_sym, params: [.Anyref, .Anyref], results: [.Anyref], locals, body }
+}
+
+fn emit_typed_trampoline(func: PreparedFunc, sig: FuncSigEntry, ctx: EmitCtx) FuncDef {
+  // Typed trampoline: (env: ref null ClosureEnv, p1: T1, ...) → R
+  // No boxing/unboxing — passes concrete types directly.
+  typed_tramp_sym := "$typed_tramp_${func.func_id.id}"
+  func_sym := lookup_func_sym(ctx.func_sym_map, func.func_id)
+  body: Vector<Instr> = []
+
+  // Extract captures from env (param 0)
+  for sid, i in func.captures {
+    cap := facts.slot_info(func, sid)
+    body = .append(.LocalGet(0))
+    body = .append(.RefCast(true, .Named("rt_types__ClosureEnv")))
+    body = .append(.I32Const(i))
+    body = .append(.ArrayGet("rt_types__ClosureEnv"))
+    body = emit_unbox_from_anyref(cap.mono, ctx.env, body)
+  }
+
+  // Forward concrete args (params 1, 2, ...)
+  for _, i in func.params {
+    body = .append(.LocalGet(i + 1))
+  }
+
+  body = .append(.Call(func_sym))
+
+  // Build typed functype params: [ref null ClosureEnv, param_types...]
+  params: Vector<ValType> = [.Ref(true, .Named("rt_types__ClosureEnv"))]
+
+  for mono in sig.param_types {
+    params = .append(val_type_of_mono(mono, ctx.env))
+  }
+
+  results: Vector<ValType> = case func.return_mono {
+    .Void => [],
+    .Never => [],
+    _ => [val_type_of_mono(func.return_mono, ctx.env)],
+  }
+
+  FuncDef.{ name: typed_tramp_sym, params, results, locals: [], body }
 }

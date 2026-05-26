@@ -12,9 +12,9 @@ other indirect call paths.
 
 ## Current State
 
-Phases 2–3 are complete. The boot compiler now emits `return_call` for direct
-calls in tail position, including propagation through `if` branches and `case`
-arms (both if-chain and br-table dispatch paths).
+Phases 2–4 are complete. The boot compiler emits `return_call` for direct calls
+and `return_call_ref` for closure calls in tail position, including propagation
+through `if` branches and `case` arms (both if-chain and br-table dispatch paths).
 
 Backend plumbing (pre-existing):
 
@@ -35,8 +35,13 @@ Tail-call emission (new):
 - `emit/match.tw`: `emit_tail_match_op` dispatches to either
   `emit_tail_br_table_match` (3+ variant patterns) or `emit_tail_arm_chain`
   (if-chain fallback), both using `emit_tail_expr` for arm bodies.
+- `emit/closures.tw`: `emit_closure_tail_call` uses `ref.test` to try the typed
+  fast path (`return_call_ref`) and falls back to the universal erased path.
+  `emit_typed_trampoline` generates concrete trampolines for user functions.
+  `emit_materialized_closure` creates 3-field concrete closure structs for
+  eligible user functions.
 
-Remaining work: Phase 4 (closure `return_call_ref`) and Phase 5 (adapter shims).
+Remaining work: Phase 5 (optional adapter shims).
 
 ## Non-Goals
 
@@ -159,26 +164,36 @@ Tests:
 - tail call in case arms emits `return_call` (if-chain path)
 - tail call in br-table match emits `return_call` + `br_table`
 
-### Phase 4: Closure and function-reference tail calls
+### Phase 4: Closure and function-reference tail calls ✓
 
-Extend the same machinery to closure calls once direct calls are stable.
+Implemented via `emit_closure_tail_call` in `closures.tw`. For closure calls in
+tail position (`ACall(ASlot(closure_slot), args)`), the emitter:
 
-Current closure calls use `call_ref` with typed function references. In tail
-position, eligible calls can become `ReturnCallRef(type_sym)`.
+1. Attempts a typed fast path using `ref.test` to check if the closure is a
+   concrete typed closure struct (3-field with typed funcref). If so, extracts
+   the typed funcref and emits `return_call_ref` with the concrete function type.
+2. Falls back to the universal erased path: extracts the universal funcref from
+   the base closure struct, boxes arguments, and emits a normal `call_ref` +
+   `return` (cannot use `return_call_ref` on the erased path because result
+   unboxing is needed after the call).
 
-Extra care points:
+Supporting changes:
 
-- preserve the existing stack order for closure environment and argument array
-  preparation
-- only use `return_call_ref` when the referenced function type matches the
-  enclosing continuation result exactly
-- keep erased closure helper paths as fallback when representation adaptation is
-  still needed
+- `emit_materialized_closure` now creates 3-field concrete closure structs for
+  user functions that appear in `concrete_func_sigs`, with a typed funcref
+  pointing to `$typed_tramp_N`.
+- `emit_typed_trampoline` generates typed trampolines that take concrete
+  (unboxed) parameters, extract captures from the closure environment, and call
+  the real function body directly — no boxing/unboxing overhead.
+- `emit_trampolines_for_func` emits both universal and typed trampolines for
+  eligible user functions.
+- `typed_closure_mono_for_func` guards typed closure creation to user functions
+  only (builtins use the base 2-field closure struct).
 
-Acceptance criteria:
-
-- Tail-position closure calls emit `return_call_ref` when enabled and eligible.
-- Non-tail closure calls continue to emit `call_ref`.
+Tests:
+- tail-position closure call emits `ref.test` + `return_call_ref`
+- non-tail closure call does not emit `return_call_ref`
+- user function closures use concrete struct (`struct.new $closure_*`)
 
 ### Phase 5: Optional adapter shims
 
@@ -265,6 +280,6 @@ backend work, especially reducing erased adapter chains and enabling
 1. ✓ Feature flag and no-op plumbing.
 2. ✓ Direct self-recursive `return_call` in simple function tails.
 3. ✓ Tail-position propagation through `if` and `case` (including br-table).
-4. Runtime-gated deep recursion test.
-5. Closure `return_call_ref` support.
+4. ✓ Runtime-gated deep recursion test.
+5. ✓ Closure `return_call_ref` support.
 6. Optional adapter shims for representation-boundary cases.
