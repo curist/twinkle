@@ -71,6 +71,7 @@ Related historical context outside this folder:
 | [boot-compiler-cleanup.md](boot-compiler-cleanup.md) | Six independent cleanup tasks: extract fix_unused_imports, break up core_linker, deduplicate LSP JSON helpers, fix quadratic workspace diagnostics, shared AST offset walker for hover/definition, fix method_function_name dispatch |
 | [br-table-case-dispatch.md](br-table-case-dispatch.md) | Emit `br_table` dispatch for eligible variant case expressions in the boot compiler |
 | [string-case-dispatch.md](string-case-dispatch.md) | Emit length-plus-trie dispatch for eligible string case expressions in the boot compiler |
+| [unreachable-case-arms.md](unreachable-case-arms.md) | Diagnose case arms shadowed by earlier catch-all, duplicate literal, or covering variant patterns |
 
 ---
 

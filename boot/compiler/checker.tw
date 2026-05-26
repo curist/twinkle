@@ -2960,6 +2960,7 @@ fn synth_case(scrut: Expr, arms: Vector<CaseArm>, s: Span, ctx: InferCtx, diags:
     }
   }
 
+  cur_diags = check_unreachable_arms(sr.ty, arms, cur_ctx, cur_diags)
   cur_diags = check_exhaustiveness(sr.ty, arms, s, cur_ctx, cur_diags)
 
   case result_ty {
@@ -3025,6 +3026,7 @@ fn check_case(
     cur_diags = arm_r.diags
   }
 
+  cur_diags = check_unreachable_arms(sr.ty, arms, cur_ctx, cur_diags)
   .{ ctx: cur_ctx, diags: check_exhaustiveness(sr.ty, arms, s, cur_ctx, cur_diags) }
 }
 
@@ -3149,6 +3151,139 @@ fn check_variant_pattern(
       diags: diags.append(.Error(.VariantTypeMismatch(.{ span: s, name, ty: zonked }))),
     },
   }
+}
+
+// ── Unreachable arm detection ────────────────────────────────────────
+type ArmCoverage = { CatchAll(Span), Literal(String, Span), Variant(String, Span) }
+
+fn pattern_is_irrefutable(pat: Pattern) Bool {
+  case pat.kind {
+    .Wildcard => true,
+    .Ident(_) => true,
+    _ => false,
+  }
+}
+
+fn literal_key(pat: Pattern) String? {
+  case pat.kind {
+    .Literal(expr) => case expr.kind {
+      .IntLit(v) => .Some("int:${v}"),
+      .FloatLit(v) => .Some("float:${v}"),
+      .StringLit(v) => .Some("str:${v}"),
+      .BoolLit(v) => .Some("bool:${v}"),
+      _ => .None,
+    },
+    _ => .None,
+  }
+}
+
+fn variant_name_from_pattern(pat: Pattern, scrut_ty: MonoType, ctx: InferCtx) String? {
+  case pat.kind {
+    .Variant(name, _) => .Some(name),
+    .QualifiedVariant(path, name, _) => if qualifier_matches_scrutinee(path, scrut_ty, ctx) {
+      .Some(name)
+    } else {
+      .None
+    },
+    _ => .None,
+  }
+}
+
+fn coverage_from_pattern(pat: Pattern, scrut_ty: MonoType, ctx: InferCtx) ArmCoverage? {
+  case pat.kind {
+    .Wildcard => .Some(.CatchAll(pat.span)),
+    .Ident(_) => .Some(.CatchAll(pat.span)),
+    .Literal(_) => case literal_key(pat) {
+      .Some(key) => .Some(.Literal(key, pat.span)),
+      .None => .None,
+    },
+    .Variant(name, sub_pats) => if sub_pats.all(pattern_is_irrefutable) {
+      .Some(.Variant(name, pat.span))
+    } else {
+      .None
+    },
+    .QualifiedVariant(path, name, sub_pats) => {
+      if !qualifier_matches_scrutinee(path, scrut_ty, ctx) {
+        return .None
+      }
+
+      if sub_pats.all(pattern_is_irrefutable) {
+        .Some(.Variant(name, pat.span))
+      } else {
+        .None
+      }
+    },
+    .ErrorPattern => .None,
+  }
+}
+
+fn coverage_covers_pattern(cov: ArmCoverage, pat: Pattern, scrut_ty: MonoType, ctx: InferCtx) Bool {
+  case cov {
+    .CatchAll(_) => case pat.kind {
+      .ErrorPattern => false,
+      _ => true,
+    },
+    .Literal(key, _) => case literal_key(pat) {
+      .Some(pat_key) => key == pat_key,
+      .None => false,
+    },
+    .Variant(name, _) => case variant_name_from_pattern(pat, scrut_ty, ctx) {
+      .Some(pat_name) => name == pat_name,
+      .None => false,
+    },
+  }
+}
+
+fn check_unreachable_arms(
+  scrut_ty: MonoType,
+  arms: Vector<CaseArm>,
+  ctx: InferCtx,
+  diags: Vector<DiagKind>,
+) Vector<DiagKind> {
+  covered: Vector<ArmCoverage> = []
+
+  for arm in arms {
+    // Skip error patterns to avoid cascading diagnostics
+    case arm.pattern.kind {
+      .ErrorPattern => { continue },
+      _ => {},
+    }
+
+    // Check if this arm is covered by any previous coverage item
+    covered_by: Span? = .None
+
+    for cov in covered {
+      if coverage_covers_pattern(cov, arm.pattern, scrut_ty, ctx) {
+        covered_by = .Some(
+          case cov {
+            .CatchAll(s) => s,
+            .Literal(_, s) => s,
+            .Variant(_, s) => s,
+          },
+        )
+        break
+      }
+    }
+
+    case covered_by {
+      .Some(covered_by_span) => {
+        diags = .append(
+          .Error(.UnreachableCaseArm(.{ span: arm.pattern.span, covered_by: covered_by_span })),
+        )
+      },
+      .None => {
+        // Only add coverage from reachable arms
+        case coverage_from_pattern(arm.pattern, scrut_ty, ctx) {
+          .Some(cov) => {
+            covered = .append(cov)
+          },
+          .None => {},
+        }
+      },
+    }
+  }
+
+  diags
 }
 
 fn check_exhaustiveness(

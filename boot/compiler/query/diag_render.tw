@@ -374,6 +374,15 @@ fn error_to_report(e: ErrorDiag, ctx: RenderCtx) Report {
       labels: [primary(d.span, .Some("`${d.operator}` is not valid syntax"))],
       help_lines: [],
     },
+    .UnreachableCaseArm(d) => .{
+      severity: .Error,
+      title: "unreachable case arm",
+      labels: [
+        primary(d.span, .Some("this arm can never match")),
+        secondary(d.covered_by, .Some("already covered here")),
+      ],
+      help_lines: [],
+    },
     .ParseError(d) => .{
       severity: .Error,
       title: d.message,

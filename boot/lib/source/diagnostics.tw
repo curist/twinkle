@@ -65,6 +65,7 @@ pub type ErrorDiag = {
   CondDefaultNotLast(.{ span: Span }),
   MissingArmSeparator(.{ span: Span, next_span: Span }),
   CStyleLogicalOp(.{ span: Span, operator: String, suggestion: String }),
+  UnreachableCaseArm(.{ span: Span, covered_by: Span }),
   ParseError(GenericDiag),
   LowerError(GenericDiag),
 }
@@ -154,6 +155,7 @@ pub fn span(kind: DiagKind) Span {
       .CondDefaultNotLast(d) => d.span,
       .MissingArmSeparator(d) => d.span,
       .CStyleLogicalOp(d) => d.span,
+      .UnreachableCaseArm(d) => d.span,
       .ParseError(d) => d.span,
       .LowerError(d) => d.span,
     },
@@ -216,6 +218,7 @@ pub fn message(kind: DiagKind) String {
       .CondDefaultNotLast(_) => "`_ =>` arm must be the last arm in a cond expression",
       .MissingArmSeparator(_) => "missing `,` after case arm",
       .CStyleLogicalOp(d) => "use `${d.suggestion}` instead of `${d.operator}`",
+      .UnreachableCaseArm(_) => "unreachable case arm",
       .ParseError(d) => d.message,
       .LowerError(d) => d.message,
     },

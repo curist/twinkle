@@ -2741,4 +2741,120 @@ pub fn suite() runner.Suite {
         .Ok({})
       },
     )
+    .test(
+      "unreachable: wildcard before string literal",
+      fn() {
+        src := "fn f(s: String) Int { case s { _ => 1, \"foo\" => 2 } }"
+        msgs := try check_errs(src)
+        try assert.str_contains(msgs[0], "unreachable case arm")
+        .Ok({})
+      },
+    )
+    .test(
+      "unreachable: ident catch-all before later arm",
+      fn() {
+        src := "fn f(x: Int) Int { case x { n => n, 1 => 99 } }"
+        msgs := try check_errs(src)
+        try assert.str_contains(msgs[0], "unreachable case arm")
+        .Ok({})
+      },
+    )
+    .test(
+      "unreachable: duplicate string literal",
+      fn() {
+        src := "fn f(s: String) Int { case s { \"a\" => 1, \"b\" => 2, \"a\" => 3, _ => 0 } }"
+        msgs := try check_errs(src)
+        try assert.str_contains(msgs[0], "unreachable case arm")
+        .Ok({})
+      },
+    )
+    .test(
+      "unreachable: duplicate int literal",
+      fn() {
+        src := "fn f(x: Int) Int { case x { 1 => 10, 2 => 20, 1 => 30, _ => 0 } }"
+        msgs := try check_errs(src)
+        try assert.str_contains(msgs[0], "unreachable case arm")
+        .Ok({})
+      },
+    )
+    .test(
+      "unreachable: duplicate bool literal",
+      fn() {
+        src := "fn f(b: Bool) Int { case b { true => 1, false => 0, true => 99 } }"
+        msgs := try check_errs(src)
+        try assert.str_contains(msgs[0], "unreachable case arm")
+        .Ok({})
+      },
+    )
+    .test(
+      "unreachable: duplicate nullary variant",
+      fn() {
+        src := "type Color = { Red, Green, Blue }\nfn f(c: Color) Int { case c { .Red => 1, .Green => 2, .Red => 3, .Blue => 4 } }"
+        msgs := try check_errs(src)
+        try assert.str_contains(msgs[0], "unreachable case arm")
+        .Ok({})
+      },
+    )
+    .test(
+      "unreachable: variant with irrefutable payload covers later same-variant",
+      fn() {
+        src := "fn f(o: Int?) Int { case o { .Some(x) => x, .Some(_) => 0, .None => -1 } }"
+        msgs := try check_errs(src)
+        try assert.str_contains(msgs[0], "unreachable case arm")
+        .Ok({})
+      },
+    )
+    .test(
+      "reachable: variant with literal payload does not cover broader arm",
+      fn() {
+        src := "fn f(o: Int?) Int { case o { .Some(1) => 10, .Some(_) => 0, .None => -1 } }"
+        r := try check_ok(src)
+        .Ok({})
+      },
+    )
+    .test(
+      "reachable: catch-all as final arm is valid",
+      fn() {
+        src := "type Color = { Red, Green, Blue }\nfn f(c: Color) Int { case c { .Red => 1, .Green => 2, _ => 0 } }"
+        r := try check_ok(src)
+        .Ok({})
+      },
+    )
+    .test(
+      "reachable: exhaustive enum match without unreachable",
+      fn() {
+        src := "type Color = { Red, Green, Blue }\nfn f(c: Color) Int { case c { .Red => 1, .Green => 2, .Blue => 3 } }"
+        r := try check_ok(src)
+        .Ok({})
+      },
+    )
+    .test(
+      "unreachable: wildcard before variant",
+      fn() {
+        src := "fn f(o: Int?) Int { case o { _ => 0, .Some(x) => x, .None => -1 } }"
+        msgs := try check_errs(src)
+        try assert.str_contains(msgs[0], "unreachable case arm")
+        .Ok({})
+      },
+    )
+    .test(
+      "unreachable: duplicate qualified variant",
+      fn() {
+        src := "type Color = { Red, Green, Blue }\nfn f(c: Color) Int { case c { Color.Red => 1, Color.Green => 2, Color.Red => 3, Color.Blue => 4 } }"
+        msgs := try check_errs(src)
+        try assert.str_contains(msgs[0], "unreachable case arm")
+        .Ok({})
+      },
+    )
+    .test(
+      "unreachable: multiple arms after catch-all",
+      fn() {
+        src := "fn f(x: Int) Int { case x { _ => 0, 1 => 1, 2 => 2 } }"
+        msgs := try check_errs(src)
+
+        // Both arms after _ should be reported
+        try assert.ok(msgs.len() >= 2, "expected at least 2 unreachable diagnostics")
+        .Ok({})
+      },
+    )
 }

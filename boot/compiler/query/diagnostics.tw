@@ -193,6 +193,7 @@ fn kind_to_message(kind: DiagKind) String {
       .CondDefaultNotLast(_) => "`_` arm must be last in cond",
       .MissingArmSeparator(_) => "missing `,` after case arm",
       .CStyleLogicalOp(d) => "use `${d.suggestion}` instead of `${d.operator}`",
+      .UnreachableCaseArm(_) => "unreachable case arm",
       .ParseError(d) => d.message,
       .LowerError(d) => d.message,
     },
