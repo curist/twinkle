@@ -286,11 +286,9 @@ fn sort_import_blocks(items: Vector<Item>) Vector<Item> {
 }
 
 fn sort_uses(uses: Vector<UseDecl>) Vector<UseDecl> {
-  uses.sort_by(
-    fn(a, b) {
-      String.compare(import_sort_key(a), import_sort_key(b))
-    },
-  )
+  uses.sort_by(fn(a, b) {
+    String.compare(import_sort_key(a), import_sort_key(b))
+  })
 }
 
 fn import_sort_key(decl: UseDecl) String {
@@ -323,11 +321,9 @@ fn import_variant_order(decl: UseDecl) Int {
 fn sort_selective_items(decl: UseDecl) UseDecl {
   case decl.items {
     .Some(items) => {
-      sorted := items.sort_by(
-        fn(a, b) {
-          String.compare(import_item_name(a), import_item_name(b))
-        },
-      )
+      sorted := items.sort_by(fn(a, b) {
+        String.compare(import_item_name(a), import_item_name(b))
+      })
       decl.items = .Some(sorted)
       decl
     },
@@ -1445,10 +1441,14 @@ fn collect_method_chain(callee: Expr, args: Vector<Expr>) ChainResult? {
   .None
 }
 
+fn chain_segment_is_self_breaking(seg: ChainSegment) Bool {
+  seg.args.len() == 1 and is_self_breaking_arg(seg.args[0])
+}
+
 fn format_chain_segment(seg: ChainSegment, tm: TriviaMap) Doc {
   parts: Vector<Doc> = [doc.text(".${seg.name}")]
 
-  if seg.args.len() == 1 and is_self_breaking_arg(seg.args[0]) {
+  if chain_segment_is_self_breaking(seg) {
     parts = .append(doc.text("("))
     parts = .append(format_expr(seg.args[0], tm))
     parts = .append(doc.text(")"))
@@ -1466,11 +1466,23 @@ fn format_call(callee: Expr, args: Vector<Expr>, tm: TriviaMap) Doc {
   // Check for method chain: Call(Field(obj, name), args) with 2+ segments
   case collect_method_chain(callee, args) {
     .Some(chain) => {
-      // First segment stays attached to the base
       first := chain.segments[0]
-      head_doc := doc.concat([format_receiver(chain.base, tm), format_chain_segment(first, tm)])
 
-      // Remaining segments break together
+      if chain_segment_is_self_breaking(first) {
+        tail_parts: Vector<Doc> = []
+
+        for seg in chain.segments {
+          tail_parts = .append(doc.hard_line())
+          tail_parts = .append(format_chain_segment(seg, tm))
+        }
+
+        return doc.concat([
+          format_receiver(chain.base, tm),
+          doc.group(doc.indent(doc.concat(tail_parts))),
+        ])
+      }
+
+      head_doc := doc.concat([format_receiver(chain.base, tm), format_chain_segment(first, tm)])
       tail_parts: Vector<Doc> = []
 
       for seg, i in chain.segments {
@@ -1754,9 +1766,44 @@ fn format_closure(params: Vector<Param>, ret_ty: TypeExpr?, body: Block, tm: Tri
     .None => {},
   }
 
-  parts = .append(doc.text(" "))
-  parts = .append(format_block(body, tm))
+  case format_inline_closure_body(body, tm) {
+    .Some(inline_body) => {
+      parts = .append(doc.text(" "))
+      parts = .append(inline_body)
+    },
+    .None => {
+      parts = .append(doc.text(" "))
+      parts = .append(format_block(body, tm))
+    },
+  }
+
   doc.concat(parts)
+}
+
+fn format_inline_closure_body(body: Block, tm: TriviaMap) Doc? {
+  if body.stmts.len() == 0 {
+    case body.tail {
+      .Some(expr) => if is_simple_expr(expr)
+        and get_trivia(tm, expr.span.start).len() == 0
+        and get_trailing_trivia(tm, expr.span.end).len() == 0 {
+        return .Some(doc.concat([doc.text("{ "), format_expr(expr, tm), doc.text(" }")]))
+      },
+      .None => {},
+    }
+  }
+
+  if body.stmts.len() == 1 and body.tail.is_none() {
+    case body.stmts[0] {
+      .Expr(stmt) => if is_simple_expr(stmt.expr)
+        and get_trivia(tm, stmt.expr.span.start).len() == 0
+        and get_trailing_trivia(tm, stmt.expr.span.end).len() == 0 {
+        return .Some(doc.concat([doc.text("{ "), format_expr(stmt.expr, tm), doc.text(" }")]))
+      },
+      _ => {},
+    }
+  }
+
+  .None
 }
 
 fn format_collect(coll: CollectExpr, tm: TriviaMap) Doc {
@@ -1835,6 +1882,7 @@ fn is_self_breaking_arg(expr: Expr) Bool {
     .If(_, _, _) => true,
     .Case(_, _) => true,
     .Collect(_) => true,
+    .Closure(_, _, _) => true,
     _ => false,
   }
 }

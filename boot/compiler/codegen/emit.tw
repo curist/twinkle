@@ -272,13 +272,14 @@ pub fn emit_module(
     }
   }
 
-  runtime_imports: Vector<ImportDef> = reg.runtime_imports.append(.{
-    module: "codegen.intrinsics",
-    name: "int_from_string_helper",
-    as_sym: "int_from_string_helper",
-    params: [.Ref(true, .Named("rt_types__String"))],
-    results: [.Anyref],
-  })
+  runtime_imports: Vector<ImportDef> = reg.runtime_imports
+    .append(.{
+      module: "codegen.intrinsics",
+      name: "int_from_string_helper",
+      as_sym: "int_from_string_helper",
+      params: [.Ref(true, .Named("rt_types__String"))],
+      results: [.Anyref],
+    })
     .append(.{
       module: "codegen.intrinsics",
       name: "from_code_point_helper",
