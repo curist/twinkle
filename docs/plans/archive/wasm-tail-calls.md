@@ -41,7 +41,8 @@ Tail-call emission (new):
   `emit_materialized_closure` creates 3-field concrete closure structs for
   eligible user functions.
 
-Remaining work: Phase 5 (optional adapter shims).
+All planned phases are complete. Phase 5 (adapter shims) was declined as
+low-impact after measurement.
 
 ## Non-Goals
 
@@ -195,16 +196,24 @@ Tests:
 - non-tail closure call does not emit `return_call_ref`
 - user function closures use concrete struct (`struct.new $closure_*`)
 
-### Phase 5: Optional adapter shims
+### Phase 5: Optional adapter shims — declined
 
 Many currently non-eligible calls may fail only because of a small result
-adapter, such as a cast or typed/erased boundary conversion.
+adapter, such as a cast or typed/erased boundary conversion. The idea was to
+generate adapter wrapper functions that perform the call + adaptation, then
+tail-call the adapter from the original call site.
 
-Rather than performing work after a tail call, generate or reuse an adapter
-function whose body performs the call and adaptation, then tail-call that
-adapter where profitable.
+After completing Phases 2–4 and measuring the boot compiler output, the
+remaining missed tail-call opportunities are too few to justify the added
+complexity. The boot compiler emits ~40k calls total, of which 124 are already
+`return_call` / `return_call_ref`. The remaining candidates are ~30 builtin
+calls in tail position (mostly generated eq-comparison helpers), each needing
+trivial result adaptation (i32→Bool cast or similar). Generating adapter shims
+for these would add code-size overhead and compilation complexity for negligible
+stack-usage or performance benefit.
 
-This is optional and should wait until the direct implementation is reliable.
+If a future workload shows meaningful tail-call opportunities behind result
+adaptation, this phase can be revisited.
 
 ## Validation Strategy
 
@@ -282,4 +291,4 @@ backend work, especially reducing erased adapter chains and enabling
 3. ✓ Tail-position propagation through `if` and `case` (including br-table).
 4. ✓ Runtime-gated deep recursion test.
 5. ✓ Closure `return_call_ref` support.
-6. Optional adapter shims for representation-boundary cases.
+6. ~~Optional adapter shims~~ — declined (low impact after measurement).
