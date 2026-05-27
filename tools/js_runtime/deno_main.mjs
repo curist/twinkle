@@ -11,14 +11,24 @@ import { runWasmBytesAsync } from "./runtime.mjs";
 const textEncoder = new TextEncoder();
 const rootDir = resolve(import.meta.dirname, "../..");
 
+function writeAllSync(stream, bytes) {
+  let offset = 0;
+  while (offset < bytes.byteLength) {
+    const written = stream.writeSync(bytes.subarray(offset));
+    if (written <= 0) {
+      throw new Error("stdout write made no progress");
+    }
+    offset += written;
+  }
+}
+
 function denoStream(stream) {
   return {
     write(chunk) {
-      if (typeof chunk === "string") {
-        stream.writeSync(textEncoder.encode(chunk));
-      } else {
-        stream.writeSync(new Uint8Array(chunk.buffer, chunk.byteOffset, chunk.byteLength));
-      }
+      const bytes = typeof chunk === "string"
+        ? textEncoder.encode(chunk)
+        : new Uint8Array(chunk.buffer, chunk.byteOffset, chunk.byteLength);
+      writeAllSync(stream, bytes);
       return true;
     },
   };

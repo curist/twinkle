@@ -286,6 +286,17 @@ function autoBridgeExternImports(wasmModule, hostImports, b, jspi = false) {
 // Host imports
 // ---------------------------------------------------------------------------
 
+function writeAllFdSync(fd, bytes) {
+  let offset = 0;
+  while (offset < bytes.byteLength) {
+    const written = writeSync(fd, bytes, offset, bytes.byteLength - offset);
+    if (written <= 0) {
+      throw new Error("stdout write made no progress");
+    }
+    offset += written;
+  }
+}
+
 function write(stream, text) {
   stream.write(text);
 }
@@ -361,7 +372,7 @@ function makeHostImports(b, runtime, bridgeBytes) {
       stdout_write_bytes: (bytesRef) => {
         const bytes = decodeByteArray(b, bytesRef);
         if (runtime.stdout?.fd !== undefined) {
-          writeSync(runtime.stdout.fd, bytes);
+          writeAllFdSync(runtime.stdout.fd, bytes);
         } else {
           runtime.stdout.write(Buffer.from(bytes));
         }
@@ -486,8 +497,14 @@ export async function runWasmBytesAsync(wasmBytes, opts = {}) {
   const { mainModule, hostImports, b, runtime } = prepareWasm(wasmBytes, opts, { jspi: hasJspi });
 
   if (hasJspi) {
-    // Phase 3: wrap stdin_read_timeout as a suspending import so the Node
-    // event loop stays free while Twinkle waits for stdin data or a timeout.
+    // Phase 3: wrap stdin reads as suspending imports so the Node event loop
+    // stays free while Twinkle waits for LSP input. Keep chunk and timeout
+    // reads on the same stream-based path; mixing process.stdin.read() with
+    // fs.readSync(0, ...) can strand bytes in Node's stream buffer.
+    hostImports.host.stdin_read_chunk = new WebAssembly.Suspending(
+      async (maxBytes) =>
+        makeByteArray(b, await readStdinTimeoutAsync(maxBytes, 2147483647, runtime)),
+    );
     hostImports.host.stdin_read_timeout = new WebAssembly.Suspending(
       async (maxBytes, timeoutMs) =>
         makeByteArray(b, await readStdinTimeoutAsync(maxBytes, timeoutMs, runtime)),
