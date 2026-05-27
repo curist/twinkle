@@ -150,9 +150,15 @@ fn try_extract_import_path(tokens: Vector<Token>, cursor_idx: Int, source: Strin
     return .None
   }
 
-  // Walk backwards through path segments
+  // Walk backwards through path segments.
+  // Stop at newline boundaries — `use @std.io\nio.` should NOT treat
+  // the second `io.` as part of the import path.
   for i >= 0 {
     tk = tokens[i]
+
+    if tk.preceded_by_newline and tk.kind != .Use {
+      break
+    }
 
     case tk.kind {
       .Use => {
@@ -218,14 +224,38 @@ fn member_completions(snap: SemanticSnapshot, dot_offset: Int, source: String) V
   // always correct for simple identifiers because the binding's value
   // expression (before the edit point) keeps its original ID.
   case resolve_receiver_by_name(reparse_items, typed, search_offset) {
-    .Some(ty) => { return completions_for_type(typed.env, ty) },
+    .Some(ty) => {
+      result := completions_for_type(typed.env, ty)
+
+      if result.len() > 0 {
+        return result
+      }
+    },
     .None => {},
   }
 
   // Fall back to direct type_map lookup (works for chained access
   // and cases where expression IDs happen to align).
   case find_receiver_type(reparse_items, typed.type_map, search_offset) {
-    .Some(ty) => completions_for_type(typed.env, ty),
+    .Some(ty) => {
+      result := completions_for_type(typed.env, ty)
+
+      if result.len() > 0 {
+        return result
+      }
+    },
+    .None => {},
+  }
+
+  // Module member completion: if the receiver is a module alias (e.g. `io`
+  // from `use @std.io`), look up its exported functions in the methods dict.
+  // Extract the identifier directly from the source text before the dot,
+  // since the parser may not produce a valid AST node for incomplete
+  // expressions like `io.` at top level.
+  name := extract_ident_before(source, dot_offset)
+
+  case typed.env.methods[name] {
+    .Some(entries) => method_entries_to_items(typed.env, entries),
     .None => [],
   }
 }
@@ -329,6 +359,25 @@ fn receiver_ident_name(block: Block, offset: Int) String? {
     },
     _ => .None,
   }
+}
+
+/// Extract the identifier immediately before `offset` from the source text.
+/// E.g., for `io.` with offset pointing at the dot, returns `"io"`.
+fn extract_ident_before(source: String, offset: Int) String {
+  end := offset
+  start := end
+
+  for start > 0 {
+    ch := source.slice(start - 1, start)
+
+    if ch >= "a" and ch <= "z" or ch >= "A" and ch <= "Z" or ch == "_" or ch >= "0" and ch <= "9" {
+      start = start - 1
+    } else {
+      break
+    }
+  }
+
+  source.slice(start, end)
 }
 
 fn find_let_type_in_block(block: Block, name: String, type_map: Dict<Int, MonoType>, offset: Int) MonoType? {
