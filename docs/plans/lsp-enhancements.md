@@ -20,6 +20,7 @@ Implemented today:
 * completion
 * code actions for unused imports
 * whole-document formatting (`textDocument/formatting`)
+* document symbols (`textDocument/documentSymbol`)
 
 Range formatting and on-type formatting are intentionally out of scope for this
 plan; whole-document format-on-save is good enough for now.
@@ -30,7 +31,7 @@ plan; whole-document format-on-save is good enough for now.
 
 | Feature | LSP method/capability | Priority | Status | Details |
 |---------|------------------------|----------|--------|---------|
-| Document symbols | `textDocument/documentSymbol` | High | Planned | [lsp-document-symbols.md](lsp-document-symbols.md) |
+| Document symbols | `textDocument/documentSymbol` | High | **Done** | [archived](archive/lsp-document-symbols.md) |
 | Find references | `textDocument/references` | High | Planned | [lsp-references.md](lsp-references.md) |
 | Rename | `textDocument/rename`, `textDocument/prepareRename` | High | Planned | [lsp-rename.md](lsp-rename.md) |
 | Signature help | `textDocument/signatureHelp` | High | Planned | [lsp-signature-help.md](lsp-signature-help.md) |
@@ -50,8 +51,8 @@ Existing related plan:
 
 ## Suggested Implementation Order
 
-1. Document symbols: simple AST walk, high editor value, good foundation for
-   workspace symbols.
+1. ~~Document symbols: simple AST walk, high editor value, good foundation for
+   workspace symbols.~~ **Done.**
 2. Find references: establishes symbol identity and use-site collection needed
    for rename and highlights.
 3. Rename: build on references with scope-aware edit generation.

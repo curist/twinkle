@@ -39,6 +39,8 @@ pub type CodeActionParams = .{
 
 pub type DocumentFormattingParams = .{ text_document: TextDocumentIdentifier }
 
+pub type DocumentSymbolParams = .{ text_document: TextDocumentIdentifier }
+
 pub fn decode_did_open(params: json.Json?) Result<DidOpenTextDocumentParams, String> {
   value := try required_params(params)
   text_document := try json.decode(value, json.field("textDocument", text_document_item_decoder()))
@@ -107,6 +109,15 @@ pub fn decode_code_action(params: json.Json?) Result<CodeActionParams, String> {
   context := try json.decode(value, json.field("context", json.raw()))
   context_diagnostics := try json.decode(context, json.field("diagnostics", json.list(json.raw())))
   .Ok(.{ text_document, range, context_diagnostics })
+}
+
+pub fn decode_document_symbol(params: json.Json?) Result<DocumentSymbolParams, String> {
+  value := try required_params(params)
+  text_document := try json.decode(
+    value,
+    json.field("textDocument", text_document_identifier_decoder()),
+  )
+  .Ok(.{ text_document })
 }
 
 pub fn decode_document_formatting(params: json.Json?) Result<DocumentFormattingParams, String> {

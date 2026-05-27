@@ -15,6 +15,7 @@ use compiler.query.cache as query_cache
 use compiler.query.completion as query_completion
 use compiler.query.definition as query_definition
 use compiler.query.diagnostics as query_diagnostics
+use compiler.query.document_symbols as query_document_symbols
 use compiler.query.hover as query_hover
 use compiler.query.semantic
 use lib.json
@@ -23,6 +24,7 @@ use lib.lsp.completion as lsp_completion
 use lib.lsp.definition as lsp_definition
 use lib.lsp.diagnostics as lsp_diagnostics
 use lib.lsp.document_store
+use lib.lsp.document_symbol as lsp_document_symbol
 use lib.lsp.hover as lsp_hover
 use lib.lsp.params
 use lib.lsp.protocol
@@ -83,6 +85,7 @@ fn handle_request(state: State, req: protocol.Request) Step {
               json.object([json.kv("triggerCharacters", json.array([.Str(".")]))]),
             ),
             json.kv("codeActionProvider", .Bool(true)),
+            json.kv("documentSymbolProvider", .Bool(true)),
           ]),
         ),
         json.kv("serverInfo", json.object([json.kv("name", .Str("twinkle-lsp"))])),
@@ -93,6 +96,7 @@ fn handle_request(state: State, req: protocol.Request) Step {
     "textDocument/definition" => handle_definition(state, req),
     "textDocument/completion" => handle_completion(state, req),
     "textDocument/codeAction" => handle_code_action(state, req),
+    "textDocument/documentSymbol" => handle_document_symbol(state, req),
     "textDocument/formatting" => handle_formatting(state, req),
     "shutdown" => {
       state.shutdown_requested = true
@@ -322,6 +326,29 @@ fn handle_code_action(state: State, req: protocol.Request) Step {
     action_params.context_diagnostics,
   )
   .{ state, outgoing: [protocol.success_response(req.id, json.array(actions))] }
+}
+
+fn handle_document_symbol(state: State, req: protocol.Request) Step {
+  sym_params := case params.decode_document_symbol(req.params) {
+    .Ok(p) => p,
+    .Err(_) => { return empty_array_response_step(state, req) },
+  }
+  doc := case document_store.get(state.documents, sym_params.text_document.uri) {
+    .Some(d) => d,
+    .None => { return empty_array_response_step(state, req) },
+  }
+  snap := workspace_snapshot(state, doc)
+  state.query_cache = snap.cache
+  symbols := query_document_symbols.document_symbols(snap)
+  .{
+    state,
+    outgoing: [
+      protocol.success_response(
+        req.id,
+        lsp_document_symbol.document_symbol_response(doc.index, symbols),
+      ),
+    ],
+  }
 }
 
 fn handle_formatting(state: State, req: protocol.Request) Step {

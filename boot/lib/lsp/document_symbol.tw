@@ -1,0 +1,50 @@
+/// LSP documentSymbol response adapter.
+
+use compiler.query.document_symbols.{DocumentSymbol, SymbolKind}
+use lib.json
+use lib.text.line_index
+
+use .range.{range_to_json}
+
+pub fn document_symbol_response(index: line_index.LineIndex, symbols: Vector<DocumentSymbol>) json.Json {
+  json.array(collect sym in symbols {
+    symbol_to_json(index, sym)
+  })
+}
+
+fn symbol_to_json(index: line_index.LineIndex, sym: DocumentSymbol) json.Json {
+  range := line_index.byte_range_to_range(index, sym.range.start, sym.range.end, .Utf16)
+  sel_range := line_index.byte_range_to_range(
+    index,
+    sym.selection_range.start,
+    sym.selection_range.end,
+    .Utf16,
+  )
+  fields: Vector<json.Field> = [
+    json.kv("name", .Str(sym.name)),
+    json.kv("kind", .Int(symbol_kind_to_int(sym.kind))),
+    json.kv("range", range_to_json(range)),
+    json.kv("selectionRange", range_to_json(sel_range)),
+  ]
+
+  if sym.children.len() > 0 {
+    children := json.array(collect child in sym.children {
+      symbol_to_json(index, child)
+    })
+    fields = .append(json.kv("children", children))
+  }
+
+  json.object(fields)
+}
+
+fn symbol_kind_to_int(kind: SymbolKind) Int {
+  case kind {
+    .Module => 2,
+    .Function => 12,
+    .Struct => 23,
+    .Enum => 10,
+    .EnumMember => 22,
+    .Field => 8,
+    .TypeParameter => 26,
+  }
+}

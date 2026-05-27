@@ -1,0 +1,141 @@
+/// Extract document symbols from a parsed module AST.
+
+use compiler.ast
+use compiler.query.semantic.{SemanticSnapshot}
+use lib.source.span.{Span}
+
+pub type DocumentSymbol = .{
+  name: String,
+  kind: SymbolKind,
+  range: Span,
+  selection_range: Span,
+  children: Vector<DocumentSymbol>,
+}
+
+pub type SymbolKind = { Module, Function, Struct, Enum, EnumMember, Field, TypeParameter }
+
+pub fn document_symbols(snap: SemanticSnapshot) Vector<DocumentSymbol> {
+  parsed := case snap.parsed {
+    .Some(p) => p,
+    .None => { return [] },
+  }
+
+  result: Vector<DocumentSymbol> = []
+
+  for item in parsed.module.items {
+    case symbol_from_item(item) {
+      .Some(sym) => result = result.append(sym),
+      .None => {},
+    }
+  }
+
+  result
+}
+
+fn symbol_from_item(item: ast.Item) DocumentSymbol? {
+  case item {
+    .Use(decl) => .Some(use_symbol(decl)),
+    .Type(decl) => .Some(type_symbol(decl)),
+    .Function(decl) => .Some(function_symbol(decl)),
+    .ExternFunction(decl) => .Some(extern_function_symbol(decl)),
+    .ExternType(decl) => .Some(extern_type_symbol(decl)),
+    .Stmt(_) => .None,
+    .ErrorItem(_) => .None,
+  }
+}
+
+fn use_symbol(decl: ast.UseDecl) DocumentSymbol {
+  name := case decl.alias {
+    .Some(alias) => alias,
+    .None => case decl.items {
+      .Some(_) => decl.path.join("."),
+      .None => if decl.path.len() > 0 {
+        decl.path[decl.path.len() - 1]
+      } else {
+        "<unknown>"
+      },
+    },
+  }
+  .{ name, kind: .Module, range: decl.span, selection_range: decl.span, children: [] }
+}
+
+fn function_symbol(decl: ast.FunctionDecl) DocumentSymbol {
+  .{
+    name: decl.name,
+    kind: .Function,
+    range: decl.span,
+    selection_range: decl.name_span,
+    children: [],
+  }
+}
+
+fn extern_function_symbol(decl: ast.ExternFunctionDecl) DocumentSymbol {
+  .{
+    name: decl.name,
+    kind: .Function,
+    range: decl.span,
+    selection_range: decl.name_span,
+    children: [],
+  }
+}
+
+fn extern_type_symbol(decl: ast.ExternTypeDecl) DocumentSymbol {
+  .{ name: decl.name, kind: .Struct, range: decl.span, selection_range: decl.span, children: [] }
+}
+
+fn type_symbol(decl: ast.TypeDecl) DocumentSymbol {
+  case decl.def {
+    .Record(fields) => .{
+      name: decl.name,
+      kind: .Struct,
+      range: decl.span,
+      selection_range: decl.span,
+      children: record_field_children(fields),
+    },
+    .Sum(variants) => .{
+      name: decl.name,
+      kind: .Enum,
+      range: decl.span,
+      selection_range: decl.span,
+      children: variant_children(variants),
+    },
+    .Alias(_) => .{
+      name: decl.name,
+      kind: .TypeParameter,
+      range: decl.span,
+      selection_range: decl.span,
+      children: [],
+    },
+    .ErrorDef(_) => .{
+      name: decl.name,
+      kind: .Struct,
+      range: decl.span,
+      selection_range: decl.span,
+      children: [],
+    },
+  }
+}
+
+fn record_field_children(fields: Vector<ast.RecordField>) Vector<DocumentSymbol> {
+  collect f in fields {
+    DocumentSymbol.{
+      name: f.name,
+      kind: .Field,
+      range: f.span,
+      selection_range: f.name_span,
+      children: [],
+    }
+  }
+}
+
+fn variant_children(variants: Vector<ast.VariantDecl>) Vector<DocumentSymbol> {
+  collect v in variants {
+    DocumentSymbol.{
+      name: v.name,
+      kind: .EnumMember,
+      range: v.span,
+      selection_range: v.span,
+      children: [],
+    }
+  }
+}

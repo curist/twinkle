@@ -1,0 +1,303 @@
+use compiler.query.cache as query_cache
+use lib.json
+use lib.lsp.document_store
+use lib.lsp.protocol
+use lib.lsp.server_core
+use tests.assert
+use tests.runner
+
+fn state_with_doc(uri: String, text: String) server_core.State {
+  docs := document_store.open(document_store.empty(), uri, text, .Some(1))
+  server_core.State.{
+    initialized: true,
+    shutdown_requested: false,
+    should_exit: false,
+    documents: docs,
+    query_cache: query_cache.empty(),
+    diagnostics_pending: false,
+    diagnostics_deadline_ms: 0.0,
+    last_published_versions: Dict.new(),
+  }
+}
+
+fn symbol_request(id: Int, uri: String) protocol.Message {
+  params := json.object([json.kv("textDocument", json.object([json.kv("uri", .Str(uri))]))])
+  protocol.Message.Request(.{
+    id: .IntId(id),
+    method: "textDocument/documentSymbol",
+    params: .Some(params),
+  })
+}
+
+type RangeInfo = .{ start_line: Int, start_char: Int, end_line: Int, end_char: Int }
+
+type SymbolInfo = .{
+  name: String,
+  kind: Int,
+  range: RangeInfo,
+  selection_range: RangeInfo,
+  children: Vector<SymbolInfo>,
+}
+
+fn extract_symbols(step: server_core.Step) Vector<SymbolInfo>!String {
+  if step.outgoing.len() != 1 {
+    return .Err("expected one outgoing message")
+  }
+
+  out := step.outgoing[0]
+  result := try json.decode(out, json.field("result", json.raw()))
+  items := case result {
+    .Array(arr) => arr,
+    _ => { return .Err("expected array result") },
+  }
+
+  result: Vector<SymbolInfo> = []
+
+  for item in items {
+    result = .append(try extract_one_symbol(item))
+  }
+
+  .Ok(result)
+}
+
+fn extract_one_symbol(item: json.Json) SymbolInfo!String {
+  name := try json.decode(item, json.field("name", json.string()))
+  kind := try json.decode(item, json.field("kind", json.int()))
+  range := try extract_range(try json.decode(item, json.field("range", json.raw())))
+  selection_range := try extract_range(
+    try json.decode(item, json.field("selectionRange", json.raw())),
+  )
+  children: Vector<SymbolInfo> = case json.decode(item, json.field("children", json.raw())) {
+    .Ok(children_json) => case children_json {
+      .Array(arr) => {
+        result: Vector<SymbolInfo> = []
+
+        for child in arr {
+          result = .append(try extract_one_symbol(child))
+        }
+
+        result
+      },
+      _ => [],
+    },
+    .Err(_) => [],
+  }
+  .Ok(.{ name, kind, range, selection_range, children })
+}
+
+fn extract_range(range_json: json.Json) RangeInfo!String {
+  start := try json.decode(range_json, json.field("start", json.raw()))
+  end := try json.decode(range_json, json.field("end", json.raw()))
+  start_line := try json.decode(start, json.field("line", json.int()))
+  start_char := try json.decode(start, json.field("character", json.int()))
+  end_line := try json.decode(end, json.field("line", json.int()))
+  end_char := try json.decode(end, json.field("character", json.int()))
+  .Ok(.{ start_line, start_char, end_line, end_char })
+}
+
+fn find_symbol(symbols: Vector<SymbolInfo>, name: String) SymbolInfo? {
+  for s in symbols {
+    if s.name == name {
+      return .Some(s)
+    }
+  }
+
+  .None
+}
+
+pub fn suite() runner.Suite {
+  runner.suite("lsp document symbol")
+    .test(
+      "functions appear as symbols",
+      fn() {
+        src := "fn greet() String { \"hi\" }\nfn add(a: Int, b: Int) Int { a + b }\n"
+        state := state_with_doc("file:///a.tw", src)
+        step := server_core.handle_message(state, symbol_request(1, "file:///a.tw"))
+        symbols := try extract_symbols(step)
+        try assert.equal(symbols.len(), 2)
+        try assert.equal(symbols[0].name, "greet")
+        try assert.equal(symbols[0].kind, 12) // Function
+        try assert.equal(symbols[1].name, "add")
+        .Ok({})
+      },
+    )
+    .test(
+      "record type with fields as children",
+      fn() {
+        src := "type Point = .{ x: Int, y: Int }\n"
+        state := state_with_doc("file:///a.tw", src)
+        step := server_core.handle_message(state, symbol_request(1, "file:///a.tw"))
+        symbols := try extract_symbols(step)
+        try assert.equal(symbols.len(), 1)
+        try assert.equal(symbols[0].name, "Point")
+        try assert.equal(symbols[0].kind, 23) // Struct
+        try assert.equal(symbols[0].children.len(), 2)
+        try assert.equal(symbols[0].children[0].name, "x")
+        try assert.equal(symbols[0].children[0].kind, 8) // Field
+        try assert.equal(symbols[0].children[1].name, "y")
+        .Ok({})
+      },
+    )
+    .test(
+      "enum type with variants as children",
+      fn() {
+        src := "type Shape = { Circle(Float), Rect(Float, Float), UnitSquare }\n"
+        state := state_with_doc("file:///a.tw", src)
+        step := server_core.handle_message(state, symbol_request(1, "file:///a.tw"))
+        symbols := try extract_symbols(step)
+        try assert.equal(symbols.len(), 1)
+        try assert.equal(symbols[0].name, "Shape")
+        try assert.equal(symbols[0].kind, 10) // Enum
+        try assert.equal(symbols[0].children.len(), 3)
+        try assert.equal(symbols[0].children[0].name, "Circle")
+        try assert.equal(symbols[0].children[0].kind, 22) // EnumMember
+        try assert.equal(symbols[0].children[1].name, "Rect")
+        try assert.equal(symbols[0].children[2].name, "UnitSquare")
+        .Ok({})
+      },
+    )
+    .test(
+      "extern function appears as symbol",
+      fn() {
+        src := "extern wasi fn read(fd: Int, buf: Int) Int\n"
+        state := state_with_doc("file:///a.tw", src)
+        step := server_core.handle_message(state, symbol_request(1, "file:///a.tw"))
+        symbols := try extract_symbols(step)
+        try assert.equal(symbols.len(), 1)
+        try assert.equal(symbols[0].name, "read")
+        try assert.equal(symbols[0].kind, 12) // Function
+        .Ok({})
+      },
+    )
+    .test(
+      "extern type appears as symbol",
+      fn() {
+        src := "extern host type Canvas\n"
+        state := state_with_doc("file:///a.tw", src)
+        step := server_core.handle_message(state, symbol_request(1, "file:///a.tw"))
+        symbols := try extract_symbols(step)
+        try assert.equal(symbols.len(), 1)
+        try assert.equal(symbols[0].name, "Canvas")
+        try assert.equal(symbols[0].kind, 23) // Struct
+        .Ok({})
+      },
+    )
+    .test(
+      "use declarations appear as symbols",
+      fn() {
+        src := "use @std.fs\nuse @std.path\nfn main() Void { }\n"
+        state := state_with_doc("file:///a.tw", src)
+        step := server_core.handle_message(state, symbol_request(1, "file:///a.tw"))
+        symbols := try extract_symbols(step)
+        try assert.equal(symbols.len(), 3)
+        try assert.equal(symbols[0].kind, 2) // Module
+        try assert.equal(symbols[1].kind, 2) // Module
+        try assert.equal(symbols[2].name, "main")
+        .Ok({})
+      },
+    )
+    .test(
+      "mixed declarations in source order",
+      fn() {
+        src := "use @std.fs\ntype Color = { Red, Green }\nfn paint() Void { }\ntype Size = .{ w: Int }\n"
+        state := state_with_doc("file:///a.tw", src)
+        step := server_core.handle_message(state, symbol_request(1, "file:///a.tw"))
+        symbols := try extract_symbols(step)
+        try assert.equal(symbols.len(), 4)
+        try assert.equal(symbols[1].name, "Color")
+        try assert.equal(symbols[2].name, "paint")
+        try assert.equal(symbols[3].name, "Size")
+        .Ok({})
+      },
+    )
+    .test(
+      "unknown document returns empty array",
+      fn() {
+        state := state_with_doc("file:///a.tw", "fn foo() Void { }\n")
+        step := server_core.handle_message(state, symbol_request(1, "file:///other.tw"))
+        symbols := try extract_symbols(step)
+        try assert.equal(symbols.len(), 0)
+        .Ok({})
+      },
+    )
+    .test(
+      "type alias appears as symbol",
+      fn() {
+        src := "type Name = String\n"
+        state := state_with_doc("file:///a.tw", src)
+        step := server_core.handle_message(state, symbol_request(1, "file:///a.tw"))
+        symbols := try extract_symbols(step)
+        try assert.equal(symbols.len(), 1)
+        try assert.equal(symbols[0].name, "Name")
+        try assert.equal(symbols[0].kind, 26) // TypeParameter
+        .Ok({})
+      },
+    )
+    .test(
+      "selection ranges point at names not whole declarations",
+      fn() {
+        // fn greet() String { "hi" }
+        //    ^^^^^  name_span should be chars 3-8
+        // type Point = .{ x: Int, y: Int }
+        //      ^^^^^  TypeDecl has no name_span, so selection_range == range
+        //                 ^  field x name_span at char 16
+        src := "fn greet() String { \"hi\" }\ntype Point = .{ x: Int, y: Int }\n"
+        state := state_with_doc("file:///a.tw", src)
+        step := server_core.handle_message(state, symbol_request(1, "file:///a.tw"))
+        symbols := try extract_symbols(step)
+
+        // Function selection range should be narrower than full range
+        greet := symbols[0]
+        try assert.equal(greet.selection_range.start_line, 0)
+        try assert.equal(greet.selection_range.start_char, 3)
+        try assert.equal(greet.selection_range.end_char, 8)
+
+        // Full range covers the whole declaration
+        try assert.equal(greet.range.start_char, 0)
+
+        // Record field "x" selection range points at the field name
+        point := symbols[1]
+        x_field := point.children[0]
+        try assert.equal(x_field.selection_range.start_line, 1)
+        try assert.equal(x_field.selection_range.start_char, 16)
+        try assert.equal(x_field.selection_range.end_char, 17)
+        .Ok({})
+      },
+    )
+    .test(
+      "multibyte text before declaration maps ranges correctly",
+      fn() {
+        // "café" is 5 chars but 6 UTF-8 bytes (é = 2 bytes).
+        // UTF-16: c=1, a=1, f=1, é=1 → 4 code units, then newline.
+        // So "fn foo" starts at line 1, char 0.
+        src := "x := \"café\"\nfn foo() Void { }\n"
+        state := state_with_doc("file:///a.tw", src)
+        step := server_core.handle_message(state, symbol_request(1, "file:///a.tw"))
+        symbols := try extract_symbols(step)
+
+        // The function should be on line 1
+        foo := symbols[0]
+        try assert.equal(foo.name, "foo")
+        try assert.equal(foo.range.start_line, 1)
+        try assert.equal(foo.range.start_char, 0)
+
+        // Selection range should point at "foo" name
+        try assert.equal(foo.selection_range.start_line, 1)
+        try assert.equal(foo.selection_range.start_char, 3)
+        try assert.equal(foo.selection_range.end_char, 6)
+        .Ok({})
+      },
+    )
+    .test(
+      "initialize advertises documentSymbolProvider",
+      fn() {
+        msg := protocol.Message.Request(.{ id: .IntId(1), method: "initialize", params: .None })
+        step := server_core.handle_message(server_core.initial_state(), msg)
+        out := step.outgoing[0]
+        result := try json.decode(out, json.field("result", json.raw()))
+        caps := try json.decode(result, json.field("capabilities", json.raw()))
+        try assert.is_true(try json.decode(caps, json.field("documentSymbolProvider", json.bool())))
+        .Ok({})
+      },
+    )
+}
