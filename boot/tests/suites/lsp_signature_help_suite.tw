@@ -1,0 +1,320 @@
+use compiler.query.cache as query_cache
+use lib.json
+use lib.lsp.document_store
+use lib.lsp.protocol
+use lib.lsp.server_core
+use tests.assert
+use tests.runner
+
+fn state_with_doc(uri: String, text: String) server_core.State {
+  docs := document_store.open(document_store.empty(), uri, text, .Some(1))
+  server_core.State.{
+    initialized: true,
+    shutdown_requested: false,
+    should_exit: false,
+    documents: docs,
+    query_cache: query_cache.empty(),
+    diagnostics_pending: false,
+    diagnostics_deadline_ms: 0.0,
+    last_published_versions: Dict.new(),
+  }
+}
+
+fn sig_help_request(id: Int, uri: String, line: Int, character: Int) protocol.Message {
+  params := json.object([
+    json.kv("textDocument", json.object([json.kv("uri", .Str(uri))])),
+    json.kv(
+      "position",
+      json.object([json.kv("line", .Int(line)), json.kv("character", .Int(character))]),
+    ),
+  ])
+  protocol.Message.Request(.{
+    id: .IntId(id),
+    method: "textDocument/signatureHelp",
+    params: .Some(params),
+  })
+}
+
+type SigHelpInfo = .{ label: String, active_param: Int, param_labels: Vector<String> }
+
+fn extract_sig_help(step: server_core.Step) SigHelpInfo?!String {
+  if step.outgoing.len() != 1 {
+    return .Err("expected one outgoing message")
+  }
+
+  out := step.outgoing[0]
+  result := try json.decode(out, json.field("result", json.raw()))
+
+  case result {
+    .Null => .Ok(.None),
+    _ => {
+      active_param := try json.decode(result, json.field("activeParameter", json.int()))
+      sigs := try json.decode(result, json.field("signatures", json.raw()))
+      items := case sigs {
+        .Array(arr) => arr,
+        _ => { return .Err("expected signatures array") },
+      }
+
+      if items.len() == 0 {
+        return .Ok(.None)
+      }
+
+      sig := items[0]
+      label := try json.decode(sig, json.field("label", json.string()))
+      params_json := try json.decode(sig, json.field("parameters", json.raw()))
+      param_items := case params_json {
+        .Array(arr) => arr,
+        _ => [],
+      }
+      param_labels: Vector<String> = []
+
+      for p in param_items {
+        pl := try json.decode(p, json.field("label", json.string()))
+        param_labels = .append(pl)
+      }
+
+      .Ok(.Some(.{ label, active_param, param_labels }))
+    },
+  }
+}
+
+pub fn suite() runner.Suite {
+  runner.suite("lsp signature help")
+    .test(
+      "cursor after open paren reports active parameter 0",
+      fn() {
+        // fn add(a: Int, b: Int) Int { a + b }
+        // add(|)
+        //     ^ cursor here, char 4
+        src := "fn add(a: Int, b: Int) Int { a + b }\nadd()\n"
+        state := state_with_doc("file:///a.tw", src)
+        step := server_core.handle_message(state, sig_help_request(1, "file:///a.tw", 1, 4))
+        info := try extract_sig_help(step)
+
+        case info {
+          .Some(h) => {
+            try assert.equal(h.active_param, 0)
+            try assert.str_contains(h.label, "add")
+            try assert.equal(h.param_labels.len(), 2)
+            try assert.equal(h.param_labels[0], "a: Int")
+            try assert.equal(h.param_labels[1], "b: Int")
+          },
+          .None => { return .Err("expected signature help, got null") },
+        }
+
+        .Ok({})
+      },
+    )
+    .test(
+      "cursor after first comma reports active parameter 1",
+      fn() {
+        // fn add(a: Int, b: Int) Int { a + b }
+        // add(1, |)
+        //        ^ cursor here, char 7
+        src := "fn add(a: Int, b: Int) Int { a + b }\nadd(1, 2)\n"
+        state := state_with_doc("file:///a.tw", src)
+        step := server_core.handle_message(state, sig_help_request(1, "file:///a.tw", 1, 7))
+        info := try extract_sig_help(step)
+
+        case info {
+          .Some(h) => try assert.equal(h.active_param, 1),
+          .None => { return .Err("expected signature help, got null") },
+        }
+
+        .Ok({})
+      },
+    )
+    .test(
+      "nested calls choose innermost call",
+      fn() {
+        // fn outer(x: Int) Int { x }
+        // fn inner(a: String) String { a }
+        // outer(inner(|))
+        //              ^ cursor here inside inner's args
+        src := "fn outer(x: Int) Int { x }\nfn inner(a: String) String { a }\nouter(inner())\n"
+        state := state_with_doc("file:///a.tw", src)
+
+        // "outer(inner(" is 12 chars on line 2, cursor at char 12
+        step := server_core.handle_message(state, sig_help_request(1, "file:///a.tw", 2, 12))
+        info := try extract_sig_help(step)
+
+        case info {
+          .Some(h) => {
+            try assert.str_contains(h.label, "inner")
+            try assert.equal(h.param_labels[0], "a: String")
+          },
+          .None => { return .Err("expected signature help for inner, got null") },
+        }
+
+        .Ok({})
+      },
+    )
+    .test(
+      "method call shows receiver-adjusted signature",
+      fn() {
+        // type Point = .{ x: Int, y: Int }
+        // fn translate(p: Point, dx: Int, dy: Int) Point { ... }
+        // p.translate(|)
+        // Should show translate with receiver skipped → params are dx, dy
+        src := "type Point = .{ x: Int, y: Int }\nfn translate(p: Point, dx: Int, dy: Int) Point {\n  .{ x: p.x + dx, y: p.y + dy }\n}\np := Point.{ x: 0, y: 0 }\np.translate(1, 2)\n"
+        state := state_with_doc("file:///a.tw", src)
+
+        // p.translate( is on line 5, cursor at char 12
+        step := server_core.handle_message(state, sig_help_request(1, "file:///a.tw", 5, 12))
+        info := try extract_sig_help(step)
+
+        case info {
+          .Some(h) => {
+            try assert.equal(h.active_param, 0)
+            try assert.equal(h.param_labels.len(), 2)
+            try assert.equal(h.param_labels[0], "dx: Int")
+            try assert.equal(h.param_labels[1], "dy: Int")
+          },
+          .None => { return .Err("expected signature help for method call, got null") },
+        }
+
+        .Ok({})
+      },
+    )
+    .test(
+      "unknown callee returns null",
+      fn() {
+        src := "unknown_fn()\n"
+        state := state_with_doc("file:///a.tw", src)
+        step := server_core.handle_message(state, sig_help_request(1, "file:///a.tw", 0, 11))
+        info := try extract_sig_help(step)
+        try assert.is_none(info)
+        .Ok({})
+      },
+    )
+    .test(
+      "module-qualified call shows signature",
+      fn() {
+        src := "use @std.path\npath.join(\"a\", \"b\")\n"
+        state := state_with_doc("file:///a.tw", src)
+
+        // path.join( → cursor at char 10 on line 1
+        step := server_core.handle_message(state, sig_help_request(1, "file:///a.tw", 1, 10))
+        info := try extract_sig_help(step)
+
+        case info {
+          .Some(h) => try assert.str_contains(h.label, "join"),
+          .None => { return .Err("expected signature help for qualified call, got null") },
+        }
+
+        .Ok({})
+      },
+    )
+    .test(
+      "signature help inside function body",
+      fn() {
+        // Signature help should work when the call is inside a function body,
+        // not just at top level.
+        src := "fn greet(name: String, loud: Bool) String { name }\nfn main() String {\n  greet(\"hi\", true)\n}\n"
+        state := state_with_doc("file:///a.tw", src)
+
+        // cursor after comma: line 2 char 14
+        step := server_core.handle_message(state, sig_help_request(1, "file:///a.tw", 2, 14))
+        info := try extract_sig_help(step)
+
+        case info {
+          .Some(h) => {
+            try assert.str_contains(h.label, "greet")
+            try assert.equal(h.active_param, 1)
+            try assert.equal(h.param_labels[0], "name: String")
+            try assert.equal(h.param_labels[1], "loud: Bool")
+          },
+          .None => { return .Err("expected signature help inside fn body, got null") },
+        }
+
+        .Ok({})
+      },
+    )
+    .test(
+      "third parameter active with multiple commas",
+      fn() {
+        src := "fn make(a: Int, b: String, c: Bool) Int { a }\nmake(1, \"x\", true)\n"
+        state := state_with_doc("file:///a.tw", src)
+
+        // cursor after second comma: "make(1, \"x\", " → char 13
+        step := server_core.handle_message(state, sig_help_request(1, "file:///a.tw", 1, 13))
+        info := try extract_sig_help(step)
+
+        case info {
+          .Some(h) => {
+            try assert.equal(h.active_param, 2)
+            try assert.equal(h.param_labels.len(), 3)
+            try assert.equal(h.param_labels[2], "c: Bool")
+          },
+          .None => { return .Err("expected active param 2, got null") },
+        }
+
+        .Ok({})
+      },
+    )
+    .test(
+      "zero-arg function shows empty params",
+      fn() {
+        src := "fn noop() Void { }\nnoop()\n"
+        state := state_with_doc("file:///a.tw", src)
+        step := server_core.handle_message(state, sig_help_request(1, "file:///a.tw", 1, 5))
+        info := try extract_sig_help(step)
+
+        case info {
+          .Some(h) => {
+            try assert.str_contains(h.label, "noop")
+            try assert.equal(h.param_labels.len(), 0)
+            try assert.equal(h.active_param, 0)
+          },
+          .None => { return .Err("expected signature help for zero-arg fn, got null") },
+        }
+
+        .Ok({})
+      },
+    )
+    .test(
+      "multibyte text before call maps positions correctly",
+      fn() {
+        // "café" has é (2 UTF-8 bytes, 1 UTF-16 code unit)
+        // Line 0: fn add(a: Int, b: Int) Int { a + b }
+        // Line 1: x := "café"    ← multibyte
+        // Line 2: add(1, 2)
+        // fn defined before multibyte line so the call on line 2 can resolve
+        src := "fn add(a: Int, b: Int) Int { a + b }\nx := \"café\"\nadd(1, 2)\n"
+        state := state_with_doc("file:///a.tw", src)
+
+        // cursor after comma on line 2, char 7
+        step := server_core.handle_message(state, sig_help_request(1, "file:///a.tw", 2, 7))
+        info := try extract_sig_help(step)
+
+        case info {
+          .Some(h) => {
+            try assert.str_contains(h.label, "add")
+            try assert.equal(h.active_param, 1)
+          },
+          .None => { return .Err("expected signature help after multibyte text, got null") },
+        }
+
+        .Ok({})
+      },
+    )
+    .test(
+      "initialize advertises signatureHelpProvider",
+      fn() {
+        msg := protocol.Message.Request(.{ id: .IntId(1), method: "initialize", params: .None })
+        step := server_core.handle_message(server_core.initial_state(), msg)
+        out := step.outgoing[0]
+        result := try json.decode(out, json.field("result", json.raw()))
+        caps := try json.decode(result, json.field("capabilities", json.raw()))
+        sig_help := try json.decode(caps, json.field("signatureHelpProvider", json.raw()))
+        triggers := try json.decode(sig_help, json.field("triggerCharacters", json.raw()))
+
+        case triggers {
+          .Array(arr) => try assert.is_true(arr.len() >= 2),
+          _ => { return .Err("expected triggerCharacters array") },
+        }
+
+        .Ok({})
+      },
+    )
+}

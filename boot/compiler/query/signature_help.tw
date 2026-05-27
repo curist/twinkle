@@ -1,0 +1,393 @@
+/// Signature help query: find the active call at a cursor position and return
+/// the callee's signature with active parameter index.
+
+use compiler.ast.{Block, CaseArm, CondArm, Expr, FunctionDecl, Item, RecordEntry, Stmt, StringPart}
+use compiler.checker.{CheckResult}
+use compiler.mono_type.{MonoType}
+use compiler.query.semantic.{SemanticSnapshot}
+use compiler.resolver.{FunctionSig, ResolvedEnv, ResolvedTypeParam, ty_to_string_env}
+use lib.source.span.{Span}
+
+pub type SignatureHelpResult = .{
+  name: String,
+  label: String,
+  param_labels: Vector<String>,
+  active_parameter: Int,
+}
+
+pub fn signature_help(snap: SemanticSnapshot, byte_offset: Int, source: String) SignatureHelpResult? {
+  parsed := try snap.parsed
+  typed := try snap.typed
+
+  for item in parsed.module.items {
+    case find_call_in_item(item, byte_offset) {
+      .Some(call_info) => { return resolve_call(call_info, typed, source, byte_offset) },
+      .None => {},
+    }
+  }
+
+  .None
+}
+
+// ── Call site finding ──────────────────────────────────────────────
+type CallInfo = .{ callee: Expr, args: Vector<Expr>, call_span: Span }
+
+fn find_call_in_item(item: Item, offset: Int) CallInfo? {
+  case item {
+    .Function(decl) => if decl.span.contains(offset) {
+      find_call_in_params_or_body(decl, offset)
+    } else {
+      .None
+    },
+    .Stmt(stmt) => find_call_in_stmt(stmt, offset),
+    _ => .None,
+  }
+}
+
+fn find_call_in_params_or_body(decl: FunctionDecl, offset: Int) CallInfo? {
+  find_call_in_block(decl.body, offset)
+}
+
+fn find_call_in_block(block: Block, offset: Int) CallInfo? {
+  for stmt in block.stmts {
+    case find_call_in_stmt(stmt, offset) {
+      .Some(r) => { return .Some(r) },
+      .None => {},
+    }
+  }
+
+  case block.tail {
+    .Some(expr) => find_call_in_expr(expr, offset),
+    .None => .None,
+  }
+}
+
+fn find_call_in_stmt(stmt: Stmt, offset: Int) CallInfo? {
+  case stmt {
+    .Let(ls) => if ls.span.contains(offset) {
+      find_call_in_expr(ls.value, offset)
+    } else {
+      .None
+    },
+    .Expr(es) => if es.span.contains(offset) {
+      find_call_in_expr(es.expr, offset)
+    } else {
+      .None
+    },
+    .For(fs) => if fs.span.contains(offset) {
+      find_call_in_opt_expr(fs.iter, offset).or_else(fn() { find_call_in_opt_expr(
+        fs.condition,
+        offset,
+      ) }).or_else(fn() { find_call_in_block(fs.body, offset) })
+    } else {
+      .None
+    },
+    .Return(rs) => if rs.span.contains(offset) {
+      find_call_in_opt_expr(rs.value, offset)
+    } else {
+      .None
+    },
+    _ => .None,
+  }
+}
+
+fn find_call_in_opt_expr(opt: Expr?, offset: Int) CallInfo? {
+  case opt {
+    .Some(e) => find_call_in_expr(e, offset),
+    .None => .None,
+  }
+}
+
+/// Find the innermost Call expression whose argument area contains the offset.
+fn find_call_in_expr(expr: Expr, offset: Int) CallInfo? {
+  if !expr.span.contains(offset) {
+    return .None
+  }
+
+  case expr.kind {
+    .Call(callee, args) => {
+      // First try to find a call deeper in the arguments (innermost wins)
+      for arg in args {
+        case find_call_in_expr(arg, offset) {
+          .Some(r) => { return .Some(r) },
+          .None => {},
+        }
+      }
+
+      // Check if cursor is in the argument area (after callee)
+      if offset > callee.span.end {
+        return .Some(.{ callee, args, call_span: expr.span })
+      }
+
+      // Cursor is on the callee itself — check inside callee
+      find_call_in_expr(callee, offset)
+    },
+    .Binary(_, lhs, rhs) => find_call_in_expr(lhs, offset).or_else(fn() { find_call_in_expr(
+      rhs,
+      offset,
+    ) }),
+    .Unary(_, inner) => find_call_in_expr(inner, offset),
+    .Field(base, _) => find_call_in_expr(base, offset),
+    .Index(base, idx) => find_call_in_expr(base, offset).or_else(fn() { find_call_in_expr(
+      idx,
+      offset,
+    ) }),
+    .BlockExpr(block) => find_call_in_block(block, offset),
+    .If(cond_e, then_block, else_expr) => find_call_in_expr(cond_e, offset).or_else(fn() { find_call_in_block(
+      then_block,
+      offset,
+    ) }).or_else(fn() { find_call_in_opt_expr(else_expr, offset) }),
+    .Case(scrutinee, arms) => find_call_in_expr(scrutinee, offset).or_else(fn() { find_call_in_case_arms(
+      arms,
+      offset,
+    ) }),
+    .Cond(arms) => find_call_in_cond_arms(arms, offset),
+    .Array(elems) => find_call_in_exprs(elems, offset),
+    .Record(entries) => find_call_in_entries(entries, offset),
+    .NamedRecord(_, entries) => find_call_in_entries(entries, offset),
+    .Variant(_, fields) => find_call_in_exprs(fields, offset),
+    .Closure(_, _, body) => find_call_in_block(body, offset),
+    .Collect(col) => find_call_in_opt_expr(col.iter, offset).or_else(fn() { find_call_in_opt_expr(
+      col.condition,
+      offset,
+    ) }).or_else(fn() { find_call_in_block(col.body, offset) }),
+    .StringInterp(parts) => find_call_in_interp(parts, offset),
+    _ => .None,
+  }
+}
+
+fn find_call_in_exprs(exprs: Vector<Expr>, offset: Int) CallInfo? {
+  for e in exprs {
+    case find_call_in_expr(e, offset) {
+      .Some(r) => { return .Some(r) },
+      .None => {},
+    }
+  }
+
+  .None
+}
+
+fn find_call_in_entries(entries: Vector<RecordEntry>, offset: Int) CallInfo? {
+  for e in entries {
+    case e.value {
+      .Some(v) => case find_call_in_expr(v, offset) {
+        .Some(r) => { return .Some(r) },
+        .None => {},
+      },
+      .None => {},
+    }
+  }
+
+  .None
+}
+
+fn find_call_in_case_arms(arms: Vector<CaseArm>, offset: Int) CallInfo? {
+  for arm in arms {
+    if arm.span.contains(offset) {
+      return find_call_in_expr(arm.expr, offset)
+    }
+  }
+
+  .None
+}
+
+fn find_call_in_cond_arms(arms: Vector<CondArm>, offset: Int) CallInfo? {
+  for arm in arms {
+    if arm.span.contains(offset) {
+      case arm.condition {
+        .Some(cond_e) => case find_call_in_expr(cond_e, offset) {
+          .Some(r) => { return .Some(r) },
+          .None => {},
+        },
+        .None => {},
+      }
+
+      return find_call_in_expr(arm.body, offset)
+    }
+  }
+
+  .None
+}
+
+fn find_call_in_interp(parts: Vector<StringPart>, offset: Int) CallInfo? {
+  for part in parts {
+    case part {
+      .Interpolation(e) => case find_call_in_expr(e, offset) {
+        .Some(r) => { return .Some(r) },
+        .None => {},
+      },
+      _ => {},
+    }
+  }
+
+  .None
+}
+
+// ── Signature resolution ──────────────────────────────────────────
+fn resolve_call(info: CallInfo, typed: CheckResult, source: String, byte_offset: Int) SignatureHelpResult? {
+  active := compute_active_parameter(info, byte_offset, source)
+
+  case info.callee.kind {
+    .Ident(name) => resolve_direct_call(name, active, typed),
+    .Field(base, method) => resolve_method_call(info.callee, base, method, active, typed),
+    _ => .None,
+  }
+}
+
+fn resolve_direct_call(name: String, active: Int, typed: CheckResult) SignatureHelpResult? {
+  sig := try typed.env.lookup_function(name)
+  build_result(sig, active, typed.env, 0)
+}
+
+fn resolve_method_call(callee: Expr, base: Expr, method: String, active: Int, typed: CheckResult) SignatureHelpResult? {
+  // Check recorded method calls first (method sugar: x.method(args))
+  case typed.method_calls[callee.id] {
+    .Some(meta) => if meta.func_name != "" {
+      sig := try typed.env.lookup_registered_function(meta.func_name)
+      display_sig := if meta.has_receiver {
+        instantiate_receiver_sig(sig, base, typed)
+      } else {
+        sig
+      }
+
+      // Skip receiver parameter for method calls
+      skip := if meta.has_receiver {
+        1
+      } else {
+        0
+      }
+
+      return build_result(display_sig, active, typed.env, skip)
+    },
+    .None => {},
+  }
+
+  // Fall back to direct function lookup (module-qualified: mod.func())
+  case typed.env.lookup_function(method) {
+    .Some(sig) => build_result(sig, active, typed.env, 0),
+    .None => .None,
+  }
+}
+
+fn build_result(sig: FunctionSig, active: Int, env: ResolvedEnv, skip: Int) SignatureHelpResult? {
+  param_labels: Vector<String> = []
+  parts: Vector<String> = []
+
+  for i in skip..sig.params.len() {
+    ty_text := ty_to_string_env(env, sig.params[i])
+    label := if i < sig.param_names.len() and sig.param_names[i] != "" {
+      "${sig.param_names[i]}: ${ty_text}"
+    } else {
+      ty_text
+    }
+    param_labels = .append(label)
+    parts = .append(label)
+  }
+
+  ret := case sig.ret {
+    .Some(t) => ty_to_string_env(env, t),
+    .None => "Void",
+  }
+  full_label := "fn ${sig.name}(${parts.join(", ")}) ${ret}"
+
+  .Some(.{ name: sig.name, label: full_label, param_labels, active_parameter: active })
+}
+
+fn compute_active_parameter(info: CallInfo, byte_offset: Int, source: String) Int {
+  // Count commas in the source between the opening paren and cursor,
+  // being careful to skip nested parens/brackets/braces.
+  // Use utf8_bytes for correct byte-level indexing (spans are byte offsets).
+  bytes := source.utf8_bytes()
+  start := info.callee.span.end
+  depth := 0
+  commas := 0
+
+  for i in start..byte_offset {
+    if i >= bytes.len() {
+      return commas
+    }
+
+    b := bytes[i].to_int()
+
+    if b == 40 or b == 91 or b == 123 {
+      // ( [ {
+      depth = depth + 1
+    } else if b == 41 or b == 93 or b == 125 {
+      // ) ] }
+      depth = depth - 1
+    } else if b == 44 and depth == 1 {
+      // , at depth 1
+      commas = commas + 1
+    }
+  }
+
+  commas
+}
+
+fn instantiate_receiver_sig(sig: FunctionSig, base: Expr, typed: CheckResult) FunctionSig {
+  args: Vector<MonoType> = case typed.type_map[base.id] {
+    .Some(.Named(_, type_args)) => type_args,
+    .Some(.Vector(inner)) => [inner],
+    .Some(.Dict(k, v)) => [k, v],
+    .Some(.Optional(inner)) => [inner],
+    .Some(.Result(ok, err)) => [ok, err],
+    _ => [],
+  }
+  params := collect p in sig.params {
+    substitute_type_params(p, sig.type_params, args)
+  }
+  ret: MonoType? = case sig.ret {
+    .Some(r) => .Some(substitute_type_params(r, sig.type_params, args)),
+    .None => .None,
+  }
+  FunctionSig.{
+    name: sig.name,
+    type_params: sig.type_params,
+    param_names: sig.param_names,
+    params,
+    ret,
+    doc: sig.doc,
+    extern_module: sig.extern_module,
+  }
+}
+
+fn substitute_type_params(
+  ty: MonoType,
+  type_params: Vector<ResolvedTypeParam>,
+  args: Vector<MonoType>,
+) MonoType {
+  case ty {
+    .Var(name) => {
+      for i in 0..type_params.len() {
+        if type_params[i].name == name and i < args.len() {
+          return args[i]
+        }
+      }
+
+      ty
+    },
+    .Named(id, inner_args) => .Named(
+      id,
+      collect a in inner_args {
+        substitute_type_params(a, type_params, args)
+      },
+    ),
+    .Vector(inner) => .Vector(substitute_type_params(inner, type_params, args)),
+    .Dict(k, v) => .Dict(
+      substitute_type_params(k, type_params, args),
+      substitute_type_params(v, type_params, args),
+    ),
+    .Optional(inner) => .Optional(substitute_type_params(inner, type_params, args)),
+    .Result(ok, err) => .Result(
+      substitute_type_params(ok, type_params, args),
+      substitute_type_params(err, type_params, args),
+    ),
+    .Function(param_types, ret) => .Function(
+      collect p in param_types {
+        substitute_type_params(p, type_params, args)
+      },
+      substitute_type_params(ret, type_params, args),
+    ),
+    _ => ty,
+  }
+}

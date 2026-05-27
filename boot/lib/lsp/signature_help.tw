@@ -1,0 +1,16 @@
+/// LSP signatureHelp response adapter.
+
+use compiler.query.signature_help.{SignatureHelpResult}
+use lib.json
+
+pub fn signature_help_response(result: SignatureHelpResult) json.Json {
+  param_infos := json.array(collect label in result.param_labels {
+    json.object([json.kv("label", .Str(label))])
+  })
+  sig := json.object([json.kv("label", .Str(result.label)), json.kv("parameters", param_infos)])
+  json.object([
+    json.kv("signatures", json.array([sig])),
+    json.kv("activeSignature", .Int(0)),
+    json.kv("activeParameter", .Int(result.active_parameter)),
+  ])
+}

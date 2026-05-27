@@ -18,6 +18,7 @@ use compiler.query.diagnostics as query_diagnostics
 use compiler.query.document_symbols as query_document_symbols
 use compiler.query.hover as query_hover
 use compiler.query.semantic
+use compiler.query.signature_help as query_signature_help
 use lib.json
 use lib.lsp.code_action as lsp_code_action
 use lib.lsp.completion as lsp_completion
@@ -29,6 +30,7 @@ use lib.lsp.hover as lsp_hover
 use lib.lsp.params
 use lib.lsp.protocol
 use lib.lsp.range as lsp_range
+use lib.lsp.signature_help as lsp_signature_help
 use lib.module.loader
 use lib.query.keys
 use lib.source.identity
@@ -86,6 +88,10 @@ fn handle_request(state: State, req: protocol.Request) Step {
             ),
             json.kv("codeActionProvider", .Bool(true)),
             json.kv("documentSymbolProvider", .Bool(true)),
+            json.kv(
+              "signatureHelpProvider",
+              json.object([json.kv("triggerCharacters", json.array([.Str("("), .Str(",")]))]),
+            ),
           ]),
         ),
         json.kv("serverInfo", json.object([json.kv("name", .Str("twinkle-lsp"))])),
@@ -97,6 +103,7 @@ fn handle_request(state: State, req: protocol.Request) Step {
     "textDocument/completion" => handle_completion(state, req),
     "textDocument/codeAction" => handle_code_action(state, req),
     "textDocument/documentSymbol" => handle_document_symbol(state, req),
+    "textDocument/signatureHelp" => handle_signature_help(state, req),
     "textDocument/formatting" => handle_formatting(state, req),
     "shutdown" => {
       state.shutdown_requested = true
@@ -326,6 +333,33 @@ fn handle_code_action(state: State, req: protocol.Request) Step {
     action_params.context_diagnostics,
   )
   .{ state, outgoing: [protocol.success_response(req.id, json.array(actions))] }
+}
+
+fn handle_signature_help(state: State, req: protocol.Request) Step {
+  sig_params := case params.decode_signature_help(req.params) {
+    .Ok(p) => p,
+    .Err(_) => { return null_response_step(state, req) },
+  }
+  doc := case document_store.get(state.documents, sig_params.text_document.uri) {
+    .Some(d) => d,
+    .None => { return null_response_step(state, req) },
+  }
+  offset := case position_offset(doc.index, sig_params.position) {
+    .Some(o) => o,
+    .None => { return null_response_step(state, req) },
+  }
+  snap := workspace_snapshot(state, doc)
+  state.query_cache = snap.cache
+
+  case query_signature_help.signature_help(snap, offset, doc.text) {
+    .Some(result) => .{
+      state,
+      outgoing: [
+        protocol.success_response(req.id, lsp_signature_help.signature_help_response(result)),
+      ],
+    },
+    .None => null_response_step(state, req),
+  }
 }
 
 fn handle_document_symbol(state: State, req: protocol.Request) Step {

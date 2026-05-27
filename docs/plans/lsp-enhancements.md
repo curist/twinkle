@@ -21,6 +21,7 @@ Implemented today:
 * code actions for unused imports
 * whole-document formatting (`textDocument/formatting`)
 * document symbols (`textDocument/documentSymbol`)
+* signature help (`textDocument/signatureHelp`)
 
 Range formatting and on-type formatting are intentionally out of scope for this
 plan; whole-document format-on-save is good enough for now.
@@ -34,7 +35,7 @@ plan; whole-document format-on-save is good enough for now.
 | Document symbols | `textDocument/documentSymbol` | High | **Done** | [archived](archive/lsp-document-symbols.md) |
 | Find references | `textDocument/references` | High | Planned | [lsp-references.md](lsp-references.md) |
 | Rename | `textDocument/rename`, `textDocument/prepareRename` | High | Planned | [lsp-rename.md](lsp-rename.md) |
-| Signature help | `textDocument/signatureHelp` | High | Planned | [lsp-signature-help.md](lsp-signature-help.md) |
+| Signature help | `textDocument/signatureHelp` | High | **Done** | [archived](archive/lsp-signature-help.md) |
 | Semantic tokens | `textDocument/semanticTokens/full` | Medium | Planned | [lsp-semantic-tokens.md](lsp-semantic-tokens.md) |
 | Workspace symbols | `workspace/symbol` | Medium | Planned | [lsp-workspace-symbols.md](lsp-workspace-symbols.md) |
 | Document highlight | `textDocument/documentHighlight` | Medium | Planned | [lsp-document-highlight.md](lsp-document-highlight.md) |
@@ -56,7 +57,8 @@ Existing related plan:
 2. Find references: establishes symbol identity and use-site collection needed
    for rename and highlights.
 3. Rename: build on references with scope-aware edit generation.
-4. Signature help: reuses type/signature rendering and call-site analysis.
+4. ~~Signature help: reuses type/signature rendering and call-site analysis.~~
+   **Done.**
 5. Semantic tokens: improve syntax highlighting with compiler knowledge.
 6. Inlay hints: useful once type/signature lookup helpers are stable.
 7. Workspace symbols, document highlight, folding ranges, incremental sync as
