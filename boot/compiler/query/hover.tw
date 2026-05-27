@@ -19,40 +19,38 @@ use lib.source.span.{Span}
 
 pub type HoverResult = .{ content: String, span: Span }
 
-pub fn hover(snap: SemanticSnapshot, byte_offset: Int, source: String) HoverResult? {
-  parsed := try snap.parsed
-  typed := try snap.typed
-  find_map(
-    parsed.module.items,
-    fn(item) { hover_item(item, byte_offset, snap, typed, parsed.module.items, source) },
-  )
-}
-
-fn hover_item(
-  item: Item,
-  offset: Int,
+type HoverContext = .{
   snap: SemanticSnapshot,
   typed: CheckResult,
   items: Vector<Item>,
   source: String,
-) HoverResult? {
+}
+
+pub fn hover(snap: SemanticSnapshot, byte_offset: Int, source: String) HoverResult? {
+  parsed := try snap.parsed
+  typed := try snap.typed
+  ctx := HoverContext.{ snap, typed, items: parsed.module.items, source }
+  find_map(parsed.module.items, fn(item) { ctx.hover_item(item, byte_offset) })
+}
+
+fn hover_item(ctx: HoverContext, item: Item, offset: Int) HoverResult? {
   case item {
     .Use(decl) => if decl.span.contains(offset) {
-      hover_import(decl, offset, snap, typed)
+      hover_import(decl, offset, ctx.snap, ctx.typed)
     } else {
       .None
     },
     .Type(decl) => if decl.span.contains(offset) {
-      hover_type_decl(decl, offset, typed, source)
+      hover_type_decl(decl, offset, ctx.typed, ctx.source)
     } else {
       .None
     },
     .Function(decl) => if decl.span.contains(offset) {
-      hover_function_decl(decl, offset, typed, items, source)
+      ctx.hover_function_decl(decl, offset)
     } else {
       .None
     },
-    .Stmt(stmt) => hover_stmt(stmt, offset, typed, items, source),
+    .Stmt(stmt) => ctx.hover_stmt(stmt, offset),
     _ => .None,
   }
 }
@@ -96,8 +94,9 @@ fn hover_import_module(decl: UseDecl, snap: SemanticSnapshot) HoverResult? {
   }
 
   alias := decl.alias.unwrap_or(decl.path[decl.path.len() - 1])
-  doc := try imported_module_doc(decl, snap)
-  .Some(.{ content: append_doc("module ${alias}", .Some(doc)), span: decl.span })
+  .Some(
+    .{ content: append_doc("module ${alias}", imported_module_doc(decl, snap)), span: decl.span },
+  )
 }
 
 fn hover_import_item(it: ImportItem, offset: Int, typed: CheckResult) HoverResult? {
@@ -142,13 +141,8 @@ fn hover_type_decl(decl: TypeDecl, offset: Int, typed: CheckResult, source: Stri
   hover_type_params(decl.type_params, offset).or_else(fn() { hover_type_def(decl.def, offset, typed) })
 }
 
-fn hover_function_decl(
-  decl: FunctionDecl,
-  offset: Int,
-  typed: CheckResult,
-  items: Vector<Item>,
-  source: String,
-) HoverResult? {
+fn hover_function_decl(ctx: HoverContext, decl: FunctionDecl, offset: Int) HoverResult? {
+  typed := ctx.typed
   sig := typed.env.lookup_function(decl.name)
   name_span := function_name_span(decl)
 
@@ -157,7 +151,7 @@ fn hover_function_decl(
       .Some(s) => {
         content := append_doc(
           sig_to_string(typed.env, s),
-          first_doc(s.doc, extract_doc_comment(source, decl.span.start)),
+          first_doc(s.doc, extract_doc_comment(ctx.source, decl.span.start)),
         )
 
         return .Some(.{ content, span: name_span })
@@ -171,12 +165,9 @@ fn hover_function_decl(
     sig,
     offset,
     typed,
-  ) }).or_else(fn() { hover_optional_type_expr(decl.return_type, offset, typed) }).or_else(fn() { hover_block(
+  ) }).or_else(fn() { hover_optional_type_expr(decl.return_type, offset, typed) }).or_else(fn() { ctx.hover_block(
     decl.body,
     offset,
-    typed,
-    items,
-    source,
   ) })
 }
 
@@ -280,19 +271,19 @@ fn hover_type_params(params: Vector<TypeParam>, offset: Int) HoverResult? {
 }
 
 // ── Shared walker integration ──────────────────────────────────────
-fn hover_block(block: Block, offset: Int, typed: CheckResult, items: Vector<Item>, source: String) HoverResult? {
+fn hover_block(ctx: HoverContext, block: Block, offset: Int) HoverResult? {
   // Check stmt-level specials first (let names, for patterns/indices)
-  find_map(block.stmts, fn(stmt) { hover_stmt_special(stmt, offset, typed) }).or_else(fn() {
+  find_map(block.stmts, fn(stmt) { hover_stmt_special(stmt, offset, ctx.typed) }).or_else(fn() {
     // Shared walker for expr-level
-    ctx := try find_node_in_block(block, offset)
-    hover_for_node(ctx, offset, typed, items, source)
+    node := try find_node_in_block(block, offset)
+    ctx.hover_for_node(node, offset)
   })
 }
 
-fn hover_stmt(stmt: Stmt, offset: Int, typed: CheckResult, items: Vector<Item>, source: String) HoverResult? {
-  hover_stmt_special(stmt, offset, typed).or_else(fn() {
-    ctx := try find_node_in_stmt(stmt, offset)
-    hover_for_node(ctx, offset, typed, items, source)
+fn hover_stmt(ctx: HoverContext, stmt: Stmt, offset: Int) HoverResult? {
+  hover_stmt_special(stmt, offset, ctx.typed).or_else(fn() {
+    node := try find_node_in_stmt(stmt, offset)
+    ctx.hover_for_node(node, offset)
   })
 }
 
@@ -351,21 +342,17 @@ fn hover_for_index(fs: ForStmt, offset: Int, typed: CheckResult) HoverResult? {
   .Some(.{ content: ty_to_string_env(typed.env, .Int), span: is })
 }
 
-fn hover_expr(expr: Expr, offset: Int, typed: CheckResult, items: Vector<Item>, source: String) HoverResult? {
-  ctx := try find_node_in_expr(expr, offset)
-  hover_for_node(ctx, offset, typed, items, source)
+fn hover_expr(ctx: HoverContext, expr: Expr, offset: Int) HoverResult? {
+  node := try find_node_in_expr(expr, offset)
+  ctx.hover_for_node(node, offset)
 }
 
-fn hover_for_node(
-  ctx: NodeContext,
-  offset: Int,
-  typed: CheckResult,
-  items: Vector<Item>,
-  source: String,
-) HoverResult? {
-  case ctx {
+fn hover_for_node(ctx: HoverContext, node: NodeContext, offset: Int) HoverResult? {
+  typed := ctx.typed
+
+  case node {
     .ExprNode(expr) => case expr.kind {
-      .Ident(name) => hover_ident_expr(expr, name, typed, items, source),
+      .Ident(name) => ctx.hover_ident_expr(expr, name),
       .Closure(params, _, _) => hover_closure_expr(expr, params, offset, typed),
       .Variant(name, _) => hover_variant_expr(expr, name, offset, typed),
       _ => expr_type(expr, typed),
@@ -392,23 +379,50 @@ fn hover_for_node(
 }
 
 // ── Hover helpers ──────────────────────────────────────────────────
-fn hover_ident_expr(
-  expr: Expr,
-  name: String,
-  typed: CheckResult,
-  items: Vector<Item>,
-  source: String,
-) HoverResult? {
+fn hover_ident_expr(ctx: HoverContext, expr: Expr, name: String) HoverResult? {
+  typed := ctx.typed
+
   case typed.env.lookup_function(name) {
     .Some(sig) => {
       content := append_doc(
         sig_to_string(typed.env, sig),
-        first_doc(sig.doc, find_func_doc(name, items, source)),
+        first_doc(sig.doc, find_func_doc(name, ctx.items, ctx.source)),
       )
       .Some(.{ content, span: expr.span })
     },
-    .None => expr_type(expr, typed),
+    .None => case expr_type(expr, typed) {
+      .Some(result) => .Some(result),
+      .None => ctx.hover_module_alias(name, expr.span),
+    },
   }
+}
+
+fn hover_module_alias(ctx: HoverContext, name: String, span: Span) HoverResult? {
+  for item in ctx.items {
+    case item {
+      .Use(decl) => {
+        if decl.path.len() == 0 {
+          continue
+        }
+
+        case decl.items {
+          .Some(_) => { continue },
+          .None => {},
+        }
+
+        alias := decl.alias.unwrap_or(decl.path[decl.path.len() - 1])
+
+        if alias == name {
+          return .Some(
+            .{ content: append_doc("module ${alias}", imported_module_doc(decl, ctx.snap)), span },
+          )
+        }
+      },
+      _ => {},
+    }
+  }
+
+  .None
 }
 
 fn hover_closure_expr(expr: Expr, params: Vector<Param>, offset: Int, typed: CheckResult) HoverResult? {

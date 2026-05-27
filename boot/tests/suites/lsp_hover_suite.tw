@@ -282,6 +282,26 @@ pub fn suite() runner.Suite {
       },
     )
     .test(
+      "hover on module alias in case scrutinee shows module info",
+      fn() {
+        dep := "pub fn try_decode_frame_bytes(buffer: String) String!String { .Ok(buffer) }\n"
+        main := "use framing\nbuffer := \"x\"\ndecoded := case framing.try_decode_frame_bytes(buffer) {\n  .Ok(value) => value,\n  .Err(_) => \"\",\n}\n"
+        state := state_with_two_docs(
+          "file:///tmp/lsp-hover-module/framing.tw",
+          dep,
+          "file:///tmp/lsp-hover-module/main.tw",
+          main,
+        )
+        step := server_core.handle_message(
+          state,
+          hover_request(1, "file:///tmp/lsp-hover-module/main.tw", 2, 17),
+        )
+        content := try hover_content(step)
+        try assert.equal(content, "```twinkle\nmodule framing\n```")
+        .Ok({})
+      },
+    )
+    .test(
       "hover on destructured function import shows signature",
       fn() {
         dep := "pub fn add(a: Int, b: Int) Int { a + b }\n"
