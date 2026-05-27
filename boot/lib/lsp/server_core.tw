@@ -190,40 +190,8 @@ fn workspace_snapshot(state: State, doc: document_store.Document) semantic.Seman
   }
 }
 
-fn completion_snapshot(state: State, doc: document_store.Document) semantic.SemanticSnapshot {
-  // Try cached snapshot first (fast path — nothing changed)
-  input := workspace_input(state, doc)
-
-  case semantic.snapshot_workspace_from_cache(state.query_cache, input) {
-    .Some(snap) => { return snap },
-    .None => {},
-  }
-
-  // Run full analysis
-  snap := semantic.snapshot_workspace(state.query_cache, input)
-
-  // If typed is available, use it directly
-  case snap.typed {
-    .Some(_) => { return snap },
-    .None => {},
-  }
-
-  // Typed failed — try to recover stale typed/resolved from cache
-  id := case identity.from_file_uri(doc.uri) {
-    .Ok(parsed) => parsed,
-    .Err(_) => identity.from_path(doc.uri),
-  }
-  canonical := imports.canonical_module_path(
-    id.path,
-    imports.make_canonical_roots(input.project_root),
-  )
-  snap.typed = query_cache.latest_typed(snap.cache, canonical)
-
-  if snap.resolved == .None {
-    snap.resolved = query_cache.latest_resolved(snap.cache, canonical)
-  }
-
-  snap
+fn editor_snapshot(state: State, doc: document_store.Document) semantic.SemanticSnapshot {
+  semantic.snapshot_workspace_for_editor(state.query_cache, workspace_input(state, doc))
 }
 
 fn workspace_input(state: State, doc: document_store.Document) query_diagnostics.WorkspaceInput {
@@ -309,7 +277,7 @@ fn handle_completion(state: State, req: protocol.Request) Step {
     .Some(o) => o,
     .None => { return empty_array_response_step(state, req) },
   }
-  snap := completion_snapshot(state, doc)
+  snap := editor_snapshot(state, doc)
   state.query_cache = snap.cache
   items := query_completion.complete(snap, offset, doc.text)
   .{
@@ -348,7 +316,7 @@ fn handle_signature_help(state: State, req: protocol.Request) Step {
     .Some(o) => o,
     .None => { return null_response_step(state, req) },
   }
-  snap := completion_snapshot(state, doc)
+  snap := editor_snapshot(state, doc)
   state.query_cache = snap.cache
 
   case query_signature_help.signature_help(snap, offset, doc.text) {

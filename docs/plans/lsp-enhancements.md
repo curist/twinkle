@@ -43,10 +43,12 @@ plan; whole-document format-on-save is good enough for now.
 | Folding ranges | `textDocument/foldingRange` | Low | Planned | [lsp-folding-ranges.md](lsp-folding-ranges.md) |
 | Incremental sync | `textDocumentSync: 2` | Low | Planned | [lsp-incremental-sync.md](lsp-incremental-sync.md) |
 
-Existing related plan:
+Existing related plans:
 
 * [lsp-code-actions.md](lsp-code-actions.md) tracks additional quick fixes and
   source actions.
+* [lsp-editor-source-recovery.md](archive/lsp-editor-source-recovery.md) archives
+  the shared handling for incomplete source while users are editing.
 
 ---
 

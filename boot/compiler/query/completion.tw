@@ -16,184 +16,29 @@ use compiler.lexer
 use compiler.mono_type.{MonoType}
 use compiler.parser
 use compiler.query.ast_walk.{NodeContext, find_node_in_block, find_node_in_stmt}
+use compiler.query.cursor_context
+use compiler.query.cursor_context.{ImportPrefix}
 use compiler.query.semantic.{SemanticSnapshot}
 use compiler.query.util.{find_map}
 use compiler.resolver.{
   FunctionSig, MethodEntry, ResolvedEnv, ResolvedField, ResolvedTypeParam, ResolvedVariant,
   lookup_type_methods, ty_to_string_env,
 }
-use compiler.tokens.{Token}
 use lib.lsp.completion as lsp_completion
 use lib.module.core_lib
 use lib.module.loader
 
-type ImportPrefix = .{ parent: Vector<String>, prefix: String, is_stdlib: Bool, is_relative: Bool }
-
-pub type CompletionContext = { Member(Int), General(String), Import(ImportPrefix), Variant }
-
 pub fn complete(snap: SemanticSnapshot, offset: Int, source: String) Vector<
   lsp_completion.CompletionItem,
 > {
-  ctx := classify_context(source, offset)
+  ctx := cursor_context.classify_completion(source, offset)
 
   case ctx {
-    .Member(dot_offset) => member_completions(snap, dot_offset, source),
+    .Member(member) => member_completions(snap, member.dot_offset, source),
     .General(prefix) => general_completions(snap, prefix, offset),
     .Import(ip) => import_completions(snap, ip),
     .Variant => variant_completions(snap, offset),
   }
-}
-
-// ── Context classification ──────────────────────────────────────────
-fn classify_context(source: String, offset: Int) CompletionContext {
-  // Lex with cursor hole injection at the cursor offset.
-  lexed := lexer.lex_with_cursor(source, 0, offset)
-  tokens := lexed.value
-
-  // Find the CursorHole token and look at what's before it.
-  cursor_idx := find_cursor_hole(tokens)
-
-  if cursor_idx < 0 {
-    return .General("")
-  }
-
-  // Nothing before cursor
-  if cursor_idx == 0 {
-    return .General("")
-  }
-
-  prev := tokens[cursor_idx - 1]
-
-  // Import context detection — must run before dot/member checks
-  // since `use @std.` should be Import, not Member.
-  case try_extract_import_path(tokens, cursor_idx, source) {
-    .Some(ip) => { return .Import(ip) },
-    .None => {},
-  }
-
-  // After a dot → could be member or variant
-  if prev.kind == .Dot {
-    if cursor_idx >= 2 {
-      before_dot := tokens[cursor_idx - 2]
-
-      // Dot in prefix position (after {, =>, ,) → variant
-      if before_dot.kind == .LBrace
-        or before_dot.kind == .FatArrow
-        or before_dot.kind == .Comma
-        or before_dot.kind == .ColonEq
-        or before_dot.kind == .Eq {
-        return .Variant
-      }
-    } else {
-      // Dot at very start → variant
-      return .Variant
-    }
-
-    return .Member(prev.span.start)
-  }
-
-  // Inside/after a partial identifier right after a dot: `foo.ba|`
-  if prev.kind == .Ident and cursor_idx >= 2 {
-    before := tokens[cursor_idx - 2]
-
-    if before.kind == .Dot {
-      return .Member(before.span.start)
-    }
-  }
-
-  // General completion — extract prefix from current identifier being typed
-  if prev.kind == .Ident {
-    if offset >= prev.span.start and offset <= prev.span.end {
-      prefix := source.slice(prev.span.start, offset)
-
-      return .General(prefix)
-    }
-  }
-
-  .General("")
-}
-
-fn find_cursor_hole(tokens: Vector<Token>) Int {
-  for i in 0..tokens.len() {
-    if tokens[i].kind == .CursorHole {
-      return i
-    }
-  }
-
-  -1
-}
-
-fn try_extract_import_path(tokens: Vector<Token>, cursor_idx: Int, source: String) ImportPrefix? {
-  if cursor_idx == 0 {
-    return .None
-  }
-
-  i := cursor_idx - 1
-  prefix := ""
-  parent: Vector<String> = []
-  is_stdlib := false
-  found_use := false
-
-  // First token before cursor determines prefix
-  tk := tokens[i]
-
-  if tk.kind == .Use {
-    return .Some(.{ parent: [], prefix: "", is_stdlib: false, is_relative: false })
-  }
-
-  if tk.kind == .Ident {
-    prefix = source.slice(tk.span.start, tk.span.end)
-    i = i - 1
-  } else if tk.kind == .Dot {
-    i = i - 1
-  } else {
-    return .None
-  }
-
-  // Walk backwards through path segments.
-  // Stop at newline boundaries — `use @std.io\nio.` should NOT treat
-  // the second `io.` as part of the import path.
-  for i >= 0 {
-    tk = tokens[i]
-
-    if tk.preceded_by_newline and tk.kind != .Use {
-      break
-    }
-
-    case tk.kind {
-      .Use => {
-        found_use = true
-        break
-      },
-      .Ident => {
-        name := source.slice(tk.span.start, tk.span.end)
-        parent = .append(name)
-      },
-      .Dot => {},
-      .At => {
-        is_stdlib = true
-      },
-      _ => { break },
-    }
-
-    i = i - 1
-  }
-
-  if !found_use {
-    return .None
-  }
-
-  // Reverse parent since we collected backwards
-  reversed: Vector<String> = []
-
-  for k in 0..parent.len() {
-    reversed = .append(parent[parent.len() - 1 - k])
-  }
-
-  // Detect relative: first thing after Use is Dot (not At/Ident)
-  is_relative := !is_stdlib and i + 1 < tokens.len() and tokens[i + 1].kind == .Dot
-
-  .Some(.{ parent: reversed, prefix, is_stdlib, is_relative })
 }
 
 // ── Member completions ──────────────────────────────────────────────
@@ -252,7 +97,7 @@ fn member_completions(snap: SemanticSnapshot, dot_offset: Int, source: String) V
   // Extract the identifier directly from the source text before the dot,
   // since the parser may not produce a valid AST node for incomplete
   // expressions like `io.` at top level.
-  name := extract_ident_before(source, dot_offset)
+  name := cursor_context.extract_ident_before(source, dot_offset)
 
   case typed.env.methods[name] {
     .Some(entries) => method_entries_to_items(typed.env, entries),
@@ -359,25 +204,6 @@ fn receiver_ident_name(block: Block, offset: Int) String? {
     },
     _ => .None,
   }
-}
-
-/// Extract the identifier immediately before `offset` from the source text.
-/// E.g., for `io.` with offset pointing at the dot, returns `"io"`.
-fn extract_ident_before(source: String, offset: Int) String {
-  end := offset
-  start := end
-
-  for start > 0 {
-    ch := source.slice(start - 1, start)
-
-    if ch >= "a" and ch <= "z" or ch >= "A" and ch <= "Z" or ch == "_" or ch >= "0" and ch <= "9" {
-      start = start - 1
-    } else {
-      break
-    }
-  }
-
-  source.slice(start, end)
 }
 
 fn find_let_type_in_block(block: Block, name: String, type_map: Dict<Int, MonoType>, offset: Int) MonoType? {

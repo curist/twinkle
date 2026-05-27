@@ -97,6 +97,37 @@ pub fn snapshot_workspace_from_cache(store: cache.Store, input: diagnostics.Work
   )
 }
 
+pub fn snapshot_workspace_for_editor(store: cache.Store, input: diagnostics.WorkspaceInput) SemanticSnapshot {
+  case snapshot_workspace_from_cache(store, input) {
+    .Some(snap) => { return snap },
+    .None => {},
+  }
+
+  snap := snapshot_workspace(store, input)
+
+  case snap.typed {
+    .Some(_) => { return snap },
+    .None => {},
+  }
+
+  id := case identity.from_file_uri(input.entry_uri) {
+    .Ok(parsed) => parsed,
+    .Err(_) => identity.from_path(input.entry_uri),
+  }
+  canonical := imports.canonical_module_path(
+    id.path,
+    imports.make_canonical_roots(input.project_root),
+  )
+
+  snap.typed = cache.latest_typed(snap.cache, canonical)
+
+  if snap.resolved == .None {
+    snap.resolved = cache.latest_resolved(snap.cache, canonical)
+  }
+
+  snap
+}
+
 pub fn snapshot_workspace(store: cache.Store, input: diagnostics.WorkspaceInput) SemanticSnapshot {
   id := case identity.from_file_uri(input.entry_uri) {
     .Ok(parsed) => parsed,

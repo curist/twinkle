@@ -445,6 +445,27 @@ pub fn suite() runner.Suite {
       },
     )
     .test(
+      "module member completion does not continue previous import line",
+      fn() {
+        // The `io.` on the second line must be classified as member access, not
+        // as a continuation of `use @std.io` from the first line.
+        valid := "use @std.io\nio.stdin_eof()\n"
+        incomplete := "use @std.io\nio.\n"
+        step := open_then_complete(valid, incomplete, 1, 3)
+        labels := try completion_labels(step)
+
+        if !has_label(labels, "stdin_eof") {
+          return .Err("expected io member completions after import line, got: ${labels}")
+        }
+
+        if has_label(labels, "fs") or has_label(labels, "path") {
+          return .Err("expected member completions, not stdlib import completions, got: ${labels}")
+        }
+
+        .Ok({})
+      },
+    )
+    .test(
       "module member completion inside function body",
       fn() {
         valid := "use @std.io\nfn foo() Bool {\n  io.stdin_eof()\n}\n"

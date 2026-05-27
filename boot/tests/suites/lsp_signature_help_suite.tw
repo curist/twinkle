@@ -419,6 +419,29 @@ pub fn suite() runner.Suite {
       },
     )
     .test(
+      "incomplete call ignores nested comma while selecting active param",
+      fn() {
+        // The comma inside `(1, 2)` is not an argument separator for make.
+        valid := "fn make(a: Int, b: Int) Int { a }\nmake(1, 2)\n"
+        incomplete := "fn make(a: Int, b: Int) Int { a }\nmake((1, 2), "
+        state := state_with_warm_cache("file:///a.tw", valid, incomplete)
+
+        // cursor at end: line 1, char 13
+        step := server_core.handle_message(state, sig_help_request(1, "file:///a.tw", 1, 13))
+        info := try extract_sig_help(step)
+
+        case info {
+          .Some(h) => {
+            try assert.str_contains(h.label, "make")
+            try assert.equal(h.active_param, 1)
+          },
+          .None => { return .Err("expected signature help with nested comma, got null") },
+        }
+
+        .Ok({})
+      },
+    )
+    .test(
       "incomplete nested call resolves inner function",
       fn() {
         // outer(inner( — cursor inside inner's open paren

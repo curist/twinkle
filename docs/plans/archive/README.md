@@ -136,6 +136,7 @@ Related historical context outside this folder:
 | [anf-verifier-pass.md](anf-verifier-pass.md) | ANF invariant verifier pass for control-flow, local binding, representation, and codegen metadata consistency |
 | [first-class-inherent-methods.md](first-class-inherent-methods.md) | First-class inherent method values (`receiver.method` → closure) |
 | [lsp-completion.md](lsp-completion.md) | LSP completion reliability — broken-edit fallback, cursor-hole re-parsing, local variable completions, import module discovery |
+| [lsp-editor-source-recovery.md](lsp-editor-source-recovery.md) | Shared LSP editor-source recovery — central editor snapshots and cursor/source context for completion and signature help |
 | [lsp-diagnostics-completion.md](lsp-diagnostics-completion.md) | Phase 2 plan for `twk lsp` diagnostics publishing, completion, and simple `///` doc comments |
 | [lsp-hover-goto-definition.md](lsp-hover-goto-definition.md) | Phase 1 implementation plan for `twk lsp` hover and go-to-definition |
 | [lsp-file-watching.md](lsp-file-watching.md) | Watched-file refresh plan for `twk lsp` disk snapshot updates and diagnostics refresh |

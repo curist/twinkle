@@ -4,6 +4,7 @@
 use compiler.ast.{Block, CaseArm, CondArm, Expr, FunctionDecl, Item, RecordEntry, Stmt, StringPart}
 use compiler.checker.{CheckResult}
 use compiler.mono_type.{MonoType}
+use compiler.query.cursor_context
 use compiler.query.semantic.{SemanticSnapshot}
 use compiler.resolver.{FunctionSig, ResolvedEnv, ResolvedTypeParam, ty_to_string_env}
 use lib.source.span.{Span}
@@ -408,9 +409,8 @@ fn substitute_type_params(
 // to find the enclosing open paren, extract the function name before it,
 // count commas for active parameter, and look up the signature.
 fn source_scan_signature_help(env: ResolvedEnv, byte_offset: Int, source: String) SignatureHelpResult? {
-  bytes := source.utf8_bytes()
-  scan := try scan_back_to_call(bytes, byte_offset)
-  name := scan.name
+  call := try cursor_context.call_at(source, byte_offset)
+  name := call.name
 
   // Try full qualified name first (e.g. "io.write_stdout_text"),
   // then just the last segment (e.g. "write_stdout_text")
@@ -426,95 +426,7 @@ fn source_scan_signature_help(env: ResolvedEnv, byte_offset: Int, source: String
       }
     },
   }
-  build_result(sig, scan.commas, env, 0)
-}
-
-type ScanResult = .{ name: String, commas: Int, paren_pos: Int }
-
-fn scan_back_to_call(bytes: Vector<Byte>, offset: Int) ScanResult? {
-  // Walk backward from cursor to find the matching open paren,
-  // counting commas at depth 0 (relative to our nesting level).
-  pos := offset - 1
-  depth := 0
-  commas := 0
-
-  for pos >= 0 {
-    b := bytes[pos].to_int()
-
-    if b == 41 or b == 93 or b == 125 {
-      // ) ] } — increase depth (going backward)
-      depth = depth + 1
-    } else if b == 91 or b == 123 {
-      // [ { — decrease depth; if we go negative, we're not in a call
-      depth = depth - 1
-
-      if depth < 0 {
-        return .None
-      }
-    } else if b == 40 {
-      // (
-      if depth == 0 {
-        // Found our open paren — extract function name before it
-        name := try extract_name_before(bytes, pos)
-
-        return .Some(.{ name, commas, paren_pos: pos })
-      }
-
-      depth = depth - 1
-    } else if b == 44 and depth == 0 {
-      // , at our level
-      commas = commas + 1
-    }
-
-    pos = pos - 1
-  }
-
-  .None
-}
-
-fn extract_name_before(bytes: Vector<Byte>, paren_pos: Int) String? {
-  // Walk backward from just before `(` skipping whitespace, then collect
-  // identifier characters (alphanumeric, underscore, dot for qualified names).
-  pos := paren_pos - 1
-
-  // Skip whitespace
-  for pos >= 0 and is_whitespace(bytes[pos].to_int()) {
-    pos = pos - 1
-  }
-
-  if pos < 0 {
-    return .None
-  }
-
-  end := pos + 1
-
-  // Collect identifier chars (a-z, A-Z, 0-9, _, .)
-  for pos >= 0 and is_ident_or_dot(bytes[pos].to_int()) {
-    pos = pos - 1
-  }
-
-  start := pos + 1
-
-  if start >= end {
-    return .None
-  }
-
-  // Extract name using String.from_utf8 on the byte range
-  name_bytes: Vector<Byte> = []
-
-  for i in start..end {
-    name_bytes = .append(bytes[i])
-  }
-
-  // If name contains a dot (qualified: mod.func), use only the last segment
-  // for function lookup
-  name := String.from_utf8(name_bytes).unwrap_or("")
-
-  if name == "" {
-    return .None
-  }
-
-  .Some(name)
+  build_result(sig, call.active_parameter, env, 0)
 }
 
 fn find_last_dot(s: String) Int {
@@ -530,12 +442,4 @@ fn find_last_dot(s: String) Int {
   }
 
   -1
-}
-
-fn is_whitespace(b: Int) Bool {
-  b == 32 or b == 9 or b == 10 or b == 13
-}
-
-fn is_ident_or_dot(b: Int) Bool {
-  b >= 97 and b <= 122 or b >= 65 and b <= 90 or b >= 48 and b <= 57 or b == 95 or b == 46
 }
