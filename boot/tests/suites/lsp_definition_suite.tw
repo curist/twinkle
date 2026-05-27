@@ -399,4 +399,377 @@ pub fn suite() runner.Suite {
         .Ok({})
       },
     )
+    .test(
+      "goto def on import module alias jumps to module",
+      fn() {
+        // use dep
+        // ^~~  cursor on "dep" in the use statement
+        dep := "pub fn answer() Int { 42 }\n"
+        main := "use dep\nx := dep.answer()\n"
+        state := state_with_two_docs(
+          "file:///tmp/lsp-def-import/dep.tw",
+          dep,
+          "file:///tmp/lsp-def-import/main.tw",
+          main,
+        )
+
+        // cursor on "dep" in the use statement (line 0, char 4)
+        step := server_core.handle_message(
+          state,
+          def_request(1, "file:///tmp/lsp-def-import/main.tw", 0, 4),
+        )
+        uri := try def_result_uri(step)
+        try assert.equal(uri, "file:///tmp/lsp-def-import/dep.tw")
+        .Ok({})
+      },
+    )
+    .test(
+      "goto def on module alias in expression context jumps to module",
+      fn() {
+        // use dep
+        // x := dep.answer()
+        //      ^^^  cursor on "dep" before the dot
+        dep := "pub fn answer() Int { 42 }\n"
+        main := "use dep\nx := dep.answer()\n"
+        state := state_with_two_docs(
+          "file:///tmp/lsp-def-mod-expr/dep.tw",
+          dep,
+          "file:///tmp/lsp-def-mod-expr/main.tw",
+          main,
+        )
+
+        // "dep" on line 1 starts at char 5
+        step := server_core.handle_message(
+          state,
+          def_request(1, "file:///tmp/lsp-def-mod-expr/main.tw", 1, 5),
+        )
+        uri := try def_result_uri(step)
+        try assert.equal(uri, "file:///tmp/lsp-def-mod-expr/dep.tw")
+        .Ok({})
+      },
+    )
+    .test(
+      "goto def on destructured import item jumps to function",
+      fn() {
+        // use dep.{answer}
+        //         ^^^^^^  cursor on "answer" in the import list
+        dep := "pub fn answer() Int { 42 }\n"
+        main := "use dep.{answer}\nx := answer()\n"
+        state := state_with_two_docs(
+          "file:///tmp/lsp-def-destr/dep.tw",
+          dep,
+          "file:///tmp/lsp-def-destr/main.tw",
+          main,
+        )
+
+        // "answer" in `use dep.{answer}` — line 0, char 9
+        step := server_core.handle_message(
+          state,
+          def_request(1, "file:///tmp/lsp-def-destr/main.tw", 0, 9),
+        )
+        uri := try def_result_uri(step)
+        try assert.equal(uri, "file:///tmp/lsp-def-destr/dep.tw")
+        r := try def_result_range(step)
+        try assert.equal(r.start_line, 0)
+        try assert.equal(r.start_char, 7)
+        try assert.equal(r.end_char, 13)
+        .Ok({})
+      },
+    )
+    .test(
+      "goto def on type in parameter annotation",
+      fn() {
+        // type Msg = .{ text: String }
+        // fn send(m: Msg) Void { }
+        //             ^^^  cursor on Msg in param type
+        src := "type Msg = .{ text: String }\nfn send(m: Msg) Void { }\n"
+        state := state_with_doc("file:///a.tw", src)
+
+        // "Msg" on line 1 starts at char 11
+        step := server_core.handle_message(state, def_request(1, "file:///a.tw", 1, 11))
+        r := try def_result_range(step)
+        try assert.equal(r.start_line, 0)
+        try assert.equal(r.start_char, 5)
+        try assert.equal(r.end_char, 8)
+        .Ok({})
+      },
+    )
+    .test(
+      "goto def on type in record field definition",
+      fn() {
+        // type Msg = .{ text: String }
+        // type Wrapper = .{ inner: Msg }
+        //                          ^^^  cursor on Msg
+        src := "type Msg = .{ text: String }\ntype Wrapper = .{ inner: Msg }\n"
+        state := state_with_doc("file:///a.tw", src)
+
+        // "Msg" on line 1 at char 25
+        step := server_core.handle_message(state, def_request(1, "file:///a.tw", 1, 25))
+        r := try def_result_range(step)
+        try assert.equal(r.start_line, 0)
+        try assert.equal(r.start_char, 5)
+        try assert.equal(r.end_char, 8)
+        .Ok({})
+      },
+    )
+    .test(
+      "goto def on type in sum variant field",
+      fn() {
+        // type Msg = .{ text: String }
+        // type Event = { Click(Msg) }
+        //                      ^^^  cursor on Msg
+        src := "type Msg = .{ text: String }\ntype Event = { Click(Msg) }\n"
+        state := state_with_doc("file:///a.tw", src)
+
+        // "Msg" on line 1 at char 21
+        step := server_core.handle_message(state, def_request(1, "file:///a.tw", 1, 21))
+        r := try def_result_range(step)
+        try assert.equal(r.start_line, 0)
+        try assert.equal(r.start_char, 5)
+        try assert.equal(r.end_char, 8)
+        .Ok({})
+      },
+    )
+    .test(
+      "goto def on type in alias definition",
+      fn() {
+        // type Msg = .{ text: String }
+        // type Alias = Msg
+        //              ^^^
+        src := "type Msg = .{ text: String }\ntype Alias = Msg\n"
+        state := state_with_doc("file:///a.tw", src)
+
+        // "Msg" on line 1 at char 13
+        step := server_core.handle_message(state, def_request(1, "file:///a.tw", 1, 13))
+        r := try def_result_range(step)
+        try assert.equal(r.start_line, 0)
+        try assert.equal(r.start_char, 5)
+        try assert.equal(r.end_char, 8)
+        .Ok({})
+      },
+    )
+    .test(
+      "goto def on type arg in generic type",
+      fn() {
+        // type Msg = .{ text: String }
+        // fn send(msgs: Vector<Msg>) Void { }
+        //                      ^^^
+        src := "type Msg = .{ text: String }\nfn send(msgs: Vector<Msg>) Void { }\n"
+        state := state_with_doc("file:///a.tw", src)
+
+        // "Msg" on line 1 at char 21
+        step := server_core.handle_message(state, def_request(1, "file:///a.tw", 1, 21))
+        r := try def_result_range(step)
+        try assert.equal(r.start_line, 0)
+        try assert.equal(r.start_char, 5)
+        try assert.equal(r.end_char, 8)
+        .Ok({})
+      },
+    )
+    .test(
+      "goto def on optional type",
+      fn() {
+        // type Msg = .{ text: String }
+        // fn find() Msg? { .None }
+        //           ^^^
+        src := "type Msg = .{ text: String }\nfn find() Msg? { .None }\n"
+        state := state_with_doc("file:///a.tw", src)
+
+        // "Msg" on line 1 at char 10
+        step := server_core.handle_message(state, def_request(1, "file:///a.tw", 1, 10))
+        r := try def_result_range(step)
+        try assert.equal(r.start_line, 0)
+        try assert.equal(r.start_char, 5)
+        try assert.equal(r.end_char, 8)
+        .Ok({})
+      },
+    )
+    .test(
+      "goto def on let binding type annotation",
+      fn() {
+        // type Msg = .{ text: String }
+        // m: Msg = .{ text: "hi" }
+        //    ^^^
+        src := "type Msg = .{ text: String }\nm: Msg = .{ text: \"hi\" }\n"
+        state := state_with_doc("file:///a.tw", src)
+
+        // "Msg" on line 1 at char 3
+        step := server_core.handle_message(state, def_request(1, "file:///a.tw", 1, 3))
+        r := try def_result_range(step)
+        try assert.equal(r.start_line, 0)
+        try assert.equal(r.start_char, 5)
+        try assert.equal(r.end_char, 8)
+        .Ok({})
+      },
+    )
+    .test(
+      "goto def on closure parameter type",
+      fn() {
+        // type Msg = .{ text: String }
+        // fn apply() String {
+        //   f := fn(m: Msg) String { m.text }
+        //              ^^^
+        //   f(.{ text: "hi" })
+        // }
+        src := "type Msg = .{ text: String }\nfn apply() String {\n  f := fn(m: Msg) String { m.text }\n  f(.{ text: \"hi\" })\n}\n"
+        state := state_with_doc("file:///a.tw", src)
+
+        // "Msg" on line 2 at char 13
+        step := server_core.handle_message(state, def_request(1, "file:///a.tw", 2, 13))
+        r := try def_result_range(step)
+        try assert.equal(r.start_line, 0)
+        try assert.equal(r.start_char, 5)
+        try assert.equal(r.end_char, 8)
+        .Ok({})
+      },
+    )
+    .test(
+      "goto def on type param returns null",
+      fn() {
+        // fn identity<T>(x: T) T { x }
+        //                    ^  cursor on T in param type — type params have no definition site
+        src := "fn identity<T>(x: T) T { x }\n"
+        state := state_with_doc("file:///a.tw", src)
+
+        // "T" on line 0 at char 18
+        step := server_core.handle_message(state, def_request(1, "file:///a.tw", 0, 18))
+        try assert.is_true(try is_null_result(step))
+        .Ok({})
+      },
+    )
+    .test(
+      "goto def on top-level let binding",
+      fn() {
+        // x := 42
+        // y := x + 1
+        //      ^
+        src := "x := 42\ny := x + 1\n"
+        state := state_with_doc("file:///a.tw", src)
+
+        // "x" on line 1 at char 5
+        step := server_core.handle_message(state, def_request(1, "file:///a.tw", 1, 5))
+        r := try def_result_range(step)
+        try assert.equal(r.start_line, 0)
+        try assert.equal(r.start_char, 0)
+        .Ok({})
+      },
+    )
+    .test(
+      "goto def with variable shadowing resolves to inner binding",
+      fn() {
+        // fn foo() Int {
+        //   x := 1
+        //   x := x + 1
+        //   x
+        // }
+        src := "fn foo() Int {\n  x := 1\n  x := x + 1\n  x\n}\n"
+        state := state_with_doc("file:///a.tw", src)
+
+        // "x" on line 3 (the tail) at char 2 should resolve to the second binding on line 2
+        step := server_core.handle_message(state, def_request(1, "file:///a.tw", 3, 2))
+        r := try def_result_range(step)
+        try assert.equal(r.start_line, 2)
+        .Ok({})
+      },
+    )
+    .test(
+      "goto def on collect comprehension binding",
+      fn() {
+        // fn foo() Vector<Int> {
+        //   collect x in [1, 2, 3] {
+        //     x * 2
+        //   }
+        // }
+        src := "fn foo() Vector<Int> {\n  collect x in [1, 2, 3] {\n    x * 2\n  }\n}\n"
+        state := state_with_doc("file:///a.tw", src)
+
+        // "x" on line 2 at char 4
+        step := server_core.handle_message(state, def_request(1, "file:///a.tw", 2, 4))
+        r := try def_result_range(step)
+        try assert.equal(r.start_line, 1)
+        try assert.equal(r.start_char, 10)
+        try assert.equal(r.end_char, 11)
+        .Ok({})
+      },
+    )
+    .test(
+      "goto def in string interpolation resolves variable",
+      fn() {
+        // fn greet(name: String) String {
+        //   "hello ${name}"
+        // }
+        dollar := String.from_code_point(36).unwrap_or("")
+        src := "fn greet(name: String) String {\n  \"hello ".concat(dollar).concat("{name}\"\n}\n")
+        state := state_with_doc("file:///a.tw", src)
+
+        // "name" inside interpolation — line 1, char 11
+        step := server_core.handle_message(state, def_request(1, "file:///a.tw", 1, 11))
+        r := try def_result_range(step)
+        try assert.equal(r.start_line, 0)
+        try assert.equal(r.start_char, 9)
+        .Ok({})
+      },
+    )
+    .test(
+      "goto def on variant constructor in expression",
+      fn() {
+        // type Color = { Red, Green, Blue }
+        // c := Color.Red
+        //            ^^^
+        src := "type Color = { Red, Green, Blue }\nc := Color.Red\n"
+        state := state_with_doc("file:///a.tw", src)
+
+        // "Red" on line 1 at char 11
+        step := server_core.handle_message(state, def_request(1, "file:///a.tw", 1, 11))
+        r := try def_result_range(step)
+        try assert.equal(r.start_line, 0)
+        try assert.equal(r.start_char, 15)
+        try assert.equal(r.end_char, 18)
+        .Ok({})
+      },
+    )
+    .test(
+      "goto def on record field access jumps to field declaration",
+      fn() {
+        // type Point = .{ x: Int, y: Int }
+        // fn get_x(p: Point) Int { p.x }
+        //                            ^
+        src := "type Point = .{ x: Int, y: Int }\nfn get_x(p: Point) Int { p.x }\n"
+        state := state_with_doc("file:///a.tw", src)
+
+        // ".x" on line 1 — "x" at char 27
+        step := server_core.handle_message(state, def_request(1, "file:///a.tw", 1, 27))
+        r := try def_result_range(step)
+        try assert.equal(r.start_line, 0)
+        try assert.equal(r.start_char, 16)
+        try assert.equal(r.end_char, 17)
+        .Ok({})
+      },
+    )
+    .test(
+      "goto def on imported record field jumps to field in defining module",
+      fn() {
+        dep := "pub type Point = .{ x: Int, y: Int }\n"
+        main := "use dep\nfn get_x(p: dep.Point) Int { p.x }\n"
+        state := state_with_two_docs(
+          "file:///tmp/lsp-def-field/dep.tw",
+          dep,
+          "file:///tmp/lsp-def-field/main.tw",
+          main,
+        )
+
+        // ".x" on line 1 — "x" at char 31
+        step := server_core.handle_message(
+          state,
+          def_request(1, "file:///tmp/lsp-def-field/main.tw", 1, 31),
+        )
+        uri := try def_result_uri(step)
+        try assert.equal(uri, "file:///tmp/lsp-def-field/dep.tw")
+        r := try def_result_range(step)
+        try assert.equal(r.start_line, 0)
+        try assert.equal(r.start_char, 20)
+        try assert.equal(r.end_char, 21)
+        .Ok({})
+      },
+    )
 }

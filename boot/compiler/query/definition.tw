@@ -89,7 +89,13 @@ fn resolve_ref(snap: SemanticSnapshot, ref: Ref, byte_offset: Int) DefinitionRes
         .None => {},
       }
 
-      resolve_function_name(snap, typed.env, name)
+      case resolve_function_name(snap, typed.env, name) {
+        .Some(target) => .Some(target),
+        .None => {
+          // Module alias used in expression context: dep in dep.answer()
+          resolve_import_alias(snap, name)
+        },
+      }
     },
     .Field(base, field) => {
       // Module-qualified calls and values: dep.answer
@@ -104,6 +110,15 @@ fn resolve_ref(snap: SemanticSnapshot, ref: Ref, byte_offset: Int) DefinitionRes
             .Some(target) => { return .Some(target) },
             .None => {},
           }
+
+          // Type.Variant constructor: Color.Red
+          case typed.env.lookup_type(alias) {
+            .Some(entry) => case find_variant_by_type_id(snap, typed.env, entry.id, field) {
+              .Some(target) => { return .Some(target) },
+              .None => {},
+            },
+            .None => {},
+          }
         },
         _ => {},
       }
@@ -111,17 +126,20 @@ fn resolve_ref(snap: SemanticSnapshot, ref: Ref, byte_offset: Int) DefinitionRes
       // Receiver method: use the receiver's resolved nominal type id to find
       // the exact method entry registered by the resolver.
       case typed.type_map[base.id] {
-        .Some(.Named(tid, _)) => case typed.env.methods_by_type[tid.id] {
-          .Some(entries) => {
-            for entry in entries {
-              if entry.method_name == field {
-                return resolve_registered_function(snap, typed.env, entry.function_name)
+        .Some(.Named(tid, _)) => {
+          case typed.env.methods_by_type[tid.id] {
+            .Some(entries) => {
+              for entry in entries {
+                if entry.method_name == field {
+                  return resolve_registered_function(snap, typed.env, entry.function_name)
+                }
               }
-            }
+            },
+            .None => {},
+          }
 
-            .None
-          },
-          .None => .None,
+          // Record field access: jump to the field declaration in the type.
+          resolve_record_field(snap, typed.env, tid, field)
         },
         _ => .None,
       }
@@ -330,6 +348,66 @@ fn find_variant_in_module(
                     },
                   },
                 )
+              }
+            }
+          },
+          _ => {},
+        }
+      },
+      _ => {},
+    }
+  }
+
+  .None
+}
+
+fn resolve_record_field(snap: SemanticSnapshot, env: ResolvedEnv, tid: TypeId, field_name: String) DefinitionResult? {
+  type_name := case env.type_id_index[tid.id] {
+    .Some(idx) => env.type_names[idx],
+    .None => { return .None },
+  }
+
+  module_path := snap.canonical_path
+  source_type_name := local_name(type_name)
+
+  case env.type_origins[tid.id] {
+    .Some(origin) => {
+      parts := origin.split("::")
+
+      if parts.len() >= 2 {
+        module_path = parts[0]
+        source_type_name = parts[1]
+      }
+    },
+    .None => {},
+  }
+
+  find_field_in_module(snap, module_path, source_type_name, field_name)
+}
+
+fn find_field_in_module(
+  snap: SemanticSnapshot,
+  module_path: String,
+  type_name: String,
+  field_name: String,
+) DefinitionResult? {
+  parsed := case cache.latest_parsed(snap.cache, module_path) {
+    .Some(p) => p,
+    .None => { return .None },
+  }
+
+  for item in parsed.module.items {
+    case item {
+      .Type(decl) => {
+        if decl.name != type_name {
+          continue
+        }
+
+        case decl.def {
+          .Record(fields) => {
+            for f in fields {
+              if f.name == field_name {
+                return .Some(.{ uri: identity.from_path(module_path).uri, span: f.name_span })
               }
             }
           },
