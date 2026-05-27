@@ -48,6 +48,7 @@ Self-hosting is complete. Historical design and status docs live in
 | Area | Description | Status | Details |
 |------|-------------|--------|---------|
 | Tooling | Formatter (done), linter, LSP, package manager | In Progress | [tooling.md](tooling.md) |
+| LSP code actions | Quick-fix actions: missing case arms, auto-import, function type annotations | Planned | [lsp-code-actions.md](lsp-code-actions.md) |
 | LSP contract hover | Hover information for builtin contract bounds and contract-backed method calls | Done | [archive/lsp-contract-hover.md](archive/lsp-contract-hover.md) |
 
 ### Active cross-cutting plans
