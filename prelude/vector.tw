@@ -1,27 +1,45 @@
 /// Return true when the vector has no elements.
+
 pub fn is_empty<A>(xs: Vector<A>) Bool {
   xs.len() == 0
 }
 
 /// Transform each element with f.
 pub fn map<A, B>(xs: Vector<A>, f: fn(A) B) Vector<B> {
-  collect x in xs { f(x) }
+  collect x in xs {
+    f(x)
+  }
 }
 
 /// Keep elements where f returns true.
 pub fn filter<A>(xs: Vector<A>, f: fn(A) Bool) Vector<A> {
   collect x in xs {
-    if f(x) { x } else { continue }
+    if f(x) {
+      x
+    } else {
+      continue
+    }
   }
 }
 
 /// Left-fold a vector.
 pub fn fold<A, B>(xs: Vector<A>, init: B, f: fn(B, A) B) B {
   acc := init
+
   for x in xs {
     acc = f(acc, x)
   }
+
   acc
+}
+
+/// Return the last element, or .None if empty.
+pub fn last<A>(xs: Vector<A>) A? {
+  if xs.len() == 0 {
+    .None
+  } else {
+    .Some(xs[xs.len() - 1])
+  }
 }
 
 /// Return the first element matching f.
@@ -31,6 +49,7 @@ pub fn find<A>(xs: Vector<A>, f: fn(A) Bool) A? {
       return .Some(x)
     }
   }
+
   .None
 }
 
@@ -41,6 +60,7 @@ pub fn any<A>(xs: Vector<A>, f: fn(A) Bool) Bool {
       return true
     }
   }
+
   false
 }
 
@@ -51,6 +71,7 @@ pub fn all<A>(xs: Vector<A>, f: fn(A) Bool) Bool {
       return false
     }
   }
+
   true
 }
 
@@ -61,52 +82,69 @@ pub fn contains<A>(xs: Vector<A>, elem: A) Bool {
       return true
     }
   }
+
   false
 }
 
 /// Return a new vector with reversed order.
 pub fn reverse<A>(xs: Vector<A>) Vector<A> {
   n := xs.len()
+
   if n == 0 {
     return []
   }
 
   out := [xs[n - 1]]
   i := n - 2
+
   for i >= 0 {
-    out = out.append(xs[i])
+    out = .append(xs[i])
     i = i - 1
   }
+
   out
 }
 
 /// Convert a vector to its string representation, e.g. "[1, 2, 3]".
 pub fn to_string<T: Stringify>(xs: Vector<T>) String {
-  parts: Vector<String> = collect x in xs { x.to_string() }
+  parts: Vector<String> = collect x in xs {
+    x.to_string()
+  }
   "[${parts.join(", ")}]"
 }
 
 /// Join strings with sep.
 pub fn join(xs: Vector<String>, sep: String) String {
   n := xs.len()
-  if n == 0 { return "" }
-  if n == 1 { return xs[0] }
+
+  if n == 0 {
+    return ""
+  }
+
+  if n == 1 {
+    return xs[0]
+  }
 
   sep_bytes := sep.utf8_bytes()
   buf: Vector<Byte> = []
   i := 0
+
   for i < n {
     if i > 0 {
       for b in sep_bytes {
-        buf = buf.append(b)
+        buf = .append(b)
       }
     }
+
     s_bytes := xs[i].utf8_bytes()
+
     for b in s_bytes {
-      buf = buf.append(b)
+      buf = .append(b)
     }
+
     i = i + 1
   }
+
   case String.from_utf8(buf) {
     .Some(s) => s,
     .None => error("join: invalid utf8"),
@@ -117,33 +155,41 @@ fn merge_sorted<T>(a: Vector<T>, b: Vector<T>, cmp: fn(T, T) Order) Vector<T> {
   out := a.slice(0, 0)
   i := 0
   j := 0
+
   for i < a.len() and j < b.len() {
     case cmp(a[i], b[j]) {
       .Gt => {
-        out = out.append(b[j])
+        out = .append(b[j])
         j = j + 1
       },
       _ => {
-        out = out.append(a[i])
+        out = .append(a[i])
         i = i + 1
       },
     }
   }
+
   for i < a.len() {
-    out = out.append(a[i])
+    out = .append(a[i])
     i = i + 1
   }
+
   for j < b.len() {
-    out = out.append(b[j])
+    out = .append(b[j])
     j = j + 1
   }
+
   out
 }
 
 /// Return a new vector sorted by comparator cmp.
 pub fn sort_by<T>(xs: Vector<T>, cmp: fn(T, T) Order) Vector<T> {
   n := xs.len()
-  if n <= 1 { return xs }
+
+  if n <= 1 {
+    return xs
+  }
+
   mid := n / 2
   left := sort_by(xs.slice(0, mid), cmp)
   right := sort_by(xs.slice(mid, n), cmp)
@@ -152,9 +198,7 @@ pub fn sort_by<T>(xs: Vector<T>, cmp: fn(T, T) Order) Vector<T> {
 
 /// Return a new vector sorted using the Ord contract.
 pub fn sort<T: Ord>(xs: Vector<T>) Vector<T> {
-  xs.sort_by(fn(a: T, b: T) Order {
-    a.compare(b)
-  })
+  xs.sort_by(fn(a: T, b: T) Order { a.compare(b) })
 }
 
 /// Return the index of the first element matching a predicate, or .None.
@@ -164,32 +208,49 @@ pub fn position<A>(xs: Vector<A>, f: fn(A) Bool) Int? {
       return .Some(i)
     }
   }
+
   .None
 }
 
 /// Map each element to a vector and flatten the results.
 pub fn flat_map<A, B>(xs: Vector<A>, f: fn(A) Vector<B>) Vector<B> {
   out: Vector<B> = []
+
   for x in xs {
     for y in f(x) {
-      out = out.append(y)
+      out = .append(y)
     }
   }
+
   out
 }
 
 /// Lexicographic comparison of two vectors.
 pub fn compare<T: Ord>(a: Vector<T>, b: Vector<T>) Order {
-  min_len := if a.len() < b.len() { a.len() } else { b.len() }
+  min_len := if a.len() < b.len() {
+    a.len()
+  } else {
+    b.len()
+  }
   i := 0
+
   for i < min_len {
     case a[i].compare(b[i]) {
       .Eq => {},
       other => { return other },
     }
+
     i = i + 1
   }
+
   al := a.len()
   bl := b.len()
-  if al < bl { .Lt } else if al > bl { .Gt } else { .Eq }
+
+  if al < bl {
+    .Lt
+  } else if al > bl {
+    .Gt
+  } else {
+    .Eq
+  }
 }

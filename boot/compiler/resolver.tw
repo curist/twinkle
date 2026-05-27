@@ -538,6 +538,7 @@ pub fn register_builtin_methods(env: ResolvedEnv) ResolvedEnv {
       me("map", "vector$map"),
       me("filter", "vector$filter"),
       me("fold", "vector$fold"),
+      me("last", "vector$last"),
       me("find", "vector$find"),
       me("any", "vector$any"),
       me("all", "vector$all"),
