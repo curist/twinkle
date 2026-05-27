@@ -17,9 +17,11 @@ In scope:
 * Constructor and variant calls where signatures are available.
 * Active parameter selection based on cursor position.
 
-Out of scope for the first pass:
+* Incomplete code while typing: source-scanning fallback when AST is unavailable.
+* Fallback from failed AST resolution to source-scan (e.g. stale typed env).
 
-* Signature help for partially invalid nested syntax beyond simple recovery.
+Out of scope:
+
 * Overload handling; Twinkle has no overloads, so one signature is expected.
 
 ---
@@ -66,10 +68,16 @@ Retrigger characters:
 * Method calls include the expected receiver-adjusted labels.
 * Unknown or unresolved callees return null.
 * Multibyte text before the call maps cursor positions correctly.
+* Incomplete code (no closing paren) triggers source-scan fallback.
+* Incomplete code with commas tracks active parameter correctly.
+* Incomplete nested calls resolve the innermost function.
+* Incomplete module-qualified calls resolve via qualified name lookup.
+* Complete calls that fail typed resolution fall back to source scan.
 
 ---
 
 ## Exit Criteria
 
 Editors show accurate call signatures and active parameters for normal Twinkle
-function, module-qualified, and method-call syntax.
+function, module-qualified, and method-call syntax — including while the user is
+actively typing incomplete code.

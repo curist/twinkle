@@ -20,6 +20,25 @@ fn state_with_doc(uri: String, text: String) server_core.State {
   }
 }
 
+/// Simulate the real editing flow: first process valid code (populating cache),
+/// then update the document with incomplete code. Returns the state with
+/// warmed cache and the new incomplete document text.
+fn state_with_warm_cache(uri: String, valid_text: String, incomplete_text: String) server_core.State {
+  state := state_with_doc(uri, valid_text)
+
+  // Trigger a request on the valid code to populate the query cache
+  step := server_core.handle_message(state, sig_help_request(1, uri, 0, 0))
+
+  // Now update the document with incomplete code
+  step.state.documents = document_store.change_full_text(
+    step.state.documents,
+    uri,
+    incomplete_text,
+    .Some(2),
+  )
+  step.state
+}
+
 fn sig_help_request(id: Int, uri: String, line: Int, character: Int) protocol.Message {
   params := json.object([
     json.kv("textDocument", json.object([json.kv("uri", .Str(uri))])),
@@ -293,6 +312,177 @@ pub fn suite() runner.Suite {
             try assert.equal(h.active_param, 1)
           },
           .None => { return .Err("expected signature help after multibyte text, got null") },
+        }
+
+        .Ok({})
+      },
+    )
+    .test(
+      "incomplete call: cursor after open paren with no closing paren",
+      fn() {
+        // User just typed "add(" — no closing paren, parse fails as Call
+        valid := "fn add(a: Int, b: Int) Int { a + b }\nadd(1, 2)\n"
+        incomplete := "fn add(a: Int, b: Int) Int { a + b }\nadd("
+        state := state_with_warm_cache("file:///a.tw", valid, incomplete)
+
+        // cursor at end of file: line 1, char 4
+        step := server_core.handle_message(state, sig_help_request(1, "file:///a.tw", 1, 4))
+        info := try extract_sig_help(step)
+
+        case info {
+          .Some(h) => {
+            try assert.str_contains(h.label, "add")
+            try assert.equal(h.active_param, 0)
+            try assert.equal(h.param_labels.len(), 2)
+            try assert.equal(h.param_labels[0], "a: Int")
+            try assert.equal(h.param_labels[1], "b: Int")
+          },
+          .None => { return .Err("expected signature help for incomplete call, got null") },
+        }
+
+        .Ok({})
+      },
+    )
+    .test(
+      "incomplete call: cursor after comma with no closing paren",
+      fn() {
+        // User typed "add(1, " — second arg not yet filled, no close paren
+        valid := "fn add(a: Int, b: Int) Int { a + b }\nadd(1, 2)\n"
+        incomplete := "fn add(a: Int, b: Int) Int { a + b }\nadd(1, "
+        state := state_with_warm_cache("file:///a.tw", valid, incomplete)
+
+        // cursor at end: line 1, char 7
+        step := server_core.handle_message(state, sig_help_request(1, "file:///a.tw", 1, 7))
+        info := try extract_sig_help(step)
+
+        case info {
+          .Some(h) => {
+            try assert.str_contains(h.label, "add")
+            try assert.equal(h.active_param, 1)
+          },
+          .None => {
+            return .Err("expected signature help for incomplete call after comma, got null")
+          },
+        }
+
+        .Ok({})
+      },
+    )
+    .test(
+      "incomplete call inside function body",
+      fn() {
+        // Editing inside a function body — code won't typecheck
+        valid := "fn greet(name: String, loud: Bool) String { name }\nfn main() String {\n  greet(\"hi\", true)\n}\n"
+        incomplete := "fn greet(name: String, loud: Bool) String { name }\nfn main() String {\n  greet("
+        state := state_with_warm_cache("file:///a.tw", valid, incomplete)
+
+        // cursor at end: line 2, char 8
+        step := server_core.handle_message(state, sig_help_request(1, "file:///a.tw", 2, 8))
+        info := try extract_sig_help(step)
+
+        case info {
+          .Some(h) => {
+            try assert.str_contains(h.label, "greet")
+            try assert.equal(h.active_param, 0)
+            try assert.equal(h.param_labels[0], "name: String")
+            try assert.equal(h.param_labels[1], "loud: Bool")
+          },
+          .None => {
+            return .Err("expected signature help for incomplete call in fn body, got null")
+          },
+        }
+
+        .Ok({})
+      },
+    )
+    .test(
+      "incomplete call: multiple commas tracks active param",
+      fn() {
+        // User typed three args, working on fourth (no close paren)
+        valid := "fn make(a: Int, b: String, c: Bool) Int { a }\nmake(1, \"x\", true)\n"
+        incomplete := "fn make(a: Int, b: String, c: Bool) Int { a }\nmake(1, \"x\", "
+        state := state_with_warm_cache("file:///a.tw", valid, incomplete)
+
+        // cursor at end: line 1, char 13
+        step := server_core.handle_message(state, sig_help_request(1, "file:///a.tw", 1, 13))
+        info := try extract_sig_help(step)
+
+        case info {
+          .Some(h) => {
+            try assert.str_contains(h.label, "make")
+            try assert.equal(h.active_param, 2)
+          },
+          .None => { return .Err("expected active param 2 for incomplete call, got null") },
+        }
+
+        .Ok({})
+      },
+    )
+    .test(
+      "incomplete nested call resolves inner function",
+      fn() {
+        // outer(inner( — cursor inside inner's open paren
+        valid := "fn outer(x: Int) Int { x }\nfn inner(a: String) String { a }\nouter(inner(\"x\"))\n"
+        incomplete := "fn outer(x: Int) Int { x }\nfn inner(a: String) String { a }\nouter(inner("
+        state := state_with_warm_cache("file:///a.tw", valid, incomplete)
+
+        // cursor at end: line 2, char 12
+        step := server_core.handle_message(state, sig_help_request(1, "file:///a.tw", 2, 12))
+        info := try extract_sig_help(step)
+
+        case info {
+          .Some(h) => {
+            try assert.str_contains(h.label, "inner")
+            try assert.equal(h.param_labels[0], "a: String")
+          },
+          .None => {
+            return .Err("expected signature help for inner in incomplete nested call, got null")
+          },
+        }
+
+        .Ok({})
+      },
+    )
+    .test(
+      "incomplete module-qualified call shows signature",
+      fn() {
+        // User typed "path.join(" — module-qualified, incomplete
+        valid := "use @std.path\npath.join(\"a\", \"b\")\n"
+        incomplete := "use @std.path\npath.join("
+        state := state_with_warm_cache("file:///a.tw", valid, incomplete)
+
+        // cursor at end: line 1, char 10
+        step := server_core.handle_message(state, sig_help_request(1, "file:///a.tw", 1, 10))
+        info := try extract_sig_help(step)
+
+        case info {
+          .Some(h) => try assert.str_contains(h.label, "join"),
+          .None => {
+            return .Err("expected signature help for incomplete qualified call, got null")
+          },
+        }
+
+        .Ok({})
+      },
+    )
+    .test(
+      "complete call that fails typed resolution falls back to source scan",
+      fn() {
+        // io.write_stdout_text( ) parses as a complete Call, but typed
+        // resolution may fail — the source-scan fallback should still work.
+        valid := "use @std.path\npath.join(\"a\", \"b\")\n"
+        edited := "use @std.path\npath.join( )\n"
+        state := state_with_warm_cache("file:///a.tw", valid, edited)
+
+        // cursor inside parens: line 1, char 11
+        step := server_core.handle_message(state, sig_help_request(1, "file:///a.tw", 1, 11))
+        info := try extract_sig_help(step)
+
+        case info {
+          .Some(h) => try assert.str_contains(h.label, "join"),
+          .None => {
+            return .Err("expected signature help for parseable but unresolved call, got null")
+          },
         }
 
         .Ok({})

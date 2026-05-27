@@ -557,13 +557,7 @@ fn general_completions(snap: SemanticSnapshot, prefix: String, offset: Int) Vect
   }
 
   // Functions and types from the resolved env
-  env: ResolvedEnv? = case snap.typed {
-    .Some(typed) => .Some(typed.env),
-    .None => case snap.resolved {
-      .Some(resolved) => .Some(resolved.env),
-      .None => .None,
-    },
-  }
+  env := snap.best_env()
 
   case env {
     .Some(e) => {
@@ -979,12 +973,9 @@ fn variant_items(type_name: String, variants: Vector<ResolvedVariant>) Vector<
 }
 
 fn all_variant_completions(snap: SemanticSnapshot) Vector<lsp_completion.CompletionItem> {
-  env := case snap.typed {
-    .Some(typed) => typed.env,
-    .None => case snap.resolved {
-      .Some(resolved) => resolved.env,
-      .None => { return [] },
-    },
+  env := case snap.best_env() {
+    .Some(e) => e,
+    .None => { return [] },
   }
   items: Vector<lsp_completion.CompletionItem> = []
 

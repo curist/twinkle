@@ -348,7 +348,7 @@ fn handle_signature_help(state: State, req: protocol.Request) Step {
     .Some(o) => o,
     .None => { return null_response_step(state, req) },
   }
-  snap := workspace_snapshot(state, doc)
+  snap := completion_snapshot(state, doc)
   state.query_cache = snap.cache
 
   case query_signature_help.signature_help(snap, offset, doc.text) {

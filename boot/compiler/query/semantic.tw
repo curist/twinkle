@@ -9,7 +9,7 @@ use compiler.imports
 use compiler.query.cache
 use compiler.query.diagnostics
 use compiler.query.stage_runner
-use compiler.resolver.{ResolveResult}
+use compiler.resolver.{ResolveResult, ResolvedEnv}
 use lib.query.keys
 use lib.source.identity
 use lib.source.span.{Span}
@@ -25,6 +25,19 @@ pub type SemanticSnapshot = .{
   typed: CheckResult?,
   diagnostics: Vector<diagnostics.Diagnostic>,
   ok: Bool,
+}
+
+/// Best available ResolvedEnv: typed.env > resolved.env > None.
+/// Use this when you need function/type lookups but don't strictly require
+/// typed metadata (type_map, method_calls).
+pub fn best_env(snap: SemanticSnapshot) ResolvedEnv? {
+  case snap.typed {
+    .Some(typed) => .Some(typed.env),
+    .None => case snap.resolved {
+      .Some(resolved) => .Some(resolved.env),
+      .None => .None,
+    },
+  }
 }
 
 pub type SymbolKind = { Import, Type, Function, Let }
