@@ -43,6 +43,8 @@ pub type DocumentSymbolParams = .{ text_document: TextDocumentIdentifier }
 
 pub type SignatureHelpParams = .{ text_document: TextDocumentIdentifier, position: Position }
 
+pub type WorkspaceSymbolParams = .{ query: String }
+
 pub fn decode_did_open(params: json.Json?) Result<DidOpenTextDocumentParams, String> {
   value := try required_params(params)
   text_document := try json.decode(value, json.field("textDocument", text_document_item_decoder()))
@@ -130,6 +132,12 @@ pub fn decode_signature_help(params: json.Json?) Result<SignatureHelpParams, Str
   )
   position := try json.decode(value, json.field("position", position_decoder()))
   .Ok(.{ text_document, position })
+}
+
+pub fn decode_workspace_symbol(params: json.Json?) Result<WorkspaceSymbolParams, String> {
+  value := try required_params(params)
+  query := try json.decode(value, json.field("query", json.string()))
+  .Ok(.{ query })
 }
 
 pub fn decode_document_formatting(params: json.Json?) Result<DocumentFormattingParams, String> {

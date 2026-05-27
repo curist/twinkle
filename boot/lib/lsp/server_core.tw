@@ -19,6 +19,7 @@ use compiler.query.document_symbols as query_document_symbols
 use compiler.query.hover as query_hover
 use compiler.query.semantic
 use compiler.query.signature_help as query_signature_help
+use compiler.query.workspace_symbols as query_workspace_symbols
 use lib.json
 use lib.lsp.code_action as lsp_code_action
 use lib.lsp.completion as lsp_completion
@@ -31,6 +32,7 @@ use lib.lsp.params
 use lib.lsp.protocol
 use lib.lsp.range as lsp_range
 use lib.lsp.signature_help as lsp_signature_help
+use lib.lsp.workspace_symbol as lsp_workspace_symbol
 use lib.module.loader
 use lib.query.keys
 use lib.source.identity
@@ -88,6 +90,7 @@ fn handle_request(state: State, req: protocol.Request) Step {
             ),
             json.kv("codeActionProvider", .Bool(true)),
             json.kv("documentSymbolProvider", .Bool(true)),
+            json.kv("workspaceSymbolProvider", .Bool(true)),
             json.kv(
               "signatureHelpProvider",
               json.object([json.kv("triggerCharacters", json.array([.Str("("), .Str(",")]))]),
@@ -105,6 +108,7 @@ fn handle_request(state: State, req: protocol.Request) Step {
     "textDocument/documentSymbol" => handle_document_symbol(state, req),
     "textDocument/signatureHelp" => handle_signature_help(state, req),
     "textDocument/formatting" => handle_formatting(state, req),
+    "workspace/symbol" => handle_workspace_symbol(state, req),
     "shutdown" => {
       state.shutdown_requested = true
       .{ state, outgoing: [protocol.success_response(req.id, .Null)] }
@@ -351,6 +355,49 @@ fn handle_document_symbol(state: State, req: protocol.Request) Step {
       ),
     ],
   }
+}
+
+fn handle_workspace_symbol(state: State, req: protocol.Request) Step {
+  ws_params := case params.decode_workspace_symbol(req.params) {
+    .Ok(p) => p,
+    .Err(_) => { return empty_array_response_step(state, req) },
+  }
+
+  // We need at least one open document to anchor workspace analysis.
+  open_docs := state.documents.docs.values()
+
+  if open_docs.len() == 0 {
+    return empty_array_response_step(state, req)
+  }
+
+  // Use the first open doc to trigger workspace analysis, which populates
+  // the cache with all reachable modules.
+  doc := open_docs[0]
+  snap := workspace_snapshot(state, doc)
+  state.query_cache = snap.cache
+
+  symbols := query_workspace_symbols.workspace_symbols(snap.cache, ws_params.query)
+  response := lsp_workspace_symbol.workspace_symbol_response(
+    symbols,
+    fn(uri: String) line_index.LineIndex? {
+      // Prefer open-doc indexes; fall back to reading from disk.
+      case document_by_identity_uri(state.documents, uri) {
+        .Some(d) => { return .Some(d.index) },
+        .None => {},
+      }
+
+      p := case identity_path_from_uri(uri) {
+        .Some(path) => path,
+        .None => { return .None },
+      }
+
+      case fs.read_text(p) {
+        .Ok(text) => .Some(line_index.new(text)),
+        .Err(_) => .None,
+      }
+    },
+  )
+  .{ state, outgoing: [protocol.success_response(req.id, response)] }
 }
 
 fn handle_formatting(state: State, req: protocol.Request) Step {

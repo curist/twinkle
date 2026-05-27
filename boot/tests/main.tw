@@ -50,6 +50,7 @@ use .suites.lsp_params_suite
 use .suites.lsp_protocol_suite
 use .suites.lsp_server_core_suite
 use .suites.lsp_signature_help_suite
+use .suites.lsp_workspace_symbol_suite
 use .suites.module_loader_suite
 use .suites.multi_module_suite
 use .suites.opt_analysis_suite
@@ -177,6 +178,7 @@ runner.run_all([
   lsp_definition_suite.suite(),
   lsp_document_symbol_suite.suite(),
   lsp_signature_help_suite.suite(),
+  lsp_workspace_symbol_suite.suite(),
   multi_module_suite.suite(),
   base_env_guardrail_suite.suite(),
   signature_loader_suite.suite(),

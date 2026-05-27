@@ -1,0 +1,168 @@
+/// Extract symbols from all workspace modules for workspace/symbol queries.
+
+use compiler.ast
+use compiler.query.cache
+use compiler.query.document_symbols.{SymbolKind}
+use lib.source.identity
+use lib.source.span.{Span}
+
+pub type WorkspaceSymbol = .{
+  name: String,
+  kind: SymbolKind,
+  container_name: String,
+  uri: String,
+  range: Span,
+  selection_range: Span,
+}
+
+/// Gather symbols from all parsed modules in the cache, filtered by query.
+pub fn workspace_symbols(store: cache.Store, query: String) Vector<WorkspaceSymbol> {
+  lower_query := to_lower(query)
+  result: Vector<WorkspaceSymbol> = []
+
+  for canonical_path in store.parsed.keys() {
+    parsed := case cache.latest_parsed(store, canonical_path) {
+      .Some(p) => p,
+      .None => { continue },
+    }
+
+    id := identity.from_path(canonical_path)
+    module_name := module_display_name(canonical_path)
+
+    for item in parsed.module.items {
+      symbols := symbols_from_item(item, module_name, id.uri)
+
+      for sym in symbols {
+        if lower_query == "" or contains_lower(sym.name, lower_query) {
+          result = .append(sym)
+        }
+      }
+    }
+  }
+
+  result
+}
+
+fn symbols_from_item(item: ast.Item, container: String, uri: String) Vector<WorkspaceSymbol> {
+  case item {
+    .Function(decl) => [
+      .{
+        name: decl.name,
+        kind: .Function,
+        container_name: container,
+        uri,
+        range: decl.span,
+        selection_range: decl.name_span,
+      },
+    ],
+    .ExternFunction(decl) => [
+      .{
+        name: decl.name,
+        kind: .Function,
+        container_name: container,
+        uri,
+        range: decl.span,
+        selection_range: decl.name_span,
+      },
+    ],
+    .Type(decl) => type_symbols(decl, container, uri),
+    .ExternType(decl) => [
+      .{
+        name: decl.name,
+        kind: .Struct,
+        container_name: container,
+        uri,
+        range: decl.span,
+        selection_range: decl.span,
+      },
+    ],
+    .Use(_) => [],
+    .Stmt(_) => [],
+    .ErrorItem(_) => [],
+  }
+}
+
+fn type_symbols(decl: ast.TypeDecl, container: String, uri: String) Vector<WorkspaceSymbol> {
+  result: Vector<WorkspaceSymbol> = []
+  kind := case decl.def {
+    .Record(_) => SymbolKind.Struct,
+    .Sum(_) => SymbolKind.Enum,
+    .Alias(_) => SymbolKind.TypeParameter,
+    .ErrorDef(_) => SymbolKind.Struct,
+  }
+  result = .append(
+    .{
+      name: decl.name,
+      kind,
+      container_name: container,
+      uri,
+      range: decl.span,
+      selection_range: decl.span,
+    },
+  )
+
+  variants := case decl.def {
+    .Sum(vs) => vs,
+    _ => { return result },
+  }
+
+  for v in variants {
+    result = .append(
+      .{
+        name: v.name,
+        kind: .EnumMember,
+        container_name: decl.name,
+        uri,
+        range: v.span,
+        selection_range: v.span,
+      },
+    )
+  }
+
+  result
+}
+
+/// Extract a short module display name from a canonical path.
+/// Strips directory prefix and .tw extension.
+fn module_display_name(canonical_path: String) String {
+  start := 0
+
+  for i in range(canonical_path.len()) {
+    if canonical_path[i].to_int() == 47 {
+      start = i + 1
+    }
+  }
+
+  name := canonical_path.slice(start, canonical_path.len())
+
+  if name.ends_with(".tw") {
+    name.slice(0, name.len() - 3)
+  } else {
+    name
+  }
+}
+
+fn to_lower(s: String) String {
+  result := ""
+
+  for b in s.utf8_bytes() {
+    n := b.to_int()
+    code := if n >= 65 and n <= 90 {
+      n + 32
+    } else {
+      n
+    }
+
+    case String.from_char_code(code) {
+      .Some(ch) => result = "${result}${ch}",
+      .None => {},
+    }
+  }
+
+  result
+}
+
+fn contains_lower(name: String, lower_query: String) Bool {
+  lower_name := to_lower(name)
+  lower_name.index_of(lower_query) != .None
+}

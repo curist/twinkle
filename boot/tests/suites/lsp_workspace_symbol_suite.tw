@@ -1,0 +1,194 @@
+use compiler.query.cache as query_cache
+use lib.json
+use lib.lsp.document_store
+use lib.lsp.protocol
+use lib.lsp.server_core
+use tests.assert
+use tests.runner
+
+fn state_with_doc(uri: String, text: String) server_core.State {
+  docs := document_store.open(document_store.empty(), uri, text, .Some(1))
+  server_core.State.{
+    initialized: true,
+    shutdown_requested: false,
+    should_exit: false,
+    documents: docs,
+    query_cache: query_cache.empty(),
+    diagnostics_pending: false,
+    diagnostics_deadline_ms: 0.0,
+    last_published_versions: Dict.new(),
+  }
+}
+
+type DocEntry = .{ uri: String, text: String }
+
+fn state_with_docs(entries: Vector<DocEntry>) server_core.State {
+  store := document_store.empty()
+
+  for entry, i in entries {
+    store = document_store.open(store, entry.uri, entry.text, .Some(i + 1))
+  }
+
+  server_core.State.{
+    initialized: true,
+    shutdown_requested: false,
+    should_exit: false,
+    documents: store,
+    query_cache: query_cache.empty(),
+    diagnostics_pending: false,
+    diagnostics_deadline_ms: 0.0,
+    last_published_versions: Dict.new(),
+  }
+}
+
+fn ws_symbol_request(id: Int, query: String) protocol.Message {
+  params := json.object([json.kv("query", .Str(query))])
+  protocol.Message.Request(.{ id: .IntId(id), method: "workspace/symbol", params: .Some(params) })
+}
+
+type SymbolInfo = .{ name: String, kind: Int, container_name: String, uri: String }
+
+fn extract_symbols(step: server_core.Step) Vector<SymbolInfo>!String {
+  if step.outgoing.len() != 1 {
+    return .Err("expected one outgoing message")
+  }
+
+  out := step.outgoing[0]
+  result := try json.decode(out, json.field("result", json.raw()))
+  items := case result {
+    .Array(arr) => arr,
+    _ => { return .Err("expected array result") },
+  }
+
+  result: Vector<SymbolInfo> = []
+
+  for item in items {
+    result = .append(try extract_one_symbol(item))
+  }
+
+  .Ok(result)
+}
+
+fn extract_one_symbol(item: json.Json) SymbolInfo!String {
+  name := try json.decode(item, json.field("name", json.string()))
+  kind := try json.decode(item, json.field("kind", json.int()))
+  container_name := try json.decode(item, json.field("containerName", json.string()))
+  location := try json.decode(item, json.field("location", json.raw()))
+  uri := try json.decode(location, json.field("uri", json.string()))
+  .Ok(.{ name, kind, container_name, uri })
+}
+
+fn find_symbol(symbols: Vector<SymbolInfo>, name: String) SymbolInfo? {
+  for s in symbols {
+    if s.name == name {
+      return .Some(s)
+    }
+  }
+
+  .None
+}
+
+pub fn suite() runner.Suite {
+  runner.suite("lsp workspace symbol")
+    .test(
+      "finds functions from open document",
+      fn() {
+        src := "fn greet() String { \"hi\" }\nfn add(a: Int, b: Int) Int { a + b }\n"
+        state := state_with_doc("file:///a.tw", src)
+        step := server_core.handle_message(state, ws_symbol_request(1, ""))
+        symbols := try extract_symbols(step)
+        greet := try find_symbol(symbols, "greet").ok_or("greet not found")
+        try assert.equal(greet.kind, 12) // Function
+        add := try find_symbol(symbols, "add").ok_or("add not found")
+        try assert.equal(add.kind, 12)
+        .Ok({})
+      },
+    )
+    .test(
+      "finds types and variants",
+      fn() {
+        src := "type Shape = { Circle(Float), Rect(Float, Float) }\ntype Point = .{ x: Int, y: Int }\n"
+        state := state_with_doc("file:///a.tw", src)
+        step := server_core.handle_message(state, ws_symbol_request(1, ""))
+        symbols := try extract_symbols(step)
+        shape := try find_symbol(symbols, "Shape").ok_or("Shape not found")
+        try assert.equal(shape.kind, 10) // Enum
+        circle := try find_symbol(symbols, "Circle").ok_or("Circle not found")
+        try assert.equal(circle.kind, 22) // EnumMember
+        try assert.equal(circle.container_name, "Shape")
+        point := try find_symbol(symbols, "Point").ok_or("Point not found")
+        try assert.equal(point.kind, 23) // Struct
+        .Ok({})
+      },
+    )
+    .test(
+      "query filters by substring match",
+      fn() {
+        src := "fn greet() String { \"hi\" }\nfn add(a: Int, b: Int) Int { a + b }\ntype Point = .{ x: Int }\n"
+        state := state_with_doc("file:///a.tw", src)
+        step := server_core.handle_message(state, ws_symbol_request(1, "gre"))
+        symbols := try extract_symbols(step)
+        try assert.equal(symbols.len(), 1)
+        try assert.equal(symbols[0].name, "greet")
+        .Ok({})
+      },
+    )
+    .test(
+      "query matching is case-insensitive",
+      fn() {
+        src := "type MyWidget = .{ id: Int }\nfn make_widget() MyWidget { .{ id: 1 } }\n"
+        state := state_with_doc("file:///a.tw", src)
+        step := server_core.handle_message(state, ws_symbol_request(1, "widget"))
+        symbols := try extract_symbols(step)
+        widget_type := try find_symbol(symbols, "MyWidget").ok_or("MyWidget not found")
+        try assert.equal(widget_type.kind, 23)
+        widget_fn := try find_symbol(symbols, "make_widget").ok_or("make_widget not found")
+        try assert.equal(widget_fn.kind, 12)
+        .Ok({})
+      },
+    )
+    .test(
+      "no open documents returns empty array",
+      fn() {
+        state := server_core.State.{
+          initialized: true,
+          shutdown_requested: false,
+          should_exit: false,
+          documents: document_store.empty(),
+          query_cache: query_cache.empty(),
+          diagnostics_pending: false,
+          diagnostics_deadline_ms: 0.0,
+          last_published_versions: Dict.new(),
+        }
+        step := server_core.handle_message(state, ws_symbol_request(1, "foo"))
+        symbols := try extract_symbols(step)
+        try assert.equal(symbols.len(), 0)
+        .Ok({})
+      },
+    )
+    .test(
+      "initialize advertises workspaceSymbolProvider",
+      fn() {
+        msg := protocol.Message.Request(.{ id: .IntId(1), method: "initialize", params: .None })
+        step := server_core.handle_message(server_core.initial_state(), msg)
+        out := step.outgoing[0]
+        result := try json.decode(out, json.field("result", json.raw()))
+        caps := try json.decode(result, json.field("capabilities", json.raw()))
+        try assert.is_true(
+          try json.decode(caps, json.field("workspaceSymbolProvider", json.bool())),
+        )
+        .Ok({})
+      },
+    )
+    .test(
+      "unmatched query returns empty array",
+      fn() {
+        src := "fn greet() String { \"hi\" }\n"
+        state := state_with_doc("file:///a.tw", src)
+        step := server_core.handle_message(state, ws_symbol_request(1, "zzzzz"))
+        symbols := try extract_symbols(step)
+        try assert.equal(symbols.len(), 0)
+        .Ok({})
+      },
+    )
+}

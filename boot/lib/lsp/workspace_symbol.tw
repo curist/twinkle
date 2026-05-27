@@ -1,0 +1,49 @@
+/// LSP workspace/symbol response adapter.
+///
+/// Returns a flat SymbolInformation[] array (not hierarchical DocumentSymbol).
+
+use compiler.query.document_symbols.{SymbolKind}
+use compiler.query.workspace_symbols.{WorkspaceSymbol}
+use lib.json
+use lib.text.line_index
+
+use .range.{range_to_json}
+
+pub fn workspace_symbol_response(
+  symbols: Vector<WorkspaceSymbol>,
+  index_for_uri: fn(String) line_index.LineIndex?,
+) json.Json {
+  result: Vector<json.Json> = []
+
+  for sym in symbols {
+    case index_for_uri(sym.uri) {
+      .Some(index) => result = result.append(symbol_to_json(sym, index)),
+      .None => {},
+    }
+  }
+
+  json.array(result)
+}
+
+fn symbol_to_json(sym: WorkspaceSymbol, index: line_index.LineIndex) json.Json {
+  range := line_index.byte_range_to_range(index, sym.range.start, sym.range.end, .Utf16)
+  location := json.object([json.kv("uri", .Str(sym.uri)), json.kv("range", range_to_json(range))])
+  json.object([
+    json.kv("name", .Str(sym.name)),
+    json.kv("kind", .Int(symbol_kind_to_int(sym.kind))),
+    json.kv("location", location),
+    json.kv("containerName", .Str(sym.container_name)),
+  ])
+}
+
+fn symbol_kind_to_int(kind: SymbolKind) Int {
+  case kind {
+    .Module => 2,
+    .Function => 12,
+    .Struct => 23,
+    .Enum => 10,
+    .EnumMember => 22,
+    .Field => 8,
+    .TypeParameter => 26,
+  }
+}
