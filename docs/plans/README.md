@@ -40,7 +40,6 @@ Self-hosting is complete. Historical design and status docs live in
 |------|-------------|--------|---------|
 | Boot compiler layout | Reorganize `boot/compiler/` into focused subdirectories with stable end-state names | Planned | [boot-compiler-layout-reorg.md](boot-compiler-layout-reorg.md) |
 | Boot performance | Track current compiler bottlenecks and optimization wins | In Progress | [boot-compiler-perf.md](boot-compiler-perf.md) |
-| Codegen integration repros | Restore disabled codegen integration repros by fixing builtin linking, method-value specialization, and return-position closures | Planned | [codegen-integration-repros.md](codegen-integration-repros.md) |
 | Task concurrency | Add library-first cooperative `Task<T>` concurrency without new syntax | Planned | [task-concurrency.md](task-concurrency.md) |
 
 
@@ -49,7 +48,6 @@ Self-hosting is complete. Historical design and status docs live in
 | Area | Description | Status | Details |
 |------|-------------|--------|---------|
 | Tooling | Formatter (done), linter, LSP, package manager | In Progress | [tooling.md](tooling.md) |
-| LSP completion | Reliability during partial edits, protocol coverage | In Progress | [lsp-completion.md](lsp-completion.md) |
 | LSP contract hover | Hover information for builtin contract bounds and contract-backed method calls | Done | [archive/lsp-contract-hover.md](archive/lsp-contract-hover.md) |
 
 ### Active cross-cutting plans

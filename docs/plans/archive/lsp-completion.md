@@ -86,11 +86,12 @@ Implemented in:
 
 ### C5 — Remaining Work
 
-* [ ] Function-local variable completions (persist checker locals)
-* [ ] Wire cursor-hole re-parsing into `member_completions` for correct
+* [x] Function-local variable completions (AST walk for params + let-bindings)
+* [x] Wire cursor-hole re-parsing into `member_completions` for correct
   receiver type in cross-line cases (`foo.|\nbar()`)
-* [ ] Import completion: filesystem module discovery
-* [ ] Snippets / import auto-insertion
+* [x] Import completion: filesystem module discovery (stdlib via core_lib,
+  project modules via filesystem, `@std` suggestion at top level)
+* [ ] Snippets / import auto-insertion (out of scope for this plan)
 
 ---
 

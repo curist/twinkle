@@ -7,9 +7,14 @@
 /// Works with the existing SemanticSnapshot, falling back to stale cached
 /// state when the current analysis fails.
 
+use @std.fs
+use @std.path
+
 use compiler.ast.{Block, CaseArm, Expr, Item, Stmt}
+use compiler.checker.{CheckResult}
 use compiler.lexer
 use compiler.mono_type.{MonoType}
+use compiler.parser
 use compiler.query.ast_walk.{NodeContext, find_node_in_block, find_node_in_stmt}
 use compiler.query.semantic.{SemanticSnapshot}
 use compiler.query.util.{find_map}
@@ -19,8 +24,12 @@ use compiler.resolver.{
 }
 use compiler.tokens.{Token}
 use lib.lsp.completion as lsp_completion
+use lib.module.core_lib
+use lib.module.loader
 
-pub type CompletionContext = { Member(Int), General(String), Import, Variant }
+type ImportPrefix = .{ parent: Vector<String>, prefix: String, is_stdlib: Bool, is_relative: Bool }
+
+pub type CompletionContext = { Member(Int), General(String), Import(ImportPrefix), Variant }
 
 pub fn complete(snap: SemanticSnapshot, offset: Int, source: String) Vector<
   lsp_completion.CompletionItem,
@@ -29,8 +38,8 @@ pub fn complete(snap: SemanticSnapshot, offset: Int, source: String) Vector<
 
   case ctx {
     .Member(dot_offset) => member_completions(snap, dot_offset, source),
-    .General(prefix) => general_completions(snap, prefix),
-    .Import => import_completions(snap),
+    .General(prefix) => general_completions(snap, prefix, offset),
+    .Import(ip) => import_completions(snap, ip),
     .Variant => variant_completions(snap, offset),
   }
 }
@@ -54,6 +63,13 @@ fn classify_context(source: String, offset: Int) CompletionContext {
   }
 
   prev := tokens[cursor_idx - 1]
+
+  // Import context detection — must run before dot/member checks
+  // since `use @std.` should be Import, not Member.
+  case try_extract_import_path(tokens, cursor_idx, source) {
+    .Some(ip) => { return .Import(ip) },
+    .None => {},
+  }
 
   // After a dot → could be member or variant
   if prev.kind == .Dot {
@@ -85,30 +101,6 @@ fn classify_context(source: String, offset: Int) CompletionContext {
     }
   }
 
-  // After `use` keyword → import completion
-  if prev.kind == .Use {
-    return .Import
-  }
-
-  // Walk backwards through ident/dot/at to detect use path context
-  if cursor_idx > 1 {
-    i := cursor_idx - 1
-
-    for i >= 0 {
-      tk := tokens[i]
-
-      if tk.kind == .Use {
-        return .Import
-      }
-
-      if tk.kind != .Ident and tk.kind != .Dot and tk.kind != .At {
-        break
-      }
-
-      i = i - 1
-    }
-  }
-
   // General completion — extract prefix from current identifier being typed
   if prev.kind == .Ident {
     if offset >= prev.span.start and offset <= prev.span.end {
@@ -131,6 +123,73 @@ fn find_cursor_hole(tokens: Vector<Token>) Int {
   -1
 }
 
+fn try_extract_import_path(tokens: Vector<Token>, cursor_idx: Int, source: String) ImportPrefix? {
+  if cursor_idx == 0 {
+    return .None
+  }
+
+  i := cursor_idx - 1
+  prefix := ""
+  parent: Vector<String> = []
+  is_stdlib := false
+  found_use := false
+
+  // First token before cursor determines prefix
+  tk := tokens[i]
+
+  if tk.kind == .Use {
+    return .Some(.{ parent: [], prefix: "", is_stdlib: false, is_relative: false })
+  }
+
+  if tk.kind == .Ident {
+    prefix = source.slice(tk.span.start, tk.span.end)
+    i = i - 1
+  } else if tk.kind == .Dot {
+    i = i - 1
+  } else {
+    return .None
+  }
+
+  // Walk backwards through path segments
+  for i >= 0 {
+    tk = tokens[i]
+
+    case tk.kind {
+      .Use => {
+        found_use = true
+        break
+      },
+      .Ident => {
+        name := source.slice(tk.span.start, tk.span.end)
+        parent = .append(name)
+      },
+      .Dot => {},
+      .At => {
+        is_stdlib = true
+      },
+      _ => { break },
+    }
+
+    i = i - 1
+  }
+
+  if !found_use {
+    return .None
+  }
+
+  // Reverse parent since we collected backwards
+  reversed: Vector<String> = []
+
+  for k in 0..parent.len() {
+    reversed = .append(parent[parent.len() - 1 - k])
+  }
+
+  // Detect relative: first thing after Use is Dot (not At/Ident)
+  is_relative := !is_stdlib and i + 1 < tokens.len() and tokens[i + 1].kind == .Dot
+
+  .Some(.{ parent: reversed, prefix, is_stdlib, is_relative })
+}
+
 // ── Member completions ──────────────────────────────────────────────
 fn member_completions(snap: SemanticSnapshot, dot_offset: Int, source: String) Vector<
   lsp_completion.CompletionItem,
@@ -139,23 +198,33 @@ fn member_completions(snap: SemanticSnapshot, dot_offset: Int, source: String) V
     .Some(v) => v,
     .None => { return [] },
   }
-  parsed := case snap.parsed {
-    .Some(v) => v,
-    .None => { return [] },
-  }
 
-  // Find the receiver expression before the dot.
-  // We search at dot_offset - 1 to land inside the receiver expression,
-  // since in the (possibly stale) AST the receiver's span ends at dot_offset
-  // and span.contains uses half-open [start, end).
   if dot_offset <= 0 {
     return []
   }
 
   search_offset := dot_offset - 1
-  receiver_type := find_receiver_type(parsed.module.items, typed.type_map, search_offset)
 
-  case receiver_type {
+  // Re-parse with cursor-hole injection after the dot so the parser
+  // doesn't merge `xs.\nfoo()` into `xs.foo()`.  The CursorHole acts
+  // as a syntactic fence, keeping the receiver expression clean.
+  cursor_offset := dot_offset + 1
+  lexed := lexer.lex_with_cursor(source, 0, cursor_offset)
+  reparsed := parser.parse_tokens(source, 0, lexed.value, lexed.diagnostics)
+  reparse_items := reparsed.value.items
+
+  // Prefer name-based resolution: when editing shifts expression IDs,
+  // direct type_map lookups can return wrong types.  Name resolution is
+  // always correct for simple identifiers because the binding's value
+  // expression (before the edit point) keeps its original ID.
+  case resolve_receiver_by_name(reparse_items, typed, search_offset) {
+    .Some(ty) => { return completions_for_type(typed.env, ty) },
+    .None => {},
+  }
+
+  // Fall back to direct type_map lookup (works for chained access
+  // and cases where expression IDs happen to align).
+  case find_receiver_type(reparse_items, typed.type_map, search_offset) {
     .Some(ty) => completions_for_type(typed.env, ty),
     .None => [],
   }
@@ -191,6 +260,91 @@ fn receiver_type_from_ctx(type_map: Dict<Int, MonoType>, ctx: NodeContext) MonoT
     .ExprNode(expr) => type_map[expr.id],
     _ => .None,
   }
+}
+
+/// Fallback receiver type resolution: extract the receiver's identifier name
+/// from the current AST, then look up its type from function params or
+/// let-bindings whose value expression IDs are stable in the stale type_map
+/// (because the code defining them is unchanged between edits).
+fn resolve_receiver_by_name(items: Vector<Item>, typed: CheckResult, offset: Int) MonoType? {
+  for item in items {
+    case item {
+      .Function(decl) => {
+        if !decl.span.contains(offset) {
+          continue
+        }
+
+        name := try receiver_ident_name(decl.body, offset)
+
+        // Check function parameters
+        case typed.env.lookup_function(decl.name) {
+          .Some(sig) => {
+            for i in 0..decl.params.len() {
+              if decl.params[i].name == name and i < sig.params.len() {
+                return .Some(sig.params[i])
+              }
+            }
+          },
+          .None => {},
+        }
+
+        // Check let-bindings before the cursor
+        return find_let_type_in_block(decl.body, name, typed.type_map, offset)
+      },
+      .Stmt(stmt) => {
+        name := case find_node_in_stmt(stmt, offset) {
+          .Some(.ExprNode(e)) => case e.kind {
+            .Ident(n) => n,
+            _ => { continue },
+          },
+          _ => { continue },
+        }
+
+        // Check earlier top-level let-bindings
+        for prev_item in items {
+          case prev_item {
+            .Stmt(.Let(ls)) => if ls.name == name and ls.span.end <= offset {
+              return typed.type_map[ls.value.id]
+            },
+            _ => {},
+          }
+        }
+
+        return .None
+      },
+      _ => {},
+    }
+  }
+
+  .None
+}
+
+fn receiver_ident_name(block: Block, offset: Int) String? {
+  ctx := try find_node_in_block(block, offset)
+
+  case ctx {
+    .ExprNode(e) => case e.kind {
+      .Ident(n) => .Some(n),
+      _ => .None,
+    },
+    _ => .None,
+  }
+}
+
+fn find_let_type_in_block(block: Block, name: String, type_map: Dict<Int, MonoType>, offset: Int) MonoType? {
+  // Walk backwards so the latest rebinding wins
+  found: MonoType? = .None
+
+  for stmt in block.stmts {
+    case stmt {
+      .Let(ls) => if ls.name == name and ls.span.end <= offset {
+        found = type_map[ls.value.id]
+      },
+      _ => {},
+    }
+  }
+
+  found
 }
 
 fn completions_for_type(env: ResolvedEnv, ty: MonoType) Vector<lsp_completion.CompletionItem> {
@@ -317,7 +471,9 @@ fn sig_to_detail(env: ResolvedEnv, sig: FunctionSig) String {
 }
 
 // ── General completions ─────────────────────────────────────────────
-fn general_completions(snap: SemanticSnapshot, prefix: String) Vector<lsp_completion.CompletionItem> {
+fn general_completions(snap: SemanticSnapshot, prefix: String, offset: Int) Vector<
+  lsp_completion.CompletionItem,
+> {
   items: Vector<lsp_completion.CompletionItem> = []
 
   // Keywords
@@ -423,7 +579,124 @@ fn general_completions(snap: SemanticSnapshot, prefix: String) Vector<lsp_comple
     .None => {},
   }
 
+  // Local variables (function params + let-bindings in scope at cursor)
+  items = .concat(local_completions(snap, offset, prefix))
+
   items
+}
+
+// ── Local variable completions ──────────────────────────────────────
+fn local_completions(snap: SemanticSnapshot, offset: Int, prefix: String) Vector<
+  lsp_completion.CompletionItem,
+> {
+  typed := case snap.typed {
+    .Some(v) => v,
+    .None => { return [] },
+  }
+  parsed := case snap.parsed {
+    .Some(v) => v,
+    .None => { return [] },
+  }
+
+  result: Vector<lsp_completion.CompletionItem> = []
+
+  for item in parsed.module.items {
+    case item {
+      .Function(decl) => {
+        if !decl.span.contains(offset) {
+          continue
+        }
+
+        // Function parameters — look up types from the function signature
+        case typed.env.lookup_function(decl.name) {
+          .Some(sig) => {
+            for i in 0..decl.params.len() {
+              pname := decl.params[i].name
+
+              if prefix != "" and !pname.starts_with(prefix) {
+                continue
+              }
+
+              if i < sig.params.len() {
+                result = .append(
+                  lsp_completion.CompletionItem.{
+                    label: pname,
+                    kind: 6,
+                    detail: .Some(ty_to_string_env(typed.env, sig.params[i])),
+                    documentation: .None,
+                  },
+                )
+              }
+            }
+          },
+          .None => {},
+        }
+
+        // Let-bindings in the function body before the cursor
+        result = .concat(
+          collect_lets_in_block(decl.body, typed.type_map, typed.env, offset, prefix),
+        )
+      },
+      .Stmt(.Let(ls)) => {
+        // Top-level let-bindings before the cursor
+        if ls.span.end <= offset {
+          if prefix == "" or ls.name.starts_with(prefix) {
+            case typed.type_map[ls.value.id] {
+              .Some(ty) => {
+                result = .append(
+                  lsp_completion.CompletionItem.{
+                    label: ls.name,
+                    kind: 6,
+                    detail: .Some(ty_to_string_env(typed.env, ty)),
+                    documentation: .None,
+                  },
+                )
+              },
+              .None => {},
+            }
+          }
+        }
+      },
+      _ => {},
+    }
+  }
+
+  result
+}
+
+fn collect_lets_in_block(
+  block: Block,
+  type_map: Dict<Int, MonoType>,
+  env: ResolvedEnv,
+  offset: Int,
+  prefix: String,
+) Vector<lsp_completion.CompletionItem> {
+  result: Vector<lsp_completion.CompletionItem> = []
+
+  for stmt in block.stmts {
+    case stmt {
+      .Let(ls) => if ls.span.end <= offset {
+        if prefix == "" or ls.name.starts_with(prefix) {
+          case type_map[ls.value.id] {
+            .Some(ty) => {
+              result = .append(
+                lsp_completion.CompletionItem.{
+                  label: ls.name,
+                  kind: 6,
+                  detail: .Some(ty_to_string_env(env, ty)),
+                  documentation: .None,
+                },
+              )
+            },
+            .None => {},
+          }
+        }
+      },
+      _ => {},
+    }
+  }
+
+  result
 }
 
 fn fn_sig_to_detail(env: ResolvedEnv, sig: FunctionSig) String {
@@ -447,20 +720,116 @@ fn fn_sig_to_detail(env: ResolvedEnv, sig: FunctionSig) String {
 }
 
 // ── Import completions ──────────────────────────────────────────────
-fn import_completions(snap: SemanticSnapshot) Vector<lsp_completion.CompletionItem> {
-  resolved := case snap.resolved {
-    .Some(r) => r,
-    .None => { return [] },
+fn import_completions(snap: SemanticSnapshot, ip: ImportPrefix) Vector<
+  lsp_completion.CompletionItem,
+> {
+  items: Vector<lsp_completion.CompletionItem> = []
+  prefix := ip.prefix
+
+  if ip.is_stdlib {
+    // After @std. — list stdlib modules
+    stdlib_root := loader.resolve_stdlib_root()
+
+    // Build path under stdlib root (skip "std" segment)
+    sub_segments := if ip.parent.len() > 0 and ip.parent[0] == "std" {
+      ip.parent.slice(1, ip.parent.len())
+    } else {
+      ip.parent
+    }
+
+    dir := if sub_segments.len() > 0 {
+      "${stdlib_root}/${sub_segments.join("/")}"
+    } else {
+      stdlib_root
+    }
+
+    items = .concat(list_modules_in_dir(dir, prefix))
+
+    return items
   }
 
-  collect ns in resolved.env.extern_namespaces.keys() {
-    lsp_completion.CompletionItem.{
-      label: ns,
-      kind: 9,
-      detail: .Some("module"),
-      documentation: .None,
+  // Top-level: suggest @std
+  if ip.parent.len() == 0 {
+    if prefix == "" or "@std".starts_with(prefix) {
+      items = .append(
+        lsp_completion.CompletionItem.{
+          label: "@std",
+          kind: 9,
+          detail: .Some("standard library"),
+          documentation: .None,
+        },
+      )
     }
   }
+
+  // Extern namespaces
+  case snap.resolved {
+    .Some(r) => {
+      for ns in r.env.extern_namespaces.keys() {
+        if prefix == "" or ns.starts_with(prefix) {
+          items = .append(
+            lsp_completion.CompletionItem.{
+              label: ns,
+              kind: 9,
+              detail: .Some("module"),
+              documentation: .None,
+            },
+          )
+        }
+      }
+    },
+    .None => {},
+  }
+
+  // Project modules from filesystem
+  base := if ip.is_relative {
+    path.dirname(snap.canonical_path)
+  } else {
+    snap.project_root
+  }
+
+  dir := if ip.parent.len() > 0 {
+    "${base}/${ip.parent.join("/")}"
+  } else {
+    base
+  }
+
+  items = .concat(list_modules_in_dir(dir, prefix))
+  items
+}
+
+fn list_modules_in_dir(dir: String, prefix: String) Vector<lsp_completion.CompletionItem> {
+  entries := case core_lib.list_dir(dir) {
+    .Some(names) => names,
+    .None => case fs.list_dir(dir) {
+      .Ok(dir_entries) => collect e in dir_entries {
+        e.name
+      },
+      .Err(_) => { return [] },
+    },
+  }
+  result: Vector<lsp_completion.CompletionItem> = []
+
+  for name in entries {
+    module_name := if name.ends_with(".tw") {
+      name.slice(0, name.len() - 3)
+    } else {
+      name
+    }
+
+    if prefix == "" or module_name.starts_with(prefix) {
+      result = .append(
+        lsp_completion.CompletionItem.{
+          label: module_name,
+          kind: 9,
+          detail: .Some("module"),
+          documentation: .None,
+        },
+      )
+    }
+  }
+
+  result
 }
 
 // ── Variant completions ─────────────────────────────────────────────
