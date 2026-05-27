@@ -7,7 +7,10 @@ use @std.date
 use @std.fs
 use @std.path
 
+use compiler.fmt.formatter
 use compiler.imports
+use compiler.lexer
+use compiler.parser
 use compiler.query.cache as query_cache
 use compiler.query.completion as query_completion
 use compiler.query.definition as query_definition
@@ -23,6 +26,7 @@ use lib.lsp.document_store
 use lib.lsp.hover as lsp_hover
 use lib.lsp.params
 use lib.lsp.protocol
+use lib.lsp.range as lsp_range
 use lib.module.loader
 use lib.query.keys
 use lib.source.identity
@@ -73,6 +77,7 @@ fn handle_request(state: State, req: protocol.Request) Step {
             json.kv("textDocumentSync", .Int(1)),
             json.kv("hoverProvider", .Bool(true)),
             json.kv("definitionProvider", .Bool(true)),
+            json.kv("documentFormattingProvider", .Bool(true)),
             json.kv(
               "completionProvider",
               json.object([json.kv("triggerCharacters", json.array([.Str(".")]))]),
@@ -88,6 +93,7 @@ fn handle_request(state: State, req: protocol.Request) Step {
     "textDocument/definition" => handle_definition(state, req),
     "textDocument/completion" => handle_completion(state, req),
     "textDocument/codeAction" => handle_code_action(state, req),
+    "textDocument/formatting" => handle_formatting(state, req),
     "shutdown" => {
       state.shutdown_requested = true
       .{ state, outgoing: [protocol.success_response(req.id, .Null)] }
@@ -316,6 +322,38 @@ fn handle_code_action(state: State, req: protocol.Request) Step {
     action_params.context_diagnostics,
   )
   .{ state, outgoing: [protocol.success_response(req.id, json.array(actions))] }
+}
+
+fn handle_formatting(state: State, req: protocol.Request) Step {
+  fmt_params := case params.decode_document_formatting(req.params) {
+    .Ok(p) => p,
+    .Err(_) => { return empty_array_response_step(state, req) },
+  }
+  doc := case document_store.get(state.documents, fmt_params.text_document.uri) {
+    .Some(d) => d,
+    .None => { return empty_array_response_step(state, req) },
+  }
+  lexed := lexer.lex(doc.text, 0)
+
+  if lexed.diagnostics.len() > 0 {
+    return empty_array_response_step(state, req)
+  }
+
+  parsed := parser.parse_tokens(doc.text, 0, lexed.value, lexed.diagnostics)
+
+  if parsed.diagnostics.len() > 0 {
+    return empty_array_response_step(state, req)
+  }
+
+  formatted := formatter.format(parsed.value, lexed.value)
+
+  if formatted == doc.text {
+    return empty_array_response_step(state, req)
+  }
+
+  range := lsp_range.byte_range_to_lsp_range(doc.index, 0, doc.text.len())
+  edit := lsp_code_action.text_edit(range, formatted)
+  .{ state, outgoing: [protocol.success_response(req.id, json.array([edit]))] }
 }
 
 fn position_offset(index: line_index.LineIndex, position: params.Position) Int? {
