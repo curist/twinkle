@@ -1192,7 +1192,13 @@ fn format_binary_inner(op: BinOp, lhs: Expr, rhs: Expr, tm: TriviaMap, indent_co
     },
     .Assign => {
       lhs_doc := format_binary_child(op, lhs, false, tm, false)
-      rhs_doc := format_binary_child(op, rhs, true, tm, false)
+      rhs_doc := case lhs.kind {
+        .Ident(name) => case format_receiver_shorthand(name, rhs, tm) {
+          .Some(d) => d,
+          .None => format_binary_child(op, rhs, true, tm, false),
+        },
+        _ => format_binary_child(op, rhs, true, tm, false),
+      }
       doc.concat([lhs_doc, doc.text(" ${op_str} "), rhs_doc])
     },
     _ => if op == .LogicalOr {

@@ -73,4 +73,5 @@ pub fn suite() runner.Suite {
     .test("breaks complex inline blocks", assert_fmt_case("inline_blocks"))
     .test("preserves blank lines and auto-blanks before comments", assert_fmt_case("blank_lines"))
     .test("inserts blank line after module doc comments", assert_fmt_case("module_doc"))
+    .test("applies rebinding shorthand in assign expressions", assert_fmt_case("assign_shorthand"))
 }

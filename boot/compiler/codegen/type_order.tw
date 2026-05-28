@@ -20,7 +20,7 @@ pub fn type_def_deps(td: TypeDef) Vector<String> {
   case td {
     .Struct(_, fields, super_type, _) => {
       case super_type {
-        .Some(parent) => deps = deps.append(parent),
+        .Some(parent) => deps = .append(parent),
         .None => {},
       }
 

@@ -1,0 +1,12 @@
+fn process(xs: Vector<Int>) Vector<Int> {
+  out := xs
+  case xs.len() > 0 {
+    true =>   out  =  out.append(42),
+    false => {},
+  }
+  case xs.len() {
+    0 => out = out.concat(xs),
+    _ => out = out.append(1).append(2),
+  }
+  out
+}

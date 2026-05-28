@@ -126,14 +126,14 @@ fn tokens_from_function(ctx: Ctx, decl: FunctionDecl) Vector<SemanticToken> {
     )
 
     case p.ty {
-      .Some(te) => out = out.concat(inner_ctx.tokens_from_type_expr(te)),
+      .Some(te) => out = .concat(inner_ctx.tokens_from_type_expr(te)),
       .None => {},
     }
   }
 
   // Return type
   case decl.return_type {
-    .Some(te) => out = out.concat(inner_ctx.tokens_from_type_expr(te)),
+    .Some(te) => out = .concat(inner_ctx.tokens_from_type_expr(te)),
     .None => {},
   }
 
@@ -199,7 +199,7 @@ fn tokens_from_type_decl(ctx: Ctx, decl: TypeDecl) Vector<SemanticToken> {
         }
       }
     },
-    .Alias(te) => out = out.concat(inner_ctx.tokens_from_type_expr(te)),
+    .Alias(te) => out = .concat(inner_ctx.tokens_from_type_expr(te)),
     .ErrorDef(_) => {},
   }
 
@@ -216,18 +216,12 @@ fn tokens_from_use(decl: UseDecl) Vector<SemanticToken> {
     .Some(items) => {
       for item in items {
         case item {
-          .Type(t) => out = out.append(.{
-            start: t.span.start,
-            length: t.name.len(),
-            kind: .Type,
-            is_declaration: false,
-          }),
-          .Value(v) => out = out.append(.{
-            start: v.span.start,
-            length: v.name.len(),
-            kind: .Function,
-            is_declaration: false,
-          }),
+          .Type(t) => out = .append(
+            .{ start: t.span.start, length: t.name.len(), kind: .Type, is_declaration: false },
+          ),
+          .Value(v) => out = .append(
+            .{ start: v.span.start, length: v.name.len(), kind: .Function, is_declaration: false },
+          ),
         }
       }
     },
@@ -391,7 +385,7 @@ fn tokens_from_let(ctx: Ctx, ls: LetStmt) Vector<SemanticToken> {
 
   // Type annotation
   case ls.ty {
-    .Some(te) => out = out.concat(ctx.tokens_from_type_expr(te)),
+    .Some(te) => out = .concat(ctx.tokens_from_type_expr(te)),
     .None => {},
   }
 
@@ -405,35 +399,29 @@ fn tokens_from_for(ctx: Ctx, fs: ForStmt) Vector<SemanticToken> {
 
   // Pattern variable
   case fs.pattern_span {
-    .Some(ps) => out = out.append(.{
-      start: ps.start,
-      length: ps.end - ps.start,
-      kind: .Variable,
-      is_declaration: true,
-    }),
+    .Some(ps) => out = .append(
+      .{ start: ps.start, length: ps.end - ps.start, kind: .Variable, is_declaration: true },
+    ),
     .None => {},
   }
 
   // Index variable
   case fs.index_span {
-    .Some(is) => out = out.append(.{
-      start: is.start,
-      length: is.end - is.start,
-      kind: .Variable,
-      is_declaration: true,
-    }),
+    .Some(is) => out = .append(
+      .{ start: is.start, length: is.end - is.start, kind: .Variable, is_declaration: true },
+    ),
     .None => {},
   }
 
   // Iter expression
   case fs.iter {
-    .Some(e) => out = out.concat(ctx.tokens_from_expr(e)),
+    .Some(e) => out = .concat(ctx.tokens_from_expr(e)),
     .None => {},
   }
 
   // Condition
   case fs.condition {
-    .Some(e) => out = out.concat(ctx.tokens_from_expr(e)),
+    .Some(e) => out = .concat(ctx.tokens_from_expr(e)),
     .None => {},
   }
 
@@ -488,12 +476,9 @@ fn tokens_from_expr(ctx: Ctx, expr: Expr) Vector<SemanticToken> {
 
       // Classify the field
       case ctx.typed.method_calls[expr.id] {
-        .Some(_) => out = out.append(.{
-          start: field_start,
-          length: field_name.len(),
-          kind: .Function,
-          is_declaration: false,
-        }),
+        .Some(_) => out = .append(
+          .{ start: field_start, length: field_name.len(), kind: .Function, is_declaration: false },
+        ),
         .None => if is_uppercase_field {
           // Uppercase field on a type/module → variant or type constructor
           out = .append(
@@ -544,7 +529,7 @@ fn tokens_from_expr(ctx: Ctx, expr: Expr) Vector<SemanticToken> {
 
       for arm in arms {
         case arm.condition {
-          .Some(c) => out = out.concat(ctx.tokens_from_expr(c)),
+          .Some(c) => out = .concat(ctx.tokens_from_expr(c)),
           .None => {},
         }
 
@@ -608,13 +593,13 @@ fn tokens_from_expr(ctx: Ctx, expr: Expr) Vector<SemanticToken> {
         )
 
         case p.ty {
-          .Some(te) => out = out.concat(ctx.tokens_from_type_expr(te)),
+          .Some(te) => out = .concat(ctx.tokens_from_type_expr(te)),
           .None => {},
         }
       }
 
       case ret_ty {
-        .Some(te) => out = out.concat(ctx.tokens_from_type_expr(te)),
+        .Some(te) => out = .concat(ctx.tokens_from_type_expr(te)),
         .None => {},
       }
 
@@ -626,7 +611,7 @@ fn tokens_from_expr(ctx: Ctx, expr: Expr) Vector<SemanticToken> {
 
       for part in parts {
         case part {
-          .Interpolation(e) => out = out.concat(ctx.tokens_from_expr(e)),
+          .Interpolation(e) => out = .concat(ctx.tokens_from_expr(e)),
           .Literal(_) => {},
         }
       }
@@ -699,7 +684,7 @@ fn tokens_from_record_entries(ctx: Ctx, entries: Vector<RecordEntry>) Vector<Sem
     )
 
     case entry.value {
-      .Some(v) => out = out.concat(ctx.tokens_from_expr(v)),
+      .Some(v) => out = .concat(ctx.tokens_from_expr(v)),
       .None => {},
     }
   }
@@ -711,32 +696,26 @@ fn tokens_from_collect(ctx: Ctx, ce: CollectExpr) Vector<SemanticToken> {
   out: Vector<SemanticToken> = []
 
   case ce.pattern_span {
-    .Some(ps) => out = out.append(.{
-      start: ps.start,
-      length: ps.end - ps.start,
-      kind: .Variable,
-      is_declaration: true,
-    }),
+    .Some(ps) => out = .append(
+      .{ start: ps.start, length: ps.end - ps.start, kind: .Variable, is_declaration: true },
+    ),
     .None => {},
   }
 
   case ce.index_span {
-    .Some(is) => out = out.append(.{
-      start: is.start,
-      length: is.end - is.start,
-      kind: .Variable,
-      is_declaration: true,
-    }),
+    .Some(is) => out = .append(
+      .{ start: is.start, length: is.end - is.start, kind: .Variable, is_declaration: true },
+    ),
     .None => {},
   }
 
   case ce.iter {
-    .Some(e) => out = out.concat(ctx.tokens_from_expr(e)),
+    .Some(e) => out = .concat(ctx.tokens_from_expr(e)),
     .None => {},
   }
 
   case ce.condition {
-    .Some(e) => out = out.concat(ctx.tokens_from_expr(e)),
+    .Some(e) => out = .concat(ctx.tokens_from_expr(e)),
     .None => {},
   }
 

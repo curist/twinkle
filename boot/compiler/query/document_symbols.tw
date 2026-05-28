@@ -24,7 +24,7 @@ pub fn document_symbols(snap: SemanticSnapshot) Vector<DocumentSymbol> {
 
   for item in parsed.module.items {
     case symbol_from_item(item) {
-      .Some(sym) => result = result.append(sym),
+      .Some(sym) => result = .append(sym),
       .None => {},
     }
   }

@@ -114,7 +114,7 @@ pub fn notification(method: String, params: json.Json?) json.Json {
   fields: Vector<json.Field> = [json.kv("jsonrpc", .Str("2.0")), json.kv("method", .Str(method))]
 
   case params {
-    .Some(p) => fields = fields.append(json.kv("params", p)),
+    .Some(p) => fields = .append(json.kv("params", p)),
     .None => {},
   }
 
@@ -129,7 +129,7 @@ pub fn request(id: RequestId, method: String, params: json.Json?) json.Json {
   ]
 
   case params {
-    .Some(p) => fields = fields.append(json.kv("params", p)),
+    .Some(p) => fields = .append(json.kv("params", p)),
     .None => {},
   }
 
@@ -143,7 +143,7 @@ pub fn rpc_error_to_json(err: RpcError) json.Json {
   ]
 
   case err.data {
-    .Some(data) => fields = fields.append(json.kv("data", data)),
+    .Some(data) => fields = .append(json.kv("data", data)),
     .None => {},
   }
 

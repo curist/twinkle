@@ -198,7 +198,7 @@ fn ranges_from_expr(expr: ast.Expr) Vector<FoldingRange> {
 
       for entry in entries {
         case entry.value {
-          .Some(v) => result = result.concat(ranges_from_expr(v)),
+          .Some(v) => result = .concat(ranges_from_expr(v)),
           .None => {},
         }
       }
@@ -212,7 +212,7 @@ fn ranges_from_expr(expr: ast.Expr) Vector<FoldingRange> {
 
       for entry in entries {
         case entry.value {
-          .Some(v) => result = result.concat(ranges_from_expr(v)),
+          .Some(v) => result = .concat(ranges_from_expr(v)),
           .None => {},
         }
       }
@@ -243,7 +243,7 @@ fn ranges_from_expr(expr: ast.Expr) Vector<FoldingRange> {
 
       for part in parts {
         case part {
-          .Interpolation(e) => result = result.concat(ranges_from_expr(e)),
+          .Interpolation(e) => result = .concat(ranges_from_expr(e)),
           .Literal(_) => {},
         }
       }

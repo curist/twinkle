@@ -300,7 +300,7 @@ pub fn parse(a: App, argv: Vector<String>) ParseResult!ParseError {
               i = i + 1
               options[name] = argv[i]
             },
-            .Positional => pos = pos.append(current),
+            .Positional => pos = .append(current),
           }
         },
       }
@@ -321,7 +321,7 @@ pub fn parse(a: App, argv: Vector<String>) ParseResult!ParseError {
           i = i + 1
           options[def.name] = argv[i]
         },
-        .Positional => pos = pos.append(current),
+        .Positional => pos = .append(current),
       }
     } else {
       pos = .append(current)

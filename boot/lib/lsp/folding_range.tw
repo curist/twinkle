@@ -37,8 +37,8 @@ pub fn folding_range_response(results: Vector<query.FoldingRange>, index: line_i
     ]
 
     case result.kind {
-      .Imports => fields = fields.append(json.kv("kind", .Str("imports"))),
-      .Comment => fields = fields.append(json.kv("kind", .Str("comment"))),
+      .Imports => fields = .append(json.kv("kind", .Str("imports"))),
+      .Comment => fields = .append(json.kv("kind", .Str("comment"))),
       .Region => {},
     }
 

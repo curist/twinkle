@@ -596,7 +596,7 @@ pub fn list<A>(da: Decoder<A>) Decoder<Vector<A>> {
 
         for i < arr.len() {
           case da.run(arr[i]) {
-            .Ok(a) => out = out.append(a),
+            .Ok(a) => out = .append(a),
             .Err(e) => { return .Err("index ${i}: ${e}") },
           }
 

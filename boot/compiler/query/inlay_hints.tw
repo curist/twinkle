@@ -163,7 +163,7 @@ fn hints_from_expr(ctx: HintCtx, expr: Expr) Vector<InlayHint> {
 
       for arm in arms {
         case arm.condition {
-          .Some(c) => out = out.concat(ctx.hints_from_expr(c)),
+          .Some(c) => out = .concat(ctx.hints_from_expr(c)),
           .None => {},
         }
 
@@ -180,12 +180,12 @@ fn hints_from_expr(ctx: HintCtx, expr: Expr) Vector<InlayHint> {
       out := ctx.hints_from_collect_pattern(ce)
 
       case ce.iter {
-        .Some(e) => out = out.concat(ctx.hints_from_expr(e)),
+        .Some(e) => out = .concat(ctx.hints_from_expr(e)),
         .None => {},
       }
 
       case ce.condition {
-        .Some(e) => out = out.concat(ctx.hints_from_expr(e)),
+        .Some(e) => out = .concat(ctx.hints_from_expr(e)),
         .None => {},
       }
 

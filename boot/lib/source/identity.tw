@@ -73,7 +73,7 @@ fn percent_decode(s: String) Result<String, String> {
       lo := try hex_value(s[i + 2].to_int())
 
       case Byte.from_int(hi * 16 + lo) {
-        .Some(byte) => out = out.append(byte),
+        .Some(byte) => out = .append(byte),
         .None => { return .Err("invalid percent escape") },
       }
 

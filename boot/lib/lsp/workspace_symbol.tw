@@ -17,7 +17,7 @@ pub fn workspace_symbol_response(
 
   for sym in symbols {
     case index_for_uri(sym.uri) {
-      .Some(index) => result = result.append(symbol_to_json(sym, index)),
+      .Some(index) => result = .append(symbol_to_json(sym, index)),
       .None => {},
     }
   }
