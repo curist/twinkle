@@ -262,10 +262,11 @@ fn lookup(reg: Registry, id: Int) Result<Entry, String> {
 ```
 
 ### Control Flow
-- `if` expressions: `if cond { a } else { b }`
+- `if` expressions: `if x > 0 { a } else { b }`
 - `case` pattern matching (exhaustive)
+- `cond` multi-way conditional: `cond { x < 0 => "neg", x == 0 => "zero", _ => "pos" }`
 - `for` loops (all forms return `void`):
-  - `for cond { body }`
+  - `for condition { body }`
   - `for x in coll { body }`
   - `for x,i in coll { body }`
 - `collect` comprehension: `collect x in range(10) { x * x }` produces `Vector<T>`

@@ -311,7 +311,7 @@ Nested bindings behave as expected with shadowing:
 ```tw
 acc := 0
 
-if cond {
+if x > 0 {
   acc := 10          // new inner binding
   acc = acc + 1      // rebinds inner acc (11)
 }
@@ -1144,7 +1144,7 @@ is conceptually lowered to:
 Expression:
 
 ```tw
-if cond { a } else { b }
+if x > 0 { a } else { b }
 ```
 
 ### `case`
@@ -1159,7 +1159,7 @@ All `for` loops are statements returning `Void`.
 Forms:
 
 ```tw
-for cond { body }
+for condition { body }
 
 for x in coll { body }
 
@@ -1207,6 +1207,51 @@ fn tree_iter<T>(t: Tree<T>) Iterator<T> {
 }
 
 for x in tree_iter(my_tree) { ... }
+```
+
+### `cond`
+
+Multi-way conditional expression. Each arm has a boolean condition and a body;
+the first arm whose condition evaluates to `true` is taken. A `_` arm serves as
+the default (like `else`).
+
+```tw
+result := cond {
+  x < 0 => "negative",
+  x == 0 => "zero",
+  x < 10 => "small",
+  _ => "big",
+}
+```
+
+When used as an expression (producing a value), a `_` default arm is required
+to ensure exhaustiveness. In statement position the default may be omitted — if
+no arm matches the whole `cond` evaluates to `Void`.
+
+Arms are evaluated top-to-bottom; the first match wins even if later arms would
+also match. Bodies can be block expressions:
+
+```tw
+label := cond {
+  score >= 90 => {
+    bonus = bonus + 1
+    "A"
+  },
+  score >= 80 => "B",
+  _ => "C",
+}
+```
+
+`cond` expressions can be nested:
+
+```tw
+cond {
+  y > 5 => cond {
+    x > 3 => "y big, x medium",
+    _ => "y big, x small",
+  },
+  _ => "both small",
+}
 ```
 
 ### Diverging expressions
@@ -1292,8 +1337,8 @@ Rules:
 
 * Produces `Vector<T>`.
 * Works with the same collection types as `for` loops (see Section 12): `Vector<T>`, `String`, `Range`, `Dict<K,V>`, and `Iterator<T>`.
-* Also supports conditional form `collect cond { body }`:
-  * `cond` must be `Bool`.
+* Also supports conditional form `collect condition { body }`:
+  * `condition` must be `Bool`.
   * Evaluates like a `while` loop and collects values produced by `body`.
 * Supports indexed/binary form `collect x, i in coll { ... }` for `Vector<T>`, `String`, `Range`, and `Dict<K,V>`:
   * For `Vector<T>`, `String`, and `Range`, `i: Int` is the iteration index.
