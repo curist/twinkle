@@ -338,13 +338,9 @@ pub fn builtin_env() ResolvedEnv {
   // same imported-function identity model as user modules.
   env = set_prelude_function_origins(env, prelude_groups, prelude_dir, canonical_roots)
 
-  // First register methods derived from signature groups (these take priority
-  // under the deduplication rule in register_methods).
+  // Register methods derived from signature groups and prelude modules.
   env = register_methods_from_groups(env, groups)
   env = register_methods_from_groups(env, prelude_groups)
-
-  // Then register remaining prelude-backed methods (compare, map, filter, etc.).
-  env = .register_builtin_methods()
   env
 }
 

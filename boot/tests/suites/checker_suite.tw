@@ -103,7 +103,15 @@ fn test_env() resolver.ResolvedEnv {
     is_extern: false,
   }
   env = .add_type(range_entry, "Range")
-  env.register_builtin_methods()
+  env = .register_bound_methods(
+    "Int",
+    [resolver.MethodEntry.{ method_name: "to_string", function_name: "int$to_string" }],
+  )
+  env = .register_bound_methods(
+    "Bool",
+    [resolver.MethodEntry.{ method_name: "to_string", function_name: "bool$to_string" }],
+  )
+  env
 }
 
 fn check_src_with_builtins(src: String) checker.CheckResult {

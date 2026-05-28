@@ -680,9 +680,10 @@ pub fn suite() runner.Suite {
       },
     )
     .test(
-      "builtin method: String.len",
+      "register_bound_methods: String.len",
       fn() {
-        env := resolver.empty_env().register_builtin_methods()
+        me := resolver.MethodEntry.{ method_name: "len", function_name: "string$len" }
+        env := resolver.empty_env().register_bound_methods("String", [me])
 
         case resolver.lookup_method(env, "String", "len") {
           .Some(fn_name) => {
@@ -694,9 +695,10 @@ pub fn suite() runner.Suite {
       },
     )
     .test(
-      "builtin method: Vector.append",
+      "register_bound_methods: Vector.append",
       fn() {
-        env := resolver.empty_env().register_builtin_methods()
+        me := resolver.MethodEntry.{ method_name: "append", function_name: "vector$append" }
+        env := resolver.empty_env().register_bound_methods("Vector", [me])
 
         case resolver.lookup_method(env, "Vector", "append") {
           .Some(fn_name) => {
@@ -708,9 +710,10 @@ pub fn suite() runner.Suite {
       },
     )
     .test(
-      "builtin method: Int.to_string",
+      "register_bound_methods: Int.to_string",
       fn() {
-        env := resolver.empty_env().register_builtin_methods()
+        me := resolver.MethodEntry.{ method_name: "to_string", function_name: "int$to_string" }
+        env := resolver.empty_env().register_bound_methods("Int", [me])
 
         case resolver.lookup_method(env, "Int", "to_string") {
           .Some(fn_name) => {
@@ -722,9 +725,10 @@ pub fn suite() runner.Suite {
       },
     )
     .test(
-      "builtin method: Dict.keys",
+      "register_bound_methods: Dict.keys",
       fn() {
-        env := resolver.empty_env().register_builtin_methods()
+        me := resolver.MethodEntry.{ method_name: "keys", function_name: "dict$keys" }
+        env := resolver.empty_env().register_bound_methods("Dict", [me])
 
         case resolver.lookup_method(env, "Dict", "keys") {
           .Some(fn_name) => {
@@ -932,8 +936,9 @@ pub fn suite() runner.Suite {
     .test(
       "T1 register_methods twice merges",
       fn() {
-        env := resolver.empty_env().register_builtin_methods()
-        env2 := env.register_builtin_methods()
+        me := resolver.MethodEntry.{ method_name: "len", function_name: "string$len" }
+        env := resolver.empty_env().register_bound_methods("String", [me])
+        env2 := env.register_bound_methods("String", [me])
 
         // Should still find the method (even if registered twice)
         case resolver.lookup_method(env2, "String", "len") {
@@ -1518,8 +1523,9 @@ pub fn suite() runner.Suite {
     .test(
       "duplicate builtin methods are deduplicated",
       fn() {
-        env := resolver.empty_env().register_builtin_methods()
-        env = .register_builtin_methods()
+        me := resolver.MethodEntry.{ method_name: "len", function_name: "string$len" }
+        env := resolver.empty_env().register_bound_methods("String", [me])
+        env = .register_bound_methods("String", [me])
 
         // String.len should exist exactly once, not duplicated
         case env.methods["String"] {
