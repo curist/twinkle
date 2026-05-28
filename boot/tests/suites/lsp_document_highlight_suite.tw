@@ -1,0 +1,165 @@
+use compiler.query.cache as query_cache
+use lib.json
+use lib.lsp.document_store
+use lib.lsp.protocol
+use lib.lsp.server_core
+use tests.assert
+use tests.runner
+
+fn state_with_doc(uri: String, text: String) server_core.State {
+  docs := document_store.open(document_store.empty(), uri, text, .Some(1))
+  server_core.State.{
+    initialized: true,
+    shutdown_requested: false,
+    should_exit: false,
+    documents: docs,
+    query_cache: query_cache.empty(),
+    diagnostics_pending: false,
+    diagnostics_deadline_ms: 0.0,
+    last_published_versions: Dict.new(),
+  }
+}
+
+fn highlight_request(id: Int, uri: String, line: Int, character: Int) protocol.Message {
+  params := json.object([
+    json.kv("textDocument", json.object([json.kv("uri", .Str(uri))])),
+    json.kv(
+      "position",
+      json.object([json.kv("line", .Int(line)), json.kv("character", .Int(character))]),
+    ),
+  ])
+  protocol.Message.Request(.{
+    id: .IntId(id),
+    method: "textDocument/documentHighlight",
+    params: .Some(params),
+  })
+}
+
+type HighlightInfo = .{ start_line: Int, start_char: Int, end_line: Int, end_char: Int, kind: Int }
+
+fn parse_highlights(step: server_core.Step) Vector<HighlightInfo>!String {
+  if step.outgoing.len() != 1 {
+    return .Err("expected one outgoing message")
+  }
+
+  out := step.outgoing[0]
+  result := try json.decode(out, json.field("result", json.raw()))
+  items := try json.decode(result, json.list(json.raw()))
+  highlights: Vector<HighlightInfo> = []
+
+  for item in items {
+    range := try json.decode(item, json.field("range", json.raw()))
+    kind := try json.decode(item, json.field("kind", json.int()))
+    start := try json.decode(range, json.field("start", json.raw()))
+    end := try json.decode(range, json.field("end", json.raw()))
+    start_line := try json.decode(start, json.field("line", json.int()))
+    start_char := try json.decode(start, json.field("character", json.int()))
+    end_line := try json.decode(end, json.field("line", json.int()))
+    end_char := try json.decode(end, json.field("character", json.int()))
+    highlights = .append(.{ start_line, start_char, end_line, end_char, kind })
+  }
+
+  .Ok(highlights)
+}
+
+pub fn suite() runner.Suite {
+  runner.suite("lsp document highlight")
+    .test(
+      "highlight local variable",
+      fn() {
+        // Line 0: fn foo() Int {
+        // Line 1:   a := 42
+        // Line 2:   a + a
+        // Line 3: }
+        src := "fn foo() Int {\n  a := 42\n  a + a\n}\n"
+        state := state_with_doc("file:///a.tw", src)
+
+        // Cursor on "a" at line 2, char 2
+        step := server_core.handle_message(state, highlight_request(1, "file:///a.tw", 2, 2))
+        highlights := try parse_highlights(step)
+
+        // Should find: declaration (line 1) + two uses (line 2)
+        try assert.equal(highlights.len(), 3)
+        .Ok({})
+      },
+    )
+    .test(
+      "highlight top-level function",
+      fn() {
+        // Line 0: fn greet() String { "hi" }
+        // Line 1: fn main() String { greet() }
+        src := "fn greet() String { \"hi\" }\nfn main() String { greet() }\n"
+        state := state_with_doc("file:///a.tw", src)
+
+        // Cursor on "greet" in the call at line 1, char 20
+        step := server_core.handle_message(state, highlight_request(1, "file:///a.tw", 1, 20))
+        highlights := try parse_highlights(step)
+
+        // Should find: declaration (line 0) + call (line 1)
+        try assert.equal(highlights.len(), 2)
+        .Ok({})
+      },
+    )
+    .test(
+      "highlight type name",
+      fn() {
+        // Line 0: type Point = .{ x: Int, y: Int }
+        // Line 1: fn origin() Point { Point.{ x: 0, y: 0 } }
+        src := "type Point = .{ x: Int, y: Int }\nfn origin() Point { Point.{ x: 0, y: 0 } }\n"
+        state := state_with_doc("file:///a.tw", src)
+
+        // Cursor on "Point" at line 0, char 5
+        step := server_core.handle_message(state, highlight_request(1, "file:///a.tw", 0, 5))
+        highlights := try parse_highlights(step)
+
+        // Should find: declaration + return type annotation + named record constructor
+        try assert.ok(highlights.len() >= 2, "expected at least 2 highlights for Point")
+        .Ok({})
+      },
+    )
+    .test(
+      "cursor on whitespace returns empty",
+      fn() {
+        src := "fn foo() Int { 42 }\n"
+        state := state_with_doc("file:///a.tw", src)
+
+        // Cursor on space at line 0, char 13
+        step := server_core.handle_message(state, highlight_request(1, "file:///a.tw", 0, 13))
+        highlights := try parse_highlights(step)
+        try assert.equal(highlights.len(), 0)
+        .Ok({})
+      },
+    )
+    .test(
+      "shadowed variable highlights first binding only",
+      fn() {
+        // Line 0: fn foo() Int {
+        // Line 1:   a := 1
+        // Line 2:   a := a + 1
+        // Line 3:   a
+        // Line 4: }
+        src := "fn foo() Int {\n  a := 1\n  a := a + 1\n  a\n}\n"
+        state := state_with_doc("file:///a.tw", src)
+
+        // Cursor on first "a" at line 1, char 2
+        step := server_core.handle_message(state, highlight_request(1, "file:///a.tw", 1, 2))
+        highlights := try parse_highlights(step)
+
+        // First binding of "a": declaration (line 1) + RHS use in rebinding (line 2)
+        try assert.equal(highlights.len(), 2)
+        .Ok({})
+      },
+    )
+    .test(
+      "unknown document returns empty",
+      fn() {
+        src := "fn foo() Int { 42 }\n"
+        state := state_with_doc("file:///a.tw", src)
+
+        step := server_core.handle_message(state, highlight_request(1, "file:///unknown.tw", 0, 3))
+        highlights := try parse_highlights(step)
+        try assert.equal(highlights.len(), 0)
+        .Ok({})
+      },
+    )
+}

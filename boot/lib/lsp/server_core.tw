@@ -15,6 +15,7 @@ use compiler.query.cache as query_cache
 use compiler.query.completion as query_completion
 use compiler.query.definition as query_definition
 use compiler.query.diagnostics as query_diagnostics
+use compiler.query.document_highlight as query_document_highlight
 use compiler.query.document_symbols as query_document_symbols
 use compiler.query.hover as query_hover
 use compiler.query.inlay_hints as query_inlay_hints
@@ -28,6 +29,7 @@ use lib.lsp.code_action as lsp_code_action
 use lib.lsp.completion as lsp_completion
 use lib.lsp.definition as lsp_definition
 use lib.lsp.diagnostics as lsp_diagnostics
+use lib.lsp.document_highlight as lsp_document_highlight
 use lib.lsp.document_store
 use lib.lsp.document_symbol as lsp_document_symbol
 use lib.lsp.hover as lsp_hover
@@ -91,6 +93,7 @@ fn handle_request(state: State, req: protocol.Request) Step {
             json.kv("definitionProvider", .Bool(true)),
             json.kv("typeDefinitionProvider", .Bool(true)),
             json.kv("referencesProvider", .Bool(true)),
+            json.kv("documentHighlightProvider", .Bool(true)),
             json.kv("documentFormattingProvider", .Bool(true)),
             json.kv(
               "completionProvider",
@@ -115,6 +118,7 @@ fn handle_request(state: State, req: protocol.Request) Step {
     "textDocument/definition" => handle_definition(state, req),
     "textDocument/typeDefinition" => handle_type_definition(state, req),
     "textDocument/references" => handle_references(state, req),
+    "textDocument/documentHighlight" => handle_document_highlight(state, req),
     "textDocument/completion" => handle_completion(state, req),
     "textDocument/codeAction" => handle_code_action(state, req),
     "textDocument/documentSymbol" => handle_document_symbol(state, req),
@@ -359,6 +363,27 @@ fn handle_references(state: State, req: protocol.Request) Step {
       }
     },
   )
+  .{ state, outgoing: [protocol.success_response(req.id, response)] }
+}
+
+fn handle_document_highlight(state: State, req: protocol.Request) Step {
+  hl_params := case params.decode_definition(req.params) {
+    .Ok(p) => p,
+    .Err(_) => { return empty_array_response_step(state, req) },
+  }
+  doc := case document_store.get(state.documents, hl_params.text_document.uri) {
+    .Some(d) => d,
+    .None => { return empty_array_response_step(state, req) },
+  }
+  offset := case position_offset(doc.index, hl_params.position) {
+    .Some(o) => o,
+    .None => { return empty_array_response_step(state, req) },
+  }
+
+  snap := workspace_snapshot(state, doc)
+  state.query_cache = snap.cache
+  results := query_document_highlight.document_highlights(snap, offset)
+  response := lsp_document_highlight.document_highlight_response(results, doc.index)
   .{ state, outgoing: [protocol.success_response(req.id, response)] }
 }
 

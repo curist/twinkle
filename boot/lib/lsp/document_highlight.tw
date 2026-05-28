@@ -1,0 +1,31 @@
+/// LSP document-highlight response adapter.
+///
+/// Converts internal DocumentHighlight list into an LSP DocumentHighlight JSON
+/// array.
+
+use compiler.query.document_highlight as query
+use lib.json
+use lib.text.line_index
+
+use .range.{range_to_json}
+
+pub fn document_highlight_response(
+  results: Vector<query.DocumentHighlight>,
+  index: line_index.LineIndex,
+) json.Json {
+  items: Vector<json.Json> = []
+
+  for result in results {
+    range := line_index.byte_range_to_range(index, result.span.start, result.span.end, .Utf16)
+    kind := case result.kind {
+      .Text => 1,
+      .Read => 2,
+      .Write => 3,
+    }
+    items = .append(
+      json.object([json.kv("range", range_to_json(range)), json.kv("kind", .Int(kind))]),
+    )
+  }
+
+  json.array(items)
+}

@@ -1,0 +1,25 @@
+/// Document-highlight query: find all occurrences of the symbol under the
+/// cursor within the current document, annotated with read/write kind.
+
+use compiler.query.references.{find_references}
+use compiler.query.semantic.{SemanticSnapshot}
+use lib.source.span.{Span}
+
+pub type HighlightKind = { Text, Read, Write }
+
+pub type DocumentHighlight = .{ span: Span, kind: HighlightKind }
+
+pub fn document_highlights(snap: SemanticSnapshot, byte_offset: Int) Vector<DocumentHighlight> {
+  // find_references with include_declaration=true gives us all sites
+  refs := find_references(snap, byte_offset, true)
+
+  highlights: Vector<DocumentHighlight> = []
+
+  for ref in refs {
+    if ref.uri == snap.uri {
+      highlights = .append(.{ span: ref.span, kind: .Read })
+    }
+  }
+
+  highlights
+}

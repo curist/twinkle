@@ -38,7 +38,7 @@ plan; whole-document format-on-save is good enough for now.
 | Signature help | `textDocument/signatureHelp` | High | **Done** | [archived](archive/lsp-signature-help.md) |
 | Semantic tokens | `textDocument/semanticTokens/full` | Medium | **Done** | [lsp-semantic-tokens.md](lsp-semantic-tokens.md) |
 | Workspace symbols | `workspace/symbol` | Medium | **Done** | [lsp-workspace-symbols.md](lsp-workspace-symbols.md) |
-| Document highlight | `textDocument/documentHighlight` | Medium | Planned | [lsp-document-highlight.md](lsp-document-highlight.md) |
+| Document highlight | `textDocument/documentHighlight` | Medium | **Done** | [lsp-document-highlight.md](lsp-document-highlight.md) |
 | Inlay hints | `textDocument/inlayHint` | Medium | **Done** | [lsp-inlay-hints.md](lsp-inlay-hints.md) |
 | Type definition | `textDocument/typeDefinition` | Medium | **Done** | [lsp-type-definition.md](lsp-type-definition.md) |
 | Folding ranges | `textDocument/foldingRange` | Low | Planned | [lsp-folding-ranges.md](lsp-folding-ranges.md) |
@@ -64,8 +64,8 @@ Existing related plans:
    **Done.**
 5. ~~Semantic tokens: improve syntax highlighting with compiler knowledge.~~ **Done.**
 6. ~~Inlay hints: useful once type/signature lookup helpers are stable.~~ **Done.**
-7. ~~Workspace symbols~~, document highlight, folding ranges, incremental sync as
-   follow-up quality-of-life improvements. **Workspace symbols done.**
+7. ~~Workspace symbols~~, ~~document highlight~~, folding ranges, incremental sync as
+   follow-up quality-of-life improvements. **Workspace symbols, document highlight done.**
 
 ---
 

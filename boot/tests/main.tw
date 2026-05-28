@@ -42,6 +42,7 @@ use .suites.linker_suite
 use .suites.lsp_completion_suite
 use .suites.lsp_definition_suite
 use .suites.lsp_diagnostics_suite
+use .suites.lsp_document_highlight_suite
 use .suites.lsp_document_store_suite
 use .suites.lsp_document_symbol_suite
 use .suites.lsp_framing_suite
@@ -186,6 +187,7 @@ runner.run_all([
   lsp_workspace_symbol_suite.suite(),
   lsp_inlay_hint_suite.suite(),
   lsp_references_suite.suite(),
+  lsp_document_highlight_suite.suite(),
   lsp_semantic_tokens_suite.suite(),
   multi_module_suite.suite(),
   base_env_guardrail_suite.suite(),
