@@ -1,14 +1,19 @@
+/// Format command: format Twinkle source code.
+
 use @std.fs
-// Format command: format Twinkle source code.
 use @std.proc
 
 use commands.common.{exit_usage_error, fs_error_message}
 use compiler.fmt.formatter
 use compiler.lexer
 use compiler.parser
+use compiler.query.diag_render
 use lib.argparse.app
 use lib.argparse.app.{ParseResult}
+use lib.source.diagnostics
 use lib.source.registry
+use lib.source.render
+use lib.source.report
 
 pub fn run_fmt_command(parsed: ParseResult) {
   if parsed.positional.len() == 0 {
@@ -17,6 +22,7 @@ pub fn run_fmt_command(parsed: ParseResult) {
 
   check := app.has_flag(parsed, "check")
   needs_reformat := false
+  has_errors := false
 
   for file in parsed.positional {
     source := case fs.read_text(file) {
@@ -31,6 +37,13 @@ pub fn run_fmt_command(parsed: ParseResult) {
     file_id := added.file_id
     lexed := lexer.lex(source, file_id)
     parsed_mod := parser.parse_tokens(source, file_id, lexed.value, lexed.diagnostics)
+
+    if parsed_mod.diagnostics.len() > 0 {
+      print_parse_errors(reg, parsed_mod.diagnostics)
+      has_errors = true
+      continue
+    }
+
     formatted := formatter.format(parsed_mod.value, lexed.value)
 
     if check {
@@ -51,7 +64,24 @@ pub fn run_fmt_command(parsed: ParseResult) {
     }
   }
 
-  if needs_reformat {
+  if has_errors or needs_reformat {
     proc.exit(1)
+  }
+}
+
+fn print_parse_errors(reg: registry.FileRegistry, diagnostics: Vector<diagnostics.DiagKind>) {
+  config := report.default_config()
+  ctx := diag_render.RenderCtx.{
+    registry: reg,
+    env: .None,
+    module: .None,
+    config,
+    type_names: .None,
+  }
+
+  for d in diagnostics {
+    rep := diag_render.to_report(d, ctx)
+    eprintln(render.render(rep, reg, config))
+    eprintln("")
   }
 }
