@@ -98,7 +98,7 @@
   (global $user____str_lit_global_empty (mut (ref null $rt_types__String)) ref.null $rt_types__String)
   (global $user____str_lit_global_68656c6c6f2c205477696e6b6c6521 (mut (ref null $rt_types__String)) ref.null $rt_types__String)
   (global $user____str_lit_global_6a6f696e3a20696e76616c69642075746638 (mut (ref null $rt_types__String)) ref.null $rt_types__String)
-  (global $user____str_lit_global_6e6f6e2d65786861757374697665206d6174636820696e205f5f7072656c7564655f766563746f722e6a6f696e202846756e634964283130352929 (mut (ref null $rt_types__String)) ref.null $rt_types__String)
+  (global $user____str_lit_global_6e6f6e2d65786861757374697665206d6174636820696e205f5f7072656c7564655f766563746f722e6a6f696e202846756e634964283130372929 (mut (ref null $rt_types__String)) ref.null $rt_types__String)
   (func $rt_arr__tailoff (type $functype_2)
     (param $p0 i32)
     (result i32)
@@ -5362,7 +5362,7 @@
     ref.cast (ref null eq)
     ref.eq
   )
-  (func $user__func_105 (type $functype_50)
+  (func $user__func_107 (type $functype_50)
     (param $p0 (ref null $rt_types__PVec))
     (param $p1 (ref null $rt_types__String))
     (result (ref null $rt_types__String))
@@ -5809,7 +5809,7 @@
             local.set $p56
             unreachable)
           (else
-            call $user____str_lit_get_6e6f6e2d65786861757374697665206d6174636820696e205f5f7072656c7564655f766563746f722e6a6f696e202846756e634964283130352929
+            call $user____str_lit_get_6e6f6e2d65786861757374697665206d6174636820696e205f5f7072656c7564655f766563746f722e6a6f696e202846756e634964283130372929
             call $rt_core__trap
             unreachable
             unreachable))))
@@ -5817,12 +5817,12 @@
     local.get $p57
     return
   )
-  (func $user__func_113 (type $functype_51)
+  (func $user__func_115 (type $functype_51)
     (local $p0 i32)
     call $user____str_lit_get_68656c6c6f2c205477696e6b6c6521
     return_call $rt_core__println
   )
-  (func $user__func_105__closure (type $functype_52)
+  (func $user__func_107__closure (type $functype_52)
     (param $p0 anyref)
     (param $p1 anyref)
     (result anyref)
@@ -5836,13 +5836,13 @@
     i32.const 1
     array.get $rt_types__Array
     ref.cast (ref null $rt_types__String)
-    call $user__func_105
+    call $user__func_107
   )
-  (func $user__func_113__closure (type $functype_52)
+  (func $user__func_115__closure (type $functype_52)
     (param $p0 anyref)
     (param $p1 anyref)
     (result anyref)
-    call $user__func_113
+    call $user__func_115
     i32.const 0
     ref.i31
   )
@@ -6523,7 +6523,7 @@
         struct.new $rt_types__Variant))
   )
   (func $user____user_init (type $functype_51)
-    call $user__func_113
+    call $user__func_115
   )
   (func $user____str_lit_get_empty (type $functype_58)
     (result (ref $rt_types__String))
@@ -6591,9 +6591,9 @@
     global.get $user____str_lit_global_6a6f696e3a20696e76616c69642075746638
     ref.as_non_null
   )
-  (func $user____str_lit_get_6e6f6e2d65786861757374697665206d6174636820696e205f5f7072656c7564655f766563746f722e6a6f696e202846756e634964283130352929 (type $functype_58)
+  (func $user____str_lit_get_6e6f6e2d65786861757374697665206d6174636820696e205f5f7072656c7564655f766563746f722e6a6f696e202846756e634964283130372929 (type $functype_58)
     (result (ref $rt_types__String))
-    global.get $user____str_lit_global_6e6f6e2d65786861757374697665206d6174636820696e205f5f7072656c7564655f766563746f722e6a6f696e202846756e634964283130352929
+    global.get $user____str_lit_global_6e6f6e2d65786861757374697665206d6174636820696e205f5f7072656c7564655f766563746f722e6a6f696e202846756e634964283130372929
     ref.is_null
     (if
       (then
@@ -6653,12 +6653,12 @@
         i32.const 40
         i32.const 49
         i32.const 48
-        i32.const 53
+        i32.const 55
         i32.const 41
         i32.const 41
         array.new_fixed $rt_types__String 59
-        global.set $user____str_lit_global_6e6f6e2d65786861757374697665206d6174636820696e205f5f7072656c7564655f766563746f722e6a6f696e202846756e634964283130352929))
-    global.get $user____str_lit_global_6e6f6e2d65786861757374697665206d6174636820696e205f5f7072656c7564655f766563746f722e6a6f696e202846756e634964283130352929
+        global.set $user____str_lit_global_6e6f6e2d65786861757374697665206d6174636820696e205f5f7072656c7564655f766563746f722e6a6f696e202846756e634964283130372929))
+    global.get $user____str_lit_global_6e6f6e2d65786861757374697665206d6174636820696e205f5f7072656c7564655f766563746f722e6a6f696e202846756e634964283130372929
     ref.as_non_null
   )
   (export "rt_arr__tailoff" (func $rt_arr__tailoff))
