@@ -583,6 +583,65 @@ pub fn suite() runner.Suite {
       },
     )
     .test(
+      "first returns some for non-empty vector",
+      fn() {
+        xs: Vector<Int> = [10, 20, 30]
+        try assert.is_some(xs.first())
+        val := case xs.first() {
+          .Some(v) => v,
+          .None => -1,
+        }
+        try assert.equal(val, 10)
+        .Ok({})
+      },
+    )
+    .test(
+      "first returns none for empty vector",
+      fn() {
+        xs: Vector<Int> = []
+        try assert.is_none(xs.first())
+        .Ok({})
+      },
+    )
+    .test(
+      "last returns some for non-empty vector",
+      fn() {
+        xs: Vector<Int> = [10, 20, 30]
+        try assert.is_some(xs.last())
+        val := case xs.last() {
+          .Some(v) => v,
+          .None => -1,
+        }
+        try assert.equal(val, 30)
+        .Ok({})
+      },
+    )
+    .test(
+      "last returns none for empty vector",
+      fn() {
+        xs: Vector<Int> = []
+        try assert.is_none(xs.last())
+        .Ok({})
+      },
+    )
+    .test(
+      "first and last on singleton",
+      fn() {
+        xs: Vector<Int> = [42]
+        f := case xs.first() {
+          .Some(v) => v,
+          .None => -1,
+        }
+        l := case xs.last() {
+          .Some(v) => v,
+          .None => -1,
+        }
+        try assert.equal(f, 42)
+        try assert.equal(l, 42)
+        .Ok({})
+      },
+    )
+    .test(
       "Vector.compare lexicographic",
       fn() {
         a: Vector<Int> = [1, 2, 3]

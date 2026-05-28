@@ -33,6 +33,15 @@ pub fn fold<A, B>(xs: Vector<A>, init: B, f: fn(B, A) B) B {
   acc
 }
 
+/// Return the first element, or .None if empty.
+pub fn first<A>(xs: Vector<A>) A? {
+  if xs.len() == 0 {
+    .None
+  } else {
+    .Some(xs[0])
+  }
+}
+
 /// Return the last element, or .None if empty.
 pub fn last<A>(xs: Vector<A>) A? {
   if xs.len() == 0 {
