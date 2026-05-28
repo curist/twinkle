@@ -1,8 +1,9 @@
 /// Inlay hints query: emit type hints for inferred `:=` bindings
 /// and parameter name hints at call sites.
 
-use compiler.ast.{Block, Expr, FunctionDecl, Item, LetStmt, Stmt}
+use compiler.ast.{Block, CollectExpr, Expr, ForStmt, FunctionDecl, Item, LetStmt, Param, Stmt}
 use compiler.checker.{CheckResult}
+use compiler.mono_type.{MonoType}
 use compiler.query.semantic.{SemanticSnapshot}
 use compiler.resolver.{FunctionSig, ty_to_string_env}
 
@@ -67,11 +68,12 @@ fn hints_from_stmt(ctx: HintCtx, stmt: Stmt) Vector<InlayHint> {
       out.concat(ctx.hints_from_expr(ls.value))
     },
     .For(fs) => {
+      out := ctx.hints_from_for_pattern(fs)
       iter_hints := case fs.iter {
         .Some(e) => ctx.hints_from_expr(e),
         .None => [],
       }
-      iter_hints.concat(ctx.hints_from_block(fs.body))
+      out.concat(iter_hints).concat(ctx.hints_from_block(fs.body))
     },
     .Expr(es) => ctx.hints_from_expr(es.expr),
     .Return(rs) => case rs.value {
@@ -170,9 +172,12 @@ fn hints_from_expr(ctx: HintCtx, expr: Expr) Vector<InlayHint> {
 
       out
     },
-    .Closure(_, _, body) => ctx.hints_from_block(body),
+    .Closure(params, _, body) => {
+      param_hints := ctx.hints_from_closure_params(expr, params)
+      param_hints.concat(ctx.hints_from_block(body))
+    },
     .Collect(ce) => {
-      out: Vector<InlayHint> = []
+      out := ctx.hints_from_collect_pattern(ce)
 
       case ce.iter {
         .Some(e) => out = out.concat(ctx.hints_from_expr(e)),
@@ -209,6 +214,103 @@ fn hints_from_expr(ctx: HintCtx, expr: Expr) Vector<InlayHint> {
       out
     },
     _ => [],
+  }
+}
+
+fn hints_from_for_pattern(ctx: HintCtx, fs: ForStmt) Vector<InlayHint> {
+  ps := case fs.pattern_span {
+    .Some(s) => s,
+    .None => { return [] },
+  }
+
+  if ps.end < ctx.range_start or ps.start > ctx.range_end {
+    return []
+  }
+
+  iter_expr := case fs.iter {
+    .Some(e) => e,
+    .None => { return [] },
+  }
+
+  iter_ty := case ctx.typed.type_map[iter_expr.id] {
+    .Some(ty) => ty,
+    .None => { return [] },
+  }
+
+  elem_ty := iter_element_type(iter_ty)
+  label := ty_to_string_env(ctx.typed.env, elem_ty)
+  [InlayHint.{ position: ps.end, label: ": ${label}", kind: .TypeHint }]
+}
+
+fn hints_from_collect_pattern(ctx: HintCtx, ce: CollectExpr) Vector<InlayHint> {
+  ps := case ce.pattern_span {
+    .Some(s) => s,
+    .None => { return [] },
+  }
+
+  if ps.end < ctx.range_start or ps.start > ctx.range_end {
+    return []
+  }
+
+  iter_expr := case ce.iter {
+    .Some(e) => e,
+    .None => { return [] },
+  }
+
+  iter_ty := case ctx.typed.type_map[iter_expr.id] {
+    .Some(ty) => ty,
+    .None => { return [] },
+  }
+
+  elem_ty := iter_element_type(iter_ty)
+  label := ty_to_string_env(ctx.typed.env, elem_ty)
+  [InlayHint.{ position: ps.end, label: ": ${label}", kind: .TypeHint }]
+}
+
+fn hints_from_closure_params(ctx: HintCtx, closure_expr: Expr, params: Vector<Param>) Vector<
+  InlayHint,
+> {
+  param_types := case ctx.typed.type_map[closure_expr.id] {
+    .Some(.Function(pts, _)) => pts,
+    _ => { return [] },
+  }
+
+  out: Vector<InlayHint> = []
+
+  for i in 0..params.len() {
+    p := params[i]
+
+    // Skip if already annotated
+    case p.ty {
+      .Some(_) => { continue },
+      .None => {},
+    }
+
+    if p.name_span.end < ctx.range_start or p.name_span.start > ctx.range_end {
+      continue
+    }
+
+    if i >= param_types.len() {
+      continue
+    }
+
+    label := ty_to_string_env(ctx.typed.env, param_types[i])
+    out = .append(InlayHint.{ position: p.name_span.end, label: ": ${label}", kind: .TypeHint })
+  }
+
+  out
+}
+
+fn iter_element_type(ty: MonoType) MonoType {
+  case ty {
+    .Vector(inner) => inner,
+    .Dict(k, _) => k,
+    .Named(_, args) => if args.len() > 0 {
+      args[0]
+    } else {
+      .Int
+    },
+    _ => ty,
   }
 }
 

@@ -167,6 +167,59 @@ pub fn suite() runner.Suite {
       },
     )
     .test(
+      "type hint for for-loop pattern variable",
+      fn() {
+        src := "xs := [1, 2, 3]\nfor x in xs {\n  x\n}\n"
+        state := state_with_doc("file:///a.tw", src)
+        step := server_core.handle_message(state, inlay_hint_request(1, "file:///a.tw", 0, 4))
+        labels := try hint_labels(step)
+        try assert.is_true(labels.contains(": Int"))
+        .Ok({})
+      },
+    )
+    .test(
+      "type hint for collect pattern variable",
+      fn() {
+        src := "xs := [1, 2, 3]\nys := collect x in xs { x + 1 }\n"
+        state := state_with_doc("file:///a.tw", src)
+        step := server_core.handle_message(state, inlay_hint_request(1, "file:///a.tw", 0, 2))
+        labels := try hint_labels(step)
+
+        // Should have hint for xs, ys, and x
+        try assert.is_true(labels.contains(": Int"))
+        .Ok({})
+      },
+    )
+    .test(
+      "type hint for closure parameter",
+      fn() {
+        src := "xs := [1, 2, 3]\nys := xs.map(fn(x) { x + 1 })\n"
+        state := state_with_doc("file:///a.tw", src)
+        step := server_core.handle_message(state, inlay_hint_request(1, "file:///a.tw", 0, 2))
+        labels := try hint_labels(step)
+
+        // Should have a type hint for the closure param x
+        try assert.is_true(labels.contains(": Int"))
+        .Ok({})
+      },
+    )
+    .test(
+      "no closure param hint when type is annotated",
+      fn() {
+        src := "xs := [1, 2, 3]\nys := xs.map(fn(x: Int) { x + 1 })\n"
+        state := state_with_doc("file:///a.tw", src)
+        step := server_core.handle_message(state, inlay_hint_request(1, "file:///a.tw", 0, 2))
+        labels := try hint_labels(step)
+
+        // Count how many ": Int" hints — should NOT have one for the annotated closure param
+        count := labels
+          .filter(fn(l) { l == ": Int" })
+          .len()
+        try assert.equal(count, 0)
+        .Ok({})
+      },
+    )
+    .test(
       "inlayHintProvider advertised in capabilities",
       fn() {
         msg := protocol.Message.Request(.{ id: .IntId(1), method: "initialize", params: .None })
