@@ -12,7 +12,9 @@ pub type VersionedTextDocumentIdentifier = .{ uri: String, version: Int? }
 
 pub type TextDocumentIdentifier = .{ uri: String }
 
-pub type TextDocumentContentChangeEvent = .{ text: String }
+pub type TextRange = .{ start: Position, end: Position }
+
+pub type TextDocumentContentChangeEvent = .{ text: String, range: TextRange? }
 
 pub type DidOpenTextDocumentParams = .{ text_document: TextDocumentItem }
 
@@ -264,7 +266,18 @@ fn content_change_decoder() json.Decoder<TextDocumentContentChangeEvent> {
   .{
     run: fn(value: json.Json) Result<TextDocumentContentChangeEvent, String> {
       text := try json.decode(value, json.field("text", json.string()))
-      .Ok(.{ text })
+      range := try json.decode(value, json.optional_field("range", range_decoder()))
+      .Ok(.{ text, range })
+    },
+  }
+}
+
+fn range_decoder() json.Decoder<TextRange> {
+  .{
+    run: fn(value: json.Json) Result<TextRange, String> {
+      start := try json.decode(value, json.field("start", position_decoder()))
+      end := try json.decode(value, json.field("end", position_decoder()))
+      .Ok(.{ start, end })
     },
   }
 }

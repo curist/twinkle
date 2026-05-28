@@ -53,7 +53,7 @@ pub fn suite() runner.Suite {
           try json.decode(caps, json.field("positionEncoding", json.string())),
           "utf-16",
         )
-        try assert.equal(try json.decode(caps, json.field("textDocumentSync", json.int())), 1)
+        try assert.equal(try json.decode(caps, json.field("textDocumentSync", json.int())), 2)
         info := try json.decode(result, json.field("serverInfo", json.raw()))
         try assert.equal(try json.decode(info, json.field("name", json.string())), "twinkle-lsp")
         .Ok({})
@@ -177,6 +177,122 @@ pub fn suite() runner.Suite {
         try assert.equal(try doc.version.ok_or("missing version"), 2)
         try assert.is_true(step.state.diagnostics_pending)
         try assert.equal(step.outgoing.len(), 0)
+        .Ok({})
+      },
+    )
+    .test(
+      "didChange applies incremental text change",
+      fn() {
+        // "hello world" — insert " beautiful" at offset 5 (line 0, char 5)
+        opened := document_store.open(
+          document_store.empty(),
+          "file:///a.tw",
+          "hello world",
+          .Some(1),
+        )
+        state := server_core.State.{
+          initialized: true,
+          shutdown_requested: false,
+          should_exit: false,
+          documents: opened,
+          query_cache: query_cache.empty(),
+          diagnostics_pending: false,
+          diagnostics_deadline_ms: 0.0,
+          last_published_versions: Dict.new(),
+        }
+        change_event := json.object([
+          json.kv("text", .Str(" beautiful")),
+          json.kv(
+            "range",
+            json.object([
+              json.kv(
+                "start",
+                json.object([json.kv("line", .Int(0)), json.kv("character", .Int(5))]),
+              ),
+              json.kv("end", json.object([json.kv("line", .Int(0)), json.kv("character", .Int(5))])),
+            ]),
+          ),
+        ])
+        params := json.object([
+          json.kv(
+            "textDocument",
+            json.object([json.kv("uri", .Str("file:///a.tw")), json.kv("version", .Int(2))]),
+          ),
+          json.kv("contentChanges", json.array([change_event])),
+        ])
+        msg := protocol.Message.Notification(.{
+          method: "textDocument/didChange",
+          params: .Some(params),
+        })
+        step := server_core.handle_message(state, msg)
+        doc := try document_store.get(step.state.documents, "file:///a.tw")
+          .ok_or("missing document")
+        try assert.equal(doc.text, "hello beautiful world")
+        try assert.equal(try doc.version.ok_or("missing version"), 2)
+        try assert.is_true(step.state.diagnostics_pending)
+        .Ok({})
+      },
+    )
+    .test(
+      "didChange applies multiple incremental changes in order",
+      fn() {
+        // "aaa\nbbb" — two changes: replace "bbb" with "ccc", then insert "X" at start
+        opened := document_store.open(document_store.empty(), "file:///a.tw", "aaa\nbbb", .Some(1))
+        state := server_core.State.{
+          initialized: true,
+          shutdown_requested: false,
+          should_exit: false,
+          documents: opened,
+          query_cache: query_cache.empty(),
+          diagnostics_pending: false,
+          diagnostics_deadline_ms: 0.0,
+          last_published_versions: Dict.new(),
+        }
+
+        // First change: replace "bbb" (line 1, char 0..3) with "ccc"
+        change1 := json.object([
+          json.kv("text", .Str("ccc")),
+          json.kv(
+            "range",
+            json.object([
+              json.kv(
+                "start",
+                json.object([json.kv("line", .Int(1)), json.kv("character", .Int(0))]),
+              ),
+              json.kv("end", json.object([json.kv("line", .Int(1)), json.kv("character", .Int(3))])),
+            ]),
+          ),
+        ])
+
+        // Second change: insert "X" at line 0, char 0
+        change2 := json.object([
+          json.kv("text", .Str("X")),
+          json.kv(
+            "range",
+            json.object([
+              json.kv(
+                "start",
+                json.object([json.kv("line", .Int(0)), json.kv("character", .Int(0))]),
+              ),
+              json.kv("end", json.object([json.kv("line", .Int(0)), json.kv("character", .Int(0))])),
+            ]),
+          ),
+        ])
+        params := json.object([
+          json.kv(
+            "textDocument",
+            json.object([json.kv("uri", .Str("file:///a.tw")), json.kv("version", .Int(2))]),
+          ),
+          json.kv("contentChanges", json.array([change1, change2])),
+        ])
+        msg := protocol.Message.Notification(.{
+          method: "textDocument/didChange",
+          params: .Some(params),
+        })
+        step := server_core.handle_message(state, msg)
+        doc := try document_store.get(step.state.documents, "file:///a.tw")
+          .ok_or("missing document")
+        try assert.equal(doc.text, "Xaaa\nccc")
         .Ok({})
       },
     )

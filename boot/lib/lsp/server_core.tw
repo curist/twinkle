@@ -90,7 +90,7 @@ fn handle_request(state: State, req: protocol.Request) Step {
           "capabilities",
           json.object([
             json.kv("positionEncoding", .Str("utf-16")),
-            json.kv("textDocumentSync", .Int(1)),
+            json.kv("textDocumentSync", .Int(2)),
             json.kv("hoverProvider", .Bool(true)),
             json.kv("definitionProvider", .Bool(true)),
             json.kv("typeDefinitionProvider", .Bool(true)),
@@ -177,15 +177,56 @@ fn handle_did_change(state: State, note: protocol.Notification) Step {
         return .{ state, outgoing: [] }
       }
 
-      full := change.content_changes[change.content_changes.len() - 1]
       doc := change.text_document
-      state.documents = document_store.change_full_text(
-        state.documents,
-        doc.uri,
-        full.text,
-        doc.version,
-      )
-      state = note_changed_document_source(state, doc.uri, full.text)
+
+      for event in change.content_changes {
+        case event.range {
+          .Some(range) => {
+            // Incremental change — convert UTF-16 range to byte offsets.
+            cur_doc := case document_store.get(state.documents, doc.uri) {
+              .Some(d) => d,
+              .None => { continue },
+            }
+            start_offset := case position_offset(
+              cur_doc.index,
+              .{ line: range.start.line, character: range.start.character },
+            ) {
+              .Some(o) => o,
+              .None => { continue },
+            }
+            end_offset := case position_offset(
+              cur_doc.index,
+              .{ line: range.end.line, character: range.end.character },
+            ) {
+              .Some(o) => o,
+              .None => { continue },
+            }
+            state.documents = document_store.change_incremental(
+              state.documents,
+              doc.uri,
+              start_offset,
+              end_offset,
+              event.text,
+              doc.version,
+            )
+          },
+          .None => {
+            // Full-text change — no range means replace everything.
+            state.documents = document_store.change_full_text(
+              state.documents,
+              doc.uri,
+              event.text,
+              doc.version,
+            )
+          },
+        }
+      }
+
+      final_text := case document_store.get(state.documents, doc.uri) {
+        .Some(d) => d.text,
+        .None => { return .{ state, outgoing: [] } },
+      }
+      state = note_changed_document_source(state, doc.uri, final_text)
       mark_diagnostics_pending(state)
     },
     .Err(_) => .{ state, outgoing: [] },

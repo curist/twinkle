@@ -30,6 +30,32 @@ pub fn change_full_text(store: Store, uri: String, text: String, version: Int?) 
   put(store, make_document(uri, text, version))
 }
 
+/// Apply an incremental text change to a document. Converts the LSP UTF-16
+/// range to byte offsets, splices in the new text, and rebuilds the line index.
+/// Returns the store unchanged if the document is unknown or the range is invalid.
+pub fn change_incremental(
+  store: Store,
+  uri: String,
+  start_offset: Int,
+  end_offset: Int,
+  new_text: String,
+  version: Int?,
+) Store {
+  doc := case get(store, uri) {
+    .Some(d) => d,
+    .None => { return store },
+  }
+
+  if start_offset < 0 or end_offset < start_offset or end_offset > doc.text.len() {
+    return store
+  }
+
+  updated := doc.text.slice(0, start_offset)
+    .concat(new_text)
+    .concat(doc.text.slice(end_offset, doc.text.len()))
+  put(store, make_document(uri, updated, version))
+}
+
 pub fn close(store: Store, uri: String) Store {
   .{ docs: store.docs.remove(uri) }
 }

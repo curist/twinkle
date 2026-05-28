@@ -23,6 +23,8 @@ Implemented today:
 * document symbols (`textDocument/documentSymbol`)
 * signature help (`textDocument/signatureHelp`)
 
+* incremental document sync (`textDocumentSync: 2`)
+
 Range formatting and on-type formatting are intentionally out of scope for this
 plan; whole-document format-on-save is good enough for now.
 
@@ -42,7 +44,7 @@ plan; whole-document format-on-save is good enough for now.
 | Inlay hints | `textDocument/inlayHint` | Medium | **Done** | [archived](archive/lsp-inlay-hints.md) |
 | Type definition | `textDocument/typeDefinition` | Medium | **Done** | [archived](archive/lsp-type-definition.md) |
 | Folding ranges | `textDocument/foldingRange` | Low | **Done** | [archived](archive/lsp-folding-ranges.md) |
-| Incremental sync | `textDocumentSync: 2` | Low | Planned | [lsp-incremental-sync.md](lsp-incremental-sync.md) |
+| Incremental sync | `textDocumentSync: 2` | Low | **Done** | [archived](archive/lsp-incremental-sync.md) |
 
 Existing related plans:
 
@@ -64,8 +66,8 @@ Existing related plans:
    **Done.**
 5. ~~Semantic tokens: improve syntax highlighting with compiler knowledge.~~ **Done.**
 6. ~~Inlay hints: useful once type/signature lookup helpers are stable.~~ **Done.**
-7. ~~Workspace symbols~~, ~~document highlight~~, ~~folding ranges~~, incremental sync as
-   follow-up quality-of-life improvements. **Workspace symbols, document highlight, folding ranges done.**
+7. ~~Workspace symbols~~, ~~document highlight~~, ~~folding ranges~~, ~~incremental sync~~ as
+   follow-up quality-of-life improvements. **All done.**
 
 ---
 
