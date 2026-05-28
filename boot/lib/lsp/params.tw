@@ -45,6 +45,12 @@ pub type SignatureHelpParams = .{ text_document: TextDocumentIdentifier, positio
 
 pub type WorkspaceSymbolParams = .{ query: String }
 
+pub type InlayHintParams = .{
+  text_document: TextDocumentIdentifier,
+  range_start: Position,
+  range_end: Position,
+}
+
 pub fn decode_did_open(params: json.Json?) Result<DidOpenTextDocumentParams, String> {
   value := try required_params(params)
   text_document := try json.decode(value, json.field("textDocument", text_document_item_decoder()))
@@ -138,6 +144,18 @@ pub fn decode_workspace_symbol(params: json.Json?) Result<WorkspaceSymbolParams,
   value := try required_params(params)
   query := try json.decode(value, json.field("query", json.string()))
   .Ok(.{ query })
+}
+
+pub fn decode_inlay_hint(params: json.Json?) Result<InlayHintParams, String> {
+  value := try required_params(params)
+  text_document := try json.decode(
+    value,
+    json.field("textDocument", text_document_identifier_decoder()),
+  )
+  range := try json.decode(value, json.field("range", json.raw()))
+  range_start := try json.decode(range, json.field("start", position_decoder()))
+  range_end := try json.decode(range, json.field("end", position_decoder()))
+  .Ok(.{ text_document, range_start, range_end })
 }
 
 pub fn decode_document_formatting(params: json.Json?) Result<DocumentFormattingParams, String> {

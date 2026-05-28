@@ -1,4 +1,4 @@
-# LSP Inlay Hints Plan
+# LSP Inlay Hints Plan — **Done**
 
 ## Goal
 
@@ -9,60 +9,60 @@ editor.
 
 ## Scope
 
-In scope:
+Implemented:
 
-* Inferred type hints for local `:=` bindings when the type is not obvious.
-* Optional return type hints for public or top-level functions without explicit
-  return annotations.
-* Parameter name hints at call sites where arguments are not self-explanatory.
+* Inferred type hints for local `:=` bindings when the type is not obvious
+  (skips literal ints, floats, strings, bools).
+* Parameter name hints at call sites for multi-arg functions (skips when the
+  argument variable already matches the parameter name).
 
-Out of scope for the first pass:
+Deferred to future work:
 
+* Return type hints for functions without explicit return annotations.
 * Hints for every expression.
 * Interactive hint resolve commands.
-* User configuration plumbing; start with conservative defaults.
+* User configuration plumbing.
 
 ---
 
 ## Design
 
-Use the typed semantic snapshot to locate inferred types and function
-signatures. Emit conservative hints to avoid visual noise.
+Uses the typed semantic snapshot to locate inferred types and function
+signatures. Walks the AST within the requested byte range, emitting conservative
+hints to avoid visual noise.
 
-Potential rules:
+Rules:
 
 * Show `: Type` after local binding names only when the binding uses `:=` and
   the initializer is not a literal with an obvious primitive type.
-* Show `: Type` for top-level bindings if they become part of the module API.
 * Show parameter name hints for positional arguments when a function has named
   parameters and the argument is not already a named/local variable matching the
-  parameter.
+  parameter. Single simple-arg calls are suppressed to reduce noise.
 
 ---
 
-## Implementation Steps
+## Implementation
 
-1. Add `InlayHintParams` decoding, including the requested range.
-2. Add typed AST/range query for candidate hints.
-3. Add type/signature rendering helpers or reuse hover rendering.
-4. Add JSON response helpers under `boot/lib/lsp/inlay_hint.tw`.
-5. Advertise `inlayHintProvider: true`.
-6. Handle `textDocument/inlayHint` in `server_core.tw`.
-7. Add tests for type hints, parameter hints, and range filtering.
+1. `boot/lib/lsp/params.tw` — `InlayHintParams` type and `decode_inlay_hint`.
+2. `boot/compiler/query/inlay_hints.tw` — AST walker producing `InlayHint`
+   values (type hints and parameter hints) within a byte range.
+3. `boot/lib/lsp/inlay_hint.tw` — JSON response adapter with LSP kind codes
+   (1=Type, 2=Parameter) and padding flags.
+4. `boot/lib/lsp/server_core.tw` — `inlayHintProvider: true` capability,
+   `textDocument/inlayHint` dispatch and handler.
+5. `boot/tests/suites/lsp_inlay_hint_suite.tw` — tests covering type hints,
+   obvious-literal suppression, annotated-binding suppression, parameter hints,
+   param-name-matching suppression, unknown documents, and capability
+   advertisement.
 
 ---
 
-## Test Plan
+## Test Plan — Covered
 
 * Inferred local binding hints display stable type strings.
 * Explicitly annotated bindings do not get duplicate type hints.
-* Parameter hints appear at the correct argument positions.
-* Requested LSP range filters returned hints.
+* Obvious literals (int, float, string, bool) are suppressed.
+* Parameter hints appear at multi-arg call sites.
+* Parameter hints suppressed when arg matches param name.
 * Unknown or untyped documents return an empty result.
-
----
-
-## Exit Criteria
-
-Editors can show useful inferred type and parameter hints while avoiding noisy
-or redundant hints in common Twinkle code.
+* Capability advertised in initialize response.

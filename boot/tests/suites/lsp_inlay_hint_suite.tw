@@ -1,0 +1,187 @@
+use compiler.query.cache as query_cache
+use lib.json
+use lib.lsp.document_store
+use lib.lsp.protocol
+use lib.lsp.server_core
+use tests.assert
+use tests.runner
+
+fn state_with_doc(uri: String, text: String) server_core.State {
+  docs := document_store.open(document_store.empty(), uri, text, .Some(1))
+  server_core.State.{
+    initialized: true,
+    shutdown_requested: false,
+    should_exit: false,
+    documents: docs,
+    query_cache: query_cache.empty(),
+    diagnostics_pending: false,
+    diagnostics_deadline_ms: 0.0,
+    last_published_versions: Dict.new(),
+  }
+}
+
+fn inlay_hint_request(id: Int, uri: String, start_line: Int, end_line: Int) protocol.Message {
+  params := json.object([
+    json.kv("textDocument", json.object([json.kv("uri", .Str(uri))])),
+    json.kv(
+      "range",
+      json.object([
+        json.kv(
+          "start",
+          json.object([json.kv("line", .Int(start_line)), json.kv("character", .Int(0))]),
+        ),
+        json.kv(
+          "end",
+          json.object([json.kv("line", .Int(end_line)), json.kv("character", .Int(0))]),
+        ),
+      ]),
+    ),
+  ])
+  protocol.Message.Request(.{
+    id: .IntId(id),
+    method: "textDocument/inlayHint",
+    params: .Some(params),
+  })
+}
+
+fn hint_labels(step: server_core.Step) Vector<String>!String {
+  if step.outgoing.len() != 1 {
+    return .Err("expected one outgoing message")
+  }
+
+  out := step.outgoing[0]
+  result := try json.decode(out, json.field("result", json.raw()))
+  items := try json.decode(result, json.list(json.raw()))
+  labels: Vector<String> = []
+
+  for item in items {
+    label := try json.decode(item, json.field("label", json.string()))
+    labels = .append(label)
+  }
+
+  .Ok(labels)
+}
+
+fn hint_kinds(step: server_core.Step) Vector<Int>!String {
+  if step.outgoing.len() != 1 {
+    return .Err("expected one outgoing message")
+  }
+
+  out := step.outgoing[0]
+  result := try json.decode(out, json.field("result", json.raw()))
+  items := try json.decode(result, json.list(json.raw()))
+  kinds: Vector<Int> = []
+
+  for item in items {
+    kind := try json.decode(item, json.field("kind", json.int()))
+    kinds = .append(kind)
+  }
+
+  .Ok(kinds)
+}
+
+pub fn suite() runner.Suite {
+  runner.suite("lsp inlay hints")
+    .test(
+      "type hint for inferred binding",
+      fn() {
+        // x := [1, 2, 3]  — type is Vector<Int>, should get a hint
+        src := "x := [1, 2, 3]\n"
+        state := state_with_doc("file:///a.tw", src)
+        step := server_core.handle_message(state, inlay_hint_request(1, "file:///a.tw", 0, 1))
+        labels := try hint_labels(step)
+        try assert.equal(labels.len(), 1)
+        try assert.equal(labels[0], ": Vector<Int>")
+        .Ok({})
+      },
+    )
+    .test(
+      "no type hint for obvious literal",
+      fn() {
+        src := "x := 42\ny := \"hello\"\nz := true\n"
+        state := state_with_doc("file:///a.tw", src)
+        step := server_core.handle_message(state, inlay_hint_request(1, "file:///a.tw", 0, 3))
+        labels := try hint_labels(step)
+        try assert.equal(labels.len(), 0)
+        .Ok({})
+      },
+    )
+    .test(
+      "no type hint for annotated binding",
+      fn() {
+        src := "x: Int = 42\n"
+        state := state_with_doc("file:///a.tw", src)
+        step := server_core.handle_message(state, inlay_hint_request(1, "file:///a.tw", 0, 1))
+        labels := try hint_labels(step)
+        try assert.equal(labels.len(), 0)
+        .Ok({})
+      },
+    )
+    .test(
+      "type hint kind is 1",
+      fn() {
+        src := "x := [1, 2]\n"
+        state := state_with_doc("file:///a.tw", src)
+        step := server_core.handle_message(state, inlay_hint_request(1, "file:///a.tw", 0, 1))
+        kinds := try hint_kinds(step)
+        try assert.equal(kinds.len(), 1)
+        try assert.equal(kinds[0], 1)
+        .Ok({})
+      },
+    )
+    .test(
+      "parameter hints for multi-arg call",
+      fn() {
+        src := "fn add(a: Int, b: Int) Int { a + b }\nx := add(1, 2)\n"
+        state := state_with_doc("file:///a.tw", src)
+        step := server_core.handle_message(state, inlay_hint_request(1, "file:///a.tw", 0, 2))
+        labels := try hint_labels(step)
+
+        // Should have type hint for x := add(1, 2) and param hints for a:, b:
+        try assert.is_true(labels.contains("a: "))
+        try assert.is_true(labels.contains("b: "))
+        .Ok({})
+      },
+    )
+    .test(
+      "no parameter hint when arg matches param name",
+      fn() {
+        src := "fn greet(name: String) String { name }\nname := \"world\"\nx := greet(name)\n"
+        state := state_with_doc("file:///a.tw", src)
+        step := server_core.handle_message(state, inlay_hint_request(1, "file:///a.tw", 0, 3))
+        labels := try hint_labels(step)
+
+        // Should NOT have a "name: " parameter hint since arg is already `name`
+        try assert.is_true(!labels.contains("name: "))
+        .Ok({})
+      },
+    )
+    .test(
+      "empty result for unknown document",
+      fn() {
+        state := state_with_doc("file:///a.tw", "x := 1\n")
+        step := server_core.handle_message(state, inlay_hint_request(1, "file:///unknown.tw", 0, 1))
+        labels := try hint_labels(step)
+        try assert.equal(labels.len(), 0)
+        .Ok({})
+      },
+    )
+    .test(
+      "inlayHintProvider advertised in capabilities",
+      fn() {
+        msg := protocol.Message.Request(.{ id: .IntId(1), method: "initialize", params: .None })
+        step := server_core.handle_message(server_core.initial_state(), msg)
+
+        if step.outgoing.len() != 1 {
+          return .Err("expected one message")
+        }
+
+        out := step.outgoing[0]
+        result := try json.decode(out, json.field("result", json.raw()))
+        caps := try json.decode(result, json.field("capabilities", json.raw()))
+        hint_cap := try json.decode(caps, json.field("inlayHintProvider", json.bool()))
+        try assert.is_true(hint_cap)
+        .Ok({})
+      },
+    )
+}

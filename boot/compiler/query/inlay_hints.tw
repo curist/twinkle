@@ -1,0 +1,309 @@
+/// Inlay hints query: emit type hints for inferred `:=` bindings
+/// and parameter name hints at call sites.
+
+use compiler.ast.{Block, Expr, FunctionDecl, Item, LetStmt, Stmt}
+use compiler.checker.{CheckResult}
+use compiler.query.semantic.{SemanticSnapshot}
+use compiler.resolver.{FunctionSig, ty_to_string_env}
+
+pub type InlayHintKind = { TypeHint, ParameterHint }
+
+pub type InlayHint = .{ position: Int, label: String, kind: InlayHintKind }
+
+type HintCtx = .{ typed: CheckResult, range_start: Int, range_end: Int }
+
+pub fn inlay_hints(snap: SemanticSnapshot, range_start: Int, range_end: Int) Vector<InlayHint> {
+  parsed := case snap.parsed {
+    .Some(p) => p,
+    .None => { return [] },
+  }
+  typed := case snap.typed {
+    .Some(t) => t,
+    .None => { return [] },
+  }
+  ctx := HintCtx.{ typed, range_start, range_end }
+  out: Vector<InlayHint> = []
+
+  for item in parsed.module.items {
+    out = .concat(ctx.hints_from_item(item))
+  }
+
+  out
+}
+
+fn hints_from_item(ctx: HintCtx, item: Item) Vector<InlayHint> {
+  case item {
+    .Function(decl) => if decl.span.end >= ctx.range_start and decl.span.start <= ctx.range_end {
+      ctx.hints_from_function(decl)
+    } else {
+      []
+    },
+    .Stmt(stmt) => ctx.hints_from_stmt(stmt),
+    _ => [],
+  }
+}
+
+fn hints_from_function(ctx: HintCtx, decl: FunctionDecl) Vector<InlayHint> {
+  ctx.hints_from_block(decl.body)
+}
+
+fn hints_from_block(ctx: HintCtx, block: Block) Vector<InlayHint> {
+  out: Vector<InlayHint> = []
+
+  for stmt in block.stmts {
+    out = .concat(ctx.hints_from_stmt(stmt))
+  }
+
+  case block.tail {
+    .Some(expr) => out.concat(ctx.hints_from_expr(expr)),
+    .None => out,
+  }
+}
+
+fn hints_from_stmt(ctx: HintCtx, stmt: Stmt) Vector<InlayHint> {
+  case stmt {
+    .Let(ls) => {
+      out := ctx.hints_from_let(ls)
+      out.concat(ctx.hints_from_expr(ls.value))
+    },
+    .For(fs) => {
+      iter_hints := case fs.iter {
+        .Some(e) => ctx.hints_from_expr(e),
+        .None => [],
+      }
+      iter_hints.concat(ctx.hints_from_block(fs.body))
+    },
+    .Expr(es) => ctx.hints_from_expr(es.expr),
+    .Return(rs) => case rs.value {
+      .Some(e) => ctx.hints_from_expr(e),
+      .None => [],
+    },
+    .Defer(ds) => ctx.hints_from_expr(ds.expr),
+    _ => [],
+  }
+}
+
+fn hints_from_let(ctx: HintCtx, ls: LetStmt) Vector<InlayHint> {
+  // Only show type hints for inferred bindings (`:=` syntax means ty == .None)
+  case ls.ty {
+    .Some(_) => { return [] },
+    .None => {},
+  }
+
+  if ls.name_span.end < ctx.range_start or ls.name_span.start > ctx.range_end {
+    return []
+  }
+
+  // Skip obvious types: literal ints, floats, strings, bools
+  if is_obvious_initializer(ls.value) {
+    return []
+  }
+
+  case ctx.typed.type_map[ls.value.id] {
+    .Some(ty) => {
+      label := ty_to_string_env(ctx.typed.env, ty)
+      [InlayHint.{ position: ls.name_span.end, label: ": ${label}", kind: .TypeHint }]
+    },
+    .None => [],
+  }
+}
+
+fn is_obvious_initializer(expr: Expr) Bool {
+  case expr.kind {
+    .IntLit(_) => true,
+    .FloatLit(_) => true,
+    .StringLit(_) => true,
+    .StringInterp(_) => true,
+    .BoolLit(_) => true,
+    _ => false,
+  }
+}
+
+fn hints_from_expr(ctx: HintCtx, expr: Expr) Vector<InlayHint> {
+  if expr.span.end < ctx.range_start or expr.span.start > ctx.range_end {
+    return []
+  }
+
+  case expr.kind {
+    .Call(callee, args) => {
+      call_hints := ctx.param_hints_for_call(callee, args)
+
+      // Recurse into callee and args
+      inner := ctx.hints_from_expr(callee)
+
+      for arg in args {
+        inner = .concat(ctx.hints_from_expr(arg))
+      }
+
+      call_hints.concat(inner)
+    },
+    .BlockExpr(block) => ctx.hints_from_block(block),
+    .If(condition, then_block, else_expr) => {
+      out := ctx.hints_from_expr(condition)
+      out = .concat(ctx.hints_from_block(then_block))
+
+      case else_expr {
+        .Some(e) => out.concat(ctx.hints_from_expr(e)),
+        .None => out,
+      }
+    },
+    .Case(scrutinee, arms) => {
+      out := ctx.hints_from_expr(scrutinee)
+
+      for arm in arms {
+        out = .concat(ctx.hints_from_expr(arm.expr))
+      }
+
+      out
+    },
+    .Cond(arms) => {
+      out: Vector<InlayHint> = []
+
+      for arm in arms {
+        case arm.condition {
+          .Some(c) => out = out.concat(ctx.hints_from_expr(c)),
+          .None => {},
+        }
+
+        out = .concat(ctx.hints_from_expr(arm.body))
+      }
+
+      out
+    },
+    .Closure(_, _, body) => ctx.hints_from_block(body),
+    .Collect(ce) => {
+      out: Vector<InlayHint> = []
+
+      case ce.iter {
+        .Some(e) => out = out.concat(ctx.hints_from_expr(e)),
+        .None => {},
+      }
+
+      case ce.condition {
+        .Some(e) => out = out.concat(ctx.hints_from_expr(e)),
+        .None => {},
+      }
+
+      out.concat(ctx.hints_from_block(ce.body))
+    },
+    .Binary(_, lhs, rhs) => ctx.hints_from_expr(lhs).concat(ctx.hints_from_expr(rhs)),
+    .Unary(_, operand) => ctx.hints_from_expr(operand),
+    .Array(elems) => {
+      out: Vector<InlayHint> = []
+
+      for e in elems {
+        out = .concat(ctx.hints_from_expr(e))
+      }
+
+      out
+    },
+    .Index(base, idx) => ctx.hints_from_expr(base).concat(ctx.hints_from_expr(idx)),
+    .Field(base, _) => ctx.hints_from_expr(base),
+    .Variant(_, args) => {
+      out: Vector<InlayHint> = []
+
+      for e in args {
+        out = .concat(ctx.hints_from_expr(e))
+      }
+
+      out
+    },
+    _ => [],
+  }
+}
+
+fn param_hints_for_call(ctx: HintCtx, callee: Expr, args: Vector<Expr>) Vector<InlayHint> {
+  if args.len() == 0 {
+    return []
+  }
+
+  // Look up function signature via method_calls or direct ident
+  sig := case resolve_call_sig(ctx, callee) {
+    .Some(s) => s,
+    .None => { return [] },
+  }
+
+  // For method calls, skip the receiver parameter
+  param_offset := case ctx.typed.method_calls[callee.id] {
+    .Some(meta) => if meta.has_receiver {
+      1
+    } else {
+      0
+    },
+    .None => case callee.kind {
+      .Field(_, _) => 1,
+      _ => 0,
+    },
+  }
+
+  out: Vector<InlayHint> = []
+
+  for i in 0..args.len() {
+    param_idx := i + param_offset
+
+    if param_idx >= sig.param_names.len() {
+      continue
+    }
+
+    name := sig.param_names[param_idx]
+
+    if name == "" {
+      continue
+    }
+
+    arg := args[i]
+
+    // Skip if the argument is already a variable with the same name
+    if arg_matches_param_name(arg, name) {
+      continue
+    }
+
+    // Skip simple literal arguments — they're usually clear from context
+    // Only show hints for non-trivial arguments
+    if is_simple_arg(arg) and args.len() <= 1 {
+      continue
+    }
+
+    out = .append(InlayHint.{ position: arg.span.start, label: "${name}: ", kind: .ParameterHint })
+  }
+
+  out
+}
+
+fn resolve_call_sig(ctx: HintCtx, callee: Expr) FunctionSig? {
+  // Check method_calls first (resolved by type checker)
+  case ctx.typed.method_calls[callee.id] {
+    .Some(meta) => if meta.func_name != "" {
+      return ctx.typed.env.lookup_registered_function(meta.func_name)
+    },
+    .None => {},
+  }
+
+  // Direct function call via identifier
+  case callee.kind {
+    .Ident(name) => ctx.typed.env.lookup_function(name),
+    .Field(_, method) => {
+      // Can't resolve without type info on the base — skip
+      .None
+    },
+    _ => .None,
+  }
+}
+
+fn arg_matches_param_name(arg: Expr, param_name: String) Bool {
+  case arg.kind {
+    .Ident(name) => name == param_name,
+    _ => false,
+  }
+}
+
+fn is_simple_arg(arg: Expr) Bool {
+  case arg.kind {
+    .Ident(_) => true,
+    .IntLit(_) => true,
+    .FloatLit(_) => true,
+    .StringLit(_) => true,
+    .BoolLit(_) => true,
+    _ => false,
+  }
+}

@@ -17,6 +17,7 @@ use compiler.query.definition as query_definition
 use compiler.query.diagnostics as query_diagnostics
 use compiler.query.document_symbols as query_document_symbols
 use compiler.query.hover as query_hover
+use compiler.query.inlay_hints as query_inlay_hints
 use compiler.query.semantic
 use compiler.query.signature_help as query_signature_help
 use compiler.query.workspace_symbols as query_workspace_symbols
@@ -28,6 +29,7 @@ use lib.lsp.diagnostics as lsp_diagnostics
 use lib.lsp.document_store
 use lib.lsp.document_symbol as lsp_document_symbol
 use lib.lsp.hover as lsp_hover
+use lib.lsp.inlay_hint as lsp_inlay_hint
 use lib.lsp.params
 use lib.lsp.protocol
 use lib.lsp.range as lsp_range
@@ -91,6 +93,7 @@ fn handle_request(state: State, req: protocol.Request) Step {
             json.kv("codeActionProvider", .Bool(true)),
             json.kv("documentSymbolProvider", .Bool(true)),
             json.kv("workspaceSymbolProvider", .Bool(true)),
+            json.kv("inlayHintProvider", .Bool(true)),
             json.kv(
               "signatureHelpProvider",
               json.object([json.kv("triggerCharacters", json.array([.Str("("), .Str(",")]))]),
@@ -108,6 +111,7 @@ fn handle_request(state: State, req: protocol.Request) Step {
     "textDocument/documentSymbol" => handle_document_symbol(state, req),
     "textDocument/signatureHelp" => handle_signature_help(state, req),
     "textDocument/formatting" => handle_formatting(state, req),
+    "textDocument/inlayHint" => handle_inlay_hint(state, req),
     "workspace/symbol" => handle_workspace_symbol(state, req),
     "shutdown" => {
       state.shutdown_requested = true
@@ -353,6 +357,34 @@ fn handle_document_symbol(state: State, req: protocol.Request) Step {
         req.id,
         lsp_document_symbol.document_symbol_response(doc.index, symbols),
       ),
+    ],
+  }
+}
+
+fn handle_inlay_hint(state: State, req: protocol.Request) Step {
+  hint_params := case params.decode_inlay_hint(req.params) {
+    .Ok(p) => p,
+    .Err(_) => { return empty_array_response_step(state, req) },
+  }
+  doc := case document_store.get(state.documents, hint_params.text_document.uri) {
+    .Some(d) => d,
+    .None => { return empty_array_response_step(state, req) },
+  }
+  range_start := case position_offset(doc.index, hint_params.range_start) {
+    .Some(o) => o,
+    .None => 0,
+  }
+  range_end := case position_offset(doc.index, hint_params.range_end) {
+    .Some(o) => o,
+    .None => doc.text.len(),
+  }
+  snap := workspace_snapshot(state, doc)
+  state.query_cache = snap.cache
+  hints := query_inlay_hints.inlay_hints(snap, range_start, range_end)
+  .{
+    state,
+    outgoing: [
+      protocol.success_response(req.id, lsp_inlay_hint.inlay_hint_response(doc.index, hints)),
     ],
   }
 }

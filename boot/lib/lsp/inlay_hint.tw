@@ -1,0 +1,31 @@
+/// LSP inlay hint response adapter.
+///
+/// Converts internal InlayHint results into LSP InlayHint[] JSON.
+
+use compiler.query.inlay_hints as query_inlay_hints
+use lib.json
+use lib.text.line_index
+
+use .range.{position_to_json}
+
+/// InlayHintKind in LSP: 1 = Type, 2 = Parameter
+fn hint_kind_to_int(kind: query_inlay_hints.InlayHintKind) Int {
+  case kind {
+    .TypeHint => 1,
+    .ParameterHint => 2,
+  }
+}
+
+pub fn inlay_hint_response(index: line_index.LineIndex, hints: Vector<query_inlay_hints.InlayHint>) json.Json {
+  items := collect hint in hints {
+    pos := line_index.byte_offset_to_position(index, hint.position, .Utf16)
+    json.object([
+      json.kv("position", position_to_json(pos)),
+      json.kv("label", .Str(hint.label)),
+      json.kv("kind", .Int(hint_kind_to_int(hint.kind))),
+      json.kv("paddingLeft", .Bool(hint.kind == .TypeHint)),
+      json.kv("paddingRight", .Bool(hint.kind == .ParameterHint)),
+    ])
+  }
+  json.array(items)
+}
