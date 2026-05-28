@@ -1,0 +1,109 @@
+/// LSP semantic tokens response adapter.
+///
+/// Converts internal SemanticToken results into the LSP delta-encoded
+/// integer array format and builds the capability/legend JSON.
+
+use compiler.query.semantic_tokens as query_semantic_tokens
+use lib.json
+use lib.text.line_index
+
+/// Build the semanticTokensProvider capability object for initialize.
+pub fn capability() json.Json {
+  token_types := json.array([
+    .Str("namespace"),
+    .Str("type"),
+    .Str("typeParameter"),
+    .Str("function"),
+    .Str("method"),
+    .Str("parameter"),
+    .Str("variable"),
+    .Str("property"),
+    .Str("enumMember"),
+  ])
+  token_modifiers := json.array([
+    .Str("declaration"),
+    .Str("definition"),
+    .Str("readonly"),
+    .Str("defaultLibrary"),
+  ])
+  legend := json.object([
+    json.kv("tokenTypes", token_types),
+    json.kv("tokenModifiers", token_modifiers),
+  ])
+  json.object([json.kv("legend", legend), json.kv("full", .Bool(true))])
+}
+
+/// Encode semantic tokens into the LSP response format.
+pub fn semantic_tokens_response(
+  index: line_index.LineIndex,
+  tokens: Vector<query_semantic_tokens.SemanticToken>,
+) json.Json {
+  // Sort tokens by start position
+  sorted := sort_tokens(tokens)
+
+  // Delta-encode
+  data: Vector<json.Json> = []
+  prev_line := 0
+  prev_char := 0
+
+  for tok in sorted {
+    pos := line_index.byte_offset_to_position(index, tok.start, .Utf16)
+    end_pos := line_index.byte_offset_to_position(index, tok.start + tok.length, .Utf16)
+
+    delta_line := pos.line - prev_line
+    delta_char := if delta_line == 0 {
+      pos.character - prev_char
+    } else {
+      pos.character
+    }
+
+    // Use character-based length for UTF-16 correctness
+    char_length := if pos.line == end_pos.line {
+      end_pos.character - pos.character
+    } else {
+      tok.length
+    }
+
+    modifiers := if tok.is_declaration {
+      1
+    } else {
+      0
+    }
+
+    data = .append(.Int(delta_line))
+    data = .append(.Int(delta_char))
+    data = .append(.Int(char_length))
+    data = .append(.Int(query_semantic_tokens.token_kind_index(tok.kind)))
+    data = .append(.Int(modifiers))
+
+    prev_line = pos.line
+    prev_char = pos.character
+  }
+
+  json.object([json.kv("data", json.array(data))])
+}
+
+/// Simple insertion sort by start position — tokens are mostly sorted already.
+fn sort_tokens(tokens: Vector<query_semantic_tokens.SemanticToken>) Vector<
+  query_semantic_tokens.SemanticToken,
+> {
+  if tokens.len() <= 1 {
+    return tokens
+  }
+
+  sorted := tokens
+
+  for i in 1..sorted.len() {
+    j := i
+
+    for j > 0 and sorted[j - 1].start > sorted[j].start {
+      // swap
+      tmp := sorted[j]
+      sorted[j] = sorted[j - 1]
+      sorted[j - 1] = tmp
+      j = j - 1
+    }
+  }
+
+  sorted
+}

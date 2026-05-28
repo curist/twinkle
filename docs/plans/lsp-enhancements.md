@@ -36,7 +36,7 @@ plan; whole-document format-on-save is good enough for now.
 | Find references | `textDocument/references` | High | **Done** | [lsp-references.md](lsp-references.md) |
 | Rename | `textDocument/rename`, `textDocument/prepareRename` | High | Planned | [lsp-rename.md](lsp-rename.md) |
 | Signature help | `textDocument/signatureHelp` | High | **Done** | [archived](archive/lsp-signature-help.md) |
-| Semantic tokens | `textDocument/semanticTokens/full` | Medium | Planned | [lsp-semantic-tokens.md](lsp-semantic-tokens.md) |
+| Semantic tokens | `textDocument/semanticTokens/full` | Medium | **Done** | [lsp-semantic-tokens.md](lsp-semantic-tokens.md) |
 | Workspace symbols | `workspace/symbol` | Medium | **Done** | [lsp-workspace-symbols.md](lsp-workspace-symbols.md) |
 | Document highlight | `textDocument/documentHighlight` | Medium | Planned | [lsp-document-highlight.md](lsp-document-highlight.md) |
 | Inlay hints | `textDocument/inlayHint` | Medium | **Done** | [lsp-inlay-hints.md](lsp-inlay-hints.md) |
@@ -62,7 +62,7 @@ Existing related plans:
 3. Rename: build on references with scope-aware edit generation.
 4. ~~Signature help: reuses type/signature rendering and call-site analysis.~~
    **Done.**
-5. Semantic tokens: improve syntax highlighting with compiler knowledge.
+5. ~~Semantic tokens: improve syntax highlighting with compiler knowledge.~~ **Done.**
 6. ~~Inlay hints: useful once type/signature lookup helpers are stable.~~ **Done.**
 7. ~~Workspace symbols~~, document highlight, folding ranges, incremental sync as
    follow-up quality-of-life improvements. **Workspace symbols done.**

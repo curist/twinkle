@@ -37,6 +37,8 @@ pub type CodeActionParams = .{
   context_diagnostics: Vector<json.Json>,
 }
 
+pub type SemanticTokensParams = .{ text_document: TextDocumentIdentifier }
+
 pub type DocumentFormattingParams = .{ text_document: TextDocumentIdentifier }
 
 pub type DocumentSymbolParams = .{ text_document: TextDocumentIdentifier }
@@ -179,6 +181,15 @@ pub fn decode_inlay_hint(params: json.Json?) Result<InlayHintParams, String> {
   range_start := try json.decode(range, json.field("start", position_decoder()))
   range_end := try json.decode(range, json.field("end", position_decoder()))
   .Ok(.{ text_document, range_start, range_end })
+}
+
+pub fn decode_semantic_tokens(params: json.Json?) Result<SemanticTokensParams, String> {
+  value := try required_params(params)
+  text_document := try json.decode(
+    value,
+    json.field("textDocument", text_document_identifier_decoder()),
+  )
+  .Ok(.{ text_document })
 }
 
 pub fn decode_document_formatting(params: json.Json?) Result<DocumentFormattingParams, String> {
