@@ -36,6 +36,9 @@ In scope:
 * A2: Auto-import for unresolved names
 * A3: Add type annotations to function signature
 
+* A4: Add type annotations to top-level function declarations
+* A5: Remove redundant type annotations from closures
+
 Out of scope:
 
 * Extract variable / extract function refactorings
@@ -136,6 +139,91 @@ quick-fix).
   insert `: Type`. The AST `Param` node should carry this.
 * Return type position: need the `)` position of the param list.
 
+### A4 — Add Type Annotations to Top-Level Function Declarations
+
+Priority: medium. Top-level functions are API boundaries — explicit types
+serve as documentation and catch unintended signature changes. Unlike A3
+(cursor-triggered source action), this is a diagnostic-driven suggestion that
+flags top-level functions with incomplete annotations.
+
+**Trigger:** A top-level `fn` declaration (not nested, not a closure) where
+any parameter lacks an explicit type annotation or the return type is omitted.
+This is a diagnostic code action (quick-fix), not a cursor-based source action.
+
+**Diagnostic data attachment** (`analyze.tw`):
+* Emit a hint-level diagnostic on the function name when annotations are
+  incomplete:
+  `{ kind: "missing_fn_annotations", name: "foo", span: <fn_name_span> }`
+* Severity: `Hint` with `unnecessary` tag — non-intrusive, shows up as a
+  suggestion rather than a warning.
+
+**Code action builder** (`code_action.tw`):
+* Reuse the same type-rendering logic as A3 (`ty_to_string_env()`).
+* For each unannotated parameter, generate a TextEdit inserting `: Type` after
+  the parameter name.
+* For a missing return type, generate a TextEdit inserting ` ReturnType` after
+  the closing `)` of the parameter list.
+* Title: `Add type annotations to "foo"`.
+* Kind: `"quickfix"`.
+
+**Differences from A3:**
+* A3 is a cursor-triggered source action on any function (including local
+  `fn`). A4 is a diagnostic-based hint specifically for top-level declarations.
+* A4 only fires for functions that are incomplete (at least one param or the
+  return type is unannotated). A3 fires whenever the cursor is on a function.
+
+**Challenges:**
+* Distinguishing top-level from nested: the analyzer needs to know scope depth
+  or check that the function is a direct child of the module.
+* Partial annotations: a function might have some params annotated and others
+  not — edits should only fill in the missing ones.
+
+### A5 — Remove Redundant Type Annotations from Closures
+
+Priority: low. When a closure is passed to a function whose parameter type is
+known (e.g. `xs.map(fn(x: Int) Int { x + 1 })` where `map` expects
+`fn(A) B`), the explicit annotations on the closure are redundant — the types
+are fully determined by the call context. Removing them reduces noise.
+
+**Trigger:** A closure expression (anonymous `fn`) with explicit type
+annotations where all annotated types match the expected type from the calling
+context. This is a diagnostic code action (hint-level suggestion).
+
+**Diagnostic data attachment** (`analyze.tw`):
+* During type checking, when a closure literal has explicit annotations that
+  exactly match the expected function type from context, emit a hint:
+  `{ kind: "redundant_closure_annotations", span: <closure_span> }`
+* Only fire when **all** annotations are redundant (every param type and the
+  return type match the expected type). If the closure has partial annotations
+  or the context type is ambiguous, do not suggest removal.
+
+**Code action builder** (`code_action.tw`):
+* For each annotated parameter, generate a TextEdit removing the `: Type`
+  suffix (keeping just the parameter name).
+* For the return type, generate a TextEdit removing the type after `)`.
+* Title: `Remove redundant type annotations from closure`.
+* Kind: `"quickfix"`.
+
+**Example:**
+```tw
+// Before (redundant — map's signature determines the types):
+xs.map(fn(x: Int) Int { x + 1 })
+
+// After:
+xs.map(fn(x) { x + 1 })
+```
+
+**Challenges:**
+* Context dependency: the expected type must be fully resolved at the closure
+  site. If the outer function is generic and the concrete type depends on other
+  arguments, the closure's context type might not be known until full
+  inference completes.
+* Partial redundancy: if only some annotations are redundant, the action
+  should not fire — removing some but not all annotations would be confusing.
+* Return type omission: need to verify that removing the return type doesn't
+  change the inferred type (e.g. when the closure body has multiple return
+  paths).
+
 ---
 
 ## Architecture
@@ -182,6 +270,10 @@ tests.
   request -> verify TextEdit inserts `use` statement
 * A3: Source with unannotated function -> codeAction request at function
   position -> verify TextEdit inserts param and return type annotations
+* A4: Source with top-level function missing type annotations -> verify
+  hint diagnostic is emitted and quick-fix inserts correct annotations
+* A5: Source with closure whose annotations match expected context type ->
+  verify hint diagnostic and quick-fix removes the redundant annotations
 
 Testing infrastructure note: the existing `open_then_complete` pattern in
 `lsp_completion_suite.tw` can be adapted to an `open_then_code_action` helper
@@ -208,4 +300,8 @@ that sends a `textDocument/codeAction` request instead of completion.
   project-local modules
 * A3 (type annotations) inserts correct inferred types for function params
   and return type
+* A4 (top-level annotation hints) emits diagnostics for incompletely
+  annotated top-level functions and generates correct quick-fix edits
+* A5 (closure annotation removal) detects fully redundant closure annotations
+  and generates edits that remove them without changing semantics
 * Code actions are validated by protocol-level tests
