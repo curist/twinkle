@@ -33,15 +33,15 @@ plan; whole-document format-on-save is good enough for now.
 | Feature | LSP method/capability | Priority | Status | Details |
 |---------|------------------------|----------|--------|---------|
 | Document symbols | `textDocument/documentSymbol` | High | **Done** | [archived](archive/lsp-document-symbols.md) |
-| Find references | `textDocument/references` | High | **Done** | [lsp-references.md](lsp-references.md) |
+| Find references | `textDocument/references` | High | **Done** | [archived](archive/lsp-references.md) |
 | Rename | `textDocument/rename`, `textDocument/prepareRename` | High | Planned | [lsp-rename.md](lsp-rename.md) |
 | Signature help | `textDocument/signatureHelp` | High | **Done** | [archived](archive/lsp-signature-help.md) |
-| Semantic tokens | `textDocument/semanticTokens/full` | Medium | **Done** | [lsp-semantic-tokens.md](lsp-semantic-tokens.md) |
-| Workspace symbols | `workspace/symbol` | Medium | **Done** | [lsp-workspace-symbols.md](lsp-workspace-symbols.md) |
-| Document highlight | `textDocument/documentHighlight` | Medium | **Done** | [lsp-document-highlight.md](lsp-document-highlight.md) |
-| Inlay hints | `textDocument/inlayHint` | Medium | **Done** | [lsp-inlay-hints.md](lsp-inlay-hints.md) |
-| Type definition | `textDocument/typeDefinition` | Medium | **Done** | [lsp-type-definition.md](lsp-type-definition.md) |
-| Folding ranges | `textDocument/foldingRange` | Low | **Done** | [lsp-folding-ranges.md](lsp-folding-ranges.md) |
+| Semantic tokens | `textDocument/semanticTokens/full` | Medium | **Done** | [archived](archive/lsp-semantic-tokens.md) |
+| Workspace symbols | `workspace/symbol` | Medium | **Done** | [archived](archive/lsp-workspace-symbols.md) |
+| Document highlight | `textDocument/documentHighlight` | Medium | **Done** | [archived](archive/lsp-document-highlight.md) |
+| Inlay hints | `textDocument/inlayHint` | Medium | **Done** | [archived](archive/lsp-inlay-hints.md) |
+| Type definition | `textDocument/typeDefinition` | Medium | **Done** | [archived](archive/lsp-type-definition.md) |
+| Folding ranges | `textDocument/foldingRange` | Low | **Done** | [archived](archive/lsp-folding-ranges.md) |
 | Incremental sync | `textDocumentSync: 2` | Low | Planned | [lsp-incremental-sync.md](lsp-incremental-sync.md) |
 
 Existing related plans:
