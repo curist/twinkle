@@ -19,7 +19,7 @@ pub type TokenKind = {
   EnumMember,
 }
 
-pub fn token_kind_index(kind: TokenKind) Int {
+pub fn id(kind: TokenKind) Int {
   case kind {
     .Namespace => 0,
     .Type => 1,

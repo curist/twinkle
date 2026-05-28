@@ -43,9 +43,9 @@ use .suites.lsp_completion_suite
 use .suites.lsp_definition_suite
 use .suites.lsp_diagnostics_suite
 use .suites.lsp_document_highlight_suite
-use .suites.lsp_folding_range_suite
 use .suites.lsp_document_store_suite
 use .suites.lsp_document_symbol_suite
+use .suites.lsp_folding_range_suite
 use .suites.lsp_framing_suite
 use .suites.lsp_hover_suite
 use .suites.lsp_inlay_hint_suite

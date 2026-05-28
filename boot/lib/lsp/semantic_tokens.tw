@@ -73,7 +73,7 @@ pub fn semantic_tokens_response(
     data = .append(.Int(delta_line))
     data = .append(.Int(delta_char))
     data = .append(.Int(char_length))
-    data = .append(.Int(query_semantic_tokens.token_kind_index(tok.kind)))
+    data = .append(.Int(tok.kind.id()))
     data = .append(.Int(modifiers))
 
     prev_line = pos.line
