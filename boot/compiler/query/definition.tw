@@ -1157,6 +1157,8 @@ fn resolve_type_id_from_mono(snap: SemanticSnapshot, env: ResolvedEnv, mono: Mon
   case mono {
     .Named(tid, _) => resolve_type_id(snap, env, tid),
     .ExternRef(tid) => resolve_type_id(snap, env, tid),
+    .Optional(inner) => resolve_type_id_from_mono(snap, env, inner),
+    .Result(ok, _) => resolve_type_id_from_mono(snap, env, ok),
     _ => .None,
   }
 }

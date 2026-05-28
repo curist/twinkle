@@ -404,4 +404,54 @@ pub fn suite() runner.Suite {
         .Ok({})
       },
     )
+    .test(
+      "optional type unwraps to inner named type",
+      fn() {
+        // type Config = .{ debug: Bool }
+        // fn find() Config? { .None }
+        // fn main() Int {
+        //   c := find()
+        //   ^  cursor on c — type is Config?
+        //   0
+        // }
+        src := "type Config = .{ debug: Bool }\nfn find() Config? { .None }\nfn main() Int {\n  c := find()\n  0\n}\n"
+        state := state_with_doc("file:///a.tw", src)
+        step := server_core.handle_message(state, typedef_request(1, "file:///a.tw", 3, 2))
+        r := try result_range(step)
+        try assert.equal(r.start_line, 0)
+        try assert.equal(r.start_char, 5)
+        try assert.equal(r.end_char, 11)
+        .Ok({})
+      },
+    )
+    .test(
+      "result type unwraps to ok named type",
+      fn() {
+        // type Token = .{ kind: String }
+        // fn parse(s: String) Result<Token, String> { .Err("nope") }
+        // fn main() Int {
+        //   r := parse("x")
+        //   ^  cursor on r — type is Result<Token, String>
+        //   0
+        // }
+        src := "type Token = .{ kind: String }\nfn parse(s: String) Result<Token, String> { .Err(\"nope\") }\nfn main() Int {\n  r := parse(\"x\")\n  0\n}\n"
+        state := state_with_doc("file:///a.tw", src)
+        step := server_core.handle_message(state, typedef_request(1, "file:///a.tw", 3, 2))
+        r := try result_range(step)
+        try assert.equal(r.start_line, 0)
+        try assert.equal(r.start_char, 5)
+        try assert.equal(r.end_char, 10)
+        .Ok({})
+      },
+    )
+    .test(
+      "optional primitive still returns null",
+      fn() {
+        src := "fn find() Int? { .None }\nfn main() Int {\n  x := find()\n  0\n}\n"
+        state := state_with_doc("file:///a.tw", src)
+        step := server_core.handle_message(state, typedef_request(1, "file:///a.tw", 2, 2))
+        try assert.is_true(try is_null_result(step))
+        .Ok({})
+      },
+    )
 }
