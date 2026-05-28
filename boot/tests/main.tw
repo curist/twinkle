@@ -49,6 +49,7 @@ use .suites.lsp_hover_suite
 use .suites.lsp_inlay_hint_suite
 use .suites.lsp_params_suite
 use .suites.lsp_protocol_suite
+use .suites.lsp_references_suite
 use .suites.lsp_server_core_suite
 use .suites.lsp_signature_help_suite
 use .suites.lsp_type_definition_suite
@@ -183,6 +184,7 @@ runner.run_all([
   lsp_signature_help_suite.suite(),
   lsp_workspace_symbol_suite.suite(),
   lsp_inlay_hint_suite.suite(),
+  lsp_references_suite.suite(),
   multi_module_suite.suite(),
   base_env_guardrail_suite.suite(),
   signature_loader_suite.suite(),

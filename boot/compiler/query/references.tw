@@ -1,0 +1,1837 @@
+/// Find-references query over semantic snapshots.
+///
+/// Resolves the symbol under the cursor to an identity, then walks candidate
+/// modules collecting all spans that refer to the same symbol.
+
+use compiler.ast.{
+  Block, Expr, Item, Pattern, RecordEntry, Stmt, TypeDecl, TypeExpr, TypePath, UseDecl,
+}
+use compiler.checker.{CheckResult}
+use compiler.imports
+use compiler.mono_type.{TypeId}
+use compiler.query.cache
+use compiler.query.definition.{definition}
+use compiler.query.semantic.{SemanticSnapshot}
+use compiler.resolver.{ResolvedEnv}
+use lib.source.identity
+use lib.source.span.{Span}
+
+pub type ReferenceLocation = .{ uri: String, span: Span }
+
+/// Context for reference collection within a specific module.
+type RefCtx = .{ uri: String, canonical_path: String, env: ResolvedEnv, typed: CheckResult? }
+
+/// Symbol identity: what the cursor points to.
+type SymbolId = {
+  Local(String, Span),
+  Func(String, String),
+  TypeDef(String, String),
+  Variant(String, String, String),
+  Field(String, String, String),
+}
+
+pub fn find_references(snap: SemanticSnapshot, byte_offset: Int, include_declaration: Bool) Vector<
+  ReferenceLocation,
+> {
+  parsed := case snap.parsed {
+    .Some(p) => p,
+    .None => { return [] },
+  }
+
+  sym := case identify_symbol(snap, byte_offset) {
+    .Some(s) => s,
+    .None => { return [] },
+  }
+
+  case sym {
+    .Local(name, decl_span) => {
+      refs := collect_local_refs(snap.uri, parsed.module.items, name, decl_span, byte_offset)
+
+      if include_declaration {
+        refs = .append(.{ uri: snap.uri, span: decl_span })
+      }
+
+      refs
+    },
+    _ => collect_workspace_refs(snap, sym, include_declaration),
+  }
+}
+
+// ── Symbol identification ──────────────────────────────────────────
+fn identify_symbol(snap: SemanticSnapshot, byte_offset: Int) SymbolId? {
+  parsed := case snap.parsed {
+    .Some(p) => p,
+    .None => { return .None },
+  }
+  typed := case snap.typed {
+    .Some(t) => t,
+    .None => { return .None },
+  }
+
+  // Check if cursor is on a type declaration name
+  for item in parsed.module.items {
+    case item {
+      .Type(decl) => {
+        name_start := decl.span.start
+          + if decl.is_pub {
+            9
+          } else {
+            5
+          }
+        name_span := Span.{
+          file_id: decl.span.file_id,
+          start: name_start,
+          end: name_start + decl.name.len(),
+        }
+
+        if name_span.contains(byte_offset) {
+          return .Some(type_def_id(snap, typed.env, decl.name))
+        }
+
+        // Check if cursor is on a variant name in the definition
+        case decl.def {
+          .Sum(variants) => {
+            for v in variants {
+              variant_name_span := Span.{
+                file_id: v.span.file_id,
+                start: v.span.start,
+                end: v.span.start + v.name.len(),
+              }
+
+              if variant_name_span.contains(byte_offset) {
+                module_path := snap.canonical_path
+                type_name := decl.name
+
+                case typed.env.lookup_type(decl.name) {
+                  .Some(entry) => case typed.env.type_origins[entry.id.id] {
+                    .Some(origin) => {
+                      parts := origin.split("::")
+
+                      if parts.len() >= 2 {
+                        module_path = parts[0]
+                        type_name = parts[1]
+                      }
+                    },
+                    .None => {},
+                  },
+                  .None => {},
+                }
+
+                return .Some(.Variant(module_path, type_name, v.name))
+              }
+            }
+          },
+          .Record(fields) => {
+            for f in fields {
+              if f.name_span.contains(byte_offset) {
+                module_path := snap.canonical_path
+                type_name := decl.name
+
+                case typed.env.lookup_type(decl.name) {
+                  .Some(entry) => case typed.env.type_origins[entry.id.id] {
+                    .Some(origin) => {
+                      parts := origin.split("::")
+
+                      if parts.len() >= 2 {
+                        module_path = parts[0]
+                        type_name = parts[1]
+                      }
+                    },
+                    .None => {},
+                  },
+                  .None => {},
+                }
+
+                return .Some(.Field(module_path, type_name, f.name))
+              }
+            }
+          },
+          _ => {},
+        }
+      },
+      .Function(decl) => {
+        name_start := decl.span.start
+          + if decl.is_pub {
+            7
+          } else {
+            3
+          }
+        name_span := Span.{
+          file_id: decl.span.file_id,
+          start: name_start,
+          end: name_start + decl.name.len(),
+        }
+
+        if name_span.contains(byte_offset) {
+          return .Some(func_id(snap, typed.env, decl.name))
+        }
+
+        // Check params for local bindings
+        if decl.span.contains(byte_offset) {
+          for p in decl.params {
+            if p.name_span.contains(byte_offset) {
+              return .Some(.Local(p.name, p.name_span))
+            }
+          }
+
+          // Check let bindings within body
+          case find_local_decl_in_block(decl.body, byte_offset) {
+            .Some(local) => { return .Some(local) },
+            .None => {},
+          }
+        }
+      },
+      _ => {},
+    }
+  }
+
+  // Check top-level let statements
+  for item in parsed.module.items {
+    case item {
+      .Stmt(.Let(ls)) => if ls.name_span.contains(byte_offset) {
+        return .Some(func_id(snap, typed.env, ls.name))
+      },
+      _ => {},
+    }
+  }
+
+  // Fall back to definition-based identification: resolve the reference at
+  // cursor, then figure out what kind of symbol it points to.
+  identify_from_definition(snap, byte_offset)
+}
+
+fn identify_from_definition(snap: SemanticSnapshot, byte_offset: Int) SymbolId? {
+  parsed := case snap.parsed {
+    .Some(p) => p,
+    .None => { return .None },
+  }
+  typed := case snap.typed {
+    .Some(t) => t,
+    .None => { return .None },
+  }
+
+  result := case definition(snap, byte_offset) {
+    .Some(r) => r,
+    .None => { return .None },
+  }
+
+  // Check if the definition target is a local binding (same file, inside a function)
+  if result.uri == snap.uri {
+    // Is the target a function parameter or let binding inside a function?
+    for item in parsed.module.items {
+      case item {
+        .Function(decl) => if decl.span.contains(result.span.start) {
+          // Check params
+          for p in decl.params {
+            if p.name_span.start == result.span.start and p.name_span.end == result.span.end {
+              return .Some(.Local(p.name, p.name_span))
+            }
+          }
+
+          // Check let bindings
+          case find_binding_at_span(decl.body, result.span) {
+            .Some(local) => { return .Some(local) },
+            .None => {},
+          }
+        },
+        _ => {},
+      }
+    }
+  }
+
+  // Check if target is a function definition
+  target_canonical := canonical_from_uri(snap, result.uri)
+
+  case cache.latest_parsed(snap.cache, target_canonical) {
+    .Some(target_parsed) => {
+      for item in target_parsed.module.items {
+        case item {
+          .Function(decl) => {
+            fn_name_start := decl.span.start
+              + if decl.is_pub {
+                7
+              } else {
+                3
+              }
+
+            if fn_name_start == result.span.start {
+              return .Some(.Func(target_canonical, decl.name))
+            }
+          },
+          .Type(decl) => {
+            type_name_start := decl.span.start
+              + if decl.is_pub {
+                9
+              } else {
+                5
+              }
+
+            if type_name_start == result.span.start {
+              return .Some(.TypeDef(target_canonical, decl.name))
+            }
+
+            // Check variant definitions
+            case decl.def {
+              .Sum(variants) => {
+                for v in variants {
+                  if v.span.start == result.span.start {
+                    return .Some(.Variant(target_canonical, decl.name, v.name))
+                  }
+                }
+              },
+              .Record(fields) => {
+                for f in fields {
+                  if f.name_span.start == result.span.start {
+                    return .Some(.Field(target_canonical, decl.name, f.name))
+                  }
+                }
+              },
+              _ => {},
+            }
+          },
+          .Stmt(.Let(ls)) => if ls.name_span.start == result.span.start {
+            return .Some(.Func(target_canonical, ls.name))
+          },
+          _ => {},
+        }
+      }
+    },
+    .None => {},
+  }
+
+  .None
+}
+
+fn find_local_decl_in_block(block: Block, offset: Int) SymbolId? {
+  for stmt in block.stmts {
+    case stmt {
+      .Let(ls) => {
+        if ls.name_span.contains(offset) {
+          return .Some(.Local(ls.name, ls.name_span))
+        }
+
+        if ls.value.span.contains(offset) {
+          return find_local_decl_in_expr(ls.value, offset)
+        }
+      },
+      .For(fs) => if fs.span.contains(offset) {
+        case fs.pattern {
+          .Some(n) => case fs.pattern_span {
+            .Some(s) => if s.contains(offset) {
+              return .Some(.Local(n, s))
+            },
+            .None => {},
+          },
+          .None => {},
+        }
+
+        case fs.index {
+          .Some(n) => case fs.index_span {
+            .Some(s) => if s.contains(offset) {
+              return .Some(.Local(n, s))
+            },
+            .None => {},
+          },
+          .None => {},
+        }
+
+        return find_local_decl_in_block(fs.body, offset)
+      },
+      _ => {},
+    }
+  }
+
+  case block.tail {
+    .Some(e) => find_local_decl_in_expr(e, offset),
+    .None => .None,
+  }
+}
+
+fn find_local_decl_in_expr(expr: Expr, offset: Int) SymbolId? {
+  if !expr.span.contains(offset) {
+    return .None
+  }
+
+  case expr.kind {
+    .Case(_, arms) => {
+      for arm in arms {
+        case find_local_decl_in_pattern(arm.pattern, offset) {
+          .Some(s) => { return .Some(s) },
+          .None => {},
+        }
+
+        case find_local_decl_in_expr(arm.expr, offset) {
+          .Some(s) => { return .Some(s) },
+          .None => {},
+        }
+      }
+
+      .None
+    },
+    .BlockExpr(b) => find_local_decl_in_block(b, offset),
+    .If(_, then_block, else_expr) => case find_local_decl_in_block(then_block, offset) {
+      .Some(s) => .Some(s),
+      .None => case else_expr {
+        .Some(e) => find_local_decl_in_expr(e, offset),
+        .None => .None,
+      },
+    },
+    .Closure(params, _, body) => {
+      for p in params {
+        if p.name_span.contains(offset) {
+          return .Some(.Local(p.name, p.name_span))
+        }
+      }
+
+      find_local_decl_in_block(body, offset)
+    },
+    .Collect(col) => {
+      case col.pattern {
+        .Some(n) => case col.pattern_span {
+          .Some(s) => if s.contains(offset) {
+            return .Some(.Local(n, s))
+          },
+          .None => {},
+        },
+        .None => {},
+      }
+
+      case col.index {
+        .Some(n) => case col.index_span {
+          .Some(s) => if s.contains(offset) {
+            return .Some(.Local(n, s))
+          },
+          .None => {},
+        },
+        .None => {},
+      }
+
+      find_local_decl_in_block(col.body, offset)
+    },
+    _ => .None,
+  }
+}
+
+fn find_local_decl_in_pattern(pat: Pattern, offset: Int) SymbolId? {
+  if !pat.span.contains(offset) {
+    return .None
+  }
+
+  case pat.kind {
+    .Ident(name) => if pat.span.contains(offset) {
+      .Some(.Local(name, pat.span))
+    } else {
+      .None
+    },
+    .Variant(_, subs) => {
+      for p in subs {
+        case find_local_decl_in_pattern(p, offset) {
+          .Some(s) => { return .Some(s) },
+          .None => {},
+        }
+      }
+
+      .None
+    },
+    .QualifiedVariant(_, _, subs) => {
+      for p in subs {
+        case find_local_decl_in_pattern(p, offset) {
+          .Some(s) => { return .Some(s) },
+          .None => {},
+        }
+      }
+
+      .None
+    },
+    _ => .None,
+  }
+}
+
+fn find_binding_at_span(block: Block, target: Span) SymbolId? {
+  for stmt in block.stmts {
+    case stmt {
+      .Let(ls) => {
+        if ls.name_span.start == target.start and ls.name_span.end == target.end {
+          return .Some(.Local(ls.name, ls.name_span))
+        }
+
+        case find_binding_at_span_in_expr(ls.value, target) {
+          .Some(s) => { return .Some(s) },
+          .None => {},
+        }
+      },
+      .For(fs) => {
+        case fs.pattern_span {
+          .Some(s) => if s.start == target.start and s.end == target.end {
+            case fs.pattern {
+              .Some(n) => { return .Some(.Local(n, s)) },
+              .None => {},
+            }
+          },
+          .None => {},
+        }
+
+        case fs.index_span {
+          .Some(s) => if s.start == target.start and s.end == target.end {
+            case fs.index {
+              .Some(n) => { return .Some(.Local(n, s)) },
+              .None => {},
+            }
+          },
+          .None => {},
+        }
+
+        case find_binding_at_span(fs.body, target) {
+          .Some(s) => { return .Some(s) },
+          .None => {},
+        }
+      },
+      _ => {},
+    }
+  }
+
+  case block.tail {
+    .Some(e) => find_binding_at_span_in_expr(e, target),
+    .None => .None,
+  }
+}
+
+fn find_binding_at_span_in_expr(expr: Expr, target: Span) SymbolId? {
+  case expr.kind {
+    .Case(_, arms) => {
+      for arm in arms {
+        case find_binding_at_span_in_pattern(arm.pattern, target) {
+          .Some(s) => { return .Some(s) },
+          .None => {},
+        }
+
+        case find_binding_at_span_in_expr(arm.expr, target) {
+          .Some(s) => { return .Some(s) },
+          .None => {},
+        }
+      }
+
+      .None
+    },
+    .BlockExpr(b) => find_binding_at_span(b, target),
+    .If(_, then_block, else_expr) => case find_binding_at_span(then_block, target) {
+      .Some(s) => .Some(s),
+      .None => case else_expr {
+        .Some(e) => find_binding_at_span_in_expr(e, target),
+        .None => .None,
+      },
+    },
+    .Closure(params, _, body) => {
+      for p in params {
+        if p.name_span.start == target.start and p.name_span.end == target.end {
+          return .Some(.Local(p.name, p.name_span))
+        }
+      }
+
+      find_binding_at_span(body, target)
+    },
+    .Collect(col) => {
+      case col.pattern_span {
+        .Some(s) => if s.start == target.start and s.end == target.end {
+          case col.pattern {
+            .Some(n) => { return .Some(.Local(n, s)) },
+            .None => {},
+          }
+        },
+        .None => {},
+      }
+
+      case col.index_span {
+        .Some(s) => if s.start == target.start and s.end == target.end {
+          case col.index {
+            .Some(n) => { return .Some(.Local(n, s)) },
+            .None => {},
+          }
+        },
+        .None => {},
+      }
+
+      find_binding_at_span(col.body, target)
+    },
+    _ => .None,
+  }
+}
+
+fn find_binding_at_span_in_pattern(pat: Pattern, target: Span) SymbolId? {
+  case pat.kind {
+    .Ident(name) => if pat.span.start == target.start and pat.span.end == target.end {
+      .Some(.Local(name, pat.span))
+    } else {
+      .None
+    },
+    .Variant(_, subs) => {
+      for p in subs {
+        case find_binding_at_span_in_pattern(p, target) {
+          .Some(s) => { return .Some(s) },
+          .None => {},
+        }
+      }
+
+      .None
+    },
+    .QualifiedVariant(_, _, subs) => {
+      for p in subs {
+        case find_binding_at_span_in_pattern(p, target) {
+          .Some(s) => { return .Some(s) },
+          .None => {},
+        }
+      }
+
+      .None
+    },
+    _ => .None,
+  }
+}
+
+fn func_id(snap: SemanticSnapshot, env: ResolvedEnv, name: String) SymbolId {
+  case env.function_bindings[name] {
+    .Some(registered) => case env.function_origins[registered] {
+      .Some(origin) => .Func(origin.module_path, origin.func_name),
+      .None => .Func(snap.canonical_path, name),
+    },
+    .None => .Func(snap.canonical_path, name),
+  }
+}
+
+fn type_def_id(snap: SemanticSnapshot, env: ResolvedEnv, name: String) SymbolId {
+  case env.lookup_type(name) {
+    .Some(entry) => case env.type_origins[entry.id.id] {
+      .Some(origin) => {
+        parts := origin.split("::")
+
+        if parts.len() >= 2 {
+          .TypeDef(parts[0], parts[1])
+        } else {
+          .TypeDef(snap.canonical_path, name)
+        }
+      },
+      .None => .TypeDef(snap.canonical_path, name),
+    },
+    .None => .TypeDef(snap.canonical_path, name),
+  }
+}
+
+fn canonical_from_uri(snap: SemanticSnapshot, uri: String) String {
+  id := case identity.from_file_uri(uri) {
+    .Ok(parsed) => parsed,
+    .Err(_) => identity.from_path(uri),
+  }
+  imports.canonical_module_path(id.path, imports.make_canonical_roots(snap.project_root))
+}
+
+// ── Local reference collection ─────────────────────────────────────
+/// Collect all references to a local binding within the enclosing function.
+fn collect_local_refs(
+  uri: String,
+  items: Vector<Item>,
+  name: String,
+  decl_span: Span,
+  cursor_offset: Int,
+) Vector<ReferenceLocation> {
+  // Find the enclosing function
+  for item in items {
+    case item {
+      .Function(decl) => if decl.span.contains(decl_span.start) {
+        refs: Vector<ReferenceLocation> = []
+        refs = collect_local_refs_in_block(refs, uri, decl.body, name, decl_span)
+        return refs
+      },
+      _ => {},
+    }
+  }
+
+  // Top-level scope: scan all top-level statements
+  refs: Vector<ReferenceLocation> = []
+
+  for item in items {
+    case item {
+      .Stmt(stmt) => {
+        refs = collect_local_refs_in_stmt(refs, uri, stmt, name, decl_span)
+      },
+      .Function(decl) => {
+        // Top-level bindings are visible inside functions only if they
+        // precede the function declaration, which is how Twinkle scoping
+        // works.  For simplicity, scan function bodies too.
+        refs = collect_local_refs_in_block(refs, uri, decl.body, name, decl_span)
+      },
+      _ => {},
+    }
+  }
+
+  refs
+}
+
+fn collect_local_refs_in_block(
+  refs: Vector<ReferenceLocation>,
+  uri: String,
+  block: Block,
+  name: String,
+  decl_span: Span,
+) Vector<ReferenceLocation> {
+  for stmt in block.stmts {
+    refs = collect_local_refs_in_stmt(refs, uri, stmt, name, decl_span)
+
+    // If this let statement rebinds the same name and is NOT our declaration,
+    // stop collecting — the name is shadowed from here on.
+    case stmt {
+      .Let(ls) => if ls.name == name {
+        is_decl := ls.name_span.start == decl_span.start and ls.name_span.end == decl_span.end
+
+        if !is_decl {
+          return refs
+        }
+      },
+      _ => {},
+    }
+  }
+
+  case block.tail {
+    .Some(e) => collect_local_refs_in_expr(refs, uri, e, name, decl_span),
+    .None => refs,
+  }
+}
+
+fn collect_local_refs_in_stmt(
+  refs: Vector<ReferenceLocation>,
+  uri: String,
+  stmt: Stmt,
+  name: String,
+  decl_span: Span,
+) Vector<ReferenceLocation> {
+  case stmt {
+    .Let(ls) => collect_local_refs_in_expr(refs, uri, ls.value, name, decl_span),
+    .For(fs) => {
+      case fs.iter {
+        .Some(e) => refs = collect_local_refs_in_expr(refs, uri, e, name, decl_span),
+        .None => {},
+      }
+
+      case fs.condition {
+        .Some(e) => refs = collect_local_refs_in_expr(refs, uri, e, name, decl_span),
+        .None => {},
+      }
+
+      // Check if for pattern shadows the name
+      shadows := false
+
+      case fs.pattern {
+        .Some(n) => if n == name {
+          shadows = true
+        },
+        .None => {},
+      }
+
+      case fs.index {
+        .Some(n) => if n == name {
+          shadows = true
+        },
+        .None => {},
+      }
+
+      if !shadows {
+        refs = collect_local_refs_in_block(refs, uri, fs.body, name, decl_span)
+      }
+
+      refs
+    },
+    .Return(rs) => case rs.value {
+      .Some(e) => collect_local_refs_in_expr(refs, uri, e, name, decl_span),
+      .None => refs,
+    },
+    .Break(bs) => case bs.value {
+      .Some(e) => collect_local_refs_in_expr(refs, uri, e, name, decl_span),
+      .None => refs,
+    },
+    .Defer(ds) => collect_local_refs_in_expr(refs, uri, ds.expr, name, decl_span),
+    .Expr(es) => collect_local_refs_in_expr(refs, uri, es.expr, name, decl_span),
+    _ => refs,
+  }
+}
+
+fn collect_local_refs_in_expr(
+  refs: Vector<ReferenceLocation>,
+  uri: String,
+  expr: Expr,
+  name: String,
+  decl_span: Span,
+) Vector<ReferenceLocation> {
+  case expr.kind {
+    .Ident(n) => if n == name {
+      // Don't re-add the declaration itself
+      if expr.span.start == decl_span.start and expr.span.end == decl_span.end {
+        refs
+      } else {
+        refs.append(.{ uri, span: expr.span })
+      }
+    } else {
+      refs
+    },
+    .Call(callee, args) => {
+      refs = collect_local_refs_in_expr(refs, uri, callee, name, decl_span)
+
+      for a in args {
+        refs = collect_local_refs_in_expr(refs, uri, a, name, decl_span)
+      }
+
+      refs
+    },
+    .Field(base, _) => collect_local_refs_in_expr(refs, uri, base, name, decl_span),
+    .Index(base, idx) => {
+      refs = collect_local_refs_in_expr(refs, uri, base, name, decl_span)
+      collect_local_refs_in_expr(refs, uri, idx, name, decl_span)
+    },
+    .Unary(_, inner) => collect_local_refs_in_expr(refs, uri, inner, name, decl_span),
+    .Binary(_, lhs, rhs) => {
+      refs = collect_local_refs_in_expr(refs, uri, lhs, name, decl_span)
+      collect_local_refs_in_expr(refs, uri, rhs, name, decl_span)
+    },
+    .If(cond_e, then_block, else_expr) => {
+      refs = collect_local_refs_in_expr(refs, uri, cond_e, name, decl_span)
+      refs = collect_local_refs_in_block(refs, uri, then_block, name, decl_span)
+
+      case else_expr {
+        .Some(e) => collect_local_refs_in_expr(refs, uri, e, name, decl_span),
+        .None => refs,
+      }
+    },
+    .Case(scrutinee, arms) => {
+      refs = collect_local_refs_in_expr(refs, uri, scrutinee, name, decl_span)
+
+      for arm in arms {
+        // Check if pattern shadows the name
+        if !pattern_shadows(arm.pattern, name) {
+          refs = collect_local_refs_in_expr(refs, uri, arm.expr, name, decl_span)
+        }
+      }
+
+      refs
+    },
+    .Cond(arms) => {
+      for arm in arms {
+        case arm.condition {
+          .Some(cond_expr) => refs = collect_local_refs_in_expr(
+            refs,
+            uri,
+            cond_expr,
+            name,
+            decl_span,
+          ),
+          .None => {},
+        }
+
+        refs = collect_local_refs_in_expr(refs, uri, arm.body, name, decl_span)
+      }
+
+      refs
+    },
+    .BlockExpr(b) => collect_local_refs_in_block(refs, uri, b, name, decl_span),
+    .Array(elems) => {
+      for e in elems {
+        refs = collect_local_refs_in_expr(refs, uri, e, name, decl_span)
+      }
+
+      refs
+    },
+    .Record(entries) => collect_local_refs_in_entries(refs, uri, entries, name, decl_span),
+    .NamedRecord(_, entries) => collect_local_refs_in_entries(refs, uri, entries, name, decl_span),
+    .Variant(_, fields) => {
+      for f in fields {
+        refs = collect_local_refs_in_expr(refs, uri, f, name, decl_span)
+      }
+
+      refs
+    },
+    .Closure(params, _, body) => {
+      // If any param shadows the name, don't descend into body
+      for p in params {
+        if p.name == name {
+          return refs
+        }
+      }
+
+      collect_local_refs_in_block(refs, uri, body, name, decl_span)
+    },
+    .Collect(col) => {
+      case col.iter {
+        .Some(e) => refs = collect_local_refs_in_expr(refs, uri, e, name, decl_span),
+        .None => {},
+      }
+
+      // Check if collect pattern shadows the name
+      shadows := false
+
+      case col.pattern {
+        .Some(n) => if n == name {
+          shadows = true
+        },
+        .None => {},
+      }
+
+      case col.index {
+        .Some(n) => if n == name {
+          shadows = true
+        },
+        .None => {},
+      }
+
+      if !shadows {
+        case col.condition {
+          .Some(e) => refs = collect_local_refs_in_expr(refs, uri, e, name, decl_span),
+          .None => {},
+        }
+
+        refs = collect_local_refs_in_block(refs, uri, col.body, name, decl_span)
+      }
+
+      refs
+    },
+    .StringInterp(parts) => {
+      for part in parts {
+        case part {
+          .Interpolation(e) => refs = collect_local_refs_in_expr(refs, uri, e, name, decl_span),
+          _ => {},
+        }
+      }
+
+      refs
+    },
+    _ => refs,
+  }
+}
+
+fn collect_local_refs_in_entries(
+  refs: Vector<ReferenceLocation>,
+  uri: String,
+  entries: Vector<RecordEntry>,
+  name: String,
+  decl_span: Span,
+) Vector<ReferenceLocation> {
+  for entry in entries {
+    case entry.value {
+      .Some(e) => refs = collect_local_refs_in_expr(refs, uri, e, name, decl_span),
+      .None => if entry.name == name {
+        // Shorthand field: .{ name } is a reference to the local `name`
+        refs = .append(.{ uri, span: entry.span })
+      },
+    }
+  }
+
+  refs
+}
+
+fn pattern_shadows(pat: Pattern, name: String) Bool {
+  case pat.kind {
+    .Ident(n) => n == name,
+    .Variant(_, subs) => {
+      for p in subs {
+        if pattern_shadows(p, name) {
+          return true
+        }
+      }
+
+      false
+    },
+    .QualifiedVariant(_, _, subs) => {
+      for p in subs {
+        if pattern_shadows(p, name) {
+          return true
+        }
+      }
+
+      false
+    },
+    _ => false,
+  }
+}
+
+// ── Workspace reference collection ─────────────────────────────────
+fn collect_workspace_refs(snap: SemanticSnapshot, sym: SymbolId, include_declaration: Bool) Vector<
+  ReferenceLocation,
+> {
+  refs: Vector<ReferenceLocation> = []
+
+  for canonical_path in snap.cache.parsed.keys() {
+    parsed := case cache.latest_parsed(snap.cache, canonical_path) {
+      .Some(p) => p,
+      .None => { continue },
+    }
+    typed := cache.latest_typed(snap.cache, canonical_path)
+    resolved := cache.latest_resolved(snap.cache, canonical_path)
+    uri := identity.from_path(canonical_path).uri
+
+    env: ResolvedEnv? = case typed {
+      .Some(t) => .Some(t.env),
+      .None => case resolved {
+        .Some(r) => .Some(r.env),
+        .None => .None,
+      },
+    }
+
+    module_env := case env {
+      .Some(e) => e,
+      .None => { continue },
+    }
+
+    refs = collect_refs_in_module(
+      refs,
+      uri,
+      canonical_path,
+      parsed,
+      module_env,
+      typed,
+      sym,
+      include_declaration,
+    )
+  }
+
+  refs
+}
+
+fn collect_refs_in_module(
+  refs: Vector<ReferenceLocation>,
+  uri: String,
+  canonical_path: String,
+  parsed: cache.ParsedModule,
+  env: ResolvedEnv,
+  typed: CheckResult?,
+  sym: SymbolId,
+  include_declaration: Bool,
+) Vector<ReferenceLocation> {
+  ctx := RefCtx.{ uri, canonical_path, env, typed }
+
+  for item in parsed.module.items {
+    case item {
+      .Use(decl) => refs = collect_refs_in_import(refs, ctx, decl, sym),
+      .Type(decl) => refs = collect_refs_in_type_decl(refs, ctx, decl, sym, include_declaration),
+      .Function(decl) => {
+        case sym {
+          .Func(mod_path, func_name) => if func_name == decl.name {
+            name_start := decl.span.start
+              + if decl.is_pub {
+                7
+              } else {
+                3
+              }
+            name_span := Span.{
+              file_id: decl.span.file_id,
+              start: name_start,
+              end: name_start + decl.name.len(),
+            }
+
+            if matches_func(ctx, decl.name, mod_path, func_name) {
+              if include_declaration {
+                refs = .append(.{ uri: ctx.uri, span: name_span })
+              }
+            }
+          },
+          _ => {},
+        }
+
+        for p in decl.params {
+          case p.ty {
+            .Some(t) => refs = collect_refs_in_type_expr(refs, ctx, t, sym),
+            .None => {},
+          }
+        }
+
+        case decl.return_type {
+          .Some(t) => refs = collect_refs_in_type_expr(refs, ctx, t, sym),
+          .None => {},
+        }
+
+        refs = collect_refs_in_block(refs, ctx, decl.body, sym)
+      },
+      .Stmt(stmt) => {
+        case stmt {
+          .Let(ls) => case sym {
+            .Func(mod_path, func_name) => if func_name == ls.name
+              and matches_func(ctx, ls.name, mod_path, func_name) {
+              if include_declaration {
+                refs = .append(.{ uri: ctx.uri, span: ls.name_span })
+              }
+            },
+            _ => {},
+          },
+          _ => {},
+        }
+
+        refs = collect_refs_in_stmt(refs, ctx, stmt, sym)
+      },
+      _ => {},
+    }
+  }
+
+  refs
+}
+
+fn collect_refs_in_import(
+  refs: Vector<ReferenceLocation>,
+  ctx: RefCtx,
+  decl: UseDecl,
+  sym: SymbolId,
+) Vector<ReferenceLocation> {
+  case decl.items {
+    .Some(items) => {
+      for it in items {
+        case it {
+          .Value(v) => {
+            imported_name := v.alias.unwrap_or(v.name)
+
+            case sym {
+              .Func(mod_path, func_name) => if is_same_func(
+                ctx.env,
+                imported_name,
+                mod_path,
+                func_name,
+              ) {
+                refs = .append(.{ uri: ctx.uri, span: v.span })
+              },
+              _ => {},
+            }
+          },
+          .Type(t) => {
+            imported_name := t.alias.unwrap_or(t.name)
+
+            case sym {
+              .TypeDef(mod_path, type_name) => if is_same_type(
+                ctx.env,
+                imported_name,
+                mod_path,
+                type_name,
+              ) {
+                refs = .append(.{ uri: ctx.uri, span: t.span })
+              },
+              _ => {},
+            }
+          },
+        }
+      }
+    },
+    .None => {},
+  }
+
+  refs
+}
+
+fn collect_refs_in_type_decl(
+  refs: Vector<ReferenceLocation>,
+  ctx: RefCtx,
+  decl: TypeDecl,
+  sym: SymbolId,
+  include_declaration: Bool,
+) Vector<ReferenceLocation> {
+  case sym {
+    .TypeDef(mod_path, type_name) => if type_name == decl.name
+      and matches_type(ctx, decl.name, mod_path, type_name) {
+      if include_declaration {
+        name_start := decl.span.start
+          + if decl.is_pub {
+            9
+          } else {
+            5
+          }
+        name_span := Span.{
+          file_id: decl.span.file_id,
+          start: name_start,
+          end: name_start + decl.name.len(),
+        }
+        refs = .append(.{ uri: ctx.uri, span: name_span })
+      }
+    },
+    .Variant(_, vtype_name, _) => if vtype_name == decl.name {},
+    .Field(_, ftype_name, _) => if ftype_name == decl.name {},
+    _ => {},
+  }
+
+  case decl.def {
+    .Record(fields) => {
+      case sym {
+        .Field(mod_path, ftype_name, field_name) => if ftype_name == decl.name
+          and matches_type(ctx, decl.name, mod_path, ftype_name) {
+          if include_declaration {
+            for f in fields {
+              if f.name == field_name {
+                refs = .append(.{ uri: ctx.uri, span: f.name_span })
+              }
+            }
+          }
+        },
+        _ => {},
+      }
+
+      for f in fields {
+        refs = collect_refs_in_type_expr(refs, ctx, f.ty, sym)
+      }
+    },
+    .Sum(variants) => {
+      case sym {
+        .Variant(mod_path, vtype_name, variant_name) => if vtype_name == decl.name
+          and matches_type(ctx, decl.name, mod_path, vtype_name) {
+          if include_declaration {
+            for v in variants {
+              if v.name == variant_name {
+                vspan := Span.{
+                  file_id: v.span.file_id,
+                  start: v.span.start,
+                  end: v.span.start + v.name.len(),
+                }
+                refs = .append(.{ uri: ctx.uri, span: vspan })
+              }
+            }
+          }
+        },
+        _ => {},
+      }
+
+      for v in variants {
+        for t in v.fields {
+          refs = collect_refs_in_type_expr(refs, ctx, t, sym)
+        }
+      }
+    },
+    .Alias(t) => refs = collect_refs_in_type_expr(refs, ctx, t, sym),
+    _ => {},
+  }
+
+  refs
+}
+
+fn collect_refs_in_type_expr(
+  refs: Vector<ReferenceLocation>,
+  ctx: RefCtx,
+  t: TypeExpr,
+  sym: SymbolId,
+) Vector<ReferenceLocation> {
+  case t.kind {
+    .Path(path) => collect_refs_in_type_path(refs, ctx, path, sym),
+    .Applied(path, args) => {
+      refs = collect_refs_in_type_path(refs, ctx, path, sym)
+
+      for a in args {
+        refs = collect_refs_in_type_expr(refs, ctx, a, sym)
+      }
+
+      refs
+    },
+    .Function(params, ret) => {
+      for p in params {
+        refs = collect_refs_in_type_expr(refs, ctx, p, sym)
+      }
+
+      collect_refs_in_type_expr(refs, ctx, ret, sym)
+    },
+    .Optional(inner) => collect_refs_in_type_expr(refs, ctx, inner, sym),
+    .Result(ok, err) => {
+      refs = collect_refs_in_type_expr(refs, ctx, ok, sym)
+      collect_refs_in_type_expr(refs, ctx, err, sym)
+    },
+    .Record(fields) => {
+      for f in fields {
+        refs = collect_refs_in_type_expr(refs, ctx, f.ty, sym)
+      }
+
+      refs
+    },
+    .Sum(vars) => {
+      for v in vars {
+        for f in v.fields {
+          refs = collect_refs_in_type_expr(refs, ctx, f, sym)
+        }
+      }
+
+      refs
+    },
+    _ => refs,
+  }
+}
+
+fn collect_refs_in_type_path(
+  refs: Vector<ReferenceLocation>,
+  ctx: RefCtx,
+  path: TypePath,
+  sym: SymbolId,
+) Vector<ReferenceLocation> {
+  if path.segments.len() == 0 {
+    return refs
+  }
+
+  joined_name := path.segments.join(".")
+  last_name := path.segments[path.segments.len() - 1]
+
+  case sym {
+    .TypeDef(mod_path, target_name) => {
+      matched := matches_type(ctx, joined_name, mod_path, target_name)
+
+      if !matched and path.segments.len() >= 2 {
+        matched = matches_type(ctx, last_name, mod_path, target_name)
+      }
+
+      if matched {
+        name_span := type_path_name_span(path, last_name)
+        refs.append(.{ uri: ctx.uri, span: name_span })
+      } else {
+        refs
+      }
+    },
+    _ => refs,
+  }
+}
+
+fn type_path_name_span(path: TypePath, name: String) Span {
+  Span.{ file_id: path.span.file_id, start: path.span.end - name.len(), end: path.span.end }
+}
+
+fn collect_refs_in_block(refs: Vector<ReferenceLocation>, ctx: RefCtx, block: Block, sym: SymbolId) Vector<
+  ReferenceLocation,
+> {
+  for stmt in block.stmts {
+    refs = collect_refs_in_stmt(refs, ctx, stmt, sym)
+  }
+
+  case block.tail {
+    .Some(e) => collect_refs_in_expr(refs, ctx, e, sym),
+    .None => refs,
+  }
+}
+
+fn collect_refs_in_stmt(refs: Vector<ReferenceLocation>, ctx: RefCtx, stmt: Stmt, sym: SymbolId) Vector<
+  ReferenceLocation,
+> {
+  case stmt {
+    .Let(ls) => {
+      case ls.ty {
+        .Some(t) => refs = collect_refs_in_type_expr(refs, ctx, t, sym),
+        .None => {},
+      }
+
+      collect_refs_in_expr(refs, ctx, ls.value, sym)
+    },
+    .For(fs) => {
+      case fs.iter {
+        .Some(e) => refs = collect_refs_in_expr(refs, ctx, e, sym),
+        .None => {},
+      }
+
+      case fs.condition {
+        .Some(e) => refs = collect_refs_in_expr(refs, ctx, e, sym),
+        .None => {},
+      }
+
+      collect_refs_in_block(refs, ctx, fs.body, sym)
+    },
+    .Return(rs) => case rs.value {
+      .Some(e) => collect_refs_in_expr(refs, ctx, e, sym),
+      .None => refs,
+    },
+    .Break(bs) => case bs.value {
+      .Some(e) => collect_refs_in_expr(refs, ctx, e, sym),
+      .None => refs,
+    },
+    .Defer(ds) => collect_refs_in_expr(refs, ctx, ds.expr, sym),
+    .Expr(es) => collect_refs_in_expr(refs, ctx, es.expr, sym),
+    _ => refs,
+  }
+}
+
+fn collect_refs_in_expr(refs: Vector<ReferenceLocation>, ctx: RefCtx, expr: Expr, sym: SymbolId) Vector<
+  ReferenceLocation,
+> {
+  case expr.kind {
+    .Ident(name) => {
+      case sym {
+        .Func(mod_path, func_name) => if matches_func(ctx, name, mod_path, func_name) {
+          refs = .append(.{ uri: ctx.uri, span: expr.span })
+        },
+        _ => {},
+      }
+
+      refs
+    },
+    .Call(callee, args) => {
+      refs = collect_refs_in_expr(refs, ctx, callee, sym)
+
+      for a in args {
+        refs = collect_refs_in_expr(refs, ctx, a, sym)
+      }
+
+      refs
+    },
+    .Field(base, field) => {
+      refs = collect_refs_in_expr(refs, ctx, base, sym)
+
+      case base.kind {
+        .Ident(alias) => case sym {
+          .Func(mod_path, func_name) => if matches_func(
+            ctx,
+            "${alias}.${field}",
+            mod_path,
+            func_name,
+          ) {
+            field_start := expr.span.end - field.len()
+            field_span := Span.{
+              file_id: expr.span.file_id,
+              start: field_start,
+              end: expr.span.end,
+            }
+            refs = .append(.{ uri: ctx.uri, span: field_span })
+          },
+          .TypeDef(mod_path, type_name) => if matches_type(
+            ctx,
+            "${alias}.${field}",
+            mod_path,
+            type_name,
+          ) {
+            field_start := expr.span.end - field.len()
+            field_span := Span.{
+              file_id: expr.span.file_id,
+              start: field_start,
+              end: expr.span.end,
+            }
+            refs = .append(.{ uri: ctx.uri, span: field_span })
+          },
+          .Variant(_, _, variant_name) => if field == variant_name {
+            case ctx.typed {
+              .Some(t) => case t.env.lookup_type(alias) {
+                .Some(entry) => case sym {
+                  .Variant(vmod, vtype, _) => if matches_type(ctx, alias, vmod, vtype) {
+                    field_start := expr.span.end - field.len()
+                    field_span := Span.{
+                      file_id: expr.span.file_id,
+                      start: field_start,
+                      end: expr.span.end,
+                    }
+                    refs = .append(.{ uri: ctx.uri, span: field_span })
+                  },
+                  _ => {},
+                },
+                .None => {},
+              },
+              .None => {},
+            }
+          },
+          _ => {},
+        },
+        _ => {},
+      }
+
+      case sym {
+        .Field(fmod, ftype_name, field_name) => if field == field_name {
+          case ctx.typed {
+            .Some(t) => case t.type_map[base.id] {
+              .Some(.Named(tid, _)) => if matches_type_id(ctx, tid, fmod, ftype_name) {
+                field_start := expr.span.end - field.len()
+                field_span := Span.{
+                  file_id: expr.span.file_id,
+                  start: field_start,
+                  end: expr.span.end,
+                }
+                refs = .append(.{ uri: ctx.uri, span: field_span })
+              },
+              _ => {},
+            },
+            .None => {},
+          }
+        },
+        .Func(mod_path, func_name) => case ctx.typed {
+          .Some(t) => case t.type_map[base.id] {
+            .Some(.Named(tid, _)) => case t.env.methods_by_type[tid.id] {
+              .Some(entries) => {
+                for entry in entries {
+                  if entry.method_name == field
+                    and matches_func(ctx, entry.function_name, mod_path, func_name) {
+                    field_start := expr.span.end - field.len()
+                    field_span := Span.{
+                      file_id: expr.span.file_id,
+                      start: field_start,
+                      end: expr.span.end,
+                    }
+                    refs = .append(.{ uri: ctx.uri, span: field_span })
+                  }
+                }
+              },
+              .None => {},
+            },
+            _ => {},
+          },
+          .None => {},
+        },
+        _ => {},
+      }
+
+      refs
+    },
+    .Index(base, idx) => {
+      refs = collect_refs_in_expr(refs, ctx, base, sym)
+      collect_refs_in_expr(refs, ctx, idx, sym)
+    },
+    .Unary(_, inner) => collect_refs_in_expr(refs, ctx, inner, sym),
+    .Binary(_, lhs, rhs) => {
+      refs = collect_refs_in_expr(refs, ctx, lhs, sym)
+      collect_refs_in_expr(refs, ctx, rhs, sym)
+    },
+    .If(cond_e, then_block, else_expr) => {
+      refs = collect_refs_in_expr(refs, ctx, cond_e, sym)
+      refs = collect_refs_in_block(refs, ctx, then_block, sym)
+
+      case else_expr {
+        .Some(e) => collect_refs_in_expr(refs, ctx, e, sym),
+        .None => refs,
+      }
+    },
+    .Case(scrutinee, arms) => {
+      refs = collect_refs_in_expr(refs, ctx, scrutinee, sym)
+
+      for arm in arms {
+        refs = collect_refs_in_pattern(refs, ctx, arm.pattern, sym, scrutinee)
+        refs = collect_refs_in_expr(refs, ctx, arm.expr, sym)
+      }
+
+      refs
+    },
+    .Cond(arms) => {
+      for arm in arms {
+        case arm.condition {
+          .Some(cond_expr) => refs = collect_refs_in_expr(refs, ctx, cond_expr, sym),
+          .None => {},
+        }
+
+        refs = collect_refs_in_expr(refs, ctx, arm.body, sym)
+      }
+
+      refs
+    },
+    .BlockExpr(b) => collect_refs_in_block(refs, ctx, b, sym),
+    .Array(elems) => {
+      for e in elems {
+        refs = collect_refs_in_expr(refs, ctx, e, sym)
+      }
+
+      refs
+    },
+    .Record(entries) => collect_refs_in_record_entries(refs, ctx, entries, sym, expr.id),
+    .NamedRecord(rname, entries) => {
+      case sym {
+        .TypeDef(mod_path, type_name) => if matches_type(ctx, rname, mod_path, type_name) {
+          name_span := Span.{
+            file_id: expr.span.file_id,
+            start: expr.span.start,
+            end: expr.span.start + rname.len(),
+          }
+          refs = .append(.{ uri: ctx.uri, span: name_span })
+        },
+        .Field(fmod, ftype_name, field_name) => if matches_type(ctx, rname, fmod, ftype_name) {
+          for entry in entries {
+            if entry.name == field_name {
+              refs = .append(.{ uri: ctx.uri, span: record_entry_name_span(entry) })
+            }
+          }
+        },
+        _ => {},
+      }
+
+      for entry in entries {
+        case entry.value {
+          .Some(e) => refs = collect_refs_in_expr(refs, ctx, e, sym),
+          .None => {},
+        }
+      }
+
+      refs
+    },
+    .Variant(vname, fields) => {
+      case sym {
+        .Variant(_, _, variant_name) => if vname == variant_name {
+          case ctx.typed {
+            .Some(t) => case t.type_map[expr.id] {
+              .Some(.Named(tid, _)) => case sym {
+                .Variant(vmod, vtype, _) => if matches_type_id(ctx, tid, vmod, vtype) {
+                  // expr.span starts at the `.`; skip it to get the name
+                  vname_start := expr.span.start + 1
+                  vspan := Span.{
+                    file_id: expr.span.file_id,
+                    start: vname_start,
+                    end: vname_start + vname.len(),
+                  }
+                  refs = .append(.{ uri: ctx.uri, span: vspan })
+                },
+                _ => {},
+              },
+              _ => {},
+            },
+            .None => {},
+          }
+        },
+        _ => {},
+      }
+
+      for f in fields {
+        refs = collect_refs_in_expr(refs, ctx, f, sym)
+      }
+
+      refs
+    },
+    .Closure(params, ret, body) => {
+      for p in params {
+        case p.ty {
+          .Some(t) => refs = collect_refs_in_type_expr(refs, ctx, t, sym),
+          .None => {},
+        }
+      }
+
+      case ret {
+        .Some(t) => refs = collect_refs_in_type_expr(refs, ctx, t, sym),
+        .None => {},
+      }
+
+      collect_refs_in_block(refs, ctx, body, sym)
+    },
+    .Collect(col) => {
+      case col.iter {
+        .Some(e) => refs = collect_refs_in_expr(refs, ctx, e, sym),
+        .None => {},
+      }
+
+      case col.condition {
+        .Some(e) => refs = collect_refs_in_expr(refs, ctx, e, sym),
+        .None => {},
+      }
+
+      collect_refs_in_block(refs, ctx, col.body, sym)
+    },
+    .StringInterp(parts) => {
+      for part in parts {
+        case part {
+          .Interpolation(e) => refs = collect_refs_in_expr(refs, ctx, e, sym),
+          _ => {},
+        }
+      }
+
+      refs
+    },
+    _ => refs,
+  }
+}
+
+fn collect_refs_in_record_entries(
+  refs: Vector<ReferenceLocation>,
+  ctx: RefCtx,
+  entries: Vector<RecordEntry>,
+  sym: SymbolId,
+  record_expr_id: Int,
+) Vector<ReferenceLocation> {
+  for entry in entries {
+    case entry.value {
+      .Some(e) => refs = collect_refs_in_expr(refs, ctx, e, sym),
+      .None => {},
+    }
+
+    // Check if this field name matches a Field symbol, using the record's
+    // inferred type to verify it's the right record type.
+    case sym {
+      .Field(fmod, ftype_name, field_name) => if entry.name == field_name {
+        case ctx.typed {
+          .Some(t) => case t.type_map[record_expr_id] {
+            .Some(.Named(tid, _)) => if matches_type_id(ctx, tid, fmod, ftype_name) {
+              refs = .append(.{ uri: ctx.uri, span: record_entry_name_span(entry) })
+            },
+            _ => {},
+          },
+          .None => {},
+        }
+      },
+      _ => {},
+    }
+  }
+
+  refs
+}
+
+fn record_entry_name_span(entry: RecordEntry) Span {
+  Span.{
+    file_id: entry.span.file_id,
+    start: entry.span.start,
+    end: entry.span.start + entry.name.len(),
+  }
+}
+
+fn collect_refs_in_pattern(
+  refs: Vector<ReferenceLocation>,
+  ctx: RefCtx,
+  pat: Pattern,
+  sym: SymbolId,
+  scrutinee: Expr,
+) Vector<ReferenceLocation> {
+  case pat.kind {
+    .Variant(vname, subs) => {
+      case sym {
+        .Variant(vmod, vtype, variant_name) => if vname == variant_name {
+          case ctx.typed {
+            .Some(t) => case t.type_map[scrutinee.id] {
+              .Some(.Named(tid, _)) => if matches_type_id(ctx, tid, vmod, vtype) {
+                // pat.span starts at the `.`; skip it to get the name
+                vspan := Span.{
+                  file_id: pat.span.file_id,
+                  start: pat.span.start + 1,
+                  end: pat.span.start + 1 + vname.len(),
+                }
+                refs = .append(.{ uri: ctx.uri, span: vspan })
+              },
+              _ => {},
+            },
+            .None => {},
+          }
+        },
+        _ => {},
+      }
+
+      for p in subs {
+        refs = collect_refs_in_pattern(refs, ctx, p, sym, scrutinee)
+      }
+
+      refs
+    },
+    .QualifiedVariant(prefix, vname, subs) => {
+      case sym {
+        .Variant(vmod, vtype, variant_name) => if vname == variant_name {
+          case ctx.typed {
+            .Some(t) => case t.type_map[scrutinee.id] {
+              .Some(.Named(tid, _)) => if matches_type_id(ctx, tid, vmod, vtype) {
+                prefix_len := prefix.join(".").len() + 1
+                vspan := Span.{
+                  file_id: pat.span.file_id,
+                  start: pat.span.start + prefix_len,
+                  end: pat.span.start + prefix_len + vname.len(),
+                }
+                refs = .append(.{ uri: ctx.uri, span: vspan })
+              },
+              _ => {},
+            },
+            .None => {},
+          }
+        },
+        _ => {},
+      }
+
+      for p in subs {
+        refs = collect_refs_in_pattern(refs, ctx, p, sym, scrutinee)
+      }
+
+      refs
+    },
+    .Literal(e) => collect_refs_in_expr(refs, ctx, e, sym),
+    _ => refs,
+  }
+}
+
+// ── Identity matching helpers ──────────────────────────────────────
+fn matches_func(ctx: RefCtx, name: String, target_mod: String, target_name: String) Bool {
+  is_same_func_in_module(ctx.env, ctx.canonical_path, name, target_mod, target_name)
+}
+
+fn matches_type(ctx: RefCtx, name: String, target_mod: String, target_name: String) Bool {
+  is_same_type_in_module(ctx.env, ctx.canonical_path, name, target_mod, target_name)
+}
+
+fn matches_type_id(ctx: RefCtx, tid: TypeId, target_mod: String, target_name: String) Bool {
+  is_same_type_id_in_module(ctx.env, tid, ctx.canonical_path, target_mod, target_name)
+}
+
+fn is_same_func(env: ResolvedEnv, name: String, target_mod: String, target_name: String) Bool {
+  registered := case env.function_bindings[name] {
+    .Some(r) => r,
+    .None => { return false },
+  }
+
+  case env.function_origins[registered] {
+    .Some(origin) => origin.module_path == target_mod and origin.func_name == target_name,
+    .None => false,
+  }
+}
+
+/// Like is_same_func but also matches local functions (no origin) when the
+/// candidate module path matches the target module.
+fn is_same_func_in_module(
+  env: ResolvedEnv,
+  canonical_path: String,
+  name: String,
+  target_mod: String,
+  target_name: String,
+) Bool {
+  registered := case env.function_bindings[name] {
+    .Some(r) => r,
+    .None => { return false },
+  }
+
+  case env.function_origins[registered] {
+    .Some(origin) => origin.module_path == target_mod and origin.func_name == target_name,
+    .None => canonical_path == target_mod and name == target_name,
+  }
+}
+
+fn is_same_type(env: ResolvedEnv, name: String, target_mod: String, target_name: String) Bool {
+  entry := case env.lookup_type(name) {
+    .Some(e) => e,
+    .None => { return false },
+  }
+
+  is_same_type_id(env, entry.id, target_mod, target_name)
+}
+
+/// Like is_same_type but also matches local types when the candidate module
+/// path matches the target module.
+fn is_same_type_in_module(
+  env: ResolvedEnv,
+  canonical_path: String,
+  name: String,
+  target_mod: String,
+  target_name: String,
+) Bool {
+  entry := case env.lookup_type(name) {
+    .Some(e) => e,
+    .None => { return false },
+  }
+
+  is_same_type_id_in_module(env, entry.id, canonical_path, target_mod, target_name)
+}
+
+fn is_same_type_id(env: ResolvedEnv, tid: TypeId, target_mod: String, target_name: String) Bool {
+  is_same_type_id_in_module(env, tid, "", target_mod, target_name)
+}
+
+fn is_same_type_id_in_module(
+  env: ResolvedEnv,
+  tid: TypeId,
+  canonical_path: String,
+  target_mod: String,
+  target_name: String,
+) Bool {
+  case env.type_origins[tid.id] {
+    .Some(origin) => {
+      parts := origin.split("::")
+
+      if parts.len() >= 2 {
+        parts[0] == target_mod and parts[1] == target_name
+      } else {
+        false
+      }
+    },
+    .None => if canonical_path != "" {
+      // Local type — check module path + infer name from type_id_index
+      if canonical_path != target_mod {
+        false
+      } else {
+        case env.type_id_index[tid.id] {
+          .Some(idx) => env.type_names[idx] == target_name,
+          .None => false,
+        }
+      }
+    } else {
+      false
+    },
+  }
+}

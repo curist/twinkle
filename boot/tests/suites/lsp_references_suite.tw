@@ -1,0 +1,403 @@
+use compiler.query.cache as query_cache
+use lib.json
+use lib.lsp.document_store
+use lib.lsp.protocol
+use lib.lsp.server_core
+use tests.assert
+use tests.runner
+
+fn state_with_doc(uri: String, text: String) server_core.State {
+  docs := document_store.open(document_store.empty(), uri, text, .Some(1))
+  server_core.State.{
+    initialized: true,
+    shutdown_requested: false,
+    should_exit: false,
+    documents: docs,
+    query_cache: query_cache.empty(),
+    diagnostics_pending: false,
+    diagnostics_deadline_ms: 0.0,
+    last_published_versions: Dict.new(),
+  }
+}
+
+fn state_with_two_docs(uri_a: String, text_a: String, uri_b: String, text_b: String) server_core.State {
+  docs0 := document_store.open(document_store.empty(), uri_a, text_a, .Some(1))
+  docs := document_store.open(docs0, uri_b, text_b, .Some(2))
+  server_core.State.{
+    initialized: true,
+    shutdown_requested: false,
+    should_exit: false,
+    documents: docs,
+    query_cache: query_cache.empty(),
+    diagnostics_pending: false,
+    diagnostics_deadline_ms: 0.0,
+    last_published_versions: Dict.new(),
+  }
+}
+
+fn ref_request(id: Int, uri: String, line: Int, character: Int, include_declaration: Bool) protocol.Message {
+  params := json.object([
+    json.kv("textDocument", json.object([json.kv("uri", .Str(uri))])),
+    json.kv(
+      "position",
+      json.object([json.kv("line", .Int(line)), json.kv("character", .Int(character))]),
+    ),
+    json.kv("context", json.object([json.kv("includeDeclaration", .Bool(include_declaration))])),
+  ])
+  protocol.Message.Request(.{
+    id: .IntId(id),
+    method: "textDocument/references",
+    params: .Some(params),
+  })
+}
+
+type LocationInfo = .{ uri: String, start_line: Int, start_char: Int, end_line: Int, end_char: Int }
+
+fn ref_result_locations(step: server_core.Step) Vector<LocationInfo>!String {
+  if step.outgoing.len() != 1 {
+    return .Err("expected one outgoing message")
+  }
+
+  out := step.outgoing[0]
+  result := try json.decode(out, json.field("result", json.raw()))
+  items := try json.decode(result, json.list(json.raw()))
+  locations: Vector<LocationInfo> = []
+
+  for item in items {
+    uri := try json.decode(item, json.field("uri", json.string()))
+    range := try json.decode(item, json.field("range", json.raw()))
+    start := try json.decode(range, json.field("start", json.raw()))
+    end := try json.decode(range, json.field("end", json.raw()))
+    start_line := try json.decode(start, json.field("line", json.int()))
+    start_char := try json.decode(start, json.field("character", json.int()))
+    end_line := try json.decode(end, json.field("line", json.int()))
+    end_char := try json.decode(end, json.field("character", json.int()))
+    locations = .append(.{ uri, start_line, start_char, end_line, end_char })
+  }
+
+  .Ok(locations)
+}
+
+fn ref_result_count(step: server_core.Step) Int!String {
+  locs := try ref_result_locations(step)
+  .Ok(locs.len())
+}
+
+pub fn suite() runner.Suite {
+  runner.suite("lsp references")
+    .test(
+      "find refs for local variable",
+      fn() {
+        // Line 0: fn foo() Int {
+        // Line 1:   a := 42
+        // Line 2:   a + a
+        // Line 3: }
+        src := "fn foo() Int {\n  a := 42\n  a + a\n}\n"
+        state := state_with_doc("file:///a.tw", src)
+
+        // Cursor on "a" at line 2, char 2
+        step := server_core.handle_message(state, ref_request(1, "file:///a.tw", 2, 2, false))
+        locs := try ref_result_locations(step)
+
+        // Should find 2 references (both uses on line 2), not the declaration
+        try assert.equal(locs.len(), 2)
+        try assert.equal(locs[0].start_line, 2)
+        try assert.equal(locs[1].start_line, 2)
+        .Ok({})
+      },
+    )
+    .test(
+      "find refs for local variable includes declaration",
+      fn() {
+        src := "fn foo() Int {\n  a := 42\n  a + a\n}\n"
+        state := state_with_doc("file:///a.tw", src)
+
+        // Cursor on "a" at line 2, char 2; include declaration
+        step := server_core.handle_message(state, ref_request(1, "file:///a.tw", 2, 2, true))
+        locs := try ref_result_locations(step)
+
+        // 2 uses + 1 declaration = 3
+        try assert.equal(locs.len(), 3)
+        .Ok({})
+      },
+    )
+    .test(
+      "find refs for function call",
+      fn() {
+        // Line 0: fn greet() String { "hi" }
+        // Line 1: x := greet()
+        // Line 2: y := greet()
+        src := "fn greet() String { \"hi\" }\nx := greet()\ny := greet()\n"
+        state := state_with_doc("file:///a.tw", src)
+
+        // Cursor on "greet" call at line 1, char 5
+        step := server_core.handle_message(state, ref_request(1, "file:///a.tw", 1, 5, false))
+        locs := try ref_result_locations(step)
+
+        // Two call sites on lines 1 and 2
+        try assert.equal(locs.len(), 2)
+        .Ok({})
+      },
+    )
+    .test(
+      "find refs for function includes declaration",
+      fn() {
+        src := "fn greet() String { \"hi\" }\nx := greet()\n"
+        state := state_with_doc("file:///a.tw", src)
+
+        // Cursor on "greet" call at line 1, char 5; include declaration
+        step := server_core.handle_message(state, ref_request(1, "file:///a.tw", 1, 5, true))
+        locs := try ref_result_locations(step)
+
+        // 1 call site + 1 declaration = 2
+        try assert.equal(locs.len(), 2)
+        .Ok({})
+      },
+    )
+    .test(
+      "find refs for type name",
+      fn() {
+        // Line 0: type Msg = .{ text: String }
+        // Line 1: fn make() Msg { .{ text: "hi" } }
+        src := "type Msg = .{ text: String }\nfn make() Msg { .{ text: \"hi\" } }\n"
+        state := state_with_doc("file:///a.tw", src)
+
+        // Cursor on "Msg" in return type at line 1, char 10
+        step := server_core.handle_message(state, ref_request(1, "file:///a.tw", 1, 10, false))
+        count := try ref_result_count(step)
+
+        // At least 1 ref (return type annotation)
+        try assert.ok(count >= 1, "expected at least 1 ref for type Msg, got ${count}")
+        .Ok({})
+      },
+    )
+    .test(
+      "find refs returns empty array for unknown position",
+      fn() {
+        src := "fn foo() Int { 42 }\n"
+        state := state_with_doc("file:///a.tw", src)
+
+        // Cursor on "42" — a literal, no symbol
+        step := server_core.handle_message(state, ref_request(1, "file:///a.tw", 0, 15, false))
+        count := try ref_result_count(step)
+        try assert.equal(count, 0)
+        .Ok({})
+      },
+    )
+    .test(
+      "find refs on function definition name",
+      fn() {
+        src := "fn greet() String { \"hi\" }\nx := greet()\n"
+        state := state_with_doc("file:///a.tw", src)
+
+        // Cursor on "greet" definition at line 0, char 3
+        step := server_core.handle_message(state, ref_request(1, "file:///a.tw", 0, 3, false))
+        locs := try ref_result_locations(step)
+
+        // One call site on line 1
+        try assert.equal(locs.len(), 1)
+        try assert.equal(locs[0].start_line, 1)
+        .Ok({})
+      },
+    )
+    .test(
+      "find refs respects shadowing",
+      fn() {
+        // Line 0: fn foo() Int {
+        // Line 1:   a := 1
+        // Line 2:   b := a
+        // Line 3:   a := 2
+        // Line 4:   a
+        // Line 5: }
+        src := "fn foo() Int {\n  a := 1\n  b := a\n  a := 2\n  a\n}\n"
+        state := state_with_doc("file:///a.tw", src)
+
+        // Cursor on first "a" definition at line 1, char 2
+        step := server_core.handle_message(state, ref_request(1, "file:///a.tw", 1, 2, false))
+        locs := try ref_result_locations(step)
+
+        // Only b := a on line 2 should match (the a after rebinding is a different binding)
+        try assert.equal(locs.len(), 1)
+        try assert.equal(locs[0].start_line, 2)
+        .Ok({})
+      },
+    )
+    .test(
+      "advertises referencesProvider capability",
+      fn() {
+        state := state_with_doc("file:///a.tw", "")
+        init := protocol.Message.Request(.{
+          id: .IntId(1),
+          method: "initialize",
+          params: .Some(json.object([])),
+        })
+        step := server_core.handle_message(state, init)
+
+        if step.outgoing.len() != 1 {
+          return .Err("expected one response")
+        }
+
+        out := step.outgoing[0]
+        result := try json.decode(out, json.field("result", json.raw()))
+        caps := try json.decode(result, json.field("capabilities", json.raw()))
+        refs_cap := try json.decode(caps, json.field("referencesProvider", json.bool()))
+        try assert.equal(refs_cap, true)
+        .Ok({})
+      },
+    )
+    .test(
+      "cross-module: find refs for imported function",
+      fn() {
+        // lib.tw defines pub fn helper() Int { 42 }
+        // main.tw imports and calls helper twice
+        lib_uri := "file:///tmp/lsp_refs_xmod/lib.tw"
+        main_uri := "file:///tmp/lsp_refs_xmod/main.tw"
+        lib := "pub fn helper() Int { 42 }\n"
+        main := "use lib\nx := lib.helper()\ny := lib.helper()\n"
+        state := state_with_two_docs(lib_uri, lib, main_uri, main)
+
+        // Cursor on "helper" definition at line 0, char 7 in lib.tw
+        step := server_core.handle_message(state, ref_request(1, lib_uri, 0, 7, false))
+        locs := try ref_result_locations(step)
+
+        // Two call sites in main.tw
+        try assert.equal(locs.len(), 2)
+
+        for loc in locs {
+          try assert.equal(loc.uri, main_uri)
+        }
+
+        .Ok({})
+      },
+    )
+    .test(
+      "cross-module: find refs for imported function includes declaration",
+      fn() {
+        lib_uri := "file:///tmp/lsp_refs_xmod2/lib.tw"
+        main_uri := "file:///tmp/lsp_refs_xmod2/main.tw"
+        lib := "pub fn helper() Int { 42 }\n"
+        main := "use lib\nx := lib.helper()\n"
+        state := state_with_two_docs(lib_uri, lib, main_uri, main)
+
+        // Cursor on "helper" call in main.tw at line 1, char 9
+        step := server_core.handle_message(state, ref_request(1, main_uri, 1, 9, true))
+        locs := try ref_result_locations(step)
+
+        // 1 call site + 1 declaration = 2
+        try assert.equal(locs.len(), 2)
+
+        // One location should be in lib.tw (the declaration)
+        lib_count := 0
+
+        for loc in locs {
+          if loc.uri == lib_uri {
+            lib_count = lib_count + 1
+          }
+        }
+
+        try assert.equal(lib_count, 1)
+        .Ok({})
+      },
+    )
+    .test(
+      "cross-module: find refs for imported type",
+      fn() {
+        lib_uri := "file:///tmp/lsp_refs_xtype/lib.tw"
+        main_uri := "file:///tmp/lsp_refs_xtype/main.tw"
+        lib := "pub type Point = .{ x: Int, y: Int }\n"
+        main := "use lib.{Point}\nfn origin() Point { .{ x: 0, y: 0 } }\n"
+        state := state_with_two_docs(lib_uri, lib, main_uri, main)
+
+        // Cursor on "Point" type definition in lib.tw at line 0, char 9
+        step := server_core.handle_message(state, ref_request(1, lib_uri, 0, 9, false))
+        locs := try ref_result_locations(step)
+
+        // main.tw should have refs: the selective import and the return type annotation
+        main_count := 0
+
+        for loc in locs {
+          if loc.uri == main_uri {
+            main_count = main_count + 1
+          }
+        }
+
+        try assert.ok(main_count >= 1, "expected at least 1 ref in main.tw, got ${main_count}")
+        .Ok({})
+      },
+    )
+    .test(
+      "cross-module: qualified type refs use the type-name span",
+      fn() {
+        lib_uri := "file:///tmp/lsp_refs_qtype/lib.tw"
+        main_uri := "file:///tmp/lsp_refs_qtype/main.tw"
+        lib := "pub type Point = .{ x: Int, y: Int }\n"
+        main := "use lib\nfn f(p: lib.Point) lib.Point { p }\n"
+        state := state_with_two_docs(lib_uri, lib, main_uri, main)
+
+        step := server_core.handle_message(state, ref_request(1, lib_uri, 0, 9, false))
+        locs := try ref_result_locations(step)
+
+        found_param := false
+        found_return := false
+
+        for loc in locs {
+          if loc.uri == main_uri
+            and loc.start_line == 1 and loc.start_char == 12 and loc.end_char == 17 {
+            found_param = true
+          }
+
+          if loc.uri == main_uri
+            and loc.start_line == 1 and loc.start_char == 23 and loc.end_char == 28 {
+            found_return = true
+          }
+        }
+
+        try assert.ok(found_param, "expected qualified parameter type reference on Point")
+        try assert.ok(found_return, "expected qualified return type reference on Point")
+        .Ok({})
+      },
+    )
+    .test(
+      "record construction fields are field references",
+      fn() {
+        src := "type Point = .{ x: Int, y: Int }\nfn origin() Point { Point.{ x: 0, y: 0 } }\n"
+        state := state_with_doc("file:///a.tw", src)
+
+        step := server_core.handle_message(state, ref_request(1, "file:///a.tw", 0, 16, false))
+        locs := try ref_result_locations(step)
+
+        try assert.equal(locs.len(), 1)
+        try assert.equal(locs[0].start_line, 1)
+        try assert.equal(locs[0].start_char, 28)
+        try assert.equal(locs[0].end_char, 29)
+        .Ok({})
+      },
+    )
+    .test(
+      "variant expression and pattern references skip the leading dot",
+      fn() {
+        src := "type Maybe = { None, Some(Int) }\nfn make() Maybe { .Some(1) }\nfn get(m: Maybe) Int { case m { .Some(v) => v, .None => 0 } }\n"
+        state := state_with_doc("file:///a.tw", src)
+
+        step := server_core.handle_message(state, ref_request(1, "file:///a.tw", 0, 21, false))
+        locs := try ref_result_locations(step)
+
+        found_expr := false
+        found_pattern := false
+
+        for loc in locs {
+          if loc.start_line == 1 and loc.start_char == 19 and loc.end_char == 23 {
+            found_expr = true
+          }
+
+          if loc.start_line == 2 and loc.start_char == 33 and loc.end_char == 37 {
+            found_pattern = true
+          }
+        }
+
+        try assert.ok(found_expr, "expected variant expression span without dot")
+        try assert.ok(found_pattern, "expected variant pattern span without dot")
+        .Ok({})
+      },
+    )
+}

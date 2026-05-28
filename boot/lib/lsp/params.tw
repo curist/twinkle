@@ -45,6 +45,14 @@ pub type SignatureHelpParams = .{ text_document: TextDocumentIdentifier, positio
 
 pub type WorkspaceSymbolParams = .{ query: String }
 
+pub type ReferenceContext = .{ include_declaration: Bool }
+
+pub type ReferenceParams = .{
+  text_document: TextDocumentIdentifier,
+  position: Position,
+  context: ReferenceContext,
+}
+
 pub type InlayHintParams = .{
   text_document: TextDocumentIdentifier,
   range_start: Position,
@@ -144,6 +152,21 @@ pub fn decode_workspace_symbol(params: json.Json?) Result<WorkspaceSymbolParams,
   value := try required_params(params)
   query := try json.decode(value, json.field("query", json.string()))
   .Ok(.{ query })
+}
+
+pub fn decode_references(params: json.Json?) Result<ReferenceParams, String> {
+  value := try required_params(params)
+  text_document := try json.decode(
+    value,
+    json.field("textDocument", text_document_identifier_decoder()),
+  )
+  position := try json.decode(value, json.field("position", position_decoder()))
+  context := try json.decode(value, json.field("context", json.raw()))
+  include_declaration := case json.decode(context, json.field("includeDeclaration", json.bool())) {
+    .Ok(b) => b,
+    .Err(_) => false,
+  }
+  .Ok(.{ text_document, position, context: .{ include_declaration } })
 }
 
 pub fn decode_inlay_hint(params: json.Json?) Result<InlayHintParams, String> {

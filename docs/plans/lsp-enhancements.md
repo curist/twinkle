@@ -33,7 +33,7 @@ plan; whole-document format-on-save is good enough for now.
 | Feature | LSP method/capability | Priority | Status | Details |
 |---------|------------------------|----------|--------|---------|
 | Document symbols | `textDocument/documentSymbol` | High | **Done** | [archived](archive/lsp-document-symbols.md) |
-| Find references | `textDocument/references` | High | Planned | [lsp-references.md](lsp-references.md) |
+| Find references | `textDocument/references` | High | **Done** | [lsp-references.md](lsp-references.md) |
 | Rename | `textDocument/rename`, `textDocument/prepareRename` | High | Planned | [lsp-rename.md](lsp-rename.md) |
 | Signature help | `textDocument/signatureHelp` | High | **Done** | [archived](archive/lsp-signature-help.md) |
 | Semantic tokens | `textDocument/semanticTokens/full` | Medium | Planned | [lsp-semantic-tokens.md](lsp-semantic-tokens.md) |
@@ -57,8 +57,8 @@ Existing related plans:
 
 1. ~~Document symbols: simple AST walk, high editor value, good foundation for
    workspace symbols.~~ **Done.**
-2. Find references: establishes symbol identity and use-site collection needed
-   for rename and highlights.
+2. ~~Find references: establishes symbol identity and use-site collection needed
+   for rename and highlights.~~ **Done.**
 3. Rename: build on references with scope-aware edit generation.
 4. ~~Signature help: reuses type/signature rendering and call-site analysis.~~
    **Done.**

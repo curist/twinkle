@@ -1,0 +1,30 @@
+/// LSP references response adapter.
+///
+/// Converts internal ReferenceLocation list into an LSP Location JSON array.
+
+use compiler.query.references as query_references
+use lib.json
+use lib.text.line_index
+
+use .range.{range_to_json}
+
+pub fn references_response(
+  results: Vector<query_references.ReferenceLocation>,
+  get_index: fn(String) line_index.LineIndex?,
+) json.Json {
+  locations: Vector<json.Json> = []
+
+  for result in results {
+    index := case get_index(result.uri) {
+      .Some(idx) => idx,
+      .None => { continue },
+    }
+
+    range := line_index.byte_range_to_range(index, result.span.start, result.span.end, .Utf16)
+    locations = .append(
+      json.object([json.kv("uri", .Str(result.uri)), json.kv("range", range_to_json(range))]),
+    )
+  }
+
+  json.array(locations)
+}

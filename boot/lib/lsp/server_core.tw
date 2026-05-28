@@ -18,6 +18,7 @@ use compiler.query.diagnostics as query_diagnostics
 use compiler.query.document_symbols as query_document_symbols
 use compiler.query.hover as query_hover
 use compiler.query.inlay_hints as query_inlay_hints
+use compiler.query.references as query_references
 use compiler.query.semantic
 use compiler.query.signature_help as query_signature_help
 use compiler.query.workspace_symbols as query_workspace_symbols
@@ -33,6 +34,7 @@ use lib.lsp.inlay_hint as lsp_inlay_hint
 use lib.lsp.params
 use lib.lsp.protocol
 use lib.lsp.range as lsp_range
+use lib.lsp.references as lsp_references
 use lib.lsp.signature_help as lsp_signature_help
 use lib.lsp.workspace_symbol as lsp_workspace_symbol
 use lib.module.loader
@@ -86,6 +88,7 @@ fn handle_request(state: State, req: protocol.Request) Step {
             json.kv("hoverProvider", .Bool(true)),
             json.kv("definitionProvider", .Bool(true)),
             json.kv("typeDefinitionProvider", .Bool(true)),
+            json.kv("referencesProvider", .Bool(true)),
             json.kv("documentFormattingProvider", .Bool(true)),
             json.kv(
               "completionProvider",
@@ -108,6 +111,7 @@ fn handle_request(state: State, req: protocol.Request) Step {
     "textDocument/hover" => handle_hover(state, req),
     "textDocument/definition" => handle_definition(state, req),
     "textDocument/typeDefinition" => handle_type_definition(state, req),
+    "textDocument/references" => handle_references(state, req),
     "textDocument/completion" => handle_completion(state, req),
     "textDocument/codeAction" => handle_code_action(state, req),
     "textDocument/documentSymbol" => handle_document_symbol(state, req),
@@ -305,6 +309,53 @@ fn handle_type_definition(state: State, req: protocol.Request) Step {
     },
     .None => null_response_step(state, req),
   }
+}
+
+fn handle_references(state: State, req: protocol.Request) Step {
+  ref_params := case params.decode_references(req.params) {
+    .Ok(p) => p,
+    .Err(_) => { return empty_array_response_step(state, req) },
+  }
+  doc := case document_store.get(state.documents, ref_params.text_document.uri) {
+    .Some(d) => d,
+    .None => { return empty_array_response_step(state, req) },
+  }
+  offset := case position_offset(doc.index, ref_params.position) {
+    .Some(o) => o,
+    .None => { return empty_array_response_step(state, req) },
+  }
+
+  // Populate the cache from all open documents so cross-module refs work.
+  // Each open doc may be a separate import-graph root; snapshotting each one
+  // ensures every reachable module is in the cache.
+  for open_doc in state.documents.docs.values() {
+    ws := workspace_snapshot(state, open_doc)
+    state.query_cache = ws.cache
+  }
+
+  snap := workspace_snapshot(state, doc)
+  state.query_cache = snap.cache
+  results := query_references.find_references(snap, offset, ref_params.context.include_declaration)
+  response := lsp_references.references_response(
+    results,
+    fn(uri: String) line_index.LineIndex? {
+      case document_by_identity_uri(state.documents, uri) {
+        .Some(d) => { return .Some(d.index) },
+        .None => {},
+      }
+
+      p := case identity_path_from_uri(uri) {
+        .Some(path) => path,
+        .None => { return .None },
+      }
+
+      case fs.read_text(p) {
+        .Ok(text) => .Some(line_index.new(text)),
+        .Err(_) => .None,
+      }
+    },
+  )
+  .{ state, outgoing: [protocol.success_response(req.id, response)] }
 }
 
 fn handle_completion(state: State, req: protocol.Request) Step {

@@ -1,75 +1,37 @@
-# LSP Find References Plan
+# LSP Find References — Done
 
-## Goal
+Implemented `textDocument/references` for the Twinkle LSP server.
 
-Implement `textDocument/references` so users can find uses of a symbol across a
-Twinkle workspace.
+## What was built
 
----
+* `boot/lib/lsp/params.tw` — `ReferenceParams` / `decode_references`
+* `boot/compiler/query/references.tw` — core query: symbol identification,
+  local and workspace reference collection with shadowing support
+* `boot/lib/lsp/references.tw` — response adapter (ReferenceLocation → LSP JSON)
+* `boot/lib/lsp/server_core.tw` — `handle_references` handler, `referencesProvider` capability
 
-## Scope
+## Symbol kinds supported
 
-In scope:
+Functions, top-level bindings, local bindings, parameters, types, variants,
+record fields, and imports — both same-module and cross-module.
 
-* Functions, top-level bindings, local bindings, parameters, types, variants,
-  record fields, and imports.
-* Current document plus project modules reachable from the workspace graph.
-* Include/exclude declaration based on `ReferenceParams.context.includeDeclaration`.
+## Key design decisions
 
-Out of scope for the first pass:
+* **SymbolId enum** — `Local(name, span)`, `Func(mod, name)`, `TypeDef(mod, name)`,
+  `Variant(mod, type, name)`, `Field(mod, type, name)`. Reuses go-to-definition
+  for cursor-to-identity resolution.
+* **RefCtx record** — bundles `uri`, `canonical_path`, `env`, `typed` to thread
+  through recursive AST walkers.
+* **Identity matching** — `matches_func` / `matches_type` / `matches_type_id`
+  check origin-based matching first, then fall back to local (no-origin) matching
+  using canonical module paths.
+* **Cross-module coverage** — `handle_references` snapshots all open documents
+  to populate the cache, same approach as workspace symbols.
+* **Shadowing** — local reference collection stops at rebinding boundaries.
 
-* Dynamic references through method values if the receiver type is unavailable.
-* External package references.
+## Tests
 
----
-
-## Design
-
-Find references should be built around a stable symbol identity abstraction. The
-query should first resolve the symbol under the cursor to an identity, then walk
-candidate modules collecting spans that resolve to the same identity.
-
-Potential identity forms:
-
-* local binding: module key + binding id/scope path/name span
-* top-level value: canonical module path + exported/internal name
-* type: canonical module path + type name
-* variant: parent type id + variant name
-* field: record type id + field name
-* import alias/item: imported target identity plus import binding span
-
-This same identity layer should later support rename and document highlight.
-
----
-
-## Implementation Steps
-
-1. Add `ReferenceParams` decoding in `params.tw`.
-2. Add a symbol-at-position query that returns the resolved identity and
-   declaration span.
-3. Add a reference collector over parsed/resolved/typed modules.
-4. Add JSON location helpers or reuse definition helpers.
-5. Advertise `referencesProvider: true`.
-6. Handle `textDocument/references` in `server_core.tw`.
-7. Add tests for local, module-level, imported, type, variant, and field
-   references.
-
----
-
-## Test Plan
-
-* Local variable references are scoped correctly and ignore shadowed names.
-* Imported function references match the imported target.
-* Type references include annotations and constructors where appropriate.
-* Variant references include patterns and expression constructors.
-* Field references are type-aware and do not match unrelated records with the
-  same field name.
-* `includeDeclaration` controls declaration inclusion.
-* Multibyte text before references maps locations correctly.
-
----
-
-## Exit Criteria
-
-Find references returns precise, scope-aware locations for the common Twinkle
-symbol kinds and provides the reusable symbol-identity foundation for rename.
+15 tests in `boot/tests/suites/lsp_references_suite.tw` covering local variables,
+functions, types, variants, fields, shadowing, `includeDeclaration`, capability
+advertisement, cross-module functions, cross-module types, qualified type paths,
+and record construction field references.
