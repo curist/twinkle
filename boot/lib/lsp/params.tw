@@ -39,6 +39,8 @@ pub type CodeActionParams = .{
 
 pub type SemanticTokensParams = .{ text_document: TextDocumentIdentifier }
 
+pub type FoldingRangeParams = .{ text_document: TextDocumentIdentifier }
+
 pub type DocumentFormattingParams = .{ text_document: TextDocumentIdentifier }
 
 pub type DocumentSymbolParams = .{ text_document: TextDocumentIdentifier }
@@ -184,6 +186,15 @@ pub fn decode_inlay_hint(params: json.Json?) Result<InlayHintParams, String> {
 }
 
 pub fn decode_semantic_tokens(params: json.Json?) Result<SemanticTokensParams, String> {
+  value := try required_params(params)
+  text_document := try json.decode(
+    value,
+    json.field("textDocument", text_document_identifier_decoder()),
+  )
+  .Ok(.{ text_document })
+}
+
+pub fn decode_folding_range(params: json.Json?) Result<FoldingRangeParams, String> {
   value := try required_params(params)
   text_document := try json.decode(
     value,

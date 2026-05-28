@@ -1,0 +1,183 @@
+use compiler.query.cache as query_cache
+use lib.json
+use lib.lsp.document_store
+use lib.lsp.protocol
+use lib.lsp.server_core
+use tests.assert
+use tests.runner
+
+fn state_with_doc(uri: String, text: String) server_core.State {
+  docs := document_store.open(document_store.empty(), uri, text, .Some(1))
+  server_core.State.{
+    initialized: true,
+    shutdown_requested: false,
+    should_exit: false,
+    documents: docs,
+    query_cache: query_cache.empty(),
+    diagnostics_pending: false,
+    diagnostics_deadline_ms: 0.0,
+    last_published_versions: Dict.new(),
+  }
+}
+
+fn folding_range_request(id: Int, uri: String) protocol.Message {
+  params := json.object([json.kv("textDocument", json.object([json.kv("uri", .Str(uri))]))])
+  protocol.Message.Request(.{
+    id: .IntId(id),
+    method: "textDocument/foldingRange",
+    params: .Some(params),
+  })
+}
+
+type FoldInfo = .{ start_line: Int, end_line: Int, kind: String? }
+
+fn parse_folding_ranges(step: server_core.Step) Vector<FoldInfo>!String {
+  if step.outgoing.len() != 1 {
+    return .Err("expected one outgoing message")
+  }
+
+  out := step.outgoing[0]
+  result := try json.decode(out, json.field("result", json.raw()))
+  items := try json.decode(result, json.list(json.raw()))
+  ranges: Vector<FoldInfo> = []
+
+  for item in items {
+    start_line := try json.decode(item, json.field("startLine", json.int()))
+    end_line := try json.decode(item, json.field("endLine", json.int()))
+    kind: String? = case json.decode(item, json.field("kind", json.string())) {
+      .Ok(k) => .Some(k),
+      .Err(_) => .None,
+    }
+    ranges = .append(.{ start_line, end_line, kind })
+  }
+
+  .Ok(ranges)
+}
+
+pub fn suite() runner.Suite {
+  runner.suite("lsp folding range")
+    .test(
+      "fold multiline function",
+      fn() {
+        // Line 0: fn foo() Int {
+        // Line 1:   a := 1
+        // Line 2:   a
+        // Line 3: }
+        src := "fn foo() Int {\n  a := 1\n  a\n}\n"
+        state := state_with_doc("file:///a.tw", src)
+        step := server_core.handle_message(state, folding_range_request(1, "file:///a.tw"))
+        ranges := try parse_folding_ranges(step)
+
+        // Function body should fold from line 0 to line 2 (closing brace on 3 stays visible).
+        try assert.ok(ranges.len() >= 1, "expected at least 1 folding range")
+        first := ranges[0]
+        try assert.equal(first.start_line, 0)
+        try assert.equal(first.end_line, 2)
+        .Ok({})
+      },
+    )
+    .test(
+      "single-line function produces no range",
+      fn() {
+        src := "fn foo() Int { 42 }\n"
+        state := state_with_doc("file:///a.tw", src)
+        step := server_core.handle_message(state, folding_range_request(1, "file:///a.tw"))
+        ranges := try parse_folding_ranges(step)
+
+        // Filter for ranges that start at line 0 (the function).
+        fn_ranges := collect r in ranges {
+          r
+        }
+
+        for r in fn_ranges {
+          // No range should start and end on line 0.
+          if r.start_line == 0 {
+            try assert.ok(r.end_line > r.start_line, "single-line range should not appear")
+          }
+        }
+
+        .Ok({})
+      },
+    )
+    .test(
+      "fold multiline type declaration",
+      fn() {
+        // Line 0: type Point = .{
+        // Line 1:   x: Int,
+        // Line 2:   y: Int,
+        // Line 3: }
+        src := "type Point = .{\n  x: Int,\n  y: Int,\n}\n"
+        state := state_with_doc("file:///a.tw", src)
+        step := server_core.handle_message(state, folding_range_request(1, "file:///a.tw"))
+        ranges := try parse_folding_ranges(step)
+
+        try assert.ok(ranges.len() >= 1, "expected at least 1 folding range for type")
+        first := ranges[0]
+        try assert.equal(first.start_line, 0)
+        try assert.equal(first.end_line, 2)
+        .Ok({})
+      },
+    )
+    .test(
+      "consecutive imports fold as imports kind",
+      fn() {
+        // Line 0: use @std.fs
+        // Line 1: use @std.path
+        // Line 2:
+        // Line 3: fn main() Int { 42 }
+        src := "use @std.fs\nuse @std.path\n\nfn main() Int { 42 }\n"
+        state := state_with_doc("file:///a.tw", src)
+        step := server_core.handle_message(state, folding_range_request(1, "file:///a.tw"))
+        ranges := try parse_folding_ranges(step)
+
+        // Find the imports range.
+        import_ranges := collect r in ranges {
+          r
+        }
+        found := false
+
+        for r in import_ranges {
+          case r.kind {
+            .Some(k) => if k == "imports" {
+              found = true
+            },
+            .None => {},
+          }
+        }
+
+        try assert.ok(found, "expected an imports folding range")
+        .Ok({})
+      },
+    )
+    .test(
+      "nested blocks produce ranges",
+      fn() {
+        // Line 0: fn foo(x: Int) Int {
+        // Line 1:   if x > 0 {
+        // Line 2:     x
+        // Line 3:   } else {
+        // Line 4:     0 - x
+        // Line 5:   }
+        // Line 6: }
+        src := "fn foo(x: Int) Int {\n  if x > 0 {\n    x\n  } else {\n    0 - x\n  }\n}\n"
+        state := state_with_doc("file:///a.tw", src)
+        step := server_core.handle_message(state, folding_range_request(1, "file:///a.tw"))
+        ranges := try parse_folding_ranges(step)
+
+        // Should have at least the function range + the if range.
+        try assert.ok(ranges.len() >= 2, "expected at least 2 folding ranges for nested blocks")
+        .Ok({})
+      },
+    )
+    .test(
+      "unknown document returns empty",
+      fn() {
+        src := "fn foo() Int { 42 }\n"
+        state := state_with_doc("file:///a.tw", src)
+        step := server_core.handle_message(state, folding_range_request(1, "file:///unknown.tw"))
+        ranges := try parse_folding_ranges(step)
+        try assert.equal(ranges.len(), 0)
+        .Ok({})
+      },
+    )
+}

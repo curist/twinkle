@@ -1,0 +1,49 @@
+/// LSP folding-range response adapter.
+///
+/// Converts internal FoldingRange list into an LSP FoldingRange JSON array.
+/// Only emits ranges that span more than one line.
+
+use compiler.query.folding_range as query
+use lib.json
+use lib.text.line_index
+
+pub fn folding_range_response(results: Vector<query.FoldingRange>, index: line_index.LineIndex) json.Json {
+  items: Vector<json.Json> = []
+
+  for result in results {
+    start_pos := line_index.byte_offset_to_position(index, result.start, .Utf16)
+    end_pos := line_index.byte_offset_to_position(index, result.end, .Utf16)
+
+    // Only emit ranges spanning more than one line.
+    if end_pos.line <= start_pos.line {
+      continue
+    }
+
+    // For code blocks with delimiters (Region), fold to the line before the
+    // closing brace so it stays visible. For imports and comments there is no
+    // closing delimiter, so use the actual end line.
+    end_line := case result.kind {
+      .Region => end_pos.line - 1,
+      _ => end_pos.line,
+    }
+
+    if end_line <= start_pos.line {
+      continue
+    }
+
+    fields: Vector<json.Field> = [
+      json.kv("startLine", .Int(start_pos.line)),
+      json.kv("endLine", .Int(end_line)),
+    ]
+
+    case result.kind {
+      .Imports => fields = fields.append(json.kv("kind", .Str("imports"))),
+      .Comment => fields = fields.append(json.kv("kind", .Str("comment"))),
+      .Region => {},
+    }
+
+    items = .append(json.object(fields))
+  }
+
+  json.array(items)
+}

@@ -1,0 +1,255 @@
+/// Collect folding ranges from a parsed module AST.
+///
+/// Returns ranges that span more than one line. The caller converts byte
+/// offsets to LSP line numbers.
+
+use compiler.ast
+use compiler.query.semantic.{SemanticSnapshot}
+
+pub type FoldingRange = .{ start: Int, end: Int, kind: FoldingRangeKind }
+
+pub type FoldingRangeKind = { Imports, Comment, Region }
+
+pub fn folding_ranges(snap: SemanticSnapshot) Vector<FoldingRange> {
+  parsed := case snap.parsed {
+    .Some(p) => p,
+    .None => { return [] },
+  }
+
+  result: Vector<FoldingRange> = []
+
+  // Collect consecutive import groups.
+  result = .concat(import_ranges(parsed.module.items))
+
+  for item in parsed.module.items {
+    result = .concat(ranges_from_item(item))
+  }
+
+  result
+}
+
+fn import_ranges(items: Vector<ast.Item>) Vector<FoldingRange> {
+  // Find consecutive runs of Use items.
+  result: Vector<FoldingRange> = []
+  run_start: Int? = .None
+  run_end: Int? = .None
+
+  for item in items {
+    case item {
+      .Use(decl) => case run_start {
+        .None => {
+          run_start = .Some(decl.span.start)
+          run_end = .Some(decl.span.end)
+        },
+        .Some(_) => run_end = .Some(decl.span.end),
+      },
+      _ => case run_start {
+        .Some(s) => {
+          e := case run_end {
+            .Some(e) => e,
+            .None => s,
+          }
+          result = .append(.{ start: s, end: e, kind: .Imports })
+          run_start = .None
+          run_end = .None
+        },
+        .None => {},
+      },
+    }
+  }
+
+  // Flush trailing run.
+  case run_start {
+    .Some(s) => {
+      e := case run_end {
+        .Some(e) => e,
+        .None => s,
+      }
+      result = .append(.{ start: s, end: e, kind: .Imports })
+    },
+    .None => {},
+  }
+
+  result
+}
+
+fn ranges_from_item(item: ast.Item) Vector<FoldingRange> {
+  case item {
+    .Function(decl) => {
+      result: Vector<FoldingRange> = [
+        .{ start: decl.span.start, end: decl.span.end, kind: .Region },
+      ]
+      result.concat(ranges_from_block(decl.body))
+    },
+    .Type(decl) => [.{ start: decl.span.start, end: decl.span.end, kind: .Region }],
+    .ExternFunction(decl) => [.{ start: decl.span.start, end: decl.span.end, kind: .Region }],
+    .ExternType(_) => [],
+    .Use(_) => [],
+    .Stmt(stmt) => ranges_from_stmt(stmt),
+    .ErrorItem(_) => [],
+  }
+}
+
+fn ranges_from_block(block: ast.Block) Vector<FoldingRange> {
+  result: Vector<FoldingRange> = []
+
+  for stmt in block.stmts {
+    result = .concat(ranges_from_stmt(stmt))
+  }
+
+  case block.tail {
+    .Some(expr) => result.concat(ranges_from_expr(expr)),
+    .None => result,
+  }
+}
+
+fn ranges_from_stmt(stmt: ast.Stmt) Vector<FoldingRange> {
+  case stmt {
+    .Let(s) => ranges_from_expr(s.value),
+    .For(s) => {
+      result: Vector<FoldingRange> = [.{ start: s.span.start, end: s.span.end, kind: .Region }]
+      result.concat(ranges_from_block(s.body))
+    },
+    .Return(s) => case s.value {
+      .Some(expr) => ranges_from_expr(expr),
+      .None => [],
+    },
+    .Break(s) => case s.value {
+      .Some(expr) => ranges_from_expr(expr),
+      .None => [],
+    },
+    .Continue(_) => [],
+    .Defer(s) => ranges_from_expr(s.expr),
+    .Expr(s) => ranges_from_expr(s.expr),
+    .ErrorStmt(_) => [],
+  }
+}
+
+fn ranges_from_expr(expr: ast.Expr) Vector<FoldingRange> {
+  case expr.kind {
+    .BlockExpr(block) => {
+      result: Vector<FoldingRange> = [
+        .{ start: expr.span.start, end: expr.span.end, kind: .Region },
+      ]
+      result.concat(ranges_from_block(block))
+    },
+    .If(condition, then_block, else_expr) => {
+      result: Vector<FoldingRange> = [
+        .{ start: expr.span.start, end: expr.span.end, kind: .Region },
+      ]
+      result = .concat(ranges_from_expr(condition))
+      result = .concat(ranges_from_block(then_block))
+
+      case else_expr {
+        .Some(e) => result.concat(ranges_from_expr(e)),
+        .None => result,
+      }
+    },
+    .Case(scrutinee, arms) => {
+      result: Vector<FoldingRange> = [
+        .{ start: expr.span.start, end: expr.span.end, kind: .Region },
+      ]
+      result = .concat(ranges_from_expr(scrutinee))
+
+      for arm in arms {
+        result = .concat(ranges_from_expr(arm.expr))
+      }
+
+      result
+    },
+    .Cond(arms) => {
+      result: Vector<FoldingRange> = [
+        .{ start: expr.span.start, end: expr.span.end, kind: .Region },
+      ]
+
+      for arm in arms {
+        result = .concat(ranges_from_expr(arm.body))
+      }
+
+      result
+    },
+    .Closure(_, _, body) => {
+      result: Vector<FoldingRange> = [
+        .{ start: expr.span.start, end: expr.span.end, kind: .Region },
+      ]
+      result.concat(ranges_from_block(body))
+    },
+    .Collect(c) => {
+      result: Vector<FoldingRange> = [
+        .{ start: expr.span.start, end: expr.span.end, kind: .Region },
+      ]
+      result.concat(ranges_from_block(c.body))
+    },
+    .Array(elems) => {
+      result: Vector<FoldingRange> = [
+        .{ start: expr.span.start, end: expr.span.end, kind: .Region },
+      ]
+
+      for elem in elems {
+        result = .concat(ranges_from_expr(elem))
+      }
+
+      result
+    },
+    .Record(entries) => {
+      result: Vector<FoldingRange> = [
+        .{ start: expr.span.start, end: expr.span.end, kind: .Region },
+      ]
+
+      for entry in entries {
+        case entry.value {
+          .Some(v) => result = result.concat(ranges_from_expr(v)),
+          .None => {},
+        }
+      }
+
+      result
+    },
+    .NamedRecord(_, entries) => {
+      result: Vector<FoldingRange> = [
+        .{ start: expr.span.start, end: expr.span.end, kind: .Region },
+      ]
+
+      for entry in entries {
+        case entry.value {
+          .Some(v) => result = result.concat(ranges_from_expr(v)),
+          .None => {},
+        }
+      }
+
+      result
+    },
+    .Call(callee, args) => {
+      result := ranges_from_expr(callee)
+
+      for arg in args {
+        result = .concat(ranges_from_expr(arg))
+      }
+
+      result
+    },
+    .Binary(_, left, right) => {
+      result := ranges_from_expr(left)
+      result.concat(ranges_from_expr(right))
+    },
+    .Unary(_, inner) => ranges_from_expr(inner),
+    .Field(inner, _) => ranges_from_expr(inner),
+    .Index(inner, idx) => {
+      result := ranges_from_expr(inner)
+      result.concat(ranges_from_expr(idx))
+    },
+    .StringInterp(parts) => {
+      result: Vector<FoldingRange> = []
+
+      for part in parts {
+        case part {
+          .Interpolation(e) => result = result.concat(ranges_from_expr(e)),
+          .Literal(_) => {},
+        }
+      }
+
+      result
+    },
+    _ => [],
+  }
+}

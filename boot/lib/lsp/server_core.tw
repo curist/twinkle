@@ -17,6 +17,7 @@ use compiler.query.definition as query_definition
 use compiler.query.diagnostics as query_diagnostics
 use compiler.query.document_highlight as query_document_highlight
 use compiler.query.document_symbols as query_document_symbols
+use compiler.query.folding_range as query_folding_range
 use compiler.query.hover as query_hover
 use compiler.query.inlay_hints as query_inlay_hints
 use compiler.query.references as query_references
@@ -32,6 +33,7 @@ use lib.lsp.diagnostics as lsp_diagnostics
 use lib.lsp.document_highlight as lsp_document_highlight
 use lib.lsp.document_store
 use lib.lsp.document_symbol as lsp_document_symbol
+use lib.lsp.folding_range as lsp_folding_range
 use lib.lsp.hover as lsp_hover
 use lib.lsp.inlay_hint as lsp_inlay_hint
 use lib.lsp.params
@@ -103,6 +105,7 @@ fn handle_request(state: State, req: protocol.Request) Step {
             json.kv("documentSymbolProvider", .Bool(true)),
             json.kv("workspaceSymbolProvider", .Bool(true)),
             json.kv("inlayHintProvider", .Bool(true)),
+            json.kv("foldingRangeProvider", .Bool(true)),
             json.kv("semanticTokensProvider", lsp_semantic_tokens.capability()),
             json.kv(
               "signatureHelpProvider",
@@ -125,6 +128,7 @@ fn handle_request(state: State, req: protocol.Request) Step {
     "textDocument/signatureHelp" => handle_signature_help(state, req),
     "textDocument/formatting" => handle_formatting(state, req),
     "textDocument/inlayHint" => handle_inlay_hint(state, req),
+    "textDocument/foldingRange" => handle_folding_range(state, req),
     "textDocument/semanticTokens/full" => handle_semantic_tokens(state, req),
     "workspace/symbol" => handle_workspace_symbol(state, req),
     "shutdown" => {
@@ -472,6 +476,26 @@ fn handle_document_symbol(state: State, req: protocol.Request) Step {
         req.id,
         lsp_document_symbol.document_symbol_response(doc.index, symbols),
       ),
+    ],
+  }
+}
+
+fn handle_folding_range(state: State, req: protocol.Request) Step {
+  fr_params := case params.decode_folding_range(req.params) {
+    .Ok(p) => p,
+    .Err(_) => { return empty_array_response_step(state, req) },
+  }
+  doc := case document_store.get(state.documents, fr_params.text_document.uri) {
+    .Some(d) => d,
+    .None => { return empty_array_response_step(state, req) },
+  }
+  snap := workspace_snapshot(state, doc)
+  state.query_cache = snap.cache
+  ranges := query_folding_range.folding_ranges(snap)
+  .{
+    state,
+    outgoing: [
+      protocol.success_response(req.id, lsp_folding_range.folding_range_response(ranges, doc.index)),
     ],
   }
 }
