@@ -11,7 +11,7 @@ use compiler.ast.{
   Block, Expr, FunctionDecl, Item, Pattern, RecordEntry, Stmt, TypeDecl, TypeDef, TypeExpr, TypePath,
 }
 use compiler.imports
-use compiler.mono_type.{TypeId}
+use compiler.mono_type.{MonoType, TypeId}
 use compiler.query.ast_walk.{NodeContext, find_node_in_block, find_node_in_expr, find_node_in_stmt}
 use compiler.query.cache
 use compiler.query.semantic.{SemanticSnapshot}
@@ -32,6 +32,40 @@ type Ref = {
 }
 
 type Binding = .{ name: String, span: Span }
+
+pub fn type_definition(snap: SemanticSnapshot, byte_offset: Int) DefinitionResult? {
+  parsed := case snap.parsed {
+    .Some(value) => value,
+    .None => { return .None },
+  }
+  typed := case snap.typed {
+    .Some(t) => t,
+    .None => { return .None },
+  }
+
+  // Type annotations: cursor on a type name jumps to the type definition
+  // (same as go-to-definition for types).
+  case find_type_ref_in_items(parsed.module.items, byte_offset) {
+    .Some(r) => case resolve_ref(snap, r, byte_offset) {
+      .Some(target) => { return .Some(target) },
+      .None => {},
+    },
+    .None => {},
+  }
+
+  // Find the expression at the cursor and look up its type.
+  expr_id := case find_typed_expr_id(parsed.module.items, byte_offset) {
+    .Some(id) => id,
+    .None => { return .None },
+  }
+
+  mono := case typed.type_map[expr_id] {
+    .Some(t) => t,
+    .None => { return .None },
+  }
+
+  resolve_type_id_from_mono(snap, typed.env, mono)
+}
 
 pub fn definition(snap: SemanticSnapshot, byte_offset: Int) DefinitionResult? {
   parsed := case snap.parsed {
@@ -1053,6 +1087,99 @@ fn variant_pattern_name_contains(s: Span, prefix: Vector<String>, name: String, 
 fn on_suffix(s: Span, name: String, offset: Int) Bool {
   start := s.end - name.len()
   start <= offset and offset < s.end
+}
+
+// ── Type definition helpers ────────────────────────────────────────
+/// Find the expression ID at a byte offset for type lookup.
+/// Handles both expression nodes and let-binding names.
+fn find_typed_expr_id(items: Vector<Item>, offset: Int) Int? {
+  for item in items {
+    case item {
+      .Function(decl) => if decl.span.contains(offset) {
+        // Check parameters: return the function body expression id as proxy
+        // (param types are available via type annotations, not type_map).
+        // Check let binding names in the body.
+        case find_let_value_id_in_block(decl.body, offset) {
+          .Some(id) => { return .Some(id) },
+          .None => {},
+        }
+
+        case find_node_in_block(decl.body, offset) {
+          .Some(ctx) => { return expr_id_from_context(ctx) },
+          .None => {},
+        }
+      },
+      .Stmt(stmt) => {
+        case stmt {
+          .Let(ls) => if ls.name_span.contains(offset) {
+            return .Some(ls.value.id)
+          },
+          _ => {},
+        }
+
+        case find_node_in_stmt(stmt, offset) {
+          .Some(ctx) => { return expr_id_from_context(ctx) },
+          .None => {},
+        }
+      },
+      _ => {},
+    }
+  }
+
+  .None
+}
+
+fn find_let_value_id_in_block(block: Block, offset: Int) Int? {
+  for stmt in block.stmts {
+    case stmt {
+      .Let(ls) => if ls.name_span.contains(offset) {
+        return .Some(ls.value.id)
+      },
+      .For(fs) => if fs.span.contains(offset) {
+        return find_let_value_id_in_block(fs.body, offset)
+      },
+      _ => {},
+    }
+  }
+
+  .None
+}
+
+fn expr_id_from_context(ctx: NodeContext) Int? {
+  case ctx {
+    .ExprNode(expr) => .Some(expr.id),
+    .FieldAccess(expr, _, _) => .Some(expr.id),
+    .PatternNode(_, _) => .None,
+  }
+}
+
+fn resolve_type_id_from_mono(snap: SemanticSnapshot, env: ResolvedEnv, mono: MonoType) DefinitionResult? {
+  case mono {
+    .Named(tid, _) => resolve_type_id(snap, env, tid),
+    .ExternRef(tid) => resolve_type_id(snap, env, tid),
+    _ => .None,
+  }
+}
+
+fn resolve_type_id(snap: SemanticSnapshot, env: ResolvedEnv, tid: TypeId) DefinitionResult? {
+  case env.type_origins[tid.id] {
+    .Some(origin) => {
+      parts := origin.split("::")
+
+      if parts.len() >= 2 {
+        return find_type_in_module(snap, parts[0], parts[1])
+      }
+
+      .None
+    },
+    .None => case env.type_id_index[tid.id] {
+      .Some(idx) => {
+        name := local_name(env.type_names[idx])
+        find_type_in_module(snap, snap.canonical_path, name)
+      },
+      .None => .None,
+    },
+  }
 }
 
 // ── Local lexical binding resolution ────────────────────────────────

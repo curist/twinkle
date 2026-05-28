@@ -85,6 +85,7 @@ fn handle_request(state: State, req: protocol.Request) Step {
             json.kv("textDocumentSync", .Int(1)),
             json.kv("hoverProvider", .Bool(true)),
             json.kv("definitionProvider", .Bool(true)),
+            json.kv("typeDefinitionProvider", .Bool(true)),
             json.kv("documentFormattingProvider", .Bool(true)),
             json.kv(
               "completionProvider",
@@ -106,6 +107,7 @@ fn handle_request(state: State, req: protocol.Request) Step {
     },
     "textDocument/hover" => handle_hover(state, req),
     "textDocument/definition" => handle_definition(state, req),
+    "textDocument/typeDefinition" => handle_type_definition(state, req),
     "textDocument/completion" => handle_completion(state, req),
     "textDocument/codeAction" => handle_code_action(state, req),
     "textDocument/documentSymbol" => handle_document_symbol(state, req),
@@ -256,6 +258,39 @@ fn handle_definition(state: State, req: protocol.Request) Step {
   state.query_cache = snap.cache
 
   case query_definition.definition(snap, offset) {
+    .Some(result) => {
+      target_index := definition_target_index(state.documents, result.uri, doc.index)
+      .{
+        state,
+        outgoing: [
+          protocol.success_response(
+            req.id,
+            lsp_definition.definition_response(target_index, result),
+          ),
+        ],
+      }
+    },
+    .None => null_response_step(state, req),
+  }
+}
+
+fn handle_type_definition(state: State, req: protocol.Request) Step {
+  def_params := case params.decode_definition(req.params) {
+    .Ok(p) => p,
+    .Err(_) => { return null_response_step(state, req) },
+  }
+  doc := case document_store.get(state.documents, def_params.text_document.uri) {
+    .Some(d) => d,
+    .None => { return null_response_step(state, req) },
+  }
+  offset := case position_offset(doc.index, def_params.position) {
+    .Some(o) => o,
+    .None => { return null_response_step(state, req) },
+  }
+  snap := workspace_snapshot(state, doc)
+  state.query_cache = snap.cache
+
+  case query_definition.type_definition(snap, offset) {
     .Some(result) => {
       target_index := definition_target_index(state.documents, result.uri, doc.index)
       .{

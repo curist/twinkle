@@ -40,6 +40,7 @@ plan; whole-document format-on-save is good enough for now.
 | Workspace symbols | `workspace/symbol` | Medium | **Done** | [lsp-workspace-symbols.md](lsp-workspace-symbols.md) |
 | Document highlight | `textDocument/documentHighlight` | Medium | Planned | [lsp-document-highlight.md](lsp-document-highlight.md) |
 | Inlay hints | `textDocument/inlayHint` | Medium | **Done** | [lsp-inlay-hints.md](lsp-inlay-hints.md) |
+| Type definition | `textDocument/typeDefinition` | Medium | **Done** | [lsp-type-definition.md](lsp-type-definition.md) |
 | Folding ranges | `textDocument/foldingRange` | Low | Planned | [lsp-folding-ranges.md](lsp-folding-ranges.md) |
 | Incremental sync | `textDocumentSync: 2` | Low | Planned | [lsp-incremental-sync.md](lsp-incremental-sync.md) |
 
