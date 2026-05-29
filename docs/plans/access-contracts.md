@@ -287,18 +287,36 @@ bind `Elem` rather than assuming Self-typed args and a fixed return.
 - **`skip`→`drop` rename** — already shipped, *not* part of this work (see
   [Naming: the `drop` family](#naming-the-drop-family)).
 
-### First commit (scope)
+### Implementation progress
 
-Checker/resolver foundation only, gate-able on its own:
+Track A — the requirement-model / proof-side foundation:
 
-1. Extend `ContractMethodRequirement` (contracts.tw) — per-arg shape vocabulary
-   (`Self`/`Int`/`Elem`) + return shapes (`Self`/`Elem`/`Iterator<Elem>`).
-2. `prove_contract_method` (checker.tw) — bind-and-thread `Elem` instead of
-   assuming Self-typed args + a fixed return.
-3. Register `Vector<T>` and `String` as satisfiers; add the `at` inherent read.
-4. Write-once `find` / `position` / `fold` / `region_eq` / `starts_with` over the
-   bound.
-5. Mirror to stage0; green on `make boot-test` + the self-host fixed point.
+1. ✅ **Per-parameter shapes** (contracts.tw) — `arg_shapes: Vector<ContractArgShape>`
+   replaces the bare count (`Receiver`/`Int`/`Elem`); `ContractReturnShape` gains
+   `Int`/`Receiver`/`Elem`. (commits `eb28842`, `6b2681f`)
+2. ✅ **`Elem` binding** (checker.tw `prove_contract_method`) — fresh element meta
+   per proof, threaded through arg/return shapes; return check switched from strict
+   equality to unification so `Elem`/`Receiver` returns bind against the satisfier's
+   actual type. The three builtin contracts exercise none of the new paths, so it's
+   behavior-preserving; full suite green + fixed point. (commit `6b2681f`)
+3. ⬜ Add the `IndexRead`/`IndexWrite` specs (`BuiltinContract` enum +
+   `resolve_builtin_contract_name` + `spec`); register `Vector<T>`/`String` as
+   satisfiers and add the `at` inherent read.
+4. ⬜ Write-once `find`/`position`/`fold`/`region_eq`/`starts_with` over the bound.
+
+**Boundary finding (the doc's Resolver findings under-billed this).** Steps 3–4 are
+not testable end-to-end without a sliver of Track B: a contract proof is only
+*triggered* from a `<C: IndexRead<E>>` bound, but today the parser reads a bound as
+a single identifier (parser.tw:268, no `<args>`) and `ResolvedContractRef =
+{ Builtin(BuiltinContract) }` carries no type arg. So the next unit must also:
+**(B-sliver)** parse a parameterized bound and store its type arg on the bound, so
+`c.at(i)` types as the declared `E`. That confirms Track B (parameterized bounds)
+is the general foundation, not a mechanical add-on.
+
+**stage0:** untouched and correct — the generic contract model is boot-only; stage0
+hardcodes Stringify/Eq/Ord (`src/types/check.rs`) and only needs work once the
+*bootstrapped* sources (prelude/boot) adopt the new bounds. Boot tests run on
+`target/twk`, so the feature is validated boot-first.
 
 Deferred to follow-up commits (still part of "done" for *this* plan): **`[i]`
 element-index syntax wiring** through `IndexRead.at`, and **`View`/`Stack`
