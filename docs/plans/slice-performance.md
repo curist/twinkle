@@ -82,17 +82,17 @@ below.
 
 - The inline `s.slice(a, b) == lit` sites — e.g. `trimmed.slice(0, 3) == "///"`
   in `signatures.tw`, `parser.tw`, `query/hover.tw`; `input.slice(i, end) == text`
-  in `json.tw`. These would want a small **public** helper, most naturally a
-  Python/JS-style `starts_with(prefix, at)` / `equals_at(s, pos, needle)` (see the
-  precedent note below) rather than exposing the 4-arg `region_eq`.
-- A [lint](linter.md) or lowering rewrite could flag `s.slice(a, b) == lit` and
-  steer it to the helper, but hand-rewriting the handful of hot sites is enough.
+  in `json.tw`. **Decision: do not add a public compare API** (`equals_at` /
+  `region_eq` / offset-arg `starts_with`) for these. Instead they go the
+  **`StringView` route** (Tier 2 / Option V1) — `region_eq` stays a private
+  internal helper. So these inline sites are left as-is until `StringView` lands.
 
-Precedent: copying-slice languages add exactly these — Java `regionMatches`,
-C `memcmp`/`strncmp`, C++ `string::compare`, and the ergonomic offset-arg form in
-Python `startswith(x, start, end)` / JS `startsWith(x, pos)`. View-slice
-languages (Rust `&str`, Go, C++ `string_view`, Swift `Substring`) skip all this
-because their slice is already zero-copy — which is Tier 2 below.
+Precedent for *why we're not* adding a public compare API: copying-slice
+languages do (Java `regionMatches`, C `memcmp`/`strncmp`, C++ `string::compare`,
+Python/JS offset-arg `startswith`), but **view-slice languages — Rust `&str`, Go,
+C++ `string_view`, Swift `Substring` — skip all that because their slice is
+zero-copy.** We're choosing that camp (Tier 2 / `StringView`), so we deliberately
+avoid growing a parallel compare-primitive surface.
 
 ### Tier 2 — O(1) views (when Tier 1's tuple-threading gets unwieldy)
 
@@ -124,8 +124,9 @@ This is the Twinkle analog of C++ `std::string_view`, Rust `&str`, Java
   a `String`; handing a substring to a `String`-typed API needs `.to_string()`,
   and you maintain a parallel view-accepting surface. Manageable precisely
   because the heavy consumers (lexer/parser) are self-contained.
-- Can start as a pure-stdlib type; if adopted broadly it warrants its own plan
-  doc (as the queue type did).
+- Can start as a pure-stdlib type; **this is the chosen direction** for the
+  zero-copy story, so it warrants its own implementation plan doc (as the queue
+  type did).
 
 **Option V2 — make `String` itself a view** (`{ bytes, start, len }`, Go-style).
 Transparent everywhere (slice on any string is O(1), no API friction), but a
@@ -149,22 +150,25 @@ the compiler is not one (it builds output via `Vector<Byte>` buffers + a single
 
 ## Recommendation
 
-1. **Tier 1 now** — pure-stdlib, kills the slice-then-compare garbage, no risk.
-2. **Tier 2 / Option V1 (`StringView`)** if scanning code wants composable
-   zero-copy views (lexer/parser); prefer it over reshaping `String` (V2).
+1. **Tier 1** — *done* for prefix/suffix (private `region_eq`). **No public
+   compare API** beyond that, by decision.
+2. **Tier 2 / Option V1 (`StringView`)** — the **chosen direction** for the rest
+   (the inline `slice(...) == lit` sites and zero-copy scanning generally),
+   preferred over both a public compare API and reshaping `String` itself (V2).
+   To be drafted as its own implementation plan.
 3. **Tier 3** — defer indefinitely absent a big-string workload.
 
 For `Vector` slice, see the companion docs (drop_last op; RRB for left-drop).
 
 ## Open questions
 
-- **Tier 1 surface**: just `region_eq`, or also `equals_at(s, pos, lit)` /
-  `find_at`? Enough to cover lexer/parser/doc-comment scanning without slicing.
-- **`StringView` scope (V1)**: which ops does the view need (indexing, sub-view,
-  `region_eq`, `starts_with`, `find`, `to_string`, byte iteration)? Does the
-  lexer/parser rewrite to views justify it, or do Tier 1 primitives suffice?
-- **V1 vs V2 retain control**: V1 localizes the backing-retention to explicit
-  views; V2 needs a copy-on-small-slice threshold across all strings.
+- ~~**Tier 1 surface**~~ — resolved: `region_eq` stays private; **no public
+  compare API**. The remaining sites go the `StringView` route.
+- **`StringView` scope (V1)** — for the dedicated plan: which ops does the view
+  need (indexing, sub-view, `region_eq`, `starts_with`, `find`, `to_string`, byte
+  iteration), and how far do the lexer/parser migrate to views?
+- **V1 retain control**: V1 localizes backing-retention to explicit views (vs V2,
+  which would need a copy-on-small-slice threshold across all strings).
 - **Interaction with String interpolation / concat**: is repeated `"${...}"`
   building anywhere O(n²)? (Out of scope here, but worth a glance — concat, not
   slice, would be the culprit.)
