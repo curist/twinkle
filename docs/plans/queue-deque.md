@@ -1,8 +1,11 @@
-# Persistent Queue (FIFO) — and the Deque upgrade path
+# Persistent end-access: `drop_last` op, `Deque`, and a FIFO `Queue`
 
-Status: proposal. Pure **stdlib** type — no compiler or runtime changes. Likely
-`@std.queue` (sibling of `@std.fs`, `@std.date`, …). Companion to
-[rrb-vector-concat.md](rrb-vector-concat.md).
+Status: proposal. Companion to [rrb-vector-concat.md](rrb-vector-concat.md).
+Originally scoped as a pure-stdlib FIFO `Queue`, but a scan of the boot compiler
+([Audit](#audit-how-the-boot-compiler-actually-uses-slice)) shows its end-drop
+usage is mostly **LIFO stack pop**, so the recommended first step is now a small
+**O(log n) `drop_last` vector runtime op** (`arr.tw`), with a structural `Deque`
+type as the follow-on and a FIFO `Queue` only for external pure-FIFO needs.
 
 ## Why this exists
 
@@ -17,6 +20,33 @@ work rather than competing: RRB makes *arbitrary* `concat`/`slice` O(log n) on t
 general-purpose `Vector`; this gives an O(1)-amortized-enqueue / sub-linear-dequeue
 FIFO structure. Shipping it also strips the dequeue case out of RRB's
 justification (RRB Gate A), letting RRB stand purely on arbitrary concat/slice.
+
+## Audit: how the boot compiler actually uses slice
+
+A scan of `boot/` (Gate A for slice) **corrects the premise** and reshapes the
+recommendation. The overwhelming majority of `.slice(` is **`String` substring**
+(lexer, paths, JSON, LSP framing) — irrelevant here. The real `Vector` end-drops
+are dominated by **LIFO stack pop**, not FIFO dequeue:
+
+| Pattern | Sites | Notes |
+|---|---|---|
+| **LIFO pop** `xs.slice(0, len-1)` | `checker.tw:85` & `lower_core/context.tw:101` (`pop_scope`), `codegen/type_order.tw:209` (Tarjan SCC worklist), `fmt/layout.tw:224` (`fit_stack`), `fmt/printer.tw:118` (trivia), `lexer.tw:369/379/394` (`interp_depths`) | scope stacks are hot but bounded-depth; **Tarjan worklist can be large → genuine O(n²)** |
+| **FIFO head-drop** `xs.slice(1, len)` | `emit/match.tw` ×4 (**recursive** head/tail over match arms → O(k²)), `fmt/printer.tw:1242/1273` (recursive doc parts) | k = arms/parts, usually modest |
+| one-shot drop-first | `loader.tw:74`, `checker.tw:1935/2006`, `run.tw`, `argv.tw` | harmless (not loops) |
+
+**A FIFO `Queue` would touch almost none of these.** Consequences for what to build:
+
+1. **An O(log n) `drop_last` / `pop` vector op** is the highest-value, most
+   transparent fix. It is the inverse of `push` (shrink the tail / pull a leaf
+   back in), genuinely O(log n) persistent, needs **no new type**, and does **not**
+   need RRB (only left-drop does). Today `slice(0, len-1)` rebuilds via
+   `from_array` at O(m); routing these consume-reassign sites to `drop_last` fixes
+   scope stacks, the Tarjan worklist, and the fmt stacks at once. **Recommended
+   first step** — it is a small `arr.tw` runtime addition, not a stdlib type.
+2. If a structural type is wanted, prefer a **`Deque`** (LIFO + FIFO) over a
+   FIFO-only `Queue`: the compiler's need is mostly the stack side.
+3. The **match-arm O(k²) recursion** is a trivial local rewrite — pass a start
+   index instead of `slice(1, …)` — needing no new type at all.
 
 ## One type, not two (cross-language norm)
 
@@ -38,8 +68,15 @@ So this plan ships **one type**. The open decision is which:
   `List<T>` (Okasaki two-list, amortized O(1) both ends) or a finger tree
   (≈ RRB complexity).
 
-Recommendation: **start with A** (immediate cheap win, zero new types), and adopt
-B only if push/pop at *both* ends turns out to be needed — see *Deque upgrade*.
+Recommendation (revised by the audit above): the compiler's own need is
+LIFO-stack-heavy, which a FIFO-only `Queue` (A) does **not** serve. So:
+
+- For the **compiler's internal sites**, ship the **O(log n) `drop_last` vector
+  op** first (no new type) and rewrite the match-arm recursion to index-based.
+- For a **structural type**, prefer **B (`Deque`)** since it covers both the
+  stack (LIFO) and queue (FIFO) needs in one — matching the cross-language norm.
+- The standalone FIFO `Queue` (A) is only worth it if a real *external* FIFO
+  workload (not the compiler) wants the absolute-cheapest, zero-new-type option.
 
 ## Design A — FIFO `Queue<T>` over two Vectors + a cursor
 
@@ -134,11 +171,16 @@ pub type Deque<T> = .{ front: List<T>, back: List<T> }
 
 This is the conventional single double-ended type (matches Rust/Gleam/Haskell),
 at the cost of introducing `List<T>` and the rebalance logic. Defer unless a
-real both-ends workload shows up; the FIFO `Queue` already covers dequeue.
+real both-ends workload shows up.
 
-(Note: a vector-only deque is possible with cursors on both stacks, but `pop`
-from a `Vector` stack still needs an O(k) slice at rebalance — cons lists are
-cleaner for both ends.)
+Note the layering once `drop_last` exists:
+
+- A **Stack** needs no type at all — a plain `Vector` with `push` + `drop_last`
+  is O(log n) both ways. This already covers every LIFO site in the audit.
+- A **Deque**'s *back* ops (`push_back`/`pop_back`) are likewise O(log n) on a
+  `Vector` via `append`/`drop_last`; only the *front* ops (`push_front`/
+  `pop_front`) are the hard part — left-drop needs cons lists (Okasaki) or RRB,
+  since a left `slice` is O(n) without relaxed nodes.
 
 ## Cost contract (to document in API.md)
 
@@ -160,22 +202,28 @@ cleaner for both ends.)
 
 ## Relationship to the RRB plan
 
-Complementary and at a different layer:
+Complementary and at different layers:
 
-- This type → cheap, library-level, solves FIFO/dequeue now.
-- RRB → general-purpose O(log n) `concat`/`slice` on `Vector`, bigger and gated.
+- `drop_last` op → cheap `arr.tw` addition; fixes the compiler's LIFO stack sites
+  and makes `Vector` a proper O(log n) stack. Independent of RRB (right-drop
+  doesn't need relaxed nodes).
+- `Deque` / `Queue` type → library-level structural sequence for FIFO / both-ends.
+- RRB → general-purpose O(log n) `concat`/`slice` (incl. left-drop) on `Vector`,
+  bigger and gated.
 
-Ship this first; it removes the essential dequeue motivation from the RRB
-decision.
+Ship `drop_last` first; it removes the LIFO stack motivation from both the type
+work and RRB, and is the smallest change with the broadest internal payoff.
 
 ## Open questions
 
-- **Which type to ship (A vs B)** — FIFO `Queue` now, or go straight to a
-  `Deque` (and `List<T>`)? Recommendation: A first.
-- **`dequeue` shape** — `Dequeued<T>?` record (above), or a split API
-  (`peek` + `drop`), or `(Queue, T?)`-style? The language has no tuples, so a
-  small record is the natural choice; confirm naming (`Dequeued` / `Popped`).
+- **Priority** — confirm the audit-driven order: `drop_last` op → (maybe) `Deque`
+  → FIFO `Queue` only for external needs. Originally this doc led with the Queue.
+- **`drop_last` surface** — expose as `Vector.drop_last` / `pop_last` returning
+  `Vector<T>` (and a `last`-returning variant), and/or auto-route existing
+  `slice(0, len-1)` consume-reassign sites to it during lowering?
+- **`dequeue` shape** (if a type is built) — `Dequeued<T>?` record (above), a
+  split API (`peek` + `drop`), or `(Queue, T?)`-style? No tuples in the language,
+  so a small record is natural; confirm naming (`Dequeued` / `Popped`).
 - **Naming** — `Queue` vs Rust-style `VecDeque` vs Gleam-style `Queue`-as-deque.
-  If B is ever adopted, a single `Deque` name avoids shipping two types.
-- **Module path** — `@std.queue`? And whether it's prelude-visible or an explicit
-  `use @std.queue`.
+  A single `Deque` name avoids ever shipping two types.
+- **Module path** — `@std.queue` / `@std.deque`? Prelude-visible or explicit `use`?
