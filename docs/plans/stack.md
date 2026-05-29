@@ -1,7 +1,8 @@
 # `Stack<T>` — and an O(log n) `drop_last` vector op
 
 Status: proposal. Companion to [slice-performance.md](slice-performance.md) (the
-audit), [slice.md](slice.md) (the read-only side), and
+audit), [view.md](view.md) (the read-only side),
+[access-contracts.md](access-contracts.md) (the general access bounds), and
 [rrb-vector-concat.md](rrb-vector-concat.md).
 
 Supersedes the earlier queue/deque proposal: the boot-compiler audit showed the
@@ -60,6 +61,11 @@ pub fn is_empty<T>(s: Stack<T>) Bool  { s.items.len() == 0 }
 `x := stack.top(); stack = stack.pop()`. The wrapper is **pure ergonomics** —
 the perf comes entirely from `drop_last`.
 
+`Stack<T>` also satisfies the access contracts
+([access-contracts.md](access-contracts.md)) — `IndexRead<T>` (`top` is
+`get(len-1)`) and `IndexWrite<T>` — so it plugs into the same write-once generic
+algorithms (`fold`, `position`, …) as `Vector`, `String`, and `View`.
+
 ### Costs
 
 | Op | Cost |
@@ -87,7 +93,9 @@ allocation churn, not asymptotics).
 ## How it fits the family
 
 - **`Stack` / `drop_last`** (this doc) — LIFO build/shrink.
-- **`Slice<T>`** ([slice.md](slice.md)) — read-only traversal / drop-first.
+- **`View<C>`** ([view.md](view.md)) — read-only traversal / drop-first.
+- **Access contracts** ([access-contracts.md](access-contracts.md)) — the general
+  `IndexRead`/`IndexWrite` bounds these types satisfy.
 - **RRB** ([rrb-vector-concat.md](rrb-vector-concat.md)) — arbitrary O(log n)
   `concat`/`slice`.
 - Queue/Deque — considered and **dropped** (audit showed FIFO isn't a real need).

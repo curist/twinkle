@@ -60,9 +60,10 @@ Self-hosting is complete. Historical design and status docs live in
 | [backend-anyref-elimination.md](backend-anyref-elimination.md) | Make `anyref` exceptional rather than foundational in the Wasm backend, including typed container/helper families |
 | [static-uniqueness-plan.md](static-uniqueness-plan.md) | Extend the static uniqueness optimizer to cover more realistic linear-update patterns without changing the runtime model |
 | [rrb-vector-concat.md](rrb-vector-concat.md) | Upgrade `Vector<T>` to an RRB-tree so `concat` and `slice` are O(log n), eliminating the O(n²) prepend-concat and dequeue/trim-slice loops. Boot `arr.tw` leads, stage0 mirrors |
+| [access-contracts.md](access-contracts.md) | A general access pattern via parameterized contracts (`IndexRead<E>` / `IntoIterator<E>` / `IndexWrite<E>`) with a `Self → E` functional dependency, so `find`/`fold`/`region_eq` are written once and monomorphized to direct reads over `Vector`/`String`/`View`/`Stack` |
 | [stack.md](stack.md) | LIFO stack: an O(log n) `drop_last` vector op (the boot-compiler audit's real need) + a thin `Stack<T>` wrapper; supersedes the dropped queue/deque idea |
-| [slice.md](slice.md) | A generic capability-based `Slice<T>` (accessor + start/len) for allocation-free read-only traversal over `Vector`/`String`/sub-slices — replaces hand-threaded indices in head/tail recursion |
-| [slice-performance.md](slice-performance.md) | Boot-compiler slice usage audit (the evidence behind the queue/RRB docs) + String-slice performance: allocation-free compare primitives (Tier 1 prefix/suffix **done**), an opt-in `StringView` type, or a `String`-as-view repr change |
+| [view.md](view.md) | A generic `View<C>` (backing + start/len) for allocation-free read-only windows over any `IndexRead` backing — closure-free, monomorphized to direct reads, replaces hand-threaded indices in head/tail recursion |
+| [slice-performance.md](slice-performance.md) | Boot-compiler slice usage audit (the evidence behind the stack/view/RRB docs) + String-slice performance: allocation-free compare primitives (Tier 1 prefix/suffix **done**), a generic `View` over the access contracts (chosen), or a `String`-as-view repr change |
 
 ### Archived reference docs
 

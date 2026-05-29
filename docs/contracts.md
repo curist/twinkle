@@ -158,3 +158,12 @@ Explicit satisfaction:
 
 For generic operands, the relevant contract must be present as a bound. For
 concrete operands, the type must satisfy the contract through the rules above.
+
+## Planned contracts
+
+Not yet implemented. A general access pattern over `Vector`/`String`/`View`/`Stack`
+is planned via **parameterized contracts** (`IndexRead<E>`, `IntoIterator<E>`,
+`IndexWrite<E>`, `Sliceable`) with a `Self → E` functional dependency, plus the
+`for x in` and slicing syntax hooks they back. Design:
+[plans/access-contracts.md](plans/access-contracts.md) (and the
+[contract-model rationale](design/contracts.md)).

@@ -1,7 +1,8 @@
 # Slice usage audit & performance
 
 Status: findings + proposal. Companion to [stack.md](stack.md) (LIFO + the
-`drop_last` op), [slice.md](slice.md) (read-only `Slice<T>` views), and
+`drop_last` op), [view.md](view.md) (read-only `View<C>` windows),
+[access-contracts.md](access-contracts.md) (the general access bounds), and
 [rrb-vector-concat.md](rrb-vector-concat.md) (general O(log n) concat/slice).
 
 This doc holds the **boot-compiler slice audit** and the **String-slice
@@ -30,7 +31,7 @@ A scan of `boot/` (excluding tests, the `arr.tw`/`str.tw` runtime impls, and the
 **Takeaway**: a FIFO queue would help almost none of these. The LIFO majority
 wants an O(log n) `drop_last` vector op + a `Stack<T>` ([stack.md](stack.md)); the
 head/tail-recursion sites want a read-only view rather than a hand-threaded index
-([slice.md](slice.md)). Arbitrary/left-drop slice → O(log n) only via RRB
+([view.md](view.md)). Arbitrary/left-drop slice → O(log n) only via RRB
 ([rrb-vector-concat.md](rrb-vector-concat.md)).
 
 ### String `.slice` sites — the volume case
@@ -83,16 +84,19 @@ below.
 - The inline `s.slice(a, b) == lit` sites — e.g. `trimmed.slice(0, 3) == "///"`
   in `signatures.tw`, `parser.tw`, `query/hover.tw`; `input.slice(i, end) == text`
   in `json.tw`. **Decision: do not add a public compare API** (`equals_at` /
-  `region_eq` / offset-arg `starts_with`) for these. Instead they go the
-  **`Slice<T>` route** ([slice.md](slice.md), Tier 2 / Option V1) — `region_eq` stays a private
-  internal helper. So these inline sites are left as-is until `Slice<T>` lands.
+  `region_eq` / offset-arg `starts_with`) for these. Instead they become ordinary
+  generic loops over the **access contracts** ([access-contracts.md](access-contracts.md)) —
+  a write-once `starts_with<C: IndexRead<E>, E: Eq>` / `region_eq`, applied to
+  `String` (or a `View`, [view.md](view.md)) — so `region_eq` stays a private
+  internal helper and these sites are left as-is until the contracts + `View` land.
 
 Precedent for *why we're not* adding a public compare API: copying-slice
 languages do (Java `regionMatches`, C `memcmp`/`strncmp`, C++ `string::compare`,
 Python/JS offset-arg `startswith`), but **view-slice languages — Rust `&str`, Go,
 C++ `string_view`, Swift `Substring` — skip all that because their slice is
-zero-copy.** We're choosing that camp (Tier 2 / generic `Slice<T>`, [slice.md](slice.md)), so we deliberately
-avoid growing a parallel compare-primitive surface.
+zero-copy.** We're choosing that camp (a generic `View` over the access contracts,
+[view.md](view.md) / [access-contracts.md](access-contracts.md)), so we
+deliberately avoid growing a parallel compare-primitive surface.
 
 ### Tier 2 — O(1) views (when Tier 1's tuple-threading gets unwieldy)
 
@@ -100,19 +104,22 @@ Tier 1 avoids allocation but threads `(s, start, end)` by hand, which gets
 clumsy for *multi-step* scanning (advance, sub-slice, compare, repeat). A view
 makes that composable while staying allocation-free. Two ways to get views:
 
-**Option V1 — a generic `Slice<T>` view (chosen direction).** Rather than a
-String-specific `StringView`, a single capability-based `Slice<T>` (a record
-holding an accessor `at: fn(Int) T` + `start`/`len`) covers `String` (as
-`Slice<Byte>`), `Vector<T>`, and sub-slices alike — the no-traits idiom. O(1)
-`drop_first`/`drop_last`/`sub`, allocation-free traversal. **Full design in
-[slice.md](slice.md).**
+**Option V1 — a generic `View` over the access contracts (chosen direction).**
+Rather than a String-specific `StringView`, a single `View<C>` (a record holding a
+backing `source: C` + `start`/`len`) covers `String` (`C = String`, element
+`Byte`), `Vector<T>`, and sub-views alike. Element reads delegate through the
+`IndexRead` access contract ([access-contracts.md](access-contracts.md)) — resolved
+as an inherent method and **monomorphized to a direct backing read, not a closure
+indirect call**. O(1) `drop_first`/`drop_last`/`sub`, allocation-free traversal.
+**Full design in [view.md](view.md); the bounds in [access-contracts.md](access-contracts.md).**
 
 - `String` **stays a flat array** — no global repr change.
-- The "tiny slice pins a big backing" retain hazard is **opt-in and localized**.
-- Natural fit for the **lexer/parser** structural scanning — but the *innermost
-  byte loop* keeps direct `s[i]` (Tier 1), since a per-byte indirect call is the
-  one place the view's accessor indirection would bite (see [slice.md](slice.md)).
-- **Cost**: no implicit coercion (no traits), so a `Slice` is not a `String`;
+- The "tiny view pins a big backing" retain hazard is **opt-in and localized**.
+- Natural fit for the **lexer/parser** structural scanning — the *innermost byte
+  loop* still keeps direct `s[i]` (Tier 1), but only because wrapping one tight
+  scan in a `View` buys nothing there; there is **no per-element indirection** to
+  pay (see [view.md](view.md)).
+- **Cost**: no implicit coercion (no traits), so a `View` is not a `String`;
   materialize with `to_string()` at `String`-API boundaries.
 
 **Option V2 — make `String` itself a view** (`{ bytes, start, len }`, Go-style).
@@ -124,7 +131,7 @@ copy-on-small-slice heuristic). Safe because strings are immutable.
 Either way `concat` is **unchanged** (still copies into a fresh contiguous
 backing) — a view helps slice, not concat.
 
-Recommendation between them: **V1** (generic `Slice<T>`, [slice.md](slice.md)) —
+Recommendation between them: **V1** (generic `View<C>`, [view.md](view.md)) —
 keep `String` simple and make views opt-in where they pay off, rather than
 reshaping the core type for a localized win.
 
@@ -140,10 +147,11 @@ the compiler is not one (it builds output via `Vector<Byte>` buffers + a single
 
 1. **Tier 1** — *done* for prefix/suffix (private `region_eq`). **No public
    compare API** beyond that, by decision.
-2. **Tier 2 / Option V1 (generic `Slice<T>`, [slice.md](slice.md))** — the **chosen direction** for the rest
-   (the inline `slice(...) == lit` sites and zero-copy scanning generally),
-   preferred over both a public compare API and reshaping `String` itself (V2).
-   To be drafted as its own implementation plan.
+2. **Tier 2 / Option V1 (generic `View<C>` over the access contracts,
+   [view.md](view.md) + [access-contracts.md](access-contracts.md))** — the
+   **chosen direction** for the rest (the inline `slice(...) == lit` sites and
+   zero-copy scanning generally), preferred over both a public compare API and
+   reshaping `String` itself (V2). Drafted in those two companion docs.
 3. **Tier 3** — defer indefinitely absent a big-string workload.
 
 For `Vector` slice, see the companion docs ([stack.md](stack.md) for `drop_last`; [rrb-vector-concat.md](rrb-vector-concat.md) for left-drop).
@@ -151,9 +159,9 @@ For `Vector` slice, see the companion docs ([stack.md](stack.md) for `drop_last`
 ## Open questions
 
 - ~~**Tier 1 surface**~~ — resolved: `region_eq` stays private; **no public
-  compare API**. The remaining sites go the `Slice<T>` route ([slice.md](slice.md)).
-- **`Slice<T>` scope (V1)** — tracked in [slice.md](slice.md): which ops the view
-  need (indexing, sub-view, `region_eq`, `starts_with`, `find`, `to_string`, byte
+  compare API**. The remaining sites go the `View` route ([view.md](view.md)).
+- **`View<C>` scope (V1)** — tracked in [view.md](view.md): which ops the view
+  needs (indexing, sub-view, `region_eq`, `starts_with`, `find`, `to_string`, byte
   iteration), and how far do the lexer/parser migrate to views?
 - **V1 retain control**: V1 localizes backing-retention to explicit views (vs V2,
   which would need a copy-on-small-slice threshold across all strings).

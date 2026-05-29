@@ -9,7 +9,7 @@ mirrored afterward to stay a correctness reference.
 > sliding window). For the **LIFO drop-last** case (which the boot-compiler audit
 > shows is the real one), a cheaper non-RRB path exists — an O(log n) `drop_last`
 > vector op + a `Stack<T>` ([stack.md](stack.md)), with read-only traversal served
-> by `Slice<T>` ([slice.md](slice.md)). RRB remains the general-purpose fix for
+> by `View<C>` ([view.md](view.md)). RRB remains the general-purpose fix for
 > *arbitrary* concat and arbitrary-range slice. See
 > [Alternatives](#alternatives--complementary-work).
 
@@ -82,7 +82,7 @@ Upgrade the persistent vector to an **RRB-tree** (relaxed radix-balanced) so tha
 
 For the **LIFO drop-last workload** (the audit's real finding), an O(log n)
 `drop_last` vector op + a `Stack<T>` ([stack.md](stack.md)) is the cheaper,
-non-RRB answer; read-only traversal goes through `Slice<T>` ([slice.md](slice.md)).
+non-RRB answer; read-only traversal goes through `View<C>` ([view.md](view.md)).
 RRB is the general-purpose fix. See
 [Alternatives](#alternatives--complementary-work).
 
@@ -415,7 +415,7 @@ by cheaper, non-RRB, library/runtime-local pieces:
 - **`drop_last` vector op + `Stack<T>`** ([stack.md](stack.md)) — O(log n)
   drop-last (no RRB needed; right-drop, unlike left-drop, needs no relaxed nodes)
   and an ergonomic stack wrapper.
-- **`Slice<T>`** ([slice.md](slice.md)) — a generic read-only view for the
+- **`View<C>`** ([view.md](view.md)) — a generic read-only view for the
   drop-first/traversal sites, O(1) `drop_first`, no copy and no hand-threaded index.
 
 ### Coexistence: this is **not** an either/or with RRB

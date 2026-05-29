@@ -109,6 +109,26 @@ checking whether a type satisfies `Stringify` means:
 
 No separate implementation table is searched.
 
+### Determined conformance
+
+This is the core principle behind Twinkle contracts: **conformance is
+*determined*, not searched.**
+
+A contract names a *set* of required inherent methods. Conformance is determined
+by the **receiver type**:
+
+* each requirement is found by **name**, resolving to exactly one function per
+  type (no overloading, no candidate set, no instance database), and
+* any contract type parameters are **functionally determined by the receiver** —
+  recovered from whichever requirements mention them and checked for mutual
+  consistency under ordinary unification.
+
+Where trait/typeclass systems *search* an instance space (with coherence and
+orphan rules to keep that search sane), Twinkle has no space to search: the
+receiver determines everything. "Determined" is used here in its standard
+functional-dependency sense — *the receiver determines the parameter* — and it is
+purely static, with no runtime evidence or dictionary passing.
+
 ### Named types
 
 A user-defined type satisfies a contract when its defining module provides the
@@ -211,14 +231,45 @@ The explicit bound keeps generic APIs honest and exportable.
 The current builtin contract reference lives in [../contracts.md](../contracts.md).
 
 The language should add new contracts only when they correspond to canonical,
-widely useful behavior. Possible future contracts include:
+widely useful behavior. Planned contracts — specified in
+[../plans/access-contracts.md](../plans/access-contracts.md) — give Twinkle a
+single general access pattern over `Vector`/`String`/`View`/`Stack`:
 
-* `Slice`
-* `IntoIterator`
-* `IndexRead`
-* `IndexWrite`
+* `IndexRead<E>` — `len` + indexed read
+* `IntoIterator<E>` — backs `for x in`
+* `IndexWrite<E>` — indexed set / append
+* `Sliceable` — Self-returning sub-window (Self-only; fits the current model)
+
+The `<E>`-carrying ones require the parameterized-contract extension below.
 
 ---
+
+## Parameterized Contracts (planned)
+
+The three current contracts (`Stringify`, `Eq`, `Ord`) are **Self-only**: their
+required methods mention only `Self`, `Int`, `Bool`, etc. That is why they need no
+notion of an associated element type.
+
+General access (`IndexRead`, `IntoIterator`, `IndexWrite`) needs to name the
+**element type a container yields**, which is determined by the container but is
+not `Self`. Rather than adding associated types (a non-goal), Twinkle plans the
+smallest sufficient extension:
+
+* A contract may take **type parameters** — `IndexRead<E>`.
+* Satisfaction **binds** them — `Vector<T>` satisfies `IndexRead<T>`; `String`
+  satisfies `IndexRead<Byte>`.
+* The receiver **determines** the parameter (a **functional dependency `Self →
+  E`**): a type satisfies `IndexRead<E>` for *at most one* `E`, so given a concrete
+  `Self` the checker recovers `E` with no search and no ambiguity.
+
+This is just *determined conformance* (above) extended with a type parameter: the
+parameter is determined by the receiver exactly as the methods are. It delivers
+associated-type *behavior* (one element type per container) without associated-type
+*machinery* — no projection syntax, no instance search, no dynamic dispatch, and
+everything stays monomorphized. It remains consistent with every existing non-goal.
+
+Full design and the contract definitions live in
+[../plans/access-contracts.md](../plans/access-contracts.md).
 
 ## Syntax Hooks
 
@@ -235,8 +286,10 @@ interpolation and comparison operators. The current mapping is listed in
 If Twinkle later generalizes more surface syntax, contracts provide a natural
 vocabulary:
 
-* slicing syntax could require `Slice`
-* `for x in value` could require `IntoIterator`
+* `for x in value` could require `IntoIterator<E>`
+* slicing syntax could require `Sliceable`
+
+(both specified in [../plans/access-contracts.md](../plans/access-contracts.md))
 
 Contracts therefore serve two roles:
 
