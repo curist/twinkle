@@ -5,12 +5,13 @@ boot compiler is the main implementation). `src/runtime/arr.rs` (stage0) is
 mirrored afterward to stay a correctness reference.
 
 > **Two O(n²) loop hazards motivate this**: prepend/right-operand `concat`, and
-> any `slice` that trims a little each iteration (dequeue / drop-last / sliding
-> window). **Queue/dequeue usage is an essential workload**, so for that case
-> specifically a dedicated persistent **`Queue`/`Deque` type** (amortized O(1),
-> far simpler than RRB) is the recommended near-term path — see
-> [Alternatives](#alternatives--complementary-work). RRB remains the
-> general-purpose fix for arbitrary concat/slice.
+> any `slice` that trims a little each iteration (drop-last / drop-first /
+> sliding window). For the **LIFO drop-last** case (which the boot-compiler audit
+> shows is the real one), a cheaper non-RRB path exists — an O(log n) `drop_last`
+> vector op + a `Stack<T>` ([stack.md](stack.md)), with read-only traversal served
+> by `Slice<T>` ([slice.md](slice.md)). RRB remains the general-purpose fix for
+> *arbitrary* concat and arbitrary-range slice. See
+> [Alternatives](#alternatives--complementary-work).
 
 ## Problem
 
@@ -54,8 +55,10 @@ with the source, so trimming a little each iteration re-copies almost everything
 - sliding-window scans → O(n·w) per element copied repeatedly
 
 This is arguably **more common than prepend-concat** — it is exactly what using a
-`Vector` as a queue or stack looks like. Since dequeue/queue is an essential
-workload, slice is treated here as a **co-primary** motivation, not a bonus.
+`Vector` as a stack looks like. Since drop-last/stack is an essential workload,
+slice is treated here as a **co-primary** motivation, not a bonus. (The cheap
+non-RRB answer for it is [stack.md](stack.md); RRB still covers arbitrary and
+left-drop slice.)
 
 The static-uniqueness optimizer (`docs/plans/static-uniqueness-plan.md`) does
 **not** fix this. It is a constant-factor / allocation-churn optimization
@@ -77,9 +80,10 @@ Upgrade the persistent vector to an **RRB-tree** (relaxed radix-balanced) so tha
   append-built vector stays fully *regular* (no size tables) so its constant
   factors do not regress.
 
-For the **essential dequeue/queue workload specifically**, a dedicated
-`Queue`/`Deque` type (amortized O(1), much simpler than RRB) is likely the better
-near-term answer; RRB is the general-purpose fix. See
+For the **LIFO drop-last workload** (the audit's real finding), an O(log n)
+`drop_last` vector op + a `Stack<T>` ([stack.md](stack.md)) is the cheaper,
+non-RRB answer; read-only traversal goes through `Slice<T>` ([slice.md](slice.md)).
+RRB is the general-purpose fix. See
 [Alternatives](#alternatives--complementary-work).
 
 References: Bagwell & Rompf, *RRB-Trees: Efficient Immutable Vectors* (2011);
@@ -249,15 +253,17 @@ Audit both operations across `boot/` and the stdlib:
 If essentially nothing loops on the bad pattern, the blowup is theoretical and
 RRB is **not** justified — stop and just document the pitfall.
 
-Crucially, **separate the dequeue/queue finding from the rest**: queue usage is
-essential and is far better served by a dedicated `Queue`/`Deque` type
+Crucially, **separate the LIFO/traversal findings from the rest**: drop-last and
+head/tail traversal are far better served by `drop_last`/`Stack`/`Slice`
 ([Alternatives](#alternatives--complementary-work)) than by RRB. So the audit
-should report (a) dequeue/queue sites → motivate the Queue type, and (b)
-*arbitrary* concat/slice loop sites → the residual that only RRB fixes. RRB's
-go/no-go rests on (b), since (a) can be solved more cheaply.
+should report (a) drop-last + read-only drop-first sites → motivate
+`drop_last`/`Stack`/`Slice`, and (b) *arbitrary* concat/slice loop sites
+(esp. left-drop) → the residual that only RRB fixes. RRB's go/no-go rests on (b),
+since (a) is solved more cheaply. (This audit is already done — see
+[slice-performance.md](slice-performance.md).)
 
 Output: a table of concat + slice call sites and their classification, plus known
-workloads (text/rope building, list prepend, FIFO queues, windowed scans).
+workloads (text/rope building, list prepend, windowed scans).
 
 ### Gate B — Quantify the blowup and the win on the *current* runtime
 
@@ -278,13 +284,13 @@ for i in range(n) { acc = [i].concat(acc) }       // right-operand accumulator
 acc: Vector<Int> = []
 for i in range(n) { acc = acc.concat([i]) }
 
-// bench/slice_dequeue.tw — the essential case. Expect ~4× per doubling (quadratic).
+// bench/slice_droplast.tw — the LIFO case. Expect ~4× per doubling (quadratic).
 acc: Vector<Int> = range(n).to_vector()
-for ... { _ = acc[0]; acc = acc.slice(1, acc.len()) }   // drop-first / dequeue
+for ... { _ = acc[acc.len() - 1]; acc = acc.slice(0, acc.len() - 1) }   // drop-last
 
-// bench/slice_droplast.tw — acc = acc.slice(0, acc.len() - 1) in a loop.
-// bench/queue_baseline.tw — same FIFO workload via a two-vector banker's queue,
-//   to show the O(1)-amortized target the Queue type would hit.
+// bench/slice_dropfirst.tw — acc = acc.slice(1, acc.len()) in a loop (left-drop).
+// bench/droplast_baseline.tw — same drop-last workload via the proposed
+//   `drop_last` op / Stack, to show the O(log n) target it would hit.
 
 // bench/concat_balanced.tw — pairwise/tree concat of many small vectors.
 // bench/get_regular.tw — N random get() on an append-built (regular) vector.
@@ -293,21 +299,21 @@ for ... { _ = acc[0]; acc = acc.slice(1, acc.len()) }   // drop-first / dequeue
 // bench/set_regular.tw, bench/set_relaxed.tw — same for set().
 ```
 
-Record a table of `N → ms` per benchmark and confirm the prepend **and dequeue**
+Record a table of `N → ms` per benchmark and confirm the prepend **and drop-last**
 curves are quadratic (each doubling of N ≈ 4× time) while append is linear (≈ 2×).
-The `queue_baseline` benchmark also quantifies how much a dedicated Queue type
-would win versus slice-based dequeue, informing the Alternatives decision.
+The `droplast_baseline` benchmark also quantifies how much `drop_last`/`Stack`
+would win versus slice-based drop-last, informing the Alternatives decision.
 
 ### Decision criteria (when RRB is worth it)
 
 Re-run the same benchmarks after a prototype Phase 3 and require **all** of:
 
-- **Prepend / right-accumulator and dequeue / trim loops**: clearly sub-quadratic
-  — each doubling of N trends toward ≈2× (linear-ish), and an order-of-magnitude
+- **Prepend / right-accumulator and trim loops**: clearly sub-quadratic — each
+  doubling of N trends toward ≈2× (linear-ish), and an order-of-magnitude
   wall-clock win at N ≥ 8k. This is the headline justification and must be
-  unmistakable. (If the only motivating workload is dequeue/queue, prefer the
-  Queue type — see Alternatives — and require RRB to be justified by arbitrary
-  concat/slice instead.)
+  unmistakable. (If the only motivating workload is LIFO drop-last, prefer
+  `drop_last`/`Stack` — see Alternatives — and require RRB to be justified by
+  arbitrary and left-drop slice instead.)
 - **Append-at-end (control)**: no regression beyond noise (RRB must not slow the
   common path).
 - **`get`/`set` on regular (append-built) vectors**: no regression — these stay
@@ -398,35 +404,42 @@ replaying elements).
 
 ## Alternatives & complementary work
 
-### A dedicated queue type — the cheaper answer for FIFO/dequeue
+### The cheaper non-RRB pieces — `drop_last` / `Stack` / `Slice`
 
-Spun out into its own plan: **[queue-deque.md](queue-deque.md)**. A persistent
-FIFO `Queue<T>` (two `Vector`s + a head cursor) is a pure library type — no trie
-surgery — with O(1)-amortized enqueue and O(log n) dequeue, directly serving the
-essential dequeue workload that is otherwise the slice O(n²) trap.
+The boot-compiler audit ([slice-performance.md](slice-performance.md)) showed the
+real in-loop slice usage is **LIFO drop-last** (scope stacks, the Tarjan
+worklist, fmt stacks) and a few **read-only head/tail recursions** (match arms) —
+*not* FIFO. (A queue/deque was considered for this and dropped.) Those are served
+by cheaper, non-RRB, library/runtime-local pieces:
+
+- **`drop_last` vector op + `Stack<T>`** ([stack.md](stack.md)) — O(log n)
+  drop-last (no RRB needed; right-drop, unlike left-drop, needs no relaxed nodes)
+  and an ergonomic stack wrapper.
+- **`Slice<T>`** ([slice.md](slice.md)) — a generic read-only view for the
+  drop-first/traversal sites, O(1) `drop_first`, no copy and no hand-threaded index.
 
 ### Coexistence: this is **not** an either/or with RRB
 
-The queue type and RRB operate at different layers and **coexist permanently**:
+These operate at different layers and **coexist permanently**:
 
-| | `Queue<T>` (library) | RRB `Vector<T>` |
+| | `Stack` / `Slice` / `drop_last` | RRB `Vector<T>` |
 |---|---|---|
-| What it is | a new, separate type (library-level) | upgrade of the existing Vector internals |
-| Fast ops | FIFO enqueue/dequeue (O(1) amortized / O(log n)) | `concat`/`slice` at **arbitrary** positions, **O(log n)** |
-| Opt-in | yes — reach for it when FIFO | no — all Vector code benefits transparently |
+| What it is | library types + one small runtime op | upgrade of the existing Vector internals |
+| Fast ops | LIFO push/pop, read-only drop-first — O(1)/O(log n) | `concat`/`slice` at **arbitrary** positions, **O(log n)** |
+| Opt-in | yes — reach for the type | no — all Vector code benefits transparently |
 | Complexity | low | high (relaxed nodes + rebalance) |
-| Doesn't give you | arbitrary-range slice / arbitrary concat | O(1) dequeue (gets you O(n log n)) |
+| Doesn't give you | arbitrary-range slice / arbitrary concat | the ergonomic LIFO/traversal surface |
 
 Neither subsumes the other. Recommended sequencing:
 
-1. **Ship the queue type first** — small, simple, removes the essential dequeue
-   case from the slice problem immediately.
+1. **Ship `drop_last` / `Stack` / `Slice` first** — small, and they cover the
+   audit's actual in-loop slice hazards (LIFO drop-last + head/tail traversal).
 2. **Then weigh RRB** for the residual: arbitrary `concat` and arbitrary-range
-   `slice` a queue can't cover. Gate A's audit (with dequeue sites split out) is
-   exactly what tells you whether that residual justifies RRB's complexity.
+   (esp. left-drop) `slice` those can't cover. Gate A's audit is exactly what
+   tells you whether that residual justifies RRB's complexity.
 
-Shipping the queue *sharpens* the RRB decision by stripping the easy case out of
-its justification.
+Shipping them *sharpens* the RRB decision by stripping the easy cases out of its
+justification.
 
 ## Relationship to other work
 
