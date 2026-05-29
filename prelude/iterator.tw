@@ -12,11 +12,11 @@ type FilterState<T> = .{ it: Iterator<T>, pred: fn(T) Bool }
 
 type TakeState<T> = .{ it: Iterator<T>, remaining: Int }
 
-type SkipState<T> = .{ it: Iterator<T>, remaining: Int }
+type DropState<T> = .{ it: Iterator<T>, remaining: Int }
 
 type TakeWhileState<T> = .{ it: Iterator<T>, pred: fn(T) Bool }
 
-type SkipWhileState<T> = .{ it: Iterator<T>, pred: fn(T) Bool, skipping: Bool }
+type DropWhileState<T> = .{ it: Iterator<T>, pred: fn(T) Bool, dropping: Bool }
 
 fn map_step<T, U>(state: MapState<T, U>) UnfoldStep<U, MapState<T, U>> {
   case Iterator.next(state.it) {
@@ -58,7 +58,7 @@ fn take_step<T>(state: TakeState<T>) UnfoldStep<T, TakeState<T>> {
   }
 }
 
-fn skip_step<T>(state: SkipState<T>) UnfoldStep<T, SkipState<T>> {
+fn drop_step<T>(state: DropState<T>) UnfoldStep<T, DropState<T>> {
   current := state.it
   remaining := state.remaining
 
@@ -73,7 +73,7 @@ fn skip_step<T>(state: SkipState<T>) UnfoldStep<T, SkipState<T>> {
   }
 
   case Iterator.next(current) {
-    .Some(item) => UnfoldStep.Yield(item.value, SkipState.{ it: item.rest, remaining: 0 }),
+    .Some(item) => UnfoldStep.Yield(item.value, DropState.{ it: item.rest, remaining: 0 }),
     .None => UnfoldStep.Done,
   }
 }
@@ -89,18 +89,18 @@ fn take_while_step<T>(state: TakeWhileState<T>) UnfoldStep<T, TakeWhileState<T>>
   }
 }
 
-fn skip_while_step<T>(state: SkipWhileState<T>) UnfoldStep<T, SkipWhileState<T>> {
+fn drop_while_step<T>(state: DropWhileState<T>) UnfoldStep<T, DropWhileState<T>> {
   current := state.it
-  skipping := state.skipping
+  dropping := state.dropping
 
-  for skipping {
+  for dropping {
     case Iterator.next(current) {
       .Some(item) => if state.pred(item.value) {
         current = item.rest
       } else {
         return UnfoldStep.Yield(
           item.value,
-          SkipWhileState.{ it: item.rest, pred: state.pred, skipping: false },
+          DropWhileState.{ it: item.rest, pred: state.pred, dropping: false },
         )
       },
       .None => { return UnfoldStep.Done },
@@ -110,7 +110,7 @@ fn skip_while_step<T>(state: SkipWhileState<T>) UnfoldStep<T, SkipWhileState<T>>
   case Iterator.next(current) {
     .Some(item) => UnfoldStep.Yield(
       item.value,
-      SkipWhileState.{ it: item.rest, pred: state.pred, skipping: false },
+      DropWhileState.{ it: item.rest, pred: state.pred, dropping: false },
     ),
     .None => UnfoldStep.Done,
   }
@@ -131,9 +131,9 @@ pub fn take<T>(it: Iterator<T>, n: Int) Iterator<T> {
   Iterator.unfold(TakeState.{ it, remaining: n }, take_step)
 }
 
-/// Lazily skip the first n values from the iterator.
-pub fn skip<T>(it: Iterator<T>, n: Int) Iterator<T> {
-  Iterator.unfold(SkipState.{ it, remaining: n }, skip_step)
+/// Lazily drop the first n values from the iterator.
+pub fn drop<T>(it: Iterator<T>, n: Int) Iterator<T> {
+  Iterator.unfold(DropState.{ it, remaining: n }, drop_step)
 }
 
 /// Lazily yield values until pred returns false.
@@ -141,7 +141,7 @@ pub fn take_while<T>(it: Iterator<T>, pred: fn(T) Bool) Iterator<T> {
   Iterator.unfold(TakeWhileState.{ it, pred }, take_while_step)
 }
 
-/// Lazily skip values while pred returns true, then yield the rest.
-pub fn skip_while<T>(it: Iterator<T>, pred: fn(T) Bool) Iterator<T> {
-  Iterator.unfold(SkipWhileState.{ it, pred, skipping: true }, skip_while_step)
+/// Lazily drop values while pred returns true, then yield the rest.
+pub fn drop_while<T>(it: Iterator<T>, pred: fn(T) Bool) Iterator<T> {
+  Iterator.unfold(DropWhileState.{ it, pred, dropping: true }, drop_while_step)
 }

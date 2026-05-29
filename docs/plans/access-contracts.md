@@ -159,6 +159,23 @@ parallel public compare API ([slice-performance.md](slice-performance.md) Tier 1
 Add these rows to the syntax-hook table in
 [../contracts.md](../contracts.md) once implemented.
 
+## Naming: the `drop` family
+
+With `drop_first`/`drop_last` settled on `Vector`/`View` ([view.md](view.md),
+[stack.md](stack.md)), **"drop" is Twinkle's verb for removing elements from an
+end/position**, and `take`/`drop` is the complementary pair. To keep one mental
+model, the iterator combinators **`skip`/`skip_while` are renamed to
+`drop`/`drop_while`**:
+
+- `iter.drop(n)` / `iter.drop_while(p)` — drop from the front (was `skip`/`skip_while`).
+- `drop_first()` is conceptually `drop(1)`; `drop_last()` is its back equivalent.
+- `take` / `take_while` are unchanged — the natural complement.
+
+This follows the FP lineage (Scala/Kotlin/Clojure/Haskell/Elixir use `drop`)
+rather than the stream lineage (`skip` in Rust/LINQ/Java Streams), and removes the
+lone `skip` exception. Mechanical rename in `prelude/iterator.tw` + call sites +
+self-host.
+
 ## How it fits the family
 
 - **Access contracts** (this doc) — the general bound; write-once generic access,

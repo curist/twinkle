@@ -29,12 +29,17 @@ pub fn first<C: IndexRead<E>, E>(v: View<C>) E?       { if v.len == 0 { .None } 
 pub fn len<C>(v: View<C>) Int        { v.len }
 pub fn is_empty<C>(v: View<C>) Bool  { v.len == 0 }
 
-// window ops are O(1) — they only adjust start/len and SHARE the same source:
-pub fn drop_first<C>(v: View<C>) View<C> { v.start = v.start + 1  v.len = v.len - 1  v }
-pub fn drop_last<C>(v: View<C>) View<C>  { v.len = v.len - 1  v }
+// window ops are O(1) — they only adjust start/len and SHARE the same source.
+// Total: on an empty view (len == 0) they return the empty view (len clamps at 0):
+pub fn drop_first<C>(v: View<C>) View<C> { if v.len == 0 { return v }  v.start = v.start + 1  v.len = v.len - 1  v }
+pub fn drop_last<C>(v: View<C>) View<C>  { if v.len == 0 { return v }  v.len = v.len - 1  v }
 pub fn sub<C>(v: View<C>, a: Int, b: Int) View<C> { v.start = v.start + a  v.len = b - a  v }
 // plus: fold / for-iteration / to_vector / (for View<String>) to_string
 ```
+
+**Settled names**: `drop_first` / `drop_last` (paired with `first` / `last` peeks),
+matching the `Vector` ops in [stack.md](stack.md). Both are **total** — an empty
+view drops to the empty view, never a trap (consistent with `Vector.drop_last`).
 
 The element type `E` is **never stored in `View`** — it's recovered at every
 method from `source`'s `IndexRead<E>` via the functional dependency

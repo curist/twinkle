@@ -449,7 +449,7 @@ pub fn suite() runner.Suite {
       },
     )
     .test(
-      "iterator skip drops prefix and handles non-positive n",
+      "iterator drop yields the suffix and handles non-positive n",
       fn() {
         base := Iterator.unfold(
           0,
@@ -461,19 +461,19 @@ pub fn suite() runner.Suite {
             }
           },
         )
-        out := base.skip(2).to_vector()
+        out := base.drop(2).to_vector()
         try assert.equal(out.len(), 4)
         try assert.equal(out[0], 2)
         try assert.equal(out[3], 5)
-        all_a := base.skip(0).to_vector()
-        all_b := base.skip(-3).to_vector()
+        all_a := base.drop(0).to_vector()
+        all_b := base.drop(-3).to_vector()
         try assert.equal(all_a.len(), 6)
         try assert.equal(all_b.len(), 6)
         .Ok({})
       },
     )
     .test(
-      "iterator skip past end returns empty",
+      "iterator drop past end returns empty",
       fn() {
         base := Iterator.unfold(
           0,
@@ -485,7 +485,7 @@ pub fn suite() runner.Suite {
             }
           },
         )
-        out := base.skip(10).to_vector()
+        out := base.drop(10).to_vector()
         try assert.equal(out.len(), 0)
         .Ok({})
       },
@@ -513,7 +513,7 @@ pub fn suite() runner.Suite {
       },
     )
     .test(
-      "iterator skip_while drops matching prefix",
+      "iterator drop_while drops matching prefix",
       fn() {
         base := Iterator.unfold(
           0,
@@ -526,7 +526,7 @@ pub fn suite() runner.Suite {
           },
         )
         out := base
-          .skip_while(fn(x) { x < 4 })
+          .drop_while(fn(x) { x < 4 })
           .to_vector()
         try assert.equal(out.len(), 4)
         try assert.equal(out[0], 4)
@@ -551,7 +551,7 @@ pub fn suite() runner.Suite {
           .take_while(fn(x) { x < 0 })
           .to_vector()
         none_b := base
-          .skip_while(fn(x) { x < 10 })
+          .drop_while(fn(x) { x < 10 })
           .to_vector()
         try assert.equal(none_a.len(), 0)
         try assert.equal(none_b.len(), 0)
@@ -559,7 +559,7 @@ pub fn suite() runner.Suite {
       },
     )
     .test(
-      "iterator map filter skip take_while compose and match collect parity",
+      "iterator map filter drop take_while compose and match collect parity",
       fn() {
         base := Iterator.unfold(
           0,
@@ -574,7 +574,7 @@ pub fn suite() runner.Suite {
         piped := base
           .map(fn(x) { x + 1 })
           .filter(fn(x) { x % 3 == 0 })
-          .skip(1)
+          .drop(1)
           .take_while(fn(x) { x <= 15 })
           .to_vector()
         via_collect := collect x in 0..20 {
@@ -637,7 +637,7 @@ pub fn suite() runner.Suite {
           .map(fn(x) { x + 1 })
           .filter(fn(x) { x % 2 == 0 })
           .take(4)
-          .skip(1)
+          .drop(1)
           .take_while(fn(x) { x < 8 })
           .to_vector()
         try assert.equal(out.len(), 2)
@@ -659,8 +659,8 @@ pub fn suite() runner.Suite {
             }
           },
         )
-        out := Iterator.skip(base, 8).to_vector()
-        rest := Iterator.skip_while(base, fn(x) { x < 8 }).to_vector()
+        out := Iterator.drop(base, 8).to_vector()
+        rest := Iterator.drop_while(base, fn(x) { x < 8 }).to_vector()
         head := Iterator.take_while(base, fn(x) { x < 3 }).to_vector()
         try assert.equal(out.len(), 2)
         try assert.equal(out[0], 8)

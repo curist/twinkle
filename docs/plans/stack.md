@@ -32,8 +32,13 @@ the tail). It is genuinely **O(log n)** persistent, needs **no RRB** (only
 *left*-drop needs relaxed nodes), and is independently useful:
 
 - `Vector.drop_last(v) Vector<T>` — O(log n), shares structure (vs `slice(0,
-  len-1)` which is O(m)).
+  len-1)` which is O(m)). **Total**: on an empty vector it returns the empty
+  vector (no trap).
 - `Vector.last(v) T?` already-style peek.
+
+**Settled name**: `drop_last` (paired with `Vector.last` / `Vector.first` peeks and
+the `View` window ops `drop_first`/`drop_last`, [view.md](view.md)). It follows
+Swift `dropLast()` / Kotlin `dropLast()` / Clojure `drop-last`, same semantics.
 
 This alone fixes every LIFO site if those `slice(0, len-1)` consume-reassigns are
 rerouted to `drop_last` (and bounds the Tarjan O(n²) to O(n log n)). Lands in
@@ -108,6 +113,9 @@ allocation churn, not asymptotics).
 - **`pop` shape**: `pop(s) Stack<T>` (discard top, above) is convenient for the
   discard-heavy sites (`pop_scope`); add a combined `pop_value(s) .{ value, rest }?`
   (no tuples in the language) for the take-and-continue sites (Tarjan)?
-- **Empty `pop`**: trap (treat as OOB) or no-op? Lean trap, matching array OOB.
+- ~~**Empty `pop`**~~ — resolved: **no-op, returns empty** (total). `Vector.drop_last`
+  on an empty vector returns the empty vector, so `Stack.pop` on an empty stack
+  yields the empty stack rather than trapping. `top()` already returns `T?`
+  (`.None` when empty), so callers that need to detect underflow check `top`.
 - **Foundation**: confirm `drop_last` (recommended) over the cursor.
 - **Naming / module**: `Stack<T>`, `@std.stack`; prelude-visible or explicit `use`?
