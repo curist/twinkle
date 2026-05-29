@@ -309,9 +309,35 @@ Track A — the requirement-model / proof-side foundation:
    (commits `9fd1273` plumbing, `631a7c8` contract). **Bonus:** contract-call
    codegen already handles arbitrary contract methods generically — no
    monomorphization change needed for `at`/`len`.
-4. ⬜ Write-once `find`/`position`/`fold`/`region_eq`/`starts_with` over the bound;
-   `IntoIterator`/`IndexWrite` specs; register `String` (`IndexRead<Byte>`) and
-   `View`/`Stack`; the `[i]` syntax wiring through `IndexRead.at`.
+4. 🔶 Write-once `find`/`position`/`fold`/`region_eq`/`starts_with` over the bound.
+   **Landed:** the direct algorithms work and are tested
+   (`position_via_index_read`/`region_eq_via_index_read`/`starts_with_via_index_read`
+   in `api_vector_suite`).
+   - **Checker FD fix:** a parameterized bound (`C: IndexRead<E>`) now threads its
+     declared `E` into the contract proof so the functional dependency binds it
+     *before* a sibling `E: Eq` is checked. Previously the Eq check saw an unbound
+     meta. (`checker.tw`: `prove_contract`/`prove_contract_method` gained an
+     `elem_hint`; `check_*_bounds` compute it via `bound_elem_hint`; proof cache is
+     skipped when a hint must bind.)
+   - **Monomorphization FD fix:** a type param that appears *only* in a contract
+     bound (e.g. `E` in `region_eq<C: IndexRead<E>, E: Eq>(a: C, b: C, n: Int)` — `E`
+     is in no value parameter) is invisible to signature-only `infer_call_subst`, so
+     the specialized body kept a free `Var(E)` and crashed codegen
+     (`val_type_of_mono called on Var`) whenever both `==`/`!=` operands were
+     contract-method calls. Now `infer_call_subst` walks the callee body and, for
+     each contract call whose receiver is concrete under the partial subst, resolves
+     the target method and matches its concrete return type back against the call's
+     declared result type — the mono-time analogue of the checker's `Self -> Elem`
+     recovery. (`monomorphize.tw`: `augment_subst_from_contract_calls`.)
+   - **⬜ Known gap (separate checker work):** *forwarding* a bound-only `E: Eq` to
+     another generic fails — e.g. `starts_with` calling `region_eq(hay, needle, n)`
+     reports `type ?N does not satisfy Eq`. When the receiver is itself a type
+     variable `C` with an in-scope `IndexRead<E>` bound, the callee's element meta
+     isn't tied to the caller's `E`, so the sibling Eq check runs on an unbound meta.
+     Tests inline the loop instead of delegating until this is fixed.
+
+   Still ⬜: `IntoIterator`/`IndexWrite` specs; register `String` (`IndexRead<Byte>`)
+   and `View`/`Stack`; the `[i]` syntax wiring through `IndexRead.at`.
 
 **Boundary finding (the doc's Resolver findings under-billed this).** Steps 3–4 are
 not testable end-to-end without a sliver of Track B: a contract proof is only

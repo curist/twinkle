@@ -698,6 +698,7 @@ fn prove_contract_method(
   req: ContractMethodRequirement,
   ctx: InferCtx,
   active: Dict<String, Bool>,
+  elem_hint: MonoType?,
 ) Result<InferCtx, String> {
   fn_name := case resolve_method_func_name(ty, req.method_name, ctx.env) {
     .Some(name) => name,
@@ -726,11 +727,19 @@ fn prove_contract_method(
   }
 
   // The receiver-determined element type (functional dependency Self -> Elem).
-  // A fresh meta that gets bound by whichever requirement mentions `Elem` (an
-  // arg or the return); determinacy guarantees all occurrences agree.
-  em := fresh_meta(recv_ctx)
-  elem_ty := em.ty
-  recv_ctx = em.ctx
+  // When the proof is triggered from a parameterized bound (`C: IndexRead<E>`),
+  // the caller threads the declared `E` as the hint so this proof binds it
+  // directly — that's what makes the FD recover `E` for downstream bounds
+  // (e.g. a sibling `E: Eq`). Absent a hint, a fresh meta gets bound by
+  // whichever requirement mentions `Elem`; determinacy guarantees agreement.
+  elem_ty := case elem_hint {
+    .Some(hint) => hint,
+    .None => {
+      em := fresh_meta(recv_ctx)
+      recv_ctx = em.ctx
+      em.ty
+    },
+  }
 
   // Validate non-receiver parameters match their declared shape.
   for i in 0..req.arg_shapes.len() {
@@ -779,7 +788,7 @@ fn prove_contract_method(
     for bound in tp.bounds {
       case bound {
         .Builtin(bound_contract, _) => {
-          proof := prove_contract(arg_ty, bound_contract, cur_ctx, active)
+          proof := prove_contract(arg_ty, bound_contract, cur_ctx, active, .None)
 
           case proof {
             .Ok(next_ctx) => {
@@ -812,21 +821,21 @@ fn try_builtin_container_contract(
 ) Result<InferCtx, String>? {
   case contract {
     .Eq => case ty {
-      .Optional(inner) => .Some(prove_contract(inner, .Eq, ctx, active)),
-      .Result(ok, err) => case prove_contract(ok, .Eq, ctx, active) {
-        .Ok(ctx2) => .Some(prove_contract(err, .Eq, ctx2, active)),
+      .Optional(inner) => .Some(prove_contract(inner, .Eq, ctx, active, .None)),
+      .Result(ok, err) => case prove_contract(ok, .Eq, ctx, active, .None) {
+        .Ok(ctx2) => .Some(prove_contract(err, .Eq, ctx2, active, .None)),
         .Err(e) => .Some(.Err(e)),
       },
-      .Vector(elem) => .Some(prove_contract(elem, .Eq, ctx, active)),
-      .Dict(k, v) => case prove_contract(k, .Eq, ctx, active) {
-        .Ok(ctx2) => .Some(prove_contract(v, .Eq, ctx2, active)),
+      .Vector(elem) => .Some(prove_contract(elem, .Eq, ctx, active, .None)),
+      .Dict(k, v) => case prove_contract(k, .Eq, ctx, active, .None) {
+        .Ok(ctx2) => .Some(prove_contract(v, .Eq, ctx2, active, .None)),
         .Err(e) => .Some(.Err(e)),
       },
       _ => .None,
     },
     .Stringify => .None,
     .Ord => case ty {
-      .Vector(elem) => .Some(prove_contract(elem, .Ord, ctx, active)),
+      .Vector(elem) => .Some(prove_contract(elem, .Ord, ctx, active, .None)),
       _ => .None,
     },
     // IndexRead has no structural container rule; it proves via inherent methods.
@@ -847,7 +856,7 @@ fn try_auto_derive_eq(ty: MonoType, ctx: InferCtx, active: Dict<String, Bool>) R
           for field in fields {
             field_ty := subst_type_params(field.ty, type_params, type_args)
 
-            case prove_contract(field_ty, .Eq, cur_ctx, active) {
+            case prove_contract(field_ty, .Eq, cur_ctx, active, .None) {
               .Ok(next_ctx) => {
                 cur_ctx = next_ctx
               },
@@ -864,7 +873,7 @@ fn try_auto_derive_eq(ty: MonoType, ctx: InferCtx, active: Dict<String, Bool>) R
             for payload_ty in variant.fields {
               concrete_ty := subst_type_params(payload_ty, type_params, type_args)
 
-              case prove_contract(concrete_ty, .Eq, cur_ctx, active) {
+              case prove_contract(concrete_ty, .Eq, cur_ctx, active, .None) {
                 .Ok(next_ctx) => {
                   cur_ctx = next_ctx
                 },
@@ -888,20 +897,30 @@ fn prove_contract(
   contract: BuiltinContract,
   ctx: InferCtx,
   active: Dict<String, Bool>,
+  elem_hint: MonoType?,
 ) Result<InferCtx, String> {
   zonked := expand_alias(zonk(ty, ctx.subst), ctx.env, 0)
   key := "${ctx.env.ty_to_string_env(zonked)}::${contract_name(contract)}"
 
-  // Check proof cache first
-  case ctx.contract_cache.get(key) {
-    .Some(satisfied) => if satisfied {
-      return .Ok(ctx)
-    } else {
-      return .Err(
-        "type ${ctx.env.ty_to_string_env(zonked)} does not satisfy ${contract_name(contract)}",
-      )
-    },
-    .None => {},
+  has_hint := case elem_hint {
+    .Some(_) => true,
+    .None => false,
+  }
+
+  // Check proof cache first. Skip it when an element hint must be bound: the
+  // cached boolean records satisfaction but not the FD unification side-effect,
+  // so a cache hit would leave the declared `E` unbound.
+  if !has_hint {
+    case ctx.contract_cache.get(key) {
+      .Some(satisfied) => if satisfied {
+        return .Ok(ctx)
+      } else {
+        return .Err(
+          "type ${ctx.env.ty_to_string_env(zonked)} does not satisfy ${contract_name(contract)}",
+        )
+      },
+      .None => {},
+    }
   }
 
   if active.has(key) {
@@ -951,7 +970,7 @@ fn prove_contract(
   method_ok := true
 
   for req in contract.methods() {
-    proof := prove_contract_method(zonked, contract, req, cur_ctx, active)
+    proof := prove_contract_method(zonked, contract, req, cur_ctx, active, elem_hint)
 
     case proof {
       .Ok(next_ctx) => {
@@ -997,7 +1016,20 @@ fn satisfies_contract(ty: MonoType, contract: BuiltinContract, ctx: InferCtx) Re
   InferCtx,
   String,
 > {
-  prove_contract(ty, contract, ctx, Dict.new())
+  prove_contract(ty, contract, ctx, Dict.new(), .None)
+}
+
+// Like `satisfies_contract`, but for a parameterized bound (`C: IndexRead<E>`):
+// `elem_hint` carries the bound's declared element type so the functional
+// dependency binds it during the proof. Sibling bounds (e.g. `E: Eq`) then see
+// the resolved element type instead of an unbound meta.
+fn satisfies_contract_with_elem(
+  ty: MonoType,
+  contract: BuiltinContract,
+  elem_hint: MonoType?,
+  ctx: InferCtx,
+) Result<InferCtx, String> {
+  prove_contract(ty, contract, ctx, Dict.new(), elem_hint)
 }
 
 fn check_instantiated_bounds(
@@ -1020,8 +1052,11 @@ fn check_instantiated_bounds(
 
     for bound in tp.bounds {
       case bound {
-        .Builtin(contract, _) => {
-          proof := satisfies_contract(arg_ty, contract, cur_ctx)
+        .Builtin(contract, bound_type_args) => {
+          // Map the bound's declared element type (e.g. `E` in `IndexRead<E>`)
+          // to the instantiated meta so the FD binds it during the proof.
+          elem_hint := bound_elem_hint(bound_type_args, sig.type_params, type_args)
+          proof := satisfies_contract_with_elem(arg_ty, contract, elem_hint, cur_ctx)
 
           case proof {
             .Ok(next_ctx) => {
@@ -1051,6 +1086,21 @@ fn check_instantiated_bounds(
   .{ ctx: cur_ctx, diags: cur_diags }
 }
 
+// Resolve a parameterized bound's declared element type arg against the owner's
+// instantiated type args. `IndexRead<E>` stores `E` as a `Var`; substituting the
+// owner's params -> args turns it into the call-site meta the FD must bind.
+fn bound_elem_hint(
+  bound_type_args: Vector<MonoType>,
+  type_params: Vector<ResolvedTypeParam>,
+  type_args: Vector<MonoType>,
+) MonoType? {
+  if bound_type_args.len() == 0 {
+    return .None
+  }
+
+  .Some(subst_vars(bound_type_args[0], build_var_map(type_params, type_args)))
+}
+
 fn check_resolved_type_param_bounds(
   owner_name: String,
   params: Vector<ResolvedTypeParam>,
@@ -1072,8 +1122,9 @@ fn check_resolved_type_param_bounds(
 
     for bound in tp.bounds {
       case bound {
-        .Builtin(contract, _) => {
-          proof := satisfies_contract(arg_ty, contract, cur_ctx)
+        .Builtin(contract, bound_type_args) => {
+          elem_hint := bound_elem_hint(bound_type_args, params, type_args)
+          proof := satisfies_contract_with_elem(arg_ty, contract, elem_hint, cur_ctx)
 
           case proof {
             .Ok(next_ctx) => {

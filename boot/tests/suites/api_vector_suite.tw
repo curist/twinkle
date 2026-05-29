@@ -22,6 +22,57 @@ fn count_via_index_read<C: IndexRead<E>, E>(c: C) Int {
   c.len()
 }
 
+// Write-once generic algorithms over the IndexRead bound. The element type `E`
+// appears only in the contract bound (not in any value parameter), so it is
+// recovered by the functional dependency at type-check time and again during
+// monomorphization. `region_eq`/`starts_with` exercise the case where BOTH
+// operands of `==`/`!=` are contract-method calls returning `E`.
+fn position_via_index_read<C: IndexRead<E>, E: Eq>(c: C, target: E) Int {
+  i := 0
+
+  for i < c.len() {
+    if c.at(i) == target {
+      return i
+    }
+
+    i = i + 1
+  }
+
+  -1
+}
+
+fn region_eq_via_index_read<C: IndexRead<E>, E: Eq>(a: C, b: C, n: Int) Bool {
+  i := 0
+
+  for i < n {
+    if a.at(i) != b.at(i) {
+      return false
+    }
+
+    i = i + 1
+  }
+
+  true
+}
+
+fn starts_with_via_index_read<C: IndexRead<E>, E: Eq>(hay: C, needle: C) Bool {
+  if needle.len() > hay.len() {
+    return false
+  }
+
+  i := 0
+
+  for i < needle.len() {
+    if hay.at(i) != needle.at(i) {
+      return false
+    }
+
+    i = i + 1
+  }
+
+  true
+}
+
 fn build_scaled_seq(count: Int, scale: Int) Vector<Int> {
   xs: Vector<Int> = []
   i := 0
@@ -270,6 +321,20 @@ pub fn suite() runner.Suite {
         xs: Vector<Int> = [10, 20, 30]
         try assert.equal(first_via_index_read(xs), 10)
         try assert.equal(count_via_index_read(xs), 3)
+        .Ok({})
+      },
+    )
+    .test(
+      "generic algorithms over IndexRead with E: Eq (double contract-call ==/!=)",
+      fn() {
+        xs: Vector<Int> = [10, 20, 30, 40]
+        ys: Vector<Int> = [10, 20, 99]
+        try assert.equal(position_via_index_read(xs, 30), 2)
+        try assert.equal(position_via_index_read(xs, 77), -1)
+        try assert.equal(region_eq_via_index_read(xs, xs, 4), true)
+        try assert.equal(region_eq_via_index_read(xs, ys, 3), false)
+        try assert.equal(starts_with_via_index_read(xs, [10, 20]), true)
+        try assert.equal(starts_with_via_index_read(xs, ys), false)
         .Ok({})
       },
     )
