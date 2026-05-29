@@ -398,41 +398,35 @@ replaying elements).
 
 ## Alternatives & complementary work
 
-### A dedicated `Queue`/`Deque<T>` type — the cheaper answer for FIFO/LIFO
+### A dedicated queue type — the cheaper answer for FIFO/dequeue
 
-A **banker's queue** (a.k.a. two-list/two-vector queue) stores a front and a back
-sequence; `push_back` appends to the back, `pop_front` takes from the front, and
-when the front empties the back is reversed into it. This gives **amortized O(1)**
-enqueue and dequeue (and a `Deque` variant does both ends) with no trie surgery —
-it can be a pure library type on top of two `Vector`s. A real-time variant
-removes the amortization if worst-case bounds are ever needed.
-
-This directly and cheaply serves the **essential dequeue/queue workload**, which
-is otherwise the slice O(n²) trap.
+Spun out into its own plan: **[queue-deque.md](queue-deque.md)**. A persistent
+FIFO `Queue<T>` (two `Vector`s + a head cursor) is a pure library type — no trie
+surgery — with O(1)-amortized enqueue and O(log n) dequeue, directly serving the
+essential dequeue workload that is otherwise the slice O(n²) trap.
 
 ### Coexistence: this is **not** an either/or with RRB
 
-The Queue type and RRB operate at different layers and **coexist permanently**:
+The queue type and RRB operate at different layers and **coexist permanently**:
 
-| | `Queue`/`Deque<T>` | RRB `Vector<T>` |
+| | `Queue<T>` (library) | RRB `Vector<T>` |
 |---|---|---|
 | What it is | a new, separate type (library-level) | upgrade of the existing Vector internals |
-| Fast ops | push/pop at ends, amortized **O(1)** | `concat`/`slice` at **arbitrary** positions, **O(log n)** |
-| Opt-in | yes — reach for it when FIFO/LIFO | no — all Vector code benefits transparently |
+| Fast ops | FIFO enqueue/dequeue (O(1) amortized / O(log n)) | `concat`/`slice` at **arbitrary** positions, **O(log n)** |
+| Opt-in | yes — reach for it when FIFO | no — all Vector code benefits transparently |
 | Complexity | low | high (relaxed nodes + rebalance) |
 | Doesn't give you | arbitrary-range slice / arbitrary concat | O(1) dequeue (gets you O(n log n)) |
 
-Neither subsumes the other. The recommended sequencing:
+Neither subsumes the other. Recommended sequencing:
 
-1. **Ship `Queue`/`Deque` first** — small, simple, and it removes the essential
-   dequeue case from the slice problem immediately.
+1. **Ship the queue type first** — small, simple, removes the essential dequeue
+   case from the slice problem immediately.
 2. **Then weigh RRB** for the residual: arbitrary `concat` and arbitrary-range
-   `slice` that a queue can't cover. Gate A's audit (with dequeue sites split out)
-   is exactly what tells you whether that residual justifies RRB's complexity.
+   `slice` a queue can't cover. Gate A's audit (with dequeue sites split out) is
+   exactly what tells you whether that residual justifies RRB's complexity.
 
-In other words, the Queue type and RRB are complementary; shipping the Queue
-*sharpens* the RRB decision by stripping the easy case out of its justification.
-If pursued, the Queue type warrants its own short plan doc.
+Shipping the queue *sharpens* the RRB decision by stripping the easy case out of
+its justification.
 
 ## Relationship to other work
 
