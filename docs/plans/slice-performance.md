@@ -66,22 +66,33 @@ nothing.
 ### Tier 1 — Allocation-free compare/scan (recommended first; pure stdlib)
 
 Most hot slices never need a `String` object — they need a comparison or a scan.
-Add allocation-free helpers and reroute callers:
+Compare the byte range in place via O(1) indexing instead of allocating a
+substring just to compare it. O(m) time, **zero allocation**, pure Twinkle in
+`prelude`/`stdlib` (no compiler or runtime change).
 
-- `String.region_eq(s, start, end, other) Bool` — byte-compare `s[start..end]`
-  against `other` without allocating. O(m) time, **zero allocation**.
-- Reimplement `starts_with`, `ends_with`, `strip_prefix`, `strip_suffix` with a
-  byte loop over `s[i]` (indexing is O(1)) instead of `slice(...) == …`.
-  `strip_*` still allocates the *remainder* it returns, but drops the throwaway
-  prefix/suffix allocation.
-- These are **pure Twinkle** in `core_lib`/stdlib — no compiler or runtime change.
+**Done so far** (`prelude/string.tw`, commit "Make string prefix/suffix checks
+allocation-free"): added a private `region_eq(s, start, other)` helper and
+rewired `starts_with` / `ends_with` / `strip_prefix` / `strip_suffix` to use it
+instead of `s.slice(...) == other`. `strip_*` still allocate only the *remainder*
+they return. Verified by self-host fixpoint + boot tests. `region_eq` is kept
+**private** for now — the public surface is deferred pending the view direction
+below.
 
-Optionally, a lowering rewrite or a [lint](linter.md) could flag
-`s.slice(a, b) == lit` and steer it to `region_eq`, but hand-rewriting the
-handful of hot sites is enough to start.
+**Remaining Tier-1 candidates** (optional, separable):
 
-This removes the dominant cost (allocation churn) for the volume case. Time stays
-O(m), which for these short prefixes is negligible.
+- The inline `s.slice(a, b) == lit` sites — e.g. `trimmed.slice(0, 3) == "///"`
+  in `signatures.tw`, `parser.tw`, `query/hover.tw`; `input.slice(i, end) == text`
+  in `json.tw`. These would want a small **public** helper, most naturally a
+  Python/JS-style `starts_with(prefix, at)` / `equals_at(s, pos, needle)` (see the
+  precedent note below) rather than exposing the 4-arg `region_eq`.
+- A [lint](linter.md) or lowering rewrite could flag `s.slice(a, b) == lit` and
+  steer it to the helper, but hand-rewriting the handful of hot sites is enough.
+
+Precedent: copying-slice languages add exactly these — Java `regionMatches`,
+C `memcmp`/`strncmp`, C++ `string::compare`, and the ergonomic offset-arg form in
+Python `startswith(x, start, end)` / JS `startsWith(x, pos)`. View-slice
+languages (Rust `&str`, Go, C++ `string_view`, Swift `Substring`) skip all this
+because their slice is already zero-copy — which is Tier 2 below.
 
 ### Tier 2 — O(1) views (when Tier 1's tuple-threading gets unwieldy)
 
