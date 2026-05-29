@@ -64,10 +64,17 @@ recursive domain concepts.
 **Open question:** is acyclic module structure enough in practice, or does Twinkle
 need an explicit mechanism for mutually recursive type groups across files?
 
-Possible directions:
+**Proposed direction:** [plans/recursive-module-groups.md](plans/recursive-module-groups.md)
+— condense the module graph into SCCs and resolve each strongly-connected group
+with the two-phase (signatures-then-bodies) pass already used *within* a module,
+allowing type/function cycles while rejecting top-level value-initialization
+cycles. The restriction is architectural, not semantic; this also unblocks
+blanket prelude-into-prelude injection.
+
+Possible directions considered:
 
 - keep cycles rejected and encourage colocating mutually recursive types,
-- allow type-only cycles with restrictions,
+- allow type-only cycles with restrictions ← the proposed plan's MVP,
 - add explicit forward declarations,
 - add package-level recursive type groups.
 
