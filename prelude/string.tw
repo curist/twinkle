@@ -344,14 +344,27 @@ pub fn contains(s: String, needle: String) Bool {
   }
 }
 
+/// Compare s[start ..< start + other.len()] against `other` byte-by-byte
+/// without allocating a substring. Caller guarantees the region is in bounds.
+fn region_eq(s: String, start: Int, other: String) Bool {
+  m := other.len()
+  i := 0
+  for i < m {
+    if s[start + i] != other[i] {
+      return false
+    }
+    i = i + 1
+  }
+  true
+}
+
 /// Return true if s starts with prefix.
 pub fn starts_with(s: String, prefix: String) Bool {
-  n := s.len()
   m := prefix.len()
-  if m > n {
+  if m > s.len() {
     return false
   }
-  s.slice(0, m) == prefix
+  region_eq(s, 0, prefix)
 }
 
 /// Return true if s ends with suffix.
@@ -361,7 +374,7 @@ pub fn ends_with(s: String, suffix: String) Bool {
   if m > n {
     return false
   }
-  s.slice(n - m, n) == suffix
+  region_eq(s, n - m, suffix)
 }
 
 /// Split s by sep into a vector of strings.
@@ -424,7 +437,7 @@ pub fn lines(s: String) Vector<String> {
 pub fn strip_prefix(s: String, prefix: String) String? {
   m := prefix.len()
   if m > s.len() { return .None }
-  if s.slice(0, m) == prefix {
+  if region_eq(s, 0, prefix) {
     .Some(s.slice(m, s.len()))
   } else {
     .None
@@ -436,7 +449,7 @@ pub fn strip_suffix(s: String, suffix: String) String? {
   n := s.len()
   m := suffix.len()
   if m > n { return .None }
-  if s.slice(n - m, n) == suffix {
+  if region_eq(s, n - m, suffix) {
     .Some(s.slice(0, n - m))
   } else {
     .None
