@@ -1,0 +1,5 @@
+/// Top-level value initialization cycle across modules: must be rejected.
+
+use .cycle_value_a
+
+pub b_val := cycle_value_a.a_val + 1

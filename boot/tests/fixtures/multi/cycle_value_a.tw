@@ -1,0 +1,9 @@
+/// Top-level value initialization cycle across modules (entry): must be rejected.
+
+use .cycle_value_b
+
+pub a_val := cycle_value_b.b_val + 1
+
+fn main() {
+  x := a_val
+}

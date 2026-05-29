@@ -1,0 +1,5 @@
+/// Mutually recursive types across modules: BNode <-> ANode.
+
+use .cycle_type_a
+
+pub type BNode = .{ tag: Int, back: cycle_type_a.ANode? }

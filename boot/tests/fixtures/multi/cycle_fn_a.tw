@@ -1,0 +1,15 @@
+/// Mutually recursive functions across modules (entry): a <-> b.
+
+use .cycle_fn_b
+
+pub fn is_even(n: Int) Bool {
+  if n == 0 {
+    true
+  } else {
+    cycle_fn_b.is_odd(n - 1)
+  }
+}
+
+fn main() {
+  result := is_even(10)
+}

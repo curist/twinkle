@@ -416,15 +416,39 @@ pub fn suite() runner.Suite {
       },
     )
     .test(
-      "circular import detected",
+      "import cycle without cross-module dependency compiles",
       fn() {
         result := module_compiler.compile_entry("${dir}/circular_a.tw")
 
         case result {
-          .Ok(_) => .Err("expected circular import error"),
+          .Ok(_) => .Ok({}),
+          .Err(err) => .Err("expected import cycle to compile, got: ${format_compile_error(err)}"),
+        }
+      },
+    )
+    .test(
+      "mutually recursive functions across modules compile",
+      fn() {
+        result := module_compiler.compile_entry("${dir}/cycle_fn_a.tw")
+
+        case result {
+          .Ok(_) => .Ok({}),
+          .Err(err) => .Err(
+            "expected mutually recursive functions to compile, got: ${format_compile_error(err)}",
+          ),
+        }
+      },
+    )
+    .test(
+      "top-level value-init cycle across modules is rejected",
+      fn() {
+        result := module_compiler.compile_entry("${dir}/cycle_value_a.tw")
+
+        case result {
+          .Ok(_) => .Err("expected value-initialization cycle to be rejected"),
           .Err(err) => {
             msg := format_compile_error(err)
-            try assert.is_true(msg.contains("Circular import"))
+            try assert.is_true(msg.contains("initialization cycle"))
             .Ok({})
           },
         }

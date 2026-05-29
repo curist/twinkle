@@ -1188,6 +1188,20 @@ pub fn merge_prelude_exports(
   cur.with_methods(methods).with_type_methods(methods_by_type)
 }
 
+/// True when the module has top-level executable statements (value bindings,
+/// expressions, loops). Such a module cannot participate in an import cycle,
+/// since its top-level initialization order relative to the cycle is undefined.
+pub fn has_top_level_statements(module: Module) Bool {
+  for item in module.items {
+    case item {
+      .Stmt(_) => { return true },
+      _ => {},
+    }
+  }
+
+  false
+}
+
 pub fn resolve(env: ResolvedEnv, module: Module) ResolveResult {
   // Pass 1: collect declarations
   p1 := collect_declarations(env, module)

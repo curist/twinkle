@@ -16,7 +16,9 @@ use compiler.query.cache
 use compiler.query.fingerprint
 use compiler.query.stage_runner
 use compiler.query.type_registry
-use compiler.resolver.{ModuleExports, ResolvedEnv, TypeEntry, extract_exports_for_module}
+use compiler.resolver.{
+  ModuleExports, ResolvedEnv, TypeEntry, extract_exports_for_module, has_top_level_statements,
+}
 use compiler.unused_imports
 use lib.json
 use lib.module.core_lib
@@ -235,26 +237,15 @@ fn analyze_module_impl(
     .None => {},
   }
 
-  // Circular import detection — report at the triggering `use` statement in
-  // the calling module when caller context is available.
+  // Import cycle reached via a back-edge. If a preliminary interface is already
+  // published for this module, let the caller merge it. Otherwise try to break
+  // the cycle by publishing one (signatures only); modules with top-level
+  // initialization or mutually-recursive types cannot be broken and error.
   if stack.contains(canonical) {
-    err_id := case caller_id {
-      .Some(cid) => cid,
-      .None => module_id,
+    case state.interfaces[canonical] {
+      .Some(_) => { return .{ env: base, state, diagnostics: [], ok: true } },
+      .None => { return break_import_cycle(id, alias, base, state, stack, caller_id, use_span) },
     }
-    err_span := case use_span {
-      .Some(s) => s,
-      .None => span.new(0, 0, 0),
-    }
-    d := synthetic_diag(
-      err_id,
-      .None,
-      err_span,
-      "import",
-      "Circular import detected: '${canonical}' is already being analyzed",
-    )
-
-    return .{ env: base, state, diagnostics: [d], ok: false }
   }
 
   t_load0 := date.now()
@@ -457,6 +448,132 @@ fn plan_dependencies(
     },
   }
   .Ok(dep_plan)
+}
+
+/// Break an import cycle by publishing a preliminary interface for `id`.
+///
+/// Reached from a back-edge: this module is already being analyzed up the stack.
+/// We resolve only its signatures (not bodies) against its non-cycle
+/// dependencies, then publish a preliminary interface so the dependent can
+/// merge it; the module's own outer call later publishes the final interface.
+///
+/// Two cases cannot be broken this way and error:
+/// - the module has top-level statements (undefined initialization order), or
+/// - resolving its signatures still fails (e.g. mutually-recursive types).
+fn break_import_cycle(
+  id: identity.SourceIdentity,
+  alias: String,
+  base: ResolvedEnv,
+  state: AnalysisState,
+  stack: Vector<String>,
+  caller_id: identity.SourceIdentity?,
+  use_span: Span?,
+) ModuleResult {
+  canonical := imports.canonical_module_path(id.path, state.canonical_roots)
+  module_id := identity.from_path(canonical)
+
+  err_id := case caller_id {
+    .Some(cid) => cid,
+    .None => module_id,
+  }
+  err_span := case use_span {
+    .Some(s) => s,
+    .None => span.new(0, 0, 0),
+  }
+
+  loaded := case load_source(state, canonical, module_id, caller_id, use_span) {
+    .Ok(value) => value,
+    .Err(err) => {
+      return .{ env: base, state: err.state, diagnostics: err.diagnostics, ok: false }
+    },
+  }
+  parsed_load := case parse_cached(loaded.state, canonical, loaded.source, loaded.source_hash) {
+    .Ok(value) => value,
+    .Err(err) => {
+      return .{ env: base, state: err.state, diagnostics: err.diagnostics, ok: false }
+    },
+  }
+  cur := parsed_load.state
+  parsed := parsed_load.parsed
+
+  // A module with top-level executable statements cannot be part of a cycle:
+  // its initialization order relative to the cycle is undefined.
+  if has_top_level_statements(parsed.module) {
+    d := synthetic_diag(
+      err_id,
+      .None,
+      err_span,
+      "import",
+      "Top-level initialization cycle: module '${canonical}' has top-level statements and participates in an import cycle",
+    )
+
+    return .{ env: base, state: cur, diagnostics: [d], ok: false }
+  }
+
+  dep_plan := case plan_dependencies(cur, canonical, parsed, loaded.source) {
+    .Ok(plan) => plan,
+    .Err(err) => {
+      return .{ env: base, state: err.state, diagnostics: err.diagnostics, ok: false }
+    },
+  }
+
+  // Resolve only the dependencies outside the current cycle; siblings still on
+  // the analysis stack are excluded — their interfaces arrive later.
+  external_deps := collect dep in dep_plan.dependencies {
+    if stack.contains(dep.canonical_path) {
+      continue
+    }
+
+    dep
+  }
+  ext_plan := DependencyPlan.{ dependencies: external_deps, is_internal: dep_plan.is_internal }
+
+  deps := analyze_dependencies(base, cur, canonical, ext_plan, stack)
+
+  if !deps.ok {
+    return .{ env: deps.env, state: deps.state, diagnostics: deps.diagnostics, ok: false }
+  }
+
+  cur = deps.state
+  hashes := dependency_hashes(cur.cache, ext_plan)
+  runner := stage_runner.new(
+    canonical,
+    loaded.source_hash,
+    hashes.deps_hash,
+    hashes.context_hash,
+    dep_plan.is_internal,
+  )
+  env := deps.env
+
+  if dep_plan.is_internal {
+    env = add_internal_host_builtins(env)
+  }
+
+  resolved_out := stage_runner.resolve(runner, cur.cache, parsed, env)
+  cur.cache = resolved_out.store
+  resolved := resolved_out.value
+
+  if resolved.diagnostics.len() > 0 {
+    // Signatures alone cannot break the cycle (e.g. mutually-recursive types
+    // across modules — not yet supported).
+    d := synthetic_diag(
+      err_id,
+      .None,
+      err_span,
+      "import",
+      "Circular import detected: '${canonical}' is already being analyzed",
+    )
+
+    return .{ env: base, state: cur, diagnostics: [d], ok: false }
+  }
+
+  // Publish a preliminary interface (signatures only). The module's own outer
+  // analysis publishes the final interface (with checked bodies and exports).
+  exports := extract_exports_for_module(resolved.env, parsed.module, canonical, Dict.new())
+  interface := make_module_interface(canonical, exports, cur.shared_type_origins)
+  cur.interfaces[canonical] = interface
+
+  .{ env: base, state: cur, diagnostics: [], ok: true }
 }
 
 fn analyze_dependencies(

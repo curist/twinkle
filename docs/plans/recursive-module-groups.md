@@ -1,11 +1,43 @@
 # Recursive module groups — allow mutually-recursive modules
 
-Status: proposal. Resolves open-question #3
+Status: **partially landed** (boot compiler). Function/import cycles now compile
+and top-level value-initialization cycles are rejected, via a preliminary-interface
+break in `analyze.tw` (`break_import_cycle`) — see "Landed so far" below. Still
+open: mutual *type* cycles (cross-module TypeId pre-allocation) and the stage0
+mirror. Resolves open-question #3
 ([../open-questions.md](../open-questions.md)). Motivated by the prelude/stdlib
 injection detour ([access-contracts.md](access-contracts.md) family): lifting the
 acyclic-modules restriction is what would let prelude modules use each other's
 functions (blanket prelude-into-prelude injection), and more generally lets user
 code split mutually-recursive domain types across files.
+
+## Landed so far (boot compiler)
+
+A surgical first slice that keeps the acyclic path byte-identical (it never enters
+the new code, so the self-host loop is unaffected):
+
+- On a back-edge (`analyze_module_impl`, the old "Circular import detected" point),
+  instead of erroring we call `break_import_cycle`: resolve the module's
+  **signatures only** (not bodies) against its *non-cycle* dependencies, then
+  publish a **preliminary interface** so the dependent can merge it. The module's
+  own outer call later publishes the final interface (with checked bodies).
+- This works because `resolver.resolve` produces interfaces (types + function
+  signatures) while bodies are checked separately by the checker — so a cycle
+  member's signature resolves without its sibling, and the sibling's body then
+  typechecks against the preliminary interface.
+- **Value-init cycles are rejected** structurally: a module reached via a
+  back-edge that has top-level `Stmt` items (value bindings / executable
+  statements) gets a `"Top-level initialization cycle"` diagnostic, since its
+  init order relative to the cycle is undefined (`resolver.has_top_level_statements`).
+- Tests in `multi_module_suite` (function cycle, import cycle, value-init
+  rejection) + updated `query_analyze`/`query_diagnostics` cycle tests. Self-host
+  fixed point holds; full boot suite green.
+
+Still open: mutual **type** cycles (need cross-module TypeId pre-allocation — the
+`break_import_cycle` resolve currently fails for them and falls back to a circular
+error; fixtures `cycle_type_a/b` are committed but untested), and the **stage0
+mirror** (stage0 still rejects all cycles; fine for bootstrap since `boot/main.tw`
+is acyclic).
 
 ## The restriction is architectural, not semantic
 

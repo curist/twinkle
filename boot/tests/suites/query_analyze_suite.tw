@@ -45,11 +45,11 @@ pub fn suite() runner.Suite {
       },
     )
     .test(
-      "analysis detects circular imports",
+      "analysis rejects value-initialization import cycles",
       fn() {
         ov := overlay.from_documents([
-          ov_doc("/tmp/analyze/a.tw", "use b\npub fn a() Int { b.b() }\n"),
-          ov_doc("/tmp/analyze/b.tw", "use a\npub fn b() Int { a.a() }\n"),
+          ov_doc("/tmp/analyze/a.tw", "use b\npub av := b.bv + 1\n"),
+          ov_doc("/tmp/analyze/b.tw", "use a\npub bv := a.av + 1\n"),
         ])
         state := analyze.new_state(base_env.builtin_env(), cache.empty(), ov, "/tmp/analyze")
         id := identity.from_path("/tmp/analyze/a.tw")
@@ -57,7 +57,7 @@ pub fn suite() runner.Suite {
         try assert.is_false(result.ok)
         try assert.is_true(result.diagnostics.len() > 0)
         msg := result.diagnostics[0].kind.message()
-        try assert.str_contains(msg, "Circular import")
+        try assert.str_contains(msg, "initialization cycle")
         .Ok({})
       },
     )
@@ -199,11 +199,11 @@ pub fn suite() runner.Suite {
       "circular import diagnostic points to importing file's use statement",
       fn() {
         // a.tw has `use b` at bytes 0..5; b.tw has `use a` at bytes 0..5.
-        // The circularity is detected when b tries to re-import a.
+        // A value-initialization cycle is detected when b tries to re-import a.
         // Diagnostic should be attributed to b.tw at its `use a` span.
         ov := overlay.from_documents([
-          ov_doc("/tmp/analyze/a.tw", "use b\npub fn a() Int { b.b() }\n"),
-          ov_doc("/tmp/analyze/b.tw", "use a\npub fn b() Int { a.a() }\n"),
+          ov_doc("/tmp/analyze/a.tw", "use b\npub av := b.bv + 1\n"),
+          ov_doc("/tmp/analyze/b.tw", "use a\npub bv := a.av + 1\n"),
         ])
         state := analyze.new_state(base_env.builtin_env(), cache.empty(), ov, "/tmp/analyze")
         id := identity.from_path("/tmp/analyze/a.tw")

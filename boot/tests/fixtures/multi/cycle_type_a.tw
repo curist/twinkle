@@ -1,0 +1,9 @@
+/// Mutually recursive types across modules (entry): ANode <-> BNode.
+
+use .cycle_type_b
+
+pub type ANode = .{ tag: Int, next: cycle_type_b.BNode? }
+
+fn main() {
+  n: ANode = ANode.{ tag: 1, next: .None }
+}

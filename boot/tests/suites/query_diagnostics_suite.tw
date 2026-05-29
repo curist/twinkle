@@ -378,14 +378,14 @@ pub fn suite() runner.Suite {
             entry_uri: a,
             project_root: "/tmp",
             open_documents: [
-              doc(a, "use b\npub fn a() Int { b.b() }\n", 1),
-              doc(b, "use a\npub fn b() Int { a.a() }\n", 1),
+              doc(a, "use b\npub av := b.bv + 1\n", 1),
+              doc(b, "use a\npub bv := a.av + 1\n", 1),
             ],
           },
         )
         try assert.is_true(result.diagnostics.len() > 0)
         try assert.equal(result.diagnostics[0].stage, "import")
-        try assert.str_contains(result.diagnostics[0].message, "Circular import")
+        try assert.str_contains(result.diagnostics[0].message, "initialization cycle")
         .Ok({})
       },
     )
