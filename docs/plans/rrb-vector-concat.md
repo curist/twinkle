@@ -1,8 +1,16 @@
-# RRB-Tree Vector: O(log n) Concat
+# RRB-Tree Vector: O(log n) Concat & Slice
 
 Status: proposal. Primary target: `boot/compiler/codegen/runtime/arr.tw` (the
 boot compiler is the main implementation). `src/runtime/arr.rs` (stage0) is
 mirrored afterward to stay a correctness reference.
+
+> **Two O(n²) loop hazards motivate this**: prepend/right-operand `concat`, and
+> any `slice` that trims a little each iteration (dequeue / drop-last / sliding
+> window). **Queue/dequeue usage is an essential workload**, so for that case
+> specifically a dedicated persistent **`Queue`/`Deque` type** (amortized O(1),
+> far simpler than RRB) is the recommended near-term path — see
+> [Alternatives](#alternatives--complementary-work). RRB remains the
+> general-purpose fix for arbitrary concat/slice.
 
 ## Problem
 
@@ -14,7 +22,7 @@ Twinkle's `Vector<T>` is a Clojure-style **bit-partitioned persistent trie**
 | `append` (`push`) | O(log₃₂ n) amortized (tail copy + occasional spine) | `acc = acc.append(x)` → **O(n log n)**, effectively linear |
 | `concat(a, b)` | **O(\|b\|)** — proportional to the **right** operand; `a` is shared, `b` is replayed | depends on which side grows (below) |
 | `get` / `set` | O(log₃₂ n) | — |
-| `slice` | O(n) — replays elements | — |
+| `slice(v, s, e)` | **O(m)**, m = e−s — fully re-materializes the range into a fresh vector, shares nothing with the source | trim-one loop → **O(n²)** (below) |
 
 `concat` is implemented differently in the two runtimes but with the **same
 asymptotics**: stage0 (`src/runtime/arr.rs:995`) literally *"iterate b and push
@@ -36,6 +44,19 @@ The prepend / right-operand case is genuinely polynomial, and it is inherent to 
 **non-relaxed** trie: true sub-linear concatenation of two persistent vectors
 requires relaxed radix-balanced (RRB) nodes.
 
+`slice` has the **same hazard family**. A single `slice` is O(m) in the slice
+length (boot copies leaf-runs in bulk via `ArrayCopy` + `from_array`; stage0
+replays element-by-element at O(m·log n)) — fine one-shot, but it shares nothing
+with the source, so trimming a little each iteration re-copies almost everything:
+
+- `acc = acc.slice(1, acc.len())` (**dequeue / drop-first**) → O(n²)
+- `acc = acc.slice(0, acc.len() - 1)` (**drop-last / pop**) → O(n²)
+- sliding-window scans → O(n·w) per element copied repeatedly
+
+This is arguably **more common than prepend-concat** — it is exactly what using a
+`Vector` as a queue or stack looks like. Since dequeue/queue is an essential
+workload, slice is treated here as a **co-primary** motivation, not a bonus.
+
 The static-uniqueness optimizer (`docs/plans/static-uniqueness-plan.md`) does
 **not** fix this. It is a constant-factor / allocation-churn optimization
 (in-place builder reuse for *append-at-end* consume-reassign chains) and changes
@@ -50,10 +71,16 @@ Upgrade the persistent vector to an **RRB-tree** (relaxed radix-balanced) so tha
 
 - `concat(a, b)` is **O(log n)** for arbitrary operands (fixes prepend and all
   general concatenation).
+- `slice(v, s, e)` is **O(log n)** (relaxed left/right slice that shares the
+  spine), fixing dequeue / drop-last / window loops. Co-primary with concat.
 - `append`, `get`, `set` keep their current asymptotics (O(log₃₂ n)); the common
   append-built vector stays fully *regular* (no size tables) so its constant
   factors do not regress.
-- `slice` optionally drops to O(log n) (a natural RRB bonus; see Phasing).
+
+For the **essential dequeue/queue workload specifically**, a dedicated
+`Queue`/`Deque` type (amortized O(1), much simpler than RRB) is likely the better
+near-term answer; RRB is the general-purpose fix. See
+[Alternatives](#alternatives--complementary-work).
 
 References: Bagwell & Rompf, *RRB-Trees: Efficient Immutable Vectors* (2011);
 L'orange, *Improving RRB-Tree Performance through Transience* (2014);
@@ -170,11 +197,14 @@ linear append-accumulation fast path and is unaffected asymptotically:
   The new RRB `concat` is the O(log n) **persistent fallback** that the optimizer
   cannot rewrite — notably the prepend / right-operand-accumulator case.
 
-### 6. `slice` (optional, phased)
+### 6. `slice` (co-primary)
 
-RRB supports O(log n) left/right slice (trim spine, mark boundary nodes relaxed).
-This is a natural follow-on once relaxed nodes exist, replacing the current O(n)
-replay. Treated as a later phase, not part of the core concat fix.
+RRB supports O(log n) left/right slice: descend to the start and end boundaries,
+trim the spine, and mark the boundary nodes relaxed (the trimmed children become
+under-full, hence size tables). The result shares all interior structure with the
+source instead of re-materializing it. This is what turns dequeue / drop-last /
+window loops from O(n²) into O(n log n). It reuses the same relaxed-node
+machinery as concat, so it is part of the core work, not a bonus.
 
 ## Invariants
 
@@ -195,7 +225,7 @@ These join the existing structural invariants documented at the top of
 | `append` | O(log₃₂ n) amortized | unchanged |
 | `get` / `set` | O(log₃₂ n) | unchanged on regular nodes; O(log n) with small size-table constant on relaxed |
 | `concat(a,b)` | O(\|b\|) → **O(n²)** prepend loop | **O(log n)**; prepend loop → O(n log n) |
-| `slice` | O(n) | O(n) now, O(log n) after the optional slice phase |
+| `slice(v,s,e)` | O(m) → **O(n²)** trim/dequeue loop | **O(log n)**; trim loop → O(n log n) |
 
 Publishing this table in `docs/spec.md` / `docs/API.md` as the vector cost
 contract is part of the deliverable, so the performance characteristics are a
@@ -209,15 +239,25 @@ that are cheap (no RRB code required) and can kill or green-light the project:
 
 ### Gate A — Is the pattern actually hit? (real-world audit)
 
-Grep every `.concat(` / `Vector.concat` call site in `boot/` and the stdlib and
-classify each as append-at-end (left-operand accumulator, fine), prepend /
-right-operand accumulator (the O(n²) case), or one-shot. If essentially nothing
-in real code prepends or right-accumulates in a loop, the polynomial blowup is
-theoretical and the complexity is **not** justified — stop here and instead
-document the pitfall (cheap) and rely on the cost contract.
+Audit both operations across `boot/` and the stdlib:
 
-Output: a short table of concat call sites and their classification, plus any
-known user/program workloads (text/rope building, list prepend) that would hit it.
+- Every `.concat(` / `Vector.concat` site → append-at-end (fine), prepend /
+  right-operand accumulator (O(n²)), or one-shot.
+- Every `.slice(` site → one-shot (fine) or trim-in-a-loop (dequeue / drop-last /
+  window — the O(n²) case).
+
+If essentially nothing loops on the bad pattern, the blowup is theoretical and
+RRB is **not** justified — stop and just document the pitfall.
+
+Crucially, **separate the dequeue/queue finding from the rest**: queue usage is
+essential and is far better served by a dedicated `Queue`/`Deque` type
+([Alternatives](#alternatives--complementary-work)) than by RRB. So the audit
+should report (a) dequeue/queue sites → motivate the Queue type, and (b)
+*arbitrary* concat/slice loop sites → the residual that only RRB fixes. RRB's
+go/no-go rests on (b), since (a) can be solved more cheaply.
+
+Output: a table of concat + slice call sites and their classification, plus known
+workloads (text/rope building, list prepend, FIFO queues, windowed scans).
 
 ### Gate B — Quantify the blowup and the win on the *current* runtime
 
@@ -238,6 +278,14 @@ for i in range(n) { acc = [i].concat(acc) }       // right-operand accumulator
 acc: Vector<Int> = []
 for i in range(n) { acc = acc.concat([i]) }
 
+// bench/slice_dequeue.tw — the essential case. Expect ~4× per doubling (quadratic).
+acc: Vector<Int> = range(n).to_vector()
+for ... { _ = acc[0]; acc = acc.slice(1, acc.len()) }   // drop-first / dequeue
+
+// bench/slice_droplast.tw — acc = acc.slice(0, acc.len() - 1) in a loop.
+// bench/queue_baseline.tw — same FIFO workload via a two-vector banker's queue,
+//   to show the O(1)-amortized target the Queue type would hit.
+
 // bench/concat_balanced.tw — pairwise/tree concat of many small vectors.
 // bench/get_regular.tw — N random get() on an append-built (regular) vector.
 // bench/get_relaxed.tw — N random get() on a concat-built vector (post-RRB:
@@ -245,16 +293,21 @@ for i in range(n) { acc = acc.concat([i]) }
 // bench/set_regular.tw, bench/set_relaxed.tw — same for set().
 ```
 
-Record a table of `N → ms` per benchmark and confirm the prepend curve is
-quadratic (each doubling of N ≈ 4× time) while append is linear (≈ 2×).
+Record a table of `N → ms` per benchmark and confirm the prepend **and dequeue**
+curves are quadratic (each doubling of N ≈ 4× time) while append is linear (≈ 2×).
+The `queue_baseline` benchmark also quantifies how much a dedicated Queue type
+would win versus slice-based dequeue, informing the Alternatives decision.
 
 ### Decision criteria (when RRB is worth it)
 
 Re-run the same benchmarks after a prototype Phase 3 and require **all** of:
 
-- **Prepend / right-accumulator**: clearly sub-quadratic — each doubling of N
-  trends toward ≈2× (linear-ish), and an order-of-magnitude wall-clock win at
-  N ≥ 8k. This is the headline justification and must be unmistakable.
+- **Prepend / right-accumulator and dequeue / trim loops**: clearly sub-quadratic
+  — each doubling of N trends toward ≈2× (linear-ish), and an order-of-magnitude
+  wall-clock win at N ≥ 8k. This is the headline justification and must be
+  unmistakable. (If the only motivating workload is dequeue/queue, prefer the
+  Queue type — see Alternatives — and require RRB to be justified by arbitrary
+  concat/slice instead.)
 - **Append-at-end (control)**: no regression beyond noise (RRB must not slow the
   common path).
 - **`get`/`set` on regular (append-built) vectors**: no regression — these stay
@@ -299,18 +352,25 @@ algorithm producing relaxed seam nodes, with canonicalization. Land in **boot
 `arr.tw` first**, validate against the scaling + invariant harness, then mirror
 into stage0 `arr.rs`. Differential-test the two.
 
-**Phase 4 — Optimizer reconciliation.** Confirm the static-uniqueness pass still
-behaves: append-at-end still rewrites to builder; prepend/right-operand concat
-falls through to the new O(log n) `concat`. Add a guard fixture for the prepend
-loop demonstrating O(n log n) scaling.
+**Phase 4 — RRB slice.** Replace `slice` with the O(log n) left/right boundary
+trim that shares interior structure and marks boundary nodes relaxed, reusing the
+Phase 1–2 relaxed machinery. Same boot-first-then-mirror discipline. This is
+co-primary with concat (dequeue/trim loops), not optional.
 
-**Phase 5 (optional) — O(log n) slice** and **bulk `builder_extend`**.
+**Phase 5 — Optimizer reconciliation.** Confirm the static-uniqueness pass still
+behaves: append-at-end still rewrites to builder; prepend/right-operand concat
+and trim/dequeue slice fall through to the new O(log n) ops. Add guard fixtures
+for the prepend and dequeue loops demonstrating O(n log n) scaling.
+
+**Phase 6 (optional) — bulk `builder_extend`** (splice leaves instead of
+replaying elements).
 
 ## Testing & characterization
 
-- **Scaling guard**: a fixture that prepends in a loop (`acc = [x].concat(acc)`)
-  for growing N and asserts near-linear (not quadratic) growth — the regression
-  this plan exists to prevent.
+- **Scaling guards**: fixtures that (a) prepend in a loop (`acc = [x].concat(acc)`)
+  and (b) dequeue in a loop (`acc = acc.slice(1, acc.len())`) for growing N and
+  assert near-linear (not quadratic) growth — the two regressions this plan exists
+  to prevent.
 - **Invariant checker**: a debug routine validating size-table monotonicity,
   regular-node fullness, and height bound on random concat trees.
 - **Differential opt/no-opt** and **stage0/boot** correctness on randomized
@@ -336,14 +396,52 @@ loop demonstrating O(n log n) scaling.
 - **Two runtimes drift.** Mitigation: differential tests are the gate; mirror
   only after the lead runtime is validated.
 
+## Alternatives & complementary work
+
+### A dedicated `Queue`/`Deque<T>` type — the cheaper answer for FIFO/LIFO
+
+A **banker's queue** (a.k.a. two-list/two-vector queue) stores a front and a back
+sequence; `push_back` appends to the back, `pop_front` takes from the front, and
+when the front empties the back is reversed into it. This gives **amortized O(1)**
+enqueue and dequeue (and a `Deque` variant does both ends) with no trie surgery —
+it can be a pure library type on top of two `Vector`s. A real-time variant
+removes the amortization if worst-case bounds are ever needed.
+
+This directly and cheaply serves the **essential dequeue/queue workload**, which
+is otherwise the slice O(n²) trap.
+
+### Coexistence: this is **not** an either/or with RRB
+
+The Queue type and RRB operate at different layers and **coexist permanently**:
+
+| | `Queue`/`Deque<T>` | RRB `Vector<T>` |
+|---|---|---|
+| What it is | a new, separate type (library-level) | upgrade of the existing Vector internals |
+| Fast ops | push/pop at ends, amortized **O(1)** | `concat`/`slice` at **arbitrary** positions, **O(log n)** |
+| Opt-in | yes — reach for it when FIFO/LIFO | no — all Vector code benefits transparently |
+| Complexity | low | high (relaxed nodes + rebalance) |
+| Doesn't give you | arbitrary-range slice / arbitrary concat | O(1) dequeue (gets you O(n log n)) |
+
+Neither subsumes the other. The recommended sequencing:
+
+1. **Ship `Queue`/`Deque` first** — small, simple, and it removes the essential
+   dequeue case from the slice problem immediately.
+2. **Then weigh RRB** for the residual: arbitrary `concat` and arbitrary-range
+   `slice` that a queue can't cover. Gate A's audit (with dequeue sites split out)
+   is exactly what tells you whether that residual justifies RRB's complexity.
+
+In other words, the Queue type and RRB are complementary; shipping the Queue
+*sharpens* the RRB decision by stripping the easy case out of its justification.
+If pursued, the Queue type warrants its own short plan doc.
+
 ## Relationship to other work
 
 - **Static-uniqueness plan** — complementary and unchanged. That plan minimizes
   COW/allocation for linear append-accumulation; this plan fixes the *asymptotic*
-  cost of persistent `concat`. They do not conflict.
+  cost of persistent `concat`/`slice`. They do not conflict.
 - **Bulk `builder_extend`** and a **written cost contract** were the other
   candidate directions; the cost contract is folded in here (the post-change
-  table), and bulk extend is an optional Phase 5 once relaxed nodes exist.
+  table), and bulk extend is the optional Phase 6 once relaxed nodes exist.
 
 ## Open questions
 

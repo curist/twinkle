@@ -59,7 +59,7 @@ Self-hosting is complete. Historical design and status docs live in
 |------|-------------|
 | [backend-anyref-elimination.md](backend-anyref-elimination.md) | Make `anyref` exceptional rather than foundational in the Wasm backend, including typed container/helper families |
 | [static-uniqueness-plan.md](static-uniqueness-plan.md) | Extend the static uniqueness optimizer to cover more realistic linear-update patterns without changing the runtime model |
-| [rrb-vector-concat.md](rrb-vector-concat.md) | Upgrade `Vector<T>` to an RRB-tree so `concat` (incl. prepend/arbitrary operands) is O(log n), eliminating the O(n²) right-operand-accumulator case; boot `arr.tw` leads, stage0 mirrors |
+| [rrb-vector-concat.md](rrb-vector-concat.md) | Upgrade `Vector<T>` to an RRB-tree so `concat` and `slice` are O(log n), eliminating the O(n²) prepend-concat and dequeue/trim-slice loops; notes a complementary, simpler `Queue`/`Deque` type for the essential FIFO case. Boot `arr.tw` leads, stage0 mirrors |
 
 ### Archived reference docs
 
