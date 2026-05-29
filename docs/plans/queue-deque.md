@@ -23,16 +23,13 @@ justification (RRB Gate A), letting RRB stand purely on arbitrary concat/slice.
 
 ## Audit: how the boot compiler actually uses slice
 
-A scan of `boot/` (Gate A for slice) **corrects the premise** and reshapes the
-recommendation. The overwhelming majority of `.slice(` is **`String` substring**
-(lexer, paths, JSON, LSP framing) — irrelevant here. The real `Vector` end-drops
-are dominated by **LIFO stack pop**, not FIFO dequeue:
-
-| Pattern | Sites | Notes |
-|---|---|---|
-| **LIFO pop** `xs.slice(0, len-1)` | `checker.tw:85` & `lower_core/context.tw:101` (`pop_scope`), `codegen/type_order.tw:209` (Tarjan SCC worklist), `fmt/layout.tw:224` (`fit_stack`), `fmt/printer.tw:118` (trivia), `lexer.tw:369/379/394` (`interp_depths`) | scope stacks are hot but bounded-depth; **Tarjan worklist can be large → genuine O(n²)** |
-| **FIFO head-drop** `xs.slice(1, len)` | `emit/match.tw` ×4 (**recursive** head/tail over match arms → O(k²)), `fmt/printer.tw:1242/1273` (recursive doc parts) | k = arms/parts, usually modest |
-| one-shot drop-first | `loader.tw:74`, `checker.tw:1935/2006`, `run.tw`, `argv.tw` | harmless (not loops) |
+A scan of `boot/` (full table in [slice-performance.md](slice-performance.md))
+**corrects the premise**. The overwhelming majority of `.slice(` is `String`
+substring (irrelevant here). The real `Vector` end-drops are dominated by **LIFO
+stack pop** (`xs.slice(0, len-1)` — scope stacks in `checker`/`lower_core`, the
+Tarjan SCC worklist in `type_order`, `fmt`/`lexer` stacks), with the only FIFO
+case being **recursive head/tail over match arms** (`emit/match.tw`, O(k²)). The
+remaining drop-firsts are one-shot.
 
 **A FIFO `Queue` would touch almost none of these.** Consequences for what to build:
 
