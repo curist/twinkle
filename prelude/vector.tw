@@ -4,6 +4,12 @@ pub fn is_empty<A>(xs: Vector<A>) Bool {
   xs.len() == 0
 }
 
+/// Return the element at index, trapping on out-of-bounds (unchecked positional
+/// read; same semantics as `xs[index]`). Backs the `IndexRead` contract.
+pub fn at<A>(xs: Vector<A>, index: Int) A {
+  xs[index]
+}
+
 /// Transform each element with f.
 pub fn map<A, B>(xs: Vector<A>, f: fn(A) B) Vector<B> {
   collect x in xs {

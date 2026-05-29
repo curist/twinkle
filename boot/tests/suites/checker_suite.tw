@@ -734,6 +734,34 @@ pub fn suite() runner.Suite {
       },
     )
     .test(
+      "IndexRead bound: at() yields the element type, len() yields Int",
+      fn() {
+        src := "fn first<C: IndexRead<E>, E>(c: C) E { c.at(0) }\nfn size<C: IndexRead<E>, E>(c: C) Int { c.len() }"
+        r := try check_ok(src)
+        try assert.equal(try type_at(r, src, "c.at(0)"), "Var(E)")
+        try assert.equal(try type_at(r, src, "c.len()"), "Int")
+        .Ok({})
+      },
+    )
+    .test(
+      "IndexRead bound satisfied by a type with len/at inherent methods",
+      fn() {
+        src := "type Seq = .{ data: Vector<Int> }\nfn len(s: Seq) Int { s.data.len() }\nfn at(s: Seq, i: Int) Int { s.data[i] }\nfn first<C: IndexRead<E>, E>(c: C) E { c.at(0) }\nfn main() Int { first(Seq.{ data: [1, 2, 3] }) }"
+        r := try check_ok(src)
+        try assert.equal(try type_at(r, src, "first(Seq"), "Int")
+        .Ok({})
+      },
+    )
+    .test(
+      "IndexRead bound rejected for record without len/at",
+      fn() {
+        src := "type Box = .{ v: Int }\nfn first<C: IndexRead<E>, E>(c: C) E { c.at(0) }\nfn main() Int { first(Box.{ v: 1 }) }"
+        msgs := try check_errs(src)
+        try assert.str_contains(msgs[0], "does not satisfy IndexRead")
+        .Ok({})
+      },
+    )
+    .test(
       "Eq bound satisfied by primitive",
       fn() {
         src := "fn same<T: Eq>(a: T, b: T) Bool { a.eq(b) }\nfn main() Bool { same(1, 2) }"

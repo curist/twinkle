@@ -551,6 +551,10 @@ fn same_builtin_contract(a: BuiltinContract, b: BuiltinContract) Bool {
       .Ord => true,
       _ => false,
     },
+    .IndexRead => case b {
+      .IndexRead => true,
+      _ => false,
+    },
   }
 }
 
@@ -613,7 +617,11 @@ fn type_var_has_contract(name: String, contract: BuiltinContract, scope: Vector<
   false
 }
 
-type ScopedContractMatch = .{ contract: BuiltinContract, req: ContractMethodRequirement }
+type ScopedContractMatch = .{
+  contract: BuiltinContract,
+  req: ContractMethodRequirement,
+  type_args: Vector<MonoType>,
+}
 
 fn lookup_scoped_contract_method(
   base_ty: MonoType,
@@ -631,10 +639,10 @@ fn lookup_scoped_contract_method(
 
   for bound in tp.bounds {
     case bound {
-      .Builtin(contract, _) => {
+      .Builtin(contract, type_args) => {
         for req in contract.methods() {
           if req.method_name == method_name {
-            return .Some(.{ contract, req })
+            return .Some(.{ contract, req, type_args })
           }
         }
       },
@@ -669,6 +677,8 @@ fn builtin_contract_satisfied_by_primitive(ty: MonoType, contract: BuiltinContra
       .String => true,
       _ => false,
     },
+    // IndexRead is satisfied via inherent methods (len/at), not a primitive shortcut.
+    .IndexRead => false,
   }
 }
 
@@ -790,6 +800,7 @@ fn contract_supports_auto_derive(contract: BuiltinContract) Bool {
     .Eq => true,
     .Stringify => false,
     .Ord => false,
+    .IndexRead => false,
   }
 }
 
@@ -818,6 +829,8 @@ fn try_builtin_container_contract(
       .Vector(elem) => .Some(prove_contract(elem, .Ord, ctx, active)),
       _ => .None,
     },
+    // IndexRead has no structural container rule; it proves via inherent methods.
+    .IndexRead => .None,
   }
 }
 
@@ -1876,16 +1889,22 @@ fn try_synth_method_call(
 
   case contract_match {
     .Some(m) => {
-      ret_ty := contract_return_type(m.req.ret, base_ty, base_ty)
+      // `Elem` slots resolve to the bound's declared element type arg (e.g. `E`
+      // in `C: IndexRead<E>`); fall back to the receiver if the bound is nullary.
+      elem_ty := if m.type_args.len() > 0 {
+        m.type_args[0]
+      } else {
+        base_ty
+      }
+      ret_ty := contract_return_type(m.req.ret, base_ty, elem_ty)
 
-      // Build expected params for non-receiver arguments (each typed as base_ty)
       extra_params: Vector<MonoType> = []
 
       for shape in m.req.arg_shapes {
         case shape {
           .Receiver => extra_params = .append(base_ty),
           .Int => extra_params = .append(MonoType.Int),
-          .Elem => extra_params = .append(base_ty),
+          .Elem => extra_params = .append(elem_ty),
         }
       }
 
@@ -1994,19 +2013,24 @@ fn try_synth_method_value(
 
   case scoped_match {
     .Some(m) => {
+      elem_ty := if m.type_args.len() > 0 {
+        m.type_args[0]
+      } else {
+        base_ty
+      }
       extra_params: Vector<MonoType> = []
 
       for shape in m.req.arg_shapes {
         case shape {
           .Receiver => extra_params = .append(base_ty),
           .Int => extra_params = .append(MonoType.Int),
-          .Elem => extra_params = .append(base_ty),
+          .Elem => extra_params = .append(elem_ty),
         }
       }
 
       return .Some(
         .{
-          ty: .Function(extra_params, contract_return_type(m.req.ret, base_ty, base_ty)),
+          ty: .Function(extra_params, contract_return_type(m.req.ret, base_ty, elem_ty)),
           ctx,
           diags,
         },

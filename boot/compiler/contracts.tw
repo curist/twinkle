@@ -4,7 +4,7 @@
 /// exposes queries for contract metadata. It intentionally does not depend on
 /// resolver-owned types such as MonoType to avoid a contracts↔resolver cycle.
 
-pub type BuiltinContract = { Stringify, Eq, Ord }
+pub type BuiltinContract = { Stringify, Eq, Ord, IndexRead }
 
 /// The return shape of a contract method requirement.
 /// Kept separate from MonoType to avoid a dependency cycle with the resolver.
@@ -47,6 +47,13 @@ pub fn spec(contract: BuiltinContract) ContractSpec {
         .{ method_name: "compare", receiver_param_count: 1, arg_shapes: [.Receiver], ret: .Order },
       ],
     },
+    .IndexRead => .{
+      name: "IndexRead",
+      methods: [
+        .{ method_name: "len", receiver_param_count: 1, arg_shapes: [], ret: .Int },
+        .{ method_name: "at", receiver_param_count: 1, arg_shapes: [.Int], ret: .Elem },
+      ],
+    },
   }
 }
 
@@ -57,6 +64,7 @@ pub fn resolve_builtin_contract_name(name: String) BuiltinContract? {
     "Stringify" => .Some(.Stringify),
     "Eq" => .Some(.Eq),
     "Ord" => .Some(.Ord),
+    "IndexRead" => .Some(.IndexRead),
     _ => .None,
   }
 }
