@@ -41,6 +41,7 @@ Self-hosting is complete. Historical design and status docs live in
 | Boot compiler layout | Reorganize `boot/compiler/` into focused subdirectories with stable end-state names | Planned | [boot-compiler-layout-reorg.md](boot-compiler-layout-reorg.md) |
 | Boot performance | Track current compiler bottlenecks and optimization wins | In Progress | [boot-compiler-perf.md](boot-compiler-perf.md) |
 | Task concurrency | Add library-first cooperative `Task<T>` concurrency without new syntax | Planned | [task-concurrency.md](task-concurrency.md) |
+| Dedup failed-module diagnostics | Memoize attempted-and-failed modules so a broken shared dependency reports its errors once, not once per importer | Planned | [dedup-failed-module-diagnostics.md](dedup-failed-module-diagnostics.md) |
 
 
 ### Later — Tooling & Ecosystem
