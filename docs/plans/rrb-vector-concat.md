@@ -1,8 +1,11 @@
 # RRB-Tree Vector: O(log n) Concat & Slice
 
-Status: proposal. Primary target: `boot/compiler/codegen/runtime/arr.tw` (the
-boot compiler is the main implementation). `src/runtime/arr.rs` (stage0) is
-mirrored afterward to stay a correctness reference.
+Status: **parked (Gate A red, 2026-05-29)** — see [Gate A result](#gate-a-result-2026-05-29--red--parked).
+Not implemented; revisit only if the prepend-concat or left-drop/`drop_first`
+loop pattern becomes dominant in the codebase. Primary target:
+`boot/compiler/codegen/runtime/arr.tw` (the boot compiler is the main
+implementation). `src/runtime/arr.rs` (stage0) is mirrored afterward to stay a
+correctness reference.
 
 > **Two O(n²) loop hazards motivate this**: prepend/right-operand `concat`, and
 > any `slice` that trims a little each iteration (drop-last / drop-first /
@@ -264,6 +267,34 @@ since (a) is solved more cheaply. (This audit is already done — see
 
 Output: a table of concat + slice call sites and their classification, plus known
 workloads (text/rope building, list prepend, windowed scans).
+
+#### Gate A result (2026-05-29) — RED → parked
+
+Classification of the ~553 `.concat(` sites + all `.slice(` sites across `boot/`
+and the stdlib:
+
+| Pattern | Count / location | Verdict |
+|---|---|---|
+| String `.concat` / `.slice` | printer, parser, lexer, json, source modules | **Not RRB** — String slice goes the `View` route ([slice-performance.md](slice-performance.md)) |
+| `doc.concat([...])` | `fmt/doc.tw` pretty-printer combinator | **Not `Vector.concat`** at all |
+| Append-at-end `acc = acc.concat(x)` (incl. dot-shorthand `acc = .concat(x)`) | the large majority of Vector sites | **Safe** — already rewritten to `builder_extend` by `opt/builder_region.tw` |
+| Prepend-in-loop `acc = X.concat(acc)` | only `lines = [rest].concat(lines)` — `signatures.tw:208`, `parser.tw:2972`, `query/hover.tw:896` | **Bounded** — doc-comment (`///`) gathering; N = comment-block size (tiny), not a hot loop |
+| Vector left-drop `xs = xs.slice(1, …)` | `loader.tw:74` (strip leading `"std"`), `checker.tw:1935/2006` (drop receiver param) | **One-shot** — no loop |
+| `Vector.drop_first` | tests only (`api_vector_suite.tw`) | **No production caller** |
+
+**Conclusion.** No production hot loop hits the prepend-concat or left-drop/`drop_first`
+pattern that RRB would accelerate. The LIFO drop-last residual that *was* real is
+already covered by the shipped O(1)-amortized `Vector.drop_last` op + `Stack<T>`
+(a regular-radix-trie tail shrink — **never needed RRB**). Per this section's own
+gate ("if essentially nothing loops on the bad pattern … stop and just document
+the pitfall"), RRB is **not justified now**. Gate B (benchmarks) was therefore not
+built — there is no caller whose curve it would characterize.
+
+**Revisit trigger.** Re-open this plan if a left-drop / `drop_first` dequeue loop
+or a prepend-`concat` accumulator loop becomes dominant (e.g. a streaming/queue
+workload in the LSP server or a rope-style text buffer). At that point start with
+Gate B benchmarks to confirm the quadratic curve before writing any relaxed-node
+code.
 
 ### Gate B — Quantify the blowup and the win on the *current* runtime
 
