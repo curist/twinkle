@@ -1,9 +1,12 @@
 # Access contracts — `IndexRead` / `IntoIterator` / `IndexWrite`
 
-Status: proposal. The general-access foundation under [view.md](view.md) (the
-zero-copy window), [stack.md](stack.md) (LIFO), and
-[slice-performance.md](slice-performance.md) (the audit). Needs one contract-model
-extension: **parameterized contracts with a functional dependency**.
+Status: **decisions locked, ready to implement** (2026-05-29). The general-access
+foundation under [view.md](view.md) (the zero-copy window), [stack.md](stack.md)
+(LIFO), and [slice-performance.md](slice-performance.md) (the audit). Needs one
+contract-model extension: **parameterized contracts with a functional
+dependency**. Locked design choices are recorded inline and summarized in
+[Decisions](#decisions-locked-2026-05-29). Tracked under
+[collections-access.md](collections-access.md).
 
 ## Why
 
@@ -64,15 +67,32 @@ dynamic dispatch, fully monomorphized.
 ## The contracts
 
 ```tw
-contract IndexRead<E>    { len(self) Int        get(self, Int) E }
+contract IndexRead<E>    { len(self) Int        at(self, Int) E }  // backs `v[i]`; unchecked, traps OOB
 contract IntoIterator<E> { iter(self) Iterator<E> }              // backs `for x in`
 contract IndexWrite<E>   { set(self, Int, E) Self   append(self, E) Self }
-contract Sliceable       { sub(self, Int, Int) Self }            // Self-only; fits MVP as-is
+contract Sliceable       { slice(self, Int, Int) Self }          // Self-only; `foo[a..b]` syntax → sliceable.md
 ```
 
 (Contract syntax is illustrative — these are compiler-recognized, like the
 existing three. `Sliceable` introduces no element type, so it already fits the
 current Self-only model; only the `<E>` contracts need the extension above.)
+
+**`at` vs `get` (locked).** `IndexRead`'s accessor is the **unchecked
+`at(self, Int) E`** — it returns the element directly and **traps on OOB**, exactly
+matching today's `v[i]` / `s[i]` semantics. The safe `get(self, Int) E?` stays the
+ergonomic surface on `Vector` but is **not** part of the contract; generic
+algorithms iterate over `range(len())`, so they never go OOB and need no
+unwrapping. This is what makes positional `[]` desugar straight to `IndexRead.at`
+(below) — the operator and the contract accessor are the same thing.
+
+**Positional `[]` is in scope, not optional.** Backing the `[]` access syntax is a
+*motivation* for this contract, not a follow-on: the plan is **done only when
+`v[i]` for any `IndexRead<E>` satisfier desugars to `c.at(i)`** (so `View`/`Stack`
+get bracket indexing for free). `synth_index` (checker.tw:4159), which today
+hardcodes `Vector`/`String`/`Dict`, routes positional indexing through the
+contract. **Keyed `[]` stays separate** — `Dict<K,V>[K] -> V?` remains
+special-cased (associative, a future `KeyedRead<K,V>`, see below); only the
+positional, `Int`-indexed, trap-on-OOB `[]` is unified under `IndexRead`.
 
 ## Satisfiers
 
@@ -107,11 +127,11 @@ name *and* signature, plus a compiler-registered satisfaction rule. So conformin
 `set`, `slice`, `push` as builtins (`boot/compiler/codegen/runtime/arr.tw`). Blockers:
 
 - **`get` returns `A?`, not `A`** (confirmed by `vector_get_optional_return.tw`:
-  `xs.get(pos)` yields `Int?`). So `IndexRead<E>` must either declare `get(self,
-  Int) E?` (safe; every generic algorithm then unwraps) **or** bind to an unsafe
-  `at(self, Int) E` (traps on OOB, like `xs[i]` indexing). **This is the decision
-  that shapes every write-once algorithm.** Lean: an unsafe `at` for the contract,
-  keep `get -> A?` as the ergonomic surface.
+  `xs.get(pos)` yields `Int?`). **Resolved:** `IndexRead` requires the unchecked
+  `at(self, Int) E` (traps on OOB, like `xs[i]`), and `get -> A?` stays the
+  ergonomic surface outside the contract. `Vector`/`String` need an `at` inherent
+  method registered (the trap-on-OOB read that `v[i]` already lowers to). This is
+  also the desugaring target for positional `[]`.
 - **Naming**: `Sliceable` requires `sub` but `Vector` has `slice`; `IntoIterator`
   requires `iter` but for-in is a builtin today. Reconcile by either naming the
   contract methods `slice`/(existing iteration hook) or adding `sub`/`iter`
@@ -152,9 +172,18 @@ parallel public compare API ([slice-performance.md](slice-performance.md) Tier 1
 
 ## Syntax hooks
 
+Backing these surface syntaxes is a primary motivation for the contracts — each is
+part of "done", not optional polish:
+
+- `v[i]` (positional, `Int`-indexed) → `IndexRead<E>` (`c.at(i)`, unchecked, traps
+  OOB). Replaces the hardcoded `Vector`/`String` arms in `synth_index`
+  (checker.tw:4159); **keyed `Dict<K,V>[K] -> V?` stays special-cased** (future
+  `KeyedRead<K,V>`).
 - `for x in v` → `IntoIterator<E>` — generalizes today's builtin iteration to any
   satisfier (currently only the builtin collections iterate).
-- future slicing syntax (e.g. `v[a..b]`) → `Sliceable`.
+- `v[a..b]` (range-slice) → `Sliceable.slice` — **tracked in a separate plan**
+  ([sliceable.md](sliceable.md)); `Sliceable` is Self-only and needs none of this
+  doc's parameterized-contract machinery, so it lands on its own schedule.
 
 Add these rows to the syntax-hook table in
 [../contracts.md](../contracts.md) once implemented.
@@ -163,18 +192,19 @@ Add these rows to the syntax-hook table in
 
 With `drop_first`/`drop_last` settled on `Vector`/`View` ([view.md](view.md),
 [stack.md](stack.md)), **"drop" is Twinkle's verb for removing elements from an
-end/position**, and `take`/`drop` is the complementary pair. To keep one mental
-model, the iterator combinators **`skip`/`skip_while` are renamed to
-`drop`/`drop_while`**:
+end/position**, and `take`/`drop` is the complementary pair. The iterator
+combinators **`drop`/`drop_while`** keep one mental model:
 
-- `iter.drop(n)` / `iter.drop_while(p)` — drop from the front (was `skip`/`skip_while`).
+- `iter.drop(n)` / `iter.drop_while(p)` — drop from the front.
 - `drop_first()` is conceptually `drop(1)`; `drop_last()` is its back equivalent.
-- `take` / `take_while` are unchanged — the natural complement.
+- `take` / `take_while` are the natural complement.
 
 This follows the FP lineage (Scala/Kotlin/Clojure/Haskell/Elixir use `drop`)
-rather than the stream lineage (`skip` in Rust/LINQ/Java Streams), and removes the
-lone `skip` exception. Mechanical rename in `prelude/iterator.tw` + call sites +
-self-host.
+rather than the stream lineage (`skip` in Rust/LINQ/Java Streams).
+
+**Done** — `prelude/iterator.tw` already exposes `drop`/`drop_while` (no `skip`),
+and no `.skip(` call sites remain. This rename is *not* part of the
+access-contracts work; it shipped separately.
 
 ## How it fits the family
 
@@ -229,16 +259,48 @@ So: the FD is safe; implementation = extend `ContractMethodRequirement` (per-arg
 shapes + `Elem`/`Self`/`Iterator<Elem>` returns) and make `prove_contract_method`
 bind `Elem` rather than assuming Self-typed args and a fixed return.
 
-## Open questions
+## Decisions (locked 2026-05-29)
 
-- **Bound syntax / where `E` is introduced:** does `C: IndexRead<E>` auto-introduce
-  `E` into the enclosing generic list, or must it be declared (`fn f<C: IndexRead<E>, E>`)?
-  Lean: declared explicitly, inferred at call sites.
-- **`len` placement:** split into a `Countable`/`Sized` contract, or keep it on
-  `IndexRead`? Lean: keep it on `IndexRead` for simplicity.
-- **`IntoIterator` element:** reuse the builtin `Iterator<E>` — yes.
-- **`IndexWrite` shape:** `set` + `append` enough? `drop_last` stays the dedicated
-  runtime op ([stack.md](stack.md)), not part of the contract. Returns `Self`
-  (persistent rebinding, matching the value model).
-- **Naming:** `IndexRead`/`IndexWrite` vs `Indexable`; `Sliceable` vs `Slice`
-  (the latter collides with the old type name, now `View`).
+- **Read accessor** — `IndexRead` requires the unchecked **`at(self, Int) E`**
+  (traps on OOB, matching `v[i]`); `get -> E?` stays the ergonomic surface outside
+  the contract. Generic algorithms iterate over `range(len())`, so no unwrapping.
+- **`[i]` element-indexing syntax is in scope** — positional `v[i]` desugars to
+  `IndexRead.at`; the plan is "done" only once `synth_index` routes positional
+  indexing through the contract (`View`/`Stack` then get `[i]` for free). Keyed
+  `Dict[K] -> V?` stays special-cased — associative access is a future
+  `KeyedRead<K, V>`, not unified.
+- **`[a..b]` range-slice syntax is a SEPARATE plan** ([sliceable.md](sliceable.md)).
+  `Sliceable` is Self-only and needs none of this doc's machinery; it tracks its
+  own `synth_index` `Range`-index arm and satisfiers there.
+- **Bound syntax** — `E` is **declared explicitly** (`fn f<C: IndexRead<E>, E>`),
+  inferred at call sites. No implicit-introduction machinery.
+- **Method naming** — contract methods **match the names builtins already expose**:
+  `IntoIterator` wired to the existing `for`-in hook; `Sliceable.slice` (not `sub`).
+  The only new method is `at` (the unchecked read). No duplicate aliases.
+- **Contract names** — `IndexRead` / `IndexWrite` / `IntoIterator` / `Sliceable`
+  (kept; not collapsed to `Indexable`).
+- **`len` placement** — kept on `IndexRead` (no separate `Countable`/`Sized`).
+- **`IntoIterator` element** — reuses the builtin `Iterator<E>`.
+- **`IndexWrite` shape** — `set` + `append`, both returning `Self` (persistent
+  rebinding). `drop_last` stays the dedicated runtime op ([stack.md](stack.md)),
+  not part of the contract.
+- **`skip`→`drop` rename** — already shipped, *not* part of this work (see
+  [Naming: the `drop` family](#naming-the-drop-family)).
+
+### First commit (scope)
+
+Checker/resolver foundation only, gate-able on its own:
+
+1. Extend `ContractMethodRequirement` (contracts.tw) — per-arg shape vocabulary
+   (`Self`/`Int`/`Elem`) + return shapes (`Self`/`Elem`/`Iterator<Elem>`).
+2. `prove_contract_method` (checker.tw) — bind-and-thread `Elem` instead of
+   assuming Self-typed args + a fixed return.
+3. Register `Vector<T>` and `String` as satisfiers; add the `at` inherent read.
+4. Write-once `find` / `position` / `fold` / `region_eq` / `starts_with` over the
+   bound.
+5. Mirror to stage0; green on `make boot-test` + the self-host fixed point.
+
+Deferred to follow-up commits (still part of "done" for *this* plan): **`[i]`
+element-index syntax wiring** through `IndexRead.at`, and **`View`/`Stack`
+registration** as satisfiers. (`[a..b]` slicing is out — see
+[sliceable.md](sliceable.md).)

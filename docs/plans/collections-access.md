@@ -50,7 +50,8 @@ with stack already done and RRB parked until a workload justifies it.
 |------|-------|--------|---------|
 | Slice usage audit | Boot-compiler `slice`/`concat` audit + String-slice perf discussion — the evidence behind the rest | **Audit done** (Vector LIFO landed; String-slice → `View`) | [slice-performance.md](slice-performance.md) |
 | `drop_last` + `Stack<T>` | O(1)-amortized `Vector.drop_last` runtime op + thin `Stack<T>` wrapper; LIFO pop sites migrated | **Implemented** | [stack.md](stack.md) |
-| Access contracts | Parameterized contracts `IndexRead<E>` / `IntoIterator<E>` / `IndexWrite<E>` with a `Self → E` functional dependency; write-once generic access monomorphized to direct reads | **Proposal — next** (resolver gap scoped) | [access-contracts.md](access-contracts.md) |
+| Access contracts | Parameterized contracts `IndexRead<E>` / `IntoIterator<E>` / `IndexWrite<E>` with a `Self → E` functional dependency; write-once generic access monomorphized to direct reads; positional `v[i]` desugars to `IndexRead.at` (in scope for "done") | **Proposal — next** (resolver gap scoped) | [access-contracts.md](access-contracts.md) |
+| `Sliceable` / `[a..b]` | Range-slice indexing `foo[a..b]` → `Sliceable.slice`; Self-only contract, needs none of the parameterized-contract machinery | **Proposal — split from access-contracts** | [sliceable.md](sliceable.md) |
 | `View<C>` | Zero-copy windows (backing + `start`/`len`) over any `IndexRead` backing; O(1) `drop_first`/`drop_last`/`sub` | **Proposal — blocked on access-contracts** | [view.md](view.md) |
 | RRB-tree `Vector` | O(log n) `concat`/`slice` via relaxed radix-balanced nodes; kills O(n²) prepend-concat and left-drop loops | **Parked — Gate A red (2026-05-29)** | [rrb-vector-concat.md](rrb-vector-concat.md) |
 
@@ -60,7 +61,8 @@ with stack already done and RRB parked until a workload justifies it.
 
 ```
 slice-performance (audit) ──┬─> stack/drop_last ............... DONE
-                            ├─> access-contracts ── view ...... NEXT (foundation → consumer)
+                            ├─> access-contracts ──┬─ view .... NEXT (foundation → consumer)
+                            │                       └─ sliceable ([a..b], Self-only; own schedule)
                             └─> rrb-vector-concat ............. PARKED (revisit on demand)
 ```
 
@@ -70,7 +72,10 @@ slice-performance (audit) ──┬─> stack/drop_last ............... DONE
    under *determined conformance*; the work is extending the requirement model in
    `boot/compiler/contracts.tw` + `checker.tw` (per-arg shape vocabulary +
    `Elem`/`Self`/`Iterator<Elem>` return shapes + bind-and-thread `Elem`), then
-   mirroring to stage0.
+   mirroring to stage0. **Completion includes wiring positional `v[i]` through
+   `IndexRead.at`** (routing `synth_index`'s hardcoded `Vector`/`String` arms;
+   keyed `Dict[K] -> V?` stays special-cased) — backing `[]` is a motivation, not
+   a follow-on.
 3. **`View<C>`** — pure stdlib once access-contracts lands; first consumer is the
    inline `slice(...) == lit` sites and head/tail recursion (e.g. `emit/match.tw`).
 4. **RRB-tree `Vector`** — only revisit if a prepend-`concat` accumulator loop or a
@@ -100,14 +105,26 @@ slice-performance (audit) ──┬─> stack/drop_last ............... DONE
 
 ---
 
-## Open decisions (gating access-contracts implementation)
+## Decisions (all locked 2026-05-29)
 
-From [access-contracts.md](access-contracts.md)'s open questions — mostly have
-"Lean:" defaults, listed here so they're tracked in one place:
+Full rationale in [access-contracts.md](access-contracts.md#decisions-locked-2026-05-29);
+summarized here:
 
-* **Bound syntax** — does `C: IndexRead<E>` auto-introduce `E`, or must it be
-  declared (`fn f<C: IndexRead<E>, E>`)? Lean: declared explicitly.
-* **`len` placement** — on `IndexRead`, or a separate `Countable`? Lean: keep on
-  `IndexRead`.
-* **Naming** — `IndexRead`/`IndexWrite` vs `Indexable`; `Sliceable` vs `Slice`
-  (avoid collision with the old type name, now `View`).
+* **Read accessor** — `IndexRead.at(self, Int) E`, unchecked (traps OOB), matching
+  `v[i]`; `get -> E?` stays the ergonomic surface outside the contract.
+* **`[i]` scope** — positional element indexing `v[i]` desugars through
+  `IndexRead.at` and is part of access-contracts "done"; keyed `Dict[K] -> V?`
+  stays special-cased (future `KeyedRead<K,V>`).
+* **`[a..b]` scope** — range-slice syntax is a **separate plan**
+  ([sliceable.md](sliceable.md)); `Sliceable` is Self-only, no machinery needed.
+* **Bound syntax** — `E` declared explicitly (`fn f<C: IndexRead<E>, E>`).
+* **Method naming** — match existing builtin names (`slice`, `for`-in); only new
+  method is `at`. No aliases.
+* **Contract names** — `IndexRead`/`IndexWrite`/`IntoIterator`/`Sliceable` (kept).
+* **`len` placement** — on `IndexRead` (no separate `Countable`).
+* **`IndexWrite`** — `set` + `append`, both return `Self`.
+* **`skip`→`drop`** — already shipped; not part of this work.
+
+First-commit scope (checker foundation + `Vector`/`String`, deferring `[i]` wiring
+and `View`/`Stack` registration) is in
+[access-contracts.md](access-contracts.md#first-commit-scope).
