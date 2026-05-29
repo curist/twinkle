@@ -299,10 +299,19 @@ Track A — the requirement-model / proof-side foundation:
    equality to unification so `Elem`/`Receiver` returns bind against the satisfier's
    actual type. The three builtin contracts exercise none of the new paths, so it's
    behavior-preserving; full suite green + fixed point. (commit `6b2681f`)
-3. ⬜ Add the `IndexRead`/`IndexWrite` specs (`BuiltinContract` enum +
-   `resolve_builtin_contract_name` + `spec`); register `Vector<T>`/`String` as
-   satisfiers and add the `at` inherent read.
-4. ⬜ Write-once `find`/`position`/`fold`/`region_eq`/`starts_with` over the bound.
+3. ✅ **`IndexRead<E>` contract + parameterized bound** (`len(self) Int`,
+   `at(self, Int) E`). Wired through every `BuiltinContract` switch; the bound's
+   declared `E` threads through `ScopedContractMatch` so `c.at(i)` types as `E` and
+   `c.len()` as `Int`. `Vector.at` (unchecked `xs[index]`) added to the prelude →
+   `Vector<T>` satisfies `IndexRead<T>`. Proof recovers `Elem` from the satisfier's
+   actual `at` return. Tested: checker-level typing/proof/rejection + a runtime test
+   that `Vector` satisfies *and executes* generic `at`/`len` over the bound.
+   (commits `9fd1273` plumbing, `631a7c8` contract). **Bonus:** contract-call
+   codegen already handles arbitrary contract methods generically — no
+   monomorphization change needed for `at`/`len`.
+4. ⬜ Write-once `find`/`position`/`fold`/`region_eq`/`starts_with` over the bound;
+   `IntoIterator`/`IndexWrite` specs; register `String` (`IndexRead<Byte>`) and
+   `View`/`Stack`; the `[i]` syntax wiring through `IndexRead.at`.
 
 **Boundary finding (the doc's Resolver findings under-billed this).** Steps 3–4 are
 not testable end-to-end without a sliver of Track B: a contract proof is only
