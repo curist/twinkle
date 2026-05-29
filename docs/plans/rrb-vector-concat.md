@@ -271,32 +271,32 @@ Write microbenchmarks against the **current** vector (no RRB needed) to (1) prov
 the O(n²) curve empirically and (2) establish baselines RRB must beat. Time the
 hot loop internally with `@std.date` (`date.now()` returns a `Float` timestamp,
 already used by `TWINKLE_TIMINGS`) so startup/compile time is excluded; run via
-`target/twk run bench/<name>.tw`. Use `hyperfine` only for whole-process sanity.
+`target/twk run boot/bench/<name>.tw`. Use `hyperfine` only for whole-process sanity.
 
 Benchmarks (each parameterized by N, run at N = 1k, 2k, 4k, 8k, 16k, 32k):
 
 ```tw
-// bench/concat_prepend.tw — the target case. Expect ~4× per doubling (quadratic).
+// boot/bench/concat_prepend.tw — the target case. Expect ~4× per doubling (quadratic).
 acc: Vector<Int> = []
 for i in range(n) { acc = [i].concat(acc) }       // right-operand accumulator
 
-// bench/concat_append.tw — control. Must stay linear on BOTH old and new.
+// boot/bench/concat_append.tw — control. Must stay linear on BOTH old and new.
 acc: Vector<Int> = []
 for i in range(n) { acc = acc.concat([i]) }
 
-// bench/slice_droplast.tw — the LIFO case. Expect ~4× per doubling (quadratic).
+// boot/bench/slice_droplast.tw — the LIFO case. Expect ~4× per doubling (quadratic).
 acc: Vector<Int> = range(n).to_vector()
 for ... { _ = acc[acc.len() - 1]; acc = acc.slice(0, acc.len() - 1) }   // drop-last
 
-// bench/slice_dropfirst.tw — acc = acc.slice(1, acc.len()) in a loop (left-drop).
-// bench/droplast_baseline.tw — same drop-last workload via the proposed
+// boot/bench/slice_dropfirst.tw — acc = acc.slice(1, acc.len()) in a loop (left-drop).
+// boot/bench/droplast_baseline.tw — same drop-last workload via the proposed
 //   `drop_last` op / Stack, to show the O(log n) target it would hit.
 
-// bench/concat_balanced.tw — pairwise/tree concat of many small vectors.
-// bench/get_regular.tw — N random get() on an append-built (regular) vector.
-// bench/get_relaxed.tw — N random get() on a concat-built vector (post-RRB:
+// boot/bench/concat_balanced.tw — pairwise/tree concat of many small vectors.
+// boot/bench/get_regular.tw — N random get() on an append-built (regular) vector.
+// boot/bench/get_relaxed.tw — N random get() on a concat-built vector (post-RRB:
 //   exercises relaxed-node navigation; pre-RRB: baseline get cost).
-// bench/set_regular.tw, bench/set_relaxed.tw — same for set().
+// boot/bench/set_regular.tw, boot/bench/set_relaxed.tw — same for set().
 ```
 
 Record a table of `N → ms` per benchmark and confirm the prepend **and drop-last**
@@ -323,7 +323,7 @@ Re-run the same benchmarks after a prototype Phase 3 and require **all** of:
   known tax). If relaxed get/set is dramatically slower, reconsider.
 
 If the prepend win is not obvious, or regular get/set regresses, **do not merge**
-— the complexity is not paid for. Keep the benchmark suite in `bench/` as a
+— the complexity is not paid for. Keep the benchmark suite in `boot/bench/` as a
 permanent regression guard regardless of outcome.
 
 ## Implementation plan
@@ -339,7 +339,7 @@ CLAUDE.md, the boot compiler is primary: **all phases land in
 the pattern is real and the blowup is measurable. Then write a precise pseudocode
 spec of relaxed nodes, indexing, and the concat/rebalance algorithm, and add the
 differential + scaling test harness *first* (see Testing) so every later phase is
-checked. The `bench/` suite from Gate B becomes the before/after evidence and a
+checked. The `boot/bench/` suite from Gate B becomes the before/after evidence and a
 permanent regression guard.
 
 **Phase 1 — Representation.** Add the `sizes` field to `$VecInternal` and the
