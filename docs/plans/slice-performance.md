@@ -1,6 +1,9 @@
 # Slice usage audit & performance
 
-Status: findings + proposal. Companion to [stack.md](stack.md) (LIFO + the
+Status: findings + proposal. **Vector LIFO side landed** — the O(1)-amortized
+`drop_last` runtime op shipped (see [stack.md](stack.md)) and every LIFO pop
+site below was rerouted to `Vector.drop_last`. The String-slice and `View`
+discussions here remain open. Companion to [stack.md](stack.md) (LIFO + the
 `drop_last` op), [view.md](view.md) (read-only `View<C>` windows),
 [access-contracts.md](access-contracts.md) (the general access bounds), and
 [rrb-vector-concat.md](rrb-vector-concat.md) (general O(log n) concat/slice).
@@ -24,7 +27,7 @@ A scan of `boot/` (excluding tests, the `arr.tw`/`str.tw` runtime impls, and the
 
 | Pattern | Sites | Notes |
 |---|---|---|
-| **LIFO pop** `xs.slice(0, len-1)` | `checker.tw:85` & `lower_core/context.tw:101` (`pop_scope`), `codegen/type_order.tw:209` (Tarjan SCC worklist), `fmt/layout.tw:224` (`fit_stack`), `fmt/printer.tw:118` (trivia), `lexer.tw:369/379/394` (`interp_depths`) | scope stacks hot but bounded-depth; **Tarjan worklist can be large → genuine O(n²)** |
+| **LIFO pop** `xs.slice(0, len-1)` ✅ **migrated to `drop_last`** | `checker.tw:85` & `lower_core/context.tw:101` (`pop_scope`), `codegen/type_order.tw:209` (Tarjan SCC worklist), `fmt/layout.tw:224` (`fit_stack`), `fmt/printer.tw:118` (trivia), `lexer.tw:369/379/394` (`interp_depths`) | scope stacks hot but bounded-depth; the Tarjan worklist's O(n²) risk is now bounded to O(n log n) by the runtime op |
 | **FIFO head-drop** `xs.slice(1, len)` | `emit/match.tw` ×4 (**recursive** head/tail over arms → O(k²)), `fmt/printer.tw:1242/1273` (recursive doc parts) | k usually modest |
 | one-shot drop-first | `loader.tw:74`, `checker.tw:1935/2006`, `run.tw`, `argv.tw` | harmless (not loops) |
 

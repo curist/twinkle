@@ -252,8 +252,8 @@ Persistent (copy-on-write) vector. Literal syntax: `[1, 2, 3]`.
 | `.fold(init, f)` | `fn<A,B>(xs: Vector<A>, init: B, f: fn(B,A) B) B` | Left fold |
 | `.first()` | `fn<A>(xs: Vector<A>) Option<A>` | First element, or `.None` if empty |
 | `.last()` | `fn<A>(xs: Vector<A>) Option<A>` | Last element, or `.None` if empty |
-| `.drop_first()` | `fn<A>(xs: Vector<A>) Vector<A>` | Vector without its first element, or empty if already empty |
-| `.drop_last()` | `fn<A>(xs: Vector<A>) Vector<A>` | Vector without its last element, or empty if already empty |
+| `.drop_first()` | `fn<A>(xs: Vector<A>) Vector<A>` | Vector without its first element, or empty if already empty. O(m) |
+| `.drop_last()` | `fn<A>(xs: Vector<A>) Vector<A>` | Vector without its last element, or empty if already empty. O(1) amortized (inverse of `append`) |
 | `.find(f)` | `fn<A>(xs: Vector<A>, f: fn(A) Bool) Option<A>` | First element matching predicate |
 | `.any(f)` | `fn<A>(xs: Vector<A>, f: fn(A) Bool) Bool` | True if any element matches |
 | `.all(f)` | `fn<A>(xs: Vector<A>, f: fn(A) Bool) Bool` | True if all elements match |
