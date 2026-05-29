@@ -558,11 +558,14 @@ fn contract_name(contract: BuiltinContract) String {
   contract.spec().name
 }
 
-fn contract_return_type(shape: ContractReturnShape) MonoType {
+fn contract_return_type(shape: ContractReturnShape, recv_ty: MonoType, elem_ty: MonoType) MonoType {
   case shape {
     .String => .String,
     .Bool => .Bool,
     .Order => MonoType.Named(TypeId.{ id: 7 }, []),
+    .Int => .Int,
+    .Receiver => recv_ty,
+    .Elem => elem_ty,
   }
 }
 
@@ -571,6 +574,9 @@ fn contract_requirement_summary(req: ContractMethodRequirement) String {
     .String => "String",
     .Bool => "Bool",
     .Order => "Order",
+    .Int => "Int",
+    .Receiver => "Self",
+    .Elem => "Elem",
   }
 
   if req.arg_shapes.len() == 0 {
@@ -709,11 +715,20 @@ fn prove_contract_method(
     .None => { return .Err("${req.method_name} does not apply to ${ctx.env.ty_to_string_env(ty)}") },
   }
 
+  // The receiver-determined element type (functional dependency Self -> Elem).
+  // A fresh meta that gets bound by whichever requirement mentions `Elem` (an
+  // arg or the return); determinacy guarantees all occurrences agree.
+  em := fresh_meta(recv_ctx)
+  elem_ty := em.ty
+  recv_ctx = em.ctx
+
   // Validate non-receiver parameters match their declared shape.
   for i in 0..req.arg_shapes.len() {
     param_idx := req.receiver_param_count + i
     expected_arg := case req.arg_shapes[i] {
       .Receiver => ty,
+      .Int => MonoType.Int,
+      .Elem => elem_ty,
     }
     recv_ctx = case silent_unify(recv_ctx, expected_arg, inst.params[param_idx]) {
       .Some(next_ctx) => next_ctx,
@@ -726,14 +741,19 @@ fn prove_contract_method(
   }
 
   ret_ty := zonk(inst.ret, recv_ctx.subst)
-  expected_ret := contract_return_type(req.ret)
+  expected_ret := contract_return_type(req.ret, ty, elem_ty)
 
-  if zonk(expected_ret, recv_ctx.subst) != ret_ty {
-    return .Err(
-      "${req.method_name} returns ${recv_ctx.env.ty_to_string_env(ret_ty)}, expected ${recv_ctx.env.ty_to_string_env(
-        expected_ret,
-      )}",
-    )
+  // Unify (not compare) so an `Elem`/`Receiver` return binds against the
+  // satisfier's actual return type; for concrete shapes this is an equality check.
+  recv_ctx = case silent_unify(recv_ctx, expected_ret, ret_ty) {
+    .Some(next_ctx) => next_ctx,
+    .None => {
+      return .Err(
+        "${req.method_name} returns ${recv_ctx.env.ty_to_string_env(ret_ty)}, expected ${recv_ctx.env.ty_to_string_env(
+          expected_ret,
+        )}",
+      )
+    },
   }
 
   cur_ctx := recv_ctx
@@ -1856,7 +1876,7 @@ fn try_synth_method_call(
 
   case contract_match {
     .Some(m) => {
-      ret_ty := contract_return_type(m.req.ret)
+      ret_ty := contract_return_type(m.req.ret, base_ty, base_ty)
 
       // Build expected params for non-receiver arguments (each typed as base_ty)
       extra_params: Vector<MonoType> = []
@@ -1864,6 +1884,8 @@ fn try_synth_method_call(
       for shape in m.req.arg_shapes {
         case shape {
           .Receiver => extra_params = .append(base_ty),
+          .Int => extra_params = .append(MonoType.Int),
+          .Elem => extra_params = .append(base_ty),
         }
       }
 
@@ -1977,10 +1999,18 @@ fn try_synth_method_value(
       for shape in m.req.arg_shapes {
         case shape {
           .Receiver => extra_params = .append(base_ty),
+          .Int => extra_params = .append(MonoType.Int),
+          .Elem => extra_params = .append(base_ty),
         }
       }
 
-      return .Some(.{ ty: .Function(extra_params, contract_return_type(m.req.ret)), ctx, diags })
+      return .Some(
+        .{
+          ty: .Function(extra_params, contract_return_type(m.req.ret, base_ty, base_ty)),
+          ctx,
+          diags,
+        },
+      )
     },
     .None => {},
   }

@@ -8,12 +8,15 @@ pub type BuiltinContract = { Stringify, Eq, Ord }
 
 /// The return shape of a contract method requirement.
 /// Kept separate from MonoType to avoid a dependency cycle with the resolver.
-pub type ContractReturnShape = { String, Bool, Order }
+/// `Receiver` = Self; `Elem` = the receiver-determined element type (functional
+/// dependency `Self -> Elem`), recovered from the satisfier's actual method type.
+/// (`IteratorElem` for `IntoIterator` lands with that contract.)
+pub type ContractReturnShape = { String, Bool, Order, Int, Receiver, Elem }
 
 /// The shape of a non-receiver parameter in a contract method requirement.
-/// `Receiver` = the parameter's type equals the receiver (Self), e.g. `eq(self, Self)`.
-/// Future shapes (`Int`, `Elem`) support the parameterized access contracts.
-pub type ContractArgShape = { Receiver }
+/// `Receiver` = the parameter's type equals the receiver (Self), e.g. `eq(self, Self)`;
+/// `Int` = a plain `Int` (e.g. the index in `at(self, Int)`); `Elem` = the element type.
+pub type ContractArgShape = { Receiver, Int, Elem }
 
 pub type ContractMethodRequirement = .{
   method_name: String,
