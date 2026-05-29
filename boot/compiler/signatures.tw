@@ -14,7 +14,8 @@ use compiler.contracts.{resolve_builtin_contract_name}
 use compiler.mono_type.{MonoType}
 use compiler.parser
 use compiler.resolver.{
-  FunctionSig, MethodEntry, ResolvedContractRef, ResolvedEnv, ResolvedTypeParam, resolve_type_expr,
+  FunctionSig, MethodEntry, ResolvedContractRef, ResolvedEnv, ResolvedTypeParam,
+  resolve_bound_type_args, resolve_type_expr,
 }
 use lib.module.core_lib
 
@@ -123,7 +124,7 @@ fn resolve_type_params(ast_params: Vector<TypeParam>) Result<Vector<ResolvedType
     for bound_path in tp.bounds {
       seg := bound_path.segments[0]
       bound := case resolve_builtin_contract_name(seg) {
-        .Some(c) => ResolvedContractRef.Builtin(c),
+        .Some(c) => ResolvedContractRef.Builtin(c, resolve_bound_type_args(bound_path.type_args)),
         .None => { return .Err("unknown contract '${seg}'") },
       }
       bounds = .append(bound)

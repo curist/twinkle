@@ -20,9 +20,24 @@ pub type ResolvedField = .{ name: String, ty: MonoType }
 
 pub type ResolvedVariant = .{ name: String, fields: Vector<MonoType> }
 
-/// A reference to a builtin contract, as resolved from source.
+/// A reference to a builtin contract, as resolved from source. The `Vector<MonoType>`
+/// carries the contract's type arguments (e.g. `E` in `IndexRead<E>`), empty for
+/// the nullary contracts (Stringify/Eq/Ord).
 /// Kept as a sum type for future extensibility (user-defined contracts).
-pub type ResolvedContractRef = { Builtin(BuiltinContract) }
+pub type ResolvedContractRef = { Builtin(BuiltinContract, Vector<MonoType>) }
+
+/// Resolve a parameterized contract bound's type arguments. The arguments are
+/// the enclosing function's declared type parameters (e.g. `E` in
+/// `fn f<C: IndexRead<E>, E>`), so each bare-name path becomes `MonoType.Var`.
+pub fn resolve_bound_type_args(args: Vector<TypeExpr>) Vector<MonoType> {
+  collect te in args {
+    case te.kind {
+      .Path(p) => MonoType.Var(p.segments[0]),
+      .Applied(p, _) => MonoType.Var(p.segments[0]),
+      _ => MonoType.Var("_"),
+    }
+  }
+}
 
 /// A type parameter with its resolved bounds, ready for the checker.
 pub type ResolvedTypeParam = .{ name: String, bounds: Vector<ResolvedContractRef> }
@@ -1584,7 +1599,7 @@ fn resolve_ast_type_params(ast_params: Vector<TypeParam>, s: Span) ResolvedTypeP
 
       case resolve_builtin_contract_name(seg) {
         .Some(c) => {
-          bound_refs = .append(.Builtin(c))
+          bound_refs = .append(.Builtin(c, resolve_bound_type_args(bound_path.type_args)))
         },
         .None => {
           diags = .append(.Error(.UnknownContract(.{ span: bound_path.span, name: seg })))

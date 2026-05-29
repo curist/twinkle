@@ -608,12 +608,32 @@ fn format_type_params(params: Vector<TypeParam>) Doc {
   doc.tight_bracketed("<", ">", param_docs)
 }
 
+fn bound_type_arg_str(te: TypeExpr) String {
+  case te.kind {
+    .Path(p) => p.segments.join("."),
+    .Applied(p, args) => {
+      inner := collect a in args {
+        bound_type_arg_str(a)
+      }
+      "${p.segments.join(".")}<${inner.join(", ")}>"
+    },
+    _ => "?",
+  }
+}
+
 fn format_type_param(param: TypeParam) Doc {
   if param.bounds.len() == 0 {
     doc.text(param.name)
   } else {
     bound_strs := collect b in param.bounds {
-      b.segments.join(".")
+      if b.type_args.len() == 0 {
+        b.segments.join(".")
+      } else {
+        targs := collect a in b.type_args {
+          bound_type_arg_str(a)
+        }
+        "${b.segments.join(".")}<${targs.join(", ")}>"
+      }
     }
     doc.text("${param.name}: ${bound_strs.join(" + ")}")
   }

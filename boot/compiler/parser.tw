@@ -265,7 +265,10 @@ fn parse_type_params(c: Cursor) TypeParamsParse {
             bound_span := c.span()
             bound_name := c.text()
             c = .advance()
-            bounds = [.{ segments: [bound_name], span: bound_span }]
+            ba := parse_optional_type_args(c)
+            c = ba.cursor
+            diagnostics_out = .concat(ba.diagnostics)
+            bounds = [.{ segments: [bound_name], type_args: ba.value, span: bound_span }]
           } else {
             diagnostics_out = .append(diag.error(c.span(), "expected contract name after ':'"))
           }
@@ -277,7 +280,10 @@ fn parse_type_params(c: Cursor) TypeParamsParse {
               extra_span := c.span()
               extra_name := c.text()
               c = .advance()
-              bounds = .append(.{ segments: [extra_name], span: extra_span })
+              ba := parse_optional_type_args(c)
+              c = ba.cursor
+              diagnostics_out = .concat(ba.diagnostics)
+              bounds = .append(.{ segments: [extra_name], type_args: ba.value, span: extra_span })
             } else {
               diagnostics_out = .append(diag.error(c.span(), "expected contract name after '+'"))
             }
@@ -309,6 +315,27 @@ fn parse_type_params(c: Cursor) TypeParamsParse {
   }
 
   .{ value: params, cursor: c, diagnostics: diagnostics_out }
+}
+
+// Parse an optional `<T, ...>` type-argument list (e.g. on a contract bound).
+// Returns an empty list when the next token is not `<`.
+fn parse_optional_type_args(c: Cursor) TypeListParse {
+  if c.kind() != .Lt {
+    return .{ value: [], cursor: c, diagnostics: [] }
+  }
+
+  cur := c.advance()
+  parsed := parse_type_list_until(cur, TokenKind.Gt)
+  diags := parsed.diagnostics
+  cur = parsed.cursor
+
+  if cur.kind() == .Gt {
+    cur = .advance()
+  } else {
+    diags = .append(diag.error(cur.span(), "expected '>' after type argument list"))
+  }
+
+  .{ value: parsed.value, cursor: cur, diagnostics: diags }
 }
 
 fn parse_type_list_until(c: Cursor, end_kind: TokenKind) TypeListParse {
@@ -613,7 +640,7 @@ fn parse_type_expr(c: Cursor) TypeParse {
     err_parsed := parse_type_expr_base(c.advance())
     diagnostics_out := err_parsed.diagnostics
     void_ty := TypeExpr.{
-      kind: .Path(TypePath.{ segments: ["Void"], span: bang_span }),
+      kind: .Path(TypePath.{ segments: ["Void"], type_args: [], span: bang_span }),
       span: bang_span,
     }
     result_span := bang_span.merge(err_parsed.value.span)
@@ -737,7 +764,7 @@ fn parse_type_expr_base(c: Cursor) TypeParse {
   }
 
   path_span := c.span_from(path_start)
-  path := TypePath.{ segments, span: path_span }
+  path := TypePath.{ segments, type_args: [], span: path_span }
   type_args: Vector<TypeExpr> = []
 
   if c.kind() == .Lt {
