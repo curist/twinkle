@@ -575,6 +575,7 @@ fn ensure_prelude_method_signatures_registered<A: ModuleSourceAdapter>(
     Ok(())
 }
 
+#[allow(clippy::too_many_arguments)]
 fn compile_module_with_adapter<A: ModuleSourceAdapter>(
     file_path: &Path,
     alias: &str,
@@ -843,6 +844,7 @@ fn compile_module_with_adapter<A: ModuleSourceAdapter>(
     Ok((exports, file_registry))
 }
 
+#[allow(clippy::too_many_arguments)]
 fn compile_planned_dependencies<A: ModuleSourceAdapter>(
     dependencies: &[planner::PlannedDependency],
     ctx: &mut CompilationContext,
@@ -968,10 +970,8 @@ fn build_module_exports(
                 ..
             }) => {
                 let local_id = LocalId(global_offset);
-                if *is_pub {
-                    if let Some(ty) = state.value_env.lookup(name) {
-                        exports.public_values.insert(name.clone(), (ty, local_id));
-                    }
+                if *is_pub && let Some(ty) = state.value_env.lookup(name) {
+                    exports.public_values.insert(name.clone(), (ty, local_id));
                 }
                 global_offset += 1;
             }
@@ -1249,10 +1249,10 @@ fn remap_func_id(
 
     if let Some(target) = external_func_refs.get(&id) {
         let target_key = path_key(target.module_path.as_path());
-        if let Some(&target_idx) = key_to_idx.get(&target_key) {
-            if let Some(mapped) = local_to_global.get(&(target_idx, target.local_func_id.0)) {
-                return *mapped;
-            }
+        if let Some(&target_idx) = key_to_idx.get(&target_key)
+            && let Some(mapped) = local_to_global.get(&(target_idx, target.local_func_id.0))
+        {
+            return *mapped;
         }
     }
 
@@ -1594,44 +1594,41 @@ fn register_inherent_methods(
         .items
         .iter()
         .filter_map(|item| {
-            if let Item::Function(decl) = item {
-                if let Some(sig) = value_env.get_function(&decl.name) {
-                    if let Some(receiver_ty) = sig.params.first() {
-                        if let Some(type_id) = method_receiver_type_id(receiver_ty) {
-                            // Only register methods for types defined in this module.
-                            // Internal (stdlib/prelude) modules may also register
-                            // methods on builtin types.
-                            let is_local = local_type_ids.contains(&type_id);
-                            if !is_local && !is_internal {
-                                return None;
-                            }
-                            let method_qname = format!("{}.{}", alias, &decl.name);
-                            let method_sig = FunctionSignature {
-                                name: method_qname,
-                                type_params: sig.type_params.clone(),
-                                type_param_bounds: sig.type_param_bounds.clone(),
-                                param_names: sig.param_names.clone(),
-                                params: sig.params.clone(),
-                                ret: sig.ret.clone(),
-                                doc: sig.doc.clone(),
-                                extern_module: sig.extern_module.clone(),
-                            };
-                            let builtin_sig = builtin_method_alias(type_id).map(|builtin_alias| {
-                                FunctionSignature {
-                                    name: format!("{}.{}", builtin_alias, &decl.name),
-                                    type_params: sig.type_params.clone(),
-                                    type_param_bounds: sig.type_param_bounds.clone(),
-                                    param_names: sig.param_names.clone(),
-                                    params: sig.params.clone(),
-                                    ret: sig.ret.clone(),
-                                    doc: sig.doc.clone(),
-                                    extern_module: sig.extern_module.clone(),
-                                }
-                            });
-                            return Some((type_id, decl.name.clone(), method_sig, builtin_sig));
-                        }
-                    }
+            if let Item::Function(decl) = item
+                && let Some(sig) = value_env.get_function(&decl.name)
+                && let Some(receiver_ty) = sig.params.first()
+                && let Some(type_id) = method_receiver_type_id(receiver_ty)
+            {
+                // Only register methods for types defined in this module.
+                // Internal (stdlib/prelude) modules may also register
+                // methods on builtin types.
+                let is_local = local_type_ids.contains(&type_id);
+                if !is_local && !is_internal {
+                    return None;
                 }
+                let method_qname = format!("{}.{}", alias, &decl.name);
+                let method_sig = FunctionSignature {
+                    name: method_qname,
+                    type_params: sig.type_params.clone(),
+                    type_param_bounds: sig.type_param_bounds.clone(),
+                    param_names: sig.param_names.clone(),
+                    params: sig.params.clone(),
+                    ret: sig.ret.clone(),
+                    doc: sig.doc.clone(),
+                    extern_module: sig.extern_module.clone(),
+                };
+                let builtin_sig =
+                    builtin_method_alias(type_id).map(|builtin_alias| FunctionSignature {
+                        name: format!("{}.{}", builtin_alias, &decl.name),
+                        type_params: sig.type_params.clone(),
+                        type_param_bounds: sig.type_param_bounds.clone(),
+                        param_names: sig.param_names.clone(),
+                        params: sig.params.clone(),
+                        ret: sig.ret.clone(),
+                        doc: sig.doc.clone(),
+                        extern_module: sig.extern_module.clone(),
+                    });
+                return Some((type_id, decl.name.clone(), method_sig, builtin_sig));
             }
             None
         })
@@ -1669,17 +1666,16 @@ fn cleanup_module_local_bindings(
                 state.func_table.remove(&qualified);
                 state.qualified_func_targets.remove(&qualified);
 
-                if let Some(sig) = sig {
-                    if let Some(receiver_ty) = sig.params.first() {
-                        if let Some(type_id) = method_receiver_type_id(receiver_ty) {
-                            state.type_env.remove_method(type_id, &decl.name);
-                            if let Some(builtin_alias) = builtin_method_alias(type_id) {
-                                let builtin_name = format!("{}.{}", builtin_alias, decl.name);
-                                state.value_env.remove_function(&builtin_name);
-                                state.func_table.remove(&builtin_name);
-                                state.qualified_func_targets.remove(&builtin_name);
-                            }
-                        }
+                if let Some(sig) = sig
+                    && let Some(receiver_ty) = sig.params.first()
+                    && let Some(type_id) = method_receiver_type_id(receiver_ty)
+                {
+                    state.type_env.remove_method(type_id, &decl.name);
+                    if let Some(builtin_alias) = builtin_method_alias(type_id) {
+                        let builtin_name = format!("{}.{}", builtin_alias, decl.name);
+                        state.value_env.remove_function(&builtin_name);
+                        state.func_table.remove(&builtin_name);
+                        state.qualified_func_targets.remove(&builtin_name);
                     }
                 }
             }

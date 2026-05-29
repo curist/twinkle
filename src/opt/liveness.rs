@@ -151,25 +151,22 @@ pub fn annotate_in_place(func: &mut AnfFunctionDef) {
 }
 
 fn annotate_expr(expr: &mut AnfExpr) {
-    match expr {
-        AnfExpr::Let { local: _, op, body } => {
-            // Check if op is ARecordUpdate with an ALocal base.
-            if let AnfOp::ARecordUpdate {
-                base: Atom::ALocal(r),
-                can_reuse_in_place,
-                ..
-            } = op.as_mut()
-            {
-                let live = live_after(body);
-                if !live.contains(r) {
-                    *can_reuse_in_place = true;
-                }
+    if let AnfExpr::Let { local: _, op, body } = expr {
+        // Check if op is ARecordUpdate with an ALocal base.
+        if let AnfOp::ARecordUpdate {
+            base: Atom::ALocal(r),
+            can_reuse_in_place,
+            ..
+        } = op.as_mut()
+        {
+            let live = live_after(body);
+            if !live.contains(r) {
+                *can_reuse_in_place = true;
             }
-            // Recurse into sub-expressions of op, then into body.
-            annotate_op(op);
-            annotate_expr(body);
         }
-        _ => {}
+        // Recurse into sub-expressions of op, then into body.
+        annotate_op(op);
+        annotate_expr(body);
     }
 }
 

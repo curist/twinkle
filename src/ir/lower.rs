@@ -375,17 +375,19 @@ impl Lowerer {
                         self.func_table.insert(decl.name.clone(), func_id);
                     }
                     // Advance counter past any pre-assigned IDs
-                    if let Some(existing) = self.func_table.get(&decl.name) {
-                        if existing.0 >= next_func_id {
-                            next_func_id = existing.0 + 1;
-                        }
+                    if let Some(existing) = self.func_table.get(&decl.name)
+                        && existing.0 >= next_func_id
+                    {
+                        next_func_id = existing.0 + 1;
                     }
                 }
                 Item::ExternFunction(decl) => {
                     let qualified = format!("{}.{}", decl.module, decl.name);
-                    if !self.func_table.contains_key(&qualified) {
+                    if let std::collections::hash_map::Entry::Vacant(e) =
+                        self.func_table.entry(qualified)
+                    {
                         let func_id = FuncId(next_func_id);
-                        self.func_table.insert(qualified, func_id);
+                        e.insert(func_id);
                         next_func_id += 1;
                         self.collect_extern_import(func_id, decl);
                     }
@@ -398,10 +400,10 @@ impl Lowerer {
         // Second pass: lower each function
         let mut functions = Vec::new();
         for item in &ast.items {
-            if let Item::Function(decl) = item {
-                if let Some(func_def) = self.lower_function(decl) {
-                    functions.push(func_def);
-                }
+            if let Item::Function(decl) = item
+                && let Some(func_def) = self.lower_function(decl)
+            {
+                functions.push(func_def);
             }
         }
 
@@ -413,7 +415,7 @@ impl Lowerer {
         });
 
         // Include hoisted lambdas and __init__ in the function list
-        functions.extend(self.hoisted_functions.drain(..));
+        functions.append(&mut self.hoisted_functions);
 
         if self.errors.is_empty() {
             let all_init_func_ids = init_func_id.into_iter().collect();
@@ -456,10 +458,10 @@ impl Lowerer {
 
         let mut functions = Vec::new();
         for item in &ast.items {
-            if let Item::Function(decl) = item {
-                if let Some(func_def) = self.lower_function(decl) {
-                    functions.push(func_def);
-                }
+            if let Item::Function(decl) = item
+                && let Some(func_def) = self.lower_function(decl)
+            {
+                functions.push(func_def);
             }
         }
 
@@ -471,7 +473,7 @@ impl Lowerer {
         });
 
         // Include any hoisted lambdas
-        functions.extend(self.hoisted_functions.drain(..));
+        functions.append(&mut self.hoisted_functions);
 
         if self.errors.is_empty() {
             Ok(LoweredModule {
@@ -1766,7 +1768,8 @@ impl Lowerer {
                 ty: MonoType::Void,
                 span: iter_span,
             };
-            let body_then_inc = CoreExpr {
+
+            CoreExpr {
                 kind: CoreExprKind::Let {
                     local: self.local_allocator.alloc(),
                     value: Box::new(body_expr),
@@ -1774,8 +1777,7 @@ impl Lowerer {
                 },
                 ty: MonoType::Void,
                 span: iter_span,
-            };
-            body_then_inc
+            }
         } else {
             // No index: body → continue
             CoreExpr {
@@ -2286,14 +2288,14 @@ impl Lowerer {
                 // Handle assignment expressions (e.g. as case arm bodies).
                 if matches!(op, BinOp::Assign) {
                     // Simple ident rebinding: x = expr
-                    if let ExprKind::Ident(name) = &left.kind {
-                        if let Some(existing_local) = self.local_allocator.lookup(name) {
-                            let value_expr = self.lower_expr(right)?;
-                            return Some(CoreExprKind::Assign {
-                                local: existing_local,
-                                value: Box::new(value_expr),
-                            });
-                        }
+                    if let ExprKind::Ident(name) = &left.kind
+                        && let Some(existing_local) = self.local_allocator.lookup(name)
+                    {
+                        let value_expr = self.lower_expr(right)?;
+                        return Some(CoreExprKind::Assign {
+                            local: existing_local,
+                            value: Box::new(value_expr),
+                        });
                     }
                     // Complex lvalue: r.field = val, arr[i] = val, m[k] = val
                     let rhs_core = self.lower_expr(right)?;
@@ -2388,35 +2390,35 @@ impl Lowerer {
             // --- Field access → RecordGet or method call ---
             ExprKind::FieldAccess { base, field } => {
                 // Module alias first-class function/value reference: Vector.len, math.pi, etc.
-                if let ExprKind::Ident(alias) = &base.kind {
-                    if self.can_use_module_alias(alias) {
-                        let qualified = format!("{}.{}", alias, field);
-                        if self.qualified_func_targets.contains_key(&qualified)
-                            || self.func_table.contains_key(&qualified)
-                        {
-                            let func_id = self.resolve_named_func_id(&qualified, span)?;
-                            return Some(CoreExprKind::GlobalFunc(func_id));
-                        }
-                        if let Some(&local_id) = self.qualified_value_globals.get(&qualified) {
-                            return Some(CoreExprKind::GlobalLocal(local_id));
-                        }
-                        self.errors.push(LowerError::InternalError {
-                            message: format!("unknown module reference '{}.{}'", alias, field),
-                            span,
-                        });
-                        return None;
+                if let ExprKind::Ident(alias) = &base.kind
+                    && self.can_use_module_alias(alias)
+                {
+                    let qualified = format!("{}.{}", alias, field);
+                    if self.qualified_func_targets.contains_key(&qualified)
+                        || self.func_table.contains_key(&qualified)
+                    {
+                        let func_id = self.resolve_named_func_id(&qualified, span)?;
+                        return Some(CoreExprKind::GlobalFunc(func_id));
                     }
+                    if let Some(&local_id) = self.qualified_value_globals.get(&qualified) {
+                        return Some(CoreExprKind::GlobalLocal(local_id));
+                    }
+                    self.errors.push(LowerError::InternalError {
+                        message: format!("unknown module reference '{}.{}'", alias, field),
+                        span,
+                    });
+                    return None;
                 }
 
                 // TypeName.Variant or module.TypeName.Variant (zero-arg variant construction)
-                if let Some(type_id) = self.try_resolve_type_from_expr(base) {
-                    if let Some(variant_idx) = self.type_env.get_variant_index(type_id, field) {
-                        return Some(CoreExprKind::Variant {
-                            type_id,
-                            variant: VariantId(variant_idx),
-                            args: vec![],
-                        });
-                    }
+                if let Some(type_id) = self.try_resolve_type_from_expr(base)
+                    && let Some(variant_idx) = self.type_env.get_variant_index(type_id, field)
+                {
+                    return Some(CoreExprKind::Variant {
+                        type_id,
+                        variant: VariantId(variant_idx),
+                        args: vec![],
+                    });
                 }
 
                 let base_expr = self.lower_expr(base)?;
@@ -2928,52 +2930,52 @@ impl Lowerer {
         if let ExprKind::FieldAccess { base, field } = &callee.kind {
             // Module-qualified call: alias.func(args) — check before constructor
             // to match synth_call resolution order in the type checker.
-            if let ExprKind::Ident(alias) = &base.kind {
-                if self.can_use_module_alias(alias) {
-                    let qualified = format!("{}.{}", alias, field);
-                    if self.qualified_func_targets.contains_key(&qualified)
-                        || self.func_table.contains_key(&qualified)
-                    {
-                        let func_id = self.resolve_named_func_id(&qualified, span)?;
-                        let mut lowered_args = Vec::new();
-                        for a in args {
-                            lowered_args.push(self.lower_expr(a)?);
-                        }
-                        let func_ty = MonoType::Function {
-                            params: lowered_args.iter().map(|a| a.ty.clone()).collect(),
-                            ret: Box::new(ret_ty.clone()),
-                        };
-                        let func_expr = CoreExpr {
-                            kind: CoreExprKind::GlobalFunc(func_id),
-                            ty: func_ty,
-                            span,
-                        };
-                        return Some(CoreExprKind::Call {
-                            callee: Box::new(func_expr),
-                            args: lowered_args,
-                        });
-                    }
-                    self.errors.push(LowerError::InternalError {
-                        message: format!("no FuncId for '{}'", qualified),
-                        span,
-                    });
-                    return None;
-                }
-            }
-
-            // TypeName.Variant(args) or module.TypeName.Variant(args)
-            if let Some(type_id) = self.try_resolve_type_from_expr(base) {
-                if let Some(variant_idx) = self.type_env.get_variant_index(type_id, field) {
+            if let ExprKind::Ident(alias) = &base.kind
+                && self.can_use_module_alias(alias)
+            {
+                let qualified = format!("{}.{}", alias, field);
+                if self.qualified_func_targets.contains_key(&qualified)
+                    || self.func_table.contains_key(&qualified)
+                {
+                    let func_id = self.resolve_named_func_id(&qualified, span)?;
                     let mut lowered_args = Vec::new();
                     for a in args {
                         lowered_args.push(self.lower_expr(a)?);
                     }
-                    return Some(CoreExprKind::Variant {
-                        type_id,
-                        variant: VariantId(variant_idx),
+                    let func_ty = MonoType::Function {
+                        params: lowered_args.iter().map(|a| a.ty.clone()).collect(),
+                        ret: Box::new(ret_ty.clone()),
+                    };
+                    let func_expr = CoreExpr {
+                        kind: CoreExprKind::GlobalFunc(func_id),
+                        ty: func_ty,
+                        span,
+                    };
+                    return Some(CoreExprKind::Call {
+                        callee: Box::new(func_expr),
                         args: lowered_args,
                     });
                 }
+                self.errors.push(LowerError::InternalError {
+                    message: format!("no FuncId for '{}'", qualified),
+                    span,
+                });
+                return None;
+            }
+
+            // TypeName.Variant(args) or module.TypeName.Variant(args)
+            if let Some(type_id) = self.try_resolve_type_from_expr(base)
+                && let Some(variant_idx) = self.type_env.get_variant_index(type_id, field)
+            {
+                let mut lowered_args = Vec::new();
+                for a in args {
+                    lowered_args.push(self.lower_expr(a)?);
+                }
+                return Some(CoreExprKind::Variant {
+                    type_id,
+                    variant: VariantId(variant_idx),
+                    args: lowered_args,
+                });
             }
 
             // Method call via FieldAccess: receiver.method(args)
@@ -3272,17 +3274,16 @@ impl Lowerer {
                 //    type checker has already validated that the variant belongs to this type.
                 // 3. Full scan — last resort when scrutinee type is unknown.
                 let resolved: Option<(crate::types::ty::TypeId, usize)> = 'resolve: {
-                    if let Some(tname) = qual_type_name {
-                        if let Some(tid) = self.type_env.lookup_type(tname) {
-                            if let Some(idx) = self.type_env.get_variant_index(tid, variant_name) {
-                                break 'resolve Some((tid, idx));
-                            }
-                        }
+                    if let Some(tname) = qual_type_name
+                        && let Some(tid) = self.type_env.lookup_type(tname)
+                        && let Some(idx) = self.type_env.get_variant_index(tid, variant_name)
+                    {
+                        break 'resolve Some((tid, idx));
                     }
-                    if let Some(MonoType::Named { type_id, .. }) = scrutinee_ty {
-                        if let Some(idx) = self.type_env.get_variant_index(*type_id, variant_name) {
-                            break 'resolve Some((*type_id, idx));
-                        }
+                    if let Some(MonoType::Named { type_id, .. }) = scrutinee_ty
+                        && let Some(idx) = self.type_env.get_variant_index(*type_id, variant_name)
+                    {
+                        break 'resolve Some((*type_id, idx));
                     }
                     let mut found = None;
                     for i in 0..self.type_env.type_count() {
@@ -4389,7 +4390,7 @@ impl Lowerer {
                 value: Some(Box::new(freeze_call)),
             },
             ty: result_ty.clone(),
-            span: span,
+            span,
         };
 
         // Match the option
@@ -5583,10 +5584,9 @@ fn extract_simple_assign(expr: &Expr) -> Option<(&str, &Expr)> {
         left,
         right,
     } = &expr.kind
+        && let ExprKind::Ident(name) = &left.kind
     {
-        if let ExprKind::Ident(name) = &left.kind {
-            return Some((name.as_str(), right));
-        }
+        return Some((name.as_str(), right));
     }
     None
 }
@@ -5617,27 +5617,27 @@ fn lower_unit_variant_compare(
         return None;
     }
 
-    if let Some((type_id, variant)) = unit_variant_tag(&right) {
-        if matches!(&left.ty, MonoType::Named { type_id: lhs_tid, .. } if *lhs_tid == type_id) {
-            return Some(build_unit_variant_compare(
-                op,
-                left.clone(),
-                type_id,
-                variant,
-                span,
-            ));
-        }
+    if let Some((type_id, variant)) = unit_variant_tag(right)
+        && matches!(&left.ty, MonoType::Named { type_id: lhs_tid, .. } if *lhs_tid == type_id)
+    {
+        return Some(build_unit_variant_compare(
+            op,
+            left.clone(),
+            type_id,
+            variant,
+            span,
+        ));
     }
-    if let Some((type_id, variant)) = unit_variant_tag(&left) {
-        if matches!(&right.ty, MonoType::Named { type_id: rhs_tid, .. } if *rhs_tid == type_id) {
-            return Some(build_unit_variant_compare(
-                op,
-                right.clone(),
-                type_id,
-                variant,
-                span,
-            ));
-        }
+    if let Some((type_id, variant)) = unit_variant_tag(left)
+        && matches!(&right.ty, MonoType::Named { type_id: rhs_tid, .. } if *rhs_tid == type_id)
+    {
+        return Some(build_unit_variant_compare(
+            op,
+            right.clone(),
+            type_id,
+            variant,
+            span,
+        ));
     }
 
     // Generic unit-enum equality/inequality: lower to a nested match so

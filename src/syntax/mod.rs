@@ -136,6 +136,133 @@ fn char_offset_to_byte_offset(source: &str, char_offset: usize) -> usize {
     source.len()
 }
 
+fn format_lexer_error(registry: &FileRegistry, error: lexer::LexError) -> anyhow::Error {
+    let file_name = registry.file_name(error.span.file_id).unwrap_or("unknown");
+
+    if let Some((line, col)) = registry.line_col(error.span) {
+        let mut msg = format!(
+            "{}:{}:{}: Lexer error: {:?}",
+            file_name, line, col, error.kind
+        );
+
+        // Add source context
+        if let Some(line_text) = registry.line_text(error.span) {
+            msg.push_str(&format!("\n{:4} | {}", line, line_text));
+
+            // Add caret pointing to error
+            let caret_pos = col + 6; // "  N | " prefix
+            msg.push_str(&format!("\n{:>width$}", "^", width = caret_pos));
+        }
+
+        anyhow::anyhow!(msg)
+    } else {
+        anyhow::anyhow!("Lexer error at {:?}: {:?}", error.span, error.kind)
+    }
+}
+
+fn format_parse_error(registry: &FileRegistry, error: parser::ParseError) -> anyhow::Error {
+    let file_name = registry.file_name(error.span.file_id).unwrap_or("unknown");
+
+    if let Some((line, col)) = registry.line_col(error.span) {
+        let mut msg = match &error.kind {
+            parser::ParseErrorKind::UnexpectedToken { expected, found } => {
+                if expected.len() == 1 {
+                    format!(
+                        "{}:{}:{}: Expected {}, found {}",
+                        file_name, line, col, expected[0], found
+                    )
+                } else {
+                    format!(
+                        "{}:{}:{}: Expected one of [{}], found {}",
+                        file_name,
+                        line,
+                        col,
+                        expected.join(", "),
+                        found
+                    )
+                }
+            }
+            parser::ParseErrorKind::UnexpectedEof { expected } => {
+                if expected.len() == 1 {
+                    format!(
+                        "{}:{}:{}: Unexpected end of file, expected {}",
+                        file_name, line, col, expected[0]
+                    )
+                } else {
+                    format!(
+                        "{}:{}:{}: Unexpected end of file, expected one of [{}]",
+                        file_name,
+                        line,
+                        col,
+                        expected.join(", ")
+                    )
+                }
+            }
+            parser::ParseErrorKind::ConstructorInPostfix { name } => {
+                format!(
+                    "{}:{}:{}: Constructor '.{}' cannot appear after an expression",
+                    file_name, line, col, name
+                )
+            }
+            parser::ParseErrorKind::LowercaseVariant { name } => {
+                format!(
+                    "{}:{}:{}: Variant name '{}' must start with an uppercase letter",
+                    file_name, line, col, name
+                )
+            }
+            parser::ParseErrorKind::CaseViolation {
+                kind,
+                name,
+                expected,
+            } => {
+                format!(
+                    "{}:{}:{}: {} '{}' must start with {} letter",
+                    file_name, line, col, kind, name, expected
+                )
+            }
+            parser::ParseErrorKind::EmptyImportList => {
+                format!(
+                    "{}:{}:{}: Import list cannot be empty",
+                    file_name, line, col
+                )
+            }
+            parser::ParseErrorKind::StatementInExpression { statement, context } => {
+                let ctx = match context {
+                    Some(c) => format!(" in {c}"),
+                    None => String::new(),
+                };
+                format!(
+                    "{}:{}:{}: '{}' is a statement and cannot be used where an expression is expected{}\nhint: wrap it in a block expression, e.g. `=> {{ {} ... }}`",
+                    file_name, line, col, statement, ctx, statement
+                )
+            }
+        };
+
+        // Add source context
+        if let Some(line_text) = registry.line_text(error.span) {
+            msg.push_str(&format!("\n{:4} | {}", line, line_text));
+
+            // Add caret/underline pointing to error
+            let span_len = (error.span.end - error.span.start).max(1) as usize;
+            let caret_pos = col + 6; // "  N | " prefix
+            let underline = if span_len == 1 {
+                "^".to_string()
+            } else {
+                "^".to_string() + &"-".repeat(span_len.saturating_sub(1))
+            };
+            msg.push_str(&format!(
+                "\n{:>width$}",
+                underline,
+                width = caret_pos + span_len - 1
+            ));
+        }
+
+        anyhow::anyhow!(msg)
+    } else {
+        anyhow::anyhow!("Parse error at {:?}: {:?}", error.span, error.kind)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -278,132 +405,5 @@ pub answer := 42
             rendered.contains("grouped expression"),
             "expected grouped-expression context, got: {rendered}"
         );
-    }
-}
-
-fn format_lexer_error(registry: &FileRegistry, error: lexer::LexError) -> anyhow::Error {
-    let file_name = registry.file_name(error.span.file_id).unwrap_or("unknown");
-
-    if let Some((line, col)) = registry.line_col(error.span) {
-        let mut msg = format!(
-            "{}:{}:{}: Lexer error: {:?}",
-            file_name, line, col, error.kind
-        );
-
-        // Add source context
-        if let Some(line_text) = registry.line_text(error.span) {
-            msg.push_str(&format!("\n{:4} | {}", line, line_text));
-
-            // Add caret pointing to error
-            let caret_pos = col + 6; // "  N | " prefix
-            msg.push_str(&format!("\n{:>width$}", "^", width = caret_pos));
-        }
-
-        anyhow::anyhow!(msg)
-    } else {
-        anyhow::anyhow!("Lexer error at {:?}: {:?}", error.span, error.kind)
-    }
-}
-
-fn format_parse_error(registry: &FileRegistry, error: parser::ParseError) -> anyhow::Error {
-    let file_name = registry.file_name(error.span.file_id).unwrap_or("unknown");
-
-    if let Some((line, col)) = registry.line_col(error.span) {
-        let mut msg = match &error.kind {
-            parser::ParseErrorKind::UnexpectedToken { expected, found } => {
-                if expected.len() == 1 {
-                    format!(
-                        "{}:{}:{}: Expected {}, found {}",
-                        file_name, line, col, expected[0], found
-                    )
-                } else {
-                    format!(
-                        "{}:{}:{}: Expected one of [{}], found {}",
-                        file_name,
-                        line,
-                        col,
-                        expected.join(", "),
-                        found
-                    )
-                }
-            }
-            parser::ParseErrorKind::UnexpectedEof { expected } => {
-                if expected.len() == 1 {
-                    format!(
-                        "{}:{}:{}: Unexpected end of file, expected {}",
-                        file_name, line, col, expected[0]
-                    )
-                } else {
-                    format!(
-                        "{}:{}:{}: Unexpected end of file, expected one of [{}]",
-                        file_name,
-                        line,
-                        col,
-                        expected.join(", ")
-                    )
-                }
-            }
-            parser::ParseErrorKind::ConstructorInPostfix { name } => {
-                format!(
-                    "{}:{}:{}: Constructor '.{}' cannot appear after an expression",
-                    file_name, line, col, name
-                )
-            }
-            parser::ParseErrorKind::LowercaseVariant { name } => {
-                format!(
-                    "{}:{}:{}: Variant name '{}' must start with an uppercase letter",
-                    file_name, line, col, name
-                )
-            }
-            parser::ParseErrorKind::CaseViolation {
-                kind,
-                name,
-                expected,
-            } => {
-                format!(
-                    "{}:{}:{}: {} '{}' must start with {} letter",
-                    file_name, line, col, kind, name, expected
-                )
-            }
-            parser::ParseErrorKind::EmptyImportList => {
-                format!(
-                    "{}:{}:{}: Import list cannot be empty",
-                    file_name, line, col
-                )
-            }
-            parser::ParseErrorKind::StatementInExpression { statement, context } => {
-                let ctx = match context {
-                    Some(c) => format!(" in {c}"),
-                    None => String::new(),
-                };
-                format!(
-                    "{}:{}:{}: '{}' is a statement and cannot be used where an expression is expected{}\nhint: wrap it in a block expression, e.g. `=> {{ {} ... }}`",
-                    file_name, line, col, statement, ctx, statement
-                )
-            }
-        };
-
-        // Add source context
-        if let Some(line_text) = registry.line_text(error.span) {
-            msg.push_str(&format!("\n{:4} | {}", line, line_text));
-
-            // Add caret/underline pointing to error
-            let span_len = (error.span.end - error.span.start).max(1) as usize;
-            let caret_pos = col + 6; // "  N | " prefix
-            let underline = if span_len == 1 {
-                "^".to_string()
-            } else {
-                "^".to_string() + &"-".repeat(span_len.saturating_sub(1))
-            };
-            msg.push_str(&format!(
-                "\n{:>width$}",
-                underline,
-                width = caret_pos + span_len - 1
-            ));
-        }
-
-        anyhow::anyhow!(msg)
-    } else {
-        anyhow::anyhow!("Parse error at {:?}: {:?}", error.span, error.kind)
     }
 }

@@ -171,7 +171,7 @@ pub(crate) fn emit_named_module_from_plan(
     ctx.set_user_func_iterator_states(plan.user_func_iterator_states.clone());
 
     // Register typed closures and cells in the unified registry.
-    for (_func_id, (params, ret)) in &plan.concrete_func_sigs {
+    for (params, ret) in plan.concrete_func_sigs.values() {
         let sym = typed_closurefunc_sym(params, ret);
         ctx.request_typed_closure(sym, params.clone(), ret.clone());
     }
@@ -202,7 +202,7 @@ pub(crate) fn emit_named_module_from_plan(
             ret,
             &abi_results,
             type_env,
-            &concrete_func_sigs,
+            concrete_func_sigs,
         ));
         module
             .types
@@ -212,7 +212,7 @@ pub(crate) fn emit_named_module_from_plan(
         module.types.push(emit_typed_cell_struct_def(
             elem,
             type_env,
-            &concrete_func_sigs,
+            concrete_func_sigs,
         ));
     }
     // Iterator-adjacent types are registered during function body emission
@@ -281,7 +281,7 @@ pub(crate) fn emit_named_module_from_plan(
             module.funcs.push(emit_typed_iterator_next_helper(
                 info,
                 type_env,
-                &concrete_func_sigs,
+                concrete_func_sigs,
             ));
         }
     }
@@ -292,7 +292,7 @@ pub(crate) fn emit_named_module_from_plan(
             yield_ty,
             seed_ty,
             type_env,
-            &concrete_func_sigs,
+            concrete_func_sigs,
         ));
     }
     for info in ctx.requested_typed_iterator_states().values() {
@@ -304,7 +304,7 @@ pub(crate) fn emit_named_module_from_plan(
             module.types.push(emit_typed_iterator_state_struct_def(
                 info,
                 type_env,
-                &concrete_func_sigs,
+                concrete_func_sigs,
             ));
         }
     }
@@ -317,7 +317,7 @@ pub(crate) fn emit_named_module_from_plan(
             module.types.push(emit_typed_iter_item_struct_def(
                 info,
                 type_env,
-                &concrete_func_sigs,
+                concrete_func_sigs,
             ));
         }
     }
@@ -331,7 +331,7 @@ pub(crate) fn emit_named_module_from_plan(
         }
     }
     // Pre-register typed option structs needed by extern import bridges.
-    for (_func_id, ext) in &anf.extern_imports {
+    for ext in anf.extern_imports.values() {
         for ty in ext
             .param_tys
             .iter()
@@ -349,7 +349,7 @@ pub(crate) fn emit_named_module_from_plan(
             module.types.push(emit_typed_general_option_struct_def(
                 &mono,
                 type_env,
-                &concrete_func_sigs,
+                concrete_func_sigs,
             ));
         }
     }
@@ -391,7 +391,7 @@ pub(crate) fn emit_named_module_from_plan(
     // Add extern function imports
     for (func_id, ext) in &anf.extern_imports {
         let has_option_extern_param = ext.param_tys.iter().any(is_option_extern_ref);
-        let has_option_extern_ret = ext.return_ty.as_ref().map_or(false, is_option_extern_ref);
+        let has_option_extern_ret = ext.return_ty.as_ref().is_some_and(is_option_extern_ref);
         let needs_bridge = has_option_extern_param || has_option_extern_ret;
 
         // Import params/results: use raw externref for Option<ExternRef> at the boundary
@@ -929,48 +929,48 @@ fn emit_extern_nullable_bridge(
 
     // If return type is Option<ExternRef>, wrap nullable externref into a Variant struct.
     // Variant layout: (type_id: i32, variant_id: i32, payload: (ref null $rt_types__Array))
-    if let Some(ret_ty) = return_mono_ty {
-        if is_option_extern_ref(ret_ty) {
-            let result_local = bridge_params.len() as u32;
-            body.push(Instr::LocalSet(result_local));
-            body.push(Instr::LocalGet(result_local));
-            body.push(Instr::RefIsNull);
-            let variant_ref = ValType::Ref {
-                nullable: true,
-                heap: HeapType::Named(T_VARIANT.to_string()),
-            };
-            body.push(Instr::If {
-                result: Some(variant_ref),
-                then_body: {
-                    // None: Variant(OPTION_TYPE_ID, 0, empty_array)
-                    vec![
-                        Instr::I32Const(OPTION_TYPE_ID.0 as i32),
-                        Instr::I32Const(0),
-                        Instr::ArrayNewFixed(T_ARRAY.to_string(), 0),
-                        Instr::StructNew(T_VARIANT.to_string()),
-                    ]
-                },
-                else_body: {
-                    // Some: Variant(OPTION_TYPE_ID, 1, [any.convert_extern(externref)])
-                    vec![
-                        Instr::I32Const(OPTION_TYPE_ID.0 as i32),
-                        Instr::I32Const(1),
-                        Instr::LocalGet(result_local),
-                        Instr::AnyConvertExtern,
-                        Instr::ArrayNewFixed(T_ARRAY.to_string(), 1),
-                        Instr::StructNew(T_VARIANT.to_string()),
-                    ]
-                },
-            });
+    if let Some(ret_ty) = return_mono_ty
+        && is_option_extern_ref(ret_ty)
+    {
+        let result_local = bridge_params.len() as u32;
+        body.push(Instr::LocalSet(result_local));
+        body.push(Instr::LocalGet(result_local));
+        body.push(Instr::RefIsNull);
+        let variant_ref = ValType::Ref {
+            nullable: true,
+            heap: HeapType::Named(T_VARIANT.to_string()),
+        };
+        body.push(Instr::If {
+            result: Some(variant_ref),
+            then_body: {
+                // None: Variant(OPTION_TYPE_ID, 0, empty_array)
+                vec![
+                    Instr::I32Const(OPTION_TYPE_ID.0 as i32),
+                    Instr::I32Const(0),
+                    Instr::ArrayNewFixed(T_ARRAY.to_string(), 0),
+                    Instr::StructNew(T_VARIANT.to_string()),
+                ]
+            },
+            else_body: {
+                // Some: Variant(OPTION_TYPE_ID, 1, [any.convert_extern(externref)])
+                vec![
+                    Instr::I32Const(OPTION_TYPE_ID.0 as i32),
+                    Instr::I32Const(1),
+                    Instr::LocalGet(result_local),
+                    Instr::AnyConvertExtern,
+                    Instr::ArrayNewFixed(T_ARRAY.to_string(), 1),
+                    Instr::StructNew(T_VARIANT.to_string()),
+                ]
+            },
+        });
 
-            return FuncDef {
-                name: bridge_sym.to_string(),
-                params: bridge_params.to_vec(),
-                results: bridge_results.to_vec(),
-                locals: vec![nullable_externref],
-                body,
-            };
-        }
+        return FuncDef {
+            name: bridge_sym.to_string(),
+            params: bridge_params.to_vec(),
+            results: bridge_results.to_vec(),
+            locals: vec![nullable_externref],
+            body,
+        };
     }
 
     FuncDef {
@@ -1492,6 +1492,7 @@ fn emit_match_op(
     )
 }
 
+#[allow(clippy::too_many_arguments)]
 fn emit_match_arm_chain(
     scrutinee_anyref: &[Instr],
     scrutinee_mono: Option<&MonoType>,
@@ -1835,84 +1836,83 @@ fn emit_pattern_condition(
 
             // Typed general Option<T> / Result<T,E> path: direct struct field access.
             // Guarded by flow metadata to avoid assuming typed layout for erased/ABI values.
-            if let Some(mono) = typed_general_option {
-                if let Some(option_sym) =
+            if let Some(mono) = typed_general_option
+                && let Some(option_sym) =
                     typed_general_option_pattern_sym(*type_id, expected_mono, Some(mono))
-                {
-                    let typed_ref = ValType::Ref {
-                        nullable: true,
-                        heap: HeapType::Named(option_sym.clone()),
-                    };
+            {
+                let typed_ref = ValType::Ref {
+                    nullable: true,
+                    heap: HeapType::Named(option_sym.clone()),
+                };
 
-                    let mut outer_checks = Vec::new();
+                let mut outer_checks = Vec::new();
 
-                    let mut type_check = value_anyref_instrs.to_vec();
-                    type_check.push(Instr::RefTest {
-                        nullable: true,
-                        heap: HeapType::Named(option_sym.clone()),
-                    });
-                    outer_checks.push(type_check);
+                let mut type_check = value_anyref_instrs.to_vec();
+                type_check.push(Instr::RefTest {
+                    nullable: true,
+                    heap: HeapType::Named(option_sym.clone()),
+                });
+                outer_checks.push(type_check);
 
-                    let mut variant_then = value_anyref_instrs.to_vec();
-                    variant_then.extend(emit_unbox_on_stack(&typed_ref));
-                    variant_then.push(Instr::StructGet(option_sym.clone(), 0));
-                    variant_then.push(Instr::I32Const(variant.0 as i32));
-                    variant_then.push(Instr::I32Eq);
+                let mut variant_then = value_anyref_instrs.to_vec();
+                variant_then.extend(emit_unbox_on_stack(&typed_ref));
+                variant_then.push(Instr::StructGet(option_sym.clone(), 0));
+                variant_then.push(Instr::I32Const(variant.0 as i32));
+                variant_then.push(Instr::I32Eq);
 
-                    let mut variant_check = value_anyref_instrs.to_vec();
-                    variant_check.push(Instr::RefTest {
-                        nullable: true,
-                        heap: HeapType::Named(option_sym.clone()),
-                    });
-                    variant_check.push(Instr::If {
-                        result: Some(ValType::I32),
-                        then_body: variant_then,
-                        else_body: vec![Instr::I32Const(0)],
-                    });
-                    outer_checks.push(variant_check);
+                let mut variant_check = value_anyref_instrs.to_vec();
+                variant_check.push(Instr::RefTest {
+                    nullable: true,
+                    heap: HeapType::Named(option_sym.clone()),
+                });
+                variant_check.push(Instr::If {
+                    result: Some(ValType::I32),
+                    then_body: variant_then,
+                    else_body: vec![Instr::I32Const(0)],
+                });
+                outer_checks.push(variant_check);
 
-                    let mut inner_checks = Vec::new();
-                    for (idx, field_pat) in fields.iter().enumerate() {
-                        if pattern_is_trivially_true(field_pat) {
-                            continue;
-                        }
-                        let struct_field_idx =
-                            typed_sum_struct_field_offset(mono, *variant, idx as u32);
-                        let field_mono = variant_field_mono_for_typed_sum(mono, *variant, idx);
-                        let payload_ty = mono_to_valtype_specialized(
-                            field_mono.unwrap_or(&MonoType::Void),
-                            ctx.type_env,
-                            &ctx.concrete_func_sigs,
-                        );
-                        let mut field_instrs = value_anyref_instrs.to_vec();
-                        field_instrs.extend(emit_unbox_on_stack(&typed_ref));
-                        field_instrs.push(Instr::StructGet(option_sym.clone(), struct_field_idx));
-                        field_instrs.extend(emit_coerce_stack(&payload_ty, &ValType::Anyref));
-                        inner_checks.push(emit_pattern_condition(
-                            field_pat,
-                            &field_instrs,
-                            field_mono,
-                            None,
-                            None,
-                            None,
-                            ctx,
-                        ));
+                let mut inner_checks = Vec::new();
+                for (idx, field_pat) in fields.iter().enumerate() {
+                    if pattern_is_trivially_true(field_pat) {
+                        continue;
                     }
-
-                    if inner_checks.is_empty() {
-                        return combine_i32_ands(outer_checks);
-                    }
-
-                    let outer_cond = combine_i32_ands(outer_checks);
-                    let inner_cond = combine_i32_ands(inner_checks);
-                    let mut instrs = outer_cond;
-                    instrs.push(Instr::If {
-                        result: Some(ValType::I32),
-                        then_body: inner_cond,
-                        else_body: vec![Instr::I32Const(0)],
-                    });
-                    return instrs;
+                    let struct_field_idx =
+                        typed_sum_struct_field_offset(mono, *variant, idx as u32);
+                    let field_mono = variant_field_mono_for_typed_sum(mono, *variant, idx);
+                    let payload_ty = mono_to_valtype_specialized(
+                        field_mono.unwrap_or(&MonoType::Void),
+                        ctx.type_env,
+                        &ctx.concrete_func_sigs,
+                    );
+                    let mut field_instrs = value_anyref_instrs.to_vec();
+                    field_instrs.extend(emit_unbox_on_stack(&typed_ref));
+                    field_instrs.push(Instr::StructGet(option_sym.clone(), struct_field_idx));
+                    field_instrs.extend(emit_coerce_stack(&payload_ty, &ValType::Anyref));
+                    inner_checks.push(emit_pattern_condition(
+                        field_pat,
+                        &field_instrs,
+                        field_mono,
+                        None,
+                        None,
+                        None,
+                        ctx,
+                    ));
                 }
+
+                if inner_checks.is_empty() {
+                    return combine_i32_ands(outer_checks);
+                }
+
+                let outer_cond = combine_i32_ands(outer_checks);
+                let inner_cond = combine_i32_ands(inner_checks);
+                let mut instrs = outer_cond;
+                instrs.push(Instr::If {
+                    result: Some(ValType::I32),
+                    then_body: inner_cond,
+                    else_body: vec![Instr::I32Const(0)],
+                });
+                return instrs;
             }
 
             // Outer checks: type_id and variant_idx (safe to evaluate eagerly)
@@ -2055,6 +2055,7 @@ fn emit_variant_field_anyref_universal(
     instrs
 }
 
+#[allow(clippy::too_many_arguments)]
 fn emit_variant_field_anyref(
     value_anyref_instrs: &[Instr],
     expected_mono: Option<&MonoType>,
@@ -2115,28 +2116,27 @@ fn emit_variant_field_anyref(
     }
 
     // Typed general Option<T> / Result<T,E> path.
-    if let Some(mono) = typed_general_option {
-        if let Some(sum_sym) = typed_general_option_pattern_sym(
+    if let Some(mono) = typed_general_option
+        && let Some(sum_sym) = typed_general_option_pattern_sym(
             mono_type_id(mono).unwrap_or(OPTION_TYPE_ID),
             expected_mono,
             Some(mono),
-        ) {
-            let struct_field_idx =
-                typed_sum_struct_field_offset(mono, variant_id, field_idx as u32);
-            let field_mono_resolved =
-                variant_field_mono_for_typed_sum(mono, variant_id, field_idx as usize);
-            let field_ty = field_mono_resolved
-                .map(|m| mono_to_valtype_specialized(m, ctx.type_env, &ctx.concrete_func_sigs))
-                .unwrap_or(ValType::Anyref);
-            let mut instrs = value_anyref_instrs.to_vec();
-            instrs.push(Instr::RefCast {
-                nullable: true,
-                heap: HeapType::Named(sum_sym.clone()),
-            });
-            instrs.push(Instr::StructGet(sum_sym, struct_field_idx));
-            instrs.extend(emit_coerce_stack(&field_ty, &ValType::Anyref));
-            return instrs;
-        }
+        )
+    {
+        let struct_field_idx = typed_sum_struct_field_offset(mono, variant_id, field_idx as u32);
+        let field_mono_resolved =
+            variant_field_mono_for_typed_sum(mono, variant_id, field_idx as usize);
+        let field_ty = field_mono_resolved
+            .map(|m| mono_to_valtype_specialized(m, ctx.type_env, &ctx.concrete_func_sigs))
+            .unwrap_or(ValType::Anyref);
+        let mut instrs = value_anyref_instrs.to_vec();
+        instrs.push(Instr::RefCast {
+            nullable: true,
+            heap: HeapType::Named(sum_sym.clone()),
+        });
+        instrs.push(Instr::StructGet(sum_sym, struct_field_idx));
+        instrs.extend(emit_coerce_stack(&field_ty, &ValType::Anyref));
+        return instrs;
     }
 
     let mut instrs = value_anyref_instrs.to_vec();
@@ -2166,21 +2166,21 @@ fn typed_iter_option_pattern_info(
         type_id: mono_type_id,
         args,
     }) = expected_mono
+        && *mono_type_id == OPTION_TYPE_ID
+        && args.len() == 1
     {
-        if *mono_type_id == OPTION_TYPE_ID && args.len() == 1 {
-            if let MonoType::Named {
-                type_id: payload_type_id,
-                args: payload_args,
-            } = &args[0]
-            {
-                if *payload_type_id == ITER_ITEM_TYPE_ID && payload_args.len() == 1 {
-                    return Some((typed_iter_option_sym(info), vec![args[0].clone()]));
-                }
-            }
-            // Keep typed iterator-option lowering even if local mono metadata for
-            // the Option payload is absent or imprecise.
-            return Some((typed_iter_option_sym(info), vec![fallback_payload]));
+        if let MonoType::Named {
+            type_id: payload_type_id,
+            args: payload_args,
+        } = &args[0]
+            && *payload_type_id == ITER_ITEM_TYPE_ID
+            && payload_args.len() == 1
+        {
+            return Some((typed_iter_option_sym(info), vec![args[0].clone()]));
         }
+        // Keep typed iterator-option lowering even if local mono metadata for
+        // the Option payload is absent or imprecise.
+        return Some((typed_iter_option_sym(info), vec![fallback_payload]));
     }
 
     Some((typed_iter_option_sym(info), vec![fallback_payload]))
@@ -2198,10 +2198,10 @@ fn typed_general_option_pattern_sym(
     if !is_typed_general_sum_candidate(mono) {
         return None;
     }
-    if let Some(expected) = expected_mono {
-        if expected != mono {
-            return None;
-        }
+    if let Some(expected) = expected_mono
+        && expected != mono
+    {
+        return None;
     }
     Some(typed_general_option_sym(mono))
 }
@@ -2229,16 +2229,16 @@ fn typed_sum_struct_field_offset(
 }
 
 /// Get the MonoType for a field within a typed sum variant.
-fn variant_field_mono_for_typed_sum<'a>(
-    mono: &'a MonoType,
+fn variant_field_mono_for_typed_sum(
+    mono: &MonoType,
     variant_id: crate::ir::VariantId,
     field_idx: usize,
-) -> Option<&'a MonoType> {
+) -> Option<&MonoType> {
     match mono {
         MonoType::Named { type_id, args } if *type_id == RESULT_TYPE_ID && args.len() == 2 => {
             // Ok = variant 0 → args[0], Err = variant 1 → args[1]
             if field_idx == 0 {
-                args.get(variant_id.0 as usize)
+                args.get(variant_id.0)
             } else {
                 None
             }
@@ -2246,7 +2246,7 @@ fn variant_field_mono_for_typed_sum<'a>(
         MonoType::Named { type_id, args } if *type_id == OPTION_TYPE_ID && args.len() == 1 => {
             // Some = variant 1, field 0 → args[0]
             if variant_id.0 == 1 && field_idx == 0 {
-                args.get(0)
+                args.first()
             } else {
                 None
             }
@@ -2714,10 +2714,10 @@ fn emit_atom(atom: &Atom, expected_ty: Option<&ValType>, ctx: &mut EmitCtx<'_>) 
     match atom {
         Atom::ALocal(local_id) => emit_local_atom(*local_id, expected_ty, ctx),
         Atom::AGlobalFunc(func_id) => {
-            if let Some(expected_ty) = expected_ty {
-                if let Some(instrs) = emit_specialized_closure_arg(atom, expected_ty, ctx) {
-                    return instrs;
-                }
+            if let Some(expected_ty) = expected_ty
+                && let Some(instrs) = emit_specialized_closure_arg(atom, expected_ty, ctx)
+            {
+                return instrs;
             }
             emit_global_func_atom(*func_id, expected_ty)
         }
@@ -2757,18 +2757,16 @@ fn emit_local_atom(
         // Uses SumRepr metadata first (authoritative), then falls back to mono
         // inference for locals whose SumRepr wasn't set (e.g. anyref locals with
         // inferred typed option content).
-        if let Some(expected) = expected_ty {
-            if is_variant_ref_type(expected) || *expected == ValType::Anyref {
-                let target = if *expected == ValType::Anyref {
-                    &ref_variant_null()
-                } else {
-                    expected
-                };
-                if let Some(instrs) =
-                    emit_sum_local_to_erased(local_id, idx, &local_ty, target, ctx)
-                {
-                    return instrs;
-                }
+        if let Some(expected) = expected_ty
+            && (is_variant_ref_type(expected) || *expected == ValType::Anyref)
+        {
+            let target = if *expected == ValType::Anyref {
+                &ref_variant_null()
+            } else {
+                expected
+            };
+            if let Some(instrs) = emit_sum_local_to_erased(local_id, idx, &local_ty, target, ctx) {
+                return instrs;
             }
         }
         return match expected_ty {
@@ -2812,44 +2810,43 @@ fn emit_sum_local_to_erased(
             SumRepr::TypedResult(mono) => is_typed_general_result_candidate(mono).then_some(mono),
             SumRepr::ErasedVariant => None,
         };
-        if let Some(mono) = candidate {
-            if local_can_store_typed_option(local_id, mono, ctx) {
-                // Debug: verify SumRepr and mono inference agree.
-                debug_assert!(
-                    ctx.infer_atom_mono(&Atom::ALocal(local_id))
-                        .as_ref()
-                        .is_none_or(|inferred| inferred == mono),
-                    "SumRepr/mono inference mismatch for L{}: repr={:?} inferred={:?}",
-                    local_id.0,
-                    mono,
-                    ctx.infer_atom_mono(&Atom::ALocal(local_id)),
-                );
-                // Anyref locals can end up carrying mixed typed/erased sum values
-                // across branch joins. Use runtime dispatch to avoid trapping on
-                // a direct typed ref.cast when the value is already erased.
-                if *local_ty == ValType::Anyref {
-                    return Some(emit_anyref_option_or_variant_local_to_variant(
-                        local_idx, mono, target, ctx,
-                    ));
-                }
-                return Some(emit_typed_general_option_local_to_variant(
+        if let Some(mono) = candidate
+            && local_can_store_typed_option(local_id, mono, ctx)
+        {
+            // Debug: verify SumRepr and mono inference agree.
+            debug_assert!(
+                ctx.infer_atom_mono(&Atom::ALocal(local_id))
+                    .as_ref()
+                    .is_none_or(|inferred| inferred == mono),
+                "SumRepr/mono inference mismatch for L{}: repr={:?} inferred={:?}",
+                local_id.0,
+                mono,
+                ctx.infer_atom_mono(&Atom::ALocal(local_id)),
+            );
+            // Anyref locals can end up carrying mixed typed/erased sum values
+            // across branch joins. Use runtime dispatch to avoid trapping on
+            // a direct typed ref.cast when the value is already erased.
+            if *local_ty == ValType::Anyref {
+                return Some(emit_anyref_option_or_variant_local_to_variant(
                     local_idx, mono, target, ctx,
                 ));
             }
+            return Some(emit_typed_general_option_local_to_variant(
+                local_idx, mono, target, ctx,
+            ));
         }
     }
 
     // Path 2: No SumRepr, but inferred mono suggests typed sum in anyref local.
     // Use runtime dispatch (ref.test) to handle both representations safely.
-    if *local_ty == ValType::Anyref {
-        if let Some(sum_mono) = ctx
+    if *local_ty == ValType::Anyref
+        && let Some(sum_mono) = ctx
             .infer_atom_mono(&Atom::ALocal(local_id))
             .filter(is_typed_general_sum_candidate)
-        {
-            return Some(emit_anyref_option_or_variant_local_to_variant(
-                local_idx, &sum_mono, target, ctx,
-            ));
-        }
+    {
+        return Some(emit_anyref_option_or_variant_local_to_variant(
+            local_idx, &sum_mono, target, ctx,
+        ));
     }
 
     None
@@ -3179,15 +3176,15 @@ fn emit_coerce_local(
     expected: &ValType,
     ctx: &EmitCtx<'_>,
 ) -> Vec<Instr> {
-    if is_universal_iter_state_ref(expected) {
-        if let Some(info) = typed_iterator_state_info_for_valtype(local_ty, ctx) {
-            return emit_box_typed_iterator_state_local(idx, &info, ctx);
-        }
+    if is_universal_iter_state_ref(expected)
+        && let Some(info) = typed_iterator_state_info_for_valtype(local_ty, ctx)
+    {
+        return emit_box_typed_iterator_state_local(idx, &info, ctx);
     }
-    if let Some(info) = typed_iterator_state_info_for_valtype(expected, ctx) {
-        if is_universal_iter_state_ref(local_ty) {
-            return emit_unbox_erased_iterator_state_local(idx, &info, ctx);
-        }
+    if let Some(info) = typed_iterator_state_info_for_valtype(expected, ctx)
+        && is_universal_iter_state_ref(local_ty)
+    {
+        return emit_unbox_erased_iterator_state_local(idx, &info, ctx);
     }
     if is_variant_ref(expected) {
         if let Some((yield_ty, seed_ty)) = typed_unfold_step_info_for_valtype(local_ty, ctx) {
@@ -3197,15 +3194,15 @@ fn emit_coerce_local(
             return emit_box_typed_iter_option_local(idx, &info, ctx);
         }
     }
-    if let Some((yield_ty, seed_ty)) = typed_unfold_step_info_for_valtype(expected, ctx) {
-        if is_variant_ref(local_ty) {
-            return emit_unbox_erased_unfold_step_local(idx, &yield_ty, &seed_ty, ctx);
-        }
+    if let Some((yield_ty, seed_ty)) = typed_unfold_step_info_for_valtype(expected, ctx)
+        && is_variant_ref(local_ty)
+    {
+        return emit_unbox_erased_unfold_step_local(idx, &yield_ty, &seed_ty, ctx);
     }
-    if let Some(info) = typed_iter_option_info_for_valtype(expected, ctx) {
-        if is_variant_ref(local_ty) {
-            return emit_unbox_erased_iter_option_local(idx, &info, ctx);
-        }
+    if let Some(info) = typed_iter_option_info_for_valtype(expected, ctx)
+        && is_variant_ref(local_ty)
+    {
+        return emit_unbox_erased_iter_option_local(idx, &info, ctx);
     }
 
     match (local_ty, expected) {
@@ -4019,6 +4016,7 @@ fn emit_record_update(
     instrs
 }
 
+#[allow(clippy::only_used_in_recursion)]
 fn record_field_mono(
     type_id: TypeId,
     field_idx: usize,
@@ -4146,14 +4144,12 @@ fn emit_variant_literal(
     }
 
     // Typed general Option<T> / Result<T,E> path: emit a typed struct.
-    if type_id == OPTION_TYPE_ID || type_id == RESULT_TYPE_ID {
-        if let Some(mono) = expected_mono {
-            if is_typed_general_sum_candidate(mono)
-                && typed_general_option_can_materialize_to(bind_ty, mono)
-            {
-                return emit_typed_general_option_literal(variant, args, mono, bind_ty, ctx);
-            }
-        }
+    if (type_id == OPTION_TYPE_ID || type_id == RESULT_TYPE_ID)
+        && let Some(mono) = expected_mono
+        && is_typed_general_sum_candidate(mono)
+        && typed_general_option_can_materialize_to(bind_ty, mono)
+    {
+        return emit_typed_general_option_literal(variant, args, mono, bind_ty, ctx);
     }
 
     let mut instrs = vec![
@@ -4457,53 +4453,49 @@ fn emit_closure_call(
     // use concrete arg types and a typed call_ref — no anyref boxing.
     // The callee may be typed as $Closure (function param) or typed closure struct.
     // We cast to the typed struct to access field 2 (typed funcref).
-    if !ctx.concrete_func_sigs.is_empty() {
-        if let Atom::ALocal(local_id) = callee {
-            if let Some((params, ret)) = ctx.local_typed_closure_sig(*local_id) {
-                let closurefunc_sym = typed_closurefunc_sym(&params, &ret);
-                let closure_sym = typed_closure_struct_sym(&params, &ret);
-                // Cast callee to the typed closure struct subtype.
-                // The callee might be stored as (ref null $Closure) for a
-                // function param, but the actual runtime value is always the
-                // typed subtype struct.
-                let typed_ref = ValType::Ref {
-                    nullable: true,
-                    heap: HeapType::Named(closure_sym.clone()),
-                };
-                // Push env (field 1, inherited from $Closure).
-                let mut instrs = emit_atom(callee, Some(&typed_ref), ctx);
-                instrs.push(Instr::StructGet(closure_sym.clone(), 1));
-                // Push concrete args.
-                for (arg, param_ty) in args.iter().zip(params.iter()) {
-                    let wasm_ty = mono_to_valtype_specialized(
-                        param_ty,
-                        ctx.type_env,
-                        &ctx.concrete_func_sigs,
-                    );
-                    instrs.extend(emit_atom(arg, Some(&wasm_ty), ctx));
-                }
-                // Push typed funcref (field 2) last for call_ref.
-                instrs.extend(emit_atom(callee, Some(&typed_ref), ctx));
-                instrs.push(Instr::StructGet(closure_sym, 2));
-                instrs.push(Instr::CallRef(closurefunc_sym));
-                #[cfg(debug_assertions)]
-                bump_boundary!(typed_closure_calls);
-                match ret {
-                    MonoType::Void | MonoType::Never => {
-                        instrs.extend(emit_void_value(Some(bind_ty)));
-                    }
-                    _ => {
-                        let ret_ty = mono_to_valtype_for_user_abi_result(
-                            &ret,
-                            ctx.type_env,
-                            &ctx.concrete_func_sigs,
-                        );
-                        instrs.extend(emit_coerce_stack(&ret_ty, bind_ty));
-                    }
-                }
-                return instrs;
+    if !ctx.concrete_func_sigs.is_empty()
+        && let Atom::ALocal(local_id) = callee
+        && let Some((params, ret)) = ctx.local_typed_closure_sig(*local_id)
+    {
+        let closurefunc_sym = typed_closurefunc_sym(&params, &ret);
+        let closure_sym = typed_closure_struct_sym(&params, &ret);
+        // Cast callee to the typed closure struct subtype.
+        // The callee might be stored as (ref null $Closure) for a
+        // function param, but the actual runtime value is always the
+        // typed subtype struct.
+        let typed_ref = ValType::Ref {
+            nullable: true,
+            heap: HeapType::Named(closure_sym.clone()),
+        };
+        // Push env (field 1, inherited from $Closure).
+        let mut instrs = emit_atom(callee, Some(&typed_ref), ctx);
+        instrs.push(Instr::StructGet(closure_sym.clone(), 1));
+        // Push concrete args.
+        for (arg, param_ty) in args.iter().zip(params.iter()) {
+            let wasm_ty =
+                mono_to_valtype_specialized(param_ty, ctx.type_env, &ctx.concrete_func_sigs);
+            instrs.extend(emit_atom(arg, Some(&wasm_ty), ctx));
+        }
+        // Push typed funcref (field 2) last for call_ref.
+        instrs.extend(emit_atom(callee, Some(&typed_ref), ctx));
+        instrs.push(Instr::StructGet(closure_sym, 2));
+        instrs.push(Instr::CallRef(closurefunc_sym));
+        #[cfg(debug_assertions)]
+        bump_boundary!(typed_closure_calls);
+        match ret {
+            MonoType::Void | MonoType::Never => {
+                instrs.extend(emit_void_value(Some(bind_ty)));
+            }
+            _ => {
+                let ret_ty = mono_to_valtype_for_user_abi_result(
+                    &ret,
+                    ctx.type_env,
+                    &ctx.concrete_func_sigs,
+                );
+                instrs.extend(emit_coerce_stack(&ret_ty, bind_ty));
             }
         }
+        return instrs;
     } // end if !concrete_func_sigs.is_empty()
 
     // Universal closure path.
@@ -4558,7 +4550,7 @@ fn emit_direct_user_call(
     instrs.push(Instr::Call(user_func_sym(func_id)));
 
     match abi.results.first() {
-        Some(result_ty) => instrs.extend(emit_coerce_stack(&result_ty, bind_ty)),
+        Some(result_ty) => instrs.extend(emit_coerce_stack(result_ty, bind_ty)),
         None => {
             instrs.extend(emit_void_value(Some(bind_ty)));
         }
@@ -4685,7 +4677,7 @@ fn emit_user_closure_trampoline(
             ));
         }
         None => match abi.results.first() {
-            Some(result_ty) => body.extend(emit_coerce_stack(&result_ty, &ValType::Anyref)),
+            Some(result_ty) => body.extend(emit_coerce_stack(result_ty, &ValType::Anyref)),
             None => body.extend(emit_void_value(Some(&ValType::Anyref))),
         },
     }
@@ -5458,21 +5450,21 @@ fn typed_cell_info_from_atom(
 }
 
 fn emit_cell_new_intrinsic(args: &[Atom], bind_ty: &ValType, ctx: &mut EmitCtx<'_>) -> Vec<Instr> {
-    if let Some(inner_mono) = ctx.infer_atom_mono(&args[0]) {
-        if let Some((cell_sym, payload_ty, _)) = typed_cell_info_from_inner_mono(&inner_mono, ctx) {
-            #[cfg(debug_assertions)]
-            bump_boundary!(typed_cell_ops);
-            let mut instrs = emit_atom(&args[0], Some(&payload_ty), ctx);
-            instrs.push(Instr::StructNew(cell_sym.clone()));
-            instrs.extend(emit_coerce_stack(
-                &ValType::Ref {
-                    nullable: true,
-                    heap: HeapType::Named(cell_sym),
-                },
-                bind_ty,
-            ));
-            return instrs;
-        }
+    if let Some(inner_mono) = ctx.infer_atom_mono(&args[0])
+        && let Some((cell_sym, payload_ty, _)) = typed_cell_info_from_inner_mono(&inner_mono, ctx)
+    {
+        #[cfg(debug_assertions)]
+        bump_boundary!(typed_cell_ops);
+        let mut instrs = emit_atom(&args[0], Some(&payload_ty), ctx);
+        instrs.push(Instr::StructNew(cell_sym.clone()));
+        instrs.extend(emit_coerce_stack(
+            &ValType::Ref {
+                nullable: true,
+                heap: HeapType::Named(cell_sym),
+            },
+            bind_ty,
+        ));
+        return instrs;
     }
     let mut instrs = emit_atom(&args[0], Some(&ValType::Anyref), ctx);
     instrs.push(Instr::ArrayNewFixed(T_ARRAY.to_string(), 1));
@@ -5525,40 +5517,41 @@ fn emit_cell_update_intrinsic(
 ) -> Vec<Instr> {
     assert_eq!(args.len(), 2, "Cell.update expects 2 args");
 
-    if let Some((cell_sym, payload_ty, inner_mono)) = typed_cell_info_from_atom(&args[0], ctx) {
-        if let Some((params, ret)) = atom_typed_closure_sig(&args[1], ctx) {
-            if params.len() == 1 && params[0] == inner_mono && ret == inner_mono {
-                let closurefunc_sym = typed_closurefunc_sym(&params, &ret);
-                let closure_sym = typed_closure_struct_sym(&params, &ret);
-                let closure_ref = ValType::Ref {
-                    nullable: true,
-                    heap: HeapType::Named(closure_sym.clone()),
-                };
-                let cell_ref = ValType::Ref {
-                    nullable: true,
-                    heap: HeapType::Named(cell_sym.clone()),
-                };
+    if let Some((cell_sym, payload_ty, inner_mono)) = typed_cell_info_from_atom(&args[0], ctx)
+        && let Some((params, ret)) = atom_typed_closure_sig(&args[1], ctx)
+        && params.len() == 1
+        && params[0] == inner_mono
+        && ret == inner_mono
+    {
+        let closurefunc_sym = typed_closurefunc_sym(&params, &ret);
+        let closure_sym = typed_closure_struct_sym(&params, &ret);
+        let closure_ref = ValType::Ref {
+            nullable: true,
+            heap: HeapType::Named(closure_sym.clone()),
+        };
+        let cell_ref = ValType::Ref {
+            nullable: true,
+            heap: HeapType::Named(cell_sym.clone()),
+        };
 
-                let mut instrs = emit_atom(&args[0], Some(&cell_ref), ctx);
-                instrs.extend(emit_atom(&args[1], Some(&closure_ref), ctx));
-                instrs.push(Instr::StructGet(closure_sym.clone(), 1));
+        let mut instrs = emit_atom(&args[0], Some(&cell_ref), ctx);
+        instrs.extend(emit_atom(&args[1], Some(&closure_ref), ctx));
+        instrs.push(Instr::StructGet(closure_sym.clone(), 1));
 
-                instrs.extend(emit_atom(&args[0], Some(&cell_ref), ctx));
-                instrs.push(Instr::StructGet(cell_sym.clone(), 0));
+        instrs.extend(emit_atom(&args[0], Some(&cell_ref), ctx));
+        instrs.push(Instr::StructGet(cell_sym.clone(), 0));
 
-                instrs.extend(emit_atom(&args[1], Some(&closure_ref), ctx));
-                instrs.push(Instr::StructGet(closure_sym, 2));
-                instrs.push(Instr::CallRef(closurefunc_sym));
-                instrs.extend(emit_coerce_stack(
-                    &mono_to_valtype_specialized(&ret, ctx.type_env, &ctx.concrete_func_sigs),
-                    &payload_ty,
-                ));
+        instrs.extend(emit_atom(&args[1], Some(&closure_ref), ctx));
+        instrs.push(Instr::StructGet(closure_sym, 2));
+        instrs.push(Instr::CallRef(closurefunc_sym));
+        instrs.extend(emit_coerce_stack(
+            &mono_to_valtype_specialized(&ret, ctx.type_env, &ctx.concrete_func_sigs),
+            &payload_ty,
+        ));
 
-                instrs.push(Instr::StructSet(cell_sym, 0));
-                instrs.extend(emit_void_value(Some(bind_ty)));
-                return instrs;
-            }
-        }
+        instrs.push(Instr::StructSet(cell_sym, 0));
+        instrs.extend(emit_void_value(Some(bind_ty)));
+        return instrs;
     }
 
     // Universal closure path.
@@ -5903,10 +5896,8 @@ fn emit_typed_iterator_next_helper(
         heap: HeapType::Named(unfold_sym.clone()),
     };
 
-    let mut body = Vec::new();
-
     // Cast param 0 to IterState, store in local 4
-    body.push(Instr::LocalGet(0));
+    let mut body = vec![Instr::LocalGet(0)];
     body.push(Instr::LocalSet(4));
 
     // Push closure env from step (IterState field 1)
@@ -7160,10 +7151,8 @@ fn emit_string_from_utf8_helper() -> FuncDef {
 /// Uses locals: 0=bytes, 1=len, 2=idx, 4=lead_byte, 5=valid, 6=temp.
 fn emit_utf8_validate_multibyte(n: u32) -> Vec<Instr> {
     use crate::runtime::types::T_ARRAY;
-    let mut instrs = Vec::new();
-
     // Check that idx + n - 1 < len (enough bytes remaining)
-    instrs.push(Instr::LocalGet(2));
+    let mut instrs = vec![Instr::LocalGet(2)];
     instrs.push(Instr::I32Const(n as i32 - 1));
     instrs.push(Instr::I32Add);
     instrs.push(Instr::LocalGet(1));
@@ -7911,10 +7900,10 @@ fn collect_prelude_refs_expr(
 }
 
 fn collect_prelude_refs_atom(atom: &Atom, user_funcs: &HashSet<FuncId>, out: &mut HashSet<FuncId>) {
-    if let Atom::AGlobalFunc(func_id) = atom {
-        if !user_funcs.contains(func_id) {
-            out.insert(*func_id);
-        }
+    if let Atom::AGlobalFunc(func_id) = atom
+        && !user_funcs.contains(func_id)
+    {
+        out.insert(*func_id);
     }
 }
 
@@ -8044,12 +8033,11 @@ fn maybe_insert_concrete_sig(
         (Vec<crate::types::ty::MonoType>, crate::types::ty::MonoType),
     >,
 ) {
-    if let Some(func) = func_lookup.get(&func_id) {
-        if func.param_tys.iter().all(is_concrete_mono_type)
-            && is_concrete_mono_type(&func.return_ty)
-        {
-            sigs.insert(func_id, (func.param_tys.clone(), func.return_ty.clone()));
-        }
+    if let Some(func) = func_lookup.get(&func_id)
+        && func.param_tys.iter().all(is_concrete_mono_type)
+        && is_concrete_mono_type(&func.return_ty)
+    {
+        sigs.insert(func_id, (func.param_tys.clone(), func.return_ty.clone()));
     }
 }
 
@@ -8182,7 +8170,7 @@ fn emit_typed_closure_struct_def(
     let closure_sym = typed_closure_struct_sym(params, ret);
     crate::wasm::ir::TypeDef::Struct {
         name: closure_sym,
-        supertype: Some(format!("{T_CLOSURE}")),
+        supertype: Some(T_CLOSURE.to_string()),
         non_final: false,
         fields: vec![
             // field 0: universal funcref (must match $Closure field 0)
@@ -8474,7 +8462,8 @@ fn topologically_order_local_type_defs(module: &mut ModuleIR) {
         let cycle = indegree
             .iter()
             .enumerate()
-            .filter_map(|(idx, degree)| (*degree > 0).then(|| original[idx].name().to_string()))
+            .filter(|&(_idx, degree)| *degree > 0)
+            .map(|(idx, _degree)| original[idx].name().to_string())
             .collect::<Vec<_>>();
         panic!(
             "cyclic local Wasm type dependencies are not supported yet: {}",
@@ -8497,10 +8486,10 @@ fn collect_local_type_deps(
         WasmTypeDef::Struct {
             fields, supertype, ..
         } => {
-            if let Some(parent) = supertype {
-                if let Some(dep_idx) = name_to_index.get(parent) {
-                    out.insert(*dep_idx);
-                }
+            if let Some(parent) = supertype
+                && let Some(dep_idx) = name_to_index.get(parent)
+            {
+                out.insert(*dep_idx);
             }
             for field in fields {
                 collect_local_valtype_deps(&field.ty, name_to_index, out);
@@ -8531,10 +8520,9 @@ fn collect_local_valtype_deps(
         heap: HeapType::Named(name),
         ..
     } = ty
+        && let Some(dep_idx) = name_to_index.get(name)
     {
-        if let Some(dep_idx) = name_to_index.get(name) {
-            out.insert(*dep_idx);
-        }
+        out.insert(*dep_idx);
     }
 }
 

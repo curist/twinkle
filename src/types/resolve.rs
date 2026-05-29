@@ -270,13 +270,10 @@ impl Resolver {
 
         // First: resolve records and sums
         for decl in &non_alias_decls {
-            if let Some(&type_id) = type_ids.get(&decl.name) {
-                match self.resolve_type_def(decl) {
-                    Ok(def) => {
-                        self.type_env.update_type(type_id, def);
-                    }
-                    Err(()) => {}
-                }
+            if let Some(&type_id) = type_ids.get(&decl.name)
+                && let Ok(def) = self.resolve_type_def(decl)
+            {
+                self.type_env.update_type(type_id, def);
             }
         }
 
@@ -284,13 +281,10 @@ impl Resolver {
         let alias_names: HashSet<&str> = alias_decls.iter().map(|d| d.name.as_str()).collect();
         let sorted_aliases = topo_sort_aliases(&alias_decls, &alias_names);
         for decl in sorted_aliases {
-            if let Some(&type_id) = type_ids.get(&decl.name) {
-                match self.resolve_type_def(decl) {
-                    Ok(def) => {
-                        self.type_env.update_type(type_id, def);
-                    }
-                    Err(()) => {}
-                }
+            if let Some(&type_id) = type_ids.get(&decl.name)
+                && let Ok(def) = self.resolve_type_def(decl)
+            {
+                self.type_env.update_type(type_id, def);
             }
         }
     }
@@ -323,48 +317,48 @@ impl Resolver {
             AstTypeDef::Sum { variants } => {
                 let mut resolved_variants = Vec::new();
                 for variant in variants {
-                    if variant.fields.len() == 1 {
-                        if let AstType::Record { fields, .. } = &variant.fields[0] {
-                            let display_name = format!("{}.{}", decl.name, variant.name);
-                            let synth_id = *self
-                                .synthesized_variant_record_type_ids
-                                .get(&display_name)
-                                .expect("synthesized variant record type was not pre-registered");
+                    if variant.fields.len() == 1
+                        && let AstType::Record { fields, .. } = &variant.fields[0]
+                    {
+                        let display_name = format!("{}.{}", decl.name, variant.name);
+                        let synth_id = *self
+                            .synthesized_variant_record_type_ids
+                            .get(&display_name)
+                            .expect("synthesized variant record type was not pre-registered");
 
-                            let mut resolved_record_fields = Vec::new();
-                            for field in fields {
-                                match self.resolve_type_with_vars(&field.ty, &type_params) {
-                                    Ok(ty) => resolved_record_fields.push(RecordField {
-                                        name: field.name.clone(),
-                                        ty,
-                                    }),
-                                    Err(()) => return Err(()),
-                                }
+                        let mut resolved_record_fields = Vec::new();
+                        for field in fields {
+                            match self.resolve_type_with_vars(&field.ty, &type_params) {
+                                Ok(ty) => resolved_record_fields.push(RecordField {
+                                    name: field.name.clone(),
+                                    ty,
+                                }),
+                                Err(()) => return Err(()),
                             }
-
-                            self.type_env.update_type(
-                                synth_id,
-                                TypeDef::Record {
-                                    name: display_name,
-                                    type_params: type_params.clone(),
-                                    fields: resolved_record_fields,
-                                    doc: None,
-                                },
-                            );
-
-                            let synth_args = type_params
-                                .iter()
-                                .map(|name| MonoType::Var(name.clone()))
-                                .collect();
-                            resolved_variants.push(Variant {
-                                name: variant.name.clone(),
-                                fields: vec![MonoType::Named {
-                                    type_id: synth_id,
-                                    args: synth_args,
-                                }],
-                            });
-                            continue;
                         }
+
+                        self.type_env.update_type(
+                            synth_id,
+                            TypeDef::Record {
+                                name: display_name,
+                                type_params: type_params.clone(),
+                                fields: resolved_record_fields,
+                                doc: None,
+                            },
+                        );
+
+                        let synth_args = type_params
+                            .iter()
+                            .map(|name| MonoType::Var(name.clone()))
+                            .collect();
+                        resolved_variants.push(Variant {
+                            name: variant.name.clone(),
+                            fields: vec![MonoType::Named {
+                                type_id: synth_id,
+                                args: synth_args,
+                            }],
+                        });
+                        continue;
                     }
 
                     let mut resolved_fields = Vec::new();
@@ -421,18 +415,18 @@ impl Resolver {
                     // Register inherent methods only for types owned by this module.
                     // Internal (stdlib/prelude) modules may also register methods
                     // on builtin types.
-                    if let Some(receiver_ty) = sig.params.first() {
-                        if let Some(type_id) = method_receiver_type_id(receiver_ty) {
-                            let is_local = self.local_type_ids.contains(&type_id);
-                            let is_builtin_allowed = self.is_internal && !is_local;
-                            if is_local || is_builtin_allowed {
-                                self.type_env.add_method(
-                                    type_id,
-                                    sig.name.clone(),
-                                    sig.name.clone(),
-                                    Some(sig.clone()),
-                                );
-                            }
+                    if let Some(receiver_ty) = sig.params.first()
+                        && let Some(type_id) = method_receiver_type_id(receiver_ty)
+                    {
+                        let is_local = self.local_type_ids.contains(&type_id);
+                        let is_builtin_allowed = self.is_internal && !is_local;
+                        if is_local || is_builtin_allowed {
+                            self.type_env.add_method(
+                                type_id,
+                                sig.name.clone(),
+                                sig.name.clone(),
+                                Some(sig.clone()),
+                            );
                         }
                     }
                     self.value_env.add_function(sig);
@@ -602,10 +596,11 @@ impl Resolver {
         type_vars: &[String],
     ) -> Result<MonoType, ()> {
         // If this is a bare name that matches a type variable, return Var(name)
-        if let AstType::Named { name, args, .. } = ty {
-            if args.is_empty() && type_vars.contains(name) {
-                return Ok(MonoType::Var(name.clone()));
-            }
+        if let AstType::Named { name, args, .. } = ty
+            && args.is_empty()
+            && type_vars.contains(name)
+        {
+            return Ok(MonoType::Var(name.clone()));
         }
         // Recursively handle compound types with type vars
         match ty {
@@ -747,17 +742,16 @@ impl Resolver {
                 if let MonoType::Named {
                     type_id: target_id, ..
                 } = target
+                    && let Some(target_def) = self.type_env.get_def(*target_id)
                 {
-                    if let Some(target_def) = self.type_env.get_def(*target_id) {
-                        let target_name = target_def.name();
-                        if visited.contains(target_name) {
-                            return true; // Circular!
-                        }
-
-                        // Recursively check if the target is circular
-                        visited.insert(target_name.to_string());
-                        return self.is_circular_alias(target_name, visited);
+                    let target_name = target_def.name();
+                    if visited.contains(target_name) {
+                        return true; // Circular!
                     }
+
+                    // Recursively check if the target is circular
+                    visited.insert(target_name.to_string());
+                    return self.is_circular_alias(target_name, visited);
                 }
                 false
             }
@@ -815,7 +809,7 @@ fn topo_sort_aliases<'a>(
     // Kahn's algorithm
     let mut in_degree: HashMap<&str, usize> =
         alias_decls.iter().map(|d| (d.name.as_str(), 0)).collect();
-    for (_, dep_list) in &deps {
+    for dep_list in deps.values() {
         for dep in dep_list {
             if let Some(count) = in_degree.get_mut(dep) {
                 *count += 1;
@@ -834,7 +828,7 @@ fn topo_sort_aliases<'a>(
     }
 
     // Recompute in_degree correctly: count prerequisites
-    for (name, _) in &decl_map {
+    for name in decl_map.keys() {
         in_degree.insert(*name, deps.get(name).map_or(0, |d| d.len()));
     }
 

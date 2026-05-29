@@ -226,10 +226,7 @@ mod tests {
         let pk = parse_key(Path::new("test.tw"), source_hash);
         assert_eq!(pk as i64, -8184021968052220895i64);
 
-        let dh = deps_hash(&vec![
-            ("a.tw".to_string(), 100u64),
-            ("b.tw".to_string(), 200u64),
-        ]);
+        let dh = deps_hash(&[("a.tw".to_string(), 100u64), ("b.tw".to_string(), 200u64)]);
         assert_eq!(dh as i64, -3408744791725452791i64);
 
         let mh = module_hash(source_hash, dh);

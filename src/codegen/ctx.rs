@@ -514,10 +514,8 @@ impl<'a> EmitCtx<'a> {
             } else {
                 value_repr_from_mono(&mono_ty, &self.concrete_func_sigs)
             };
-            if !erased_assignment {
-                if !erase_init_cell {
-                    self.local_mono.insert(*local_id, mono_ty.clone());
-                }
+            if !erased_assignment && !erase_init_cell {
+                self.local_mono.insert(*local_id, mono_ty.clone());
             }
             self.set_local_value_repr(*local_id, local_repr);
             let ty = if erased_assignment || erase_init_cell {
@@ -569,44 +567,44 @@ impl<'a> EmitCtx<'a> {
             let local_mono = self.local_mono.get(local_id);
 
             // ── Iterator metadata coherence ────────────────────────────
-            if info.iterator_state.is_some() {
-                if let Some(mono) = local_mono {
-                    let is_iterator = matches!(
-                        mono,
-                        MonoType::Named { type_id, .. } if *type_id == ITERATOR_TYPE_ID
-                    );
-                    debug_assert!(
-                        is_iterator,
-                        "codegen verify: {func_name} (FuncId({})): L{} has iterator_state but mono is {:?}, expected Iterator",
-                        func_id.0, local_id.0, mono
-                    );
-                }
+            if info.iterator_state.is_some()
+                && let Some(mono) = local_mono
+            {
+                let is_iterator = matches!(
+                    mono,
+                    MonoType::Named { type_id, .. } if *type_id == ITERATOR_TYPE_ID
+                );
+                debug_assert!(
+                    is_iterator,
+                    "codegen verify: {func_name} (FuncId({})): L{} has iterator_state but mono is {:?}, expected Iterator",
+                    func_id.0, local_id.0, mono
+                );
             }
-            if let Some(next_info) = &info.iterator_next_state {
-                if let Some(mono) = local_mono {
-                    let is_option = matches!(
-                        mono,
-                        MonoType::Named { type_id, .. } if *type_id == OPTION_TYPE_ID
-                    );
-                    debug_assert!(
-                        is_option,
-                        "codegen verify: {func_name} (FuncId({})): L{} has iterator_next_state ({:?}) but mono is {:?}, expected Option",
-                        func_id.0, local_id.0, next_info, mono
-                    );
-                }
+            if let Some(next_info) = &info.iterator_next_state
+                && let Some(mono) = local_mono
+            {
+                let is_option = matches!(
+                    mono,
+                    MonoType::Named { type_id, .. } if *type_id == OPTION_TYPE_ID
+                );
+                debug_assert!(
+                    is_option,
+                    "codegen verify: {func_name} (FuncId({})): L{} has iterator_next_state ({:?}) but mono is {:?}, expected Option",
+                    func_id.0, local_id.0, next_info, mono
+                );
             }
-            if let Some(item_info) = &info.iter_item_state {
-                if let Some(mono) = local_mono {
-                    let is_iter_item = matches!(
-                        mono,
-                        MonoType::Named { type_id, .. } if *type_id == ITER_ITEM_TYPE_ID
-                    );
-                    debug_assert!(
-                        is_iter_item,
-                        "codegen verify: {func_name} (FuncId({})): L{} has iter_item_state ({:?}) but mono is {:?}, expected IterItem",
-                        func_id.0, local_id.0, item_info, mono
-                    );
-                }
+            if let Some(item_info) = &info.iter_item_state
+                && let Some(mono) = local_mono
+            {
+                let is_iter_item = matches!(
+                    mono,
+                    MonoType::Named { type_id, .. } if *type_id == ITER_ITEM_TYPE_ID
+                );
+                debug_assert!(
+                    is_iter_item,
+                    "codegen verify: {func_name} (FuncId({})): L{} has iter_item_state ({:?}) but mono is {:?}, expected IterItem",
+                    func_id.0, local_id.0, item_info, mono
+                );
             }
             if info.vector_builder_elem.is_some()
                 && let Some((_, local_ty)) = self.local(*local_id)
@@ -1302,9 +1300,10 @@ impl<'a> EmitCtx<'a> {
                 let mut pat_locals = pat_types.into_iter().collect::<Vec<_>>();
                 pat_locals.sort_by_key(|(local_id, _)| local_id.0);
                 for (local_id, (local_ty, local_mono, local_iter_item_state)) in pat_locals {
-                    if !self.local_map.contains_key(&local_id) {
-                        self.local_map
-                            .insert(local_id, (*next_idx, local_ty.clone()));
+                    if let std::collections::hash_map::Entry::Vacant(e) =
+                        self.local_map.entry(local_id)
+                    {
+                        e.insert((*next_idx, local_ty.clone()));
                         if let Some(mono) = local_mono {
                             let repr = value_repr_from_mono(&mono, &self.concrete_func_sigs);
                             self.local_mono.insert(local_id, mono);
@@ -1599,10 +1598,10 @@ impl<'a> EmitCtx<'a> {
         if let Some(info) = atom_iterator_state(atom, self) {
             return Some(ref_named(true, &typed_iterator_state_sym(&info)));
         }
-        if let Atom::ALocal(local_id) = atom {
-            if let Some((_, ty)) = self.local(*local_id) {
-                return Some(ty.clone());
-            }
+        if let Atom::ALocal(local_id) = atom
+            && let Some((_, ty)) = self.local(*local_id)
+        {
+            return Some(ty.clone());
         }
         self.infer_atom_mono(atom)
             .map(|mono| mono_to_valtype_specialized(&mono, self.type_env, &self.concrete_func_sigs))
@@ -1649,17 +1648,16 @@ impl<'a> EmitCtx<'a> {
         if let Atom::AGlobalFunc(func_id) = callee {
             use crate::ir::lower::prelude as ids;
 
-            if *func_id == ids::ITERATOR_UNFOLD {
-                if let Some(info) =
+            if *func_id == ids::ITERATOR_UNFOLD
+                && let Some(info) =
                     iterator_state_from_unfold_args(args.first()?, args.get(1)?, self)
-                {
-                    return Some(ref_named(true, &typed_iterator_state_sym(&info)));
-                }
+            {
+                return Some(ref_named(true, &typed_iterator_state_sym(&info)));
             }
-            if *func_id == ids::ITERATOR_NEXT {
-                if let Some(info) = atom_iterator_state(args.first()?, self) {
-                    return Some(ref_named(true, &typed_iter_option_sym(&info)));
-                }
+            if *func_id == ids::ITERATOR_NEXT
+                && let Some(info) = atom_iterator_state(args.first()?, self)
+            {
+                return Some(ref_named(true, &typed_iter_option_sym(&info)));
             }
         }
         if let Some(mono) = self.infer_call_result_mono(callee, args) {
@@ -1683,14 +1681,14 @@ impl<'a> EmitCtx<'a> {
                     .and_then(|sig| sig.result.clone())
             }
             Atom::ALocal(local_id) => {
-                if let Some((_params, ret)) = self.local_typed_closure_sig(*local_id) {
-                    if is_concrete_mono_type(&ret) {
-                        return Some(mono_to_valtype_specialized(
-                            &ret,
-                            self.type_env,
-                            &self.concrete_func_sigs,
-                        ));
-                    }
+                if let Some((_params, ret)) = self.local_typed_closure_sig(*local_id)
+                    && is_concrete_mono_type(&ret)
+                {
+                    return Some(mono_to_valtype_specialized(
+                        &ret,
+                        self.type_env,
+                        &self.concrete_func_sigs,
+                    ));
                 }
                 Some(ValType::Anyref)
             }
@@ -1847,23 +1845,25 @@ impl<'a> EmitCtx<'a> {
                 variant,
                 args,
             } => {
-                if !self.concrete_func_sigs.is_empty() && *type_id == UNFOLD_STEP_TYPE_ID {
-                    if let Some((yield_ty, seed_ty)) =
+                if !self.concrete_func_sigs.is_empty()
+                    && *type_id == UNFOLD_STEP_TYPE_ID
+                    && let Some((yield_ty, seed_ty)) =
                         resolve_unfold_step_types(*variant, args, self)
-                    {
-                        return Some(MonoType::Named {
-                            type_id: UNFOLD_STEP_TYPE_ID,
-                            args: vec![yield_ty, seed_ty],
-                        });
-                    }
+                {
+                    return Some(MonoType::Named {
+                        type_id: UNFOLD_STEP_TYPE_ID,
+                        args: vec![yield_ty, seed_ty],
+                    });
                 }
-                if *type_id == OPTION_TYPE_ID && variant.0 == 1 && args.len() == 1 {
-                    if let Some(inner) = self.infer_atom_mono(&args[0]) {
-                        return Some(MonoType::Named {
-                            type_id: OPTION_TYPE_ID,
-                            args: vec![inner],
-                        });
-                    }
+                if *type_id == OPTION_TYPE_ID
+                    && variant.0 == 1
+                    && args.len() == 1
+                    && let Some(inner) = self.infer_atom_mono(&args[0])
+                {
+                    return Some(MonoType::Named {
+                        type_id: OPTION_TYPE_ID,
+                        args: vec![inner],
+                    });
                 }
                 Some(MonoType::named(*type_id))
             }
@@ -2034,23 +2034,22 @@ fn record_field_mono(
     field_idx: usize,
     target_mono: Option<&MonoType>,
 ) -> Option<MonoType> {
-    if type_id == ITER_ITEM_TYPE_ID {
-        if let Some(MonoType::Named {
+    if type_id == ITER_ITEM_TYPE_ID
+        && let Some(MonoType::Named {
             type_id: mono_type_id,
             args,
         }) = target_mono
-        {
-            if *mono_type_id == ITER_ITEM_TYPE_ID && args.len() == 1 {
-                return match field_idx {
-                    0 => args.first().cloned(),
-                    1 => Some(MonoType::Named {
-                        type_id: ITERATOR_TYPE_ID,
-                        args: vec![args[0].clone()],
-                    }),
-                    _ => None,
-                };
-            }
-        }
+        && *mono_type_id == ITER_ITEM_TYPE_ID
+        && args.len() == 1
+    {
+        return match field_idx {
+            0 => args.first().cloned(),
+            1 => Some(MonoType::Named {
+                type_id: ITERATOR_TYPE_ID,
+                args: vec![args[0].clone()],
+            }),
+            _ => None,
+        };
     }
     match type_env.get_def(type_id)? {
         TypeDef::Record { fields, .. } => fields.get(field_idx).map(|f| f.ty.clone()),
@@ -2065,16 +2064,16 @@ fn record_field_mono(
 }
 
 fn should_erase_assigned_local(mono: &MonoType) -> bool {
-    match mono {
+    !matches!(
+        mono,
         MonoType::Int
-        | MonoType::Float
-        | MonoType::Bool
-        | MonoType::Byte
-        | MonoType::String
-        | MonoType::Void
-        | MonoType::Never => false,
-        _ => true,
-    }
+            | MonoType::Float
+            | MonoType::Bool
+            | MonoType::Byte
+            | MonoType::String
+            | MonoType::Void
+            | MonoType::Never
+    )
 }
 
 fn is_unfold_step_variant_op(op: &AnfOp) -> bool {
@@ -2655,10 +2654,9 @@ pub fn is_typed_general_option_candidate(mono: &MonoType) -> bool {
             if let MonoType::Named {
                 type_id: inner_id, ..
             } = &args[0]
+                && *inner_id == ITER_ITEM_TYPE_ID
             {
-                if *inner_id == ITER_ITEM_TYPE_ID {
-                    return false;
-                }
+                return false;
             }
             is_concrete_mono_type(&args[0])
         }
@@ -2975,23 +2973,23 @@ fn sum_variant_field_monos(
                 type_id,
                 !type_params.is_empty(),
             ),
-            Some(TypeDef::Alias { target, .. }) => match target {
-                MonoType::Named { type_id, .. } => match type_env.get_def(*type_id) {
-                    Some(TypeDef::Sum {
-                        variants,
-                        type_params,
-                        ..
-                    }) => (
-                        variants
-                            .get(variant_idx)
-                            .map(|v| v.fields.clone())
-                            .unwrap_or_default(),
-                        *type_id,
-                        !type_params.is_empty(),
-                    ),
-                    _ => (Vec::new(), *type_id, false),
-                },
-                _ => (Vec::new(), type_id, false),
+            Some(TypeDef::Alias {
+                target: MonoType::Named { type_id, .. },
+                ..
+            }) => match type_env.get_def(*type_id) {
+                Some(TypeDef::Sum {
+                    variants,
+                    type_params,
+                    ..
+                }) => (
+                    variants
+                        .get(variant_idx)
+                        .map(|v| v.fields.clone())
+                        .unwrap_or_default(),
+                    *type_id,
+                    !type_params.is_empty(),
+                ),
+                _ => (Vec::new(), *type_id, false),
             },
             _ => (Vec::new(), type_id, false),
         };

@@ -78,11 +78,11 @@ impl QueryStageCache {
     }
 
     pub fn get_parsed(&mut self, module: &Path, key: u64) -> Option<ParsedModule> {
-        if let Some(entry) = self.parse.get(module) {
-            if entry.key == key {
-                self.stats.parse_hits += 1;
-                return Some(entry.value.clone());
-            }
+        if let Some(entry) = self.parse.get(module)
+            && entry.key == key
+        {
+            self.stats.parse_hits += 1;
+            return Some(entry.value.clone());
         }
         self.stats.parse_misses += 1;
         None
@@ -94,11 +94,11 @@ impl QueryStageCache {
     }
 
     pub fn get_resolved(&mut self, module: &Path, key: u64) -> Option<ResolvedModule> {
-        if let Some(entry) = self.resolve.get(module) {
-            if entry.key == key {
-                self.stats.resolve_hits += 1;
-                return Some(entry.value.clone());
-            }
+        if let Some(entry) = self.resolve.get(module)
+            && entry.key == key
+        {
+            self.stats.resolve_hits += 1;
+            return Some(entry.value.clone());
         }
         self.stats.resolve_misses += 1;
         None
@@ -110,11 +110,11 @@ impl QueryStageCache {
     }
 
     pub fn get_typed(&mut self, module: &Path, key: u64) -> Option<TypedModule> {
-        if let Some(entry) = self.typecheck.get(module) {
-            if entry.key == key {
-                self.stats.typecheck_hits += 1;
-                return Some(entry.value.clone());
-            }
+        if let Some(entry) = self.typecheck.get(module)
+            && entry.key == key
+        {
+            self.stats.typecheck_hits += 1;
+            return Some(entry.value.clone());
         }
         self.stats.typecheck_misses += 1;
         None
@@ -126,11 +126,11 @@ impl QueryStageCache {
     }
 
     pub fn get_lowered(&mut self, module: &Path, key: u64) -> Option<LoweredModule> {
-        if let Some(entry) = self.lower.get(module) {
-            if entry.key == key {
-                self.stats.lower_hits += 1;
-                return Some(entry.value.clone());
-            }
+        if let Some(entry) = self.lower.get(module)
+            && entry.key == key
+        {
+            self.stats.lower_hits += 1;
+            return Some(entry.value.clone());
         }
         self.stats.lower_misses += 1;
         None

@@ -166,7 +166,7 @@ impl TypeError {
             TypeError::NonExhaustiveMatch { missing, span } => self.format_error(
                 registry,
                 *span,
-                &format!("Non-exhaustive pattern match"),
+                "Non-exhaustive pattern match",
                 Some(&format!(
                     "Missing patterns: {}",
                     missing.join(", ")
@@ -175,7 +175,7 @@ impl TypeError {
             TypeError::NotAFunction { ty, span } => self.format_error(
                 registry,
                 *span,
-                &format!("Cannot call non-function value"),
+                "Cannot call non-function value",
                 Some(&format!("Type: {}", fmt_type(ty))),
             ),
             TypeError::WrongArity {
@@ -185,7 +185,7 @@ impl TypeError {
             } => self.format_error(
                 registry,
                 *span,
-                &format!("Wrong number of arguments"),
+                "Wrong number of arguments",
                 Some(&format!(
                     "Expected {} argument(s), found {}",
                     expected, actual
@@ -198,7 +198,7 @@ impl TypeError {
             } => self.format_error(
                 registry,
                 *span,
-                &format!("No such field"),
+                "No such field",
                 Some(&format!(
                     "Type '{}' has no field '{}'",
                     record_type, field
@@ -211,7 +211,7 @@ impl TypeError {
             } => self.format_error(
                 registry,
                 *span,
-                &format!("No such variant"),
+                "No such variant",
                 Some(&format!(
                     "Type '{}' has no variant '{}'",
                     sum_type, variant
@@ -241,7 +241,7 @@ impl TypeError {
             TypeError::AnonymousRecordWithoutContext { span } => self.format_error(
                 registry,
                 *span,
-                &format!("Anonymous record literal requires type annotation"),
+                "Anonymous record literal requires type annotation",
                 Some("Try adding a type annotation or using a named constructor (Point.{{ ... }})"),
             ),
             TypeError::GenericNotSupported { name, span, note } => self.format_error(
@@ -259,13 +259,13 @@ impl TypeError {
             TypeError::InvalidTopLevelItem { span, note } => self.format_error(
                 registry,
                 *span,
-                &format!("Invalid top-level item"),
+                "Invalid top-level item",
                 Some(note),
             ),
             TypeError::CaseScrutineeNotSumType { actual_type, span } => self.format_error(
                 registry,
                 *span,
-                &format!("Case scrutinee must be a sum type"),
+                "Case scrutinee must be a sum type",
                 Some(&format!("Found type: {}", fmt_type(actual_type))),
             ),
             TypeError::FieldMethodCollision { type_name, name, span } => self.format_error(

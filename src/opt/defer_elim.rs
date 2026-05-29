@@ -156,14 +156,10 @@ fn elim(
         }
 
         // ── Break: prepend loop_defers (LIFO) before breaking ─────────────────
-        AnfExpr::Break(v) => {
-            prepend_defers(loop_defers.iter().cloned().collect(), AnfExpr::Break(v))
-        }
+        AnfExpr::Break(v) => prepend_defers(loop_defers.to_vec(), AnfExpr::Break(v)),
 
         // ── Continue: prepend loop_defers (LIFO) before continuing ────────────
-        AnfExpr::Continue => {
-            prepend_defers(loop_defers.iter().cloned().collect(), AnfExpr::Continue)
-        }
+        AnfExpr::Continue => prepend_defers(loop_defers.to_vec(), AnfExpr::Continue),
 
         // ── Terminal Atom ──────────────────────────────────────────────────────
         // Inside a branch (branch_start = Some(n)): block-scoped — fire only
@@ -178,7 +174,7 @@ fn elim(
             }
             None if in_loop => {
                 // End of loop iteration — only loop-body-local defers.
-                prepend_defers(loop_defers.iter().cloned().collect(), AnfExpr::Atom(a))
+                prepend_defers(loop_defers.to_vec(), AnfExpr::Atom(a))
             }
             None => {
                 // Function exit — all defers.

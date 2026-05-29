@@ -201,10 +201,10 @@ fn collect_free_locals_op(
 }
 
 fn collect_free_locals_atom(atom: &Atom, declared: &HashSet<LocalId>, free: &mut HashSet<LocalId>) {
-    if let Atom::ALocal(local_id) = atom {
-        if !declared.contains(local_id) {
-            free.insert(*local_id);
-        }
+    if let Atom::ALocal(local_id) = atom
+        && !declared.contains(local_id)
+    {
+        free.insert(*local_id);
     }
 }
 

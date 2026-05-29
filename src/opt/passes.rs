@@ -287,13 +287,13 @@ fn copy_propagate_inner(
 ) -> (AnfExpr, bool) {
     match body {
         AnfExpr::Let { local, op, body } => {
-            if let AnfOp::AInit { value: ref lit } = *op {
-                if is_non_local_atom(lit) {
-                    let use_count = uses.get(&local).copied().unwrap_or(0);
-                    if use_count == 1 && !assigned.contains(&local) {
-                        let new_body = subst_atom(*body, local, lit);
-                        return (new_body, true);
-                    }
+            if let AnfOp::AInit { value: ref lit } = *op
+                && is_non_local_atom(lit)
+            {
+                let use_count = uses.get(&local).copied().unwrap_or(0);
+                if use_count == 1 && !assigned.contains(&local) {
+                    let new_body = subst_atom(*body, local, lit);
+                    return (new_body, true);
                 }
             }
             // Recurse into sub-expressions.

@@ -411,10 +411,10 @@ impl TypeChecker {
     /// unannotated parameters are introduced in a future stage.
     fn solve_meta(&mut self, id: u32, ty: MonoType, span: Span) -> Result<(), ()> {
         let zonked = self.zonk(&ty);
-        if let MonoType::MetaVar(other) = &zonked {
-            if *other == id {
-                return Ok(()); // trivial self-unification
-            }
+        if let MonoType::MetaVar(other) = &zonked
+            && *other == id
+        {
+            return Ok(()); // trivial self-unification
         }
         if self.occurs(id, &zonked) {
             self.errors.push(TypeError::OccursCheckFailed { span });
@@ -584,10 +584,11 @@ impl TypeChecker {
     }
 
     fn resolve_type_with_current_vars(&mut self, ty: &AstType) -> Result<MonoType, ()> {
-        if let AstType::Named { name, args, .. } = ty {
-            if args.is_empty() && self.type_var_scope.contains(name) {
-                return Ok(MonoType::Var(name.clone()));
-            }
+        if let AstType::Named { name, args, .. } = ty
+            && args.is_empty()
+            && self.type_var_scope.contains(name)
+        {
+            return Ok(MonoType::Var(name.clone()));
         }
 
         match ty {
@@ -770,36 +771,36 @@ impl TypeChecker {
             ExprKind::Cond { arms } => self.synth_cond(arms, expr.span),
 
             ExprKind::FieldAccess { base, field } => {
-                if let ExprKind::Ident(alias) = &base.kind {
-                    if self.can_use_module_alias(alias) {
-                        let qualified = format!("{}.{}", alias, field);
-                        if let Some(ty) = self.value_env.lookup(&qualified) {
-                            // Plain pub value or monomorphic function: synthesize directly
-                            if !matches!(ty, MonoType::Function { .. }) {
-                                self.type_map.set_expr_type(expr.id, ty.clone());
-                                return Ok(ty);
-                            }
-                            // Monomorphic function: can infer without annotation
-                            if let Some(sig) = self.value_env.get_function(&qualified) {
-                                if sig.type_params.is_empty() {
-                                    let fn_ty = ty.clone();
-                                    self.type_map.set_expr_type(expr.id, fn_ty.clone());
-                                    return Ok(fn_ty);
-                                }
-                            }
+                if let ExprKind::Ident(alias) = &base.kind
+                    && self.can_use_module_alias(alias)
+                {
+                    let qualified = format!("{}.{}", alias, field);
+                    if let Some(ty) = self.value_env.lookup(&qualified) {
+                        // Plain pub value or monomorphic function: synthesize directly
+                        if !matches!(ty, MonoType::Function { .. }) {
+                            self.type_map.set_expr_type(expr.id, ty.clone());
+                            return Ok(ty);
                         }
-                        // Polymorphic function ref: require a type annotation
-                        self.errors.push(TypeError::UnsupportedFeature {
-                            feature: "module method reference without type annotation",
-                            span: expr.span,
-                            note: format!(
-                                "'{}.{}' as a value requires a type annotation, \
-                                 e.g. `f : fn(...) ... = {}.{}`",
-                                alias, field, alias, field
-                            ),
-                        });
-                        return Err(());
+                        // Monomorphic function: can infer without annotation
+                        if let Some(sig) = self.value_env.get_function(&qualified)
+                            && sig.type_params.is_empty()
+                        {
+                            let fn_ty = ty.clone();
+                            self.type_map.set_expr_type(expr.id, fn_ty.clone());
+                            return Ok(fn_ty);
+                        }
                     }
+                    // Polymorphic function ref: require a type annotation
+                    self.errors.push(TypeError::UnsupportedFeature {
+                        feature: "module method reference without type annotation",
+                        span: expr.span,
+                        note: format!(
+                            "'{}.{}' as a value requires a type annotation, \
+                                 e.g. `f : fn(...) ... = {}.{}`",
+                            alias, field, alias, field
+                        ),
+                    });
+                    return Err(());
                 }
                 self.synth_field_access(base, field, expr.span)
             }
@@ -920,24 +921,24 @@ impl TypeChecker {
 
         // Contextual literal narrowing: integer literals can satisfy Byte
         // expectations when they are in range.
-        if let ExprKind::Literal(Literal::Int(n)) = &expr.kind {
-            if *expected == MonoType::Byte {
-                if (0..=255).contains(n) {
-                    self.type_map.set_expr_type(expr.id, MonoType::Byte);
-                    return Ok(());
-                }
-
-                self.errors.push(TypeError::TypeMismatch {
-                    expected: MonoType::Byte,
-                    actual: MonoType::Int,
-                    span: expr.span,
-                    note: Some(format!(
-                        "integer literal {} is out of range for Byte (0..255)",
-                        n
-                    )),
-                });
-                return Err(());
+        if let ExprKind::Literal(Literal::Int(n)) = &expr.kind
+            && *expected == MonoType::Byte
+        {
+            if (0..=255).contains(n) {
+                self.type_map.set_expr_type(expr.id, MonoType::Byte);
+                return Ok(());
             }
+
+            self.errors.push(TypeError::TypeMismatch {
+                expected: MonoType::Byte,
+                actual: MonoType::Int,
+                span: expr.span,
+                note: Some(format!(
+                    "integer literal {} is out of range for Byte (0..255)",
+                    n
+                )),
+            });
+            return Err(());
         }
 
         let result = match &expr.kind {
@@ -972,7 +973,7 @@ impl TypeChecker {
 
             // Cond: check each arm against expected type
             ExprKind::Cond { arms } => {
-                let has_default = arms.last().map_or(false, |a| a.condition.is_none());
+                let has_default = arms.last().is_some_and(|a| a.condition.is_none());
                 for arm in arms {
                     if let Some(cond) = &arm.condition {
                         self.check_expr(cond, &MonoType::Bool)?;
@@ -1018,7 +1019,6 @@ impl TypeChecker {
                     let mut pc =
                         PatternChecker::new(&self.type_env, &mut self.local_env, &mut self.errors);
                     pc.check_pattern(&arm.pattern, &scrut_ty)?;
-                    drop(pc);
                     self.check_expr(&arm.body, expected)?;
                     self.local_env.pop_scope();
                 }
@@ -1118,17 +1118,16 @@ impl TypeChecker {
 
             // Dict.new() — type comes entirely from context annotation
             ExprKind::Call { callee, args } if args.is_empty() => {
-                if let ExprKind::FieldAccess { base, field } = &callee.kind {
-                    if let ExprKind::Ident(alias) = &base.kind {
-                        if alias == "Dict" && field == "new" {
-                            if let MonoType::Dict(_, _) = expected {
-                                self.type_map.set_expr_type(expr.id, expected.clone());
-                                self.type_map.set_expr_type(callee.id, expected.clone());
-                                self.type_map.set_expr_type(base.id, expected.clone());
-                                return Ok(());
-                            }
-                        }
-                    }
+                if let ExprKind::FieldAccess { base, field } = &callee.kind
+                    && let ExprKind::Ident(alias) = &base.kind
+                    && alias == "Dict"
+                    && field == "new"
+                    && let MonoType::Dict(_, _) = expected
+                {
+                    self.type_map.set_expr_type(expr.id, expected.clone());
+                    self.type_map.set_expr_type(callee.id, expected.clone());
+                    self.type_map.set_expr_type(base.id, expected.clone());
+                    return Ok(());
                 }
                 let actual = self.synth_expr(expr)?;
                 self.unify(&actual, expected, expr.span)
@@ -1136,13 +1135,13 @@ impl TypeChecker {
 
             // First-class module method reference: Vector.len, String.concat, etc.
             ExprKind::FieldAccess { base, field } => {
-                if let ExprKind::Ident(alias) = &base.kind {
-                    if self.can_use_module_alias(alias) {
-                        let alias = alias.clone();
-                        let field = field.clone();
-                        return self
-                            .check_module_func_ref(&alias, &field, expected, expr.id, expr.span);
-                    }
+                if let ExprKind::Ident(alias) = &base.kind
+                    && self.can_use_module_alias(alias)
+                {
+                    let alias = alias.clone();
+                    let field = field.clone();
+                    return self
+                        .check_module_func_ref(&alias, &field, expected, expr.id, expr.span);
                 }
                 let actual = self.synth_expr(expr)?;
                 self.unify(&actual, expected, expr.span)
@@ -1513,82 +1512,82 @@ impl TypeChecker {
         } = &callee.kind
         {
             // Check for module-qualified call FIRST (before synthesising base type)
-            if let ExprKind::Ident(alias) = &base.kind {
-                if self.can_use_module_alias(alias) {
-                    let alias = alias.clone();
-                    let method_name = method_name.clone();
-                    let callee_id = callee.id;
-                    self.call_expected_ret = call_expected;
-                    return self.synth_module_call(&alias, &method_name, args, span, callee_id);
-                }
+            if let ExprKind::Ident(alias) = &base.kind
+                && self.can_use_module_alias(alias)
+            {
+                let alias = alias.clone();
+                let method_name = method_name.clone();
+                let callee_id = callee.id;
+                self.call_expected_ret = call_expected;
+                return self.synth_module_call(&alias, &method_name, args, span, callee_id);
             }
 
             // TypeName.Variant(args) or module.TypeName.Variant(args)
-            if let Some(type_id) = self.try_resolve_type_from_expr(base) {
-                if let Some(variant_idx) = self.type_env.get_variant_index(type_id, method_name) {
-                    // Build named_ty with Var args for generic types
-                    let type_var_args: Vec<MonoType> = self
-                        .type_env
-                        .get_def(type_id)
-                        .map(|d| {
-                            d.type_params()
-                                .iter()
-                                .map(|p| MonoType::Var(p.clone()))
-                                .collect()
-                        })
-                        .unwrap_or_default();
-                    let named_ty = MonoType::Named {
-                        type_id,
-                        args: type_var_args,
-                    };
-                    self.type_map.set_expr_type(base.id, named_ty.clone());
-                    let variants = self
-                        .type_env
-                        .get_variants(type_id)
-                        .expect("variant exists, variants must exist");
-                    let variant_fields = variants[variant_idx].fields.clone();
-                    // Check arity
-                    if variant_fields.len() != args.len() {
-                        self.errors.push(TypeError::WrongArity {
-                            expected: variant_fields.len(),
-                            actual: args.len(),
-                            span,
-                        });
+            if let Some(type_id) = self.try_resolve_type_from_expr(base)
+                && let Some(variant_idx) = self.type_env.get_variant_index(type_id, method_name)
+            {
+                // Build named_ty with Var args for generic types
+                let type_var_args: Vec<MonoType> = self
+                    .type_env
+                    .get_def(type_id)
+                    .map(|d| {
+                        d.type_params()
+                            .iter()
+                            .map(|p| MonoType::Var(p.clone()))
+                            .collect()
+                    })
+                    .unwrap_or_default();
+                let named_ty = MonoType::Named {
+                    type_id,
+                    args: type_var_args,
+                };
+                self.type_map.set_expr_type(base.id, named_ty.clone());
+                let variants = self
+                    .type_env
+                    .get_variants(type_id)
+                    .expect("variant exists, variants must exist");
+                let variant_fields = variants[variant_idx].fields.clone();
+                // Check arity
+                if variant_fields.len() != args.len() {
+                    self.errors.push(TypeError::WrongArity {
+                        expected: variant_fields.len(),
+                        actual: args.len(),
+                        span,
+                    });
+                    return Err(());
+                }
+                // Instantiate type params with MetaVars (no-op for non-generic types)
+                let type_params: Vec<String> = self
+                    .type_env
+                    .get_def(type_id)
+                    .map(|d| d.type_params().to_vec())
+                    .unwrap_or_default();
+                let inst_map: HashMap<String, MonoType> = type_params
+                    .iter()
+                    .map(|p| (p.clone(), self.fresh_meta()))
+                    .collect();
+                let inst_fields: Vec<MonoType> = variant_fields
+                    .iter()
+                    .map(|f| apply_subst(f, &inst_map))
+                    .collect();
+                let inst_named_ty = apply_subst(&named_ty, &inst_map);
+                // Check each arg against instantiated field type
+                for (arg, expected_ty) in args.iter().zip(inst_fields.iter()) {
+                    if let Err(()) = self.check_expr(arg, expected_ty) {
                         return Err(());
                     }
-                    // Instantiate type params with MetaVars (no-op for non-generic types)
-                    let type_params: Vec<String> = self
-                        .type_env
-                        .get_def(type_id)
-                        .map(|d| d.type_params().to_vec())
-                        .unwrap_or_default();
-                    let inst_map: HashMap<String, MonoType> = type_params
-                        .iter()
-                        .map(|p| (p.clone(), self.fresh_meta()))
-                        .collect();
-                    let inst_fields: Vec<MonoType> = variant_fields
-                        .iter()
-                        .map(|f| apply_subst(f, &inst_map))
-                        .collect();
-                    let inst_named_ty = apply_subst(&named_ty, &inst_map);
-                    // Check each arg against instantiated field type
-                    for (arg, expected_ty) in args.iter().zip(inst_fields.iter()) {
-                        if let Err(()) = self.check_expr(arg, expected_ty) {
-                            return Err(());
-                        }
-                    }
-                    // Record callee type (constructor function) and return
-                    let ctor_ty = if inst_fields.is_empty() {
-                        inst_named_ty.clone()
-                    } else {
-                        MonoType::Function {
-                            params: inst_fields,
-                            ret: Box::new(inst_named_ty.clone()),
-                        }
-                    };
-                    self.type_map.set_expr_type(callee.id, self.zonk(&ctor_ty));
-                    return Ok(self.zonk(&inst_named_ty));
                 }
+                // Record callee type (constructor function) and return
+                let ctor_ty = if inst_fields.is_empty() {
+                    inst_named_ty.clone()
+                } else {
+                    MonoType::Function {
+                        params: inst_fields,
+                        ret: Box::new(inst_named_ty.clone()),
+                    }
+                };
+                self.type_map.set_expr_type(callee.id, self.zonk(&ctor_ty));
+                return Ok(self.zonk(&inst_named_ty));
             }
 
             // Method call on a value: synthesise base type, then dispatch.
@@ -1603,16 +1602,15 @@ impl TypeChecker {
 
         // Normal function call: if callee is a plain Ident with a FunctionSignature
         // (and not shadowed by a local), use the signature-aware path.
-        if let ExprKind::Ident(name) = &callee.kind {
-            if self.local_env.lookup(name).is_none() {
-                if let Some(sig) = self.value_env.get_function(name).cloned() {
-                    let call_label = format!("call to `{}`", name);
-                    let (ret, callee_ty) =
-                        self.synth_sig_call(&sig, args, call_expected, Some(&call_label), span)?;
-                    self.type_map.set_expr_type(callee.id, callee_ty);
-                    return Ok(ret);
-                }
-            }
+        if let ExprKind::Ident(name) = &callee.kind
+            && self.local_env.lookup(name).is_none()
+            && let Some(sig) = self.value_env.get_function(name).cloned()
+        {
+            let call_label = format!("call to `{}`", name);
+            let (ret, callee_ty) =
+                self.synth_sig_call(&sig, args, call_expected, Some(&call_label), span)?;
+            self.type_map.set_expr_type(callee.id, callee_ty);
+            return Ok(ret);
         }
 
         let callee_ty = self.synth_expr(callee)?;
@@ -1641,21 +1639,21 @@ impl TypeChecker {
                 // On failure, patch in call context for better error messages.
                 for (idx, (arg, expected_ty)) in args.iter().zip(params.iter()).enumerate() {
                     if let Err(()) = self.check_expr(arg, expected_ty) {
-                        if let Some(TypeError::TypeMismatch { note, .. }) = self.errors.last_mut() {
-                            if note.is_none() {
-                                let label = if let ExprKind::Ident(n) = &callee.kind {
-                                    format!("argument {} of call to `{}`", idx + 1, n)
-                                } else {
-                                    format!("argument {} of call", idx + 1)
-                                };
-                                *note = Some(label);
-                            }
+                        if let Some(TypeError::TypeMismatch { note, .. }) = self.errors.last_mut()
+                            && note.is_none()
+                        {
+                            let label = if let ExprKind::Ident(n) = &callee.kind {
+                                format!("argument {} of call to `{}`", idx + 1, n)
+                            } else {
+                                format!("argument {} of call", idx + 1)
+                            };
+                            *note = Some(label);
                         }
                         return Err(());
                     }
                 }
 
-                Ok(self.zonk(&*ret))
+                Ok(self.zonk(&ret))
             }
             _ => {
                 self.errors.push(TypeError::NotAFunction {
@@ -1720,12 +1718,11 @@ impl TypeChecker {
         }
         for (idx, (arg, expected_ty)) in args.iter().zip(inst_params.iter()).enumerate() {
             if let Err(()) = self.check_expr(arg, expected_ty) {
-                if let Some(label) = call_label {
-                    if let Some(TypeError::TypeMismatch { note, .. }) = self.errors.last_mut() {
-                        if note.is_none() {
-                            *note = Some(format!("argument {} of {}", idx + 1, label));
-                        }
-                    }
+                if let Some(label) = call_label
+                    && let Some(TypeError::TypeMismatch { note, .. }) = self.errors.last_mut()
+                    && note.is_none()
+                {
+                    *note = Some(format!("argument {} of {}", idx + 1, label));
                 }
                 return Err(());
             }
@@ -2162,29 +2159,29 @@ impl TypeChecker {
         {
             // If there is no inherent method, this may still be a capability
             // record function field call: `record.fn_field(args)`.
-            if let Some(field_idx) = self.type_env.get_field_index(type_id, method) {
-                if let Some(fields) = self.type_env.get_record_fields(type_id) {
-                    let type_params = self
-                        .type_env
-                        .get_def(type_id)
-                        .map(|d| d.type_params().to_vec())
-                        .unwrap_or_default();
-                    let subst = build_type_subst(&type_params, &named_args);
-                    let field_ty = apply_subst(&fields[field_idx].ty, &subst);
-                    if let MonoType::Function { params, ret } = field_ty {
-                        if params.len() != args.len() {
-                            self.errors.push(TypeError::WrongArity {
-                                expected: params.len(),
-                                actual: args.len(),
-                                span,
-                            });
-                            return Err(());
-                        }
-                        for (arg, expected_ty) in args.iter().zip(params.iter()) {
-                            self.check_expr(arg, expected_ty)?;
-                        }
-                        return Ok(*ret);
+            if let Some(field_idx) = self.type_env.get_field_index(type_id, method)
+                && let Some(fields) = self.type_env.get_record_fields(type_id)
+            {
+                let type_params = self
+                    .type_env
+                    .get_def(type_id)
+                    .map(|d| d.type_params().to_vec())
+                    .unwrap_or_default();
+                let subst = build_type_subst(&type_params, &named_args);
+                let field_ty = apply_subst(&fields[field_idx].ty, &subst);
+                if let MonoType::Function { params, ret } = field_ty {
+                    if params.len() != args.len() {
+                        self.errors.push(TypeError::WrongArity {
+                            expected: params.len(),
+                            actual: args.len(),
+                            span,
+                        });
+                        return Err(());
                     }
+                    for (arg, expected_ty) in args.iter().zip(params.iter()) {
+                        self.check_expr(arg, expected_ty)?;
+                    }
+                    return Ok(*ret);
                 }
             }
 
@@ -2572,7 +2569,7 @@ impl TypeChecker {
     }
 
     fn synth_cond(&mut self, arms: &[CondArm], _span: Span) -> Result<MonoType, ()> {
-        let has_default = arms.last().map_or(false, |a| a.condition.is_none());
+        let has_default = arms.last().is_some_and(|a| a.condition.is_none());
         let mut result_ty: Option<MonoType> = None;
 
         for arm in arms {
@@ -2682,54 +2679,54 @@ impl TypeChecker {
 
     fn synth_field_access(&mut self, base: &Expr, field: &str, span: Span) -> Result<MonoType, ()> {
         // Check for TypeName.Variant or module.TypeName.Variant syntax
-        if let Some(type_id) = self.try_resolve_type_from_expr(base) {
-            if let Some(variant_idx) = self.type_env.get_variant_index(type_id, field) {
-                // Instantiate generic type params with fresh MetaVars so that
-                // unification (e.g. unifying Done with Yield's type) can solve them.
-                let type_params: Vec<String> = self
-                    .type_env
-                    .get_def(type_id)
-                    .map(|d| d.type_params().to_vec())
-                    .unwrap_or_default();
-                let inst_map: HashMap<String, MonoType> = type_params
-                    .iter()
-                    .map(|p| (p.clone(), self.fresh_meta()))
-                    .collect();
-                let type_var_args: Vec<MonoType> = type_params
-                    .iter()
-                    .map(|p| MonoType::Var(p.clone()))
-                    .collect();
-                let raw_named = MonoType::Named {
-                    type_id,
-                    args: type_var_args,
-                };
-                let named_ty = if inst_map.is_empty() {
-                    raw_named
-                } else {
-                    apply_subst(&raw_named, &inst_map)
-                };
-                // Record type of the type-name base as Named (so lowerer can identify it)
-                self.type_map.set_expr_type(base.id, named_ty.clone());
-                let variants = self
-                    .type_env
-                    .get_variants(type_id)
-                    .expect("variant index exists, variants must exist");
-                let variant_fields_raw = variants[variant_idx].fields.clone();
-                let variant_fields: Vec<MonoType> = variant_fields_raw
-                    .iter()
-                    .map(|f| apply_subst(f, &inst_map))
-                    .collect();
-                return if variant_fields.is_empty() {
-                    // Zero-arg variant — directly a value of the named type
-                    Ok(named_ty)
-                } else {
-                    // Parameterized variant accessed as a value (not called here)
-                    Ok(MonoType::Function {
-                        params: variant_fields,
-                        ret: Box::new(named_ty),
-                    })
-                };
-            }
+        if let Some(type_id) = self.try_resolve_type_from_expr(base)
+            && let Some(variant_idx) = self.type_env.get_variant_index(type_id, field)
+        {
+            // Instantiate generic type params with fresh MetaVars so that
+            // unification (e.g. unifying Done with Yield's type) can solve them.
+            let type_params: Vec<String> = self
+                .type_env
+                .get_def(type_id)
+                .map(|d| d.type_params().to_vec())
+                .unwrap_or_default();
+            let inst_map: HashMap<String, MonoType> = type_params
+                .iter()
+                .map(|p| (p.clone(), self.fresh_meta()))
+                .collect();
+            let type_var_args: Vec<MonoType> = type_params
+                .iter()
+                .map(|p| MonoType::Var(p.clone()))
+                .collect();
+            let raw_named = MonoType::Named {
+                type_id,
+                args: type_var_args,
+            };
+            let named_ty = if inst_map.is_empty() {
+                raw_named
+            } else {
+                apply_subst(&raw_named, &inst_map)
+            };
+            // Record type of the type-name base as Named (so lowerer can identify it)
+            self.type_map.set_expr_type(base.id, named_ty.clone());
+            let variants = self
+                .type_env
+                .get_variants(type_id)
+                .expect("variant index exists, variants must exist");
+            let variant_fields_raw = variants[variant_idx].fields.clone();
+            let variant_fields: Vec<MonoType> = variant_fields_raw
+                .iter()
+                .map(|f| apply_subst(f, &inst_map))
+                .collect();
+            return if variant_fields.is_empty() {
+                // Zero-arg variant — directly a value of the named type
+                Ok(named_ty)
+            } else {
+                // Parameterized variant accessed as a value (not called here)
+                Ok(MonoType::Function {
+                    params: variant_fields,
+                    ret: Box::new(named_ty),
+                })
+            };
         }
 
         let base_ty = self.synth_expr(base)?;
@@ -2765,7 +2762,7 @@ impl TypeChecker {
                         .get_def(type_id)
                         .map(|d| d.type_params().to_vec())
                         .unwrap_or_default();
-                    let subst = build_type_subst(&type_params, &type_args);
+                    let subst = build_type_subst(&type_params, type_args);
                     // Find the field
                     for f in record_fields {
                         if f.name == field {
@@ -2793,7 +2790,7 @@ impl TypeChecker {
                     Err(())
                 } else if has_method {
                     // Non-record Named type (e.g. enum) with a method
-                    return self.synth_method_value_ref(&base_ty, type_id, field, span);
+                    self.synth_method_value_ref(&base_ty, type_id, field, span)
                 } else {
                     // Not a record type and no method
                     self.errors.push(TypeError::TypeMismatch {
@@ -2807,10 +2804,10 @@ impl TypeChecker {
             }
             _ => {
                 // Check for registered method value reference (e.g. xs.map, n.to_string).
-                if let Some(type_id) = method_receiver_type_id(&base_ty) {
-                    if self.type_env.has_method(type_id, field) {
-                        return self.synth_method_value_ref(&base_ty, type_id, field, span);
-                    }
+                if let Some(type_id) = method_receiver_type_id(&base_ty)
+                    && self.type_env.has_method(type_id, field)
+                {
+                    return self.synth_method_value_ref(&base_ty, type_id, field, span);
                 }
                 self.errors.push(TypeError::TypeMismatch {
                     expected: MonoType::Int, // Dummy
@@ -2945,13 +2942,12 @@ impl TypeChecker {
                 let mut field_synth: Vec<(&str, Result<MonoType, ()>)> = Vec::new();
                 for (provided_name, provided_expr) in fields.iter() {
                     let result = self.synth_expr(provided_expr);
-                    if let Ok(actual_ty) = &result {
-                        if let Some((_, declared_ty)) =
+                    if let Ok(actual_ty) = &result
+                        && let Some((_, declared_ty)) =
                             def_fields.iter().find(|(n, _)| n == provided_name)
-                        {
-                            let inst_decl_ty = apply_subst(declared_ty, &inst_map);
-                            let _ = self.unify(actual_ty, &inst_decl_ty, provided_expr.span);
-                        }
+                    {
+                        let inst_decl_ty = apply_subst(declared_ty, &inst_map);
+                        let _ = self.unify(actual_ty, &inst_decl_ty, provided_expr.span);
                     }
                     field_synth.push((provided_name.as_str(), result));
                 }
@@ -3237,7 +3233,7 @@ impl TypeChecker {
                 };
 
                 // Find the variant with the matching name
-                let variant = variants.iter().find(|v| &v.name == variant_name);
+                let variant = variants.iter().find(|v| v.name == variant_name);
 
                 match variant {
                     Some(v) => {
@@ -3379,13 +3375,13 @@ impl TypeChecker {
             }
         }
 
-        if let Some(join_ty) = result_ty.clone().map(|ty| self.zonk(&ty)) {
-            if !contains_meta(&join_ty) {
-                for arm in deferred_arms {
-                    self.check_case_arm(arm, &scrut_ty, &join_ty)?;
-                }
-                return Ok(join_ty);
+        if let Some(join_ty) = result_ty.clone().map(|ty| self.zonk(&ty))
+            && !contains_meta(&join_ty)
+        {
+            for arm in deferred_arms {
+                self.check_case_arm(arm, &scrut_ty, &join_ty)?;
             }
+            return Ok(join_ty);
         }
 
         if deferred_arms.is_empty() {
@@ -3745,10 +3741,10 @@ impl TypeChecker {
                     }
                 }
                 // index_pattern binds Int index
-                if let Some(idx_pat) = index_pattern {
-                    if let Pattern::Ident(name, _) = idx_pat {
-                        self.local_env.bind(name.clone(), MonoType::Int);
-                    }
+                if let Some(idx_pat) = index_pattern
+                    && let Pattern::Ident(name, _) = idx_pat
+                {
+                    self.local_env.bind(name.clone(), MonoType::Int);
                 }
             }
             MonoType::String => {
@@ -3765,10 +3761,10 @@ impl TypeChecker {
                     }
                 }
                 // index_pattern binds Int index
-                if let Some(idx_pat) = index_pattern {
-                    if let Pattern::Ident(name, _) = idx_pat {
-                        self.local_env.bind(name.clone(), MonoType::Int);
-                    }
+                if let Some(idx_pat) = index_pattern
+                    && let Pattern::Ident(name, _) = idx_pat
+                {
+                    self.local_env.bind(name.clone(), MonoType::Int);
                 }
             }
             MonoType::Named { type_id, .. } if type_id == RANGE_TYPE_ID => {
@@ -3785,10 +3781,10 @@ impl TypeChecker {
                     }
                 }
                 // index_pattern also binds Int (a simple counter)
-                if let Some(idx_pat) = index_pattern {
-                    if let Pattern::Ident(name, _) = idx_pat {
-                        self.local_env.bind(name.clone(), MonoType::Int);
-                    }
+                if let Some(idx_pat) = index_pattern
+                    && let Pattern::Ident(name, _) = idx_pat
+                {
+                    self.local_env.bind(name.clone(), MonoType::Int);
                 }
             }
             MonoType::Named { type_id, ref args } if type_id == ITERATOR_TYPE_ID => {
@@ -3804,10 +3800,10 @@ impl TypeChecker {
                         });
                     }
                 }
-                if let Some(idx_pat) = index_pattern {
-                    if let Pattern::Ident(name, _) = idx_pat {
-                        self.local_env.bind(name.clone(), MonoType::Int);
-                    }
+                if let Some(idx_pat) = index_pattern
+                    && let Pattern::Ident(name, _) = idx_pat
+                {
+                    self.local_env.bind(name.clone(), MonoType::Int);
                 }
             }
             MonoType::Dict(key_ty, val_ty) => {
@@ -3824,10 +3820,10 @@ impl TypeChecker {
                     }
                 }
                 // index_pattern binds the value type (not an integer index)
-                if let Some(val_pat) = index_pattern {
-                    if let Pattern::Ident(name, _) = val_pat {
-                        self.local_env.bind(name.clone(), *val_ty);
-                    }
+                if let Some(val_pat) = index_pattern
+                    && let Pattern::Ident(name, _) = val_pat
+                {
+                    self.local_env.bind(name.clone(), *val_ty);
                 }
             }
             other => {
@@ -3909,10 +3905,10 @@ impl TypeChecker {
                         had_error = true;
                     }
                 }
-                if let Some(idx_pat) = index_pattern {
-                    if let Pattern::Ident(name, _) = idx_pat {
-                        self.local_env.bind(name.clone(), MonoType::Int);
-                    }
+                if let Some(idx_pat) = index_pattern
+                    && let Pattern::Ident(name, _) = idx_pat
+                {
+                    self.local_env.bind(name.clone(), MonoType::Int);
                 }
             }
             MonoType::String => {
@@ -3929,10 +3925,10 @@ impl TypeChecker {
                         had_error = true;
                     }
                 }
-                if let Some(idx_pat) = index_pattern {
-                    if let Pattern::Ident(name, _) = idx_pat {
-                        self.local_env.bind(name.clone(), MonoType::Int);
-                    }
+                if let Some(idx_pat) = index_pattern
+                    && let Pattern::Ident(name, _) = idx_pat
+                {
+                    self.local_env.bind(name.clone(), MonoType::Int);
                 }
             }
             MonoType::Named { type_id, .. } if type_id == RANGE_TYPE_ID => {
@@ -3949,10 +3945,10 @@ impl TypeChecker {
                         had_error = true;
                     }
                 }
-                if let Some(idx_pat) = index_pattern {
-                    if let Pattern::Ident(name, _) = idx_pat {
-                        self.local_env.bind(name.clone(), MonoType::Int);
-                    }
+                if let Some(idx_pat) = index_pattern
+                    && let Pattern::Ident(name, _) = idx_pat
+                {
+                    self.local_env.bind(name.clone(), MonoType::Int);
                 }
             }
             MonoType::Named { type_id, ref args } if type_id == ITERATOR_TYPE_ID => {
@@ -3969,10 +3965,10 @@ impl TypeChecker {
                         had_error = true;
                     }
                 }
-                if let Some(idx_pat) = index_pattern {
-                    if let Pattern::Ident(name, _) = idx_pat {
-                        self.local_env.bind(name.clone(), MonoType::Int);
-                    }
+                if let Some(idx_pat) = index_pattern
+                    && let Pattern::Ident(name, _) = idx_pat
+                {
+                    self.local_env.bind(name.clone(), MonoType::Int);
                 }
             }
             MonoType::Dict(key_ty, val_ty) => {
@@ -3989,10 +3985,10 @@ impl TypeChecker {
                         had_error = true;
                     }
                 }
-                if let Some(val_pat) = index_pattern {
-                    if let Pattern::Ident(name, _) = val_pat {
-                        self.local_env.bind(name.clone(), *val_ty);
-                    }
+                if let Some(val_pat) = index_pattern
+                    && let Pattern::Ident(name, _) = val_pat
+                {
+                    self.local_env.bind(name.clone(), *val_ty);
                 }
             }
             other => {
@@ -4344,10 +4340,11 @@ fn topo_sort_top_level(ast: &SourceFile, _value_env: &ValueEnv) -> Vec<usize> {
         // Convert name references to item indices, filtering to only
         // real dependencies (items that need inference before use).
         for name in &refs {
-            if let Some(&dep_idx) = name_to_idx.get(name.as_str()) {
-                if dep_idx != idx && needs_inference.contains(name.as_str()) {
-                    deps[idx].insert(dep_idx);
-                }
+            if let Some(&dep_idx) = name_to_idx.get(name.as_str())
+                && dep_idx != idx
+                && needs_inference.contains(name.as_str())
+            {
+                deps[idx].insert(dep_idx);
             }
         }
     }

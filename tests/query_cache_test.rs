@@ -87,7 +87,7 @@ fn query_cache_invalidates_reverse_dependents_when_dep_changes() {
 
     // dep parse must miss due source hash change; resolve/typecheck should rerun
     // for dep and for main (reverse-dependent invalidation).
-    assert!(after_change.parse_misses >= before_change.parse_misses + 1);
+    assert!(after_change.parse_misses > before_change.parse_misses);
     assert!(after_change.resolve_misses >= before_change.resolve_misses + 2);
     assert!(after_change.typecheck_misses >= before_change.typecheck_misses + 2);
 

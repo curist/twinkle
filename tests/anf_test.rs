@@ -418,7 +418,7 @@ fn check_snapshot(tw_path: &str, snapshot_name: &str) {
     let snap_path = snapshot_path(snapshot_name);
     if std::env::var("UPDATE_SNAPSHOTS").is_ok() {
         // Regenerate snapshot.
-        let snap_dir = format!("tests/snapshots/anf");
+        let snap_dir = "tests/snapshots/anf".to_string();
         fs::create_dir_all(&snap_dir).expect("create snapshot dir");
         fs::write(&snap_path, &actual).expect("write snapshot");
         return;
@@ -426,7 +426,7 @@ fn check_snapshot(tw_path: &str, snapshot_name: &str) {
 
     if !Path::new(&snap_path).exists() {
         // No snapshot yet — create it on first run.
-        let snap_dir = format!("tests/snapshots/anf");
+        let snap_dir = "tests/snapshots/anf".to_string();
         fs::create_dir_all(&snap_dir).expect("create snapshot dir");
         fs::write(&snap_path, &actual).expect("write snapshot");
         return;

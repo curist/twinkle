@@ -345,6 +345,7 @@ fn arr_remove_at_fn() -> FuncDef {
 
 /// Inline wymix: pops (a, b) from Wasm stack, pushes (lo ^ hi).
 /// 4 i64.mul — reconstructs low half from partial products instead of a 5th mul.
+#[allow(clippy::too_many_arguments)]
 fn wymix_instrs(
     la: u32,
     lb: u32,

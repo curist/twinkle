@@ -193,55 +193,55 @@ impl CompileState {
             // (builtin methods are registered separately via prelude plumbing).
             // The function itself is still callable via its qualified name
             // (registered above); this only controls dot-method availability.
-            if let Some(receiver_ty) = sig.params.first() {
-                if let Some(receiver_type_id) = method_receiver_type_id(receiver_ty) {
-                    let is_own_type = exports
-                        .public_types
-                        .values()
-                        .any(|&tid| tid == receiver_type_id);
-                    if is_own_type {
-                        self.type_env.add_method(
-                            receiver_type_id,
-                            func_name.clone(),
+            if let Some(receiver_ty) = sig.params.first()
+                && let Some(receiver_type_id) = method_receiver_type_id(receiver_ty)
+            {
+                let is_own_type = exports
+                    .public_types
+                    .values()
+                    .any(|&tid| tid == receiver_type_id);
+                if is_own_type {
+                    self.type_env.add_method(
+                        receiver_type_id,
+                        func_name.clone(),
+                        qualified_name.clone(),
+                        Some(sig.clone()),
+                    );
+                    // Persist method func target (not snapshot/restored)
+                    if let Some(&func_id) = exports.public_func_ids.get(func_name) {
+                        self.method_func_targets.insert(
                             qualified_name.clone(),
-                            Some(sig.clone()),
+                            ExternalFuncRef {
+                                module_path: exports.canonical_path.clone(),
+                                local_func_id: func_id,
+                            },
                         );
-                        // Persist method func target (not snapshot/restored)
+                    }
+
+                    // Builtin receiver methods can also be called via canonical
+                    // module aliases, e.g. `Vector.map(xs, f)`.
+                    if let Some(alias_name) = builtin_method_alias(receiver_type_id) {
+                        let builtin_name = format!("{}.{}", alias_name, func_name);
+                        let builtin_sig = FunctionSignature {
+                            name: builtin_name.clone(),
+                            type_params: sig.type_params.clone(),
+                            type_param_bounds: sig.type_param_bounds.clone(),
+                            param_names: sig.param_names.clone(),
+                            params: sig.params.clone(),
+                            ret: sig.ret.clone(),
+                            doc: sig.doc.clone(),
+                            extern_module: sig.extern_module.clone(),
+                        };
+                        self.value_env.add_function(builtin_sig);
                         if let Some(&func_id) = exports.public_func_ids.get(func_name) {
-                            self.method_func_targets.insert(
-                                qualified_name.clone(),
+                            self.func_table.insert(builtin_name.clone(), func_id);
+                            self.qualified_func_targets.insert(
+                                builtin_name,
                                 ExternalFuncRef {
                                     module_path: exports.canonical_path.clone(),
                                     local_func_id: func_id,
                                 },
                             );
-                        }
-
-                        // Builtin receiver methods can also be called via canonical
-                        // module aliases, e.g. `Vector.map(xs, f)`.
-                        if let Some(alias_name) = builtin_method_alias(receiver_type_id) {
-                            let builtin_name = format!("{}.{}", alias_name, func_name);
-                            let builtin_sig = FunctionSignature {
-                                name: builtin_name.clone(),
-                                type_params: sig.type_params.clone(),
-                                type_param_bounds: sig.type_param_bounds.clone(),
-                                param_names: sig.param_names.clone(),
-                                params: sig.params.clone(),
-                                ret: sig.ret.clone(),
-                                doc: sig.doc.clone(),
-                                extern_module: sig.extern_module.clone(),
-                            };
-                            self.value_env.add_function(builtin_sig);
-                            if let Some(&func_id) = exports.public_func_ids.get(func_name) {
-                                self.func_table.insert(builtin_name.clone(), func_id);
-                                self.qualified_func_targets.insert(
-                                    builtin_name,
-                                    ExternalFuncRef {
-                                        module_path: exports.canonical_path.clone(),
-                                        local_func_id: func_id,
-                                    },
-                                );
-                            }
                         }
                     }
                 }
@@ -342,36 +342,35 @@ impl CompileState {
                     // The signature is stored directly in TypeEnv so method
                     // resolution bypasses ValueEnv entirely (Option B).
                     for (func_name, sig) in &exports.public_functions {
-                        if let Some(receiver_ty) = sig.params.first() {
-                            if let Some(receiver_type_id) = method_receiver_type_id(receiver_ty) {
-                                if receiver_type_id == type_id {
-                                    // Use the module's qualified name for
-                                    // FuncId resolution in the lowerer.
-                                    let qualified_name = format!("{}.{}", alias, func_name);
+                        if let Some(receiver_ty) = sig.params.first()
+                            && let Some(receiver_type_id) = method_receiver_type_id(receiver_ty)
+                            && receiver_type_id == type_id
+                        {
+                            // Use the module's qualified name for
+                            // FuncId resolution in the lowerer.
+                            let qualified_name = format!("{}.{}", alias, func_name);
 
-                                    // Register FuncId mapping so the lowerer
-                                    // can resolve the qualified name.
-                                    if let Some(&func_id) = exports.public_func_ids.get(func_name) {
-                                        self.func_table.insert(qualified_name.clone(), func_id);
-                                        let ext_ref = ExternalFuncRef {
-                                            module_path: exports.canonical_path.clone(),
-                                            local_func_id: func_id,
-                                        };
-                                        self.qualified_func_targets
-                                            .insert(qualified_name.clone(), ext_ref.clone());
-                                        // Persist for transitive method resolution
-                                        self.method_func_targets
-                                            .insert(qualified_name.clone(), ext_ref);
-                                    }
-
-                                    self.type_env.add_method(
-                                        type_id,
-                                        func_name.clone(),
-                                        qualified_name,
-                                        Some(sig.clone()),
-                                    );
-                                }
+                            // Register FuncId mapping so the lowerer
+                            // can resolve the qualified name.
+                            if let Some(&func_id) = exports.public_func_ids.get(func_name) {
+                                self.func_table.insert(qualified_name.clone(), func_id);
+                                let ext_ref = ExternalFuncRef {
+                                    module_path: exports.canonical_path.clone(),
+                                    local_func_id: func_id,
+                                };
+                                self.qualified_func_targets
+                                    .insert(qualified_name.clone(), ext_ref.clone());
+                                // Persist for transitive method resolution
+                                self.method_func_targets
+                                    .insert(qualified_name.clone(), ext_ref);
                             }
+
+                            self.type_env.add_method(
+                                type_id,
+                                func_name.clone(),
+                                qualified_name,
+                                Some(sig.clone()),
+                            );
                         }
                     }
                 }

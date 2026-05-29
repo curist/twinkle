@@ -27,6 +27,7 @@ impl<'a> PatternChecker<'a> {
     }
 
     /// Check a pattern against an expected type and bind variables
+    #[allow(clippy::result_unit_err)]
     pub fn check_pattern(&mut self, pattern: &Pattern, expected: &MonoType) -> Result<(), ()> {
         match pattern {
             Pattern::Wildcard(_) => {
@@ -191,6 +192,7 @@ impl<'a> PatternChecker<'a> {
 
     /// Check exhaustiveness of case patterns
     /// Returns Ok if patterns are exhaustive, Err with missing variants otherwise
+    #[allow(clippy::result_unit_err)]
     pub fn check_exhaustiveness(
         type_env: &TypeEnv,
         errors: &mut Vec<TypeError>,

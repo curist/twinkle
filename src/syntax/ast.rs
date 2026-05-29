@@ -13,6 +13,7 @@ pub struct SourceFile {
 
 /// Top-level item (declaration or statement)
 #[derive(Debug, Clone, PartialEq)]
+#[allow(clippy::large_enum_variant)]
 pub enum Item {
     Import(ImportDecl),
     TypeDecl(TypeDecl),

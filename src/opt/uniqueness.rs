@@ -161,11 +161,11 @@ fn op_semantics(func_id: FuncId) -> Option<OpSemantics> {
 }
 
 fn is_no_retain_read_only(func_id: FuncId) -> bool {
-    op_semantics(func_id).map_or(false, |s| s.no_retain_read_only)
+    op_semantics(func_id).is_some_and(|s| s.no_retain_read_only)
 }
 
 fn call_does_not_retain_args(func_id: FuncId) -> bool {
-    op_semantics(func_id).map_or(false, |s| s.no_retain_args)
+    op_semantics(func_id).is_some_and(|s| s.no_retain_args)
 }
 
 fn alloc_local(next_local: &mut u32) -> LocalId {
@@ -250,9 +250,7 @@ fn summarize_cow_wrapper(func: &AnfFunctionDef) -> Option<(FuncId, usize, Vec<us
                 callee: Atom::AGlobalFunc(wrapped_func),
                 args,
             } => {
-                let Some(info) = op_semantics(*wrapped_func).and_then(|s| s.as_cow_info()) else {
-                    return None;
-                };
+                let info = op_semantics(*wrapped_func).and_then(|s| s.as_cow_info())?;
                 if !info.builder_rewritable && info.in_place_id.is_none() {
                     return None;
                 }
@@ -365,7 +363,7 @@ fn base_can_rewrite(
     unique.contains(&base)
         && (!tainted.contains(&base)
             || refreshed.contains(&base)
-            || source_fresh.map_or(false, |sf| sf.contains(&base)))
+            || source_fresh.is_some_and(|sf| sf.contains(&base)))
 }
 
 // ── Fresh producer detection ─────────────────────────────────────────────────
@@ -409,7 +407,7 @@ fn is_fresh_producer(op: &AnfOp) -> bool {
         AnfOp::ACall {
             callee: Atom::AGlobalFunc(id),
             ..
-        } => op_semantics(*id).map_or(false, |s| s.fresh_producer),
+        } => op_semantics(*id).is_some_and(|s| s.fresh_producer),
         _ => false,
     }
 }
@@ -479,37 +477,28 @@ fn refine_tainted_for_reassigned_locals(body: &AnfExpr, tainted: &mut HashSet<Lo
 ///   let r = RecordUpdate(d, field, val) ; assign(d = r)
 fn collect_cow_reassign_targets_spine(expr: &AnfExpr, targets: &mut HashSet<LocalId>) {
     let mut cursor = expr;
-    loop {
-        match cursor {
-            AnfExpr::Let { local, op, body } => {
-                // Check for COW call op followed by assign(target = result)
-                if let AnfOp::ACall {
-                    callee: Atom::AGlobalFunc(func_id),
-                    args,
-                } = op.as_ref()
-                {
-                    if let Some(info) = op_semantics(*func_id).and_then(|s| s.as_cow_info()) {
-                        if let Some(Atom::ALocal(base)) = args.get(info.base_arg) {
-                            if is_consume_reassign(body, *base, *local) {
-                                targets.insert(*base);
-                            }
-                        }
-                    }
-                }
-                // Check for record update followed by assign(target = result)
-                if let AnfOp::ARecordUpdate {
-                    base: Atom::ALocal(base),
-                    ..
-                } = op.as_ref()
-                {
-                    if is_consume_reassign(body, *base, *local) {
-                        targets.insert(*base);
-                    }
-                }
-                cursor = body;
-            }
-            _ => break,
+    while let AnfExpr::Let { local, op, body } = cursor {
+        // Check for COW call op followed by assign(target = result)
+        if let AnfOp::ACall {
+            callee: Atom::AGlobalFunc(func_id),
+            args,
+        } = op.as_ref()
+            && let Some(info) = op_semantics(*func_id).and_then(|s| s.as_cow_info())
+            && let Some(Atom::ALocal(base)) = args.get(info.base_arg)
+            && is_consume_reassign(body, *base, *local)
+        {
+            targets.insert(*base);
         }
+        // Check for record update followed by assign(target = result)
+        if let AnfOp::ARecordUpdate {
+            base: Atom::ALocal(base),
+            ..
+        } = op.as_ref()
+            && is_consume_reassign(body, *base, *local)
+        {
+            targets.insert(*base);
+        }
+        cursor = body;
     }
 }
 
@@ -529,51 +518,46 @@ fn all_escapes_after_last_cow_use(body: &AnfExpr, local: LocalId) -> bool {
     let mut seen_escape = false;
     let mut cursor = body;
 
-    loop {
-        match cursor {
-            AnfExpr::Let { local: _, op, body } => {
-                // Bail out if local appears in a nested scope.
-                if op_has_local_in_nested_scope(op, local) {
-                    return false;
-                }
-
-                // Check if this is a COW-base use of local.
-                let is_cow_base = if let AnfOp::ACall {
-                    callee: Atom::AGlobalFunc(func_id),
-                    args,
-                } = op.as_ref()
-                {
-                    if let Some(info) = op_semantics(*func_id).and_then(|s| s.as_cow_info()) {
-                        args.get(info.base_arg)
-                            .map_or(false, |a| atom_is_local(a, local))
-                    } else {
-                        false
-                    }
-                } else if let AnfOp::ARecordUpdate {
-                    base: Atom::ALocal(b),
-                    ..
-                } = op.as_ref()
-                {
-                    *b == local
-                } else {
-                    false
-                };
-
-                if is_cow_base && seen_escape {
-                    // A COW op on local AFTER an escape — the escape could alias
-                    // the value the COW op sees. Not safe to untaint.
-                    return false;
-                }
-
-                // Check if this op escapes local.
-                if op_escapes_local(op, local) {
-                    seen_escape = true;
-                }
-
-                cursor = body;
-            }
-            _ => break,
+    while let AnfExpr::Let { local: _, op, body } = cursor {
+        // Bail out if local appears in a nested scope.
+        if op_has_local_in_nested_scope(op, local) {
+            return false;
         }
+
+        // Check if this is a COW-base use of local.
+        let is_cow_base = if let AnfOp::ACall {
+            callee: Atom::AGlobalFunc(func_id),
+            args,
+        } = op.as_ref()
+        {
+            if let Some(info) = op_semantics(*func_id).and_then(|s| s.as_cow_info()) {
+                args.get(info.base_arg)
+                    .is_some_and(|a| atom_is_local(a, local))
+            } else {
+                false
+            }
+        } else if let AnfOp::ARecordUpdate {
+            base: Atom::ALocal(b),
+            ..
+        } = op.as_ref()
+        {
+            *b == local
+        } else {
+            false
+        };
+
+        if is_cow_base && seen_escape {
+            // A COW op on local AFTER an escape — the escape could alias
+            // the value the COW op sees. Not safe to untaint.
+            return false;
+        }
+
+        // Check if this op escapes local.
+        if op_escapes_local(op, local) {
+            seen_escape = true;
+        }
+
+        cursor = body;
     }
 
     // We need at least one escape (otherwise the local wouldn't be tainted by
@@ -670,52 +654,50 @@ fn scan_tainted_expr(
     live_out: &HashSet<LocalId>,
     wrappers: &HashMap<FuncId, TinyWrapperSummary>,
 ) {
-    match expr {
-        AnfExpr::Let { local, op, body } => {
-            let bind_local = *local;
-            let live_after_body = live_after(body);
-            let init_alias_source = if let AnfOp::AInit {
-                value: Atom::ALocal(source),
-            } = op.as_ref()
-            {
-                Some(*source)
-            } else {
-                None
-            };
+    if let AnfExpr::Let { local, op, body } = expr {
+        let bind_local = *local;
+        let live_after_body = live_after(body);
+        let init_alias_source = if let AnfOp::AInit {
+            value: Atom::ALocal(source),
+        } = op.as_ref()
+        {
+            Some(*source)
+        } else {
+            None
+        };
 
-            // Alias copy: let y = x
-            // Taint when source is still live after the copy (straight-line aliasing).
-            if let Some(source) = init_alias_source {
-                if live_after_body.contains(&source) {
-                    tainted.insert(source);
-                }
-            }
-            // Alias copy through reassignment: y = x
-            if let AnfOp::AAssign {
-                value: Atom::ALocal(source),
-                ..
-            } = op.as_ref()
-            {
-                // Reassignment can cross sub-expression boundaries (e.g. branch writes
-                // to an outer local). Include outer live-out for conservative safety.
-                if live_after_body.contains(source) || live_out.contains(source) {
-                    tainted.insert(*source);
-                }
-            }
-            scan_tainted_op(op, tainted, &live_after_body, wrappers);
-            scan_tainted_expr(body, tainted, live_out, wrappers);
-
-            // Branch-boundary alias escape:
-            // If an init alias `y := x` occurs in a nested scope and `y` escapes
-            // (e.g. captured by a closure assigned outward), then `x` is aliased
-            // across the boundary when `x` is live-out of the parent continuation.
-            if let Some(source) = init_alias_source {
-                if live_out.contains(&source) && tainted.contains(&bind_local) {
-                    tainted.insert(source);
-                }
+        // Alias copy: let y = x
+        // Taint when source is still live after the copy (straight-line aliasing).
+        if let Some(source) = init_alias_source
+            && live_after_body.contains(&source)
+        {
+            tainted.insert(source);
+        }
+        // Alias copy through reassignment: y = x
+        if let AnfOp::AAssign {
+            value: Atom::ALocal(source),
+            ..
+        } = op.as_ref()
+        {
+            // Reassignment can cross sub-expression boundaries (e.g. branch writes
+            // to an outer local). Include outer live-out for conservative safety.
+            if live_after_body.contains(source) || live_out.contains(source) {
+                tainted.insert(*source);
             }
         }
-        _ => {}
+        scan_tainted_op(op, tainted, &live_after_body, wrappers);
+        scan_tainted_expr(body, tainted, live_out, wrappers);
+
+        // Branch-boundary alias escape:
+        // If an init alias `y := x` occurs in a nested scope and `y` escapes
+        // (e.g. captured by a closure assigned outward), then `x` is aliased
+        // across the boundary when `x` is live-out of the parent continuation.
+        if let Some(source) = init_alias_source
+            && live_out.contains(&source)
+            && tainted.contains(&bind_local)
+        {
+            tainted.insert(source);
+        }
     }
 }
 
@@ -763,10 +745,10 @@ fn scan_tainted_op(
                 resolve_cow_call(*func_id, args, wrappers)
             {
                 for (i, a) in resolved_args.iter().enumerate() {
-                    if i != info.base_arg {
-                        if let Atom::ALocal(x) = a {
-                            tainted.insert(*x);
-                        }
+                    if i != info.base_arg
+                        && let Atom::ALocal(x) = a
+                    {
+                        tainted.insert(*x);
                     }
                 }
             } else if *func_id == prelude::VECTOR_CONCAT && args.len() == 2 {
@@ -778,10 +760,10 @@ fn scan_tainted_op(
                 if let Atom::ALocal(rhs) = &args[1] {
                     tainted.insert(*rhs);
                 }
-                if let Atom::ALocal(base) = &args[0] {
-                    if live_out.contains(base) {
-                        tainted.insert(*base);
-                    }
+                if let Atom::ALocal(base) = &args[0]
+                    && live_out.contains(base)
+                {
+                    tainted.insert(*base);
                 }
             } else if !call_does_not_retain_args(*func_id) {
                 // Non-COW function: taint all local args (conservative)
@@ -922,47 +904,45 @@ fn is_field_borrow_and_update(
             callee: Atom::AGlobalFunc(func_id),
             args,
         } = cow_op.as_ref()
-        {
-            if let Some((info, _wrapped, resolved_args)) =
+            && let Some((info, _wrapped, resolved_args)) =
                 resolve_cow_call(*func_id, args, wrappers)
+        {
+            // Must have an in-place variant (dict/vector set, not VECTOR_APPEND)
+            if info.in_place_id.is_some()
+                && resolved_args
+                    .get(info.base_arg)
+                    .is_some_and(|a| atom_is_local(a, field_local))
             {
-                // Must have an in-place variant (dict/vector set, not VECTOR_APPEND)
-                if info.in_place_id.is_some()
-                    && resolved_args
-                        .get(info.base_arg)
-                        .map_or(false, |a| atom_is_local(a, field_local))
-                {
-                    // field_local must be dead after this COW op
-                    if live_after(rest).contains(&field_local) {
-                        return false;
-                    }
-                    // The updated field value may flow through transparent lets
-                    // before the final ARecordUpdate, but must not be used in
-                    // any other way.
-                    let mut tail = rest.as_ref();
-                    loop {
-                        match tail {
-                            AnfExpr::Let { op: update_op, .. }
-                                if matches!(
-                                    update_op.as_ref(),
-                                    AnfOp::ARecordUpdate {
-                                        value: Atom::ALocal(v),
-                                        ..
-                                    } if *v == *new_field
-                                ) =>
-                            {
-                                return true;
-                            }
-                            AnfExpr::Let { op, body: next, .. } => {
-                                if op_has_local_in_nested_scope(op, *new_field)
-                                    || op_uses_local_non_recursive(op, *new_field)
-                                {
-                                    return false;
-                                }
-                                tail = next;
-                            }
-                            _ => return false,
+                // field_local must be dead after this COW op
+                if live_after(rest).contains(&field_local) {
+                    return false;
+                }
+                // The updated field value may flow through transparent lets
+                // before the final ARecordUpdate, but must not be used in
+                // any other way.
+                let mut tail = rest.as_ref();
+                loop {
+                    match tail {
+                        AnfExpr::Let { op: update_op, .. }
+                            if matches!(
+                                update_op.as_ref(),
+                                AnfOp::ARecordUpdate {
+                                    value: Atom::ALocal(v),
+                                    ..
+                                } if *v == *new_field
+                            ) =>
+                        {
+                            return true;
                         }
+                        AnfExpr::Let { op, body: next, .. } => {
+                            if op_has_local_in_nested_scope(op, *new_field)
+                                || op_uses_local_non_recursive(op, *new_field)
+                            {
+                                return false;
+                            }
+                            tail = next;
+                        }
+                        _ => return false,
                     }
                 }
             }
@@ -1081,25 +1061,19 @@ fn analyze_loop_dict_sites(
                 callee: Atom::AGlobalFunc(func_id),
                 args,
             } = op.as_ref()
-            {
-                if let Some((info, _wrapped_func, _resolved_args)) =
+                && let Some((info, _wrapped_func, _resolved_args)) =
                     resolve_cow_call(*func_id, args, wrappers)
-                {
-                    if info.in_place_id.is_some()
-                        && is_cow_consume_reassign(*func_id, args, body, base, *local, wrappers)
-                    {
-                        let AnfExpr::Let {
-                            body: rest_after_assign,
-                            ..
-                        } = body.as_ref()
-                        else {
-                            return None;
-                        };
-                        return Some(
-                            1 + analyze_loop_dict_sites(rest_after_assign, base, wrappers)?,
-                        );
-                    }
-                }
+                && info.in_place_id.is_some()
+                && is_cow_consume_reassign(*func_id, args, body, base, *local, wrappers)
+            {
+                let AnfExpr::Let {
+                    body: rest_after_assign,
+                    ..
+                } = body.as_ref()
+                else {
+                    return None;
+                };
+                return Some(1 + analyze_loop_dict_sites(rest_after_assign, base, wrappers)?);
             }
 
             // Allow read-only ops that reference base (e.g., dict.has, dict.get, dict.len)
@@ -1174,27 +1148,22 @@ fn rewrite_loop_dict_expr(
         callee: Atom::AGlobalFunc(func_id),
         args,
     } = op.as_mut()
-    {
-        if let Some((info, _wrapped_func, resolved_args)) =
+        && let Some((info, _wrapped_func, resolved_args)) =
             resolve_cow_call(*func_id, args, wrappers)
+        && let Some(in_place_id) = info.in_place_id
+        && info.base_arg < resolved_args.len()
+        && atom_is_local(resolved_args[info.base_arg], base)
+        && is_consume_reassign(body, base, *local)
+    {
+        *func_id = in_place_id;
+        *sites += 1;
+        if let AnfExpr::Let {
+            body: rest_after_assign,
+            ..
+        } = body.as_mut()
         {
-            if let Some(in_place_id) = info.in_place_id {
-                if info.base_arg < resolved_args.len()
-                    && atom_is_local(resolved_args[info.base_arg], base)
-                    && is_consume_reassign(body, base, *local)
-                {
-                    *func_id = in_place_id;
-                    *sites += 1;
-                    if let AnfExpr::Let {
-                        body: rest_after_assign,
-                        ..
-                    } = body.as_mut()
-                    {
-                        rewrite_loop_dict_expr(rest_after_assign, base, sites, wrappers);
-                        return;
-                    }
-                }
-            }
+            rewrite_loop_dict_expr(rest_after_assign, base, sites, wrappers);
+            return;
         }
     }
 
@@ -1245,15 +1214,14 @@ fn match_builder_region_step(
     result: LocalId,
     wrappers: &HashMap<FuncId, TinyWrapperSummary>,
 ) -> Option<BuilderRegionStep> {
-    if let Some((info, _wrapped_func, resolved_args)) = resolve_cow_call(func_id, args, wrappers) {
-        if info.builder_rewritable
-            && resolved_args.len() == 2
-            && atom_is_local(resolved_args[0], base)
-            && !atom_is_local(resolved_args[1], base)
-            && is_consume_reassign(body, base, result)
-        {
-            return Some(BuilderRegionStep::Push);
-        }
+    if let Some((info, _wrapped_func, resolved_args)) = resolve_cow_call(func_id, args, wrappers)
+        && info.builder_rewritable
+        && resolved_args.len() == 2
+        && atom_is_local(resolved_args[0], base)
+        && !atom_is_local(resolved_args[1], base)
+        && is_consume_reassign(body, base, result)
+    {
+        return Some(BuilderRegionStep::Push);
     }
 
     if func_id == prelude::VECTOR_CONCAT
@@ -1292,12 +1260,13 @@ fn base_can_start_builder_region(
         && ((!tainted.contains(&base) || refreshed.contains(&base))
             || known_empty.contains(&base)
             || builder_safe.contains(&base)
-            || source_fresh.map_or(false, |sf| sf.contains(&base)))
+            || source_fresh.is_some_and(|sf| sf.contains(&base)))
 }
 
 /// Check if the current expr starts a straight-line builder region:
 /// `xs = xs.append(v)` and/or `xs = xs.concat(rhs)` consume-reassign chains.
 /// Base must be uniqueness-safe for builder_from/new.
+#[allow(clippy::too_many_arguments)]
 fn detect_spine_builder_base(
     expr: &AnfExpr,
     tainted: &HashSet<LocalId>,
@@ -1368,15 +1337,14 @@ fn count_spine_builder_steps(
             callee: Atom::AGlobalFunc(func_id),
             args,
         } = op.as_ref()
+            && match_builder_region_step(*func_id, args, body, base, *local, wrappers).is_some()
         {
-            if match_builder_region_step(*func_id, args, body, base, *local, wrappers).is_some() {
-                count += 1;
-                if let AnfExpr::Let { body: rest, .. } = body.as_ref() {
-                    cursor = rest;
-                    continue;
-                }
-                break;
+            count += 1;
+            if let AnfExpr::Let { body: rest, .. } = body.as_ref() {
+                cursor = rest;
+                continue;
             }
+            break;
         }
         if op_uses_local_non_recursive(op, base) {
             let is_read_only = matches!(
@@ -1412,19 +1380,17 @@ fn spine_builder_region_has_extend(
             callee: Atom::AGlobalFunc(func_id),
             args,
         } = op.as_ref()
-        {
-            if let Some(step) =
+            && let Some(step) =
                 match_builder_region_step(*func_id, args, body, base, *local, wrappers)
-            {
-                if step == BuilderRegionStep::Extend {
-                    return true;
-                }
-                if let AnfExpr::Let { body: rest, .. } = body.as_ref() {
-                    cursor = rest;
-                    continue;
-                }
-                return false;
+        {
+            if step == BuilderRegionStep::Extend {
+                return true;
             }
+            if let AnfExpr::Let { body: rest, .. } = body.as_ref() {
+                cursor = rest;
+                continue;
+            }
+            return false;
         }
         if op_uses_local_non_recursive(op, base) {
             let is_read_only = matches!(
@@ -1513,30 +1479,28 @@ fn rewrite_spine_builder_steps(
             callee: Atom::AGlobalFunc(func_id),
             args,
         } = op.as_mut()
-        {
-            if let Some(step) =
+            && let Some(step) =
                 match_builder_region_step(*func_id, args, body, base, *local, wrappers)
+        {
+            *func_id = match step {
+                BuilderRegionStep::Push => prelude::VECTOR_BUILDER_PUSH,
+                BuilderRegionStep::Extend => prelude::VECTOR_BUILDER_EXTEND,
+            };
+            args[0] = Atom::ALocal(builder);
+            if let AnfExpr::Let {
+                op: assign_op,
+                body: rest,
+                ..
+            } = body.as_mut()
             {
-                *func_id = match step {
-                    BuilderRegionStep::Push => prelude::VECTOR_BUILDER_PUSH,
-                    BuilderRegionStep::Extend => prelude::VECTOR_BUILDER_EXTEND,
+                **assign_op = AnfOp::AInit {
+                    value: Atom::ALitVoid,
                 };
-                args[0] = Atom::ALocal(builder);
-                if let AnfExpr::Let {
-                    op: assign_op,
-                    body: rest,
-                    ..
-                } = body.as_mut()
-                {
-                    *assign_op = Box::new(AnfOp::AInit {
-                        value: Atom::ALitVoid,
-                    });
-                    *sites += 1;
-                    expr = rest;
-                    continue;
-                }
-                return;
+                *sites += 1;
+                expr = rest;
+                continue;
             }
+            return;
         }
         expr = body;
     }
@@ -1636,18 +1600,16 @@ fn analyze_loop_builder_expr(
                 callee: Atom::AGlobalFunc(func_id),
                 args,
             } = op.as_ref()
+                && match_builder_region_step(*func_id, args, body, base, *local, wrappers).is_some()
             {
-                if match_builder_region_step(*func_id, args, body, base, *local, wrappers).is_some()
-                {
-                    let AnfExpr::Let {
-                        body: rest_after_assign,
-                        ..
-                    } = body.as_ref()
-                    else {
-                        return None;
-                    };
-                    return Some(1 + analyze_loop_builder_expr(rest_after_assign, base, wrappers)?);
-                }
+                let AnfExpr::Let {
+                    body: rest_after_assign,
+                    ..
+                } = body.as_ref()
+                else {
+                    return None;
+                };
+                return Some(1 + analyze_loop_builder_expr(rest_after_assign, base, wrappers)?);
             }
 
             if op_uses_local_non_recursive(op, base) {
@@ -1712,27 +1674,25 @@ fn rewrite_loop_builder_expr(
         callee: Atom::AGlobalFunc(func_id),
         args,
     } = op.as_mut()
+        && let Some(step) = match_builder_region_step(*func_id, args, body, base, *local, wrappers)
     {
-        if let Some(step) = match_builder_region_step(*func_id, args, body, base, *local, wrappers)
+        *func_id = match step {
+            BuilderRegionStep::Push => prelude::VECTOR_BUILDER_PUSH,
+            BuilderRegionStep::Extend => prelude::VECTOR_BUILDER_EXTEND,
+        };
+        args[0] = Atom::ALocal(builder);
+        if let AnfExpr::Let {
+            op: assign_op,
+            body: rest_after_assign,
+            ..
+        } = body.as_mut()
         {
-            *func_id = match step {
-                BuilderRegionStep::Push => prelude::VECTOR_BUILDER_PUSH,
-                BuilderRegionStep::Extend => prelude::VECTOR_BUILDER_EXTEND,
+            **assign_op = AnfOp::AInit {
+                value: Atom::ALitVoid,
             };
-            args[0] = Atom::ALocal(builder);
-            if let AnfExpr::Let {
-                op: assign_op,
-                body: rest_after_assign,
-                ..
-            } = body.as_mut()
-            {
-                *assign_op = Box::new(AnfOp::AInit {
-                    value: Atom::ALitVoid,
-                });
-                *sites += 1;
-                rewrite_loop_builder_expr(rest_after_assign, base, builder, sites, wrappers);
-                return;
-            }
+            *sites += 1;
+            rewrite_loop_builder_expr(rest_after_assign, base, builder, sites, wrappers);
+            return;
         }
     }
 
@@ -1885,6 +1845,7 @@ pub fn uniqueness_rewrite(
     );
 }
 
+#[allow(clippy::too_many_arguments)]
 fn rewrite_expr(
     expr: &mut AnfExpr,
     tainted: &HashSet<LocalId>,
@@ -2188,9 +2149,9 @@ fn rewrite_expr(
                 continue;
             }
 
-            *op = Box::new(AnfOp::ALoop {
+            **op = AnfOp::ALoop {
                 body: Box::new(rewritten_loop_body),
-            });
+            };
             // Process the loop op (this clears source_fresh for
             // assigned-in-loop locals in the ALoop handler).
             rewrite_op(
@@ -2233,7 +2194,7 @@ fn rewrite_expr(
             ..
         } if wrappers
             .get(func_id)
-            .map_or(false, |summary| summary.returns_fresh_record)
+            .is_some_and(|summary| summary.returns_fresh_record)
     );
     if is_fresh_producer(op) || returns_fresh_record {
         unique.insert(bind_local);
@@ -2489,10 +2450,8 @@ fn rewrite_expr(
                         None,
                     );
                 if can_rewrite && (can_reuse_in_place_base || can_preserve_builder_uniqueness) {
-                    if can_reuse_in_place_base {
-                        if let Some(in_place_id) = info.in_place_id {
-                            *func_id = in_place_id;
-                        }
+                    if can_reuse_in_place_base && let Some(in_place_id) = info.in_place_id {
+                        *func_id = in_place_id;
                     }
                     // Result inherits uniqueness from the consuming update.
                     unique.insert(bind_local);
@@ -2536,10 +2495,10 @@ fn rewrite_expr(
             // after the concat). Without this, source_fresh would bypass the
             // taint guard and allow incorrect in-place ops on the base after
             // the concat, violating the vector_set_after_concat negative invariant.
-            if let Atom::ALocal(base) = &args[0] {
-                if tainted.contains(base) {
-                    source_fresh.remove(base);
-                }
+            if let Atom::ALocal(base) = &args[0]
+                && tainted.contains(base)
+            {
+                source_fresh.remove(base);
             }
         } else if !call_does_not_retain_args(*func_id) {
             // Opaque call: the function may retain any of its arguments.
@@ -2553,12 +2512,12 @@ fn rewrite_expr(
         }
     }
     // Indirect call (closure/fn-value call): all args may be retained.
-    if let AnfOp::ACall { callee, args } = op.as_ref() {
-        if !matches!(callee, Atom::AGlobalFunc(_)) {
-            for arg in args {
-                if let Atom::ALocal(local) = arg {
-                    source_fresh.remove(local);
-                }
+    if let AnfOp::ACall { callee, args } = op.as_ref()
+        && !matches!(callee, Atom::AGlobalFunc(_))
+    {
+        for arg in args {
+            if let Atom::ALocal(local) = arg {
+                source_fresh.remove(local);
             }
         }
     }
@@ -2633,6 +2592,7 @@ fn intersect_in_place(dst: &mut HashSet<LocalId>, other: &HashSet<LocalId>) {
     dst.retain(|id| other.contains(id));
 }
 
+#[allow(clippy::too_many_arguments)]
 fn rewrite_op(
     op: &mut AnfOp,
     tainted: &HashSet<LocalId>,

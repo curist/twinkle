@@ -109,10 +109,10 @@ pub fn eliminate_dead_code_with_roots(
     }
 
     // Remap init FuncIds
-    if let Some(ref mut init_id) = module.init_func_id {
-        if let Some(&new_id) = old_to_new.get(init_id) {
-            *init_id = new_id;
-        }
+    if let Some(ref mut init_id) = module.init_func_id
+        && let Some(&new_id) = old_to_new.get(init_id)
+    {
+        *init_id = new_id;
     }
     module.all_init_func_ids = module
         .all_init_func_ids

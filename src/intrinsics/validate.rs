@@ -90,15 +90,15 @@ fn compare_signature_shape(
     // IntrinsicContract has no bounds field — flag if the .tw stub declares
     // bounds on any type parameter, since they would be silently ignored.
     for (contract_param, stub_param) in expected.type_params.iter().zip(sig.type_params.iter()) {
-        if let Some(bounds) = sig.type_param_bounds.get(stub_param.as_str()) {
-            if !bounds.is_empty() {
-                errors.push(format!(
-                    "{}: stub has bounds {:?} on type param '{}' but contract has no bounds field",
-                    label(),
-                    bounds,
-                    stub_param
-                ));
-            }
+        if let Some(bounds) = sig.type_param_bounds.get(stub_param.as_str())
+            && !bounds.is_empty()
+        {
+            errors.push(format!(
+                "{}: stub has bounds {:?} on type param '{}' but contract has no bounds field",
+                label(),
+                bounds,
+                stub_param
+            ));
         }
         let _ = contract_param; // used only for 1:1 zip alignment
     }

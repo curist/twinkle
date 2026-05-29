@@ -236,14 +236,14 @@ impl VerifyCtx {
     }
 
     fn check_atom_defined(&mut self, atom: &Atom) {
-        if let Atom::ALocal(id) = atom {
-            if !self.is_available(id) {
-                self.err_local(
-                    Invariant::UndeclaredLocal,
-                    *id,
-                    format!("L{} used but not declared", id.0),
-                );
-            }
+        if let Atom::ALocal(id) = atom
+            && !self.is_available(id)
+        {
+            self.err_local(
+                Invariant::UndeclaredLocal,
+                *id,
+                format!("L{} used but not declared", id.0),
+            );
         }
     }
 }
@@ -319,16 +319,16 @@ fn verify_expr(ctx: &mut VerifyCtx, expr: &AnfExpr) {
             if let Some(a) = atom {
                 ctx.check_atom_defined(a);
                 // Check return value type against function return type
-                if let Some(actual_ty) = ctx.resolve_atom_ty(a) {
-                    if !is_type_compatible(&ctx.return_ty, &actual_ty) {
-                        ctx.err(
-                            Invariant::ReturnTypeMismatch,
-                            format!(
-                                "return value has type {:?}, expected {:?}",
-                                actual_ty, ctx.return_ty
-                            ),
-                        );
-                    }
+                if let Some(actual_ty) = ctx.resolve_atom_ty(a)
+                    && !is_type_compatible(&ctx.return_ty, &actual_ty)
+                {
+                    ctx.err(
+                        Invariant::ReturnTypeMismatch,
+                        format!(
+                            "return value has type {:?}, expected {:?}",
+                            actual_ty, ctx.return_ty
+                        ),
+                    );
                 }
             } else {
                 // Return with no value — expected return type should be Void
@@ -353,18 +353,17 @@ fn verify_expr(ctx: &mut VerifyCtx, expr: &AnfExpr) {
             if let Some(a) = atom {
                 ctx.check_atom_defined(a);
                 // Check break value type against expected loop result type
-                if let Some(Some(expected_ty)) = ctx.loop_result_ty_stack.last() {
-                    if let Some(actual_ty) = ctx.resolve_atom_ty(a) {
-                        if !is_type_compatible(expected_ty, &actual_ty) {
-                            ctx.err(
-                                Invariant::BreakTypeMismatch,
-                                format!(
-                                    "break value has type {:?}, expected {:?}",
-                                    actual_ty, expected_ty
-                                ),
-                            );
-                        }
-                    }
+                if let Some(Some(expected_ty)) = ctx.loop_result_ty_stack.last()
+                    && let Some(actual_ty) = ctx.resolve_atom_ty(a)
+                    && !is_type_compatible(expected_ty, &actual_ty)
+                {
+                    ctx.err(
+                        Invariant::BreakTypeMismatch,
+                        format!(
+                            "break value has type {:?}, expected {:?}",
+                            actual_ty, expected_ty
+                        ),
+                    );
                 }
             }
         }
@@ -385,24 +384,23 @@ fn verify_expr(ctx: &mut VerifyCtx, expr: &AnfExpr) {
 fn verify_op(ctx: &mut VerifyCtx, let_local: LocalId, op: &AnfOp, let_result_ty: Option<MonoType>) {
     // UnfoldStep metadata check: variant literals with UNFOLD_STEP_TYPE_ID
     // must have concrete result metadata in op_result_mono.
-    if ctx.options.check_unfold_step_metadata {
-        if let AnfOp::AVariant { type_id, .. } = op {
-            if *type_id == UNFOLD_STEP_TYPE_ID {
-                let has_concrete = ctx
-                    .local_types
-                    .get(&let_local)
-                    .is_some_and(is_concrete_unfold_step_mono);
-                if !has_concrete {
-                    ctx.err_local(
-                        Invariant::UnfoldStepMetadataMissing,
-                        let_local,
-                        format!(
-                            "UnfoldStep variant for L{} missing concrete result metadata",
-                            let_local.0
-                        ),
-                    );
-                }
-            }
+    if ctx.options.check_unfold_step_metadata
+        && let AnfOp::AVariant { type_id, .. } = op
+        && *type_id == UNFOLD_STEP_TYPE_ID
+    {
+        let has_concrete = ctx
+            .local_types
+            .get(&let_local)
+            .is_some_and(is_concrete_unfold_step_mono);
+        if !has_concrete {
+            ctx.err_local(
+                Invariant::UnfoldStepMetadataMissing,
+                let_local,
+                format!(
+                    "UnfoldStep variant for L{} missing concrete result metadata",
+                    let_local.0
+                ),
+            );
         }
     }
 
@@ -507,19 +505,18 @@ fn verify_op(ctx: &mut VerifyCtx, let_local: LocalId, op: &AnfOp, let_result_ty:
             ctx.check_atom_defined(value);
             // Validate type stability: the assigned value must be compatible
             // with the local's declared type (Wasm local.set requires stable type).
-            if let Some(declared_ty) = ctx.local_types.get(local) {
-                if let Some(value_ty) = ctx.resolve_atom_ty(value) {
-                    if !is_type_compatible(declared_ty, &value_ty) {
-                        ctx.err_local(
-                            Invariant::AssignTypeMismatch,
-                            *local,
-                            format!(
-                                "assign to L{} has type {:?}, but local declared as {:?}",
-                                local.0, value_ty, declared_ty
-                            ),
-                        );
-                    }
-                }
+            if let Some(declared_ty) = ctx.local_types.get(local)
+                && let Some(value_ty) = ctx.resolve_atom_ty(value)
+                && !is_type_compatible(declared_ty, &value_ty)
+            {
+                ctx.err_local(
+                    Invariant::AssignTypeMismatch,
+                    *local,
+                    format!(
+                        "assign to L{} has type {:?}, but local declared as {:?}",
+                        local.0, value_ty, declared_ty
+                    ),
+                );
             }
         }
         AnfOp::ADefer(inner) => {

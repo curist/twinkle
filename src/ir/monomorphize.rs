@@ -76,11 +76,10 @@ pub fn match_type_against(
                 type_id: actual_type_id,
                 args: ac,
             } = concrete
+                && expected_type_id == actual_type_id
             {
-                if expected_type_id == actual_type_id {
-                    for (ap_ty, ac_ty) in ap.iter().zip(ac.iter()) {
-                        match_type_against(ap_ty, ac_ty, out);
-                    }
+                for (ap_ty, ac_ty) in ap.iter().zip(ac.iter()) {
+                    match_type_against(ap_ty, ac_ty, out);
                 }
             }
         }
@@ -345,20 +344,20 @@ fn resolve_builtin_contract_method(
 
 /// Walk `expr`, pushing `(orig_fid, subst)` onto `queue` for every direct or
 /// first-class use of a generic function.
-fn collect_instantiations<'a>(
+fn collect_instantiations(
     expr: &CoreExpr,
     module: &CoreModule,
-    generic_funcs: &HashMap<FuncId, &'a FunctionDef>,
+    generic_funcs: &HashMap<FuncId, &FunctionDef>,
     queue: &mut VecDeque<(FuncId, HashMap<String, MonoType>)>,
 ) {
     match &expr.kind {
         CoreExprKind::Call { callee, args } => {
-            if let CoreExprKind::GlobalFunc(fid) = &callee.kind {
-                if let Some(gf) = generic_funcs.get(fid) {
-                    let (type_params, subst) = infer_call_subst(gf, args, &expr.ty);
-                    if type_params.iter().all(|p| subst.contains_key(p)) {
-                        queue.push_back((*fid, subst));
-                    }
+            if let CoreExprKind::GlobalFunc(fid) = &callee.kind
+                && let Some(gf) = generic_funcs.get(fid)
+            {
+                let (type_params, subst) = infer_call_subst(gf, args, &expr.ty);
+                if type_params.iter().all(|p| subst.contains_key(p)) {
+                    queue.push_back((*fid, subst));
                 }
             }
             collect_instantiations(callee, module, generic_funcs, queue);
@@ -373,15 +372,15 @@ fn collect_instantiations<'a>(
             args,
         } => {
             let target = resolve_builtin_contract_method(module, &receiver.ty, contract, method);
-            if let Some(fid) = target {
-                if let Some(gf) = generic_funcs.get(&fid) {
-                    let mut call_args = Vec::with_capacity(1 + args.len());
-                    call_args.push((**receiver).clone());
-                    call_args.extend(args.iter().cloned());
-                    let (type_params, subst) = infer_call_subst(gf, &call_args, &expr.ty);
-                    if type_params.iter().all(|p| subst.contains_key(p)) {
-                        queue.push_back((fid, subst));
-                    }
+            if let Some(fid) = target
+                && let Some(gf) = generic_funcs.get(&fid)
+            {
+                let mut call_args = Vec::with_capacity(1 + args.len());
+                call_args.push((**receiver).clone());
+                call_args.extend(args.iter().cloned());
+                let (type_params, subst) = infer_call_subst(gf, &call_args, &expr.ty);
+                if type_params.iter().all(|p| subst.contains_key(p)) {
+                    queue.push_back((fid, subst));
                 }
             }
             collect_instantiations(receiver, module, generic_funcs, queue);
@@ -659,38 +658,38 @@ fn rewrite_calls_in_kind(
                 .map(|a| rewrite_calls_in_expr(a, module, spec_map, generic_funcs))
                 .collect();
 
-            if let CoreExprKind::GlobalFunc(fid) = &callee.kind {
-                if let Some(gf) = generic_funcs.get(fid) {
-                    let (type_params, subst) = infer_call_subst(gf, &new_args, &parent.ty);
-                    let type_args: Vec<MonoType> = type_params
+            if let CoreExprKind::GlobalFunc(fid) = &callee.kind
+                && let Some(gf) = generic_funcs.get(fid)
+            {
+                let (type_params, subst) = infer_call_subst(gf, &new_args, &parent.ty);
+                let type_args: Vec<MonoType> = type_params
+                    .iter()
+                    .map(|p| subst.get(p).cloned().unwrap_or(MonoType::Void))
+                    .collect();
+                debug_assert!(
+                    type_params.iter().all(|p| subst.contains_key(p)),
+                    "unsolved type params {:?} at call site for {:?}",
+                    type_params
                         .iter()
-                        .map(|p| subst.get(p).cloned().unwrap_or(MonoType::Void))
-                        .collect();
-                    debug_assert!(
-                        type_params.iter().all(|p| subst.contains_key(p)),
-                        "unsolved type params {:?} at call site for {:?}",
-                        type_params
-                            .iter()
-                            .filter(|p| !subst.contains_key(*p))
-                            .collect::<Vec<_>>(),
-                        fid,
-                    );
-                    debug_assert!(
-                        spec_map.contains_key(&(*fid, type_args.clone())),
-                        "no specialization found for {:?} with type_args={:?}; call site will be left unpatched",
-                        fid,
-                        type_args,
-                    );
-                    if let Some(&new_fid) = spec_map.get(&(*fid, type_args)) {
-                        return CoreExprKind::Call {
-                            callee: Box::new(CoreExpr {
-                                kind: CoreExprKind::GlobalFunc(new_fid),
-                                ty: callee.ty.clone(),
-                                span: callee.span,
-                            }),
-                            args: new_args,
-                        };
-                    }
+                        .filter(|p| !subst.contains_key(*p))
+                        .collect::<Vec<_>>(),
+                    fid,
+                );
+                debug_assert!(
+                    spec_map.contains_key(&(*fid, type_args.clone())),
+                    "no specialization found for {:?} with type_args={:?}; call site will be left unpatched",
+                    fid,
+                    type_args,
+                );
+                if let Some(&new_fid) = spec_map.get(&(*fid, type_args)) {
+                    return CoreExprKind::Call {
+                        callee: Box::new(CoreExpr {
+                            kind: CoreExprKind::GlobalFunc(new_fid),
+                            ty: callee.ty.clone(),
+                            span: callee.span,
+                        }),
+                        args: new_args,
+                    };
                 }
             }
 

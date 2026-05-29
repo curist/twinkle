@@ -69,7 +69,7 @@ fn qualify(ns: &str, sym: &str) -> String {
 }
 
 /// Rewrite all `Call(sym)` instructions in a body using the rename map.
-fn rewrite_calls(body: &mut Vec<Instr>, renames: &HashMap<String, String>) {
+fn rewrite_calls(body: &mut [Instr], renames: &HashMap<String, String>) {
     for instr in body.iter_mut() {
         match instr {
             Instr::Call(sym)
@@ -99,7 +99,7 @@ fn rewrite_calls(body: &mut Vec<Instr>, renames: &HashMap<String, String>) {
 
 /// Rewrite all `StructNew`, `StructGet`, `StructSet`, `ArrayNew`, `ArrayGet`,
 /// `ArraySet`, `RefCast`, `RefNull` type references using the type rename map.
-fn rewrite_type_refs(body: &mut Vec<Instr>, renames: &HashMap<String, String>) {
+fn rewrite_type_refs(body: &mut [Instr], renames: &HashMap<String, String>) {
     for instr in body.iter_mut() {
         match instr {
             Instr::StructNew(ty)
@@ -128,10 +128,10 @@ fn rewrite_type_refs(body: &mut Vec<Instr>, renames: &HashMap<String, String>) {
                 }
             }
             Instr::RefCast { heap, .. } | Instr::RefTest { heap, .. } | Instr::RefNull(heap) => {
-                if let HeapType::Named(ty) = heap {
-                    if let Some(renamed) = renames.get(ty.as_str()) {
-                        *ty = renamed.clone();
-                    }
+                if let HeapType::Named(ty) = heap
+                    && let Some(renamed) = renames.get(ty.as_str())
+                {
+                    *ty = renamed.clone();
                 }
             }
             Instr::If {
@@ -167,10 +167,9 @@ fn rewrite_val_type(vt: &mut ValType, renames: &HashMap<String, String>) {
         heap: HeapType::Named(ty),
         ..
     } = vt
+        && let Some(renamed) = renames.get(ty.as_str())
     {
-        if let Some(renamed) = renames.get(ty.as_str()) {
-            *ty = renamed.clone();
-        }
+        *ty = renamed.clone();
     }
 }
 

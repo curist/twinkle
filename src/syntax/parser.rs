@@ -157,7 +157,7 @@ impl Parser {
     }
 
     fn peek_preceded_by_newline(&self) -> bool {
-        self.peek().map_or(false, |t| t.preceded_by_newline)
+        self.peek().is_some_and(|t| t.preceded_by_newline)
     }
 
     fn consume_if(&mut self, kind: TokenKind) -> bool {
@@ -968,12 +968,7 @@ impl Parser {
         let mut lhs = self.parse_prefix()?;
 
         // Parse infix and postfix operators
-        loop {
-            let op_kind = match self.peek_kind() {
-                Some(kind) => kind,
-                None => break,
-            };
-
+        while let Some(op_kind) = self.peek_kind() {
             // Check for shift operators: adjacent `<`+`<` or `>`+`>` with no
             // intervening whitespace form `<<` and `>>`.  Type parsing never
             // calls this path, so `Vector<Vector<Int>>` is unaffected.
@@ -1054,42 +1049,42 @@ impl Parser {
                 // (e.g. `pt.Point.{ ... }` or `mod.Type.Variant`), but a terminal
                 // `.Upper` (`.Upper(...)` or `.Upper` at end) is a constructor and
                 // must appear in prefix form only.
-                if op_kind == TokenKind::Dot {
-                    if let Some(next_tok) = self.tokens.get(self.pos + 1) {
-                        // `.{` and `.Upper` on a new line start a fresh
-                        // expression instead of extending the previous one.
-                        if op_token.preceded_by_newline {
-                            if next_tok.kind == TokenKind::LBrace {
-                                break;
-                            }
-                            if next_tok.kind == TokenKind::Ident
-                                && next_tok.text.starts_with(|c: char| c.is_uppercase())
-                            {
-                                break;
-                            }
+                if op_kind == TokenKind::Dot
+                    && let Some(next_tok) = self.tokens.get(self.pos + 1)
+                {
+                    // `.{` and `.Upper` on a new line start a fresh
+                    // expression instead of extending the previous one.
+                    if op_token.preceded_by_newline {
+                        if next_tok.kind == TokenKind::LBrace {
+                            break;
                         }
-
                         if next_tok.kind == TokenKind::Ident
                             && next_tok.text.starts_with(|c: char| c.is_uppercase())
                         {
-                            // Same line: if followed by another `.`, it's an intermediate
-                            // qualifier (e.g. `pt.Point.{...}`) — allow. Otherwise check
-                            // if the base is a type path (has an uppercase segment like
-                            // `module.Type`). Type paths may use terminal `.Upper` for
-                            // qualified variant constructors. Pure value paths (`x`, `foo.bar`)
-                            // remain a hard error.
-                            let followed_by_dot = matches!(
-                                self.tokens.get(self.pos + 2).map(|t| t.kind),
-                                Some(TokenKind::Dot)
-                            );
-                            if !followed_by_dot && !expr_chain_has_upper_segment(&lhs) {
-                                let name = next_tok.text.clone();
-                                let span = next_tok.span;
-                                return Err(ParseError::new(
-                                    ParseErrorKind::ConstructorInPostfix { name },
-                                    span,
-                                ));
-                            }
+                            break;
+                        }
+                    }
+
+                    if next_tok.kind == TokenKind::Ident
+                        && next_tok.text.starts_with(|c: char| c.is_uppercase())
+                    {
+                        // Same line: if followed by another `.`, it's an intermediate
+                        // qualifier (e.g. `pt.Point.{...}`) — allow. Otherwise check
+                        // if the base is a type path (has an uppercase segment like
+                        // `module.Type`). Type paths may use terminal `.Upper` for
+                        // qualified variant constructors. Pure value paths (`x`, `foo.bar`)
+                        // remain a hard error.
+                        let followed_by_dot = matches!(
+                            self.tokens.get(self.pos + 2).map(|t| t.kind),
+                            Some(TokenKind::Dot)
+                        );
+                        if !followed_by_dot && !expr_chain_has_upper_segment(&lhs) {
+                            let name = next_tok.text.clone();
+                            let span = next_tok.span;
+                            return Err(ParseError::new(
+                                ParseErrorKind::ConstructorInPostfix { name },
+                                span,
+                            ));
                         }
                     }
                 }
@@ -1120,10 +1115,10 @@ impl Parser {
             // Identifier — if uppercase, greedily consume constructor path Upper(.Upper)*
             TokenKind::Ident => {
                 let ident = self.parse_ident()?;
-                if let ExprKind::Ident(ref name) = ident.kind {
-                    if name.starts_with(|c: char| c.is_uppercase()) {
-                        return self.parse_constructor_path(ident);
-                    }
+                if let ExprKind::Ident(ref name) = ident.kind
+                    && name.starts_with(|c: char| c.is_uppercase())
+                {
+                    return self.parse_constructor_path(ident);
                 }
                 Ok(ident)
             }
@@ -1205,10 +1200,10 @@ impl Parser {
             return false;
         }
         // Dot must not be preceded by newline
-        if let Some(dot_tok) = self.tokens.get(self.pos) {
-            if dot_tok.preceded_by_newline {
-                return false;
-            }
+        if let Some(dot_tok) = self.tokens.get(self.pos)
+            && dot_tok.preceded_by_newline
+        {
+            return false;
         }
         if let Some(ident_tok) = self.tokens.get(self.pos + 1) {
             if ident_tok.kind != TokenKind::Ident {
@@ -1488,10 +1483,10 @@ impl Parser {
         self.expect(TokenKind::Dot)?;
 
         // Named record constructor: Type.{ ... } or module.Type.{ ... }
-        if self.peek_is(TokenKind::LBrace) {
-            if let Some(type_name) = expr_as_type_name(&base) {
-                return self.parse_record_literal(Some(type_name), start);
-            }
+        if self.peek_is(TokenKind::LBrace)
+            && let Some(type_name) = expr_as_type_name(&base)
+        {
+            return self.parse_record_literal(Some(type_name), start);
         }
 
         let field = match self.peek() {
@@ -1957,14 +1952,14 @@ impl Parser {
                         span,
                     })
                 } else if token.text.starts_with(|c: char| c.is_uppercase()) {
-                    return Err(ParseError::new(
+                    Err(ParseError::new(
                         ParseErrorKind::CaseViolation {
                             kind: "binding name",
                             name: token.text.clone(),
                             expected: "a lowercase",
                         },
                         token.span,
-                    ));
+                    ))
                 } else {
                     Ok(Pattern::Ident(token.text.clone(), token.span))
                 }
@@ -2063,17 +2058,17 @@ impl Parser {
         let pattern = self.parse_pattern()?;
 
         // Enforce lowercase-initial for value binding identifiers
-        if let Pattern::Ident(ref name, span) = pattern {
-            if name.starts_with(|c: char| c.is_uppercase()) {
-                return Err(ParseError::new(
-                    ParseErrorKind::CaseViolation {
-                        kind: "value binding",
-                        name: name.clone(),
-                        expected: "a lowercase",
-                    },
-                    span,
-                ));
-            }
+        if let Pattern::Ident(ref name, span) = pattern
+            && name.starts_with(|c: char| c.is_uppercase())
+        {
+            return Err(ParseError::new(
+                ParseErrorKind::CaseViolation {
+                    kind: "value binding",
+                    name: name.clone(),
+                    expected: "a lowercase",
+                },
+                span,
+            ));
         }
 
         let (ty, value) = if self.peek_is(TokenKind::ColonEq) {

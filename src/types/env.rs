@@ -491,6 +491,7 @@ impl TypeEnv {
 
     /// Resolve an AST type annotation to a MonoType
     /// Shared by both Resolver and TypeChecker to avoid duplication
+    #[allow(clippy::result_unit_err)]
     pub fn resolve_type(&self, ty: &AstType, errors: &mut Vec<TypeError>) -> Result<MonoType, ()> {
         match ty {
             AstType::Named { name, args, span } => {
@@ -629,10 +630,10 @@ impl TypeEnv {
                             return Err(());
                         }
                         let inner = self.resolve_type(&args[0], errors)?;
-                        return Ok(MonoType::Named {
+                        Ok(MonoType::Named {
                             type_id: OPTION_TYPE_ID,
                             args: vec![inner],
-                        });
+                        })
                     }
                     "Result" => {
                         if args.len() != 2 {
@@ -647,10 +648,10 @@ impl TypeEnv {
                         }
                         let t = self.resolve_type(&args[0], errors)?;
                         let e = self.resolve_type(&args[1], errors)?;
-                        return Ok(MonoType::Named {
+                        Ok(MonoType::Named {
                             type_id: RESULT_TYPE_ID,
                             args: vec![t, e],
-                        });
+                        })
                     }
                     "Cell" => {
                         if args.len() != 1 {
@@ -664,10 +665,10 @@ impl TypeEnv {
                             return Err(());
                         }
                         let inner = self.resolve_type(&args[0], errors)?;
-                        return Ok(MonoType::Named {
+                        Ok(MonoType::Named {
                             type_id: CELL_TYPE_ID,
                             args: vec![inner],
-                        });
+                        })
                     }
                     "Iterator" => {
                         if args.len() != 1 {
@@ -681,10 +682,10 @@ impl TypeEnv {
                             return Err(());
                         }
                         let elem = self.resolve_type(&args[0], errors)?;
-                        return Ok(MonoType::Named {
+                        Ok(MonoType::Named {
                             type_id: ITERATOR_TYPE_ID,
                             args: vec![elem],
-                        });
+                        })
                     }
                     "Task" => {
                         if args.len() != 1 {
@@ -698,10 +699,10 @@ impl TypeEnv {
                             return Err(());
                         }
                         let inner = self.resolve_type(&args[0], errors)?;
-                        return Ok(MonoType::Named {
+                        Ok(MonoType::Named {
                             type_id: TASK_TYPE_ID,
                             args: vec![inner],
-                        });
+                        })
                     }
                     "IterItem" => {
                         if args.len() != 1 {
@@ -715,10 +716,10 @@ impl TypeEnv {
                             return Err(());
                         }
                         let elem = self.resolve_type(&args[0], errors)?;
-                        return Ok(MonoType::Named {
+                        Ok(MonoType::Named {
                             type_id: ITER_ITEM_TYPE_ID,
                             args: vec![elem],
-                        });
+                        })
                     }
                     "UnfoldStep" => {
                         if args.len() != 2 {
@@ -733,10 +734,10 @@ impl TypeEnv {
                         }
                         let t = self.resolve_type(&args[0], errors)?;
                         let s = self.resolve_type(&args[1], errors)?;
-                        return Ok(MonoType::Named {
+                        Ok(MonoType::Named {
                             type_id: UNFOLD_STEP_TYPE_ID,
                             args: vec![t, s],
-                        });
+                        })
                     }
                     _ => {
                         // User-defined type — look up in type environment

@@ -171,9 +171,8 @@ fn test_parser_error_cases() {
 
 #[test]
 fn test_stage0_skeleton() {
-    // Verify the basic module structure exists
-    // This is a sanity check that the crate compiles
-    assert!(true, "Stage 0 skeleton is functional");
+    // Reaching this test at all is the assertion: it confirms the crate's
+    // basic module structure compiles and links.
 }
 
 #[test]
