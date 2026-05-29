@@ -48,6 +48,7 @@ Self-hosting is complete. Historical design and status docs live in
 | Area | Description | Status | Details |
 |------|-------------|--------|---------|
 | Tooling | Formatter (done), linter, LSP, package manager | In Progress | [tooling.md](tooling.md) |
+| Linter | `twk lint`: semantic lints (must-use, ignored Result/Option, record-copy helper, unreachable code) on the existing diagnostic channel | Planned | [linter.md](linter.md) |
 | LSP enhancements | Document symbols, references, rename, signature help, semantic tokens, workspace symbols, highlights, inlay hints, folding, and incremental sync | Planned | [lsp-enhancements.md](lsp-enhancements.md) |
 | LSP code actions | Quick-fix actions: missing case arms, auto-import, function type annotations | Planned | [lsp-code-actions.md](lsp-code-actions.md) |
 | LSP contract hover | Hover information for builtin contract bounds and contract-backed method calls | Done | [archive/lsp-contract-hover.md](archive/lsp-contract-hover.md) |
@@ -58,6 +59,7 @@ Self-hosting is complete. Historical design and status docs live in
 |------|-------------|
 | [backend-anyref-elimination.md](backend-anyref-elimination.md) | Make `anyref` exceptional rather than foundational in the Wasm backend, including typed container/helper families |
 | [static-uniqueness-plan.md](static-uniqueness-plan.md) | Extend the static uniqueness optimizer to cover more realistic linear-update patterns without changing the runtime model |
+| [rrb-vector-concat.md](rrb-vector-concat.md) | Upgrade `Vector<T>` to an RRB-tree so `concat` (incl. prepend/arbitrary operands) is O(log n), eliminating the O(n²) right-operand-accumulator case; boot `arr.tw` leads, stage0 mirrors |
 
 ### Archived reference docs
 
