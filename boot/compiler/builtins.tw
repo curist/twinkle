@@ -117,6 +117,7 @@ fn builtin_abi(name: String) AbiContract {
     "vector$set_unsafe" => abi([pvec_n(), .I32, .Anyref], [pvec_()]),
     "vector$concat" => abi([pvec_n(), pvec_n()], [pvec_()]),
     "vector$slice" => abi([pvec_n(), .I32, .I32], [pvec_()]),
+    "vector$drop_last" => abi([pvec_n()], [pvec_()]),
     "vector$builder_new" => abi([], [arr_()]),
     "vector$builder_push" => abi([arr_n(), .Anyref], []),
     "vector$builder_freeze" => abi([arr_n()], [pvec_()]),
@@ -489,6 +490,7 @@ pub fn builtin_specs() Vector<BuiltinSpec> {
     rt("host_stdin_read_timeout", "host", "stdin_read_timeout", .None),
     rt("host_stdin_eof", "host", "stdin_eof", .None),
     rt("host_stdout_write_bytes", "host", "stdout_write_bytes", .None),
+    rt("vector$drop_last", "rt.arr", "drop_last", .Some("Vector.drop_last")),
   ]
 }
 

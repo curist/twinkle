@@ -1,28 +1,39 @@
 # `Stack<T>` — and an O(log n) `drop_last` vector op
 
-Status: **partially implemented**. The ergonomics layer has landed; the
-performance foundation and migrations have not.
+Status: **implemented** (foundation + ergonomics + migrations). Remaining items
+are the optional follow-ons noted at the end.
 
 **Done:**
+- The **O(1)-amortized runtime `drop_last` vector op** (the foundation below).
+  It shrinks the tail in O(1) and pulls the last trie leaf back into a fresh tail
+  only at a 32-boundary (then O(log n)) — the exact inverse of `push`. Lives in
+  `rt.arr` (boot `codegen/runtime/arr.tw`) and is mirrored in stage0
+  `src/runtime/arr.rs`. Wired as the `Vector.drop_last` builtin in both compilers.
+  One safety refinement over textbook Clojure `pop`: the boundary case **copies**
+  the pulled leaf into a private tail rather than sharing it, so the `set_in_place`
+  uniqueness optimization can never corrupt the original vector's trie.
+- `Vector.drop_last` is now the runtime op (not the slice shim); `Vector.drop_first`
+  stays an O(m) prelude function built on `slice` (left-drop needs RRB).
+- The **migration targets** are rerouted to `Vector.drop_last`: `pop_scope`
+  (checker + lower_core), the Tarjan SCC worklist (`type_order.tw`), the lexer
+  `interp_depths` stack, and the `fmt` `fit_stack` / trivia stacks. This bounds
+  the Tarjan worklist's repeated pops to O(log n) each.
 - `Stack<T>` in `@std.stack` (`new`, `from_vector`, `to_vector`, `push`, `top`,
-  `pop`, `len`, `is_empty`) — first stdlib-owned generic type. Explicit `use`
-  (not prelude-visible).
-- `Vector.drop_first` / `drop_last` in `prelude/vector.tw` — **total** (empty →
-  empty, no trap), with the settled names. **But these are O(m)**, built on
-  `slice`, *not* the O(log n) runtime op below.
-- `Stack.pop` on empty is a no-op (total); `top()` returns `T?`.
-- Boot only (stage0 never compiles `@std.stack`).
+  `pop`, `len`, `is_empty`) — first stdlib-owned generic type. `Stack.pop` on
+  empty is a no-op (total); `top()` returns `T?`.
 
-**Not done (remaining work):**
-- The **O(log n) runtime `drop_last` vector op** — the central performance thesis
-  of this doc (see "Foundation" below). Today's `drop_last` is the O(m) slice
-  shim; the API is forward-compatible with the runtime op replacing it.
-- The **migration targets** (`pop_scope`, Tarjan worklist, fmt/lexer stacks) — none
-  rerouted to `Stack`/`drop_last` yet, so the O(n²) Tarjan risk stands.
+**Why the compiler migrated to `Vector.drop_last`, not `Stack<T>`:** the perf comes
+entirely from `drop_last`; the wrapper is pure ergonomics. `@std.stack` is also
+*not* in the bootstrap closure (and uses prelude helpers stage0 doesn't inject into
+stdlib), so using it inside the compiler would break stage0. The `Vector` op is the
+correct receiver for these internal sites.
+
+**Not done (optional follow-ons):**
 - Access-contract integration (`IndexRead`/`IndexWrite`) — see
   [access-contracts.md](access-contracts.md).
-- `pop_value(s) .{ value, rest }?` combined shape (open question below).
-- Stage0 mirror of the runtime op (only needed once the op exists).
+- `pop_value(s) .{ value, rest }?` combined shape (open question below) — the
+  take-and-continue sites (Tarjan) still read `top` then `drop_last` separately.
+- An O(log n) `drop_first` (left-drop) — needs RRB relaxed nodes.
 
 Companion to [slice-performance.md](slice-performance.md) (the
 audit), [view.md](view.md) (the read-only side),
@@ -142,7 +153,8 @@ allocation churn, not asymptotics).
   on an empty vector returns the empty vector, so `Stack.pop` on an empty stack
   yields the empty stack rather than trapping. `top()` already returns `T?`
   (`.None` when empty), so callers that need to detect underflow check `top`.
-- **Foundation**: confirm `drop_last` (recommended) over the cursor. **Still open**
-  for the *runtime op*; the stdlib `Stack` currently rides the O(m) slice shim.
+- ~~**Foundation**: confirm `drop_last` (recommended) over the cursor.~~ — resolved:
+  the O(1)-amortized runtime `drop_last` landed in both compilers and backs both
+  `Vector.drop_last` and `Stack.pop`. The cursor alternative was not needed.
 - ~~**Naming / module**~~ — resolved: `Stack<T>` in `@std.stack`, **explicit `use`**
   (not prelude-visible).

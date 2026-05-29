@@ -60,15 +60,6 @@ pub fn drop_first<A>(xs: Vector<A>) Vector<A> {
   }
 }
 
-/// Return a new vector without the last element, or the empty vector if already empty.
-pub fn drop_last<A>(xs: Vector<A>) Vector<A> {
-  if xs.len() == 0 {
-    xs
-  } else {
-    xs.slice(0, xs.len() - 1)
-  }
-}
-
 /// Return the first element matching f.
 pub fn find<A>(xs: Vector<A>, f: fn(A) Bool) A? {
   for x in xs {

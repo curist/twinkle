@@ -98,7 +98,7 @@ pub fn push_scope(ctx: LowerCtx) LowerCtx {
 }
 
 pub fn pop_scope(ctx: LowerCtx) LowerCtx {
-  ctx.locals = ctx.locals.slice(0, ctx.locals.len() - 1)
+  ctx.locals = ctx.locals.drop_last()
   ctx
 }
 

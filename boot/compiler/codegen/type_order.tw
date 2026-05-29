@@ -206,7 +206,7 @@ fn tarjan_visit(
       }
 
       top := cur_stack[cur_stack.len() - 1]
-      cur_stack = .slice(0, cur_stack.len() - 1)
+      cur_stack = .drop_last()
       cur_on_stack[top] = false
       component = .append(top)
 

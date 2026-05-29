@@ -366,7 +366,7 @@ pub fn lex(source: String, file_id: Int) StageResult<Vector<Token>> {
 
       if is_byte(c, "{") {
         i = i + 1
-        interp_depths = .slice(0, interp_depths.len() - 1).append(depth + 1)
+        interp_depths = .drop_last().append(depth + 1)
         out = .append(
           make_token(.LBrace, source, token_start, i, file_id, preceded_by_newline, leading_trivia),
         )
@@ -376,7 +376,7 @@ pub fn lex(source: String, file_id: Int) StageResult<Vector<Token>> {
       if is_byte(c, "}") {
         if depth > 1 {
           i = i + 1
-          interp_depths = .slice(0, interp_depths.len() - 1).append(depth - 1)
+          interp_depths = .drop_last().append(depth - 1)
           out = .append(
             make_token(
               .RBrace,
@@ -391,7 +391,7 @@ pub fn lex(source: String, file_id: Int) StageResult<Vector<Token>> {
           continue
         }
 
-        interp_depths = .slice(0, interp_depths.len() - 1)
+        interp_depths = .drop_last()
         i = i + 1
         scanned := scan_string_segment(source, i, i)
         i = scanned.next_index

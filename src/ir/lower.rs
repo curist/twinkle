@@ -101,6 +101,8 @@ pub mod prelude {
     pub const DICT_REMOVE_IN_PLACE: FuncId = FuncId(1016); // (dict, key) -> Dict<K,V>
     // Internal helper: extend a vector builder with all elements from a vector.
     pub const VECTOR_BUILDER_EXTEND: FuncId = FuncId(1100); // (builder, vec) -> Void
+    // Vector.drop_last(vec) -> Vector<T>: O(1)-amortized pop of the last element.
+    pub const VECTOR_DROP_LAST: FuncId = FuncId(1044);
 
     // String / numeric conversion builtins
     pub const CHAR_CODE_AT: FuncId = FuncId(1017); // String.char_code_at(s, i) -> Int

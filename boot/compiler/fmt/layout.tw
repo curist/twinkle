@@ -221,7 +221,7 @@ fn fits(doc: Doc, indent: Int, remaining: Int) Bool {
 
     last := fit_stack.len() - 1
     d := fit_stack[last]
-    fit_stack = .slice(0, last)
+    fit_stack = .drop_last()
 
     case d {
       .Nil => {},

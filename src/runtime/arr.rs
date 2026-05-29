@@ -80,6 +80,8 @@ pub fn make() -> ModuleIR {
     m.funcs.push(len_fn());
     m.funcs.push(concat_fn());
     m.funcs.push(slice_fn());
+    m.funcs.push(pop_tail_fn());
+    m.funcs.push(drop_last_fn());
     m.funcs.push(builder_new_fn());
     m.funcs.push(builder_from_fn());
     m.funcs.push(builder_push_fn());
@@ -1089,6 +1091,309 @@ fn slice_fn() -> FuncDef {
             },
             Instr::LocalGet(3),
             Instr::RefAsNonNull,
+        ],
+    }
+}
+
+/// `pop_tail(len: i32, level: i32, node: VecInternal?) -> eqref`
+/// Remove the rightmost leaf path from the trie. `len` is the OLD length; the
+/// rightmost element lives at index len-2. Returns the new node, or null when
+/// this subtree becomes empty. Inverse of push_tail.
+fn pop_tail_fn() -> FuncDef {
+    // p0=len, p1=level, p2=node
+    // L3=subidx, L4=new_children, L5=newchild, L6=child
+    FuncDef {
+        name: "pop_tail".into(),
+        params: vec![ValType::I32, ValType::I32, ref_vec_internal_null()],
+        results: vec![ref_eq_null()],
+        locals: vec![
+            ValType::I32,
+            ref_vec_children_null(),
+            ref_eq_null(),
+            ref_vec_internal_null(),
+        ],
+        body: vec![
+            Instr::LocalGet(0),
+            Instr::I32Const(2),
+            Instr::I32Sub,
+            Instr::LocalGet(1),
+            Instr::I32ShrU,
+            Instr::I32Const(MASK),
+            Instr::I32And,
+            Instr::LocalSet(3),
+            Instr::LocalGet(1),
+            Instr::I32Const(B),
+            Instr::I32GtS,
+            Instr::If {
+                result: Some(ref_eq_null()),
+                then_body: vec![
+                    Instr::LocalGet(2),
+                    Instr::RefAsNonNull,
+                    Instr::StructGet(T_VEC_INTERNAL.into(), VI_CHILDREN),
+                    Instr::LocalGet(3),
+                    Instr::ArrayGet(T_VEC_CHILDREN.into()),
+                    Instr::RefCast {
+                        nullable: true,
+                        heap: HeapType::Named(T_VEC_INTERNAL.into()),
+                    },
+                    Instr::LocalSet(6),
+                    Instr::LocalGet(0),
+                    Instr::LocalGet(1),
+                    Instr::I32Const(B),
+                    Instr::I32Sub,
+                    Instr::LocalGet(6),
+                    Instr::Call("pop_tail".into()),
+                    Instr::LocalSet(5),
+                    Instr::LocalGet(5),
+                    Instr::RefIsNull,
+                    Instr::LocalGet(3),
+                    Instr::I32Eqz,
+                    Instr::I32And,
+                    Instr::If {
+                        result: Some(ref_eq_null()),
+                        then_body: vec![Instr::RefNull(HeapType::Eq)],
+                        else_body: vec![
+                            Instr::RefNull(HeapType::Eq),
+                            Instr::I32Const(BF),
+                            Instr::ArrayNew(T_VEC_CHILDREN.into()),
+                            Instr::LocalSet(4),
+                            Instr::LocalGet(4),
+                            Instr::RefAsNonNull,
+                            Instr::I32Const(0),
+                            Instr::LocalGet(2),
+                            Instr::RefAsNonNull,
+                            Instr::StructGet(T_VEC_INTERNAL.into(), VI_CHILDREN),
+                            Instr::I32Const(0),
+                            Instr::I32Const(BF),
+                            Instr::ArrayCopy(T_VEC_CHILDREN.into(), T_VEC_CHILDREN.into()),
+                            Instr::LocalGet(4),
+                            Instr::RefAsNonNull,
+                            Instr::LocalGet(3),
+                            Instr::LocalGet(5),
+                            Instr::ArraySet(T_VEC_CHILDREN.into()),
+                            Instr::LocalGet(4),
+                            Instr::RefAsNonNull,
+                            Instr::StructNew(T_VEC_INTERNAL.into()),
+                            Instr::RefCast {
+                                nullable: false,
+                                heap: HeapType::Eq,
+                            },
+                        ],
+                    },
+                ],
+                else_body: vec![
+                    Instr::LocalGet(3),
+                    Instr::I32Eqz,
+                    Instr::If {
+                        result: Some(ref_eq_null()),
+                        then_body: vec![Instr::RefNull(HeapType::Eq)],
+                        else_body: vec![
+                            Instr::RefNull(HeapType::Eq),
+                            Instr::I32Const(BF),
+                            Instr::ArrayNew(T_VEC_CHILDREN.into()),
+                            Instr::LocalSet(4),
+                            Instr::LocalGet(4),
+                            Instr::RefAsNonNull,
+                            Instr::I32Const(0),
+                            Instr::LocalGet(2),
+                            Instr::RefAsNonNull,
+                            Instr::StructGet(T_VEC_INTERNAL.into(), VI_CHILDREN),
+                            Instr::I32Const(0),
+                            Instr::I32Const(BF),
+                            Instr::ArrayCopy(T_VEC_CHILDREN.into(), T_VEC_CHILDREN.into()),
+                            Instr::LocalGet(4),
+                            Instr::RefAsNonNull,
+                            Instr::LocalGet(3),
+                            Instr::RefNull(HeapType::Eq),
+                            Instr::ArraySet(T_VEC_CHILDREN.into()),
+                            Instr::LocalGet(4),
+                            Instr::RefAsNonNull,
+                            Instr::StructNew(T_VEC_INTERNAL.into()),
+                            Instr::RefCast {
+                                nullable: false,
+                                heap: HeapType::Eq,
+                            },
+                        ],
+                    },
+                ],
+            },
+        ],
+    }
+}
+
+/// `drop_last(vec: PVec?) -> PVec`
+/// Return vec without its last element; the empty vector if already empty.
+/// O(1) amortized: shrinks the tail, pulling the last trie leaf back into the
+/// tail only at a 32-boundary (then O(log n)). Inverse of push.
+fn drop_last_fn() -> FuncDef {
+    // p0=vec
+    // L1=len, L2=tailoff, L3=tail_len, L4=new_tail, L5=new_root, L6=new_shift, L7=shift
+    FuncDef {
+        name: "drop_last".into(),
+        params: vec![ref_pvec_null()],
+        results: vec![ref_pvec()],
+        locals: vec![
+            ValType::I32,
+            ValType::I32,
+            ValType::I32,
+            ref_array_null(),
+            ref_eq_null(),
+            ValType::I32,
+            ValType::I32,
+        ],
+        body: vec![
+            Instr::LocalGet(0),
+            Instr::RefAsNonNull,
+            Instr::StructGet(T_PVEC.into(), PV_LEN),
+            Instr::LocalSet(1),
+            Instr::LocalGet(1),
+            Instr::I32Const(1),
+            Instr::I32LeS,
+            Instr::If {
+                result: Some(ref_pvec()),
+                then_body: vec![Instr::GlobalGet("empty_pvec".into())],
+                else_body: vec![
+                    Instr::LocalGet(1),
+                    Instr::Call("tailoff".into()),
+                    Instr::LocalSet(2),
+                    Instr::LocalGet(1),
+                    Instr::LocalGet(2),
+                    Instr::I32Sub,
+                    Instr::LocalSet(3),
+                    Instr::LocalGet(3),
+                    Instr::I32Const(1),
+                    Instr::I32GtS,
+                    Instr::If {
+                        result: Some(ref_pvec()),
+                        then_body: vec![
+                            // CASE A: tail_len > 1, shrink tail
+                            Instr::RefNull(HeapType::None),
+                            Instr::LocalGet(3),
+                            Instr::I32Const(1),
+                            Instr::I32Sub,
+                            Instr::ArrayNew(T_ARRAY.into()),
+                            Instr::LocalSet(4),
+                            Instr::LocalGet(4),
+                            Instr::RefAsNonNull,
+                            Instr::I32Const(0),
+                            Instr::LocalGet(0),
+                            Instr::RefAsNonNull,
+                            Instr::StructGet(T_PVEC.into(), PV_TAIL),
+                            Instr::I32Const(0),
+                            Instr::LocalGet(3),
+                            Instr::I32Const(1),
+                            Instr::I32Sub,
+                            Instr::ArrayCopy(T_ARRAY.into(), T_ARRAY.into()),
+                            Instr::LocalGet(1),
+                            Instr::I32Const(1),
+                            Instr::I32Sub,
+                            Instr::LocalGet(0),
+                            Instr::RefAsNonNull,
+                            Instr::StructGet(T_PVEC.into(), PV_SHIFT),
+                            Instr::LocalGet(0),
+                            Instr::RefAsNonNull,
+                            Instr::StructGet(T_PVEC.into(), PV_ROOT),
+                            Instr::LocalGet(4),
+                            Instr::RefAsNonNull,
+                            Instr::StructNew(T_PVEC.into()),
+                        ],
+                        else_body: vec![
+                            // CASE B: tail_len == 1, pull last leaf into a fresh tail
+                            Instr::LocalGet(0),
+                            Instr::RefAsNonNull,
+                            Instr::StructGet(T_PVEC.into(), PV_SHIFT),
+                            Instr::LocalSet(7),
+                            Instr::RefNull(HeapType::None),
+                            Instr::I32Const(BF),
+                            Instr::ArrayNew(T_ARRAY.into()),
+                            Instr::LocalSet(4),
+                            Instr::LocalGet(4),
+                            Instr::RefAsNonNull,
+                            Instr::I32Const(0),
+                            Instr::LocalGet(0),
+                            Instr::RefAsNonNull,
+                            Instr::LocalGet(1),
+                            Instr::I32Const(2),
+                            Instr::I32Sub,
+                            Instr::Call("get_leaf".into()),
+                            Instr::I32Const(0),
+                            Instr::I32Const(BF),
+                            Instr::ArrayCopy(T_ARRAY.into(), T_ARRAY.into()),
+                            Instr::LocalGet(1),
+                            Instr::LocalGet(7),
+                            Instr::LocalGet(0),
+                            Instr::RefAsNonNull,
+                            Instr::StructGet(T_PVEC.into(), PV_ROOT),
+                            Instr::Call("pop_tail".into()),
+                            Instr::LocalSet(5),
+                            Instr::LocalGet(7),
+                            Instr::LocalSet(6),
+                            Instr::LocalGet(5),
+                            Instr::RefIsNull,
+                            Instr::If {
+                                result: None,
+                                then_body: vec![Instr::I32Const(0), Instr::LocalSet(6)],
+                                else_body: vec![
+                                    Instr::LocalGet(7),
+                                    Instr::I32Const(B),
+                                    Instr::I32GtS,
+                                    Instr::If {
+                                        result: None,
+                                        then_body: vec![
+                                            Instr::LocalGet(5),
+                                            Instr::RefCast {
+                                                nullable: false,
+                                                heap: HeapType::Named(T_VEC_INTERNAL.into()),
+                                            },
+                                            Instr::StructGet(T_VEC_INTERNAL.into(), VI_CHILDREN),
+                                            Instr::I32Const(1),
+                                            Instr::ArrayGet(T_VEC_CHILDREN.into()),
+                                            Instr::RefIsNull,
+                                            Instr::If {
+                                                result: None,
+                                                then_body: vec![
+                                                    Instr::LocalGet(5),
+                                                    Instr::RefCast {
+                                                        nullable: false,
+                                                        heap: HeapType::Named(
+                                                            T_VEC_INTERNAL.into(),
+                                                        ),
+                                                    },
+                                                    Instr::StructGet(
+                                                        T_VEC_INTERNAL.into(),
+                                                        VI_CHILDREN,
+                                                    ),
+                                                    Instr::I32Const(0),
+                                                    Instr::ArrayGet(T_VEC_CHILDREN.into()),
+                                                    Instr::LocalSet(5),
+                                                    Instr::LocalGet(7),
+                                                    Instr::I32Const(B),
+                                                    Instr::I32Sub,
+                                                    Instr::LocalSet(6),
+                                                ],
+                                                else_body: vec![],
+                                            },
+                                        ],
+                                        else_body: vec![],
+                                    },
+                                ],
+                            },
+                            Instr::LocalGet(1),
+                            Instr::I32Const(1),
+                            Instr::I32Sub,
+                            Instr::LocalGet(6),
+                            Instr::LocalGet(5),
+                            Instr::RefCast {
+                                nullable: true,
+                                heap: HeapType::Named(T_VEC_INTERNAL.into()),
+                            },
+                            Instr::LocalGet(4),
+                            Instr::RefAsNonNull,
+                            Instr::StructNew(T_PVEC.into()),
+                        ],
+                    },
+                ],
+            },
         ],
     }
 }

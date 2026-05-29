@@ -170,6 +170,14 @@ fn runtime_entry(func_id: FuncId, twinkle_name: &'static str) -> Option<PreludeE
             vec![ref_pvec_null(), ValType::I32, ValType::I32],
             vec![ref_pvec()],
         )),
+        id if id == prelude_ids::VECTOR_DROP_LAST => Some(PreludeEntry::runtime(
+            twinkle_name,
+            "rt.arr",
+            "drop_last",
+            "rt_arr__drop_last",
+            vec![ref_pvec_null()],
+            vec![ref_pvec()],
+        )),
         id if id == prelude_ids::DICT_SET => Some(PreludeEntry::runtime(
             twinkle_name,
             "rt.dict",

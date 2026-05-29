@@ -115,7 +115,7 @@ fn get_eof_trivia(tokens: Vector<Token>) Vector<Trivia> {
       for trivia.len() > 0 {
         case trivia[trivia.len() - 1].kind {
           .BlankLine => {
-            trivia = .slice(0, trivia.len() - 1)
+            trivia = .drop_last()
           },
           _ => { break },
         }

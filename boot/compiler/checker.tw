@@ -82,7 +82,7 @@ fn push_scope(ctx: InferCtx) InferCtx {
 }
 
 fn pop_scope(ctx: InferCtx) InferCtx {
-  ctx.locals = ctx.locals.slice(0, ctx.locals.len() - 1)
+  ctx.locals = ctx.locals.drop_last()
   ctx
 }
 

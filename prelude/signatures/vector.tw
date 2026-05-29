@@ -1,4 +1,5 @@
 /// Convert a vector to its string representation, e.g. "[1, 2, 3]".
+
 pub fn to_string<T: Stringify>(xs: Vector<T>) String {
   ""
 }
@@ -25,6 +26,11 @@ pub fn concat<T>(a: Vector<T>, b: Vector<T>) Vector<T> {
 
 /// Return a subvector [start, end).
 pub fn slice<T>(xs: Vector<T>, start: Int, end: Int) Vector<T> {
+  xs
+}
+
+/// Return a new vector without the last element, or the empty vector if already empty.
+pub fn drop_last<T>(xs: Vector<T>) Vector<T> {
   xs
 }
 

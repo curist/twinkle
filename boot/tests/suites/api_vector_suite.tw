@@ -663,6 +663,48 @@ pub fn suite() runner.Suite {
       },
     )
     .test(
+      "drop_last across trie boundaries matches slice",
+      fn() {
+        // Exercise the O(1) tail-shrink and the 32-boundary leaf pull,
+        // including a multi-level trie (len > 1024 → shift > 5).
+        sizes := [32, 33, 34, 64, 65, 1024, 1025, 1056, 1057]
+
+        for n in sizes {
+          v: Vector<Int> = collect i in range(n) {
+            i
+          }
+          got := v.drop_last()
+          want := v.slice(0, n - 1)
+          try assert.equal(got.len(), n - 1)
+
+          for x, i in got {
+            try assert.equal(x, want[i])
+          }
+        }
+
+        .Ok({})
+      },
+    )
+    .test(
+      "repeated drop_last pops a large vector to empty",
+      fn() {
+        v: Vector<Int> = collect i in range(1100) {
+          i
+        }
+        expected_len := 1100
+
+        for expected_len > 0 {
+          try assert.equal(v.len(), expected_len)
+          try assert.equal(v[v.len() - 1], expected_len - 1)
+          v = .drop_last()
+          expected_len = expected_len - 1
+        }
+
+        try assert.equal(v.len(), 0)
+        .Ok({})
+      },
+    )
+    .test(
       "first and last on singleton",
       fn() {
         xs: Vector<Int> = [42]
