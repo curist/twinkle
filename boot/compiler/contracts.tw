@@ -10,10 +10,15 @@ pub type BuiltinContract = { Stringify, Eq, Ord }
 /// Kept separate from MonoType to avoid a dependency cycle with the resolver.
 pub type ContractReturnShape = { String, Bool, Order }
 
+/// The shape of a non-receiver parameter in a contract method requirement.
+/// `Receiver` = the parameter's type equals the receiver (Self), e.g. `eq(self, Self)`.
+/// Future shapes (`Int`, `Elem`) support the parameterized access contracts.
+pub type ContractArgShape = { Receiver }
+
 pub type ContractMethodRequirement = .{
   method_name: String,
   receiver_param_count: Int,
-  arg_count_without_receiver: Int,
+  arg_shapes: Vector<ContractArgShape>,
   ret: ContractReturnShape,
 }
 
@@ -24,29 +29,19 @@ pub fn spec(contract: BuiltinContract) ContractSpec {
     .Stringify => .{
       name: "Stringify",
       methods: [
-        .{
-          method_name: "to_string",
-          receiver_param_count: 1,
-          arg_count_without_receiver: 0,
-          ret: .String,
-        },
+        .{ method_name: "to_string", receiver_param_count: 1, arg_shapes: [], ret: .String },
       ],
     },
     .Eq => .{
       name: "Eq",
       methods: [
-        .{ method_name: "eq", receiver_param_count: 1, arg_count_without_receiver: 1, ret: .Bool },
+        .{ method_name: "eq", receiver_param_count: 1, arg_shapes: [.Receiver], ret: .Bool },
       ],
     },
     .Ord => .{
       name: "Ord",
       methods: [
-        .{
-          method_name: "compare",
-          receiver_param_count: 1,
-          arg_count_without_receiver: 1,
-          ret: .Order,
-        },
+        .{ method_name: "compare", receiver_param_count: 1, arg_shapes: [.Receiver], ret: .Order },
       ],
     },
   }

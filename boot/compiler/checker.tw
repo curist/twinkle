@@ -573,7 +573,7 @@ fn contract_requirement_summary(req: ContractMethodRequirement) String {
     .Order => "Order",
   }
 
-  if req.arg_count_without_receiver == 0 {
+  if req.arg_shapes.len() == 0 {
     return "${req.method_name}(self) -> ${ret_name}"
   }
 
@@ -692,7 +692,7 @@ fn prove_contract_method(
     .None => { return .Err("missing ${contract_requirement_summary(req)}") },
   }
   inst := instantiate(sig, ctx)
-  expected_param_count := req.receiver_param_count + req.arg_count_without_receiver
+  expected_param_count := req.receiver_param_count + req.arg_shapes.len()
 
   if inst.params.len() != expected_param_count {
     return .Err(
@@ -709,10 +709,13 @@ fn prove_contract_method(
     .None => { return .Err("${req.method_name} does not apply to ${ctx.env.ty_to_string_env(ty)}") },
   }
 
-  // Validate non-receiver parameters also match the target type
-  for i in 0..req.arg_count_without_receiver {
+  // Validate non-receiver parameters match their declared shape.
+  for i in 0..req.arg_shapes.len() {
     param_idx := req.receiver_param_count + i
-    recv_ctx = case silent_unify(recv_ctx, ty, inst.params[param_idx]) {
+    expected_arg := case req.arg_shapes[i] {
+      .Receiver => ty,
+    }
+    recv_ctx = case silent_unify(recv_ctx, expected_arg, inst.params[param_idx]) {
       .Some(next_ctx) => next_ctx,
       .None => {
         return .Err(
@@ -1857,11 +1860,11 @@ fn try_synth_method_call(
 
       // Build expected params for non-receiver arguments (each typed as base_ty)
       extra_params: Vector<MonoType> = []
-      i := 0
 
-      for i < m.req.arg_count_without_receiver {
-        extra_params = .append(base_ty)
-        i = i + 1
+      for shape in m.req.arg_shapes {
+        case shape {
+          .Receiver => extra_params = .append(base_ty),
+        }
       }
 
       pu := pre_unify_return(br.ctx, ret_ty, call_expected, callee_span, br.diags)
@@ -1970,11 +1973,11 @@ fn try_synth_method_value(
   case scoped_match {
     .Some(m) => {
       extra_params: Vector<MonoType> = []
-      i := 0
 
-      for i < m.req.arg_count_without_receiver {
-        extra_params = .append(base_ty)
-        i = i + 1
+      for shape in m.req.arg_shapes {
+        case shape {
+          .Receiver => extra_params = .append(base_ty),
+        }
       }
 
       return .Some(.{ ty: .Function(extra_params, contract_return_type(m.req.ret)), ctx, diags })
