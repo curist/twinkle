@@ -99,10 +99,12 @@ pub fn plan_dependencies_with_exists(
   norm_file := canonical_module_path(file_path, roots)
   norm_stdlib := canonical_module_path(stdlib_root, roots)
   norm_prelude := canonical_module_path(prelude_root, roots)
-  is_internal := norm_file.starts_with(norm_stdlib) or norm_file.starts_with(norm_prelude)
+  is_prelude := norm_file.starts_with(norm_prelude)
+  is_internal := is_prelude or norm_file.starts_with(norm_stdlib)
 
-  // Auto-inject prelude modules for non-internal files
-  if !is_internal {
+  // Auto-inject prelude modules for everything except prelude itself
+  // (prelude-into-prelude would cycle). Stdlib modules now get prelude injected.
+  if !is_prelude {
     prelude_modules := loader.list_prelude_modules(prelude_root)
 
     for prelude_path in prelude_modules {

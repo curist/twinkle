@@ -124,7 +124,7 @@ playground-dev: target/playground.wasm tools/bridge.wasm tree-sitter-twinkle/tre
 
 # Format all .tw source files (boot only; prelude/stdlib excluded).
 fmt: target/twk
-	@find boot -name '*.tw' | xargs target/twk fmt
+	@find boot -name '*.tw' -not -path 'boot/lib/module/core_lib.tw' | xargs target/twk fmt
 
 clean:
 	cargo clean

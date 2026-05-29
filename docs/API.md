@@ -252,6 +252,8 @@ Persistent (copy-on-write) vector. Literal syntax: `[1, 2, 3]`.
 | `.fold(init, f)` | `fn<A,B>(xs: Vector<A>, init: B, f: fn(B,A) B) B` | Left fold |
 | `.first()` | `fn<A>(xs: Vector<A>) Option<A>` | First element, or `.None` if empty |
 | `.last()` | `fn<A>(xs: Vector<A>) Option<A>` | Last element, or `.None` if empty |
+| `.drop_first()` | `fn<A>(xs: Vector<A>) Vector<A>` | Vector without its first element, or empty if already empty |
+| `.drop_last()` | `fn<A>(xs: Vector<A>) Vector<A>` | Vector without its last element, or empty if already empty |
 | `.find(f)` | `fn<A>(xs: Vector<A>, f: fn(A) Bool) Option<A>` | First element matching predicate |
 | `.any(f)` | `fn<A>(xs: Vector<A>, f: fn(A) Bool) Bool` | True if any element matches |
 | `.all(f)` | `fn<A>(xs: Vector<A>, f: fn(A) Bool) Bool` | True if all elements match |
@@ -319,7 +321,7 @@ Division by zero traps.
 
 Everything above (primitives, built-in types, I/O, type conversions, String/Vector/Dict methods, operators) is available as **prelude** — no import needed.
 
-Only non-prelude stdlib modules require explicit imports: `use @std.path`, `use @std.fs`, `use @std.proc`, `use @std.date`.
+Only non-prelude stdlib modules require explicit imports: `use @std.path`, `use @std.fs`, `use @std.proc`, `use @std.date`, `use @std.stack`.
 
 ### `@std.path`
 
@@ -374,3 +376,20 @@ Timing utilities.
 | Function | Signature | Description |
 |----------|-----------|-------------|
 | `now` | `fn() Float` | Current time as milliseconds since the time origin (`performance.now()` in Node/browser; ms since Unix epoch in the interpreter) |
+
+### `@std.stack`
+
+A last-in-first-out `Stack<T>` backed by a persistent `Vector`. The top of the
+stack is the last element. Operations are total: `pop` on an empty stack is a
+no-op and `top` returns `.None`. Requires `use @std.stack`.
+
+| Function | Signature | Description |
+|----------|-----------|-------------|
+| `Stack.new()` | `fn<T>() Stack<T>` | Empty stack |
+| `from_vector(xs)` | `fn<T>(items: Vector<T>) Stack<T>` | Stack from a vector; last element is the top |
+| `.to_vector()` | `fn<T>(s: Stack<T>) Vector<T>` | Backing vector, bottom-to-top |
+| `.push(x)` | `fn<T>(s: Stack<T>, x: T) Stack<T>` | Push a value onto the top |
+| `.top()` | `fn<T>(s: Stack<T>) Option<T>` | Top element, or `.None` if empty |
+| `.pop()` | `fn<T>(s: Stack<T>) Stack<T>` | Remove the top element, or unchanged if empty |
+| `.len()` | `fn<T>(s: Stack<T>) Int` | Number of elements |
+| `.is_empty()` | `fn<T>(s: Stack<T>) Bool` | True when the stack has no elements |

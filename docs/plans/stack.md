@@ -1,6 +1,30 @@
 # `Stack<T>` — and an O(log n) `drop_last` vector op
 
-Status: proposal. Companion to [slice-performance.md](slice-performance.md) (the
+Status: **partially implemented**. The ergonomics layer has landed; the
+performance foundation and migrations have not.
+
+**Done:**
+- `Stack<T>` in `@std.stack` (`new`, `from_vector`, `to_vector`, `push`, `top`,
+  `pop`, `len`, `is_empty`) — first stdlib-owned generic type. Explicit `use`
+  (not prelude-visible).
+- `Vector.drop_first` / `drop_last` in `prelude/vector.tw` — **total** (empty →
+  empty, no trap), with the settled names. **But these are O(m)**, built on
+  `slice`, *not* the O(log n) runtime op below.
+- `Stack.pop` on empty is a no-op (total); `top()` returns `T?`.
+- Boot only (stage0 never compiles `@std.stack`).
+
+**Not done (remaining work):**
+- The **O(log n) runtime `drop_last` vector op** — the central performance thesis
+  of this doc (see "Foundation" below). Today's `drop_last` is the O(m) slice
+  shim; the API is forward-compatible with the runtime op replacing it.
+- The **migration targets** (`pop_scope`, Tarjan worklist, fmt/lexer stacks) — none
+  rerouted to `Stack`/`drop_last` yet, so the O(n²) Tarjan risk stands.
+- Access-contract integration (`IndexRead`/`IndexWrite`) — see
+  [access-contracts.md](access-contracts.md).
+- `pop_value(s) .{ value, rest }?` combined shape (open question below).
+- Stage0 mirror of the runtime op (only needed once the op exists).
+
+Companion to [slice-performance.md](slice-performance.md) (the
 audit), [view.md](view.md) (the read-only side),
 [access-contracts.md](access-contracts.md) (the general access bounds), and
 [rrb-vector-concat.md](rrb-vector-concat.md).
@@ -107,15 +131,18 @@ allocation churn, not asymptotics).
 
 ## Open questions
 
-- **Type vs just `drop_last` + `last` on `Vector`**: is the `Stack<T>` wrapper
-  worth it, or do the renamed `Vector` ops read clearly enough on their own? The
-  wrapper's only value is intent-signaling.
+- ~~**Type vs just `drop_last` + `last` on `Vector`**~~ — resolved: **wrapper shipped.**
+  `Stack<T>` lives in `@std.stack` for intent-signaling; the `Vector` ops remain
+  available for sites that prefer them.
 - **`pop` shape**: `pop(s) Stack<T>` (discard top, above) is convenient for the
   discard-heavy sites (`pop_scope`); add a combined `pop_value(s) .{ value, rest }?`
-  (no tuples in the language) for the take-and-continue sites (Tarjan)?
+  (no tuples in the language) for the take-and-continue sites (Tarjan)? **Open** —
+  not yet added.
 - ~~**Empty `pop`**~~ — resolved: **no-op, returns empty** (total). `Vector.drop_last`
   on an empty vector returns the empty vector, so `Stack.pop` on an empty stack
   yields the empty stack rather than trapping. `top()` already returns `T?`
   (`.None` when empty), so callers that need to detect underflow check `top`.
-- **Foundation**: confirm `drop_last` (recommended) over the cursor.
-- **Naming / module**: `Stack<T>`, `@std.stack`; prelude-visible or explicit `use`?
+- **Foundation**: confirm `drop_last` (recommended) over the cursor. **Still open**
+  for the *runtime op*; the stdlib `Stack` currently rides the O(m) slice shim.
+- ~~**Naming / module**~~ — resolved: `Stack<T>` in `@std.stack`, **explicit `use`**
+  (not prelude-visible).

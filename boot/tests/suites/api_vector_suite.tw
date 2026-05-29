@@ -625,6 +625,44 @@ pub fn suite() runner.Suite {
       },
     )
     .test(
+      "drop_first removes the leading element",
+      fn() {
+        xs: Vector<Int> = [10, 20, 30]
+        ys := xs.drop_first()
+        try assert.equal(ys.len(), 2)
+        try assert.equal(ys[0], 20)
+        try assert.equal(ys[1], 30)
+        .Ok({})
+      },
+    )
+    .test(
+      "drop_first on empty returns empty",
+      fn() {
+        xs: Vector<Int> = []
+        try assert.equal(xs.drop_first().len(), 0)
+        .Ok({})
+      },
+    )
+    .test(
+      "drop_last removes the trailing element",
+      fn() {
+        xs: Vector<Int> = [10, 20, 30]
+        ys := xs.drop_last()
+        try assert.equal(ys.len(), 2)
+        try assert.equal(ys[0], 10)
+        try assert.equal(ys[1], 20)
+        .Ok({})
+      },
+    )
+    .test(
+      "drop_last on empty returns empty",
+      fn() {
+        xs: Vector<Int> = []
+        try assert.equal(xs.drop_last().len(), 0)
+        .Ok({})
+      },
+    )
+    .test(
       "first and last on singleton",
       fn() {
         xs: Vector<Int> = [42]

@@ -184,7 +184,7 @@ pub fn suite() runner.Suite {
       },
     )
     .test(
-      "prelude skipped for stdlib files",
+      "prelude injected for stdlib files but still marked internal",
       fn() {
         module := parse_module("fn helper() { }")
         plan := try plan_deps(module, "${loader.resolve_stdlib_root()}/fs.tw", root)
@@ -200,7 +200,7 @@ pub fn suite() runner.Suite {
           }
         }
 
-        try assert.equal(prelude_count, 0)
+        try assert.is_true(prelude_count > 0)
         .Ok({})
       },
     )
