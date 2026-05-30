@@ -771,6 +771,15 @@ pub fn suite() runner.Suite {
       },
     )
     .test(
+      "IntoIterator bound: iter() yields Iterator<E>",
+      fn() {
+        src := "fn to_iter<C: IntoIterator<E>, E>(c: C) Iterator<E> { c.iter() }"
+        r := try check_ok(src)
+        try assert.str_contains(try type_at(r, src, "c.iter()"), "4")
+        .Ok({})
+      },
+    )
+    .test(
       "IndexRead bound with a concrete element type arg (IndexRead<Int>) resolves",
       fn() {
         src := "type Seq = .{ data: Vector<Int> }\nfn len(s: Seq) Int { s.data.len() }\nfn at(s: Seq, i: Int) Int { s.data[i] }\nfn first<C: IndexRead<Int>>(c: C) Int { c.at(0) }\nfn main() Int { first(Seq.{ data: [1, 2, 3] }) }"

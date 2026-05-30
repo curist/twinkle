@@ -4,14 +4,14 @@
 /// exposes queries for contract metadata. It intentionally does not depend on
 /// resolver-owned types such as MonoType to avoid a contracts↔resolver cycle.
 
-pub type BuiltinContract = { Stringify, Eq, Ord, IndexRead, IndexWrite }
+pub type BuiltinContract = { Stringify, Eq, Ord, IndexRead, IndexWrite, IntoIterator }
 
 /// The return shape of a contract method requirement.
 /// Kept separate from MonoType to avoid a dependency cycle with the resolver.
 /// `Receiver` = Self; `Elem` = the receiver-determined element type (functional
 /// dependency `Self -> Elem`), recovered from the satisfier's actual method type.
 /// (`IteratorElem` for `IntoIterator` lands with that contract.)
-pub type ContractReturnShape = { String, Bool, Order, Int, Receiver, Elem }
+pub type ContractReturnShape = { String, Bool, Order, Int, Receiver, Elem, IteratorElem }
 
 /// The shape of a non-receiver parameter in a contract method requirement.
 /// `Receiver` = the parameter's type equals the receiver (Self), e.g. `eq(self, Self)`;
@@ -66,6 +66,12 @@ pub fn spec(contract: BuiltinContract) ContractSpec {
         .{ method_name: "append", receiver_param_count: 1, arg_shapes: [.Elem], ret: .Receiver },
       ],
     },
+    .IntoIterator => .{
+      name: "IntoIterator",
+      methods: [
+        .{ method_name: "iter", receiver_param_count: 1, arg_shapes: [], ret: .IteratorElem },
+      ],
+    },
   }
 }
 
@@ -78,6 +84,7 @@ pub fn resolve_builtin_contract_name(name: String) BuiltinContract? {
     "Ord" => .Some(.Ord),
     "IndexRead" => .Some(.IndexRead),
     "IndexWrite" => .Some(.IndexWrite),
+    "IntoIterator" => .Some(.IntoIterator),
     _ => .None,
   }
 }
