@@ -38,8 +38,10 @@ const PV_SHIFT: u32 = 1;
 const PV_ROOT: u32 = 2;
 const PV_TAIL: u32 = 3;
 
-/// $VecInternal field index
+/// $VecInternal field indices
 const VI_CHILDREN: u32 = 0;
+#[allow(dead_code)]
+const VI_SIZES: u32 = 1;
 
 /// Build the `rt.arr` module: persistent bit-partitioned trie vector operations.
 pub fn make() -> ModuleIR {
@@ -269,6 +271,7 @@ fn new_path_fn() -> FuncDef {
                         Instr::ArraySet(T_VEC_CHILDREN.into()),
                         Instr::LocalGet(2),
                         Instr::RefAsNonNull,
+                        Instr::RefNull(HeapType::Named(T_I32_ARRAY.into())),
                         Instr::StructNew(T_VEC_INTERNAL.into()),
                         Instr::RefCast {
                             nullable: false,
@@ -376,6 +379,7 @@ fn push_tail_fn() -> FuncDef {
             },
             Instr::LocalGet(4),
             Instr::RefAsNonNull,
+            Instr::RefNull(HeapType::Named(T_I32_ARRAY.into())),
             Instr::StructNew(T_VEC_INTERNAL.into()),
             Instr::RefCast {
                 nullable: false,
@@ -483,6 +487,7 @@ fn do_set_fn() -> FuncDef {
                     Instr::ArraySet(T_VEC_CHILDREN.into()),
                     Instr::LocalGet(4),
                     Instr::RefAsNonNull,
+                    Instr::RefNull(HeapType::Named(T_I32_ARRAY.into())),
                     Instr::StructNew(T_VEC_INTERNAL.into()),
                     Instr::RefCast {
                         nullable: false,
@@ -623,6 +628,7 @@ fn push_fn() -> FuncDef {
                                     Instr::ArraySet(T_VEC_CHILDREN.into()),
                                     Instr::LocalGet(7),
                                     Instr::RefAsNonNull,
+                                    Instr::RefNull(HeapType::Named(T_I32_ARRAY.into())),
                                     Instr::StructNew(T_VEC_INTERNAL.into()),
                                     Instr::RefCast {
                                         nullable: false,
@@ -1173,6 +1179,7 @@ fn pop_tail_fn() -> FuncDef {
                             Instr::ArraySet(T_VEC_CHILDREN.into()),
                             Instr::LocalGet(4),
                             Instr::RefAsNonNull,
+                            Instr::RefNull(HeapType::Named(T_I32_ARRAY.into())),
                             Instr::StructNew(T_VEC_INTERNAL.into()),
                             Instr::RefCast {
                                 nullable: false,
@@ -1208,6 +1215,7 @@ fn pop_tail_fn() -> FuncDef {
                             Instr::ArraySet(T_VEC_CHILDREN.into()),
                             Instr::LocalGet(4),
                             Instr::RefAsNonNull,
+                            Instr::RefNull(HeapType::Named(T_I32_ARRAY.into())),
                             Instr::StructNew(T_VEC_INTERNAL.into()),
                             Instr::RefCast {
                                 nullable: false,

@@ -88,7 +88,7 @@ fn test_rt_types_namespace() Result<Void, String> {
 
 fn test_rt_types_count() Result<Void, String> {
   m := rt_types.module()
-  try assert.equal(type_count(m), 18)
+  try assert.equal(type_count(m), 19)
   .Ok({})
 }
 
@@ -306,7 +306,7 @@ fn test_rt_types_vec_internal() Result<Void, String> {
 
   case td {
     .Struct(_, fields, _, _) => {
-      try assert.equal(fields.len(), 1)
+      try assert.equal(fields.len(), 2)
       try assert.ok(
         case fields[0].name {
           .Some(n) => n == "children",
@@ -322,6 +322,23 @@ fn test_rt_types_vec_internal() Result<Void, String> {
           try assert.equal(n, "VecChildren")
         },
         _ => { return assert.fail("children should be ref VecChildren") },
+      }
+
+      try assert.ok(
+        case fields[1].name {
+          .Some(n) => n == "sizes",
+          .None => false,
+        },
+        "field 1 should be sizes",
+      )
+
+      // RRB size table: nullable ref to I32Array (null ⇒ regular node)
+      case fields[1].ty {
+        .Ref(nullable, .Named(n)) => {
+          try assert.ok(nullable, "sizes should be a nullable ref")
+          try assert.equal(n, "I32Array")
+        },
+        _ => { return assert.fail("sizes should be ref null I32Array") },
       }
     },
     _ => { return assert.fail("VecInternal should be a Struct type") },
@@ -1635,7 +1652,7 @@ fn test_rt_dict_emits_wat() Result<Void, String> {
 pub fn suite() runner.Suite {
   runner.suite("runtime modules (M10)")
     .test("rt.types: namespace", test_rt_types_namespace)
-    .test("rt.types: 18 type definitions", test_rt_types_count)
+    .test("rt.types: 19 type definitions", test_rt_types_count)
     .test("rt.types: no funcs/imports/exports", test_rt_types_no_funcs)
     .test("rt.types: Array is mutable anyref array", test_rt_types_array)
     .test("rt.types: String is mutable i8 array", test_rt_types_string)
@@ -1646,7 +1663,7 @@ pub fn suite() runner.Suite {
     .test("rt.types: BoxedFloat has f64 field", test_rt_types_boxed_float)
     .test("rt.types: IterState is non-final", test_rt_types_iter_state_non_final)
     .test("rt.types: VecChildren is mutable eqref array", test_rt_types_vec_children)
-    .test("rt.types: VecInternal has children field", test_rt_types_vec_internal)
+    .test("rt.types: VecInternal has children and sizes fields", test_rt_types_vec_internal)
     .test("rt.types: PVec has len/shift/root/tail", test_rt_types_pvec)
     .test("rt.types: emits valid WAT", test_rt_types_emits_wat)
     .test("rt.core: namespace", test_rt_core_namespace)

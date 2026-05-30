@@ -18,6 +18,7 @@ pub const T_BOXED_FLOAT: &str = "rt_types__BoxedFloat";
 pub const T_ITER_STATE: &str = "rt_types__IterState";
 pub const T_VEC_CHILDREN: &str = "rt_types__VecChildren";
 pub const T_VEC_INTERNAL: &str = "rt_types__VecInternal";
+pub const T_I32_ARRAY: &str = "rt_types__I32Array";
 pub const T_PVEC: &str = "rt_types__PVec";
 
 /// Qualified function names for cross-module calls (after linking).
@@ -113,6 +114,14 @@ pub fn ref_vec_internal_null() -> ValType {
     }
 }
 
+/// Ref-to-I32Array (nullable) — RRB relaxed-node size table.
+pub fn ref_i32_array_null() -> ValType {
+    ValType::Ref {
+        nullable: true,
+        heap: HeapType::Named(T_I32_ARRAY.into()),
+    }
+}
+
 /// Ref-to-IterState (non-null)
 pub fn ref_iter_state() -> ValType {
     ValType::Ref {
@@ -174,16 +183,37 @@ pub fn make() -> ModuleIR {
         },
     });
 
-    // (type $VecInternal (struct (field $children (ref $VecChildren))))
+    // (type $I32Array (array (mut i32)))
+    // RRB relaxed-node size table: cumulative element counts per child.
+    // Must precede VecInternal, which carries a nullable ref to it.
+    m.types.push(TypeDef::Array {
+        name: "I32Array".into(),
+        elem: FieldDef {
+            name: None,
+            mutable: true,
+            ty: ValType::I32,
+        },
+    });
+
+    // (type $VecInternal (struct (field $children (ref $VecChildren))
+    //                            (field $sizes (ref null $I32Array))))
+    // sizes == null ⇒ regular (radix-indexed) node; non-null ⇒ relaxed (RRB) node.
     m.types.push(TypeDef::Struct {
         name: "VecInternal".into(),
         supertype: None,
         non_final: false,
-        fields: vec![FieldDef {
-            name: Some("children".into()),
-            mutable: false,
-            ty: ref_vec_children(),
-        }],
+        fields: vec![
+            FieldDef {
+                name: Some("children".into()),
+                mutable: false,
+                ty: ref_vec_children(),
+            },
+            FieldDef {
+                name: Some("sizes".into()),
+                mutable: false,
+                ty: ref_i32_array_null(),
+            },
+        ],
     });
 
     // (type $PVec (struct (field $len i32) (field $shift i32)

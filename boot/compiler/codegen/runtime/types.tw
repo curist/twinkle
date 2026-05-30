@@ -13,9 +13,13 @@ pub fn module() WasmModule {
       .Array("Array", .{ name: .None, mutable: true, ty: .Anyref }),
       .Array("String", .{ name: .None, mutable: true, ty: .I8 }),
       .Array("VecChildren", .{ name: .None, mutable: true, ty: .Ref(true, .Eq) }),
+      .Array("I32Array", .{ name: .None, mutable: true, ty: .I32 }),
       .Struct(
         "VecInternal",
-        [.{ name: .Some("children"), mutable: false, ty: .Ref(false, .Named("VecChildren")) }],
+        [
+          .{ name: .Some("children"), mutable: false, ty: .Ref(false, .Named("VecChildren")) },
+          .{ name: .Some("sizes"), mutable: false, ty: .Ref(true, .Named("I32Array")) },
+        ],
         .None,
         true,
       ),

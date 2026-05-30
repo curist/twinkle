@@ -35,6 +35,10 @@ fn t_vec_internal() String {
   "rt_types__VecInternal"
 }
 
+fn t_i32_array() String {
+  "rt_types__I32Array"
+}
+
 fn t_boxed_int() String {
   "rt_types__BoxedInt"
 }
@@ -72,6 +76,10 @@ fn vec_internal_null() ValType {
   .Ref(true, .Named(t_vec_internal()))
 }
 
+fn i32_array_null() ValType {
+  .Ref(true, .Named(t_i32_array()))
+}
+
 fn ref_eq_() ValType {
   .Ref(false, .Eq)
 }
@@ -97,9 +105,13 @@ fn pv_tail() Int {
   3
 }
 
-// VecInternal field index
+// VecInternal field indices
 fn vi_children() Int {
   0
+}
+
+fn vi_sizes() Int {
+  1
 }
 
 // ── Module ──────────────────────────────────────────────────────────
@@ -309,6 +321,7 @@ fn new_path_fn() FuncDef {
               .ArraySet(t_vec_children()),
               .LocalGet(2),
               .RefAsNonNull,
+              .RefNull(.Named(t_i32_array())),
               .StructNew(t_vec_internal()),
               .RefCast(false, .Eq),
               .LocalSet(1),
@@ -396,6 +409,7 @@ fn push_tail_fn() FuncDef {
       ),
       .LocalGet(4),
       .RefAsNonNull,
+      .RefNull(.Named(t_i32_array())),
       .StructNew(t_vec_internal()),
       .RefCast(false, .Eq),
     ],
@@ -485,6 +499,7 @@ fn do_set_fn() FuncDef {
           .ArraySet(t_vec_children()),
           .LocalGet(4),
           .RefAsNonNull,
+          .RefNull(.Named(t_i32_array())),
           .StructNew(t_vec_internal()),
           .RefCast(false, .Eq),
         ],
@@ -607,6 +622,7 @@ fn push_fn() FuncDef {
                   .ArraySet(t_vec_children()),
                   .LocalGet(7),
                   .RefAsNonNull,
+                  .RefNull(.Named(t_i32_array())),
                   .StructNew(t_vec_internal()),
                   .RefCast(false, .Eq),
                   .LocalSet(5),
@@ -1161,6 +1177,7 @@ fn pop_tail_fn() FuncDef {
               .ArraySet(t_vec_children()),
               .LocalGet(4),
               .RefAsNonNull,
+              .RefNull(.Named(t_i32_array())),
               .StructNew(t_vec_internal()),
               .RefCast(false, .Eq),
             ],
@@ -1193,6 +1210,7 @@ fn pop_tail_fn() FuncDef {
               .ArraySet(t_vec_children()),
               .LocalGet(4),
               .RefAsNonNull,
+              .RefNull(.Named(t_i32_array())),
               .StructNew(t_vec_internal()),
               .RefCast(false, .Eq),
             ],
@@ -1432,6 +1450,7 @@ fn promote_full_tail_fn() FuncDef {
               .ArraySet(t_vec_children()),
               .LocalGet(5),
               .RefAsNonNull,
+              .RefNull(.Named(t_i32_array())),
               .StructNew(t_vec_internal()),
               .RefCast(false, .Eq),
               .LocalSet(4),
