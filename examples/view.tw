@@ -1,0 +1,77 @@
+// `View<C>` — zero-copy windows over any indexable backing (`@std.view`).
+//
+// A `View` is a backing plus a start/length window. It reaches elements through
+// the `IndexRead` access contract, so `at` is a direct read into the backing and
+// the window ops `drop_first` / `drop_last` / `sub` are O(1) — they only move the
+// window and share the one backing. That makes two-ended and head/tail traversal
+// allocation-free, instead of the O(n^2) you get from repeated `slice`.
+use @std.view
+use @std.view.{View}
+
+fn or_neg(o: Int?) Int {
+  case o {
+    .Some(v) => v,
+    .None => -1,
+  }
+}
+
+// A generic algorithm written against `IndexRead` works over any satisfier —
+// Vector and String here — by reading elements through the contract (`c.at`).
+fn is_palindrome<C: IndexRead<E>, E: Eq>(c: C) Bool {
+  lo := 0
+  hi := c.len() - 1
+
+  for lo < hi {
+    if c.at(lo) != c.at(hi) {
+      return false
+    }
+
+    lo = lo + 1
+    hi = hi - 1
+  }
+
+  true
+}
+
+// A `View`'s own `len`/`at` make it itself an `IndexRead` satisfier, so it plugs
+// into the same generic code as its backing (element-agnostic, so no `Eq` bound).
+fn length<C: IndexRead<E>, E>(c: C) Int {
+  c.len()
+}
+
+fn show_window(label: String, v: View<Vector<Int>>) Void {
+  out := v.to_vector()
+  parts := ""
+
+  for x, i in out {
+    parts = if i == 0 {
+      "${x}"
+    } else {
+      "${parts}, ${x}"
+    }
+  }
+
+  println("${label}: [${parts}]  (len ${v.len()})")
+}
+
+println("== O(1) window ops (all share one backing) ==")
+full := view.from([10, 20, 30, 40, 50])
+show_window("full       ", full)
+show_window("drop_first ", full.drop_first())
+show_window("drop_last  ", full.drop_last())
+show_window("sub(1, 4)  ", full.sub(1, 4))
+println("")
+println("== peeks and fold over a window ==")
+mid := full.drop_first().drop_last() // [20, 30, 40]
+println("first: ${or_neg(mid.first())}")
+println("last:  ${or_neg(mid.last())}")
+println("sum:   ${mid.fold(0, fn(acc, x) { acc + x })}")
+println("")
+println("== one generic algorithm, two backings (via IndexRead) ==")
+println("[1,2,3,2,1]  palindrome? ${is_palindrome([1, 2, 3, 2, 1])}")
+println("[1,2,3]      palindrome? ${is_palindrome([1, 2, 3])}")
+println("\"racecar\"    palindrome? ${is_palindrome("racecar")}") // windows bytes
+println("\"hello\"      palindrome? ${is_palindrome("hello")}")
+println("")
+println("== a View is itself an IndexRead satisfier ==")
+println("length(view of [9, 8, 9]) = ${length(view.from([9, 8, 9]))}")
