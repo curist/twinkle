@@ -388,10 +388,8 @@ no-op and `top` returns `.None`. Requires `use @std.stack`.
 | Function | Signature | Description |
 |----------|-----------|-------------|
 | `Stack.new()` | `fn<T>() Stack<T>` | Empty stack |
-| `from_vector(xs)` | `fn<T>(items: Vector<T>) Stack<T>` | Stack from a vector; last element is the top |
-| `.to_vector()` | `fn<T>(s: Stack<T>) Vector<T>` | Backing vector, bottom-to-top |
 | `.push(x)` | `fn<T>(s: Stack<T>, x: T) Stack<T>` | Push a value onto the top |
 | `.top()` | `fn<T>(s: Stack<T>) Option<T>` | Top element, or `.None` if empty |
 | `.pop()` | `fn<T>(s: Stack<T>) Stack<T>` | Remove the top element, or unchanged if empty |
-| `.len()` | `fn<T>(s: Stack<T>) Int` | Number of elements |
 | `.is_empty()` | `fn<T>(s: Stack<T>) Bool` | True when the stack has no elements |
+| `.to_vector()` | `fn<T>(s: Stack<T>) Vector<T>` | Backing vector, bottom-to-top (use for size/traversal) |

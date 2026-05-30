@@ -18,9 +18,12 @@ are the optional follow-ons noted at the end.
   (checker + lower_core), the Tarjan SCC worklist (`type_order.tw`), the lexer
   `interp_depths` stack, and the `fmt` `fit_stack` / trivia stacks. This bounds
   the Tarjan worklist's repeated pops to O(log n) each.
-- `Stack<T>` in `@std.stack` (`new`, `from_vector`, `to_vector`, `push`, `top`,
-  `pop`, `len`, `is_empty`) — first stdlib-owned generic type. `Stack.pop` on
-  empty is a no-op (total); `top()` returns `T?`.
+- `Stack<T>` in `@std.stack` (`new`, `push`, `pop`, `top`, `is_empty`,
+  `to_vector`) — first stdlib-owned generic type. `Stack.pop` on empty is a
+  no-op (total); `top()` returns `T?`. The surface is deliberately minimal: the
+  LIFO core plus `to_vector` as the escape hatch for size/traversal. `from_vector`
+  and `len` were dropped (2026-05-30) — `from_vector` was a rarely-used seeder and
+  `len` is recoverable via `to_vector().len()`; neither pulled its weight.
 
 **Why the compiler migrated to `Vector.drop_last`, not `Stack<T>`:** the perf comes
 entirely from `drop_last`; the wrapper is pure ergonomics. `@std.stack` is also
@@ -101,9 +104,8 @@ pub fn new<T>() Stack<T>              { .{ items: [] } }
 pub fn push<T>(s: Stack<T>, x: T) Stack<T> { s.items = s.items.append(x) }   // O(1) amortized
 pub fn top<T>(s: Stack<T>) T?         { s.items.last() }                      // O(log n)
 pub fn pop<T>(s: Stack<T>) Stack<T>   { s.items = s.items.drop_last() }       // O(log n), drops top
-pub fn len<T>(s: Stack<T>) Int        { s.items.len() }
 pub fn is_empty<T>(s: Stack<T>) Bool  { s.items.len() == 0 }
-// from_vector / to_vector bridges
+pub fn to_vector<T>(s: Stack<T>) Vector<T> { s.items }   // escape hatch: size/traversal
 ```
 
 `pop_scope` becomes `ctx.scopes = ctx.scopes.pop()`; the Tarjan loop does
@@ -121,7 +123,7 @@ against" above); traverse by materializing with `to_vector()`.
 |---|---|
 | `push` | O(1) amortized |
 | `pop` / `top` | O(log n) |
-| `len` / `is_empty` | O(1) |
+| `is_empty` / `to_vector` | O(1) |
 
 ## Alternative without a runtime change: a cursor
 

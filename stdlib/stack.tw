@@ -8,11 +8,6 @@ pub fn new<T>() Stack<T> {
   Stack.{ items: [] }
 }
 
-/// Build a stack from a vector; the last element becomes the top.
-pub fn from_vector<T>(items: Vector<T>) Stack<T> {
-  Stack.{ items }
-}
-
 /// Return the backing vector, bottom-to-top.
 pub fn to_vector<T>(s: Stack<T>) Vector<T> {
   s.items
@@ -33,11 +28,6 @@ pub fn top<T>(s: Stack<T>) T? {
 pub fn pop<T>(s: Stack<T>) Stack<T> {
   s.items = s.items.drop_last()
   s
-}
-
-/// Number of elements in the stack.
-pub fn len<T>(s: Stack<T>) Int {
-  s.items.len()
 }
 
 /// Return true when the stack has no elements.
