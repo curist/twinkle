@@ -121,6 +121,12 @@ pub fn module() WasmModule {
     vi_nav_fn(),
     child_count_fn(),
     copy_leaves_fn(),
+    node_total_size_fn(),
+    make_relaxed_fn(),
+    pack_children_fn(),
+    append_centre_fn(),
+    concat_trees_fn(),
+    wrap_leaf_fn(),
     get_leaf_fn(),
     new_path_fn(),
     push_tail_fn(),
@@ -133,6 +139,7 @@ pub fn module() WasmModule {
     set_in_place_fn(),
     len_fn(),
     concat_fn(),
+    concat_rrb_fn(),
     slice_fn(),
     pop_tail_fn(),
     drop_last_fn(),
@@ -397,7 +404,6 @@ fn copy_leaves_fn() FuncDef {
               .I32Eq,
               .If(
                 .None,
-                // leaf level: child is an Array; bulk-copy its elements.
                 [
                   .LocalGet(2),
                   .LocalGet(3),
@@ -418,7 +424,6 @@ fn copy_leaves_fn() FuncDef {
                   .I32Add,
                   .LocalSet(3),
                 ],
-                // internal level: recurse into the child subtree.
                 [
                   .LocalGet(6),
                   .RefAsNonNull,
@@ -442,6 +447,288 @@ fn copy_leaves_fn() FuncDef {
         ],
       ),
       .LocalGet(3),
+    ],
+  }
+}
+
+// node_total_size(node: eqref, shift: i32) -> i32
+// Element count in the subtree rooted at `node`. shift==0 means `node` is a
+// leaf Array. Relaxed nodes read sizes[last]; regular nodes are full for all
+// but the last child.
+fn node_total_size_fn() FuncDef {
+  // p0=node, p1=shift; L2=sizes, L3=count
+  .{
+    name: "node_total_size",
+    params: [ref_eq_(), .I32],
+    results: [.I32],
+    locals: [i32_array_null(), .I32],
+    body: [
+      .LocalGet(1),
+      .I32Eqz,
+      .If(
+        .Some(.I32),
+        [.LocalGet(0), .RefCast(false, .Named(t_array())), .ArrayLen],
+        [
+          .LocalGet(0),
+          .RefCast(false, .Named(t_vec_internal())),
+          .StructGet(t_vec_internal(), vi_sizes()),
+          .LocalSet(2),
+          .LocalGet(2),
+          .RefIsNull,
+          .If(
+            .Some(.I32),
+            [
+              .LocalGet(0),
+              .RefCast(false, .Named(t_vec_internal())),
+              .Call("child_count"),
+              .LocalSet(3),
+              .LocalGet(3),
+              .I32Const(1),
+              .I32Sub,
+              .I32Const(1),
+              .LocalGet(1),
+              .I32Shl,
+              .I32Mul,
+              .LocalGet(0),
+              .RefCast(false, .Named(t_vec_internal())),
+              .StructGet(t_vec_internal(), vi_children()),
+              .LocalGet(3),
+              .I32Const(1),
+              .I32Sub,
+              .ArrayGet(t_vec_children()),
+              .RefAsNonNull,
+              .LocalGet(1),
+              .I32Const(b_()),
+              .I32Sub,
+              .Call("node_total_size"),
+              .I32Add,
+            ],
+            [
+              .LocalGet(2),
+              .RefAsNonNull,
+              .LocalGet(2),
+              .RefAsNonNull,
+              .ArrayLen,
+              .I32Const(1),
+              .I32Sub,
+              .ArrayGet(t_i32_array()),
+            ],
+          ),
+        ],
+      ),
+    ],
+  }
+}
+
+// make_relaxed(children: VecChildren, count: i32, node_shift: i32) -> VecInternal
+// Build an internal node from `count` children (at level node_shift-5). Computes
+// a cumulative size table; canonicalizes to a regular node (sizes=null) when
+// every child but the last is full for the level. `children` is referenced as-is.
+fn make_relaxed_fn() FuncDef {
+  // p0=children, p1=count, p2=node_shift; L3=sizes, L4=acc, L5=i, L6=regular, L7=csize
+  .{
+    name: "make_relaxed",
+    params: [vec_children_ref(), .I32, .I32],
+    results: [.Ref(false, .Named(t_vec_internal()))],
+    locals: [i32_array_null(), .I32, .I32, .I32, .I32],
+    body: [
+      .I32Const(0),
+      .LocalGet(1),
+      .ArrayNew(t_i32_array()),
+      .LocalSet(3),
+      .I32Const(0),
+      .LocalSet(4),
+      .I32Const(0),
+      .LocalSet(5),
+      .I32Const(1),
+      .LocalSet(6),
+      .Block(
+        "brk",
+        .None,
+        [
+          .Loop(
+            "lp",
+            .None,
+            [
+              .LocalGet(5),
+              .LocalGet(1),
+              .I32GeS,
+              .BrIf("brk"),
+              .LocalGet(0),
+              .LocalGet(5),
+              .ArrayGet(t_vec_children()),
+              .RefAsNonNull,
+              .LocalGet(2),
+              .I32Const(b_()),
+              .I32Sub,
+              .Call("node_total_size"),
+              .LocalSet(7),
+              .LocalGet(4),
+              .LocalGet(7),
+              .I32Add,
+              .LocalSet(4),
+              .LocalGet(3),
+              .RefAsNonNull,
+              .LocalGet(5),
+              .LocalGet(4),
+              .ArraySet(t_i32_array()),
+              .LocalGet(5),
+              .LocalGet(1),
+              .I32Const(1),
+              .I32Sub,
+              .I32LtS,
+              .If(
+                .None,
+                [
+                  .LocalGet(7),
+                  .I32Const(1),
+                  .LocalGet(2),
+                  .I32Shl,
+                  .I32Ne,
+                  .If(.None, [.I32Const(0), .LocalSet(6)], []),
+                ],
+                [],
+              ),
+              .LocalGet(5),
+              .I32Const(1),
+              .I32Add,
+              .LocalSet(5),
+              .Br("lp"),
+            ],
+          ),
+        ],
+      ),
+      .LocalGet(6),
+      .If(
+        .Some(.Ref(false, .Named(t_vec_internal()))),
+        [.LocalGet(0), .RefNull(.Named(t_i32_array())), .StructNew(t_vec_internal())],
+        [.LocalGet(0), .LocalGet(3), .RefAsNonNull, .StructNew(t_vec_internal())],
+      ),
+    ],
+  }
+}
+
+// pack_children(scratch: VecChildren, count: i32, node_shift: i32) -> (node, shift)
+// Group `count` children (level node_shift-5) into internal node(s) at node_shift,
+// at most 32 children each. <=32 children -> one node at node_shift; otherwise
+// several nodes wrapped under one grandparent at node_shift+5.
+fn pack_children_fn() FuncDef {
+  // p0=scratch, p1=count, p2=node_shift
+  // L3=ch, L4=off, L5=chunk, L6=parents, L7=pi, L8=resultnode, L9=resultshift
+  .{
+    name: "pack_children",
+    params: [vec_children_ref(), .I32, .I32],
+    results: [ref_eq_(), .I32],
+    locals: [vec_children_null(), .I32, .I32, vec_children_null(), .I32, ref_eq_null(), .I32],
+    body: [
+      .LocalGet(1),
+      .I32Const(bf()),
+      .I32LeS,
+      .If(
+        .None,
+        [
+          .RefNull(.Eq),
+          .I32Const(bf()),
+          .ArrayNew(t_vec_children()),
+          .LocalSet(3),
+          .LocalGet(3),
+          .RefAsNonNull,
+          .I32Const(0),
+          .LocalGet(0),
+          .I32Const(0),
+          .LocalGet(1),
+          .ArrayCopy(t_vec_children(), t_vec_children()),
+          .LocalGet(3),
+          .RefAsNonNull,
+          .LocalGet(1),
+          .LocalGet(2),
+          .Call("make_relaxed"),
+          .LocalSet(8),
+          .LocalGet(2),
+          .LocalSet(9),
+        ],
+        [
+          .RefNull(.Eq),
+          .I32Const(bf()),
+          .ArrayNew(t_vec_children()),
+          .LocalSet(6),
+          .I32Const(0),
+          .LocalSet(4),
+          .I32Const(0),
+          .LocalSet(7),
+          .Block(
+            "brk",
+            .None,
+            [
+              .Loop(
+                "lp",
+                .None,
+                [
+                  .LocalGet(4),
+                  .LocalGet(1),
+                  .I32GeS,
+                  .BrIf("brk"),
+                  .I32Const(bf()),
+                  .LocalGet(1),
+                  .LocalGet(4),
+                  .I32Sub,
+                  .I32Const(bf()),
+                  .LocalGet(1),
+                  .LocalGet(4),
+                  .I32Sub,
+                  .I32LtS,
+                  .Select,
+                  .LocalSet(5),
+                  .RefNull(.Eq),
+                  .I32Const(bf()),
+                  .ArrayNew(t_vec_children()),
+                  .LocalSet(3),
+                  .LocalGet(3),
+                  .RefAsNonNull,
+                  .I32Const(0),
+                  .LocalGet(0),
+                  .LocalGet(4),
+                  .LocalGet(5),
+                  .ArrayCopy(t_vec_children(), t_vec_children()),
+                  .LocalGet(6),
+                  .RefAsNonNull,
+                  .LocalGet(7),
+                  .LocalGet(3),
+                  .RefAsNonNull,
+                  .LocalGet(5),
+                  .LocalGet(2),
+                  .Call("make_relaxed"),
+                  .ArraySet(t_vec_children()),
+                  .LocalGet(7),
+                  .I32Const(1),
+                  .I32Add,
+                  .LocalSet(7),
+                  .LocalGet(4),
+                  .LocalGet(5),
+                  .I32Add,
+                  .LocalSet(4),
+                  .Br("lp"),
+                ],
+              ),
+            ],
+          ),
+          .LocalGet(6),
+          .RefAsNonNull,
+          .LocalGet(7),
+          .LocalGet(2),
+          .I32Const(b_()),
+          .I32Add,
+          .Call("make_relaxed"),
+          .LocalSet(8),
+          .LocalGet(2),
+          .I32Const(b_()),
+          .I32Add,
+          .LocalSet(9),
+        ],
+      ),
+      .LocalGet(8),
+      .RefAsNonNull,
+      .LocalGet(9),
     ],
   }
 }
@@ -996,9 +1283,6 @@ fn get_fn() FuncDef {
           .ArrayGet(t_array()),
         ],
         [
-          // trie_count = len - tail.len: the trie holds the first trie_count
-          // elements, the tail the rest. Equivalent to tailoff(len) for regular
-          // (32-aligned) vectors, but correct for relaxed/non-aligned tries.
           .LocalGet(2),
           .LocalGet(0),
           .RefAsNonNull,
@@ -1129,7 +1413,6 @@ fn set_fn() FuncDef {
     results: [pvec_ref()],
     locals: [.I32, arr_null()],
     body: [
-      // trie_count = len - tail.len (relaxed-safe trie/tail boundary)
       .LocalGet(0),
       .RefAsNonNull,
       .StructGet(t_pvec(), pv_len()),
@@ -1250,7 +1533,366 @@ fn len_fn() FuncDef {
   }
 }
 
+// append_centre(scratch: VecChildren, k: i32, centre: eqref, cs: i32,
+//                seam_shift: i32) -> i32
+// Append the seam subtree `centre` to scratch[k..]. When centre already sits at
+// the seam level it is one child; otherwise it grew a level and we splice in its
+// children. Returns the new k.
+fn append_centre_fn() FuncDef {
+  // p0=scratch, p1=k, p2=centre, p3=cs, p4=seam_shift; L5=cc
+  .{
+    name: "append_centre",
+    params: [vec_children_ref(), .I32, ref_eq_(), .I32, .I32],
+    results: [.I32],
+    locals: [.I32],
+    body: [
+      .LocalGet(3),
+      .LocalGet(4),
+      .I32Eq,
+      .If(
+        .Some(.I32),
+        [
+          .LocalGet(0),
+          .LocalGet(1),
+          .LocalGet(2),
+          .ArraySet(t_vec_children()),
+          .LocalGet(1),
+          .I32Const(1),
+          .I32Add,
+        ],
+        [
+          .LocalGet(2),
+          .RefCast(false, .Named(t_vec_internal())),
+          .Call("child_count"),
+          .LocalSet(5),
+          .LocalGet(0),
+          .LocalGet(1),
+          .LocalGet(2),
+          .RefCast(false, .Named(t_vec_internal())),
+          .StructGet(t_vec_internal(), vi_children()),
+          .I32Const(0),
+          .LocalGet(5),
+          .ArrayCopy(t_vec_children(), t_vec_children()),
+          .LocalGet(1),
+          .LocalGet(5),
+          .I32Add,
+        ],
+      ),
+    ],
+  }
+}
+
+// concat_trees(l: VecInternal, sl: i32, r: VecInternal, sr: i32) -> (node, shift)
+// RRB spine-merge: recurse along l's right edge and r's left edge to the common
+// level, merge the seam, then greedily repack the boundary children into nodes of
+// at most 32 (growing a level when the repacked count exceeds 32). Produces
+// relaxed seam nodes; make_relaxed canonicalizes back to regular where it can.
+fn concat_trees_fn() FuncDef {
+  vc := t_vec_children()
+  vi := t_vec_internal()
+  vir := ValType.Ref(false, .Named(vi))
+
+  // p0=l, p1=sl, p2=r, p3=sr
+  // L4=centre, L5=cs, L6=scratch, L7=k, L8=countL, L9=countR, L10=resnode, L11=resshift
+  .{
+    name: "concat_trees",
+    params: [vir, .I32, vir, .I32],
+    results: [ref_eq_(), .I32],
+    locals: [ref_eq_null(), .I32, vec_children_null(), .I32, .I32, .I32, ref_eq_null(), .I32],
+    body: [
+      .RefNull(.Eq),
+      .I32Const(96),
+      .ArrayNew(vc),
+      .LocalSet(6),
+      .I32Const(0),
+      .LocalSet(7),
+      .LocalGet(1),
+      .LocalGet(3),
+      .I32Eq,
+      .If(
+        .None,
+        [
+          .LocalGet(1),
+          .I32Const(b_()),
+          .I32Eq,
+          .If(
+            .None,
+            [
+              .LocalGet(0),
+              .Call("child_count"),
+              .LocalSet(8),
+              .LocalGet(6),
+              .RefAsNonNull,
+              .I32Const(0),
+              .LocalGet(0),
+              .StructGet(vi, vi_children()),
+              .I32Const(0),
+              .LocalGet(8),
+              .ArrayCopy(vc, vc),
+              .LocalGet(8),
+              .LocalSet(7),
+              .LocalGet(2),
+              .Call("child_count"),
+              .LocalSet(9),
+              .LocalGet(6),
+              .RefAsNonNull,
+              .LocalGet(7),
+              .LocalGet(2),
+              .StructGet(vi, vi_children()),
+              .I32Const(0),
+              .LocalGet(9),
+              .ArrayCopy(vc, vc),
+              .LocalGet(7),
+              .LocalGet(9),
+              .I32Add,
+              .LocalSet(7),
+              .LocalGet(6),
+              .RefAsNonNull,
+              .LocalGet(7),
+              .LocalGet(1),
+              .Call("pack_children"),
+              .LocalSet(11),
+              .LocalSet(10),
+            ],
+            [
+              .LocalGet(0),
+              .Call("child_count"),
+              .LocalSet(8),
+              .LocalGet(0),
+              .StructGet(vi, vi_children()),
+              .LocalGet(8),
+              .I32Const(1),
+              .I32Sub,
+              .ArrayGet(vc),
+              .RefAsNonNull,
+              .RefCast(false, .Named(vi)),
+              .LocalGet(1),
+              .I32Const(b_()),
+              .I32Sub,
+              .LocalGet(2),
+              .StructGet(vi, vi_children()),
+              .I32Const(0),
+              .ArrayGet(vc),
+              .RefAsNonNull,
+              .RefCast(false, .Named(vi)),
+              .LocalGet(3),
+              .I32Const(b_()),
+              .I32Sub,
+              .Call("concat_trees"),
+              .LocalSet(5),
+              .LocalSet(4),
+              .LocalGet(6),
+              .RefAsNonNull,
+              .I32Const(0),
+              .LocalGet(0),
+              .StructGet(vi, vi_children()),
+              .I32Const(0),
+              .LocalGet(8),
+              .I32Const(1),
+              .I32Sub,
+              .ArrayCopy(vc, vc),
+              .LocalGet(8),
+              .I32Const(1),
+              .I32Sub,
+              .LocalSet(7),
+              .LocalGet(6),
+              .RefAsNonNull,
+              .LocalGet(7),
+              .LocalGet(4),
+              .RefAsNonNull,
+              .LocalGet(5),
+              .LocalGet(1),
+              .I32Const(b_()),
+              .I32Sub,
+              .Call("append_centre"),
+              .LocalSet(7),
+              .LocalGet(2),
+              .Call("child_count"),
+              .LocalSet(9),
+              .LocalGet(6),
+              .RefAsNonNull,
+              .LocalGet(7),
+              .LocalGet(2),
+              .StructGet(vi, vi_children()),
+              .I32Const(1),
+              .LocalGet(9),
+              .I32Const(1),
+              .I32Sub,
+              .ArrayCopy(vc, vc),
+              .LocalGet(7),
+              .LocalGet(9),
+              .I32Add,
+              .I32Const(1),
+              .I32Sub,
+              .LocalSet(7),
+              .LocalGet(6),
+              .RefAsNonNull,
+              .LocalGet(7),
+              .LocalGet(1),
+              .Call("pack_children"),
+              .LocalSet(11),
+              .LocalSet(10),
+            ],
+          ),
+        ],
+        [
+          .LocalGet(1),
+          .LocalGet(3),
+          .I32GtS,
+          .If(
+            .None,
+            [
+              .LocalGet(0),
+              .Call("child_count"),
+              .LocalSet(8),
+              .LocalGet(0),
+              .StructGet(vi, vi_children()),
+              .LocalGet(8),
+              .I32Const(1),
+              .I32Sub,
+              .ArrayGet(vc),
+              .RefAsNonNull,
+              .RefCast(false, .Named(vi)),
+              .LocalGet(1),
+              .I32Const(b_()),
+              .I32Sub,
+              .LocalGet(2),
+              .LocalGet(3),
+              .Call("concat_trees"),
+              .LocalSet(5),
+              .LocalSet(4),
+              .LocalGet(6),
+              .RefAsNonNull,
+              .I32Const(0),
+              .LocalGet(0),
+              .StructGet(vi, vi_children()),
+              .I32Const(0),
+              .LocalGet(8),
+              .I32Const(1),
+              .I32Sub,
+              .ArrayCopy(vc, vc),
+              .LocalGet(8),
+              .I32Const(1),
+              .I32Sub,
+              .LocalSet(7),
+              .LocalGet(6),
+              .RefAsNonNull,
+              .LocalGet(7),
+              .LocalGet(4),
+              .RefAsNonNull,
+              .LocalGet(5),
+              .LocalGet(1),
+              .I32Const(b_()),
+              .I32Sub,
+              .Call("append_centre"),
+              .LocalSet(7),
+              .LocalGet(6),
+              .RefAsNonNull,
+              .LocalGet(7),
+              .LocalGet(1),
+              .Call("pack_children"),
+              .LocalSet(11),
+              .LocalSet(10),
+            ],
+            [
+              .LocalGet(0),
+              .LocalGet(1),
+              .LocalGet(2),
+              .StructGet(vi, vi_children()),
+              .I32Const(0),
+              .ArrayGet(vc),
+              .RefAsNonNull,
+              .RefCast(false, .Named(vi)),
+              .LocalGet(3),
+              .I32Const(b_()),
+              .I32Sub,
+              .Call("concat_trees"),
+              .LocalSet(5),
+              .LocalSet(4),
+              .LocalGet(6),
+              .RefAsNonNull,
+              .I32Const(0),
+              .LocalGet(4),
+              .RefAsNonNull,
+              .LocalGet(5),
+              .LocalGet(3),
+              .I32Const(b_()),
+              .I32Sub,
+              .Call("append_centre"),
+              .LocalSet(7),
+              .LocalGet(2),
+              .Call("child_count"),
+              .LocalSet(9),
+              .LocalGet(6),
+              .RefAsNonNull,
+              .LocalGet(7),
+              .LocalGet(2),
+              .StructGet(vi, vi_children()),
+              .I32Const(1),
+              .LocalGet(9),
+              .I32Const(1),
+              .I32Sub,
+              .ArrayCopy(vc, vc),
+              .LocalGet(7),
+              .LocalGet(9),
+              .I32Add,
+              .I32Const(1),
+              .I32Sub,
+              .LocalSet(7),
+              .LocalGet(6),
+              .RefAsNonNull,
+              .LocalGet(7),
+              .LocalGet(3),
+              .Call("pack_children"),
+              .LocalSet(11),
+              .LocalSet(10),
+            ],
+          ),
+        ],
+      ),
+      .LocalGet(10),
+      .RefAsNonNull,
+      .LocalGet(11),
+    ],
+  }
+}
+
+// wrap_leaf(leaf: Array) -> VecInternal
+// A shift-5 internal node holding `leaf` as its single child.
+fn wrap_leaf_fn() FuncDef {
+  // p0=leaf; L1=ch
+  .{
+    name: "wrap_leaf",
+    params: [arr_ref()],
+    results: [.Ref(false, .Named(t_vec_internal()))],
+    locals: [vec_children_null()],
+    body: [
+      .RefNull(.Eq),
+      .I32Const(bf()),
+      .ArrayNew(t_vec_children()),
+      .LocalSet(1),
+      .LocalGet(1),
+      .RefAsNonNull,
+      .I32Const(0),
+      .LocalGet(0),
+      .ArraySet(t_vec_children()),
+      .LocalGet(1),
+      .RefAsNonNull,
+      .I32Const(1),
+      .I32Const(b_()),
+      .Call("make_relaxed"),
+    ],
+  }
+}
+
 // concat(a: PVec?, b: PVec?) -> PVec
+//
+// NOTE (RRB Phase 3): the relaxed-merge implementation lives in `concat_rrb`
+// (validated correct via the Vector.concat_rrb test builtin), but `concat`
+// itself still routes through the transient builder. Wiring it to the RRB path
+// is blocked on making the remaining radix-only trie ops relaxed-aware —
+// `push`/`pop_tail`/`drop_last`/`get_leaf`/`set_in_place` currently corrupt or
+// trap on relaxed vectors (the compiler does concat-then-push internally).
 fn concat_fn() FuncDef {
   // p0=a, p1=b, L2=builder
   .{
@@ -1291,6 +1933,84 @@ fn concat_fn() FuncDef {
   }
 }
 
+// concat_rrb(a, b) -> PVec  [TEMP debug entry: forces the RRB merge path]
+// Assumes a non-empty and b.root != null.
+fn concat_rrb_fn() FuncDef {
+  vi := t_vec_internal()
+
+  // p0=a, p1=b; L2=aL, L3=aLs, L4=merged, L5=ms
+  .{
+    name: "concat_rrb",
+    params: [pvec_null(), pvec_null()],
+    results: [pvec_ref()],
+    locals: [ref_eq_null(), .I32, ref_eq_null(), .I32],
+    body: [
+      .LocalGet(0),
+      .RefAsNonNull,
+      .StructGet(t_pvec(), pv_root()),
+      .RefIsNull,
+      .If(
+        .None,
+        [
+          .LocalGet(0),
+          .RefAsNonNull,
+          .StructGet(t_pvec(), pv_tail()),
+          .Call("wrap_leaf"),
+          .LocalSet(2),
+          .I32Const(b_()),
+          .LocalSet(3),
+        ],
+        [
+          .LocalGet(0),
+          .RefAsNonNull,
+          .StructGet(t_pvec(), pv_root()),
+          .RefAsNonNull,
+          .LocalGet(0),
+          .RefAsNonNull,
+          .StructGet(t_pvec(), pv_shift()),
+          .LocalGet(0),
+          .RefAsNonNull,
+          .StructGet(t_pvec(), pv_tail()),
+          .Call("wrap_leaf"),
+          .I32Const(b_()),
+          .Call("concat_trees"),
+          .LocalSet(3),
+          .LocalSet(2),
+        ],
+      ),
+      .LocalGet(2),
+      .RefAsNonNull,
+      .RefCast(false, .Named(vi)),
+      .LocalGet(3),
+      .LocalGet(1),
+      .RefAsNonNull,
+      .StructGet(t_pvec(), pv_root()),
+      .RefAsNonNull,
+      .LocalGet(1),
+      .RefAsNonNull,
+      .StructGet(t_pvec(), pv_shift()),
+      .Call("concat_trees"),
+      .LocalSet(5),
+      .LocalSet(4),
+      .LocalGet(0),
+      .RefAsNonNull,
+      .StructGet(t_pvec(), pv_len()),
+      .LocalGet(1),
+      .RefAsNonNull,
+      .StructGet(t_pvec(), pv_len()),
+      .I32Add,
+      .LocalGet(5),
+      .LocalGet(4),
+      .RefAsNonNull,
+      .RefCast(false, .Named(vi)),
+      .LocalGet(1),
+      .RefAsNonNull,
+      .StructGet(t_pvec(), pv_tail()),
+      .StructNew(t_pvec()),
+    ],
+  }
+}
+
 // slice(vec: PVec?, start: i32, end: i32) -> PVec
 fn slice_fn() FuncDef {
   ta := t_array()
@@ -1301,8 +2021,6 @@ fn slice_fn() FuncDef {
     params: [pvec_null(), .I32, .I32],
     results: [pvec_ref()],
     locals: [.I32, arr_null(), .I32, arr_null(), .I32, .I32],
-    // Phase 3: materialize the range element-by-element via `get` (relaxed-safe).
-    // This is O((end-start)·log n); Phase 4 restores O(log n) structural slice.
     body: [
       .LocalGet(2),
       .LocalGet(1),
@@ -2180,7 +2898,6 @@ fn to_array_fn() FuncDef {
       .LocalGet(5),
       .I32Sub,
       .LocalSet(6),
-      // copy the trie's leaves (relaxed-aware) when there is a root.
       .LocalGet(6),
       .I32Const(0),
       .I32GtS,
