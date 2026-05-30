@@ -33,12 +33,6 @@ fn is_palindrome<C: IndexRead<E>, E: Eq>(c: C) Bool {
   true
 }
 
-// A `View`'s own `len`/`at` make it itself an `IndexRead` satisfier, so it plugs
-// into the same generic code as its backing (element-agnostic, so no `Eq` bound).
-fn length<C: IndexRead<E>, E>(c: C) Int {
-  c.len()
-}
-
 fn show_window(label: String, v: View<Vector<Int>>) Void {
   out := v.to_vector()
   parts := ""
@@ -67,11 +61,17 @@ println("first: ${or_neg(mid.first())}")
 println("last:  ${or_neg(mid.last())}")
 println("sum:   ${mid.fold(0, fn(acc, x) { acc + x })}")
 println("")
-println("== one generic algorithm, two backings (via IndexRead) ==")
-println("[1,2,3,2,1]  palindrome? ${is_palindrome([1, 2, 3, 2, 1])}")
-println("[1,2,3]      palindrome? ${is_palindrome([1, 2, 3])}")
-println("\"racecar\"    palindrome? ${is_palindrome("racecar")}") // windows bytes
-println("\"hello\"      palindrome? ${is_palindrome("hello")}")
-println("")
-println("== a View is itself an IndexRead satisfier ==")
-println("length(view of [9, 8, 9]) = ${length(view.from([9, 8, 9]))}")
+println("== one generic algorithm, three backings (via IndexRead) ==")
+println("[1,2,3,2,1]      palindrome? ${is_palindrome([1, 2, 3, 2, 1])}")
+println("[1,2,3]          palindrome? ${is_palindrome([1, 2, 3])}")
+println("\"racecar\"        palindrome? ${is_palindrome("racecar")}") // windows bytes
+// A View is itself an IndexRead satisfier, so it flows through the SAME generic
+// algorithm — `E` is recovered through the View's own backing bound.
+println("view of [9,8,9]  palindrome? ${is_palindrome(view.from([9, 8, 9]))}")
+println(
+  "sub(1,4) of [0,1,2,1,9]  palindrome? ${is_palindrome(
+    view
+      .from([0, 1, 2, 1, 9])
+      .sub(1, 4),
+  )}",
+)
