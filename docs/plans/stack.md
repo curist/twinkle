@@ -28,13 +28,16 @@ entirely from `drop_last`; the wrapper is pure ergonomics. `@std.stack` is also
 stdlib), so using it inside the compiler would break stage0. The `Vector` op is the
 correct receiver for these internal sites.
 
-**Access contracts (2026-05-30):** `Stack<T>` satisfies **`IndexRead<T>`** via
-`len` + a new `at(s, index) T` (bottom-to-top; `top` == `at(len-1)`), so it flows
-through the same write-once generic algorithms (`fold`, `position`, for-in) as
-`Vector`/`String`/`View`. **`IndexWrite<T>` was deliberately *not* added**: a LIFO's
-only natural write is `push`/`pop`, and satisfying it would require a public
-`append` method that merely duplicates `push` (plus an out-of-character positional
-`set_at`). Read-only contract integration, mirroring `View`.
+**Decided against — access-contract integration (2026-05-30).** `Stack<T>` is
+**not** an `IndexRead`/`IndexWrite` satisfier, reversing the earlier plan. A `Stack`
+is an *access-restricting* abstraction: its whole value over a bare `Vector` is that
+it constrains callers to LIFO (`push`/`pop`/`top`) and signals that intent — exactly
+as a queue constrains to FIFO. Exposing `at(i)` / `s[i]` / for-in would let callers
+reach past the abstraction into arbitrary positions, defeating the reason to choose a
+`Stack`. Backing it on a `Vector` makes positional access free to *implement*, but
+that is not a reason to *expose* it. To traverse, materialize explicitly with
+`to_vector()`. (`View` is different — it *is* a random-access window, so `IndexRead`
+is its essence; see [view.md](view.md).)
 
 **Not done (optional follow-ons):**
 - `pop_value(s) .{ value, rest }?` combined shape (open question below) — the
@@ -107,10 +110,10 @@ pub fn is_empty<T>(s: Stack<T>) Bool  { s.items.len() == 0 }
 `x := stack.top(); stack = stack.pop()`. The wrapper is **pure ergonomics** —
 the perf comes entirely from `drop_last`.
 
-`Stack<T>` also satisfies the access contracts
-([access-contracts.md](access-contracts.md)) — `IndexRead<T>` (`top` is
-`get(len-1)`) and `IndexWrite<T>` — so it plugs into the same write-once generic
-algorithms (`fold`, `position`, …) as `Vector`, `String`, and `View`.
+`Stack<T>` deliberately does **not** satisfy the access contracts
+([access-contracts.md](access-contracts.md)) — no `IndexRead`/`IndexWrite`. Random
+positional access would defeat the point of a LIFO abstraction (see "Decided
+against" above); traverse by materializing with `to_vector()`.
 
 ### Costs
 
@@ -141,7 +144,8 @@ allocation churn, not asymptotics).
 - **`Stack` / `drop_last`** (this doc) — LIFO build/shrink.
 - **`View<C>`** ([view.md](view.md)) — read-only traversal / drop-first.
 - **Access contracts** ([access-contracts.md](access-contracts.md)) — the general
-  `IndexRead`/`IndexWrite` bounds these types satisfy.
+  `IndexRead`/`IndexWrite` bounds that `Vector`/`String`/`View` satisfy (`Stack`
+  deliberately does not — see "Decided against" above).
 - **RRB** ([rrb-vector-concat.md](rrb-vector-concat.md)) — arbitrary O(log n)
   `concat`/`slice`.
 - Queue/Deque — considered and **dropped** (audit showed FIFO isn't a real need).

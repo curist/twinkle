@@ -96,8 +96,8 @@ contract, not positional write.
 
 **Positional `[]` is in scope, not optional.** Backing the `[]` access syntax is a
 *motivation* for this contract, not a follow-on: the plan is **done only when
-`v[i]` for any `IndexRead<E>` satisfier desugars to `c.at(i)`** (so `View`/`Stack`
-get bracket indexing for free). `synth_index` (checker.tw:4159), which today
+`v[i]` for any `IndexRead<E>` satisfier desugars to `c.at(i)`** (so `View` gets
+bracket indexing for free). `synth_index` (checker.tw:4159), which today
 hardcodes `Vector`/`String`/`Dict`, routes positional indexing through the
 contract. **Keyed `[]` stays separate** — `Dict<K,V>[K] -> V?` remains
 special-cased (associative, a future `KeyedRead<K,V>`, see below); only the
@@ -116,14 +116,16 @@ positional, `Int`-indexed, trap-on-OOB `[]` is unified under `IndexRead`.
 
 **Stdlib (ordinary inherent methods):**
 
-- `View<C>` ([view.md](view.md)) — `IndexRead<E>`, `IntoIterator<E>`, `Sliceable`;
-  all O(1) window ops, `get` delegates to `source.get`.
-- `Stack<T>` ([stack.md](stack.md)) — `IndexRead<T>` (`top` = `get(len-1)`),
-  `IndexWrite<T>`.
+- `View<C>` ([view.md](view.md)) — `IndexRead<E>` (`at` delegates to `source.at`),
+  all O(1) window ops. **Landed** as the first stdlib satisfier.
+- `Stack<T>` ([stack.md](stack.md)) — **deliberately NOT a satisfier** (reversed
+  2026-05-30). A `Stack` is an access-restricting LIFO abstraction; positional
+  `at`/`s[i]`/for-in would defeat its purpose (the same reason a queue exposes no
+  random access). Traverse by materializing with `to_vector()`. See
+  [stack.md](stack.md) "Decided against".
 
-Because `View` and `Stack` satisfy the same contracts as the builtins, they plug
-straight into the generic algorithms below — and views compose (a `View` over a
-`View`).
+`View` satisfies the same contracts as the builtins, so it plugs straight into the
+generic algorithms below — and views compose (a `View` over a `View`).
 
 ### Conformance audit (what actually has to change)
 
@@ -422,11 +424,10 @@ Track A — the requirement-model / proof-side foundation:
    [view.md](view.md)): a zero-copy window whose own `len`/`at` make it satisfy
    `IndexRead<E>`, confirmed by passing a `View<Vector<Int>>` through a generic
    `<C: IndexRead<E>, E>` bound (the element `E` is recovered through the *nested*
-   backing bound, no registration code). `Stack<T>` ✅ likewise satisfies
-   `IndexRead<T>` via `len` + a new `at` ([stack.md](stack.md)); `IndexWrite` was
-   intentionally skipped for it (a LIFO's write surface is `push`/`pop`, not a
-   positional `set_at`/`append`). **This plan is now complete** — all three
-   contracts, `[i]`/`for x in` syntax, and the `View`/`Stack` satisfiers have landed.
+   backing bound, no registration code). `Stack` was considered and **deliberately
+   excluded** (2026-05-30): a LIFO abstraction shouldn't expose positional access —
+   see [stack.md](stack.md). **This plan is now complete**: all three contracts, the
+   `[i]`/`for x in` syntax, and the sole stdlib satisfier (`View`) have landed.
 
    - **Concrete bound type args (done).** `resolve_ast_type_params` previously mapped
      *every* bound type arg to `MonoType.Var(name)`, so a concrete `C: IndexRead<Int>`
@@ -454,6 +455,6 @@ hardcodes Stringify/Eq/Ord (`src/types/check.rs`) and only needs work once the
 `target/twk`, so the feature is validated boot-first.
 
 Deferred to follow-up commits (still part of "done" for *this* plan): **`[i]`
-element-index syntax wiring** through `IndexRead.at`, and **`View`/`Stack`
+element-index syntax wiring** through `IndexRead.at`, and **`View`
 registration** as satisfiers. (`[a..b]` slicing is out — see
 [sliceable.md](sliceable.md).)

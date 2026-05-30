@@ -29,13 +29,6 @@ pub fn top<T>(s: Stack<T>) T? {
   s.items.last()
 }
 
-/// Element at the given index, bottom-to-top, trapping on out-of-bounds. The top
-/// is `at(len() - 1)`. Backs the `IndexRead` contract, so a `Stack` plugs into the
-/// same write-once generic algorithms (`fold`, `position`, for-in) as `Vector`.
-pub fn at<T>(s: Stack<T>, index: Int) T {
-  s.items.at(index)
-}
-
 /// Remove the top element, or return the stack unchanged if empty.
 pub fn pop<T>(s: Stack<T>) Stack<T> {
   s.items = s.items.drop_last()
