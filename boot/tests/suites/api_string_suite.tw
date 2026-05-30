@@ -1,8 +1,26 @@
 use tests.assert
 use tests.runner
 
+// Generic access over the IndexRead contract; String must satisfy IndexRead<Byte>.
+fn first_via_index_read<C: IndexRead<E>, E>(c: C) E {
+  c.at(0)
+}
+
+fn count_via_index_read<C: IndexRead<E>, E>(c: C) Int {
+  c.len()
+}
+
 pub fn suite() runner.Suite {
   runner.suite("string")
+    .test(
+      "String satisfies IndexRead<Byte> (generic at/len over the bound)",
+      fn() {
+        s := "abc"
+        try assert.equal(first_via_index_read(s).to_int(), 97)
+        try assert.equal(count_via_index_read(s), 3)
+        .Ok({})
+      },
+    )
     .test(
       "len returns byte length",
       fn() {

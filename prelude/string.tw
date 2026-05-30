@@ -3,6 +3,13 @@ pub fn is_empty(s: String) Bool {
   s.len() == 0
 }
 
+/// Return the byte at index, trapping on out-of-bounds (unchecked positional
+/// read; same semantics as `s[index]`). Backs the `IndexRead` contract; the
+/// checked, bounds-safe form is `get(s, i) Byte?`.
+pub fn at(s: String, index: Int) Byte {
+  s[index]
+}
+
 /// Lexicographic byte-order comparison.
 pub fn compare(a: String, b: String) Order {
   la := a.len()
