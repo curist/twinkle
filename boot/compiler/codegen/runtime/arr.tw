@@ -119,6 +119,8 @@ pub fn module() WasmModule {
   funcs := [
     tailoff_fn(),
     vi_nav_fn(),
+    child_count_fn(),
+    copy_leaves_fn(),
     get_leaf_fn(),
     new_path_fn(),
     push_tail_fn(),
@@ -293,6 +295,153 @@ fn vi_nav_fn() FuncDef {
       ),
       .LocalGet(4),
       .LocalGet(1),
+    ],
+  }
+}
+
+// child_count(node: VecInternal) -> i32
+// Number of live children. Relaxed nodes carry sizes whose length is exactly the
+// child count; regular nodes are filled left-to-right, so scan to the first null
+// (or the full branching factor).
+fn child_count_fn() FuncDef {
+  // p0=node; L1=sizes, L2=i
+  .{
+    name: "child_count",
+    params: [.Ref(false, .Named(t_vec_internal()))],
+    results: [.I32],
+    locals: [i32_array_null(), .I32],
+    body: [
+      .LocalGet(0),
+      .StructGet(t_vec_internal(), vi_sizes()),
+      .LocalSet(1),
+      .LocalGet(1),
+      .RefIsNull,
+      .If(
+        .Some(.I32),
+        [
+          .I32Const(0),
+          .LocalSet(2),
+          .Block(
+            "brk",
+            .None,
+            [
+              .Loop(
+                "lp",
+                .None,
+                [
+                  .LocalGet(2),
+                  .I32Const(bf()),
+                  .I32GeS,
+                  .BrIf("brk"),
+                  .LocalGet(0),
+                  .StructGet(t_vec_internal(), vi_children()),
+                  .LocalGet(2),
+                  .ArrayGet(t_vec_children()),
+                  .RefIsNull,
+                  .BrIf("brk"),
+                  .LocalGet(2),
+                  .I32Const(1),
+                  .I32Add,
+                  .LocalSet(2),
+                  .Br("lp"),
+                ],
+              ),
+            ],
+          ),
+          .LocalGet(2),
+        ],
+        [.LocalGet(1), .RefAsNonNull, .ArrayLen],
+      ),
+    ],
+  }
+}
+
+// copy_leaves(node: VecInternal, shift: i32, dest: Array, off: i32) -> i32
+// Append every element under `node` to `dest` starting at `off`, left to right,
+// returning the next free offset. Relaxed-aware: walks actual children/leaf
+// lengths rather than assuming full 32-element leaves.
+fn copy_leaves_fn() FuncDef {
+  ta := t_array()
+
+  // p0=node, p1=shift, p2=dest, p3=off; L4=count, L5=i, L6=child
+  .{
+    name: "copy_leaves",
+    params: [.Ref(false, .Named(t_vec_internal())), .I32, arr_ref(), .I32],
+    results: [.I32],
+    locals: [.I32, .I32, ref_eq_null()],
+    body: [
+      .LocalGet(0),
+      .Call("child_count"),
+      .LocalSet(4),
+      .I32Const(0),
+      .LocalSet(5),
+      .Block(
+        "brk",
+        .None,
+        [
+          .Loop(
+            "lp",
+            .None,
+            [
+              .LocalGet(5),
+              .LocalGet(4),
+              .I32GeS,
+              .BrIf("brk"),
+              .LocalGet(0),
+              .StructGet(t_vec_internal(), vi_children()),
+              .LocalGet(5),
+              .ArrayGet(t_vec_children()),
+              .LocalSet(6),
+              .LocalGet(1),
+              .I32Const(b_()),
+              .I32Eq,
+              .If(
+                .None,
+                // leaf level: child is an Array; bulk-copy its elements.
+                [
+                  .LocalGet(2),
+                  .LocalGet(3),
+                  .LocalGet(6),
+                  .RefAsNonNull,
+                  .RefCast(false, .Named(ta)),
+                  .I32Const(0),
+                  .LocalGet(6),
+                  .RefAsNonNull,
+                  .RefCast(false, .Named(ta)),
+                  .ArrayLen,
+                  .ArrayCopy(ta, ta),
+                  .LocalGet(3),
+                  .LocalGet(6),
+                  .RefAsNonNull,
+                  .RefCast(false, .Named(ta)),
+                  .ArrayLen,
+                  .I32Add,
+                  .LocalSet(3),
+                ],
+                // internal level: recurse into the child subtree.
+                [
+                  .LocalGet(6),
+                  .RefAsNonNull,
+                  .RefCast(false, .Named(t_vec_internal())),
+                  .LocalGet(1),
+                  .I32Const(b_()),
+                  .I32Sub,
+                  .LocalGet(2),
+                  .LocalGet(3),
+                  .Call("copy_leaves"),
+                  .LocalSet(3),
+                ],
+              ),
+              .LocalGet(5),
+              .I32Const(1),
+              .I32Add,
+              .LocalSet(5),
+              .Br("lp"),
+            ],
+          ),
+        ],
+      ),
+      .LocalGet(3),
     ],
   }
 }
@@ -847,13 +996,15 @@ fn get_fn() FuncDef {
           .ArrayGet(t_array()),
         ],
         [
+          // trie_count = len - tail.len: the trie holds the first trie_count
+          // elements, the tail the rest. Equivalent to tailoff(len) for regular
+          // (32-aligned) vectors, but correct for relaxed/non-aligned tries.
           .LocalGet(2),
-          .I32Const(1),
+          .LocalGet(0),
+          .RefAsNonNull,
+          .StructGet(t_pvec(), pv_tail()),
+          .ArrayLen,
           .I32Sub,
-          .I32Const(b_()),
-          .I32ShrU,
-          .I32Const(b_()),
-          .I32Shl,
           .LocalSet(3),
           .LocalGet(1),
           .LocalGet(3),
@@ -865,8 +1016,8 @@ fn get_fn() FuncDef {
               .RefAsNonNull,
               .StructGet(t_pvec(), pv_tail()),
               .LocalGet(1),
-              .I32Const(mask()),
-              .I32And,
+              .LocalGet(3),
+              .I32Sub,
               .ArrayGet(t_array()),
             ],
             [
@@ -978,10 +1129,15 @@ fn set_fn() FuncDef {
     results: [pvec_ref()],
     locals: [.I32, arr_null()],
     body: [
+      // trie_count = len - tail.len (relaxed-safe trie/tail boundary)
       .LocalGet(0),
       .RefAsNonNull,
       .StructGet(t_pvec(), pv_len()),
-      .Call("tailoff"),
+      .LocalGet(0),
+      .RefAsNonNull,
+      .StructGet(t_pvec(), pv_tail()),
+      .ArrayLen,
+      .I32Sub,
       .LocalSet(3),
       .LocalGet(1),
       .LocalGet(3),
@@ -1145,6 +1301,8 @@ fn slice_fn() FuncDef {
     params: [pvec_null(), .I32, .I32],
     results: [pvec_ref()],
     locals: [.I32, arr_null(), .I32, arr_null(), .I32, .I32],
+    // Phase 3: materialize the range element-by-element via `get` (relaxed-safe).
+    // This is O((end-start)·log n); Phase 4 restores O(log n) structural slice.
     body: [
       .LocalGet(2),
       .LocalGet(1),
@@ -1160,7 +1318,7 @@ fn slice_fn() FuncDef {
           .LocalGet(3),
           .ArrayNew(ta),
           .LocalSet(4),
-          .LocalGet(1),
+          .I32Const(0),
           .LocalSet(5),
           .Block(
             "brk",
@@ -1171,63 +1329,20 @@ fn slice_fn() FuncDef {
                 .None,
                 [
                   .LocalGet(5),
-                  .LocalGet(2),
+                  .LocalGet(3),
                   .I32GeS,
                   .BrIf("brk"),
-                  .LocalGet(0),
-                  .RefAsNonNull,
-                  .LocalGet(5),
-                  .Call("get_leaf"),
-                  .LocalSet(6),
-                  .LocalGet(5),
-                  .I32Const(mask()),
-                  .I32And,
-                  .LocalSet(7),
-                  .I32Const(bf()),
-                  .LocalGet(7),
-                  .I32Sub,
-                  .LocalGet(2),
-                  .LocalGet(5),
-                  .I32Sub,
-                  .I32Const(bf()),
-                  .LocalGet(7),
-                  .I32Sub,
-                  .LocalGet(2),
-                  .LocalGet(5),
-                  .I32Sub,
-                  .I32Const(bf()),
-                  .LocalGet(7),
-                  .I32Sub,
-                  .LocalGet(2),
-                  .LocalGet(5),
-                  .I32Sub,
-                  .I32LtS,
-                  .Select,
-                  .LocalSet(8),
-                  .LocalGet(6),
-                  .RefAsNonNull,
-                  .ArrayLen,
-                  .LocalGet(7),
-                  .I32Sub,
-                  .LocalGet(8),
-                  .I32LtS,
-                  .If(
-                    .None,
-                    [.LocalGet(6), .RefAsNonNull, .ArrayLen, .LocalGet(7), .I32Sub, .LocalSet(8)],
-                    [],
-                  ),
                   .LocalGet(4),
                   .RefAsNonNull,
                   .LocalGet(5),
+                  .LocalGet(0),
                   .LocalGet(1),
-                  .I32Sub,
-                  .LocalGet(6),
-                  .RefAsNonNull,
-                  .LocalGet(7),
-                  .LocalGet(8),
-                  .ArrayCopy(ta, ta),
                   .LocalGet(5),
-                  .LocalGet(8),
+                  .I32Add,
+                  .Call("get"),
+                  .ArraySet(ta),
+                  .LocalGet(5),
+                  .I32Const(1),
                   .I32Add,
                   .LocalSet(5),
                   .Br("lp"),
@@ -2039,7 +2154,7 @@ fn from_array_fn() FuncDef {
 fn to_array_fn() FuncDef {
   ta := t_array()
 
-  // p0=vec, L1=len, L2=result, L3=i, L4=tail, L5=tail_len, L6=trie_len
+  // p0=vec, L1=len, L2=result, L4=tail, L5=tail_len, L6=trie_count
   FuncDef.{
     name: "to_array",
     params: [pvec_null()],
@@ -2065,38 +2180,27 @@ fn to_array_fn() FuncDef {
       .LocalGet(5),
       .I32Sub,
       .LocalSet(6),
+      // copy the trie's leaves (relaxed-aware) when there is a root.
+      .LocalGet(6),
       .I32Const(0),
-      .LocalSet(3),
-      .Block(
-        "brk",
+      .I32GtS,
+      .If(
         .None,
         [
-          .Loop(
-            "lp",
-            .None,
-            [
-              .LocalGet(3),
-              .LocalGet(6),
-              .I32GeS,
-              .BrIf("brk"),
-              .LocalGet(2),
-              .RefAsNonNull,
-              .LocalGet(3),
-              .LocalGet(0),
-              .RefAsNonNull,
-              .LocalGet(3),
-              .Call("get_leaf"),
-              .I32Const(0),
-              .I32Const(bf()),
-              .ArrayCopy(ta, ta),
-              .LocalGet(3),
-              .I32Const(bf()),
-              .I32Add,
-              .LocalSet(3),
-              .Br("lp"),
-            ],
-          ),
+          .LocalGet(0),
+          .RefAsNonNull,
+          .StructGet(t_pvec(), pv_root()),
+          .RefAsNonNull,
+          .LocalGet(0),
+          .RefAsNonNull,
+          .StructGet(t_pvec(), pv_shift()),
+          .LocalGet(2),
+          .RefAsNonNull,
+          .I32Const(0),
+          .Call("copy_leaves"),
+          .Drop,
         ],
+        [],
       ),
       .LocalGet(5),
       .I32Eqz,

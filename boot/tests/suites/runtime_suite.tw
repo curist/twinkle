@@ -1037,18 +1037,8 @@ fn test_rt_arr_set_persistent() Result<Void, String> {
   m := rt_arr.module()
   f := try find_func(m.funcs, "set").ok_or("missing set func")
   try assert.equal(f.params.len(), 3)
-  try assert.ok(
-    has_instr(
-      f.body,
-      fn(i: Instr) Bool {
-        case i {
-          .Call(sym) => sym == "tailoff",
-          _ => false,
-        }
-      },
-    ),
-    "set should call tailoff",
-  )
+  // The trie/tail boundary is computed inline as len - tail.len (relaxed-safe),
+  // not via tailoff(); the meaningful contract is the do_set trie path below.
   try assert.ok(
     has_instr(
       f.body,
@@ -1163,17 +1153,18 @@ fn test_rt_arr_slice_iterates() Result<Void, String> {
   m := rt_arr.module()
   f := try find_func(m.funcs, "slice").ok_or("missing slice func")
   try assert.equal(f.params.len(), 3)
+  // Phase 3: slice materializes the range via `get` (relaxed-safe) + from_array.
   try assert.ok(
     has_instr(
       f.body,
       fn(i: Instr) Bool {
         case i {
-          .Call(sym) => sym == "get_leaf",
+          .Call(sym) => sym == "get",
           _ => false,
         }
       },
     ),
-    "slice should call get_leaf",
+    "slice should call get",
   )
   try assert.ok(
     has_instr(
@@ -1701,7 +1692,7 @@ pub fn suite() runner.Suite {
     .test("rt.arr: set_in_place mutates leaf via get_leaf", test_rt_arr_set_in_place)
     .test("rt.arr: len reads PVec.len", test_rt_arr_len)
     .test("rt.arr: concat iterates and pushes", test_rt_arr_concat_iterates)
-    .test("rt.arr: slice uses get_leaf and from_array", test_rt_arr_slice_iterates)
+    .test("rt.arr: slice uses get and from_array", test_rt_arr_slice_iterates)
     .test("rt.arr: builder_new creates 3-element layout", test_rt_arr_builder_new_layout)
     .test("rt.arr: builder_from creates 3-element layout", test_rt_arr_builder_from)
     .test("rt.arr: builder_push has tail-full path", test_rt_arr_builder_push_tail)
