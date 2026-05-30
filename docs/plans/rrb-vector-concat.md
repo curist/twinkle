@@ -1,19 +1,26 @@
 # RRB-Tree Vector: O(log n) Concat & Slice
 
-Status: **parked (Gate A red, 2026-05-29)** — see [Gate A result](#gate-a-result-2026-05-29--red--parked).
-Not implemented; revisit only if the prepend-concat or left-drop/`drop_first`
-loop pattern becomes dominant in the codebase. Primary target:
-`boot/compiler/codegen/runtime/arr.tw` (the boot compiler is the main
-implementation). `src/runtime/arr.rs` (stage0) is mirrored afterward to stay a
-correctness reference.
+Status: **prioritized — the next major collections effort (2026-05-30).**
+Unparked from the Gate A red result below by an explicit design decision: make
+`Vector<T>` the **single universal sequence** — cheap at *both* ends and for
+*arbitrary* concat/slice — so one type covers stack / queue / deque / rope
+without bespoke wrapper types (consistent with deleting `@std.stack`: the
+capability belongs on `Vector`, not in wrappers). This is a **forward-looking**
+choice, not a reaction to a new hot loop: Gate A still finds no dominant
+prepend/left-drop loop in today's codebase ([Gate A result](#gate-a-result-2026-05-29--red--parked)),
+and we are deliberately building the capability ahead of a proven in-repo
+workload. Sequence: Gate B baselines (quantify today's curves) → relaxed-node
+implementation. Primary target: `boot/compiler/codegen/runtime/arr.tw` (the boot
+compiler is the main implementation); `src/runtime/arr.rs` (stage0) is mirrored
+afterward to stay a correctness reference.
 
 > **Two O(n²) loop hazards motivate this**: prepend/right-operand `concat`, and
 > any `slice` that trims a little each iteration (drop-last / drop-first /
-> sliding window). For the **LIFO drop-last** case (which the boot-compiler audit
-> shows is the real one), a cheaper non-RRB path exists — an O(log n) `drop_last`
-> vector op + a `Stack<T>` ([stack.md](stack.md)), with read-only traversal served
-> by `View<C>` ([view.md](view.md)). RRB remains the general-purpose fix for
-> *arbitrary* concat and arbitrary-range slice. See
+> sliding window). The **LIFO drop-last** case is already covered more cheaply by
+> the shipped O(log n) `Vector.drop_last` op ([stack.md](stack.md)), with
+> read-only traversal served by `View<C>` ([view.md](view.md)). RRB is the
+> general-purpose fix for the rest — *arbitrary* concat, arbitrary-range slice,
+> and cheap `drop_first`/`prepend` (the queue/deque half). See
 > [Alternatives](#alternatives--complementary-work).
 
 ## Problem
@@ -83,11 +90,10 @@ Upgrade the persistent vector to an **RRB-tree** (relaxed radix-balanced) so tha
   append-built vector stays fully *regular* (no size tables) so its constant
   factors do not regress.
 
-For the **LIFO drop-last workload** (the audit's real finding), an O(log n)
-`drop_last` vector op + a `Stack<T>` ([stack.md](stack.md)) is the cheaper,
-non-RRB answer; read-only traversal goes through `View<C>` ([view.md](view.md)).
-RRB is the general-purpose fix. See
-[Alternatives](#alternatives--complementary-work).
+For the **LIFO drop-last workload** (the audit's real finding), the shipped
+O(log n) `Vector.drop_last` op ([stack.md](stack.md)) is the cheaper, non-RRB
+answer; read-only traversal goes through `View<C>` ([view.md](view.md)). RRB is
+the general-purpose fix. See [Alternatives](#alternatives--complementary-work).
 
 References: Bagwell & Rompf, *RRB-Trees: Efficient Immutable Vectors* (2011);
 L'orange, *Improving RRB-Tree Performance through Transience* (2014);
@@ -257,10 +263,10 @@ If essentially nothing loops on the bad pattern, the blowup is theoretical and
 RRB is **not** justified — stop and just document the pitfall.
 
 Crucially, **separate the LIFO/traversal findings from the rest**: drop-last and
-head/tail traversal are far better served by `drop_last`/`Stack`/`Slice`
+head/tail traversal are far better served by `drop_last`/`View`
 ([Alternatives](#alternatives--complementary-work)) than by RRB. So the audit
 should report (a) drop-last + read-only drop-first sites → motivate
-`drop_last`/`Stack`/`Slice`, and (b) *arbitrary* concat/slice loop sites
+`drop_last`/`View`, and (b) *arbitrary* concat/slice loop sites
 (esp. left-drop) → the residual that only RRB fixes. RRB's go/no-go rests on (b),
 since (a) is solved more cheaply. (This audit is already done — see
 [slice-performance.md](slice-performance.md).)
@@ -282,19 +288,24 @@ and the stdlib:
 | Vector left-drop `xs = xs.slice(1, …)` | `loader.tw:74` (strip leading `"std"`), `checker.tw:1935/2006` (drop receiver param) | **One-shot** — no loop |
 | `Vector.drop_first` | tests only (`api_vector_suite.tw`) | **No production caller** |
 
-**Conclusion.** No production hot loop hits the prepend-concat or left-drop/`drop_first`
-pattern that RRB would accelerate. The LIFO drop-last residual that *was* real is
-already covered by the shipped O(1)-amortized `Vector.drop_last` op + `Stack<T>`
-(a regular-radix-trie tail shrink — **never needed RRB**). Per this section's own
-gate ("if essentially nothing loops on the bad pattern … stop and just document
-the pitfall"), RRB is **not justified now**. Gate B (benchmarks) was therefore not
-built — there is no caller whose curve it would characterize.
+**Conclusion (as of the audit).** No production hot loop hits the prepend-concat
+or left-drop/`drop_first` pattern that RRB would accelerate. The LIFO drop-last
+residual that *was* real is already covered by the shipped O(1)-amortized
+`Vector.drop_last` op (a regular-radix-trie tail shrink — **never needed RRB**).
+On the audit's own gate ("if essentially nothing loops on the bad pattern … stop
+and just document the pitfall"), RRB was **not data-justified**, so it was parked.
 
-**Revisit trigger.** Re-open this plan if a left-drop / `drop_first` dequeue loop
-or a prepend-`concat` accumulator loop becomes dominant (e.g. a streaming/queue
-workload in the LSP server or a rope-style text buffer). At that point start with
-Gate B benchmarks to confirm the quadratic curve before writing any relaxed-node
-code.
+**Override (2026-05-30) — pursuing RRB anyway, as a design decision.** The project
+has chosen to make `Vector<T>` the single universal sequence (stack/queue/deque/
+rope) rather than wait for a hot loop or add per-shape wrapper types. This is an
+explicit, eyes-open override of the Gate A finding: the data above still stands
+(no dominant bad loop *today*), and we accept investing ahead of demand because
+`drop_first`/`prepend` are the missing half of the "one collection for everything"
+goal, and a cheap arbitrary `concat`/`slice` is broadly enabling (e.g. ropes for
+the editor/LSP). **Honesty note for whoever picks this up:** the justification is
+strategic, not a measured regression — so still build Gate B baselines first
+(quantify the current curves and set the bar RRB must beat), but treat them as
+*baselines to establish*, not a go/no-go gate that could re-park the work.
 
 ### Gate B — Quantify the blowup and the win on the *current* runtime
 
@@ -321,7 +332,7 @@ for ... { _ = acc[acc.len() - 1]; acc = acc.slice(0, acc.len() - 1) }   // drop-
 
 // boot/bench/slice_dropfirst.tw — acc = acc.slice(1, acc.len()) in a loop (left-drop).
 // boot/bench/droplast_baseline.tw — same drop-last workload via the proposed
-//   `drop_last` op / Stack, to show the O(log n) target it would hit.
+//   `drop_last` op, to show the O(log n) target it would hit.
 
 // boot/bench/concat_balanced.tw — pairwise/tree concat of many small vectors.
 // boot/bench/get_regular.tw — N random get() on an append-built (regular) vector.
@@ -332,7 +343,7 @@ for ... { _ = acc[acc.len() - 1]; acc = acc.slice(0, acc.len() - 1) }   // drop-
 
 Record a table of `N → ms` per benchmark and confirm the prepend **and drop-last**
 curves are quadratic (each doubling of N ≈ 4× time) while append is linear (≈ 2×).
-The `droplast_baseline` benchmark also quantifies how much `drop_last`/`Stack`
+The `droplast_baseline` benchmark also quantifies how much `drop_last`
 would win versus slice-based drop-last, informing the Alternatives decision.
 
 ### Decision criteria (when RRB is worth it)
@@ -343,7 +354,7 @@ Re-run the same benchmarks after a prototype Phase 3 and require **all** of:
   doubling of N trends toward ≈2× (linear-ish), and an order-of-magnitude
   wall-clock win at N ≥ 8k. This is the headline justification and must be
   unmistakable. (If the only motivating workload is LIFO drop-last, prefer
-  `drop_last`/`Stack` — see Alternatives — and require RRB to be justified by
+  `drop_last` — see Alternatives — and require RRB to be justified by
   arbitrary and left-drop slice instead.)
 - **Append-at-end (control)**: no regression beyond noise (RRB must not slow the
   common path).
@@ -435,42 +446,38 @@ replaying elements).
 
 ## Alternatives & complementary work
 
-### The cheaper non-RRB pieces — `drop_last` / `Stack` / `Slice`
+### The cheaper non-RRB pieces — `drop_last` / `View` (both shipped)
 
 The boot-compiler audit ([slice-performance.md](slice-performance.md)) showed the
 real in-loop slice usage is **LIFO drop-last** (scope stacks, the Tarjan
 worklist, fmt stacks) and a few **read-only head/tail recursions** (match arms) —
-*not* FIFO. (A queue/deque was considered for this and dropped.) Those are served
-by cheaper, non-RRB, library/runtime-local pieces:
+*not* FIFO. (A queue/deque was considered for this and dropped.) Those were served
+by cheaper, non-RRB pieces, both now **shipped**:
 
-- **`drop_last` vector op + `Stack<T>`** ([stack.md](stack.md)) — O(log n)
-  drop-last (no RRB needed; right-drop, unlike left-drop, needs no relaxed nodes)
-  and an ergonomic stack wrapper.
-- **`View<C>`** ([view.md](view.md)) — a generic read-only view for the
-  drop-first/traversal sites, O(1) `drop_first`, no copy and no hand-threaded index.
+- **`Vector.drop_last`** ([stack.md](stack.md)) — O(log n) drop-last runtime op
+  (no RRB needed; right-drop, unlike left-drop, needs no relaxed nodes). The boot
+  compiler's LIFO pop sites are migrated onto it. (The `@std.stack` wrapper that
+  rode along was later removed — unused; the op is the lasting artifact.)
+- **`View<C>`** ([view.md](view.md)) — a generic read-only window for the
+  drop-first/traversal sites: O(1) `drop_first`, no copy, no hand-threaded index.
 
 ### Coexistence: this is **not** an either/or with RRB
 
 These operate at different layers and **coexist permanently**:
 
-| | `Stack` / `Slice` / `drop_last` | RRB `Vector<T>` |
+| | `drop_last` / `View` | RRB `Vector<T>` |
 |---|---|---|
-| What it is | library types + one small runtime op | upgrade of the existing Vector internals |
-| Fast ops | LIFO push/pop, read-only drop-first — O(1)/O(log n) | `concat`/`slice` at **arbitrary** positions, **O(log n)** |
-| Opt-in | yes — reach for the type | no — all Vector code benefits transparently |
-| Complexity | low | high (relaxed nodes + rebalance) |
-| Doesn't give you | arbitrary-range slice / arbitrary concat | the ergonomic LIFO/traversal surface |
+| What it is | one small runtime op + a read-only window type | upgrade of the existing Vector internals |
+| Fast ops | LIFO pop, read-only drop-first — O(1)/O(log n) | `concat`/`slice` at **arbitrary** positions + cheap `drop_first`/`prepend`, **O(log n)** |
+| Opt-in | yes — reach for `drop_last`/`View` | no — all Vector code benefits transparently |
+| Complexity | low (shipped) | high (relaxed nodes + rebalance) |
+| Doesn't give you | arbitrary-range slice / arbitrary concat / *mutating* drop-first | the ergonomic read-only window surface |
 
-Neither subsumes the other. Recommended sequencing:
-
-1. **Ship `drop_last` / `Stack` / `Slice` first** — small, and they cover the
-   audit's actual in-loop slice hazards (LIFO drop-last + head/tail traversal).
-2. **Then weigh RRB** for the residual: arbitrary `concat` and arbitrary-range
-   (esp. left-drop) `slice` those can't cover. Gate A's audit is exactly what
-   tells you whether that residual justifies RRB's complexity.
-
-Shipping them *sharpens* the RRB decision by stripping the easy cases out of its
-justification.
+Neither subsumes the other. The cheap pieces shipped first; **RRB is now the
+residual** — arbitrary `concat`, arbitrary-range (esp. left-drop) `slice`, and the
+`drop_first`/`prepend` that make a `Vector` a real queue/deque. With the easy
+cases already stripped out, RRB's job is precisely the "universal sequence"
+capability that motivated unparking it.
 
 ## Relationship to other work
 

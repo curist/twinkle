@@ -37,11 +37,14 @@ actually pays for `slice`/`concat`. It split the problem into:
    closure.
 3. **Arbitrary concat (prepend) & arbitrary-range / left-drop slice** — the
    general O(log n) fix is an RRB-tree `Vector`
-   ([rrb-vector-concat.md](rrb-vector-concat.md)). **Parked** — the audit found
-   no hot caller for it (Gate A red).
+   ([rrb-vector-concat.md](rrb-vector-concat.md)). **Prioritized (2026-05-30)** —
+   unparked despite the Gate A red audit, as a deliberate design decision to make
+   `Vector` the single universal sequence (stack/queue/deque/rope) and supply the
+   cheap `drop_first`/`prepend` half.
 
-So the live frontier is: **access-contracts (foundation) → view (consumer)**,
-with stack already done and RRB parked until a workload justifies it.
+So the live frontier is: **RRB-tree `Vector`** (the universal-sequence
+investment). Access-contracts + `View` are done; `drop_last` shipped; the
+`@std.stack` wrapper was tried and removed (the capability lives on `Vector`).
 
 ---
 
@@ -53,18 +56,18 @@ with stack already done and RRB parked until a workload justifies it.
 | `drop_last` | O(1)-amortized `Vector.drop_last` runtime op; LIFO pop sites migrated (a thin `Stack<T>` wrapper was tried and removed) | **Implemented** | [stack.md](stack.md) |
 | Access contracts | Parameterized contracts `IndexRead<E>` / `IntoIterator<E>` / `IndexWrite<E>` with a `Self → E` functional dependency; write-once generic access monomorphized to direct reads; positional `v[i]` desugars to `IndexRead.at` (in scope for "done") | **Done** — all three contracts + `v[i]` + `for x in` landed; `View` is the stdlib satisfier; `Stack` deliberately excluded then removed | [access-contracts.md](access-contracts.md) |
 | `Sliceable` / `[a..b]` | Range-slice indexing `foo[a..b]` → `Sliceable.slice`; Self-only contract, needs none of the parameterized-contract machinery | **Proposal — split from access-contracts** | [sliceable.md](sliceable.md) |
-| `View<C>` | Zero-copy windows (backing + `start`/`len`) over any `IndexRead` backing; O(1) `drop_first`/`drop_last`/`sub` | **Proposal — blocked on access-contracts** | [view.md](view.md) |
-| RRB-tree `Vector` | O(log n) `concat`/`slice` via relaxed radix-balanced nodes; kills O(n²) prepend-concat and left-drop loops | **Parked — Gate A red (2026-05-29)** | [rrb-vector-concat.md](rrb-vector-concat.md) |
+| `View<C>` | Zero-copy windows (backing + `start`/`count`) over any `IndexRead` backing; O(1) `drop_first`/`drop_last`/`sub` | **Shipped** (`@std.view`) | [view.md](view.md) |
+| RRB-tree `Vector` | O(log n) `concat`/`slice` via relaxed radix-balanced nodes; kills O(n²) prepend-concat and left-drop loops; adds cheap `drop_first`/`prepend` (queue/deque) | **Prioritized — next (2026-05-30)**, unparked as a design decision (Vector = universal sequence) | [rrb-vector-concat.md](rrb-vector-concat.md) |
 
 ---
 
 ## Dependency & implementation order
 
 ```
-slice-performance (audit) ──┬─> stack/drop_last ............... DONE
-                            ├─> access-contracts ──┬─ view .... NEXT (foundation → consumer)
+slice-performance (audit) ──┬─> drop_last ..................... DONE (Stack wrapper removed)
+                            ├─> access-contracts ──┬─ view .... DONE
                             │                       └─ sliceable ([a..b], Self-only; own schedule)
-                            └─> rrb-vector-concat ............. PARKED (revisit on demand)
+                            └─> rrb-vector-concat ............. NEXT (unparked — universal Vector)
 ```
 
 1. ~~**`drop_last`**~~ — the audit's real hot path. **Done.** (The `Stack<T>` wrapper
@@ -78,12 +81,12 @@ slice-performance (audit) ──┬─> stack/drop_last ............... DONE
    `IndexRead.at`** (routing `synth_index`'s hardcoded `Vector`/`String` arms;
    keyed `Dict[K] -> V?` stays special-cased) — backing `[]` is a motivation, not
    a follow-on.
-3. **`View<C>`** — pure stdlib once access-contracts lands; first consumer is the
-   inline `slice(...) == lit` sites and head/tail recursion (e.g. `emit/match.tw`).
-4. **RRB-tree `Vector`** — only revisit if a prepend-`concat` accumulator loop or a
-   left-drop / `drop_first` dequeue loop becomes dominant. Start with Gate B
-   benchmarks (`boot/bench/`) to confirm the quadratic curve before any
-   relaxed-node code.
+3. ~~**`View<C>`**~~ — **Done.** Shipped as `@std.view`; satisfies the access
+   contracts itself, so views compose.
+4. **RRB-tree `Vector`** — **next.** Unparked as a design decision (make `Vector`
+   the single universal sequence: stack/queue/deque/rope), *not* gated on a
+   measured hot loop. Start with Gate B baselines (`boot/bench/`) to quantify
+   today's curves and set the bar, then the relaxed-node implementation.
 
 ---
 
