@@ -10,6 +10,15 @@ pub fn at<A>(xs: Vector<A>, index: Int) A {
   xs[index]
 }
 
+/// Replace the element at index, trapping on out-of-bounds (unchecked positional
+/// write; same semantics as `xs[index] = value`). Returns the updated vector.
+/// Backs the `IndexWrite` contract; the checked, bounds-safe form is
+/// `set(xs, i, v) Vector<T>?`.
+pub fn set_at<A>(xs: Vector<A>, index: Int, value: A) Vector<A> {
+  xs[index] = value
+  xs
+}
+
 /// Transform each element with f.
 pub fn map<A, B>(xs: Vector<A>, f: fn(A) B) Vector<B> {
   collect x in xs {

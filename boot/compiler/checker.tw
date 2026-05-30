@@ -555,6 +555,10 @@ fn same_builtin_contract(a: BuiltinContract, b: BuiltinContract) Bool {
       .IndexRead => true,
       _ => false,
     },
+    .IndexWrite => case b {
+      .IndexWrite => true,
+      _ => false,
+    },
   }
 }
 
@@ -705,8 +709,9 @@ fn builtin_contract_satisfied_by_primitive(ty: MonoType, contract: BuiltinContra
       .String => true,
       _ => false,
     },
-    // IndexRead is satisfied via inherent methods (len/at), not a primitive shortcut.
+    // IndexRead/IndexWrite are satisfied via inherent methods, not a primitive shortcut.
     .IndexRead => false,
+    .IndexWrite => false,
   }
 }
 
@@ -838,6 +843,7 @@ fn contract_supports_auto_derive(contract: BuiltinContract) Bool {
     .Stringify => false,
     .Ord => false,
     .IndexRead => false,
+    .IndexWrite => false,
   }
 }
 
@@ -866,8 +872,10 @@ fn try_builtin_container_contract(
       .Vector(elem) => .Some(prove_contract(elem, .Ord, ctx, active, .None)),
       _ => .None,
     },
-    // IndexRead has no structural container rule; it proves via inherent methods.
+    // IndexRead/IndexWrite have no structural container rule; they prove via
+    // inherent methods.
     .IndexRead => .None,
+    .IndexWrite => .None,
   }
 }
 

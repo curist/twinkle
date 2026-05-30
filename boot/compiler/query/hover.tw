@@ -233,6 +233,7 @@ fn contract_hover(contract: BuiltinContract) String {
     .Eq => "contract Eq\n\nRequired method: `fn eq(value: Self, other: Self) Bool`\n\nUsed by `==`, `!=`, and generic equality.",
     .Ord => "contract Ord\n\nRequired method: `fn compare(value: Self, other: Self) Order`\n\nUsed by `<`, `<=`, `>`, `>=`, and generic ordering.",
     .IndexRead => "contract IndexRead<E>\n\nRequired methods: `fn len(self: Self) Int`, `fn at(self: Self, index: Int) E`\n\nGeneral positional read access; backs `self[i]` and write-once generic algorithms.",
+    .IndexWrite => "contract IndexWrite<E>\n\nRequired methods: `fn set_at(self: Self, index: Int, value: E) Self`, `fn append(self: Self, value: E) Self`\n\nGeneral positional write access (unchecked, traps OOB); returns an updated `Self`.",
   }
 }
 
@@ -257,6 +258,15 @@ fn contract_method_hover(contract: BuiltinContract, method_name: String) String?
       method_name == "len" => .Some("fn len(self: Self) Int\n\nContract method from `IndexRead`."),
       method_name == "at" => .Some(
         "fn at(self: Self, index: Int) E\n\nContract method from `IndexRead`.",
+      ),
+      _ => .None,
+    },
+    .IndexWrite => cond {
+      method_name == "set_at" => .Some(
+        "fn set_at(self: Self, index: Int, value: E) Self\n\nContract method from `IndexWrite`.",
+      ),
+      method_name == "append" => .Some(
+        "fn append(self: Self, value: E) Self\n\nContract method from `IndexWrite`.",
       ),
       _ => .None,
     },

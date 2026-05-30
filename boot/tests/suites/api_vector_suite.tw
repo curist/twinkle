@@ -27,6 +27,15 @@ fn index_via_bracket<C: IndexRead<E>, E>(c: C, i: Int) E {
   c[i]
 }
 
+// Generic positional write over the IndexWrite contract; Vector must satisfy it.
+fn set_at_via_index_write<C: IndexWrite<E>, E>(c: C, i: Int, v: E) C {
+  c.set_at(i, v)
+}
+
+fn append_via_index_write<C: IndexWrite<E>, E>(c: C, v: E) C {
+  c.append(v)
+}
+
 // Write-once generic algorithms over the IndexRead bound. The element type `E`
 // appears only in the contract bound (not in any value parameter), so it is
 // recovered by the functional dependency at type-check time and again during
@@ -319,6 +328,15 @@ pub fn suite() runner.Suite {
         try assert.equal(first_via_index_read(xs), 10)
         try assert.equal(count_via_index_read(xs), 3)
         try assert.equal(index_via_bracket(xs, 1), 20)
+        .Ok({})
+      },
+    )
+    .test(
+      "Vector satisfies IndexWrite (generic set_at/append over the bound)",
+      fn() {
+        xs: Vector<Int> = [10, 20, 30]
+        try assert_vec_int_eq(set_at_via_index_write(xs, 1, 99), [10, 99, 30])
+        try assert_vec_int_eq(append_via_index_write(xs, 40), [10, 20, 30, 40])
         .Ok({})
       },
     )
