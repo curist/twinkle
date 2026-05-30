@@ -1,9 +1,30 @@
 # `View<C>` — zero-copy windows over any indexable backing
 
-Status: proposal. Pure **stdlib** type — no runtime change. Companion to
+Status: **landed** (`@std.view`, 2026-05-30) — pure **stdlib** type, no runtime or
+compiler change; rides the access contracts. Companion to
 [access-contracts.md](access-contracts.md) (the general bound it satisfies),
 [stack.md](stack.md) (the LIFO/build side), and
 [slice-performance.md](slice-performance.md) (the audit that motivates both).
+
+**Shipped surface (deltas from the sketch below):**
+- Fields are `.{ source, start, count }` — the length field is `count`, not `len`,
+  because `IndexRead` requires a `len` *method* and a field/inherent-method name
+  collision is illegal.
+- Element read is `at(self, Int) E` (unchecked, backs `IndexRead`), mirroring
+  `Vector.at`/`String.at` — not `get`. `first`/`last` are the optional peeks.
+- `to_vector`/`fold` iterate by explicit index (`v.at(i)` over `0..count`) rather
+  than `for x in v`: for-in over a *concrete* user type isn't wired (it landed only
+  for type-variable receivers under a bound), and indexing is what `View` is for.
+- `to_string` (for `View<String>`) is deferred — String has no public
+  bytes→String builder yet; materialize via `to_vector` of bytes for now.
+- `IndexRead<E>` self-satisfaction is verified (a `View<Vector<Int>>` flows through
+  a generic `<C: IndexRead<E>>` bound; `E` recovered via the nested backing bound).
+  `IntoIterator`/`Sliceable` self-satisfaction not added — IndexRead-preferred
+  for-in already covers iteration, and `[a..b]` is the separate `sliceable.md` plan.
+
+Implementation: `stdlib/view.tw`; tests `boot/tests/suites/api_view_suite.tw`.
+
+The original proposal follows.
 
 ## Idea
 

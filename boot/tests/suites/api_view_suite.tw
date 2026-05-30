@@ -1,0 +1,166 @@
+use @std.view
+use @std.view.{View}
+
+use tests.assert
+use tests.runner
+
+fn unwrap_or(opt: Int?, fallback: Int) Int {
+  case opt {
+    .Some(v) => v,
+    .None => fallback,
+  }
+}
+
+// View satisfies IndexRead<E> via its own len/at, so it plugs into the same
+// generic algorithms as its backing. Exercising it here proves self-satisfaction.
+fn count_via_index_read<C: IndexRead<E>, E>(c: C) Int {
+  c.len()
+}
+
+fn index_via_bracket<C: IndexRead<E>, E>(c: C, i: Int) E {
+  c[i]
+}
+
+pub fn suite() runner.Suite {
+  runner.suite("view")
+    .test(
+      "from wraps the whole backing",
+      fn() {
+        xs: Vector<Int> = [10, 20, 30]
+        v: View<Vector<Int>> = view.from(xs)
+        try assert.equal(v.len(), 3)
+        try assert.is_false(v.is_empty())
+        try assert.equal(v.at(0), 10)
+        try assert.equal(v.at(2), 30)
+        .Ok({})
+      },
+    )
+    .test(
+      "first and last peek the ends",
+      fn() {
+        v := view.from([10, 20, 30])
+        try assert.equal(unwrap_or(v.first(), -1), 10)
+        try assert.equal(unwrap_or(v.last(), -1), 30)
+        .Ok({})
+      },
+    )
+    .test(
+      "first and last on an empty view return None",
+      fn() {
+        empty: Vector<Int> = []
+        v := view.from(empty)
+        try assert.is_true(v.is_empty())
+        try assert.equal(v.len(), 0)
+        try assert.is_none(v.first())
+        try assert.is_none(v.last())
+        .Ok({})
+      },
+    )
+    .test(
+      "drop_first advances the window and shares the backing",
+      fn() {
+        v := view.from([10, 20, 30, 40])
+        v = .drop_first()
+        try assert.equal(v.len(), 3)
+        try assert.equal(v.at(0), 20)
+        try assert.equal(unwrap_or(v.last(), -1), 40)
+        .Ok({})
+      },
+    )
+    .test(
+      "drop_last shrinks the window from the end",
+      fn() {
+        v := view.from([10, 20, 30, 40])
+        v = .drop_last()
+        try assert.equal(v.len(), 3)
+        try assert.equal(unwrap_or(v.last(), -1), 30)
+        try assert.equal(v.at(0), 10)
+        .Ok({})
+      },
+    )
+    .test(
+      "drop_first and drop_last are total on an empty view",
+      fn() {
+        empty: Vector<Int> = []
+        v := view.from(empty)
+        v = .drop_first()
+        v = .drop_last()
+        try assert.equal(v.len(), 0)
+        try assert.is_true(v.is_empty())
+        .Ok({})
+      },
+    )
+    .test(
+      "sub carves a relative window",
+      fn() {
+        v := view.from([10, 20, 30, 40, 50])
+        w := v.sub(1, 4)
+        try assert.equal(w.len(), 3)
+        try assert.equal(w.at(0), 20)
+        try assert.equal(w.at(2), 40)
+        .Ok({})
+      },
+    )
+    .test(
+      "head/tail recursion over a view is allocation-free",
+      fn() {
+        // Repeated drop_first never copies the backing; it only moves start.
+        v := view.from([1, 2, 3, 4, 5])
+        sum := 0
+
+        for v.len() > 0 {
+          sum = sum + unwrap_or(v.first(), 0)
+          v = .drop_first()
+        }
+
+        try assert.equal(sum, 15)
+        .Ok({})
+      },
+    )
+    .test(
+      "to_vector materializes the window",
+      fn() {
+        v := view
+          .from([10, 20, 30, 40])
+          .drop_first()
+          .drop_last()
+        out := v.to_vector()
+        try assert.equal(out.len(), 2)
+        try assert.equal(out[0], 20)
+        try assert.equal(out[1], 30)
+        .Ok({})
+      },
+    )
+    .test(
+      "fold accumulates over the window",
+      fn() {
+        v := view
+          .from([1, 2, 3, 4])
+          .drop_first()
+        total := v.fold(0, fn(acc, x) { acc + x })
+        try assert.equal(total, 9)
+        .Ok({})
+      },
+    )
+    .test(
+      "View over String windows bytes",
+      fn() {
+        v := view.from("hello")
+        try assert.equal(v.len(), 5)
+        try assert.equal(v.at(0).to_int(), 104) // 'h'
+        w := v.sub(1, 4) // "ell"
+        try assert.equal(w.len(), 3)
+        try assert.equal(w.at(0).to_int(), 101) // 'e'
+        .Ok({})
+      },
+    )
+    .test(
+      "View satisfies IndexRead through a generic bound",
+      fn() {
+        v := view.from([10, 20, 30])
+        try assert.equal(count_via_index_read(v), 3)
+        try assert.equal(index_via_bracket(v, 1), 20)
+        .Ok({})
+      },
+    )
+}

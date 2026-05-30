@@ -1,0 +1,113 @@
+/// A read-only, zero-copy window over any `IndexRead` backing.
+///
+/// A `View` is just a backing (`source`) plus a `start` offset and element
+/// `count`. Element reads delegate through the `IndexRead` access contract, so
+/// after monomorphization `at` is a direct read into the backing (O(1) for a
+/// `String`, O(log n) for a `Vector`) plus a single integer add — no closure,
+/// no indirection. The window ops `drop_first` / `drop_last` / `sub` are O(1):
+/// they only adjust `start` / `count` and share the one backing.
+///
+/// Because a `View` provides its own `len` / `at`, it itself satisfies
+/// `IndexRead<E>`, so views compose (a view's `source` can be another view) and
+/// plug into the same generic algorithms as their backings.
+///
+/// The element type `E` is never stored — it is recovered at each method from
+/// the backing's `IndexRead<E>` via the contract's functional dependency, so
+/// `View` needs only the backing parameter `C`.
+
+pub type View<C> = .{ source: C, start: Int, count: Int }
+
+/// Wrap an entire backing in a view (O(1)).
+pub fn from<C: IndexRead<E>, E>(c: C) View<C> {
+  View.{ source: c, start: 0, count: c.len() }
+}
+
+/// Number of elements in the window. Backs the `IndexRead` contract.
+pub fn len<C>(v: View<C>) Int {
+  v.count
+}
+
+/// Return true when the window has no elements.
+pub fn is_empty<C>(v: View<C>) Bool {
+  v.count == 0
+}
+
+/// Element at the window-relative index, trapping on out-of-bounds. Reads
+/// directly through the backing's `IndexRead`. Backs the `IndexRead` contract.
+pub fn at<C: IndexRead<E>, E>(v: View<C>, i: Int) E {
+  v.source.at(v.start + i)
+}
+
+/// First element, or .None if the window is empty.
+pub fn first<C: IndexRead<E>, E>(v: View<C>) E? {
+  if v.count == 0 {
+    .None
+  } else {
+    .Some(v.at(0))
+  }
+}
+
+/// Last element, or .None if the window is empty.
+pub fn last<C: IndexRead<E>, E>(v: View<C>) E? {
+  if v.count == 0 {
+    .None
+  } else {
+    .Some(v.at(v.count - 1))
+  }
+}
+
+/// Drop the first element (O(1), shares the backing). An empty window drops to
+/// the empty window, never a trap.
+pub fn drop_first<C>(v: View<C>) View<C> {
+  if v.count == 0 {
+    return v
+  }
+
+  v.start = v.start + 1
+  v.count = v.count - 1
+  v
+}
+
+/// Drop the last element (O(1), shares the backing). An empty window drops to
+/// the empty window, never a trap.
+pub fn drop_last<C>(v: View<C>) View<C> {
+  if v.count == 0 {
+    return v
+  }
+
+  v.count = v.count - 1
+  v
+}
+
+/// Sub-window covering [a, b) relative to this view (O(1), shares the backing).
+pub fn sub<C>(v: View<C>, a: Int, b: Int) View<C> {
+  v.start = v.start + a
+  v.count = b - a
+  v
+}
+
+/// Materialize the window into an owned `Vector`, dropping the backing.
+pub fn to_vector<C: IndexRead<E>, E>(v: View<C>) Vector<E> {
+  out: Vector<E> = []
+  i := 0
+
+  for i < v.count {
+    out = .append(v.at(i))
+    i = i + 1
+  }
+
+  out
+}
+
+/// Left-fold over the window.
+pub fn fold<C: IndexRead<E>, E, B>(v: View<C>, init: B, f: fn(B, E) B) B {
+  acc := init
+  i := 0
+
+  for i < v.count {
+    acc = f(acc, v.at(i))
+    i = i + 1
+  }
+
+  acc
+}

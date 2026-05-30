@@ -418,8 +418,11 @@ Track A — the requirement-model / proof-side foundation:
        via an identity `iter`. User-type and signature-backed satisfiers resolve fine;
        this is the contract receiver counterpart of the `is_builtin_method_type` list.
 
-   Still ⬜: register `View`/`Stack` as satisfiers (tracked in their own docs —
-   [view.md](view.md), [stack.md](stack.md)). With that, this plan is complete.
+   `View<C>` ✅ landed as the first stdlib satisfier (`@std.view`, see
+   [view.md](view.md)): a zero-copy window whose own `len`/`at` make it satisfy
+   `IndexRead<E>`, confirmed by passing a `View<Vector<Int>>` through a generic
+   `<C: IndexRead<E>, E>` bound (the element `E` is recovered through the *nested*
+   backing bound, no registration code). Still ⬜: `Stack` ([stack.md](stack.md)).
 
    - **Concrete bound type args (done).** `resolve_ast_type_params` previously mapped
      *every* bound type arg to `MonoType.Var(name)`, so a concrete `C: IndexRead<Int>`
