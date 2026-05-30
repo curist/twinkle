@@ -23,12 +23,33 @@ fn collect_via_into_iterator<C: IntoIterator<E>, E>(c: C) Vector<E> {
   c.iter().to_vector()
 }
 
+// `for x in c` over a generic IntoIterator bound drives the iterator (no index).
+fn for_collect_via_into_iterator<C: IntoIterator<E>, E>(c: C) Vector<E> {
+  out: Vector<E> = []
+
+  for x in c {
+    out = .append(x)
+  }
+
+  out
+}
+
 pub fn suite() runner.Suite {
   runner.suite("range and iterator")
     .test(
       "IntoIterator: user type satisfies via iter() (non-indexable)",
       fn() {
         v := collect_via_into_iterator(Countdown.{ from: 3 })
+        try assert.equal(v.len(), 3)
+        try assert.equal(v[0], 3)
+        try assert.equal(v[2], 1)
+        .Ok({})
+      },
+    )
+    .test(
+      "IntoIterator: for x in c drives the iterator over a generic bound",
+      fn() {
+        v := for_collect_via_into_iterator(Countdown.{ from: 3 })
         try assert.equal(v.len(), 3)
         try assert.equal(v[0], 3)
         try assert.equal(v[2], 1)

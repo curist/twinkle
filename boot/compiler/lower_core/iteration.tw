@@ -52,6 +52,31 @@ fn setup_indexed_iter(
     .Some(t) => t,
     .None => iter_elem_type(ar.expr.ty, ctx.env),
   }
+
+  // A generic `IntoIterator<E>` iterable (recorded by the checker) is driven
+  // through `iter()`: wrap the receiver in an `IntoIterator.iter` contract call
+  // typed `Iterator<E>` so the dispatch below routes it to the iterator loop
+  // (the builtin `Iterator` is TypeId 4). Other iterables keep their direct
+  // expression and take the indexed/Range/Dict paths.
+  is_into_iter := case ctx.method_calls[iter_expr.id] {
+    .Some(info) => case info.contract {
+      .Some(c) => case c {
+        .IntoIterator => true,
+        _ => false,
+      },
+      .None => false,
+    },
+    .None => false,
+  }
+  iter_core_expr := if is_into_iter {
+    CoreExpr.{
+      kind: .ContractCall(.IntoIterator, "iter", ar.expr, []),
+      ty: MonoType.Named(TypeId.{ id: 4 }, [elem_ty]),
+      span: s,
+    }
+  } else {
+    ar.expr
+  }
   arr_lo := ctx.alloc_anon_local()
   arr_local := arr_lo.local
   ctx = arr_lo.ctx
@@ -108,7 +133,7 @@ fn setup_indexed_iter(
     index_source,
     index_source_ty,
     dict_keys_local,
-    iter_core: ar.expr,
+    iter_core: iter_core_expr,
     body_core: body_r.expr,
   }
 }
