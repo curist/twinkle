@@ -15,14 +15,17 @@ fn or_neg(o: Int?) Int {
   }
 }
 
-// A generic algorithm written against `IndexRead` works over any satisfier —
-// Vector and String here — by reading elements through the contract (`c.at`).
+// A generic algorithm written against `IndexRead`. The whole point of the
+// contract is that `c[i]` index syntax works over any satisfier: on a type
+// variable bounded `IndexRead<E>`, `c[i]` desugars to the contract's `at` and
+// monomorphizes to the concrete backing's read. So this one body indexes a
+// Vector, a String, and a View with the same `c[i]`.
 fn is_palindrome<C: IndexRead<E>, E: Eq>(c: C) Bool {
   lo := 0
   hi := c.len() - 1
 
   for lo < hi {
-    if c.at(lo) != c.at(hi) {
+    if c[lo] != c[hi] {
       return false
     }
 
@@ -61,7 +64,7 @@ println("first: ${or_neg(mid.first())}")
 println("last:  ${or_neg(mid.last())}")
 println("sum:   ${mid.fold(0, fn(acc, x) { acc + x })}")
 println("")
-println("== one generic algorithm, three backings (via IndexRead) ==")
+println("== one generic algorithm using c[i], three backings (via IndexRead) ==")
 println("[1,2,3,2,1]      palindrome? ${is_palindrome([1, 2, 3, 2, 1])}")
 println("[1,2,3]          palindrome? ${is_palindrome([1, 2, 3])}")
 println("\"racecar\"        palindrome? ${is_palindrome("racecar")}") // windows bytes
