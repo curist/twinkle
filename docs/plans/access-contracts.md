@@ -399,18 +399,16 @@ Track A — the requirement-model / proof-side foundation:
       return shape (`Iterator<E>`, `Iterator` TypeId). Concrete fast paths preserved.
    3. Register `View`/`Stack` as satisfiers (tracked in their own docs).
 
-   **Finding — concrete bound type args don't resolve (pre-existing).**
-   `resolve_bound_type_args` (resolver.tw:32) maps *every* bound type arg to
-   `MonoType.Var(name)`, so a **concrete** arg like `C: IndexRead<Int>` becomes
-   `Var("Int")` (a rigid type variable), and unifying a satisfier's real `Int` `at`
-   return against rigid `Var("Int")` fails — `Vector<Int>` is reported as not
-   satisfying `IndexRead<Int>`. Only the type-variable form (`<C: IndexRead<E>, E>`,
-   the locked canonical spelling) works today. This blocks element-monomorphic
-   write algorithms (e.g. "double every Int in place" wants `IndexRead<Int> +
-   IndexWrite<Int>` since there is no numeric contract to bound an abstract `E`).
-   Fix is a self-contained resolver change: resolve bound type args as real
-   `TypeExpr`s against the type-param scope (param names → `Var`, types → resolved),
-   instead of the blanket `Var(segments[0])`.
+   - **Concrete bound type args (done).** `resolve_ast_type_params` previously mapped
+     *every* bound type arg to `MonoType.Var(name)`, so a concrete `C: IndexRead<Int>`
+     became the rigid `Var("Int")` and unifying a satisfier's real `Int` `at` return
+     against it failed ("uninstantiated type variable 'Int' reached unification") —
+     only the type-variable spelling worked. Fixed by threading `env` and resolving
+     each bound arg with `resolve_type_expr` against the sibling type-param names: a
+     declared param resolves to `Var`, anything else to a concrete type. `IndexRead<E>`
+     still stores `Var("E")` (no regression); `IndexRead<Int>` now stores `Int`. This
+     unblocks element-monomorphic algorithms (e.g. `IndexRead<Int> + IndexWrite<Int>`
+     "double in place"), since there is no numeric contract to bound an abstract `E`.
 
 **Boundary finding (the doc's Resolver findings under-billed this).** Steps 3–4 are
 not testable end-to-end without a sliver of Track B: a contract proof is only
