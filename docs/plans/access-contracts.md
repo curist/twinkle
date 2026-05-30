@@ -422,7 +422,11 @@ Track A — the requirement-model / proof-side foundation:
    [view.md](view.md)): a zero-copy window whose own `len`/`at` make it satisfy
    `IndexRead<E>`, confirmed by passing a `View<Vector<Int>>` through a generic
    `<C: IndexRead<E>, E>` bound (the element `E` is recovered through the *nested*
-   backing bound, no registration code). Still ⬜: `Stack` ([stack.md](stack.md)).
+   backing bound, no registration code). `Stack<T>` ✅ likewise satisfies
+   `IndexRead<T>` via `len` + a new `at` ([stack.md](stack.md)); `IndexWrite` was
+   intentionally skipped for it (a LIFO's write surface is `push`/`pop`, not a
+   positional `set_at`/`append`). **This plan is now complete** — all three
+   contracts, `[i]`/`for x in` syntax, and the `View`/`Stack` satisfiers have landed.
 
    - **Concrete bound type args (done).** `resolve_ast_type_params` previously mapped
      *every* bound type arg to `MonoType.Var(name)`, so a concrete `C: IndexRead<Int>`

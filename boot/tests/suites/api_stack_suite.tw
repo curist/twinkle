@@ -11,6 +11,28 @@ fn top_or<T>(s: Stack<T>, fallback: T) T {
   }
 }
 
+// Stack satisfies IndexRead<T> via len/at (bottom-to-top), so it flows through a
+// generic `<C: IndexRead<E>, E>` bound just like Vector/String/View.
+fn count_via_index_read<C: IndexRead<E>, E>(c: C) Int {
+  c.len()
+}
+
+fn index_via_bracket<C: IndexRead<E>, E>(c: C, i: Int) E {
+  c[i]
+}
+
+fn sum_via_index_read<C: IndexRead<Int>>(c: C) Int {
+  total := 0
+  i := 0
+
+  for i < c.len() {
+    total = total + c.at(i)
+    i = i + 1
+  }
+
+  total
+}
+
 pub fn suite() runner.Suite {
   runner.suite("stack")
     .test(
@@ -68,6 +90,26 @@ pub fn suite() runner.Suite {
         s = .push(9)
         try assert.equal(s.len(), 2)
         try assert.equal(top_or(s, -1), 9)
+        .Ok({})
+      },
+    )
+    .test(
+      "at reads bottom-to-top and top is at(len-1)",
+      fn() {
+        s := stack.from_vector([10, 20, 30])
+        try assert.equal(s.at(0), 10)
+        try assert.equal(s.at(2), 30)
+        try assert.equal(s.at(s.len() - 1), top_or(s, -1))
+        .Ok({})
+      },
+    )
+    .test(
+      "Stack satisfies IndexRead through a generic bound",
+      fn() {
+        s := stack.from_vector([10, 20, 30])
+        try assert.equal(count_via_index_read(s), 3)
+        try assert.equal(index_via_bracket(s, 1), 20)
+        try assert.equal(sum_via_index_read(s), 60)
         .Ok({})
       },
     )

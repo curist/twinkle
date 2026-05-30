@@ -28,9 +28,15 @@ entirely from `drop_last`; the wrapper is pure ergonomics. `@std.stack` is also
 stdlib), so using it inside the compiler would break stage0. The `Vector` op is the
 correct receiver for these internal sites.
 
+**Access contracts (2026-05-30):** `Stack<T>` satisfies **`IndexRead<T>`** via
+`len` + a new `at(s, index) T` (bottom-to-top; `top` == `at(len-1)`), so it flows
+through the same write-once generic algorithms (`fold`, `position`, for-in) as
+`Vector`/`String`/`View`. **`IndexWrite<T>` was deliberately *not* added**: a LIFO's
+only natural write is `push`/`pop`, and satisfying it would require a public
+`append` method that merely duplicates `push` (plus an out-of-character positional
+`set_at`). Read-only contract integration, mirroring `View`.
+
 **Not done (optional follow-ons):**
-- Access-contract integration (`IndexRead`/`IndexWrite`) — see
-  [access-contracts.md](access-contracts.md).
 - `pop_value(s) .{ value, rest }?` combined shape (open question below) — the
   take-and-continue sites (Tarjan) still read `top` then `drop_last` separately.
 - An O(log n) `drop_first` (left-drop) — needs RRB relaxed nodes.
