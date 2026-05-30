@@ -38,6 +38,7 @@ Shorthand: `T?` is equivalent to `Option<T>`.
 | `.ok_or(err)` | `fn<T, E>(opt: T?, err: E) Result<T, E>` | Convert to Result: `Some(v)` → `Ok(v)`, `None` → `Err(err)` |
 | `.ok_or_else(f)` | `fn<T, E>(opt: T?, f: fn() E) Result<T, E>` | Lazy variant — `f()` is only called when `opt` is `None` |
 | `.transpose()` | `fn<T, E>(opt: Option<Result<T, E>>) Result<Option<T>, E>` | Convert `Option<Result<T,E>>` into `Result<Option<T>,E>` |
+| `.to_string()` | `fn<T: Stringify>(opt: Option<T>) String` | Witnesses `Stringify`: `Some(v)` → `Some(<v>)`, `None` → `None`; enables `${opt}` interpolation |
 
 `try` on Option: `try opt` extracts the `Some` value or propagates `None` via early return.
 Only valid in functions returning `Option<U>`. Use `.ok_or(err)` to bridge to `Result` contexts.

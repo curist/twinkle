@@ -49,6 +49,24 @@ pub fn suite() runner.Suite {
       },
     )
     .test(
+      "option to_string witnesses Stringify",
+      fn() {
+        s: Int? = .Some(42)
+        n: Int? = .None
+        try assert.equal(s.to_string(), "Some(42)")
+        try assert.equal(n.to_string(), "None")
+
+        // Interpolation goes through the Stringify witness:
+        try assert.equal("${s}", "Some(42)")
+        try assert.equal("v=${n}", "v=None")
+
+        // Payload that is itself Stringify (a String) nests fine:
+        word: String? = .Some("hi")
+        try assert.equal(word.to_string(), "Some(hi)")
+        .Ok({})
+      },
+    )
+    .test(
       "option pattern matching extracts value",
       fn() {
         opt: Int? = .Some(10)
