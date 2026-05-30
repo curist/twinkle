@@ -67,10 +67,10 @@ dynamic dispatch, fully monomorphized.
 ## The contracts
 
 ```tw
-contract IndexRead<E>    { len(self) Int        at(self, Int) E }  // backs `v[i]`; unchecked, traps OOB
-contract IntoIterator<E> { iter(self) Iterator<E> }              // backs `for x in`
-contract IndexWrite<E>   { set(self, Int, E) Self   append(self, E) Self }
-contract Sliceable       { slice(self, Int, Int) Self }          // Self-only; `foo[a..b]` syntax → sliceable.md
+contract IndexRead<E>    { len(self) Int        at(self, Int) E }   // backs `v[i]`; unchecked, traps OOB
+contract IntoIterator<E> { iter(self) Iterator<E> }                 // non-indexable iterables; see below
+contract IndexWrite<E>   { set_at(self, Int, E) Self   append(self, E) Self }  // unchecked, traps OOB
+contract Sliceable       { slice(self, Int, Int) Self }             // Self-only; `foo[a..b]` syntax → sliceable.md
 ```
 
 (Contract syntax is illustrative — these are compiler-recognized, like the
@@ -84,6 +84,15 @@ ergonomic surface on `Vector` but is **not** part of the contract; generic
 algorithms iterate over `range(len())`, so they never go OOB and need no
 unwrapping. This is what makes positional `[]` desugar straight to `IndexRead.at`
 (below) — the operator and the contract accessor are the same thing.
+
+**`set_at` vs `set` (locked).** `IndexWrite`'s mutator is the **unchecked
+`set_at(self, Int, E) Self`** (traps on OOB), the write dual of `at`: read `at`,
+write `set_at`, both positional and "…at [index]". The existing checked
+`set(self, Int, E) Self?` stays the ergonomic surface on `Vector` (it is *not* the
+contract method — they cannot share a name, since method resolution is by name and
+`set` already returns `Self?`). `append(self, E) Self` already matches the builtin.
+`put` was rejected — its associative/map connotation belongs to the future keyed
+contract, not positional write.
 
 **Positional `[]` is in scope, not optional.** Backing the `[]` access syntax is a
 *motivation* for this contract, not a follow-on: the plan is **done only when
@@ -179,8 +188,11 @@ part of "done", not optional polish:
   OOB). Replaces the hardcoded `Vector`/`String` arms in `synth_index`
   (checker.tw:4159); **keyed `Dict<K,V>[K] -> V?` stays special-cased** (future
   `KeyedRead<K,V>`).
-- `for x in v` → `IntoIterator<E>` — generalizes today's builtin iteration to any
-  satisfier (currently only the builtin collections iterate).
+- `for x in c` → **`IndexRead<E>` for indexable bounds, `IntoIterator<E>` otherwise.**
+  A generic `C: IndexRead<E>` already has `len`+`at`, so `for x in c` lowers to the
+  **same indexed loop** the concrete collections use — no iterator/closure allocation
+  (the existing fast path is preserved; only generic *non-indexable* receivers go
+  through `IntoIterator.iter`). See the iteration decision below.
 - `v[a..b]` (range-slice) → `Sliceable.slice` — **tracked in a separate plan**
   ([sliceable.md](sliceable.md)); `Sliceable` is Self-only and needs none of this
   doc's parameterized-contract machinery, so it lands on its own schedule.
@@ -274,16 +286,31 @@ bind `Elem` rather than assuming Self-typed args and a fixed return.
   own `synth_index` `Range`-index arm and satisfiers there.
 - **Bound syntax** — `E` is **declared explicitly** (`fn f<C: IndexRead<E>, E>`),
   inferred at call sites. No implicit-introduction machinery.
-- **Method naming** — contract methods **match the names builtins already expose**:
-  `IntoIterator` wired to the existing `for`-in hook; `Sliceable.slice` (not `sub`).
-  The only new method is `at` (the unchecked read). No duplicate aliases.
+- **Method naming** — contract methods **match the names builtins already expose**
+  where possible: `Sliceable.slice` (not `sub`). The new methods are the **unchecked
+  positional accessors** `at` (read) and `set_at` (write), which intentionally differ
+  from the checked `get`/`set` (`-> E?`/`-> Self?`) because a type cannot expose two
+  methods of the same name with different return types. `append` matches the builtin.
 - **Contract names** — `IndexRead` / `IndexWrite` / `IntoIterator` / `Sliceable`
   (kept; not collapsed to `Indexable`).
 - **`len` placement** — kept on `IndexRead` (no separate `Countable`/`Sized`).
 - **`IntoIterator` element** — reuses the builtin `Iterator<E>`.
-- **`IndexWrite` shape** — `set` + `append`, both returning `Self` (persistent
-  rebinding). `drop_last` stays the dedicated runtime op ([stack.md](stack.md)),
-  not part of the contract.
+- **Iteration layering (locked 2026-05-30)** — `for x in c` over a generic
+  `C: IndexRead<E>` lowers to **indexed iteration** (`range(len())` + `at(i)`), the
+  same allocation-free path the concrete collections already use; routing it through
+  `IntoIterator.iter` (which returns an `Iterator<E>`) would force an iterator +
+  closure allocation per loop, so it is **not** used for indexable receivers.
+  `IntoIterator` earns its keep for genuinely **non-indexable** iterables (lazy
+  streams, `Dict` entries, ranges-as-streams). `Iterator.unfold` stays the low-level
+  iterator **constructor**: index-backed types can derive `iter` generically via
+  `unfold` over `range(len())`, and custom iterables implement `iter` with `unfold`
+  directly. `IntoIterator` is layered on the iterator machinery, not a replacement
+  for `unfold`.
+- **`IndexWrite` shape** — `set_at` + `append`, both returning `Self` (persistent
+  rebinding); `set_at` is unchecked (traps on OOB), the write dual of `at`. The
+  checked `set(self, Int, E) Self?` stays the ergonomic surface, outside the
+  contract. `drop_last` stays the dedicated runtime op ([stack.md](stack.md)), not
+  part of the contract.
 - **`skip`→`drop` rename** — already shipped, *not* part of this work (see
   [Naming: the `drop` family](#naming-the-drop-family)).
 
@@ -356,7 +383,17 @@ Track A — the requirement-model / proof-side foundation:
      body does not recurse). Tested: checker typing (`c[0]` is `Var(E)`) + runtime
      (`index_via_bracket`, and `a[i] == b[i]` composing with the mono FD fix).
 
-   Still ⬜: `IntoIterator`/`IndexWrite` specs; register `View`/`Stack` as satisfiers.
+   Still ⬜ (sequenced 2026-05-30):
+   1. **`IndexWrite<E>`** — `set_at`/`append -> Self`; `Vector` gets an unchecked
+      inherent `set_at` (the existing checked `set -> Self?` is untouched). New
+      `set_at`/`append` `ContractReturnShape.Receiver` is already available; only the
+      new `BuiltinContract` variant + switch arms + a `Vector.set_at` are needed.
+   2. **`for x in c` over `C: IndexRead<E>`** — lower to the existing indexed loop
+      (no allocation), generalizing `iterable_binding_info_of`/`setup_indexed_iter`
+      to a type variable with an in-scope `IndexRead` bound.
+   3. **`IntoIterator<E>`** — for non-indexable iterables; needs an `IteratorElem`
+      return shape (`Iterator<E>`, `Iterator` TypeId). Concrete fast paths preserved.
+   4. Register `View`/`Stack` as satisfiers (tracked in their own docs).
 
 **Boundary finding (the doc's Resolver findings under-billed this).** Steps 3–4 are
 not testable end-to-end without a sliver of Track B: a contract proof is only
