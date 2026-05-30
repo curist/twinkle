@@ -762,6 +762,15 @@ pub fn suite() runner.Suite {
       },
     )
     .test(
+      "IndexRead<E> + sibling E: Eq forwards to another generic over a type-variable receiver",
+      fn() {
+        src := "fn region_eq<C: IndexRead<E>, E: Eq>(a: C, b: C, n: Int) Bool { a.at(0) == b.at(0) }\nfn starts_with<C: IndexRead<E>, E: Eq>(hay: C, needle: C) Bool { region_eq(hay, needle, needle.len()) }"
+        r := try check_ok(src)
+        try assert.equal(try type_at(r, src, "region_eq(hay, needle, needle.len())"), "Bool")
+        .Ok({})
+      },
+    )
+    .test(
       "Eq bound satisfied by primitive",
       fn() {
         src := "fn same<T: Eq>(a: T, b: T) Bool { a.eq(b) }\nfn main() Bool { same(1, 2) }"

@@ -329,12 +329,17 @@ Track A — the requirement-model / proof-side foundation:
      the target method and matches its concrete return type back against the call's
      declared result type — the mono-time analogue of the checker's `Self -> Elem`
      recovery. (`monomorphize.tw`: `augment_subst_from_contract_calls`.)
-   - **⬜ Known gap (separate checker work):** *forwarding* a bound-only `E: Eq` to
-     another generic fails — e.g. `starts_with` calling `region_eq(hay, needle, n)`
-     reports `type ?N does not satisfy Eq`. When the receiver is itself a type
-     variable `C` with an in-scope `IndexRead<E>` bound, the callee's element meta
-     isn't tied to the caller's `E`, so the sibling Eq check runs on an unbound meta.
-     Tests inline the loop instead of delegating until this is fixed.
+   - **Bound-forwarding fix (checker):** *forwarding* a bound-only `E: Eq` to
+     another generic over a **type-variable receiver** now works — e.g.
+     `starts_with<C: IndexRead<E>, E: Eq>` delegating to `region_eq(hay, needle, n)`.
+     Previously it reported `type ?N does not satisfy Eq`: proving `Var(C): IndexRead`
+     via the receiver's in-scope bound returned `Ok` without binding the proof's
+     element hint, so the callee's element meta stayed unbound and the sibling Eq
+     check failed. Fix: when a type variable carries the contract via an in-scope
+     bound (`scoped_bound_for_contract`), unify the proof's `elem_hint` with that
+     bound's declared element type (`bind_elem_hint_to_scoped_bound`), tying the
+     callee's element to the caller's `E`. Tested end-to-end (checker proof in
+     `checker_suite`; runtime delegation in `api_vector_suite`).
 
    Still ⬜: `IntoIterator`/`IndexWrite` specs; register `String` (`IndexRead<Byte>`)
    and `View`/`Stack`; the `[i]` syntax wiring through `IndexRead.at`.

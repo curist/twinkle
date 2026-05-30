@@ -600,21 +600,49 @@ fn lookup_scoped_type_param(scope: Vector<ResolvedTypeParam>, name: String) Reso
   .None
 }
 
-fn type_var_has_contract(name: String, contract: BuiltinContract, scope: Vector<ResolvedTypeParam>) Bool {
+// If the type variable `name` carries `contract` via an in-scope bound, return
+// that bound's type arguments (e.g. `[E]` for `C: IndexRead<E>`, or `[]` for an
+// unparameterized bound like `T: Eq`). `.None` means the variable has no such
+// bound in scope.
+fn scoped_bound_for_contract(
+  name: String,
+  contract: BuiltinContract,
+  scope: Vector<ResolvedTypeParam>,
+) Vector<MonoType>? {
   tp := case lookup_scoped_type_param(scope, name) {
     .Some(found) => found,
-    .None => { return false },
+    .None => { return .None },
   }
 
   for bound in tp.bounds {
     case bound {
-      .Builtin(found, _) => if same_builtin_contract(found, contract) {
-        return true
+      .Builtin(found, type_args) => if same_builtin_contract(found, contract) {
+        return .Some(type_args)
       },
     }
   }
 
-  false
+  .None
+}
+
+// When proving that a type variable satisfies a parameterized contract via its
+// in-scope bound, tie the proof's element hint to the bound's declared element
+// type. This propagates the functional dependency `Self -> Elem` across a call:
+// proving `C: IndexRead<E_callee>` for a caller's `C` (bounded `IndexRead<E>`)
+// binds `E_callee` to the caller's `E`, so a sibling `E_callee: Eq` then resolves
+// against the caller's `E` instead of an unbound meta.
+fn bind_elem_hint_to_scoped_bound(ctx: InferCtx, elem_hint: MonoType?, bound_args: Vector<MonoType>) InferCtx {
+  case elem_hint {
+    .Some(hint) => if bound_args.len() > 0 {
+      case silent_unify(ctx, hint, bound_args[0]) {
+        .Some(u) => u,
+        .None => ctx,
+      }
+    } else {
+      ctx
+    },
+    .None => ctx,
+  }
 }
 
 type ScopedContractMatch = .{
@@ -936,8 +964,11 @@ fn prove_contract(
   active[key] = true
 
   case zonked {
-    .Var(name) => if type_var_has_contract(name, contract, ctx.type_var_scope) {
-      return .Ok(ctx)
+    .Var(name) => case scoped_bound_for_contract(name, contract, ctx.type_var_scope) {
+      .Some(bound_args) => {
+        return .Ok(bind_elem_hint_to_scoped_bound(ctx, elem_hint, bound_args))
+      },
+      .None => {},
     },
     _ => {},
   }

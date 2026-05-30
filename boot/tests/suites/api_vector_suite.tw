@@ -55,22 +55,14 @@ fn region_eq_via_index_read<C: IndexRead<E>, E: Eq>(a: C, b: C, n: Int) Bool {
   true
 }
 
+// Delegates to `region_eq_via_index_read`, forwarding the bound-only `E: Eq` to
+// another generic over a type-variable receiver (`hay`/`needle` have type `C`).
 fn starts_with_via_index_read<C: IndexRead<E>, E: Eq>(hay: C, needle: C) Bool {
   if needle.len() > hay.len() {
     return false
   }
 
-  i := 0
-
-  for i < needle.len() {
-    if hay.at(i) != needle.at(i) {
-      return false
-    }
-
-    i = i + 1
-  }
-
-  true
+  region_eq_via_index_read(hay, needle, needle.len())
 }
 
 fn build_scaled_seq(count: Int, scale: Int) Vector<Int> {
