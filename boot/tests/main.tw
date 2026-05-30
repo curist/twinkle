@@ -7,7 +7,6 @@ use .suites.api_dict_suite
 use .suites.api_option_result_suite
 use .suites.api_range_iterator_suite
 use .suites.api_set_suite
-use .suites.api_stack_suite
 use .suites.api_string_suite
 use .suites.api_vector_suite
 use .suites.api_view_suite
@@ -118,7 +117,6 @@ runner.run_all([
   api_string_suite.suite(),
   api_dict_suite.suite(),
   api_set_suite.suite(),
-  api_stack_suite.suite(),
   api_view_suite.suite(),
   dict_hash_suite.suite(),
   api_range_iterator_suite.suite(),

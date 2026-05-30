@@ -118,11 +118,10 @@ positional, `Int`-indexed, trap-on-OOB `[]` is unified under `IndexRead`.
 
 - `View<C>` ([view.md](view.md)) — `IndexRead<E>` (`at` delegates to `source.at`),
   all O(1) window ops. **Landed** as the first stdlib satisfier.
-- `Stack<T>` ([stack.md](stack.md)) — **deliberately NOT a satisfier** (reversed
-  2026-05-30). A `Stack` is an access-restricting LIFO abstraction; positional
-  `at`/`s[i]`/for-in would defeat its purpose (the same reason a queue exposes no
-  random access). Traverse by materializing with `to_vector()`. See
-  [stack.md](stack.md) "Decided against".
+- `Stack<T>` — was never made a satisfier (a LIFO abstraction shouldn't expose
+  positional access), and the `@std.stack` wrapper itself was later **removed**
+  (2026-05-30) as unused — see [stack.md](stack.md). `Vector.drop_last` is the
+  lasting LIFO primitive.
 
 `View` satisfies the same contracts as the builtins, so it plugs straight into the
 generic algorithms below — and views compose (a `View` over a `View`).

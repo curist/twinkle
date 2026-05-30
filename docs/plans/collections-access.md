@@ -28,8 +28,9 @@ The unifying constraints (see the per-doc detail):
 actually pays for `slice`/`concat`. It split the problem into:
 
 1. **LIFO drop-last / head-tail** — the real, hot pattern. Solved cheaply by an
-   O(1)-amortized `drop_last` runtime op + a `Stack<T>` wrapper
-   ([stack.md](stack.md)). **Shipped.**
+   O(1)-amortized `drop_last` runtime op ([stack.md](stack.md)). **Shipped.** (A
+   thin `Stack<T>` wrapper was tried and removed — `drop_last`/`append`/`last`
+   already give a stack; the wrapper had no users.)
 2. **Read-only windows / traversal** — solved by a zero-copy `View<C>`
    ([view.md](view.md)), which needs a **general access bound**
    ([access-contracts.md](access-contracts.md)) to reach elements without a
@@ -49,8 +50,8 @@ with stack already done and RRB parked until a workload justifies it.
 | Plan | Scope | Status | Details |
 |------|-------|--------|---------|
 | Slice usage audit | Boot-compiler `slice`/`concat` audit + String-slice perf discussion — the evidence behind the rest | **Audit done** (Vector LIFO landed; String-slice → `View`) | [slice-performance.md](slice-performance.md) |
-| `drop_last` + `Stack<T>` | O(1)-amortized `Vector.drop_last` runtime op + thin `Stack<T>` wrapper; LIFO pop sites migrated | **Implemented** | [stack.md](stack.md) |
-| Access contracts | Parameterized contracts `IndexRead<E>` / `IntoIterator<E>` / `IndexWrite<E>` with a `Self → E` functional dependency; write-once generic access monomorphized to direct reads; positional `v[i]` desugars to `IndexRead.at` (in scope for "done") | **Nearly done** — all three contracts + `v[i]` + `for x in` (both indexed and iterator-driven) landed; only `View`/`Stack` satisfier registration remains (their own docs) | [access-contracts.md](access-contracts.md) |
+| `drop_last` | O(1)-amortized `Vector.drop_last` runtime op; LIFO pop sites migrated (a thin `Stack<T>` wrapper was tried and removed) | **Implemented** | [stack.md](stack.md) |
+| Access contracts | Parameterized contracts `IndexRead<E>` / `IntoIterator<E>` / `IndexWrite<E>` with a `Self → E` functional dependency; write-once generic access monomorphized to direct reads; positional `v[i]` desugars to `IndexRead.at` (in scope for "done") | **Done** — all three contracts + `v[i]` + `for x in` landed; `View` is the stdlib satisfier; `Stack` deliberately excluded then removed | [access-contracts.md](access-contracts.md) |
 | `Sliceable` / `[a..b]` | Range-slice indexing `foo[a..b]` → `Sliceable.slice`; Self-only contract, needs none of the parameterized-contract machinery | **Proposal — split from access-contracts** | [sliceable.md](sliceable.md) |
 | `View<C>` | Zero-copy windows (backing + `start`/`len`) over any `IndexRead` backing; O(1) `drop_first`/`drop_last`/`sub` | **Proposal — blocked on access-contracts** | [view.md](view.md) |
 | RRB-tree `Vector` | O(log n) `concat`/`slice` via relaxed radix-balanced nodes; kills O(n²) prepend-concat and left-drop loops | **Parked — Gate A red (2026-05-29)** | [rrb-vector-concat.md](rrb-vector-concat.md) |
@@ -66,7 +67,8 @@ slice-performance (audit) ──┬─> stack/drop_last ............... DONE
                             └─> rrb-vector-concat ............. PARKED (revisit on demand)
 ```
 
-1. ~~**`drop_last` + `Stack<T>`**~~ — the audit's real hot path. **Done.**
+1. ~~**`drop_last`**~~ — the audit's real hot path. **Done.** (The `Stack<T>` wrapper
+   it once carried was removed — no users.)
 2. **Access contracts** — the foundation `View` and write-once `find`/`fold`/
    `region_eq` all sit on. Implementation-ready: the functional dependency is free
    under *determined conformance*; the work is extending the requirement model in

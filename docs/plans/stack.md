@@ -1,7 +1,14 @@
 # `Stack<T>` — and an O(log n) `drop_last` vector op
 
-Status: **implemented** (foundation + ergonomics + migrations). Remaining items
-are the optional follow-ons noted at the end.
+Status: **`drop_last` shipped; the `Stack<T>` wrapper was removed (2026-05-30).**
+The lasting result of this work is the runtime `Vector.drop_last` op (below) and
+the migration of the compiler's LIFO sites onto it. The `@std.stack` wrapper
+that originally sat on top was **deleted**: it had zero users (the compiler can't
+import stdlib, and `drop_last`/`append`/`last` already give a stack), so it was
+speculative API — `push`/`pop`/`top` are exact 1:1 aliases of
+`append`/`drop_last`/`last` with no added capability. The rest of this doc is
+kept as the record of the `drop_last` design; references to the `Stack<T>` type
+below are historical.
 
 **Done:**
 - The **O(1)-amortized runtime `drop_last` vector op** (the foundation below).

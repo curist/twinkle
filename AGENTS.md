@@ -179,12 +179,12 @@ p := Point.{ x: 1, y: 2 }
 - Separate namespaces for values and types
 - Project root: walks up from entry file to find `twinkle.toml`; `TWINKLE_ROOT` env var overrides
 
-**Two import lines for a stdlib module that owns a generic type** (e.g. `@std.stack`'s `Stack<T>`): the plain and destructuring forms bind *different* things, so you often want both:
+**Two import lines for a stdlib module that owns a generic type** (e.g. `@std.view`'s `View<C>`): the plain and destructuring forms bind *different* things, so you often want both:
 ```tw
-use @std.stack          // binds the module alias `stack` → call constructors as `stack.new()`
-use @std.stack.{Stack}  // binds the type `Stack` into scope → annotate as `Stack<Int>`
+use @std.view          // binds the module alias `view` → call constructors as `view.from(xs)`
+use @std.view.{View}   // binds the type `View` into scope → annotate as `View<Vector<Int>>`
 ```
-The plain form does **not** bring the type name into scope unqualified (you'd write `stack.Stack<Int>`), and the destructuring form does **not** bind the module alias (so `stack.new()` is undefined). This is intended. Inherent methods (`s.push(x)`, `s.top()`) resolve via the type regardless of import form, so only the constructor calls and type annotations need this. (Builtins like `Set`/`Dict` are compiler-registered and need neither.)
+The plain form does **not** bring the type name into scope unqualified (you'd write `view.View<...>`), and the destructuring form does **not** bind the module alias (so `view.from(...)` is undefined). This is intended. Inherent methods (`v.at(i)`, `v.drop_first()`) resolve via the type regardless of import form, so only the constructor calls and type annotations need this. (Builtins like `Set`/`Dict` are compiler-registered and need neither.)
 
 ### Inherent Methods (Dot Sugar)
 Dot syntax supports:

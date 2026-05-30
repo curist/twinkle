@@ -323,7 +323,7 @@ Division by zero traps.
 
 Everything above (primitives, built-in types, I/O, type conversions, String/Vector/Dict methods, operators) is available as **prelude** — no import needed.
 
-Only non-prelude stdlib modules require explicit imports: `use @std.path`, `use @std.fs`, `use @std.proc`, `use @std.date`, `use @std.stack`.
+Only non-prelude stdlib modules require explicit imports: `use @std.path`, `use @std.fs`, `use @std.proc`, `use @std.date`, `use @std.view`.
 
 ### `@std.path`
 
@@ -379,17 +379,26 @@ Timing utilities.
 |----------|-----------|-------------|
 | `now` | `fn() Float` | Current time as milliseconds since the time origin (`performance.now()` in Node/browser; ms since Unix epoch in the interpreter) |
 
-### `@std.stack`
+### `@std.view`
 
-A last-in-first-out `Stack<T>` backed by a persistent `Vector`. The top of the
-stack is the last element. Operations are total: `pop` on an empty stack is a
-no-op and `top` returns `.None`. Requires `use @std.stack`.
+A read-only, zero-copy window `View<C>` over any `IndexRead` backing (a `Vector`,
+a `String`, or another `View`). Element reads delegate through the contract, so
+`at` is a direct backing read plus an integer add; the window ops are O(1) and
+share the one backing. A `View` itself satisfies `IndexRead<E>`. Requires
+`use @std.view` (and `use @std.view.{View}` to name the type). The element type
+`E` follows from the backing via the functional dependency. See
+[plans/view.md](plans/view.md).
 
 | Function | Signature | Description |
 |----------|-----------|-------------|
-| `Stack.new()` | `fn<T>() Stack<T>` | Empty stack |
-| `.push(x)` | `fn<T>(s: Stack<T>, x: T) Stack<T>` | Push a value onto the top |
-| `.top()` | `fn<T>(s: Stack<T>) Option<T>` | Top element, or `.None` if empty |
-| `.pop()` | `fn<T>(s: Stack<T>) Stack<T>` | Remove the top element, or unchanged if empty |
-| `.is_empty()` | `fn<T>(s: Stack<T>) Bool` | True when the stack has no elements |
-| `.to_vector()` | `fn<T>(s: Stack<T>) Vector<T>` | Backing vector, bottom-to-top (use for size/traversal) |
+| `view.from(c)` | `fn<C: IndexRead<E>, E>(c: C) View<C>` | Wrap a whole backing in a window (O(1)) |
+| `.len()` | `fn<C>(v: View<C>) Int` | Number of elements in the window |
+| `.is_empty()` | `fn<C>(v: View<C>) Bool` | True when the window has no elements |
+| `.at(i)` | `fn<C: IndexRead<E>, E>(v: View<C>, i: Int) E` | Element at window-relative index (traps OOB); backs `IndexRead` |
+| `.first()` | `fn<C: IndexRead<E>, E>(v: View<C>) Option<E>` | First element, or `.None` if empty |
+| `.last()` | `fn<C: IndexRead<E>, E>(v: View<C>) Option<E>` | Last element, or `.None` if empty |
+| `.drop_first()` | `fn<C>(v: View<C>) View<C>` | Drop the first element (O(1), shares backing; total) |
+| `.drop_last()` | `fn<C>(v: View<C>) View<C>` | Drop the last element (O(1), shares backing; total) |
+| `.sub(a, b)` | `fn<C>(v: View<C>, a: Int, b: Int) View<C>` | Relative sub-window `[a, b)` (O(1), shares backing) |
+| `.to_vector()` | `fn<C: IndexRead<E>, E>(v: View<C>) Vector<E>` | Materialize the window into an owned `Vector` |
+| `.fold(init, f)` | `fn<C: IndexRead<E>, E, B>(v: View<C>, init: B, f: fn(B, E) B) B` | Left-fold over the window |

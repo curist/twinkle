@@ -53,7 +53,6 @@ contract Sliceable { slice(self, Int, Int) Self }
   [rrb-vector-concat.md](rrb-vector-concat.md), parked).
 - `String` — `slice` = substring (O(m)).
 - `View<C>` ([view.md](view.md)) — `slice` = O(1) window adjust (`sub`).
-- `Stack<T>` — not a natural slice target; skip.
 
 So once this lands, `view[1..n]`, `vec[1..n]`, `str[1..n]` all work uniformly.
 
