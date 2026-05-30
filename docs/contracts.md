@@ -155,15 +155,27 @@ Explicit satisfaction:
 | string interpolation | `Stringify` |
 | `==`, `!=` | `Eq` |
 | `<`, `<=`, `>`, `>=` | `Ord` |
+| `c[i]` (positional, `Int`-indexed) | `IndexRead<E>` |
 
 For generic operands, the relevant contract must be present as a bound. For
 concrete operands, the type must satisfy the contract through the rules above.
+`c[i]` desugars to `IndexRead.at(c, i)` (unchecked, traps on out-of-bounds) when
+`c` is a type variable bounded `IndexRead<E>`; concrete `Vector`/`String` keep
+their direct positional read, and keyed `Dict<K, V>[K] -> V?` stays a separate
+special case (a future `KeyedRead<K, V>`).
 
-## Planned contracts
+## Access contracts
 
-Not yet implemented. A general access pattern over `Vector`/`String`/`View`/`Stack`
-is planned via **parameterized contracts** (`IndexRead<E>`, `IntoIterator<E>`,
-`IndexWrite<E>`, `Sliceable`) with a `Self → E` functional dependency, plus the
-`for x in` and slicing syntax hooks they back. Design:
+A general positional-access pattern over collections is provided by
+**parameterized contracts** with a `Self → E` functional dependency.
+
+**`IndexRead<E>`** is implemented: `len(self) Int` and `at(self, Int) E`.
+`Vector<T>` satisfies it (`E = T`) and `String` satisfies it (`E = Byte`); any
+type with matching `len`/`at` inherent methods conforms. It backs the `c[i]`
+syntax hook above and lets generic algorithms (`find`/`position`/`region_eq`/
+`starts_with`) be written once over the bound and monomorphized to direct reads.
+
+Still planned: `IntoIterator<E>` (`for x in`), `IndexWrite<E>`, and `Sliceable`
+(range-slice `v[a..b]`, tracked separately). Design:
 [plans/access-contracts.md](plans/access-contracts.md) (and the
 [contract-model rationale](design/contracts.md)).

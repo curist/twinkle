@@ -84,7 +84,7 @@ fn lower_expr(ctx: LowerCtx, expr: Expr) ExprOut {
     .Case(scrut, arms) => lower_case(ctx, scrut, arms, ty, s, lower_expr),
     .Cond(arms) => lower_cond(ctx, arms, ty, s, lower_expr),
     .Array(elems) => lower_array(ctx, elems, ty, s, lower_expr),
-    .Index(base_expr, idx_expr) => lower_index(ctx, base_expr, idx_expr, ty, s, lower_expr),
+    .Index(base_expr, idx_expr) => lower_index(ctx, expr, base_expr, idx_expr, ty, s, lower_expr),
     .Binary(ast_op, lhs, rhs) => lower_binary(ctx, ast_op, lhs, rhs, ty, s, lower_expr),
     .Unary(ast_op, operand) => lower_unary(ctx, ast_op, operand, ty, s, lower_expr),
     .If(cond_expr, then_block, else_expr) => lower_if(

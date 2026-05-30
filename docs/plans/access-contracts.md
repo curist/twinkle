@@ -341,8 +341,22 @@ Track A — the requirement-model / proof-side foundation:
      callee's element to the caller's `E`. Tested end-to-end (checker proof in
      `checker_suite`; runtime delegation in `api_vector_suite`).
 
-   Still ⬜: `IntoIterator`/`IndexWrite` specs; register `String` (`IndexRead<Byte>`)
-   and `View`/`Stack`; the `[i]` syntax wiring through `IndexRead.at`.
+   - **`String` satisfies `IndexRead<Byte>`:** added an unchecked
+     `String.at(self, Int) Byte` (same trap-on-OOB semantics as `s[index]`) so the
+     contract proof recovers `E = Byte` from `at`'s return; the checked form stays
+     `get(s, i) Byte?`. `region_eq`/`starts_with` over the bound now run on `String`
+     allocation-free — the substitution target for the slice-perf `s.slice(a,b) == lit`
+     sites. (`prelude/string.tw`.)
+   - **`[i]` syntax → `IndexRead.at`:** `c[i]` on a type variable bounded
+     `IndexRead<E>` now type-checks to `E` and lowers to a `ContractCall(IndexRead,
+     "at", c, [i])`. `synth_index` records the contract call (keyed by the `Index`
+     expr id) for a `.Var` receiver with an in-scope `at`; `lower_index` reads that
+     record and emits the contract call. Concrete `Vector`/`String`/`Dict` receivers
+     carry no record and keep the direct `Index` op (so `String.at`'s `s[index]`
+     body does not recurse). Tested: checker typing (`c[0]` is `Var(E)`) + runtime
+     (`index_via_bracket`, and `a[i] == b[i]` composing with the mono FD fix).
+
+   Still ⬜: `IntoIterator`/`IndexWrite` specs; register `View`/`Stack` as satisfiers.
 
 **Boundary finding (the doc's Resolver findings under-billed this).** Steps 3–4 are
 not testable end-to-end without a sliver of Track B: a contract proof is only

@@ -85,6 +85,7 @@ pub fn lower_array(
 
 pub fn lower_index(
   ctx: LowerCtx,
+  index_expr: Expr,
   base_expr: Expr,
   idx_expr: Expr,
   ty: MonoType,
@@ -93,5 +94,27 @@ pub fn lower_index(
 ) ExprOut {
   br := lower_expr_fn(ctx, base_expr)
   ir := lower_expr_fn(br.ctx, idx_expr)
+
+  // `c[i]` over an `IndexRead<E>` bound is recorded as a contract call by the
+  // checker; lower it to `IndexRead.at(c, i)` so monomorphization resolves it
+  // to the satisfier's `at`. Concrete receivers (Vector/String/Dict) carry no
+  // such record and keep the direct `Index` op.
+  case ir.ctx.method_calls[index_expr.id] {
+    .Some(info) => case info.contract {
+      .Some(contract) => {
+        return .{
+          expr: .{
+            kind: .ContractCall(contract, info.method_name, br.expr, [ir.expr]),
+            ty,
+            span: s,
+          },
+          ctx: ir.ctx,
+        }
+      },
+      .None => {},
+    },
+    .None => {},
+  }
+
   .{ expr: .{ kind: .Index(br.expr, ir.expr), ty, span: s }, ctx: ir.ctx }
 }

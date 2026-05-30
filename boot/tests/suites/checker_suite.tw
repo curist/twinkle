@@ -744,6 +744,15 @@ pub fn suite() runner.Suite {
       },
     )
     .test(
+      "IndexRead bound: c[i] indexes a type-variable receiver, yields the element type",
+      fn() {
+        src := "fn first<C: IndexRead<E>, E>(c: C) E { c[0] }"
+        r := try check_ok(src)
+        try assert.equal(try type_at(r, src, "c[0]"), "Var(E)")
+        .Ok({})
+      },
+    )
+    .test(
       "IndexRead bound satisfied by a type with len/at inherent methods",
       fn() {
         src := "type Seq = .{ data: Vector<Int> }\nfn len(s: Seq) Int { s.data.len() }\nfn at(s: Seq, i: Int) Int { s.data[i] }\nfn first<C: IndexRead<E>, E>(c: C) E { c.at(0) }\nfn main() Int { first(Seq.{ data: [1, 2, 3] }) }"

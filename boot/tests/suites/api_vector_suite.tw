@@ -22,6 +22,11 @@ fn count_via_index_read<C: IndexRead<E>, E>(c: C) Int {
   c.len()
 }
 
+// `c[i]` positional indexing desugars to `IndexRead.at` over the bound.
+fn index_via_bracket<C: IndexRead<E>, E>(c: C, i: Int) E {
+  c[i]
+}
+
 // Write-once generic algorithms over the IndexRead bound. The element type `E`
 // appears only in the contract bound (not in any value parameter), so it is
 // recovered by the functional dependency at type-check time and again during
@@ -313,6 +318,7 @@ pub fn suite() runner.Suite {
         xs: Vector<Int> = [10, 20, 30]
         try assert.equal(first_via_index_read(xs), 10)
         try assert.equal(count_via_index_read(xs), 3)
+        try assert.equal(index_via_bracket(xs, 1), 20)
         .Ok({})
       },
     )

@@ -1404,7 +1404,7 @@ fn synth_inner(ctx: InferCtx, expr: Expr, diags: Vector<DiagKind>) SynthOut {
     .BlockExpr(block) => synth_block(block, ctx, diags),
     .Binary(op, lhs, rhs) => synth_binary(op, lhs, rhs, expr.span, ctx, diags),
     .Unary(op, operand) => synth_unary(op, operand, expr.span, ctx, diags),
-    .Index(base, idx) => synth_index(base, idx, expr.span, ctx, diags),
+    .Index(base, idx) => synth_index(base, idx, expr.id, expr.span, ctx, diags),
     .StringInterp(parts) => synth_string_interp(parts, ctx, diags),
     .Field(base, field_name) => synth_field(base, field_name, expr.span, ctx, diags),
     .Array(elems) => synth_array(elems, expr.span, ctx, diags),
@@ -4295,7 +4295,7 @@ fn synth_unary(op: UnOp, operand: Expr, s: Span, ctx: InferCtx, diags: Vector<Di
   }
 }
 
-fn synth_index(base: Expr, idx: Expr, s: Span, ctx: InferCtx, diags: Vector<DiagKind>) SynthOut {
+fn synth_index(base: Expr, idx: Expr, expr_id: Int, s: Span, ctx: InferCtx, diags: Vector<DiagKind>) SynthOut {
   br := ctx.synth(base, diags)
   ir := br.ctx.synth(idx, br.diags)
   zonked_base := zonk(br.ty, ir.ctx.subst)
@@ -4312,6 +4312,35 @@ fn synth_index(base: Expr, idx: Expr, s: Span, ctx: InferCtx, diags: Vector<Diag
     .String => {
       u := ir.ctx.unify(ir.ty, MonoType.Int, idx.span, ir.diags)
       .{ ty: MonoType.Byte, ctx: u.ctx, diags: u.diags }
+    },
+    // A type variable bounded `IndexRead<E>`: `c[i]` desugars to the contract's
+    // `at(c, i)`. Record the contract call so lowering emits a ContractCall, and
+    // type the result as the bound's declared element `E`.
+    .Var(_) => case lookup_scoped_contract_method(zonked_base, "at", ir.ctx.type_var_scope) {
+      .Some(m) => {
+        elem_ty := if m.type_args.len() > 0 {
+          m.type_args[0]
+        } else {
+          zonked_base
+        }
+        u := ir.ctx.unify(ir.ty, MonoType.Int, idx.span, ir.diags)
+        result_ctx := u.ctx
+        result_ctx.method_calls[expr_id] = MethodCallInfo.{
+          func_name: "",
+          has_receiver: true,
+          contract: .Some(m.contract),
+          method_name: "at",
+        }
+        .{ ty: elem_ty, ctx: result_ctx, diags: u.diags }
+      },
+      .None => {
+        m := fresh_meta(ir.ctx)
+        .{
+          ty: m.ty,
+          ctx: m.ctx,
+          diags: ir.diags.append(.Error(.NotIndexable(.{ span: s, ty: zonked_base }))),
+        }
+      },
     },
     _ => {
       m := fresh_meta(ir.ctx)
