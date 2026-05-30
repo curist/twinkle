@@ -44,7 +44,14 @@ fn setup_indexed_iter(
   ctx = .push_scope()
   ar := lower_expr_fn(ctx, iter_expr)
   ctx = ar.ctx
-  elem_ty := iter_elem_type(ar.expr.ty, ctx.env)
+
+  // Prefer the element type the checker bound for this iterable (the only source
+  // of `E` for a generic `IndexRead<E>` bound, whose receiver is just `Var(C)`);
+  // fall back to structural inference for concrete collections.
+  elem_ty := case ctx.for_elem_types[iter_expr.id] {
+    .Some(t) => t,
+    .None => iter_elem_type(ar.expr.ty, ctx.env),
+  }
   arr_lo := ctx.alloc_anon_local()
   arr_local := arr_lo.local
   ctx = arr_lo.ctx
@@ -446,19 +453,27 @@ fn build_indexed_loop(setup: IterSetup, inner_action: CoreExpr, s: Span) ExprOut
     },
     .None => action_then_inc,
   }
+
+  // A type-variable iter is a generic `IndexRead<E>` bound: element and length
+  // access go through the contract (`at`/`len`), which monomorphizes to the
+  // satisfier's direct ops. Concrete collections keep the direct `Index`/builtin.
+  is_contract_iter := case setup.iter_core.ty {
+    .Var(_) => true,
+    _ => false,
+  }
+  source_expr := CoreExpr.{ kind: .Local(setup.index_source), ty: setup.index_source_ty, span: s }
+  idx_local_expr := CoreExpr.{ kind: .Local(setup.idx_local), ty: int_ty, span: s }
+  elem_value := if is_contract_iter {
+    CoreExpr.{
+      kind: .ContractCall(.IndexRead, "at", source_expr, [idx_local_expr]),
+      ty: setup.elem_ty,
+      span: s,
+    }
+  } else {
+    CoreExpr.{ kind: .Index(source_expr, idx_local_expr), ty: setup.elem_ty, span: s }
+  }
   elem_bind := CoreExpr.{
-    kind: .Let(
-      setup.elem_local,
-      .{
-        kind: .Index(
-          .{ kind: .Local(setup.index_source), ty: setup.index_source_ty, span: s },
-          .{ kind: .Local(setup.idx_local), ty: int_ty, span: s },
-        ),
-        ty: setup.elem_ty,
-        span: s,
-      },
-      body_or_idx,
-    ),
+    kind: .Let(setup.elem_local, elem_value, body_or_idx),
     ty: void_ty,
     span: s,
   }
@@ -492,6 +507,20 @@ fn build_indexed_loop(setup: IterSetup, inner_action: CoreExpr, s: Span) ExprOut
         kind: .Call(
           .{ kind: .GlobalFunc(ctx.builtins.method_id("String", "len")), ty: void_ty, span: s },
           [CoreExpr.{ kind: CoreExprKind.Local(setup.arr_local), ty: iter_ty, span: s }],
+        ),
+        ty: int_ty,
+        span: s,
+      }
+      len_init := CoreExpr.{ kind: .Let(setup.len_local, len_call, idx_init), ty: void_ty, span: s }
+      .{ kind: .Let(setup.arr_local, setup.iter_core, len_init), ty: void_ty, span: s }
+    },
+    .Var(_) => {
+      len_call := CoreExpr.{
+        kind: .ContractCall(
+          .IndexRead,
+          "len",
+          CoreExpr.{ kind: CoreExprKind.Local(setup.arr_local), ty: iter_ty, span: s },
+          [],
         ),
         ty: int_ty,
         span: s,

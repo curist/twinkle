@@ -27,6 +27,18 @@ fn index_via_bracket<C: IndexRead<E>, E>(c: C, i: Int) E {
   c[i]
 }
 
+// `for x in c` over a generic `IndexRead<E>` bound iterates by index (no iterator
+// allocation), element-agnostic so it needs no concrete element type.
+fn to_vector_via_for<C: IndexRead<E>, E>(c: C) Vector<E> {
+  out: Vector<E> = []
+
+  for x in c {
+    out = .append(x)
+  }
+
+  out
+}
+
 // Generic positional write over the IndexWrite contract; Vector must satisfy it.
 fn set_at_via_index_write<C: IndexWrite<E>, E>(c: C, i: Int, v: E) C {
   c.set_at(i, v)
@@ -337,6 +349,14 @@ pub fn suite() runner.Suite {
         xs: Vector<Int> = [10, 20, 30]
         try assert_vec_int_eq(set_at_via_index_write(xs, 1, 99), [10, 99, 30])
         try assert_vec_int_eq(append_via_index_write(xs, 40), [10, 20, 30, 40])
+        .Ok({})
+      },
+    )
+    .test(
+      "for x in c iterates a generic IndexRead bound (Vector)",
+      fn() {
+        xs: Vector<Int> = [10, 20, 30]
+        try assert_vec_int_eq(to_vector_via_for(xs), [10, 20, 30])
         .Ok({})
       },
     )

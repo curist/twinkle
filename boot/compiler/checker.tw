@@ -33,6 +33,7 @@ pub type InferCtx = .{
   pub_names: Dict<String, Bool>,
   method_calls: Dict<Int, MethodCallInfo>,
   contract_cache: Dict<String, Bool>,
+  for_elem_types: Dict<Int, MonoType>,
 }
 
 pub type MethodCallInfo = .{
@@ -55,6 +56,7 @@ pub type CheckResult = .{
   diagnostics: Vector<DiagKind>,
   method_calls: Dict<Int, MethodCallInfo>,
   pub_values: Dict<String, MonoType>,
+  for_elem_types: Dict<Int, MonoType>,
 }
 
 // ── Context helpers ─────────────────────────────────────────────────
@@ -73,6 +75,7 @@ fn empty_ctx(env: ResolvedEnv, module_aliases: Dict<String, Bool>) InferCtx {
     pub_names: Dict.new(),
     method_calls: Dict.new(),
     contract_cache: Dict.new(),
+    for_elem_types: Dict.new(),
   }
 }
 
@@ -3564,6 +3567,7 @@ fn bind_iterable_vars(
   cur_diags := ir.diags
   info := iterable_binding_info_of(ir.ty, iter_expr.span, cur_ctx, cur_diags)
   cur_diags = info.diags
+  cur_ctx.for_elem_types[iter_expr.id] = info.elem_ty
   cur_ctx = bind_optional(cur_ctx, pattern, info.elem_ty)
 
   case index {
@@ -3620,6 +3624,24 @@ fn iterable_binding_info_of(ty: MonoType, s: Span, ctx: InferCtx, diags: Vector<
       diags,
     },
     .Dict(k, v) => .{ elem_ty: k, secondary_ty: .Some(v), secondary_allowed: true, diags },
+    // A type variable bounded `IndexRead<E>` iterates by index (no iterator
+    // allocation); the element is the bound's declared `E`.
+    .Var(_) => case lookup_scoped_contract_method(zonked, "at", ctx.type_var_scope) {
+      .Some(m) => {
+        elem_ty := if m.type_args.len() > 0 {
+          m.type_args[0]
+        } else {
+          zonked
+        }
+        .{ elem_ty, secondary_ty: .Some(MonoType.Int), secondary_allowed: true, diags }
+      },
+      .None => .{
+        elem_ty: MonoType.Int,
+        secondary_ty: .Some(MonoType.Int),
+        secondary_allowed: true,
+        diags: diags.append(.Error(.NotIterable(.{ span: s, ty: zonked }))),
+      },
+    },
     .Named(tid, args) => case type_def_name(ctx.env, tid) {
       .Some("Range") => .{
         elem_ty: MonoType.Int,
@@ -4951,5 +4973,6 @@ pub fn check(module: Module, env: ResolvedEnv) CheckResult {
     diagnostics: cur_diags,
     method_calls: ctx.method_calls,
     pub_values,
+    for_elem_types: ctx.for_elem_types,
   }
 }
