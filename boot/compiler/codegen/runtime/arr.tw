@@ -118,6 +118,7 @@ fn vi_sizes() Int {
 pub fn module() WasmModule {
   funcs := [
     tailoff_fn(),
+    vi_nav_fn(),
     get_leaf_fn(),
     new_path_fn(),
     push_tail_fn(),
@@ -196,6 +197,102 @@ fn tailoff_fn() FuncDef {
         [.I32Const(0)],
         [.LocalGet(0), .I32Const(1), .I32Sub, .I32Const(b_()), .I32ShrU, .I32Const(b_()), .I32Shl],
       ),
+    ],
+  }
+}
+
+// vi_nav(node: VecInternal, idx: i32, shift: i32) -> (slot, sub_idx)
+// One level of trie descent that works for both regular and relaxed (RRB) nodes.
+//
+// Convention: regular (radix) nodes leave idx UNCHANGED so the fully-regular
+// fast path is byte-identical to the original pure-radix navigation (callers
+// still take the in-leaf index as `idx & mask`). A relaxed node first *rebases*
+// idx to be relative to its own subtree — clearing the high bits that regular
+// ancestors selected via radix but never subtracted — then advances from the
+// radix guess (a lower bound) while sizes[slot] <= idx and subtracts the
+// preceding cumulative size. Mixed regular/relaxed paths stay correct because
+// every relaxed node re-derives its subtree-relative index from scratch.
+//
+// Hot get/set inline the regular branch and only *call* this for the rare
+// relaxed case, so the size-table tax never touches append-built vectors.
+fn vi_nav_fn() FuncDef {
+  // p0=node, p1=idx, p2=shift; L3=sizes, L4=slot
+  .{
+    name: "vi_nav",
+    params: [.Ref(false, .Named(t_vec_internal())), .I32, .I32],
+    results: [.I32, .I32],
+    locals: [i32_array_null(), .I32],
+    body: [
+      .LocalGet(0),
+      .StructGet(t_vec_internal(), vi_sizes()),
+      .LocalSet(3),
+      .LocalGet(3),
+      .RefIsNull,
+      .If(
+        .None,
+        [.LocalGet(1), .LocalGet(2), .I32ShrU, .I32Const(mask()), .I32And, .LocalSet(4)],
+        [
+          .LocalGet(1),
+          .I32Const(1),
+          .LocalGet(2),
+          .I32Const(b_()),
+          .I32Add,
+          .I32Shl,
+          .I32Const(1),
+          .I32Sub,
+          .I32And,
+          .LocalSet(1),
+          .LocalGet(1),
+          .LocalGet(2),
+          .I32ShrU,
+          .I32Const(mask()),
+          .I32And,
+          .LocalSet(4),
+          .Block(
+            "sbrk",
+            .None,
+            [
+              .Loop(
+                "slp",
+                .None,
+                [
+                  .LocalGet(3),
+                  .RefAsNonNull,
+                  .LocalGet(4),
+                  .ArrayGet(t_i32_array()),
+                  .LocalGet(1),
+                  .I32GtS,
+                  .BrIf("sbrk"),
+                  .LocalGet(4),
+                  .I32Const(1),
+                  .I32Add,
+                  .LocalSet(4),
+                  .Br("slp"),
+                ],
+              ),
+            ],
+          ),
+          .LocalGet(4),
+          .I32Eqz,
+          .If(
+            .None,
+            [],
+            [
+              .LocalGet(1),
+              .LocalGet(3),
+              .RefAsNonNull,
+              .LocalGet(4),
+              .I32Const(1),
+              .I32Sub,
+              .ArrayGet(t_i32_array()),
+              .I32Sub,
+              .LocalSet(1),
+            ],
+          ),
+        ],
+      ),
+      .LocalGet(4),
+      .LocalGet(1),
     ],
   }
 }
@@ -462,11 +559,12 @@ fn do_set_fn() FuncDef {
           .RefCast(false, .Eq),
         ],
         [
+          .LocalGet(1),
+          .RefCast(false, .Named(t_vec_internal())),
           .LocalGet(2),
           .LocalGet(0),
-          .I32ShrU,
-          .I32Const(mask()),
-          .I32And,
+          .Call("vi_nav"),
+          .LocalSet(2),
           .LocalSet(5),
           .RefNull(.Eq),
           .I32Const(bf()),
@@ -499,7 +597,9 @@ fn do_set_fn() FuncDef {
           .ArraySet(t_vec_children()),
           .LocalGet(4),
           .RefAsNonNull,
-          .RefNull(.Named(t_i32_array())),
+          .LocalGet(1),
+          .RefCast(false, .Named(t_vec_internal())),
+          .StructGet(t_vec_internal(), vi_sizes()),
           .StructNew(t_vec_internal()),
           .RefCast(false, .Eq),
         ],
@@ -721,12 +821,12 @@ fn make_fn() FuncDef {
 
 // get(vec: PVec?, idx: i32) -> anyref
 fn get_fn() FuncDef {
-  // p0=vec, p1=idx, L2=len, L3=tailoff, L4=node, L5=level
+  // p0=vec, p1=idx, L2=len, L3=tailoff, L4=node, L5=level, L6=slot, L7=sizes
   .{
     name: "get",
     params: [pvec_null(), .I32],
     results: [.Anyref],
-    locals: [.I32, .I32, vec_internal_null(), .I32],
+    locals: [.I32, .I32, vec_internal_null(), .I32, .I32, i32_array_null()],
     body: [
       .LocalGet(0),
       .RefAsNonNull,
@@ -792,12 +892,34 @@ fn get_fn() FuncDef {
                       .BrIf("brk"),
                       .LocalGet(4),
                       .RefAsNonNull,
+                      .StructGet(t_vec_internal(), vi_sizes()),
+                      .LocalSet(7),
+                      .LocalGet(7),
+                      .RefIsNull,
+                      .If(
+                        .None,
+                        [
+                          .LocalGet(1),
+                          .LocalGet(5),
+                          .I32ShrU,
+                          .I32Const(mask()),
+                          .I32And,
+                          .LocalSet(6),
+                        ],
+                        [
+                          .LocalGet(4),
+                          .RefAsNonNull,
+                          .LocalGet(1),
+                          .LocalGet(5),
+                          .Call("vi_nav"),
+                          .LocalSet(1),
+                          .LocalSet(6),
+                        ],
+                      ),
+                      .LocalGet(4),
+                      .RefAsNonNull,
                       .StructGet(t_vec_internal(), vi_children()),
-                      .LocalGet(1),
-                      .LocalGet(5),
-                      .I32ShrU,
-                      .I32Const(mask()),
-                      .I32And,
+                      .LocalGet(6),
                       .ArrayGet(t_vec_children()),
                       .RefCast(true, .Named(t_vec_internal())),
                       .LocalSet(4),
@@ -812,12 +934,27 @@ fn get_fn() FuncDef {
               ),
               .LocalGet(4),
               .RefAsNonNull,
+              .StructGet(t_vec_internal(), vi_sizes()),
+              .LocalSet(7),
+              .LocalGet(7),
+              .RefIsNull,
+              .If(
+                .None,
+                [.LocalGet(1), .LocalGet(5), .I32ShrU, .I32Const(mask()), .I32And, .LocalSet(6)],
+                [
+                  .LocalGet(4),
+                  .RefAsNonNull,
+                  .LocalGet(1),
+                  .LocalGet(5),
+                  .Call("vi_nav"),
+                  .LocalSet(1),
+                  .LocalSet(6),
+                ],
+              ),
+              .LocalGet(4),
+              .RefAsNonNull,
               .StructGet(t_vec_internal(), vi_children()),
-              .LocalGet(1),
-              .LocalGet(5),
-              .I32ShrU,
-              .I32Const(mask()),
-              .I32And,
+              .LocalGet(6),
               .ArrayGet(t_vec_children()),
               .RefCast(false, .Named(t_array())),
               .LocalGet(1),
