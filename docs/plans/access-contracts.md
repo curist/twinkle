@@ -391,13 +391,20 @@ Track A — the requirement-model / proof-side foundation:
      `Vector.set -> Vector<T>?` is untouched. Tested with generic `set_at`/`append`
      over the bound. Multi-bound `C: IndexRead<E> + IndexWrite<E>` composes.
 
+   - **`for x in c` over `C: IndexRead<E>` (done).** Lowers to the existing indexed
+     loop — no iterator/closure allocation — driven by the contract's `len`/`at`,
+     which monomorphize to the satisfier's direct ops. `iterable_binding_info_of`
+     gained a `.Var` arm binding the element to the bound's `E`; since the element
+     can't be recovered at lowering from the receiver `Var(C)`, the checker records
+     it per iterable (`for_elem_types`, threaded `CheckResult` → `LowerCtx`) and
+     `build_indexed_loop` emits `IndexRead.at`/`len` contract calls for a `Var` iter
+     (concrete receivers unchanged). Verified index-based lowering (no
+     `Iterator.next`) and the `for x, i in c` indexed form over `Vector`/`String`.
+
    Still ⬜ (sequenced 2026-05-30):
-   1. **`for x in c` over `C: IndexRead<E>`** — lower to the existing indexed loop
-      (no allocation), generalizing `iterable_binding_info_of`/`setup_indexed_iter`
-      to a type variable with an in-scope `IndexRead` bound.
-   2. **`IntoIterator<E>`** — for non-indexable iterables; needs an `IteratorElem`
+   1. **`IntoIterator<E>`** — for non-indexable iterables; needs an `IteratorElem`
       return shape (`Iterator<E>`, `Iterator` TypeId). Concrete fast paths preserved.
-   3. Register `View`/`Stack` as satisfiers (tracked in their own docs).
+   2. Register `View`/`Stack` as satisfiers (tracked in their own docs).
 
    - **Concrete bound type args (done).** `resolve_ast_type_params` previously mapped
      *every* bound type arg to `MonoType.Var(name)`, so a concrete `C: IndexRead<Int>`
