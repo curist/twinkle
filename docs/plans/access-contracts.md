@@ -383,17 +383,34 @@ Track A — the requirement-model / proof-side foundation:
      body does not recurse). Tested: checker typing (`c[0]` is `Var(E)`) + runtime
      (`index_via_bracket`, and `a[i] == b[i]` composing with the mono FD fix).
 
+   - **`IndexWrite<E>` (done):** `set_at(self, Int, E) Self` (unchecked write dual of
+     `at`) + `append(self, E) Self`, both returning `Self`. Wired through every
+     `BuiltinContract` switch; `Vector.set_at` added (rebinds via the unchecked
+     index-assignment lowering) so `Vector<T>` satisfies `IndexWrite<T>`. The existing
+     `Receiver` return shape covered both methods — no new shape needed. The checked
+     `Vector.set -> Vector<T>?` is untouched. Tested with generic `set_at`/`append`
+     over the bound. Multi-bound `C: IndexRead<E> + IndexWrite<E>` composes.
+
    Still ⬜ (sequenced 2026-05-30):
-   1. **`IndexWrite<E>`** — `set_at`/`append -> Self`; `Vector` gets an unchecked
-      inherent `set_at` (the existing checked `set -> Self?` is untouched). New
-      `set_at`/`append` `ContractReturnShape.Receiver` is already available; only the
-      new `BuiltinContract` variant + switch arms + a `Vector.set_at` are needed.
-   2. **`for x in c` over `C: IndexRead<E>`** — lower to the existing indexed loop
+   1. **`for x in c` over `C: IndexRead<E>`** — lower to the existing indexed loop
       (no allocation), generalizing `iterable_binding_info_of`/`setup_indexed_iter`
       to a type variable with an in-scope `IndexRead` bound.
-   3. **`IntoIterator<E>`** — for non-indexable iterables; needs an `IteratorElem`
+   2. **`IntoIterator<E>`** — for non-indexable iterables; needs an `IteratorElem`
       return shape (`Iterator<E>`, `Iterator` TypeId). Concrete fast paths preserved.
-   4. Register `View`/`Stack` as satisfiers (tracked in their own docs).
+   3. Register `View`/`Stack` as satisfiers (tracked in their own docs).
+
+   **Finding — concrete bound type args don't resolve (pre-existing).**
+   `resolve_bound_type_args` (resolver.tw:32) maps *every* bound type arg to
+   `MonoType.Var(name)`, so a **concrete** arg like `C: IndexRead<Int>` becomes
+   `Var("Int")` (a rigid type variable), and unifying a satisfier's real `Int` `at`
+   return against rigid `Var("Int")` fails — `Vector<Int>` is reported as not
+   satisfying `IndexRead<Int>`. Only the type-variable form (`<C: IndexRead<E>, E>`,
+   the locked canonical spelling) works today. This blocks element-monomorphic
+   write algorithms (e.g. "double every Int in place" wants `IndexRead<Int> +
+   IndexWrite<Int>` since there is no numeric contract to bound an abstract `E`).
+   Fix is a self-contained resolver change: resolve bound type args as real
+   `TypeExpr`s against the type-param scope (param names → `Var`, types → resolved),
+   instead of the blanket `Var(segments[0])`.
 
 **Boundary finding (the doc's Resolver findings under-billed this).** Steps 3–4 are
 not testable end-to-end without a sliver of Track B: a contract proof is only
