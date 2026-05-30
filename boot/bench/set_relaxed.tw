@@ -1,0 +1,46 @@
+// Gate B baseline — N strided persistent set() on a concat-built vector (same
+// 17-element-chunk fixture as get_relaxed.tw). Pre-RRB this is a second regular
+// set baseline; post-RRB it exercises set() on relaxed nodes, whose cost must
+// stay within the documented bound versus set_regular.
+//
+//   target/twk run boot/bench/set_relaxed.tw
+use @std.date
+
+fn build_concat(n: Int) Vector<Int> {
+  acc: Vector<Int> = []
+  i := 0
+
+  for i < n {
+    m := if i + 17 <= n {
+      17
+    } else {
+      n - i
+    }
+    chunk: Vector<Int> = collect j in range(m) {
+      i + j
+    }
+    acc = .concat(chunk)
+    i = i + m
+  }
+
+  acc
+}
+
+fn bench(n: Int) {
+  v := build_concat(n)
+  t0 := date.now()
+  idx := 0
+
+  for _ in range(n) {
+    idx = (idx + 40503) % n
+    v[idx] = idx
+  }
+
+  dt := date.now() - t0
+  println("${n}\t${dt}\t${v[0]}")
+}
+
+println("N\tms\tsink")
+for n in [1000, 2000, 4000, 8000, 16000, 32000] {
+  bench(n)
+}

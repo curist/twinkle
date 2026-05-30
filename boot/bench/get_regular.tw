@@ -1,0 +1,29 @@
+// Gate B baseline — N strided get() on an append-built (fully regular) vector.
+// Establishes the radix fast-path get cost that RRB must NOT regress. A large
+// coprime stride defeats sequential cache locality so the trie is exercised.
+// Build is outside the timed region; only the gets are timed.
+//
+//   target/twk run boot/bench/get_regular.tw
+use @std.date
+
+fn bench(n: Int) {
+  v: Vector<Int> = collect i in range(n) {
+    i
+  }
+  t0 := date.now()
+  idx := 0
+  sum := 0
+
+  for _ in range(n) {
+    idx = (idx + 40503) % n
+    sum = sum + v[idx]
+  }
+
+  dt := date.now() - t0
+  println("${n}\t${dt}\t${sum}")
+}
+
+println("N\tms\tsink")
+for n in [1000, 2000, 4000, 8000, 16000, 32000] {
+  bench(n)
+}

@@ -1,0 +1,41 @@
+// Gate B baseline — balanced (tree) concat of many small vectors, the rope /
+// pairwise-merge shape. Builds n/8 eight-element chunks and concats adjacent
+// pairs bottom-up to a single vector. On the current vector each concat is
+// O(right operand) so a full level is O(n); post-RRB each concat is O(log n).
+//
+//   target/twk run boot/bench/concat_balanced.tw
+use @std.date
+
+fn bench(n: Int) {
+  t0 := date.now()
+  chunks: Vector<Vector<Int>> = collect c in range(n / 8) {
+    collect j in range(8) {
+      c * 8 + j
+    }
+  }
+
+  for chunks.len() > 1 {
+    next: Vector<Vector<Int>> = []
+    k := 0
+
+    for k < chunks.len() {
+      if k + 1 < chunks.len() {
+        next = .concat([chunks[k].concat(chunks[k + 1])])
+      } else {
+        next = .concat([chunks[k]])
+      }
+
+      k = k + 2
+    }
+
+    chunks = next
+  }
+
+  dt := date.now() - t0
+  println("${n}\t${dt}\t${chunks[0].len()}")
+}
+
+println("N\tms\tsink")
+for n in [1000, 2000, 4000, 8000, 16000, 32000] {
+  bench(n)
+}

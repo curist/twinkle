@@ -1,0 +1,49 @@
+// Gate B baseline — N strided get() on a concat-built vector. Built from
+// 17-element chunks (non-power-of-2, to force relaxed seam nodes once RRB
+// lands) concatenated end-to-end. Pre-RRB this is still a regular tree, so it
+// is simply a second get baseline; post-RRB it exercises relaxed-node
+// navigation (radix guess + size-table correction) and its get cost must stay
+// within the documented bound (~1.5-2x get_regular).
+//
+//   target/twk run boot/bench/get_relaxed.tw
+use @std.date
+
+fn build_concat(n: Int) Vector<Int> {
+  acc: Vector<Int> = []
+  i := 0
+
+  for i < n {
+    m := if i + 17 <= n {
+      17
+    } else {
+      n - i
+    }
+    chunk: Vector<Int> = collect j in range(m) {
+      i + j
+    }
+    acc = .concat(chunk)
+    i = i + m
+  }
+
+  acc
+}
+
+fn bench(n: Int) {
+  v := build_concat(n)
+  t0 := date.now()
+  idx := 0
+  sum := 0
+
+  for _ in range(n) {
+    idx = (idx + 40503) % n
+    sum = sum + v[idx]
+  }
+
+  dt := date.now() - t0
+  println("${n}\t${dt}\t${sum}")
+}
+
+println("N\tms\tsink")
+for n in [1000, 2000, 4000, 8000, 16000, 32000] {
+  bench(n)
+}

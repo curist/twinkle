@@ -1,0 +1,27 @@
+// Gate B baseline — the target case for RRB.
+// Right-operand accumulator concat: every iteration replays the whole
+// accumulator, so on the current (non-RRB) vector this is O(n^2).
+// Expect ~4x wall-clock per doubling of N (quadratic).
+//
+//   target/twk run boot/bench/concat_prepend.tw
+use @std.date
+
+fn bench(n: Int) {
+  t0 := date.now()
+  acc: Vector<Int> = []
+
+  for i in range(n) {
+    acc = [i].concat(acc)
+  }
+
+  dt := date.now() - t0
+
+  // acc[0] is the most-recently prepended element (n-1): a cheap sink that
+  // forces the loop to actually run (defeats dead-code elimination).
+  println("${n}\t${dt}\t${acc[0]}")
+}
+
+println("N\tms\tsink")
+for n in [1000, 2000, 4000, 8000, 16000] {
+  bench(n)
+}

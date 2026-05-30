@@ -368,6 +368,23 @@ If the prepend win is not obvious, or regular get/set regresses, **do not merge*
 — the complexity is not paid for. Keep the benchmark suite in `boot/bench/` as a
 permanent regression guard regardless of outcome.
 
+#### Gate B baselines established (2026-05-30)
+
+The suite is built and run — see `boot/bench/` (`README.md` has the full table,
+per-doubling ratios, and the post-prototype acceptance criteria). On the current
+non-RRB runtime the curves are exactly as predicted:
+
+- **Quadratic (RRB's targets):** `concat_prepend`, `slice_dropfirst`,
+  `slice_droplast` each grow ≈4× per doubling of N (e.g. prepend 3.6 ms → 736 ms
+  across 1k→16k).
+- **Linear controls (must stay linear):** `concat_append`, `concat_balanced`,
+  `droplast_baseline` grow ≈2× per doubling. The shipped `drop_last` op does the
+  drop-last workload ~400× faster than slice at 16k — confirming LIFO pop is not
+  RRB's job.
+- **Fast-path baselines:** `get`/`set` are linear in total ops; `*_relaxed`
+  reads ≈ `*_regular` today (concat builds regular trees pre-RRB), giving the
+  bar that relaxed-node get/set must stay within (~1.5–2×) after Phase 3/4.
+
 ## Implementation plan
 
 The `rt.arr` module is emitted by Wasm-building code in **both** runtimes. Per

@@ -1,0 +1,28 @@
+// Gate B baseline — left-drop / dequeue. `slice(1, len)` shares nothing with
+// the source, so trimming one element per iteration re-copies almost the whole
+// vector every time: O(n^2) on the current vector. Expect ~4x per doubling.
+// This is the queue/deque half that RRB slice (Phase 4) is meant to fix.
+//
+//   target/twk run boot/bench/slice_dropfirst.tw
+use @std.date
+
+fn bench(n: Int) {
+  acc: Vector<Int> = collect i in range(n) {
+    i
+  }
+  t0 := date.now()
+  sum := 0
+
+  for acc.len() > 1 {
+    sum = sum + acc[0]
+    acc = .slice(1, acc.len())
+  }
+
+  dt := date.now() - t0
+  println("${n}\t${dt}\t${sum}")
+}
+
+println("N\tms\tsink")
+for n in [1000, 2000, 4000, 8000, 16000] {
+  bench(n)
+}

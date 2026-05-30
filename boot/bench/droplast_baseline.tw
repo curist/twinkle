@@ -1,0 +1,28 @@
+// Gate B reference — the same drop-last workload as slice_droplast.tw, but
+// through the shipped O(log n) `Vector.drop_last` op (regular-radix tail shrink,
+// no RRB). This is the target curve a drop-last loop should hit (~2x per
+// doubling) and quantifies how far slice-based drop-last is from optimal.
+//
+//   target/twk run boot/bench/droplast_baseline.tw
+use @std.date
+
+fn bench(n: Int) {
+  acc: Vector<Int> = collect i in range(n) {
+    i
+  }
+  t0 := date.now()
+  sum := 0
+
+  for acc.len() > 0 {
+    sum = sum + acc[acc.len() - 1]
+    acc = .drop_last()
+  }
+
+  dt := date.now() - t0
+  println("${n}\t${dt}\t${sum}")
+}
+
+println("N\tms\tsink")
+for n in [1000, 2000, 4000, 8000, 16000, 32000] {
+  bench(n)
+}

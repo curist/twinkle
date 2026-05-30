@@ -1,4 +1,4 @@
-.PHONY: help test boot-test rust-test stage0 stage2 bundle-cli quick-bundle-cli cli playground playground-dev playground-wasm fmt clean
+.PHONY: help test boot-test rust-test stage0 stage2 bundle-cli quick-bundle-cli cli playground playground-dev playground-wasm fmt bench clean
 
 STAGE1_WASM ?= target/boot-stage1.wasm
 STAGE2_WASM ?= target/boot.wasm
@@ -9,7 +9,7 @@ TWK_CLI     ?= $(DENO_BIN) run --allow-read --allow-write --allow-env tools/js_r
 
 # Source file sets — used for dependency tracking.
 RUST_SRCS := $(shell find src -name '*.rs') Cargo.toml Cargo.lock
-BOOT_SRCS := $(shell find boot -name '*.tw' -not -path 'boot/tests/*' -not -path 'boot/tmp/*' -not -path 'boot/repros/*')
+BOOT_SRCS := $(shell find boot -name '*.tw' -not -path 'boot/tests/*' -not -path 'boot/tmp/*' -not -path 'boot/repros/*' -not -path 'boot/bench/*')
 CORE_LIB_SRCS := $(shell find prelude stdlib -name '*.tw')
 
 help:
@@ -22,6 +22,7 @@ help:
 	@printf '  make bundle-cli        Rebuild stage2 payload and build Deno target/twk\n'
 	@printf '  make cli               Alias for bundle-cli\n'
 	@printf '  make fmt               Format boot compiler .tw source files\n'
+	@printf '  make bench             Run the Vector benchmark suite (boot/bench/)\n'
 	@printf '  make playground        Build playground (all deps + vite build)\n'
 	@printf '  make playground-dev    Start playground dev server (all deps + vite dev)\n'
 	@printf '  make playground-wasm   Build target/playground.wasm (slim compiler for browser)\n'
@@ -121,6 +122,15 @@ playground: target/playground.wasm tools/bridge.wasm tree-sitter-twinkle/tree-si
 # Copy artifacts and start the vite dev server
 playground-dev: target/playground.wasm tools/bridge.wasm tree-sitter-twinkle/tree-sitter-twinkle.wasm playground/node_modules
 	cd playground && node scripts/copy-assets.mjs && npx vite
+
+# Run the Vector benchmark suite (RRB Gate B baselines). See boot/bench/README.md.
+# Pass BENCH=<name> to run a single benchmark, e.g. `make bench BENCH=concat_prepend`.
+BENCH ?=
+bench: target/twk
+	@for f in $(if $(BENCH),boot/bench/$(BENCH).tw,$(sort $(wildcard boot/bench/*.tw))); do \
+		printf '\n==> %s\n' "$$f"; \
+		target/twk run "$$f" || exit 1; \
+	done
 
 # Format all .tw source files (boot only; prelude/stdlib excluded).
 fmt: target/twk

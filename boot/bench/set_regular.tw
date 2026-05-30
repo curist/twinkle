@@ -1,0 +1,28 @@
+// Gate B baseline — N strided persistent set() on an append-built (regular)
+// vector. `v[idx] = ...` rebinds v to a fresh path-copied vector each
+// iteration (the persistent-set workload). Establishes the radix fast-path set
+// cost RRB must not regress. Build is outside the timed region.
+//
+//   target/twk run boot/bench/set_regular.tw
+use @std.date
+
+fn bench(n: Int) {
+  v: Vector<Int> = collect i in range(n) {
+    i
+  }
+  t0 := date.now()
+  idx := 0
+
+  for _ in range(n) {
+    idx = (idx + 40503) % n
+    v[idx] = idx
+  }
+
+  dt := date.now() - t0
+  println("${n}\t${dt}\t${v[0]}")
+}
+
+println("N\tms\tsink")
+for n in [1000, 2000, 4000, 8000, 16000, 32000] {
+  bench(n)
+}

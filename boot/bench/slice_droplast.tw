@@ -1,0 +1,28 @@
+// Gate B baseline — drop-last via slice (the LIFO/stack case expressed as
+// `slice(0, len-1)`). Like drop-first, slice shares nothing with the source,
+// so this is O(n^2). Compare against droplast_baseline.tw, which does the same
+// workload through the shipped O(log n) `drop_last` op.
+//
+//   target/twk run boot/bench/slice_droplast.tw
+use @std.date
+
+fn bench(n: Int) {
+  acc: Vector<Int> = collect i in range(n) {
+    i
+  }
+  t0 := date.now()
+  sum := 0
+
+  for acc.len() > 1 {
+    sum = sum + acc[acc.len() - 1]
+    acc = .slice(0, acc.len() - 1)
+  }
+
+  dt := date.now() - t0
+  println("${n}\t${dt}\t${sum}")
+}
+
+println("N\tms\tsink")
+for n in [1000, 2000, 4000, 8000, 16000] {
+  bench(n)
+}
