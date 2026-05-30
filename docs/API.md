@@ -73,6 +73,7 @@ Supports `try` sugar — `v := try expr` extracts the `Ok` value or propagates t
 | `.ok()` | `fn<T, E>(res: Result<T, E>) Option<T>` | Convert `Ok(v)` to `Some(v)` and discard errors |
 | `.err()` | `fn<T, E>(res: Result<T, E>) Option<E>` | Convert `Err(e)` to `Some(e)` and discard success values |
 | `.transpose()` | `fn<T, E>(res: Result<Option<T>, E>) Option<Result<T, E>>` | Convert `Result<Option<T>,E>` into `Option<Result<T,E>>` |
+| `.to_string()` | `fn<T: Stringify, E: Stringify>(res: Result<T, E>) String` | Witnesses `Stringify`: `Ok(v)` → `Ok(<v>)`, `Err(e)` → `Err(<e>)`; enables `${res}` interpolation |
 
 ### `Cell<T>`
 Mutable reference cell for imperative state.

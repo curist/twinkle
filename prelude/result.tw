@@ -1,4 +1,5 @@
 /// Return true if the result is Ok.
+
 pub fn is_ok<T, E>(res: Result<T, E>) Bool {
   case res {
     .Ok(_) => true,
@@ -18,9 +19,7 @@ pub fn is_err<T, E>(res: Result<T, E>) Bool {
 pub fn unwrap<T, E: Stringify>(res: Result<T, E>) T {
   case res {
     .Ok(v) => v,
-    .Err(e) => {
-      error("Result.unwrap: called on Err(${e})")
-    },
+    .Err(e) => error("Result.unwrap: called on Err(${e})"),
   }
 }
 
@@ -97,5 +96,15 @@ pub fn transpose<T, E>(res: Result<T?, E>) Option<Result<T, E>> {
       .None => .None,
       .Some(v) => .Some(.Ok(v)),
     },
+  }
+}
+
+/// Render a Result as a string, witnessing `Stringify` when both payloads are
+/// themselves `Stringify` (so `${res}` interpolates). `Ok(v)` renders as
+/// `Ok(<v>)`, `Err(e)` as `Err(<e>)`.
+pub fn to_string<T: Stringify, E: Stringify>(res: Result<T, E>) String {
+  case res {
+    .Ok(v) => "Ok(${v.to_string()})",
+    .Err(e) => "Err(${e.to_string()})",
   }
 }

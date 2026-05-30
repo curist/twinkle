@@ -117,6 +117,20 @@ pub fn suite() runner.Suite {
       },
     )
     .test(
+      "result to_string witnesses Stringify",
+      fn() {
+        ok: Result<Int, String> = .Ok(7)
+        err: Result<Int, String> = .Err("nope")
+        try assert.equal(ok.to_string(), "Ok(7)")
+        try assert.equal(err.to_string(), "Err(nope)")
+
+        // Interpolation goes through the Stringify witness:
+        try assert.equal("${ok}", "Ok(7)")
+        try assert.equal("r=${err}", "r=Err(nope)")
+        .Ok({})
+      },
+    )
+    .test(
       "result pattern matching extracts ok",
       fn() {
         r: Result<String, Int> = .Ok("hello")

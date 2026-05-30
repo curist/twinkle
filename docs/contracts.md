@@ -64,6 +64,9 @@ Other satisfaction:
   witness.
 - `Option<T>` satisfies `Stringify` through its prelude `to_string<T: Stringify>`
   witness: `Some(v)` renders as `Some(<v>)`, `None` as `None`.
+- `Result<T, E>` satisfies `Stringify` through its prelude
+  `to_string<T: Stringify, E: Stringify>` witness: `Ok(v)` → `Ok(<v>)`,
+  `Err(e)` → `Err(<e>)`.
 - `Stringify` is not auto-derived.
 
 Example:
