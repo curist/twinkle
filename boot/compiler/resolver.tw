@@ -1587,9 +1587,16 @@ fn check_dup_type_params(type_params: Vector<String>, s: Span) Vector<diag.DiagK
   }
 }
 
-fn resolve_ast_type_params(ast_params: Vector<TypeParam>, s: Span) ResolvedTypeParamsResult {
+fn resolve_ast_type_params(env: ResolvedEnv, ast_params: Vector<TypeParam>, s: Span) ResolvedTypeParamsResult {
   diags: Vector<diag.DiagKind> = []
   resolved: Vector<ResolvedTypeParam> = []
+
+  // The sibling type params are all in scope for one another's bounds (e.g. `E`
+  // in `<C: IndexRead<E>, E>`), so a bound arg naming one resolves to `Var`; any
+  // other name resolves as a concrete type (e.g. `IndexRead<Int>` -> `Int`).
+  type_var_names := collect tp in ast_params {
+    tp.name
+  }
 
   for tp in ast_params {
     bound_refs: Vector<ResolvedContractRef> = []
@@ -1599,7 +1606,21 @@ fn resolve_ast_type_params(ast_params: Vector<TypeParam>, s: Span) ResolvedTypeP
 
       case resolve_builtin_contract_name(seg) {
         .Some(c) => {
-          bound_refs = .append(.Builtin(c, resolve_bound_type_args(bound_path.type_args)))
+          bound_args: Vector<MonoType> = []
+
+          for arg in bound_path.type_args {
+            r := env.resolve_type_expr(arg, type_var_names)
+            diags = .concat(r.diagnostics)
+
+            case r.ty {
+              .Some(ty) => {
+                bound_args = .append(ty)
+              },
+              .None => {},
+            }
+          }
+
+          bound_refs = .append(.Builtin(c, bound_args))
         },
         .None => {
           diags = .append(.Error(.UnknownContract(.{ span: bound_path.span, name: seg })))
@@ -1614,7 +1635,7 @@ fn resolve_ast_type_params(ast_params: Vector<TypeParam>, s: Span) ResolvedTypeP
 }
 
 fn resolve_type_decl(env: ResolvedEnv, decl: TypeDecl) ResolveResult {
-  r := resolve_ast_type_params(decl.type_params, decl.span)
+  r := resolve_ast_type_params(env, decl.type_params, decl.span)
   type_params := r.params
   names := resolved_type_param_names(type_params)
   diags := r.diags.concat(check_dup_type_params(names, decl.span))
@@ -1811,7 +1832,7 @@ fn resolve_extern_function_decl(env: ResolvedEnv, decl: ExternFunctionDecl) Reso
 }
 
 fn resolve_function_decl(env: ResolvedEnv, decl: FunctionDecl) ResolveResult {
-  r := resolve_ast_type_params(decl.type_params, decl.span)
+  r := resolve_ast_type_params(env, decl.type_params, decl.span)
   type_params := r.params
   names := resolved_type_param_names(type_params)
   diags := r.diags.concat(check_dup_type_params(names, decl.span))
