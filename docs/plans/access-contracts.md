@@ -401,10 +401,25 @@ Track A — the requirement-model / proof-side foundation:
      (concrete receivers unchanged). Verified index-based lowering (no
      `Iterator.next`) and the `for x, i in c` indexed form over `Vector`/`String`.
 
-   Still ⬜ (sequenced 2026-05-30):
-   1. **`IntoIterator<E>`** — for non-indexable iterables; needs an `IteratorElem`
-      return shape (`Iterator<E>`, `Iterator` TypeId). Concrete fast paths preserved.
-   2. Register `View`/`Stack` as satisfiers (tracked in their own docs).
+   - **`IntoIterator<E>` (done).** `iter(self) Iterator<E>`, for non-indexable
+     iterables. Added the `IteratorElem` return shape (`Iterator<E>`, the builtin
+     `Iterator` TypeId 4); wired through every `BuiltinContract` switch. `for x in c`
+     over a generic `IntoIterator<E>` (and not `IndexRead`) lowers to `c.iter()` (an
+     `IntoIterator.iter` contract call typed `Iterator<E>`) and reuses the iterator
+     loop; `IndexRead` is preferred when a Var has both (indexed, allocation-free).
+     `iterable_binding_info_of` resolves the element via `iterable_var_match`
+     (`at` then `iter`); `bind_iterable_vars` records the `iter` contract call so
+     `setup_indexed_iter` wraps the receiver. Tested with a `Countdown` user type
+     via both `c.iter().to_vector()` and `for x in c`.
+     - **Known limitation:** a builtin type's *prelude-Twinkle* methods are not in the
+       linker's contract method table (only signature/codegen methods and
+       `is_builtin_method_type` prelude methods register under the `t{tid}` key the
+       contract resolver uses). So `Iterator` itself can't yet satisfy `IntoIterator`
+       via an identity `iter`. User-type and signature-backed satisfiers resolve fine;
+       this is the contract receiver counterpart of the `is_builtin_method_type` list.
+
+   Still ⬜: register `View`/`Stack` as satisfiers (tracked in their own docs —
+   [view.md](view.md), [stack.md](stack.md)). With that, this plan is complete.
 
    - **Concrete bound type args (done).** `resolve_ast_type_params` previously mapped
      *every* bound type arg to `MonoType.Var(name)`, so a concrete `C: IndexRead<Int>`
