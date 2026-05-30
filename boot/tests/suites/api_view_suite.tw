@@ -21,6 +21,43 @@ fn index_via_bracket<C: IndexRead<E>, E>(c: C, i: Int) E {
   c[i]
 }
 
+// Generic over the IndexRead bound with a sibling `E: Eq`, reading elements
+// directly through the contract (`c.at`). Driving this with a `View` backing
+// forces the checker to recover the element type of a satisfier that is itself
+// generic (`View<Vector<Int>>` -> element `Int`) so the sibling `E: Eq` holds.
+fn is_palindrome<C: IndexRead<E>, E: Eq>(c: C) Bool {
+  lo := 0
+  hi := c.len() - 1
+
+  for lo < hi {
+    if c.at(lo) != c.at(hi) {
+      return false
+    }
+
+    lo = lo + 1
+    hi = hi - 1
+  }
+
+  true
+}
+
+// Same shape, but the bound is reached through an intermediate `View` whose own
+// `at` is an inherent method returning the bound-only element type `E`. This
+// forces monomorphization to recover `E` from an inherent-method return.
+fn palindrome_via_view<C: IndexRead<E>, E: Eq>(c: C) Bool {
+  v: View<C> = view.from(c)
+
+  for v.len() > 1 {
+    if v.at(0) != v.at(v.len() - 1) {
+      return false
+    }
+
+    v = .drop_first().drop_last()
+  }
+
+  true
+}
+
 pub fn suite() runner.Suite {
   runner.suite("view")
     .test(
@@ -160,6 +197,31 @@ pub fn suite() runner.Suite {
         v := view.from([10, 20, 30])
         try assert.equal(count_via_index_read(v), 3)
         try assert.equal(index_via_bracket(v, 1), 20)
+        .Ok({})
+      },
+    )
+    .test(
+      "IndexRead+Eq algorithm runs over a View backing (FD through a generic satisfier)",
+      fn() {
+        // Baseline: the same algorithm over the concrete backings still works.
+        try assert.is_true(is_palindrome([1, 2, 1]))
+        try assert.is_true(is_palindrome("aba"))
+
+        // The fix: C = View<Vector<Int>>; E must resolve to Int so E: Eq holds.
+        try assert.is_true(is_palindrome(view.from([1, 2, 3, 2, 1])))
+        try assert.is_false(is_palindrome(view.from([1, 2, 3])))
+        .Ok({})
+      },
+    )
+    .test(
+      "generic algorithm that wraps its bound in a View (bound-only E via inherent at)",
+      fn() {
+        try assert.is_true(palindrome_via_view([1, 2, 3, 2, 1]))
+        try assert.is_false(palindrome_via_view([1, 2, 3]))
+
+        // String backing too: C = String, E = Byte.
+        try assert.is_true(palindrome_via_view("racecar"))
+        try assert.is_false(palindrome_via_view("hello"))
         .Ok({})
       },
     )

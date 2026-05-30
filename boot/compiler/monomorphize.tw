@@ -411,132 +411,182 @@ fn infer_call_subst(ctx: MonoCtx, gf: FunctionDef, args: Vector<CoreExpr>, call_
   // `fn f<C: IndexRead<E>, E>` when `E` is in no value parameter). They are
   // invisible to the signature-only matching above, so the specialized body
   // would keep a free `Var(E)` and crash codegen. With the receiver type now
-  // resolved by `subst`, each contract call's concrete return type pins the
-  // element type.
-  ctx.augment_subst_from_contract_calls(gf.body, subst)
+  // resolved by `subst`, each contract/inherent call's concrete return type
+  // pins the element type.
+  ctx.augment_subst_from_contract_calls(gf.body, subst, Dict.new())
 }
 
-// Walk a callee body and, for every contract call whose receiver type is now
-// concrete under `subst`, resolve the target method and match its concrete
-// return type back against the call's declared (still-generic) result type to
-// extend `subst`. This is the monomorphization-time analogue of the checker's
-// functional-dependency recovery (`Self -> Elem`).
-fn augment_subst_from_contract_calls(ctx: MonoCtx, expr: CoreExpr, subst: Dict<String, MonoType>) Dict<
-  String,
-  MonoType,
-> {
+// Resolve a generic call's concrete return type given concrete argument types,
+// including the callee's *own* bound-only type params. After matching arguments
+// against the callee's parameters, if the return is still generic (a bound-only
+// param such as `View.at -> E2`, which never appears in a value parameter), walk
+// the callee body to recover it — the same FD recovery applied one level deeper.
+// `visited` guards against unbounded recursion through (mutually) recursive callees.
+fn recover_call_return(
+  ctx: MonoCtx,
+  fid_id: Int,
+  target: FunctionDef,
+  arg_tys: Vector<MonoType>,
+  visited: Dict<Int, Bool>,
+) MonoType {
+  local: Dict<String, MonoType> = Dict.new()
+  i := 0
+
+  for i < arg_tys.len() and i < target.params.len() {
+    local = match_type_against(target.params[i].ty, arg_tys[i], local)
+    i = i + 1
+  }
+
+  direct := apply_subst(target.return_ty, local)
+
+  if contains_var(direct) and !visited.has(fid_id) {
+    next_visited := visited
+    next_visited[fid_id] = true
+    local = ctx.augment_subst_from_contract_calls(target.body, local, next_visited)
+    return apply_subst(target.return_ty, local)
+  }
+
+  direct
+}
+
+// Walk a callee body and, for every contract or inherent call whose receiver is
+// now concrete under `subst`, resolve the target and match its concrete return
+// type back against the call's declared (still-generic) result type to extend
+// `subst`. This is the monomorphization-time analogue of the checker's
+// functional-dependency recovery (`Self -> Elem`). Recovery is attempted only
+// when the call's result type is still generic, and a fully concrete return is
+// required before binding (a partly-generic return would pollute `subst`).
+fn augment_subst_from_contract_calls(
+  ctx: MonoCtx,
+  expr: CoreExpr,
+  subst: Dict<String, MonoType>,
+  visited: Dict<Int, Bool>,
+) Dict<String, MonoType> {
   case expr.kind {
     .ContractCall(_, method_name, receiver, args) => {
-      subst = ctx.augment_subst_from_contract_calls(receiver, subst)
+      subst = ctx.augment_subst_from_contract_calls(receiver, subst, visited)
 
       for a in args {
-        subst = ctx.augment_subst_from_contract_calls(a, subst)
+        subst = ctx.augment_subst_from_contract_calls(a, subst, visited)
       }
 
-      concrete_recv := apply_subst(receiver.ty, subst)
+      if contains_var(apply_subst(expr.ty, subst)) {
+        concrete_recv := apply_subst(receiver.ty, subst)
 
-      case resolve_contract_target_id(concrete_recv, method_name, ctx) {
-        .Some(fid) => case ctx.func_map[fid.id] {
-          .Some(target) => {
-            local: Dict<String, MonoType> = Dict.new()
+        case resolve_contract_target_id(concrete_recv, method_name, ctx) {
+          .Some(fid) => case ctx.func_map[fid.id] {
+            .Some(target) => {
+              arg_tys := [concrete_recv].concat(collect a in args {
+                apply_subst(a.ty, subst)
+              })
+              concrete_ret := recover_call_return(ctx, fid.id, target, arg_tys, visited)
 
-            if target.params.len() > 0 {
-              local = match_type_against(target.params[0].ty, concrete_recv, local)
-            }
-
-            j := 0
-
-            for j < args.len() and j + 1 < target.params.len() {
-              local = match_type_against(
-                target.params[j + 1].ty,
-                apply_subst(args[j].ty, subst),
-                local,
-              )
-              j = j + 1
-            }
-
-            concrete_ret := apply_subst(target.return_ty, local)
-            subst = match_type_against(expr.ty, concrete_ret, subst)
+              if !contains_var(concrete_ret) {
+                subst = match_type_against(expr.ty, concrete_ret, subst)
+              }
+            },
+            .None => {},
           },
           .None => {},
-        },
-        .None => {},
+        }
       }
 
       subst
     },
     .Let(_, value, body) => {
-      subst = ctx.augment_subst_from_contract_calls(value, subst)
-      ctx.augment_subst_from_contract_calls(body, subst)
+      subst = ctx.augment_subst_from_contract_calls(value, subst, visited)
+      ctx.augment_subst_from_contract_calls(body, subst, visited)
     },
-    .Assign(_, value) => ctx.augment_subst_from_contract_calls(value, subst),
+    .Assign(_, value) => ctx.augment_subst_from_contract_calls(value, subst, visited),
     .BinOp(_, lhs, rhs) => {
-      subst = ctx.augment_subst_from_contract_calls(lhs, subst)
-      ctx.augment_subst_from_contract_calls(rhs, subst)
+      subst = ctx.augment_subst_from_contract_calls(lhs, subst, visited)
+      ctx.augment_subst_from_contract_calls(rhs, subst, visited)
     },
-    .UnOp(_, inner) => ctx.augment_subst_from_contract_calls(inner, subst),
+    .UnOp(_, inner) => ctx.augment_subst_from_contract_calls(inner, subst, visited),
     .Call(callee, args) => {
-      subst = ctx.augment_subst_from_contract_calls(callee, subst)
+      subst = ctx.augment_subst_from_contract_calls(callee, subst, visited)
 
       for a in args {
-        subst = ctx.augment_subst_from_contract_calls(a, subst)
+        subst = ctx.augment_subst_from_contract_calls(a, subst, visited)
+      }
+
+      // Recover a bound-only result returned by an inherent/global call (e.g.
+      // `View.at -> E`, lowered to a `Call(GlobalFunc(...))`), mirroring the
+      // ContractCall case above.
+      case callee.kind {
+        .GlobalFunc(fid) => if contains_var(apply_subst(expr.ty, subst)) {
+          case ctx.func_map[fid.id] {
+            .Some(target) => {
+              arg_tys := collect a in args {
+                apply_subst(a.ty, subst)
+              }
+              concrete_ret := recover_call_return(ctx, fid.id, target, arg_tys, visited)
+
+              if !contains_var(concrete_ret) {
+                subst = match_type_against(expr.ty, concrete_ret, subst)
+              }
+            },
+            .None => {},
+          }
+        },
+        _ => {},
       }
 
       subst
     },
     .If(cond_e, then_e, else_e) => {
-      subst = ctx.augment_subst_from_contract_calls(cond_e, subst)
-      subst = ctx.augment_subst_from_contract_calls(then_e, subst)
-      ctx.augment_subst_from_contract_calls(else_e, subst)
+      subst = ctx.augment_subst_from_contract_calls(cond_e, subst, visited)
+      subst = ctx.augment_subst_from_contract_calls(then_e, subst, visited)
+      ctx.augment_subst_from_contract_calls(else_e, subst, visited)
     },
     .Match(scrut, arms) => {
-      subst = ctx.augment_subst_from_contract_calls(scrut, subst)
+      subst = ctx.augment_subst_from_contract_calls(scrut, subst, visited)
 
       for arm in arms {
-        subst = ctx.augment_subst_from_contract_calls(arm.body, subst)
+        subst = ctx.augment_subst_from_contract_calls(arm.body, subst, visited)
       }
 
       subst
     },
-    .Loop(body) => ctx.augment_subst_from_contract_calls(body, subst),
+    .Loop(body) => ctx.augment_subst_from_contract_calls(body, subst, visited),
     .Break(val) => case val {
-      .Some(v) => ctx.augment_subst_from_contract_calls(v, subst),
+      .Some(v) => ctx.augment_subst_from_contract_calls(v, subst, visited),
       .None => subst,
     },
     .Return(val) => case val {
-      .Some(v) => ctx.augment_subst_from_contract_calls(v, subst),
+      .Some(v) => ctx.augment_subst_from_contract_calls(v, subst, visited),
       .None => subst,
     },
-    .Defer(inner) => ctx.augment_subst_from_contract_calls(inner, subst),
+    .Defer(inner) => ctx.augment_subst_from_contract_calls(inner, subst, visited),
     .Record(_, fields) => {
       for fi in fields {
-        subst = ctx.augment_subst_from_contract_calls(fi.value, subst)
+        subst = ctx.augment_subst_from_contract_calls(fi.value, subst, visited)
       }
 
       subst
     },
-    .RecordGet(target, _) => ctx.augment_subst_from_contract_calls(target, subst),
+    .RecordGet(target, _) => ctx.augment_subst_from_contract_calls(target, subst, visited),
     .RecordUpdate(base, _, value) => {
-      subst = ctx.augment_subst_from_contract_calls(base, subst)
-      ctx.augment_subst_from_contract_calls(value, subst)
+      subst = ctx.augment_subst_from_contract_calls(base, subst, visited)
+      ctx.augment_subst_from_contract_calls(value, subst, visited)
     },
     .Variant(_, _, args) => {
       for a in args {
-        subst = ctx.augment_subst_from_contract_calls(a, subst)
+        subst = ctx.augment_subst_from_contract_calls(a, subst, visited)
       }
 
       subst
     },
     .ArrayLit(elems) => {
       for e in elems {
-        subst = ctx.augment_subst_from_contract_calls(e, subst)
+        subst = ctx.augment_subst_from_contract_calls(e, subst, visited)
       }
 
       subst
     },
     .Index(base, idx) => {
-      subst = ctx.augment_subst_from_contract_calls(base, subst)
-      ctx.augment_subst_from_contract_calls(idx, subst)
+      subst = ctx.augment_subst_from_contract_calls(base, subst, visited)
+      ctx.augment_subst_from_contract_calls(idx, subst, visited)
     },
     _ => subst,
   }

@@ -832,8 +832,16 @@ fn prove_contract_method(
 
     for bound in tp.bounds {
       case bound {
-        .Builtin(bound_contract, _) => {
-          proof := prove_contract(arg_ty, bound_contract, cur_ctx, active, .None)
+        .Builtin(bound_contract, bound_type_args) => {
+          // Thread the bound's declared element type (e.g. `E2` in
+          // `C2: IndexRead<E2>`) as the proof hint. Without this, proving a
+          // satisfier method's own bound binds a fresh meta, so a satisfier
+          // whose element comes *through* that bound (e.g. `View<C2>`, whose
+          // `at` returns the bound-only `E2`) never connects its concrete
+          // element back to the outer element meta — and a sibling `E: Eq`
+          // fails. The hint binds the functional dependency one level deeper.
+          elem_hint := bound_elem_hint(bound_type_args, sig.type_params, inst.type_args)
+          proof := prove_contract(arg_ty, bound_contract, cur_ctx, active, elem_hint)
 
           case proof {
             .Ok(next_ctx) => {
