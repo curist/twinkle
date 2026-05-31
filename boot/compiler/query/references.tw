@@ -18,8 +18,23 @@ use lib.source.span.{Span}
 
 pub type ReferenceLocation = .{ uri: String, span: Span }
 
-/// Context for reference collection within a specific module.
-type RefCtx = .{ uri: String, canonical_path: String, env: ResolvedEnv, typed: CheckResult? }
+/// Context for reference collection within a specific module: per-module
+/// location/env data plus the searched-for symbol and whether the declaration
+/// itself should be reported. Carried as the receiver so the walk reads as
+/// `ctx.collect_refs_in_expr(refs, e)`.
+type RefCtx = .{
+  uri: String,
+  canonical_path: String,
+  env: ResolvedEnv,
+  typed: CheckResult?,
+  sym: SymbolId,
+  include_declaration: Bool,
+}
+
+// Invariants for a local-variable reference walk: the document uri plus the
+// target binding's name and declaration span. Carried as the receiver so the
+// walk reads as `ctx.collect_local_refs_in_expr(refs, e)`.
+type LocalRefCtx = .{ uri: String, name: String, decl_span: Span }
 
 /// Symbol identity: what the cursor points to.
 type SymbolId = {
@@ -45,7 +60,7 @@ pub fn find_references(snap: SemanticSnapshot, byte_offset: Int, include_declara
 
   case sym {
     .Local(name, decl_span) => {
-      refs := collect_local_refs(snap.uri, parsed.module.items, name, decl_span, byte_offset)
+      refs := collect_local_refs(snap.uri, parsed.module.items, name, decl_span)
 
       if include_declaration {
         refs = .append(.{ uri: snap.uri, span: decl_span })
@@ -626,19 +641,17 @@ fn canonical_from_uri(snap: SemanticSnapshot, uri: String) String {
 
 // ── Local reference collection ─────────────────────────────────────
 /// Collect all references to a local binding within the enclosing function.
-fn collect_local_refs(
-  uri: String,
-  items: Vector<Item>,
-  name: String,
-  decl_span: Span,
-  cursor_offset: Int,
-) Vector<ReferenceLocation> {
+fn collect_local_refs(uri: String, items: Vector<Item>, name: String, decl_span: Span) Vector<
+  ReferenceLocation,
+> {
+  ctx := LocalRefCtx.{ uri, name, decl_span }
+
   // Find the enclosing function
   for item in items {
     case item {
       .Function(decl) => if decl.span.contains(decl_span.start) {
         refs: Vector<ReferenceLocation> = []
-        refs = collect_local_refs_in_block(refs, uri, decl.body, name, decl_span)
+        refs = ctx.collect_local_refs_in_block(refs, decl.body)
         return refs
       },
       _ => {},
@@ -651,13 +664,13 @@ fn collect_local_refs(
   for item in items {
     case item {
       .Stmt(stmt) => {
-        refs = collect_local_refs_in_stmt(refs, uri, stmt, name, decl_span)
+        refs = ctx.collect_local_refs_in_stmt(refs, stmt)
       },
       .Function(decl) => {
         // Top-level bindings are visible inside functions only if they
         // precede the function declaration, which is how Twinkle scoping
         // works.  For simplicity, scan function bodies too.
-        refs = collect_local_refs_in_block(refs, uri, decl.body, name, decl_span)
+        refs = ctx.collect_local_refs_in_block(refs, decl.body)
       },
       _ => {},
     }
@@ -666,21 +679,18 @@ fn collect_local_refs(
   refs
 }
 
-fn collect_local_refs_in_block(
-  refs: Vector<ReferenceLocation>,
-  uri: String,
-  block: Block,
-  name: String,
-  decl_span: Span,
-) Vector<ReferenceLocation> {
+fn collect_local_refs_in_block(ctx: LocalRefCtx, refs: Vector<ReferenceLocation>, block: Block) Vector<
+  ReferenceLocation,
+> {
   for stmt in block.stmts {
-    refs = collect_local_refs_in_stmt(refs, uri, stmt, name, decl_span)
+    refs = ctx.collect_local_refs_in_stmt(refs, stmt)
 
     // If this let statement rebinds the same name and is NOT our declaration,
     // stop collecting — the name is shadowed from here on.
     case stmt {
-      .Let(ls) => if ls.name == name {
-        is_decl := ls.name_span.start == decl_span.start and ls.name_span.end == decl_span.end
+      .Let(ls) => if ls.name == ctx.name {
+        is_decl := ls.name_span.start == ctx.decl_span.start
+          and ls.name_span.end == ctx.decl_span.end
 
         if !is_decl {
           return refs
@@ -691,28 +701,24 @@ fn collect_local_refs_in_block(
   }
 
   case block.tail {
-    .Some(e) => collect_local_refs_in_expr(refs, uri, e, name, decl_span),
+    .Some(e) => ctx.collect_local_refs_in_expr(refs, e),
     .None => refs,
   }
 }
 
-fn collect_local_refs_in_stmt(
-  refs: Vector<ReferenceLocation>,
-  uri: String,
-  stmt: Stmt,
-  name: String,
-  decl_span: Span,
-) Vector<ReferenceLocation> {
+fn collect_local_refs_in_stmt(ctx: LocalRefCtx, refs: Vector<ReferenceLocation>, stmt: Stmt) Vector<
+  ReferenceLocation,
+> {
   case stmt {
-    .Let(ls) => collect_local_refs_in_expr(refs, uri, ls.value, name, decl_span),
+    .Let(ls) => ctx.collect_local_refs_in_expr(refs, ls.value),
     .For(fs) => {
       case fs.iter {
-        .Some(e) => refs = collect_local_refs_in_expr(refs, uri, e, name, decl_span),
+        .Some(e) => refs = ctx.collect_local_refs_in_expr(refs, e),
         .None => {},
       }
 
       case fs.condition {
-        .Some(e) => refs = collect_local_refs_in_expr(refs, uri, e, name, decl_span),
+        .Some(e) => refs = ctx.collect_local_refs_in_expr(refs, e),
         .None => {},
       }
 
@@ -720,92 +726,88 @@ fn collect_local_refs_in_stmt(
       shadows := false
 
       case fs.pattern {
-        .Some(n) => if n == name {
+        .Some(n) => if n == ctx.name {
           shadows = true
         },
         .None => {},
       }
 
       case fs.index {
-        .Some(n) => if n == name {
+        .Some(n) => if n == ctx.name {
           shadows = true
         },
         .None => {},
       }
 
       if !shadows {
-        refs = collect_local_refs_in_block(refs, uri, fs.body, name, decl_span)
+        refs = ctx.collect_local_refs_in_block(refs, fs.body)
       }
 
       refs
     },
     .Return(rs) => case rs.value {
-      .Some(e) => collect_local_refs_in_expr(refs, uri, e, name, decl_span),
+      .Some(e) => ctx.collect_local_refs_in_expr(refs, e),
       .None => refs,
     },
     .Break(bs) => case bs.value {
-      .Some(e) => collect_local_refs_in_expr(refs, uri, e, name, decl_span),
+      .Some(e) => ctx.collect_local_refs_in_expr(refs, e),
       .None => refs,
     },
-    .Defer(ds) => collect_local_refs_in_expr(refs, uri, ds.expr, name, decl_span),
-    .Expr(es) => collect_local_refs_in_expr(refs, uri, es.expr, name, decl_span),
+    .Defer(ds) => ctx.collect_local_refs_in_expr(refs, ds.expr),
+    .Expr(es) => ctx.collect_local_refs_in_expr(refs, es.expr),
     _ => refs,
   }
 }
 
-fn collect_local_refs_in_expr(
-  refs: Vector<ReferenceLocation>,
-  uri: String,
-  expr: Expr,
-  name: String,
-  decl_span: Span,
-) Vector<ReferenceLocation> {
+fn collect_local_refs_in_expr(ctx: LocalRefCtx, refs: Vector<ReferenceLocation>, expr: Expr) Vector<
+  ReferenceLocation,
+> {
   case expr.kind {
-    .Ident(n) => if n == name {
+    .Ident(n) => if n == ctx.name {
       // Don't re-add the declaration itself
-      if expr.span.start == decl_span.start and expr.span.end == decl_span.end {
+      if expr.span.start == ctx.decl_span.start and expr.span.end == ctx.decl_span.end {
         refs
       } else {
-        refs.append(.{ uri, span: expr.span })
+        refs.append(.{ uri: ctx.uri, span: expr.span })
       }
     } else {
       refs
     },
     .Call(callee, args) => {
-      refs = collect_local_refs_in_expr(refs, uri, callee, name, decl_span)
+      refs = ctx.collect_local_refs_in_expr(refs, callee)
 
       for a in args {
-        refs = collect_local_refs_in_expr(refs, uri, a, name, decl_span)
+        refs = ctx.collect_local_refs_in_expr(refs, a)
       }
 
       refs
     },
-    .Field(base, _) => collect_local_refs_in_expr(refs, uri, base, name, decl_span),
+    .Field(base, _) => ctx.collect_local_refs_in_expr(refs, base),
     .Index(base, idx) => {
-      refs = collect_local_refs_in_expr(refs, uri, base, name, decl_span)
-      collect_local_refs_in_expr(refs, uri, idx, name, decl_span)
+      refs = ctx.collect_local_refs_in_expr(refs, base)
+      ctx.collect_local_refs_in_expr(refs, idx)
     },
-    .Unary(_, inner) => collect_local_refs_in_expr(refs, uri, inner, name, decl_span),
+    .Unary(_, inner) => ctx.collect_local_refs_in_expr(refs, inner),
     .Binary(_, lhs, rhs) => {
-      refs = collect_local_refs_in_expr(refs, uri, lhs, name, decl_span)
-      collect_local_refs_in_expr(refs, uri, rhs, name, decl_span)
+      refs = ctx.collect_local_refs_in_expr(refs, lhs)
+      ctx.collect_local_refs_in_expr(refs, rhs)
     },
     .If(cond_e, then_block, else_expr) => {
-      refs = collect_local_refs_in_expr(refs, uri, cond_e, name, decl_span)
-      refs = collect_local_refs_in_block(refs, uri, then_block, name, decl_span)
+      refs = ctx.collect_local_refs_in_expr(refs, cond_e)
+      refs = ctx.collect_local_refs_in_block(refs, then_block)
 
       case else_expr {
-        .Some(e) => collect_local_refs_in_expr(refs, uri, e, name, decl_span),
+        .Some(e) => ctx.collect_local_refs_in_expr(refs, e),
         .None => refs,
       }
     },
     .Case(scrutinee, arms) => {
-      refs = collect_local_refs_in_expr(refs, uri, scrutinee, name, decl_span)
+      refs = ctx.collect_local_refs_in_expr(refs, scrutinee)
 
       for arm in arms {
         // Check if pattern shadows the name
-        if !pattern_shadows(arm.pattern, name) {
-          refs = collect_local_refs_in_expr(refs, uri, arm.expr, name, decl_span)
+        if !pattern_shadows(arm.pattern, ctx.name) {
+          refs = ctx.collect_local_refs_in_expr(refs, arm.expr)
         }
       }
 
@@ -814,34 +816,28 @@ fn collect_local_refs_in_expr(
     .Cond(arms) => {
       for arm in arms {
         case arm.condition {
-          .Some(cond_expr) => refs = collect_local_refs_in_expr(
-            refs,
-            uri,
-            cond_expr,
-            name,
-            decl_span,
-          ),
+          .Some(cond_expr) => refs = ctx.collect_local_refs_in_expr(refs, cond_expr),
           .None => {},
         }
 
-        refs = collect_local_refs_in_expr(refs, uri, arm.body, name, decl_span)
+        refs = ctx.collect_local_refs_in_expr(refs, arm.body)
       }
 
       refs
     },
-    .BlockExpr(b) => collect_local_refs_in_block(refs, uri, b, name, decl_span),
+    .BlockExpr(b) => ctx.collect_local_refs_in_block(refs, b),
     .Array(elems) => {
       for e in elems {
-        refs = collect_local_refs_in_expr(refs, uri, e, name, decl_span)
+        refs = ctx.collect_local_refs_in_expr(refs, e)
       }
 
       refs
     },
-    .Record(entries) => collect_local_refs_in_entries(refs, uri, entries, name, decl_span),
-    .NamedRecord(_, entries) => collect_local_refs_in_entries(refs, uri, entries, name, decl_span),
+    .Record(entries) => ctx.collect_local_refs_in_entries(refs, entries),
+    .NamedRecord(_, entries) => ctx.collect_local_refs_in_entries(refs, entries),
     .Variant(_, fields) => {
       for f in fields {
-        refs = collect_local_refs_in_expr(refs, uri, f, name, decl_span)
+        refs = ctx.collect_local_refs_in_expr(refs, f)
       }
 
       refs
@@ -849,16 +845,16 @@ fn collect_local_refs_in_expr(
     .Closure(params, _, body) => {
       // If any param shadows the name, don't descend into body
       for p in params {
-        if p.name == name {
+        if p.name == ctx.name {
           return refs
         }
       }
 
-      collect_local_refs_in_block(refs, uri, body, name, decl_span)
+      ctx.collect_local_refs_in_block(refs, body)
     },
     .Collect(col) => {
       case col.iter {
-        .Some(e) => refs = collect_local_refs_in_expr(refs, uri, e, name, decl_span),
+        .Some(e) => refs = ctx.collect_local_refs_in_expr(refs, e),
         .None => {},
       }
 
@@ -866,14 +862,14 @@ fn collect_local_refs_in_expr(
       shadows := false
 
       case col.pattern {
-        .Some(n) => if n == name {
+        .Some(n) => if n == ctx.name {
           shadows = true
         },
         .None => {},
       }
 
       case col.index {
-        .Some(n) => if n == name {
+        .Some(n) => if n == ctx.name {
           shadows = true
         },
         .None => {},
@@ -881,11 +877,11 @@ fn collect_local_refs_in_expr(
 
       if !shadows {
         case col.condition {
-          .Some(e) => refs = collect_local_refs_in_expr(refs, uri, e, name, decl_span),
+          .Some(e) => refs = ctx.collect_local_refs_in_expr(refs, e),
           .None => {},
         }
 
-        refs = collect_local_refs_in_block(refs, uri, col.body, name, decl_span)
+        refs = ctx.collect_local_refs_in_block(refs, col.body)
       }
 
       refs
@@ -893,7 +889,7 @@ fn collect_local_refs_in_expr(
     .StringInterp(parts) => {
       for part in parts {
         case part {
-          .Interpolation(e) => refs = collect_local_refs_in_expr(refs, uri, e, name, decl_span),
+          .Interpolation(e) => refs = ctx.collect_local_refs_in_expr(refs, e),
           _ => {},
         }
       }
@@ -905,18 +901,16 @@ fn collect_local_refs_in_expr(
 }
 
 fn collect_local_refs_in_entries(
+  ctx: LocalRefCtx,
   refs: Vector<ReferenceLocation>,
-  uri: String,
   entries: Vector<RecordEntry>,
-  name: String,
-  decl_span: Span,
 ) Vector<ReferenceLocation> {
   for entry in entries {
     case entry.value {
-      .Some(e) => refs = collect_local_refs_in_expr(refs, uri, e, name, decl_span),
-      .None => if entry.name == name {
+      .Some(e) => refs = ctx.collect_local_refs_in_expr(refs, e),
+      .None => if entry.name == ctx.name {
         // Shorthand field: .{ name } is a reference to the local `name`
-        refs = .append(.{ uri, span: entry.span })
+        refs = .append(.{ uri: ctx.uri, span: entry.span })
       },
     }
   }
@@ -977,39 +971,22 @@ fn collect_workspace_refs(snap: SemanticSnapshot, sym: SymbolId, include_declara
       .None => { continue },
     }
 
-    refs = collect_refs_in_module(
-      refs,
-      uri,
-      canonical_path,
-      parsed,
-      module_env,
-      typed,
-      sym,
-      include_declaration,
-    )
+    ctx := RefCtx.{ uri, canonical_path, env: module_env, typed, sym, include_declaration }
+    refs = ctx.collect_refs_in_module(refs, parsed)
   }
 
   refs
 }
 
-fn collect_refs_in_module(
-  refs: Vector<ReferenceLocation>,
-  uri: String,
-  canonical_path: String,
-  parsed: cache.ParsedModule,
-  env: ResolvedEnv,
-  typed: CheckResult?,
-  sym: SymbolId,
-  include_declaration: Bool,
-) Vector<ReferenceLocation> {
-  ctx := RefCtx.{ uri, canonical_path, env, typed }
-
+fn collect_refs_in_module(ctx: RefCtx, refs: Vector<ReferenceLocation>, parsed: cache.ParsedModule) Vector<
+  ReferenceLocation,
+> {
   for item in parsed.module.items {
     case item {
-      .Use(decl) => refs = collect_refs_in_import(refs, ctx, decl, sym),
-      .Type(decl) => refs = collect_refs_in_type_decl(refs, ctx, decl, sym, include_declaration),
+      .Use(decl) => refs = ctx.collect_refs_in_import(refs, decl),
+      .Type(decl) => refs = ctx.collect_refs_in_type_decl(refs, decl),
       .Function(decl) => {
-        case sym {
+        case ctx.sym {
           .Func(mod_path, func_name) => if func_name == decl.name {
             name_start := decl.span.start
               + if decl.is_pub {
@@ -1024,7 +1001,7 @@ fn collect_refs_in_module(
             }
 
             if matches_func(ctx, decl.name, mod_path, func_name) {
-              if include_declaration {
+              if ctx.include_declaration {
                 refs = .append(.{ uri: ctx.uri, span: name_span })
               }
             }
@@ -1034,24 +1011,24 @@ fn collect_refs_in_module(
 
         for p in decl.params {
           case p.ty {
-            .Some(t) => refs = collect_refs_in_type_expr(refs, ctx, t, sym),
+            .Some(t) => refs = ctx.collect_refs_in_type_expr(refs, t),
             .None => {},
           }
         }
 
         case decl.return_type {
-          .Some(t) => refs = collect_refs_in_type_expr(refs, ctx, t, sym),
+          .Some(t) => refs = ctx.collect_refs_in_type_expr(refs, t),
           .None => {},
         }
 
-        refs = collect_refs_in_block(refs, ctx, decl.body, sym)
+        refs = ctx.collect_refs_in_block(refs, decl.body)
       },
       .Stmt(stmt) => {
         case stmt {
-          .Let(ls) => case sym {
+          .Let(ls) => case ctx.sym {
             .Func(mod_path, func_name) => if func_name == ls.name
               and matches_func(ctx, ls.name, mod_path, func_name) {
-              if include_declaration {
+              if ctx.include_declaration {
                 refs = .append(.{ uri: ctx.uri, span: ls.name_span })
               }
             },
@@ -1060,7 +1037,7 @@ fn collect_refs_in_module(
           _ => {},
         }
 
-        refs = collect_refs_in_stmt(refs, ctx, stmt, sym)
+        refs = ctx.collect_refs_in_stmt(refs, stmt)
       },
       _ => {},
     }
@@ -1069,12 +1046,9 @@ fn collect_refs_in_module(
   refs
 }
 
-fn collect_refs_in_import(
-  refs: Vector<ReferenceLocation>,
-  ctx: RefCtx,
-  decl: UseDecl,
-  sym: SymbolId,
-) Vector<ReferenceLocation> {
+fn collect_refs_in_import(ctx: RefCtx, refs: Vector<ReferenceLocation>, decl: UseDecl) Vector<
+  ReferenceLocation,
+> {
   case decl.items {
     .Some(items) => {
       for it in items {
@@ -1082,7 +1056,7 @@ fn collect_refs_in_import(
           .Value(v) => {
             imported_name := v.alias.unwrap_or(v.name)
 
-            case sym {
+            case ctx.sym {
               .Func(mod_path, func_name) => if is_same_func(
                 ctx.env,
                 imported_name,
@@ -1097,7 +1071,7 @@ fn collect_refs_in_import(
           .Type(t) => {
             imported_name := t.alias.unwrap_or(t.name)
 
-            case sym {
+            case ctx.sym {
               .TypeDef(mod_path, type_name) => if is_same_type(
                 ctx.env,
                 imported_name,
@@ -1118,17 +1092,13 @@ fn collect_refs_in_import(
   refs
 }
 
-fn collect_refs_in_type_decl(
-  refs: Vector<ReferenceLocation>,
-  ctx: RefCtx,
-  decl: TypeDecl,
-  sym: SymbolId,
-  include_declaration: Bool,
-) Vector<ReferenceLocation> {
-  case sym {
+fn collect_refs_in_type_decl(ctx: RefCtx, refs: Vector<ReferenceLocation>, decl: TypeDecl) Vector<
+  ReferenceLocation,
+> {
+  case ctx.sym {
     .TypeDef(mod_path, type_name) => if type_name == decl.name
       and matches_type(ctx, decl.name, mod_path, type_name) {
-      if include_declaration {
+      if ctx.include_declaration {
         name_start := decl.span.start
           + if decl.is_pub {
             9
@@ -1150,10 +1120,10 @@ fn collect_refs_in_type_decl(
 
   case decl.def {
     .Record(fields) => {
-      case sym {
+      case ctx.sym {
         .Field(mod_path, ftype_name, field_name) => if ftype_name == decl.name
           and matches_type(ctx, decl.name, mod_path, ftype_name) {
-          if include_declaration {
+          if ctx.include_declaration {
             for f in fields {
               if f.name == field_name {
                 refs = .append(.{ uri: ctx.uri, span: f.name_span })
@@ -1165,14 +1135,14 @@ fn collect_refs_in_type_decl(
       }
 
       for f in fields {
-        refs = collect_refs_in_type_expr(refs, ctx, f.ty, sym)
+        refs = ctx.collect_refs_in_type_expr(refs, f.ty)
       }
     },
     .Sum(variants) => {
-      case sym {
+      case ctx.sym {
         .Variant(mod_path, vtype_name, variant_name) => if vtype_name == decl.name
           and matches_type(ctx, decl.name, mod_path, vtype_name) {
-          if include_declaration {
+          if ctx.include_declaration {
             for v in variants {
               if v.name == variant_name {
                 vspan := Span.{
@@ -1190,49 +1160,46 @@ fn collect_refs_in_type_decl(
 
       for v in variants {
         for t in v.fields {
-          refs = collect_refs_in_type_expr(refs, ctx, t, sym)
+          refs = ctx.collect_refs_in_type_expr(refs, t)
         }
       }
     },
-    .Alias(t) => refs = collect_refs_in_type_expr(refs, ctx, t, sym),
+    .Alias(t) => refs = ctx.collect_refs_in_type_expr(refs, t),
     _ => {},
   }
 
   refs
 }
 
-fn collect_refs_in_type_expr(
-  refs: Vector<ReferenceLocation>,
-  ctx: RefCtx,
-  t: TypeExpr,
-  sym: SymbolId,
-) Vector<ReferenceLocation> {
+fn collect_refs_in_type_expr(ctx: RefCtx, refs: Vector<ReferenceLocation>, t: TypeExpr) Vector<
+  ReferenceLocation,
+> {
   case t.kind {
-    .Path(path) => collect_refs_in_type_path(refs, ctx, path, sym),
+    .Path(path) => ctx.collect_refs_in_type_path(refs, path),
     .Applied(path, args) => {
-      refs = collect_refs_in_type_path(refs, ctx, path, sym)
+      refs = ctx.collect_refs_in_type_path(refs, path)
 
       for a in args {
-        refs = collect_refs_in_type_expr(refs, ctx, a, sym)
+        refs = ctx.collect_refs_in_type_expr(refs, a)
       }
 
       refs
     },
     .Function(params, ret) => {
       for p in params {
-        refs = collect_refs_in_type_expr(refs, ctx, p, sym)
+        refs = ctx.collect_refs_in_type_expr(refs, p)
       }
 
-      collect_refs_in_type_expr(refs, ctx, ret, sym)
+      ctx.collect_refs_in_type_expr(refs, ret)
     },
-    .Optional(inner) => collect_refs_in_type_expr(refs, ctx, inner, sym),
+    .Optional(inner) => ctx.collect_refs_in_type_expr(refs, inner),
     .Result(ok, err) => {
-      refs = collect_refs_in_type_expr(refs, ctx, ok, sym)
-      collect_refs_in_type_expr(refs, ctx, err, sym)
+      refs = ctx.collect_refs_in_type_expr(refs, ok)
+      ctx.collect_refs_in_type_expr(refs, err)
     },
     .Record(fields) => {
       for f in fields {
-        refs = collect_refs_in_type_expr(refs, ctx, f.ty, sym)
+        refs = ctx.collect_refs_in_type_expr(refs, f.ty)
       }
 
       refs
@@ -1240,7 +1207,7 @@ fn collect_refs_in_type_expr(
     .Sum(vars) => {
       for v in vars {
         for f in v.fields {
-          refs = collect_refs_in_type_expr(refs, ctx, f, sym)
+          refs = ctx.collect_refs_in_type_expr(refs, f)
         }
       }
 
@@ -1250,12 +1217,9 @@ fn collect_refs_in_type_expr(
   }
 }
 
-fn collect_refs_in_type_path(
-  refs: Vector<ReferenceLocation>,
-  ctx: RefCtx,
-  path: TypePath,
-  sym: SymbolId,
-) Vector<ReferenceLocation> {
+fn collect_refs_in_type_path(ctx: RefCtx, refs: Vector<ReferenceLocation>, path: TypePath) Vector<
+  ReferenceLocation,
+> {
   if path.segments.len() == 0 {
     return refs
   }
@@ -1263,7 +1227,7 @@ fn collect_refs_in_type_path(
   joined_name := path.segments.join(".")
   last_name := path.segments[path.segments.len() - 1]
 
-  case sym {
+  case ctx.sym {
     .TypeDef(mod_path, target_name) => {
       matched := matches_type(ctx, joined_name, mod_path, target_name)
 
@@ -1286,64 +1250,64 @@ fn type_path_name_span(path: TypePath, name: String) Span {
   Span.{ file_id: path.span.file_id, start: path.span.end - name.len(), end: path.span.end }
 }
 
-fn collect_refs_in_block(refs: Vector<ReferenceLocation>, ctx: RefCtx, block: Block, sym: SymbolId) Vector<
+fn collect_refs_in_block(ctx: RefCtx, refs: Vector<ReferenceLocation>, block: Block) Vector<
   ReferenceLocation,
 > {
   for stmt in block.stmts {
-    refs = collect_refs_in_stmt(refs, ctx, stmt, sym)
+    refs = ctx.collect_refs_in_stmt(refs, stmt)
   }
 
   case block.tail {
-    .Some(e) => collect_refs_in_expr(refs, ctx, e, sym),
+    .Some(e) => ctx.collect_refs_in_expr(refs, e),
     .None => refs,
   }
 }
 
-fn collect_refs_in_stmt(refs: Vector<ReferenceLocation>, ctx: RefCtx, stmt: Stmt, sym: SymbolId) Vector<
+fn collect_refs_in_stmt(ctx: RefCtx, refs: Vector<ReferenceLocation>, stmt: Stmt) Vector<
   ReferenceLocation,
 > {
   case stmt {
     .Let(ls) => {
       case ls.ty {
-        .Some(t) => refs = collect_refs_in_type_expr(refs, ctx, t, sym),
+        .Some(t) => refs = ctx.collect_refs_in_type_expr(refs, t),
         .None => {},
       }
 
-      collect_refs_in_expr(refs, ctx, ls.value, sym)
+      ctx.collect_refs_in_expr(refs, ls.value)
     },
     .For(fs) => {
       case fs.iter {
-        .Some(e) => refs = collect_refs_in_expr(refs, ctx, e, sym),
+        .Some(e) => refs = ctx.collect_refs_in_expr(refs, e),
         .None => {},
       }
 
       case fs.condition {
-        .Some(e) => refs = collect_refs_in_expr(refs, ctx, e, sym),
+        .Some(e) => refs = ctx.collect_refs_in_expr(refs, e),
         .None => {},
       }
 
-      collect_refs_in_block(refs, ctx, fs.body, sym)
+      ctx.collect_refs_in_block(refs, fs.body)
     },
     .Return(rs) => case rs.value {
-      .Some(e) => collect_refs_in_expr(refs, ctx, e, sym),
+      .Some(e) => ctx.collect_refs_in_expr(refs, e),
       .None => refs,
     },
     .Break(bs) => case bs.value {
-      .Some(e) => collect_refs_in_expr(refs, ctx, e, sym),
+      .Some(e) => ctx.collect_refs_in_expr(refs, e),
       .None => refs,
     },
-    .Defer(ds) => collect_refs_in_expr(refs, ctx, ds.expr, sym),
-    .Expr(es) => collect_refs_in_expr(refs, ctx, es.expr, sym),
+    .Defer(ds) => ctx.collect_refs_in_expr(refs, ds.expr),
+    .Expr(es) => ctx.collect_refs_in_expr(refs, es.expr),
     _ => refs,
   }
 }
 
-fn collect_refs_in_expr(refs: Vector<ReferenceLocation>, ctx: RefCtx, expr: Expr, sym: SymbolId) Vector<
+fn collect_refs_in_expr(ctx: RefCtx, refs: Vector<ReferenceLocation>, expr: Expr) Vector<
   ReferenceLocation,
 > {
   case expr.kind {
     .Ident(name) => {
-      case sym {
+      case ctx.sym {
         .Func(mod_path, func_name) => if matches_func(ctx, name, mod_path, func_name) {
           refs = .append(.{ uri: ctx.uri, span: expr.span })
         },
@@ -1353,19 +1317,19 @@ fn collect_refs_in_expr(refs: Vector<ReferenceLocation>, ctx: RefCtx, expr: Expr
       refs
     },
     .Call(callee, args) => {
-      refs = collect_refs_in_expr(refs, ctx, callee, sym)
+      refs = ctx.collect_refs_in_expr(refs, callee)
 
       for a in args {
-        refs = collect_refs_in_expr(refs, ctx, a, sym)
+        refs = ctx.collect_refs_in_expr(refs, a)
       }
 
       refs
     },
     .Field(base, field) => {
-      refs = collect_refs_in_expr(refs, ctx, base, sym)
+      refs = ctx.collect_refs_in_expr(refs, base)
 
       case base.kind {
-        .Ident(alias) => case sym {
+        .Ident(alias) => case ctx.sym {
           .Func(mod_path, func_name) => if matches_func(
             ctx,
             "${alias}.${field}",
@@ -1397,7 +1361,7 @@ fn collect_refs_in_expr(refs: Vector<ReferenceLocation>, ctx: RefCtx, expr: Expr
           .Variant(_, _, variant_name) => if field == variant_name {
             case ctx.typed {
               .Some(t) => case t.env.lookup_type(alias) {
-                .Some(entry) => case sym {
+                .Some(entry) => case ctx.sym {
                   .Variant(vmod, vtype, _) => if matches_type(ctx, alias, vmod, vtype) {
                     field_start := expr.span.end - field.len()
                     field_span := Span.{
@@ -1419,7 +1383,7 @@ fn collect_refs_in_expr(refs: Vector<ReferenceLocation>, ctx: RefCtx, expr: Expr
         _ => {},
       }
 
-      case sym {
+      case ctx.sym {
         .Field(fmod, ftype_name, field_name) => if field == field_name {
           case ctx.typed {
             .Some(t) => case t.type_map[base.id] {
@@ -1466,29 +1430,29 @@ fn collect_refs_in_expr(refs: Vector<ReferenceLocation>, ctx: RefCtx, expr: Expr
       refs
     },
     .Index(base, idx) => {
-      refs = collect_refs_in_expr(refs, ctx, base, sym)
-      collect_refs_in_expr(refs, ctx, idx, sym)
+      refs = ctx.collect_refs_in_expr(refs, base)
+      ctx.collect_refs_in_expr(refs, idx)
     },
-    .Unary(_, inner) => collect_refs_in_expr(refs, ctx, inner, sym),
+    .Unary(_, inner) => ctx.collect_refs_in_expr(refs, inner),
     .Binary(_, lhs, rhs) => {
-      refs = collect_refs_in_expr(refs, ctx, lhs, sym)
-      collect_refs_in_expr(refs, ctx, rhs, sym)
+      refs = ctx.collect_refs_in_expr(refs, lhs)
+      ctx.collect_refs_in_expr(refs, rhs)
     },
     .If(cond_e, then_block, else_expr) => {
-      refs = collect_refs_in_expr(refs, ctx, cond_e, sym)
-      refs = collect_refs_in_block(refs, ctx, then_block, sym)
+      refs = ctx.collect_refs_in_expr(refs, cond_e)
+      refs = ctx.collect_refs_in_block(refs, then_block)
 
       case else_expr {
-        .Some(e) => collect_refs_in_expr(refs, ctx, e, sym),
+        .Some(e) => ctx.collect_refs_in_expr(refs, e),
         .None => refs,
       }
     },
     .Case(scrutinee, arms) => {
-      refs = collect_refs_in_expr(refs, ctx, scrutinee, sym)
+      refs = ctx.collect_refs_in_expr(refs, scrutinee)
 
       for arm in arms {
-        refs = collect_refs_in_pattern(refs, ctx, arm.pattern, sym, scrutinee)
-        refs = collect_refs_in_expr(refs, ctx, arm.expr, sym)
+        refs = ctx.collect_refs_in_pattern(refs, arm.pattern, scrutinee)
+        refs = ctx.collect_refs_in_expr(refs, arm.expr)
       }
 
       refs
@@ -1496,26 +1460,26 @@ fn collect_refs_in_expr(refs: Vector<ReferenceLocation>, ctx: RefCtx, expr: Expr
     .Cond(arms) => {
       for arm in arms {
         case arm.condition {
-          .Some(cond_expr) => refs = collect_refs_in_expr(refs, ctx, cond_expr, sym),
+          .Some(cond_expr) => refs = ctx.collect_refs_in_expr(refs, cond_expr),
           .None => {},
         }
 
-        refs = collect_refs_in_expr(refs, ctx, arm.body, sym)
+        refs = ctx.collect_refs_in_expr(refs, arm.body)
       }
 
       refs
     },
-    .BlockExpr(b) => collect_refs_in_block(refs, ctx, b, sym),
+    .BlockExpr(b) => ctx.collect_refs_in_block(refs, b),
     .Array(elems) => {
       for e in elems {
-        refs = collect_refs_in_expr(refs, ctx, e, sym)
+        refs = ctx.collect_refs_in_expr(refs, e)
       }
 
       refs
     },
-    .Record(entries) => collect_refs_in_record_entries(refs, ctx, entries, sym, expr.id),
+    .Record(entries) => ctx.collect_refs_in_record_entries(refs, entries, expr.id),
     .NamedRecord(rname, entries) => {
-      case sym {
+      case ctx.sym {
         .TypeDef(mod_path, type_name) => if matches_type(ctx, rname, mod_path, type_name) {
           name_span := Span.{
             file_id: expr.span.file_id,
@@ -1536,7 +1500,7 @@ fn collect_refs_in_expr(refs: Vector<ReferenceLocation>, ctx: RefCtx, expr: Expr
 
       for entry in entries {
         case entry.value {
-          .Some(e) => refs = collect_refs_in_expr(refs, ctx, e, sym),
+          .Some(e) => refs = ctx.collect_refs_in_expr(refs, e),
           .None => {},
         }
       }
@@ -1544,11 +1508,11 @@ fn collect_refs_in_expr(refs: Vector<ReferenceLocation>, ctx: RefCtx, expr: Expr
       refs
     },
     .Variant(vname, fields) => {
-      case sym {
+      case ctx.sym {
         .Variant(_, _, variant_name) => if vname == variant_name {
           case ctx.typed {
             .Some(t) => case t.type_map[expr.id] {
-              .Some(.Named(tid, _)) => case sym {
+              .Some(.Named(tid, _)) => case ctx.sym {
                 .Variant(vmod, vtype, _) => if matches_type_id(ctx, tid, vmod, vtype) {
                   // expr.span starts at the `.`; skip it to get the name
                   vname_start := expr.span.start + 1
@@ -1570,7 +1534,7 @@ fn collect_refs_in_expr(refs: Vector<ReferenceLocation>, ctx: RefCtx, expr: Expr
       }
 
       for f in fields {
-        refs = collect_refs_in_expr(refs, ctx, f, sym)
+        refs = ctx.collect_refs_in_expr(refs, f)
       }
 
       refs
@@ -1578,35 +1542,35 @@ fn collect_refs_in_expr(refs: Vector<ReferenceLocation>, ctx: RefCtx, expr: Expr
     .Closure(params, ret, body) => {
       for p in params {
         case p.ty {
-          .Some(t) => refs = collect_refs_in_type_expr(refs, ctx, t, sym),
+          .Some(t) => refs = ctx.collect_refs_in_type_expr(refs, t),
           .None => {},
         }
       }
 
       case ret {
-        .Some(t) => refs = collect_refs_in_type_expr(refs, ctx, t, sym),
+        .Some(t) => refs = ctx.collect_refs_in_type_expr(refs, t),
         .None => {},
       }
 
-      collect_refs_in_block(refs, ctx, body, sym)
+      ctx.collect_refs_in_block(refs, body)
     },
     .Collect(col) => {
       case col.iter {
-        .Some(e) => refs = collect_refs_in_expr(refs, ctx, e, sym),
+        .Some(e) => refs = ctx.collect_refs_in_expr(refs, e),
         .None => {},
       }
 
       case col.condition {
-        .Some(e) => refs = collect_refs_in_expr(refs, ctx, e, sym),
+        .Some(e) => refs = ctx.collect_refs_in_expr(refs, e),
         .None => {},
       }
 
-      collect_refs_in_block(refs, ctx, col.body, sym)
+      ctx.collect_refs_in_block(refs, col.body)
     },
     .StringInterp(parts) => {
       for part in parts {
         case part {
-          .Interpolation(e) => refs = collect_refs_in_expr(refs, ctx, e, sym),
+          .Interpolation(e) => refs = ctx.collect_refs_in_expr(refs, e),
           _ => {},
         }
       }
@@ -1618,21 +1582,20 @@ fn collect_refs_in_expr(refs: Vector<ReferenceLocation>, ctx: RefCtx, expr: Expr
 }
 
 fn collect_refs_in_record_entries(
-  refs: Vector<ReferenceLocation>,
   ctx: RefCtx,
+  refs: Vector<ReferenceLocation>,
   entries: Vector<RecordEntry>,
-  sym: SymbolId,
   record_expr_id: Int,
 ) Vector<ReferenceLocation> {
   for entry in entries {
     case entry.value {
-      .Some(e) => refs = collect_refs_in_expr(refs, ctx, e, sym),
+      .Some(e) => refs = ctx.collect_refs_in_expr(refs, e),
       .None => {},
     }
 
     // Check if this field name matches a Field symbol, using the record's
     // inferred type to verify it's the right record type.
-    case sym {
+    case ctx.sym {
       .Field(fmod, ftype_name, field_name) => if entry.name == field_name {
         case ctx.typed {
           .Some(t) => case t.type_map[record_expr_id] {
@@ -1660,15 +1623,14 @@ fn record_entry_name_span(entry: RecordEntry) Span {
 }
 
 fn collect_refs_in_pattern(
-  refs: Vector<ReferenceLocation>,
   ctx: RefCtx,
+  refs: Vector<ReferenceLocation>,
   pat: Pattern,
-  sym: SymbolId,
   scrutinee: Expr,
 ) Vector<ReferenceLocation> {
   case pat.kind {
     .Variant(vname, subs) => {
-      case sym {
+      case ctx.sym {
         .Variant(vmod, vtype, variant_name) => if vname == variant_name {
           case ctx.typed {
             .Some(t) => case t.type_map[scrutinee.id] {
@@ -1690,13 +1652,13 @@ fn collect_refs_in_pattern(
       }
 
       for p in subs {
-        refs = collect_refs_in_pattern(refs, ctx, p, sym, scrutinee)
+        refs = ctx.collect_refs_in_pattern(refs, p, scrutinee)
       }
 
       refs
     },
     .QualifiedVariant(prefix, vname, subs) => {
-      case sym {
+      case ctx.sym {
         .Variant(vmod, vtype, variant_name) => if vname == variant_name {
           case ctx.typed {
             .Some(t) => case t.type_map[scrutinee.id] {
@@ -1718,12 +1680,12 @@ fn collect_refs_in_pattern(
       }
 
       for p in subs {
-        refs = collect_refs_in_pattern(refs, ctx, p, sym, scrutinee)
+        refs = ctx.collect_refs_in_pattern(refs, p, scrutinee)
       }
 
       refs
     },
-    .Literal(e) => collect_refs_in_expr(refs, ctx, e, sym),
+    .Literal(e) => ctx.collect_refs_in_expr(refs, e),
     _ => refs,
   }
 }
