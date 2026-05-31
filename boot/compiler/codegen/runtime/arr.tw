@@ -617,7 +617,10 @@ fn make_relaxed_fn() FuncDef {
 // pack_children(scratch: VecChildren, count: i32, node_shift: i32) -> (node, shift)
 // Group `count` children (level node_shift-5) into internal node(s) at node_shift,
 // at most 32 children each. <=32 children -> one node at node_shift; otherwise
-// several nodes wrapped under one grandparent at node_shift+5.
+// several nodes wrapped under one grandparent at node_shift+5. Overflow children
+// are distributed evenly across the minimum number of parents: this is the local
+// balance rule used by the current spine merge, and avoids the single-child
+// overflow chains that cause repeated-prepend height creep.
 fn pack_children_fn() FuncDef {
   // p0=scratch, p1=count, p2=node_shift
   // L3=ch, L4=off, L5=chunk, L6=parents, L7=pi, L8=resultnode, L9=resultshift

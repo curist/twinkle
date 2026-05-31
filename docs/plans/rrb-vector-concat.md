@@ -178,11 +178,20 @@ Standard RRB concatenation, O(log n):
    leaves. At the leaf level, the rightmost leaf of `a` and leftmost of `b` are
    the merge boundary.
 3. **Rebalance the merged level.** Redistribute the boundary nodes' children so
-   each node holds within the slack invariant of full (`m - e` … `m` children,
-   `e` typically 1–2). This is what keeps height bounded under repeated concat
-   (prevents "height creep"). The rebalanced parent becomes a **relaxed** node
-   with a freshly computed size table (unless all children came out full, in
-   which case it may stay regular — see canonicalization).
+   each node holds within the classical RRB slack invariant of near-full
+   occupancy (`m - e` … `m` children for interior nodes, with bounded edge
+   exceptions when the local window cannot mathematically fill another node).
+   This is what keeps height bounded under repeated concat (prevents "height
+   creep") while preserving good constants. The rebalanced parent becomes a
+   **relaxed** node with a freshly computed size table (unless all children came
+   out full, in which case it may stay regular — see canonicalization).
+
+   **Current boot baseline.** The first implementation uses a simpler local
+   even-redistribution rule across the minimum number of parent nodes. This is
+   not the classical slack invariant; it is a pragmatic baseline that avoids
+   one-child overflow chains and has passed the scaling guards. Phase 7 below
+   exists to compare that baseline against stricter classical/windowed RRB
+   rebalancing.
 4. **Propagate upward**, creating relaxed parents at each level of the seam, up
    to a (possibly new) root. Recompute `shift`/`len`.
 
@@ -225,7 +234,9 @@ machinery as concat, so it is part of the core work, not a bonus.
 - **Relaxed**: `sizes != null`, monotonically increasing, `sizes[last] == ` node
   element count; children may be under-full.
 - A relaxed node's children may themselves be regular or relaxed.
-- Height stays within the RRB slack bound after concat (rebalancing guarantee).
+- Height stays bounded after concat. The current boot baseline guarantees this
+  by evenly redistributing overflow across the minimum number of parent nodes;
+  Phase 7 evaluates the stricter classical near-full slack invariant.
 - `empty_pvec` and append-only construction remain entirely regular.
 
 These join the existing structural invariants documented at the top of
@@ -430,6 +441,23 @@ for the prepend and dequeue loops demonstrating O(n log n) scaling.
 **Phase 6 (optional) — bulk `builder_extend`** (splice leaves instead of
 replaying elements).
 
+**Phase 7 — classical RRB slack comparison.** Treat the current boot concat
+packing (minimum-parent, even redistribution) as the baseline and prototype a
+stricter classical/windowed rebalance. The stricter variant should gather a
+bounded window of adjacent seam siblings where needed, redistribute so interior
+nodes are near-full (`m - e` … `m`, with only bounded edge exceptions), and then
+measure against the baseline before replacing it. Compare at least:
+
+- prepend/right-operand concat scaling and wall-clock constants;
+- `concat_balanced` and append-at-end controls;
+- `get`/`set` on regular and relaxed vectors (especially whether more nodes
+  canonicalize back to regular and avoid size-table navigation);
+- memory/shape proxies where available: number of relaxed nodes, average child
+  occupancy, and tree height on deterministic adversarial concat patterns.
+
+Do not switch to naive full-left packing (`32,1` for 33 children): that is the
+height-creep shape the current even-redistribution baseline intentionally avoids.
+
 ## Testing & characterization
 
 - **Scaling guards**: fixtures that (a) prepend in a loop (`acc = [x].concat(acc)`)
@@ -453,8 +481,10 @@ replaying elements).
   regular. Mitigation: radix-first guess + canonicalization to drop size tables
   when children are full.
 - **Height creep** under repeated concat if rebalancing is skipped. Mitigation:
-  implement the bounded-slack rebalance from the start; do not ship a
-  naive "single relaxed root" concat as the end state.
+  redistribute seam overflow from the start; do not ship a naive "single relaxed
+  root" or one-child overflow-chain concat as the end state. Phase 7 compares the
+  current even-redistribution baseline with stricter classical/windowed RRB
+  slack to see whether the extra implementation complexity buys better constants.
 - **GC layout change** ripples to every `VecInternal` constructor and to
   `from_array`/`to_array`/builder freeze. Mitigation: Phase 1 isolates the
   additive field change with the suite green before any algorithmic change.
