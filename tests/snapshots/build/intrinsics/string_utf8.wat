@@ -33,66 +33,83 @@
   (type $functype_0 (func (param f64) (result (ref $rt_types__String))))
   (type $functype_1 (func (param (ref null $rt_types__String))))
   (type $functype_2 (func (param i32) (result i32)))
-  (type $functype_3 (func (param (ref $rt_types__PVec) i32) (result (ref $rt_types__Array))))
-  (type $functype_4 (func (param i32 (ref eq)) (result (ref eq))))
-  (type $functype_5 (func (param i32 i32 (ref null $rt_types__VecInternal) (ref eq)) (result (ref eq))))
-  (type $functype_6 (func (param i32 (ref eq) i32 anyref) (result (ref eq))))
-  (type $functype_7 (func (param (ref $rt_types__PVec) anyref) (result (ref $rt_types__PVec))))
-  (type $functype_8 (func (param i32 anyref) (result (ref $rt_types__PVec))))
-  (type $functype_9 (func (param (ref null $rt_types__PVec) i32) (result anyref)))
-  (type $functype_10 (func (param (ref null $rt_types__PVec) i32 anyref) (result (ref $rt_types__PVec))))
-  (type $functype_11 (func (param (ref null $rt_types__PVec)) (result i32)))
-  (type $functype_12 (func (param (ref null $rt_types__PVec) (ref null $rt_types__PVec)) (result (ref $rt_types__PVec))))
-  (type $functype_13 (func (param (ref null $rt_types__PVec) i32 i32) (result (ref $rt_types__PVec))))
-  (type $functype_14 (func (param i32 i32 (ref null $rt_types__VecInternal)) (result (ref null eq))))
-  (type $functype_15 (func (param (ref null $rt_types__PVec)) (result (ref $rt_types__PVec))))
-  (type $functype_16 (func (result (ref $rt_types__Array))))
-  (type $functype_17 (func (param (ref null $rt_types__PVec)) (result (ref $rt_types__Array))))
-  (type $functype_18 (func (param (ref null $rt_types__Array) anyref)))
-  (type $functype_19 (func (param (ref null $rt_types__Array) (ref null $rt_types__PVec))))
-  (type $functype_20 (func (param (ref null $rt_types__Array)) (result (ref $rt_types__PVec))))
-  (type $functype_21 (func (param (ref $rt_types__Array)) (result (ref $rt_types__PVec))))
-  (type $functype_22 (func (param (ref null $rt_types__Variant)) (result (ref null $rt_types__Variant))))
-  (type $functype_23 (func (param (ref null $rt_types__String)) (result i32)))
-  (type $functype_24 (func (param (ref null $rt_types__String) (ref null $rt_types__String)) (result (ref $rt_types__String))))
-  (type $functype_25 (func (param (ref null $rt_types__String) i32 i32) (result (ref $rt_types__String))))
-  (type $functype_26 (func (param (ref null $rt_types__String) (ref null $rt_types__String)) (result i32)))
-  (type $functype_27 (func (param i64) (result (ref $rt_types__String))))
-  (type $functype_28 (func (param i32) (result (ref $rt_types__String))))
-  (type $functype_29 (func (param (ref $rt_types__Array) i32 anyref) (result (ref $rt_types__Array))))
-  (type $functype_30 (func (param (ref $rt_types__Array) i32) (result (ref $rt_types__Array))))
-  (type $functype_31 (func (param i64) (result i64)))
-  (type $functype_32 (func (param (ref null $rt_types__String)) (result i64)))
-  (type $functype_33 (func (param anyref) (result i64)))
-  (type $functype_34 (func (param (ref null $rt_types__HamtCollision) anyref) (result anyref)))
-  (type $functype_35 (func (param (ref null $rt_types__HamtCollision) i64 anyref anyref) (result (ref $rt_types__HamtCollision))))
-  (type $functype_36 (func (param (ref null $rt_types__HamtNode) i64 i32 anyref) (result anyref)))
-  (type $functype_37 (func (param (ref null $rt_types__HamtNode) i64 i32 anyref anyref) (result (ref $rt_types__HamtNode))))
-  (type $functype_38 (func (param (ref null $rt_types__HamtNode) i64 i32 anyref) (result (ref null $rt_types__HamtNode))))
-  (type $functype_39 (func (result (ref $rt_types__PDict))))
-  (type $functype_40 (func (param (ref null $rt_types__PDict)) (result i32)))
-  (type $functype_41 (func (param (ref null $rt_types__PDict)) (result (ref $rt_types__PVec))))
-  (type $functype_42 (func (param (ref null $rt_types__PDict) anyref) (result i32)))
-  (type $functype_43 (func (param (ref null $rt_types__PDict) anyref) (result anyref)))
-  (type $functype_44 (func (param (ref null $rt_types__PDict) anyref) (result (ref $rt_types__Variant))))
-  (type $functype_45 (func (param (ref null $rt_types__PDict) anyref anyref) (result (ref $rt_types__PDict))))
-  (type $functype_46 (func (param (ref null $rt_types__PDict) anyref) (result (ref $rt_types__PDict))))
-  (type $functype_47 (func (param (ref null $rt_types__Array) (ref null $rt_types__Array)) (result i32)))
-  (type $functype_48 (func (param (ref $rt_types__PVec) (ref $rt_types__PVec)) (result i32)))
-  (type $functype_49 (func (param (ref $rt_types__PDict) (ref $rt_types__PDict)) (result i32)))
-  (type $functype_50 (func (param (ref $rt_types__Variant) (ref $rt_types__Variant)) (result i32)))
-  (type $functype_51 (func (param anyref anyref) (result i32)))
-  (type $functype_52 (func (param (ref null $rt_types__PVec) (ref null $rt_types__String)) (result (ref null $rt_types__String))))
-  (type $functype_53 (func (param (ref null $rt_types__Variant)) (result (ref null $rt_types__String))))
-  (type $functype_54 (func (param i64) (result i32)))
-  (type $functype_55 (func))
-  (type $functype_56 (func (param anyref anyref) (result anyref)))
-  (type $functype_57 (func (param anyref) (result (ref null $rt_types__Variant))))
-  (type $functype_58 (func (param (ref null $rt_types__String)) (result anyref)))
-  (type $functype_59 (func (param i32) (result anyref)))
-  (type $functype_60 (func (param (ref null $rt_types__String)) (result (ref $rt_types__Array))))
-  (type $functype_61 (func (param (ref null $rt_types__Array)) (result anyref)))
-  (type $functype_62 (func (result (ref $rt_types__String))))
+  (type $functype_3 (func (param (ref $rt_types__VecInternal) i32 i32) (result i32 i32)))
+  (type $functype_4 (func (param (ref $rt_types__VecInternal)) (result i32)))
+  (type $functype_5 (func (param (ref $rt_types__VecInternal) i32 (ref $rt_types__Array) i32) (result i32)))
+  (type $functype_6 (func (param (ref eq) i32) (result i32)))
+  (type $functype_7 (func (param (ref $rt_types__VecChildren) i32 i32) (result (ref $rt_types__VecInternal))))
+  (type $functype_8 (func (param (ref $rt_types__VecChildren) i32 i32) (result (ref eq) i32)))
+  (type $functype_9 (func (param (ref $rt_types__VecChildren) i32 (ref eq) i32 i32) (result i32)))
+  (type $functype_10 (func (param (ref $rt_types__VecInternal) i32 (ref $rt_types__VecInternal) i32) (result (ref eq) i32)))
+  (type $functype_11 (func (param (ref $rt_types__Array)) (result (ref $rt_types__VecInternal))))
+  (type $functype_12 (func (param (ref $rt_types__PVec) i32) (result (ref $rt_types__Array) i32)))
+  (type $functype_13 (func (param i32 (ref eq)) (result (ref eq))))
+  (type $functype_14 (func (param i32 i32 (ref null $rt_types__VecInternal) (ref eq)) (result (ref eq))))
+  (type $functype_15 (func (param i32 (ref eq) i32 anyref) (result (ref eq))))
+  (type $functype_16 (func (param (ref $rt_types__PVec) anyref) (result (ref $rt_types__PVec))))
+  (type $functype_17 (func (param (ref $rt_types__PVec) (ref $rt_types__Array)) (result (ref $rt_types__PVec))))
+  (type $functype_18 (func (param i32 anyref) (result (ref $rt_types__PVec))))
+  (type $functype_19 (func (param (ref null $rt_types__PVec) i32) (result anyref)))
+  (type $functype_20 (func (param (ref null $rt_types__PVec) i32 anyref) (result (ref $rt_types__PVec))))
+  (type $functype_21 (func (param (ref null $rt_types__PVec)) (result i32)))
+  (type $functype_22 (func (param (ref null $rt_types__PVec) (ref null $rt_types__PVec)) (result (ref $rt_types__PVec))))
+  (type $functype_23 (func (param (ref eq) i32 i32) (result (ref eq))))
+  (type $functype_24 (func (param (ref eq) i32) (result (ref $rt_types__Array))))
+  (type $functype_25 (func (param (ref null $rt_types__VecInternal) i32) (result (ref null $rt_types__VecInternal) i32)))
+  (type $functype_26 (func (param (ref eq) i32 i32) (result (ref $rt_types__PVec))))
+  (type $functype_27 (func (param (ref null $rt_types__PVec) i32 i32) (result (ref $rt_types__PVec))))
+  (type $functype_28 (func (param i32 i32 (ref null $rt_types__VecInternal)) (result (ref null eq))))
+  (type $functype_29 (func (param (ref null $rt_types__PVec)) (result (ref $rt_types__PVec))))
+  (type $functype_30 (func (result (ref $rt_types__Array))))
+  (type $functype_31 (func (param (ref null $rt_types__PVec)) (result (ref $rt_types__Array))))
+  (type $functype_32 (func (param (ref null $rt_types__Array) anyref)))
+  (type $functype_33 (func (param (ref null $rt_types__Array) (ref $rt_types__Array) i32 i32)))
+  (type $functype_34 (func (param (ref null $rt_types__Array) (ref $rt_types__VecInternal) i32)))
+  (type $functype_35 (func (param (ref null $rt_types__Array) (ref null $rt_types__PVec))))
+  (type $functype_36 (func (param (ref null $rt_types__Array)) (result (ref $rt_types__PVec))))
+  (type $functype_37 (func (param (ref $rt_types__Array)) (result (ref $rt_types__PVec))))
+  (type $functype_38 (func (param (ref null $rt_types__Variant)) (result (ref null $rt_types__Variant))))
+  (type $functype_39 (func (result (ref $rt_types__PVec))))
+  (type $functype_40 (func (param (ref null $rt_types__String)) (result i32)))
+  (type $functype_41 (func (param (ref null $rt_types__String) (ref null $rt_types__String)) (result (ref $rt_types__String))))
+  (type $functype_42 (func (param (ref null $rt_types__String) i32 i32) (result (ref $rt_types__String))))
+  (type $functype_43 (func (param (ref null $rt_types__String) (ref null $rt_types__String)) (result i32)))
+  (type $functype_44 (func (param i64) (result (ref $rt_types__String))))
+  (type $functype_45 (func (param i32) (result (ref $rt_types__String))))
+  (type $functype_46 (func (param (ref $rt_types__Array) i32 anyref) (result (ref $rt_types__Array))))
+  (type $functype_47 (func (param (ref $rt_types__Array) i32) (result (ref $rt_types__Array))))
+  (type $functype_48 (func (param i64) (result i64)))
+  (type $functype_49 (func (param (ref null $rt_types__String)) (result i64)))
+  (type $functype_50 (func (param anyref) (result i64)))
+  (type $functype_51 (func (param (ref null $rt_types__HamtCollision) anyref) (result anyref)))
+  (type $functype_52 (func (param (ref null $rt_types__HamtCollision) i64 anyref anyref) (result (ref $rt_types__HamtCollision))))
+  (type $functype_53 (func (param (ref null $rt_types__HamtNode) i64 i32 anyref) (result anyref)))
+  (type $functype_54 (func (param (ref null $rt_types__HamtNode) i64 i32 anyref anyref) (result (ref $rt_types__HamtNode))))
+  (type $functype_55 (func (param (ref null $rt_types__HamtNode) i64 i32 anyref) (result (ref null $rt_types__HamtNode))))
+  (type $functype_56 (func (result (ref $rt_types__PDict))))
+  (type $functype_57 (func (param (ref null $rt_types__PDict)) (result i32)))
+  (type $functype_58 (func (param (ref null $rt_types__PDict)) (result (ref $rt_types__PVec))))
+  (type $functype_59 (func (param (ref null $rt_types__PDict) anyref) (result i32)))
+  (type $functype_60 (func (param (ref null $rt_types__PDict) anyref) (result anyref)))
+  (type $functype_61 (func (param (ref null $rt_types__PDict) anyref) (result (ref $rt_types__Variant))))
+  (type $functype_62 (func (param (ref null $rt_types__PDict) anyref anyref) (result (ref $rt_types__PDict))))
+  (type $functype_63 (func (param (ref null $rt_types__PDict) anyref) (result (ref $rt_types__PDict))))
+  (type $functype_64 (func (param (ref null $rt_types__Array) (ref null $rt_types__Array)) (result i32)))
+  (type $functype_65 (func (param (ref $rt_types__PVec) (ref $rt_types__PVec)) (result i32)))
+  (type $functype_66 (func (param (ref $rt_types__PDict) (ref $rt_types__PDict)) (result i32)))
+  (type $functype_67 (func (param (ref $rt_types__Variant) (ref $rt_types__Variant)) (result i32)))
+  (type $functype_68 (func (param anyref anyref) (result i32)))
+  (type $functype_69 (func (param (ref null $rt_types__PVec) (ref null $rt_types__String)) (result (ref null $rt_types__String))))
+  (type $functype_70 (func (param (ref null $rt_types__Variant)) (result (ref null $rt_types__String))))
+  (type $functype_71 (func (param i64) (result i32)))
+  (type $functype_72 (func))
+  (type $functype_73 (func (param anyref anyref) (result anyref)))
+  (type $functype_74 (func (param anyref) (result (ref null $rt_types__Variant))))
+  (type $functype_75 (func (param (ref null $rt_types__String)) (result anyref)))
+  (type $functype_76 (func (param i32) (result anyref)))
+  (type $functype_77 (func (param (ref null $rt_types__String)) (result (ref $rt_types__Array))))
+  (type $functype_78 (func (param (ref null $rt_types__Array)) (result anyref)))
+  (type $functype_79 (func (result (ref $rt_types__String))))
   (import "host" "f64_to_string" (func $rt_str__host_f64_to_string (type $functype_0)))
   (import "host" "print" (func $rt_core__host_print (type $functype_1)))
   (import "host" "println" (func $rt_core__host_println (type $functype_1)))
@@ -136,81 +153,922 @@
         i32.const 5
         i32.shl))
   )
-  (func $rt_arr__get_leaf (type $functype_3)
+  (func $rt_arr__vi_nav (type $functype_3)
+    (param $p0 (ref $rt_types__VecInternal))
+    (param $p1 i32)
+    (param $p2 i32)
+    (result i32)
+    (result i32)
+    (local $p3 (ref null $rt_types__I32Array))
+    (local $p4 i32)
+    local.get $p0
+    struct.get $rt_types__VecInternal 1
+    local.set $p3
+    local.get $p3
+    ref.is_null
+    (if
+      (then
+        local.get $p1
+        local.get $p2
+        i32.shr_u
+        i32.const 31
+        i32.and
+        local.set $p4)
+      (else
+        local.get $p1
+        i32.const 1
+        local.get $p2
+        i32.const 5
+        i32.add
+        i32.shl
+        i32.const 1
+        i32.sub
+        i32.and
+        local.set $p1
+        local.get $p1
+        local.get $p2
+        i32.shr_u
+        i32.const 31
+        i32.and
+        local.set $p4
+        (block $sbrk
+          (loop $slp
+            local.get $p3
+            ref.as_non_null
+            local.get $p4
+            array.get $rt_types__I32Array
+            local.get $p1
+            i32.gt_s
+            br_if $sbrk
+            local.get $p4
+            i32.const 1
+            i32.add
+            local.set $p4
+            br $slp))
+        local.get $p4
+        i32.eqz
+        (if
+          (then)
+          (else
+            local.get $p1
+            local.get $p3
+            ref.as_non_null
+            local.get $p4
+            i32.const 1
+            i32.sub
+            array.get $rt_types__I32Array
+            i32.sub
+            local.set $p1))))
+    local.get $p4
+    local.get $p1
+  )
+  (func $rt_arr__child_count (type $functype_4)
+    (param $p0 (ref $rt_types__VecInternal))
+    (result i32)
+    (local $p1 (ref null $rt_types__I32Array))
+    (local $p2 i32)
+    local.get $p0
+    struct.get $rt_types__VecInternal 1
+    local.set $p1
+    local.get $p1
+    ref.is_null
+    (if (result i32)
+      (then
+        i32.const 0
+        local.set $p2
+        (block $brk
+          (loop $lp
+            local.get $p2
+            i32.const 32
+            i32.ge_s
+            br_if $brk
+            local.get $p0
+            struct.get $rt_types__VecInternal 0
+            local.get $p2
+            array.get $rt_types__VecChildren
+            ref.is_null
+            br_if $brk
+            local.get $p2
+            i32.const 1
+            i32.add
+            local.set $p2
+            br $lp))
+        local.get $p2)
+      (else
+        local.get $p1
+        ref.as_non_null
+        array.len))
+  )
+  (func $rt_arr__copy_leaves (type $functype_5)
+    (param $p0 (ref $rt_types__VecInternal))
+    (param $p1 i32)
+    (param $p2 (ref $rt_types__Array))
+    (param $p3 i32)
+    (result i32)
+    (local $p4 i32)
+    (local $p5 i32)
+    (local $p6 (ref null eq))
+    local.get $p0
+    call $rt_arr__child_count
+    local.set $p4
+    i32.const 0
+    local.set $p5
+    (block $brk
+      (loop $lp
+        local.get $p5
+        local.get $p4
+        i32.ge_s
+        br_if $brk
+        local.get $p0
+        struct.get $rt_types__VecInternal 0
+        local.get $p5
+        array.get $rt_types__VecChildren
+        local.set $p6
+        local.get $p1
+        i32.const 5
+        i32.eq
+        (if
+          (then
+            local.get $p2
+            local.get $p3
+            local.get $p6
+            ref.as_non_null
+            ref.cast (ref $rt_types__Array)
+            i32.const 0
+            local.get $p6
+            ref.as_non_null
+            ref.cast (ref $rt_types__Array)
+            array.len
+            array.copy $rt_types__Array $rt_types__Array
+            local.get $p3
+            local.get $p6
+            ref.as_non_null
+            ref.cast (ref $rt_types__Array)
+            array.len
+            i32.add
+            local.set $p3)
+          (else
+            local.get $p6
+            ref.as_non_null
+            ref.cast (ref $rt_types__VecInternal)
+            local.get $p1
+            i32.const 5
+            i32.sub
+            local.get $p2
+            local.get $p3
+            call $rt_arr__copy_leaves
+            local.set $p3))
+        local.get $p5
+        i32.const 1
+        i32.add
+        local.set $p5
+        br $lp))
+    local.get $p3
+  )
+  (func $rt_arr__node_total_size (type $functype_6)
+    (param $p0 (ref eq))
+    (param $p1 i32)
+    (result i32)
+    (local $p2 (ref null $rt_types__I32Array))
+    (local $p3 i32)
+    local.get $p1
+    i32.eqz
+    (if (result i32)
+      (then
+        local.get $p0
+        ref.cast (ref $rt_types__Array)
+        array.len)
+      (else
+        local.get $p0
+        ref.cast (ref $rt_types__VecInternal)
+        struct.get $rt_types__VecInternal 1
+        local.set $p2
+        local.get $p2
+        ref.is_null
+        (if (result i32)
+          (then
+            local.get $p0
+            ref.cast (ref $rt_types__VecInternal)
+            call $rt_arr__child_count
+            local.set $p3
+            local.get $p3
+            i32.const 1
+            i32.sub
+            i32.const 1
+            local.get $p1
+            i32.shl
+            i32.mul
+            local.get $p0
+            ref.cast (ref $rt_types__VecInternal)
+            struct.get $rt_types__VecInternal 0
+            local.get $p3
+            i32.const 1
+            i32.sub
+            array.get $rt_types__VecChildren
+            ref.as_non_null
+            local.get $p1
+            i32.const 5
+            i32.sub
+            call $rt_arr__node_total_size
+            i32.add)
+          (else
+            local.get $p2
+            ref.as_non_null
+            local.get $p2
+            ref.as_non_null
+            array.len
+            i32.const 1
+            i32.sub
+            array.get $rt_types__I32Array))))
+  )
+  (func $rt_arr__make_relaxed (type $functype_7)
+    (param $p0 (ref $rt_types__VecChildren))
+    (param $p1 i32)
+    (param $p2 i32)
+    (result (ref $rt_types__VecInternal))
+    (local $p3 (ref null $rt_types__I32Array))
+    (local $p4 i32)
+    (local $p5 i32)
+    (local $p6 i32)
+    (local $p7 i32)
+    i32.const 0
+    local.get $p1
+    array.new $rt_types__I32Array
+    local.set $p3
+    i32.const 0
+    local.set $p4
+    i32.const 0
+    local.set $p5
+    i32.const 1
+    local.set $p6
+    (block $brk
+      (loop $lp
+        local.get $p5
+        local.get $p1
+        i32.ge_s
+        br_if $brk
+        local.get $p0
+        local.get $p5
+        array.get $rt_types__VecChildren
+        ref.as_non_null
+        local.get $p2
+        i32.const 5
+        i32.sub
+        call $rt_arr__node_total_size
+        local.set $p7
+        local.get $p4
+        local.get $p7
+        i32.add
+        local.set $p4
+        local.get $p3
+        ref.as_non_null
+        local.get $p5
+        local.get $p4
+        array.set $rt_types__I32Array
+        local.get $p5
+        local.get $p1
+        i32.const 1
+        i32.sub
+        i32.lt_s
+        (if
+          (then
+            local.get $p7
+            i32.const 1
+            local.get $p2
+            i32.shl
+            i32.ne
+            (if
+              (then
+                i32.const 0
+                local.set $p6))))
+        local.get $p5
+        i32.const 1
+        i32.add
+        local.set $p5
+        br $lp))
+    local.get $p6
+    (if (result (ref $rt_types__VecInternal))
+      (then
+        local.get $p0
+        ref.null $rt_types__I32Array
+        struct.new $rt_types__VecInternal)
+      (else
+        local.get $p0
+        local.get $p3
+        ref.as_non_null
+        struct.new $rt_types__VecInternal))
+  )
+  (func $rt_arr__pack_children (type $functype_8)
+    (param $p0 (ref $rt_types__VecChildren))
+    (param $p1 i32)
+    (param $p2 i32)
+    (result (ref eq))
+    (result i32)
+    (local $p3 (ref null $rt_types__VecChildren))
+    (local $p4 i32)
+    (local $p5 i32)
+    (local $p6 (ref null $rt_types__VecChildren))
+    (local $p7 i32)
+    (local $p8 (ref null eq))
+    (local $p9 i32)
+    (local $p10 i32)
+    (local $p11 i32)
+    (local $p12 i32)
+    local.get $p1
+    i32.const 32
+    i32.le_s
+    (if
+      (then
+        ref.null eq
+        i32.const 32
+        array.new $rt_types__VecChildren
+        local.set $p3
+        local.get $p3
+        ref.as_non_null
+        i32.const 0
+        local.get $p0
+        i32.const 0
+        local.get $p1
+        array.copy $rt_types__VecChildren $rt_types__VecChildren
+        local.get $p3
+        ref.as_non_null
+        local.get $p1
+        local.get $p2
+        call $rt_arr__make_relaxed
+        local.set $p8
+        local.get $p2
+        local.set $p9)
+      (else
+        local.get $p1
+        i32.const 32
+        i32.const 1
+        i32.sub
+        i32.add
+        i32.const 5
+        i32.shr_u
+        local.set $p10
+        local.get $p1
+        local.get $p10
+        i32.div_s
+        local.set $p11
+        local.get $p1
+        local.get $p11
+        local.get $p10
+        i32.mul
+        i32.sub
+        local.set $p12
+        ref.null eq
+        i32.const 32
+        array.new $rt_types__VecChildren
+        local.set $p6
+        i32.const 0
+        local.set $p4
+        i32.const 0
+        local.set $p7
+        (block $brk
+          (loop $lp
+            local.get $p4
+            local.get $p1
+            i32.ge_s
+            br_if $brk
+            local.get $p11
+            local.get $p7
+            local.get $p12
+            i32.lt_s
+            i32.add
+            local.set $p5
+            ref.null eq
+            i32.const 32
+            array.new $rt_types__VecChildren
+            local.set $p3
+            local.get $p3
+            ref.as_non_null
+            i32.const 0
+            local.get $p0
+            local.get $p4
+            local.get $p5
+            array.copy $rt_types__VecChildren $rt_types__VecChildren
+            local.get $p6
+            ref.as_non_null
+            local.get $p7
+            local.get $p3
+            ref.as_non_null
+            local.get $p5
+            local.get $p2
+            call $rt_arr__make_relaxed
+            array.set $rt_types__VecChildren
+            local.get $p7
+            i32.const 1
+            i32.add
+            local.set $p7
+            local.get $p4
+            local.get $p5
+            i32.add
+            local.set $p4
+            br $lp))
+        local.get $p6
+        ref.as_non_null
+        local.get $p7
+        local.get $p2
+        i32.const 5
+        i32.add
+        call $rt_arr__make_relaxed
+        local.set $p8
+        local.get $p2
+        i32.const 5
+        i32.add
+        local.set $p9))
+    local.get $p8
+    ref.as_non_null
+    local.get $p9
+  )
+  (func $rt_arr__append_centre (type $functype_9)
+    (param $p0 (ref $rt_types__VecChildren))
+    (param $p1 i32)
+    (param $p2 (ref eq))
+    (param $p3 i32)
+    (param $p4 i32)
+    (result i32)
+    (local $p5 i32)
+    local.get $p3
+    local.get $p4
+    i32.eq
+    (if (result i32)
+      (then
+        local.get $p0
+        local.get $p1
+        local.get $p2
+        array.set $rt_types__VecChildren
+        local.get $p1
+        i32.const 1
+        i32.add)
+      (else
+        local.get $p2
+        ref.cast (ref $rt_types__VecInternal)
+        call $rt_arr__child_count
+        local.set $p5
+        local.get $p0
+        local.get $p1
+        local.get $p2
+        ref.cast (ref $rt_types__VecInternal)
+        struct.get $rt_types__VecInternal 0
+        i32.const 0
+        local.get $p5
+        array.copy $rt_types__VecChildren $rt_types__VecChildren
+        local.get $p1
+        local.get $p5
+        i32.add))
+  )
+  (func $rt_arr__concat_trees (type $functype_10)
+    (param $p0 (ref $rt_types__VecInternal))
+    (param $p1 i32)
+    (param $p2 (ref $rt_types__VecInternal))
+    (param $p3 i32)
+    (result (ref eq))
+    (result i32)
+    (local $p4 (ref null eq))
+    (local $p5 i32)
+    (local $p6 (ref null $rt_types__VecChildren))
+    (local $p7 i32)
+    (local $p8 i32)
+    (local $p9 i32)
+    (local $p10 (ref null eq))
+    (local $p11 i32)
+    (local $p12 (ref null $rt_types__Array))
+    (local $p13 (ref null $rt_types__Array))
+    (local $p14 i32)
+    (local $p15 (ref null $rt_types__Array))
+    ref.null eq
+    i32.const 96
+    array.new $rt_types__VecChildren
+    local.set $p6
+    i32.const 0
+    local.set $p7
+    local.get $p1
+    local.get $p3
+    i32.eq
+    (if
+      (then
+        local.get $p1
+        i32.const 5
+        i32.eq
+        (if
+          (then
+            local.get $p0
+            call $rt_arr__child_count
+            local.set $p8
+            local.get $p2
+            call $rt_arr__child_count
+            local.set $p9
+            local.get $p0
+            struct.get $rt_types__VecInternal 0
+            local.get $p8
+            i32.const 1
+            i32.sub
+            array.get $rt_types__VecChildren
+            ref.cast (ref null $rt_types__Array)
+            local.set $p12
+            local.get $p2
+            struct.get $rt_types__VecInternal 0
+            i32.const 0
+            array.get $rt_types__VecChildren
+            ref.cast (ref null $rt_types__Array)
+            local.set $p13
+            local.get $p12
+            ref.as_non_null
+            array.len
+            local.get $p13
+            ref.as_non_null
+            array.len
+            i32.add
+            local.set $p14
+            local.get $p14
+            i32.const 32
+            i32.le_s
+            (if
+              (then
+                ref.null none
+                local.get $p14
+                array.new $rt_types__Array
+                local.set $p15
+                local.get $p15
+                ref.as_non_null
+                i32.const 0
+                local.get $p12
+                ref.as_non_null
+                i32.const 0
+                local.get $p12
+                ref.as_non_null
+                array.len
+                array.copy $rt_types__Array $rt_types__Array
+                local.get $p15
+                ref.as_non_null
+                local.get $p12
+                ref.as_non_null
+                array.len
+                local.get $p13
+                ref.as_non_null
+                i32.const 0
+                local.get $p13
+                ref.as_non_null
+                array.len
+                array.copy $rt_types__Array $rt_types__Array
+                local.get $p6
+                ref.as_non_null
+                i32.const 0
+                local.get $p0
+                struct.get $rt_types__VecInternal 0
+                i32.const 0
+                local.get $p8
+                i32.const 1
+                i32.sub
+                array.copy $rt_types__VecChildren $rt_types__VecChildren
+                local.get $p8
+                i32.const 1
+                i32.sub
+                local.set $p7
+                local.get $p6
+                ref.as_non_null
+                local.get $p7
+                local.get $p15
+                ref.as_non_null
+                array.set $rt_types__VecChildren
+                local.get $p7
+                i32.const 1
+                i32.add
+                local.set $p7
+                local.get $p6
+                ref.as_non_null
+                local.get $p7
+                local.get $p2
+                struct.get $rt_types__VecInternal 0
+                i32.const 1
+                local.get $p9
+                i32.const 1
+                i32.sub
+                array.copy $rt_types__VecChildren $rt_types__VecChildren
+                local.get $p7
+                local.get $p9
+                i32.add
+                i32.const 1
+                i32.sub
+                local.set $p7)
+              (else
+                local.get $p6
+                ref.as_non_null
+                i32.const 0
+                local.get $p0
+                struct.get $rt_types__VecInternal 0
+                i32.const 0
+                local.get $p8
+                array.copy $rt_types__VecChildren $rt_types__VecChildren
+                local.get $p8
+                local.set $p7
+                local.get $p6
+                ref.as_non_null
+                local.get $p7
+                local.get $p2
+                struct.get $rt_types__VecInternal 0
+                i32.const 0
+                local.get $p9
+                array.copy $rt_types__VecChildren $rt_types__VecChildren
+                local.get $p7
+                local.get $p9
+                i32.add
+                local.set $p7))
+            local.get $p6
+            ref.as_non_null
+            local.get $p7
+            local.get $p1
+            call $rt_arr__pack_children
+            local.set $p11
+            local.set $p10)
+          (else
+            local.get $p0
+            call $rt_arr__child_count
+            local.set $p8
+            local.get $p0
+            struct.get $rt_types__VecInternal 0
+            local.get $p8
+            i32.const 1
+            i32.sub
+            array.get $rt_types__VecChildren
+            ref.as_non_null
+            ref.cast (ref $rt_types__VecInternal)
+            local.get $p1
+            i32.const 5
+            i32.sub
+            local.get $p2
+            struct.get $rt_types__VecInternal 0
+            i32.const 0
+            array.get $rt_types__VecChildren
+            ref.as_non_null
+            ref.cast (ref $rt_types__VecInternal)
+            local.get $p3
+            i32.const 5
+            i32.sub
+            call $rt_arr__concat_trees
+            local.set $p5
+            local.set $p4
+            local.get $p6
+            ref.as_non_null
+            i32.const 0
+            local.get $p0
+            struct.get $rt_types__VecInternal 0
+            i32.const 0
+            local.get $p8
+            i32.const 1
+            i32.sub
+            array.copy $rt_types__VecChildren $rt_types__VecChildren
+            local.get $p8
+            i32.const 1
+            i32.sub
+            local.set $p7
+            local.get $p6
+            ref.as_non_null
+            local.get $p7
+            local.get $p4
+            ref.as_non_null
+            local.get $p5
+            local.get $p1
+            i32.const 5
+            i32.sub
+            call $rt_arr__append_centre
+            local.set $p7
+            local.get $p2
+            call $rt_arr__child_count
+            local.set $p9
+            local.get $p6
+            ref.as_non_null
+            local.get $p7
+            local.get $p2
+            struct.get $rt_types__VecInternal 0
+            i32.const 1
+            local.get $p9
+            i32.const 1
+            i32.sub
+            array.copy $rt_types__VecChildren $rt_types__VecChildren
+            local.get $p7
+            local.get $p9
+            i32.add
+            i32.const 1
+            i32.sub
+            local.set $p7
+            local.get $p6
+            ref.as_non_null
+            local.get $p7
+            local.get $p1
+            call $rt_arr__pack_children
+            local.set $p11
+            local.set $p10)))
+      (else
+        local.get $p1
+        local.get $p3
+        i32.gt_s
+        (if
+          (then
+            local.get $p0
+            call $rt_arr__child_count
+            local.set $p8
+            local.get $p0
+            struct.get $rt_types__VecInternal 0
+            local.get $p8
+            i32.const 1
+            i32.sub
+            array.get $rt_types__VecChildren
+            ref.as_non_null
+            ref.cast (ref $rt_types__VecInternal)
+            local.get $p1
+            i32.const 5
+            i32.sub
+            local.get $p2
+            local.get $p3
+            call $rt_arr__concat_trees
+            local.set $p5
+            local.set $p4
+            local.get $p6
+            ref.as_non_null
+            i32.const 0
+            local.get $p0
+            struct.get $rt_types__VecInternal 0
+            i32.const 0
+            local.get $p8
+            i32.const 1
+            i32.sub
+            array.copy $rt_types__VecChildren $rt_types__VecChildren
+            local.get $p8
+            i32.const 1
+            i32.sub
+            local.set $p7
+            local.get $p6
+            ref.as_non_null
+            local.get $p7
+            local.get $p4
+            ref.as_non_null
+            local.get $p5
+            local.get $p1
+            i32.const 5
+            i32.sub
+            call $rt_arr__append_centre
+            local.set $p7
+            local.get $p6
+            ref.as_non_null
+            local.get $p7
+            local.get $p1
+            call $rt_arr__pack_children
+            local.set $p11
+            local.set $p10)
+          (else
+            local.get $p0
+            local.get $p1
+            local.get $p2
+            struct.get $rt_types__VecInternal 0
+            i32.const 0
+            array.get $rt_types__VecChildren
+            ref.as_non_null
+            ref.cast (ref $rt_types__VecInternal)
+            local.get $p3
+            i32.const 5
+            i32.sub
+            call $rt_arr__concat_trees
+            local.set $p5
+            local.set $p4
+            local.get $p6
+            ref.as_non_null
+            i32.const 0
+            local.get $p4
+            ref.as_non_null
+            local.get $p5
+            local.get $p3
+            i32.const 5
+            i32.sub
+            call $rt_arr__append_centre
+            local.set $p7
+            local.get $p2
+            call $rt_arr__child_count
+            local.set $p9
+            local.get $p6
+            ref.as_non_null
+            local.get $p7
+            local.get $p2
+            struct.get $rt_types__VecInternal 0
+            i32.const 1
+            local.get $p9
+            i32.const 1
+            i32.sub
+            array.copy $rt_types__VecChildren $rt_types__VecChildren
+            local.get $p7
+            local.get $p9
+            i32.add
+            i32.const 1
+            i32.sub
+            local.set $p7
+            local.get $p6
+            ref.as_non_null
+            local.get $p7
+            local.get $p3
+            call $rt_arr__pack_children
+            local.set $p11
+            local.set $p10))))
+    local.get $p10
+    ref.as_non_null
+    local.get $p11
+  )
+  (func $rt_arr__wrap_leaf (type $functype_11)
+    (param $p0 (ref $rt_types__Array))
+    (result (ref $rt_types__VecInternal))
+    (local $p1 (ref null $rt_types__VecChildren))
+    ref.null eq
+    i32.const 32
+    array.new $rt_types__VecChildren
+    local.set $p1
+    local.get $p1
+    ref.as_non_null
+    i32.const 0
+    local.get $p0
+    array.set $rt_types__VecChildren
+    local.get $p1
+    ref.as_non_null
+    i32.const 1
+    i32.const 5
+    call $rt_arr__make_relaxed
+  )
+  (func $rt_arr__get_leaf (type $functype_12)
     (param $p0 (ref $rt_types__PVec))
     (param $p1 i32)
     (result (ref $rt_types__Array))
+    (result i32)
     (local $p2 i32)
-    (local $p3 i32)
-    (local $p4 (ref null $rt_types__VecInternal))
+    (local $p3 (ref null $rt_types__VecInternal))
+    (local $p4 i32)
     (local $p5 i32)
     local.get $p0
     struct.get $rt_types__PVec 0
+    local.get $p0
+    struct.get $rt_types__PVec 3
+    array.len
+    i32.sub
     local.set $p2
+    local.get $p1
     local.get $p2
-    i32.const 32
-    i32.le_s
-    (if (result (ref $rt_types__Array))
+    i32.ge_s
+    (if
       (then
         local.get $p0
-        struct.get $rt_types__PVec 3)
-      (else
-        local.get $p2
-        i32.const 1
-        i32.sub
-        i32.const 5
-        i32.shr_u
-        i32.const 5
-        i32.shl
-        local.set $p3
+        struct.get $rt_types__PVec 3
         local.get $p1
+        local.get $p2
+        i32.sub
+        return))
+    local.get $p0
+    struct.get $rt_types__PVec 2
+    local.set $p3
+    local.get $p0
+    struct.get $rt_types__PVec 1
+    local.set $p4
+    (block $brk
+      (loop $lp
+        local.get $p4
+        i32.const 5
+        i32.le_s
+        br_if $brk
         local.get $p3
-        i32.ge_s
-        (if (result (ref $rt_types__Array))
-          (then
-            local.get $p0
-            struct.get $rt_types__PVec 3)
-          (else
-            local.get $p0
-            struct.get $rt_types__PVec 2
-            local.set $p4
-            local.get $p0
-            struct.get $rt_types__PVec 1
-            local.set $p5
-            (block $brk
-              (loop $lp
-                local.get $p5
-                i32.const 5
-                i32.le_s
-                br_if $brk
-                local.get $p4
-                ref.as_non_null
-                struct.get $rt_types__VecInternal 0
-                local.get $p1
-                local.get $p5
-                i32.shr_u
-                i32.const 31
-                i32.and
-                array.get $rt_types__VecChildren
-                ref.cast (ref null $rt_types__VecInternal)
-                local.set $p4
-                local.get $p5
-                i32.const 5
-                i32.sub
-                local.set $p5
-                br $lp))
-            local.get $p4
-            ref.as_non_null
-            struct.get $rt_types__VecInternal 0
-            local.get $p1
-            local.get $p5
-            i32.shr_u
-            i32.const 31
-            i32.and
-            array.get $rt_types__VecChildren
-            ref.cast (ref $rt_types__Array)))))
+        ref.as_non_null
+        local.get $p1
+        local.get $p4
+        call $rt_arr__vi_nav
+        local.set $p1
+        local.set $p5
+        local.get $p3
+        ref.as_non_null
+        struct.get $rt_types__VecInternal 0
+        local.get $p5
+        array.get $rt_types__VecChildren
+        ref.cast (ref null $rt_types__VecInternal)
+        local.set $p3
+        local.get $p4
+        i32.const 5
+        i32.sub
+        local.set $p4
+        br $lp))
+    local.get $p3
+    ref.as_non_null
+    local.get $p1
+    local.get $p4
+    call $rt_arr__vi_nav
+    local.set $p1
+    local.set $p5
+    local.get $p3
+    ref.as_non_null
+    struct.get $rt_types__VecInternal 0
+    local.get $p5
+    array.get $rt_types__VecChildren
+    ref.cast (ref $rt_types__Array)
+    local.get $p1
+    i32.const 31
+    i32.and
   )
-  (func $rt_arr__new_path (type $functype_4)
+  (func $rt_arr__new_path (type $functype_13)
     (param $p0 i32)
     (param $p1 (ref eq))
     (result (ref eq))
@@ -242,7 +1100,7 @@
         br $lp))
     local.get $p1
   )
-  (func $rt_arr__push_tail (type $functype_5)
+  (func $rt_arr__push_tail (type $functype_14)
     (param $p0 i32)
     (param $p1 i32)
     (param $p2 (ref null $rt_types__VecInternal))
@@ -319,7 +1177,7 @@
     struct.new $rt_types__VecInternal
     ref.cast (ref eq)
   )
-  (func $rt_arr__do_set (type $functype_6)
+  (func $rt_arr__do_set (type $functype_15)
     (param $p0 i32)
     (param $p1 (ref eq))
     (param $p2 i32)
@@ -363,11 +1221,12 @@
         ref.as_non_null
         ref.cast (ref eq))
       (else
+        local.get $p1
+        ref.cast (ref $rt_types__VecInternal)
         local.get $p2
         local.get $p0
-        i32.shr_u
-        i32.const 31
-        i32.and
+        call $rt_arr__vi_nav
+        local.set $p2
         local.set $p5
         ref.null eq
         i32.const 32
@@ -400,11 +1259,13 @@
         array.set $rt_types__VecChildren
         local.get $p4
         ref.as_non_null
-        ref.null $rt_types__I32Array
+        local.get $p1
+        ref.cast (ref $rt_types__VecInternal)
+        struct.get $rt_types__VecInternal 1
         struct.new $rt_types__VecInternal
         ref.cast (ref eq)))
   )
-  (func $rt_arr__push (type $functype_7)
+  (func $rt_arr__push (type $functype_16)
     (param $p0 (ref $rt_types__PVec))
     (param $p1 anyref)
     (result (ref $rt_types__PVec))
@@ -478,56 +1339,17 @@
             call $rt_arr__new_path
             local.set $p5)
           (else
-            local.get $p2
-            i32.const 5
-            i32.shr_u
-            i32.const 1
+            local.get $p0
+            struct.get $rt_types__PVec 2
+            ref.as_non_null
             local.get $p6
-            i32.shl
-            i32.gt_u
-            (if
-              (then
-                ref.null eq
-                i32.const 32
-                array.new $rt_types__VecChildren
-                local.set $p7
-                local.get $p7
-                ref.as_non_null
-                i32.const 0
-                local.get $p0
-                struct.get $rt_types__PVec 2
-                ref.as_non_null
-                ref.cast (ref eq)
-                array.set $rt_types__VecChildren
-                local.get $p7
-                ref.as_non_null
-                i32.const 1
-                local.get $p6
-                local.get $p0
-                struct.get $rt_types__PVec 3
-                ref.cast (ref eq)
-                call $rt_arr__new_path
-                array.set $rt_types__VecChildren
-                local.get $p7
-                ref.as_non_null
-                ref.null $rt_types__I32Array
-                struct.new $rt_types__VecInternal
-                ref.cast (ref eq)
-                local.set $p5
-                local.get $p6
-                i32.const 5
-                i32.add
-                local.set $p6)
-              (else
-                local.get $p2
-                local.get $p6
-                local.get $p0
-                struct.get $rt_types__PVec 2
-                local.get $p0
-                struct.get $rt_types__PVec 3
-                ref.cast (ref eq)
-                call $rt_arr__push_tail
-                local.set $p5))))
+            local.get $p0
+            struct.get $rt_types__PVec 3
+            call $rt_arr__wrap_leaf
+            i32.const 5
+            call $rt_arr__concat_trees
+            local.set $p6
+            local.set $p5))
         local.get $p1
         array.new_fixed $rt_types__Array 1
         local.set $p4
@@ -541,7 +1363,52 @@
         ref.as_non_null
         struct.new $rt_types__PVec))
   )
-  (func $rt_arr__make (type $functype_8)
+  (func $rt_arr__promote_full_tail (type $functype_17)
+    (param $p0 (ref $rt_types__PVec))
+    (param $p1 (ref $rt_types__Array))
+    (result (ref $rt_types__PVec))
+    (local $p2 i32)
+    (local $p3 i32)
+    (local $p4 (ref null eq))
+    local.get $p0
+    struct.get $rt_types__PVec 0
+    i32.const 32
+    i32.add
+    local.set $p2
+    local.get $p0
+    struct.get $rt_types__PVec 1
+    local.set $p3
+    local.get $p0
+    struct.get $rt_types__PVec 2
+    ref.is_null
+    (if
+      (then
+        i32.const 5
+        local.set $p3
+        i32.const 5
+        local.get $p1
+        ref.cast (ref eq)
+        call $rt_arr__new_path
+        local.set $p4)
+      (else
+        local.get $p0
+        struct.get $rt_types__PVec 2
+        ref.as_non_null
+        local.get $p3
+        local.get $p1
+        call $rt_arr__wrap_leaf
+        i32.const 5
+        call $rt_arr__concat_trees
+        local.set $p3
+        local.set $p4))
+    local.get $p2
+    local.get $p3
+    local.get $p4
+    ref.cast (ref null $rt_types__VecInternal)
+    global.get $rt_arr__empty_leaf
+    struct.new $rt_types__PVec
+  )
+  (func $rt_arr__make (type $functype_18)
     (param $p0 i32)
     (param $p1 anyref)
     (result (ref $rt_types__PVec))
@@ -576,7 +1443,7 @@
         local.get $p2
         ref.as_non_null))
   )
-  (func $rt_arr__get (type $functype_9)
+  (func $rt_arr__get (type $functype_19)
     (param $p0 (ref null $rt_types__PVec))
     (param $p1 i32)
     (result anyref)
@@ -584,6 +1451,8 @@
     (local $p3 i32)
     (local $p4 (ref null $rt_types__VecInternal))
     (local $p5 i32)
+    (local $p6 i32)
+    (local $p7 (ref null $rt_types__I32Array))
     local.get $p0
     ref.as_non_null
     struct.get $rt_types__PVec 0
@@ -602,12 +1471,11 @@
         array.get $rt_types__Array)
       (else
         local.get $p2
-        i32.const 1
+        local.get $p0
+        ref.as_non_null
+        struct.get $rt_types__PVec 3
+        array.len
         i32.sub
-        i32.const 5
-        i32.shr_u
-        i32.const 5
-        i32.shl
         local.set $p3
         local.get $p1
         local.get $p3
@@ -618,8 +1486,8 @@
             ref.as_non_null
             struct.get $rt_types__PVec 3
             local.get $p1
-            i32.const 31
-            i32.and
+            local.get $p3
+            i32.sub
             array.get $rt_types__Array)
           (else
             local.get $p0
@@ -638,12 +1506,30 @@
                 br_if $brk
                 local.get $p4
                 ref.as_non_null
+                struct.get $rt_types__VecInternal 1
+                local.set $p7
+                local.get $p7
+                ref.is_null
+                (if
+                  (then
+                    local.get $p1
+                    local.get $p5
+                    i32.shr_u
+                    i32.const 31
+                    i32.and
+                    local.set $p6)
+                  (else
+                    local.get $p4
+                    ref.as_non_null
+                    local.get $p1
+                    local.get $p5
+                    call $rt_arr__vi_nav
+                    local.set $p1
+                    local.set $p6))
+                local.get $p4
+                ref.as_non_null
                 struct.get $rt_types__VecInternal 0
-                local.get $p1
-                local.get $p5
-                i32.shr_u
-                i32.const 31
-                i32.and
+                local.get $p6
                 array.get $rt_types__VecChildren
                 ref.cast (ref null $rt_types__VecInternal)
                 local.set $p4
@@ -654,12 +1540,30 @@
                 br $lp))
             local.get $p4
             ref.as_non_null
+            struct.get $rt_types__VecInternal 1
+            local.set $p7
+            local.get $p7
+            ref.is_null
+            (if
+              (then
+                local.get $p1
+                local.get $p5
+                i32.shr_u
+                i32.const 31
+                i32.and
+                local.set $p6)
+              (else
+                local.get $p4
+                ref.as_non_null
+                local.get $p1
+                local.get $p5
+                call $rt_arr__vi_nav
+                local.set $p1
+                local.set $p6))
+            local.get $p4
+            ref.as_non_null
             struct.get $rt_types__VecInternal 0
-            local.get $p1
-            local.get $p5
-            i32.shr_u
-            i32.const 31
-            i32.and
+            local.get $p6
             array.get $rt_types__VecChildren
             ref.cast (ref $rt_types__Array)
             local.get $p1
@@ -667,7 +1571,7 @@
             i32.and
             array.get $rt_types__Array))))
   )
-  (func $rt_arr__set (type $functype_10)
+  (func $rt_arr__set (type $functype_20)
     (param $p0 (ref null $rt_types__PVec))
     (param $p1 i32)
     (param $p2 anyref)
@@ -677,7 +1581,11 @@
     local.get $p0
     ref.as_non_null
     struct.get $rt_types__PVec 0
-    call $rt_arr__tailoff
+    local.get $p0
+    ref.as_non_null
+    struct.get $rt_types__PVec 3
+    array.len
+    i32.sub
     local.set $p3
     local.get $p1
     local.get $p3
@@ -746,83 +1654,675 @@
         struct.get $rt_types__PVec 3
         struct.new $rt_types__PVec))
   )
-  (func $rt_arr__len (type $functype_11)
+  (func $rt_arr__set_in_place (type $functype_20)
+    (param $p0 (ref null $rt_types__PVec))
+    (param $p1 i32)
+    (param $p2 anyref)
+    (result (ref $rt_types__PVec))
+    local.get $p0
+    ref.as_non_null
+    local.get $p1
+    call $rt_arr__get_leaf
+    local.get $p2
+    array.set $rt_types__Array
+    local.get $p0
+    ref.as_non_null
+  )
+  (func $rt_arr__len (type $functype_21)
     (param $p0 (ref null $rt_types__PVec))
     (result i32)
     local.get $p0
     ref.as_non_null
     struct.get $rt_types__PVec 0
   )
-  (func $rt_arr__concat (type $functype_12)
+  (func $rt_arr__concat (type $functype_22)
     (param $p0 (ref null $rt_types__PVec))
     (param $p1 (ref null $rt_types__PVec))
     (result (ref $rt_types__PVec))
-    (local $p2 (ref null $rt_types__PVec))
-    (local $p3 i32)
+    (local $p2 (ref null $rt_types__Array))
+    (local $p3 (ref null eq))
     (local $p4 i32)
-    local.get $p0
-    ref.as_non_null
-    local.set $p2
+    (local $p5 (ref null eq))
+    (local $p6 i32)
     local.get $p1
     ref.as_non_null
     struct.get $rt_types__PVec 0
-    local.set $p4
-    i32.const 0
-    local.set $p3
-    (block $brk
-      (loop $lp
-        local.get $p3
-        local.get $p4
-        i32.ge_s
-        br_if $brk
-        local.get $p2
+    i32.eqz
+    (if (result (ref $rt_types__PVec))
+      (then
+        local.get $p0
+        ref.as_non_null)
+      (else
+        local.get $p0
         ref.as_non_null
+        struct.get $rt_types__PVec 0
+        i32.eqz
+        (if (result (ref $rt_types__PVec))
+          (then
+            local.get $p1
+            ref.as_non_null)
+          (else
+            local.get $p1
+            ref.as_non_null
+            struct.get $rt_types__PVec 2
+            ref.is_null
+            (if (result (ref $rt_types__PVec))
+              (then
+                local.get $p0
+                call $rt_arr__builder_from
+                local.set $p2
+                local.get $p2
+                local.get $p1
+                call $rt_arr__builder_extend
+                local.get $p2
+                call $rt_arr__builder_freeze)
+              (else
+                local.get $p0
+                ref.as_non_null
+                struct.get $rt_types__PVec 2
+                ref.is_null
+                (if
+                  (then
+                    local.get $p0
+                    ref.as_non_null
+                    struct.get $rt_types__PVec 3
+                    call $rt_arr__wrap_leaf
+                    local.set $p3
+                    i32.const 5
+                    local.set $p4)
+                  (else
+                    local.get $p0
+                    ref.as_non_null
+                    struct.get $rt_types__PVec 2
+                    ref.as_non_null
+                    local.get $p0
+                    ref.as_non_null
+                    struct.get $rt_types__PVec 1
+                    local.get $p0
+                    ref.as_non_null
+                    struct.get $rt_types__PVec 3
+                    call $rt_arr__wrap_leaf
+                    i32.const 5
+                    call $rt_arr__concat_trees
+                    local.set $p4
+                    local.set $p3))
+                local.get $p3
+                ref.as_non_null
+                ref.cast (ref $rt_types__VecInternal)
+                local.get $p4
+                local.get $p1
+                ref.as_non_null
+                struct.get $rt_types__PVec 2
+                ref.as_non_null
+                local.get $p1
+                ref.as_non_null
+                struct.get $rt_types__PVec 1
+                call $rt_arr__concat_trees
+                local.set $p6
+                local.set $p5
+                local.get $p0
+                ref.as_non_null
+                struct.get $rt_types__PVec 0
+                local.get $p1
+                ref.as_non_null
+                struct.get $rt_types__PVec 0
+                i32.add
+                local.get $p6
+                local.get $p5
+                ref.as_non_null
+                ref.cast (ref $rt_types__VecInternal)
+                local.get $p1
+                ref.as_non_null
+                struct.get $rt_types__PVec 3
+                struct.new $rt_types__PVec))))))
+  )
+  (func $rt_arr__slice_trim_right (type $functype_23)
+    (param $p0 (ref eq))
+    (param $p1 i32)
+    (param $p2 i32)
+    (result (ref eq))
+    (local $p3 (ref null $rt_types__VecInternal))
+    (local $p4 i32)
+    (local $p5 i32)
+    (local $p6 (ref null $rt_types__VecChildren))
+    (local $p7 (ref null eq))
+    (local $p8 (ref null eq))
+    (local $p9 (ref null $rt_types__Array))
+    (local $p10 (ref null $rt_types__Array))
+    (local $p11 i32)
+    local.get $p1
+    i32.eqz
+    (if (result (ref eq))
+      (then
+        local.get $p0
+        ref.cast (ref $rt_types__Array)
+        local.set $p9
+        local.get $p2
+        local.get $p9
+        ref.as_non_null
+        array.len
+        i32.eq
+        (if (result (ref eq))
+          (then
+            local.get $p0)
+          (else
+            ref.null none
+            local.get $p2
+            array.new $rt_types__Array
+            local.set $p10
+            local.get $p10
+            ref.as_non_null
+            i32.const 0
+            local.get $p9
+            ref.as_non_null
+            i32.const 0
+            local.get $p2
+            array.copy $rt_types__Array $rt_types__Array
+            local.get $p10
+            ref.as_non_null
+            ref.cast (ref eq))))
+      (else
+        local.get $p0
+        ref.cast (ref $rt_types__VecInternal)
+        local.set $p3
+        local.get $p3
+        ref.as_non_null
+        local.get $p2
+        i32.const 1
+        i32.sub
         local.get $p1
+        call $rt_arr__vi_nav
+        local.set $p5
+        local.set $p4
         local.get $p3
-        call $rt_arr__get
-        call $rt_arr__push
-        local.set $p2
+        ref.as_non_null
+        struct.get $rt_types__VecInternal 0
+        local.get $p4
+        array.get $rt_types__VecChildren
+        local.set $p7
+        local.get $p1
+        i32.const 5
+        i32.eq
+        (if
+          (then
+            local.get $p5
+            i32.const 31
+            i32.and
+            i32.const 1
+            i32.add
+            local.set $p11
+            local.get $p7
+            ref.as_non_null
+            ref.cast (ref $rt_types__Array)
+            local.set $p9
+            local.get $p11
+            local.get $p9
+            ref.as_non_null
+            array.len
+            i32.eq
+            (if
+              (then
+                local.get $p7
+                local.set $p8)
+              (else
+                ref.null none
+                local.get $p11
+                array.new $rt_types__Array
+                local.set $p10
+                local.get $p10
+                ref.as_non_null
+                i32.const 0
+                local.get $p9
+                ref.as_non_null
+                i32.const 0
+                local.get $p11
+                array.copy $rt_types__Array $rt_types__Array
+                local.get $p10
+                ref.as_non_null
+                ref.cast (ref eq)
+                local.set $p8)))
+          (else
+            local.get $p7
+            ref.as_non_null
+            ref.cast (ref $rt_types__VecInternal)
+            ref.cast (ref eq)
+            local.get $p1
+            i32.const 5
+            i32.sub
+            local.get $p5
+            i32.const 1
+            i32.add
+            call $rt_arr__slice_trim_right
+            local.set $p8))
+        ref.null eq
+        i32.const 32
+        array.new $rt_types__VecChildren
+        local.set $p6
+        local.get $p6
+        ref.as_non_null
+        i32.const 0
         local.get $p3
+        ref.as_non_null
+        struct.get $rt_types__VecInternal 0
+        i32.const 0
+        local.get $p4
         i32.const 1
         i32.add
-        local.set $p3
-        br $lp))
-    local.get $p2
-    ref.as_non_null
+        array.copy $rt_types__VecChildren $rt_types__VecChildren
+        local.get $p6
+        ref.as_non_null
+        local.get $p4
+        local.get $p8
+        array.set $rt_types__VecChildren
+        local.get $p6
+        ref.as_non_null
+        local.get $p4
+        i32.const 1
+        i32.add
+        local.get $p1
+        call $rt_arr__make_relaxed
+        ref.cast (ref eq)))
   )
-  (func $rt_arr__slice (type $functype_13)
+  (func $rt_arr__slice_trim_left (type $functype_23)
+    (param $p0 (ref eq))
+    (param $p1 i32)
+    (param $p2 i32)
+    (result (ref eq))
+    (local $p3 (ref null $rt_types__VecInternal))
+    (local $p4 i32)
+    (local $p5 i32)
+    (local $p6 i32)
+    (local $p7 i32)
+    (local $p8 (ref null $rt_types__VecChildren))
+    (local $p9 (ref null eq))
+    (local $p10 (ref null eq))
+    (local $p11 (ref null $rt_types__Array))
+    (local $p12 (ref null $rt_types__Array))
+    (local $p13 i32)
+    (local $p14 i32)
+    local.get $p1
+    i32.eqz
+    (if (result (ref eq))
+      (then
+        local.get $p0
+        ref.cast (ref $rt_types__Array)
+        local.set $p11
+        local.get $p2
+        i32.eqz
+        (if (result (ref eq))
+          (then
+            local.get $p0)
+          (else
+            local.get $p11
+            ref.as_non_null
+            array.len
+            local.get $p2
+            i32.sub
+            local.set $p14
+            ref.null none
+            local.get $p14
+            array.new $rt_types__Array
+            local.set $p12
+            local.get $p12
+            ref.as_non_null
+            i32.const 0
+            local.get $p11
+            ref.as_non_null
+            local.get $p2
+            local.get $p14
+            array.copy $rt_types__Array $rt_types__Array
+            local.get $p12
+            ref.as_non_null
+            ref.cast (ref eq))))
+      (else
+        local.get $p0
+        ref.cast (ref $rt_types__VecInternal)
+        local.set $p3
+        local.get $p3
+        ref.as_non_null
+        local.get $p2
+        local.get $p1
+        call $rt_arr__vi_nav
+        local.set $p5
+        local.set $p4
+        local.get $p3
+        ref.as_non_null
+        call $rt_arr__child_count
+        local.set $p6
+        local.get $p6
+        local.get $p4
+        i32.sub
+        local.set $p7
+        local.get $p3
+        ref.as_non_null
+        struct.get $rt_types__VecInternal 0
+        local.get $p4
+        array.get $rt_types__VecChildren
+        local.set $p9
+        local.get $p1
+        i32.const 5
+        i32.eq
+        (if
+          (then
+            local.get $p5
+            i32.const 31
+            i32.and
+            local.set $p13
+            local.get $p9
+            ref.as_non_null
+            ref.cast (ref $rt_types__Array)
+            local.set $p11
+            local.get $p13
+            i32.eqz
+            (if
+              (then
+                local.get $p9
+                local.set $p10)
+              (else
+                local.get $p11
+                ref.as_non_null
+                array.len
+                local.get $p13
+                i32.sub
+                local.set $p14
+                ref.null none
+                local.get $p14
+                array.new $rt_types__Array
+                local.set $p12
+                local.get $p12
+                ref.as_non_null
+                i32.const 0
+                local.get $p11
+                ref.as_non_null
+                local.get $p13
+                local.get $p14
+                array.copy $rt_types__Array $rt_types__Array
+                local.get $p12
+                ref.as_non_null
+                ref.cast (ref eq)
+                local.set $p10)))
+          (else
+            local.get $p9
+            ref.as_non_null
+            ref.cast (ref $rt_types__VecInternal)
+            ref.cast (ref eq)
+            local.get $p1
+            i32.const 5
+            i32.sub
+            local.get $p5
+            call $rt_arr__slice_trim_left
+            local.set $p10))
+        ref.null eq
+        i32.const 32
+        array.new $rt_types__VecChildren
+        local.set $p8
+        local.get $p8
+        ref.as_non_null
+        i32.const 0
+        local.get $p3
+        ref.as_non_null
+        struct.get $rt_types__VecInternal 0
+        local.get $p4
+        local.get $p7
+        array.copy $rt_types__VecChildren $rt_types__VecChildren
+        local.get $p8
+        ref.as_non_null
+        i32.const 0
+        local.get $p10
+        array.set $rt_types__VecChildren
+        local.get $p8
+        ref.as_non_null
+        local.get $p7
+        local.get $p1
+        call $rt_arr__make_relaxed
+        ref.cast (ref eq)))
+  )
+  (func $rt_arr__slice_last_leaf (type $functype_24)
+    (param $p0 (ref eq))
+    (param $p1 i32)
+    (result (ref $rt_types__Array))
+    (local $p2 (ref null $rt_types__VecInternal))
+    (local $p3 i32)
+    local.get $p1
+    i32.eqz
+    (if (result (ref $rt_types__Array))
+      (then
+        local.get $p0
+        ref.cast (ref $rt_types__Array))
+      (else
+        local.get $p0
+        ref.cast (ref $rt_types__VecInternal)
+        local.set $p2
+        local.get $p2
+        ref.as_non_null
+        call $rt_arr__child_count
+        local.set $p3
+        local.get $p2
+        ref.as_non_null
+        struct.get $rt_types__VecInternal 0
+        local.get $p3
+        i32.const 1
+        i32.sub
+        array.get $rt_types__VecChildren
+        ref.as_non_null
+        local.get $p1
+        i32.const 5
+        i32.sub
+        call $rt_arr__slice_last_leaf))
+  )
+  (func $rt_arr__slice_collapse_root (type $functype_25)
+    (param $p0 (ref null $rt_types__VecInternal))
+    (param $p1 i32)
+    (result (ref null $rt_types__VecInternal))
+    (result i32)
+    (local $p2 i32)
+    (block $brk
+      (loop $lp
+        local.get $p0
+        ref.is_null
+        br_if $brk
+        local.get $p1
+        i32.const 5
+        i32.le_s
+        br_if $brk
+        local.get $p0
+        ref.as_non_null
+        call $rt_arr__child_count
+        local.set $p2
+        local.get $p2
+        i32.const 1
+        i32.ne
+        br_if $brk
+        local.get $p0
+        ref.as_non_null
+        struct.get $rt_types__VecInternal 0
+        i32.const 0
+        array.get $rt_types__VecChildren
+        ref.cast (ref null $rt_types__VecInternal)
+        local.set $p0
+        local.get $p1
+        i32.const 5
+        i32.sub
+        local.set $p1
+        br $lp))
+    local.get $p0
+    local.get $p1
+  )
+  (func $rt_arr__slice_from_full_tree (type $functype_26)
+    (param $p0 (ref eq))
+    (param $p1 i32)
+    (param $p2 i32)
+    (result (ref $rt_types__PVec))
+    (local $p3 (ref null $rt_types__Array))
+    (local $p4 (ref null $rt_types__VecInternal))
+    (local $p5 i32)
+    local.get $p2
+    i32.const 32
+    i32.le_s
+    (if (result (ref $rt_types__PVec))
+      (then
+        local.get $p2
+        i32.const 0
+        ref.null $rt_types__VecInternal
+        local.get $p0
+        local.get $p1
+        call $rt_arr__slice_last_leaf
+        struct.new $rt_types__PVec)
+      (else
+        local.get $p0
+        local.get $p1
+        call $rt_arr__slice_last_leaf
+        local.set $p3
+        local.get $p2
+        local.get $p1
+        local.get $p0
+        ref.cast (ref null $rt_types__VecInternal)
+        call $rt_arr__pop_tail
+        ref.cast (ref null $rt_types__VecInternal)
+        local.set $p4
+        local.get $p1
+        local.set $p5
+        local.get $p4
+        local.get $p5
+        call $rt_arr__slice_collapse_root
+        local.set $p5
+        local.set $p4
+        local.get $p2
+        local.get $p5
+        local.get $p4
+        local.get $p3
+        ref.as_non_null
+        struct.new $rt_types__PVec))
+  )
+  (func $rt_arr__slice (type $functype_27)
     (param $p0 (ref null $rt_types__PVec))
     (param $p1 i32)
     (param $p2 i32)
     (result (ref $rt_types__PVec))
-    (local $p3 (ref null $rt_types__PVec))
-    (local $p4 i32)
-    global.get $rt_arr__empty_pvec
-    local.set $p3
+    (local $p3 i32)
+    (local $p4 (ref null $rt_types__Array))
+    (local $p5 (ref null $rt_types__Array))
+    (local $p6 (ref null eq))
+    (local $p7 i32)
+    (local $p8 (ref null eq))
+    local.get $p2
     local.get $p1
-    local.set $p4
-    (block $brk
-      (loop $lp
-        local.get $p4
-        local.get $p2
-        i32.ge_s
-        br_if $brk
-        local.get $p3
-        ref.as_non_null
-        local.get $p0
-        local.get $p4
-        call $rt_arr__get
-        call $rt_arr__push
-        local.set $p3
-        local.get $p4
-        i32.const 1
-        i32.add
-        local.set $p4
-        br $lp))
+    i32.sub
+    local.set $p3
     local.get $p3
-    ref.as_non_null
+    i32.eqz
+    (if (result (ref $rt_types__PVec))
+      (then
+        global.get $rt_arr__empty_pvec)
+      (else
+        local.get $p1
+        i32.eqz
+        local.get $p2
+        local.get $p0
+        ref.as_non_null
+        struct.get $rt_types__PVec 0
+        i32.eq
+        i32.and
+        (if (result (ref $rt_types__PVec))
+          (then
+            local.get $p0
+            ref.as_non_null)
+          (else
+            local.get $p3
+            i32.const 32
+            i32.le_s
+            (if (result (ref $rt_types__PVec))
+              (then
+                local.get $p0
+                call $rt_arr__to_array
+                local.set $p4
+                ref.null none
+                local.get $p3
+                array.new $rt_types__Array
+                local.set $p5
+                local.get $p5
+                ref.as_non_null
+                i32.const 0
+                local.get $p4
+                ref.as_non_null
+                local.get $p1
+                local.get $p3
+                array.copy $rt_types__Array $rt_types__Array
+                local.get $p5
+                ref.as_non_null
+                call $rt_arr__from_array)
+              (else
+                local.get $p0
+                ref.as_non_null
+                struct.get $rt_types__PVec 2
+                ref.is_null
+                (if
+                  (then
+                    local.get $p0
+                    ref.as_non_null
+                    struct.get $rt_types__PVec 3
+                    ref.cast (ref eq)
+                    local.set $p6
+                    i32.const 0
+                    local.set $p7)
+                  (else
+                    local.get $p0
+                    ref.as_non_null
+                    struct.get $rt_types__PVec 3
+                    array.len
+                    i32.eqz
+                    (if
+                      (then
+                        local.get $p0
+                        ref.as_non_null
+                        struct.get $rt_types__PVec 2
+                        ref.as_non_null
+                        ref.cast (ref eq)
+                        local.set $p6
+                        local.get $p0
+                        ref.as_non_null
+                        struct.get $rt_types__PVec 1
+                        local.set $p7)
+                      (else
+                        local.get $p0
+                        ref.as_non_null
+                        struct.get $rt_types__PVec 2
+                        ref.as_non_null
+                        local.get $p0
+                        ref.as_non_null
+                        struct.get $rt_types__PVec 1
+                        local.get $p0
+                        ref.as_non_null
+                        struct.get $rt_types__PVec 3
+                        call $rt_arr__wrap_leaf
+                        i32.const 5
+                        call $rt_arr__concat_trees
+                        local.set $p7
+                        local.set $p6))))
+                local.get $p6
+                ref.as_non_null
+                local.get $p7
+                local.get $p2
+                call $rt_arr__slice_trim_right
+                local.set $p8
+                local.get $p1
+                i32.eqz
+                (if
+                  (then)
+                  (else
+                    local.get $p8
+                    ref.as_non_null
+                    local.get $p7
+                    local.get $p1
+                    call $rt_arr__slice_trim_left
+                    local.set $p8))
+                local.get $p8
+                ref.as_non_null
+                local.get $p7
+                local.get $p3
+                call $rt_arr__slice_from_full_tree))))))
   )
-  (func $rt_arr__pop_tail (type $functype_14)
+  (func $rt_arr__pop_tail (type $functype_28)
     (param $p0 i32)
     (param $p1 i32)
     (param $p2 (ref null $rt_types__VecInternal))
@@ -830,98 +2330,86 @@
     (local $p3 i32)
     (local $p4 (ref null $rt_types__VecChildren))
     (local $p5 (ref null eq))
-    (local $p6 (ref null $rt_types__VecInternal))
-    local.get $p0
-    i32.const 2
-    i32.sub
-    local.get $p1
-    i32.shr_u
-    i32.const 31
-    i32.and
+    (local $p6 i32)
+    local.get $p2
+    ref.as_non_null
+    call $rt_arr__child_count
     local.set $p3
     local.get $p1
     i32.const 5
     i32.gt_s
-    (if (result (ref null eq))
+    (if
       (then
-        local.get $p2
-        ref.as_non_null
-        struct.get $rt_types__VecInternal 0
-        local.get $p3
-        array.get $rt_types__VecChildren
-        ref.cast (ref null $rt_types__VecInternal)
-        local.set $p6
         local.get $p0
         local.get $p1
         i32.const 5
         i32.sub
-        local.get $p6
+        local.get $p2
+        ref.as_non_null
+        struct.get $rt_types__VecInternal 0
+        local.get $p3
+        i32.const 1
+        i32.sub
+        array.get $rt_types__VecChildren
+        ref.cast (ref null $rt_types__VecInternal)
         call $rt_arr__pop_tail
         local.set $p5
+        local.get $p3
+        local.set $p6
         local.get $p5
         ref.is_null
-        local.get $p3
-        i32.eqz
-        i32.and
-        (if (result (ref null eq))
+        (if
           (then
-            ref.null eq)
-          (else
-            ref.null eq
-            i32.const 32
-            array.new $rt_types__VecChildren
-            local.set $p4
-            local.get $p4
-            ref.as_non_null
-            i32.const 0
-            local.get $p2
-            ref.as_non_null
-            struct.get $rt_types__VecInternal 0
-            i32.const 0
-            i32.const 32
-            array.copy $rt_types__VecChildren $rt_types__VecChildren
-            local.get $p4
-            ref.as_non_null
             local.get $p3
-            local.get $p5
-            array.set $rt_types__VecChildren
-            local.get $p4
-            ref.as_non_null
-            ref.null $rt_types__I32Array
-            struct.new $rt_types__VecInternal
-            ref.cast (ref eq))))
+            i32.const 1
+            i32.sub
+            local.set $p6)))
       (else
         local.get $p3
-        i32.eqz
-        (if (result (ref null eq))
-          (then
-            ref.null eq)
+        i32.const 1
+        i32.sub
+        local.set $p6
+        ref.null eq
+        local.set $p5))
+    local.get $p6
+    i32.eqz
+    (if (result (ref null eq))
+      (then
+        ref.null eq)
+      (else
+        ref.null eq
+        i32.const 32
+        array.new $rt_types__VecChildren
+        local.set $p4
+        local.get $p4
+        ref.as_non_null
+        i32.const 0
+        local.get $p2
+        ref.as_non_null
+        struct.get $rt_types__VecInternal 0
+        i32.const 0
+        local.get $p6
+        array.copy $rt_types__VecChildren $rt_types__VecChildren
+        local.get $p5
+        ref.is_null
+        (if
+          (then)
           (else
-            ref.null eq
-            i32.const 32
-            array.new $rt_types__VecChildren
-            local.set $p4
             local.get $p4
             ref.as_non_null
-            i32.const 0
-            local.get $p2
-            ref.as_non_null
-            struct.get $rt_types__VecInternal 0
-            i32.const 0
-            i32.const 32
-            array.copy $rt_types__VecChildren $rt_types__VecChildren
-            local.get $p4
-            ref.as_non_null
-            local.get $p3
-            ref.null eq
-            array.set $rt_types__VecChildren
-            local.get $p4
-            ref.as_non_null
-            ref.null $rt_types__I32Array
-            struct.new $rt_types__VecInternal
-            ref.cast (ref eq)))))
+            local.get $p6
+            i32.const 1
+            i32.sub
+            local.get $p5
+            array.set $rt_types__VecChildren))
+        local.get $p4
+        ref.as_non_null
+        local.get $p6
+        local.get $p1
+        call $rt_arr__make_relaxed
+        ref.cast (ref eq)))
   )
-  (func $rt_arr__drop_last (type $functype_15)
+  (func $rt_arr__drop_last (type $functype_29)
     (param $p0 (ref null $rt_types__PVec))
     (result (ref $rt_types__PVec))
     (local $p1 i32)
@@ -931,6 +2419,8 @@
     (local $p5 (ref null eq))
     (local $p6 i32)
     (local $p7 i32)
+    (local $p8 (ref null $rt_types__Array))
+    (local $p9 i32)
     local.get $p0
     ref.as_non_null
     struct.get $rt_types__PVec 0
@@ -942,13 +2432,15 @@
       (then
         global.get $rt_arr__empty_pvec)
       (else
-        local.get $p1
-        call $rt_arr__tailoff
-        local.set $p2
-        local.get $p1
-        local.get $p2
-        i32.sub
+        local.get $p0
+        ref.as_non_null
+        struct.get $rt_types__PVec 3
+        array.len
         local.set $p3
+        local.get $p1
+        local.get $p3
+        i32.sub
+        local.set $p2
         local.get $p3
         i32.const 1
         i32.gt_s
@@ -988,21 +2480,42 @@
             ref.as_non_null
             struct.get $rt_types__PVec 1
             local.set $p7
+            local.get $p0
+            ref.as_non_null
+            local.get $p3
+            i32.eqz
+            (if (result i32)
+              (then
+                local.get $p1
+                i32.const 1
+                i32.sub)
+              (else
+                local.get $p1
+                i32.const 2
+                i32.sub))
+            call $rt_arr__get_leaf
+            local.set $p9
+            local.set $p8
+            local.get $p3
+            i32.eqz
+            (if
+              (then)
+              (else
+                local.get $p8
+                ref.as_non_null
+                array.len
+                local.set $p9))
             ref.null none
-            i32.const 32
+            local.get $p9
             array.new $rt_types__Array
             local.set $p4
             local.get $p4
             ref.as_non_null
             i32.const 0
-            local.get $p0
+            local.get $p8
             ref.as_non_null
-            local.get $p1
-            i32.const 2
-            i32.sub
-            call $rt_arr__get_leaf
             i32.const 0
-            i32.const 32
+            local.get $p9
             array.copy $rt_types__Array $rt_types__Array
             local.get $p1
             local.get $p7
@@ -1027,10 +2540,9 @@
                   (then
                     local.get $p5
                     ref.cast (ref $rt_types__VecInternal)
-                    struct.get $rt_types__VecInternal 0
+                    call $rt_arr__child_count
                     i32.const 1
-                    array.get $rt_types__VecChildren
-                    ref.is_null
+                    i32.eq
                     (if
                       (then
                         local.get $p5
@@ -1053,17 +2565,17 @@
             ref.as_non_null
             struct.new $rt_types__PVec))))
   )
-  (func $rt_arr__builder_new (type $functype_16)
+  (func $rt_arr__builder_new (type $functype_30)
     (result (ref $rt_types__Array))
     global.get $rt_arr__empty_pvec
-    i64.const 0
-    struct.new $rt_types__BoxedInt
+    i32.const 0
+    ref.i31
     ref.null none
     i32.const 32
     array.new $rt_types__Array
     array.new_fixed $rt_types__Array 3
   )
-  (func $rt_arr__builder_from (type $functype_17)
+  (func $rt_arr__builder_from (type $functype_31)
     (param $p0 (ref null $rt_types__PVec))
     (result (ref $rt_types__Array))
     (local $p1 (ref null $rt_types__Array))
@@ -1112,18 +2624,16 @@
     local.get $p4
     ref.as_non_null
     local.get $p2
-    i64.extend_i32_s
-    struct.new $rt_types__BoxedInt
+    ref.i31
     local.get $p3
     array.new_fixed $rt_types__Array 3
   )
-  (func $rt_arr__builder_push (type $functype_18)
+  (func $rt_arr__builder_push (type $functype_32)
     (param $p0 (ref null $rt_types__Array))
     (param $p1 anyref)
     (local $p2 (ref null $rt_types__Array))
     (local $p3 i32)
     (local $p4 (ref null $rt_types__PVec))
-    (local $p5 (ref null $rt_types__PVec))
     local.get $p0
     ref.as_non_null
     i32.const 2
@@ -1134,9 +2644,8 @@
     ref.as_non_null
     i32.const 1
     array.get $rt_types__Array
-    ref.cast (ref $rt_types__BoxedInt)
-    struct.get $rt_types__BoxedInt 0
-    i32.wrap_i64
+    ref.cast (ref i31)
+    i31.get_u
     local.set $p3
     local.get $p3
     i32.const 32
@@ -1154,8 +2663,7 @@
         local.get $p3
         i32.const 1
         i32.add
-        i64.extend_i32_s
-        struct.new $rt_types__BoxedInt
+        ref.i31
         array.set $rt_types__Array)
       (else
         local.get $p0
@@ -1164,39 +2672,14 @@
         array.get $rt_types__Array
         ref.cast (ref null $rt_types__PVec)
         local.set $p4
-        local.get $p4
-        ref.as_non_null
-        struct.get $rt_types__PVec 0
-        i32.const 32
-        i32.add
-        local.get $p4
-        ref.as_non_null
-        struct.get $rt_types__PVec 1
-        local.get $p4
-        ref.as_non_null
-        struct.get $rt_types__PVec 2
-        local.get $p2
-        ref.as_non_null
-        struct.new $rt_types__PVec
-        local.get $p1
-        call $rt_arr__push
-        local.set $p5
         local.get $p0
         ref.as_non_null
         i32.const 0
-        local.get $p5
+        local.get $p4
         ref.as_non_null
-        struct.get $rt_types__PVec 0
-        i32.const 1
-        i32.sub
-        local.get $p5
+        local.get $p2
         ref.as_non_null
-        struct.get $rt_types__PVec 1
-        local.get $p5
-        ref.as_non_null
-        struct.get $rt_types__PVec 2
-        global.get $rt_arr__empty_leaf
-        struct.new $rt_types__PVec
+        call $rt_arr__promote_full_tail
         array.set $rt_types__Array
         ref.null none
         i32.const 32
@@ -1215,39 +2698,261 @@
         local.get $p0
         ref.as_non_null
         i32.const 1
-        i64.const 1
-        struct.new $rt_types__BoxedInt
+        i32.const 1
+        ref.i31
         array.set $rt_types__Array))
   )
-  (func $rt_arr__builder_extend (type $functype_19)
+  (func $rt_arr__builder_append_leaf_range (type $functype_33)
+    (param $p0 (ref null $rt_types__Array))
+    (param $p1 (ref $rt_types__Array))
+    (param $p2 i32)
+    (param $p3 i32)
+    (local $p4 (ref null $rt_types__Array))
+    (local $p5 i32)
+    (local $p6 i32)
+    (local $p7 i32)
+    (local $p8 (ref null $rt_types__PVec))
+    (block $brk
+      (loop $lp
+        local.get $p3
+        i32.eqz
+        br_if $brk
+        local.get $p0
+        ref.as_non_null
+        i32.const 2
+        array.get $rt_types__Array
+        ref.cast (ref null $rt_types__Array)
+        local.set $p4
+        local.get $p0
+        ref.as_non_null
+        i32.const 1
+        array.get $rt_types__Array
+        ref.cast (ref i31)
+        i31.get_u
+        local.set $p5
+        local.get $p5
+        i32.const 32
+        i32.eq
+        (if
+          (then
+            local.get $p0
+            ref.as_non_null
+            i32.const 0
+            array.get $rt_types__Array
+            ref.cast (ref null $rt_types__PVec)
+            local.set $p8
+            local.get $p0
+            ref.as_non_null
+            i32.const 0
+            local.get $p8
+            ref.as_non_null
+            local.get $p4
+            ref.as_non_null
+            call $rt_arr__promote_full_tail
+            array.set $rt_types__Array
+            ref.null none
+            i32.const 32
+            array.new $rt_types__Array
+            local.set $p4
+            local.get $p0
+            ref.as_non_null
+            i32.const 2
+            local.get $p4
+            array.set $rt_types__Array
+            local.get $p0
+            ref.as_non_null
+            i32.const 1
+            i32.const 0
+            ref.i31
+            array.set $rt_types__Array
+            br $lp))
+        i32.const 32
+        local.get $p5
+        i32.sub
+        local.set $p6
+        local.get $p3
+        local.get $p6
+        i32.lt_s
+        (if (result i32)
+          (then
+            local.get $p3)
+          (else
+            local.get $p6))
+        local.set $p7
+        local.get $p4
+        ref.as_non_null
+        local.get $p5
+        local.get $p1
+        local.get $p2
+        local.get $p7
+        array.copy $rt_types__Array $rt_types__Array
+        local.get $p5
+        local.get $p7
+        i32.add
+        local.set $p5
+        local.get $p0
+        ref.as_non_null
+        i32.const 1
+        local.get $p5
+        ref.i31
+        array.set $rt_types__Array
+        local.get $p2
+        local.get $p7
+        i32.add
+        local.set $p2
+        local.get $p3
+        local.get $p7
+        i32.sub
+        local.set $p3
+        local.get $p5
+        i32.const 32
+        i32.eq
+        local.get $p3
+        i32.const 0
+        i32.gt_s
+        i32.and
+        (if
+          (then
+            local.get $p0
+            ref.as_non_null
+            i32.const 0
+            array.get $rt_types__Array
+            ref.cast (ref null $rt_types__PVec)
+            local.set $p8
+            local.get $p0
+            ref.as_non_null
+            i32.const 0
+            local.get $p8
+            ref.as_non_null
+            local.get $p4
+            ref.as_non_null
+            call $rt_arr__promote_full_tail
+            array.set $rt_types__Array
+            ref.null none
+            i32.const 32
+            array.new $rt_types__Array
+            local.set $p4
+            local.get $p0
+            ref.as_non_null
+            i32.const 2
+            local.get $p4
+            array.set $rt_types__Array
+            local.get $p0
+            ref.as_non_null
+            i32.const 1
+            i32.const 0
+            ref.i31
+            array.set $rt_types__Array))
+        br $lp))
+  )
+  (func $rt_arr__builder_extend_node (type $functype_34)
+    (param $p0 (ref null $rt_types__Array))
+    (param $p1 (ref $rt_types__VecInternal))
+    (param $p2 i32)
+    (local $p3 i32)
+    (local $p4 i32)
+    (local $p5 (ref null eq))
+    (local $p6 (ref null $rt_types__Array))
+    local.get $p1
+    call $rt_arr__child_count
+    local.set $p3
+    i32.const 0
+    local.set $p4
+    (block $brk
+      (loop $lp
+        local.get $p4
+        local.get $p3
+        i32.ge_s
+        br_if $brk
+        local.get $p1
+        struct.get $rt_types__VecInternal 0
+        local.get $p4
+        array.get $rt_types__VecChildren
+        local.set $p5
+        local.get $p2
+        i32.const 5
+        i32.eq
+        (if
+          (then
+            local.get $p5
+            ref.as_non_null
+            ref.cast (ref $rt_types__Array)
+            local.set $p6
+            local.get $p0
+            local.get $p6
+            ref.as_non_null
+            i32.const 0
+            local.get $p6
+            ref.as_non_null
+            array.len
+            call $rt_arr__builder_append_leaf_range)
+          (else
+            local.get $p0
+            local.get $p5
+            ref.as_non_null
+            ref.cast (ref $rt_types__VecInternal)
+            local.get $p2
+            i32.const 5
+            i32.sub
+            call $rt_arr__builder_extend_node))
+        local.get $p4
+        i32.const 1
+        i32.add
+        local.set $p4
+        br $lp))
+  )
+  (func $rt_arr__builder_extend (type $functype_35)
     (param $p0 (ref null $rt_types__Array))
     (param $p1 (ref null $rt_types__PVec))
     (local $p2 i32)
     (local $p3 i32)
+    (local $p4 i32)
     local.get $p1
     ref.as_non_null
     struct.get $rt_types__PVec 0
-    local.set $p3
-    i32.const 0
     local.set $p2
-    (block $brk
-      (loop $lp
-        local.get $p2
-        local.get $p3
-        i32.ge_s
-        br_if $brk
+    local.get $p2
+    i32.eqz
+    (if
+      (then
+        return))
+    local.get $p1
+    ref.as_non_null
+    struct.get $rt_types__PVec 3
+    array.len
+    local.set $p3
+    local.get $p2
+    local.get $p3
+    i32.sub
+    local.set $p4
+    local.get $p4
+    i32.eqz
+    (if
+      (then)
+      (else
         local.get $p0
         local.get $p1
-        local.get $p2
-        call $rt_arr__get
-        call $rt_arr__builder_push
-        local.get $p2
-        i32.const 1
-        i32.add
-        local.set $p2
-        br $lp))
+        ref.as_non_null
+        struct.get $rt_types__PVec 2
+        ref.as_non_null
+        local.get $p1
+        ref.as_non_null
+        struct.get $rt_types__PVec 1
+        call $rt_arr__builder_extend_node))
+    local.get $p3
+    i32.eqz
+    (if
+      (then)
+      (else
+        local.get $p0
+        local.get $p1
+        ref.as_non_null
+        struct.get $rt_types__PVec 3
+        i32.const 0
+        local.get $p3
+        call $rt_arr__builder_append_leaf_range))
   )
-  (func $rt_arr__builder_freeze (type $functype_20)
+  (func $rt_arr__builder_freeze (type $functype_36)
     (param $p0 (ref null $rt_types__Array))
     (result (ref $rt_types__PVec))
     (local $p1 (ref null $rt_types__PVec))
@@ -1264,9 +2969,8 @@
     ref.as_non_null
     i32.const 1
     array.get $rt_types__Array
-    ref.cast (ref $rt_types__BoxedInt)
-    struct.get $rt_types__BoxedInt 0
-    i32.wrap_i64
+    ref.cast (ref i31)
+    i31.get_u
     local.set $p2
     local.get $p0
     ref.as_non_null
@@ -1308,12 +3012,15 @@
         ref.as_non_null
         struct.new $rt_types__PVec))
   )
-  (func $rt_arr__from_array (type $functype_21)
+  (func $rt_arr__from_array (type $functype_37)
     (param $p0 (ref $rt_types__Array))
     (result (ref $rt_types__PVec))
     (local $p1 i32)
     (local $p2 (ref null $rt_types__PVec))
     (local $p3 i32)
+    (local $p4 (ref null $rt_types__Array))
+    (local $p5 i32)
+    (local $p6 (ref null $rt_types__Array))
     local.get $p0
     array.len
     local.set $p1
@@ -1341,30 +3048,79 @@
             (block $brk
               (loop $lp
                 local.get $p3
+                i32.const 32
+                i32.add
                 local.get $p1
                 i32.ge_s
                 br_if $brk
-                local.get $p2
+                ref.null none
+                i32.const 32
+                array.new $rt_types__Array
+                local.set $p4
+                local.get $p4
                 ref.as_non_null
+                i32.const 0
                 local.get $p0
                 local.get $p3
-                array.get $rt_types__Array
-                call $rt_arr__push
+                i32.const 32
+                array.copy $rt_types__Array $rt_types__Array
+                local.get $p2
+                ref.as_non_null
+                local.get $p4
+                ref.as_non_null
+                call $rt_arr__promote_full_tail
                 local.set $p2
                 local.get $p3
-                i32.const 1
+                i32.const 32
                 i32.add
                 local.set $p3
                 br $lp))
+            local.get $p1
+            local.get $p3
+            i32.sub
+            local.set $p5
+            local.get $p5
+            i32.eqz
+            (if
+              (then
+                global.get $rt_arr__empty_leaf
+                local.set $p6)
+              (else
+                ref.null none
+                local.get $p5
+                array.new $rt_types__Array
+                local.set $p6
+                local.get $p6
+                ref.as_non_null
+                i32.const 0
+                local.get $p0
+                local.get $p3
+                local.get $p5
+                array.copy $rt_types__Array $rt_types__Array))
             local.get $p2
-            ref.as_non_null))))
+            ref.as_non_null
+            struct.get $rt_types__PVec 0
+            local.get $p5
+            i32.add
+            local.get $p2
+            ref.as_non_null
+            struct.get $rt_types__PVec 1
+            local.get $p2
+            ref.as_non_null
+            struct.get $rt_types__PVec 2
+            local.get $p6
+            ref.as_non_null
+            struct.new $rt_types__PVec))))
   )
-  (func $rt_arr__to_array (type $functype_17)
+  (func $rt_arr__to_array (type $functype_31)
     (param $p0 (ref null $rt_types__PVec))
     (result (ref $rt_types__Array))
     (local $p1 i32)
     (local $p2 (ref null $rt_types__Array))
     (local $p3 i32)
+    (local $p4 (ref null $rt_types__Array))
+    (local $p5 i32)
+    (local $p6 i32)
     local.get $p0
     ref.as_non_null
     struct.get $rt_types__PVec 0
@@ -1373,31 +3129,50 @@
     local.get $p1
     array.new $rt_types__Array
     local.set $p2
+    local.get $p0
+    ref.as_non_null
+    struct.get $rt_types__PVec 3
+    local.set $p4
+    local.get $p4
+    array.len
+    local.set $p5
+    local.get $p1
+    local.get $p5
+    i32.sub
+    local.set $p6
+    local.get $p6
     i32.const 0
-    local.set $p3
-    (block $brk
-      (loop $lp
-        local.get $p3
-        local.get $p1
-        i32.ge_s
-        br_if $brk
-        local.get $p2
-        ref.as_non_null
-        local.get $p3
+    i32.gt_s
+    (if
+      (then
         local.get $p0
         ref.as_non_null
-        local.get $p3
-        call $rt_arr__get
-        array.set $rt_types__Array
-        local.get $p3
-        i32.const 1
-        i32.add
-        local.set $p3
-        br $lp))
+        struct.get $rt_types__PVec 2
+        ref.as_non_null
+        local.get $p0
+        ref.as_non_null
+        struct.get $rt_types__PVec 1
+        local.get $p2
+        ref.as_non_null
+        i32.const 0
+        call $rt_arr__copy_leaves
+        drop))
+    local.get $p5
+    i32.eqz
+    (if
+      (then)
+      (else
+        local.get $p2
+        ref.as_non_null
+        local.get $p6
+        local.get $p4
+        i32.const 0
+        local.get $p5
+        array.copy $rt_types__Array $rt_types__Array))
     local.get $p2
     ref.as_non_null
   )
-  (func $rt_arr__from_read_file_result (type $functype_22)
+  (func $rt_arr__from_read_file_result (type $functype_38)
     (param $p0 (ref null $rt_types__Variant))
     (result (ref null $rt_types__Variant))
     (local $p1 (ref null $rt_types__Variant))
@@ -1434,14 +3209,18 @@
       (else
         local.get $p0))
   )
-  (func $rt_str__len (type $functype_23)
+  (func $rt_arr__make_empty (type $functype_39)
+    (result (ref $rt_types__PVec))
+    global.get $rt_arr__empty_pvec
+  )
+  (func $rt_str__len (type $functype_40)
     (param $p0 (ref null $rt_types__String))
     (result i32)
     local.get $p0
     ref.as_non_null
     array.len
   )
-  (func $rt_str__concat (type $functype_24)
+  (func $rt_str__concat (type $functype_41)
     (param $p0 (ref null $rt_types__String))
     (param $p1 (ref null $rt_types__String))
     (result (ref $rt_types__String))
@@ -1484,7 +3263,7 @@
     local.get $p5
     ref.as_non_null
   )
-  (func $rt_str__substring (type $functype_25)
+  (func $rt_str__substring (type $functype_42)
     (param $p0 (ref null $rt_types__String))
     (param $p1 i32)
     (param $p2 i32)
@@ -1549,7 +3328,7 @@
     local.get $p4
     ref.as_non_null
   )
-  (func $rt_str__eq (type $functype_26)
+  (func $rt_str__eq (type $functype_43)
     (param $p0 (ref null $rt_types__String))
     (param $p1 (ref null $rt_types__String))
     (result i32)
@@ -1596,7 +3375,7 @@
         br $cmp))
     i32.const 1
   )
-  (func $rt_str__cmp (type $functype_26)
+  (func $rt_str__cmp (type $functype_43)
     (param $p0 (ref null $rt_types__String))
     (param $p1 (ref null $rt_types__String))
     (result i32)
@@ -1674,7 +3453,7 @@
         return))
     i32.const 0
   )
-  (func $rt_str__from_i64 (type $functype_27)
+  (func $rt_str__from_i64 (type $functype_44)
     (param $p0 i64)
     (result (ref $rt_types__String))
     (local $p1 i32)
@@ -1798,7 +3577,7 @@
     local.get $p0
     call $rt_str__host_f64_to_string
   )
-  (func $rt_str__from_bool (type $functype_28)
+  (func $rt_str__from_bool (type $functype_45)
     (param $p0 i32)
     (result (ref $rt_types__String))
     local.get $p0
@@ -1841,7 +3620,7 @@
         br $loop))
     local.get $p1
   )
-  (func $rt_dict__arr_insert_at (type $functype_29)
+  (func $rt_dict__arr_insert_at (type $functype_46)
     (param $p0 (ref $rt_types__Array))
     (param $p1 i32)
     (param $p2 anyref)
@@ -1896,7 +3675,7 @@
     local.get $p4
     ref.as_non_null
   )
-  (func $rt_dict__arr_replace_at (type $functype_29)
+  (func $rt_dict__arr_replace_at (type $functype_46)
     (param $p0 (ref $rt_types__Array))
     (param $p1 i32)
     (param $p2 anyref)
@@ -1925,7 +3704,7 @@
     local.get $p4
     ref.as_non_null
   )
-  (func $rt_dict__arr_remove_at (type $functype_30)
+  (func $rt_dict__arr_remove_at (type $functype_47)
     (param $p0 (ref $rt_types__Array))
     (param $p1 i32)
     (result (ref $rt_types__Array))
@@ -1976,7 +3755,7 @@
     local.get $p3
     ref.as_non_null
   )
-  (func $rt_dict__hash_i64 (type $functype_31)
+  (func $rt_dict__hash_i64 (type $functype_48)
     (param $p0 i64)
     (result i64)
     (local $p1 i64)
@@ -2138,7 +3917,7 @@
     i64.or
     i64.xor
   )
-  (func $rt_dict__hash_string (type $functype_32)
+  (func $rt_dict__hash_string (type $functype_49)
     (param $p0 (ref null $rt_types__String))
     (result i64)
     (local $p1 i32)
@@ -4089,7 +5868,7 @@
     i64.or
     i64.xor
   )
-  (func $rt_dict__hash_key (type $functype_33)
+  (func $rt_dict__hash_key (type $functype_50)
     (param $p0 anyref)
     (result i64)
     local.get $p0
@@ -4115,7 +5894,7 @@
     ref.cast (ref null $rt_types__String)
     call $rt_dict__hash_string
   )
-  (func $rt_dict__collision_get (type $functype_34)
+  (func $rt_dict__collision_get (type $functype_51)
     (param $p0 (ref null $rt_types__HamtCollision))
     (param $p1 anyref)
     (result anyref)
@@ -4161,7 +5940,7 @@
         br $scan))
     ref.null any
   )
-  (func $rt_dict__collision_set (type $functype_35)
+  (func $rt_dict__collision_set (type $functype_52)
     (param $p0 (ref null $rt_types__HamtCollision))
     (param $p1 i64)
     (param $p2 anyref)
@@ -4243,7 +6022,7 @@
     ref.as_non_null
     struct.new $rt_types__HamtCollision
   )
-  (func $rt_dict__node_get (type $functype_36)
+  (func $rt_dict__node_get (type $functype_53)
     (param $p0 (ref null $rt_types__HamtNode))
     (param $p1 i64)
     (param $p2 i32)
@@ -4361,7 +6140,7 @@
     local.get $p3
     call $rt_dict__collision_get
   )
-  (func $rt_dict__node_set (type $functype_37)
+  (func $rt_dict__node_set (type $functype_54)
     (param $p0 (ref null $rt_types__HamtNode))
     (param $p1 i64)
     (param $p2 i32)
@@ -4648,7 +6427,7 @@
     ref.as_non_null
     struct.new $rt_types__HamtNode
   )
-  (func $rt_dict__node_remove (type $functype_38)
+  (func $rt_dict__node_remove (type $functype_55)
     (param $p0 (ref null $rt_types__HamtNode))
     (param $p1 i64)
     (param $p2 i32)
@@ -4913,7 +6692,7 @@
     ref.as_non_null
     struct.new $rt_types__HamtNode
   )
-  (func $rt_dict__order_remove_key (type $functype_7)
+  (func $rt_dict__order_remove_key (type $functype_16)
     (param $p0 (ref $rt_types__PVec))
     (param $p1 anyref)
     (result (ref $rt_types__PVec))
@@ -4961,7 +6740,7 @@
     local.get $p4
     ref.as_non_null
   )
-  (func $rt_dict__make (type $functype_39)
+  (func $rt_dict__make (type $functype_56)
     (result (ref $rt_types__PDict))
     i32.const 0
     ref.null $rt_types__HamtNode
@@ -4972,21 +6751,21 @@
     struct.new $rt_types__PVec
     struct.new $rt_types__PDict
   )
-  (func $rt_dict__len (type $functype_40)
+  (func $rt_dict__len (type $functype_57)
     (param $p0 (ref null $rt_types__PDict))
     (result i32)
     local.get $p0
     ref.as_non_null
     struct.get $rt_types__PDict 0
   )
-  (func $rt_dict__keys (type $functype_41)
+  (func $rt_dict__keys (type $functype_58)
     (param $p0 (ref null $rt_types__PDict))
     (result (ref $rt_types__PVec))
     local.get $p0
     ref.as_non_null
     struct.get $rt_types__PDict 2
   )
-  (func $rt_dict__has (type $functype_42)
+  (func $rt_dict__has (type $functype_59)
     (param $p0 (ref null $rt_types__PDict))
     (param $p1 anyref)
     (result i32)
@@ -5001,7 +6780,7 @@
     ref.is_null
     i32.eqz
   )
-  (func $rt_dict__get (type $functype_43)
+  (func $rt_dict__get (type $functype_60)
     (param $p0 (ref null $rt_types__PDict))
     (param $p1 anyref)
     (result anyref)
@@ -5014,7 +6793,7 @@
     local.get $p1
     call $rt_dict__node_get
   )
-  (func $rt_dict__get_option (type $functype_44)
+  (func $rt_dict__get_option (type $functype_61)
     (param $p0 (ref null $rt_types__PDict))
     (param $p1 anyref)
     (result (ref $rt_types__Variant))
@@ -5043,7 +6822,7 @@
         array.new_fixed $rt_types__Array 1
         struct.new $rt_types__Variant))
   )
-  (func $rt_dict__set (type $functype_45)
+  (func $rt_dict__set (type $functype_62)
     (param $p0 (ref null $rt_types__PDict))
     (param $p1 anyref)
     (param $p2 anyref)
@@ -5099,7 +6878,7 @@
     ref.as_non_null
     struct.new $rt_types__PDict
   )
-  (func $rt_dict__remove (type $functype_46)
+  (func $rt_dict__remove (type $functype_63)
     (param $p0 (ref null $rt_types__PDict))
     (param $p1 anyref)
     (result (ref $rt_types__PDict))
@@ -5151,7 +6930,7 @@
     ref.as_non_null
     struct.new $rt_types__PDict
   )
-  (func $rt_dict__set_in_place (type $functype_45)
+  (func $rt_dict__set_in_place (type $functype_62)
     (param $p0 (ref null $rt_types__PDict))
     (param $p1 anyref)
     (param $p2 anyref)
@@ -5209,7 +6988,7 @@
     local.get $p0
     ref.as_non_null
   )
-  (func $rt_dict__remove_in_place (type $functype_46)
+  (func $rt_dict__remove_in_place (type $functype_63)
     (param $p0 (ref null $rt_types__PDict))
     (param $p1 anyref)
     (result (ref $rt_types__PDict))
@@ -5291,7 +7070,7 @@
     call $rt_core__host_error
     unreachable
   )
-  (func $rt_core__eq_array (type $functype_47)
+  (func $rt_core__eq_array (type $functype_64)
     (param $p0 (ref null $rt_types__Array))
     (param $p1 (ref null $rt_types__Array))
     (result i32)
@@ -5357,7 +7136,7 @@
         br $loop))
     i32.const 1
   )
-  (func $rt_core__eq_vec (type $functype_48)
+  (func $rt_core__eq_vec (type $functype_65)
     (param $p0 (ref $rt_types__PVec))
     (param $p1 (ref $rt_types__PVec))
     (result i32)
@@ -5401,7 +7180,7 @@
         br $loop))
     i32.const 1
   )
-  (func $rt_core__eq_dict (type $functype_49)
+  (func $rt_core__eq_dict (type $functype_66)
     (param $p0 (ref $rt_types__PDict))
     (param $p1 (ref $rt_types__PDict))
     (result i32)
@@ -5466,7 +7245,7 @@
         br $loop))
     i32.const 1
   )
-  (func $rt_core__eq_variant (type $functype_50)
+  (func $rt_core__eq_variant (type $functype_67)
     (param $p0 (ref $rt_types__Variant))
     (param $p1 (ref $rt_types__Variant))
     (result i32)
@@ -5500,7 +7279,7 @@
     local.get $p3
     call $rt_core__eq_array
   )
-  (func $rt_core__eq (type $functype_51)
+  (func $rt_core__eq (type $functype_68)
     (param $p0 anyref)
     (param $p1 anyref)
     (result i32)
@@ -5616,7 +7395,7 @@
     ref.cast (ref null eq)
     ref.eq
   )
-  (func $user__func_112 (type $functype_52)
+  (func $user__func_112 (type $functype_69)
     (param $p0 (ref null $rt_types__PVec))
     (param $p1 (ref null $rt_types__String))
     (result (ref null $rt_types__String))
@@ -6071,7 +7850,7 @@
     local.get $p57
     return
   )
-  (func $user__func_120 (type $functype_53)
+  (func $user__func_120 (type $functype_70)
     (param $p0 (ref null $rt_types__Variant))
     (result (ref null $rt_types__String))
     (local $p1 (ref null $rt_types__String))
@@ -6134,7 +7913,7 @@
     local.get $p5
     return
   )
-  (func $user__func_121 (type $functype_54)
+  (func $user__func_121 (type $functype_71)
     (param $p0 i64)
     (result i32)
     (local $p1 anyref)
@@ -6358,7 +8137,7 @@
     local.get $p5
     return
   )
-  (func $user__func_122 (type $functype_55)
+  (func $user__func_122 (type $functype_72)
     (local $p0 anyref)
     (local $p1 (ref null $rt_types__PVec))
     (local $p2 i64)
@@ -7433,7 +9212,7 @@
     local.get $p116
     drop
   )
-  (func $user__func_112__closure (type $functype_56)
+  (func $user__func_112__closure (type $functype_73)
     (param $p0 anyref)
     (param $p1 anyref)
     (result anyref)
@@ -7449,7 +9228,7 @@
     ref.cast (ref null $rt_types__String)
     call $user__func_112
   )
-  (func $user__func_120__closure (type $functype_56)
+  (func $user__func_120__closure (type $functype_73)
     (param $p0 anyref)
     (param $p1 anyref)
     (result anyref)
@@ -7460,7 +9239,7 @@
     ref.cast (ref null $rt_types__Variant)
     call $user__func_120
   )
-  (func $user__func_121__closure (type $functype_56)
+  (func $user__func_121__closure (type $functype_73)
     (param $p0 anyref)
     (param $p1 anyref)
     (result anyref)
@@ -7473,7 +9252,7 @@
     call $user__func_121
     ref.i31
   )
-  (func $user__func_122__closure (type $functype_56)
+  (func $user__func_122__closure (type $functype_73)
     (param $p0 anyref)
     (param $p1 anyref)
     (result anyref)
@@ -7481,7 +9260,7 @@
     i32.const 0
     ref.i31
   )
-  (func $user__user____iterator_next (type $functype_57)
+  (func $user__user____iterator_next (type $functype_74)
     (param $p0 anyref)
     (result (ref null $rt_types__Variant))
     (local $p1 (ref null $rt_types__Variant))
@@ -7540,7 +9319,7 @@
         struct.new $rt_types__Variant))
     return
   )
-  (func $user__$int_from_string_helper (type $functype_58)
+  (func $user__$int_from_string_helper (type $functype_75)
     (param $p0 (ref null $rt_types__String))
     (result anyref)
     (local $p1 i64)
@@ -7660,7 +9439,7 @@
         array.new_fixed $rt_types__Array 0
         struct.new $rt_types__Variant))
   )
-  (func $user__$from_code_point_helper (type $functype_59)
+  (func $user__$from_code_point_helper (type $functype_76)
     (param $p0 i32)
     (result anyref)
     local.get $p0
@@ -7788,7 +9567,7 @@
                             array.new_fixed $rt_types__Array 0
                             struct.new $rt_types__Variant))))))))))))
   )
-  (func $user__$string_utf8_bytes_helper (type $functype_60)
+  (func $user__$string_utf8_bytes_helper (type $functype_77)
     (param $p0 (ref null $rt_types__String))
     (result (ref $rt_types__Array))
     (local $p1 i32)
@@ -7822,7 +9601,7 @@
         br $$continue))
     local.get $p3
   )
-  (func $user__$string_from_utf8_helper (type $functype_61)
+  (func $user__$string_from_utf8_helper (type $functype_78)
     (param $p0 (ref null $rt_types__Array))
     (result anyref)
     (local $p1 i32)
@@ -8157,10 +9936,10 @@
         array.new_fixed $rt_types__Array 1
         struct.new $rt_types__Variant))
   )
-  (func $user____user_init (type $functype_55)
+  (func $user____user_init (type $functype_72)
     call $user__func_122
   )
-  (func $user____str_lit_get_empty (type $functype_62)
+  (func $user____str_lit_get_empty (type $functype_79)
     (result (ref $rt_types__String))
     global.get $user____str_lit_global_empty
     ref.is_null
@@ -8171,7 +9950,7 @@
     global.get $user____str_lit_global_empty
     ref.as_non_null
   )
-  (func $user____str_lit_get_29 (type $functype_62)
+  (func $user____str_lit_get_29 (type $functype_79)
     (result (ref $rt_types__String))
     global.get $user____str_lit_global_29
     ref.is_null
@@ -8183,7 +9962,7 @@
     global.get $user____str_lit_global_29
     ref.as_non_null
   )
-  (func $user____str_lit_get_4641494c (type $functype_62)
+  (func $user____str_lit_get_4641494c (type $functype_79)
     (result (ref $rt_types__String))
     global.get $user____str_lit_global_4641494c
     ref.is_null
@@ -8198,7 +9977,7 @@
     global.get $user____str_lit_global_4641494c
     ref.as_non_null
   )
-  (func $user____str_lit_get_4e6f6e65 (type $functype_62)
+  (func $user____str_lit_get_4e6f6e65 (type $functype_79)
     (result (ref $rt_types__String))
     global.get $user____str_lit_global_4e6f6e65
     ref.is_null
@@ -8213,7 +9992,7 @@
     global.get $user____str_lit_global_4e6f6e65
     ref.as_non_null
   )
-  (func $user____str_lit_get_536f6d6528 (type $functype_62)
+  (func $user____str_lit_get_536f6d6528 (type $functype_79)
     (result (ref $rt_types__String))
     global.get $user____str_lit_global_536f6d6528
     ref.is_null
@@ -8229,7 +10008,7 @@
     global.get $user____str_lit_global_536f6d6528
     ref.as_non_null
   )
-  (func $user____str_lit_get_6261642062797465 (type $functype_62)
+  (func $user____str_lit_get_6261642062797465 (type $functype_79)
     (result (ref $rt_types__String))
     global.get $user____str_lit_global_6261642062797465
     ref.is_null
@@ -8248,7 +10027,7 @@
     global.get $user____str_lit_global_6261642062797465
     ref.as_non_null
   )
-  (func $user____str_lit_get_68656c6c6f (type $functype_62)
+  (func $user____str_lit_get_68656c6c6f (type $functype_79)
     (result (ref $rt_types__String))
     global.get $user____str_lit_global_68656c6c6f
     ref.is_null
@@ -8264,7 +10043,7 @@
     global.get $user____str_lit_global_68656c6c6f
     ref.as_non_null
   )
-  (func $user____str_lit_get_6a6f696e3a20696e76616c69642075746638 (type $functype_62)
+  (func $user____str_lit_get_6a6f696e3a20696e76616c69642075746638 (type $functype_79)
     (result (ref $rt_types__String))
     global.get $user____str_lit_global_6a6f696e3a20696e76616c69642075746638
     ref.is_null
@@ -8293,7 +10072,7 @@
     global.get $user____str_lit_global_6a6f696e3a20696e76616c69642075746638
     ref.as_non_null
   )
-  (func $user____str_lit_get_6e6f6e2d65786861757374697665206d6174636820696e205f5f696e69745f5f202846756e634964283132322929 (type $functype_62)
+  (func $user____str_lit_get_6e6f6e2d65786861757374697665206d6174636820696e205f5f696e69745f5f202846756e634964283132322929 (type $functype_79)
     (result (ref $rt_types__String))
     global.get $user____str_lit_global_6e6f6e2d65786861757374697665206d6174636820696e205f5f696e69745f5f202846756e634964283132322929
     ref.is_null
@@ -8350,7 +10129,7 @@
     global.get $user____str_lit_global_6e6f6e2d65786861757374697665206d6174636820696e205f5f696e69745f5f202846756e634964283132322929
     ref.as_non_null
   )
-  (func $user____str_lit_get_6e6f6e2d65786861757374697665206d6174636820696e205f5f7072656c7564655f766563746f722e6a6f696e202846756e634964283131322929 (type $functype_62)
+  (func $user____str_lit_get_6e6f6e2d65786861757374697665206d6174636820696e205f5f7072656c7564655f766563746f722e6a6f696e202846756e634964283131322929 (type $functype_79)
     (result (ref $rt_types__String))
     global.get $user____str_lit_global_6e6f6e2d65786861757374697665206d6174636820696e205f5f7072656c7564655f766563746f722e6a6f696e202846756e634964283131322929
     ref.is_null
@@ -8420,7 +10199,7 @@
     global.get $user____str_lit_global_6e6f6e2d65786861757374697665206d6174636820696e205f5f7072656c7564655f766563746f722e6a6f696e202846756e634964283131322929
     ref.as_non_null
   )
-  (func $user____str_lit_get_6e6f6e2d65786861757374697665206d6174636820696e20737472696e675f757466382e62797465202846756e634964283132312929 (type $functype_62)
+  (func $user____str_lit_get_6e6f6e2d65786861757374697665206d6174636820696e20737472696e675f757466382e62797465202846756e634964283132312929 (type $functype_79)
     (result (ref $rt_types__String))
     global.get $user____str_lit_global_6e6f6e2d65786861757374697665206d6174636820696e20737472696e675f757466382e62797465202846756e634964283132312929
     ref.is_null
@@ -8485,7 +10264,7 @@
     global.get $user____str_lit_global_6e6f6e2d65786861757374697665206d6174636820696e20737472696e675f757466382e62797465202846756e634964283132312929
     ref.as_non_null
   )
-  (func $user____str_lit_get_6e6f6e2d65786861757374697665206d6174636820696e20737472696e675f757466382e73686f775f6f7074202846756e634964283132302929 (type $functype_62)
+  (func $user____str_lit_get_6e6f6e2d65786861757374697665206d6174636820696e20737472696e675f757466382e73686f775f6f7074202846756e634964283132302929 (type $functype_79)
     (result (ref $rt_types__String))
     global.get $user____str_lit_global_6e6f6e2d65786861757374697665206d6174636820696e20737472696e675f757466382e73686f775f6f7074202846756e634964283132302929
     ref.is_null
@@ -8554,7 +10333,7 @@
     global.get $user____str_lit_global_6e6f6e2d65786861757374697665206d6174636820696e20737472696e675f757466382e73686f775f6f7074202846756e634964283132302929
     ref.as_non_null
   )
-  (func $user____str_lit_get_726f756e642d747269703a20 (type $functype_62)
+  (func $user____str_lit_get_726f756e642d747269703a20 (type $functype_79)
     (result (ref $rt_types__String))
     global.get $user____str_lit_global_726f756e642d747269703a20
     ref.is_null
@@ -8577,7 +10356,7 @@
     global.get $user____str_lit_global_726f756e642d747269703a20
     ref.as_non_null
   )
-  (func $user____str_lit_get_78 (type $functype_62)
+  (func $user____str_lit_get_78 (type $functype_79)
     (result (ref $rt_types__String))
     global.get $user____str_lit_global_78
     ref.is_null
@@ -8589,7 +10368,7 @@
     global.get $user____str_lit_global_78
     ref.as_non_null
   )
-  (func $user____str_lit_get_c3a9 (type $functype_62)
+  (func $user____str_lit_get_c3a9 (type $functype_79)
     (result (ref $rt_types__String))
     global.get $user____str_lit_global_c3a9
     ref.is_null
@@ -8602,7 +10381,7 @@
     global.get $user____str_lit_global_c3a9
     ref.as_non_null
   )
-  (func $user____str_lit_get_e4bda0e5a5bde4b896e7958c (type $functype_62)
+  (func $user____str_lit_get_e4bda0e5a5bde4b896e7958c (type $functype_79)
     (result (ref $rt_types__String))
     global.get $user____str_lit_global_e4bda0e5a5bde4b896e7958c
     ref.is_null
@@ -8625,7 +10404,7 @@
     global.get $user____str_lit_global_e4bda0e5a5bde4b896e7958c
     ref.as_non_null
   )
-  (func $user____str_lit_get_f09f918d (type $functype_62)
+  (func $user____str_lit_get_f09f918d (type $functype_79)
     (result (ref $rt_types__String))
     global.get $user____str_lit_global_f09f918d
     ref.is_null
@@ -8641,27 +10420,46 @@
     ref.as_non_null
   )
   (export "rt_arr__tailoff" (func $rt_arr__tailoff))
+  (export "rt_arr__vi_nav" (func $rt_arr__vi_nav))
+  (export "rt_arr__child_count" (func $rt_arr__child_count))
+  (export "rt_arr__copy_leaves" (func $rt_arr__copy_leaves))
+  (export "rt_arr__node_total_size" (func $rt_arr__node_total_size))
+  (export "rt_arr__make_relaxed" (func $rt_arr__make_relaxed))
+  (export "rt_arr__pack_children" (func $rt_arr__pack_children))
+  (export "rt_arr__append_centre" (func $rt_arr__append_centre))
+  (export "rt_arr__concat_trees" (func $rt_arr__concat_trees))
+  (export "rt_arr__wrap_leaf" (func $rt_arr__wrap_leaf))
   (export "rt_arr__get_leaf" (func $rt_arr__get_leaf))
   (export "rt_arr__new_path" (func $rt_arr__new_path))
   (export "rt_arr__push_tail" (func $rt_arr__push_tail))
   (export "rt_arr__do_set" (func $rt_arr__do_set))
   (export "rt_arr__push" (func $rt_arr__push))
+  (export "rt_arr__promote_full_tail" (func $rt_arr__promote_full_tail))
   (export "rt_arr__make" (func $rt_arr__make))
   (export "rt_arr__get" (func $rt_arr__get))
   (export "rt_arr__set" (func $rt_arr__set))
+  (export "rt_arr__set_in_place" (func $rt_arr__set_in_place))
   (export "rt_arr__len" (func $rt_arr__len))
   (export "rt_arr__concat" (func $rt_arr__concat))
+  (export "rt_arr__slice_trim_right" (func $rt_arr__slice_trim_right))
+  (export "rt_arr__slice_trim_left" (func $rt_arr__slice_trim_left))
+  (export "rt_arr__slice_last_leaf" (func $rt_arr__slice_last_leaf))
+  (export "rt_arr__slice_collapse_root" (func $rt_arr__slice_collapse_root))
+  (export "rt_arr__slice_from_full_tree" (func $rt_arr__slice_from_full_tree))
   (export "rt_arr__slice" (func $rt_arr__slice))
   (export "rt_arr__pop_tail" (func $rt_arr__pop_tail))
   (export "rt_arr__drop_last" (func $rt_arr__drop_last))
   (export "rt_arr__builder_new" (func $rt_arr__builder_new))
   (export "rt_arr__builder_from" (func $rt_arr__builder_from))
   (export "rt_arr__builder_push" (func $rt_arr__builder_push))
+  (export "rt_arr__builder_append_leaf_range" (func $rt_arr__builder_append_leaf_range))
+  (export "rt_arr__builder_extend_node" (func $rt_arr__builder_extend_node))
   (export "rt_arr__builder_extend" (func $rt_arr__builder_extend))
   (export "rt_arr__builder_freeze" (func $rt_arr__builder_freeze))
   (export "rt_arr__from_array" (func $rt_arr__from_array))
   (export "rt_arr__to_array" (func $rt_arr__to_array))
   (export "rt_arr__from_read_file_result" (func $rt_arr__from_read_file_result))
+  (export "rt_arr__make_empty" (func $rt_arr__make_empty))
   (export "rt_str__len" (func $rt_str__len))
   (export "rt_str__concat" (func $rt_str__concat))
   (export "rt_str__substring" (func $rt_str__substring))

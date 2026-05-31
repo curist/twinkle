@@ -124,7 +124,7 @@ total, no copy, no `(arms, start)` parameter. Same shape fixes the
 - Not a replacement for `Vector`/`String` — an adjunct. Materialize with
   `to_vector` / `to_string` at the boundary where an owned value is needed.
 - Doesn't change `concat`/arbitrary slice asymptotics — that's RRB
-  ([rrb-vector-concat.md](rrb-vector-concat.md)).
+  ([rrb-vector-concat.md](archive/rrb-vector-concat.md)).
 
 ## Cost contract
 
@@ -142,7 +142,7 @@ total, no copy, no `(arms, start)` parameter. Same shape fixes the
 - **Access contracts** ([access-contracts.md](access-contracts.md)) — the bounds
   `View` satisfies and is written against.
 - **Stack / `drop_last`** ([stack.md](stack.md)) — LIFO build/shrink.
-- **RRB** ([rrb-vector-concat.md](rrb-vector-concat.md)) — arbitrary O(log n)
+- **RRB** ([rrb-vector-concat.md](archive/rrb-vector-concat.md)) — arbitrary O(log n)
   `concat`/`slice` on `Vector` itself.
 - **Tier 1 string compares** ([slice-performance.md](slice-performance.md)) —
   direct-indexing in the hot byte loop.

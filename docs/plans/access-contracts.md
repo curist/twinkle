@@ -226,7 +226,7 @@ access-contracts work; it shipped separately.
 - **`View<C>`** ([view.md](view.md)) — concrete zero-copy window; a satisfier.
 - **`Stack<T>` / `drop_last`** ([stack.md](stack.md)) — LIFO; a satisfier plus the
   runtime shrink op.
-- **RRB** ([rrb-vector-concat.md](rrb-vector-concat.md)) — makes `Vector`'s own
+- **RRB** ([rrb-vector-concat.md](archive/rrb-vector-concat.md)) — makes `Vector`'s own
   `sub`/`concat` O(log n).
 - **Tier 1** ([slice-performance.md](slice-performance.md)) — the hot byte loop
   stays direct `s[i]`.

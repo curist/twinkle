@@ -107,6 +107,7 @@ Related historical context outside this folder:
 | [pvec-performance-enhancements.md](pvec-performance-enhancements.md) | Incremental PVec runtime optimizations: i31ref builder tail, promote_full_tail, bulk array conversion, leaf-oriented slice/extend, true in-place set |
 | [dict-performance-enhancements.md](dict-performance-enhancements.md) | Incremental HAMT dict runtime optimizations: hot-path inlining, in-place mutation for unique dicts |
 | [dict-in-place-alias-safety.md](dict-in-place-alias-safety.md) | Deep ownership analysis ensuring in-place dict/vector mutation is alias-safe |
+| [rrb-vector-concat.md](rrb-vector-concat.md) | RRB-tree `Vector` concat/slice implementation plan and benchmarks; runtime work landed in boot and stage0, with Phase 7 classical-slack experiment archived as a wash |
 | [wasm-tail-calls.md](wasm-tail-calls.md) | Wasm tail-call emission (`return_call` for direct calls, `return_call_ref` for closures) as a required target feature |
 | [dict-wyhash-i64.md](dict-wyhash-i64.md) | Migrate active FNV-derived hashing to deterministic wyhash v3 and carry 64-bit hashes through the Dict HAMT |
 | [string-unicode-semantics.md](string-unicode-semantics.md) | Byte-first string semantics with explicit Unicode APIs |

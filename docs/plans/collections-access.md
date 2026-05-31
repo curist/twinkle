@@ -37,14 +37,13 @@ actually pays for `slice`/`concat`. It split the problem into:
    closure.
 3. **Arbitrary concat (prepend) & arbitrary-range / left-drop slice** — the
    general O(log n) fix is an RRB-tree `Vector`
-   ([rrb-vector-concat.md](rrb-vector-concat.md)). **Prioritized (2026-05-30)** —
-   unparked despite the Gate A red audit, as a deliberate design decision to make
-   `Vector` the single universal sequence (stack/queue/deque/rope) and supply the
-   cheap `drop_first`/`prepend` half.
+   ([rrb-vector-concat.md](archive/rrb-vector-concat.md)). The runtime work
+   landed in boot and stage0; the plan is archived with the Phase 7
+   slack-comparison note.
 
-So the live frontier is: **RRB-tree `Vector`** (the universal-sequence
-investment). Access-contracts + `View` are done; `drop_last` shipped; the
-`@std.stack` wrapper was tried and removed (the capability lives on `Vector`).
+The main collection-access thread is no longer blocked on RRB planning:
+access-contracts + `View` are done; `drop_last` shipped; the `@std.stack` wrapper
+was tried and removed (the capability lives on `Vector`).
 
 ---
 
@@ -57,7 +56,7 @@ investment). Access-contracts + `View` are done; `drop_last` shipped; the
 | Access contracts | Parameterized contracts `IndexRead<E>` / `IntoIterator<E>` / `IndexWrite<E>` with a `Self → E` functional dependency; write-once generic access monomorphized to direct reads; positional `v[i]` desugars to `IndexRead.at` (in scope for "done") | **Done** — all three contracts + `v[i]` + `for x in` landed; `View` is the stdlib satisfier; `Stack` deliberately excluded then removed | [access-contracts.md](access-contracts.md) |
 | `Sliceable` / `[a..b]` | Range-slice indexing `foo[a..b]` → `Sliceable.slice`; Self-only contract, needs none of the parameterized-contract machinery | **Proposal — split from access-contracts** | [sliceable.md](sliceable.md) |
 | `View<C>` | Zero-copy windows (backing + `start`/`count`) over any `IndexRead` backing; O(1) `drop_first`/`drop_last`/`sub` | **Shipped** (`@std.view`) | [view.md](view.md) |
-| RRB-tree `Vector` | O(log n) `concat`/`slice` via relaxed radix-balanced nodes; kills O(n²) prepend-concat and left-drop loops; adds cheap `drop_first`/`prepend` (queue/deque) | **Prioritized — next (2026-05-30)**, unparked as a design decision (Vector = universal sequence) | [rrb-vector-concat.md](rrb-vector-concat.md) |
+| RRB-tree `Vector` | O(log n) `concat`/`slice` via relaxed radix-balanced nodes; kills O(n²) prepend-concat and left-drop loops; adds cheap `drop_first`/`prepend` (queue/deque) | **Archived** — boot runtime work landed; Phase 7 narrow slack tweak was a wash and reverted | [rrb-vector-concat.md](archive/rrb-vector-concat.md) |
 
 ---
 
@@ -67,7 +66,7 @@ investment). Access-contracts + `View` are done; `drop_last` shipped; the
 slice-performance (audit) ──┬─> drop_last ..................... DONE (Stack wrapper removed)
                             ├─> access-contracts ──┬─ view .... DONE
                             │                       └─ sliceable ([a..b], Self-only; own schedule)
-                            └─> rrb-vector-concat ............. NEXT (unparked — universal Vector)
+                            └─> rrb-vector-concat ............. ARCHIVED (boot + stage0 runtime landed)
 ```
 
 1. ~~**`drop_last`**~~ — the audit's real hot path. **Done.** (The `Stack<T>` wrapper
@@ -83,10 +82,10 @@ slice-performance (audit) ──┬─> drop_last ..................... DONE (St
    a follow-on.
 3. ~~**`View<C>`**~~ — **Done.** Shipped as `@std.view`; satisfies the access
    contracts itself, so views compose.
-4. **RRB-tree `Vector`** — **next.** Unparked as a design decision (make `Vector`
-   the single universal sequence: stack/queue/deque/rope), *not* gated on a
-   measured hot loop. Start with Gate B baselines (`boot/bench/`) to quantify
-   today's curves and set the bar, then the relaxed-node implementation.
+4. ~~**RRB-tree `Vector`**~~ — **Archived.** The boot runtime implementation
+   landed with benchmarks and guards. A narrow Phase 7 classical-slack tweak was
+   tried and reverted as an inert wash; any future slack work should start with
+   shape instrumentation and adversarial seam-repacking fixtures.
 
 ---
 

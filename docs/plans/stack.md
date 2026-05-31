@@ -57,7 +57,7 @@ is its essence; see [view.md](view.md).)
 Companion to [slice-performance.md](slice-performance.md) (the
 audit), [view.md](view.md) (the read-only side),
 [access-contracts.md](access-contracts.md) (the general access bounds), and
-[rrb-vector-concat.md](rrb-vector-concat.md).
+[rrb-vector-concat.md](archive/rrb-vector-concat.md).
 
 Supersedes the earlier queue/deque proposal: the boot-compiler audit showed the
 real need is **LIFO stack**, not FIFO — see "Why a stack, not a queue" below.
@@ -155,7 +155,7 @@ allocation churn, not asymptotics).
 - **Access contracts** ([access-contracts.md](access-contracts.md)) — the general
   `IndexRead`/`IndexWrite` bounds that `Vector`/`String`/`View` satisfy (`Stack`
   deliberately does not — see "Decided against" above).
-- **RRB** ([rrb-vector-concat.md](rrb-vector-concat.md)) — arbitrary O(log n)
+- **RRB** ([rrb-vector-concat.md](archive/rrb-vector-concat.md)) — arbitrary O(log n)
   `concat`/`slice`.
 - Queue/Deque — considered and **dropped** (audit showed FIFO isn't a real need).
 

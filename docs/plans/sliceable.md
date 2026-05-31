@@ -50,7 +50,7 @@ contract Sliceable { slice(self, Int, Int) Self }
 ## Satisfiers
 
 - `Vector<T>` — `slice` builtin already present (O(m) today; O(log n) post-RRB, see
-  [rrb-vector-concat.md](rrb-vector-concat.md), parked).
+  [rrb-vector-concat.md](archive/rrb-vector-concat.md), parked).
 - `String` — `slice` = substring (O(m)).
 - `View<C>` ([view.md](view.md)) — `slice` = O(1) window adjust (`sub`).
 
