@@ -1037,6 +1037,7 @@ fn test_rt_arr_set_persistent() Result<Void, String> {
   m := rt_arr.module()
   f := try find_func(m.funcs, "set").ok_or("missing set func")
   try assert.equal(f.params.len(), 3)
+
   // The trie/tail boundary is computed inline as len - tail.len (relaxed-safe),
   // not via tailoff(); the meaningful contract is the do_set trie path below.
   try assert.ok(
@@ -1153,30 +1154,31 @@ fn test_rt_arr_slice_iterates() Result<Void, String> {
   m := rt_arr.module()
   f := try find_func(m.funcs, "slice").ok_or("missing slice func")
   try assert.equal(f.params.len(), 3)
-  // Phase 3: slice flattens via to_array (relaxed-safe) then bulk-copies + from_array.
+
+  // Structural slice trims boundary spines and rebuilds the PVec tail split.
   try assert.ok(
     has_instr(
       f.body,
       fn(i: Instr) Bool {
         case i {
-          .Call(sym) => sym == "to_array",
+          .Call(sym) => sym == "slice_trim_right",
           _ => false,
         }
       },
     ),
-    "slice should call to_array",
+    "slice should trim the right boundary structurally",
   )
   try assert.ok(
     has_instr(
       f.body,
       fn(i: Instr) Bool {
         case i {
-          .Call(sym) => sym == "from_array",
+          .Call(sym) => sym == "slice_from_full_tree",
           _ => false,
         }
       },
     ),
-    "slice should call from_array",
+    "slice should rebuild the PVec tail split structurally",
   )
   .Ok({})
 }

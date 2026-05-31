@@ -24,11 +24,6 @@ pub fn concat<T>(a: Vector<T>, b: Vector<T>) Vector<T> {
   a
 }
 
-/// TEMP debug: forces the RRB merge path.
-pub fn concat_rrb<T>(a: Vector<T>, b: Vector<T>) Vector<T> {
-  a
-}
-
 /// Return a subvector [start, end).
 pub fn slice<T>(xs: Vector<T>, start: Int, end: Int) Vector<T> {
   xs

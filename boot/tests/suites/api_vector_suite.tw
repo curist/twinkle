@@ -2,11 +2,15 @@ use tests.assert
 use tests.runner
 
 fn build_seq(count: Int) Vector<Int> {
+  build_seq_from(0, count)
+}
+
+fn build_seq_from(start: Int, count: Int) Vector<Int> {
   xs: Vector<Int> = []
   i := 0
 
   for i < count {
-    xs = .append(i)
+    xs = .append(start + i)
     i = i + 1
   }
 
@@ -109,6 +113,18 @@ fn assert_vec_int_eq(actual: Vector<Int>, expected: Vector<Int>) Result<Void, St
 
   for i < actual.len() {
     try assert.equal(actual[i], expected[i])
+    i = i + 1
+  }
+
+  .Ok({})
+}
+
+fn expect_range(actual: Vector<Int>, start: Int, end: Int) Result<Void, String> {
+  try assert.equal(actual.len(), end - start)
+  i := 0
+
+  for i < actual.len() {
+    try assert.equal(actual[i], start + i)
     i = i + 1
   }
 
@@ -330,6 +346,31 @@ pub fn suite() runner.Suite {
         try assert.equal(s.len(), 3)
         try assert.equal(s[0], 20)
         try assert.equal(s[2], 40)
+        .Ok({})
+      },
+    )
+    .test(
+      "slice handles regular and relaxed vector boundaries",
+      fn() {
+        regular := build_seq(1100)
+        relaxed := build_seq(513).concat(build_seq_from(513, 587))
+
+        starts: Vector<Int> = [0, 1, 31, 32, 33, 511, 512, 513, 1023, 1024]
+        ends: Vector<Int> = [1, 32, 33, 64, 65, 513, 514, 1024, 1025, 1100]
+        i := 0
+
+        for i < starts.len() {
+          s := starts[i]
+          e := ends[i]
+          try expect_range(regular.slice(s, e), s, e)
+          try expect_range(relaxed.slice(s, e), s, e)
+          i = i + 1
+        }
+
+        try expect_range(regular.slice(1099, 1100), 1099, 1100)
+        try expect_range(relaxed.slice(1099, 1100), 1099, 1100)
+        try assert.equal(regular.slice(17, 17).len(), 0)
+        try assert.equal(relaxed.slice(17, 17).len(), 0)
         .Ok({})
       },
     )
