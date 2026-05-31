@@ -66,14 +66,14 @@ pub fn verify_prepared_module_with_level(
 
     case level {
       .Basic => {},
-      .Full => try verify_prepared_func_expr(
+      .Full => try verify_prepared_func_expr(.{
         pf,
-        prepared.closure_captures,
+        closure_captures: prepared.closure_captures,
         funcs_by_id,
         env,
         module_globals,
         builtins,
-      ),
+      }),
     }
 
     tc := date.now()

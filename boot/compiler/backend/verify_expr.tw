@@ -20,13 +20,24 @@ use compiler.core_ir.{FieldId, LocalId, VariantId}
 use compiler.mono_type.{MonoType}
 use compiler.resolver.{ResolvedEnv, lookup_type_def, resolved_type_param_names}
 
-fn canonical_capture_source_local(
+/// Invariant context threaded through the per-function expression walk.
+///
+/// `pf` is fixed for the duration of one function's verification; the remaining
+/// fields are module-level and shared across every function. Bundling them lets
+/// the walk read as inherent-method calls (`ctx.verify_op(...)`) instead of
+/// threading the same six arguments through every helper.
+pub type VerifyCtx = .{
   pf: PreparedFunc,
   closure_captures: Dict<Int, Vector<CaptureParam>>,
-  info: SlotInfo,
-) LocalId {
+  funcs_by_id: Dict<Int, PreparedFunc>,
+  env: ResolvedEnv,
+  module_globals: Dict<Int, MonoType>,
+  builtins: BuiltinRegistry,
+}
+
+fn canonical_capture_source_local(ctx: VerifyCtx, info: SlotInfo) LocalId {
   caps := case info.role {
-    .CaptureParam => case closure_captures[pf.func_id.id] {
+    .CaptureParam => case ctx.closure_captures[ctx.pf.func_id.id] {
       .Some(caps) => caps,
       .None => { return info.source_local },
     },
@@ -42,120 +53,72 @@ fn canonical_capture_source_local(
   info.source_local
 }
 
-pub fn verify_prepared_func_expr(
-  pf: PreparedFunc,
-  closure_captures: Dict<Int, Vector<CaptureParam>>,
-  funcs_by_id: Dict<Int, PreparedFunc>,
-  env: ResolvedEnv,
-  module_globals: Dict<Int, MonoType>,
-  builtins: BuiltinRegistry,
-) Result<Void, String> {
-  verify_expr(pf, closure_captures, funcs_by_id, env, module_globals, builtins, pf.body)
+pub fn verify_prepared_func_expr(ctx: VerifyCtx) Result<Void, String> {
+  ctx.verify_expr(ctx.pf.body)
 }
 
-fn verify_expr(
-  pf: PreparedFunc,
-  closure_captures: Dict<Int, Vector<CaptureParam>>,
-  funcs_by_id: Dict<Int, PreparedFunc>,
-  env: ResolvedEnv,
-  module_globals: Dict<Int, MonoType>,
-  builtins: BuiltinRegistry,
-  expr: PreparedExpr,
-) Result<Void, String> {
+fn verify_expr(ctx: VerifyCtx, expr: PreparedExpr) Result<Void, String> {
   case expr {
     .Let(slot, op, body) => {
-      result_info := try facts.slot_info_result(pf, slot, "let result")
-      try verify_op(
-        pf,
-        closure_captures,
-        funcs_by_id,
-        env,
-        module_globals,
-        builtins,
-        result_info,
-        op,
-      )
-      verify_expr(pf, closure_captures, funcs_by_id, env, module_globals, builtins, body)
+      result_info := try facts.slot_info_result(ctx.pf, slot, "let result")
+      try ctx.verify_op(result_info, op)
+      ctx.verify_expr(body)
     },
-    .Atom(atom) => verify_atom_mapped(pf, atom, "atom", module_globals),
-    .Return(atom) => verify_return_expr(pf, atom, funcs_by_id, module_globals, env, builtins),
-    .Break(atom) => verify_break_expr(pf, atom),
+    .Atom(atom) => ctx.verify_atom_mapped(atom, "atom"),
+    .Return(atom) => ctx.verify_return_expr(atom),
+    .Break(atom) => ctx.verify_break_expr(atom),
     .Continue => .Ok({}),
   }
 }
 
-fn verify_op(
-  pf: PreparedFunc,
-  closure_captures: Dict<Int, Vector<CaptureParam>>,
-  funcs_by_id: Dict<Int, PreparedFunc>,
-  env: ResolvedEnv,
-  module_globals: Dict<Int, MonoType>,
-  builtins: BuiltinRegistry,
-  result_info: SlotInfo,
-  op: PreparedOp,
-) Result<Void, String> {
+fn verify_op(ctx: VerifyCtx, result_info: SlotInfo, op: PreparedOp) Result<Void, String> {
   case op {
     .ACall(callee, args) => {
-      try verify_call_callee(pf, callee, module_globals)
+      try ctx.verify_call_callee(callee)
 
       for arg in args {
-        try verify_atom_use(pf, arg, "call arg", module_globals)
+        try ctx.verify_atom_use(arg, "call arg")
       }
 
-      try verify_call_shape(pf, callee, args, funcs_by_id, module_globals, env, builtins)
+      try ctx.verify_call_shape(callee, args)
       .Ok({})
     },
     .AIf(cond_e, then_e, else_e) => {
-      try verify_atom_use(pf, cond_e, "if condition", module_globals)
-      try verify_condition_atom(pf, cond_e, module_globals, env)
-      try verify_expr(pf, closure_captures, funcs_by_id, env, module_globals, builtins, then_e)
-      verify_expr(pf, closure_captures, funcs_by_id, env, module_globals, builtins, else_e)
+      try ctx.verify_atom_use(cond_e, "if condition")
+      try ctx.verify_condition_atom(cond_e)
+      try ctx.verify_expr(then_e)
+      ctx.verify_expr(else_e)
     },
     .AMatch(scrutinee, arms) => {
-      try verify_atom_use(pf, scrutinee, "match scrutinee", module_globals)
+      try ctx.verify_atom_use(scrutinee, "match scrutinee")
 
       if match_uses_variant_patterns(arms) {
-        try require_local_repr_if_local(
-          pf,
-          scrutinee,
-          [.TypedSum(.Void)],
-          "match scrutinee",
-          module_globals,
-          env,
-        )
+        try ctx.require_local_repr_if_local(scrutinee, [.TypedSum(.Void)], "match scrutinee")
       }
 
       for arm in arms {
-        try verify_pattern_bindings(pf, arm.pattern)
-        try verify_expr(pf, closure_captures, funcs_by_id, env, module_globals, builtins, arm.body)
+        try ctx.verify_pattern_bindings(arm.pattern)
+        try ctx.verify_expr(arm.body)
       }
 
       .Ok({})
     },
-    .ALoop(body) => verify_expr(
-      pf,
-      closure_captures,
-      funcs_by_id,
-      env,
-      module_globals,
-      builtins,
-      body,
-    ),
+    .ALoop(body) => ctx.verify_expr(body),
     .ABinOp(_, lhs, rhs, kind) => {
-      try verify_atom_use(pf, lhs, "binary lhs", module_globals)
-      try verify_atom_use(pf, rhs, "binary rhs", module_globals)
-      try verify_opkind_atom(pf, lhs, kind, "binary lhs", module_globals, env)
-      verify_opkind_atom(pf, rhs, kind, "binary rhs", module_globals, env)
+      try ctx.verify_atom_use(lhs, "binary lhs")
+      try ctx.verify_atom_use(rhs, "binary rhs")
+      try ctx.verify_opkind_atom(lhs, kind, "binary lhs")
+      ctx.verify_opkind_atom(rhs, kind, "binary rhs")
     },
     .AUnOp(_, atom, kind) => {
-      try verify_atom_use(pf, atom, "unary operand", module_globals)
-      verify_opkind_atom(pf, atom, kind, "unary operand", module_globals, env)
+      try ctx.verify_atom_use(atom, "unary operand")
+      ctx.verify_opkind_atom(atom, kind, "unary operand")
     },
     .AMakeClosure(fid, free_vars) => {
-      target := case callable_targets.callable_target(fid, funcs_by_id, builtins, env) {
+      target := case callable_targets.callable_target(fid, ctx.funcs_by_id, ctx.builtins, ctx.env) {
         .Some(info) => info,
         .None => {
-          return fail_slot(pf, result_info, "AMakeClosure targets unknown callable F${fid.id}")
+          return fail_slot(ctx.pf, result_info, "AMakeClosure targets unknown callable F${fid.id}")
         },
       }
 
@@ -163,7 +126,7 @@ fn verify_op(
         .ClosureRef => {},
         _ => {
           return fail_slot(
-            pf,
+            ctx.pf,
             result_info,
             "AMakeClosure result must have ClosureRef repr, got ${repr_name(result_info.repr)}",
           )
@@ -174,7 +137,7 @@ fn verify_op(
         .Some(name) => {
           if !target.closure_materializable {
             return fail_slot(
-              pf,
+              ctx.pf,
               result_info,
               "AMakeClosure target ${name} (F${fid.id}) is not closure-materializable yet",
             )
@@ -182,7 +145,7 @@ fn verify_op(
 
           if free_vars.len() != 0 {
             return fail_slot(
-              pf,
+              ctx.pf,
               result_info,
               "builtin AMakeClosure target ${name} (F${fid.id}) must not capture locals",
             )
@@ -191,12 +154,12 @@ fn verify_op(
           .Ok({})
         },
         .None => {
-          caps := case closure_captures[fid.id] {
+          caps := case ctx.closure_captures[fid.id] {
             .Some(caps) => caps,
             .None => {
               if free_vars.len() != 0 {
                 return fail_slot(
-                  pf,
+                  ctx.pf,
                   result_info,
                   "AMakeClosure for F${fid.id} has free vars but no closure metadata",
                 )
@@ -208,20 +171,20 @@ fn verify_op(
 
           if free_vars.len() != caps.len() {
             return fail_slot(
-              pf,
+              ctx.pf,
               result_info,
               "AMakeClosure for F${fid.id} passes ${free_vars.len()} captures, expected ${caps.len()}",
             )
           }
 
           for fv, i in free_vars {
-            info := try facts.slot_info_result(pf, fv, "closure capture")
+            info := try facts.slot_info_result(ctx.pf, fv, "closure capture")
             cap := caps[i]
-            source_local := canonical_capture_source_local(pf, closure_captures, info)
+            source_local := ctx.canonical_capture_source_local(info)
 
             if source_local.id != cap.local_id.id {
               return fail_slot(
-                pf,
+                ctx.pf,
                 result_info,
                 "AMakeClosure capture ${i} uses L${source_local.id}, expected L${cap.local_id.id}",
               )
@@ -229,7 +192,7 @@ fn verify_op(
 
             if !mono_eq(info.mono, cap.ty) {
               return fail_slot(
-                pf,
+                ctx.pf,
                 result_info,
                 "AMakeClosure capture ${i} for L${info.source_local.id} has mono ${mono_name(
                   info.mono,
@@ -237,7 +200,7 @@ fn verify_op(
               )
             }
 
-            try reject_dead_use(pf, info, "closure capture")
+            try ctx.reject_dead_use(info, "closure capture")
           }
 
           .Ok({})
@@ -246,146 +209,83 @@ fn verify_op(
     },
     .ARecord(_, fields) => {
       for field in fields {
-        try verify_atom_use(pf, field.value, "record field", module_globals)
+        try ctx.verify_atom_use(field.value, "record field")
       }
 
-      try require_result_repr(pf, result_info, [.TypedRef(.Void)], "record literal result")
-      try verify_record_field_payloads(
-        pf,
-        result_info,
-        fields,
-        funcs_by_id,
-        module_globals,
-        env,
-        "record field",
-      )
+      try ctx.require_result_repr(result_info, [.TypedRef(.Void)], "record literal result")
+      try ctx.verify_record_field_payloads(result_info, fields, "record field")
       .Ok({})
     },
     .ARecordGet(target, _, _) => {
-      try verify_atom_use(pf, target, "record get target", module_globals)
-      require_local_repr_if_local(
-        pf,
-        target,
-        [.TypedRef(.Void)],
-        "record get target",
-        module_globals,
-        env,
-      )
+      try ctx.verify_atom_use(target, "record get target")
+      ctx.require_local_repr_if_local(target, [.TypedRef(.Void)], "record get target")
     },
     .ARecordUpdate(base, fid, value, _, _) => {
-      try verify_atom_use(pf, base, "record update base", module_globals)
-      try verify_atom_use(pf, value, "record update value", module_globals)
-      try require_local_repr_if_local(
-        pf,
-        base,
-        [.TypedRef(.Void)],
-        "record update base",
-        module_globals,
-        env,
-      )
-      try require_result_repr(pf, result_info, [.TypedRef(.Void)], "record update result")
-      try verify_record_update_value(pf, result_info, fid, value, funcs_by_id, module_globals, env)
+      try ctx.verify_atom_use(base, "record update base")
+      try ctx.verify_atom_use(value, "record update value")
+      try ctx.require_local_repr_if_local(base, [.TypedRef(.Void)], "record update base")
+      try ctx.require_result_repr(result_info, [.TypedRef(.Void)], "record update result")
+      try ctx.verify_record_update_value(result_info, fid, value)
       .Ok({})
     },
     .AVariant(_, vid, args) => {
       for arg in args {
-        try verify_atom_use(pf, arg, "variant arg", module_globals)
+        try ctx.verify_atom_use(arg, "variant arg")
       }
 
-      try require_result_repr(pf, result_info, [.TypedSum(.Void)], "variant result")
-      try verify_variant_payloads(pf, result_info, vid, args, funcs_by_id, module_globals, env)
+      try ctx.require_result_repr(result_info, [.TypedSum(.Void)], "variant result")
+      try ctx.verify_variant_payloads(result_info, vid, args)
       .Ok({})
     },
     .AArrayLit(items) => {
       for item in items {
-        try verify_atom_use(pf, item, "array item", module_globals)
+        try ctx.verify_atom_use(item, "array item")
       }
 
-      try require_result_repr(pf, result_info, [.TypedRef(.Void)], "array literal result")
+      try ctx.require_result_repr(result_info, [.TypedRef(.Void)], "array literal result")
       .Ok({})
     },
     .AIndex(base, index, _, _) => {
-      try verify_atom_use(pf, base, "index base", module_globals)
-      try verify_atom_use(pf, index, "index operand", module_globals)
-      try require_local_repr_if_local(
-        pf,
-        base,
-        [.TypedRef(.Void)],
-        "index base",
-        module_globals,
-        env,
-      )
+      try ctx.verify_atom_use(base, "index base")
+      try ctx.verify_atom_use(index, "index operand")
+      try ctx.require_local_repr_if_local(base, [.TypedRef(.Void)], "index base")
       .Ok({})
     },
     .AInit(atom) => case result_info.role {
-      .DeadPlaceholder => verify_dead_placeholder_value(
-        pf,
-        result_info,
-        atom,
-        funcs_by_id,
-        module_globals,
-        env,
-        builtins,
-        "init value",
-      ),
+      .DeadPlaceholder => ctx.verify_dead_placeholder_value(result_info, atom, "init value"),
       _ => {
-        try verify_atom_use(pf, atom, "init value", module_globals)
-        verify_value_for_slot(
-          pf,
-          result_info,
-          atom,
-          funcs_by_id,
-          module_globals,
-          env,
-          builtins,
-          "init value",
-        )
+        try ctx.verify_atom_use(atom, "init value")
+        ctx.verify_value_for_slot(result_info, atom, "init value")
       },
     },
     .AAssign(target, atom) => {
-      target_info := try facts.slot_info_result(pf, target, "assign target")
-      try reject_dead_use(pf, target_info, "assign target")
-      try verify_atom_use(pf, atom, "assign value", module_globals)
-      verify_value_for_slot(
-        pf,
-        target_info,
-        atom,
-        funcs_by_id,
-        module_globals,
-        env,
-        builtins,
-        "assign value",
-      )
+      target_info := try facts.slot_info_result(ctx.pf, target, "assign target")
+      try ctx.reject_dead_use(target_info, "assign target")
+      try ctx.verify_atom_use(atom, "assign value")
+      ctx.verify_value_for_slot(target_info, atom, "assign value")
     },
-    .ADefer(body) => verify_expr(
-      pf,
-      closure_captures,
-      funcs_by_id,
-      env,
-      module_globals,
-      builtins,
-      body,
-    ),
+    .ADefer(body) => ctx.verify_expr(body),
     .AWrapAnyref(atom, _) => {
-      try verify_atom_use(pf, atom, "wrap operand", module_globals)
-      try require_result_repr(pf, result_info, [.OpaqueAnyref], "wrap result")
+      try ctx.verify_atom_use(atom, "wrap operand")
+      try ctx.require_result_repr(result_info, [.OpaqueAnyref], "wrap result")
       .Ok({})
     },
     .AUnwrapAnyref(atom, _) => {
-      try verify_atom_use(pf, atom, "unwrap operand", module_globals)
-      try require_local_repr_if_local(
-        pf,
+      try ctx.verify_atom_use(atom, "unwrap operand")
+      try ctx.require_local_repr_if_local(
         atom,
         [ReprKind.OpaqueAnyref, ReprKind.ErasedSum],
         "unwrap operand",
-        module_globals,
-        env,
       )
 
       case result_info.repr {
-        .OpaqueAnyref => fail_slot(pf, result_info, "unwrap result must not remain OpaqueAnyref"),
-        .ErasedSum => fail_slot(pf, result_info, "unwrap result must not remain ErasedSum"),
-        .DeadValue => fail_slot(pf, result_info, "unwrap result must not be DeadValue"),
+        .OpaqueAnyref => fail_slot(
+          ctx.pf,
+          result_info,
+          "unwrap result must not remain OpaqueAnyref",
+        ),
+        .ErasedSum => fail_slot(ctx.pf, result_info, "unwrap result must not remain ErasedSum"),
+        .DeadValue => fail_slot(ctx.pf, result_info, "unwrap result must not be DeadValue"),
         _ => .Ok({}),
       }
     },
@@ -447,107 +347,66 @@ fn subst_mono_vars(ty: MonoType, var_map: Dict<String, MonoType>) MonoType {
   }
 }
 
-fn verify_call_shape(
-  pf: PreparedFunc,
-  callee: PreparedAtom,
-  args: Vector<PreparedAtom>,
-  funcs_by_id: Dict<Int, PreparedFunc>,
-  module_globals: Dict<Int, MonoType>,
-  env: ResolvedEnv,
-  builtins: BuiltinRegistry,
-) Result<Void, String> {
+fn verify_call_shape(ctx: VerifyCtx, callee: PreparedAtom, args: Vector<PreparedAtom>) Result<
+  Void,
+  String,
+> {
   case callee {
     .ASlot(sid) => {
-      info := try facts.slot_info_result(pf, sid, "call callee")
+      info := try facts.slot_info_result(ctx.pf, sid, "call callee")
 
-      case expand_mono_alias(info.mono, env, 0) {
+      case expand_mono_alias(info.mono, ctx.env, 0) {
         .Function(params, _) => {
           if args.len() != params.len() {
             return fail_slot(
-              pf,
+              ctx.pf,
               info,
               "closure call passes ${args.len()} arg(s), expected ${params.len()}",
             )
           }
 
           for arg, i in args {
-            try verify_call_arg_type(
-              pf,
-              arg,
-              params[i],
-              funcs_by_id,
-              module_globals,
-              env,
-              builtins,
-              "closure call arg ${i}",
-            )
-            expected_repr := repr_of_mono(params[i], env)
-            try verify_call_arg_repr(
-              pf,
-              arg,
-              expected_repr,
-              module_globals,
-              env,
-              "closure call arg ${i}",
-            )
+            try ctx.verify_call_arg_type(arg, params[i], "closure call arg ${i}")
+            expected_repr := repr_of_mono(params[i], ctx.env)
+            try ctx.verify_call_arg_repr(arg, expected_repr, "closure call arg ${i}")
           }
 
           .Ok({})
         },
         _ => fail_slot(
-          pf,
+          ctx.pf,
           info,
           "closure call callee must have Function mono, got ${mono_name(info.mono)}",
         ),
       }
     },
     .AGlobalFunc(fid) => {
-      target := case callable_targets.callable_target(fid, funcs_by_id, builtins, env) {
+      target := case callable_targets.callable_target(fid, ctx.funcs_by_id, ctx.builtins, ctx.env) {
         .Some(target) => target,
         .None => { return .Ok({}) },
       }
 
       case target.builtin_name {
-        .Some(_) => verify_builtin_call_shape(
-          pf,
-          fid.id,
-          args,
-          module_globals,
-          funcs_by_id,
-          env,
-          builtins,
-        ),
+        .Some(_) => ctx.verify_builtin_call_shape(fid.id, args),
         .None => {
-          func_name := case funcs_by_id[fid.id] {
+          func_name := case ctx.funcs_by_id[fid.id] {
             .Some(f) => f.name,
             .None => "F${fid.id}",
           }
 
           if args.len() != target.semantic_params.len() {
             return fail_func(
-              pf,
+              ctx.pf,
               "direct call to ${func_name} (F${fid.id}) passes ${args.len()} arg(s), expected ${target.semantic_params.len()}",
             )
           }
 
           for arg, i in args {
             param_mono := target.semantic_params[i]
-            try verify_call_arg_type(
-              pf,
+            try ctx.verify_call_arg_type(arg, param_mono, "direct call arg ${i} to ${func_name}")
+            try ctx.verify_call_arg_repr(
               arg,
-              param_mono,
-              funcs_by_id,
-              module_globals,
-              env,
-              builtins,
-              "direct call arg ${i} to ${func_name}",
-            )
-            try verify_call_arg_repr(
-              pf,
-              arg,
-              repr_of_mono(param_mono, env),
-              module_globals,
-              env,
+              repr_of_mono(param_mono, ctx.env),
               "direct call arg ${i} to ${func_name}",
             )
           }
@@ -564,16 +423,11 @@ fn abi_has_types(param_types: Vector<ValType>, result_types: Vector<ValType>) Bo
   param_types.len() > 0 or result_types.len() > 0
 }
 
-fn verify_builtin_call_shape(
-  pf: PreparedFunc,
-  fid: Int,
-  args: Vector<PreparedAtom>,
-  module_globals: Dict<Int, MonoType>,
-  funcs_by_id: Dict<Int, PreparedFunc>,
-  env: ResolvedEnv,
-  builtins: BuiltinRegistry,
-) Result<Void, String> {
-  entry := case builtins.by_id[fid] {
+fn verify_builtin_call_shape(ctx: VerifyCtx, fid: Int, args: Vector<PreparedAtom>) Result<
+  Void,
+  String,
+> {
+  entry := case ctx.builtins.by_id[fid] {
     .Some(entry) => entry,
     .None => { return .Ok({}) },
   }
@@ -584,19 +438,15 @@ fn verify_builtin_call_shape(
 
   if args.len() != entry.abi.param_types.len() {
     return fail_func(
-      pf,
+      ctx.pf,
       "builtin call to ${entry.name} (F${fid}) passes ${args.len()} arg(s), expected ${entry.abi.param_types.len()}",
     )
   }
 
   for arg, i in args {
-    try verify_atom_coercible_to_val_type(
-      pf,
+    try ctx.verify_atom_coercible_to_val_type(
       arg,
       entry.abi.param_types[i],
-      funcs_by_id,
-      module_globals,
-      env,
       "builtin call arg ${i} to ${entry.name}",
     )
   }
@@ -604,122 +454,92 @@ fn verify_builtin_call_shape(
   .Ok({})
 }
 
-fn verify_return_expr(
-  pf: PreparedFunc,
-  atom: PreparedAtom?,
-  funcs_by_id: Dict<Int, PreparedFunc>,
-  module_globals: Dict<Int, MonoType>,
-  env: ResolvedEnv,
-  builtins: BuiltinRegistry,
-) Result<Void, String> {
-  case pf.return_mono {
+fn verify_return_expr(ctx: VerifyCtx, atom: PreparedAtom?) Result<Void, String> {
+  case ctx.pf.return_mono {
     .Void => case atom {
-      .Some(_) => fail_func(pf, "void function must not return a value"),
+      .Some(_) => fail_func(ctx.pf, "void function must not return a value"),
       .None => .Ok({}),
     },
     .Never => case atom {
-      .Some(_) => fail_func(pf, "never-returning function must not return a value"),
+      .Some(_) => fail_func(ctx.pf, "never-returning function must not return a value"),
       .None => .Ok({}),
     },
     _ => {
       a := case atom {
         .Some(a) => a,
-        .None => { return fail_func(pf, "non-void function must return a value") },
+        .None => { return fail_func(ctx.pf, "non-void function must return a value") },
       }
-      try verify_atom_use(pf, a, "return", module_globals)
-      try verify_return_value_type(pf, a, funcs_by_id, module_globals, env, builtins)
+      try ctx.verify_atom_use(a, "return")
+      try ctx.verify_return_value_type(a)
       .Ok({})
     },
   }
 }
 
-fn verify_break_expr(pf: PreparedFunc, atom: PreparedAtom?) Result<Void, String> {
+fn verify_break_expr(ctx: VerifyCtx, atom: PreparedAtom?) Result<Void, String> {
   case atom {
-    .Some(_) => fail_func(pf, "break with value is not supported in prepared backend IR"),
+    .Some(_) => fail_func(ctx.pf, "break with value is not supported in prepared backend IR"),
     .None => .Ok({}),
   }
 }
 
-fn verify_return_value_type(
-  pf: PreparedFunc,
-  atom: PreparedAtom,
-  funcs_by_id: Dict<Int, PreparedFunc>,
-  module_globals: Dict<Int, MonoType>,
-  env: ResolvedEnv,
-  builtins: BuiltinRegistry,
-) Result<Void, String> {
-  case infer_atom_mono(pf, atom, funcs_by_id, module_globals, env, builtins) {
-    .Some(actual) => if mono_eq(actual, pf.return_mono) {
+fn verify_return_value_type(ctx: VerifyCtx, atom: PreparedAtom) Result<Void, String> {
+  case ctx.infer_atom_mono(atom) {
+    .Some(actual) => if mono_eq(actual, ctx.pf.return_mono) {
       .Ok({})
     } else {
       fail_func(
-        pf,
-        "return value has mono ${mono_name(actual)}, expected ${mono_name(pf.return_mono)}",
+        ctx.pf,
+        "return value has mono ${mono_name(actual)}, expected ${mono_name(ctx.pf.return_mono)}",
       )
     },
     .None => .Ok({}),
   }
 }
 
-fn verify_call_arg_type(
-  pf: PreparedFunc,
-  atom: PreparedAtom,
-  expected: MonoType,
-  funcs_by_id: Dict<Int, PreparedFunc>,
-  module_globals: Dict<Int, MonoType>,
-  env: ResolvedEnv,
-  builtins: BuiltinRegistry,
-  context: String,
-) Result<Void, String> {
+fn verify_call_arg_type(ctx: VerifyCtx, atom: PreparedAtom, expected: MonoType, context: String) Result<
+  Void,
+  String,
+> {
   case atom {
     .ALitInt(n) => case expected {
       .Byte => if n >= 0 and n <= 255 {
         return .Ok({})
       } else {
-        return fail_func(pf, "${context} byte literal out of range")
+        return fail_func(ctx.pf, "${context} byte literal out of range")
       },
       _ => {},
     },
     _ => {},
   }
 
-  case infer_atom_mono(pf, atom, funcs_by_id, module_globals, env, builtins) {
+  case ctx.infer_atom_mono(atom) {
     .Some(actual) => if mono_eq(actual, expected) {
       .Ok({})
     } else {
       .Err(
-        "backend verifier: function ${pf.name} (F${pf.func_id.id}): ${context} has mono ${mono_name(
+        "backend verifier: function ${ctx.pf.name} (F${ctx.pf.func_id.id}): ${context} has mono ${mono_name(
           actual,
-        )}, expected ${mono_name(expected)} [arg=${describe_atom(
-          pf,
-          atom,
-          funcs_by_id,
-          module_globals,
-        )}]",
+        )}, expected ${mono_name(expected)} [arg=${ctx.describe_atom(atom)}]",
       )
     },
     .None => .Ok({}),
   }
 }
 
-fn describe_atom(
-  pf: PreparedFunc,
-  atom: PreparedAtom,
-  funcs_by_id: Dict<Int, PreparedFunc>,
-  module_globals: Dict<Int, MonoType>,
-) String {
+fn describe_atom(ctx: VerifyCtx, atom: PreparedAtom) String {
   case atom {
-    .ASlot(sid) => case pf.slots[sid.id] {
+    .ASlot(sid) => case ctx.pf.slots[sid.id] {
       .Some(info) => "ASlot(S${sid.id}, L${info.source_local.id}, role=${slot_role_name(info.role)}, mono=${mono_name(
         info.mono,
       )}, repr=${repr_name(info.repr)})",
       .None => "ASlot(S${sid.id}, missing)",
     },
-    .AGlobalFunc(fid) => case funcs_by_id[fid.id] {
+    .AGlobalFunc(fid) => case ctx.funcs_by_id[fid.id] {
       .Some(target) => "AGlobalFunc(F${fid.id}, ${target.name})",
       .None => "AGlobalFunc(F${fid.id})",
     },
-    .AGlobalLocal(lid) => case module_globals[lid.id] {
+    .AGlobalLocal(lid) => case ctx.module_globals[lid.id] {
       .Some(mono) => "AGlobalLocal(L${lid.id}, mono=${mono_name(mono)})",
       .None => "AGlobalLocal(L${lid.id}, unknown)",
     },
@@ -735,38 +555,31 @@ fn describe_atom(
   }
 }
 
-fn infer_atom_mono(
-  pf: PreparedFunc,
-  atom: PreparedAtom,
-  funcs_by_id: Dict<Int, PreparedFunc>,
-  module_globals: Dict<Int, MonoType>,
-  env: ResolvedEnv,
-  builtins: BuiltinRegistry,
-) MonoType? {
-  case facts.atom_mono(atom, pf) {
+fn infer_atom_mono(ctx: VerifyCtx, atom: PreparedAtom) MonoType? {
+  case facts.atom_mono(atom, ctx.pf) {
     .Some(mono) => .Some(mono),
     .None => case atom {
-      .AGlobalFunc(fid) => case callable_targets.semantic_sig(fid, funcs_by_id, builtins, env) {
+      .AGlobalFunc(fid) => case callable_targets.semantic_sig(
+        fid,
+        ctx.funcs_by_id,
+        ctx.builtins,
+        ctx.env,
+      ) {
         .Some(target) => .Some(.Function(target.semantic_params, target.semantic_ret)),
         .None => .None,
       },
-      .AGlobalLocal(lid) => module_globals[lid.id],
+      .AGlobalLocal(lid) => ctx.module_globals[lid.id],
       _ => .None,
     },
   }
 }
 
-fn infer_atom_val_type(
-  pf: PreparedFunc,
-  atom: PreparedAtom,
-  module_globals: Dict<Int, MonoType>,
-  env: ResolvedEnv,
-) ValType? {
-  case facts.atom_val_type(atom, pf) {
+fn infer_atom_val_type(ctx: VerifyCtx, atom: PreparedAtom) ValType? {
+  case facts.atom_val_type(atom, ctx.pf) {
     .Some(vt) => .Some(vt),
     .None => case atom {
-      .AGlobalLocal(lid) => case module_globals[lid.id] {
-        .Some(mono) => .Some(val_type_of_mono(mono, env)),
+      .AGlobalLocal(lid) => case ctx.module_globals[lid.id] {
+        .Some(mono) => .Some(val_type_of_mono(mono, ctx.env)),
         .None => .None,
       },
       _ => .None,
@@ -814,12 +627,9 @@ fn can_emit_coerce_stack(from: ValType, to: ValType) Bool {
 }
 
 fn verify_atom_coercible_to_val_type(
-  pf: PreparedFunc,
+  ctx: VerifyCtx,
   atom: PreparedAtom,
   expected_vt: ValType,
-  funcs_by_id: Dict<Int, PreparedFunc>,
-  module_globals: Dict<Int, MonoType>,
-  env: ResolvedEnv,
   context: String,
 ) Result<Void, String> {
   case atom {
@@ -829,7 +639,7 @@ fn verify_atom_coercible_to_val_type(
     _ => {},
   }
 
-  actual_vt := case infer_atom_val_type(pf, atom, module_globals, env) {
+  actual_vt := case ctx.infer_atom_val_type(atom) {
     .Some(vt) => vt,
     .None => { return .Ok({}) },
   }
@@ -840,29 +650,16 @@ fn verify_atom_coercible_to_val_type(
 
   actual_mono := case atom {
     .AGlobalFunc(_) => "function",
-    _ => case infer_atom_mono(
-      pf,
-      atom,
-      funcs_by_id,
-      module_globals,
-      env,
-      BuiltinRegistry.{
-        by_name: Dict.new(),
-        by_id: Dict.new(),
-        by_canonical: Dict.new(),
-        entries: [],
-        next_id: 0,
-      },
-    ) {
+    _ => case ctx.infer_atom_mono(atom) {
       .Some(mono) => mono_name(mono),
       .None => "unknown",
     },
   }
   fail_func(
-    pf,
+    ctx.pf,
     "${context} has unsupported physical edge ${val_type_name(actual_vt)} -> ${val_type_name(
       expected_vt,
-    )} [mono=${actual_mono}, arg=${describe_atom(pf, atom, funcs_by_id, module_globals)}]",
+    )} [mono=${actual_mono}, arg=${ctx.describe_atom(atom)}]",
   )
 }
 
@@ -882,28 +679,21 @@ fn record_field_val_type(result_mono: MonoType, fid: Int, env: ResolvedEnv) ValT
 }
 
 fn verify_record_field_payloads(
-  pf: PreparedFunc,
+  ctx: VerifyCtx,
   result_info: SlotInfo,
   fields: Vector<PreparedFieldAtom>,
-  funcs_by_id: Dict<Int, PreparedFunc>,
-  module_globals: Dict<Int, MonoType>,
-  env: ResolvedEnv,
   context: String,
 ) Result<Void, String> {
   for field in fields {
-    expected_vt := case record_field_val_type(result_info.mono, field.field.id, env) {
+    expected_vt := case record_field_val_type(result_info.mono, field.field.id, ctx.env) {
       .Some(vt) => vt,
       .None => {
-        return fail_slot(pf, result_info, "record field ${field.field.id} missing from layout")
+        return fail_slot(ctx.pf, result_info, "record field ${field.field.id} missing from layout")
       },
     }
-    try verify_atom_coercible_to_val_type(
-      pf,
+    try ctx.verify_atom_coercible_to_val_type(
       field.value,
       expected_vt,
-      funcs_by_id,
-      module_globals,
-      env,
       "${context} ${field.field.id}",
     )
   }
@@ -912,91 +702,66 @@ fn verify_record_field_payloads(
 }
 
 fn verify_record_update_value(
-  pf: PreparedFunc,
+  ctx: VerifyCtx,
   result_info: SlotInfo,
   fid: FieldId,
   value: PreparedAtom,
-  funcs_by_id: Dict<Int, PreparedFunc>,
-  module_globals: Dict<Int, MonoType>,
-  env: ResolvedEnv,
 ) Result<Void, String> {
-  expected_vt := case record_field_val_type(result_info.mono, fid.id, env) {
+  expected_vt := case record_field_val_type(result_info.mono, fid.id, ctx.env) {
     .Some(vt) => vt,
     .None => {
-      return fail_slot(pf, result_info, "record update field ${fid.id} missing from layout")
+      return fail_slot(ctx.pf, result_info, "record update field ${fid.id} missing from layout")
     },
   }
-  verify_atom_coercible_to_val_type(
-    pf,
-    value,
-    expected_vt,
-    funcs_by_id,
-    module_globals,
-    env,
-    "record update field ${fid.id}",
-  )
+  ctx.verify_atom_coercible_to_val_type(value, expected_vt, "record update field ${fid.id}")
 }
 
 fn verify_variant_payloads(
-  pf: PreparedFunc,
+  ctx: VerifyCtx,
   result_info: SlotInfo,
   vid: VariantId,
   args: Vector<PreparedAtom>,
-  funcs_by_id: Dict<Int, PreparedFunc>,
-  module_globals: Dict<Int, MonoType>,
-  env: ResolvedEnv,
 ) Result<Void, String> {
-  payload_types: Vector<ValType> = case layout_of(result_info.mono, env) {
+  payload_types: Vector<ValType> = case layout_of(result_info.mono, ctx.env) {
     .Sum(sum) => {
       for variant in sum.variants {
         if variant.variant_id.id == vid.id {
-          return verify_variant_payloads_for_types(
-            pf,
+          return ctx.verify_variant_payloads_for_types(
             result_info,
             vid,
             args,
             variant.payload_types,
-            funcs_by_id,
-            module_globals,
-            env,
           )
         }
       }
 
-      return fail_slot(pf, result_info, "variant ${vid.id} missing from sum layout")
+      return fail_slot(ctx.pf, result_info, "variant ${vid.id} missing from sum layout")
     },
-    _ => { return fail_slot(pf, result_info, "variant result has non-sum layout") },
+    _ => { return fail_slot(ctx.pf, result_info, "variant result has non-sum layout") },
   }
   payload_types
   .Ok({})
 }
 
 fn verify_variant_payloads_for_types(
-  pf: PreparedFunc,
+  ctx: VerifyCtx,
   result_info: SlotInfo,
   vid: VariantId,
   args: Vector<PreparedAtom>,
   payload_types: Vector<ValType>,
-  funcs_by_id: Dict<Int, PreparedFunc>,
-  module_globals: Dict<Int, MonoType>,
-  env: ResolvedEnv,
 ) Result<Void, String> {
   if args.len() != payload_types.len() {
     return fail_slot(
-      pf,
+      ctx.pf,
       result_info,
       "variant ${vid.id} passes ${args.len()} payload arg(s), expected ${payload_types.len()}",
     )
   }
 
   for arg, i in args {
-    try verify_atom_coercible_to_val_type(
-      pf,
+    try ctx.verify_atom_coercible_to_val_type(
       arg,
       payload_types[i],
-      funcs_by_id,
-      module_globals,
-      env,
       "variant ${vid.id} payload ${i}",
     )
   }
@@ -1004,20 +769,17 @@ fn verify_variant_payloads_for_types(
   .Ok({})
 }
 
-fn verify_call_callee(pf: PreparedFunc, atom: PreparedAtom, module_globals: Dict<Int, MonoType>) Result<
-  Void,
-  String,
-> {
-  try verify_atom_use(pf, atom, "call callee", module_globals)
+fn verify_call_callee(ctx: VerifyCtx, atom: PreparedAtom) Result<Void, String> {
+  try ctx.verify_atom_use(atom, "call callee")
 
   case atom {
     .ASlot(sid) => {
-      info := try facts.slot_info_result(pf, sid, "call callee")
+      info := try facts.slot_info_result(ctx.pf, sid, "call callee")
 
       case info.repr {
         .ClosureRef => .Ok({}),
         _ => fail_slot(
-          pf,
+          ctx.pf,
           info,
           "call callee must have ClosureRef repr, got ${repr_name(info.repr)}",
         ),
@@ -1027,57 +789,47 @@ fn verify_call_callee(pf: PreparedFunc, atom: PreparedAtom, module_globals: Dict
   }
 }
 
-fn verify_atom_mapped(
-  pf: PreparedFunc,
-  atom: PreparedAtom,
-  context: String,
-  module_globals: Dict<Int, MonoType>,
-) Result<Void, String> {
+fn verify_atom_mapped(ctx: VerifyCtx, atom: PreparedAtom, context: String) Result<Void, String> {
   case atom {
     .ASlot(sid) => {
-      _ := try facts.slot_info_result(pf, sid, context)
+      _ := try facts.slot_info_result(ctx.pf, sid, context)
       .Ok({})
     },
-    .AGlobalLocal(lid) => case module_globals[lid.id] {
+    .AGlobalLocal(lid) => case ctx.module_globals[lid.id] {
       .Some(_) => .Ok({}),
-      .None => fail_func(pf, "${context} references unknown module global L${lid.id}"),
+      .None => fail_func(ctx.pf, "${context} references unknown module global L${lid.id}"),
     },
     _ => .Ok({}),
   }
 }
 
-fn verify_atom_use(
-  pf: PreparedFunc,
-  atom: PreparedAtom,
-  context: String,
-  module_globals: Dict<Int, MonoType>,
-) Result<Void, String> {
+fn verify_atom_use(ctx: VerifyCtx, atom: PreparedAtom, context: String) Result<Void, String> {
   case atom {
     .ASlot(sid) => {
-      info := try facts.slot_info_result(pf, sid, context)
-      reject_dead_use(pf, info, context)
+      info := try facts.slot_info_result(ctx.pf, sid, context)
+      ctx.reject_dead_use(info, context)
     },
-    .AGlobalLocal(lid) => case module_globals[lid.id] {
+    .AGlobalLocal(lid) => case ctx.module_globals[lid.id] {
       .Some(_) => .Ok({}),
-      .None => fail_func(pf, "${context} references unknown module global L${lid.id}"),
+      .None => fail_func(ctx.pf, "${context} references unknown module global L${lid.id}"),
     },
     _ => .Ok({}),
   }
 }
 
-fn verify_pattern_bindings(pf: PreparedFunc, pattern: PreparedPattern) Result<Void, String> {
+fn verify_pattern_bindings(ctx: VerifyCtx, pattern: PreparedPattern) Result<Void, String> {
   case pattern {
     .Var(sid) => {
-      info := try facts.slot_info_result(pf, sid, "pattern binding")
+      info := try facts.slot_info_result(ctx.pf, sid, "pattern binding")
 
       case info.role {
         .PatternLocal => .Ok({}),
-        _ => fail_slot(pf, info, "pattern binding must target PatternLocal slot"),
+        _ => fail_slot(ctx.pf, info, "pattern binding must target PatternLocal slot"),
       }
     },
     .Variant(_, _, fields) => {
       for field in fields {
-        try verify_pattern_bindings(pf, field)
+        try ctx.verify_pattern_bindings(field)
       }
 
       .Ok({})
@@ -1104,13 +856,9 @@ fn pattern_uses_variant(pattern: PreparedPattern) Bool {
 }
 
 fn verify_dead_placeholder_value(
-  pf: PreparedFunc,
+  ctx: VerifyCtx,
   target: SlotInfo,
   atom: PreparedAtom,
-  funcs_by_id: Dict<Int, PreparedFunc>,
-  module_globals: Dict<Int, MonoType>,
-  env: ResolvedEnv,
-  builtins: BuiltinRegistry,
   context: String,
 ) Result<Void, String> {
   case atom {
@@ -1118,12 +866,12 @@ fn verify_dead_placeholder_value(
     _ => {},
   }
 
-  case infer_atom_mono(pf, atom, funcs_by_id, module_globals, env, builtins) {
+  case ctx.infer_atom_mono(atom) {
     .Some(actual) => if mono_eq(actual, .Never) {
       .Ok({})
     } else {
       fail_slot(
-        pf,
+        ctx.pf,
         target,
         "${context} for dead placeholder has mono ${mono_name(actual)}, expected Never",
       )
@@ -1132,35 +880,29 @@ fn verify_dead_placeholder_value(
   }
 }
 
-fn verify_value_for_slot(
-  pf: PreparedFunc,
-  target: SlotInfo,
-  atom: PreparedAtom,
-  funcs_by_id: Dict<Int, PreparedFunc>,
-  module_globals: Dict<Int, MonoType>,
-  env: ResolvedEnv,
-  builtins: BuiltinRegistry,
-  context: String,
-) Result<Void, String> {
+fn verify_value_for_slot(ctx: VerifyCtx, target: SlotInfo, atom: PreparedAtom, context: String) Result<
+  Void,
+  String,
+> {
   case atom {
     .ALitVoid => { return .Ok({}) },
     .ALitInt(n) => case target.mono {
       .Byte => if n >= 0 and n <= 255 {
         return .Ok({})
       } else {
-        return fail_slot(pf, target, "${context} byte literal out of range")
+        return fail_slot(ctx.pf, target, "${context} byte literal out of range")
       },
       _ => {},
     },
     _ => {},
   }
 
-  case infer_atom_mono(pf, atom, funcs_by_id, module_globals, env, builtins) {
+  case ctx.infer_atom_mono(atom) {
     .Some(actual) => if mono_eq(actual, target.mono) {
       .Ok({})
     } else {
       fail_slot(
-        pf,
+        ctx.pf,
         target,
         "${context} has mono ${mono_name(actual)}, expected ${mono_name(target.mono)}",
       )
@@ -1169,14 +911,10 @@ fn verify_value_for_slot(
   }
 }
 
-fn verify_opkind_atom(
-  pf: PreparedFunc,
-  atom: PreparedAtom,
-  kind: OpKind,
-  context: String,
-  module_globals: Dict<Int, MonoType>,
-  env: ResolvedEnv,
-) Result<Void, String> {
+fn verify_opkind_atom(ctx: VerifyCtx, atom: PreparedAtom, kind: OpKind, context: String) Result<
+  Void,
+  String,
+> {
   allowed := case kind {
     .Int => [ReprKind.I64, ReprKind.I32],
     .Float => [ReprKind.F64],
@@ -1186,13 +924,13 @@ fn verify_opkind_atom(
 
   case atom {
     .ASlot(sid) => {
-      info := try facts.slot_info_result(pf, sid, context)
+      info := try facts.slot_info_result(ctx.pf, sid, context)
 
       if repr_matches_any(info.repr, allowed) {
         .Ok({})
       } else {
         fail_slot(
-          pf,
+          ctx.pf,
           info,
           "${context} has incompatible repr ${repr_name(info.repr)} for ${op_kind_name(kind)} op",
         )
@@ -1200,35 +938,35 @@ fn verify_opkind_atom(
     },
     .ALitInt(_) => case kind {
       .Int => .Ok({}),
-      _ => fail_func(pf, "${context} must match ${op_kind_name(kind)} op kind"),
+      _ => fail_func(ctx.pf, "${context} must match ${op_kind_name(kind)} op kind"),
     },
     .ALitFloat(_) => case kind {
       .Float => .Ok({}),
-      _ => fail_func(pf, "${context} must match ${op_kind_name(kind)} op kind"),
+      _ => fail_func(ctx.pf, "${context} must match ${op_kind_name(kind)} op kind"),
     },
     .ALitBool(_) => case kind {
       .Bool => .Ok({}),
-      _ => fail_func(pf, "${context} must match ${op_kind_name(kind)} op kind"),
+      _ => fail_func(ctx.pf, "${context} must match ${op_kind_name(kind)} op kind"),
     },
     .ALitStr(_) => case kind {
       .Str => .Ok({}),
-      _ => fail_func(pf, "${context} must match ${op_kind_name(kind)} op kind"),
+      _ => fail_func(ctx.pf, "${context} must match ${op_kind_name(kind)} op kind"),
     },
-    .ALitVoid => fail_func(pf, "${context} must not be Void in ${op_kind_name(kind)} op"),
+    .ALitVoid => fail_func(ctx.pf, "${context} must not be Void in ${op_kind_name(kind)} op"),
     .AGlobalFunc(_) => fail_func(
-      pf,
+      ctx.pf,
       "${context} must not be a function value in ${op_kind_name(kind)} op",
     ),
-    .AGlobalLocal(lid) => case module_globals[lid.id] {
-      .None => fail_func(pf, "${context} references unknown module global L${lid.id}"),
+    .AGlobalLocal(lid) => case ctx.module_globals[lid.id] {
+      .None => fail_func(ctx.pf, "${context} references unknown module global L${lid.id}"),
       .Some(mono) => {
-        actual_repr := repr_of_mono(mono, env)
+        actual_repr := repr_of_mono(mono, ctx.env)
 
         if repr_matches_any(actual_repr, allowed) {
           .Ok({})
         } else {
           fail_func(
-            pf,
+            ctx.pf,
             "${context} module global L${lid.id} has incompatible repr ${repr_name(actual_repr)} for ${op_kind_name(
               kind,
             )} op",
@@ -1239,81 +977,74 @@ fn verify_opkind_atom(
   }
 }
 
-fn verify_condition_atom(
-  pf: PreparedFunc,
-  atom: PreparedAtom,
-  module_globals: Dict<Int, MonoType>,
-  env: ResolvedEnv,
-) Result<Void, String> {
+fn verify_condition_atom(ctx: VerifyCtx, atom: PreparedAtom) Result<Void, String> {
   case atom {
     .ASlot(sid) => {
-      info := try facts.slot_info_result(pf, sid, "if condition")
+      info := try facts.slot_info_result(ctx.pf, sid, "if condition")
 
       if repr_matches_category(info.repr, .I32) {
         .Ok({})
       } else {
-        fail_slot(pf, info, "if condition has incompatible repr ${repr_name(info.repr)}")
+        fail_slot(ctx.pf, info, "if condition has incompatible repr ${repr_name(info.repr)}")
       }
     },
     .ALitBool(_) => .Ok({}),
-    .AGlobalLocal(lid) => case module_globals[lid.id] {
-      .None => fail_func(pf, "if condition references unknown module global L${lid.id}"),
+    .AGlobalLocal(lid) => case ctx.module_globals[lid.id] {
+      .None => fail_func(ctx.pf, "if condition references unknown module global L${lid.id}"),
       .Some(mono) => {
-        actual_repr := repr_of_mono(mono, env)
+        actual_repr := repr_of_mono(mono, ctx.env)
 
         if repr_matches_category(actual_repr, .I32) {
           .Ok({})
         } else {
           fail_func(
-            pf,
+            ctx.pf,
             "if condition module global L${lid.id} has incompatible repr ${repr_name(actual_repr)}",
           )
         }
       },
     },
-    _ => fail_func(pf, "if condition must be Bool/I32-valued atom"),
+    _ => fail_func(ctx.pf, "if condition must be Bool/I32-valued atom"),
   }
 }
 
-fn require_result_repr(pf: PreparedFunc, info: SlotInfo, allowed: Vector<ReprKind>, context: String) Result<
+fn require_result_repr(ctx: VerifyCtx, info: SlotInfo, allowed: Vector<ReprKind>, context: String) Result<
   Void,
   String,
 > {
   if repr_matches_any(info.repr, allowed) {
     .Ok({})
   } else {
-    fail_slot(pf, info, "${context} has incompatible repr ${repr_name(info.repr)}")
+    fail_slot(ctx.pf, info, "${context} has incompatible repr ${repr_name(info.repr)}")
   }
 }
 
 fn require_local_repr_if_local(
-  pf: PreparedFunc,
+  ctx: VerifyCtx,
   atom: PreparedAtom,
   allowed: Vector<ReprKind>,
   context: String,
-  module_globals: Dict<Int, MonoType>,
-  env: ResolvedEnv,
 ) Result<Void, String> {
   case atom {
     .ASlot(sid) => {
-      info := try facts.slot_info_result(pf, sid, context)
+      info := try facts.slot_info_result(ctx.pf, sid, context)
 
       if repr_matches_any(info.repr, allowed) {
         .Ok({})
       } else {
-        fail_slot(pf, info, "${context} has incompatible repr ${repr_name(info.repr)}")
+        fail_slot(ctx.pf, info, "${context} has incompatible repr ${repr_name(info.repr)}")
       }
     },
-    .AGlobalLocal(lid) => case module_globals[lid.id] {
-      .None => fail_func(pf, "${context} references unknown module global L${lid.id}"),
+    .AGlobalLocal(lid) => case ctx.module_globals[lid.id] {
+      .None => fail_func(ctx.pf, "${context} references unknown module global L${lid.id}"),
       .Some(mono) => {
-        actual_repr := repr_of_mono(mono, env)
+        actual_repr := repr_of_mono(mono, ctx.env)
 
         if repr_matches_any(actual_repr, allowed) {
           .Ok({})
         } else {
           fail_func(
-            pf,
+            ctx.pf,
             "${context} module global L${lid.id} has incompatible repr ${repr_name(actual_repr)}",
           )
         }
@@ -1374,9 +1105,9 @@ fn repr_matches_category(actual: ReprKind, expected: ReprKind) Bool {
   }
 }
 
-fn reject_dead_use(pf: PreparedFunc, info: SlotInfo, context: String) Result<Void, String> {
+fn reject_dead_use(ctx: VerifyCtx, info: SlotInfo, context: String) Result<Void, String> {
   case info.repr {
-    .DeadValue => fail_slot(pf, info, "${context} uses dead placeholder slot"),
+    .DeadValue => fail_slot(ctx.pf, info, "${context} uses dead placeholder slot"),
     _ => .Ok({}),
   }
 }
@@ -1389,17 +1120,12 @@ fn reject_dead_use(pf: PreparedFunc, info: SlotInfo, context: String) Result<Voi
 //
 // Note: TypedRef/TypedSum/ClosureRef → OpaqueAnyref is allowed (implicit Wasm subtyping).
 // Future 4b work: add field payload repr checks for ARecord/AVariant using layout types.
-fn infer_atom_repr(
-  pf: PreparedFunc,
-  atom: PreparedAtom,
-  module_globals: Dict<Int, MonoType>,
-  env: ResolvedEnv,
-) ReprKind? {
-  case facts.atom_repr(atom, pf) {
+fn infer_atom_repr(ctx: VerifyCtx, atom: PreparedAtom) ReprKind? {
+  case facts.atom_repr(atom, ctx.pf) {
     .Some(repr) => .Some(repr),
     .None => case atom {
-      .AGlobalLocal(lid) => case module_globals[lid.id] {
-        .Some(mono) => .Some(repr_of_mono(mono, env)),
+      .AGlobalLocal(lid) => case ctx.module_globals[lid.id] {
+        .Some(mono) => .Some(repr_of_mono(mono, ctx.env)),
         .None => .None,
       },
       _ => .None,
@@ -1436,20 +1162,16 @@ fn repr_is_typed_value(repr: ReprKind) Bool {
   }
 }
 
-fn verify_call_arg_repr(
-  pf: PreparedFunc,
-  arg: PreparedAtom,
-  expected_repr: ReprKind,
-  module_globals: Dict<Int, MonoType>,
-  env: ResolvedEnv,
-  context: String,
-) Result<Void, String> {
-  case infer_atom_repr(pf, arg, module_globals, env) {
+fn verify_call_arg_repr(ctx: VerifyCtx, arg: PreparedAtom, expected_repr: ReprKind, context: String) Result<
+  Void,
+  String,
+> {
+  case ctx.infer_atom_repr(arg) {
     .None => .Ok({}),
     .Some(actual) => {
       if repr_is_erased(actual) and repr_is_typed_value(expected_repr) {
         return fail_func(
-          pf,
+          ctx.pf,
           "${context} passes erased repr ${repr_name(actual)} to typed param repr ${repr_name(
             expected_repr,
           )} — missing AUnwrapAnyref?",
@@ -1458,7 +1180,7 @@ fn verify_call_arg_repr(
 
       if repr_is_scalar(actual) and repr_is_erased(expected_repr) {
         return fail_func(
-          pf,
+          ctx.pf,
           "${context} passes scalar repr ${repr_name(actual)} to erased param repr ${repr_name(
             expected_repr,
           )} — missing AWrapAnyref?",
