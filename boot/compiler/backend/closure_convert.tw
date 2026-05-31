@@ -31,7 +31,8 @@ pub fn convert_closures(anf: AnfModule, env: ResolvedEnv) ClosureConversion {
   i := anf.functions.len() - 1
 
   for _ in 0..anf.functions.len() {
-    state = scan_expr(anf.functions[i].body, anf.functions[i], env, state)
+    ctx := ConvCtx.{ func: anf.functions[i], env }
+    state = ctx.scan_expr(ctx.func.body, state)
     i = i - 1
   }
 
@@ -40,37 +41,38 @@ pub fn convert_closures(anf: AnfModule, env: ResolvedEnv) ClosureConversion {
 
 type ConversionState = .{ captures: Dict<Int, Vector<CaptureParam>>, next_local: Int }
 
-fn scan_expr(expr: AnfExpr, enclosing: AnfFunctionDef, env: ResolvedEnv, state: ConversionState) ConversionState {
+/// Read-only context threaded through the capture-scan and type-resolution walk:
+/// the enclosing function whose body/captures are being processed, plus the
+/// resolved environment. Carried as the receiver so the chain reads as
+/// `ctx.record_captures(...)`; the mutable accumulators (state, out) stay as
+/// explicit values. Leaf helpers that need only one of these keep narrow params.
+type ConvCtx = .{ func: AnfFunctionDef, env: ResolvedEnv }
+
+fn scan_expr(ctx: ConvCtx, expr: AnfExpr, state: ConversionState) ConversionState {
   case expr {
     .Let(_, op, body) => {
-      state = scan_op(op, enclosing, env, state)
-      scan_expr(body, enclosing, env, state)
+      state = ctx.scan_op(op, state)
+      ctx.scan_expr(body, state)
     },
     _ => state,
   }
 }
 
-fn scan_op(op: AnfOp, enclosing: AnfFunctionDef, env: ResolvedEnv, state: ConversionState) ConversionState {
+fn scan_op(ctx: ConvCtx, op: AnfOp, state: ConversionState) ConversionState {
   case op {
-    .AMakeClosure(fid, free_vars) => record_captures(fid, free_vars, enclosing, env, state),
+    .AMakeClosure(fid, free_vars) => ctx.record_captures(fid, free_vars, state),
     .AIf(_, then_e, else_e) => {
-      state = scan_expr(then_e, enclosing, env, state)
-      scan_expr(else_e, enclosing, env, state)
+      state = ctx.scan_expr(then_e, state)
+      ctx.scan_expr(else_e, state)
     },
-    .AMatch(_, arms) => arms.fold(state, fn(cur, arm) { scan_expr(arm.body, enclosing, env, cur) }),
-    .ALoop(body) => scan_expr(body, enclosing, env, state),
-    .ADefer(body) => scan_expr(body, enclosing, env, state),
+    .AMatch(_, arms) => arms.fold(state, fn(cur, arm) { ctx.scan_expr(arm.body, cur) }),
+    .ALoop(body) => ctx.scan_expr(body, state),
+    .ADefer(body) => ctx.scan_expr(body, state),
     _ => state,
   }
 }
 
-fn record_captures(
-  fid: FuncId,
-  free_vars: Vector<LocalId>,
-  enclosing: AnfFunctionDef,
-  env: ResolvedEnv,
-  state: ConversionState,
-) ConversionState {
+fn record_captures(ctx: ConvCtx, fid: FuncId, free_vars: Vector<LocalId>, state: ConversionState) ConversionState {
   params: Vector<CaptureParam> = []
   next_local := state.next_local
 
@@ -79,7 +81,7 @@ fn record_captures(
       CaptureParam.{
         local_id: fv,
         param_local: LocalId.{ id: next_local },
-        ty: resolve_capture_type_with_captures(enclosing, fv, env, state.captures),
+        ty: ctx.resolve_capture_type_with_captures(fv, state.captures),
       },
     )
     next_local = next_local + 1
@@ -397,44 +399,34 @@ fn max_int(a: Int, b: Int) Int {
   }
 }
 
-fn collect_pattern_monos(
-  expr: AnfExpr,
-  func: AnfFunctionDef,
-  env: ResolvedEnv,
-  out: Dict<Int, MonoType>,
-) Dict<Int, MonoType> {
+fn collect_pattern_monos(ctx: ConvCtx, expr: AnfExpr, out: Dict<Int, MonoType>) Dict<Int, MonoType> {
   case expr {
     .Let(_, op, body) => {
-      out = collect_pattern_monos_op(op, func, env, out)
-      collect_pattern_monos(body, func, env, out)
+      out = ctx.collect_pattern_monos_op(op, out)
+      ctx.collect_pattern_monos(body, out)
     },
     _ => out,
   }
 }
 
-fn collect_pattern_monos_op(
-  op: AnfOp,
-  func: AnfFunctionDef,
-  env: ResolvedEnv,
-  out: Dict<Int, MonoType>,
-) Dict<Int, MonoType> {
+fn collect_pattern_monos_op(ctx: ConvCtx, op: AnfOp, out: Dict<Int, MonoType>) Dict<Int, MonoType> {
   case op {
     .AIf(_, then_e, else_e) => {
-      out = collect_pattern_monos(then_e, func, env, out)
-      collect_pattern_monos(else_e, func, env, out)
+      out = ctx.collect_pattern_monos(then_e, out)
+      ctx.collect_pattern_monos(else_e, out)
     },
     .AMatch(scrutinee, arms) => {
-      scrut_mono := atom_mono(func, scrutinee, out)
+      scrut_mono := atom_mono(ctx.func, scrutinee, out)
 
       for arm in arms {
-        out = collect_binding_monos(arm.pattern, scrut_mono, env, out)
-        out = collect_pattern_monos(arm.body, func, env, out)
+        out = collect_binding_monos(arm.pattern, scrut_mono, ctx.env, out)
+        out = ctx.collect_pattern_monos(arm.body, out)
       }
 
       out
     },
-    .ALoop(body) => collect_pattern_monos(body, func, env, out),
-    .ADefer(body) => collect_pattern_monos(body, func, env, out),
+    .ALoop(body) => ctx.collect_pattern_monos(body, out),
+    .ADefer(body) => ctx.collect_pattern_monos(body, out),
     _ => out,
   }
 }
@@ -579,24 +571,23 @@ fn resolve_capture_type_from_maps(
 // resolve_capture_type resolves the MonoType of a captured local from its
 // enclosing function definition. Checks params first, then pattern-bound locals,
 // then op_result_mono.
-fn resolve_capture_type(func: AnfFunctionDef, local: LocalId, env: ResolvedEnv) MonoType {
-  pattern_monos := collect_pattern_monos(func.body, func, env, Dict.new())
-  resolve_capture_type_from_maps(func, local, pattern_monos)
+fn resolve_capture_type(ctx: ConvCtx, local: LocalId) MonoType {
+  pattern_monos := ctx.collect_pattern_monos(ctx.func.body, Dict.new())
+  resolve_capture_type_from_maps(ctx.func, local, pattern_monos)
 }
 
 fn resolve_capture_type_with_captures(
-  func: AnfFunctionDef,
+  ctx: ConvCtx,
   local: LocalId,
-  env: ResolvedEnv,
   captures: Dict<Int, Vector<CaptureParam>>,
 ) MonoType {
-  ty := resolve_capture_type(func, local, env)
+  ty := ctx.resolve_capture_type(local)
 
   if ty != .Void {
     return ty
   }
 
-  case captures[func.func_id.id] {
+  case captures[ctx.func.func_id.id] {
     .Some(existing) => {
       for cap in existing {
         if cap.local_id.id == local.id {
