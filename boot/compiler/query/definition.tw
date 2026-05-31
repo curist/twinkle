@@ -22,6 +22,11 @@ use lib.source.span.{Span}
 
 pub type DefinitionResult = .{ uri: String, span: Span }
 
+/// Invariants for resolving a reference to its definition: the snapshot under
+/// query and its resolved environment. Carried as the receiver so the resolvers
+/// read as `ctx.resolve_type_name(name)` instead of forwarding both.
+type DefCtx = .{ snap: SemanticSnapshot, env: ResolvedEnv }
+
 type Ref = {
   Ident(String),
   Field(Expr, String),
@@ -115,6 +120,7 @@ fn resolve_ref(snap: SemanticSnapshot, ref: Ref, byte_offset: Int) DefinitionRes
     .Some(t) => t,
     .None => { return .None },
   }
+  ctx := DefCtx.{ snap, env: typed.env }
 
   case ref {
     .Ident(name) => {
@@ -123,7 +129,7 @@ fn resolve_ref(snap: SemanticSnapshot, ref: Ref, byte_offset: Int) DefinitionRes
         .None => {},
       }
 
-      case resolve_function_name(snap, typed.env, name) {
+      case ctx.resolve_function_name(name) {
         .Some(target) => .Some(target),
         .None => {
           // Module alias used in expression context: dep in dep.answer()
@@ -135,19 +141,19 @@ fn resolve_ref(snap: SemanticSnapshot, ref: Ref, byte_offset: Int) DefinitionRes
       // Module-qualified calls and values: dep.answer
       case base.kind {
         .Ident(alias) => {
-          case resolve_function_name(snap, typed.env, "${alias}.${field}") {
+          case ctx.resolve_function_name("${alias}.${field}") {
             .Some(target) => { return .Some(target) },
             .None => {},
           }
 
-          case resolve_type_name(snap, typed.env, "${alias}.${field}") {
+          case ctx.resolve_type_name("${alias}.${field}") {
             .Some(target) => { return .Some(target) },
             .None => {},
           }
 
           // Type.Variant constructor: Color.Red
           case typed.env.lookup_type(alias) {
-            .Some(entry) => case find_variant_by_type_id(snap, typed.env, entry.id, field) {
+            .Some(entry) => case ctx.find_variant_by_type_id(entry.id, field) {
               .Some(target) => { return .Some(target) },
               .None => {},
             },
@@ -165,7 +171,7 @@ fn resolve_ref(snap: SemanticSnapshot, ref: Ref, byte_offset: Int) DefinitionRes
             .Some(entries) => {
               for entry in entries {
                 if entry.method_name == field {
-                  return resolve_registered_function(snap, typed.env, entry.function_name)
+                  return ctx.resolve_registered_function(entry.function_name)
                 }
               }
             },
@@ -173,53 +179,53 @@ fn resolve_ref(snap: SemanticSnapshot, ref: Ref, byte_offset: Int) DefinitionRes
           }
 
           // Record field access: jump to the field declaration in the type.
-          resolve_record_field(snap, typed.env, tid, field)
+          ctx.resolve_record_field(tid, field)
         },
         _ => .None,
       }
     },
-    .TypeName(name) => resolve_type_name(snap, typed.env, name),
+    .TypeName(name) => ctx.resolve_type_name(name),
     .ImportModule(alias) => resolve_import_alias(snap, alias),
-    .ImportItem(name) => case resolve_function_name(snap, typed.env, name) {
+    .ImportItem(name) => case ctx.resolve_function_name(name) {
       .Some(target) => .Some(target),
-      .None => resolve_type_name(snap, typed.env, name),
+      .None => ctx.resolve_type_name(name),
     },
-    .Variant(name, scrutinee) => resolve_variant_name(snap, typed.env, name, scrutinee),
+    .Variant(name, scrutinee) => ctx.resolve_variant_name(name, scrutinee),
   }
 }
 
-fn resolve_function_name(snap: SemanticSnapshot, env: ResolvedEnv, name: String) DefinitionResult? {
-  registered := case env.function_bindings[name] {
+fn resolve_function_name(ctx: DefCtx, name: String) DefinitionResult? {
+  registered := case ctx.env.function_bindings[name] {
     .Some(target) => target,
     .None => { return .None },
   }
-  resolve_registered_function(snap, env, registered)
+  ctx.resolve_registered_function(registered)
 }
 
-fn resolve_registered_function(snap: SemanticSnapshot, env: ResolvedEnv, registered: String) DefinitionResult? {
-  case env.function_origins[registered] {
-    .Some(origin) => find_function_in_module(snap, origin.module_path, origin.func_name),
-    .None => find_function_in_module(snap, snap.canonical_path, local_name(registered)),
+fn resolve_registered_function(ctx: DefCtx, registered: String) DefinitionResult? {
+  case ctx.env.function_origins[registered] {
+    .Some(origin) => find_function_in_module(ctx.snap, origin.module_path, origin.func_name),
+    .None => find_function_in_module(ctx.snap, ctx.snap.canonical_path, local_name(registered)),
   }
 }
 
-fn resolve_type_name(snap: SemanticSnapshot, env: ResolvedEnv, name: String) DefinitionResult? {
-  entry := case env.lookup_type(name) {
+fn resolve_type_name(ctx: DefCtx, name: String) DefinitionResult? {
+  entry := case ctx.env.lookup_type(name) {
     .Some(e) => e,
     .None => { return .None },
   }
 
-  case env.type_origins[entry.id.id] {
+  case ctx.env.type_origins[entry.id.id] {
     .Some(origin) => {
       parts := origin.split("::")
 
       if parts.len() >= 2 {
-        return find_type_in_module(snap, parts[0], parts[1])
+        return find_type_in_module(ctx.snap, parts[0], parts[1])
       }
 
       .None
     },
-    .None => find_type_in_module(snap, snap.canonical_path, local_name(name)),
+    .None => find_type_in_module(ctx.snap, ctx.snap.canonical_path, local_name(name)),
   }
 }
 
@@ -239,17 +245,17 @@ fn resolve_import_alias(snap: SemanticSnapshot, alias: String) DefinitionResult?
   .Some(.{ uri: identity.from_path(dep_path).uri, span: target.module.span })
 }
 
-fn resolve_variant_name(snap: SemanticSnapshot, env: ResolvedEnv, name: String, scrutinee: Expr?) DefinitionResult? {
+fn resolve_variant_name(ctx: DefCtx, name: String, scrutinee: Expr?) DefinitionResult? {
   // Prefer the scrutinee's concrete sum type.  This handles shorthand patterns
   // (`.Some`) without relying on globally unique variant names.
-  typed := case snap.typed {
+  typed := case ctx.snap.typed {
     .Some(t) => t,
     .None => { return .None },
   }
 
   case scrutinee {
     .Some(expr) => case typed.type_map[expr.id] {
-      .Some(.Named(tid, _)) => case find_variant_by_type_id(snap, env, tid, name) {
+      .Some(.Named(tid, _)) => case ctx.find_variant_by_type_id(tid, name) {
         .Some(target) => { return .Some(target) },
         .None => {},
       },
@@ -259,10 +265,10 @@ fn resolve_variant_name(snap: SemanticSnapshot, env: ResolvedEnv, name: String, 
   }
 
   // Fallback for qualified variants and constructor calls: scan visible types.
-  for i in 0..env.types.len() {
-    entry := env.types[i]
+  for i in 0..ctx.env.types.len() {
+    entry := ctx.env.types[i]
 
-    case find_variant_by_type_id(snap, env, entry.id, name) {
+    case ctx.find_variant_by_type_id(entry.id, name) {
       .Some(target) => { return .Some(target) },
       .None => {},
     }
@@ -271,25 +277,20 @@ fn resolve_variant_name(snap: SemanticSnapshot, env: ResolvedEnv, name: String, 
   .None
 }
 
-fn find_variant_by_type_id(
-  snap: SemanticSnapshot,
-  env: ResolvedEnv,
-  tid: TypeId,
-  variant_name: String,
-) DefinitionResult? {
+fn find_variant_by_type_id(ctx: DefCtx, tid: TypeId, variant_name: String) DefinitionResult? {
   type_name := ""
 
-  case env.type_id_index[tid.id] {
+  case ctx.env.type_id_index[tid.id] {
     .Some(idx) => {
-      type_name = env.type_names[idx]
+      type_name = ctx.env.type_names[idx]
     },
     .None => { return .None },
   }
 
-  module_path := snap.canonical_path
+  module_path := ctx.snap.canonical_path
   source_type_name := local_name(type_name)
 
-  case env.type_origins[tid.id] {
+  case ctx.env.type_origins[tid.id] {
     .Some(origin) => {
       parts := origin.split("::")
 
@@ -301,7 +302,7 @@ fn find_variant_by_type_id(
     .None => {},
   }
 
-  find_variant_in_module(snap, module_path, source_type_name, variant_name)
+  find_variant_in_module(ctx.snap, module_path, source_type_name, variant_name)
 }
 
 fn local_name(name: String) String {
@@ -395,16 +396,16 @@ fn find_variant_in_module(
   .None
 }
 
-fn resolve_record_field(snap: SemanticSnapshot, env: ResolvedEnv, tid: TypeId, field_name: String) DefinitionResult? {
-  type_name := case env.type_id_index[tid.id] {
-    .Some(idx) => env.type_names[idx],
+fn resolve_record_field(ctx: DefCtx, tid: TypeId, field_name: String) DefinitionResult? {
+  type_name := case ctx.env.type_id_index[tid.id] {
+    .Some(idx) => ctx.env.type_names[idx],
     .None => { return .None },
   }
 
-  module_path := snap.canonical_path
+  module_path := ctx.snap.canonical_path
   source_type_name := local_name(type_name)
 
-  case env.type_origins[tid.id] {
+  case ctx.env.type_origins[tid.id] {
     .Some(origin) => {
       parts := origin.split("::")
 
@@ -416,7 +417,7 @@ fn resolve_record_field(snap: SemanticSnapshot, env: ResolvedEnv, tid: TypeId, f
     .None => {},
   }
 
-  find_field_in_module(snap, module_path, source_type_name, field_name)
+  find_field_in_module(ctx.snap, module_path, source_type_name, field_name)
 }
 
 fn find_field_in_module(
