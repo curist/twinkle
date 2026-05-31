@@ -5,7 +5,7 @@ use compiler.ast.{
   TypeDecl, TypeDef, TypeExpr, TypeParam, TypePath, UseDecl, VariantDecl,
 }
 use compiler.checker.{CheckResult}
-use compiler.contracts.{BuiltinContract, resolve_builtin_contract_name}
+use compiler.contracts.{BuiltinContract, resolve_builtin_contract_name, spec}
 use compiler.imports
 use compiler.mono_type.{MonoType, TypeId}
 use compiler.query.ast_walk.{NodeContext, find_node_in_block, find_node_in_expr, find_node_in_stmt}
@@ -13,7 +13,8 @@ use compiler.query.cache
 use compiler.query.semantic.{SemanticSnapshot}
 use compiler.query.util.{find_map, find_map_indexed}
 use compiler.resolver.{
-  FunctionSig, ResolvedEnv, ResolvedTypeDef, ResolvedTypeParam, ResolvedVariant, ty_to_string_env,
+  FunctionSig, ResolvedContractRef, ResolvedEnv, ResolvedTypeDef, ResolvedTypeParam, ResolvedVariant,
+  ty_to_string_env,
 }
 use lib.source.span.{Span}
 
@@ -219,7 +220,48 @@ fn sig_to_string(env: ResolvedEnv, sig: FunctionSig) String {
     .Some(t) => ty_to_string_env(env, t),
     .None => "Void",
   }
-  "fn(${parts.join(", ")}) ${ret}"
+  "fn${type_params_to_string(env, sig.type_params)}(${parts.join(", ")}) ${ret}"
+}
+
+/// Render a function's type parameters with their contract bounds, e.g.
+/// `<C: IndexRead<E>, E: Eq>`. Returns "" when there are no type parameters.
+fn type_params_to_string(env: ResolvedEnv, params: Vector<ResolvedTypeParam>) String {
+  if params.len() == 0 {
+    return ""
+  }
+
+  parts := collect p in params {
+    type_param_to_string(env, p)
+  }
+  "<${parts.join(", ")}>"
+}
+
+fn type_param_to_string(env: ResolvedEnv, param: ResolvedTypeParam) String {
+  if param.bounds.len() == 0 {
+    return param.name
+  }
+
+  bound_parts := collect b in param.bounds {
+    contract_ref_to_string(env, b)
+  }
+  "${param.name}: ${bound_parts.join(" + ")}"
+}
+
+fn contract_ref_to_string(env: ResolvedEnv, ref: ResolvedContractRef) String {
+  case ref {
+    .Builtin(contract, type_args) => {
+      name := spec(contract).name
+
+      if type_args.len() == 0 {
+        name
+      } else {
+        arg_parts := collect a in type_args {
+          ty_to_string_env(env, a)
+        }
+        "${name}<${arg_parts.join(", ")}>"
+      }
+    },
+  }
 }
 
 // ── Contract hover ────────────────────────────────────────────────
@@ -603,9 +645,18 @@ fn instantiate_receiver_sig(sig: FunctionSig, base: Expr, typed: CheckResult) Fu
     .Some(r) => .Some(substitute_type_params(r, sig.type_params, args)),
     .None => .None,
   }
+
+  // The receiver's type args instantiate the leading type params positionally
+  // (mirroring `substitute_type_params`); only the params beyond `args.len()`
+  // stay polymorphic, so the rest must not show in the displayed signature.
+  remaining_type_params := if args.len() < sig.type_params.len() {
+    sig.type_params.slice(args.len(), sig.type_params.len())
+  } else {
+    []
+  }
   FunctionSig.{
     name: sig.name,
-    type_params: sig.type_params,
+    type_params: remaining_type_params,
     param_names: sig.param_names,
     params,
     ret,

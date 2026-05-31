@@ -690,6 +690,32 @@ pub fn suite() runner.Suite {
       },
     )
     .test(
+      "hover on generic function name shows type params and bounds",
+      fn() {
+        source := "fn check<T: Eq + Stringify>(a: T, b: T) Bool { a == b }\nx := check(1, 2)\n"
+        state := state_with_doc("file:///a.tw", source)
+
+        // "check" usage on line 1 at char 5
+        step := server_core.handle_message(state, hover_request(1, "file:///a.tw", 1, 7))
+        content := try hover_content(step)
+        try assert.str_contains(content, "fn<T: Eq + Stringify>(a: T, b: T) Bool")
+        .Ok({})
+      },
+    )
+    .test(
+      "hover on parameterized-contract bound in function name",
+      fn() {
+        source := "fn first<C: IndexRead<E>, E>(c: C) E { c.at(0) }\nx := first([1, 2])\n"
+        state := state_with_doc("file:///a.tw", source)
+
+        // "first" usage on line 1 at char 5
+        step := server_core.handle_message(state, hover_request(1, "file:///a.tw", 1, 7))
+        content := try hover_content(step)
+        try assert.str_contains(content, "fn<C: IndexRead<E>, E>(c: C) E")
+        .Ok({})
+      },
+    )
+    .test(
       "hover on Stringify bound in type declaration",
       fn() {
         //                0         1         2
