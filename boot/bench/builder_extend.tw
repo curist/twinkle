@@ -1,0 +1,31 @@
+// Phase 6 (bulk builder_extend) sensitivity bench.
+//
+// Repeatedly append a LARGE chunk: `acc = acc.concat(chunk)`. The optimizer
+// rewrites append-at-end consume-reassign concat into a builder region
+// (builder_from + repeated builder_extend + builder_freeze), so the timed loop
+// is dominated by builder_extend(builder, chunk). Phase 6 makes each extend
+// O(chunk/32) bulk leaf-copies; pre-Phase-6 it replays O(chunk) elements, so the
+// pre/post-Phase-6 difference shows here as a ~branching-factor constant gap.
+// (The existing concat_append.tw appends 1-element chunks, where bulk == element,
+// so it can't show this.)
+use @std.date
+
+fn run(n: Int) {
+  chunk: Vector<Int> = collect i in range(256) {
+    i
+  }
+  t0 := date.now()
+  acc: Vector<Int> = []
+
+  for r in range(n / 256) {
+    acc = .concat(chunk)
+  }
+
+  dt := date.now() - t0
+  println("${n}\t${dt}\t${acc.len()}")
+}
+
+println("N\tms\tsink (chunk=256)")
+for n in [8000, 16000, 32000, 64000] {
+  run(n)
+}

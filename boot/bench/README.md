@@ -16,7 +16,7 @@ the optimizer cannot dead-code-eliminate the work.
 ```bash
 target/twk run boot/bench/<name>.tw      # prints "N<TAB>ms<TAB>sink" rows
 make bench                               # run every benchmark
-make bench-guard                         # fail if concat/slice tail ratios look quadratic
+make bench-guard                         # fail if concat/slice scaling or bulk extend regresses
 ```
 
 These are standalone programs read from disk — editing them needs **no**
@@ -29,6 +29,7 @@ These are standalone programs read from disk — editing them needs **no**
 | `concat_prepend.tw` | `acc = [i].concat(acc)` (right-operand accumulator) | **quadratic** | linear-ish (O(n log n)) |
 | `concat_append.tw` | `acc = acc.concat([i])` (left-base, append) | linear (control) | unchanged |
 | `concat_balanced.tw` | pairwise/tree concat of n/8 eight-elem chunks | linear | unchanged/faster |
+| `builder_extend.tw` | append a reused 256-element chunk through optimized concat | linear but element-replay constant | bulk leaf-copy constant |
 | `slice_dropfirst.tw` | `acc = acc.slice(1, acc.len())` (dequeue / left-drop) | **quadratic** | linear-ish |
 | `slice_droplast.tw` | `acc = acc.slice(0, acc.len()-1)` (drop-last via slice) | **quadratic** | linear-ish |
 | `droplast_baseline.tw` | same drop-last via the shipped `drop_last` op | linear (reference) | n/a (already O(log n)) |
@@ -88,16 +89,21 @@ regular twin while `*_regular` does not move.
 
 ## After RRB concat and structural slice
 
-Use `make bench-guard` as the quick scaling smoke test for the two formerly
-quadratic families. It runs `concat_prepend`, `slice_dropfirst`, and
-`slice_droplast`, then checks only the tail doubling ratios so noisy small inputs
-are ignored. The guard is intentionally separate from `make test` because
-absolute timings are machine-relative.
+Use `make bench-guard` as the quick smoke test for vector runtime regressions.
+It runs `concat_prepend`, `slice_dropfirst`, and `slice_droplast`, then checks
+only the tail doubling ratios so noisy small inputs are ignored. It also runs
+`builder_extend` and compares its normalized tail cost against `concat_append`;
+that catches Phase 6 regressions where append-at-end concat still scales but
+falls back to replaying every element instead of copying whole leaf runs. The
+guard is intentionally separate from `make test` because timings are
+machine-relative.
 
 Full `make bench` should continue to show:
 
 - `concat_prepend`, `slice_dropfirst`, `slice_droplast`: clearly sub-quadratic
   (per-doubling trending toward ≈2× rather than ≈4×).
 - `concat_append` / `concat_balanced`: no regression beyond noise.
+- `builder_extend`: clearly cheaper per element than single-element concat append
+  when extending by reusable trie-backed chunks.
 - `get_regular` / `set_regular`: no regression (stay on the radix fast path).
 - `get_relaxed` / `set_relaxed`: regression bounded to ~1.5–2× their regular twin.

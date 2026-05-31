@@ -23,7 +23,7 @@ help:
 	@printf '  make cli               Alias for bundle-cli\n'
 	@printf '  make fmt               Format boot compiler .tw source files\n'
 	@printf '  make bench             Run the Vector benchmark suite (boot/bench/)\n'
-	@printf '  make bench-guard       Check concat/slice scaling guards\n'
+	@printf '  make bench-guard       Check vector scaling/bulk-copy guards\n'
 	@printf '  make playground        Build playground (all deps + vite build)\n'
 	@printf '  make playground-dev    Start playground dev server (all deps + vite dev)\n'
 	@printf '  make playground-wasm   Build target/playground.wasm (slim compiler for browser)\n'
