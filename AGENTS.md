@@ -210,6 +210,16 @@ p.translate(1,2)  →  Point.translate(p,1,2)
 2. The function returns the same type (builder/transform pattern), e.g. `env.with_types(...) ResolvedEnv`
 3. Multiple functions share the same receiver type, forming a cohesive API surface, e.g. `env.lookup_type(name)`, `env.has_type(name)`, `env.add_function(sig)`
 
+### Threaded Context Records
+
+When the same invariants ride **unchanged** through a recursive walk, bundle
+them into a record passed as the **first** argument, so calls read as
+inherent-method steps (`ctx.lower_op(node, acc)`). Keep mutating accumulators
+(the folded/returned value) and per-node data as explicit parameters, and never
+fold mutable state (output buffers, diagnostics, an evolving env) into the
+record — that only moves the threading or forces you to thread the record back
+out. Justified by how many call sites thread the bundle, not by field count.
+
 ### Capabilities (Explicit Records)
 Twinkle does not have traits. Capabilities are passed explicitly as records of functions:
 
