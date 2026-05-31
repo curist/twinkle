@@ -1,4 +1,4 @@
-.PHONY: help test boot-test rust-test stage0 stage2 bundle-cli quick-bundle-cli cli playground playground-dev playground-wasm fmt bench clean
+.PHONY: help test boot-test rust-test stage0 stage2 bundle-cli quick-bundle-cli cli playground playground-dev playground-wasm fmt bench bench-guard clean
 
 STAGE1_WASM ?= target/boot-stage1.wasm
 STAGE2_WASM ?= target/boot.wasm
@@ -23,6 +23,7 @@ help:
 	@printf '  make cli               Alias for bundle-cli\n'
 	@printf '  make fmt               Format boot compiler .tw source files\n'
 	@printf '  make bench             Run the Vector benchmark suite (boot/bench/)\n'
+	@printf '  make bench-guard       Check concat/slice scaling guards\n'
 	@printf '  make playground        Build playground (all deps + vite build)\n'
 	@printf '  make playground-dev    Start playground dev server (all deps + vite dev)\n'
 	@printf '  make playground-wasm   Build target/playground.wasm (slim compiler for browser)\n'
@@ -131,6 +132,9 @@ bench: target/twk
 		printf '\n==> %s\n' "$$f"; \
 		target/twk run "$$f" || exit 1; \
 	done
+
+bench-guard: target/twk
+	python3 tools/check_vector_scaling.py
 
 # Format all .tw source files (boot only; prelude/stdlib excluded).
 fmt: target/twk

@@ -15,6 +15,8 @@ the optimizer cannot dead-code-eliminate the work.
 
 ```bash
 target/twk run boot/bench/<name>.tw      # prints "N<TAB>ms<TAB>sink" rows
+make bench                               # run every benchmark
+make bench-guard                         # fail if concat/slice tail ratios look quadratic
 ```
 
 These are standalone programs read from disk — editing them needs **no**
@@ -84,13 +86,18 @@ regular trees pre-RRB). After RRB, `*_relaxed` will exercise size-table
 navigation; the decision criterion is that they stay within ~1.5–2× of their
 regular twin while `*_regular` does not move.
 
-## After a Phase 3/4 prototype
+## After RRB concat and structural slice
 
-Re-run all ten and require **all** of:
+Use `make bench-guard` as the quick scaling smoke test for the two formerly
+quadratic families. It runs `concat_prepend`, `slice_dropfirst`, and
+`slice_droplast`, then checks only the tail doubling ratios so noisy small inputs
+are ignored. The guard is intentionally separate from `make test` because
+absolute timings are machine-relative.
+
+Full `make bench` should continue to show:
 
 - `concat_prepend`, `slice_dropfirst`, `slice_droplast`: clearly sub-quadratic
-  (per-doubling trending to ≈2×) and an order-of-magnitude wall-clock win at
-  N ≥ 8k.
+  (per-doubling trending toward ≈2× rather than ≈4×).
 - `concat_append` / `concat_balanced`: no regression beyond noise.
 - `get_regular` / `set_regular`: no regression (stay on the radix fast path).
 - `get_relaxed` / `set_relaxed`: regression bounded to ~1.5–2× their regular twin.

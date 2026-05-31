@@ -1094,6 +1094,26 @@ fn opt_vector_concat_loop_rewritten_to_builder_extend() {
 }
 
 #[test]
+fn opt_vector_concat_prepend_loop_not_rewritten_to_builder_extend() {
+    let module = compile_opt("tests/opt/vector_concat_prepend_loop_not_rewritten.tw");
+    assert_eq!(
+        count_calls_to(&module, VECTOR_CONCAT),
+        1,
+        "Expected prepend concat to remain on the persistent RRB concat path"
+    );
+    assert_eq!(
+        count_calls_to(&module, VECTOR_BUILDER_EXTEND),
+        0,
+        "Expected no builder_extend rewrite when the accumulator is the right operand"
+    );
+    assert_eq!(
+        count_calls_to(&module, VECTOR_BUILDER_FREEZE),
+        0,
+        "Expected no builder region for prepend concat"
+    );
+}
+
+#[test]
 fn opt_vector_concat_dead_base_rewritten_to_builder_extend() {
     let module = compile_opt("tests/opt/vector_concat_dead_base.tw");
     assert_eq!(

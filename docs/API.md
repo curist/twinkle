@@ -238,24 +238,24 @@ Qualified forms (`String.len`, `String.trim`, etc.) also work.
 
 ## Vector\<T\>
 
-Persistent (copy-on-write) vector. Literal syntax: `[1, 2, 3]`.
+Persistent vector with structural sharing. Literal syntax: `[1, 2, 3]`.
 
 | Method | Signature | Description |
 |--------|-----------|-------------|
 | `.len()` | `fn<T>(v: Vector<T>) Int` | Number of elements |
 | `.is_empty()` | `fn<T>(v: Vector<T>) Bool` | Whether the vector has no elements |
-| `.append(elem)` | `fn<T>(v: Vector<T>, elem: T) Vector<T>` | Append element, return new vector |
-| `.get(i)` | `fn<T>(v: Vector<T>, i: Int) Option<T>` | Safe index lookup |
-| `.set(i, val)` | `fn<T>(v: Vector<T>, i: Int, val: T) Option<Vector<T>>` | Safe update at index |
-| `.concat(other)` | `fn<T>(v: Vector<T>, other: Vector<T>) Vector<T>` | Concatenate two vectors |
-| `.slice(start, end)` | `fn<T>(v: Vector<T>, start: Int, end: Int) Vector<T>` | Subvector `[start, end)` |
+| `.append(elem)` | `fn<T>(v: Vector<T>, elem: T) Vector<T>` | Append element, return new vector. O(log n) amortized, effectively constant with the tail buffer |
+| `.get(i)` | `fn<T>(v: Vector<T>, i: Int) Option<T>` | Safe index lookup. O(log n) |
+| `.set(i, val)` | `fn<T>(v: Vector<T>, i: Int, val: T) Option<Vector<T>>` | Safe update at index. O(log n) |
+| `.concat(other)` | `fn<T>(v: Vector<T>, other: Vector<T>) Vector<T>` | Concatenate two vectors structurally. O(log n), sharing both operands' trees |
+| `.slice(start, end)` | `fn<T>(v: Vector<T>, start: Int, end: Int) Vector<T>` | Subvector `[start, end)`. O(log n), sharing the source tree except boundary spines |
 | `.map(f)` | `fn<A,B>(xs: Vector<A>, f: fn(A) B) Vector<B>` | Transform each element |
 | `.filter(f)` | `fn<A>(xs: Vector<A>, f: fn(A) Bool) Vector<A>` | Keep elements where `f` returns true |
 | `.fold(init, f)` | `fn<A,B>(xs: Vector<A>, init: B, f: fn(B,A) B) B` | Left fold |
 | `.first()` | `fn<A>(xs: Vector<A>) Option<A>` | First element, or `.None` if empty |
 | `.last()` | `fn<A>(xs: Vector<A>) Option<A>` | Last element, or `.None` if empty |
-| `.drop_first()` | `fn<A>(xs: Vector<A>) Vector<A>` | Vector without its first element, or empty if already empty. O(m) |
-| `.drop_last()` | `fn<A>(xs: Vector<A>) Vector<A>` | Vector without its last element, or empty if already empty. O(1) amortized (inverse of `append`) |
+| `.drop_first()` | `fn<A>(xs: Vector<A>) Vector<A>` | Vector without its first element, or empty if already empty. O(log n) via structural slice |
+| `.drop_last()` | `fn<A>(xs: Vector<A>) Vector<A>` | Vector without its last element, or empty if already empty. O(log n) worst-case, O(1) when shrinking the tail |
 | `.find(f)` | `fn<A>(xs: Vector<A>, f: fn(A) Bool) Option<A>` | First element matching predicate |
 | `.any(f)` | `fn<A>(xs: Vector<A>, f: fn(A) Bool) Bool` | True if any element matches |
 | `.all(f)` | `fn<A>(xs: Vector<A>, f: fn(A) Bool) Bool` | True if all elements match |

@@ -1439,6 +1439,11 @@ fn detect_dead_concat_base(
     if atom_is_local(&args[1], base) {
         return None;
     }
+    if let Atom::ALocal(rhs) = &args[1]
+        && collect_assign_targets(body).contains(rhs)
+    {
+        return None;
+    }
     // Allow the consume-reassign case: `xs = xs.concat(rhs)` where `xs`
     // appears only as the immediate assign target (not read).
     if expr_mentions_local(body, base) && !is_consume_reassign(body, base, *local) {

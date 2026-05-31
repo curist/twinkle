@@ -1119,7 +1119,7 @@ fn test_rt_arr_len() Result<Void, String> {
   .Ok({})
 }
 
-fn test_rt_arr_concat_iterates() Result<Void, String> {
+fn test_rt_arr_concat_structural() Result<Void, String> {
   m := rt_arr.module()
   f := try find_func(m.funcs, "concat").ok_or("missing concat func")
   try assert.equal(f.params.len(), 2)
@@ -1128,12 +1128,12 @@ fn test_rt_arr_concat_iterates() Result<Void, String> {
       f.body,
       fn(i: Instr) Bool {
         case i {
-          .Call(sym) => sym == "builder_from",
+          .Call(sym) => sym == "concat_trees",
           _ => false,
         }
       },
     ),
-    "concat should call builder_from",
+    "concat should merge trie spines structurally",
   )
   try assert.ok(
     has_instr(
@@ -1145,7 +1145,7 @@ fn test_rt_arr_concat_iterates() Result<Void, String> {
         }
       },
     ),
-    "concat should call builder_extend",
+    "concat should keep the tiny-right fallback through builder_extend",
   )
   .Ok({})
 }
@@ -1693,8 +1693,8 @@ pub fn suite() runner.Suite {
     .test("rt.arr: set is persistent", test_rt_arr_set_persistent)
     .test("rt.arr: set_in_place mutates leaf via get_leaf", test_rt_arr_set_in_place)
     .test("rt.arr: len reads PVec.len", test_rt_arr_len)
-    .test("rt.arr: concat iterates and pushes", test_rt_arr_concat_iterates)
-    .test("rt.arr: slice uses get and from_array", test_rt_arr_slice_iterates)
+    .test("rt.arr: concat merges trie spines", test_rt_arr_concat_structural)
+    .test("rt.arr: slice trims boundary spines", test_rt_arr_slice_iterates)
     .test("rt.arr: builder_new creates 3-element layout", test_rt_arr_builder_new_layout)
     .test("rt.arr: builder_from creates 3-element layout", test_rt_arr_builder_from)
     .test("rt.arr: builder_push has tail-full path", test_rt_arr_builder_push_tail)

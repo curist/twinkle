@@ -1366,18 +1366,18 @@ evens := collect x in range(1, 20) {
 
 ## 14. Vectors
 
-Vectors are **immutable** sequences (`Vector<T>`).
+Vectors are **immutable** persistent sequences (`Vector<T>`) with structural sharing.
 
 `vec[i]` indexing, 0-based (traps on out-of-bounds).
 
 Vector operations via method or module syntax:
 
 * `vec.len() Int` / `Vector.len(vec) Int` — number of elements
-* `vec.append(value) Vector<T>` — returns new vector with value appended
-* `vec.concat(other) Vector<T>` / `Vector.concat(a, b) Vector<T>` — concatenate two vectors
-* `vec.slice(start, end) Vector<T>` / `Vector.slice(vec, start, end) Vector<T>` — subset `[start, end)`
-* `vec.get(i) Option<T>` — safe index access; returns `None` if out of bounds
-* `vec.set(i, val) Option<Vector<T>>` — safe functional update; returns `None` if out of bounds
+* `vec.append(value) Vector<T>` — returns new vector with value appended; O(log n) amortized
+* `vec.concat(other) Vector<T>` / `Vector.concat(a, b) Vector<T>` — structurally concatenate two vectors; O(log n)
+* `vec.slice(start, end) Vector<T>` / `Vector.slice(vec, start, end) Vector<T>` — structurally shared subset `[start, end)`; O(log n)
+* `vec.get(i) Option<T>` — safe index access; returns `None` if out of bounds; O(log n)
+* `vec.set(i, val) Option<Vector<T>>` — safe functional update; returns `None` if out of bounds; O(log n)
 * `Vector.make(size, fill) Vector<T>` — create a vector of `size` elements all equal to `fill`
 
 Unsafe index write (traps on out-of-bounds):

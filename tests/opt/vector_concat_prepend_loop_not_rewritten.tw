@@ -1,0 +1,24 @@
+// Prepend-style concat keeps the accumulator on the right. The builder-region
+// rewrite must not flip this into builder_extend; RRB concat is the intended
+// persistent fast path for this shape.
+// Expected output:
+//   4
+//   3
+//   2
+//   1
+//   0
+fn build() Vector<Int> {
+  xs: Vector<Int> = []
+
+  for i in range(4) {
+    xs = [i].concat(xs)
+  }
+
+  xs
+}
+
+out := build()
+println("${out.len()}")
+for x in out {
+  println("${x}")
+}
