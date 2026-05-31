@@ -1153,18 +1153,18 @@ fn test_rt_arr_slice_iterates() Result<Void, String> {
   m := rt_arr.module()
   f := try find_func(m.funcs, "slice").ok_or("missing slice func")
   try assert.equal(f.params.len(), 3)
-  // Phase 3: slice materializes the range via `get` (relaxed-safe) + from_array.
+  // Phase 3: slice flattens via to_array (relaxed-safe) then bulk-copies + from_array.
   try assert.ok(
     has_instr(
       f.body,
       fn(i: Instr) Bool {
         case i {
-          .Call(sym) => sym == "get",
+          .Call(sym) => sym == "to_array",
           _ => false,
         }
       },
     ),
-    "slice should call get",
+    "slice should call to_array",
   )
   try assert.ok(
     has_instr(
