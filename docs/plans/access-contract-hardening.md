@@ -2,8 +2,11 @@
 
 Status: **In progress** — Findings 1 (arity validation), 2 (proof-cache
 soundness), 3 (explicit iterable-lowering record), 4 (contract-identity lookup
-helper), and 6 (`View.sub` clamping) are landed and self-host green; Finding 5
-(monomorphization FD recovery) is pending.
+helper), and 6 (`View.sub` clamping) are landed and self-host green. Finding 5
+(monomorphization FD recovery) has been **redesigned** after a first attempt
+proved brittle (it answered a signature/type-level question with post-link
+callable tables); see Finding 5 for the corrected, signature-based plan. The
+first attempt is set aside (git stash), not committed.
 
 ## Goal
 
@@ -295,29 +298,99 @@ fn lookup_scoped_contract_bound(
 
 This is mostly cleanup, but it makes later contracts safer to add.
 
-### 5. Move monomorphization FD recovery away from body scanning
+### 5. Move monomorphization FD recovery away from body scanning — **REDESIGNED, NOT YET IMPLEMENTED**
 
 `boot/compiler/monomorphize.tw` currently recovers bound-only type parameters by
-walking the callee body and inspecting contract/inherent calls. This handles the
-current access-contract cases but couples type substitution to implementation
-shape: a function's monomorphic type arguments should be recoverable from its
-signature and bounds once receiver types are concrete.
+walking the callee body and inspecting contract/inherent calls. This couples type
+substitution to implementation shape: a function's monomorphic type arguments
+should be recoverable from its signature and bounds once receiver types are
+concrete.
 
-Target direction:
+A first attempt (now set aside, see "Why the first attempt was wrong") added
+`augment_subst_from_bounds`, which read bounds via `lookup_registered_function`
+and resolved the determining method via the post-link `method_table` / `func_map`.
+That is the wrong altitude: it answers a **signature/type-level** question with
+**post-link callable tables**, which are brittle (TypeId-keying skew after
+linking, missing targets after DCE, cross-module name ambiguity).
 
-- During `infer_call_subst`, after matching value parameters and return type,
-  inspect the callee's type-parameter bounds.
-- For a bound like `C: IndexRead<E>`, if `C` is known concrete and `E` is still
-  unresolved, resolve the contract method required to determine `E` (for
-  `IndexRead`, `at`; for `IntoIterator`, `iter`; for `IndexWrite`, `set_at` or
-  `append`) and match the concrete method signature back to the bound arg.
-- Keep the existing body-scan recovery temporarily as a fallback, then remove it
-  once tests cover the signature/bound path.
+#### Two motivating bugs
 
-Regression coverage:
+Both surface as `val_type_of_mono called on Var — must be monomorphized` and both
+reproduce on baseline (they are pre-existing, not caused by the first attempt):
 
-- Bound-only `E` in return types, local types, and delegated generic calls is
-  resolved without depending on a particular contract call in the function body.
+1. **Bound-only `E`, no contract call in the body** (the precise promise of this
+   finding):
+
+   ```tw
+   fn has_empty_slot<C: IndexRead<E>, E>(c: C) Bool {
+     best: E? = .None            // E only in a local; no param/return; no c.at
+     case best { .Some(_) => true, .None => false }
+   }
+   ```
+
+   Body scanning finds nothing, so `E` stays free.
+
+2. **View receiver** (`slot(view.from([1, 2, 3]))`): resolving `View.at` through
+   `method_table` misses (TypeId-keying skew and/or DCE reachability), so even the
+   callable-table approach can't recover `E`. FD recovery should not need the
+   callable target at all — the method **signature** is enough.
+
+#### Root invariant hole (explains the silent bad codegen)
+
+`collect_type_params(func)` scans only value parameters and the return type, so
+for `has_empty_slot` it returns `[C]`, not `[C, E]`. `subst_covers([C], subst)`
+then returns `true` even when `E` is unrecovered, so monomorphization **accepts**
+a specialization with a free bound-only `Var` and emits it — the trap happens
+later in codegen instead of being blocked at specialization.
+
+#### Corrected design
+
+1. **Recover FDs from signatures, not callable targets.** For a concrete receiver
+   `View<Vector<Int>>` and bound `IndexRead<E>`: resolve the required method's
+   *signature* (`View.at`) from resolver/method metadata; match its receiver
+   parameter against the concrete receiver (`View<C> ~ View<Vector<Int>> ⇒ C =
+   Vector<Int>`); recover the method signature's own bound-only vars from *its*
+   bounds (`C: IndexRead<E>, C = Vector<Int> ⇒ E = Int`); apply that subst to the
+   method's declared return. No `method_table` / `func_map`, no body scan, no need
+   for the target to survive DCE. Keep the structural shortcut for builtin
+   containers (`Vector`/`String` element is known directly).
+
+2. **Carry type-param/bound metadata into Core IR.** Name lookup
+   (`lookup_registered_function(ctx.env, gf.name)`) is fragile after linking and
+   across modules. Add type params + bounds to `FunctionDef`, or a
+   `FuncId -> type_params/bounds` map on `CoreModule`, so monomorphization uses the
+   callee's actual bound metadata without name lookup. (Construction sites:
+   `lower_core/functions.tw` populates from the sig; closures/records/specialized
+   clones/linker carry empty or pass-through.)
+
+3. **Include bound-only params in specialization coverage.** Make the
+   specialization param set the function's full declared type params (e.g.
+   `[C, E]`, not `[C]`). Then a missed recovery makes `subst_covers` *block* the
+   bad specialization instead of emitting invalid monomorphic IR.
+
+4. **Add an invariant guard.** After applying subst to a specialized function,
+   check that no free `Var` remains in params, return, body annotations, or
+   local/value types; if any does, report a monomorphization internal error
+   located at the generic function/call, not a deep codegen trap.
+
+Note the coupling: (3) makes a missed recovery *loud and early* (blocked or
+guarded), but for the program to actually compile, (1) must *succeed*. So the two
+are complements, not alternatives.
+
+#### Incremental landing order
+
+1. Fix specialization coverage (3) + invariant guard (4) so no free bound-only
+   `Var` can reach codegen — converts silent bad output into a clear, located
+   error. (Depends on (2) for the declared-type-param list.)
+2. Switch FD recovery to signature-based method returns (1).
+3. Re-enable the `View` repro as the final proof.
+
+Regression coverage (keep all three once (1)–(4) land):
+
+- `has_empty_slot([1, 2, 3])` (builtin Vector element).
+- `has_empty_slot("abc")` (builtin String element → `Byte`).
+- `slot(view.from([1, 2, 3]))` (FD recovery from bounds, independent of body
+  shape and of `View.at` reachability).
 - Existing `View<C>` nested-bound cases still monomorphize.
 - Recursive generic functions do not trigger unbounded recovery.
 
