@@ -748,6 +748,7 @@ fn builtin_contract_satisfied_by_primitive(ty: MonoType, contract: BuiltinContra
       .Bool => true,
       .Byte => true,
       .String => true,
+      .Void => true,
       _ => false,
     },
     .Ord => case ty {

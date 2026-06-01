@@ -100,6 +100,7 @@ Builtin satisfaction:
 - `Bool`
 - `Byte`
 - `String`
+- `Void`
 
 Conditional satisfaction:
 

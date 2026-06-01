@@ -157,6 +157,35 @@ pub fn suite() runner.Suite {
       },
     )
     .test(
+      "void payloads satisfy equality",
+      fn() {
+        none_a: Option<Void> = .None
+        none_b: Option<Void> = .None
+        some_a: Option<Void> = .Some({})
+        some_b: Option<Void> = .Some({})
+        try assert.is_true(none_a == none_b)
+        try assert.is_true(some_a == some_b)
+        try assert.is_false(none_a == some_a)
+
+        ok_a: Result<Void, String> = .Ok({})
+        ok_b: Result<Void, String> = .Ok({})
+        err_a: Result<Void, String> = .Err("x")
+        try assert.is_true(ok_a == ok_b)
+        try assert.is_false(ok_a == err_a)
+
+        va: Vector<Void> = [{}, {}]
+        vb: Vector<Void> = [{}, {}]
+        try assert.is_true(va == vb)
+
+        da: Dict<String, Void> = Dict.new()
+        da["x"] = {}
+        db: Dict<String, Void> = Dict.new()
+        db["x"] = {}
+        try assert.is_true(da == db)
+        .Ok({})
+      },
+    )
+    .test(
       "sum equality: same variant same payload",
       fn() {
         a: Result<Int, String> = .Ok(5)
