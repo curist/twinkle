@@ -74,7 +74,16 @@ pub fn suite() runner.Suite {
     .test("preserves blank lines and auto-blanks before comments", assert_fmt_case("blank_lines"))
     .test("inserts blank line after module doc comments", assert_fmt_case("module_doc"))
     .test("applies rebinding shorthand in assign expressions", assert_fmt_case("assign_shorthand"))
-    .test("keeps a doc comment attached to the first declaration", assert_fmt_case("doc_on_first_decl"))
-    .test("preserves a separated module doc above the first declaration", assert_fmt_case("module_doc_then_decl"))
-    .test("preserves a blank between a module doc and a doc-less declaration", assert_fmt_case("module_doc_blank_before_decl"))
+    .test(
+      "keeps a doc comment attached to the first declaration",
+      assert_fmt_case("doc_on_first_decl"),
+    )
+    .test(
+      "preserves a separated module doc above the first declaration",
+      assert_fmt_case("module_doc_then_decl"),
+    )
+    .test(
+      "preserves a blank between a module doc and a doc-less declaration",
+      assert_fmt_case("module_doc_blank_before_decl"),
+    )
 }

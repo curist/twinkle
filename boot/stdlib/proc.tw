@@ -1,5 +1,4 @@
 /// Return the current process argument vector.
-
 pub fn args() Vector<String> {
   __host_args()
 }

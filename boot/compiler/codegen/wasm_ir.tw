@@ -1,7 +1,7 @@
 /// Wasm IR types — the output of codegen, input to WAT emission.
 /// Mirrors stage0's src/wasm/ir.rs.
-/// ── Heap types ──────────────────────────────────────────────────────
 
+/// ── Heap types ──────────────────────────────────────────────────────
 pub type HeapType = { Named(String), Any, Eq, I31, Func, None_, Extern }
 
 // ── Value types ─────────────────────────────────────────────────────

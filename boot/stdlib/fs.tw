@@ -1,5 +1,4 @@
 /// File system error type.
-
 pub type FsError = { NotFound, PermissionDenied, InvalidUtf8, Other(String) }
 
 /// Kind of directory entry.

@@ -1,5 +1,4 @@
 /// Read up to max_bytes from stdin. Returns an empty vector at EOF.
-
 pub fn read_stdin_chunk(max_bytes: Int) Vector<Byte> {
   __host_stdin_read_chunk(max_bytes)
 }

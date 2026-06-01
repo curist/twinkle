@@ -1,6 +1,5 @@
 /// Return the number of milliseconds elapsed since the time origin
 /// (performance.now() in the browser/Node, or ms since Unix epoch in the interpreter).
-
 pub fn now() Float {
   __host_now()
 }

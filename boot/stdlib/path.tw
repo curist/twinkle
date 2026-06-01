@@ -1,5 +1,4 @@
 /// Return true if path starts with "/".
-
 pub fn is_absolute(path: String) Bool {
   String.len(path) > 0 and String.slice(path, 0, 1) == "/"
 }

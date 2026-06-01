@@ -1,5 +1,4 @@
 /// Spawn a task that runs the given function and eventually produces a value.
-
 pub fn spawn<T>(f: fn() T) Task<T> {
   f()
 }

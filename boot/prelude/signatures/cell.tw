@@ -1,5 +1,4 @@
 /// Create a mutable cell containing value.
-
 pub fn new<T>(value: T) Cell<T> {
   value
 }

@@ -10,7 +10,6 @@
 /// are not duplicated here.
 
 /// Host `Math` object (globalThis.Math under the JS/Deno runner).
-
 extern Math {
   fn sqrt(x: Float) Float
   fn floor(x: Float) Float

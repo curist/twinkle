@@ -1,10 +1,9 @@
-/// Return all values from the dict.
 /// Return true when the dict has no entries.
-
 pub fn is_empty<K, V>(d: Dict<K, V>) Bool {
   d.len() == 0
 }
 
+/// Return all values from the dict.
 pub fn values<K, V>(d: Dict<K, V>) Vector<V> {
   collect k, v in d {
     v

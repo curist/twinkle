@@ -1,5 +1,4 @@
 /// Return the string unchanged.
-
 pub fn to_string(s: String) String {
   ""
 }
