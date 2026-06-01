@@ -250,6 +250,7 @@ fn lower_method_value(
     func_id: lambda_func_id,
     name: "__method_value",
     is_init: false,
+    type_params: [],
     params,
     body,
     return_ty: ret_ty,

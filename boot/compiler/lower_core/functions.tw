@@ -60,7 +60,11 @@ pub fn lower_function(
   ctx = .pop_scope()
   ctx.current_fn_return_type = saved_return_type
 
-  // Get return type from signature
+  // Get return type and declared type params from signature
+  type_params := case ctx.env.lookup_function(decl.name) {
+    .Some(sig) => sig.type_params,
+    .None => [],
+  }
   ret_ty := case ctx.env.lookup_function(decl.name) {
     .Some(sig) => case sig.ret {
       .Some(t) => t,
@@ -72,6 +76,7 @@ pub fn lower_function(
     func_id,
     name: decl.name,
     is_init: false,
+    type_params,
     params,
     body: body_r.expr,
     return_ty: ret_ty,

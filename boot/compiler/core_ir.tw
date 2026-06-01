@@ -7,7 +7,7 @@ use lib.source.span.{Span}
 
 use .contracts.{BuiltinContract}
 use .mono_type.{MonoType, TypeId}
-use .resolver.{ResolvedEnv}
+use .resolver.{ResolvedEnv, ResolvedTypeParam}
 
 // ── Identity types ──────────────────────────────────────────────────
 pub type LocalId = .{ id: Int }
@@ -95,6 +95,7 @@ pub type FunctionDef = .{
   func_id: FuncId,
   name: String,
   is_init: Bool,
+  type_params: Vector<ResolvedTypeParam>,
   params: Vector<Param>,
   body: CoreExpr,
   return_ty: MonoType,

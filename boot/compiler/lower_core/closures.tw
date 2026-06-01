@@ -222,6 +222,7 @@ pub fn lower_closure(
     func_id: lambda_func_id,
     name: "__lambda",
     is_init: false,
+    type_params: [],
     params: lambda_params,
     body: body_r.expr,
     return_ty: lambda_ret_ty,

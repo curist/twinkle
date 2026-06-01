@@ -70,6 +70,18 @@ fn test_phase1_option_boundary_fixture() Result<Void, String> {
   .Ok({})
 }
 
+fn test_bound_only_element_slot_builtin_backings() Result<Void, String> {
+  src := "fn has_empty_slot<C: IndexRead<E>, E>(c: C) Bool { best: E? = .None case best { .Some(_) => true, .None => false } }\nprintln(has_empty_slot([1, 2, 3]).to_string())\nprintln(has_empty_slot(\"abc\").to_string())\n"
+  try assert_codegen_src_compiles(src, "bound-only IndexRead element over builtin backings")
+  .Ok({})
+}
+
+fn test_bound_only_element_slot_view_backing() Result<Void, String> {
+  src := "use @std.view\nfn slot<C: IndexRead<E>, E>(c: C) Bool { best: E? = .None case best { .Some(_) => true, .None => false } }\nprintln(slot(view.from([1, 2, 3])).to_string())\n"
+  try assert_codegen_src_compiles(src, "bound-only IndexRead element over View backing")
+  .Ok({})
+}
+
 fn test_phase2_return_inside_if() Result<Void, String> {
   wat := try assert_codegen_src_compiles(
     "fn choose(b: Bool) String {\n  if b { return \"yes\" }\n  \"no\"\n}\nprintln(choose(true))\nprintln(choose(false))\n",
@@ -774,6 +786,14 @@ pub fn suite() runner.Suite {
     .test(
       "phase 1 option boundary fixture compiles through boot codegen",
       test_phase1_option_boundary_fixture,
+    )
+    .test(
+      "bound-only IndexRead element local over builtin backings",
+      test_bound_only_element_slot_builtin_backings,
+    )
+    .test(
+      "bound-only IndexRead element local over View backing",
+      test_bound_only_element_slot_view_backing,
     )
     .test("phase 2 return inside if compiles through boot codegen", test_phase2_return_inside_if)
     .test("phase 2 return inside for compiles through boot codegen", test_phase2_return_inside_for)

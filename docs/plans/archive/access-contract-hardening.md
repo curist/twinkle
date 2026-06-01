@@ -1,12 +1,9 @@
 # Access-contract hardening and cleanup
 
-Status: **In progress** — Findings 1 (arity validation), 2 (proof-cache
-soundness), 3 (explicit iterable-lowering record), 4 (contract-identity lookup
-helper), and 6 (`View.sub` clamping) are landed and self-host green. Finding 5
-(monomorphization FD recovery) has been **redesigned** after a first attempt
-proved brittle (it answered a signature/type-level question with post-link
-callable tables); see Finding 5 for the corrected, signature-based plan. The
-first attempt is set aside (git stash), not committed.
+Status: **Complete** — all findings are landed and self-host green. The final
+Finding 5 implementation recovers bound-only type parameters from declared
+bounds and signatures, with a fallback to linked function metadata when
+transitive imports preserve method metadata without resolver signatures.
 
 ## Goal
 
@@ -298,9 +295,17 @@ fn lookup_scoped_contract_bound(
 
 This is mostly cleanup, but it makes later contracts safer to add.
 
-### 5. Move monomorphization FD recovery away from body scanning — **REDESIGNED, NOT YET IMPLEMENTED**
+### 5. Move monomorphization FD recovery away from body scanning — **DONE**
 
-`boot/compiler/monomorphize.tw` currently recovers bound-only type parameters by
+Landed: Core IR now carries declared type params and bounds on `FunctionDef`,
+monomorphization specializes over that declared parameter set, and FD recovery
+uses bounds plus method signatures (with direct built-in shortcuts for
+`Vector`/`String`) instead of relying on body scans or callable method tables.
+Specialized clones are guarded so a free `Var` cannot silently reach codegen.
+Regression coverage exercises bound-only `IndexRead<E>` over `Vector`, `String`,
+and `View` backings.
+
+`boot/compiler/monomorphize.tw` previously recovered bound-only type parameters by
 walking the callee body and inspecting contract/inherent calls. This couples type
 substitution to implementation shape: a function's monomorphic type arguments
 should be recoverable from its signature and bounds once receiver types are
