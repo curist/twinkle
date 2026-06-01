@@ -6,7 +6,7 @@ break in `analyze.tw` (`break_import_cycle`) — see "Landed so far" below. Stil
 open: mutual *type* cycles (cross-module TypeId pre-allocation) and the stage0
 mirror. Resolves open-question #3
 ([../open-questions.md](../open-questions.md)). Motivated by the prelude/stdlib
-injection detour ([access-contracts.md](access-contracts.md) family): lifting the
+injection detour ([access-contracts.md](archive/access-contracts.md) family): lifting the
 acyclic-modules restriction is what would let prelude modules use each other's
 functions (blanket prelude-into-prelude injection), and more generally lets user
 code split mutually-recursive domain types across files.

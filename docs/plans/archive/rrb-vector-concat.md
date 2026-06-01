@@ -20,8 +20,8 @@ afterward to stay a correctness reference.
 > **Two O(n²) loop hazards motivate this**: prepend/right-operand `concat`, and
 > any `slice` that trims a little each iteration (drop-last / drop-first /
 > sliding window). The **LIFO drop-last** case is already covered more cheaply by
-> the shipped O(log n) `Vector.drop_last` op ([stack.md](../stack.md)), with
-> read-only traversal served by `View<C>` ([view.md](../view.md)). RRB is the
+> the shipped O(log n) `Vector.drop_last` op ([stack.md](stack.md)), with
+> read-only traversal served by `View<C>` ([view.md](view.md)). RRB is the
 > general-purpose fix for the rest — *arbitrary* concat, arbitrary-range slice,
 > and cheap `drop_first`/`prepend` (the queue/deque half). See
 > [Alternatives](#alternatives--complementary-work).
@@ -70,7 +70,7 @@ with the source, so trimming a little each iteration re-copies almost everything
 This is arguably **more common than prepend-concat** — it is exactly what using a
 `Vector` as a stack looks like. Since drop-last/stack is an essential workload,
 slice is treated here as a **co-primary** motivation, not a bonus. (The cheap
-non-RRB answer for it is [stack.md](../stack.md); RRB still covers arbitrary and
+non-RRB answer for it is [stack.md](stack.md); RRB still covers arbitrary and
 left-drop slice.)
 
 The static-uniqueness optimizer (`docs/plans/static-uniqueness-plan.md`) does
@@ -94,8 +94,8 @@ Upgrade the persistent vector to an **RRB-tree** (relaxed radix-balanced) so tha
   factors do not regress.
 
 For the **LIFO drop-last workload** (the audit's real finding), the shipped
-O(log n) `Vector.drop_last` op ([stack.md](../stack.md)) is the cheaper, non-RRB
-answer; read-only traversal goes through `View<C>` ([view.md](../view.md)). RRB is
+O(log n) `Vector.drop_last` op ([stack.md](stack.md)) is the cheaper, non-RRB
+answer; read-only traversal goes through `View<C>` ([view.md](view.md)). RRB is
 the general-purpose fix. See [Alternatives](#alternatives--complementary-work).
 
 References: Bagwell & Rompf, *RRB-Trees: Efficient Immutable Vectors* (2011);
@@ -283,7 +283,7 @@ should report (a) drop-last + read-only drop-first sites → motivate
 `drop_last`/`View`, and (b) *arbitrary* concat/slice loop sites
 (esp. left-drop) → the residual that only RRB fixes. RRB's go/no-go rests on (b),
 since (a) is solved more cheaply. (This audit is already done — see
-[slice-performance.md](../slice-performance.md).)
+[slice-performance.md](slice-performance.md).)
 
 Output: a table of concat + slice call sites and their classification, plus known
 workloads (text/rope building, list prepend, windowed scans).
@@ -295,7 +295,7 @@ and the stdlib:
 
 | Pattern | Count / location | Verdict |
 |---|---|---|
-| String `.concat` / `.slice` | printer, parser, lexer, json, source modules | **Not RRB** — String slice goes the `View` route ([slice-performance.md](../slice-performance.md)) |
+| String `.concat` / `.slice` | printer, parser, lexer, json, source modules | **Not RRB** — String slice goes the `View` route ([slice-performance.md](slice-performance.md)) |
 | `doc.concat([...])` | `fmt/doc.tw` pretty-printer combinator | **Not `Vector.concat`** at all |
 | Append-at-end `acc = acc.concat(x)` (incl. dot-shorthand `acc = .concat(x)`) | the large majority of Vector sites | **Safe** — already rewritten to `builder_extend` by `opt/builder_region.tw` |
 | Prepend-in-loop `acc = X.concat(acc)` | only `lines = [rest].concat(lines)` — `signatures.tw:208`, `parser.tw:2972`, `query/hover.tw:896` | **Bounded** — doc-comment (`///`) gathering; N = comment-block size (tiny), not a hot loop |
@@ -511,17 +511,17 @@ another replacement.
 
 ### The cheaper non-RRB pieces — `drop_last` / `View` (both shipped)
 
-The boot-compiler audit ([slice-performance.md](../slice-performance.md)) showed the
+The boot-compiler audit ([slice-performance.md](slice-performance.md)) showed the
 real in-loop slice usage is **LIFO drop-last** (scope stacks, the Tarjan
 worklist, fmt stacks) and a few **read-only head/tail recursions** (match arms) —
 *not* FIFO. (A queue/deque was considered for this and dropped.) Those were served
 by cheaper, non-RRB pieces, both now **shipped**:
 
-- **`Vector.drop_last`** ([stack.md](../stack.md)) — O(log n) drop-last runtime op
+- **`Vector.drop_last`** ([stack.md](stack.md)) — O(log n) drop-last runtime op
   (no RRB needed; right-drop, unlike left-drop, needs no relaxed nodes). The boot
   compiler's LIFO pop sites are migrated onto it. (The `@std.stack` wrapper that
   rode along was later removed — unused; the op is the lasting artifact.)
-- **`View<C>`** ([view.md](../view.md)) — a generic read-only window for the
+- **`View<C>`** ([view.md](view.md)) — a generic read-only window for the
   drop-first/traversal sites: O(1) `drop_first`, no copy, no hand-threaded index.
 
 ### Coexistence: this is **not** an either/or with RRB

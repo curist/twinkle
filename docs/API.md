@@ -387,7 +387,7 @@ a `String`, or another `View`). Element reads delegate through the contract, so
 share the one backing. A `View` itself satisfies `IndexRead<E>`. Requires
 `use @std.view` (and `use @std.view.{View}` to name the type). The element type
 `E` follows from the backing via the functional dependency. See
-[plans/view.md](plans/view.md).
+[plans/view.md](plans/archive/view.md).
 
 | Function | Signature | Description |
 |----------|-----------|-------------|

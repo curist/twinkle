@@ -35,13 +35,13 @@ generic loops over the bound.
 
 Access needs an **element type determined by Self**, which Self-only contracts
 can't carry. Associated types are an explicit non-goal
-([design/contracts.md](../design/contracts.md)). We close the gap with the
+([design/contracts.md](../../design/contracts.md)). We close the gap with the
 smallest sufficient extension:
 
 **Parameterized contracts, kept under *determined conformance*.**
 
 Twinkle contracts follow **determined conformance** (see
-[design/contracts.md](../design/contracts.md)): conformance is *determined by the
+[design/contracts.md](../../design/contracts.md)): conformance is *determined by the
 receiver, not searched*. A contract names a set of required inherent methods, each
 found by name (one function per type — no candidate set), and the receiver
 determines everything. Parameterized contracts just extend that one step:
@@ -195,11 +195,11 @@ part of "done", not optional polish:
   (the existing fast path is preserved; only generic *non-indexable* receivers go
   through `IntoIterator.iter`). See the iteration decision below.
 - `v[a..b]` (range-slice) → `Sliceable.slice` — **tracked in a separate plan**
-  ([sliceable.md](sliceable.md)); `Sliceable` is Self-only and needs none of this
+  ([sliceable.md](../sliceable.md)); `Sliceable` is Self-only and needs none of this
   doc's parameterized-contract machinery, so it lands on its own schedule.
 
 Add these rows to the syntax-hook table in
-[../contracts.md](../contracts.md) once implemented.
+[../contracts.md](../../contracts.md) once implemented.
 
 ## Naming: the `drop` family
 
@@ -226,7 +226,7 @@ access-contracts work; it shipped separately.
 - **`View<C>`** ([view.md](view.md)) — concrete zero-copy window; a satisfier.
 - **`Stack<T>` / `drop_last`** ([stack.md](stack.md)) — LIFO; a satisfier plus the
   runtime shrink op.
-- **RRB** ([rrb-vector-concat.md](archive/rrb-vector-concat.md)) — makes `Vector`'s own
+- **RRB** ([rrb-vector-concat.md](rrb-vector-concat.md)) — makes `Vector`'s own
   `sub`/`concat` O(log n).
 - **Tier 1** ([slice-performance.md](slice-performance.md)) — the hot byte loop
   stays direct `s[i]`.
@@ -282,7 +282,7 @@ bind `Elem` rather than assuming Self-typed args and a fixed return.
   indexing through the contract (`View`/`Stack` then get `[i]` for free). Keyed
   `Dict[K] -> V?` stays special-cased — associative access is a future
   `KeyedRead<K, V>`, not unified.
-- **`[a..b]` range-slice syntax is a SEPARATE plan** ([sliceable.md](sliceable.md)).
+- **`[a..b]` range-slice syntax is a SEPARATE plan** ([sliceable.md](../sliceable.md)).
   `Sliceable` is Self-only and needs none of this doc's machinery; it tracks its
   own `synth_index` `Range`-index arm and satisfiers there.
 - **Bound syntax** — `E` is **declared explicitly** (`fn f<C: IndexRead<E>, E>`),
@@ -456,4 +456,4 @@ hardcodes Stringify/Eq/Ord (`src/types/check.rs`) and only needs work once the
 Deferred to follow-up commits (still part of "done" for *this* plan): **`[i]`
 element-index syntax wiring** through `IndexRead.at`, and **`View`
 registration** as satisfiers. (`[a..b]` slicing is out — see
-[sliceable.md](sliceable.md).)
+[sliceable.md](../sliceable.md).)

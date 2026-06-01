@@ -107,7 +107,12 @@ Related historical context outside this folder:
 | [pvec-performance-enhancements.md](pvec-performance-enhancements.md) | Incremental PVec runtime optimizations: i31ref builder tail, promote_full_tail, bulk array conversion, leaf-oriented slice/extend, true in-place set |
 | [dict-performance-enhancements.md](dict-performance-enhancements.md) | Incremental HAMT dict runtime optimizations: hot-path inlining, in-place mutation for unique dicts |
 | [dict-in-place-alias-safety.md](dict-in-place-alias-safety.md) | Deep ownership analysis ensuring in-place dict/vector mutation is alias-safe |
+| [collections-access.md](collections-access.md) | Umbrella for the collection-access cluster (cheap + general indexing/slice/concat/traversal); archived once the audit, `drop_last`, access-contracts, `View`, and RRB work all landed — only the `[a..b]` range-slice proposal ([../sliceable.md](../sliceable.md)) remains open |
 | [rrb-vector-concat.md](rrb-vector-concat.md) | RRB-tree `Vector` concat/slice implementation plan and benchmarks; runtime work landed in boot and stage0, with Phase 7 classical-slack experiment archived as a wash |
+| [slice-performance.md](slice-performance.md) | Boot-compiler `slice`/`concat` audit — the evidence behind the collections-access cluster; Vector LIFO landed via `drop_last`, String-slice routed to `View` |
+| [stack.md](stack.md) | O(1)-amortized `Vector.drop_last` runtime op (LIFO pop sites migrated); the thin `Stack<T>` wrapper it once carried was tried and removed as unused |
+| [access-contracts.md](access-contracts.md) | Parameterized contracts `IndexRead<E>`/`IndexWrite<E>`/`IntoIterator<E>` with a `Self → E` functional dependency; write-once generic access monomorphized to direct reads; `v[i]` and `for x in` wired through the contracts |
+| [view.md](view.md) | `View<C>` zero-copy windows over any `IndexRead` backing (`@std.view`); O(1) `drop_first`/`drop_last`/`sub`, the first stdlib access-contract satisfier |
 | [wasm-tail-calls.md](wasm-tail-calls.md) | Wasm tail-call emission (`return_call` for direct calls, `return_call_ref` for closures) as a required target feature |
 | [dict-wyhash-i64.md](dict-wyhash-i64.md) | Migrate active FNV-derived hashing to deterministic wyhash v3 and carry 64-bit hashes through the Dict HAMT |
 | [string-unicode-semantics.md](string-unicode-semantics.md) | Byte-first string semantics with explicit Unicode APIs |

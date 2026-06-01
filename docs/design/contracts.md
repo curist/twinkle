@@ -232,7 +232,7 @@ The current builtin contract reference lives in [../contracts.md](../contracts.m
 
 The language should add new contracts only when they correspond to canonical,
 widely useful behavior. Planned contracts — specified in
-[../plans/access-contracts.md](../plans/access-contracts.md) — give Twinkle a
+[../plans/access-contracts.md](../plans/archive/access-contracts.md) — give Twinkle a
 single general access pattern over `Vector`/`String`/`View`/`Stack`:
 
 * `IndexRead<E>` — `len` + indexed read
@@ -269,7 +269,7 @@ associated-type *behavior* (one element type per container) without associated-t
 everything stays monomorphized. It remains consistent with every existing non-goal.
 
 Full design and the contract definitions live in
-[../plans/access-contracts.md](../plans/access-contracts.md).
+[../plans/access-contracts.md](../plans/archive/access-contracts.md).
 
 ## Syntax Hooks
 
@@ -289,7 +289,7 @@ vocabulary:
 * `for x in value` could require `IntoIterator<E>`
 * slicing syntax could require `Sliceable`
 
-(both specified in [../plans/access-contracts.md](../plans/access-contracts.md))
+(both specified in [../plans/access-contracts.md](../plans/archive/access-contracts.md))
 
 Contracts therefore serve two roles:
 

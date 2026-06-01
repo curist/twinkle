@@ -182,5 +182,5 @@ syntax hook above and lets generic algorithms (`find`/`position`/`region_eq`/
 
 Still planned: `IntoIterator<E>` (`for x in`), `IndexWrite<E>`, and `Sliceable`
 (range-slice `v[a..b]`, tracked separately). Design:
-[plans/access-contracts.md](plans/access-contracts.md) (and the
+[plans/access-contracts.md](plans/archive/access-contracts.md) (and the
 [contract-model rationale](design/contracts.md)).

@@ -6,7 +6,7 @@ site below was rerouted to `Vector.drop_last`. The String-slice and `View`
 discussions here remain open. Companion to [stack.md](stack.md) (LIFO + the
 `drop_last` op), [view.md](view.md) (read-only `View<C>` windows),
 [access-contracts.md](access-contracts.md) (the general access bounds), and
-[rrb-vector-concat.md](archive/rrb-vector-concat.md) (general O(log n) concat/slice).
+[rrb-vector-concat.md](rrb-vector-concat.md) (general O(log n) concat/slice).
 
 This doc holds the **boot-compiler slice audit** and the **String-slice
 performance** discussion. The actionable Vector work lives in the two companion
@@ -35,7 +35,7 @@ A scan of `boot/` (excluding tests, the `arr.tw`/`str.tw` runtime impls, and the
 wants an O(log n) `drop_last` vector op + a `Stack<T>` ([stack.md](stack.md)); the
 head/tail-recursion sites want a read-only view rather than a hand-threaded index
 ([view.md](view.md)). Arbitrary/left-drop slice → O(log n) only via RRB
-([rrb-vector-concat.md](archive/rrb-vector-concat.md)).
+([rrb-vector-concat.md](rrb-vector-concat.md)).
 
 ### String `.slice` sites — the volume case
 
@@ -157,7 +157,7 @@ the compiler is not one (it builds output via `Vector<Byte>` buffers + a single
    reshaping `String` itself (V2). Drafted in those two companion docs.
 3. **Tier 3** — defer indefinitely absent a big-string workload.
 
-For `Vector` slice, see the companion docs ([stack.md](stack.md) for `drop_last`; [rrb-vector-concat.md](archive/rrb-vector-concat.md) for left-drop).
+For `Vector` slice, see the companion docs ([stack.md](stack.md) for `drop_last`; [rrb-vector-concat.md](rrb-vector-concat.md) for left-drop).
 
 ## Open questions
 

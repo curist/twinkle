@@ -61,7 +61,7 @@ Self-hosting is complete. Historical design and status docs live in
 | [recursive-module-groups.md](recursive-module-groups.md) | Allow mutually-recursive modules by condensing the module graph into SCCs and resolving each group with the two-phase signatures-then-bodies pass; rejects only top-level value-init cycles. Resolves open-question #3 and unblocks prelude-into-prelude injection |
 | [backend-anyref-elimination.md](backend-anyref-elimination.md) | Make `anyref` exceptional rather than foundational in the Wasm backend, including typed container/helper families |
 | [static-uniqueness-plan.md](static-uniqueness-plan.md) | Extend the static uniqueness optimizer to cover more realistic linear-update patterns without changing the runtime model |
-| [collections-access.md](collections-access.md) | Umbrella for the collection-access cluster — cheap + general indexing/slice/concat/traversal. Gathers `slice-performance` (audit), `stack`/`drop_last`, `access-contracts`, `view`, and the archived RRB-vector work |
+| [sliceable.md](sliceable.md) | `foo[a..b]` range-slice syntax via a Self-only `Sliceable` contract — the lone open piece of the (now-archived) collection-access cluster; adds a `Range`-index arm to `synth_index` plus `Vector`/`String`/`View` satisfiers. Background in [archive/collections-access.md](archive/collections-access.md) |
 
 ### Archived reference docs
 
