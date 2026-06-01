@@ -958,18 +958,35 @@ fn prove_contract(
   elem_hint: MonoType?,
 ) Result<InferCtx, String> {
   zonked := expand_alias(zonk(ty, ctx.subst), ctx.env, 0)
-  key := "${ctx.env.ty_to_string_env(zonked)}::${contract_name(contract)}"
+  base_key := "${ctx.env.ty_to_string_env(zonked)}::${contract_name(contract)}"
 
-  has_hint := case elem_hint {
-    .Some(_) => true,
-    .None => false,
+  // Parameterized contracts (IndexRead<E> / IndexWrite<E> / IntoIterator<E>)
+  // must cache per element type: a bare `ty::contract` key cannot tell
+  // IndexRead<Int> from IndexRead<String>, so a hinted proof would otherwise
+  // poison later checks for a different element. When the hinted element is
+  // still an unresolved meta, skip the cache entirely — the boolean ignores the
+  // element, the meta is local to this inference session, and the proof's FD
+  // unification side-effect (binding the declared `E`) must run every time.
+  elem_zonked: MonoType? = if contract.type_arg_count() > 0 {
+    case elem_hint {
+      .Some(h) => .Some(expand_alias(zonk(h, ctx.subst), ctx.env, 0)),
+      .None => .None,
+    }
+  } else {
+    .None
+  }
+  cache_enabled := case elem_zonked {
+    .Some(zh) => !contains_meta(zh),
+    .None => true,
+  }
+  cache_key := case elem_zonked {
+    .Some(zh) => "${base_key}::${ctx.env.ty_to_string_env(zh)}",
+    .None => base_key,
   }
 
-  // Check proof cache first. Skip it when an element hint must be bound: the
-  // cached boolean records satisfaction but not the FD unification side-effect,
-  // so a cache hit would leave the declared `E` unbound.
-  if !has_hint {
-    case ctx.contract_cache.get(key) {
+  // Check proof cache first (only when the key is precise enough to read).
+  if cache_enabled {
+    case ctx.contract_cache.get(cache_key) {
       .Some(satisfied) => if satisfied {
         return .Ok(ctx)
       } else {
@@ -981,7 +998,7 @@ fn prove_contract(
     }
   }
 
-  if active.has(key) {
+  if active.has(base_key) {
     // Coinductive: for auto-derivable contracts, assume satisfaction holds
     // for recursive types (structural equality on recursive types is well-defined)
     if contract_supports_auto_derive(contract) {
@@ -991,7 +1008,7 @@ fn prove_contract(
     return .Err("cyclic proof for ${ctx.env.ty_to_string_env(zonked)}: ${contract_name(contract)}")
   }
 
-  active[key] = true
+  active[base_key] = true
 
   case zonked {
     .Var(name) => case scoped_bound_for_contract(name, contract, ctx.type_var_scope) {
@@ -1004,7 +1021,9 @@ fn prove_contract(
   }
 
   if builtin_contract_satisfied_by_primitive(zonked, contract) {
-    ctx.contract_cache[key] = true
+    if cache_enabled {
+      ctx.contract_cache[cache_key] = true
+    }
 
     return .Ok(ctx)
   }
@@ -1013,12 +1032,16 @@ fn prove_contract(
   case try_builtin_container_contract(zonked, contract, ctx, active) {
     .Some(result) => case result {
       .Ok(ok_ctx) => {
-        ok_ctx.contract_cache[key] = true
+        if cache_enabled {
+          ok_ctx.contract_cache[cache_key] = true
+        }
 
         return .Ok(ok_ctx)
       },
       .Err(e) => {
-        ctx.contract_cache[key] = false
+        if cache_enabled {
+          ctx.contract_cache[cache_key] = false
+        }
 
         return .Err(e)
       },
@@ -1044,7 +1067,9 @@ fn prove_contract(
   }
 
   if method_ok {
-    cur_ctx.contract_cache[key] = true
+    if cache_enabled {
+      cur_ctx.contract_cache[cache_key] = true
+    }
 
     return .Ok(cur_ctx)
   }
@@ -1054,12 +1079,16 @@ fn prove_contract(
     case try_auto_derive_eq(zonked, ctx, active) {
       .Some(result) => case result {
         .Ok(ok_ctx) => {
-          ok_ctx.contract_cache[key] = true
+          if cache_enabled {
+            ok_ctx.contract_cache[cache_key] = true
+          }
 
           return .Ok(ok_ctx)
         },
         .Err(e) => {
-          ctx.contract_cache[key] = false
+          if cache_enabled {
+            ctx.contract_cache[cache_key] = false
+          }
 
           return .Err(e)
         },
@@ -1069,7 +1098,10 @@ fn prove_contract(
   }
 
   // Neither explicit method nor auto-derive succeeded
-  ctx.contract_cache[key] = false
+  if cache_enabled {
+    ctx.contract_cache[cache_key] = false
+  }
+
   .Err("type ${ctx.env.ty_to_string_env(zonked)} does not satisfy ${contract_name(contract)}")
 }
 

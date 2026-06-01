@@ -789,6 +789,28 @@ pub fn suite() runner.Suite {
       },
     )
     .test(
+      "parameterized proof cache: a failed IndexRead<String> does not poison IndexRead<Int>",
+      fn() {
+        // Seq's element is Int, so `want_str` (IndexRead<String>) legitimately
+        // fails first and caches a negative fact. Before per-element cache keys
+        // that negative was stored under the bare `Seq::IndexRead` key and
+        // poisoned the later `want_int` (IndexRead<Int>) proof. Exactly one
+        // contract failure should survive: the String one.
+        src := "type Seq = .{ data: Vector<Int> }\nfn len(s: Seq) Int { s.data.len() }\nfn at(s: Seq, i: Int) Int { s.data[i] }\nfn want_str<C: IndexRead<String>>(c: C) String { c.at(0) }\nfn want_int<C: IndexRead<Int>>(c: C) Int { c.at(0) }\nfn main() Int {\n  s := Seq.{ data: [1, 2, 3] }\n  bad := want_str(s)\n  want_int(s)\n}"
+        msgs := try check_errs(src)
+        n := 0
+
+        for m in msgs {
+          if m.contains("does not satisfy IndexRead") {
+            n = n + 1
+          }
+        }
+
+        try assert.equal(n, 1)
+        .Ok({})
+      },
+    )
+    .test(
       "IndexRead<E> + sibling E: Eq forwards to another generic over a type-variable receiver",
       fn() {
         src := "fn region_eq<C: IndexRead<E>, E: Eq>(a: C, b: C, n: Int) Bool { a.at(0) == b.at(0) }\nfn starts_with<C: IndexRead<E>, E: Eq>(hay: C, needle: C) Bool { region_eq(hay, needle, needle.len()) }"

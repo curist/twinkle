@@ -320,6 +320,24 @@ fn error_to_report(e: ErrorDiag, ctx: RenderCtx) Report {
       labels: [primary(d.span, .None)],
       help_lines: [],
     },
+    .ContractArityMismatch(d) => .{
+      severity: .Error,
+      title: if d.expected == 0 {
+        "contract `${d.contract}` does not take type arguments"
+      } else {
+        "contract `${d.contract}` expects ${d.expected.to_string()} type argument(s), but got ${d.found.to_string()}"
+      },
+      labels: [primary(d.span, .Some(if d.expected == 0 {
+        "remove the type arguments"
+      } else {
+        "expected ${d.expected.to_string()} type argument(s)"
+      }))],
+      help_lines: if d.expected == 0 {
+        ["write `${d.contract}`"]
+      } else {
+        ["write `${d.contract}<E>` and declare `E`, e.g. `fn f<C: ${d.contract}<E>, E>(c: C) ...`"]
+      },
+    },
     .ExternBoundaryType(d) => .{
       severity: .Error,
       title: "extern functions only support primitive boundary types",

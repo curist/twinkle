@@ -1,6 +1,7 @@
 # Access-contract hardening and cleanup
 
-Status: **Planned**.
+Status: **In progress** — Findings 1 (arity validation) and 2 (proof-cache
+soundness) are landed and self-host green; Findings 3–6 are pending.
 
 ## Goal
 
@@ -26,7 +27,12 @@ This plan addresses those issues without changing the public contract model.
 
 ## Findings to address
 
-### 1. Validate builtin contract type-argument arity
+### 1. Validate builtin contract type-argument arity — **DONE**
+
+Landed: `contracts.type_arg_count`, a `ContractArityMismatch` diagnostic wired
+through all diag sites, and an arity check in `resolver.tw`'s bound resolution
+that drops the malformed bound instead of storing it. Stage0 (Rust) left
+untouched — boot self-hosts cleanly and no gate exercises the rejected shapes.
 
 Today the resolver accepts any number of type arguments for any builtin contract.
 That lets invalid bounds through with two distinct bad outcomes (confirmed by
@@ -128,7 +134,13 @@ Regression coverage:
 - Keep valid concrete and variable args working (`IndexRead<E>`,
   `IndexRead<Int>`).
 
-### 2. Make parameterized contract proof caching sound
+### 2. Make parameterized contract proof caching sound — **DONE**
+
+Landed: `prove_contract` now caches parameterized contracts under a per-element
+key (`ty::contract::elem`), keeps the bare key for nullary contracts and the
+cycle-detection `active` set, and skips the cache entirely (read and write) when
+the hinted element is still an unresolved meta. Positive and negative entries use
+the same key construction.
 
 `prove_contract` skips *reading* the proof cache when an element hint is present,
 because hinted proofs need the side effect of unifying the proof's `Elem` with the

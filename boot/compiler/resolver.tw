@@ -1606,21 +1606,34 @@ fn resolve_ast_type_params(env: ResolvedEnv, ast_params: Vector<TypeParam>, s: S
 
       case resolve_builtin_contract_name(seg) {
         .Some(c) => {
-          bound_args: Vector<MonoType> = []
+          expected := c.type_arg_count()
+          found := bound_path.type_args.len()
 
-          for arg in bound_path.type_args {
-            r := env.resolve_type_expr(arg, type_var_names)
-            diags = .concat(r.diagnostics)
+          if expected != found {
+            // Wrong arity: emit a diagnostic and drop the bound rather than
+            // store a malformed ref (a missing access-contract element type
+            // otherwise ICEs once `E` is forced; extra args on nullary
+            // contracts would be silently ignored).
+            diags = .append(
+              .Error(.ContractArityMismatch(.{ span: bound_path.span, contract: seg, expected, found })),
+            )
+          } else {
+            bound_args: Vector<MonoType> = []
 
-            case r.ty {
-              .Some(ty) => {
-                bound_args = .append(ty)
-              },
-              .None => {},
+            for arg in bound_path.type_args {
+              r := env.resolve_type_expr(arg, type_var_names)
+              diags = .concat(r.diagnostics)
+
+              case r.ty {
+                .Some(ty) => {
+                  bound_args = .append(ty)
+                },
+                .None => {},
+              }
             }
-          }
 
-          bound_refs = .append(.Builtin(c, bound_args))
+            bound_refs = .append(.Builtin(c, bound_args))
+          }
         },
         .None => {
           diags = .append(.Error(.UnknownContract(.{ span: bound_path.span, name: seg })))
