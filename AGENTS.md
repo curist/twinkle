@@ -82,7 +82,7 @@ The formatter is idempotent — running it twice produces no further changes.
 
 ### Run Twinkle Programs
 - No `main` function — top-level statements execute directly.
-- `TWINKLE_ROOT` env var overrides project root (see Modules & Imports below).
+- Project roots are discovered by walking up to `twinkle.toml`.
 
 ## Communication Guidelines
 
@@ -177,7 +177,7 @@ p := Point.{ x: 1, y: 2 }
 - Stdlib: `use @std.fs` (prelude modules auto-imported, no `use` needed)
 - Exports accessed as `module.function`, `module.Type`
 - Separate namespaces for values and types
-- Project root: walks up from entry file to find `twinkle.toml`; `TWINKLE_ROOT` env var overrides
+- Project root: walks up from entry file to find `twinkle.toml`
 
 **Two import lines for a stdlib module that owns a generic type** (e.g. `@std.view`'s `View<C>`): the plain and destructuring forms bind *different* things, so you often want both:
 ```tw

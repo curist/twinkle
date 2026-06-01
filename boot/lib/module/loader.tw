@@ -5,7 +5,6 @@
 
 use @std.fs
 use @std.path
-use @std.proc
 
 use .core_lib
 
@@ -13,13 +12,7 @@ use .core_lib
 /// Falls back to the current working directory when no project file is found.
 /// This keeps relative entry paths rooted at the caller's workspace instead of
 /// treating the entry file's directory as an isolated project root.
-/// If `TWINKLE_ROOT` env var is set, uses that instead.
 pub fn find_project_root(start: String) String {
-  case proc.env("TWINKLE_ROOT") {
-    .Some(root) => { return root },
-    .None => {},
-  }
-
   dir := path.normalize(start)
 
   for true {

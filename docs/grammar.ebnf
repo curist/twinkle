@@ -52,8 +52,7 @@ ModulePath =
    - `use utils`          → loads <root>/utils.tw, bound as "utils"
    - Relative imports resolve from the importing file's parent directory.
    - Parent traversal (`..foo`) is not supported in MVP.
-   - Project root: nearest ancestor directory containing twinkle.toml;
-     overridable via TWINKLE_ROOT env var.
+   - Project root: nearest ancestor directory containing twinkle.toml.
    - No wildcard or destructuring in MVP (see docs/design/module.md "No Destructuring Imports"). *)
 
 (* ===== Type Declarations ===== *)

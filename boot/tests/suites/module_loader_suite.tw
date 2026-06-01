@@ -1,5 +1,4 @@
 use @std.path
-use @std.proc
 
 use lib.module.loader
 use tests.assert
@@ -9,19 +8,11 @@ pub fn suite() runner.Suite {
   root := loader.find_project_root(".")
   runner.suite("module loader")
     .test(
-      "find_project_root returns TWINKLE_ROOT when set",
+      "find_project_root finds nearest twinkle.toml",
       fn() {
-        case proc.env("TWINKLE_ROOT") {
-          .Some(expected) => {
-            try assert.equal(loader.find_project_root("/some/arbitrary/path"), expected)
-            .Ok({})
-          },
-          .None => {
-            result := loader.find_project_root(root)
-            try assert.equal(result, root)
-            .Ok({})
-          },
-        }
+        result := loader.find_project_root(root)
+        try assert.equal(result, root)
+        .Ok({})
       },
     )
     .test(

@@ -682,8 +682,7 @@ directory. For example, `use .helper` in `<root>/lib/app.tw` resolves to
 #### Project root resolution
 
 1. Walk up from the entry file's directory until `twinkle.toml` is found.
-2. `TWINKLE_ROOT` environment variable overrides with an absolute path.
-3. If neither is found, the entry file's directory is the root (single-file scripts).
+2. If none is found, the entry file's directory is the root (single-file scripts).
 
 #### Stdlib modules
 

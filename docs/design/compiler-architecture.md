@@ -50,7 +50,7 @@ boot/main.tw + boot/compiler/* + boot/lib/*
 Runtime / library inputs:
 
 ```text
-prelude/*.tw + stdlib/*.tw
+boot/prelude/*.tw + boot/stdlib/*.tw
   └─ generated into boot/lib/module/core_lib.tw for bootstrap loading
 
 boot/compiler/codegen/runtime/* + bridge/runtime helpers
@@ -180,8 +180,8 @@ twinkle/
     runtime/              # runtime modules (arr/dict/str/core/types)
     wasm/                 # linker/runtime IR emit
 
-  prelude/                # auto-imported language APIs
-  stdlib/                 # @std modules
+  boot/prelude/           # auto-imported language APIs
+  boot/stdlib/            # @std modules
   playground/             # browser playground
   tree-sitter-twinkle/    # syntax grammar and highlighting queries
   tools/                  # JS runtime, Deno bundling, generators

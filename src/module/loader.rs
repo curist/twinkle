@@ -1,14 +1,8 @@
-use std::env;
 use std::path::{Path, PathBuf};
 
 /// Walk up from `start` looking for `twinkle.toml`.
 /// Falls back to `start` if not found.
-/// If `TWINKLE_ROOT` env var is set, uses that instead.
 pub fn find_project_root(start: &Path) -> PathBuf {
-    if let Ok(root) = env::var("TWINKLE_ROOT") {
-        return PathBuf::from(root);
-    }
-
     let mut dir = start.to_path_buf();
     loop {
         if dir.join("twinkle.toml").exists() {
@@ -34,20 +28,11 @@ pub fn resolve_module_path(root: &Path, module_path: &[String]) -> PathBuf {
 }
 
 pub fn resolve_stdlib_root_default() -> PathBuf {
-    if let Ok(root) = env::var("TWINKLE_STDLIB_ROOT") {
-        return PathBuf::from(root);
-    }
-    if let Ok(root) = env::var("TWINKLE_ROOT") {
-        return PathBuf::from(root).join("stdlib");
-    }
-    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("stdlib")
+    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("boot/stdlib")
 }
 
 pub fn resolve_prelude_root_default() -> PathBuf {
-    if let Ok(root) = env::var("TWINKLE_ROOT") {
-        return PathBuf::from(root).join("prelude");
-    }
-    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("prelude")
+    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("boot/prelude")
 }
 
 pub fn resolve_stdlib_module_path_from_root(stdlib_root: &Path, module_path: &[String]) -> PathBuf {

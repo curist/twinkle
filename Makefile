@@ -9,8 +9,8 @@ TWK_CLI     ?= $(DENO_BIN) run --allow-read --allow-write --allow-env tools/js_r
 
 # Source file sets — used for dependency tracking.
 RUST_SRCS := $(shell find src -name '*.rs') Cargo.toml Cargo.lock
-BOOT_SRCS := $(shell find boot -name '*.tw' -not -path 'boot/tests/*' -not -path 'boot/tmp/*' -not -path 'boot/repros/*' -not -path 'boot/bench/*')
-CORE_LIB_SRCS := $(shell find prelude stdlib -name '*.tw')
+BOOT_SRCS := $(shell find boot -name '*.tw' -not -path 'boot/tests/*' -not -path 'boot/tmp/*' -not -path 'boot/repros/*' -not -path 'boot/bench/*' -not -path 'boot/prelude/*' -not -path 'boot/stdlib/*')
+CORE_LIB_SRCS := $(shell find boot/prelude boot/stdlib -name '*.tw')
 
 help:
 	@printf 'Twinkle development targets:\n'
@@ -136,7 +136,7 @@ bench: target/twk
 bench-guard: target/twk
 	python3 tools/check_vector_scaling.py
 
-# Format all .tw source files (boot only; prelude/stdlib excluded).
+# Format all .tw source files owned by boot, excluding generated core_lib.
 fmt: target/twk
 	@find boot -name '*.tw' -not -path 'boot/lib/module/core_lib.tw' | xargs target/twk fmt
 

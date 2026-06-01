@@ -644,57 +644,57 @@ const SIGNATURE_SOURCE_MODULES: &[SignatureSourceModule] = &[
     SignatureSourceModule {
         virtual_path: "/virtual/prelude/signatures/int.tw",
         module_alias: Some("Int"),
-        source: include_str!("../../prelude/signatures/int.tw"),
+        source: include_str!("../../boot/prelude/signatures/int.tw"),
     },
     SignatureSourceModule {
         virtual_path: "/virtual/prelude/signatures/float.tw",
         module_alias: Some("Float"),
-        source: include_str!("../../prelude/signatures/float.tw"),
+        source: include_str!("../../boot/prelude/signatures/float.tw"),
     },
     SignatureSourceModule {
         virtual_path: "/virtual/prelude/signatures/bool.tw",
         module_alias: Some("Bool"),
-        source: include_str!("../../prelude/signatures/bool.tw"),
+        source: include_str!("../../boot/prelude/signatures/bool.tw"),
     },
     SignatureSourceModule {
         virtual_path: "/virtual/prelude/signatures/string.tw",
         module_alias: Some("String"),
-        source: include_str!("../../prelude/signatures/string.tw"),
+        source: include_str!("../../boot/prelude/signatures/string.tw"),
     },
     SignatureSourceModule {
         virtual_path: "/virtual/prelude/signatures/vector.tw",
         module_alias: Some("Vector"),
-        source: include_str!("../../prelude/signatures/vector.tw"),
+        source: include_str!("../../boot/prelude/signatures/vector.tw"),
     },
     SignatureSourceModule {
         virtual_path: "/virtual/prelude/signatures/dict.tw",
         module_alias: Some("Dict"),
-        source: include_str!("../../prelude/signatures/dict.tw"),
+        source: include_str!("../../boot/prelude/signatures/dict.tw"),
     },
     SignatureSourceModule {
         virtual_path: "/virtual/prelude/signatures/cell.tw",
         module_alias: Some("Cell"),
-        source: include_str!("../../prelude/signatures/cell.tw"),
+        source: include_str!("../../boot/prelude/signatures/cell.tw"),
     },
     SignatureSourceModule {
         virtual_path: "/virtual/prelude/signatures/iterator.tw",
         module_alias: Some("Iterator"),
-        source: include_str!("../../prelude/signatures/iterator.tw"),
+        source: include_str!("../../boot/prelude/signatures/iterator.tw"),
     },
     SignatureSourceModule {
         virtual_path: "/virtual/prelude/signatures/task.tw",
         module_alias: Some("Task"),
-        source: include_str!("../../prelude/signatures/task.tw"),
+        source: include_str!("../../boot/prelude/signatures/task.tw"),
     },
     SignatureSourceModule {
         virtual_path: "/virtual/prelude/signatures/byte.tw",
         module_alias: Some("Byte"),
-        source: include_str!("../../prelude/signatures/byte.tw"),
+        source: include_str!("../../boot/prelude/signatures/byte.tw"),
     },
     SignatureSourceModule {
         virtual_path: "/virtual/prelude/signatures/range.tw",
         module_alias: None,
-        source: include_str!("../../prelude/signatures/range.tw"),
+        source: include_str!("../../boot/prelude/signatures/range.tw"),
     },
 ];
 

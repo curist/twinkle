@@ -28,9 +28,7 @@ use tests.runner
 
 // ── helpers ───────────────────────────────────────────────────────────────────
 fn signatures_dir() String {
-  boot_root := loader.find_project_root(".")
-  twinkle_root := path.dirname(boot_root)
-  path.join(twinkle_root, "prelude/signatures")
+  path.join(loader.resolve_prelude_root(), "signatures")
 }
 
 fn canonical_name(receiver: String?, sig_name: String) String {

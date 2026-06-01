@@ -35,7 +35,6 @@ function copyFile(src, dest) {
 
 function copyDir(src, dest) {
   requirePath(src)
-  // dereference: follow symlinks (boot/prelude and boot/stdlib are symlinks)
   cpSync(src, dest, { recursive: true, force: true, dereference: true })
   console.log(`  copied: ${dest.replace(publicDir + '/', 'public/')} (dir)`)
 }

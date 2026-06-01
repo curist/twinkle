@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Generate boot/lib/module/core_lib.tw from prelude/ and stdlib/ sources."""
+"""Generate boot/lib/module/core_lib.tw from boot/prelude and boot/stdlib sources."""
 
 import os
 import sys
@@ -98,10 +98,10 @@ def quote(s):
 
 def main():
     prelude_files = collect_tw_files(
-        str(project_root / "prelude"), "prelude", VIRTUAL_ROOT
+        str(project_root / "boot" / "prelude"), "prelude", VIRTUAL_ROOT
     )
     stdlib_files = collect_tw_files(
-        str(project_root / "stdlib"), "stdlib", VIRTUAL_ROOT
+        str(project_root / "boot" / "stdlib"), "stdlib", VIRTUAL_ROOT
     )
     all_files = sorted(prelude_files + stdlib_files, key=lambda f: f[0])
     dir_index = build_dir_index(all_files, VIRTUAL_ROOT)

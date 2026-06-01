@@ -97,13 +97,11 @@ MVP scope: only single leading-dot relative imports are supported (`.foo`,
 ## Project Root Resolution
 
 The project root is resolved by walking up from the entry file's directory until
-a `twinkle.toml` file is found. The `TWINKLE_ROOT` environment variable overrides
-this with an absolute path. If neither is found, the entry file's directory is
+a `twinkle.toml` file is found. If none is found, the entry file's directory is
 treated as the root (for single-file scripts).
 
 Walking up to a manifest is the established convention (Cargo, go.mod, package.json).
-The env var override is useful for CI, scripts, and editor integrations. The
-no-manifest fallback keeps single-file programs friction-free.
+The no-manifest fallback keeps single-file programs friction-free.
 
 `twinkle.toml` may initially be empty or contain only a project name — its presence
 is what matters for root detection, not its contents.

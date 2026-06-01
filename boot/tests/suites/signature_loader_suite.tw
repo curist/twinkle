@@ -39,10 +39,7 @@ fn find_sig(sigs: Vector<FunctionSig>, name: String) FunctionSig? {
 }
 
 fn signatures_dir() String {
-  // boot project root is boot/; signatures live one level up at prelude/signatures/
-  boot_root := loader.find_project_root(".")
-  twinkle_root := path.dirname(boot_root)
-  path.join(twinkle_root, "prelude/signatures")
+  path.join(loader.resolve_prelude_root(), "signatures")
 }
 
 // ── suite ─────────────────────────────────────────────────────────────────────

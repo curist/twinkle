@@ -56,10 +56,7 @@ async function doLoadResources() {
   self.postMessage({ type: 'status', text: 'Compiling boot module…' });
   cachedBootModule = new WebAssembly.Module(cachedBootBytes);
 
-  self.postMessage({ type: 'status', text: 'Loading prelude…' });
-  // TWINKLE_ROOT="/", so prelude lives at /prelude and stdlib at /stdlib.
-  // This keeps prelude_root == parent_prelude ("/prelude") so canonical_module_path
-  // does NOT remap paths — linker and reader both see /prelude/... consistently.
+  self.postMessage({ type: 'status', text: 'Loading support library sources…' });
   cachedPrelude = new Map();
 
   const fetches = [];
@@ -675,7 +672,7 @@ self.onmessage = async (event) => {
 
     const exitCode = await runWasmBytesAsync(null, {
       programArgs: ['playground.wasm', '/input/main.tw'],
-      env: { TWINKLE_ROOT: '/', NO_COLOR: '1' },
+      env: { NO_COLOR: '1' },
       vfs,
       emit,
       wasmModule: cachedBootModule,
