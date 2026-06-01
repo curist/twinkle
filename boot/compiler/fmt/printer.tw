@@ -360,8 +360,16 @@ pub fn format_module(module: Module, tokens: Vector<Token>) Doc {
         emit_trivia(leading_file_trivia.slice(start, leading_file_trivia.len())),
       ])
 
-      // Insert blank line after module doc comments to visually separate them from code.
-      if has_doc_in_trivia(leading_file_trivia) {
+      // Separate a leading doc comment from the code that follows when it is
+      // module-level: either it sits above the imports, or the author already
+      // separated it from the first declaration with a blank line (preserved here
+      // because emit_trivia drops a trailing blank). A doc comment sitting directly
+      // on the first declaration, with no blank, is that declaration's own doc and
+      // stays attached.
+      authored_blank := is_blank_trivia(leading_file_trivia[leading_file_trivia.len() - 1])
+
+      if has_doc_in_trivia(leading_file_trivia)
+        and (item_kind_name(items[0]) == "use" or authored_blank) {
         result = doc.concat([result, doc.hard_line()])
       }
     }

@@ -1,0 +1,7 @@
+/// a module doc
+/// useful description regarding this module
+
+/// foo does bar
+pub fn foo() Int {
+  1
+}

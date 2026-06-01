@@ -1,0 +1,9 @@
+/// Documents the first function directly.
+pub fn first(xs: Vector<Int>) Int {
+  xs[0]
+}
+
+/// Documents the second function.
+pub fn second(xs: Vector<Int>) Int {
+  xs[1]
+}

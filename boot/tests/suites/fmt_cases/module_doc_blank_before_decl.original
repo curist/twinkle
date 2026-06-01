@@ -1,0 +1,4 @@
+/// Wasm IR types — the output of codegen.
+/// Mirrors stage0's ir.rs.
+
+pub type HeapType = { Named(String), Any, Eq }
