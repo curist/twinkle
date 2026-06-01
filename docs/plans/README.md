@@ -42,6 +42,7 @@ Self-hosting is complete. Historical design and status docs live in
 | Boot performance | Track current compiler bottlenecks and optimization wins | In Progress | [boot-compiler-perf.md](boot-compiler-perf.md) |
 | Task concurrency | Add library-first cooperative `Task<T>` concurrency without new syntax | Planned | [task-concurrency.md](task-concurrency.md) |
 | Dedup failed-module diagnostics | Memoize attempted-and-failed modules so a broken shared dependency reports its errors once, not once per importer | Planned | [dedup-failed-module-diagnostics.md](dedup-failed-module-diagnostics.md) |
+| Access-contract hardening | Validate contract-bound arity, make parameterized proof caching sound, and simplify generic iteration / FD recovery internals | Planned | [access-contract-hardening.md](access-contract-hardening.md) |
 
 
 ### Later — Tooling & Ecosystem
