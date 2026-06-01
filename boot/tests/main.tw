@@ -1,4 +1,5 @@
 use .runner
+use .suites.alias_reexport_suite
 use .suites.anf_analysis_suite
 use .suites.anf_lower_suite
 use .suites.anf_suite
@@ -95,6 +96,7 @@ use .suites.source_suite
 use .suites.stdlib_host_suite
 use .suites.stdlib_math_suite
 use .suites.stdlib_path_suite
+use .suites.stdlib_tuple_suite
 use .suites.string_edge_cases_suite
 use .suites.task_suite
 use .suites.type_registry_suite
@@ -107,6 +109,7 @@ use .suites.wat_suite
 
 runner.run_all([
   assert_helpers_suite.suite(),
+  alias_reexport_suite.suite(),
   semantic_suite.suite(),
   semantic_tree_stringify_suite.suite(),
   equality_repro_suite.suite(),
@@ -124,6 +127,7 @@ runner.run_all([
   dict_hash_suite.suite(),
   api_range_iterator_suite.suite(),
   stdlib_path_suite.suite(),
+  stdlib_tuple_suite.suite(),
   stdlib_math_suite.suite(),
   stdlib_host_suite.suite(),
   source_suite.suite(),

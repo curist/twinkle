@@ -1,0 +1,83 @@
+use @std.tuple
+use @std.tuple.{Pair, Triple}
+
+use tests.assert
+use tests.runner
+
+pub fn suite() runner.Suite {
+  runner.suite("stdlib tuple")
+    .test(
+      "pair construction and field access",
+      fn() {
+        p: Pair<Int, String> = tuple.pair(1, "a")
+        try assert.equal(p.first, 1)
+        try assert.equal(p.second, "a")
+        .Ok({})
+      },
+    )
+    .test(
+      "anonymous Pair literal where the type is expected",
+      fn() {
+        p: Pair<Int, Int> = .{ first: 3, second: 4 }
+        try assert.equal(p.first, 3)
+        try assert.equal(p.second, 4)
+        .Ok({})
+      },
+    )
+    .test(
+      "swap flips the components",
+      fn() {
+        sw: Pair<String, Int> = tuple.pair(7, "x").swap()
+        try assert.equal(sw.first, "x")
+        try assert.equal(sw.second, 7)
+        .Ok({})
+      },
+    )
+    .test(
+      "structural equality from record fields",
+      fn() {
+        try assert.is_true(tuple.pair(1, 2) == tuple.pair(1, 2))
+        try assert.is_true(tuple.pair(1, 2) != tuple.pair(1, 3))
+        .Ok({})
+      },
+    )
+    .test(
+      "Pair satisfies Stringify",
+      fn() {
+        p := tuple.pair(1, "a")
+        try assert.equal("${p}", "(1, a)")
+        try assert.equal(p.to_string(), "(1, a)")
+        .Ok({})
+      },
+    )
+    .test(
+      "triple construction and field access",
+      fn() {
+        t: Triple<Int, Int, Bool> = tuple.triple(1, 2, true)
+        try assert.equal(t.first, 1)
+        try assert.equal(t.second, 2)
+        try assert.is_true(t.third)
+        .Ok({})
+      },
+    )
+    .test(
+      "Triple satisfies Stringify through the re-exported surface",
+      fn() {
+        // Reached purely via `use @std.tuple` / `@std.tuple.{Triple}` — no direct
+        // import of the `triple` submodule. Proves the transparent re-export
+        // carries the home module's inherent `to_string`.
+        t: Triple<Int, String, Bool> = tuple.triple(1, "b", false)
+        try assert.equal("${t}", "(1, b, false)")
+        try assert.equal(t.to_string(), "(1, b, false)")
+        .Ok({})
+      },
+    )
+    .test(
+      "triple structural equality",
+      fn() {
+        try assert.is_true(tuple.triple(1, 2, 3) == tuple.triple(1, 2, 3))
+        try assert.is_true(tuple.triple(1, 2, 3) != tuple.triple(1, 2, 4))
+        .Ok({})
+      },
+    )
+}

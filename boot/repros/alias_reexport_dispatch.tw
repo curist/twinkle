@@ -1,0 +1,44 @@
+/// Bug 2 repro: an alias-typed value passed into a position expecting the
+/// underlying type must resolve to the underlying nominal type.
+///
+/// Before the fix, the alias TypeId leaked past the checker:
+///   - non-generic alias -> backend verifier: "arg 0 has mono Named(Tn), expected Named(Tm)"
+///   - generic alias     -> "lookup_func_sym: unknown FuncId NNN"
+///
+/// Expected output:
+///   base
+///   gen
+///   alias-method
+// ── Non-generic alias passed to a function on the underlying type ────
+type Base = .{ tag: Int }
+
+type AliasBase = Base
+
+fn label(b: Base) String {
+  "base"
+}
+
+// ── Generic alias passed to a function on the underlying type ────────
+type GBase<A, B, C> = .{ first: A, second: B, third: C }
+
+type GAlias<A, B, C> = GBase<A, B, C>
+
+fn glabel<A, B, C>(g: GBase<A, B, C>) String {
+  "gen"
+}
+
+// ── Inherent method dispatched through an alias-typed value ──────────
+type Carrier = .{ value: Int }
+
+fn describe(c: Carrier) String {
+  "alias-method"
+}
+
+type AliasCarrier = Carrier
+
+ab: AliasBase = .{ tag: 1 }
+println(label(ab))
+ga: GAlias<Int, Int, Int> = .{ first: 1, second: 2, third: 3 }
+println(glabel(ga))
+ac: AliasCarrier = .{ value: 7 }
+println(ac.describe())

@@ -1,0 +1,13 @@
+/// Bug 1 repro: transparent type-alias re-export where the alias name equals the
+/// target name must NOT be reported as a circular alias.
+///
+/// Expected: compiles and prints "Triple". Before the fix, the resolver reports
+/// a spurious `circular type alias `Triple`` because cycle tracking keyed by name
+/// confuses the alias `Triple` with its distinct-TypeId target `Triple`.
+
+use .alias_reexport_triple as triple_mod
+
+pub type Triple<A, B, C> = triple_mod.Triple<A, B, C>
+
+t: Triple<Int, Int, Int> = .{ first: 1, second: 2, third: 3 }
+println(t.to_string())

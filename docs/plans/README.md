@@ -62,7 +62,6 @@ Self-hosting is complete. Historical design and status docs live in
 | [backend-anyref-elimination.md](backend-anyref-elimination.md) | Make `anyref` exceptional rather than foundational in the Wasm backend, including typed container/helper families |
 | [static-uniqueness-plan.md](static-uniqueness-plan.md) | Extend the static uniqueness optimizer to cover more realistic linear-update patterns without changing the runtime model |
 | [sliceable.md](sliceable.md) | `foo[a..b]` range-slice syntax via a Self-only `Sliceable` contract — the lone open piece of the (now-archived) collection-access cluster; adds a `Range`-index arm to `synth_index` plus `Vector`/`String`/`View` satisfiers. Background in [archive/collections-access.md](archive/collections-access.md) |
-| [tuple.md](tuple.md) | Library-first `@std.tuple` (`Pair` + terse constructor) to remove per-call-site ceremony for incidental multi-value groupings; defers structural `(a, b)` syntax. No compiler change |
 | [queue.md](queue.md) | Library-first `@std.queue` persistent double-ended queue, so FIFO/deque-heavy code avoids repeated `Vector.drop_first()` front-slices; pure stdlib, no compiler/runtime primitive |
 
 ### Archived reference docs

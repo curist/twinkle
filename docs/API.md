@@ -387,7 +387,7 @@ fn single_number(nums: Vector<Int>) Int {
 
 Everything above (primitives, built-in types, I/O, type conversions, String/Vector/Dict methods, operators) is available as **prelude** — no import needed.
 
-Only non-prelude stdlib modules require explicit imports: `use @std.path`, `use @std.fs`, `use @std.proc`, `use @std.date`, `use @std.view`, `use @std.math`.
+Only non-prelude stdlib modules require explicit imports: `use @std.path`, `use @std.fs`, `use @std.proc`, `use @std.date`, `use @std.view`, `use @std.math`, `use @std.tuple`.
 
 ### `@std.math`
 
@@ -499,3 +499,46 @@ share the one backing. A `View` itself satisfies `IndexRead<E>`. Requires
 | `.sub(a, b)` | `fn<C>(v: View<C>, a: Int, b: Int) View<C>` | Relative sub-window `[a, b)` (O(1), shares backing; total — endpoints clamp into `[0, len()]`, so out-of-range or reversed args yield a valid/empty window) |
 | `.to_vector()` | `fn<C: IndexRead<E>, E>(v: View<C>) Vector<E>` | Materialize the window into an owned `Vector` |
 | `.fold(init, f)` | `fn<C: IndexRead<E>, E, B>(v: View<C>, init: B, f: fn(B, E) B) B` | Left-fold over the window |
+
+### `@std.tuple`
+
+Ad-hoc grouping of a few values without declaring a domain record. `Pair<A, B>`
+is the common case; `Triple<A, B, C>` is the escalation. Both are nominal
+records, so they get conditional structural `==`/`!=` for free when their fields
+satisfy `Eq`, and both satisfy `Stringify` (`(a, b)` / `(a, b, c)`). Use a named
+record instead when the fields carry meaningful API names.
+
+Like `@std.view`, the full surface is two import lines: `use @std.tuple` for the
+`tuple.pair` / `tuple.triple` constructors, and `use @std.tuple.{Pair, Triple}`
+to name the types in annotations. `Triple` is transparently re-exported from a
+submodule (so each arity can own its `to_string`); you never need to import
+`@std.tuple.triple` directly.
+
+| Function | Signature | Description |
+|----------|-----------|-------------|
+| `tuple.pair(a, b)` | `fn<A, B>(first: A, second: B) Pair<A, B>` | Construct a `Pair` |
+| `tuple.triple(a, b, c)` | `fn<A, B, C>(first: A, second: B, third: C) Triple<A, B, C>` | Construct a `Triple` |
+| `.swap()` | `fn<A, B>(p: Pair<A, B>) Pair<B, A>` | Swap the two components |
+| `.to_string()` | `fn<A: Stringify, B: Stringify>(p: Pair<A, B>) String` | Render as `(a, b)`; backs `Stringify` |
+| `.to_string()` | `fn<A: Stringify, B: Stringify, C: Stringify>(t: Triple<A, B, C>) String` | Render as `(a, b, c)`; backs `Stringify` |
+
+Fields are named `first` / `second` (and `third` for `Triple`):
+
+```tw
+use @std.tuple
+use @std.tuple.{Pair, Triple}
+
+fn pop<T>(stack: Vector<T>) Result<Pair<T, Vector<T>>, String> {
+  case stack.last() {
+    .Some(v) => .Ok(tuple.pair(v, stack.drop_last())),
+    .None => .Err("stack underflow"),
+  }
+}
+
+top := try pop(stack)
+value := top.first
+rest := top.second
+
+t: Triple<Int, Int, Bool> = tuple.triple(1, 2, true)
+"${t}"   // "(1, 2, true)"
+```

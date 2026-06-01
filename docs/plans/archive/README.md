@@ -56,6 +56,8 @@ Related historical context outside this folder:
 | [compound-rebinding.md](compound-rebinding.md) | Rebinding receiver shorthand: `x = .method(args)` desugars to `x = x.method(args)` at parse time |
 | [cond.md](cond.md) | `cond` expression for boolean dispatch chains — desugars to nested `If`, replaces deeply nested `if/else if/else` |
 | [extern-types.md](extern-types.md) | `externref`-backed opaque host handles for FFI — Phase 1 (non-null) and Phase 2 (nullable `Option<ExternType>`) |
+| [tuple.md](tuple.md) | Design rationale for a library-first `@std.tuple` (`Pair` + terse constructor); why nominal records over `(a, b)` syntax. Superseded by `tuple-and-alias-reexport.md` |
+| [tuple-and-alias-reexport.md](tuple-and-alias-reexport.md) | Shipped `@std.tuple` (`Pair`/`Triple`, `.first`/`.second`/`.third`, `tuple.pair`/`tuple.triple`) on top of three resolver fixes that make transparent type-alias re-export work (TypeId-keyed cycle detection, eager alias expansion, inherent-method re-export through aliases) |
 
 ---
 

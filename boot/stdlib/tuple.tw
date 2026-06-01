@@ -1,0 +1,41 @@
+/// Ad-hoc multi-value grouping without declaring a domain record.
+///
+/// `Pair<A, B>` is the common case; `Triple<A, B, C>` is the escalation. Both
+/// are nominal records, so they get conditional structural `==`/`!=` for free
+/// when their fields satisfy `Eq`, and both satisfy `Stringify` so `${p}` and
+/// `${t}` render as `(a, b)` / `(a, b, c)`.
+///
+/// Two import lines give the full surface (mirroring `@std.view`):
+///
+///   use @std.tuple          // `tuple.pair(a, b)`, `tuple.triple(a, b, c)`
+///   use @std.tuple.{Pair, Triple}   // name the types in annotations
+///
+/// `Triple` is re-exported here through a transparent type alias; its nominal
+/// home and its own `to_string` live in the `triple` submodule, because a single
+/// module cannot hold two `to_string` witnesses.
+
+use .tuple.triple as triple_mod
+
+pub type Pair<A, B> = .{ first: A, second: B }
+
+pub type Triple<A, B, C> = triple_mod.Triple<A, B, C>
+
+/// Terse constructor: pair(x, y) instead of Pair.{ first: x, second: y }.
+pub fn pair<A, B>(first: A, second: B) Pair<A, B> {
+  .{ first, second }
+}
+
+/// Terse constructor for the three-component tuple.
+pub fn triple<A, B, C>(first: A, second: B, third: C) Triple<A, B, C> {
+  .{ first, second, third }
+}
+
+/// Swap the two components.
+pub fn swap<A, B>(p: Pair<A, B>) Pair<B, A> {
+  .{ first: p.second, second: p.first }
+}
+
+/// Stringify witness, so `${p}` works when both components are Stringify.
+pub fn to_string<A: Stringify, B: Stringify>(p: Pair<A, B>) String {
+  "(${p.first}, ${p.second})"
+}

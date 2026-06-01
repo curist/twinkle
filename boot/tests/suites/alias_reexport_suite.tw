@@ -1,0 +1,61 @@
+use tests.assert
+use tests.runner
+
+// Transparent type aliases (spec: "type aliases don't create distinct nominal
+// types"). These regression-test the resolver's eager alias expansion: a value
+// typed via an alias must resolve to the underlying nominal type so it can be
+// passed to functions on that type and dispatch inherent methods through it.
+// ── Non-generic alias ───────────────────────────────────────────────
+type Base = .{ tag: Int }
+
+type AliasBase = Base
+
+fn base_label(b: Base) String {
+  "base:${b.tag}"
+}
+
+// ── Generic alias ───────────────────────────────────────────────────
+type GBase<A, B, C> = .{ first: A, second: B, third: C }
+
+type GAlias<A, B, C> = GBase<A, B, C>
+
+fn gbase_first<A, B, C>(g: GBase<A, B, C>) A {
+  g.first
+}
+
+// ── Inherent method through an alias ────────────────────────────────
+type Carrier = .{ value: Int }
+
+fn doubled(c: Carrier) Int {
+  c.value * 2
+}
+
+type AliasCarrier = Carrier
+
+pub fn suite() runner.Suite {
+  runner.suite("alias re-export")
+    .test(
+      "non-generic alias value passes to underlying-typed function",
+      fn() {
+        b: AliasBase = .{ tag: 5 }
+        try assert.equal(base_label(b), "base:5")
+        .Ok({})
+      },
+    )
+    .test(
+      "generic alias value passes to underlying-typed function",
+      fn() {
+        g: GAlias<Int, String, Bool> = .{ first: 9, second: "x", third: true }
+        try assert.equal(gbase_first(g), 9)
+        .Ok({})
+      },
+    )
+    .test(
+      "inherent method dispatches through alias-typed value",
+      fn() {
+        c: AliasCarrier = .{ value: 21 }
+        try assert.equal(c.doubled(), 42)
+        .Ok({})
+      },
+    )
+}

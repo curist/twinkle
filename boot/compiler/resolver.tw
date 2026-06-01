@@ -175,6 +175,26 @@ pub fn lookup_type_methods(env: ResolvedEnv, tid: TypeId) Vector<MethodEntry>? {
   env.methods_by_type[tid.id]
 }
 
+// The TypeId whose method table backs a type entry. For a transparent alias
+// (`pub type T = other.T`), inherent methods live under the *target* type's id,
+// not the alias's own id — so re-exporting the alias must surface the home
+// module's methods. Follows alias chains; non-alias entries return their own id.
+pub fn method_source_tid(env: ResolvedEnv, entry: TypeEntry) TypeId {
+  case entry.def {
+    .Some(d) => case d {
+      .Alias(_, _, target) => case target {
+        .Named(tid, _) => case env.lookup_type_by_id(tid) {
+          .Some(next) => env.method_source_tid(next),
+          .None => tid,
+        },
+        _ => entry.id,
+      },
+      _ => entry.id,
+    },
+    .None => entry.id,
+  }
+}
+
 fn me(method_name: String, function_name: String) MethodEntry {
   .{ method_name, function_name }
 }
@@ -724,7 +744,9 @@ pub fn extract_exports_for_module(
       methods: Dict.new(),
       values: [],
     }) {
-      entries: Vector<MethodEntry> = case env.lookup_type_methods(exported.entry.id) {
+      entries: Vector<MethodEntry> = case env.lookup_type_methods(
+        env.method_source_tid(exported.entry),
+      ) {
         .Some(found) => found,
         .None => case env.methods[exported.name] {
           .Some(found) => found,
@@ -783,7 +805,7 @@ pub fn extract_exports_for_module(
   exported_types := visible_types.concat(support_types)
 
   for exported in exported_types {
-    case env.lookup_type_methods(exported.entry.id) {
+    case env.lookup_type_methods(env.method_source_tid(exported.entry)) {
       .Some(entries) => {
         visible := collect entry in entries {
           if !interface_function_sources.has(entry.function_name) {
@@ -908,7 +930,14 @@ fn register_imported_interface_types(
             .Some(id) => id,
             .None => exported.entry.id,
           }
-          methods_by_type = register_type_methods(methods_by_type, remapped_id, qualified_methods)
+
+          // Key by the underlying type for a transparent alias re-export, since
+          // alias-typed values resolve to that type, not the alias's own id.
+          method_tid := case cur.lookup_type_by_id(remapped_id) {
+            .Some(remapped_entry) => cur.method_source_tid(remapped_entry),
+            .None => remapped_id,
+          }
+          methods_by_type = register_type_methods(methods_by_type, method_tid, qualified_methods)
         }
       },
       .None => {},
@@ -2383,10 +2412,92 @@ fn resolve_single_name(
         type_ok(MonoType.ExternRef(entry.id))
       }
     } else {
-      type_ok(MonoType.Named(entry.id, args))
+      // Type aliases are transparent (spec: "type aliases don't create distinct
+      // nominal types"). Expand them eagerly here — the one place type names
+      // become MonoType — so no alias TypeId leaks into resolved signatures,
+      // record/variant field types, or the per-expression TypeMap. Lowering,
+      // monomorphization, and the backend have no alias awareness, so an
+      // unexpanded alias TypeId would mismatch the underlying nominal type.
+      type_ok(env.expand_alias_named(MonoType.Named(entry.id, args), 0))
     },
     .None => type_err(.Error(.UndefinedType(.{ span: s, name }))),
   }
+}
+
+// Eagerly expand a `Named` type when it refers to a type alias, substituting the
+// applied type args into the alias target's `Var` placeholders and recursing in
+// case the target is itself an alias. Non-alias types (and types whose def is not
+// yet resolved) are returned unchanged. Mirrors checker.tw's `expand_alias`, but
+// runs at name-resolution time so all downstream channels see the underlying type.
+fn expand_alias_named(env: ResolvedEnv, ty: MonoType, depth: Int) MonoType {
+  if depth > 10 {
+    return ty
+  }
+
+  case ty {
+    .Named(tid, type_args) => {
+      def := case env.lookup_type_def(tid) {
+        .Some(d) => d,
+        .None => { return ty },
+      }
+
+      case def {
+        .Alias(_, type_params, target) => {
+          expanded := subst_type_vars(target, build_alias_var_map(type_params, type_args))
+          env.expand_alias_named(expanded, depth + 1)
+        },
+        _ => ty,
+      }
+    },
+    _ => ty,
+  }
+}
+
+// Substitute named type variables in a MonoType. Local to the resolver to avoid
+// reaching into the checker; mirrors checker.tw's `subst_vars`.
+fn subst_type_vars(ty: MonoType, var_map: Dict<String, MonoType>) MonoType {
+  if var_map.len() == 0 {
+    return ty
+  }
+
+  case ty {
+    .Var(name) => case var_map[name] {
+      .Some(replacement) => replacement,
+      .None => ty,
+    },
+    .Vector(inner) => .Vector(subst_type_vars(inner, var_map)),
+    .Dict(k, v) => .Dict(subst_type_vars(k, var_map), subst_type_vars(v, var_map)),
+    .Function(params, ret) => {
+      inst_params := collect p in params {
+        subst_type_vars(p, var_map)
+      }
+      .Function(inst_params, subst_type_vars(ret, var_map))
+    },
+    .Optional(inner) => .Optional(subst_type_vars(inner, var_map)),
+    .Result(ok, err) => .Result(subst_type_vars(ok, var_map), subst_type_vars(err, var_map)),
+    .Named(tid, args) => {
+      inst_args := collect a in args {
+        subst_type_vars(a, var_map)
+      }
+      MonoType.Named(tid, inst_args)
+    },
+    _ => ty,
+  }
+}
+
+fn build_alias_var_map(type_params: Vector<ResolvedTypeParam>, type_args: Vector<MonoType>) Dict<
+  String,
+  MonoType,
+> {
+  m: Dict<String, MonoType> = Dict.new()
+
+  for i in 0..type_params.len() {
+    if i < type_args.len() {
+      m[type_params[i].name] = type_args[i]
+    }
+  }
+
+  m
 }
 
 fn def_type_param_count(def: ResolvedTypeDef) Int {
@@ -2619,7 +2730,10 @@ fn detect_circular_aliases(env: ResolvedEnv, diags: Vector<diag.DiagKind>) Vecto
       _ => { continue },
     }
 
-    if is_circular_alias(env, aname, Dict.new()) {
+    // Track visited types by TypeId identity, not name: an alias and its
+    // distinct-TypeId target may share a name (a transparent re-export), and a
+    // name-keyed walk would mistake that for a self-cycle.
+    if is_circular_alias(env, env.types[i].id, Dict.new()) {
       result = .append(.Error(.CircularAlias(.{ span: env.types[i].span, name: aname })))
     }
   }
@@ -2627,14 +2741,14 @@ fn detect_circular_aliases(env: ResolvedEnv, diags: Vector<diag.DiagKind>) Vecto
   result
 }
 
-fn is_circular_alias(env: ResolvedEnv, name: String, visited: Dict<String, Bool>) Bool {
-  if visited.has(name) {
+fn is_circular_alias(env: ResolvedEnv, tid: TypeId, visited: Dict<Int, Bool>) Bool {
+  if visited.has(tid.id) {
     return true
   }
 
   new_visited := visited
-  new_visited[name] = true
-  entry := case env.lookup_type(name) {
+  new_visited[tid.id] = true
+  entry := case env.lookup_type_by_id(tid) {
     .Some(e) => e,
     .None => { return false },
   }
@@ -2649,23 +2763,20 @@ fn is_circular_alias(env: ResolvedEnv, name: String, visited: Dict<String, Bool>
   }
 }
 
-fn mono_contains_circular(env: ResolvedEnv, ty: MonoType, visited: Dict<String, Bool>) Bool {
+fn mono_contains_circular(env: ResolvedEnv, ty: MonoType, visited: Dict<Int, Bool>) Bool {
   case ty {
-    .Named(tid, args) => case env.find_type_name(tid) {
-      .Some(tname) => {
-        if is_circular_alias(env, tname, visited) {
+    .Named(tid, args) => {
+      if is_circular_alias(env, tid, visited) {
+        return true
+      }
+
+      for a in args {
+        if mono_contains_circular(env, a, visited) {
           return true
         }
+      }
 
-        for a in args {
-          if mono_contains_circular(env, a, visited) {
-            return true
-          }
-        }
-
-        false
-      },
-      .None => false,
+      false
     },
     .Optional(inner) => mono_contains_circular(env, inner, visited),
     .Vector(inner) => mono_contains_circular(env, inner, visited),

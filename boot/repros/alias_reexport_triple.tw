@@ -1,0 +1,6 @@
+/// Helper module for alias_reexport_circular.tw — the real nominal home of Triple.
+pub type Triple<A, B, C> = .{ first: A, second: B, third: C }
+
+pub fn to_string<A, B, C>(t: Triple<A, B, C>) String {
+  "Triple"
+}
