@@ -1,4 +1,5 @@
 /// Advance the iterator and return the next value and rest iterator.
+
 pub fn next<T>(it: Iterator<T>) Option<IterItem<T>> {
   .None
 }

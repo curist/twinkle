@@ -15,7 +15,7 @@ fn enqueue(state: BfsState, sym: String) BfsState {
   if state.reachable.has(sym) {
     state
   } else {
-    state.queue = state.queue.append(sym)
+    state.queue = .append(sym)
     state.reachable[sym] = true
     state
   }

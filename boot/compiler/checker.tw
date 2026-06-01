@@ -95,12 +95,12 @@ fn empty_ctx(env: ResolvedEnv, module_aliases: Dict<String, Bool>) InferCtx {
 }
 
 fn push_scope(ctx: InferCtx) InferCtx {
-  ctx.locals = ctx.locals.append(Dict.new())
+  ctx.locals = .append(Dict.new())
   ctx
 }
 
 fn pop_scope(ctx: InferCtx) InferCtx {
-  ctx.locals = ctx.locals.drop_last()
+  ctx.locals = .drop_last()
   ctx
 }
 
@@ -4897,7 +4897,7 @@ fn check_function(decl: FunctionDecl, ctx: InferCtx, diags: Vector<DiagKind>) Ch
 
             f
           }
-          result_ctx.env = result_ctx.env.with_functions(updated_fns)
+          result_ctx.env = .with_functions(updated_fns)
           .{ ctx: result_ctx, diags: body_r.diags }
         },
       }

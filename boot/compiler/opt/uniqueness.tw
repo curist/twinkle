@@ -177,10 +177,10 @@ fn with_known_empty_local(st: RwState, local: LocalId) RwState {
 }
 
 fn without_local_ownership(st: RwState, local: LocalId) RwState {
-  st.ownership = st.ownership.remove(local.id)
-  st.known_empty = st.known_empty.remove(local.id)
-  st.refreshed = st.refreshed.remove(local.id)
-  st.fresh_records = st.fresh_records.remove(local.id)
+  st.ownership = .remove(local.id)
+  st.known_empty = .remove(local.id)
+  st.refreshed = .remove(local.id)
+  st.fresh_records = .remove(local.id)
   st
 }
 
@@ -196,22 +196,22 @@ fn transfer_owned_local(st: RwState, source: LocalId, target: LocalId) RwState {
   }
   source_was_fresh_record := set_has(st.fresh_records, source.id)
   st = without_local_ownership(st, target)
-  st.ownership = st.ownership.remove(source.id)
+  st.ownership = .remove(source.id)
   st.ownership[target.id] = moved
-  st.refreshed = st.refreshed.remove(source.id)
+  st.refreshed = .remove(source.id)
 
   if set_has(st.tainted, target.id) {
     st.refreshed[target.id] = true
   }
 
-  st.fresh_records = st.fresh_records.remove(source.id)
+  st.fresh_records = .remove(source.id)
 
   if source_was_fresh_record {
     st.fresh_records[target.id] = true
   }
 
   if set_has(st.known_empty, source.id) {
-    st.known_empty = st.known_empty.remove(source.id)
+    st.known_empty = .remove(source.id)
     st.known_empty[target.id] = true
   }
 
@@ -225,8 +225,8 @@ fn with_consumed_update_result(st: RwState, local: LocalId) RwState {
     st.refreshed[local.id] = true
   }
 
-  st.known_empty = st.known_empty.remove(local.id)
-  st.fresh_records = st.fresh_records.remove(local.id)
+  st.known_empty = .remove(local.id)
+  st.fresh_records = .remove(local.id)
   st
 }
 

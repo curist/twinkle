@@ -4,8 +4,8 @@ use .suites.anf_lower_suite
 use .suites.anf_suite
 use .suites.api_cell_suite
 use .suites.api_dict_suite
-use .suites.api_option_result_suite
 use .suites.api_int_suite
+use .suites.api_option_result_suite
 use .suites.api_range_iterator_suite
 use .suites.api_set_suite
 use .suites.api_string_suite

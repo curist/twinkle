@@ -180,7 +180,7 @@ pub fn plan_wasm_types_impl(
         }
 
         if !reg.module_globals.has(k) {
-          reg.module_globals_order = reg.module_globals_order.append(k)
+          reg.module_globals_order = .append(k)
         }
 
         reg.module_globals[k] = ModuleGlobalEntry.{ sym: "global_local_${k}", mono }
@@ -308,7 +308,7 @@ fn ensure_boundary_imports(reg: WasmTypeRegistry) WasmTypeRegistry {
     }
 
     if !already {
-      reg.runtime_imports = reg.runtime_imports.append(imp)
+      reg.runtime_imports = .append(imp)
     }
   }
 
@@ -615,7 +615,7 @@ fn register_string(reg: WasmTypeRegistry, s: String) WasmTypeRegistry {
         byte_len,
       }
       reg.string_pool[s] = entry
-      reg.string_pool_order = reg.string_pool_order.append(s)
+      reg.string_pool_order = .append(s)
       reg.string_pool_next_offset = reg.string_pool_next_offset + byte_len
       reg
     },
@@ -639,7 +639,7 @@ fn register_runtime_import(reg: WasmTypeRegistry, entry: BuiltinEntry, info: Run
     params: entry.abi.param_types,
     results: entry.abi.result_types,
   }
-  reg.runtime_imports = reg.runtime_imports.append(imp)
+  reg.runtime_imports = .append(imp)
   reg
 }
 

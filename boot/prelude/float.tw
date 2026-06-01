@@ -1,20 +1,31 @@
-fn is_nan(x: Float) Bool { x != x }
+fn is_nan(x: Float) Bool {
+  x != x
+}
 
 /// Compare two Floats. NaN compares as greater than all other values.
 /// NaN == NaN yields Eq for deterministic sorting.
 pub fn compare(a: Float, b: Float) Order {
   a_nan := is_nan(a)
   b_nan := is_nan(b)
-  if a_nan and b_nan { .Eq }
-  else if a_nan { .Gt }
-  else if b_nan { .Lt }
-  else if a < b { .Lt }
-  else if a > b { .Gt }
-  else { .Eq }
+
+  if a_nan and b_nan {
+    .Eq
+  } else if a_nan {
+    .Gt
+  } else if b_nan {
+    .Lt
+  } else if a < b {
+    .Lt
+  } else if a > b {
+    .Gt
+  } else {
+    .Eq
+  }
 }
 
 fn normalize_integral_float_text(s: String) String {
   n := s.len()
+
   if n >= 2 and s.slice(n - 2, n) == ".0" {
     s.slice(0, n - 2)
   } else {
@@ -25,6 +36,7 @@ fn normalize_integral_float_text(s: String) String {
 /// Convert an integral Float to Int.
 pub fn to_int(f: Float) Int {
   s := normalize_integral_float_text(f.to_string())
+
   case Int.from_string(s) {
     .Some(v) => v,
     .None => {

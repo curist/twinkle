@@ -38,8 +38,8 @@ pub fn suite() runner.Suite {
       "record field target",
       fn() {
         s: State = .{ items: [], name: "test" }
-        s.items = s.items.append(42)
-        s.items = s.items.append(99)
+        s.items = .append(42)
+        s.items = .append(99)
         try assert.equal(s.items.len(), 2)
         try assert.equal(s.items[0], 42)
         try assert.equal(s.items[1], 99)
@@ -74,7 +74,7 @@ pub fn suite() runner.Suite {
       "nested field target",
       fn() {
         o: Outer = .{ inner: .{ count: [1] } }
-        o.inner.count = o.inner.count.append(2)
+        o.inner.count = .append(2)
         try assert.equal(o.inner.count.len(), 2)
         try assert.equal(o.inner.count[1], 2)
         .Ok({})

@@ -10,9 +10,7 @@ use compiler.lower_core.control_flow.{rewrite_index_loop_continue}
 use compiler.lower_core.helpers.{
   global_func_expr, local_expr, record_get_expr, variant_pattern, void_expr,
 }
-use compiler.lower_core.types.{
-  find_field_index, iter_elem_type, resolve_type_id, type_id_from_mono,
-}
+use compiler.lower_core.types.{find_field_index, iter_elem_type, resolve_type_id, type_id_from_mono}
 use compiler.mono_type.{MonoType, TypeId}
 use lib.source.span.{Span}
 

@@ -316,8 +316,8 @@ pub fn extend_types_from(
     entry := acc_types[i]
 
     if find_type_entry_index(env, entry.id) == .None {
-      env.types = env.types.append(entry)
-      env.type_names = env.type_names.append(acc_type_names[i])
+      env.types = .append(entry)
+      env.type_names = .append(acc_type_names[i])
       env.type_index[acc_type_names[i]] = env.types.len() - 1
       env.type_id_index[entry.id.id] = env.types.len() - 1
     }
@@ -419,8 +419,8 @@ pub fn register_type_entry(env: ResolvedEnv, entry: TypeEntry, preferred_name: S
     .None => {
       env.type_index[preferred_name] = env.types.len()
       env.type_id_index[entry.id.id] = env.types.len()
-      env.types = env.types.append(entry)
-      env.type_names = env.type_names.append(preferred_name)
+      env.types = .append(entry)
+      env.type_names = .append(preferred_name)
       env
     },
   }
@@ -447,7 +447,7 @@ pub fn set_type_origin(env: ResolvedEnv, tid: TypeId, origin: String) ResolvedEn
 }
 
 pub fn remove_type_binding(env: ResolvedEnv, name: String) ResolvedEnv {
-  env.type_bindings = env.type_bindings.remove(name)
+  env.type_bindings = .remove(name)
   env
 }
 
@@ -473,7 +473,7 @@ pub fn register_function(env: ResolvedEnv, sig: FunctionSig) ResolvedEnv {
     },
     .None => {
       env.func_index[sig.name] = env.functions.len()
-      env.functions = env.functions.append(sig)
+      env.functions = .append(sig)
       env
     },
   }
@@ -490,7 +490,7 @@ pub fn bind_function(env: ResolvedEnv, name: String, target_name: String) Resolv
 }
 
 pub fn remove_function_binding(env: ResolvedEnv, name: String) ResolvedEnv {
-  env.function_bindings = env.function_bindings.remove(name)
+  env.function_bindings = .remove(name)
   env
 }
 
@@ -507,7 +507,7 @@ pub fn add_function(env: ResolvedEnv, sig: FunctionSig) ResolvedEnv {
   cur := env.register_function(sig).bind_function(sig.name, sig.name)
 
   // Clear any stale imported origin when a local function shadows a prelude/imported name.
-  cur.function_origins = cur.function_origins.remove(sig.name)
+  cur.function_origins = .remove(sig.name)
   cur
 }
 
@@ -1615,7 +1615,9 @@ fn resolve_ast_type_params(env: ResolvedEnv, ast_params: Vector<TypeParam>, s: S
             // otherwise ICEs once `E` is forced; extra args on nullary
             // contracts would be silently ignored).
             diags = .append(
-              .Error(.ContractArityMismatch(.{ span: bound_path.span, contract: seg, expected, found })),
+              .Error(
+                .ContractArityMismatch(.{ span: bound_path.span, contract: seg, expected, found }),
+              ),
             )
           } else {
             bound_args: Vector<MonoType> = []
@@ -2595,7 +2597,7 @@ fn add_name_index(name: String, names: Vector<String>, acc: TypeRefs) TypeRefs {
       }
 
       acc.seen[i] = true
-      acc.indices = acc.indices.append(i)
+      acc.indices = .append(i)
       return acc
     }
   }

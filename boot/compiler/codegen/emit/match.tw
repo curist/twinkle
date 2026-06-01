@@ -572,7 +572,7 @@ fn add_string_candidate_to_buckets(buckets: Vector<LengthBucket>, len: Int, cand
 
   for bucket, i in out {
     if bucket.len == len {
-      bucket.candidates = bucket.candidates.append(cand)
+      bucket.candidates = .append(cand)
       out[i] = bucket
       return out
     }
@@ -759,7 +759,7 @@ fn add_candidate_to_byte_groups(
 
   for group, i in out {
     if group.byte == byte {
-      group.candidates = group.candidates.append(cand)
+      group.candidates = .append(cand)
       out[i] = group
       return out
     }

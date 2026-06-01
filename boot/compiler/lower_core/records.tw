@@ -246,15 +246,17 @@ fn lower_method_value(
     ty: ret_ty,
     span: s,
   }
-  ctx.hoisted = ctx.hoisted.append(FunctionDef.{
-    func_id: lambda_func_id,
-    name: "__method_value",
-    is_init: false,
-    type_params: [],
-    params,
-    body,
-    return_ty: ret_ty,
-  })
+  ctx.hoisted = .append(
+    FunctionDef.{
+      func_id: lambda_func_id,
+      name: "__method_value",
+      is_init: false,
+      type_params: [],
+      params,
+      body,
+      return_ty: ret_ty,
+    },
+  )
 
   closure := CoreExpr.{ kind: .MakeClosure(lambda_func_id, [receiver_local]), ty, span: s }
   .{ expr: .{ kind: .Let(receiver_local, receiver, closure), ty, span: s }, ctx }

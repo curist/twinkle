@@ -236,7 +236,7 @@ fn remember_sum_helper(mono: MonoType, env: ResolvedEnv, state: SumHelperState) 
 
   if cached and !state.seen.has(key) {
     state.seen[key] = mono
-    state.order = state.order.append(key)
+    state.order = .append(key)
 
     sum_layout := get_sum_layout(mono, env)
 

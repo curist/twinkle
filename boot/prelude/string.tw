@@ -1,4 +1,5 @@
 /// Return true when the string has no bytes.
+
 pub fn is_empty(s: String) Bool {
   s.len() == 0
 }
@@ -14,106 +15,134 @@ pub fn at(s: String, index: Int) Byte {
 pub fn compare(a: String, b: String) Order {
   la := a.len()
   lb := b.len()
-  min_len := if la < lb { la } else { lb }
+  min_len := if la < lb {
+    la
+  } else {
+    lb
+  }
   i := 0
+
   for i < min_len {
     ba := Byte.to_int(a[i])
     bb := Byte.to_int(b[i])
-    if ba < bb { return .Lt }
-    if ba > bb { return .Gt }
+
+    if ba < bb {
+      return .Lt
+    }
+
+    if ba > bb {
+      return .Gt
+    }
+
     i = i + 1
   }
-  if la < lb { .Lt } else if la > lb { .Gt } else { .Eq }
+
+  if la < lb {
+    .Lt
+  } else if la > lb {
+    .Gt
+  } else {
+    .Eq
+  }
 }
 
 // Decode the code point at byte position `pos` in string `s`.
 fn decode_cp(s: String, pos: Int) Int {
   lead := Byte.to_int(s[pos])
+
   if lead < 0x80 {
     lead
   } else if lead < 0xE0 {
-    ((lead - 0xC0) * 64) + (Byte.to_int(s[pos + 1]) - 0x80)
+    (lead - 0xC0) * 64 + (Byte.to_int(s[pos + 1]) - 0x80)
   } else if lead < 0xF0 {
-    ((lead - 0xE0) * 4096) + ((Byte.to_int(s[pos + 1]) - 0x80) * 64) + (Byte.to_int(s[pos + 2]) - 0x80)
+    (lead - 0xE0) * 4096 + (Byte.to_int(s[pos + 1]) - 0x80) * 64 + (Byte.to_int(s[pos + 2]) - 0x80)
   } else {
-    ((lead - 0xF0) * 262144) + ((Byte.to_int(s[pos + 1]) - 0x80) * 4096) + ((Byte.to_int(s[pos + 2]) - 0x80) * 64) + (Byte.to_int(s[pos + 3]) - 0x80)
+    (lead - 0xF0) * 262144
+      + (Byte.to_int(s[pos + 1]) - 0x80) * 4096 + (Byte.to_int(s[pos + 2]) - 0x80) * 64
+      + (Byte.to_int(s[pos + 3]) - 0x80)
   }
 }
 
 // Return the byte length of the UTF-8 sequence starting at `pos`.
 fn cp_len(s: String, pos: Int) Int {
   lead := Byte.to_int(s[pos])
-  if lead < 0x80 { 1 }
-  else if lead < 0xE0 { 2 }
-  else if lead < 0xF0 { 3 }
-  else { 4 }
+
+  if lead < 0x80 {
+    1
+  } else if lead < 0xE0 {
+    2
+  } else if lead < 0xF0 {
+    3
+  } else {
+    4
+  }
 }
 
 // UAX #29 Grapheme_Cluster_Break=Extend property (commonly needed ranges).
 fn is_gcb_extend(cp: Int) Bool {
   // Combining Diacritical Marks
-  (cp >= 0x0300 and cp <= 0x036F) or
-  // Combining Diacritical Marks Extended
-  (cp >= 0x1AB0 and cp <= 0x1AFF) or
-  // Combining Diacritical Marks Supplement
-  (cp >= 0x1DC0 and cp <= 0x1DFF) or
-  // Combining Diacritical Marks for Symbols
-  (cp >= 0x20D0 and cp <= 0x20FF) or
-  // Combining Half Marks
-  (cp >= 0xFE20 and cp <= 0xFE2F) or
-  // Variation Selectors
-  (cp >= 0xFE00 and cp <= 0xFE0F) or
-  // Cyrillic combining marks
-  (cp >= 0x0483 and cp <= 0x0489) or
-  // Hebrew combining marks
-  (cp >= 0x0591 and cp <= 0x05BD) or
-  cp == 0x05BF or
-  (cp >= 0x05C1 and cp <= 0x05C2) or
-  (cp >= 0x05C4 and cp <= 0x05C5) or
-  cp == 0x05C7 or
-  // Arabic combining marks
-  (cp >= 0x0610 and cp <= 0x061A) or
-  (cp >= 0x064B and cp <= 0x065F) or
-  cp == 0x0670 or
-  (cp >= 0x06D6 and cp <= 0x06DC) or
-  (cp >= 0x06DF and cp <= 0x06E4) or
-  (cp >= 0x06E7 and cp <= 0x06E8) or
-  (cp >= 0x06EA and cp <= 0x06ED) or
-  // Devanagari / Indic combining marks
-  (cp >= 0x0900 and cp <= 0x0903) or
-  (cp >= 0x093A and cp <= 0x094F) or
-  (cp >= 0x0951 and cp <= 0x0957) or
-  (cp >= 0x0962 and cp <= 0x0963) or
-  // Thai / Lao combining marks
-  (cp >= 0x0E31 and cp <= 0x0E3A) or
-  (cp >= 0x0E47 and cp <= 0x0E4E) or
-  (cp >= 0x0EB1 and cp <= 0x0EBC) or
-  (cp >= 0x0EC8 and cp <= 0x0ECE) or
-  // Zero-Width Non-Joiner
-  cp == 0x200C or
-  // Emoji Modifiers (skin tones) — GCB=Extend
-  (cp >= 0x1F3FB and cp <= 0x1F3FF) or
-  // Tags (includes U+E007F TAG CANCEL)
-  (cp >= 0xE0020 and cp <= 0xE007F) or
-  // Variation Selectors Supplement
-  (cp >= 0xE0100 and cp <= 0xE01EF) or
-  // Hangul Jungseong (V) and Jongseong (T) — GCB=V/T, treated as
-  // non-breaking here for simplified Hangul syllable clustering
-  (cp >= 0x1160 and cp <= 0x11FF) or
-  // General combining marks (Mn/Me categories, additional ranges)
-  (cp >= 0x0730 and cp <= 0x074A) or
-  (cp >= 0x07A6 and cp <= 0x07B0) or
-  (cp >= 0x0816 and cp <= 0x0823) or
-  (cp >= 0x0825 and cp <= 0x0827) or
-  (cp >= 0x0829 and cp <= 0x082D) or
-  // Myanmar
-  (cp >= 0x1032 and cp <= 0x1037) or
-  (cp >= 0x1039 and cp <= 0x103A) or
-  (cp >= 0x103D and cp <= 0x103E) or
-  (cp >= 0x1058 and cp <= 0x1059) or
-  // Mongolian Free Variation Selectors
-  (cp >= 0x180B and cp <= 0x180D) or
-  cp == 0x180F
+  cp >= 0x0300 and cp <= 0x036F
+    // Combining Diacritical Marks Extended
+    or cp >= 0x1AB0 and cp <= 0x1AFF
+    // Combining Diacritical Marks Supplement
+    or cp >= 0x1DC0 and cp <= 0x1DFF
+    // Combining Diacritical Marks for Symbols
+    or cp >= 0x20D0 and cp <= 0x20FF
+    // Combining Half Marks
+    or cp >= 0xFE20 and cp <= 0xFE2F
+    // Variation Selectors
+    or cp >= 0xFE00 and cp <= 0xFE0F
+    // Cyrillic combining marks
+    or cp >= 0x0483 and cp <= 0x0489
+    // Hebrew combining marks
+    or cp >= 0x0591 and cp <= 0x05BD
+    or cp == 0x05BF
+    or cp >= 0x05C1 and cp <= 0x05C2
+    or cp >= 0x05C4 and cp <= 0x05C5
+    or cp == 0x05C7
+    // Arabic combining marks
+    or cp >= 0x0610 and cp <= 0x061A
+    or cp >= 0x064B and cp <= 0x065F
+    or cp == 0x0670
+    or cp >= 0x06D6 and cp <= 0x06DC
+    or cp >= 0x06DF and cp <= 0x06E4
+    or cp >= 0x06E7 and cp <= 0x06E8
+    or cp >= 0x06EA and cp <= 0x06ED
+    // Devanagari / Indic combining marks
+    or cp >= 0x0900 and cp <= 0x0903
+    or cp >= 0x093A and cp <= 0x094F
+    or cp >= 0x0951 and cp <= 0x0957
+    or cp >= 0x0962 and cp <= 0x0963
+    // Thai / Lao combining marks
+    or cp >= 0x0E31 and cp <= 0x0E3A
+    or cp >= 0x0E47 and cp <= 0x0E4E
+    or cp >= 0x0EB1 and cp <= 0x0EBC
+    or cp >= 0x0EC8 and cp <= 0x0ECE
+    // Zero-Width Non-Joiner
+    or cp == 0x200C
+    // Emoji Modifiers (skin tones) — GCB=Extend
+    or cp >= 0x1F3FB and cp <= 0x1F3FF
+    // Tags (includes U+E007F TAG CANCEL)
+    or cp >= 0xE0020 and cp <= 0xE007F
+    // Variation Selectors Supplement
+    or cp >= 0xE0100 and cp <= 0xE01EF
+    // Hangul Jungseong (V) and Jongseong (T) — GCB=V/T, treated as
+    // non-breaking here for simplified Hangul syllable clustering
+    or cp >= 0x1160 and cp <= 0x11FF
+    // General combining marks (Mn/Me categories, additional ranges)
+    or cp >= 0x0730 and cp <= 0x074A
+    or cp >= 0x07A6 and cp <= 0x07B0
+    or cp >= 0x0816 and cp <= 0x0823
+    or cp >= 0x0825 and cp <= 0x0827
+    or cp >= 0x0829 and cp <= 0x082D
+    // Myanmar
+    or cp >= 0x1032 and cp <= 0x1037
+    or cp >= 0x1039 and cp <= 0x103A
+    or cp >= 0x103D and cp <= 0x103E
+    or cp >= 0x1058 and cp <= 0x1059
+    // Mongolian Free Variation Selectors
+    or cp >= 0x180B and cp <= 0x180D
+    or cp == 0x180F
 }
 
 // Regional Indicator: U+1F1E6..U+1F1FF
@@ -124,24 +153,25 @@ fn is_regional_indicator(cp: Int) Bool {
 // Extended_Pictographic: simplified check covering the major emoji blocks.
 fn is_extended_pictographic(cp: Int) Bool {
   // Misc Symbols and Pictographs
-  (cp >= 0x1F300 and cp <= 0x1F5FF) or
-  // Emoticons
-  (cp >= 0x1F600 and cp <= 0x1F64F) or
-  // Transport and Map Symbols
-  (cp >= 0x1F680 and cp <= 0x1F6FF) or
-  // Supplemental Symbols and Pictographs
-  (cp >= 0x1F900 and cp <= 0x1F9FF) or
-  // Symbols and Pictographs Extended-A
-  (cp >= 0x1FA00 and cp <= 0x1FA6F) or
-  (cp >= 0x1FA70 and cp <= 0x1FAFF) or
-  // Dingbats
-  (cp >= 0x2702 and cp <= 0x27B0) or
-  // Misc symbols
-  cp == 0x00A9 or cp == 0x00AE or
-  (cp >= 0x2600 and cp <= 0x26FF) or
-  (cp >= 0x2300 and cp <= 0x23FF) or
-  // Regional indicators (also pictographic)
-  (cp >= 0x1F1E6 and cp <= 0x1F1FF)
+  cp >= 0x1F300 and cp <= 0x1F5FF
+    // Emoticons
+    or cp >= 0x1F600 and cp <= 0x1F64F
+    // Transport and Map Symbols
+    or cp >= 0x1F680 and cp <= 0x1F6FF
+    // Supplemental Symbols and Pictographs
+    or cp >= 0x1F900 and cp <= 0x1F9FF
+    // Symbols and Pictographs Extended-A
+    or cp >= 0x1FA00 and cp <= 0x1FA6F
+    or cp >= 0x1FA70 and cp <= 0x1FAFF
+    // Dingbats
+    or cp >= 0x2702 and cp <= 0x27B0
+    // Misc symbols
+    or cp == 0x00A9
+    or cp == 0x00AE
+    or cp >= 0x2600 and cp <= 0x26FF
+    or cp >= 0x2300 and cp <= 0x23FF
+    // Regional indicators (also pictographic)
+    or cp >= 0x1F1E6 and cp <= 0x1F1FF
 }
 
 // Find the end byte offset of the extended grapheme cluster starting at `pos`.
@@ -152,19 +182,28 @@ fn next_grapheme_end(s: String, pos: Int) Int {
   len := s.len()
   cp := decode_cp(s, pos)
   next := pos + cp_len(s, pos)
-  if next >= len { return next }
+
+  if next >= len {
+    return next
+  }
 
   // GB3: CR × LF
   if cp == 0x0D {
     next_cp := decode_cp(s, next)
+
     if next_cp == 0x0A {
       return next + 1
     }
+
     return next
   }
 
   // GB4: Control / LF breaks after
-  if cp == 0x0A or (cp >= 0x00 and cp <= 0x1F and cp != 0x0D) or (cp >= 0x7F and cp <= 0x9F) or cp == 0x2028 or cp == 0x2029 {
+  if cp == 0x0A
+    or cp >= 0x00 and cp <= 0x1F and cp != 0x0D
+    or cp >= 0x7F and cp <= 0x9F
+    or cp == 0x2028
+    or cp == 0x2029 {
     return next
   }
 
@@ -174,10 +213,10 @@ fn next_grapheme_end(s: String, pos: Int) Int {
   // GB12/13: Regional Indicator — consume exactly one pair
   if is_regional_indicator(cp) {
     next_cp := decode_cp(s, next)
+
     if is_regional_indicator(next_cp) {
       next = next + cp_len(s, next)
     }
-    // Fall through to extend loop
   }
 
   // GB9/GB9a/GB11: consume Extend, ZWJ sequences
@@ -185,7 +224,12 @@ fn next_grapheme_end(s: String, pos: Int) Int {
     next_cp := decode_cp(s, next)
 
     // GB5: break before Control/CR/LF
-    if next_cp == 0x0A or next_cp == 0x0D or (next_cp >= 0x00 and next_cp <= 0x1F) or (next_cp >= 0x7F and next_cp <= 0x9F) or next_cp == 0x2028 or next_cp == 0x2029 {
+    if next_cp == 0x0A
+      or next_cp == 0x0D
+      or next_cp >= 0x00 and next_cp <= 0x1F
+      or next_cp >= 0x7F and next_cp <= 0x9F
+      or next_cp == 0x2028
+      or next_cp == 0x2029 {
       break
     }
 
@@ -195,9 +239,11 @@ fn next_grapheme_end(s: String, pos: Int) Int {
     } else if next_cp == 0x200D {
       // GB9: × ZWJ
       next = next + cp_len(s, next)
+
       // GB11: ExtPict Extend* ZWJ × ExtPict — only if base context is ExtPict
       if saw_extpict and next < len {
         after_zwj := decode_cp(s, next)
+
         if is_extended_pictographic(after_zwj) {
           next = next + cp_len(s, next)
           saw_extpict = true
@@ -213,97 +259,154 @@ fn next_grapheme_end(s: String, pos: Int) Int {
 
 /// Iterate extended grapheme clusters.
 pub fn graphemes(s: String) Iterator<String> {
-  Iterator.unfold(0, fn(pos: Int) {
-    if pos >= s.len() {
-      UnfoldStep.Done
-    } else {
-      next := next_grapheme_end(s, pos)
-      UnfoldStep.Yield(s.slice(pos, next), next)
-    }
-  })
+  Iterator.unfold(
+    0,
+    fn(pos: Int) {
+      if pos >= s.len() {
+        UnfoldStep.Done
+      } else {
+        next := next_grapheme_end(s, pos)
+        UnfoldStep.Yield(s.slice(pos, next), next)
+      }
+    },
+  )
 }
 
 /// Iterate Unicode scalars as strings.
 pub fn chars(s: String) Iterator<String> {
-  Iterator.unfold(0, fn(pos: Int) {
-    if pos >= s.len() {
-      UnfoldStep.Done
-    } else {
-      lead := Byte.to_int(s[pos])
-      byte_len := if lead < 128 { 1 }
-                  else if lead < 224 { 2 }
-                  else if lead < 240 { 3 }
-                  else { 4 }
-      UnfoldStep.Yield(s.slice(pos, pos + byte_len), pos + byte_len)
-    }
-  })
+  Iterator.unfold(
+    0,
+    fn(pos: Int) {
+      if pos >= s.len() {
+        UnfoldStep.Done
+      } else {
+        lead := Byte.to_int(s[pos])
+        byte_len := if lead < 128 {
+          1
+        } else if lead < 224 {
+          2
+        } else if lead < 240 {
+          3
+        } else {
+          4
+        }
+        UnfoldStep.Yield(s.slice(pos, pos + byte_len), pos + byte_len)
+      }
+    },
+  )
 }
 
 /// Return code point at scalar index i.
 pub fn code_point_at(s: String, i: Int) Int? {
   pos := 0
   idx := 0
+
   for pos < s.len() {
     lead := Byte.to_int(s[pos])
-    byte_len := if lead < 128 { 1 }
-                else if lead < 224 { 2 }
-                else if lead < 240 { 3 }
-                else { 4 }
+    byte_len := if lead < 128 {
+      1
+    } else if lead < 224 {
+      2
+    } else if lead < 240 {
+      3
+    } else {
+      4
+    }
+
     if idx == i {
       cp := if byte_len == 1 {
         lead
       } else if byte_len == 2 {
-        ((lead - 192) * 64) + (Byte.to_int(s[pos + 1]) - 128)
+        (lead - 192) * 64 + (Byte.to_int(s[pos + 1]) - 128)
       } else if byte_len == 3 {
-        ((lead - 224) * 4096) + ((Byte.to_int(s[pos + 1]) - 128) * 64) + (Byte.to_int(s[pos + 2]) - 128)
+        (lead - 224) * 4096 + (Byte.to_int(s[pos + 1]) - 128) * 64 + (Byte.to_int(s[pos + 2]) - 128)
       } else {
-        ((lead - 240) * 262144) + ((Byte.to_int(s[pos + 1]) - 128) * 4096) + ((Byte.to_int(s[pos + 2]) - 128) * 64) + (Byte.to_int(s[pos + 3]) - 128)
+        (lead - 240) * 262144
+          + (Byte.to_int(s[pos + 1]) - 128) * 4096 + (Byte.to_int(s[pos + 2]) - 128) * 64
+          + (Byte.to_int(s[pos + 3]) - 128)
       }
+
       return .Some(cp)
     }
+
     pos = pos + byte_len
     idx = idx + 1
   }
+
   .None
 }
 
 /// Return a substring by character (Unicode scalar) indices [start, end).
 /// Indices are clamped to [0, char_len]; start > end yields "".
 pub fn substring(s: String, start: Int, end: Int) String {
-  start := if start < 0 { 0 } else { start }
-  end := if end < 0 { 0 } else { end }
-  if start >= end { return "" }
+  start := if start < 0 {
+    0
+  } else {
+    start
+  }
+  end := if end < 0 {
+    0
+  } else {
+    end
+  }
+
+  if start >= end {
+    return ""
+  }
+
   len := s.len()
   pos := 0
   idx := 0
   byte_start := len
   byte_end := len
+
   for pos < len {
-    if idx == start { byte_start = pos }
+    if idx == start {
+      byte_start = pos
+    }
+
     if idx == end {
       byte_end = pos
       break
     }
+
     lead := s[pos]
-    byte_len := if lead < 128 { 1 }
-                else if lead < 224 { 2 }
-                else if lead < 240 { 3 }
-                else { 4 }
+    byte_len := if lead < 128 {
+      1
+    } else if lead < 224 {
+      2
+    } else if lead < 240 {
+      3
+    } else {
+      4
+    }
     pos = pos + byte_len
     idx = idx + 1
   }
-  if idx == start { byte_start = pos }
-  if idx == end { byte_end = pos }
-  if byte_start >= byte_end { return "" }
+
+  if idx == start {
+    byte_start = pos
+  }
+
+  if idx == end {
+    byte_end = pos
+  }
+
+  if byte_start >= byte_end {
+    return ""
+  }
+
   s.slice(byte_start, byte_end)
 }
 
 /// Return the number of Unicode scalars.
 pub fn char_len(s: String) Int {
   count := 0
+
   for ch in s.chars() {
     count = count + 1
   }
+
   count
 }
 
@@ -319,27 +422,34 @@ pub fn index_of(s: String, needle: String) Int? {
   if m == 0 {
     return .Some(0)
   }
+
   if m > n {
     return .None
   }
 
   i := 0
   last := n - m
+
   for i <= last {
     found := true
     j := 0
+
     for j < m {
       if s[i + j] != needle[j] {
         found = false
         break
       }
+
       j = j + 1
     }
+
     if found {
       return .Some(i)
     }
+
     i = i + 1
   }
+
   .None
 }
 
@@ -356,21 +466,26 @@ pub fn contains(s: String, needle: String) Bool {
 fn region_eq(s: String, start: Int, other: String) Bool {
   m := other.len()
   i := 0
+
   for i < m {
     if s[start + i] != other[i] {
       return false
     }
+
     i = i + 1
   }
+
   true
 }
 
 /// Return true if s starts with prefix.
 pub fn starts_with(s: String, prefix: String) Bool {
   m := prefix.len()
+
   if m > s.len() {
     return false
   }
+
   region_eq(s, 0, prefix)
 }
 
@@ -378,9 +493,11 @@ pub fn starts_with(s: String, prefix: String) Bool {
 pub fn ends_with(s: String, suffix: String) Bool {
   n := s.len()
   m := suffix.len()
+
   if m > n {
     return false
   }
+
   region_eq(s, n - m, suffix)
 }
 
@@ -399,15 +516,18 @@ pub fn split(s: String, sep: String) Vector<String> {
   for i <= n - m {
     found := true
     j := 0
+
     for j < m {
       if s[i + j] != sep[j] {
         found = false
         break
       }
+
       j = j + 1
     }
+
     if found {
-      parts = parts.append(s.slice(start, i))
+      parts = .append(s.slice(start, i))
       i = i + m
       start = i
     } else {
@@ -421,29 +541,46 @@ pub fn split(s: String, sep: String) Vector<String> {
 /// Split on newlines, handling both \n and \r\n.
 pub fn lines(s: String) Vector<String> {
   n := s.len()
+
   if n == 0 {
     return []
   }
+
   parts: Vector<String> = []
   start := 0
   i := 0
+
   for i < n {
     if s[i] == 10 {
-      end := if i > start and s[i - 1] == 13 { i - 1 } else { i }
-      parts = parts.append(s.slice(start, end))
+      end := if i > start and s[i - 1] == 13 {
+        i - 1
+      } else {
+        i
+      }
+      parts = .append(s.slice(start, end))
       start = i + 1
     }
+
     i = i + 1
   }
+
   // trailing segment (strip final \r if present)
-  end := if n > start and s[n - 1] == 13 { n - 1 } else { n }
+  end := if n > start and s[n - 1] == 13 {
+    n - 1
+  } else {
+    n
+  }
   parts.append(s.slice(start, end))
 }
 
 /// Remove prefix and return the remainder, or .None if s doesn't start with prefix.
 pub fn strip_prefix(s: String, prefix: String) String? {
   m := prefix.len()
-  if m > s.len() { return .None }
+
+  if m > s.len() {
+    return .None
+  }
+
   if region_eq(s, 0, prefix) {
     .Some(s.slice(m, s.len()))
   } else {
@@ -455,7 +592,11 @@ pub fn strip_prefix(s: String, prefix: String) String? {
 pub fn strip_suffix(s: String, suffix: String) String? {
   n := s.len()
   m := suffix.len()
-  if m > n { return .None }
+
+  if m > n {
+    return .None
+  }
+
   if region_eq(s, n - m, suffix) {
     .Some(s.slice(0, n - m))
   } else {
@@ -466,22 +607,34 @@ pub fn strip_suffix(s: String, suffix: String) String? {
 /// Count non-overlapping occurrences of needle in s.
 pub fn count(s: String, needle: String) Int {
   m := needle.len()
-  if m == 0 { return 0 }
+
+  if m == 0 {
+    return 0
+  }
+
   n := s.len()
-  if m > n { return 0 }
+
+  if m > n {
+    return 0
+  }
+
   c := 0
   i := 0
   last := n - m
+
   for i <= last {
     found := true
     j := 0
+
     for j < m {
       if s[i + j] != needle[j] {
         found = false
         break
       }
+
       j = j + 1
     }
+
     if found {
       c = c + 1
       i = i + m
@@ -489,31 +642,39 @@ pub fn count(s: String, needle: String) Int {
       i = i + 1
     }
   }
+
   c
 }
 
 /// Replace all non-overlapping occurrences of old with new_s.
 pub fn replace(s: String, old: String, new_s: String) String {
-  if old.len() == 0 { return s }
+  if old.len() == 0 {
+    return s
+  }
+
   s.split(old).join(new_s)
 }
 
 /// Trim leading and trailing ASCII whitespace.
 pub fn trim(s: String) String {
   n := s.len()
+
   if n == 0 {
     return s
   }
 
   start := 0
+
   for start < n and is_ascii_space(s.char_code_at(start)) {
     start = start + 1
   }
+
   if start == n {
     return ""
   }
 
   end := n - 1
+
   for end >= start and is_ascii_space(s.char_code_at(end)) {
     end = end - 1
   }

@@ -227,7 +227,7 @@ pub fn lower_closure(
     body: body_r.expr,
     return_ty: lambda_ret_ty,
   }
-  ctx.hoisted = ctx.hoisted.append(hoisted_def)
+  ctx.hoisted = .append(hoisted_def)
 
   // 8. Emit MakeClosure
   .{ expr: .{ kind: .MakeClosure(lambda_func_id, free_vars), ty, span: s }, ctx }

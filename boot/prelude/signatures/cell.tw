@@ -1,4 +1,5 @@
 /// Create a mutable cell containing value.
+
 pub fn new<T>(value: T) Cell<T> {
   value
 }
@@ -9,9 +10,7 @@ pub fn get<T>(cell: Cell<T>) T {
 }
 
 /// Overwrite the current value in a cell.
-pub fn set<T>(cell: Cell<T>, value: T) Void {
-}
+pub fn set<T>(cell: Cell<T>, value: T) Void {}
 
 /// Apply f to the current value and store the result.
-pub fn update<T>(cell: Cell<T>, f: fn(T) T) Void {
-}
+pub fn update<T>(cell: Cell<T>, f: fn(T) T) Void {}

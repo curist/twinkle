@@ -1,4 +1,5 @@
 /// Convert a float to its string representation.
+
 pub fn to_string(f: Float) String {
   ""
 }
@@ -17,4 +18,3 @@ pub fn from_string(s: String) Option<Float> {
 pub fn bits(f: Float) Int {
   0
 }
-

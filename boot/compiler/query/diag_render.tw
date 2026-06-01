@@ -327,11 +327,18 @@ fn error_to_report(e: ErrorDiag, ctx: RenderCtx) Report {
       } else {
         "contract `${d.contract}` expects ${d.expected.to_string()} type argument(s), but got ${d.found.to_string()}"
       },
-      labels: [primary(d.span, .Some(if d.expected == 0 {
-        "remove the type arguments"
-      } else {
-        "expected ${d.expected.to_string()} type argument(s)"
-      }))],
+      labels: [
+        primary(
+          d.span,
+          .Some(
+            if d.expected == 0 {
+              "remove the type arguments"
+            } else {
+              "expected ${d.expected.to_string()} type argument(s)"
+            },
+          ),
+        ),
+      ],
       help_lines: if d.expected == 0 {
         ["write `${d.contract}`"]
       } else {

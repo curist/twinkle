@@ -1,4 +1,5 @@
 /// Convert a byte to its integer value.
+
 pub fn to_int(b: Byte) Int {
   0
 }

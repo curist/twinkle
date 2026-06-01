@@ -683,13 +683,15 @@ fn analyze_dependencies(
         },
       }
 
-      cur.import_timings = cur.import_timings.append(.{
-        ms: dt,
-        kind: kind_name,
-        importer: canonical,
-        dependency: dep.canonical_path,
-        export_entries,
-      })
+      cur.import_timings = .append(
+        .{
+          ms: dt,
+          kind: kind_name,
+          importer: canonical,
+          dependency: dep.canonical_path,
+          export_entries,
+        },
+      )
       cur.timings.import_merge = cur.timings.import_merge + (date.now() - t_import0)
     }
   }
@@ -791,7 +793,7 @@ fn publish_interface(
   cur.interfaces[canonical] = interface
   cur.cache = cache.set_exports_fingerprint(cur.cache, canonical, interface.fingerprint)
   cur.cache = cache.set_module_hash(cur.cache, canonical, keys.module_hash(source_hash, deps_hash))
-  cur.module_order = cur.module_order.append(canonical)
+  cur.module_order = .append(canonical)
   cur
 }
 
@@ -914,7 +916,7 @@ fn capture_local_types(
   for i in local_type_start..env.types.len() {
     entry := env.types[i]
     name := env.type_names[i]
-    state.shared_types = state.shared_types.append(.{ entry, name })
+    state.shared_types = .append(.{ entry, name })
 
     // Record the assignment for future stable TypeId enforcement (Phase 4).
     // The returned out.id is not yet used — TypeIds still come from the

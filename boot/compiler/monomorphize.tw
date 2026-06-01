@@ -1014,7 +1014,7 @@ fn collect_instantiations(
               subst := ctx.infer_call_subst(gf, args, expr.ty)
 
               if subst_covers(type_params, subst) {
-                queue.items = queue.items.append(InstItem.{ func_id: fid, subst })
+                queue.items = .append(InstItem.{ func_id: fid, subst })
               }
             },
             .None => {},
@@ -1038,7 +1038,7 @@ fn collect_instantiations(
               subst := ctx.infer_call_subst(gf, call_args, expr.ty)
 
               if subst_covers(type_params, subst) {
-                queue.items = queue.items.append(InstItem.{ func_id: fid, subst })
+                queue.items = .append(InstItem.{ func_id: fid, subst })
               }
             },
             .None => {},
@@ -1059,7 +1059,7 @@ fn collect_instantiations(
             subst := match_type_against(generic_fn_ty, expr.ty, Dict.new())
 
             if subst_covers(type_params, subst) {
-              queue.items = queue.items.append(InstItem.{ func_id: fid, subst })
+              queue.items = .append(InstItem.{ func_id: fid, subst })
             }
           },
           .None => {},
@@ -1077,7 +1077,7 @@ fn collect_instantiations(
             subst = capture_subst_from_free_vars(gf, free_vars, local_types, subst)
 
             if subst_covers(type_params, subst) {
-              queue.items = queue.items.append(InstItem.{ func_id: fid, subst })
+              queue.items = .append(InstItem.{ func_id: fid, subst })
             }
           },
           .None => {},

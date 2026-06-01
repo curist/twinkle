@@ -1,12 +1,18 @@
 /// Return true if path starts with "/".
+
 pub fn is_absolute(path: String) Bool {
   String.len(path) > 0 and String.slice(path, 0, 1) == "/"
 }
 
 /// Join two path segments with "/".
 pub fn join(base: String, part: String) String {
-  if base == "" { return part }
-  if part == "" { return base }
+  if base == "" {
+    return part
+  }
+
+  if part == "" {
+    return base
+  }
 
   base_len := String.len(base)
   part_len := String.len(part)
@@ -24,14 +30,18 @@ pub fn join(base: String, part: String) String {
 
 /// Join multiple path segments with "/".
 pub fn join_all(parts: Vector<String>) String {
-  if parts.len() == 0 { return "" }
+  if parts.len() == 0 {
+    return ""
+  }
 
   out := parts[0]
   i := 1
+
   for i < parts.len() {
     out = join(out, parts[i])
     i = i + 1
   }
+
   out
 }
 
@@ -39,16 +49,25 @@ pub fn join_all(parts: Vector<String>) String {
 /// "a/b/c" → "a/b", "/" → "/", "file" → ".".
 pub fn dirname(path: String) String {
   n := String.len(path)
-  if n == 0 { return "." }
+
+  if n == 0 {
+    return "."
+  }
 
   i := n - 1
+
   for i >= 0 {
     if String.slice(path, i, i + 1) == "/" {
-      if i == 0 { return "/" }
+      if i == 0 {
+        return "/"
+      }
+
       return String.slice(path, 0, i)
     }
+
     i = i - 1
   }
+
   "."
 }
 
@@ -56,15 +75,21 @@ pub fn dirname(path: String) String {
 /// "a/b/c.txt" → "c.txt".
 pub fn basename(path: String) String {
   n := String.len(path)
-  if n == 0 { return "" }
+
+  if n == 0 {
+    return ""
+  }
 
   i := n - 1
+
   for i >= 0 {
     if String.slice(path, i, i + 1) == "/" {
       return String.slice(path, i + 1, n)
     }
+
     i = i - 1
   }
+
   path
 }
 
@@ -75,12 +100,15 @@ pub fn stem(path: String) String {
   n := String.len(name)
 
   i := n - 1
+
   for i > 0 {
     if String.slice(name, i, i + 1) == "." {
       return String.slice(name, 0, i)
     }
+
     i = i - 1
   }
+
   name
 }
 
@@ -91,12 +119,15 @@ pub fn extension(path: String) String {
   n := String.len(name)
 
   i := n - 1
+
   for i > 0 {
     if String.slice(name, i, i + 1) == "." {
       return String.slice(name, i, n)
     }
+
     i = i - 1
   }
+
   ""
 }
 
@@ -113,27 +144,32 @@ pub fn normalize(path: String) String {
   for i <= n {
     at_end := i == n
     at_sep := false
+
     if !at_end {
       at_sep = String.slice(path, i, i + 1) == "/"
     }
 
     if at_end or at_sep {
       seg := String.slice(path, start, i)
-      if seg == "" or seg == "." {
-      } else if seg == ".." {
+
+      if seg == "" or seg == "." {} else if seg == ".." {
         if segs.len() > 0 {
           last := segs[segs.len() - 1]
+
           if last == ".." {
-            if !abs { segs = segs.append(seg) }
+            if !abs {
+              segs = .append(seg)
+            }
           } else {
-            segs = segs.slice(0, segs.len() - 1)
+            segs = .slice(0, segs.len() - 1)
           }
         } else if !abs {
-          segs = segs.append(seg)
+          segs = .append(seg)
         }
       } else {
-        segs = segs.append(seg)
+        segs = .append(seg)
       }
+
       start = i + 1
     }
 
@@ -141,26 +177,35 @@ pub fn normalize(path: String) String {
   }
 
   if segs.len() == 0 {
-    if abs { "/" } else { "." }
+    if abs {
+      "/"
+    } else {
+      "."
+    }
   } else if abs {
     out := "/"
     j := 0
+
     for j < segs.len() {
       if out == "/" {
         out = "${out}${segs[j]}"
       } else {
         out = "${out}/${segs[j]}"
       }
+
       j = j + 1
     }
+
     out
   } else {
     out := segs[0]
     j := 1
+
     for j < segs.len() {
       out = "${out}/${segs[j]}"
       j = j + 1
     }
+
     out
   }
 }

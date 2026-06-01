@@ -32,7 +32,7 @@ pub fn lower_stmts(
         target := case r.ctx.lookup_local_or_global(ls.name) {
           .Some(id) => id,
           .None => {
-            r.ctx = r.ctx.emit_error(ls.span, "undefined variable for assign: ${ls.name}")
+            r.ctx = .emit_error(ls.span, "undefined variable for assign: ${ls.name}")
             LocalId.{ id: -1 }
           },
         }

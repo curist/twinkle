@@ -95,12 +95,12 @@ pub fn alloc_func_id(ctx: LowerCtx) FuncIdOut {
 }
 
 pub fn push_scope(ctx: LowerCtx) LowerCtx {
-  ctx.locals = ctx.locals.append(Dict.new())
+  ctx.locals = .append(Dict.new())
   ctx
 }
 
 pub fn pop_scope(ctx: LowerCtx) LowerCtx {
-  ctx.locals = ctx.locals.drop_last()
+  ctx.locals = .drop_last()
   ctx
 }
 
@@ -149,6 +149,6 @@ pub fn expr_type(ctx: LowerCtx, expr: Expr) MonoType {
 }
 
 pub fn emit_error(ctx: LowerCtx, s: Span, msg: String) LowerCtx {
-  ctx.errors = ctx.errors.append(.Error(.LowerError(.{ span: s, message: msg, help_lines: [] })))
+  ctx.errors = .append(.Error(.LowerError(.{ span: s, message: msg, help_lines: [] })))
   ctx
 }

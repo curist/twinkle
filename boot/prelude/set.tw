@@ -6,13 +6,13 @@ pub fn new<K>() Set<K> {
 
 /// Return a new set with the element inserted.
 pub fn insert<K>(s: Set<K>, k: K) Set<K> {
-  s.entries = s.entries.set(k, {})
+  s.entries = .set(k, {})
   s
 }
 
 /// Return a new set with the element removed.
 pub fn remove<K>(s: Set<K>, k: K) Set<K> {
-  s.entries = s.entries.remove(k)
+  s.entries = .remove(k)
   s
 }
 

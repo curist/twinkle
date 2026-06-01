@@ -342,7 +342,7 @@ pub fn lex(source: String, file_id: Int) StageResult<Vector<Token>> {
       // Same-line line comment → trailing trivia on previous token
       if kind == .LineComment and !saw_newline and out.len() > 0 {
         last := out[out.len() - 1]
-        last.trailing_trivia = last.trailing_trivia.append(trivia_entry)
+        last.trailing_trivia = .append(trivia_entry)
         out[out.len() - 1] = last
       } else {
         trivia_buf = .append(trivia_entry)
