@@ -86,6 +86,52 @@ pub fn suite() runner.Suite {
       },
     )
     .test(
+      "equality ignores insertion order",
+      fn() {
+        a := Set.from_vector([1, 2, 3])
+        b := Set.from_vector([3, 2, 1])
+        c := Set.from_vector([1, 2, 4])
+        d := Set.from_vector([1, 2])
+        try assert.is_true(a == b)
+        try assert.is_false(a == c)
+        try assert.is_false(a == d)
+        try assert.is_true(a != c)
+        .Ok({})
+      },
+    )
+    .test(
+      "for loops iterate set elements in insertion order",
+      fn() {
+        s := Set.from_vector(["c", "a", "b"])
+        seen: Vector<String> = []
+
+        for x in s {
+          seen = .append(x)
+        }
+
+        try assert.equal(seen.len(), 3)
+        try assert.equal(seen[0], "c")
+        try assert.equal(seen[1], "a")
+        try assert.equal(seen[2], "b")
+        .Ok({})
+      },
+    )
+    .test(
+      "collect accepts set iterables",
+      fn() {
+        s := Set.from_vector([1, 2, 3])
+        xs := collect x in s {
+          x * 2
+        }
+
+        try assert.equal(xs.len(), 3)
+        try assert.equal(xs[0], 2)
+        try assert.equal(xs[1], 4)
+        try assert.equal(xs[2], 6)
+        .Ok({})
+      },
+    )
+    .test(
       "union ordering and membership",
       fn() {
         a := Set.from_vector(["a", "b", "c"])

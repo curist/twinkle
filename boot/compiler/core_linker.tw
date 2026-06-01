@@ -28,6 +28,7 @@ fn is_builtin_method_type(type_name: String) Bool {
     or type_name == "Vector"
     or type_name == "Dict"
     or type_name == "Option"
+    or type_name == "Set"
     or type_name == "Result"
 }
 
@@ -224,9 +225,15 @@ pub fn link(
           }
 
           for entry in entries {
+            allow_external_method := case entry_env.find_type_name(TypeId.{ id: canonical_tid }) {
+              .Some(type_name) => is_builtin_method_type(type_name),
+              .None => false,
+            }
+
             case m.func_table[entry.function_name] {
               .Some(local_fid) => if local_fid.id < builtin_count
-                or remap.has(local_fid.id) and !m.external_refs.has(local_fid.id) {
+                or remap.has(local_fid.id)
+                and (!m.external_refs.has(local_fid.id) or allow_external_method) {
                 global_fid := remap_func_id(local_fid, remap)
                 key := "t${canonical_tid}::${entry.method_name}"
 

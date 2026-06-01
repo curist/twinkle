@@ -48,12 +48,12 @@ pub type MethodCallInfo = .{
 // (keyed by the iterable expression id) instead of leaving lowering to re-derive
 // it from the receiver's `Var(_)` shape and the `method_calls` side channel.
 pub type IterableLoweringKind = {
-  ConcreteIndexed,      // Vector or String: indexed loop, len/elem via builtins
-  Dict,                 // Dict<K, V>: iterate the keys
-  Range,                // Range: directional counting loop
-  Iterator,             // Iterator<E>: pull via `next()`
-  IndexReadContract,    // type var bound `IndexRead<E>`: `at`/`len` via contract
-  IntoIteratorContract, // type var bound `IntoIterator<E>`: wrap in `iter()`
+  ConcreteIndexed,
+  Dict,
+  Range,
+  Iterator,
+  IndexReadContract,
+  IntoIteratorContract,
 }
 
 pub type IterableLoweringInfo = .{ elem_ty: MonoType, kind: IterableLoweringKind }
@@ -3701,6 +3701,26 @@ type IterableBindingInfo = .{
   diags: Vector<DiagKind>,
 }
 
+fn single_arg_named_iterable_info(
+  args: Vector<MonoType>,
+  kind: IterableLoweringKind,
+  s: Span,
+  zonked: MonoType,
+  diags: Vector<DiagKind>,
+) IterableBindingInfo {
+  if args.len() > 0 {
+    .{ elem_ty: args[0], secondary_ty: .Some(MonoType.Int), secondary_allowed: true, kind, diags }
+  } else {
+    .{
+      elem_ty: MonoType.Int,
+      secondary_ty: .Some(MonoType.Int),
+      secondary_allowed: true,
+      kind,
+      diags: diags.append(.Error(.NotIterable(.{ span: s, ty: zonked }))),
+    }
+  }
+}
+
 // Which access contract makes a type variable iterable: `IndexRead` (by index)
 // takes precedence over `IntoIterator` (by `iter()`). `.None` means neither.
 fn iterable_var_match(ty: MonoType, scope: Vector<ResolvedTypeParam>) ScopedContractBound? {
@@ -3767,23 +3787,8 @@ fn iterable_binding_info_of(ty: MonoType, s: Span, ctx: InferCtx, diags: Vector<
         kind: .Range,
         diags,
       },
-      .Some("Iterator") => if args.len() > 0 {
-        .{
-          elem_ty: args[0],
-          secondary_ty: .Some(MonoType.Int),
-          secondary_allowed: true,
-          kind: .Iterator,
-          diags,
-        }
-      } else {
-        .{
-          elem_ty: MonoType.Int,
-          secondary_ty: .Some(MonoType.Int),
-          secondary_allowed: true,
-          kind: .Iterator,
-          diags: diags.append(.Error(.NotIterable(.{ span: s, ty: zonked }))),
-        }
-      },
+      .Some("Iterator") => single_arg_named_iterable_info(args, .Iterator, s, zonked, diags),
+      .Some("Set") => single_arg_named_iterable_info(args, .IntoIteratorContract, s, zonked, diags),
       _ => .{
         elem_ty: MonoType.Int,
         secondary_ty: .Some(MonoType.Int),

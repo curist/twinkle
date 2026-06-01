@@ -314,6 +314,41 @@ The free functions `dict_get(d, key)` and `dict_get_unsafe(d, key)` also exist.
 Dicts are iterable: `for k, v in d { ... }`.
 Qualified forms (`Dict.values`, etc.) also work.
 
+## Set\<K\>
+
+Persistent set backed by a `Dict<K, Void>`. Elements must be `Int`, `String`, or
+`Byte` (the same key constraint as `Dict`). Insertion order of first insertion is
+preserved, so `to_vector` and iteration are deterministic. No import needed.
+
+| Method | Signature | Description |
+|--------|-----------|-------------|
+| `Set.new()` | `fn<K>() Set<K>` | Create an empty set |
+| `.insert(k)` | `fn<K>(s: Set<K>, k: K) Set<K>` | Return a new set with `k` added (no-op if present) |
+| `.remove(k)` | `fn<K>(s: Set<K>, k: K) Set<K>` | Return a new set with `k` removed |
+| `.contains(k)` | `fn<K>(s: Set<K>, k: K) Bool` | Whether `k` is a member |
+| `.len()` | `fn<K>(s: Set<K>) Int` | Number of elements |
+| `.is_empty()` | `fn<K>(s: Set<K>) Bool` | Whether the set has no elements |
+| `.to_vector()` | `fn<K>(s: Set<K>) Vector<K>` | Elements as a vector, in insertion order |
+| `.iter()` | `fn<K>(s: Set<K>) Iterator<K>` | Iterate elements in insertion order |
+| `Set.from_vector(xs)` | `fn<K>(xs: Vector<K>) Set<K>` | Build a set from a vector, deduplicating |
+| `.union(other)` | `fn<K>(a: Set<K>, b: Set<K>) Set<K>` | Elements in either set (order: `a` then new from `b`) |
+| `.intersection(other)` | `fn<K>(a: Set<K>, b: Set<K>) Set<K>` | Elements in both sets (order from `a`) |
+| `.difference(other)` | `fn<K>(a: Set<K>, b: Set<K>) Set<K>` | Elements in `a` but not `b` (order from `a`) |
+| `.is_subset(other)` | `fn<K>(a: Set<K>, b: Set<K>) Bool` | Whether every element of `a` is in `b` |
+
+Sets support `==`/`!=` using membership equality, so insertion order does not
+affect equality. Sets are directly iterable in insertion order; `.to_vector()`
+returns the same order when a materialized vector is needed. Qualified forms
+(`Set.union`, etc.) also work.
+
+```tw
+seen: Set<Int> = Set.new()
+seen = seen.insert(3).insert(7)
+seen.contains(7)                   // true
+Set.from_vector([1, 1, 2]).len()   // 2
+for k in seen { ... }              // iterate directly
+```
+
 ## Operators
 
 ### Arithmetic (`Int` and `Float`)

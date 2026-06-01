@@ -36,6 +36,42 @@ pub fn to_vector<K>(s: Set<K>) Vector<K> {
   s.entries.keys()
 }
 
+type SetIterState<K> = .{ xs: Vector<K>, index: Int }
+
+/// Iterate elements in insertion order.
+pub fn iter<K>(s: Set<K>) Iterator<K> {
+  xs := s.to_vector()
+
+  Iterator.unfold(
+    SetIterState.{ xs, index: 0 },
+    fn(state: SetIterState<K>) {
+      if state.index >= state.xs.len() {
+        UnfoldStep.Done
+      } else {
+        UnfoldStep.Yield(
+          state.xs[state.index],
+          SetIterState.{ xs: state.xs, index: state.index + 1 },
+        )
+      }
+    },
+  )
+}
+
+/// Return true when both sets contain the same elements.
+pub fn eq<K>(a: Set<K>, b: Set<K>) Bool {
+  if a.len() != b.len() {
+    return false
+  }
+
+  for k in a.entries {
+    if !b.contains(k) {
+      return false
+    }
+  }
+
+  true
+}
+
 /// Create a set from a vector, deduplicating elements.
 pub fn from_vector<K>(xs: Vector<K>) Set<K> {
   s: Set<K> = Set.{ entries: Dict.new() }
