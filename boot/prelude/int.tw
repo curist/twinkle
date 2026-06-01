@@ -1,6 +1,36 @@
 /// Compare two Ints.
+
 pub fn compare(a: Int, b: Int) Order {
-  if a < b { .Lt } else if a > b { .Gt } else { .Eq }
+  if a < b {
+    .Lt
+  } else if a > b {
+    .Gt
+  } else {
+    .Eq
+  }
+}
+
+/// The smaller of two Ints.
+pub fn min(a: Int, b: Int) Int {
+  if a < b {
+    a
+  } else {
+    b
+  }
+}
+
+/// The larger of two Ints.
+pub fn max(a: Int, b: Int) Int {
+  if a > b {
+    a
+  } else {
+    b
+  }
+}
+
+/// Clamp `n` into the inclusive range `[lo, hi]` (assumes `lo <= hi`).
+pub fn clamp(n: Int, lo: Int, hi: Int) Int {
+  n.max(lo).min(hi)
 }
 
 /// Convert Int to Float.

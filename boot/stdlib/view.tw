@@ -80,9 +80,18 @@ pub fn drop_last<C>(v: View<C>) View<C> {
 }
 
 /// Sub-window covering [a, b) relative to this view (O(1), shares the backing).
+///
+/// Total by construction: the endpoints are clamped into `[0, v.count]`, so
+/// out-of-range arguments collapse to a valid (possibly empty) window rather
+/// than producing a negative count or an out-of-bounds start. This matches the
+/// forgiving `drop_first` / `drop_last` behavior. For example `v.sub(-5, 3)`
+/// becomes `v.sub(0, 3)`, `v.sub(2, 999)` becomes `v.sub(2, v.len())`, and a
+/// reversed range like `v.sub(8, 3)` becomes an empty window.
 pub fn sub<C>(v: View<C>, a: Int, b: Int) View<C> {
-  v.start = v.start + a
-  v.count = b - a
+  start := a.clamp(0, v.count)
+  end := b.clamp(start, v.count)
+  v.start = v.start + start
+  v.count = end - start
   v
 }
 

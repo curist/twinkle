@@ -1,7 +1,8 @@
 # Access-contract hardening and cleanup
 
-Status: **In progress** — Findings 1 (arity validation) and 2 (proof-cache
-soundness) are landed and self-host green; Findings 3–6 are pending.
+Status: **In progress** — Findings 1 (arity validation), 2 (proof-cache
+soundness), and 6 (`View.sub` clamping) are landed and self-host green;
+Findings 3–5 (lowering/monomorphization refactors) are pending.
 
 ## Goal
 
@@ -304,7 +305,12 @@ Regression coverage:
 - Existing `View<C>` nested-bound cases still monomorphize.
 - Recursive generic functions do not trigger unbounded recovery.
 
-### 6. Make `View.sub` total by clamping
+### 6. Make `View.sub` total by clamping — **DONE**
+
+Landed: `View.sub` clamps `a` into `[0, count]` and `b` into `[start, count]`
+via the new `Int.clamp`, so out-of-range or reversed endpoints collapse to a
+valid (possibly empty) window. Added `Int.min` / `Int.max` / `Int.clamp` to the
+prelude (`boot/prelude/int.tw`) and documented all four in `docs/API.md`.
 
 `View.sub(v, a, b)` currently adjusts `start` and `count` directly:
 
