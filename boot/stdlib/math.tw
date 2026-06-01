@@ -1,0 +1,133 @@
+/// Math helpers.
+///
+/// The integer helpers (`abs`, `sign`, `gcd`, `lcm`, `pow`, `isqrt`) are pure
+/// Twinkle. The floating-point helpers (`sqrt`, `floor`, `ceil`, `round`) bridge
+/// to the host's `Math` object via `extern`, so they require the JS/Deno runner
+/// (the same host that backs `target/twk run`); the import is tree-shaken away
+/// when only the integer helpers are used.
+///
+/// `Int.min`, `Int.max`, and `Int.clamp` already live in the prelude, so they
+/// are not duplicated here.
+
+/// Host `Math` object (globalThis.Math under the JS/Deno runner).
+
+extern Math {
+  fn sqrt(x: Float) Float
+  fn floor(x: Float) Float
+  fn ceil(x: Float) Float
+  fn round(x: Float) Float
+}
+
+/// Absolute value of n. (abs(min_i64) overflows, matching two's-complement.)
+pub fn abs(n: Int) Int {
+  if n < 0 {
+    -n
+  } else {
+    n
+  }
+}
+
+/// Sign of n: -1 when negative, 0 when zero, 1 when positive.
+pub fn sign(n: Int) Int {
+  cond {
+    n < 0 => -1,
+    n > 0 => 1,
+    _ => 0,
+  }
+}
+
+/// Greatest common divisor of a and b (Euclid's algorithm).
+/// Result is non-negative; gcd(0, 0) is 0.
+pub fn gcd(a: Int, b: Int) Int {
+  x := abs(a)
+  y := abs(b)
+
+  for y != 0 {
+    t := y
+    y = x % y
+    x = t
+  }
+
+  x
+}
+
+/// Least common multiple of a and b. Returns 0 when either is 0.
+pub fn lcm(a: Int, b: Int) Int {
+  if a == 0 or b == 0 {
+    return 0
+  }
+
+  abs(a / gcd(a, b) * b)
+}
+
+/// Integer exponentiation by squaring. Traps on a negative exponent
+/// (the result would not be an integer). pow(0, 0) is 1.
+pub fn pow(base: Int, exp: Int) Int {
+  if exp < 0 {
+    error("Math.pow: negative exponent")
+  }
+
+  result := 1
+  b := base
+  e := exp
+
+  for e > 0 {
+    if e % 2 == 1 {
+      result = result * b
+    }
+
+    b = b * b
+    e = e / 2
+  }
+
+  result
+}
+
+/// Floor of the square root of a non-negative integer. Traps when n < 0.
+pub fn isqrt(n: Int) Int {
+  if n < 0 {
+    error("Math.isqrt: negative input")
+  }
+
+  if n < 2 {
+    return n
+  }
+
+  // Binary search for the largest r with r*r <= n.
+  lo := 1
+  hi := n
+  ans := 1
+
+  for lo <= hi {
+    mid := lo + (hi - lo) / 2
+
+    if mid <= n / mid {
+      ans = mid
+      lo = mid + 1
+    } else {
+      hi = mid - 1
+    }
+  }
+
+  ans
+}
+
+/// Square root of x (host `Math.sqrt`). Requires the JS/Deno runner.
+pub fn sqrt(x: Float) Float {
+  Math.sqrt(x)
+}
+
+/// Largest integer value not greater than x (host `Math.floor`).
+pub fn floor(x: Float) Float {
+  Math.floor(x)
+}
+
+/// Smallest integer value not less than x (host `Math.ceil`).
+pub fn ceil(x: Float) Float {
+  Math.ceil(x)
+}
+
+/// Nearest integer to x, ties rounding toward +∞ (host `Math.round`).
+pub fn round(x: Float) Float {
+  Math.round(x)
+}

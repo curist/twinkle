@@ -93,6 +93,7 @@ use .suites.signature_loader_suite
 use .suites.slot_assign_suite
 use .suites.source_suite
 use .suites.stdlib_host_suite
+use .suites.stdlib_math_suite
 use .suites.stdlib_path_suite
 use .suites.string_edge_cases_suite
 use .suites.task_suite
@@ -123,6 +124,7 @@ runner.run_all([
   dict_hash_suite.suite(),
   api_range_iterator_suite.suite(),
   stdlib_path_suite.suite(),
+  stdlib_math_suite.suite(),
   stdlib_host_suite.suite(),
   source_suite.suite(),
   diag_suite.suite(),

@@ -362,6 +362,22 @@ Division by zero traps.
 ### Logical
 `and`, `or`, `!` (prefix not)
 
+### Bitwise (`Int`)
+`&` (and), `|` (or), `^` (xor), `<<` (shift left), `>>` (shift right)
+
+Operate on the full 64-bit two's-complement representation. `>>` is an
+**arithmetic** shift — it sign-extends, so `-8 >> 1` is `-4`. Precedence follows
+C: `&` binds tighter than `^`, which binds tighter than `|`, and all three bind
+looser than the shifts. Parenthesize when mixing with comparisons.
+
+```tw
+fn single_number(nums: Vector<Int>) Int {
+  acc := 0
+  for n in nums { acc = acc ^ n }   // pairs cancel, unique value remains
+  acc
+}
+```
+
 ### String interpolation
 `"text ${expr} more"` — calls `.to_string()` on interpolated expressions.
 
@@ -371,7 +387,40 @@ Division by zero traps.
 
 Everything above (primitives, built-in types, I/O, type conversions, String/Vector/Dict methods, operators) is available as **prelude** — no import needed.
 
-Only non-prelude stdlib modules require explicit imports: `use @std.path`, `use @std.fs`, `use @std.proc`, `use @std.date`, `use @std.view`.
+Only non-prelude stdlib modules require explicit imports: `use @std.path`, `use @std.fs`, `use @std.proc`, `use @std.date`, `use @std.view`, `use @std.math`.
+
+### `@std.math`
+
+Math helpers. `Int.min`, `Int.max`, and `Int.clamp` already live in the prelude;
+this module adds number-theory, exponent, and floating-point helpers. Call
+qualified, e.g. `math.gcd(a, b)`.
+
+The integer helpers are pure Twinkle. The floating-point helpers bridge to the
+host's `Math` object via `extern`, so they require the JS/Deno runner that backs
+`target/twk run`; the host import is tree-shaken away when only the integer
+helpers are used.
+
+| Function | Signature | Description |
+|----------|-----------|-------------|
+| `abs` | `fn(n: Int) Int` | Absolute value (`abs(min_i64)` overflows) |
+| `sign` | `fn(n: Int) Int` | `-1`, `0`, or `1` by sign |
+| `gcd` | `fn(a: Int, b: Int) Int` | Greatest common divisor (non-negative; `gcd(0,0)=0`) |
+| `lcm` | `fn(a: Int, b: Int) Int` | Least common multiple (`0` when either is `0`) |
+| `pow` | `fn(base: Int, exp: Int) Int` | Integer exponentiation; traps on negative `exp`; `pow(0,0)=1` |
+| `isqrt` | `fn(n: Int) Int` | Floor of the square root; traps when `n < 0` |
+| `sqrt` | `fn(x: Float) Float` | Square root (host `Math.sqrt`) |
+| `floor` | `fn(x: Float) Float` | Largest integer ≤ `x` (host `Math.floor`) |
+| `ceil` | `fn(x: Float) Float` | Smallest integer ≥ `x` (host `Math.ceil`) |
+| `round` | `fn(x: Float) Float` | Nearest integer, ties toward `+∞` (host `Math.round`) |
+
+```tw
+use @std.math
+
+math.gcd(12, 18)    // 6
+math.pow(2, 10)     // 1024
+math.isqrt(99)      // 9
+math.sqrt(16.0)     // 4.0
+```
 
 ### `@std.path`
 

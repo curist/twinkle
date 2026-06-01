@@ -1,0 +1,63 @@
+use @std.math
+
+use tests.assert
+use tests.runner
+
+pub fn suite() runner.Suite {
+  runner.suite("stdlib math")
+    .test(
+      "abs and sign",
+      fn() {
+        try assert.equal(math.abs(-7), 7)
+        try assert.equal(math.abs(7), 7)
+        try assert.equal(math.abs(0), 0)
+        try assert.equal(math.sign(-3), -1)
+        try assert.equal(math.sign(0), 0)
+        try assert.equal(math.sign(9), 1)
+        .Ok({})
+      },
+    )
+    .test(
+      "gcd and lcm",
+      fn() {
+        try assert.equal(math.gcd(48, 36), 12)
+        try assert.equal(math.gcd(-48, 36), 12)
+        try assert.equal(math.gcd(0, 0), 0)
+        try assert.equal(math.gcd(13, 0), 13)
+        try assert.equal(math.lcm(4, 6), 12)
+        try assert.equal(math.lcm(0, 5), 0)
+        .Ok({})
+      },
+    )
+    .test(
+      "pow by squaring",
+      fn() {
+        try assert.equal(math.pow(2, 10), 1024)
+        try assert.equal(math.pow(3, 0), 1)
+        try assert.equal(math.pow(0, 0), 1)
+        try assert.equal(math.pow(5, 3), 125)
+        .Ok({})
+      },
+    )
+    .test(
+      "isqrt floors the root",
+      fn() {
+        try assert.equal(math.isqrt(0), 0)
+        try assert.equal(math.isqrt(1), 1)
+        try assert.equal(math.isqrt(99), 9)
+        try assert.equal(math.isqrt(100), 10)
+        try assert.equal(math.isqrt(101), 10)
+        .Ok({})
+      },
+    )
+    .test(
+      "float helpers bridge to host Math",
+      fn() {
+        try assert.equal(math.sqrt(16.0), 4.0)
+        try assert.equal(math.floor(2.7), 2.0)
+        try assert.equal(math.ceil(2.3), 3.0)
+        try assert.equal(math.round(2.5), 3.0)
+        .Ok({})
+      },
+    )
+}
