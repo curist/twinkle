@@ -1023,7 +1023,9 @@ fn format_let(s: LetStmt, tm: TriviaMap) Doc {
   }
 
   value_doc := if s.is_rebind and s.ty.is_none() {
-    case format_receiver_shorthand(s.name, s.value, tm) {
+    target := Expr.{ id: 0, kind: .Ident(s.name), span: s.value.span }
+
+    case format_receiver_shorthand(target, s.value, tm) {
       .Some(d) => d,
       .None => format_expr(s.value, tm),
     }
@@ -1034,17 +1036,53 @@ fn format_let(s: LetStmt, tm: TriviaMap) Doc {
   doc.concat(parts)
 }
 
-fn format_receiver_shorthand(receiver: String, expr: Expr, tm: TriviaMap) Doc? {
+// Structural equality over the "place path" expression forms that can appear as
+// an assignment target (or as an index within one). Deliberately conservative:
+// anything outside this set compares unequal, so the receiver-shorthand collapse
+// only fires when the target provably matches the chain's innermost receiver.
+fn place_expr_eq(a: Expr, b: Expr) Bool {
+  case a.kind {
+    .Ident(an) => case b.kind {
+      .Ident(bn) => an == bn,
+      _ => false,
+    },
+    .Field(ao, af) => case b.kind {
+      .Field(bo, bf) => af == bf and place_expr_eq(ao, bo),
+      _ => false,
+    },
+    .Index(ao, ai) => case b.kind {
+      .Index(bo, bi) => place_expr_eq(ao, bo) and place_expr_eq(ai, bi),
+      _ => false,
+    },
+    .IntLit(av) => case b.kind {
+      .IntLit(bv) => av == bv,
+      _ => false,
+    },
+    .StringLit(av) => case b.kind {
+      .StringLit(bv) => av == bv,
+      _ => false,
+    },
+    .BoolLit(av) => case b.kind {
+      .BoolLit(bv) => av == bv,
+      _ => false,
+    },
+    _ => false,
+  }
+}
+
+// Collapse `target = target.method(args)...` to the leading-dot rebind shorthand
+// `target = .method(args)...`. The parser reconstructs the elided receiver as a
+// structural copy of the assignment target (parser.tw receiver shorthand), so the
+// collapse is a faithful round-trip whenever `target` equals the chain's innermost
+// receiver — for a plain variable, a field path, or an indexed place alike.
+fn format_receiver_shorthand(target: Expr, expr: Expr, tm: TriviaMap) Doc? {
   case expr.kind {
     .Call(callee, args) => case callee.kind {
       .Field(obj, name) => {
-        prefix: Doc? = case obj.kind {
-          .Ident(obj_name) => if obj_name == receiver {
-            .Some(doc.nil())
-          } else {
-            .None
-          },
-          _ => format_receiver_shorthand(receiver, obj, tm),
+        prefix: Doc? = if place_expr_eq(obj, target) {
+          .Some(doc.nil())
+        } else {
+          format_receiver_shorthand(target, obj, tm)
         }
 
         case prefix {
@@ -1212,12 +1250,9 @@ fn format_binary_inner(op: BinOp, lhs: Expr, rhs: Expr, tm: TriviaMap, indent_co
     },
     .Assign => {
       lhs_doc := format_binary_child(op, lhs, false, tm, false)
-      rhs_doc := case lhs.kind {
-        .Ident(name) => case format_receiver_shorthand(name, rhs, tm) {
-          .Some(d) => d,
-          .None => format_binary_child(op, rhs, true, tm, false),
-        },
-        _ => format_binary_child(op, rhs, true, tm, false),
+      rhs_doc := case format_receiver_shorthand(lhs, rhs, tm) {
+        .Some(d) => d,
+        .None => format_binary_child(op, rhs, true, tm, false),
       }
       doc.concat([lhs_doc, doc.text(" ${op_str} "), rhs_doc])
     },

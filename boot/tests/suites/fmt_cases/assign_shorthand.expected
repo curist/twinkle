@@ -13,3 +13,12 @@ fn process(xs: Vector<Int>) Vector<Int> {
 
   out
 }
+
+fn places() {
+  groups[key] = .unwrap_or([]).append(s)
+  adj[pre] = .append(course)
+  state.docs = .insert(k, v)
+  grid[r][c] = .set(v)
+  a[i] = b[i].append(x)
+  a[i] = a[j].append(x)
+}
