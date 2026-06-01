@@ -33,7 +33,7 @@ pub type InferCtx = .{
   pub_names: Dict<String, Bool>,
   method_calls: Dict<Int, MethodCallInfo>,
   contract_cache: Dict<String, Bool>,
-  for_elem_types: Dict<Int, MonoType>,
+  iterable_lowering: Dict<Int, IterableLoweringInfo>,
 }
 
 pub type MethodCallInfo = .{
@@ -42,6 +42,21 @@ pub type MethodCallInfo = .{
   contract: BuiltinContract?,
   method_name: String,
 }
+
+// How a `for`/`collect` iterable should be lowered. The checker already knows
+// the iteration mode after type-checking, so it records that decision once here
+// (keyed by the iterable expression id) instead of leaving lowering to re-derive
+// it from the receiver's `Var(_)` shape and the `method_calls` side channel.
+pub type IterableLoweringKind = {
+  ConcreteIndexed,      // Vector or String: indexed loop, len/elem via builtins
+  Dict,                 // Dict<K, V>: iterate the keys
+  Range,                // Range: directional counting loop
+  Iterator,             // Iterator<E>: pull via `next()`
+  IndexReadContract,    // type var bound `IndexRead<E>`: `at`/`len` via contract
+  IntoIteratorContract, // type var bound `IntoIterator<E>`: wrap in `iter()`
+}
+
+pub type IterableLoweringInfo = .{ elem_ty: MonoType, kind: IterableLoweringKind }
 
 type SynthOut = .{ ty: MonoType, ctx: InferCtx, diags: Vector<DiagKind> }
 
@@ -56,7 +71,7 @@ pub type CheckResult = .{
   diagnostics: Vector<DiagKind>,
   method_calls: Dict<Int, MethodCallInfo>,
   pub_values: Dict<String, MonoType>,
-  for_elem_types: Dict<Int, MonoType>,
+  iterable_lowering: Dict<Int, IterableLoweringInfo>,
 }
 
 // ── Context helpers ─────────────────────────────────────────────────
@@ -75,7 +90,7 @@ fn empty_ctx(env: ResolvedEnv, module_aliases: Dict<String, Bool>) InferCtx {
     pub_names: Dict.new(),
     method_calls: Dict.new(),
     contract_cache: Dict.new(),
-    for_elem_types: Dict.new(),
+    iterable_lowering: Dict.new(),
   }
 }
 
@@ -663,6 +678,29 @@ type ScopedContractMatch = .{
   contract: BuiltinContract,
   req: ContractMethodRequirement,
   type_args: Vector<MonoType>,
+}
+
+// A type variable's in-scope bound for a specific contract: the contract itself
+// plus its declared type arguments (e.g. `[E]` for `C: IndexRead<E>`). Unlike
+// `lookup_scoped_contract_method`, this keys on contract identity rather than a
+// method name, so contract-backed decisions (indexing, iteration) do not depend
+// on which method names a contract happens to expose.
+type ScopedContractBound = .{ contract: BuiltinContract, type_args: Vector<MonoType> }
+
+fn lookup_scoped_contract_bound(
+  base_ty: MonoType,
+  contract: BuiltinContract,
+  scope: Vector<ResolvedTypeParam>,
+) ScopedContractBound? {
+  name := case base_ty {
+    .Var(n) => n,
+    _ => { return .None },
+  }
+
+  case scoped_bound_for_contract(name, contract, scope) {
+    .Some(type_args) => .Some(.{ contract, type_args }),
+    .None => .None,
+  }
 }
 
 fn lookup_scoped_contract_method(
@@ -3618,30 +3656,11 @@ fn bind_iterable_vars(
   cur_diags := ir.diags
   info := iterable_binding_info_of(ir.ty, iter_expr.span, cur_ctx, cur_diags)
   cur_diags = info.diags
-  cur_ctx.for_elem_types[iter_expr.id] = info.elem_ty
 
-  // A type variable iterable that has only `IntoIterator` (not `IndexRead`) is
-  // driven through `iter()`; record that contract call so lowering wraps the
-  // receiver instead of trying to index it. `IndexRead`-backed Vars iterate by
-  // index and need no record.
-  zonked_iter := expand_alias(zonk(ir.ty, cur_ctx.subst), cur_ctx.env, 0)
-
-  case zonked_iter {
-    .Var(_) => case lookup_scoped_contract_method(zonked_iter, "at", cur_ctx.type_var_scope) {
-      .Some(_) => {},
-      .None => case lookup_scoped_contract_method(zonked_iter, "iter", cur_ctx.type_var_scope) {
-        .Some(m) => cur_ctx.method_calls[iter_expr.id] = MethodCallInfo.{
-          func_name: "",
-          has_receiver: true,
-          contract: .Some(m.contract),
-          method_name: "iter",
-        },
-        .None => {},
-      },
-    },
-    _ => {},
-  }
-
+  // Record the single iteration decision (element type + lowering mode) for this
+  // iterable. Lowering consumes it directly instead of re-deriving the mode from
+  // the receiver's `Var(_)` shape or a separate `method_calls` entry.
+  cur_ctx.iterable_lowering[iter_expr.id] = .{ elem_ty: info.elem_ty, kind: info.kind }
   cur_ctx = bind_optional(cur_ctx, pattern, info.elem_ty)
 
   case index {
@@ -3678,15 +3697,16 @@ type IterableBindingInfo = .{
   elem_ty: MonoType,
   secondary_ty: MonoType?,
   secondary_allowed: Bool,
+  kind: IterableLoweringKind,
   diags: Vector<DiagKind>,
 }
 
 // Which access contract makes a type variable iterable: `IndexRead` (by index)
 // takes precedence over `IntoIterator` (by `iter()`). `.None` means neither.
-fn iterable_var_match(ty: MonoType, scope: Vector<ResolvedTypeParam>) ScopedContractMatch? {
-  case lookup_scoped_contract_method(ty, "at", scope) {
+fn iterable_var_match(ty: MonoType, scope: Vector<ResolvedTypeParam>) ScopedContractBound? {
+  case lookup_scoped_contract_bound(ty, .IndexRead, scope) {
     .Some(m) => .Some(m),
-    .None => lookup_scoped_contract_method(ty, "iter", scope),
+    .None => lookup_scoped_contract_bound(ty, .IntoIterator, scope),
   }
 }
 
@@ -3698,15 +3718,23 @@ fn iterable_binding_info_of(ty: MonoType, s: Span, ctx: InferCtx, diags: Vector<
       elem_ty: elem,
       secondary_ty: .Some(MonoType.Int),
       secondary_allowed: true,
+      kind: .ConcreteIndexed,
       diags,
     },
     .String => .{
       elem_ty: MonoType.Byte,
       secondary_ty: .Some(MonoType.Int),
       secondary_allowed: true,
+      kind: .ConcreteIndexed,
       diags,
     },
-    .Dict(k, v) => .{ elem_ty: k, secondary_ty: .Some(v), secondary_allowed: true, diags },
+    .Dict(k, v) => .{
+      elem_ty: k,
+      secondary_ty: .Some(v),
+      secondary_allowed: true,
+      kind: .Dict,
+      diags,
+    },
     // A type variable iterates via an in-scope access contract: `IndexRead<E>`
     // (preferred — by index, no allocation) or, failing that, `IntoIterator<E>`
     // (driven through `iter()`). The element is the matching bound's declared `E`.
@@ -3717,12 +3745,17 @@ fn iterable_binding_info_of(ty: MonoType, s: Span, ctx: InferCtx, diags: Vector<
         } else {
           zonked
         }
-        .{ elem_ty, secondary_ty: .Some(MonoType.Int), secondary_allowed: true, diags }
+        kind: IterableLoweringKind = case m.contract {
+          .IntoIterator => .IntoIteratorContract,
+          _ => .IndexReadContract,
+        }
+        .{ elem_ty, secondary_ty: .Some(MonoType.Int), secondary_allowed: true, kind, diags }
       },
       .None => .{
         elem_ty: MonoType.Int,
         secondary_ty: .Some(MonoType.Int),
         secondary_allowed: true,
+        kind: .ConcreteIndexed,
         diags: diags.append(.Error(.NotIterable(.{ span: s, ty: zonked }))),
       },
     },
@@ -3731,15 +3764,23 @@ fn iterable_binding_info_of(ty: MonoType, s: Span, ctx: InferCtx, diags: Vector<
         elem_ty: MonoType.Int,
         secondary_ty: .Some(MonoType.Int),
         secondary_allowed: true,
+        kind: .Range,
         diags,
       },
       .Some("Iterator") => if args.len() > 0 {
-        .{ elem_ty: args[0], secondary_ty: .Some(MonoType.Int), secondary_allowed: true, diags }
+        .{
+          elem_ty: args[0],
+          secondary_ty: .Some(MonoType.Int),
+          secondary_allowed: true,
+          kind: .Iterator,
+          diags,
+        }
       } else {
         .{
           elem_ty: MonoType.Int,
           secondary_ty: .Some(MonoType.Int),
           secondary_allowed: true,
+          kind: .Iterator,
           diags: diags.append(.Error(.NotIterable(.{ span: s, ty: zonked }))),
         }
       },
@@ -3747,6 +3788,7 @@ fn iterable_binding_info_of(ty: MonoType, s: Span, ctx: InferCtx, diags: Vector<
         elem_ty: MonoType.Int,
         secondary_ty: .Some(MonoType.Int),
         secondary_allowed: true,
+        kind: .ConcreteIndexed,
         diags: diags.append(.Error(.NotIterable(.{ span: s, ty: zonked }))),
       },
     },
@@ -3754,6 +3796,7 @@ fn iterable_binding_info_of(ty: MonoType, s: Span, ctx: InferCtx, diags: Vector<
       elem_ty: MonoType.Int,
       secondary_ty: .Some(MonoType.Int),
       secondary_allowed: true,
+      kind: .ConcreteIndexed,
       diags: diags.append(.Error(.NotIterable(.{ span: s, ty: zonked }))),
     },
   }
@@ -4430,7 +4473,7 @@ fn synth_index(base: Expr, idx: Expr, expr_id: Int, s: Span, ctx: InferCtx, diag
     // A type variable bounded `IndexRead<E>`: `c[i]` desugars to the contract's
     // `at(c, i)`. Record the contract call so lowering emits a ContractCall, and
     // type the result as the bound's declared element `E`.
-    .Var(_) => case lookup_scoped_contract_method(zonked_base, "at", ir.ctx.type_var_scope) {
+    .Var(_) => case lookup_scoped_contract_bound(zonked_base, .IndexRead, ir.ctx.type_var_scope) {
       .Some(m) => {
         elem_ty := if m.type_args.len() > 0 {
           m.type_args[0]
@@ -5057,6 +5100,6 @@ pub fn check(module: Module, env: ResolvedEnv) CheckResult {
     diagnostics: cur_diags,
     method_calls: ctx.method_calls,
     pub_values,
-    for_elem_types: ctx.for_elem_types,
+    iterable_lowering: ctx.iterable_lowering,
   }
 }

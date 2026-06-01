@@ -1,8 +1,9 @@
 # Access-contract hardening and cleanup
 
 Status: **In progress** — Findings 1 (arity validation), 2 (proof-cache
-soundness), and 6 (`View.sub` clamping) are landed and self-host green;
-Findings 3–5 (lowering/monomorphization refactors) are pending.
+soundness), 3 (explicit iterable-lowering record), 4 (contract-identity lookup
+helper), and 6 (`View.sub` clamping) are landed and self-host green; Finding 5
+(monomorphization FD recovery) is pending.
 
 ## Goal
 
@@ -189,7 +190,15 @@ Regression coverage:
   `IndexRead<String>` proof.
 - Existing successful generic access tests remain unchanged.
 
-### 3. Replace generic-iteration lowering side channels with one explicit record
+### 3. Replace generic-iteration lowering side channels with one explicit record — **DONE**
+
+Landed: the checker now records one `IterableLoweringInfo` (`elem_ty` + a
+`IterableLoweringKind` mode) per iterable expression, replacing both the
+`for_elem_types` map and the `method_calls`-for-`iter()` entry (both removed from
+`InferCtx`/`CheckResult`/`LowerCtx`). `iteration.tw` consumes `kind` for the
+mode decisions (IntoIterator wrapping, Range/Iterator dispatch, IndexRead-vs-
+indexed element/length access) instead of re-deriving from `Var(_)` and
+`method_calls`. The lowering record is built on the Finding 4 helper.
 
 `for x in c` over generic access contracts currently relies on several maps and
 reconstruction steps:
@@ -253,7 +262,14 @@ Regression coverage:
 - `for x, i in c` keeps the existing index behavior for indexed collections and
   iterator-backed collections.
 
-### 4. Prefer contract-specific lookup helpers over method-name probing
+### 4. Prefer contract-specific lookup helpers over method-name probing — **DONE**
+
+Landed: new `lookup_scoped_contract_bound(base_ty, contract, scope)` keys on
+contract identity (returning a `ScopedContractBound` of contract + type args).
+The contract-decision sites — `synth_index` (IndexRead), `iterable_var_match`
+(IndexRead then IntoIterator), and the iteration-mode classification — now use
+it. `lookup_scoped_contract_method` (by name) is kept only where resolving an
+actual method call, which still needs the matched `req`.
 
 Several paths ask whether a type variable has a contract by searching for a
 method name such as `"at"` or `"iter"`. That is brittle: future contracts could

@@ -2,7 +2,7 @@
 
 use compiler.ast.{Expr}
 use compiler.builtins.{BuiltinRegistry}
-use compiler.checker.{CheckResult, MethodCallInfo}
+use compiler.checker.{CheckResult, IterableLoweringInfo, MethodCallInfo}
 use compiler.core_ir.{CoreExpr, ExternImport, FuncId, FunctionDef, LocalId}
 use compiler.mono_type.{MonoType}
 use compiler.resolver.{FunctionOrigin, ResolvedEnv}
@@ -23,7 +23,7 @@ pub type LowerCtx = .{
   current_fn_return_type: MonoType?,
   errors: Vector<DiagKind>,
   method_calls: Dict<Int, MethodCallInfo>,
-  for_elem_types: Dict<Int, MonoType>,
+  iterable_lowering: Dict<Int, IterableLoweringInfo>,
   imported_func_origins: Dict<Int, FunctionOrigin>,
   origin_cache: Dict<String, FuncId>,
   extern_imports: Dict<Int, ExternImport>,
@@ -60,7 +60,7 @@ pub fn new_ctx(check_result: CheckResult, reg: BuiltinRegistry) LowerCtx {
     current_fn_return_type: .None,
     errors: [],
     method_calls: check_result.method_calls,
-    for_elem_types: check_result.for_elem_types,
+    iterable_lowering: check_result.iterable_lowering,
     imported_func_origins: Dict.new(),
     origin_cache: Dict.new(),
     extern_imports: Dict.new(),
