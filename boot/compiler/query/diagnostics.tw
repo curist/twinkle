@@ -184,6 +184,11 @@ fn kind_to_message(kind: DiagKind) String {
       .FieldMethodCollision(d) => "inherent method `${d.name}` conflicts with field `${d.name}` on ${d.type_name}",
       .DuplicateTypeParam(d) => "duplicate type parameter ${d.name}",
       .UnknownContract(d) => "unknown contract '${d.name}'",
+      .ContractArityMismatch(d) => if d.expected == 0 {
+        "contract `${d.contract}` does not take type arguments"
+      } else {
+        "contract `${d.contract}` expects ${d.expected.to_string()} type argument(s), but got ${d.found.to_string()}"
+      },
       .ExternBoundaryType(_) => "extern boundary type not supported",
       .MissingTypeAnnotation(_) => "missing type annotation",
       .AnonymousTypeNotAllowed(_) => "anonymous type not allowed here",

@@ -2,6 +2,7 @@
 
 use compiler.ast.{Block, CollectExpr, Expr, ForStmt}
 use compiler.builder_family.{BuilderConfig, vector_builder_config}
+use compiler.checker.{IterableLoweringKind}
 use compiler.core_ir.{CoreExpr, CoreExprKind, CorePattern, FieldId, LocalId, MatchArm}
 use compiler.lower_core.collect_helpers.{collect_builder_push, global_func_call}
 use compiler.lower_core.context.{ExprOut, LowerCtx}
@@ -10,7 +11,7 @@ use compiler.lower_core.helpers.{
   global_func_expr, local_expr, record_get_expr, variant_pattern, void_expr,
 }
 use compiler.lower_core.types.{
-  expand_alias_for_iter, find_field_index, iter_elem_type, resolve_type_id, type_id_from_mono,
+  find_field_index, iter_elem_type, resolve_type_id, type_id_from_mono,
 }
 use compiler.mono_type.{MonoType, TypeId}
 use lib.source.span.{Span}
@@ -23,6 +24,7 @@ type IterSetup = .{
   idx_local: LocalId,
   elem_local: LocalId,
   elem_ty: MonoType,
+  kind: IterableLoweringKind,
   idx_user_local: LocalId?,
   index_source: LocalId,
   index_source_ty: MonoType,
@@ -45,28 +47,29 @@ fn setup_indexed_iter(
   ar := lower_expr_fn(ctx, iter_expr)
   ctx = ar.ctx
 
-  // Prefer the element type the checker bound for this iterable (the only source
-  // of `E` for a generic `IndexRead<E>` bound, whose receiver is just `Var(C)`);
-  // fall back to structural inference for concrete collections.
-  elem_ty := case ctx.for_elem_types[iter_expr.id] {
-    .Some(t) => t,
+  // The checker recorded the iteration decision (element type + lowering mode)
+  // for this iterable; consume it directly. The element type is the only source
+  // of `E` for a generic contract-bound iterable, whose receiver is just
+  // `Var(C)`. Fall back to structural element inference / a concrete indexed loop
+  // only if the record is somehow absent.
+  lowering_info := ctx.iterable_lowering[iter_expr.id]
+  elem_ty := case lowering_info {
+    .Some(i) => i.elem_ty,
     .None => iter_elem_type(ar.expr.ty, ctx.env),
   }
+  kind: IterableLoweringKind = case lowering_info {
+    .Some(i) => i.kind,
+    .None => .ConcreteIndexed,
+  }
 
-  // A generic `IntoIterator<E>` iterable (recorded by the checker) is driven
-  // through `iter()`: wrap the receiver in an `IntoIterator.iter` contract call
-  // typed `Iterator<E>` so the dispatch below routes it to the iterator loop
-  // (the builtin `Iterator` is TypeId 4). Other iterables keep their direct
-  // expression and take the indexed/Range/Dict paths.
-  is_into_iter := case ctx.method_calls[iter_expr.id] {
-    .Some(info) => case info.contract {
-      .Some(c) => case c {
-        .IntoIterator => true,
-        _ => false,
-      },
-      .None => false,
-    },
-    .None => false,
+  // An `IntoIterator<E>` iterable is driven through `iter()`: wrap the receiver
+  // in an `IntoIterator.iter` contract call typed `Iterator<E>` so the dispatch
+  // below routes it to the iterator loop (the builtin `Iterator` is TypeId 4).
+  // Other iterables keep their direct expression and take the indexed/Range/Dict
+  // paths.
+  is_into_iter := case kind {
+    .IntoIteratorContract => true,
+    _ => false,
   }
   iter_core_expr := if is_into_iter {
     CoreExpr.{
@@ -129,6 +132,7 @@ fn setup_indexed_iter(
     idx_local,
     elem_local,
     elem_ty,
+    kind,
     idx_user_local,
     index_source,
     index_source_ty,
@@ -401,15 +405,15 @@ fn build_indexed_loop(setup: IterSetup, inner_action: CoreExpr, s: Span) ExprOut
   int_ty := MonoType.Int
   void_ty := MonoType.Void
   ctx := setup.ctx
-  expanded_iter_ty := expand_alias_for_iter(setup.iter_core.ty, ctx.env, 0)
 
-  case expanded_iter_ty {
-    .Named(tid, _) => case ctx.env.lookup_type_def(tid) {
-      .Some(.Record("Range", _, _)) => { return build_range_loop(setup, inner_action, s) },
-      .Some(.Record("Iterator", _, _)) => { return build_iterator_loop(setup, inner_action, s) },
-      .Some(.Sum("Iterator", _, _)) => { return build_iterator_loop(setup, inner_action, s) },
-      _ => {},
-    },
+  // The checker already classified the iteration mode. `Range` / `Iterator`
+  // route to their dedicated loop builders; an `IntoIterator` iterable was
+  // wrapped into an `Iterator<E>` by `setup_indexed_iter`, so it pulls via the
+  // iterator loop too. Everything else falls through to the indexed loop below.
+  case setup.kind {
+    .Range => { return build_range_loop(setup, inner_action, s) },
+    .Iterator => { return build_iterator_loop(setup, inner_action, s) },
+    .IntoIteratorContract => { return build_iterator_loop(setup, inner_action, s) },
     _ => {},
   }
 
@@ -479,11 +483,11 @@ fn build_indexed_loop(setup: IterSetup, inner_action: CoreExpr, s: Span) ExprOut
     .None => action_then_inc,
   }
 
-  // A type-variable iter is a generic `IndexRead<E>` bound: element and length
-  // access go through the contract (`at`/`len`), which monomorphizes to the
-  // satisfier's direct ops. Concrete collections keep the direct `Index`/builtin.
-  is_contract_iter := case setup.iter_core.ty {
-    .Var(_) => true,
+  // A generic `IndexRead<E>` bound: element and length access go through the
+  // contract (`at`/`len`), which monomorphizes to the satisfier's direct ops.
+  // Concrete collections keep the direct `Index`/builtin.
+  is_contract_iter := case setup.kind {
+    .IndexReadContract => true,
     _ => false,
   }
   source_expr := CoreExpr.{ kind: .Local(setup.index_source), ty: setup.index_source_ty, span: s }

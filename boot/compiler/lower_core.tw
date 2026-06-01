@@ -466,6 +466,7 @@ pub fn lower_module(module: Module, check_result: CheckResult, builtins: Builtin
         func_id: init_fid,
         name: "$init",
         is_init: true,
+        type_params: [],
         params: [],
         body: init_body,
         return_ty: .Void,

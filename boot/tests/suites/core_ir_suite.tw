@@ -466,6 +466,7 @@ pub fn suite() runner.Suite {
           body,
           return_ty: mono_type.MonoType.Int,
           is_init: false,
+          type_params: [],
         }
         try assert.equal(def.name, "test")
         assert.equal(def.params.len(), 1)
@@ -1506,6 +1507,7 @@ pub fn suite() runner.Suite {
           body,
           return_ty: mono_type.MonoType.Void,
           is_init: false,
+          type_params: [],
         }
         module := core_ir.CompiledModule.{
           path: "test/main.tw",
@@ -1563,6 +1565,7 @@ pub fn suite() runner.Suite {
           body,
           return_ty: mono_type.MonoType.Void,
           is_init: false,
+          type_params: [],
         }
         ext_refs: Dict<Int, core_ir.ExternalRef> = Dict.new()
         ext_refs[100] = core_ir.ExternalRef.{ module_path: "dep/math.tw", func_name: "missing" }
@@ -1619,6 +1622,7 @@ pub fn suite() runner.Suite {
           body: core_ir.CoreExpr.{ kind: .LitStr(""), ty: mono_type.MonoType.String, span: s },
           return_ty: mono_type.MonoType.String,
           is_init: false,
+          type_params: [],
         }
         fallback := core_ir.FunctionDef.{
           func_id: core_ir.FuncId.{ id: 99 },
@@ -1627,6 +1631,7 @@ pub fn suite() runner.Suite {
           body: core_ir.CoreExpr.{ kind: .LitStr(""), ty: mono_type.MonoType.String, span: s },
           return_ty: mono_type.MonoType.String,
           is_init: false,
+          type_params: [],
         }
         func_map: Dict<Int, core_ir.FunctionDef> = Dict.new()
         func_map[42] = exact

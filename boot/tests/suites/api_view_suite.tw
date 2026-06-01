@@ -139,6 +139,53 @@ pub fn suite() runner.Suite {
       },
     )
     .test(
+      "sub clamps a negative start to zero",
+      fn() {
+        v := view.from([10, 20, 30, 40, 50])
+        w := v.sub(-5, 3)
+        try assert.equal(w.len(), 3)
+        try assert.equal(w.at(0), 10)
+        try assert.equal(w.at(2), 30)
+        .Ok({})
+      },
+    )
+    .test(
+      "sub clamps an end past the window length",
+      fn() {
+        v := view.from([10, 20, 30, 40, 50])
+        w := v.sub(2, 999)
+        try assert.equal(w.len(), 3)
+        try assert.equal(w.at(0), 30)
+        try assert.equal(w.at(2), 50)
+        .Ok({})
+      },
+    )
+    .test(
+      "sub on a reversed range yields an empty window, not a negative count",
+      fn() {
+        v := view.from([10, 20, 30, 40, 50])
+        w := v.sub(8, 3)
+        try assert.equal(w.len(), 0)
+        try assert.is_true(w.is_empty())
+        .Ok({})
+      },
+    )
+    .test(
+      "chained sub stays within the original source",
+      fn() {
+        // Window to [20,30,40], then sub past its end: clamps within the
+        // already-narrowed window, never escaping back into the source.
+        v := view
+          .from([10, 20, 30, 40, 50])
+          .sub(1, 4)
+        w := v.sub(1, 99)
+        try assert.equal(w.len(), 2)
+        try assert.equal(w.at(0), 30)
+        try assert.equal(w.at(1), 40)
+        .Ok({})
+      },
+    )
+    .test(
       "head/tail recursion over a view is allocation-free",
       fn() {
         // Repeated drop_first never copies the backing; it only moves start.

@@ -134,6 +134,19 @@ nums.sort_by(Int.compare)
 names.sort_by(String.compare)
 ```
 
+## Numeric (`Int`)
+
+| Function | Signature | Description |
+|----------|-----------|-------------|
+| `Int.min` | `fn(a: Int, b: Int) Int` | The smaller of two integers |
+| `Int.max` | `fn(a: Int, b: Int) Int` | The larger of two integers |
+| `Int.clamp` | `fn(n: Int, lo: Int, hi: Int) Int` | Clamp `n` into the inclusive range `[lo, hi]` (assumes `lo <= hi`) |
+
+```tw
+lo.max(0).min(width)   // clamp via chained dot-calls
+i.clamp(0, xs.len())   // or directly
+```
+
 ## I/O
 
 | Function | Signature | Description |
@@ -399,6 +412,6 @@ share the one backing. A `View` itself satisfies `IndexRead<E>`. Requires
 | `.last()` | `fn<C: IndexRead<E>, E>(v: View<C>) Option<E>` | Last element, or `.None` if empty |
 | `.drop_first()` | `fn<C>(v: View<C>) View<C>` | Drop the first element (O(1), shares backing; total) |
 | `.drop_last()` | `fn<C>(v: View<C>) View<C>` | Drop the last element (O(1), shares backing; total) |
-| `.sub(a, b)` | `fn<C>(v: View<C>, a: Int, b: Int) View<C>` | Relative sub-window `[a, b)` (O(1), shares backing) |
+| `.sub(a, b)` | `fn<C>(v: View<C>, a: Int, b: Int) View<C>` | Relative sub-window `[a, b)` (O(1), shares backing; total — endpoints clamp into `[0, len()]`, so out-of-range or reversed args yield a valid/empty window) |
 | `.to_vector()` | `fn<C: IndexRead<E>, E>(v: View<C>) Vector<E>` | Materialize the window into an owned `Vector` |
 | `.fold(init, f)` | `fn<C: IndexRead<E>, E, B>(v: View<C>, init: B, f: fn(B, E) B) B` | Left-fold over the window |

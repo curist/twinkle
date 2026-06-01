@@ -56,6 +56,7 @@ pub type ErrorDiag = {
   FieldMethodCollision(.{ span: Span, type_name: String, name: String, method_span: Span }),
   DuplicateTypeParam(.{ span: Span, name: String }),
   UnknownContract(.{ span: Span, name: String }),
+  ContractArityMismatch(.{ span: Span, contract: String, expected: Int, found: Int }),
   ExternBoundaryType(.{ span: Span }),
   MissingTypeAnnotation(.{ span: Span }),
   AnonymousTypeNotAllowed(.{ span: Span }),
@@ -146,6 +147,7 @@ pub fn span(kind: DiagKind) Span {
       .FieldMethodCollision(d) => d.method_span,
       .DuplicateTypeParam(d) => d.span,
       .UnknownContract(d) => d.span,
+      .ContractArityMismatch(d) => d.span,
       .ExternBoundaryType(d) => d.span,
       .MissingTypeAnnotation(d) => d.span,
       .AnonymousTypeNotAllowed(d) => d.span,
@@ -209,6 +211,11 @@ pub fn message(kind: DiagKind) String {
       .FieldMethodCollision(d) => "inherent method '${d.name}' conflicts with field '${d.name}' on ${d.type_name}",
       .DuplicateTypeParam(d) => "duplicate type parameter ${d.name}",
       .UnknownContract(d) => "unknown contract '${d.name}'",
+      .ContractArityMismatch(d) => if d.expected == 0 {
+        "contract `${d.contract}` does not take type arguments"
+      } else {
+        "contract `${d.contract}` expects ${d.expected.to_string()} type argument(s), but got ${d.found.to_string()}"
+      },
       .ExternBoundaryType(_) => "extern functions only support primitive boundary types",
       .MissingTypeAnnotation(_) => "function parameters must have type annotations",
       .AnonymousTypeNotAllowed(_) => "anonymous record/sum types not supported in type expressions",
@@ -236,6 +243,11 @@ pub fn help_lines(kind: DiagKind) Vector<String> {
       .StringConcatOperator(_) => [
         "prefer string interpolation (`\"\${...}\"`); use `String.concat(a, b)` for explicit function calls",
       ],
+      .ContractArityMismatch(d) => if d.expected == 0 {
+        ["write `${d.contract}` with no type arguments"]
+      } else {
+        ["write `${d.contract}<E>` and declare `E`, e.g. `fn f<C: ${d.contract}<E>, E>(c: C) ...`"]
+      },
       _ => [],
     },
     .Warning(_) => [],

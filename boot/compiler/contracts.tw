@@ -93,3 +93,17 @@ pub fn resolve_builtin_contract_name(name: String) BuiltinContract? {
 pub fn methods(contract: BuiltinContract) Vector<ContractMethodRequirement> {
   contract.spec().methods
 }
+
+/// Number of type arguments a builtin contract takes when written as a bound.
+/// The nullary contracts (Stringify/Eq/Ord) take none; the access contracts
+/// carry the receiver-determined element type `E` (e.g. `IndexRead<E>`).
+pub fn type_arg_count(contract: BuiltinContract) Int {
+  case contract {
+    .Stringify => 0,
+    .Eq => 0,
+    .Ord => 0,
+    .IndexRead => 1,
+    .IndexWrite => 1,
+    .IntoIterator => 1,
+  }
+}

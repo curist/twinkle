@@ -14,7 +14,7 @@ use compiler.core_ir.{
   FunctionDef, LocalId, MatchArm, Param,
 }
 use compiler.mono_type.{MonoType, TypeId}
-use compiler.resolver.{ResolvedEnv}
+use compiler.resolver.{ResolvedContractRef, ResolvedEnv, ResolvedTypeParam}
 use lib.source.span.{Span}
 
 use .core_linker.dce.{build_reachability_index, collect_func_refs_indexed, compute_reachable}
@@ -295,6 +295,7 @@ pub fn link(
           func_id: remapped_id,
           name: remapped_func.name,
           is_init: remapped_func.is_init,
+          type_params: remapped_func.type_params,
           params: remapped_func.params,
           body: remap_expr(remapped_func.body, remap, global_remap, remapped_func.is_init),
           return_ty: remapped_func.return_ty,
@@ -488,6 +489,7 @@ fn build_combined_init(init_ids: Vector<FuncId>, next_global: Int) CombinedInit 
     func_id: combined_id,
     name: "$combined_init",
     is_init: true,
+    type_params: [],
     params: [],
     body,
     return_ty: MonoType.Void,
@@ -699,11 +701,30 @@ fn remap_expr_types_list(exprs: Vector<CoreExpr>, type_remap: Dict<Int, TypeId>)
   }
 }
 
+fn remap_type_param_bounds(params: Vector<ResolvedTypeParam>, type_remap: Dict<Int, TypeId>) Vector<
+  ResolvedTypeParam,
+> {
+  collect tp in params {
+    bounds: Vector<ResolvedContractRef> = collect bound in tp.bounds {
+      case bound {
+        .Builtin(contract, args) => .Builtin(
+          contract,
+          collect arg in args {
+            remap_mono_type(arg, type_remap)
+          },
+        ),
+      }
+    }
+    ResolvedTypeParam.{ name: tp.name, bounds }
+  }
+}
+
 fn remap_function_types(func: FunctionDef, type_remap: Dict<Int, TypeId>) FunctionDef {
   FunctionDef.{
     func_id: func.func_id,
     name: func.name,
     is_init: func.is_init,
+    type_params: remap_type_param_bounds(func.type_params, type_remap),
     params: collect p in func.params {
       Param.{ local: p.local, ty: remap_mono_type(p.ty, type_remap) }
     },

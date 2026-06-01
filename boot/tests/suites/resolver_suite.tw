@@ -416,6 +416,60 @@ pub fn suite() runner.Suite {
       },
     )
     .test(
+      "contract arity: extra arg on nullary contract (Eq<Int>) is rejected",
+      fn() {
+        src := "fn f<T: Eq<Int>>(a: T, b: T) Bool { a.eq(b) }"
+        msgs := try resolve_errs(src)
+        try assert.str_contains(msgs[0], "`Eq` does not take type arguments")
+        .Ok({})
+      },
+    )
+    .test(
+      "contract arity: extra arg on Stringify is rejected",
+      fn() {
+        src := "fn f<T: Stringify<Int>>(a: T) String { a.to_string() }"
+        msgs := try resolve_errs(src)
+        try assert.str_contains(msgs[0], "`Stringify` does not take type arguments")
+        .Ok({})
+      },
+    )
+    .test(
+      "contract arity: missing element arg on IndexRead is rejected",
+      fn() {
+        src := "fn first<C: IndexRead>(c: C) Int { c.len() }"
+        msgs := try resolve_errs(src)
+        try assert.str_contains(msgs[0], "`IndexRead` expects 1 type argument")
+        .Ok({})
+      },
+    )
+    .test(
+      "contract arity: missing element arg on IntoIterator is rejected",
+      fn() {
+        src := "fn it<C: IntoIterator>(c: C) Int { 0 }"
+        msgs := try resolve_errs(src)
+        try assert.str_contains(msgs[0], "`IntoIterator` expects 1 type argument")
+        .Ok({})
+      },
+    )
+    .test(
+      "contract arity: too many args on IndexRead is rejected",
+      fn() {
+        src := "fn first<C: IndexRead<Int, String>>(c: C) Int { c.len() }"
+        msgs := try resolve_errs(src)
+        try assert.str_contains(msgs[0], "`IndexRead` expects 1 type argument(s), but got 2")
+        .Ok({})
+      },
+    )
+    .test(
+      "contract arity: valid variable and concrete element args are accepted",
+      fn() {
+        try resolve_ok("fn a<C: IndexRead<E>, E>(c: C) E { c.at(0) }")
+        try resolve_ok("fn b<C: IndexRead<Int>>(c: C) Int { c.at(0) }")
+        try resolve_ok("fn c<T: Eq>(a: T, b: T) Bool { a.eq(b) }")
+        .Ok({})
+      },
+    )
+    .test(
       "circular type alias",
       fn() {
         src := "type A = B\ntype B = A"

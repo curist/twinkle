@@ -3,11 +3,12 @@
 /// Specializes generic functions per unique concrete instantiation.
 /// Algorithm: BFS seed → specialize → rewrite → drop generics.
 
+use .contracts.{BuiltinContract}
 use .core_ir.{
   CoreExpr, CoreExprKind, CoreModule, FieldInit, FuncId, FunctionDef, LocalId, MatchArm, Param,
 }
 use .mono_type.{MonoType}
-use .resolver.{ResolvedEnv}
+use .resolver.{FunctionSig, ResolvedEnv, lookup_registered_function}
 
 // ── Type helpers ──────────────────────────────────────────────────
 pub fn contains_var(ty: MonoType) Bool {
@@ -40,6 +41,10 @@ pub fn contains_var(ty: MonoType) Bool {
 }
 
 pub fn is_func_generic(func: FunctionDef) Bool {
+  if func.type_params.len() > 0 {
+    return true
+  }
+
   for p in func.params {
     if contains_var(p.ty) {
       return true
@@ -156,6 +161,12 @@ fn apply_subst(ty: MonoType, subst: Dict<String, MonoType>) MonoType {
 // Body expression annotations are implementation details of earlier phases and
 // must not affect the specialization key space.
 fn collect_type_params(func: FunctionDef) Vector<String> {
+  if func.type_params.len() > 0 {
+    return collect tp in func.type_params {
+      tp.name
+    }
+  }
+
   seen: Dict<String, Bool> = Dict.new()
   result: Vector<String> = []
 
@@ -410,9 +421,11 @@ fn infer_call_subst(ctx: MonoCtx, gf: FunctionDef, args: Vector<CoreExpr>, call_
   // Recover type params that appear only in a contract bound (e.g. `E` in
   // `fn f<C: IndexRead<E>, E>` when `E` is in no value parameter). They are
   // invisible to the signature-only matching above, so the specialized body
-  // would keep a free `Var(E)` and crash codegen. With the receiver type now
-  // resolved by `subst`, each contract/inherent call's concrete return type
-  // pins the element type.
+  // would keep a free `Var(E)` and crash codegen.
+  subst = ctx.augment_subst_from_bounds(gf, subst)
+
+  // Fallback: scan the body for a contract/inherent call whose concrete return
+  // pins a still-unresolved param. Kept for any param the bound path cannot reach.
   ctx.augment_subst_from_contract_calls(gf.body, subst, Dict.new())
 }
 
@@ -590,6 +603,233 @@ fn augment_subst_from_contract_calls(
     },
     _ => subst,
   }
+}
+
+fn augment_subst_from_bounds(ctx: MonoCtx, gf: FunctionDef, subst: Dict<String, MonoType>) Dict<
+  String,
+  MonoType,
+> {
+  out := subst
+
+  for tp in gf.type_params {
+    for bound in tp.bounds {
+      case bound {
+        .Builtin(contract, bound_args) => {
+          out = ctx.recover_bound_elem(tp.name, contract, bound_args, out)
+        },
+      }
+    }
+  }
+
+  out
+}
+
+fn recover_bound_elem(
+  ctx: MonoCtx,
+  recv_param_name: String,
+  contract: BuiltinContract,
+  bound_args: Vector<MonoType>,
+  subst: Dict<String, MonoType>,
+) Dict<String, MonoType> {
+  if bound_args.len() == 0 {
+    return subst
+  }
+
+  elem_name := case bound_args[0] {
+    .Var(n) => n,
+    _ => { return subst },
+  }
+
+  case subst.get(elem_name) {
+    .Some(existing) => if !contains_var(existing) {
+      return subst
+    },
+    .None => {},
+  }
+
+  recv := case subst.get(recv_param_name) {
+    .Some(t) => apply_subst(t, subst),
+    .None => { return subst },
+  }
+
+  if contains_var(recv) {
+    return subst
+  }
+
+  case ctx.recover_contract_elem(recv, contract) {
+    .Some(elem) => if !contains_var(elem) {
+      subst[elem_name] = elem
+    },
+    .None => {},
+  }
+
+  subst
+}
+
+fn recover_contract_elem(ctx: MonoCtx, recv: MonoType, contract: BuiltinContract) MonoType? {
+  case builtin_container_elem(recv, contract) {
+    .Some(e) => { return .Some(e) },
+    .None => {},
+  }
+
+  for req in contract.methods() {
+    case req.ret {
+      .Elem => { return ctx.resolve_method_return_from_sig(recv, req.method_name) },
+      .IteratorElem => case ctx.resolve_method_return_from_sig(recv, req.method_name) {
+        .Some(ret) => case ret {
+          .Named(_, args) => if args.len() > 0 {
+            return .Some(args[0])
+          },
+          _ => {},
+        },
+        .None => {},
+      },
+      _ => {},
+    }
+
+    j := 0
+
+    for shape in req.arg_shapes {
+      case shape {
+        .Elem => { return ctx.resolve_method_arg_from_sig(recv, req.method_name, j + 1) },
+        _ => {},
+      }
+
+      j = j + 1
+    }
+  }
+
+  .None
+}
+
+fn builtin_container_elem(recv: MonoType, contract: BuiltinContract) MonoType? {
+  case contract {
+    .IndexRead => case recv {
+      .Vector(e) => .Some(e),
+      .String => .Some(MonoType.Byte),
+      _ => .None,
+    },
+    .IndexWrite => case recv {
+      .Vector(e) => .Some(e),
+      _ => .None,
+    },
+    .IntoIterator => case recv {
+      .Vector(e) => .Some(e),
+      .String => .Some(MonoType.Byte),
+      _ => .None,
+    },
+    _ => .None,
+  }
+}
+
+fn function_def_sig(func: FunctionDef) FunctionSig {
+  FunctionSig.{
+    name: func.name,
+    type_params: func.type_params,
+    param_names: [],
+    params: collect p in func.params {
+      p.ty
+    },
+    ret: .Some(func.return_ty),
+    doc: .None,
+    extern_module: .None,
+  }
+}
+
+fn lookup_method_sig(ctx: MonoCtx, recv: MonoType, method_name: String) FunctionSig? {
+  fn_name := case recv {
+    .Named(tid, _) => ctx.env.lookup_type_method(tid, method_name),
+    .ExternRef(tid) => ctx.env.lookup_type_method(tid, method_name),
+    .String => .Some("String.${method_name}"),
+    .Vector(_) => .Some("Vector.${method_name}"),
+    .Dict(_, _) => .Some("Dict.${method_name}"),
+    .Optional(_) => .Some("Option.${method_name}"),
+    .Result(_, _) => .Some("Result.${method_name}"),
+    .Int => .Some("Int.${method_name}"),
+    .Float => .Some("Float.${method_name}"),
+    .Bool => .Some("Bool.${method_name}"),
+    .Byte => .Some("Byte.${method_name}"),
+    _ => .None,
+  }
+
+  case fn_name {
+    .Some(name) => case lookup_registered_function(ctx.env, name) {
+      .Some(sig) => { return .Some(sig) },
+      .None => {},
+    },
+    .None => {},
+  }
+
+  // Transitive imports can preserve method metadata without keeping the
+  // defining function's signature in the entry environment. Fall back to the
+  // linked FunctionDef metadata so bound-only recovery still has a signature to
+  // match; this is still signature-level recovery and does not inspect bodies.
+  case resolve_contract_target_id(recv, method_name, ctx) {
+    .Some(fid) => case ctx.func_map[fid.id] {
+      .Some(func) => .Some(function_def_sig(func)),
+      .None => .None,
+    },
+    .None => .None,
+  }
+}
+
+fn recover_sig_subst(ctx: MonoCtx, sig: FunctionSig, recv: MonoType) Dict<String, MonoType> {
+  subst: Dict<String, MonoType> = Dict.new()
+
+  if sig.params.len() > 0 {
+    subst = match_type_against(sig.params[0], recv, subst)
+  }
+
+  changed := true
+
+  for changed {
+    changed = false
+
+    for tp in sig.type_params {
+      for bound in tp.bounds {
+        case bound {
+          .Builtin(contract, bound_args) => {
+            before := subst.keys().len()
+            subst = ctx.recover_bound_elem(tp.name, contract, bound_args, subst)
+
+            if subst.keys().len() > before {
+              changed = true
+            }
+          },
+        }
+      }
+    }
+  }
+
+  subst
+}
+
+fn resolve_method_return_from_sig(ctx: MonoCtx, recv: MonoType, method_name: String) MonoType? {
+  sig := case ctx.lookup_method_sig(recv, method_name) {
+    .Some(found) => found,
+    .None => { return .None },
+  }
+  subst := ctx.recover_sig_subst(sig, recv)
+  ret := case sig.ret {
+    .Some(t) => t,
+    .None => MonoType.Void,
+  }
+
+  .Some(apply_subst(ret, subst))
+}
+
+fn resolve_method_arg_from_sig(ctx: MonoCtx, recv: MonoType, method_name: String, arg_index: Int) MonoType? {
+  sig := case ctx.lookup_method_sig(recv, method_name) {
+    .Some(found) => found,
+    .None => { return .None },
+  }
+
+  if arg_index >= sig.params.len() {
+    return .None
+  }
+
+  subst := ctx.recover_sig_subst(sig, recv)
+  .Some(apply_subst(sig.params[arg_index], subst))
 }
 
 fn collect_local_types(expr: CoreExpr, out: Dict<Int, MonoType>) Dict<Int, MonoType> {
@@ -909,6 +1149,113 @@ fn apply_subst_to_expr(expr: CoreExpr, subst: Dict<String, MonoType>) CoreExpr {
     ty: apply_subst(expr.ty, subst),
     span: expr.span,
   }
+}
+
+fn expr_has_free_var(expr: CoreExpr) Bool {
+  if contains_var(expr.ty) {
+    return true
+  }
+
+  case expr.kind {
+    .Let(_, value, body) => expr_has_free_var(value) or expr_has_free_var(body),
+    .Assign(_, value) => expr_has_free_var(value),
+    .BinOp(_, lhs, rhs) => expr_has_free_var(lhs) or expr_has_free_var(rhs),
+    .UnOp(_, inner) => expr_has_free_var(inner),
+    .Call(callee, args) => {
+      if expr_has_free_var(callee) {
+        return true
+      }
+
+      for a in args {
+        if expr_has_free_var(a) {
+          return true
+        }
+      }
+
+      false
+    },
+    .ContractCall(_, _, receiver, args) => {
+      if expr_has_free_var(receiver) {
+        return true
+      }
+
+      for a in args {
+        if expr_has_free_var(a) {
+          return true
+        }
+      }
+
+      false
+    },
+    .MakeClosure(_, _) => false,
+    .If(cond_e, then_e, else_e) => expr_has_free_var(cond_e)
+      or expr_has_free_var(then_e)
+      or expr_has_free_var(else_e),
+    .Match(scrut, arms) => {
+      if expr_has_free_var(scrut) {
+        return true
+      }
+
+      for arm in arms {
+        if expr_has_free_var(arm.body) {
+          return true
+        }
+      }
+
+      false
+    },
+    .Loop(body) => expr_has_free_var(body),
+    .Break(val) => case val {
+      .Some(v) => expr_has_free_var(v),
+      .None => false,
+    },
+    .Return(val) => case val {
+      .Some(v) => expr_has_free_var(v),
+      .None => false,
+    },
+    .Defer(inner) => expr_has_free_var(inner),
+    .Record(_, fields) => {
+      for field in fields {
+        if expr_has_free_var(field.value) {
+          return true
+        }
+      }
+
+      false
+    },
+    .RecordGet(target, _) => expr_has_free_var(target),
+    .RecordUpdate(base, _, value) => expr_has_free_var(base) or expr_has_free_var(value),
+    .Variant(_, _, args) => {
+      for a in args {
+        if expr_has_free_var(a) {
+          return true
+        }
+      }
+
+      false
+    },
+    .ArrayLit(elems) => {
+      for e in elems {
+        if expr_has_free_var(e) {
+          return true
+        }
+      }
+
+      false
+    },
+    .Index(base, idx) => expr_has_free_var(base) or expr_has_free_var(idx),
+    _ => false,
+  }
+}
+
+fn func_has_free_var(func: FunctionDef) Bool {
+  for p in func.params {
+    if contains_var(p.ty) {
+      return true
+    }
+  }
+
+  contains_var(func.return_ty) or expr_has_free_var(func.body)
 }
 
 fn apply_subst_to_kind(kind: CoreExprKind, subst: Dict<String, MonoType>) CoreExprKind {
@@ -1381,10 +1728,18 @@ pub fn monomorphize(module: CoreModule) CoreModule {
           func_id: new_fid,
           name: spec_name,
           is_init: false,
+          type_params: [],
           params: new_params,
           body: new_body,
           return_ty: new_ret,
         }
+
+        if func_has_free_var(specialized) {
+          error(
+            "monomorphize: specialized function '${spec_name}' still contains a free type variable",
+          )
+        }
+
         queue = collect_instantiations_func(specialized, ctx, queue)
         new_functions = .append(specialized)
       },
@@ -1403,6 +1758,7 @@ pub fn monomorphize(module: CoreModule) CoreModule {
           func_id: func.func_id,
           name: func.name,
           is_init: func.is_init,
+          type_params: func.type_params,
           params: func.params,
           body: new_body,
           return_ty: func.return_ty,
@@ -1419,6 +1775,7 @@ pub fn monomorphize(module: CoreModule) CoreModule {
         func_id: func.func_id,
         name: func.name,
         is_init: func.is_init,
+        type_params: func.type_params,
         params: func.params,
         body: new_body,
         return_ty: func.return_ty,

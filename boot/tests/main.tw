@@ -5,6 +5,7 @@ use .suites.anf_suite
 use .suites.api_cell_suite
 use .suites.api_dict_suite
 use .suites.api_option_result_suite
+use .suites.api_int_suite
 use .suites.api_range_iterator_suite
 use .suites.api_set_suite
 use .suites.api_string_suite
@@ -117,6 +118,7 @@ runner.run_all([
   api_string_suite.suite(),
   api_dict_suite.suite(),
   api_set_suite.suite(),
+  api_int_suite.suite(),
   api_view_suite.suite(),
   dict_hash_suite.suite(),
   api_range_iterator_suite.suite(),
