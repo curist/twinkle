@@ -1700,8 +1700,6 @@ Expressions that require contextual type information:
   in range `0..255`. Character literals (`'a'`) follow the same rule, since they
   are an integer-literal form.
 
-This is the same approach used by Gleam, Elm, and modern OCaml. The type system (what is typable) is unchanged from Damas–Milner; only the inference procedure is bidirectional rather than pure Algorithm W.
-
 ### Generalization Rules
 
 1. **`fn` declarations are generalized** — type variables in the signature are universally quantified:
