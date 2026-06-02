@@ -457,23 +457,11 @@ fn find_field_in_module(
 }
 
 fn function_name_span(decl: FunctionDecl) Span {
-  start := decl.span.start
-    + if decl.is_pub {
-      7
-    } else {
-      3
-    }
-  .{ file_id: decl.span.file_id, start, end: start + decl.name.len() }
+  decl.name_span
 }
 
 fn type_name_span(decl: TypeDecl) Span {
-  start := decl.span.start
-    + if decl.is_pub {
-      9
-    } else {
-      5
-    }
-  .{ file_id: decl.span.file_id, start, end: start + decl.name.len() }
+  decl.name_span
 }
 
 fn dependency_path_for_alias(snap: SemanticSnapshot, parsed: cache.ParsedModule, alias: String) String? {

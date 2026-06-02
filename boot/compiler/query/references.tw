@@ -87,19 +87,7 @@ fn identify_symbol(snap: SemanticSnapshot, byte_offset: Int) SymbolId? {
   for item in parsed.module.items {
     case item {
       .Type(decl) => {
-        name_start := decl.span.start
-          + if decl.is_pub {
-            9
-          } else {
-            5
-          }
-        name_span := Span.{
-          file_id: decl.span.file_id,
-          start: name_start,
-          end: name_start + decl.name.len(),
-        }
-
-        if name_span.contains(byte_offset) {
+        if decl.name_span.contains(byte_offset) {
           return .Some(type_def_id(snap, typed.env, decl.name))
         }
 
@@ -165,19 +153,7 @@ fn identify_symbol(snap: SemanticSnapshot, byte_offset: Int) SymbolId? {
         }
       },
       .Function(decl) => {
-        name_start := decl.span.start
-          + if decl.is_pub {
-            7
-          } else {
-            3
-          }
-        name_span := Span.{
-          file_id: decl.span.file_id,
-          start: name_start,
-          end: name_start + decl.name.len(),
-        }
-
-        if name_span.contains(byte_offset) {
+        if decl.name_span.contains(byte_offset) {
           return .Some(func_id(snap, typed.env, decl.name))
         }
 
@@ -261,27 +237,11 @@ fn identify_from_definition(snap: SemanticSnapshot, byte_offset: Int) SymbolId? 
     .Some(target_parsed) => {
       for item in target_parsed.module.items {
         case item {
-          .Function(decl) => {
-            fn_name_start := decl.span.start
-              + if decl.is_pub {
-                7
-              } else {
-                3
-              }
-
-            if fn_name_start == result.span.start {
-              return .Some(.Func(target_canonical, decl.name))
-            }
+          .Function(decl) => if decl.name_span.start == result.span.start {
+            return .Some(.Func(target_canonical, decl.name))
           },
           .Type(decl) => {
-            type_name_start := decl.span.start
-              + if decl.is_pub {
-                9
-              } else {
-                5
-              }
-
-            if type_name_start == result.span.start {
+            if decl.name_span.start == result.span.start {
               return .Some(.TypeDef(target_canonical, decl.name))
             }
 
@@ -988,21 +948,9 @@ fn collect_refs_in_module(ctx: RefCtx, refs: Vector<ReferenceLocation>, parsed: 
       .Function(decl) => {
         case ctx.sym {
           .Func(mod_path, func_name) => if func_name == decl.name {
-            name_start := decl.span.start
-              + if decl.is_pub {
-                7
-              } else {
-                3
-              }
-            name_span := Span.{
-              file_id: decl.span.file_id,
-              start: name_start,
-              end: name_start + decl.name.len(),
-            }
-
             if matches_func(ctx, decl.name, mod_path, func_name) {
               if ctx.include_declaration {
-                refs = .append(.{ uri: ctx.uri, span: name_span })
+                refs = .append(.{ uri: ctx.uri, span: decl.name_span })
               }
             }
           },
@@ -1099,18 +1047,7 @@ fn collect_refs_in_type_decl(ctx: RefCtx, refs: Vector<ReferenceLocation>, decl:
     .TypeDef(mod_path, type_name) => if type_name == decl.name
       and matches_type(ctx, decl.name, mod_path, type_name) {
       if ctx.include_declaration {
-        name_start := decl.span.start
-          + if decl.is_pub {
-            9
-          } else {
-            5
-          }
-        name_span := Span.{
-          file_id: decl.span.file_id,
-          start: name_start,
-          end: name_start + decl.name.len(),
-        }
-        refs = .append(.{ uri: ctx.uri, span: name_span })
+        refs = .append(.{ uri: ctx.uri, span: decl.name_span })
       }
     },
     .Variant(_, vtype_name, _) => if vtype_name == decl.name {},
