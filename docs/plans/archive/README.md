@@ -109,6 +109,7 @@ Related historical context outside this folder:
 | [pvec-performance-enhancements.md](pvec-performance-enhancements.md) | Incremental PVec runtime optimizations: i31ref builder tail, promote_full_tail, bulk array conversion, leaf-oriented slice/extend, true in-place set |
 | [dict-performance-enhancements.md](dict-performance-enhancements.md) | Incremental HAMT dict runtime optimizations: hot-path inlining, in-place mutation for unique dicts |
 | [dict-in-place-alias-safety.md](dict-in-place-alias-safety.md) | Deep ownership analysis ensuring in-place dict/vector mutation is alias-safe |
+| [string-builder-uniqueness-plan.md](string-builder-uniqueness-plan.md) | Internal string builder runtime helpers plus static uniqueness rewrites for loop and straight-line `String.concat` accumulator regions |
 | [collections-access.md](collections-access.md) | Umbrella for the collection-access cluster (cheap + general indexing/slice/concat/traversal); archived once the audit, `drop_last`, access-contracts, `View`, and RRB work all landed — only the `[a..b]` range-slice proposal ([../sliceable.md](../sliceable.md)) remains open |
 | [rrb-vector-concat.md](rrb-vector-concat.md) | RRB-tree `Vector` concat/slice implementation plan and benchmarks; runtime work landed in boot and stage0, with Phase 7 classical-slack experiment archived as a wash |
 | [slice-performance.md](slice-performance.md) | Boot-compiler `slice`/`concat` audit — the evidence behind the collections-access cluster; Vector LIFO landed via `drop_last`, String-slice routed to `View` |
