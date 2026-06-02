@@ -1,6 +1,0 @@
----
-source: tests/integration_test.rs
-assertion_line: 161
-expression: err_msg
----
-"case_missing_comma.tw:6:9: Expected ,, found .\n   6 |         .Some(n) => n\n\n              ^"

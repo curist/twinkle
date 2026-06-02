@@ -362,6 +362,7 @@ WildcardPattern =
 
 LiteralPattern =
       IntLiteral
+    | CharLiteral
     | BoolLiteral
     | StringLiteral ;
 
@@ -504,6 +505,7 @@ IfExpr =
 
 Literal =
       IntLiteral
+    | CharLiteral
     | FloatLiteral
     | StringLiteral
     | BoolLiteral ;
@@ -511,6 +513,18 @@ Literal =
 IntLiteral =
       HexLiteral
     | Digit { Digit } ;
+
+CharLiteral =
+    "'" CharChar "'" ;
+
+CharChar =
+      ? any single ASCII character except "'" and '\' ?
+    | "\\" CharEscape
+    | "\\" HexEscape
+    | "\\" UnicodeEscape ;
+
+CharEscape =
+      "n" | "t" | "r" | "'" | '"' | "\\" | "0" | "e" ;
 
 HexLiteral =
     "0x" HexDigit { HexDigit } ;
@@ -557,6 +571,14 @@ UnicodeEscape =
 
 BoolLiteral =
     "true" | "false" ;
+
+(* Implementation note (character literals):
+   - A character literal denotes the integer code point of its single
+     character: `'A'` = 65, `'\n'` = 10, `'\x41'` = 65, `'\u{1F600}'` = 128512.
+   - It is an integer-literal form: it lexes to the same token as IntLiteral,
+     defaults to `Int`, and in a position expecting `Byte` narrows to `Byte`
+     when the value is in `0..255` (same rule as a decimal integer literal).
+   - Escapes mirror string escapes, plus `\'`; `\"` is also accepted. *)
 
 (* Implementation note (numeric literals & negation):
    - `-1` and `-3.14` are parsed as UnaryExpr: `-` applied to IntLiteral/FloatLiteral.

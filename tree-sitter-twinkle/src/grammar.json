@@ -2544,6 +2544,10 @@
         },
         {
           "type": "SYMBOL",
+          "name": "char_literal"
+        },
+        {
+          "type": "SYMBOL",
           "name": "float_literal"
         },
         {
@@ -2784,6 +2788,10 @@
         {
           "type": "SYMBOL",
           "name": "int_literal"
+        },
+        {
+          "type": "SYMBOL",
+          "name": "char_literal"
         },
         {
           "type": "SYMBOL",
@@ -3162,6 +3170,13 @@
           "value": "\\d+"
         }
       ]
+    },
+    "char_literal": {
+      "type": "TOKEN",
+      "content": {
+        "type": "PATTERN",
+        "value": "'(\\\\(x[0-9a-fA-F]{2}|u\\{[0-9a-fA-F]{1,6}\\}|[ntr'\"\\\\0e])|[^'\\\\\\n])'"
+      }
     },
     "float_literal": {
       "type": "PATTERN",

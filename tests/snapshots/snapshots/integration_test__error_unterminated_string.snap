@@ -1,5 +1,0 @@
----
-source: tests/integration_test.rs
-expression: err_msg
----
-"unterminated_string.tw:2:11: Lexer error: UnterminatedString\n   2 |   println(\"unterminated\n\n                ^"

@@ -1051,6 +1051,34 @@ Twinkle string literals support these escapes:
 Migration note: code that previously built ESC with `String.from_char_code(27)` can
 be simplified to `"\e"` or `"\x1b"` in literals.
 
+### Character Literals
+
+A character literal `'c'` denotes the **integer code point** of a single
+character:
+
+```tw
+'A'         // 65
+'\n'        // 10
+'\x41'      // 65
+'\u{1F600}' // 128512
+```
+
+A character literal is an *integer-literal form*: it behaves exactly like the
+equivalent integer literal. It defaults to `Int`, narrows to `Byte` in a
+position that expects `Byte` (when the value is in `0..255`, same rule as a
+decimal integer literal), and may be used as a `case` pattern:
+
+```tw
+op: Byte = '+'                       // narrows to Byte
+code := s.char_code_at(i)
+if code >= '0' and code <= '9' { ... }   // compares against Int code points
+case b { '\n' => ..., _ => ... }     // pattern position
+```
+
+This lets character-oriented code compare against readable literals instead of
+raw ASCII numbers. Supported escapes mirror string escapes, plus `\'`:
+`\n \t \r \\ \' \" \0 \e \xNN \u{...}`.
+
 ### String Interpolation
 
 String interpolation uses:
@@ -1669,9 +1697,8 @@ Expressions that require contextual type information:
 * **Function arguments** — the argument is checked against the declared parameter type.
 * **Integer literals in `Byte` contexts** — a literal like `10` is accepted as
   `Byte` only when an expected `Byte` type is present, and only if the value is
-  in range `0..255`.
-
-This is the same approach used by Gleam, Elm, and modern OCaml. The type system (what is typable) is unchanged from Damas–Milner; only the inference procedure is bidirectional rather than pure Algorithm W.
+  in range `0..255`. Character literals (`'a'`) follow the same rule, since they
+  are an integer-literal form.
 
 ### Generalization Rules
 

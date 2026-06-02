@@ -505,6 +505,7 @@ module.exports = grammar({
 
     literal_pattern: $ => choice(
       $.int_literal,
+      $.char_literal,
       $.float_literal,
       $.bool_literal,
       $.string_literal,
@@ -556,6 +557,7 @@ module.exports = grammar({
     _literal: $ => choice(
       prec.dynamic(5, $.string_literal), // prefer strings so the lexer chooses them early
       $.int_literal,
+      $.char_literal,
       $.float_literal,
       $.bool_literal,
       $.record_literal,
@@ -647,6 +649,10 @@ module.exports = grammar({
       /0x[0-9a-fA-F]+/,
       /\d+/,
     ),
+
+    // A character literal denotes an integer code point (e.g. `'A'` = 65).
+    // Single ASCII character or an escape sequence; lexed as one token.
+    char_literal: $ => token(/'(\\(x[0-9a-fA-F]{2}|u\{[0-9a-fA-F]{1,6}\}|[ntr'"\\0e])|[^'\\\n])'/),
 
     float_literal: $ => /\d+\.\d+/,
 

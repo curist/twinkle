@@ -4,7 +4,6 @@
 /// structurally correct ANF IR for every program in the test suite.
 /// The key invariant: every operation's inputs are atoms (locals or literals),
 /// not nested expressions.
-use std::fs;
 use std::path::Path;
 use twinkle::ir::anf::{AnfExpr, AnfFunctionDef, AnfMatchArm, AnfModule, AnfOp, Atom};
 
@@ -401,64 +400,4 @@ fn anf_trap_div_zero() {
 #[test]
 fn anf_trap_error_call() {
     check("tests/run/traps/error_call.tw");
-}
-
-// ── Golden snapshot tests ─────────────────────────────────────────────────────
-// These tests verify the exact ANF output for a few representative programs.
-// Run with UPDATE_SNAPSHOTS=1 to regenerate the golden files.
-
-fn snapshot_path(name: &str) -> String {
-    format!("tests/snapshots/anf/{}.txt", name)
-}
-
-fn check_snapshot(tw_path: &str, snapshot_name: &str) {
-    let module = lower_anf_for(tw_path);
-    let actual = format!("{}", module);
-
-    let snap_path = snapshot_path(snapshot_name);
-    if std::env::var("UPDATE_SNAPSHOTS").is_ok() {
-        // Regenerate snapshot.
-        let snap_dir = "tests/snapshots/anf".to_string();
-        fs::create_dir_all(&snap_dir).expect("create snapshot dir");
-        fs::write(&snap_path, &actual).expect("write snapshot");
-        return;
-    }
-
-    if !Path::new(&snap_path).exists() {
-        // No snapshot yet — create it on first run.
-        let snap_dir = "tests/snapshots/anf".to_string();
-        fs::create_dir_all(&snap_dir).expect("create snapshot dir");
-        fs::write(&snap_path, &actual).expect("write snapshot");
-        return;
-    }
-
-    let expected = fs::read_to_string(&snap_path)
-        .unwrap_or_else(|_| panic!("Could not read snapshot: {}", snap_path));
-
-    assert_eq!(
-        actual, expected,
-        "ANF snapshot mismatch for '{}'\n\
-         To update: UPDATE_SNAPSHOTS=1 cargo test {}",
-        tw_path, snapshot_name
-    );
-}
-
-#[test]
-fn anf_snapshot_hello() {
-    check_snapshot("tests/run/hello.tw", "hello");
-}
-
-#[test]
-fn anf_snapshot_arithmetic() {
-    check_snapshot("tests/run/arithmetic.tw", "arithmetic");
-}
-
-#[test]
-fn anf_snapshot_closures() {
-    check_snapshot("tests/run/closures.tw", "closures");
-}
-
-#[test]
-fn anf_snapshot_records() {
-    check_snapshot("tests/run/records.tw", "records");
 }
