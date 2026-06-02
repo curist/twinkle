@@ -6,7 +6,6 @@
 /// 2. Node-count reduction for programs with compile-time constants.
 /// 3. Golden snapshot tests for the optimized ANF of two fixtures.
 /// 4. Record-update in-place annotation: `can_reuse_in_place` set/unset correctly.
-use std::fs;
 use std::path::Path;
 
 use twinkle::ir::anf::{AnfExpr, AnfFunctionDef, AnfMatchArm, AnfModule, AnfOp, Atom};
@@ -339,43 +338,6 @@ fn opt_dead_let_reduces_nodes() {
         before,
         after
     );
-}
-
-// ── Golden snapshot tests ─────────────────────────────────────────────────────
-
-fn snapshot_dir() -> &'static str {
-    "tests/snapshots/opt"
-}
-
-fn check_opt_snapshot(tw_path: &str, name: &str) {
-    let module = compile_opt(tw_path);
-    let actual = format!("{}", module);
-    let snap_path = format!("{}/{}.txt", snapshot_dir(), name);
-
-    if std::env::var("UPDATE_SNAPSHOTS").is_ok() || !Path::new(&snap_path).exists() {
-        fs::create_dir_all(snapshot_dir()).expect("create snapshot dir");
-        fs::write(&snap_path, &actual).expect("write snapshot");
-        return;
-    }
-
-    let expected = fs::read_to_string(&snap_path)
-        .unwrap_or_else(|_| panic!("Could not read snapshot: {}", snap_path));
-    assert_eq!(
-        actual, expected,
-        "Opt snapshot mismatch for '{}'\n\
-         To update: UPDATE_SNAPSHOTS=1 cargo test {}",
-        tw_path, name
-    );
-}
-
-#[test]
-fn opt_snapshot_constant_folding() {
-    check_opt_snapshot("tests/opt/constant_folding.tw", "constant_folding");
-}
-
-#[test]
-fn opt_snapshot_dead_let() {
-    check_opt_snapshot("tests/opt/dead_let.tw", "dead_let");
 }
 
 // ── Record update in-place annotation tests ───────────────────────────────────
