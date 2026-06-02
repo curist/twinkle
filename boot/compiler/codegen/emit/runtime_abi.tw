@@ -21,23 +21,41 @@ pub fn is_host_vector_arg(name: String, index: Int) Bool {
     or name == "host_run_wasm" and (index == 0 or index == 1)
 }
 
-pub fn is_vector_builder_array_arg(name: String, index: Int) Bool {
-  name == "vector$builder_push" and index == 0 or name == "vector$builder_freeze" and index == 0
+// The builder buffer (the transient builder handle) is held in an erased
+// anyref local; its arg-0 position in push/extend/freeze must be cast back to
+// the concrete builder type before the call. Covers both families.
+pub fn is_builder_buffer_arg(name: String, index: Int) Bool {
+  index == 0
+    and (name == "vector$builder_push"
+      or name == "vector$builder_freeze"
+      or name == "string$builder_extend"
+      or name == "string$builder_freeze")
 }
 
-pub fn is_vector_builder_push(name: String) Bool {
-  name == "vector$builder_push"
+// The in-builder append op (vector push / string extend) returns void but is
+// bound to a non-void (now-dead) result local by the loop rewrite, so a default
+// placeholder value must be pushed before the local.set.
+pub fn is_builder_void_push(name: String) Bool {
+  name == "vector$builder_push" or name == "string$builder_extend"
 }
 
-pub fn is_vector_builder_seed(name: String) Bool {
-  name == "vector$builder_new" or name == "vector$builder_from"
+// The builder seed (from/new) returns the raw builder handle, which is stored
+// directly into the erased anyref slot — skip the mono-driven result adaption.
+pub fn is_builder_seed(name: String) Bool {
+  name == "vector$builder_new" or name == "vector$builder_from" or name == "string$builder_from"
 }
 
 // ABI shim: builder regions keep transient builders as erased anyref locals;
-// cast back to concrete Array before the push/freeze call.
+// cast back to the concrete builder type before the push/extend/freeze call.
 pub fn emit_builder_arg_shim(entry_name: String, index: Int, buf: Vector<Instr>) Vector<Instr> {
-  if is_vector_builder_array_arg(entry_name, index) {
-    return buf.append(.RefCast(true, .Named("rt_types__Array")))
+  if is_builder_buffer_arg(entry_name, index) {
+    cast_type := if entry_name == "string$builder_extend" or entry_name == "string$builder_freeze" {
+      "rt_types__StrBuilder"
+    } else {
+      "rt_types__Array"
+    }
+
+    return buf.append(.RefCast(true, .Named(cast_type)))
   }
 
   buf

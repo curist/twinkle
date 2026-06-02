@@ -77,6 +77,13 @@ type Ownership = { Shallow, Deep }
 fn classify_producer_ownership(op: AnfOp, semantics: OptimizerSemantics) Ownership? {
   case op {
     .AArrayLit(_) => .Some(.Deep),
+    // A string-literal initializer (e.g. `out := ""`) is the natural base of a
+    // `String.concat` accumulator loop. Treat it as deep-owned so the loop
+    // region detector can pick it up — string builder regions copy the base via
+    // `string$builder_from`, so the literal is never mutated. There are no
+    // in-place string COW ops, so this ownership only ever licenses the
+    // builder-region rewrite.
+    .AInit(.ALitStr(_)) => .Some(.Deep),
     .ARecord(_, _) => .Some(.Shallow),
     .ARecordUpdate(_, _, _, _, _) => .Some(.Shallow),
     .AVariant(_, _, _) => .Some(.Shallow),
@@ -740,18 +747,23 @@ fn try_loop_rewrite(bind_local: LocalId, loop_body: AnfExpr, cont: AnfExpr, st: 
     // empty), which silently dropped the base's pre-loop contents and corrupted
     // self-hosted runs. builder_from on a genuinely empty base copies nothing,
     // so dropping the builder_new shortcut costs effectively nothing.
-    case rewrite_loop_region(
-      bind_local,
-      loop_body,
-      cont,
-      base,
-      base_mono,
-      st.next_local,
-      false,
-      st.config.builder,
-    ) {
-      .Some(result) => { return .Some(result) },
-      .None => {},
+    //
+    // Try each builder family (vector, then string). Each family's `push_id`
+    // gates whether it matches the loop, so at most one fires for a given base.
+    for builder in [st.config.builder, st.config.string_builder] {
+      case rewrite_loop_region(
+        bind_local,
+        loop_body,
+        cont,
+        base,
+        base_mono,
+        st.next_local,
+        false,
+        builder,
+      ) {
+        .Some(result) => { return .Some(result) },
+        .None => {},
+      }
     }
   }
 

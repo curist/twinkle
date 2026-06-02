@@ -492,7 +492,6 @@ fn from_bool_fn() FuncDef {
 // StrBuilder { len: i32 (mut), buf: String (mut) }. Field 0 = len, field 1 = buf.
 // All inputs are valid UTF-8 String values, so the buffer is always valid UTF-8
 // and freeze needs no validation. See docs/plans/string-builder-uniqueness-plan.md.
-
 // builder_from(base: String?) -> StrBuilder
 // Initial capacity == base length (an empty base allocates a 0-length buffer).
 fn builder_from_fn() FuncDef {

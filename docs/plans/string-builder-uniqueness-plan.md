@@ -231,23 +231,34 @@ Like `VECTOR_CONCAT`, it should not become a generic one-base COW op with an
 in-place variant. It has no true in-place string mutation. Recognition should be
 local to builder-region rewrites.
 
-Concretely, the `CallSemantics` row for `String.concat` in
-`make_prelude_optimizer_semantics` (`boot/compiler/opt/semantics.tw`) should be:
+**RESOLVED during implementation.** The `cow_base_arg: .None` registration the
+plan originally proposed does **not** work: with `.None`, taint analysis taints
+*all* of `concat`'s args including the accumulator base (a non-COW allocating
+call taints every arg), which strips the base's ownership so the loop-region
+detector's deep-owned candidate gate never selects it — the rewrite never fires.
+
+The working registration treats `String.concat` exactly like `Vector.append`
+(the vector push op): a consume-reassign combinator whose base is arg 0, so the
+base stays untainted through the loop. There is no real in-place string
+mutation, so `in_place_equivalent` is `.None` (no straight-line in-place rewrite
+is ever emitted — recognition stays local to builder-region rewrites). In
+`make_prelude_optimizer_semantics` (`boot/compiler/opt/semantics.tw`):
 
 ```tw
 calls[b.method_id("String", "concat").id] = CallSemantics.{
-  effect: .Allocate,
-  fresh_result: true,
-  cow_base_arg: .None,        // NOT a one-base COW op; no in-place variant
-  in_place_equivalent: .None,
+  effect: .Update,
+  fresh_result: false,
+  cow_base_arg: .Some(0),     // base = accumulator; keeps it untainted in loop
+  in_place_equivalent: .None, // no in-place string op; builder-region only
 }
 ```
 
-Note the consequence: with `cow_base_arg: .None`, taint analysis taints all of
-`concat`'s args including the base (it is not treated as a reusable COW base).
-The loop-region detector keys off `push_id` independently of taint, so confirm
-the rewrite still fires under that taint state during implementation — if it
-does not, `concat` needs a different registration than this.
+One more piece is required for the *empty-base* idiom `out := ""`: a string
+literal lowers to `AInit(.ALitStr(_))`, which by default carries no ownership,
+so it would not be a candidate. `classify_producer_ownership` now treats a
+string-literal initializer as deep-owned. This is safe because the builder seed
+copies the base (`string$builder_from`) and there are no in-place string COW
+ops, so the ownership only ever licenses the builder-region rewrite.
 
 ## Rewrite Rules
 
@@ -405,22 +416,40 @@ both compilers, regen core_lib, `make bundle-cli`, then suite + docs.
 Keep the initial implementation simple and correctness-first (a `Vector<Byte>`
 buffer). Optimize the representation later if profiling shows it matters.
 
-### Phase S3: Add the string builder family + concat semantics
+### Phase S3: Add the string builder family + concat semantics — ✅ DONE (boot)
 
-Small, not a redesign — `BuilderConfig` already exists and is already threaded.
-Add a `string_builder_config(b)` constructor alongside `vector_builder_config`,
-register the `String.concat` `CallSemantics` row (see "Operation semantics"),
-and let the uniqueness pass try the string family in addition to the vector one.
+`string_builder_config(b)` added alongside `vector_builder_config`
+(`builder_family.tw`). `OptimizerSemantics`/`CowConfig` gained a second
+`string_builder: BuilderConfig` field, carried through the CowConfig round-trip
+and `empty_*` constructors. `String.concat` + `string$builder_from/extend/freeze`
+registered in `make_prelude_optimizer_semantics` (see corrected "Operation
+semantics" above). Boot-only — stage0 left as a correctness reference that does
+not perform this optimization (per CLAUDE.md); self-host stays green.
 
-### Phase S5: Loop string concat regions (do before S4)
+### Phase S5: Loop string concat regions (do before S4) — ✅ DONE (boot)
 
-The boot loop-builder engine is already re-enabled (S0). With the string family
-from S3, the existing `loop_push_reassign_elem` / `rewrite_loop_region` path
-should fire on `out = out.concat(chunk)` loops directly, preserving the existing
-accumulator-read negative rule.
+`try_loop_rewrite` now tries each builder family (vector, then string) per
+candidate base; each family's `push_id` gates which one matches, so at most one
+fires. The existing `loop_push_reassign_elem` / `rewrite_loop_region` path fires
+on `out = out.concat(chunk)` loops directly and rejects self-concat
+(`args[1] != base`) for free, preserving the accumulator-read negative rule.
 
-This unlocks `repeat`-style helpers and many parser/formatter string assembly
-loops without a public string builder API.
+Backend (the crux): the loop rewrite binds the void-returning `builder_extend`
+call to a non-void (dead) result local, and the builder handle lives in an
+erased anyref slot. `collect_vector_builder_slots` (`codegen/emit.tw`) now
+recognizes the `string$builder_*` ids (creator/consumer sets), and the
+name-based ABI predicates in `codegen/emit/runtime_abi.tw` were generalized to
+both families (`is_builder_buffer_arg` / `is_builder_void_push` /
+`is_builder_seed`), with `emit_builder_arg_shim` casting the handle back to
+`rt_types__StrBuilder` (vs `rt_types__Array`) for string ops. Without this the
+end-to-end program traps at instantiation ("not enough arguments for
+local.set").
+
+Verified: `repeat`/non-empty-base loops rewrite and run correctly; self-concat
+and mid-loop-accumulator-read loops are left unoptimized and still correct;
+`make stage2` reaches fixed point; boot suite green (incl. new
+`opt_uniqueness_suite` structural tests). This unlocks `repeat`-style helpers
+and many parser/formatter string assembly loops without a public builder API.
 
 ### Phase S4: Straight-line string concat regions
 

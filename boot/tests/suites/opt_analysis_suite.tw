@@ -59,7 +59,11 @@ fn mock_semantics() OptimizerSemantics {
     cow_base_arg: .None,
     in_place_equivalent: .None,
   }
-  OptimizerSemantics.{ call_semantics: calls, builder: empty_builder_config() }
+  OptimizerSemantics.{
+    call_semantics: calls,
+    builder: empty_builder_config(),
+    string_builder: empty_builder_config(),
+  }
 }
 
 fn make_func(body: AnfExpr) AnfFunctionDef {

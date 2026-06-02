@@ -6,7 +6,9 @@
 /// - preserve current dead-let purity behavior (calls remain non-eliminable)
 
 use compiler.anf.{AnfExpr, AnfOp}
-use compiler.builder_family.{BuilderConfig, empty_builder_config, vector_builder_config}
+use compiler.builder_family.{
+  BuilderConfig, empty_builder_config, string_builder_config, vector_builder_config,
+}
 use compiler.builtins.{BuiltinRegistry}
 use compiler.core_ir.{FuncId, LocalId}
 
@@ -17,6 +19,7 @@ pub type CowConfig = .{
   fresh_producer_ids: Dict<Int, Bool>,
   read_only_ids: Dict<Int, Bool>,
   builder: BuilderConfig,
+  string_builder: BuilderConfig,
 }
 
 pub type EffectKind = { Pure, ReadOnly, Update, Allocate, Control }
@@ -36,7 +39,11 @@ pub type ReusableUpdateSite = .{
   in_place_equivalent: FuncId?,
 }
 
-pub type OptimizerSemantics = .{ call_semantics: Dict<Int, CallSemantics>, builder: BuilderConfig }
+pub type OptimizerSemantics = .{
+  call_semantics: Dict<Int, CallSemantics>,
+  builder: BuilderConfig,
+  string_builder: BuilderConfig,
+}
 
 fn control_call() CallSemantics {
   CallSemantics.{
@@ -48,12 +55,17 @@ fn control_call() CallSemantics {
 }
 
 pub fn empty_optimizer_semantics() OptimizerSemantics {
-  OptimizerSemantics.{ call_semantics: Dict.new(), builder: empty_builder_config() }
+  OptimizerSemantics.{
+    call_semantics: Dict.new(),
+    builder: empty_builder_config(),
+    string_builder: empty_builder_config(),
+  }
 }
 
 pub fn make_prelude_optimizer_semantics(b: BuiltinRegistry) OptimizerSemantics {
   calls: Dict<Int, CallSemantics> = Dict.new()
   builder := vector_builder_config(b)
+  string_builder := string_builder_config(b)
   calls[b.method_id("Vector", "len").id] = CallSemantics.{
     effect: .ReadOnly,
     fresh_result: false,
@@ -120,7 +132,43 @@ pub fn make_prelude_optimizer_semantics(b: BuiltinRegistry) OptimizerSemantics {
     cow_base_arg: .None,
     in_place_equivalent: .None,
   }
-  OptimizerSemantics.{ call_semantics: calls, builder }
+
+  // String builder family. `String.concat` is registered exactly like
+  // `Vector.append` (the vector push op): a consume-reassign combinator whose
+  // base argument (arg 0) is the reusable accumulator. This keeps the base
+  // untainted through the loop body so the loop-region detector can fire.
+  //
+  // It deliberately does NOT use `cow_base_arg: .None`: that would make taint
+  // analysis taint the accumulator (a non-COW allocating call taints all its
+  // args), which strips its ownership and blocks the rewrite. There is no true
+  // in-place string mutation, so `in_place_equivalent` is `.None` — no
+  // straight-line in-place rewrite is ever emitted; recognition stays local to
+  // builder-region rewrites.
+  calls[string_builder.push_id.id] = CallSemantics.{
+    effect: .Update,
+    fresh_result: false,
+    cow_base_arg: .Some(0),
+    in_place_equivalent: .None,
+  }
+  calls[string_builder.builder_from_id.id] = CallSemantics.{
+    effect: .Allocate,
+    fresh_result: true,
+    cow_base_arg: .None,
+    in_place_equivalent: .None,
+  }
+  calls[string_builder.builder_push_id.id] = CallSemantics.{
+    effect: .Update,
+    fresh_result: false,
+    cow_base_arg: .Some(0),
+    in_place_equivalent: .None,
+  }
+  calls[string_builder.builder_freeze_id.id] = CallSemantics.{
+    effect: .Allocate,
+    fresh_result: true,
+    cow_base_arg: .None,
+    in_place_equivalent: .None,
+  }
+  OptimizerSemantics.{ call_semantics: calls, builder, string_builder }
 }
 
 pub fn call_info(semantics: OptimizerSemantics, func_id: FuncId) CallSemantics? {
@@ -153,7 +201,13 @@ pub fn cow_config_from_semantics(semantics: OptimizerSemantics) CowConfig {
     }
   }
 
-  CowConfig.{ cow_ops, fresh_producer_ids, read_only_ids, builder: semantics.builder }
+  CowConfig.{
+    cow_ops,
+    fresh_producer_ids,
+    read_only_ids,
+    builder: semantics.builder,
+    string_builder: semantics.string_builder,
+  }
 }
 
 pub fn optimizer_semantics_from_cow_config(config: CowConfig) OptimizerSemantics {
@@ -193,7 +247,11 @@ pub fn optimizer_semantics_from_cow_config(config: CowConfig) OptimizerSemantics
     }
   }
 
-  OptimizerSemantics.{ call_semantics: calls, builder: config.builder }
+  OptimizerSemantics.{
+    call_semantics: calls,
+    builder: config.builder,
+    string_builder: config.string_builder,
+  }
 }
 
 pub fn op_effect(op: AnfOp, semantics: OptimizerSemantics) EffectKind {

@@ -92,6 +92,23 @@ fn mock_builder_freeze() FuncId {
   fid(233)
 }
 
+// String builder family
+fn mock_str_concat() FuncId {
+  fid(260)
+}
+
+fn mock_str_builder_from() FuncId {
+  fid(261)
+}
+
+fn mock_str_builder_extend() FuncId {
+  fid(262)
+}
+
+fn mock_str_builder_freeze() FuncId {
+  fid(263)
+}
+
 // Fresh wrapper helper (summarized structurally, not via call semantics)
 fn mock_alloc_out() FuncId {
   fid(240)
@@ -165,6 +182,32 @@ fn mock_semantics() OptimizerSemantics {
     cow_base_arg: .None,
     in_place_equivalent: .None,
   }
+
+  // String.concat: consume-reassign combinator, base = arg 0 (like vec push).
+  calls[mock_str_concat().id] = .{
+    effect: .Update,
+    fresh_result: false,
+    cow_base_arg: .Some(0),
+    in_place_equivalent: .None,
+  }
+  calls[mock_str_builder_from().id] = .{
+    effect: .Allocate,
+    fresh_result: true,
+    cow_base_arg: .None,
+    in_place_equivalent: .None,
+  }
+  calls[mock_str_builder_extend().id] = .{
+    effect: .Update,
+    fresh_result: false,
+    cow_base_arg: .Some(0),
+    in_place_equivalent: .None,
+  }
+  calls[mock_str_builder_freeze().id] = .{
+    effect: .Allocate,
+    fresh_result: true,
+    cow_base_arg: .None,
+    in_place_equivalent: .None,
+  }
   OptimizerSemantics.{
     call_semantics: calls,
     builder: BuilderConfig.{
@@ -173,6 +216,13 @@ fn mock_semantics() OptimizerSemantics {
       builder_from_id: mock_builder_from(),
       builder_push_id: mock_builder_push(),
       builder_freeze_id: mock_builder_freeze(),
+    },
+    string_builder: BuilderConfig.{
+      push_id: mock_str_concat(),
+      builder_new_id: mock_str_builder_from(),
+      builder_from_id: mock_str_builder_from(),
+      builder_push_id: mock_str_builder_extend(),
+      builder_freeze_id: mock_str_builder_freeze(),
     },
   }
 }
@@ -1998,6 +2048,70 @@ fn test_dict_fresh_remove_rewrite() Result<Void, String> {
   }
 }
 
+// ── Phase 3: String concat loop → string builder ────────────────────
+fn test_string_concat_loop_rewrite() Result<Void, String> {
+  // let out = AInit(ALitStr(""))    // string-literal base → deep owned
+  // let _ = ALoop(
+  //   let tmp = str_concat(out, chunk)
+  //   let _ = AAssign(out, tmp)
+  //   Continue)
+  // Atom(out)
+  //
+  // Should rewrite to the string builder family: str_builder_from(out) at top.
+  loop_body: AnfExpr = .Let(
+    lid(1),
+    .ACall(.AGlobalFunc(mock_str_concat()), [.ALocal(lid(0)), .ALitStr("ab")]),
+    .Let(lid(2), .AAssign(lid(0), .ALocal(lid(1))), .Continue),
+  )
+  body: AnfExpr = .Let(
+    lid(0),
+    .AInit(.ALitStr("")),
+    .Let(lid(3), .ALoop(loop_body), .Atom(.ALocal(lid(0)))),
+  )
+  func := make_func(body)
+  result := rewrite(func)
+
+  case result.body {
+    .Let(_, .AInit(_), .Let(_, .ACall(.AGlobalFunc(f), args), _)) => {
+      try assert.equal(f.id, mock_str_builder_from().id)
+      try assert.equal(args.len(), 1)
+
+      case args[0] {
+        .ALocal(local) => assert.equal(local.id, 0),
+        _ => .Err("expected str_builder_from base arg"),
+      }
+    },
+    _ => .Err("expected str_builder_from call after string-literal base"),
+  }
+}
+
+fn test_string_self_concat_no_rewrite() Result<Void, String> {
+  // let out = AInit(ALitStr(""))
+  // let _ = ALoop(
+  //   let tmp = str_concat(out, out)   // self-concat → must NOT rewrite
+  //   let _ = AAssign(out, tmp)
+  //   Continue)
+  // Atom(out)
+  loop_body: AnfExpr = .Let(
+    lid(1),
+    .ACall(.AGlobalFunc(mock_str_concat()), [.ALocal(lid(0)), .ALocal(lid(0))]),
+    .Let(lid(2), .AAssign(lid(0), .ALocal(lid(1))), .Continue),
+  )
+  body: AnfExpr = .Let(
+    lid(0),
+    .AInit(.ALitStr("")),
+    .Let(lid(3), .ALoop(loop_body), .Atom(.ALocal(lid(0)))),
+  )
+  func := make_func(body)
+  result := rewrite(func)
+
+  // ALoop must be preserved (no builder wrapping).
+  case result.body {
+    .Let(_, .AInit(_), .Let(_, .ALoop(_), _)) => .Ok({}),
+    _ => .Err("expected ALoop preserved (self-concat)"),
+  }
+}
+
 // ── Suite ───────────────────────────────────────────────────────────
 pub fn suite() runner.Suite {
   s := runner.suite("Opt: Uniqueness Rewrite")
@@ -2087,5 +2201,9 @@ pub fn suite() runner.Suite {
   s = .test("dict fresh linear set chain", test_dict_fresh_linear_set_chain)
   s = .test("dict fresh set with consume-reassign", test_dict_fresh_set_with_consume_reassign)
   s = .test("dict fresh remove rewrite", test_dict_fresh_remove_rewrite)
+
+  // String concat loop → string builder family
+  s = .test("string concat loop → builder", test_string_concat_loop_rewrite)
+  s = .test("string self-concat → no rewrite", test_string_self_concat_no_rewrite)
   s
 }

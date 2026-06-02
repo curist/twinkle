@@ -31,3 +31,21 @@ pub fn vector_builder_config(b: BuiltinRegistry) BuilderConfig {
     builder_freeze_id: b.id("vector$builder_freeze"),
   }
 }
+
+/// String-builder family: `String.concat` is the user-facing op that triggers
+/// recognition (the loop matcher fits `concat(base, chunk)` and rejects
+/// self-concat for free), and it lowers to `string$builder_extend` because a
+/// concat appends a whole string rather than a single element. The family is
+/// `from`-only (no `builder_new`) — `string$builder_from("")` copies nothing,
+/// so an empty-builder variant would only reintroduce the `known_empty`
+/// false-positive bug class. `builder_new_id` is unused; it points at
+/// `builder_from` so any incidental semantics registration stays consistent.
+pub fn string_builder_config(b: BuiltinRegistry) BuilderConfig {
+  BuilderConfig.{
+    push_id: b.method_id("String", "concat"),
+    builder_new_id: b.id("string$builder_from"),
+    builder_from_id: b.id("string$builder_from"),
+    builder_push_id: b.id("string$builder_extend"),
+    builder_freeze_id: b.id("string$builder_freeze"),
+  }
+}

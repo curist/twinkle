@@ -7,8 +7,8 @@ use compiler.codegen.emit.coercions.{adapt_runtime_result, emit_coerce_stack}
 use compiler.codegen.emit.context.{EmitCtx, lookup_func_sym}
 use compiler.codegen.emit.defaults.{emit_default_value}
 use compiler.codegen.emit.runtime_abi.{
-  emit_builder_arg_shim, emit_host_arg_shim, emit_host_result_shim, is_host_vector_arg,
-  is_vector_builder_array_arg, is_vector_builder_push, is_vector_builder_seed,
+  emit_builder_arg_shim, emit_host_arg_shim, emit_host_result_shim, is_builder_buffer_arg,
+  is_builder_seed, is_builder_void_push, is_host_vector_arg,
 }
 use compiler.codegen.wasm_ir.{AbiContract, Instr, ValType}
 use compiler.codegen.wasm_layout.{val_type_of_mono}
@@ -202,7 +202,7 @@ fn emit_runtime_arg(
   // though the surrounding Twinkle surface type is Vector<T>. For the builder
   // buffer argument, cast directly back to Array and skip the generic
   // mono-driven anyref→Vector coercion path.
-  if is_vector_builder_array_arg(entry_name, index) {
+  if is_builder_buffer_arg(entry_name, index) {
     return emit_builder_arg_shim(entry_name, index, out)
   }
 
@@ -269,10 +269,10 @@ fn emit_runtime_call(
     },
     .Never => out,
     _ => {
-      if is_vector_builder_push(entry_name) {
+      if is_builder_void_push(entry_name) {
         out = emit_default_value(val_type_of_mono(result_mono, ctx.env), out)
       } else {
-        if !is_vector_builder_seed(entry_name) {
+        if !is_builder_seed(entry_name) {
           out = .concat(adapt_runtime_result(fid, result_mono, ctx))
         }
       }

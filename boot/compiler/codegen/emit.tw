@@ -483,49 +483,41 @@ fn emit_func(func: AnfFunctionDef, prepared: PreparedFunc, base_ctx: EmitCtx) Fu
   FuncResult.{ func_def: fd, trampolines: tramps }
 }
 
+// Identifies builder slots across all builder families (vector and string).
+// `creators` maps a builtin FuncId whose *result* is a builder handle (e.g.
+// `vector$builder_from`, `string$builder_from`); `consumers` maps a builtin
+// whose *arg 0* is a builder handle (push/extend/freeze). Builder slots are
+// emitted as raw `anyref` rather than the base value's wasm type, because the
+// rewritten region holds the transient builder there.
+type BuilderSlotIds = .{ creators: Dict<Int, Bool>, consumers: Dict<Int, Bool> }
+
+fn builder_slot_ids(builtins: BuiltinRegistry) BuilderSlotIds {
+  creators: Dict<Int, Bool> = Dict.new()
+  consumers: Dict<Int, Bool> = Dict.new()
+  creators[bi.id(builtins, "vector$builder_new").id] = true
+  creators[bi.id(builtins, "vector$builder_from").id] = true
+  creators[bi.id(builtins, "string$builder_from").id] = true
+  consumers[bi.id(builtins, "vector$builder_push").id] = true
+  consumers[bi.id(builtins, "vector$builder_freeze").id] = true
+  consumers[bi.id(builtins, "string$builder_extend").id] = true
+  consumers[bi.id(builtins, "string$builder_freeze").id] = true
+  BuilderSlotIds.{ creators, consumers }
+}
+
 fn collect_vector_builder_slots(expr: PreparedExpr, builtins: BuiltinRegistry) Dict<Int, Bool> {
-  builder_new := bi.id(builtins, "vector$builder_new")
-  builder_from := bi.id(builtins, "vector$builder_from")
-  builder_push := bi.id(builtins, "vector$builder_push")
-  builder_freeze := bi.id(builtins, "vector$builder_freeze")
-  collect_vector_builder_slots_expr(
-    expr,
-    builder_new,
-    builder_from,
-    builder_push,
-    builder_freeze,
-    Dict.new(),
-  )
+  collect_vector_builder_slots_expr(expr, builder_slot_ids(builtins), Dict.new())
 }
 
 fn collect_vector_builder_slots_expr(
   expr: PreparedExpr,
-  builder_new: FuncId,
-  builder_from: FuncId,
-  builder_push: FuncId,
-  builder_freeze: FuncId,
+  ids: BuilderSlotIds,
   known: Dict<Int, Bool>,
 ) Dict<Int, Bool> {
   case expr {
     .Let(sid, op, body) => {
       cur := known
-      cur = collect_vector_builder_slots_op(
-        op,
-        sid,
-        builder_new,
-        builder_from,
-        builder_push,
-        builder_freeze,
-        cur,
-      )
-      collect_vector_builder_slots_expr(
-        body,
-        builder_new,
-        builder_from,
-        builder_push,
-        builder_freeze,
-        cur,
-      )
+      cur = collect_vector_builder_slots_op(op, sid, ids, cur)
+      collect_vector_builder_slots_expr(body, ids, cur)
     },
     _ => known,
   }
@@ -534,21 +526,18 @@ fn collect_vector_builder_slots_expr(
 fn collect_vector_builder_slots_op(
   op: PreparedOp,
   sid: SlotId,
-  builder_new: FuncId,
-  builder_from: FuncId,
-  builder_push: FuncId,
-  builder_freeze: FuncId,
+  ids: BuilderSlotIds,
   known: Dict<Int, Bool>,
 ) Dict<Int, Bool> {
   cur := known
 
   case op {
     .ACall(.AGlobalFunc(fid), args) => {
-      if fid.id == builder_new.id or fid.id == builder_from.id {
+      if ids.creators.has(fid.id) {
         cur[sid.id] = true
       }
 
-      if (fid.id == builder_push.id or fid.id == builder_freeze.id) and args.len() > 0 {
+      if ids.consumers.has(fid.id) and args.len() > 0 {
         case args[0] {
           .ASlot(builder_sid) => cur[builder_sid.id] = true,
           _ => {},
@@ -572,55 +561,20 @@ fn collect_vector_builder_slots_op(
       cur
     },
     .AIf(_, then_e, else_e) => {
-      cur = collect_vector_builder_slots_expr(
-        then_e,
-        builder_new,
-        builder_from,
-        builder_push,
-        builder_freeze,
-        cur,
-      )
-      collect_vector_builder_slots_expr(
-        else_e,
-        builder_new,
-        builder_from,
-        builder_push,
-        builder_freeze,
-        cur,
-      )
+      cur = collect_vector_builder_slots_expr(then_e, ids, cur)
+      collect_vector_builder_slots_expr(else_e, ids, cur)
     },
     .AMatch(_, arms) => {
       out := cur
 
       for arm in arms {
-        out = collect_vector_builder_slots_expr(
-          arm.body,
-          builder_new,
-          builder_from,
-          builder_push,
-          builder_freeze,
-          out,
-        )
+        out = collect_vector_builder_slots_expr(arm.body, ids, out)
       }
 
       out
     },
-    .ALoop(body) => collect_vector_builder_slots_expr(
-      body,
-      builder_new,
-      builder_from,
-      builder_push,
-      builder_freeze,
-      cur,
-    ),
-    .ADefer(body) => collect_vector_builder_slots_expr(
-      body,
-      builder_new,
-      builder_from,
-      builder_push,
-      builder_freeze,
-      cur,
-    ),
+    .ALoop(body) => collect_vector_builder_slots_expr(body, ids, cur),
+    .ADefer(body) => collect_vector_builder_slots_expr(body, ids, cur),
     _ => cur,
   }
 }
