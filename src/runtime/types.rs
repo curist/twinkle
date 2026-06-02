@@ -5,6 +5,7 @@ use crate::wasm::ir::*;
 /// correctly qualified and do not need linker rewriting.
 pub const T_ARRAY: &str = "rt_types__Array";
 pub const T_STRING: &str = "rt_types__String";
+pub const T_STR_BUILDER: &str = "rt_types__StrBuilder";
 pub const T_HAMT_ENTRY: &str = "rt_types__HamtEntry";
 pub const T_HAMT_NODE: &str = "rt_types__HamtNode";
 pub const T_HAMT_COLLISION: &str = "rt_types__HamtCollision";
@@ -50,6 +51,20 @@ pub fn ref_string_null() -> ValType {
     ValType::Ref {
         nullable: true,
         heap: HeapType::Named(T_STRING.into()),
+    }
+}
+/// Ref-to-StrBuilder (non-null)
+pub fn ref_str_builder() -> ValType {
+    ValType::Ref {
+        nullable: false,
+        heap: HeapType::Named(T_STR_BUILDER.into()),
+    }
+}
+/// Ref-to-StrBuilder (nullable)
+pub fn ref_str_builder_null() -> ValType {
+    ValType::Ref {
+        nullable: true,
+        heap: HeapType::Named(T_STR_BUILDER.into()),
     }
 }
 /// Ref-to-PDict (non-null)
@@ -160,6 +175,30 @@ pub fn make() -> ModuleIR {
             mutable: true,
             ty: ValType::I8,
         },
+    });
+
+    // (type $StrBuilder (struct (field $len (mut i32)) (field $buf (mut (ref $String)))))
+    // Transient growable byte buffer for the string-builder optimization. Internal
+    // only; never escapes to user code. Must come after $String (it refs it).
+    m.types.push(TypeDef::Struct {
+        name: "StrBuilder".into(),
+        supertype: None,
+        non_final: false,
+        fields: vec![
+            FieldDef {
+                name: Some("len".into()),
+                mutable: true,
+                ty: ValType::I32,
+            },
+            FieldDef {
+                name: Some("buf".into()),
+                mutable: true,
+                ty: ValType::Ref {
+                    nullable: false,
+                    heap: HeapType::Named("String".into()),
+                },
+            },
+        ],
     });
 
     // -- Persistent vector trie types --

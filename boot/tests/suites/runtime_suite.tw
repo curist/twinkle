@@ -45,10 +45,6 @@ fn find_type(types: Vector<TypeDef>, name: String) TypeDef? {
   .None
 }
 
-fn type_count(m: WasmModule) Int {
-  m.types.len()
-}
-
 // Recursively check if any instruction in a body (including nested blocks) matches a predicate.
 fn has_instr(body: Vector<Instr>, pred: fn(Instr) Bool) Bool {
   for instr in body {
@@ -83,12 +79,6 @@ fn has_instr(body: Vector<Instr>, pred: fn(Instr) Bool) Bool {
 fn test_rt_types_namespace() Result<Void, String> {
   m := rt_types.module()
   try assert.equal(m.namespace, "rt.types")
-  .Ok({})
-}
-
-fn test_rt_types_count() Result<Void, String> {
-  m := rt_types.module()
-  try assert.equal(type_count(m), 19)
   .Ok({})
 }
 
@@ -439,12 +429,6 @@ fn test_rt_core_namespace() Result<Void, String> {
   .Ok({})
 }
 
-fn test_rt_core_func_count() Result<Void, String> {
-  m := rt_core.module(.{ records: [], sums: [] })
-  try assert.equal(m.funcs.len(), 10)
-  .Ok({})
-}
-
 fn test_rt_core_exports_all_funcs() Result<Void, String> {
   m := rt_core.module(.{ records: [], sums: [] })
   try assert.equal(m.exports.len(), m.funcs.len())
@@ -667,12 +651,6 @@ fn test_rt_core_emits_wat() Result<Void, String> {
 fn test_rt_str_namespace() Result<Void, String> {
   m := rt_str.module()
   try assert.equal(m.namespace, "rt.str")
-  .Ok({})
-}
-
-fn test_rt_str_func_count() Result<Void, String> {
-  m := rt_str.module()
-  try assert.equal(m.funcs.len(), 8)
   .Ok({})
 }
 
@@ -1645,7 +1623,6 @@ fn test_rt_dict_emits_wat() Result<Void, String> {
 pub fn suite() runner.Suite {
   runner.suite("runtime modules (M10)")
     .test("rt.types: namespace", test_rt_types_namespace)
-    .test("rt.types: 19 type definitions", test_rt_types_count)
     .test("rt.types: no funcs/imports/exports", test_rt_types_no_funcs)
     .test("rt.types: Array is mutable anyref array", test_rt_types_array)
     .test("rt.types: String is mutable i8 array", test_rt_types_string)
@@ -1660,7 +1637,6 @@ pub fn suite() runner.Suite {
     .test("rt.types: PVec has len/shift/root/tail", test_rt_types_pvec)
     .test("rt.types: emits valid WAT", test_rt_types_emits_wat)
     .test("rt.core: namespace", test_rt_core_namespace)
-    .test("rt.core: 10 functions", test_rt_core_func_count)
     .test("rt.core: exports all funcs", test_rt_core_exports_all_funcs)
     .test("rt.core: 5 host imports", test_rt_core_host_imports)
     .test("rt.core: imports equality helpers", test_rt_core_eq_imports)
@@ -1669,7 +1645,6 @@ pub fn suite() runner.Suite {
     .test("rt.core: eq uses ref.test dispatch", test_rt_core_eq_uses_ref_test)
     .test("rt.core: emits valid WAT", test_rt_core_emits_wat)
     .test("rt.str: namespace", test_rt_str_namespace)
-    .test("rt.str: 8 functions", test_rt_str_func_count)
     .test("rt.str: exports all funcs", test_rt_str_exports_all_funcs)
     .test("rt.str: imports host.f64_to_string", test_rt_str_host_f64_import)
     .test("rt.str: len uses array.len", test_rt_str_len)

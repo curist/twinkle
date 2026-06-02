@@ -5,7 +5,7 @@ use crate::ir::FuncId;
 use crate::ir::lower::prelude as prelude_ids;
 use crate::runtime::types::{
     T_VARIANT, ref_array, ref_array_null, ref_pdict, ref_pdict_null, ref_pvec, ref_pvec_null,
-    ref_string, ref_string_null,
+    ref_str_builder, ref_str_builder_null, ref_string, ref_string_null,
 };
 use crate::wasm::ir::{FuncSym, HeapType, ValType};
 
@@ -292,6 +292,30 @@ fn runtime_entry(func_id: FuncId, twinkle_name: &'static str) -> Option<PreludeE
             "rt_arr__builder_extend",
             vec![ref_array_null(), ref_pvec_null()],
             vec![],
+        )),
+        id if id == prelude_ids::STRING_BUILDER_FROM => Some(PreludeEntry::runtime(
+            twinkle_name,
+            "rt.str",
+            "builder_from",
+            "rt_str__builder_from",
+            vec![ref_string_null()],
+            vec![ref_str_builder()],
+        )),
+        id if id == prelude_ids::STRING_BUILDER_EXTEND => Some(PreludeEntry::runtime(
+            twinkle_name,
+            "rt.str",
+            "builder_extend",
+            "rt_str__builder_extend",
+            vec![ref_str_builder_null(), ref_string_null()],
+            vec![],
+        )),
+        id if id == prelude_ids::STRING_BUILDER_FREEZE => Some(PreludeEntry::runtime(
+            twinkle_name,
+            "rt.str",
+            "builder_freeze",
+            "rt_str__builder_freeze",
+            vec![ref_str_builder_null()],
+            vec![ref_string()],
         )),
         id if id == prelude_ids::HOST_READ_FILE => Some(PreludeEntry::runtime(
             twinkle_name,

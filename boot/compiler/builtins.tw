@@ -54,6 +54,14 @@ fn str_() ValType {
   ref_nn("rt_types__String")
 }
 
+fn sb_n() ValType {
+  ref_null("rt_types__StrBuilder")
+}
+
+fn sb_() ValType {
+  ref_nn("rt_types__StrBuilder")
+}
+
 fn arr_n() ValType {
   ref_null("rt_types__Array")
 }
@@ -122,6 +130,9 @@ fn builtin_abi(name: String) AbiContract {
     "vector$builder_push" => abi([arr_n(), .Anyref], []),
     "vector$builder_freeze" => abi([arr_n()], [pvec_()]),
     "vector$builder_from" => abi([pvec_n()], [arr_()]),
+    "string$builder_from" => abi([str_n()], [sb_()]),
+    "string$builder_extend" => abi([sb_n(), str_n()], []),
+    "string$builder_freeze" => abi([sb_n()], [str_()]),
     "dict$new" => abi([], [dict_()]),
     "dict$set" => abi([dict_n(), .Anyref, .Anyref], [dict_()]),
     "dict$set_in_place" => abi([dict_n(), .Anyref, .Anyref], [dict_()]),
@@ -446,6 +457,9 @@ pub fn builtin_specs() Vector<BuiltinSpec> {
     rt("vector$builder_push", "rt.arr", "builder_push", .None),
     rt("vector$builder_freeze", "rt.arr", "builder_freeze", .None),
     rt("vector$builder_from", "rt.arr", "builder_from", .None),
+    rt("string$builder_from", "rt.str", "builder_from", .None),
+    rt("string$builder_extend", "rt.str", "builder_extend", .None),
+    rt("string$builder_freeze", "rt.str", "builder_freeze", .None),
     rt("dict$new", "rt.dict", "make", .Some("Dict.new")),
     rt("dict$set", "rt.dict", "set", .Some("Dict.set")),
     rt("dict$keys", "rt.dict", "keys", .Some("Dict.keys")),

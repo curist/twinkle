@@ -22,6 +22,9 @@ pub fn make() -> ModuleIR {
     m.funcs.push(from_i64_fn());
     m.funcs.push(from_f64_fn());
     m.funcs.push(from_bool_fn());
+    m.funcs.push(builder_from_fn());
+    m.funcs.push(builder_extend_fn());
+    m.funcs.push(builder_freeze_fn());
 
     for f in &m.funcs {
         m.exports.push(ExportDef {
@@ -551,6 +554,217 @@ fn from_bool_fn() -> FuncDef {
                     Instr::I32Const(115),
                     Instr::I32Const(101),
                     Instr::ArrayNewFixed(T_STRING.into(), 5),
+                ],
+            },
+        ],
+    }
+}
+
+// ── String builder (transient, internal-only) ──────────────────────────────
+// StrBuilder { len: i32 (mut), buf: String (mut) }. Field 0 = len, field 1 = buf.
+// All inputs are valid UTF-8 String values, so the buffer is always valid UTF-8
+// and freeze needs no validation. Mirrors boot rt.str builder_* funcs.
+
+/// `builder_from(base: String) -> StrBuilder` — capacity == base length.
+fn builder_from_fn() -> FuncDef {
+    // p0=base; L1=len; L2=buf
+    FuncDef {
+        name: "builder_from".into(),
+        params: vec![ref_string_null()],
+        results: vec![ref_str_builder()],
+        locals: vec![ValType::I32, ref_string_null()],
+        body: vec![
+            Instr::LocalGet(0),
+            Instr::RefAsNonNull,
+            Instr::ArrayLen,
+            Instr::LocalSet(1),
+            Instr::I32Const(0),
+            Instr::LocalGet(1),
+            Instr::ArrayNew(T_STRING.into()),
+            Instr::LocalSet(2),
+            Instr::LocalGet(1),
+            Instr::I32Eqz,
+            Instr::If {
+                result: None,
+                then_body: vec![],
+                else_body: vec![
+                    Instr::LocalGet(2),
+                    Instr::RefAsNonNull,
+                    Instr::I32Const(0),
+                    Instr::LocalGet(0),
+                    Instr::RefAsNonNull,
+                    Instr::I32Const(0),
+                    Instr::LocalGet(1),
+                    Instr::ArrayCopy(T_STRING.into(), T_STRING.into()),
+                ],
+            },
+            Instr::LocalGet(1),
+            Instr::LocalGet(2),
+            Instr::RefAsNonNull,
+            Instr::StructNew(T_STR_BUILDER.into()),
+        ],
+    }
+}
+
+/// `builder_extend(builder: StrBuilder, chunk: String) -> void` — doubling growth.
+fn builder_extend_fn() -> FuncDef {
+    // p0=builder, p1=chunk
+    // L2=cur_len, L3=chunk_len, L4=needed, L5=buf, L6=cap, L7=new_cap, L8=new_buf
+    FuncDef {
+        name: "builder_extend".into(),
+        params: vec![ref_str_builder_null(), ref_string_null()],
+        results: vec![],
+        locals: vec![
+            ValType::I32,
+            ValType::I32,
+            ValType::I32,
+            ref_string_null(),
+            ValType::I32,
+            ValType::I32,
+            ref_string_null(),
+        ],
+        body: vec![
+            Instr::LocalGet(0),
+            Instr::RefAsNonNull,
+            Instr::StructGet(T_STR_BUILDER.into(), 0),
+            Instr::LocalSet(2),
+            Instr::LocalGet(1),
+            Instr::RefAsNonNull,
+            Instr::ArrayLen,
+            Instr::LocalSet(3),
+            Instr::LocalGet(2),
+            Instr::LocalGet(3),
+            Instr::I32Add,
+            Instr::LocalSet(4),
+            Instr::LocalGet(0),
+            Instr::RefAsNonNull,
+            Instr::StructGet(T_STR_BUILDER.into(), 1),
+            Instr::LocalSet(5),
+            Instr::LocalGet(5),
+            Instr::RefAsNonNull,
+            Instr::ArrayLen,
+            Instr::LocalSet(6),
+            Instr::LocalGet(4),
+            Instr::LocalGet(6),
+            Instr::I32GtS,
+            Instr::If {
+                result: None,
+                then_body: vec![
+                    Instr::LocalGet(6),
+                    Instr::I32Const(2),
+                    Instr::I32Mul,
+                    Instr::LocalSet(7),
+                    Instr::LocalGet(7),
+                    Instr::LocalGet(4),
+                    Instr::I32LtS,
+                    Instr::If {
+                        result: None,
+                        then_body: vec![Instr::LocalGet(4), Instr::LocalSet(7)],
+                        else_body: vec![],
+                    },
+                    Instr::I32Const(0),
+                    Instr::LocalGet(7),
+                    Instr::ArrayNew(T_STRING.into()),
+                    Instr::LocalSet(8),
+                    Instr::LocalGet(2),
+                    Instr::I32Eqz,
+                    Instr::If {
+                        result: None,
+                        then_body: vec![],
+                        else_body: vec![
+                            Instr::LocalGet(8),
+                            Instr::RefAsNonNull,
+                            Instr::I32Const(0),
+                            Instr::LocalGet(5),
+                            Instr::RefAsNonNull,
+                            Instr::I32Const(0),
+                            Instr::LocalGet(2),
+                            Instr::ArrayCopy(T_STRING.into(), T_STRING.into()),
+                        ],
+                    },
+                    Instr::LocalGet(0),
+                    Instr::RefAsNonNull,
+                    Instr::LocalGet(8),
+                    Instr::RefAsNonNull,
+                    Instr::StructSet(T_STR_BUILDER.into(), 1),
+                    Instr::LocalGet(8),
+                    Instr::LocalSet(5),
+                ],
+                else_body: vec![],
+            },
+            Instr::LocalGet(3),
+            Instr::I32Eqz,
+            Instr::If {
+                result: None,
+                then_body: vec![],
+                else_body: vec![
+                    Instr::LocalGet(5),
+                    Instr::RefAsNonNull,
+                    Instr::LocalGet(2),
+                    Instr::LocalGet(1),
+                    Instr::RefAsNonNull,
+                    Instr::I32Const(0),
+                    Instr::LocalGet(3),
+                    Instr::ArrayCopy(T_STRING.into(), T_STRING.into()),
+                ],
+            },
+            Instr::LocalGet(0),
+            Instr::RefAsNonNull,
+            Instr::LocalGet(4),
+            Instr::StructSet(T_STR_BUILDER.into(), 0),
+        ],
+    }
+}
+
+/// `builder_freeze(builder: StrBuilder) -> String` — buffer if exactly full,
+/// else exact-size copy.
+fn builder_freeze_fn() -> FuncDef {
+    // p0=builder; L1=len; L2=buf; L3=result
+    FuncDef {
+        name: "builder_freeze".into(),
+        params: vec![ref_str_builder_null()],
+        results: vec![ref_string()],
+        locals: vec![ValType::I32, ref_string_null(), ref_string_null()],
+        body: vec![
+            Instr::LocalGet(0),
+            Instr::RefAsNonNull,
+            Instr::StructGet(T_STR_BUILDER.into(), 0),
+            Instr::LocalSet(1),
+            Instr::LocalGet(0),
+            Instr::RefAsNonNull,
+            Instr::StructGet(T_STR_BUILDER.into(), 1),
+            Instr::LocalSet(2),
+            Instr::LocalGet(1),
+            Instr::LocalGet(2),
+            Instr::RefAsNonNull,
+            Instr::ArrayLen,
+            Instr::I32Eq,
+            Instr::If {
+                result: Some(ref_string()),
+                then_body: vec![Instr::LocalGet(2), Instr::RefAsNonNull],
+                else_body: vec![
+                    Instr::I32Const(0),
+                    Instr::LocalGet(1),
+                    Instr::ArrayNew(T_STRING.into()),
+                    Instr::LocalSet(3),
+                    Instr::LocalGet(1),
+                    Instr::I32Eqz,
+                    Instr::If {
+                        result: None,
+                        then_body: vec![],
+                        else_body: vec![
+                            Instr::LocalGet(3),
+                            Instr::RefAsNonNull,
+                            Instr::I32Const(0),
+                            Instr::LocalGet(2),
+                            Instr::RefAsNonNull,
+                            Instr::I32Const(0),
+                            Instr::LocalGet(1),
+                            Instr::ArrayCopy(T_STRING.into(), T_STRING.into()),
+                        ],
+                    },
+                    Instr::LocalGet(3),
+                    Instr::RefAsNonNull,
                 ],
             },
         ],

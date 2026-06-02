@@ -329,6 +329,27 @@ const INTRINSIC_SPECS: &[IntrinsicSpec] = &[
         false,
         false
     ),
+    spec!(
+        STRING_BUILDER_FROM,
+        "__string_builder_from",
+        Runtime,
+        false,
+        false
+    ),
+    spec!(
+        STRING_BUILDER_EXTEND,
+        "__string_builder_extend",
+        Runtime,
+        false,
+        false
+    ),
+    spec!(
+        STRING_BUILDER_FREEZE,
+        "__string_builder_freeze",
+        Runtime,
+        false,
+        false
+    ),
     spec!(BYTE_TO_INT, "Byte.to_int", Intrinsic, true, true, ByteToInt),
     spec!(
         BYTE_FROM_INT,

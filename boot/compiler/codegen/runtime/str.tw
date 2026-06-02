@@ -17,6 +17,18 @@ fn t_string() String {
   "rt_types__String"
 }
 
+fn t_strbuilder() String {
+  "rt_types__StrBuilder"
+}
+
+fn sb_ref() ValType {
+  .Ref(false, HeapType.Named("rt_types__StrBuilder"))
+}
+
+fn sb_null() ValType {
+  .Ref(true, HeapType.Named("rt_types__StrBuilder"))
+}
+
 pub fn module() WasmModule {
   funcs := [
     len_fn(),
@@ -27,6 +39,9 @@ pub fn module() WasmModule {
     from_i64_fn(),
     from_f64_fn(),
     from_bool_fn(),
+    builder_from_fn(),
+    builder_extend_fn(),
+    builder_freeze_fn(),
   ]
   exports := collect f in funcs {
     ExportDef.{ wasm_name: f.name, func_sym: f.name }
@@ -467,6 +482,217 @@ fn from_bool_fn() FuncDef {
           .I32Const(115),
           .I32Const(101),
           .ArrayNewFixed(ts, 5),
+        ],
+      ),
+    ],
+  }
+}
+
+// ── String builder (transient, internal-only) ──────────────────────────────
+// StrBuilder { len: i32 (mut), buf: String (mut) }. Field 0 = len, field 1 = buf.
+// All inputs are valid UTF-8 String values, so the buffer is always valid UTF-8
+// and freeze needs no validation. See docs/plans/string-builder-uniqueness-plan.md.
+
+// builder_from(base: String?) -> StrBuilder
+// Initial capacity == base length (an empty base allocates a 0-length buffer).
+fn builder_from_fn() FuncDef {
+  ts := t_string()
+  tb := t_strbuilder()
+
+  // p0=base; L1=len; L2=buf
+  .{
+    name: "builder_from",
+    params: [str_null()],
+    results: [sb_ref()],
+    locals: [.I32, str_null()],
+    body: [
+      .LocalGet(0),
+      .RefAsNonNull,
+      .ArrayLen,
+      .LocalSet(1),
+      .I32Const(0),
+      .LocalGet(1),
+      .ArrayNew(ts),
+      .LocalSet(2),
+      .LocalGet(1),
+      .I32Eqz,
+      .If(
+        .None,
+        [],
+        [
+          .LocalGet(2),
+          .RefAsNonNull,
+          .I32Const(0),
+          .LocalGet(0),
+          .RefAsNonNull,
+          .I32Const(0),
+          .LocalGet(1),
+          .ArrayCopy(ts, ts),
+        ],
+      ),
+      .LocalGet(1),
+      .LocalGet(2),
+      .RefAsNonNull,
+      .StructNew(tb),
+    ],
+  }
+}
+
+// builder_extend(builder: StrBuilder?, chunk: String?) -> void
+// Appends chunk's bytes, doubling the backing buffer when it must grow.
+fn builder_extend_fn() FuncDef {
+  ts := t_string()
+  tb := t_strbuilder()
+
+  // p0=builder, p1=chunk
+  // L2=cur_len, L3=chunk_len, L4=needed, L5=buf, L6=cap, L7=new_cap, L8=new_buf
+  .{
+    name: "builder_extend",
+    params: [sb_null(), str_null()],
+    results: [],
+    locals: [.I32, .I32, .I32, str_null(), .I32, .I32, str_null()],
+    body: [
+      .LocalGet(0),
+      .RefAsNonNull,
+      .StructGet(tb, 0),
+      .LocalSet(2),
+      .LocalGet(1),
+      .RefAsNonNull,
+      .ArrayLen,
+      .LocalSet(3),
+      .LocalGet(2),
+      .LocalGet(3),
+      .I32Add,
+      .LocalSet(4),
+      .LocalGet(0),
+      .RefAsNonNull,
+      .StructGet(tb, 1),
+      .LocalSet(5),
+      .LocalGet(5),
+      .RefAsNonNull,
+      .ArrayLen,
+      .LocalSet(6),
+      .LocalGet(4),
+      .LocalGet(6),
+      .I32GtS,
+      .If(
+        .None,
+        [
+          .LocalGet(6),
+          .I32Const(2),
+          .I32Mul,
+          .LocalSet(7),
+          .LocalGet(7),
+          .LocalGet(4),
+          .I32LtS,
+          .If(.None, [.LocalGet(4), .LocalSet(7)], []),
+          .I32Const(0),
+          .LocalGet(7),
+          .ArrayNew(ts),
+          .LocalSet(8),
+          .LocalGet(2),
+          .I32Eqz,
+          .If(
+            .None,
+            [],
+            [
+              .LocalGet(8),
+              .RefAsNonNull,
+              .I32Const(0),
+              .LocalGet(5),
+              .RefAsNonNull,
+              .I32Const(0),
+              .LocalGet(2),
+              .ArrayCopy(ts, ts),
+            ],
+          ),
+          .LocalGet(0),
+          .RefAsNonNull,
+          .LocalGet(8),
+          .RefAsNonNull,
+          .StructSet(tb, 1),
+          .LocalGet(8),
+          .LocalSet(5),
+        ],
+        [],
+      ),
+      .LocalGet(3),
+      .I32Eqz,
+      .If(
+        .None,
+        [],
+        [
+          .LocalGet(5),
+          .RefAsNonNull,
+          .LocalGet(2),
+          .LocalGet(1),
+          .RefAsNonNull,
+          .I32Const(0),
+          .LocalGet(3),
+          .ArrayCopy(ts, ts),
+        ],
+      ),
+      .LocalGet(0),
+      .RefAsNonNull,
+      .LocalGet(4),
+      .StructSet(tb, 0),
+    ],
+  }
+}
+
+// builder_freeze(builder: StrBuilder?) -> String
+// Returns the backing buffer directly when it is exactly full, else an
+// exact-size copy.
+fn builder_freeze_fn() FuncDef {
+  ts := t_string()
+  tb := t_strbuilder()
+
+  // p0=builder; L1=len; L2=buf; L3=result
+  .{
+    name: "builder_freeze",
+    params: [sb_null()],
+    results: [str_ref()],
+    locals: [.I32, str_null(), str_null()],
+    body: [
+      .LocalGet(0),
+      .RefAsNonNull,
+      .StructGet(tb, 0),
+      .LocalSet(1),
+      .LocalGet(0),
+      .RefAsNonNull,
+      .StructGet(tb, 1),
+      .LocalSet(2),
+      .LocalGet(1),
+      .LocalGet(2),
+      .RefAsNonNull,
+      .ArrayLen,
+      .I32Eq,
+      .If(
+        .Some(str_ref()),
+        [.LocalGet(2), .RefAsNonNull],
+        [
+          .I32Const(0),
+          .LocalGet(1),
+          .ArrayNew(ts),
+          .LocalSet(3),
+          .LocalGet(1),
+          .I32Eqz,
+          .If(
+            .None,
+            [],
+            [
+              .LocalGet(3),
+              .RefAsNonNull,
+              .I32Const(0),
+              .LocalGet(2),
+              .RefAsNonNull,
+              .I32Const(0),
+              .LocalGet(1),
+              .ArrayCopy(ts, ts),
+            ],
+          ),
+          .LocalGet(3),
+          .RefAsNonNull,
         ],
       ),
     ],
