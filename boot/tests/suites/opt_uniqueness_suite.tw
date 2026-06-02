@@ -2060,7 +2060,7 @@ fn test_dict_fresh_remove_rewrite() Result<Void, String> {
   }
 }
 
-// ── Phase 3: String concat loop → string builder ────────────────────
+// ── String concat loop → string builder ─────────────────────────────
 fn test_string_concat_loop_rewrite() Result<Void, String> {
   // let out = AInit(ALitStr(""))    // string-literal base → deep owned
   // let _ = ALoop(
@@ -2124,7 +2124,7 @@ fn test_string_self_concat_no_rewrite() Result<Void, String> {
   }
 }
 
-// ── Phase 4: Straight-line String concat → string builder ───────────
+// ── Straight-line String concat → string builder ────────────────────
 fn test_string_concat_straight_line_chain_rewrite() Result<Void, String> {
   // let out = ""
   // let t1 = str_concat(out, "a"); assign(out, t1)
@@ -2208,6 +2208,38 @@ fn test_string_concat_straight_line_intervening_read_no_rewrite() Result<Void, S
 
   try assert.equal(count_call(result.body, mock_str_builder_from()), 0)
   assert.equal(count_call(result.body, mock_str_concat()), 2)
+}
+
+// ── Straight-line vector append → vector builder ─────────────────────
+fn test_vector_append_straight_line_chain_rewrite() Result<Void, String> {
+  // let v = []
+  // let t1 = vec_push(v, 1); assign(v, t1)
+  // let t2 = vec_push(v, 2); assign(v, t2)
+  // Atom(v)
+  body: AnfExpr = .Let(
+    lid(0),
+    .AArrayLit([]),
+    .Let(
+      lid(1),
+      .ACall(.AGlobalFunc(mock_vec_push()), [.ALocal(lid(0)), .ALitInt(1)]),
+      .Let(
+        lid(2),
+        .AAssign(lid(0), .ALocal(lid(1))),
+        .Let(
+          lid(3),
+          .ACall(.AGlobalFunc(mock_vec_push()), [.ALocal(lid(0)), .ALitInt(2)]),
+          .Let(lid(4), .AAssign(lid(0), .ALocal(lid(3))), .Atom(.ALocal(lid(0)))),
+        ),
+      ),
+    ),
+  )
+  func := make_func(body)
+  result := rewrite(func)
+
+  try assert.equal(count_call(result.body, mock_vec_push()), 0)
+  try assert.equal(count_call(result.body, mock_builder_from()), 1)
+  try assert.equal(count_call(result.body, mock_builder_push()), 2)
+  assert.equal(count_call(result.body, mock_builder_freeze()), 1)
 }
 
 // ── Suite ───────────────────────────────────────────────────────────
@@ -2316,6 +2348,10 @@ pub fn suite() runner.Suite {
   s = .test(
     "string concat straight-line intervening read → no rewrite",
     test_string_concat_straight_line_intervening_read_no_rewrite,
+  )
+  s = .test(
+    "vector append straight-line chain → builder",
+    test_vector_append_straight_line_chain_rewrite,
   )
   s
 }

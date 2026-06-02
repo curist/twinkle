@@ -4,7 +4,6 @@ use compiler.codegen.runtime.dict as rt_dict
 use compiler.codegen.runtime.str as rt_str
 use compiler.codegen.runtime.types as rt_types
 use compiler.codegen.wasm_ir.{FuncDef, Instr, TypeDef}
-
 use compiler.codegen.wat.{emit_wat_unlinked_for_test}
 use tests.assert
 use tests.runner

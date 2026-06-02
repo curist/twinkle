@@ -606,10 +606,14 @@ fn rewrite_expr(expr: AnfExpr, st: RwState, consumed_params: Dict<Int, Bool>) Ex
         _ => {},
       }
 
-      // Phase 4: straight-line String.concat consume-reassign chains.
-      case try_straight_line_builder_rewrite(local, op, body, st, st.config.string_builder) {
-        .Some(rewritten) => { return rewrite_expr(rewritten.expr, rewritten.st, consumed_params) },
-        .None => {},
+      // Collapse straight-line consume-reassign chains (vector append + string
+      // concat) into a single builder region. Each family's push_id gates which
+      // one matches, so at most one fires for a given op.
+      for builder in [st.config.builder, st.config.string_builder] {
+        case try_straight_line_builder_rewrite(local, op, body, st, builder) {
+          .Some(rewritten) => { return rewrite_expr(rewritten.expr, rewritten.st, consumed_params) },
+          .None => {},
+        }
       }
 
       case classify_producer_ownership(op, st.config) {
@@ -735,7 +739,7 @@ fn rewrite_op(op: AnfOp, st: RwState, consumed_params: Dict<Int, Bool>) OpRewrit
   }
 }
 
-// ── Phase 4: Straight-line builder rewrite ─────────────────────────
+// ── Straight-line builder rewrite ──────────────────────────────────
 fn collect_straight_line_tail(expr: AnfExpr, base: LocalId, builder: BuilderConfig) StraightLineChain {
   case expr {
     .Let(local, op, body) => case collect_straight_line_chain(local, op, body, base, builder) {
