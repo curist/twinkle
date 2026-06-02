@@ -695,10 +695,10 @@ module.exports = grammar({
 
     continue_statement: $ => 'continue',
 
-    return_statement: $ => seq(
+    return_statement: $ => prec.right(seq(
       'return',
-      field('value', $._expression),
-    ),
+      optional(field('value', $._expression)),
+    )),
 
     // ===== Types =====
 
