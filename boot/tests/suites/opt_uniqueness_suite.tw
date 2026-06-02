@@ -1668,6 +1668,18 @@ fn find_builder_local(e: AnfExpr) LocalId? {
   }
 }
 
+fn count_call(e: AnfExpr, target: FuncId) Int {
+  case e {
+    .Let(_, .ACall(.AGlobalFunc(f), _), body) => if f.id == target.id {
+      1 + count_call(body, target)
+    } else {
+      count_call(body, target)
+    },
+    .Let(_, _, body) => count_call(body, target),
+    _ => 0,
+  }
+}
+
 // ── Issue 1: Loop rewrite continuation must be recursively rewritten ─
 fn test_loop_rewrite_continues_into_cont() Result<Void, String> {
   // let v = AArrayLit([])       // fresh, empty
@@ -2112,6 +2124,92 @@ fn test_string_self_concat_no_rewrite() Result<Void, String> {
   }
 }
 
+// ── Phase 4: Straight-line String concat → string builder ───────────
+fn test_string_concat_straight_line_chain_rewrite() Result<Void, String> {
+  // let out = ""
+  // let t1 = str_concat(out, "a"); assign(out, t1)
+  // let t2 = str_concat(out, "b"); assign(out, t2)
+  // Atom(out)
+  body: AnfExpr = .Let(
+    lid(0),
+    .AInit(.ALitStr("")),
+    .Let(
+      lid(1),
+      .ACall(.AGlobalFunc(mock_str_concat()), [.ALocal(lid(0)), .ALitStr("a")]),
+      .Let(
+        lid(2),
+        .AAssign(lid(0), .ALocal(lid(1))),
+        .Let(
+          lid(7),
+          .AInit(.ALitVoid),
+          .Let(
+            lid(3),
+            .ACall(.AGlobalFunc(mock_str_concat()), [.ALocal(lid(0)), .ALitStr("b")]),
+            .Let(lid(4), .AAssign(lid(0), .ALocal(lid(3))), .Atom(.ALocal(lid(0)))),
+          ),
+        ),
+      ),
+    ),
+  )
+  func := make_func(body)
+  result := rewrite(func)
+
+  try assert.equal(count_call(result.body, mock_str_concat()), 0)
+  try assert.equal(count_call(result.body, mock_str_builder_from()), 1)
+  try assert.equal(count_call(result.body, mock_str_builder_extend()), 2)
+  assert.equal(count_call(result.body, mock_str_builder_freeze()), 1)
+}
+
+fn test_string_concat_straight_line_single_no_rewrite() Result<Void, String> {
+  // A single concat would not save work with the current from/extend/freeze
+  // runtime shape, so keep it as plain String.concat.
+  body: AnfExpr = .Let(
+    lid(0),
+    .AInit(.ALitStr("")),
+    .Let(
+      lid(1),
+      .ACall(.AGlobalFunc(mock_str_concat()), [.ALocal(lid(0)), .ALitStr("a")]),
+      .Let(lid(2), .AAssign(lid(0), .ALocal(lid(1))), .Atom(.ALocal(lid(0)))),
+    ),
+  )
+  func := make_func(body)
+  result := rewrite(func)
+
+  try assert.equal(count_call(result.body, mock_str_builder_from()), 0)
+  assert.equal(count_call(result.body, mock_str_concat()), 1)
+}
+
+fn test_string_concat_straight_line_intervening_read_no_rewrite() Result<Void, String> {
+  // A read between consume-reassign sites observes the intermediate immutable
+  // value, so this is not a single straight-line builder region.
+  body: AnfExpr = .Let(
+    lid(0),
+    .AInit(.ALitStr("")),
+    .Let(
+      lid(1),
+      .ACall(.AGlobalFunc(mock_str_concat()), [.ALocal(lid(0)), .ALitStr("a")]),
+      .Let(
+        lid(2),
+        .AAssign(lid(0), .ALocal(lid(1))),
+        .Let(
+          lid(3),
+          .ACall(.AGlobalFunc(mock_vec_len()), [.ALocal(lid(0))]),
+          .Let(
+            lid(4),
+            .ACall(.AGlobalFunc(mock_str_concat()), [.ALocal(lid(0)), .ALitStr("b")]),
+            .Let(lid(5), .AAssign(lid(0), .ALocal(lid(4))), .Atom(.ALocal(lid(0)))),
+          ),
+        ),
+      ),
+    ),
+  )
+  func := make_func(body)
+  result := rewrite(func)
+
+  try assert.equal(count_call(result.body, mock_str_builder_from()), 0)
+  assert.equal(count_call(result.body, mock_str_concat()), 2)
+}
+
 // ── Suite ───────────────────────────────────────────────────────────
 pub fn suite() runner.Suite {
   s := runner.suite("Opt: Uniqueness Rewrite")
@@ -2205,5 +2303,19 @@ pub fn suite() runner.Suite {
   // String concat loop → string builder family
   s = .test("string concat loop → builder", test_string_concat_loop_rewrite)
   s = .test("string self-concat → no rewrite", test_string_self_concat_no_rewrite)
+
+  // Straight-line string concat → string builder family
+  s = .test(
+    "string concat straight-line chain → builder",
+    test_string_concat_straight_line_chain_rewrite,
+  )
+  s = .test(
+    "string concat straight-line single → no rewrite",
+    test_string_concat_straight_line_single_no_rewrite,
+  )
+  s = .test(
+    "string concat straight-line intervening read → no rewrite",
+    test_string_concat_straight_line_intervening_read_no_rewrite,
+  )
   s
 }

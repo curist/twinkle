@@ -405,16 +405,17 @@ Suggested fixtures:
 The initial tests can assert structural lowering once builder IDs exist, plus
 runtime equivalence with optimization enabled and disabled.
 
-### Phase S2: Add internal string builder runtime helpers
+### Phase S2: Add internal string builder runtime helpers — ✅ DONE (`7e0322b`)
 
-Implement `string$builder_from / extend / freeze` in the boot runtime codegen
-and stage0 runtime/codegen for bootstrap parity. (No `_new` — see Design
-Overview.) Follow the established recipe in
-`reference_runtime_builtin_wiring.md`: append-at-end FuncId discipline, wire
-both compilers, regen core_lib, `make bundle-cli`, then suite + docs.
+Implemented `string$builder_from / extend / freeze` in the boot runtime codegen
+and stage0 runtime/codegen for bootstrap parity. There is no `_new` helper — see
+Design Overview.
 
-Keep the initial implementation simple and correctness-first (a `Vector<Byte>`
-buffer). Optimize the representation later if profiling shows it matters.
+The implementation uses the dedicated `rt_types__StrBuilder { len, buf }`
+growable byte buffer described above. It copies the seed string into a mutable
+byte array, doubles capacity as needed in `extend`, and returns the backing
+buffer directly from `freeze` when it is already exact-sized (otherwise it copies
+to an exact-sized `String`).
 
 ### Phase S3: Add the string builder family + concat semantics — ✅ DONE (boot)
 
@@ -451,22 +452,26 @@ and mid-loop-accumulator-read loops are left unoptimized and still correct;
 `opt_uniqueness_suite` structural tests). This unlocks `repeat`-style helpers
 and many parser/formatter string assembly loops without a public builder API.
 
-### Phase S4: Straight-line string concat regions
+### Phase S4: Straight-line string concat regions — ✅ DONE (boot)
 
-Teach the optimizer to rewrite safe straight-line `String.concat` consume-reassign
-chains into string builder regions. This needs a **new** straight-line builder-
-region detector (the existing builder rewrite is loop-only; straight-line COW
-today relies on in-place mutation, which strings can't use), so it is genuinely
-more work than S5 despite the lower phase number.
+The optimizer now rewrites safe straight-line `String.concat` consume-reassign
+chains into string builder regions. The detector recognizes repeated accumulator
+sites, preserves harmless non-accumulator gap lets (for example statement-level
+`init void` lets), rejects single-concat regions, rejects self-concat through the
+same matcher as the loop path, and stops when an intervening read/call observes
+the accumulator.
 
-Start with the narrowest shapes:
+Example:
 
 ```tw
 out = out.concat(chunk)
 out = out.concat(more)
 ```
 
-and only then add dead-base concat if it falls out naturally.
+lowers to `string$builder_from(out)`, repeated `string$builder_extend(...)`, and
+a final `string$builder_freeze` assignment back to `out` before the original
+continuation runs. Dead-base concat remains a possible follow-up rather than a
+requirement for this phase.
 
 ### Phase S6: Source cleanup opportunities
 

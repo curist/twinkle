@@ -8,10 +8,12 @@
 
 use compiler.anf.{AnfExpr, AnfFunctionDef, AnfMatchArm, AnfModule, AnfOp, Atom}
 use compiler.anf_analysis.{set_has}
+use compiler.builder_family.{BuilderConfig}
 use compiler.core_ir.{FieldId, LocalId}
 use compiler.mono_type.{MonoType}
 use compiler.opt.analysis.{
-  base_reusable_after_binding_with_live, collect_tainted_and_live, next_local_id,
+  base_reusable_after_binding_with_live, collect_tainted_and_live, loop_push_reassign_elem,
+  next_local_id,
 }
 use compiler.opt.liveness.{live_after}
 use compiler.opt.loop_builder.{LoopRewrite, rewrite_loop_region}
@@ -117,6 +119,14 @@ type ExprRewrite = .{ expr: AnfExpr, st: RwState }
 type OpRewrite = .{ op: AnfOp, st: RwState }
 
 type UpdateRewrite = .{ op: AnfOp, st: RwState }
+
+type StraightLineSite = .{ result_local: LocalId, assign_local: LocalId, elem: Atom }
+
+type StraightLineEntry = { Site(StraightLineSite), Gap(LocalId, AnfOp) }
+
+type StraightLineChain = .{ entries: Vector<StraightLineEntry>, cont: AnfExpr }
+
+type StraightLineRewrite = .{ expr: AnfExpr, st: RwState }
 
 fn ownership_of(st: RwState, local: LocalId) Ownership? {
   if set_has(st.tainted, local.id) and !set_has(st.refreshed, local.id) {
@@ -596,6 +606,12 @@ fn rewrite_expr(expr: AnfExpr, st: RwState, consumed_params: Dict<Int, Bool>) Ex
         _ => {},
       }
 
+      // Phase 4: straight-line String.concat consume-reassign chains.
+      case try_straight_line_builder_rewrite(local, op, body, st, st.config.string_builder) {
+        .Some(rewritten) => { return rewrite_expr(rewritten.expr, rewritten.st, consumed_params) },
+        .None => {},
+      }
+
       case classify_producer_ownership(op, st.config) {
         .Some(ownership) => {
           st = with_local_ownership(st, local, ownership)
@@ -716,6 +732,187 @@ fn rewrite_op(op: AnfOp, st: RwState, consumed_params: Dict<Int, Bool>) OpRewrit
       .{ op: .ADefer(body_r.expr), st: st.with_metadata_from(body_r.st) }
     },
     _ => .{ op, st },
+  }
+}
+
+// ── Phase 4: Straight-line builder rewrite ─────────────────────────
+fn collect_straight_line_tail(expr: AnfExpr, base: LocalId, builder: BuilderConfig) StraightLineChain {
+  case expr {
+    .Let(local, op, body) => case collect_straight_line_chain(local, op, body, base, builder) {
+      .Some(chain) => chain,
+      .None => if !op_uses_local_non_recursive(op, base) and !op_has_local_in_nested_scope(op, base) {
+        tail := collect_straight_line_tail(body, base, builder)
+        entries := [StraightLineEntry.Gap(local, op)]
+
+        for entry in tail.entries {
+          entries = .append(entry)
+        }
+
+        StraightLineChain.{ entries, cont: tail.cont }
+      } else {
+        StraightLineChain.{ entries: [], cont: expr }
+      },
+    },
+    _ => StraightLineChain.{ entries: [], cont: expr },
+  }
+}
+
+fn collect_straight_line_chain(
+  result_local: LocalId,
+  op: AnfOp,
+  body: AnfExpr,
+  base: LocalId,
+  builder: BuilderConfig,
+) StraightLineChain? {
+  elem := try loop_push_reassign_elem(op, body, base, builder.push_id, result_local)
+
+  case body {
+    .Let(assign_local, _, rest) => {
+      tail := collect_straight_line_tail(rest, base, builder)
+      site := StraightLineSite.{ result_local, assign_local, elem }
+      entries := [StraightLineEntry.Site(site)]
+
+      for entry in tail.entries {
+        entries = .append(entry)
+      }
+
+      .Some(StraightLineChain.{ entries, cont: tail.cont })
+    },
+    _ => .None,
+  }
+}
+
+fn straight_line_site_result_dead_after_assign(st: RwState, site: StraightLineSite) Bool {
+  empty_live: Dict<Int, Bool> = Dict.new()
+  live_after_assign := case st.live_after_by_binding[site.assign_local.id] {
+    .Some(live) => live,
+    .None => empty_live,
+  }
+
+  !set_has(live_after_assign, site.result_local.id)
+}
+
+fn straight_line_chain_is_safe(st: RwState, chain: StraightLineChain) Bool {
+  site_count := 0
+
+  for entry in chain.entries {
+    case entry {
+      .Site(site) => {
+        site_count = site_count + 1
+
+        if !straight_line_site_result_dead_after_assign(st, site) {
+          return false
+        }
+      },
+      .Gap(_, _) => {},
+    }
+  }
+
+  site_count >= 2
+}
+
+fn lower_straight_line_entries(
+  entries: Vector<StraightLineEntry>,
+  index: Int,
+  base: LocalId,
+  builder_local: LocalId,
+  freeze_local: LocalId,
+  final_assign_local: LocalId,
+  cont: AnfExpr,
+  builder: BuilderConfig,
+) AnfExpr {
+  if index >= entries.len() {
+    return AnfExpr.Let(
+      freeze_local,
+      .ACall(.AGlobalFunc(builder.builder_freeze_id), [.ALocal(builder_local)]),
+      AnfExpr.Let(final_assign_local, .AAssign(base, .ALocal(freeze_local)), cont),
+    )
+  }
+
+  rest := lower_straight_line_entries(
+    entries,
+    index + 1,
+    base,
+    builder_local,
+    freeze_local,
+    final_assign_local,
+    cont,
+    builder,
+  )
+
+  case entries[index] {
+    .Site(site) => AnfExpr.Let(
+      site.result_local,
+      .ACall(.AGlobalFunc(builder.builder_push_id), [.ALocal(builder_local), site.elem]),
+      AnfExpr.Let(site.assign_local, .AInit(.ALitVoid), rest),
+    ),
+    .Gap(local, op) => AnfExpr.Let(local, op, rest),
+  }
+}
+
+fn lower_straight_line_builder_chain(
+  chain: StraightLineChain,
+  base: LocalId,
+  st: RwState,
+  builder: BuilderConfig,
+) StraightLineRewrite {
+  builder_local := LocalId.{ id: st.next_local }
+  freeze_local := LocalId.{ id: st.next_local + 1 }
+  final_assign_local := LocalId.{ id: st.next_local + 2 }
+  base_mono := case st.monos[base.id] {
+    .Some(mono) => mono,
+    .None => .Void,
+  }
+
+  body := lower_straight_line_entries(
+    chain.entries,
+    0,
+    base,
+    builder_local,
+    freeze_local,
+    final_assign_local,
+    chain.cont,
+    builder,
+  )
+  expr := AnfExpr.Let(
+    builder_local,
+    .ACall(.AGlobalFunc(builder.builder_from_id), [.ALocal(base)]),
+    body,
+  )
+  st.next_local = st.next_local + 3
+  st.monos[builder_local.id] = base_mono
+  st.monos[freeze_local.id] = base_mono
+  st.monos[final_assign_local.id] = .Void
+  StraightLineRewrite.{ expr, st }
+}
+
+fn try_straight_line_builder_rewrite(
+  result_local: LocalId,
+  op: AnfOp,
+  body: AnfExpr,
+  st: RwState,
+  builder: BuilderConfig,
+) StraightLineRewrite? {
+  case op {
+    .ACall(.AGlobalFunc(f), args) => if f.id == builder.push_id.id and args.len() == 2 {
+      case args[0] {
+        .ALocal(base) => if local_is_deep_owned(st, base) {
+          chain := try collect_straight_line_chain(result_local, op, body, base, builder)
+
+          if straight_line_chain_is_safe(st, chain) {
+            .Some(lower_straight_line_builder_chain(chain, base, st, builder))
+          } else {
+            .None
+          }
+        } else {
+          .None
+        },
+        _ => .None,
+      }
+    } else {
+      .None
+    },
+    _ => .None,
   }
 }
 
