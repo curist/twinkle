@@ -14,7 +14,7 @@ use compiler.opt.analysis.{
   base_reusable_after_binding_with_live, collect_tainted_and_live, next_local_id,
 }
 use compiler.opt.liveness.{live_after}
-use compiler.opt.loop_builder.{LoopRewrite}
+use compiler.opt.loop_builder.{LoopRewrite, rewrite_loop_region}
 use compiler.opt.semantics.{
   CowConfig, OptimizerSemantics, call_info, optimizer_semantics_from_cow_config,
   reusable_update_site,
@@ -74,13 +74,6 @@ fn has_cow_op_in_expr(expr: AnfExpr, semantics: OptimizerSemantics) Bool {
 // ── Phase 2: Forward rewrite ───────────────────────────────────────
 type Ownership = { Shallow, Deep }
 
-fn is_empty_array_lit(op: AnfOp) Bool {
-  case op {
-    .AArrayLit(elems) => elems.len() == 0,
-    _ => false,
-  }
-}
-
 fn classify_producer_ownership(op: AnfOp, semantics: OptimizerSemantics) Ownership? {
   case op {
     .AArrayLit(_) => .Some(.Deep),
@@ -103,7 +96,6 @@ fn classify_producer_ownership(op: AnfOp, semantics: OptimizerSemantics) Ownersh
 type RwState = .{
   tainted: Dict<Int, Bool>,
   ownership: Dict<Int, Ownership>,
-  known_empty: Dict<Int, Bool>,
   refreshed: Dict<Int, Bool>,
   fresh_records: Dict<Int, Bool>,
   live_after_by_binding: Dict<Int, Dict<Int, Bool>>,
@@ -171,14 +163,8 @@ fn with_local_ownership(st: RwState, local: LocalId, ownership: Ownership) RwSta
   st
 }
 
-fn with_known_empty_local(st: RwState, local: LocalId) RwState {
-  st.known_empty[local.id] = true
-  st
-}
-
 fn without_local_ownership(st: RwState, local: LocalId) RwState {
   st.ownership = .remove(local.id)
-  st.known_empty = .remove(local.id)
   st.refreshed = .remove(local.id)
   st.fresh_records = .remove(local.id)
   st
@@ -210,11 +196,6 @@ fn transfer_owned_local(st: RwState, source: LocalId, target: LocalId) RwState {
     st.fresh_records[target.id] = true
   }
 
-  if set_has(st.known_empty, source.id) {
-    st.known_empty = .remove(source.id)
-    st.known_empty[target.id] = true
-  }
-
   st
 }
 
@@ -225,7 +206,6 @@ fn with_consumed_update_result(st: RwState, local: LocalId) RwState {
     st.refreshed[local.id] = true
   }
 
-  st.known_empty = .remove(local.id)
   st.fresh_records = .remove(local.id)
   st
 }
@@ -592,7 +572,6 @@ fn rewrite_expr(expr: AnfExpr, st: RwState, consumed_params: Dict<Int, Bool>) Ex
               st = RwState.{
                 tainted: st.tainted,
                 ownership: st.ownership,
-                known_empty: st.known_empty,
                 refreshed: st.refreshed,
                 fresh_records: st.fresh_records,
                 live_after_by_binding: st.live_after_by_binding,
@@ -623,10 +602,6 @@ fn rewrite_expr(expr: AnfExpr, st: RwState, consumed_params: Dict<Int, Bool>) Ex
           st = with_fresh_record_local(st, local)
         },
         _ => {},
-      }
-
-      if is_empty_array_lit(op) {
-        st = with_known_empty_local(st, local)
       }
 
       // AInit ownership transfer: let x = init(y) where y is owned → x inherits that ownership
@@ -670,7 +645,6 @@ fn rewrite_expr(expr: AnfExpr, st: RwState, consumed_params: Dict<Int, Bool>) Ex
             st = RwState.{
               tainted: st.tainted,
               ownership: st.ownership,
-              known_empty: st.known_empty,
               refreshed: st.refreshed,
               fresh_records: st.fresh_records.remove(source.id),
               live_after_by_binding: st.live_after_by_binding,
@@ -719,7 +693,6 @@ fn rewrite_op(op: AnfOp, st: RwState, consumed_params: Dict<Int, Bool>) OpRewrit
       empty_st: RwState = RwState.{
         tainted: st.tainted,
         ownership: Dict.new(),
-        known_empty: Dict.new(),
         refreshed: Dict.new(),
         fresh_records: Dict.new(),
         live_after_by_binding: st.live_after_by_binding,
@@ -741,12 +714,47 @@ fn rewrite_op(op: AnfOp, st: RwState, consumed_params: Dict<Int, Bool>) OpRewrit
 
 // ── Phase 3: Loop region rewrite ───────────────────────────────────
 fn try_loop_rewrite(bind_local: LocalId, loop_body: AnfExpr, cont: AnfExpr, st: RwState) LoopRewrite? {
-  // Temporarily keep boot loop-builder rewriting off. The current boot backend
-  // still miscompiles some rewritten builder regions in self-hosted runs (for
-  // example checker diagnostic accumulation), even though the Rust stage0 path
-  // is fine. Keep point rewrites and field-borrow/fresh-wrapper improvements,
-  // but avoid emitting new builder regions from the boot optimizer until the
-  // backend-side sync issue is fixed.
+  // Find candidates: deeply owned, non-tainted locals
+  candidates: Vector<Int> = collect k in st.ownership.keys() {
+    local := LocalId.{ id: k }
+
+    if local_is_deep_owned(st, local) {
+      k
+    } else {
+      continue
+    }
+  }
+
+  for base_id in candidates {
+    base := LocalId.{ id: base_id }
+    base_mono := case st.monos[base_id] {
+      .Some(mono) => mono,
+      .None => .Void,
+    }
+
+    // Always start the builder from the base (builder_from), never builder_new.
+    // builder_from copies the base's current contents into the builder, so the
+    // rewrite is correct regardless of whether the base is empty. The earlier
+    // builder_new path depended on a `known_empty` emptiness flag whose boot
+    // analysis produced false positives (a non-empty base wrongly treated as
+    // empty), which silently dropped the base's pre-loop contents and corrupted
+    // self-hosted runs. builder_from on a genuinely empty base copies nothing,
+    // so dropping the builder_new shortcut costs effectively nothing.
+    case rewrite_loop_region(
+      bind_local,
+      loop_body,
+      cont,
+      base,
+      base_mono,
+      st.next_local,
+      false,
+      st.config.builder,
+    ) {
+      .Some(result) => { return .Some(result) },
+      .None => {},
+    }
+  }
+
   .None
 }
 
@@ -843,7 +851,6 @@ pub fn uniqueness_rewrite_with_semantics_and_consumed_and_fresh(
   st: RwState = RwState.{
     tainted: tl.tainted,
     ownership: Dict.new(),
-    known_empty: Dict.new(),
     refreshed: Dict.new(),
     fresh_records: Dict.new(),
     live_after_by_binding: tl.by_binding,
