@@ -114,7 +114,7 @@ pub fn analyze_workspace(store: cache.Store, input: WorkspaceInput) WorkspaceAna
   ov := overlay.from_documents(docs)
   state := analyze.new_state(base, store, ov, input.project_root)
   result := analyze.analyze_module(entry_id, "__entry", base, state, [])
-  diags := convert_analysis_diags(result.diagnostics)
+  diags := dedupe_diagnostics(convert_analysis_diags(result.diagnostics))
   .{
     cache: result.state.cache,
     diagnostics: diags,
@@ -123,6 +123,32 @@ pub fn analyze_workspace(store: cache.Store, input: WorkspaceInput) WorkspaceAna
 }
 
 // ── Helpers ─────────────────────────────────────────────────────────
+fn dedupe_diagnostics(diags: Vector<Diagnostic>) Vector<Diagnostic> {
+  seen: Dict<String, Bool> = Dict.new()
+  out: Vector<Diagnostic> = []
+
+  for d in diags {
+    key := diagnostic_key(d)
+
+    if seen.has(key) {
+      continue
+    }
+
+    seen[key] = true
+    out = .append(d)
+  }
+
+  out
+}
+
+fn diagnostic_key(d: Diagnostic) String {
+  span_key := case d.span {
+    .Some(s) => "${s.start}:${s.end}",
+    .None => "none",
+  }
+  "${d.uri}|${d.stage}|${span_key}|${d.message}"
+}
+
 fn convert_analysis_diags(diags: Vector<analyze.AnalysisDiag>) Vector<Diagnostic> {
   collect d in diags {
     Diagnostic.{
