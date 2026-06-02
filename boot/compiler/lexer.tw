@@ -224,21 +224,116 @@ fn hex_digit_value(ch: Byte) Int {
   }
 }
 
+type CharLiteralValidation = .{ ok: Bool, message: String }
+
+fn char_literal_ok() CharLiteralValidation {
+  CharLiteralValidation.{ ok: true, message: "" }
+}
+
+fn char_literal_error(message: String) CharLiteralValidation {
+  CharLiteralValidation.{ ok: false, message }
+}
+
+fn is_char_simple_escape(ch: Byte) Bool {
+  case ch {
+    'n' => true,
+    't' => true,
+    'r' => true,
+    '\\' => true,
+    '\'' => true,
+    '"' => true,
+    '0' => true,
+    'e' => true,
+    _ => false,
+  }
+}
+
+fn validate_bare_char_literal(raw: String) CharLiteralValidation {
+  if raw.len() == 3 and raw[1].to_int() < 128 {
+    char_literal_ok()
+  } else {
+    char_literal_error(
+      "character literal must contain exactly one ASCII character; use a Unicode escape like '\\u{...}' for non-ASCII code points",
+    )
+  }
+}
+
+fn validate_simple_char_escape(raw: String) CharLiteralValidation {
+  if raw.len() == 4 {
+    char_literal_ok()
+  } else {
+    char_literal_error("character escape must contain exactly one escaped character")
+  }
+}
+
+fn validate_hex_char_escape(raw: String) CharLiteralValidation {
+  if raw.len() != 6 {
+    char_literal_error("hex character escape must be exactly \\xNN with two hex digits")
+  } else if hex_digit_value(raw[3]) < 0 or hex_digit_value(raw[4]) < 0 {
+    char_literal_error("hex character escape must use two hex digits")
+  } else {
+    char_literal_ok()
+  }
+}
+
+fn validate_unicode_char_escape(raw: String) CharLiteralValidation {
+  if raw.len() < 6 or raw[3] != '{' {
+    return char_literal_error("Unicode character escape must use braces: \\u{...}")
+  }
+
+  i := 4
+  digits := 0
+  code := 0
+
+  for i < raw.len() - 1 and raw[i] != '}' {
+    digit := hex_digit_value(raw[i])
+
+    if digit < 0 {
+      return char_literal_error("Unicode character escape contains a non-hex digit")
+    }
+
+    code = code * 16 + digit
+    digits = digits + 1
+    i = i + 1
+  }
+
+  cond {
+    i >= raw.len() - 1 or raw[i] != '}' => char_literal_error(
+      "Unicode character escape is missing closing '}'",
+    ),
+    i != raw.len() - 2 => char_literal_error(
+      "Unicode character escape has trailing characters after '}'",
+    ),
+    digits == 0 => char_literal_error("Unicode character escape needs at least one hex digit"),
+    digits > 6 => char_literal_error("Unicode character escape may contain at most six hex digits"),
+    code >= 0xD800 and code <= 0xDFFF => char_literal_error(
+      "Unicode character escape cannot be a surrogate code point",
+    ),
+    code > 0x10FFFF => char_literal_error(
+      "Unicode character escape is outside the valid Unicode range",
+    ),
+    _ => char_literal_ok(),
+  }
+}
+
 // Validate a character literal's raw text (including the surrounding quotes).
-// Accepts a single ASCII character (`'A'`) or any escape sequence (`'\n'`,
-// `'\x41'`, `'\u{1F600}'`). Rejects empty (`''`) and bare multi-byte content.
-fn valid_char_literal(raw: String) Bool {
-  if raw.len() < 3 {
-    return false
+// Accepts a single ASCII character (`'A'`) or a supported escape sequence
+// (`'\n'`, `'\x41'`, `'\u{1F600}'`). Rejects malformed escapes, empty
+// literals, bare multi-byte content, and Unicode escapes outside scalar range.
+fn validate_char_literal(raw: String) CharLiteralValidation {
+  cond {
+    raw.len() < 3 => char_literal_error(
+      "empty character literal; use a single character or escape sequence",
+    ),
+    raw[1] != '\\' => validate_bare_char_literal(raw),
+    raw.len() < 4 => char_literal_error("incomplete character escape"),
+    is_char_simple_escape(raw[2]) => validate_simple_char_escape(raw),
+    raw[2] == 'x' => validate_hex_char_escape(raw),
+    raw[2] == 'u' => validate_unicode_char_escape(raw),
+    _ => char_literal_error(
+      "unknown character escape; supported escapes are \\n, \\t, \\r, \\\\, \\', \\\", \\0, \\e, \\xNN, and \\u{...}",
+    ),
   }
-
-  first := raw[1]
-
-  if first == '\\' {
-    return true
-  }
-
-  raw.len() == 3 and first.to_int() < 128
 }
 
 fn scan_string_segment(source: String, from: Int, content_start: Int) ScanStringResult {
@@ -534,13 +629,14 @@ pub fn lex(source: String, file_id: Int) StageResult<Vector<Token>> {
         diagnostics_out = .append(
           diag.error(span.new(file_id, token_start, j), "unterminated character literal"),
         )
-      } else if !valid_char_literal(source.slice(token_start, j)) {
-        diagnostics_out = .append(
-          diag.error(
-            span.new(file_id, token_start, j),
-            "character literal must contain a single ASCII character or escape sequence",
-          ),
-        )
+      } else {
+        validation := validate_char_literal(source.slice(token_start, j))
+
+        if !validation.ok {
+          diagnostics_out = .append(
+            diag.error(span.new(file_id, token_start, j), validation.message),
+          )
+        }
       }
 
       i = j

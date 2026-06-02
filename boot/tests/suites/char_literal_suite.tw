@@ -1,3 +1,5 @@
+use compiler.lexer
+use lib.source.diagnostics as diag
 use tests.assert
 use tests.runner
 
@@ -75,6 +77,39 @@ pub fn suite() runner.Suite {
         .Ok({})
       },
     )
+    .test(
+      "rejects malformed escapes with clear diagnostics",
+      fn() {
+        try assert_char_diag("'\\q'", "unknown character escape")
+        try assert_char_diag("'\\xG0'", "hex character escape must use two hex digits")
+        try assert_char_diag("'\\x1'", "hex character escape must be exactly \\xNN")
+        try assert_char_diag("'\\u{}'", "needs at least one hex digit")
+        try assert_char_diag("'\\u{12xz}'", "contains a non-hex digit")
+        try assert_char_diag("'\\u{D800}'", "cannot be a surrogate")
+        try assert_char_diag("'\\u{110000}'", "outside the valid Unicode range")
+        .Ok({})
+      },
+    )
+    .test(
+      "rejects empty, multi-character, and bare non-ASCII literals clearly",
+      fn() {
+        try assert_char_diag("''", "empty character literal")
+        try assert_char_diag("'ab'", "exactly one ASCII character")
+        try assert_char_diag("'é'", "use a Unicode escape")
+        .Ok({})
+      },
+    )
+}
+
+fn assert_char_diag(src: String, expected: String) Result<Void, String> {
+  result := lexer.lex(src, 0)
+
+  if result.diagnostics.len() == 0 {
+    return .Err("expected diagnostic for ${src}")
+  }
+
+  message := diag.message(result.diagnostics[0])
+  assert.str_contains(message, expected)
 }
 
 fn classify(code: Int) String {

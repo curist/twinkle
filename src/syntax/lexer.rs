@@ -18,6 +18,7 @@ pub enum LexErrorKind {
     InvalidNumber,
     InvalidHexLiteral,
     UnterminatedChar,
+    InvalidCharLiteral(&'static str),
     UnexpectedChar(char),
     InvalidUtf8,
 }
@@ -276,9 +277,20 @@ impl Lexer {
         let start = self.byte_pos;
         self.advance(); // consume opening '
 
-        if self.is_eof() || self.peek() == '\'' {
+        if self.is_eof() {
             let span = Span::new(self.file_id, start as u32, self.byte_pos as u32);
             return Err(LexError::new(LexErrorKind::UnterminatedChar, span));
+        }
+
+        if self.peek() == '\'' {
+            self.advance(); // consume closing '
+            let span = Span::new(self.file_id, start as u32, self.byte_pos as u32);
+            return Err(LexError::new(
+                LexErrorKind::InvalidCharLiteral(
+                    "empty character literal; use a single character or escape sequence",
+                ),
+                span,
+            ));
         }
 
         let value: u32 = if self.peek() == '\\' {
@@ -337,12 +349,42 @@ impl Lexer {
                 }
             }
         } else {
-            self.advance() as u32
+            let ch = self.advance();
+            if ch == '\n' {
+                let span = Span::new(self.file_id, start as u32, self.byte_pos as u32);
+                return Err(LexError::new(LexErrorKind::UnterminatedChar, span));
+            }
+            if !ch.is_ascii() {
+                let span = Span::new(self.file_id, start as u32, self.byte_pos as u32);
+                return Err(LexError::new(
+                    LexErrorKind::InvalidCharLiteral(
+                        "character literal must contain exactly one ASCII character; use a Unicode escape like \\u{...} for non-ASCII code points",
+                    ),
+                    span,
+                ));
+            }
+            ch as u32
         };
 
-        if self.is_eof() || self.peek() != '\'' {
+        if self.is_eof() {
             let span = Span::new(self.file_id, start as u32, self.byte_pos as u32);
             return Err(LexError::new(LexErrorKind::UnterminatedChar, span));
+        }
+
+        if self.peek() != '\'' {
+            while !self.is_eof() && self.peek() != '\'' && self.peek() != '\n' {
+                self.advance();
+            }
+            if !self.is_eof() && self.peek() == '\'' {
+                self.advance();
+            }
+            let span = Span::new(self.file_id, start as u32, self.byte_pos as u32);
+            return Err(LexError::new(
+                LexErrorKind::InvalidCharLiteral(
+                    "character literal must contain exactly one ASCII character or escape sequence",
+                ),
+                span,
+            ));
         }
 
         self.advance(); // consume closing '
@@ -712,7 +754,31 @@ mod tests {
     #[test]
     fn test_lex_char_literal_empty() {
         let result = Lexer::lex("''", FileId(0));
-        assert_eq!(result.unwrap_err().kind, LexErrorKind::UnterminatedChar);
+        assert_eq!(
+            result.unwrap_err().kind,
+            LexErrorKind::InvalidCharLiteral(
+                "empty character literal; use a single character or escape sequence"
+            )
+        );
+    }
+
+    #[test]
+    fn test_lex_char_literal_invalid_content() {
+        let result = Lexer::lex("'ab'", FileId(0));
+        assert_eq!(
+            result.unwrap_err().kind,
+            LexErrorKind::InvalidCharLiteral(
+                "character literal must contain exactly one ASCII character or escape sequence"
+            )
+        );
+
+        let result = Lexer::lex("'é'", FileId(0));
+        assert_eq!(
+            result.unwrap_err().kind,
+            LexErrorKind::InvalidCharLiteral(
+                "character literal must contain exactly one ASCII character; use a Unicode escape like \\u{...} for non-ASCII code points"
+            )
+        );
     }
 
     #[test]
