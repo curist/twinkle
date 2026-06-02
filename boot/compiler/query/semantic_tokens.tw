@@ -145,11 +145,14 @@ fn tokens_from_function(ctx: Ctx, decl: FunctionDecl) Vector<SemanticToken> {
 fn tokens_from_type_decl(ctx: Ctx, decl: TypeDecl) Vector<SemanticToken> {
   out: Vector<SemanticToken> = []
 
-  // Type name — compute span from the decl span
-  // The name starts after "type " (5 chars) from the decl start
-  name_len := decl.name.len()
-  name_start := decl.span.start + 5
-  out = .append(.{ start: name_start, length: name_len, kind: .Type, is_declaration: true })
+  out = .append(
+    .{
+      start: decl.name_span.start,
+      length: decl.name_span.end - decl.name_span.start,
+      kind: .Type,
+      is_declaration: true,
+    },
+  )
 
   // Build context with type params
   tp_dict: Dict<String, Bool> = ctx.type_params

@@ -64,6 +64,7 @@ pub type ExternFunctionDecl = .{
 pub type TypeDecl = .{
   is_pub: Bool,
   name: String,
+  name_span: Span,
   type_params: Vector<TypeParam>,
   def: TypeDef,
   span: Span,

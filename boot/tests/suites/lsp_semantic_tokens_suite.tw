@@ -436,6 +436,92 @@ pub fn suite() runner.Suite {
       },
     )
     .test(
+      "public type after relative import highlights the type name",
+      fn() {
+        triple_uri := "file:///tmp/lsp_semtok_pub_type/tuple/triple.tw"
+        tuple_uri := "file:///tmp/lsp_semtok_pub_type/tuple.tw"
+        triple := "pub type Triple<A, B, C> = .{ first: A, second: B, third: C }\n"
+        tuple := "use .tuple.triple as triple_mod\n\npub type Pair<A, B> = .{ first: A, second: B }\n"
+        state := state_with_two_docs(triple_uri, triple, tuple_uri, tuple)
+
+        step := server_core.handle_message(state, sem_tokens_request(1, tuple_uri))
+        data := try sem_token_data(step)
+
+        line := 0
+        col := 0
+        found_pair := false
+        found_split_type_keyword := false
+        i := 0
+
+        for i < token_count(data) {
+          tok := try nth_token(data, i)
+
+          if tok.delta_line > 0 {
+            line = line + tok.delta_line
+            col = tok.delta_start
+          } else {
+            col = col + tok.delta_start
+          }
+
+          if line == 2
+            and col == 9 and tok.length == 4 and tok.token_type == TK_TYPE()
+            and (tok.modifiers & MOD_DECLARATION()) != 0 {
+            found_pair = true
+          }
+
+          if line == 2 and col == 5 and tok.length == 4 and tok.token_type == TK_TYPE() {
+            found_split_type_keyword = true
+          }
+
+          i = i + 1
+        }
+
+        try assert.ok(found_pair, "expected the Pair identifier to get the type token")
+        try assert.ok(!found_split_type_keyword, "type token must not cover `ype ` from `pub type`")
+        .Ok({})
+      },
+    )
+    .test(
+      "relative import keeps semantic token deltas valid",
+      fn() {
+        foo_uri := "file:///tmp/lsp_semtok_relative/foo.tw"
+        main_uri := "file:///tmp/lsp_semtok_relative/main.tw"
+        foo := "pub fn helper() Int { 42 }\n"
+        main := "use .foo\nx := foo.helper()\n"
+        state := state_with_two_docs(foo_uri, foo, main_uri, main)
+
+        step := server_core.handle_message(state, sem_tokens_request(1, main_uri))
+        data := try sem_token_data(step)
+        try assert.ok(
+          token_count(data) > 0,
+          "expected semantic tokens for relative-import document",
+        )
+
+        line := 0
+        col := 0
+        i := 0
+
+        for i < token_count(data) {
+          tok := try nth_token(data, i)
+          try assert.ok(tok.delta_line >= 0, "delta_line should be >= 0")
+          try assert.ok(tok.delta_start >= 0, "delta_start should be >= 0")
+
+          if tok.delta_line > 0 {
+            line = line + tok.delta_line
+            col = tok.delta_start
+          } else {
+            col = col + tok.delta_start
+          }
+
+          try assert.ok(line >= 0 and col >= 0, "absolute token position should stay valid")
+          try assert.ok(tok.length > 0, "token length should be > 0")
+          i = i + 1
+        }
+
+        .Ok({})
+      },
+    )
+    .test(
       "delta encoding is correct for multi-line tokens",
       fn() {
         // Line 0: fn foo() Int { 42 }

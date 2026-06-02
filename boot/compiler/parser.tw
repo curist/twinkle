@@ -1376,6 +1376,7 @@ fn parse_type(c: Cursor) ItemParse {
   }
 
   name := c.text()
+  name_span := c.span()
   c = .advance()
   parsed_type_params := parse_type_params(c)
   type_params := parsed_type_params.value
@@ -1436,7 +1437,7 @@ fn parse_type(c: Cursor) ItemParse {
   }
 
   decl_span := c.span_from(start_pos)
-  decl := TypeDecl.{ is_pub, name, type_params, def, span: decl_span, doc: .None }
+  decl := TypeDecl.{ is_pub, name, name_span, type_params, def, span: decl_span, doc: .None }
   .{ value: .Type(decl), cursor: c, diagnostics: diagnostics_out }
 }
 
