@@ -585,7 +585,7 @@ pub fn suite() runner.Suite {
       },
     )
     .test(
-      "semanticTokensProvider is not advertised in capabilities",
+      "semanticTokensProvider advertised in capabilities",
       fn() {
         msg := protocol.Message.Request(.{ id: .IntId(1), method: "initialize", params: .None })
         step := server_core.handle_message(server_core.initial_state(), msg)
@@ -597,12 +597,22 @@ pub fn suite() runner.Suite {
         out := step.outgoing[0]
         result := try json.decode(out, json.field("result", json.raw()))
         caps := try json.decode(result, json.field("capabilities", json.raw()))
-        sem_cap := try json.decode(caps, json.optional_field("semanticTokensProvider", json.raw()))
+        sem_cap := try json.decode(caps, json.field("semanticTokensProvider", json.raw()))
 
-        case sem_cap {
-          .None => .Ok({}),
-          .Some(_) => .Err("semanticTokensProvider should not be advertised"),
-        }
+        // Should have a "legend" with tokenTypes and tokenModifiers
+        legend := try json.decode(sem_cap, json.field("legend", json.raw()))
+        token_types := try json.decode(legend, json.field("tokenTypes", json.list(json.string())))
+        token_modifiers := try json.decode(
+          legend,
+          json.field("tokenModifiers", json.list(json.string())),
+        )
+        try assert.ok(token_types.len() > 0, "expected non-empty tokenTypes")
+        try assert.ok(token_modifiers.len() > 0, "expected non-empty tokenModifiers")
+
+        // Should have "full" support
+        full := try json.decode(sem_cap, json.field("full", json.bool()))
+        try assert.equal(full, true)
+        .Ok({})
       },
     )
     .test(

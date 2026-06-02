@@ -106,6 +106,7 @@ fn handle_request(state: State, req: protocol.Request) Step {
             json.kv("workspaceSymbolProvider", .Bool(true)),
             json.kv("inlayHintProvider", .Bool(true)),
             json.kv("foldingRangeProvider", .Bool(true)),
+            json.kv("semanticTokensProvider", lsp_semantic_tokens.capability()),
             json.kv(
               "signatureHelpProvider",
               json.object([json.kv("triggerCharacters", json.array([.Str("("), .Str(",")]))]),
