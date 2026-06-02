@@ -1,0 +1,113 @@
+/// Shared escape-sequence decoding for string and character literals.
+///
+/// Single source of truth for what `\n`, `\xNN`, `\u{...}`, and the other
+/// escapes mean. Three call sites share it: the string unescaper
+/// (`unescape_string`), the character-literal validator, and the
+/// character-literal value decoder (`parse_char_literal`). Each applies its own
+/// policy to the result — strings keep a malformed escape verbatim, while
+/// character literals surface `error` as a diagnostic.
+// Outcome of decoding one escape body (the characters after a backslash).
+// `error` is empty on success. `consumed` counts the body characters (not the
+// backslash) and is only meaningful on success.
+pub type EscapeResult = .{ code: Int, consumed: Int, error: String }
+
+fn decoded(code: Int, consumed: Int) EscapeResult {
+  .{ code, consumed, error: "" }
+}
+
+fn invalid(error: String) EscapeResult {
+  .{ code: 0, consumed: 0, error }
+}
+
+pub fn hex_digit_value(ch: Byte) Int {
+  cond {
+    ch >= '0' and ch <= '9' => ch - '0',
+    ch >= 'A' and ch <= 'F' => ch - 'A' + 10,
+    ch >= 'a' and ch <= 'f' => ch - 'a' + 10,
+    _ => -1,
+  }
+}
+
+// Code point for a single-character escape, or -1 if `ch` does not name one.
+fn simple_escape_code(ch: Byte) Int {
+  cond {
+    ch == 'n' => 10,
+    ch == 't' => 9,
+    ch == 'r' => 13,
+    ch == '\\' => 92,
+    ch == '"' => 34,
+    ch == '\'' => 39,
+    ch == '$' => 36,
+    ch == '0' => 0,
+    ch == 'e' => 27,
+    _ => -1,
+  }
+}
+
+// Decode the escape body beginning at `s[start]` — the character immediately
+// following a backslash.
+pub fn decode_escape(s: String, start: Int) EscapeResult {
+  if start >= s.len() {
+    return invalid("incomplete escape sequence")
+  }
+
+  c := s[start]
+  simple := simple_escape_code(c)
+
+  cond {
+    simple >= 0 => decoded(simple, 1),
+    c == 'x' => decode_hex_escape(s, start),
+    c == 'u' => decode_unicode_escape(s, start),
+    _ => invalid(
+      "unknown character escape; supported escapes are \\n, \\t, \\r, \\\\, \\', \\\", \\0, \\e, \\xNN, and \\u{...}",
+    ),
+  }
+}
+
+fn decode_hex_escape(s: String, start: Int) EscapeResult {
+  if start + 2 >= s.len() {
+    return invalid("hex character escape must be written as \\xNN with two hex digits")
+  }
+
+  hi := hex_digit_value(s[start + 1])
+  lo := hex_digit_value(s[start + 2])
+
+  if hi < 0 or lo < 0 {
+    return invalid("hex character escape must use two hex digits")
+  }
+
+  decoded(hi * 16 + lo, 3)
+}
+
+fn decode_unicode_escape(s: String, start: Int) EscapeResult {
+  if start + 1 >= s.len() or s[start + 1] != '{' {
+    return invalid("Unicode character escape must use braces: \\u{...}")
+  }
+
+  i := start + 2
+  code := 0
+  digits := 0
+
+  for i < s.len() and s[i] != '}' {
+    d := hex_digit_value(s[i])
+
+    if d < 0 {
+      return invalid("Unicode character escape contains a non-hex digit")
+    }
+
+    code = code * 16 + d
+    digits = digits + 1
+    i = i + 1
+  }
+
+  cond {
+    i >= s.len() => invalid("Unicode character escape is missing closing '}'"),
+    digits == 0 => invalid("Unicode character escape needs at least one hex digit"),
+    digits > 6 => invalid("Unicode character escape may contain at most six hex digits"),
+    code >= 0xD800 and code <= 0xDFFF => invalid(
+      "Unicode character escape cannot be a surrogate code point",
+    ),
+    code > 0x10FFFF => invalid("Unicode character escape is outside the valid Unicode range"),
+    _ => decoded(code, i - start + 1),
+  }
+}

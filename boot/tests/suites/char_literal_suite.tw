@@ -82,7 +82,7 @@ pub fn suite() runner.Suite {
       fn() {
         try assert_char_diag("'\\q'", "unknown character escape")
         try assert_char_diag("'\\xG0'", "hex character escape must use two hex digits")
-        try assert_char_diag("'\\x1'", "hex character escape must be exactly \\xNN")
+        try assert_char_diag("'\\x1'", "hex character escape must use two hex digits")
         try assert_char_diag("'\\u{}'", "needs at least one hex digit")
         try assert_char_diag("'\\u{12xz}'", "contains a non-hex digit")
         try assert_char_diag("'\\u{D800}'", "cannot be a surrogate")

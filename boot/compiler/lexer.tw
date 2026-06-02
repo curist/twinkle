@@ -1,3 +1,4 @@
+use compiler.escape
 use lib.source.diagnostics as diag
 use lib.source.diagnostics.{DiagKind, StageResult}
 use lib.source.span
@@ -113,93 +114,22 @@ fn unescape_string(raw: String) String {
         parts = .append(raw.slice(seg_start, i))
       }
 
-      next := raw[i + 1]
+      result := escape.decode_escape(raw, i + 1)
 
-      cond {
-        next == 'n' => {
-          parts = .append("\n")
-        },
-        next == 't' => {
-          parts = .append("\t")
-        },
-        next == 'r' => {
-          parts = .append("\r")
-        },
-        next == '\\' => {
-          parts = .append("\\")
-        },
-        next == '\"' => {
-          parts = .append("\"")
-        },
-        next == '$' => {
-          parts = .append("$")
-        },
-        next == 'e' => {
-          parts = .append("\e")
-        },
-        next == 'x' and i + 3 < n => {
-          hi := hex_digit_value(raw[i + 2])
-          lo := hex_digit_value(raw[i + 3])
-
-          if hi >= 0 and lo >= 0 {
-            code := hi * 16 + lo
-
-            case String.from_code_point(code) {
-              .Some(s) => {
-                parts = .append(s)
-                i = i + 4
-                seg_start = i
-                continue
-              },
-              .None => {
-                parts = .append(raw.slice(i, i + 2))
-              },
-            }
-          } else {
-            parts = .append(raw.slice(i, i + 2))
-          }
-        },
-        next == 'u' and i + 2 < n and raw[i + 2] == '{' => {
-          j := i + 3
-          code := 0
-          digits := 0
-          valid := true
-
-          for j < n and raw[j] != '}' {
-            digit := hex_digit_value(raw[j])
-
-            if digit < 0 {
-              valid = false
-            } else {
-              code = code * 16 + digit
-              digits = digits + 1
-            }
-
-            j = j + 1
-          }
-
-          if valid and digits > 0 and j < n and raw[j] == '}' {
-            case String.from_code_point(code) {
-              .Some(s) => {
-                parts = .append(s)
-                i = j + 1
-                seg_start = i
-                continue
-              },
-              .None => {
-                parts = .append(raw.slice(i, i + 2))
-              },
-            }
-          } else {
-            parts = .append(raw.slice(i, i + 2))
-          }
-        },
-        _ => {
-          // Unknown escape — keep both chars
-          parts = .append(raw.slice(i, i + 2))
-        },
+      if result.error == "" {
+        case String.from_code_point(result.code) {
+          .Some(s) => {
+            parts = .append(s)
+            i = i + 1 + result.consumed
+            seg_start = i
+            continue
+          },
+          .None => {},
+        }
       }
 
+      // Malformed or unrepresentable escape: keep it verbatim (strings are lenient).
+      parts = .append(raw.slice(i, i + 2))
       i = i + 2
       seg_start = i
     } else {
@@ -215,15 +145,6 @@ fn unescape_string(raw: String) String {
   parts.join("")
 }
 
-fn hex_digit_value(ch: Byte) Int {
-  cond {
-    ch >= '0' and ch <= '9' => ch - '0',
-    ch >= 'A' and ch <= 'F' => ch - 'A' + 10,
-    ch >= 'a' and ch <= 'f' => ch - 'a' + 10,
-    _ => -1,
-  }
-}
-
 type CharLiteralValidation = .{ ok: Bool, message: String }
 
 fn char_literal_ok() CharLiteralValidation {
@@ -232,20 +153,6 @@ fn char_literal_ok() CharLiteralValidation {
 
 fn char_literal_error(message: String) CharLiteralValidation {
   CharLiteralValidation.{ ok: false, message }
-}
-
-fn is_char_simple_escape(ch: Byte) Bool {
-  case ch {
-    'n' => true,
-    't' => true,
-    'r' => true,
-    '\\' => true,
-    '\'' => true,
-    '"' => true,
-    '0' => true,
-    'e' => true,
-    _ => false,
-  }
 }
 
 fn validate_bare_char_literal(raw: String) CharLiteralValidation {
@@ -258,81 +165,28 @@ fn validate_bare_char_literal(raw: String) CharLiteralValidation {
   }
 }
 
-fn validate_simple_char_escape(raw: String) CharLiteralValidation {
-  if raw.len() == 4 {
-    char_literal_ok()
-  } else {
-    char_literal_error("character escape must contain exactly one escaped character")
-  }
-}
-
-fn validate_hex_char_escape(raw: String) CharLiteralValidation {
-  if raw.len() != 6 {
-    char_literal_error("hex character escape must be exactly \\xNN with two hex digits")
-  } else if hex_digit_value(raw[3]) < 0 or hex_digit_value(raw[4]) < 0 {
-    char_literal_error("hex character escape must use two hex digits")
-  } else {
-    char_literal_ok()
-  }
-}
-
-fn validate_unicode_char_escape(raw: String) CharLiteralValidation {
-  if raw.len() < 6 or raw[3] != '{' {
-    return char_literal_error("Unicode character escape must use braces: \\u{...}")
-  }
-
-  i := 4
-  digits := 0
-  code := 0
-
-  for i < raw.len() - 1 and raw[i] != '}' {
-    digit := hex_digit_value(raw[i])
-
-    if digit < 0 {
-      return char_literal_error("Unicode character escape contains a non-hex digit")
-    }
-
-    code = code * 16 + digit
-    digits = digits + 1
-    i = i + 1
-  }
-
-  cond {
-    i >= raw.len() - 1 or raw[i] != '}' => char_literal_error(
-      "Unicode character escape is missing closing '}'",
-    ),
-    i != raw.len() - 2 => char_literal_error(
-      "Unicode character escape has trailing characters after '}'",
-    ),
-    digits == 0 => char_literal_error("Unicode character escape needs at least one hex digit"),
-    digits > 6 => char_literal_error("Unicode character escape may contain at most six hex digits"),
-    code >= 0xD800 and code <= 0xDFFF => char_literal_error(
-      "Unicode character escape cannot be a surrogate code point",
-    ),
-    code > 0x10FFFF => char_literal_error(
-      "Unicode character escape is outside the valid Unicode range",
-    ),
-    _ => char_literal_ok(),
-  }
-}
-
 // Validate a character literal's raw text (including the surrounding quotes).
 // Accepts a single ASCII character (`'A'`) or a supported escape sequence
-// (`'\n'`, `'\x41'`, `'\u{1F600}'`). Rejects malformed escapes, empty
-// literals, bare multi-byte content, and Unicode escapes outside scalar range.
+// (`'\n'`, `'\x41'`, `'\u{1F600}'`). Escape validity is delegated to the shared
+// escape decoder; this adds only the character-literal framing rules: exactly
+// one character, with nothing trailing before the closing quote.
 fn validate_char_literal(raw: String) CharLiteralValidation {
+  if raw.len() < 3 {
+    return char_literal_error("empty character literal; use a single character or escape sequence")
+  }
+
+  if raw[1] != '\\' {
+    return validate_bare_char_literal(raw)
+  }
+
+  result := escape.decode_escape(raw, 2)
+
   cond {
-    raw.len() < 3 => char_literal_error(
-      "empty character literal; use a single character or escape sequence",
+    result.error != "" => char_literal_error(result.error),
+    2 + result.consumed != raw.len() - 1 => char_literal_error(
+      "character escape has trailing characters before the closing quote",
     ),
-    raw[1] != '\\' => validate_bare_char_literal(raw),
-    raw.len() < 4 => char_literal_error("incomplete character escape"),
-    is_char_simple_escape(raw[2]) => validate_simple_char_escape(raw),
-    raw[2] == 'x' => validate_hex_char_escape(raw),
-    raw[2] == 'u' => validate_unicode_char_escape(raw),
-    _ => char_literal_error(
-      "unknown character escape; supported escapes are \\n, \\t, \\r, \\\\, \\', \\\", \\0, \\e, \\xNN, and \\u{...}",
-    ),
+    _ => char_literal_ok(),
   }
 }
 

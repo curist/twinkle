@@ -1,5 +1,7 @@
 /// Literal parsing helpers for the Twinkle parser.
 
+use compiler.escape
+
 fn parse_hex(s: String) Int {
   result := 0
   i := 2 // skip "0x" or "0X"
@@ -19,60 +21,25 @@ fn parse_hex(s: String) Int {
   result
 }
 
-// Byte at `i`, or 0 if out of range — keeps malformed literals from trapping.
-fn char_byte_at(raw: String, i: Int) Int {
-  if i < raw.len() {
-    raw[i].to_int()
+// Decode a character literal (`'A'`, `'\n'`, `'\x41'`, `'\u{1F600}'`) to its
+// code point. `raw` includes the surrounding quotes. Malformed literals are
+// reported by the lexer, so here we just return a best-effort value.
+fn parse_char_literal(raw: String) Int {
+  if raw.len() < 3 {
+    return 0
+  }
+
+  if raw[1] != '\\' {
+    return raw[1].to_int()
+  }
+
+  result := escape.decode_escape(raw, 2)
+
+  if result.error == "" {
+    result.code
   } else {
     0
   }
-}
-
-fn hex_value(b: Int) Int {
-  cond {
-    b >= 0x30 and b <= 0x39 => b - 0x30,
-    b >= 0x41 and b <= 0x46 => b - 0x41 + 10,
-    b >= 0x61 and b <= 0x66 => b - 0x61 + 10,
-    _ => 0,
-  }
-}
-
-// Decode a character literal (`'A'`, `'\n'`, `'\x41'`, `'\u{1F600}'`) to its
-// code point. `raw` includes the surrounding quotes.
-fn parse_char_literal(raw: String) Int {
-  first := char_byte_at(raw, 1)
-
-  if first != 0x5C {
-    return first
-  }
-
-  esc := char_byte_at(raw, 2)
-  cond {
-    esc == 0x6E => 10, // \n
-    esc == 0x74 => 9, // \t
-    esc == 0x72 => 13, // \r
-    esc == 0x5C => 92, // backslash
-    esc == 0x27 => 39, // \'
-    esc == 0x22 => 34, // \"
-    esc == 0x30 => 0, // \0
-    esc == 0x65 => 27, // \e (ESC)
-    esc == 0x78 => hex_value(char_byte_at(raw, 3)) * 16 + hex_value(char_byte_at(raw, 4)), // \xHH
-    esc == 0x75 => parse_braced_hex(raw, 4), // \u{...}
-    _ => esc, // unknown escape: take the literal char value
-  }
-}
-
-// Parse hex digits starting at `start`, stopping at `}`.
-fn parse_braced_hex(raw: String, start: Int) Int {
-  result := 0
-  i := start
-
-  for i < raw.len() and char_byte_at(raw, i) != 0x7D {
-    result = result * 16 + hex_value(char_byte_at(raw, i))
-    i = i + 1
-  }
-
-  result
 }
 
 pub fn parse_int_literal(raw: String) Int {
