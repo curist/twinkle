@@ -68,6 +68,9 @@
 (int_literal) @number
 (float_literal) @number.float
 
+; Character literals (integer code points)
+(char_literal) @character
+
 ; Strings
 (string_literal) @string
 (string_content) @string

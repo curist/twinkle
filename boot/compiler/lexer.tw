@@ -237,6 +237,23 @@ fn hex_digit_value(ch: Byte) Int {
   }
 }
 
+// Validate a character literal's raw text (including the surrounding quotes).
+// Accepts a single ASCII character (`'A'`) or any escape sequence (`'\n'`,
+// `'\x41'`, `'\u{1F600}'`). Rejects empty (`''`) and bare multi-byte content.
+fn valid_char_literal(raw: String) Bool {
+  if raw.len() < 3 {
+    return false
+  }
+
+  first := raw[1]
+
+  if is_byte(first, "\\") {
+    return true
+  }
+
+  raw.len() == 3 and first.to_int() < 128
+}
+
 fn scan_string_segment(source: String, from: Int, content_start: Int) ScanStringResult {
   i := from
   n := source.len()
@@ -487,6 +504,61 @@ pub fn lex(source: String, file_id: Int) StageResult<Vector<Token>> {
 
       out = .append(
         make_token(kind, source, token_start, i, file_id, preceded_by_newline, leading_trivia),
+      )
+      continue
+    }
+
+    if is_byte(c, "'") {
+      // Character literal: lexes as an Int token carrying the code point.
+      // The raw `'...'` text is preserved so the formatter round-trips it.
+      j := i + 1
+      escaped := false
+      terminated := false
+
+      for j < n {
+        ch := source[j]
+
+        if escaped {
+          escaped = false
+          j = j + 1
+          continue
+        }
+
+        if is_byte(ch, "\\") {
+          escaped = true
+          j = j + 1
+          continue
+        }
+
+        if is_byte(ch, "'") {
+          j = j + 1
+          terminated = true
+          break
+        }
+
+        if is_byte(ch, "\n") {
+          break
+        }
+
+        j = j + 1
+      }
+
+      if !terminated {
+        diagnostics_out = .append(
+          diag.error(span.new(file_id, token_start, j), "unterminated character literal"),
+        )
+      } else if !valid_char_literal(source.slice(token_start, j)) {
+        diagnostics_out = .append(
+          diag.error(
+            span.new(file_id, token_start, j),
+            "character literal must contain a single ASCII character or escape sequence",
+          ),
+        )
+      }
+
+      i = j
+      out = .append(
+        make_token(.IntLit, source, token_start, i, file_id, preceded_by_newline, leading_trivia),
       )
       continue
     }

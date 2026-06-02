@@ -1,0 +1,86 @@
+use tests.assert
+use tests.runner
+
+pub fn suite() runner.Suite {
+  runner.suite("char literal")
+    .test(
+      "ASCII code points",
+      fn() {
+        try assert.equal('A', 65)
+        try assert.equal('a', 97)
+        try assert.equal('0', 48)
+        try assert.equal(' ', 32)
+        try assert.equal('~', 126)
+        .Ok({})
+      },
+    )
+    .test(
+      "defaults to Int and joins Int arithmetic",
+      fn() {
+        x := 'A'
+        try assert.equal(x + 1, 66)
+        try assert.equal('z' - 'a', 25)
+        .Ok({})
+      },
+    )
+    .test(
+      "flexes to Byte in check position",
+      fn() {
+        b: Byte = 'A'
+        try assert.equal(b.to_int(), 65)
+        bytes: Vector<Byte> = ['a', 'b', 'c']
+        try assert.equal(bytes[1].to_int(), 98)
+        .Ok({})
+      },
+    )
+    .test(
+      "simple escapes",
+      fn() {
+        try assert.equal('\n', 10)
+        try assert.equal('\t', 9)
+        try assert.equal('\r', 13)
+        try assert.equal('\\', 92)
+        try assert.equal('\'', 39)
+        try assert.equal('\"', 34)
+        try assert.equal('\0', 0)
+        try assert.equal('\e', 27)
+        .Ok({})
+      },
+    )
+    .test(
+      "hex and unicode escapes",
+      fn() {
+        try assert.equal('\x41', 65)
+        try assert.equal('\x7e', 126)
+        try assert.equal('\u{41}', 65)
+        try assert.equal('\u{1F600}', 128512)
+        .Ok({})
+      },
+    )
+    .test(
+      "compares against a byte drawn from a string",
+      fn() {
+        s := "A1 "
+        try assert.is_true(s[0] == 'A')
+        try assert.is_true(s[1] >= '0' and s[1] <= '9')
+        try assert.is_true(s[2] == ' ')
+        .Ok({})
+      },
+    )
+    .test(
+      "usable as a case pattern",
+      fn() {
+        try assert.equal(classify('7'), "digit")
+        try assert.equal(classify('q'), "other")
+        .Ok({})
+      },
+    )
+}
+
+fn classify(code: Int) String {
+  case code {
+    '0' => "digit",
+    '7' => "digit",
+    _ => "other",
+  }
+}
