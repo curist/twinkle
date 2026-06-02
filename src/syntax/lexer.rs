@@ -17,6 +17,7 @@ pub enum LexErrorKind {
     InvalidUnicodeEscape,
     InvalidNumber,
     InvalidHexLiteral,
+    UnterminatedChar,
     UnexpectedChar(char),
     InvalidUtf8,
 }
@@ -87,6 +88,9 @@ impl Lexer {
         let mut token = match ch {
             // String literals
             '"' => self.lex_string()?,
+
+            // Character literals (lex to an integer code-point token)
+            '\'' => self.lex_char()?,
 
             // Numbers
             '0'..='9' => self.lex_number()?,
@@ -263,6 +267,87 @@ impl Lexer {
         };
 
         Ok(Token::new(kind, span, text))
+    }
+
+    /// Lex a character literal (`'A'`, `'\n'`, `'\x41'`, `'\u{1F600}'`).
+    /// Decodes to the code point and emits an `IntLit` token, so the parser
+    /// treats it identically to an integer literal.
+    fn lex_char(&mut self) -> LexResult<Token> {
+        let start = self.byte_pos;
+        self.advance(); // consume opening '
+
+        if self.is_eof() || self.peek() == '\'' {
+            let span = Span::new(self.file_id, start as u32, self.byte_pos as u32);
+            return Err(LexError::new(LexErrorKind::UnterminatedChar, span));
+        }
+
+        let value: u32 = if self.peek() == '\\' {
+            self.advance(); // consume backslash
+
+            if self.is_eof() {
+                let span = Span::new(self.file_id, start as u32, self.byte_pos as u32);
+                return Err(LexError::new(LexErrorKind::UnterminatedChar, span));
+            }
+
+            let esc = self.peek();
+            match esc {
+                'n' => {
+                    self.advance();
+                    '\n' as u32
+                }
+                't' => {
+                    self.advance();
+                    '\t' as u32
+                }
+                'r' => {
+                    self.advance();
+                    '\r' as u32
+                }
+                '\\' => {
+                    self.advance();
+                    '\\' as u32
+                }
+                '\'' => {
+                    self.advance();
+                    '\'' as u32
+                }
+                '"' => {
+                    self.advance();
+                    '"' as u32
+                }
+                '0' => {
+                    self.advance();
+                    0
+                }
+                'e' => {
+                    self.advance();
+                    0x1b
+                }
+                'x' => {
+                    self.advance();
+                    self.parse_hex_escape(start)? as u32
+                }
+                'u' => {
+                    self.advance();
+                    self.parse_unicode_escape(start)? as u32
+                }
+                _ => {
+                    let span = Span::new(self.file_id, start as u32, self.byte_pos as u32);
+                    return Err(LexError::new(LexErrorKind::InvalidEscape(esc), span));
+                }
+            }
+        } else {
+            self.advance() as u32
+        };
+
+        if self.is_eof() || self.peek() != '\'' {
+            let span = Span::new(self.file_id, start as u32, self.byte_pos as u32);
+            return Err(LexError::new(LexErrorKind::UnterminatedChar, span));
+        }
+
+        self.advance(); // consume closing '
+        let span = Span::new(self.file_id, start as u32, self.byte_pos as u32);
+        Ok(Token::new(TokenKind::IntLit, span, value.to_string()))
     }
 
     fn lex_string(&mut self) -> LexResult<Token> {
@@ -590,6 +675,44 @@ mod tests {
         assert_eq!(tokens[1].text, "3.14");
         assert_eq!(tokens[2].kind, TokenKind::IntLit);
         assert_eq!(tokens[2].text, "0");
+    }
+
+    #[test]
+    fn test_lex_char_literal() {
+        // A character literal lexes to an IntLit token holding its code point.
+        let tokens = lex_simple("'A' '0' ' '");
+        assert_eq!(tokens[0].kind, TokenKind::IntLit);
+        assert_eq!(tokens[0].text, "65");
+        assert_eq!(tokens[1].kind, TokenKind::IntLit);
+        assert_eq!(tokens[1].text, "48");
+        assert_eq!(tokens[2].kind, TokenKind::IntLit);
+        assert_eq!(tokens[2].text, "32");
+    }
+
+    #[test]
+    fn test_lex_char_literal_escapes() {
+        let tokens = lex_simple(r"'\n' '\t' '\\' '\'' '\0' '\e' '\x41' '\u{1F600}'");
+        let codes: Vec<&str> = tokens
+            .iter()
+            .filter(|t| t.kind == TokenKind::IntLit)
+            .map(|t| t.text.as_str())
+            .collect();
+        assert_eq!(
+            codes,
+            vec!["10", "9", "92", "39", "0", "27", "65", "128512"]
+        );
+    }
+
+    #[test]
+    fn test_lex_char_literal_unterminated() {
+        let result = Lexer::lex("'A", FileId(0));
+        assert_eq!(result.unwrap_err().kind, LexErrorKind::UnterminatedChar);
+    }
+
+    #[test]
+    fn test_lex_char_literal_empty() {
+        let result = Lexer::lex("''", FileId(0));
+        assert_eq!(result.unwrap_err().kind, LexErrorKind::UnterminatedChar);
     }
 
     #[test]

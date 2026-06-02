@@ -1,5 +1,0 @@
----
-source: tests/integration_test.rs
-expression: err_msg
----
-"missing_paren.tw:1:15: Expected ,, found {\n   1 | fn foo(x: Int {\n\n                    ^"
