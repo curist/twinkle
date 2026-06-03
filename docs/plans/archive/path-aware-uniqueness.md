@@ -1,8 +1,10 @@
 # Uniqueness Optimizer: Value-Semantics Soundness Fix (+ path-aware future work)
 
-**Status: the soundness work is DONE** (branch `fix/uniqueness-alias-inplace`,
-commit `e658523`). This document records what was actually found and fixed, and
-what remains as *optional, measured-as-low-value* future optimization.
+**Status: COMPLETE / ARCHIVED.** The soundness work is DONE (commit `e658523`).
+Both optional perf levers (dict path-aware, vector-append builder-threading) were
+measured and rejected — see "Measurement check" and "Closeout" below. This
+document records what was actually found and fixed, and why no further
+optimization is warranted absent a proving workload.
 
 The original framing of this plan — "the uniqueness analysis is sound but too
 conservative, extend its coverage" — turned out to be backwards for the cases
@@ -108,6 +110,80 @@ compile-time impact**; record-shell reuse is fully preserved.
    available, but is a *performance* lever, not a correctness one. Gate it on a
    measured compile-time need; keep the deep-ownership invariant above as the
    non-negotiable soundness boundary.
+
+## Measurement check (2026-06-03): the numbers say stop
+
+Before opening item 1 or 2, we gathered the data the plan demands. Verdict:
+**no measured compile-time justification for either.**
+
+Census (stage0 optimizer over `boot/main.tw`): `TOTAL COW remaining = 1695`
+(passes the downward ratchet; one below the 1696 baseline, within noise).
+
+Boot-side optimizer split — stable at the post-fix numbers, confirming boot has
+not drifted: record-shell reuse `in_place=true` = 132, dict in-place (Fn46) = 75,
+dict COW (Fn38) = 397.
+
+Compile-time breakdown (boot compiling `boot/main.tw`, ~3.6 s wall):
+
+| phase | ms |
+|---|---:|
+| compile_modules (frontend) | 1404 |
+| emit_module | 365 |
+| optimize (of which **uniqueness = 82**) | 313 |
+| prepare_backend | 269 |
+| verify | 244 |
+| emit_wasm_binary | 229 |
+
+Two reasons the path-aware items don't pay:
+
+1. The uniqueness pass is **~2 % of wall-clock** (82 ms / 3.6 s); the frontend's
+   `import_merge` alone (339 ms) dwarfs it. There's no bottleneck here to attack.
+2. The remaining COW is dominated by `VECTOR_APPEND`, **not** the dict/record
+   copies items 1 & 2 target. The COW-heaviest functions
+   (`emit_resume_segment`, `anyref.emit_unbox_from_anyref`, the `closure_emit.*`
+   trampolines) are almost pure `VECTOR_APPEND`, which is already O(1)-amortized.
+   The dict/record copies are scattered thin; item 1 recovers *at most* ~32 of
+   them — a count this census confirms is on no hot concentration.
+
+The plan's "don't do it without a workload that proves it matters" guidance is
+therefore confirmed by measurement, not just asserted. If COW ever does start to
+hurt, the lever shows up in the per-function census as a dict/record-heavy
+function climbing the list — that breakdown is the instrument to watch.
+
+### Follow-up spike: the `VECTOR_APPEND` case also fails the cost test
+
+Since `VECTOR_APPEND` dominates the remaining COW count, we spiked whether it
+was worth its own optimization pass. It is not.
+
+**Why the cheap appends are already gone, and the rest are unreachable.**
+`VECTOR_APPEND` has no in-place variant — outside the builder family it always
+COWs the tail leaf, so the count can only drop by converting append chains to
+builders. The straight-line and simple-loop chains are *already* rewritten
+(`builder_region.tw` / `loop_builder.tw`); e.g. `emit_resume_segment` shows
+`BUILDER_NEW/PUSH/FREEZE` firing alongside the 38 appends it can't reach. Those
+remaining appends are a **threaded-accumulator** pattern: `buf` is passed into
+helper calls and returned (`buf = emit_unbox_from_anyref(…, buf)`,
+`buf = save_hoisted_to_frame(…, buf)`) and built across loops and `case`/`if`
+arms. That violates every rewriter gate (base-read-in-gap, single straight-line
+run, intra-function). Capturing it would mean threading a mutable builder through
+all ~727 codegen append sites — a large, inter-procedural, high-risk refactor.
+
+**What it would buy (microbench, 1M ops, `hyperfine`).** 1M COW helper-appends =
+196.9 ms vs 1M builder pushes = 182.3 ms — a ~14.6 ms delta, ~15 ns per append
+(the rest is fixed compile+startup). Compiling `boot/main.tw` emits on the order
+of ~1M instructions total (2.8 MB wasm), much of it already builder-ized, so the
+**absolute ceiling** — every emitted instruction being an un-rewritten COW
+append, which it is not — is ~15 ms of 3600 ms (**<0.5 %**), under the phase
+noise we already measure. High risk × cross-cutting effort for a sub-0.5 %
+ceiling: not worth it.
+
+## Closeout
+
+Soundness is fixed and merged; the census harness is restored as the regression
+instrument. Both remaining perf levers — dict path-aware coverage and
+vector-append builder-threading — were measured and **neither survives the cost
+test**. This plan is archived as complete. Reopen only with a concrete workload
+where the per-function census shows a hot path climbing the COW list.
 
 ## Note on the draft implementation plan
 
