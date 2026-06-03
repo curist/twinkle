@@ -1,0 +1,14 @@
+// Aliasing the dict after it was already built, then updating it, must keep the
+// update COW: the alias is a live reference, so an in-place mutation would
+// corrupt it. The first set (on the freshly-built sole-owner dict) may be
+// in-place; the aliased update must not.
+// Expected output:
+//   1
+//   2
+m: Dict<String, Int> = Dict.new()
+m["x"] = 1
+alias := m
+m["y"] = 2
+
+println("${alias.len()}")
+println("${m.len()}")

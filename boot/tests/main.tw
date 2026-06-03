@@ -103,6 +103,7 @@ use .suites.task_suite
 use .suites.type_registry_suite
 use .suites.unused_imports_suite
 use .suites.utf16_suite
+use .suites.value_semantics_suite
 use .suites.wasm_ir_suite
 use .suites.wasm_layout_suite
 use .suites.wasm_plan_suite
@@ -117,6 +118,7 @@ runner.run_all([
   equality_matrix_suite.suite(),
   semantic_closure_rebinding_suite.suite(),
   semantic_control_flow_suite.suite(),
+  value_semantics_suite.suite(),
   api_option_result_suite.suite(),
   api_cell_suite.suite(),
   api_vector_suite.suite(),

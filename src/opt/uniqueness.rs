@@ -2254,7 +2254,15 @@ fn rewrite_expr(
         value: Atom::ALocal(source),
     } = op.as_ref()
     {
-        if unique.contains(source) && (!tainted.contains(source) || builder_safe.contains(source)) {
+        // A copy-bind only *moves* ownership when the source is dead afterward.
+        // If the source stays live, the value is genuinely aliased, so neither
+        // side uniquely owns it — otherwise a later in-place op on the alias
+        // would mutate the value still observed through the live source.
+        let source_live = live_after(body).contains(source);
+        if unique.contains(source)
+            && (!tainted.contains(source) || builder_safe.contains(source))
+            && !source_live
+        {
             // Transfer: source dies (moved), target becomes unique.
             // `builder_safe` sources are allowed here even when globally tainted:
             // the taint is only from a later escape, while the current value is
@@ -2271,10 +2279,13 @@ fn rewrite_expr(
                 source_fresh.insert(bind_local);
             }
         } else {
-            // Transfer failed (source is tainted and not builder_safe = aliased,
-            // or source is not unique). The source may now be aliased by
-            // bind_local; clear source_fresh from the source since we can no
-            // longer guarantee unique ownership of the value.
+            // Source stays live (true alias) or transfer failed (source tainted
+            // and not builder_safe, or not unique). The source is no longer
+            // uniquely owned; clear its ownership facts so a later in-place op
+            // on either side falls back to COW.
+            if source_live {
+                unique.remove(source);
+            }
             source_fresh.remove(source);
             if refreshed.contains(source) && live_after(body).contains(source) {
                 // Source was refreshed (held a fresh value) but is now aliased.
@@ -2304,8 +2315,13 @@ fn rewrite_expr(
         builder_safe.remove(target);
         source_fresh.remove(target);
         if let Atom::ALocal(source) = value {
+            // Only move ownership when the source is dead after this assign; a
+            // live source means target aliases it, so neither uniquely owns the
+            // value (see the AInit copy-bind guard above).
+            let source_live = live_after(body).contains(source);
             if unique.contains(source)
                 && (!tainted.contains(source) || builder_safe.contains(source))
+                && !source_live
             {
                 // Treat as move when source is not tainted, or when the source
                 // is in `builder_safe` and therefore only tainted by a later

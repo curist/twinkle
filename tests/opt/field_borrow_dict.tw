@@ -1,6 +1,7 @@
 // Field-borrow test: struct with a dict field, multiple compound updates.
-// After the first update (COW), ctx becomes unique. The second and third
-// updates should fire field-borrow, turning their DICT_SET into DICT_SET_IN_PLACE.
+// `ctx` comes from a helper (make_ctx), so its deep ownership is not proven and
+// its dict fields may alias caller state — the dict updates must stay COW
+// (DICT_SET), not become DICT_SET_IN_PLACE. The runtime result must be correct.
 
 type Ctx = .{
   table: Dict<String, Int>,

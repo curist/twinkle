@@ -6,7 +6,7 @@
 /// Phase 2 — Forward rewrite: track ownership, rewrite COW ops to in-place
 /// Phase 3 — Loop region rewrite: accumulator pattern → builder new/push/freeze
 
-use compiler.anf.{AnfExpr, AnfFunctionDef, AnfMatchArm, AnfModule, AnfOp, Atom}
+use compiler.anf.{AnfExpr, AnfFunctionDef, AnfMatchArm, AnfModule, AnfOp, Atom, FieldAtom}
 use compiler.anf_analysis.{set_has}
 use compiler.builder_family.{BuilderConfig}
 use compiler.core_ir.{FieldId, LocalId}
@@ -150,6 +150,28 @@ fn local_is_deep_owned(st: RwState, local: LocalId) Bool {
   }
 }
 
+// An atom carries no aliasable mutable state of its own when it is an immutable
+// literal/global, or a local whose reachable mutable state is deep-owned
+// (unaliased). Conservative: a non-deep-owned local may alias caller state.
+fn atom_is_deep(st: RwState, a: Atom) Bool {
+  case a {
+    .ALocal(l) => local_is_deep_owned(st, l),
+    _ => true,
+  }
+}
+
+// A record value is deep-owned only when every field value is deep-owned, so
+// that mutating any field in place cannot reach state aliased elsewhere.
+fn record_fields_all_deep(st: RwState, fields: Vector<FieldAtom>) Bool {
+  for fa in fields {
+    if !atom_is_deep(st, fa.value) {
+      return false
+    }
+  }
+
+  true
+}
+
 fn merge_mono_maps(base: Dict<Int, MonoType>, updates: Dict<Int, MonoType>) Dict<Int, MonoType> {
   out := base
 
@@ -214,6 +236,27 @@ fn transfer_owned_local(st: RwState, source: LocalId, target: LocalId) RwState {
   }
 
   st
+}
+
+// A copy-bind `target := source` only *moves* ownership when `source` is dead
+// after this binding. If `source` stays live, the value is genuinely aliased,
+// so neither end uniquely owns it — clear ownership on both so any later COW
+// op on either falls back to its persistent (non-in-place) variant. Without
+// this guard, updating `target` would mutate a dict/vector/record still
+// observed through the live `source` (a value-semantics violation).
+fn alias_or_transfer_owned(st: RwState, source: LocalId, target: LocalId, bind_local: LocalId) RwState {
+  empty_live: Dict<Int, Bool> = Dict.new()
+  live_after := case st.live_after_by_binding[bind_local.id] {
+    .Some(live) => live,
+    .None => empty_live,
+  }
+
+  if set_has(live_after, source.id) {
+    st = without_local_ownership(st, target)
+    without_local_ownership(st, source)
+  } else {
+    transfer_owned_local(st, source, target)
+  }
 }
 
 fn with_consumed_update_result(st: RwState, local: LocalId) RwState {
@@ -623,6 +666,22 @@ fn rewrite_expr(expr: AnfExpr, st: RwState, consumed_params: Dict<Int, Bool>) Ex
         .None => {},
       }
 
+      // Deep-ownership for records: a freshly-built record (or a record update)
+      // is deep-owned only when all of its field values are themselves
+      // deep-owned. This distinguishes a locally-built record (every field a
+      // fresh dict/vector) from a param-derived one whose fields still alias the
+      // caller. Only deep-owned records license in-place field mutation below.
+      case op {
+        .ARecord(_, fields) => if record_fields_all_deep(st, fields) {
+          st = with_local_ownership(st, local, .Deep)
+        },
+        .ARecordUpdate(base_atom, _, value, _, _) => if atom_is_deep(st, base_atom)
+          and atom_is_deep(st, value) {
+          st = with_local_ownership(st, local, .Deep)
+        },
+        _ => {},
+      }
+
       case op {
         .ACall(.AGlobalFunc(func_id), _) => if set_has(st.fresh_helper_ids, func_id.id) {
           st = with_local_ownership(st, local, .Shallow)
@@ -631,10 +690,11 @@ fn rewrite_expr(expr: AnfExpr, st: RwState, consumed_params: Dict<Int, Bool>) Ex
         _ => {},
       }
 
-      // AInit ownership transfer: let x = init(y) where y is owned → x inherits that ownership
+      // AInit ownership transfer: let x = init(y) where y is owned → x inherits
+      // that ownership, but only if y is dead afterward (otherwise x aliases y).
       case op {
         .AInit(.ALocal(source)) => {
-          st = transfer_owned_local(st, source, local)
+          st = alias_or_transfer_owned(st, source, local, local)
         },
         _ => {},
       }
@@ -642,7 +702,7 @@ fn rewrite_expr(expr: AnfExpr, st: RwState, consumed_params: Dict<Int, Bool>) Ex
       // AAssign ownership transfer
       case op {
         .AAssign(target, .ALocal(source)) => {
-          st = transfer_owned_local(st, source, target)
+          st = alias_or_transfer_owned(st, source, target, local)
         },
         .AAssign(target, _) => {
           // Non-local assign: kill ownership
@@ -680,7 +740,7 @@ fn rewrite_expr(expr: AnfExpr, st: RwState, consumed_params: Dict<Int, Bool>) Ex
               next_local: st.next_local,
               monos: st.monos,
             }
-          } else if local_has_shell_ownership(st, source)
+          } else if local_is_deep_owned(st, source)
             and is_field_borrow_and_update(local, body, st.config) {
             st = with_local_ownership(st, local, .Deep)
           }

@@ -354,6 +354,49 @@ fn count_in_place_updates(module: &AnfModule) -> usize {
         .sum()
 }
 
+// Count calls to a specific global FuncId across the module. Used to detect
+// dict/vector in-place vs COW rewrites, which the ARecordUpdate-only helpers
+// above do not see.
+fn count_call_to(module: &AnfModule, id: FuncId) -> usize {
+    fn expr(e: &AnfExpr, id: FuncId) -> usize {
+        match e {
+            AnfExpr::Let { op, body, .. } => op_count(op, id) + expr(body, id),
+            _ => 0,
+        }
+    }
+    fn op_count(op: &AnfOp, id: FuncId) -> usize {
+        match op {
+            AnfOp::ACall { callee, .. } => usize::from(*callee == Atom::AGlobalFunc(id)),
+            AnfOp::AIf {
+                then_branch,
+                else_branch,
+                ..
+            } => expr(then_branch, id) + expr(else_branch, id),
+            AnfOp::AMatch { arms, .. } => arms.iter().map(|a| expr(&a.body, id)).sum(),
+            AnfOp::ALoop { body } => expr(body, id),
+            _ => 0,
+        }
+    }
+    module.functions.iter().map(|f| expr(&f.body, id)).sum()
+}
+
+#[test]
+fn opt_dict_alias_live_update_not_rewritten() {
+    // `alias := m; m["y"] = 2` with `alias` live afterward: the update must
+    // stay COW (DICT_SET), not become DICT_SET_IN_PLACE, or it would corrupt
+    // the live alias. Regression guard for the copy-bind ownership transfer.
+    let module = compile_opt("tests/opt/dict_alias_live_update_not_rewritten.tw");
+    assert!(
+        count_call_to(&module, DICT_SET) >= 1,
+        "aliased dict update must remain a COW DICT_SET, got 0"
+    );
+    // The only sound in-place here is the first set on the freshly-built dict.
+    assert!(
+        count_call_to(&module, DICT_SET_IN_PLACE) <= 1,
+        "no aliased dict update should be rewritten to DICT_SET_IN_PLACE"
+    );
+}
+
 fn expr_has_in_place(expr: &AnfExpr) -> bool {
     match expr {
         AnfExpr::Let { op, body, .. } => op_has_in_place(op) || expr_has_in_place(body),
@@ -1768,9 +1811,10 @@ fn opt_fresh_wrapper_destructure_reread_same_field_not_rewritten() {
 /// The second and third updates should fire field-borrow, producing DICT_SET_IN_PLACE.
 #[test]
 fn opt_field_borrow_dict_second_and_third_updates_in_place() {
-    // Stage0 uses the narrower deep-ownership gate: field-borrow extractions
-    // get shallow ownership (unique but not source_fresh), so dict in-place
-    // is blocked. (Boot compiler handles this via Deep ownership tracking.)
+    // Field-borrow on a dict field extracted from a helper-returned record must
+    // NOT become dict in-place: the record's deep ownership is not proven, so
+    // the field may alias caller state. Both stage0 and boot keep it COW (boot
+    // via Deep ownership tracking, after the value-semantics soundness fix).
     let module = compile_opt("tests/opt/field_borrow_dict.tw");
     let in_place = count_calls_to(&module, DICT_SET_IN_PLACE);
     assert_eq!(

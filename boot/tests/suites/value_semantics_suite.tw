@@ -1,0 +1,89 @@
+use tests.assert
+use tests.runner
+
+// Value-semantics / aliasing guarantees.
+//
+// All Twinkle values are immutable; `m[k] = v` rebinds `m` to a new value and
+// must NEVER mutate a dict/vector/record that another live binding still
+// observes. These cases pin that guarantee at runtime, because the uniqueness
+// optimizer rewrites `m[k] = v` to an in-place mutation and must only do so
+// when the base is the sole live reference.
+//
+// Regression: a copy-bind `b := a` used to transfer ownership to `b`
+// unconditionally, so updating `b` mutated the dict still aliased by a live
+// `a`. See docs/plans (path-aware-uniqueness) and the uniqueness pass's
+// transfer_owned_local.
+type Ctx = .{ types: Dict<String, Int>, spans: Dict<String, Int> }
+
+fn record_via_param(ctx: Ctx, v: Int) Ctx {
+  ctx.types["k"] = v
+  ctx.spans["k"] = v
+  ctx
+}
+
+pub fn suite() runner.Suite {
+  runner.suite("value-semantics")
+    .test(
+      "dict: update through alias leaves original untouched",
+      fn() {
+        a: Dict<String, Int> = Dict.new()
+        a["x"] = 1
+        b := a
+        b["y"] = 2
+        try assert.equal(a.len(), 1)
+        try assert.equal(b.len(), 2)
+        .Ok({})
+      },
+    )
+    .test(
+      "dict: update through one of several aliases leaves the others untouched",
+      fn() {
+        a: Dict<String, Int> = Dict.new()
+        a["x"] = 1
+        b := a
+        c := a
+        b["y"] = 2
+        try assert.equal(a.len(), 1)
+        try assert.equal(c.len(), 1)
+        try assert.equal(b.len(), 2)
+        .Ok({})
+      },
+    )
+    .test(
+      "dict: alias before update sees the empty original (control)",
+      fn() {
+        m: Dict<String, Int> = Dict.new()
+        alias := m
+        m["x"] = 1
+        try assert.equal(alias.len(), 0)
+        try assert.equal(m.len(), 1)
+        .Ok({})
+      },
+    )
+    .test(
+      "record: in-place field update via parameter does not poison caller",
+      fn() {
+        shared: Dict<String, Int> = Dict.new()
+        shared["orig"] = 1
+        original: Ctx = .{ types: Dict.new(), spans: shared }
+        updated := original.record_via_param(9)
+
+        // `original.spans` aliases `shared`; the update must not mutate it.
+        try assert.equal(shared.len(), 1)
+        try assert.equal(original.spans.len(), 1)
+        try assert.equal(updated.spans.len(), 2)
+        .Ok({})
+      },
+    )
+    .test(
+      "vector: update through alias leaves original untouched (control)",
+      fn() {
+        xs: Vector<Int> = [1, 2, 3]
+        ys := xs
+        xs[0] = 99
+        try assert.equal(ys[0], 1)
+        try assert.equal(xs[0], 99)
+        .Ok({})
+      },
+    )
+}
