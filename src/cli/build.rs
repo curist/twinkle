@@ -1,4 +1,5 @@
 use std::fs;
+#[cfg(test)]
 use std::path::Path;
 use std::path::PathBuf;
 
@@ -6,20 +7,24 @@ use anyhow::{Context, Result, anyhow, bail};
 
 use crate::codegen::emit::emit_user_module;
 use crate::runtime;
+use crate::wasm::binary::emit_wasm;
 use crate::wasm::emit::emit_wat;
 use crate::wasm::linker::{LinkError, link_with_extern_modules};
 
-pub fn build_file(file_path: &str, output: Option<&str>, emit_wat: bool) -> Result<()> {
-    let wat = build_wat(file_path)?;
-    let plan = resolve_output_plan(file_path, output, emit_wat)?;
+pub fn build_file(file_path: &str, output: Option<&str>, emit_wat_sidecar: bool) -> Result<()> {
+    let linked = build_linked_module(file_path)?;
+    let plan = resolve_output_plan(file_path, output, emit_wat_sidecar)?;
 
     if let Some(out_path) = &plan.wat_out {
-        fs::write(out_path, &wat)
+        let text = emit_wat(&linked);
+        fs::write(out_path, &text)
             .with_context(|| format!("failed to write WAT output '{}'", out_path.display()))?;
     }
 
     if let Some(out_path) = &plan.wasm_out {
-        assemble_wat_to_wasm(&wat, out_path)?;
+        let bytes = emit_wasm(&linked);
+        fs::write(out_path, bytes)
+            .with_context(|| format!("failed to write Wasm output '{}'", out_path.display()))?;
     }
 
     println!("Building: {}", file_path);
@@ -34,8 +39,32 @@ pub fn build_file(file_path: &str, output: Option<&str>, emit_wat: bool) -> Resu
 }
 
 pub fn build_wat(file_path: &str) -> Result<String> {
+    let linked = build_linked_module(file_path)?;
+    Ok(emit_wat(&linked))
+}
+
+fn build_linked_module(file_path: &str) -> Result<crate::wasm::linker::LinkedModuleIR> {
     let pipeline = crate::backend_pipeline::compile_backend_opt(file_path)?;
-    build_wat_from_core_module(pipeline.core_module)
+    build_linked_module_from_optimized(
+        &pipeline.core_module,
+        &pipeline.optimized_anf_module,
+    )
+}
+
+fn build_linked_module_from_optimized(
+    core_module: &crate::ir::core::CoreModule,
+    optimized_anf_module: &crate::ir::anf::AnfModule,
+) -> Result<crate::wasm::linker::LinkedModuleIR> {
+    let user_module = emit_user_module(optimized_anf_module, &core_module.type_env);
+    let mut modules = runtime::all_modules();
+    modules.push(user_module);
+
+    let extern_modules: std::collections::HashSet<String> = optimized_anf_module
+        .extern_imports
+        .values()
+        .map(|ext| ext.wasm_module.clone())
+        .collect();
+    link_with_extern_modules(modules, None, &extern_modules).map_err(format_link_errors)
 }
 
 /// Build WAT from an already-compiled CoreModule (useful for source-map compilation tests).
@@ -45,18 +74,7 @@ pub fn build_wat_from_core_module(core_module: crate::ir::core::CoreModule) -> R
     crate::ir::anf::verify::verify_module_or_panic(&anf_module, "post-lowering");
     let optimized_anf_module = crate::opt::optimize_module(anf_module);
     crate::ir::anf::verify::verify_module_or_panic(&optimized_anf_module, "post-optimization");
-
-    let user_module = emit_user_module(&optimized_anf_module, &core_module.type_env);
-    let mut modules = runtime::all_modules();
-    modules.push(user_module);
-
-    let extern_modules: std::collections::HashSet<String> = optimized_anf_module
-        .extern_imports
-        .values()
-        .map(|ext| ext.wasm_module.clone())
-        .collect();
-    let linked =
-        link_with_extern_modules(modules, None, &extern_modules).map_err(format_link_errors)?;
+    let linked = build_linked_module_from_optimized(&core_module, &optimized_anf_module)?;
     Ok(emit_wat(&linked))
 }
 
@@ -100,6 +118,7 @@ fn format_link_errors(errors: Vec<LinkError>) -> anyhow::Error {
     anyhow!("link errors:\n{msgs}")
 }
 
+#[cfg(test)]
 fn assemble_wat_to_wasm(wat: &str, wasm_out: &Path) -> Result<()> {
     let wasm_bytes =
         wat::parse_str(wat).context("failed to assemble WAT to Wasm bytes using wat crate")?;
@@ -307,6 +326,27 @@ mod tests {
             std::process::id()
         ));
         assemble_wat_to_wasm("(module)", &out).expect("assemble should succeed");
+        let bytes = fs::read(&out).expect("wasm output should exist");
+        let _ = fs::remove_file(&out);
+        assert!(bytes.starts_with(b"\0asm"), "missing wasm magic header");
+    }
+
+    #[test]
+    fn build_file_wasm_uses_binary_emitter() {
+        use std::time::{SystemTime, UNIX_EPOCH};
+
+        let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+        let input = root.join("tests/run/hello.tw");
+        let stamp = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_nanos();
+        let out = std::env::temp_dir().join(format!(
+            "twinkle-direct-build-test-{}-{stamp}.wasm",
+            std::process::id()
+        ));
+        build_file(input.to_str().unwrap(), Some(out.to_str().unwrap()), false)
+            .expect("direct wasm build should succeed");
         let bytes = fs::read(&out).expect("wasm output should exist");
         let _ = fs::remove_file(&out);
         assert!(bytes.starts_with(b"\0asm"), "missing wasm magic header");
