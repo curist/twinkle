@@ -1,5 +1,5 @@
-/// Quick analysis: count COW operations in checker.tw before/after optimization.
-/// Run with: cargo test --release -p twinkle --test cow_analysis -- --nocapture
+/// Opt-in analysis: count COW operations in the boot compiler before/after optimization.
+/// Run with: cargo test --release -p twinkle --test cow_analysis -- --ignored --nocapture
 use twinkle::ir::anf::{AnfExpr, AnfModule, AnfOp, Atom};
 use twinkle::ir::core::FuncId;
 
@@ -161,6 +161,7 @@ fn per_function_cow_counts(module: &AnfModule) -> Vec<(String, Vec<(&'static str
 }
 
 #[test]
+#[ignore = "slow opt-in analysis over boot/main.tw"]
 fn analyze_checker_cow() {
     // Census over the self-hosted compiler itself. (boot/tests/main.tw, the
     // test suite, uses features the stage0 frontend can't parse; boot/main.tw is
