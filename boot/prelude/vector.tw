@@ -185,7 +185,7 @@ pub fn join(xs: Vector<String>, sep: String) String {
 }
 
 fn merge_sorted<T>(a: Vector<T>, b: Vector<T>, cmp: fn(T, T) Order) Vector<T> {
-  out := a.slice(0, 0)
+  out: Vector<T> = []
   i := 0
   j := 0
 
@@ -215,6 +215,23 @@ fn merge_sorted<T>(a: Vector<T>, b: Vector<T>, cmp: fn(T, T) Order) Vector<T> {
   out
 }
 
+fn sort_by_range<T>(xs: Vector<T>, lo: Int, hi: Int, cmp: fn(T, T) Order) Vector<T> {
+  n := hi - lo
+
+  if n <= 0 {
+    return []
+  }
+
+  if n == 1 {
+    return [xs[lo]]
+  }
+
+  mid := lo + n / 2
+  left := sort_by_range(xs, lo, mid, cmp)
+  right := sort_by_range(xs, mid, hi, cmp)
+  merge_sorted(left, right, cmp)
+}
+
 /// Return a new vector sorted by comparator cmp.
 pub fn sort_by<T>(xs: Vector<T>, cmp: fn(T, T) Order) Vector<T> {
   n := xs.len()
@@ -223,10 +240,35 @@ pub fn sort_by<T>(xs: Vector<T>, cmp: fn(T, T) Order) Vector<T> {
     return xs
   }
 
-  mid := n / 2
-  left := sort_by(xs.slice(0, mid), cmp)
-  right := sort_by(xs.slice(mid, n), cmp)
-  merge_sorted(left, right, cmp)
+  ascending := true
+  strictly_descending := true
+  i := 1
+
+  for i < n and (ascending or strictly_descending) {
+    case cmp(xs[i - 1], xs[i]) {
+      .Gt => {
+        ascending = false
+      },
+      .Lt => {
+        strictly_descending = false
+      },
+      .Eq => {
+        strictly_descending = false
+      },
+    }
+
+    i = i + 1
+  }
+
+  if ascending {
+    return xs
+  }
+
+  if strictly_descending {
+    return xs.reverse()
+  }
+
+  sort_by_range(xs, 0, n, cmp)
 }
 
 /// Return a new vector sorted using the Ord contract.
