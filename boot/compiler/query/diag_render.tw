@@ -198,11 +198,21 @@ fn error_to_report(e: ErrorDiag, ctx: RenderCtx) Report {
       labels: [primary(d.span, .Some("not a record type"))],
       help_lines: [],
     },
-    .VariantTypeMismatch(d) => .{
-      severity: .Error,
-      title: "variant `.${d.name}` does not belong to `${fmt_ty(d.ty, ctx)}`",
-      labels: [primary(d.span, .Some("wrong type"))],
-      help_lines: [],
+    .VariantTypeMismatch(d) => case d.ty {
+      // The expected type was never determined, so printing the internal
+      // metavar (`?9`) is meaningless — tell the user how to fix it instead.
+      .MetaVar(_) => .{
+        severity: .Error,
+        title: "cannot infer the type of variant `.${d.name}`",
+        labels: [primary(d.span, .Some("cannot infer type"))],
+        help_lines: ["add a type annotation so the variant's type is known"],
+      },
+      _ => .{
+        severity: .Error,
+        title: "variant `.${d.name}` does not belong to `${fmt_ty(d.ty, ctx)}`",
+        labels: [primary(d.span, .Some("wrong type"))],
+        help_lines: [],
+      },
     },
     .ByteOutOfRange(d) => .{
       severity: .Error,

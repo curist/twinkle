@@ -274,4 +274,28 @@ pub fn suite() runner.Suite {
         .Ok({})
       },
     )
+    .test(
+      "VariantTypeMismatch: unsolved metavar gives an actionable message, not ?N",
+      fn() {
+        kind := DiagKind.Error(
+          .VariantTypeMismatch(.{ span: s(0, 8), name: "Missing", ty: MonoType.MetaVar(9) }),
+        )
+        r := diag_render.to_report(kind, ctx())
+        try assert.equal(r.title, "cannot infer the type of variant `.Missing`")
+        try assert.is_false(r.title.contains("?"))
+        .Ok({})
+      },
+    )
+    .test(
+      "VariantTypeMismatch: concrete type keeps the 'does not belong' message",
+      fn() {
+        kind := DiagKind.Error(
+          .VariantTypeMismatch(.{ span: s(0, 8), name: "Missing", ty: MonoType.Int }),
+        )
+        r := diag_render.to_report(kind, ctx())
+        try assert.is_true(r.title.contains("does not belong to"))
+        try assert.is_true(r.title.contains("Int"))
+        .Ok({})
+      },
+    )
 }
