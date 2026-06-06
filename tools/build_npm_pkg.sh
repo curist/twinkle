@@ -23,6 +23,7 @@ rm -rf "$OUT_DIR"
 mkdir -p "$OUT_DIR"
 
 cp "$SRC/runtime.mjs"   "$OUT_DIR/runtime.mjs"
+cp "$SRC/node_host.mjs" "$OUT_DIR/node_host.mjs"
 cp "$SRC/node_main.mjs" "$OUT_DIR/node.mjs"
 cp "$SRC/index.mjs"     "$OUT_DIR/index.mjs"
 cp "$BOOT_WASM"         "$OUT_DIR/boot.wasm"

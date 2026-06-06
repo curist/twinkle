@@ -10,6 +10,7 @@ import { readFileSync, writeFileSync, rmSync, mkdtempSync } from "node:fs";
 import { resolve, dirname, join, basename } from "node:path";
 import { tmpdir } from "node:os";
 import { runWasmBytesAsync } from "./runtime.mjs";
+import { nodeHost } from "./node_host.mjs";
 
 const here = import.meta.dirname;
 
@@ -95,6 +96,7 @@ export async function compile(input, opts = {}) {
       stdout: out,
       stderr: err,
       bridgeBytes,
+      host: nodeHost,
     });
     if (code !== 0) {
       throw new Error(`Twinkle compilation failed (exit ${code}):\n${err.text() || out.text()}`);
@@ -121,7 +123,9 @@ export async function run(wasmBytes, opts = {}) {
     stdout: opts.stdout ?? process.stdout,
     stderr: opts.stderr ?? process.stderr,
     bridgeBytes: loadBridgeWasm(),
+    host: nodeHost,
     imports: opts.imports ?? {},
+    marshalSpec: opts.marshalSpec ?? {},
   });
 }
 

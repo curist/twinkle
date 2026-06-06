@@ -4,11 +4,15 @@
 // bridge Wasm module to create/read Wasm GC values (since JS cannot directly
 // construct or inspect Wasm GC arrays/structs).
 //
+// Host-agnostic: all filesystem and stdin host imports are routed through an
+// injected `host` adapter (see tools/js_runtime/node_host.mjs for Node/Deno,
+// or the playground's browser adapter). This module contains no `node:`
+// imports, so it loads unchanged in a browser/worker.
+//
 // Used by:
-//   - tools/js_runtime/deno_main.mjs  (Deno standalone CLI)
-
-import { readFileSync, writeFileSync, existsSync, readdirSync, mkdirSync, readSync, writeSync } from "node:fs";
-import { resolve } from "node:path";
+//   - tools/js_runtime/deno_main.mjs  (Deno standalone CLI, host: nodeHost)
+//   - tools/js_runtime/node_main.mjs  (Node CLI, host: nodeHost)
+//   - tools/js_runtime/index.mjs      (embeddable library, host: nodeHost)
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -105,109 +109,11 @@ function decodeStringArray(b, arrRef) {
 
 function decodeByteArray(b, arrRef) {
   const len = b.array_len(arrRef);
-  if (len === 0) return Buffer.alloc(0);
+  if (len === 0) return new Uint8Array(0);
   ensureMemory(b, len);
   b.bulk_bytes_read(arrRef);
-  // ArrayBuffer.slice copies (unlike Buffer.slice which creates a view)
-  return Buffer.from(b.memory.buffer.slice(0, len));
-}
-
-// ---------------------------------------------------------------------------
-// Stdin helpers
-// ---------------------------------------------------------------------------
-
-function sleepSyncMs(ms) {
-  if (ms <= 0) return;
-  const sab = new SharedArrayBuffer(4);
-  Atomics.wait(new Int32Array(sab), 0, 0, ms);
-}
-
-function readStdinTimeout(maxBytes, timeoutMs, runtime) {
-  const n = Number(maxBytes);
-  const timeout = Number(timeoutMs);
-  if (n <= 0) return Buffer.alloc(0);
-
-  // Accessing process.stdin asks Node/libuv to put fd 0 in non-blocking mode
-  // for pipes/ttys, which lets fs.readSync report EAGAIN instead of blocking
-  // forever when no LSP bytes are currently available.
-  void process.stdin;
-
-  const deadline = performance.now() + Math.max(0, timeout);
-  const buf = Buffer.allocUnsafe(n);
-  while (true) {
-    try {
-      const read = readSync(0, buf, 0, n, null);
-      if (read === 0) runtime.stdinEof = true;
-      return buf.subarray(0, read);
-    } catch (e) {
-      if (e?.code === "EAGAIN" || e?.code === "EWOULDBLOCK") {
-        const remaining = deadline - performance.now();
-        if (remaining <= 0) return Buffer.alloc(0);
-        sleepSyncMs(Math.min(10, remaining));
-        continue;
-      }
-      throw e;
-    }
-  }
-}
-
-function readStdinTimeoutAsync(maxBytes, timeoutMs, runtime) {
-  const n = Number(maxBytes);
-  const timeout = Number(timeoutMs);
-  if (n <= 0) return Promise.resolve(Buffer.alloc(0));
-
-  return new Promise((resolve) => {
-    let timer = null;
-
-    let settled = false;
-
-    const finish = (chunk) => {
-      if (settled) return;
-      settled = true;
-      if (timer !== null) { clearTimeout(timer); timer = null; }
-      process.stdin.removeListener("readable", onReadable);
-      process.stdin.removeListener("end", onEnd);
-      resolve(chunk);
-    };
-
-    const tryRead = () => {
-      // read() with no argument returns whatever is buffered (1..any bytes),
-      // matching the sync path's "read up to n" semantics.
-      const chunk = process.stdin.read();
-      if (chunk !== null) {
-        // If the stream returned more than n bytes, push the excess back.
-        if (chunk.length > n) {
-          process.stdin.unshift(chunk.subarray(n));
-          finish(chunk.subarray(0, n));
-        } else {
-          finish(chunk);
-        }
-        return true;
-      }
-      return false;
-    };
-
-    const onReadable = () => { tryRead(); };
-
-    const onEnd = () => {
-      runtime.stdinEof = true;
-      finish(Buffer.alloc(0));
-    };
-
-    // Try immediate read from the stream buffer
-    if (tryRead()) return;
-
-    if (process.stdin.readableEnded) {
-      runtime.stdinEof = true;
-      resolve(Buffer.alloc(0));
-      return;
-    }
-
-    timer = setTimeout(() => finish(Buffer.alloc(0)), Math.max(0, timeout));
-
-    process.stdin.once("readable", onReadable);
-    process.stdin.once("end", onEnd);
-  });
+  // ArrayBuffer.slice copies, so the returned view owns its bytes.
+  return new Uint8Array(b.memory.buffer.slice(0, len));
 }
 
 // ---------------------------------------------------------------------------
@@ -256,7 +162,7 @@ export function resolveExternImports(importList, hostImports, imports = {}, glob
  *   - Int (bigint), Float (number), Bool (i32) pass through
  * Throws a single aggregated error if any extern import is unsatisfied.
  */
-function autoBridgeExternImports(wasmModule, hostImports, b, jspi = false, imports = {}) {
+function autoBridgeExternImports(wasmModule, hostImports, b, jspi = false, imports = {}, marshalSpec = {}) {
   let importList;
   try {
     importList = WebAssembly.Module.imports(wasmModule);
@@ -276,10 +182,16 @@ function autoBridgeExternImports(wasmModule, hostImports, b, jspi = false, impor
     );
   }
 
-  const marshalArgs = (args) => args.map((arg) => {
+  // Per-import arg marshaling honors an optional spec: `marshalSpec[module][name]`
+  // is an array of `"raw" | "string"` keyed by arg position. `"raw"` passes the
+  // value through untouched — essential for externref args (e.g. a canvas 2D
+  // context), since calling decodeString on an opaque host object recurses until
+  // a stack overflow in some engines (notably Safari). Without a spec entry, a
+  // non-numeric arg is assumed to be a Wasm GC string and decoded.
+  const makeMarshalArgs = (spec) => (args) => args.map((arg, i) => {
     if (typeof arg === "bigint") return Number(arg);
     if (typeof arg === "number") return arg;
-    // GC ref — assume string
+    if (spec?.[i] === "raw") return arg;
     return decodeString(b, arg);
   });
 
@@ -292,6 +204,7 @@ function autoBridgeExternImports(wasmModule, hostImports, b, jspi = false, impor
   };
 
   for (const { module, name, fn, recv } of found) {
+    const marshalArgs = makeMarshalArgs(marshalSpec[module]?.[name]);
     let bridgedFn;
     if (jspi) {
       // JSPI mode: async wrapper so Promise-returning JS functions suspend
@@ -320,17 +233,6 @@ function autoBridgeExternImports(wasmModule, hostImports, b, jspi = false, impor
 // ---------------------------------------------------------------------------
 // Host imports
 // ---------------------------------------------------------------------------
-
-function writeAllFdSync(fd, bytes) {
-  let offset = 0;
-  while (offset < bytes.byteLength) {
-    const written = writeSync(fd, bytes, offset, bytes.byteLength - offset);
-    if (written <= 0) {
-      throw new Error("stdout write made no progress");
-    }
-    offset += written;
-  }
-}
 
 function write(stream, text) {
   stream.write(text);
@@ -378,16 +280,18 @@ function makeHostImports(b, runtime, bridgeBytes) {
           stdout: runtime.stdout,
           stderr: runtime.stderr,
           imports: runtime.imports,
+          marshalSpec: runtime.marshalSpec,
+          host: runtime.host,
           bridgeBytes,
         });
         return BigInt(exitCode);
       },
 
-      // --- File system ---
+      // --- File system (routed through the injected host adapter) ---
       read_file: (pathRef) => {
-        const filePath = resolve(runtime.cwd, decodeString(b, pathRef));
+        const filePath = runtime.host.resolvePath(runtime.cwd, decodeString(b, pathRef));
         try {
-          const bytes = readFileSync(filePath);
+          const bytes = runtime.host.readFile(filePath);
           return makeResultOk(b, makeByteArray(b, bytes));
         } catch (e) {
           const msg = `host.read_file failed for '${filePath}': ${e.message}`;
@@ -395,35 +299,33 @@ function makeHostImports(b, runtime, bridgeBytes) {
         }
       },
       write_file: (pathRef, contentRef) => {
-        const filePath = resolve(runtime.cwd, decodeString(b, pathRef));
-        writeFileSync(filePath, decodeString(b, contentRef));
+        const filePath = runtime.host.resolvePath(runtime.cwd, decodeString(b, pathRef));
+        runtime.host.writeFile(filePath, decodeString(b, contentRef));
       },
       write_bytes: (pathRef, bytesRef) => {
-        const filePath = resolve(runtime.cwd, decodeString(b, pathRef));
-        writeFileSync(filePath, decodeByteArray(b, bytesRef));
+        const filePath = runtime.host.resolvePath(runtime.cwd, decodeString(b, pathRef));
+        runtime.host.writeBytes(filePath, decodeByteArray(b, bytesRef));
       },
-      stdin_read_chunk: (maxBytes) => makeByteArray(b, readStdinTimeout(maxBytes, 2147483647, runtime)),
-      stdin_read_timeout: (maxBytes, timeoutMs) => makeByteArray(b, readStdinTimeout(maxBytes, timeoutMs, runtime)),
+      stdin_read_chunk: (maxBytes) => makeByteArray(b, runtime.host.readStdin(maxBytes, 2147483647, runtime)),
+      stdin_read_timeout: (maxBytes, timeoutMs) => makeByteArray(b, runtime.host.readStdin(maxBytes, timeoutMs, runtime)),
       stdin_eof: () => runtime.stdinEof ? 1 : 0,
       stdout_write_bytes: (bytesRef) => {
-        const bytes = decodeByteArray(b, bytesRef);
-        if (runtime.stdout?.fd !== undefined) {
-          writeAllFdSync(runtime.stdout.fd, bytes);
-        } else {
-          runtime.stdout.write(Buffer.from(bytes));
-        }
+        // Streams accept a Uint8Array chunk; each adapter's write() handles the
+        // platform write (fd write on Node, writeSync on Deno, postMessage in a
+        // worker), so no Buffer/fd handling is needed here.
+        runtime.stdout.write(decodeByteArray(b, bytesRef));
       },
       mkdirp: (pathRef) => {
-        const dirPath = resolve(runtime.cwd, decodeString(b, pathRef));
-        mkdirSync(dirPath, { recursive: true });
+        const dirPath = runtime.host.resolvePath(runtime.cwd, decodeString(b, pathRef));
+        runtime.host.mkdirp(dirPath);
       },
       list_dir: (pathRef) => {
-        const dirPath = resolve(runtime.cwd, decodeString(b, pathRef));
-        return makeStringArray(b, readdirSync(dirPath));
+        const dirPath = runtime.host.resolvePath(runtime.cwd, decodeString(b, pathRef));
+        return makeStringArray(b, runtime.host.listDir(dirPath));
       },
       exists: (pathRef) => {
-        const filePath = resolve(runtime.cwd, decodeString(b, pathRef));
-        return existsSync(filePath) ? 1 : 0;
+        const filePath = runtime.host.resolvePath(runtime.cwd, decodeString(b, pathRef));
+        return runtime.host.exists(filePath) ? 1 : 0;
       },
 
       // --- Parsing ---
@@ -467,16 +369,21 @@ function prepareWasm(wasmBytes, opts, { jspi = false } = {}) {
   const {
     programPath = "<memory>.wasm",
     guestArgs = [],
-    cwd = process.cwd(),
-    env = process.env,
-    stdout = process.stdout,
-    stderr = process.stderr,
+    cwd = "/",
+    env = {},
+    stdout,
+    stderr,
     bridgeBytes,
+    host,
     imports = {},
+    marshalSpec = {},
   } = opts;
 
   if (!bridgeBytes) {
     throw new Error("runWasmBytes: bridgeBytes is required");
+  }
+  if (!host) {
+    throw new Error("runWasmBytes: host adapter is required (see node_host.mjs)");
   }
 
   const b = instantiateBridge(bridgeBytes);
@@ -487,12 +394,14 @@ function prepareWasm(wasmBytes, opts, { jspi = false } = {}) {
     stdout,
     stderr,
     stdinEof: false,
+    host,
     imports,
+    marshalSpec,
   };
 
   const hostImports = makeHostImports(b, runtime, bridgeBytes);
   const mainModule = new WebAssembly.Module(wasmBytes);
-  autoBridgeExternImports(mainModule, hostImports, b, jspi, imports);
+  autoBridgeExternImports(mainModule, hostImports, b, jspi, imports, marshalSpec);
 
   return { mainModule, hostImports, b, runtime };
 }
@@ -520,13 +429,6 @@ export function runWasmBytes(wasmBytes, opts = {}) {
   }
 }
 
-export function runWasmFile(wasmPath, opts = {}) {
-  return runWasmBytes(readFileSync(wasmPath), {
-    programPath: resolve(wasmPath),
-    ...opts,
-  });
-}
-
 // ---------------------------------------------------------------------------
 // Public API — async (JSPI-aware)
 // ---------------------------------------------------------------------------
@@ -535,21 +437,21 @@ export async function runWasmBytesAsync(wasmBytes, opts = {}) {
   const { mainModule, hostImports, b, runtime } = prepareWasm(wasmBytes, opts, { jspi: hasJspi });
 
   if (hasJspi) {
-    // Phase 3: wrap stdin reads as suspending imports so the Node event loop
-    // stays free while Twinkle waits for LSP input. Keep chunk and timeout
-    // reads on the same stream-based path; mixing process.stdin.read() with
-    // fs.readSync(0, ...) can strand bytes in Node's stream buffer.
+    // Wrap stdin reads as suspending imports so the event loop stays free while
+    // Twinkle waits for LSP input. Keep chunk and timeout reads on the same
+    // stream-based path; mixing process.stdin.read() with fs.readSync(0, ...)
+    // can strand bytes in Node's stream buffer.
     hostImports.host.stdin_read_chunk = new WebAssembly.Suspending(
       async (maxBytes) =>
-        makeByteArray(b, await readStdinTimeoutAsync(maxBytes, 2147483647, runtime)),
+        makeByteArray(b, await runtime.host.readStdinAsync(maxBytes, 2147483647, runtime)),
     );
     hostImports.host.stdin_read_timeout = new WebAssembly.Suspending(
       async (maxBytes, timeoutMs) =>
-        makeByteArray(b, await readStdinTimeoutAsync(maxBytes, timeoutMs, runtime)),
+        makeByteArray(b, await runtime.host.readStdinAsync(maxBytes, timeoutMs, runtime)),
     );
 
-    // Phase 4: wrap run_wasm as a suspending import so child programs can
-    // themselves use JSPI suspending imports.
+    // Wrap run_wasm as a suspending import so child programs can themselves use
+    // JSPI suspending imports.
     const childBridgeBytes = opts.bridgeBytes;
     hostImports.host.run_wasm = new WebAssembly.Suspending(
       async (bytesRef, argvRef) => {
@@ -564,6 +466,8 @@ export async function runWasmBytesAsync(wasmBytes, opts = {}) {
           stdout: runtime.stdout,
           stderr: runtime.stderr,
           imports: runtime.imports,
+          marshalSpec: runtime.marshalSpec,
+          host: runtime.host,
           bridgeBytes: childBridgeBytes,
         });
         return BigInt(exitCode);
@@ -588,11 +492,4 @@ export async function runWasmBytesAsync(wasmBytes, opts = {}) {
     }
     throw e;
   }
-}
-
-export async function runWasmFileAsync(wasmPath, opts = {}) {
-  return runWasmBytesAsync(readFileSync(wasmPath), {
-    programPath: resolve(wasmPath),
-    ...opts,
-  });
 }

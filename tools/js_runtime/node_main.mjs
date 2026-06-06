@@ -9,6 +9,7 @@
 import { readFileSync, writeSync } from "node:fs";
 import { resolve } from "node:path";
 import { runWasmBytesAsync } from "./runtime.mjs";
+import { nodeHost } from "./node_host.mjs";
 
 const textEncoder = new TextEncoder();
 const here = import.meta.dirname;
@@ -104,6 +105,7 @@ async function main() {
     stdout: nodeStream(1),
     stderr: nodeStream(2),
     bridgeBytes: loadBridgeWasm(),
+    host: nodeHost,
   });
   process.exit(exitCode);
 }

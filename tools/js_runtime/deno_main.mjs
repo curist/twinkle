@@ -7,6 +7,7 @@
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { runWasmBytesAsync } from "./runtime.mjs";
+import { nodeHost } from "./node_host.mjs";
 
 const textEncoder = new TextEncoder();
 const rootDir = resolve(import.meta.dirname, "../..");
@@ -118,6 +119,7 @@ async function main() {
     stdout: denoStream(Deno.stdout),
     stderr: denoStream(Deno.stderr),
     bridgeBytes,
+    host: nodeHost,
   });
   Deno.exit(exitCode);
 }

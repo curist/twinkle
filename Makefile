@@ -58,7 +58,7 @@ boot/lib/module/core_lib.tw: $(CORE_LIB_SRCS) tools/generate_core_lib.py
 		printf 'target/twk not available; skipping core_lib formatting\n'; \
 	fi
 
-$(STAGE2_WASM): $(BOOT_SRCS) $(CORE_LIB_SRCS) boot/lib/module/core_lib.tw target/release/twk tools/js_runtime/runtime.mjs tools/js_runtime/deno_main.mjs
+$(STAGE2_WASM): $(BOOT_SRCS) $(CORE_LIB_SRCS) boot/lib/module/core_lib.tw target/release/twk tools/js_runtime/runtime.mjs tools/js_runtime/deno_main.mjs tools/js_runtime/node_host.mjs
 	@printf '\n==> Build stage1 compiler with stage0 -> $(STAGE1_WASM)\n'
 	./target/release/twk build boot/main.tw -o $(STAGE1_WASM)
 	@printf '\n==> Build bridge module via stage1\n'
@@ -81,7 +81,7 @@ $(STAGE2_WASM): $(BOOT_SRCS) $(CORE_LIB_SRCS) boot/lib/module/core_lib.tw target
 	@printf '\nSelf-host loop completed successfully.\n'
 
 # Build the Deno standalone CLI from target/boot.wasm.
-target/twk: $(STAGE2_WASM) tools/build_deno_cli.sh tools/js_runtime/runtime.mjs tools/js_runtime/deno_main.mjs
+target/twk: $(STAGE2_WASM) tools/build_deno_cli.sh tools/js_runtime/runtime.mjs tools/js_runtime/deno_main.mjs tools/js_runtime/node_host.mjs
 	DENO_BIN="$(DENO_BIN)" tools/build_deno_cli.sh
 
 # Full standalone CLI rebuild: stage2 payload + Deno compile.
