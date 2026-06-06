@@ -4,6 +4,10 @@ import highlightsScm from 'tree-sitter-twinkle/queries/highlights.scm?raw'
 import treeSitterWasmUrl from 'web-tree-sitter/tree-sitter.wasm?url'
 import grammarWasmUrl from 'tree-sitter-twinkle/tree-sitter-twinkle.wasm?url'
 
+// __TWINKLE_COMPILER_VERSION__ is injected by vite.config (define); logging it on
+// load lets you confirm which @twinkle-lang/twinkle the deployed site is running.
+console.log(`Twinkle playground · compiler @twinkle-lang/twinkle@${__TWINKLE_COMPILER_VERSION__}`)
+
 // ---------------------------------------------------------------------------
 // Examples — fetched from ./examples/<name>.tw
 // ---------------------------------------------------------------------------

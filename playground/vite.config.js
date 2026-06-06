@@ -1,9 +1,25 @@
 import { defineConfig } from 'vite'
 import wasm from 'vite-plugin-wasm'
 import { fileURLToPath } from 'node:url'
+import { readFileSync } from 'node:fs'
 
 const repoRoot = fileURLToPath(new URL('../', import.meta.url))
 const at = (p) => fileURLToPath(new URL(p, import.meta.url))
+
+// The compiler version baked into this build, logged to the console on load so
+// you can confirm which @twinkle-lang/twinkle the deployed site is running. For
+// the published build it's the version installed in node_modules; for the
+// TWINKLE_LOCAL build it's the in-repo version tagged `+local`.
+function compilerVersion() {
+  try {
+    if (process.env.TWINKLE_LOCAL) {
+      return JSON.parse(readFileSync(at('../tools/npm/package.json'), 'utf8')).version + '+local'
+    }
+    return JSON.parse(readFileSync(at('node_modules/@twinkle-lang/twinkle/package.json'), 'utf8')).version
+  } catch {
+    return 'unknown'
+  }
+}
 
 // Local-development override (TWINKLE_LOCAL=1): resolve the published packages
 // to in-repo build artifacts so the playground runs against current source
@@ -27,6 +43,10 @@ export default defineConfig({
 
   // Relative base so the built app works on GitHub Pages at any sub-path
   base: './',
+
+  define: {
+    __TWINKLE_COMPILER_VERSION__: JSON.stringify(compilerVersion()),
+  },
 
   resolve: { alias: localAlias },
 
