@@ -28,6 +28,14 @@ pub type ReportSeverity = { Error, Warning }
 /// Secondary spans use `-` underlines (e.g. "first defined here").
 pub type SpanLabel = .{ span: Span, label: String?, is_primary: Bool }
 
+/// A single text edit: replace bytes `[start, end)` with `replacement`.
+/// An insertion is expressed as `start == end`.
+pub type FixEdit = .{ start: Int, end: Int, replacement: String }
+
+/// A named, machine-applicable fix made of one or more edits.
+/// A diagnostic may offer several alternative fixes.
+pub type SuggestedFix = .{ title: String, edits: Vector<FixEdit> }
+
 /// A rich diagnostic report ready for terminal rendering.
 ///
 /// Labels are rendered in the order they appear in the vector.
