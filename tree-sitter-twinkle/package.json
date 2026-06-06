@@ -2,7 +2,11 @@
   "name": "tree-sitter-twinkle",
   "version": "0.1.0",
   "description": "Twinkle grammar for tree-sitter",
-  "repository": "https://github.com/tree-sitter/tree-sitter-twinkle",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/curist/twinkle.git",
+    "directory": "tree-sitter-twinkle"
+  },
   "license": "MIT",
   "author": {
     "name": "curist",
