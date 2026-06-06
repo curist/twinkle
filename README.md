@@ -9,7 +9,7 @@ It is designed around immutable data, persistent collections, top-level executab
 
 **Try it:** [Twinkle Playground](https://curist.github.io/twinkle/)
 
-## Why Twinkle?
+## Why
 
 Twinkle is a general-purpose language for writing direct, typed programs over
 immutable values.
