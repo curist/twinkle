@@ -215,70 +215,105 @@ function readStdinTimeoutAsync(maxBytes, timeoutMs, runtime) {
 // ---------------------------------------------------------------------------
 
 /**
- * Auto-bridge extern imports by resolving `globalThis[module][name]` and
- * wrapping with type conversions for Twinkle's extern-safe types:
+ * Resolve each wasm extern import to a JS function.
+ * Resolution order per import: scoped `imports[module][name]`, then
+ * `globals[module][name]`. Imports already satisfied by `hostImports`, or that
+ * are not functions, are skipped. Returns the resolved bindings plus a list of
+ * unresolved "module.name" strings.
+ */
+export function resolveExternImports(importList, hostImports, imports = {}, globals = globalThis) {
+  const found = [];
+  const missing = [];
+  for (const imp of importList) {
+    if (hostImports[imp.module]?.[imp.name] !== undefined) continue;
+    if (imp.kind !== "function") continue;
+
+    const scopedRecv = imports[imp.module];
+    const scoped = scopedRecv?.[imp.name];
+    if (typeof scoped === "function") {
+      found.push({ module: imp.module, name: imp.name, fn: scoped, recv: scopedRecv });
+      continue;
+    }
+
+    const globalRecv = globals[imp.module];
+    const global = globalRecv?.[imp.name];
+    if (typeof global === "function") {
+      found.push({ module: imp.module, name: imp.name, fn: global, recv: globalRecv });
+      continue;
+    }
+
+    missing.push(`${imp.module}.${imp.name}`);
+  }
+  return { found, missing };
+}
+
+/**
+ * Auto-bridge extern imports by resolving each to `imports[module][name]` (a
+ * scoped per-run object) or `globalThis[module][name]`, wrapping with type
+ * conversions for Twinkle's extern-safe types:
  *   - String params (GC refs) are decoded via bridge
  *   - String returns from JS are encoded via bridge
  *   - Int (bigint), Float (number), Bool (i32) pass through
+ * Throws a single aggregated error if any extern import is unsatisfied.
  */
-function autoBridgeExternImports(wasmModule, hostImports, b, jspi = false) {
+function autoBridgeExternImports(wasmModule, hostImports, b, jspi = false, imports = {}) {
+  let importList;
   try {
-    for (const imp of WebAssembly.Module.imports(wasmModule)) {
-      // Already provided (host module, etc.) — skip
-      if (hostImports[imp.module]?.[imp.name] !== undefined) continue;
-      if (imp.kind !== "function") continue;
+    importList = WebAssembly.Module.imports(wasmModule);
+  } catch {
+    // Module.imports may fail on GC modules in some runtimes; nothing to bridge.
+    return;
+  }
 
-      // Try globalThis[module][name]
-      const mod = globalThis[imp.module];
-      const fn = mod?.[imp.name];
-      if (typeof fn !== "function") {
-        throw new Error(`Unsupported host import: ${imp.module}.${imp.name} (not found on globalThis.${imp.module})`);
-      }
+  const { found, missing } = resolveExternImports(importList, hostImports, imports);
 
-      const marshalArgs = (args) => args.map((arg) => {
-        if (typeof arg === "bigint") return Number(arg);
-        if (typeof arg === "number") return arg;
-        // GC ref — assume string
-        return decodeString(b, arg);
-      });
+  if (missing.length > 0) {
+    const [m0, f0] = missing[0].split(".");
+    throw new Error(
+      `Missing host import(s): ${missing.join(", ")}\n` +
+      `Provide them via the run() "imports" option ` +
+      `(e.g. { imports: { ${m0}: { ${f0}: fn } } }) or define them on globalThis.`,
+    );
+  }
 
-      const marshalReturn = (result) => {
-        if (result === undefined || result === null) return;
-        if (typeof result === "string") return encodeString(b, result);
-        if (typeof result === "number") return result;
-        if (typeof result === "bigint") return result;
-        return result;
+  const marshalArgs = (args) => args.map((arg) => {
+    if (typeof arg === "bigint") return Number(arg);
+    if (typeof arg === "number") return arg;
+    // GC ref — assume string
+    return decodeString(b, arg);
+  });
+
+  const marshalReturn = (result) => {
+    if (result === undefined || result === null) return;
+    if (typeof result === "string") return encodeString(b, result);
+    if (typeof result === "number") return result;
+    if (typeof result === "bigint") return result;
+    return result;
+  };
+
+  for (const { module, name, fn, recv } of found) {
+    let bridgedFn;
+    if (jspi) {
+      // JSPI mode: async wrapper so Promise-returning JS functions suspend
+      // Wasm. Non-Promise returns pass through without suspension.
+      const asyncWrapper = async (...args) =>
+        marshalReturn(await fn.apply(recv, marshalArgs(args)));
+      bridgedFn = new WebAssembly.Suspending(asyncWrapper);
+    } else {
+      // Sync mode: detect and reject Promise returns
+      bridgedFn = (...args) => {
+        const result = fn.apply(recv, marshalArgs(args));
+        if (result instanceof Promise) {
+          throw new Error(
+            `Extern ${module}.${name} returned a Promise, but JSPI is not available. ` +
+            `Promise-returning externs require a runtime with WebAssembly.Suspending/promising support.`,
+          );
+        }
+        return marshalReturn(result);
       };
-
-      let bridgedFn;
-      if (jspi) {
-        // JSPI mode: async wrapper so Promise-returning JS functions suspend
-        // Wasm. Non-Promise returns pass through without suspension.
-        const asyncWrapper = async (...args) => {
-          const result = await fn.apply(mod, marshalArgs(args));
-          return marshalReturn(result);
-        };
-        bridgedFn = new WebAssembly.Suspending(asyncWrapper);
-      } else {
-        // Sync mode: detect and reject Promise returns
-        bridgedFn = (...args) => {
-          const result = fn.apply(mod, marshalArgs(args));
-          if (result instanceof Promise) {
-            throw new Error(
-              `Extern ${imp.module}.${imp.name} returned a Promise, but JSPI is not available. ` +
-              `Promise-returning externs require a runtime with WebAssembly.Suspending/promising support.`,
-            );
-          }
-          return marshalReturn(result);
-        };
-      }
-
-      if (!hostImports[imp.module]) hostImports[imp.module] = {};
-      hostImports[imp.module][imp.name] = bridgedFn;
     }
-  } catch (e) {
-    if (e.message?.startsWith("Unsupported host import:") || e.message?.startsWith("Extern ")) throw e;
-    // Module.imports may fail on GC modules in some runtimes.
+    if (!hostImports[module]) hostImports[module] = {};
+    hostImports[module][name] = bridgedFn;
   }
 }
 
@@ -342,6 +377,7 @@ function makeHostImports(b, runtime, bridgeBytes) {
           env: runtime.env,
           stdout: runtime.stdout,
           stderr: runtime.stderr,
+          imports: runtime.imports,
           bridgeBytes,
         });
         return BigInt(exitCode);
@@ -436,6 +472,7 @@ function prepareWasm(wasmBytes, opts, { jspi = false } = {}) {
     stdout = process.stdout,
     stderr = process.stderr,
     bridgeBytes,
+    imports = {},
   } = opts;
 
   if (!bridgeBytes) {
@@ -450,11 +487,12 @@ function prepareWasm(wasmBytes, opts, { jspi = false } = {}) {
     stdout,
     stderr,
     stdinEof: false,
+    imports,
   };
 
   const hostImports = makeHostImports(b, runtime, bridgeBytes);
   const mainModule = new WebAssembly.Module(wasmBytes);
-  autoBridgeExternImports(mainModule, hostImports, b, jspi);
+  autoBridgeExternImports(mainModule, hostImports, b, jspi, imports);
 
   return { mainModule, hostImports, b, runtime };
 }
@@ -525,6 +563,7 @@ export async function runWasmBytesAsync(wasmBytes, opts = {}) {
           env: runtime.env,
           stdout: runtime.stdout,
           stderr: runtime.stderr,
+          imports: runtime.imports,
           bridgeBytes: childBridgeBytes,
         });
         return BigInt(exitCode);
