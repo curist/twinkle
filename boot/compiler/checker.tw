@@ -4348,6 +4348,30 @@ fn contains_type_var(ty: MonoType) Bool {
   }
 }
 
+// `try` on a control-flow operand (if/case/cond/block): push the enclosing
+// function's Result/Option shape into the operand so bare variant/.Ok/.Err
+// literals in its branches resolve — synth alone never reaches them. Returns
+// .None when the enclosing return isn't Result/Option, so the caller falls back
+// to the synth path (which keeps the precise try-misuse diagnostics).
+fn try_check_cf_operand(operand: Expr, ctx: InferCtx, diags: Vector<DiagKind>) SynthOut? {
+  case ctx.current_ret {
+    .Some(ret_ty) => case zonk(ret_ty, ctx.subst) {
+      .Result(_, ret_err) => {
+        m := fresh_meta(ctx)
+        cr := m.ctx.check_expr(operand, MonoType.Result(m.ty, ret_err), diags)
+        .Some(.{ ty: zonk(m.ty, cr.ctx.subst), ctx: cr.ctx, diags: cr.diags })
+      },
+      .Optional(_) => {
+        m := fresh_meta(ctx)
+        cr := m.ctx.check_expr(operand, MonoType.Optional(m.ty), diags)
+        .Some(.{ ty: zonk(m.ty, cr.ctx.subst), ctx: cr.ctx, diags: cr.diags })
+      },
+      _ => .None,
+    },
+    .None => .None,
+  }
+}
+
 fn synth_unary(op: UnOp, operand: Expr, s: Span, ctx: InferCtx, diags: Vector<DiagKind>) SynthOut {
   case op {
     .Neg => {
@@ -4386,83 +4410,102 @@ fn synth_unary(op: UnOp, operand: Expr, s: Span, ctx: InferCtx, diags: Vector<Di
       }
     },
     .Try => {
-      // For a call operand, propagate the enclosing function's Result/Option
-      // shape so a generic call (e.g. opt.ok_or(.Variant(...))) can solve its
-      // error type — and thus resolve bare variant-literal args — before its
-      // arguments are checked. synth_call captures and clears call_expected_ret,
-      // so this mirrors check_expr's .Call handling and cannot leak.
-      try_ctx := case operand.kind {
-        .Call(_, _) => case ctx.current_ret {
-          .Some(ret_ty) => case zonk(ret_ty, ctx.subst) {
-            .Result(_, ret_err) => {
-              m := fresh_meta(ctx)
-              cc := m.ctx
-              cc.call_expected_ret = .Some(MonoType.Result(m.ty, ret_err))
-              cc
-            },
-            .Optional(_) => {
-              m := fresh_meta(ctx)
-              cc := m.ctx
-              cc.call_expected_ret = .Some(MonoType.Optional(m.ty))
-              cc
+      // Control-flow operands (if/case/cond/block) can't resolve bare
+      // variant/.Ok/.Err literals in their branches under synth — the expected
+      // type never reaches them. Check them against the enclosing Result/Option
+      // shape instead (same propagation that makes return-position if/case work).
+      cf_out := case operand.kind {
+        .If(_, _, _) => try_check_cf_operand(operand, ctx, diags),
+        .Case(_, _) => try_check_cf_operand(operand, ctx, diags),
+        .Cond(_) => try_check_cf_operand(operand, ctx, diags),
+        .BlockExpr(_) => try_check_cf_operand(operand, ctx, diags),
+        _ => .None,
+      }
+
+      case cf_out {
+        .Some(out) => out,
+        .None => {
+          // For a call operand, propagate the enclosing function's Result/Option
+          // shape so a generic call (e.g. opt.ok_or(.Variant(...))) can solve its
+          // error type — and thus resolve bare variant-literal args — before its
+          // arguments are checked. synth_call captures and clears call_expected_ret,
+          // so this mirrors check_expr's .Call handling and cannot leak.
+          try_ctx := case operand.kind {
+            .Call(_, _) => case ctx.current_ret {
+              .Some(ret_ty) => case zonk(ret_ty, ctx.subst) {
+                .Result(_, ret_err) => {
+                  m := fresh_meta(ctx)
+                  cc := m.ctx
+                  cc.call_expected_ret = .Some(MonoType.Result(m.ty, ret_err))
+                  cc
+                },
+                .Optional(_) => {
+                  m := fresh_meta(ctx)
+                  cc := m.ctx
+                  cc.call_expected_ret = .Some(MonoType.Optional(m.ty))
+                  cc
+                },
+                _ => ctx,
+              },
+              .None => ctx,
             },
             _ => ctx,
-          },
-          .None => ctx,
-        },
-        _ => ctx,
-      }
-      r := try_ctx.synth(operand, diags)
-      zonked := zonk(r.ty, r.ctx.subst)
-
-      case zonked {
-        .Optional(inner) => {
-          // try on Option: function must return Option
-          try_diags := case r.ctx.current_ret {
-            .Some(ret_ty) => case zonk(ret_ty, r.ctx.subst) {
-              .Optional(_) => r.diags,
-              _ => r.diags.append(.Error(.TryReturnMismatch(.{ span: s, expected_kind: "Option" }))),
-            },
-            .None => r.diags.append(
-              .Error(.TryReturnMismatch(.{ span: s, expected_kind: "Option" })),
-            ),
           }
-          .{ ty: inner, ctx: r.ctx, diags: try_diags }
-        },
-        .Result(ok_ty, err_ty) => {
-          // try on Result: function must return Result with compatible error type
-          try_result: SynthOut = case r.ctx.current_ret {
-            .Some(ret_ty) => case zonk(ret_ty, r.ctx.subst) {
-              .Result(_, ret_err) => {
-                u := r.ctx.unify(err_ty, ret_err, s, r.diags)
+          r := try_ctx.synth(operand, diags)
+          zonked := zonk(r.ty, r.ctx.subst)
 
-                // Thread u.ctx so MetaVar substitutions from error unification are preserved
-                .{ ty: ok_ty, ctx: u.ctx, diags: u.diags }
-              },
-              _ => .{
-                ty: ok_ty,
-                ctx: r.ctx,
-                diags: r.diags.append(
-                  .Error(.TryReturnMismatch(.{ span: s, expected_kind: "Result" })),
+          case zonked {
+            .Optional(inner) => {
+              // try on Option: function must return Option
+              try_diags := case r.ctx.current_ret {
+                .Some(ret_ty) => case zonk(ret_ty, r.ctx.subst) {
+                  .Optional(_) => r.diags,
+                  _ => r.diags.append(
+                    .Error(.TryReturnMismatch(.{ span: s, expected_kind: "Option" })),
+                  ),
+                },
+                .None => r.diags.append(
+                  .Error(.TryReturnMismatch(.{ span: s, expected_kind: "Option" })),
                 ),
-              },
+              }
+              .{ ty: inner, ctx: r.ctx, diags: try_diags }
             },
-            .None => .{
-              ty: ok_ty,
-              ctx: r.ctx,
-              diags: r.diags.append(
-                .Error(.TryReturnMismatch(.{ span: s, expected_kind: "Result" })),
-              ),
+            .Result(ok_ty, err_ty) => {
+              // try on Result: function must return Result with compatible error type
+              try_result: SynthOut = case r.ctx.current_ret {
+                .Some(ret_ty) => case zonk(ret_ty, r.ctx.subst) {
+                  .Result(_, ret_err) => {
+                    u := r.ctx.unify(err_ty, ret_err, s, r.diags)
+
+                    // Thread u.ctx so MetaVar substitutions from error unification are preserved
+                    .{ ty: ok_ty, ctx: u.ctx, diags: u.diags }
+                  },
+                  _ => .{
+                    ty: ok_ty,
+                    ctx: r.ctx,
+                    diags: r.diags.append(
+                      .Error(.TryReturnMismatch(.{ span: s, expected_kind: "Result" })),
+                    ),
+                  },
+                },
+                .None => .{
+                  ty: ok_ty,
+                  ctx: r.ctx,
+                  diags: r.diags.append(
+                    .Error(.TryReturnMismatch(.{ span: s, expected_kind: "Result" })),
+                  ),
+                },
+              }
+              try_result
             },
-          }
-          try_result
-        },
-        _ => {
-          m := fresh_meta(r.ctx)
-          .{
-            ty: m.ty,
-            ctx: m.ctx,
-            diags: r.diags.append(.Error(.TryOperandError(.{ span: s, ty: zonked }))),
+            _ => {
+              m := fresh_meta(r.ctx)
+              .{
+                ty: m.ty,
+                ctx: m.ctx,
+                diags: r.diags.append(.Error(.TryOperandError(.{ span: s, ty: zonked }))),
+              }
+            },
           }
         },
       }

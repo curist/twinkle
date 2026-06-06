@@ -29,6 +29,32 @@ fn ok_or_enum_helper(opt: Int?) Result<Int, LookupErr> {
   .Ok(x)
 }
 
+// try over control-flow operands: the expected Result/LookupErr type must reach
+// the branches so bare .Missing/.Ok literals resolve there too.
+fn try_if_enum(opt: Int?, c: Bool) Result<Int, LookupErr> {
+  x := try if c {
+    opt.ok_or(.Missing("none"))
+  } else {
+    .Ok(0)
+  }
+  .Ok(x)
+}
+
+fn try_case_enum(opt: Int?, c: Bool) Result<Int, LookupErr> {
+  x := try case c {
+    true => opt.ok_or(.Missing("none")),
+    false => .Ok(0),
+  }
+  .Ok(x)
+}
+
+fn try_block_enum(opt: Int?) Result<Int, LookupErr> {
+  x := try {
+    opt.ok_or(.Missing("none"))
+  }
+  .Ok(x)
+}
+
 fn first_some(a: Int?, b: Int?) Int? {
   x := try a
   y := try b
@@ -266,6 +292,18 @@ pub fn suite() runner.Suite {
         try assert.is_ok(ok_r)
         err_r: Result<Int, LookupErr> = ok_or_enum_helper(.None)
         try assert.is_err(err_r)
+        .Ok({})
+      },
+    )
+    .test(
+      "try propagates expected type into if/case/block operands",
+      fn() {
+        try assert.is_ok(try_if_enum(.Some(1), false))
+        try assert.is_err(try_if_enum(.None, true))
+        try assert.is_ok(try_case_enum(.Some(1), false))
+        try assert.is_err(try_case_enum(.None, true))
+        try assert.is_ok(try_block_enum(.Some(1)))
+        try assert.is_err(try_block_enum(.None))
         .Ok({})
       },
     )
