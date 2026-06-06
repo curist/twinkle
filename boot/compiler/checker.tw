@@ -784,14 +784,11 @@ fn prove_contract_method(
   active: Dict<String, Bool>,
   elem_hint: MonoType?,
 ) Result<InferCtx, String> {
-  fn_name := case resolve_method_func_name(ty, req.method_name, ctx.env) {
-    .Some(name) => name,
-    .None => { return .Err("missing ${contract_requirement_summary(req)}") },
-  }
-  sig := case ctx.env.lookup_registered_function(fn_name) {
-    .Some(found) => found,
-    .None => { return .Err("missing ${contract_requirement_summary(req)}") },
-  }
+  fn_name := try resolve_method_func_name(ty, req.method_name, ctx.env).ok_or(
+    "missing ${contract_requirement_summary(req)}",
+  )
+  sig := try ctx.env.lookup_registered_function(fn_name)
+    .ok_or("missing ${contract_requirement_summary(req)}")
   inst := instantiate(sig, ctx)
   expected_param_count := req.receiver_param_count + req.arg_shapes.len()
 
@@ -805,10 +802,9 @@ fn prove_contract_method(
     return .Err("unsupported contract receiver shape for ${contract_name(contract)}")
   }
 
-  recv_ctx := case silent_unify(inst.ctx, ty, inst.params[0]) {
-    .Some(next_ctx) => next_ctx,
-    .None => { return .Err("${req.method_name} does not apply to ${ctx.env.ty_to_string_env(ty)}") },
-  }
+  recv_ctx := try silent_unify(inst.ctx, ty, inst.params[0]).ok_or(
+    "${req.method_name} does not apply to ${ctx.env.ty_to_string_env(ty)}",
+  )
 
   // The receiver-determined element type (functional dependency Self -> Elem).
   // When the proof is triggered from a parameterized bound (`C: IndexRead<E>`),

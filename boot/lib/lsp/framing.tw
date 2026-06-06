@@ -61,14 +61,8 @@ pub fn try_decode_frame_bytes(buffer: Vector<Byte>) Result<DecodeByteFrameResult
 }
 
 fn content_length(headers: Dict<String, String>) Result<Int, String> {
-  len_text := case lookup_content_length(headers) {
-    .Some(v) => v,
-    .None => { return .Err("missing Content-Length header") },
-  }
-  content_len := case Int.from_string(len_text.trim()) {
-    .Some(n) => n,
-    .None => { return .Err("invalid Content-Length header") },
-  }
+  len_text := try lookup_content_length(headers).ok_or("missing Content-Length header")
+  content_len := try Int.from_string(len_text.trim()).ok_or("invalid Content-Length header")
 
   if content_len < 0 {
     return .Err("invalid Content-Length header")
@@ -115,10 +109,7 @@ fn parse_headers(header_text: String) Result<Dict<String, String>, String> {
 
   for line in header_text.split("\r\n") {
     if line == "" {} else {
-      colon := case line.index_of(":") {
-        .Some(i) => i,
-        .None => { return .Err("invalid header line") },
-      }
+      colon := try line.index_of(":").ok_or("invalid header line")
       name := line.slice(0, colon).trim()
       value := line.slice(colon + 1, line.len()).trim()
 

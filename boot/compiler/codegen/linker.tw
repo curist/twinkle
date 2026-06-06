@@ -1,4 +1,4 @@
-/// Phase D M9: Linker — merge user module with runtime modules.
+/// Linker — merge user module with runtime modules.
 ///
 /// Takes a list of WasmModules (each with a namespace), qualifies all
 /// symbols with namespace prefixes, resolves inter-module imports

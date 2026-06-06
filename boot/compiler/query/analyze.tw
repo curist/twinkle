@@ -918,7 +918,7 @@ fn capture_local_types(
     name := env.type_names[i]
     state.shared_types = .append(.{ entry, name })
 
-    // Record the assignment for future stable TypeId enforcement (Phase 4).
+    // Record the assignment for future stable TypeId enforcement.
     // The returned out.id is not yet used — TypeIds still come from the
     // resolver/checker's sequential allocation.
     out := type_registry.assign(reg, canonical, name)

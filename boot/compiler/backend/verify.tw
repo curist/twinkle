@@ -1,4 +1,4 @@
-/// Backend verifier — Phase 5.
+/// Backend verifier.
 ///
 /// Verifies prepared backend IR before Wasm planning/emission proceeds.
 /// The verifier is intentionally strict: invalid prepared states should fail

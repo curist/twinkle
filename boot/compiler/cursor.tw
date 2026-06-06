@@ -52,15 +52,18 @@ pub fn preceded_by_newline(c: Cursor) Bool {
 }
 
 pub fn advance(c: Cursor) Cursor {
-  .{ tokens: c.tokens, pos: c.pos + 1, next_expr_id: c.next_expr_id }
+  c.pos = c.pos + 1
+  c
 }
 
 pub fn at(c: Cursor, offset: Int) Cursor {
-  .{ tokens: c.tokens, pos: c.pos + offset, next_expr_id: c.next_expr_id }
+  c.pos = c.pos + offset
+  c
 }
 
 pub fn with_pos(c: Cursor, new_pos: Int) Cursor {
-  .{ tokens: c.tokens, pos: new_pos, next_expr_id: c.next_expr_id }
+  c.pos = new_pos
+  c
 }
 
 pub fn is_eof(c: Cursor) Bool {

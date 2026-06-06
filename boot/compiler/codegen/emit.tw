@@ -1459,7 +1459,7 @@ fn emit_intrinsic_call(
     .TaskSpawn => emit_intrinsic_task_spawn(args, result_idx, result_mono, ctx, buf),
     .TaskAwait => emit_intrinsic_task_await(args, result_idx, result_mono, ctx, buf),
     .TaskYield => {
-      // Phase 2 stub for top-level yield: no-op (yield only meaningful in task bodies)
+      // Top-level yield is a no-op: yield is only meaningful in task bodies.
       buf.append(.I32Const(0)).append(.RefI31).append(.LocalSet(result_idx))
     },
     .CellNew => emit_intrinsic_cell_new(args, result_idx, result_mono, ctx, buf),
@@ -2071,7 +2071,7 @@ fn emit_intrinsic_cell_update(
     .append(.LocalSet(result_idx)) // return void
 }
 
-// ── Task intrinsics (Phase 2: scheduler-based) ────────────────────────
+// ── Task intrinsics (scheduler-based) ─────────────────────────────────
 // Task.spawn(f) creates a Task struct with a run-to-completion frame
 // and enqueues it.  Task.await(task) drives the scheduler until the
 // target task completes, then unboxes the result.
@@ -2110,7 +2110,7 @@ fn emit_intrinsic_task_await(
   ctx: EmitCtx,
   buf: Vector<Instr>,
 ) Vector<Instr> {
-  // Phase 2 top-level await: fast-path check + scheduler fallback.
+  // Top-level await: fast-path check + scheduler fallback.
   //
   // The task atom (args[0]) already has its own local, so we can
   // re-emit it multiple times without needing a temp.
