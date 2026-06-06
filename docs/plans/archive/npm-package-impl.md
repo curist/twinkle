@@ -8,7 +8,7 @@
 
 **Tech Stack:** Node.js ≥22 (ESM, Wasm GC, optional JSPI), the existing self-hosted `boot.wasm` compiler, `node:test`, bash + Make for packaging.
 
-**Design spec:** `docs/plans/npm-package.md`
+**Design spec:** `docs/plans/archive/npm-package.md`
 
 ---
 

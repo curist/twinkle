@@ -13,6 +13,15 @@ test("compile returns wasm bytes", async () => {
   assert.deepEqual([...wasm.slice(0, 4)], [0x00, 0x61, 0x73, 0x6d]); // "\0asm"
 });
 
+test("concurrent compiles do not collide on output path", async () => {
+  const [a, b] = await Promise.all([
+    compile(fix("scoped_extern.tw")),
+    compile(fix("global_extern.tw")),
+  ]);
+  assert.deepEqual([...a.slice(0, 4)], [0x00, 0x61, 0x73, 0x6d]);
+  assert.deepEqual([...b.slice(0, 4)], [0x00, 0x61, 0x73, 0x6d]);
+});
+
 test("scoped imports receive marshaled values", async () => {
   const seen = [];
   const code = await runFile(fix("scoped_extern.tw"), {

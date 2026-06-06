@@ -80,7 +80,10 @@ export async function compile(input, opts = {}) {
     throw new TypeError("compile: input must be a path string or { source, path? }");
   }
 
-  const outPath = join(cleanupDir ?? tmpdir(), `twinkle-out-${process.pid}-${Date.now()}.wasm`);
+  // A dedicated temp dir per call: mkdtempSync's random suffix guarantees a
+  // unique output path even for concurrent same-process compiles.
+  const outDir = mkdtempSync(join(tmpdir(), "twinkle-out-"));
+  const outPath = join(outDir, "out.wasm");
   const out = collectingStream();
   const err = collectingStream();
   try {
@@ -98,7 +101,7 @@ export async function compile(input, opts = {}) {
     }
     return new Uint8Array(readFileSync(outPath));
   } finally {
-    try { rmSync(outPath, { force: true }); } catch {}
+    try { rmSync(outDir, { recursive: true, force: true }); } catch {}
     if (cleanupDir) { try { rmSync(cleanupDir, { recursive: true, force: true }); } catch {} }
   }
 }
