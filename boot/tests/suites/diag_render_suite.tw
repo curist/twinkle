@@ -117,7 +117,12 @@ pub fn suite() runner.Suite {
       fn() {
         kind := DiagKind.Error(
           .MissingVariants(
-            .{ span: s(5, 20), scrutinee_ty: MonoType.Bool, missing: ["True", "False"] },
+            .{
+              span: s(5, 20),
+              scrutinee_ty: MonoType.Bool,
+              missing: [.{ name: "True", arity: 0 }, .{ name: "False", arity: 0 }],
+              insert_at: 19,
+            },
           ),
         )
         r := diag_render.to_report(kind, ctx())

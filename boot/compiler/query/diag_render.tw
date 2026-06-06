@@ -112,7 +112,7 @@ fn error_to_report(e: ErrorDiag, ctx: RenderCtx) Report {
       severity: .Error,
       title: "non-exhaustive match on `${fmt_ty(d.scrutinee_ty, ctx)}`",
       labels: [primary(d.span, .Some("missing variants"))],
-      help_lines: ["add arm(s): ${d.missing.join(", ")}"],
+      help_lines: ["add arm(s): ${d.missing.map(fn(v) { v.name }).join(", ")}"],
     },
     .DuplicateField(d) => .{
       severity: .Error,

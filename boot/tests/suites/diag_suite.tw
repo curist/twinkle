@@ -90,7 +90,12 @@ pub fn suite() runner.Suite {
       fn() {
         k := DiagKind.Error(
           .MissingVariants(
-            .{ span: s(2, 9), scrutinee_ty: MonoType.Bool, missing: ["True", "False"] },
+            .{
+              span: s(2, 9),
+              scrutinee_ty: MonoType.Bool,
+              missing: [.{ name: "True", arity: 0 }, .{ name: "False", arity: 0 }],
+              insert_at: 9,
+            },
           ),
         )
         try assert.equal(k.span().start, 2)

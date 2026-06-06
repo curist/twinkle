@@ -3,7 +3,7 @@
 /// Consumes ResolvedEnv + Module AST, produces TypeMap + diagnostics.
 /// InferCtx is threaded functionally through every call; updates use COW field mutation.
 
-use lib.source.diagnostics.{DiagKind}
+use lib.source.diagnostics.{DiagKind, MissingVariant}
 use lib.source.span.{Span}
 
 use .ast.{
@@ -3528,11 +3528,11 @@ fn check_exhaustiveness(
     }
   }
 
-  variant_names := get_variant_names(scrut_ty, ctx)
+  variant_specs := get_variant_specs(scrut_ty, ctx)
 
-  case variant_names {
+  case variant_specs {
     .None => diags,
-    .Some(names) => {
+    .Some(specs) => {
       // Collect covered variant names from arm patterns
       covered := collect arm in arms {
         case arm.pattern.kind {
@@ -3557,18 +3557,25 @@ fn check_exhaustiveness(
         }
       }
 
-      // Find uncovered variants
-      missing := collect name in names {
-        if covered.any(fn(c) { c == name }) {
+      // Find uncovered variants, preserving their arities
+      missing := collect spec in specs {
+        if covered.any(fn(c) { c == spec.name }) {
           continue
         }
 
-        name
+        spec
       }
 
       if missing.len() > 0 {
         diags.append(
-          .Error(.MissingVariants(.{ span: s, scrutinee_ty: zonk(scrut_ty, ctx.subst), missing })),
+          .Error(
+            .MissingVariants(.{
+              span: s,
+              scrutinee_ty: zonk(scrut_ty, ctx.subst),
+              missing,
+              insert_at: s.end - 1,
+            }),
+          ),
         )
       } else {
         diags
@@ -3577,20 +3584,20 @@ fn check_exhaustiveness(
   }
 }
 
-fn get_variant_names(scrut_ty: MonoType, ctx: InferCtx) Vector<String>? {
+fn get_variant_specs(scrut_ty: MonoType, ctx: InferCtx) Vector<MissingVariant>? {
   zonked := zonk(scrut_ty, ctx.subst)
 
   case zonked {
-    .Optional(_) => .Some(["Some", "None"]),
-    .Result(_, _) => .Some(["Ok", "Err"]),
-    .Bool => .Some(["true", "false"]),
+    .Optional(_) => .Some([.{ name: "Some", arity: 1 }, .{ name: "None", arity: 0 }]),
+    .Result(_, _) => .Some([.{ name: "Ok", arity: 1 }, .{ name: "Err", arity: 1 }]),
+    .Bool => .Some([.{ name: "true", arity: 0 }, .{ name: "false", arity: 0 }]),
     .Named(tid, _) => {
       def := try ctx.env.lookup_type_def(tid)
 
       case def {
         .Sum(_, _, variants) => .Some(
           collect v in variants {
-            v.name
+            .{ name: v.name, arity: v.fields.len() }
           },
         ),
         _ => .None,
