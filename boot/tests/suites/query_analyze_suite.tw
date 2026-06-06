@@ -88,6 +88,28 @@ pub fn suite() runner.Suite {
       },
     )
     .test(
+      "a failed module is analyzed once across multiple paths (no re-walk blowup)",
+      fn() {
+        // Diamond: main -> {a, b} -> broken. `broken` fails to resolve. The
+        // failure must be memoized so it is reported exactly once, not once per
+        // path. Without memoization this re-walks broken per path — the source
+        // of an exponential hang on large graphs.
+        ov := overlay.from_documents([
+          ov_doc("/tmp/analyze/main.tw", "use a\nuse b\nx := a.x() + b.x()\n"),
+          ov_doc("/tmp/analyze/a.tw", "use broken\npub fn x() Int { broken.x() }\n"),
+          ov_doc("/tmp/analyze/b.tw", "use broken\npub fn x() Int { broken.x() }\n"),
+          ov_doc("/tmp/analyze/broken.tw", "pub fn x() Int { nope }\n"),
+        ])
+        state := analyze.new_state(base_env.builtin_env(), cache.empty(), ov, "/tmp/analyze")
+        id := identity.from_path("/tmp/analyze/main.tw")
+        result := analyze.analyze_module(id, "__entry", base_env.builtin_env(), state, [])
+        try assert.is_false(result.ok)
+        try assert.equal(result.diagnostics.len(), 1)
+        try assert.is_true(result.state.failed.has("/tmp/analyze/broken.tw"))
+        .Ok({})
+      },
+    )
+    .test(
       "analysis caches stages on re-analysis",
       fn() {
         ov := overlay.from_documents([ov_doc("/tmp/analyze/cached.tw", "x := 1\n")])

@@ -99,6 +99,10 @@ pub type AnalysisState = .{
   canonical_roots: imports.CanonicalRoots,
   exports: Dict<String, ModuleExports>,
   interfaces: Dict<String, ModuleInterface>,
+  // Canonical paths whose analysis already failed. Memoizing failures (not just
+  // successes via `exports`) keeps a single broken module from forcing
+  // exponential re-analysis along every path that reaches it in a large graph.
+  failed: Dict<String, Bool>,
   shared_types: Vector<SharedTypeEntry>,
   shared_type_origins: Dict<Int, String>,
   module_order: Vector<String>,
@@ -191,6 +195,7 @@ pub fn new_state(base: ResolvedEnv, store: cache.Store, ov: overlay.Overlay, pro
     canonical_roots: imports.make_canonical_roots(project_root),
     exports: Dict.new(),
     interfaces: Dict.new(),
+    failed: Dict.new(),
     shared_types: initial_shared,
     shared_type_origins: base.type_origins,
     module_order: [],
@@ -219,6 +224,13 @@ pub fn analyze_module(
   analyze_module_impl(id, alias, base, state, stack, .None, .None)
 }
 
+/// Record that `canonical` failed analysis so later paths to it short-circuit
+/// instead of re-walking its subtree.
+fn mark_failed(state: AnalysisState, canonical: String) AnalysisState {
+  state.failed[canonical] = true
+  state
+}
+
 fn analyze_module_impl(
   id: identity.SourceIdentity,
   alias: String,
@@ -237,6 +249,13 @@ fn analyze_module_impl(
     .None => {},
   }
 
+  // Already failed on an earlier path? Return the memoized failure without
+  // re-walking its subtree. Diagnostics were reported on the first failure;
+  // re-reporting here would duplicate them.
+  if state.failed.has(canonical) {
+    return .{ env: base, state, diagnostics: [], ok: false }
+  }
+
   // Import cycle reached via a back-edge. If a preliminary interface is already
   // published for this module, let the caller merge it. Otherwise try to break
   // the cycle by publishing one (signatures only); modules with top-level
@@ -252,7 +271,7 @@ fn analyze_module_impl(
   loaded := case load_source(state, canonical, module_id, caller_id, use_span) {
     .Ok(value) => value,
     .Err(err) => {
-      return .{ env: base, state: err.state, diagnostics: err.diagnostics, ok: false }
+      return .{ env: base, state: mark_failed(err.state, canonical), diagnostics: err.diagnostics, ok: false }
     },
   }
 
@@ -264,7 +283,7 @@ fn analyze_module_impl(
   parsed_load := case parse_cached(loaded.state, canonical, loaded.source, loaded.source_hash) {
     .Ok(value) => value,
     .Err(err) => {
-      return .{ env: base, state: err.state, diagnostics: err.diagnostics, ok: false }
+      return .{ env: base, state: mark_failed(err.state, canonical), diagnostics: err.diagnostics, ok: false }
     },
   }
 
@@ -281,7 +300,7 @@ fn analyze_module_impl(
   ) {
     .Ok(plan) => plan,
     .Err(err) => {
-      return .{ env: base, state: err.state, diagnostics: err.diagnostics, ok: false }
+      return .{ env: base, state: mark_failed(err.state, canonical), diagnostics: err.diagnostics, ok: false }
     },
   }
 
@@ -299,7 +318,7 @@ fn analyze_module_impl(
   )
 
   if !deps.ok {
-    return .{ env: deps.env, state: deps.state, diagnostics: deps.diagnostics, ok: false }
+    return .{ env: deps.env, state: mark_failed(deps.state, canonical), diagnostics: deps.diagnostics, ok: false }
   }
 
   cur := deps.state
@@ -335,7 +354,9 @@ fn analyze_module_impl(
     deps.diagnostics,
   ) {
     .Ok(value) => value,
-    .Err(err) => { return .{ env, state: err.state, diagnostics: err.diagnostics, ok: false } },
+    .Err(err) => {
+      return .{ env, state: mark_failed(err.state, canonical), diagnostics: err.diagnostics, ok: false }
+    },
   }
   t_publish0 := date.now()
   cur = publish_interface(
