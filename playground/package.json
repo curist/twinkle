@@ -8,7 +8,9 @@
     "preview": "vite preview"
   },
   "dependencies": {
+    "@twinkle-lang/twinkle": "^0.3.0",
     "codejar": "^4.2.0",
+    "tree-sitter-twinkle": "^0.1.0",
     "web-tree-sitter": "^0.25.3"
   },
   "devDependencies": {
