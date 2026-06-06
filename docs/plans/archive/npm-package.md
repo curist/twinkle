@@ -1,5 +1,10 @@
 # Twinkle npm Package (bin + lib)
 
+> **Status: COMPLETE** (merged to `main`, 2026-06-06). Implementation in
+> `tools/js_runtime/` + `tools/npm/`; user guide in `docs/js-embedding.md`.
+> Publishing to npm remains a manual step (create `@twinkle-lang` org +
+> `npm login`).
+
 ## Goal
 
 Distribute Twinkle through npm as a single package, `@twinkle-lang/twinkle`
