@@ -85,13 +85,21 @@ JavaScript embedding/extern-wiring guide.
 
 ## CLI Usage
 
-After installing globally (or run any command through `npx twk …`):
+After a global install (`npm install -g @twinkle-lang/twinkle`), use `twk` directly:
 
 ```bash
 twk run program.tw            # compile and run
 twk build program.tw -o out.wasm
 twk check program.tw          # type-check only
 twk fmt program.tw            # format in place
+```
+
+To run a one-off without installing, invoke it through `npx` by naming the
+**package** (the bare bin name `twk` won't resolve to the scoped package):
+
+```bash
+npx @twinkle-lang/twinkle run program.tw
+# or, explicitly: npx --package=@twinkle-lang/twinkle twk run program.tw
 ```
 
 Full command list:
