@@ -2,8 +2,9 @@
 
 ## Goal
 
-Distribute Twinkle through npm as a single package, `twinkle-lang`, providing
-two faces:
+Distribute Twinkle through npm as a single package, `@twinkle-lang/twinkle`
+(published under a `@twinkle-lang` npm organization, leaving room for related
+packages later), providing two faces:
 
 - **bin** — a `twk` CLI, a faithful Node.js equivalent of today's Deno
   standalone `target/twk` (all subcommands: `build/run/ir/fmt/check/lsp`).
@@ -35,7 +36,7 @@ This removes two frictions:
 
 | Topic | Decision |
 |---|---|
-| Package name | `twinkle-lang` |
+| Package name | `@twinkle-lang/twinkle` (scoped under `@twinkle-lang` org) |
 | Bin name | `twk` |
 | Module format | ESM-only (`"type": "module"`). `require()` works on Node ≥22. |
 | `engines.node` | `>=22` (Wasm GC stable; JSPI auto-detected, degrades gracefully) |
@@ -106,7 +107,7 @@ instead of a cryptic instantiate failure).
 ## Lib API (`tools/js_runtime/index.mjs`)
 
 ```js
-import { compile, run, runFile } from "twinkle-lang";
+import { compile, run, runFile } from "@twinkle-lang/twinkle";
 
 // compile: path string | { source, path? }  ->  Uint8Array (wasm bytes)
 const wasm = await compile("game.tw");
@@ -173,8 +174,9 @@ target/npm/
 
 ```json
 {
-  "name": "twinkle-lang",
+  "name": "@twinkle-lang/twinkle",
   "version": "0.1.0",
+  "publishConfig": { "access": "public" },
   "type": "module",
   "bin": { "twk": "./node.mjs" },
   "exports": { ".": "./index.mjs" },
@@ -210,7 +212,7 @@ or plain `node`) that imports the lib and asserts:
 
 ## Docs
 
-- New `docs/js-embedding.md`: install (`npm i twinkle-lang`), CLI usage
+- New `docs/js-embedding.md`: install (`npm i @twinkle-lang/twinkle`), CLI usage
   (`npx twk run file.tw`, full subcommand list), and the lib/extern-wiring guide
   (compile/run, `imports` object, globals fallback, missing-import errors).
 - README section linking to it.
