@@ -20,6 +20,15 @@ fn ok_or_try_helper(opt: Int?) Result<Int, String> {
   .Ok(x)
 }
 
+type LookupErr = { Missing(String), Bad }
+
+// The bare variant literal `.Missing(...)` only resolves because `try` propagates
+// the enclosing Result's error type (LookupErr) into the ok_or call's error arg.
+fn ok_or_enum_helper(opt: Int?) Result<Int, LookupErr> {
+  x := try opt.ok_or(.Missing("none"))
+  .Ok(x)
+}
+
 fn first_some(a: Int?, b: Int?) Int? {
   x := try a
   y := try b
@@ -247,6 +256,16 @@ pub fn suite() runner.Suite {
         r: Result<Int, String> = ok_or_try_helper(opt)
         try assert.is_err(r)
         try assert.err_eq(r, "was none")
+        .Ok({})
+      },
+    )
+    .test(
+      "ok_or with enum error resolves bare variant under try",
+      fn() {
+        ok_r: Result<Int, LookupErr> = ok_or_enum_helper(.Some(5))
+        try assert.is_ok(ok_r)
+        err_r: Result<Int, LookupErr> = ok_or_enum_helper(.None)
+        try assert.is_err(err_r)
         .Ok({})
       },
     )

@@ -4386,7 +4386,33 @@ fn synth_unary(op: UnOp, operand: Expr, s: Span, ctx: InferCtx, diags: Vector<Di
       }
     },
     .Try => {
-      r := ctx.synth(operand, diags)
+      // For a call operand, propagate the enclosing function's Result/Option
+      // shape so a generic call (e.g. opt.ok_or(.Variant(...))) can solve its
+      // error type — and thus resolve bare variant-literal args — before its
+      // arguments are checked. synth_call captures and clears call_expected_ret,
+      // so this mirrors check_expr's .Call handling and cannot leak.
+      try_ctx := case operand.kind {
+        .Call(_, _) => case ctx.current_ret {
+          .Some(ret_ty) => case zonk(ret_ty, ctx.subst) {
+            .Result(_, ret_err) => {
+              m := fresh_meta(ctx)
+              cc := m.ctx
+              cc.call_expected_ret = .Some(MonoType.Result(m.ty, ret_err))
+              cc
+            },
+            .Optional(_) => {
+              m := fresh_meta(ctx)
+              cc := m.ctx
+              cc.call_expected_ret = .Some(MonoType.Optional(m.ty))
+              cc
+            },
+            _ => ctx,
+          },
+          .None => ctx,
+        },
+        _ => ctx,
+      }
+      r := try_ctx.synth(operand, diags)
       zonked := zonk(r.ty, r.ctx.subst)
 
       case zonked {
