@@ -83,19 +83,21 @@ npm install @twinkle-lang/twinkle      # library
 See [docs/js-embedding.md](docs/js-embedding.md) for CLI usage and the
 JavaScript embedding/extern-wiring guide.
 
-## Building
-
-The compiler self-hosts. A Rust stage0 compiler bootstraps the Twinkle boot compiler, then the boot compiler rebuilds itself to a fixed point. Building the standalone CLI uses `deno compile`.
-
-```bash
-make bundle-cli  # rebuild target/boot.wasm, then build ./target/twk
-make test        # run Rust and boot compiler test suites
-```
-
 ## CLI Usage
 
+After installing globally (or run any command through `npx twk …`):
+
+```bash
+twk run program.tw            # compile and run
+twk build program.tw -o out.wasm
+twk check program.tw          # type-check only
+twk fmt program.tw            # format in place
+```
+
+Full command list:
+
 ```text
-❯ target/twk --help
+❯ twk --help
 twk - Twinkle compiler
 
 Usage: twk <command> [options]
