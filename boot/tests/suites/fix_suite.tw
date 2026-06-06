@@ -1,0 +1,109 @@
+use compiler.mono_type as mono_type
+use compiler.query.analyze
+use lib.json
+use lib.lsp.code_action as code_action
+use lib.source.diagnostics as diag
+use lib.source.diagnostics.{DiagKind}
+use lib.source.report as report
+use lib.source.span
+use lib.text.line_index
+use tests.assert
+use tests.runner
+
+fn s(start: Int, end: Int) span.Span {
+  span.new(0, start, end)
+}
+
+fn missing_variants_kind() DiagKind {
+  DiagKind.Error(
+    .MissingVariants(
+      .{
+        span: s(0, 30),
+        scrutinee_ty: compiler_mono_type_int(),
+        missing: [.{ name: "Circle", arity: 1 }, .{ name: "UnitSquare", arity: 0 }],
+        insert_at: 29,
+      },
+    ),
+  )
+}
+
+// Use Int as a stand-in scrutinee type; fixes() never inspects scrutinee_ty.
+fn compiler_mono_type_int() mono_type.MonoType {
+  mono_type.MonoType.Int
+}
+
+pub fn suite() runner.Suite {
+  runner.suite("fix")
+    .test(
+      "fixes: missing variants produces one fix with arm-text edits",
+      fn() {
+        fixes := diag.fixes(missing_variants_kind())
+        try assert.equal(fixes.len(), 1)
+        fix := fixes[0]
+        try assert.equal(fix.title, "add missing arms")
+        try assert.equal(fix.edits.len(), 1)
+        edit := fix.edits[0]
+        try assert.equal(edit.start, 29)
+        try assert.equal(edit.end, 29)
+        try assert.equal(edit.replacement, "  .Circle(value0) => {},\n  .UnitSquare => {},\n")
+        .Ok({})
+      },
+    )
+    .test(
+      "fixes_to_json: serializes fixes into the data.fixes shape",
+      fn() {
+        data := analyze.fixes_to_json(diag.fixes(missing_variants_kind()))
+        json_data := case data {
+          .Some(j) => j,
+          .None => { return assert.fail("expected Some(data)") },
+        }
+        fixes := try json.decode(json_data, json.field("fixes", json.list(json.raw())))
+        try assert.equal(fixes.len(), 1)
+        title := try json.decode(fixes[0], json.field("title", json.string()))
+        try assert.equal(title, "add missing arms")
+        edits := try json.decode(fixes[0], json.field("edits", json.list(json.raw())))
+        start := try json.decode(edits[0], json.field("start", json.int()))
+        try assert.equal(start, 29)
+        .Ok({})
+      },
+    )
+    .test(
+      "unused-import fix serializes to the uniform shape",
+      fn() {
+        fix := report.SuggestedFix.{
+          title: "remove unused import `foo`",
+          edits: [report.FixEdit.{ start: 0, end: 15, replacement: "" }],
+        }
+        data := case analyze.fixes_to_json([fix]) {
+          .Some(j) => j,
+          .None => { return assert.fail("expected Some(data)") },
+        }
+        fixes := try json.decode(data, json.field("fixes", json.list(json.raw())))
+        try assert.equal(fixes.len(), 1)
+        title := try json.decode(fixes[0], json.field("title", json.string()))
+        try assert.equal(title, "remove unused import `foo`")
+        .Ok({})
+      },
+    )
+    .test(
+      "fix_actions: builds a quickfix from data.fixes",
+      fn() {
+        index := line_index.new("case s {\n  .Circle(r) => 1,\n}\n")
+        data := case analyze.fixes_to_json(diag.fixes(missing_variants_kind())) {
+          .Some(j) => j,
+          .None => { return assert.fail("expected data") },
+        }
+        diag_json := json.object([
+          json.kv("message", .Str("non-exhaustive match")),
+          json.kv("data", data),
+        ])
+        actions := code_action.fix_actions("file:///a.tw", index, [diag_json])
+        try assert.equal(actions.len(), 1)
+        title := try json.decode(actions[0], json.field("title", json.string()))
+        try assert.equal(title, "add missing arms")
+        kind := try json.decode(actions[0], json.field("kind", json.string()))
+        try assert.equal(kind, "quickfix")
+        .Ok({})
+      },
+    )
+}

@@ -50,10 +50,24 @@ pub fn suite() runner.Suite {
       fn() {
         index := line_index.new("use foo.{A, B}\nx := A\n")
         data := json.object([
-          json.kv("kind", .Str("unused_import")),
-          json.kv("use_start", .Int(0)),
-          json.kv("use_end", .Int(15)),
-          json.kv("replacement", .Str("use foo.{A}\n")),
+          json.kv(
+            "fixes",
+            json.array([
+              json.object([
+                json.kv("title", .Str("remove unused import `B`")),
+                json.kv(
+                  "edits",
+                  json.array([
+                    json.object([
+                      json.kv("start", .Int(0)),
+                      json.kv("end", .Int(15)),
+                      json.kv("replacement", .Str("use foo.{A}\n")),
+                    ]),
+                  ]),
+                ),
+              ]),
+            ]),
+          ),
         ])
         diag := query_diagnostics.Diagnostic.{
           uri: "file:///a.tw",
@@ -71,14 +85,13 @@ pub fn suite() runner.Suite {
         item := items[0]
         try assert.equal(try json.decode(item, json.field("severity", json.int())), 2)
         item_data := try json.decode(item, json.field("data", json.raw()))
+        fixes := try json.decode(item_data, json.field("fixes", json.list(json.raw())))
+        try assert.equal(fixes.len(), 1)
+        edits := try json.decode(fixes[0], json.field("edits", json.list(json.raw())))
+        try assert.equal(try json.decode(edits[0], json.field("start", json.int())), 0)
+        try assert.equal(try json.decode(edits[0], json.field("end", json.int())), 15)
         try assert.equal(
-          try json.decode(item_data, json.field("kind", json.string())),
-          "unused_import",
-        )
-        try assert.equal(try json.decode(item_data, json.field("use_start", json.int())), 0)
-        try assert.equal(try json.decode(item_data, json.field("use_end", json.int())), 15)
-        try assert.equal(
-          try json.decode(item_data, json.field("replacement", json.string())),
+          try json.decode(edits[0], json.field("replacement", json.string())),
           "use foo.{A}\n",
         )
         .Ok({})

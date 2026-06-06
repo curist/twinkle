@@ -26,6 +26,7 @@ use lib.query.keys
 use lib.source.diagnostics as diag
 use lib.source.identity
 use lib.source.overlay
+use lib.source.report as report
 use lib.source.span
 use lib.source.span.{Span}
 
@@ -99,9 +100,6 @@ pub type AnalysisState = .{
   canonical_roots: imports.CanonicalRoots,
   exports: Dict<String, ModuleExports>,
   interfaces: Dict<String, ModuleInterface>,
-  // Canonical paths whose analysis already failed. Memoizing failures (not just
-  // successes via `exports`) keeps a single broken module from forcing
-  // exponential re-analysis along every path that reaches it in a large graph.
   failed: Dict<String, Bool>,
   shared_types: Vector<SharedTypeEntry>,
   shared_type_origins: Dict<Int, String>,
@@ -271,7 +269,12 @@ fn analyze_module_impl(
   loaded := case load_source(state, canonical, module_id, caller_id, use_span) {
     .Ok(value) => value,
     .Err(err) => {
-      return .{ env: base, state: mark_failed(err.state, canonical), diagnostics: err.diagnostics, ok: false }
+      return .{
+        env: base,
+        state: mark_failed(err.state, canonical),
+        diagnostics: err.diagnostics,
+        ok: false,
+      }
     },
   }
 
@@ -283,7 +286,12 @@ fn analyze_module_impl(
   parsed_load := case parse_cached(loaded.state, canonical, loaded.source, loaded.source_hash) {
     .Ok(value) => value,
     .Err(err) => {
-      return .{ env: base, state: mark_failed(err.state, canonical), diagnostics: err.diagnostics, ok: false }
+      return .{
+        env: base,
+        state: mark_failed(err.state, canonical),
+        diagnostics: err.diagnostics,
+        ok: false,
+      }
     },
   }
 
@@ -300,7 +308,12 @@ fn analyze_module_impl(
   ) {
     .Ok(plan) => plan,
     .Err(err) => {
-      return .{ env: base, state: mark_failed(err.state, canonical), diagnostics: err.diagnostics, ok: false }
+      return .{
+        env: base,
+        state: mark_failed(err.state, canonical),
+        diagnostics: err.diagnostics,
+        ok: false,
+      }
     },
   }
 
@@ -318,7 +331,12 @@ fn analyze_module_impl(
   )
 
   if !deps.ok {
-    return .{ env: deps.env, state: mark_failed(deps.state, canonical), diagnostics: deps.diagnostics, ok: false }
+    return .{
+      env: deps.env,
+      state: mark_failed(deps.state, canonical),
+      diagnostics: deps.diagnostics,
+      ok: false,
+    }
   }
 
   cur := deps.state
@@ -355,7 +373,12 @@ fn analyze_module_impl(
   ) {
     .Ok(value) => value,
     .Err(err) => {
-      return .{ env, state: mark_failed(err.state, canonical), diagnostics: err.diagnostics, ok: false }
+      return .{
+        env,
+        state: mark_failed(err.state, canonical),
+        diagnostics: err.diagnostics,
+        ok: false,
+      }
     },
   }
   t_publish0 := date.now()
@@ -969,23 +992,52 @@ fn synthetic_diag(
   .{ identity: id, version, kind, stage, data: .None, type_names: empty_type_names() }
 }
 
+/// Serialize structured fixes into the uniform `data.fixes` JSON the LSP
+/// code-action builder consumes. Returns `.None` when there are no fixes.
+pub fn fixes_to_json(fixes: Vector<report.SuggestedFix>) json.Json? {
+  if fixes.len() == 0 {
+    return .None
+  }
+
+  fix_objs := collect fix in fixes {
+    edit_objs := collect e in fix.edits {
+      json.object([
+        json.kv("start", .Int(e.start)),
+        json.kv("end", .Int(e.end)),
+        json.kv("replacement", .Str(e.replacement)),
+      ])
+    }
+    json.object([json.kv("title", .Str(fix.title)), json.kv("edits", json.array(edit_objs))])
+  }
+
+  .Some(json.object([json.kv("fixes", json.array(fix_objs))]))
+}
+
 fn convert_unused_import_diags(
   source: overlay.SourceText,
   result: unused_imports.UnusedImportResult,
 ) Vector<AnalysisDiag> {
   collect item in result.items {
-    data := json.object([
-      json.kv("kind", .Str("unused_import")),
-      json.kv("use_start", .Int(item.edit.use_span.start)),
-      json.kv("use_end", .Int(item.edit.use_span.end)),
-      json.kv("replacement", .Str(item.edit.replacement)),
-    ])
+    binding := case item.kind {
+      .Warning(.UnusedImport(d)) => d.binding,
+      _ => "import",
+    }
+    fix := report.SuggestedFix.{
+      title: "remove unused import `${binding}`",
+      edits: [
+        report.FixEdit.{
+          start: item.edit.use_span.start,
+          end: item.edit.use_span.end,
+          replacement: item.edit.replacement,
+        },
+      ],
+    }
     AnalysisDiag.{
       identity: source.identity,
       version: source.version,
       kind: item.kind,
       stage: "import",
-      data: .Some(data),
+      data: fixes_to_json([fix]),
       type_names: empty_type_names(),
     }
   }
@@ -1003,7 +1055,7 @@ fn wrap_diags(
       version: source.version,
       kind: d,
       stage,
-      data: .None,
+      data: fixes_to_json(diag.fixes(d)),
       type_names,
     }
   }

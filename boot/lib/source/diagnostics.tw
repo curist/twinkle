@@ -7,6 +7,7 @@
 use compiler.mono_type.{MonoType, ty_to_string}
 
 use .registry
+use .report.{FixEdit, SuggestedFix}
 use .span.{Span}
 
 // ── Severity ─────────────────────────────────────────────────────────
@@ -28,12 +29,9 @@ pub type ErrorDiag = {
   UndefinedType(.{ span: Span, name: String }),
   WrongArity(.{ span: Span, expected: Int, found: Int }),
   TypeArityMismatch(.{ span: Span, name: String, expected: Int, found: Int }),
-  MissingVariants(.{
-    span: Span,
-    scrutinee_ty: MonoType,
-    missing: Vector<MissingVariant>,
-    insert_at: Int,
-  }),
+  MissingVariants(
+    .{ span: Span, scrutinee_ty: MonoType, missing: Vector<MissingVariant>, insert_at: Int },
+  ),
   DuplicateField(.{ span: Span, name: String, first: Span }),
   InfiniteType(.{ span: Span }),
   NoField(.{ span: Span, name: String, ty: MonoType }),
@@ -186,9 +184,9 @@ pub fn message(kind: DiagKind) String {
       .UndefinedType(d) => "undefined type: ${d.name}",
       .WrongArity(d) => "expected ${d.expected} arguments, got ${d.found}",
       .TypeArityMismatch(d) => "${d.name} expects ${d.expected} type argument(s), got ${d.found}",
-      .MissingVariants(d) => "non-exhaustive match on `${ty_to_string(d.scrutinee_ty)}`, missing: ${d.missing.map(
-        fn(v) { v.name },
-      ).join(", ")}",
+      .MissingVariants(d) => "non-exhaustive match on `${ty_to_string(d.scrutinee_ty)}`, missing: ${d.missing
+        .map(fn(v) { v.name })
+        .join(", ")}",
       .DuplicateField(d) => "duplicate field: ${d.name}",
       .InfiniteType(_) => "infinite type (occurs check)",
       .NoField(d) => "no field `${d.name}` on type ${ty_to_string(d.ty)}",
@@ -261,6 +259,63 @@ pub fn help_lines(kind: DiagKind) Vector<String> {
     },
     .Warning(_) => [],
   }
+}
+
+/// Render a single case arm with placeholder bindings for its payload.
+/// Arity 0 → `  .Foo => {},`; arity N → `  .Bar(value0, value1) => {},`.
+/// Fixed 2-space indent; `twk fmt` normalizes afterward.
+pub fn missing_arm_text(name: String, arity: Int) String {
+  binders := collect i in range(arity) {
+    "value${i.to_string()}"
+  }
+  payload := if arity == 0 {
+    ""
+  } else {
+    "(${binders.join(", ")})"
+  }
+  "  .${name}${payload} => {},\n"
+}
+
+/// Structured, machine-applicable fixes for a diagnostic. Pure projection of the
+/// payload — the single source of truth consumed by both the terminal renderer
+/// (via fix_preview_lines) and the LSP data channel (via serialization).
+pub fn fixes(kind: DiagKind) Vector<SuggestedFix> {
+  case kind {
+    .Error(e) => case e {
+      .MissingVariants(d) => {
+        arms := collect v in d.missing {
+          missing_arm_text(v.name, v.arity)
+        }
+        replacement := arms.join("")
+        [
+          SuggestedFix.{
+            title: "add missing arms",
+            edits: [FixEdit.{ start: d.insert_at, end: d.insert_at, replacement }],
+          },
+        ]
+      },
+      _ => [],
+    },
+    .Warning(_) => [],
+  }
+}
+
+/// Human-readable preview lines for a fix, for terminal `= help:` rendering.
+/// Title line followed by each replacement line (trailing newline trimmed).
+pub fn fix_preview_lines(fix: SuggestedFix) Vector<String> {
+  lines: Vector<String> = [fix.title.concat(":")]
+
+  for edit in fix.edits {
+    for piece in edit.replacement.split("\n") {
+      trimmed := piece.trim()
+
+      if trimmed != "" {
+        lines = .append("    ${trimmed}")
+      }
+    }
+  }
+
+  lines
 }
 
 pub fn format_diagnostics(reg: registry.FileRegistry, diags: Vector<DiagKind>) String {

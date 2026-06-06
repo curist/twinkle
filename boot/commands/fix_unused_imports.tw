@@ -24,26 +24,36 @@ pub fn collect_fixes(diagnostics: Vector<analyze.AnalysisDiag>) Dict<String, Vec
   edits_by_file: Dict<String, Vector<ImportFix>> = Dict.new()
 
   for d in diagnostics {
-    case d.data {
-      .Some(data) => {
-        kind := case json.decode(data, json.field("kind", json.string())) {
-          .Ok(k) => k,
-          .Err(_) => { continue },
-        }
+    case d.kind {
+      .Warning(.UnusedImport(_)) => {},
+      _ => { continue },
+    }
 
-        if kind != "unused_import" {
-          continue
-        }
+    data := case d.data {
+      .Some(value) => value,
+      .None => { continue },
+    }
+    fixes := case json.decode(data, json.field("fixes", json.list(json.raw()))) {
+      .Ok(value) => value,
+      .Err(_) => { continue },
+    }
 
-        use_start := case json.decode(data, json.field("use_start", json.int())) {
+    for fix_obj in fixes {
+      edits := case json.decode(fix_obj, json.field("edits", json.list(json.raw()))) {
+        .Ok(value) => value,
+        .Err(_) => { continue },
+      }
+
+      for edit in edits {
+        use_start := case json.decode(edit, json.field("start", json.int())) {
           .Ok(s) => s,
           .Err(_) => { continue },
         }
-        use_end := case json.decode(data, json.field("use_end", json.int())) {
+        use_end := case json.decode(edit, json.field("end", json.int())) {
           .Ok(e) => e,
           .Err(_) => { continue },
         }
-        replacement := case json.decode(data, json.field("replacement", json.string())) {
+        replacement := case json.decode(edit, json.field("replacement", json.string())) {
           .Ok(r) => r,
           .Err(_) => { continue },
         }
@@ -68,8 +78,7 @@ pub fn collect_fixes(diagnostics: Vector<analyze.AnalysisDiag>) Dict<String, Vec
           },
           .None => edits_by_file[file_path] = [fix],
         }
-      },
-      .None => {},
+      }
     }
   }
 

@@ -458,9 +458,10 @@ pub fn suite() runner.Suite {
 
             case d.data {
               .Some(data) => {
-                kind := try json.decode(data, json.field("kind", json.string()))
-                try assert.equal(kind, "unused_import")
-                replacement := try json.decode(data, json.field("replacement", json.string()))
+                fixes := try json.decode(data, json.field("fixes", json.list(json.raw())))
+                try assert.equal(fixes.len(), 1)
+                edits := try json.decode(fixes[0], json.field("edits", json.list(json.raw())))
+                replacement := try json.decode(edits[0], json.field("replacement", json.string()))
                 try assert.str_contains(replacement, "used_fn")
               },
               .None => { return .Err("expected data on unused import diagnostic") },

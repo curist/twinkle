@@ -463,11 +463,7 @@ fn handle_code_action(state: State, req: protocol.Request) Step {
     .Some(d) => d,
     .None => { return empty_array_response_step(state, req) },
   }
-  actions := lsp_code_action.unused_import_actions(
-    doc.uri,
-    doc.index,
-    action_params.context_diagnostics,
-  )
+  actions := lsp_code_action.fix_actions(doc.uri, doc.index, action_params.context_diagnostics)
   .{ state, outgoing: [protocol.success_response(req.id, json.array(actions))] }
 }
 

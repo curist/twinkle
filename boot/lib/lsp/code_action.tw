@@ -28,81 +28,58 @@ pub fn code_action(title: String, kind: String, edit: json.Json, diagnostics: Ve
   ])
 }
 
-/// Build code actions from unused import diagnostics in a codeAction request.
-///
-/// Each diagnostic with `data.kind == "unused_import"` produces a quickfix action.
-/// Diagnostics sharing the same use_span are deduped into a single edit.
-/// When multiple actions exist, a bulk "Remove all unused imports" is appended.
-pub fn unused_import_actions(
-  uri: String,
-  index: line_index.LineIndex,
-  context_diagnostics: Vector<json.Json>,
-) Vector<json.Json> {
+/// Build quickfix code actions from any diagnostic carrying a `data.fixes`
+/// payload (the uniform shape produced by analyze.fixes_to_json). Each fix
+/// becomes one CodeAction whose WorkspaceEdit applies all of the fix's edits.
+pub fn fix_actions(uri: String, index: line_index.LineIndex, context_diagnostics: Vector<json.Json>) Vector<
+  json.Json,
+> {
   actions: Vector<json.Json> = []
-
-  // Track use_spans we've already seen for dedup
-  seen_spans: Dict<String, Bool> = Dict.new()
-
-  // Collect all edits for the bulk action
-  bulk_edits: Vector<json.Json> = []
-  bulk_diags: Vector<json.Json> = []
 
   for diag in context_diagnostics {
     data := case json.decode(diag, json.field("data", json.raw())) {
       .Ok(d) => d,
       .Err(_) => { continue },
     }
-    kind := case json.decode(data, json.field("kind", json.string())) {
-      .Ok(k) => k,
+    fixes := case json.decode(data, json.field("fixes", json.list(json.raw()))) {
+      .Ok(fs) => fs,
       .Err(_) => { continue },
     }
 
-    if kind != "unused_import" {
-      continue
-    }
-
-    use_start := case json.decode(data, json.field("use_start", json.int())) {
-      .Ok(s) => s,
-      .Err(_) => { continue },
-    }
-    use_end := case json.decode(data, json.field("use_end", json.int())) {
-      .Ok(e) => e,
-      .Err(_) => { continue },
-    }
-    replacement := case json.decode(data, json.field("replacement", json.string())) {
-      .Ok(r) => r,
-      .Err(_) => { continue },
-    }
-    message := case json.decode(diag, json.field("message", json.string())) {
-      .Ok(m) => m,
-      .Err(_) => "Remove unused import",
-    }
-    span_key := "${use_start}:${use_end}"
-
-    if !seen_spans.has(span_key) {
-      seen_spans[span_key] = true
-      range := byte_range_to_lsp_range(index, use_start, use_end)
-      edit_json := text_edit(range, replacement)
-      ws_edit := workspace_edit(uri, [edit_json])
-
-      // Strip the "unused import: " prefix to get the bare name for the title
-      import_name := if message.starts_with("unused import: ") {
-        message.substring(15, message.len())
-      } else {
-        message
+    for fix in fixes {
+      title := case json.decode(fix, json.field("title", json.string())) {
+        .Ok(t) => t,
+        .Err(_) => "apply fix",
       }
-      action := code_action("Remove unused import '${import_name}'", "quickfix", ws_edit, [diag])
-      actions = .append(action)
-      bulk_edits = .append(edit_json)
-      bulk_diags = .append(diag)
-    }
-  }
+      edit_objs := case json.decode(fix, json.field("edits", json.list(json.raw()))) {
+        .Ok(es) => es,
+        .Err(_) => { continue },
+      }
 
-  // Bulk action when more than one
-  if actions.len() > 1 {
-    bulk_ws_edit := workspace_edit(uri, bulk_edits)
-    bulk := code_action("Remove all unused imports", "quickfix", bulk_ws_edit, bulk_diags)
-    actions = .append(bulk)
+      text_edits: Vector<json.Json> = []
+
+      for e in edit_objs {
+        start := case json.decode(e, json.field("start", json.int())) {
+          .Ok(v) => v,
+          .Err(_) => { continue },
+        }
+        end := case json.decode(e, json.field("end", json.int())) {
+          .Ok(v) => v,
+          .Err(_) => { continue },
+        }
+        replacement := case json.decode(e, json.field("replacement", json.string())) {
+          .Ok(v) => v,
+          .Err(_) => { continue },
+        }
+        range := byte_range_to_lsp_range(index, start, end)
+        text_edits = .append(text_edit(range, replacement))
+      }
+
+      if text_edits.len() > 0 {
+        ws_edit := workspace_edit(uri, text_edits)
+        actions = .append(code_action(title, "quickfix", ws_edit, [diag]))
+      }
+    }
   }
 
   actions

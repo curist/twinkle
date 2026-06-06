@@ -614,12 +614,26 @@ pub fn suite() runner.Suite {
           last_published_versions: Dict.new(),
         }
 
-        // Build a codeAction request with a diagnostic carrying edit data
+        // Build a codeAction request with a diagnostic carrying fix data
         diag_data := json.object([
-          json.kv("kind", .Str("unused_import")),
-          json.kv("use_start", .Int(0)),
-          json.kv("use_end", .Int(15)),
-          json.kv("replacement", .Str("use foo.{A}\n")),
+          json.kv(
+            "fixes",
+            json.array([
+              json.object([
+                json.kv("title", .Str("remove unused import `B`")),
+                json.kv(
+                  "edits",
+                  json.array([
+                    json.object([
+                      json.kv("start", .Int(0)),
+                      json.kv("end", .Int(15)),
+                      json.kv("replacement", .Str("use foo.{A}\n")),
+                    ]),
+                  ]),
+                ),
+              ]),
+            ]),
+          ),
         ])
         diag_json := json.object([
           json.kv(
@@ -673,7 +687,7 @@ pub fn suite() runner.Suite {
         try assert.equal(try json.decode(action, json.field("kind", json.string())), "quickfix")
         try assert.equal(
           try json.decode(action, json.field("title", json.string())),
-          "Remove unused import 'B'",
+          "remove unused import `B`",
         )
 
         // Should have a workspace edit
@@ -757,15 +771,15 @@ pub fn suite() runner.Suite {
           if msg_str.contains("unused_fn") {
             found_unused = true
 
-            // Should have data with unused_import kind
+            // Should have data with a uniform fix payload.
             data := try json.decode(item, json.field("data", json.raw()))
-            try assert.equal(
-              try json.decode(data, json.field("kind", json.string())),
-              "unused_import",
-            )
+            fixes := try json.decode(data, json.field("fixes", json.list(json.raw())))
+            fix := fixes[0]
+            edits := try json.decode(fix, json.field("edits", json.list(json.raw())))
+            edit := edits[0]
 
             // Should have replacement that keeps only used_fn
-            replacement := try json.decode(data, json.field("replacement", json.string()))
+            replacement := try json.decode(edit, json.field("replacement", json.string()))
             try assert.str_contains(replacement, "used_fn")
             try assert.is_false(replacement.contains("unused_fn"))
           }

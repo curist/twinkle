@@ -11,6 +11,7 @@
 use compiler.ast.{Module}
 use compiler.mono_type.{MonoType, ty_to_string}
 use compiler.resolver.{ResolvedEnv}
+use lib.source.diagnostics as diag
 use lib.source.diagnostics.{DiagKind, ErrorDiag, WarningDiag}
 use lib.source.registry.{FileRegistry}
 use lib.source.report.{RenderConfig, Report, SpanLabel}
@@ -108,11 +109,21 @@ fn error_to_report(e: ErrorDiag, ctx: RenderCtx) Report {
       labels: [primary(d.span, .None)],
       help_lines: [],
     },
-    .MissingVariants(d) => .{
-      severity: .Error,
-      title: "non-exhaustive match on `${fmt_ty(d.scrutinee_ty, ctx)}`",
-      labels: [primary(d.span, .Some("missing variants"))],
-      help_lines: ["add arm(s): ${d.missing.map(fn(v) { v.name }).join(", ")}"],
+    .MissingVariants(d) => {
+      help: Vector<String> = []
+
+      for fix in diag.fixes(.Error(.MissingVariants(d))) {
+        for line in diag.fix_preview_lines(fix) {
+          help = .append(line)
+        }
+      }
+
+      .{
+        severity: .Error,
+        title: "non-exhaustive match on `${fmt_ty(d.scrutinee_ty, ctx)}`",
+        labels: [primary(d.span, .Some("missing variants"))],
+        help_lines: help,
+      }
     },
     .DuplicateField(d) => .{
       severity: .Error,

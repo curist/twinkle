@@ -141,9 +141,29 @@ pub fn suite() runner.Suite {
           .None => { return assert.fail("expected label") },
         }
 
-        try assert.equal(r.help_lines.len(), 1)
-        try assert.is_true(r.help_lines[0].contains("True"))
-        try assert.is_true(r.help_lines[0].contains("False"))
+        try assert.equal(r.help_lines.len(), 3)
+        try assert.is_true(r.help_lines[1].contains("True"))
+        try assert.is_true(r.help_lines[2].contains("False"))
+        .Ok({})
+      },
+    )
+    .test(
+      "MissingVariants: help lines include the fix preview arms",
+      fn() {
+        kind := DiagKind.Error(
+          .MissingVariants(
+            .{
+              span: s(0, 30),
+              scrutinee_ty: MonoType.Int,
+              missing: [.{ name: "Circle", arity: 1 }, .{ name: "UnitSquare", arity: 0 }],
+              insert_at: 29,
+            },
+          ),
+        )
+        r := diag_render.to_report(kind, ctx())
+        try assert.equal(r.help_lines[0], "add missing arms:")
+        try assert.equal(r.help_lines[1], "    .Circle(value0) => {},")
+        try assert.equal(r.help_lines[2], "    .UnitSquare => {},")
         .Ok({})
       },
     )
