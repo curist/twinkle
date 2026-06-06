@@ -4,7 +4,8 @@
 [![npm](https://img.shields.io/npm/v/%40twinkle-lang%2Ftwinkle)](https://www.npmjs.com/package/@twinkle-lang/twinkle)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 
-Twinkle is a small, statically typed programming language that compiles to WebAssembly GC.
+Twinkle is a statically typed programming language with a simple, value-oriented core and a small WebAssembly GC runtime.
+
 It is designed around immutable data, persistent collections, top-level executable code, and a self-hosted compiler written in Twinkle itself.
 
 **Try it:** [Twinkle Playground](https://curist.github.io/twinkle/)
