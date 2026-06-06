@@ -67,6 +67,24 @@ function loadBootWasm() {
   }
 }
 
+function loadPackageVersion() {
+  const override = Deno.env.get("TWK_VERSION");
+  if (override) return override;
+  try {
+    const pkg = JSON.parse(readFileSync(`${import.meta.dirname}/../../target/deno-assets/package.json`, "utf8"));
+    if (typeof pkg.version === "string") return pkg.version;
+  } catch (_) {
+    // Not running from the Deno standalone asset layout.
+  }
+  try {
+    const pkg = JSON.parse(readFileSync(`${rootDir}/tools/npm/package.json`, "utf8"));
+    if (typeof pkg.version === "string") return pkg.version;
+  } catch (_) {
+    // Development fallback failed; let the compiler report "dev".
+  }
+  return undefined;
+}
+
 function loadBridgeWasm() {
   const override = Deno.env.get("BRIDGE_WASM");
   if (override) return readFileSync(resolve(override));
@@ -88,11 +106,15 @@ function loadBridgeWasm() {
 async function main() {
   const bootOverride = Deno.env.get("BOOT_WASM");
   const bridgeBytes = loadBridgeWasm();
+  const env = Deno.env.toObject();
+  const version = loadPackageVersion();
+  if (version !== undefined) env.TWK_VERSION = version;
+
   const exitCode = await runWasmBytesAsync(loadBootWasm(), {
     programPath: bootOverride ? resolve(bootOverride) : "twk.wasm",
     guestArgs: Deno.args,
     cwd: Deno.cwd(),
-    env: Deno.env.toObject(),
+    env,
     stdout: denoStream(Deno.stdout),
     stderr: denoStream(Deno.stderr),
     bridgeBytes,

@@ -58,6 +58,23 @@ function loadBootWasm() {
   }
 }
 
+function loadPackageVersion() {
+  if (process.env.TWK_VERSION) return process.env.TWK_VERSION;
+  try {
+    const pkg = JSON.parse(readFileSync(`${here}/package.json`, "utf8"));
+    if (typeof pkg.version === "string") return pkg.version;
+  } catch (_) {
+    // Not running from the packaged npm layout.
+  }
+  try {
+    const pkg = JSON.parse(readFileSync(`${here}/../npm/package.json`, "utf8"));
+    if (typeof pkg.version === "string") return pkg.version;
+  } catch (_) {
+    // Development fallback failed; let the compiler report "dev".
+  }
+  return undefined;
+}
+
 function loadBridgeWasm() {
   const override = process.env.BRIDGE_WASM;
   if (override) return readFileSync(resolve(override));
@@ -75,11 +92,15 @@ function loadBridgeWasm() {
 
 async function main() {
   const bootOverride = process.env.BOOT_WASM;
+  const env = { ...process.env };
+  const version = loadPackageVersion();
+  if (version !== undefined) env.TWK_VERSION = version;
+
   const exitCode = await runWasmBytesAsync(loadBootWasm(), {
     programPath: bootOverride ? resolve(bootOverride) : "twk.wasm",
     guestArgs: process.argv.slice(2),
     cwd: process.cwd(),
-    env: process.env,
+    env,
     stdout: nodeStream(1),
     stderr: nodeStream(2),
     bridgeBytes: loadBridgeWasm(),

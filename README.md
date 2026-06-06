@@ -116,10 +116,8 @@ To run a one-off without installing, invoke it through `npx` by naming the
 npx @twinkle-lang/twinkle run program.tw
 ```
 
-Full command list:
-
 ```text
-❯ twk --help
+❯ twk
 twk - Twinkle compiler
 
 Usage: twk <command> [options]
@@ -132,6 +130,8 @@ Commands:
   parse               Parse source and print diagnostics
   fmt                 Format source
   lsp                 Start the Language Server Protocol server
+  version             Print Twinkle compiler version
+  help                Print help information
 
 Run 'twk <command> --help' for more information.
 ```
