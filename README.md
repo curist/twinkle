@@ -4,27 +4,25 @@
 [![npm](https://img.shields.io/npm/v/%40twinkle-lang%2Ftwinkle)](https://www.npmjs.com/package/@twinkle-lang/twinkle)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 
-Twinkle is a statically typed programming language with a simple, value-oriented core and a small Wasm GC runtime.
+Twinkle is a statically typed, value-oriented language targeting Wasm GC.
 
-It is designed around immutable data, persistent collections, top-level executable code, and a self-hosted compiler written in Twinkle itself.
+It is for writing direct, typed programs without making mutation the default:
+values are immutable, errors are explicit, pattern matching is exhaustive, and
+collections are persistent; everyday code still uses loops, rebinding, early
+returns, and method-style calls.
+
+Twinkle supports top-level executable code and has a self-hosted compiler written
+in Twinkle itself.
 
 **Try it:** [Twinkle Playground](https://curist.github.io/twinkle/)
 
-## Why Twinkle?
-
-Twinkle is for writing direct, typed programs without making mutation the default.
-
-Values are immutable, errors are explicit, pattern matching is exhaustive, and
-collections are persistent — while everyday code still uses loops, rebinding,
-early returns, and method-style calls.
-
 ## Highlights
 
-- **Immutable values.** Rebinding and update syntax keep transformations direct without mutation.
-- **Records and enums.** Nominal records, exhaustive pattern matching, and generics form the core data model.
-- **Persistent collections.** `Vector` and `Dict` are ordinary values with ergonomic update and method syntax.
-- **Typed control flow.** `Option`, `Result`, `try`, loops, early returns, and `case` expressions work together.
-- **Module-defined APIs.** Functions can be called as methods, and contracts support interpolation, equality, and ordering.
+- **Immutable values:** Rebinding and update syntax keep transformations direct without mutation.
+- **Records and enums:** Nominal records, exhaustive pattern matching, and generics form the core data model.
+- **Persistent collections:** `Vector` and `Dict` are ordinary values with ergonomic update and method syntax.
+- **Typed control flow:** `Option`, `Result`, `try`, loops, early returns, and `case` expressions work together.
+- **Module-defined APIs:** Functions can be called as methods, and contracts support interpolation, equality, and ordering.
 
 ## Quick Example
 
@@ -70,12 +68,12 @@ case complete_named(todos, "build") {
 
 ## Documentation
 
-- **[Language Specification](docs/spec.md)** — complete language reference
-- **[API Reference](docs/API.md)** — built-in and standard-library APIs
-- **[Contracts Reference](docs/contracts.md)** — `Stringify`, `Eq`, and `Ord`
-- **[Contract Design Notes](docs/design/contracts.md)** — rationale and design details
-- **[Grammar](docs/grammar.ebnf)** — formal EBNF grammar
-- **[Examples](examples/)** — sample Twinkle programs
+- **[Language Specification](docs/spec.md):** complete language reference
+- **[API Reference](docs/API.md):** built-in and standard-library APIs
+- **[Contracts Reference](docs/contracts.md):** `Stringify`, `Eq`, and `Ord`
+- **[Contract Design Notes](docs/design/contracts.md):** rationale and design details
+- **[Grammar](docs/grammar.ebnf):** formal EBNF grammar
+- **[Examples](examples/):** sample Twinkle programs
 
 ## Install from npm
 
