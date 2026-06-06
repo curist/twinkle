@@ -829,14 +829,9 @@ fn prove_contract_method(
       .Int => MonoType.Int,
       .Elem => elem_ty,
     }
-    recv_ctx = case silent_unify(recv_ctx, expected_arg, inst.params[param_idx]) {
-      .Some(next_ctx) => next_ctx,
-      .None => {
-        return .Err(
-          "${req.method_name} parameter ${param_idx} does not match ${ctx.env.ty_to_string_env(ty)}",
-        )
-      },
-    }
+    recv_ctx = try silent_unify(recv_ctx, expected_arg, inst.params[param_idx]).ok_or(
+      "${req.method_name} parameter ${param_idx} does not match ${ctx.env.ty_to_string_env(ty)}",
+    )
   }
 
   ret_ty := zonk(inst.ret, recv_ctx.subst)
@@ -844,16 +839,11 @@ fn prove_contract_method(
 
   // Unify (not compare) so an `Elem`/`Receiver` return binds against the
   // satisfier's actual return type; for concrete shapes this is an equality check.
-  recv_ctx = case silent_unify(recv_ctx, expected_ret, ret_ty) {
-    .Some(next_ctx) => next_ctx,
-    .None => {
-      return .Err(
-        "${req.method_name} returns ${recv_ctx.env.ty_to_string_env(ret_ty)}, expected ${recv_ctx.env.ty_to_string_env(
-          expected_ret,
-        )}",
-      )
-    },
-  }
+  recv_ctx = try silent_unify(recv_ctx, expected_ret, ret_ty).ok_or(
+    "${req.method_name} returns ${recv_ctx.env.ty_to_string_env(ret_ty)}, expected ${recv_ctx.env.ty_to_string_env(
+      expected_ret,
+    )}",
+  )
 
   cur_ctx := recv_ctx
 
