@@ -1,6 +1,11 @@
 # Playground consumes published npm packages
 
-**Status:** Design approved, pending implementation plan
+**Status:** Implemented & shipped (archived 2026-06-06). `@twinkle-lang/twinkle@0.3.0`
+and `tree-sitter-twinkle@0.1.0` are published; the playground consumes them, and
+the GitHub Pages deploy builds from the published packages. One deviation from
+the plan below: `make playground` (and the deploy) builds from the published
+packages while `make playground-dev` uses the in-repo compiler via
+`TWINKLE_LOCAL=1`, rather than published-by-default with a dev-only override.
 **Date:** 2026-06-06
 
 ## Goal
