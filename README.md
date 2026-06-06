@@ -69,6 +69,19 @@ case complete_named(todos, "build") {
 - **[Grammar](docs/grammar.ebnf)** — formal EBNF grammar
 - **[Examples](examples/)** — sample Twinkle programs
 
+## Install from npm
+
+Twinkle ships on npm as [`@twinkle-lang/twinkle`](https://www.npmjs.com/package/@twinkle-lang/twinkle),
+providing both the `twk` CLI and an embeddable compile/run library:
+
+```bash
+npm install -g @twinkle-lang/twinkle   # CLI
+npm install @twinkle-lang/twinkle      # library
+```
+
+See [docs/js-embedding.md](docs/js-embedding.md) for CLI usage and the
+JavaScript embedding/extern-wiring guide.
+
 ## Building
 
 The compiler self-hosts. A Rust stage0 compiler bootstraps the Twinkle boot compiler, then the boot compiler rebuilds itself to a fixed point. Building the standalone CLI uses `deno compile`.
