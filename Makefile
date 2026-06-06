@@ -1,4 +1,4 @@
-.PHONY: help test boot-test rust-test stage0 stage2 bundle-cli quick-bundle-cli cli playground playground-dev playground-wasm fmt bench bench-guard clean npm-pack npm-publish npm-test
+.PHONY: help test boot-test rust-test stage0 stage2 bundle-cli quick-bundle-cli cli playground playground-dev fmt bench bench-guard clean npm-pack npm-publish npm-test
 
 STAGE1_WASM ?= target/boot-stage1.wasm
 STAGE2_WASM ?= target/boot.wasm
@@ -24,9 +24,8 @@ help:
 	@printf '  make fmt               Format boot compiler .tw source files\n'
 	@printf '  make bench             Run the Vector benchmark suite (boot/bench/)\n'
 	@printf '  make bench-guard       Check vector scaling/bulk-copy guards\n'
-	@printf '  make playground        Build playground (all deps + vite build)\n'
-	@printf '  make playground-dev    Start playground dev server (all deps + vite dev)\n'
-	@printf '  make playground-wasm   Build target/playground.wasm (slim compiler for browser)\n'
+	@printf '  make playground        Build playground (vite build against in-repo artifacts)\n'
+	@printf '  make playground-dev    Start playground dev server (vite dev)\n'
 
 # Fast day-to-day validation for boot compiler changes.
 boot-test: target/twk
@@ -97,16 +96,12 @@ quick-bundle-cli:
 # ---------------------------------------------------------------------------
 # Playground
 # ---------------------------------------------------------------------------
-
-# Slim compiler wasm for the browser playground (excludes LSP, IR debug, etc.)
-PLAYGROUND_WASM ?= target/playground.wasm
-PLAYGROUND_ENTRY := boot/playground.tw
-
-target/playground.wasm: $(STAGE2_WASM) $(PLAYGROUND_ENTRY)
-	@printf '\n==> Build playground.wasm (slim compiler for browser)\n'
-	BOOT_WASM=$(STAGE2_WASM) $(TWK_CLI) build $(PLAYGROUND_ENTRY) -o $(PLAYGROUND_WASM)
-
-playground-wasm: target/playground.wasm
+#
+# The playground is a plain Vite app that consumes the published packages
+# (@twinkle-lang/twinkle for the compiler runtime + boot.wasm/bridge.wasm, and
+# tree-sitter-twinkle for the grammar wasm + highlight query). The in-repo build
+# below sets TWINKLE_LOCAL=1 so Vite resolves those specifiers to current build
+# artifacts instead of node_modules — no asset copying, no slim playground.wasm.
 
 # Tree-sitter grammar wasm (rebuild when grammar.js changes)
 tree-sitter-twinkle/tree-sitter-twinkle.wasm: tree-sitter-twinkle/grammar.js
@@ -116,13 +111,13 @@ tree-sitter-twinkle/tree-sitter-twinkle.wasm: tree-sitter-twinkle/grammar.js
 playground/node_modules: playground/package.json playground/package-lock.json
 	cd playground && npm ci && touch node_modules
 
-# Copy all artifacts into playground/public/, then run vite build
-playground: target/playground.wasm tools/bridge.wasm tree-sitter-twinkle/tree-sitter-twinkle.wasm playground/node_modules
-	cd playground && node scripts/copy-assets.mjs && npx vite build
+PLAYGROUND_DEPS := $(STAGE2_WASM) tools/bridge.wasm tools/js_runtime/runtime.mjs tree-sitter-twinkle/tree-sitter-twinkle.wasm playground/node_modules
 
-# Copy artifacts and start the vite dev server
-playground-dev: target/playground.wasm tools/bridge.wasm tree-sitter-twinkle/tree-sitter-twinkle.wasm playground/node_modules
-	cd playground && node scripts/copy-assets.mjs && npx vite
+playground: $(PLAYGROUND_DEPS)
+	cd playground && TWINKLE_LOCAL=1 npx vite build
+
+playground-dev: $(PLAYGROUND_DEPS)
+	cd playground && TWINKLE_LOCAL=1 npx vite
 
 # Run the Vector benchmark suite (RRB Gate B baselines). See boot/bench/README.md.
 # Pass BENCH=<name> to run a single benchmark, e.g. `make bench BENCH=concat_prepend`.

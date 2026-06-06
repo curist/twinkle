@@ -4,9 +4,8 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "build": "node scripts/copy-assets.mjs && vite build",
-    "preview": "vite preview",
-    "copy-assets": "node scripts/copy-assets.mjs"
+    "build": "vite build",
+    "preview": "vite preview"
   },
   "dependencies": {
     "codejar": "^4.2.0",

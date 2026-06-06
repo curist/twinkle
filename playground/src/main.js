@@ -1,6 +1,8 @@
 import { CodeJar } from 'codejar'
 import { Parser, Language, Query } from 'web-tree-sitter'
-import highlightsScm from '../../tree-sitter-twinkle/queries/highlights.scm?raw'
+import highlightsScm from 'tree-sitter-twinkle/queries/highlights.scm?raw'
+import treeSitterWasmUrl from 'web-tree-sitter/tree-sitter.wasm?url'
+import grammarWasmUrl from 'tree-sitter-twinkle/tree-sitter-twinkle.wasm?url'
 
 // ---------------------------------------------------------------------------
 // Examples — fetched from ./examples/<name>.tw
@@ -101,8 +103,8 @@ function highlight(el) {
 }
 
 async function initTreeSitter() {
-  await Parser.init({ locateFile: () => './tree-sitter.wasm' })
-  const lang = await Language.load('./tree-sitter-twinkle.wasm')
+  await Parser.init({ locateFile: () => treeSitterWasmUrl })
+  const lang = await Language.load(grammarWasmUrl)
   tsParser = new Parser()
   tsParser.setLanguage(lang)
   tsQuery = new Query(lang, highlightsScm)
@@ -234,7 +236,7 @@ let workerReady = null
 let running = false
 
 function initWorker() {
-  worker = new Worker('./worker.js')
+  worker = new Worker(new URL('./worker.js', import.meta.url), { type: 'module' })
   workerReady = new Promise((resolve) => {
     function onReady(e) {
       if (e.data?.type === 'ready') {

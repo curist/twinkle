@@ -7,5 +7,4 @@ boot/lib/module/core_lib.tw
 playground/node_modules/
 playground/dist/
 playground/public/*
-!playground/public/worker.js
 !playground/public/examples/
