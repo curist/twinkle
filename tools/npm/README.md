@@ -1,8 +1,8 @@
 # @twinkle-lang/twinkle
 
-Twinkle is a statically typed language targeting WebAssembly GC. This package
-ships both the `twk` command-line compiler and an embeddable JS library for
-compiling and running Twinkle programs from Node.js.
+Twinkle is a statically typed, value-oriented language targeting Wasm GC. This
+package ships both the `twk` command-line compiler and an embeddable JS library
+for compiling and running Twinkle programs from Node.js.
 
 ## Install
 

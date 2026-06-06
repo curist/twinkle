@@ -4,7 +4,7 @@
 [![npm](https://img.shields.io/npm/v/%40twinkle-lang%2Ftwinkle)](https://www.npmjs.com/package/@twinkle-lang/twinkle)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 
-Twinkle is a statically typed programming language with a simple, value-oriented core and a small WebAssembly GC runtime.
+Twinkle is a statically typed programming language with a simple, value-oriented core and a small Wasm GC runtime.
 
 It is designed around immutable data, persistent collections, top-level executable code, and a self-hosted compiler written in Twinkle itself.
 
@@ -14,25 +14,17 @@ It is designed around immutable data, persistent collections, top-level executab
 
 Twinkle is for writing direct, typed programs without making mutation the default.
 
-Many languages make you choose: functional languages offer strong data modeling
-and explicit failure, but often come with unfamiliar control flow; imperative
-languages feel direct, but mutation and hidden failure can make code harder to
-reason about.
-
-Twinkle tries to keep the directness without giving up the guarantees. Values are
-immutable, errors are explicit, pattern matching is exhaustive, and collections
-are persistent — but ordinary code still uses loops, rebinding, early returns,
-and method-style calls.
+Values are immutable, errors are explicit, pattern matching is exhaustive, and
+collections are persistent — while everyday code still uses loops, rebinding,
+early returns, and method-style calls.
 
 ## Highlights
 
-Key language features:
-
-- **Values are immutable.** Rebinding syntax such as `todo = .complete()` and `updated = .append(todo)` creates new values while keeping transformation code direct.
-- **Records and enums are the core data model.** Records are nominal, enums pattern-match exhaustively, and both work naturally with generics.
-- **Persistent collections are ordinary values.** `Vector` and `Dict` use persistent-vector and HAMT-style structures, with update syntax and method calls for ergonomic transformations.
-- **Control flow is typed but familiar.** `Option`, `Result`, and `try` handle absence and recoverable errors; loops, early returns, and `case` expressions are part of everyday code.
-- **Modules define APIs.** Functions become method-style calls when their first parameter is a module-defined type, and contracts provide syntax hooks for interpolation, equality, and ordering.
+- **Immutable values.** Rebinding and update syntax keep transformations direct without mutation.
+- **Records and enums.** Nominal records, exhaustive pattern matching, and generics form the core data model.
+- **Persistent collections.** `Vector` and `Dict` are ordinary values with ergonomic update and method syntax.
+- **Typed control flow.** `Option`, `Result`, `try`, loops, early returns, and `case` expressions work together.
+- **Module-defined APIs.** Functions can be called as methods, and contracts support interpolation, equality, and ordering.
 
 ## Quick Example
 
