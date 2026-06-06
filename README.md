@@ -24,6 +24,16 @@ immutable, errors are explicit, pattern matching is exhaustive, and collections
 are persistent — but ordinary code still uses loops, rebinding, early returns,
 and method-style calls.
 
+## Highlights
+
+Functional ideas, imperative feel:
+
+- **Values are immutable.** Rebinding syntax such as `todo = .complete()` and `updated = .append(todo)` creates new values while keeping transformation code direct.
+- **Records and enums are the core data model.** Records are nominal, enums pattern-match exhaustively, and both work naturally with generics.
+- **Persistent collections are ordinary values.** `Vector` and `Dict` use persistent-vector and HAMT-style structures, with update syntax and method calls for ergonomic transformations.
+- **Control flow is typed but familiar.** `Option`, `Result`, and `try` handle absence and recoverable errors; loops, early returns, and `case` expressions are part of everyday code.
+- **Modules define APIs.** Functions become method-style calls when their first parameter is a module-defined type, and contracts provide syntax hooks for interpolation, equality, and ordering.
+
 ## Quick Example
 
 ```twinkle
