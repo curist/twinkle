@@ -124,7 +124,25 @@ const divider = document.getElementById('divider')
 // CodeJar replaces the div with a contenteditable code editor.
 // It calls highlight() after every change; Tab inserts two spaces.
 const jar = CodeJar(editorEl, highlight, { tab: '  ' })
-loadExample(examples.value).then(code => jar.updateCode(code))
+
+function selectedExampleFromUrl() {
+  const params = new URLSearchParams(window.location.search)
+  const requested = params.get('example')
+  if (!requested) return examples.value
+  return [...examples.options].some(option => option.value === requested)
+    ? requested
+    : examples.value
+}
+
+function updateExampleUrl(name) {
+  const url = new URL(window.location)
+  url.searchParams.set('example', name)
+  history.replaceState(null, '', url)
+}
+
+const initialExample = selectedExampleFromUrl()
+examples.value = initialExample
+loadExample(initialExample).then(code => jar.updateCode(code))
 
 // Sync line number scroll with editor
 editorEl.addEventListener('scroll', () => { lineNumbers.scrollTop = editorEl.scrollTop })
@@ -138,6 +156,7 @@ initTreeSitter().catch(e => console.warn('tree-sitter unavailable:', e.message))
 examples.addEventListener('change', async () => {
   if (running) stop()
   output.innerHTML = ''
+  updateExampleUrl(examples.value)
   const code = await loadExample(examples.value)
   if (code) jar.updateCode(code)
 })

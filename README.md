@@ -66,6 +66,8 @@ case complete_named(todos, "build") {
 }
 ```
 
+[Run it.](https://curist.github.io/twinkle/?example=todo)
+
 ## Documentation
 
 - **[Language Specification](docs/spec.md):** complete language reference
