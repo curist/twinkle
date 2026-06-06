@@ -4,15 +4,14 @@
 [![npm](https://img.shields.io/npm/v/%40twinkle-lang%2Ftwinkle)](https://www.npmjs.com/package/@twinkle-lang/twinkle)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 
-Twinkle is a small, statically typed programming language for value-oriented programs that compile to WebAssembly GC.
+Twinkle is a small, statically typed programming language that compiles to WebAssembly GC.
 It is designed around immutable data, persistent collections, top-level executable code, and a self-hosted compiler written in Twinkle itself.
 
 **Try it:** [Twinkle Playground](https://curist.github.io/twinkle/)
 
-## Why
+## Why Twinkle?
 
-Twinkle is a general-purpose language for writing direct, typed programs over
-immutable values.
+Twinkle is for writing direct, typed programs without making mutation the default.
 
 Many languages make you choose: functional languages offer strong data modeling
 and explicit failure, but often come with unfamiliar control flow; imperative
@@ -26,7 +25,7 @@ and method-style calls.
 
 ## Highlights
 
-Functional ideas, imperative feel:
+Key language features:
 
 - **Values are immutable.** Rebinding syntax such as `todo = .complete()` and `updated = .append(todo)` creates new values while keeping transformation code direct.
 - **Records and enums are the core data model.** Records are nominal, enums pattern-match exhaustively, and both work naturally with generics.
