@@ -6,7 +6,12 @@ import grammarWasmUrl from 'tree-sitter-twinkle/tree-sitter-twinkle.wasm?url'
 
 // __TWINKLE_COMPILER_VERSION__ is injected by vite.config (define); logging it on
 // load lets you confirm which @twinkle-lang/twinkle the deployed site is running.
-console.log(`Twinkle playground · compiler @twinkle-lang/twinkle@${__TWINKLE_COMPILER_VERSION__}`)
+console.log(
+  `%c✨ Twinkle%c playground %c@twinkle-lang/twinkle@${__TWINKLE_COMPILER_VERSION__} `,
+  'color:#0d1117;background:#d2a8ff;padding:3px 8px;border-radius:6px 0 0 6px;font-weight:700',
+  'color:#8b949e;background:#21262d;padding:3px 4px',
+  'color:#56d364;background:#21262d;padding:3px 8px;border-radius:0 6px 6px 0;font-weight:600',
+)
 
 // ---------------------------------------------------------------------------
 // Examples — fetched from ./examples/<name>.tw
