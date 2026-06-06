@@ -99,7 +99,6 @@ To run a one-off without installing, invoke it through `npx` by naming the
 
 ```bash
 npx @twinkle-lang/twinkle run program.tw
-# or, explicitly: npx --package=@twinkle-lang/twinkle twk run program.tw
 ```
 
 Full command list:
