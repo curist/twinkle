@@ -125,7 +125,6 @@ export async function run(wasmBytes, opts = {}) {
     bridgeBytes: loadBridgeWasm(),
     host: nodeHost,
     imports: opts.imports ?? {},
-    marshalSpec: opts.marshalSpec ?? {},
   });
 }
 

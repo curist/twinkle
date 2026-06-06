@@ -123,7 +123,11 @@ tree-sitter-twinkle/tree-sitter-twinkle.wasm: tree-sitter-twinkle/grammar.js
 
 # Dev server against the in-repo compiler (TWINKLE_LOCAL aliases to in-repo
 # artifacts), so unreleased compiler/runtime changes show up in the playground.
-playground-dev: $(STAGE2_WASM) tools/bridge.wasm tools/js_runtime/runtime.mjs tree-sitter-twinkle/tree-sitter-twinkle.wasm playground/node_modules
+# web.mjs self-loads wasm via `new URL('./boot.wasm', import.meta.url)`, so stage
+# the in-repo wasm next to it (the published package ships them flattened).
+playground-dev: $(STAGE2_WASM) tools/bridge.wasm tools/js_runtime/runtime.mjs tools/js_runtime/web.mjs tree-sitter-twinkle/tree-sitter-twinkle.wasm playground/node_modules
+	cp $(STAGE2_WASM) tools/js_runtime/boot.wasm
+	cp tools/bridge.wasm tools/js_runtime/bridge.wasm
 	cd playground && TWINKLE_LOCAL=1 npx vite
 
 # Run the Vector benchmark suite (RRB Gate B baselines). See boot/bench/README.md.

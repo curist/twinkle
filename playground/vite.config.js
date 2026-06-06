@@ -13,6 +13,7 @@ const at = (p) => fileURLToPath(new URL(p, import.meta.url))
 // is preserved: @rollup/plugin-alias replaces only the matched path prefix.
 const localAlias = process.env.TWINKLE_LOCAL
   ? [
+      { find: /^@twinkle-lang\/twinkle\/web$/, replacement: at('../tools/js_runtime/web.mjs') },
       { find: /^@twinkle-lang\/twinkle\/runtime\.mjs$/, replacement: at('../tools/js_runtime/runtime.mjs') },
       { find: /^@twinkle-lang\/twinkle\/boot\.wasm/, replacement: at('../target/boot.wasm') },
       { find: /^@twinkle-lang\/twinkle\/bridge\.wasm/, replacement: at('../tools/bridge.wasm') },
@@ -28,6 +29,11 @@ export default defineConfig({
   base: './',
 
   resolve: { alias: localAlias },
+
+  // @twinkle-lang/twinkle/web self-loads its wasm via `new URL('./boot.wasm',
+  // import.meta.url)`. esbuild's dep pre-bundling would rewrite import.meta.url
+  // and break that, so keep the package out of optimizeDeps.
+  optimizeDeps: { exclude: ['@twinkle-lang/twinkle'] },
 
   build: {
     outDir: 'dist',

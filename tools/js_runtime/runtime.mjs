@@ -121,11 +121,18 @@ function decodeByteArray(b, arrRef) {
 // ---------------------------------------------------------------------------
 
 /**
- * Resolve each wasm extern import to a JS function.
+ * Resolve each wasm extern import to a JS function (and its optional arg spec).
+ *
+ * A scoped `imports[module][name]` entry is either:
+ *   - a function — the implementation, with default arg marshaling, or
+ *   - `{ fn?, args? }` — `fn` is the implementation (omit it to fall back to
+ *     `globals[module][name]`), and `args` is the per-arg marshal spec, an array
+ *     of `"raw" | "string"` keyed by position.
+ *
  * Resolution order per import: scoped `imports[module][name]`, then
  * `globals[module][name]`. Imports already satisfied by `hostImports`, or that
- * are not functions, are skipped. Returns the resolved bindings plus a list of
- * unresolved "module.name" strings.
+ * are not functions, are skipped. Returns the resolved bindings (each with
+ * `fn`, `recv`, and `args`) plus a list of unresolved "module.name" strings.
  */
 export function resolveExternImports(importList, hostImports, imports = {}, globals = globalThis) {
   const found = [];
@@ -134,21 +141,33 @@ export function resolveExternImports(importList, hostImports, imports = {}, glob
     if (hostImports[imp.module]?.[imp.name] !== undefined) continue;
     if (imp.kind !== "function") continue;
 
-    const scopedRecv = imports[imp.module];
-    const scoped = scopedRecv?.[imp.name];
+    const scoped = imports[imp.module]?.[imp.name];
+    let fn;
+    let recv;
+    let args;
+
     if (typeof scoped === "function") {
-      found.push({ module: imp.module, name: imp.name, fn: scoped, recv: scopedRecv });
-      continue;
+      fn = scoped;
+      recv = imports[imp.module];
+    } else if (scoped && typeof scoped === "object") {
+      args = scoped.args;
+      if (typeof scoped.fn === "function") {
+        fn = scoped.fn;
+        recv = imports[imp.module];
+      } else {
+        fn = globals[imp.module]?.[imp.name];
+        recv = globals[imp.module];
+      }
+    } else {
+      fn = globals[imp.module]?.[imp.name];
+      recv = globals[imp.module];
     }
 
-    const globalRecv = globals[imp.module];
-    const global = globalRecv?.[imp.name];
-    if (typeof global === "function") {
-      found.push({ module: imp.module, name: imp.name, fn: global, recv: globalRecv });
-      continue;
+    if (typeof fn === "function") {
+      found.push({ module: imp.module, name: imp.name, fn, recv, args });
+    } else {
+      missing.push(`${imp.module}.${imp.name}`);
     }
-
-    missing.push(`${imp.module}.${imp.name}`);
   }
   return { found, missing };
 }
@@ -162,7 +181,7 @@ export function resolveExternImports(importList, hostImports, imports = {}, glob
  *   - Int (bigint), Float (number), Bool (i32) pass through
  * Throws a single aggregated error if any extern import is unsatisfied.
  */
-function autoBridgeExternImports(wasmModule, hostImports, b, jspi = false, imports = {}, marshalSpec = {}) {
+function autoBridgeExternImports(wasmModule, hostImports, b, jspi = false, imports = {}) {
   let importList;
   try {
     importList = WebAssembly.Module.imports(wasmModule);
@@ -182,11 +201,11 @@ function autoBridgeExternImports(wasmModule, hostImports, b, jspi = false, impor
     );
   }
 
-  // Per-import arg marshaling honors an optional spec: `marshalSpec[module][name]`
-  // is an array of `"raw" | "string"` keyed by arg position. `"raw"` passes the
-  // value through untouched — essential for externref args (e.g. a canvas 2D
-  // context), since calling decodeString on an opaque host object recurses until
-  // a stack overflow in some engines (notably Safari). Without a spec entry, a
+  // Per-import arg marshaling honors the extern's optional `args` spec — an
+  // array of `"raw" | "string"` keyed by arg position. `"raw"` passes the value
+  // through untouched, essential for externref args (e.g. a canvas 2D context),
+  // since calling decodeString on an opaque host object recurses until a stack
+  // overflow in some engines (notably Safari). Without a spec entry, a
   // non-numeric arg is assumed to be a Wasm GC string and decoded.
   const makeMarshalArgs = (spec) => (args) => args.map((arg, i) => {
     if (typeof arg === "bigint") return Number(arg);
@@ -203,8 +222,8 @@ function autoBridgeExternImports(wasmModule, hostImports, b, jspi = false, impor
     return result;
   };
 
-  for (const { module, name, fn, recv } of found) {
-    const marshalArgs = makeMarshalArgs(marshalSpec[module]?.[name]);
+  for (const { module, name, fn, recv, args } of found) {
+    const marshalArgs = makeMarshalArgs(args);
     let bridgedFn;
     if (jspi) {
       // JSPI mode: async wrapper so Promise-returning JS functions suspend
@@ -280,7 +299,6 @@ function makeHostImports(b, runtime, bridgeBytes) {
           stdout: runtime.stdout,
           stderr: runtime.stderr,
           imports: runtime.imports,
-          marshalSpec: runtime.marshalSpec,
           host: runtime.host,
           bridgeBytes,
         });
@@ -344,6 +362,64 @@ function makeHostImports(b, runtime, bridgeBytes) {
 }
 
 // ---------------------------------------------------------------------------
+// In-memory host adapter
+// ---------------------------------------------------------------------------
+
+/**
+ * A host adapter backed by an in-memory file map — the default for browsers and
+ * other environments without a real filesystem. Reads/writes a `Map<string,
+ * Uint8Array>`; stdin is always EOF. Pure JS (no `node:` deps), so it is safe to
+ * load anywhere.
+ *
+ * @param {Map<string,Uint8Array> | Iterable<[string,Uint8Array]>} [initialFiles]
+ */
+export function createMemoryHost(initialFiles) {
+  const files = initialFiles instanceof Map ? initialFiles : new Map(initialFiles ?? []);
+  const norm = (p) => (p.startsWith("/") ? p : "/" + p).replace(/\/+/g, "/");
+  return {
+    files,
+    resolvePath(cwd, p) {
+      if (p.startsWith("/")) return norm(p);
+      return norm((cwd.endsWith("/") ? cwd : cwd + "/") + p);
+    },
+    readFile(path) {
+      const data = files.get(norm(path));
+      if (data === undefined) throw new Error(`file not found: ${path}`);
+      return data;
+    },
+    writeFile(path, text) { files.set(norm(path), textEncoder.encode(text)); },
+    writeBytes(path, bytes) { files.set(norm(path), bytes); },
+    exists(path) {
+      const np = norm(path);
+      if (files.has(np)) return true;
+      const prefix = np.endsWith("/") ? np : np + "/";
+      for (const k of files.keys()) if (k.startsWith(prefix)) return true;
+      return false;
+    },
+    listDir(path) {
+      const prefix = norm(path).replace(/\/?$/, "/");
+      const names = new Set();
+      for (const k of files.keys()) {
+        if (k.startsWith(prefix)) {
+          const name = k.slice(prefix.length).split("/")[0];
+          if (name) names.add(name);
+        }
+      }
+      return [...names].sort();
+    },
+    mkdirp() { /* virtual dirs are implicit */ },
+    readStdin(_maxBytes, _timeoutMs, runtime) {
+      runtime.stdinEof = true;
+      return new Uint8Array(0);
+    },
+    readStdinAsync(_maxBytes, _timeoutMs, runtime) {
+      runtime.stdinEof = true;
+      return Promise.resolve(new Uint8Array(0));
+    },
+  };
+}
+
+// ---------------------------------------------------------------------------
 // Bridge instantiation
 // ---------------------------------------------------------------------------
 
@@ -376,7 +452,6 @@ function prepareWasm(wasmBytes, opts, { jspi = false } = {}) {
     bridgeBytes,
     host,
     imports = {},
-    marshalSpec = {},
   } = opts;
 
   if (!bridgeBytes) {
@@ -396,12 +471,11 @@ function prepareWasm(wasmBytes, opts, { jspi = false } = {}) {
     stdinEof: false,
     host,
     imports,
-    marshalSpec,
   };
 
   const hostImports = makeHostImports(b, runtime, bridgeBytes);
   const mainModule = new WebAssembly.Module(wasmBytes);
-  autoBridgeExternImports(mainModule, hostImports, b, jspi, imports, marshalSpec);
+  autoBridgeExternImports(mainModule, hostImports, b, jspi, imports);
 
   return { mainModule, hostImports, b, runtime };
 }
@@ -466,7 +540,6 @@ export async function runWasmBytesAsync(wasmBytes, opts = {}) {
           stdout: runtime.stdout,
           stderr: runtime.stderr,
           imports: runtime.imports,
-          marshalSpec: runtime.marshalSpec,
           host: runtime.host,
           bridgeBytes: childBridgeBytes,
         });
