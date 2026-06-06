@@ -251,19 +251,113 @@ to:
   autoBridgeExternImports(mainModule, hostImports, b, jspi, imports);
 ```
 
+Also store `imports` on the per-run `runtime` object so nested `host.run_wasm`
+children can inherit it. In `prepareWasm`, change the `runtime` object literal from:
+
+```js
+  const runtime = {
+    programArgs: [programPath, ...guestArgs],
+    cwd,
+    env,
+    stdout,
+    stderr,
+    stdinEof: false,
+  };
+```
+
+to:
+
+```js
+  const runtime = {
+    programArgs: [programPath, ...guestArgs],
+    cwd,
+    env,
+    stdout,
+    stderr,
+    stdinEof: false,
+    imports,
+  };
+```
+
 (`runWasmBytes`, `runWasmBytesAsync`, `runWasmFile`, `runWasmFileAsync` already forward their full `opts` into `prepareWasm`, so `imports` flows through automatically — no further edits there.)
 
-- [ ] **Step 5: Run the tests to verify they pass**
+- [ ] **Step 5: Forward inherited imports through nested `host.run_wasm`**
+
+So a Twinkle program that spawns a child via `host.run_wasm` passes its scoped
+imports down. Two call sites in `tools/js_runtime/runtime.mjs`.
+
+In `makeHostImports`, the synchronous `run_wasm`, change the child-run options from:
+
+```js
+        const exitCode = runWasmBytes(childBytes, {
+          programPath: programPath ?? "<memory>.wasm",
+          guestArgs,
+          cwd: runtime.cwd,
+          env: runtime.env,
+          stdout: runtime.stdout,
+          stderr: runtime.stderr,
+          bridgeBytes,
+        });
+```
+
+to (add the `imports` line):
+
+```js
+        const exitCode = runWasmBytes(childBytes, {
+          programPath: programPath ?? "<memory>.wasm",
+          guestArgs,
+          cwd: runtime.cwd,
+          env: runtime.env,
+          stdout: runtime.stdout,
+          stderr: runtime.stderr,
+          imports: runtime.imports,
+          bridgeBytes,
+        });
+```
+
+In `runWasmBytesAsync`, the JSPI `run_wasm` override, change:
+
+```js
+        const exitCode = await runWasmBytesAsync(childBytes, {
+          programPath: programPath ?? "<memory>.wasm",
+          guestArgs,
+          cwd: runtime.cwd,
+          env: runtime.env,
+          stdout: runtime.stdout,
+          stderr: runtime.stderr,
+          bridgeBytes: childBridgeBytes,
+        });
+```
+
+to (add the `imports` line):
+
+```js
+        const exitCode = await runWasmBytesAsync(childBytes, {
+          programPath: programPath ?? "<memory>.wasm",
+          guestArgs,
+          cwd: runtime.cwd,
+          env: runtime.env,
+          stdout: runtime.stdout,
+          stderr: runtime.stderr,
+          imports: runtime.imports,
+          bridgeBytes: childBridgeBytes,
+        });
+```
+
+(`runtime.imports` defaults to `{}` from the `prepareWasm` destructure, so the
+CLI and other no-imports callers keep globals-only child behavior.)
+
+- [ ] **Step 6: Run the tests to verify they pass**
 
 Run: `node --test tools/js_runtime/runtime.test.mjs`
 Expected: PASS (5 tests).
 
-- [ ] **Step 6: Verify the Deno CLI path is unaffected**
+- [ ] **Step 7: Verify the Deno CLI path is unaffected**
 
 Run: `BOOT_WASM=target/boot.wasm deno run --allow-read --allow-write --allow-env tools/js_runtime/deno_main.mjs run examples/extern_ffi.tw`
 Expected: prints the extern_ffi output (e.g. "Hello from Twinkle via extern FFI!") and exits 0 — `console`/`Math` still resolve from `globalThis` with no `imports` passed.
 
-- [ ] **Step 7: Commit**
+- [ ] **Step 8: Commit**
 
 ```bash
 git add tools/js_runtime/runtime.mjs tools/js_runtime/runtime.test.mjs
@@ -271,7 +365,9 @@ git commit -m "Add scoped extern-import resolution to JS runtime
 
 Resolve wasm extern imports from a scoped per-run imports object first,
 then globalThis, aggregating any unsatisfied imports into one clear error.
-Backward compatible: callers passing no imports keep globals-only behavior."
+Imports are stored on the run context and inherited by nested host.run_wasm
+children. Backward compatible: callers passing no imports keep globals-only
+behavior."
 ```
 
 ---
@@ -409,6 +505,13 @@ main().catch((e) => {
   console.error(e.stack || e.message || e);
   process.exit(1);
 });
+```
+
+Then mark the source executable so the shebang is usable directly and the bit
+is preserved through git:
+
+```bash
+chmod +x tools/js_runtime/node_main.mjs
 ```
 
 - [ ] **Step 4: Run the test to verify it passes**
@@ -578,11 +681,15 @@ function loadBridgeWasm() {
 
 function collectingStream() {
   const chunks = [];
+  // Stream-decode so a multi-byte UTF-8 sequence split across writes is not
+  // corrupted; flush the decoder in text().
   const dec = new TextDecoder();
   return {
-    text() { return chunks.join(""); },
+    text() {
+      return chunks.join("") + dec.decode();
+    },
     write(chunk) {
-      chunks.push(typeof chunk === "string" ? chunk : dec.decode(chunk));
+      chunks.push(typeof chunk === "string" ? chunk : dec.decode(chunk, { stream: true }));
       return true;
     },
   };
@@ -590,7 +697,11 @@ function collectingStream() {
 
 /**
  * Compile Twinkle source to wasm bytes.
- * @param {string | {source: string, path?: string}} input file path, or source.
+ * @param {string | {source: string, path?: string}} input
+ *   A file path string — full project/import support (relative `use .sibling`,
+ *   walk-up to `twinkle.toml`). Or `{ source, path? }` — written to a temp dir
+ *   and compiled single-file only; relative imports and project-root discovery
+ *   will NOT resolve as they would at the original location.
  * @returns {Promise<Uint8Array>}
  */
 export async function compile(input, opts = {}) {
@@ -799,6 +910,9 @@ cp "$BRIDGE_WASM"       "$OUT_DIR/bridge.wasm"
 cp tools/npm/package.json "$OUT_DIR/package.json"
 cp tools/npm/README.md    "$OUT_DIR/README.md"
 
+# Ensure the bin is executable in the published tarball.
+chmod +x "$OUT_DIR/node.mjs"
+
 VERSION="$(node -p "require('./$OUT_DIR/package.json').version")"
 printf 'Staged @twinkle-lang/twinkle v%s in %s\n' "$VERSION" "$OUT_DIR"
 ```
@@ -877,8 +991,11 @@ Run (still in `$WORK`):
 ```bash
 printf 'println("hello from installed twk")\n' > hi.tw
 npx twk run hi.tw
+./node_modules/.bin/twk run hi.tw
 ```
-Expected: prints `hello from installed twk`.
+Expected: both invocations print `hello from installed twk`. The direct
+`.bin/twk` call exercises the executable bin shim/mode (catches a missing
+executable bit or broken shebang that `npx` might paper over).
 
 - [ ] **Step 3: Verify the lib import works from the installed package**
 
@@ -957,14 +1074,27 @@ twk run program.tw
 
 ## Library
 
+The package is ESM-only — use `import`:
+
 ```js
 import { compile, run, runFile, runSource } from "@twinkle-lang/twinkle";
 ```
 
+CommonJS consumers can load it through Node's ESM interop (`require()` of ESM is
+unflagged on Node ≥ 22.12), but CommonJS is not a primary target — prefer
+`import` or a dynamic `await import("@twinkle-lang/twinkle")`.
+
 ### `compile(input, opts?) -> Promise<Uint8Array>`
 
-`input` is a file path string, or `{ source, path? }` for in-memory source.
-Returns the compiled wasm bytes. Throws with the compiler diagnostics on error.
+`input` is either a **file path string** or `{ source, path? }` for in-memory
+source. Returns the compiled wasm bytes. Throws with the compiler diagnostics on
+error.
+
+> **Source-context limitation:** a path argument gets full project support —
+> relative imports (`use .sibling`) and walk-up `twinkle.toml` discovery resolve
+> from the file's real location. `{ source }` is written to a temporary
+> directory and compiled as a single file, so relative imports and project-root
+> discovery will not resolve. Use a path for multi-file projects.
 
 ### `run(wasmBytes, opts?) -> Promise<number>`
 
@@ -1082,4 +1212,30 @@ Expected: the boot compiler test suite passes — confirms the runtime change di
 
 Run: `make npm-pack && node target/npm/node.mjs run examples/extern_ffi.tw`
 Expected: the staged package's CLI runs the extern_ffi example (console/Math via globalThis fallback), exit 0.
+
+---
+
+## Appendix: Publishing (manual)
+
+Publishing is **manual** in this scope — there is no CI auto-publish. These are
+operator steps, run only when cutting a release; they are not part of the
+task-by-task implementation.
+
+**One-time setup:**
+1. Create the `@twinkle-lang` organization on npmjs.com (Account → Add
+   Organization). Free for public packages; reserves the scope.
+2. `npm login` locally (or configure a granular/automation token).
+
+**Each release:**
+1. Bump `"version"` in `tools/npm/package.json`.
+2. `npm whoami` — confirm you are authenticated.
+3. `make npm-pack` — build the verified payload and stage `target/npm/`.
+4. Inspect the `npm pack` file list (expect `node.mjs`, `index.mjs`,
+   `runtime.mjs`, `boot.wasm`, `bridge.wasm`, `README.md`, `package.json`).
+5. `cd target/npm && npm publish --dry-run` — verify what would be published.
+6. `npm publish` — `publishConfig.access: "public"` (already in the manifest)
+   publishes the scoped package publicly.
+
+A future CI publish would authenticate with an automation `NPM_TOKEN` and run
+`make npm-publish`; that automation is out of scope here.
 ```

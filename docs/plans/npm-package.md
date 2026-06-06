@@ -8,10 +8,11 @@ packages later), providing two faces:
 
 - **bin** — a `twk` CLI, a faithful Node.js equivalent of today's Deno
   standalone `target/twk` (all subcommands: `build/run/ir/fmt/check/lsp`).
-- **lib** — an importable module so JS projects can `import`/`require` Twinkle
-  to **compile** `.tw` source and **run** the result, with extern (JS host)
-  functions wired in through a scoped per-run object instead of `globalThis`
-  pollution — including auto-resolution of host globals.
+- **lib** — an ESM module JS projects `import` to **compile** `.tw` source and
+  **run** the result, with extern (JS host) functions wired in through a scoped
+  per-run object instead of `globalThis` pollution — including auto-resolution
+  of host globals. (CommonJS consumers can load it via Node's ESM interop, but
+  CJS is not a primary target.)
 
 This removes two frictions:
 
@@ -38,7 +39,8 @@ This removes two frictions:
 |---|---|
 | Package name | `@twinkle-lang/twinkle` (scoped under `@twinkle-lang` org) |
 | Bin name | `twk` |
-| Module format | ESM-only (`"type": "module"`). `require()` works on Node ≥22. |
+| Module format | ESM-only (`"type": "module"`). Use `import`; CJS via Node ESM interop only (not a primary target — `require(esm)` is unflagged only on Node ≥22.12). |
+| Package version | Carried in `tools/npm/package.json`, bumped manually per release (no auto-sync). |
 | `engines.node` | `>=22` (Wasm GC stable; JSPI auto-detected, degrades gracefully) |
 | Lib capability | compile + run |
 | Call direction | JS→Twinkle only (extern imports) |
@@ -104,6 +106,13 @@ instead of a cryptic instantiate failure).
 (`runWasmBytes`, `runWasmBytesAsync`, and their `*File` variants) into
 `prepareWasm`.
 
+**Nested `host.run_wasm` inheritance.** A running program can spawn a child via
+`host.run_wasm`. To keep scoped wiring consistent, `imports` is stored on the
+per-run `runtime` object and forwarded into the child runner (both the sync and
+the JSPI async `run_wasm` paths), so child programs inherit the parent run's
+extern imports. (The CLI passes no `imports`, so its children remain
+globals-only, exactly as today.)
+
 ## Lib API (`tools/js_runtime/index.mjs`)
 
 ```js
@@ -128,6 +137,11 @@ await runFile("calc.tw");
   given as source, run the compiler with `-o <temp.wasm>` into the OS temp dir,
   read the bytes back, clean up, return `Uint8Array`. (The compiler is a CLI
   that writes to a file path; the lib hides that behind a bytes-returning API.)
+  **Source-context limitation:** a path argument gets full project/import
+  support (relative `use .sibling`, walk-up to `twinkle.toml`); `{ source }` is
+  written to a temp dir and is single-file only — relative imports and project
+  root won't resolve as they would at the original location. This is documented,
+  not worked around.
 - `run(wasmBytes, opts?)` calls the JSPI-aware async runner with the new
   `imports` plumbing and the bundled `bridge.wasm`.
 - `runFile` / `runSource` are thin compile-then-run helpers.
@@ -161,9 +175,9 @@ package contains only flat files (no cross-directory relative imports):
 
 ```
 target/npm/
-  package.json      # generated from a template + version
+  package.json      # copied from tools/npm/package.json (version lives there)
   README.md         # install + usage (lib & CLI)
-  node.mjs          # copy of node_main.mjs (bin entry)
+  node.mjs          # copy of node_main.mjs (bin entry), chmod +x
   index.mjs         # copy of lib API
   runtime.mjs       # copy of canonical runtime
   boot.wasm         # freshly built by `make stage2`
@@ -192,13 +206,24 @@ Makefile targets:
   `target/npm/` and runs `npm pack` there. `boot.wasm` is gitignored and built
   at pack time, so the package always ships a verified self-hosted payload.
 - `make npm-publish` — stage + `npm publish` from `target/npm/`.
-- Package `version` is kept in sync with `twinkle.toml` (currently `0.1.0`) by
-  the staging script.
+- The package version lives in `tools/npm/package.json` and is bumped manually
+  per release (no auto-sync from any other file).
+
+## Publishing (manual, for now)
+
+Publishing is a manual operation; there is no CI auto-publish in this scope.
+One-time setup: create the `@twinkle-lang` organization on npmjs.com (free for
+public packages — reserves the scope), then `npm login` locally. Release flow:
+`npm whoami` to confirm auth → `make npm-pack` → inspect the tarball file list →
+`cd target/npm && npm publish --dry-run` → `npm publish` (the manifest's
+`publishConfig.access: public` makes the scoped package public). A future CI
+publish would use an automation `NPM_TOKEN`; out of scope here.
 
 ## Tests (`make npm-test`)
 
-A Node test script (e.g. `tools/npm_smoke_test.mjs`, runnable via `node --test`
-or plain `node`) that imports the lib and asserts:
+Colocated `node:test` files under `tools/js_runtime/` (`runtime.test.mjs`,
+`index.test.mjs`, `cli.test.mjs`), run via `make npm-test` (`node --test
+tools/js_runtime/*.test.mjs`), asserting:
 
 1. **Compile + run with scoped imports**: compile+run `examples/extern_ffi.tw`
    with `imports: { console, Math }` (or relying on globals) and check captured
@@ -220,11 +245,13 @@ or plain `node`) that imports the lib and asserts:
 ## Build / Implementation Order
 
 1. Runtime: thread `opts.imports` through `prepareWasm` /
-   `autoBridgeExternImports`; add globals fallback ordering + strict
-   missing-import aggregation error. Keep Deno path behavior identical.
+   `autoBridgeExternImports` (and into nested `host.run_wasm`); add globals
+   fallback ordering + strict missing-import aggregation error. Keep Deno path
+   behavior identical.
 2. `node_main.mjs` — Node CLI entry.
 3. `index.mjs` — lib API (`compile` / `run` / `runFile`).
 4. `tools/build_npm_pkg.sh` + `package.json` template + Makefile targets
    (`npm-pack`, `npm-publish`).
-5. `tools/npm_smoke_test.mjs` + `make npm-test`.
+5. Colocated `tools/js_runtime/*.test.mjs` + `make npm-test` + end-to-end
+   tarball install verification.
 6. `docs/js-embedding.md` + README section.
