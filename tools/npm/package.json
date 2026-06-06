@@ -1,0 +1,13 @@
+{
+  "name": "@twinkle-lang/twinkle",
+  "version": "0.1.0",
+  "description": "Twinkle — a statically typed language targeting WebAssembly GC. CLI (twk) plus an embeddable compile/run library.",
+  "type": "module",
+  "bin": { "twk": "./node.mjs" },
+  "exports": { ".": "./index.mjs" },
+  "files": ["node.mjs", "index.mjs", "runtime.mjs", "boot.wasm", "bridge.wasm", "README.md"],
+  "engines": { "node": ">=22" },
+  "license": "MIT",
+  "publishConfig": { "access": "public" },
+  "repository": { "type": "git", "url": "git+https://github.com/curist/twinkle.git" }
+}

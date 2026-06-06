@@ -1,4 +1,4 @@
-.PHONY: help test boot-test rust-test stage0 stage2 bundle-cli quick-bundle-cli cli playground playground-dev playground-wasm fmt bench bench-guard clean
+.PHONY: help test boot-test rust-test stage0 stage2 bundle-cli quick-bundle-cli cli playground playground-dev playground-wasm fmt bench bench-guard clean npm-pack npm-publish npm-test
 
 STAGE1_WASM ?= target/boot-stage1.wasm
 STAGE2_WASM ?= target/boot.wasm
@@ -143,3 +143,23 @@ fmt: target/twk
 clean:
 	cargo clean
 	rm -rf target/boot.wasm target/boot-stage1.wasm target/twk target/deno-assets
+
+# ---------------------------------------------------------------------------
+# npm package (@twinkle-lang/twinkle)
+# ---------------------------------------------------------------------------
+
+# Stage a self-contained npm package into target/npm/ and build the tarball.
+# Depends on a fresh self-hosted payload.
+npm-pack: $(STAGE2_WASM) tools/build_npm_pkg.sh tools/npm/package.json tools/npm/README.md $(wildcard tools/js_runtime/*.mjs)
+	tools/build_npm_pkg.sh
+	cd target/npm && npm pack
+
+# Publish the staged package to npm (requires `npm login` and the
+# @twinkle-lang organization to exist).
+npm-publish: $(STAGE2_WASM) tools/build_npm_pkg.sh tools/npm/package.json tools/npm/README.md $(wildcard tools/js_runtime/*.mjs)
+	tools/build_npm_pkg.sh
+	cd target/npm && npm publish
+
+# Run the JS runtime/lib/CLI test suite (needs target/boot.wasm present).
+npm-test: $(STAGE2_WASM)
+	node --test tools/js_runtime/*.test.mjs
