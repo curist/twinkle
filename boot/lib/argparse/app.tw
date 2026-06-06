@@ -67,11 +67,11 @@ pub fn error_message(e: ParseError) String {
 
 // --- Private helpers ---
 fn find_by_long(args: Vector<arg.Arg>, name: String) arg.Arg? {
-  args.find(fn(a: arg.Arg) Bool { a.name == name })
+  args.find(fn(a) { a.name == name })
 }
 
 fn find_by_short(args: Vector<arg.Arg>, s: String) arg.Arg? {
-  args.find(fn(a: arg.Arg) Bool {
+  args.find(fn(a) {
     case a.short_name {
       .Some(sn) => sn == s,
       .None => false,
@@ -168,7 +168,7 @@ pub fn format_help(a: App, cmd_name: String?) String {
 
   case cmd_name {
     .Some(name) => {
-      cmd := a.commands.find(fn(c: command.Command) Bool { c.name == name })
+      cmd := a.commands.find(fn(c) { c.name == name })
 
       case cmd {
         .Some(c) => {
@@ -248,10 +248,9 @@ pub fn parse(a: App, argv: Vector<String>) ParseResult!ParseError {
       return .Ok(ParseResult.{ command: .Some("version"), flags, options, positional: pos })
     }
 
-    c := case a.commands.find(fn(c: command.Command) Bool { c.name == first }) {
-      .Some(cmd) => cmd,
-      .None => { return .Err(.UnknownCommand(first)) },
-    }
+    c := try a.commands
+      .find(fn(c) { c.name == first })
+      .ok_or(.UnknownCommand(first))
     cmd_name = .Some(first)
     active_args = c.args
     i = i + 1
@@ -284,10 +283,7 @@ pub fn parse(a: App, argv: Vector<String>) ParseResult!ParseError {
         .Some(eq) => {
           key := name.slice(0, eq)
           val := name.slice(eq + 1, name.len())
-          def := case find_by_long(active_args, key) {
-            .Some(arg) => arg,
-            .None => { return .Err(.UnknownFlag("--${key}")) },
-          }
+          def := try find_by_long(active_args, key).ok_or(.UnknownFlag("--${key}"))
 
           case def.kind {
             .Opt => options[key] = val,
@@ -295,10 +291,7 @@ pub fn parse(a: App, argv: Vector<String>) ParseResult!ParseError {
           }
         },
         .None => {
-          def := case find_by_long(active_args, name) {
-            .Some(arg) => arg,
-            .None => { return .Err(.UnknownFlag("--${name}")) },
-          }
+          def := try find_by_long(active_args, name).ok_or(.UnknownFlag("--${name}"))
 
           case def.kind {
             .Flag => flags[name] = true,
@@ -316,10 +309,7 @@ pub fn parse(a: App, argv: Vector<String>) ParseResult!ParseError {
       }
     } else if current.starts_with("-") and current.len() > 1 {
       s := current.slice(1, current.len())
-      def := case find_by_short(active_args, s) {
-        .Some(arg) => arg,
-        .None => { return .Err(.UnknownFlag("-${s}")) },
-      }
+      def := try find_by_short(active_args, s).ok_or(.UnknownFlag("-${s}"))
 
       case def.kind {
         .Flag => flags[def.name] = true,
