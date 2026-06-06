@@ -21,21 +21,6 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Set up Rust
-        uses: dtolnay/rust-toolchain@stable
-        with:
-          targets: wasm32-wasip1
-
-      - name: Cache Cargo
-        uses: actions/cache@v4
-        with:
-          path: |
-            ~/.cargo/registry
-            ~/.cargo/git
-            target
-          key: ${{ runner.os }}-cargo-${{ hashFiles('Cargo.lock') }}
-          restore-keys: ${{ runner.os }}-cargo-
-
       - name: Set up Node
         uses: actions/setup-node@v4
         with:
@@ -43,11 +28,9 @@ jobs:
           cache: npm
           cache-dependency-path: playground/package-lock.json
 
-      - name: Set up Deno
-        uses: denoland/setup-deno@v2
-        with:
-          deno-version: v2.x
-
+      # Consumes the published @twinkle-lang/twinkle + tree-sitter-twinkle from
+      # npm (no Rust/Deno/self-host build); the live site tracks the last
+      # published compiler.
       - name: Build playground
         run: make playground
 

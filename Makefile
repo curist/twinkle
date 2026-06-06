@@ -24,8 +24,8 @@ help:
 	@printf '  make fmt               Format boot compiler .tw source files\n'
 	@printf '  make bench             Run the Vector benchmark suite (boot/bench/)\n'
 	@printf '  make bench-guard       Check vector scaling/bulk-copy guards\n'
-	@printf '  make playground        Build playground (vite build against in-repo artifacts)\n'
-	@printf '  make playground-dev    Start playground dev server (vite dev)\n'
+	@printf '  make playground        Build playground from published packages (no compiler build)\n'
+	@printf '  make playground-dev    Dev server against the in-repo compiler (TWINKLE_LOCAL)\n'
 
 # Fast day-to-day validation for boot compiler changes.
 boot-test: target/twk
@@ -99,24 +99,31 @@ quick-bundle-cli:
 #
 # The playground is a plain Vite app that consumes the published packages
 # (@twinkle-lang/twinkle for the compiler runtime + boot.wasm/bridge.wasm, and
-# tree-sitter-twinkle for the grammar wasm + highlight query). The in-repo build
-# below sets TWINKLE_LOCAL=1 so Vite resolves those specifiers to current build
-# artifacts instead of node_modules — no asset copying, no slim playground.wasm.
-
-# Tree-sitter grammar wasm (rebuild when grammar.js changes)
-tree-sitter-twinkle/tree-sitter-twinkle.wasm: tree-sitter-twinkle/grammar.js
-	cd tree-sitter-twinkle && npx tree-sitter generate && npx tree-sitter build --wasm
+# tree-sitter-twinkle for the grammar wasm + highlight query).
+#
+# `make playground` builds from those published packages (just npm + vite, no
+# Rust/Deno/self-host) — this is what the GitHub Pages deploy runs, so the live
+# site tracks the last published @twinkle-lang/twinkle and the deploy stays cheap.
+#
+# `make playground-dev` runs the dev server against the in-repo compiler: it
+# builds target/boot.wasm and sets TWINKLE_LOCAL=1 so Vite aliases the package
+# specifiers to current in-repo artifacts, letting you test unreleased changes.
 
 # Ensure playground npm deps are installed
 playground/node_modules: playground/package.json playground/package-lock.json
 	cd playground && npm ci && touch node_modules
 
-PLAYGROUND_DEPS := $(STAGE2_WASM) tools/bridge.wasm tools/js_runtime/runtime.mjs tree-sitter-twinkle/tree-sitter-twinkle.wasm playground/node_modules
+# Build from the published packages (cheap; no compiler build).
+playground: playground/node_modules
+	cd playground && npx vite build
 
-playground: $(PLAYGROUND_DEPS)
-	cd playground && TWINKLE_LOCAL=1 npx vite build
+# Tree-sitter grammar wasm (rebuild when grammar.js changes; needs Docker)
+tree-sitter-twinkle/tree-sitter-twinkle.wasm: tree-sitter-twinkle/grammar.js
+	cd tree-sitter-twinkle && npx tree-sitter generate && npx tree-sitter build --wasm
 
-playground-dev: $(PLAYGROUND_DEPS)
+# Dev server against the in-repo compiler (TWINKLE_LOCAL aliases to in-repo
+# artifacts), so unreleased compiler/runtime changes show up in the playground.
+playground-dev: $(STAGE2_WASM) tools/bridge.wasm tools/js_runtime/runtime.mjs tree-sitter-twinkle/tree-sitter-twinkle.wasm playground/node_modules
 	cd playground && TWINKLE_LOCAL=1 npx vite
 
 # Run the Vector benchmark suite (RRB Gate B baselines). See boot/bench/README.md.

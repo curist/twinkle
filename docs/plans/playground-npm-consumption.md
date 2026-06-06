@@ -139,12 +139,18 @@ behavior moves behind an injected `host` adapter.
 
 - `package.json`: add `@twinkle-lang/twinkle` and `tree-sitter-twinkle` as
   dependencies (published versions), and a `playground/.npmrc` with
-  `ignore-scripts=true` (see §3). A dev-only Vite alias block, gated by
-  `TWINKLE_LOCAL=1`, must map **each subpath the playground imports** to the
-  in-repo build — aliasing the bare package name alone does not cover subpaths:
+  `ignore-scripts=true` (see §3). `make playground` (and the GitHub Pages
+  deploy) resolves every package specifier from `node_modules`, so it needs no
+  Rust/Deno/self-host build — the live site tracks the last published
+  `@twinkle-lang/twinkle`, keeping the Pages deploy cheap.
+- `make playground-dev` runs the dev server against the in-repo compiler via a
+  Vite alias block gated by `TWINKLE_LOCAL=1`, mapping **each subpath the
+  playground imports** to the in-repo build so unreleased compiler/runtime
+  changes show up. Aliasing the bare package name alone does not cover subpaths:
   - `@twinkle-lang/twinkle/runtime.mjs` → `../tools/js_runtime/runtime.mjs`
   - `@twinkle-lang/twinkle/boot.wasm`   → `../target/boot.wasm`
   - `@twinkle-lang/twinkle/bridge.wasm` → `../tools/bridge.wasm`
+  - `tree-sitter-twinkle/queries/highlights.scm` and the grammar wasm likewise
 - Worker moves `public/worker.js` → `src/worker.js` and becomes a **module
   worker**: `new Worker(new URL('./worker.js', import.meta.url), { type: 'module' })`
   in `src/main.js`. It imports `runWasmBytesAsync` from
