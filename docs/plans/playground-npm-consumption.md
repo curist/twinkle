@@ -100,6 +100,12 @@ behavior moves behind an injected `host` adapter.
 - Node entry points (`index.mjs`, `node_main.mjs`, `deno_main.mjs`) import
   `nodeHost` and pass it. **Observable behavior is unchanged**; this is the only
   edit those files need.
+- **Makefile dependency tracking:** because `deno_main.mjs` / `node_main.mjs`
+  now depend on `node_host.mjs`, add `tools/js_runtime/node_host.mjs` to the
+  `$(STAGE2_WASM)` prerequisite list (`Makefile:61`) and the `target/twk`
+  prerequisite list (`Makefile:84`). Without this, the "stage2 self-host
+  rebuild" safety net can silently link stale host code. (`npm-pack` already
+  globs `tools/js_runtime/*.mjs`, so it needs no change.)
 
 ### 2. Package changes (`tools/npm/`)
 
@@ -116,28 +122,54 @@ behavior moves behind an injected `host` adapter.
   Fix the placeholder `repository` URL before publishing.
 - The package has no `exports` map, so subpath imports of `queries/highlights.scm`
   and the grammar wasm are allowed by default.
-- Note: the package's `install: node-gyp-build` script targets the native Node
-  binding (irrelevant to the browser). Shipped `prebuilds/**` cover common
-  platforms; the playground can install with `--ignore-scripts` if needed.
+- **Native-binding install must be neutralized for the browser consumer.** The
+  package's `"install": "node-gyp-build"` script compiles the native Node
+  binding (`bindings/node/binding.cc`), which the browser never uses — and this
+  repo currently ships **no** `prebuilds/`, so a plain `npm install` in the
+  playground would attempt a node-gyp compile and can fail. The playground only
+  needs `queries/*` + `*.wasm`. Chosen fix: **the playground installs with
+  `--ignore-scripts`** (set `ignore-scripts=true` in `playground/.npmrc` so both
+  local `npm install` and CI skip the native build). Alternatives, if we later
+  decide the grammar package is wasm-only for all consumers: drop the `install`
+  script + native deps from the published package, or publish real
+  `prebuildify` prebuilds. The `.npmrc` route is chosen as the lowest-blast
+  option that does not change the grammar package's external contract.
 
 ### 4. Playground changes (`playground/`)
 
 - `package.json`: add `@twinkle-lang/twinkle` and `tree-sitter-twinkle` as
-  dependencies (published versions). A dev-only Vite alias gated by
-  `TWINKLE_LOCAL=1` points `@twinkle-lang/twinkle` at the in-repo
-  `tools/js_runtime` + `target/boot.wasm` for local development.
+  dependencies (published versions), and a `playground/.npmrc` with
+  `ignore-scripts=true` (see §3). A dev-only Vite alias block, gated by
+  `TWINKLE_LOCAL=1`, must map **each subpath the playground imports** to the
+  in-repo build — aliasing the bare package name alone does not cover subpaths:
+  - `@twinkle-lang/twinkle/runtime.mjs` → `../tools/js_runtime/runtime.mjs`
+  - `@twinkle-lang/twinkle/boot.wasm`   → `../target/boot.wasm`
+  - `@twinkle-lang/twinkle/bridge.wasm` → `../tools/bridge.wasm`
 - Worker moves `public/worker.js` → `src/worker.js` and becomes a **module
   worker**: `new Worker(new URL('./worker.js', import.meta.url), { type: 'module' })`
-  in `src/main.js`. It imports `runWasmBytesAsync` from the package and shrinks
-  to: build the browser host adapter + externs object + canvas marshal spec,
-  call `run`, forward stdout/stderr/exit over `postMessage`.
+  in `src/main.js`. It imports `runWasmBytesAsync` from
+  **`@twinkle-lang/twinkle/runtime.mjs`** (not the bare package — `index.mjs`
+  stays Node/library-oriented and is not browser-loadable), loads `boot.wasm`
+  and `bridge.wasm` bytes from the package via `?url` + `fetch`, builds the
+  browser host adapter + externs object + canvas marshal spec, and calls:
+
+  ```js
+  runWasmBytesAsync(bootBytes, {
+    guestArgs: ["run", "/input/main.tw"],
+    bridgeBytes, host, imports, marshalSpec,
+  })
+  ```
+
+  then forwards stdout/stderr/exit over `postMessage`. The bare `run()` /
+  `runFile()` API in `index.mjs` is **not** used by the browser.
 - The browser host adapter (in the playground) provides: an in-memory VFS host
   holding only `/input/main.tw`, an EOF stdin, and stdout/stderr that post
   messages. Externs (`canvas` via `OffscreenCanvas`, `http` via `fetch`,
   `timer` via `setTimeout`) are passed as `imports`; the canvas marshal spec is
   passed as `marshalSpec`.
 - `boot.wasm` / `bridge.wasm` are imported as Vite `?url` assets from the
-  package — no copying.
+  package (`@twinkle-lang/twinkle/boot.wasm?url`,
+  `@twinkle-lang/twinkle/bridge.wasm?url`) — no copying.
 - Highlighting: `src/main.js` imports `highlights.scm?raw` and the grammar wasm
   (`?url`) from `tree-sitter-twinkle`, and `web-tree-sitter`'s `tree-sitter.wasm`
   (`?url`) from its own package, passing those URLs to `Parser.init` /
@@ -175,12 +207,15 @@ behavior moves behind an injected `host` adapter.
 
 ## Sequencing
 
-1. Runtime DI refactor + `node_host.mjs` + marshal spec; keep Node/Deno paths
-   green (tests + stage2 rebuild).
+1. Runtime DI refactor + `node_host.mjs` + marshal spec; add
+   `tools/js_runtime/node_host.mjs` to the `$(STAGE2_WASM)` and `target/twk`
+   Makefile prerequisite lists; keep Node/Deno paths green (tests + stage2
+   rebuild).
 2. Package `exports`/`files`/build-script updates; version bump; publish
    `@twinkle-lang/twinkle`.
 3. Publish `tree-sitter-twinkle` (fix repository URL).
 4. Playground: module worker + browser adapter + asset imports from packages;
-   delete `copy-assets.mjs` and worker duplication.
+   add `playground/.npmrc` (`ignore-scripts=true`); add the `TWINKLE_LOCAL`
+   subpath aliases; delete `copy-assets.mjs` and worker duplication.
 5. Makefile/repo cleanup: remove `boot/playground.tw` and the playground-wasm
    build.
