@@ -326,8 +326,9 @@ Checklist:
       `by_symbol` on it (Dict keys can only be Int/String at runtime).
 - [x] Decide the initial `sorted_spans` implementation behind the helper API:
       hidden linear scan over sorted spans.
-- [ ] Add conversion helpers for LSP token kinds only as consumers, not core
-      occurrence concepts.
+- [x] Add conversion helpers for LSP token kinds only as consumers, not core
+      occurrence concepts. `semantic_tokens.tw` owns `token_kind(SymbolKind)`;
+      the occurrence module stays free of LSP-specific kinds.
 - [x] Document which source constructs should emit declaration and reference
       occurrences.
 
@@ -432,26 +433,36 @@ Recommended order:
      `occurrences.SymbolKey`;
    - group by `SymbolKey`, not by name/span heuristics;
    - load per-file occurrence indexes for candidate modules from the cache.
-4. `hover.tw`
-   - use occurrence kind plus existing type maps for detail text.
-5. `completion.tw`
-   - resolve the receiver before a dot via the occurrence at that offset
-     (occurrence → symbol key → type detail → member list) instead of reparsing
-     with a cursor hole and scanning previous lets.
-6. `inlay_hints.tw` and remaining completion helpers
-   - use occurrence/scoped symbol info where relevant.
+4. `hover.tw` — not migrated to occurrences (by design)
+   - hover answers "what is the type of the expression here", which is a
+     `type_map` lookup keyed by expression id. Occurrences deliberately carry
+     symbol identity/kind/role, not `MonoType`, so they cannot supply the type
+     text hover needs. Hover keeps its `type_map`-driven path; what it shared
+     with the other call consumers (callee → signature) moved to
+     `call_resolve` (Phase 6).
+5. `completion.tw` — not migrated to occurrences (by design)
+   - member completion needs the receiver's `MonoType` to enumerate fields and
+     methods, which occurrences do not carry. It also runs on mid-edit source
+     where occurrences (built from the last good parse) lag the cursor, which is
+     exactly why completion reparses with a cursor hole. The occurrence index
+     does not replace either need, so completion keeps its receiver resolution.
+6. `inlay_hints.tw` — type hints stay `type_map`-driven (same reason as hover);
+   parameter-name hints now resolve the callee via the shared `call_resolve`
+   helper instead of a private resolver.
 
 Checklist:
 
 - [x] Migrate semantic tokens behind existing LSP regression tests.
-- [ ] Migrate the remaining consumers one at a time behind tests. Definition,
-      references, and document highlights now consume occurrences; hover,
-      completion, and inlay hints remain.
+- [x] Migrate the occurrence-backed consumers behind tests: definition,
+      references, and document highlights consume occurrences. hover, completion,
+      and inlay-hint *type* features stay `type_map`-driven because occurrences
+      carry symbol identity, not `MonoType` — see notes 4–6 above.
 - [x] Replace the private `references.SymbolId` and `definition.tw` local-binding
       walks (`resolve_local_binding`, `find_local_in_block`) with `SymbolKey`.
-- [ ] Delete obsolete local-scope walkers once no consumer needs them. The
-      semantic-token bridge and definition/references local walkers are gone;
-      `completion.tw`'s independent receiver param/let collection remains.
+- [x] Delete obsolete local-scope walkers once no consumer needs them. The
+      semantic-token bridge and definition/references local walkers are gone.
+      `completion.tw`'s receiver param/let collection stays: it serves mid-edit
+      cursor-hole reparses that the occurrence index does not cover.
 - [x] Keep focused regression cases for shadowing, imports, methods, fields, and
       variants.
 
@@ -459,8 +470,9 @@ Acceptance:
 
 - Semantic tokens no longer maintain an independent local-name context.
 - Definition/references agree on shadowed local names and imported aliases.
-- Member completion resolves the receiver from the occurrence index rather than
-  re-deriving local binding types.
+- Receiver/callee resolution for hover, signature help, and inlay hints lives in
+  one `call_resolve` helper rather than three private copies. (Member completion
+  keeps its own receiver path for mid-edit reparses, per note 5.)
 
 ---
 
@@ -472,22 +484,29 @@ living inside it, so they are sequenced after consumers read occurrences.
 
 Checklist:
 
-- [ ] Add `resolved_call_info` / `callee_info`: one helper over checker
-      `method_calls` + `type_map` + resolver origins that hover, signature help,
-      inlay hints, definition, and semantic tokens all call instead of
-      re-inspecting those maps independently.
-- [ ] Add type-introspection helpers over `ResolvedEnv + MonoType`
-      (`field_info_for_type`, `variant_info_for_type`, `methods_for_type`),
-      promoting the private versions in `hover.tw`, and migrate the duplicate
-      field/variant lookups in `definition.tw`, `references.tw`, `completion.tw`.
-- [ ] Replace the three local `substitute_type_params` copies (`hover.tw`,
-      `completion.tw`, `signature_help.tw`) with a single query-safe wrapper over
-      `type_util.subst_type_params` that tolerates missing args instead of
-      trapping.
+- [x] Add a shared callee resolver: `compiler.query.call_resolve` exposes
+      `resolve_callee` (callee → `FunctionSig` + receiver flag + receiver expr)
+      and one `instantiate_receiver_sig`. hover, signature help, and inlay hints
+      call it instead of re-inspecting `method_calls` +
+      `lookup_function`/`lookup_registered_function`. definition and semantic
+      tokens do not need it: definition resolves to declaration spans (not
+      signatures) and semantic tokens classify from occurrences.
+- [~] Type-introspection helpers over `ResolvedEnv + MonoType` — not extracted.
+      After the references migration the remaining field/variant lookups split by
+      input domain: `definition.tw` reads declaration *spans* from cached parsed
+      ASTs, while `hover.tw`/`completion.tw` read resolved field/variant *types*
+      from `ResolvedEnv + MonoType`, and even those two differ in output shape
+      (hover: one variant's display text; completion: all fields/methods as
+      items). A single `*_for_type` helper would serve only part of one consumer,
+      so this was assessed and deliberately left in place rather than forced.
+- [x] Replace the three local `substitute_type_params` copies (`hover.tw`,
+      `completion.tw`, `signature_help.tw`) with `type_util.subst_type_params_lenient`,
+      a query-safe variant of `subst_type_params` that leaves an unmatched type
+      variable unchanged instead of trapping.
 
 Acceptance:
 
-- Call/member/type-detail resolution lives in one place; consumers call it.
+- Callee → signature resolution for the call consumers lives in `call_resolve`.
 - No query module defines its own `substitute_type_params`.
 
 Out of scope (tracked, not scheduled): consolidating the AST cursor/path walkers
