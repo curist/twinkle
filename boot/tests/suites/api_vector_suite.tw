@@ -1,6 +1,31 @@
 use tests.assert
 use tests.runner
 
+fn sort_suite_is_sorted(xs: Vector<Int>) Bool {
+  ok := true
+  i := 1
+
+  for i < xs.len() and ok {
+    if xs[i - 1] > xs[i] {
+      ok = false
+    }
+
+    i = i + 1
+  }
+
+  ok
+}
+
+fn sort_suite_sum(xs: Vector<Int>) Int {
+  total := 0
+
+  for x in xs {
+    total = total + x
+  }
+
+  total
+}
+
 fn build_seq(count: Int) Vector<Int> {
   build_seq_from(0, count)
 }
@@ -691,6 +716,52 @@ pub fn suite() runner.Suite {
         one: Vector<Int> = [42]
         try assert.equal(empty.sort_by(Int.compare).len(), 0)
         try assert.equal(one.sort_by(Int.compare)[0], 42)
+        .Ok({})
+      },
+    )
+    .test(
+      "sort_by handles large, duplicate-heavy, and adversarial inputs",
+      fn() {
+        // duplicate-heavy: tiny value range forces the 3-way partition path
+        dup := collect i in range(2000) {
+          i * 7919 % 11
+        }
+        sorted_dup := dup.sort_by(Int.compare)
+        try assert.equal(sorted_dup.len(), 2000)
+        try assert.is_true(sort_suite_is_sorted(sorted_dup))
+        try assert.equal(sort_suite_sum(sorted_dup), sort_suite_sum(dup))
+
+        // wide pseudo-random range; crosses the insertion cutoff and trie boundaries
+        wide := collect i in range(5000) {
+          (i * 7919 + 17) % 100000 - 50000
+        }
+        sorted_wide := wide.sort_by(Int.compare)
+        try assert.equal(sorted_wide.len(), 5000)
+        try assert.is_true(sort_suite_is_sorted(sorted_wide))
+        try assert.equal(sort_suite_sum(sorted_wide), sort_suite_sum(wide))
+
+        // already-sorted and reverse-sorted hit the pre-scan fast paths
+        asc := collect i in range(1000) {
+          i
+        }
+        try assert.is_true(sort_suite_is_sorted(asc.sort_by(Int.compare)))
+        desc := collect i in range(1000) {
+          1000 - i
+        }
+        try assert.is_true(sort_suite_is_sorted(desc.sort_by(Int.compare)))
+
+        // all-equal input
+        flat := Vector.make(500, 7)
+        sorted_flat := flat.sort_by(Int.compare)
+        try assert.is_true(sort_suite_is_sorted(sorted_flat))
+        try assert.equal(sorted_flat.len(), 500)
+
+        // the input vector must not be mutated by the sort
+        original: Vector<Int> = [3, 1, 2]
+        ignored := original.sort_by(Int.compare)
+        try assert.equal(original[0], 3)
+        try assert.equal(original[1], 1)
+        try assert.equal(original[2], 2)
         .Ok({})
       },
     )
