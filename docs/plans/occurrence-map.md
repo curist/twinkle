@@ -46,6 +46,60 @@ groups.values()
 
 ---
 
+## Redundancy Inventory
+
+An audit of the query/LSP layer found several ad-hoc semantic-resolution pockets
+beyond semantic tokens. The occurrence map (plus a couple of adjacent shared
+helpers) is meant to absorb them. This is the concrete target list.
+
+1. **Symbol identity / lexical binding walks** —
+   `references.tw` (private `SymbolId` + scope/reference collector),
+   `definition.tw` (`resolve_local_binding`, `find_local_in_block`, pattern
+   binding lookup), `semantic_tokens.tw` (temporary `local_names`/`param_names`),
+   `completion.tw` (independent in-scope param/let collection). These converge on
+   `occurrences.tw` / `SymbolKey`.
+
+2. **Receiver/member type resolution in completion** — `completion.tw` reparses
+   with a cursor hole, resolves the receiver by name, scans previous lets, and
+   falls back to stale `type_map` ids. Once occurrences exist, member completion
+   should be: occurrence before dot → symbol key → symbol/type detail → member
+   list, instead of re-deriving local binding types by hand.
+
+3. **Method/call resolution duplicated** — `hover.tw`, `signature_help.tw`,
+   `inlay_hints.tw`, `definition.tw`, `semantic_tokens.tw` each separately inspect
+   combinations of `typed.method_calls`, `typed.type_map`,
+   `env.lookup_function`, `env.lookup_type_method`, and module-qualified names.
+   Extract a shared `resolved_call_info` / `callee_info` helper built around
+   checker `method_calls` plus resolver origins.
+
+4. **Type substitution duplicated despite `type_util.tw`** — `hover.tw`,
+   `completion.tw`, `signature_help.tw` each define a local
+   `substitute_type_params`, while `type_util.subst_type_params` exists. The query
+   copies are tolerant of missing args where `type_util` traps, so the fix is a
+   single query-safe wrapper, not three copies.
+
+5. **Field / variant lookup repeated** — `definition.tw`, `references.tw`,
+   `hover.tw`, `completion.tw` each do "given type + field/variant name, find
+   resolved info / declaration / display text". Centralize as type-introspection
+   helpers over `ResolvedEnv + MonoType`: `field_info_for_type`,
+   `variant_info_for_type`, `methods_for_type` (some already private in
+   `hover.tw`).
+
+6. **AST cursor/path walking duplicated** — `ast_walk.tw`, `ast_path.tw`,
+   `definition.tw`, `signature_help.tw`, `completion.tw`, `semantic.tw`. This is
+   query infra rather than checker reuse; longer term either `ast_path.tw` becomes
+   the shared parent-chain cursor API, or occurrence/call/context indexes replace
+   many of these walks. Out of scope for the core occurrence map; tracked here so
+   it is not lost.
+
+Suggested order (drives the phase plan below): wire occurrences into the
+snapshot → migrate semantic tokens and delete `local_names` → migrate
+definition/references to `SymbolKey` → extract shared call/member/type-
+introspection helpers → replace duplicated type substitution with a `type_util`
+wrapper.
+
+---
+
 ## Non-goals
 
 - Do not run lowering, monomorphization, optimization, linking, or codegen for
@@ -378,14 +432,21 @@ Recommended order:
    - load per-file occurrence indexes for candidate modules from the cache.
 4. `hover.tw`
    - use occurrence kind plus existing type maps for detail text.
-5. `inlay_hints.tw` and completion helpers
+5. `completion.tw`
+   - resolve the receiver before a dot via the occurrence at that offset
+     (occurrence → symbol key → type detail → member list) instead of reparsing
+     with a cursor hole and scanning previous lets.
+6. `inlay_hints.tw` and remaining completion helpers
    - use occurrence/scoped symbol info where relevant.
 
 Checklist:
 
 - [ ] Migrate one consumer at a time behind tests.
+- [ ] Replace the private `references.SymbolId` and `definition.tw` local-binding
+      walks (`resolve_local_binding`, `find_local_in_block`) with `SymbolKey`.
 - [ ] Delete obsolete local-scope walkers once no consumer needs them, including
-      `semantic_tokens.tw` `local_names`/`after_stmt` threading.
+      `semantic_tokens.tw` `local_names`/`after_stmt` threading and
+      `completion.tw`'s independent in-scope param/let collection.
 - [ ] Keep focused regression cases for shadowing, imports, methods, fields, and
       variants.
 
@@ -393,6 +454,42 @@ Acceptance:
 
 - Semantic tokens no longer maintain an independent local-name context.
 - Definition/references agree on shadowed local names and imported aliases.
+- Member completion resolves the receiver from the occurrence index rather than
+  re-deriving local binding types.
+
+---
+
+### Phase 6 — Extract shared call / type-introspection helpers
+
+Purpose: collapse the non-lexical duplication surfaced in the redundancy
+inventory (items 3–5). These helpers complement the occurrence index rather than
+living inside it, so they are sequenced after consumers read occurrences.
+
+Checklist:
+
+- [ ] Add `resolved_call_info` / `callee_info`: one helper over checker
+      `method_calls` + `type_map` + resolver origins that hover, signature help,
+      inlay hints, definition, and semantic tokens all call instead of
+      re-inspecting those maps independently.
+- [ ] Add type-introspection helpers over `ResolvedEnv + MonoType`
+      (`field_info_for_type`, `variant_info_for_type`, `methods_for_type`),
+      promoting the private versions in `hover.tw`, and migrate the duplicate
+      field/variant lookups in `definition.tw`, `references.tw`, `completion.tw`.
+- [ ] Replace the three local `substitute_type_params` copies (`hover.tw`,
+      `completion.tw`, `signature_help.tw`) with a single query-safe wrapper over
+      `type_util.subst_type_params` that tolerates missing args instead of
+      trapping.
+
+Acceptance:
+
+- Call/member/type-detail resolution lives in one place; consumers call it.
+- No query module defines its own `substitute_type_params`.
+
+Out of scope (tracked, not scheduled): consolidating the AST cursor/path walkers
+(`ast_walk.tw`, `ast_path.tw`, and the per-feature walks in `definition.tw`,
+`signature_help.tw`, `completion.tw`, `semantic.tw`) into a shared parent-chain
+cursor API. Revisit once occurrence/call indexes have removed their semantic
+duties.
 
 ---
 
