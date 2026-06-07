@@ -181,7 +181,34 @@ export function resolveExternImports(importList, hostImports, imports = {}, glob
  *   - Int (bigint), Float (number), Bool (i32) pass through
  * Throws a single aggregated error if any extern import is unsatisfied.
  */
-function autoBridgeExternImports(wasmModule, hostImports, b, jspi = false, imports = {}) {
+/**
+ * Read the compiler-emitted `twinkle.externs` custom section into a
+ * `module → name → { args, ret }` map. Best-effort: `customSections` may throw
+ * on GC modules in some engines (same risk class as `Module.imports`), and the
+ * section is absent for non-Twinkle wasm — either way we return `{}` and the
+ * manual override / string-default path takes over.
+ */
+function readExternMeta(wasmModule) {
+  let sections;
+  try {
+    sections = WebAssembly.Module.customSections(wasmModule, "twinkle.externs");
+  } catch {
+    return {};
+  }
+  if (!sections || sections.length === 0) return {};
+  try {
+    const list = JSON.parse(new TextDecoder().decode(new Uint8Array(sections[0])));
+    const map = {};
+    for (const e of list) {
+      (map[e.module] ??= {})[e.name] = { args: e.args, ret: e.ret };
+    }
+    return map;
+  } catch {
+    return {};
+  }
+}
+
+function autoBridgeExternImports(wasmModule, hostImports, b, jspi = false, imports = {}, externMeta = {}) {
   let importList;
   try {
     importList = WebAssembly.Module.imports(wasmModule);
@@ -201,21 +228,34 @@ function autoBridgeExternImports(wasmModule, hostImports, b, jspi = false, impor
     );
   }
 
-  // Per-import arg marshaling honors the extern's optional `args` spec — an
-  // array of `"raw" | "string"` keyed by arg position. `"raw"` passes the value
-  // through untouched, essential for externref args (e.g. a canvas 2D context),
-  // since calling decodeString on an opaque host object recurses until a stack
-  // overflow in some engines (notably Safari). Without a spec entry, a
-  // non-numeric arg is assumed to be a Wasm GC string and decoded.
+  // Per-import arg marshaling honors a per-position kind spec. Two vocabularies
+  // are accepted and treated identically: the compiler-emitted twinkle.externs
+  // kinds ("str" | "ref" | "i64" | "f64" | "i32") and the manual override's
+  // ("raw" | "string"). Numbers pass through (handled before the spec). "ref" /
+  // "raw" pass the value untouched — essential for externref args (e.g. a canvas
+  // 2D context), since decodeString on an opaque host object recurses until a
+  // stack overflow in some engines (notably Safari). Anything else (incl. no
+  // entry) is assumed to be a Wasm GC string and decoded.
   const makeMarshalArgs = (spec) => (args) => args.map((arg, i) => {
     if (typeof arg === "bigint") return Number(arg);
     if (typeof arg === "number") return arg;
-    if (spec?.[i] === "raw") return arg;
+    const k = spec?.[i];
+    if (k === "ref" || k === "raw") return arg;
     return decodeString(b, arg);
   });
 
-  const marshalReturn = (result) => {
+  // Return marshaling uses the compiler-emitted `ret` kind when available, so
+  // we never guess from the JS value's type. Falls back to a generic guess when
+  // there is no section (manual-only callers).
+  const marshalReturn = (result, ret) => {
     if (result === undefined || result === null) return;
+    switch (ret) {
+      case "ref": return result;
+      case "str": return typeof result === "string" ? encodeString(b, result) : result;
+      case "i64": return typeof result === "number" ? BigInt(result) : result;
+      case "f64": case "i32": return result;
+      case "void": return undefined;
+    }
     if (typeof result === "string") return encodeString(b, result);
     if (typeof result === "number") return result;
     if (typeof result === "bigint") return result;
@@ -223,13 +263,16 @@ function autoBridgeExternImports(wasmModule, hostImports, b, jspi = false, impor
   };
 
   for (const { module, name, fn, recv, args } of found) {
-    const marshalArgs = makeMarshalArgs(args);
+    // Precedence: a manual `args` override wins over the section's kinds.
+    const meta = externMeta[module]?.[name];
+    const marshalArgs = makeMarshalArgs(args ?? meta?.args);
+    const ret = meta?.ret;
     let bridgedFn;
     if (jspi) {
       // JSPI mode: async wrapper so Promise-returning JS functions suspend
       // Wasm. Non-Promise returns pass through without suspension.
       const asyncWrapper = async (...args) =>
-        marshalReturn(await fn.apply(recv, marshalArgs(args)));
+        marshalReturn(await fn.apply(recv, marshalArgs(args)), ret);
       bridgedFn = new WebAssembly.Suspending(asyncWrapper);
     } else {
       // Sync mode: detect and reject Promise returns
@@ -241,7 +284,7 @@ function autoBridgeExternImports(wasmModule, hostImports, b, jspi = false, impor
             `Promise-returning externs require a runtime with WebAssembly.Suspending/promising support.`,
           );
         }
-        return marshalReturn(result);
+        return marshalReturn(result, ret);
       };
     }
     if (!hostImports[module]) hostImports[module] = {};
@@ -475,7 +518,8 @@ function prepareWasm(wasmBytes, opts, { jspi = false } = {}) {
 
   const hostImports = makeHostImports(b, runtime, bridgeBytes);
   const mainModule = new WebAssembly.Module(wasmBytes);
-  autoBridgeExternImports(mainModule, hostImports, b, jspi, imports);
+  const externMeta = readExternMeta(mainModule);
+  autoBridgeExternImports(mainModule, hostImports, b, jspi, imports, externMeta);
 
   return { mainModule, hostImports, b, runtime };
 }
