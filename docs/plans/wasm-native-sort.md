@@ -20,6 +20,8 @@ The optimizer/runtime should make those shapes fast. A narrow `sort_indices_by_i
 
 **Current conclusion:** `Vector.gather` and typed dataframe gather cleanup helped join and made the API cleaner, but `order_by` remains dominated by sorting. Microbenchmarks show the expensive path is `idx.sort_by(fn(a, b) { Int.compare(keys[a], keys[b]) })`: comparison sort multiplies PVec random reads by `n log n`. Native-language references show the workload itself is far cheaper when sort works over dense memory, so the current ~2.5s dataframe `order_by` is implementation overhead, not a Twinkle ceiling.
 
+**Companion representation plan:** [typed-vector-representation.md](typed-vector-representation.md) is the broader monomorphization/physical-representation fix. This sort plan can materialize dense typed working sets inside kernels; the typed-vector plan makes `Vector<Int>` access itself avoid boxed `anyref` reads where possible.
+
 ---
 
 ## Baseline metrics to track
@@ -192,7 +194,7 @@ These are optional conveniences. They should lower to the same runtime kernels a
 Layer the fix so generic idioms improve over time:
 
 1. **Make `Vector.sort` / common `Vector.sort_by` cases runtime-native.**
-   The current prelude merge sort is valuable as a simple spec, but hot execution should use a runtime kernel with a dense mutable working set.
+   The current prelude merge sort is valuable as a simple spec, but hot execution should use a runtime kernel with a dense mutable working set. This complements [typed-vector-representation.md](typed-vector-representation.md): native sort reduces hot algorithm overhead now; typed vectors reduce boxed read overhead at the representation level.
 2. **Recognize common comparator shapes.**
    In particular, `idx.sort_by(fn(a, b) { Int.compare(keys[a], keys[b]) })` should lower to an internal typed argsort kernel instead of calling a closure for every comparison.
 3. **Keep ordered/reverse detection outside the heavy kernel.**
@@ -219,7 +221,7 @@ Two representation options:
    SortEntry = struct { key: i64, row: i32, is_null: i32 }
    entries: array<SortEntry>
    ```
-   Pros: one logical item to swap; straightforward comparator.<br>
+   Pros: one logical item to swap; straightforward comparator.
    Cons: one struct allocation per row.
 
 2. **Parallel arrays**
@@ -228,7 +230,7 @@ Two representation options:
    rows_buf: array<i31ref row>
    nulls_buf: array<i31ref bool>
    ```
-   Pros: fewer per-row object allocations; closer to native array-sort layout.<br>
+   Pros: fewer per-row object allocations; closer to native array-sort layout.
    Cons: swaps touch multiple arrays; more bookkeeping.
 
 Pick the representation that is easiest to implement correctly in the current runtime DSL, then measure. If entry records allocate too much, switch to parallel arrays.
