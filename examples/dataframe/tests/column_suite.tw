@@ -1,7 +1,7 @@
 use assert
 use frame.cell.{Scalar}
 use frame.column
-use frame.column.{ColData, Column, DType}
+use frame.column.{ColData, DType}
 use runner
 
 pub fn suite() {
@@ -36,6 +36,27 @@ pub fn suite() {
         ok1 := try assert.equal(column.as_ints(g), [7, 6, 5])
         ok2 := try assert.is_true(column.is_null(g, 1))
         assert.is_false(column.is_null(g, 0))
+      },
+    )
+    .test(
+      "gather duplicates and reorders, carrying nulls",
+      fn() {
+        c := column.with_nulls(ColData.IntCol([5, 6, 7]), [false, true, false])
+        g := column.gather(c, [2, 2, 1, 0])
+        ok1 := try assert.equal(column.as_ints(g), [7, 7, 6, 5])
+        ok2 := try assert.is_true(column.is_null(g, 2))
+        assert.is_false(column.is_null(g, 0))
+      },
+    )
+    .test(
+      "gather_or_null fills -1 indices with null",
+      fn() {
+        c := column.str_col(["x", "y"])
+        g := column.gather_or_null(c, [1, -1, 0])
+        ok1 := try assert.equal(column.as_strs(g), ["y", "", "x"])
+        ok2 := try assert.is_true(column.is_null(g, 1))
+        ok3 := try assert.is_false(column.is_null(g, 0))
+        assert.is_false(column.is_null(g, 2))
       },
     )
     .test(

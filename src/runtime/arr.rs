@@ -83,6 +83,7 @@ pub fn make() -> ModuleIR {
         slice_fn(),
         pop_tail_fn(),
         drop_last_fn(),
+        gather_fn(),
         builder_new_fn(),
         builder_from_fn(),
         builder_push_fn(),
@@ -3002,6 +3003,60 @@ fn pop_tail_fn() -> FuncDef {
                     },
                 ],
             },
+        ],
+    }
+}
+
+fn gather_fn() -> FuncDef {
+    FuncDef {
+        name: "gather".into(),
+        params: vec![ref_pvec_null(), ref_pvec_null()],
+        results: vec![ref_pvec()],
+        locals: vec![ValType::I32, ref_array_null(), ValType::I32, ValType::I32],
+        body: vec![
+            Instr::LocalGet(1),
+            Instr::Call("len".into()),
+            Instr::LocalSet(2),
+            Instr::Call("builder_new".into()),
+            Instr::LocalSet(3),
+            Instr::I32Const(0),
+            Instr::LocalSet(4),
+            Instr::Block {
+                label: "brk".into(),
+                result: None,
+                body: vec![Instr::Loop {
+                    label: "lp".into(),
+                    result: None,
+                    body: vec![
+                        Instr::LocalGet(4),
+                        Instr::LocalGet(2),
+                        Instr::I32GeS,
+                        Instr::BrIf("brk".into()),
+                        Instr::LocalGet(1),
+                        Instr::LocalGet(4),
+                        Instr::Call("get".into()),
+                        Instr::RefCast {
+                            nullable: false,
+                            heap: HeapType::Named(T_BOXED_INT.into()),
+                        },
+                        Instr::StructGet(T_BOXED_INT.into(), 0),
+                        Instr::I32WrapI64,
+                        Instr::LocalSet(5),
+                        Instr::LocalGet(3),
+                        Instr::LocalGet(0),
+                        Instr::LocalGet(5),
+                        Instr::Call("get".into()),
+                        Instr::Call("builder_push".into()),
+                        Instr::LocalGet(4),
+                        Instr::I32Const(1),
+                        Instr::I32Add,
+                        Instr::LocalSet(4),
+                        Instr::Br("lp".into()),
+                    ],
+                }],
+            },
+            Instr::LocalGet(3),
+            Instr::Call("builder_freeze".into()),
         ],
     }
 }

@@ -76,15 +76,14 @@ pub fn rename(t: Table, from: String, to: String) Result<Table, String> {
 }
 
 pub fn head(t: Table, n: Int) Table {
-  limit := if n < t.nrows {
-    n
-  } else {
-    t.nrows
+  // Clamp at the source: negative n -> 0, n > nrows -> nrows. A negative limit
+  // would otherwise reach column.slice(c, 0, limit) and trap.
+  limit := n.max(0).min(t.nrows)
+  out_cols := collect c in t.cols {
+    column.slice(c, 0, limit)
   }
-  idx := collect i in range(limit) {
-    i
-  }
-  t.take(idx)
+
+  Table.{ names: t.names, cols: out_cols, nrows: limit }
 }
 
 /// Gather rows by index across every column (the core primitive).

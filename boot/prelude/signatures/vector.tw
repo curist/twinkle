@@ -34,6 +34,11 @@ pub fn drop_last<T>(xs: Vector<T>) Vector<T> {
   xs
 }
 
+/// Return a new vector by reading `xs` at each index in `idx`.
+pub fn gather<T>(xs: Vector<T>, idx: Vector<Int>) Vector<T> {
+  xs
+}
+
 /// Return the element at index, or None if out of bounds.
 pub fn get<T>(xs: Vector<T>, index: Int) Option<T> {
   .None

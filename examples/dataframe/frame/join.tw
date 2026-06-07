@@ -1,5 +1,4 @@
 use frame.cell
-use frame.cell.{Scalar}
 use frame.column
 use frame.column.{Column}
 use frame.table
@@ -102,27 +101,9 @@ fn build_output(l: Table, r: Table, on: String, lidx: Vector<Int>, ridx: Vector<
         name
       }
       out_names = .append(out_name)
-      out_cols = .append(gather_nullable(c, ridx))
+      out_cols = .append(column.gather_or_null(c, ridx))
     }
   }
 
   table.from_columns(out_names, out_cols)
-}
-
-/// Like column.gather, but a -1 index produces a null cell.
-fn gather_nullable(c: Column, idx: Vector<Int>) Column {
-  cells: Vector<Scalar> = []
-
-  for i in idx {
-    if i < 0 {
-      cells = .append(Scalar.CNull)
-    } else {
-      cells = .append(column.cell_at(c, i))
-    }
-  }
-
-  case column.from_cells(cells) {
-    .Ok(col) => col,
-    .Err(e) => error(e),
-  }
 }

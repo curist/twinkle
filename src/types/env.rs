@@ -255,6 +255,7 @@ impl TypeEnv {
             (BUILTIN_VECTOR_TYPE_ID, "concat", "Vector.concat"),
             (BUILTIN_VECTOR_TYPE_ID, "slice", "Vector.slice"),
             (BUILTIN_VECTOR_TYPE_ID, "drop_last", "Vector.drop_last"),
+            (BUILTIN_VECTOR_TYPE_ID, "gather", "Vector.gather"),
             (BUILTIN_VECTOR_TYPE_ID, "get", "Vector.get"),
             (BUILTIN_VECTOR_TYPE_ID, "set", "Vector.set"),
             (BUILTIN_VECTOR_TYPE_ID, "is_empty", "Vector.is_empty"),

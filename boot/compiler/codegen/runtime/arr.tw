@@ -147,6 +147,7 @@ pub fn module() WasmModule {
     slice_fn(),
     pop_tail_fn(),
     drop_last_fn(),
+    gather_fn(),
     builder_new_fn(),
     builder_from_fn(),
     builder_push_fn(),
@@ -2894,6 +2895,63 @@ fn pop_tail_fn() FuncDef {
           .RefCast(false, .Eq),
         ],
       ),
+    ],
+  }
+}
+
+// gather(vec: PVec?, idx: PVec?) -> PVec
+// Build a vector where result[i] = vec[idx[i]]. The index vector stores Int
+// elements as BoxedInt anyrefs; truncate to i32 before calling get.
+fn gather_fn() FuncDef {
+  // p0=vec, p1=idx; L2=n, L3=builder, L4=i, L5=k
+  .{
+    name: "gather",
+    params: [pvec_null(), pvec_null()],
+    results: [pvec_ref()],
+    locals: [.I32, arr_null(), .I32, .I32],
+    body: [
+      .LocalGet(1),
+      .Call("len"),
+      .LocalSet(2),
+      .Call("builder_new"),
+      .LocalSet(3),
+      .I32Const(0),
+      .LocalSet(4),
+      .Block(
+        "brk",
+        .None,
+        [
+          .Loop(
+            "lp",
+            .None,
+            [
+              .LocalGet(4),
+              .LocalGet(2),
+              .I32GeS,
+              .BrIf("brk"),
+              .LocalGet(1),
+              .LocalGet(4),
+              .Call("get"),
+              .RefCast(false, .Named(t_boxed_int())),
+              .StructGet(t_boxed_int(), 0),
+              .I32WrapI64,
+              .LocalSet(5),
+              .LocalGet(3),
+              .LocalGet(0),
+              .LocalGet(5),
+              .Call("get"),
+              .Call("builder_push"),
+              .LocalGet(4),
+              .I32Const(1),
+              .I32Add,
+              .LocalSet(4),
+              .Br("lp"),
+            ],
+          ),
+        ],
+      ),
+      .LocalGet(3),
+      .Call("builder_freeze"),
     ],
   }
 }

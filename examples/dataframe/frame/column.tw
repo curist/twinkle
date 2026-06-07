@@ -101,52 +101,67 @@ pub fn as_bools(c: Column) Vector<Bool> {
 
 /// Gather rows by index, carrying the null mask along.
 pub fn gather(c: Column, idx: Vector<Int>) Column {
-  new_nulls: Vector<Bool> = []
+  new_data := case c.data {
+    .IntCol(v) => ColData.IntCol(v.gather(idx)),
+    .FloatCol(v) => ColData.FloatCol(v.gather(idx)),
+    .StrCol(v) => ColData.StrCol(v.gather(idx)),
+    .BoolCol(v) => ColData.BoolCol(v.gather(idx)),
+  }
 
-  for i in idx {
-    new_nulls = .append(c.nulls[i])
+  Column.{ data: new_data, nulls: c.nulls.gather(idx) }
+}
+
+/// Like gather, but a negative index produces a null cell (type-appropriate
+/// placeholder + masked). Used by left/outer joins for unmatched rows.
+pub fn gather_or_null(c: Column, idx: Vector<Int>) Column {
+  nulls := collect k in idx {
+    k < 0 or c.nulls[k]
   }
 
   new_data := case c.data {
-    .IntCol(v) => {
-      out: Vector<Int> = []
-
-      for i in idx {
-        out = .append(v[i])
+    .IntCol(v) => ColData.IntCol(collect k in idx {
+      if k < 0 {
+        0
+      } else {
+        v[k]
       }
-
-      ColData.IntCol(out)
-    },
-    .FloatCol(v) => {
-      out: Vector<Float> = []
-
-      for i in idx {
-        out = .append(v[i])
+    }),
+    .FloatCol(v) => ColData.FloatCol(collect k in idx {
+      if k < 0 {
+        0.0
+      } else {
+        v[k]
       }
-
-      ColData.FloatCol(out)
-    },
-    .StrCol(v) => {
-      out: Vector<String> = []
-
-      for i in idx {
-        out = .append(v[i])
+    }),
+    .StrCol(v) => ColData.StrCol(collect k in idx {
+      if k < 0 {
+        ""
+      } else {
+        v[k]
       }
-
-      ColData.StrCol(out)
-    },
-    .BoolCol(v) => {
-      out: Vector<Bool> = []
-
-      for i in idx {
-        out = .append(v[i])
+    }),
+    .BoolCol(v) => ColData.BoolCol(collect k in idx {
+      if k < 0 {
+        false
+      } else {
+        v[k]
       }
-
-      ColData.BoolCol(out)
-    },
+    }),
   }
 
-  Column.{ data: new_data, nulls: new_nulls }
+  Column.{ data: new_data, nulls }
+}
+
+/// Structural subrange [start, end) of a column, sharing the source tree.
+pub fn slice(c: Column, start: Int, end: Int) Column {
+  new_data := case c.data {
+    .IntCol(v) => ColData.IntCol(v.slice(start, end)),
+    .FloatCol(v) => ColData.FloatCol(v.slice(start, end)),
+    .StrCol(v) => ColData.StrCol(v.slice(start, end)),
+    .BoolCol(v) => ColData.BoolCol(v.slice(start, end)),
+  }
+
+  Column.{ data: new_data, nulls: c.nulls.slice(start, end) }
 }
 
 /// Read a single element as a boxed Scalar (CNull when masked).

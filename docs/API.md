@@ -266,6 +266,7 @@ Persistent vector with structural sharing. Literal syntax: `[1, 2, 3]`.
 | `.set(i, val)` | `fn<T>(v: Vector<T>, i: Int, val: T) Option<Vector<T>>` | Safe update at index. O(log n) |
 | `.concat(other)` | `fn<T>(v: Vector<T>, other: Vector<T>) Vector<T>` | Concatenate two vectors structurally. O(log n), sharing both operands' trees |
 | `.slice(start, end)` | `fn<T>(v: Vector<T>, start: Int, end: Int) Vector<T>` | Subvector `[start, end)`. O(log n), sharing the source tree except boundary spines |
+| `.gather(idx)` | `fn<T>(xs: Vector<T>, idx: Vector<Int>) Vector<T>` | Bulk index: `result[k] = xs[idx[k]]`, length `idx.len()`. Traps on OOB index. Permute/select/duplicate in one op |
 | `.map(f)` | `fn<A,B>(xs: Vector<A>, f: fn(A) B) Vector<B>` | Transform each element |
 | `.filter(f)` | `fn<A>(xs: Vector<A>, f: fn(A) Bool) Vector<A>` | Keep elements where `f` returns true |
 | `.fold(init, f)` | `fn<A,B>(xs: Vector<A>, init: B, f: fn(B,A) B) B` | Left fold |

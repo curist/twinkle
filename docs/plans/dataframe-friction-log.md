@@ -7,7 +7,7 @@ app-level ergonomics and collection performance — the actual deliverable of th
 stress test. All findings are from the real build; nothing here is hypothetical.
 
 The engine that produced these notes: `frame/{cell,column,table,row,query,csv,group,join,gen}.tw`,
-35 passing tests, plus a `bench/main.tw` harness.
+the dataframe test suite, plus a `bench/main.tw` harness.
 
 ## Headline finding: fluent method chains don't survive module boundaries
 
@@ -237,6 +237,68 @@ Observations:
   `gather_nullable` boxing is extra work the inner join doesn't need (no -1 indices) —
   a fast path that calls plain `column.gather` when `how == Inner` would help.
 
+### Phase 1 gather-path optimization results
+
+After rewriting `column.gather` to use `collect`, routing join null-fill through typed
+`column.gather_or_null`, and switching `head` to structural `column.slice`, the same bench
+harness produced:
+
+```
+── N = 10000 ──
+filter      : 2.39ms    (checksum 4912)
+order_by    : 12.19ms   (checksum 10000)
+group_by/agg: 4.77ms    (checksum 64)
+join        : 6.58ms    (checksum 8597)
+
+── N = 100000 ──
+filter      : 17.53ms   (checksum 49735)
+order_by    : 151.68ms  (checksum 100000)
+group_by/agg: 28.54ms   (checksum 64)
+join        : 83.97ms   (checksum 78120)
+
+── N = 1000000 ──
+filter      : 213.08ms  (checksum 498802)
+order_by    : 2823.07ms (checksum 1000000)
+group_by/agg: 333.73ms  (checksum 64)
+join        : 1380.43ms (checksum 937500)
+```
+
+The clear movement is join: removing the `Scalar` round-trip from right-column null-fill
+cuts a meaningful chunk of the large left-join case. `filter` and `order_by` are essentially
+flat, which matches the cost model: Phase 1 removes append-loop overhead but still does one
+indexed vector read per gathered cell, while `order_by` remains comparator-bound. `group_by`
+is roughly unchanged within benchmark noise.
+
+A follow-up added the v1 `Vector.gather` runtime primitive and routed `column.gather`
+through it. That run produced:
+
+```
+── N = 10000 ──
+filter      : 2.12ms    (checksum 4912)
+order_by    : 12.03ms   (checksum 10000)
+group_by/agg: 4.82ms    (checksum 64)
+join        : 6.67ms    (checksum 8597)
+
+── N = 100000 ──
+filter      : 17.89ms   (checksum 49735)
+order_by    : 154.77ms  (checksum 100000)
+group_by/agg: 26.76ms   (checksum 64)
+join        : 84.40ms   (checksum 78120)
+
+── N = 1000000 ──
+filter      : 214.92ms  (checksum 498802)
+order_by    : 2625.39ms (checksum 1000000)
+group_by/agg: 339.00ms  (checksum 64)
+join        : 1398.56ms (checksum 937500)
+```
+
+As expected, the v1 runtime gather is mostly flat against Phase 1: it consolidates the loop
+into the runtime but still performs one trie lookup per requested index. The `order_by` number
+moved in this run, but that workload is dominated by sort-comparator behavior and shows enough
+run-to-run variance that this should not be attributed to gather alone without a targeted
+microbenchmark. The conclusion stands: the remaining large wins likely need either typed
+sort-key materialization for `order_by` or a later trie-aware gather path.
+
 ## Recommendations (ranked)
 
 1. **Cross-module inherent methods (UFCS or `extend`).** Without it, fluent
@@ -249,8 +311,10 @@ Observations:
    `to_string` (we did, for `DType`/`Dir`/`How`); builtins with no module to attach to
    weren't, hence the language fix. Remaining: audit other builtins returned by core
    APIs, and optionally auto-derive `Stringify` for payload-free enums.
-3. **A trie-aware bulk `Vector.gather(idx)` / permute primitive.** Directly attacks the
-   `order_by`/`take` cost center, the dominant cost at scale.
+3. **Materialized sort keys for `order_by`, plus a later trie-aware gather.** The comparator
+   dominates sorted workloads because it repeatedly dispatches through `ColData` and performs
+   random vector reads. A trie-aware `Vector.gather(idx)` would still help shared `take` paths,
+   especially monotonic selections, but it is not the main `order_by` lever by itself.
 4. **A way to write `ColData` 4-arm dispatch once** (generic-over-primitive, or codegen).
    The 4× duplication in `gather`/`compare_at`/`cell_at`/`from_cells`/agg is the
    concrete tax of no-traits + no-HKT for unboxed columns.
@@ -265,5 +329,5 @@ Generics (`from_cells<…>`-style monomorphic helpers, `Vector<Column>`,
 `Dict<String, Vector<Int>>`), `Result`/`try` propagation through every fallible op,
 `case`/`cond`, closures with inferred params, `collect`/`range`, record field-pun and
 named-constructor literals, and the persistent collections under load. The language was
-productive; the friction was concentrated in the seven items above, and only the first
+productive; the friction was concentrated in the findings above, and only the first
 (cross-module methods) changed the *shape* of the result rather than just its verbosity.

@@ -1,14 +1,11 @@
 use assert
-use runner
 use frame.column
 use frame.table
 use frame.table.{Table}
+use runner
 
 fn sample() Table {
-  cols := [
-    column.int_col([1, 2, 3]),
-    column.str_col(["a", "b", "c"]),
-  ]
+  cols := [column.int_col([1, 2, 3]), column.str_col(["a", "b", "c"])]
 
   case table.from_columns(["id", "name"], cols) {
     .Ok(t) => t,
@@ -64,6 +61,25 @@ pub fn suite() {
         ok1 := try assert.equal(column.as_ints(try t.column("id")), [3, 1])
         ok2 := try assert.equal(column.as_strs(try t.column("name")), ["c", "a"])
         assert.equal(t.nrows, 2)
+      },
+    )
+    .test(
+      "head returns the first n rows",
+      fn() {
+        t := sample().head(2)
+        ok1 := try assert.equal(t.nrows, 2)
+        assert.equal(column.as_ints(try t.column("id")), [1, 2])
+      },
+    )
+    .test(
+      "head clamps requested row count",
+      fn() {
+        none := sample().head(-1)
+        all := sample().head(99)
+        ok1 := try assert.equal(none.nrows, 0)
+        ok2 := try assert.equal(column.as_ints(try none.column("id")), [])
+        ok3 := try assert.equal(all.nrows, 3)
+        assert.equal(column.as_ints(try all.column("id")), [1, 2, 3])
       },
     )
     .test(

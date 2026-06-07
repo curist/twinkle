@@ -65,6 +65,8 @@ fn intrinsic_abi_result(func_id: FuncId) -> Option<IntrinsicAbiResult> {
         id if id == prelude_ids::VECTOR_APPEND
             || id == prelude_ids::VECTOR_CONCAT
             || id == prelude_ids::VECTOR_SLICE
+            || id == prelude_ids::VECTOR_DROP_LAST
+            || id == prelude_ids::VECTOR_GATHER
             || id == prelude_ids::VECTOR_SET_IN_PLACE
     ) {
         return Some(IntrinsicAbiResult::RefArrayNullable);

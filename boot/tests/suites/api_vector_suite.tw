@@ -823,6 +823,26 @@ pub fn suite() runner.Suite {
       },
     )
     .test(
+      "gather selects duplicates and reorders",
+      fn() {
+        xs := [10, 20, 30, 40]
+        got := xs.gather([3, 0, 0, 2])
+        try assert.equal(got, [40, 10, 10, 30])
+        .Ok({})
+      },
+    )
+    .test(
+      "gather crosses trie boundaries",
+      fn() {
+        xs: Vector<Int> = collect i in range(1100) {
+          i
+        }
+        got := xs.gather([1099, 1024, 33, 32, 0, 1099])
+        try assert.equal(got, [1099, 1024, 33, 32, 0, 1099])
+        .Ok({})
+      },
+    )
+    .test(
       "drop_last across trie boundaries matches slice",
       fn() {
         // Exercise the O(1) tail-shrink and the 32-boundary leaf pull,

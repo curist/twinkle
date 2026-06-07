@@ -106,6 +106,8 @@ pub mod prelude {
     pub const STRING_BUILDER_FREEZE: FuncId = FuncId(1103); // (builder) -> String
     // Vector.drop_last(vec) -> Vector<T>: O(1)-amortized pop of the last element.
     pub const VECTOR_DROP_LAST: FuncId = FuncId(1044);
+    // Vector.gather(vec, idx) -> Vector<T>: bulk positional select/permute.
+    pub const VECTOR_GATHER: FuncId = FuncId(1045);
 
     // String / numeric conversion builtins
     pub const CHAR_CODE_AT: FuncId = FuncId(1017); // String.char_code_at(s, i) -> Int

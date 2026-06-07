@@ -513,6 +513,19 @@ pub fn contract(func_id: FuncId) -> Option<IntrinsicContract> {
                 abi_result: Some(IntrinsicAbiResult::RefArrayNullable),
             })
         }
+        id if id == prelude_ids::VECTOR_GATHER => {
+            let t = ty_var("T");
+            let vec_t = MonoType::Vector(Box::new(t));
+            Some(IntrinsicContract {
+                func_id,
+                twinkle_name: "Vector.gather",
+                dispatch: IntrinsicDispatch::Runtime,
+                type_params: vec!["T".to_string()],
+                params: vec![vec_t.clone(), MonoType::Vector(Box::new(MonoType::Int))],
+                ret: vec_t,
+                abi_result: Some(IntrinsicAbiResult::RefArrayNullable),
+            })
+        }
         id if id == prelude_ids::DICT_SET => {
             let k = ty_var("K");
             let v = ty_var("V");
@@ -824,6 +837,7 @@ fn builtin_doc(name: &str) -> Option<&'static str> {
         "Vector.drop_last" => {
             "Return a new vector without the last element, or the empty vector if already empty."
         }
+        "Vector.gather" => "Return a new vector by reading elements at the given indices.",
         "Vector.get" => "Return the element at the given index, or `None` if out of bounds.",
         "Vector.set" => "Return a new vector with the element at the given index replaced.",
         "Vector.make" => "Create a vector of `n` copies of a value.",
