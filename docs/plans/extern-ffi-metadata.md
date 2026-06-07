@@ -72,32 +72,51 @@ what can actually appear.
 `LinkedModule` (the backend IR consumed by `wasm.tw`) carries only lowered
 `ImportDef`s (ValTypes), not the source `MonoType`s. Rather than reverse-map
 ValTypes (a `Ref(_, Named(...))` is *probably* `String` but that's an unsafe
-assumption), compute the kinds from the `MonoType`s while they're still in hand:
+assumption), compute the kinds from the `MonoType`s while they're still in hand
+and preserve that metadata through Wasm linking:
 
-1. The linker already has the post-DCE live `extern_imports`
-   (`Dict<Int, ExternImport>`, each with `param_tys` / `return_ty`).
-2. Map those to a `Vector<ExternMeta>` and hang it off `LinkedModule`.
-3. `wasm.tw` JSON-encodes `linked.extern_meta` into the custom section.
+1. `emit_module` already has the source `anf.extern_imports`
+   (`Dict<Int, ExternImport>`, each with `param_tys` / `return_ty`) while it
+   builds the user module's lowered `ImportDef`s.
+2. Map those imports to a `Vector<ExternMeta>` there and hang it off
+   `WasmModule` next to `imports`.
+3. `codegen/linker.tw` carries/merges the module metadata into `LinkedModule`.
+4. `codegen/linker_dce.tw` filters `LinkedModule.extern_meta` together with the
+   surviving extern `ImportDef`s, so the section describes only live imports.
+5. `wasm.tw` JSON-encodes `linked.extern_meta` into the custom section.
 
-This keeps the source types authoritative and adds no ValType guesswork.
+This keeps the source types authoritative, adds no ValType guesswork, and still
+makes the emitted section match post-Wasm-DCE imports.
 
 ## Implementation steps
 
 ### 1. Boot compiler — emit the section
 
-- `core_ir.tw` (or a codegen module): add
+- Add
   `pub type ExternMeta = .{ module: String, name: String, args: Vector<String>, ret: String }`
-  and a `mono_type_kind(MonoType) String` helper implementing the table above.
-- `linker.tw`: add `extern_meta: Vector<ExternMeta>` to `LinkedModule`; populate
-  it from the live `extern_imports` during linking (after DCE, so it matches the
-  emitted imports).
-- `wasm.tw`: a `encode_extern_meta_section(meta) Vector<Byte>` that builds the
-  custom-section payload — `emit_name(buf, "twinkle.externs")` followed by the
-  UTF-8 JSON bytes — and append it via the existing
+  in the codegen IR layer (for example `wasm_ir.tw`) and a
+  `mono_type_kind(MonoType) String` helper near `emit_module` implementing the
+  table above.
+- Add `extern_meta: Vector<ExternMeta>` to both `WasmModule` and `LinkedModule`.
+  Update all constructors in runtime modules, tests, and linker fixtures to use
+  `[]` when they have no user externs.
+- In `emit_module`, populate `user_module.extern_meta` from
+  `anf.extern_imports` next to the existing `extern_imports: Vector<ImportDef>`
+  construction, before source types are erased to `ValType`s.
+- In `codegen/linker.tw`, merge module `extern_meta` into `LinkedModule` using
+  the original import `module`/`name` values. Do not namespace or rewrite them:
+  they must match `WebAssembly.Module.imports`.
+- In `codegen/linker_dce.tw`, filter `linked.extern_meta` to the same set of
+  surviving non-runtime extern imports as `linked.imports`, using
+  `(module, name)` pairs.
+- In `wasm.tw`, add `encode_extern_meta_section(meta) Vector<Byte>` that builds
+  the custom-section payload — `emit_name(buf, "twinkle.externs")` followed by
+  the UTF-8 JSON bytes — and append it via the existing
   `emit_section_into(buf, 0x00, payload)` in `emit_wasm_parts`, after the
   standard sections. Skip emitting when `meta` is empty.
-- Build a small JSON string in Twinkle (string concat over the meta vector); no
-  general JSON library needed — the shape is fixed.
+- Build a small JSON string in Twinkle; no general JSON library is needed, but
+  add a tiny `json_escape_string` helper for `module` and `name` rather than
+  assuming extern import strings never contain JSON-special characters.
 
 ### 2. Runtime — consume the section (`tools/js_runtime/runtime.mjs`)
 
@@ -107,12 +126,16 @@ This keeps the source types authoritative and adds no ValType guesswork.
 - `resolveExternImports` / `autoBridgeExternImports`: when an extern has no
   explicit `args` (from the manual override), use the section's `args` for that
   import. Precedence: manual `{ args }` > section > default (string).
-- Marshal per kind: `str` → decode, `ref` → raw, `i64` → bigint→Number, `f64` /
-  `i32` → passthrough. (The existing numeric `typeof` fast-path already covers
-  the number kinds; `ref` is the new explicit case.)
-- Thread the parsed section through `run_wasm` to children like `host`/`imports`
-  already are, so a program run via `run_wasm` gets its own section honored.
-  (In the playground, the child user program is the one carrying the section.)
+- Marshal args per kind: `str` → decode, `ref` → raw, `i64` → bigint→Number,
+  `f64` / `i32` → passthrough. (The existing numeric `typeof` fast-path already
+  covers the number kinds; `ref` is the new explicit case.)
+- Marshal returns per `ret` instead of guessing only from JS `typeof`:
+  `str` → encode JS string, `ref` → raw, `i64` → `BigInt(...)` when needed,
+  `f64` / `i32` → passthrough, `void` → `undefined`.
+- Ensure `host.run_wasm` continues to call `runWasmBytes` / `runWasmBytesAsync`
+  on the child bytes normally. The child module parses its own
+  `twinkle.externs` section during its own `prepareWasm`; do not reuse the
+  parent's parsed metadata.
 
 ### 3. Playground worker (`playground/src/worker.js`)
 
