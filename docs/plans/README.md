@@ -65,6 +65,7 @@ Self-hosting is complete. Historical design and status docs live in
 | [static-uniqueness-plan.md](static-uniqueness-plan.md) | Extend the static uniqueness optimizer to cover more realistic linear-update patterns without changing the runtime model |
 | [sliceable.md](sliceable.md) | `foo[a..b]` range-slice syntax via a Self-only `Sliceable` contract — the lone open piece of the (now-archived) collection-access cluster; adds a `Range`-index arm to `synth_index` plus `Vector`/`String`/`View` satisfiers. Background in [archive/collections-access.md](archive/collections-access.md) |
 | [queue.md](queue.md) | Library-first `@std.queue` persistent double-ended queue, so FIFO/deque-heavy code avoids repeated `Vector.drop_first()` front-slices; pure stdlib, no compiler/runtime primitive |
+| [wasm-native-sort.md](wasm-native-sort.md) | Runtime-native dense working-set sort for dataframe `order_by`, starting with row indices sorted by an `Int` key column to avoid repeated PVec random reads in the comparator |
 
 ### Archived reference docs
 
