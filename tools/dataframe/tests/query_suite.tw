@@ -1,6 +1,7 @@
 use assert
 use frame.column
 use frame.query
+use frame.query.{Dir}
 use frame.table
 use frame.table.{Table}
 use runner
@@ -41,6 +42,21 @@ pub fn suite() {
       fn() {
         bad := query.with_column(people(), "x", column.int_col([1]))
         assert.is_err(bad)
+      },
+    )
+    .test(
+      "order_by ascending sorts by the keyed column",
+      fn() {
+        t := people().take([2, 0, 1])
+        sorted := try query.order_by(t, "age", Dir.Asc)
+        assert.equal(column.as_ints(try sorted.column("age")), [25, 35, 45])
+      },
+    )
+    .test(
+      "order_by descending reverses the order",
+      fn() {
+        sorted := try query.order_by(people(), "age", Dir.Desc)
+        assert.equal(column.as_ints(try sorted.column("age")), [45, 35, 25])
       },
     )
 }
