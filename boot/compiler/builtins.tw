@@ -193,6 +193,10 @@ fn builtin_abi(name: String) AbiContract {
     // Iterator intrinsics
     "iterator$next" => abi([.Anyref], [.Anyref]),
     "iterator$unfold" => abi([.Anyref, closure_n()], [.Anyref]),
+    // Scratch buffer ops
+    "vector$scratch_new" => abi([.I32], [.Anyref]),
+    "vector$scratch_get" => abi([.Anyref, .I32], [.Anyref]),
+    "vector$scratch_set" => abi([.Anyref, .I32, .Anyref], []),
     // Task intrinsics
     "task$spawn" => abi([closure_n()], [.Anyref]),
     "task$await" => abi([.Anyref], [.Anyref]),
@@ -507,6 +511,9 @@ pub fn builtin_specs() Vector<BuiltinSpec> {
     rt("host_stdout_write_bytes", "host", "stdout_write_bytes", .None),
     rt("vector$drop_last", "rt.arr", "drop_last", .Some("Vector.drop_last")),
     rt("vector$gather", "rt.arr", "gather", .Some("Vector.gather")),
+    rt("vector$scratch_new", "rt.arr", "scratch_new", .Some("Vector.scratch_new")),
+    rt("vector$scratch_get", "rt.arr", "scratch_get", .Some("Vector.scratch_get")),
+    rt("vector$scratch_set", "rt.arr", "scratch_set", .Some("Vector.scratch_set")),
   ]
 }
 

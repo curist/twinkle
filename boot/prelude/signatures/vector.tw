@@ -53,3 +53,16 @@ pub fn set<T>(xs: Vector<T>, index: Int, value: T) Option<Vector<T>> {
 pub fn make<T>(len: Int, value: T) Vector<T> {
   []
 }
+
+/// INTERNAL: allocate a fresh dense mutable sort buffer of `n` null slots.
+pub fn scratch_new<T>(n: Int) Scratch<T> {
+  0
+}
+
+/// INTERNAL: read element `i` from a dense sort buffer.
+pub fn scratch_get<T>(buf: Scratch<T>, i: Int) T {
+  0
+}
+
+/// INTERNAL: write `v` to element `i` of a dense sort buffer, mutating in place.
+pub fn scratch_set<T>(buf: Scratch<T>, i: Int, v: T) Void {}

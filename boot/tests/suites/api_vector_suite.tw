@@ -766,6 +766,26 @@ pub fn suite() runner.Suite {
       },
     )
     .test(
+      "scratch buffer round-trips and mutates in place",
+      fn() {
+        buf: Scratch<Int> = Vector.scratch_new(3)
+        Vector.scratch_set(buf, 0, 10)
+        Vector.scratch_set(buf, 1, 20)
+        Vector.scratch_set(buf, 2, 30)
+        try assert.equal(Vector.scratch_get(buf, 1), 20)
+        out: Vector<Int> = collect i in range(3) {
+          Vector.scratch_get(buf, i)
+        }
+        try assert.equal(out[0], 10)
+        try assert.equal(out[2], 30)
+
+        // in-place mutation: overwrite and confirm the same handle changed
+        Vector.scratch_set(buf, 0, 99)
+        try assert.equal(Vector.scratch_get(buf, 0), 99)
+        .Ok({})
+      },
+    )
+    .test(
       "sort_by does not mutate original vector",
       fn() {
         xs: Vector<Int> = [3, 2, 1]

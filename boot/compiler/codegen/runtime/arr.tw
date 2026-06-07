@@ -159,6 +159,9 @@ pub fn module() WasmModule {
     to_array_fn(),
     from_read_file_result_fn(),
     make_empty_fn(),
+    scratch_new_fn(),
+    scratch_get_fn(),
+    scratch_set_fn(),
   ]
   exports := collect f in funcs {
     ExportDef.{ wasm_name: f.name, func_sym: f.name }
@@ -1529,6 +1532,45 @@ fn set_in_place_fn() FuncDef {
       .ArraySet(t_array()),
       .LocalGet(p_vec),
       .RefAsNonNull,
+    ],
+  }
+}
+
+// scratch_new(len: i32) -> anyref (a fresh dense rt_types__Array of `len` null slots)
+fn scratch_new_fn() FuncDef {
+  .{
+    name: "scratch_new",
+    params: [.I32],
+    results: [.Anyref],
+    locals: [],
+    body: [.RefNull(.None_), .LocalGet(0), .ArrayNew(t_array())],
+  }
+}
+
+// scratch_get(buf: anyref, idx: i32) -> anyref
+fn scratch_get_fn() FuncDef {
+  .{
+    name: "scratch_get",
+    params: [.Anyref, .I32],
+    results: [.Anyref],
+    locals: [],
+    body: [.LocalGet(0), .RefCast(false, .Named(t_array())), .LocalGet(1), .ArrayGet(t_array())],
+  }
+}
+
+// scratch_set(buf: anyref, idx: i32, val: anyref) -> ()  (mutates in place)
+fn scratch_set_fn() FuncDef {
+  .{
+    name: "scratch_set",
+    params: [.Anyref, .I32, .Anyref],
+    results: [],
+    locals: [],
+    body: [
+      .LocalGet(0),
+      .RefCast(false, .Named(t_array())),
+      .LocalGet(1),
+      .LocalGet(2),
+      .ArraySet(t_array()),
     ],
   }
 }
