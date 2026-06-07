@@ -6,7 +6,7 @@
 /// DCE cannot see because they are introduced by codegen.
 
 use compiler.codegen.linker.{LinkedModule}
-use compiler.codegen.wasm_ir.{FuncDef, Instr}
+use compiler.codegen.wasm_ir.{ExternMeta, FuncDef, ImportDef, Instr}
 
 // ── Reachability analysis ─────────────────────────────────────────────
 type BfsState = .{ queue: Vector<String>, reachable: Dict<String, Bool> }
@@ -111,7 +111,28 @@ pub fn eliminate_dead_wasm(linked: LinkedModule) LinkedModule {
     }
   }
 
+  // Keep extern metadata only for externs whose import survived DCE, matched by
+  // (module, name) since ExternMeta carries no as_sym.
+  filtered_extern_meta := collect em in linked.extern_meta {
+    if extern_meta_is_live(em, filtered_imports) {
+      em
+    } else {
+      continue
+    }
+  }
+
   linked.funcs = filtered_funcs
   linked.imports = filtered_imports
+  linked.extern_meta = filtered_extern_meta
   linked
+}
+
+fn extern_meta_is_live(em: ExternMeta, imports: Vector<ImportDef>) Bool {
+  for imp in imports {
+    if imp.module == em.module and imp.name == em.name {
+      return true
+    }
+  }
+
+  false
 }

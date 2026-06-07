@@ -28,10 +28,11 @@ use compiler.codegen.runtime.sched as rt_sched
 use compiler.codegen.runtime.str as rt_str
 use compiler.codegen.runtime.types as rt_types
 use compiler.codegen.wasm.{emit_linked_wasm}
-use compiler.codegen.wasm_ir.{WasmModule}
+use compiler.codegen.wasm_ir.{ExternMeta, WasmModule}
 use compiler.codegen.wasm_layout.{EqTypeLayouts, collect_eq_type_layouts}
 use compiler.codegen.wasm_plan.{plan_wasm_types}
 use compiler.codegen.wat.{emit_wat}
+use compiler.mono_type.{MonoType}
 use compiler.resolver.{ResolvedEnv}
 
 fn timings_enabled() Bool {
@@ -143,6 +144,11 @@ pub fn link_program(anf: AnfModule, env: ResolvedEnv, builtins: BuiltinRegistry)
     log_time("link", t6 - t5)
   }
 
+  // 6b. Attach extern FFI metadata for the twinkle.externs custom section,
+  // derived from the source extern_imports (MonoTypes), before Wasm DCE filters
+  // it down to the live imports.
+  linked.extern_meta = collect_extern_meta(anf)
+
   // 7. Wasm-level dead code elimination
   linked = eliminate_dead_wasm(linked)
   t7 := date.now()
@@ -152,6 +158,48 @@ pub fn link_program(anf: AnfModule, env: ResolvedEnv, builtins: BuiltinRegistry)
   }
 
   linked
+}
+
+/// Marshal kind for an extern arg/return MonoType, for the twinkle.externs
+/// custom section. Extern signatures are restricted to extern-safe types, so
+/// this is total over what can actually appear; the fallback keeps non-numeric
+/// refs raw rather than mis-decoding them as strings.
+fn mono_type_kind(ty: MonoType) String {
+  case ty {
+    .String => "str",
+    .Int => "i64",
+    .Float => "f64",
+    .Bool => "i32",
+    .Byte => "i32",
+    .ExternRef(_) => "ref",
+    .Optional(inner) => mono_type_kind(inner),
+    _ => "ref",
+  }
+}
+
+/// Build the FFI metadata for every declared extern import, from the source
+/// MonoTypes. Wasm DCE later trims this to the imports that survive.
+fn collect_extern_meta(anf: AnfModule) Vector<ExternMeta> {
+  result: Vector<ExternMeta> = []
+
+  for fid in anf.extern_imports.keys() {
+    case anf.extern_imports[fid] {
+      .Some(ext) => {
+        args := collect ty in ext.param_tys {
+          mono_type_kind(ty)
+        }
+        ret := case ext.return_ty {
+          .Some(.Void) => "void",
+          .Some(ty) => mono_type_kind(ty),
+          .None => "void",
+        }
+        result = .append(.{ module: ext.wasm_module, name: ext.wasm_name, args, ret })
+      },
+      .None => {},
+    }
+  }
+
+  result
 }
 
 pub fn codegen(anf: AnfModule, env: ResolvedEnv, builtins: BuiltinRegistry) String {

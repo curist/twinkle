@@ -10,8 +10,8 @@ use @std.proc
 use compiler.codegen.linker.{LinkedModule}
 use compiler.codegen.type_order.{compute_type_order, type_def_has_self_edge, type_def_name}
 use compiler.codegen.wasm_ir.{
-  DataSegment, ElemDef, ExportDef, FieldDef, FuncDef, GlobalDef, HeapType, ImportDef, Instr,
-  MemoryDef, MemoryExportDef, TableDef, TypeDef, ValType, WasmModule,
+  DataSegment, ElemDef, ExportDef, ExternMeta, FieldDef, FuncDef, GlobalDef, HeapType, ImportDef,
+  Instr, MemoryDef, MemoryExportDef, TableDef, TypeDef, ValType, WasmModule,
 }
 use compiler.codegen.wasm_type_util.{val_type_eq}
 
@@ -1300,7 +1300,7 @@ pub fn emit_wasm(module: WasmModule) Vector<Byte> {
 }
 
 pub fn emit_linked_wasm(linked: LinkedModule) Vector<Byte> {
-  emit_wasm_parts(
+  buf := emit_wasm_parts(
     linked.types,
     linked.imports,
     linked.funcs,
@@ -1313,6 +1313,57 @@ pub fn emit_linked_wasm(linked: LinkedModule) Vector<Byte> {
     linked.data,
     linked.start,
   )
+
+  // Custom section: extern FFI metadata for the JS runtime to auto-marshal.
+  // Custom sections may appear anywhere; emit it last, and only when non-empty.
+  if linked.extern_meta.len() == 0 {
+    buf
+  } else {
+    emit_section_into(buf, 0x00, encode_extern_meta_section_payload(linked.extern_meta))
+  }
+}
+
+// ── twinkle.externs custom section ─────────────────────────────────────
+fn encode_extern_meta_section_payload(meta: Vector<ExternMeta>) Vector<Byte> {
+  // Custom section payload = section name (length-prefixed) + raw content bytes.
+  named := emit_name([], "twinkle.externs")
+  emit_bytes(named, extern_meta_json(meta).utf8_bytes())
+}
+
+fn extern_meta_json(meta: Vector<ExternMeta>) String {
+  entries := collect em in meta {
+    "{\"module\":${json_string(em.module)},\"name\":${json_string(em.name)},\"args\":${json_string_array(em.args)},\"ret\":${json_string(em.ret)}}"
+  }
+  "[${entries.join(",")}]"
+}
+
+fn json_string_array(items: Vector<String>) String {
+  parts := collect s in items {
+    json_string(s)
+  }
+  "[${parts.join(",")}]"
+}
+
+fn json_string(s: String) String {
+  "\"${json_escape(s)}\""
+}
+
+fn json_escape(s: String) String {
+  out := ""
+
+  for i in 0..s.len() {
+    ch := s.slice(i, i + 1)
+
+    if ch == "\"" {
+      out = "${out}\\\""
+    } else if ch == "\\" {
+      out = "${out}\\\\"
+    } else {
+      out = "${out}${ch}"
+    }
+  }
+
+  out
 }
 
 fn emit_wasm_parts(
