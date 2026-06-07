@@ -1,5 +1,30 @@
 # Occurrence Map Plan
 
+**Status: COMPLETE / ARCHIVED.** The occurrence index is built (lexical + checker
+enrichment), cached as a `SemanticSnapshot` artifact, and consumed by semantic
+tokens, definition, references, and document highlights — all agreeing on
+shadowed locals and imported aliases through one `SymbolKey`-backed index. Phase
+6's shared helpers landed too: `compiler.query.call_resolve` (callee → signature
+for hover/signature-help/inlay-hints) and `type_util.subst_type_params_lenient`
+(one tolerant substitution, replacing three copies).
+
+Two plan items were assessed and deliberately **not** done; rationale is recorded
+inline in Phases 5–6:
+
+- hover, completion, and inlay-hint *type* features stay `type_map`-driven.
+  Occurrences carry symbol identity, not `MonoType`, so they cannot supply the
+  type text/member lists those features need (and completion additionally needs
+  mid-edit cursor-hole reparses the index does not cover).
+- The `*_for_type` type-introspection helpers were not extracted: after the
+  references migration, `definition` reads declaration spans from cached ASTs
+  while hover/completion read resolved types from `ResolvedEnv + MonoType` —
+  different input domains with different output shapes, so a shared helper would
+  be contrived.
+
+Bootstrapping this work surfaced a pre-existing stage0 resolver bug (records were
+resolved before aliases, so an alias-typed record field expanded to `Void`);
+fixed separately in `src/types/resolve.rs` with a typecheck regression fixture.
+
 ## Goal
 
 Replace ad-hoc identifier classification in editor features with a shared
