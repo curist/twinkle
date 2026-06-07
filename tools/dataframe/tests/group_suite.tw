@@ -1,0 +1,50 @@
+use assert
+use runner
+use frame.cell.{Scalar}
+use frame.column
+use frame.table
+use frame.table.{Table}
+use frame.group
+
+fn numbers() Table {
+  cols := [column.int_col([1, 2, 3, 4])]
+
+  case table.from_columns(["x"], cols) {
+    .Ok(t) => t,
+    .Err(e) => error(e),
+  }
+}
+
+pub fn suite() {
+  runner.suite("group")
+    .test(
+      "count counts the index set",
+      fn() {
+        a := group.count()
+        assert.equal((a.apply)(numbers(), [0, 1, 2]), Scalar.CInt(3))
+      },
+    )
+    .test(
+      "sum adds the selected int rows",
+      fn() {
+        a := group.sum("x")
+        assert.equal((a.apply)(numbers(), [0, 1, 3]), Scalar.CInt(7))
+      },
+    )
+    .test(
+      "mean returns a float average",
+      fn() {
+        a := group.mean("x")
+        assert.equal((a.apply)(numbers(), [0, 1, 2, 3]), Scalar.CFloat(2.5))
+      },
+    )
+    .test(
+      "min and max pick extremes",
+      fn() {
+        amin := group.min("x")
+        amax := group.max("x")
+        ok1 := try assert.equal((amin.apply)(numbers(), [1, 3]), Scalar.CInt(2))
+        assert.equal((amax.apply)(numbers(), [1, 3]), Scalar.CInt(4))
+      },
+    )
+}

@@ -1,0 +1,120 @@
+use frame.cell.{Scalar}
+use frame.column
+use frame.column.{Column}
+use frame.table
+use frame.table.{Table}
+
+/// A uniform aggregation: given the source table and a group's row indices,
+/// produce one scalar. Uniformity lets heterogeneous aggregations share one
+/// Vector despite the no-trait type system.
+pub type Aggregation = .{ name: String, apply: fn(Table, Vector<Int>) Scalar }
+
+fn source_column(t: Table, name: String) Column {
+  case t.column(name) {
+    .Ok(c) => c,
+    .Err(e) => error(e),
+  }
+}
+
+pub fn count() Aggregation {
+  Aggregation.{ name: "count", apply: fn(t: Table, idx: Vector<Int>) { Scalar.CInt(idx.len()) } }
+}
+
+pub fn sum(col: String) Aggregation {
+  Aggregation.{
+    name: "sum_${col}",
+    apply: fn(t: Table, idx: Vector<Int>) {
+      c := source_column(t, col)
+
+      case c.data {
+        .IntCol(v) => {
+          acc := 0
+
+          for i in idx {
+            if !column.is_null(c, i) {
+              acc = acc + v[i]
+            }
+          }
+
+          Scalar.CInt(acc)
+        },
+        .FloatCol(v) => {
+          acc := 0.0
+
+          for i in idx {
+            if !column.is_null(c, i) {
+              acc = acc + v[i]
+            }
+          }
+
+          Scalar.CFloat(acc)
+        },
+        _ => error("sum requires a numeric column: ${col}"),
+      }
+    },
+  }
+}
+
+pub fn mean(col: String) Aggregation {
+  Aggregation.{
+    name: "mean_${col}",
+    apply: fn(t: Table, idx: Vector<Int>) {
+      c := source_column(t, col)
+      total := 0.0
+      n := 0
+
+      for i in idx {
+        if !column.is_null(c, i) {
+          n = n + 1
+          total = total + numeric_at(c, col, i)
+        }
+      }
+
+      if n == 0 {
+        Scalar.CNull
+      } else {
+        Scalar.CFloat(total / n.to_float())
+      }
+    },
+  }
+}
+
+pub fn min(col: String) Aggregation {
+  extreme(col, "min", Order.Lt)
+}
+
+pub fn max(col: String) Aggregation {
+  extreme(col, "max", Order.Gt)
+}
+
+fn extreme(col: String, prefix: String, keep: Order) Aggregation {
+  Aggregation.{
+    name: "${prefix}_${col}",
+    apply: fn(t: Table, idx: Vector<Int>) {
+      c := source_column(t, col)
+      best := -1
+
+      for i in idx {
+        if !column.is_null(c, i) {
+          if best < 0 or column.compare_at(c, i, best) == keep {
+            best = i
+          }
+        }
+      }
+
+      if best < 0 {
+        Scalar.CNull
+      } else {
+        column.cell_at(c, best)
+      }
+    },
+  }
+}
+
+fn numeric_at(c: Column, col: String, i: Int) Float {
+  case c.data {
+    .IntCol(v) => v[i].to_float(),
+    .FloatCol(v) => v[i],
+    _ => error("expected a numeric column: ${col}"),
+  }
+}
