@@ -1,0 +1,147 @@
+use frame.column.{ColData, Column}
+use frame.table
+use frame.table.{Table}
+
+/// Parse a simple CSV (comma fields, newline rows, no quoting) into a Table,
+/// inferring each column's dtype. Empty cells become nulls.
+pub fn parse(input: String) Result<Table, String> {
+  rows := split_rows(input)
+
+  if rows.len() == 0 {
+    return .Err("empty CSV input")
+  }
+
+  header := rows[0].split(",")
+  ncols := header.len()
+
+  // Collect raw string cells per column.
+  raw: Vector<Vector<String>> = []
+
+  for _i in range(ncols) {
+    raw = .append([])
+  }
+
+  body := rows.drop_first()
+
+  for line, r in body {
+    fields := line.split(",")
+
+    if fields.len() != ncols {
+      return .Err("row ${r + 1} has ${fields.len()} fields, expected ${ncols}")
+    }
+
+    for f, c in fields {
+      raw[c] = .append(f)
+    }
+  }
+
+  cols: Vector<Column> = []
+
+  for c in range(ncols) {
+    cols = .append(infer_column(raw[c]))
+  }
+
+  table.from_columns(header, cols)
+}
+
+fn split_rows(input: String) Vector<String> {
+  lines := input.split("\n")
+
+  // Drop a single trailing empty string caused by a final newline.
+  if lines.len() > 0 and lines[lines.len() - 1] == "" {
+    lines.drop_last()
+  } else {
+    lines
+  }
+}
+
+fn is_int(s: String) Bool {
+  case Int.from_string(s) {
+    .Some(_) => true,
+    .None => false,
+  }
+}
+
+fn is_float(s: String) Bool {
+  case Float.from_string(s) {
+    .Some(_) => true,
+    .None => false,
+  }
+}
+
+fn is_bool(s: String) Bool {
+  s == "true" or s == "false"
+}
+
+fn infer_column(cells: Vector<String>) Column {
+  nulls: Vector<Bool> = []
+
+  for s in cells {
+    nulls = .append(s == "")
+  }
+
+  all_int := true
+  all_float := true
+  all_bool := true
+  any_value := false
+
+  for s in cells {
+    if s != "" {
+      any_value = true
+
+      if !is_int(s) {
+        all_int = false
+      }
+
+      if !is_float(s) {
+        all_float = false
+      }
+
+      if !is_bool(s) {
+        all_bool = false
+      }
+    }
+  }
+
+  if any_value and all_int {
+    data: Vector<Int> = []
+
+    for s in cells {
+      data = .append(parse_int_or(s, 0))
+    }
+
+    Column.{ data: ColData.IntCol(data), nulls }
+  } else if any_value and all_float {
+    data: Vector<Float> = []
+
+    for s in cells {
+      data = .append(parse_float_or(s, 0.0))
+    }
+
+    Column.{ data: ColData.FloatCol(data), nulls }
+  } else if any_value and all_bool {
+    data: Vector<Bool> = []
+
+    for s in cells {
+      data = .append(s == "true")
+    }
+
+    Column.{ data: ColData.BoolCol(data), nulls }
+  } else {
+    Column.{ data: ColData.StrCol(cells), nulls }
+  }
+}
+
+fn parse_int_or(s: String, fallback: Int) Int {
+  case Int.from_string(s) {
+    .Some(n) => n,
+    .None => fallback,
+  }
+}
+
+fn parse_float_or(s: String, fallback: Float) Float {
+  case Float.from_string(s) {
+    .Some(f) => f,
+    .None => fallback,
+  }
+}
