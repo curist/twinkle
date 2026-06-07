@@ -1,10 +1,24 @@
-# Wasm-native sort working set for dataframe `order_by` — Implementation Plan
+# Make idiomatic Twinkle sorting fast with native dense working sets — Implementation Plan
 
-**Goal:** Make dataframe `order_by` substantially faster by moving the hot sort working set out of persistent vectors and into dense mutable Wasm runtime arrays for the duration of the sort. The first target is sorting row indices by an `Int` key column, because the current benchmark's `amount` column is `Int` and the measured hotspot is repeated random PVec key reads inside the comparator.
+**Goal:** Idiomatic Twinkle collection code should be fast enough without dataframe/user code reaching for bespoke runtime escape hatches. The motivating hotspot is dataframe `order_by`, written naturally as “sort row indices by a key column, then gather rows”. Today that idiomatic shape stays as high-level prelude merge sort over persistent vectors and pays closure calls plus repeated PVec random reads inside the comparator. The real fix is to make the compiler/runtime route hot sort patterns through native dense working sets while preserving the public `Vector<T>` value model.
 
-**Non-goal:** This is not a replacement for persistent `Vector<T>` as the language collection. Persistent vectors remain the public value model. The native sort uses temporary runtime arrays internally, then freezes back to `Vector<Int>` row indices.
+**Principle:** User code should remain idiomatic:
 
-**Current conclusion:** `Vector.gather` and typed dataframe gather cleanup helped join and made the API cleaner, but `order_by` remains dominated by the sort comparator. Microbenchmarks show the expensive path is `idx.sort_by(fn(a, b) { Int.compare(keys[a], keys[b]) })`: comparison sort multiplies PVec random reads by `n log n`.
+```tw
+idx.sort_by(fn(a, b) { Int.compare(keys[a], keys[b]) })
+```
+
+or dataframe-level:
+
+```tw
+t.order_by("amount", Dir.Asc)
+```
+
+The optimizer/runtime should make those shapes fast. A narrow `sort_indices_by_int_key(...)` helper is acceptable as an internal lowering target, but not as the main user-facing solution.
+
+**Non-goal:** This is not a replacement for persistent `Vector<T>` as the language collection. Persistent vectors remain the public value model. Sort kernels may use temporary mutable Wasm arrays internally, then freeze back to persistent vectors.
+
+**Current conclusion:** `Vector.gather` and typed dataframe gather cleanup helped join and made the API cleaner, but `order_by` remains dominated by sorting. Microbenchmarks show the expensive path is `idx.sort_by(fn(a, b) { Int.compare(keys[a], keys[b]) })`: comparison sort multiplies PVec random reads by `n log n`. Native-language references show the workload itself is far cheaper when sort works over dense memory, so the current ~2.5s dataframe `order_by` is implementation overhead, not a Twinkle ceiling.
 
 ---
 
@@ -17,6 +31,8 @@ target/twk run examples/dataframe/bench/order_by_micro.tw | tee /tmp/dataframe-o
 target/twk run examples/dataframe/bench/main.tw | tee /tmp/dataframe-bench.txt
 rustc -O examples/dataframe/bench/order_by_rust.rs -o /tmp/order_by_rust
 /tmp/order_by_rust | tee /tmp/order_by-rust.txt
+go run examples/dataframe/bench/order_by_go.go | tee /tmp/order_by-go.txt
+clojure examples/dataframe/bench/order_by_clojure.clj | tee /tmp/order_by-clojure.txt
 ```
 
 ### Twinkle order-by microbenchmarks
@@ -146,82 +162,88 @@ These show the workload itself can be far faster when the sort operates on dense
 
 ---
 
-## Proposed API surface
+## Desired end-state
 
-Start with a runtime builtin hidden behind a prelude method on `Vector<Int>` or a dataframe-internal helper.
+### User-facing surface
 
-Preferred first API:
-
-```tw
-// returns row indices [0, keys.len()) sorted by keys[row]
-pub fn sort_indices(keys: Vector<Int>) Vector<Int>
-```
-
-If direction is needed in the primitive:
+Prefer keeping the source surface ordinary and broad:
 
 ```tw
-pub fn sort_indices_by_int_key(keys: Vector<Int>, descending: Bool) Vector<Int>
+xs.sort()
+xs.sort_by(fn(a, b) { ... })
+idx.sort_by(fn(a, b) { Int.compare(keys[a], keys[b]) })
+t.order_by("amount", Dir.Asc)
 ```
 
-For dataframe use, null handling is required. Two viable shapes:
+The implementation may introduce internal runtime intrinsics, but users should not need to pick a special “fast” API for common cases. If a public API is added, it should be broadly useful and semantic, such as an `argsort`/`sort_by_key` convenience, not a dataframe-specific escape hatch.
+
+Potential public additions, after the internals prove out:
 
 ```tw
-pub fn sort_indices_by_int_key(keys: Vector<Int>, nulls: Vector<Bool>, descending: Bool) Vector<Int>
+keys.argsort()                         // Vector<Int> of row indices
+keys.argsort_by(dir: SortDir)          // direction-aware
+keys.argsort_nulls(nulls, dir, nulls)  // explicit null policy
 ```
 
-or keep null handling in dataframe by first materializing a non-null index subset. The primitive-with-null-mask is better for avoiding extra passes and for preserving current null ordering exactly.
+These are optional conveniences. They should lower to the same runtime kernels as idiomatic `sort_by` shapes where possible.
 
-Semantics for the nullable version:
+### Compiler/runtime strategy
 
-- result is a `Vector<Int>` of row indices.
-- ascending: non-null keys ascending, nulls last.
-- descending: nulls first, non-null keys descending. This matches the current `order_by` behavior after applying descending order to the whole comparison result.
-- equal keys may be unstable unless documented otherwise. Current `sort_by` merge sort is stable-ish by left preference; dataframe tests should not rely on tie stability unless we commit to it.
+Layer the fix so generic idioms improve over time:
+
+1. **Make `Vector.sort` / common `Vector.sort_by` cases runtime-native.**
+   The current prelude merge sort is valuable as a simple spec, but hot execution should use a runtime kernel with a dense mutable working set.
+2. **Recognize common comparator shapes.**
+   In particular, `idx.sort_by(fn(a, b) { Int.compare(keys[a], keys[b]) })` should lower to an internal typed argsort kernel instead of calling a closure for every comparison.
+3. **Keep ordered/reverse detection outside the heavy kernel.**
+   The existing pre-scan for already-ordered input is useful and simple in Twinkle. The native kernel can assume it is sorting a genuinely unsorted working set.
+4. **Use internal intrinsics as lowering targets, not as required user APIs.**
+   An internal `vector$argsort_int_key(keys, nulls, descending)` is fine if produced by dataframe/table lowering or optimizer recognition. It is not the desired programming model.
 
 ---
 
 ## Runtime design
 
-### Data representation
+### Dense working-set representation
 
-For an `Int` key column:
+For the first typed key path (`Int` keys):
 
 - input `keys`: PVec of boxed `Int` values (`BoxedInt` anyrefs)
-- input `nulls`: PVec of Bool values (`i31ref`)
-- temporary working array: Wasm GC `Array` of records or tuple-like fields
+- optional input `nulls`: PVec of Bool values (`i31ref`)
+- temporary working set: Wasm GC arrays holding dense keys, row ids, and null flags
 
 Two representation options:
 
-1. **Pair record array**
+1. **Pair/entry record array**
    ```text
    SortEntry = struct { key: i64, row: i32, is_null: i32 }
    entries: array<SortEntry>
    ```
-   Pros: one array, comparator reads one object per side. Easy to extend to Float/String with different entry structs.  
-   Cons: allocates one struct per row.
+   Pros: one logical item to swap; straightforward comparator.<br>
+   Cons: one struct allocation per row.
 
 2. **Parallel arrays**
    ```text
-   keys_buf: array<anyref or boxed i64>
+   keys_buf: array<i64-like boxed values or typed i64 storage when available>
    rows_buf: array<i31ref row>
    nulls_buf: array<i31ref bool>
    ```
-   Pros: fewer per-row struct allocations if rows/nulls are i31; easier in-place swaps per field.  
-   Cons: more array accesses and swap bookkeeping.
+   Pros: fewer per-row object allocations; closer to native array-sort layout.<br>
+   Cons: swaps touch multiple arrays; more bookkeeping.
 
-Start with the simpler representation that is easiest to implement correctly in the existing runtime DSL. If per-row structs are too expensive, switch to parallel arrays.
+Pick the representation that is easiest to implement correctly in the current runtime DSL, then measure. If entry records allocate too much, switch to parallel arrays.
 
 ### Algorithm choice
 
 Start with an in-place comparison sort over the dense working set:
 
-- introsort if feasible;
-- otherwise iterative quicksort with insertion-sort cutoff;
-- heapsort fallback optional for v1 if recursion/stack handling is awkward.
+- iterative quicksort/introsort if feasible;
+- insertion sort cutoff for small partitions;
+- heapsort fallback optional if worst-case behavior matters.
 
-The first win should come from eliminating repeated PVec key reads and Twinkle closure calls, not from choosing the perfect sort.
+A branchless or branch-reduced partition can be explored after the dense working set is in place, but it should not be the first success criterion. The first win should come from eliminating closure calls and repeated PVec key/null-mask reads.
 
-For `Int` keys, a later radix sort can be much faster and avoids comparator overhead entirely. The benchmark's `amount` key has small cardinality, so counting/radix would be a major win, but implement comparison sort first unless radix is straightforward.
+For `Int` keys, a later radix/counting strategy may beat comparison sort. The benchmark's `amount` key has small cardinality, so counting sort would be especially strong, but implement the general dense comparison path first unless radix is straightforward.
 
 ### Output
 
@@ -229,115 +251,120 @@ After sorting the working set, build a `Vector<Int>` of sorted row indices using
 
 ```text
 builder = builder_new()
-for entry in sorted_entries:
-  builder_push(builder, boxed_int(entry.row))
+for row in sorted_rows:
+  builder_push(builder, boxed_int(row))
 return builder_freeze(builder)
 ```
 
-The dataframe then calls `take(sorted_idx)`, which routes through `Vector.gather`.
-
----
+Dataframe `take(sorted_idx)` then uses the normal gather path.
 
 ## Implementation phases
 
-### Phase 1 — Add benchmarks and lock current behavior
+### Phase 1 — Benchmarks and behavior locks
 
-Status: done for the standalone microbench files. Keep them as regression/perf tracking tools.
+Status: started. Keep these as regression/perf tracking tools and extend them as new kernels land.
 
 Files:
 
 - `examples/dataframe/bench/order_by_micro.tw`
+- `examples/dataframe/bench/order_by_breakdown.tw`
 - `examples/dataframe/bench/order_by_rust.rs`
+- `examples/dataframe/bench/order_by_go.go`
+- `examples/dataframe/bench/order_by_clojure.clj`
 - `docs/plans/dataframe-friction-log.md`
 
-Before runtime work, add a dataframe test that covers null order and tie behavior expectations. If tie stability is not guaranteed, avoid asserting it.
+Before runtime work, add/keep dataframe tests that cover null order and duplicate-key behavior. Avoid relying on tie stability unless the native sort commits to stable output.
 
-### Phase 2 — Boot runtime primitive for nullable Int-key index sort
+### Phase 2 — Runtime-native `Vector.sort` / typed `Int` sort kernel
 
-Files:
+First improve an idiomatic language primitive rather than dataframe code. Add a runtime implementation for sorting `Vector<Int>` values over a dense temporary working set, then route `Vector.sort<Int>` or the relevant intrinsic path to it.
+
+Why first:
+
+- It attacks `sort values`, currently ~829ms at `N = 1000000`.
+- It validates dense working-set sort mechanics without closure callbacks or key-index pattern recognition.
+- It is a general language improvement, not a dataframe-only workaround.
+
+Files likely touched:
 
 - `boot/prelude/signatures/vector.tw`
 - `boot/compiler/builtins.tw`
 - `boot/compiler/codegen/runtime/arr.tw`
 - `boot/tests/suites/api_vector_suite.tw`
+- stage0 parity files under `src/`
 
-Add a runtime builtin, tentatively:
+Tests:
+
+- basic sort, duplicates, negative/positive ints.
+- already ascending / descending behavior.
+- crosses trie boundaries.
+- preserves existing `Ord` semantics for `Int`.
+
+### Phase 3 — Native generic `Vector.sort_by` working set, if callback overhead is acceptable
+
+Implement a runtime-backed sort that flattens the input vector once, sorts a dense array, and freezes back to PVec, while still calling the comparator callback.
+
+This will not eliminate callback cost, but it can remove high-level Twinkle recursive merge-sort overhead and repeated PVec reads for sorting `xs` itself. Measure before and after; if callback crossing dominates, keep this as an internal stepping stone and focus on comparator-shape specialization.
+
+### Phase 4 — Optimizer/lowering recognition for key-index comparators
+
+Recognize the idiomatic key-index shape:
 
 ```tw
-pub fn sort_indices_by_int_key(keys: Vector<Int>, nulls: Vector<Bool>, descending: Bool) Vector<Int> {
-  keys
-}
+idx.sort_by(fn(a, b) { Int.compare(keys[a], keys[b]) })
 ```
 
-The stub return is irrelevant because the runtime mapping replaces it. If the signature source rejects returning `keys` due to type mismatch, use a small placeholder construction accepted by the checker.
+and lower it to an internal typed argsort kernel over dense key/null buffers. This is the real fix for dataframe `order_by` while preserving idiomatic source.
 
-Runtime implementation outline:
+Recognition can start narrow:
 
-1. `n = len(keys)` and validate `len(nulls) == n` if runtime helpers make this cheap; otherwise rely on caller invariant initially.
-2. Allocate/fill dense working set from PVecs in one pass.
-3. Sort working set by `(is_null, key)` with direction semantics.
-4. Build and return sorted row-index PVec.
+- receiver is a `Vector<Int>` index vector;
+- comparator parameters are used only as indices into the same `Vector<Int>` key vector;
+- comparison is `Int.compare(keys[a], keys[b])` or the descending reversal equivalent;
+- optional null-mask checks match the dataframe pattern.
 
-Test cases:
+Internal lowering target, not necessarily public API:
 
-- basic reorder by int key.
-- duplicates.
-- already ascending.
-- descending.
-- nulls last ascending / first descending.
-- crosses trie boundaries.
+```tw
+vector$argsort_int_key(keys: Vector<Int>, nulls: Vector<Bool>, descending: Bool) Vector<Int>
+```
 
-### Phase 3 — Stage0 parity
+The native kernel should assume the caller has already handled cheap ordered/reverse detection if desired.
 
-Mirror the boot runtime in Rust stage0.
+### Phase 5 — Route dataframe `order_by` without changing user ergonomics
 
-Files likely touched:
+Keep dataframe source high-level. Either:
 
-- `src/runtime/arr.rs`
-- `src/types/env.rs`
-- `src/codegen/prelude.rs`
-- `src/intrinsics/registry.rs`
-- `src/intrinsics/signatures.rs`
-- `src/intrinsics/contracts.rs`
-- `src/ir/lower.rs`
+1. write `order_by` in an idiomatic shape that the optimizer recognizes; or
+2. use a private/internal helper only inside the dataframe implementation while preserving the public `t.order_by(...)` API.
 
-Use the existing `Vector.gather` and `Vector.drop_last` entries as the wiring template.
+Do not require dataframe users to call a special fast primitive. The performance win should be visible through normal `order_by`.
 
-### Phase 4 — Route dataframe `order_by` through the primitive for Int columns
+### Phase 6 — Extend typed key paths
 
-Files:
+After `Int` is proven:
 
-- `examples/dataframe/frame/table.tw`
-- `examples/dataframe/tests/query_suite.tw`
-- `docs/plans/dataframe-friction-log.md`
-
-In `sort_indices_by_column`, route only `.IntCol(keys)` through the primitive. Keep Float/String/Bool on the current specialized comparator until their own primitives exist.
-
-Expected outcome: the `amount` benchmark should move substantially if the primitive avoids comparator PVec reads and Twinkle closure calls. If it does not, inspect the generated/runtime sort implementation before broadening to other types.
-
-### Phase 5 — Extend beyond Int if justified
-
-Possible follow-ups:
-
-- Bool key sort: trivial rank-based sort.
-- Float key sort: dense working set with `f64` compare semantics matching `Float.compare`.
-- String key sort: harder; string comparisons still cost, but dense rows avoid PVec random reads.
-- General `Vector.sort_by` runtime primitive: broader language benefit, but harder because arbitrary comparator closures still cross the Wasm call boundary.
-
----
+- Bool key sort: rank-based dense sort.
+- Float key sort: dense `f64` compare semantics matching `Float.compare`.
+- String key sort: dense row/key storage still avoids PVec random reads, though string comparison remains costly.
+- Optional public `argsort`/`sort_by_key` convenience APIs if they feel generally useful.
 
 ## Success criteria
 
-Track the same commands from the baseline section. Primary success metric:
+Track the same commands from the baseline section.
 
-- `examples/dataframe/bench/order_by_micro.tw`, `sort idx key` at `N = 1000000` should drop substantially from the current ~1.67s.
+Primary language-level success metrics:
 
-Secondary metric:
+- `examples/dataframe/bench/order_by_micro.tw`, `sort values` at `N = 1000000` should drop substantially from the current ~829ms once `Vector.sort<Int>` is runtime-native.
+- `sort idx key` at `N = 1000000` should drop substantially from the current ~1.67s once key-index comparator recognition or an equivalent internal lowering lands.
 
-- `examples/dataframe/bench/main.tw`, `order_by` at `N = 1000000` should drop from the current ~2.5s range.
+Dataframe success metric:
+
+- `examples/dataframe/bench/main.tw`, `order_by` at `N = 1000000` should drop from the current ~2.5s range without changing the public dataframe API or asking users to call a special fast path.
 
 Guardrails:
 
+- Idiomatic `Vector.sort`, `Vector.sort_by`, and dataframe `order_by` remain the user-facing APIs.
 - `filter`, `join`, and `group_by` should not regress materially.
 - dataframe tests should preserve current null ordering.
 - boot and Rust test suites should pass.
