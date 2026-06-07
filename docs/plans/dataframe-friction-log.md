@@ -31,17 +31,42 @@ returns `GroupBy` and `.agg` is defined in `GroupBy`'s own module (`group`), so 
 hop resolves. That asymmetry is instructive — the rule is consistent, it just doesn't
 match the "objects have methods" mental model a fluent dataframe API wants.
 
-**Implications / options for the language:**
-- **As-is:** real-world multi-module libraries that want fluent chaining must put
-  *every* operation in the type's defining module. For a dataframe that means one
-  giant `table.tw` holding filter/group/join/sort/agg — exactly the "file doing too
-  much" smell, traded against API ergonomics. Genuine tension.
-- **Possible language change:** allow inherent-method resolution for `pub fn`s in
-  *any* module whose first parameter is the receiver type (UFCS-style), or an opt-in
-  `extend Table { ... }` block. This is the single highest-value ergonomic change this
-  project surfaced.
-- For now the engine uses qualified calls everywhere; it works and reads fine, but the
-  marquee ergonomic selling point of the design is unmet.
+**The constraint is twofold and was verified empirically:**
+1. Inherent-method sugar resolves only in the receiver type's defining module
+   (`type 'Table' has no method 'filter'` when `filter` is in `query`).
+2. **Circular module imports are a hard error** — a two-file experiment with mutual
+   `use` produced `Circular import detected`. So you cannot even keep the
+   implementation in a separate module and add a thin delegating wrapper in
+   `table.tw`: the impl module must import `Table`, and `table` importing it back is
+   the cycle. To make an op an inherent method, *its whole implementation* must live
+   in `Table`'s module.
+
+**What we did (partial reorg).** We moved the row-level ops — `RowRef` +
+`filter`/`with_column`/`order_by`/`Dir` — into `table.tw`, so the common chain works:
+```tw
+t.filter(fn(r) { r.int("amount") > 500 }).order_by("amount", Dir.Asc)   // try-wrapped, see below
+```
+`group_by`/`agg` and `join` stayed in their own modules as qualified calls
+(`group.group_by(t, [...]).agg([...])`, `join.join(l, r, ...)`). This keeps `table.tw`
+moderate (~250 lines) rather than absorbing the entire engine. Full chaining through
+group-by/join would require pulling `GroupBy`/`Aggregation`/`How` and their logic into
+`table.tw` too, since they all reference `Table`.
+
+Two incidental facts learned during the reorg:
+- **Inherent calls do NOT require importing the defining module.** `base.filter(...)`
+  compiles with no `use frame.table` at all — resolution is purely by the value's type.
+  You only `use frame.table.{Dir}` to name the `Dir` *type*. So the dot-method surface
+  is import-light; it's the *definition site* that's constrained.
+- **`Result`-returning ops break the visual chain.** `order_by`/`with_column`/`group_by`
+  return `Result`, so a real chain needs `try`: `try t.filter(p).order_by("x", .Asc)`.
+  The approved design's clean preview chain is only literally writable for the
+  infallible hops.
+
+**Possible language change (still the #1 ask):** allow inherent-method resolution for
+`pub fn`s in *any* module whose first parameter is the receiver type (UFCS-style), or an
+opt-in `extend Table { ... }` block in another module. Either would let the engine keep
+its clean module split *and* offer full fluent chaining — the one thing this project
+could not have both of.
 
 ## Ergonomic findings
 
@@ -51,17 +76,23 @@ match the "objects have methods" mental model a fluent dataframe API wants.
   discoverable until you hit them; there's no list in the docs of reserved type names
   (`Cell`, and presumably `Option`/`Result`/`Range`/`Iterator`/`Array`...).
 
-- **GAP — `assert.equal` can't compare bare enums (`Order`, `DType`, `Dir`, `How`).**
-  `assert.equal<T: Eq + Stringify>` requires `Stringify`, and **user/builtin enums get
-  auto-derived structural `Eq` but NOT auto `Stringify`.** So
-  `assert.equal(column.dtype(c), DType.DFloat)` is a *compile error*
-  (`type DType does not satisfy Stringify`). Workaround used throughout the tests:
-  `assert.is_true(column.dtype(c) == DType.DFloat)` (the `==` works via auto-Eq). This
-  is a real papercut: the most natural assertion form fails on exactly the small
-  closed enums you most want to assert on, and the error appears at the call site, not
-  the type definition. A derivable/auto `Stringify` for simple enums (variant name as
-  string) — or an `assert.eq` that only needs `Eq` and renders via a fallback — would
-  remove it.
+- **MOSTLY USER-FIXABLE — `assert.equal` needs `Stringify`, which enums don't auto-derive.**
+  `assert.equal<T: Eq + Stringify>` requires `Stringify`, and **enums get auto-derived
+  structural `Eq` but NOT auto `Stringify`.** So `assert.equal(column.dtype(c), DType.DFloat)`
+  first failed with `type DType does not satisfy Stringify`. The correct framing (thanks
+  to review feedback): `assert.equal` is ordinary user-level code that legitimately asks
+  for `Stringify`, so the fix is to **give the enum a `to_string`**, not to work around
+  the assert. We did exactly that — `DType`, `Dir`, and `How` each got a one-line
+  `pub fn to_string(...)` in their module, and the `DType` assertions now use
+  `assert.equal` directly. This is the idiomatic resolution and it's cheap.
+  - **Residual real gap: builtin `Order` has no Stringify witness.** `Order` is a
+    *compiler builtin* with no prelude `.tw` module, so there is nowhere user code can
+    attach an `Order.to_string`. Its assertion still uses the `== Order.Lt`/`is_true`
+    workaround. That part is a genuine (small) **stdlib gap**: builtins returned by core
+    APIs (`Int.compare → Order`) should ship a `to_string`/Stringify witness so they're
+    usable with the same `assert.equal`/interpolation as everything else.
+  - **Secondary nicety:** auto-derivable `Stringify` for simple (payload-free) enums
+    would remove even the one-liners — but that's an enhancement, not the gap.
 
 - **GAP — nested patterns inside `.Some(...)` don't compile.** `case opt { .Some(.CInt(_)) => ... }`
   is rejected; you must destructure in two levels:
@@ -203,10 +234,15 @@ Observations:
 ## Recommendations (ranked)
 
 1. **Cross-module inherent methods (UFCS or `extend`).** Without it, fluent
-   library APIs force everything into one module. This is the #1 finding and it's
-   architectural, not cosmetic.
-2. **Auto/derivable `Stringify` for simple enums** (or an `Eq`-only assert). Removes the
-   `assert.equal`-on-enum papercut that every test file worked around.
+   library APIs force everything into one module — verified hard by the circular-import
+   error. We shipped a *partial* reorg (row-level ops into `table.tw`) to get
+   `t.filter(...).order_by(...)`, but full chaining through group-by/join still can't
+   coexist with a clean module split. This is the #1 finding and it's architectural.
+2. **Ship a `Stringify` (`to_string`) witness for builtin `Order`** (and audit other
+   builtins returned by core APIs). User enums are fixable by adding `to_string`
+   (we did, for `DType`/`Dir`/`How`); the only thing user code *can't* fix is builtins
+   with no module to attach to. Optionally, auto-derive `Stringify` for payload-free
+   enums to drop even the one-liners.
 3. **Nested constructor patterns** (`.Some(.CInt(_))`). Removes forced double-nesting in
    all enum-of-enum dispatch.
 4. **A trie-aware bulk `Vector.gather(idx)` / permute primitive.** Directly attacks the
