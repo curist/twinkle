@@ -52,3 +52,48 @@ pub fn subst_type_params(
     _ => ty,
   }
 }
+
+/// Like `subst_type_params`, but tolerant of missing arguments: an unmatched
+/// type variable is left unchanged instead of trapping. Editor queries run on
+/// partially-typed source where the checker may not have supplied every type
+/// argument, so they substitute leniently rather than aborting the request.
+pub fn subst_type_params_lenient(
+  ty: MonoType,
+  type_params: Vector<ResolvedTypeParam>,
+  args: Vector<MonoType>,
+) MonoType {
+  case ty {
+    .Var(name) => {
+      for p, i in type_params {
+        if p.name == name and i < args.len() {
+          return args[i]
+        }
+      }
+
+      ty
+    },
+    .Named(tid, inner_args) => .Named(
+      tid,
+      collect a in inner_args {
+        subst_type_params_lenient(a, type_params, args)
+      },
+    ),
+    .Vector(elem) => .Vector(subst_type_params_lenient(elem, type_params, args)),
+    .Dict(k, v) => .Dict(
+      subst_type_params_lenient(k, type_params, args),
+      subst_type_params_lenient(v, type_params, args),
+    ),
+    .Function(ps, r) => .Function(
+      collect p in ps {
+        subst_type_params_lenient(p, type_params, args)
+      },
+      subst_type_params_lenient(r, type_params, args),
+    ),
+    .Optional(inner) => .Optional(subst_type_params_lenient(inner, type_params, args)),
+    .Result(ok, err) => .Result(
+      subst_type_params_lenient(ok, type_params, args),
+      subst_type_params_lenient(err, type_params, args),
+    ),
+    _ => ty,
+  }
+}

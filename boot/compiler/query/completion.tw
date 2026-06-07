@@ -24,6 +24,7 @@ use compiler.resolver.{
   FunctionSig, MethodEntry, ResolvedEnv, ResolvedField, ResolvedTypeParam, ResolvedVariant,
   lookup_type_methods, ty_to_string_env,
 }
+use compiler.type_util
 use lib.lsp.completion as lsp_completion
 use lib.module.core_lib
 use lib.module.loader
@@ -248,7 +249,7 @@ fn field_completions(
   args: Vector<MonoType>,
 ) Vector<lsp_completion.CompletionItem> {
   collect f in fields {
-    field_ty := substitute_type_params(f.ty, params, args)
+    field_ty := type_util.subst_type_params_lenient(f.ty, params, args)
     lsp_completion.CompletionItem.{
       label: f.name,
       kind: 5,
@@ -985,42 +986,4 @@ fn find_case_info_in_expr(expr: Expr, offset: Int) CaseInfo? {
 
 fn find_case_info_in_exprs(exprs: Vector<Expr>, offset: Int) CaseInfo? {
   find_map(exprs, fn(e) { find_case_info_in_expr(e, offset) })
-}
-
-// ── Type param substitution ─────────────────────────────────────────
-fn substitute_type_params(ty: MonoType, params: Vector<ResolvedTypeParam>, args: Vector<MonoType>) MonoType {
-  case ty {
-    .Var(name) => {
-      for i in 0..params.len() {
-        if params[i].name == name and i < args.len() {
-          return args[i]
-        }
-      }
-
-      ty
-    },
-    .Named(tid, inner_args) => .Named(
-      tid,
-      collect a in inner_args {
-        substitute_type_params(a, params, args)
-      },
-    ),
-    .Vector(inner) => .Vector(substitute_type_params(inner, params, args)),
-    .Dict(k, v) => .Dict(
-      substitute_type_params(k, params, args),
-      substitute_type_params(v, params, args),
-    ),
-    .Function(fn_params, ret) => .Function(
-      collect p in fn_params {
-        substitute_type_params(p, params, args)
-      },
-      substitute_type_params(ret, params, args),
-    ),
-    .Optional(inner) => .Optional(substitute_type_params(inner, params, args)),
-    .Result(ok, err) => .Result(
-      substitute_type_params(ok, params, args),
-      substitute_type_params(err, params, args),
-    ),
-    _ => ty,
-  }
 }

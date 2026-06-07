@@ -7,6 +7,7 @@ use compiler.mono_type.{MonoType}
 use compiler.query.cursor_context
 use compiler.query.semantic.{SemanticSnapshot}
 use compiler.resolver.{FunctionSig, ResolvedEnv, ResolvedTypeParam, ty_to_string_env}
+use compiler.type_util
 use lib.source.span.{Span}
 
 pub type SignatureHelpResult = .{
@@ -346,10 +347,10 @@ fn instantiate_receiver_sig(sig: FunctionSig, base: Expr, typed: CheckResult) Fu
     _ => [],
   }
   params := collect p in sig.params {
-    substitute_type_params(p, sig.type_params, args)
+    type_util.subst_type_params_lenient(p, sig.type_params, args)
   }
   ret: MonoType? = case sig.ret {
-    .Some(r) => .Some(substitute_type_params(r, sig.type_params, args)),
+    .Some(r) => .Some(type_util.subst_type_params_lenient(r, sig.type_params, args)),
     .None => .None,
   }
   FunctionSig.{
@@ -360,47 +361,6 @@ fn instantiate_receiver_sig(sig: FunctionSig, base: Expr, typed: CheckResult) Fu
     ret,
     doc: sig.doc,
     extern_module: sig.extern_module,
-  }
-}
-
-fn substitute_type_params(
-  ty: MonoType,
-  type_params: Vector<ResolvedTypeParam>,
-  args: Vector<MonoType>,
-) MonoType {
-  case ty {
-    .Var(name) => {
-      for i in 0..type_params.len() {
-        if type_params[i].name == name and i < args.len() {
-          return args[i]
-        }
-      }
-
-      ty
-    },
-    .Named(id, inner_args) => .Named(
-      id,
-      collect a in inner_args {
-        substitute_type_params(a, type_params, args)
-      },
-    ),
-    .Vector(inner) => .Vector(substitute_type_params(inner, type_params, args)),
-    .Dict(k, v) => .Dict(
-      substitute_type_params(k, type_params, args),
-      substitute_type_params(v, type_params, args),
-    ),
-    .Optional(inner) => .Optional(substitute_type_params(inner, type_params, args)),
-    .Result(ok, err) => .Result(
-      substitute_type_params(ok, type_params, args),
-      substitute_type_params(err, type_params, args),
-    ),
-    .Function(param_types, ret) => .Function(
-      collect p in param_types {
-        substitute_type_params(p, type_params, args)
-      },
-      substitute_type_params(ret, type_params, args),
-    ),
-    _ => ty,
   }
 }
 

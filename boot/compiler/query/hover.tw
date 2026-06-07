@@ -16,6 +16,7 @@ use compiler.resolver.{
   FunctionSig, ResolvedContractRef, ResolvedEnv, ResolvedTypeDef, ResolvedTypeParam, ResolvedVariant,
   ty_to_string_env,
 }
+use compiler.type_util
 use lib.source.span.{Span}
 
 pub type HoverResult = .{ content: String, span: Span }
@@ -627,15 +628,15 @@ fn instantiate_receiver_sig(sig: FunctionSig, base: Expr, typed: CheckResult) Fu
     _ => [],
   }
   params := collect p in sig.params {
-    substitute_type_params(p, sig.type_params, args)
+    type_util.subst_type_params_lenient(p, sig.type_params, args)
   }
   ret: MonoType? = case sig.ret {
-    .Some(r) => .Some(substitute_type_params(r, sig.type_params, args)),
+    .Some(r) => .Some(type_util.subst_type_params_lenient(r, sig.type_params, args)),
     .None => .None,
   }
 
   // The receiver's type args instantiate the leading type params positionally
-  // (mirroring `substitute_type_params`); only the params beyond `args.len()`
+  // (mirroring `subst_type_params_lenient`); only the params beyond `args.len()`
   // stay polymorphic, so the rest must not show in the displayed signature.
   remaining_type_params := if args.len() < sig.type_params.len() {
     sig.type_params.slice(args.len(), sig.type_params.len())
@@ -845,7 +846,7 @@ fn variant_info_from_variants(
   for v in variants {
     if v.name == variant_name {
       field_types := collect f in v.fields {
-        substitute_type_params(f, params, args)
+        type_util.subst_type_params_lenient(f, params, args)
       }
       fields := collect f in field_types {
         ty_to_string_env(env, f)
@@ -861,43 +862,6 @@ fn variant_info_from_variants(
   }
 
   .None
-}
-
-fn substitute_type_params(ty: MonoType, params: Vector<ResolvedTypeParam>, args: Vector<MonoType>) MonoType {
-  case ty {
-    .Var(name) => {
-      for i in 0..params.len() {
-        if params[i].name == name and i < args.len() {
-          return args[i]
-        }
-      }
-
-      ty
-    },
-    .Named(tid, inner_args) => .Named(
-      tid,
-      collect a in inner_args {
-        substitute_type_params(a, params, args)
-      },
-    ),
-    .Vector(inner) => .Vector(substitute_type_params(inner, params, args)),
-    .Dict(k, v) => .Dict(
-      substitute_type_params(k, params, args),
-      substitute_type_params(v, params, args),
-    ),
-    .Function(fn_params, ret) => .Function(
-      collect p in fn_params {
-        substitute_type_params(p, params, args)
-      },
-      substitute_type_params(ret, params, args),
-    ),
-    .Optional(inner) => .Optional(substitute_type_params(inner, params, args)),
-    .Result(ok, err) => .Result(
-      substitute_type_params(ok, params, args),
-      substitute_type_params(err, params, args),
-    ),
-    _ => ty,
-  }
 }
 
 // ── Doc comment helpers ────────────────────────────────────────────
