@@ -29,13 +29,13 @@ test.
 
 ## Architecture
 
-Its own project root `tools/dataframe/` (parallels `tools/leetcode/`, which has its own
+Its own project root `examples/dataframe/` (parallels `tools/leetcode/`, which has its own
 `twinkle.toml`). Copies `assert.tw` + `runner.tw` from `boot/tests/` like leetcode does.
 Library modules live under `frame/`, correctness tests under `tests/`, benchmark harness
 under `bench/`.
 
 ```
-tools/dataframe/
+examples/dataframe/
   twinkle.toml            name = "dataframe"
   assert.tw  runner.tw    copied from boot/tests (same pattern as leetcode)
   frame/
@@ -56,7 +56,7 @@ Module paths resolve from the root, e.g. `use frame.column`, `use frame.table`.
 ### Note on `json.tw` reuse
 
 `boot/lib/json.tw` lives under the `boot/` project root, so a separate
-`tools/dataframe/` root **cannot import it**. CSV is therefore the primary loader
+`examples/dataframe/` root **cannot import it**. CSV is therefore the primary loader
 (and exercises `String`/`Byte`/utf8 handling on its own). JSON ingest is deferred; if
 added later it means vendoring (copying) `json.tw` into the project — itself a
 cross-module-reuse data point worth noting.

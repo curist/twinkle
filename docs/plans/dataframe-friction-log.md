@@ -2,7 +2,7 @@
 
 Companion to `docs/plans/dataframe-stress-test.md` (spec) and
 `docs/plans/dataframe-stress-test-plan.md` (impl plan). Records what building a
-multi-module columnar query engine (`tools/dataframe/`) revealed about Twinkle's
+multi-module columnar query engine (`examples/dataframe/`) revealed about Twinkle's
 app-level ergonomics and collection performance — the actual deliverable of the
 stress test. All findings are from the real build; nothing here is hypothetical.
 

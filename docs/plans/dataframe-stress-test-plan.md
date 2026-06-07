@@ -2,7 +2,7 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Build a multi-module columnar dataframe / query engine in Twinkle (`tools/dataframe/`), exercised over large synthetic datasets, to stress-test app-level ergonomics + stdlib breadth and collection performance — producing both a working engine and a friction-log document.
+**Goal:** Build a multi-module columnar dataframe / query engine in Twinkle (`examples/dataframe/`), exercised over large synthetic datasets, to stress-test app-level ergonomics + stdlib breadth and collection performance — producing both a working engine and a friction-log document.
 
 **Architecture:** Columnar storage — each `Column` is a tagged `ColData` enum (`IntCol`/`FloatCol`/`StrCol`/`BoolCol`) over unboxed primitive `Vector`s, plus a parallel `Vector<Bool>` null mask. A `Table` is parallel named columns. `filter`, `order_by`, and `join` all reduce to "compute an index vector, then `take` (gather)". Aggregations are uniform capability records (`fn(Table, Vector<Int>) Cell`) so heterogeneous aggregations coexist in one `Vector`. Fluent API only (no SQL frontend).
 
@@ -18,12 +18,12 @@
 
 ## Conventions for every task
 
-- **Project root:** `tools/dataframe/` has its own `twinkle.toml`, so module paths resolve from there: `use frame.cell`, `use frame.column`, `use tests.cell_suite`, `use runner`, `use assert`.
-- **Test entrypoint:** `tools/dataframe/main.tw` imports each suite module and calls `runner.run_all([...])`. Each task that adds a suite also wires it into `main.tw`.
-- **Run all tests:** `target/twk run tools/dataframe/main.tw`
-- **Run one suite (TDD inner loop):** `TWK_TEST_FILTER="<suite name>" target/twk run tools/dataframe/main.tw`
+- **Project root:** `examples/dataframe/` has its own `twinkle.toml`, so module paths resolve from there: `use frame.cell`, `use frame.column`, `use tests.cell_suite`, `use runner`, `use assert`.
+- **Test entrypoint:** `examples/dataframe/main.tw` imports each suite module and calls `runner.run_all([...])`. Each task that adds a suite also wires it into `main.tw`.
+- **Run all tests:** `target/twk run examples/dataframe/main.tw`
+- **Run one suite (TDD inner loop):** `TWK_TEST_FILTER="<suite name>" target/twk run examples/dataframe/main.tw`
 - **Red state:** Twinkle compiles the whole program, so a test referencing a not-yet-written function fails as a **compile error** ("unknown function/module"). That counts as the failing-test step. After implementing, the same run must pass.
-- **Format after editing:** `target/twk fmt tools/dataframe/<file>.tw` (formatter is idempotent).
+- **Format after editing:** `target/twk fmt examples/dataframe/<file>.tw` (formatter is idempotent).
 - **Anonymous `.{...}` literals** need a known expected type; otherwise use the named form (`Column.{...}`, `RowRef.{...}`, `Cell.CInt(n)`).
 - **Two import lines** when a module both supplies constructors and a type you name: `use frame.row` (alias) + `use frame.row.{RowRef}` (type). Inherent-method dot sugar (`t.select(...)`) resolves via the receiver type regardless.
 - **Commit** after each task with a short imperative subject. Do **not** add a `Co-Authored-By` trailer unless actually correct for the session. End-of-task commits only; never commit on `main` if the repo policy says branch first — assume work happens on a feature branch created at execution time.
@@ -33,7 +33,7 @@
 ## File structure (locked decomposition)
 
 ```
-tools/dataframe/
+examples/dataframe/
   twinkle.toml            name = "dataframe"
   assert.tw               copied verbatim from boot/tests/assert.tw
   runner.tw               copied verbatim from boot/tests/runner.tw
@@ -60,26 +60,26 @@ tools/dataframe/
 ## Task 1: Project scaffolding
 
 **Files:**
-- Create: `tools/dataframe/twinkle.toml`
-- Create: `tools/dataframe/assert.tw` (copy of `boot/tests/assert.tw`)
-- Create: `tools/dataframe/runner.tw` (copy of `boot/tests/runner.tw`)
-- Create: `tools/dataframe/main.tw`
-- Create: `tools/dataframe/tests/cell_suite.tw`
+- Create: `examples/dataframe/twinkle.toml`
+- Create: `examples/dataframe/assert.tw` (copy of `boot/tests/assert.tw`)
+- Create: `examples/dataframe/runner.tw` (copy of `boot/tests/runner.tw`)
+- Create: `examples/dataframe/main.tw`
+- Create: `examples/dataframe/tests/cell_suite.tw`
 
 - [ ] **Step 1: Create the project root and copy the harness**
 
 ```bash
-mkdir -p tools/dataframe/frame tools/dataframe/tests tools/dataframe/bench
-printf 'name = "dataframe"\n' > tools/dataframe/twinkle.toml
-cp boot/tests/assert.tw tools/dataframe/assert.tw
-cp boot/tests/runner.tw tools/dataframe/runner.tw
+mkdir -p examples/dataframe/frame examples/dataframe/tests examples/dataframe/bench
+printf 'name = "dataframe"\n' > examples/dataframe/twinkle.toml
+cp boot/tests/assert.tw examples/dataframe/assert.tw
+cp boot/tests/runner.tw examples/dataframe/runner.tw
 ```
 
 (If `boot/tests/assert.tw` / `runner.tw` differ from the `tools/leetcode/` copies, prefer the `boot/tests/` originals; they are the canonical harness.)
 
 - [ ] **Step 2: Write a trivial smoke suite**
 
-Create `tools/dataframe/tests/cell_suite.tw`:
+Create `examples/dataframe/tests/cell_suite.tw`:
 
 ```tw
 use assert
@@ -98,7 +98,7 @@ pub fn suite() {
 
 - [ ] **Step 3: Wire the entrypoint**
 
-Create `tools/dataframe/main.tw`:
+Create `examples/dataframe/main.tw`:
 
 ```tw
 use tests.cell_suite
@@ -111,13 +111,13 @@ runner.run_all([
 
 - [ ] **Step 4: Run to verify the harness works**
 
-Run: `target/twk run tools/dataframe/main.tw`
+Run: `target/twk run examples/dataframe/main.tw`
 Expected: PASS — output ends with `Ran 1 tests: 1 passed`.
 
 - [ ] **Step 5: Commit**
 
 ```bash
-git add tools/dataframe
+git add examples/dataframe
 git commit -m "dataframe: scaffold project root and test harness"
 ```
 
@@ -128,12 +128,12 @@ git commit -m "dataframe: scaffold project root and test harness"
 `Cell` is the boxed scalar used only at API edges (aggregation results, display, single-value access). It needs auto-derived structural `Eq` (for `assert.equal`) and a hand-written `to_string` (Stringify is not auto-derived for user types). `from_cells` packs a `Vector<Cell>` back into a typed `Column` (used by `group.agg`), inferring dtype from the first non-null cell.
 
 **Files:**
-- Create: `tools/dataframe/frame/cell.tw`
-- Modify: `tools/dataframe/tests/cell_suite.tw`
+- Create: `examples/dataframe/frame/cell.tw`
+- Modify: `examples/dataframe/tests/cell_suite.tw`
 
 - [ ] **Step 1: Write the failing tests**
 
-Replace `tools/dataframe/tests/cell_suite.tw` with:
+Replace `examples/dataframe/tests/cell_suite.tw` with:
 
 ```tw
 use assert
@@ -164,12 +164,12 @@ pub fn suite() {
 
 - [ ] **Step 2: Run to verify it fails**
 
-Run: `target/twk run tools/dataframe/main.tw`
+Run: `target/twk run examples/dataframe/main.tw`
 Expected: FAIL — compile error, unknown module `frame.cell`.
 
 - [ ] **Step 3: Implement `cell.tw`**
 
-Create `tools/dataframe/frame/cell.tw`:
+Create `examples/dataframe/frame/cell.tw`:
 
 ```tw
 /// Cell is the boxed scalar used at API edges: aggregation results, display,
@@ -200,15 +200,15 @@ pub fn to_string(c: Cell) String {
 
 - [ ] **Step 4: Run to verify it passes**
 
-Run: `TWK_TEST_FILTER="cell" target/twk run tools/dataframe/main.tw`
+Run: `TWK_TEST_FILTER="cell" target/twk run examples/dataframe/main.tw`
 Expected: PASS — `cell` suite green.
 
-Then format: `target/twk fmt tools/dataframe/frame/cell.tw`
+Then format: `target/twk fmt examples/dataframe/frame/cell.tw`
 
 - [ ] **Step 5: Commit**
 
 ```bash
-git add tools/dataframe/frame/cell.tw tools/dataframe/tests/cell_suite.tw
+git add examples/dataframe/frame/cell.tw examples/dataframe/tests/cell_suite.tw
 git commit -m "dataframe: add Cell scalar type with to_string"
 ```
 
@@ -217,13 +217,13 @@ git commit -m "dataframe: add Cell scalar type with to_string"
 ## Task 3: `Column` — columnar storage with null mask
 
 **Files:**
-- Create: `tools/dataframe/frame/column.tw`
-- Create: `tools/dataframe/tests/column_suite.tw`
-- Modify: `tools/dataframe/main.tw`
+- Create: `examples/dataframe/frame/column.tw`
+- Create: `examples/dataframe/tests/column_suite.tw`
+- Modify: `examples/dataframe/main.tw`
 
 - [ ] **Step 1: Write the failing tests**
 
-Create `tools/dataframe/tests/column_suite.tw`:
+Create `examples/dataframe/tests/column_suite.tw`:
 
 ```tw
 use assert
@@ -287,12 +287,12 @@ pub fn suite() {
 
 - [ ] **Step 2: Run to verify it fails**
 
-Run: `target/twk run tools/dataframe/main.tw`
+Run: `target/twk run examples/dataframe/main.tw`
 Expected: FAIL — compile error, unknown module `frame.column`.
 
 - [ ] **Step 3: Implement `column.tw`**
 
-Create `tools/dataframe/frame/column.tw`:
+Create `examples/dataframe/frame/column.tw`:
 
 ```tw
 use frame.cell.{Cell}
@@ -485,7 +485,7 @@ fn bool_rank(b: Bool) Int {
 
 - [ ] **Step 4: Wire the suite and run**
 
-Add to `tools/dataframe/main.tw` — import `use tests.column_suite` and add `column_suite.suite(),` to the `run_all` list. The file becomes:
+Add to `examples/dataframe/main.tw` — import `use tests.column_suite` and add `column_suite.suite(),` to the `run_all` list. The file becomes:
 
 ```tw
 use tests.cell_suite
@@ -498,15 +498,15 @@ runner.run_all([
 ])
 ```
 
-Run: `TWK_TEST_FILTER="column" target/twk run tools/dataframe/main.tw`
+Run: `TWK_TEST_FILTER="column" target/twk run examples/dataframe/main.tw`
 Expected: PASS — `column` suite green.
 
-Then format: `target/twk fmt tools/dataframe/frame/column.tw`
+Then format: `target/twk fmt examples/dataframe/frame/column.tw`
 
 - [ ] **Step 5: Commit**
 
 ```bash
-git add tools/dataframe/frame/column.tw tools/dataframe/tests/column_suite.tw tools/dataframe/main.tw
+git add examples/dataframe/frame/column.tw examples/dataframe/tests/column_suite.tw examples/dataframe/main.tw
 git commit -m "dataframe: add columnar Column type with null mask, gather, compare_at"
 ```
 
@@ -515,13 +515,13 @@ git commit -m "dataframe: add columnar Column type with null mask, gather, compa
 ## Task 4: `Table` — named columns, select/drop/rename, take, display
 
 **Files:**
-- Create: `tools/dataframe/frame/table.tw`
-- Create: `tools/dataframe/tests/table_suite.tw`
-- Modify: `tools/dataframe/main.tw`
+- Create: `examples/dataframe/frame/table.tw`
+- Create: `examples/dataframe/tests/table_suite.tw`
+- Modify: `examples/dataframe/main.tw`
 
 - [ ] **Step 1: Write the failing tests**
 
-Create `tools/dataframe/tests/table_suite.tw`:
+Create `examples/dataframe/tests/table_suite.tw`:
 
 ```tw
 use assert
@@ -605,12 +605,12 @@ pub fn suite() {
 
 - [ ] **Step 2: Run to verify it fails**
 
-Run: `target/twk run tools/dataframe/main.tw`
+Run: `target/twk run examples/dataframe/main.tw`
 Expected: FAIL — compile error, unknown module `frame.table`.
 
 - [ ] **Step 3: Implement `table.tw`**
 
-Create `tools/dataframe/frame/table.tw`:
+Create `examples/dataframe/frame/table.tw`:
 
 ```tw
 use frame.cell
@@ -731,17 +731,17 @@ pub fn display(t: Table) String {
 
 - [ ] **Step 4: Wire the suite and run**
 
-Add `use tests.table_suite` and `table_suite.suite(),` to `tools/dataframe/main.tw`.
+Add `use tests.table_suite` and `table_suite.suite(),` to `examples/dataframe/main.tw`.
 
-Run: `TWK_TEST_FILTER="table" target/twk run tools/dataframe/main.tw`
+Run: `TWK_TEST_FILTER="table" target/twk run examples/dataframe/main.tw`
 Expected: PASS — `table` suite green.
 
-Then format: `target/twk fmt tools/dataframe/frame/table.tw`
+Then format: `target/twk fmt examples/dataframe/frame/table.tw`
 
 - [ ] **Step 5: Commit**
 
 ```bash
-git add tools/dataframe/frame/table.tw tools/dataframe/tests/table_suite.tw tools/dataframe/main.tw
+git add examples/dataframe/frame/table.tw examples/dataframe/tests/table_suite.tw examples/dataframe/main.tw
 git commit -m "dataframe: add Table with select/drop/rename/take/display"
 ```
 
@@ -750,13 +750,13 @@ git commit -m "dataframe: add Table with select/drop/rename/take/display"
 ## Task 5: `RowRef` — typed row view for predicates
 
 **Files:**
-- Create: `tools/dataframe/frame/row.tw`
-- Create: `tools/dataframe/tests/row_suite.tw`
-- Modify: `tools/dataframe/main.tw`
+- Create: `examples/dataframe/frame/row.tw`
+- Create: `examples/dataframe/tests/row_suite.tw`
+- Modify: `examples/dataframe/main.tw`
 
 - [ ] **Step 1: Write the failing tests**
 
-Create `tools/dataframe/tests/row_suite.tw`:
+Create `examples/dataframe/tests/row_suite.tw`:
 
 ```tw
 use assert
@@ -807,12 +807,12 @@ pub fn suite() {
 
 - [ ] **Step 2: Run to verify it fails**
 
-Run: `target/twk run tools/dataframe/main.tw`
+Run: `target/twk run examples/dataframe/main.tw`
 Expected: FAIL — compile error, unknown module `frame.row`.
 
 - [ ] **Step 3: Implement `row.tw`**
 
-Create `tools/dataframe/frame/row.tw`:
+Create `examples/dataframe/frame/row.tw`:
 
 ```tw
 use frame.column
@@ -879,17 +879,17 @@ pub fn bool(r: RowRef, name: String) Bool {
 
 - [ ] **Step 4: Wire the suite and run**
 
-Add `use tests.row_suite` and `row_suite.suite(),` to `tools/dataframe/main.tw`.
+Add `use tests.row_suite` and `row_suite.suite(),` to `examples/dataframe/main.tw`.
 
-Run: `TWK_TEST_FILTER="row" target/twk run tools/dataframe/main.tw`
+Run: `TWK_TEST_FILTER="row" target/twk run examples/dataframe/main.tw`
 Expected: PASS — `row` suite green.
 
-Then format: `target/twk fmt tools/dataframe/frame/row.tw`
+Then format: `target/twk fmt examples/dataframe/frame/row.tw`
 
 - [ ] **Step 5: Commit**
 
 ```bash
-git add tools/dataframe/frame/row.tw tools/dataframe/tests/row_suite.tw tools/dataframe/main.tw
+git add examples/dataframe/frame/row.tw examples/dataframe/tests/row_suite.tw examples/dataframe/main.tw
 git commit -m "dataframe: add RowRef typed row view for predicates"
 ```
 
@@ -898,13 +898,13 @@ git commit -m "dataframe: add RowRef typed row view for predicates"
 ## Task 6: `filter` and `with_column`
 
 **Files:**
-- Create: `tools/dataframe/frame/query.tw`
-- Create: `tools/dataframe/tests/query_suite.tw`
-- Modify: `tools/dataframe/main.tw`
+- Create: `examples/dataframe/frame/query.tw`
+- Create: `examples/dataframe/tests/query_suite.tw`
+- Modify: `examples/dataframe/main.tw`
 
 - [ ] **Step 1: Write the failing tests**
 
-Create `tools/dataframe/tests/query_suite.tw`:
+Create `examples/dataframe/tests/query_suite.tw`:
 
 ```tw
 use assert
@@ -958,12 +958,12 @@ pub fn suite() {
 
 - [ ] **Step 2: Run to verify it fails**
 
-Run: `target/twk run tools/dataframe/main.tw`
+Run: `target/twk run examples/dataframe/main.tw`
 Expected: FAIL — compile error, unknown module `frame.query`.
 
 - [ ] **Step 3: Implement `filter` and `with_column` in `query.tw`**
 
-Create `tools/dataframe/frame/query.tw`:
+Create `examples/dataframe/frame/query.tw`:
 
 ```tw
 use frame.column
@@ -1015,17 +1015,17 @@ fn from_columns_append(t: Table, name: String, c: Column) Result<Table, String> 
 
 - [ ] **Step 4: Wire the suite and run**
 
-Add `use tests.query_suite` and `query_suite.suite(),` to `tools/dataframe/main.tw`.
+Add `use tests.query_suite` and `query_suite.suite(),` to `examples/dataframe/main.tw`.
 
-Run: `TWK_TEST_FILTER="query" target/twk run tools/dataframe/main.tw`
+Run: `TWK_TEST_FILTER="query" target/twk run examples/dataframe/main.tw`
 Expected: PASS — `query` suite green.
 
-Then format: `target/twk fmt tools/dataframe/frame/query.tw`
+Then format: `target/twk fmt examples/dataframe/frame/query.tw`
 
 - [ ] **Step 5: Commit**
 
 ```bash
-git add tools/dataframe/frame/query.tw tools/dataframe/tests/query_suite.tw tools/dataframe/main.tw
+git add examples/dataframe/frame/query.tw examples/dataframe/tests/query_suite.tw examples/dataframe/main.tw
 git commit -m "dataframe: add filter and with_column"
 ```
 
@@ -1034,12 +1034,12 @@ git commit -m "dataframe: add filter and with_column"
 ## Task 7: `order_by`
 
 **Files:**
-- Modify: `tools/dataframe/frame/query.tw`
-- Modify: `tools/dataframe/tests/query_suite.tw`
+- Modify: `examples/dataframe/frame/query.tw`
+- Modify: `examples/dataframe/tests/query_suite.tw`
 
 - [ ] **Step 1: Add the failing tests**
 
-Append these two `.test(...)` calls to the `query` suite chain in `tools/dataframe/tests/query_suite.tw` (insert before the closing of the chain). Also add `use frame.query.{Dir}` to the imports at the top of the file.
+Append these two `.test(...)` calls to the `query` suite chain in `examples/dataframe/tests/query_suite.tw` (insert before the closing of the chain). Also add `use frame.query.{Dir}` to the imports at the top of the file.
 
 ```tw
     .test(
@@ -1061,12 +1061,12 @@ Append these two `.test(...)` calls to the `query` suite chain in `tools/datafra
 
 - [ ] **Step 2: Run to verify it fails**
 
-Run: `target/twk run tools/dataframe/main.tw`
+Run: `target/twk run examples/dataframe/main.tw`
 Expected: FAIL — compile error, unknown type `Dir` / unknown function `order_by`.
 
 - [ ] **Step 3: Implement `order_by` in `query.tw`**
 
-Append to `tools/dataframe/frame/query.tw`:
+Append to `examples/dataframe/frame/query.tw`:
 
 ```tw
 pub type Dir = { Asc, Desc }
@@ -1099,15 +1099,15 @@ pub fn order_by(t: Table, name: String, dir: Dir) Result<Table, String> {
 
 - [ ] **Step 4: Run to verify it passes**
 
-Run: `TWK_TEST_FILTER="query" target/twk run tools/dataframe/main.tw`
+Run: `TWK_TEST_FILTER="query" target/twk run examples/dataframe/main.tw`
 Expected: PASS — `query` suite green (now including order_by tests).
 
-Then format: `target/twk fmt tools/dataframe/frame/query.tw`
+Then format: `target/twk fmt examples/dataframe/frame/query.tw`
 
 - [ ] **Step 5: Commit**
 
 ```bash
-git add tools/dataframe/frame/query.tw tools/dataframe/tests/query_suite.tw
+git add examples/dataframe/frame/query.tw examples/dataframe/tests/query_suite.tw
 git commit -m "dataframe: add order_by (index-sort then gather)"
 ```
 
@@ -1118,13 +1118,13 @@ git commit -m "dataframe: add order_by (index-sort then gather)"
 `csv.tw` parses a simple CSV string (comma-separated, newline-delimited, no quoted-field/escape handling in MVP — that is a deliberate scope cut and friction-log note) into a `Table`. Each column's dtype is inferred by scanning its cells: all-empty-or-int → `IntCol`; else all-empty-or-number → `FloatCol`; `"true"`/`"false"` (case-sensitive) → `BoolCol`; otherwise `StrCol`. Empty cells become nulls.
 
 **Files:**
-- Create: `tools/dataframe/frame/csv.tw`
-- Create: `tools/dataframe/tests/csv_suite.tw`
-- Modify: `tools/dataframe/main.tw`
+- Create: `examples/dataframe/frame/csv.tw`
+- Create: `examples/dataframe/tests/csv_suite.tw`
+- Modify: `examples/dataframe/main.tw`
 
 - [ ] **Step 1: Write the failing tests**
 
-Create `tools/dataframe/tests/csv_suite.tw`:
+Create `examples/dataframe/tests/csv_suite.tw`:
 
 ```tw
 use assert
@@ -1172,12 +1172,12 @@ pub fn suite() {
 
 - [ ] **Step 2: Run to verify it fails**
 
-Run: `target/twk run tools/dataframe/main.tw`
+Run: `target/twk run examples/dataframe/main.tw`
 Expected: FAIL — compile error, unknown module `frame.csv`.
 
 - [ ] **Step 3: Implement `csv.tw`**
 
-Create `tools/dataframe/frame/csv.tw`:
+Create `examples/dataframe/frame/csv.tw`:
 
 ```tw
 use frame.column
@@ -1333,17 +1333,17 @@ fn parse_float_or(s: String, fallback: Float) Float {
 
 - [ ] **Step 4: Wire the suite and run**
 
-Add `use tests.csv_suite` and `csv_suite.suite(),` to `tools/dataframe/main.tw`.
+Add `use tests.csv_suite` and `csv_suite.suite(),` to `examples/dataframe/main.tw`.
 
-Run: `TWK_TEST_FILTER="csv" target/twk run tools/dataframe/main.tw`
+Run: `TWK_TEST_FILTER="csv" target/twk run examples/dataframe/main.tw`
 Expected: PASS — `csv` suite green.
 
-Then format: `target/twk fmt tools/dataframe/frame/csv.tw`
+Then format: `target/twk fmt examples/dataframe/frame/csv.tw`
 
 - [ ] **Step 5: Commit**
 
 ```bash
-git add tools/dataframe/frame/csv.tw tools/dataframe/tests/csv_suite.tw tools/dataframe/main.tw
+git add examples/dataframe/frame/csv.tw examples/dataframe/tests/csv_suite.tw examples/dataframe/main.tw
 git commit -m "dataframe: add CSV loader with per-column type inference"
 ```
 
@@ -1354,8 +1354,8 @@ git commit -m "dataframe: add CSV loader with per-column type inference"
 `group.agg` produces one `Cell` per group per aggregation; those must become a typed `Column`. `from_cells` infers dtype from the first non-null cell and packs (CNull → masked, with a type-appropriate placeholder value).
 
 **Files:**
-- Modify: `tools/dataframe/frame/column.tw`
-- Modify: `tools/dataframe/tests/column_suite.tw`
+- Modify: `examples/dataframe/frame/column.tw`
+- Modify: `examples/dataframe/tests/column_suite.tw`
 
 - [ ] **Step 1: Add the failing tests**
 
@@ -1382,12 +1382,12 @@ Add `use frame.cell.{Cell}` is already imported in `column_suite.tw`. Append to 
 
 - [ ] **Step 2: Run to verify it fails**
 
-Run: `target/twk run tools/dataframe/main.tw`
+Run: `target/twk run examples/dataframe/main.tw`
 Expected: FAIL — compile error, unknown function `from_cells`.
 
 - [ ] **Step 3: Implement `from_cells` in `column.tw`**
 
-Append to `tools/dataframe/frame/column.tw`:
+Append to `examples/dataframe/frame/column.tw`:
 
 ```tw
 /// Pack a vector of Cells into a typed Column, inferring dtype from the first
@@ -1488,15 +1488,15 @@ fn pack_bools(cells: Vector<Cell>, nulls: Vector<Bool>) Result<Column, String> {
 
 - [ ] **Step 4: Run to verify it passes**
 
-Run: `TWK_TEST_FILTER="column" target/twk run tools/dataframe/main.tw`
+Run: `TWK_TEST_FILTER="column" target/twk run examples/dataframe/main.tw`
 Expected: PASS — `column` suite green.
 
-Then format: `target/twk fmt tools/dataframe/frame/column.tw`
+Then format: `target/twk fmt examples/dataframe/frame/column.tw`
 
 - [ ] **Step 5: Commit**
 
 ```bash
-git add tools/dataframe/frame/column.tw tools/dataframe/tests/column_suite.tw
+git add examples/dataframe/frame/column.tw examples/dataframe/tests/column_suite.tw
 git commit -m "dataframe: add from_cells to pack Cells into a typed Column"
 ```
 
@@ -1507,13 +1507,13 @@ git commit -m "dataframe: add from_cells to pack Cells into a typed Column"
 Aggregations are uniform capability records: `Aggregation = .{ name: String, apply: fn(Table, Vector<Int>) Cell }`. `apply` receives the source table and the group's row indices, so heterogeneous aggregations live in one `Vector` despite the no-trait system. All aggregations skip nulls.
 
 **Files:**
-- Create: `tools/dataframe/frame/group.tw`
-- Create: `tools/dataframe/tests/group_suite.tw`
-- Modify: `tools/dataframe/main.tw`
+- Create: `examples/dataframe/frame/group.tw`
+- Create: `examples/dataframe/tests/group_suite.tw`
+- Modify: `examples/dataframe/main.tw`
 
 - [ ] **Step 1: Write the failing tests (aggregations over an explicit index set)**
 
-Create `tools/dataframe/tests/group_suite.tw`:
+Create `examples/dataframe/tests/group_suite.tw`:
 
 ```tw
 use assert
@@ -1572,12 +1572,12 @@ pub fn suite() {
 
 - [ ] **Step 2: Run to verify it fails**
 
-Run: `target/twk run tools/dataframe/main.tw`
+Run: `target/twk run examples/dataframe/main.tw`
 Expected: FAIL — compile error, unknown module `frame.group`.
 
 - [ ] **Step 3: Implement the aggregations in `group.tw`**
 
-Create `tools/dataframe/frame/group.tw`:
+Create `examples/dataframe/frame/group.tw`:
 
 ```tw
 use frame.cell.{Cell}
@@ -1709,17 +1709,17 @@ fn numeric_at(c: Column, col: String, i: Int) Float {
 
 - [ ] **Step 4: Wire the suite and run**
 
-Add `use tests.group_suite` and `group_suite.suite(),` to `tools/dataframe/main.tw`.
+Add `use tests.group_suite` and `group_suite.suite(),` to `examples/dataframe/main.tw`.
 
-Run: `TWK_TEST_FILTER="group" target/twk run tools/dataframe/main.tw`
+Run: `TWK_TEST_FILTER="group" target/twk run examples/dataframe/main.tw`
 Expected: PASS — `group` suite green.
 
-Then format: `target/twk fmt tools/dataframe/frame/group.tw`
+Then format: `target/twk fmt examples/dataframe/frame/group.tw`
 
 - [ ] **Step 5: Commit**
 
 ```bash
-git add tools/dataframe/frame/group.tw tools/dataframe/tests/group_suite.tw tools/dataframe/main.tw
+git add examples/dataframe/frame/group.tw examples/dataframe/tests/group_suite.tw examples/dataframe/main.tw
 git commit -m "dataframe: add aggregations (count/sum/mean/min/max)"
 ```
 
@@ -1730,12 +1730,12 @@ git commit -m "dataframe: add aggregations (count/sum/mean/min/max)"
 Groups rows by a composite key string built from the key columns (using `Cell.to_string` joined with a separator), tracked in a `Dict<String, Vector<Int>>` — insertion order gives deterministic group order. The output has the key columns (one row per group, taken from each group's first row) plus one column per aggregation (via `from_cells`).
 
 **Files:**
-- Modify: `tools/dataframe/frame/group.tw`
-- Modify: `tools/dataframe/tests/group_suite.tw`
+- Modify: `examples/dataframe/frame/group.tw`
+- Modify: `examples/dataframe/tests/group_suite.tw`
 
 - [ ] **Step 1: Add the failing tests**
 
-Append to the `group` suite chain in `tools/dataframe/tests/group_suite.tw` (and add `use frame.column.{DType}` to imports if a dtype assertion is wanted; not required below):
+Append to the `group` suite chain in `examples/dataframe/tests/group_suite.tw` (and add `use frame.column.{DType}` to imports if a dtype assertion is wanted; not required below):
 
 ```tw
     .test(
@@ -1760,12 +1760,12 @@ Append to the `group` suite chain in `tools/dataframe/tests/group_suite.tw` (and
 
 - [ ] **Step 2: Run to verify it fails**
 
-Run: `target/twk run tools/dataframe/main.tw`
+Run: `target/twk run examples/dataframe/main.tw`
 Expected: FAIL — compile error, unknown function `group_by` / `agg`.
 
 - [ ] **Step 3: Implement `group_by` and `agg` in `group.tw`**
 
-Append to `tools/dataframe/frame/group.tw`:
+Append to `examples/dataframe/frame/group.tw`:
 
 ```tw
 pub type GroupBy = .{ table: Table, keys: Vector<String> }
@@ -1846,15 +1846,15 @@ pub fn agg(g: GroupBy, aggs: Vector<Aggregation>) Result<Table, String> {
 
 - [ ] **Step 4: Run to verify it passes**
 
-Run: `TWK_TEST_FILTER="group" target/twk run tools/dataframe/main.tw`
+Run: `TWK_TEST_FILTER="group" target/twk run examples/dataframe/main.tw`
 Expected: PASS — `group` suite green.
 
-Then format: `target/twk fmt tools/dataframe/frame/group.tw`
+Then format: `target/twk fmt examples/dataframe/frame/group.tw`
 
 - [ ] **Step 5: Commit**
 
 ```bash
-git add tools/dataframe/frame/group.tw tools/dataframe/tests/group_suite.tw
+git add examples/dataframe/frame/group.tw examples/dataframe/tests/group_suite.tw
 git commit -m "dataframe: add group_by().agg() with HAMT-keyed grouping"
 ```
 
@@ -1865,13 +1865,13 @@ git commit -m "dataframe: add group_by().agg() with HAMT-keyed grouping"
 `join.tw` builds a `Dict<String, Vector<Int>>` from the right table's key column (string-keyed for MVP — keys are stringified via `Cell.to_string`), then probes with the left rows. Produces left+right index vectors, gathers both sides, and concatenates columns (right key column dropped to avoid duplication; right non-key columns prefixed on name collision).
 
 **Files:**
-- Create: `tools/dataframe/frame/join.tw`
-- Create: `tools/dataframe/tests/join_suite.tw`
-- Modify: `tools/dataframe/main.tw`
+- Create: `examples/dataframe/frame/join.tw`
+- Create: `examples/dataframe/tests/join_suite.tw`
+- Modify: `examples/dataframe/main.tw`
 
 - [ ] **Step 1: Write the failing tests**
 
-Create `tools/dataframe/tests/join_suite.tw`:
+Create `examples/dataframe/tests/join_suite.tw`:
 
 ```tw
 use assert
@@ -1931,12 +1931,12 @@ pub fn suite() {
 
 - [ ] **Step 2: Run to verify it fails**
 
-Run: `target/twk run tools/dataframe/main.tw`
+Run: `target/twk run examples/dataframe/main.tw`
 Expected: FAIL — compile error, unknown module `frame.join`.
 
 - [ ] **Step 3: Implement `join.tw`**
 
-Create `tools/dataframe/frame/join.tw`:
+Create `examples/dataframe/frame/join.tw`:
 
 ```tw
 use frame.cell
@@ -2067,17 +2067,17 @@ fn gather_nullable(c: Column, idx: Vector<Int>) Column {
 
 - [ ] **Step 4: Wire the suite and run**
 
-Add `use tests.join_suite` and `join_suite.suite(),` to `tools/dataframe/main.tw`.
+Add `use tests.join_suite` and `join_suite.suite(),` to `examples/dataframe/main.tw`.
 
-Run: `TWK_TEST_FILTER="join" target/twk run tools/dataframe/main.tw`
+Run: `TWK_TEST_FILTER="join" target/twk run examples/dataframe/main.tw`
 Expected: PASS — `join` suite green.
 
-Then format: `target/twk fmt tools/dataframe/frame/join.tw`
+Then format: `target/twk fmt examples/dataframe/frame/join.tw`
 
 - [ ] **Step 5: Commit**
 
 ```bash
-git add tools/dataframe/frame/join.tw tools/dataframe/tests/join_suite.tw tools/dataframe/main.tw
+git add examples/dataframe/frame/join.tw examples/dataframe/tests/join_suite.tw examples/dataframe/main.tw
 git commit -m "dataframe: add hash join (inner + left)"
 ```
 
@@ -2090,18 +2090,18 @@ git commit -m "dataframe: add hash join (inner + left)"
 
 - [ ] **Step 1: Run the entire test suite**
 
-Run: `target/twk run tools/dataframe/main.tw`
+Run: `target/twk run examples/dataframe/main.tw`
 Expected: PASS — every suite (`cell`, `column`, `table`, `row`, `query`, `csv`, `group`, `join`) green, final line `Ran N tests: N passed`.
 
 - [ ] **Step 2: Confirm the formatter is idempotent across the project**
 
-Run: `target/twk fmt tools/dataframe/frame/cell.tw tools/dataframe/frame/column.tw tools/dataframe/frame/table.tw tools/dataframe/frame/row.tw tools/dataframe/frame/query.tw tools/dataframe/frame/csv.tw tools/dataframe/frame/group.tw tools/dataframe/frame/join.tw`
+Run: `target/twk fmt examples/dataframe/frame/cell.tw examples/dataframe/frame/column.tw examples/dataframe/frame/table.tw examples/dataframe/frame/row.tw examples/dataframe/frame/query.tw examples/dataframe/frame/csv.tw examples/dataframe/frame/group.tw examples/dataframe/frame/join.tw`
 Expected: no diff on a second run.
 
 - [ ] **Step 3: Commit any formatting changes**
 
 ```bash
-git add -A tools/dataframe
+git add -A examples/dataframe
 git commit -m "dataframe: full-suite green checkpoint" || echo "nothing to commit"
 ```
 
@@ -2112,13 +2112,13 @@ git commit -m "dataframe: full-suite green checkpoint" || echo "nothing to commi
 A seeded LCG PRNG generates a deterministic `Table` of N rows with a low-cardinality key column (for group/join stress), an int measure, and a float measure. Deterministic so benchmarks are reproducible.
 
 **Files:**
-- Create: `tools/dataframe/frame/gen.tw`
-- Create: `tools/dataframe/tests/gen_suite.tw`
-- Modify: `tools/dataframe/main.tw`
+- Create: `examples/dataframe/frame/gen.tw`
+- Create: `examples/dataframe/tests/gen_suite.tw`
+- Modify: `examples/dataframe/main.tw`
 
 - [ ] **Step 1: Write the failing tests**
 
-Create `tools/dataframe/tests/gen_suite.tw`:
+Create `examples/dataframe/tests/gen_suite.tw`:
 
 ```tw
 use assert
@@ -2149,12 +2149,12 @@ pub fn suite() {
 
 - [ ] **Step 2: Run to verify it fails**
 
-Run: `target/twk run tools/dataframe/main.tw`
+Run: `target/twk run examples/dataframe/main.tw`
 Expected: FAIL — compile error, unknown module `frame.gen`.
 
 - [ ] **Step 3: Implement `gen.tw`**
 
-Create `tools/dataframe/frame/gen.tw`:
+Create `examples/dataframe/frame/gen.tw`:
 
 ```tw
 use frame.column
@@ -2202,17 +2202,17 @@ pub fn table(n: Int, key_cardinality: Int) Table {
 
 - [ ] **Step 4: Wire the suite and run**
 
-Add `use tests.gen_suite` and `gen_suite.suite(),` to `tools/dataframe/main.tw`.
+Add `use tests.gen_suite` and `gen_suite.suite(),` to `examples/dataframe/main.tw`.
 
-Run: `TWK_TEST_FILTER="gen" target/twk run tools/dataframe/main.tw`
+Run: `TWK_TEST_FILTER="gen" target/twk run examples/dataframe/main.tw`
 Expected: PASS — `gen` suite green.
 
-Then format: `target/twk fmt tools/dataframe/frame/gen.tw`
+Then format: `target/twk fmt examples/dataframe/frame/gen.tw`
 
 - [ ] **Step 5: Commit**
 
 ```bash
-git add tools/dataframe/frame/gen.tw tools/dataframe/tests/gen_suite.tw tools/dataframe/main.tw
+git add examples/dataframe/frame/gen.tw examples/dataframe/tests/gen_suite.tw examples/dataframe/main.tw
 git commit -m "dataframe: add deterministic synthetic data generator"
 ```
 
@@ -2223,11 +2223,11 @@ git commit -m "dataframe: add deterministic synthetic data generator"
 A standalone entrypoint that generates large tables and times `filter`, `order_by`, `group_by().agg()`, and `join` with `@std.date.now()`, printing elapsed milliseconds per op across scaling N. This is the perf-at-scale instrument (and the cliff-finder for `take`/gather).
 
 **Files:**
-- Create: `tools/dataframe/bench/main.tw`
+- Create: `examples/dataframe/bench/main.tw`
 
 - [ ] **Step 1: Implement the benchmark entrypoint**
 
-Create `tools/dataframe/bench/main.tw`:
+Create `examples/dataframe/bench/main.tw`:
 
 ```tw
 use @std.date
@@ -2292,7 +2292,7 @@ bench_n(1000000)
 
 - [ ] **Step 2: Run the benchmark at the two smaller sizes first**
 
-Run: `target/twk run tools/dataframe/bench/main.tw`
+Run: `target/twk run examples/dataframe/bench/main.tw`
 Expected: prints `filter`/`order_by`/`group_by/agg`/`self-join` timings for `N = 10000` and `100000`. Observe whether `N = 1000000` completes; if it traps or hangs, note where.
 
 - [ ] **Step 3: Capture a timing snapshot**
@@ -2300,13 +2300,13 @@ Expected: prints `filter`/`order_by`/`group_by/agg`/`self-join` timings for `N =
 Save the printed output to a scratch file for the friction log:
 
 ```bash
-target/twk run tools/dataframe/bench/main.tw | tee /tmp/dataframe-bench.txt
+target/twk run examples/dataframe/bench/main.tw | tee /tmp/dataframe-bench.txt
 ```
 
 - [ ] **Step 4: Commit**
 
 ```bash
-git add tools/dataframe/bench/main.tw
+git add examples/dataframe/bench/main.tw
 git commit -m "dataframe: add benchmark harness (filter/order_by/group_by/join)"
 ```
 
