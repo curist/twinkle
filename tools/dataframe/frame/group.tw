@@ -1,3 +1,4 @@
+use frame.cell
 use frame.cell.{Scalar}
 use frame.column
 use frame.column.{Column}
@@ -117,4 +118,85 @@ fn numeric_at(c: Column, col: String, i: Int) Float {
     .FloatCol(v) => v[i],
     _ => error("expected a numeric column: ${col}"),
   }
+}
+
+pub type GroupBy = .{ table: Table, keys: Vector<String> }
+
+pub fn group_by(t: Table, keys: Vector<String>) GroupBy {
+  GroupBy.{ table: t, keys }
+}
+
+fn group_key(t: Table, keys: Vector<String>, row: Int) String {
+  parts: Vector<String> = []
+
+  for k in keys {
+    c := source_column(t, k)
+    parts = .append(cell.to_string(column.cell_at(c, row)))
+  }
+
+  parts.join(key_sep())
+}
+
+fn key_sep() String {
+  // Unit separator (control char) to avoid collisions between key fields.
+  case String.from_code_point(0x1F) {
+    .Some(s) => s,
+    .None => "||",
+  }
+}
+
+pub fn agg(g: GroupBy, aggs: Vector<Aggregation>) Result<Table, String> {
+  t := g.table
+
+  // Build group buckets, preserving first-seen order.
+  buckets: Dict<String, Vector<Int>> = Dict.new()
+  order: Vector<String> = []
+
+  for row in range(t.nrows) {
+    key := group_key(t, g.keys, row)
+
+    case buckets[key] {
+      .Some(idxs) => buckets[key] = idxs.append(row),
+      .None => {
+        buckets[key] = [row]
+        order = .append(key)
+      },
+    }
+  }
+
+  // First row index of each group, in first-seen order.
+  firsts: Vector<Int> = []
+
+  for key in order {
+    case buckets[key] {
+      .Some(idxs) => firsts = .append(idxs[0]),
+      .None => { return .Err("internal: missing bucket ${key}") },
+    }
+  }
+
+  // Output columns: key columns gathered by `firsts`, then one per aggregation.
+  out_names: Vector<String> = []
+  out_cols: Vector<Column> = []
+
+  for k in g.keys {
+    out_names = .append(k)
+    out_cols = .append(column.gather(source_column(t, k), firsts))
+  }
+
+  for a in aggs {
+    cells: Vector<Scalar> = []
+
+    for key in order {
+      idxs := case buckets[key] {
+        .Some(v) => v,
+        .None => { return .Err("internal: missing bucket ${key}") },
+      }
+      cells = .append(a.apply(t, idxs))
+    }
+
+    out_names = .append(a.name)
+    out_cols = .append(try column.from_cells(cells))
+  }
+
+  table.from_columns(out_names, out_cols)
 }

@@ -1,10 +1,10 @@
 use assert
-use runner
 use frame.cell.{Scalar}
 use frame.column
+use frame.group
 use frame.table
 use frame.table.{Table}
-use frame.group
+use runner
 
 fn numbers() Table {
   cols := [column.int_col([1, 2, 3, 4])]
@@ -21,21 +21,21 @@ pub fn suite() {
       "count counts the index set",
       fn() {
         a := group.count()
-        assert.equal((a.apply)(numbers(), [0, 1, 2]), Scalar.CInt(3))
+        assert.equal(a.apply(numbers(), [0, 1, 2]), Scalar.CInt(3))
       },
     )
     .test(
       "sum adds the selected int rows",
       fn() {
         a := group.sum("x")
-        assert.equal((a.apply)(numbers(), [0, 1, 3]), Scalar.CInt(7))
+        assert.equal(a.apply(numbers(), [0, 1, 3]), Scalar.CInt(7))
       },
     )
     .test(
       "mean returns a float average",
       fn() {
         a := group.mean("x")
-        assert.equal((a.apply)(numbers(), [0, 1, 2, 3]), Scalar.CFloat(2.5))
+        assert.equal(a.apply(numbers(), [0, 1, 2, 3]), Scalar.CFloat(2.5))
       },
     )
     .test(
@@ -43,8 +43,23 @@ pub fn suite() {
       fn() {
         amin := group.min("x")
         amax := group.max("x")
-        ok1 := try assert.equal((amin.apply)(numbers(), [1, 3]), Scalar.CInt(2))
-        assert.equal((amax.apply)(numbers(), [1, 3]), Scalar.CInt(4))
+        ok1 := try assert.equal(amin.apply(numbers(), [1, 3]), Scalar.CInt(2))
+        assert.equal(amax.apply(numbers(), [1, 3]), Scalar.CInt(4))
+      },
+    )
+    .test(
+      "group_by then agg sums per group",
+      fn() {
+        cols := [column.str_col(["a", "b", "a", "b"]), column.int_col([10, 1, 20, 2])]
+        t := case table.from_columns(["k", "v"], cols) {
+          .Ok(tt) => tt,
+          .Err(e) => error(e),
+        }
+        g := try group.group_by(t, ["k"]).agg([group.sum("v"), group.count()])
+        ok1 := try assert.equal(g.nrows, 2)
+        ok2 := try assert.equal(column.as_strs(try g.column("k")), ["a", "b"])
+        ok3 := try assert.equal(column.as_ints(try g.column("sum_v")), [30, 3])
+        assert.equal(column.as_ints(try g.column("count")), [2, 2])
       },
     )
 }
