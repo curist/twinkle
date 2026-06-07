@@ -1,0 +1,81 @@
+/// Shared call-site resolution for editor queries (hover, signature help, inlay
+/// hints). Resolves the callee of a `Call` expression to a `FunctionSig` plus the
+/// receiver facts those features need, so each consumer stops re-inspecting
+/// `method_calls` + `lookup_function`/`lookup_registered_function` on its own.
+
+use compiler.ast.{Expr}
+use compiler.checker.{CheckResult}
+use compiler.mono_type.{MonoType}
+use compiler.resolver.{FunctionSig}
+use compiler.type_util
+
+/// A resolved callee: the function signature, whether the call carries an
+/// implicit receiver (method sugar), and the receiver expression to instantiate
+/// type parameters from. `base` is `.None` for plain and module-qualified calls.
+pub type CalleeInfo = .{ sig: FunctionSig, has_receiver: Bool, base: Expr? }
+
+/// Resolve the callee of a call expression to its signature and receiver facts.
+///
+/// Method sugar (`x.method(args)`) recorded in the checker's `method_calls` wins;
+/// otherwise a bare identifier resolves as a direct function and a `mod.func`
+/// field resolves the trailing name as a module-qualified function.
+pub fn resolve_callee(callee: Expr, typed: CheckResult) CalleeInfo? {
+  case typed.method_calls[callee.id] {
+    .Some(meta) => if meta.func_name != "" {
+      sig := try typed.env.lookup_registered_function(meta.func_name)
+      base: Expr? = case callee.kind {
+        .Field(b, _) => .Some(b),
+        _ => .None,
+      }
+
+      return .Some(.{ sig, has_receiver: meta.has_receiver, base })
+    },
+    .None => {},
+  }
+
+  case callee.kind {
+    .Ident(name) => {
+      sig := try typed.env.lookup_function(name)
+      .Some(.{ sig, has_receiver: false, base: .None })
+    },
+    .Field(_, method) => {
+      sig := try typed.env.lookup_function(method)
+      .Some(.{ sig, has_receiver: false, base: .None })
+    },
+    _ => .None,
+  }
+}
+
+/// Instantiate a signature's type parameters from the receiver's concrete type
+/// args, so displayed parameter/return types reflect the receiver instead of
+/// leaving polymorphic variables in place.
+pub fn instantiate_receiver_sig(sig: FunctionSig, base: Expr, typed: CheckResult) FunctionSig {
+  args: Vector<MonoType> = case typed.type_map[base.id] {
+    .Some(.Named(_, type_args)) => type_args,
+    .Some(.Vector(inner)) => [inner],
+    .Some(.Dict(k, v)) => [k, v],
+    .Some(.Optional(inner)) => [inner],
+    .Some(.Result(ok, err)) => [ok, err],
+    _ => [],
+  }
+  params := collect p in sig.params {
+    type_util.subst_type_params_lenient(p, sig.type_params, args)
+  }
+  ret: MonoType? = case sig.ret {
+    .Some(r) => .Some(type_util.subst_type_params_lenient(r, sig.type_params, args)),
+    .None => .None,
+  }
+
+  // The receiver's type args instantiate the leading type params positionally;
+  // only the params beyond `args.len()` stay polymorphic, so the rest must not
+  // show in the displayed signature.
+  remaining_type_params := if args.len() < sig.type_params.len() {
+    sig.type_params.slice(args.len(), sig.type_params.len())
+  } else {
+    []
+  }
+  sig.type_params = remaining_type_params
+  sig.params = params
+  sig.ret = ret
+  sig
+}

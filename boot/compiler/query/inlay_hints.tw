@@ -4,8 +4,9 @@
 use compiler.ast.{Block, CollectExpr, Expr, ForStmt, FunctionDecl, Item, LetStmt, Param, Stmt}
 use compiler.checker.{CheckResult}
 use compiler.mono_type.{MonoType}
+use compiler.query.call_resolve
 use compiler.query.semantic.{SemanticSnapshot}
-use compiler.resolver.{FunctionSig, ty_to_string_env}
+use compiler.resolver.{ty_to_string_env}
 
 pub type InlayHintKind = { TypeHint, ParameterHint }
 
@@ -319,23 +320,17 @@ fn param_hints_for_call(ctx: HintCtx, callee: Expr, args: Vector<Expr>) Vector<I
     return []
   }
 
-  // Look up function signature via method_calls or direct ident
-  sig := case resolve_call_sig(ctx, callee) {
-    .Some(s) => s,
+  ci := case call_resolve.resolve_callee(callee, ctx.typed) {
+    .Some(c) => c,
     .None => { return [] },
   }
+  sig := ci.sig
 
-  // For method calls, skip the receiver parameter
-  param_offset := case ctx.typed.method_calls[callee.id] {
-    .Some(meta) => if meta.has_receiver {
-      1
-    } else {
-      0
-    },
-    .None => case callee.kind {
-      .Field(_, _) => 1,
-      _ => 0,
-    },
+  // Method sugar passes the receiver as the first argument, so skip its name.
+  param_offset := if ci.has_receiver {
+    1
+  } else {
+    0
   }
 
   out: Vector<InlayHint> = []
@@ -370,26 +365,6 @@ fn param_hints_for_call(ctx: HintCtx, callee: Expr, args: Vector<Expr>) Vector<I
   }
 
   out
-}
-
-fn resolve_call_sig(ctx: HintCtx, callee: Expr) FunctionSig? {
-  // Check method_calls first (resolved by type checker)
-  case ctx.typed.method_calls[callee.id] {
-    .Some(meta) => if meta.func_name != "" {
-      return ctx.typed.env.lookup_registered_function(meta.func_name)
-    },
-    .None => {},
-  }
-
-  // Direct function call via identifier
-  case callee.kind {
-    .Ident(name) => ctx.typed.env.lookup_function(name),
-    .Field(_, method) => {
-      // Can't resolve without type info on the base — skip
-      .None
-    },
-    _ => .None,
-  }
 }
 
 fn arg_matches_param_name(arg: Expr, param_name: String) Bool {

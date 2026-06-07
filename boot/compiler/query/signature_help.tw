@@ -3,11 +3,10 @@
 
 use compiler.ast.{Block, CaseArm, CondArm, Expr, FunctionDecl, Item, RecordEntry, Stmt, StringPart}
 use compiler.checker.{CheckResult}
-use compiler.mono_type.{MonoType}
+use compiler.query.call_resolve
 use compiler.query.cursor_context
 use compiler.query.semantic.{SemanticSnapshot}
-use compiler.resolver.{FunctionSig, ResolvedEnv, ResolvedTypeParam, ty_to_string_env}
-use compiler.type_util
+use compiler.resolver.{FunctionSig, ResolvedEnv, ty_to_string_env}
 use lib.source.span.{Span}
 
 pub type SignatureHelpResult = .{
@@ -239,47 +238,24 @@ fn find_call_in_interp(parts: Vector<StringPart>, offset: Int) CallInfo? {
 // ── Signature resolution ──────────────────────────────────────────
 fn resolve_call(info: CallInfo, typed: CheckResult, source: String, byte_offset: Int) SignatureHelpResult? {
   active := compute_active_parameter(info, byte_offset, source)
+  ci := try call_resolve.resolve_callee(info.callee, typed)
 
-  case info.callee.kind {
-    .Ident(name) => resolve_direct_call(name, active, typed),
-    .Field(base, method) => resolve_method_call(info.callee, base, method, active, typed),
-    _ => .None,
-  }
-}
-
-fn resolve_direct_call(name: String, active: Int, typed: CheckResult) SignatureHelpResult? {
-  sig := try typed.env.lookup_function(name)
-  build_result(sig, active, typed.env, 0)
-}
-
-fn resolve_method_call(callee: Expr, base: Expr, method: String, active: Int, typed: CheckResult) SignatureHelpResult? {
-  // Check recorded method calls first (method sugar: x.method(args))
-  case typed.method_calls[callee.id] {
-    .Some(meta) => if meta.func_name != "" {
-      sig := try typed.env.lookup_registered_function(meta.func_name)
-      display_sig := if meta.has_receiver {
-        instantiate_receiver_sig(sig, base, typed)
-      } else {
-        sig
-      }
-
-      // Skip receiver parameter for method calls
-      skip := if meta.has_receiver {
-        1
-      } else {
-        0
-      }
-
-      return build_result(display_sig, active, typed.env, skip)
+  // Method sugar with a receiver instantiates the signature from the receiver's
+  // concrete type and hides the receiver parameter from the displayed labels.
+  display_sig := case ci.base {
+    .Some(b) => if ci.has_receiver {
+      call_resolve.instantiate_receiver_sig(ci.sig, b, typed)
+    } else {
+      ci.sig
     },
-    .None => {},
+    .None => ci.sig,
   }
-
-  // Fall back to direct function lookup (module-qualified: mod.func())
-  case typed.env.lookup_function(method) {
-    .Some(sig) => build_result(sig, active, typed.env, 0),
-    .None => .None,
+  skip := if ci.has_receiver {
+    1
+  } else {
+    0
   }
+  build_result(display_sig, active, typed.env, skip)
 }
 
 fn build_result(sig: FunctionSig, active: Int, env: ResolvedEnv, skip: Int) SignatureHelpResult? {
@@ -335,33 +311,6 @@ fn compute_active_parameter(info: CallInfo, byte_offset: Int, source: String) In
   }
 
   commas
-}
-
-fn instantiate_receiver_sig(sig: FunctionSig, base: Expr, typed: CheckResult) FunctionSig {
-  args: Vector<MonoType> = case typed.type_map[base.id] {
-    .Some(.Named(_, type_args)) => type_args,
-    .Some(.Vector(inner)) => [inner],
-    .Some(.Dict(k, v)) => [k, v],
-    .Some(.Optional(inner)) => [inner],
-    .Some(.Result(ok, err)) => [ok, err],
-    _ => [],
-  }
-  params := collect p in sig.params {
-    type_util.subst_type_params_lenient(p, sig.type_params, args)
-  }
-  ret: MonoType? = case sig.ret {
-    .Some(r) => .Some(type_util.subst_type_params_lenient(r, sig.type_params, args)),
-    .None => .None,
-  }
-  FunctionSig.{
-    name: sig.name,
-    type_params: sig.type_params,
-    param_names: sig.param_names,
-    params,
-    ret,
-    doc: sig.doc,
-    extern_module: sig.extern_module,
-  }
 }
 
 // ── Source-scanning fallback ──────────────────────────────────────

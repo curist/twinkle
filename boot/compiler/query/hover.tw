@@ -10,6 +10,7 @@ use compiler.imports
 use compiler.mono_type.{MonoType, TypeId}
 use compiler.query.ast_walk.{NodeContext, find_node_in_block, find_node_in_expr, find_node_in_stmt}
 use compiler.query.cache
+use compiler.query.call_resolve
 use compiler.query.semantic.{SemanticSnapshot}
 use compiler.query.util.{find_map, find_map_indexed}
 use compiler.resolver.{
@@ -550,7 +551,7 @@ fn hover_recorded_method(callee_id: Int, base: Expr, method_span: Span, typed: C
 
   sig := try typed.env.lookup_registered_function(meta.func_name)
   display_sig := if meta.has_receiver {
-    instantiate_receiver_sig(sig, base, typed)
+    call_resolve.instantiate_receiver_sig(sig, base, typed)
   } else {
     sig
   }
@@ -574,7 +575,7 @@ fn hover_variant_method(base: Expr, method: String, method_span: Span, typed: Ch
 fn hover_named_method(base: Expr, method: String, method_span: Span, typed: CheckResult) HoverResult? {
   func_name := try method_function_name(base, method, typed)
   sig := try typed.env.lookup_registered_function(func_name)
-  display_sig := instantiate_receiver_sig(sig, base, typed)
+  display_sig := call_resolve.instantiate_receiver_sig(sig, base, typed)
   .Some(.{ content: append_doc(sig_to_string(typed.env, display_sig), sig.doc), span: method_span })
 }
 
@@ -615,42 +616,6 @@ fn builtin_method_owner(ty: MonoType) String? {
     .Optional(_) => .Some("Option"),
     .Result(_, _) => .Some("Result"),
     _ => .None,
-  }
-}
-
-fn instantiate_receiver_sig(sig: FunctionSig, base: Expr, typed: CheckResult) FunctionSig {
-  args: Vector<MonoType> = case typed.type_map[base.id] {
-    .Some(.Named(_, type_args)) => type_args,
-    .Some(.Vector(inner)) => [inner],
-    .Some(.Dict(k, v)) => [k, v],
-    .Some(.Optional(inner)) => [inner],
-    .Some(.Result(ok, err)) => [ok, err],
-    _ => [],
-  }
-  params := collect p in sig.params {
-    type_util.subst_type_params_lenient(p, sig.type_params, args)
-  }
-  ret: MonoType? = case sig.ret {
-    .Some(r) => .Some(type_util.subst_type_params_lenient(r, sig.type_params, args)),
-    .None => .None,
-  }
-
-  // The receiver's type args instantiate the leading type params positionally
-  // (mirroring `subst_type_params_lenient`); only the params beyond `args.len()`
-  // stay polymorphic, so the rest must not show in the displayed signature.
-  remaining_type_params := if args.len() < sig.type_params.len() {
-    sig.type_params.slice(args.len(), sig.type_params.len())
-  } else {
-    []
-  }
-  FunctionSig.{
-    name: sig.name,
-    type_params: remaining_type_params,
-    param_names: sig.param_names,
-    params,
-    ret,
-    doc: sig.doc,
-    extern_module: sig.extern_module,
   }
 }
 
