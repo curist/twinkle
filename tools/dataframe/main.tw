@@ -5,6 +5,7 @@ use tests.table_suite
 use tests.row_suite
 use tests.query_suite
 use tests.group_suite
+use tests.join_suite
 use runner
 
 runner.run_all([
@@ -15,4 +16,5 @@ runner.run_all([
   row_suite.suite(),
   query_suite.suite(),
   group_suite.suite(),
+  join_suite.suite(),
 ])
