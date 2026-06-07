@@ -56,6 +56,17 @@ pub fn dtype(c: Column) DType {
   }
 }
 
+/// Satisfies the Stringify contract for DType (so assert.equal / interpolation
+/// work on dtypes directly, e.g. assert.equal(column.dtype(c), DType.DInt)).
+pub fn to_string(d: DType) String {
+  case d {
+    .DInt => "Int",
+    .DFloat => "Float",
+    .DStr => "Str",
+    .DBool => "Bool",
+  }
+}
+
 pub fn is_null(c: Column, i: Int) Bool {
   c.nulls[i]
 }

@@ -223,6 +223,14 @@ fn from_columns_append(t: Table, name: String, c: Column) Result<Table, String> 
 
 pub type Dir = { Asc, Desc }
 
+/// Satisfies the Stringify contract for Dir.
+pub fn to_string(d: Dir) String {
+  case d {
+    .Asc => "Asc",
+    .Desc => "Desc",
+  }
+}
+
 fn flip(o: Order) Order {
   case o {
     .Lt => Order.Gt,

@@ -18,7 +18,7 @@ pub fn suite() {
       "dtype reflects the variant",
       fn() {
         c := column.float_col([1.0, 2.0])
-        assert.is_true(column.dtype(c) == DType.DFloat)
+        assert.equal(column.dtype(c), DType.DFloat)
       },
     )
     .test(
@@ -58,7 +58,7 @@ pub fn suite() {
       "from_cells infers Int and packs nulls",
       fn() {
         c := try column.from_cells([Scalar.CInt(1), Scalar.CNull, Scalar.CInt(3)])
-        ok1 := try assert.is_true(column.dtype(c) == DType.DInt)
+        ok1 := try assert.equal(column.dtype(c), DType.DInt)
         ok2 := try assert.is_true(column.is_null(c, 1))
         assert.equal(column.as_ints(c), [1, 0, 3])
       },
@@ -67,7 +67,7 @@ pub fn suite() {
       "from_cells infers Float",
       fn() {
         c := try column.from_cells([Scalar.CFloat(1.5), Scalar.CFloat(2.5)])
-        assert.is_true(column.dtype(c) == DType.DFloat)
+        assert.equal(column.dtype(c), DType.DFloat)
       },
     )
 }

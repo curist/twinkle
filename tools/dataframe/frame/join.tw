@@ -7,6 +7,14 @@ use frame.table.{Table}
 
 pub type How = { Inner, Left }
 
+/// Satisfies the Stringify contract for How.
+pub fn to_string(h: How) String {
+  case h {
+    .Inner => "Inner",
+    .Left => "Left",
+  }
+}
+
 fn key_string(c: Column, i: Int) String {
   cell.to_string(column.cell_at(c, i))
 }

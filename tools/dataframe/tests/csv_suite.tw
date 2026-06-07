@@ -1,8 +1,8 @@
 use assert
-use runner
 use frame.column
 use frame.column.{DType}
 use frame.csv
+use runner
 
 pub fn suite() {
   runner.suite("csv")
@@ -11,8 +11,8 @@ pub fn suite() {
       fn() {
         t := try csv.parse("id,name\n1,ann\n2,bob\n")
         ok1 := try assert.equal(t.nrows, 2)
-        ok2 := try assert.is_true(column.dtype(try t.column("id")) == DType.DInt)
-        ok3 := try assert.is_true(column.dtype(try t.column("name")) == DType.DStr)
+        ok2 := try assert.equal(column.dtype(try t.column("id")), DType.DInt)
+        ok3 := try assert.equal(column.dtype(try t.column("name")), DType.DStr)
         assert.equal(column.as_ints(try t.column("id")), [1, 2])
       },
     )
@@ -20,7 +20,7 @@ pub fn suite() {
       "infers float when a column mixes int and decimal",
       fn() {
         t := try csv.parse("x\n1\n2.5\n")
-        ok1 := try assert.is_true(column.dtype(try t.column("x")) == DType.DFloat)
+        ok1 := try assert.equal(column.dtype(try t.column("x")), DType.DFloat)
         assert.equal(column.as_floats(try t.column("x")), [1.0, 2.5])
       },
     )
@@ -32,10 +32,5 @@ pub fn suite() {
         assert.is_false(column.is_null(try t.column("x"), 0))
       },
     )
-    .test(
-      "ragged rows are an error",
-      fn() {
-        assert.is_err(csv.parse("a,b\n1\n"))
-      },
-    )
+    .test("ragged rows are an error", fn() { assert.is_err(csv.parse("a,b\n1\n")) })
 }
