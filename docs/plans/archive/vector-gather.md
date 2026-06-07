@@ -1,6 +1,6 @@
 # Vector.gather + dataframe gather-path optimization — Implementation Plan
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+> **Archive status:** Completed and archived. Phase 1, the v1 `Vector.gather` runtime primitive, dataframe routing, and the `order_by` comparator-specialization follow-up landed. The measured conclusion is that typed join null-fill was the clearest win; `head` now uses structural slice; v1 gather mostly flattened against Phase 1 for `filter` because it still performs independent trie lookups; and `order_by` remains comparator/random-read bound. Future work is a trie-aware gather path and/or a deeper typed/key sort strategy.
 
 **Goal:** Make the dataframe's gather/reorder paths (`take`, `filter`, `join`, `head`, `group_by`) fast and DRY, first with zero-risk pure-Twinkle changes, then (optionally) with a runtime `Vector.gather` primitive — a builder-loop in v1 (constant-factor), with a trie-aware bulk path for monotonic index sets as a possible v2.
 

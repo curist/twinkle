@@ -326,6 +326,14 @@ random vector reads and null checks for each comparison. Larger gains likely req
 sort strategy change (for example materializing null ranks/keys into a representation with
 cheaper repeated reads, or a specialized typed/key sort), plus a later trie-aware gather path.
 
+**Conclusion.** The gather-path plan is complete and archived in
+`docs/plans/archive/vector-gather.md`. It delivered API/implementation cleanup, removed the
+join `Scalar` round-trip, made `head` structural, and added the reusable `Vector.gather` API.
+It did **not** deliver a meaningful `filter` win because v1 gather is still an independent
+lookup loop; the promised monotonic-index benefit remains future work for a trie-aware gather
+implementation. `order_by` improved only modestly after comparator specialization and should
+be treated as a separate typed/key-sort problem rather than a gather problem.
+
 ## Recommendations (ranked)
 
 1. **Cross-module inherent methods (UFCS or `extend`).** Without it, fluent
@@ -338,10 +346,11 @@ cheaper repeated reads, or a specialized typed/key sort), plus a later trie-awar
    `to_string` (we did, for `DType`/`Dir`/`How`); builtins with no module to attach to
    weren't, hence the language fix. Remaining: audit other builtins returned by core
    APIs, and optionally auto-derive `Stringify` for payload-free enums.
-3. **Materialized sort keys for `order_by`, plus a later trie-aware gather.** The comparator
-   dominates sorted workloads because it repeatedly dispatches through `ColData` and performs
-   random vector reads. A trie-aware `Vector.gather(idx)` would still help shared `take` paths,
-   especially monotonic selections, but it is not the main `order_by` lever by itself.
+3. **Typed/key sort strategy for `order_by`, plus a later trie-aware gather.** The comparator
+   dominates sorted workloads because it performs random vector reads on every comparison;
+   moving `ColData` dispatch out of the comparator helped only modestly. A trie-aware
+   `Vector.gather(idx)` would still help shared `take` paths, especially monotonic selections,
+   but it is not the main `order_by` lever by itself.
 4. **A way to write `ColData` 4-arm dispatch once** (generic-over-primitive, or codegen).
    The 4× duplication in `gather`/`compare_at`/`cell_at`/`from_cells`/agg is the
    concrete tax of no-traits + no-HKT for unboxed columns.
