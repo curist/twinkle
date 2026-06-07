@@ -1,0 +1,37 @@
+use frame.column
+use frame.table
+use frame.table.{Table}
+
+/// Deterministic LCG step (Numerical Recipes constants), masked to 31 bits.
+fn next_seed(seed: Int) Int {
+  (seed * 1664525 + 1013904223) % 2147483648
+}
+
+/// Generate an N-row table with `key_cardinality` distinct string keys, an Int
+/// `amount` column, and a Float `score` column. Deterministic given (n, cardinality).
+pub fn table(n: Int, key_cardinality: Int) Table {
+  keys: Vector<String> = []
+  amounts: Vector<Int> = []
+  scores: Vector<Float> = []
+
+  seed := 12345
+
+  for _ in range(n) {
+    seed = next_seed(seed)
+    k := seed % key_cardinality
+    keys = .append("k${k}")
+
+    seed = next_seed(seed)
+    amounts = .append(seed % 1000)
+
+    seed = next_seed(seed)
+    scores = .append((seed % 10000).to_float() / 100.0)
+  }
+
+  cols := [column.str_col(keys), column.int_col(amounts), column.float_col(scores)]
+
+  case table.from_columns(["key", "amount", "score"], cols) {
+    .Ok(t) => t,
+    .Err(e) => error(e),
+  }
+}

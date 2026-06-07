@@ -1,0 +1,202 @@
+use frame.cell
+use frame.cell.{Scalar}
+use frame.column
+use frame.column.{Column}
+use frame.table
+use frame.table.{Table}
+
+/// A uniform aggregation: given the source table and a group's row indices,
+/// produce one scalar. Uniformity lets heterogeneous aggregations share one
+/// Vector despite the no-trait type system.
+pub type Aggregation = .{ name: String, apply: fn(Table, Vector<Int>) Scalar }
+
+fn source_column(t: Table, name: String) Column {
+  case t.column(name) {
+    .Ok(c) => c,
+    .Err(e) => error(e),
+  }
+}
+
+pub fn count() Aggregation {
+  Aggregation.{ name: "count", apply: fn(t: Table, idx: Vector<Int>) { Scalar.CInt(idx.len()) } }
+}
+
+pub fn sum(col: String) Aggregation {
+  Aggregation.{
+    name: "sum_${col}",
+    apply: fn(t: Table, idx: Vector<Int>) {
+      c := source_column(t, col)
+
+      case c.data {
+        .IntCol(v) => {
+          acc := 0
+
+          for i in idx {
+            if !column.is_null(c, i) {
+              acc = acc + v[i]
+            }
+          }
+
+          Scalar.CInt(acc)
+        },
+        .FloatCol(v) => {
+          acc := 0.0
+
+          for i in idx {
+            if !column.is_null(c, i) {
+              acc = acc + v[i]
+            }
+          }
+
+          Scalar.CFloat(acc)
+        },
+        _ => error("sum requires a numeric column: ${col}"),
+      }
+    },
+  }
+}
+
+pub fn mean(col: String) Aggregation {
+  Aggregation.{
+    name: "mean_${col}",
+    apply: fn(t: Table, idx: Vector<Int>) {
+      c := source_column(t, col)
+      total := 0.0
+      n := 0
+
+      for i in idx {
+        if !column.is_null(c, i) {
+          n = n + 1
+          total = total + numeric_at(c, col, i)
+        }
+      }
+
+      if n == 0 {
+        Scalar.CNull
+      } else {
+        Scalar.CFloat(total / n.to_float())
+      }
+    },
+  }
+}
+
+pub fn min(col: String) Aggregation {
+  extreme(col, "min", Order.Lt)
+}
+
+pub fn max(col: String) Aggregation {
+  extreme(col, "max", Order.Gt)
+}
+
+fn extreme(col: String, prefix: String, keep: Order) Aggregation {
+  Aggregation.{
+    name: "${prefix}_${col}",
+    apply: fn(t: Table, idx: Vector<Int>) {
+      c := source_column(t, col)
+      best := -1
+
+      for i in idx {
+        if !column.is_null(c, i) {
+          if best < 0 or column.compare_at(c, i, best) == keep {
+            best = i
+          }
+        }
+      }
+
+      if best < 0 {
+        Scalar.CNull
+      } else {
+        column.cell_at(c, best)
+      }
+    },
+  }
+}
+
+fn numeric_at(c: Column, col: String, i: Int) Float {
+  case c.data {
+    .IntCol(v) => v[i].to_float(),
+    .FloatCol(v) => v[i],
+    _ => error("expected a numeric column: ${col}"),
+  }
+}
+
+pub type GroupBy = .{ table: Table, keys: Vector<String> }
+
+pub fn group_by(t: Table, keys: Vector<String>) GroupBy {
+  GroupBy.{ table: t, keys }
+}
+
+fn group_key(t: Table, keys: Vector<String>, row: Int) String {
+  parts: Vector<String> = []
+
+  for k in keys {
+    c := source_column(t, k)
+    parts = .append(cell.to_string(column.cell_at(c, row)))
+  }
+
+  parts.join(key_sep())
+}
+
+fn key_sep() String {
+  // Unit separator (control char) to avoid collisions between key fields.
+  case String.from_code_point(0x1F) {
+    .Some(s) => s,
+    .None => "||",
+  }
+}
+
+pub fn agg(g: GroupBy, aggs: Vector<Aggregation>) Result<Table, String> {
+  t := g.table
+
+  // Build group buckets, preserving first-seen order.
+  buckets: Dict<String, Vector<Int>> = Dict.new()
+  order: Vector<String> = []
+
+  for row in range(t.nrows) {
+    key := group_key(t, g.keys, row)
+
+    case buckets[key] {
+      .Some(idxs) => buckets[key] = idxs.append(row),
+      .None => {
+        buckets[key] = [row]
+        order = .append(key)
+      },
+    }
+  }
+
+  // First row index of each group, in first-seen order.
+  firsts: Vector<Int> = []
+
+  for key in order {
+    case buckets[key] {
+      .Some(idxs) => firsts = .append(idxs[0]),
+      .None => { return .Err("internal: missing bucket ${key}") },
+    }
+  }
+
+  // Output columns: key columns gathered by `firsts`, then one per aggregation.
+  out_names: Vector<String> = []
+  out_cols: Vector<Column> = []
+
+  for k in g.keys {
+    out_names = .append(k)
+    out_cols = .append(column.gather(source_column(t, k), firsts))
+  }
+
+  for a in aggs {
+    cells: Vector<Scalar> = []
+
+    for key in order {
+      idxs := case buckets[key] {
+        .Some(v) => v,
+        .None => { return .Err("internal: missing bucket ${key}") },
+      }
+      cells = .append(a.apply(t, idxs))
+    }
+
+    out_names = .append(a.name)
+    out_cols = .append(try column.from_cells(cells))
+  }
+
+  table.from_columns(out_names, out_cols)
+}

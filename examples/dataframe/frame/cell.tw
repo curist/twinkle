@@ -1,0 +1,18 @@
+/// Scalar is the boxed value used at API edges: aggregation results, display,
+/// and single-value access. Columnar storage uses unboxed Vectors instead.
+pub type Scalar = { CInt(Int), CFloat(Float), CStr(String), CBool(Bool), CNull }
+
+/// Render a scalar for display / Stringify. (Eq is auto-derived structurally.)
+pub fn to_string(c: Scalar) String {
+  case c {
+    .CInt(n) => n.to_string(),
+    .CFloat(f) => f.to_string(),
+    .CStr(s) => s,
+    .CBool(b) => if b {
+      "true"
+    } else {
+      "false"
+    },
+    .CNull => "null",
+  }
+}

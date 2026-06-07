@@ -1,0 +1,53 @@
+use assert
+use runner
+use frame.column
+use frame.table
+use frame.table.{Table}
+use frame.join
+use frame.join.{How}
+
+fn left() Table {
+  cols := [
+    column.int_col([1, 2, 3]),
+    column.str_col(["ann", "bob", "cid"]),
+  ]
+
+  case table.from_columns(["id", "name"], cols) {
+    .Ok(t) => t,
+    .Err(e) => error(e),
+  }
+}
+
+fn right() Table {
+  cols := [
+    column.int_col([2, 3]),
+    column.str_col(["x", "y"]),
+  ]
+
+  case table.from_columns(["id", "tag"], cols) {
+    .Ok(t) => t,
+    .Err(e) => error(e),
+  }
+}
+
+pub fn suite() {
+  runner.suite("join")
+    .test(
+      "inner join keeps only matching keys",
+      fn() {
+        j := try join.join(left(), right(), "id", How.Inner)
+        ok1 := try assert.equal(j.nrows, 2)
+        ok2 := try assert.equal(column.as_strs(try j.column("name")), ["bob", "cid"])
+        assert.equal(column.as_strs(try j.column("tag")), ["x", "y"])
+      },
+    )
+    .test(
+      "left join keeps unmatched left rows with null fill",
+      fn() {
+        j := try join.join(left(), right(), "id", How.Left)
+        ok1 := try assert.equal(j.nrows, 3)
+        ok2 := try assert.equal(column.as_strs(try j.column("name")), ["ann", "bob", "cid"])
+        assert.is_true(column.is_null(try j.column("tag"), 0))
+      },
+    )
+}

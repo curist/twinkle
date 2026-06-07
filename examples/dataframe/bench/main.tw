@@ -1,0 +1,59 @@
+use @std.date
+
+use frame.gen
+use frame.group
+use frame.join
+use frame.join.{How}
+use frame.table.{Dir}
+
+fn time_ms(label: String, work: fn() Int) Void {
+  start := date.now()
+  guard := work()
+  elapsed := date.now() - start
+  println("${label}: ${elapsed}ms (checksum ${guard})")
+}
+
+fn bench_n(n: Int) Void {
+  println("── N = ${n} ──")
+  base := gen.table(n, 64)
+  keyed := gen.table(n, n)
+
+  time_ms("filter      ", fn() { base.filter(fn(r) { r.int("amount") > 500 }).nrows })
+
+  time_ms(
+    "order_by    ",
+    fn() {
+      case base.order_by("amount", Dir.Asc) {
+        .Ok(t) => t.nrows,
+        .Err(_) => -1,
+      }
+    },
+  )
+
+  time_ms(
+    "group_by/agg",
+    fn() {
+      case group.group_by(base, ["key"])
+        .agg([group.sum("amount"), group.mean("score"), group.count()]) {
+        .Ok(t) => t.nrows,
+        .Err(_) => -1,
+      }
+    },
+  )
+
+  time_ms(
+    "join        ",
+    fn() {
+      case join.join(base, keyed, "key", How.Inner) {
+        .Ok(t) => t.nrows,
+        .Err(_) => -1,
+      }
+    },
+  )
+
+  println("")
+}
+
+bench_n(10000)
+bench_n(100000)
+bench_n(1000000)

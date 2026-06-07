@@ -1,0 +1,128 @@
+use frame.cell
+use frame.cell.{Scalar}
+use frame.column
+use frame.column.{Column}
+use frame.table
+use frame.table.{Table}
+
+pub type How = { Inner, Left }
+
+/// Satisfies the Stringify contract for How.
+pub fn to_string(h: How) String {
+  case h {
+    .Inner => "Inner",
+    .Left => "Left",
+  }
+}
+
+fn key_string(c: Column, i: Int) String {
+  cell.to_string(column.cell_at(c, i))
+}
+
+/// Hash join `l` and `r` on a shared key column name. Right key column is
+/// dropped from the output; right non-key columns whose names collide with
+/// left columns are prefixed with "r_". Left join fills unmatched right rows
+/// with nulls (a sentinel index of -1, materialized as a null row).
+pub fn join(l: Table, r: Table, on: String, how: How) Result<Table, String> {
+  lkey := try l.column(on)
+  rkey := try r.column(on)
+
+  // Build the right-side index map: key string -> right row indices.
+  rmap: Dict<String, Vector<Int>> = Dict.new()
+
+  for ri in range(r.nrows) {
+    if !column.is_null(rkey, ri) {
+      k := key_string(rkey, ri)
+
+      case rmap[k] {
+        .Some(idxs) => rmap[k] = idxs.append(ri),
+        .None => rmap[k] = [ri],
+      }
+    }
+  }
+
+  // Produce paired index vectors. -1 on the right means "no match".
+  lidx: Vector<Int> = []
+  ridx: Vector<Int> = []
+
+  for li in range(l.nrows) {
+    matches := if column.is_null(lkey, li) {
+      empty_indices()
+    } else {
+      case rmap[key_string(lkey, li)] {
+        .Some(idxs) => idxs,
+        .None => empty_indices(),
+      }
+    }
+
+    if matches.len() == 0 {
+      case how {
+        .Left => {
+          lidx = .append(li)
+          ridx = .append(-1)
+        },
+        .Inner => {},
+      }
+    } else {
+      for ri in matches {
+        lidx = .append(li)
+        ridx = .append(ri)
+      }
+    }
+  }
+
+  build_output(l, r, on, lidx, ridx)
+}
+
+fn empty_indices() Vector<Int> {
+  []
+}
+
+fn build_output(l: Table, r: Table, on: String, lidx: Vector<Int>, ridx: Vector<Int>) Result<
+  Table,
+  String,
+> {
+  out_names: Vector<String> = []
+  out_cols: Vector<Column> = []
+
+  // All left columns, gathered by lidx.
+  for c, i in l.cols {
+    out_names = .append(l.names[i])
+    out_cols = .append(column.gather(c, lidx))
+  }
+
+  // Right columns except the join key; gathered by ridx, null-filling -1.
+  for c, i in r.cols {
+    name := r.names[i]
+
+    if name != on {
+      out_name := if l.names.contains(name) {
+        "r_${name}"
+      } else {
+        name
+      }
+      out_names = .append(out_name)
+      out_cols = .append(gather_nullable(c, ridx))
+    }
+  }
+
+  table.from_columns(out_names, out_cols)
+}
+
+/// Like column.gather, but a -1 index produces a null cell.
+fn gather_nullable(c: Column, idx: Vector<Int>) Column {
+  cells: Vector<Scalar> = []
+
+  for i in idx {
+    if i < 0 {
+      cells = .append(Scalar.CNull)
+    } else {
+      cells = .append(column.cell_at(c, i))
+    }
+  }
+
+  case column.from_cells(cells) {
+    .Ok(col) => col,
+    .Err(e) => error(e),
+  }
+}

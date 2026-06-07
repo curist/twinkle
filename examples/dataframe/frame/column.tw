@@ -1,0 +1,292 @@
+use frame.cell.{Scalar}
+
+/// The unboxed primitive backing store for a column.
+pub type ColData = {
+  IntCol(Vector<Int>),
+  FloatCol(Vector<Float>),
+  StrCol(Vector<String>),
+  BoolCol(Vector<Bool>),
+}
+
+/// A column: dense data plus a parallel null mask (nulls[i] == true => missing).
+pub type Column = .{ data: ColData, nulls: Vector<Bool> }
+
+/// Logical element type of a column.
+pub type DType = { DInt, DFloat, DStr, DBool }
+
+fn no_nulls(n: Int) Vector<Bool> {
+  Vector.make(n, false)
+}
+
+pub fn with_nulls(data: ColData, nulls: Vector<Bool>) Column {
+  Column.{ data, nulls }
+}
+
+pub fn int_col(values: Vector<Int>) Column {
+  Column.{ data: ColData.IntCol(values), nulls: no_nulls(values.len()) }
+}
+
+pub fn float_col(values: Vector<Float>) Column {
+  Column.{ data: ColData.FloatCol(values), nulls: no_nulls(values.len()) }
+}
+
+pub fn str_col(values: Vector<String>) Column {
+  Column.{ data: ColData.StrCol(values), nulls: no_nulls(values.len()) }
+}
+
+pub fn bool_col(values: Vector<Bool>) Column {
+  Column.{ data: ColData.BoolCol(values), nulls: no_nulls(values.len()) }
+}
+
+pub fn len(c: Column) Int {
+  case c.data {
+    .IntCol(v) => v.len(),
+    .FloatCol(v) => v.len(),
+    .StrCol(v) => v.len(),
+    .BoolCol(v) => v.len(),
+  }
+}
+
+pub fn dtype(c: Column) DType {
+  case c.data {
+    .IntCol(_) => DType.DInt,
+    .FloatCol(_) => DType.DFloat,
+    .StrCol(_) => DType.DStr,
+    .BoolCol(_) => DType.DBool,
+  }
+}
+
+/// Satisfies the Stringify contract for DType (so assert.equal / interpolation
+/// work on dtypes directly, e.g. assert.equal(column.dtype(c), DType.DInt)).
+pub fn to_string(d: DType) String {
+  case d {
+    .DInt => "Int",
+    .DFloat => "Float",
+    .DStr => "Str",
+    .DBool => "Bool",
+  }
+}
+
+pub fn is_null(c: Column, i: Int) Bool {
+  c.nulls[i]
+}
+
+pub fn as_ints(c: Column) Vector<Int> {
+  case c.data {
+    .IntCol(v) => v,
+    _ => error("column is not Int"),
+  }
+}
+
+pub fn as_floats(c: Column) Vector<Float> {
+  case c.data {
+    .FloatCol(v) => v,
+    _ => error("column is not Float"),
+  }
+}
+
+pub fn as_strs(c: Column) Vector<String> {
+  case c.data {
+    .StrCol(v) => v,
+    _ => error("column is not Str"),
+  }
+}
+
+pub fn as_bools(c: Column) Vector<Bool> {
+  case c.data {
+    .BoolCol(v) => v,
+    _ => error("column is not Bool"),
+  }
+}
+
+/// Gather rows by index, carrying the null mask along.
+pub fn gather(c: Column, idx: Vector<Int>) Column {
+  new_nulls: Vector<Bool> = []
+
+  for i in idx {
+    new_nulls = .append(c.nulls[i])
+  }
+
+  new_data := case c.data {
+    .IntCol(v) => {
+      out: Vector<Int> = []
+
+      for i in idx {
+        out = .append(v[i])
+      }
+
+      ColData.IntCol(out)
+    },
+    .FloatCol(v) => {
+      out: Vector<Float> = []
+
+      for i in idx {
+        out = .append(v[i])
+      }
+
+      ColData.FloatCol(out)
+    },
+    .StrCol(v) => {
+      out: Vector<String> = []
+
+      for i in idx {
+        out = .append(v[i])
+      }
+
+      ColData.StrCol(out)
+    },
+    .BoolCol(v) => {
+      out: Vector<Bool> = []
+
+      for i in idx {
+        out = .append(v[i])
+      }
+
+      ColData.BoolCol(out)
+    },
+  }
+
+  Column.{ data: new_data, nulls: new_nulls }
+}
+
+/// Read a single element as a boxed Scalar (CNull when masked).
+pub fn cell_at(c: Column, i: Int) Scalar {
+  if c.nulls[i] {
+    return Scalar.CNull
+  }
+
+  case c.data {
+    .IntCol(v) => Scalar.CInt(v[i]),
+    .FloatCol(v) => Scalar.CFloat(v[i]),
+    .StrCol(v) => Scalar.CStr(v[i]),
+    .BoolCol(v) => Scalar.CBool(v[i]),
+  }
+}
+
+/// Compare two rows of this column for sorting. Nulls sort last (greater).
+pub fn compare_at(c: Column, i: Int, j: Int) Order {
+  ai := c.nulls[i]
+  aj := c.nulls[j]
+
+  if ai and aj {
+    return Order.Eq
+  }
+
+  if ai {
+    return Order.Gt
+  }
+
+  if aj {
+    return Order.Lt
+  }
+
+  case c.data {
+    .IntCol(v) => Int.compare(v[i], v[j]),
+    .FloatCol(v) => Float.compare(v[i], v[j]),
+    .StrCol(v) => String.compare(v[i], v[j]),
+    .BoolCol(v) => Int.compare(bool_rank(v[i]), bool_rank(v[j])),
+  }
+}
+
+fn bool_rank(b: Bool) Int {
+  if b {
+    1
+  } else {
+    0
+  }
+}
+
+/// Pack a vector of Scalars into a typed Column, inferring dtype from the first
+/// non-null scalar. CNull becomes masked with a type-appropriate placeholder.
+/// An all-null input defaults to a FloatCol (matches mean-of-empty results).
+pub fn from_cells(cells: Vector<Scalar>) Result<Column, String> {
+  nulls: Vector<Bool> = []
+
+  for c in cells {
+    nulls = .append(is_null_cell(c))
+  }
+
+  case first_non_null(cells) {
+    .None => .Ok(Column.{ data: ColData.FloatCol(Vector.make(cells.len(), 0.0)), nulls }),
+    .Some(.CInt(_)) => pack_ints(cells, nulls),
+    .Some(.CFloat(_)) => pack_floats(cells, nulls),
+    .Some(.CStr(_)) => pack_strs(cells, nulls),
+    .Some(.CBool(_)) => pack_bools(cells, nulls),
+    .Some(.CNull) => .Err("unreachable: first_non_null returned CNull"),
+  }
+}
+
+fn is_null_cell(c: Scalar) Bool {
+  case c {
+    .CNull => true,
+    _ => false,
+  }
+}
+
+fn first_non_null(cells: Vector<Scalar>) Scalar? {
+  for c in cells {
+    case c {
+      .CNull => {},
+      _ => { return .Some(c) },
+    }
+  }
+
+  .None
+}
+
+fn pack_ints(cells: Vector<Scalar>, nulls: Vector<Bool>) Result<Column, String> {
+  data: Vector<Int> = []
+
+  for c in cells {
+    case c {
+      .CInt(n) => data = .append(n),
+      .CNull => data = .append(0),
+      _ => { return .Err("mixed cell types in from_cells (expected Int)") },
+    }
+  }
+
+  .Ok(Column.{ data: ColData.IntCol(data), nulls })
+}
+
+fn pack_floats(cells: Vector<Scalar>, nulls: Vector<Bool>) Result<Column, String> {
+  data: Vector<Float> = []
+
+  for c in cells {
+    case c {
+      .CFloat(f) => data = .append(f),
+      .CInt(n) => data = .append(n.to_float()),
+      .CNull => data = .append(0.0),
+      _ => { return .Err("mixed cell types in from_cells (expected Float)") },
+    }
+  }
+
+  .Ok(Column.{ data: ColData.FloatCol(data), nulls })
+}
+
+fn pack_strs(cells: Vector<Scalar>, nulls: Vector<Bool>) Result<Column, String> {
+  data: Vector<String> = []
+
+  for c in cells {
+    case c {
+      .CStr(s) => data = .append(s),
+      .CNull => data = .append(""),
+      _ => { return .Err("mixed cell types in from_cells (expected Str)") },
+    }
+  }
+
+  .Ok(Column.{ data: ColData.StrCol(data), nulls })
+}
+
+fn pack_bools(cells: Vector<Scalar>, nulls: Vector<Bool>) Result<Column, String> {
+  data: Vector<Bool> = []
+
+  for c in cells {
+    case c {
+      .CBool(b) => data = .append(b),
+      .CNull => data = .append(false),
+      _ => { return .Err("mixed cell types in from_cells (expected Bool)") },
+    }
+  }
+
+  .Ok(Column.{ data: ColData.BoolCol(data), nulls })
+}

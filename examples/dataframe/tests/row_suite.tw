@@ -1,0 +1,39 @@
+use assert
+use frame.column
+use frame.table
+use frame.table.{RowRef, Table}
+use runner
+
+fn sample() Table {
+  cols := [column.int_col([10, 20]), column.str_col(["x", "y"])]
+
+  case table.from_columns(["age", "name"], cols) {
+    .Ok(t) => t,
+    .Err(e) => error(e),
+  }
+}
+
+pub fn suite() {
+  runner.suite("row")
+    .test(
+      "typed accessors read the right cell",
+      fn() {
+        t := sample()
+        r := RowRef.{ table: t, idx: 1 }
+        ok1 := try assert.equal(r.int("age"), 20)
+        assert.equal(r.str("name"), "y")
+      },
+    )
+    .test(
+      "is_null reports the mask",
+      fn() {
+        c := column.with_nulls(column.ColData.IntCol([1, 2]), [true, false])
+        t := case table.from_columns(["v"], [c]) {
+          .Ok(tt) => tt,
+          .Err(e) => error(e),
+        }
+        r := RowRef.{ table: t, idx: 0 }
+        assert.is_true(r.is_null("v"))
+      },
+    )
+}

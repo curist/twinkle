@@ -1,0 +1,60 @@
+use assert
+use frame.column
+use frame.table
+use frame.table.{Dir, Table}
+use runner
+
+fn people() Table {
+  cols := [column.int_col([25, 35, 45]), column.str_col(["ann", "bob", "cid"])]
+
+  case table.from_columns(["age", "name"], cols) {
+    .Ok(t) => t,
+    .Err(e) => error(e),
+  }
+}
+
+pub fn suite() {
+  runner.suite("query")
+    .test(
+      "filter keeps matching rows",
+      fn() {
+        t := people().filter(fn(r) { r.int("age") > 30 })
+        ok1 := try assert.equal(t.nrows, 2)
+        assert.equal(column.as_strs(try t.column("name")), ["bob", "cid"])
+      },
+    )
+    .test(
+      "with_column appends a derived column",
+      fn() {
+        base := people()
+        doubled := collect a in column.as_ints(try base.column("age")) {
+          a * 2
+        }
+        t := try base.with_column("age2", column.int_col(doubled))
+        ok1 := try assert.equal(t.names, ["age", "name", "age2"])
+        assert.equal(column.as_ints(try t.column("age2")), [50, 70, 90])
+      },
+    )
+    .test(
+      "with_column rejects a length mismatch",
+      fn() {
+        bad := people().with_column("x", column.int_col([1]))
+        assert.is_err(bad)
+      },
+    )
+    .test(
+      "order_by ascending sorts by the keyed column",
+      fn() {
+        t := people().take([2, 0, 1])
+        sorted := try t.order_by("age", Dir.Asc)
+        assert.equal(column.as_ints(try sorted.column("age")), [25, 35, 45])
+      },
+    )
+    .test(
+      "order_by descending reverses the order",
+      fn() {
+        sorted := try people().order_by("age", Dir.Desc)
+        assert.equal(column.as_ints(try sorted.column("age")), [45, 35, 25])
+      },
+    )
+}
