@@ -184,55 +184,111 @@ pub fn join(xs: Vector<String>, sep: String) String {
   }
 }
 
-fn merge_sorted<T>(a: Vector<T>, b: Vector<T>, cmp: fn(T, T) Order) Vector<T> {
-  out: Vector<T> = []
-  i := 0
-  j := 0
+fn swap<T>(buf: Vector<T>, i: Int, j: Int) Vector<T> {
+  tmp := buf[i]
+  buf[i] = buf[j]
+  buf[j] = tmp
+  buf
+}
 
-  for i < a.len() and j < b.len() {
-    case cmp(a[i], b[j]) {
-      .Gt => {
-        out = .append(b[j])
-        j = j + 1
+/// Median value of buf[a], buf[b], buf[c] under cmp. Used as the quicksort
+/// pivot value (a copy, so partition swaps don't invalidate it).
+fn median_of_three<T>(buf: Vector<T>, a: Int, b: Int, c: Int, cmp: fn(T, T) Order) T {
+  va := buf[a]
+  vb := buf[b]
+  vc := buf[c]
+
+  case cmp(va, vb) {
+    .Gt => case cmp(va, vc) {
+      .Gt => case cmp(vb, vc) {
+        .Gt => vb,
+        _ => vc,
       },
-      _ => {
-        out = .append(a[i])
+      _ => va,
+    },
+    _ => case cmp(vb, vc) {
+      .Gt => case cmp(va, vc) {
+        .Gt => va,
+        _ => vc,
+      },
+      _ => vb,
+    },
+  }
+}
+
+/// In-place insertion sort over [lo, hi). Used for small partitions.
+fn insertion_sort_range<T>(buf: Vector<T>, lo: Int, hi: Int, cmp: fn(T, T) Order) Vector<T> {
+  i := lo + 1
+
+  for i < hi {
+    key := buf[i]
+    j := i - 1
+    placing := true
+
+    for j >= lo and placing {
+      case cmp(buf[j], key) {
+        .Gt => {
+          buf[j + 1] = buf[j]
+          j = j - 1
+        },
+        _ => {
+          placing = false
+        },
+      }
+    }
+
+    buf[j + 1] = key
+    i = i + 1
+  }
+
+  buf
+}
+
+/// In-place Dijkstra 3-way quicksort over [lo, hi). Three-way partitioning
+/// keeps duplicate-heavy keys (e.g. low-cardinality dataframe columns) near
+/// O(n log n) instead of degrading to O(n^2).
+fn quicksort_range<T>(buf: Vector<T>, lo: Int, hi: Int, cmp: fn(T, T) Order) Vector<T> {
+  n := hi - lo
+
+  if n <= 1 {
+    return buf
+  }
+
+  if n <= 16 {
+    return insertion_sort_range(buf, lo, hi, cmp)
+  }
+
+  mid := lo + n / 2
+  pivot := median_of_three(buf, lo, mid, hi - 1, cmp)
+  lt := lo
+  i := lo
+  gt := hi - 1
+
+  for i <= gt {
+    case cmp(buf[i], pivot) {
+      .Lt => {
+        buf = swap(buf, lt, i)
+        lt = lt + 1
+        i = i + 1
+      },
+      .Gt => {
+        buf = swap(buf, i, gt)
+        gt = gt - 1
+      },
+      .Eq => {
         i = i + 1
       },
     }
   }
 
-  for i < a.len() {
-    out = .append(a[i])
-    i = i + 1
-  }
-
-  for j < b.len() {
-    out = .append(b[j])
-    j = j + 1
-  }
-
-  out
-}
-
-fn sort_by_range<T>(xs: Vector<T>, lo: Int, hi: Int, cmp: fn(T, T) Order) Vector<T> {
-  n := hi - lo
-
-  if n <= 0 {
-    return []
-  }
-
-  if n == 1 {
-    return [xs[lo]]
-  }
-
-  mid := lo + n / 2
-  left := sort_by_range(xs, lo, mid, cmp)
-  right := sort_by_range(xs, mid, hi, cmp)
-  merge_sorted(left, right, cmp)
+  buf = quicksort_range(buf, lo, lt, cmp)
+  buf = quicksort_range(buf, gt + 1, hi, cmp)
+  buf
 }
 
 /// Return a new vector sorted by comparator cmp.
+///
+/// Not a stable sort: elements that compare Equal may be reordered.
 pub fn sort_by<T>(xs: Vector<T>, cmp: fn(T, T) Order) Vector<T> {
   n := xs.len()
 
@@ -268,7 +324,15 @@ pub fn sort_by<T>(xs: Vector<T>, cmp: fn(T, T) Order) Vector<T> {
     return xs.reverse()
   }
 
-  sort_by_range(xs, 0, n, cmp)
+  buf := Vector.make(n, xs[0])
+  k := 0
+
+  for k < n {
+    buf[k] = xs[k]
+    k = k + 1
+  }
+
+  quicksort_range(buf, 0, n, cmp)
 }
 
 /// Return a new vector sorted using the Ord contract.
