@@ -50,6 +50,7 @@ Self-hosting is complete. Historical design and status docs live in
 | Area | Description | Status | Details |
 |------|-------------|--------|---------|
 | Tooling | Formatter (done), linter, LSP, package manager | In Progress | [tooling.md](tooling.md) |
+| JS browser command API | Expose the shipped compiler CLI payload through `@twinkle-lang/twinkle/web` so browser embedders can invoke `fmt`, `check`, `ir`, and `build` against an in-memory project | Planned | [js-package-browser-command-api.md](js-package-browser-command-api.md) |
 | Linter | `twk lint`: semantic lints (must-use, ignored Result/Option, record-copy helper, unreachable code) on the existing diagnostic channel | Planned | [linter.md](linter.md) |
 | LSP enhancements | Document symbols, references, rename, signature help, semantic tokens, workspace symbols, highlights, inlay hints, folding, and incremental sync | Planned | [lsp-enhancements.md](lsp-enhancements.md) |
 | LSP code actions | Quick-fix actions: missing case arms, auto-import, function type annotations | Planned | [lsp-code-actions.md](lsp-code-actions.md) |
