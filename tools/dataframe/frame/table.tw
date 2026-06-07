@@ -1,0 +1,116 @@
+use frame.cell
+use frame.column
+use frame.column.{Column}
+
+/// A table is parallel named columns of equal length.
+pub type Table = .{ names: Vector<String>, cols: Vector<Column>, nrows: Int }
+
+pub fn from_columns(names: Vector<String>, cols: Vector<Column>) Result<Table, String> {
+  if names.len() != cols.len() {
+    return .Err("names/columns length mismatch: ${names.len()} vs ${cols.len()}")
+  }
+
+  if cols.len() == 0 {
+    return .Ok(Table.{ names, cols, nrows: 0 })
+  }
+
+  nrows := column.len(cols[0])
+
+  for c, i in cols {
+    if column.len(c) != nrows {
+      return .Err("column '${names[i]}' has length ${column.len(c)}, expected ${nrows}")
+    }
+  }
+
+  .Ok(Table.{ names, cols, nrows })
+}
+
+pub fn ncols(t: Table) Int {
+  t.cols.len()
+}
+
+pub fn col_index(t: Table, name: String) Int? {
+  t.names.position(fn(n) { n == name })
+}
+
+pub fn column(t: Table, name: String) Result<Column, String> {
+  case t.col_index(name) {
+    .Some(i) => .Ok(t.cols[i]),
+    .None => .Err("no such column '${name}'"),
+  }
+}
+
+pub fn select(t: Table, names: Vector<String>) Result<Table, String> {
+  out_cols: Vector<Column> = []
+
+  for name in names {
+    out_cols = .append(try t.column(name))
+  }
+
+  from_columns(names, out_cols)
+}
+
+pub fn drop(t: Table, names: Vector<String>) Result<Table, String> {
+  keep: Vector<String> = []
+
+  for n in t.names {
+    if !names.contains(n) {
+      keep = .append(n)
+    }
+  }
+
+  t.select(keep)
+}
+
+pub fn rename(t: Table, from: String, to: String) Result<Table, String> {
+  case t.col_index(from) {
+    .None => .Err("no such column '${from}'"),
+    .Some(i) => {
+      new_names := case t.names.set(i, to) {
+        .Some(ns) => ns,
+        .None => { return .Err("rename index out of range") },
+      }
+      .Ok(Table.{ names: new_names, cols: t.cols, nrows: t.nrows })
+    },
+  }
+}
+
+pub fn head(t: Table, n: Int) Table {
+  limit := if n < t.nrows {
+    n
+  } else {
+    t.nrows
+  }
+  idx := collect i in range(limit) {
+    i
+  }
+  t.take(idx)
+}
+
+/// Gather rows by index across every column (the core primitive).
+pub fn take(t: Table, idx: Vector<Int>) Table {
+  out_cols: Vector<Column> = []
+
+  for c in t.cols {
+    out_cols = .append(column.gather(c, idx))
+  }
+
+  Table.{ names: t.names, cols: out_cols, nrows: idx.len() }
+}
+
+/// Render a simple text table (header + every row). Intended for small results.
+pub fn display(t: Table) String {
+  lines: Vector<String> = [t.names.join(" | ")]
+
+  for r in range(t.nrows) {
+    fields: Vector<String> = []
+
+    for c in t.cols {
+      fields = .append(cell.to_string(column.cell_at(c, r)))
+    }
+
+    lines = .append(fields.join(" | "))
+  }
+
+  lines.join("\n")
+}

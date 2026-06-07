@@ -1,0 +1,77 @@
+use assert
+use runner
+use frame.column
+use frame.table
+use frame.table.{Table}
+
+fn sample() Table {
+  cols := [
+    column.int_col([1, 2, 3]),
+    column.str_col(["a", "b", "c"]),
+  ]
+
+  case table.from_columns(["id", "name"], cols) {
+    .Ok(t) => t,
+    .Err(e) => error(e),
+  }
+}
+
+pub fn suite() {
+  runner.suite("table")
+    .test(
+      "from_columns sets nrows and rejects ragged columns",
+      fn() {
+        t := sample()
+        ok1 := try assert.equal(t.nrows, 3)
+        bad := table.from_columns(["a", "b"], [column.int_col([1]), column.int_col([1, 2])])
+        assert.is_err(bad)
+      },
+    )
+    .test(
+      "column looks up by name",
+      fn() {
+        t := sample()
+        c := try t.column("id")
+        assert.equal(column.as_ints(c), [1, 2, 3])
+      },
+    )
+    .test(
+      "select keeps and orders the requested columns",
+      fn() {
+        t := try sample().select(["name"])
+        ok1 := try assert.equal(t.names, ["name"])
+        assert.equal(column.as_strs(try t.column("name")), ["a", "b", "c"])
+      },
+    )
+    .test(
+      "drop removes a column",
+      fn() {
+        t := try sample().drop(["id"])
+        assert.equal(t.names, ["name"])
+      },
+    )
+    .test(
+      "rename changes a column name",
+      fn() {
+        t := try sample().rename("id", "key")
+        assert.equal(t.names, ["key", "name"])
+      },
+    )
+    .test(
+      "take gathers rows across all columns",
+      fn() {
+        t := sample().take([2, 0])
+        ok1 := try assert.equal(column.as_ints(try t.column("id")), [3, 1])
+        ok2 := try assert.equal(column.as_strs(try t.column("name")), ["c", "a"])
+        assert.equal(t.nrows, 2)
+      },
+    )
+    .test(
+      "display renders a header and rows",
+      fn() {
+        s := sample().display()
+        ok1 := try assert.str_contains(s, "id")
+        assert.str_contains(s, "name")
+      },
+    )
+}
