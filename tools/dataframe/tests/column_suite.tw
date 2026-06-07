@@ -1,0 +1,57 @@
+use assert
+use frame.cell.{Scalar}
+use frame.column
+use frame.column.{ColData, Column, DType}
+use runner
+
+pub fn suite() {
+  runner.suite("column")
+    .test(
+      "int_col has length and no nulls",
+      fn() {
+        c := column.int_col([1, 2, 3])
+        ok1 := try assert.equal(column.len(c), 3)
+        assert.is_false(column.is_null(c, 1))
+      },
+    )
+    .test(
+      "dtype reflects the variant",
+      fn() {
+        c := column.float_col([1.0, 2.0])
+        assert.is_true(column.dtype(c) == DType.DFloat)
+      },
+    )
+    .test(
+      "as_ints returns the backing vector",
+      fn() {
+        c := column.int_col([10, 20, 30])
+        assert.equal(column.as_ints(c), [10, 20, 30])
+      },
+    )
+    .test(
+      "gather reorders data and nulls",
+      fn() {
+        c := column.with_nulls(ColData.IntCol([5, 6, 7]), [false, true, false])
+        g := column.gather(c, [2, 1, 0])
+        ok1 := try assert.equal(column.as_ints(g), [7, 6, 5])
+        ok2 := try assert.is_true(column.is_null(g, 1))
+        assert.is_false(column.is_null(g, 0))
+      },
+    )
+    .test(
+      "cell_at yields CNull for masked rows",
+      fn() {
+        c := column.with_nulls(ColData.StrCol(["a", "b"]), [false, true])
+        ok1 := try assert.equal(column.cell_at(c, 0), Scalar.CStr("a"))
+        assert.equal(column.cell_at(c, 1), Scalar.CNull)
+      },
+    )
+    .test(
+      "compare_at orders ints with nulls last",
+      fn() {
+        c := column.with_nulls(ColData.IntCol([3, 1, 0]), [false, false, true])
+        ok1 := try assert.is_true(column.compare_at(c, 1, 0) == Order.Lt)
+        assert.is_true(column.compare_at(c, 0, 2) == Order.Lt)
+      },
+    )
+}

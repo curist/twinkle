@@ -1,6 +1,8 @@
 use tests.cell_suite
+use tests.column_suite
 use runner
 
 runner.run_all([
   cell_suite.suite(),
+  column_suite.suite(),
 ])

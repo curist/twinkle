@@ -12,6 +12,10 @@
 
 ---
 
+## Deviation log (discovered during execution)
+
+- **`Cell` → `Scalar` (Task 2):** `Cell` is a reserved builtin type name in Twinkle (the mutable reference cell). The scalar enum is therefore named **`Scalar`**, living in module **`cell`** (file `frame/cell.tw`). All later tasks use `use frame.cell.{Scalar}`, construct `Scalar.CInt(...)`, and call `cell.to_string(...)` / `cell.from_cells(...)`. Wherever the task text below says `Cell`/`Cell.CInt`, read `Scalar`/`Scalar.CInt`.
+
 ## Conventions for every task
 
 - **Project root:** `tools/dataframe/` has its own `twinkle.toml`, so module paths resolve from there: `use frame.cell`, `use frame.column`, `use tests.cell_suite`, `use runner`, `use assert`.
