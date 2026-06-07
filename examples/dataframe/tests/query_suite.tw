@@ -1,5 +1,6 @@
 use assert
 use frame.column
+use frame.column.{ColData}
 use frame.table
 use frame.table.{Dir, Table}
 use runner
@@ -55,6 +56,22 @@ pub fn suite() {
       fn() {
         sorted := try people().order_by("age", Dir.Desc)
         assert.equal(column.as_ints(try sorted.column("age")), [45, 35, 25])
+      },
+    )
+    .test(
+      "order_by preserves null ordering behavior",
+      fn() {
+        c := column.with_nulls(ColData.IntCol([3, 1, 2]), [false, true, false])
+        t := case table.from_columns(["x"], [c]) {
+          .Ok(v) => v,
+          .Err(e) => error(e),
+        }
+        asc := try t.order_by("x", Dir.Asc)
+        desc := try t.order_by("x", Dir.Desc)
+        ok1 := try assert.equal(column.as_ints(try asc.column("x")), [2, 3, 1])
+        ok2 := try assert.is_true(column.is_null(try asc.column("x"), 2))
+        ok3 := try assert.equal(column.as_ints(try desc.column("x")), [1, 3, 2])
+        assert.is_true(column.is_null(try desc.column("x"), 0))
       },
     )
 }

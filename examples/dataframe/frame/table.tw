@@ -230,11 +230,164 @@ pub fn to_string(d: Dir) String {
   }
 }
 
-fn flip(o: Order) Order {
-  case o {
-    .Lt => Order.Gt,
-    .Gt => Order.Lt,
-    .Eq => Order.Eq,
+fn bool_rank_for_sort(b: Bool) Int {
+  if b {
+    1
+  } else {
+    0
+  }
+}
+
+fn sort_indices_by_column(col: Column, idx: Vector<Int>, dir: Dir) Vector<Int> {
+  case dir {
+    .Asc => case col.data {
+      .IntCol(keys) => idx.sort_by(fn(a, b) {
+        ai := col.nulls[a]
+        bi := col.nulls[b]
+
+        if ai and bi {
+          return Order.Eq
+        }
+
+        if ai {
+          return Order.Gt
+        }
+
+        if bi {
+          return Order.Lt
+        }
+
+        Int.compare(keys[a], keys[b])
+      }),
+      .FloatCol(keys) => idx.sort_by(fn(a, b) {
+        ai := col.nulls[a]
+        bi := col.nulls[b]
+
+        if ai and bi {
+          return Order.Eq
+        }
+
+        if ai {
+          return Order.Gt
+        }
+
+        if bi {
+          return Order.Lt
+        }
+
+        Float.compare(keys[a], keys[b])
+      }),
+      .StrCol(keys) => idx.sort_by(fn(a, b) {
+        ai := col.nulls[a]
+        bi := col.nulls[b]
+
+        if ai and bi {
+          return Order.Eq
+        }
+
+        if ai {
+          return Order.Gt
+        }
+
+        if bi {
+          return Order.Lt
+        }
+
+        String.compare(keys[a], keys[b])
+      }),
+      .BoolCol(keys) => idx.sort_by(fn(a, b) {
+        ai := col.nulls[a]
+        bi := col.nulls[b]
+
+        if ai and bi {
+          return Order.Eq
+        }
+
+        if ai {
+          return Order.Gt
+        }
+
+        if bi {
+          return Order.Lt
+        }
+
+        Int.compare(bool_rank_for_sort(keys[a]), bool_rank_for_sort(keys[b]))
+      }),
+    },
+    .Desc => case col.data {
+      .IntCol(keys) => idx.sort_by(fn(a, b) {
+        ai := col.nulls[a]
+        bi := col.nulls[b]
+
+        if ai and bi {
+          return Order.Eq
+        }
+
+        if ai {
+          return Order.Lt
+        }
+
+        if bi {
+          return Order.Gt
+        }
+
+        Int.compare(keys[b], keys[a])
+      }),
+      .FloatCol(keys) => idx.sort_by(fn(a, b) {
+        ai := col.nulls[a]
+        bi := col.nulls[b]
+
+        if ai and bi {
+          return Order.Eq
+        }
+
+        if ai {
+          return Order.Lt
+        }
+
+        if bi {
+          return Order.Gt
+        }
+
+        Float.compare(keys[b], keys[a])
+      }),
+      .StrCol(keys) => idx.sort_by(fn(a, b) {
+        ai := col.nulls[a]
+        bi := col.nulls[b]
+
+        if ai and bi {
+          return Order.Eq
+        }
+
+        if ai {
+          return Order.Lt
+        }
+
+        if bi {
+          return Order.Gt
+        }
+
+        String.compare(keys[b], keys[a])
+      }),
+      .BoolCol(keys) => idx.sort_by(fn(a, b) {
+        ai := col.nulls[a]
+        bi := col.nulls[b]
+
+        if ai and bi {
+          return Order.Eq
+        }
+
+        if ai {
+          return Order.Lt
+        }
+
+        if bi {
+          return Order.Gt
+        }
+
+        Int.compare(bool_rank_for_sort(keys[b]), bool_rank_for_sort(keys[a]))
+      }),
+    },
   }
 }
 
@@ -244,15 +397,7 @@ pub fn order_by(t: Table, name: String, dir: Dir) Result<Table, String> {
   idx := collect i in range(t.nrows) {
     i
   }
-
-  sorted := idx.sort_by(fn(a, b) {
-    base := column.compare_at(col, a, b)
-
-    case dir {
-      .Asc => base,
-      .Desc => flip(base),
-    }
-  })
+  sorted := sort_indices_by_column(col, idx, dir)
 
   .Ok(t.take(sorted))
 }

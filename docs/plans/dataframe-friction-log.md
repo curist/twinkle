@@ -296,8 +296,35 @@ As expected, the v1 runtime gather is mostly flat against Phase 1: it consolidat
 into the runtime but still performs one trie lookup per requested index. The `order_by` number
 moved in this run, but that workload is dominated by sort-comparator behavior and shows enough
 run-to-run variance that this should not be attributed to gather alone without a targeted
-microbenchmark. The conclusion stands: the remaining large wins likely need either typed
-sort-key materialization for `order_by` or a later trie-aware gather path.
+microbenchmark.
+
+A further `order_by` pass moved the `ColData` dispatch outside the sort comparator and uses
+per-dtype comparator closures over the typed key vector. The latest run was:
+
+```
+── N = 10000 ──
+filter      : 2.13ms    (checksum 4912)
+order_by    : 12.06ms   (checksum 10000)
+group_by/agg: 4.75ms    (checksum 64)
+join        : 6.40ms    (checksum 8597)
+
+── N = 100000 ──
+filter      : 17.83ms   (checksum 49735)
+order_by    : 147.35ms  (checksum 100000)
+group_by/agg: 27.60ms   (checksum 64)
+join        : 85.41ms   (checksum 78120)
+
+── N = 1000000 ──
+filter      : 209.49ms  (checksum 498802)
+order_by    : 2530.79ms (checksum 1000000)
+group_by/agg: 337.20ms  (checksum 64)
+join        : 1481.51ms (checksum 937500)
+```
+
+This is directionally better for `order_by`, but still modest: the comparator still performs
+random vector reads and null checks for each comparison. Larger gains likely require a deeper
+sort strategy change (for example materializing null ranks/keys into a representation with
+cheaper repeated reads, or a specialized typed/key sort), plus a later trie-aware gather path.
 
 ## Recommendations (ranked)
 
