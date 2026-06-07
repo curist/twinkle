@@ -1,12 +1,24 @@
 use assert
 use runner
+use frame.cell
+use frame.cell.{Scalar}
 
 pub fn suite() {
   runner.suite("cell")
     .test(
-      "harness smoke test",
+      "to_string renders each variant",
       fn() {
-        assert.equal(1 + 1, 2)
+        ok1 := try assert.equal(cell.to_string(Scalar.CInt(42)), "42")
+        ok2 := try assert.equal(cell.to_string(Scalar.CFloat(1.5)), "1.5")
+        ok3 := try assert.equal(cell.to_string(Scalar.CStr("hi")), "hi")
+        ok4 := try assert.equal(cell.to_string(Scalar.CBool(true)), "true")
+        assert.equal(cell.to_string(Scalar.CNull), "null")
+      },
+    )
+    .test(
+      "cells are structurally comparable",
+      fn() {
+        assert.equal(Scalar.CInt(7), Scalar.CInt(7))
       },
     )
 }
