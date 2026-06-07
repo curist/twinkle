@@ -114,3 +114,138 @@ pub fn display(t: Table) String {
 
   lines.join("\n")
 }
+
+// ---------------------------------------------------------------------------
+// Row view + row-level operations
+//
+// These live in `table` (not a separate module) so they resolve as inherent
+// methods on Table: `t.filter(...)`, `t.order_by(...)`. Twinkle inherent-method
+// sugar only resolves for functions in the receiver type's defining module, and
+// circular imports are forbidden, so a row-predicate op like `filter` (whose
+// predicate is `fn(RowRef) Bool`) cannot live in a separate module that would
+// have to import Table back. See docs/plans/dataframe-friction-log.md (#1).
+// ---------------------------------------------------------------------------
+/// A lightweight view of one row, used by predicates: r.int("age") > 30.
+/// Typed accessors trap on type mismatch or null — null-tolerant access
+/// goes through is_null first.
+pub type RowRef = .{ table: Table, idx: Int }
+
+fn lookup(r: RowRef, name: String) Column {
+  case r.table.column(name) {
+    .Ok(c) => c,
+    .Err(e) => error(e),
+  }
+}
+
+pub fn is_null(r: RowRef, name: String) Bool {
+  column.is_null(lookup(r, name), r.idx)
+}
+
+pub fn int(r: RowRef, name: String) Int {
+  c := lookup(r, name)
+
+  if column.is_null(c, r.idx) {
+    error("null at ${name}[${r.idx}]")
+  }
+
+  column.as_ints(c)[r.idx]
+}
+
+pub fn float(r: RowRef, name: String) Float {
+  c := lookup(r, name)
+
+  if column.is_null(c, r.idx) {
+    error("null at ${name}[${r.idx}]")
+  }
+
+  column.as_floats(c)[r.idx]
+}
+
+pub fn str(r: RowRef, name: String) String {
+  c := lookup(r, name)
+
+  if column.is_null(c, r.idx) {
+    error("null at ${name}[${r.idx}]")
+  }
+
+  column.as_strs(c)[r.idx]
+}
+
+pub fn bool(r: RowRef, name: String) Bool {
+  c := lookup(r, name)
+
+  if column.is_null(c, r.idx) {
+    error("null at ${name}[${r.idx}]")
+  }
+
+  column.as_bools(c)[r.idx]
+}
+
+/// Keep rows for which the predicate returns true.
+pub fn filter(t: Table, pred: fn(RowRef) Bool) Table {
+  idx: Vector<Int> = []
+
+  for i in range(t.nrows) {
+    if pred(RowRef.{ table: t, idx: i }) {
+      idx = .append(i)
+    }
+  }
+
+  t.take(idx)
+}
+
+/// Add or replace a column. The new column must match the table's row count.
+pub fn with_column(t: Table, name: String, c: Column) Result<Table, String> {
+  if t.nrows != 0 and column.len(c) != t.nrows {
+    return .Err("column '${name}' has length ${column.len(c)}, expected ${t.nrows}")
+  }
+
+  case t.col_index(name) {
+    .Some(i) => {
+      new_cols := case t.cols.set(i, c) {
+        .Some(cs) => cs,
+        .None => { return .Err("with_column index out of range") },
+      }
+      .Ok(Table.{ names: t.names, cols: new_cols, nrows: t.nrows })
+    },
+    .None => from_columns_append(t, name, c),
+  }
+}
+
+fn from_columns_append(t: Table, name: String, c: Column) Result<Table, String> {
+  nrows := if t.ncols() == 0 {
+    column.len(c)
+  } else {
+    t.nrows
+  }
+  .Ok(Table.{ names: t.names.append(name), cols: t.cols.append(c), nrows })
+}
+
+pub type Dir = { Asc, Desc }
+
+fn flip(o: Order) Order {
+  case o {
+    .Lt => Order.Gt,
+    .Gt => Order.Lt,
+    .Eq => Order.Eq,
+  }
+}
+
+/// Sort rows by a single column. Sorts an index vector, then gathers.
+pub fn order_by(t: Table, name: String, dir: Dir) Result<Table, String> {
+  col := try t.column(name)
+  idx := collect i in range(t.nrows) {
+    i
+  }
+
+  sorted := idx.sort_by(fn(a, b) {
+    base := column.compare_at(col, a, b)
+
+    case dir {
+      .Asc => base,
+      .Desc => flip(base),
+    }
+  })
+
+  .Ok(t.take(sorted))
+}

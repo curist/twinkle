@@ -4,8 +4,7 @@ use frame.gen
 use frame.group
 use frame.join
 use frame.join.{How}
-use frame.query
-use frame.query.{Dir}
+use frame.table.{Dir}
 
 fn time_ms(label: String, work: fn() Int) Void {
   start := date.now()
@@ -19,12 +18,12 @@ fn bench_n(n: Int) Void {
   base := gen.table(n, 64)
   keyed := gen.table(n, n)
 
-  time_ms("filter      ", fn() { query.filter(base, fn(r) { r.int("amount") > 500 }).nrows })
+  time_ms("filter      ", fn() { base.filter(fn(r) { r.int("amount") > 500 }).nrows })
 
   time_ms(
     "order_by    ",
     fn() {
-      case query.order_by(base, "amount", Dir.Asc) {
+      case base.order_by("amount", Dir.Asc) {
         .Ok(t) => t.nrows,
         .Err(_) => -1,
       }

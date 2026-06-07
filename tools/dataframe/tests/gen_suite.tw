@@ -1,7 +1,6 @@
 use assert
-use runner
-use frame.table
 use frame.gen
+use runner
 
 pub fn suite() {
   runner.suite("gen")

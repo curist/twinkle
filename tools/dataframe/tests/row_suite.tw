@@ -1,16 +1,11 @@
 use assert
-use runner
 use frame.column
 use frame.table
-use frame.table.{Table}
-use frame.row
-use frame.row.{RowRef}
+use frame.table.{RowRef, Table}
+use runner
 
 fn sample() Table {
-  cols := [
-    column.int_col([10, 20]),
-    column.str_col(["x", "y"]),
-  ]
+  cols := [column.int_col([10, 20]), column.str_col(["x", "y"])]
 
   case table.from_columns(["age", "name"], cols) {
     .Ok(t) => t,

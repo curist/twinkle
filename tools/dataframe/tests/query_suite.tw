@@ -1,9 +1,7 @@
 use assert
 use frame.column
-use frame.query
-use frame.query.{Dir}
 use frame.table
-use frame.table.{Table}
+use frame.table.{Dir, Table}
 use runner
 
 fn people() Table {
@@ -20,7 +18,7 @@ pub fn suite() {
     .test(
       "filter keeps matching rows",
       fn() {
-        t := query.filter(people(), fn(r) { r.int("age") > 30 })
+        t := people().filter(fn(r) { r.int("age") > 30 })
         ok1 := try assert.equal(t.nrows, 2)
         assert.equal(column.as_strs(try t.column("name")), ["bob", "cid"])
       },
@@ -32,7 +30,7 @@ pub fn suite() {
         doubled := collect a in column.as_ints(try base.column("age")) {
           a * 2
         }
-        t := try query.with_column(base, "age2", column.int_col(doubled))
+        t := try base.with_column("age2", column.int_col(doubled))
         ok1 := try assert.equal(t.names, ["age", "name", "age2"])
         assert.equal(column.as_ints(try t.column("age2")), [50, 70, 90])
       },
@@ -40,7 +38,7 @@ pub fn suite() {
     .test(
       "with_column rejects a length mismatch",
       fn() {
-        bad := query.with_column(people(), "x", column.int_col([1]))
+        bad := people().with_column("x", column.int_col([1]))
         assert.is_err(bad)
       },
     )
@@ -48,14 +46,14 @@ pub fn suite() {
       "order_by ascending sorts by the keyed column",
       fn() {
         t := people().take([2, 0, 1])
-        sorted := try query.order_by(t, "age", Dir.Asc)
+        sorted := try t.order_by("age", Dir.Asc)
         assert.equal(column.as_ints(try sorted.column("age")), [25, 35, 45])
       },
     )
     .test(
       "order_by descending reverses the order",
       fn() {
-        sorted := try query.order_by(people(), "age", Dir.Desc)
+        sorted := try people().order_by("age", Dir.Desc)
         assert.equal(column.as_ints(try sorted.column("age")), [45, 35, 25])
       },
     )
