@@ -1,0 +1,163 @@
+use compiler.query.occurrences as occ
+use lib.source.span
+use tests.assert
+use tests.runner
+
+fn sp(start: Int, end: Int) span.Span {
+  span.new(0, start, end)
+}
+
+// Mirrors `groups.values()` at offsets [0,15): `groups` is a local reference at
+// [0,6), the whole method call (keyed to the `values` method) spans [0,15), and
+// the original `groups` let declaration sits at [30,36).
+fn sample_index() occ.OccurrenceIndex {
+  groups_key := occ.SymbolKey.Local("m", 1)
+  values_key := occ.SymbolKey.Function("dict", "values")
+
+  groups_def := occ.SymbolDef.{
+    key: groups_key,
+    name: "groups",
+    kind: .Local,
+    declaration_span: .Some(sp(30, 36)),
+    declaration_uri: .Some("file:///m.tw"),
+    detail: .NoDetail,
+  }
+
+  idx := occ.empty("m", "file:///m.tw")
+  idx = .add_symbol(groups_def)
+
+  // declaration of `groups`
+  idx = .add_occurrence(
+    .{
+      symbol_key: groups_key,
+      name: "groups",
+      kind: .Local,
+      role: .Declaration,
+      span: sp(30, 36),
+      expr_id: .None,
+      type_expr_span: .None,
+    },
+  )
+
+  // outer method-call expression keyed to `values`
+  idx = .add_occurrence(
+    .{
+      symbol_key: values_key,
+      name: "values",
+      kind: .Method,
+      role: .Reference,
+      span: sp(0, 15),
+      expr_id: .Some(42),
+      type_expr_span: .None,
+    },
+  )
+
+  // inner `groups` receiver reference
+  idx = .add_occurrence(
+    .{
+      symbol_key: groups_key,
+      name: "groups",
+      kind: .Local,
+      role: .Reference,
+      span: sp(0, 6),
+      expr_id: .Some(7),
+      type_expr_span: .None,
+    },
+  )
+
+  idx.finalize()
+}
+
+pub fn suite() runner.Suite {
+  runner.suite("occurrences")
+    .test(
+      "encode_symbol_key is injective across variants and arguments",
+      fn() {
+        a := occ.encode_symbol_key(.Local("m", 1))
+        b := occ.encode_symbol_key(.Local("m", 2))
+        c := occ.encode_symbol_key(.Function("m", "1"))
+        d := occ.encode_symbol_key(.Field("m", "T", "f"))
+        e := occ.encode_symbol_key(.Variant("m", "T", "f"))
+
+        try assert.ok(a != b, "distinct local ids must encode differently")
+        try assert.ok(a != c, "Local vs Function must encode differently")
+        try assert.ok(d != e, "Field vs Variant must encode differently")
+        try assert.equal(a, occ.encode_symbol_key(.Local("m", 1)))
+        .Ok({})
+      },
+    )
+    .test(
+      "occurrence_at_offset picks the narrowest containing span",
+      fn() {
+        idx := sample_index()
+
+        // offset 3 is inside both [0,15) and [0,6); narrowest wins -> groups
+        inner := try occ.occurrence_at_offset(idx, 3).ok_or("expected an occurrence at offset 3")
+        try assert.equal(inner.name, "groups")
+        try assert.ok(inner.kind == .Local, "offset 3 should resolve to the local")
+
+        // offset 9 is only inside [0,15) -> the values method
+        outer := try occ.occurrence_at_offset(idx, 9).ok_or("expected an occurrence at offset 9")
+        try assert.equal(outer.name, "values")
+        try assert.ok(outer.kind == .Method, "offset 9 should resolve to the method")
+        .Ok({})
+      },
+    )
+    .test(
+      "occurrence_at_offset returns None outside any span",
+      fn() {
+        idx := sample_index()
+
+        case occ.occurrence_at_offset(idx, 20) {
+          .Some(_) => .Err("offset 20 should not resolve to any occurrence"),
+          .None => .Ok({}),
+        }
+      },
+    )
+    .test(
+      "occurrence_for_expr resolves by expression id",
+      fn() {
+        idx := sample_index()
+        found := try occ.occurrence_for_expr(idx, 7).ok_or("expected an occurrence for expr 7")
+        try assert.equal(found.name, "groups")
+
+        case occ.occurrence_for_expr(idx, 999) {
+          .Some(_) => .Err("unknown expr id should not resolve"),
+          .None => .Ok({}),
+        }
+      },
+    )
+    .test(
+      "occurrences_for_symbol groups declaration and references by key",
+      fn() {
+        idx := sample_index()
+        groups := occ.occurrences_for_symbol(idx, .Local("m", 1))
+        try assert.equal(groups.len(), 2)
+
+        values := occ.occurrences_for_symbol(idx, .Function("dict", "values"))
+        try assert.equal(values.len(), 1)
+
+        none := occ.occurrences_for_symbol(idx, .Local("m", 999))
+        try assert.equal(none.len(), 0)
+        .Ok({})
+      },
+    )
+    .test(
+      "definition_for_occurrence finds the declaring symbol",
+      fn() {
+        idx := sample_index()
+        ref := try occ.occurrence_at_offset(idx, 3).ok_or("expected the groups reference")
+        def := try occ.definition_for_occurrence(idx, ref).ok_or("expected a definition for groups")
+        try assert.equal(def.name, "groups")
+        try assert.ok(def.kind == .Local, "definition should be a local")
+
+        // a symbol with no recorded SymbolDef resolves to None
+        values_ref := try occ.occurrence_at_offset(idx, 9).ok_or("expected the values reference")
+
+        case occ.definition_for_occurrence(idx, values_ref) {
+          .Some(_) => .Err("values has no SymbolDef in this index"),
+          .None => .Ok({}),
+        }
+      },
+    )
+}

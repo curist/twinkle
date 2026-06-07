@@ -64,6 +64,7 @@ use .suites.lsp_type_definition_suite
 use .suites.lsp_workspace_symbol_suite
 use .suites.module_loader_suite
 use .suites.multi_module_suite
+use .suites.occurrences_suite
 use .suites.opt_analysis_suite
 use .suites.opt_builder_region_suite
 use .suites.opt_const_fold_suite
@@ -206,6 +207,7 @@ runner.run_all([
   lsp_document_highlight_suite.suite(),
   lsp_folding_range_suite.suite(),
   lsp_semantic_tokens_suite.suite(),
+  occurrences_suite.suite(),
   multi_module_suite.suite(),
   base_env_guardrail_suite.suite(),
   signature_loader_suite.suite(),

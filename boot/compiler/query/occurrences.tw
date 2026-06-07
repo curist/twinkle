@@ -1,0 +1,244 @@
+/// Shared semantic occurrence map for editor query features.
+///
+/// An occurrence index answers one question consistently: for a source span or
+/// AST node, what declared symbol does this occurrence resolve to, and how
+/// should tooling describe it? It is the common source of truth for semantic
+/// tokens, hover, definition, references, document highlights, and friends, so
+/// each feature stops re-walking the AST and rebuilding partial scope knowledge.
+///
+/// Phase 1 defines the data model plus lookup/builder helpers. Populating an
+/// index from the AST and checker metadata happens in later phases.
+
+use lib.source.span.{Span}
+
+/// How tooling should describe a symbol.
+pub type SymbolKind = {
+  Module,
+  Type,
+  TypeParameter,
+  Function,
+  Method,
+  Parameter,
+  Local,
+  ModuleValue,
+  Field,
+  Variant,
+  ExternNamespace,
+}
+
+/// Cross-file-comparable symbol identity.
+///
+/// Global/imported symbols (functions, types, fields, variants, module values)
+/// carry canonical origin metadata so per-file indexes can be matched across a
+/// workspace query. Local lexical symbols carry the declaring module path plus a
+/// per-file local id; they are unique within their file but need not be stable
+/// across edits.
+pub type SymbolKey = {
+  Local(String, Int),
+  Function(String, String),
+  TypeDef(String, String),
+  TypeParam(String, Int),
+  ModuleAlias(String, Int),
+  ModuleValue(String, String),
+  Field(String, String, String),
+  Variant(String, String, String),
+  ExternNamespace(String),
+}
+
+/// Optional human-readable detail (e.g. a type signature for hover).
+pub type SymbolDetail = { NoDetail, Detail(String) }
+
+pub type SymbolDef = .{
+  key: SymbolKey,
+  name: String,
+  kind: SymbolKind,
+  declaration_span: Span?,
+  declaration_uri: String?,
+  detail: SymbolDetail,
+}
+
+pub type OccurrenceRole = { Declaration, Reference, Write, Import, Shorthand }
+
+pub type Occurrence = .{
+  symbol_key: SymbolKey,
+  name: String,
+  kind: SymbolKind,
+  role: OccurrenceRole,
+  span: Span,
+  expr_id: Int?,
+  type_expr_span: Span?,
+}
+
+/// Per-file occurrence index. Built after parse/resolve/check and cached as a
+/// query artifact. Cross-file queries load the per-file indexes of candidate
+/// modules and match `SymbolKey` values via their encoded form.
+pub type OccurrenceIndex = .{
+  module_path: String,
+  uri: String,
+  symbols: Vector<SymbolDef>,
+  occurrences: Vector<Occurrence>,
+  by_expr: Dict<Int, Int>,
+  by_symbol: Dict<String, Vector<Int>>,
+  sorted_spans: Vector<Int>,
+}
+
+/// Total, injective encoding of a symbol key into a `Dict`-safe string.
+///
+/// `Dict` keys are limited to Int/String by the runtime `hash_key` (it handles
+/// i31, boxed int, and string; other shapes trap), so `SymbolKey` — an enum —
+/// cannot key a `Dict` directly. Module paths and identifiers never contain a
+/// tab, so a tab-separated, tag-prefixed encoding stays injective. This is also
+/// the value cross-file consumers compare when matching symbols.
+pub fn encode_symbol_key(key: SymbolKey) String {
+  case key {
+    .Local(m, id) => "L\t${m}\t${id}",
+    .Function(m, n) => "F\t${m}\t${n}",
+    .TypeDef(m, n) => "T\t${m}\t${n}",
+    .TypeParam(m, id) => "P\t${m}\t${id}",
+    .ModuleAlias(m, id) => "A\t${m}\t${id}",
+    .ModuleValue(m, n) => "V\t${m}\t${n}",
+    .Field(m, t, f) => "D\t${m}\t${t}\t${f}",
+    .Variant(m, t, v) => "E\t${m}\t${t}\t${v}",
+    .ExternNamespace(n) => "X\t${n}",
+  }
+}
+
+/// An empty index for the given module/file. Feed it via `add_symbol` /
+/// `add_occurrence`, then `finalize` once before serving lookups.
+pub fn empty(module_path: String, uri: String) OccurrenceIndex {
+  .{
+    module_path,
+    uri,
+    symbols: [],
+    occurrences: [],
+    by_expr: Dict.new(),
+    by_symbol: Dict.new(),
+    sorted_spans: [],
+  }
+}
+
+/// Record a symbol definition.
+pub fn add_symbol(index: OccurrenceIndex, def: SymbolDef) OccurrenceIndex {
+  index.symbols = .append(def)
+  index
+}
+
+/// Record an occurrence, maintaining the `by_expr` and `by_symbol` indexes.
+/// `sorted_spans` is rebuilt by `finalize`, not here.
+pub fn add_occurrence(index: OccurrenceIndex, occ: Occurrence) OccurrenceIndex {
+  idx := index.occurrences.len()
+  index.occurrences = .append(occ)
+
+  case occ.expr_id {
+    .Some(eid) => index.by_expr[eid] = idx,
+    .None => {},
+  }
+
+  enc := encode_symbol_key(occ.symbol_key)
+  existing := case index.by_symbol.get(enc) {
+    .Some(v) => v,
+    .None => [],
+  }
+  index.by_symbol[enc] = existing.append(idx)
+
+  index
+}
+
+/// Compute `sorted_spans` (occurrence indexes ordered by span start, then end).
+/// Call once after all occurrences are added; lookups assume it is current.
+pub fn finalize(index: OccurrenceIndex) OccurrenceIndex {
+  ids: Vector<Int> = collect i in range(index.occurrences.len()) {
+    i
+  }
+  occs := index.occurrences
+
+  index.sorted_spans = ids.sort_by(fn(a, b) {
+    sa := occs[a].span
+    sb := occs[b].span
+
+    cond {
+      sa.start < sb.start => .Lt,
+      sa.start > sb.start => .Gt,
+      sa.end < sb.end => .Lt,
+      sa.end > sb.end => .Gt,
+      _ => .Eq,
+    }
+  })
+
+  index
+}
+
+/// The occurrence at a cursor offset, preferring the narrowest containing span
+/// (so a method name wins over its receiver expression). Returns `.None` when
+/// no occurrence covers the offset.
+///
+/// Implementation is a scan over `sorted_spans`; the helper hides this so a
+/// future interval/binary-search structure can replace it without touching
+/// callers. Falls back to `occurrences` order when `finalize` has not run.
+pub fn occurrence_at_offset(index: OccurrenceIndex, offset: Int) Occurrence? {
+  order := if index.sorted_spans.len() == index.occurrences.len() {
+    index.sorted_spans
+  } else {
+    collect i in range(index.occurrences.len()) {
+      i
+    }
+  }
+
+  best: Occurrence? = .None
+  best_len := 0
+
+  for i in order {
+    occ := index.occurrences[i]
+
+    if occ.span.contains(offset) {
+      span_len := occ.span.len()
+
+      case best {
+        .None => {
+          best = .Some(occ)
+          best_len = span_len
+        },
+        .Some(_) => if span_len < best_len {
+          best = .Some(occ)
+          best_len = span_len
+        },
+      }
+    }
+  }
+
+  best
+}
+
+/// The occurrence carrying the given expression id, if any.
+pub fn occurrence_for_expr(index: OccurrenceIndex, expr_id: Int) Occurrence? {
+  case index.by_expr.get(expr_id) {
+    .Some(i) => .Some(index.occurrences[i]),
+    .None => .None,
+  }
+}
+
+/// All occurrences (declarations and uses) of a symbol within this file.
+pub fn occurrences_for_symbol(index: OccurrenceIndex, key: SymbolKey) Vector<Occurrence> {
+  enc := encode_symbol_key(key)
+
+  case index.by_symbol.get(enc) {
+    .Some(ids) => collect i in ids {
+      index.occurrences[i]
+    },
+    .None => [],
+  }
+}
+
+/// The defining symbol for an occurrence, looked up by key within this file.
+/// Cross-file definitions are resolved by loading the declaring module's index.
+pub fn definition_for_occurrence(index: OccurrenceIndex, occ: Occurrence) SymbolDef? {
+  target := encode_symbol_key(occ.symbol_key)
+
+  for def in index.symbols {
+    if encode_symbol_key(def.key) == target {
+      return .Some(def)
+    }
+  }
+
+  .None
+}

@@ -1,0 +1,485 @@
+# Occurrence Map Plan
+
+## Goal
+
+Replace ad-hoc identifier classification in editor features with a shared
+semantic occurrence map produced by the frontend pipeline.
+
+An occurrence map answers one question consistently:
+
+> For this source span / AST node, what declared symbol does this occurrence
+> resolve to, and how should tooling describe it?
+
+This should become the common source of truth for semantic tokens, hover,
+definition, references, document highlights, rename/preparation, inlay hints,
+and completion context checks.
+
+---
+
+## Motivation
+
+Today several query modules independently re-walk the AST and rebuild partial
+scope knowledge:
+
+- semantic tokens classify identifiers as variables, parameters, functions,
+  namespaces, properties, enum members, and methods.
+- definition/references/document-highlight need declaration/use relationships.
+- hover/inlay/completion need type information at expression positions.
+- some features infer whether an identifier-like token is a module alias, local
+  binding, parameter, type, function, field, or variant from environment lookups
+  plus local heuristics.
+
+This creates repeated work and subtle drift. For example, `groups.values()` was
+highlighted as a namespace receiver because semantic tokens only checked the
+resolved environment and parameter names; it did not have a reusable lexical
+binding map for local lets. The current `semantic_tokens.tw` `local_names` and
+`after_stmt` scope-threading fix is an intentional bridge; Phase 5 should delete
+that local classifier once semantic tokens consume the occurrence map.
+
+The occurrence map should make these cases direct:
+
+```tw
+groups.values()
+^^^^^^ local variable use, resolves to the `groups` let binding
+       ^^^^^^ inherent method call, resolves to `Dict.values`/receiver method metadata
+```
+
+---
+
+## Non-goals
+
+- Do not run lowering, monomorphization, optimization, linking, or codegen for
+  editor queries.
+- Do not replace the type checker or resolver. The occurrence map records their
+  decisions in a tooling-friendly shape.
+- Do not require a perfect rename implementation in the first iteration.
+- Do not invent structural record identity. Record fields should still respect
+  nominal type information from checking.
+
+---
+
+## Current Baseline
+
+`SemanticSnapshot` already exposes:
+
+- `parsed`: AST and source spans.
+- `resolved`: resolved environment and diagnostics.
+- `typed`: checker result, including the checked environment and selected typed
+  metadata such as expression type maps and method-call metadata.
+
+Limitations:
+
+- `ResolvedEnv` is mostly an environment of declarations/imports/module values,
+  not a lexical occurrence table.
+- Local lets, loop binders, collect binders, closure parameters, pattern binders,
+  and shadowing are not exposed as reusable symbol identities.
+- Query features manually traverse AST scopes and often duplicate partial logic.
+- Many lookups are name-based, so shadowing and imported aliases are easy to get
+  wrong.
+- Spans are available in the AST, but declaration/use relationships are not
+  represented uniformly.
+
+---
+
+## Target Architecture
+
+Add a frontend-produced per-file occurrence index to semantic snapshots:
+
+```tw
+pub type SemanticSnapshot = .{
+  ...
+  occurrences: OccurrenceIndex?,
+}
+```
+
+The index should be built after parse/resolve/check, using the AST plus resolver
+and checker metadata. It should be cached as a query artifact keyed by the same
+semantic inputs as typed results. Cross-file queries should load the per-file
+indexes for candidate modules from the query cache instead of relying on a single
+snapshot-local index.
+
+High-level shape:
+
+```tw
+pub type SymbolKind = {
+  Module,
+  Type,
+  TypeParameter,
+  Function,
+  Method,
+  Parameter,
+  Local,
+  ModuleValue,
+  Field,
+  Variant,
+  ExternNamespace,
+}
+
+pub type SymbolKey = {
+  Local(String, Int),                  // declaring module path + per-file local id
+  Function(String, String),            // canonical module path + function name
+  TypeDef(String, String),             // canonical module path + type name
+  TypeParam(String, Int),              // declaring module path + per-file local id
+  ModuleAlias(String, Int),            // importing module path + per-file local id
+  ModuleValue(String, String),         // canonical module path + value name
+  Field(String, String, String),       // canonical module path + type name + field
+  Variant(String, String, String),     // canonical module path + type name + variant
+  ExternNamespace(String),
+}
+
+pub type SymbolDef = .{
+  key: SymbolKey,
+  name: String,
+  kind: SymbolKind,
+  declaration_span: Span?,
+  declaration_uri: String?,
+  detail: SymbolDetail,
+}
+
+pub type OccurrenceRole = { Declaration, Reference, Write, Import, Shorthand }
+
+pub type Occurrence = .{
+  symbol_key: SymbolKey,
+  name: String,
+  kind: SymbolKind,
+  role: OccurrenceRole,
+  span: Span,
+  expr_id: Int?,
+  type_expr_span: Span?,
+}
+
+pub type OccurrenceIndex = .{
+  module_path: String,
+  uri: String,
+  symbols: Vector<SymbolDef>,
+  occurrences: Vector<Occurrence>,
+  by_expr: Dict<Int, Int>,             // expr id -> occurrence index
+  by_symbol: Dict<String, Vector<Int>>, // encoded symbol key -> occurrence indexes
+  sorted_spans: Vector<Int>,           // occurrence indexes sorted by span start/end
+}
+```
+
+`Dict` keys are limited to `Int`/`String` by the runtime `hash_key` (it only
+handles i31, boxed int, and string; other key shapes trap). `SymbolKey` is an
+enum, so it cannot be a `Dict` key directly. The occurrence module must provide a
+total, injective `encode_symbol_key(SymbolKey) String` and key `by_symbol` on the
+encoded string. The same encoding is what cross-file consumers compare when
+matching symbols across per-file indexes.
+
+The exact representation can differ, but it should support:
+
+- lookup by arbitrary cursor offset using `span.contains(offset)` semantics,
+- lookup by expression id,
+- declaration-to-references queries within one file and across cached indexes,
+- occurrence-to-definition queries,
+- semantic-token classification without redoing scope resolution.
+
+`sorted_spans` is intentionally not a start-offset dictionary. LSP cursor hits
+usually land inside an identifier, not exactly at its first byte. The helper API
+should provide `occurrence_at_offset(index, offset)` and may implement it with a
+sorted interval list plus local scan, or with a linear scan initially if the
+helper hides the implementation.
+
+---
+
+## Symbol Identity Rules
+
+### Per-file indexes, cross-file keys
+
+Occurrence indexes are per file because parse/check artifacts and source spans
+are per file. Symbol keys, however, must be comparable across files for imported
+functions/types/fields/variants/module values. This lets `references.tw` search
+candidate modules by loading each candidate module's occurrence index and
+matching `SymbolKey` values.
+
+Local lexical symbols remain file-local. Their keys include the declaring module
+path plus a per-file local id, so they are unique within a workspace query but do
+not need to be stable across edits.
+
+### Relationship to existing `references.SymbolId`
+
+`references.tw` already has a private `SymbolId` enum with variants such as
+`Local`, `Func`, `TypeDef`, `Variant`, and `Field`. The occurrence map should not
+introduce a second ambiguous `SymbolId` name. Use `SymbolKey` in the shared
+occurrence module and migrate `references.tw` by either:
+
+- replacing its private `SymbolId` with `occurrences.SymbolKey`, or
+- temporarily adding conversion helpers while references is migrated.
+
+The final state should have one shared identity type for query features.
+
+### Cross-module symbols
+
+Imported functions/types/module values should preserve canonical origin metadata
+where available:
+
+- function origin: canonical module path + source function name,
+- type origin: canonical module path + source type name,
+- module alias/import: importing module path + local symbol key,
+- extern namespace: namespace string plus declaration/import location.
+
+### Local lexical symbols
+
+Local symbols should be allocated for:
+
+- function parameters,
+- closure parameters,
+- `let` bindings,
+- rebindings/write occurrences,
+- `for` pattern/index binders,
+- `collect` pattern/index binders,
+- pattern variables in `case` arms.
+
+Lexical scopes should model shadowing explicitly. A reference occurrence should
+point to the nearest in-scope symbol, not merely carry a name.
+
+### Field and method symbols
+
+Field and method occurrences need type-aware classification:
+
+- record field access should identify the receiver type and field name,
+- record literal/update entries should identify fields when contextual type is
+  known,
+- inherent method calls should use checker method-call metadata,
+- module-qualified calls should resolve the namespace occurrence separately from
+  the function/method occurrence.
+
+For fields, a synthetic symbol identity based on canonical type origin + field
+name is preferred for cross-file references. A nominal type id + field name is
+acceptable internally only if it can be converted to a stable `SymbolKey` before
+it leaves the occurrence builder.
+
+### Variants
+
+Variant occurrences should identify the enum type when checker information makes
+that available. Qualified variants and bare `.Variant` should share the same
+variant symbol when resolved.
+
+---
+
+## Work Plan
+
+### Phase 1 — Define occurrence data model
+
+Purpose: add shared types without changing query behavior.
+
+Checklist:
+
+- [ ] Add `boot/compiler/query/occurrences.tw` with symbol, occurrence, and
+      index types, using `SymbolKey` rather than a second `SymbolId`.
+- [ ] Add helper lookups: occurrence at arbitrary cursor offset, occurrences for
+      symbol, definition for occurrence.
+- [ ] Add a total, injective `encode_symbol_key(SymbolKey) String` and key
+      `by_symbol` on it (Dict keys can only be Int/String at runtime).
+- [ ] Decide the initial `sorted_spans` implementation behind the helper API:
+      interval search or hidden linear scan.
+- [ ] Add conversion helpers for LSP token kinds only as consumers, not core
+      occurrence concepts.
+- [ ] Document which source constructs should emit declaration and reference
+      occurrences.
+
+Acceptance:
+
+- New module compiles and has focused unit coverage for index lookup helpers,
+  including cursor offsets in the middle of an identifier.
+
+---
+
+### Phase 2 — Build lexical occurrence index from AST
+
+Purpose: centralize local scope tracking that semantic tokens and references
+currently duplicate.
+
+Checklist:
+
+- [ ] Implement an AST walk that allocates local symbols for params, lets,
+      closures, loops, collect, and pattern binders.
+- [ ] Track lexical scopes and shadowing.
+- [ ] Emit declaration occurrences and identifier reference occurrences.
+- [ ] Attach expression ids where available.
+- [ ] Add regression coverage for local shadowing, nested blocks, closures,
+      loops, collect, and pattern variables.
+- [ ] Mark the current `semantic_tokens.tw` local-name tracker as temporary and
+      avoid extending it beyond regression fixes.
+
+Acceptance:
+
+- `groups.values()` records `groups` as a local reference to the `groups` let
+  declaration.
+- No query consumer has to independently track local names for this case.
+
+---
+
+### Phase 3 — Integrate resolver/checker metadata
+
+Purpose: enrich occurrences with global, type, method, field, and variant
+resolution.
+
+Checklist:
+
+- [ ] Emit symbols/occurrences for function declarations and function calls.
+- [ ] Emit symbols/occurrences for type declarations, type references, and type
+      parameters.
+- [ ] Emit module alias/import occurrences from `use` declarations.
+- [ ] Use checker `method_calls` metadata for method occurrences.
+- [ ] Use expression/type maps for field and variant classification when
+      available.
+- [ ] Represent unresolved/error occurrences conservatively so editor features
+      still return partial results.
+
+Acceptance:
+
+- Occurrence index can distinguish local receivers, module-qualified calls,
+  record fields, methods, enum variants, type refs, and type parameters.
+
+---
+
+### Phase 4 — Cache and expose in `SemanticSnapshot`
+
+Purpose: make occurrences a normal query artifact.
+
+Checklist:
+
+- [ ] Add an occurrence stage to `stage_runner` or a small query builder layered
+      after typed results.
+- [ ] Store/retrieve per-file occurrence indexes in `compiler.query.cache`.
+- [ ] Add `occurrences` to `SemanticSnapshot` and populate it for the snapshot's
+      entry file.
+- [ ] Add a helper for workspace consumers to load/build occurrence indexes for
+      candidate modules from the cache.
+- [ ] Ensure parse or type errors still return partial occurrences when useful.
+- [ ] Add cache invalidation tests showing occurrences update after edits.
+
+Acceptance:
+
+- LSP handlers can obtain `snap.occurrences` for the active file alongside
+  parsed/resolved/typed artifacts without running lower/codegen.
+- Cross-file consumers can load per-file occurrence indexes for candidate
+  modules without inventing a separate workspace-wide index format.
+
+---
+
+### Phase 5 — Migrate consumers incrementally
+
+Purpose: remove duplicated scope/classification logic while keeping behavior
+stable.
+
+Recommended order:
+
+1. `semantic_tokens.tw`
+   - classify tokens from occurrence kind/role;
+   - keep syntax-only fallback for comments/literals/unknown nodes if needed.
+2. `definition.tw`
+   - use occurrence-to-definition mapping.
+3. `references.tw` and `document_highlight.tw`
+   - replace or bridge the private `references.SymbolId` with shared
+     `occurrences.SymbolKey`;
+   - group by `SymbolKey`, not by name/span heuristics;
+   - load per-file occurrence indexes for candidate modules from the cache.
+4. `hover.tw`
+   - use occurrence kind plus existing type maps for detail text.
+5. `inlay_hints.tw` and completion helpers
+   - use occurrence/scoped symbol info where relevant.
+
+Checklist:
+
+- [ ] Migrate one consumer at a time behind tests.
+- [ ] Delete obsolete local-scope walkers once no consumer needs them, including
+      `semantic_tokens.tw` `local_names`/`after_stmt` threading.
+- [ ] Keep focused regression cases for shadowing, imports, methods, fields, and
+      variants.
+
+Acceptance:
+
+- Semantic tokens no longer maintain an independent local-name context.
+- Definition/references agree on shadowed local names and imported aliases.
+
+---
+
+## Testing Strategy
+
+Use red/green tests under `boot/tests` for each migration.
+
+Core occurrence tests:
+
+- local let declaration/use,
+- rebinding/write occurrence,
+- function parameter declaration/use,
+- nested scope shadowing,
+- closure parameter shadowing outer locals,
+- loop and collect binders,
+- case pattern binders,
+- module alias and module-qualified function call,
+- selective import of function/type/variant,
+- type parameter declaration/use,
+- method call on local receiver,
+- record field declaration/access/literal entry,
+- enum variant declaration/use,
+- unresolved identifier fallback.
+
+Consumer regression tests:
+
+- semantic token classification for the same constructs,
+- go-to-definition from each reference to the correct declaration,
+- references grouped by `SymbolKey` rather than text name,
+- document highlight only highlights the same binding under shadowing.
+
+---
+
+## Open Questions
+
+- Should occurrences be produced by the checker directly, or by a query pass
+  after checking?
+
+  Initial recommendation: build it as a query pass after checking. This avoids
+  bloating checker responsibilities while still using checker metadata. If the
+  pass needs too much duplicated resolution logic, move specific hooks into the
+  checker later.
+
+- How precise should partial/error files be?
+
+  Initial recommendation: emit syntax/lexical occurrences even when typecheck
+  fails, then enrich only the parts that checker metadata can prove.
+
+- Do symbol keys need to be stable across edits?
+
+  Initial recommendation: cross-file declaration keys must be stable enough to
+  compare separate per-file indexes in one workspace query. Local lexical keys do
+  not need to be stable across edits; they only need to be unique within the
+  declaring module's current occurrence index.
+
+- Should module aliases be symbols?
+
+  Initial recommendation: yes. They have declarations (`use foo as bar`) and
+  references (`bar.fn()`), and semantic tokens need to distinguish them from
+  locals.
+
+---
+
+## Risks
+
+- The occurrence builder may duplicate parts of resolver/checker if the boundary
+  is not kept clear.
+- A poorly specified cursor lookup structure could force consumers back to
+  ad-hoc span scans; hide the implementation behind `occurrence_at_offset` from
+  the start.
+- Cross-file references can drift if per-file indexes use snapshot-local ids for
+  imported/global symbols; require stable `SymbolKey` values for cross-module
+  symbols.
+- Field and variant resolution may require additional checker metadata for full
+  precision.
+- Migrating all query consumers at once would be risky; migrate incrementally.
+- Partial/error recovery can complicate the data model if unresolved occurrences
+  are not represented explicitly.
+
+---
+
+## Success Criteria
+
+- Editor features classify and navigate identifiers from shared per-file
+  occurrence indexes rather than independent heuristics.
+- Shadowing behavior is consistent across semantic tokens, definition,
+  references, and document highlights.
+- The `groups.values()` class of bug is impossible because local receiver
+  references resolve to local symbols before namespace classification.
+- Query features remain frontend-only and do not invoke lowering/codegen.
