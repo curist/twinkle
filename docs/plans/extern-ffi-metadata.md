@@ -122,7 +122,13 @@ makes the emitted section match post-Wasm-DCE imports.
 
 - In `prepareWasm`, after building `mainModule`, read
   `WebAssembly.Module.customSections(mainModule, "twinkle.externs")`; if present,
-  `JSON.parse` the first one into a `module → name → { args, ret }` map.
+  `JSON.parse` the first one into a `module → name → { args, ret }` map. **Wrap
+  the `customSections` call in `try/catch`** and treat any failure (or absence)
+  as "no metadata" → fall back to the manual override / string-default path. The
+  existing `autoBridge` already guards `Module.imports()` because it "may fail on
+  GC modules in some runtimes (e.g. mobile Safari)"; `customSections` is the same
+  risk class, so the section is a best-effort optimization, never a hard
+  dependency.
 - `resolveExternImports` / `autoBridgeExternImports`: when an extern has no
   explicit `args` (from the manual override), use the section's `args` for that
   import. Precedence: manual `{ args }` > section > default (string).
@@ -172,3 +178,6 @@ makes the emitted section match post-Wasm-DCE imports.
   (the runtime is the only consumer).
 - **Override precedence** must be exact: a manual `args` has to win so existing
   callers and non-Twinkle wasm keep working.
+- **`customSections` on GC modules** may be unavailable in some engines (same
+  class as `Module.imports`), so reading it is best-effort behind a `try/catch`;
+  the manual override remains the reliable path where it's missing.
