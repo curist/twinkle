@@ -94,12 +94,18 @@ could not have both of.
   - **Secondary nicety:** auto-derivable `Stringify` for simple (payload-free) enums
     would remove even the one-liners — but that's an enhancement, not the gap.
 
-- **GAP — nested patterns inside `.Some(...)` don't compile.** `case opt { .Some(.CInt(_)) => ... }`
-  is rejected; you must destructure in two levels:
-  `case opt { .Some(s) => case s { .CInt(_) => ... } }`. For a combinator-heavy style
-  (here, dispatching on the first non-null scalar of a column) this doubles the
-  nesting. Nested constructor patterns are table stakes in ML-family languages; their
-  absence is felt immediately in any enum-of-enum code.
+- **NOT A GAP (corrected) — nested patterns DO compile.** During the build a subagent
+  reported that `case opt { .Some(.CInt(_)) => ... }` was rejected and rewrote it to a
+  two-level `case opt { .Some(s) => case s { .CInt(_) => ... } }`. That was a
+  **misdiagnosis** (same failure mode as the historical `known_empty` episode): nested
+  constructor patterns work in both compilers. Verified by direct repro
+  (`.Some(.CInt(_))` and binding-inner `.Some(.CInt(n)) => "${n}"` both run), by the
+  boot compiler's own source using them (`base_env.tw`: `.Some(.Record(name, _, _))`,
+  `prelude/result.tw`: `.Some(.Ok(v))`), by the dedicated regression test
+  `boot/repros/nested_variant_pattern_repro.tw`, and by the fact that stage0 must
+  compile that boot source to bootstrap. `from_cells` has been simplified back to the
+  nested form. **Lesson for this log: treat single-subagent "X doesn't compile" claims
+  as hypotheses until reproduced minimally.**
 
 - **TRADEOFF — the two-import-line rule bites within your own project, not just stdlib.**
   `use frame.cell.{Scalar}` brings the *type* into scope but NOT the module alias, so
@@ -238,21 +244,19 @@ Observations:
    error. We shipped a *partial* reorg (row-level ops into `table.tw`) to get
    `t.filter(...).order_by(...)`, but full chaining through group-by/join still can't
    coexist with a clean module split. This is the #1 finding and it's architectural.
-2. **Ship a `Stringify` (`to_string`) witness for builtin `Order`** (and audit other
-   builtins returned by core APIs). User enums are fixable by adding `to_string`
-   (we did, for `DType`/`Dir`/`How`); the only thing user code *can't* fix is builtins
-   with no module to attach to. Optionally, auto-derive `Stringify` for payload-free
-   enums to drop even the one-liners.
-3. **Nested constructor patterns** (`.Some(.CInt(_))`). Removes forced double-nesting in
-   all enum-of-enum dispatch.
-4. **A trie-aware bulk `Vector.gather(idx)` / permute primitive.** Directly attacks the
+2. **[DONE] `Stringify` witness for builtin `Order`.** Shipped on `main`
+   (`Order.to_string`, wired like `option`/`result`). User enums are fixable by adding
+   `to_string` (we did, for `DType`/`Dir`/`How`); builtins with no module to attach to
+   weren't, hence the language fix. Remaining: audit other builtins returned by core
+   APIs, and optionally auto-derive `Stringify` for payload-free enums.
+3. **A trie-aware bulk `Vector.gather(idx)` / permute primitive.** Directly attacks the
    `order_by`/`take` cost center, the dominant cost at scale.
-5. **A way to write `ColData` 4-arm dispatch once** (generic-over-primitive, or codegen).
+4. **A way to write `ColData` 4-arm dispatch once** (generic-over-primitive, or codegen).
    The 4× duplication in `gather`/`compare_at`/`cell_at`/`from_cells`/agg is the
    concrete tax of no-traits + no-HKT for unboxed columns.
-6. **Reserved-name documentation.** List reserved type names (`Cell`, `Option`,
+5. **Reserved-name documentation.** List reserved type names (`Cell`, `Option`,
    `Result`, ...) in the docs so collisions are designed around, not discovered.
-7. **Nullable accessors on the row view** (`RowRef.int_opt`), for predicates over dirty
+6. **Nullable accessors on the row view** (`RowRef.int_opt`), for predicates over dirty
    data without trap-or-precheck.
 
 ## What held up without complaint

@@ -208,13 +208,11 @@ pub fn from_cells(cells: Vector<Scalar>) Result<Column, String> {
 
   case first_non_null(cells) {
     .None => .Ok(Column.{ data: ColData.FloatCol(Vector.make(cells.len(), 0.0)), nulls }),
-    .Some(s) => case s {
-      .CInt(_) => pack_ints(cells, nulls),
-      .CFloat(_) => pack_floats(cells, nulls),
-      .CStr(_) => pack_strs(cells, nulls),
-      .CBool(_) => pack_bools(cells, nulls),
-      .CNull => .Err("unreachable: first_non_null returned CNull"),
-    },
+    .Some(.CInt(_)) => pack_ints(cells, nulls),
+    .Some(.CFloat(_)) => pack_floats(cells, nulls),
+    .Some(.CStr(_)) => pack_strs(cells, nulls),
+    .Some(.CBool(_)) => pack_bools(cells, nulls),
+    .Some(.CNull) => .Err("unreachable: first_non_null returned CNull"),
   }
 }
 
