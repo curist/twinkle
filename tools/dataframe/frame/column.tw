@@ -184,3 +184,100 @@ fn bool_rank(b: Bool) Int {
     0
   }
 }
+
+/// Pack a vector of Scalars into a typed Column, inferring dtype from the first
+/// non-null scalar. CNull becomes masked with a type-appropriate placeholder.
+/// An all-null input defaults to a FloatCol (matches mean-of-empty results).
+pub fn from_cells(cells: Vector<Scalar>) Result<Column, String> {
+  nulls: Vector<Bool> = []
+
+  for c in cells {
+    nulls = .append(is_null_cell(c))
+  }
+
+  case first_non_null(cells) {
+    .None => .Ok(Column.{ data: ColData.FloatCol(Vector.make(cells.len(), 0.0)), nulls }),
+    .Some(s) => case s {
+      .CInt(_) => pack_ints(cells, nulls),
+      .CFloat(_) => pack_floats(cells, nulls),
+      .CStr(_) => pack_strs(cells, nulls),
+      .CBool(_) => pack_bools(cells, nulls),
+      .CNull => .Err("unreachable: first_non_null returned CNull"),
+    },
+  }
+}
+
+fn is_null_cell(c: Scalar) Bool {
+  case c {
+    .CNull => true,
+    _ => false,
+  }
+}
+
+fn first_non_null(cells: Vector<Scalar>) Scalar? {
+  for c in cells {
+    case c {
+      .CNull => {},
+      _ => { return .Some(c) },
+    }
+  }
+
+  .None
+}
+
+fn pack_ints(cells: Vector<Scalar>, nulls: Vector<Bool>) Result<Column, String> {
+  data: Vector<Int> = []
+
+  for c in cells {
+    case c {
+      .CInt(n) => data = .append(n),
+      .CNull => data = .append(0),
+      _ => { return .Err("mixed cell types in from_cells (expected Int)") },
+    }
+  }
+
+  .Ok(Column.{ data: ColData.IntCol(data), nulls })
+}
+
+fn pack_floats(cells: Vector<Scalar>, nulls: Vector<Bool>) Result<Column, String> {
+  data: Vector<Float> = []
+
+  for c in cells {
+    case c {
+      .CFloat(f) => data = .append(f),
+      .CInt(n) => data = .append(n.to_float()),
+      .CNull => data = .append(0.0),
+      _ => { return .Err("mixed cell types in from_cells (expected Float)") },
+    }
+  }
+
+  .Ok(Column.{ data: ColData.FloatCol(data), nulls })
+}
+
+fn pack_strs(cells: Vector<Scalar>, nulls: Vector<Bool>) Result<Column, String> {
+  data: Vector<String> = []
+
+  for c in cells {
+    case c {
+      .CStr(s) => data = .append(s),
+      .CNull => data = .append(""),
+      _ => { return .Err("mixed cell types in from_cells (expected Str)") },
+    }
+  }
+
+  .Ok(Column.{ data: ColData.StrCol(data), nulls })
+}
+
+fn pack_bools(cells: Vector<Scalar>, nulls: Vector<Bool>) Result<Column, String> {
+  data: Vector<Bool> = []
+
+  for c in cells {
+    case c {
+      .CBool(b) => data = .append(b),
+      .CNull => data = .append(false),
+      _ => { return .Err("mixed cell types in from_cells (expected Bool)") },
+    }
+  }
+
+  .Ok(Column.{ data: ColData.BoolCol(data), nulls })
+}
