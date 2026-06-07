@@ -423,9 +423,11 @@ Recommended order:
 1. `semantic_tokens.tw` — done
    - classify tokens from occurrence kind/role;
    - keep syntax-only fallback for comments/literals/unknown nodes if needed.
-2. `definition.tw`
+2. `definition.tw` — done for occurrence-backed symbols
    - use occurrence-to-definition mapping.
-3. `references.tw` and `document_highlight.tw`
+   - keep targeted syntax fallback for imports/module aliases and type-definition
+     queries that are not represented as ordinary identifier occurrences.
+3. `references.tw` and `document_highlight.tw` — done
    - replace or bridge the private `references.SymbolId` with shared
      `occurrences.SymbolKey`;
    - group by `SymbolKey`, not by name/span heuristics;
@@ -442,13 +444,15 @@ Recommended order:
 Checklist:
 
 - [x] Migrate semantic tokens behind existing LSP regression tests.
-- [ ] Migrate the remaining consumers one at a time behind tests.
-- [ ] Replace the private `references.SymbolId` and `definition.tw` local-binding
+- [ ] Migrate the remaining consumers one at a time behind tests. Definition,
+      references, and document highlights now consume occurrences; hover,
+      completion, and inlay hints remain.
+- [x] Replace the private `references.SymbolId` and `definition.tw` local-binding
       walks (`resolve_local_binding`, `find_local_in_block`) with `SymbolKey`.
-- [ ] Delete obsolete local-scope walkers once no consumer needs them, including
-      `semantic_tokens.tw` `local_names`/`after_stmt` threading and
-      `completion.tw`'s independent in-scope param/let collection.
-- [ ] Keep focused regression cases for shadowing, imports, methods, fields, and
+- [ ] Delete obsolete local-scope walkers once no consumer needs them. The
+      semantic-token bridge and definition/references local walkers are gone;
+      `completion.tw`'s independent receiver param/let collection remains.
+- [x] Keep focused regression cases for shadowing, imports, methods, fields, and
       variants.
 
 Acceptance:

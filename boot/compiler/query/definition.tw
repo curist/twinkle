@@ -14,6 +14,8 @@ use compiler.imports
 use compiler.mono_type.{MonoType, TypeId}
 use compiler.query.ast_walk.{NodeContext, find_node_in_block, find_node_in_expr, find_node_in_stmt}
 use compiler.query.cache
+use compiler.query.occurrences as occ
+use compiler.query.semantic
 use compiler.query.semantic.{SemanticSnapshot}
 use compiler.resolver.{ResolvedEnv}
 use lib.module.core_lib
@@ -35,8 +37,6 @@ type Ref = {
   ImportItem(String),
   Variant(String, Expr?),
 }
-
-type Binding = .{ name: String, span: Span }
 
 pub fn type_definition(snap: SemanticSnapshot, byte_offset: Int) DefinitionResult? {
   parsed := case snap.parsed {
@@ -73,6 +73,11 @@ pub fn type_definition(snap: SemanticSnapshot, byte_offset: Int) DefinitionResul
 }
 
 pub fn definition(snap: SemanticSnapshot, byte_offset: Int) DefinitionResult? {
+  case occurrence_definition(snap, byte_offset) {
+    .Some(target) => { return .Some(target) },
+    .None => {},
+  }
+
   parsed := case snap.parsed {
     .Some(value) => value,
     .None => { return .None },
@@ -111,6 +116,63 @@ pub fn definition(snap: SemanticSnapshot, byte_offset: Int) DefinitionResult? {
   resolve_ref(snap, ref, byte_offset)
 }
 
+fn occurrence_definition(snap: SemanticSnapshot, byte_offset: Int) DefinitionResult? {
+  index := case snap.occurrences {
+    .Some(i) => i,
+    .None => { return .None },
+  }
+  first := case occ.occurrence_at_offset(index, byte_offset) {
+    .Some(o) => o,
+    .None => { return .None },
+  }
+  occurrence := prefer_shorthand_value(index, first)
+
+  // Preserve existing behavior: type parameters do not produce a go-to-def
+  // target even though they are represented in the occurrence map for other
+  // consumers.
+  if occurrence.kind == .TypeParameter {
+    return .None
+  }
+
+  case occ.definition_for_occurrence(index, occurrence) {
+    .Some(def) => { return definition_result_from_symbol(def) },
+    .None => {},
+  }
+
+  for candidate in semantic.occurrences_for_cached_modules(snap.cache).indexes {
+    case occ.definition_for_occurrence(candidate, occurrence) {
+      .Some(def) => { return definition_result_from_symbol(def) },
+      .None => {},
+    }
+  }
+
+  .None
+}
+
+fn prefer_shorthand_value(index: occ.OccurrenceIndex, first: occ.Occurrence) occ.Occurrence {
+  for candidate in index.occurrences {
+    if candidate.role == .Shorthand
+      and candidate.span.start == first.span.start and candidate.span.end == first.span.end {
+      return candidate
+    }
+  }
+
+  first
+}
+
+fn definition_result_from_symbol(def: occ.SymbolDef) DefinitionResult? {
+  span := case def.declaration_span {
+    .Some(s) => s,
+    .None => { return .None },
+  }
+  uri := case def.declaration_uri {
+    .Some(u) => u,
+    .None => { return .None },
+  }
+
+  .Some(.{ uri, span })
+}
+
 fn resolve_ref(snap: SemanticSnapshot, ref: Ref, byte_offset: Int) DefinitionResult? {
   parsed := case snap.parsed {
     .Some(p) => p,
@@ -123,19 +185,12 @@ fn resolve_ref(snap: SemanticSnapshot, ref: Ref, byte_offset: Int) DefinitionRes
   ctx := DefCtx.{ snap, env: typed.env }
 
   case ref {
-    .Ident(name) => {
-      case resolve_local_binding(parsed.module.items, name, byte_offset) {
-        .Some(b) => { return .Some(.{ uri: snap.uri, span: b.span }) },
-        .None => {},
-      }
-
-      case ctx.resolve_function_name(name) {
-        .Some(target) => .Some(target),
-        .None => {
-          // Module alias used in expression context: dep in dep.answer()
-          resolve_import_alias(snap, name)
-        },
-      }
+    .Ident(name) => case ctx.resolve_function_name(name) {
+      .Some(target) => .Some(target),
+      .None => {
+        // Module alias used in expression context: dep in dep.answer()
+        resolve_import_alias(snap, name)
+      },
     },
     .Field(base, field) => {
       // Module-qualified calls and values: dep.answer
@@ -1170,259 +1225,5 @@ fn resolve_type_id(snap: SemanticSnapshot, env: ResolvedEnv, tid: TypeId) Defini
       },
       .None => .None,
     },
-  }
-}
-
-// ── Local lexical binding resolution ────────────────────────────────
-fn resolve_local_binding(items: Vector<Item>, name: String, ref_offset: Int) Binding? {
-  // Current function scope: params plus preceding local binders.
-  for item in items {
-    case item {
-      .Function(decl) => if decl.span.contains(ref_offset) {
-        for p in decl.params {
-          if p.name == name {
-            return .Some(.{ name, span: p.name_span })
-          }
-        }
-
-        return find_local_in_block(decl.body, name, ref_offset)
-      },
-      _ => {},
-    }
-  }
-
-  found: Binding? = .None
-
-  for item in items {
-    case item {
-      .Stmt(.Let(ls)) => if ls.name == name and ls.span.start < ref_offset {
-        found = .Some(.{ name, span: ls.name_span })
-      },
-      _ => {},
-    }
-  }
-
-  found
-}
-
-fn find_local_in_block(block: Block, name: String, ref_offset: Int) Binding? {
-  found: Binding? = .None
-
-  for stmt in block.stmts {
-    if stmt_span(stmt).start >= ref_offset {
-      break
-    }
-
-    case stmt {
-      .Let(ls) => {
-        if ls.value.span.contains(ref_offset) {
-          case find_scoped_binding_in_expr(ls.value, name, ref_offset) {
-            .Some(b) => { return .Some(b) },
-            .None => {},
-          }
-        }
-
-        if ls.name == name {
-          found = .Some(.{ name, span: ls.name_span })
-        }
-      },
-      .For(fs) => if fs.span.contains(ref_offset) {
-        case fs.pattern {
-          .Some(n) => if n == name {
-            case fs.pattern_span {
-              .Some(s) => { return .Some(.{ name, span: s }) },
-              .None => {},
-            }
-          },
-          .None => {},
-        }
-
-        case fs.index {
-          .Some(n) => if n == name {
-            case fs.index_span {
-              .Some(s) => { return .Some(.{ name, span: s }) },
-              .None => {},
-            }
-          },
-          .None => {},
-        }
-
-        case find_local_in_block(fs.body, name, ref_offset) {
-          .Some(b) => { return .Some(b) },
-          .None => {},
-        }
-      },
-      _ => if stmt_span(stmt).contains(ref_offset) {
-        case find_scoped_binding_in_stmt(stmt, name, ref_offset) {
-          .Some(b) => { return .Some(b) },
-          .None => {},
-        }
-      },
-    }
-  }
-
-  case block.tail {
-    .Some(e) => if e.span.contains(ref_offset) {
-      case find_scoped_binding_in_expr(e, name, ref_offset) {
-        .Some(b) => { return .Some(b) },
-        .None => {},
-      }
-    },
-    .None => {},
-  }
-
-  found
-}
-
-fn find_scoped_binding_in_stmt(stmt: Stmt, name: String, ref_offset: Int) Binding? {
-  case stmt {
-    .Return(rs) => case rs.value {
-      .Some(e) => find_scoped_binding_in_expr(e, name, ref_offset),
-      .None => .None,
-    },
-    .Break(bs) => case bs.value {
-      .Some(e) => find_scoped_binding_in_expr(e, name, ref_offset),
-      .None => .None,
-    },
-    .Defer(ds) => find_scoped_binding_in_expr(ds.expr, name, ref_offset),
-    .Expr(es) => find_scoped_binding_in_expr(es.expr, name, ref_offset),
-    _ => .None,
-  }
-}
-
-fn find_scoped_binding_in_expr(expr: Expr, name: String, ref_offset: Int) Binding? {
-  if !expr.span.contains(ref_offset) {
-    return .None
-  }
-
-  case expr.kind {
-    .Case(scrutinee, arms) => {
-      if scrutinee.span.contains(ref_offset) {
-        return .None
-      }
-
-      for arm in arms {
-        if arm.expr.span.contains(ref_offset) {
-          case find_binding_in_pattern(arm.pattern, name) {
-            .Some(b) => { return .Some(b) },
-            .None => {},
-          }
-
-          return find_scoped_binding_in_expr(arm.expr, name, ref_offset)
-        }
-      }
-
-      .None
-    },
-    .BlockExpr(block) => find_local_in_block(block, name, ref_offset),
-    .If(cond_e, then_block, else_expr) => {
-      if cond_e.span.contains(ref_offset) {
-        return .None
-      }
-
-      if then_block.span.contains(ref_offset) {
-        return find_local_in_block(then_block, name, ref_offset)
-      }
-
-      case else_expr {
-        .Some(e) => find_scoped_binding_in_expr(e, name, ref_offset),
-        .None => .None,
-      }
-    },
-    .Cond(arms) => {
-      for arm in arms {
-        if arm.span.contains(ref_offset) {
-          return find_scoped_binding_in_expr(arm.body, name, ref_offset)
-        }
-      }
-
-      .None
-    },
-    .Collect(col) => {
-      case col.iter {
-        .Some(e) => if e.span.contains(ref_offset) {
-          return .None
-        },
-        .None => {},
-      }
-
-      case col.condition {
-        .Some(e) => if e.span.contains(ref_offset) {
-          return .None
-        },
-        .None => {},
-      }
-
-      if col.body.span.contains(ref_offset) {
-        case col.pattern {
-          .Some(n) => if n == name {
-            case col.pattern_span {
-              .Some(s) => { return .Some(.{ name, span: s }) },
-              .None => {},
-            }
-          },
-          .None => {},
-        }
-
-        case col.index {
-          .Some(n) => if n == name {
-            case col.index_span {
-              .Some(s) => { return .Some(.{ name, span: s }) },
-              .None => {},
-            }
-          },
-          .None => {},
-        }
-
-        return find_local_in_block(col.body, name, ref_offset)
-      }
-
-      .None
-    },
-    _ => .None,
-  }
-}
-
-fn find_binding_in_pattern(pat: Pattern, name: String) Binding? {
-  case pat.kind {
-    .Ident(n) => if n == name {
-      .Some(.{ name, span: pat.span })
-    } else {
-      .None
-    },
-    .Variant(_, subs) => {
-      for p in subs {
-        case find_binding_in_pattern(p, name) {
-          .Some(b) => { return .Some(b) },
-          .None => {},
-        }
-      }
-
-      .None
-    },
-    .QualifiedVariant(_, _, subs) => {
-      for p in subs {
-        case find_binding_in_pattern(p, name) {
-          .Some(b) => { return .Some(b) },
-          .None => {},
-        }
-      }
-
-      .None
-    },
-    _ => .None,
-  }
-}
-
-fn stmt_span(stmt: Stmt) Span {
-  case stmt {
-    .Let(s) => s.span,
-    .For(s) => s.span,
-    .Return(s) => s.span,
-    .Break(s) => s.span,
-    .Continue(s) => s.span,
-    .Defer(s) => s.span,
-    .Expr(s) => s.span,
-    .ErrorStmt(s) => s,
   }
 }

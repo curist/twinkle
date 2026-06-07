@@ -650,7 +650,11 @@ fn walk_type_expr(ctx: Ctx, b: Builder, te: TypeExpr) Builder {
         type_name,
         .Type,
         .Reference,
-        path.span,
+        Span.{
+          file_id: path.span.file_id,
+          start: path.span.end - type_name.len(),
+          end: path.span.end,
+        },
         .None,
       )
     },
@@ -674,7 +678,11 @@ fn walk_type_expr(ctx: Ctx, b: Builder, te: TypeExpr) Builder {
           type_name,
           .Type,
           .Reference,
-          path.span,
+          Span.{
+            file_id: path.span.file_id,
+            start: path.span.end - type_name.len(),
+            end: path.span.end,
+          },
           .None,
         )
       }

@@ -1,7 +1,7 @@
 /// Document-highlight query: find all occurrences of the symbol under the
 /// cursor within the current document, annotated with read/write kind.
 
-use compiler.query.references.{find_references}
+use compiler.query.occurrences as occ
 use compiler.query.semantic.{SemanticSnapshot}
 use lib.source.span.{Span}
 
@@ -10,15 +10,24 @@ pub type HighlightKind = { Text, Read, Write }
 pub type DocumentHighlight = .{ span: Span, kind: HighlightKind }
 
 pub fn document_highlights(snap: SemanticSnapshot, byte_offset: Int) Vector<DocumentHighlight> {
-  // find_references with include_declaration=true gives us all sites
-  refs := find_references(snap, byte_offset, true)
+  index := case snap.occurrences {
+    .Some(i) => i,
+    .None => { return [] },
+  }
+  target := case occ.occurrence_at_offset(index, byte_offset) {
+    .Some(o) => o,
+    .None => { return [] },
+  }
 
   highlights: Vector<DocumentHighlight> = []
 
-  for ref in refs {
-    if ref.uri == snap.uri {
-      highlights = .append(.{ span: ref.span, kind: .Read })
+  for site in occ.occurrences_for_symbol(index, target.symbol_key) {
+    kind := if site.role == .Write {
+      HighlightKind.Write
+    } else {
+      HighlightKind.Read
     }
+    highlights = .append(.{ span: site.span, kind })
   }
 
   highlights
