@@ -1,0 +1,299 @@
+use compiler.checker
+use compiler.parser
+use compiler.query.cache
+use compiler.query.diagnostics
+use compiler.query.occurrence_build
+use compiler.query.occurrences as occ
+use compiler.query.semantic
+use compiler.resolver
+use tests.assert
+use tests.runner
+
+// Build a fully enriched index (resolver + checker metadata) from source.
+fn build(src: String) occ.OccurrenceIndex {
+  parsed := parser.parse(src, 0)
+  resolved := resolver.empty_env().resolve(parsed.value)
+  typed := checker.check(parsed.value, resolved.env)
+  occurrence_build.build("m", "file:///m.tw", parsed.value, resolved.env, typed)
+}
+
+fn nth_offset(src: String, needle: String, n: Int) Int {
+  i := 0
+  needle_len := needle.len()
+  seen := 0
+
+  for i + needle_len <= src.len() {
+    if src.substring(i, i + needle_len) == needle {
+      seen = seen + 1
+
+      if seen == n {
+        return i
+      }
+    }
+
+    i = i + 1
+  }
+
+  -1
+}
+
+fn at_nth(idx: occ.OccurrenceIndex, src: String, needle: String, n: Int) occ.Occurrence? {
+  occ.occurrence_at_offset(idx, nth_offset(src, needle, n))
+}
+
+fn has(idx: occ.OccurrenceIndex, name: String, kind: occ.SymbolKind, role: occ.OccurrenceRole) Bool {
+  found := false
+
+  for o in idx.occurrences {
+    if o.name == name and o.kind == kind and o.role == role {
+      found = true
+    }
+  }
+
+  found
+}
+
+pub fn suite() runner.Suite {
+  runner.suite("occurrence enrich (resolver/checker)")
+    .test(
+      "function declaration and call resolve to one function symbol",
+      fn() {
+        src := "fn helper() Int {\n  0\n}\nfn run() Int {\n  helper()\n}\n"
+        idx := build(src)
+
+        decl := try at_nth(idx, src, "helper", 1).ok_or("expected the helper declaration")
+        try assert.ok(decl.kind == .Function, "helper should be a function")
+        try assert.ok(decl.role == .Declaration, "first helper should be a declaration")
+
+        call := try at_nth(idx, src, "helper", 2).ok_or("expected the helper call")
+        try assert.ok(call.kind == .Function, "call target should be a function")
+        try assert.ok(call.role == .Reference, "call should be a reference")
+
+        try assert.equal(idx.occurrences_for_symbol(call.symbol_key).len(), 2)
+        .Ok({})
+      },
+    )
+    .test(
+      "type declaration and reference resolve to one type symbol",
+      fn() {
+        src := "type Point = .{ x: Int, y: Int }\nfn origin() Point {\n  Point.{ x: 0, y: 0 }\n}\n"
+        idx := build(src)
+
+        decl := try at_nth(idx, src, "Point", 1).ok_or("expected the Point declaration")
+        try assert.ok(decl.kind == .Type, "Point should be a type")
+        try assert.ok(decl.role == .Declaration, "first Point should be a declaration")
+
+        ann := try at_nth(idx, src, "Point", 2).ok_or("expected the Point return-type reference")
+        try assert.ok(ann.kind == .Type, "return-type Point should be a type reference")
+
+        // declaration + return-type annotation + named-record constructor
+        try assert.ok(
+          idx.occurrences_for_symbol(decl.symbol_key).len() >= 3,
+          "Point uses should group",
+        )
+        .Ok({})
+      },
+    )
+    .test(
+      "record fields are declared and type parameters are classified",
+      fn() {
+        src := "type Box<T> = .{ item: T }\n"
+        idx := build(src)
+
+        try assert.ok(has(idx, "item", .Field, .Declaration), "item should be a field declaration")
+        try assert.ok(
+          has(idx, "T", .TypeParameter, .Declaration),
+          "T should be a type-param declaration",
+        )
+        try assert.ok(
+          has(idx, "T", .TypeParameter, .Reference),
+          "T in the field type should be a type-param reference",
+        )
+        .Ok({})
+      },
+    )
+    .test(
+      "enum variants are declared and variant literals are references",
+      fn() {
+        src := "type Color = {\n  Red,\n  Green,\n}\nfn pick() Color {\n  .Red\n}\n"
+        idx := build(src)
+
+        try assert.ok(
+          has(idx, "Red", .Variant, .Declaration),
+          "Red should be a variant declaration",
+        )
+        try assert.ok(
+          has(idx, "Red", .Variant, .Reference),
+          "the .Red literal should be a variant reference",
+        )
+        .Ok({})
+      },
+    )
+    .test(
+      "record field access resolves to the declaring field symbol",
+      fn() {
+        src := "type Point = .{ coord: Int, y: Int }\nfn get_coord(p: Point) Int {\n  p.coord\n}\n"
+        idx := build(src)
+
+        decl := try at_nth(idx, src, "coord", 1).ok_or("expected the coord field declaration")
+        access := try at_nth(idx, src, "coord", 3).ok_or("expected the p.coord field access")
+
+        try assert.ok(decl.kind == .Field, "coord declaration should be a field")
+        try assert.ok(access.kind == .Field, "coord access should be a field")
+        try assert.equal(idx.occurrences_for_symbol(access.symbol_key).len(), 2)
+        .Ok({})
+      },
+    )
+    .test(
+      "variant literal resolves to the declaring variant symbol",
+      fn() {
+        src := "type Color = { Red, Green }\nfn pick() Color {\n  .Red\n}\n"
+        idx := build(src)
+
+        decl := try at_nth(idx, src, "Red", 1).ok_or("expected the Red variant declaration")
+        lit := try at_nth(idx, src, "Red", 2).ok_or("expected the .Red variant literal")
+
+        try assert.ok(decl.kind == .Variant, "Red declaration should be a variant")
+        try assert.ok(lit.kind == .Variant, "Red literal should be a variant")
+        try assert.equal(idx.occurrences_for_symbol(lit.symbol_key).len(), 2)
+        .Ok({})
+      },
+    )
+    .test(
+      "selective imports record import occurrences",
+      fn() {
+        src := "use foo.bar.{ helper, Widget }\n"
+        idx := build(src)
+
+        try assert.ok(
+          has(idx, "helper", .Function, .Import),
+          "imported value should be a function import",
+        )
+        try assert.ok(has(idx, "Widget", .Type, .Import), "imported type should be a type import")
+        .Ok({})
+      },
+    )
+    .test(
+      "a module-qualified receiver is a namespace, not a local",
+      fn() {
+        src := "fn run() Int {\n  mod.helper()\n}\n"
+        idx := build(src)
+
+        recv := try at_nth(idx, src, "mod", 1).ok_or("expected the mod namespace receiver")
+        try assert.ok(recv.kind == .Module, "an unknown qualifier should classify as a namespace")
+        .Ok({})
+      },
+    )
+    .test(
+      "semantic snapshot invalidates cached occurrences after edit",
+      fn() {
+        src1 := "fn helper() Int {\n  helper()\n}\n"
+        snap1 := semantic.snapshot(
+          cache.empty(),
+          diagnostics.DocumentInput.{ uri: "file:///m.tw", text: src1, version: .Some(1) },
+        )
+        _old_idx := try cache.latest_occurrences(snap1.cache, "/m.tw")
+          .ok_or("expected first cached occurrences")
+
+        src2 := "fn other() Int {\n  other()\n}\n"
+        snap2 := semantic.snapshot(
+          snap1.cache,
+          diagnostics.DocumentInput.{ uri: "file:///m.tw", text: src2, version: .Some(2) },
+        )
+        idx := try cache.latest_occurrences(snap2.cache, "/m.tw")
+          .ok_or("expected updated cached occurrences")
+
+        try assert.ok(
+          has(idx, "other", .Function, .Declaration),
+          "updated cache should contain other",
+        )
+        try assert.ok(
+          !has(idx, "helper", .Function, .Declaration),
+          "updated cache must not keep helper",
+        )
+        .Ok({})
+      },
+    )
+    .test(
+      "semantic snapshot caches the occurrence index",
+      fn() {
+        src := "fn helper() Int {\n  0\n}\nfn run() Int {\n  helper()\n}\n"
+        snap := semantic.snapshot(
+          cache.empty(),
+          diagnostics.DocumentInput.{ uri: "file:///m.tw", text: src, version: .Some(1) },
+        )
+
+        cached := try cache.latest_occurrences(snap.cache, "/m.tw")
+          .ok_or("expected cached occurrences")
+        call := try at_nth(cached, src, "helper", 2).ok_or("expected the cached helper call")
+
+        try assert.ok(call.kind == .Function, "cached occurrence should use enriched metadata")
+        .Ok({})
+      },
+    )
+    .test(
+      "semantic snapshot exposes the enriched occurrence index",
+      fn() {
+        src := "fn helper() Int {\n  0\n}\nfn run() Int {\n  helper()\n}\n"
+        snap := semantic.snapshot(
+          cache.empty(),
+          diagnostics.DocumentInput.{ uri: "file:///m.tw", text: src, version: .Some(1) },
+        )
+        idx := try snap.occurrences.ok_or("expected occurrences in semantic snapshot")
+        call := try at_nth(idx, src, "helper", 2).ok_or("expected the helper call")
+
+        try assert.ok(
+          call.kind == .Function,
+          "snapshot occurrence should use enriched function metadata",
+        )
+        try assert.equal(idx.occurrences_for_symbol(call.symbol_key).len(), 2)
+        .Ok({})
+      },
+    )
+    .test(
+      "workspace occurrence helper builds missing cached indexes",
+      fn() {
+        src := "fn helper() Int {\n  0\n}\nfn run() Int {\n  helper()\n}\n"
+        snap := semantic.snapshot(
+          cache.empty(),
+          diagnostics.DocumentInput.{ uri: "file:///m.tw", text: src, version: .Some(1) },
+        )
+        store := snap.cache
+        store.occurrences = Dict.new()
+
+        loaded := semantic.occurrences_for_modules(store, ["/m.tw"])
+        try assert.equal(loaded.indexes.len(), 1)
+
+        idx := loaded.indexes[0]
+        call := try at_nth(idx, src, "helper", 2).ok_or("expected the helper call")
+        try assert.ok(call.kind == .Function, "helper call should be enriched")
+        try assert.ok(
+          cache.latest_occurrences(loaded.cache, "/m.tw") != .None,
+          "helper should store the rebuilt occurrence index",
+        )
+        .Ok({})
+      },
+    )
+    .test(
+      "workspace occurrence helper skips modules without parsed artifacts",
+      fn() {
+        loaded := semantic.occurrences_for_modules(cache.empty(), ["/missing.tw"])
+        try assert.equal(loaded.indexes.len(), 0)
+        .Ok({})
+      },
+    )
+    .test(
+      "build_lexical stays purely lexical (no global enrichment)",
+      fn() {
+        // The metadata-free entry must not invent function/type occurrences.
+        src := "fn helper() Int {\n  0\n}\nfn run() Int {\n  helper()\n}\n"
+        idx := occurrence_build.build_lexical("m", "file:///m.tw", parser.parse(src, 0).value)
+
+        try assert.ok(
+          !has(idx, "helper", .Function, .Declaration),
+          "lexical pass must not emit function declarations",
+        )
+        .Ok({})
+      },
+    )
+}

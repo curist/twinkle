@@ -406,6 +406,54 @@ pub fn suite() runner.Suite {
       },
     )
     .test(
+      "local receiver is not highlighted as namespace",
+      fn() {
+        src := "fn f() Vector<Int> {\n  groups: Dict<String, Int> = Dict.new()\n  groups.values()\n}\n"
+        state := state_with_doc("file:///a.tw", src)
+        step := server_core.handle_message(state, sem_tokens_request(1, "file:///a.tw"))
+        data := try sem_token_data(step)
+
+        line := 0
+        col := 0
+        found_local_receiver := false
+        found_namespace_receiver := false
+        i := 0
+
+        for i < token_count(data) {
+          tok := try nth_token(data, i)
+
+          if tok.delta_line > 0 {
+            line = line + tok.delta_line
+            col = tok.delta_start
+          } else {
+            col = col + tok.delta_start
+          }
+
+          if line == 2 and col == 2 and tok.length == 6 {
+            if tok.token_type == TK_VARIABLE() {
+              found_local_receiver = true
+            }
+
+            if tok.token_type == TK_NAMESPACE() {
+              found_namespace_receiver = true
+            }
+          }
+
+          i = i + 1
+        }
+
+        try assert.ok(
+          found_local_receiver,
+          "expected local receiver `groups` to be a variable token",
+        )
+        try assert.ok(
+          !found_namespace_receiver,
+          "local receiver `groups` must not be a namespace token",
+        )
+        .Ok({})
+      },
+    )
+    .test(
       "module name gets namespace token",
       fn() {
         lib_uri := "file:///tmp/lsp_semtok_ns/lib.tw"

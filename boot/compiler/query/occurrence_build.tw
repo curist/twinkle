@@ -1,21 +1,25 @@
-/// Build the lexical layer of an occurrence index from the AST.
+/// Build an occurrence index from the AST plus resolver/checker metadata.
 ///
-/// Phase 2 centralizes the local scope tracking that semantic tokens and
-/// references each duplicate today. It allocates a local symbol for every
-/// binder (params, lets, closure params, for/collect binders, case pattern
-/// idents), models shadowing by threading a per-scope environment, and emits a
-/// `Declaration` occurrence at each binder plus `Reference`/`Write`/`Shorthand`
-/// occurrences for identifiers that resolve to a binder in scope.
+/// `build_lexical` produces only the lexical layer (Phase 2): a local symbol for
+/// every binder (params, lets, closure params, for/collect binders, case pattern
+/// idents) with shadowing modeled by a threaded per-scope environment.
 ///
-/// Identifiers that do not resolve to a local binder (functions, types,
-/// variants, fields, module aliases) are left untouched here; Phase 3 enriches
-/// them from resolver/checker metadata.
+/// `build` additionally enriches the index with global resolution (Phase 3):
+/// declarations for functions/types/type-params/fields/variants and selective
+/// imports, classification of non-local identifiers as functions or types,
+/// type-expression references, and member classification (namespace / method /
+/// variant / property) using checker `method_calls`. Member/variant/field
+/// *references* currently carry best-effort keys; precise cross-file keys via the
+/// checker type map are a later refinement (Phase 3b).
 
 use compiler.ast.{
-  Block, CollectExpr, Expr, ForStmt, FunctionDecl, Item, Module, Param, Pattern, RecordEntry, Stmt,
-  StringPart,
+  Block, CollectExpr, Expr, ForStmt, FunctionDecl, ImportItem, Module, Pattern, RecordEntry, Stmt,
+  TypeDecl, TypeExpr, TypeParam, UseDecl,
 }
+use compiler.checker.{CheckResult, MethodCallInfo}
+use compiler.mono_type.{MonoType, TypeId}
 use compiler.query.occurrences as occ
+use compiler.resolver.{ResolvedEnv}
 use lib.source.span.{Span}
 
 /// A binder in scope: its per-file local id and how tooling describes it.
@@ -33,18 +37,47 @@ type Builder = .{ index: occ.OccurrenceIndex, next_local: Int }
 type Walk = .{ b: Builder, env: Env }
 
 /// Immutable invariants threaded as the receiver so calls read as
-/// `ctx.walk_expr(b, env, e)`.
-type Ctx = .{ mod: String, uri: String }
+/// `ctx.walk_expr(b, env, e)`. `env`/`typed` are present only in metadata mode;
+/// `tparams` maps a type-parameter name to its per-file local id within the
+/// current declaration.
+type Ctx = .{
+  mod: String,
+  uri: String,
+  env: ResolvedEnv?,
+  typed: CheckResult?,
+  tparams: Dict<String, Int>,
+}
 
-/// Build the lexical occurrence index for a parsed module.
+type TParamAlloc = .{ b: Builder, map: Dict<String, Int> }
+
+/// Build only the lexical occurrence layer for a parsed module.
 pub fn build_lexical(mod: String, uri: String, module: Module) occ.OccurrenceIndex {
-  ctx := Ctx.{ mod, uri }
-  b := Builder.{ index: occ.empty(mod, uri), next_local: 0 }
+  ctx := Ctx.{ mod, uri, env: .None, typed: .None, tparams: Dict.new() }
+  ctx.build_with(module)
+}
+
+/// Build a fully enriched occurrence index using resolver/checker metadata.
+pub fn build(mod: String, uri: String, module: Module, env: ResolvedEnv, typed: CheckResult) occ.OccurrenceIndex {
+  ctx := Ctx.{ mod, uri, env: .Some(env), typed: .Some(typed), tparams: Dict.new() }
+  ctx.build_with(module)
+}
+
+fn build_with(ctx: Ctx, module: Module) occ.OccurrenceIndex {
+  b := Builder.{ index: occ.empty(ctx.mod, ctx.uri), next_local: 0 }
   top_env: Env = Dict.new()
 
   for item in module.items {
     case item {
-      .Function(fd) => b = ctx.walk_function(b, fd),
+      .Function(fd) => b = ctx.walk_function_item(b, fd),
+      .Type(td) => b = ctx.walk_type_item(b, td),
+      .Use(ud) => b = ctx.walk_use_item(b, ud),
+      .ExternFunction(ed) => b = ctx.emit_decl(
+        b,
+        ed.name,
+        ed.name_span,
+        .Function,
+        .Function(ctx.mod, ed.name),
+      ),
       .Stmt(s) => {
         w := ctx.walk_stmt(b, top_env, s)
         b = w.b
@@ -57,14 +90,94 @@ pub fn build_lexical(mod: String, uri: String, module: Module) occ.OccurrenceInd
   b.index.finalize()
 }
 
-fn walk_function(ctx: Ctx, b: Builder, fd: FunctionDecl) Builder {
-  w := Walk.{ b, env: Dict.new() }
+fn meta(ctx: Ctx) Bool {
+  case ctx.env {
+    .Some(_) => true,
+    .None => false,
+  }
+}
+
+fn walk_function_item(ctx: Ctx, b: Builder, fd: FunctionDecl) Builder {
+  b = ctx.emit_decl(b, fd.name, fd.name_span, .Function, ctx.fn_decl_key(fd.name))
+
+  alloc := ctx.alloc_tparams(b, fd.type_params)
+  inner := ctx.with_tparams(alloc.map)
+  w := Walk.{ b: alloc.b, env: Dict.new() }
 
   for p in fd.params {
-    w = ctx.declare(w.b, w.env, p.name, p.name_span, .Parameter)
+    w.b = inner.walk_type_expr_opt(w.b, p.ty)
+    w = inner.declare(w.b, w.env, p.name, p.name_span, .Parameter)
   }
 
-  ctx.walk_block(w.b, w.env, fd.body)
+  w.b = inner.walk_type_expr_opt(w.b, fd.return_type)
+  inner.walk_block(w.b, w.env, fd.body)
+}
+
+fn walk_type_item(ctx: Ctx, b: Builder, td: TypeDecl) Builder {
+  b = ctx.emit_decl(b, td.name, td.name_span, .Type, ctx.type_decl_key(td.name))
+
+  alloc := ctx.alloc_tparams(b, td.type_params)
+  inner := ctx.with_tparams(alloc.map)
+  b = alloc.b
+
+  case td.def {
+    .Record(fields) => {
+      for f in fields {
+        b = inner.emit_decl(b, f.name, f.name_span, .Field, .Field(ctx.mod, td.name, f.name))
+        b = inner.walk_type_expr(b, f.ty)
+      }
+    },
+    .Sum(variants) => {
+      for v in variants {
+        vspan := Span.{
+          file_id: v.span.file_id,
+          start: v.span.start,
+          end: v.span.start + v.name.len(),
+        }
+        b = inner.emit_decl(b, v.name, vspan, .Variant, .Variant(ctx.mod, td.name, v.name))
+
+        for field_ty in v.fields {
+          b = inner.walk_type_expr(b, field_ty)
+        }
+      }
+    },
+    .Alias(te) => b = inner.walk_type_expr(b, te),
+    .ErrorDef(_) => {},
+  }
+
+  b
+}
+
+fn walk_use_item(ctx: Ctx, b: Builder, ud: UseDecl) Builder {
+  if !ctx.meta() {
+    return b
+  }
+
+  case ud.items {
+    .Some(items) => {
+      for it in items {
+        b = ctx.emit_import(b, it)
+      }
+    },
+    .None => {},
+  }
+
+  b
+}
+
+fn emit_import(ctx: Ctx, b: Builder, it: ImportItem) Builder {
+  case it {
+    .Value(v) => ctx.add_occ(
+      b,
+      .Function(ctx.mod, v.name),
+      v.name,
+      .Function,
+      .Import,
+      v.span,
+      .None,
+    ),
+    .Type(t) => ctx.add_occ(b, .TypeDef(ctx.mod, t.name), t.name, .Type, .Import, t.span, .None),
+  }
 }
 
 fn walk_block(ctx: Ctx, b: Builder, env: Env, block: Block) Builder {
@@ -83,7 +196,8 @@ fn walk_block(ctx: Ctx, b: Builder, env: Env, block: Block) Builder {
 fn walk_stmt(ctx: Ctx, b: Builder, env: Env, stmt: Stmt) Walk {
   case stmt {
     .Let(ls) => {
-      b2 := ctx.walk_expr(b, env, ls.value)
+      b2 := ctx.walk_type_expr_opt(b, ls.ty)
+      b2 = ctx.walk_expr(b2, env, ls.value)
 
       if ls.is_rebind {
         // Write to an existing local; a non-local target is resolved in Phase 3.
@@ -150,7 +264,7 @@ fn walk_expr(ctx: Ctx, b: Builder, env: Env, expr: Expr) Builder {
   case expr.kind {
     .Ident(name) => case env.get(name) {
       .Some(bind) => ctx.ref_local(b, bind, name, .Reference, expr.span, .Some(expr.id)),
-      .None => b,
+      .None => ctx.classify_global_ident(b, name, expr),
     },
     .IntLit(_) => b,
     .FloatLit(_) => b,
@@ -178,7 +292,7 @@ fn walk_expr(ctx: Ctx, b: Builder, env: Env, expr: Expr) Builder {
 
       b
     },
-    .Field(recv, _) => ctx.walk_expr(b, env, recv),
+    .Field(recv, field_name) => ctx.walk_field(b, env, expr, recv, field_name),
     .Index(a, i) => ctx.walk_expr(ctx.walk_expr(b, env, a), env, i),
     .BlockExpr(blk) => ctx.walk_block(b, env, blk),
     .If(c, then_blk, else_opt) => {
@@ -188,8 +302,10 @@ fn walk_expr(ctx: Ctx, b: Builder, env: Env, expr: Expr) Builder {
     },
     .Case(scrut, arms) => {
       b = ctx.walk_expr(b, env, scrut)
+      scrut_ty := ctx.expr_type(scrut.id)
 
       for arm in arms {
+        b = ctx.walk_pattern_refs(b, arm.pattern, scrut_ty)
         w := ctx.bind_pattern(b, env, arm.pattern)
         b = ctx.walk_expr(w.b, w.env, arm.expr)
       }
@@ -211,33 +327,265 @@ fn walk_expr(ctx: Ctx, b: Builder, env: Env, expr: Expr) Builder {
 
       b
     },
-    .Record(entries) => ctx.walk_record_entries(b, env, entries),
-    .NamedRecord(_, entries) => ctx.walk_record_entries(b, env, entries),
-    .Variant(_, args) => {
+    .Record(entries) => ctx.walk_record_entries(b, env, entries, ctx.expr_type(expr.id)),
+    .NamedRecord(name, entries) => {
+      if ctx.meta() {
+        b = ctx.add_occ(
+          b,
+          ctx.type_decl_key(name),
+          name,
+          .Type,
+          .Reference,
+          Span.{
+            file_id: expr.span.file_id,
+            start: expr.span.start,
+            end: expr.span.start + name.len(),
+          },
+          .None,
+        )
+      }
+
+      ctx.walk_record_entries(b, env, entries, ctx.type_by_name(name))
+    },
+    .Variant(name, args) => {
+      if ctx.meta() {
+        b = ctx.add_occ(
+          b,
+          ctx.variant_key_for_type(ctx.expr_type(expr.id), name),
+          name,
+          .Variant,
+          .Reference,
+          Span.{
+            file_id: expr.span.file_id,
+            start: expr.span.start + 1,
+            end: expr.span.start + 1 + name.len(),
+          },
+          .None,
+        )
+      }
+
       for a in args {
         b = ctx.walk_expr(b, env, a)
       }
 
       b
     },
-    .Closure(params, _, body) => {
+    .Closure(params, ret_ty, body) => {
       w := Walk.{ b, env }
 
       for p in params {
+        w.b = ctx.walk_type_expr_opt(w.b, p.ty)
         w = ctx.declare(w.b, w.env, p.name, p.name_span, .Parameter)
       }
 
+      w.b = ctx.walk_type_expr_opt(w.b, ret_ty)
       ctx.walk_block(w.b, w.env, body)
     },
     .Collect(ce) => ctx.walk_collect(b, env, ce),
   }
 }
 
-fn walk_record_entries(ctx: Ctx, b: Builder, env: Env, entries: Vector<RecordEntry>) Builder {
+/// Classify an identifier that is not a lexical binder: a function or type
+/// reference when the resolver knows it, otherwise left for a syntactic
+/// fallback in the consumer.
+fn classify_global_ident(ctx: Ctx, b: Builder, name: String, expr: Expr) Builder {
+  case ctx.env {
+    .Some(env) => case env.lookup_function(name) {
+      .Some(_) => ctx.add_occ(
+        b,
+        ctx.function_key(env, name),
+        name,
+        .Function,
+        .Reference,
+        expr.span,
+        .Some(expr.id),
+      ),
+      .None => if env.has_type(name) {
+        ctx.add_occ(b, ctx.type_key(env, name), name, .Type, .Reference, expr.span, .Some(expr.id))
+      } else {
+        b
+      },
+    },
+    .None => b,
+  }
+}
+
+fn walk_field(ctx: Ctx, b: Builder, env: Env, expr: Expr, recv: Expr, field_name: String) Builder {
+  field_len := field_name.len()
+  field_start := expr.span.end - field_len
+  field_span := Span.{ file_id: expr.span.file_id, start: field_start, end: expr.span.end }
+
+  // Classify the receiver: a module/namespace qualifier vs an ordinary expr.
+  b = if ctx.receiver_is_namespace(env, recv) {
+    case recv.kind {
+      .Ident(base_name) => ctx.add_occ(
+        b,
+        .ExternNamespace(base_name),
+        base_name,
+        .Module,
+        .Reference,
+        recv.span,
+        .None,
+      ),
+      _ => ctx.walk_expr(b, env, recv),
+    }
+  } else {
+    ctx.walk_expr(b, env, recv)
+  }
+
+  if !ctx.meta() {
+    return b
+  }
+
+  method_meta := case ctx.typed {
+    .Some(t) => t.method_calls.get(expr.id),
+    .None => .None,
+  }
+
+  case method_meta {
+    .Some(meta) => ctx.add_occ(
+      b,
+      ctx.method_key(meta, field_name),
+      field_name,
+      .Method,
+      .Reference,
+      field_span,
+      .None,
+    ),
+    .None => {
+      is_upper := field_len > 0 and field_name[0].is_upper()
+
+      if is_upper {
+        ctx.add_occ(
+          b,
+          ctx.variant_key_for_type(ctx.expr_type(expr.id), field_name),
+          field_name,
+          .Variant,
+          .Reference,
+          field_span,
+          .None,
+        )
+      } else {
+        ctx.add_occ(
+          b,
+          ctx.field_key_for_type(ctx.expr_type(recv.id), field_name),
+          field_name,
+          .Field,
+          .Reference,
+          field_span,
+          .None,
+        )
+      }
+    },
+  }
+}
+
+/// Mirror the receiver heuristic used by semantic tokens: an identifier base is
+/// a namespace when it is not a known function, type, value, or in-scope binder.
+fn receiver_is_namespace(ctx: Ctx, env: Env, recv: Expr) Bool {
+  if !ctx.meta() {
+    return false
+  }
+
+  case recv.kind {
+    .Ident(base_name) => case ctx.env {
+      .Some(renv) => {
+        no_local := case env.get(base_name) {
+          .Some(_) => false,
+          .None => true,
+        }
+        no_func := case renv.lookup_function(base_name) {
+          .Some(_) => false,
+          .None => true,
+        }
+        no_type := !renv.has_type(base_name)
+        no_value := !renv.value_bindings.has(base_name)
+        no_local and no_func and no_type and no_value
+      },
+      .None => false,
+    },
+    _ => false,
+  }
+}
+
+/// Emit variant references that appear inside a case pattern.
+fn walk_pattern_refs(ctx: Ctx, b: Builder, pat: Pattern, expected: MonoType?) Builder {
+  if !ctx.meta() {
+    return b
+  }
+
+  case pat.kind {
+    .Variant(name, subs) => {
+      b = ctx.add_occ(
+        b,
+        ctx.variant_key_for_type(expected, name),
+        name,
+        .Variant,
+        .Reference,
+        Span.{
+          file_id: pat.span.file_id,
+          start: pat.span.start + 1,
+          end: pat.span.start + 1 + name.len(),
+        },
+        .None,
+      )
+
+      for sub in subs {
+        b = ctx.walk_pattern_refs(b, sub, .None)
+      }
+
+      b
+    },
+    .QualifiedVariant(_, name, subs) => {
+      b = ctx.add_occ(
+        b,
+        ctx.variant_key_for_type(expected, name),
+        name,
+        .Variant,
+        .Reference,
+        Span.{ file_id: pat.span.file_id, start: pat.span.start, end: pat.span.start + name.len() },
+        .None,
+      )
+
+      for sub in subs {
+        b = ctx.walk_pattern_refs(b, sub, .None)
+      }
+
+      b
+    },
+    _ => b,
+  }
+}
+
+fn walk_record_entries(
+  ctx: Ctx,
+  b: Builder,
+  env: Env,
+  entries: Vector<RecordEntry>,
+  record_ty: MonoType?,
+) Builder {
   for entry in entries {
+    if ctx.meta() {
+      b = ctx.add_occ(
+        b,
+        ctx.field_key_for_type(record_ty, entry.name),
+        entry.name,
+        .Field,
+        .Reference,
+        Span.{
+          file_id: entry.span.file_id,
+          start: entry.span.start,
+          end: entry.span.start + entry.name.len(),
+        },
+        .None,
+      )
+    }
+
     case entry.value {
-      .Some(e) => b = ctx.walk_expr(b, env, e),
-      // Shorthand `.{ x }` is also a use of the local `x`.
+      .Some(e) => {
+        b = ctx.walk_expr(b, env, e)
+      },
+      // Shorthand `.{ x }` is a use of the local `x` (and the field).
       .None => case env.get(entry.name) {
         .Some(bind) => b = ctx.ref_local(b, bind, entry.name, .Shorthand, entry.span, .None),
         .None => {},
@@ -276,6 +624,346 @@ fn walk_opt_expr(ctx: Ctx, b: Builder, env: Env, e: Expr?) Builder {
   }
 }
 
+fn walk_type_expr_opt(ctx: Ctx, b: Builder, te: TypeExpr?) Builder {
+  case te {
+    .Some(t) => ctx.walk_type_expr(b, t),
+    .None => b,
+  }
+}
+
+/// Classify a type expression's path segments as type-parameter or type
+/// references and recurse into applied/function/optional/result components.
+fn walk_type_expr(ctx: Ctx, b: Builder, te: TypeExpr) Builder {
+  if !ctx.meta() {
+    return b
+  }
+
+  case te.kind {
+    .Path(path) => if path.segments.len() == 1 {
+      ctx.classify_type_name(b, path.segments[0], path.span)
+    } else {
+      full_name := path.segments.join(".")
+      type_name := path.segments[path.segments.len() - 1]
+      ctx.add_occ(
+        b,
+        ctx.qualified_type_key(full_name, type_name),
+        type_name,
+        .Type,
+        .Reference,
+        path.span,
+        .None,
+      )
+    },
+    .Applied(path, args) => {
+      head := if path.segments.len() == 1 {
+        ctx.classify_type_name(
+          b,
+          path.segments[0],
+          Span.{
+            file_id: path.span.file_id,
+            start: path.span.start,
+            end: path.span.start + path.segments[0].len(),
+          },
+        )
+      } else {
+        full_name := path.segments.join(".")
+        type_name := path.segments[path.segments.len() - 1]
+        ctx.add_occ(
+          b,
+          ctx.qualified_type_key(full_name, type_name),
+          type_name,
+          .Type,
+          .Reference,
+          path.span,
+          .None,
+        )
+      }
+      b = head
+
+      for arg in args {
+        b = ctx.walk_type_expr(b, arg)
+      }
+
+      b
+    },
+    .Function(param_types, ret_type) => {
+      for pt in param_types {
+        b = ctx.walk_type_expr(b, pt)
+      }
+
+      ctx.walk_type_expr(b, ret_type)
+    },
+    .Optional(inner) => ctx.walk_type_expr(b, inner),
+    .Result(ok, err) => ctx.walk_type_expr(ctx.walk_type_expr(b, ok), err),
+    .Record(fields) => {
+      for f in fields {
+        b = ctx.walk_type_expr(b, f.ty)
+      }
+
+      b
+    },
+    .Sum(variants) => {
+      for v in variants {
+        for field_ty in v.fields {
+          b = ctx.walk_type_expr(b, field_ty)
+        }
+      }
+
+      b
+    },
+    .ErrorType => b,
+  }
+}
+
+fn classify_type_name(ctx: Ctx, b: Builder, name: String, span: Span) Builder {
+  case ctx.tparams.get(name) {
+    .Some(id) => ctx.add_occ(
+      b,
+      .TypeParam(ctx.mod, id),
+      name,
+      .TypeParameter,
+      .Reference,
+      span,
+      .None,
+    ),
+    .None => case ctx.env {
+      .Some(env) => ctx.add_occ(b, ctx.type_key(env, name), name, .Type, .Reference, span, .None),
+      .None => b,
+    },
+  }
+}
+
+/// Allocate a local symbol per declared type parameter (metadata mode only),
+/// returning the updated builder and a name->id map for the declaration scope.
+fn alloc_tparams(ctx: Ctx, b: Builder, tps: Vector<TypeParam>) TParamAlloc {
+  m: Dict<String, Int> = Dict.new()
+
+  if !ctx.meta() {
+    return .{ b, map: m }
+  }
+
+  for tp in tps {
+    id := b.next_local
+    key := occ.SymbolKey.TypeParam(ctx.mod, id)
+    b.index = .add_symbol(
+      .{
+        key,
+        name: tp.name,
+        kind: .TypeParameter,
+        declaration_span: .Some(tp.span),
+        declaration_uri: .Some(ctx.uri),
+        detail: .NoDetail,
+      },
+    )
+    b.index = .add_occurrence(
+      .{
+        symbol_key: key,
+        name: tp.name,
+        kind: .TypeParameter,
+        role: .Declaration,
+        span: tp.span,
+        expr_id: .None,
+        type_expr_span: .None,
+      },
+    )
+    b.next_local = id + 1
+    m[tp.name] = id
+  }
+
+  .{ b, map: m }
+}
+
+fn with_tparams(ctx: Ctx, map: Dict<String, Int>) Ctx {
+  ctx.tparams = map
+  ctx
+}
+
+fn fn_decl_key(ctx: Ctx, name: String) occ.SymbolKey {
+  case ctx.env {
+    .Some(env) => ctx.function_key(env, name),
+    .None => .Function(ctx.mod, name),
+  }
+}
+
+fn type_decl_key(ctx: Ctx, name: String) occ.SymbolKey {
+  case ctx.env {
+    .Some(env) => ctx.type_key(env, name),
+    .None => .TypeDef(ctx.mod, name),
+  }
+}
+
+fn function_key(ctx: Ctx, env: ResolvedEnv, name: String) occ.SymbolKey {
+  case env.function_bindings.get(name) {
+    .Some(reg) => case env.lookup_function_origin(reg) {
+      .Some(o) => .Function(o.module_path, o.func_name),
+      .None => .Function(ctx.mod, name),
+    },
+    .None => .Function(ctx.mod, name),
+  }
+}
+
+fn type_key(ctx: Ctx, env: ResolvedEnv, name: String) occ.SymbolKey {
+  case env.lookup_type(name) {
+    .Some(entry) => case env.type_origins.get(entry.id.id) {
+      .Some(origin) => ctx.type_key_from_origin(origin, name),
+      .None => .TypeDef(ctx.mod, local_part(name)),
+    },
+    .None => .TypeDef(ctx.mod, local_part(name)),
+  }
+}
+
+fn qualified_type_key(ctx: Ctx, full_name: String, display_name: String) occ.SymbolKey {
+  case ctx.env {
+    .Some(env) => case env.lookup_type(full_name) {
+      .Some(entry) => case env.type_origins.get(entry.id.id) {
+        .Some(origin) => ctx.type_key_from_origin(origin, display_name),
+        .None => .TypeDef(ctx.mod, display_name),
+      },
+      .None => .TypeDef(ctx.mod, display_name),
+    },
+    .None => .TypeDef(ctx.mod, display_name),
+  }
+}
+
+fn type_key_from_origin(ctx: Ctx, origin: String, fallback_name: String) occ.SymbolKey {
+  parts := origin.split("::")
+
+  if parts.len() >= 2 {
+    .TypeDef(parts[0], parts[1])
+  } else {
+    .TypeDef(origin, fallback_name)
+  }
+}
+
+fn expr_type(ctx: Ctx, expr_id: Int) MonoType? {
+  case ctx.typed {
+    .Some(t) => t.type_map[expr_id],
+    .None => .None,
+  }
+}
+
+fn type_by_name(ctx: Ctx, name: String) MonoType? {
+  env := case ctx.env {
+    .Some(e) => e,
+    .None => { return .None },
+  }
+  entry := try env.lookup_type(name)
+  .Some(.Named(entry.id, []))
+}
+
+fn type_key_for_id(ctx: Ctx, env: ResolvedEnv, tid: TypeId, fallback_name: String) occ.SymbolKey {
+  case env.type_origins.get(tid.id) {
+    .Some(origin) => ctx.type_key_from_origin(origin, fallback_name),
+    .None => .TypeDef(ctx.mod, fallback_name),
+  }
+}
+
+fn type_parts_for_id(ctx: Ctx, env: ResolvedEnv, tid: TypeId, fallback_name: String) Vector<String> {
+  key := ctx.type_key_for_id(env, tid, fallback_name)
+
+  case key {
+    .TypeDef(module_path, type_name) => [module_path, type_name],
+    _ => [ctx.mod, fallback_name],
+  }
+}
+
+fn field_key_for_type(ctx: Ctx, ty: MonoType?, field_name: String) occ.SymbolKey {
+  env := case ctx.env {
+    .Some(e) => e,
+    .None => { return .Field(ctx.mod, "", field_name) },
+  }
+
+  case ty {
+    .Some(.Named(tid, _)) => case env.lookup_type_def(tid) {
+      .Some(.Record(type_name, _, fields)) => {
+        for f in fields {
+          if f.name == field_name {
+            parts := ctx.type_parts_for_id(env, tid, type_name)
+
+            return .Field(parts[0], parts[1], field_name)
+          }
+        }
+
+        .Field(ctx.mod, "", field_name)
+      },
+      _ => .Field(ctx.mod, "", field_name),
+    },
+    _ => .Field(ctx.mod, "", field_name),
+  }
+}
+
+fn variant_key_for_type(ctx: Ctx, ty: MonoType?, variant_name: String) occ.SymbolKey {
+  env := case ctx.env {
+    .Some(e) => e,
+    .None => { return .Variant(ctx.mod, "", variant_name) },
+  }
+
+  case ty {
+    .Some(.Named(tid, _)) => case env.lookup_type_def(tid) {
+      .Some(.Sum(type_name, _, variants)) => {
+        for v in variants {
+          if v.name == variant_name {
+            parts := ctx.type_parts_for_id(env, tid, type_name)
+
+            return .Variant(parts[0], parts[1], variant_name)
+          }
+        }
+
+        .Variant(ctx.mod, "", variant_name)
+      },
+      _ => .Variant(ctx.mod, "", variant_name),
+    },
+    _ => .Variant(ctx.mod, "", variant_name),
+  }
+}
+
+fn method_key(ctx: Ctx, meta: MethodCallInfo, fallback_name: String) occ.SymbolKey {
+  env := case ctx.env {
+    .Some(e) => e,
+    .None => { return .Function(ctx.mod, fallback_name) },
+  }
+
+  if meta.func_name != "" {
+    case env.lookup_function_origin(meta.func_name) {
+      .Some(origin) => { return .Function(origin.module_path, origin.func_name) },
+      .None => {},
+    }
+  }
+
+  .Function(ctx.mod, fallback_name)
+}
+
+fn local_part(name: String) String {
+  parts := name.split(".")
+  parts[parts.len() - 1]
+}
+
+/// Emit a declaration symbol plus its declaration occurrence (metadata mode).
+fn emit_decl(
+  ctx: Ctx,
+  b: Builder,
+  name: String,
+  name_span: Span,
+  kind: occ.SymbolKind,
+  key: occ.SymbolKey,
+) Builder {
+  if !ctx.meta() {
+    return b
+  }
+
+  b.index = .add_symbol(
+    .{
+      key,
+      name,
+      kind,
+      declaration_span: .Some(name_span),
+      declaration_uri: .Some(ctx.uri),
+      detail: .NoDetail,
+    },
+  )
+  ctx.add_occ(b, key, name, kind, .Declaration, name_span, .None)
+}
+
 /// Allocate a fresh local symbol for a binder, record its declaration, and
 /// return the builder plus an environment with the name bound (shadowing any
 /// outer binder of the same name).
@@ -293,17 +981,7 @@ fn declare(ctx: Ctx, b: Builder, env: Env, name: String, name_span: Span, kind: 
       detail: .NoDetail,
     },
   )
-  b.index = .add_occurrence(
-    .{
-      symbol_key: key,
-      name,
-      kind,
-      role: .Declaration,
-      span: name_span,
-      expr_id: .None,
-      type_expr_span: .None,
-    },
-  )
+  b = ctx.add_occ(b, key, name, kind, .Declaration, name_span, .None)
   b.next_local = id + 1
 
   env[name] = Binding.{ id, kind }
@@ -320,16 +998,21 @@ fn ref_local(
   span: Span,
   expr_id: Int?,
 ) Builder {
+  ctx.add_occ(b, .Local(ctx.mod, bind.id), name, bind.kind, role, span, expr_id)
+}
+
+fn add_occ(
+  ctx: Ctx,
+  b: Builder,
+  key: occ.SymbolKey,
+  name: String,
+  kind: occ.SymbolKind,
+  role: occ.OccurrenceRole,
+  span: Span,
+  expr_id: Int?,
+) Builder {
   b.index = .add_occurrence(
-    .{
-      symbol_key: .Local(ctx.mod, bind.id),
-      name,
-      kind: bind.kind,
-      role,
-      span,
-      expr_id,
-      type_expr_span: .None,
-    },
+    .{ symbol_key: key, name, kind, role, span, expr_id, type_expr_span: .None },
   )
   b
 }

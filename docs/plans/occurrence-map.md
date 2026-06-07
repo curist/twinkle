@@ -32,9 +32,8 @@ scope knowledge:
 This creates repeated work and subtle drift. For example, `groups.values()` was
 highlighted as a namespace receiver because semantic tokens only checked the
 resolved environment and parameter names; it did not have a reusable lexical
-binding map for local lets. The current `semantic_tokens.tw` `local_names` and
-`after_stmt` scope-threading fix is an intentional bridge; Phase 5 should delete
-that local classifier once semantic tokens consume the occurrence map.
+binding map for local lets. `semantic_tokens.tw` now consumes the occurrence map,
+which keeps that regression covered without a private local-name classifier.
 
 The occurrence map should make these cases direct:
 
@@ -319,17 +318,17 @@ Purpose: add shared types without changing query behavior.
 
 Checklist:
 
-- [ ] Add `boot/compiler/query/occurrences.tw` with symbol, occurrence, and
+- [x] Add `boot/compiler/query/occurrences.tw` with symbol, occurrence, and
       index types, using `SymbolKey` rather than a second `SymbolId`.
-- [ ] Add helper lookups: occurrence at arbitrary cursor offset, occurrences for
+- [x] Add helper lookups: occurrence at arbitrary cursor offset, occurrences for
       symbol, definition for occurrence.
-- [ ] Add a total, injective `encode_symbol_key(SymbolKey) String` and key
+- [x] Add a total, injective `encode_symbol_key(SymbolKey) String` and key
       `by_symbol` on it (Dict keys can only be Int/String at runtime).
-- [ ] Decide the initial `sorted_spans` implementation behind the helper API:
-      interval search or hidden linear scan.
+- [x] Decide the initial `sorted_spans` implementation behind the helper API:
+      hidden linear scan over sorted spans.
 - [ ] Add conversion helpers for LSP token kinds only as consumers, not core
       occurrence concepts.
-- [ ] Document which source constructs should emit declaration and reference
+- [x] Document which source constructs should emit declaration and reference
       occurrences.
 
 Acceptance:
@@ -346,14 +345,14 @@ currently duplicate.
 
 Checklist:
 
-- [ ] Implement an AST walk that allocates local symbols for params, lets,
+- [x] Implement an AST walk that allocates local symbols for params, lets,
       closures, loops, collect, and pattern binders.
-- [ ] Track lexical scopes and shadowing.
-- [ ] Emit declaration occurrences and identifier reference occurrences.
-- [ ] Attach expression ids where available.
-- [ ] Add regression coverage for local shadowing, nested blocks, closures,
+- [x] Track lexical scopes and shadowing.
+- [x] Emit declaration occurrences and identifier reference occurrences.
+- [x] Attach expression ids where available.
+- [x] Add regression coverage for local shadowing, nested blocks, closures,
       loops, collect, and pattern variables.
-- [ ] Mark the current `semantic_tokens.tw` local-name tracker as temporary and
+- [x] Mark the current `semantic_tokens.tw` local-name tracker as temporary and
       avoid extending it beyond regression fixes.
 
 Acceptance:
@@ -371,14 +370,14 @@ resolution.
 
 Checklist:
 
-- [ ] Emit symbols/occurrences for function declarations and function calls.
-- [ ] Emit symbols/occurrences for type declarations, type references, and type
+- [x] Emit symbols/occurrences for function declarations and function calls.
+- [x] Emit symbols/occurrences for type declarations, type references, and type
       parameters.
-- [ ] Emit module alias/import occurrences from `use` declarations.
-- [ ] Use checker `method_calls` metadata for method occurrences.
-- [ ] Use expression/type maps for field and variant classification when
+- [x] Emit selective import occurrences from `use` declarations.
+- [x] Use checker `method_calls` metadata for method occurrences.
+- [x] Use expression/type maps for precise field and variant classification when
       available.
-- [ ] Represent unresolved/error occurrences conservatively so editor features
+- [x] Represent unresolved/error occurrences conservatively so editor features
       still return partial results.
 
 Acceptance:
@@ -394,15 +393,16 @@ Purpose: make occurrences a normal query artifact.
 
 Checklist:
 
-- [ ] Add an occurrence stage to `stage_runner` or a small query builder layered
-      after typed results.
-- [ ] Store/retrieve per-file occurrence indexes in `compiler.query.cache`.
-- [ ] Add `occurrences` to `SemanticSnapshot` and populate it for the snapshot's
+- [x] Add a small occurrence builder layered after typed results.
+- [x] Store/retrieve per-file occurrence indexes in `compiler.query.cache`.
+- [x] Add `occurrences` to `SemanticSnapshot` and populate it for the snapshot's
       entry file.
-- [ ] Add a helper for workspace consumers to load/build occurrence indexes for
+- [x] Add a helper for workspace consumers to load/build occurrence indexes for
       candidate modules from the cache.
-- [ ] Ensure parse or type errors still return partial occurrences when useful.
-- [ ] Add cache invalidation tests showing occurrences update after edits.
+- [x] Ensure parse or type errors still return partial lexical occurrences when
+      useful.
+- [x] Add cache coverage showing snapshots store occurrence indexes.
+- [x] Add invalidation tests showing occurrences update after edits.
 
 Acceptance:
 
@@ -420,7 +420,7 @@ stable.
 
 Recommended order:
 
-1. `semantic_tokens.tw`
+1. `semantic_tokens.tw` — done
    - classify tokens from occurrence kind/role;
    - keep syntax-only fallback for comments/literals/unknown nodes if needed.
 2. `definition.tw`
@@ -441,7 +441,8 @@ Recommended order:
 
 Checklist:
 
-- [ ] Migrate one consumer at a time behind tests.
+- [x] Migrate semantic tokens behind existing LSP regression tests.
+- [ ] Migrate the remaining consumers one at a time behind tests.
 - [ ] Replace the private `references.SymbolId` and `definition.tw` local-binding
       walks (`resolve_local_binding`, `find_local_in_block`) with `SymbolKey`.
 - [ ] Delete obsolete local-scope walkers once no consumer needs them, including

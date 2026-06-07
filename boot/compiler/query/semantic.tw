@@ -8,6 +8,8 @@ use compiler.checker.{CheckResult}
 use compiler.imports
 use compiler.query.cache
 use compiler.query.diagnostics
+use compiler.query.occurrence_build
+use compiler.query.occurrences.{OccurrenceIndex}
 use compiler.query.stage_runner
 use compiler.resolver.{ResolveResult, ResolvedEnv}
 use lib.query.keys
@@ -23,8 +25,87 @@ pub type SemanticSnapshot = .{
   parsed: cache.ParsedModule?,
   resolved: ResolveResult?,
   typed: CheckResult?,
+  occurrences: OccurrenceIndex?,
   diagnostics: Vector<diagnostics.Diagnostic>,
   ok: Bool,
+}
+
+type OccBuildResult = .{ cache: cache.Store, occurrences: OccurrenceIndex? }
+
+pub type WorkspaceOccurrences = .{ cache: cache.Store, indexes: Vector<OccurrenceIndex> }
+
+fn build_occurrences_cached(
+  store: cache.Store,
+  canonical_path: String,
+  uri: String,
+  parsed: cache.ParsedModule?,
+  typed: CheckResult?,
+  key: Int,
+) OccBuildResult {
+  p := case parsed {
+    .Some(value) => value,
+    .None => { return .{ cache: store, occurrences: .None } },
+  }
+
+  cached := cache.get_occurrences(store, canonical_path, key)
+
+  case cached.value {
+    .Some(index) => { return .{ cache: cached.store, occurrences: .Some(index) } },
+    .None => {},
+  }
+
+  index := case typed {
+    .Some(t) => occurrence_build.build(canonical_path, uri, p.module, t.env, t),
+    .None => occurrence_build.build_lexical(canonical_path, uri, p.module),
+  }
+
+  .{
+    cache: cache.put_occurrences(cached.store, canonical_path, key, index),
+    occurrences: .Some(index),
+  }
+}
+
+fn occurrence_key(store: cache.Store, canonical_path: String) Int {
+  case cache.module_hash(store, canonical_path) {
+    .Some(k) => k,
+    .None => 0,
+  }
+}
+
+/// Load occurrence indexes for workspace candidate modules from the query cache,
+/// building and storing any missing index when the module's parsed artifact is
+/// available. This gives cross-file consumers a shared path for references,
+/// definitions, highlights, and rename without inventing their own workspace-
+/// wide occurrence store.
+pub fn occurrences_for_modules(store: cache.Store, modules: Vector<String>) WorkspaceOccurrences {
+  out: Vector<OccurrenceIndex> = []
+
+  for canonical in modules {
+    id := identity.from_path(canonical)
+    res := build_occurrences_cached(
+      store,
+      canonical,
+      id.uri,
+      cache.latest_parsed(store, canonical),
+      cache.latest_typed(store, canonical),
+      occurrence_key(store, canonical),
+    )
+    store = res.cache
+
+    case res.occurrences {
+      .Some(index) => out = .append(index),
+      .None => {},
+    }
+  }
+
+  .{ cache: store, indexes: out }
+}
+
+/// Load/build occurrence indexes for every parsed module currently known to the
+/// cache. Use this for broad workspace consumers; narrower consumers should pass
+/// candidate modules to `occurrences_for_modules`.
+pub fn occurrences_for_cached_modules(store: cache.Store) WorkspaceOccurrences {
+  occurrences_for_modules(store, store.parsed.keys())
 }
 
 /// Best available ResolvedEnv: typed.env > resolved.env > None.
@@ -81,9 +162,18 @@ pub fn snapshot_workspace_from_cache(store: cache.Store, input: diagnostics.Work
     }
   }
 
+  occ_res := build_occurrences_cached(
+    store,
+    canonical,
+    id.uri,
+    .Some(parsed),
+    .Some(typed),
+    occurrence_key(store, canonical),
+  )
+
   .Some(
     .{
-      cache: store,
+      cache: occ_res.cache,
       uri: id.uri,
       canonical_path: canonical,
       project_root: input.project_root,
@@ -91,6 +181,7 @@ pub fn snapshot_workspace_from_cache(store: cache.Store, input: diagnostics.Work
       parsed: .Some(parsed),
       resolved: .Some(resolved),
       typed: .Some(typed),
+      occurrences: occ_res.occurrences,
       diagnostics: [],
       ok: true,
     },
@@ -172,8 +263,16 @@ pub fn snapshot_workspace(store: cache.Store, input: diagnostics.WorkspaceInput)
   parsed := cache.latest_parsed(cur_cache, canonical)
   resolved := cache.latest_resolved(cur_cache, canonical)
   typed := cache.latest_typed(cur_cache, canonical)
+  occ_res := build_occurrences_cached(
+    cur_cache,
+    canonical,
+    id.uri,
+    parsed,
+    typed,
+    occurrence_key(cur_cache, canonical),
+  )
   .{
-    cache: cur_cache,
+    cache: occ_res.cache,
     uri: id.uri,
     canonical_path: canonical,
     project_root: input.project_root,
@@ -181,6 +280,7 @@ pub fn snapshot_workspace(store: cache.Store, input: diagnostics.WorkspaceInput)
     parsed,
     resolved,
     typed,
+    occurrences: occ_res.occurrences,
     diagnostics: entry_diags,
     ok: entry_diags.len() == 0 and typed != .None,
   }
@@ -199,8 +299,17 @@ pub fn snapshot(store: cache.Store, input: diagnostics.DocumentInput) SemanticSn
   parsed := parsed_out.value
 
   if parsed.diagnostics.len() > 0 {
+    occ_res := build_occurrences_cached(
+      cur_cache,
+      id.path,
+      id.uri,
+      .Some(parsed),
+      .None,
+      keys.module_hash(source_hash, 0),
+    )
+
     return .{
-      cache: cur_cache,
+      cache: occ_res.cache,
       uri: id.uri,
       canonical_path: id.path,
       project_root: "",
@@ -208,6 +317,7 @@ pub fn snapshot(store: cache.Store, input: diagnostics.DocumentInput) SemanticSn
       parsed: .Some(parsed),
       resolved: .None,
       typed: .None,
+      occurrences: occ_res.occurrences,
       diagnostics: diagnostics.convert_diagnostics(input, "parse", parsed.diagnostics),
       ok: false,
     }
@@ -218,8 +328,17 @@ pub fn snapshot(store: cache.Store, input: diagnostics.DocumentInput) SemanticSn
   resolved := resolved_out.value
 
   if resolved.diagnostics.len() > 0 {
+    occ_res := build_occurrences_cached(
+      cur_cache,
+      id.path,
+      id.uri,
+      .Some(parsed),
+      .None,
+      keys.module_hash(source_hash, 0),
+    )
+
     return .{
-      cache: cur_cache,
+      cache: occ_res.cache,
       uri: id.uri,
       canonical_path: id.path,
       project_root: "",
@@ -227,6 +346,7 @@ pub fn snapshot(store: cache.Store, input: diagnostics.DocumentInput) SemanticSn
       parsed: .Some(parsed),
       resolved: .Some(resolved),
       typed: .None,
+      occurrences: occ_res.occurrences,
       diagnostics: diagnostics.convert_diagnostics(input, "resolve", resolved.diagnostics),
       ok: false,
     }
@@ -237,8 +357,17 @@ pub fn snapshot(store: cache.Store, input: diagnostics.DocumentInput) SemanticSn
   checked := checked_out.value
 
   if checked.diagnostics.len() > 0 {
+    occ_res := build_occurrences_cached(
+      cur_cache,
+      id.path,
+      id.uri,
+      .Some(parsed),
+      .Some(checked),
+      keys.module_hash(source_hash, 0),
+    )
+
     return .{
-      cache: cur_cache,
+      cache: occ_res.cache,
       uri: id.uri,
       canonical_path: id.path,
       project_root: "",
@@ -246,13 +375,24 @@ pub fn snapshot(store: cache.Store, input: diagnostics.DocumentInput) SemanticSn
       parsed: .Some(parsed),
       resolved: .Some(resolved),
       typed: .Some(checked),
+      occurrences: occ_res.occurrences,
       diagnostics: diagnostics.convert_diagnostics(input, "check", checked.diagnostics),
       ok: false,
     }
   }
 
+  cur_cache = cache.set_module_hash(cur_cache, id.path, keys.module_hash(source_hash, 0))
+  occ_res := build_occurrences_cached(
+    cur_cache,
+    id.path,
+    id.uri,
+    .Some(parsed),
+    .Some(checked),
+    keys.module_hash(source_hash, 0),
+  )
+
   .{
-    cache: cache.set_module_hash(cur_cache, id.path, keys.module_hash(source_hash, 0)),
+    cache: occ_res.cache,
     uri: id.uri,
     canonical_path: id.path,
     project_root: "",
@@ -260,6 +400,7 @@ pub fn snapshot(store: cache.Store, input: diagnostics.DocumentInput) SemanticSn
     parsed: .Some(parsed),
     resolved: .Some(resolved),
     typed: .Some(checked),
+    occurrences: occ_res.occurrences,
     diagnostics: [],
     ok: true,
   }
