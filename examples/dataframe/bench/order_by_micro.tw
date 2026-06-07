@@ -1,0 +1,48 @@
+use @std.date
+
+fn next_seed(seed: Int) Int {
+  (seed * 1664525 + 1013904223) % 2147483648
+}
+
+fn amounts(n: Int) Vector<Int> {
+  out: Vector<Int> = []
+  seed := 12345
+
+  for _ in range(n) {
+    seed = next_seed(seed)
+    seed = next_seed(seed)
+    out = .append(seed % 1000)
+    seed = next_seed(seed)
+  }
+
+  out
+}
+
+fn bench_n(n: Int) Void {
+  println("── N = ${n} ──")
+  keys := amounts(n)
+  idx := collect i in range(n) {
+    i
+  }
+
+  start1 := date.now()
+  sorted_values := keys.sort()
+  elapsed1 := date.now() - start1
+  println("sort values : ${elapsed1}ms (checksum ${sorted_values.len()})")
+
+  start2 := date.now()
+  sorted_idx := idx.sort_by(fn(a, b) { Int.compare(a, b) })
+  elapsed2 := date.now() - start2
+  println("sort idx id: ${elapsed2}ms (checksum ${sorted_idx.len()})")
+
+  start3 := date.now()
+  sorted_by_key := idx.sort_by(fn(a, b) { Int.compare(keys[a], keys[b]) })
+  elapsed3 := date.now() - start3
+  println("sort idx key: ${elapsed3}ms (checksum ${sorted_by_key.len()})")
+
+  println("")
+}
+
+bench_n(10000)
+bench_n(100000)
+bench_n(1000000)

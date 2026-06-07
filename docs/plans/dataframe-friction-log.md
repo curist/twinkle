@@ -334,6 +334,50 @@ lookup loop; the promised monotonic-index benefit remains future work for a trie
 implementation. `order_by` improved only modestly after comparator specialization and should
 be treated as a separate typed/key-sort problem rather than a gather problem.
 
+### `order_by` microbenchmarks
+
+To isolate the sort path, `examples/dataframe/bench/order_by_micro.tw` times three pieces:
+plain `Vector<Int>.sort()`, sorting an already-ascending index vector with an identity
+comparator, and sorting an index vector by `keys[a]`/`keys[b]` random reads. A native Rust
+reference lives at `examples/dataframe/bench/order_by_rust.rs`.
+
+Latest Twinkle run:
+
+```
+── N = 10000 ──
+sort values : 9.41ms    (checksum 10000)
+sort idx id : 0.32ms    (checksum 10000)
+sort idx key: 8.65ms    (checksum 10000)
+
+── N = 100000 ──
+sort values : 64.13ms   (checksum 100000)
+sort idx id : 4.31ms    (checksum 100000)
+sort idx key: 99.95ms   (checksum 100000)
+
+── N = 1000000 ──
+sort values : 828.89ms  (checksum 1000000)
+sort idx id : 28.74ms   (checksum 1000000)
+sort idx key: 1674.20ms (checksum 1000000)
+```
+
+Rust reference on the same generated data:
+
+```
+N=10000    native total: 0.72ms   sort: 0.26ms   gather: 0.44ms
+N=10000    merge  total: 2.08ms   sort: 1.40ms   gather: 0.68ms
+N=100000   native total: 4.54ms   sort: 1.61ms   gather: 2.85ms
+N=100000   merge  total: 15.57ms  sort: 13.81ms  gather: 1.73ms
+N=1000000  native total: 57.63ms  sort: 8.78ms   gather: 48.35ms
+N=1000000  merge  total: 133.24ms sort: 84.11ms  gather: 48.34ms
+```
+
+Takeaway: the benchmark does not imply Twinkle is capped near the current dataframe
+`order_by` time. It shows the remaining gap is implementation overhead in the current
+prelude/runtime path: high-level merge sort over persistent vectors, comparator closure calls,
+and repeated PVec random reads. The identity-index case is cheap because `Vector.sort_by`
+detects already-ascending input and returns early; the key-index case isolates the random-read
+comparator cost that dominates dataframe `order_by`.
+
 ## Recommendations (ranked)
 
 1. **Cross-module inherent methods (UFCS or `extend`).** Without it, fluent
