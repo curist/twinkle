@@ -2,6 +2,7 @@ use tests.cell_suite
 use tests.column_suite
 use tests.table_suite
 use tests.row_suite
+use tests.query_suite
 use runner
 
 runner.run_all([
@@ -9,4 +10,5 @@ runner.run_all([
   column_suite.suite(),
   table_suite.suite(),
   row_suite.suite(),
+  query_suite.suite(),
 ])

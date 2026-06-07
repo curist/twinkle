@@ -1,0 +1,46 @@
+use assert
+use frame.column
+use frame.query
+use frame.table
+use frame.table.{Table}
+use runner
+
+fn people() Table {
+  cols := [column.int_col([25, 35, 45]), column.str_col(["ann", "bob", "cid"])]
+
+  case table.from_columns(["age", "name"], cols) {
+    .Ok(t) => t,
+    .Err(e) => error(e),
+  }
+}
+
+pub fn suite() {
+  runner.suite("query")
+    .test(
+      "filter keeps matching rows",
+      fn() {
+        t := query.filter(people(), fn(r) { r.int("age") > 30 })
+        ok1 := try assert.equal(t.nrows, 2)
+        assert.equal(column.as_strs(try t.column("name")), ["bob", "cid"])
+      },
+    )
+    .test(
+      "with_column appends a derived column",
+      fn() {
+        base := people()
+        doubled := collect a in column.as_ints(try base.column("age")) {
+          a * 2
+        }
+        t := try query.with_column(base, "age2", column.int_col(doubled))
+        ok1 := try assert.equal(t.names, ["age", "name", "age2"])
+        assert.equal(column.as_ints(try t.column("age2")), [50, 70, 90])
+      },
+    )
+    .test(
+      "with_column rejects a length mismatch",
+      fn() {
+        bad := query.with_column(people(), "x", column.int_col([1]))
+        assert.is_err(bad)
+      },
+    )
+}

@@ -1,0 +1,44 @@
+use frame.column
+use frame.column.{Column}
+use frame.row.{RowRef}
+use frame.table.{Table}
+
+/// Keep rows for which the predicate returns true.
+pub fn filter(t: Table, pred: fn(RowRef) Bool) Table {
+  idx: Vector<Int> = []
+
+  for i in range(t.nrows) {
+    if pred(RowRef.{ table: t, idx: i }) {
+      idx = .append(i)
+    }
+  }
+
+  t.take(idx)
+}
+
+/// Add or replace a column. The new column must match the table's row count.
+pub fn with_column(t: Table, name: String, c: Column) Result<Table, String> {
+  if t.nrows != 0 and column.len(c) != t.nrows {
+    return .Err("column '${name}' has length ${column.len(c)}, expected ${t.nrows}")
+  }
+
+  case t.col_index(name) {
+    .Some(i) => {
+      new_cols := case t.cols.set(i, c) {
+        .Some(cs) => cs,
+        .None => { return .Err("with_column index out of range") },
+      }
+      .Ok(Table.{ names: t.names, cols: new_cols, nrows: t.nrows })
+    },
+    .None => from_columns_append(t, name, c),
+  }
+}
+
+fn from_columns_append(t: Table, name: String, c: Column) Result<Table, String> {
+  nrows := if t.ncols() == 0 {
+    column.len(c)
+  } else {
+    t.nrows
+  }
+  .Ok(Table.{ names: t.names.append(name), cols: t.cols.append(c), nrows })
+}
