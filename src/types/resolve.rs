@@ -260,16 +260,22 @@ impl Resolver {
         // Pass 2b: Resolve each type definition fully and UPDATE in place
         // This preserves TypeIds embedded in resolved MonoTypes
         //
-        // Non-alias types (records, sums) are resolved first since they have no
-        // ordering dependencies. Aliases are then resolved in topological order
-        // so that alias chains (e.g. A -> B -> C -> Record) work regardless of
-        // declaration order.
+        // Aliases are resolved first, in topological (dependency) order, then
+        // records and sums. A reference to an alias name expands transparently to
+        // the alias target (see TypeEnv::resolve_type), so a record/sum field
+        // whose type is an alias must see that alias already resolved — otherwise
+        // it expands to the placeholder `Void` from Pass 2a. Resolving aliases
+        // first is safe because alias resolution only needs TypeIds (assigned in
+        // Pass 2a) plus other aliases resolved in topo order; it never needs a
+        // record's or sum's fields, so alias -> record chains still resolve.
         let (alias_decls, non_alias_decls): (Vec<&TypeDecl>, Vec<&TypeDecl>) = decls
             .iter()
             .partition(|d| matches!(d.definition, AstTypeDef::Alias { .. }));
 
-        // First: resolve records and sums
-        for decl in &non_alias_decls {
+        // First: resolve aliases in topological (dependency) order
+        let alias_names: HashSet<&str> = alias_decls.iter().map(|d| d.name.as_str()).collect();
+        let sorted_aliases = topo_sort_aliases(&alias_decls, &alias_names);
+        for decl in sorted_aliases {
             if let Some(&type_id) = type_ids.get(&decl.name)
                 && let Ok(def) = self.resolve_type_def(decl)
             {
@@ -277,10 +283,9 @@ impl Resolver {
             }
         }
 
-        // Then: resolve aliases in topological (dependency) order
-        let alias_names: HashSet<&str> = alias_decls.iter().map(|d| d.name.as_str()).collect();
-        let sorted_aliases = topo_sort_aliases(&alias_decls, &alias_names);
-        for decl in sorted_aliases {
+        // Then: resolve records and sums, whose fields may reference the
+        // now-resolved aliases.
+        for decl in &non_alias_decls {
             if let Some(&type_id) = type_ids.get(&decl.name)
                 && let Ok(def) = self.resolve_type_def(decl)
             {

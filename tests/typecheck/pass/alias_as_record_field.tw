@@ -1,0 +1,29 @@
+// Regression: a type alias used as a record field type must expand, not collapse
+// to Void. Records were once resolved before aliases, so a field whose type was
+// an alias saw the alias's placeholder target (Void). Aliases now resolve first.
+
+type Binding = .{ id: Int }
+
+// Alias to a builtin generic, used as a field type.
+type Env = Dict<String, Binding>
+
+// Alias to a builtin Vector, used as a field type.
+type Ids = Vector<Int>
+
+// Alias to a user record, used as a field type.
+type AliasedBinding = Binding
+
+type Walk = .{ env: Env, ids: Ids, current: AliasedBinding }
+
+fn make() Walk {
+    Walk.{ env: Dict.new(), ids: [], current: .{ id: 0 } }
+}
+
+fn main() {
+    w := make()
+
+    // Field types must be the expanded targets, so these methods/fields resolve.
+    n := w.env.len() + w.ids.len() + w.current.id
+
+    println("${n}")
+}
