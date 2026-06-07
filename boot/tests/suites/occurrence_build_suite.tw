@@ -1,0 +1,198 @@
+use compiler.ast.{Module}
+use compiler.parser
+use compiler.query.occurrence_build
+use compiler.query.occurrences as occ
+use tests.assert
+use tests.runner
+
+fn parse_src(src: String) Module {
+  parser.parse(src, 0).value
+}
+
+fn build(src: String) occ.OccurrenceIndex {
+  occurrence_build.build_lexical("m", "file:///m.tw", parse_src(src))
+}
+
+// Byte offset of the nth (1-based) occurrence of `needle` in `src`, or -1.
+fn nth_offset(src: String, needle: String, n: Int) Int {
+  i := 0
+  needle_len := needle.len()
+  seen := 0
+
+  for i + needle_len <= src.len() {
+    if src.substring(i, i + needle_len) == needle {
+      seen = seen + 1
+
+      if seen == n {
+        return i
+      }
+    }
+
+    i = i + 1
+  }
+
+  -1
+}
+
+fn at_nth(idx: occ.OccurrenceIndex, src: String, needle: String, n: Int) occ.Occurrence? {
+  occ.occurrence_at_offset(idx, nth_offset(src, needle, n))
+}
+
+// Does any occurrence have the given role and name?
+fn has_role(idx: occ.OccurrenceIndex, name: String, role: occ.OccurrenceRole) Bool {
+  found := false
+
+  for o in idx.occurrences {
+    if o.name == name and o.role == role {
+      found = true
+    }
+  }
+
+  found
+}
+
+pub fn suite() runner.Suite {
+  runner.suite("occurrence build (lexical)")
+    .test(
+      "local let declaration and use resolve to one symbol",
+      fn() {
+        src := "fn f() Int {\n  count := 1\n  count\n}\n"
+        idx := build(src)
+
+        decl := try at_nth(idx, src, "count", 1).ok_or("expected the count declaration")
+        try assert.ok(decl.role == .Declaration, "first count should be a declaration")
+        try assert.ok(decl.kind == .Local, "count should be a local")
+
+        ref := try at_nth(idx, src, "count", 2).ok_or("expected the count reference")
+        try assert.ok(ref.role == .Reference, "second count should be a reference")
+
+        all := idx.occurrences_for_symbol(ref.symbol_key)
+        try assert.equal(all.len(), 2)
+        .Ok({})
+      },
+    )
+    .test(
+      "the groups.values() receiver resolves to the local, not a namespace",
+      fn() {
+        src := "fn f(m: Int) Int {\n  groups := m\n  groups.values()\n  0\n}\n"
+        idx := build(src)
+
+        recv := try at_nth(idx, src, "groups", 2).ok_or("expected the groups receiver")
+        try assert.ok(recv.kind == .Local, "groups receiver must be a local")
+        try assert.ok(recv.role == .Reference, "groups receiver must be a reference")
+        try assert.equal(idx.occurrences_for_symbol(recv.symbol_key).len(), 2)
+        .Ok({})
+      },
+    )
+    .test(
+      "inner let shadows an outer binding of the same name",
+      fn() {
+        src := "fn f() Int {\n  x := 1\n  y := {\n    x := 2\n    x\n  }\n  x\n}\n"
+        idx := build(src)
+
+        inner := try at_nth(idx, src, "x", 3).ok_or("expected the inner x reference")
+        outer := try at_nth(idx, src, "x", 4).ok_or("expected the outer x reference")
+
+        inner_key := occ.encode_symbol_key(inner.symbol_key)
+        outer_key := occ.encode_symbol_key(outer.symbol_key)
+        try assert.ok(
+          inner_key != outer_key,
+          "shadowed x references must resolve to different symbols",
+        )
+        .Ok({})
+      },
+    )
+    .test(
+      "function parameters are locals usable in the body",
+      fn() {
+        src := "fn add(a: Int, b: Int) Int {\n  a + b\n}\n"
+        idx := build(src)
+
+        a_ref := try at_nth(idx, src, "a", 2).ok_or("expected a reference")
+        try assert.ok(a_ref.kind == .Parameter, "a should be a parameter")
+        try assert.equal(idx.occurrences_for_symbol(a_ref.symbol_key).len(), 2)
+        .Ok({})
+      },
+    )
+    .test(
+      "closure parameter shadows an outer local",
+      fn() {
+        src := "fn f() Int {\n  x := 1\n  g := fn(x: Int) Int { x }\n  x\n}\n"
+        idx := build(src)
+
+        closure_x := try at_nth(idx, src, "x", 3).ok_or("expected the closure-body x")
+        outer_x := try at_nth(idx, src, "x", 4).ok_or("expected the outer x")
+
+        try assert.ok(closure_x.kind == .Parameter, "closure x should be a parameter")
+        try assert.ok(
+          occ.encode_symbol_key(closure_x.symbol_key) != occ.encode_symbol_key(outer_x.symbol_key),
+          "closure x must not resolve to the outer local",
+        )
+        .Ok({})
+      },
+    )
+    .test(
+      "for binder is a local and rebinding emits a write",
+      fn() {
+        src := "fn f(xs: Int) Int {\n  total := 0\n  for v in xs {\n    total = total + v\n  }\n  total\n}\n"
+        idx := build(src)
+
+        v_ref := try at_nth(idx, src, "v", 2).ok_or("expected the v reference in the body")
+        try assert.ok(v_ref.kind == .Local, "loop binder v should be a local")
+        try assert.equal(idx.occurrences_for_symbol(v_ref.symbol_key).len(), 2)
+
+        try assert.ok(has_role(idx, "total", .Write), "rebinding total should emit a write")
+        .Ok({})
+      },
+    )
+    .test(
+      "collect binder is visible in the body",
+      fn() {
+        src := "fn f(xs: Int) Int {\n  collect v in xs { v }\n  0\n}\n"
+        idx := build(src)
+
+        v_ref := try at_nth(idx, src, "v", 2).ok_or("expected the v reference in the collect body")
+        try assert.ok(v_ref.kind == .Local, "collect binder v should be a local")
+        try assert.equal(idx.occurrences_for_symbol(v_ref.symbol_key).len(), 2)
+        .Ok({})
+      },
+    )
+    .test(
+      "case pattern variables bind in the arm body",
+      fn() {
+        src := "fn f(o: Int) Int {\n  case o {\n    .Some(item) => item,\n    .None => 0,\n  }\n}\n"
+        idx := build(src)
+
+        item_ref := try at_nth(idx, src, "item", 2).ok_or("expected the item reference in the arm")
+        try assert.ok(item_ref.kind == .Local, "pattern variable item should be a local")
+        try assert.equal(idx.occurrences_for_symbol(item_ref.symbol_key).len(), 2)
+        .Ok({})
+      },
+    )
+    .test(
+      "record shorthand is a use of the local field name",
+      fn() {
+        src := "fn f() Int {\n  x := 1\n  p := .{ x }\n  0\n}\n"
+        idx := build(src)
+
+        try assert.ok(
+          has_role(idx, "x", .Shorthand),
+          "record shorthand x should be a shorthand use",
+        )
+        .Ok({})
+      },
+    )
+    .test(
+      "non-local identifiers are left for later enrichment",
+      fn() {
+        src := "fn f() Int {\n  helper()\n}\n"
+        idx := build(src)
+
+        // `helper` is not a binder, so the lexical pass records no occurrence yet.
+        case at_nth(idx, src, "helper", 1) {
+          .Some(_) => .Err("lexical pass should not classify the unbound call target"),
+          .None => .Ok({}),
+        }
+      },
+    )
+}

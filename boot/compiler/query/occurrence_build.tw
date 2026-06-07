@@ -1,0 +1,335 @@
+/// Build the lexical layer of an occurrence index from the AST.
+///
+/// Phase 2 centralizes the local scope tracking that semantic tokens and
+/// references each duplicate today. It allocates a local symbol for every
+/// binder (params, lets, closure params, for/collect binders, case pattern
+/// idents), models shadowing by threading a per-scope environment, and emits a
+/// `Declaration` occurrence at each binder plus `Reference`/`Write`/`Shorthand`
+/// occurrences for identifiers that resolve to a binder in scope.
+///
+/// Identifiers that do not resolve to a local binder (functions, types,
+/// variants, fields, module aliases) are left untouched here; Phase 3 enriches
+/// them from resolver/checker metadata.
+
+use compiler.ast.{
+  Block, CollectExpr, Expr, ForStmt, FunctionDecl, Item, Module, Param, Pattern, RecordEntry, Stmt,
+  StringPart,
+}
+use compiler.query.occurrences as occ
+use lib.source.span.{Span}
+
+/// A binder in scope: its per-file local id and how tooling describes it.
+type Binding = .{ id: Int, kind: occ.SymbolKind }
+
+/// Lexical environment: identifier name -> the binder currently in scope.
+/// Shadowing is just overwriting a name; scopes are discarded by not threading
+/// a child environment back to the caller.
+type Env = Dict<String, Binding>
+
+/// Accumulating builder state (flows through the whole walk and back out).
+type Builder = .{ index: occ.OccurrenceIndex, next_local: Int }
+
+/// A walk step that may extend the environment (binders) as well as the index.
+type Walk = .{ b: Builder, env: Env }
+
+/// Immutable invariants threaded as the receiver so calls read as
+/// `ctx.walk_expr(b, env, e)`.
+type Ctx = .{ mod: String, uri: String }
+
+/// Build the lexical occurrence index for a parsed module.
+pub fn build_lexical(mod: String, uri: String, module: Module) occ.OccurrenceIndex {
+  ctx := Ctx.{ mod, uri }
+  b := Builder.{ index: occ.empty(mod, uri), next_local: 0 }
+  top_env: Env = Dict.new()
+
+  for item in module.items {
+    case item {
+      .Function(fd) => b = ctx.walk_function(b, fd),
+      .Stmt(s) => {
+        w := ctx.walk_stmt(b, top_env, s)
+        b = w.b
+        top_env = w.env
+      },
+      _ => {},
+    }
+  }
+
+  b.index.finalize()
+}
+
+fn walk_function(ctx: Ctx, b: Builder, fd: FunctionDecl) Builder {
+  w := Walk.{ b, env: Dict.new() }
+
+  for p in fd.params {
+    w = ctx.declare(w.b, w.env, p.name, p.name_span, .Parameter)
+  }
+
+  ctx.walk_block(w.b, w.env, fd.body)
+}
+
+fn walk_block(ctx: Ctx, b: Builder, env: Env, block: Block) Builder {
+  cur := Walk.{ b, env }
+
+  for stmt in block.stmts {
+    cur = ctx.walk_stmt(cur.b, cur.env, stmt)
+  }
+
+  case block.tail {
+    .Some(e) => ctx.walk_expr(cur.b, cur.env, e),
+    .None => cur.b,
+  }
+}
+
+fn walk_stmt(ctx: Ctx, b: Builder, env: Env, stmt: Stmt) Walk {
+  case stmt {
+    .Let(ls) => {
+      b2 := ctx.walk_expr(b, env, ls.value)
+
+      if ls.is_rebind {
+        // Write to an existing local; a non-local target is resolved in Phase 3.
+        case env.get(ls.name) {
+          .Some(bind) => Walk.{
+            b: ctx.ref_local(b2, bind, ls.name, .Write, ls.name_span, .None),
+            env,
+          },
+          .None => Walk.{ b: b2, env },
+        }
+      } else {
+        ctx.declare(b2, env, ls.name, ls.name_span, .Local)
+      }
+    },
+    .For(fs) => Walk.{ b: ctx.walk_for(b, env, fs), env },
+    .Return(rs) => Walk.{ b: ctx.walk_opt_expr(b, env, rs.value), env },
+    .Break(bs) => Walk.{ b: ctx.walk_opt_expr(b, env, bs.value), env },
+    .Continue(_) => Walk.{ b, env },
+    .Defer(ds) => Walk.{ b: ctx.walk_expr(b, env, ds.expr), env },
+    .Expr(es) => Walk.{ b: ctx.walk_expr(b, env, es.expr), env },
+    .ErrorStmt(_) => Walk.{ b, env },
+  }
+}
+
+fn walk_for(ctx: Ctx, b: Builder, env: Env, fs: ForStmt) Builder {
+  // The iterator is evaluated in the outer scope, before the binders exist.
+  b2 := ctx.walk_opt_expr(b, env, fs.iter)
+  w := Walk.{ b: b2, env }
+
+  w = ctx.bind_loop_var(w, fs.pattern, fs.pattern_span, fs.span)
+  w = ctx.bind_loop_var(w, fs.index, fs.index_span, fs.span)
+
+  // The condition (loop-guard form) is evaluated with binders in scope.
+  b3 := ctx.walk_opt_expr(w.b, w.env, fs.condition)
+  ctx.walk_block(b3, w.env, fs.body)
+}
+
+fn walk_collect(ctx: Ctx, b: Builder, env: Env, ce: CollectExpr) Builder {
+  b2 := ctx.walk_opt_expr(b, env, ce.iter)
+  w := Walk.{ b: b2, env }
+
+  w = ctx.bind_loop_var(w, ce.pattern, ce.pattern_span, ce.body.span)
+  w = ctx.bind_loop_var(w, ce.index, ce.index_span, ce.body.span)
+
+  b3 := ctx.walk_opt_expr(w.b, w.env, ce.condition)
+  ctx.walk_block(b3, w.env, ce.body)
+}
+
+fn bind_loop_var(ctx: Ctx, w: Walk, name: String?, name_span: Span?, fallback: Span) Walk {
+  case name {
+    .Some(n) => {
+      sp := case name_span {
+        .Some(s) => s,
+        .None => fallback,
+      }
+
+      ctx.declare(w.b, w.env, n, sp, .Local)
+    },
+    .None => w,
+  }
+}
+
+fn walk_expr(ctx: Ctx, b: Builder, env: Env, expr: Expr) Builder {
+  case expr.kind {
+    .Ident(name) => case env.get(name) {
+      .Some(bind) => ctx.ref_local(b, bind, name, .Reference, expr.span, .Some(expr.id)),
+      .None => b,
+    },
+    .IntLit(_) => b,
+    .FloatLit(_) => b,
+    .StringLit(_) => b,
+    .BoolLit(_) => b,
+    .ErrorExpr => b,
+    .StringInterp(parts) => {
+      for part in parts {
+        case part {
+          .Interpolation(e) => b = ctx.walk_expr(b, env, e),
+          .Literal(_) => {},
+        }
+      }
+
+      b
+    },
+    .Unary(_, e) => ctx.walk_expr(b, env, e),
+    .Binary(_, l, r) => ctx.walk_expr(ctx.walk_expr(b, env, l), env, r),
+    .Call(callee, args) => {
+      b = ctx.walk_expr(b, env, callee)
+
+      for a in args {
+        b = ctx.walk_expr(b, env, a)
+      }
+
+      b
+    },
+    .Field(recv, _) => ctx.walk_expr(b, env, recv),
+    .Index(a, i) => ctx.walk_expr(ctx.walk_expr(b, env, a), env, i),
+    .BlockExpr(blk) => ctx.walk_block(b, env, blk),
+    .If(c, then_blk, else_opt) => {
+      b = ctx.walk_expr(b, env, c)
+      b = ctx.walk_block(b, env, then_blk)
+      ctx.walk_opt_expr(b, env, else_opt)
+    },
+    .Case(scrut, arms) => {
+      b = ctx.walk_expr(b, env, scrut)
+
+      for arm in arms {
+        w := ctx.bind_pattern(b, env, arm.pattern)
+        b = ctx.walk_expr(w.b, w.env, arm.expr)
+      }
+
+      b
+    },
+    .Cond(arms) => {
+      for arm in arms {
+        b = ctx.walk_opt_expr(b, env, arm.condition)
+        b = ctx.walk_expr(b, env, arm.body)
+      }
+
+      b
+    },
+    .Array(elems) => {
+      for e in elems {
+        b = ctx.walk_expr(b, env, e)
+      }
+
+      b
+    },
+    .Record(entries) => ctx.walk_record_entries(b, env, entries),
+    .NamedRecord(_, entries) => ctx.walk_record_entries(b, env, entries),
+    .Variant(_, args) => {
+      for a in args {
+        b = ctx.walk_expr(b, env, a)
+      }
+
+      b
+    },
+    .Closure(params, _, body) => {
+      w := Walk.{ b, env }
+
+      for p in params {
+        w = ctx.declare(w.b, w.env, p.name, p.name_span, .Parameter)
+      }
+
+      ctx.walk_block(w.b, w.env, body)
+    },
+    .Collect(ce) => ctx.walk_collect(b, env, ce),
+  }
+}
+
+fn walk_record_entries(ctx: Ctx, b: Builder, env: Env, entries: Vector<RecordEntry>) Builder {
+  for entry in entries {
+    case entry.value {
+      .Some(e) => b = ctx.walk_expr(b, env, e),
+      // Shorthand `.{ x }` is also a use of the local `x`.
+      .None => case env.get(entry.name) {
+        .Some(bind) => b = ctx.ref_local(b, bind, entry.name, .Shorthand, entry.span, .None),
+        .None => {},
+      },
+    }
+  }
+
+  b
+}
+
+fn bind_pattern(ctx: Ctx, b: Builder, env: Env, pat: Pattern) Walk {
+  case pat.kind {
+    .Ident(name) => ctx.declare(b, env, name, pat.span, .Local),
+    .Variant(_, subs) => ctx.bind_patterns(b, env, subs),
+    .QualifiedVariant(_, _, subs) => ctx.bind_patterns(b, env, subs),
+    .Wildcard => Walk.{ b, env },
+    .Literal(_) => Walk.{ b, env },
+    .ErrorPattern => Walk.{ b, env },
+  }
+}
+
+fn bind_patterns(ctx: Ctx, b: Builder, env: Env, subs: Vector<Pattern>) Walk {
+  w := Walk.{ b, env }
+
+  for sub in subs {
+    w = ctx.bind_pattern(w.b, w.env, sub)
+  }
+
+  w
+}
+
+fn walk_opt_expr(ctx: Ctx, b: Builder, env: Env, e: Expr?) Builder {
+  case e {
+    .Some(expr) => ctx.walk_expr(b, env, expr),
+    .None => b,
+  }
+}
+
+/// Allocate a fresh local symbol for a binder, record its declaration, and
+/// return the builder plus an environment with the name bound (shadowing any
+/// outer binder of the same name).
+fn declare(ctx: Ctx, b: Builder, env: Env, name: String, name_span: Span, kind: occ.SymbolKind) Walk {
+  id := b.next_local
+  key := occ.SymbolKey.Local(ctx.mod, id)
+
+  b.index = .add_symbol(
+    .{
+      key,
+      name,
+      kind,
+      declaration_span: .Some(name_span),
+      declaration_uri: .Some(ctx.uri),
+      detail: .NoDetail,
+    },
+  )
+  b.index = .add_occurrence(
+    .{
+      symbol_key: key,
+      name,
+      kind,
+      role: .Declaration,
+      span: name_span,
+      expr_id: .None,
+      type_expr_span: .None,
+    },
+  )
+  b.next_local = id + 1
+
+  env[name] = Binding.{ id, kind }
+  Walk.{ b, env }
+}
+
+/// Record a use of an in-scope local binder.
+fn ref_local(
+  ctx: Ctx,
+  b: Builder,
+  bind: Binding,
+  name: String,
+  role: occ.OccurrenceRole,
+  span: Span,
+  expr_id: Int?,
+) Builder {
+  b.index = .add_occurrence(
+    .{
+      symbol_key: .Local(ctx.mod, bind.id),
+      name,
+      kind: bind.kind,
+      role,
+      span,
+      expr_id,
+      type_expr_span: .None,
+    },
+  )
+  b
+}
