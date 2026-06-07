@@ -1,0 +1,98 @@
+use @std.date
+
+use frame.column
+use frame.column.{Column}
+use frame.gen
+use frame.table.{Dir}
+
+fn must_col(r: Result<Column, String>) Column {
+  case r {
+    .Ok(c) => c,
+    .Err(e) => error(e),
+  }
+}
+
+fn ms_since(start: Float) Float {
+  date.now() - start
+}
+
+fn bench_n(n: Int) Void {
+  println("── N = ${n} ──")
+
+  start_gen := date.now()
+  base := gen.table(n, 64)
+  gen_ms := ms_since(start_gen)
+  println("generate table      : ${gen_ms}ms")
+
+  amount_col := must_col(base.column("amount"))
+  key_col := must_col(base.column("key"))
+  score_col := must_col(base.column("score"))
+  amounts := column.as_ints(amount_col)
+
+  start_idx := date.now()
+  idx := collect i in range(n) {
+    i
+  }
+  idx_ms := ms_since(start_idx)
+  println("build idx           : ${idx_ms}ms (checksum ${idx.len()})")
+
+  start_sort := date.now()
+  sorted := idx.sort_by(fn(a, b) { Int.compare(amounts[a], amounts[b]) })
+  sort_ms := ms_since(start_sort)
+  println("sort idx by amount  : ${sort_ms}ms (checksum ${sorted.len()})")
+
+  start_sort_nulls := date.now()
+  sorted_with_nulls := idx.sort_by(fn(a, b) {
+    ai := amount_col.nulls[a]
+    bi := amount_col.nulls[b]
+
+    if ai and bi {
+      return Order.Eq
+    }
+
+    if ai {
+      return Order.Gt
+    }
+
+    if bi {
+      return Order.Lt
+    }
+
+    Int.compare(amounts[a], amounts[b])
+  })
+  sort_nulls_ms := ms_since(start_sort_nulls)
+  println("sort idx + nulls    : ${sort_nulls_ms}ms (checksum ${sorted_with_nulls.len()})")
+
+  start_gather_amount := date.now()
+  gathered_amounts := amounts.gather(sorted)
+  gather_amount_ms := ms_since(start_gather_amount)
+  println("gather amount vector: ${gather_amount_ms}ms (checksum ${gathered_amounts.len()})")
+
+  start_gather_cols := date.now()
+  gathered_key_col := column.gather(key_col, sorted)
+  gathered_amount_col := column.gather(amount_col, sorted)
+  gathered_score_col := column.gather(score_col, sorted)
+  gather_cols_ms := ms_since(start_gather_cols)
+  checksum_cols := column.len(gathered_key_col)
+    + column.len(gathered_amount_col) + column.len(gathered_score_col)
+  println("gather 3 columns    : ${gather_cols_ms}ms (checksum ${checksum_cols})")
+
+  start_take := date.now()
+  taken := base.take(sorted)
+  take_ms := ms_since(start_take)
+  println("table.take(sorted)  : ${take_ms}ms (checksum ${taken.nrows})")
+
+  start_full := date.now()
+  ordered := case base.order_by("amount", Dir.Asc) {
+    .Ok(t) => t,
+    .Err(e) => error(e),
+  }
+  full_ms := ms_since(start_full)
+  println("full order_by       : ${full_ms}ms (checksum ${ordered.nrows})")
+
+  println("")
+}
+
+bench_n(10000)
+bench_n(100000)
+bench_n(1000000)

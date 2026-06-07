@@ -46,6 +46,46 @@ Interpretation:
 - `sort values` measures prelude merge sort over a `Vector<Int>` value vector.
 - `sort idx key` isolates the dataframe comparator shape: repeated random reads from a key PVec during index sorting. This is the primary target.
 
+### Dataframe `order_by` breakdown
+
+`examples/dataframe/bench/order_by_breakdown.tw` breaks the current `order_by("amount", Asc)` path into generation, index construction, key-index sorting, null-aware key-index sorting, gather, and full `order_by`.
+
+Latest run:
+
+```
+── N = 10000 ──
+generate table      : 6.71ms
+build idx           : 0.28ms     (checksum 10000)
+sort idx by amount  : 9.35ms     (checksum 10000)
+sort idx + nulls    : 8.78ms     (checksum 10000)
+gather amount vector: 0.32ms     (checksum 10000)
+gather 3 columns    : 1.77ms     (checksum 30000)
+table.take(sorted)  : 2.01ms     (checksum 10000)
+full order_by       : 10.72ms    (checksum 10000)
+
+── N = 100000 ──
+generate table      : 45.86ms
+build idx           : 2.11ms     (checksum 100000)
+sort idx by amount  : 92.74ms    (checksum 100000)
+sort idx + nulls    : 119.03ms   (checksum 100000)
+gather amount vector: 4.57ms     (checksum 100000)
+gather 3 columns    : 30.36ms    (checksum 300000)
+table.take(sorted)  : 28.60ms    (checksum 100000)
+full order_by       : 152.73ms   (checksum 100000)
+
+── N = 1000000 ──
+generate table      : 462.04ms
+build idx           : 27.22ms    (checksum 1000000)
+sort idx by amount  : 1620.13ms  (checksum 1000000)
+sort idx + nulls    : 2155.01ms  (checksum 1000000)
+gather amount vector: 71.69ms    (checksum 1000000)
+gather 3 columns    : 414.06ms   (checksum 3000000)
+table.take(sorted)  : 416.34ms   (checksum 1000000)
+full order_by       : 2652.56ms  (checksum 1000000)
+```
+
+At `N = 1000000`, the full path is dominated by null-aware index sorting (~2.16s) plus final table gather (~0.42s). The difference between `sort idx by amount` and `sort idx + nulls` shows that even an all-non-null column pays heavily for per-comparison null-mask checks. The next useful primitive should therefore avoid both repeated PVec key reads and repeated PVec null-mask reads inside the comparator.
+
 ### Dataframe end-to-end benchmark
 
 Latest dataframe benchmark after `Vector.gather` and dtype-specialized `order_by` comparator:
@@ -70,9 +110,12 @@ group_by/agg: 337.20ms  (checksum 64)
 join        : 1481.51ms (checksum 937500)
 ```
 
-### Rust reference, same generated data
+### Native-language references, same generated data
 
-`examples/dataframe/bench/order_by_rust.rs` provides a reference ceiling, not a Twinkle ceiling:
+`examples/dataframe/bench/order_by_rust.rs`, `order_by_go.go`, and `order_by_clojure.clj`
+provide reference points, not a Twinkle ceiling.
+
+Rust:
 
 ```
 N=10000    native total: 0.72ms   sort: 0.26ms   gather: 0.44ms
@@ -83,7 +126,23 @@ N=1000000  native total: 57.63ms  sort: 8.78ms   gather: 48.35ms
 N=1000000  merge  total: 133.24ms sort: 84.11ms  gather: 48.34ms
 ```
 
-This shows the workload itself can be far faster when the sort operates on dense native memory. The gap is current implementation overhead: high-level prelude merge sort over persistent vectors, closure comparator calls, and repeated PVec random reads.
+Go (`sort.Slice` over row indices):
+
+```
+N=10000    go total: 1.48ms   sort: 1.33ms   gather: 0.13ms
+N=100000   go total: 15.37ms  sort: 12.75ms  gather: 2.46ms
+N=1000000  go total: 77.21ms  sort: 59.33ms  gather: 17.27ms
+```
+
+Clojure/JVM (`Arrays.sort` over boxed row indices; includes cold JVM/script overhead):
+
+```
+N=10000    clj total: 7.84ms    sort: 4.25ms    gather: 3.15ms
+N=100000   clj total: 42.76ms   sort: 14.51ms   gather: 25.66ms
+N=1000000  clj total: 244.66ms  sort: 119.34ms  gather: 120.57ms
+```
+
+These show the workload itself can be far faster when the sort operates on dense native memory. The gap is current implementation overhead: high-level prelude merge sort over persistent vectors, closure comparator calls, and repeated PVec random reads.
 
 ---
 
