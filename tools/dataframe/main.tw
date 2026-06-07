@@ -6,6 +6,7 @@ use tests.row_suite
 use tests.query_suite
 use tests.group_suite
 use tests.join_suite
+use tests.gen_suite
 use runner
 
 runner.run_all([
@@ -17,4 +18,5 @@ runner.run_all([
   query_suite.suite(),
   group_suite.suite(),
   join_suite.suite(),
+  gen_suite.suite(),
 ])

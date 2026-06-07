@@ -1,0 +1,24 @@
+use assert
+use runner
+use frame.table
+use frame.gen
+
+pub fn suite() {
+  runner.suite("gen")
+    .test(
+      "generates the requested shape",
+      fn() {
+        t := gen.table(100, 8)
+        ok1 := try assert.equal(t.nrows, 100)
+        assert.equal(t.names, ["key", "amount", "score"])
+      },
+    )
+    .test(
+      "is deterministic for a fixed size",
+      fn() {
+        a := gen.table(50, 4).display()
+        b := gen.table(50, 4).display()
+        assert.equal(a, b)
+      },
+    )
+}
