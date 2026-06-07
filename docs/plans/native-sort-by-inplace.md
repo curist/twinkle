@@ -1,6 +1,6 @@
 # Native in-place `Vector.sort_by` — Design Spec (Approach A)
 
-**Status:** approved design, ready for implementation plan.
+**Status:** Approach A measured **insufficient** (in-place writes did not materialize; `order_by` N=1M regressed ~2531ms → ~5589ms). **Escalating to Approach C** (flat dense scratch + stable merge), which is a separate plan. The Task 2 quicksort prelude change is being reverted to restore the stable merge-sort baseline; the Task 1 characterization tests are kept (they are stability-agnostic and will validate Approach C too).
 **Parent plan:** [wasm-native-sort.md](wasm-native-sort.md) — this is a concrete, staged execution of that plan's "general win" direction (every `sort_by` benefits), starting with the lowest-risk variant.
 
 ## Goal
@@ -129,6 +129,30 @@ the null-ordering test).
 **Decision gate:** if `order_by` does not improve materially, escalate to
 Approach C (flat dense scratch + stable merge). If it improves but stability is
 required by some consumer, also escalate to C.
+
+### Measured results (gate: FAIL → escalate to C)
+
+In-place writes did **not** materialize. The generated WAT emits `swap`,
+`quicksort_range`, and `insertion_sort_range` as separate functions, so the
+working buffer crosses call boundaries on every swap and the uniqueness analysis
+falls back to the persistent copy-on-write path (`rt_arr__set` + `array.copy`,
+two O(log₃₂ n) COW writes per swap). No `set_in_place`/`set_unsafe` writes were
+emitted in the sort path. Net effect is roughly O(n·log²n) work — a
+constant-factor *regression*, not an O(n²) hang.
+
+| benchmark (N = 1,000,000) | baseline (merge sort) | Approach A (quicksort) |
+|---|---|---|
+| `sort values` (`order_by_micro.tw`) | ~829 ms | ~3526 ms (~4.3× slower) |
+| `sort idx key` (`order_by_micro.tw`) | ~1674 ms | ~4490 ms (~2.7× slower) |
+| `order_by` (`main.tw`) | ~2531 ms | ~5589 ms (~2.2× slower) |
+
+Boot suite stayed green (2565 tests) — correctness is fine; the problem is
+purely that the COW write path makes the in-place algorithm slower than the
+merge sort it replaced. The plan's Step 5 inline-fallback was **not** pursued:
+even a fully-inlined single-body sort that achieved in-place writes would still
+pay the per-element O(log₃₂ n) trie-access cost that Approach C eliminates, and
+A would remain unstable. Approach C (flat dense scratch-array runtime primitives
++ stable bottom-up merge) is the correct next step and is its own plan.
 
 ## Out of scope
 
