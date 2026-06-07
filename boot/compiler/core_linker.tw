@@ -30,6 +30,7 @@ fn is_builtin_method_type(type_name: String) Bool {
     or type_name == "Option"
     or type_name == "Set"
     or type_name == "Result"
+    or type_name == "Order"
 }
 
 // ── Public API ──────────────────────────────────────────────────────

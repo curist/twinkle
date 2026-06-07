@@ -1,0 +1,13 @@
+/// Methods for the builtin `Order` type (the result of `compare` functions
+/// such as `Int.compare`, `String.compare`, and `Vector.sort_by` comparators).
+
+/// Render an Order as a string ("Lt", "Eq", "Gt"). Witnesses the `Stringify`
+/// contract so Order values interpolate (`${o}`) and work with helpers like
+/// `assert.equal` that require Stringify.
+pub fn to_string(o: Order) String {
+  case o {
+    .Lt => "Lt",
+    .Eq => "Eq",
+    .Gt => "Gt",
+  }
+}

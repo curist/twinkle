@@ -182,6 +182,7 @@ fn prelude_module_stem(receiver: String?) String? {
       "Int" => .Some("int"),
       "Iterator" => .Some("iterator"),
       "Option" => .Some("option"),
+      "Order" => .Some("order"),
       "Result" => .Some("result"),
       "Set" => .Some("set"),
       "String" => .Some("string"),

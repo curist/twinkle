@@ -127,6 +127,10 @@ Comparison result type used by `sort_by` and primitive comparators.
 | `Float.compare` | `fn(a: Float, b: Float) Order` | Compare two floats |
 | `String.compare` | `fn(a: String, b: String) Order` | Lexicographic byte-order comparison |
 | `Byte.compare` | `fn(a: Byte, b: Byte) Order` | Compare two bytes by numeric value |
+| `Order.to_string` | `fn(o: Order) String` | Render as `"Lt"`/`"Eq"`/`"Gt"` |
+
+`Order` satisfies the `Stringify` contract, so values interpolate (`"${o}"`) and
+work with generic helpers that require `Stringify` (e.g. `assert.equal`).
 
 Comparators can be passed directly as function references:
 ```tw
