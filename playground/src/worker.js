@@ -33,33 +33,31 @@ const http = {
   },
 }
 
-// Canvas args carry the 2D-context externref, which must be passed through
-// untouched (`args: ['raw', ...]`): decoding it as a Wasm GC string recurses
-// until a stack overflow in some engines (notably Safari).
-const RAW = (n) => Array(n).fill('raw')
-
+// Plain functions — the compiler-emitted twinkle.externs section tells the
+// runtime which args are the 2D-context externref (passed through raw) vs
+// strings vs numbers, so no per-arg marshal spec is needed here.
 function canvasImports(offscreen) {
   const ctx = offscreen.getContext('2d')
   return {
-    get_context: { fn: () => ctx ?? null, args: ['string'] },
-    get_width: { fn: () => offscreen.width },
-    get_height: { fn: () => offscreen.height },
-    set_fill_style: { fn: (c, color) => { c.fillStyle = color }, args: ['raw', 'string'] },
-    fill_rect: { fn: (c, x, y, w, h) => c.fillRect(x, y, w, h), args: RAW(5) },
-    clear_rect: { fn: (c, x, y, w, h) => c.clearRect(x, y, w, h), args: RAW(5) },
-    set_stroke_style: { fn: (c, color) => { c.strokeStyle = color }, args: ['raw', 'string'] },
-    stroke_rect: { fn: (c, x, y, w, h) => c.strokeRect(x, y, w, h), args: RAW(5) },
-    begin_path: { fn: (c) => c.beginPath(), args: ['raw'] },
-    close_path: { fn: (c) => c.closePath(), args: ['raw'] },
-    move_to: { fn: (c, x, y) => c.moveTo(x, y), args: RAW(3) },
-    line_to: { fn: (c, x, y) => c.lineTo(x, y), args: RAW(3) },
-    arc: { fn: (c, x, y, r, s, e) => c.arc(x, y, r, s, e), args: RAW(6) },
-    fill: { fn: (c) => c.fill(), args: ['raw'] },
-    stroke: { fn: (c) => c.stroke(), args: ['raw'] },
-    set_line_width: { fn: (c, w) => { c.lineWidth = w }, args: RAW(2) },
-    set_global_alpha: { fn: (c, a) => { c.globalAlpha = a }, args: RAW(2) },
-    set_font: { fn: (c, font) => { c.font = font }, args: ['raw', 'string'] },
-    fill_text: { fn: (c, text, x, y) => c.fillText(text, x, y), args: ['raw', 'string', 'raw', 'raw'] },
+    get_context: () => ctx ?? null,
+    get_width: () => offscreen.width,
+    get_height: () => offscreen.height,
+    set_fill_style: (c, color) => { c.fillStyle = color },
+    fill_rect: (c, x, y, w, h) => c.fillRect(x, y, w, h),
+    clear_rect: (c, x, y, w, h) => c.clearRect(x, y, w, h),
+    set_stroke_style: (c, color) => { c.strokeStyle = color },
+    stroke_rect: (c, x, y, w, h) => c.strokeRect(x, y, w, h),
+    begin_path: (c) => c.beginPath(),
+    close_path: (c) => c.closePath(),
+    move_to: (c, x, y) => c.moveTo(x, y),
+    line_to: (c, x, y) => c.lineTo(x, y),
+    arc: (c, x, y, r, s, e) => c.arc(x, y, r, s, e),
+    fill: (c) => c.fill(),
+    stroke: (c) => c.stroke(),
+    set_line_width: (c, w) => { c.lineWidth = w },
+    set_global_alpha: (c, a) => { c.globalAlpha = a },
+    set_font: (c, font) => { c.font = font },
+    fill_text: (c, text, x, y) => c.fillText(text, x, y),
   }
 }
 
