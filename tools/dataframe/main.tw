@@ -1,0 +1,6 @@
+use tests.cell_suite
+use runner
+
+runner.run_all([
+  cell_suite.suite(),
+])
