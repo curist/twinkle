@@ -1,6 +1,15 @@
 # Compiler-emitted extern FFI metadata
 
-**Status:** Plan, ready to implement
+**Status:** Implemented & shipped (archived 2026-06-07). Boot emits the
+`twinkle.externs` section, the runtime auto-marshals from it, and the playground
+canvas externs are plain functions. Verified: section content, self-host fixed
+point, 2531 boot tests, js_runtime suite + end-to-end externs tests. Bundled in
+`@twinkle-lang/twinkle` 0.5.0 (publish required before the playground deploy).
+One implementation deviation from the plan below: the metadata is computed in
+`link_program` (codegen.tw) from `anf.extern_imports`, not carried on
+`WasmModule` — this avoided adding the field to ~40 pre-link constructors.
+Deferred follow-up: the signature checks (arity / return validation) the section
+now enables.
 **Date:** 2026-06-07
 
 ## Goal
