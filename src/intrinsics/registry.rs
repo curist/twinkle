@@ -464,21 +464,21 @@ const INTRINSIC_SPECS: &[IntrinsicSpec] = &[
         VECTOR_SCRATCH_NEW,
         "Vector.scratch_new",
         Runtime,
-        false,
+        true,
         false
     ),
     spec!(
         VECTOR_SCRATCH_GET,
         "Vector.scratch_get",
         Runtime,
-        false,
+        true,
         false
     ),
     spec!(
         VECTOR_SCRATCH_SET,
         "Vector.scratch_set",
         Runtime,
-        false,
+        true,
         false
     ),
     spec!(HOST_READ_FILE, "__host_read_file", Runtime, false, false),
