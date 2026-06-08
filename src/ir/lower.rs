@@ -108,12 +108,6 @@ pub mod prelude {
     pub const VECTOR_DROP_LAST: FuncId = FuncId(1044);
     // Vector.gather(vec, idx) -> Vector<T>: bulk positional select/permute.
     pub const VECTOR_GATHER: FuncId = FuncId(1045);
-    // Vector.scratch_new(n) -> Scratch<T>: allocate dense mutable sort buffer.
-    pub const VECTOR_SCRATCH_NEW: FuncId = FuncId(1046);
-    // Vector.scratch_get(buf, i) -> T: read element from dense sort buffer.
-    pub const VECTOR_SCRATCH_GET: FuncId = FuncId(1047);
-    // Vector.scratch_set(buf, i, v) -> Void: write element to dense sort buffer.
-    pub const VECTOR_SCRATCH_SET: FuncId = FuncId(1048);
 
     // String / numeric conversion builtins
     pub const CHAR_CODE_AT: FuncId = FuncId(1017); // String.char_code_at(s, i) -> Int

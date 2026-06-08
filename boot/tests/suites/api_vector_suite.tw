@@ -26,6 +26,37 @@ fn sort_suite_sum(xs: Vector<Int>) Int {
   total
 }
 
+type SortStabItem = .{ key: Int, tag: Int }
+
+// Compare on key only; ties (equal keys) must keep input order for a stable sort.
+fn stab_cmp(a: SortStabItem, b: SortStabItem) Order {
+  Int.compare(a.key, b.key)
+}
+
+// Keys non-decreasing, and within an equal-key run the tags strictly increase
+// (tag records the original input position, so this proves stability).
+fn stab_is_stable(xs: Vector<SortStabItem>) Bool {
+  ok := true
+  i := 1
+
+  for i < xs.len() and ok {
+    prev := xs[i - 1]
+    cur := xs[i]
+
+    if prev.key > cur.key {
+      ok = false
+    } else {
+      if prev.key == cur.key and prev.tag >= cur.tag {
+        ok = false
+      }
+    }
+
+    i = i + 1
+  }
+
+  ok
+}
+
 fn build_seq(count: Int) Vector<Int> {
   build_seq_from(0, count)
 }
@@ -766,26 +797,6 @@ pub fn suite() runner.Suite {
       },
     )
     .test(
-      "scratch buffer round-trips and mutates in place",
-      fn() {
-        buf: Scratch<Int> = Vector.scratch_new(3)
-        Vector.scratch_set(buf, 0, 10)
-        Vector.scratch_set(buf, 1, 20)
-        Vector.scratch_set(buf, 2, 30)
-        try assert.equal(Vector.scratch_get(buf, 1), 20)
-        out: Vector<Int> = collect i in range(3) {
-          Vector.scratch_get(buf, i)
-        }
-        try assert.equal(out[0], 10)
-        try assert.equal(out[2], 30)
-
-        // in-place mutation: overwrite and confirm the same handle changed
-        Vector.scratch_set(buf, 0, 99)
-        try assert.equal(Vector.scratch_get(buf, 0), 99)
-        .Ok({})
-      },
-    )
-    .test(
       "sort_by does not mutate original vector",
       fn() {
         xs: Vector<Int> = [3, 2, 1]
@@ -796,6 +807,39 @@ pub fn suite() runner.Suite {
         try assert.equal(ys[0], 1)
         try assert.equal(ys[1], 2)
         try assert.equal(ys[2], 3)
+        .Ok({})
+      },
+    )
+    .test(
+      "sort_by is stable for equal keys",
+      fn() {
+        // key sequence 2,1,2,1,2,1 avoids the ascending/descending fast paths
+        // and forces the dense merge; equal keys must keep input order.
+        small: Vector<SortStabItem> = [
+          .{ key: 2, tag: 0 },
+          .{ key: 1, tag: 1 },
+          .{ key: 2, tag: 2 },
+          .{ key: 1, tag: 3 },
+          .{ key: 2, tag: 4 },
+          .{ key: 1, tag: 5 },
+        ]
+        sorted_small := small.sort_by(stab_cmp)
+        try assert.equal(sorted_small[0].tag, 1)
+        try assert.equal(sorted_small[1].tag, 3)
+        try assert.equal(sorted_small[2].tag, 5)
+        try assert.equal(sorted_small[3].tag, 0)
+        try assert.equal(sorted_small[4].tag, 2)
+        try assert.equal(sorted_small[5].tag, 4)
+        try assert.is_true(stab_is_stable(sorted_small))
+
+        // larger tie-heavy case crossing multiple merge widths: only 4 distinct
+        // keys over 1000 items, tag = input position.
+        big := collect i in range(1000) {
+          SortStabItem.{ key: i % 4, tag: i }
+        }
+        sorted_big := big.sort_by(stab_cmp)
+        try assert.equal(sorted_big.len(), 1000)
+        try assert.is_true(stab_is_stable(sorted_big))
         .Ok({})
       },
     )

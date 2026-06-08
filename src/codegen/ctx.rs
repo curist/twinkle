@@ -17,7 +17,7 @@ use crate::syntax::ast::{BinOp, UnOp};
 use crate::types::env::TypeEnv;
 use crate::types::ty::{
     CELL_TYPE_ID, ITER_ITEM_TYPE_ID, ITERATOR_TYPE_ID, MonoType, OPTION_TYPE_ID, RESULT_TYPE_ID,
-    SCRATCH_TYPE_ID, TASK_TYPE_ID, TypeDef, TypeId, UNFOLD_STEP_TYPE_ID,
+    TASK_TYPE_ID, TypeDef, TypeId, UNFOLD_STEP_TYPE_ID,
 };
 use crate::wasm::ir::{FuncSym, HeapType, ImportDef, Label, ValType};
 
@@ -2574,11 +2574,6 @@ fn mono_named_to_valtype(type_id: TypeId, type_env: &TypeEnv) -> ValType {
     if type_id == TASK_TYPE_ID {
         // Phase 1: Task is a 1-element rt_types__Array wrapping the result.
         return ref_named(true, T_ARRAY);
-    }
-    if type_id == SCRATCH_TYPE_ID {
-        // Scratch<T> is an opaque dense sort buffer backed by rt_types__Array.
-        // Layout is anyref; the scratch_* ops cast internally.
-        return ValType::Anyref;
     }
     match type_env.get_def(type_id) {
         Some(TypeDef::Sum { .. }) => ref_named(true, T_VARIANT),

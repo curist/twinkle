@@ -5,8 +5,8 @@ use super::ty::{
     BUILTIN_BOOL_TYPE_ID, BUILTIN_BYTE_TYPE_ID, BUILTIN_DICT_TYPE_ID, BUILTIN_FLOAT_TYPE_ID,
     BUILTIN_INT_TYPE_ID, BUILTIN_STRING_TYPE_ID, BUILTIN_VECTOR_TYPE_ID, CELL_TYPE_ID,
     FunctionSignature, ITER_ITEM_TYPE_ID, ITERATOR_TYPE_ID, MonoType, OPTION_TYPE_ID,
-    ORDER_TYPE_ID, RANGE_TYPE_ID, RESULT_TYPE_ID, RecordField, SCRATCH_TYPE_ID, SET_TYPE_ID,
-    TASK_TYPE_ID, TypeDef, TypeId, UNFOLD_STEP_TYPE_ID, Variant,
+    ORDER_TYPE_ID, RANGE_TYPE_ID, RESULT_TYPE_ID, RecordField, SET_TYPE_ID, TASK_TYPE_ID, TypeDef,
+    TypeId, UNFOLD_STEP_TYPE_ID, Variant,
 };
 use crate::intrinsics::signatures;
 use crate::syntax::ast::Type as AstType;
@@ -242,20 +242,6 @@ impl TypeEnv {
                 doc: Some("Persistent set of unique values.".to_string()),
             }),
             SET_TYPE_ID,
-        );
-
-        // TypeId(10) = Scratch<T> — opaque dense sort buffer (anyref, backed by rt_types__Array)
-        assert_eq!(
-            env.add_type(TypeDef::Record {
-                name: "Scratch".to_string(),
-                type_params: vec!["T".to_string()],
-                fields: vec![],
-                doc: Some(
-                    "Internal dense sort buffer. Opaque anyref backed by rt_types__Array."
-                        .to_string(),
-                ),
-            }),
-            SCRATCH_TYPE_ID,
         );
 
         // Register all builtin method mappings.

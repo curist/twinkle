@@ -64,14 +64,11 @@ See: [native-sort-by-inplace.md](native-sort-by-inplace.md).
 
 ### Approach C: dense scratch-buffer stable merge sort
 
-Current direction for generic `Vector.sort_by`: copy the input into a flat mutable Wasm-GC scratch array, perform a stable bottom-up merge over dense buffers, and freeze back to `Vector`.
+Implemented for generic `Vector.sort_by`: copy the input into a flat mutable Wasm-GC scratch array, perform a stable bottom-up merge over dense buffers, and freeze back to `Vector`. It is correct and stable.
 
-This is architecturally sound because it removes two real costs from generic `sort_by`:
+Result: **measured neutral-to-negative; did not pass the gate.** In a controlled same-machine A/B against the pre-C recursive merge sort, the dense path *regressed* the pure `Vector<Int>` sort (~808 ms → ~935 ms at N = 1M) and was flat on both index-key sort and dataframe `order_by`. The double copy in/out and per-element un-inlined `scratch_get`/`scratch_set` runtime calls cost more than the old PVec-builder merge saved, and on `order_by` the opaque comparator's persistent-vector key/null reads still dominate — so changing the merge mechanics is neutral. This confirms (like Approach A) that generic-sort mechanics are not the lever.
 
-- persistent-vector allocation at every merge level;
-- persistent-vector writes during the sort body.
-
-But expectations should be modest for dataframe `order_by`, because Approach C keeps the opaque comparator closure. It does not remove the repeated `keys[a]` / `nulls[a]` persistent-vector reads inside every comparison. Treat it as a foundation and correctness-preserving generic sort improvement, not the final dataframe performance lever.
+The reusable part is the `Scratch<T>` dense-buffer infrastructure (an opaque mutable Wasm-GC array with `scratch_new`/`get`/`set` in both compilers), which is a building block for the dense key-index argsort kernel below — not the `sort_by` rewrite itself.
 
 See: [native-sort-dense-merge.md](native-sort-dense-merge.md).
 

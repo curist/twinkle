@@ -9,7 +9,7 @@ use crate::types::env::{TypeEnv, ValueEnv};
 use crate::types::resolve::Resolver;
 use crate::types::ty::{
     CELL_TYPE_ID, FunctionSignature, ITER_ITEM_TYPE_ID, ITERATOR_TYPE_ID, MonoType, OPTION_TYPE_ID,
-    RANGE_TYPE_ID, SCRATCH_TYPE_ID, TASK_TYPE_ID, UNFOLD_STEP_TYPE_ID,
+    RANGE_TYPE_ID, TASK_TYPE_ID, UNFOLD_STEP_TYPE_ID,
 };
 
 pub use crate::intrinsics::registry::IntrinsicDispatch;
@@ -635,42 +635,6 @@ pub fn contract(func_id: FuncId) -> Option<IntrinsicContract> {
                 abi_result: Some(IntrinsicAbiResult::RefArrayNullable),
             })
         }
-        id if id == prelude_ids::VECTOR_SCRATCH_NEW => {
-            let t = ty_var("T");
-            Some(IntrinsicContract {
-                func_id,
-                twinkle_name: "Vector.scratch_new",
-                dispatch: IntrinsicDispatch::Runtime,
-                type_params: vec!["T".to_string()],
-                params: vec![MonoType::Int],
-                ret: scratch_ty(t),
-                abi_result: Some(IntrinsicAbiResult::Anyref),
-            })
-        }
-        id if id == prelude_ids::VECTOR_SCRATCH_GET => {
-            let t = ty_var("T");
-            Some(IntrinsicContract {
-                func_id,
-                twinkle_name: "Vector.scratch_get",
-                dispatch: IntrinsicDispatch::Runtime,
-                type_params: vec!["T".to_string()],
-                params: vec![scratch_ty(t.clone()), MonoType::Int],
-                ret: t,
-                abi_result: Some(IntrinsicAbiResult::Anyref),
-            })
-        }
-        id if id == prelude_ids::VECTOR_SCRATCH_SET => {
-            let t = ty_var("T");
-            Some(IntrinsicContract {
-                func_id,
-                twinkle_name: "Vector.scratch_set",
-                dispatch: IntrinsicDispatch::Runtime,
-                type_params: vec!["T".to_string()],
-                params: vec![scratch_ty(t.clone()), MonoType::Int, t],
-                ret: MonoType::Void,
-                abi_result: None,
-            })
-        }
         _ => None,
     }
 }
@@ -961,13 +925,6 @@ fn unfold_step_ty(yield_ty: MonoType, seed_ty: MonoType) -> MonoType {
 fn task_ty(inner: MonoType) -> MonoType {
     MonoType::Named {
         type_id: TASK_TYPE_ID,
-        args: vec![inner],
-    }
-}
-
-fn scratch_ty(inner: MonoType) -> MonoType {
-    MonoType::Named {
-        type_id: SCRATCH_TYPE_ID,
         args: vec![inner],
     }
 }
