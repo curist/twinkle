@@ -43,8 +43,16 @@ fn t_array_i64() String {
   "rt_types__ArrayI64"
 }
 
+fn t_array_f64() String {
+  "rt_types__ArrayF64"
+}
+
 fn t_boxed_int() String {
   "rt_types__BoxedInt"
+}
+
+fn t_boxed_float() String {
+  "rt_types__BoxedFloat"
 }
 
 fn t_variant() String {
@@ -86,6 +94,10 @@ fn i32_array_null() ValType {
 
 fn arr_i64_null() ValType {
   .Ref(true, .Named(t_array_i64()))
+}
+
+fn arr_f64_null() ValType {
+  .Ref(true, .Named(t_array_f64()))
 }
 
 fn ref_eq_() ValType {
@@ -157,6 +169,7 @@ pub fn module() WasmModule {
     drop_last_fn(),
     gather_fn(),
     sort_i64_fn(),
+    sort_f64_fn(),
     builder_new_fn(),
     builder_from_fn(),
     builder_push_fn(),
@@ -3262,6 +3275,323 @@ fn sort_i64_fn() FuncDef {
                   .LocalGet(l_i),
                   .ArrayGet(tai),
                   .StructNew(tbi),
+                  .Call("builder_push"),
+                  .LocalGet(l_i),
+                  .I32Const(1),
+                  .I32Add,
+                  .LocalSet(l_i),
+                  .Br("push_lp"),
+                ],
+              ),
+            ],
+          ),
+          .LocalGet(l_builder),
+          .Call("builder_freeze"),
+        ],
+      ),
+    ],
+  }
+}
+
+// sort_f64(vec: PVec?) -> PVec
+// Native typed value sort over Vector<Float>. Boxes once in / once out: copies
+// the unboxed f64 keys into a dense typed `ArrayF64` buffer, runs a stable
+// bottom-up merge sort over raw f64 (inlined array.get/set, f64.le compares,
+// no per-element cast or call), then rebuilds a PVec via the builder.
+//
+// The merge ping-pongs between `src` and `aux`, doubling the run width each
+// pass; the final `src` handle holds the sorted data. The merge is stable:
+// on a tie the element from the left run is taken first (f64.le).
+// NaN ordering: f64.le returns false for NaN comparisons, so NaN values sort
+// deterministically to one end; exact position is unspecified-but-deterministic.
+fn sort_f64_fn() FuncDef {
+  p_vec := 0
+  l_n := 1
+  l_src := 2
+  l_aux := 3
+  l_i := 4
+  l_builder := 5
+  l_width := 6
+  l_lo := 7
+  l_mid := 8
+  l_hi := 9
+  l_j := 10
+  l_k := 11
+  l_tmp := 12
+
+  taf := t_array_f64()
+  tbf := t_boxed_float()
+
+  // p0=vec; L1=n, L2=src(f64[]), L3=aux(f64[]), L4=i/loop, L5=builder,
+  // L6=width, L7=lo, L8=mid, L9=hi, L10=j, L11=k, L12=tmp(f64[])
+  .{
+    name: "sort_f64",
+    params: [pvec_null()],
+    results: [pvec_ref()],
+    locals: [
+      .I32,
+      arr_f64_null(),
+      arr_f64_null(),
+      .I32,
+      arr_null(),
+      .I32,
+      .I32,
+      .I32,
+      .I32,
+      .I32,
+      .I32,
+      arr_f64_null(),
+    ],
+    body: [
+      .LocalGet(p_vec),
+      .Call("len"),
+      .LocalSet(l_n),
+      .LocalGet(l_n),
+      .I32Const(1),
+      .I32LeS,
+      .If(
+        .Some(pvec_ref()),
+        [.LocalGet(p_vec), .RefAsNonNull],
+        [
+          .LocalGet(l_n),
+          .ArrayNewDefault(taf),
+          .LocalSet(l_src),
+          .LocalGet(l_n),
+          .ArrayNewDefault(taf),
+          .LocalSet(l_aux),
+          .I32Const(0),
+          .LocalSet(l_i),
+          .Block(
+            "copy_brk",
+            .None,
+            [
+              .Loop(
+                "copy_lp",
+                .None,
+                [
+                  .LocalGet(l_i),
+                  .LocalGet(l_n),
+                  .I32GeS,
+                  .BrIf("copy_brk"),
+                  .LocalGet(l_src),
+                  .RefAsNonNull,
+                  .LocalGet(l_i),
+                  .LocalGet(p_vec),
+                  .LocalGet(l_i),
+                  .Call("get"),
+                  .RefCast(false, .Named(tbf)),
+                  .StructGet(tbf, 0),
+                  .ArraySet(taf),
+                  .LocalGet(l_i),
+                  .I32Const(1),
+                  .I32Add,
+                  .LocalSet(l_i),
+                  .Br("copy_lp"),
+                ],
+              ),
+            ],
+          ),
+          .I32Const(1),
+          .LocalSet(l_width),
+          .Block(
+            "w_brk",
+            .None,
+            [
+              .Loop(
+                "w_lp",
+                .None,
+                [
+                  .LocalGet(l_width),
+                  .LocalGet(l_n),
+                  .I32GeS,
+                  .BrIf("w_brk"),
+                  .I32Const(0),
+                  .LocalSet(l_lo),
+                  .Block(
+                    "lo_brk",
+                    .None,
+                    [
+                      .Loop(
+                        "lo_lp",
+                        .None,
+                        [
+                          .LocalGet(l_lo),
+                          .LocalGet(l_n),
+                          .I32GeS,
+                          .BrIf("lo_brk"),
+                          .LocalGet(l_lo),
+                          .LocalGet(l_width),
+                          .I32Add,
+                          .LocalGet(l_n),
+                          .LocalGet(l_lo),
+                          .LocalGet(l_width),
+                          .I32Add,
+                          .LocalGet(l_n),
+                          .I32LtS,
+                          .Select,
+                          .LocalSet(l_mid),
+                          .LocalGet(l_lo),
+                          .LocalGet(l_width),
+                          .I32Add,
+                          .LocalGet(l_width),
+                          .I32Add,
+                          .LocalGet(l_n),
+                          .LocalGet(l_lo),
+                          .LocalGet(l_width),
+                          .I32Add,
+                          .LocalGet(l_width),
+                          .I32Add,
+                          .LocalGet(l_n),
+                          .I32LtS,
+                          .Select,
+                          .LocalSet(l_hi),
+                          .LocalGet(l_lo),
+                          .LocalSet(l_i),
+                          .LocalGet(l_mid),
+                          .LocalSet(l_j),
+                          .LocalGet(l_lo),
+                          .LocalSet(l_k),
+                          .Block(
+                            "m_brk",
+                            .None,
+                            [
+                              .Loop(
+                                "m_lp",
+                                .None,
+                                [
+                                  .LocalGet(l_k),
+                                  .LocalGet(l_hi),
+                                  .I32GeS,
+                                  .BrIf("m_brk"),
+                                  .LocalGet(l_aux),
+                                  .RefAsNonNull,
+                                  .LocalGet(l_k),
+                                  .LocalGet(l_i),
+                                  .LocalGet(l_mid),
+                                  .I32GeS,
+                                  .If(
+                                    .Some(.F64),
+                                    [
+                                      .LocalGet(l_src),
+                                      .RefAsNonNull,
+                                      .LocalGet(l_j),
+                                      .ArrayGet(taf),
+                                      .LocalGet(l_j),
+                                      .I32Const(1),
+                                      .I32Add,
+                                      .LocalSet(l_j),
+                                    ],
+                                    [
+                                      .LocalGet(l_j),
+                                      .LocalGet(l_hi),
+                                      .I32GeS,
+                                      .If(
+                                        .Some(.F64),
+                                        [
+                                          .LocalGet(l_src),
+                                          .RefAsNonNull,
+                                          .LocalGet(l_i),
+                                          .ArrayGet(taf),
+                                          .LocalGet(l_i),
+                                          .I32Const(1),
+                                          .I32Add,
+                                          .LocalSet(l_i),
+                                        ],
+                                        [
+                                          .LocalGet(l_src),
+                                          .RefAsNonNull,
+                                          .LocalGet(l_i),
+                                          .ArrayGet(taf),
+                                          .LocalGet(l_src),
+                                          .RefAsNonNull,
+                                          .LocalGet(l_j),
+                                          .ArrayGet(taf),
+                                          .F64Le,
+                                          .If(
+                                            .Some(.F64),
+                                            [
+                                              .LocalGet(l_src),
+                                              .RefAsNonNull,
+                                              .LocalGet(l_i),
+                                              .ArrayGet(taf),
+                                              .LocalGet(l_i),
+                                              .I32Const(1),
+                                              .I32Add,
+                                              .LocalSet(l_i),
+                                            ],
+                                            [
+                                              .LocalGet(l_src),
+                                              .RefAsNonNull,
+                                              .LocalGet(l_j),
+                                              .ArrayGet(taf),
+                                              .LocalGet(l_j),
+                                              .I32Const(1),
+                                              .I32Add,
+                                              .LocalSet(l_j),
+                                            ],
+                                          ),
+                                        ],
+                                      ),
+                                    ],
+                                  ),
+                                  .ArraySet(taf),
+                                  .LocalGet(l_k),
+                                  .I32Const(1),
+                                  .I32Add,
+                                  .LocalSet(l_k),
+                                  .Br("m_lp"),
+                                ],
+                              ),
+                            ],
+                          ),
+                          .LocalGet(l_lo),
+                          .LocalGet(l_width),
+                          .I32Add,
+                          .LocalGet(l_width),
+                          .I32Add,
+                          .LocalSet(l_lo),
+                          .Br("lo_lp"),
+                        ],
+                      ),
+                    ],
+                  ),
+                  .LocalGet(l_src),
+                  .LocalSet(l_tmp),
+                  .LocalGet(l_aux),
+                  .LocalSet(l_src),
+                  .LocalGet(l_tmp),
+                  .LocalSet(l_aux),
+                  .LocalGet(l_width),
+                  .I32Const(1),
+                  .I32Shl,
+                  .LocalSet(l_width),
+                  .Br("w_lp"),
+                ],
+              ),
+            ],
+          ),
+          .Call("builder_new"),
+          .LocalSet(l_builder),
+          .I32Const(0),
+          .LocalSet(l_i),
+          .Block(
+            "push_brk",
+            .None,
+            [
+              .Loop(
+                "push_lp",
+                .None,
+                [
+                  .LocalGet(l_i),
+                  .LocalGet(l_n),
+                  .I32GeS,
+                  .BrIf("push_brk"),
+                  .LocalGet(l_builder),
+                  .LocalGet(l_src),
+                  .RefAsNonNull,
+                  .LocalGet(l_i),
+                  .ArrayGet(taf),
+                  .StructNew(tbf),
                   .Call("builder_push"),
                   .LocalGet(l_i),
                   .I32Const(1),

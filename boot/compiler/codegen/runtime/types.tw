@@ -24,6 +24,7 @@ pub fn module() WasmModule {
       .Array("VecChildren", .{ name: .None, mutable: true, ty: .Ref(true, .Eq) }),
       .Array("I32Array", .{ name: .None, mutable: true, ty: .I32 }),
       .Array("ArrayI64", .{ name: .None, mutable: true, ty: .I64 }),
+      .Array("ArrayF64", .{ name: .None, mutable: true, ty: .F64 }),
       .Struct(
         "VecInternal",
         [

@@ -45,6 +45,12 @@ pub fn sort_i64(xs: Vector<Int>) Vector<Int> {
   xs
 }
 
+// Internal: native typed value sort over Vector<Float>. Not a user-facing API;
+// `xs.sort()` is routed here by the compiler for primitive element types.
+pub fn sort_f64(xs: Vector<Float>) Vector<Float> {
+  xs
+}
+
 /// Return the element at index, or None if out of bounds.
 pub fn get<T>(xs: Vector<T>, index: Int) Option<T> {
   .None

@@ -988,6 +988,12 @@ fn vector_sort_i64_fid(ctx: MonoCtx) FuncId? {
   ctx.func_table["vector$sort_i64"]
 }
 
+// FuncId of the native typed value sort builtin (`vector$sort_f64`), keyed in the
+// function table by its internal builtin name.
+fn vector_sort_f64_fid(ctx: MonoCtx) FuncId? {
+  ctx.func_table["vector$sort_f64"]
+}
+
 fn lower_resolved_contract_call(
   parent: CoreExpr,
   method_name: String,
@@ -1445,6 +1451,15 @@ fn rewrite_calls_kind(
                 if ctx.is_vector_sort(fid) and type_args.len() == 1 {
                   case type_args[0] {
                     .Int => case ctx.vector_sort_i64_fid() {
+                      .Some(sort_fid) => {
+                        return .Call(
+                          CoreExpr.{ kind: .GlobalFunc(sort_fid), ty: callee.ty, span: callee.span },
+                          new_args,
+                        )
+                      },
+                      .None => {},
+                    },
+                    .Float => case ctx.vector_sort_f64_fid() {
                       .Some(sort_fid) => {
                         return .Call(
                           CoreExpr.{ kind: .GlobalFunc(sort_fid), ty: callee.ty, span: callee.span },

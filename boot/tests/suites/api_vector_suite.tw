@@ -26,6 +26,21 @@ fn sort_suite_sum(xs: Vector<Int>) Int {
   total
 }
 
+fn sort_suite_is_sorted_f(xs: Vector<Float>) Bool {
+  ok := true
+  i := 1
+
+  for i < xs.len() and ok {
+    if xs[i - 1] > xs[i] {
+      ok = false
+    }
+
+    i = i + 1
+  }
+
+  ok
+}
+
 type SortStabItem = .{ key: Int, tag: Int }
 
 // Compare on key only; ties (equal keys) must keep input order for a stable sort.
@@ -813,6 +828,38 @@ pub fn suite() runner.Suite {
         s2 := ex.sort()
         try assert.equal(s2[0], -9223372036854775808)
         try assert.equal(s2[4], 9223372036854775807)
+        .Ok({})
+      },
+    )
+    .test(
+      "native Float value sort orders negatives, zero, positives",
+      fn() {
+        xs: Vector<Float> = [3.5, -1.0, 0.0, -2.5, 1.25]
+        s := xs.sort()
+        try assert.is_true(s[0] == -2.5)
+        try assert.is_true(s[1] == -1.0)
+        try assert.is_true(s[4] == 3.5)
+        .Ok({})
+      },
+    )
+    .test(
+      "native Float value sort is correct on adversarial input",
+      fn() {
+        // duplicate-heavy, neither ascending nor descending -> dense merge path
+        dup := collect i in range(4000) {
+          (i * 7919 % 13).to_float()
+        }
+        sorted := dup.sort()
+        try assert.equal(sorted.len(), 4000)
+        try assert.is_true(sort_suite_is_sorted_f(sorted))
+
+        // negatives, positive/negative zero, ordering
+        mix: Vector<Float> = [2.0, -3.5, 2.0, 0.0, -3.5, 1.0, -0.0]
+        s2 := mix.sort()
+        try assert.equal(s2.len(), 7)
+        try assert.is_true(sort_suite_is_sorted_f(s2))
+        try assert.is_true(s2[0] == -3.5)
+        try assert.is_true(s2[6] == 2.0)
         .Ok({})
       },
     )
