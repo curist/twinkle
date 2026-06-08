@@ -184,55 +184,100 @@ pub fn join(xs: Vector<String>, sep: String) String {
   }
 }
 
-fn merge_sorted<T>(a: Vector<T>, b: Vector<T>, cmp: fn(T, T) Order) Vector<T> {
-  out: Vector<T> = []
+/// Copy a vector's elements into a fresh dense scratch buffer of length n.
+fn scratch_from_vector<T>(xs: Vector<T>, n: Int) Scratch<T> {
+  buf: Scratch<T> = Vector.scratch_new(n)
   i := 0
-  j := 0
 
-  for i < a.len() and j < b.len() {
-    case cmp(a[i], b[j]) {
-      .Gt => {
-        out = .append(b[j])
-        j = j + 1
-      },
-      _ => {
-        out = .append(a[i])
-        i = i + 1
-      },
-    }
-  }
-
-  for i < a.len() {
-    out = .append(a[i])
+  for i < n {
+    Vector.scratch_set(buf, i, xs[i])
     i = i + 1
   }
 
-  for j < b.len() {
-    out = .append(b[j])
-    j = j + 1
-  }
-
-  out
+  buf
 }
 
-fn sort_by_range<T>(xs: Vector<T>, lo: Int, hi: Int, cmp: fn(T, T) Order) Vector<T> {
-  n := hi - lo
+/// Build a vector from the first n elements of a dense scratch buffer.
+fn scratch_freeze<T>(buf: Scratch<T>, n: Int) Vector<T> {
+  collect i in range(n) {
+    Vector.scratch_get(buf, i)
+  }
+}
 
-  if n <= 0 {
-    return []
+/// Stably merge src[lo, mid) and src[mid, hi) into dst[lo, hi). On a tie
+/// (cmp returns Eq) the left run's element is taken first, preserving input
+/// order. Handles an empty right run (mid == hi) by copying the left run.
+fn merge_run<T>(src: Scratch<T>, dst: Scratch<T>, lo: Int, mid: Int, hi: Int, cmp: fn(T, T) Order) Void {
+  i := lo
+  j := mid
+  k := lo
+
+  for k < hi {
+    take_left := true
+
+    if i >= mid {
+      take_left = false
+    } else {
+      if j < hi {
+        case cmp(Vector.scratch_get(src, i), Vector.scratch_get(src, j)) {
+          .Gt => {
+            take_left = false
+          },
+          _ => {
+            take_left = true
+          },
+        }
+      }
+    }
+
+    if take_left {
+      Vector.scratch_set(dst, k, Vector.scratch_get(src, i))
+      i = i + 1
+    } else {
+      Vector.scratch_set(dst, k, Vector.scratch_get(src, j))
+      j = j + 1
+    }
+
+    k = k + 1
+  }
+}
+
+/// Stable bottom-up merge sort over a pair of scratch buffers. Ping-pongs
+/// between src and aux by rebinding the handles each pass; returns the buffer
+/// holding the fully sorted result.
+fn merge_sort_dense<T>(src: Scratch<T>, aux: Scratch<T>, n: Int, cmp: fn(T, T) Order) Scratch<T> {
+  width := 1
+
+  for width < n {
+    lo := 0
+
+    for lo < n {
+      mid := if lo + width < n {
+        lo + width
+      } else {
+        n
+      }
+      hi := if lo + width + width < n {
+        lo + width + width
+      } else {
+        n
+      }
+      merge_run(src, aux, lo, mid, hi, cmp)
+      lo = lo + width + width
+    }
+
+    tmp := src
+    src = aux
+    aux = tmp
+    width = width + width
   }
 
-  if n == 1 {
-    return [xs[lo]]
-  }
-
-  mid := lo + n / 2
-  left := sort_by_range(xs, lo, mid, cmp)
-  right := sort_by_range(xs, mid, hi, cmp)
-  merge_sorted(left, right, cmp)
+  src
 }
 
 /// Return a new vector sorted by comparator cmp.
+///
+/// Stable: elements that compare Equal keep their input order.
 pub fn sort_by<T>(xs: Vector<T>, cmp: fn(T, T) Order) Vector<T> {
   n := xs.len()
 
@@ -268,7 +313,10 @@ pub fn sort_by<T>(xs: Vector<T>, cmp: fn(T, T) Order) Vector<T> {
     return xs.reverse()
   }
 
-  sort_by_range(xs, 0, n, cmp)
+  src := scratch_from_vector(xs, n)
+  aux: Scratch<T> = Vector.scratch_new(n)
+  src = merge_sort_dense(src, aux, n, cmp)
+  scratch_freeze(src, n)
 }
 
 /// Return a new vector sorted using the Ord contract.
