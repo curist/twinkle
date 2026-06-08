@@ -973,6 +973,21 @@ fn resolve_contract_target_id(receiver_ty: MonoType, method_name: String, ctx: M
   }
 }
 
+// True when `fid` is the prelude `Vector.sort` (Ord variant). Resolved via the
+// method table, where builtin-typed methods are keyed "Vector::sort".
+fn is_vector_sort(ctx: MonoCtx, fid: FuncId) Bool {
+  case ctx.method_table["Vector::sort"] {
+    .Some(sort_fid) => sort_fid.id == fid.id,
+    .None => false,
+  }
+}
+
+// FuncId of the native typed value sort builtin (`vector$sort_i64`), keyed in the
+// function table by its internal builtin name.
+fn vector_sort_i64_fid(ctx: MonoCtx) FuncId? {
+  ctx.func_table["vector$sort_i64"]
+}
+
 fn lower_resolved_contract_call(
   parent: CoreExpr,
   method_name: String,
@@ -1420,6 +1435,25 @@ fn rewrite_calls_kind(
                       type_args = .append(t)
                     },
                     .None => {},
+                  }
+                }
+
+                // Type-directed fast path: Vector.sort over a primitive element
+                // type lowers to a native typed kernel instead of the generic Ord
+                // merge. Non-primitive element types fall through to the normal
+                // generic specialization below.
+                if ctx.is_vector_sort(fid) and type_args.len() == 1 {
+                  case type_args[0] {
+                    .Int => case ctx.vector_sort_i64_fid() {
+                      .Some(sort_fid) => {
+                        return .Call(
+                          CoreExpr.{ kind: .GlobalFunc(sort_fid), ty: callee.ty, span: callee.span },
+                          new_args,
+                        )
+                      },
+                      .None => {},
+                    },
+                    _ => {},
                   }
                 }
 
