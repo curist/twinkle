@@ -186,6 +186,22 @@ fn runtime_entry(func_id: FuncId, twinkle_name: &'static str) -> Option<PreludeE
             vec![ref_pvec_null(), ref_pvec_null()],
             vec![ref_pvec()],
         )),
+        id if id == prelude_ids::VECTOR_SORT_I64 => Some(PreludeEntry::runtime(
+            twinkle_name,
+            "rt.arr",
+            "sort_i64",
+            "rt_arr__sort_i64",
+            vec![ref_pvec_null()],
+            vec![ref_pvec()],
+        )),
+        id if id == prelude_ids::VECTOR_SORT_F64 => Some(PreludeEntry::runtime(
+            twinkle_name,
+            "rt.arr",
+            "sort_f64",
+            "rt_arr__sort_f64",
+            vec![ref_pvec_null()],
+            vec![ref_pvec()],
+        )),
         id if id == prelude_ids::DICT_SET => Some(PreludeEntry::runtime(
             twinkle_name,
             "rt.dict",

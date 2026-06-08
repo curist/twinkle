@@ -84,6 +84,8 @@ pub fn make() -> ModuleIR {
         pop_tail_fn(),
         drop_last_fn(),
         gather_fn(),
+        sort_i64_fn(),
+        sort_f64_fn(),
         builder_new_fn(),
         builder_from_fn(),
         builder_push_fn(),
@@ -3057,6 +3059,631 @@ fn gather_fn() -> FuncDef {
             },
             Instr::LocalGet(3),
             Instr::Call("builder_freeze".into()),
+        ],
+    }
+}
+
+// sort_i64(vec: PVec?) -> PVec
+//
+// Native typed value sort over Vector<Int>. Boxes once in / once out: copies
+// the unboxed i64 keys into a dense typed `ArrayI64` buffer, runs a stable
+// bottom-up merge sort over raw i64 (inlined array.get/set, i64.le_s compares,
+// no per-element cast or call), then rebuilds a PVec via the builder.
+//
+// The merge ping-pongs between `src` and `aux`, doubling the run width each
+// pass; the final `src` handle holds the sorted data. The merge is stable:
+// on a tie the element from the left run is taken first.
+//
+// Stage0 mirror of `sort_i64_fn` in boot/compiler/codegen/runtime/arr.tw.
+fn sort_i64_fn() -> FuncDef {
+    const P_VEC: u32 = 0;
+    const L_N: u32 = 1;
+    const L_SRC: u32 = 2;
+    const L_AUX: u32 = 3;
+    const L_I: u32 = 4;
+    const L_BUILDER: u32 = 5;
+    const L_WIDTH: u32 = 6;
+    const L_LO: u32 = 7;
+    const L_MID: u32 = 8;
+    const L_HI: u32 = 9;
+    const L_J: u32 = 10;
+    const L_K: u32 = 11;
+    const L_TMP: u32 = 12;
+
+    let tai = T_ARRAY_I64;
+    let tbi = T_BOXED_INT;
+
+    FuncDef {
+        name: "sort_i64".into(),
+        params: vec![ref_pvec_null()],
+        results: vec![ref_pvec()],
+        locals: vec![
+            ValType::I32,            // L_N
+            ref_array_i64_null(),    // L_SRC
+            ref_array_i64_null(),    // L_AUX
+            ValType::I32,            // L_I
+            ref_array_null(),        // L_BUILDER (PVec builder = Array)
+            ValType::I32,            // L_WIDTH
+            ValType::I32,            // L_LO
+            ValType::I32,            // L_MID
+            ValType::I32,            // L_HI
+            ValType::I32,            // L_J
+            ValType::I32,            // L_K
+            ref_array_i64_null(),    // L_TMP
+        ],
+        body: vec![
+            Instr::LocalGet(P_VEC),
+            Instr::Call("len".into()),
+            Instr::LocalSet(L_N),
+            Instr::LocalGet(L_N),
+            Instr::I32Const(1),
+            Instr::I32LeS,
+            Instr::If {
+                result: Some(ref_pvec()),
+                then_body: vec![Instr::LocalGet(P_VEC), Instr::RefAsNonNull],
+                else_body: vec![
+                    Instr::LocalGet(L_N),
+                    Instr::ArrayNewDefault(tai.into()),
+                    Instr::LocalSet(L_SRC),
+                    Instr::LocalGet(L_N),
+                    Instr::ArrayNewDefault(tai.into()),
+                    Instr::LocalSet(L_AUX),
+                    Instr::I32Const(0),
+                    Instr::LocalSet(L_I),
+                    // unbox-in: read each element, cast to BoxedInt, extract the i64 field into the dense src buffer
+                    Instr::Block {
+                        label: "copy_brk".into(),
+                        result: None,
+                        body: vec![Instr::Loop {
+                            label: "copy_lp".into(),
+                            result: None,
+                            body: vec![
+                                Instr::LocalGet(L_I),
+                                Instr::LocalGet(L_N),
+                                Instr::I32GeS,
+                                Instr::BrIf("copy_brk".into()),
+                                Instr::LocalGet(L_SRC),
+                                Instr::RefAsNonNull,
+                                Instr::LocalGet(L_I),
+                                Instr::LocalGet(P_VEC),
+                                Instr::LocalGet(L_I),
+                                Instr::Call("get".into()),
+                                Instr::RefCast {
+                                    nullable: false,
+                                    heap: HeapType::Named(tbi.into()),
+                                },
+                                Instr::StructGet(tbi.into(), 0),
+                                Instr::ArraySet(tai.into()),
+                                Instr::LocalGet(L_I),
+                                Instr::I32Const(1),
+                                Instr::I32Add,
+                                Instr::LocalSet(L_I),
+                                Instr::Br("copy_lp".into()),
+                            ],
+                        }],
+                    },
+                    Instr::I32Const(1),
+                    Instr::LocalSet(L_WIDTH),
+                    // for width = 1,2,4,...; ping-pong src/aux
+                    Instr::Block {
+                        label: "w_brk".into(),
+                        result: None,
+                        body: vec![Instr::Loop {
+                            label: "w_lp".into(),
+                            result: None,
+                            body: vec![
+                                Instr::LocalGet(L_WIDTH),
+                                Instr::LocalGet(L_N),
+                                Instr::I32GeS,
+                                Instr::BrIf("w_brk".into()),
+                                Instr::I32Const(0),
+                                Instr::LocalSet(L_LO),
+                                Instr::Block {
+                                    label: "lo_brk".into(),
+                                    result: None,
+                                    body: vec![Instr::Loop {
+                                        label: "lo_lp".into(),
+                                        result: None,
+                                        body: vec![
+                                            Instr::LocalGet(L_LO),
+                                            Instr::LocalGet(L_N),
+                                            Instr::I32GeS,
+                                            Instr::BrIf("lo_brk".into()),
+                                            // mid = min(lo+width, n)
+                                            Instr::LocalGet(L_LO),
+                                            Instr::LocalGet(L_WIDTH),
+                                            Instr::I32Add,
+                                            Instr::LocalGet(L_N),
+                                            Instr::LocalGet(L_LO),
+                                            Instr::LocalGet(L_WIDTH),
+                                            Instr::I32Add,
+                                            Instr::LocalGet(L_N),
+                                            Instr::I32LtS,
+                                            Instr::Select,
+                                            Instr::LocalSet(L_MID),
+                                            // hi = min(lo+2*width, n)
+                                            Instr::LocalGet(L_LO),
+                                            Instr::LocalGet(L_WIDTH),
+                                            Instr::I32Add,
+                                            Instr::LocalGet(L_WIDTH),
+                                            Instr::I32Add,
+                                            Instr::LocalGet(L_N),
+                                            Instr::LocalGet(L_LO),
+                                            Instr::LocalGet(L_WIDTH),
+                                            Instr::I32Add,
+                                            Instr::LocalGet(L_WIDTH),
+                                            Instr::I32Add,
+                                            Instr::LocalGet(L_N),
+                                            Instr::I32LtS,
+                                            Instr::Select,
+                                            Instr::LocalSet(L_HI),
+                                            Instr::LocalGet(L_LO),
+                                            Instr::LocalSet(L_I),
+                                            Instr::LocalGet(L_MID),
+                                            Instr::LocalSet(L_J),
+                                            Instr::LocalGet(L_LO),
+                                            Instr::LocalSet(L_K),
+                                            // merge [lo,mid) and [mid,hi) into aux[lo,hi)
+                                            Instr::Block {
+                                                label: "m_brk".into(),
+                                                result: None,
+                                                body: vec![Instr::Loop {
+                                                    label: "m_lp".into(),
+                                                    result: None,
+                                                    body: vec![
+                                                        Instr::LocalGet(L_K),
+                                                        Instr::LocalGet(L_HI),
+                                                        Instr::I32GeS,
+                                                        Instr::BrIf("m_brk".into()),
+                                                        Instr::LocalGet(L_AUX),
+                                                        Instr::RefAsNonNull,
+                                                        Instr::LocalGet(L_K),
+                                                        // pick next element (i64) onto stack
+                                                        Instr::LocalGet(L_I),
+                                                        Instr::LocalGet(L_MID),
+                                                        Instr::I32GeS,
+                                                        Instr::If {
+                                                            result: Some(ValType::I64),
+                                                            // left run exhausted: take right
+                                                            then_body: vec![
+                                                                Instr::LocalGet(L_SRC),
+                                                                Instr::RefAsNonNull,
+                                                                Instr::LocalGet(L_J),
+                                                                Instr::ArrayGet(tai.into()),
+                                                                Instr::LocalGet(L_J),
+                                                                Instr::I32Const(1),
+                                                                Instr::I32Add,
+                                                                Instr::LocalSet(L_J),
+                                                            ],
+                                                            else_body: vec![
+                                                                Instr::LocalGet(L_J),
+                                                                Instr::LocalGet(L_HI),
+                                                                Instr::I32GeS,
+                                                                Instr::If {
+                                                                    result: Some(ValType::I64),
+                                                                    // right run exhausted: take left
+                                                                    then_body: vec![
+                                                                        Instr::LocalGet(L_SRC),
+                                                                        Instr::RefAsNonNull,
+                                                                        Instr::LocalGet(L_I),
+                                                                        Instr::ArrayGet(tai.into()),
+                                                                        Instr::LocalGet(L_I),
+                                                                        Instr::I32Const(1),
+                                                                        Instr::I32Add,
+                                                                        Instr::LocalSet(L_I),
+                                                                    ],
+                                                                    else_body: vec![
+                                                                        // src[i] <= src[j] ? take left : take right
+                                                                        Instr::LocalGet(L_SRC),
+                                                                        Instr::RefAsNonNull,
+                                                                        Instr::LocalGet(L_I),
+                                                                        Instr::ArrayGet(tai.into()),
+                                                                        Instr::LocalGet(L_SRC),
+                                                                        Instr::RefAsNonNull,
+                                                                        Instr::LocalGet(L_J),
+                                                                        Instr::ArrayGet(tai.into()),
+                                                                        Instr::I64LeS,
+                                                                        Instr::If {
+                                                                            result: Some(ValType::I64),
+                                                                            then_body: vec![
+                                                                                Instr::LocalGet(L_SRC),
+                                                                                Instr::RefAsNonNull,
+                                                                                Instr::LocalGet(L_I),
+                                                                                Instr::ArrayGet(tai.into()),
+                                                                                Instr::LocalGet(L_I),
+                                                                                Instr::I32Const(1),
+                                                                                Instr::I32Add,
+                                                                                Instr::LocalSet(L_I),
+                                                                            ],
+                                                                            else_body: vec![
+                                                                                Instr::LocalGet(L_SRC),
+                                                                                Instr::RefAsNonNull,
+                                                                                Instr::LocalGet(L_J),
+                                                                                Instr::ArrayGet(tai.into()),
+                                                                                Instr::LocalGet(L_J),
+                                                                                Instr::I32Const(1),
+                                                                                Instr::I32Add,
+                                                                                Instr::LocalSet(L_J),
+                                                                            ],
+                                                                        },
+                                                                    ],
+                                                                },
+                                                            ],
+                                                        },
+                                                        Instr::ArraySet(tai.into()),
+                                                        Instr::LocalGet(L_K),
+                                                        Instr::I32Const(1),
+                                                        Instr::I32Add,
+                                                        Instr::LocalSet(L_K),
+                                                        Instr::Br("m_lp".into()),
+                                                    ],
+                                                }],
+                                            },
+                                            Instr::LocalGet(L_LO),
+                                            Instr::LocalGet(L_WIDTH),
+                                            Instr::I32Add,
+                                            Instr::LocalGet(L_WIDTH),
+                                            Instr::I32Add,
+                                            Instr::LocalSet(L_LO),
+                                            Instr::Br("lo_lp".into()),
+                                        ],
+                                    }],
+                                },
+                                // swap src <-> aux
+                                Instr::LocalGet(L_SRC),
+                                Instr::LocalSet(L_TMP),
+                                Instr::LocalGet(L_AUX),
+                                Instr::LocalSet(L_SRC),
+                                Instr::LocalGet(L_TMP),
+                                Instr::LocalSet(L_AUX),
+                                Instr::LocalGet(L_WIDTH),
+                                Instr::I32Const(1),
+                                Instr::I32Shl,
+                                Instr::LocalSet(L_WIDTH),
+                                Instr::Br("w_lp".into()),
+                            ],
+                        }],
+                    },
+                    // box-out: builder_push(BoxedInt(src[i]))
+                    Instr::Call("builder_new".into()),
+                    Instr::LocalSet(L_BUILDER),
+                    Instr::I32Const(0),
+                    Instr::LocalSet(L_I),
+                    Instr::Block {
+                        label: "push_brk".into(),
+                        result: None,
+                        body: vec![Instr::Loop {
+                            label: "push_lp".into(),
+                            result: None,
+                            body: vec![
+                                Instr::LocalGet(L_I),
+                                Instr::LocalGet(L_N),
+                                Instr::I32GeS,
+                                Instr::BrIf("push_brk".into()),
+                                Instr::LocalGet(L_BUILDER),
+                                Instr::LocalGet(L_SRC),
+                                Instr::RefAsNonNull,
+                                Instr::LocalGet(L_I),
+                                Instr::ArrayGet(tai.into()),
+                                Instr::StructNew(tbi.into()),
+                                Instr::Call("builder_push".into()),
+                                Instr::LocalGet(L_I),
+                                Instr::I32Const(1),
+                                Instr::I32Add,
+                                Instr::LocalSet(L_I),
+                                Instr::Br("push_lp".into()),
+                            ],
+                        }],
+                    },
+                    Instr::LocalGet(L_BUILDER),
+                    Instr::Call("builder_freeze".into()),
+                ],
+            },
+        ],
+    }
+}
+
+// sort_f64(vec: PVec?) -> PVec
+//
+// Native typed value sort over Vector<Float>. Clone of `sort_i64` with an f64
+// element type, the `f64.le` compare (NaN-comparisons are false so NaNs sort
+// deterministically but their exact position is unspecified), and BoxedFloat
+// box-in / box-out.
+//
+// Stage0 mirror of `sort_f64_fn` in boot/compiler/codegen/runtime/arr.tw.
+fn sort_f64_fn() -> FuncDef {
+    const P_VEC: u32 = 0;
+    const L_N: u32 = 1;
+    const L_SRC: u32 = 2;
+    const L_AUX: u32 = 3;
+    const L_I: u32 = 4;
+    const L_BUILDER: u32 = 5;
+    const L_WIDTH: u32 = 6;
+    const L_LO: u32 = 7;
+    const L_MID: u32 = 8;
+    const L_HI: u32 = 9;
+    const L_J: u32 = 10;
+    const L_K: u32 = 11;
+    const L_TMP: u32 = 12;
+
+    let taf = T_ARRAY_F64;
+    let tbf = T_BOXED_FLOAT;
+
+    FuncDef {
+        name: "sort_f64".into(),
+        params: vec![ref_pvec_null()],
+        results: vec![ref_pvec()],
+        locals: vec![
+            ValType::I32,            // L_N
+            ref_array_f64_null(),    // L_SRC
+            ref_array_f64_null(),    // L_AUX
+            ValType::I32,            // L_I
+            ref_array_null(),        // L_BUILDER
+            ValType::I32,            // L_WIDTH
+            ValType::I32,            // L_LO
+            ValType::I32,            // L_MID
+            ValType::I32,            // L_HI
+            ValType::I32,            // L_J
+            ValType::I32,            // L_K
+            ref_array_f64_null(),    // L_TMP
+        ],
+        body: vec![
+            Instr::LocalGet(P_VEC),
+            Instr::Call("len".into()),
+            Instr::LocalSet(L_N),
+            Instr::LocalGet(L_N),
+            Instr::I32Const(1),
+            Instr::I32LeS,
+            Instr::If {
+                result: Some(ref_pvec()),
+                then_body: vec![Instr::LocalGet(P_VEC), Instr::RefAsNonNull],
+                else_body: vec![
+                    Instr::LocalGet(L_N),
+                    Instr::ArrayNewDefault(taf.into()),
+                    Instr::LocalSet(L_SRC),
+                    Instr::LocalGet(L_N),
+                    Instr::ArrayNewDefault(taf.into()),
+                    Instr::LocalSet(L_AUX),
+                    Instr::I32Const(0),
+                    Instr::LocalSet(L_I),
+                    Instr::Block {
+                        label: "copy_brk".into(),
+                        result: None,
+                        body: vec![Instr::Loop {
+                            label: "copy_lp".into(),
+                            result: None,
+                            body: vec![
+                                Instr::LocalGet(L_I),
+                                Instr::LocalGet(L_N),
+                                Instr::I32GeS,
+                                Instr::BrIf("copy_brk".into()),
+                                Instr::LocalGet(L_SRC),
+                                Instr::RefAsNonNull,
+                                Instr::LocalGet(L_I),
+                                Instr::LocalGet(P_VEC),
+                                Instr::LocalGet(L_I),
+                                Instr::Call("get".into()),
+                                Instr::RefCast {
+                                    nullable: false,
+                                    heap: HeapType::Named(tbf.into()),
+                                },
+                                Instr::StructGet(tbf.into(), 0),
+                                Instr::ArraySet(taf.into()),
+                                Instr::LocalGet(L_I),
+                                Instr::I32Const(1),
+                                Instr::I32Add,
+                                Instr::LocalSet(L_I),
+                                Instr::Br("copy_lp".into()),
+                            ],
+                        }],
+                    },
+                    Instr::I32Const(1),
+                    Instr::LocalSet(L_WIDTH),
+                    Instr::Block {
+                        label: "w_brk".into(),
+                        result: None,
+                        body: vec![Instr::Loop {
+                            label: "w_lp".into(),
+                            result: None,
+                            body: vec![
+                                Instr::LocalGet(L_WIDTH),
+                                Instr::LocalGet(L_N),
+                                Instr::I32GeS,
+                                Instr::BrIf("w_brk".into()),
+                                Instr::I32Const(0),
+                                Instr::LocalSet(L_LO),
+                                Instr::Block {
+                                    label: "lo_brk".into(),
+                                    result: None,
+                                    body: vec![Instr::Loop {
+                                        label: "lo_lp".into(),
+                                        result: None,
+                                        body: vec![
+                                            Instr::LocalGet(L_LO),
+                                            Instr::LocalGet(L_N),
+                                            Instr::I32GeS,
+                                            Instr::BrIf("lo_brk".into()),
+                                            Instr::LocalGet(L_LO),
+                                            Instr::LocalGet(L_WIDTH),
+                                            Instr::I32Add,
+                                            Instr::LocalGet(L_N),
+                                            Instr::LocalGet(L_LO),
+                                            Instr::LocalGet(L_WIDTH),
+                                            Instr::I32Add,
+                                            Instr::LocalGet(L_N),
+                                            Instr::I32LtS,
+                                            Instr::Select,
+                                            Instr::LocalSet(L_MID),
+                                            Instr::LocalGet(L_LO),
+                                            Instr::LocalGet(L_WIDTH),
+                                            Instr::I32Add,
+                                            Instr::LocalGet(L_WIDTH),
+                                            Instr::I32Add,
+                                            Instr::LocalGet(L_N),
+                                            Instr::LocalGet(L_LO),
+                                            Instr::LocalGet(L_WIDTH),
+                                            Instr::I32Add,
+                                            Instr::LocalGet(L_WIDTH),
+                                            Instr::I32Add,
+                                            Instr::LocalGet(L_N),
+                                            Instr::I32LtS,
+                                            Instr::Select,
+                                            Instr::LocalSet(L_HI),
+                                            Instr::LocalGet(L_LO),
+                                            Instr::LocalSet(L_I),
+                                            Instr::LocalGet(L_MID),
+                                            Instr::LocalSet(L_J),
+                                            Instr::LocalGet(L_LO),
+                                            Instr::LocalSet(L_K),
+                                            Instr::Block {
+                                                label: "m_brk".into(),
+                                                result: None,
+                                                body: vec![Instr::Loop {
+                                                    label: "m_lp".into(),
+                                                    result: None,
+                                                    body: vec![
+                                                        Instr::LocalGet(L_K),
+                                                        Instr::LocalGet(L_HI),
+                                                        Instr::I32GeS,
+                                                        Instr::BrIf("m_brk".into()),
+                                                        Instr::LocalGet(L_AUX),
+                                                        Instr::RefAsNonNull,
+                                                        Instr::LocalGet(L_K),
+                                                        Instr::LocalGet(L_I),
+                                                        Instr::LocalGet(L_MID),
+                                                        Instr::I32GeS,
+                                                        Instr::If {
+                                                            result: Some(ValType::F64),
+                                                            then_body: vec![
+                                                                Instr::LocalGet(L_SRC),
+                                                                Instr::RefAsNonNull,
+                                                                Instr::LocalGet(L_J),
+                                                                Instr::ArrayGet(taf.into()),
+                                                                Instr::LocalGet(L_J),
+                                                                Instr::I32Const(1),
+                                                                Instr::I32Add,
+                                                                Instr::LocalSet(L_J),
+                                                            ],
+                                                            else_body: vec![
+                                                                Instr::LocalGet(L_J),
+                                                                Instr::LocalGet(L_HI),
+                                                                Instr::I32GeS,
+                                                                Instr::If {
+                                                                    result: Some(ValType::F64),
+                                                                    then_body: vec![
+                                                                        Instr::LocalGet(L_SRC),
+                                                                        Instr::RefAsNonNull,
+                                                                        Instr::LocalGet(L_I),
+                                                                        Instr::ArrayGet(taf.into()),
+                                                                        Instr::LocalGet(L_I),
+                                                                        Instr::I32Const(1),
+                                                                        Instr::I32Add,
+                                                                        Instr::LocalSet(L_I),
+                                                                    ],
+                                                                    else_body: vec![
+                                                                        Instr::LocalGet(L_SRC),
+                                                                        Instr::RefAsNonNull,
+                                                                        Instr::LocalGet(L_I),
+                                                                        Instr::ArrayGet(taf.into()),
+                                                                        Instr::LocalGet(L_SRC),
+                                                                        Instr::RefAsNonNull,
+                                                                        Instr::LocalGet(L_J),
+                                                                        Instr::ArrayGet(taf.into()),
+                                                                        Instr::F64Le,
+                                                                        Instr::If {
+                                                                            result: Some(ValType::F64),
+                                                                            then_body: vec![
+                                                                                Instr::LocalGet(L_SRC),
+                                                                                Instr::RefAsNonNull,
+                                                                                Instr::LocalGet(L_I),
+                                                                                Instr::ArrayGet(taf.into()),
+                                                                                Instr::LocalGet(L_I),
+                                                                                Instr::I32Const(1),
+                                                                                Instr::I32Add,
+                                                                                Instr::LocalSet(L_I),
+                                                                            ],
+                                                                            else_body: vec![
+                                                                                Instr::LocalGet(L_SRC),
+                                                                                Instr::RefAsNonNull,
+                                                                                Instr::LocalGet(L_J),
+                                                                                Instr::ArrayGet(taf.into()),
+                                                                                Instr::LocalGet(L_J),
+                                                                                Instr::I32Const(1),
+                                                                                Instr::I32Add,
+                                                                                Instr::LocalSet(L_J),
+                                                                            ],
+                                                                        },
+                                                                    ],
+                                                                },
+                                                            ],
+                                                        },
+                                                        Instr::ArraySet(taf.into()),
+                                                        Instr::LocalGet(L_K),
+                                                        Instr::I32Const(1),
+                                                        Instr::I32Add,
+                                                        Instr::LocalSet(L_K),
+                                                        Instr::Br("m_lp".into()),
+                                                    ],
+                                                }],
+                                            },
+                                            Instr::LocalGet(L_LO),
+                                            Instr::LocalGet(L_WIDTH),
+                                            Instr::I32Add,
+                                            Instr::LocalGet(L_WIDTH),
+                                            Instr::I32Add,
+                                            Instr::LocalSet(L_LO),
+                                            Instr::Br("lo_lp".into()),
+                                        ],
+                                    }],
+                                },
+                                Instr::LocalGet(L_SRC),
+                                Instr::LocalSet(L_TMP),
+                                Instr::LocalGet(L_AUX),
+                                Instr::LocalSet(L_SRC),
+                                Instr::LocalGet(L_TMP),
+                                Instr::LocalSet(L_AUX),
+                                Instr::LocalGet(L_WIDTH),
+                                Instr::I32Const(1),
+                                Instr::I32Shl,
+                                Instr::LocalSet(L_WIDTH),
+                                Instr::Br("w_lp".into()),
+                            ],
+                        }],
+                    },
+                    Instr::Call("builder_new".into()),
+                    Instr::LocalSet(L_BUILDER),
+                    Instr::I32Const(0),
+                    Instr::LocalSet(L_I),
+                    Instr::Block {
+                        label: "push_brk".into(),
+                        result: None,
+                        body: vec![Instr::Loop {
+                            label: "push_lp".into(),
+                            result: None,
+                            body: vec![
+                                Instr::LocalGet(L_I),
+                                Instr::LocalGet(L_N),
+                                Instr::I32GeS,
+                                Instr::BrIf("push_brk".into()),
+                                Instr::LocalGet(L_BUILDER),
+                                Instr::LocalGet(L_SRC),
+                                Instr::RefAsNonNull,
+                                Instr::LocalGet(L_I),
+                                Instr::ArrayGet(taf.into()),
+                                Instr::StructNew(tbf.into()),
+                                Instr::Call("builder_push".into()),
+                                Instr::LocalGet(L_I),
+                                Instr::I32Const(1),
+                                Instr::I32Add,
+                                Instr::LocalSet(L_I),
+                                Instr::Br("push_lp".into()),
+                            ],
+                        }],
+                    },
+                    Instr::LocalGet(L_BUILDER),
+                    Instr::Call("builder_freeze".into()),
+                ],
+            },
         ],
     }
 }

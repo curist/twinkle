@@ -218,6 +218,12 @@ const INTRINSIC_SPECS: &[IntrinsicSpec] = &[
     spec!(VECTOR_SLICE, "Vector.slice", Runtime, true, true),
     spec!(VECTOR_DROP_LAST, "Vector.drop_last", Runtime, true, true),
     spec!(VECTOR_GATHER, "Vector.gather", Runtime, true, true),
+    // Internal-only native value sorts. Present in the signature/contract
+    // registries (so the ABI + runtime forwarding exist) but NOT registered as
+    // user-callable methods in env.rs — they are reached only via the
+    // monomorphizer's type-directed routing of `Vector.sort<Int>`/`<Float>`.
+    spec!(VECTOR_SORT_I64, "Vector.sort_i64", Runtime, true, true),
+    spec!(VECTOR_SORT_F64, "Vector.sort_f64", Runtime, true, true),
     spec!(DICT_SET, "Dict.set", Runtime, true, true),
     spec!(DICT_KEYS, "Dict.keys", Runtime, true, true),
     spec!(DICT_GET, "Dict.get", Intrinsic, true, true, DictGet),
@@ -546,6 +552,8 @@ const COMMON_BOOTSTRAP_FUNC_NAMES: &[(&str, FuncId)] = &[
     ("Vector.slice", prelude_ids::VECTOR_SLICE),
     ("Vector.drop_last", prelude_ids::VECTOR_DROP_LAST),
     ("Vector.gather", prelude_ids::VECTOR_GATHER),
+    ("Vector.sort_i64", prelude_ids::VECTOR_SORT_I64),
+    ("Vector.sort_f64", prelude_ids::VECTOR_SORT_F64),
     ("String.len", prelude_ids::STRING_LEN),
     ("String.concat", prelude_ids::STRING_CONCAT),
     ("Dict.len", prelude_ids::DICT_LEN),

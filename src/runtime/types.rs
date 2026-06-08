@@ -20,6 +20,8 @@ pub const T_ITER_STATE: &str = "rt_types__IterState";
 pub const T_VEC_CHILDREN: &str = "rt_types__VecChildren";
 pub const T_VEC_INTERNAL: &str = "rt_types__VecInternal";
 pub const T_I32_ARRAY: &str = "rt_types__I32Array";
+pub const T_ARRAY_I64: &str = "rt_types__ArrayI64";
+pub const T_ARRAY_F64: &str = "rt_types__ArrayF64";
 pub const T_PVEC: &str = "rt_types__PVec";
 
 /// Qualified function names for cross-module calls (after linking).
@@ -137,6 +139,22 @@ pub fn ref_i32_array_null() -> ValType {
     }
 }
 
+/// Ref-to-ArrayI64 (nullable) — dense i64 buffer for the native value sort.
+pub fn ref_array_i64_null() -> ValType {
+    ValType::Ref {
+        nullable: true,
+        heap: HeapType::Named(T_ARRAY_I64.into()),
+    }
+}
+
+/// Ref-to-ArrayF64 (nullable) — dense f64 buffer for the native value sort.
+pub fn ref_array_f64_null() -> ValType {
+    ValType::Ref {
+        nullable: true,
+        heap: HeapType::Named(T_ARRAY_F64.into()),
+    }
+}
+
 /// Ref-to-IterState (non-null)
 pub fn ref_iter_state() -> ValType {
     ValType::Ref {
@@ -231,6 +249,28 @@ pub fn make() -> ModuleIR {
             name: None,
             mutable: true,
             ty: ValType::I32,
+        },
+    });
+
+    // (type $ArrayI64 (array (mut i64)))
+    // Dense i64 scratch buffer for the native Vector<Int> value sort.
+    m.types.push(TypeDef::Array {
+        name: "ArrayI64".into(),
+        elem: FieldDef {
+            name: None,
+            mutable: true,
+            ty: ValType::I64,
+        },
+    });
+
+    // (type $ArrayF64 (array (mut f64)))
+    // Dense f64 scratch buffer for the native Vector<Float> value sort.
+    m.types.push(TypeDef::Array {
+        name: "ArrayF64".into(),
+        elem: FieldDef {
+            name: None,
+            mutable: true,
+            ty: ValType::F64,
         },
     });
 

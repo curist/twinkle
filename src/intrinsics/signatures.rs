@@ -526,6 +526,30 @@ pub fn contract(func_id: FuncId) -> Option<IntrinsicContract> {
                 abi_result: Some(IntrinsicAbiResult::RefArrayNullable),
             })
         }
+        id if id == prelude_ids::VECTOR_SORT_I64 => {
+            let vec_int = MonoType::Vector(Box::new(MonoType::Int));
+            Some(IntrinsicContract {
+                func_id,
+                twinkle_name: "Vector.sort_i64",
+                dispatch: IntrinsicDispatch::Runtime,
+                type_params: vec![],
+                params: vec![vec_int.clone()],
+                ret: vec_int,
+                abi_result: Some(IntrinsicAbiResult::RefArrayNullable),
+            })
+        }
+        id if id == prelude_ids::VECTOR_SORT_F64 => {
+            let vec_float = MonoType::Vector(Box::new(MonoType::Float));
+            Some(IntrinsicContract {
+                func_id,
+                twinkle_name: "Vector.sort_f64",
+                dispatch: IntrinsicDispatch::Runtime,
+                type_params: vec![],
+                params: vec![vec_float.clone()],
+                ret: vec_float,
+                abi_result: Some(IntrinsicAbiResult::RefArrayNullable),
+            })
+        }
         id if id == prelude_ids::DICT_SET => {
             let k = ty_var("K");
             let v = ty_var("V");
@@ -838,6 +862,12 @@ fn builtin_doc(name: &str) -> Option<&'static str> {
             "Return a new vector without the last element, or the empty vector if already empty."
         }
         "Vector.gather" => "Return a new vector by reading elements at the given indices.",
+        "Vector.sort_i64" => {
+            "Internal: native ascending value sort of a Vector<Int> (routed from Vector.sort)."
+        }
+        "Vector.sort_f64" => {
+            "Internal: native ascending value sort of a Vector<Float> (routed from Vector.sort)."
+        }
         "Vector.get" => "Return the element at the given index, or `None` if out of bounds.",
         "Vector.set" => "Return a new vector with the element at the given index replaced.",
         "Vector.make" => "Create a vector of `n` copies of a value.",

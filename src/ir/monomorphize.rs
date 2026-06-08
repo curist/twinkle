@@ -235,6 +235,38 @@ fn resolve_func_id_by_name(module: &CoreModule, name: &str) -> Option<FuncId> {
         .map(|f| f.func_id)
 }
 
+/// Resolve the `FuncId` of the prelude `Vector.sort` function.
+///
+/// The native typed-value sort fast path needs to recognise call sites that
+/// target the generic prelude `Vector.sort`. That function is namespaced in the
+/// Core module as `__prelude_vector.sort`, so a plain `resolve_func_id_by_name`
+/// on the method table's canonical `"Vector.sort"` name fails (it is neither an
+/// intrinsic nor a `module.functions` entry under that name). We mirror the boot
+/// compiler, which resolves via its method table: look up the method, then map
+/// the canonical `Vector.sort` name onto the prelude-internal `__prelude_vector.sort`
+/// name and resolve that.
+fn resolve_prelude_vector_sort(module: &CoreModule) -> Option<FuncId> {
+    let canonical = module
+        .type_env
+        .get_method(crate::types::ty::BUILTIN_VECTOR_TYPE_ID, "sort")
+        .map(|info| info.func_name.clone())?;
+
+    // The method table may already carry the resolvable internal name.
+    if let Some(fid) = resolve_func_id_by_name(module, &canonical) {
+        return Some(fid);
+    }
+
+    // Otherwise translate the canonical `Vector.sort` form into the
+    // prelude-internal `__prelude_vector.sort` name and resolve that.
+    let (module_part, method_part) = canonical.split_once('.')?;
+    let internal = format!("__prelude_{}.{}", module_part.to_lowercase(), method_part);
+    module
+        .functions
+        .iter()
+        .find(|f| f.name == internal)
+        .map(|f| f.func_id)
+}
+
 fn func_matches_stringify_receiver(func: &FunctionDef, receiver_ty: &MonoType) -> bool {
     if func.name.rsplit('.').next().unwrap_or(&func.name) != "to_string" {
         return false;
@@ -623,8 +655,9 @@ fn rewrite_calls_in_func(
     module: &CoreModule,
     spec_map: &SpecMap,
     generic_funcs: &HashMap<FuncId, &FunctionDef>,
+    prelude_sort_fid: Option<FuncId>,
 ) -> FunctionDef {
-    func.body = rewrite_calls_in_expr(&func.body, module, spec_map, generic_funcs);
+    func.body = rewrite_calls_in_expr(&func.body, module, spec_map, generic_funcs, prelude_sort_fid);
     func
 }
 
@@ -633,10 +666,11 @@ fn rewrite_calls_in_expr(
     module: &CoreModule,
     spec_map: &SpecMap,
     generic_funcs: &HashMap<FuncId, &FunctionDef>,
+    prelude_sort_fid: Option<FuncId>,
 ) -> CoreExpr {
     CoreExpr {
         ty: expr.ty.clone(),
-        kind: rewrite_calls_in_kind(expr, module, spec_map, generic_funcs),
+        kind: rewrite_calls_in_kind(expr, module, spec_map, generic_funcs, prelude_sort_fid),
         span: expr.span,
     }
 }
@@ -650,12 +684,13 @@ fn rewrite_calls_in_kind(
     module: &CoreModule,
     spec_map: &SpecMap,
     generic_funcs: &HashMap<FuncId, &FunctionDef>,
+    prelude_sort_fid: Option<FuncId>,
 ) -> CoreExprKind {
     match &parent.kind {
         CoreExprKind::Call { callee, args } => {
             let new_args: Vec<CoreExpr> = args
                 .iter()
-                .map(|a| rewrite_calls_in_expr(a, module, spec_map, generic_funcs))
+                .map(|a| rewrite_calls_in_expr(a, module, spec_map, generic_funcs, prelude_sort_fid))
                 .collect();
 
             if let CoreExprKind::GlobalFunc(fid) = &callee.kind
@@ -675,6 +710,28 @@ fn rewrite_calls_in_kind(
                         .collect::<Vec<_>>(),
                     fid,
                 );
+                // Type-directed fast path: `Vector.sort` over a primitive
+                // element type lowers to a native typed kernel instead of the
+                // generic Ord merge. Other element types (e.g. String) fall
+                // through to the normal generic specialization below.
+                if type_args.len() == 1 && prelude_sort_fid == Some(*fid) {
+                    let native = match type_args[0] {
+                        MonoType::Int => Some(crate::ir::lower::prelude::VECTOR_SORT_I64),
+                        MonoType::Float => Some(crate::ir::lower::prelude::VECTOR_SORT_F64),
+                        _ => None,
+                    };
+                    if let Some(sort_fid) = native {
+                        return CoreExprKind::Call {
+                            callee: Box::new(CoreExpr {
+                                kind: CoreExprKind::GlobalFunc(sort_fid),
+                                ty: callee.ty.clone(),
+                                span: callee.span,
+                            }),
+                            args: new_args,
+                        };
+                    }
+                }
+
                 debug_assert!(
                     spec_map.contains_key(&(*fid, type_args.clone())),
                     "no specialization found for {:?} with type_args={:?}; call site will be left unpatched",
@@ -699,6 +756,7 @@ fn rewrite_calls_in_kind(
                     module,
                     spec_map,
                     generic_funcs,
+                    prelude_sort_fid,
                 )),
                 args: new_args,
             }
@@ -710,10 +768,10 @@ fn rewrite_calls_in_kind(
             receiver,
             args,
         } => {
-            let new_receiver = rewrite_calls_in_expr(receiver, module, spec_map, generic_funcs);
+            let new_receiver = rewrite_calls_in_expr(receiver, module, spec_map, generic_funcs, prelude_sort_fid);
             let new_args: Vec<CoreExpr> = args
                 .iter()
-                .map(|a| rewrite_calls_in_expr(a, module, spec_map, generic_funcs))
+                .map(|a| rewrite_calls_in_expr(a, module, spec_map, generic_funcs, prelude_sort_fid))
                 .collect();
             let target =
                 resolve_builtin_contract_method(module, &new_receiver.ty, contract, method);
@@ -789,8 +847,9 @@ fn rewrite_calls_in_kind(
                 module,
                 spec_map,
                 generic_funcs,
+                prelude_sort_fid,
             )),
-            body: Box::new(rewrite_calls_in_expr(body, module, spec_map, generic_funcs)),
+            body: Box::new(rewrite_calls_in_expr(body, module, spec_map, generic_funcs, prelude_sort_fid)),
         },
         CoreExprKind::Assign { local, value } => CoreExprKind::Assign {
             local: *local,
@@ -799,21 +858,23 @@ fn rewrite_calls_in_kind(
                 module,
                 spec_map,
                 generic_funcs,
+                prelude_sort_fid,
             )),
         },
         CoreExprKind::BinOp { op, left, right } => CoreExprKind::BinOp {
             op: *op,
-            left: Box::new(rewrite_calls_in_expr(left, module, spec_map, generic_funcs)),
+            left: Box::new(rewrite_calls_in_expr(left, module, spec_map, generic_funcs, prelude_sort_fid)),
             right: Box::new(rewrite_calls_in_expr(
                 right,
                 module,
                 spec_map,
                 generic_funcs,
+                prelude_sort_fid,
             )),
         },
         CoreExprKind::UnOp { op, expr } => CoreExprKind::UnOp {
             op: *op,
-            expr: Box::new(rewrite_calls_in_expr(expr, module, spec_map, generic_funcs)),
+            expr: Box::new(rewrite_calls_in_expr(expr, module, spec_map, generic_funcs, prelude_sort_fid)),
         },
         CoreExprKind::MakeClosure { func_id, free_vars } => {
             if let Some(gf) = generic_funcs.get(func_id) {
@@ -851,18 +912,20 @@ fn rewrite_calls_in_kind(
             then_branch,
             else_branch,
         } => CoreExprKind::If {
-            cond: Box::new(rewrite_calls_in_expr(cond, module, spec_map, generic_funcs)),
+            cond: Box::new(rewrite_calls_in_expr(cond, module, spec_map, generic_funcs, prelude_sort_fid)),
             then_branch: Box::new(rewrite_calls_in_expr(
                 then_branch,
                 module,
                 spec_map,
                 generic_funcs,
+                prelude_sort_fid,
             )),
             else_branch: Box::new(rewrite_calls_in_expr(
                 else_branch,
                 module,
                 spec_map,
                 generic_funcs,
+                prelude_sort_fid,
             )),
         },
         CoreExprKind::Match { scrutinee, arms } => CoreExprKind::Match {
@@ -871,33 +934,35 @@ fn rewrite_calls_in_kind(
                 module,
                 spec_map,
                 generic_funcs,
+                prelude_sort_fid,
             )),
             arms: arms
                 .iter()
                 .map(|arm| MatchArm {
                     pattern: arm.pattern.clone(),
-                    body: rewrite_calls_in_expr(&arm.body, module, spec_map, generic_funcs),
+                    body: rewrite_calls_in_expr(&arm.body, module, spec_map, generic_funcs, prelude_sort_fid),
                 })
                 .collect(),
         },
         CoreExprKind::Loop { body } => CoreExprKind::Loop {
-            body: Box::new(rewrite_calls_in_expr(body, module, spec_map, generic_funcs)),
+            body: Box::new(rewrite_calls_in_expr(body, module, spec_map, generic_funcs, prelude_sort_fid)),
         },
         CoreExprKind::Break { value } => CoreExprKind::Break {
             value: value
                 .as_ref()
-                .map(|v| Box::new(rewrite_calls_in_expr(v, module, spec_map, generic_funcs))),
+                .map(|v| Box::new(rewrite_calls_in_expr(v, module, spec_map, generic_funcs, prelude_sort_fid))),
         },
         CoreExprKind::Return { value } => CoreExprKind::Return {
             value: value
                 .as_ref()
-                .map(|v| Box::new(rewrite_calls_in_expr(v, module, spec_map, generic_funcs))),
+                .map(|v| Box::new(rewrite_calls_in_expr(v, module, spec_map, generic_funcs, prelude_sort_fid))),
         },
         CoreExprKind::Defer(inner) => CoreExprKind::Defer(Box::new(rewrite_calls_in_expr(
             inner,
             module,
             spec_map,
             generic_funcs,
+            prelude_sort_fid,
         ))),
         CoreExprKind::Record { type_id, fields } => CoreExprKind::Record {
             type_id: *type_id,
@@ -906,7 +971,7 @@ fn rewrite_calls_in_kind(
                 .map(|(fid, val)| {
                     (
                         *fid,
-                        rewrite_calls_in_expr(val, module, spec_map, generic_funcs),
+                        rewrite_calls_in_expr(val, module, spec_map, generic_funcs, prelude_sort_fid),
                     )
                 })
                 .collect(),
@@ -917,17 +982,19 @@ fn rewrite_calls_in_kind(
                 module,
                 spec_map,
                 generic_funcs,
+                prelude_sort_fid,
             )),
             field: *field,
         },
         CoreExprKind::RecordUpdate { base, field, value } => CoreExprKind::RecordUpdate {
-            base: Box::new(rewrite_calls_in_expr(base, module, spec_map, generic_funcs)),
+            base: Box::new(rewrite_calls_in_expr(base, module, spec_map, generic_funcs, prelude_sort_fid)),
             field: *field,
             value: Box::new(rewrite_calls_in_expr(
                 value,
                 module,
                 spec_map,
                 generic_funcs,
+                prelude_sort_fid,
             )),
         },
         CoreExprKind::Variant {
@@ -939,22 +1006,23 @@ fn rewrite_calls_in_kind(
             variant: *variant,
             args: args
                 .iter()
-                .map(|a| rewrite_calls_in_expr(a, module, spec_map, generic_funcs))
+                .map(|a| rewrite_calls_in_expr(a, module, spec_map, generic_funcs, prelude_sort_fid))
                 .collect(),
         },
         CoreExprKind::ArrayLit { elements } => CoreExprKind::ArrayLit {
             elements: elements
                 .iter()
-                .map(|e| rewrite_calls_in_expr(e, module, spec_map, generic_funcs))
+                .map(|e| rewrite_calls_in_expr(e, module, spec_map, generic_funcs, prelude_sort_fid))
                 .collect(),
         },
         CoreExprKind::Index { base, index } => CoreExprKind::Index {
-            base: Box::new(rewrite_calls_in_expr(base, module, spec_map, generic_funcs)),
+            base: Box::new(rewrite_calls_in_expr(base, module, spec_map, generic_funcs, prelude_sort_fid)),
             index: Box::new(rewrite_calls_in_expr(
                 index,
                 module,
                 spec_map,
                 generic_funcs,
+                prelude_sort_fid,
             )),
         },
         CoreExprKind::LitInt(_)
@@ -1077,16 +1145,17 @@ pub fn monomorphize(mut module: CoreModule) -> CoreModule {
 
     // Rewrite all call sites; drop original generic defs.
     let module_for_rewrite = module.clone();
+    let prelude_sort_fid = resolve_prelude_vector_sort(&module_for_rewrite);
     let rewritten: Vec<FunctionDef> = module
         .functions
         .into_iter()
         .filter(|f| !is_generic(f))
-        .map(|f| rewrite_calls_in_func(f, &module_for_rewrite, &spec_map, &generic_funcs))
+        .map(|f| rewrite_calls_in_func(f, &module_for_rewrite, &spec_map, &generic_funcs, prelude_sort_fid))
         .collect();
 
     let rewritten_new: Vec<FunctionDef> = new_funcs
         .into_iter()
-        .map(|f| rewrite_calls_in_func(f, &module_for_rewrite, &spec_map, &generic_funcs))
+        .map(|f| rewrite_calls_in_func(f, &module_for_rewrite, &spec_map, &generic_funcs, prelude_sort_fid))
         .collect();
 
     module.functions = rewritten;

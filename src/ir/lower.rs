@@ -108,6 +108,13 @@ pub mod prelude {
     pub const VECTOR_DROP_LAST: FuncId = FuncId(1044);
     // Vector.gather(vec, idx) -> Vector<T>: bulk positional select/permute.
     pub const VECTOR_GATHER: FuncId = FuncId(1045);
+    // Internal: native typed value sort over Vector<Int>. Reached only via the
+    // monomorphizer's type-directed routing of `Vector.sort<Int>`; never a
+    // user-callable method.
+    pub const VECTOR_SORT_I64: FuncId = FuncId(1046);
+    // Internal: native typed value sort over Vector<Float>. Reached only via the
+    // monomorphizer's type-directed routing of `Vector.sort<Float>`.
+    pub const VECTOR_SORT_F64: FuncId = FuncId(1047);
 
     // String / numeric conversion builtins
     pub const CHAR_CODE_AT: FuncId = FuncId(1017); // String.char_code_at(s, i) -> Int
