@@ -1,0 +1,64 @@
+use @std.date
+
+// Deterministic linear-congruential generator so the benchmark data is
+// reproducible across runs and across implementations.
+fn next_seed(seed: Int) Int {
+  (seed * 1664525 + 1013904223) % 2147483648
+}
+
+// Build a Vector<Int> of length n with LCG-derived values (lots of duplicates).
+fn int_keys(n: Int) Vector<Int> {
+  out: Vector<Int> = []
+  seed := 12345
+
+  for _ in range(n) {
+    seed = next_seed(seed)
+    out = .append(seed % 1000000)
+    seed = next_seed(seed)
+  }
+
+  out
+}
+
+// Build a Vector<Float> from the same LCG so the data is deterministic and has
+// duplicates. Avoid reasoning about float sums; we only check len + endpoints.
+fn float_keys(n: Int) Vector<Float> {
+  out: Vector<Float> = []
+  seed := 12345
+
+  for _ in range(n) {
+    seed = next_seed(seed)
+    out = .append((seed % 1000000).to_float() / 1000.0)
+    seed = next_seed(seed)
+  }
+
+  out
+}
+
+fn bench_n(n: Int) Void {
+  println("── N = ${n} ──")
+
+  keys := int_keys(n)
+  start_i := date.now()
+  sorted_i := keys.sort()
+  elapsed_i := date.now() - start_i
+  last_i := sorted_i.len() - 1
+  println(
+    "int   sort : ${elapsed_i}ms (len ${sorted_i.len()} first ${sorted_i[0]} last ${sorted_i[last_i]})",
+  )
+
+  fkeys := float_keys(n)
+  start_f := date.now()
+  sorted_f := fkeys.sort()
+  elapsed_f := date.now() - start_f
+  last_f := sorted_f.len() - 1
+  println(
+    "float sort : ${elapsed_f}ms (len ${sorted_f.len()} first ${sorted_f[0]} last ${sorted_f[last_f]})",
+  )
+
+  println("")
+}
+
+bench_n(10000)
+bench_n(100000)
+bench_n(1000000)

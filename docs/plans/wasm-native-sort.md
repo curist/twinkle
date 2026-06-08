@@ -72,6 +72,46 @@ The reusable part is the `Scratch<T>` dense-buffer infrastructure (an opaque mut
 
 See: [native-sort-dense-merge.md](native-sort-dense-merge.md).
 
+### Native typed value-sort kernel — first dense kernel that won
+
+`xs.sort()` on `Vector<Int>` and `Vector<Float>` now lowers to a native typed-array
+merge kernel: the input is materialized once into a dense `i64`/`f64` buffer, sorted by
+a stable merge whose comparisons and moves are pure unboxed `i64`/`f64` inside a single
+runtime function, and frozen back to a persistent `Vector`. Implemented in both the boot
+compiler and the Rust stage0 reference.
+
+This is the first dense-typed sort kernel to actually pass the gate, and it does so
+precisely where the two earlier dense attempts failed. Approach A (in-place quicksort
+over a uniquely-owned vector) lost because the in-place writes degraded to persistent
+copy-on-write. Approach C (a generic stable merge over an *opaque* `anyref` `Scratch<T>`)
+lost because every element touch paid an `anyref` cast plus an un-inlined
+`scratch_get`/`scratch_set` call, and the comparator stayed boxed. The difference here is
+*typed and inlined*: a monomorphic `i64`/`f64` dense buffer with inlined element access
+and no per-comparison closure, so the merge is straight-line numeric work.
+
+Measured same-machine (Apple silicon, `date.now()` microbench in
+`examples/sort-bench/value_sort_micro.tw`; Twinkle COLD single-run via `target/twk run`;
+Clojure persistent-vector via `examples/sort-bench/value_sort_clojure.clj`, WARMED):
+
+| N | Twinkle `Vector<Int>.sort()` | Twinkle `Vector<Float>.sort()` | Clojure pvec `(vec (sort v))` |
+|---:|---:|---:|---:|
+| 10,000 | ~1.4 ms | ~1.5 ms | ~0.7 ms |
+| 100,000 | ~9.0 ms | ~10.2 ms | ~11 ms |
+| 1,000,000 | ~115 ms | ~118 ms | ~172 ms |
+
+The headline `Vector<Int>` value sort at N = 1M dropped from the documented ~808 ms
+generic-merge baseline to ~115 ms — about a 7× improvement — and now **beats** the
+Clojure persistent-vector reference (~172 ms warmed on this machine), comfortably under
+the ~200 ms target. `Vector<Float>` tracks the same curve. (Inputs are identical across
+implementations: both report first `0` / last `999998` at N = 1M.) This validates the
+dense-typed-kernel direction: the win comes from typed, inlined element access, not from
+the merge mechanics that A and C also used.
+
+Note this is the *plain value sort* — keys are sorted directly. The remaining lever for
+the dataframe `order_by` path is the key-index argsort (below), where the comparator
+reads persistent-vector keys/null masks by index; that has not yet been moved to a dense
+typed working set.
+
 ## Main vector to attack
 
 The highest-value vector is **key-index sorting**:
@@ -136,6 +176,9 @@ See: [typed-vector-representation.md](typed-vector-representation.md).
 Keep the benchmark set small and focused:
 
 ```bash
+target/twk run examples/sort-bench/value_sort_micro.tw
+clojure examples/sort-bench/value_sort_clojure.clj
+
 target/twk run examples/dataframe/bench/order_by_micro.tw
 target/twk run examples/dataframe/bench/order_by_breakdown.tw
 target/twk run examples/dataframe/bench/main.tw
