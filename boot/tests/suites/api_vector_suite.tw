@@ -797,6 +797,26 @@ pub fn suite() runner.Suite {
       },
     )
     .test(
+      "native Int value sort is correct on adversarial input",
+      fn() {
+        // duplicate-heavy, neither ascending nor descending -> dense merge path
+        dup := collect i in range(4000) {
+          i * 7919 % 13
+        }
+        sorted := dup.sort()
+        try assert.equal(sorted.len(), 4000)
+        try assert.is_true(sort_suite_is_sorted(sorted))
+        try assert.equal(sort_suite_sum(sorted), sort_suite_sum(dup))
+
+        // extremes
+        ex: Vector<Int> = [9223372036854775807, -9223372036854775808, 0, -1, 1]
+        s2 := ex.sort()
+        try assert.equal(s2[0], -9223372036854775808)
+        try assert.equal(s2[4], 9223372036854775807)
+        .Ok({})
+      },
+    )
+    .test(
       "sort_by does not mutate original vector",
       fn() {
         xs: Vector<Int> = [3, 2, 1]
