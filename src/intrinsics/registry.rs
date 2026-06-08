@@ -460,6 +460,27 @@ const INTRINSIC_SPECS: &[IntrinsicSpec] = &[
     spec!(TASK_SPAWN, "Task.spawn", Intrinsic, true, true, TaskSpawn),
     spec!(TASK_AWAIT, "Task.await", Intrinsic, true, true, TaskAwait),
     spec!(TASK_YIELD, "Task.yield", Intrinsic, true, true, TaskYield),
+    spec!(
+        VECTOR_SCRATCH_NEW,
+        "Vector.scratch_new",
+        Runtime,
+        false,
+        false
+    ),
+    spec!(
+        VECTOR_SCRATCH_GET,
+        "Vector.scratch_get",
+        Runtime,
+        false,
+        false
+    ),
+    spec!(
+        VECTOR_SCRATCH_SET,
+        "Vector.scratch_set",
+        Runtime,
+        false,
+        false
+    ),
     spec!(HOST_READ_FILE, "__host_read_file", Runtime, false, false),
     spec!(HOST_WRITE_FILE, "__host_write_file", Runtime, false, false),
     spec!(
@@ -546,6 +567,9 @@ const COMMON_BOOTSTRAP_FUNC_NAMES: &[(&str, FuncId)] = &[
     ("Vector.slice", prelude_ids::VECTOR_SLICE),
     ("Vector.drop_last", prelude_ids::VECTOR_DROP_LAST),
     ("Vector.gather", prelude_ids::VECTOR_GATHER),
+    ("Vector.scratch_new", prelude_ids::VECTOR_SCRATCH_NEW),
+    ("Vector.scratch_get", prelude_ids::VECTOR_SCRATCH_GET),
+    ("Vector.scratch_set", prelude_ids::VECTOR_SCRATCH_SET),
     ("String.len", prelude_ids::STRING_LEN),
     ("String.concat", prelude_ids::STRING_CONCAT),
     ("Dict.len", prelude_ids::DICT_LEN),

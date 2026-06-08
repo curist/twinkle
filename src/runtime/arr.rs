@@ -73,6 +73,9 @@ pub fn make() -> ModuleIR {
         get_fn(),
         set_fn(),
         set_in_place_fn(),
+        scratch_new_fn(),
+        scratch_get_fn(),
+        scratch_set_fn(),
         len_fn(),
         concat_fn(),
         slice_trim_right_fn(),
@@ -2054,6 +2057,57 @@ fn set_in_place_fn() -> FuncDef {
             Instr::ArraySet(T_ARRAY.into()),
             Instr::LocalGet(0),
             Instr::RefAsNonNull,
+        ],
+    }
+}
+
+fn scratch_new_fn() -> FuncDef {
+    FuncDef {
+        name: "scratch_new".into(),
+        params: vec![ValType::I32],
+        results: vec![ValType::Anyref],
+        locals: vec![],
+        body: vec![
+            Instr::RefNull(HeapType::None),
+            Instr::LocalGet(0),
+            Instr::ArrayNew(T_ARRAY.into()),
+        ],
+    }
+}
+
+fn scratch_get_fn() -> FuncDef {
+    FuncDef {
+        name: "scratch_get".into(),
+        params: vec![ValType::Anyref, ValType::I32],
+        results: vec![ValType::Anyref],
+        locals: vec![],
+        body: vec![
+            Instr::LocalGet(0),
+            Instr::RefCast {
+                nullable: false,
+                heap: HeapType::Named(T_ARRAY.into()),
+            },
+            Instr::LocalGet(1),
+            Instr::ArrayGet(T_ARRAY.into()),
+        ],
+    }
+}
+
+fn scratch_set_fn() -> FuncDef {
+    FuncDef {
+        name: "scratch_set".into(),
+        params: vec![ValType::Anyref, ValType::I32, ValType::Anyref],
+        results: vec![],
+        locals: vec![],
+        body: vec![
+            Instr::LocalGet(0),
+            Instr::RefCast {
+                nullable: false,
+                heap: HeapType::Named(T_ARRAY.into()),
+            },
+            Instr::LocalGet(1),
+            Instr::LocalGet(2),
+            Instr::ArraySet(T_ARRAY.into()),
         ],
     }
 }
