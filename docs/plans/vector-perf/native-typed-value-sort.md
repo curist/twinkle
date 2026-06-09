@@ -396,7 +396,9 @@ git commit -m "sort: value-sort microbenchmark + record native typed kernel resu
 
 ---
 
-## Appendix — Phase 2: argsort + dataframe `order_by` (separate plan)
+## Appendix — Phase 2: argsort + dataframe `order_by`
+
+Tracked in [native-key-index-argsort.md](native-key-index-argsort.md).
 
 Reuses this plan's typed buffer + merge core. New entry point: a native **argsort** that sorts an index array against a dense typed key buffer (and a null-rank), comparison inlined, no closure. Surface (general builtin family):
 
@@ -405,7 +407,7 @@ Vector.argsort(keys: Vector<K>) Vector<Int>                              // K in
 Vector.argsort_nulls(keys: Vector<K>, nulls: Vector<Bool>, descending: Bool) Vector<Int>
 ```
 
-Dataframe `sort_indices_by_column` (`examples/dataframe/frame/table.tw:241`) replaces its `Int`/`Float`/`Bool` `idx.sort_by(closure)` arms with `keys.argsort_nulls(col.nulls, descending)`; `String` keeps the closure path. `order_by`'s gather/`take` is a separate, smaller follow-up (it is ~1/40th of `order_by`'s reads; the v1 `Vector.gather` is already a constant-factor builder loop — a structural trie-aware gather is the only further lever there). Null semantics: null = +infinity (Asc → last, Desc → first), matching the current comparator. Write this as its own plan once Phase 1 lands and the kernel core is proven.
+Dataframe `sort_indices_by_column` (`examples/dataframe/frame/table.tw:241`) replaces its `Int`/`Float`/`Bool` `idx.sort_by(closure)` arms with native null-aware argsort helpers; `String` keeps the closure path. `order_by`'s gather/`take` is a separate, smaller follow-up (it is ~1/40th of `order_by`'s reads; the v1 `Vector.gather` is already a constant-factor builder loop — a structural trie-aware gather is the only further lever there). Null semantics: null = +infinity (Asc → last, Desc → first), matching the current comparator.
 
 ---
 

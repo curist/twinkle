@@ -169,7 +169,9 @@ Typed vector representation remains the grand-picture fix:
 - dense working-set sort kernels are a near-term proof point;
 - typed vectors help far beyond sorting: map/filter/fold, dataframe columns, group-by, joins, and numeric workloads.
 
-See: [typed-vector-representation.md](typed-vector-representation.md).
+The immediate implementation plan is [generic-sort-by-vector-read-perf.md](generic-sort-by-vector-read-perf.md): improve generic `sort_by` callback execution and indexed vector reads first, so idiomatic callbacks remain competitive even when they have observable side effects. [native-key-index-argsort.md](native-key-index-argsort.md) remains an optional transparent fast path for recognized pure key-index comparators, not the baseline performance story.
+
+See also: [typed-vector-representation.md](typed-vector-representation.md).
 
 ## Bench commands
 

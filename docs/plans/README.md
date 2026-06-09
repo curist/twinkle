@@ -65,8 +65,7 @@ Self-hosting is complete. Historical design and status docs live in
 | [static-uniqueness-plan.md](static-uniqueness-plan.md) | Extend the static uniqueness optimizer to cover more realistic linear-update patterns without changing the runtime model |
 | [sliceable.md](sliceable.md) | `foo[a..b]` range-slice syntax via a Self-only `Sliceable` contract — the lone open piece of the (now-archived) collection-access cluster; adds a `Range`-index arm to `synth_index` plus `Vector`/`String`/`View` satisfiers. Background in [archive/collections-access.md](archive/collections-access.md) |
 | [queue.md](queue.md) | Library-first `@std.queue` persistent double-ended queue, so FIFO/deque-heavy code avoids repeated `Vector.drop_first()` front-slices; pure stdlib, no compiler/runtime primitive |
-| [wasm-native-sort.md](wasm-native-sort.md) | Consolidated `order_by`/native-sort performance plan: keep idiomatic sorting APIs while lowering hot key-index sort shapes to dense working sets; includes failed Approach A, current Approach C, and the broader typed-vector direction |
-| [typed-vector-representation.md](typed-vector-representation.md) | Use monomorphization/backend representation facts to give `Vector<Int>` and later primitive vectors typed physical storage instead of boxed `anyref` elements |
+| [vector-perf/](vector-perf/README.md) | **Ongoing endeavor.** Make idiomatic `Vector`/`sort_by`/`order_by` code fast (vs ~7× behind Clojure). Measurement points at vector read cost + typed representation as the master lever; comparator and allocation micro-opts proven small. Gathers all sort/native-sort/typed-vector plans and the rejected approaches |
 
 ### Archived reference docs
 
