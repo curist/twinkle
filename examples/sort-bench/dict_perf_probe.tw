@@ -1,0 +1,93 @@
+use @std.date
+
+// Compares Twinkle Dict (persistent HAMT) against Clojure's persistent map on the
+// same operation family: persistent build (set/assoc in a loop, no transients),
+// random get over present keys, and random update of existing keys.
+// Int keys (multiply-hash) and String keys (FNV-1a) both, since dataframe uses
+// String keys.
+fn next_seed(seed: Int) Int {
+  (seed * 1664525 + 1013904223) % 2147483648
+}
+
+fn print_time(label: String, start: Float, guard: Int) Void {
+  println("${label}: ${date.now() - start}ms (checksum ${guard})")
+}
+
+fn bench_int(n: Int) Void {
+  // build: keys 0..n-1, each once
+  start_build := date.now()
+  d: Dict<Int, Int> = Dict.new()
+
+  for i in range(n) {
+    d = .set(i, i * 7 % 1000)
+  }
+
+  print_time("int build  (n sets)        ", start_build, d.len())
+
+  // random get over present keys
+  start_get := date.now()
+  acc := 0
+  seed := 12345
+
+  for _ in range(n) {
+    seed = next_seed(seed)
+
+    case d.get(seed % n) {
+      .Some(v) => {
+        acc = acc + v
+      },
+      .None => {},
+    }
+  }
+
+  print_time("int get    (n random hits) ", start_get, acc % 100000)
+
+  // random update of existing keys
+  start_upd := date.now()
+  seed2 := 999
+  e := d
+
+  for _ in range(n) {
+    seed2 = next_seed(seed2)
+    e = .set(seed2 % n, seed2 % 1000)
+  }
+
+  print_time("int update (n random sets) ", start_upd, e.len())
+}
+
+fn bench_string(n: Int) Void {
+  start_build := date.now()
+  d: Dict<String, Int> = Dict.new()
+
+  for i in range(n) {
+    d = .set("k${i}", i * 7 % 1000)
+  }
+
+  print_time("str build  (n sets)        ", start_build, d.len())
+
+  start_get := date.now()
+  acc := 0
+  seed := 12345
+
+  for _ in range(n) {
+    seed = next_seed(seed)
+
+    case d.get("k${seed % n}") {
+      .Some(v) => {
+        acc = acc + v
+      },
+      .None => {},
+    }
+  }
+
+  print_time("str get    (n random hits) ", start_get, acc % 100000)
+}
+
+fn bench_n(n: Int) Void {
+  println("── N = ${n} ──")
+  bench_int(n)
+  bench_string(n)
+}
+
+println("=== dict performance probe ===")
+bench_n(1000000)
