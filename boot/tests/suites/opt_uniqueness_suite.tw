@@ -2060,6 +2060,43 @@ fn test_dict_fresh_remove_rewrite() Result<Void, String> {
   }
 }
 
+// A dict `set` in a consume-reassign loop on a uniquely-owned dict is rewritten to
+// dict_set_in_place — no builder lifecycle, just a callee swap inside the loop.
+// Dicts have no builder, so the loop structure is preserved and only the call is
+// swapped. This is the boot port of stage0's loop in-place rewrite (see the passing
+// `opt_dict_set_loop_unique_rewritten_to_in_place` in tests/opt_test.rs), restoring
+// boot↔stage0 parity. (Contrast `test_dict_fresh_set_with_consume_reassign`, the
+// straight-line variant.)
+fn test_loop_dict_set_consume_reassign_rewrite() Result<Void, String> {
+  // let d = dict_new()
+  // let _ = ALoop(
+  //   let tmp = dict_set(d, 1, 2)
+  //   let _ = assign(d, tmp)
+  //   Continue
+  // )
+  // Atom(d)
+  loop_body: AnfExpr = .Let(
+    lid(1),
+    .ACall(.AGlobalFunc(mock_dict_set()), [.ALocal(lid(0)), .ALitInt(1), .ALitInt(2)]),
+    .Let(lid(2), .AAssign(lid(0), .ALocal(lid(1))), .Continue),
+  )
+  body: AnfExpr = .Let(
+    lid(0),
+    .ACall(.AGlobalFunc(mock_dict_new()), []),
+    .Let(lid(3), .ALoop(loop_body), .Atom(.ALocal(lid(0)))),
+  )
+  func := make_func(body)
+  result := rewrite(func)
+
+  case result.body {
+    .Let(_, _, .Let(_, .ALoop(loop_e), _)) => case loop_e {
+      .Let(_, .ACall(.AGlobalFunc(f), _), _) => assert.equal(f.id, mock_dict_set_in_place().id),
+      _ => .Err("expected dict_set call as first op in loop body"),
+    },
+    _ => .Err("expected dict_new then loop"),
+  }
+}
+
 // ── String concat loop → string builder ─────────────────────────────
 fn test_string_concat_loop_rewrite() Result<Void, String> {
   // let out = AInit(ALitStr(""))    // string-literal base → deep owned
@@ -2331,6 +2368,10 @@ pub fn suite() runner.Suite {
   s = .test("dict fresh linear set chain", test_dict_fresh_linear_set_chain)
   s = .test("dict fresh set with consume-reassign", test_dict_fresh_set_with_consume_reassign)
   s = .test("dict fresh remove rewrite", test_dict_fresh_remove_rewrite)
+  s = .test(
+    "dict set in loop → in-place (boot↔stage0 parity)",
+    test_loop_dict_set_consume_reassign_rewrite,
+  )
 
   // String concat loop → string builder family
   s = .test("string concat loop → builder", test_string_concat_loop_rewrite)

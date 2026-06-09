@@ -981,6 +981,244 @@ fn try_straight_line_builder_rewrite(
 }
 
 // ── Phase 3: Loop region rewrite ───────────────────────────────────
+// ── Dict in-place loop rewrite (callee swap, no builder) ─────────────
+// Port of stage0's analyze_loop_dict_sites / rewrite_loop_dict_expr. A COW op
+// with a direct in-place equivalent (Dict.set/remove, the indexed Vector set —
+// NOT append/concat, which need a builder lifecycle) used in a loop only via
+// consume-reassign sites (plus read-only reads of the base) can have each site's
+// callee swapped to its in-place variant, with no builder. Boot previously left
+// these as persistent path-copies because rewrite_op resets ownership at loop
+// boundaries; this restores parity with stage0 (opt_dict_set_loop_* in
+// tests/opt_test.rs).
+type DictLoopRw = .{ expr: AnfExpr, sites: Int }
+
+type DictLoopOpRw = .{ op: AnfOp, sites: Int }
+
+fn loop_is_consume_reassign(body: AnfExpr, base: LocalId, result: LocalId) Bool {
+  case body {
+    .Let(_, .AAssign(target, .ALocal(v)), _) => target.id == base.id and v.id == result.id,
+    _ => false,
+  }
+}
+
+fn op_is_read_only_call(op: AnfOp, semantics: OptimizerSemantics) Bool {
+  case op {
+    .ACall(.AGlobalFunc(func_id), _) => case call_info(semantics, func_id) {
+      .Some(info) => case info.effect {
+        .ReadOnly => true,
+        _ => false,
+      },
+      .None => false,
+    },
+    _ => false,
+  }
+}
+
+// A swappable in-place COW consume-reassign site on `base`: callee has an
+// in-place equivalent, base is the cow base arg, no other arg references base,
+// and the binding is immediately consume-reassigned back to base.
+fn is_swappable_inplace_site(
+  op: AnfOp,
+  body: AnfExpr,
+  base: LocalId,
+  result: LocalId,
+  semantics: OptimizerSemantics,
+) Bool {
+  case op {
+    .ACall(.AGlobalFunc(func_id), args) => case call_info(semantics, func_id) {
+      .Some(info) => {
+        has_in_place := case info.in_place_equivalent {
+          .Some(_) => true,
+          .None => false,
+        }
+
+        if !has_in_place {
+          return false
+        }
+
+        case info.cow_base_arg {
+          .Some(base_arg) => {
+            if base_arg >= args.len() {
+              return false
+            }
+
+            if !atom_is_local(args[base_arg], base) {
+              return false
+            }
+
+            for i in range(args.len()) {
+              if i != base_arg and atom_is_local(args[i], base) {
+                return false
+              }
+            }
+
+            loop_is_consume_reassign(body, base, result)
+          },
+          .None => false,
+        }
+      },
+      .None => false,
+    },
+    _ => false,
+  }
+}
+
+// Count in-place-swappable sites for `base` in `expr`, or .None if base is used
+// in any other way (vector append, escape, non-read-only call, …).
+fn analyze_loop_dict_sites(expr: AnfExpr, base: LocalId, semantics: OptimizerSemantics) Int? {
+  case expr {
+    .Let(local, op, body) => if is_swappable_inplace_site(op, body, base, local, semantics) {
+      // body is `Let(_, AAssign(base, local), rest)` — recurse after the assign.
+      case body {
+        .Let(_, _, rest) => case analyze_loop_dict_sites(rest, base, semantics) {
+          .Some(n) => .Some(1 + n),
+          .None => .None,
+        },
+        _ => .None,
+      }
+    } else {
+      // Any other use of base must be a read-only call; otherwise bail.
+      if op_uses_local_non_recursive(op, base) and !op_is_read_only_call(op, semantics) {
+        .None
+      } else {
+        case analyze_loop_dict_sites_in_op(op, base, semantics) {
+          .Some(a) => case analyze_loop_dict_sites(body, base, semantics) {
+            .Some(b) => .Some(a + b),
+            .None => .None,
+          },
+          .None => .None,
+        }
+      }
+    },
+    .Atom(atom) => if atom_is_local(atom, base) {
+      .None
+    } else {
+      .Some(0)
+    },
+    .Return(maybe) => case maybe {
+      .Some(atom) => if atom_is_local(atom, base) {
+        .None
+      } else {
+        .Some(0)
+      },
+      .None => .Some(0),
+    },
+    .Break(maybe) => case maybe {
+      .Some(atom) => if atom_is_local(atom, base) {
+        .None
+      } else {
+        .Some(0)
+      },
+      .None => .Some(0),
+    },
+    .Continue => .Some(0),
+  }
+}
+
+fn analyze_loop_dict_sites_in_op(op: AnfOp, base: LocalId, semantics: OptimizerSemantics) Int? {
+  case op {
+    .AIf(_, then_e, else_e) => case analyze_loop_dict_sites(then_e, base, semantics) {
+      .Some(a) => case analyze_loop_dict_sites(else_e, base, semantics) {
+        .Some(b) => .Some(a + b),
+        .None => .None,
+      },
+      .None => .None,
+    },
+    .AMatch(_, arms) => {
+      total := 0
+      ok := true
+
+      for arm in arms {
+        case analyze_loop_dict_sites(arm.body, base, semantics) {
+          .Some(n) => {
+            total = total + n
+          },
+          .None => {
+            ok = false
+          },
+        }
+      }
+
+      if ok {
+        .Some(total)
+      } else {
+        .None
+      }
+    },
+    .ALoop(b) => analyze_loop_dict_sites(b, base, semantics),
+    .ADefer(b) => analyze_loop_dict_sites(b, base, semantics),
+    _ => .Some(0),
+  }
+}
+
+fn swap_callee_to_in_place(op: AnfOp, semantics: OptimizerSemantics) AnfOp {
+  case op {
+    .ACall(.AGlobalFunc(func_id), args) => case call_info(semantics, func_id) {
+      .Some(info) => case info.in_place_equivalent {
+        .Some(in_place_id) => .ACall(.AGlobalFunc(in_place_id), args),
+        .None => op,
+      },
+      .None => op,
+    },
+    _ => op,
+  }
+}
+
+fn rewrite_loop_dict_expr(expr: AnfExpr, base: LocalId, semantics: OptimizerSemantics) DictLoopRw {
+  case expr {
+    .Let(local, op, body) => if is_swappable_inplace_site(op, body, base, local, semantics) {
+      new_op := swap_callee_to_in_place(op, semantics)
+
+      case body {
+        .Let(assign_local, assign_op, rest) => {
+          rest_rw := rewrite_loop_dict_expr(rest, base, semantics)
+          DictLoopRw.{
+            expr: .Let(local, new_op, .Let(assign_local, assign_op, rest_rw.expr)),
+            sites: 1 + rest_rw.sites,
+          }
+        },
+        _ => DictLoopRw.{ expr, sites: 0 },
+      }
+    } else {
+      sub := rewrite_loop_dict_op_subexpr(op, base, semantics)
+      body_rw := rewrite_loop_dict_expr(body, base, semantics)
+      DictLoopRw.{ expr: .Let(local, sub.op, body_rw.expr), sites: sub.sites + body_rw.sites }
+    },
+    _ => DictLoopRw.{ expr, sites: 0 },
+  }
+}
+
+fn rewrite_loop_dict_op_subexpr(op: AnfOp, base: LocalId, semantics: OptimizerSemantics) DictLoopOpRw {
+  case op {
+    .AIf(cond_atom, then_e, else_e) => {
+      t := rewrite_loop_dict_expr(then_e, base, semantics)
+      e := rewrite_loop_dict_expr(else_e, base, semantics)
+      DictLoopOpRw.{ op: .AIf(cond_atom, t.expr, e.expr), sites: t.sites + e.sites }
+    },
+    .AMatch(scrut, arms) => {
+      total := 0
+      new_arms: Vector<AnfMatchArm> = []
+
+      for arm in arms {
+        arm_rw := rewrite_loop_dict_expr(arm.body, base, semantics)
+        total = total + arm_rw.sites
+        new_arms = .append(AnfMatchArm.{ pattern: arm.pattern, body: arm_rw.expr })
+      }
+
+      DictLoopOpRw.{ op: .AMatch(scrut, new_arms), sites: total }
+    },
+    .ALoop(b) => {
+      r := rewrite_loop_dict_expr(b, base, semantics)
+      DictLoopOpRw.{ op: .ALoop(r.expr), sites: r.sites }
+    },
+    .ADefer(b) => {
+      r := rewrite_loop_dict_expr(b, base, semantics)
+      DictLoopOpRw.{ op: .ADefer(r.expr), sites: r.sites }
+    },
+    _ => DictLoopOpRw.{ op, sites: 0 },
+  }
+}
+
 fn try_loop_rewrite(bind_local: LocalId, loop_body: AnfExpr, cont: AnfExpr, st: RwState) LoopRewrite? {
   // Find candidates: deeply owned, non-tainted locals
   candidates: Vector<Int> = collect k in st.ownership.keys() {
@@ -1025,6 +1263,27 @@ fn try_loop_rewrite(bind_local: LocalId, loop_body: AnfExpr, cont: AnfExpr, st: 
         .Some(result) => { return .Some(result) },
         .None => {},
       }
+    }
+
+    // No builder lifecycle: swap each in-place-swappable COW callee (Dict.set/
+    // remove, indexed Vector set) to its in-place variant when base is used in the
+    // loop only via consume-reassign sites + read-only reads. Tried after builders
+    // so vector-append loops still become builders.
+    case analyze_loop_dict_sites(loop_body, base, st.config) {
+      .Some(expected) => if expected > 0 {
+        rw := rewrite_loop_dict_expr(loop_body, base, st.config)
+
+        if rw.sites == expected {
+          return .Some(
+            LoopRewrite.{
+              expr: .Let(bind_local, .ALoop(rw.expr), cont),
+              mono_updates: Dict.new(),
+              next_local: st.next_local,
+            },
+          )
+        }
+      },
+      .None => {},
     }
   }
 
