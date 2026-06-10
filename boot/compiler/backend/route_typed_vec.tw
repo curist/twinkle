@@ -58,22 +58,42 @@ pub fn route_ids(builtins: BuiltinRegistry) RouteIds {
   }
 }
 
-pub fn route_typed_vectors(funcs: Vector<PreparedFunc>, builtins: BuiltinRegistry) Vector<
-  PreparedFunc,
-> {
+pub fn route_typed_vectors(
+  funcs: Vector<PreparedFunc>,
+  builtins: BuiltinRegistry,
+  typed_fields: Dict<String, Bool>,
+) Vector<PreparedFunc> {
   ids := route_ids(builtins)
 
   collect pf in funcs {
-    route_func(pf, ids, builtins)
+    route_func(pf, ids, builtins, typed_fields)
   }
 }
 
-fn route_func(pf: PreparedFunc, ids: RouteIds, builtins: BuiltinRegistry) PreparedFunc {
+// Every key present in `set`. An empty key list vacuously satisfies this.
+fn all_in(keys: Vector<String>, set: Dict<String, Bool>) Bool {
+  for k in keys {
+    if !set.has(k) {
+      return false
+    }
+  }
+
+  true
+}
+
+fn route_func(
+  pf: PreparedFunc,
+  ids: RouteIds,
+  builtins: BuiltinRegistry,
+  typed_fields: Dict<String, Bool>,
+) PreparedFunc {
   // 1. Collect (v, b) candidates: v = builder_freeze(b) where v: Vector<Int>.
   cands := collect_candidates(pf.body, pf.slots, ids, [])
 
   // 2. Keep only candidates whose v never escapes except by direct return
-  //    (used solely by index/len/return). The builder is threaded through plain copies (builder_new -> temp, then
+  //    (used solely by index/len/return) and any record-field stores it makes go
+  //    into fields the whole-program analysis already decided are typed. The
+  //    builder is threaded through plain copies (builder_new -> temp, then
   //    temp -> builder_local), so follow the copy chain backward from the freeze
   //    argument to mark every builder slot (incl. the builder_new result).
   copy_map := build_copy_map(pf.body, Dict.new())
@@ -82,8 +102,10 @@ fn route_func(pf: PreparedFunc, ids: RouteIds, builtins: BuiltinRegistry) Prepar
 
   for c in cands {
     aliases := aliases_for(c.v, copy_map)
+    vuse := classify_v_group(pf.body, aliases, ids.len, builtins, pf.slots)
+    all_field_keys_typed := vuse.field_keys.len() == 0 or all_in(vuse.field_keys, typed_fields)
 
-    if !v_group_escapes(pf.body, aliases, ids.len, builtins) {
+    if !vuse.escapes and all_field_keys_typed {
       for sid in aliases.keys() {
         eligible_v[sid] = true
       }
@@ -105,6 +127,17 @@ fn route_func(pf: PreparedFunc, ids: RouteIds, builtins: BuiltinRegistry) Prepar
         }
       }
     }
+  }
+
+  // 2b. Reads from a typed field are typed sources: each ARecordGet whose key is
+  //     in typed_fields makes its RESULT slot a PVecI64 vector. No builder
+  //     lineage (the field is already physically typed), so these only join
+  //     eligible_v — index/len over the result route to _i64 like any other
+  //     eligible_v slot.
+  field_read_sids := collect_typed_field_reads(pf.body, typed_fields, [])
+
+  for sid in field_read_sids {
+    eligible_v[sid] = true
   }
 
   if eligible_v.keys().len() == 0 {
@@ -221,6 +254,58 @@ fn collect_candidates_op(
     },
     .ALoop(inner) => collect_candidates(inner, slots, ids, acc),
     .ADefer(inner) => collect_candidates(inner, slots, ids, acc),
+    _ => acc,
+  }
+}
+
+// Collect the result sids of `ARecordGet(_, fid, tid)` reads whose field key
+// "${tid}:${fid}" is in `typed_fields` — these read from a physically-typed
+// field, so the loaded Vector<Int> is already PVecI64 and the result slot is a
+// typed source.
+fn collect_typed_field_reads(expr: PreparedExpr, typed_fields: Dict<String, Bool>, acc: Vector<Int>) Vector<
+  Int,
+> {
+  case expr {
+    .Let(slot, op, body) => {
+      acc2 := case op {
+        .ARecordGet(_, fid, tid) => {
+          key := "${tid.id}:${fid.id}"
+
+          if typed_fields.has(key) {
+            acc.append(slot.id)
+          } else {
+            acc
+          }
+        },
+        _ => acc,
+      }
+
+      acc3 := collect_typed_field_reads_op(op, typed_fields, acc2)
+      collect_typed_field_reads(body, typed_fields, acc3)
+    },
+    _ => acc,
+  }
+}
+
+fn collect_typed_field_reads_op(op: PreparedOp, typed_fields: Dict<String, Bool>, acc: Vector<Int>) Vector<
+  Int,
+> {
+  case op {
+    .AIf(_, then_e, else_e) => {
+      acc2 := collect_typed_field_reads(then_e, typed_fields, acc)
+      collect_typed_field_reads(else_e, typed_fields, acc2)
+    },
+    .AMatch(_, arms) => {
+      cur := acc
+
+      for arm in arms {
+        cur = collect_typed_field_reads(arm.body, typed_fields, cur)
+      }
+
+      cur
+    },
+    .ALoop(inner) => collect_typed_field_reads(inner, typed_fields, acc),
+    .ADefer(inner) => collect_typed_field_reads(inner, typed_fields, acc),
     _ => acc,
   }
 }

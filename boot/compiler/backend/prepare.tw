@@ -61,7 +61,7 @@ pub fn prepare_backend(
   // defaults using MonoType and boundary-op overrides.
   funcs2 := assign_repr_for_module(funcs, env, builtins)
 
-  funcs3 := route_typed_vectors(funcs2, builtins)
+  funcs3 := route_typed_vectors(funcs2, builtins, Dict.new())
   .{ anf: anf2, closure_captures, funcs: funcs3, typed_vector_fields: Dict.new() }
 }
 

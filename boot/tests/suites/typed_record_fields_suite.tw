@@ -13,7 +13,9 @@
 
 use compiler.backend.closure_convert.{convert_closures}
 use compiler.backend.prepare.{prepare_backend}
-use compiler.backend.route_typed_vec.{analyze_typed_fields}
+use compiler.backend.prepared_ir.{PreparedFunc, SlotInfo}
+use compiler.backend.route_typed_vec.{analyze_typed_fields, route_typed_vectors}
+use compiler.builtins.{BuiltinRegistry}
 use compiler.pipeline
 use tests.assert
 use tests.runner
@@ -25,6 +27,46 @@ fn analyze_src(src: String) Result<Dict<String, Bool>, String> {
   cc := convert_closures(artifacts.opt, artifacts.env)
   prepared := prepare_backend(cc.anf, artifacts.env, artifacts.builtins, cc.captures)
   .Ok(analyze_typed_fields(prepared.funcs, artifacts.builtins))
+}
+
+type Prepared = .{ funcs: Vector<PreparedFunc>, builtins: BuiltinRegistry }
+
+// Compile source to prepared backend funcs + registry (the raw inputs to both
+// analyze_typed_fields and route_typed_vectors).
+fn prepare_src(src: String) Result<Prepared, String> {
+  artifacts := try pipeline.compile_source(src)
+  cc := convert_closures(artifacts.opt, artifacts.env)
+  prepared := prepare_backend(cc.anf, artifacts.env, artifacts.builtins, cc.captures)
+  .Ok(.{ funcs: prepared.funcs, builtins: artifacts.builtins })
+}
+
+// True if a slot's physical wasm storage is the typed PVecI64 ref.
+fn is_pvec_i64(info: SlotInfo) Bool {
+  case info.wasm_type {
+    .Ref(_, ht) => case ht {
+      .Named(n) => n == "rt_types__PVecI64",
+      _ => false,
+    },
+    _ => false,
+  }
+}
+
+// Count slots across all funcs whose physical wasm type is PVecI64.
+fn pvec_i64_slot_count(funcs: Vector<PreparedFunc>) Int {
+  n := 0
+
+  for pf in funcs {
+    for sid in pf.slots.keys() {
+      case pf.slots[sid] {
+        .Some(info) => if is_pvec_i64(info) {
+          n = n + 1
+        },
+        .None => {},
+      }
+    }
+  }
+
+  n
 }
 
 // Count the (TypeId, FieldId) keys the analysis decided are typed (true).
@@ -135,6 +177,46 @@ pub fn suite() runner.Suite {
 
         try assert.ok(only_true, "all decided keys should be true")
         try assert.equal(typed_count(d), 1)
+        .Ok({})
+      },
+    )
+    .test(
+      "routing with the typed-field set retypes producer + field-read slots to PVecI64",
+      fn() {
+        p := try prepare_src(positive_src())
+        tf := analyze_typed_fields(p.funcs, p.builtins)
+
+        // Sanity: the analysis flagged the column field as typed.
+        try assert.equal(typed_count(tf), 1)
+
+        // Empty set: stores into the field escape and no field reads are typed,
+        // so nothing retypes — proves the empty-set path preserves old behavior.
+        empty: Dict<String, Bool> = Dict.new()
+        routed_empty := route_typed_vectors(p.funcs, p.builtins, empty)
+        try assert.equal(pvec_i64_slot_count(routed_empty), 0)
+
+        // Real set: the producer (collect/builder_freeze result) AND the
+        // field-read (b.xs) result slot retype to PVecI64. Both the freeze result
+        // and its plain-copy aliases plus the read result get retyped, so expect
+        // at least two typed slots and strictly more than the empty-set run.
+        routed := route_typed_vectors(p.funcs, p.builtins, tf)
+        n := pvec_i64_slot_count(routed)
+        try assert.ok(n >= 2, "expected producer + field-read slots typed")
+        try assert.ok(n > pvec_i64_slot_count(routed_empty), "non-empty set must type strictly more slots")
+        .Ok({})
+      },
+    )
+    .test(
+      "routing the boxed-producer source with a set never retypes (field stays boxed)",
+      fn() {
+        // The boxed source has no typed-routable producer, so analyze yields an
+        // empty set and routing must leave everything boxed regardless.
+        p := try prepare_src(boxed_src())
+        tf := analyze_typed_fields(p.funcs, p.builtins)
+        try assert.equal(typed_count(tf), 0)
+
+        routed := route_typed_vectors(p.funcs, p.builtins, tf)
+        try assert.equal(pvec_i64_slot_count(routed), 0)
         .Ok({})
       },
     )
