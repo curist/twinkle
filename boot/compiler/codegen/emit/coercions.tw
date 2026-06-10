@@ -19,6 +19,17 @@ pub fn emit_coerce_stack(
     return buf
   }
 
+  case from {
+    .Ref(_, .Named(from_name)) => case to {
+      .Ref(_, .Named(to_name)) => if from_name == "rt_types__PVecI64"
+        and to_name == "rt_types__PVec" and is_vector_int(mono) {
+        return buf.append(.Call("rt_arr__box_i64"))
+      },
+      _ => {},
+    },
+    _ => {},
+  }
+
   case to {
     .Anyref => { return emit_box_to_anyref(mono, ctx.env, buf) },
     _ => {},
@@ -62,6 +73,13 @@ pub fn emit_coerce_stack(
   }
 
   buf
+}
+
+fn is_vector_int(mono: MonoType) Bool {
+  case mono {
+    .Vector(.Int) => true,
+    _ => false,
+  }
 }
 
 pub fn adapt_runtime_result(fid: FuncId, result_mono: MonoType, ctx: EmitCtx) Vector<Instr> {

@@ -622,10 +622,10 @@ fn emit_expr(expr: PreparedExpr, expected_ty: MonoType, ctx: EmitCtx, buf: Vecto
         buf2 := emit_atom(atom, ctx, buf)
         buf2.append(.Unreachable)
       },
-      _ => emit_atom(atom, ctx, buf),
+      _ => emit_atom_for_expected(atom, expected_ty, ctx, buf),
     },
     .Return(.Some(atom)) => {
-      buf2 := emit_atom(atom, ctx, buf)
+      buf2 := emit_atom_for_expected(atom, current_return_mono(ctx, expected_ty), ctx, buf)
       buf2.append(.Return)
     },
     .Return(.None) => buf.append(.Return),
@@ -657,6 +657,34 @@ fn emit_expr(expr: PreparedExpr, expected_ty: MonoType, ctx: EmitCtx, buf: Vecto
   }
 }
 
+fn current_return_mono(ctx: EmitCtx, fallback: MonoType) MonoType {
+  case current_prepared_func(ctx) {
+    .Some(pf) => pf.return_mono,
+    .None => fallback,
+  }
+}
+
+fn emit_atom_for_expected(
+  atom: PreparedAtom,
+  expected_ty: MonoType,
+  ctx: EmitCtx,
+  buf: Vector<Instr>,
+) Vector<Instr> {
+  buf2 := emit_atom(atom, ctx, buf)
+
+  case expected_ty {
+    .Void => buf2,
+    .Never => buf2,
+    _ => emit_coerce_stack(
+      atom_val_type(atom, ctx),
+      val_type_of_mono(expected_ty, ctx.env),
+      expected_ty,
+      ctx,
+      buf2,
+    ),
+  }
+}
+
 // ── Tail-position expression emission ──────────────────────────────────
 // emit_tail_expr emits an expression in return-tail context: the result
 // of the expression will be returned from the enclosing function.
@@ -667,11 +695,11 @@ fn emit_tail_expr(expr: PreparedExpr, expected_ty: MonoType, ctx: EmitCtx, buf: 
   case expr {
     .Let(local, op, body) => emit_tail_let(local, op, body, expected_ty, ctx, buf),
     .Atom(atom) => {
-      buf2 := emit_atom(atom, ctx, buf)
+      buf2 := emit_atom_for_expected(atom, expected_ty, ctx, buf)
       buf2.append(.Return)
     },
     .Return(.Some(atom)) => {
-      buf2 := emit_atom(atom, ctx, buf)
+      buf2 := emit_atom_for_expected(atom, current_return_mono(ctx, expected_ty), ctx, buf)
       buf2.append(.Return)
     },
     .Return(.None) => buf.append(.Return),

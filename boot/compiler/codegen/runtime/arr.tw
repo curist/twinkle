@@ -196,6 +196,7 @@ pub fn module() WasmModule {
     builder_new_i64_fn(),
     builder_push_i64_fn(),
     builder_freeze_i64_fn(),
+    box_i64_fn(),
     vec_i64_roundtrip_fn(),
     builder_new_fn(),
     builder_from_fn(),
@@ -2069,6 +2070,60 @@ fn builder_freeze_i64_fn() FuncDef {
           .StructNew(t_pvec_i64()),
         ],
       ),
+    ],
+  }
+}
+
+// box_i64(vec: PVecI64?) -> PVec
+// Representation-boundary adapter for returning a locally typed Vector<Int>
+// through the ordinary boxed Vector<Int> ABI. This pays one boxing pass at the
+// boundary while preserving raw i64 storage for in-function indexed reads.
+fn box_i64_fn() FuncDef {
+  tbi := t_boxed_int()
+
+  // p0=vec; L1=n, L2=i, L3=boxed_builder
+  .{
+    name: "box_i64",
+    params: [pvec_i64_null()],
+    results: [pvec_ref()],
+    locals: [.I32, .I32, arr_null()],
+    body: [
+      .LocalGet(0),
+      .Call("len_i64"),
+      .LocalSet(1),
+      .I32Const(0),
+      .LocalSet(2),
+      .Call("builder_new"),
+      .LocalSet(3),
+      .Block(
+        "brk",
+        .None,
+        [
+          .Loop(
+            "lp",
+            .None,
+            [
+              .LocalGet(2),
+              .LocalGet(1),
+              .I32GeS,
+              .BrIf("brk"),
+              .LocalGet(3),
+              .LocalGet(0),
+              .LocalGet(2),
+              .Call("get_i64"),
+              .StructNew(tbi),
+              .Call("builder_push"),
+              .LocalGet(2),
+              .I32Const(1),
+              .I32Add,
+              .LocalSet(2),
+              .Br("lp"),
+            ],
+          ),
+        ],
+      ),
+      .LocalGet(3),
+      .Call("builder_freeze"),
     ],
   }
 }

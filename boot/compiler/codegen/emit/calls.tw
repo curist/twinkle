@@ -1,6 +1,6 @@
 /// Call emission for direct, runtime, intrinsic, and closure calls.
 
-use compiler.backend.prepared_ir.{PreparedAtom, SlotId}
+use compiler.backend.prepared_ir.{PreparedAtom, PreparedFunc, SlotId}
 use compiler.builtins as bi
 use compiler.builtins.{RuntimeInfo}
 use compiler.codegen.emit.coercions.{adapt_runtime_result, emit_coerce_stack}
@@ -74,6 +74,8 @@ pub fn emit_call(
   }
 }
 
+type DirectExpected = .{ mono: MonoType, val_type: ValType }
+
 fn emit_direct_call(
   fid: FuncId,
   args: Vector<PreparedAtom>,
@@ -89,16 +91,7 @@ fn emit_direct_call(
   expected_func := ctx.prepared_funcs[fid.id]
 
   for a, i in args {
-    expected: MonoType? = case expected_func {
-      .Some(pf) => case pf.params.get(i) {
-        .Some(sid) => case pf.slots[sid.id] {
-          .Some(info) => .Some(info.mono),
-          .None => .None,
-        },
-        .None => .None,
-      },
-      .None => .None,
-    }
+    expected := direct_expected_arg(expected_func, i)
     out = emit_direct_arg(a, expected, ctx, out, fns)
   }
 
@@ -130,38 +123,50 @@ pub fn emit_direct_tail_call(
   expected_func := ctx.prepared_funcs[fid.id]
 
   for a, i in args {
-    expected: MonoType? = case expected_func {
-      .Some(pf) => case pf.params.get(i) {
-        .Some(sid) => case pf.slots[sid.id] {
-          .Some(info) => .Some(info.mono),
-          .None => .None,
-        },
-        .None => .None,
-      },
-      .None => .None,
-    }
+    expected := direct_expected_arg(expected_func, i)
     out = emit_direct_arg(a, expected, ctx, out, fns)
   }
 
   out.append(.ReturnCall(sym))
 }
 
+fn direct_expected_arg(expected_func: PreparedFunc?, i: Int) DirectExpected? {
+  case expected_func {
+    .Some(pf) => case pf.params.get(i) {
+      .Some(sid) => case pf.slots[sid.id] {
+        .Some(info) => .Some(.{ mono: info.mono, val_type: info.wasm_type }),
+        .None => .None,
+      },
+      .None => .None,
+    },
+    .None => .None,
+  }
+}
+
 fn emit_direct_arg(
   a: PreparedAtom,
-  expected: MonoType?,
+  expected: DirectExpected?,
   ctx: EmitCtx,
   buf: Vector<Instr>,
   fns: CallEmitFns,
 ) Vector<Instr> {
   case expected {
-    .Some(.Byte) => case a {
-      .ALitInt(n) => { return buf.append(.I32Const(n)) },
+    .Some(exp) => case exp.mono {
+      .Byte => case a {
+        .ALitInt(n) => { return buf.append(.I32Const(n)) },
+        _ => {},
+      },
       _ => {},
     },
     _ => {},
   }
 
-  fns.emit_atom(a, ctx, buf)
+  out := fns.emit_atom(a, ctx, buf)
+
+  case expected {
+    .Some(exp) => emit_coerce_stack(fns.atom_val_type(a, ctx), exp.val_type, exp.mono, ctx, out),
+    .None => out,
+  }
 }
 
 fn emit_runtime_arg(

@@ -6,7 +6,9 @@
 /// typed `PVecI64` (raw i64 leaves, no BoxedInt pointer-chase per read). We swap
 /// the builder/len builtin calls to their `_i64` variants and retype the result
 /// slot to PVecI64; the index reads are routed in emit by the base wasm type.
-/// No coercion is needed precisely because eligibility forbids any boundary use.
+/// Return-position escape is allowed: emission inserts the `PVecI64 -> PVec`
+/// boxing adapter at the function boundary. Other boundary uses remain
+/// disallowed.
 ///
 /// Runs after assign_repr_for_module (so wasm_type overrides stick and push
 /// elements are already boxed — builder_push_i64 takes the boxed element).
@@ -17,6 +19,7 @@ use compiler.backend.prepared_ir.{
 use compiler.builtins as bi
 use compiler.builtins.{BuiltinRegistry}
 use compiler.codegen.wasm_ir.{ValType}
+use compiler.core_ir.{FuncId}
 
 fn with_repr_wasm(info: SlotInfo, repr: ReprKind, wasm_type: ValType) SlotInfo {
   .{
@@ -57,16 +60,16 @@ pub fn route_typed_vectors(funcs: Vector<PreparedFunc>, builtins: BuiltinRegistr
   }
 
   collect pf in funcs {
-    route_func(pf, ids)
+    route_func(pf, ids, builtins)
   }
 }
 
-fn route_func(pf: PreparedFunc, ids: RouteIds) PreparedFunc {
+fn route_func(pf: PreparedFunc, ids: RouteIds, builtins: BuiltinRegistry) PreparedFunc {
   // 1. Collect (v, b) candidates: v = builder_freeze(b) where v: Vector<Int>.
   cands := collect_candidates(pf.body, pf.slots, ids, [])
 
-  // 2. Keep only candidates whose v never escapes (used solely by index/len).
-  //    The builder is threaded through plain copies (builder_new -> temp, then
+  // 2. Keep only candidates whose v never escapes except by direct return
+  //    (used solely by index/len/return). The builder is threaded through plain copies (builder_new -> temp, then
   //    temp -> builder_local), so follow the copy chain backward from the freeze
   //    argument to mark every builder slot (incl. the builder_new result).
   copy_map := build_copy_map(pf.body, Dict.new())
@@ -74,8 +77,13 @@ fn route_func(pf: PreparedFunc, ids: RouteIds) PreparedFunc {
   eligible_b: Dict<Int, Bool> = Dict.new()
 
   for c in cands {
-    if !v_escapes(pf.body, c.v, ids.len) {
-      eligible_v[c.v] = true
+    aliases := aliases_for(c.v, copy_map)
+
+    if !v_group_escapes(pf.body, aliases, ids.len, builtins) {
+      for sid in aliases.keys() {
+        eligible_v[sid] = true
+      }
+
       cur := c.b
       steps := 0
 
@@ -263,58 +271,94 @@ fn mono_key_of(info: SlotInfo) String {
   }
 }
 
+fn aliases_for(root: Int, copy_map: Dict<Int, Int>) Dict<Int, Bool> {
+  out: Dict<Int, Bool> = Dict.new()
+  out[root] = true
+
+  for dst in copy_map.keys() {
+    cur := dst
+    steps := 0
+
+    for steps < 64 {
+      if cur == root {
+        out[dst] = true
+        steps = 64
+      } else {
+        case copy_map[cur] {
+          .Some(src) => {
+            cur = src
+            steps = steps + 1
+          },
+          .None => {
+            steps = 64
+          },
+        }
+      }
+    }
+  }
+
+  out
+}
+
 // ── Escape analysis ─────────────────────────────────────────────────
-// True if slot `v` is used anywhere other than an `xs[i]` Array read base or
-// the argument of `len(v)`.
-fn v_escapes(expr: PreparedExpr, v: Int, len_id: Int) Bool {
+// True if slot `v` is used anywhere other than an `xs[i]` Array read base,
+// the argument of `len(v)`, or direct function return. Return is a real
+// representation boundary, but it is handled by the emitter's PVecI64 -> PVec
+// adapter; all other boundaries remain conservative opt-outs.
+fn v_group_escapes(expr: PreparedExpr, vs: Dict<Int, Bool>, len_id: Int, builtins: BuiltinRegistry) Bool {
   case expr {
-    .Let(_, op, body) => op_escapes(op, v, len_id) or v_escapes(body, v, len_id),
-    .Atom(a) => slot_is(a, v),
-    .Return(.Some(a)) => slot_is(a, v),
-    .Break(.Some(a)) => slot_is(a, v),
+    .Let(_, op, body) => op_group_escapes(op, vs, len_id, builtins)
+      or v_group_escapes(body, vs, len_id, builtins),
+    .Atom(a) => slot_in(a, vs),
+    .Return(.Some(_)) => false,
+    .Break(.Some(a)) => slot_in(a, vs),
     _ => false,
   }
 }
 
-fn op_escapes(op: PreparedOp, v: Int, len_id: Int) Bool {
+fn op_group_escapes(op: PreparedOp, vs: Dict<Int, Bool>, len_id: Int, builtins: BuiltinRegistry) Bool {
   case op {
     .ACall(callee, args) => case callee {
-      // len(v) is the one allowed call use.
-      .AGlobalFunc(fid) => if fid.id == len_id and args.len() == 1 and slot_is(args[0], v) {
+      // len(v) is the allowed builtin call use.
+      .AGlobalFunc(fid) => if fid.id == len_id and args.len() == 1 and slot_in(args[0], vs) {
         false
       } else {
-        atoms_contain(args, v) or slot_is(callee, v)
+        if user_direct_call_accepts_boxed_arg(fid, args, vs, builtins) {
+          false
+        } else {
+          atoms_contain_any(args, vs) or slot_in(callee, vs)
+        }
       },
-      _ => atoms_contain(args, v) or slot_is(callee, v),
+      _ => atoms_contain_any(args, vs) or slot_in(callee, vs),
     },
-    // xs[i] Array read: base may be v, index may not.
+    // xs[i] Array read: base may be in the vector alias set, index may not.
     .AIndex(base, index, kind, _) => case kind {
-      .Array => slot_is(index, v) or slot_is(base, v) and false,
-      _ => slot_is(base, v) or slot_is(index, v),
+      .Array => slot_in(index, vs),
+      _ => slot_in(base, vs) or slot_in(index, vs),
     },
-    .AIf(cnd, then_e, else_e) => slot_is(cnd, v)
-      or v_escapes(then_e, v, len_id)
-      or v_escapes(else_e, v, len_id),
+    .AIf(cnd, then_e, else_e) => slot_in(cnd, vs)
+      or v_group_escapes(then_e, vs, len_id, builtins)
+      or v_group_escapes(else_e, vs, len_id, builtins),
     .AMatch(scrut, arms) => {
-      if slot_is(scrut, v) {
+      if slot_in(scrut, vs) {
         return true
       }
 
       for arm in arms {
-        if v_escapes(arm.body, v, len_id) {
+        if v_group_escapes(arm.body, vs, len_id, builtins) {
           return true
         }
       }
 
       false
     },
-    .ALoop(inner) => v_escapes(inner, v, len_id),
-    .ADefer(inner) => v_escapes(inner, v, len_id),
-    .ABinOp(_, l, r, _) => slot_is(l, v) or slot_is(r, v),
-    .AUnOp(_, a, _) => slot_is(a, v),
+    .ALoop(inner) => v_group_escapes(inner, vs, len_id, builtins),
+    .ADefer(inner) => v_group_escapes(inner, vs, len_id, builtins),
+    .ABinOp(_, l, r, _) => slot_in(l, vs) or slot_in(r, vs),
+    .AUnOp(_, a, _) => slot_in(a, vs),
     .AMakeClosure(_, free_vars) => {
       for fv in free_vars {
-        if fv.id == v {
+        if vs.has(fv.id) {
           return true
         }
       }
@@ -323,21 +367,21 @@ fn op_escapes(op: PreparedOp, v: Int, len_id: Int) Bool {
     },
     .ARecord(_, fields) => {
       for f in fields {
-        if slot_is(f.value, v) {
+        if slot_in(f.value, vs) {
           return true
         }
       }
 
       false
     },
-    .ARecordGet(t, _, _) => slot_is(t, v),
-    .ARecordUpdate(b, _, val, _, _) => slot_is(b, v) or slot_is(val, v),
-    .AVariant(_, _, args) => atoms_contain(args, v),
-    .AArrayLit(items) => atoms_contain(items, v),
-    .AInit(a) => slot_is(a, v),
-    .AAssign(_, a) => slot_is(a, v),
-    .AWrapAnyref(a, _) => slot_is(a, v),
-    .AUnwrapAnyref(a, _) => slot_is(a, v),
+    .ARecordGet(t, _, _) => slot_in(t, vs),
+    .ARecordUpdate(b, _, val, _, _) => slot_in(b, vs) or slot_in(val, vs),
+    .AVariant(_, _, args) => atoms_contain_any(args, vs),
+    .AArrayLit(items) => atoms_contain_any(items, vs),
+    .AInit(a) => false,
+    .AAssign(_, a) => slot_in(a, vs),
+    .AWrapAnyref(a, _) => slot_in(a, vs),
+    .AUnwrapAnyref(a, _) => slot_in(a, vs),
   }
 }
 
@@ -349,6 +393,39 @@ fn atoms_contain(atoms: Vector<PreparedAtom>, v: Int) Bool {
   }
 
   false
+}
+
+fn slot_in(atom: PreparedAtom, vs: Dict<Int, Bool>) Bool {
+  case atom {
+    .ASlot(s) => vs.has(s.id),
+    _ => false,
+  }
+}
+
+fn atoms_contain_any(atoms: Vector<PreparedAtom>, vs: Dict<Int, Bool>) Bool {
+  for a in atoms {
+    if slot_in(a, vs) {
+      return true
+    }
+  }
+
+  false
+}
+
+fn user_direct_call_accepts_boxed_arg(
+  fid: FuncId,
+  args: Vector<PreparedAtom>,
+  vs: Dict<Int, Bool>,
+  builtins: BuiltinRegistry,
+) Bool {
+  if !atoms_contain_any(args, vs) {
+    return false
+  }
+
+  case bi.entry(builtins, fid) {
+    .Some(_) => false,
+    .None => true,
+  }
 }
 
 // ── Rewrite ─────────────────────────────────────────────────────────
