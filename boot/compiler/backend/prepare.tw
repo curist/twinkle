@@ -34,6 +34,7 @@ pub type PreparedModule = .{
   anf: AnfModule,
   closure_captures: Dict<Int, Vector<CaptureParam>>,
   funcs: Vector<PreparedFunc>,
+  typed_vector_fields: Dict<String, Bool>,
 }
 
 // prepare_backend converts optimized semantic ANF into prepared backend IR.
@@ -61,7 +62,7 @@ pub fn prepare_backend(
   funcs2 := assign_repr_for_module(funcs, env, builtins)
 
   funcs3 := route_typed_vectors(funcs2, builtins)
-  .{ anf: anf2, closure_captures, funcs: funcs3 }
+  .{ anf: anf2, closure_captures, funcs: funcs3, typed_vector_fields: Dict.new() }
 }
 
 fn empty_registry() WasmTypeRegistry {

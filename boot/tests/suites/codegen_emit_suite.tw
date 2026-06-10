@@ -90,7 +90,12 @@ fn test_param_local_id_can_overlap_module_global_id() Result<Void, String> {
     return_mono: MonoType.Int,
     is_init: false,
   }
-  prepared := PreparedModule.{ anf, closure_captures: Dict.new(), funcs: [prepared_func] }
+  prepared := PreparedModule.{
+    anf,
+    closure_captures: Dict.new(),
+    funcs: [prepared_func],
+    typed_vector_fields: Dict.new(),
+  }
   wasm := emit_module(prepared, reg, make_builtin_registry(), resolver.empty_env())
   wat := emit_wat_unlinked_for_test(wasm)
   try assert.str_contains(wat, "global $global_local_0")
@@ -132,7 +137,12 @@ fn make_one_func_module(
     return_mono,
     is_init: false,
   }
-  PreparedModule.{ anf, closure_captures: Dict.new(), funcs: [prepared_func] }
+  PreparedModule.{
+    anf,
+    closure_captures: Dict.new(),
+    funcs: [prepared_func],
+    typed_vector_fields: Dict.new(),
+  }
 }
 
 fn test_tail_call_emits_return_call() Result<Void, String> {
@@ -350,6 +360,7 @@ fn test_tail_call_in_if_branches() Result<Void, String> {
     anf,
     closure_captures: Dict.new(),
     funcs: [prepared_dispatch, prepared_callee],
+    typed_vector_fields: Dict.new(),
   }
   reg := empty_registry()
   wasm := emit_module(prepared, reg, make_builtin_registry(), resolver.empty_env())
@@ -445,6 +456,7 @@ fn test_tail_call_in_case_arms() Result<Void, String> {
     anf,
     closure_captures: Dict.new(),
     funcs: [prepared_dispatch, prepared_callee],
+    typed_vector_fields: Dict.new(),
   }
   reg := empty_registry()
   wasm := emit_module(prepared, reg, make_builtin_registry(), resolver.empty_env())
@@ -610,6 +622,7 @@ fn test_tail_call_in_br_table_match() Result<Void, String> {
     anf,
     closure_captures: Dict.new(),
     funcs: [prepared_dispatch, prepared_callee],
+    typed_vector_fields: Dict.new(),
   }
   env := env_with_sum_type(action_tid, "Action", ["A", "B", "C"])
   wasm := emit_module(prepared, reg, make_builtin_registry(), env)

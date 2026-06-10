@@ -137,7 +137,12 @@ fn first_func(prepared: PreparedModule) PreparedFunc {
 }
 
 fn replace_func(prepared: PreparedModule, pf: PreparedFunc) PreparedModule {
-  .{ anf: prepared.anf, closure_captures: prepared.closure_captures, funcs: [pf] }
+  .{
+    anf: prepared.anf,
+    closure_captures: prepared.closure_captures,
+    funcs: [pf],
+    typed_vector_fields: Dict.new(),
+  }
 }
 
 fn rewrite_func(pf: PreparedFunc, slots: Dict<Int, SlotInfo>) PreparedFunc {
@@ -395,6 +400,7 @@ pub fn suite() runner.Suite {
           anf: prepared.anf,
           closure_captures: bad_caps,
           funcs: prepared.funcs,
+          typed_vector_fields: Dict.new(),
         }
         verify_err(broken, "capture 0 uses L0, expected L1")
       },

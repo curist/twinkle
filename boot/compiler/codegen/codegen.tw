@@ -87,12 +87,15 @@ pub fn link_program(anf: AnfModule, env: ResolvedEnv, builtins: BuiltinRegistry)
   prepared := prepare_backend(closure_conversion.anf, env, builtins, closure_conversion.captures)
   t2 := date.now()
 
+  env2 := env
+  env2.typed_vector_fields = prepared.typed_vector_fields
+
   if timed {
     log_time("prepare_backend", t2 - t1)
   }
 
   // 3. Verify prepared backend IR.
-  case verify_prepared_module_with_level(prepared, env, builtins, verify_level_from_env()) {
+  case verify_prepared_module_with_level(prepared, env2, builtins, verify_level_from_env()) {
     .Ok(_) => {},
     .Err(msg) => error(msg),
   }
@@ -104,7 +107,7 @@ pub fn link_program(anf: AnfModule, env: ResolvedEnv, builtins: BuiltinRegistry)
   }
 
   // 4. Plan Wasm types from prepared backend IR.
-  registry := plan_wasm_types(prepared, env, builtins)
+  registry := plan_wasm_types(prepared, env2, builtins)
   t4 := date.now()
 
   if timed {
@@ -112,7 +115,7 @@ pub fn link_program(anf: AnfModule, env: ResolvedEnv, builtins: BuiltinRegistry)
   }
 
   // 5. Emit user module from prepared backend IR.
-  user_module := emit_module(prepared, registry, builtins, env)
+  user_module := emit_module(prepared, registry, builtins, env2)
   t5 := date.now()
 
   if timed {
