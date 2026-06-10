@@ -333,20 +333,22 @@ Every payload-free variant literal currently emits `StructNew` (`boot/compiler/c
 
 Not pursued: the i32-tag representation for payload-free-only enums. The singleton approach captured the allocation win with far less risk; revisit i32-tag only if profiling shows the remaining tagged-struct loads (vs a bare i32) matter.
 
-### T3.2 Closure call representation
+### T3.2 Closure call representation — DONE (typed funcref for non-tail calls, 2026-06-10)
 
-**Files to inspect:**
+**What the WAT probe found** (`xs.sort_by(fn(a,b){ Int.compare(a,b) })`): the comparator was called through the **universal erased path** on every comparison — box both `i64` args into `BoxedInt`, `array.new_fixed` a 2-element args array, `call_ref` the universal funcref (anyref params/result), then `ref.cast Variant` + `variant_to_sum_helper` to recover the `Order`. ~3 allocations + a result conversion per comparison, ~17M times.
 
-- `boot/prelude/vector.tw` (`sort_by`, `sort_by_range`, `merge_sorted`)
-- `boot/compiler/core_ir.tw` / closure representation and call lowering
-- `boot/compiler/lower_anf.tw` / closure call lowering
-- generated WAT for a small `sort_by` program
+The concrete closure struct (`$closure_fn_i64_i64_t7`, a subtype of `rt_types__Closure`) already carries a **typed funcref in field 2** taking unboxed `i64 i64 → Order` directly. But only *tail-position* closure calls (`emit_closure_tail_call`) used it; the comparator call isn't in tail position (its result feeds a `case`), so it never hit the typed path.
 
-- [ ] Build a small WAT probe for `xs.sort_by(fn(a,b){ Int.compare(a,b) })` and trace the comparator invocation path.
-- [ ] Determine whether the comparator is called through a generic closure object on every comparison, and what casts/loads/indirect calls that entails.
-- [ ] Check whether monomorphization specializes `sort_by` only by element type or can also specialize on a known comparator function value.
-- [ ] Prototype a direct-call fast path for closure-literal comparators if feasible, while preserving every comparator invocation, side effect, trap, and call order.
-- [ ] Gate on `sort_by(Int.compare)` and `sort_by + Cell.update` probes.
+**Fix (no monomorphization-on-function-value needed):** generalize the typed path to value-producing calls. `emit_closure_call` now tries `try_emit_typed_closure_call` (`boot/compiler/codegen/emit/closures.tw`): `ref.test` for the typed struct and, on the hot path, push env (field 1) + raw args + typed funcref (field 2), `call_ref` the typed functype, use the result directly. The universal erased call stays as the `else` branch for closures lacking the typed struct (builtins). `register_layout_type_def` always declares both the typed func type and the 3-field struct for any `.Closure` layout, so the cast/call validate. This is conservative and preserves every comparator invocation, so side-effecting/observing comparators stay correct — no recognition or comparator-shape analysis required.
+
+- [x] WAT probe + trace: universal path boxes args + allocates args array + converts result per comparison; the typed funcref existed but was tail-call-only.
+- [x] Monomorphization specializes `sort_by` by element type only; the comparator stays an opaque closure value. **Not changed** — the typed funcref already gives the unboxed fast path via a runtime `ref.test`, so no specialization-on-comparator-value was needed.
+- [x] Typed-funcref fast path for non-tail closure calls, value-returning only (Void/Never keep universal). Preserves call count, order, env, and side effects — verified with a captured-state `Cell.update` comparator.
+- [x] Gated on `sort_repeat_probe.tw` and a side-effecting comparator. N=1M: generic `sort_by(Int.compare)` ~610 → ~495 ms (~19%); key-index ~2200 → ~2010 ms; native `xs.sort()` unchanged.
+
+**Cumulative across the three sort-mechanics wins on this branch:** generic `sort_by(Int.compare)` ~743 → ~495 ms (~33%); key-index `sort_by` ~2367 → ~2010 ms (~15%). The remaining key-index gap is now almost entirely the ~1.6 s of random boxed key reads — i.e. the master typed-`Vector<Int>`-storage track, nothing left in comparator mechanics.
+
+Possible follow-on (not pursued): hoist the per-comparison `ref.test` out of the merge loop (the closure value is loop-invariant), but the backend has no LICM and V8 likely folds the always-true test; not worth the complexity now.
 
 ## Relationship to transparent argsort recognition
 

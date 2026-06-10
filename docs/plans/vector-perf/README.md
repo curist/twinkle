@@ -35,11 +35,15 @@ N = 1M). Measurement (see [generic-sort-by-vector-read-perf.md](generic-sort-by-
 - **Comparator micro-opts are small vs the key-index gap but a large share of
   the mechanics half.** Closure boundary (~122 ms) + enum/`Order` allocation
   (~68 ms) ≈ ~6% of the 7× gap, but ~30% of the post-cache mechanics floor.
-  The enum-allocation half is now **landed** (2026-06-10): payload-free variant
-  literals are hoisted to shared immutable globals (`Order.Lt`, `.None`, etc.
-  become one `global.get` instead of a per-use `struct.new`). Generic `sort_by`
-  ~645 → ~610 ms; broad win for all nullary-variant code. The remaining
-  comparator lever is the closure boundary itself (T3.2, not yet done).
+  Both halves are now **landed** (2026-06-10). Enum allocation: payload-free
+  variant literals hoisted to shared immutable globals (`Order.Lt`, `.None`
+  become one `global.get`, not a per-use `struct.new`); generic `sort_by`
+  ~645 → ~610 ms. Closure boundary (T3.2): non-tail closure calls now use the
+  typed funcref (unboxed args, no args array, direct result) via a runtime
+  `ref.test`, instead of the universal box-everything path; generic `sort_by`
+  ~610 → ~495 ms. Together with the merge-cursor cache, generic `sort_by`
+  mechanics dropped ~743 → ~495 ms (~33%) on this branch. Comparator mechanics
+  are now essentially exhausted — the remaining gap is the read wall.
 - **Clojure does not cache keys either** — it re-invokes the key fn per comparison
   and sorts a flat array. So the gap is constant-factor/structural, and transparent
   argsort recognition is *not* required to close it.
