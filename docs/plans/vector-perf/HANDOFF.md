@@ -20,11 +20,16 @@ have landed and **work** on this branch:
 - **S1 — typed `PVecI64` runtime family.** Validated ~6.8× faster random reads.
 - **S2.0 — source-level routing.** Idiomatic `xs := collect …; … xs[i] …` (where
   `xs` never escapes) now compiles to typed storage and gets the full ~6.8×.
+- **S2.1 — boxed-boundary adapters.** A locally typed `Vector<Int>` may now be
+  returned or passed to a direct user function through the ordinary boxed
+  `Vector<Int>` ABI; in-function reads stay typed and the boundary pays one
+  boxing pass.
 
-**Everything is committed, self-hosts, and all 2571 boot tests pass.** It is a
-real, working, conservative optimization — not a prototype. It just doesn't yet
-cover vectors that *escape* (passed to functions, stored in records) — notably
-dataframe columns — which is the next increment.
+The committed baseline self-hosts and passes the boot suite. Current uncommitted
+work also self-hosts, passes the boot suite, keeps the read probe fast, and has a
+probe confirming direct-call argument boxing. It still doesn't cover vectors that
+escape through records, variants, closures, builtin/vector combinators, or typed
+cross-function ABIs — notably dataframe columns — which is the next increment.
 
 ## Commit trail (review in order)
 
@@ -56,17 +61,18 @@ If `match=false`, or the typed/boxed gap collapses, the routing regressed.
 
 ## What works, and what doesn't (scope)
 
-**Works:** a `Vector<Int>` built by `collect` (or `[…]` literal) and used **only**
-by `xs[i]` indexed reads and `xs.len()`, all within one function. Such a vector
-never crosses a representation boundary, so it is stored as `PVecI64` end-to-end
-with **no coercion** needed.
+**Works:** a `Vector<Int>` built by `collect` (or `[…]` literal) and used by
+`xs[i]` indexed reads and `xs.len()` within one function. Current uncommitted
+work also allows direct function return and direct user-function arguments by
+boxing `PVecI64` back to the ordinary `PVec` ABI at that boundary.
 
-**Does NOT route (stays boxed, unchanged):** any `Vector<Int>` that escapes —
-passed to a function, returned, stored in a record/variant, captured by a
-closure, `.append`/`.sort`/`.map`'d, stringified, etc. The escape analysis is
-deliberately conservative; if in doubt it leaves the vector boxed. This is why
-**dataframe `order_by` is unaffected** (its `IntCol(Vector<Int>)` columns cross
-boundaries) — correct, but it means the headline dataframe win is still pending.
+**Does NOT route (stays boxed, unchanged):** any other `Vector<Int>` escape —
+stored in a record/variant, captured by a closure, passed through a closure call
+or builtin/vector combinator, `.append`/`.sort`/`.map`'d, etc. The escape
+analysis is deliberately conservative; if in doubt it leaves the vector boxed.
+This is why **dataframe `order_by` is unaffected** (its `IntCol(Vector<Int>)`
+columns cross record/module boundaries) — correct, but it means the headline
+dataframe win is still pending.
 
 ## Architecture map (the S2.0 touch points)
 
@@ -81,13 +87,16 @@ subtlety is.
   `AInit` copies (copy-map), then: swap `builder_new/push/freeze`/`len` →
   `_i64`, retype `v`'s slot to `PVecI64`, and **re-erase** the builder-lineage
   slots to `OpaqueAnyref`/anyref.
-- `runtime/arr.tw` + `runtime/types.tw` — the `PVecI64` family (S1).
+- `runtime/arr.tw` + `runtime/types.tw` — the `PVecI64` family (S1), plus the
+  `box_i64` boxed-boundary adapter in current uncommitted work.
 - `builtins.tw` — the `_i64` builtins (abi + `rt`, `.None` canonical).
 - `emit/arrays.tw` — `xs[i]` routes to `get_i64` when the base wasm type is
   `PVecI64` (`is_pvec_i64`).
 - `emit/runtime_abi.tw` + `emit/calls.tw` — the `_i64` builder ops skip the
   mono-driven result adaption and get the `anyref→Array` builder-arg cast
-  (`is_builder_buffer_arg`, `is_builder_seed`, `is_typed_vec_freeze`).
+  (`is_builder_buffer_arg`, `is_builder_seed`, `is_typed_vec_freeze`). Current
+  uncommitted work also coerces direct-call args to callee param slot types so
+  `PVecI64` can box to `PVec` at user-function boundaries.
 - `backend/verify_slots.tw` — verifier accepts a `PVecI64` wasm type for a
   `Vector<Int>` slot (`is_typed_vec_i64`).
 
@@ -137,4 +146,5 @@ for the coercion work.
 - [ ] Read `fc93bec`'s diff against `7baa23c`; sanity-check the escape analysis
       in `route_typed_vec.tw` (does any escaping use slip through?).
 - [ ] Confirm dataframe (`examples/dataframe/bench/main.tw`) still behaves.
-- [ ] Decide the boundary-coercion policy before extending eligibility.
+- [ ] Decide the broader boundary-coercion policy before extending eligibility
+      past direct returns/user-function args.

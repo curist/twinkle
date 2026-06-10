@@ -49,6 +49,48 @@ sort idx key: 1674.20ms
 
 `sort idx key` isolates repeated `keys[a]` / `keys[b]` reads from a `Vector<Int>` key column inside a comparator. This cost includes PVec traversal and boxed `Int` egress. A dense native representation in Rust/Go/Clojure is much faster, showing that the workload itself is not inherently multi-second.
 
+### Cross-runtime calibration: Clojure reference vectors vs dense longs
+
+Read probe: `examples/sort-bench/ref_vector_read_clojure.clj`.
+
+Shape: `N = 1_000_000`, `M = 10_000_000` random reads with the same multiplicative
+index pattern used by the Twinkle typed-vector probe.
+
+```text
+JVM long[]                    ~9 ms
+Clojure persistent Vector<Long> ~167–170 ms
+Clojure Vector<String>          ~210–266 ms
+Clojure Vector<deftype Row>     ~267–273 ms
+Clojure Vector<map row>         ~850–950 ms
+```
+
+Sort probe: `examples/sort-bench/long_array_sort_clojure.clj`.
+
+Shape: `N = 1_000_000`, same LCG-generated values as the Clojure value-sort
+reference. Clojure's ordinary `sort` uses value-style collection semantics by
+sorting an object-array copy; primitive `long[]` sorting is Java interop and
+mutates, so the probe clones the array before `Arrays/sort` to model
+value-preserving use.
+
+```text
+long[] clone + Arrays/sort      ~41–42 ms
+Clojure persistent Vector sort  ~169–182 ms
+```
+
+Takeaways:
+
+- Dense primitive arrays are a separate performance tier; Clojure `long[]` is
+  roughly an order of magnitude faster than boxed persistent-vector reads in the
+  random-read shape, and roughly 4× faster than persistent-vector sort even when
+  cloning first.
+- Boxed primitive payloads in a reference vector are very expensive, which
+  supports the `Vector<Int> -> PVecI64` direction.
+- Reference payload vectors (`String`, nominal/`deftype`-like rows) do not show
+  the same cliff as boxed primitives, though map-as-record payloads are much
+  slower. This suggests `VectorAnyref` may remain acceptable for reference
+  payloads as the default, while primitive monomorphic vectors need typed leaf
+  storage and hot kernels may still need dense working sets.
+
 ---
 
 ## Design direction
