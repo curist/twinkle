@@ -185,29 +185,46 @@ pub fn join(xs: Vector<String>, sep: String) String {
 }
 
 fn merge_sorted<T>(a: Vector<T>, b: Vector<T>, cmp: fn(T, T) Order) Vector<T> {
+  an := a.len()
+  bn := b.len()
   out: Vector<T> = []
   i := 0
   j := 0
 
-  for i < a.len() and j < b.len() {
-    case cmp(a[i], b[j]) {
-      .Gt => {
-        out = .append(b[j])
-        j = j + 1
-      },
-      _ => {
-        out = .append(a[i])
-        i = i + 1
-      },
+  // Cache the cursor values across compare and append so each loop iteration
+  // costs one vector read (refreshing the advanced side) instead of three.
+  if an > 0 and bn > 0 {
+    av := a[0]
+    bv := b[0]
+
+    for i < an and j < bn {
+      case cmp(av, bv) {
+        .Gt => {
+          out = .append(bv)
+          j = j + 1
+
+          if j < bn {
+            bv = b[j]
+          }
+        },
+        _ => {
+          out = .append(av)
+          i = i + 1
+
+          if i < an {
+            av = a[i]
+          }
+        },
+      }
     }
   }
 
-  for i < a.len() {
+  for i < an {
     out = .append(a[i])
     i = i + 1
   }
 
-  for j < b.len() {
+  for j < bn {
     out = .append(b[j])
     j = j + 1
   }

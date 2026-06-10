@@ -99,6 +99,58 @@ The dominant cost of the mechanics half is the **~561 ms floor of reads + compar
 
 **Synthesis: reads dominate everywhere — random key reads (~1624 ms) and the sequential merge-floor reads (much of ~561 ms).** The master lever is typed flat `Vector<Int>` storage: it makes random key reads cheap *and* lets the merge run over a native buffer (cheap sequential reads + no per-level allocation) in one change. A persistent-only flat-buffer merge is a ~6.5% lever on its own and is therefore folded into the typed-storage work rather than pursued separately.
 
+### Re-measure under tiering control (2026-06-10): the gap is structural, not warm-up
+
+All earlier probes were single-shot cold runs while the Clojure reference was warmed,
+leaving open that part of the 7× was V8 tier-up (Liftoff → TurboFan) rather than
+structure. `examples/sort-bench/sort_repeat_probe.tw` runs each phase three times
+in-process; we also ran it under forced `--v8-flags=--no-liftoff,--no-wasm-lazy-compilation`
+(via `deno run -A --v8-flags=… tools/js_runtime/deno_main.mjs run …`). At N = 1M:
+
+| path | run 1 | runs 2–3 | forced TurboFan |
+|---|---:|---:|---:|
+| native `xs.sort()` | ~102 ms | **~58–63 ms** | ~57–75 ms |
+| generic `sort_by(Int.compare)` | ~734 ms | ~704–746 ms | ~754–776 ms |
+| key-index `sort_by` | ~2280 ms | ~2240–2280 ms | ~2360–2400 ms |
+
+Conclusions:
+
+- **The generic and key-index numbers are tier-stable.** The 7× key-index gap and the
+  ~720 ms mechanics half are structural; no re-prioritization needed on warm-up grounds.
+- **Only the native kernel tier-warms**, settling at ~58–63 ms (the recorded ~106–115 ms
+  value-sort figures are cold first-run). Warmed-vs-warmed, the native kernel is ~3×
+  faster than Clojure's ~192 ms value sort.
+- Benchmark hygiene: numbers degrade several-fold under background CPU load — check
+  system load before trusting a run.
+
+### Cached-cursor merge landed (2026-06-10): reads were ~half the mechanics floor, not most of it
+
+The prelude `merge_sorted` now hoists `a.len()`/`b.len()` out of the loop and caches the
+two cursor values across compare and append, so each merge step costs ~1 vector read
+(refresh the advanced side) instead of 3 reads + 2 `len` calls. This was T2.1's
+"cache the current left/right value" item, landed standalone — it needed no typed buffer.
+
+Measured (userland A/B mirroring old vs new shape, N = 1M, two stable in-process passes):
+old shape ~728–739 ms vs cached ~645–647 ms — **~90 ms, ~12% of the mechanics half**;
+the key-index path moved within noise (random key reads still dominate it). Verified
+post-land in the real prelude on a quiet machine: generic `sort_by(Int.compare)`
+~642–654 ms across three in-process runs (`sort_repeat_probe.tw`).
+
+This corrects the earlier attribution that the ~561 ms R floor was "mostly reads."
+Removing ~2/3 of the main-loop reads saved only ~90 ms, so merge-context reads cost
+~4–5 ns each (most merge levels operate on small sub-vectors that hit the ≤32 tail-only
+fast path in `get`), and reads are roughly **half** of the mechanics floor — the random
+~16 ns/read regime applies to the key-index reads into the big `keys` vector, not to the
+merge's own reads. The other half of the floor is per-element call/branch work: the
+closure boundary (~122 ms at call scale), `Order` allocation (~68 ms), recursion, and
+branchy append logic. Two implications:
+
+1. **Track 1 (typed storage) is still the master lever for the key-index path** — the
+   ~1624 ms of random boxed key reads is untouched by the merge change.
+2. **For the mechanics half, comparator mechanics (Track 3) are a relatively larger
+   share than the earlier ~21% framing suggested** — with reads cheapened, closure
+   boundary + `Order` allocation + recursion dominate what remains (~650 ms).
+
 ### Comparator micro-costs are small (enum/`Order` allocation, closure boundary)
 
 `examples/sort-bench/enum_alloc_probe.tw` isolates producing+consuming a comparison result as an enum vs a bare `Int`, at the ~17M-comparison scale, with identical branch structure. Stable results:
@@ -248,7 +300,7 @@ This is larger than this plan but, given that the realistic path is read-bound, 
 
 - [ ] Prototype a bottom-up merge that copies `xs` into a typed flat buffer once, ping-pongs between two buffers, and copies back once — 2 allocations total instead of O(n log n), with native sequential `array.get/set`.
 - [ ] Keep the comparator invoked on real elements so every call, side effect, trap, and call order is preserved.
-- [ ] Cache the current left/right value across compare and append to remove the duplicate read in the current `cmp(a[i], b[j])`-then-append shape.
+- [x] Cache the current left/right value across compare and append to remove the duplicate read in the current `cmp(a[i], b[j])`-then-append shape. **Landed standalone 2026-06-10** (prelude `merge_sorted`, no typed buffer needed): ~12% off the mechanics half; see [Cached-cursor merge landed](#cached-cursor-merge-landed-2026-06-10-reads-were-half-the-mechanics-floor-not-most-of-it).
 - [ ] Gate on generic `sort_by(Int.compare)` and key-index `sort_by`; target below the ~561 ms PVec read floor, not merely the ~155 ms allocation saving.
 
 > Do **not** ship a persistent-vector-only version of this; per T0.2 the allocation-only saving is ~155 ms (~6.5%) and not worth the prelude churn.

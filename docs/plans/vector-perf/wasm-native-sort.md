@@ -102,7 +102,12 @@ Clojure persistent-vector via `examples/sort-bench/value_sort_clojure.clj`, WARM
 The headline `Vector<Int>` value sort at N = 1M dropped from the documented ~808 ms
 generic-merge baseline to ~115 ms — about a 7× improvement — and now **beats** the
 Clojure persistent-vector reference (~172 ms warmed on this machine), comfortably under
-the ~200 ms target. `Vector<Float>` tracks the same curve. (Inputs are identical across
+the ~200 ms target. The ~115 ms is the **cold first-run** number: repeating the sort
+in-process (`examples/sort-bench/sort_repeat_probe.tw`, 2026-06-10) shows it settle at
+**~58–63 ms** once V8 tiers the kernel up from Liftoff to TurboFan. This is the only
+sort path with a material tiering effect — the generic and key-index `sort_by` numbers
+are stable across in-process runs and under forced
+`--v8-flags=--no-liftoff,--no-wasm-lazy-compilation`. `Vector<Float>` tracks the same curve. (Inputs are identical across
 implementations: both report first `0` / last `999998` at N = 1M.) This validates the
 dense-typed-kernel direction: the win comes from typed, inlined element access, not from
 the merge mechanics that A and C also used.

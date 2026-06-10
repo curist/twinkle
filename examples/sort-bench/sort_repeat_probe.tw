@@ -1,0 +1,30 @@
+use @std.date
+
+// Re-measure probe: runs each sort phase twice in the same process to expose
+// V8 tier-up (Liftoff -> TurboFan) effects in the single-shot benchmark numbers.
+fn shuffled(n: Int) Vector<Int> {
+  collect i in range(n) {
+    i * 7919 % n
+  }
+}
+
+fn bench_pass(label: String, xs: Vector<Int>, keys: Vector<Int>) Void {
+  start1 := date.now()
+  s1 := xs.sort()
+  println("${label} native xs.sort()      ${date.now() - start1}ms (check ${s1[0]} ${s1[999999]})")
+
+  start2 := date.now()
+  s2 := xs.sort_by(fn(a, b) { Int.compare(a, b) })
+  println("${label} generic sort_by       ${date.now() - start2}ms (check ${s2[0]} ${s2[999999]})")
+
+  start3 := date.now()
+  s3 := xs.sort_by(fn(a, b) { Int.compare(keys[a], keys[b]) })
+  println("${label} key-index sort_by     ${date.now() - start3}ms (check ${s3[0]} ${s3[999999]})")
+}
+
+n := 1000000
+xs := shuffled(n)
+keys := shuffled(n)
+bench_pass("run1", xs, keys)
+bench_pass("run2", xs, keys)
+bench_pass("run3", xs, keys)

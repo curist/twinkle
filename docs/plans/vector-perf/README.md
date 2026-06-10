@@ -9,21 +9,32 @@ It is a dedicated subfolder because this is a major, still-open problem. Several
 distinct approaches have been tried and measured; most isolated wins are small,
 and the real lever is structural. Keep new plans, probes, and results here.
 
-## Current understanding (2026-06-09)
+## Current understanding (2026-06-10)
 
 The realistic dataframe path — `idx.sort_by(fn(a,b){ Int.compare(keys[a], keys[b]) })`
-— is **~7× slower than Clojure's persistent-vector sort** (~2.37 s vs ~0.34 s at
+— is **~7× slower than Clojure's persistent-vector sort** (~2.27 s vs ~0.34 s at
 N = 1M). Measurement (see [generic-sort-by-vector-read-perf.md](generic-sort-by-vector-read-perf.md),
-"Measured decomposition") attributes the gap:
+"Measured decomposition" and the 2026-06-10 re-measure) attributes the gap:
 
-- **Reads dominate everywhere.** ~69% of the key-index path is `keys[…]` reads
-  (~1624 ms of random PVec lookups). Even the no-key-read merge baseline (~720 ms)
-  is ~79% reads + compares + recursion, not allocation.
+- **The gap is structural, not warm-up.** In-process repeats and forced TurboFan
+  (`--no-liftoff,--no-wasm-lazy-compilation`) leave the generic (~704–746 ms) and
+  key-index (~2240–2280 ms) numbers unchanged. Only the native value-sort kernel
+  tier-warms: ~102 ms cold first run → **~58–63 ms** warm (the recorded ~106–115 ms
+  figures are cold; warmed-vs-warmed it beats Clojure's ~192 ms by ~3×).
+- **Random key reads dominate the key-index path.** ~69% is `keys[…]` reads
+  (~1.6 s of random PVec lookups in the cache-hostile ~16 ns/read regime).
+- **The merge's own reads were ~half of the mechanics half, now largely removed.**
+  The prelude `merge_sorted` caches cursor values and hoists lens (landed 2026-06-10),
+  cutting ~3 reads + 2 `len` calls per step to ~1 read: mechanics ~739 → ~647 ms
+  (~12%). Merge-context reads cost only ~4–5 ns (small sub-vectors hit the tail
+  fast path); the remaining ~650 ms floor is closure calls, `Order` allocation,
+  recursion, and append mechanics.
 - **Allocation is a minor lever.** Singleton `[xs[lo]]` vectors are negligible
   (~10 ms); append + output-vector allocation is ~150 ms (~6.5% of the path). A
   flat-buffer merge over *persistent* storage is therefore not worth shipping alone.
-- **Comparator micro-opts are small.** Closure boundary (~12%) + enum/`Order`
-  allocation (~9%) ≈ ~6% of the gap combined.
+- **Comparator micro-opts are small vs the key-index gap but now a large share of
+  the mechanics half.** Closure boundary (~122 ms) + enum/`Order` allocation
+  (~68 ms) ≈ ~6% of the 7× gap, but ~30% of the post-cache mechanics floor.
 - **Clojure does not cache keys either** — it re-invokes the key fn per comparison
   and sorts a flat array. So the gap is constant-factor/structural, and transparent
   argsort recognition is *not* required to close it.
@@ -49,6 +60,7 @@ allocation) in one change. Everything else is secondary.
 - `examples/sort-bench/sort_by_component_probe.tw` — clean component breakdown (sort, closure, reads, append).
 - `examples/sort-bench/enum_alloc_probe.tw` — isolates enum/`Order` allocation (direct vs closure boundary; enums in general).
 - `examples/sort-bench/merge_attribution_probe.tw` — ablates the merge (reads vs singleton vs append/alloc); validated against real `sort_by`.
+- `examples/sort-bench/sort_repeat_probe.tw` — runs native sort / generic `sort_by` / key-index three times in-process to expose V8 tier-up (Liftoff → TurboFan) effects.
 - `examples/dataframe/bench/` — end-to-end `order_by` plus Clojure/Go/Rust references.
 
 ## Benchmark gate
@@ -64,7 +76,12 @@ clojure examples/dataframe/bench/order_by_clojure_persistent.clj
 
 - Don't re-try opaque dense scratch (Approach C): per-element runtime calls + `anyref`
   casts outweigh the merge savings. Any dense/flat buffer must use **inlined** array ops.
-- Don't chase comparator micro-opts for parity; they cap at ~6% combined.
+- Don't chase comparator micro-opts for parity; they cap at ~6% of the key-index gap
+  combined (though they are ~30% of the post-cache mechanics floor).
 - Don't ship a persistent-only flat-buffer merge; the allocation-only saving is ~6.5%.
-- Do measure before prioritizing — two confident structural guesses (singleton
-  allocation cost, flat-buffer merge value) were falsified by probes here.
+- Do measure before prioritizing — three confident structural guesses (singleton
+  allocation cost, flat-buffer merge value, "the merge floor is mostly reads") were
+  falsified or halved by probes here.
+- Do control for V8 tiering and background load: repeat phases in-process
+  (`sort_repeat_probe.tw`) and check system load — a background game invalidated one
+  whole benchmarking session, and the native kernel is ~1.7× faster warm than cold.
