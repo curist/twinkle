@@ -1,0 +1,337 @@
+/// Typed Vector<Int> routing (typed-vector representation, S2.0).
+///
+/// Conservative, intra-function rewrite: when a `Vector<Int>` produced by a
+/// `collect`/builder is used ONLY by indexed reads (`xs[i]`) and `xs.len()`, it
+/// never crosses a representation boundary, so we can store it physically as a
+/// typed `PVecI64` (raw i64 leaves, no BoxedInt pointer-chase per read). We swap
+/// the builder/len builtin calls to their `_i64` variants and retype the result
+/// slot to PVecI64; the index reads are routed in emit by the base wasm type.
+/// No coercion is needed precisely because eligibility forbids any boundary use.
+///
+/// Runs after assign_repr_for_module (so wasm_type overrides stick and push
+/// elements are already boxed — builder_push_i64 takes the boxed element).
+
+use compiler.backend.prepared_ir.{PreparedAtom, PreparedExpr, PreparedFunc, PreparedOp, SlotInfo}
+use compiler.builtins as bi
+use compiler.builtins.{BuiltinRegistry}
+use compiler.codegen.wasm_ir.{ValType}
+
+type Cand = .{ v: Int, b: Int }
+
+type RouteIds = .{
+  builder_new: Int,
+  builder_push: Int,
+  builder_freeze: Int,
+  len: Int,
+  builder_new_i64: Int,
+  builder_push_i64: Int,
+  builder_freeze_i64: Int,
+  len_i64: Int,
+}
+
+pub fn route_typed_vectors(funcs: Vector<PreparedFunc>, builtins: BuiltinRegistry) Vector<
+  PreparedFunc,
+> {
+  ids := RouteIds.{
+    builder_new: bi.id(builtins, "vector$builder_new").id,
+    builder_push: bi.id(builtins, "vector$builder_push").id,
+    builder_freeze: bi.id(builtins, "vector$builder_freeze").id,
+    len: bi.id(builtins, "vector$len").id,
+    builder_new_i64: bi.id(builtins, "vector$builder_new_i64").id,
+    builder_push_i64: bi.id(builtins, "vector$builder_push_i64").id,
+    builder_freeze_i64: bi.id(builtins, "vector$builder_freeze_i64").id,
+    len_i64: bi.id(builtins, "vector$len_i64").id,
+  }
+
+  collect pf in funcs {
+    route_func(pf, ids)
+  }
+}
+
+fn route_func(pf: PreparedFunc, ids: RouteIds) PreparedFunc {
+  // 1. Collect (v, b) candidates: v = builder_freeze(b) where v: Vector<Int>.
+  cands := collect_candidates(pf.body, pf.slots, ids, [])
+
+  // 2. Keep only candidates whose v never escapes (used solely by index/len).
+  eligible_v: Dict<Int, Bool> = Dict.new()
+  eligible_b: Dict<Int, Bool> = Dict.new()
+
+  for c in cands {
+    if !v_escapes(pf.body, c.v, ids.len) {
+      eligible_v[c.v] = true
+      eligible_b[c.b] = true
+    }
+  }
+
+  if eligible_v.keys().len() == 0 {
+    return pf
+  }
+
+  // 3. Swap builder/len calls to _i64 variants and retype the result slots.
+  new_body := rewrite(pf.body, eligible_v, eligible_b, ids)
+  new_slots: Dict<Int, SlotInfo> = pf.slots
+
+  for sid_int in pf.slots.keys() {
+    case pf.slots[sid_int] {
+      .Some(info) => if eligible_v.has(info.slot.id) {
+        new_slots[sid_int] = SlotInfo.{
+          slot: info.slot,
+          source_local: info.source_local,
+          role: info.role,
+          mono: info.mono,
+          repr: info.repr,
+          wasm_type: ValType.Ref(true, .Named("rt_types__PVecI64")),
+        }
+      } else {},
+      .None => {},
+    }
+  }
+
+  .{
+    func_id: pf.func_id,
+    name: pf.name,
+    is_init: pf.is_init,
+    captures: pf.captures,
+    params: pf.params,
+    locals: pf.locals,
+    slots: new_slots,
+    body: new_body,
+    return_mono: pf.return_mono,
+  }
+}
+
+// ── Candidate collection ────────────────────────────────────────────
+fn is_int_vector(mono_key: String) Bool {
+  mono_key == "vec_i64"
+}
+
+fn slot_is(atom: PreparedAtom, sid: Int) Bool {
+  case atom {
+    .ASlot(s) => s.id == sid,
+    _ => false,
+  }
+}
+
+fn collect_candidates(
+  expr: PreparedExpr,
+  slots: Dict<Int, SlotInfo>,
+  ids: RouteIds,
+  acc: Vector<Cand>,
+) Vector<Cand> {
+  case expr {
+    .Let(slot, op, body) => {
+      acc2 := case op {
+        .ACall(.AGlobalFunc(fid), args) => if fid.id == ids.builder_freeze and args.len() == 1 {
+          case args[0] {
+            .ASlot(b) => case slots[slot.id] {
+              .Some(info) => if is_int_vector(mono_key_of(info)) {
+                acc.append(.{ v: slot.id, b: b.id })
+              } else {
+                acc
+              },
+              .None => acc,
+            },
+            _ => acc,
+          }
+        } else {
+          acc
+        },
+        _ => acc,
+      }
+
+      acc3 := collect_candidates_op(op, slots, ids, acc2)
+      collect_candidates(body, slots, ids, acc3)
+    },
+    _ => acc,
+  }
+}
+
+fn collect_candidates_op(
+  op: PreparedOp,
+  slots: Dict<Int, SlotInfo>,
+  ids: RouteIds,
+  acc: Vector<Cand>,
+) Vector<Cand> {
+  case op {
+    .AIf(_, then_e, else_e) => {
+      acc2 := collect_candidates(then_e, slots, ids, acc)
+      collect_candidates(else_e, slots, ids, acc2)
+    },
+    .AMatch(_, arms) => {
+      cur := acc
+
+      for arm in arms {
+        cur = collect_candidates(arm.body, slots, ids, cur)
+      }
+
+      cur
+    },
+    .ALoop(inner) => collect_candidates(inner, slots, ids, acc),
+    .ADefer(inner) => collect_candidates(inner, slots, ids, acc),
+    _ => acc,
+  }
+}
+
+fn mono_key_of(info: SlotInfo) String {
+  // SlotInfo carries the semantic MonoType; reuse mono_to_key indirectly by
+  // matching the layout key. Vector<Int> keys to "vec_i64".
+  case info.mono {
+    .Vector(.Int) => "vec_i64",
+    _ => "other",
+  }
+}
+
+// ── Escape analysis ─────────────────────────────────────────────────
+// True if slot `v` is used anywhere other than an `xs[i]` Array read base or
+// the argument of `len(v)`.
+fn v_escapes(expr: PreparedExpr, v: Int, len_id: Int) Bool {
+  case expr {
+    .Let(_, op, body) => op_escapes(op, v, len_id) or v_escapes(body, v, len_id),
+    .Atom(a) => slot_is(a, v),
+    .Return(.Some(a)) => slot_is(a, v),
+    .Break(.Some(a)) => slot_is(a, v),
+    _ => false,
+  }
+}
+
+fn op_escapes(op: PreparedOp, v: Int, len_id: Int) Bool {
+  case op {
+    .ACall(callee, args) => case callee {
+      // len(v) is the one allowed call use.
+      .AGlobalFunc(fid) => if fid.id == len_id and args.len() == 1 and slot_is(args[0], v) {
+        false
+      } else {
+        atoms_contain(args, v) or slot_is(callee, v)
+      },
+      _ => atoms_contain(args, v) or slot_is(callee, v),
+    },
+    // xs[i] Array read: base may be v, index may not.
+    .AIndex(base, index, kind, _) => case kind {
+      .Array => slot_is(index, v) or slot_is(base, v) and false,
+      _ => slot_is(base, v) or slot_is(index, v),
+    },
+    .AIf(cnd, then_e, else_e) => slot_is(cnd, v)
+      or v_escapes(then_e, v, len_id)
+      or v_escapes(else_e, v, len_id),
+    .AMatch(scrut, arms) => {
+      if slot_is(scrut, v) {
+        return true
+      }
+
+      for arm in arms {
+        if v_escapes(arm.body, v, len_id) {
+          return true
+        }
+      }
+
+      false
+    },
+    .ALoop(inner) => v_escapes(inner, v, len_id),
+    .ADefer(inner) => v_escapes(inner, v, len_id),
+    .ABinOp(_, l, r, _) => slot_is(l, v) or slot_is(r, v),
+    .AUnOp(_, a, _) => slot_is(a, v),
+    .AMakeClosure(_, free_vars) => {
+      for fv in free_vars {
+        if fv.id == v {
+          return true
+        }
+      }
+
+      false
+    },
+    .ARecord(_, fields) => {
+      for f in fields {
+        if slot_is(f.value, v) {
+          return true
+        }
+      }
+
+      false
+    },
+    .ARecordGet(t, _, _) => slot_is(t, v),
+    .ARecordUpdate(b, _, val, _, _) => slot_is(b, v) or slot_is(val, v),
+    .AVariant(_, _, args) => atoms_contain(args, v),
+    .AArrayLit(items) => atoms_contain(items, v),
+    .AInit(a) => slot_is(a, v),
+    .AAssign(_, a) => slot_is(a, v),
+    .AWrapAnyref(a, _) => slot_is(a, v),
+    .AUnwrapAnyref(a, _) => slot_is(a, v),
+  }
+}
+
+fn atoms_contain(atoms: Vector<PreparedAtom>, v: Int) Bool {
+  for a in atoms {
+    if slot_is(a, v) {
+      return true
+    }
+  }
+
+  false
+}
+
+// ── Rewrite ─────────────────────────────────────────────────────────
+fn rewrite(
+  expr: PreparedExpr,
+  eligible_v: Dict<Int, Bool>,
+  eligible_b: Dict<Int, Bool>,
+  ids: RouteIds,
+) PreparedExpr {
+  case expr {
+    .Let(slot, op, body) => .Let(
+      slot,
+      rewrite_op(slot.id, op, eligible_v, eligible_b, ids),
+      rewrite(body, eligible_v, eligible_b, ids),
+    ),
+    _ => expr,
+  }
+}
+
+fn rewrite_op(
+  result_sid: Int,
+  op: PreparedOp,
+  eligible_v: Dict<Int, Bool>,
+  eligible_b: Dict<Int, Bool>,
+  ids: RouteIds,
+) PreparedOp {
+  case op {
+    .ACall(.AGlobalFunc(fid), args) => {
+      swapped: Int? = cond {
+        fid.id == ids.builder_new and eligible_b.has(result_sid) => .Some(ids.builder_new_i64),
+        fid.id == ids.builder_push and args.len() >= 1 and arg0_in(args, eligible_b) => .Some(
+          ids.builder_push_i64,
+        ),
+        fid.id == ids.builder_freeze and args.len() == 1 and arg0_in(args, eligible_b) => .Some(
+          ids.builder_freeze_i64,
+        ),
+        fid.id == ids.len and args.len() == 1 and arg0_in(args, eligible_v) => .Some(ids.len_i64),
+        _ => .None,
+      }
+
+      case swapped {
+        .Some(new_fid) => .ACall(.AGlobalFunc(.{ id: new_fid }), args),
+        .None => op,
+      }
+    },
+    .AIf(cnd, then_e, else_e) => .AIf(
+      cnd,
+      rewrite(then_e, eligible_v, eligible_b, ids),
+      rewrite(else_e, eligible_v, eligible_b, ids),
+    ),
+    .AMatch(scrut, arms) => .AMatch(
+      scrut,
+      collect arm in arms {
+        .{ pattern: arm.pattern, body: rewrite(arm.body, eligible_v, eligible_b, ids) }
+      },
+    ),
+    .ALoop(inner) => .ALoop(rewrite(inner, eligible_v, eligible_b, ids)),
+    .ADefer(inner) => .ADefer(rewrite(inner, eligible_v, eligible_b, ids)),
+    _ => op,
+  }
+}
+
+fn arg0_in(args: Vector<PreparedAtom>, set: Dict<Int, Bool>) Bool {
+  case args[0] {
+    .ASlot(s) => set.has(s.id),
+    _ => false,
+  }
+}

@@ -20,6 +20,13 @@ pub type ArrayEmitFns = .{
   emit_erased_container_ingress: fn(PreparedAtom, EmitCtx, Vector<Instr>) Vector<Instr>,
 }
 
+fn is_pvec_i64(vt: ValType) Bool {
+  case vt {
+    .Ref(_, .Named(name)) => name == "rt_types__PVecI64",
+    _ => false,
+  }
+}
+
 pub fn emit_array_literal(
   items: Vector<PreparedAtom>,
   result_mono: MonoType,
@@ -92,6 +99,30 @@ pub fn emit_index_op(
 ) Vector<Instr> {
   case kind {
     .Array => {
+      // Typed-vector fast path: when the base is a PVecI64 (typed Vector<Int>),
+      // bounds-check against the PVecI64 length and read a raw i64 leaf via
+      // get_i64 — no anyref egress, no BoxedInt pointer-chase.
+      base_vt := fns.atom_val_type(base, ctx)
+
+      if is_pvec_i64(base_vt) {
+        out := fns.emit_atom(index, ctx, buf).append(.I64Const(0)).append(.I64GeS)
+        out = fns.emit_atom(index, ctx, out)
+        out = fns.emit_atom(base, ctx, out)
+        out = .append(.RefAsNonNull).append(.StructGet("rt_types__PVecI64", 0)).append(
+          .I64ExtendI32U,
+        ).append(.I64LtS).append(.I32And).append(.I32Eqz).append(.If(.None, [.Unreachable], []))
+        out = fns.emit_atom(base, ctx, out)
+        out = fns.emit_checked_i32_narrow(index, ctx, out)
+        out = .append(.Call("rt_arr__get_i64"))
+
+        // get_i64 yields i64; coerce to the expected slot type (identity when
+        // the result stays i64 — the win; boxes only if the slot was erased).
+        return case result_vt {
+          .Some(expected_vt) => emit_coerce_stack(.I64, expected_vt, result_ty, ctx, out),
+          .None => out,
+        }
+      }
+
       // Vector indexing returns erased anyref from rt_arr__get. Cast/unbox here
       // when the destination slot is already typed; leave raw anyref alone when
       // boundary insertion requested an intermediate anyref local.

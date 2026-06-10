@@ -1912,14 +1912,23 @@ fn builder_new_i64_fn() FuncDef {
 fn builder_push_i64_fn() FuncDef {
   ta := t_array()
   tai := t_array_i64()
+  tbi := t_boxed_int()
 
-  // p0=builder, p1=elem; L2=tail_buf, L3=tail_len, L4=pvec_so_far
+  // p0=builder, p1=elem (BoxedInt anyref); L2=tail_buf, L3=tail_len,
+  // L4=pvec_so_far, L5=elem unboxed to i64. Takes a boxed element so the
+  // typed-vector router can swap builder_push -> builder_push_i64 without
+  // rewriting the (already-boxed) push argument; the unbox is one-time build
+  // cost, not the hot read path.
   .{
     name: "builder_push_i64",
-    params: [arr_null(), .I64],
+    params: [arr_null(), .Anyref],
     results: [],
-    locals: [arr_i64_null(), .I32, pvec_i64_null()],
+    locals: [arr_i64_null(), .I32, pvec_i64_null(), .I64],
     body: [
+      .LocalGet(1),
+      .RefCast(false, .Named(tbi)),
+      .StructGet(tbi, 0),
+      .LocalSet(5),
       .LocalGet(0),
       .RefAsNonNull,
       .I32Const(2),
@@ -1942,7 +1951,7 @@ fn builder_push_i64_fn() FuncDef {
           .LocalGet(2),
           .RefAsNonNull,
           .LocalGet(3),
-          .LocalGet(1),
+          .LocalGet(5),
           .ArraySet(tai),
           .LocalGet(0),
           .RefAsNonNull,
@@ -1976,7 +1985,7 @@ fn builder_push_i64_fn() FuncDef {
           .LocalGet(2),
           .RefAsNonNull,
           .I32Const(0),
-          .LocalGet(1),
+          .LocalGet(5),
           .ArraySet(tai),
           .LocalGet(0),
           .RefAsNonNull,
@@ -4398,8 +4407,6 @@ fn vec_i64_roundtrip_fn() FuncDef {
               .LocalGet(0),
               .LocalGet(3),
               .Call("get"),
-              .RefCast(false, .Named(tbi)),
-              .StructGet(tbi, 0),
               .Call("builder_push_i64"),
               .LocalGet(3),
               .I32Const(1),

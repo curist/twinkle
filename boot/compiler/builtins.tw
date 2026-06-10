@@ -78,6 +78,14 @@ fn pvec_() ValType {
   ref_nn("rt_types__PVec")
 }
 
+fn pvec_i64_n() ValType {
+  ref_null("rt_types__PVecI64")
+}
+
+fn pvec_i64_() ValType {
+  ref_nn("rt_types__PVecI64")
+}
+
 fn dict_n() ValType {
   ref_null("rt_types__PDict")
 }
@@ -130,6 +138,11 @@ fn builtin_abi(name: String) AbiContract {
     "vector$sort_i64" => abi([pvec_n()], [pvec_()]),
     "vector$sort_f64" => abi([pvec_n()], [pvec_()]),
     "vector$vec_i64_roundtrip" => abi([pvec_n()], [pvec_()]),
+    "vector$len_i64" => abi([pvec_i64_n()], [.I32]),
+    "vector$get_i64" => abi([pvec_i64_n(), .I32], [.I64]),
+    "vector$builder_new_i64" => abi([], [arr_()]),
+    "vector$builder_push_i64" => abi([arr_n(), .Anyref], []),
+    "vector$builder_freeze_i64" => abi([arr_n()], [pvec_i64_()]),
     "vector$builder_new" => abi([], [arr_()]),
     "vector$builder_push" => abi([arr_n(), .Anyref], []),
     "vector$builder_freeze" => abi([arr_n()], [pvec_()]),
@@ -513,6 +526,11 @@ pub fn builtin_specs() Vector<BuiltinSpec> {
     rt("vector$sort_i64", "rt.arr", "sort_i64", .None),
     rt("vector$sort_f64", "rt.arr", "sort_f64", .None),
     rt("vector$vec_i64_roundtrip", "rt.arr", "vec_i64_roundtrip", .Some("Vector.vec_i64_roundtrip")),
+    rt("vector$len_i64", "rt.arr", "len_i64", .None),
+    rt("vector$get_i64", "rt.arr", "get_i64", .None),
+    rt("vector$builder_new_i64", "rt.arr", "builder_new_i64", .None),
+    rt("vector$builder_push_i64", "rt.arr", "builder_push_i64", .None),
+    rt("vector$builder_freeze_i64", "rt.arr", "builder_freeze_i64", .None),
   ]
 }
 

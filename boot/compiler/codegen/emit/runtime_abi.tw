@@ -36,13 +36,24 @@ pub fn is_builder_buffer_arg(name: String, index: Int) Bool {
 // bound to a non-void (now-dead) result local by the loop rewrite, so a default
 // placeholder value must be pushed before the local.set.
 pub fn is_builder_void_push(name: String) Bool {
-  name == "vector$builder_push" or name == "string$builder_extend"
+  name == "vector$builder_push"
+    or name == "vector$builder_push_i64"
+    or name == "string$builder_extend"
 }
 
 // The builder seed (from/new) returns the raw builder handle, which is stored
 // directly into the erased anyref slot — skip the mono-driven result adaption.
 pub fn is_builder_seed(name: String) Bool {
-  name == "vector$builder_new" or name == "vector$builder_from" or name == "string$builder_from"
+  name == "vector$builder_new"
+    or name == "vector$builder_new_i64"
+    or name == "vector$builder_from"
+    or name == "string$builder_from"
+}
+
+// builder_freeze_i64 returns a PVecI64 stored directly into a typed-vector slot
+// (route_typed_vectors retyped it) — skip the mono-driven adaption to PVec.
+pub fn is_typed_vec_freeze(name: String) Bool {
+  name == "vector$builder_freeze_i64"
 }
 
 // ABI shim: builder regions keep transient builders as erased anyref locals;
