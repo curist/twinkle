@@ -19,6 +19,12 @@ pub type StringPoolEntry = .{
 
 pub type ModuleGlobalEntry = .{ sym: String, mono: MonoType }
 
+// A payload-free variant value hoisted to a shared immutable module global.
+// Keyed in the registry by "${sum.sym}#${vid}". `mono`/`vid` let emission
+// rebuild the global's struct initializer; `global_sym` is the name read back
+// at each use site via global.get.
+pub type VariantSingletonEntry = .{ global_sym: String, mono: MonoType, vid: Int }
+
 pub type WasmTypeRegistry = .{
   type_defs: Vector<TypeDef>,
   layout_cache: Dict<String, WasmLayout>,
@@ -35,4 +41,5 @@ pub type WasmTypeRegistry = .{
   string_pool_order: Vector<String>,
   string_pool_next_offset: Int,
   runtime_imports: Vector<ImportDef>,
+  variant_singletons: Dict<String, VariantSingletonEntry>,
 }

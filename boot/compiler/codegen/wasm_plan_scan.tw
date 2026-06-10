@@ -12,7 +12,13 @@ use compiler.backend.prepared_ir.{
 }
 use compiler.builtins as bi
 use compiler.builtins.{BuiltinRegistry}
+use compiler.codegen.wasm_layout.{mono_to_key}
 use compiler.mono_type.{MonoType}
+
+// A payload-free variant literal actually constructed in some body, keyed by
+// "${mono_to_key(mono)}#${vid}". Carries the result mono so the planner can
+// resolve the sum layout and (if eligible) hoist the value to a shared global.
+pub type NullaryVariantReq = .{ mono: MonoType, vid: Int }
 
 pub type ScanResult = .{
   strings: Dict<String, Bool>,
@@ -20,6 +26,7 @@ pub type ScanResult = .{
   closure_materialized_monos: Dict<Int, MonoType>,
   direct_builtin_calls: Dict<Int, Bool>,
   module_globals: Dict<Int, Bool>,
+  nullary_variants: Dict<String, NullaryVariantReq>,
 }
 
 pub fn scan_module_bodies(input: PreparedModule, builtins: BuiltinRegistry) ScanResult {
@@ -29,6 +36,7 @@ pub fn scan_module_bodies(input: PreparedModule, builtins: BuiltinRegistry) Scan
     closure_materialized_monos: Dict.new(),
     direct_builtin_calls: Dict.new(),
     module_globals: Dict.new(),
+    nullary_variants: Dict.new(),
   }
 
   for func in input.funcs {
@@ -215,6 +223,20 @@ fn extract_closure_monos_op(
         out
       },
       .None => out,
+    },
+    // Payload-free variant literal: record its result mono (from the slot it
+    // binds to) so the planner can hoist it to a shared module global.
+    .AVariant(_, vid, args) => if args.len() == 0 {
+      case slots[sid.id] {
+        .Some(info) => {
+          key := "${mono_to_key(info.mono)}#${vid.id}"
+          out.nullary_variants[key] = .{ mono: info.mono, vid: vid.id }
+          out
+        },
+        .None => out,
+      }
+    } else {
+      out
     },
     .AIf(_, then_e, else_e) => {
       cur := extract_closure_monos(then_e, slots, out)

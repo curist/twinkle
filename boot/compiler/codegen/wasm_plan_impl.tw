@@ -12,11 +12,12 @@ use compiler.builtins as bi
 use compiler.builtins.{BuiltinEntry, BuiltinRegistry, RuntimeInfo}
 use compiler.codegen.wasm_ir.{FieldDef, HeapType, ImportDef, TypeDef, ValType}
 use compiler.codegen.wasm_layout.{
-  WasmClosureLayout, WasmLayout, layout_of, mono_to_key, val_type_of,
+  WasmClosureLayout, WasmLayout, layout_of, mono_to_key, val_type_of, variant_singleton_eligible,
 }
-use compiler.codegen.wasm_plan_scan.{scan_module_bodies}
+use compiler.codegen.wasm_plan_scan.{ScanResult, scan_module_bodies}
 use compiler.codegen.wasm_plan_types.{
-  CaptureEntry, FuncSigEntry, ModuleGlobalEntry, StringPoolEntry, WasmTypeRegistry,
+  CaptureEntry, FuncSigEntry, ModuleGlobalEntry, StringPoolEntry, VariantSingletonEntry,
+  WasmTypeRegistry,
 }
 use compiler.core_ir.{FuncId}
 use compiler.mono_type.{MonoType, TypeId}
@@ -50,6 +51,7 @@ pub fn plan_wasm_types_impl(
     string_pool_order: [],
     string_pool_next_offset: 0,
     runtime_imports: [],
+    variant_singletons: Dict.new(),
   }
   t0 := date.now()
   scan := scan_module_bodies(input, builtins)
@@ -197,6 +199,11 @@ pub fn plan_wasm_types_impl(
   reg = register_mono(reg, MonoType.Optional(MonoType.String), env)
   reg = register_mono(reg, MonoType.Optional(MonoType.Int), env)
   reg = register_mono(reg, MonoType.Optional(MonoType.Float), env)
+
+  // Hoist payload-free variant literals to shared immutable globals (one
+  // struct.new at module init instead of per-use). Runs after all layouts are
+  // resolved so each constructed nullary variant's sum layout is available.
+  reg = resolve_variant_singletons(reg, scan, env)
   result := topo_sort_type_defs(reg)
   t4 := date.now()
 
@@ -461,7 +468,31 @@ fn with_type_defs_and_index(
     string_pool_order: reg.string_pool_order,
     string_pool_next_offset: reg.string_pool_next_offset,
     runtime_imports: reg.runtime_imports,
+    variant_singletons: reg.variant_singletons,
   }
+}
+
+// Register a shared immutable global for each eligible payload-free variant
+// literal that some body actually constructs. Keyed by "${sum.sym}#${vid}" so
+// emission can look it up from the use-site's sum layout and variant id.
+fn resolve_variant_singletons(reg: WasmTypeRegistry, scan: ScanResult, env: ResolvedEnv) WasmTypeRegistry {
+  for key in scan.nullary_variants.keys() {
+    case scan.nullary_variants[key] {
+      .Some(req) => case layout_of(req.mono, env) {
+        .Sum(sum) => if variant_singleton_eligible(sum) {
+          reg.variant_singletons["${sum.sym}#${req.vid}"] = VariantSingletonEntry.{
+            global_sym: "variant_singleton_${mono_to_key(req.mono)}_v${req.vid}",
+            mono: req.mono,
+            vid: req.vid,
+          }
+        } else {},
+        _ => {},
+      },
+      .None => {},
+    }
+  }
+
+  reg
 }
 
 fn append_type_def(reg: WasmTypeRegistry, sym: String, td: TypeDef) WasmTypeRegistry {
@@ -736,6 +767,7 @@ fn topo_sort_type_defs(reg: WasmTypeRegistry) WasmTypeRegistry {
     string_pool_order: reg.string_pool_order,
     string_pool_next_offset: reg.string_pool_next_offset,
     runtime_imports: reg.runtime_imports,
+    variant_singletons: reg.variant_singletons,
   }
 }
 

@@ -5,7 +5,8 @@ use compiler.codegen.emit.coercions.{emit_coerce_stack}
 use compiler.codegen.emit.context.{EmitCtx}
 use compiler.codegen.emit.defaults.{emit_default_value}
 use compiler.codegen.emit.layout_helpers.{cached_layout_of}
-use compiler.codegen.wasm_ir.{Instr, ValType}
+use compiler.codegen.wasm_ir.{GlobalDef, Instr, ValType}
+use compiler.codegen.wasm_layout.{WasmSumLayout}
 use compiler.core_ir.{VariantId}
 use compiler.mono_type.{MonoType, TypeId}
 
@@ -49,6 +50,13 @@ pub fn emit_variant_literal(
     _ => error("emit_variant_literal: expected Sum layout for type"),
   }
 
+  // Payload-free variant hoisted to a shared immutable global: read it back
+  // instead of allocating a fresh struct at every use site.
+  case ctx.registry.variant_singletons["${sum.sym}#${vid.id}"] {
+    .Some(entry) => { return buf.append(.GlobalGet(entry.global_sym)) },
+    .None => {},
+  }
+
   // Emit tag
   out := buf.append(.I32Const(vid.id))
 
@@ -75,4 +83,24 @@ pub fn emit_variant_literal(
   }
 
   out.append(.StructNew(sum.sym))
+}
+
+// Build the immutable module global holding one shared instance of a
+// payload-free variant. The initializer is the same tag + all-default-slots +
+// struct.new the inline path would emit, run once at instantiation. Eligibility
+// (all sibling payload defaults are constant) is enforced by the planner, so
+// this is a valid Wasm constant expression.
+pub fn build_variant_singleton_global(sum: WasmSumLayout, vid: Int, global_sym: String) GlobalDef {
+  init := [Instr.I32Const(vid)]
+
+  // The target variant is nullary (no payloads); every variant's slots get
+  // their default constant value.
+  for v in sum.variants {
+    for pt in v.payload_types {
+      init = emit_default_value(pt, init)
+    }
+  }
+
+  init = .append(.StructNew(sum.sym))
+  .{ name: global_sym, mutable: false, ty: .Ref(false, .Named(sum.sym)), init }
 }

@@ -58,7 +58,7 @@ use compiler.codegen.emit.variants as variant_emit
 use compiler.codegen.wasm_ir.{
   DataSegment, FuncDef, GlobalDef, ImportDef, Instr, TypeDef, ValType, WasmModule,
 }
-use compiler.codegen.wasm_layout.{mono_to_key, val_type_of_mono}
+use compiler.codegen.wasm_layout.{layout_of, mono_to_key, val_type_of_mono}
 use compiler.codegen.wasm_plan_types.{WasmTypeRegistry}
 use compiler.core_ir.{BinOp, FieldId, FuncId, UnOp, VariantId}
 use compiler.mono_type.{MonoType, TypeId}
@@ -226,8 +226,26 @@ pub fn emit_module(
   // Module globals
   mod_globals := emit_module_globals(reg, anf, env)
 
+  // Shared payload-free variant singletons (one struct.new at init, reused at
+  // every use site via global.get).
+  singleton_globals: Vector<GlobalDef> = []
+
+  for k in reg.variant_singletons.keys() {
+    case reg.variant_singletons[k] {
+      .Some(entry) => case layout_of(entry.mono, env) {
+        .Sum(sum) => {
+          singleton_globals = .append(
+            variant_emit.build_variant_singleton_global(sum, entry.vid, entry.global_sym),
+          )
+        },
+        _ => {},
+      },
+      .None => {},
+    }
+  }
+
   // Assemble all globals
-  globals: Vector<GlobalDef> = mod_globals.concat(str_globals)
+  globals: Vector<GlobalDef> = mod_globals.concat(str_globals).concat(singleton_globals)
 
   // Data segments
   data: Vector<DataSegment> = []

@@ -56,6 +56,7 @@ fn empty_registry() WasmTypeRegistry {
     string_pool_order: [],
     string_pool_next_offset: 0,
     runtime_imports: [],
+    variant_singletons: Dict.new(),
   }
 }
 

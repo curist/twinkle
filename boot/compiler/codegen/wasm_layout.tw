@@ -458,6 +458,33 @@ pub fn val_type_of_mono(ty: MonoType, env: ResolvedEnv) ValType {
   }
 }
 
+// A sum-payload slot whose default value is a Wasm *constant* expression — the
+// only kind a global initializer may use. Everything but a non-nullable ref
+// has a const default (i32/i64/f64 consts, null refs, ref.i31); a non-nullable
+// ref default needs ref.as_non_null, which is not constant and would trap at
+// instantiation.
+pub fn variant_payload_default_is_const(vt: ValType) Bool {
+  case vt {
+    .Ref(false, _) => false,
+    _ => true,
+  }
+}
+
+// A payload-free variant of `sum` can be hoisted to a shared immutable global
+// only if every sibling payload slot (filled with a default in the struct) has
+// a constant default.
+pub fn variant_singleton_eligible(sum: WasmSumLayout) Bool {
+  for v in sum.variants {
+    for pt in v.payload_types {
+      if !variant_payload_default_is_const(pt) {
+        return false
+      }
+    }
+  }
+
+  true
+}
+
 pub type EqTypeLayouts = .{ records: Vector<WasmRecordLayout>, sums: Vector<WasmSumLayout> }
 
 fn compare_strings(a: String, b: String) Order {
