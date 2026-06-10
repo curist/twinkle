@@ -108,6 +108,26 @@ fn ref_eq_null() ValType {
   .Ref(true, .Eq)
 }
 
+// Typed i64 persistent vector helpers (rt.arr_i64 family). The trie-build
+// helpers (new_path/wrap_leaf/concat_trees) are shared with the boxed family —
+// they treat leaves as opaque `ref eq` — so only these thin PVecI64-struct
+// wrappers are i64-specific.
+fn t_pvec_i64() String {
+  "rt_types__PVecI64"
+}
+
+fn pvec_i64_null() ValType {
+  .Ref(true, .Named(t_pvec_i64()))
+}
+
+fn pvec_i64_ref() ValType {
+  .Ref(false, .Named(t_pvec_i64()))
+}
+
+fn arr_i64_ref() ValType {
+  .Ref(false, .Named(t_array_i64()))
+}
+
 // PVec field indices
 fn pv_len() Int {
   0
@@ -170,6 +190,13 @@ pub fn module() WasmModule {
     gather_fn(),
     sort_i64_fn(),
     sort_f64_fn(),
+    len_i64_fn(),
+    get_i64_fn(),
+    promote_full_tail_i64_fn(),
+    builder_new_i64_fn(),
+    builder_push_i64_fn(),
+    builder_freeze_i64_fn(),
+    vec_i64_roundtrip_fn(),
     builder_new_fn(),
     builder_from_fn(),
     builder_push_fn(),
@@ -202,6 +229,24 @@ pub fn module() WasmModule {
           .RefNull(.Named(t_vec_internal())),
           .GlobalGet("empty_leaf"),
           .StructNew(t_pvec()),
+        ],
+      },
+      .{
+        name: "empty_leaf_i64",
+        mutable: false,
+        ty: arr_i64_ref(),
+        init: [.ArrayNewFixed(t_array_i64(), 0)],
+      },
+      .{
+        name: "empty_pvec_i64",
+        mutable: false,
+        ty: pvec_i64_ref(),
+        init: [
+          .I32Const(0),
+          .I32Const(0),
+          .RefNull(.Named(t_vec_internal())),
+          .GlobalGet("empty_leaf_i64"),
+          .StructNew(t_pvec_i64()),
         ],
       },
     ],
@@ -1566,6 +1611,459 @@ fn len_fn() FuncDef {
   }
 }
 
+// ═══════════════════════════════════════════════════════════════════════
+// Typed i64 persistent vector (PVecI64) — de-risking spike for the typed
+// Vector<Int> representation. Mirrors the boxed ops above with i64 leaves and
+// tail; the trie-build helpers (new_path/wrap_leaf/concat_trees/vi_nav) are
+// shared (leaves are opaque `ref eq`). Only these thin PVecI64-struct wrappers
+// are i64-specific. Reads return raw i64 — no BoxedInt pointer-chase or cast.
+// ═══════════════════════════════════════════════════════════════════════
+// len_i64(vec: PVecI64?) -> i32
+fn len_i64_fn() FuncDef {
+  .{
+    name: "len_i64",
+    params: [pvec_i64_null()],
+    results: [.I32],
+    locals: [],
+    body: [.LocalGet(0), .RefAsNonNull, .StructGet(t_pvec_i64(), pv_len())],
+  }
+}
+
+// get_i64(vec: PVecI64?, idx: i32) -> i64  (mirror of get_fn, i64 leaves)
+fn get_i64_fn() FuncDef {
+  // p0=vec, p1=idx, L2=len, L3=tailoff, L4=node, L5=level, L6=slot, L7=sizes
+  .{
+    name: "get_i64",
+    params: [pvec_i64_null(), .I32],
+    results: [.I64],
+    locals: [.I32, .I32, vec_internal_null(), .I32, .I32, i32_array_null()],
+    body: [
+      .LocalGet(0),
+      .RefAsNonNull,
+      .StructGet(t_pvec_i64(), pv_len()),
+      .LocalSet(2),
+      .LocalGet(2),
+      .I32Const(bf()),
+      .I32LeS,
+      .If(
+        .Some(.I64),
+        [
+          .LocalGet(0),
+          .RefAsNonNull,
+          .StructGet(t_pvec_i64(), pv_tail()),
+          .LocalGet(1),
+          .I32Const(mask()),
+          .I32And,
+          .ArrayGet(t_array_i64()),
+        ],
+        [
+          .LocalGet(2),
+          .LocalGet(0),
+          .RefAsNonNull,
+          .StructGet(t_pvec_i64(), pv_tail()),
+          .ArrayLen,
+          .I32Sub,
+          .LocalSet(3),
+          .LocalGet(1),
+          .LocalGet(3),
+          .I32GeS,
+          .If(
+            .Some(.I64),
+            [
+              .LocalGet(0),
+              .RefAsNonNull,
+              .StructGet(t_pvec_i64(), pv_tail()),
+              .LocalGet(1),
+              .LocalGet(3),
+              .I32Sub,
+              .ArrayGet(t_array_i64()),
+            ],
+            [
+              .LocalGet(0),
+              .RefAsNonNull,
+              .StructGet(t_pvec_i64(), pv_root()),
+              .LocalSet(4),
+              .LocalGet(0),
+              .RefAsNonNull,
+              .StructGet(t_pvec_i64(), pv_shift()),
+              .LocalSet(5),
+              .Block(
+                "brk",
+                .None,
+                [
+                  .Loop(
+                    "lp",
+                    .None,
+                    [
+                      .LocalGet(5),
+                      .I32Const(b_()),
+                      .I32LeS,
+                      .BrIf("brk"),
+                      .LocalGet(4),
+                      .RefAsNonNull,
+                      .StructGet(t_vec_internal(), vi_sizes()),
+                      .LocalSet(7),
+                      .LocalGet(7),
+                      .RefIsNull,
+                      .If(
+                        .None,
+                        [
+                          .LocalGet(1),
+                          .LocalGet(5),
+                          .I32ShrU,
+                          .I32Const(mask()),
+                          .I32And,
+                          .LocalSet(6),
+                        ],
+                        [
+                          .LocalGet(4),
+                          .RefAsNonNull,
+                          .LocalGet(1),
+                          .LocalGet(5),
+                          .Call("vi_nav"),
+                          .LocalSet(1),
+                          .LocalSet(6),
+                        ],
+                      ),
+                      .LocalGet(4),
+                      .RefAsNonNull,
+                      .StructGet(t_vec_internal(), vi_children()),
+                      .LocalGet(6),
+                      .ArrayGet(t_vec_children()),
+                      .RefCast(true, .Named(t_vec_internal())),
+                      .LocalSet(4),
+                      .LocalGet(5),
+                      .I32Const(b_()),
+                      .I32Sub,
+                      .LocalSet(5),
+                      .Br("lp"),
+                    ],
+                  ),
+                ],
+              ),
+              .LocalGet(4),
+              .RefAsNonNull,
+              .StructGet(t_vec_internal(), vi_sizes()),
+              .LocalSet(7),
+              .LocalGet(7),
+              .RefIsNull,
+              .If(
+                .None,
+                [.LocalGet(1), .LocalGet(5), .I32ShrU, .I32Const(mask()), .I32And, .LocalSet(6)],
+                [
+                  .LocalGet(4),
+                  .RefAsNonNull,
+                  .LocalGet(1),
+                  .LocalGet(5),
+                  .Call("vi_nav"),
+                  .LocalSet(1),
+                  .LocalSet(6),
+                ],
+              ),
+              .LocalGet(4),
+              .RefAsNonNull,
+              .StructGet(t_vec_internal(), vi_children()),
+              .LocalGet(6),
+              .ArrayGet(t_vec_children()),
+              .RefCast(false, .Named(t_array_i64())),
+              .LocalGet(1),
+              .I32Const(mask()),
+              .I32And,
+              .ArrayGet(t_array_i64()),
+            ],
+          ),
+        ],
+      ),
+    ],
+  }
+}
+
+// promote_full_tail_i64(prefix: PVecI64, full_tail: ArrayI64) -> PVecI64
+// Radix append of one full leaf. The builder only ever produces strict (radix)
+// vectors, so we use push_tail + manual root-overflow growth rather than the
+// RRB concat_trees (which inspects leaves as boxed Array). new_path/push_tail
+// treat leaves as opaque `ref eq`, so ArrayI64 leaves work unchanged.
+fn promote_full_tail_i64_fn() FuncDef {
+  p_prefix := 0
+  p_full_tail := 1
+  l_cnt := 2
+  l_shift := 3
+  l_new_shift := 4
+  l_new_root := 5
+  l_nc := 6
+
+  .{
+    name: "promote_full_tail_i64",
+    params: [pvec_i64_ref(), arr_i64_ref()],
+    results: [pvec_i64_ref()],
+    locals: [.I32, .I32, .I32, ref_eq_null(), vec_children_null()],
+    body: [
+      .LocalGet(p_prefix),
+      .StructGet(t_pvec_i64(), pv_len()),
+      .LocalSet(l_cnt),
+      .LocalGet(p_prefix),
+      .StructGet(t_pvec_i64(), pv_shift()),
+      .LocalSet(l_shift),
+      .LocalGet(p_prefix),
+      .StructGet(t_pvec_i64(), pv_root()),
+      .RefIsNull,
+      .If(
+        .None,
+        [
+          .I32Const(b_()),
+          .LocalSet(l_new_shift),
+          .I32Const(b_()),
+          .LocalGet(p_full_tail),
+          .RefCast(false, .Eq),
+          .Call("new_path"),
+          .LocalSet(l_new_root),
+        ],
+        [
+          .LocalGet(l_cnt),
+          .I32Const(b_()),
+          .I32ShrU,
+          .I32Const(1),
+          .LocalGet(l_shift),
+          .I32Shl,
+          .I32GeU,
+          .If(
+            .None,
+            [
+              .LocalGet(l_shift),
+              .I32Const(b_()),
+              .I32Add,
+              .LocalSet(l_new_shift),
+              .RefNull(.Eq),
+              .I32Const(bf()),
+              .ArrayNew(t_vec_children()),
+              .LocalSet(l_nc),
+              .LocalGet(l_nc),
+              .RefAsNonNull,
+              .I32Const(0),
+              .LocalGet(p_prefix),
+              .StructGet(t_pvec_i64(), pv_root()),
+              .RefAsNonNull,
+              .RefCast(false, .Eq),
+              .ArraySet(t_vec_children()),
+              .LocalGet(l_nc),
+              .RefAsNonNull,
+              .I32Const(1),
+              .LocalGet(l_shift),
+              .LocalGet(p_full_tail),
+              .RefCast(false, .Eq),
+              .Call("new_path"),
+              .ArraySet(t_vec_children()),
+              .LocalGet(l_nc),
+              .RefAsNonNull,
+              .RefNull(.Named(t_i32_array())),
+              .StructNew(t_vec_internal()),
+              .RefCast(false, .Eq),
+              .LocalSet(l_new_root),
+            ],
+            [
+              .LocalGet(l_shift),
+              .LocalSet(l_new_shift),
+              .LocalGet(l_cnt),
+              .I32Const(bf()),
+              .I32Add,
+              .LocalGet(l_shift),
+              .LocalGet(p_prefix),
+              .StructGet(t_pvec_i64(), pv_root()),
+              .LocalGet(p_full_tail),
+              .RefCast(false, .Eq),
+              .Call("push_tail"),
+              .LocalSet(l_new_root),
+            ],
+          ),
+        ],
+      ),
+      .LocalGet(l_cnt),
+      .I32Const(bf()),
+      .I32Add,
+      .LocalGet(l_new_shift),
+      .LocalGet(l_new_root),
+      .RefCast(true, .Named(t_vec_internal())),
+      .GlobalGet("empty_leaf_i64"),
+      .StructNew(t_pvec_i64()),
+    ],
+  }
+}
+
+// builder_new_i64() -> Array  (state: [PVecI64, tail_len i31, tail_buf ArrayI64])
+fn builder_new_i64_fn() FuncDef {
+  .{
+    name: "builder_new_i64",
+    params: [],
+    results: [arr_ref()],
+    locals: [],
+    body: [
+      .GlobalGet("empty_pvec_i64"),
+      .I32Const(0),
+      .RefI31,
+      .I64Const(0),
+      .I32Const(bf()),
+      .ArrayNew(t_array_i64()),
+      .ArrayNewFixed(t_array(), 3),
+    ],
+  }
+}
+
+// builder_push_i64(builder: Array?, elem: i64) -> void
+fn builder_push_i64_fn() FuncDef {
+  ta := t_array()
+  tai := t_array_i64()
+
+  // p0=builder, p1=elem; L2=tail_buf, L3=tail_len, L4=pvec_so_far
+  .{
+    name: "builder_push_i64",
+    params: [arr_null(), .I64],
+    results: [],
+    locals: [arr_i64_null(), .I32, pvec_i64_null()],
+    body: [
+      .LocalGet(0),
+      .RefAsNonNull,
+      .I32Const(2),
+      .ArrayGet(ta),
+      .RefCast(true, .Named(tai)),
+      .LocalSet(2),
+      .LocalGet(0),
+      .RefAsNonNull,
+      .I32Const(1),
+      .ArrayGet(ta),
+      .RefCast(false, .I31),
+      .I31GetU,
+      .LocalSet(3),
+      .LocalGet(3),
+      .I32Const(bf()),
+      .I32LtS,
+      .If(
+        .None,
+        [
+          .LocalGet(2),
+          .RefAsNonNull,
+          .LocalGet(3),
+          .LocalGet(1),
+          .ArraySet(tai),
+          .LocalGet(0),
+          .RefAsNonNull,
+          .I32Const(1),
+          .LocalGet(3),
+          .I32Const(1),
+          .I32Add,
+          .RefI31,
+          .ArraySet(ta),
+        ],
+        [
+          .LocalGet(0),
+          .RefAsNonNull,
+          .I32Const(0),
+          .ArrayGet(ta),
+          .RefCast(true, .Named(t_pvec_i64())),
+          .LocalSet(4),
+          .LocalGet(0),
+          .RefAsNonNull,
+          .I32Const(0),
+          .LocalGet(4),
+          .RefAsNonNull,
+          .LocalGet(2),
+          .RefAsNonNull,
+          .Call("promote_full_tail_i64"),
+          .ArraySet(ta),
+          .I64Const(0),
+          .I32Const(bf()),
+          .ArrayNew(tai),
+          .LocalSet(2),
+          .LocalGet(2),
+          .RefAsNonNull,
+          .I32Const(0),
+          .LocalGet(1),
+          .ArraySet(tai),
+          .LocalGet(0),
+          .RefAsNonNull,
+          .I32Const(2),
+          .LocalGet(2),
+          .ArraySet(ta),
+          .LocalGet(0),
+          .RefAsNonNull,
+          .I32Const(1),
+          .I32Const(1),
+          .RefI31,
+          .ArraySet(ta),
+        ],
+      ),
+    ],
+  }
+}
+
+// builder_freeze_i64(builder: Array?) -> PVecI64
+fn builder_freeze_i64_fn() FuncDef {
+  ta := t_array()
+  tai := t_array_i64()
+
+  // p0=builder, L1=pvec_so_far, L2=tail_len, L3=tail_buf, L4=final_tail
+  .{
+    name: "builder_freeze_i64",
+    params: [arr_null()],
+    results: [pvec_i64_ref()],
+    locals: [pvec_i64_null(), .I32, arr_i64_null(), arr_i64_null()],
+    body: [
+      .LocalGet(0),
+      .RefAsNonNull,
+      .I32Const(0),
+      .ArrayGet(ta),
+      .RefCast(true, .Named(t_pvec_i64())),
+      .LocalSet(1),
+      .LocalGet(0),
+      .RefAsNonNull,
+      .I32Const(1),
+      .ArrayGet(ta),
+      .RefCast(false, .I31),
+      .I31GetU,
+      .LocalSet(2),
+      .LocalGet(0),
+      .RefAsNonNull,
+      .I32Const(2),
+      .ArrayGet(ta),
+      .RefCast(true, .Named(tai)),
+      .LocalSet(3),
+      .LocalGet(2),
+      .I32Eqz,
+      .If(
+        .Some(pvec_i64_ref()),
+        [.LocalGet(1), .RefAsNonNull],
+        [
+          .I64Const(0),
+          .LocalGet(2),
+          .ArrayNew(tai),
+          .LocalSet(4),
+          .LocalGet(4),
+          .RefAsNonNull,
+          .I32Const(0),
+          .LocalGet(3),
+          .RefAsNonNull,
+          .I32Const(0),
+          .LocalGet(2),
+          .ArrayCopy(tai, tai),
+          .LocalGet(1),
+          .RefAsNonNull,
+          .StructGet(t_pvec_i64(), pv_len()),
+          .LocalGet(2),
+          .I32Add,
+          .LocalGet(1),
+          .RefAsNonNull,
+          .StructGet(t_pvec_i64(), pv_shift()),
+          .LocalGet(1),
+          .RefAsNonNull,
+          .StructGet(t_pvec_i64(), pv_root()),
+          .LocalGet(4),
+          .RefAsNonNull,
+          .StructNew(t_pvec_i64()),
+        ],
+      ),
+    ],
+  }
+}
+
 // append_centre(scratch: VecChildren, k: i32, centre: eqref, cs: i32,
 //                seam_shift: i32) -> i32
 // Append the seam subtree `centre` to scratch[k..]. When centre already sits at
@@ -2005,10 +2503,11 @@ fn concat_trees_fn() FuncDef {
 // wrap_leaf(leaf: Array) -> VecInternal
 // A shift-5 internal node holding `leaf` as its single child.
 fn wrap_leaf_fn() FuncDef {
-  // p0=leaf; L1=ch
+  // p0=leaf (any leaf array — Array or ArrayI64 — stored as a `ref eq` child);
+  // L1=ch
   .{
     name: "wrap_leaf",
-    params: [arr_ref()],
+    params: [ref_eq_()],
     results: [.Ref(false, .Named(t_vec_internal()))],
     locals: [vec_children_null()],
     body: [
@@ -3854,6 +4353,100 @@ fn promote_full_tail_fn() FuncDef {
       .RefCast(true, .Named(t_vec_internal())),
       .GlobalGet("empty_leaf"),
       .StructNew(t_pvec()),
+    ],
+  }
+}
+
+// vec_i64_roundtrip(xs: PVec?) -> PVec
+// Internal correctness hook for the typed PVecI64 family: build a PVecI64 from
+// a boxed Vector<Int>, then read every element back via len_i64/get_i64 into a
+// fresh boxed vector. A test asserts `vec_i64_roundtrip(xs) == xs` across many
+// sizes, exercising the typed builder + get over all trie shapes. (Dormant
+// until S2 routes idiomatic code to the typed family; remove or fold into a
+// unit test then.)
+fn vec_i64_roundtrip_fn() FuncDef {
+  tbi := t_boxed_int()
+
+  // p0=xs; L1=n, L2=bi (i64 builder), L3=i, L4=pv64, L5=bo (boxed builder)
+  .{
+    name: "vec_i64_roundtrip",
+    params: [pvec_null()],
+    results: [pvec_ref()],
+    locals: [.I32, arr_null(), .I32, pvec_i64_null(), arr_null()],
+    body: [
+      .LocalGet(0),
+      .RefAsNonNull,
+      .StructGet(t_pvec(), pv_len()),
+      .LocalSet(1),
+      .Call("builder_new_i64"),
+      .LocalSet(2),
+      .I32Const(0),
+      .LocalSet(3),
+      .Block(
+        "bbrk",
+        .None,
+        [
+          .Loop(
+            "blp",
+            .None,
+            [
+              .LocalGet(3),
+              .LocalGet(1),
+              .I32GeS,
+              .BrIf("bbrk"),
+              .LocalGet(2),
+              .LocalGet(0),
+              .LocalGet(3),
+              .Call("get"),
+              .RefCast(false, .Named(tbi)),
+              .StructGet(tbi, 0),
+              .Call("builder_push_i64"),
+              .LocalGet(3),
+              .I32Const(1),
+              .I32Add,
+              .LocalSet(3),
+              .Br("blp"),
+            ],
+          ),
+        ],
+      ),
+      .LocalGet(2),
+      .Call("builder_freeze_i64"),
+      .LocalSet(4),
+      .Call("builder_new"),
+      .LocalSet(5),
+      .I32Const(0),
+      .LocalSet(3),
+      .Block(
+        "rbrk",
+        .None,
+        [
+          .Loop(
+            "rlp",
+            .None,
+            [
+              .LocalGet(3),
+              .LocalGet(4),
+              .Call("len_i64"),
+              .I32GeS,
+              .BrIf("rbrk"),
+              .LocalGet(5),
+              .LocalGet(4),
+              .LocalGet(3),
+              .Call("get_i64"),
+              .StructNew(tbi),
+              .Call("builder_push"),
+              .LocalGet(3),
+              .I32Const(1),
+              .I32Add,
+              .LocalSet(3),
+              .Br("rlp"),
+            ],
+          ),
+        ],
+      ),
+      .LocalGet(5),
+      .Call("builder_freeze"),
     ],
   }
 }

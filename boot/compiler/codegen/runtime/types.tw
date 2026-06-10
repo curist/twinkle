@@ -46,6 +46,17 @@ pub fn module() WasmModule {
         true,
       ),
       .Struct(
+        "PVecI64",
+        [
+          .{ name: .Some("len"), mutable: false, ty: .I32 },
+          .{ name: .Some("shift"), mutable: false, ty: .I32 },
+          .{ name: .Some("root"), mutable: false, ty: .Ref(true, .Named("VecInternal")) },
+          .{ name: .Some("tail"), mutable: false, ty: .Ref(false, .Named("ArrayI64")) },
+        ],
+        .None,
+        true,
+      ),
+      .Struct(
         "HamtEntry",
         [
           .{ name: .Some("hash"), mutable: false, ty: .I64 },

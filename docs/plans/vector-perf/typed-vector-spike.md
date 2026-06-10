@@ -1,0 +1,70 @@
+# Typed `Vector<Int>` representation — de-risking spike
+
+**Status:** active (2026-06-10). First concrete step of the
+[typed-vector-representation.md](typed-vector-representation.md) master track,
+chosen over a full upfront plan to *measure the premise before committing
+multi-week effort*. Boot-only (no stage0 parity — routing only changes what
+boot emits; stage0 compiles the new boot source as ordinary Twinkle and the
+self-host fixed point is between two boot-compiled stages).
+
+## The premise being tested
+
+`xs[i]` on `Vector<Int>` today: bounds-check → `rt_arr__get` (trie walk →
+`anyref` leaf element) → `ref.cast BoxedInt` → `struct.get i64`. The boxed leaf
+holds an `anyref` pointer to a **separate, scattered `BoxedInt` heap object**, so
+each read is a pointer-chase + cast on top of the trie walk. A typed `PVecI64`
+walks the **same trie** but its leaves store `i64` inline → one `array.get i64`,
+no chase, no cast. The spike measures whether removing that per-read scattered
+pointer-chase is worth the typed-storage machinery. (The random boxed read is
+~16 ns; the trie walk is shared, so the saving is the leaf-egress delta.)
+
+## Design
+
+- New GC struct `PVecI64` = same shape as `PVec` but `tail: ref ArrayI64`.
+- **Reuse** `VecInternal`/`VecChildren` for the trie: children are `ref null eq`,
+  which hold `ArrayI64` leaves (all GC arrays are `eq` subtypes). Only the leaves
+  and tail are typed; internal nodes are shared.
+- `ArrayI64` already exists (from the `sort_i64` kernel).
+- Typed ops mirror `rt.arr` with ~5 substitutions (struct type → `PVecI64`, leaf
+  array → `ArrayI64`, result/elem `anyref` → `i64`).
+
+## Steps
+
+- [x] **S1 — typed runtime family + direct microbench (the measurement). DONE — gate passed decisively (2026-06-10).**
+  Built `PVecI64` (struct in `runtime/types.tw`) + `rt.arr` ops `len_i64`,
+  `get_i64`, `promote_full_tail_i64`, `builder_new_i64`/`push_i64`/`freeze_i64`
+  + `empty_pvec_i64`/`empty_leaf_i64` globals. The trie-build helpers are
+  shared: `new_path`/`push_tail` treat leaves as opaque `ref eq` (widened
+  `wrap_leaf`'s param `ref Array` → `ref eq` to match). **Key correction:** the
+  RRB `concat_trees` is *not* leaf-agnostic — it casts leaves to boxed `Array`
+  to rebalance — so the typed builder uses a **radix** append (`push_tail` +
+  manual root-overflow growth), which is correct since builders only produce
+  strict vectors. A/B microbench A/B'd via two temp internal builtins
+  (`bench_read_i64`/`bench_read_boxed`, identical LCG index sequence → matching
+  checksums verify correctness across all trie depths n=33…100000…1M).
+
+  **Result at N=1M, 10M random reads (quiet machine, stable across runs):**
+
+  | path | time | per read |
+  |---|---:|---:|
+  | boxed `rt.arr` get + `BoxedInt` cast/deref | ~610–628 ms | ~61 ns |
+  | typed `PVecI64` `get_i64` (raw i64 leaf) **incl. one-time build** | ~90 ms | ~9 ns |
+
+  **~6.8× faster** — and the typed number *includes* building the `PVecI64`
+  from the boxed input once (~1M boxed reads + typed pushes), so the pure typed
+  read is even cheaper. Confirms the premise: the scattered `BoxedInt`
+  pointer-chase was the dominant per-read cost; the shared trie walk is cheap.
+  Typed `Vector<Int>` storage is validated as the master lever. **Proceed to S2.**
+- [ ] **S2 — source-level repr routing.** Recognize intra-function
+  typed-eligible `Vector<Int>` and route `collect`/literal → typed builder,
+  `xs[i]` → `get_i64`, `xs.len()` → `len_i64`; erase `PVecI64 → PVecAnyref` at
+  every call boundary (coercion: box each `i64`). Verifier must forbid feeding a
+  `PVecI64` slot to a generic anyref-vector helper without the coercion.
+- [ ] **S3 — confirm idiomatic path.** Extend the microbench to source-level
+  `collect`/`xs[i]`/`len` and confirm it matches the S1 internal-op number.
+
+## Deferred past the spike (the rest of the track)
+
+Cross-function typed ABIs, typed `gather`/`sort`/`map`/`filter`, contract
+awareness (`Stringify`/`Eq`/iteration), `Float`/`Bool`/`Byte` families,
+`set`/`slice`/`concat` over typed storage. Only pursue if the spike wins.

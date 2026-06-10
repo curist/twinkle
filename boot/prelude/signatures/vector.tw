@@ -51,6 +51,13 @@ pub fn sort_f64(xs: Vector<Float>) Vector<Float> {
   xs
 }
 
+// Internal correctness hook for the typed PVecI64 family (typed-vector spike).
+// Builds a typed i64 vector from xs and reads it all back; a test asserts the
+// result equals xs. Not user-facing; dormant until typed-vector routing lands.
+pub fn vec_i64_roundtrip(xs: Vector<Int>) Vector<Int> {
+  xs
+}
+
 /// Return the element at index, or None if out of bounds.
 pub fn get<T>(xs: Vector<T>, index: Int) Option<T> {
   .None

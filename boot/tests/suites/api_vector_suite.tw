@@ -263,6 +263,30 @@ pub fn suite() runner.Suite {
       },
     )
     .test(
+      "typed PVecI64 roundtrip equals identity across trie shapes",
+      fn() {
+        // Build a boxed Vector<Int>, rebuild it through the typed i64 family,
+        // and read every element back — must equal the original. Sizes cover
+        // empty/tail-only/first-promotion/level-boundary/multi-level tries;
+        // values span negatives to exercise i64 sign handling.
+        sizes: Vector<Int> = [0, 1, 31, 32, 33, 64, 65, 1023, 1024, 1025, 2000, 5000]
+
+        for n in sizes {
+          xs := collect i in range(n) {
+            i * 2654435761 % 100000 - 50000
+          }
+          rt := xs.vec_i64_roundtrip()
+          try assert.equal(rt.len(), n)
+
+          for x, k in xs {
+            try assert.equal(rt[k], x)
+          }
+        }
+
+        .Ok({})
+      },
+    )
+    .test(
       "set returns new vector with updated element",
       fn() {
         xs: Vector<Int> = [10, 20, 30]

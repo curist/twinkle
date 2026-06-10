@@ -129,6 +129,7 @@ fn builtin_abi(name: String) AbiContract {
     "vector$gather" => abi([pvec_n(), pvec_n()], [pvec_()]),
     "vector$sort_i64" => abi([pvec_n()], [pvec_()]),
     "vector$sort_f64" => abi([pvec_n()], [pvec_()]),
+    "vector$vec_i64_roundtrip" => abi([pvec_n()], [pvec_()]),
     "vector$builder_new" => abi([], [arr_()]),
     "vector$builder_push" => abi([arr_n(), .Anyref], []),
     "vector$builder_freeze" => abi([arr_n()], [pvec_()]),
@@ -511,6 +512,7 @@ pub fn builtin_specs() Vector<BuiltinSpec> {
     rt("vector$gather", "rt.arr", "gather", .Some("Vector.gather")),
     rt("vector$sort_i64", "rt.arr", "sort_i64", .None),
     rt("vector$sort_f64", "rt.arr", "sort_f64", .None),
+    rt("vector$vec_i64_roundtrip", "rt.arr", "vec_i64_roundtrip", .Some("Vector.vec_i64_roundtrip")),
   ]
 }
 

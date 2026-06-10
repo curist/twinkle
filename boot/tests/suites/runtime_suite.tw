@@ -924,8 +924,8 @@ fn test_rt_arr_no_imports() Result<Void, String> {
 fn test_rt_arr_has_globals() Result<Void, String> {
   m := rt_arr.module()
 
-  // empty_leaf and empty_pvec globals
-  try assert.equal(m.globals.len(), 2)
+  // empty_leaf/empty_pvec (boxed) + empty_leaf_i64/empty_pvec_i64 (typed)
+  try assert.equal(m.globals.len(), 4)
   .Ok({})
 }
 
