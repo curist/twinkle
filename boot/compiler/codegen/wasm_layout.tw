@@ -53,6 +53,13 @@ pub type WasmClosureLayout = .{
 
 pub type WasmIteratorLayout = .{ state_sym: String, step_sym: String, yield_layout: WasmLayout }
 
+fn is_int_vector_field(ty: MonoType) Bool {
+  case ty {
+    .Vector(.Int) => true,
+    _ => false,
+  }
+}
+
 // ── mono_to_key ─────────────────────────────────────────────────────
 pub fn mono_to_key(ty: MonoType) String {
   case ty {
@@ -212,11 +219,17 @@ fn layout_of_named(tid: TypeId, args: Vector<MonoType>, env: ResolvedEnv) WasmLa
       field_layouts := collect f, i in fields {
         // Substitute type params with concrete args
         field_ty := subst_type_params(f.ty, type_params, args)
-        WasmFieldLayout.{
-          field_id: FieldId.{ id: i },
-          name: f.name,
-          val_type: val_type_of_mono(field_ty, env),
+
+        // Typed-field key uses the field's position i, which equals its FieldId.id
+        // (record fields are numbered 0..n-1 positionally); matches the "${tid}:${fid}"
+        // keys the typed-field analysis produces from ARecord/ARecordGet FieldIds.
+        vt: ValType = if env.typed_vector_fields.has("${tid.id}:${i}")
+          and is_int_vector_field(field_ty) {
+          .Ref(true, .Named("rt_types__PVecI64"))
+        } else {
+          val_type_of_mono(field_ty, env)
         }
+        WasmFieldLayout.{ field_id: FieldId.{ id: i }, name: f.name, val_type: vt }
       }
       .Record(WasmRecordLayout.{ type_id: tid, sym, fields: field_layouts })
     },

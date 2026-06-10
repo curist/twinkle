@@ -448,6 +448,54 @@ fn test_mono_to_key_stable() Result<Void, String> {
   assert.equal(a, b)
 }
 
+// ── layout_of: typed vector fields ──────────────────────────────────
+fn test_layout_record_vector_int_field_becomes_pveci64_when_flagged() Result<Void, String> {
+  fields := [ResolvedField.{ name: "col", ty: .Vector(.Int) }]
+  base := env_with_record("Col", 30, fields)
+  base.typed_vector_fields["30:0"] = true
+  l := layout_of(.Named(TypeId.{ id: 30 }, []), base)
+
+  case l {
+    .Record(r) => {
+      vt := r.fields[0].val_type
+
+      case vt {
+        .Ref(_, ht) => case ht {
+          .Named(n) => assert.equal(n, "rt_types__PVecI64"),
+          _ => assert.fail("expected Named heap type"),
+        },
+        _ => assert.fail("expected Ref val_type"),
+      }
+    },
+    _ => assert.fail("expected Record layout"),
+  }
+}
+
+fn test_layout_record_vector_int_field_stays_boxed_when_not_flagged() Result<Void, String> {
+  fields := [ResolvedField.{ name: "col", ty: .Vector(.Int) }]
+  base := env_with_record("Col", 31, fields)
+  l := layout_of(.Named(TypeId.{ id: 31 }, []), base)
+
+  case l {
+    .Record(r) => {
+      vt := r.fields[0].val_type
+
+      case vt {
+        .Ref(nullable, ht) => {
+          try assert.equal(nullable, true)
+
+          case ht {
+            .Named(n) => assert.equal(n, "rt_types__PVec"),
+            _ => assert.fail("expected Named rt_types__PVec"),
+          }
+        },
+        _ => assert.fail("expected Ref val_type"),
+      }
+    },
+    _ => assert.fail("expected Record layout"),
+  }
+}
+
 // ── Suite ───────────────────────────────────────────────────────────
 pub fn suite() runner.Suite {
   runner.suite("wasm layout")
@@ -485,4 +533,12 @@ pub fn suite() runner.Suite {
     .test("mono_to_key Optional", test_mono_to_key_optional)
     .test("mono_to_key Result", test_mono_to_key_result)
     .test("mono_to_key stable", test_mono_to_key_stable)
+    .test(
+      "layout_of record Vector<Int> field becomes PVecI64 when flagged typed",
+      test_layout_record_vector_int_field_becomes_pveci64_when_flagged,
+    )
+    .test(
+      "layout_of record Vector<Int> field stays boxed when not flagged",
+      test_layout_record_vector_int_field_stays_boxed_when_not_flagged,
+    )
 }

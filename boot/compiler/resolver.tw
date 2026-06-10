@@ -123,6 +123,7 @@ pub type ResolvedEnv = .{
   extern_namespaces: Dict<String, Bool>,
   value_bindings: Dict<String, MonoType>,
   value_origins: Dict<String, FunctionOrigin>,
+  typed_vector_fields: Dict<String, Bool>,
 }
 
 pub fn empty_env() ResolvedEnv {
@@ -142,6 +143,7 @@ pub fn empty_env() ResolvedEnv {
     extern_namespaces: Dict.new(),
     value_bindings: Dict.new(),
     value_origins: Dict.new(),
+    typed_vector_fields: Dict.new(),
   }
 }
 
