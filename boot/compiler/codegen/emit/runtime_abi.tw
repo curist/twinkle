@@ -28,6 +28,8 @@ pub fn is_builder_buffer_arg(name: String, index: Int) Bool {
   index == 0
     and (name == "vector$builder_push"
       or name == "vector$builder_freeze"
+      or name == "vector$builder_push_i64"
+      or name == "vector$builder_freeze_i64"
       or name == "string$builder_extend"
       or name == "string$builder_freeze")
 }

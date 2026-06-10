@@ -87,32 +87,34 @@ pointer-chase is worth the typed-storage machinery. (The random boxed read is
     mechanism + measures idiomatic source*; broad reach needs the coercion +
     cross-function increments (deferred).
 
-  **S2.0 status (2026-06-10): ~90% built, UNCOMMITTED, two integration bugs to
-  fix before it works.** Built and working: typed builtin wiring
-  (`builtins.tw`); `builder_push_i64` takes a boxed element (unbox inside);
-  eligibility + escape analysis + rewrite (`backend/route_typed_vec.tw`, wired
-  in `prepare.tw`); verifier exception for a PVecI64 `Vector<Int>` slot
-  (`verify_slots.tw`); emit `xs[i]` routing by base wasm type (`emit/arrays.tw`);
-  `freeze_i64`/`new_i64`/`push_i64` skip the mono-driven result adaption
-  (`runtime_abi.tw`/`calls.tw`). Verified: the read path routes (PVecI64
-  bounds-check + `get_i64`), the slot retypes to PVecI64, self-host stays green
-  (routing is dormant on boot's own code — all its vectors escape). **Two bugs:**
-  1. **Builder lineage vs `loop_builder`.** `collect`'s builder is threaded as a
-     loop accumulator (AAssign rebinding), so `builder_new`'s result slot ≠ the
-     `freeze`'s arg slot. The rewrite swaps `builder_new`→`_i64` only by the
-     freeze-arg slot, so `builder_new` stays boxed → a boxed `empty_pvec` sits in
-     the typed builder state → `freeze_i64` casts it to PVecI64 → illegal cast at
-     runtime. **Fix:** identify the builder lineage by `source_local` (all SSA
-     slots of the builder var), not a single slot id; swap every
-     `builder_new/push/freeze` whose builder operand shares that source_local.
-  2. **Erased index-result slot.** The `xs[i]` result slot is anyref-erased
-     (boundary insertion), so the typed path boxes the raw i64 and the next op
-     unboxes it — correct but reintroduces per-read boxing, erasing the win.
-     **Fix:** keep the index result unboxed when the consumer is i64 (extend
-     eligibility/coercion to retype the index-result slot to i64), or run
-     routing before boundary insertion for the read side.
-- [ ] **S3 — confirm idiomatic path.** Extend the microbench to source-level
-  `collect`/`xs[i]`/`len` and confirm it matches the S1 internal-op number.
+  **S2.0 status: WORKING (2026-06-10).** Idiomatic `collect` + random `xs[i]` +
+  scalar return now routes to PVecI64 and gets the full win: at N=1M / 10M reads,
+  **boxed ~540–577 ms vs typed ~82 ms (~6.8×)**, matching the S1 internal-op
+  number; checksums match the boxed path. Self-host converges with routing
+  enabled and all 2571 tests pass; dataframe `order_by` unaffected (its columns
+  escape, so they don't route — the conservative no-boundary eligibility holds).
+
+  Getting there from the gated commit took three fixes (the builder is threaded
+  through copies, and routing after boundary insertion must reproduce the boxed
+  builder's slot erasure):
+  1. **Builder lineage across copies.** `builder_new`'s result goes to a temp
+     `p2`, then `p3 := p2` (an `AInit` copy), and `p3` is the builder threaded to
+     push/freeze. Matching `builder_new` by the freeze-arg slot (`p3`) missed
+     `p2`, leaving it boxed → illegal cast. **Fix:** a copy-map
+     (`Let(dst, AInit(ASlot(src)))`), traced backward from the freeze arg so
+     every builder slot (incl. the `builder_new` result) is in `eligible_b`.
+  2. **Builder slot erasure.** The boxed builder slots are `OpaqueAnyref`/anyref
+     (so `builder_new` returning `Array` fits and the arg shim casts to `Array`).
+     route_func receives the threaded copy as `TypedRef`/`PVec`, so it must
+     re-erase the `eligible_b` slots to `OpaqueAnyref`/anyref itself.
+  3. **Builder-arg shim for the `_i64` ops.** `is_builder_buffer_arg`
+     (`runtime_abi.tw`) must include `builder_push_i64`/`builder_freeze_i64` so
+     their arg-0 builder is cast `anyref → Array` (not to the mono-derived PVec).
+
+  The earlier-feared "erased index-result re-boxing" turned out not to hurt — the
+  measured ~6.8× shows the read win is fully realized (the optimizer cleans up).
+- [x] **S3 — confirm idiomatic path.** Done: the `collect`+`xs[i]` bench above
+  matches S1's ~7× at the source level.
 
 ## Deferred past the spike (the rest of the track)
 

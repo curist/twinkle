@@ -17,6 +17,7 @@
 use compiler.anf.{AnfModule}
 use compiler.backend.prepared_ir.{CaptureParam, PreparedFunc}
 use compiler.backend.repr_assign.{assign_repr_for_module}
+use compiler.backend.route_typed_vec.{route_typed_vectors}
 use compiler.backend.slot_assign.{assign_slots_for_module}
 use compiler.builtins.{BuiltinRegistry}
 use compiler.codegen.insert_boundaries.{insert_boundaries}
@@ -59,12 +60,8 @@ pub fn prepare_backend(
   // defaults using MonoType and boundary-op overrides.
   funcs2 := assign_repr_for_module(funcs, env, builtins)
 
-  // Typed Vector<Int> routing (route_typed_vec.route_typed_vectors) is built but
-  // GATED OFF: it has two integration bugs (builder lineage vs loop_builder, and
-  // an erased index-result slot that re-boxes the read) documented in
-  // docs/plans/vector-perf/typed-vector-spike.md (S2.0 status). Re-enable by
-  // importing route_typed_vectors and wrapping funcs2 once those are fixed.
-  .{ anf: anf2, closure_captures, funcs: funcs2 }
+  funcs3 := route_typed_vectors(funcs2, builtins)
+  .{ anf: anf2, closure_captures, funcs: funcs3 }
 }
 
 fn empty_registry() WasmTypeRegistry {

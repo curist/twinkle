@@ -11,10 +11,23 @@
 /// Runs after assign_repr_for_module (so wasm_type overrides stick and push
 /// elements are already boxed — builder_push_i64 takes the boxed element).
 
-use compiler.backend.prepared_ir.{PreparedAtom, PreparedExpr, PreparedFunc, PreparedOp, SlotInfo}
+use compiler.backend.prepared_ir.{
+  PreparedAtom, PreparedExpr, PreparedFunc, PreparedOp, ReprKind, SlotInfo,
+}
 use compiler.builtins as bi
 use compiler.builtins.{BuiltinRegistry}
 use compiler.codegen.wasm_ir.{ValType}
+
+fn with_repr_wasm(info: SlotInfo, repr: ReprKind, wasm_type: ValType) SlotInfo {
+  .{
+    slot: info.slot,
+    source_local: info.source_local,
+    role: info.role,
+    mono: info.mono,
+    repr,
+    wasm_type,
+  }
+}
 
 type Cand = .{ v: Int, b: Int }
 
@@ -53,13 +66,32 @@ fn route_func(pf: PreparedFunc, ids: RouteIds) PreparedFunc {
   cands := collect_candidates(pf.body, pf.slots, ids, [])
 
   // 2. Keep only candidates whose v never escapes (used solely by index/len).
+  //    The builder is threaded through plain copies (builder_new -> temp, then
+  //    temp -> builder_local), so follow the copy chain backward from the freeze
+  //    argument to mark every builder slot (incl. the builder_new result).
+  copy_map := build_copy_map(pf.body, Dict.new())
   eligible_v: Dict<Int, Bool> = Dict.new()
   eligible_b: Dict<Int, Bool> = Dict.new()
 
   for c in cands {
     if !v_escapes(pf.body, c.v, ids.len) {
       eligible_v[c.v] = true
-      eligible_b[c.b] = true
+      cur := c.b
+      steps := 0
+
+      for steps < 64 {
+        eligible_b[cur] = true
+
+        case copy_map[cur] {
+          .Some(src) => {
+            cur = src
+            steps = steps + 1
+          },
+          .None => {
+            steps = 64
+          },
+        }
+      }
     }
   }
 
@@ -67,22 +99,31 @@ fn route_func(pf: PreparedFunc, ids: RouteIds) PreparedFunc {
     return pf
   }
 
-  // 3. Swap builder/len calls to _i64 variants and retype the result slots.
+  // 3. Swap builder/len calls to _i64 variants and retype the slots.
+  //    - Result slots (eligible_v) become PVecI64 (typed reads).
+  //    - Builder-lineage slots (eligible_b) hold the erased anyref builder
+  //      handle: builder_new_i64 returns Array (like the boxed builder), and the
+  //      builder-arg shim casts anyref -> Array at each push/freeze, so the slot
+  //      must be OpaqueAnyref/anyref (matching how the boxed builder is erased).
   new_body := rewrite(pf.body, eligible_v, eligible_b, ids)
   new_slots: Dict<Int, SlotInfo> = pf.slots
 
   for sid_int in pf.slots.keys() {
     case pf.slots[sid_int] {
-      .Some(info) => if eligible_v.has(info.slot.id) {
-        new_slots[sid_int] = SlotInfo.{
-          slot: info.slot,
-          source_local: info.source_local,
-          role: info.role,
-          mono: info.mono,
-          repr: info.repr,
-          wasm_type: ValType.Ref(true, .Named("rt_types__PVecI64")),
+      .Some(info) => {
+        retyped: SlotInfo? = cond {
+          eligible_v.has(info.slot.id) => .Some(
+            with_repr_wasm(info, info.repr, .Ref(true, .Named("rt_types__PVecI64"))),
+          ),
+          eligible_b.has(info.slot.id) => .Some(with_repr_wasm(info, .OpaqueAnyref, .Anyref)),
+          _ => .None,
         }
-      } else {},
+
+        case retyped {
+          .Some(ni) => new_slots[sid_int] = ni,
+          .None => {},
+        }
+      },
       .None => {},
     }
   }
@@ -168,6 +209,47 @@ fn collect_candidates_op(
     },
     .ALoop(inner) => collect_candidates(inner, slots, ids, acc),
     .ADefer(inner) => collect_candidates(inner, slots, ids, acc),
+    _ => acc,
+  }
+}
+
+// Map each slot defined by a plain copy `Let(dst, AInit(ASlot(src)), _)` to its
+// source, so the builder lineage (builder_new result -> ... -> freeze arg) can
+// be traced across the copies introduced by lowering/slot assignment.
+fn build_copy_map(expr: PreparedExpr, acc: Dict<Int, Int>) Dict<Int, Int> {
+  case expr {
+    .Let(slot, op, body) => {
+      acc2 := case op {
+        .AInit(.ASlot(src)) => {
+          acc[slot.id] = src.id
+          acc
+        },
+        _ => acc,
+      }
+      acc3 := copy_map_op(op, acc2)
+      build_copy_map(body, acc3)
+    },
+    _ => acc,
+  }
+}
+
+fn copy_map_op(op: PreparedOp, acc: Dict<Int, Int>) Dict<Int, Int> {
+  case op {
+    .AIf(_, then_e, else_e) => {
+      acc2 := build_copy_map(then_e, acc)
+      build_copy_map(else_e, acc2)
+    },
+    .AMatch(_, arms) => {
+      cur := acc
+
+      for arm in arms {
+        cur = build_copy_map(arm.body, cur)
+      }
+
+      cur
+    },
+    .ALoop(inner) => build_copy_map(inner, acc),
+    .ADefer(inner) => build_copy_map(inner, acc),
     _ => acc,
   }
 }
