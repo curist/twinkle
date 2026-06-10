@@ -105,7 +105,77 @@ pub fn emit_closure_call(
   fns: ClosureEmitFns,
 ) Vector<Instr> {
   entry := lookup_slot(ctx, lid)
-  emit_universal_closure_call(entry, args, result_idx, result_mono, ctx, buf, fns)
+
+  case try_emit_typed_closure_call(entry, args, result_idx, result_mono, ctx, buf, fns) {
+    .Some(out) => out,
+    .None => emit_universal_closure_call(entry, args, result_idx, result_mono, ctx, buf, fns),
+  }
+}
+
+/// Non-tail typed closure call: when the callee has a concrete closure layout,
+/// `ref.test` for the typed struct and, on the hot path, call its typed funcref
+/// (field 2) with **unboxed** args — no per-call arg boxing, no args array, and
+/// the typed result is used directly (no Variant round-trip). Falls back to the
+/// universal erased call for closures without the typed struct (e.g. builtins).
+/// This is the value-producing analogue of `emit_closure_tail_call`.
+fn try_emit_typed_closure_call(
+  entry: LocalEntry,
+  args: Vector<PreparedAtom>,
+  result_idx: Int,
+  result_mono: MonoType,
+  ctx: EmitCtx,
+  buf: Vector<Instr>,
+  fns: ClosureEmitFns,
+) Vector<Instr>? {
+  // Keep result handling to a single LocalSet: only value-returning closures.
+  // Void/Never closures (rare, not the comparator shape) take the universal path.
+  case result_mono {
+    .Void => { return .None },
+    .Never => { return .None },
+    _ => {},
+  }
+
+  case entry.mono {
+    .Function(_, _) => {},
+    _ => { return .None },
+  }
+
+  case cached_layout_of(entry.mono, ctx) {
+    .Closure(cl) => {
+      // Typed path: env (field 1) + unboxed args + typed funcref (field 2).
+      typed_buf: Vector<Instr> = []
+      typed_buf = .append(.LocalGet(entry.index)).append(.RefCast(true, .Named(cl.closure_sym))).append(
+        .StructGet(cl.closure_sym, 1),
+      )
+
+      for a in args {
+        typed_buf = fns.emit_atom(a, ctx, typed_buf)
+      }
+
+      typed_buf = .append(.LocalGet(entry.index)).append(.RefCast(true, .Named(cl.closure_sym))).append(
+        .StructGet(cl.closure_sym, 2),
+      )
+      typed_buf = .append(.CallRef(cl.typed_func_type_sym)).append(.LocalSet(result_idx))
+
+      // Fallback: the existing universal erased call, also writing result_idx.
+      fallback_buf := emit_universal_closure_call(
+        entry,
+        args,
+        result_idx,
+        result_mono,
+        ctx,
+        [],
+        fns,
+      )
+
+      out := buf.append(.LocalGet(entry.index))
+        .append(.RefTest(true, .Named(cl.closure_sym)))
+        .append(.If(.None, typed_buf, fallback_buf))
+
+      .Some(out)
+    },
+    _ => .None,
+  }
 }
 
 fn emit_universal_closure_call(
