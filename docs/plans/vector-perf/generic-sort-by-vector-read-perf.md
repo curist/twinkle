@@ -320,13 +320,18 @@ Approach C failed because dense scratch access was opaque: per-element runtime c
 
 Real but small per the measured decomposition: closure boundary (~12%) plus enum/`Order` allocation (~9%) ≈ ~21% of the 743 ms mechanics half ≈ ~6% of the 7× gap. Do the enum-representation fix opportunistically because it is broad and low-risk, but do not expect parity from this track.
 
-### T3.1 Payload-free variant representation (enums in general, not just `Order`)
+### T3.1 Payload-free variant representation (enums in general, not just `Order`) — DONE (singleton globals, 2026-06-10)
 
 Every payload-free variant literal currently emits `StructNew` (`boot/compiler/codegen/emit/variants.tw`); sum types are a tagged GC struct. The cost is only paid across an opaque closure boundary (the `sort_by` shape) — the optimizer already fuses construct-then-match when the producer is inlined. `enum_alloc_probe.tw` confirms a user-defined `Cmp3` behaves identically to `Order`, so any fix must target payload-free variants generally.
 
-- [ ] Prototype representing payload-free-only enums as a bare i32 tag, or caching nullary variants as module-global singletons (one `StructNew` at init, reused).
-- [ ] Mind the cross-cutting blast radius: pattern-match conditions, default-payload emission (`emit.tw`), `insert_boundaries.tw`, and stage0 parity.
-- [ ] Gate on `enum_alloc_probe.tw` and `sort_by(Int.compare)`.
+**Landed via the module-global-singleton variant** (commit `codegen: hoist payload-free variant literals to shared globals`), not the i32-tag representation change. Rationale: caching one immutable instance per nullary variant is a pure backend change with no blast radius into pattern-match conditions, repr, or `insert_boundaries.tw`, and no stage0 parity work (the logic lives in boot's Twinkle source, which stage0 simply compiles — like the string-builder rewrite). The i32-tag alternative would touch all of those and was not needed.
+
+- [x] Cache nullary variants as immutable module-global singletons (one `StructNew` at init, reused via `global.get`). The planner demand-collects constructed nullary variants (second-pass slot-mono walk in `wasm_plan_scan.tw`, mirroring the closure-mono pass) and registers one global per eligible `(sum, variant)`; emission diverts to `global.get`.
+- [x] Eligibility gate: every sibling payload slot must have a *constant* default (`variant_singleton_eligible` in `wasm_layout.tw`). A non-nullable ref default needs `ref.as_non_null`, which is not a constant expression — those sums keep the inline `StructNew`. Covers `Order` (no payloads) and `Option`/enums whose other variants carry primitives or nullable refs.
+- [x] Blast radius avoided, not managed: no i32-tag repr change, so pattern-match conditions / default-payload emission / `insert_boundaries.tw` / stage0 are untouched. Demand collection (not eager enumeration) keeps the boot module free of dead globals.
+- [x] Gated on `enum_alloc_probe.tw` and `sort_repeat_probe.tw`. Measured at N=1M: generic `sort_by(Int.compare)` ~645 → ~610 ms; key-index ~2260 → ~2200 ms; native `xs.sort()` unchanged (constructs no `Order`). The broader payoff is every `.None`/nullary variant in user *and* compiler code.
+
+Not pursued: the i32-tag representation for payload-free-only enums. The singleton approach captured the allocation win with far less risk; revisit i32-tag only if profiling shows the remaining tagged-struct loads (vs a bare i32) matter.
 
 ### T3.2 Closure call representation
 
