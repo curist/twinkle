@@ -428,6 +428,167 @@ fn user_direct_call_accepts_boxed_arg(
   }
 }
 
+// ── V-group classifier ───────────────────────────────────────────────
+// Result of classifying how a typed-vector v-group is used.
+// - escapes: true if used by anything other than index/len/return/break and
+//   record-field stores.
+// - field_keys: the "${tid}:${fid}" keys this group is stored into via
+//   ARecord / ARecordUpdate (Vector<Int> fields only). May contain duplicates
+//   (e.g. the same field assigned in both arms of a match); callers that need
+//   a set must de-duplicate.
+type VGroupUse = .{ escapes: Bool, field_keys: Vector<String> }
+
+fn merge_use(a: VGroupUse, b: VGroupUse) VGroupUse {
+  .{ escapes: a.escapes or b.escapes, field_keys: a.field_keys.concat(b.field_keys) }
+}
+
+// Under the current callers, vs only ever contains Vector<Int> slots, so the
+// non-Vector<Int> branches that depend on this are defensive.
+fn atom_is_int_vector_slot(atom: PreparedAtom, slots: Dict<Int, SlotInfo>) Bool {
+  case atom {
+    .ASlot(s) => case slots[s.id] {
+      .Some(info) => is_int_vector(mono_key_of(info)),
+      .None => false,
+    },
+    _ => false,
+  }
+}
+
+fn classify_v_group(
+  expr: PreparedExpr,
+  vs: Dict<Int, Bool>,
+  len_id: Int,
+  builtins: BuiltinRegistry,
+  slots: Dict<Int, SlotInfo>,
+) VGroupUse {
+  classify_expr(expr, vs, len_id, builtins, slots)
+}
+
+fn classify_expr(
+  expr: PreparedExpr,
+  vs: Dict<Int, Bool>,
+  len_id: Int,
+  builtins: BuiltinRegistry,
+  slots: Dict<Int, SlotInfo>,
+) VGroupUse {
+  case expr {
+    .Let(_, op, body) => {
+      op_use := classify_op(op, vs, len_id, builtins, slots)
+      body_use := classify_expr(body, vs, len_id, builtins, slots)
+      merge_use(op_use, body_use)
+    },
+    .Atom(a) => .{ escapes: slot_in(a, vs), field_keys: [] },
+    .Return(.Some(_)) => .{ escapes: false, field_keys: [] },
+    .Break(.Some(a)) => .{ escapes: slot_in(a, vs), field_keys: [] },
+    _ => .{ escapes: false, field_keys: [] },
+  }
+}
+
+// Mirrors op_group_escapes arm-for-arm; ONLY the ARecord and ARecordUpdate arms
+// intentionally differ (they record field-store keys instead of escaping). Keep
+// the two in sync if op_group_escapes changes.
+fn classify_op(
+  op: PreparedOp,
+  vs: Dict<Int, Bool>,
+  len_id: Int,
+  builtins: BuiltinRegistry,
+  slots: Dict<Int, SlotInfo>,
+) VGroupUse {
+  case op {
+    .ACall(callee, args) => case callee {
+      // len(v) is the allowed builtin call use.
+      .AGlobalFunc(fid) => if fid.id == len_id and args.len() == 1 and slot_in(args[0], vs) {
+        .{ escapes: false, field_keys: [] }
+      } else {
+        if user_direct_call_accepts_boxed_arg(fid, args, vs, builtins) {
+          .{ escapes: false, field_keys: [] }
+        } else {
+          .{ escapes: atoms_contain_any(args, vs) or slot_in(callee, vs), field_keys: [] }
+        }
+      },
+      _ => .{ escapes: atoms_contain_any(args, vs) or slot_in(callee, vs), field_keys: [] },
+    },
+    // xs[i] Array read: base may be in the vector alias set, index may not.
+    .AIndex(base, index, kind, _) => case kind {
+      .Array => .{ escapes: slot_in(index, vs), field_keys: [] },
+      _ => .{ escapes: slot_in(base, vs) or slot_in(index, vs), field_keys: [] },
+    },
+    .AIf(cnd, then_e, else_e) => {
+      cnd_esc: VGroupUse = .{ escapes: slot_in(cnd, vs), field_keys: [] }
+      then_use := classify_expr(then_e, vs, len_id, builtins, slots)
+      else_use := classify_expr(else_e, vs, len_id, builtins, slots)
+      merge_use(cnd_esc, merge_use(then_use, else_use))
+    },
+    .AMatch(scrut, arms) => {
+      acc: VGroupUse = .{ escapes: slot_in(scrut, vs), field_keys: [] }
+
+      for arm in arms {
+        arm_use := classify_expr(arm.body, vs, len_id, builtins, slots)
+        acc = merge_use(acc, arm_use)
+      }
+
+      acc
+    },
+    .ALoop(inner) => classify_expr(inner, vs, len_id, builtins, slots),
+    .ADefer(inner) => classify_expr(inner, vs, len_id, builtins, slots),
+    .ABinOp(_, l, r, _) => .{ escapes: slot_in(l, vs) or slot_in(r, vs), field_keys: [] },
+    .AUnOp(_, a, _) => .{ escapes: slot_in(a, vs), field_keys: [] },
+    .AMakeClosure(_, free_vars) => {
+      esc := false
+
+      for fv in free_vars {
+        if vs.has(fv.id) {
+          esc = true
+        }
+      }
+
+      .{ escapes: esc, field_keys: [] }
+    },
+    .ARecord(tid, fields) => {
+      // A Vector<Int> field value is a typed store (record the key); a v-group value
+      // in a non-Vector<Int> field is a genuine escape.
+      acc: VGroupUse = .{ escapes: false, field_keys: [] }
+
+      for f in fields {
+        if slot_in(f.value, vs) {
+          if atom_is_int_vector_slot(f.value, slots) {
+            key := "${tid.id}:${f.field.id}"
+            acc = merge_use(acc, .{ escapes: false, field_keys: [key] })
+          } else {
+            acc = merge_use(acc, .{ escapes: true, field_keys: [] })
+          }
+        }
+      }
+
+      acc
+    },
+    .ARecordGet(t, _, _) => .{ escapes: slot_in(t, vs), field_keys: [] },
+    .ARecordUpdate(b, fid, val, _, tid) => {
+      // If val is a typed-vector value being stored into the field — record it.
+      // If base is a typed-vector (shouldn't happen) — genuine escape.
+      val_use: VGroupUse = if slot_in(val, vs) {
+        if atom_is_int_vector_slot(val, slots) {
+          key := "${tid.id}:${fid.id}"
+          .{ escapes: false, field_keys: [key] }
+        } else {
+          .{ escapes: true, field_keys: [] }
+        }
+      } else {
+        .{ escapes: false, field_keys: [] }
+      }
+
+      base_esc: VGroupUse = .{ escapes: slot_in(b, vs), field_keys: [] }
+      merge_use(base_esc, val_use)
+    },
+    .AVariant(_, _, args) => .{ escapes: atoms_contain_any(args, vs), field_keys: [] },
+    .AArrayLit(items) => .{ escapes: atoms_contain_any(items, vs), field_keys: [] },
+    .AInit(_) => .{ escapes: false, field_keys: [] },
+    .AAssign(_, a) => .{ escapes: slot_in(a, vs), field_keys: [] },
+    .AWrapAnyref(a, _) => .{ escapes: slot_in(a, vs), field_keys: [] },
+    .AUnwrapAnyref(a, _) => .{ escapes: slot_in(a, vs), field_keys: [] },
+  }
+}
+
 // ── Rewrite ─────────────────────────────────────────────────────────
 fn rewrite(
   expr: PreparedExpr,
