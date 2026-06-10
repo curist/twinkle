@@ -9,6 +9,10 @@ It is a dedicated subfolder because this is a major, still-open problem. Several
 distinct approaches have been tried and measured; most isolated wins are small,
 and the real lever is structural. Keep new plans, probes, and results here.
 
+> **Picking up / reviewing the typed-vector work?** Start at
+> **[HANDOFF.md](HANDOFF.md)** — current state (S1 + S2.0 landed and working on
+> branch `native-typed-value-sort`), commit trail, verify commands, and what's next.
+
 ## Current understanding (2026-06-10)
 
 The realistic dataframe path — `idx.sort_by(fn(a,b){ Int.compare(keys[a], keys[b]) })`

@@ -1,0 +1,58 @@
+use @std.date
+
+// Typed Vector<Int> routing probe (typed-vector representation, S2.0).
+//
+// typed_sum's xs is used ONLY by xs[i] reads, so route_typed_vectors stores it
+// as a typed PVecI64 (raw i64 leaves). boxed_sum is identical except xs is
+// stringified in a dead branch, which makes it escape -> it stays the boxed
+// anyref PVec. Both compute the same checksum (correctness); the only delta is
+// the per-read egress (raw i64 vs BoxedInt cast + pointer-chase).
+//
+//   target/twk run examples/sort-bench/typed_vec_read_probe.tw
+//
+// Expected (N=1M, 10M reads, quiet machine): boxed ~540ms, typed ~82ms (~6.8x),
+// match=true. If match=false or the gap collapses, the routing regressed.
+fn typed_sum(n: Int, m: Int) Int {
+  xs := collect i in range(n) {
+    i
+  }
+  acc := 0
+
+  for k in range(m) {
+    idx := k * 2654435761 % n
+    acc = acc + xs[idx]
+  }
+
+  acc
+}
+
+fn boxed_sum(n: Int, m: Int) Int {
+  xs := collect i in range(n) {
+    i
+  }
+
+  if n < 0 {
+    println("${xs}")
+  }
+
+  acc := 0
+
+  for k in range(m) {
+    idx := k * 2654435761 % n
+    acc = acc + xs[idx]
+  }
+
+  acc
+}
+
+n := 1000000
+m := 10000000
+println("match=${typed_sum(n, m) == boxed_sum(n, m)}")
+for r in range(2) {
+  t0 := date.now()
+  b := boxed_sum(n, m)
+  println("run${r} boxed ${date.now() - t0}ms (${b})")
+  t1 := date.now()
+  t := typed_sum(n, m)
+  println("run${r} typed ${date.now() - t1}ms (${t})")
+}
