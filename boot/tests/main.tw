@@ -105,6 +105,7 @@ use .suites.stdlib_tuple_suite
 use .suites.string_edge_cases_suite
 use .suites.task_suite
 use .suites.type_registry_suite
+use .suites.typed_record_fields_suite
 use .suites.unused_imports_suite
 use .suites.utf16_suite
 use .suites.value_semantics_suite
@@ -219,6 +220,7 @@ runner.run_all([
   signature_drift_suite.suite(),
   unused_imports_suite.suite(),
   task_suite.suite(),
+  typed_record_fields_suite.suite(),
   receiver_shorthand_suite.suite(),
   defer_suite.suite(),
   first_class_method_suite.suite(),

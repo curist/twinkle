@@ -1,0 +1,141 @@
+/// Tests for analyze_typed_fields in boot/compiler/backend/route_typed_vec.tw.
+///
+/// analyze_typed_fields decides, per (TypeId, FieldId), whether a Vector<Int>
+/// record field can be physically stored as PVecI64. The conservative policy
+/// (Approach B): a field is typed iff it has at least one typed-routable producer
+/// (a collect/builder whose only other uses are index/len) and every producer and
+/// consumer is typed-friendly. Any boxed producer (param/combinator result),
+/// escaping consumer, or a value feeding multiple fields demotes the field.
+///
+/// These are end-to-end fixtures: each test compiles a tiny .tw source through
+/// the real pipeline (compile_source -> closure_convert -> prepare_backend), then
+/// runs analyze_typed_fields on the prepared funcs and inspects the decision dict.
+
+use compiler.backend.closure_convert.{convert_closures}
+use compiler.backend.prepare.{prepare_backend}
+use compiler.backend.route_typed_vec.{analyze_typed_fields}
+use compiler.pipeline
+use tests.assert
+use tests.runner
+
+// Compile source to the prepared backend funcs + builtin registry, then run the
+// whole-program typed-field analysis on them.
+fn analyze_src(src: String) Result<Dict<String, Bool>, String> {
+  artifacts := try pipeline.compile_source(src)
+  cc := convert_closures(artifacts.opt, artifacts.env)
+  prepared := prepare_backend(cc.anf, artifacts.env, artifacts.builtins, cc.captures)
+  .Ok(analyze_typed_fields(prepared.funcs, artifacts.builtins))
+}
+
+// Count the (TypeId, FieldId) keys the analysis decided are typed (true).
+fn typed_count(d: Dict<String, Bool>) Int {
+  n := 0
+
+  for k in d.keys() {
+    case d[k] {
+      .Some(v) => if v {
+        n = n + 1
+      },
+      .None => {},
+    }
+  }
+
+  n
+}
+
+// Source fixtures (escaped newlines — Twinkle string literals don't span lines).
+fn positive_src() String {
+  "type Box = .{ xs: Vector<Int> }\n".concat("fn make(n: Int) Int {\n")
+    .concat("  ys := collect i in range(n) { i * 2 }\n")
+    .concat("  b := Box.{ xs: ys }\n")
+    .concat("  zs := b.xs\n")
+    .concat("  zs[0] + zs.len()\n")
+    .concat("}\n")
+    .concat("make(5)\n")
+}
+
+fn boxed_src() String {
+  "type Box = .{ xs: Vector<Int> }\n".concat("fn wrap(ys: Vector<Int>) Int {\n")
+    .concat("  b := Box.{ xs: ys }\n")
+    .concat("  zs := b.xs\n")
+    .concat("  zs[0] + zs.len()\n")
+    .concat("}\n")
+    .concat("wrap([1, 2, 3])\n")
+}
+
+fn bad_consumer_src() String {
+  "type Box = .{ xs: Vector<Int> }\n".concat("fn use_box(n: Int) Vector<Int> {\n")
+    .concat("  ys := collect i in range(n) { i * 2 }\n")
+    .concat("  b := Box.{ xs: ys }\n")
+    .concat("  zs := b.xs\n")
+    .concat("  zs.append(0)\n")
+    .concat("}\n")
+    .concat("use_box(5)\n")
+}
+
+fn multi_field_src() String {
+  "type Pair = .{ a: Vector<Int>, b: Vector<Int> }\n".concat("fn dup(n: Int) Int {\n")
+    .concat("  ys := collect i in range(n) { i * 2 }\n")
+    .concat("  p := Pair.{ a: ys, b: ys }\n")
+    .concat("  ra := p.a\n")
+    .concat("  rb := p.b\n")
+    .concat("  ra[0] + ra.len() + rb[0] + rb.len()\n")
+    .concat("}\n")
+    .concat("dup(5)\n")
+}
+
+pub fn suite() runner.Suite {
+  runner.suite("typed record fields")
+    .test(
+      "positive: collect into field, read via index, is typed",
+      fn() {
+        d := try analyze_src(positive_src())
+        try assert.equal(typed_count(d), 1)
+        .Ok({})
+      },
+    )
+    .test(
+      "boxed producer: field fed by a parameter stays boxed",
+      fn() {
+        d := try analyze_src(boxed_src())
+        try assert.equal(typed_count(d), 0)
+        .Ok({})
+      },
+    )
+    .test(
+      "bad consumer: field read that escapes stays boxed",
+      fn() {
+        d := try analyze_src(bad_consumer_src())
+        try assert.equal(typed_count(d), 0)
+        .Ok({})
+      },
+    )
+    .test(
+      "multi-field producer: one vector into two fields demotes both",
+      fn() {
+        d := try analyze_src(multi_field_src())
+        try assert.equal(typed_count(d), 0)
+        .Ok({})
+      },
+    )
+    .test(
+      "positive case decides exactly one true key, no spurious entries",
+      fn() {
+        d := try analyze_src(positive_src())
+        only_true := true
+
+        for k in d.keys() {
+          case d[k] {
+            .Some(v) => if !v {
+              only_true = false
+            },
+            .None => {},
+          }
+        }
+
+        try assert.ok(only_true, "all decided keys should be true")
+        try assert.equal(typed_count(d), 1)
+        .Ok({})
+      },
+    )
+}

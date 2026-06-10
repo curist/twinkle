@@ -45,10 +45,8 @@ type RouteIds = .{
   len_i64: Int,
 }
 
-pub fn route_typed_vectors(funcs: Vector<PreparedFunc>, builtins: BuiltinRegistry) Vector<
-  PreparedFunc,
-> {
-  ids := RouteIds.{
+pub fn route_ids(builtins: BuiltinRegistry) RouteIds {
+  .{
     builder_new: bi.id(builtins, "vector$builder_new").id,
     builder_push: bi.id(builtins, "vector$builder_push").id,
     builder_freeze: bi.id(builtins, "vector$builder_freeze").id,
@@ -58,6 +56,12 @@ pub fn route_typed_vectors(funcs: Vector<PreparedFunc>, builtins: BuiltinRegistr
     builder_freeze_i64: bi.id(builtins, "vector$builder_freeze_i64").id,
     len_i64: bi.id(builtins, "vector$len_i64").id,
   }
+}
+
+pub fn route_typed_vectors(funcs: Vector<PreparedFunc>, builtins: BuiltinRegistry) Vector<
+  PreparedFunc,
+> {
+  ids := route_ids(builtins)
 
   collect pf in funcs {
     route_func(pf, ids, builtins)
@@ -586,6 +590,328 @@ fn classify_op(
     .AAssign(_, a) => .{ escapes: slot_in(a, vs), field_keys: [] },
     .AWrapAnyref(a, _) => .{ escapes: slot_in(a, vs), field_keys: [] },
     .AUnwrapAnyref(a, _) => .{ escapes: slot_in(a, vs), field_keys: [] },
+  }
+}
+
+// ── Whole-program typed-field analysis (Approach B) ──────────────────
+// Decide per (TypeId, FieldId) whether a Vector<Int> record field can be stored
+// physically as PVecI64. Conservative single-direction: a field is typed iff it
+// has >=1 typed-routable producer AND every producer and consumer is
+// typed-friendly. Any boxed producer (a field fed by a parameter or a combinator
+// result), escaping consumer, or producer that feeds multiple fields demotes it.
+// No coercions are ever inserted, so a field with a boxed and a typed producer
+// must stay boxed.
+//
+// Structure: two passes over `funcs`.
+//   Pass 1 (scan_func_producers_consumers): for each function, classify typed
+//     v-groups -> has_ok_producer / multi-field+escape bad_producer / consumers;
+//     also record the OK candidate alias slot sets per key into `ok_aliases` so
+//     pass 2 can recognise an already-accounted producer.
+//   Pass 2 (scan_func_field_stores): walk every Vector<Int> field-store site; a
+//     store whose value isn't an OK candidate alias for that key is a boxed
+//     producer -> bad_producer.
+// The split is needed because pass 2 of one function may reference OK aliases
+// established by pass 1, and (for correctness under cross-function fields) all
+// pass-1 OK aliases must be known before any pass-2 verdict — hence the global
+// two-pass loop in analyze_typed_fields rather than a single per-func pass.
+type FieldStat = .{ has_ok_producer: Bool, bad_producer: Bool, bad_consumer: Bool }
+
+// Per-function record of which slot ids (alias sets) were accepted as OK
+// producers for a given field key. Keyed by "${tid}:${fid}" -> set of slot ids.
+type OkAliases = .{ map: Dict<String, Dict<Int, Bool>> }
+
+fn empty_stat() FieldStat {
+  .{ has_ok_producer: false, bad_producer: false, bad_consumer: false }
+}
+
+fn stat_of(stats: Dict<String, FieldStat>, key: String) FieldStat {
+  case stats[key] {
+    .Some(s) => s,
+    .None => empty_stat(),
+  }
+}
+
+pub fn analyze_typed_fields(funcs: Vector<PreparedFunc>, builtins: BuiltinRegistry) Dict<
+  String,
+  Bool,
+> {
+  ids := route_ids(builtins)
+  stats: Dict<String, FieldStat> = Dict.new()
+
+  // ok_aliases[func_index] -> OkAliases for that function (slot ids are
+  // function-local, so the alias sets are scoped per function in pass 2).
+  ok_per_func: Vector<OkAliases> = []
+
+  // Pass 1: producers (typed v-groups) + consumers.
+  for pf in funcs {
+    res := scan_func_producers_consumers(pf, ids, builtins, stats)
+    stats = res.stats
+    ok_per_func = .append(res.ok)
+  }
+
+  // Pass 2: every Vector<Int> field-store site; a store not traceable to an OK
+  // producer alias is a boxed producer.
+  for pf, i in funcs {
+    ok := ok_per_func[i]
+    stats = scan_func_field_stores(pf, ids, ok, stats)
+  }
+
+  out: Dict<String, Bool> = Dict.new()
+
+  for key in stats.keys() {
+    case stats[key] {
+      .Some(s) => if s.has_ok_producer and !s.bad_producer and !s.bad_consumer {
+        out[key] = true
+      },
+      .None => {},
+    }
+  }
+
+  out
+}
+
+type ScanResult = .{ stats: Dict<String, FieldStat>, ok: OkAliases }
+
+fn scan_func_producers_consumers(
+  pf: PreparedFunc,
+  ids: RouteIds,
+  builtins: BuiltinRegistry,
+  stats0: Dict<String, FieldStat>,
+) ScanResult {
+  copy_map := build_copy_map(pf.body, Dict.new())
+  cands := collect_candidates(pf.body, pf.slots, ids, [])
+  stats := stats0
+  ok_map: Dict<String, Dict<Int, Bool>> = Dict.new()
+
+  // Producers: classify each typed v-group candidate.
+  for c in cands {
+    aliases := aliases_for(c.v, copy_map)
+    vuse := classify_v_group(pf.body, aliases, ids.len, builtins, pf.slots)
+    keys := distinct_keys(vuse.field_keys)
+
+    if !vuse.escapes and keys.len() == 1 {
+      // Single typed-field producer that doesn't otherwise escape: OK for key k.
+      k := keys[0]
+      st := stat_of(stats, k)
+      st.has_ok_producer = true
+      stats[k] = st
+
+      // Remember this candidate's alias slots as OK for k, so pass 2 won't
+      // re-flag the same store as a boxed producer.
+      existing := case ok_map[k] {
+        .Some(m) => m,
+        .None => Dict.new(),
+      }
+
+      for sid in aliases.keys() {
+        existing[sid] = true
+      }
+
+      ok_map[k] = existing
+    } else {
+      // Either feeds multiple distinct fields, or escapes while also feeding a
+      // field: every distinct field key it touches is demoted.
+      if keys.len() >= 1 {
+        for k in keys {
+          st := stat_of(stats, k)
+          st.bad_producer = true
+          stats[k] = st
+        }
+      }
+    }
+  }
+
+  // Consumers: every ARecordGet whose result slot is Vector<Int>.
+  stats = scan_consumers(pf.body, pf, ids, builtins, stats)
+  .{ stats, ok: .{ map: ok_map } }
+}
+
+// Walk the body for ARecordGet consumers of Vector<Int> fields. The result slot
+// (the Let-bound slot of the ARecordGet) must be consumed only via index/len,
+// otherwise the field is demoted (bad_consumer).
+fn scan_consumers(
+  expr: PreparedExpr,
+  pf: PreparedFunc,
+  ids: RouteIds,
+  builtins: BuiltinRegistry,
+  stats0: Dict<String, FieldStat>,
+) Dict<String, FieldStat> {
+  case expr {
+    .Let(slot, op, body) => {
+      stats := case op {
+        .ARecordGet(_, fid, tid) => {
+          // Is the result slot a Vector<Int>?
+          is_vec := case pf.slots[slot.id] {
+            .Some(info) => is_int_vector(mono_key_of(info)),
+            .None => false,
+          }
+
+          if is_vec {
+            key := "${tid.id}:${fid.id}"
+
+            if result_consumed_typed_only(pf.body, slot.id, ids.len, builtins) {
+              stats0
+            } else {
+              st := stat_of(stats0, key)
+              st.bad_consumer = true
+              s2 := stats0
+              s2[key] = st
+              s2
+            }
+          } else {
+            stats0
+          }
+        },
+        _ => stats0,
+      }
+
+      stats2 := scan_consumers_op(op, pf, ids, builtins, stats)
+      scan_consumers(body, pf, ids, builtins, stats2)
+    },
+    _ => stats0,
+  }
+}
+
+fn scan_consumers_op(
+  op: PreparedOp,
+  pf: PreparedFunc,
+  ids: RouteIds,
+  builtins: BuiltinRegistry,
+  stats0: Dict<String, FieldStat>,
+) Dict<String, FieldStat> {
+  case op {
+    .AIf(_, then_e, else_e) => {
+      s := scan_consumers(then_e, pf, ids, builtins, stats0)
+      scan_consumers(else_e, pf, ids, builtins, s)
+    },
+    .AMatch(_, arms) => {
+      cur := stats0
+
+      for arm in arms {
+        cur = scan_consumers(arm.body, pf, ids, builtins, cur)
+      }
+
+      cur
+    },
+    .ALoop(inner) => scan_consumers(inner, pf, ids, builtins, stats0),
+    .ADefer(inner) => scan_consumers(inner, pf, ids, builtins, stats0),
+    _ => stats0,
+  }
+}
+
+// Pass 2: scan every Vector<Int> field-store site. A store whose value does NOT
+// trace to an OK producer alias for that key is a boxed/foreign producer.
+fn scan_func_field_stores(
+  pf: PreparedFunc,
+  ids: RouteIds,
+  ok: OkAliases,
+  stats0: Dict<String, FieldStat>,
+) Dict<String, FieldStat> {
+  sites := field_store_sites(pf.body, pf.slots, [])
+  stats := stats0
+
+  for site in sites {
+    is_ok := case site.value {
+      .ASlot(s) => case ok.map[site.key] {
+        .Some(slotset) => slotset.has(s.id),
+        .None => false,
+      },
+      _ => false,
+    }
+
+    if !is_ok {
+      st := stat_of(stats, site.key)
+      st.bad_producer = true
+      stats[site.key] = st
+    }
+  }
+
+  stats
+}
+
+// ── Analysis helpers ────────────────────────────────────────────────
+fn distinct_keys(keys: Vector<String>) Vector<String> {
+  seen: Dict<String, Bool> = Dict.new()
+  out: Vector<String> = []
+
+  for k in keys {
+    if !seen.has(k) {
+      seen[k] = true
+      out = .append(k)
+    }
+  }
+
+  out
+}
+
+// True if `result_sid` is used only by `AIndex .Array` base reads and `len`.
+// Reuses the escape-shape logic via a singleton {result_sid} alias set: a
+// typed-friendly consumer is exactly one that does NOT escape under that set.
+fn result_consumed_typed_only(
+  expr: PreparedExpr,
+  result_sid: Int,
+  len_id: Int,
+  builtins: BuiltinRegistry,
+) Bool {
+  singleton: Dict<Int, Bool> = Dict.new()
+  singleton[result_sid] = true
+  !v_group_escapes(expr, singleton, len_id, builtins)
+}
+
+type FieldStoreSite = .{ key: String, value: PreparedAtom }
+
+// Collect all Vector<Int> field-store sites: ARecord field atoms whose field is
+// a Vector<Int> slot, and ARecordUpdate setting a Vector<Int> value.
+fn field_store_sites(expr: PreparedExpr, slots: Dict<Int, SlotInfo>, acc: Vector<FieldStoreSite>) Vector<
+  FieldStoreSite,
+> {
+  case expr {
+    .Let(_, op, body) => {
+      acc2 := field_store_sites_op(op, slots, acc)
+      field_store_sites(body, slots, acc2)
+    },
+    _ => acc,
+  }
+}
+
+fn field_store_sites_op(op: PreparedOp, slots: Dict<Int, SlotInfo>, acc: Vector<FieldStoreSite>) Vector<
+  FieldStoreSite,
+> {
+  case op {
+    .ARecord(tid, fields) => {
+      cur := acc
+
+      for f in fields {
+        if atom_is_int_vector_slot(f.value, slots) {
+          key := "${tid.id}:${f.field.id}"
+          cur = .append(.{ key, value: f.value })
+        }
+      }
+
+      cur
+    },
+    .ARecordUpdate(_, fid, val, _, tid) => if atom_is_int_vector_slot(val, slots) {
+      key := "${tid.id}:${fid.id}"
+      acc.append(.{ key, value: val })
+    } else {
+      acc
+    },
+    .AIf(_, then_e, else_e) => {
+      acc2 := field_store_sites(then_e, slots, acc)
+      field_store_sites(else_e, slots, acc2)
+    },
+    .AMatch(_, arms) => {
+      cur := acc
+
+      for arm in arms {
+        cur = field_store_sites(arm.body, slots, cur)
+      }
+
+      cur
+    },
+    .ALoop(inner) => field_store_sites(inner, slots, acc),
+    .ADefer(inner) => field_store_sites(inner, slots, acc),
+    _ => acc,
   }
 }
 
