@@ -1,9 +1,12 @@
 # Typed Vector Record Fields — Design
 
-**Status:** design approved, pre-implementation
-**Date:** 2026-06-10
-**Branch:** `native-typed-value-sort`
-**Parent plan:** [typed-vector-representation.md](typed-vector-representation.md) (representation flow target: "record fields containing typed vectors")
+**Status:** ✅ LANDED (S2.2). Implemented across `162dea3..da1bb6c` on branch
+`native-typed-value-sort` (env-carried layout override → whole-program
+`analyze_typed_fields` → routing → activation → store-side verifier check),
+self-host green, 2585 boot tests. Follow-ups recorded in the plan doc. Archived
+as a completed design record.
+**Date:** 2026-06-10 (design); landed 2026-06-11
+**Parent plan:** [typed-vector-representation.md](../vector-perf/typed-vector-representation.md) (representation flow target: "record fields containing typed vectors")
 **Builds on:** S2.1 boundary boxing for return + direct-call args (commit `e59b873`)
 
 ## Goal

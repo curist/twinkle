@@ -1,6 +1,15 @@
 # Typed Vector Record Fields Implementation Plan
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+> **Status: ✅ COMPLETE (S2.2).** All seven tasks landed via subagent-driven
+> development across `162dea3..da1bb6c` on `native-typed-value-sort` (each task
+> spec- and quality-reviewed; final whole-feature review merge-ready). Self-host
+> fixed point holds; 2585 boot tests pass. Activation surfaced and fixed a latent
+> routing soundness bug (`build_copy_map` self-copy clobber, `ca36551`). The
+> checkboxes below were not ticked during execution — this banner is the
+> authoritative completion record. Non-blocking follow-ups are listed at the end.
+>
+> **For agentic workers (historical):** this plan was executed with
+> superpowers:subagent-driven-development; steps use checkbox (`- [ ]`) syntax.
 
 **Goal:** Keep a `Vector<Int>` in its typed `PVecI64` representation when stored in a record field, so reads through the field (`r.col[i]`, `r.col.len()`) hit raw `i64` leaves instead of the boxed `PVec` pointer-chase.
 

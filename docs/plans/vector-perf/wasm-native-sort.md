@@ -60,7 +60,7 @@ Tried replacing prelude merge sort with an in-place quicksort-style algorithm ov
 
 Result: rejected. The expected in-place writes did not materialize across helper/recursive call boundaries; the generated code fell back to persistent copy-on-write writes. That made `order_by` dramatically slower instead of faster. This is not worth digging further unless the uniqueness model changes substantially.
 
-See: [native-sort-by-inplace.md](native-sort-by-inplace.md).
+See: [native-sort-by-inplace.md](../archive/native-sort-by-inplace.md) (archived).
 
 ### Approach C: dense scratch-buffer stable merge sort
 
@@ -70,7 +70,7 @@ Result: **measured neutral-to-negative; did not pass the gate.** In a controlled
 
 The reusable part is the `Scratch<T>` dense-buffer infrastructure (an opaque mutable Wasm-GC array with `scratch_new`/`get`/`set` in both compilers), which is a building block for the dense key-index argsort kernel below — not the `sort_by` rewrite itself.
 
-See: [native-sort-dense-merge.md](native-sort-dense-merge.md).
+See: [native-sort-dense-merge.md](../archive/native-sort-dense-merge.md) (archived).
 
 ### Native typed value-sort kernel — first dense kernel that won
 

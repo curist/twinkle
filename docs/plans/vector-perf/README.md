@@ -10,8 +10,16 @@ distinct approaches have been tried and measured; most isolated wins are small,
 and the real lever is structural. Keep new plans, probes, and results here.
 
 > **Picking up / reviewing the typed-vector work?** Start at
-> **[HANDOFF.md](HANDOFF.md)** — current state (S1 + S2.0 landed and working on
-> branch `native-typed-value-sort`), commit trail, verify commands, and what's next.
+> **[HANDOFF.md](HANDOFF.md)** — current state (S1 + S2.0 + S2.1 + S2.2 landed and
+> working on branch `native-typed-value-sort`), commit trail, verify commands, and
+> what's next.
+
+> **Landed since (2026-06-11): S2.2 — typed `Vector<Int>` record fields.** A
+> `Vector<Int>` stored in a record field now keeps `PVecI64` storage under
+> conservative whole-program inference, with a store-side verifier check. Design +
+> implementation plan archived as completed (see **Archived** below). **Next
+> increment:** variant-payload routing — dataframe columns are
+> `IntCol(Vector<Int>)`, so that boundary is the actual `order_by` unlock.
 
 ## Current understanding (2026-06-10)
 
@@ -65,8 +73,16 @@ allocation) in one change. Everything else is secondary.
 | [wasm-native-sort.md](wasm-native-sort.md) | Earlier consolidated `order_by`/native-sort track; broader context and the dense working-set framing | superseded as lead, still useful context |
 | [native-typed-value-sort.md](native-typed-value-sort.md) | Lower `xs.sort()` on `Vector<Int>`/`Vector<Float>` to a native typed kernel (unbox once, raw merge, box once); the seed of typed storage | partial/landed value-sort path |
 | [native-key-index-argsort.md](native-key-index-argsort.md) | Optional transparent fast path for conservatively-recognized pure key-index comparators | optional, not the baseline |
-| [native-sort-by-inplace.md](native-sort-by-inplace.md) | Approach A: in-place quicksort over a uniquely-owned buffer | **rejected** |
-| [native-sort-dense-merge.md](native-sort-dense-merge.md) | Approach C: dense `anyref` scratch merge sort; lost to opaque per-element scratch calls + casts | **rejected** |
+| [typed-vector-spike.md](typed-vector-spike.md) | The S1 + S2.0 de-risking spike (typed `PVecI64` family + intra-function routing) | landed; record of the spike |
+
+## Archived (landed or rejected — in `docs/plans/archive/`)
+
+| Doc | Role | Status |
+|-----|------|--------|
+| [typed-record-fields.md](../archive/typed-record-fields.md) | S2.2 design: typed `Vector<Int>` record fields | **landed** (2026-06-11) |
+| [typed-record-fields-plan.md](../archive/typed-record-fields-plan.md) | S2.2 implementation plan (7 tasks, subagent-driven) | **landed** (2026-06-11) |
+| [native-sort-by-inplace.md](../archive/native-sort-by-inplace.md) | Approach A: in-place quicksort over a uniquely-owned buffer | **rejected** |
+| [native-sort-dense-merge.md](../archive/native-sort-dense-merge.md) | Approach C: dense `anyref` scratch merge sort; lost to opaque per-element scratch calls + casts | **rejected** |
 
 ## Probes (in `examples/`)
 
