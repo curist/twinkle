@@ -481,16 +481,6 @@ fn op_group_escapes(op: PreparedOp, vs: Dict<Int, Bool>, len_id: Int, builtins: 
   }
 }
 
-fn atoms_contain(atoms: Vector<PreparedAtom>, v: Int) Bool {
-  for a in atoms {
-    if slot_is(a, v) {
-      return true
-    }
-  }
-
-  false
-}
-
 fn slot_in(atom: PreparedAtom, vs: Dict<Int, Bool>) Bool {
   case atom {
     .ASlot(s) => vs.has(s.id),
