@@ -713,3 +713,27 @@ fields; no change needed.>"
 - **`ARecordUpdate` copy semantics:** updating a *different* field of a record whose typed field is copied through must carry the `PVecI64` slot intact. The positive probe does not exercise this; if you add an update-based probe and it traps or mismatches, the update lowering is re-deriving the field type instead of copying by struct type — handle in Task 7's verifier/emit review.
 - **Stage0 parity:** not required for this boot-codegen optimization (per the no-stage0-parity rule for backend-only typed-vector opts).
 - **Honest payoff expectation:** combinator-built dataframe columns stay boxed until typed combinators (parent-plan Phase 5). The positive probe uses `collect`, which *is* typed; that is the immediately-covered case. Do not expect the negative/boxed probe or combinator-built columns to become typed in this plan.
+
+## Follow-ups (non-blocking, recorded from the final whole-feature review)
+
+The feature shipped merge-ready; these are deferred improvements, not gaps that
+block it:
+
+- **Walker-duplication refactor.** `route_typed_vec.tw` now has eight parallel
+  `PreparedExpr`/`PreparedOp` structural-recursion walker pairs
+  (`collect_candidates`, `collect_typed_field_reads`, `build_copy_map`,
+  `v_group_escapes`, `classify_*`, `scan_consumers`, `field_store_sites`,
+  `rewrite`), each re-implementing the same `AIf`/`AMatch`/`ALoop`/`ADefer`
+  recursion. `classify_op` even carries a "keep in sync with `op_group_escapes`"
+  comment — the exact drift risk to retire. Factor a shared op-recursion helper
+  (or merge `classify_*` back into the escape walk now the new path is trusted),
+  and consider splitting the whole-program analysis into a sibling file.
+- **Verifier get/variant-side coverage.** The `pvec_repr_mismatch` check is
+  store-side only (`ARecord`/`ARecordUpdate`). An `ARecordGet` result-slot
+  mismatch or an `AVariant` payload mismatch would still reach the Wasm
+  validator rather than this verifier — a narrow residual gap, symmetric to but
+  rarer than the store side that had the historical bug. Add get/variant-side
+  checks if/when those boundaries route.
+- **Variant-payload routing** is the actual unlock for dataframe `order_by`
+  (columns are `IntCol(Vector<Int>)`), and is the natural next increment after
+  this record-field step.

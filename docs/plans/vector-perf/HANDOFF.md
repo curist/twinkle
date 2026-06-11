@@ -24,12 +24,22 @@ have landed and **work** on this branch:
   returned or passed to a direct user function through the ordinary boxed
   `Vector<Int>` ABI; in-function reads stay typed and the boundary pays one
   boxing pass.
+- **S2.2 — typed `Vector<Int>` record fields.** A `Vector<Int>` stored in a
+  record field keeps its `PVecI64` storage (struct field is physically
+  `PVecI64`), so reads through the field hit `rt_arr__get_i64`. Conservative
+  whole-program inference (`analyze_typed_fields`): a field is typed only if
+  *every* producer is a typed-routable `collect`/builder value and *every*
+  consumer reads it via index/len; any boxed producer, escaping consumer, or
+  one-vector-into-multiple-fields demotes the whole field to boxed. No
+  representation-boundary coercions are inserted at field stores/loads (fully
+  typed or fully boxed). A store-side verifier check (`pvec_repr_mismatch`)
+  rejects a `PVecI64`-value-into-`PVec`-field mismatch at compile time.
 
-The committed baseline self-hosts and passes the boot suite. Current uncommitted
-work also self-hosts, passes the boot suite, keeps the read probe fast, and has a
-probe confirming direct-call argument boxing. It still doesn't cover vectors that
-escape through records, variants, closures, builtin/vector combinators, or typed
-cross-function ABIs — notably dataframe columns — which is the next increment.
+The committed baseline self-hosts and passes the boot suite. It still doesn't
+cover vectors that escape through **variants**, closures, builtin/vector
+combinators, or typed cross-function ABIs. Dataframe columns are **variant**-held
+(`IntCol(Vector<Int>)`), so `order_by` is still boxed — variant payloads are the
+next increment.
 
 ## Commit trail (review in order)
 
@@ -46,7 +56,7 @@ commit exists only so the WIP wasn't lost mid-debug; `fc93bec` is the real one.)
 
 ```bash
 make bundle-cli      # must print "Fixed point reached" (self-host with routing on)
-make boot-test       # must print "Ran 2571 tests: 2571 passed"
+make boot-test       # all green (was 2571 at S2.0; 2585 after S2.2)
 
 # The headline result (quiet machine — kill background CPU first; numbers
 # degrade several-fold under load):
@@ -66,13 +76,16 @@ If `match=false`, or the typed/boxed gap collapses, the routing regressed.
 work also allows direct function return and direct user-function arguments by
 boxing `PVecI64` back to the ordinary `PVec` ABI at that boundary.
 
+As of **S2.2**, a `Vector<Int>` stored in a **record field** also routes when the
+whole-program field analysis proves it safe (see the S2.2 bullet above).
+
 **Does NOT route (stays boxed, unchanged):** any other `Vector<Int>` escape —
-stored in a record/variant, captured by a closure, passed through a closure call
-or builtin/vector combinator, `.append`/`.sort`/`.map`'d, etc. The escape
+stored in a **variant payload**, captured by a closure, passed through a closure
+call or builtin/vector combinator, `.append`/`.sort`/`.map`'d, etc. The escape
 analysis is deliberately conservative; if in doubt it leaves the vector boxed.
-This is why **dataframe `order_by` is unaffected** (its `IntCol(Vector<Int>)`
-columns cross record/module boundaries) — correct, but it means the headline
-dataframe win is still pending.
+This is why **dataframe `order_by` is still unaffected** — its
+`IntCol(Vector<Int>)` columns are **variant**-held, and variant payloads are not
+yet routed (the next increment), so the headline dataframe win is still pending.
 
 ## Architecture map (the S2.0 touch points)
 
