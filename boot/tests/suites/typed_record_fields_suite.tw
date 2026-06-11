@@ -12,7 +12,7 @@
 /// runs analyze_typed_fields on the prepared funcs and inspects the decision dict.
 
 use compiler.backend.closure_convert.{convert_closures}
-use compiler.backend.prepare.{prepare_backend}
+use compiler.backend.prepare.{prepare_backend_preroute}
 use compiler.backend.prepared_ir.{PreparedFunc, SlotInfo}
 use compiler.backend.route_typed_vec.{analyze_typed_fields, route_typed_vectors}
 use compiler.builtins.{BuiltinRegistry}
@@ -25,18 +25,24 @@ use tests.runner
 fn analyze_src(src: String) Result<Dict<String, Bool>, String> {
   artifacts := try pipeline.compile_source(src)
   cc := convert_closures(artifacts.opt, artifacts.env)
-  prepared := prepare_backend(cc.anf, artifacts.env, artifacts.builtins, cc.captures)
+
+  // Analyze the pre-routing prepared funcs: routing retypes producer slots to
+  // PVecI64, which would hide them from this analysis pass.
+  prepared := prepare_backend_preroute(cc.anf, artifacts.env, artifacts.builtins, cc.captures)
   .Ok(analyze_typed_fields(prepared.funcs, artifacts.builtins))
 }
 
-type Prepared = .{ funcs: Vector<PreparedFunc>, builtins: BuiltinRegistry }
+type RouteInputs = .{ funcs: Vector<PreparedFunc>, builtins: BuiltinRegistry }
 
 // Compile source to prepared backend funcs + registry (the raw inputs to both
 // analyze_typed_fields and route_typed_vectors).
-fn prepare_src(src: String) Result<Prepared, String> {
+fn prepare_src(src: String) Result<RouteInputs, String> {
   artifacts := try pipeline.compile_source(src)
   cc := convert_closures(artifacts.opt, artifacts.env)
-  prepared := prepare_backend(cc.anf, artifacts.env, artifacts.builtins, cc.captures)
+
+  // Use the pre-routing funcs so route_typed_vectors can be exercised on
+  // un-routed slots (prepare_backend already routes its final funcs).
+  prepared := prepare_backend_preroute(cc.anf, artifacts.env, artifacts.builtins, cc.captures)
   .Ok(.{ funcs: prepared.funcs, builtins: artifacts.builtins })
 }
 
@@ -126,6 +132,19 @@ fn multi_field_src() String {
     .concat("dup(5)\n")
 }
 
+// A collect whose result is a variant payload escapes: the payload slot stays a
+// boxed PVec, so routing the producer to PVecI64 would create an unboxed store
+// the boundary pass never covered (an invalid-wasm slot mismatch). The self-copy
+// `Lx = init Lx` that lowering emits before the variant must not break the alias
+// chain that makes this escape visible.
+fn variant_payload_src() String {
+  "type CD = { IntCol(Vector<Int>), Other(Int) }\n".concat("fn build(n: Int) CD {\n")
+    .concat("  ys := collect i in range(n) { i * 2 }\n")
+    .concat("  CD.IntCol(ys)\n")
+    .concat("}\n")
+    .concat("build(5)\n")
+}
+
 pub fn suite() runner.Suite {
   runner.suite("typed record fields")
     .test(
@@ -202,7 +221,10 @@ pub fn suite() runner.Suite {
         routed := route_typed_vectors(p.funcs, p.builtins, tf)
         n := pvec_i64_slot_count(routed)
         try assert.ok(n >= 2, "expected producer + field-read slots typed")
-        try assert.ok(n > pvec_i64_slot_count(routed_empty), "non-empty set must type strictly more slots")
+        try assert.ok(
+          n > pvec_i64_slot_count(routed_empty),
+          "non-empty set must type strictly more slots",
+        )
         .Ok({})
       },
     )
@@ -215,6 +237,20 @@ pub fn suite() runner.Suite {
         tf := analyze_typed_fields(p.funcs, p.builtins)
         try assert.equal(typed_count(tf), 0)
 
+        routed := route_typed_vectors(p.funcs, p.builtins, tf)
+        try assert.equal(pvec_i64_slot_count(routed), 0)
+        .Ok({})
+      },
+    )
+    .test(
+      "variant payload producer never retypes (would be an unboxed store)",
+      fn() {
+        // A collect feeding a variant payload escapes; routing must leave the
+        // producer boxed. Routing it to PVecI64 once produced invalid wasm (a
+        // PVecI64 stored straight into the PVec payload slot). Pass the analyzed
+        // field set (empty here) just like the live pipeline does.
+        p := try prepare_src(variant_payload_src())
+        tf := analyze_typed_fields(p.funcs, p.builtins)
         routed := route_typed_vectors(p.funcs, p.builtins, tf)
         try assert.equal(pvec_i64_slot_count(routed), 0)
         .Ok({})

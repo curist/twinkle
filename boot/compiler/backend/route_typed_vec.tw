@@ -317,7 +317,14 @@ fn build_copy_map(expr: PreparedExpr, acc: Dict<Int, Int>) Dict<Int, Int> {
   case expr {
     .Let(slot, op, body) => {
       acc2 := case op {
-        .AInit(.ASlot(src)) => {
+        // A self-copy (`Lx = init Lx`, emitted as a redundant rebind) must not
+        // overwrite a real `Lx -> src` mapping: doing so turns the chain into a
+        // self-loop, hiding forward aliases from aliases_for() and letting an
+        // escaping consumer (e.g. a variant payload store) slip past the escape
+        // check — which would route a producer with no boxing boundary.
+        .AInit(.ASlot(src)) => if src.id == slot.id {
+          acc
+        } else {
           acc[slot.id] = src.id
           acc
         },

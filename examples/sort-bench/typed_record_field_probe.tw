@@ -1,0 +1,33 @@
+// Typed record-field routing probe (typed-vector representation, S2.2).
+//
+// make_col builds a Vector<Int> via collect and stores it in Col.data; sum_col
+// reads Col.data only via indexed access. Both sides pass whole-program analysis,
+// so Col.data is physically PVecI64 (raw i64 leaves instead of boxed anyref).
+//
+//   target/twk build examples/sort-bench/typed_record_field_probe.tw -o /tmp/trf.wat
+//   grep rt_arr__get /tmp/trf.wat
+//
+// Expected: the typed read rt_arr__get_i64 appears (and the Col struct field
+// references rt_types__PVecI64); the boxed rt_arr__get does NOT carry this
+// field's read. Running it prints 1498500.
+type Col = .{ data: Vector<Int>, n: Int }
+
+fn make_col(n: Int) Col {
+  xs := collect i in range(n) {
+    i * 3
+  }
+  Col.{ data: xs, n }
+}
+
+fn sum_col(c: Col) Int {
+  total := 0
+
+  for k in range(c.n) {
+    total = total + c.data[k]
+  }
+
+  total
+}
+
+c := make_col(1000)
+println(sum_col(c).to_string())

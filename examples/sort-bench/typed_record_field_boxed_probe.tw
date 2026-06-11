@@ -1,0 +1,30 @@
+// Negative control for typed-record-field routing (typed-vector representation, S2.2).
+//
+// wrap receives xs as a parameter (a boxed producer, not a local collect), so
+// whole-program analysis must DEMOTE Col.data to stay boxed PVec — routing it to
+// PVecI64 would produce an invalid-wasm store into a boxed slot.
+//
+//   target/twk build examples/sort-bench/typed_record_field_boxed_probe.tw -o /tmp/trfb.wat
+//   grep rt_arr__get /tmp/trfb.wat
+//
+// Expected: only the boxed rt_arr__get appears, NO rt_arr__get_i64. Running it
+// prints 15.
+type Col = .{ data: Vector<Int>, n: Int }
+
+fn wrap(xs: Vector<Int>) Col {
+  Col.{ data: xs, n: xs.len() }
+}
+
+fn sum_col(c: Col) Int {
+  total := 0
+
+  for k in range(c.n) {
+    total = total + c.data[k]
+  }
+
+  total
+}
+
+base := [1, 2, 3, 4]
+c := wrap(base.append(5))
+println(sum_col(c).to_string())

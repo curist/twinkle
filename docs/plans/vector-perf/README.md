@@ -74,6 +74,8 @@ allocation) in one change. Everything else is secondary.
 - `examples/sort-bench/enum_alloc_probe.tw` — isolates enum/`Order` allocation (direct vs closure boundary; enums in general).
 - `examples/sort-bench/merge_attribution_probe.tw` — ablates the merge (reads vs singleton vs append/alloc); validated against real `sort_by`.
 - `examples/sort-bench/sort_repeat_probe.tw` — runs native sort / generic `sort_by` / key-index three times in-process to expose V8 tier-up (Liftoff → TurboFan) effects.
+- `examples/sort-bench/typed_record_field_probe.tw` — positive: a `Vector<Int>` column built by `collect` and stored in a record field, read only via index/len, keeps `PVecI64` storage (`rt_arr__get_i64`, no field-boundary boxing).
+- `examples/sort-bench/typed_record_field_boxed_probe.tw` — negative: the same field fed by a combinator-built producer (`append`) passed through a parameter stays boxed `PVec` (no `rt_arr__get_i64`).
 - `examples/sort-bench/ref_vector_read_clojure.clj` — Clojure read calibration for dense `long[]`, boxed persistent `Vector<Long>`, and reference payload vectors (`String`, row objects, map rows); summarized in [typed-vector-representation.md](typed-vector-representation.md).
 - `examples/sort-bench/long_array_sort_clojure.clj` — Clojure sort calibration for `long[]` clone + `Arrays/sort` vs persistent-vector `sort`; summarized in [typed-vector-representation.md](typed-vector-representation.md).
 - `examples/dataframe/bench/` — end-to-end `order_by` plus Clojure/Go/Rust references.

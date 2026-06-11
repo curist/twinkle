@@ -17,7 +17,7 @@
 use compiler.anf.{AnfModule}
 use compiler.backend.prepared_ir.{CaptureParam, PreparedFunc}
 use compiler.backend.repr_assign.{assign_repr_for_module}
-use compiler.backend.route_typed_vec.{route_typed_vectors}
+use compiler.backend.route_typed_vec.{analyze_typed_fields, route_typed_vectors}
 use compiler.backend.slot_assign.{assign_slots_for_module}
 use compiler.builtins.{BuiltinRegistry}
 use compiler.codegen.insert_boundaries.{insert_boundaries}
@@ -37,6 +37,34 @@ pub type PreparedModule = .{
   typed_vector_fields: Dict<String, Bool>,
 }
 
+// Boundary-inserted ANF plus the prepared funcs *before* typed-vector routing.
+// This is the exact input analyze_typed_fields runs on; exposed so tests and
+// tooling can inspect the routing decision on un-routed slots (routing mutates
+// producer slots to PVecI64, which would hide them from a second analysis pass).
+pub type PreRouteModule = .{ anf: AnfModule, funcs: Vector<PreparedFunc> }
+
+// Run the backend preparation steps up to (but not including) typed-vector
+// routing. prepare_backend builds on this and then routes; tests use it to get
+// the analysis input directly.
+pub fn prepare_backend_preroute(
+  anf: AnfModule,
+  env: ResolvedEnv,
+  builtins: BuiltinRegistry,
+  closure_captures: Dict<Int, Vector<CaptureParam>>,
+) PreRouteModule {
+  // Insert explicit wrap/unwrap nodes at every representation-crossing point.
+  anf2 := insert_boundaries(anf, empty_registry(), builtins, env)
+
+  // Assign slots after boundary insertion so wrap/unwrap temporaries are
+  // included in the slot maps.
+  funcs := assign_slots_for_module(anf2.functions, closure_captures, env)
+
+  // Refine SlotInfo.repr and SlotInfo.wasm_type from the slot-assignment
+  // defaults using MonoType and boundary-op overrides.
+  funcs2 := assign_repr_for_module(funcs, env, builtins)
+  .{ anf: anf2, funcs: funcs2 }
+}
+
 // prepare_backend converts optimized semantic ANF into prepared backend IR.
 //
 // This is the only sanctioned entry into the backend pipeline. Call this after
@@ -50,19 +78,11 @@ pub fn prepare_backend(
   builtins: BuiltinRegistry,
   closure_captures: Dict<Int, Vector<CaptureParam>>,
 ) PreparedModule {
-  // Insert explicit wrap/unwrap nodes at every representation-crossing point.
-  anf2 := insert_boundaries(anf, empty_registry(), builtins, env)
+  pre := prepare_backend_preroute(anf, env, builtins, closure_captures)
 
-  // Assign slots after boundary insertion so wrap/unwrap temporaries are
-  // included in the slot maps.
-  funcs := assign_slots_for_module(anf2.functions, closure_captures, env)
-
-  // Refine SlotInfo.repr and SlotInfo.wasm_type from the slot-assignment
-  // defaults using MonoType and boundary-op overrides.
-  funcs2 := assign_repr_for_module(funcs, env, builtins)
-
-  funcs3 := route_typed_vectors(funcs2, builtins, Dict.new())
-  .{ anf: anf2, closure_captures, funcs: funcs3, typed_vector_fields: Dict.new() }
+  typed_fields := analyze_typed_fields(pre.funcs, builtins)
+  funcs3 := route_typed_vectors(pre.funcs, builtins, typed_fields)
+  .{ anf: pre.anf, closure_captures, funcs: funcs3, typed_vector_fields: typed_fields }
 }
 
 fn empty_registry() WasmTypeRegistry {
