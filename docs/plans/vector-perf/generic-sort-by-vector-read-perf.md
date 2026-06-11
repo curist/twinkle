@@ -6,6 +6,15 @@
 
 **Reprioritized 2026-06-09 after measurement.** The realistic key-index path is ~7× slower than Clojure (~2.37s vs ~0.34s at N=1M), and that gap is dominated by **vector read cost** and **persistent-merge allocation** — both structural — not by comparator mechanics. Comparator micro-opts (closure representation, enum/`Order` allocation) were measured and are real but small (~6% of the gap combined). Tracks below are reordered accordingly: read path first, flat-buffer merge second, comparator mechanics last. See [Measured decomposition](#measured-decomposition-2026-06-09).
 
+> **Read-wall lever is in progress (2026-06-11).** The identified master lever —
+> typed flat `Vector<Int>` storage — has been landing on branch
+> `native-typed-value-sort`: typed `PVecI64` reads (S1/S2.0), boundary adapters
+> (S2.1), and typed record fields (S2.2). The remaining read-wall win for
+> dataframe `order_by` needs the typed representation to reach **variant-held
+> columns** (`IntCol(Vector<Int>)`). See
+> [typed-vector-representation.md](typed-vector-representation.md) for the master
+> track and its per-phase status.
+
 **Goal:** Improve the normal Twinkle path:
 
 ```tw

@@ -1,6 +1,6 @@
 # Order-by and native sort performance — consolidated plan
 
-**Status:** active performance track. Keep user-facing dataframe and collection code idiomatic, but lower hot sort/order-by shapes to dense runtime work where needed.
+**Status:** superseded as the active lead — retained for context and the native-sort post-mortems (Approaches A/C, the value-sort kernel, the dense working-set framing). The live leads are now [generic-sort-by-vector-read-perf.md](generic-sort-by-vector-read-perf.md) (read-path + merge mechanics) and [typed-vector-representation.md](typed-vector-representation.md) (the master representation lever). The principle here still holds: keep user-facing dataframe/collection code idiomatic, but lower hot sort/order-by shapes to dense runtime work where needed.
 
 ## Goal
 

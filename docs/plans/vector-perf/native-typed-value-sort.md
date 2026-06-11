@@ -1,6 +1,16 @@
 # Native Typed Value Sort Implementation Plan
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+> **Status: ✅ LANDED.** `xs.sort()` on `Vector<Int>` and `Vector<Float>` is
+> lowered to native typed kernels (`sort_i64`/`sort_f64` over dense GC arrays),
+> with the monomorphization routing hook and stage0 parity in place (commits
+> around `48a594a`/`60232f4`/`a66cbe2`). The per-step checkboxes below were not
+> ticked during execution — this banner is the completion record. This is the
+> first dense typed kernel that won, and the seed of the broader
+> [typed-vector-representation.md](typed-vector-representation.md) track. Remaining
+> open work is Bool/Byte families (Milestone 3 only covered Float).
+>
+> **For agentic workers (historical):** executed task-by-task; steps use checkbox
+> (`- [ ]`) syntax.
 
 **Goal:** Make `xs.sort()` on `Vector<Int>`/`Vector<Float>` fast by lowering it — with no source changes — to a native runtime kernel that unboxes once into a dense typed GC array, runs a stable merge over raw `i64`/`f64` (inlined compares, no closure, no per-element box/cast), and boxes once on the way out.
 

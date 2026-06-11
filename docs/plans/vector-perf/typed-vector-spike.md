@@ -1,11 +1,15 @@
 # Typed `Vector<Int>` representation — de-risking spike
 
-**Status:** active (2026-06-10). First concrete step of the
+**Status:** ✅ complete / landed (S1 + S2.0; the premise held — ~6.8× faster
+random reads). This was the first concrete step of the
 [typed-vector-representation.md](typed-vector-representation.md) master track,
 chosen over a full upfront plan to *measure the premise before committing
-multi-week effort*. Boot-only (no stage0 parity — routing only changes what
-boot emits; stage0 compiles the new boot source as ordinary Twinkle and the
-self-host fixed point is between two boot-compiled stages).
+multi-week effort*. Ongoing typed-vector work now lives under that master plan
+(S2.1 boundary adapters, S2.2 record fields landed since). Retained as the
+record of the de-risking spike and its measurements. Boot-only (no stage0
+parity — routing only changes what boot emits; stage0 compiles the new boot
+source as ordinary Twinkle and the self-host fixed point is between two
+boot-compiled stages).
 
 ## The premise being tested
 
@@ -55,11 +59,14 @@ pointer-chase is worth the typed-storage machinery. (The random boxed read is
   read is even cheaper. Confirms the premise: the scattered `BoxedInt`
   pointer-chase was the dominant per-read cost; the shared trie walk is cheap.
   Typed `Vector<Int>` storage is validated as the master lever. **Proceed to S2.**
-- [ ] **S2 — source-level repr routing.** Recognize intra-function
+- [x] **S2 — source-level repr routing. DONE.** Recognize intra-function
   typed-eligible `Vector<Int>` and route `collect`/literal → typed builder,
   `xs[i]` → `get_i64`, `xs.len()` → `len_i64`; erase `PVecI64 → PVecAnyref` at
   every call boundary (coercion: box each `i64`). Verifier must forbid feeding a
   `PVecI64` slot to a generic anyref-vector helper without the coercion.
+  S2.0 (intra-function, no-boundary) landed; boundary work continued beyond this
+  spike as S2.1 (return + direct-call args) and S2.2 (record fields) under the
+  master plan.
 
   **S2.0 design (first increment — IR rewrite, conservative no-boundary).**
   Lowest blast radius: a post-prepare IR rewrite pass, *no* change to existing

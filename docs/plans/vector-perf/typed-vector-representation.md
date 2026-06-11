@@ -281,7 +281,18 @@ These should be visible in backend IR/planning, not hidden ad hoc in emitters.
 
 ## Implementation phases
 
-### Phase 1 — Measure boxed vector read cost directly
+> **Progress (2026-06-11, branch `native-typed-value-sort`).** The `Vector<Int>`
+> track is well underway; per-phase status is tagged on each header below.
+> Landed: typed `PVecI64` family + intra-function routing (S1/S2.0, see
+> [typed-vector-spike.md](typed-vector-spike.md)), boxed-boundary adapters for
+> return + direct-call args (S2.1), and typed **record fields** (S2.2, see
+> [../archive/typed-record-fields.md](../archive/typed-record-fields.md)). The
+> native value-sort kernel ([native-typed-value-sort.md](native-typed-value-sort.md))
+> realizes the Phase-2 dense working set. **Open next:** typed combinators
+> (Phase 5) and variant-payload routing (a Phase-6 boundary) — the latter is the
+> dataframe `order_by` unlock, since columns are `IntCol(Vector<Int>)`.
+
+### Phase 1 — Measure boxed vector read cost directly — ✅ done
 
 Add microbenchmarks that isolate:
 
@@ -292,11 +303,11 @@ Add microbenchmarks that isolate:
 
 Record numbers in this plan and `docs/plans/dataframe-friction-log.md` where relevant.
 
-### Phase 2 — Dense i64 working-set helper for sort kernels
+### Phase 2 — Dense i64 working-set helper for sort kernels — ✅ done (native value-sort kernel)
 
 As part of [wasm-native-sort.md](wasm-native-sort.md), implement helpers that materialize `Vector<Int>` into a dense i64 working array inside the runtime sort. This gives immediate value and validates unboxing/fill loops.
 
-### Phase 3 — Backend representation enum for typed vectors
+### Phase 3 — Backend representation enum for typed vectors — ✅ done (S2.0 repr tags + S2.2 verifier check)
 
 Introduce backend representation tags for typed vectors, initially behind a conservative gate:
 
@@ -306,7 +317,7 @@ Introduce backend representation tags for typed vectors, initially behind a cons
 
 Add verifier checks so typed vector locals cannot be consumed by generic anyref-vector helpers without an explicit coercion.
 
-### Phase 4 — Typed `Vector<Int>` literals, collect, index, and len
+### Phase 4 — Typed `Vector<Int>` literals, collect, index, and len — ✅ done (S2.0)
 
 Make the smallest useful `Vector<Int>` path typed:
 
@@ -318,7 +329,7 @@ Make the smallest useful `Vector<Int>` path typed:
 
 Run existing vector/API tests plus new numeric read microbenchmarks.
 
-### Phase 5 — Typed append/builder and common combinators
+### Phase 5 — Typed append/builder and common combinators — ◐ partial (typed builder done; combinators open)
 
 Add typed builder support so loops building `Vector<Int>` do not box each append. Route `collect` to the typed builder where possible.
 
@@ -328,13 +339,13 @@ Then consider:
 - `Vector.sort<Int>`;
 - `Vector.map`/`filter` specializations if optimizer can recognize them.
 
-### Phase 6 — Cross-function monomorphic typed vectors
+### Phase 6 — Cross-function monomorphic typed vectors — ◐ partial (boundary-by-boundary)
 
 Let monomorphized function ABIs use typed vector representations when all call sites agree or when the monomorphized instance is representation-specific.
 
-This is where the feature becomes broadly useful, rather than a local optimization.
+This is where the feature becomes broadly useful, rather than a local optimization. Landed so far as conservative per-boundary steps rather than full typed ABIs: S2.1 (return + direct-call argument boxing adapters) and S2.2 (typed record fields via whole-program field inference). Still open: variant payloads (the dataframe-column boundary), closures/closure-call boundaries, builtin/vector combinators, and genuinely representation-specialized cross-function ABIs.
 
-### Phase 7 — Extend to Float/Bool/Byte if Int succeeds
+### Phase 7 — Extend to Float/Bool/Byte if Int succeeds — ◐ partial (Float value-sort kernel only; typed Float/Bool/Byte vectors open)
 
 Add typed families only when motivated by benchmarks and use cases.
 
