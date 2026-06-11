@@ -12,11 +12,13 @@
 /// runs analyze_typed_fields on the prepared funcs and inspects the decision dict.
 
 use compiler.backend.closure_convert.{convert_closures}
-use compiler.backend.prepare.{prepare_backend_preroute}
+use compiler.backend.prepare.{PreparedModule, prepare_backend, prepare_backend_preroute}
 use compiler.backend.prepared_ir.{PreparedFunc, SlotInfo}
 use compiler.backend.route_typed_vec.{analyze_typed_fields, route_typed_vectors}
+use compiler.backend.verify.{verify_prepared_module_with_level}
 use compiler.builtins.{BuiltinRegistry}
 use compiler.pipeline
+use compiler.resolver.{ResolvedEnv}
 use tests.assert
 use tests.runner
 
@@ -44,6 +46,19 @@ fn prepare_src(src: String) Result<RouteInputs, String> {
   // un-routed slots (prepare_backend already routes its final funcs).
   prepared := prepare_backend_preroute(cc.anf, artifacts.env, artifacts.builtins, cc.captures)
   .Ok(.{ funcs: prepared.funcs, builtins: artifacts.builtins })
+}
+
+type VerifyInputs = .{ prepared: PreparedModule, env: ResolvedEnv, builtins: BuiltinRegistry }
+
+// Compile source through the full backend preparation (including typed-vector
+// routing), returning the routed PreparedModule plus the env/builtins the
+// verifier consumes. The routed module's producer/field-read slots are already
+// PVecI64 where the field set says the field is typed.
+fn verify_inputs(src: String) Result<VerifyInputs, String> {
+  artifacts := try pipeline.compile_source(src)
+  cc := convert_closures(artifacts.opt, artifacts.env)
+  prepared := prepare_backend(cc.anf, artifacts.env, artifacts.builtins, cc.captures)
+  .Ok(.{ prepared, env: artifacts.env, builtins: artifacts.builtins })
 }
 
 // True if a slot's physical wasm storage is the typed PVecI64 ref.
@@ -254,6 +269,47 @@ pub fn suite() runner.Suite {
         routed := route_typed_vectors(p.funcs, p.builtins, tf)
         try assert.equal(pvec_i64_slot_count(routed), 0)
         .Ok({})
+      },
+    )
+    .test(
+      "verify accepts PVecI64 producer into a typed field under the matching env",
+      fn() {
+        vi := try verify_inputs(positive_src())
+
+        // env2 mirrors the live pipeline: typed_vector_fields carries the routed
+        // module's decisions, so layout_of yields PVecI64 for the typed field and
+        // the routed producer slot (also PVecI64) matches.
+        env2 := vi.env
+        env2.typed_vector_fields = vi.prepared.typed_vector_fields
+
+        case verify_prepared_module_with_level(vi.prepared, env2, vi.builtins, .Full) {
+          .Ok(_) => .Ok({}),
+          .Err(msg) => .Err("expected verify to accept matching env, got: ${msg}"),
+        }
+      },
+    )
+    .test(
+      "verify rejects a PVecI64 producer stored into a boxed-PVec field slot",
+      fn() {
+        vi := try verify_inputs(positive_src())
+
+        // Sanity: the routed module actually typed the field, so its producer
+        // slot is PVecI64. Without that the mismatch below would be vacuous.
+        try assert.ok(typed_count(vi.prepared.typed_vector_fields) >= 1, "expected a typed field")
+
+        // Drop typed_vector_fields: layout_of now reports the field as a boxed
+        // PVec, but the routed producer atom is still PVecI64 — exactly the
+        // representation mismatch an over-eager routing pass would emit. The
+        // field-store check must reject it (the generic Ref->Ref coercibility
+        // rule would otherwise let it through, which is how the original routing
+        // bug reached V8 instead of being caught here).
+        env_boxed := vi.env
+        env_boxed.typed_vector_fields = Dict.new()
+
+        case verify_prepared_module_with_level(vi.prepared, env_boxed, vi.builtins, .Full) {
+          .Ok(_) => .Err("expected verify to reject PVecI64-into-boxed-field mismatch"),
+          .Err(_) => .Ok({}),
+        }
       },
     )
 }

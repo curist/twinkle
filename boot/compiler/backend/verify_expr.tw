@@ -678,6 +678,41 @@ fn record_field_val_type(result_mono: MonoType, fid: Int, env: ResolvedEnv) ValT
   }
 }
 
+// The typed-vector representations a record-field store can carry: the boxed
+// `rt_types__PVec` ref or the unboxed `rt_types__PVecI64` ref. A typed (TypeId,
+// FieldId) field's physical slot is PVecI64; an untyped one is the boxed PVec.
+// These two refs are NOT interchangeable in Wasm (PVecI64 stored into a PVec
+// slot is invalid), but the generic Ref->Ref coercibility rule in
+// `can_emit_coerce_stack` treats them as compatible. This helper catches the
+// exact PVecI64<->PVec field-representation mismatch that an over-eager typed
+// routing pass would produce, so it fails at compile time rather than only in
+// the Wasm validator.
+fn pvec_named(vt: ValType) String? {
+  case vt {
+    .Ref(_, .Named(name)) => if name == "rt_types__PVec" or name == "rt_types__PVecI64" {
+      .Some(name)
+    } else {
+      .None
+    },
+    _ => .None,
+  }
+}
+
+fn pvec_repr_mismatch(ctx: VerifyCtx, atom: PreparedAtom, expected_vt: ValType) Bool {
+  expected_name := case pvec_named(expected_vt) {
+    .Some(n) => n,
+    .None => { return false },
+  }
+  actual_name := case ctx.infer_atom_val_type(atom) {
+    .Some(vt) => case pvec_named(vt) {
+      .Some(n) => n,
+      .None => { return false },
+    },
+    .None => { return false },
+  }
+  expected_name != actual_name
+}
+
 fn verify_record_field_payloads(
   ctx: VerifyCtx,
   result_info: SlotInfo,
@@ -691,6 +726,19 @@ fn verify_record_field_payloads(
         return fail_slot(ctx.pf, result_info, "record field ${field.field.id} missing from layout")
       },
     }
+
+    if ctx.pvec_repr_mismatch(field.value, expected_vt) {
+      actual_vt := ctx.infer_atom_val_type(field.value).unwrap()
+
+      return fail_slot(
+        ctx.pf,
+        result_info,
+        "${context} ${field.field.id} typed-vector representation mismatch: value ${val_type_name(
+          actual_vt,
+        )} stored into field slot ${val_type_name(expected_vt)}",
+      )
+    }
+
     try ctx.verify_atom_coercible_to_val_type(
       field.value,
       expected_vt,
@@ -713,6 +761,19 @@ fn verify_record_update_value(
       return fail_slot(ctx.pf, result_info, "record update field ${fid.id} missing from layout")
     },
   }
+
+  if ctx.pvec_repr_mismatch(value, expected_vt) {
+    actual_vt := ctx.infer_atom_val_type(value).unwrap()
+
+    return fail_slot(
+      ctx.pf,
+      result_info,
+      "record update field ${fid.id} typed-vector representation mismatch: value ${val_type_name(
+        actual_vt,
+      )} stored into field slot ${val_type_name(expected_vt)}",
+    )
+  }
+
   ctx.verify_atom_coercible_to_val_type(value, expected_vt, "record update field ${fid.id}")
 }
 
@@ -1119,7 +1180,13 @@ fn reject_dead_use(ctx: VerifyCtx, info: SlotInfo, context: String) Result<Void,
 //   - scalar (I64/F64/I32) arg passed to erased param → missing AWrapAnyref
 //
 // Note: TypedRef/TypedSum/ClosureRef → OpaqueAnyref is allowed (implicit Wasm subtyping).
-// Future 4b work: add field payload repr checks for ARecord/AVariant using layout types.
+//
+// Field-payload typed-vector repr checks exist for ARecord
+// (verify_record_field_payloads) and ARecordUpdate (verify_record_update_value).
+// Not yet covered: AVariant payloads and the ARecordGet result-slot side (a typed
+// field read into a boxed result slot, or vice versa, would still reach the Wasm
+// validator rather than this verifier) — store-side coverage was the historical
+// bug class; the get/variant side is a known residual gap.
 fn infer_atom_repr(ctx: VerifyCtx, atom: PreparedAtom) ReprKind? {
   case facts.atom_repr(atom, ctx.pf) {
     .Some(repr) => .Some(repr),
