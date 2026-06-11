@@ -1,0 +1,105 @@
+use @std.date
+
+fn next_seed(seed: Int) Int {
+  (seed * 1664525 + 1013904223) % 2147483648
+}
+
+fn append_keys(n: Int) Vector<Int> {
+  out: Vector<Int> = []
+  seed := 12345
+
+  for _ in range(n) {
+    seed = next_seed(seed)
+    out = .append(seed % 1000)
+    seed = next_seed(seed)
+  }
+
+  out
+}
+
+fn print_time(label: String, start: Float, guard: Int) Void {
+  println("${label}: ${date.now() - start}ms (checksum ${guard})")
+}
+
+fn order_rank(o: Order) Int {
+  case o {
+    .Lt => -1,
+    .Eq => 0,
+    .Gt => 1,
+  }
+}
+
+fn bench_n(n: Int) Void {
+  println("── N = ${n} ──")
+  idx := collect i in range(n) {
+    i * 7919 % n
+  }
+  keys := append_keys(n)
+  reps := n * 17
+
+  start_sort := date.now()
+  sorted := idx.sort_by(fn(a, b) { Int.compare(a, b) })
+  print_time("sort_by Int.compare      ", start_sort, sorted.len())
+
+  calls := Cell.new(0)
+  start_counted := date.now()
+  sorted_counted := idx.sort_by(fn(a, b) {
+    calls.update(fn(x) { x + 1 })
+    Int.compare(a, b)
+  })
+  print_time("sort_by Int + Cell count ", start_counted, calls.get() + sorted_counted.len())
+  println("observed comparator calls: ${calls.get()}")
+
+  cmp := fn(a: Int, b: Int) Order { Int.compare(a, b) }
+  start_closure := date.now()
+  sum_closure := 0
+
+  for i in range(reps) {
+    sum_closure = sum_closure + order_rank(cmp(i % n, (i * 7 + 3) % n))
+  }
+
+  print_time("closure calls same scale ", start_closure, sum_closure)
+
+  start_cell := date.now()
+  cell := Cell.new(0)
+
+  for _ in range(reps) {
+    cell.update(fn(x) { x + 1 })
+  }
+
+  print_time("Cell.update same scale   ", start_cell, cell.get())
+
+  start_reads := date.now()
+  sum_reads := 0
+
+  for i in range(reps) {
+    sum_reads = sum_reads + keys[(i * 7 + 3) % n]
+  }
+
+  print_time("random reads same scale  ", start_reads, sum_reads)
+
+  start_build := date.now()
+  built := 0
+
+  for chunk in range(17) {
+    out: Vector<Int> = []
+
+    for i in range(n) {
+      out = .append((i + chunk) % n)
+    }
+
+    built = built + out.len()
+  }
+
+  print_time("build chunks via append   ", start_build, built)
+
+  start_key_sort := date.now()
+  sorted_key := idx.sort_by(fn(a, b) { Int.compare(keys[a], keys[b]) })
+  print_time("sort_by key reads        ", start_key_sort, sorted_key.len())
+
+  println("")
+}
+
+bench_n(10000)
+bench_n(100000)
+bench_n(1000000)

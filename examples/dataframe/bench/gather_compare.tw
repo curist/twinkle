@@ -1,0 +1,125 @@
+use @std.date
+
+use frame.column
+use frame.column.{ColData, Column}
+use frame.gen
+use frame.table.{Table}
+
+fn ms_since(start: Float) Float {
+  date.now() - start
+}
+
+fn must_col(r: Result<Column, String>) Column {
+  case r {
+    .Ok(c) => c,
+    .Err(e) => error(e),
+  }
+}
+
+fn gather_tw<T>(xs: Vector<T>, idx: Vector<Int>) Vector<T> {
+  collect k in idx {
+    xs[k]
+  }
+}
+
+fn column_gather_tw(c: Column, idx: Vector<Int>) Column {
+  new_data := case c.data {
+    .IntCol(v) => ColData.IntCol(gather_tw(v, idx)),
+    .FloatCol(v) => ColData.FloatCol(gather_tw(v, idx)),
+    .StrCol(v) => ColData.StrCol(gather_tw(v, idx)),
+    .BoolCol(v) => ColData.BoolCol(gather_tw(v, idx)),
+  }
+
+  Column.{ data: new_data, nulls: gather_tw(c.nulls, idx) }
+}
+
+fn table_take_tw(t: Table, idx: Vector<Int>) Table {
+  out_cols := collect c in t.cols {
+    column_gather_tw(c, idx)
+  }
+
+  Table.{ names: t.names, cols: out_cols, nrows: idx.len() }
+}
+
+fn time_ms(label: String, work: fn() Int) Void {
+  start := date.now()
+  guard := work()
+  elapsed := ms_since(start)
+  println("${label}: ${elapsed}ms (checksum ${guard})")
+}
+
+fn bench_n(n: Int) Void {
+  println("── N = ${n} ──")
+  base := gen.table(n, 64)
+
+  amount_col := must_col(base.column("amount"))
+  key_col := must_col(base.column("key"))
+  score_col := must_col(base.column("score"))
+  amounts := column.as_ints(amount_col)
+
+  idx := collect i in range(n) {
+    i
+  }
+
+  sorted := idx.sort_by(fn(a, b) { Int.compare(amounts[a], amounts[b]) })
+
+  time_ms(
+    "native vector.gather amount",
+    fn() {
+      gathered := amounts.gather(sorted)
+      gathered.len()
+    },
+  )
+
+  time_ms(
+    "twinkle gather amount     ",
+    fn() {
+      gathered := gather_tw(amounts, sorted)
+      gathered.len()
+    },
+  )
+
+  time_ms(
+    "native gather 3 columns   ",
+    fn() {
+      gathered_key_col := column.gather(key_col, sorted)
+      gathered_amount_col := column.gather(amount_col, sorted)
+      gathered_score_col := column.gather(score_col, sorted)
+      column.len(gathered_key_col)
+        + column.len(gathered_amount_col) + column.len(gathered_score_col)
+    },
+  )
+
+  time_ms(
+    "twinkle gather 3 columns  ",
+    fn() {
+      gathered_key_col := column_gather_tw(key_col, sorted)
+      gathered_amount_col := column_gather_tw(amount_col, sorted)
+      gathered_score_col := column_gather_tw(score_col, sorted)
+      column.len(gathered_key_col)
+        + column.len(gathered_amount_col) + column.len(gathered_score_col)
+    },
+  )
+
+  time_ms(
+    "native table.take all cols",
+    fn() {
+      taken := base.take(sorted)
+      taken.nrows
+    },
+  )
+
+  time_ms(
+    "twinkle table_take all    ",
+    fn() {
+      taken := table_take_tw(base, sorted)
+      taken.nrows
+    },
+  )
+
+  println("")
+}
+
+bench_n(10000)
+bench_n(100000)
+bench_n(1000000)

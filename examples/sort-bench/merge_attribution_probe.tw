@@ -1,0 +1,198 @@
+use @std.date
+
+// Attribution probe for the ~743ms generic `sort_by(Int.compare)` mechanics half
+// (no dataframe key reads). It ablates the real recursive merge sort into layers
+// so we can price each component:
+//
+//   R  reads + compares + recursion, NO allocation, NO append.
+//      Recurses over the original array's index ranges and walks both halves with
+//      two pointers. This is the cost a flat-buffer in-place merge (Track 2) would
+//      pay: index reads + comparator calls + recursion, with zero per-level alloc.
+//      (Reads still go through the persistent PVec, so R is itself an upper bound
+//      on what a typed flat buffer from Track 1 would cost.)
+//
+//   S  R plus the base-case singleton `[xs[lo]]` allocation (~N of them), consumed.
+//
+//   B  the real algorithm: recursive merge building each output via `.append`.
+//      Should reproduce `sort_by(Int.compare)` minus the ascending/descending
+//      pre-scan. Validated against a real `xs.sort_by(...)` call below.
+//
+// Deltas:
+//   S - R  ≈ singleton allocation overhead (~N allocs)
+//   B - S  ≈ merge-output append + output-vector allocation overhead (~N log N appends)
+//   B - R  ≈ total allocation overhead that a flat-buffer merge could remove
+fn print_time(label: String, start: Float, guard: Int) Void {
+  println("${label}: ${date.now() - start}ms (checksum ${guard})")
+}
+
+fn shuffled(n: Int) Vector<Int> {
+  collect i in range(n) {
+    i * 7919 % n
+  }
+}
+
+// ── R: reads + compares + recursion, no allocation ──────────────────────────
+fn ms_reads(xs: Vector<Int>, lo: Int, hi: Int, cmp: fn(Int, Int) Order) Int {
+  n := hi - lo
+
+  if n <= 1 {
+    return n
+  }
+
+  mid := lo + n / 2
+  l := ms_reads(xs, lo, mid, cmp)
+  r := ms_reads(xs, mid, hi, cmp)
+
+  i := lo
+  j := mid
+  acc := 0
+
+  for i < mid and j < hi {
+    case cmp(xs[i], xs[j]) {
+      .Gt => {
+        acc = acc + xs[j]
+        j = j + 1
+      },
+      _ => {
+        acc = acc + xs[i]
+        i = i + 1
+      },
+    }
+  }
+
+  for i < mid {
+    acc = acc + xs[i]
+    i = i + 1
+  }
+
+  for j < hi {
+    acc = acc + xs[j]
+    j = j + 1
+  }
+
+  l + r + acc
+}
+
+// ── S: R plus base-case singleton allocation ────────────────────────────────
+fn ms_singletons(xs: Vector<Int>, lo: Int, hi: Int, cmp: fn(Int, Int) Order) Int {
+  n := hi - lo
+
+  if n <= 0 {
+    return 0
+  }
+
+  if n == 1 {
+    leaf: Vector<Int> = [xs[lo]]
+
+    return leaf[0] - leaf[0] + 1
+  }
+
+  mid := lo + n / 2
+  l := ms_singletons(xs, lo, mid, cmp)
+  r := ms_singletons(xs, mid, hi, cmp)
+
+  i := lo
+  j := mid
+  acc := 0
+
+  for i < mid and j < hi {
+    case cmp(xs[i], xs[j]) {
+      .Gt => {
+        acc = acc + xs[j]
+        j = j + 1
+      },
+      _ => {
+        acc = acc + xs[i]
+        i = i + 1
+      },
+    }
+  }
+
+  for i < mid {
+    acc = acc + xs[i]
+    i = i + 1
+  }
+
+  for j < hi {
+    acc = acc + xs[j]
+    j = j + 1
+  }
+
+  l + r + acc
+}
+
+// ── B: the real recursive merge sort (mirror of prelude vector.tw) ───────────
+fn merge_build(a: Vector<Int>, b: Vector<Int>, cmp: fn(Int, Int) Order) Vector<Int> {
+  out: Vector<Int> = []
+  i := 0
+  j := 0
+
+  for i < a.len() and j < b.len() {
+    case cmp(a[i], b[j]) {
+      .Gt => {
+        out = .append(b[j])
+        j = j + 1
+      },
+      _ => {
+        out = .append(a[i])
+        i = i + 1
+      },
+    }
+  }
+
+  for i < a.len() {
+    out = .append(a[i])
+    i = i + 1
+  }
+
+  for j < b.len() {
+    out = .append(b[j])
+    j = j + 1
+  }
+
+  out
+}
+
+fn ms_build(xs: Vector<Int>, lo: Int, hi: Int, cmp: fn(Int, Int) Order) Vector<Int> {
+  n := hi - lo
+
+  if n <= 0 {
+    return []
+  }
+
+  if n == 1 {
+    return [xs[lo]]
+  }
+
+  mid := lo + n / 2
+  left := ms_build(xs, lo, mid, cmp)
+  right := ms_build(xs, mid, hi, cmp)
+  merge_build(left, right, cmp)
+}
+
+fn bench_n(n: Int) Void {
+  println("── N = ${n} ──")
+  xs := shuffled(n)
+  cmp := fn(a: Int, b: Int) Order { Int.compare(a, b) }
+
+  start_r := date.now()
+  r := ms_reads(xs, 0, n, cmp)
+  print_time("R reads+compare+recursion  ", start_r, r % 100000)
+
+  start_s := date.now()
+  s := ms_singletons(xs, 0, n, cmp)
+  print_time("S R + singleton alloc      ", start_s, s % 100000)
+
+  start_b := date.now()
+  b := ms_build(xs, 0, n, cmp)
+  print_time("B real merge (alloc+append)", start_b, b.len())
+
+  start_ref := date.now()
+  ref := xs.sort_by(fn(a, b) { Int.compare(a, b) })
+  print_time("ref real sort_by           ", start_ref, ref.len())
+
+  println("  derived: singleton alloc (S-R), append+output alloc (B-S), total alloc (B-R)")
+}
+
+println("=== merge mechanics attribution ===")
+bench_n(1000000)

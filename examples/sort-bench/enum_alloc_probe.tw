@@ -1,0 +1,179 @@
+use @std.date
+
+// Isolates the cost of producing+consuming a comparison result as an enum
+// (nullary variant => StructNew per call) vs as a bare Int (unboxed, no alloc).
+//
+// All compare functions share the SAME branch structure; the only difference is
+// the return representation. Consumers all branch 3-way on consume, so the delta
+// between Int and enum versions is the struct allocation + tag extraction.
+//
+// Tests enums in general, not just Order:
+//   - Order            : builtin nullary-only enum
+//   - Cmp3             : user-defined nullary-only enum
+//   - Option<Int>      : payloaded enum (can't be folded to a bare i32)
+fn print_time(label: String, start: Float, guard: Int) Void {
+  println("${label}: ${date.now() - start}ms (checksum ${guard})")
+}
+
+// ── Int return (no allocation) ──────────────────────────────────────────────
+fn cmp_int(a: Int, b: Int) Int {
+  if a < b {
+    -1
+  } else if a > b {
+    1
+  } else {
+    0
+  }
+}
+
+fn int_rank(x: Int) Int {
+  if x < 0 {
+    -1
+  } else if x > 0 {
+    1
+  } else {
+    0
+  }
+}
+
+// ── Order return (builtin nullary enum, StructNew) ──────────────────────────
+fn cmp_ord(a: Int, b: Int) Order {
+  if a < b {
+    .Lt
+  } else if a > b {
+    .Gt
+  } else {
+    .Eq
+  }
+}
+
+fn order_rank(o: Order) Int {
+  case o {
+    .Lt => -1,
+    .Eq => 0,
+    .Gt => 1,
+  }
+}
+
+// ── Custom nullary enum (user-defined, to show enums in general) ────────────
+type Cmp3 = { Lo, Mid, Hi }
+
+fn cmp_cmp3(a: Int, b: Int) Cmp3 {
+  if a < b {
+    .Lo
+  } else if a > b {
+    .Hi
+  } else {
+    .Mid
+  }
+}
+
+fn cmp3_rank(c: Cmp3) Int {
+  case c {
+    .Lo => -1,
+    .Mid => 0,
+    .Hi => 1,
+  }
+}
+
+// ── Payloaded enum ──────────────────────────────────────────────────────────
+fn cmp_opt(a: Int, b: Int) Option<Int> {
+  if a == b {
+    .None
+  } else {
+    .Some(a - b)
+  }
+}
+
+fn opt_rank(o: Option<Int>) Int {
+  case o {
+    .None => 0,
+    .Some(d) => if d < 0 {
+      -1
+    } else {
+      1
+    },
+  }
+}
+
+fn bench(reps: Int) Void {
+  n := 1000
+
+  // A. Int return, direct call — no enum.
+  start_a := date.now()
+  acc_a := 0
+
+  for i in range(reps) {
+    a := i % n
+    b := (i * 7 + 3) % n
+    acc_a = acc_a + int_rank(cmp_int(a, b))
+  }
+
+  print_time("A int  return  direct      ", start_a, acc_a)
+
+  // B. Order return, direct call (inlinable — may let the optimizer fuse).
+  start_b := date.now()
+  acc_b := 0
+
+  for i in range(reps) {
+    a := i % n
+    b := (i * 7 + 3) % n
+    acc_b = acc_b + order_rank(cmp_ord(a, b))
+  }
+
+  print_time("B Order return direct      ", start_b, acc_b)
+
+  // C. Custom nullary enum, direct call.
+  start_c := date.now()
+  acc_c := 0
+
+  for i in range(reps) {
+    a := i % n
+    b := (i * 7 + 3) % n
+    acc_c = acc_c + cmp3_rank(cmp_cmp3(a, b))
+  }
+
+  print_time("C Cmp3 return  direct      ", start_c, acc_c)
+
+  // D. Int return via closure value (mirrors sort_by's comparator boundary).
+  cmpi := fn(a: Int, b: Int) Int { cmp_int(a, b) }
+  start_d := date.now()
+  acc_d := 0
+
+  for i in range(reps) {
+    a := i % n
+    b := (i * 7 + 3) % n
+    acc_d = acc_d + int_rank(cmpi(a, b))
+  }
+
+  print_time("D int  return via closure  ", start_d, acc_d)
+
+  // E. Order return via closure value (this is exactly the sort_by shape).
+  cmpo := fn(a: Int, b: Int) Order { cmp_ord(a, b) }
+  start_e := date.now()
+  acc_e := 0
+
+  for i in range(reps) {
+    a := i % n
+    b := (i * 7 + 3) % n
+    acc_e = acc_e + order_rank(cmpo(a, b))
+  }
+
+  print_time("E Order return via closure ", start_e, acc_e)
+
+  // F. Payloaded enum via closure.
+  cmpx := fn(a: Int, b: Int) Option<Int> { cmp_opt(a, b) }
+  start_f := date.now()
+  acc_f := 0
+
+  for i in range(reps) {
+    a := i % n
+    b := (i * 7 + 3) % n
+    acc_f = acc_f + opt_rank(cmpx(a, b))
+  }
+
+  print_time("F Option payload via clos  ", start_f, acc_f)
+}
+
+println("=== enum allocation probe (reps ~= 1M-sort comparison scale) ===")
+bench(17000000)
