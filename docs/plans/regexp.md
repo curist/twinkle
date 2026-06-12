@@ -90,7 +90,7 @@ for m in re.find_all(line) {
 | Predefined classes | `\d`=`[0-9]`, `\w`=`[0-9A-Za-z_]`, `\s`=`[ \t\n\r\f\v]` (and negations) |
 | Quantifiers | `*` `+` `?` `{m}` `{m,}` `{m,n}` — greedy only |
 | Groups | `(…)` capturing, `(?:…)` non-capturing |
-| Alternation | `a` or `b` or `c` — first branch has priority |
+| Alternation | `a|b|c` — first branch has priority |
 | Anchors | `^` start-of-input, `$` end-of-input |
 | Escapes | `\n \t \r \f \v \\` and `\` before any metachar; `\uXXXX` |
 | Flags | leading `(?i)` only (case-insensitive, ASCII) |
@@ -142,6 +142,17 @@ last recorded match when the input is exhausted (or the thread list empties).
 Once a match is recorded, **stop seeding new start threads** (a later start cannot
 beat an already-found earlier match), but let the in-flight higher-priority
 threads finish extending.
+
+This is the highest-risk logic in the library; it must be pinned by tests before
+anything is trusted. Required leftmost-greedy cases (asserting `find(..).text()`):
+
+```
+find("a+",      "aaa") == "aaa"   // greedy quantifier extends
+find("a*",      "aaa") == "aaa"   // greedy, zero-or-more
+find("a|aa",    "aa")  == "a"     // alternation: first branch wins (leftmost-first)
+find("aa|a",    "aa")  == "aa"    // first branch wins the other way
+find("(a|aa)+", "aa")  == "aa"    // priority inside a loop still spans the whole input
+```
 
 ### `find_all` and empty matches
 
@@ -280,8 +291,9 @@ Wiring steps (no Rust changes): add the files → regenerate `core_lib` →
 
 `compile` returns `Result<Regexp, RegexError>` where `RegexError` is
 `.{ pos: Int, message: String }` (`pos` is the scalar offset in the pattern).
-`must` calls `compile` and traps with `error("regexp: ${message}")` on failure —
-intended for author-written literal patterns where a typo is a programmer bug.
+`must` calls `compile` and traps with `error("regexp:${err.pos}: ${err.message}")`
+on failure — intended for author-written literal patterns where a typo is a
+programmer bug.
 
 ## Testing
 
