@@ -1,0 +1,31 @@
+/// Internal — unstable. Ast → compiled Program. Not part of the public surface.
+
+use .types.{Ast, Inst}
+
+/// Compile an `Ast` into a flat program, wrapped as
+/// `Save(0) <body> Save(1) Match` so slot pair 0/1 brackets the whole match.
+pub fn compile(ast: Ast) Vector<Inst> {
+  out: Vector<Inst> = [Inst.Save(0)]
+  out = emit(ast, out)
+  out = .append(Inst.Save(1))
+  out.append(Inst.Match)
+}
+
+// Append the instructions for `ast` to `acc`, returning the new accumulator.
+fn emit(ast: Ast, acc: Vector<Inst>) Vector<Inst> {
+  case ast {
+    .Empty => acc,
+    .Lit(c) => acc.append(Inst.Char(c)),
+    .Concat(items) => {
+      a := acc
+
+      for it in items {
+        a = emit(it, a)
+      }
+
+      a
+    },
+    // remaining cases are added in later tasks
+    _ => acc,
+  }
+}
