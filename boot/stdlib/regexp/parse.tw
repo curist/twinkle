@@ -30,7 +30,7 @@ pub fn parse(pattern: String) Result<Parsed, RegexError> {
 
 // Does the pattern start with the four scalars `( ? i )`?
 fn has_ignore_case_prefix(chars: Vector<Int>) Bool {
-  chars.len() >= 4 and chars[0] == 40 and chars[1] == 63 and chars[2] == 105 and chars[3] == 41
+  chars.len() >= 4 and chars[0] == '(' and chars[1] == '?' and chars[2] == 'i' and chars[3] == ')'
 }
 
 /// Decode a String into its sequence of Unicode scalar values.
@@ -55,7 +55,7 @@ fn parse_alt(cur: Cursor) Result<Pair<Ast, Cursor>, RegexError> {
   branches: Vector<Ast> = [first.first]
   c := first.second
 
-  for c.pos < c.chars.len() and c.chars[c.pos] == 124 {
+  for c.pos < c.chars.len() and c.chars[c.pos] == '|' {
     branch := try parse_concat(advance(c, 1))
     branches = .append(branch.first)
     c = branch.second
@@ -73,13 +73,21 @@ fn parse_concat(cur: Cursor) Result<Pair<Ast, Cursor>, RegexError> {
   items: Vector<Ast> = []
   c := cur
 
-  for c.pos < c.chars.len() and c.chars[c.pos] != 124 and c.chars[c.pos] != 41 {
+  for c.pos < c.chars.len() and c.chars[c.pos] != '|' and c.chars[c.pos] != ')' {
+    if is_quantifier(c.chars[c.pos]) {
+      return .Err(err(c.pos, "nothing to repeat"))
+    }
+
     next := try parse_repeat(c)
     items = .append(next.first)
     c = next.second
   }
 
   .Ok(tuple.pair(Ast.Concat(items), c))
+}
+
+fn is_quantifier(ch: Int) Bool {
+  ch == '*' or ch == '+' or ch == '?' or ch == '{'
 }
 
 // Parse an atom followed by an optional postfix quantifier (`* + ? {m,n}`).
@@ -94,13 +102,13 @@ fn parse_repeat(cur: Cursor) Result<Pair<Ast, Cursor>, RegexError> {
 
   q := c.chars[c.pos]
 
-  if q == 42 {
+  if q == '*' {
     .Ok(tuple.pair(Ast.Star(atom), advance(c, 1)))
-  } else if q == 43 {
+  } else if q == '+' {
     .Ok(tuple.pair(Ast.Plus(atom), advance(c, 1)))
-  } else if q == 63 {
+  } else if q == '?' {
     .Ok(tuple.pair(Ast.Opt(atom), advance(c, 1)))
-  } else if q == 123 {
+  } else if q == '{' {
     parse_brace(atom, c)
   } else {
     .Ok(tuple.pair(atom, c))
@@ -118,14 +126,14 @@ fn parse_brace(atom: Ast, c: Cursor) Result<Pair<Ast, Cursor>, RegexError> {
   m := mp.value
   d = mp.cursor
 
-  if d.pos < d.chars.len() and d.chars[d.pos] == 125 {
+  if d.pos < d.chars.len() and d.chars[d.pos] == '}' {
     return .Ok(tuple.pair(Ast.Repeat(atom, m, m), advance(d, 1)))
   }
 
-  if d.pos < d.chars.len() and d.chars[d.pos] == 44 {
+  if d.pos < d.chars.len() and d.chars[d.pos] == ',' {
     d = advance(d, 1)
 
-    if d.pos < d.chars.len() and d.chars[d.pos] == 125 {
+    if d.pos < d.chars.len() and d.chars[d.pos] == '}' {
       return .Ok(tuple.pair(Ast.Repeat(atom, m, -1), advance(d, 1)))
     }
 
@@ -133,7 +141,7 @@ fn parse_brace(atom: Ast, c: Cursor) Result<Pair<Ast, Cursor>, RegexError> {
     n := np.value
     d = np.cursor
 
-    if d.pos < d.chars.len() and d.chars[d.pos] == 125 {
+    if d.pos < d.chars.len() and d.chars[d.pos] == '}' {
       return .Ok(tuple.pair(Ast.Repeat(atom, m, n), advance(d, 1)))
     }
 
@@ -149,8 +157,8 @@ fn try_int(cur: Cursor) IntParse? {
   v := 0
   any := false
 
-  for c.pos < c.chars.len() and c.chars[c.pos] >= 48 and c.chars[c.pos] <= 57 {
-    v = v * 10 + (c.chars[c.pos] - 48)
+  for c.pos < c.chars.len() and c.chars[c.pos] >= '0' and c.chars[c.pos] <= '9' {
+    v = v * 10 + (c.chars[c.pos] - '0')
     c = advance(c, 1)
     any = true
   }
@@ -167,17 +175,17 @@ fn try_int(cur: Cursor) IntParse? {
 fn parse_atom(cur: Cursor) Result<Pair<Ast, Cursor>, RegexError> {
   ch := cur.chars[cur.pos]
 
-  if ch == 46 {
+  if ch == '.' {
     .Ok(tuple.pair(Ast.AnyChar, advance(cur, 1)))
-  } else if ch == 94 {
+  } else if ch == '^' {
     .Ok(tuple.pair(Ast.AssertStart, advance(cur, 1)))
-  } else if ch == 36 {
+  } else if ch == '$' {
     .Ok(tuple.pair(Ast.AssertEnd, advance(cur, 1)))
-  } else if ch == 40 {
+  } else if ch == '(' {
     parse_group(cur)
-  } else if ch == 91 {
+  } else if ch == '[' {
     parse_class(cur)
-  } else if ch == 92 {
+  } else if ch == '\\' {
     if cur.pos + 1 >= cur.chars.len() {
       return .Err(err(cur.pos, "trailing backslash"))
     }
@@ -199,8 +207,8 @@ fn parse_group(cur: Cursor) Result<Pair<Ast, Cursor>, RegexError> {
   open := cur.pos
   c := advance(cur, 1)
 
-  if c.pos < c.chars.len() and c.chars[c.pos] == 63 {
-    if c.pos + 1 < c.chars.len() and c.chars[c.pos + 1] == 58 {
+  if c.pos < c.chars.len() and c.chars[c.pos] == '?' {
+    if c.pos + 1 < c.chars.len() and c.chars[c.pos + 1] == ':' {
       inner := try parse_alt(advance(c, 2))
       after := try expect_close(inner.second, open)
       .Ok(tuple.pair(Ast.NonCap(inner.first), after))
@@ -218,7 +226,7 @@ fn parse_group(cur: Cursor) Result<Pair<Ast, Cursor>, RegexError> {
 
 // Consume the closing `)`; error (anchored at the opening `(`) if absent.
 fn expect_close(c: Cursor, open: Int) Result<Cursor, RegexError> {
-  if c.pos >= c.chars.len() or c.chars[c.pos] != 41 {
+  if c.pos >= c.chars.len() or c.chars[c.pos] != ')' {
     .Err(err(open, "unbalanced ("))
   } else {
     .Ok(advance(c, 1))
@@ -230,31 +238,31 @@ type EscClass = .{ ranges: Vector<ClassItem>, negated: Bool }
 // `\d \w \s` and their negations; `.None` for any other escape.
 fn class_escape(esc: Int) EscClass? {
   case esc {
-    100 => .Some(EscClass.{ ranges: digit_ranges(), negated: false }),
-    68 => .Some(EscClass.{ ranges: digit_ranges(), negated: true }),
-    119 => .Some(EscClass.{ ranges: word_ranges(), negated: false }),
-    87 => .Some(EscClass.{ ranges: word_ranges(), negated: true }),
-    115 => .Some(EscClass.{ ranges: space_ranges(), negated: false }),
-    83 => .Some(EscClass.{ ranges: space_ranges(), negated: true }),
+    'd' => .Some(EscClass.{ ranges: digit_ranges(), negated: false }),
+    'D' => .Some(EscClass.{ ranges: digit_ranges(), negated: true }),
+    'w' => .Some(EscClass.{ ranges: word_ranges(), negated: false }),
+    'W' => .Some(EscClass.{ ranges: word_ranges(), negated: true }),
+    's' => .Some(EscClass.{ ranges: space_ranges(), negated: false }),
+    'S' => .Some(EscClass.{ ranges: space_ranges(), negated: true }),
     _ => .None,
   }
 }
 
 fn digit_ranges() Vector<ClassItem> {
-  [ClassItem.{ lo: 48, hi: 57 }]
+  [ClassItem.{ lo: '0', hi: '9' }]
 }
 
 fn word_ranges() Vector<ClassItem> {
   [
-    ClassItem.{ lo: 48, hi: 57 },
-    ClassItem.{ lo: 65, hi: 90 },
-    ClassItem.{ lo: 97, hi: 122 },
-    ClassItem.{ lo: 95, hi: 95 },
+    ClassItem.{ lo: '0', hi: '9' },
+    ClassItem.{ lo: 'A', hi: 'Z' },
+    ClassItem.{ lo: 'a', hi: 'z' },
+    ClassItem.{ lo: '_', hi: '_' },
   ]
 }
 
 fn space_ranges() Vector<ClassItem> {
-  [ClassItem.{ lo: 9, hi: 13 }, ClassItem.{ lo: 32, hi: 32 }]
+  [ClassItem.{ lo: '\t', hi: '\r' }, ClassItem.{ lo: ' ', hi: ' ' }]
 }
 
 // Parse a `[...]` / `[^...]` class starting at the `[`.
@@ -263,14 +271,14 @@ fn parse_class(cur: Cursor) Result<Pair<Ast, Cursor>, RegexError> {
   c := advance(cur, 1)
   negated := false
 
-  if c.pos < c.chars.len() and c.chars[c.pos] == 94 {
+  if c.pos < c.chars.len() and c.chars[c.pos] == '^' {
     negated = true
     c = advance(c, 1)
   }
 
   items: Vector<ClassItem> = []
 
-  for c.pos < c.chars.len() and c.chars[c.pos] != 93 {
+  for c.pos < c.chars.len() and c.chars[c.pos] != ']' {
     elem := try parse_class_element(c)
     items = .concat(elem.first)
     c = elem.second
@@ -288,7 +296,7 @@ fn parse_class(cur: Cursor) Result<Pair<Ast, Cursor>, RegexError> {
 fn parse_class_element(cur: Cursor) Result<Pair<Vector<ClassItem>, Cursor>, RegexError> {
   ch := cur.chars[cur.pos]
 
-  if ch == 92 {
+  if ch == '\\' {
     if cur.pos + 1 >= cur.chars.len() {
       return .Err(err(cur.pos, "trailing backslash"))
     }
@@ -311,11 +319,11 @@ fn parse_class_element(cur: Cursor) Result<Pair<Vector<ClassItem>, Cursor>, Rege
 // Given a low scalar already consumed (cursor `c` points just past it), produce
 // either a single-scalar item or a `lo-hi` range item.
 fn class_after_scalar(lo: Int, c: Cursor) Result<Pair<Vector<ClassItem>, Cursor>, RegexError> {
-  if c.pos + 1 < c.chars.len() and c.chars[c.pos] == 45 and c.chars[c.pos + 1] != 93 {
+  if c.pos + 1 < c.chars.len() and c.chars[c.pos] == '-' and c.chars[c.pos + 1] != ']' {
     after := advance(c, 1)
     hch := after.chars[after.pos]
 
-    if hch == 92 {
+    if hch == '\\' {
       if after.pos + 1 >= after.chars.len() {
         return .Err(err(after.pos, "trailing backslash"))
       }
@@ -338,11 +346,11 @@ fn advance(cur: Cursor, n: Int) Cursor {
 // Control-character escapes; everything else (\\ \. \* …) is the literal char.
 fn decode_escape(c: Int) Int {
   case c {
-    110 => 10,
-    116 => 9,
-    114 => 13,
-    102 => 12,
-    118 => 11,
+    'n' => '\n',
+    't' => '\t',
+    'r' => '\r',
+    'f' => '\x0c',
+    'v' => '\x0b',
     _ => c,
   }
 }

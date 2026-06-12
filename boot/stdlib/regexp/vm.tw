@@ -56,7 +56,7 @@ fn add_thread(prog: Vector<Inst>, gen: Gen, pc: Int, slots: Vector<Int>, pos: In
 fn inst_matches(prog: Vector<Inst>, pc: Int, ch: Int, ignore_case: Bool) Bool {
   case prog[pc] {
     .Char(c) => scalar_eq(c, ch, ignore_case),
-    .AnyChar => ch != 10,
+    .AnyChar => ch != '\n',
     .Class(items, negated) => class_match(items, ch, negated, ignore_case),
     _ => false,
   }
@@ -132,8 +132,8 @@ fn scalar_eq(a: Int, b: Int, ignore_case: Bool) Bool {
 
 // ASCII uppercase -> lowercase; everything else unchanged.
 fn fold(c: Int) Int {
-  if c >= 65 and c <= 90 {
-    c + 32
+  if c >= 'A' and c <= 'Z' {
+    c + ('a' - 'A')
   } else {
     c
   }
@@ -158,8 +158,8 @@ fn class_match(items: Vector<ClassItem>, ch: Int, negated: Bool, ignore_case: Bo
 // Under ignore_case, an ASCII letter also matches the range of its other case.
 fn in_folded(it: ClassItem, ch: Int) Bool {
   lower := fold(ch)
-  upper := if ch >= 97 and ch <= 122 {
-    ch - 32
+  upper := if ch >= 'a' and ch <= 'z' {
+    ch - ('a' - 'A')
   } else {
     ch
   }
