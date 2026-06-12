@@ -17,14 +17,15 @@ They are intentionally small; browse the directory to see what is available.
 ## Stress-test projects
 
 Self-contained projects (each with its own `twinkle.toml`) that exercise
-Twinkle at scale to probe **API ergonomics** and **performance**, and to drive
-improvements back into the compiler and standard library:
+Twinkle at scale to **surface** weaknesses in API ergonomics and performance and
+drive fixes back into the compiler and standard library. They are diagnostics,
+not claims that Twinkle is already good at these things.
 
 - **`leetcode/`** — API ergonomics on small, self-contained algorithm problems.
-- **`dataframe/`** — a columnar query engine; ergonomics *and* performance at
-  application scale.
-- **`sort-bench/`** — focused performance probes (sorting, dict, typed vector
-  reads) with cross-language baselines.
+- **`dataframe/`** — a columnar query engine that stresses fluent APIs at
+  application scale; it exposed generic `sort_by` as a bottleneck.
+- **`sort-bench/`** — the performance probes spun out of that finding (sorting,
+  dict, typed vector reads), with cross-language baselines.
 
 See each project's own README for details. They share the `assert.tw` /
 `runner.tw` test harness via symlinks to `boot/tests/`.
