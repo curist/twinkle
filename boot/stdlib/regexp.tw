@@ -43,12 +43,16 @@ pub fn test(re: Regexp, s: String) Bool {
   }
 }
 
+// Capture-slot array length: two slots (start/end) per group, plus group 0.
+fn slot_count(group_count: Int) Int {
+  2 * (group_count + 1)
+}
+
 /// The leftmost match in `s`, or `.None`.
 pub fn find(re: Regexp, s: String) Match? {
   chars := parse.decode(s)
-  nslots := 2 * (re.group_count + 1)
 
-  case vm.find_from(re.program, chars, 0, re.ignore_case, nslots) {
+  case vm.find_from(re.program, chars, 0, re.ignore_case, slot_count(re.group_count)) {
     .Some(slots) => .Some(materialize(chars, slots, re.group_count)),
     .None => .None,
   }
@@ -66,9 +70,13 @@ pub fn find_all(re: Regexp, s: String) Iterator<Match> {
       if st.pos > st.chars.len() {
         UnfoldStep.Done
       } else {
-        nslots := 2 * (st.re.group_count + 1)
-
-        case vm.find_from(st.re.program, st.chars, st.pos, st.re.ignore_case, nslots) {
+        case vm.find_from(
+          st.re.program,
+          st.chars,
+          st.pos,
+          st.re.ignore_case,
+          slot_count(st.re.group_count),
+        ) {
           .Some(slots) => {
             m := materialize(st.chars, slots, st.re.group_count)
             next := if m.end > m.start {
@@ -101,7 +109,7 @@ pub fn replace_all(re: Regexp, s: String, repl: String) String {
 fn replace_n(re: Regexp, s: String, repl: String, limit: Int) String {
   chars := parse.decode(s)
   len := chars.len()
-  nslots := 2 * (re.group_count + 1)
+  nslots := slot_count(re.group_count)
   out := ""
   last := 0
   pos := 0

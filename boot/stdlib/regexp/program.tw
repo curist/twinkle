@@ -61,8 +61,6 @@ fn emit(ast: Ast, acc: Vector<Inst>) Vector<Inst> {
 
       a
     },
-    // remaining cases are added in later tasks
-    _ => acc,
   }
 }
 

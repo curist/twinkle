@@ -145,6 +145,7 @@ fn class_match(items: Vector<ClassItem>, ch: Int, negated: Bool, ignore_case: Bo
   for it in items {
     if ch >= it.lo and ch <= it.hi or ignore_case and in_folded(it, ch) {
       hit = true
+      break
     }
   }
 
