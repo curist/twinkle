@@ -1,0 +1,71 @@
+// Advent of Code __YEAR__, Day __DAY__
+// https://adventofcode.com/__YEAR__/day/__DAY__
+//
+// TDD flow:
+//   1. Paste the puzzle's example into sample.txt.
+//   2. Set the two `part_ sample` expectations below to the example's stated
+//      answers and run `make test YEAR=__YEAR__` — they start red.
+//   3. Implement parse / part1 / part2 until the sample passes.
+//   4. `make pull` + `make solve` to get the real answers, then record them in
+//      the `part_ input` expectations to lock in a regression.
+
+use lib.aoc
+use assert
+use runner
+
+fn parse(input: String) Vector<String> {
+  aoc.lines(input)
+}
+
+pub fn part1(input: String) Int {
+  lines := parse(input)
+  // TODO: solve part 1
+  0
+}
+
+pub fn part2(input: String) Int {
+  lines := parse(input)
+  // TODO: solve part 2
+  0
+}
+
+pub fn suite() {
+  dir := aoc.day_dir(__YEAR__, __DAY__)
+  sample := aoc.read_sample(dir)
+
+  runner.suite("__YEAR__ day__DD__")
+    .test(
+      "part1 sample",
+      fn() {
+        // TODO: replace -1 with the example's part 1 answer.
+        assert.equal(part1(sample), -1)
+      },
+    )
+    .test(
+      "part2 sample",
+      fn() {
+        // TODO: replace -1 with the example's part 2 answer.
+        assert.equal(part2(sample), -1)
+      },
+    )
+    // Real-input regression: skipped until `make pull` fetches input.txt.
+    // Record the answers once `make solve` prints them.
+    .test(
+      "part1 input",
+      fn() {
+        case aoc.read_input(dir) {
+          .Some(inp) => assert.equal(part1(inp), 0),
+          .None => .Ok({}),
+        }
+      },
+    )
+    .test(
+      "part2 input",
+      fn() {
+        case aoc.read_input(dir) {
+          .Some(inp) => assert.equal(part2(inp), 0),
+          .None => .Ok({}),
+        }
+      },
+    )
+}

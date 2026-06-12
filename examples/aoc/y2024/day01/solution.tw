@@ -1,0 +1,88 @@
+// Advent of Code 2024, Day 1 — Historian Hysteria
+// https://adventofcode.com/2024/day/1
+//
+// Two columns of location IDs. Part 1 pairs them up smallest-to-smallest and
+// sums the distances; part 2 scores each left ID by how often it appears on
+// the right. A worked demo of the skeleton: solve against the sample first,
+// then lock in the real-input answer once `make pull` + `make solve` confirm it.
+use @std.math
+
+use assert
+use lib.aoc
+use runner
+
+type Cols = .{ left: Vector<Int>, right: Vector<Int> }
+
+fn parse(input: String) Cols {
+  left: Vector<Int> = []
+  right: Vector<Int> = []
+
+  for line in aoc.lines(input) {
+    nums := aoc.ints(line)
+    left = .append(nums[0])
+    right = .append(nums[1])
+  }
+
+  Cols.{ left, right }
+}
+
+pub fn part1(input: String) Int {
+  cols := parse(input)
+  l := cols.left.sort()
+  r := cols.right.sort()
+
+  total := 0
+
+  for x, i in l {
+    total = total + math.abs(x - r[i])
+  }
+
+  total
+}
+
+pub fn part2(input: String) Int {
+  cols := parse(input)
+
+  total := 0
+
+  for x in cols.left {
+    count := 0
+
+    for y in cols.right {
+      if y == x {
+        count = count + 1
+      }
+    }
+
+    total = total + x * count
+  }
+
+  total
+}
+
+pub fn suite() {
+  dir := aoc.day_dir(2024, 1)
+  sample := aoc.read_sample(dir)
+
+  runner.suite("2024 day01")
+    .test("part1 sample", fn() { assert.equal(part1(sample), 11) })
+    .test("part2 sample", fn() { assert.equal(part2(sample), 31) })
+    .test(
+      "part1 input",
+      fn() {
+        case aoc.read_input(dir) {
+          .Some(inp) => assert.equal(part1(inp), 0),
+          .None => .Ok({}),
+        }
+      },
+    )
+    .test(
+      "part2 input",
+      fn() {
+        case aoc.read_input(dir) {
+          .Some(inp) => assert.equal(part2(inp), 0),
+          .None => .Ok({}),
+        }
+      },
+    )
+}

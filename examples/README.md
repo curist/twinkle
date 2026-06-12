@@ -21,6 +21,9 @@ Twinkle at scale to **surface** weaknesses in API ergonomics and performance and
 drive fixes back into the compiler and standard library. They are diagnostics,
 not claims that Twinkle is already good at these things.
 
+- **`aoc/`** — a scaffolded Advent of Code workspace: a Makefile fetches puzzle
+  inputs, generates the per-year/all-years test aggregators, and drives a
+  TDD-style solving loop on the sample then the real input.
 - **`leetcode/`** — API ergonomics on small, self-contained algorithm problems.
 - **`dataframe/`** — a columnar query engine that stresses fluent APIs at
   application scale; it exposed generic `sort_by` as a bottleneck.

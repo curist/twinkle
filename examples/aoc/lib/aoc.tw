@@ -1,0 +1,84 @@
+/// Shared helpers for Advent of Code solutions.
+///
+/// Paths are resolved relative to the process working directory, which the
+/// Makefile pins to the `examples/aoc` root — so a day passes its own
+/// `aoc.day_dir(year, day)` (e.g. "y2024/day01") and reads files beneath it.
+
+use @std.fs
+
+/// Two-digit zero-padded day number, e.g. 1 -> "01".
+fn pad2(n: Int) String {
+  if n < 10 {
+    "0${n}"
+  } else {
+    "${n}"
+  }
+}
+
+/// Directory holding a puzzle's files, e.g. day_dir(2024, 1) -> "y2024/day01".
+pub fn day_dir(year: Int, day: Int) String {
+  "y${year}/day${pad2(day)}"
+}
+
+/// Read a day's committed sample input. Traps when missing: the sample is part
+/// of the puzzle and is expected to be checked in.
+pub fn read_sample(dir: String) String {
+  case fs.read_text("${dir}/sample.txt") {
+    .Ok(text) => text,
+    .Err(_) => error("missing ${dir}/sample.txt"),
+  }
+}
+
+/// Read a day's personal puzzle input, or `.None` when it has not been pulled.
+/// Solutions guard their real-input regression tests on this so a fresh
+/// checkout (with no pulled inputs) still passes.
+pub fn read_input(dir: String) String? {
+  path := "${dir}/input.txt"
+
+  if fs.exists(path) {
+    case fs.read_text(path) {
+      .Ok(text) => .Some(text),
+      .Err(_) => .None,
+    }
+  } else {
+    .None
+  }
+}
+
+/// Lines of the input with surrounding blank space trimmed, so the trailing
+/// newline every file ends with does not produce a spurious empty final line.
+/// Internal blank lines (group separators) are preserved.
+pub fn lines(input: String) Vector<String> {
+  input.trim().lines()
+}
+
+/// Whitespace-separated tokens of a single line, dropping empty runs so that
+/// columns padded with multiple spaces split cleanly.
+pub fn words(line: String) Vector<String> {
+  out: Vector<String> = []
+
+  for part in line.split(" ") {
+    if part != "" {
+      out = .append(part)
+    }
+  }
+
+  out
+}
+
+/// Every integer token on a line (split on whitespace). Non-numeric tokens are
+/// skipped.
+pub fn ints(line: String) Vector<Int> {
+  out: Vector<Int> = []
+
+  for w in words(line) {
+    case Int.from_string(w) {
+      .Some(n) => {
+        out = .append(n)
+      },
+      .None => {},
+    }
+  }
+
+  out
+}
