@@ -1,0 +1,97 @@
+/// Internal — unstable. Pattern string → Ast. Not part of the public surface.
+
+use @std.tuple
+use @std.tuple.{Pair}
+
+use .types.{Ast, Parsed, RegexError}
+
+type Cursor = .{ chars: Vector<Int>, pos: Int, groups: Int, ignore_case: Bool }
+
+/// Parse a pattern into an `Ast` plus its group count and flags.
+pub fn parse(pattern: String) Result<Parsed, RegexError> {
+  chars := decode(pattern)
+  cur := Cursor.{ chars, pos: 0, groups: 0, ignore_case: false }
+
+  result := try parse_concat(cur)
+  end := result.second
+
+  if end.pos != end.chars.len() {
+    .Err(err(end.pos, "unexpected '${scalar_str(end.chars[end.pos])}'"))
+  } else {
+    .Ok(Parsed.{ ast: result.first, group_count: end.groups, ignore_case: end.ignore_case })
+  }
+}
+
+/// Decode a String into its sequence of Unicode scalar values.
+pub fn decode(s: String) Vector<Int> {
+  out: Vector<Int> = []
+
+  for ch in s.chars() {
+    case ch.code_point_at(0) {
+      .Some(cp) => {
+        out = .append(cp)
+      },
+      .None => {},
+    }
+  }
+
+  out
+}
+
+// Parse a run of atoms until end of input, `|`, or `)`.
+fn parse_concat(cur: Cursor) Result<Pair<Ast, Cursor>, RegexError> {
+  items: Vector<Ast> = []
+  c := cur
+
+  for c.pos < c.chars.len() and c.chars[c.pos] != 124 and c.chars[c.pos] != 41 {
+    next := try parse_atom(c)
+    items = .append(next.first)
+    c = next.second
+  }
+
+  .Ok(tuple.pair(Ast.Concat(items), c))
+}
+
+// Parse a single atom. For now: a literal scalar, or `\X` as a literal.
+fn parse_atom(cur: Cursor) Result<Pair<Ast, Cursor>, RegexError> {
+  ch := cur.chars[cur.pos]
+
+  if ch == 92 {
+    if cur.pos + 1 >= cur.chars.len() {
+      return .Err(err(cur.pos, "trailing backslash"))
+    }
+
+    esc := cur.chars[cur.pos + 1]
+    .Ok(tuple.pair(Ast.Lit(decode_escape(esc)), advance(cur, 2)))
+  } else {
+    .Ok(tuple.pair(Ast.Lit(ch), advance(cur, 1)))
+  }
+}
+
+fn advance(cur: Cursor, n: Int) Cursor {
+  cur.pos = cur.pos + n
+  cur
+}
+
+// Control-character escapes; everything else (\\ \. \* …) is the literal char.
+fn decode_escape(c: Int) Int {
+  case c {
+    110 => 10,
+    116 => 9,
+    114 => 13,
+    102 => 12,
+    118 => 11,
+    _ => c,
+  }
+}
+
+fn err(pos: Int, msg: String) RegexError {
+  RegexError.{ pos, message: msg }
+}
+
+fn scalar_str(c: Int) String {
+  case String.from_code_point(c) {
+    .Some(s) => s,
+    .None => "?",
+  }
+}
