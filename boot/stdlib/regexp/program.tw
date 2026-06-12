@@ -18,6 +18,31 @@ fn emit(ast: Ast, acc: Vector<Inst>) Vector<Inst> {
     .Lit(c) => acc.append(Inst.Char(c)),
     .AnyChar => acc.append(Inst.AnyChar),
     .Class(items, negated) => acc.append(Inst.Class(items, negated)),
+    .Star(inner) => {
+      // L: Split(B, D) ; B ; Jmp(L) ; D:
+      l := acc.len()
+      a := acc.append(Inst.Split(l + 1, 0))
+      a = emit(inner, a)
+      a = .append(Inst.Jmp(l))
+      done := a.len()
+      a.set_at(l, Inst.Split(l + 1, done))
+    },
+    .Plus(inner) => {
+      // B ; Split(B, D)
+      bstart := acc.len()
+      a := emit(inner, acc)
+      l := a.len()
+      a.append(Inst.Split(bstart, l + 1))
+    },
+    .Opt(inner) => {
+      // Split(B, D) ; B ; D:
+      l := acc.len()
+      a := acc.append(Inst.Split(l + 1, 0))
+      a = emit(inner, a)
+      done := a.len()
+      a.set_at(l, Inst.Split(l + 1, done))
+    },
+    .Repeat(inner, m, n) => emit(expand_repeat(inner, m, n), acc),
     .Concat(items) => {
       a := acc
 
@@ -30,4 +55,29 @@ fn emit(ast: Ast, acc: Vector<Inst>) Vector<Inst> {
     // remaining cases are added in later tasks
     _ => acc,
   }
+}
+
+// Expand `x{m,n}` to `m` mandatory copies plus the tail: a `Star` when
+// unbounded (n == -1), otherwise `n - m` optional copies.
+fn expand_repeat(inner: Ast, m: Int, n: Int) Ast {
+  parts: Vector<Ast> = []
+  k := 0
+
+  for k < m {
+    parts = .append(inner)
+    k = k + 1
+  }
+
+  if n == -1 {
+    parts = .append(Ast.Star(inner))
+  } else {
+    j := m
+
+    for j < n {
+      parts = .append(Ast.Opt(inner))
+      j = j + 1
+    }
+  }
+
+  Ast.Concat(parts)
 }

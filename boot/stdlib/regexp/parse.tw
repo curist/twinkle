@@ -44,12 +44,92 @@ fn parse_concat(cur: Cursor) Result<Pair<Ast, Cursor>, RegexError> {
   c := cur
 
   for c.pos < c.chars.len() and c.chars[c.pos] != 124 and c.chars[c.pos] != 41 {
-    next := try parse_atom(c)
+    next := try parse_repeat(c)
     items = .append(next.first)
     c = next.second
   }
 
   .Ok(tuple.pair(Ast.Concat(items), c))
+}
+
+// Parse an atom followed by an optional postfix quantifier (`* + ? {m,n}`).
+fn parse_repeat(cur: Cursor) Result<Pair<Ast, Cursor>, RegexError> {
+  atomr := try parse_atom(cur)
+  atom := atomr.first
+  c := atomr.second
+
+  if c.pos >= c.chars.len() {
+    return .Ok(tuple.pair(atom, c))
+  }
+
+  q := c.chars[c.pos]
+
+  if q == 42 {
+    .Ok(tuple.pair(Ast.Star(atom), advance(c, 1)))
+  } else if q == 43 {
+    .Ok(tuple.pair(Ast.Plus(atom), advance(c, 1)))
+  } else if q == 63 {
+    .Ok(tuple.pair(Ast.Opt(atom), advance(c, 1)))
+  } else if q == 123 {
+    parse_brace(atom, c)
+  } else {
+    .Ok(tuple.pair(atom, c))
+  }
+}
+
+type IntParse = .{ value: Int, cursor: Cursor }
+
+// Parse `{m}`, `{m,}`, or `{m,n}` (cursor `c` at the `{`). n == -1 if unbounded.
+fn parse_brace(atom: Ast, c: Cursor) Result<Pair<Ast, Cursor>, RegexError> {
+  open := c.pos
+  d := advance(c, 1)
+
+  mp := try try_int(d).ok_or(err(open, "bad repetition"))
+  m := mp.value
+  d = mp.cursor
+
+  if d.pos < d.chars.len() and d.chars[d.pos] == 125 {
+    return .Ok(tuple.pair(Ast.Repeat(atom, m, m), advance(d, 1)))
+  }
+
+  if d.pos < d.chars.len() and d.chars[d.pos] == 44 {
+    d = advance(d, 1)
+
+    if d.pos < d.chars.len() and d.chars[d.pos] == 125 {
+      return .Ok(tuple.pair(Ast.Repeat(atom, m, -1), advance(d, 1)))
+    }
+
+    np := try try_int(d).ok_or(err(open, "bad repetition"))
+    n := np.value
+    d = np.cursor
+
+    if d.pos < d.chars.len() and d.chars[d.pos] == 125 {
+      return .Ok(tuple.pair(Ast.Repeat(atom, m, n), advance(d, 1)))
+    }
+
+    return .Err(err(open, "bad repetition"))
+  }
+
+  .Err(err(open, "bad repetition"))
+}
+
+// Parse one or more decimal digits; `.None` if none present.
+fn try_int(cur: Cursor) IntParse? {
+  c := cur
+  v := 0
+  any := false
+
+  for c.pos < c.chars.len() and c.chars[c.pos] >= 48 and c.chars[c.pos] <= 57 {
+    v = v * 10 + (c.chars[c.pos] - 48)
+    c = advance(c, 1)
+    any = true
+  }
+
+  if any {
+    .Some(IntParse.{ value: v, cursor: c })
+  } else {
+    .None
+  }
 }
 
 // Parse a single atom: `.`, a `[...]` class, a `\d`-style class escape, an
