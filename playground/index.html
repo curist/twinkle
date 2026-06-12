@@ -31,6 +31,14 @@
     }
     .logo { font-size: 1.1rem; font-weight: 700; color: #58a6ff; letter-spacing: -0.5px; }
     .logo span { color: #f78166; }
+    .version {
+      margin-left: -6px;
+      font-size: 0.68rem;
+      color: #6e7681;
+      font-family: 'Cascadia Code', 'Fira Code', 'JetBrains Mono', 'Menlo', monospace;
+      white-space: nowrap;
+      cursor: help;
+    }
 
     select {
       background: #21262d;
@@ -198,7 +206,11 @@
         position: relative;
       }
       .logo {
-        width: 100%;
+        width: auto;
+      }
+      .version {
+        margin-left: -2px;
+        margin-right: auto;
       }
       #status {
         position: absolute;
@@ -243,6 +255,7 @@
 
 <header>
   <div class="logo">twinkle<span>✦</span></div>
+  <span id="compiler-version" class="version" title="@twinkle-lang/twinkle package version"></span>
   <select id="examples">
     <option value="fizzbuzz">FizzBuzz</option>
     <option value="primes">Primes</option>
