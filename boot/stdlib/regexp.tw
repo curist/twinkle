@@ -54,6 +54,38 @@ pub fn find(re: Regexp, s: String) Match? {
   }
 }
 
+type ScanState = .{ re: Regexp, chars: Vector<Int>, pos: Int }
+
+/// Every non-overlapping match in `s`, left to right, as a lazy iterator.
+pub fn find_all(re: Regexp, s: String) Iterator<Match> {
+  chars := parse.decode(s)
+
+  Iterator.unfold(
+    ScanState.{ re, chars, pos: 0 },
+    fn(st: ScanState) {
+      if st.pos > st.chars.len() {
+        UnfoldStep.Done
+      } else {
+        nslots := 2 * (st.re.group_count + 1)
+
+        case vm.find_from(st.re.program, st.chars, st.pos, st.re.ignore_case, nslots) {
+          .Some(slots) => {
+            m := materialize(st.chars, slots, st.re.group_count)
+            next := if m.end > m.start {
+              m.end
+            } else {
+              m.end + 1
+            }
+
+            UnfoldStep.Yield(m, ScanState.{ re: st.re, chars: st.chars, pos: next })
+          },
+          .None => UnfoldStep.Done,
+        }
+      }
+    },
+  )
+}
+
 fn materialize(chars: Vector<Int>, slots: Vector<Int>, group_count: Int) Match {
   groups: Vector<String?> = []
   k := 0
