@@ -208,15 +208,17 @@ function readExternMeta(wasmModule) {
   }
 }
 
-function autoBridgeExternImports(wasmModule, hostImports, b, jspi = false, imports = {}, externMeta = {}) {
-  let importList;
-  try {
-    importList = WebAssembly.Module.imports(wasmModule);
-  } catch {
-    // Module.imports may fail on GC modules in some runtimes; nothing to bridge.
-    return;
+function importListFromExternMeta(externMeta) {
+  const list = [];
+  for (const [module, entries] of Object.entries(externMeta)) {
+    for (const name of Object.keys(entries)) {
+      list.push({ module, name, kind: "function" });
+    }
   }
+  return list;
+}
 
+function bridgeExternImports(importList, hostImports, b, jspi = false, imports = {}, externMeta = {}) {
   const { found, missing } = resolveExternImports(importList, hostImports, imports);
 
   if (missing.length > 0) {
@@ -290,6 +292,52 @@ function autoBridgeExternImports(wasmModule, hostImports, b, jspi = false, impor
     if (!hostImports[module]) hostImports[module] = {};
     hostImports[module][name] = bridgedFn;
   }
+}
+
+function autoBridgeExternImports(wasmModule, hostImports, b, jspi = false, imports = {}, externMeta = {}) {
+  let importList;
+  try {
+    importList = WebAssembly.Module.imports(wasmModule);
+  } catch {
+    // Some browsers (notably Safari on Wasm GC modules) can instantiate a module
+    // but reject import introspection. Twinkle modules carry their extern ABI in
+    // a custom section, so use that as the browser fallback instead of leaving
+    // extern modules absent from the import object.
+    importList = importListFromExternMeta(externMeta);
+  }
+  bridgeExternImports(importList, hostImports, b, jspi, imports, externMeta);
+}
+
+function missingImportFromError(e) {
+  const msg = e?.message ?? "";
+  const match = msg.match(/import\s+([^\s:]+):([^\s]+)\s+must be an object/)
+    ?? msg.match(/Import #[0-9]+ module="([^"]+)" function="([^"]+)"/)
+    ?? msg.match(/Import #[0-9]+ "([^"]+)" "([^"]+)"/);
+  if (match) return { module: match[1], name: match[2], kind: "function" };
+  const moduleOnly = msg.match(/Import #[0-9]+ "([^"]+)": module is not an object or function/);
+  if (moduleOnly) return { module: moduleOnly[1], name: null, kind: "function" };
+  return null;
+}
+
+function instantiateWithExternRetry(mainModule, hostImports, b, jspi, imports, externMeta) {
+  // Last-ditch Safari fallback: if both Module.imports() and customSections()
+  // are unavailable for a GC module, instantiate once, read the missing import
+  // from the LinkError text, bridge it, and retry. This preserves globalThis
+  // fallback for common browser globals such as performance/Math.
+  for (let i = 0; i < 64; i++) {
+    try {
+      return new WebAssembly.Instance(mainModule, hostImports);
+    } catch (e) {
+      const imp = missingImportFromError(e);
+      if (!imp) throw e;
+      if (imp.name === null) {
+        hostImports[imp.module] = {};
+      } else {
+        bridgeExternImports([imp], hostImports, b, jspi, imports, externMeta);
+      }
+    }
+  }
+  throw new Error("too many missing WebAssembly imports while instantiating");
 }
 
 // ---------------------------------------------------------------------------
@@ -521,7 +569,7 @@ function prepareWasm(wasmBytes, opts, { jspi = false } = {}) {
   const externMeta = readExternMeta(mainModule);
   autoBridgeExternImports(mainModule, hostImports, b, jspi, imports, externMeta);
 
-  return { mainModule, hostImports, b, runtime };
+  return { mainModule, hostImports, b, runtime, imports, externMeta, jspi };
 }
 
 // ---------------------------------------------------------------------------
@@ -529,9 +577,9 @@ function prepareWasm(wasmBytes, opts, { jspi = false } = {}) {
 // ---------------------------------------------------------------------------
 
 export function runWasmBytes(wasmBytes, opts = {}) {
-  const { mainModule, hostImports } = prepareWasm(wasmBytes, opts);
+  const { mainModule, hostImports, b, imports, externMeta, jspi } = prepareWasm(wasmBytes, opts);
   try {
-    const instance = new WebAssembly.Instance(mainModule, hostImports);
+    const instance = instantiateWithExternRetry(mainModule, hostImports, b, jspi, imports, externMeta);
     // Boot-compiled modules export __twinkle_start instead of using a Wasm
     // start section. Stage0-compiled modules still use the start section and
     // run during instantiation above.
@@ -552,7 +600,7 @@ export function runWasmBytes(wasmBytes, opts = {}) {
 // ---------------------------------------------------------------------------
 
 export async function runWasmBytesAsync(wasmBytes, opts = {}) {
-  const { mainModule, hostImports, b, runtime } = prepareWasm(wasmBytes, opts, { jspi: hasJspi });
+  const { mainModule, hostImports, b, runtime, imports, externMeta, jspi } = prepareWasm(wasmBytes, opts, { jspi: hasJspi });
 
   if (hasJspi) {
     // Wrap stdin reads as suspending imports so the event loop stays free while
@@ -593,7 +641,7 @@ export async function runWasmBytesAsync(wasmBytes, opts = {}) {
   }
 
   try {
-    const instance = new WebAssembly.Instance(mainModule, hostImports);
+    const instance = instantiateWithExternRetry(mainModule, hostImports, b, jspi, imports, externMeta);
     if (instance.exports.__twinkle_start) {
       if (hasJspi) {
         const start = WebAssembly.promising(instance.exports.__twinkle_start);

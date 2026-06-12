@@ -33,3 +33,38 @@ test("web command returns non-zero compiler exits instead of throwing", async ()
   assert.notEqual(result.exitCode, 0);
   assert.match(result.stderr, /expected expression/);
 });
+
+test("web run falls back to extern metadata when import introspection is unavailable", async () => {
+  const originalImports = WebAssembly.Module.imports;
+  WebAssembly.Module.imports = () => { throw new Error("import introspection unavailable"); };
+  try {
+    const result = await command(["run", "/input/main.tw"], {
+      source: "extern Math fn floor(x: Float) Float\nprintln(Math.floor(2.7).to_string())\n",
+      env: { NO_COLOR: "1" },
+    });
+
+    assert.equal(result.exitCode, 0);
+    assert.match(result.stdout, /2/);
+  } finally {
+    WebAssembly.Module.imports = originalImports;
+  }
+});
+
+test("web run retries missing externs when all import metadata APIs are unavailable", async () => {
+  const originalImports = WebAssembly.Module.imports;
+  const originalCustomSections = WebAssembly.Module.customSections;
+  WebAssembly.Module.imports = () => { throw new Error("import introspection unavailable"); };
+  WebAssembly.Module.customSections = () => { throw new Error("custom sections unavailable"); };
+  try {
+    const result = await command(["run", "/input/main.tw"], {
+      source: "extern performance fn now() Float\nprintln((performance.now() >= 0.0).to_string())\n",
+      env: { NO_COLOR: "1" },
+    });
+
+    assert.equal(result.exitCode, 0);
+    assert.match(result.stdout, /true/);
+  } finally {
+    WebAssembly.Module.imports = originalImports;
+    WebAssembly.Module.customSections = originalCustomSections;
+  }
+});
