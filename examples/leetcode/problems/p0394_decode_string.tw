@@ -1,0 +1,81 @@
+use @std.tuple
+use @std.tuple.{Pair}
+
+use assert
+use runner
+
+// https://leetcode.com/problems/decode-string/
+// Expand encodings like "3[a2[c]]" -> "accaccacc". Two stacks hold the pending
+// repeat counts and prefixes; a stray ']' pops an empty stack and surfaces as
+// an Err via `try`, and an unclosed '[' is caught at the end.
+fn pop<T>(stack: Vector<T>) Result<Pair<T, Vector<T>>, String> {
+  case stack.last() {
+    .Some(v) => .Ok(tuple.pair(v, stack.drop_last())),
+    .None => .Err("stack underflow"),
+  }
+}
+
+fn repeat(s: String, k: Int) String {
+  // Keep this as ordinary immutable concat. The compiler recognizes this
+  // consume-reassign loop and lowers it through the internal string builder.
+  out := ""
+  i := 0
+
+  for i < k {
+    out = .concat(s)
+    i = i + 1
+  }
+
+  out
+}
+
+fn decode(s: String) Result<String, String> {
+  counts: Vector<Int> = []
+  prefixes: Vector<String> = []
+  cur := ""
+  num := 0
+
+  for code, i in s {
+    cond {
+      code >= '0' and code <= '9' => {
+        num = num * 10 + (code - '0')
+      },
+      code == '[' => {
+        counts = .append(num)
+        prefixes = .append(cur)
+        cur = ""
+        num = 0
+      },
+      code == ']' => {
+        k := try pop(counts)
+        counts = k.second
+        prefix := try pop(prefixes)
+        prefixes = prefix.second
+        expanded := repeat(cur, k.first)
+        cur = prefix.first
+        cur = .concat(expanded)
+      },
+      _ => {
+        cur = .concat(s.slice(i, i + 1))
+      },
+    }
+  }
+
+  if !counts.is_empty() {
+    return .Err("unclosed bracket")
+  }
+
+  .Ok(cur)
+}
+
+pub fn suite() {
+  runner.suite("0394 decode-string")
+    .test("nested encoding", fn() { assert.equal(decode("3[a2[c]]").unwrap_or("?"), "accaccacc") })
+    .test(
+      "sequential groups with suffix",
+      fn() { assert.equal(decode("2[abc]3[cd]ef").unwrap_or("?"), "abcabccdcdcdef") },
+    )
+    .test("multi-digit count", fn() { assert.equal(decode("10[a]").unwrap_or("?"), "aaaaaaaaaa") })
+    .test("plain text passthrough", fn() { assert.equal(decode("abc").unwrap_or("?"), "abc") })
+    .test("stray bracket is an error", fn() { assert.err_contains(decode("a]"), "underflow") })
+}

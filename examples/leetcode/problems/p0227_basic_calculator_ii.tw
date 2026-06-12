@@ -1,0 +1,92 @@
+use @std.tuple
+use @std.tuple.{Pair}
+
+use assert
+use runner
+
+// https://leetcode.com/problems/basic-calculator-ii/
+// Evaluate a +-*/ expression on non-negative integers with precedence and no
+// parentheses. Single pass: defer each pending term onto a stack, applying *
+// and / immediately, then sum what remains. Malformed input becomes an Err
+// carried out with `try`.
+fn pop<T>(stack: Vector<T>) Result<Pair<T, Vector<T>>, String> {
+  case stack.last() {
+    .Some(v) => .Ok(tuple.pair(v, stack.drop_last())),
+    .None => .Err("stack underflow"),
+  }
+}
+
+// Apply the pending operator `op` to `num` against the stack top.
+fn flush(stack: Vector<Int>, op: Int, num: Int) Result<Vector<Int>, String> {
+  case op {
+    '+' => .Ok(stack.append(num)),
+    '-' => .Ok(stack.append(-num)),
+    '*' => {
+      top := try pop(stack)
+      .Ok(top.second.append(top.first * num))
+    },
+    '/' => {
+      if num == 0 {
+        return .Err("division by zero")
+      }
+
+      top := try pop(stack)
+      .Ok(top.second.append(top.first / num))
+    },
+    _ => .Err("bad operator"),
+  }
+}
+
+fn calculate(s: String) Result<Int, String> {
+  stack: Vector<Int> = []
+  num := 0
+  op := '+'
+  n := s.len()
+  i := 0
+
+  // One extra step with a '+' sentinel flushes the trailing number.
+  for i <= n {
+    code := if i < n {
+      s.char_code_at(i)
+    } else {
+      '+'
+    }
+
+    cond {
+      code >= '0' and code <= '9' => {
+        num = num * 10 + (code - '0')
+      },
+      code == ' ' => {},
+      code == '+' or code == '-' or code == '*' or code == '/' => {
+        stack = try flush(stack, op, num)
+        op = code
+        num = 0
+      },
+      _ => { return .Err("unexpected character") },
+    }
+
+    i = i + 1
+  }
+
+  sum := 0
+
+  for x in stack {
+    sum = sum + x
+  }
+
+  .Ok(sum)
+}
+
+pub fn suite() runner.Suite {
+  runner.suite("0227 basic-calculator-ii")
+    .test("precedence", fn() { assert.equal(calculate("3+2*2").unwrap_or(0), 7) })
+    .test("spaces and division", fn() { assert.equal(calculate(" 3/2 ").unwrap_or(0), 1) })
+    .test(
+      "negative term with truncating division",
+      fn() { assert.equal(calculate("14-3/2").unwrap_or(-1), 13) },
+    )
+    .test(
+      "division by zero is an error",
+      fn() { assert.err_contains(calculate("1/0"), "division by zero") },
+    )
+}

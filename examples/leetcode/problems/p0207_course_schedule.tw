@@ -1,0 +1,72 @@
+use assert
+use runner
+
+// https://leetcode.com/problems/course-schedule/
+// Can all courses be finished given prerequisite edges [course, prereq]?
+// True iff the dependency graph is acyclic. Kahn's algorithm: repeatedly
+// drain indegree-0 nodes from a queue (a Vector popped from the front).
+fn can_finish(num_courses: Int, prerequisites: Vector<Vector<Int>>) Bool {
+  indeg: Vector<Int> = Vector.make(num_courses, 0)
+  adj: Vector<Vector<Int>> = Vector.make(num_courses, [])
+
+  for p in prerequisites {
+    course := p[0]
+    pre := p[1]
+    adj[pre] = .append(course)
+    indeg[course] = indeg[course] + 1
+  }
+
+  queue: Vector<Int> = []
+
+  for i in 0..num_courses {
+    if indeg[i] == 0 {
+      queue = .append(i)
+    }
+  }
+
+  taken := 0
+
+  for !queue.is_empty() {
+    node := queue.first().unwrap()
+    queue = .drop_first()
+    taken = taken + 1
+
+    for next in adj[node] {
+      indeg[next] = indeg[next] - 1
+
+      if indeg[next] == 0 {
+        queue = .append(next)
+      }
+    }
+  }
+
+  taken == num_courses
+}
+
+pub fn suite() {
+  runner.suite("0207 course-schedule")
+    .test(
+      "linear chain is finishable",
+      fn() {
+        assert.is_true(can_finish(2, [[1, 0]]))
+      },
+    )
+    .test(
+      "simple cycle is not finishable",
+      fn() {
+        assert.is_false(can_finish(2, [[1, 0], [0, 1]]))
+      },
+    )
+    .test(
+      "diamond dependency is finishable",
+      fn() {
+        assert.is_true(can_finish(4, [[1, 0], [2, 0], [3, 1], [3, 2]]))
+      },
+    )
+    .test(
+      "no prerequisites",
+      fn() {
+        assert.is_true(can_finish(3, []))
+      },
+    )
+}

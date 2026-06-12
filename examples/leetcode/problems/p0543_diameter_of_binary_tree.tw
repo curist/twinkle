@@ -1,0 +1,56 @@
+use assert
+use runner
+
+// https://leetcode.com/problems/diameter-of-binary-tree/
+// Longest path (in edges) between any two nodes. A single post-order walk
+// returns both the subtree height and the best diameter seen. There are no
+// tuples, so the two results ride in a small record.
+type Tree = { Empty, Node(Tree, Int, Tree) }
+
+type Probe = .{ height: Int, diameter: Int }
+
+fn node(left: Tree, value: Int, right: Tree) Tree {
+  .Node(left, value, right)
+}
+
+fn leaf(value: Int) Tree {
+  .Node(.Empty, value, .Empty)
+}
+
+fn walk(t: Tree) Probe {
+  case t {
+    .Empty => .{ height: 0, diameter: 0 },
+    .Node(left, _, right) => {
+      l := walk(left)
+      r := walk(right)
+      height := 1 + l.height.max(r.height)
+      through := l.height + r.height
+      best := through.max(l.diameter).max(r.diameter)
+      .{ height, diameter: best }
+    },
+  }
+}
+
+fn diameter(t: Tree) Int {
+  walk(t).diameter
+}
+
+pub fn suite() {
+  runner.suite("0543 diameter-of-binary-tree")
+    .test(
+      "balanced-ish tree",
+      fn() {
+        // [1,2,3,4,5]: longest path 4-2-5 or 4-2-1-3 spans 3 edges.
+        t := node(node(leaf(4), 2, leaf(5)), 1, leaf(3))
+        assert.equal(diameter(t), 3)
+      },
+    )
+    .test("single node", fn() { assert.equal(diameter(leaf(1)), 0) })
+    .test(
+      "left-leaning chain",
+      fn() {
+        t := node(node(leaf(3), 2, Tree.Empty), 1, Tree.Empty)
+        assert.equal(diameter(t), 2)
+      },
+    )
+}

@@ -1,0 +1,40 @@
+use problems.p0001_two_sum
+use problems.p0003_longest_substring
+use problems.p0034_first_last_position
+use problems.p0049_group_anagrams
+use problems.p0056_merge_intervals
+use problems.p0064_minimum_path_sum
+use problems.p0070_climbing_stairs
+use problems.p0136_single_number
+use problems.p0150_evaluate_rpn
+use problems.p0200_number_of_islands
+use problems.p0207_course_schedule
+use problems.p0227_basic_calculator_ii
+use problems.p0242_valid_anagram
+use problems.p0394_decode_string
+use problems.p0543_diameter_of_binary_tree
+use problems.p0560_subarray_sum_equals_k
+use problems.p0973_k_closest_points
+use problems.p1979_gcd_of_array
+use runner
+
+runner.run_all([
+  p0001_two_sum.suite(),
+  p0003_longest_substring.suite(),
+  p0034_first_last_position.suite(),
+  p0049_group_anagrams.suite(),
+  p0056_merge_intervals.suite(),
+  p0064_minimum_path_sum.suite(),
+  p0070_climbing_stairs.suite(),
+  p0136_single_number.suite(),
+  p0150_evaluate_rpn.suite(),
+  p0200_number_of_islands.suite(),
+  p0207_course_schedule.suite(),
+  p0227_basic_calculator_ii.suite(),
+  p0242_valid_anagram.suite(),
+  p0394_decode_string.suite(),
+  p0543_diameter_of_binary_tree.suite(),
+  p0560_subarray_sum_equals_k.suite(),
+  p0973_k_closest_points.suite(),
+  p1979_gcd_of_array.suite(),
+])

@@ -1,0 +1,47 @@
+use assert
+use runner
+
+// https://leetcode.com/problems/group-anagrams/
+// Group words that are anagrams of each other. The grouping key is the word
+// with its bytes sorted; groups accumulate in a Dict<String, Vector<String>>,
+// so this stresses nested-collection update (append into a dict's vector value).
+// Dict preserves first-insertion order, so output order is deterministic.
+fn sort_bytes(s: String) String {
+  sorted := s.utf8_bytes().sort()
+
+  case String.from_utf8(sorted) {
+    .Some(key) => key,
+    .None => error("sorted bytes are not valid UTF-8"),
+  }
+}
+
+fn group_anagrams(strs: Vector<String>) Vector<Vector<String>> {
+  groups: Dict<String, Vector<String>> = Dict.new()
+
+  for s in strs {
+    key := sort_bytes(s)
+    groups[key] = .unwrap_or([]).append(s)
+  }
+
+  groups.values()
+}
+
+pub fn suite() {
+  runner.suite("0049 group-anagrams")
+    .test(
+      "classic grouping",
+      fn() {
+        input: Vector<String> = ["eat", "tea", "tan", "ate", "nat", "bat"]
+        expected: Vector<Vector<String>> = [["eat", "tea", "ate"], ["tan", "nat"], ["bat"]]
+        assert.equal(group_anagrams(input), expected)
+      },
+    )
+    .test(
+      "single empty string",
+      fn() {
+        input: Vector<String> = [""]
+        expected: Vector<Vector<String>> = [[""]]
+        assert.equal(group_anagrams(input), expected)
+      },
+    )
+}

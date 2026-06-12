@@ -1,0 +1,40 @@
+use @std.math
+
+use assert
+use runner
+
+// https://leetcode.com/problems/find-greatest-common-divisor-of-array/
+// GCD of the smallest and largest elements of the array.
+fn find_gcd(nums: Vector<Int>) Int {
+  lo := nums[0]
+  hi := nums[0]
+
+  for n in nums {
+    lo = .min(n)
+    hi = .max(n)
+  }
+
+  math.gcd(lo, hi)
+}
+
+pub fn suite() {
+  runner.suite("1979 gcd-of-array")
+    .test(
+      "basic",
+      fn() {
+        assert.equal(find_gcd([2, 5, 6, 9, 10]), 2)
+      },
+    )
+    .test(
+      "single coprime pair",
+      fn() {
+        assert.equal(find_gcd([7, 5, 6, 8, 3]), 1)
+      },
+    )
+    .test(
+      "multiple of min",
+      fn() {
+        assert.equal(find_gcd([3, 3]), 3)
+      },
+    )
+}

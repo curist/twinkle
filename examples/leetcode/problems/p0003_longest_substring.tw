@@ -1,0 +1,33 @@
+use assert
+use runner
+
+// https://leetcode.com/problems/longest-substring-without-repeating-characters/
+// Sliding window; a Dict<Byte, Int> remembers the position just past each
+// byte's last sighting, so the window start can jump forward in O(1).
+fn length_of_longest(s: String) Int {
+  last: Dict<Byte, Int> = Dict.new()
+  start := 0
+  best := 0
+
+  for c, i in s.utf8_bytes() {
+    case last[c] {
+      .Some(bound) => if bound > start {
+        start = bound
+      },
+      .None => {},
+    }
+
+    best = .max(i - start + 1)
+    last[c] = i + 1
+  }
+
+  best
+}
+
+pub fn suite() {
+  runner.suite("0003 longest-substring")
+    .test("abcabcbb", fn() { assert.equal(length_of_longest("abcabcbb"), 3) })
+    .test("all same", fn() { assert.equal(length_of_longest("bbbbb"), 1) })
+    .test("pwwkew", fn() { assert.equal(length_of_longest("pwwkew"), 3) })
+    .test("empty", fn() { assert.equal(length_of_longest(""), 0) })
+}

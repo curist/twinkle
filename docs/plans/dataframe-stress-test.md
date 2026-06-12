@@ -5,7 +5,7 @@
 
 ## Purpose
 
-`tools/leetcode/` proved Twinkle's ergonomics on small, self-contained problems and
+`examples/leetcode/` proved Twinkle's ergonomics on small, self-contained problems and
 converged on essentially one recurring gap (the now-solved tuple/pair type). LeetCode
 problems are single-file, no I/O, int-heavy, and small-input — they push the language
 only so far. The self-hosted boot compiler is the *deepest* stress test we have, but it
@@ -29,7 +29,7 @@ test.
 
 ## Architecture
 
-Its own project root `examples/dataframe/` (parallels `tools/leetcode/`, which has its own
+Its own project root `examples/dataframe/` (parallels `examples/leetcode/`, which has its own
 `twinkle.toml`). Copies `assert.tw` + `runner.tw` from `boot/tests/` like leetcode does.
 Library modules live under `frame/`, correctness tests under `tests/`, benchmark harness
 under `bench/`.

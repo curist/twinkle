@@ -1,0 +1,42 @@
+use assert
+use runner
+
+// https://leetcode.com/problems/two-sum/
+// Return indices of the two numbers that add up to `target`.
+// Exactly one solution is guaranteed; same element may not be reused.
+fn two_sum(nums: Vector<Int>, target: Int) Vector<Int> {
+  seen: Dict<Int, Int> = Dict.new()
+
+  for n, i in nums {
+    case seen[target - n] {
+      .Some(j) => { return [j, i] },
+      .None => {},
+    }
+
+    seen[n] = i
+  }
+
+  []
+}
+
+pub fn suite() {
+  runner.suite("0001 two-sum")
+    .test(
+      "basic example",
+      fn() {
+        assert.equal(two_sum([2, 7, 11, 15], 9), [0, 1])
+      },
+    )
+    .test(
+      "answer not at front",
+      fn() {
+        assert.equal(two_sum([3, 2, 4], 6), [1, 2])
+      },
+    )
+    .test(
+      "duplicate values",
+      fn() {
+        assert.equal(two_sum([3, 3], 6), [0, 1])
+      },
+    )
+}

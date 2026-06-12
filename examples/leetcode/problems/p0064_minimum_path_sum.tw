@@ -1,0 +1,51 @@
+use assert
+use runner
+
+// https://leetcode.com/problems/minimum-path-sum/
+// Minimize the path sum from top-left to bottom-right, moving only right or down.
+// Rolling 1-D dp over the grid columns; dp[j] is rebound via index-assign sugar.
+fn min_path_sum(grid: Vector<Vector<Int>>) Int {
+  rows := grid.len()
+  cols := grid[0].len()
+  dp: Vector<Int> = Vector.make(cols, 0)
+
+  for i in range(rows) {
+    for j in range(cols) {
+      cell := grid[i][j]
+
+      dp[j] = cond {
+        i == 0 and j == 0 => cell,
+        i == 0 => dp[j - 1] + cell,
+        j == 0 => dp[j] + cell,
+        _ => cell + dp[j].min(dp[j - 1]),
+      }
+    }
+  }
+
+  dp[cols - 1]
+}
+
+pub fn suite() {
+  runner.suite("0064 minimum-path-sum")
+    .test(
+      "3x3 grid",
+      fn() {
+        grid: Vector<Vector<Int>> = [[1, 3, 1], [1, 5, 1], [4, 2, 1]]
+        assert.equal(min_path_sum(grid), 7)
+      },
+    )
+    .test(
+      "single row",
+      fn() {
+        grid: Vector<Vector<Int>> = [[1, 2, 3]]
+        assert.equal(min_path_sum(grid), 6)
+      },
+    )
+    .test(
+      "single cell",
+      fn() {
+        grid: Vector<Vector<Int>> = [[5]]
+        assert.equal(min_path_sum(grid), 5)
+      },
+    )
+}

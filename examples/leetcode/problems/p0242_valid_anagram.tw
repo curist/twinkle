@@ -1,0 +1,36 @@
+use assert
+use runner
+
+// https://leetcode.com/problems/valid-anagram/
+// True when `t` is a rearrangement of `s`. Count bytes in `s`, then drain
+// them with `t`; any miss or leftover means it is not an anagram.
+fn is_anagram(s: String, t: String) Bool {
+  if s.len() != t.len() {
+    return false
+  }
+
+  counts: Dict<Byte, Int> = Dict.new()
+
+  for b in s.utf8_bytes() {
+    counts[b] = counts[b].unwrap_or(0) + 1
+  }
+
+  for b in t.utf8_bytes() {
+    seen := counts[b].unwrap_or(0)
+
+    if seen == 0 {
+      return false
+    }
+
+    counts[b] = seen - 1
+  }
+
+  true
+}
+
+pub fn suite() {
+  runner.suite("0242 valid-anagram")
+    .test("anagram", fn() { assert.is_true(is_anagram("anagram", "nagaram")) })
+    .test("not an anagram", fn() { assert.is_false(is_anagram("rat", "car")) })
+    .test("length mismatch", fn() { assert.is_false(is_anagram("a", "ab")) })
+}

@@ -1,0 +1,31 @@
+use assert
+use runner
+
+// https://leetcode.com/problems/single-number/
+// Every element appears twice except one. Find it in O(n) time, O(1) space.
+// XOR cancels pairs, leaving the unique value.
+fn single_number(nums: Vector<Int>) Int {
+  acc := 0
+
+  for n in nums {
+    acc = acc ^ n
+  }
+
+  acc
+}
+
+pub fn suite() {
+  runner.suite("0136 single-number")
+    .test(
+      "single at end",
+      fn() {
+        assert.equal(single_number([2, 2, 1]), 1)
+      },
+    )
+    .test(
+      "larger input",
+      fn() {
+        assert.equal(single_number([4, 1, 2, 1, 2]), 4)
+      },
+    )
+}

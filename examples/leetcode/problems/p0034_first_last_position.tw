@@ -1,0 +1,71 @@
+use assert
+use runner
+
+// https://leetcode.com/problems/find-first-and-last-position-of-element-in-sorted-array/
+// Return [first, last] indices of target in a sorted array, or [-1, -1].
+// Two binary searches; the answer is itself a pair returned as Vector<Int>.
+fn lower_bound(nums: Vector<Int>, target: Int) Int {
+  lo := 0
+  hi := nums.len()
+
+  for lo < hi {
+    mid := lo + (hi - lo) / 2
+
+    if nums[mid] < target {
+      lo = mid + 1
+    } else {
+      hi = mid
+    }
+  }
+
+  lo
+}
+
+fn upper_bound(nums: Vector<Int>, target: Int) Int {
+  lo := 0
+  hi := nums.len()
+
+  for lo < hi {
+    mid := lo + (hi - lo) / 2
+
+    if nums[mid] <= target {
+      lo = mid + 1
+    } else {
+      hi = mid
+    }
+  }
+
+  lo
+}
+
+fn search_range(nums: Vector<Int>, target: Int) Vector<Int> {
+  first := lower_bound(nums, target)
+
+  if first == nums.len() or nums[first] != target {
+    return [-1, -1]
+  }
+
+  [first, upper_bound(nums, target) - 1]
+}
+
+pub fn suite() {
+  runner.suite("0034 first-last-position")
+    .test(
+      "target appears multiple times",
+      fn() {
+        assert.equal(search_range([5, 7, 7, 8, 8, 10], 8), [3, 4])
+      },
+    )
+    .test(
+      "target absent",
+      fn() {
+        assert.equal(search_range([5, 7, 7, 8, 8, 10], 6), [-1, -1])
+      },
+    )
+    .test(
+      "single occurrence",
+      fn() {
+        assert.equal(search_range([1, 2, 3], 2), [1, 1])
+      },
+    )
+}

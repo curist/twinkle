@@ -6,7 +6,7 @@
 
 **Architecture:** Columnar storage — each `Column` is a tagged `ColData` enum (`IntCol`/`FloatCol`/`StrCol`/`BoolCol`) over unboxed primitive `Vector`s, plus a parallel `Vector<Bool>` null mask. A `Table` is parallel named columns. `filter`, `order_by`, and `join` all reduce to "compute an index vector, then `take` (gather)". Aggregations are uniform capability records (`fn(Table, Vector<Int>) Cell`) so heterogeneous aggregations coexist in one `Vector`. Fluent API only (no SQL frontend).
 
-**Tech Stack:** Twinkle (`.tw`), `@std.date` for benchmark timing, the copied `assert.tw` + `runner.tw` test harness (same pattern as `tools/leetcode/`). Run with `target/twk` (built via `make bundle-cli`).
+**Tech Stack:** Twinkle (`.tw`), `@std.date` for benchmark timing, the copied `assert.tw` + `runner.tw` test harness (same pattern as `examples/leetcode/`). Run with `target/twk` (built via `make bundle-cli`).
 
 **Design reference:** `docs/plans/dataframe-stress-test.md`.
 
@@ -75,7 +75,7 @@ cp boot/tests/assert.tw examples/dataframe/assert.tw
 cp boot/tests/runner.tw examples/dataframe/runner.tw
 ```
 
-(If `boot/tests/assert.tw` / `runner.tw` differ from the `tools/leetcode/` copies, prefer the `boot/tests/` originals; they are the canonical harness.)
+(`boot/tests/assert.tw` / `runner.tw` are the canonical harness; `examples/*/` reference them via symlink.)
 
 - [ ] **Step 2: Write a trivial smoke suite**
 

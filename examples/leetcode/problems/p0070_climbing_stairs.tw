@@ -1,0 +1,25 @@
+use assert
+use runner
+
+// https://leetcode.com/problems/climbing-stairs/
+// Number of distinct ways to climb `n` steps taking 1 or 2 at a time.
+// Rolling Fibonacci; rebinding two locals instead of a mutable dp array.
+fn climb_stairs(n: Int) Int {
+  prev := 1
+  cur := 1
+
+  for _ in 0..n {
+    next := prev + cur
+    prev = cur
+    cur = next
+  }
+
+  prev
+}
+
+pub fn suite() {
+  runner.suite("0070 climbing-stairs")
+    .test("n = 2", fn() { assert.equal(climb_stairs(2), 2) })
+    .test("n = 3", fn() { assert.equal(climb_stairs(3), 3) })
+    .test("n = 10", fn() { assert.equal(climb_stairs(10), 89) })
+}

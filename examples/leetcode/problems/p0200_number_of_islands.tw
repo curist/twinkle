@@ -1,0 +1,89 @@
+use assert
+use runner
+
+// https://leetcode.com/problems/number-of-islands/
+// Count 4-connected components of land (1) in a 0/1 grid. The grid is
+// immutable, so visited cells are tracked in a Set keyed by `r * cols + c`
+// and each component is flood-filled with a Vector used as a stack.
+fn num_islands(grid: Vector<Vector<Int>>) Int {
+  rows := grid.len()
+
+  if rows == 0 {
+    return 0
+  }
+
+  cols := grid[0].len()
+  dirs: Vector<Vector<Int>> = [[-1, 0], [1, 0], [0, -1], [0, 1]]
+  visited: Set<Int> = Set.new()
+  count := 0
+
+  for r in 0..rows {
+    for c in 0..cols {
+      start := r * cols + c
+
+      if grid[r][c] == 1 and !visited.contains(start) {
+        count = count + 1
+        visited = .insert(start)
+        stack: Vector<Int> = [start]
+
+        for !stack.is_empty() {
+          cur := stack.last().unwrap()
+          stack = .drop_last()
+          cr := cur / cols
+          cc := cur % cols
+
+          for d in dirs {
+            nr := cr + d[0]
+            nc := cc + d[1]
+
+            if nr >= 0 and nr < rows and nc >= 0 and nc < cols {
+              key := nr * cols + nc
+
+              if grid[nr][nc] == 1 and !visited.contains(key) {
+                visited = .insert(key)
+                stack = .append(key)
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+
+  count
+}
+
+pub fn suite() {
+  runner.suite("0200 number-of-islands")
+    .test(
+      "single large island",
+      fn() {
+        grid: Vector<Vector<Int>> = [
+          [1, 1, 1, 1, 0],
+          [1, 1, 0, 1, 0],
+          [1, 1, 0, 0, 0],
+          [0, 0, 0, 0, 0],
+        ]
+        assert.equal(num_islands(grid), 1)
+      },
+    )
+    .test(
+      "three islands",
+      fn() {
+        grid: Vector<Vector<Int>> = [
+          [1, 1, 0, 0, 0],
+          [1, 1, 0, 0, 0],
+          [0, 0, 1, 0, 0],
+          [0, 0, 0, 1, 1],
+        ]
+        assert.equal(num_islands(grid), 3)
+      },
+    )
+    .test(
+      "all water",
+      fn() {
+        grid: Vector<Vector<Int>> = [[0, 0], [0, 0]]
+        assert.equal(num_islands(grid), 0)
+      },
+    )
+}

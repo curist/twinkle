@@ -1,0 +1,43 @@
+use assert
+use runner
+
+// https://leetcode.com/problems/subarray-sum-equals-k/
+// Count contiguous subarrays summing to k. A Dict<Int, Int> tallies how often
+// each running prefix sum has appeared; a subarray sums to k whenever the
+// current prefix minus k has been seen before.
+fn subarray_sum(nums: Vector<Int>, k: Int) Int {
+  counts: Dict<Int, Int> = Dict.new()
+  counts[0] = 1
+  prefix := 0
+  result := 0
+
+  for n in nums {
+    prefix = prefix + n
+    result = result + counts[prefix - k].unwrap_or(0)
+    counts[prefix] = counts[prefix].unwrap_or(0) + 1
+  }
+
+  result
+}
+
+pub fn suite() {
+  runner.suite("0560 subarray-sum-equals-k")
+    .test(
+      "two ones, k = 2",
+      fn() {
+        assert.equal(subarray_sum([1, 1, 1], 2), 2)
+      },
+    )
+    .test(
+      "longer mix",
+      fn() {
+        assert.equal(subarray_sum([1, 2, 3], 3), 2)
+      },
+    )
+    .test(
+      "negatives included",
+      fn() {
+        assert.equal(subarray_sum([1, -1, 0], 0), 3)
+      },
+    )
+}

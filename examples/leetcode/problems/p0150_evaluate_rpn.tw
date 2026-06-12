@@ -1,0 +1,80 @@
+use @std.tuple
+use @std.tuple.{Pair}
+
+use assert
+use runner
+
+// https://leetcode.com/problems/evaluate-reverse-polish-notation/
+// Evaluate a Reverse Polish expression. Everything that can go wrong (stack
+// underflow, division by zero, an unknown token) is surfaced as Err and
+// propagated with `try`, so the happy path stays linear.
+fn pop<T>(stack: Vector<T>) Result<Pair<T, Vector<T>>, String> {
+  case stack.last() {
+    .Some(v) => .Ok(tuple.pair(v, stack.drop_last())),
+    .None => .Err("stack underflow"),
+  }
+}
+
+fn apply(op: String, a: Int, b: Int) Result<Int, String> {
+  case op {
+    "+" => .Ok(a + b),
+    "-" => .Ok(a - b),
+    "*" => .Ok(a * b),
+    "/" => if b == 0 {
+      .Err("division by zero")
+    } else {
+      .Ok(a / b)
+    },
+    _ => .Err("unknown operator '${op}'"),
+  }
+}
+
+fn eval_rpn(tokens: Vector<String>) Result<Int, String> {
+  stack: Vector<Int> = []
+
+  for tok in tokens {
+    case Int.from_string(tok) {
+      .Some(n) => {
+        stack = .append(n)
+      },
+      .None => {
+        right := try pop(stack)
+        left := try pop(right.second)
+        value := try apply(tok, left.first, right.first)
+        stack = left.second.append(value)
+      },
+    }
+  }
+
+  top := try pop(stack)
+
+  if !top.second.is_empty() {
+    return .Err("too many operands")
+  }
+
+  .Ok(top.first)
+}
+
+pub fn suite() {
+  runner.suite("0150 evaluate-rpn")
+    .test(
+      "simple expression",
+      fn() { assert.equal(eval_rpn(["2", "1", "+", "3", "*"]).unwrap_or(0), 9) },
+    )
+    .test(
+      "integer division truncates",
+      fn() { assert.equal(eval_rpn(["4", "13", "5", "/", "+"]).unwrap_or(0), 6) },
+    )
+    .test(
+      "division by zero is an error",
+      fn() {
+        assert.err_contains(eval_rpn(["1", "0", "/"]), "division by zero")
+      },
+    )
+    .test(
+      "underflow is an error",
+      fn() {
+        assert.err_contains(eval_rpn(["+"]), "underflow")
+      },
+    )
+}
