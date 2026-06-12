@@ -1,6 +1,7 @@
 // Caesar cipher, string ↔ byte manipulation
 fn shift_char(b: Byte, shift: Int) Byte {
   n := b.to_int()
+
   if n >= 65 and n <= 90 {
     Byte.from_int((n - 65 + shift) % 26 + 65).unwrap_or(b)
   } else if n >= 97 and n <= 122 {

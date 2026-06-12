@@ -18,7 +18,7 @@ npx twk build path/to/program.tw -o out.wasm
 npx twk fmt path/to/program.tw
 ```
 
-## Library
+## Node library
 
 ```js
 import { compile, run, runFile } from "@twinkle-lang/twinkle";
@@ -41,4 +41,27 @@ await run(wasm, { imports: { canvas } });
 
 A missing extern import produces a clear error naming the exact `module.fn`.
 
-Requires Node.js ≥ 22.
+## Browser library
+
+```js
+import { command, run, load } from "@twinkle-lang/twinkle/web";
+
+await load(); // optional prefetch
+
+const result = await command(["fmt", "/input/main.tw"], {
+  source: editor.getValue(),
+  env: { NO_COLOR: "1" },
+});
+
+if (result.exitCode === 0) {
+  editor.setValue(result.text("/input/main.tw"));
+}
+```
+
+`command(args, opts)` runs the shipped compiler payload against an in-memory
+filesystem and returns `{ exitCode, stdout, stderr, files, text(path), bytes(path) }`.
+Compiler failures are returned as non-zero exit codes; host/runtime failures throw.
+The existing browser `run(source, opts)` helper is still available and returns an
+exit code.
+
+Requires Node.js ≥ 22 for the Node APIs. Browser APIs require WebAssembly GC.

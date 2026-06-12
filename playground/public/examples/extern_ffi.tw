@@ -1,7 +1,6 @@
 // Extern FFI: call JavaScript functions from Twinkle.
 // `extern` declarations map to WASM imports, auto-bridged
 // to globalThis, so `extern Math` resolves to JS `Math`.
-
 extern console {
   fn log(msg: String)
   fn warn(msg: String)

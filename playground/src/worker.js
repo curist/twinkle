@@ -7,10 +7,10 @@
 // Externs are passed through the runtime's `imports` option (module → fn, or
 // `{ fn, args }` when an arg needs an explicit marshal hint). No globalThis.
 //
-// Receives: { type: 'run', code: string, offscreenCanvas? }
-// Posts:    { type: 'ready' | 'status' | 'stdout' | 'stderr' | 'done' | 'error', ... }
+// Receives: { type: 'run' | 'fmt', code: string, id?, offscreenCanvas? }
+// Posts:    { type: 'ready' | 'status' | 'stdout' | 'stderr' | 'done' | 'formatted' | 'fmt_failed' | 'error', ... }
 
-import { run, load } from '@twinkle-lang/twinkle/web'
+import { command, run, load } from '@twinkle-lang/twinkle/web'
 
 // ---------------------------------------------------------------------------
 // Externs
@@ -86,10 +86,24 @@ self.postMessage({ type: 'ready' })
 load() // warm the compiler wasm cache so the first run is snappy
 
 self.onmessage = async (event) => {
-  const { type, code, offscreenCanvas } = event.data
-  if (type !== 'run') return
+  const { type, code, id, offscreenCanvas } = event.data
+  if (type !== 'run' && type !== 'fmt') return
 
   try {
+    if (type === 'fmt') {
+      self.postMessage({ type: 'status', text: 'Formatting…' })
+      const result = await command(['fmt', '/input/main.tw'], {
+        source: code,
+        env: { NO_COLOR: '1' },
+      })
+      if (result.exitCode === 0) {
+        self.postMessage({ type: 'formatted', id, code: result.text('/input/main.tw') ?? code })
+      } else {
+        self.postMessage({ type: 'fmt_failed', id, stderr: result.stderr, stdout: result.stdout })
+      }
+      return
+    }
+
     const imports = { timer, http }
     if (offscreenCanvas) imports.canvas = canvasImports(offscreenCanvas)
 

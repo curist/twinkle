@@ -82,6 +82,7 @@ Related historical context outside this folder:
 | Plan | Description |
 |------|-------------|
 | [formatter.md](formatter.md) | Source formatter (`twk fmt`) — lossless trivia model, Wadler-Lindig Doc IR, AST printer, Fill layout for imports, trailing comment preservation |
+| [js-package-browser-command-api.md](js-package-browser-command-api.md) | Browser `command(args, opts)` API for `@twinkle-lang/twinkle/web`, exposing the shipped compiler payload to embedders for `fmt`, `check`, `ir`, and `build` against an in-memory project |
 | [tooling.md](tooling.md) | Historical tooling and ecosystem roadmap from before the boot compiler became the primary implementation path |
 
 ---

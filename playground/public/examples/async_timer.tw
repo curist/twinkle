@@ -1,13 +1,8 @@
 // Async timer, JSPI suspends Wasm while setTimeout runs.
 // The browser event loop stays free during each sleep.
+extern timer fn sleep_ms(ms: Int)
 
-extern timer {
-  fn sleep_ms(ms: Int)
-}
-
-extern performance {
-  fn now() Float
-}
+extern performance fn now() Float
 
 start := performance.now()
 

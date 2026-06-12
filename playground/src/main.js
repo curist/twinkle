@@ -158,8 +158,16 @@ loadExample(initialExample).then(code => jar.updateCode(code))
 // Sync line number scroll with editor
 editorEl.addEventListener('scroll', () => { lineNumbers.scrollTop = editorEl.scrollTop })
 
-// iOS Safari: reset stuck scroll when keyboard dismisses
-editorEl.addEventListener('blur', () => { window.scrollTo(0, 0) })
+// iOS Safari: reset stuck scroll when keyboard dismisses, and format when the
+// editor loses focus. Clicking Run skips this blur formatter because Run formats
+// first and then executes the formatted source.
+editorEl.addEventListener('blur', (e) => {
+  window.scrollTo(0, 0)
+  const nextFocus = e.relatedTarget
+  setTimeout(() => {
+    if (!running && document.activeElement !== runBtn && nextFocus !== runBtn) formatEditor()
+  }, 0)
+})
 
 // Kick off tree-sitter load in the background; editor works without it
 initTreeSitter().catch(e => console.warn('tree-sitter unavailable:', e.message))
@@ -243,6 +251,8 @@ document.addEventListener('touchend', onDragEnd)
 let worker = null
 let workerReady = null
 let running = false
+let formatSeq = 0
+let pendingFormat = null
 
 function initWorker() {
   worker = new Worker(new URL('./worker.js', import.meta.url), { type: 'module' })
@@ -257,7 +267,7 @@ function initWorker() {
   })
 
   worker.onmessage = (e) => {
-    const { type, text, exitCode, message } = e.data
+    const { type, text, exitCode, message, id, code, stderr, stdout } = e.data
     switch (type) {
       case 'status':
         status.textContent = text
@@ -277,7 +287,28 @@ function initWorker() {
           status.textContent = `Done (exit ${exitCode})`
         }
         break
+      case 'formatted':
+        if (pendingFormat?.id === id) {
+          const pending = pendingFormat
+          pendingFormat = null
+          if (pending.apply && jar.toString() === pending.code && code !== pending.code) jar.updateCode(code)
+          status.textContent = pending.quiet ? status.textContent : 'Formatted'
+          pending.resolve({ ok: true, code: code ?? pending.code })
+        }
+        break
+      case 'fmt_failed':
+        if (pendingFormat?.id === id) {
+          const pending = pendingFormat
+          pendingFormat = null
+          if (!pending.quiet) status.textContent = (stderr || stdout) ? 'Format failed' : 'Ready'
+          pending.resolve({ ok: false, code: pending.code, stderr, stdout })
+        }
+        break
       case 'error':
+        if (pendingFormat) {
+          pendingFormat.resolve({ ok: false, code: pendingFormat.code, error: message })
+          pendingFormat = null
+        }
         setRunning(false)
         appendOutput('out-error', `\nInternal error: ${message}`)
         status.textContent = 'Error'
@@ -303,7 +334,21 @@ function stop() {
   worker.terminate()
   initWorker()
   setRunning(false)
+  if (pendingFormat) pendingFormat.resolve({ ok: false, code: pendingFormat.code })
+  pendingFormat = null
   status.textContent = 'Stopped'
+}
+
+async function formatEditor({ apply = true, quiet = false } = {}) {
+  await workerReady
+  const code = jar.toString()
+  const id = ++formatSeq
+  if (pendingFormat) pendingFormat.resolve({ ok: false, code: pendingFormat.code })
+  const result = new Promise((resolve) => {
+    pendingFormat = { id, code, apply, quiet, resolve }
+  })
+  worker.postMessage({ type: 'fmt', id, code })
+  return result
 }
 
 async function run() {
@@ -311,11 +356,13 @@ async function run() {
 
   output.innerHTML = ''
   setRunning(true)
+  status.textContent = 'Formatting…'
+
+  const formatted = await formatEditor({ apply: true, quiet: true })
+  if (!running) return
+  const code = formatted.ok ? formatted.code : jar.toString()
   status.textContent = 'Starting…'
 
-  await workerReady
-
-  const code = jar.toString()
   const needsCanvas = /extern\s+\w+\s+type\s+\w*Canvas\w*|extern\s+canvas\b/.test(code)
 
   if (needsCanvas) {
