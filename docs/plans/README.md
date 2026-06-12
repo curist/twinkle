@@ -62,6 +62,7 @@ Self-hosting is complete. Historical design and status docs live in
 |------|-------------|
 | [recursive-module-groups.md](recursive-module-groups.md) | Allow mutually-recursive modules by condensing the module graph into SCCs and resolving each group with the two-phase signatures-then-bodies pass; rejects only top-level value-init cycles. Resolves open-question #3 and unblocks prelude-into-prelude injection |
 | [backend-anyref-elimination.md](backend-anyref-elimination.md) | Make `anyref` exceptional rather than foundational in the Wasm backend, including typed container/helper families |
+| [typed-dict-representation.md](typed-dict-representation.md) | Add typed-key dict runtime families for `Dict<Int, V>` and `Dict<String, V>` so common compiler maps avoid generic `anyref` key hashing/equality |
 | [static-uniqueness-plan.md](static-uniqueness-plan.md) | Extend the static uniqueness optimizer to cover more realistic linear-update patterns without changing the runtime model |
 | [sliceable.md](sliceable.md) | `foo[a..b]` range-slice syntax via a Self-only `Sliceable` contract — the lone open piece of the (now-archived) collection-access cluster; adds a `Range`-index arm to `synth_index` plus `Vector`/`String`/`View` satisfiers. Background in [archive/collections-access.md](archive/collections-access.md) |
 | [queue.md](queue.md) | Library-first `@std.queue` persistent double-ended queue, so FIFO/deque-heavy code avoids repeated `Vector.drop_first()` front-slices; pure stdlib, no compiler/runtime primitive |
