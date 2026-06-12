@@ -1,6 +1,13 @@
 # `@std.regexp` percent escapes
 
-**Status:** proposed follow-up to `docs/plans/archive/regexp.md`.
+**Status:** SUPERSEDED by `docs/plans/string-literals.md`.
+
+> Raw string literals (`r"…"`) solve the underlying problem — backslash-heavy
+> regex patterns needing doubled escapes in Twinkle strings — at the right layer,
+> without forking the regex dialect. With `r"…"`, `regexp.must(r"\d+")` needs no
+> `%`-aliases and stays portable standard regex syntax. This `%`-escape proposal
+> is therefore retired in favor of `docs/plans/string-literals.md`; it is kept for
+> historical context only and should not be implemented.
 
 ## Goal
 

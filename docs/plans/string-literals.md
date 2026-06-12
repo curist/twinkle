@@ -1,0 +1,508 @@
+# Raw and multiline string literals
+
+**Status:** design approved, ready to implement.
+
+## Goal
+
+Add two new string-literal forms to Twinkle, both purely at the lexer level:
+
+- **`r"…"` — raw single-line.** No backslash-escape processing, so a regex like
+  `\d+` is written `r"\d+"` instead of `"\\d+"`. Interpolation still works.
+- **`\\`-prefixed lines — raw multiline.** Zig-style line-prefixed blocks for SQL,
+  HTML, help text, and other embedded content, with clean indentation and local
+  error recovery. Interpolation still works.
+
+Neither form changes the AST, parser, type checker, or codegen: raw-vs-cooked and
+single-vs-multi are fully resolved in the lexer, which emits the **same string
+tokens** (`StringLit` / `StringStart` / `StringContinue` / `StringEnd`) it emits
+today. Everything downstream sees an ordinary decoded `String`.
+
+This supersedes `docs/plans/archive/regexp-percent-escapes.md`: with `r"…"`,
+`regexp.must(r"\d+")` needs no `%`-aliases and no doubled backslashes, and the
+regex stays portable standard syntax.
+
+## Why these two forms
+
+The pain points are on two orthogonal axes — *escaping* and *line-spanning* —
+and Twinkle's existing `"…"` is cooked, single-line, and interpolated. The
+universal rule across all forms is:
+
+> **`${…}` interpolation is always on. The only knobs are escaping (`r` and `\\`
+> turn off backslash escapes) and shape (`"…"` single-line vs `\\`-lines multi).**
+
+| Form | Escaping | Lines | Interp | Primary use |
+|---|---|---|---|---|
+| `"…"` | cooked | single | yes | normal strings (unchanged) |
+| `r"…"` | raw | single | yes | regex: `r"\d+"` |
+| `\\`-lines | raw | multi | yes | SQL / HTML / help text |
+
+There is deliberately **no `"""` triple-quote form**. The Zig-style `\\` block was
+chosen over closing-delimiter triple-quotes because it solves three problems
+structurally rather than by heuristic:
+
+1. **Indentation.** The `\\` marker shows where each line's content begins, so the
+   marker's own indentation is *not* part of the value. Code indentation and
+   string indentation are cleanly separated — no "strip common leading
+   whitespace" rule, no tabs-vs-spaces edge cases.
+2. **Error recovery.** There is no closing delimiter to forget. A block ends at
+   the first line that does not start with `\\`, exactly like a `//` comment ends
+   at end-of-line. A typo can never swallow the rest of the file.
+3. **Line-start legibility.** Every content line is explicitly marked, so leading
+   whitespace and block boundaries are always visible.
+
+The honest tradeoff: every line carries a `\\` marker (heavier than a triple-quote
+block), and there are no inline escapes (`\t` etc.) — use a literal tab or
+interpolate `${"\t"}`. For the target use cases this is fine.
+
+## Semantics
+
+### `r"…"` — raw single-line
+
+```tw
+r"\d+"            // value: \d+   (two chars: backslash, d, then +)
+r"C:\temp"        // value: C:\temp
+r"a ${x} b"       // interpolation still fires
+```
+
+- `\` is an ordinary character; `unescape_string` is **not** applied.
+- The string still terminates at `"` and still triggers interpolation at `${`.
+  Because `\` is literal, **a raw single-line string cannot contain `"`** (there
+  is no `\"` escape). This is the standard raw-string limitation; for regex and
+  paths it does not come up. Patterns that need a literal `"` use cooked `"…"` or
+  a `\\` block.
+- A literal newline inside `r"…"` is an error (`unterminated string literal`),
+  same as `"…"`.
+- `r` is a raw-string prefix **only** when immediately followed by `"`
+  (`r"…"`). `r` followed by anything else lexes as an ordinary identifier, so
+  `range`, `red`, and a variable named `r` are unaffected. This is safe because
+  an identifier can never be immediately followed by `"` in a valid expression.
+
+### `\\`-lines — raw multiline
+
+```tw
+query :=
+  \\SELECT *
+  \\FROM users
+  \\WHERE active = ${flag}
+```
+
+Value: `SELECT *\nFROM users\nWHERE active = <flag>`.
+
+- Each line's content is everything after its `\\` marker to end-of-line.
+- Lines are joined with `\n`. There is **no trailing newline** after the last
+  line. To get one, add a final empty `\\` line:
+  ```tw
+  \\last
+  \\
+  ```
+  → `"last\n"`.
+- A **blank line inside** the block is an empty `\\` line. A bare blank line (no
+  `\\`) *ends* the block.
+- The block ends at the first line whose first non-whitespace characters are not
+  `\\`. There is no closing delimiter.
+- **Marker indentation is excluded.** The whitespace before each `\\` is consumed
+  as ordinary inter-token whitespace and never enters the value, so the block can
+  be indented to match surrounding code:
+  ```tw
+  fn render(user: User) String {
+    \\<div>
+    \\  <h1>${user.name}</h1>
+    \\</div>
+  }
+  ```
+  Value: `<div>\n  <h1>%name%</h1>\n</div>` — the two spaces before `<h1>` are in
+  the value (after the `\\`); the indentation of the `\\` markers is not.
+- `\` inside the content is literal (raw); there is no escape processing.
+- `${…}` interpolation fires, but an interpolation must **open and close within a
+  single `\\` line** (it cannot span a line break).
+- `\r\n` line endings are normalized to `\n` so a repo checked out on Windows
+  produces byte-identical values.
+- No `//` comments inside a block — a comment line does not start with `\\`, so it
+  ends the block.
+
+## Formatter & lint rules
+
+The governing invariant: **the formatter is value-preserving for every string
+literal.** For a `\\` block, the only things fmt may touch are the *marker
+indentation* (semantically irrelevant — it is excluded from the value) and the
+block's placement relative to the tokens before it. fmt must never alter anything
+after a `\\` marker.
+
+### Formatter rules (`target/twk fmt` — automatic, value-preserving)
+
+- **F1 — block on its own lines.** A `\\` block is laid out as its own run of
+  lines and never shares a line with the tokens that introduce it. The introducer
+  — a binding `x :=`, a **rebinding `x =`**, `return`, a record `field:`, or a call
+  argument — ends its line, and the block begins on the next line:
+  ```tw
+  // before
+  multi_line := \\starts
+    \\here
+  // after
+  multi_line :=
+    \\starts
+    \\here
+  ```
+  The identical shape applies to rebinding with `=`:
+  ```tw
+  multi_line =
+    \\updated
+    \\multi
+    \\line
+    \\string
+  ```
+  Canonical shape in every case: the introducer line, then the indented block.
+- **F2 — canonical marker indentation.** All `\\` markers in one block align at a
+  single indentation step deeper than the enclosing statement. Because marker
+  indentation is excluded from the value, this reflow is always safe.
+- **F3 — preserve content exactly.** fmt passes that would mutate string content
+  are disabled inside `\\` content: do **not** trim trailing whitespace on content
+  lines (trailing spaces after the marker are part of the value), do **not**
+  re-indent or rewrap text after the marker, and keep empty `\\` lines verbatim
+  (they encode blank lines and the trailing-newline convention).
+- **F4 — never convert string forms.** fmt does not rewrite `\\` ↔ `"…"` ↔
+  `r"…"`. Form choice is the author's; changing it is a lint *suggestion* (below),
+  never an automatic edit.
+
+### Lint rules (diagnostics — suggestions, not auto-applied)
+
+- **L1 — single-line `\\` block.** A block of exactly one marker line (its value
+  has no newline) should be a single-line string. Emit a suggestion-level
+  diagnostic on the block, with a value-preserving suggested fix:
+  - content has no `\` and no `"` → `"content"`,
+  - content has `\` but no `"` → `r"content"`,
+  - content contains `"` → cooked `"…\"…"`.
+
+  A one-marker block followed by an empty `\\` line is **not** single-line (it has
+  a trailing newline), so it does not fire.
+- **L2 — escape-heavy cooked string (optional / future).** A `"…"` carrying
+  several `\\` escapes that a raw string would simplify → suggest `r"…"`. Off by
+  default to avoid noise; listed here so the rule space is explicit, not
+  necessarily shipped in v1.
+
+These mirror how the codebase already models style guidance — a `DiagKind` variant
+carrying a suggestion, like the parser's `CStyleLogicalOp` rejection of `&&`/`||`.
+
+## Token-model mapping (why downstream is unchanged)
+
+The lexer already produces, in `boot/compiler/tokens.tw`:
+
+- `StringLit` — a complete string with no interpolation.
+- `StringStart` / `StringContinue` / `StringEnd` — bracketing the expression
+  tokens of an interpolated string, with `interp_depths` tracking brace nesting.
+
+Both new forms map onto exactly these tokens:
+
+- `r"…"` with no `${}` → `StringLit`; with `${}` → `StringStart … StringEnd`.
+- `\\` block with no `${}` → a single `StringLit` whose text is the newline-joined
+  content; with `${}` → `StringStart … StringEnd` whose segments span lines.
+
+So the parser, AST, and everything downstream need **no changes**. The work is in
+the two lexers and the grammar.
+
+## File layout & touch points
+
+The change touches two executable lexers (which must round-trip in lockstep) plus
+the descriptive grammar / highlighting / spec surfaces (kept in sync so the docs
+and editor tooling match the lexers):
+
+1. `boot/compiler/lexer.tw` — the primary lexer (string scanning lives in
+   `scan_string_segment`, `unescape_string`, and the `c == '\"'` branch around
+   line 503; interpolation resumes around lines 317–364 via the `interp_depths`
+   stack).
+2. `src/syntax/lexer.rs` — the stage0 Rust lexer; the bootstrap reference. It
+   must accept identical tokens or `boot/main.tw` will not round-trip.
+3. `docs/grammar.ebnf` — the canonical EBNF. Extend the `StringLiteral` rule
+   (line 539) with raw-string and multiline productions so the spec grammar stays
+   authoritative.
+4. `tree-sitter-twinkle/grammar.js` — editor/parser grammar. After editing,
+   regenerate `src/parser.c` and rebuild `tree-sitter-twinkle.wasm`, and commit
+   `grammar.js`, the regenerated `src/`, and the wasm together.
+5. `tree-sitter-twinkle/queries/highlights.scm` — syntax-highlight queries; add
+   captures for the new raw/multiline string nodes (the current strings block at
+   lines 74–77 maps `string_literal` / `string_content` / `escape_sequence`).
+
+**Per CLAUDE.md, never run `tree-sitter test` from the agent — hand that step to
+the human.** Plus tests (`boot/tests/…`, Rust lexer tests) and prose docs
+(`docs/spec.md`).
+
+## Milestones
+
+Three milestones, each independently shippable. Milestone 1 (`r"…"`) delivers the
+regex win on its own; milestone 3 (`\\` interpolation) is the highest-risk piece
+and can land as a fast-follow without blocking the rest.
+
+---
+
+### Milestone 1 — `r"…"` raw single-line
+
+**Task 1.1 — boot lexer**
+
+- [ ] In `boot/compiler/lexer.tw`, recognize the raw prefix: when the current
+      char is `r` and `source[i+1] == '"'`, consume both and scan a raw segment.
+- [ ] Add a `scan_raw_string_segment(source, from, content_start)` parallel to
+      `scan_string_segment` that is identical except it (a) does **not** set
+      `escaped` on `\` (so `\` is ordinary and `\"` does not escape the
+      terminator) and (b) returns `text` **without** calling `unescape_string`.
+      It still terminates on `"`, still returns `found_interp` on `${`, and still
+      breaks on `\n` (→ unterminated).
+- [ ] Emit the same `StringLit` / `StringStart` tokens as the cooked path, so the
+      interpolation resume code is reused unchanged.
+
+Sketch:
+```tw
+// raw: no `\` handling; `"` always terminates, `${` always interpolates.
+fn scan_raw_string_segment(source: String, from: Int, content_start: Int) ScanStringResult {
+  i := from
+  n := source.len()
+  for i < n {
+    ch := source[i]
+    if ch == '\"' {
+      return ScanStringResult.{ next_index: i + 1, text: source.slice(content_start, i), terminated: true, found_interp: false }
+    }
+    if ch == '$' and i + 1 < n and source[i + 1] == '{' {
+      return ScanStringResult.{ next_index: i + 2, text: source.slice(content_start, i), terminated: false, found_interp: true }
+    }
+    if ch == '\n' { break }
+    i = i + 1
+  }
+  ScanStringResult.{ next_index: i, text: source.slice(content_start, i), terminated: false, found_interp: false }
+}
+```
+Note: when interpolation in a raw string resumes after `}`, the continuation
+segment is *also* raw. Track this so the resume path picks the raw scanner (see
+Milestone 3's host-kind flag; for a raw single-line string the same flag selects
+`scan_raw_string_segment` on resume).
+
+**Task 1.2 — stage0 Rust lexer**
+
+- [ ] Mirror the same `r"…"` recognition and raw scan in `src/syntax/lexer.rs`,
+      emitting identical tokens.
+
+**Task 1.3 — tests**
+
+- [ ] Boot lexer/parse coverage: `r"\d+"` is the two-token-free value `\d+`;
+      `r"a ${x} b"` interpolates; `r"\n"` is backslash-n, not a newline; a raw
+      string with a literal newline errors; `regexp.must(r"\d+").find(...)` works
+      end to end.
+- [ ] Rust lexer tests for the same.
+
+**Task 1.4 — grammar & highlighting**
+
+- [ ] Extend `docs/grammar.ebnf` with a raw-string production alongside
+      `StringLiteral` (line 539): like `StringLiteral` but `r"`-introduced, with no
+      escape alternatives in its `StringChar` (only "any char except `"`" and the
+      `${` Expr `}` interpolation alternative).
+- [ ] Add a `raw_string` rule to `tree-sitter-twinkle/grammar.js`; regenerate
+      `src/parser.c` and rebuild `tree-sitter-twinkle.wasm`.
+- [ ] In `tree-sitter-twinkle/queries/highlights.scm`, capture the raw-string node
+      as `@string` — and notably with **no** `@string.escape` capture, since `\`
+      is literal in raw strings. Hand `tree-sitter test` to the human.
+
+**Task 1.5 — docs**
+
+- [ ] Document `r"…"` in `docs/spec.md`'s string-literal section (raw, no escapes,
+      interpolation on, cannot contain `"`).
+
+---
+
+### Milestone 2 — `\\` multiline (no interpolation)
+
+**Task 2.1 — boot lexer**
+
+- [ ] In the main loop's token-start handling, recognize `\\` (`c == '\\' and
+      source[i+1] == '\\'`) as the start of a multiline string. Indentation before
+      the `\\` is already consumed as whitespace, so the value excludes it for
+      free.
+- [ ] Add `scan_multiline_string(source, from)` that consumes consecutive `\\`
+      lines, joins their content with `\n`, normalizes `\r\n` → `\n`, and stops at
+      the first non-`\\` line. Emit one `StringLit`.
+
+Sketch (no-interpolation core):
+```tw
+type MultilineResult = .{ text: String, next_index: Int }
+
+fn scan_multiline_string(source: String, from: Int) MultilineResult {
+  i := from
+  n := source.len()
+  parts: Vector<String> = []
+  for true {
+    i = i + 2                                   // consume the `\\` marker
+    line_start := i
+    for i < n and source[i] != '\n' { i = i + 1 }
+    end := if i > line_start and source[i - 1] == '\r' { i - 1 } else { i }  // CRLF → LF
+    parts = .append(source.slice(line_start, end))
+    // peek next line: newline, then horizontal whitespace, then `\\`?
+    j := if i < n and source[i] == '\n' { i + 1 } else { i }
+    k := j
+    for k < n and (source[k] == ' ' or source[k] == '\t') { k = k + 1 }
+    if k + 1 < n and source[k] == '\\' and source[k + 1] == '\\' {
+      i = k
+    } else {
+      i = if i < n and source[i] == '\n' { i } else { i }   // leave the trailing newline for the main loop
+      break
+    }
+  }
+  MultilineResult.{ text: join_newline(parts), next_index: i }
+}
+```
+(`join_newline` joins with `\n`; reuse an existing join helper or inline it.)
+
+**Task 2.2 — stage0 Rust lexer**
+
+- [ ] Mirror `\\`-block scanning in `src/syntax/lexer.rs`.
+
+**Task 2.3 — tests**
+
+- [ ] Two-line block → `"a\nb"` (no trailing newline); trailing empty `\\` line
+      adds the newline; indentation of the markers is excluded while content
+      indentation is preserved; a non-`\\` line ends the block; `\r\n` normalizes;
+      a single `\\foo` on one line is the value `foo`.
+
+**Task 2.4 — grammar & highlighting**
+
+- [ ] Add a multiline-string production to `docs/grammar.ebnf` (one-or-more
+      `\\`-prefixed lines, raw content, optional `${` Expr `}` per line).
+- [ ] Add a `multiline_string` rule (one-or-more `\\` line tokens) to
+      `tree-sitter-twinkle/grammar.js`; regenerate and rebuild wasm.
+- [ ] Capture the multiline-string node in
+      `tree-sitter-twinkle/queries/highlights.scm` as `@string` (no
+      `@string.escape`); hand off `tree-sitter test`.
+
+**Task 2.5 — docs**
+
+- [ ] Document `\\` multiline strings in `docs/spec.md` (line prefix, newline
+      joining, no trailing newline, blank-line rule, indentation exclusion, CRLF
+      normalization, no inline escapes).
+
+---
+
+### Milestone 3 — `\\` multiline interpolation
+
+The hard part: an interpolation in a `\\` block must resume into the *multiline*
+scanner, not the `"…"` scanner. Today the `interp_depths` stack records only
+brace depth; it must also record which **host string kind** each interpolation
+belongs to (cooked `"…"`, raw `r"…"`, or `\\` block) so the resume after `}`
+picks the right segment scanner.
+
+**Task 3.1 — boot lexer**
+
+- [ ] Replace the `interp_depths: Vector<Int>` stack with a stack of records
+      `.{ depth: Int, host: StringKind }` (or a parallel stack), where
+      `StringKind = { Cooked, Raw, Multiline }`.
+- [ ] On `${` inside a `\\` line, emit `StringStart` with the text accumulated so
+      far (including earlier lines' `\n` joins) and push `host: .Multiline`.
+- [ ] On the closing `}`, dispatch the resume by `host`: `.Cooked` →
+      `scan_string_segment`, `.Raw` → `scan_raw_string_segment`, `.Multiline` → a
+      `scan_multiline_segment` that continues the block (handles further lines and
+      either `${`→`StringContinue` or block-end→`StringEnd`).
+- [ ] Enforce: an interpolation must close on the same `\\` line it opened; a line
+      break inside `${…}` is an error.
+
+**Task 3.2 — stage0 Rust lexer**
+
+- [ ] Mirror the host-kind stack and multiline-segment resume.
+
+**Task 3.3 — tests**
+
+- [ ] `\\` block with one and with multiple `${…}`; interpolation on the last
+      line (→ `StringEnd`); interpolation spanning a line break errors; a `$` not
+      followed by `{` stays literal (regex `$` anchor in a block is fine).
+
+**Task 3.4 — grammar & highlighting**
+
+- [ ] Confirm the `docs/grammar.ebnf` multiline production already admits the
+      `${` Expr `}` alternative (added in Task 2.4); adjust if needed.
+- [ ] Extend the `multiline_string` rule in `tree-sitter-twinkle/grammar.js` to
+      allow `${…}` interpolations; regenerate and rebuild wasm.
+- [ ] Ensure `tree-sitter-twinkle/queries/highlights.scm` captures the
+      interpolation delimiters/expressions inside multiline strings consistently
+      with the existing `interpolation` captures (lines ~199–200); hand off
+      `tree-sitter test`.
+
+---
+
+### Milestone 4 — formatter & lint
+
+Depends on Milestone 2 (the `\\` node must lex/parse first). The formatter and
+lint rules are defined in "Formatter & lint rules" above.
+
+**Task 4a.1 — formatter layout (F1–F3)**
+
+- [ ] In `boot/compiler/fmt/` (the `doc` → `layout` → `printer` pipeline), lay out
+      a `\\` block as its own indented run of lines (F1), with markers at a
+      canonical indentation one step past the enclosing statement (F2).
+- [ ] Carve the block's content out of the passes that trim trailing whitespace /
+      re-indent, so content after each marker is emitted byte-for-byte (F3),
+      including empty `\\` lines. The string token already carries the decoded
+      value; the formatter must reconstruct markers from it without round-tripping
+      through a content-mutating path.
+- [ ] Confirm idempotence (`fmt` twice = no change) on multiline cases.
+
+**Task 4a.2 — formatter test cases**
+
+- [ ] Add `boot/tests/suites/fmt_cases` fixtures: same-line introducer-then-`\\`
+      reflows to the next line for **both** binding `:=` and rebinding `=`;
+      mis-indented markers normalize; trailing spaces inside content survive; empty
+      `\\` lines and a trailing-newline block survive; idempotence.
+
+**Task 4a.3 — single-line `\\` lint (L1)**
+
+- [ ] Add a `DiagKind` variant carrying the suggested single-line rewrite (model on
+      `CStyleLogicalOp`), raised when a `\\` block has exactly one marker line.
+- [ ] Compute the value-preserving suggestion per L1 (`"…"`, `r"…"`, or escaped
+      cooked), and surface it as a suggestion-level diagnostic.
+
+**Task 4a.4 — lint tests**
+
+- [ ] A single-`\\`-line block warns with the right suggested form for each of the
+      three content cases; a one-line block with a trailing empty `\\` line does
+      **not** warn; a genuinely multi-line block does not warn.
+
+### Wrap-up
+
+**Task 4.1 — adopt `r"…"` in regexp docs/examples**
+
+- [ ] Update `docs/API.md`'s `@std.regexp` examples to use `r"\d+"` /
+      `r"mul\((\d+),(\d+)\)"` instead of doubled backslashes, noting both spellings
+      work.
+
+**Task 4.2 — retire the percent-escapes plan**
+
+- [ ] Confirm `docs/plans/archive/regexp-percent-escapes.md` is marked superseded by this
+      plan (done as part of this change).
+
+**Task 4.3 — full check**
+
+- [ ] `make bundle-cli` (rebuild embedded stdlib + CLI), `target/twk run
+      boot/tests/main.tw`, and `make test` all green. Hand tree-sitter tests to the
+      human.
+
+## Testing summary
+
+- **boot:** lexer/parse round-trip for every form and edge (raw escapes, can't
+  contain `"`, multiline joining/trailing-newline/blank-line/indentation/CRLF,
+  interpolation per line), plus an end-to-end `@std.regexp` case using `r"…"`.
+- **stage0:** the Rust lexer test suite must accept identical tokens (`cargo test`
+  lexer tests), and `boot/main.tw` must still self-host (the changed lexer is
+  itself compiled by stage0).
+- **formatter & lint:** `fmt_cases` fixtures for the layout rules (F1–F3) plus
+  idempotence, and lint tests for the single-line `\\` suggestion (L1) including
+  the trailing-newline non-firing case.
+- **tree-sitter:** grammar tests run by the human.
+
+## Risks & notes
+
+- **Milestone 3 is the entanglement risk.** If interpolation-in-`\\` proves
+  costly, Milestones 1–2 ship a coherent feature on their own (raw single-line +
+  raw multiline without interpolation); the universal-interp rule is then
+  completed by Milestone 3 as a fast-follow.
+- **`r` prefix disambiguation** is safe (identifier-then-`"` is never valid), but
+  the test suite should pin `range`/`red`/a variable `r` to guard against a greedy
+  prefix rule.
+- **Self-host hazard:** the lexer change is compiled by the *current* stage0, then
+  recompiles itself. Land the stage0 Rust change and the boot change together and
+  verify the self-host fixed point (`make bundle-cli`) before trusting either.
+- **Future (out of scope):** a `String.dedent()` helper or closing-column dedent;
+  a `b"…"` byte-string prefix; allowing `"` inside raw single-line via a hashed
+  form (`r#"…"#`). None of these change the architecture here.
