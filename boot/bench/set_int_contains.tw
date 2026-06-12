@@ -1,0 +1,35 @@
+// Phase 0 baseline — N strided contains() on a prebuilt Set<Int> with small
+// keys. Build is outside the timed region. contains() is the Set read path
+// (Dict has() over Void values); (build - contains) isolates the set()
+// alloc/order-append cost the same way the dict probes do.
+//
+//   target/twk run boot/bench/set_int_contains.tw
+use @std.date
+
+fn bench(n: Int) {
+  s: Set<Int> = Set.new()
+
+  for i in range(n) {
+    s = .insert(i)
+  }
+
+  t0 := date.now()
+  idx := 0
+  hits := 0
+
+  for _ in range(n) {
+    idx = (idx + 40503) % n
+
+    if s.contains(idx) {
+      hits = hits + 1
+    }
+  }
+
+  dt := date.now() - t0
+  println("${n}\t${dt}\t${hits}")
+}
+
+println("N\tms\tsink")
+for n in [1000, 2000, 4000, 8000, 16000, 32000] {
+  bench(n)
+}

@@ -1,0 +1,27 @@
+// Phase 0 baseline — build a Set<String> by inserting N distinct string keys.
+// Keys are pre-materialized outside the timed region. Set<String> is a frequent
+// boot-compiler shape (seen-name guards). Compare against set_int_build and
+// dict_str_build to size the String-key set() premium.
+//
+//   target/twk run boot/bench/set_str_build.tw
+use @std.date
+
+fn bench(n: Int) {
+  keys: Vector<String> = collect i in range(n) {
+    "key_${i}"
+  }
+  t0 := date.now()
+  s: Set<String> = Set.new()
+
+  for k in keys {
+    s = .insert(k)
+  }
+
+  dt := date.now() - t0
+  println("${n}\t${dt}\t${s.len()}")
+}
+
+println("N\tms\tsink")
+for n in [1000, 2000, 4000, 8000, 16000, 32000] {
+  bench(n)
+}

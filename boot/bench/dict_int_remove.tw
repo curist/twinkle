@@ -1,0 +1,32 @@
+// Phase 0 baseline — remove() every key from a prebuilt Dict<Int, Int> with
+// small (i31, unboxed) keys, in a strided order. Build is outside the timed
+// region. remove() pays hash + compare + HAMT path-copy plus an insertion-order
+// vector rebuild, so it is the most order-vector-sensitive mutation probe.
+//
+//   target/twk run boot/bench/dict_int_remove.tw
+use @std.date
+
+fn bench(n: Int) {
+  keys: Vector<Int> = collect i in range(n) {
+    i * 40503 % n
+  }
+  d: Dict<Int, Int> = Dict.new()
+
+  for i in range(n) {
+    d = .set(i, i)
+  }
+
+  t0 := date.now()
+
+  for k in keys {
+    d = .remove(k)
+  }
+
+  dt := date.now() - t0
+  println("${n}\t${dt}\t${d.len()}")
+}
+
+println("N\tms\tsink")
+for n in [1000, 2000, 4000, 8000, 16000, 32000] {
+  bench(n)
+}

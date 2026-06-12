@@ -1,0 +1,39 @@
+// Phase 0 baseline — N strided get() on a prebuilt Dict<String, Int>. Keys are
+// pre-materialized; build is outside the timed region. The read path pays
+// hash_string + generic string equality per probe, so (str_get - int_get) is
+// the String-key read-cost premium a direct hash/equality family would target.
+//
+//   target/twk run boot/bench/dict_str_get.tw
+use @std.date
+
+fn bench(n: Int) {
+  keys: Vector<String> = collect i in range(n) {
+    "key_${i}"
+  }
+  d: Dict<String, Int> = Dict.new()
+
+  for k in keys {
+    d = .set(k, 1)
+  }
+
+  t0 := date.now()
+  idx := 0
+  sum := 0
+
+  for _ in range(n) {
+    idx = (idx + 40503) % n
+    sum = sum
+      + case d.get(keys[idx]) {
+        .Some(v) => v,
+        .None => 0,
+      }
+  }
+
+  dt := date.now() - t0
+  println("${n}\t${dt}\t${sum}")
+}
+
+println("N\tms\tsink")
+for n in [1000, 2000, 4000, 8000, 16000, 32000] {
+  bench(n)
+}

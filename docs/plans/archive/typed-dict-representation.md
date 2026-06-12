@@ -1,5 +1,32 @@
 # Typed Dict Representation
 
+**Status: ARCHIVED / NOT PURSUED (Phase 0 gate, 2026-06-12).** Phase 0
+microbenchmarks (`boot/bench/dict_*`, `boot/bench/set_*`) measured the actual
+cost split and the premise did not hold:
+
+- **Key boxing is already negligible.** `dict_bigint_build` (every key a heap
+  `BoxedInt`) is within noise of `dict_int_build` (every key an unboxed i31):
+  7.12 vs 7.13 ms @32k. `set` is dominated by HAMT node alloc + path-copy +
+  insertion-order append (`build − get` ≈ 80% of build), not key handling. A
+  typed `i64` key saves ≈0 — the typed-vector analogy does not transfer.
+- **The only real key-typing win is String reads** (~2× int reads:
+  `str_has` 2.27 vs `int_has` 1.16 @32k), i.e. `hash_string`+generic `core_eq`
+  vs a direct path. String *build* stays alloc-bound. A narrow, modest lever —
+  not worth the family-parameterization + routing + boundary machinery this
+  plan describes.
+- **Surfaced the real structural cost:** `remove` is O(n) per call (insertion-
+  order vector rebuild) → bulk remove is O(n²) (10 s @32k). Key typing is
+  irrelevant to it. This — and node-allocation cost generally — is the lever
+  worth chasing, tracked separately.
+
+The Phase 0 benchmarks and full baseline table are kept as a permanent
+regression guard in `boot/bench/README.md` ("Dict / Set benchmark suite"). The
+design below is retained for reference only; do not implement without new
+evidence that key representation (not allocation/order-tracking) is the
+bottleneck.
+
+---
+
 ## Goal
 
 Make common `Dict<K, V>` and `Set<K>` workloads faster by using typed runtime

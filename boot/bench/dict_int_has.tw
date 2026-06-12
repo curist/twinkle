@@ -1,0 +1,35 @@
+// Phase 0 baseline — N strided has() on a prebuilt Dict<Int, Int> with small
+// (i31, unboxed) keys. Build is outside the timed region. has() pays the same
+// hash + compare + traversal as get() but skips Option construction, so it is
+// the cleanest read-cost probe for the key-specialization hypothesis.
+//
+//   target/twk run boot/bench/dict_int_has.tw
+use @std.date
+
+fn bench(n: Int) {
+  d: Dict<Int, Int> = Dict.new()
+
+  for i in range(n) {
+    d = .set(i, i)
+  }
+
+  t0 := date.now()
+  idx := 0
+  hits := 0
+
+  for _ in range(n) {
+    idx = (idx + 40503) % n
+
+    if d.has(idx) {
+      hits = hits + 1
+    }
+  }
+
+  dt := date.now() - t0
+  println("${n}\t${dt}\t${hits}")
+}
+
+println("N\tms\tsink")
+for n in [1000, 2000, 4000, 8000, 16000, 32000] {
+  bench(n)
+}

@@ -107,3 +107,62 @@ Full `make bench` should continue to show:
   when extending by reusable trie-backed chunks.
 - `get_regular` / `set_regular`: no regression (stay on the radix fast path).
 - `get_relaxed` / `set_relaxed`: regression bounded to ~1.5–2× their regular twin.
+
+---
+
+# Dict / Set benchmark suite (typed-dict Phase 0)
+
+Microbenchmarks for `Dict<K,V>` / `Set<K>`, written for the
+[typed-dict representation plan](../../docs/plans/typed-dict-representation.md)
+**Phase 0**. They establish current-runtime baselines and, by ablation, split
+where `set`/`get` time actually goes — the go/no-go signal for whether typed key
+families (`i64` / `String`) are worth building. Same harness conventions as the
+vector suite (`@std.date` hot-loop timing, printed `sink` to defeat DCE, keys
+pre-materialized outside the timed region so only the dict op is measured).
+
+## What each one measures
+
+| File | Workload | Probe |
+|---|---|---|
+| `dict_int_build` | insert N small-int (i31, unboxed) keys | full `set` cost |
+| `dict_int_get` | N strided `get` on prebuilt | read cost (`get_option`) |
+| `dict_int_has` | N strided `has` on prebuilt | read cost (no Option) |
+| `dict_int_remove` | remove all N keys (strided) | `set`+order-vector rebuild |
+| `dict_bigint_build` | insert N keys > 2³¹ (forced `BoxedInt`) | **isolates key boxing/hash cost** vs `dict_int_build` |
+| `dict_str_build` / `_get` / `_has` | same shapes, `String` keys | `hash_string`+generic string-eq premium vs Int twins |
+| `set_int_build` / `_contains` | `Set<Int>` (= `Dict<K,Void>`) | key-spec is a pure win for Set |
+| `set_str_build` / `_contains` | `Set<String>` | String-key set path |
+
+## Baseline results — current generic HAMT runtime (2026-06-12)
+
+Single-run, `target/twk run`, Apple Silicon / Deno. Absolute ms is
+machine-relative; the **cross-bench deltas** are the signal. Values at N=32000.
+
+```
+build (ms@32k):  int 7.13   bigint 7.12   string 7.35   set_int 6.97   set_str 7.81
+read  (ms@32k):  int_has 1.16   int_get 1.46   set_int_contains 1.13
+                 str_has 2.27   str_get 3.14   set_str_contains 2.57
+remove(ms):      int_remove  16k 2261   32k 10131   → QUADRATIC (≈4× per doubling)
+```
+
+### Set-cost split (ablation conclusions)
+
+- **Key boxing is already negligible.** `dict_bigint_build` (every key a heap
+  `BoxedInt`) is within noise of `dict_int_build` (every key an unboxed i31).
+  Build is dominated by HAMT node alloc + path-copy + insertion-order append,
+  **not** key handling. A typed `i64` key saves ~0 on build.
+- **`build − get` ≈ 5.7 ms (≈80% of build)** is allocation/order-append, only
+  ~20% is hash+traversal. Key typing only touches part of that 20%.
+- **String reads cost ~2× int reads** (`str_has` 2.27 vs `int_has` 1.16;
+  `str_get` 3.14 vs `int_get` 1.46). This is the one clear, measurable
+  key-specialization win: a direct `hash_string`+string-eq path replacing
+  anyref dispatch + generic `core_eq`. String *build* stays alloc-bound (≈int).
+- **`remove` is O(n) per call** (insertion-order vector rebuild), making
+  bulk-remove O(n²) — 10 s at 32k. Orthogonal to key typing; a structural
+  order-tracking issue worth its own look.
+
+**Gate takeaway:** the typed-vector analogy does not transfer to Int keys —
+build is alloc-bound and boxing is already cheap, so `Dict<Int,V>` specialization
+is a weak first target. The measurable lever is **String-key reads** (~2× today).
+The dominant structural cost is node allocation + insertion-order maintenance,
+independent of key type.

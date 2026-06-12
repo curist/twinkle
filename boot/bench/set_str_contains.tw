@@ -1,0 +1,38 @@
+// Phase 0 baseline — N strided contains() on a prebuilt Set<String>. Keys are
+// pre-materialized; build is outside the timed region. This is the String-key
+// set read path (hash_string + generic string equality), the cost a direct
+// string-equality family would target.
+//
+//   target/twk run boot/bench/set_str_contains.tw
+use @std.date
+
+fn bench(n: Int) {
+  keys: Vector<String> = collect i in range(n) {
+    "key_${i}"
+  }
+  s: Set<String> = Set.new()
+
+  for k in keys {
+    s = .insert(k)
+  }
+
+  t0 := date.now()
+  idx := 0
+  hits := 0
+
+  for _ in range(n) {
+    idx = (idx + 40503) % n
+
+    if s.contains(keys[idx]) {
+      hits = hits + 1
+    }
+  }
+
+  dt := date.now() - t0
+  println("${n}\t${dt}\t${hits}")
+}
+
+println("N\tms\tsink")
+for n in [1000, 2000, 4000, 8000, 16000, 32000] {
+  bench(n)
+}

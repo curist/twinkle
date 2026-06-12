@@ -1,0 +1,29 @@
+// Phase 0 ablation — build a Dict<Int, Int> with keys above 2^31, which the
+// generic runtime cannot store as i31ref and must box into a BoxedInt heap
+// struct (see hash_key_fn in dict.tw). Comparing this against dict_int_build
+// (small i31 keys) isolates the per-key BoxedInt allocation + wide-hash cost,
+// i.e. the upper bound on what a typed i64 key family can save. If this gap is
+// small, gotcha #1 holds and Int-key specialization is a weak first target.
+//
+//   target/twk run boot/bench/dict_bigint_build.tw
+use @std.date
+
+fn bench(n: Int) {
+  keys: Vector<Int> = collect i in range(n) {
+    i + 4000000000
+  }
+  t0 := date.now()
+  d: Dict<Int, Int> = Dict.new()
+
+  for k in keys {
+    d = .set(k, k)
+  }
+
+  dt := date.now() - t0
+  println("${n}\t${dt}\t${d.len()}")
+}
+
+println("N\tms\tsink")
+for n in [1000, 2000, 4000, 8000, 16000, 32000] {
+  bench(n)
+}

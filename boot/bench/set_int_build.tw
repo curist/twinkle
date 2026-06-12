@@ -1,0 +1,28 @@
+// Phase 0 baseline — build a Set<Int> by inserting N distinct small-int keys.
+// Set is backed by Dict<K, Void>, so this exercises the same HAMT set() path
+// with an erased value. Key specialization benefits Set immediately, making
+// this a pure-win probe (no value to specialize away). Compare against
+// dict_int_build to see the Void-value overhead.
+//
+//   target/twk run boot/bench/set_int_build.tw
+use @std.date
+
+fn bench(n: Int) {
+  keys: Vector<Int> = collect i in range(n) {
+    i
+  }
+  t0 := date.now()
+  s: Set<Int> = Set.new()
+
+  for k in keys {
+    s = .insert(k)
+  }
+
+  dt := date.now() - t0
+  println("${n}\t${dt}\t${s.len()}")
+}
+
+println("N\tms\tsink")
+for n in [1000, 2000, 4000, 8000, 16000, 32000] {
+  bench(n)
+}
