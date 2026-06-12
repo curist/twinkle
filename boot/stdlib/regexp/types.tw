@@ -1,0 +1,40 @@
+/// Internal — unstable. Shared data types for the regexp engine, kept in one
+/// module so `parse`, `program`, and `vm` can all reference them without import
+/// cycles. Not part of the `@std.regexp` public surface.
+
+pub type ClassItem = .{ lo: Int, hi: Int }
+
+/// Compiled-program instruction for the Pike VM.
+pub type Inst = {
+  Char(Int),
+  AnyChar,
+  Class(Vector<ClassItem>, Bool),
+  Split(Int, Int),
+  Jmp(Int),
+  Save(Int),
+  AssertStart,
+  AssertEnd,
+  Match,
+}
+
+/// Parsed pattern tree.
+pub type Ast = {
+  Empty,
+  Lit(Int),
+  AnyChar,
+  Class(Vector<ClassItem>, Bool),
+  Concat(Vector<Ast>),
+  Alt(Vector<Ast>),
+  Star(Ast),
+  Plus(Ast),
+  Opt(Ast),
+  Repeat(Ast, Int, Int),
+  Group(Ast, Int),
+  NonCap(Ast),
+  AssertStart,
+  AssertEnd,
+}
+
+pub type Parsed = .{ ast: Ast, group_count: Int, ignore_case: Bool }
+
+pub type RegexError = .{ pos: Int, message: String }

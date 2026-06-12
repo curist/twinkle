@@ -1,3 +1,0 @@
-/// Internal — unstable. Single-pass Pike VM. Not part of the public surface.
-
-type Thread = .{ pc: Int, slots: Vector<Int> }
