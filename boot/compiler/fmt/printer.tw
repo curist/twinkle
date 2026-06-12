@@ -113,6 +113,16 @@ fn get_trailing_trivia_in_range(tm: TriviaMap, start: Int, end: Int) Vector<Triv
   result
 }
 
+// Trailing trivia for a comma-separated list item spanning up to `item_end`,
+// bounded by `next_start` (the following item's start, or the container's end).
+// Catches both a comment on the item's own value token (when no trailing comma
+// was written) and one attached to the separating comma after it.
+fn item_trailing_trivia(tm: TriviaMap, item_end: Int, next_start: Int) Vector<Trivia> {
+  result := get_trailing_trivia(tm, item_end)
+  result = .concat(get_trailing_trivia_in_range(tm, item_end, next_start))
+  result
+}
+
 /// Emit trailing trivia as " // comment" after a statement/item doc.
 fn emit_trailing_trivia(trivia: Vector<Trivia>) Doc {
   result := Doc.Nil
@@ -1234,8 +1244,8 @@ fn format_expr(expr: Expr, tm: TriviaMap) Doc {
     ]),
     .BlockExpr(block) => format_block(block, tm),
     .If(cond_e, then_block, else_expr) => format_if(cond_e, then_block, else_expr, tm),
-    .Case(scrutinee, arms) => format_case(scrutinee, arms, tm),
-    .Cond(arms) => format_cond(arms, tm),
+    .Case(scrutinee, arms) => format_case(scrutinee, arms, expr.span, tm),
+    .Cond(arms) => format_cond(arms, expr.span, tm),
     .Array(elems) => {
       elem_docs := collect e in elems {
         format_expr(e, tm)
@@ -1663,54 +1673,74 @@ fn format_if(cond_e: Expr, then_block: Block, else_expr: Expr?, tm: TriviaMap) D
   doc.concat(parts)
 }
 
-// Join arm docs with `,`-terminated hard lines, preserving an author-written
-// blank line above any arm (i.e. an extra hard line before it).
-fn join_arm_docs(docs: Vector<Doc>, has_author_blank: Vector<Bool>) Doc {
-  result := docs[0]
-  i := 1
-
-  for i < docs.len() {
-    sep := if has_author_blank[i] {
-      doc.concat([doc.text(","), doc.hard_line(), doc.hard_line()])
+// Join arm docs (each already carrying its leading comments and body) onto
+// separate lines. Each arm gets its own trailing comma so a same-line comment
+// after the comma can follow it, and an author-written blank line above an arm
+// is preserved as an extra hard line.
+fn join_arm_docs(
+  docs: Vector<Doc>,
+  spans: Vector<Span>,
+  has_author_blank: Vector<Bool>,
+  container: Span,
+  tm: TriviaMap,
+) Doc {
+  trailing_bound := fn(i: Int) Int {
+    if i + 1 < spans.len() {
+      spans[i + 1].start
     } else {
-      doc.concat([doc.text(","), doc.hard_line()])
+      container.end
     }
-    result = doc.concat([result, sep, docs[i]])
-    i = i + 1
+  }
+  result := Doc.Nil
+
+  for d, i in docs {
+    line_doc := doc.concat([d, doc.text(",")])
+    trailing := item_trailing_trivia(tm, spans[i].end, trailing_bound(i))
+
+    if has_comment_in_trivia(trailing) {
+      line_doc = doc.concat([line_doc, emit_trailing_trivia(trailing)])
+    }
+
+    if i == 0 {
+      result = line_doc
+    } else {
+      sep := if has_author_blank[i] {
+        doc.concat([doc.hard_line(), doc.hard_line()])
+      } else {
+        doc.hard_line()
+      }
+      result = doc.concat([result, sep, line_doc])
+    }
   }
 
   result
 }
 
-fn format_case(scrutinee: Expr, arms: Vector<CaseArm>, tm: TriviaMap) Doc {
+fn format_case(scrutinee: Expr, arms: Vector<CaseArm>, container: Span, tm: TriviaMap) Doc {
   arm_docs: Vector<Doc> = []
+  arm_spans: Vector<Span> = []
   has_author_blank: Vector<Bool> = []
 
   for arm, i in arms {
     raw_trivia := get_trivia(tm, arm.span.start)
     trivia := non_blank_trivia(raw_trivia)
     has_author_blank = .append(i > 0 and has_blank_in_trivia(raw_trivia))
+    arm_spans = .append(arm.span)
     arm_doc := format_case_arm(arm, tm)
 
     if trivia.len() > 0 {
       arm_doc = doc.concat([emit_trivia(trivia), arm_doc])
     }
 
-    trailing := get_trailing_trivia(tm, arm.span.end)
-
-    if trailing.len() > 0 {
-      arm_doc = doc.concat([arm_doc, emit_trailing_trivia(trailing)])
-    }
-
     arm_docs = .append(arm_doc)
   }
 
-  inner := join_arm_docs(arm_docs, has_author_blank)
+  inner := join_arm_docs(arm_docs, arm_spans, has_author_blank, container, tm)
   doc.concat([
     doc.text("case "),
     format_expr(scrutinee, tm),
     doc.text(" {"),
-    doc.indent(doc.concat([doc.hard_line(), inner, doc.text(",")])),
+    doc.indent(doc.concat([doc.hard_line(), inner])),
     doc.hard_line(),
     doc.text("}"),
   ])
@@ -1754,33 +1784,29 @@ fn format_case_arm(arm: CaseArm, tm: TriviaMap) Doc {
   doc.group(doc.concat([format_pattern(arm.pattern, tm), doc.text(" => "), body]))
 }
 
-fn format_cond(arms: Vector<CondArm>, tm: TriviaMap) Doc {
+fn format_cond(arms: Vector<CondArm>, container: Span, tm: TriviaMap) Doc {
   arm_docs: Vector<Doc> = []
+  arm_spans: Vector<Span> = []
   has_author_blank: Vector<Bool> = []
 
   for arm, i in arms {
     raw_trivia := get_trivia(tm, arm.span.start)
     trivia := non_blank_trivia(raw_trivia)
     has_author_blank = .append(i > 0 and has_blank_in_trivia(raw_trivia))
+    arm_spans = .append(arm.span)
     arm_doc := format_cond_arm(arm, tm)
 
     if trivia.len() > 0 {
       arm_doc = doc.concat([emit_trivia(trivia), arm_doc])
     }
 
-    trailing := get_trailing_trivia(tm, arm.span.end)
-
-    if trailing.len() > 0 {
-      arm_doc = doc.concat([arm_doc, emit_trailing_trivia(trailing)])
-    }
-
     arm_docs = .append(arm_doc)
   }
 
-  inner := join_arm_docs(arm_docs, has_author_blank)
+  inner := join_arm_docs(arm_docs, arm_spans, has_author_blank, container, tm)
   doc.concat([
     doc.text("cond {"),
-    doc.indent(doc.concat([doc.hard_line(), inner, doc.text(",")])),
+    doc.indent(doc.concat([doc.hard_line(), inner])),
     doc.hard_line(),
     doc.text("}"),
   ])
@@ -1908,7 +1934,7 @@ fn format_bracketed_items(
 
   for sp, i in spans {
     if has_comment_in_trivia(get_trivia(tm, sp.start))
-      or has_comment_in_trivia(get_trailing_trivia_in_range(tm, sp.end, trailing_bound(i))) {
+      or has_comment_in_trivia(item_trailing_trivia(tm, sp.end, trailing_bound(i))) {
       has_comment = true
     }
   }
@@ -1933,7 +1959,7 @@ fn format_bracketed_items(
     }
 
     line_doc = doc.concat([line_doc, doc.text(",")])
-    trailing := get_trailing_trivia_in_range(tm, sp.end, trailing_bound(i))
+    trailing := item_trailing_trivia(tm, sp.end, trailing_bound(i))
 
     if has_comment_in_trivia(trailing) {
       line_doc = doc.concat([line_doc, emit_trailing_trivia(trailing)])

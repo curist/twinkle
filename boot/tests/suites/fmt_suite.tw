@@ -84,6 +84,10 @@ pub fn suite() runner.Suite {
       "preserves comments inside record and array literals",
       assert_fmt_case("record_field_comments"),
     )
+    .test(
+      "preserves trailing comments on case and cond arms",
+      assert_fmt_case("case_cond_trailing_comments"),
+    )
     .test("inserts blank line after module doc comments", assert_fmt_case("module_doc"))
     .test("applies rebinding shorthand in assign expressions", assert_fmt_case("assign_shorthand"))
     .test(
