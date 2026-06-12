@@ -392,7 +392,7 @@ fn single_number(nums: Vector<Int>) Int {
 
 Everything above (primitives, built-in types, I/O, type conversions, String/Vector/Dict methods, operators) is available as **prelude** — no import needed.
 
-Only non-prelude stdlib modules require explicit imports: `use @std.path`, `use @std.fs`, `use @std.proc`, `use @std.date`, `use @std.view`, `use @std.math`, `use @std.tuple`.
+Only non-prelude stdlib modules require explicit imports: `use @std.path`, `use @std.fs`, `use @std.proc`, `use @std.date`, `use @std.view`, `use @std.math`, `use @std.tuple`, `use @std.regexp`.
 
 ### `@std.math`
 
@@ -425,6 +425,48 @@ math.gcd(12, 18)    // 6
 math.pow(2, 10)     // 1024
 math.isqrt(99)      // 9
 math.sqrt(16.0)     // 4.0
+```
+
+### `@std.regexp`
+
+Pure-Twinkle regular expressions for structured text parsing. Compile once with
+`regexp.compile` or `regexp.must`, then use the inherent methods on `Regexp`.
+Matches use Unicode scalar offsets; captures are 1-based (`group(0)` is the whole
+match).
+
+| Type / Function | Signature | Description |
+|-----------------|-----------|-------------|
+| `RegexError` | `.{ pos: Int, message: String }` | Compile error; `pos` is a scalar offset in the pattern |
+| `Match` | `.{ start: Int, end: Int, groups: Vector<String?> }` | Successful match with pre-materialized capture text |
+| `regexp.compile(pattern)` | `fn(pattern: String) Result<Regexp, RegexError>` | Compile a pattern |
+| `regexp.must(pattern)` | `fn(pattern: String) Regexp` | Compile or trap with `regexp:${pos}: ...` |
+| `.test(s)` | `fn(re: Regexp, s: String) Bool` | True if the pattern matches anywhere |
+| `.find(s)` | `fn(re: Regexp, s: String) Match?` | Leftmost match, if any |
+| `.find_all(s)` | `fn(re: Regexp, s: String) Iterator<Match>` | Non-overlapping matches, including empty-match progress |
+| `.replace(s, repl)` | `fn(re: Regexp, s: String, repl: String) String` | Replace the first match |
+| `.replace_all(s, repl)` | `fn(re: Regexp, s: String, repl: String) String` | Replace every match |
+| `Match.group(i)` | `fn(m: Match, i: Int) String?` | Capture text, or `.None` if absent/unmatched |
+| `Match.text()` | `fn(m: Match) String` | Whole-match text |
+
+Supported v1 syntax: literals, `.`, character classes and ranges (`[abc]`,
+`[a-z]`, `[^...]`), predefined classes (`\d \w \s` and uppercase negations),
+greedy quantifiers (`* + ? {m} {m,} {m,n}`), capturing and non-capturing groups,
+alternation, `^`/`$`, escapes (`\n \t \r \f \v \\` and escaped metacharacters),
+and leading `(?i)` ASCII-only case-insensitivity. Backreferences, lookaround,
+lazy quantifiers, multiline/dotall flags, and named groups are not in v1.
+Replacement templates expand `$0`..`$9`, with `$$` for a literal dollar.
+
+```tw
+use @std.regexp
+
+re := regexp.must("(\\d+) (red|green|blue)")
+for m in re.find_all("Game 1: 3 blue, 4 red") {
+  n := Int.from_string(m.group(1).unwrap()).unwrap()
+  color := m.group(2).unwrap()
+  println("${n} ${color}")
+}
+
+regexp.must("mul\\((\\d+),(\\d+)\\)").replace_all("mul(2,4)", "$1*$2")  // "2*4"
 ```
 
 ### `@std.path`
