@@ -154,19 +154,28 @@ pub fn plan_wasm_types_impl(
   t3 := date.now()
 
   // Compute module globals from explicit prepared-body AGlobalLocal operands.
-  // The referenced LocalIds must resolve back to slots in init functions.
-  // After linking, multiple per-module $init functions exist, so we
-  // search all of them for the defining slot.
+  // The referenced LocalIds must resolve back to the top-level initializer
+  // assignment that stores the global's value.
   case input.anf.init_func_id {
-    .Some(init_fid) => {
-      // Build combined slot map from all init functions.
+    .Some(_) => {
+      // Build a map from module-global LocalId to the mono stored by that
+      // global's top-level initializer. Do not use every init slot here:
+      // function-local source LocalIds are only unique within a module, while
+      // linked GlobalLocal IDs are program-wide. A later init function's local
+      // slot can therefore have the same numeric id as an earlier module
+      // global and must not overwrite the global's type.
       all_init_slots: Dict<Int, MonoType> = Dict.new()
 
       for pf in input.funcs {
         if pf.is_init {
+          all_init_slots = facts.module_global_assign_monos(pf, all_init_slots)
+
           for sid_int in pf.slots.keys() {
             case pf.slots[sid_int] {
-              .Some(info) => all_init_slots[info.source_local.id] = info.mono,
+              .Some(info) => if scan.module_globals.has(info.source_local.id)
+                and !all_init_slots.has(info.source_local.id) {
+                all_init_slots[info.source_local.id] = info.mono
+              },
               .None => {},
             }
           }

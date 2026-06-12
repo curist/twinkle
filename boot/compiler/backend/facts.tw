@@ -4,7 +4,9 @@
 /// PreparedFunc and related prepared-IR records. They should not rediscover
 /// semantic ANF facts or depend on Wasm planning/emission state.
 
-use compiler.backend.prepared_ir.{PreparedAtom, PreparedFunc, ReprKind, SlotId, SlotInfo}
+use compiler.backend.prepared_ir.{
+  PreparedAtom, PreparedExpr, PreparedFunc, PreparedOp, ReprKind, SlotId, SlotInfo,
+}
 use compiler.codegen.wasm_ir.{ValType}
 use compiler.mono_type.{MonoType}
 
@@ -96,5 +98,110 @@ pub fn atom_val_type(atom: PreparedAtom, func: PreparedFunc) ValType? {
     },
     .AGlobalLocal(_) => .None,
     .AGlobalFunc(_) => .Some(.Ref(false, .Func)),
+  }
+}
+
+// Module-global discovery for an init function.
+//
+// An init function's body mixes ordinary Let-bound locals with the top-level
+// assignments that store each module global's value. Their source LocalIds are
+// unique within the function, but function-local ids collide with program-wide
+// linked GlobalLocal ids across modules, so globals must be inferred
+// structurally rather than by merging every slot. A module-global assignment is
+// an AAssign whose target's source LocalId is not also Let-bound in the same
+// init function. Monos are accumulated into `out`, which is also returned.
+pub fn module_global_assign_monos(func: PreparedFunc, out: Dict<Int, MonoType>) Dict<Int, MonoType> {
+  let_sources := collect_let_source_lids(func.body, func, Dict.new())
+  collect_global_assign_monos(func.body, func, let_sources, out)
+}
+
+fn collect_let_source_lids(expr: PreparedExpr, func: PreparedFunc, out: Dict<Int, Bool>) Dict<
+  Int,
+  Bool,
+> {
+  case expr {
+    .Let(sid, op, body) => {
+      info := slot_info(func, sid)
+      cur := out
+      cur[info.source_local.id] = true
+      cur = collect_let_source_lids_op(op, func, cur)
+      collect_let_source_lids(body, func, cur)
+    },
+    _ => out,
+  }
+}
+
+fn collect_let_source_lids_op(op: PreparedOp, func: PreparedFunc, out: Dict<Int, Bool>) Dict<
+  Int,
+  Bool,
+> {
+  case op {
+    .AIf(_, then_e, else_e) => {
+      cur := collect_let_source_lids(then_e, func, out)
+      collect_let_source_lids(else_e, func, cur)
+    },
+    .AMatch(_, arms) => {
+      cur := out
+
+      for arm in arms {
+        cur = collect_let_source_lids(arm.body, func, cur)
+      }
+
+      cur
+    },
+    .ALoop(body) => collect_let_source_lids(body, func, out),
+    .ADefer(body) => collect_let_source_lids(body, func, out),
+    _ => out,
+  }
+}
+
+fn collect_global_assign_monos(
+  expr: PreparedExpr,
+  func: PreparedFunc,
+  let_sources: Dict<Int, Bool>,
+  out: Dict<Int, MonoType>,
+) Dict<Int, MonoType> {
+  case expr {
+    .Let(_, op, body) => {
+      cur := collect_global_assign_monos_op(op, func, let_sources, out)
+      collect_global_assign_monos(body, func, let_sources, cur)
+    },
+    _ => out,
+  }
+}
+
+fn collect_global_assign_monos_op(
+  op: PreparedOp,
+  func: PreparedFunc,
+  let_sources: Dict<Int, Bool>,
+  out: Dict<Int, MonoType>,
+) Dict<Int, MonoType> {
+  case op {
+    .AAssign(target, _) => {
+      info := slot_info(func, target)
+      cur := out
+
+      if !let_sources.has(info.source_local.id) {
+        cur[info.source_local.id] = info.mono
+      }
+
+      cur
+    },
+    .AIf(_, then_e, else_e) => {
+      cur := collect_global_assign_monos(then_e, func, let_sources, out)
+      collect_global_assign_monos(else_e, func, let_sources, cur)
+    },
+    .AMatch(_, arms) => {
+      cur := out
+
+      for arm in arms {
+        cur = collect_global_assign_monos(arm.body, func, let_sources, cur)
+      }
+
+      cur
+    },
+    .ALoop(body) => collect_global_assign_monos(body, func, let_sources, out),
+    .ADefer(body) => collect_global_assign_monos(body, func, let_sources, out),
+    _ => out,
   }
 }

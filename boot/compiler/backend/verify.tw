@@ -14,6 +14,7 @@
 use @std.date
 use @std.proc
 
+use compiler.backend.facts as facts
 use compiler.backend.prepare.{PreparedModule}
 use compiler.backend.prepared_ir.{PreparedFunc}
 use compiler.backend.verify_expr.{verify_prepared_func_expr}
@@ -92,21 +93,15 @@ pub fn verify_prepared_module_with_level(
   .Ok({})
 }
 
-// Build a LocalId → MonoType map for all module globals from init functions' slot maps.
-// AGlobalLocal atoms in non-init functions reference locals declared in $init.
-// After linking, multiple per-module $init functions exist alongside
-// $combined_init, so we collect globals from all of them.
+// Build a LocalId → MonoType map for module globals from init assignments.
+// See facts.module_global_assign_monos for why globals are inferred from
+// top-level AAssign targets rather than by merging every init slot.
 fn build_module_globals(prepared: PreparedModule) Dict<Int, MonoType> {
   out: Dict<Int, MonoType> = Dict.new()
 
   for pf in prepared.funcs {
     if pf.is_init {
-      for sid_int in pf.slots.keys() {
-        case pf.slots[sid_int] {
-          .Some(info) => out[info.source_local.id] = info.mono,
-          .None => {},
-        }
-      }
+      out = facts.module_global_assign_monos(pf, out)
     }
   }
 
