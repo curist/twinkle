@@ -1,0 +1,168 @@
+use @std.regexp
+use @std.regexp.{Match}
+
+use tests.assert
+use tests.runner
+
+fn text_or(m: Match?, missing: String) String {
+  case m {
+    .Some(mm) => mm.text(),
+    .None => missing,
+  }
+}
+
+fn group_or(m: Match, i: Int, missing: String) String {
+  case m.group(i) {
+    .Some(s) => s,
+    .None => missing,
+  }
+}
+
+fn err_at(p: String, want_pos: Int) Result<Void, String> {
+  case regexp.compile(p) {
+    .Err(e) => assert.equal(e.pos, want_pos),
+    .Ok(_) => assert.fail("expected regexp compile error for ${p}"),
+  }
+}
+
+pub fn suite() runner.Suite {
+  runner.suite("stdlib regexp")
+    .test(
+      "find substring and test",
+      fn() {
+        case regexp.must("abc").find("xxabcyy") {
+          .Some(m) => {
+            try assert.equal(m.text(), "abc")
+            try assert.equal(m.start, 2)
+          },
+          .None => { return assert.fail("expected match") },
+        }
+        try assert.is_true(regexp.must("abc").test("zabcz"))
+        try assert.is_false(regexp.must("abc").test("abx"))
+        .Ok({})
+      },
+    )
+    .test(
+      "classes and dot",
+      fn() {
+        try assert.is_true(regexp.must("a.c").test("axc"))
+        try assert.is_false(regexp.must("a.c").test("a\nc"))
+        try assert.equal(text_or(regexp.must("[0-9]").find("xx7yy"), "?"), "7")
+        try assert.equal(text_or(regexp.must("[^abc]").find("abQ"), "?"), "Q")
+        try assert.equal(text_or(regexp.must("\\d").find("a5"), "?"), "5")
+        .Ok({})
+      },
+    )
+    .test(
+      "greedy quantifiers",
+      fn() {
+        try assert.equal(text_or(regexp.must("a+").find("aaa"), "?"), "aaa")
+        try assert.equal(text_or(regexp.must("a*").find("aaa"), "?"), "aaa")
+        try assert.equal(text_or(regexp.must("ab?c").find("ac"), "?"), "ac")
+        try assert.equal(text_or(regexp.must("a{2,3}").find("aaaa"), "?"), "aaa")
+        try assert.equal(text_or(regexp.must("a{2,}").find("aaaa"), "?"), "aaaa")
+        .Ok({})
+      },
+    )
+    .test(
+      "captures",
+      fn() {
+        case regexp.must("(\\d+)-(\\d+)").find("ab 12-34 cd") {
+          .Some(m) => {
+            try assert.equal(m.text(), "12-34")
+            try assert.equal(group_or(m, 1, "?"), "12")
+            try assert.equal(group_or(m, 2, "?"), "34")
+          },
+          .None => { return assert.fail("expected match") },
+        }
+
+        case regexp.must("a(b)?c").find("ac") {
+          .Some(m) => try assert.is_none(m.group(1)),
+          .None => { return assert.fail("expected optional-group match") },
+        }
+        .Ok({})
+      },
+    )
+    .test(
+      "alternation priority",
+      fn() {
+        try assert.equal(text_or(regexp.must("a|aa").find("aa"), "?"), "a")
+        try assert.equal(text_or(regexp.must("aa|a").find("aa"), "?"), "aa")
+        try assert.equal(text_or(regexp.must("(a|aa)+").find("aa"), "?"), "aa")
+        try assert.equal(text_or(regexp.must("red|green|blue").find("xbluey"), "?"), "blue")
+        .Ok({})
+      },
+    )
+    .test(
+      "anchors",
+      fn() {
+        try assert.is_true(regexp.must("^ab").test("abc"))
+        try assert.is_false(regexp.must("^ab").test("xab"))
+        try assert.is_true(regexp.must("bc$").test("abc"))
+        try assert.is_false(regexp.must("bc$").test("abcd"))
+        .Ok({})
+      },
+    )
+    .test(
+      "find_all including empty matches",
+      fn() {
+        nums: Vector<String> = []
+        for m in regexp.must("\\d+").find_all("a12 b3 c456") {
+          nums = .append(m.text())
+        }
+        try assert.vec_len(nums, 3)
+        try assert.equal(nums[0], "12")
+        try assert.equal(nums[1], "3")
+        try assert.equal(nums[2], "456")
+
+        empty_count := 0
+        for _ in regexp.must("a*").find_all("") {
+          empty_count = empty_count + 1
+        }
+        try assert.equal(empty_count, 1)
+
+        bb_count := 0
+        for _ in regexp.must("a*").find_all("bb") {
+          bb_count = bb_count + 1
+        }
+        try assert.equal(bb_count, 3)
+        .Ok({})
+      },
+    )
+    .test(
+      "ignore case",
+      fn() {
+        try assert.is_true(regexp.must("(?i)abc").test("ABC"))
+        try assert.is_true(regexp.must("(?i)abc").test("AbC"))
+        try assert.equal(text_or(regexp.must("(?i)[a-z]+").find("XYz"), "?"), "XYz")
+        try assert.is_err(regexp.compile("ab(?i)c"))
+        .Ok({})
+      },
+    )
+    .test(
+      "replace",
+      fn() {
+        try assert.equal(regexp.must("\\d+").replace("a1b2", "#"), "a#b2")
+        try assert.equal(regexp.must("\\d+").replace_all("a1b2", "#"), "a#b#")
+        try assert.equal(regexp.must("(\\w+)@(\\w+)").replace_all("x@y", "$2.$1"), "y.x")
+        try assert.equal(regexp.must("a").replace_all("a", "$$"), "$")
+        try assert.equal(regexp.must("a").replace_all("a", "[$5]"), "[]")
+        try assert.equal(regexp.must("a*").replace_all("", "X"), "X")
+        try assert.equal(regexp.must("a*").replace_all("b", "X"), "XbX")
+        try assert.equal(regexp.must("a+").replace_all("baab", "X"), "bXb")
+        .Ok({})
+      },
+    )
+    .test(
+      "parser error positions",
+      fn() {
+        try err_at("a(b", 1)
+        try err_at("ab)", 2)
+        try err_at("a[bc", 1)
+        try err_at("ab\\", 2)
+        try err_at("*ab", 0)
+        try err_at("a{2,x}", 1)
+        .Ok({})
+      },
+    )
+}
