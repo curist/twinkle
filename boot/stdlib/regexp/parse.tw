@@ -12,7 +12,7 @@ pub fn parse(pattern: String) Result<Parsed, RegexError> {
   chars := decode(pattern)
   cur := Cursor.{ chars, pos: 0, groups: 0, ignore_case: false }
 
-  result := try parse_concat(cur)
+  result := try parse_alt(cur)
   end := result.second
 
   if end.pos != end.chars.len() {
@@ -36,6 +36,25 @@ pub fn decode(s: String) Vector<Int> {
   }
 
   out
+}
+
+// Parse `concat ('|' concat)*`. One branch returns it directly; many become Alt.
+fn parse_alt(cur: Cursor) Result<Pair<Ast, Cursor>, RegexError> {
+  first := try parse_concat(cur)
+  branches: Vector<Ast> = [first.first]
+  c := first.second
+
+  for c.pos < c.chars.len() and c.chars[c.pos] == 124 {
+    branch := try parse_concat(advance(c, 1))
+    branches = .append(branch.first)
+    c = branch.second
+  }
+
+  if branches.len() == 1 {
+    .Ok(tuple.pair(branches[0], c))
+  } else {
+    .Ok(tuple.pair(Ast.Alt(branches), c))
+  }
 }
 
 // Parse a run of atoms until end of input, `|`, or `)`.
@@ -167,7 +186,7 @@ fn parse_group(cur: Cursor) Result<Pair<Ast, Cursor>, RegexError> {
 
   if c.pos < c.chars.len() and c.chars[c.pos] == 63 {
     if c.pos + 1 < c.chars.len() and c.chars[c.pos + 1] == 58 {
-      inner := try parse_concat(advance(c, 2))
+      inner := try parse_alt(advance(c, 2))
       after := try expect_close(inner.second, open)
       .Ok(tuple.pair(Ast.NonCap(inner.first), after))
     } else {
@@ -176,7 +195,7 @@ fn parse_group(cur: Cursor) Result<Pair<Ast, Cursor>, RegexError> {
   } else {
     idx := c.groups + 1
     c.groups = idx
-    inner := try parse_concat(c)
+    inner := try parse_alt(c)
     after := try expect_close(inner.second, open)
     .Ok(tuple.pair(Ast.Group(inner.first, idx), after))
   }

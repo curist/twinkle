@@ -49,6 +49,7 @@ fn emit(ast: Ast, acc: Vector<Inst>) Vector<Inst> {
       a.append(Inst.Save(2 * idx + 1))
     },
     .NonCap(inner) => emit(inner, acc),
+    .Alt(branches) => emit_alt(branches, acc),
     .Concat(items) => {
       a := acc
 
@@ -61,6 +62,42 @@ fn emit(ast: Ast, acc: Vector<Inst>) Vector<Inst> {
     // remaining cases are added in later tasks
     _ => acc,
   }
+}
+
+// Lower `b0|b1|…|bk` as a chain of priority-ordered splits:
+//   Split(B0, L1) ; B0 ; Jmp(End)
+//   L1: Split(B1, L2) ; B1 ; Jmp(End)
+//   … ; Lk: Bk ; End:
+// First branch keeps priority; each non-final branch jumps past the rest.
+fn emit_alt(branches: Vector<Ast>, acc: Vector<Inst>) Vector<Inst> {
+  a := acc
+  jmps: Vector<Int> = []
+  n := branches.len()
+  i := 0
+
+  for i < n {
+    if i < n - 1 {
+      split_pos := a.len()
+      a = .append(Inst.Split(split_pos + 1, 0))
+      a = emit(branches[i], a)
+      jmp_pos := a.len()
+      a = .append(Inst.Jmp(0))
+      jmps = .append(jmp_pos)
+      a = .set_at(split_pos, Inst.Split(split_pos + 1, a.len()))
+    } else {
+      a = emit(branches[i], a)
+    }
+
+    i = i + 1
+  }
+
+  end := a.len()
+
+  for jp in jmps {
+    a = .set_at(jp, Inst.Jmp(end))
+  }
+
+  a
 }
 
 // Expand `x{m,n}` to `m` mandatory copies plus the tail: a `Star` when
