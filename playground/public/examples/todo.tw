@@ -38,10 +38,11 @@ fn complete_named(todos: Vector<Todo>, name: String) Vector<Todo>!String {
   .Ok(updated)
 }
 
-todos: Vector<Todo> = []
-todos = .append(.{ name: "parse", done: false })
-todos = .append(.{ name: "check", done: false })
-todos = .append(.{ name: "build", done: false })
+todos: Vector<Todo> = [
+  .{ name: "parse", done: false },
+  .{ name: "check", done: false },
+  .{ name: "build", done: false },
+]
 
 case complete_named(todos, "build") {
   .Ok(updated) => println("updated ${updated}"),

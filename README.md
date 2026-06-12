@@ -35,7 +35,11 @@ fn complete(todo: Todo) Todo {
 }
 
 fn to_string(todo: Todo) String {
-  mark := if todo.done { "✅" } else { "⬜" }
+  mark := if todo.done {
+    "✅"
+  } else {
+    "⬜"
+  }
   "${mark} ${todo.name}"
 }
 
@@ -55,10 +59,11 @@ fn complete_named(todos: Vector<Todo>, name: String) Vector<Todo>!String {
   .Ok(updated)
 }
 
-todos: Vector<Todo> = []
-todos = .append(.{ name: "parse", done: false })
-todos = .append(.{ name: "check", done: false })
-todos = .append(.{ name: "build", done: false })
+todos: Vector<Todo> = [
+  .{ name: "parse", done: false },
+  .{ name: "check", done: false },
+  .{ name: "build", done: false },
+]
 
 case complete_named(todos, "build") {
   .Ok(updated) => println("updated ${updated}"), // updated [⬜ parse, ⬜ check, ✅ build]
