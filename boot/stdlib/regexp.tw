@@ -86,6 +86,101 @@ pub fn find_all(re: Regexp, s: String) Iterator<Match> {
   )
 }
 
+/// Replace the first match of `re` in `s` with `repl` (`$0..$9`, `$$`).
+pub fn replace(re: Regexp, s: String, repl: String) String {
+  replace_n(re, s, repl, 1)
+}
+
+/// Replace every match of `re` in `s` with `repl` (`$0..$9`, `$$`).
+pub fn replace_all(re: Regexp, s: String, repl: String) String {
+  replace_n(re, s, repl, -1)
+}
+
+// limit < 0 means unlimited. Copies the gap before each match, emits the
+// expanded replacement, and on an empty match copies the stepped-over scalar.
+fn replace_n(re: Regexp, s: String, repl: String, limit: Int) String {
+  chars := parse.decode(s)
+  len := chars.len()
+  nslots := 2 * (re.group_count + 1)
+  out := ""
+  last := 0
+  pos := 0
+  count := 0
+
+  for pos <= len {
+    if limit >= 0 and count >= limit {
+      return finish(out, chars, last, len)
+    }
+
+    case vm.find_from(re.program, chars, pos, re.ignore_case, nslots) {
+      .Some(slots) => {
+        m := materialize(chars, slots, re.group_count)
+        out = .concat(slice_scalars(chars, last, m.start))
+        out = .concat(expand(repl, m))
+        count = count + 1
+
+        if m.end > m.start {
+          last = m.end
+          pos = m.end
+        } else {
+          if m.end < len {
+            out = .concat(slice_scalars(chars, m.end, m.end + 1))
+          }
+
+          last = m.end + 1
+          pos = m.end + 1
+        }
+      },
+      .None => { return finish(out, chars, last, len) },
+    }
+  }
+
+  finish(out, chars, last, len)
+}
+
+fn finish(out: String, chars: Vector<Int>, last: Int, len: Int) String {
+  if last < len {
+    out.concat(slice_scalars(chars, last, len))
+  } else {
+    out
+  }
+}
+
+// Expand a replacement template: `$0..$9` -> group text, `$$` -> `$`, a lone
+// `$` stays literal, and a reference to an absent group expands to "".
+fn expand(repl: String, m: Match) String {
+  rs := parse.decode(repl)
+  out := ""
+  i := 0
+
+  for i < rs.len() {
+    if rs[i] == 36 {
+      if i + 1 < rs.len() and rs[i + 1] == 36 {
+        out = .concat("$")
+        i = i + 2
+      } else if i + 1 < rs.len() and rs[i + 1] >= 48 and rs[i + 1] <= 57 {
+        out = .concat(group_text(m, rs[i + 1] - 48))
+        i = i + 2
+      } else {
+        out = .concat("$")
+        i = i + 1
+      }
+    } else {
+      out = .concat(slice_scalars(rs, i, i + 1))
+      i = i + 1
+    }
+  }
+
+  out
+}
+
+fn group_text(m: Match, g: Int) String {
+  case group(m, g) {
+    .Some(s) => s,
+    .None => "",
+  }
+}
+
 fn materialize(chars: Vector<Int>, slots: Vector<Int>, group_count: Int) Match {
   groups: Vector<String?> = []
   k := 0
