@@ -125,8 +125,12 @@ def main():
             j = 0
             while j < char_len:
                 end = min(j + CHUNK_LIMIT, char_len)
+                # Do not split immediately after a backslash: that would make the
+                # generated Twinkle string's closing quote part of the escape.
+                if end < char_len and escaped[end - 1] == "\\":
+                    end -= 1
                 chunks.append(quote(escaped[j:end]))
-                j += CHUNK_LIMIT
+                j = end
             expr = f'join_chunks([{", ".join(chunks)}])'
         buf.append(f"    {quote(virtual_path)} => .Some({expr}),\n")
     buf.append("    _ => .None,\n")
