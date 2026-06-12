@@ -5,7 +5,7 @@
 #
 #   make list                   list scaffolded days, grouped by year
 #   make new YEAR=2024 DAY=1     scaffold a fresh day from the template
-#   make pull YEAR=2024 DAY=1    fetch your puzzle input + statement (needs cookie)
+#   make pull YEAR=2024 DAY=1    scaffold if needed, then fetch input + statement
 #   make solve YEAR=2024 DAY=1   run one day, printing answers on the real input
 #   make test                   run every year's tests
 #   make test YEAR=2024         run one year's tests
@@ -59,19 +59,30 @@ new: require-day
 # --- fetching -------------------------------------------------------------
 
 pull: require-day
-	@if [ ! -d "$(DIR)" ]; then echo "$(DIR) missing — run: make new YEAR=$(YEAR) DAY=$(DAY)"; exit 1; fi
+	@if [ ! -d "$(DIR)" ]; then $(MAKE) --no-print-directory new YEAR=$(YEAR) DAY=$(DAY); fi
 	@SESSION="$${AOC_SESSION:-$$(cat .session 2>/dev/null || true)}"; \
 	if [ -z "$$SESSION" ]; then \
 		echo "no session cookie — set AOC_SESSION or create a .session file"; exit 1; \
 	fi; \
 	echo "fetching input -> $(DIR)/input.txt"; \
-	curl -fsS -A "$(UA)" -b "session=$$SESSION" \
-		"https://adventofcode.com/$(YEAR)/day/$(DAY)/input" > "$(DIR)/input.txt"; \
+	if err=$$(curl -fsS -A "$(UA)" -b "session=$$SESSION" \
+		"https://adventofcode.com/$(YEAR)/day/$(DAY)/input" -o "$(DIR)/input.txt.tmp" 2>&1); then \
+		mv "$(DIR)/input.txt.tmp" "$(DIR)/input.txt"; \
+	else \
+		rm -f "$(DIR)/input.txt.tmp"; \
+		echo "input fetch failed ($$err) — check the cookie, or the puzzle may not be unlocked yet" >&2; \
+		exit 1; \
+	fi; \
 	echo "fetching statement -> $(DIR)/statement.md"; \
-	curl -fsS -A "$(UA)" -b "session=$$SESSION" \
-		"https://adventofcode.com/$(YEAR)/day/$(DAY)" > "$(DIR)/statement.html"; \
-	perl -0777 -ne 'while(/<article.*?>(.*?)<\/article>/sg){$$a=$$1;$$a=~s/<[^>]+>//g;$$a=~s/&gt;/>/g;$$a=~s/&lt;/</g;$$a=~s/&amp;/&/g;print$$a,"\n\n";}' \
-		"$(DIR)/statement.html" > "$(DIR)/statement.md" || true
+	if err=$$(curl -fsS -A "$(UA)" -b "session=$$SESSION" \
+		"https://adventofcode.com/$(YEAR)/day/$(DAY)" -o "$(DIR)/statement.html.tmp" 2>&1); then \
+		mv "$(DIR)/statement.html.tmp" "$(DIR)/statement.html"; \
+		perl -0777 -ne 'while(/<article.*?>(.*?)<\/article>/sg){$$a=$$1;$$a=~s/<[^>]+>//g;$$a=~s/&gt;/>/g;$$a=~s/&lt;/</g;$$a=~s/&amp;/&/g;print$$a,"\n\n";}' \
+			"$(DIR)/statement.html" > "$(DIR)/statement.md" || true; \
+	else \
+		rm -f "$(DIR)/statement.html.tmp"; \
+		echo "statement fetch failed ($$err) — continuing, input is what matters" >&2; \
+	fi
 
 # --- running --------------------------------------------------------------
 
