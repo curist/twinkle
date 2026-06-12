@@ -1332,7 +1332,9 @@ fn encode_extern_meta_section_payload(meta: Vector<ExternMeta>) Vector<Byte> {
 
 fn extern_meta_json(meta: Vector<ExternMeta>) String {
   entries := collect em in meta {
-    "{\"module\":${json_string(em.module)},\"name\":${json_string(em.name)},\"args\":${json_string_array(em.args)},\"ret\":${json_string(em.ret)}}"
+    "{\"module\":${json_string(em.module)},\"name\":${json_string(em.name)},\"args\":${json_string_array(
+      em.args,
+    )},\"ret\":${json_string(em.ret)}}"
   }
   "[${entries.join(",")}]"
 }

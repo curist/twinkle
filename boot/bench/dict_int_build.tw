@@ -13,9 +13,11 @@ fn bench(n: Int) {
   }
   t0 := date.now()
   d: Dict<Int, Int> = Dict.new()
+
   for k in keys {
-    d = d.set(k, k)
+    d = .set(k, k)
   }
+
   dt := date.now() - t0
   println("${n}\t${dt}\t${d.len()}")
 }

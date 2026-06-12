@@ -3569,12 +3569,9 @@ fn check_exhaustiveness(
       if missing.len() > 0 {
         diags.append(
           .Error(
-            .MissingVariants(.{
-              span: s,
-              scrutinee_ty: zonk(scrut_ty, ctx.subst),
-              missing,
-              insert_at: s.end - 1,
-            }),
+            .MissingVariants(
+              .{ span: s, scrutinee_ty: zonk(scrut_ty, ctx.subst), missing, insert_at: s.end - 1 },
+            ),
           ),
         )
       } else {

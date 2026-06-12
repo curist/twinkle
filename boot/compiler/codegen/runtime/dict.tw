@@ -33,6 +33,7 @@ t_variant := "rt_types__Variant"
 t_string := "rt_types__String"
 t_boxed_int := "rt_types__BoxedInt"
 t_vec_internal := "rt_types__VecInternal"
+
 // Field indices
 he_hash := 0
 he_key := 1

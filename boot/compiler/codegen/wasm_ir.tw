@@ -192,12 +192,7 @@ pub type WasmModule = .{
 /// MonoTypes and emitted into the `twinkle.externs` custom section so the JS
 /// runtime can auto-marshal arguments/returns. `args`/`ret` kinds are one of
 /// "str" | "i64" | "f64" | "i32" | "ref" | "void".
-pub type ExternMeta = .{
-  module: String,
-  name: String,
-  args: Vector<String>,
-  ret: String,
-}
+pub type ExternMeta = .{ module: String, name: String, args: Vector<String>, ret: String }
 
 // ── ABI contract ─────────────────────────────────────────────────────
 pub type AbiContract = .{ param_types: Vector<ValType>, result_types: Vector<ValType> }
