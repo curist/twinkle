@@ -1,0 +1,6 @@
+node := Tree.Branch(
+  left,
+  // pivot value
+  value,
+  right, // subtree
+)

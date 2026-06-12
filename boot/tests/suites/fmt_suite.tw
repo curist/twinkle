@@ -88,6 +88,18 @@ pub fn suite() runner.Suite {
       "preserves trailing comments on case and cond arms",
       assert_fmt_case("case_cond_trailing_comments"),
     )
+    .test("preserves comments inside call arguments", assert_fmt_case("call_arg_comments"))
+    .test("preserves comments inside function parameters", assert_fmt_case("param_comments"))
+    .test("preserves comments inside closure parameters", assert_fmt_case("closure_param_comments"))
+    .test(
+      "preserves comments inside type declaration fields and variants",
+      assert_fmt_case("type_decl_comments"),
+    )
+    .test("preserves comments inside import lists", assert_fmt_case("import_comments"))
+    .test(
+      "preserves comments inside variant constructor arguments",
+      assert_fmt_case("variant_arg_comments"),
+    )
     .test("inserts blank line after module doc comments", assert_fmt_case("module_doc"))
     .test("applies rebinding shorthand in assign expressions", assert_fmt_case("assign_shorthand"))
     .test(

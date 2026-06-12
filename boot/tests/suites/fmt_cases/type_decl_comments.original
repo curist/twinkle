@@ -1,0 +1,13 @@
+type Config = .{
+  host: String,
+  // listening port
+  port: Int,
+  retries: Int, // how many times
+}
+
+type Shape = {
+  Circle,
+  // axis-aligned
+  Rect,
+  Square, // unit
+}

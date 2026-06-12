@@ -1,0 +1,5 @@
+f := fn(
+  acc,
+  // current element
+  x,
+) { acc + x }

@@ -1,0 +1,6 @@
+result := compute(
+  first,
+  // the important one
+  second,
+  third, // inline note
+)

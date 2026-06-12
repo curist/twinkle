@@ -558,8 +558,8 @@ fn should_blank_between(prev: String, cur: String) Bool {
 
 fn format_item(item: Item, tm: TriviaMap) Doc {
   case item {
-    .Use(decl) => format_use(decl),
-    .Type(decl) => format_type_decl(decl),
+    .Use(decl) => format_use(decl, tm),
+    .Type(decl) => format_type_decl(decl, tm),
     .Function(decl) => format_function(decl, tm),
     .ExternFunction(decl) => format_extern_fn(decl),
     .ExternType(decl) => format_extern_type(decl),
@@ -569,7 +569,7 @@ fn format_item(item: Item, tm: TriviaMap) Doc {
 }
 
 // --- Imports ---
-fn format_use(decl: UseDecl) Doc {
+fn format_use(decl: UseDecl, tm: TriviaMap) Doc {
   parts: Vector<Doc> = [doc.text("use ")]
 
   if decl.is_stdlib {
@@ -592,8 +592,21 @@ fn format_use(decl: UseDecl) Doc {
       item_docs := collect item in items {
         format_import_item(item)
       }
+      item_spans := collect item in items {
+        import_item_span(item)
+      }
       parts = .append(doc.text("."))
-      parts = .append(doc.fill_bracketed("{", "}", item_docs))
+      parts = .append(
+        format_bracketed_items(
+          "{",
+          "}",
+          doc.fill_bracketed("{", "}", item_docs),
+          item_docs,
+          item_spans,
+          decl.span.end,
+          tm,
+        ),
+      )
     },
     .None => {},
   }
@@ -615,7 +628,7 @@ fn format_import_item(item: ImportItem) Doc {
 }
 
 // --- Type Declarations ---
-fn format_type_decl(decl: TypeDecl) Doc {
+fn format_type_decl(decl: TypeDecl, tm: TriviaMap) Doc {
   parts: Vector<Doc> = []
 
   if decl.is_pub {
@@ -635,13 +648,33 @@ fn format_type_decl(decl: TypeDecl) Doc {
       field_docs := collect f in fields {
         format_record_field(f)
       }
-      parts = .append(doc.spaced_bracketed(".{", "}", field_docs))
+      parts = .append(
+        format_bracketed_items(
+          ".{",
+          "}",
+          doc.spaced_bracketed(".{", "}", field_docs),
+          field_docs,
+          record_field_spans(fields),
+          decl.span.end,
+          tm,
+        ),
+      )
     },
     .Sum(variants) => {
       variant_docs := collect v in variants {
         format_variant_decl(v)
       }
-      parts = .append(doc.spaced_bracketed("{", "}", variant_docs))
+      parts = .append(
+        format_bracketed_items(
+          "{",
+          "}",
+          doc.spaced_bracketed("{", "}", variant_docs),
+          variant_docs,
+          variant_decl_spans(variants),
+          decl.span.end,
+          tm,
+        ),
+      )
     },
     .Alias(ty) => {
       parts = .append(format_type_expr(ty))
@@ -763,7 +796,21 @@ fn format_function(decl: FunctionDecl, tm: TriviaMap) Doc {
   param_docs := collect p in decl.params {
     format_param(p)
   }
-  parts = .append(doc.tight_bracketed("(", ")", param_docs))
+  params_end := case decl.return_type {
+    .Some(ret) => ret.span.start,
+    .None => decl.body.span.start,
+  }
+  parts = .append(
+    format_bracketed_items(
+      "(",
+      ")",
+      doc.tight_bracketed("(", ")", param_docs),
+      param_docs,
+      param_spans(decl.params),
+      params_end,
+      tm,
+    ),
+  )
 
   case decl.return_type {
     .Some(ret) => {
@@ -1234,7 +1281,7 @@ fn format_expr(expr: Expr, tm: TriviaMap) Doc {
     }),
     .Unary(op, inner) => format_unary(op, inner, tm),
     .Binary(op, lhs, rhs) => format_binary(op, lhs, rhs, tm),
-    .Call(callee, args) => format_call(callee, args, tm),
+    .Call(callee, args) => format_call(callee, args, expr.span, tm),
     .Field(obj, name) => doc.concat([format_receiver(obj, tm), doc.text(".${name}")]),
     .Index(obj, idx) => doc.concat([
       format_receiver(obj, tm),
@@ -1250,7 +1297,15 @@ fn format_expr(expr: Expr, tm: TriviaMap) Doc {
       elem_docs := collect e in elems {
         format_expr(e, tm)
       }
-      format_bracketed_items("[", "]", false, elem_docs, expr_spans(elems), expr.span, tm)
+      format_bracketed_items(
+        "[",
+        "]",
+        doc.tight_bracketed("[", "]", elem_docs),
+        elem_docs,
+        expr_spans(elems),
+        expr.span.end,
+        tm,
+      )
     },
     .Record(entries) => {
       entry_docs := collect e in entries {
@@ -1259,10 +1314,10 @@ fn format_expr(expr: Expr, tm: TriviaMap) Doc {
       format_bracketed_items(
         ".{",
         "}",
-        true,
+        doc.spaced_bracketed(".{", "}", entry_docs),
         entry_docs,
         record_entry_spans(entries),
-        expr.span,
+        expr.span.end,
         tm,
       )
     },
@@ -1275,10 +1330,10 @@ fn format_expr(expr: Expr, tm: TriviaMap) Doc {
         format_bracketed_items(
           ".{",
           "}",
-          true,
+          doc.spaced_bracketed(".{", "}", entry_docs),
           entry_docs,
           record_entry_spans(entries),
-          expr.span,
+          expr.span.end,
           tm,
         ),
       ])
@@ -1289,7 +1344,18 @@ fn format_expr(expr: Expr, tm: TriviaMap) Doc {
       field_docs := collect f in fields {
         format_expr(f, tm)
       }
-      doc.concat([doc.text(".${name}"), doc.tight_bracketed("(", ")", field_docs)])
+      doc.concat([
+        doc.text(".${name}"),
+        format_bracketed_items(
+          "(",
+          ")",
+          doc.tight_bracketed("(", ")", field_docs),
+          field_docs,
+          expr_spans(fields),
+          expr.span.end,
+          tm,
+        ),
+      ])
     },
     .Closure(params, ret_ty, body) => format_closure(params, ret_ty, body, tm),
     .Collect(coll) => format_collect(coll, tm),
@@ -1591,7 +1657,7 @@ fn format_chain_segment(seg: ChainSegment, tm: TriviaMap) Doc {
   doc.concat(parts)
 }
 
-fn format_call(callee: Expr, args: Vector<Expr>, tm: TriviaMap) Doc {
+fn format_call(callee: Expr, args: Vector<Expr>, container: Span, tm: TriviaMap) Doc {
   // Check for method chain: Call(Field(obj, name), args) with 2+ segments
   case collect_method_chain(callee, args) {
     .Some(chain) => {
@@ -1640,7 +1706,18 @@ fn format_call(callee: Expr, args: Vector<Expr>, tm: TriviaMap) Doc {
   arg_docs := collect a in args {
     format_expr(a, tm)
   }
-  doc.concat([format_expr(callee, tm), doc.tight_bracketed("(", ")", arg_docs)])
+  doc.concat([
+    format_expr(callee, tm),
+    format_bracketed_items(
+      "(",
+      ")",
+      doc.tight_bracketed("(", ")", arg_docs),
+      arg_docs,
+      expr_spans(args),
+      container.end,
+      tm,
+    ),
+  ])
 }
 
 fn format_if(cond_e: Expr, then_block: Block, else_expr: Expr?, tm: TriviaMap) Doc {
@@ -1907,27 +1984,28 @@ fn format_literal_expr(expr: Expr, tm: TriviaMap) Doc {
   }
 }
 
-// Lay out bracketed items (array elements, record fields), preserving comments
-// that sit on or above an item. A line comment cannot be rendered flat, so the
-// presence of any comment forces the broken layout with one item per line and
-// the trailing comma placed before a same-line comment. With no comments this
-// falls back to the width-driven flat/broken group.
+// Lay out a comma-separated bracketed list (call args, params, record fields,
+// array/record elements, …), preserving comments that sit on or above an item.
+// A line comment cannot be rendered flat, so the presence of any comment forces
+// a broken layout with one item per line and the trailing comma placed before a
+// same-line comment. With no comments it returns `fallback` unchanged, so
+// comment-free output is identical to the caller's normal layout.
 fn format_bracketed_items(
   open: String,
   close: String,
-  spaced: Bool,
+  fallback: Doc,
   item_docs: Vector<Doc>,
   spans: Vector<Span>,
-  container: Span,
+  list_end: Int,
   tm: TriviaMap,
 ) Doc {
   // A list item's trailing comment is bounded by the next item's start, or by
-  // the container's end (just inside the closing bracket) for the last item.
+  // `list_end` (just past the closing bracket) for the last item.
   trailing_bound := fn(i: Int) Int {
     if i + 1 < spans.len() {
       spans[i + 1].start
     } else {
-      container.end
+      list_end
     }
   }
   has_comment := false
@@ -1940,11 +2018,7 @@ fn format_bracketed_items(
   }
 
   if !has_comment {
-    return if spaced {
-      doc.spaced_bracketed(open, close, item_docs)
-    } else {
-      doc.tight_bracketed(open, close, item_docs)
-    }
+    return fallback
   }
 
   parts: Vector<Doc> = []
@@ -1989,6 +2063,31 @@ fn expr_spans(exprs: Vector<Expr>) Vector<Span> {
   }
 }
 
+fn param_spans(params: Vector<Param>) Vector<Span> {
+  collect p in params {
+    p.span
+  }
+}
+
+fn record_field_spans(fields: Vector<RecordField>) Vector<Span> {
+  collect f in fields {
+    f.span
+  }
+}
+
+fn variant_decl_spans(variants: Vector<VariantDecl>) Vector<Span> {
+  collect v in variants {
+    v.span
+  }
+}
+
+fn import_item_span(item: ImportItem) Span {
+  case item {
+    .Value(v) => v.span,
+    .Type(t) => t.span,
+  }
+}
+
 fn format_record_entry(entry: RecordEntry, tm: TriviaMap) Doc {
   case entry.value {
     .Some(val) => case val.kind {
@@ -2008,7 +2107,21 @@ fn format_closure(params: Vector<Param>, ret_ty: TypeExpr?, body: Block, tm: Tri
   param_docs := collect p in params {
     format_param(p)
   }
-  parts = .append(doc.tight_bracketed("(", ")", param_docs))
+  params_end := case ret_ty {
+    .Some(ty) => ty.span.start,
+    .None => body.span.start,
+  }
+  parts = .append(
+    format_bracketed_items(
+      "(",
+      ")",
+      doc.tight_bracketed("(", ")", param_docs),
+      param_docs,
+      param_spans(params),
+      params_end,
+      tm,
+    ),
+  )
 
   case ret_ty {
     .Some(ty) => {

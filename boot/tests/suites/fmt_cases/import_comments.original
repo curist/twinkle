@@ -1,0 +1,6 @@
+use foo.bar.{
+  alpha,
+  // grouped helpers
+  beta,
+  gamma, // last one
+}
