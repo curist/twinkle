@@ -72,6 +72,18 @@ pub fn suite() runner.Suite {
     .test("breaks method chains consistently", assert_fmt_case("method_chain"))
     .test("breaks complex inline blocks", assert_fmt_case("inline_blocks"))
     .test("preserves blank lines and auto-blanks before comments", assert_fmt_case("blank_lines"))
+    .test(
+      "preserves author blank lines between top-level statements",
+      assert_fmt_case("top_level_blank_lines"),
+    )
+    .test(
+      "preserves author blank lines between case and cond arms",
+      assert_fmt_case("case_cond_blank_lines"),
+    )
+    .test(
+      "preserves comments inside record and array literals",
+      assert_fmt_case("record_field_comments"),
+    )
     .test("inserts blank line after module doc comments", assert_fmt_case("module_doc"))
     .test("applies rebinding shorthand in assign expressions", assert_fmt_case("assign_shorthand"))
     .test(

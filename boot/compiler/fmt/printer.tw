@@ -15,6 +15,7 @@ type TriviaMap = .{
   trailing: Dict<Int, Vector<Trivia>>,
   literal_text: Dict<Int, String>,
   leading_positions: Vector<Int>,
+  trailing_positions: Vector<Int>,
 }
 
 type BinaryPiece = .{ op: BinOp, expr: Expr }
@@ -26,6 +27,7 @@ fn build_trivia_map(tokens: Vector<Token>) TriviaMap {
   trailing: Dict<Int, Vector<Trivia>> = Dict.new()
   literal_text: Dict<Int, String> = Dict.new()
   leading_positions: Vector<Int> = []
+  trailing_positions: Vector<Int> = []
 
   for tok in tokens {
     if tok.leading_trivia.len() > 0 {
@@ -35,6 +37,7 @@ fn build_trivia_map(tokens: Vector<Token>) TriviaMap {
 
     if tok.trailing_trivia.len() > 0 {
       trailing[tok.span.end] = tok.trailing_trivia
+      trailing_positions = .append(tok.span.end)
     }
 
     if tok.kind == .IntLit or tok.kind == .FloatLit {
@@ -42,7 +45,7 @@ fn build_trivia_map(tokens: Vector<Token>) TriviaMap {
     }
   }
 
-  TriviaMap.{ leading, trailing, literal_text, leading_positions }
+  TriviaMap.{ leading, trailing, literal_text, leading_positions, trailing_positions }
 }
 
 fn get_trivia(tm: TriviaMap, offset: Int) Vector<Trivia> {
@@ -82,6 +85,32 @@ fn get_trailing_trivia(tm: TriviaMap, offset: Int) Vector<Trivia> {
     .Some(trivia) => trivia,
     .None => [],
   }
+}
+
+// Collect trailing trivia attached to tokens ending in (start, end) exclusive.
+// Used for comments after a list item's separating comma (e.g. `a: 1, // note`),
+// which the lexer attaches to the comma rather than the item's value token.
+fn get_trailing_trivia_in_range(tm: TriviaMap, start: Int, end: Int) Vector<Trivia> {
+  result: Vector<Trivia> = []
+
+  for pos in tm.trailing_positions {
+    if pos <= start {
+      continue
+    }
+
+    if pos >= end {
+      break
+    }
+
+    case tm.trailing.get(pos) {
+      .Some(trivia) => {
+        result = .concat(trivia)
+      },
+      .None => {},
+    }
+  }
+
+  result
 }
 
 /// Emit trailing trivia as " // comment" after a statement/item doc.
@@ -401,8 +430,14 @@ pub fn format_module(module: Module, tokens: Vector<Token>) Doc {
       // Determine if a blank line is needed
       needs_blank := should_blank_between(prev_kind, cur_kind)
 
-      // Blank line between different import groups
-      if prev_kind == "use" and cur_kind == "use" and prev_import_group != cur_import_group {
+      if prev_kind == "use" and cur_kind == "use" {
+        // Imports: blank lines are managed by group, not by author spacing
+        if prev_import_group != cur_import_group {
+          needs_blank = true
+        }
+      } else if has_blank_in_trivia(trivia) {
+        // Preserve an author-written blank line before this item (including a
+        // blank that sits above a leading comment)
         needs_blank = true
       }
 
@@ -1205,19 +1240,38 @@ fn format_expr(expr: Expr, tm: TriviaMap) Doc {
       elem_docs := collect e in elems {
         format_expr(e, tm)
       }
-      doc.tight_bracketed("[", "]", elem_docs)
+      format_bracketed_items("[", "]", false, elem_docs, expr_spans(elems), expr.span, tm)
     },
     .Record(entries) => {
       entry_docs := collect e in entries {
         format_record_entry(e, tm)
       }
-      doc.spaced_bracketed(".{", "}", entry_docs)
+      format_bracketed_items(
+        ".{",
+        "}",
+        true,
+        entry_docs,
+        record_entry_spans(entries),
+        expr.span,
+        tm,
+      )
     },
     .NamedRecord(name, entries) => {
       entry_docs := collect e in entries {
         format_record_entry(e, tm)
       }
-      doc.concat([doc.text("${name}"), doc.spaced_bracketed(".{", "}", entry_docs)])
+      doc.concat([
+        doc.text("${name}"),
+        format_bracketed_items(
+          ".{",
+          "}",
+          true,
+          entry_docs,
+          record_entry_spans(entries),
+          expr.span,
+          tm,
+        ),
+      ])
     },
     .Variant(name, fields) => if fields.len() == 0 {
       doc.text(".${name}")
@@ -1609,11 +1663,33 @@ fn format_if(cond_e: Expr, then_block: Block, else_expr: Expr?, tm: TriviaMap) D
   doc.concat(parts)
 }
 
+// Join arm docs with `,`-terminated hard lines, preserving an author-written
+// blank line above any arm (i.e. an extra hard line before it).
+fn join_arm_docs(docs: Vector<Doc>, has_author_blank: Vector<Bool>) Doc {
+  result := docs[0]
+  i := 1
+
+  for i < docs.len() {
+    sep := if has_author_blank[i] {
+      doc.concat([doc.text(","), doc.hard_line(), doc.hard_line()])
+    } else {
+      doc.concat([doc.text(","), doc.hard_line()])
+    }
+    result = doc.concat([result, sep, docs[i]])
+    i = i + 1
+  }
+
+  result
+}
+
 fn format_case(scrutinee: Expr, arms: Vector<CaseArm>, tm: TriviaMap) Doc {
   arm_docs: Vector<Doc> = []
+  has_author_blank: Vector<Bool> = []
 
-  for arm in arms {
-    trivia := non_blank_trivia(get_trivia(tm, arm.span.start))
+  for arm, i in arms {
+    raw_trivia := get_trivia(tm, arm.span.start)
+    trivia := non_blank_trivia(raw_trivia)
+    has_author_blank = .append(i > 0 and has_blank_in_trivia(raw_trivia))
     arm_doc := format_case_arm(arm, tm)
 
     if trivia.len() > 0 {
@@ -1629,7 +1705,7 @@ fn format_case(scrutinee: Expr, arms: Vector<CaseArm>, tm: TriviaMap) Doc {
     arm_docs = .append(arm_doc)
   }
 
-  inner := doc.join(arm_docs, doc.concat([doc.text(","), doc.hard_line()]))
+  inner := join_arm_docs(arm_docs, has_author_blank)
   doc.concat([
     doc.text("case "),
     format_expr(scrutinee, tm),
@@ -1680,9 +1756,12 @@ fn format_case_arm(arm: CaseArm, tm: TriviaMap) Doc {
 
 fn format_cond(arms: Vector<CondArm>, tm: TriviaMap) Doc {
   arm_docs: Vector<Doc> = []
+  has_author_blank: Vector<Bool> = []
 
-  for arm in arms {
-    trivia := non_blank_trivia(get_trivia(tm, arm.span.start))
+  for arm, i in arms {
+    raw_trivia := get_trivia(tm, arm.span.start)
+    trivia := non_blank_trivia(raw_trivia)
+    has_author_blank = .append(i > 0 and has_blank_in_trivia(raw_trivia))
     arm_doc := format_cond_arm(arm, tm)
 
     if trivia.len() > 0 {
@@ -1698,7 +1777,7 @@ fn format_cond(arms: Vector<CondArm>, tm: TriviaMap) Doc {
     arm_docs = .append(arm_doc)
   }
 
-  inner := doc.join(arm_docs, doc.concat([doc.text(","), doc.hard_line()]))
+  inner := join_arm_docs(arm_docs, has_author_blank)
   doc.concat([
     doc.text("cond {"),
     doc.indent(doc.concat([doc.hard_line(), inner, doc.text(",")])),
@@ -1799,6 +1878,88 @@ fn format_literal_expr(expr: Expr, tm: TriviaMap) Doc {
       _ => doc.text("/* error */"),
     },
     _ => doc.text("/* error */"),
+  }
+}
+
+// Lay out bracketed items (array elements, record fields), preserving comments
+// that sit on or above an item. A line comment cannot be rendered flat, so the
+// presence of any comment forces the broken layout with one item per line and
+// the trailing comma placed before a same-line comment. With no comments this
+// falls back to the width-driven flat/broken group.
+fn format_bracketed_items(
+  open: String,
+  close: String,
+  spaced: Bool,
+  item_docs: Vector<Doc>,
+  spans: Vector<Span>,
+  container: Span,
+  tm: TriviaMap,
+) Doc {
+  // A list item's trailing comment is bounded by the next item's start, or by
+  // the container's end (just inside the closing bracket) for the last item.
+  trailing_bound := fn(i: Int) Int {
+    if i + 1 < spans.len() {
+      spans[i + 1].start
+    } else {
+      container.end
+    }
+  }
+  has_comment := false
+
+  for sp, i in spans {
+    if has_comment_in_trivia(get_trivia(tm, sp.start))
+      or has_comment_in_trivia(get_trailing_trivia_in_range(tm, sp.end, trailing_bound(i))) {
+      has_comment = true
+    }
+  }
+
+  if !has_comment {
+    return if spaced {
+      doc.spaced_bracketed(open, close, item_docs)
+    } else {
+      doc.tight_bracketed(open, close, item_docs)
+    }
+  }
+
+  parts: Vector<Doc> = []
+
+  for d, i in item_docs {
+    sp := spans[i]
+    leading := non_blank_trivia(get_trivia(tm, sp.start))
+    line_doc := d
+
+    if leading.len() > 0 {
+      line_doc = doc.concat([emit_trivia(leading), line_doc])
+    }
+
+    line_doc = doc.concat([line_doc, doc.text(",")])
+    trailing := get_trailing_trivia_in_range(tm, sp.end, trailing_bound(i))
+
+    if has_comment_in_trivia(trailing) {
+      line_doc = doc.concat([line_doc, emit_trailing_trivia(trailing)])
+    }
+
+    parts = .append(line_doc)
+  }
+
+  inner := doc.join(parts, doc.hard_line())
+  doc.concat([
+    doc.text(open),
+    doc.indent(doc.concat([doc.hard_line(), inner])),
+    doc.hard_line(),
+    doc.text(close),
+  ])
+}
+
+fn record_entry_spans(entries: Vector<RecordEntry>) Vector<Span> {
+  collect e in entries {
+    e.span
+  }
+}
+
+fn expr_spans(exprs: Vector<Expr>) Vector<Span> {
+  collect e in exprs {
+    e.span
   }
 }
 

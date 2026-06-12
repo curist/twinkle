@@ -1,0 +1,19 @@
+fn classify(x: Shape) Int {
+  case x {
+    .Circle(r) => 1,
+    .Rect(w, h) => 2,
+
+    .Square => 3,
+    // catch-all
+    _ => 0,
+  }
+}
+
+fn sign(x: Int) String {
+  cond {
+    x < 0 => "neg",
+
+    x == 0 => "zero",
+    _ => "pos",
+  }
+}

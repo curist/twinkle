@@ -1,0 +1,17 @@
+fn make() Config {
+  Config.{
+    host: "localhost",
+    // default HTTP port
+    port: 8080,
+    timeout: 30, // seconds
+  }
+}
+
+fn nums() Vector<Int> {
+  [
+    1,
+    // the answer
+    42,
+    7,
+  ]
+}
