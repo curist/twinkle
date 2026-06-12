@@ -38,6 +38,7 @@ t_vec_internal := "rt_types__VecInternal"
 he_hash := 0
 he_key := 1
 he_val := 2
+he_order_index := 3
 hn_bitmap := 0
 hn_entries := 1
 hc_hash := 1
@@ -45,6 +46,7 @@ hc_entries := 2
 pd_size := 0
 pd_root := 1
 pd_order := 2
+pd_tombstones := 3
 
 pub fn module() WasmModule {
   funcs := [
@@ -60,7 +62,7 @@ pub fn module() WasmModule {
     node_get_fn(),
     node_set_fn(),
     node_remove_fn(),
-    order_remove_key_fn(),
+    compact_fn(),
     make_fn(),
     len_fn(),
     keys_fn(),
@@ -96,6 +98,20 @@ pub fn module() WasmModule {
       .{ module: "rt.arr", name: "len", as_sym: "arr_len", params: [pvec_null], results: [.I32] },
       .{
         module: "rt.arr",
+        name: "set",
+        as_sym: "arr_set",
+        params: [pvec_null, .I32, .Anyref],
+        results: [pvec_ref],
+      },
+      .{
+        module: "rt.arr",
+        name: "set_in_place",
+        as_sym: "arr_set_in_place",
+        params: [pvec_null, .I32, .Anyref],
+        results: [pvec_ref],
+      },
+      .{
+        module: "rt.arr",
         name: "get",
         as_sym: "arr_get",
         params: [pvec_null, .I32],
@@ -124,7 +140,11 @@ pub fn module() WasmModule {
       },
     ],
     funcs,
-    globals: [GlobalDef.{ name: "was_replace", mutable: true, ty: .I32, init: [.I32Const(0)] }],
+    globals: [
+      GlobalDef.{ name: "was_replace", mutable: true, ty: .I32, init: [.I32Const(0)] },
+      GlobalDef.{ name: "dict_order_index", mutable: true, ty: .I32, init: [.I32Const(0)] },
+      GlobalDef.{ name: "dict_removed_index", mutable: true, ty: .I32, init: [.I32Const(0)] },
+    ],
     tables: [],
     elems: [],
     exports,
@@ -883,6 +903,8 @@ fn collision_set_fn() FuncDef {
                   .LocalGet(1),
                   .LocalGet(2),
                   .LocalGet(3),
+                  .LocalGet(7),
+                  .StructGet(t_hamt_entry, he_order_index),
                   .StructNew(t_hamt_entry),
                   .LocalSet(7),
                   .LocalGet(4),
@@ -914,6 +936,7 @@ fn collision_set_fn() FuncDef {
       .LocalGet(1),
       .LocalGet(2),
       .LocalGet(3),
+      .GlobalGet("dict_order_index"),
       .StructNew(t_hamt_entry),
       .LocalSet(7),
       .LocalGet(4),
@@ -1083,6 +1106,7 @@ fn node_set_fn() FuncDef {
       .LocalGet(1),
       .LocalGet(3),
       .LocalGet(4),
+      .GlobalGet("dict_order_index"),
       .StructNew(t_hamt_entry),
       .LocalSet(5),
       .LocalGet(0),
@@ -1226,7 +1250,12 @@ fn node_set_fn() FuncDef {
                   .RefAsNonNull,
                   .StructGet(t_hamt_node, hn_entries),
                   .LocalGet(10),
-                  .LocalGet(5),
+                  .LocalGet(1),
+                  .LocalGet(3),
+                  .LocalGet(4),
+                  .LocalGet(13),
+                  .StructGet(t_hamt_entry, he_order_index),
+                  .StructNew(t_hamt_entry),
                   .Call("arr_replace_at"),
                   .LocalSet(12),
                   .LocalGet(9),
@@ -1293,6 +1322,9 @@ fn node_set_fn() FuncDef {
                 ],
                 [],
               ),
+              .LocalGet(13),
+              .StructGet(t_hamt_entry, he_order_index),
+              .GlobalSet("dict_order_index"),
               .RefNull(.Named(t_hamt_node)),
               .LocalGet(13),
               .StructGet(t_hamt_entry, he_hash),
@@ -1305,6 +1337,9 @@ fn node_set_fn() FuncDef {
               .StructGet(t_hamt_entry, he_val),
               .Call("node_set"),
               .LocalSet(14),
+              .LocalGet(5),
+              .StructGet(t_hamt_entry, he_order_index),
+              .GlobalSet("dict_order_index"),
               .LocalGet(14),
               .LocalGet(1),
               .LocalGet(2),
@@ -1484,6 +1519,9 @@ fn node_remove_fn() FuncDef {
               .If(
                 .None,
                 [
+                  .LocalGet(11),
+                  .StructGet(t_hamt_entry, he_order_index),
+                  .GlobalSet("dict_removed_index"),
                   .LocalGet(10),
                   .I32Const(1),
                   .I32Eq,
@@ -1604,7 +1642,18 @@ fn node_remove_fn() FuncDef {
               .StructGet(t_hamt_entry, he_key),
               .LocalGet(3),
               .Call("core_eq"),
-              .If(.None, [.LocalGet(19), .LocalSet(18), .Br("find_exit")], []),
+              .If(
+                .None,
+                [
+                  .LocalGet(20),
+                  .StructGet(t_hamt_entry, he_order_index),
+                  .GlobalSet("dict_removed_index"),
+                  .LocalGet(19),
+                  .LocalSet(18),
+                  .Br("find_exit"),
+                ],
+                [],
+              ),
               .LocalGet(19),
               .I32Const(1),
               .I32Add,
@@ -1673,67 +1722,32 @@ fn node_remove_fn() FuncDef {
   }
 }
 
-// ── order_remove_key(order, key) -> PVec ─────────────────────────────────────
-// Bulk approach: to_array -> linear compact -> from_array.
-// Precondition: key exists exactly once in order (caller checked via node_get).
-fn order_remove_key_fn() FuncDef {
-  // p0=order, p1=key; L2=src (flat array), L3=n, L4=dst (flat array),
-  // L5=i (read cursor), L6=j (write cursor), L7=elem, L8=matches
+// ── compact(dict: PDict?) -> PDict ───────────────────────────────────────────
+// Rebuild order (dropping null tombstones) and refresh every entry's stored
+// order_index. O(n log n); run only when dead >= live, so amortized O(log n)
+// per remove. Fully persistent: builds fresh structures.
+fn compact_fn() FuncDef {
+  // p0=dict; L1=flat order, L2=n, L3=new_root, L4=new_order, L5=i, L6=j,
+  // L7=key, L8=hash, L9=val
   FuncDef.{
-    name: "order_remove_key",
-    params: [pvec_ref, .Anyref],
-    results: [pvec_ref],
-    locals: [arr_null, .I32, arr_null, .I32, .I32, .Anyref, .I32],
+    name: "compact",
+    params: [pdict_null],
+    results: [pdict_ref],
+    locals: [arr_null, .I32, hamt_node_null, pvec_null, .I32, .I32, .Anyref, .I64, .Anyref],
     body: [
       .LocalGet(0),
+      .RefAsNonNull,
+      .StructGet(t_pdict, pd_order),
+      .RefAsNonNull,
       .Call("arr_to_array"),
-      .LocalSet(2),
-      .LocalGet(2),
+      .LocalSet(1),
+      .LocalGet(1),
       .RefAsNonNull,
       .ArrayLen,
+      .LocalSet(2),
+      .RefNull(.Named(t_hamt_node)),
       .LocalSet(3),
-      .I32Const(0),
-      .LocalSet(5),
-      .I32Const(0),
-      .LocalSet(8),
-      .Block(
-        "count_exit",
-        .None,
-        [
-          .Loop(
-            "count_loop",
-            .None,
-            [
-              .LocalGet(5),
-              .LocalGet(3),
-              .I32GeS,
-              .BrIf("count_exit"),
-              .LocalGet(2),
-              .RefAsNonNull,
-              .LocalGet(5),
-              .ArrayGet(t_array),
-              .LocalSet(7),
-              .LocalGet(7),
-              .LocalGet(1),
-              .Call("core_eq"),
-              .If(.None, [.LocalGet(8), .I32Const(1), .I32Add, .LocalSet(8)], []),
-              .LocalGet(5),
-              .I32Const(1),
-              .I32Add,
-              .LocalSet(5),
-              .Br("count_loop"),
-            ],
-          ),
-        ],
-      ),
-      .LocalGet(8),
-      .I32Eqz,
-      .If(.None, [.LocalGet(0), .Return], []),
-      .RefNull(.None_),
-      .LocalGet(3),
-      .LocalGet(8),
-      .I32Sub,
-      .ArrayNew(t_array),
+      .Call("arr_make_empty"),
       .LocalSet(4),
       .I32Const(0),
       .LocalSet(5),
@@ -1748,26 +1762,45 @@ fn order_remove_key_fn() FuncDef {
             .None,
             [
               .LocalGet(5),
-              .LocalGet(3),
+              .LocalGet(2),
               .I32GeS,
               .BrIf("exit"),
-              .LocalGet(2),
+              .LocalGet(1),
               .RefAsNonNull,
               .LocalGet(5),
               .ArrayGet(t_array),
               .LocalSet(7),
               .LocalGet(7),
-              .LocalGet(1),
-              .Call("core_eq"),
+              .RefIsNull,
               .I32Eqz,
               .If(
                 .None,
                 [
+                  .LocalGet(7),
+                  .Call("hash_key"),
+                  .LocalSet(8),
+                  .LocalGet(0),
+                  .RefAsNonNull,
+                  .StructGet(t_pdict, pd_root),
+                  .LocalGet(8),
+                  .I32Const(0),
+                  .LocalGet(7),
+                  .Call("node_get"),
+                  .LocalSet(9),
+                  .LocalGet(6),
+                  .GlobalSet("dict_order_index"),
+                  .LocalGet(3),
+                  .LocalGet(8),
+                  .I32Const(0),
+                  .LocalGet(7),
+                  .LocalGet(9),
+                  .Call("node_set"),
+                  .LocalSet(3),
                   .LocalGet(4),
                   .RefAsNonNull,
-                  .LocalGet(6),
                   .LocalGet(7),
-                  .ArraySet(t_array),
+                  .Call("arr_push"),
+                  .LocalSet(4),
                   .LocalGet(6),
                   .I32Const(1),
                   .I32Add,
@@ -1784,9 +1817,12 @@ fn order_remove_key_fn() FuncDef {
           ),
         ],
       ),
+      .LocalGet(6),
+      .LocalGet(3),
       .LocalGet(4),
       .RefAsNonNull,
-      .Call("arr_from_array"),
+      .I32Const(0),
+      .StructNew(t_pdict),
     ],
   }
 }
@@ -1802,6 +1838,7 @@ fn make_fn() FuncDef {
       .I32Const(0),
       .RefNull(.Named(t_hamt_node)),
       .Call("arr_make_empty"),
+      .I32Const(0),
       .StructNew(t_pdict),
     ],
   }
@@ -1820,12 +1857,91 @@ fn len_fn() FuncDef {
 
 // ── keys(dict: PDict?) -> PVec ───────────────────────────────────────────────
 fn keys_fn() FuncDef {
+  // p0=dict; L1=flat, L2=n, L3=dst, L4=i, L5=j, L6=elem
   FuncDef.{
     name: "keys",
     params: [pdict_null],
     results: [pvec_ref],
-    locals: [],
-    body: [.LocalGet(0), .RefAsNonNull, .StructGet(t_pdict, pd_order)],
+    locals: [arr_null, .I32, arr_null, .I32, .I32, .Anyref],
+    body: [
+      .LocalGet(0),
+      .RefAsNonNull,
+      .StructGet(t_pdict, pd_tombstones),
+      .I32Eqz,
+      .If(
+        .Some(pvec_ref),
+        [.LocalGet(0), .RefAsNonNull, .StructGet(t_pdict, pd_order)],
+        [
+          .LocalGet(0),
+          .RefAsNonNull,
+          .StructGet(t_pdict, pd_order),
+          .RefAsNonNull,
+          .Call("arr_to_array"),
+          .LocalSet(1),
+          .LocalGet(1),
+          .RefAsNonNull,
+          .ArrayLen,
+          .LocalSet(2),
+          .RefNull(.None_),
+          .LocalGet(0),
+          .RefAsNonNull,
+          .StructGet(t_pdict, pd_size),
+          .ArrayNew(t_array),
+          .LocalSet(3),
+          .I32Const(0),
+          .LocalSet(4),
+          .I32Const(0),
+          .LocalSet(5),
+          .Block(
+            "kexit",
+            .None,
+            [
+              .Loop(
+                "kloop",
+                .None,
+                [
+                  .LocalGet(4),
+                  .LocalGet(2),
+                  .I32GeS,
+                  .BrIf("kexit"),
+                  .LocalGet(1),
+                  .RefAsNonNull,
+                  .LocalGet(4),
+                  .ArrayGet(t_array),
+                  .LocalSet(6),
+                  .LocalGet(6),
+                  .RefIsNull,
+                  .I32Eqz,
+                  .If(
+                    .None,
+                    [
+                      .LocalGet(3),
+                      .RefAsNonNull,
+                      .LocalGet(5),
+                      .LocalGet(6),
+                      .ArraySet(t_array),
+                      .LocalGet(5),
+                      .I32Const(1),
+                      .I32Add,
+                      .LocalSet(5),
+                    ],
+                    [],
+                  ),
+                  .LocalGet(4),
+                  .I32Const(1),
+                  .I32Add,
+                  .LocalSet(4),
+                  .Br("kloop"),
+                ],
+              ),
+            ],
+          ),
+          .LocalGet(3),
+          .RefAsNonNull,
+          .Call("arr_from_array"),
+        ],
+      ),
+    ],
   }
 }
 
@@ -1922,6 +2038,11 @@ fn set_fn() FuncDef {
       .GlobalSet("was_replace"),
       .LocalGet(0),
       .RefAsNonNull,
+      .StructGet(t_pdict, pd_order),
+      .Call("arr_len"),
+      .GlobalSet("dict_order_index"),
+      .LocalGet(0),
+      .RefAsNonNull,
       .StructGet(t_pdict, pd_root),
       .LocalGet(3),
       .I32Const(0),
@@ -1947,6 +2068,9 @@ fn set_fn() FuncDef {
       .LocalGet(4),
       .LocalGet(6),
       .RefAsNonNull,
+      .LocalGet(0),
+      .RefAsNonNull,
+      .StructGet(t_pdict, pd_tombstones),
       .StructNew(t_pdict),
     ],
   }
@@ -1954,12 +2078,13 @@ fn set_fn() FuncDef {
 
 // ── remove(dict: PDict?, key) -> PDict ───────────────────────────────────────
 fn remove_fn() FuncDef {
-  // p0=dict, p1=key; L2=hash(i64), L3=old_root, L4=new_root, L5=was_removed, L6=new_order
+  // p0=dict, p1=key; L2=hash, L3=old_root, L4=new_root, L5=was_removed,
+  // L6=new_order, L7=new_tombstones, L8=new_size, L9=removed_index, L10=new_dict
   FuncDef.{
     name: "remove",
     params: [pdict_null, .Anyref],
     results: [pdict_ref],
-    locals: [.I64, hamt_node_null, hamt_node_null, .I32, pvec_null],
+    locals: [.I64, hamt_node_null, hamt_node_null, .I32, pvec_null, .I32, .I32, .I32, pdict_null],
     body: [
       .LocalGet(1),
       .Call("hash_key"),
@@ -1983,21 +2108,54 @@ fn remove_fn() FuncDef {
       .RefAsNonNull,
       .StructGet(t_pdict, pd_order),
       .LocalSet(6),
-      .LocalGet(5),
-      .If(
-        .None,
-        [.LocalGet(6), .RefAsNonNull, .LocalGet(1), .Call("order_remove_key"), .LocalSet(6)],
-        [],
-      ),
+      .LocalGet(0),
+      .RefAsNonNull,
+      .StructGet(t_pdict, pd_tombstones),
+      .LocalSet(7),
       .LocalGet(0),
       .RefAsNonNull,
       .StructGet(t_pdict, pd_size),
+      .LocalSet(8),
       .LocalGet(5),
-      .I32Sub,
+      .If(
+        .None,
+        [
+          .GlobalGet("dict_removed_index"),
+          .LocalSet(9),
+          .LocalGet(6),
+          .RefAsNonNull,
+          .LocalGet(9),
+          .RefNull(.None_),
+          .Call("arr_set"),
+          .LocalSet(6),
+          .LocalGet(7),
+          .I32Const(1),
+          .I32Add,
+          .LocalSet(7),
+          .LocalGet(8),
+          .I32Const(1),
+          .I32Sub,
+          .LocalSet(8),
+        ],
+        [],
+      ),
+      .LocalGet(8),
       .LocalGet(4),
       .LocalGet(6),
       .RefAsNonNull,
+      .LocalGet(7),
       .StructNew(t_pdict),
+      .LocalSet(10),
+      .LocalGet(5),
+      .LocalGet(7),
+      .LocalGet(8),
+      .I32GeS,
+      .I32And,
+      .If(
+        .Some(pdict_ref),
+        [.LocalGet(10), .RefAsNonNull, .Call("compact")],
+        [.LocalGet(10), .RefAsNonNull],
+      ),
     ],
   }
 }
@@ -2015,6 +2173,11 @@ fn set_in_place_fn() FuncDef {
       .LocalSet(3),
       .I32Const(0),
       .GlobalSet("was_replace"),
+      .LocalGet(0),
+      .RefAsNonNull,
+      .StructGet(t_pdict, pd_order),
+      .Call("arr_len"),
+      .GlobalSet("dict_order_index"),
       .LocalGet(0),
       .RefAsNonNull,
       .StructGet(t_pdict, pd_root),
@@ -2061,12 +2224,12 @@ fn set_in_place_fn() FuncDef {
 }
 
 fn remove_in_place_fn() FuncDef {
-  // p0=dict, p1=key; L2=hash(i64), L3=old_root, L4=new_root, L5=was_removed
+  // p0=dict, p1=key; L2=hash, L3=old_root, L4=new_root, L5=was_removed, L6=removed_index
   FuncDef.{
     name: "remove_in_place",
     params: [pdict_null, .Anyref],
     results: [pdict_ref],
-    locals: [.I64, hamt_node_null, hamt_node_null, .I32],
+    locals: [.I64, hamt_node_null, hamt_node_null, .I32, .I32],
     body: [
       .LocalGet(1),
       .Call("hash_key"),
@@ -2094,15 +2257,26 @@ fn remove_in_place_fn() FuncDef {
       .If(
         .None,
         [
+          .GlobalGet("dict_removed_index"),
+          .LocalSet(6),
           .LocalGet(0),
           .RefAsNonNull,
           .LocalGet(0),
           .RefAsNonNull,
           .StructGet(t_pdict, pd_order),
           .RefAsNonNull,
-          .LocalGet(1),
-          .Call("order_remove_key"),
+          .LocalGet(6),
+          .RefNull(.None_),
+          .Call("arr_set_in_place"),
           .StructSet(t_pdict, pd_order),
+          .LocalGet(0),
+          .RefAsNonNull,
+          .LocalGet(0),
+          .RefAsNonNull,
+          .StructGet(t_pdict, pd_tombstones),
+          .I32Const(1),
+          .I32Add,
+          .StructSet(t_pdict, pd_tombstones),
           .LocalGet(0),
           .RefAsNonNull,
           .LocalGet(0),
@@ -2114,8 +2288,20 @@ fn remove_in_place_fn() FuncDef {
         ],
         [],
       ),
+      .LocalGet(5),
       .LocalGet(0),
       .RefAsNonNull,
+      .StructGet(t_pdict, pd_tombstones),
+      .LocalGet(0),
+      .RefAsNonNull,
+      .StructGet(t_pdict, pd_size),
+      .I32GeS,
+      .I32And,
+      .If(
+        .Some(pdict_ref),
+        [.LocalGet(0), .RefAsNonNull, .Call("compact")],
+        [.LocalGet(0), .RefAsNonNull],
+      ),
     ],
   }
 }

@@ -260,4 +260,85 @@ pub fn suite() runner.Suite {
         .Ok({})
       },
     )
+    .test(
+      "remove then reinsert puts key at end",
+      fn() {
+        d: Dict<Int, Int> = Dict.new()
+        d[1] = 10
+        d[2] = 20
+        d[3] = 30
+        d = .remove(2)
+        d[2] = 99
+        ks := d.keys()
+        try assert.equal(ks.len(), 3)
+        try assert.equal(ks[0], 1)
+        try assert.equal(ks[1], 3)
+        try assert.equal(ks[2], 2)
+        try assert.equal(d.get(2), .Some(99))
+        try assert.equal(d.len(), 3)
+        .Ok({})
+      },
+    )
+    .test(
+      "remove preserves persistence of aliased version",
+      fn() {
+        a: Dict<Int, Int> = Dict.new()
+        a[1] = 1
+        a[2] = 2
+        b := a.remove(1)
+        aks := a.keys()
+        bks := b.keys()
+        try assert.equal(aks.len(), 2)
+        try assert.equal(aks[0], 1)
+        try assert.equal(aks[1], 2)
+        try assert.equal(bks.len(), 1)
+        try assert.equal(bks[0], 2)
+        try assert.equal(a.get(1), .Some(1))
+        .Ok({})
+      },
+    )
+    .test(
+      "heavy interleaved set and remove keeps order and contents",
+      fn() {
+        d: Dict<Int, Int> = Dict.new()
+
+        for i in range(200) {
+          d[i] = i
+        }
+
+        for i in range(200) {
+          if i % 2 == 0 {
+            d = .remove(i)
+          }
+        }
+
+        try assert.equal(d.len(), 100)
+        ks := d.keys()
+        try assert.equal(ks.len(), 100)
+
+        for k, i in ks {
+          try assert.equal(k, i * 2 + 1)
+          try assert.equal(d.get(k), .Some(k))
+        }
+
+        .Ok({})
+      },
+    )
+    .test(
+      "equality ignores insertion order and tombstone history",
+      fn() {
+        a: Dict<Int, Int> = Dict.new()
+        a[1] = 1
+        a[2] = 2
+        a[3] = 3
+        b: Dict<Int, Int> = Dict.new()
+        b[3] = 3
+        b[1] = 1
+        b[9] = 9
+        b = .remove(9)
+        b[2] = 2
+        try assert.is_true(a == b)
+        .Ok({})
+      },
+    )
 }

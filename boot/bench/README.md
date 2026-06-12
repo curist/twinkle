@@ -127,7 +127,7 @@ pre-materialized outside the timed region so only the dict op is measured).
 | `dict_int_build` | insert N small-int (i31, unboxed) keys | full `set` cost |
 | `dict_int_get` | N strided `get` on prebuilt | read cost (`get_option`) |
 | `dict_int_has` | N strided `has` on prebuilt | read cost (no Option) |
-| `dict_int_remove` | remove all N keys (strided) | `set`+order-vector rebuild |
+| `dict_int_remove` | remove all N keys (strided) | HAMT remove + tombstoned order maintenance |
 | `dict_bigint_build` | insert N keys > 2³¹ (forced `BoxedInt`) | **isolates key boxing/hash cost** vs `dict_int_build` |
 | `dict_str_build` / `_get` / `_has` | same shapes, `String` keys | `hash_string`+generic string-eq premium vs Int twins |
 | `set_int_build` / `_contains` | `Set<Int>` (= `Dict<K,Void>`) | key-spec is a pure win for Set |
@@ -142,7 +142,7 @@ machine-relative; the **cross-bench deltas** are the signal. Values at N=32000.
 build (ms@32k):  int 7.13   bigint 7.12   string 7.35   set_int 6.97   set_str 7.81
 read  (ms@32k):  int_has 1.16   int_get 1.46   set_int_contains 1.13
                  str_has 2.27   str_get 3.14   set_str_contains 2.57
-remove(ms):      int_remove  16k 2261   32k 10131   → QUADRATIC (≈4× per doubling)
+remove(ms):      int_remove  1k 0.47   2k 0.79   4k 1.61   8k 2.66   16k 6.16   32k 17.45   → linear bulk
 ```
 
 ### Set-cost split (ablation conclusions)
@@ -157,9 +157,9 @@ remove(ms):      int_remove  16k 2261   32k 10131   → QUADRATIC (≈4× per do
   `str_get` 3.14 vs `int_get` 1.46). This is the one clear, measurable
   key-specialization win: a direct `hash_string`+string-eq path replacing
   anyref dispatch + generic `core_eq`. String *build* stays alloc-bound (≈int).
-- **`remove` is O(n) per call** (insertion-order vector rebuild), making
-  bulk-remove O(n²) — 10 s at 32k. Orthogonal to key typing; a structural
-  order-tracking issue worth its own look.
+- **`remove` is amortized O(log n) per call** after the tombstoned-order-vector
+  change described in `docs/plans/archive/dict-amortized-remove.md`, making bulk remove
+  linear instead of quadratic. This is orthogonal to key typing.
 
 **Gate takeaway:** the typed-vector analogy does not transfer to Int keys —
 build is alloc-bound and boxing is already cheap, so `Dict<Int,V>` specialization

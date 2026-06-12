@@ -1,6 +1,8 @@
 # Dict/Set Amortized O(log n) Remove Implementation Plan
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+> **Status: COMPLETE / ARCHIVED (2026-06-12).** Implemented in the boot runtime: `Dict.remove`/`Set.remove` now tombstone insertion-order slots and compact by density, making bulk remove linear. Validation passed with self-host convergence, boot tests, Rust tests, and dict/set benchmarks. The original per-task commit checkpoints below were folded into the final implementation commit.
+
+> **For agentic workers:** This plan is archived. Steps remain checked below as the implementation record.
 
 **Goal:** Make `Dict.remove`/`Set.remove` amortized O(log n) instead of O(n) per call, eliminating the O(n²) bulk-remove cliff (`dict_int_remove`: ~10 s at 32k today).
 
@@ -50,7 +52,7 @@ This task adds the data and the index stamping, but leaves `remove` using the ex
 - Modify: `boot/compiler/codegen/runtime/dict.tw`
 - Test: `boot/tests/suites/api_dict_suite.tw`, `boot/tests/suites/api_set_suite.tw`
 
-- [ ] **Step 1: Add characterization tests that must stay green through Tasks 1–2**
+- [x] **Step 1: Add characterization tests that must stay green through Tasks 1–2**
 
 These assert the observable contract the refactor must not break. Add to `boot/tests/suites/api_dict_suite.tw` (follow the file's existing `test(...)`/`assert` style; adapt helper names to those already imported in the file):
 
@@ -62,9 +64,9 @@ test("dict remove then reinsert puts key at end", fn() {
   d[3] = 30
   d = .remove(2)
   d[2] = 99
-  try assert.eq(d.keys(), [1, 3, 2])      // 2 reinserted at the end
-  try assert.eq(d.get(2), .Some(99))
-  try assert.eq(d.len(), 3)
+  try assert.equal(d.keys(), [1, 3, 2])      // 2 reinserted at the end
+  try assert.equal(d.get(2), .Some(99))
+  try assert.equal(d.len(), 3)
 })
 
 test("dict remove preserves persistence of aliased version", fn() {
@@ -72,9 +74,9 @@ test("dict remove preserves persistence of aliased version", fn() {
   a[1] = 1
   a[2] = 2
   b := a.remove(1)
-  try assert.eq(a.keys(), [1, 2])         // original unchanged
-  try assert.eq(b.keys(), [2])
-  try assert.eq(a.get(1), .Some(1))
+  try assert.equal(a.keys(), [1, 2])         // original unchanged
+  try assert.equal(b.keys(), [2])
+  try assert.equal(a.get(1), .Some(1))
 })
 
 test("dict heavy interleaved set/remove keeps order and contents", fn() {
@@ -87,15 +89,15 @@ test("dict heavy interleaved set/remove keeps order and contents", fn() {
       d = .remove(i)
     }
   }
-  try assert.eq(d.len(), 100)
+  try assert.equal(d.len(), 100)
   expected: Vector<Int> = collect i in range(200) {
     i
   }
   // surviving keys are the odd ones, still in ascending insertion order
   odds := expected.filter(fn(x) { x % 2 == 1 })
-  try assert.eq(d.keys(), odds)
+  try assert.equal(d.keys(), odds)
   for k in d.keys() {
-    try assert.eq(d.get(k), .Some(k))
+    try assert.equal(d.get(k), .Some(k))
   }
 })
 
@@ -110,18 +112,18 @@ test("dict equality ignores insertion order and tombstone history", fn() {
   b[9] = 9
   b = .remove(9)        // forces a different order/tombstone history
   b[2] = 2
-  try assert.eq(a, b)
+  try assert.is_true(a == b)
 })
 ```
 
 Add the analogous insert/remove/reinsert + persistence cases to `boot/tests/suites/api_set_suite.tw` using `Set.new()/.insert/.remove/.contains/.to_vector`.
 
-- [ ] **Step 2: Run the new tests against current code to confirm they pass (characterization baseline)**
+- [x] **Step 2: Run the new tests against current code to confirm they pass (characterization baseline)**
 
 Run: `make boot-test 2>&1 | tail -20`
 Expected: PASS (these describe current behavior; they must already hold).
 
-- [ ] **Step 3: Add the struct fields in `types.tw`**
+- [x] **Step 3: Add the struct fields in `types.tw`**
 
 In `HamtEntry`, append a field after `val`:
 
@@ -135,7 +137,7 @@ In `PDict`, append a field after `order`:
 .{ name: .Some("tombstones"), mutable: true, ty: .I32 },
 ```
 
-- [ ] **Step 4: Add field-index constants and two globals in `dict.tw`**
+- [x] **Step 4: Add field-index constants, two globals, and the `arr_set` imports in `dict.tw`**
 
 Next to the existing `he_*`/`pd_*` constants add:
 
@@ -151,7 +153,28 @@ GlobalDef.{ name: "dict_order_index", mutable: true, ty: .I32, init: [.I32Const(
 GlobalDef.{ name: "dict_removed_index", mutable: true, ty: .I32, init: [.I32Const(0)] },
 ```
 
-- [ ] **Step 5: Stamp the insert index at the three entry-creation sites**
+`dict.tw` currently imports `rt.arr`'s `push`/`len`/`get`/`to_array`/`from_array`/`make_empty` but **not** `set` or `set_in_place`. The tombstone writes in Task 2 need them. Add both to the `imports:` list alongside the existing `rt.arr` entries:
+
+```tw
+.{
+  module: "rt.arr",
+  name: "set",
+  as_sym: "arr_set",
+  params: [pvec_null, .I32, .Anyref],
+  results: [pvec_ref],
+},
+.{
+  module: "rt.arr",
+  name: "set_in_place",
+  as_sym: "arr_set_in_place",
+  params: [pvec_null, .I32, .Anyref],
+  results: [pvec_ref],
+},
+```
+
+(Adding them in Task 1 is harmless — they are unused until Task 2. Verify `rt.arr` exports `set`/`set_in_place` with these signatures; `arr.tw` defines `set` at `// set(vec: PVec?, idx: i32, val: anyref) -> PVec` and `set_in_place` alongside it.)
+
+- [x] **Step 5: Stamp the insert index at the three entry-creation sites**
 
 `node_set` top build (`[hash, key, val] StructNew(t_hamt_entry)`): push the global before `StructNew`:
 
@@ -178,7 +201,7 @@ GlobalDef.{ name: "dict_removed_index", mutable: true, ty: .I32, init: [.I32Cons
 .LocalSet(7),
 ```
 
-- [ ] **Step 6: Preserve the index at the `node_set` replace site**
+- [x] **Step 6: Preserve the index at the `node_set` replace site**
 
 At the `node_set` key-match replace branch (currently `arr_replace_at(entries, idx, L5)` with the matched old entry in `L13`): replace the use of `L5` with a freshly built entry carrying the old index. I.e. where it pushes `.LocalGet(5)` as the replacement entry argument to `arr_replace_at`, substitute:
 
@@ -191,9 +214,47 @@ At the `node_set` key-match replace branch (currently `arr_replace_at(entries, i
 .StructNew(t_hamt_entry),
 ```
 
-(The `node_set` deep-collision-creation path — building a `HamtCollision` from `[old_entry L13, new_entry L5]` — needs no change: `L13` is the unchanged old entry and `L5` already carries the global insert index.)
+(The `node_set` deep-collision-creation path that builds a `HamtCollision` from `[old_entry L13, new_entry L5]` directly — the `depth >= 12` branch — needs no change: `L13` is the unchanged old entry and `L5` already carries the global insert index.)
 
-- [ ] **Step 7: Set `dict_order_index` before `node_set` in `set` and `set_in_place`**
+- [x] **Step 6b: Guard the recursive old-entry reinsertion in `node_set` (critical)**
+
+There is a second, subtler `node_set` path that re-stamps an existing entry: the `depth < 12` collision **split**. When the new key collides with an existing entry (`L13`) at a slot, `node_set` recursively reinserts **the old entry** into a fresh deeper node:
+
+```tw
+.RefNull(.Named(t_hamt_node)),
+.LocalGet(13), .StructGet(t_hamt_entry, he_hash),
+.LocalGet(2), .I32Const(1), .I32Add,          // depth + 1
+.LocalGet(13), .StructGet(t_hamt_entry, he_key),
+.LocalGet(13), .StructGet(t_hamt_entry, he_val),
+.Call("node_set"),                            // ← rebuilds L13's entry, re-stamps with global
+.LocalSet(14),
+// ... then recursively inserts the NEW key into L14 ...
+.Call("node_set"),
+```
+
+After Step 5 stamps `node_set`'s top build from `dict_order_index`, this recursive call would rebuild the **old** entry with the **new** key's index — corrupting `L13.order_index`, so a later remove of that old key tombstones the wrong slot. This is the core correctness hazard.
+
+Fix: temporarily point the global at the old entry's own index for the old-entry recursive call, then restore it (from `L5`, which holds the new entry already stamped with the new index at Step 5 and is never overwritten) before the new-key recursive call.
+
+Immediately **before** the old-entry recursive call (before the `.RefNull(.Named(t_hamt_node))` that begins its argument list), insert:
+
+```tw
+.LocalGet(13),
+.StructGet(t_hamt_entry, he_order_index),
+.GlobalSet("dict_order_index"),
+```
+
+Immediately **after** that call's `.LocalSet(14)`, and before the new-key recursive `node_set` argument list begins, insert:
+
+```tw
+.LocalGet(5),
+.StructGet(t_hamt_entry, he_order_index),
+.GlobalSet("dict_order_index"),
+```
+
+This is self-consistent under recursion: every `node_set` frame saves/restores around its own split, and the old entry being pushed deeper is a single key (it lands in an empty node without further splitting), so the diverted global is restored before any new-key work. The interleaved-set/remove characterization test (Step 1) — which builds 200 keys and removes half — exercises collisions and is the guard for this.
+
+- [x] **Step 7: Set `dict_order_index` before `node_set` in `set` and `set_in_place`**
 
 At the top of `set_fn`'s body (right after computing the hash, before `node_set`), insert:
 
@@ -207,7 +268,7 @@ At the top of `set_fn`'s body (right after computing the hash, before `node_set`
 
 Add the identical snippet at the top of `set_in_place_fn`'s body. (Both append the new key at `arr_len(order)`, so the stamped index matches the slot `arr_push` will fill.)
 
-- [ ] **Step 8: Add the `tombstones` field to every `StructNew(t_pdict)` site**
+- [x] **Step 8: Add the `tombstones` field to every `StructNew(t_pdict)` site**
 
 Run: `grep -n "StructNew(t_pdict)" boot/compiler/codegen/runtime/dict.tw`
 
@@ -218,12 +279,12 @@ For each site, push the tombstone count before `StructNew(t_pdict)`:
 
 (`set_in_place_fn`/`remove_in_place_fn` mutate `p0` via `StructSet` and do not `StructNew` a `PDict`, so they need no tombstone field here.)
 
-- [ ] **Step 9: Self-host and run the full suite (behavior unchanged)**
+- [x] **Step 9: Self-host and run the full suite (behavior unchanged)**
 
 Run: `make stage2 && make boot-test 2>&1 | tail -20`
 Expected: self-host converges (regenerates `target/boot.wasm`); all tests PASS including the Step 1 characterization tests. Behavior is identical to before — the new fields are written but not yet read.
 
-- [ ] **Step 10: Commit**
+- [x] **Step 10: Commit**
 
 ```bash
 git add boot/compiler/codegen/runtime/types.tw boot/compiler/codegen/runtime/dict.tw boot/tests/suites/api_dict_suite.tw boot/tests/suites/api_set_suite.tw
@@ -244,7 +305,7 @@ Swap the algorithm. `remove` tombstones the exact slot using the stored index; `
 **Files:**
 - Modify: `boot/compiler/codegen/runtime/dict.tw`
 
-- [ ] **Step 1: Publish the removed entry's index from `node_remove`**
+- [x] **Step 1: Publish the removed entry's index from `node_remove`**
 
 At the **direct-entry match** in `node_remove` (the `core_eq` true branch, matched entry in `L11`), at the very start of that branch insert:
 
@@ -264,7 +325,7 @@ At the **collision-array match** in `node_remove` (where it finds the matching e
 
 (Read the current `node_remove` body to confirm the exact local holding the matched collision entry.)
 
-- [ ] **Step 2: Add the `compact` function**
+- [x] **Step 2: Add the `compact` function**
 
 Add this `FuncDef` builder and register it in the module `funcs:` list:
 
@@ -375,7 +436,7 @@ fn compact_fn() FuncDef {
 }
 ```
 
-- [ ] **Step 3: Rewrite `remove_fn` to tombstone + maybe compact**
+- [x] **Step 3: Rewrite `remove_fn` to tombstone + maybe compact**
 
 Replace the body of `remove_fn` with:
 
@@ -449,14 +510,14 @@ fn remove_fn() FuncDef {
       .LocalGet(7),
       .StructNew(t_pdict),
       .LocalSet(10),
+      // compact when a removal pushed dead >= live. No `size > 0` guard: when
+      // the last key is removed (size 0, tombstones 1) this still fires and
+      // compact rebuilds a clean empty dict, so an emptied dict never keeps a
+      // tombstoned order vector across reuse.
       .LocalGet(5),
       .LocalGet(7),
       .LocalGet(8),
       .I32GeS,
-      .I32And,
-      .LocalGet(8),
-      .I32Const(0),
-      .I32GtS,
       .I32And,
       .If(
         .Some(pdict_ref),
@@ -468,7 +529,7 @@ fn remove_fn() FuncDef {
 }
 ```
 
-- [ ] **Step 4: Rewrite `remove_in_place_fn` to tombstone in place + maybe compact**
+- [x] **Step 4: Rewrite `remove_in_place_fn` to tombstone in place + maybe compact**
 
 `remove_in_place` operates on a uniquely-owned dict, so it mutates `p0` via `StructSet` and may tombstone the order vector in place with `arr_set_in_place`. Replace its body with:
 
@@ -541,7 +602,8 @@ fn remove_in_place_fn() FuncDef {
         ],
         [],
       ),
-      // compact if dead >= live and live > 0
+      // compact when a removal pushed dead >= live (no `size > 0` guard, so the
+      // final remove-to-empty also compacts to a clean empty dict).
       .LocalGet(5),
       .LocalGet(0),
       .RefAsNonNull,
@@ -550,12 +612,6 @@ fn remove_in_place_fn() FuncDef {
       .RefAsNonNull,
       .StructGet(t_pdict, pd_size),
       .I32GeS,
-      .I32And,
-      .LocalGet(0),
-      .RefAsNonNull,
-      .StructGet(t_pdict, pd_size),
-      .I32Const(0),
-      .I32GtS,
       .I32And,
       .If(
         .Some(pdict_ref),
@@ -569,7 +625,7 @@ fn remove_in_place_fn() FuncDef {
 
 If `rt.arr` `set_in_place` is not callable as `arr_set_in_place` from `dict.tw`, add it to the module imports list the same way `arr_len` is imported (`{ module: "rt.arr", name: "set_in_place", as_sym: "arr_set_in_place", params: [pvec_null, .I32, .Anyref], results: [pvec_ref] }`), or fall back to `arr_set` (persistent) — correctness first; the in-place win on `order` is secondary.
 
-- [ ] **Step 5: Make `keys` tombstone-aware**
+- [x] **Step 5: Make `keys` tombstone-aware**
 
 Replace `keys_fn` so it returns the order vector directly when clean and a filtered copy otherwise:
 
@@ -664,14 +720,14 @@ fn keys_fn() FuncDef {
 }
 ```
 
-- [ ] **Step 6: Drop `order_remove_key`**
+- [x] **Step 6: Drop `order_remove_key`**
 
 Remove the `order_remove_key_fn()` definition and its entry in the module `funcs:` list. Confirm nothing else references it:
 
 Run: `grep -n "order_remove_key" boot/compiler/codegen/runtime/dict.tw`
 Expected: no matches.
 
-- [ ] **Step 7: Confirm no other consumer reads `pd_order` expecting it tombstone-free**
+- [x] **Step 7: Confirm no other consumer reads `pd_order` expecting it tombstone-free**
 
 Run: `grep -n "pd_order" boot/compiler/codegen/runtime/dict.tw`
 Expected matches only in: `keys_fn` (handles tombstones), `set_fn`/`set_in_place_fn` (append; tombstones irrelevant), `remove_fn`/`remove_in_place_fn`/`compact_fn`. Then verify the prelude routes `Dict.values`/iteration and `Set.to_vector` through `keys()` (not a raw order read):
@@ -679,12 +735,12 @@ Expected matches only in: `keys_fn` (handles tombstones), `set_fn`/`set_in_place
 Run: `grep -rn "keys\|values\|to_vector\|pd_order\|dict\$order" boot/prelude boot/compiler/codegen/emit.tw | grep -i dict`
 Expected: `values`/iteration/`to_vector` build on `keys()`; no direct order access bypassing it. If any path reads the order vector directly, route it through `keys()`.
 
-- [ ] **Step 8: Self-host and run the full suite**
+- [x] **Step 8: Self-host and run the full suite**
 
 Run: `make stage2 && make boot-test 2>&1 | tail -20`
 Expected: self-host converges; all tests PASS, including the Task 1 characterization tests (order, persistence, equality, interleaved set/remove).
 
-- [ ] **Step 9: Commit**
+- [x] **Step 9: Commit**
 
 ```bash
 git add boot/compiler/codegen/runtime/dict.tw
@@ -705,26 +761,26 @@ stays O(1) when clean and filters tombstones otherwise. Behavior is unchanged
 **Files:**
 - Modify: `boot/bench/README.md`
 
-- [ ] **Step 1: Re-run the remove benchmark and confirm it is now linear**
+- [x] **Step 1: Re-run the remove benchmark and confirm it is now linear**
 
 Run: `target/twk run boot/bench/dict_int_remove.tw`
 Expected: per-doubling ratio trends to ~2× (linear bulk) instead of ~4× (quadratic). At 32k it should be a few ms, not ~10 000 ms.
 
-- [ ] **Step 2: Confirm no regression on the other dict/set benches**
+- [x] **Step 2: Confirm no regression on the other dict/set benches**
 
 Run: `for f in dict_int_build dict_int_get dict_int_has dict_str_build dict_str_get dict_str_has set_int_build set_int_contains set_str_build set_str_contains; do echo "== $f =="; target/twk run boot/bench/$f.tw | tail -1; done`
 Expected: build/get/has/contains within noise of the Phase 0 baselines in `boot/bench/README.md` (keys() stays O(1) on the clean path; set/get untouched).
 
-- [ ] **Step 3: Update the remove baseline in `boot/bench/README.md`**
+- [x] **Step 3: Update the remove baseline in `boot/bench/README.md`**
 
 In the "Dict / Set benchmark suite" section, update the `remove` line from the quadratic Phase 0 numbers to the new linear measurement, and replace the "remove is O(n) per call → O(n²)" note with a one-line record that tombstoned removal made it amortized O(log n)/call (linear bulk), pointing at this plan.
 
-- [ ] **Step 4: Final full verification**
+- [x] **Step 4: Final full verification**
 
 Run: `make stage2 && make boot-test 2>&1 | tail -20`
 Expected: self-host converges; full suite PASS.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add boot/bench/README.md

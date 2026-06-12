@@ -143,7 +143,7 @@ fn test_rt_types_pdict() Result<Void, String> {
 
   case find_type(m.types, "PDict") {
     .Some(.Struct(_, fields, _, _)) => {
-      try assert.equal(fields.len(), 3)
+      try assert.equal(fields.len(), 4)
       try assert.ok(
         case fields[0].name {
           .Some(n) => n == "size",
@@ -164,6 +164,13 @@ fn test_rt_types_pdict() Result<Void, String> {
           .None => false,
         },
         "field 2 should be order",
+      )
+      try assert.ok(
+        case fields[3].name {
+          .Some(n) => n == "tombstones",
+          .None => false,
+        },
+        "field 3 should be tombstones",
       )
     },
     _ => { return assert.fail("missing PDict type") },
