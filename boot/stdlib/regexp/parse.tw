@@ -158,6 +158,10 @@ fn parse_atom(cur: Cursor) Result<Pair<Ast, Cursor>, RegexError> {
 
   if ch == 46 {
     .Ok(tuple.pair(Ast.AnyChar, advance(cur, 1)))
+  } else if ch == 94 {
+    .Ok(tuple.pair(Ast.AssertStart, advance(cur, 1)))
+  } else if ch == 36 {
+    .Ok(tuple.pair(Ast.AssertEnd, advance(cur, 1)))
   } else if ch == 40 {
     parse_group(cur)
   } else if ch == 91 {

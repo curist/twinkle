@@ -50,6 +50,8 @@ fn emit(ast: Ast, acc: Vector<Inst>) Vector<Inst> {
     },
     .NonCap(inner) => emit(inner, acc),
     .Alt(branches) => emit_alt(branches, acc),
+    .AssertStart => acc.append(Inst.AssertStart),
+    .AssertEnd => acc.append(Inst.AssertEnd),
     .Concat(items) => {
       a := acc
 
