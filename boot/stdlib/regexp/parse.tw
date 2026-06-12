@@ -139,6 +139,8 @@ fn parse_atom(cur: Cursor) Result<Pair<Ast, Cursor>, RegexError> {
 
   if ch == 46 {
     .Ok(tuple.pair(Ast.AnyChar, advance(cur, 1)))
+  } else if ch == 40 {
+    parse_group(cur)
   } else if ch == 91 {
     parse_class(cur)
   } else if ch == 92 {
@@ -154,6 +156,38 @@ fn parse_atom(cur: Cursor) Result<Pair<Ast, Cursor>, RegexError> {
     }
   } else {
     .Ok(tuple.pair(Ast.Lit(ch), advance(cur, 1)))
+  }
+}
+
+// Parse a group starting at `(`: capturing `(...)`, non-capturing `(?:...)`.
+// `(?i)` is handled separately in `parse` (leading flag); other `(?` forms error.
+fn parse_group(cur: Cursor) Result<Pair<Ast, Cursor>, RegexError> {
+  open := cur.pos
+  c := advance(cur, 1)
+
+  if c.pos < c.chars.len() and c.chars[c.pos] == 63 {
+    if c.pos + 1 < c.chars.len() and c.chars[c.pos + 1] == 58 {
+      inner := try parse_concat(advance(c, 2))
+      after := try expect_close(inner.second, open)
+      .Ok(tuple.pair(Ast.NonCap(inner.first), after))
+    } else {
+      .Err(err(c.pos, "unsupported group"))
+    }
+  } else {
+    idx := c.groups + 1
+    c.groups = idx
+    inner := try parse_concat(c)
+    after := try expect_close(inner.second, open)
+    .Ok(tuple.pair(Ast.Group(inner.first, idx), after))
+  }
+}
+
+// Consume the closing `)`; error (anchored at the opening `(`) if absent.
+fn expect_close(c: Cursor, open: Int) Result<Cursor, RegexError> {
+  if c.pos >= c.chars.len() or c.chars[c.pos] != 41 {
+    .Err(err(open, "unbalanced ("))
+  } else {
+    .Ok(advance(c, 1))
   }
 }
 

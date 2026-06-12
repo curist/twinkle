@@ -43,6 +43,12 @@ fn emit(ast: Ast, acc: Vector<Inst>) Vector<Inst> {
       a.set_at(l, Inst.Split(l + 1, done))
     },
     .Repeat(inner, m, n) => emit(expand_repeat(inner, m, n), acc),
+    .Group(inner, idx) => {
+      a := acc.append(Inst.Save(2 * idx))
+      a = emit(inner, a)
+      a.append(Inst.Save(2 * idx + 1))
+    },
+    .NonCap(inner) => emit(inner, acc),
     .Concat(items) => {
       a := acc
 
