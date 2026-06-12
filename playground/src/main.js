@@ -13,7 +13,7 @@ console.log(
   'color:#56d364;background:#21262d;padding:3px 8px;border-radius:0 6px 6px 0;font-weight:600',
 )
 
-document.getElementById('compiler-version').textContent = `twk ${__TWINKLE_COMPILER_VERSION__}`
+document.getElementById('compiler-version').textContent = `v${__TWINKLE_COMPILER_VERSION__}`
 
 // ---------------------------------------------------------------------------
 // Examples — fetched from ./examples/<name>.tw
