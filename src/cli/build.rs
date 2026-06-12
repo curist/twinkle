@@ -45,10 +45,7 @@ pub fn build_wat(file_path: &str) -> Result<String> {
 
 fn build_linked_module(file_path: &str) -> Result<crate::wasm::linker::LinkedModuleIR> {
     let pipeline = crate::backend_pipeline::compile_backend_opt(file_path)?;
-    build_linked_module_from_optimized(
-        &pipeline.core_module,
-        &pipeline.optimized_anf_module,
-    )
+    build_linked_module_from_optimized(&pipeline.core_module, &pipeline.optimized_anf_module)
 }
 
 fn build_linked_module_from_optimized(

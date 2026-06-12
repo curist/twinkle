@@ -1,0 +1,26 @@
+// Phase 0 baseline — build a Dict<Int, Int> by inserting N distinct small-int
+// keys (each fits i31, so the generic runtime stores them unboxed as i31ref).
+// This is the full set() cost: hash dispatch + key compare + HAMT node
+// alloc/path-copy + insertion-order vector append. Keys are pre-materialized
+// outside the timed region so only the inserts are measured.
+//
+//   target/twk run boot/bench/dict_int_build.tw
+use @std.date
+
+fn bench(n: Int) {
+  keys: Vector<Int> = collect i in range(n) {
+    i
+  }
+  t0 := date.now()
+  d: Dict<Int, Int> = Dict.new()
+  for k in keys {
+    d = d.set(k, k)
+  }
+  dt := date.now() - t0
+  println("${n}\t${dt}\t${d.len()}")
+}
+
+println("N\tms\tsink")
+for n in [1000, 2000, 4000, 8000, 16000, 32000] {
+  bench(n)
+}

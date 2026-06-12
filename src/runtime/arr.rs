@@ -3098,18 +3098,18 @@ fn sort_i64_fn() -> FuncDef {
         params: vec![ref_pvec_null()],
         results: vec![ref_pvec()],
         locals: vec![
-            ValType::I32,            // L_N
-            ref_array_i64_null(),    // L_SRC
-            ref_array_i64_null(),    // L_AUX
-            ValType::I32,            // L_I
-            ref_array_null(),        // L_BUILDER (PVec builder = Array)
-            ValType::I32,            // L_WIDTH
-            ValType::I32,            // L_LO
-            ValType::I32,            // L_MID
-            ValType::I32,            // L_HI
-            ValType::I32,            // L_J
-            ValType::I32,            // L_K
-            ref_array_i64_null(),    // L_TMP
+            ValType::I32,         // L_N
+            ref_array_i64_null(), // L_SRC
+            ref_array_i64_null(), // L_AUX
+            ValType::I32,         // L_I
+            ref_array_null(),     // L_BUILDER (PVec builder = Array)
+            ValType::I32,         // L_WIDTH
+            ValType::I32,         // L_LO
+            ValType::I32,         // L_MID
+            ValType::I32,         // L_HI
+            ValType::I32,         // L_J
+            ValType::I32,         // L_K
+            ref_array_i64_null(), // L_TMP
         ],
         body: vec![
             Instr::LocalGet(P_VEC),
@@ -3284,26 +3284,48 @@ fn sort_i64_fn() -> FuncDef {
                                                                         Instr::ArrayGet(tai.into()),
                                                                         Instr::I64LeS,
                                                                         Instr::If {
-                                                                            result: Some(ValType::I64),
+                                                                            result: Some(
+                                                                                ValType::I64,
+                                                                            ),
                                                                             then_body: vec![
-                                                                                Instr::LocalGet(L_SRC),
+                                                                                Instr::LocalGet(
+                                                                                    L_SRC,
+                                                                                ),
                                                                                 Instr::RefAsNonNull,
-                                                                                Instr::LocalGet(L_I),
-                                                                                Instr::ArrayGet(tai.into()),
-                                                                                Instr::LocalGet(L_I),
+                                                                                Instr::LocalGet(
+                                                                                    L_I,
+                                                                                ),
+                                                                                Instr::ArrayGet(
+                                                                                    tai.into(),
+                                                                                ),
+                                                                                Instr::LocalGet(
+                                                                                    L_I,
+                                                                                ),
                                                                                 Instr::I32Const(1),
                                                                                 Instr::I32Add,
-                                                                                Instr::LocalSet(L_I),
+                                                                                Instr::LocalSet(
+                                                                                    L_I,
+                                                                                ),
                                                                             ],
                                                                             else_body: vec![
-                                                                                Instr::LocalGet(L_SRC),
+                                                                                Instr::LocalGet(
+                                                                                    L_SRC,
+                                                                                ),
                                                                                 Instr::RefAsNonNull,
-                                                                                Instr::LocalGet(L_J),
-                                                                                Instr::ArrayGet(tai.into()),
-                                                                                Instr::LocalGet(L_J),
+                                                                                Instr::LocalGet(
+                                                                                    L_J,
+                                                                                ),
+                                                                                Instr::ArrayGet(
+                                                                                    tai.into(),
+                                                                                ),
+                                                                                Instr::LocalGet(
+                                                                                    L_J,
+                                                                                ),
                                                                                 Instr::I32Const(1),
                                                                                 Instr::I32Add,
-                                                                                Instr::LocalSet(L_J),
+                                                                                Instr::LocalSet(
+                                                                                    L_J,
+                                                                                ),
                                                                             ],
                                                                         },
                                                                     ],
@@ -3414,18 +3436,18 @@ fn sort_f64_fn() -> FuncDef {
         params: vec![ref_pvec_null()],
         results: vec![ref_pvec()],
         locals: vec![
-            ValType::I32,            // L_N
-            ref_array_f64_null(),    // L_SRC
-            ref_array_f64_null(),    // L_AUX
-            ValType::I32,            // L_I
-            ref_array_null(),        // L_BUILDER
-            ValType::I32,            // L_WIDTH
-            ValType::I32,            // L_LO
-            ValType::I32,            // L_MID
-            ValType::I32,            // L_HI
-            ValType::I32,            // L_J
-            ValType::I32,            // L_K
-            ref_array_f64_null(),    // L_TMP
+            ValType::I32,         // L_N
+            ref_array_f64_null(), // L_SRC
+            ref_array_f64_null(), // L_AUX
+            ValType::I32,         // L_I
+            ref_array_null(),     // L_BUILDER
+            ValType::I32,         // L_WIDTH
+            ValType::I32,         // L_LO
+            ValType::I32,         // L_MID
+            ValType::I32,         // L_HI
+            ValType::I32,         // L_J
+            ValType::I32,         // L_K
+            ref_array_f64_null(), // L_TMP
         ],
         body: vec![
             Instr::LocalGet(P_VEC),
@@ -3591,26 +3613,48 @@ fn sort_f64_fn() -> FuncDef {
                                                                         Instr::ArrayGet(taf.into()),
                                                                         Instr::F64Le,
                                                                         Instr::If {
-                                                                            result: Some(ValType::F64),
+                                                                            result: Some(
+                                                                                ValType::F64,
+                                                                            ),
                                                                             then_body: vec![
-                                                                                Instr::LocalGet(L_SRC),
+                                                                                Instr::LocalGet(
+                                                                                    L_SRC,
+                                                                                ),
                                                                                 Instr::RefAsNonNull,
-                                                                                Instr::LocalGet(L_I),
-                                                                                Instr::ArrayGet(taf.into()),
-                                                                                Instr::LocalGet(L_I),
+                                                                                Instr::LocalGet(
+                                                                                    L_I,
+                                                                                ),
+                                                                                Instr::ArrayGet(
+                                                                                    taf.into(),
+                                                                                ),
+                                                                                Instr::LocalGet(
+                                                                                    L_I,
+                                                                                ),
                                                                                 Instr::I32Const(1),
                                                                                 Instr::I32Add,
-                                                                                Instr::LocalSet(L_I),
+                                                                                Instr::LocalSet(
+                                                                                    L_I,
+                                                                                ),
                                                                             ],
                                                                             else_body: vec![
-                                                                                Instr::LocalGet(L_SRC),
+                                                                                Instr::LocalGet(
+                                                                                    L_SRC,
+                                                                                ),
                                                                                 Instr::RefAsNonNull,
-                                                                                Instr::LocalGet(L_J),
-                                                                                Instr::ArrayGet(taf.into()),
-                                                                                Instr::LocalGet(L_J),
+                                                                                Instr::LocalGet(
+                                                                                    L_J,
+                                                                                ),
+                                                                                Instr::ArrayGet(
+                                                                                    taf.into(),
+                                                                                ),
+                                                                                Instr::LocalGet(
+                                                                                    L_J,
+                                                                                ),
                                                                                 Instr::I32Const(1),
                                                                                 Instr::I32Add,
-                                                                                Instr::LocalSet(L_J),
+                                                                                Instr::LocalSet(
+                                                                                    L_J,
+                                                                                ),
                                                                             ],
                                                                         },
                                                                     ],
