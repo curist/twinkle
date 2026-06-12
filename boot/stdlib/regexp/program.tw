@@ -16,6 +16,8 @@ fn emit(ast: Ast, acc: Vector<Inst>) Vector<Inst> {
   case ast {
     .Empty => acc,
     .Lit(c) => acc.append(Inst.Char(c)),
+    .AnyChar => acc.append(Inst.AnyChar),
+    .Class(items, negated) => acc.append(Inst.Class(items, negated)),
     .Concat(items) => {
       a := acc
 
