@@ -327,6 +327,10 @@ impl Lexer {
                     self.advance();
                     '"' as u32
                 }
+                '$' => {
+                    self.advance();
+                    '$' as u32
+                }
                 '0' => {
                     self.advance();
                     0
@@ -733,7 +737,7 @@ mod tests {
 
     #[test]
     fn test_lex_char_literal_escapes() {
-        let tokens = lex_simple(r"'\n' '\t' '\\' '\'' '\0' '\e' '\x41' '\u{1F600}'");
+        let tokens = lex_simple(r"'\n' '\t' '\\' '\'' '\$' '\0' '\e' '\x41' '\u{1F600}'");
         let codes: Vec<&str> = tokens
             .iter()
             .filter(|t| t.kind == TokenKind::IntLit)
@@ -741,7 +745,7 @@ mod tests {
             .collect();
         assert_eq!(
             codes,
-            vec!["10", "9", "92", "39", "0", "27", "65", "128512"]
+            vec!["10", "9", "92", "39", "36", "0", "27", "65", "128512"]
         );
     }
 
