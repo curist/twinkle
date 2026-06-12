@@ -1775,6 +1775,37 @@ impl TypeChecker {
         matches!(ty, MonoType::Var(name) if self.current_type_param_bounds.get(name).map(|b| b.contains(&"Stringify".to_string())) == Some(true))
     }
 
+    fn mono_from_bound_arg(&self, name: &str) -> MonoType {
+        match name {
+            "Int" => MonoType::Int,
+            "Float" => MonoType::Float,
+            "Bool" => MonoType::Bool,
+            "Byte" => MonoType::Byte,
+            "String" => MonoType::String,
+            "Void" => MonoType::Void,
+            other if self.type_var_scope.iter().any(|param| param == other) => {
+                MonoType::Var(other.to_string())
+            }
+            _ => MonoType::Void,
+        }
+    }
+
+    fn into_iterator_bound_elem(&self, ty: &MonoType) -> Option<MonoType> {
+        let MonoType::Var(name) = ty else {
+            return None;
+        };
+        let bounds = self.current_type_param_bounds.get(name)?;
+        for bound in bounds {
+            if let Some(inner) = bound
+                .strip_prefix("IntoIterator<")
+                .and_then(|rest| rest.strip_suffix('>'))
+            {
+                return Some(self.mono_from_bound_arg(inner.trim()));
+            }
+        }
+        None
+    }
+
     fn validate_stringify_type(
         &mut self,
         ty: &MonoType,
@@ -2143,6 +2174,15 @@ impl TypeChecker {
             self.try_synth_registered_method_call(base, &base_ty, method, args, span)?
         {
             return Ok(ret_ty);
+        }
+        if method == "iter"
+            && args.is_empty()
+            && let Some(elem_ty) = self.into_iterator_bound_elem(&base_ty)
+        {
+            return Ok(MonoType::Named {
+                type_id: crate::types::ty::ITERATOR_TYPE_ID,
+                args: vec![elem_ty],
+            });
         }
         if method == "to_string" && args.is_empty() && self.has_stringify_bound(&base_ty) {
             return Ok(MonoType::String);
@@ -3797,6 +3837,27 @@ impl TypeChecker {
                             feature: "complex pattern in for loop over Iterator",
                             span: iter.span,
                             note: "Only simple identifiers are supported in for loop patterns over Iterator<T>".to_string(),
+                        });
+                    }
+                }
+                if let Some(idx_pat) = index_pattern
+                    && let Pattern::Ident(name, _) = idx_pat
+                {
+                    self.local_env.bind(name.clone(), MonoType::Int);
+                }
+            }
+            other if self.into_iterator_bound_elem(&other).is_some() => {
+                let elem_ty = self
+                    .into_iterator_bound_elem(&other)
+                    .unwrap_or(MonoType::Void);
+                match pattern {
+                    Pattern::Ident(name, _) => self.local_env.bind(name.clone(), elem_ty),
+                    Pattern::Wildcard(_) => {}
+                    _ => {
+                        self.errors.push(TypeError::UnsupportedFeature {
+                            feature: "complex pattern in for loop over IntoIterator",
+                            span: iter.span,
+                            note: "Only simple identifiers are supported in for loop patterns over IntoIterator".to_string(),
                         });
                     }
                 }

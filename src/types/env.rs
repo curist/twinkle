@@ -11,6 +11,34 @@ use super::ty::{
 use crate::intrinsics::signatures;
 use crate::syntax::ast::Type as AstType;
 
+fn build_type_subst(type_params: &[String], args: &[MonoType]) -> HashMap<String, MonoType> {
+    type_params
+        .iter()
+        .zip(args.iter())
+        .map(|(k, v)| (k.clone(), v.clone()))
+        .collect()
+}
+
+fn apply_type_subst(ty: &MonoType, subst: &HashMap<String, MonoType>) -> MonoType {
+    match ty {
+        MonoType::Var(name) => subst.get(name).cloned().unwrap_or_else(|| ty.clone()),
+        MonoType::Vector(elem) => MonoType::Vector(Box::new(apply_type_subst(elem, subst))),
+        MonoType::Dict(k, v) => MonoType::Dict(
+            Box::new(apply_type_subst(k, subst)),
+            Box::new(apply_type_subst(v, subst)),
+        ),
+        MonoType::Function { params, ret } => MonoType::Function {
+            params: params.iter().map(|p| apply_type_subst(p, subst)).collect(),
+            ret: Box::new(apply_type_subst(ret, subst)),
+        },
+        MonoType::Named { type_id, args } => MonoType::Named {
+            type_id: *type_id,
+            args: args.iter().map(|a| apply_type_subst(a, subst)).collect(),
+        },
+        other => other.clone(),
+    }
+}
+
 /// Stored information for an inherent method, allowing method resolution
 /// without requiring the defining module to be in the value environment.
 #[derive(Debug, Clone)]
@@ -767,17 +795,33 @@ impl TypeEnv {
                             return Ok(MonoType::ExternRef(type_id));
                         }
 
-                        // Aliases: expand transparently, but don't accept type args
-                        if let Some(TypeDef::Alias { target, .. }) = self.get_def(type_id) {
-                            if !args.is_empty() {
-                                errors.push(TypeError::GenericNotSupported {
-                                    name: name.clone(),
+                        // Aliases: expand transparently, applying type arguments to
+                        // the alias target just like nominal generic types.
+                        if let Some(TypeDef::Alias {
+                            type_params,
+                            target,
+                            ..
+                        }) = self.get_def(type_id)
+                        {
+                            if args.len() != type_params.len() {
+                                errors.push(TypeError::UndefinedType {
+                                    name: format!(
+                                        "{} (expected {} type arg(s), found {})",
+                                        name,
+                                        type_params.len(),
+                                        args.len()
+                                    ),
                                     span: *span,
-                                    note: "Type aliases cannot take type arguments".to_string(),
                                 });
                                 return Err(());
                             }
-                            return Ok(target.clone());
+
+                            let resolved_args: Vec<MonoType> = args
+                                .iter()
+                                .map(|a| self.resolve_type(a, errors))
+                                .collect::<Result<_, _>>()?;
+                            let subst = build_type_subst(type_params, &resolved_args);
+                            return Ok(apply_type_subst(target, &subst));
                         }
 
                         // Check arity against declared type_params

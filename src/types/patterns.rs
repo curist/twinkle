@@ -200,11 +200,45 @@ impl<'a> PatternChecker<'a> {
         arms: &[CaseArm],
         span: Span,
     ) -> Result<(), ()> {
-        // For primitive types (Int, Bool, String), only a wildcard/identifier arm is exhaustive
-        if matches!(
-            scrut_ty,
-            MonoType::Int | MonoType::Bool | MonoType::String | MonoType::Byte
-        ) {
+        // Bool has a finite literal domain, so `true` + `false` is exhaustive.
+        // Other primitive domains remain open-ended and require a catch-all arm.
+        if matches!(scrut_ty, MonoType::Bool) {
+            let has_catch_all = arms
+                .iter()
+                .any(|arm| matches!(arm.pattern, Pattern::Wildcard(_) | Pattern::Ident(_, _)));
+            if has_catch_all {
+                return Ok(());
+            }
+
+            let mut has_true = false;
+            let mut has_false = false;
+            for arm in arms {
+                if let Pattern::Literal(crate::syntax::ast::Literal::Bool(value), _) = &arm.pattern
+                {
+                    if *value {
+                        has_true = true;
+                    } else {
+                        has_false = true;
+                    }
+                }
+            }
+
+            let mut missing = Vec::new();
+            if !has_true {
+                missing.push("true".to_string());
+            }
+            if !has_false {
+                missing.push("false".to_string());
+            }
+            if !missing.is_empty() {
+                errors.push(TypeError::NonExhaustiveMatch { missing, span });
+                return Err(());
+            }
+            return Ok(());
+        }
+
+        // For open-ended primitive types, only a wildcard/identifier arm is exhaustive.
+        if matches!(scrut_ty, MonoType::Int | MonoType::String | MonoType::Byte) {
             let has_wildcard = arms
                 .iter()
                 .any(|arm| matches!(arm.pattern, Pattern::Wildcard(_) | Pattern::Ident(_, _)));

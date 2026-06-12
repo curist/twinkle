@@ -451,10 +451,10 @@ impl Parser {
                 let mut bounds = Vec::new();
                 if self.peek_is(TokenKind::Colon) {
                     self.expect(TokenKind::Colon)?;
-                    bounds.push(self.expect(TokenKind::Ident)?.text);
+                    bounds.push(Self::type_bound_to_string(&self.parse_type()?));
                     while self.peek_is(TokenKind::Plus) {
                         self.expect(TokenKind::Plus)?;
-                        bounds.push(self.expect(TokenKind::Ident)?.text);
+                        bounds.push(Self::type_bound_to_string(&self.parse_type()?));
                     }
                 }
                 params.push(TypeParam {
@@ -591,10 +591,10 @@ impl Parser {
                 let mut bounds = Vec::new();
                 if self.peek_is(TokenKind::Colon) {
                     self.expect(TokenKind::Colon)?;
-                    bounds.push(self.expect(TokenKind::Ident)?.text);
+                    bounds.push(Self::type_bound_to_string(&self.parse_type()?));
                     while self.peek_is(TokenKind::Plus) {
                         self.expect(TokenKind::Plus)?;
-                        bounds.push(self.expect(TokenKind::Ident)?.text);
+                        bounds.push(Self::type_bound_to_string(&self.parse_type()?));
                     }
                 }
                 params.push(TypeParam {
@@ -2244,6 +2244,36 @@ impl Parser {
 
         let rbrace = self.expect(TokenKind::RBrace)?;
         Ok((dot.span.merge(&rbrace.span), fields))
+    }
+
+    fn type_bound_to_string(ty: &Type) -> String {
+        match ty {
+            Type::Named { name, args, .. } => {
+                if args.is_empty() {
+                    name.clone()
+                } else {
+                    let rendered_args = args
+                        .iter()
+                        .map(Self::type_bound_to_string)
+                        .collect::<Vec<_>>()
+                        .join(", ");
+                    format!("{}<{}>", name, rendered_args)
+                }
+            }
+            Type::Record { .. } => "<record>".to_string(),
+            Type::Function { params, ret, .. } => {
+                let rendered_params = params
+                    .iter()
+                    .map(Self::type_bound_to_string)
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                format!(
+                    "fn({}) {}",
+                    rendered_params,
+                    Self::type_bound_to_string(ret)
+                )
+            }
+        }
     }
 
     fn parse_type(&mut self) -> ParseResult<Type> {

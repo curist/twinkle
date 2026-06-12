@@ -3045,6 +3045,14 @@ impl Lowerer {
                 receiver: Box::new(all_args.remove(0)),
                 args: all_args,
             });
+        } else if matches!(&base_ty, MonoType::Var(name) if method == "iter" && self.current_type_param_bounds.get(name).map(|bounds| bounds.iter().any(|b| b.starts_with("IntoIterator<"))) == Some(true))
+        {
+            return Some(CoreExprKind::ContractCall {
+                contract: "IntoIterator".to_string(),
+                method: method.to_string(),
+                receiver: Box::new(all_args.remove(0)),
+                args: all_args,
+            });
         } else if self.errors.len() > error_count_before {
             return None;
         } else if let MonoType::Named { type_id, .. } = base_ty.clone() {
