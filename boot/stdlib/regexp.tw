@@ -1,0 +1,15 @@
+/// Regular expressions (pure Twinkle). Public surface: `@std.regexp`.
+/// See docs/plans/regexp.md for the design and supported subset.
+
+use .regexp.program.{Inst}
+
+pub type RegexError = .{ pos: Int, message: String }
+
+pub type Regexp = .{ program: Vector<Inst>, group_count: Int, ignore_case: Bool }
+
+pub type Match = .{ start: Int, end: Int, groups: Vector<String?> }
+
+/// Placeholder so the module compiles; replaced in Task 4.
+pub fn version() Int {
+  1
+}
