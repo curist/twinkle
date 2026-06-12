@@ -1,6 +1,6 @@
 # `@std.regexp` percent escapes
 
-**Status:** proposed follow-up to `docs/plans/regexp.md`.
+**Status:** proposed follow-up to `docs/plans/archive/regexp.md`.
 
 ## Goal
 

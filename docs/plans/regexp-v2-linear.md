@@ -1,6 +1,6 @@
 # `@std.regexp` v2 linear-time extensions
 
-**Status:** proposed follow-up to `docs/plans/regexp.md`.
+**Status:** proposed follow-up to `docs/plans/archive/regexp.md`.
 
 ## Goal
 
