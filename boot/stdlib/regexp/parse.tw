@@ -12,6 +12,12 @@ pub fn parse(pattern: String) Result<Parsed, RegexError> {
   chars := decode(pattern)
   cur := Cursor.{ chars, pos: 0, groups: 0, ignore_case: false }
 
+  // Leading `(?i)` sets a global ASCII case-fold; only legal at position 0.
+  if has_ignore_case_prefix(chars) {
+    cur.pos = 4
+    cur.ignore_case = true
+  }
+
   result := try parse_alt(cur)
   end := result.second
 
@@ -20,6 +26,11 @@ pub fn parse(pattern: String) Result<Parsed, RegexError> {
   } else {
     .Ok(Parsed.{ ast: result.first, group_count: end.groups, ignore_case: end.ignore_case })
   }
+}
+
+// Does the pattern start with the four scalars `( ? i )`?
+fn has_ignore_case_prefix(chars: Vector<Int>) Bool {
+  chars.len() >= 4 and chars[0] == 40 and chars[1] == 63 and chars[2] == 105 and chars[3] == 41
 }
 
 /// Decode a String into its sequence of Unicode scalar values.
