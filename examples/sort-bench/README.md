@@ -7,6 +7,12 @@ generic `sort_by` as a bottleneck (its order-by is sort-bound). These probes
 isolate that cost away from the app-scale noise so it can be attributed and
 optimized — work that is still ongoing.
 
+The full record of that effort — measurements, the approaches tried and
+rejected, and current status — lives in
+[`docs/plans/vector-perf/`](../../docs/plans/vector-perf/README.md) (start at
+its `HANDOFF.md`). That index also documents what each probe here measures and
+the benchmark gate they form.
+
 Unlike `leetcode` and `dataframe`, this is not a test suite — there is no
 `main.tw`. Each `*_probe.tw` / `*_micro.tw` is a standalone, self-timing
 investigation into one performance question, written to attribute cost in a hot

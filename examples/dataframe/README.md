@@ -12,7 +12,8 @@ threaded through transformations, and hot paths like sort and gather.
 
 This is the project that exposed Twinkle's generic `sort_by` as a bottleneck
 (order-by is sort-bound), which is **why [`sort-bench`](../sort-bench) exists** —
-to isolate that cost and drive the optimization work, which is still ongoing.
+to isolate that cost and drive the optimization work, which is still ongoing and
+tracked in [`docs/plans/vector-perf/`](../../docs/plans/vector-perf/README.md).
 Ergonomics findings here also drove concrete fixes (e.g. the `Order` `Stringify`
 fix).
 
