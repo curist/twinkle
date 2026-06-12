@@ -26,14 +26,12 @@ fn complete_named(todos: Vector<Todo>, name: String) Vector<Todo>!String {
     .ok_or("unknown task: ${name}")
 
   updated: Vector<Todo> = []
-
   for todo in todos {
     if todo.name == target.name {
       // .complete() is shorthand for todo.complete(), the leading dot
       // calls an inherent method on the variable being rebound
       todo = .complete()
     }
-
     updated = .append(todo)
   }
 

@@ -1006,49 +1006,20 @@ fn join_block_docs(
   has_leading_comment: Vector<Bool>,
 ) Doc {
   result := docs[0]
-  prev_flow := false
-
-  if block.stmts.len() > 0 {
-    prev_flow = is_flow_stmt(block.stmts[0])
-  }
-
   i := 1
 
   for i < docs.len() {
-    cur_flow := if i < block.stmts.len() {
-      is_flow_stmt(block.stmts[i])
-    } else {
-      case block.tail {
-        .Some(expr) => is_flow_expr(expr),
-        .None => false,
-      }
-    }
     wants_blank := has_author_blank[i] or has_leading_comment[i]
     sep := if wants_blank {
-      doc.concat([doc.hard_line(), doc.hard_line()])
-    } else if should_use_compact_flow_separator(block, i) {
-      doc.hard_line()
-    } else if prev_flow or cur_flow {
       doc.concat([doc.hard_line(), doc.hard_line()])
     } else {
       doc.hard_line()
     }
     result = doc.concat([result, sep, docs[i]])
-    prev_flow = cur_flow
     i = i + 1
   }
 
   result
-}
-
-fn should_use_compact_flow_separator(block: Block, cur_index: Int) Bool {
-  if cur_index >= block.stmts.len() or cur_index == 0 {
-    return false
-  }
-
-  prev := block.stmts[cur_index - 1]
-  cur := block.stmts[cur_index]
-  is_simple_stmt(prev, true) and is_simple_terminal_stmt(cur)
 }
 
 fn is_arm_inline_stmt(stmt: Stmt) Bool {
@@ -1056,35 +1027,6 @@ fn is_arm_inline_stmt(stmt: Stmt) Bool {
     .Continue(_) => true,
     .Break(_) => true,
     .Return(_) => true,
-    _ => false,
-  }
-}
-
-fn is_simple_terminal_stmt(stmt: Stmt) Bool {
-  case stmt {
-    .Return(_) => is_simple_stmt(stmt, true),
-    .Break(_) => is_simple_stmt(stmt, true),
-    _ => false,
-  }
-}
-
-fn is_flow_stmt(stmt: Stmt) Bool {
-  case stmt {
-    .For(_) => true,
-    .Return(_) => true,
-    .Defer(_) => true,
-    .Expr(s) => is_flow_expr(s.expr),
-    _ => false,
-  }
-}
-
-fn is_flow_expr(expr: Expr) Bool {
-  case expr.kind {
-    .If(_, _, _) => true,
-    .Case(_, _) => true,
-    .Cond(_) => true,
-    .Collect(_) => true,
-    .BlockExpr(_) => true,
     _ => false,
   }
 }

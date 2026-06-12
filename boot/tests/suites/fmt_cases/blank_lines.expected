@@ -5,7 +5,6 @@ fn process(data: Vector<Int>) Int {
   for x in data {
     total = total + x
   }
-
   for x in data {
     count = count + 1
   }

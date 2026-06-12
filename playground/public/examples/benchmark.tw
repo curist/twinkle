@@ -24,11 +24,9 @@ bench(
   "vector append 10k",
   fn() {
     v: Vector<Int> = []
-
     for i in 0..10000 {
       v = .append(i)
     }
-
     "len = ${v.len()}"
   },
 )
@@ -38,17 +36,13 @@ bench(
   "dict 1000 insert+lookup",
   fn() {
     d: Dict<String, Int> = Dict.new()
-
     for i in 0..1000 {
       d["${i}"] = i * i
     }
-
     sum := 0
-
     for key in d.keys() {
       sum = sum + d[key].unwrap_or(0)
     }
-
     "sum = ${sum}"
   },
 )
@@ -58,53 +52,41 @@ bench(
   "string concat 500",
   fn() {
     s := ""
-
     for i in 0..500 {
       s = "${s}${i}"
     }
-
     "len = ${s.len()}"
   },
 )
 
 // 5. Sum of primes (trial division)
 fn is_prime(n: Int) Bool {
-  if n < 2 {
-    return false
+  cond {
+    n < 2 => false,
+    n == 2 => true,
+    n % 2 == 0 => false,
+    _ => {
+      d := 3
+      for d * d <= n {
+        if n % d == 0 {
+          return false
+        }
+        d = d + 2
+      }
+      true
+    },
   }
-
-  if n == 2 {
-    return true
-  }
-
-  if n % 2 == 0 {
-    return false
-  }
-
-  d := 3
-
-  for d * d <= n {
-    if n % d == 0 {
-      return false
-    }
-
-    d = d + 2
-  }
-
-  true
 }
 
 bench(
   "sum primes < 5000",
   fn() {
     sum := 0
-
     for n in 2..5000 {
       if is_prime(n) {
         sum = sum + n
       }
     }
-
     "${sum}"
   },
 )

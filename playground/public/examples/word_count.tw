@@ -1,7 +1,6 @@
 // Word frequency with Dict
 fn count_words(words: Vector<String>) Dict<String, Int> {
   counts: Dict<String, Int> = Dict.new()
-
   for word in words {
     // Dict indexing returns Option, use pattern matching to handle both cases
     case counts[word] {
@@ -9,29 +8,23 @@ fn count_words(words: Vector<String>) Dict<String, Int> {
       .None => counts[word] = 1,
     }
   }
-
   counts
 }
 
 fn most_common(counts: Dict<String, Int>) String? {
   keys := counts.keys()
-
   if keys.len() == 0 {
     return .None
   }
-
   best := keys[0]
   best_n := counts[best].unwrap_or(0)
-
   for word in keys {
     n := counts[word].unwrap_or(0)
-
     if n > best_n {
       best = word
       best_n = n
     }
   }
-
   .Some(best)
 }
 

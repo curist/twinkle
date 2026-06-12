@@ -9,12 +9,10 @@ println("Response length: ${body.len()} bytes")
 // Find the "name" field in the JSON (simple string search)
 fn find_json_value(json: String, key: String) String {
   needle := "\"${key}\": \""
-
   case json.index_of(needle) {
     .Some(i) => {
       start := i + needle.len()
       rest := json.slice(start, json.len())
-
       case rest.index_of("\"") {
         .Some(offset) => json.slice(start, start + offset),
         .None => rest,

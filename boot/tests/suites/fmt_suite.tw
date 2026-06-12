@@ -67,6 +67,10 @@ pub fn suite() runner.Suite {
     .test("formats dollar strings without changing meaning", test_dollar_string_formatting)
     .test("formats literals and wrapped calls", assert_fmt_case("literals_and_calls"))
     .test("formats control-flow blocks", assert_fmt_case("control_flow"))
+    .test(
+      "does not auto-insert blank lines around flow statements",
+      assert_fmt_case("cond_arm_compact_block"),
+    )
     .test("preserves interleaved binary comments", assert_fmt_case("interleaved_comments"))
     .test("groups extern declarations by module", assert_fmt_case("extern_decls"))
     .test("breaks method chains consistently", assert_fmt_case("method_chain"))

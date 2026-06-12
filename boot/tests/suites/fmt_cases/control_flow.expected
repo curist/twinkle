@@ -12,10 +12,8 @@ fn classify(n: Int) String {
 
 fn sum(xs: Vector<Int>) Int {
   total := 0
-
   for x, i in xs {
     total = total + x + i
   }
-
   return total
 }

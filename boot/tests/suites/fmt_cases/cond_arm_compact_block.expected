@@ -1,0 +1,17 @@
+fn is_prime(n: Int) Bool {
+  cond {
+    n < 2 => false,
+    n == 2 => true,
+    n % 2 == 0 => false,
+    _ => {
+      i := 3
+      for i * i <= n {
+        if n % i == 0 {
+          return false
+        }
+        i = i + 2
+      }
+      true
+    },
+  }
+}
