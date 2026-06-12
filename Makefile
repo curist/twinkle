@@ -1,4 +1,4 @@
-.PHONY: help test boot-test rust-test stage0 stage2 bundle-cli quick-bundle-cli cli playground playground-dev fmt bench bench-guard clean npm-pack npm-publish npm-test
+.PHONY: help test boot-test rust-test stage0 stage2 bundle-cli quick-bundle-cli cli playground playground-dev fmt bench bench-guard bench-compare clean npm-pack npm-publish npm-test
 
 STAGE1_WASM ?= target/boot-stage1.wasm
 STAGE2_WASM ?= target/boot.wasm
@@ -24,6 +24,7 @@ help:
 	@printf '  make fmt               Format boot compiler .tw source files\n'
 	@printf '  make bench             Run the Vector benchmark suite (boot/bench/)\n'
 	@printf '  make bench-guard       Check vector scaling/bulk-copy guards\n'
+	@printf '  make bench-compare     Compare persistent collections with Clojure\n'
 	@printf '  make playground        Build playground from latest published packages (no compiler build)\n'
 	@printf '  make playground-dev    Dev server against the in-repo compiler (TWINKLE_LOCAL)\n'
 
@@ -144,6 +145,9 @@ bench: target/twk
 
 bench-guard: target/twk
 	python3 tools/check_vector_scaling.py
+
+bench-compare: target/twk
+	python3 tools/bench_persistent_compare.py
 
 # Format all .tw source files owned by boot, excluding generated core_lib.
 fmt: target/twk
