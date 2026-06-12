@@ -32,8 +32,9 @@ Deliberately excluded; all are additive later and none change the architecture:
   `Vector<Int>` of code points before matching, so `.` and the classes match one
   scalar regardless of UTF-8 encoding.
 - **Captures via `group(i)`, 1-based**, with `group(0)` = the whole match.
-- **Pike VM** (Thompson NFA simulated in lockstep with capture slots): linear in
-  input × program per anchored run, no catastrophic backtracking.
+- **Single-pass Pike VM** (Thompson NFA simulated in lockstep with capture
+  slots): one left-to-right pass, O(n·m), no catastrophic backtracking.
+  Unanchored search seeds a fresh start thread per position at lowest priority.
 - **Pre-materialized captures**: a `Match` holds the captured substrings
   directly, so it does not keep the source string alive across an
   `Iterator<Match>`.
@@ -114,23 +115,45 @@ rewriting the range bounds). Non-ASCII scalars pass through unchanged.
 `^` matches only position 0; `$` matches only end-of-input (no multiline in v1).
 `.` matches any scalar except `\n`.
 
-### Unanchored search (v1 strategy)
+### Unanchored search (single-pass Pike VM)
 
-`find`/`find_all` are unanchored. v1 implements this as: for each start position
-`0..len`, run the **anchored** Pike VM from that start; take the first start that
-produces a match. The first matching start gives leftmost; the greedy-priority VM
-at that start gives the greedy match — together, correct leftmost-greedy. This is
-O(n²·m) worst case (n = input scalar length, m = program length), which is fine
-for the target inputs. A single-pass lockstep
-seed-per-position version (O(n·m)) is a v2 optimization, deferred because its
-capture/priority bookkeeping is easy to get wrong.
+`find`/`find_all` are unanchored, implemented as one left-to-right pass of the
+Pike VM (O(n·m); n = input scalar length, m = program length). At each position
+`pos` in `0..=len`, **if no match has been recorded yet**, a fresh start thread
+(`pc = 0`) is seeded into the current thread list at **lowest priority** (appended
+after existing threads). Because older start positions sit ahead of newer ones in
+priority order, an older start that can still match wins → **leftmost**. Within a
+single start, `Split(x, y)` exploring `x` first gives **greedy / first-alternation**
+priority.
+
+**Match handling is record-and-continue, not return-on-first-match.** When a
+thread reaches `Match`, record its slots as the current best and **cut all
+lower-priority threads in this generation** (they cannot beat it) — but keep
+stepping the higher-priority threads already carried into the next generation, so
+a greedy loop can extend to a longer match and overwrite the record. Return the
+last recorded match when the input is exhausted (or the thread list empties).
+
+> Returning immediately the first time any thread reaches `Match` is a **greedy
+> bug**: for `a+` on `"aaa"` the exit branch of the first `a` reaches `Match` at
+> `pos 1` while the higher-priority loop thread is still alive, so an
+> early return yields `"a"` instead of `"aaa"`. Record-and-continue with the
+> lower-priority cut is what makes it greedy *and* leftmost.
+
+Once a match is recorded, **stop seeding new start threads** (a later start cannot
+beat an already-found earlier match), but let the in-flight higher-priority
+threads finish extending.
 
 ### `find_all` and empty matches
 
-`find_all` is built with `Iterator.unfold(pos, step)`. After a match `[s, e)`,
-the scan resumes at `e`; if the match was empty (`s == e`), it resumes at `e + 1`
-to make progress. **Invariant:** scanning stops once the resume position exceeds
-`len`. Thus `a*` over `""` yields exactly one match `[0, 0)` and then halts.
+The VM exposes `find_from(re, chars, start) Match?` — the same single pass, but
+the first seed is placed at `pos = start` and no thread is seeded before `start`,
+so it returns the leftmost match at or after `start`. `find` is `find_from(.., 0)`.
+
+`find_all` is built with `Iterator.unfold(start, step)`, where each step calls
+`find_from(re, chars, start)`. After a match `[s, e)` the scan resumes at `e`; if
+the match was empty (`s == e`), it resumes at `e + 1` to make progress.
+**Invariant:** scanning stops once the resume position exceeds `len`. Thus `a*`
+over `""` yields exactly one match `[0, 0)` and then halts.
 
 ### Replacement (`$` expansion)
 
@@ -199,19 +222,39 @@ slot pair `0`/`1` brackets the whole match — the whole program is wrapped as
 `Save(0) <body> Save(1) Match`. Greedy comes from putting the loop/continue body
 (`B`) before the exit (`D`) in every `Split`.
 
-### `vm` — Pike VM over a scalar array
+### `vm` — single-pass Pike VM over a scalar array
 
-Runs a `Program` anchored at a given start over the decoded `Vector<Int>`,
-stepping positions while advancing a priority-ordered thread list; each thread
-carries its capture-slot array. On reaching `Match`, the winning slots are sliced
-out of the scalar array into substrings to build the `groups` vector. Priority
-ordering (from `Split(x, y)` putting `x` first) yields greedy/leftmost-first
-semantics without backtracking.
+`find_from(re, chars, start) Match?` runs one left-to-right pass over the decoded
+`Vector<Int>`, advancing a priority-ordered thread list; each thread carries its
+capture-slot array.
 
-Because search is unanchored by trying each start position, anchors are absolute,
-**not** relative to the search start: `Assert(Start)` checks current input
-position `== 0` (not `== search_start`), and `Assert(End)` checks position
-`== len`. Getting this wrong is the easiest bug to introduce here.
+The core primitive is **`add_thread(list, thread, pos)`** — it appends a thread
+*and recursively follows all zero-width instructions* (the ε-closure), so the
+list is always ε-closed and runnable:
+
+- `Jmp(x)` → `add_thread(pc := x)`
+- `Split(x, y)` → `add_thread(x)` **then** `add_thread(y)` (x first = priority)
+- `Save(slot)` → set `slots[slot] = pos`, `add_thread(pc + 1)`
+- `Assert(Start)` → if `pos == 0`, `add_thread(pc + 1)`, else drop
+- `Assert(End)` → if `pos == len`, `add_thread(pc + 1)`, else drop
+- `Char` / `Any` / `Class` / `Match` → append the thread (consuming/terminal)
+
+`add_thread` dedups by `pc` **within a single generation** (a per-step visited
+set), keeping the *first* thread to reach each `pc` — which, given priority-order
+insertion, has the winning captures. This dedup is what stops the list exploding.
+
+Each step seeds (per the search rules above), then iterates the list in priority
+order: `Match` → record + cut; `Char(c)`/`Any`/`Class` matching the current scalar
+→ `add_thread(next, pc + 1, pos + 1)`; otherwise drop. On the recorded match the
+winning slots are sliced out of the scalar array into substrings to build the
+`groups` vector.
+
+Anchors are **absolute**, not relative to `start`: `Assert(Start)` checks input
+position `== 0` (not `== start`), `Assert(End)` checks `== len`. Getting this
+wrong is the easiest bug to introduce here.
+
+Threads are immutable records (`Thread.{ pc, slots }`) rebound functionally
+(`t.with_pc(...)`, slot updates via `Vector.set`), matching Twinkle's value model.
 
 ## File layout & wiring
 
@@ -257,5 +300,4 @@ Per-layer suites on the existing `assert`/`runner` harness:
 
 `compile_with(pattern, .{ ignore_case, multiline, dotall })`; lazy quantifiers;
 inline-scoped flags (`(?i:…)`); multiline/dotall; named groups; lookaround;
-backreferences (would require dropping the linear-time guarantee); single-pass
-lockstep unanchored search for O(n·m).
+backreferences (would require dropping the linear-time guarantee).
