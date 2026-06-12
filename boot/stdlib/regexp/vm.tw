@@ -1,0 +1,168 @@
+/// Internal — unstable. Single-pass Pike VM. Not part of the public surface.
+/// See docs/plans/regexp.md ("Unanchored search" / "vm") for the algorithm.
+
+use .types.{ClassItem, Inst}
+
+type Thread = .{ pc: Int, slots: Vector<Int> }
+
+// A generation of runnable threads plus a per-generation `seen` set (indexed by
+// pc) that dedups the ε-closure, keeping the first (highest-priority) thread to
+// reach each pc.
+type Gen = .{ threads: Vector<Thread>, seen: Vector<Bool> }
+
+fn fresh_slots(nslots: Int) Vector<Int> {
+  Vector.make(nslots, -1)
+}
+
+fn new_gen(prog_len: Int) Gen {
+  Gen.{ threads: [], seen: Vector.make(prog_len, false) }
+}
+
+// Add a thread at `pc`, following all zero-width instructions (the ε-closure).
+fn add_thread(prog: Vector<Inst>, gen: Gen, pc: Int, slots: Vector<Int>, pos: Int, len: Int) Gen {
+  if gen.seen[pc] {
+    return gen
+  }
+
+  g := gen
+  g.seen = .set_at(pc, true)
+
+  case prog[pc] {
+    .Jmp(x) => add_thread(prog, g, x, slots, pos, len),
+    .Split(x, y) => {
+      g = add_thread(prog, g, x, slots, pos, len)
+      add_thread(prog, g, y, slots, pos, len)
+    },
+    .Save(slot) => add_thread(prog, g, pc + 1, slots.set_at(slot, pos), pos, len),
+    .AssertStart => if pos == 0 {
+      add_thread(prog, g, pc + 1, slots, pos, len)
+    } else {
+      g
+    },
+    .AssertEnd => if pos == len {
+      add_thread(prog, g, pc + 1, slots, pos, len)
+    } else {
+      g
+    },
+    _ => {
+      // Char / AnyChar / Class / Match: a consuming or terminal state — keep it.
+      g.threads = .append(Thread.{ pc, slots })
+      g
+    },
+  }
+}
+
+// Does the consuming instruction at `pc` accept scalar `ch`?
+fn inst_matches(prog: Vector<Inst>, pc: Int, ch: Int, ignore_case: Bool) Bool {
+  case prog[pc] {
+    .Char(c) => scalar_eq(c, ch, ignore_case),
+    .AnyChar => ch != 10,
+    .Class(items, negated) => class_match(items, ch, negated, ignore_case),
+    _ => false,
+  }
+}
+
+/// Find the leftmost match at or after `start`. Returns the winning capture
+/// slots (`-1` for unset), or `.None`. Single left-to-right pass: seed a fresh
+/// start thread per position at lowest priority (leftmost) while no match is
+/// recorded; on `Match`, record and cut lower-priority threads but keep stepping
+/// higher-priority ones (greedy).
+pub fn find_from(prog: Vector<Inst>, chars: Vector<Int>, start: Int, ignore_case: Bool, nslots: Int) Vector<
+  Int,
+>? {
+  len := chars.len()
+  clist := new_gen(prog.len())
+  matched: Vector<Int>? = .None
+  pos := start
+
+  for true {
+    case matched {
+      .None => {
+        clist = add_thread(prog, clist, 0, fresh_slots(nslots), pos, len)
+      },
+      .Some(_) => {},
+    }
+
+    nlist := new_gen(prog.len())
+    ch := if pos < len {
+      chars[pos]
+    } else {
+      -1
+    }
+
+    i := 0
+    stop := false
+
+    for i < clist.threads.len() and !stop {
+      t := clist.threads[i]
+
+      case prog[t.pc] {
+        .Match => {
+          matched = .Some(t.slots)
+          stop = true
+        },
+        _ => if pos < len and inst_matches(prog, t.pc, ch, ignore_case) {
+          nlist = add_thread(prog, nlist, t.pc + 1, t.slots, pos + 1, len)
+        },
+      }
+
+      i = i + 1
+    }
+
+    if pos >= len {
+      return matched
+    }
+
+    clist = nlist
+    pos = pos + 1
+  }
+
+  matched
+}
+
+fn scalar_eq(a: Int, b: Int, ignore_case: Bool) Bool {
+  if a == b {
+    true
+  } else if ignore_case {
+    fold(a) == fold(b)
+  } else {
+    false
+  }
+}
+
+// ASCII uppercase -> lowercase; everything else unchanged.
+fn fold(c: Int) Int {
+  if c >= 65 and c <= 90 {
+    c + 32
+  } else {
+    c
+  }
+}
+
+fn class_match(items: Vector<ClassItem>, ch: Int, negated: Bool, ignore_case: Bool) Bool {
+  hit := false
+
+  for it in items {
+    if ch >= it.lo and ch <= it.hi or ignore_case and in_folded(it, ch) {
+      hit = true
+    }
+  }
+
+  if negated {
+    !hit
+  } else {
+    hit
+  }
+}
+
+// Under ignore_case, an ASCII letter also matches the range of its other case.
+fn in_folded(it: ClassItem, ch: Int) Bool {
+  lower := fold(ch)
+  upper := if ch >= 97 and ch <= 122 {
+    ch - 32
+  } else {
+    ch
+  }
+
+  lower >= it.lo and lower <= it.hi or upper >= it.lo and upper <= it.hi
+}

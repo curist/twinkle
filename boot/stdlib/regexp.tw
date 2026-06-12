@@ -1,7 +1,10 @@
 /// Regular expressions (pure Twinkle). Public surface: `@std.regexp`.
 /// See docs/plans/regexp.md for the design and supported subset.
 
+use .regexp.parse
+use .regexp.program
 use .regexp.types
+use .regexp.vm
 
 /// Parse/compile error: `pos` is the scalar offset into the pattern.
 pub type RegexError = types.RegexError
@@ -13,7 +16,96 @@ pub type Regexp = .{ program: Vector<types.Inst>, group_count: Int, ignore_case:
 /// whole match, `groups[1..]` the capturing groups (`.None` if unmatched).
 pub type Match = .{ start: Int, end: Int, groups: Vector<String?> }
 
-/// Placeholder so the module compiles; replaced in Task 4.
-pub fn version() Int {
-  1
+/// Compile a pattern, returning a `RegexError` for a malformed pattern.
+pub fn compile(pattern: String) Result<Regexp, RegexError> {
+  case parse.parse(pattern) {
+    .Ok(p) => {
+      prog := program.compile(p.ast)
+      .Ok(Regexp.{ program: prog, group_count: p.group_count, ignore_case: p.ignore_case })
+    },
+    .Err(e) => .Err(e),
+  }
+}
+
+/// Compile a pattern, trapping on error. For author-written literal patterns.
+pub fn must(pattern: String) Regexp {
+  case compile(pattern) {
+    .Ok(re) => re,
+    .Err(e) => error("regexp:${e.pos}: ${e.message}"),
+  }
+}
+
+/// Does the pattern match anywhere in `s`?
+pub fn test(re: Regexp, s: String) Bool {
+  case find(re, s) {
+    .Some(_) => true,
+    .None => false,
+  }
+}
+
+/// The leftmost match in `s`, or `.None`.
+pub fn find(re: Regexp, s: String) Match? {
+  chars := parse.decode(s)
+  nslots := 2 * (re.group_count + 1)
+
+  case vm.find_from(re.program, chars, 0, re.ignore_case, nslots) {
+    .Some(slots) => .Some(materialize(chars, slots, re.group_count)),
+    .None => .None,
+  }
+}
+
+fn materialize(chars: Vector<Int>, slots: Vector<Int>, group_count: Int) Match {
+  groups: Vector<String?> = []
+  k := 0
+
+  for k <= group_count {
+    lo := slots[2 * k]
+    hi := slots[2 * k + 1]
+
+    if lo >= 0 and hi >= 0 {
+      groups = .append(.Some(slice_scalars(chars, lo, hi)))
+    } else {
+      groups = .append(.None)
+    }
+
+    k = k + 1
+  }
+
+  Match.{ start: slots[0], end: slots[1], groups }
+}
+
+/// The i-th group: `group(0)` is the whole match. `.None` if `i` is out of
+/// range or that group did not participate.
+pub fn group(m: Match, i: Int) String? {
+  if i < 0 or i >= m.groups.len() {
+    .None
+  } else {
+    m.groups[i]
+  }
+}
+
+/// The whole matched text (`group(0)`).
+pub fn text(m: Match) String {
+  case group(m, 0) {
+    .Some(s) => s,
+    .None => "",
+  }
+}
+
+fn slice_scalars(chars: Vector<Int>, lo: Int, hi: Int) String {
+  out := ""
+  i := lo
+
+  for i < hi {
+    case String.from_code_point(chars[i]) {
+      .Some(s) => {
+        out = .concat(s)
+      },
+      .None => {},
+    }
+
+    i = i + 1
+  }
+
+  out
 }
