@@ -92,10 +92,16 @@ impl Lexer {
 
         // An interpolation inside a `\\` block must open and close on one line.
         if saw_newline
-            && matches!(self.interpolation_stack.last(), Some((_, StringKind::Multiline)))
+            && matches!(
+                self.interpolation_stack.last(),
+                Some((_, StringKind::Multiline))
+            )
         {
             let span = Span::new(self.file_id, start as u32, start as u32);
-            return Err(LexError::new(LexErrorKind::MultilineInterpAcrossLines, span));
+            return Err(LexError::new(
+                LexErrorKind::MultilineInterpAcrossLines,
+                span,
+            ));
         }
 
         if self.is_eof() {
