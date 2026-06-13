@@ -509,6 +509,7 @@ module.exports = grammar({
       $.float_literal,
       $.bool_literal,
       $.string_literal,
+      $.raw_string_literal,
     ),
 
     identifier_pattern: $ => $.identifier,
@@ -556,6 +557,7 @@ module.exports = grammar({
 
     _literal: $ => choice(
       prec.dynamic(5, $.string_literal), // prefer strings so the lexer chooses them early
+      prec.dynamic(5, $.raw_string_literal),
       $.int_literal,
       $.char_literal,
       $.float_literal,
@@ -644,6 +646,20 @@ module.exports = grammar({
       $._expression,
       token.immediate('}'),
     ),
+
+    // Raw single-line string: `r"…"`. No escape processing (backslashes are
+    // ordinary), but interpolation still fires. Cannot contain `"` or a newline.
+    raw_string_literal: $ => seq(
+      'r"',
+      repeat(choice(
+        $.raw_string_content,
+        $.interpolation,
+        token.immediate('$'),
+      )),
+      '"',
+    ),
+
+    raw_string_content: $ => token.immediate(prec(1, /[^\n"$]+/)),
 
     int_literal: $ => choice(
       /0x[0-9a-fA-F]+/,

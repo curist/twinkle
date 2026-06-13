@@ -1,0 +1,69 @@
+use compiler.lexer
+use compiler.tokens.{Token, TokenKind}
+use tests.assert
+use tests.runner
+
+// Non-trivia, non-Eof tokens from lexing `src`.
+fn lex_tokens(src: String) Vector<Token> {
+  result := lexer.lex(src, 0)
+  collect t in result.value {
+    t
+  }
+}
+
+pub fn suite() runner.Suite {
+  runner.suite("string literals")
+    .test(
+      "raw single-line keeps backslashes literal",
+      fn() {
+        toks := lex_tokens("r\"\\d+\"")
+        try assert.is_true(toks[0].kind == .StringLit)
+        try assert.equal(toks[0].text, "\\d+")
+        .Ok({})
+      },
+    )
+    .test(
+      "raw interpolation keeps both segments raw",
+      fn() {
+        // r"\d ${x} z\w" — backslashes stay literal across the interpolation.
+        toks := lex_tokens("r\"\\d ".concat("$").concat("{x} z\\w\""))
+        try assert.is_true(toks[0].kind == .StringStart)
+        try assert.equal(toks[0].text, "\\d ")
+        try assert.is_true(toks[1].kind == .Ident)
+        try assert.is_true(toks[2].kind == .StringEnd)
+        try assert.equal(toks[2].text, " z\\w")
+        .Ok({})
+      },
+    )
+    .test(
+      "raw backslash-n is two chars, not a newline",
+      fn() {
+        toks := lex_tokens("r\"\\n\"")
+        try assert.is_true(toks[0].kind == .StringLit)
+        try assert.equal(toks[0].text, "\\n")
+        try assert.equal(toks[0].text.len(), 2)
+        .Ok({})
+      },
+    )
+    .test(
+      "raw string with a literal newline is unterminated",
+      fn() {
+        result := lexer.lex("r\"abc\ndef\"", 0)
+        try assert.is_true(result.diagnostics.len() > 0)
+        .Ok({})
+      },
+    )
+    .test(
+      "r prefix only applies immediately before a quote",
+      fn() {
+        red := lex_tokens("red")
+        try assert.is_true(red[0].kind == .Ident)
+        try assert.equal(red[0].text, "red")
+
+        bare := lex_tokens("r + 1")
+        try assert.is_true(bare[0].kind == .Ident)
+        try assert.equal(bare[0].text, "r")
+        .Ok({})
+      },
+    )
+}

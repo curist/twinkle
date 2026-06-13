@@ -443,6 +443,10 @@
             "named": true
           },
           {
+            "type": "raw_string_literal",
+            "named": true
+          },
+          {
             "type": "receiver_shorthand",
             "named": true
           },
@@ -1087,6 +1091,10 @@
             "named": true
           },
           {
+            "type": "raw_string_literal",
+            "named": true
+          },
+          {
             "type": "receiver_shorthand",
             "named": true
           },
@@ -1508,6 +1516,10 @@
             "named": true
           },
           {
+            "type": "raw_string_literal",
+            "named": true
+          },
+          {
             "type": "receiver_shorthand",
             "named": true
           },
@@ -1605,6 +1617,10 @@
         },
         {
           "type": "int_literal",
+          "named": true
+        },
+        {
+          "type": "raw_string_literal",
           "named": true
         },
         {
@@ -1972,6 +1988,25 @@
       "types": [
         {
           "type": "logical_or_expression",
+          "named": true
+        }
+      ]
+    }
+  },
+  {
+    "type": "raw_string_literal",
+    "named": true,
+    "fields": {},
+    "children": {
+      "multiple": true,
+      "required": false,
+      "types": [
+        {
+          "type": "interpolation",
+          "named": true
+        },
+        {
+          "type": "raw_string_content",
           "named": true
         }
       ]
@@ -2591,6 +2626,10 @@
           "named": true
         },
         {
+          "type": "raw_string_literal",
+          "named": true
+        },
+        {
           "type": "receiver_shorthand",
           "named": true
         },
@@ -2942,6 +2981,14 @@
   {
     "type": "pub",
     "named": false
+  },
+  {
+    "type": "r\"",
+    "named": false
+  },
+  {
+    "type": "raw_string_content",
+    "named": true
   },
   {
     "type": "return",

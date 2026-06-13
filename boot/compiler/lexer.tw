@@ -8,6 +8,22 @@ use .tokens.{Token, TokenKind, Trivia, TriviaKind}
 
 type ScanStringResult = .{ next_index: Int, text: String, terminated: Bool, found_interp: Bool }
 
+// Which surface string an open interpolation belongs to, so the scan resuming
+// after `}` picks the matching segment scanner. Two-way for now (cooked / raw);
+// Milestone 3 widens this with a Multiline arm.
+type StringKind = { Cooked, Raw }
+
+// One entry per open `${…}`: `depth` tracks nested braces inside the
+// interpolation; `host` records which string the interpolation lives in.
+type InterpFrame = .{ depth: Int, host: StringKind }
+
+fn scan_host_segment(source: String, from: Int, content_start: Int, host: StringKind) ScanStringResult {
+  case host {
+    .Cooked => scan_string_segment(source, from, content_start),
+    .Raw => scan_raw_string_segment(source, from, content_start),
+  }
+}
+
 fn keyword_or_ident(text: String) TokenKind {
   case text {
     "use" => .Use,
@@ -243,13 +259,56 @@ fn scan_string_segment(source: String, from: Int, content_start: Int) ScanString
   }
 }
 
+// Raw single-line string: `\` is an ordinary character (no escape processing),
+// `"` always terminates, `${` always interpolates. Mirrors scan_string_segment
+// but never sets `escaped` and returns the slice without unescape_string.
+fn scan_raw_string_segment(source: String, from: Int, content_start: Int) ScanStringResult {
+  i := from
+  n := source.len()
+
+  for i < n {
+    ch := source[i]
+
+    if ch == '\"' {
+      return ScanStringResult.{
+        next_index: i + 1,
+        text: source.slice(content_start, i),
+        terminated: true,
+        found_interp: false,
+      }
+    }
+
+    if ch == '$' and i + 1 < n and source[i + 1] == '{' {
+      return ScanStringResult.{
+        next_index: i + 2,
+        text: source.slice(content_start, i),
+        terminated: false,
+        found_interp: true,
+      }
+    }
+
+    if ch == '\n' {
+      break
+    }
+
+    i = i + 1
+  }
+
+  ScanStringResult.{
+    next_index: i,
+    text: source.slice(content_start, i),
+    terminated: false,
+    found_interp: false,
+  }
+}
+
 pub fn lex(source: String, file_id: Int) StageResult<Vector<Token>> {
   out: Vector<Token> = []
   diagnostics_out: Vector<DiagKind> = []
   i := 0
   saw_newline := false
   n := source.len()
-  interp_depths: Vector<Int> = []
+  interp_depths: Vector<InterpFrame> = []
   trivia_buf: Vector<Trivia> = []
   blank_pending := false
 
@@ -315,11 +374,13 @@ pub fn lex(source: String, file_id: Int) StageResult<Vector<Token>> {
     blank_pending = false
 
     if interp_depths.len() > 0 {
-      depth := interp_depths[interp_depths.len() - 1]
+      frame := interp_depths[interp_depths.len() - 1]
+      depth := frame.depth
+      host := frame.host
 
       if c == '{' {
         i = i + 1
-        interp_depths = .drop_last().append(depth + 1)
+        interp_depths = .drop_last().append(InterpFrame.{ depth: depth + 1, host })
         out = .append(
           make_token(.LBrace, source, token_start, i, file_id, preceded_by_newline, leading_trivia),
         )
@@ -329,7 +390,7 @@ pub fn lex(source: String, file_id: Int) StageResult<Vector<Token>> {
       if c == '}' {
         if depth > 1 {
           i = i + 1
-          interp_depths = .drop_last().append(depth - 1)
+          interp_depths = .drop_last().append(InterpFrame.{ depth: depth - 1, host })
           out = .append(
             make_token(
               .RBrace,
@@ -346,7 +407,7 @@ pub fn lex(source: String, file_id: Int) StageResult<Vector<Token>> {
 
         interp_depths = .drop_last()
         i = i + 1
-        scanned := scan_string_segment(source, i, i)
+        scanned := scan_host_segment(source, i, i, host)
         i = scanned.next_index
 
         if scanned.found_interp {
@@ -361,7 +422,7 @@ pub fn lex(source: String, file_id: Int) StageResult<Vector<Token>> {
               leading_trivia,
             ),
           )
-          interp_depths = .append(1)
+          interp_depths = .append(InterpFrame.{ depth: 1, host })
           continue
         }
 
@@ -384,6 +445,49 @@ pub fn lex(source: String, file_id: Int) StageResult<Vector<Token>> {
         )
         continue
       }
+    }
+
+    // Raw single-line string prefix: `r` immediately followed by `"`.
+    // `r` before anything else is an ordinary identifier (handled below).
+    if c == 'r' and i + 1 < n and source[i + 1] == '\"' {
+      i = i + 2
+      scanned := scan_raw_string_segment(source, i, i)
+      i = scanned.next_index
+
+      if scanned.found_interp {
+        out = .append(
+          make_token_text(
+            .StringStart,
+            scanned.text,
+            token_start,
+            i,
+            file_id,
+            preceded_by_newline,
+            leading_trivia,
+          ),
+        )
+        interp_depths = .append(InterpFrame.{ depth: 1, host: .Raw })
+        continue
+      }
+
+      if !scanned.terminated {
+        diagnostics_out = .append(
+          diag.error(span.new(file_id, token_start, i), "unterminated string literal"),
+        )
+      }
+
+      out = .append(
+        make_token_text(
+          .StringLit,
+          scanned.text,
+          token_start,
+          i,
+          file_id,
+          preceded_by_newline,
+          leading_trivia,
+        ),
+      )
+      continue
     }
 
     if is_ident_start(c) {
@@ -517,7 +621,7 @@ pub fn lex(source: String, file_id: Int) StageResult<Vector<Token>> {
             leading_trivia,
           ),
         )
-        interp_depths = .append(1)
+        interp_depths = .append(InterpFrame.{ depth: 1, host: .Cooked })
         continue
       }
 

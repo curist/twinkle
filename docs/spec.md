@@ -1051,6 +1051,32 @@ Twinkle string literals support these escapes:
 Migration note: code that previously built ESC with `String.from_char_code(27)` can
 be simplified to `"\e"` or `"\x1b"` in literals.
 
+### Raw String Literals
+
+A raw string literal is written `r"…"`. Inside it, `\` is an ordinary
+character — **no escape processing happens** — so a regex like `\d+` is written
+`r"\d+"` instead of `"\\d+"`:
+
+```tw
+r"\d+"        // value: \d+   (backslash, d, plus)
+r"C:\temp"    // value: C:\temp
+```
+
+The `r` is a raw-string prefix **only** when immediately followed by `"`; `r`
+anywhere else (`range`, `red`, a variable named `r`) is an ordinary identifier.
+
+Because `\` is literal, there is no `\"` escape, so **a raw string cannot
+contain `"`** and cannot span a line (a literal newline is an
+`unterminated string literal` error). For those cases, use a cooked `"…"`
+string.
+
+String interpolation still fires inside a raw string; only escape processing is
+turned off:
+
+```tw
+r"id=${user.id}"   // interpolates user.id; the rest is verbatim
+```
+
 ### Character Literals
 
 A character literal `'c'` denotes the **integer code point** of a single

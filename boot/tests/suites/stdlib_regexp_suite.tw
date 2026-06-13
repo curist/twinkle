@@ -43,6 +43,21 @@ pub fn suite() runner.Suite {
       },
     )
     .test(
+      "raw string pattern passes backslashes through",
+      fn() {
+        // r"(\d+)-(\d+)" — no doubled backslashes needed.
+        case regexp.must(r"(\d+)-(\d+)").find("order 42-17 done") {
+          .Some(m) => {
+            try assert.equal(m.text(), "42-17")
+            try assert.equal(group_or(m, 1, "?"), "42")
+            try assert.equal(group_or(m, 2, "?"), "17")
+          },
+          .None => { return assert.fail("expected raw-pattern match") },
+        }
+        .Ok({})
+      },
+    )
+    .test(
       "classes and dot",
       fn() {
         try assert.is_true(regexp.must("a.c").test("axc"))

@@ -76,6 +76,10 @@
 (string_content) @string
 (escape_sequence) @string.escape
 
+; Raw strings — no @string.escape, since `\` is a literal character here.
+(raw_string_literal) @string
+(raw_string_content) @string
+
 ; Comments
 (comment) @comment
 

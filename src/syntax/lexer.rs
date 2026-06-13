@@ -29,14 +29,22 @@ impl LexError {
     }
 }
 
+/// Which surface string an open interpolation belongs to, so the scan resuming
+/// after `}` picks the matching segment rules (escapes processed or raw).
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum StringKind {
+    Cooked,
+    Raw,
+}
+
 pub struct Lexer {
     source: Vec<char>,
     file_id: FileId,
     pos: usize,
     /// Byte offset corresponding to `pos`, used for span creation.
     byte_pos: usize,
-    /// Stack of active `${...}` interpolation contexts (top = current depth).
-    interpolation_stack: Vec<u32>,
+    /// Stack of active `${...}` interpolation contexts: `(brace_depth, host)`.
+    interpolation_stack: Vec<(u32, StringKind)>,
 }
 
 impl Lexer {
@@ -89,6 +97,10 @@ impl Lexer {
         let mut token = match ch {
             // String literals
             '"' => self.lex_string()?,
+
+            // Raw single-line string: `r` immediately followed by `"`. Any other
+            // `r` is an ordinary identifier (handled by the alphanumeric arm).
+            'r' if self.peek_ahead(1) == '"' => self.lex_raw_string()?,
 
             // Character literals (lex to an integer code-point token)
             '\'' => self.lex_char()?,
@@ -420,7 +432,7 @@ impl Lexer {
             // This is a string with interpolation
             self.advance(); // consume $
             self.advance(); // consume {
-            self.interpolation_stack.push(1);
+            self.interpolation_stack.push((1, StringKind::Cooked));
 
             let span = Span::new(self.file_id, start as u32, self.byte_pos as u32);
             Ok(Token::new(TokenKind::StringStart, span, value))
@@ -437,9 +449,60 @@ impl Lexer {
         }
     }
 
+    /// Raw single-line string: `\` is literal (no escapes), `"` terminates, `${`
+    /// interpolates. Mirrors `lex_string` but never decodes escapes.
+    fn lex_raw_string(&mut self) -> LexResult<Token> {
+        let start = self.byte_pos;
+        self.advance(); // consume r
+        self.advance(); // consume opening "
+
+        let (value, terminated, has_interpolation) = self.scan_raw_segment();
+
+        if has_interpolation {
+            self.advance(); // consume $
+            self.advance(); // consume {
+            self.interpolation_stack.push((1, StringKind::Raw));
+
+            let span = Span::new(self.file_id, start as u32, self.byte_pos as u32);
+            Ok(Token::new(TokenKind::StringStart, span, value))
+        } else {
+            if !terminated {
+                let span = Span::new(self.file_id, start as u32, self.byte_pos as u32);
+                return Err(LexError::new(LexErrorKind::UnterminatedString, span));
+            }
+
+            self.advance(); // consume closing "
+            let span = Span::new(self.file_id, start as u32, self.byte_pos as u32);
+            Ok(Token::new(TokenKind::StringLit, span, value))
+        }
+    }
+
+    /// Scan a raw segment up to the closing `"`, an opening `${`, or a line break.
+    /// Returns `(value, terminated, found_interp)`. The cursor stops on the
+    /// terminator/`$` without consuming it (callers advance as needed).
+    fn scan_raw_segment(&mut self) -> (String, bool, bool) {
+        let mut value = String::new();
+
+        while !self.is_eof() {
+            let ch = self.peek();
+            if ch == '"' {
+                return (value, true, false);
+            }
+            if ch == '$' && self.peek_ahead(1) == '{' {
+                return (value, false, true);
+            }
+            if ch == '\n' {
+                break;
+            }
+            value.push(self.advance());
+        }
+
+        (value, false, false)
+    }
+
     fn lex_string_continuation(&mut self) -> LexResult<Token> {
         // We're inside a string interpolation, lexing tokens until we hit a closing }
-        let brace_depth = *self
+        let (brace_depth, host) = *self
             .interpolation_stack
             .last()
             .expect("interpolation stack must be non-empty");
@@ -450,7 +513,7 @@ impl Lexer {
                 .interpolation_stack
                 .last_mut()
                 .expect("interpolation stack must be non-empty");
-            *top += 1;
+            top.0 += 1;
             return Ok(self.lex_single(TokenKind::LBrace));
         }
 
@@ -471,30 +534,35 @@ impl Lexer {
                 let start = self.byte_pos;
                 self.advance(); // consume }
 
-                let mut value = String::new();
-                let mut has_more_interpolation = false;
-
-                while !self.is_eof() && self.peek() != '"' {
-                    if self.peek() == '\\' {
-                        let escaped = self.parse_escape_sequence()?;
-                        value.push(escaped);
-                    } else if self.peek() == '$' && self.peek_ahead(1) == '{' {
-                        has_more_interpolation = true;
-                        break;
-                    } else {
-                        value.push(self.advance());
+                let (value, terminated, has_more_interpolation) = match host {
+                    StringKind::Cooked => {
+                        let mut value = String::new();
+                        let mut found_interp = false;
+                        while !self.is_eof() && self.peek() != '"' {
+                            if self.peek() == '\\' {
+                                let escaped = self.parse_escape_sequence()?;
+                                value.push(escaped);
+                            } else if self.peek() == '$' && self.peek_ahead(1) == '{' {
+                                found_interp = true;
+                                break;
+                            } else {
+                                value.push(self.advance());
+                            }
+                        }
+                        (value, !self.is_eof() && !found_interp, found_interp)
                     }
-                }
+                    StringKind::Raw => self.scan_raw_segment(),
+                };
 
                 if has_more_interpolation {
                     self.advance(); // consume $
                     self.advance(); // consume {
-                    self.interpolation_stack.push(1);
+                    self.interpolation_stack.push((1, host));
 
                     let span = Span::new(self.file_id, start as u32, self.byte_pos as u32);
                     Ok(Token::new(TokenKind::StringContinue, span, value))
                 } else {
-                    if self.is_eof() {
+                    if !terminated {
                         let span = Span::new(self.file_id, start as u32, self.byte_pos as u32);
                         return Err(LexError::new(LexErrorKind::UnterminatedString, span));
                     }
@@ -509,7 +577,7 @@ impl Lexer {
                     .interpolation_stack
                     .last_mut()
                     .expect("interpolation stack must be non-empty");
-                *top = new_depth;
+                top.0 = new_depth;
                 Ok(self.lex_single(TokenKind::RBrace))
             }
         } else {
@@ -832,6 +900,31 @@ mod tests {
         let result = Lexer::lex(r#""\x1"#, FileId(0));
         assert!(result.is_err());
         assert_eq!(result.unwrap_err().kind, LexErrorKind::InvalidHexEscape);
+    }
+
+    #[test]
+    fn test_lex_raw_string_keeps_backslashes() {
+        let tokens = lex_simple(r#"r"\d+""#);
+        assert_eq!(tokens[0].kind, TokenKind::StringLit);
+        assert_eq!(tokens[0].text, r"\d+");
+    }
+
+    #[test]
+    fn test_lex_raw_string_interpolation_stays_raw() {
+        let tokens = lex_simple(r#"r"\d ${x} z\w""#);
+        assert_eq!(tokens[0].kind, TokenKind::StringStart);
+        assert_eq!(tokens[0].text, r"\d ");
+        assert_eq!(tokens[1].kind, TokenKind::Ident);
+        assert_eq!(tokens[1].text, "x");
+        assert_eq!(tokens[2].kind, TokenKind::StringEnd);
+        assert_eq!(tokens[2].text, r" z\w");
+    }
+
+    #[test]
+    fn test_raw_prefix_only_before_quote() {
+        let tokens = lex_simple("red");
+        assert_eq!(tokens[0].kind, TokenKind::Ident);
+        assert_eq!(tokens[0].text, "red");
     }
 
     #[test]

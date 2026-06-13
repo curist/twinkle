@@ -19,7 +19,7 @@ fn format_ok(src: String) Result<String, String> {
     return .Err("expected no parser diagnostics")
   }
 
-  .Ok(formatter.format(parsed.value, lexed.value))
+  .Ok(formatter.format(parsed.value, lexed.value, src))
 }
 
 fn read_case(name: String, suffix: String) Result<String, String> {
@@ -48,6 +48,11 @@ fn test_unicode_escape_formatting() Result<Void, String> {
   assert.equal(formatted, "fn f() String {\n  \"e\"\n}\n")
 }
 
+fn test_raw_string_preserved() Result<Void, String> {
+  formatted := try format_ok("fn f() String { r\"\\d+\" }")
+  assert.equal(formatted, "fn f() String {\n  r\"\\d+\"\n}\n")
+}
+
 fn test_dollar_string_formatting() Result<Void, String> {
   formatted := try format_ok("fn f() String { \"byte$to_int\" }")
   try assert.equal(formatted, "fn f() String {\n  \"byte$to_int\"\n}\n")
@@ -65,6 +70,7 @@ pub fn suite() runner.Suite {
     .test("formats declarations and top-level spacing", assert_fmt_case("declarations"))
     .test("formats unicode escapes as scalars", test_unicode_escape_formatting)
     .test("formats dollar strings without changing meaning", test_dollar_string_formatting)
+    .test("preserves raw single-line strings", test_raw_string_preserved)
     .test("formats literals and wrapped calls", assert_fmt_case("literals_and_calls"))
     .test("formats control-flow blocks", assert_fmt_case("control_flow"))
     .test(

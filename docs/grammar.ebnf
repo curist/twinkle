@@ -508,6 +508,7 @@ Literal =
     | CharLiteral
     | FloatLiteral
     | StringLiteral
+    | RawStringLiteral
     | BoolLiteral ;
 
 IntLiteral =
@@ -544,6 +545,16 @@ StringChar =
     | "\\" SimpleEscape
     | "\\" HexEscape
     | "\\" UnicodeEscape
+    | "${" Expr "}" ;
+
+(* Raw single-line string: `r`-introduced, no escape processing (so '\' is an
+   ordinary character and there is no '\"' escape — a raw string cannot contain
+   '"'). Interpolation still fires. *)
+RawStringLiteral =
+    'r"' { RawStringChar } '"' ;
+
+RawStringChar =
+      ? any character except '"' and newline ?
     | "${" Expr "}" ;
 
 SimpleEscape =

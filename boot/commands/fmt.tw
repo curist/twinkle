@@ -44,7 +44,7 @@ pub fn run_fmt_command(parsed: ParseResult) {
       continue
     }
 
-    formatted := formatter.format(parsed_mod.value, lexed.value)
+    formatted := formatter.format(parsed_mod.value, lexed.value, source)
 
     if check {
       if source != formatted {

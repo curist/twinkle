@@ -3,8 +3,10 @@ use compiler.fmt.layout
 use compiler.fmt.printer
 use compiler.tokens.{Token}
 
-/// Format a module AST into a canonical source string.
-pub fn format(module: Module, tokens: Vector<Token>) String {
-  d := printer.format_module(module, tokens)
+/// Format a module AST into a canonical source string. `source` is the original
+/// text the module was parsed from; the printer reads it to recover string
+/// literal surface forms (raw/multiline) that the AST does not retain.
+pub fn format(module: Module, tokens: Vector<Token>, source: String) String {
+  d := printer.format_module(module, tokens, source)
   layout.render(d)
 }

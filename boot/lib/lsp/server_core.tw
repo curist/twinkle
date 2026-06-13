@@ -666,7 +666,7 @@ fn handle_formatting(state: State, req: protocol.Request) Step {
     return empty_array_response_step(state, req)
   }
 
-  formatted := formatter.format(parsed.value, lexed.value)
+  formatted := formatter.format(parsed.value, lexed.value, doc.text)
 
   if formatted == doc.text {
     return empty_array_response_step(state, req)

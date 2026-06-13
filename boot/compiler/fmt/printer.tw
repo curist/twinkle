@@ -10,10 +10,29 @@ use compiler.tokens.{Token, Trivia}
 use lib.source.span.{Span}
 
 // --- Trivia helpers ---
+// Surface form of a string literal, recovered from the source character at the
+// literal's start offset. The AST keeps only the decoded value, so the formatter
+// reads the original form here to preserve the author's choice (F4).
+type StringForm = { Cooked, Raw, Multiline }
+
+fn detect_string_form(source: String, offset: Int) StringForm {
+  if offset >= source.len() {
+    return .Cooked
+  }
+
+  c := source[offset]
+  cond {
+    c == 'r' => .Raw,
+    c == '\\' => .Multiline,
+    _ => .Cooked,
+  }
+}
+
 type TriviaMap = .{
   leading: Dict<Int, Vector<Trivia>>,
   trailing: Dict<Int, Vector<Trivia>>,
   literal_text: Dict<Int, String>,
+  string_form: Dict<Int, StringForm>,
   leading_positions: Vector<Int>,
   trailing_positions: Vector<Int>,
 }
@@ -22,10 +41,11 @@ type BinaryPiece = .{ op: BinOp, expr: Expr }
 
 type BinaryChain = .{ first: Expr, pieces: Vector<BinaryPiece> }
 
-fn build_trivia_map(tokens: Vector<Token>) TriviaMap {
+fn build_trivia_map(tokens: Vector<Token>, source: String) TriviaMap {
   leading: Dict<Int, Vector<Trivia>> = Dict.new()
   trailing: Dict<Int, Vector<Trivia>> = Dict.new()
   literal_text: Dict<Int, String> = Dict.new()
+  string_form: Dict<Int, StringForm> = Dict.new()
   leading_positions: Vector<Int> = []
   trailing_positions: Vector<Int> = []
 
@@ -43,9 +63,13 @@ fn build_trivia_map(tokens: Vector<Token>) TriviaMap {
     if tok.kind == .IntLit or tok.kind == .FloatLit {
       literal_text[tok.span.start] = tok.text
     }
+
+    if tok.kind == .StringLit or tok.kind == .StringStart {
+      string_form[tok.span.start] = detect_string_form(source, tok.span.start)
+    }
   }
 
-  TriviaMap.{ leading, trailing, literal_text, leading_positions, trailing_positions }
+  TriviaMap.{ leading, trailing, literal_text, string_form, leading_positions, trailing_positions }
 }
 
 fn get_trivia(tm: TriviaMap, offset: Int) Vector<Trivia> {
@@ -374,14 +398,14 @@ fn import_item_name(item: ImportItem) String {
 }
 
 // --- Module ---
-pub fn format_module(module: Module, tokens: Vector<Token>) Doc {
+pub fn format_module(module: Module, tokens: Vector<Token>, source: String) Doc {
   items := sort_import_blocks(module.items)
 
   if items.len() == 0 {
     return doc.nil()
   }
 
-  tm := build_trivia_map(tokens)
+  tm := build_trivia_map(tokens, source)
   result := Doc.Nil
   original_first_start := item_span(module.items[0]).start
   leading_file_trivia := get_trivia(tm, original_first_start)
@@ -1214,7 +1238,7 @@ fn format_expr(expr: Expr, tm: TriviaMap) Doc {
       .Some(raw) => doc.text(raw),
       .None => doc.text(format_float_literal(f)),
     },
-    .StringLit(s) => doc.text("\"${escape_string(s)}\""),
+    .StringLit(s) => format_string_lit(s, expr.span.start, tm),
     .StringInterp(parts) => format_string_interp(parts, tm),
     .BoolLit(b) => doc.text(if b {
       "true"
@@ -1911,7 +1935,7 @@ fn format_literal_expr(expr: Expr, tm: TriviaMap) Doc {
       .Some(raw) => doc.text(raw),
       .None => doc.text(format_float_literal(f)),
     },
-    .StringLit(s) => doc.text("\"${escape_string(s)}\""),
+    .StringLit(s) => format_string_lit(s, expr.span.start, tm),
     .BoolLit(b) => doc.text(if b {
       "true"
     } else {
@@ -2147,6 +2171,16 @@ fn format_collect(coll: CollectExpr, tm: TriviaMap) Doc {
   parts = .append(doc.text(" "))
   parts = .append(format_block(coll.body, tm))
   doc.concat(parts)
+}
+
+// Emit a non-interpolated string literal in its original surface form. Raw
+// (`r"…"`) content is verbatim — it has no escapes and cannot contain `"` — so
+// the decoded value is dropped in unescaped.
+fn format_string_lit(s: String, start: Int, tm: TriviaMap) Doc {
+  case tm.string_form.get(start) {
+    .Some(.Raw) => doc.text("r\"${s}\""),
+    _ => doc.text("\"${escape_string(s)}\""),
+  }
 }
 
 fn format_string_interp(parts: Vector<StringPart>, tm: TriviaMap) Doc {

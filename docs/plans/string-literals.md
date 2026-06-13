@@ -110,8 +110,8 @@ Value: `SELECT *\nFROM users\nWHERE active = <flag>`.
     \\</div>
   }
   ```
-  Value: `<div>\n  <h1>%name%</h1>\n</div>` — the two spaces before `<h1>` are in
-  the value (after the `\\`); the indentation of the `\\` markers is not.
+  Value: `<div>\n  <h1><user.name></h1>\n</div>` — the two spaces before `<h1>`
+  are in the value (after the `\\`); the indentation of the `\\` markers is not.
 - `\` inside the content is literal (raw); there is no escape processing.
 - `${…}` interpolation fires, but an interpolation must **open and close within a
   single `\\` line** (it cannot span a line break).
@@ -127,6 +127,17 @@ literal.** For a `\\` block, the only things fmt may touch are the *marker
 indentation* (semantically irrelevant — it is excluded from the value) and the
 block's placement relative to the tokens before it. fmt must never alter anything
 after a `\\` marker.
+
+**How fmt recovers the surface form.** The AST keeps only the *decoded* value
+(`StringLit(String)` / `StringInterp(...)`), so by itself it cannot tell raw from
+cooked, or a `\\` block from a cooked string with `\n`. Rather than thread a form
+tag through the AST (and its ~30 match sites), the printer recovers the form the
+same way it already preserves int/float spelling: `build_trivia_map` indexes the
+string tokens by `span.start` and reads `source[span.start]` (`r` → raw, `\` →
+multiline, else cooked) into a `string_form` map, which the `StringLit`/
+`StringInterp` emit sites consult. This keeps the parser/AST/checker/codegen
+genuinely unchanged; only `formatter.format` gains a `source` parameter. Done for
+`r"…"`; the `\\` arm slots into the same map in Milestone 4.
 
 ### Formatter rules (`target/twk fmt` — automatic, value-preserving)
 
@@ -236,18 +247,20 @@ and can land as a fast-follow without blocking the rest.
 
 ### Milestone 1 — `r"…"` raw single-line
 
-**Task 1.1 — boot lexer**
+**Task 1.1 — boot lexer** ✅ done
 
-- [ ] In `boot/compiler/lexer.tw`, recognize the raw prefix: when the current
+- [x] In `boot/compiler/lexer.tw`, recognize the raw prefix: when the current
       char is `r` and `source[i+1] == '"'`, consume both and scan a raw segment.
-- [ ] Add a `scan_raw_string_segment(source, from, content_start)` parallel to
+- [x] Add a `scan_raw_string_segment(source, from, content_start)` parallel to
       `scan_string_segment` that is identical except it (a) does **not** set
       `escaped` on `\` (so `\` is ordinary and `\"` does not escape the
       terminator) and (b) returns `text` **without** calling `unescape_string`.
       It still terminates on `"`, still returns `found_interp` on `${`, and still
       breaks on `\n` (→ unterminated).
-- [ ] Emit the same `StringLit` / `StringStart` tokens as the cooked path, so the
-      interpolation resume code is reused unchanged.
+- [x] Emit the same `StringLit` / `StringStart` tokens as the cooked path. The
+      `interp_depths` stack became `Vector<InterpFrame>` (`.{ depth, host }`,
+      `StringKind = { Cooked, Raw }`); resume after `}` dispatches via
+      `scan_host_segment` so a raw string's continuation stays raw.
 
 Sketch:
 ```tw
@@ -270,38 +283,52 @@ fn scan_raw_string_segment(source: String, from: Int, content_start: Int) ScanSt
 }
 ```
 Note: when interpolation in a raw string resumes after `}`, the continuation
-segment is *also* raw. Track this so the resume path picks the raw scanner (see
-Milestone 3's host-kind flag; for a raw single-line string the same flag selects
-`scan_raw_string_segment` on resume).
+segment is *also* raw, so the resume path must remember that the host string was
+raw and pick `scan_raw_string_segment` rather than the cooked scanner. This is the
+same "which scanner resumes after `}`" problem that Milestone 3 solves in full for
+`\\` blocks. To keep Milestone 1 self-contained and correct for `r"a ${x} b"`, M1
+introduces the **minimal** host-kind distinction needed here — a single bit (or
+two-value `StringKind = { Cooked, Raw }`) threaded onto the `interp_depths`
+entries — and M3 widens it to the three-way `{ Cooked, Raw, Multiline }` stack.
+The host-kind stack is therefore *started* in M1, not deferred wholesale to M3;
+M3 only adds the `Multiline` arm and its `scan_multiline_segment` resume.
 
-**Task 1.2 — stage0 Rust lexer**
+**Task 1.2 — stage0 Rust lexer** ✅ done
 
-- [ ] Mirror the same `r"…"` recognition and raw scan in `src/syntax/lexer.rs`,
-      emitting identical tokens.
+- [x] Mirror the same `r"…"` recognition and raw scan in `src/syntax/lexer.rs`
+      (`StringKind` enum, `interpolation_stack: Vec<(u32, StringKind)>`,
+      `lex_raw_string` / `scan_raw_segment`), emitting identical tokens.
+      Self-host fixed point (`make stage2`) reached.
 
-**Task 1.3 — tests**
+**Task 1.3 — tests** ✅ done
 
-- [ ] Boot lexer/parse coverage: `r"\d+"` is the two-token-free value `\d+`;
-      `r"a ${x} b"` interpolates; `r"\n"` is backslash-n, not a newline; a raw
-      string with a literal newline errors; `regexp.must(r"\d+").find(...)` works
-      end to end.
-- [ ] Rust lexer tests for the same.
+- [x] Boot lexer/parse coverage (`boot/tests/suites/string_literal_suite.tw`):
+      `r"\d+"` → value `\d+`; raw interpolation keeps both segments raw; `r"\n"`
+      is backslash-n; a literal newline errors; `r` disambiguation. End-to-end
+      `regexp.must(r"(\d+)-(\d+)").find(...)` in the regexp suite. Plus an
+      fmt-preservation test (`fmt_suite`).
+- [x] Rust lexer tests for the same (`src/syntax/lexer.rs` tests).
 
-**Task 1.4 — grammar & highlighting**
+**Task 1.4 — grammar & highlighting** — code done; wasm rebuild + tests pending (human)
 
-- [ ] Extend `docs/grammar.ebnf` with a raw-string production alongside
-      `StringLiteral` (line 539): like `StringLiteral` but `r"`-introduced, with no
-      escape alternatives in its `StringChar` (only "any char except `"`" and the
-      `${` Expr `}` interpolation alternative).
-- [ ] Add a `raw_string` rule to `tree-sitter-twinkle/grammar.js`; regenerate
-      `src/parser.c` and rebuild `tree-sitter-twinkle.wasm`.
-- [ ] In `tree-sitter-twinkle/queries/highlights.scm`, capture the raw-string node
-      as `@string` — and notably with **no** `@string.escape` capture, since `\`
-      is literal in raw strings. Hand `tree-sitter test` to the human.
+- [x] Extend `docs/grammar.ebnf` with a `RawStringLiteral` production alongside
+      `StringLiteral`, with no escape alternatives (only "any char except `"`/
+      newline" and the `${` Expr `}` interpolation alternative).
+- [x] Add a `raw_string_literal` rule (+ `raw_string_content`) to
+      `tree-sitter-twinkle/grammar.js`, registered in `_literal` and
+      `literal_pattern`; ran `npx tree-sitter generate` (clean, no conflicts).
+      `tree-sitter parse` confirms `r"\d+"` / `r"a ${z} b"` produce
+      `raw_string_literal` nodes with no `escape_sequence` and no ERROR nodes;
+      `red` stays an identifier. **Still TODO (human): `npx tree-sitter build
+      --wasm` (Docker) to rebuild `tree-sitter-twinkle.wasm`, and `tree-sitter
+      test`.**
+- [x] In `tree-sitter-twinkle/queries/highlights.scm`, capture
+      `raw_string_literal` / `raw_string_content` as `@string` with **no**
+      `@string.escape` (since `\` is literal in raw strings).
 
-**Task 1.5 — docs**
+**Task 1.5 — docs** ✅ done
 
-- [ ] Document `r"…"` in `docs/spec.md`'s string-literal section (raw, no escapes,
+- [x] Document `r"…"` in `docs/spec.md`'s string-literal section (raw, no escapes,
       interpolation on, cannot contain `"`).
 
 ---
@@ -339,8 +366,7 @@ fn scan_multiline_string(source: String, from: Int) MultilineResult {
     if k + 1 < n and source[k] == '\\' and source[k + 1] == '\\' {
       i = k
     } else {
-      i = if i < n and source[i] == '\n' { i } else { i }   // leave the trailing newline for the main loop
-      break
+      break   // leave i at the trailing newline (if any) for the main loop
     }
   }
   MultilineResult.{ text: join_newline(parts), next_index: i }
@@ -387,9 +413,10 @@ picks the right segment scanner.
 
 **Task 3.1 — boot lexer**
 
-- [ ] Replace the `interp_depths: Vector<Int>` stack with a stack of records
-      `.{ depth: Int, host: StringKind }` (or a parallel stack), where
-      `StringKind = { Cooked, Raw, Multiline }`.
+- [ ] Widen the host-kind stack introduced in Milestone 1 from two-way
+      `{ Cooked, Raw }` to three-way `StringKind = { Cooked, Raw, Multiline }`
+      (entries are records `.{ depth: Int, host: StringKind }`, or a parallel
+      stack alongside `interp_depths`).
 - [ ] On `${` inside a `\\` line, emit `StringStart` with the text accumulated so
       far (including earlier lines' `\n` joins) and push `host: .Multiline`.
 - [ ] On the closing `}`, dispatch the resume by `host`: `.Cooked` →
