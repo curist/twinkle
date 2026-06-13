@@ -5,7 +5,8 @@ use runner
 
 use .day01.solution as day01
 use .day02.solution as day02
+use .day03.solution as day03
 
 pub fn all() Vector<runner.Suite> {
-  [day01.suite(), day02.suite()]
+  [day01.suite(), day02.suite(), day03.suite()]
 }

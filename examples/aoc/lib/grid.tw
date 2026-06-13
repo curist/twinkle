@@ -1,0 +1,332 @@
+/// Grid helpers for Advent of Code-style integer coordinate puzzles.
+///
+/// `Pos` is a 2D coordinate with `x` growing east and `y` growing south. Use
+/// `key` when storing positions in `Set<Int>` or `Dict<Int, T>`; it maps every
+/// signed coordinate pair to one stable integer key.
+
+pub type Pos = .{ x: Int, y: Int }
+
+/// Inclusive rectangular bounds.
+pub type Rect = .{ lo: Pos, hi: Pos }
+
+/// A rectangular finite grid. Rows are stored as `cells[y][x]`.
+pub type Grid<T> = .{ cells: Vector<Vector<T>> }
+
+pub fn pos(x: Int, y: Int) Pos {
+  Pos.{ x, y }
+}
+
+pub fn origin() Pos {
+  pos(0, 0)
+}
+
+pub fn to_string(p: Pos) String {
+  "(${p.x}, ${p.y})"
+}
+
+pub fn translate(p: Pos, dx: Int, dy: Int) Pos {
+  pos(p.x + dx, p.y + dy)
+}
+
+pub fn add(p: Pos, other: Pos) Pos {
+  pos(p.x + other.x, p.y + other.y)
+}
+
+pub fn subtract(p: Pos, other: Pos) Pos {
+  pos(p.x - other.x, p.y - other.y)
+}
+
+pub fn scale(p: Pos, factor: Int) Pos {
+  pos(p.x * factor, p.y * factor)
+}
+
+fn abs(n: Int) Int {
+  if n < 0 {
+    -n
+  } else {
+    n
+  }
+}
+
+pub fn manhattan(p: Pos, other: Pos) Int {
+  abs(p.x - other.x) + abs(p.y - other.y)
+}
+
+pub fn north(p: Pos) Pos {
+  p.translate(0, -1)
+}
+
+pub fn south(p: Pos) Pos {
+  p.translate(0, 1)
+}
+
+pub fn east(p: Pos) Pos {
+  p.translate(1, 0)
+}
+
+pub fn west(p: Pos) Pos {
+  p.translate(-1, 0)
+}
+
+pub fn northeast(p: Pos) Pos {
+  p.translate(1, -1)
+}
+
+pub fn northwest(p: Pos) Pos {
+  p.translate(-1, -1)
+}
+
+pub fn southeast(p: Pos) Pos {
+  p.translate(1, 1)
+}
+
+pub fn southwest(p: Pos) Pos {
+  p.translate(-1, 1)
+}
+
+pub fn neighbors4(p: Pos) Vector<Pos> {
+  [p.north(), p.south(), p.east(), p.west()]
+}
+
+pub fn neighbors8(p: Pos) Vector<Pos> {
+  [
+    p.northwest(),
+    p.north(),
+    p.northeast(),
+    p.west(),
+    p.east(),
+    p.southwest(),
+    p.south(),
+    p.southeast(),
+  ]
+}
+
+fn zigzag(n: Int) Int {
+  if n >= 0 {
+    n * 2
+  } else {
+    -(n * 2) - 1
+  }
+}
+
+/// Stable key for using a position with built-in `Set<Int>` / `Dict<Int, T>`.
+pub fn key(p: Pos) Int {
+  x := zigzag(p.x)
+  y := zigzag(p.y)
+  sum := x + y
+
+  sum * (sum + 1) / 2 + y
+}
+
+pub fn try_step_cardinal(p: Pos, dir: Byte) Pos? {
+  case dir {
+    '^' => .Some(p.north()),
+    'U' => .Some(p.north()),
+    'N' => .Some(p.north()),
+    'v' => .Some(p.south()),
+    'D' => .Some(p.south()),
+    'S' => .Some(p.south()),
+    '>' => .Some(p.east()),
+    'R' => .Some(p.east()),
+    'E' => .Some(p.east()),
+    '<' => .Some(p.west()),
+    'L' => .Some(p.west()),
+    'W' => .Some(p.west()),
+    _ => .None,
+  }
+}
+
+pub fn step_cardinal(p: Pos, dir: Byte) Pos {
+  case p.try_step_cardinal(dir) {
+    .Some(next) => next,
+    .None => error("invalid cardinal grid direction: ${dir}"),
+  }
+}
+
+pub fn rect(lo: Pos, hi: Pos) Rect {
+  Rect.{ lo, hi }
+}
+
+pub fn rect_from_size(width: Int, height: Int) Rect {
+  if width <= 0 or height <= 0 {
+    error("grid rect dimensions must be positive")
+  }
+
+  rect(origin(), pos(width - 1, height - 1))
+}
+
+pub fn width(r: Rect) Int {
+  r.hi.x - r.lo.x + 1
+}
+
+pub fn height(r: Rect) Int {
+  r.hi.y - r.lo.y + 1
+}
+
+pub fn contains(r: Rect, p: Pos) Bool {
+  p.x >= r.lo.x and p.x <= r.hi.x and p.y >= r.lo.y and p.y <= r.hi.y
+}
+
+pub fn positions(r: Rect) Vector<Pos> {
+  out: Vector<Pos> = []
+
+  for y in r.lo.y..r.hi.y + 1 {
+    for x in r.lo.x..r.hi.x + 1 {
+      out = .append(pos(x, y))
+    }
+  }
+
+  out
+}
+
+pub fn from_rows<T>(cells: Vector<Vector<T>>) Grid<T> {
+  if cells.is_empty() {
+    return Grid.{ cells }
+  }
+
+  cols := cells[0].len()
+
+  for row in cells {
+    if row.len() != cols {
+      error("grid rows must all have the same width")
+    }
+  }
+
+  Grid.{ cells }
+}
+
+pub fn from_lines(lines: Vector<String>) Grid<Byte> {
+  from_lines_map(lines, fn(b) { b })
+}
+
+pub fn from_text(input: String) Grid<Byte> {
+  from_lines(input.trim().lines())
+}
+
+pub fn from_lines_map<T>(lines: Vector<String>, f: fn(Byte) T) Grid<T> {
+  cells: Vector<Vector<T>> = []
+
+  for line in lines {
+    row: Vector<T> = []
+
+    for b in line {
+      row = .append(f(b))
+    }
+
+    cells = .append(row)
+  }
+
+  from_rows(cells)
+}
+
+pub fn from_text_map<T>(input: String, f: fn(Byte) T) Grid<T> {
+  from_lines_map(input.trim().lines(), f)
+}
+
+pub fn digit(b: Byte) Int {
+  if b >= '0' and b <= '9' {
+    b - '0'
+  } else {
+    error("expected digit byte, got: ${b}")
+  }
+}
+
+pub fn from_digit_text(input: String) Grid<Int> {
+  from_text_map(input, digit)
+}
+
+pub fn rows<T>(g: Grid<T>) Int {
+  g.cells.len()
+}
+
+pub fn cols<T>(g: Grid<T>) Int {
+  if g.cells.is_empty() {
+    0
+  } else {
+    g.cells[0].len()
+  }
+}
+
+pub fn is_empty<T>(g: Grid<T>) Bool {
+  g.rows() == 0 or g.cols() == 0
+}
+
+pub fn bounds<T>(g: Grid<T>) Rect? {
+  if g.is_empty() {
+    .None
+  } else {
+    .Some(rect_from_size(g.cols(), g.rows()))
+  }
+}
+
+pub fn in_bounds<T>(g: Grid<T>, p: Pos) Bool {
+  p.x >= 0 and p.y >= 0 and p.y < g.rows() and p.x < g.cols()
+}
+
+pub fn get<T>(g: Grid<T>, p: Pos) T? {
+  if g.in_bounds(p) {
+    .Some(g.cells[p.y][p.x])
+  } else {
+    .None
+  }
+}
+
+pub fn must_get<T>(g: Grid<T>, p: Pos) T {
+  case g.get(p) {
+    .Some(value) => value,
+    .None => error("grid position out of bounds: ${p}"),
+  }
+}
+
+pub fn all_positions<T>(g: Grid<T>) Vector<Pos> {
+  case g.bounds() {
+    .Some(b) => b.positions(),
+    .None => [],
+  }
+}
+
+pub fn cardinal_neighbors<T>(g: Grid<T>, p: Pos) Vector<Pos> {
+  out: Vector<Pos> = []
+
+  for next in p.neighbors4() {
+    if g.in_bounds(next) {
+      out = .append(next)
+    }
+  }
+
+  out
+}
+
+pub fn diagonal_neighbors<T>(g: Grid<T>, p: Pos) Vector<Pos> {
+  out: Vector<Pos> = []
+
+  for next in p.neighbors8() {
+    if g.in_bounds(next) {
+      out = .append(next)
+    }
+  }
+
+  out
+}
+
+pub fn find<T: Eq>(g: Grid<T>, needle: T) Pos? {
+  for p in g.all_positions() {
+    if g.must_get(p) == needle {
+      return .Some(p)
+    }
+  }
+
+  .None
+}
+
+pub fn count<T: Eq>(g: Grid<T>, needle: T) Int {
+  total := 0
+
+  for p in g.all_positions() {
+    if g.must_get(p) == needle {
+      total = total + 1
+    }
+  }
+
+  total
+}

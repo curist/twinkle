@@ -1,0 +1,83 @@
+// Advent of Code 2015, Day 3
+// https://adventofcode.com/2015/day/3
+//
+// TDD flow:
+//   1. Paste the puzzle's example into sample.txt.
+//   2. Set the two `part_ sample` expectations below to the example's stated
+//      answers and run `make test YEAR=2015` — they start red.
+//   3. Implement parse / part1 / part2 until the sample passes.
+//   4. `make pull` + `make solve` to get the real answers, then record them in
+//      the `part_ input` expectations to lock in a regression.
+use assert
+use lib.aoc
+use lib.grid
+use runner
+
+fn parse(input: String) Vector<Byte> {
+  collect dir in input.trim() {
+    dir
+  }
+}
+
+fn delivered_house_count(directions: Vector<Byte>, santa_count: Int) Int {
+  if santa_count <= 0 {
+    error("santa_count must be positive")
+  }
+
+  visited: Set<Int> = Set.new()
+  positions: Vector<grid.Pos> = []
+
+  for _ in 0..santa_count {
+    positions = .append(grid.origin())
+  }
+
+  visited = .insert(grid.origin().key())
+
+  for dir, i in directions {
+    santa := i % santa_count
+    next := positions[santa].step_cardinal(dir)
+    positions[santa] = next
+    visited = .insert(next.key())
+  }
+
+  visited.len()
+}
+
+pub fn part1(input: String) Int {
+  delivered_house_count(parse(input), 1)
+}
+
+pub fn part2(input: String) Int {
+  delivered_house_count(parse(input), 2)
+}
+
+pub fn suite() {
+  dir := aoc.day_dir(2015, 3)
+  sample := aoc.read_sample(dir)
+
+  runner.suite("2015 day03")
+    .test("part1 sample", fn() { assert.equal(part1(sample), 4) })
+    .test("part1 east", fn() { assert.equal(part1(">"), 2) })
+    .test("part1 repeated line", fn() { assert.equal(part1("^v^v^v^v^v"), 2) })
+    .test("part2 sample", fn() { assert.equal(part2(sample), 3) })
+    .test("part2 alternating", fn() { assert.equal(part2("^v"), 3) })
+    .test("part2 long alternating", fn() { assert.equal(part2("^v^v^v^v^v"), 11) })
+    .test(
+      "part1 input",
+      fn() {
+        case aoc.read_input(dir) {
+          .Some(inp) => assert.equal(part1(inp), 2565),
+          .None => .Ok({}),
+        }
+      },
+    )
+    .test(
+      "part2 input",
+      fn() {
+        case aoc.read_input(dir) {
+          .Some(inp) => assert.equal(part2(inp), 2639),
+          .None => .Ok({}),
+        }
+      },
+    )
+}
