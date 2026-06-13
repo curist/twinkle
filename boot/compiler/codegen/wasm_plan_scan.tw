@@ -164,10 +164,9 @@ fn scan_atom(atom: PreparedAtom, is_init: Bool, out: ScanResult) ScanResult {
       cur
     },
     .AGlobalLocal(lid) => {
-      if is_init {
-        return out
-      }
-
+      // Register the global whether the read is in a regular function or in an
+      // init function (top-level user code lowers into an init function, and a
+      // module global like `math.pi` may be read only from there).
       cur := out
       cur.module_globals[lid.id] = true
       cur
