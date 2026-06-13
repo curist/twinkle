@@ -142,14 +142,81 @@ fn builtin_type_entries() Vector<TypeEntry> {
   types
 }
 
-/// Returns a ResolvedEnv seeded with only the builtin named types (Option,
-/// Result, Cell, Range, Iterator, IterItem, UnfoldStep, Order, Task).  No
-/// function signatures are added.  Used by the signature-only bootstrap loader
-/// to resolve TypeExprs in prelude/signatures/*.tw without creating a circular
-/// dependency.
+/// Reserved stdlib types.
+///
+/// A prelude-backed method may name a type that is defined in stdlib source
+/// (e.g. `@std.view`'s `View`) in its public signature. The signature loader
+/// resolves annotations against the builtin type env, which knows only builtin
+/// names, so such a type must be pre-seeded here as a forward declaration
+/// (`def == .None`) at a fixed id. The defining stdlib module fills the def in
+/// place via the resolver's unresolved-binding reuse path, and the pinned
+/// canonical `origin` ties the seeded id, the in-module definition, and every
+/// importer (`plan_export_type_ids`) to one TypeId. These types stay ordinary
+/// importable stdlib types; they are NOT builtins and NOT in
+/// `is_reserved_type_name`.
+pub type ReservedStdlibType = .{ name: String, arity: Int, origin: String }
+
+pub fn reserved_stdlib_types() Vector<ReservedStdlibType> {
+  [.{ name: "View", arity: 1, origin: "@std.view::View" }]
+}
+
+pub fn reserved_stdlib_type_origin(name: String) String? {
+  for rt in reserved_stdlib_types() {
+    if rt.name == name {
+      return .Some(rt.origin)
+    }
+  }
+
+  .None
+}
+
+fn reserved_stdlib_type_entries(start_id: Int) Vector<TypeEntry> {
+  rts := reserved_stdlib_types()
+
+  collect i in range(rts.len()) {
+    TypeEntry.{
+      id: TypeId.{ id: start_id + i },
+      arity: rts[i].arity,
+      def: .None,
+      span: .{ file_id: 0, start: 0, end: 0 },
+      is_extern: false,
+    }
+  }
+}
+
+fn reserved_stdlib_type_names() Vector<String> {
+  collect rt in reserved_stdlib_types() {
+    rt.name
+  }
+}
+
+/// Apply the reserved stdlib types' pinned canonical origins to an env whose
+/// reserved entries start at `start_id`.
+fn with_reserved_stdlib_origins(env: ResolvedEnv, start_id: Int) ResolvedEnv {
+  cur := env
+  rts := reserved_stdlib_types()
+
+  for i in range(rts.len()) {
+    cur.type_origins[start_id + i] = rts[i].origin
+  }
+
+  cur
+}
+
+/// Returns a ResolvedEnv seeded with the builtin named types (Option, Result,
+/// Cell, Range, Iterator, IterItem, UnfoldStep, Order, Task, Set) plus the
+/// reserved stdlib forward declarations.  No function signatures are added.
+/// Used by the signature-only bootstrap loader to resolve TypeExprs in
+/// prelude/signatures/*.tw without creating a circular dependency.
 pub fn builtin_type_env() ResolvedEnv {
   types := builtin_type_entries()
-  resolver.empty_env().with_types(types, builtin_type_names(types))
+  reserved := reserved_stdlib_type_entries(types.len())
+  env := resolver.empty_env()
+    .with_types(
+      types.concat(reserved),
+      builtin_type_names(types).concat(reserved_stdlib_type_names()),
+    )
+  with_reserved_stdlib_origins(env, types.len())
 }
 
 // ── method registration from signature groups ────────────────────────────────
@@ -328,10 +395,19 @@ pub fn builtin_env() ResolvedEnv {
     builtin_sig("host_stdout_write_bytes", [], ["bytes"], [.Vector(.Byte)], .Some(.Void)),
   ]
   builtin_named_types := builtin_type_entries()
-  builtin_named_type_names := builtin_type_names(builtin_named_types)
+  reserved_types := reserved_stdlib_type_entries(builtin_named_types.len())
+  all_named_types := builtin_named_types.concat(reserved_types)
+  all_named_type_names := builtin_type_names(builtin_named_types).concat(
+    reserved_stdlib_type_names(),
+  )
   env := resolver.empty_env()
-    .with_types(builtin_named_types, builtin_named_type_names)
+    .with_types(all_named_types, all_named_type_names)
     .with_registered_functions(sig_fns.concat(prelude_fns).concat(hardcoded))
+
+  // Pin reserved stdlib type origins so a module's import of the defining stdlib
+  // module (e.g. @std.view) matches the seeded id instead of allocating a fresh,
+  // divergent one in plan_export_type_ids.
+  env = with_reserved_stdlib_origins(env, builtin_named_types.len())
   env = bind_public_free_builtins(env)
 
   // Actual prelude module functions should carry canonical imported origins in

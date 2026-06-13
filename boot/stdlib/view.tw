@@ -262,7 +262,7 @@ pub fn filter<C: IndexRead<E>, E>(v: View<C>, pred: fn(E) Bool) Vector<E> {
   i := 0
 
   for i < v.count {
-    x := v.at(i)
+    x: E = v.at(i)
 
     if pred(x) {
       out = .append(x)
@@ -279,7 +279,7 @@ pub fn find<C: IndexRead<E>, E>(v: View<C>, pred: fn(E) Bool) Option<E> {
   i := 0
 
   for i < v.count {
-    x := v.at(i)
+    x: E = v.at(i)
 
     if pred(x) {
       return .Some(x)

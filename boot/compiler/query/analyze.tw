@@ -8,7 +8,7 @@ use @std.date
 use @std.fs
 use @std.proc
 
-use compiler.base_env.{add_internal_host_builtins}
+use compiler.base_env.{add_internal_host_builtins, reserved_stdlib_type_origin}
 use compiler.checker
 use compiler.imports
 use compiler.imports.{DependencyPlan, PlannedDep}
@@ -532,6 +532,15 @@ fn next_preliminary_type_id(env: ResolvedEnv) Int {
   max_id + 1
 }
 
+fn reserved_stdlib_type_allowed(name: String, canonical: String) Bool {
+  origin := "${canonical}::${name}"
+  case reserved_stdlib_type_origin(name) {
+    .Some(reserved_origin) => reserved_origin == origin
+      or name == "View" and canonical.ends_with("/stdlib/view.tw"),
+    .None => true,
+  }
+}
+
 fn preliminary_type_exports(parsed: cache.ParsedModule, canonical: String, start_id: Int) ModuleExports {
   visible_types: Vector<ExportedType> = []
   next_id := start_id
@@ -539,6 +548,10 @@ fn preliminary_type_exports(parsed: cache.ParsedModule, canonical: String, start
   for item in parsed.module.items {
     case item {
       .Type(decl) => if decl.is_pub {
+        origin := "${canonical}::${decl.name}"
+        if !reserved_stdlib_type_allowed(decl.name, canonical) {
+          continue
+        }
         visible_types = .append(
           ExportedType.{
             name: decl.name,
@@ -549,12 +562,16 @@ fn preliminary_type_exports(parsed: cache.ParsedModule, canonical: String, start
               span: decl.span,
               is_extern: false,
             },
-            origin: .Some("${canonical}::${decl.name}"),
+            origin: .Some(origin),
           },
         )
         next_id = next_id + 1
       },
       .ExternType(decl) => if decl.is_pub {
+        origin := "${canonical}::${decl.name}"
+        if !reserved_stdlib_type_allowed(decl.name, canonical) {
+          continue
+        }
         visible_types = .append(
           ExportedType.{
             name: decl.name,
@@ -565,7 +582,7 @@ fn preliminary_type_exports(parsed: cache.ParsedModule, canonical: String, start
               span: decl.span,
               is_extern: true,
             },
-            origin: .Some("${canonical}::${decl.name}"),
+            origin: .Some(origin),
           },
         )
         next_id = next_id + 1
@@ -932,6 +949,24 @@ fn dependency_hashes(store: cache.Store, dep_plan: imports.DependencyPlan) Depen
   }
 }
 
+fn reserved_stdlib_shadow_diags(parsed: cache.ParsedModule, canonical: String) Vector<diag.DiagKind> {
+  diags: Vector<diag.DiagKind> = []
+
+  for item in parsed.module.items {
+    case item {
+      .Type(decl) => if !reserved_stdlib_type_allowed(decl.name, canonical) {
+        diags = .append(.Error(.ReservedTypeName(.{ span: decl.span, name: decl.name })))
+      },
+      .ExternType(decl) => if !reserved_stdlib_type_allowed(decl.name, canonical) {
+        diags = .append(.Error(.ReservedTypeName(.{ span: decl.span, name: decl.name })))
+      },
+      _ => {},
+    }
+  }
+
+  diags
+}
+
 fn resolve_and_check_local(
   state: AnalysisState,
   canonical: String,
@@ -941,6 +976,14 @@ fn resolve_and_check_local(
   source: overlay.SourceText,
   prior_diagnostics: Vector<AnalysisDiag>,
 ) LocalCheck!AnalysisError {
+  shadow_diags := reserved_stdlib_shadow_diags(parsed, canonical)
+  if shadow_diags.len() > 0 {
+    state.cache = cache.clear_resolved_and_later(state.cache, canonical)
+    diags := wrap_diags(source, "resolve", shadow_diags, type_name_snapshot(env))
+
+    return .Err(.{ state, diagnostics: prior_diagnostics.concat(diags) })
+  }
+
   t_resolve0 := date.now()
   resolved_out := stage_runner.resolve(runner, state.cache, parsed, env)
   state.cache = resolved_out.store
@@ -1108,11 +1151,27 @@ fn capture_local_types(
   canonical: String,
   local_type_start: Int,
 ) AnalysisState {
-  if env.types.len() <= local_type_start {
-    return state
-  }
-
   reg := state.cache.type_registry
+
+  for i in range(local_type_start) {
+    entry := env.types[i]
+    name := env.type_names[i]
+
+    if entry.def == .None or reserved_stdlib_type_origin(name) == .None {
+      continue
+    }
+
+    found := false
+    for j in range(state.shared_types.len()) {
+      if state.shared_types[j].entry.id.id == entry.id.id {
+        state.shared_types[j] = .{ entry, name }
+        found = true
+      }
+    }
+    if !found {
+      state.shared_types = .append(.{ entry, name })
+    }
+  }
 
   for i in local_type_start..env.types.len() {
     entry := env.types[i]

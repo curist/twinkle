@@ -6,7 +6,7 @@ use super::ty::{
     BUILTIN_INT_TYPE_ID, BUILTIN_STRING_TYPE_ID, BUILTIN_VECTOR_TYPE_ID, CELL_TYPE_ID,
     FunctionSignature, ITER_ITEM_TYPE_ID, ITERATOR_TYPE_ID, MonoType, OPTION_TYPE_ID,
     ORDER_TYPE_ID, RANGE_TYPE_ID, RESULT_TYPE_ID, RecordField, SET_TYPE_ID, TASK_TYPE_ID, TypeDef,
-    TypeId, UNFOLD_STEP_TYPE_ID, Variant,
+    TypeId, UNFOLD_STEP_TYPE_ID, VIEW_TYPE_ID, Variant,
 };
 use crate::intrinsics::signatures;
 use crate::syntax::ast::Type as AstType;
@@ -270,6 +270,17 @@ impl TypeEnv {
                 doc: Some("Persistent set of unique values.".to_string()),
             }),
             SET_TYPE_ID,
+        );
+
+        // TypeId(10) = View<C> — reserved stdlib type filled by @std.view.
+        assert_eq!(
+            env.add_type(TypeDef::Record {
+                name: "View".to_string(),
+                type_params: vec!["C".to_string()],
+                fields: vec![],
+                doc: Some("Reserved stdlib view type.".to_string()),
+            }),
+            VIEW_TYPE_ID,
         );
 
         // Register all builtin method mappings.

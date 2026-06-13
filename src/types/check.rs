@@ -1806,6 +1806,22 @@ impl TypeChecker {
         None
     }
 
+    fn index_read_bound_elem(&self, ty: &MonoType) -> Option<MonoType> {
+        let MonoType::Var(name) = ty else {
+            return None;
+        };
+        let bounds = self.current_type_param_bounds.get(name)?;
+        for bound in bounds {
+            if let Some(inner) = bound
+                .strip_prefix("IndexRead<")
+                .and_then(|rest| rest.strip_suffix('>'))
+            {
+                return Some(self.mono_from_bound_arg(inner.trim()));
+            }
+        }
+        None
+    }
+
     fn validate_stringify_type(
         &mut self,
         ty: &MonoType,
@@ -2183,6 +2199,16 @@ impl TypeChecker {
                 type_id: crate::types::ty::ITERATOR_TYPE_ID,
                 args: vec![elem_ty],
             });
+        }
+        if method == "len" && args.is_empty() && self.index_read_bound_elem(&base_ty).is_some() {
+            return Ok(MonoType::Int);
+        }
+        if method == "at"
+            && args.len() == 1
+            && let Some(elem_ty) = self.index_read_bound_elem(&base_ty)
+        {
+            self.check_expr(&args[0], &MonoType::Int)?;
+            return Ok(elem_ty);
         }
         if method == "to_string" && args.is_empty() && self.has_stringify_bound(&base_ty) {
             return Ok(MonoType::String);

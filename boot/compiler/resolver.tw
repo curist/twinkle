@@ -201,6 +201,16 @@ fn me(method_name: String, function_name: String) MethodEntry {
   .{ method_name, function_name }
 }
 
+fn same_function_origin(env: ResolvedEnv, a: String, b: String) Bool {
+  case env.function_origins[a] {
+    .Some(ao) => case env.function_origins[b] {
+      .Some(bo) => ao.module_path == bo.module_path and ao.func_name == bo.func_name,
+      .None => false,
+    },
+    .None => false,
+  }
+}
+
 pub fn register_methods(
   methods: Dict<String, Vector<MethodEntry>>,
   type_name: String,
@@ -1561,24 +1571,33 @@ fn detect_inherent_methods(
       },
       .None => false,
     }
-    collision := field_collision
 
-    if !collision {
-      collision = case tm[tid.id] {
-        .Some(existing) => existing.any(fn(e) { e.method_name == method_name }),
-        .None => case m[type_name] {
-          .Some(existing) => existing.any(fn(e) { e.method_name == method_name }),
-          .None => false,
-        },
-      }
+    // An existing method with the SAME name mapping to the SAME function is a
+    // harmless re-registration — the same inherent method reached through more
+    // than one import path, which happens once a stdlib type's id is shared
+    // across modules (e.g. the reserved `View`). Only a DIFFERENT function under
+    // the same name is a real duplicate. register_methods/register_type_methods
+    // already dedup by method name, so the same-function case falls through to a
+    // no-op register.
+    existing_method_fn := case tm[tid.id] {
+      .Some(existing) => lookup_method_entries(existing, method_name),
+      .None => case m[type_name] {
+        .Some(existing) => lookup_method_entries(existing, method_name),
+        .None => .None,
+      },
     }
-
-    if !collision {
-      collision = case m[type_name] {
-        .Some(existing) => existing.any(fn(e) { e.method_name == method_name }),
+    shared_stdlib_method := type_name == "View"
+      and case env.type_origins[tid.id] {
+        .Some(origin) => origin == "@std.view::View",
         .None => false,
       }
+    method_collision := case existing_method_fn {
+      .Some(existing_function) => !shared_stdlib_method
+        and existing_function != f.name and !same_function_origin(env, existing_function, f.name),
+      .None => false,
     }
+
+    collision := field_collision or method_collision
 
     if field_collision {
       span := case local_field_spans[type_name] {

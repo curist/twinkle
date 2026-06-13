@@ -184,7 +184,7 @@ pub fn suite() runner.Suite {
       },
     )
     .test(
-      "prelude injected for stdlib files but still marked internal",
+      "prelude is not injected for stdlib files but still marked internal",
       fn() {
         module := parse_module("fn helper() { }")
         plan := try plan_deps(module, "${loader.resolve_stdlib_root()}/fs.tw", root)
@@ -200,35 +200,29 @@ pub fn suite() runner.Suite {
           }
         }
 
-        try assert.is_true(prelude_count > 0)
+        try assert.equal(prelude_count, 0)
         .Ok({})
       },
     )
     .test(
-      "prelude injected for prelude files except self",
+      "prelude is not injected for prelude files",
       fn() {
         module := parse_module("fn helper() { }")
         prelude_file := "${loader.resolve_prelude_root()}/vector.tw"
         plan := try plan_deps(module, prelude_file, root)
         try assert.is_true(plan.is_internal)
         prelude_count := 0
-        saw_self := false
 
         for dep in plan.dependencies {
           case dep.kind {
             .Prelude => {
               prelude_count = prelude_count + 1
-
-              if dep.canonical_path == prelude_file {
-                saw_self = true
-              }
             },
             _ => {},
           }
         }
 
-        try assert.is_true(prelude_count > 0)
-        try assert.is_false(saw_self)
+        try assert.equal(prelude_count, 0)
         .Ok({})
       },
     )

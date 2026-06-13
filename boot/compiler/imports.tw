@@ -102,9 +102,14 @@ pub fn plan_dependencies_with_exists(
   is_prelude := norm_file.starts_with(norm_prelude)
   is_internal := is_prelude or norm_file.starts_with(norm_stdlib)
 
-  // Auto-inject prelude modules for every module, including prelude modules.
-  // Recursive-module analysis handles the safe prelude-into-prelude cycles; the
-  // current module itself is skipped to avoid a trivial self-import edge.
+  // Auto-inject prelude modules only for user modules. Internal stdlib/prelude
+  // implementations already resolve against builtin/prelude signatures; adding
+  // source-level prelude edges there creates cycles such as prelude Vector ->
+  // stdlib View -> prelude Vector.
+  if is_internal {
+    return .Ok(DependencyPlan.{ dependencies: deps, is_internal })
+  }
+
   prelude_modules := loader.list_prelude_modules(prelude_root)
 
   for prelude_path in prelude_modules {

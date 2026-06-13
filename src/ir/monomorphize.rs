@@ -368,6 +368,8 @@ fn resolve_builtin_contract_method(
         }
         ("Ord", "compare") => resolve_contract_method_target(module, receiver_ty, "compare"),
         ("Eq", "eq") => resolve_contract_method_target(module, receiver_ty, "eq"),
+        ("IndexRead", "len") => resolve_contract_method_target(module, receiver_ty, "len"),
+        ("IndexRead", "at") => resolve_contract_method_target(module, receiver_ty, "at"),
         _ => None,
     }
 }

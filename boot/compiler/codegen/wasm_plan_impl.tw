@@ -21,7 +21,7 @@ use compiler.codegen.wasm_plan_types.{
 }
 use compiler.core_ir.{FuncId}
 use compiler.mono_type.{MonoType, TypeId}
-use compiler.resolver.{ResolvedEnv, TypeEntry}
+use compiler.resolver.{ResolvedEnv, ResolvedTypeDef, TypeEntry, plain_resolved_type_params}
 use compiler.type_util.{subst_type_params}
 
 // ── plan_wasm_types ─────────────────────────────────────────────────
@@ -394,7 +394,28 @@ fn register_named_dependencies(
   entry := find_type_entry(env, tid)
   def := case entry.def {
     .Some(d) => d,
-    .None => error("register_named_dependencies: TypeId ${tid.id} has no definition"),
+    .None => case env.type_origins[tid.id] {
+      .Some(origin) => if origin == "@std.view::View" {
+        source_ty := if args.len() > 0 {
+          args[0]
+        } else {
+          MonoType.Void
+        }
+        view_def: ResolvedTypeDef = .Record(
+          "View",
+          plain_resolved_type_params(["C"]),
+          [
+            .{ name: "source", ty: source_ty },
+            .{ name: "start", ty: .Int },
+            .{ name: "count", ty: .Int },
+          ],
+        )
+        view_def
+      } else {
+        error("register_named_dependencies: TypeId ${tid.id} has no definition")
+      },
+      .None => error("register_named_dependencies: TypeId ${tid.id} has no definition"),
+    },
   }
 
   case def {

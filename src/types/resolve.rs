@@ -1,7 +1,8 @@
 use super::env::{TypeEnv, ValueEnv};
 use super::error::TypeError;
 use super::ty::{
-    FunctionSignature, MonoType, RecordField, TypeDef, TypeId, Variant, method_receiver_type_id,
+    FunctionSignature, MonoType, RecordField, TypeDef, TypeId, VIEW_TYPE_ID, Variant,
+    method_receiver_type_id,
 };
 use crate::module::artifacts::ResolvedModule;
 use crate::syntax::ast::{
@@ -234,7 +235,14 @@ impl Resolver {
                     doc: decl.doc.clone(),
                 },
             };
-            let type_id = self.type_env.add_type(placeholder);
+            let type_id = if name == "View" {
+                self.type_env
+                    .lookup_type(name)
+                    .filter(|id| *id == VIEW_TYPE_ID)
+                    .unwrap_or_else(|| self.type_env.add_type(placeholder))
+            } else {
+                self.type_env.add_type(placeholder)
+            };
             type_ids.insert(name.clone(), type_id);
             self.local_type_ids.insert(type_id);
 

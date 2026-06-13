@@ -1,6 +1,21 @@
+use @std.view
+
 /// Return true when the vector has no elements.
 pub fn is_empty<A>(xs: Vector<A>) Bool {
   xs.len() == 0
+}
+
+/// Non-overlapping contiguous windows over the vector, as zero-copy `View`s that
+/// share the backing. Invalid sizes return an empty vector. See `View.chunks`.
+pub fn chunks<T>(xs: Vector<T>, size: Int) Vector<View<Vector<T>>> {
+  view.from(xs).chunks(size)
+}
+
+/// Sliding contiguous windows over the vector, as zero-copy `View`s that share
+/// the backing. Invalid or too-large sizes return an empty vector. See
+/// `View.windows`.
+pub fn windows<T>(xs: Vector<T>, size: Int) Vector<View<Vector<T>>> {
+  view.from(xs).windows(size)
 }
 
 /// Return the element at index, trapping on out-of-bounds (unchecked positional
