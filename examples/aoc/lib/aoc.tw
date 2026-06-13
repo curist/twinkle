@@ -5,6 +5,9 @@
 /// `aoc.day_dir(year, day)` (e.g. "y2024/day01") and reads files beneath it.
 
 use @std.fs
+use @std.regexp
+
+int_pattern := regexp.must(r"[+-]?\d+")
 
 /// Two-digit zero-padded day number, e.g. 1 -> "01".
 fn pad2(n: Int) String {
@@ -66,13 +69,13 @@ pub fn words(line: String) Vector<String> {
   out
 }
 
-/// Every integer token on a line (split on whitespace). Non-numeric tokens are
-/// skipped.
+/// Every integer in a line. Non-numeric separators are ignored, so inputs like
+/// `2x3x4` and `x=-10, y=20` parse without callers pre-splitting fields.
 pub fn ints(line: String) Vector<Int> {
   out: Vector<Int> = []
 
-  for w in words(line) {
-    case Int.from_string(w) {
+  for m in int_pattern.find_all(line) {
+    case Int.from_string(m.text()) {
       .Some(n) => {
         out = .append(n)
       },

@@ -1,0 +1,105 @@
+// Advent of Code 2015, Day 2
+// https://adventofcode.com/2015/day/2
+//
+// TDD flow:
+//   1. Paste the puzzle's example into sample.txt.
+//   2. Set the two `part_ sample` expectations below to the example's stated
+//      answers and run `make test YEAR=2015` — they start red.
+//   3. Implement parse / part1 / part2 until the sample passes.
+//   4. `make pull` + `make solve` to get the real answers, then record them in
+//      the `part_ input` expectations to lock in a regression.
+use assert
+use lib.aoc
+use runner
+
+fn parse(input: String) Vector<String> {
+  aoc.lines(input)
+}
+
+fn calc_wrapping_size(dims: Vector<Int>) Int {
+  if dims.len() != 3 {
+    error("invalid dimensions")
+  }
+  l := dims[0]
+  w := dims[1]
+  h := dims[2]
+
+  side_lw := l * w
+  side_wh := w * h
+  side_hl := h * l
+  slack := side_lw.min(side_wh).min(side_hl)
+
+  2 * (side_lw + side_wh + side_hl) + slack
+}
+
+pub fn part1(input: String) Int {
+  lines := parse(input)
+  total := 0
+
+  for line in lines {
+    dims := aoc.ints(line)
+    total = total + calc_wrapping_size(dims)
+  }
+
+  total
+}
+
+fn calc_ribbon_length(dims: Vector<Int>) Int {
+  if dims.len() != 3 {
+    error("invalid dimensions")
+  }
+  l := dims[0]
+  w := dims[1]
+  h := dims[2]
+
+  smallest_perimeter := 2 * (l + w + h - l.max(w).max(h))
+  bow := l * w * h
+
+  smallest_perimeter + bow
+}
+
+pub fn part2(input: String) Int {
+  lines := parse(input)
+
+  total := 0
+
+  for line in lines {
+    dims := aoc.ints(line)
+    total = total + calc_ribbon_length(dims)
+  }
+
+  total
+}
+
+pub fn suite() {
+  dir := aoc.day_dir(2015, 2)
+  sample := aoc.read_sample(dir)
+
+  runner.suite("2015 day02")
+    .test("part1 sample", fn() { assert.equal(part1(sample), 58 + 43) })
+    .test(
+      "part2 sample",
+      fn() {
+        // TODO: replace -1 with the example's part 2 answer.
+        assert.equal(part2(sample), 34 + 14)
+      },
+    )
+    .test(
+      "part1 input",
+      fn() {
+        case aoc.read_input(dir) {
+          .Some(inp) => assert.equal(part1(inp), 1586300),
+          .None => .Ok({}),
+        }
+      },
+    )
+    .test(
+      "part2 input",
+      fn() {
+        case aoc.read_input(dir) {
+          .Some(inp) => assert.equal(part2(inp), 3737498),
+          .None => .Ok({}),
+        }
+      },
+    )
+}
