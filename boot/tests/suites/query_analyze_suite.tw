@@ -243,6 +243,23 @@ pub fn suite() runner.Suite {
       },
     )
     .test(
+      "user modules cannot define reserved stdlib View type",
+      fn() {
+        ov := overlay.from_documents([
+          ov_doc("/tmp/analyze/main.tw", "type View = .{ value: Int }\nx := 1\n"),
+        ])
+        state := analyze.new_state(base_env.builtin_env(), cache.empty(), ov, "/tmp/analyze")
+        id := identity.from_path("/tmp/analyze/main.tw")
+        result := analyze.analyze_module(id, "__entry", base_env.builtin_env(), state, [])
+        try assert.is_false(result.ok)
+        try assert.is_true(result.diagnostics.len() > 0)
+        try assert.equal(result.diagnostics[0].stage, "resolve")
+        try assert.str_contains(result.diagnostics[0].kind.message(), "reserved")
+        try assert.str_contains(result.diagnostics[0].kind.message(), "View")
+        .Ok({})
+      },
+    )
+    .test(
       "module_runners populated for all analyzed modules",
       fn() {
         ov := overlay.from_documents([

@@ -281,6 +281,8 @@ Persistent vector with structural sharing. Literal syntax: `[1, 2, 3]`.
 | `.find_map(f)` | `fn<A,B>(xs: Vector<A>, f: fn(A) Option<B>) Option<B>` | First `.Some` produced by `f`, short-circuiting |
 | `.count_where(f)` | `fn<A>(xs: Vector<A>, f: fn(A) Bool) Int` | Count elements satisfying `f` |
 | `.zip_with(other, f)` | `fn<A,B,C>(a: Vector<A>, b: Vector<B>, f: fn(A,B) C) Vector<C>` | Combine elementwise, stopping at the shorter input |
+| `.chunks(size)` | `fn<T>(xs: Vector<T>, size: Int) Vector<View<Vector<T>>>` | Non-overlapping zero-copy windows over the vector; invalid sizes return empty |
+| `.windows(size)` | `fn<T>(xs: Vector<T>, size: Int) Vector<View<Vector<T>>>` | Sliding zero-copy windows over the vector; invalid or too-large sizes return empty |
 | `.find(f)` | `fn<A>(xs: Vector<A>, f: fn(A) Bool) Option<A>` | First element matching predicate |
 | `.any(f)` | `fn<A>(xs: Vector<A>, f: fn(A) Bool) Bool` | True if any element matches |
 | `.all(f)` | `fn<A>(xs: Vector<A>, f: fn(A) Bool) Bool` | True if all elements match |

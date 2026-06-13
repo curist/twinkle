@@ -1,3 +1,6 @@
+use @std.view
+use @std.view.{View}
+
 use tests.assert
 use tests.runner
 
@@ -1177,6 +1180,45 @@ pub fn suite() runner.Suite {
       fn() {
         try assert.equal([1, 2, 3, 4].count_where(fn(x) { x % 2 == 0 }), 2)
         try assert.equal([1, 2, 3].zip_with([10, 20], fn(a, b) { a + b }), [11, 22])
+        .Ok({})
+      },
+    )
+    .test(
+      "chunks returns View windows over the vector",
+      fn() {
+        xs := [1, 2, 3, 4, 5]
+        chunks := xs.chunks(2)
+        try assert.equal(chunks.len(), 3)
+        try assert.equal(chunks[0].to_vector(), [1, 2])
+        try assert.equal(chunks[1].to_vector(), [3, 4])
+        try assert.equal(chunks[2].to_vector(), [5])
+        try assert.equal(xs.chunks(0).len(), 0)
+        try assert.equal(xs.chunks(-1).len(), 0)
+        .Ok({})
+      },
+    )
+    .test(
+      "windows returns sliding View windows over the vector",
+      fn() {
+        xs := [1, 2, 3, 4]
+        windows := xs.windows(2)
+        try assert.equal(windows.len(), 3)
+        try assert.equal(windows[0].to_vector(), [1, 2])
+        try assert.equal(windows[1].to_vector(), [2, 3])
+        try assert.equal(windows[2].to_vector(), [3, 4])
+        try assert.equal(xs.windows(5).len(), 0)
+        try assert.equal(xs.windows(0).len(), 0)
+        .Ok({})
+      },
+    )
+    .test(
+      "Vector chunks share View identity with stdlib view",
+      fn() {
+        xs := [1, 2, 3]
+        chunk: View<Vector<Int>> = xs.chunks(2)[0]
+        whole: View<Vector<Int>> = view.from(xs)
+        try assert.equal(chunk.to_vector(), [1, 2])
+        try assert.equal(whole.to_vector(), xs)
         .Ok({})
       },
     )

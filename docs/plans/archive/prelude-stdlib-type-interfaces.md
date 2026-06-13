@@ -1,6 +1,6 @@
 # Prelude methods returning stdlib types
 
-Status: spike validated; ready to implement (Path 2 — reserved stdlib type, forward-declaration reuse + origin pinning).
+Status: implemented and validated (Path 2 — reserved stdlib type, forward-declaration reuse + origin pinning).
 
 ## Spike results (2026-06-13)
 
@@ -219,40 +219,28 @@ shared.
 
 ## Implementation steps
 
-The spike already validated steps 1–2 and isolated the additional work (2b, and
-stage0 parity). Order:
+Completed:
 
-1. **Reserved registry + seeding + origin.** Add the registry and append `View`
-   (`arity: 1`, `def: .None`) to the builtin type vector in `base_env.tw`; seed
-   into both `builtin_type_env()` and `builtin_env()`. **Set
-   `type_origins[reserved_id] = "@std.view::View"` in `builtin_env()`** (the
-   spike's load-bearing fix). Keep names confined to this boundary
-   (builtin_refs-style). Note `builtin_type_names` requires `def == .Some`, so the
-   reserved entry/name must be concatenated *separately* from
-   `builtin_type_entries()` / `builtin_type_names()`.
-2. **Stage0 parity.** Mirror the seeding (and origin) in the Rust stage0
-   (`src/types/env.rs`, alongside `Set`/`Order`/`Task`), so stage0 can compile the
-   bare-`View` prelude method directly. Without this the prelude won't bootstrap
-   except via the throwaway two-phase trick. Confirm stage0's import/method
-   model needs the equivalent of the origin pin and the dedup.
-3. **Idempotent method registration (step 2b).** Dedup identical method
-   re-registration for the shared `View` id in `detect_inherent_methods` /
-   `register_imported_interface_types`. This is the gating fix — without it the
-   prelude fails with `duplicate method: … on View` for *every* program.
-4. **Prelude method.** Add `chunks` / `windows` to `boot/prelude/vector.tw` (bare
-   `View` return, `use @std.view` for bodies). `receiver_for_stem("vector")` /
-   `to_internal_name` already route `Vector` methods — no signature-map change.
-5. **Origin guard.** Add the reserved-stdlib shadowing check in the analyze layer
-   (`capture_local_types` / `preliminary_type_exports`) so a non-`@std.view`
-   module defining `type View` is rejected.
-6. **Tests.** Boot tests under `boot/tests/suites/` covering: `xs.chunks(2)` /
-   `xs.windows(2)` shapes and contents; invalid sizes → empty vector; a `View`
-   produced by `chunks` is the same nominal type as one from `view.from`
-   (identity unification); existing `api_view_suite` still green (no duplicate
-   methods); and a negative test for the origin guard.
-7. **Docs.** Add `Vector.chunks` / `Vector.windows` to `docs/API.md`; note the
-   reserved-stdlib-type mechanism in the design notes if appropriate.
-8. **Rebuild + verify** (below).
+1. **Reserved registry + seeding + origin.** `base_env.tw` now declares reserved
+   stdlib types and appends `View` (`arity: 1`, `def: .None`) after builtin named
+   types. Both `builtin_type_env()` and `builtin_env()` seed it, and the reserved
+   id is pinned to `@std.view::View` in `type_origins`.
+2. **Stage0 parity.** Rust stage0 seeds `VIEW_TYPE_ID`, reuses it when resolving
+   `type View`, and can bootstrap `boot/main.tw` directly. Stage0 also recognizes
+   `IndexRead<E>` bounds for generic `.len()` / `.at(...)`, lowers them as
+   deferred contract calls, and monomorphizes them to concrete receiver methods.
+3. **Idempotent method registration.** Re-registering identical methods for the
+   shared reserved `View` id is treated as a no-op, while non-identical duplicate
+   methods still error.
+4. **Prelude methods.** `boot/prelude/vector.tw` exports `chunks` and `windows`
+   with bare `View` return annotations and imports `@std.view` for their bodies.
+5. **Origin guard.** Analyze rejects non-stdlib declarations of reserved stdlib
+   type names while allowing the bundled/canonical `@std.view` definition to fill
+   the reserved forward declaration.
+6. **Tests.** Boot tests cover vector `chunks` / `windows` contents, invalid
+   sizes, nominal identity with `view.from`, and user `type View` rejection.
+7. **Docs.** `docs/API.md` documents `Vector.chunks` and `Vector.windows`.
+8. **Rebuild + verify.** The validation commands below pass.
 
 ## Touch points (file:line)
 
@@ -276,31 +264,25 @@ stage0 parity). Order:
 
 ## Acceptance criteria
 
-- `Vector.chunks` and `Vector.windows` resolve as inherent vector methods.
-- Their return type is `Vector<View<Vector<T>>>`, sharing the original vector via
-  `View` windows; invalid sizes return an empty vector.
-- `View` has the **same nominal identity** whether referenced from a prelude
+- [x] `Vector.chunks` and `Vector.windows` resolve as inherent vector methods.
+- [x] Their return type is `Vector<View<Vector<T>>>`, sharing the original vector
+  via `View` windows; invalid sizes return an empty vector.
+- [x] `View` has the **same nominal identity** whether referenced from a prelude
   method result or imported directly from `@std.view` (proven by a unification
   test, not by inspection).
-- A non-`@std.view` module defining `type View` is rejected (origin guard).
-- `make stage2` reaches a **deterministic fixed point** and
-  `target/twk run boot/tests/main.tw` passes.
+- [x] A non-`@std.view` module defining `type View` is rejected (origin guard).
+- [x] Stage0 can build `boot/main.tw` directly and the boot suite passes.
 
 ## Expectations / caveats
 
-- **Not byte-identical to the current self-host.** Unlike the `builtin_refs`
+- **Not byte-identical to the pre-change self-host.** Unlike the `builtin_refs`
   work (which preserved ids), seeding `View` shifts every dynamically-allocated
-  user `TypeId` by the number of newly reserved entries. The required signal is a
-  deterministic fixed point (stage2 == stage3), **not** byte-identity with the
-  pre-change compiler.
-- **The remaining risk is method-registration dedup (step 3), not identity.** The
-  spike confirmed identity unifies with seeding + origin pin; the cycle is handled
-  by existing machinery. The open question is scoping the dedup so it suppresses
-  *only* re-registration of the same `(type_id, method_name, function_name)` for
-  shared stdlib ids, without masking genuine user duplicate-method errors. If the
-  dedup proves hard to scope cleanly, reassess against promoting `View` to a
-  builtin (Path 1), which sidesteps both import-merge and multi-site method
-  registration.
+  user `TypeId` by the reserved entry. The required signal is a deterministic
+  fixed point after the change, **not** byte-identity with the pre-change
+  compiler.
 - Keep all source-level reserved names confined to the bootstrap boundary, per
   the `builtin_refs.tw` convention.
+- The codegen fallback for a still-opaque reserved `View` remains a defensive
+  fallback. The preferred long-term invariant is that normal analysis fills the
+  reserved definition before codegen needs the layout.
 ```

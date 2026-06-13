@@ -4,7 +4,7 @@ Status: done. Archived after the initial `Vector`/`View` helper pass landed.
 
 Follow-up: `Vector.chunks` and `Vector.windows` remain deferred until prelude
 method signatures can mention stdlib-defined types such as `@std.view.View`; see
-[prelude-stdlib-type-interfaces.md](../prelude-stdlib-type-interfaces.md).
+[prelude-stdlib-type-interfaces.md](prelude-stdlib-type-interfaces.md).
 
 ## Goal
 
@@ -112,7 +112,7 @@ Return types:
 View.chunks<C>(v: View<C>, size: Int) Vector<View<C>>
 View.windows<C>(v: View<C>, size: Int) Vector<View<C>>
 
-// Deferred follow-up; see ../prelude-stdlib-type-interfaces.md
+// Deferred follow-up; see prelude-stdlib-type-interfaces.md
 Vector.chunks<T>(xs: Vector<T>, size: Int) Vector<View<Vector<T>>>
 Vector.windows<T>(xs: Vector<T>, size: Int) Vector<View<Vector<T>>>
 ```
@@ -128,7 +128,7 @@ Semantics:
 - Deferred: `Vector` implementations should forward through `view.from(xs)` so
   the chunks and windows share the original vector rather than copying elements.
   This requires prelude method signatures to reference `@std.view.View`; see
-  [prelude-stdlib-type-interfaces.md](../prelude-stdlib-type-interfaces.md).
+  [prelude-stdlib-type-interfaces.md](prelude-stdlib-type-interfaces.md).
 
 ### Add to `View` for parity with `Vector`
 
@@ -194,7 +194,7 @@ awkward to express in the current type system, defer `unique`.
 2. Extend `boot/prelude/vector.tw` with vector conveniences. Reuse existing
    vector primitives (`slice`, `append`, `len`, indexing). Deferred: the
    `View`-returning conveniences (`chunks`, `windows`) need the follow-up in
-   [prelude-stdlib-type-interfaces.md](../prelude-stdlib-type-interfaces.md).
+   [prelude-stdlib-type-interfaces.md](prelude-stdlib-type-interfaces.md).
 3. Add API documentation to `docs/API.md` under `Vector<T>` and `@std.view`.
 4. Add boot tests covering edge behavior:
    - `take` / `drop` clamp behavior
