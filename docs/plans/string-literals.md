@@ -416,41 +416,40 @@ brace depth; it must also record which **host string kind** each interpolation
 belongs to (cooked `"…"`, raw `r"…"`, or `\\` block) so the resume after `}`
 picks the right segment scanner.
 
-**Task 3.1 — boot lexer**
+**Task 3.1 — boot lexer** ✅ done
 
-- [ ] Widen the host-kind stack introduced in Milestone 1 from two-way
-      `{ Cooked, Raw }` to three-way `StringKind = { Cooked, Raw, Multiline }`
-      (entries are records `.{ depth: Int, host: StringKind }`, or a parallel
-      stack alongside `interp_depths`).
-- [ ] On `${` inside a `\\` line, emit `StringStart` with the text accumulated so
-      far (including earlier lines' `\n` joins) and push `host: .Multiline`.
-- [ ] On the closing `}`, dispatch the resume by `host`: `.Cooked` →
-      `scan_string_segment`, `.Raw` → `scan_raw_string_segment`, `.Multiline` → a
-      `scan_multiline_segment` that continues the block (handles further lines and
-      either `${`→`StringContinue` or block-end→`StringEnd`).
-- [ ] Enforce: an interpolation must close on the same `\\` line it opened; a line
-      break inside `${…}` is an error.
+- [x] Widened the host-kind stack to three-way
+      `StringKind = { Cooked, Raw, Multiline }`.
+- [x] `scan_multiline_string` became `scan_multiline_segment(source, from)`: scans
+      from a content cursor (past a marker, or past a `}` on resume), accumulates
+      across `\\` lines, and stops at the first `${` (StringStart/Continue) or the
+      first non-`\\` line (StringLit/StringEnd). `scan_host_segment` dispatches
+      `.Multiline` to it.
+- [x] Enforced same-line interpolation: a newline while the top frame is
+      `.Multiline` emits a diagnostic and drops the frame.
 
-**Task 3.2 — stage0 Rust lexer**
+**Task 3.2 — stage0 Rust lexer** ✅ done
 
-- [ ] Mirror the host-kind stack and multiline-segment resume.
+- [x] Mirrored: `StringKind::Multiline`, `scan_multiline_segment`, the resume arm,
+      a quote-consumption guard (multiline has no closing delimiter), and a
+      `MultilineInterpAcrossLines` error on a newline inside a multiline interp.
 
-**Task 3.3 — tests**
+**Task 3.3 — tests** ✅ done
 
-- [ ] `\\` block with one and with multiple `${…}`; interpolation on the last
-      line (→ `StringEnd`); interpolation spanning a line break errors; a `$` not
-      followed by `{` stays literal (regex `$` anchor in a block is fine).
+- [x] Boot + Rust: single `${…}`, accumulation across lines, multiple `${…}` (→
+      `StringContinue`/`StringEnd`), lone `$` stays literal, line-break-in-interp
+      errors.
 
-**Task 3.4 — grammar & highlighting**
+**Task 3.4 — grammar & highlighting** — code done; wasm rebuild + tests pending (human)
 
-- [ ] Confirm the `docs/grammar.ebnf` multiline production already admits the
-      `${` Expr `}` alternative (added in Task 2.4); adjust if needed.
-- [ ] Extend the `multiline_string` rule in `tree-sitter-twinkle/grammar.js` to
-      allow `${…}` interpolations; regenerate and rebuild wasm.
-- [ ] Ensure `tree-sitter-twinkle/queries/highlights.scm` captures the
-      interpolation delimiters/expressions inside multiline strings consistently
-      with the existing `interpolation` captures (lines ~199–200); hand off
-      `tree-sitter test`.
+- [x] `docs/grammar.ebnf` multiline production already admits `${ Expr }`.
+- [x] `multiline_string`/`multiline_line` in `tree-sitter-twinkle/grammar.js`
+      restructured so each line is `\\` + `repeat(multiline_content | interpolation
+      | '$')`; `tree-sitter generate` clean; `tree-sitter parse` shows
+      `multiline_content` + `interpolation` nodes, no ERRORs. **TODO (human): wasm
+      rebuild + `tree-sitter test`.**
+- [x] `highlights.scm` captures `multiline_content` as `@string`; interpolations
+      use the shared `interpolation` rule.
 
 ---
 
@@ -484,18 +483,19 @@ lint rules are defined in "Formatter & lint rules" above.
       `=`; trailing spaces inside content survive (F3); a trailing-newline block
       (final empty `\\` line) survives; idempotence.
 
-**Task 4a.3 — single-line `\\` lint (L1)**
+**Task 4a.3 — single-line `\\` lint (L1)** ✅ done
 
-- [ ] Add a `DiagKind` variant carrying the suggested single-line rewrite (model on
-      `CStyleLogicalOp`), raised when a `\\` block has exactly one marker line.
-- [ ] Compute the value-preserving suggestion per L1 (`"…"`, `r"…"`, or escaped
-      cooked), and surface it as a suggestion-level diagnostic.
+- [x] Added a `WarningDiag` variant `MultilineSingleLine(.{ span, suggestion })`,
+      wired through `span`/`message`/`diag_render`/`query/diagnostics`.
+- [x] The lexer raises it (suggestion-level) when a `\\` block produces a single
+      StringLit whose value has no newline, with `single_line_suggestion`
+      computing the value-preserving form (`"…"`, `r"…"`, or escaped cooked).
 
-**Task 4a.4 — lint tests**
+**Task 4a.4 — lint tests** ✅ done
 
-- [ ] A single-`\\`-line block warns with the right suggested form for each of the
-      three content cases; a one-line block with a trailing empty `\\` line does
-      **not** warn; a genuinely multi-line block does not warn.
+- [x] Boot tests: each of the three content cases gets the right suggested form;
+      a one-line block with a trailing empty `\\` line does **not** warn; a
+      genuinely multi-line block does not warn.
 
 ### Wrap-up
 

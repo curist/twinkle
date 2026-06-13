@@ -452,5 +452,11 @@ fn warning_to_report(w: WarningDiag, ctx: RenderCtx) Report {
       labels: [primary(d.span, .None)],
       help_lines: ["use `twk check --fix-unused-imports` to remove automatically"],
     },
+    .MultilineSingleLine(d) => .{
+      severity: .Warning,
+      title: "single-line multiline block",
+      labels: [primary(d.span, .None)],
+      help_lines: ["a one-line `\\\\` block reads better as ${d.suggestion}"],
+    },
   }
 }

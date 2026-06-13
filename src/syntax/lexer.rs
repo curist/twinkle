@@ -12,6 +12,7 @@ pub struct LexError {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum LexErrorKind {
     UnterminatedString,
+    MultilineInterpAcrossLines,
     InvalidEscape(char),
     InvalidHexEscape,
     InvalidUnicodeEscape,
@@ -35,6 +36,7 @@ impl LexError {
 enum StringKind {
     Cooked,
     Raw,
+    Multiline,
 }
 
 pub struct Lexer {
@@ -87,6 +89,14 @@ impl Lexer {
         let saw_newline = self.skip_whitespace_and_comments();
 
         let start = self.byte_pos;
+
+        // An interpolation inside a `\\` block must open and close on one line.
+        if saw_newline
+            && matches!(self.interpolation_stack.last(), Some((_, StringKind::Multiline)))
+        {
+            let span = Span::new(self.file_id, start as u32, start as u32);
+            return Err(LexError::new(LexErrorKind::MultilineInterpAcrossLines, span));
+        }
 
         if self.is_eof() {
             return Ok(Token::eof(self.file_id, start as u32));
@@ -503,19 +513,47 @@ impl Lexer {
         (value, false, false)
     }
 
-    /// `\\`-prefixed multiline string: join consecutive `\\` lines with `\n`
-    /// (no trailing newline), normalize `\r\n` → `\n`, and stop at the first line
-    /// that does not start with `\\`. Marker indentation is excluded.
+    /// `\\`-prefixed multiline string. Consume the first marker, then scan the
+    /// block. `${` opens an interpolation (StringStart); otherwise the whole block
+    /// is one StringLit. Marker indentation is excluded; lines join with `\n`.
     fn lex_multiline_string(&mut self) -> LexResult<Token> {
         let start = self.byte_pos;
+        self.advance(); // first '\'
+        self.advance(); // second '\'
+
+        let (text, found_interp) = self.scan_multiline_segment();
+        let span = Span::new(self.file_id, start as u32, self.byte_pos as u32);
+
+        if found_interp {
+            self.advance(); // consume $
+            self.advance(); // consume {
+            self.interpolation_stack.push((1, StringKind::Multiline));
+            Ok(Token::new(TokenKind::StringStart, span, text))
+        } else {
+            Ok(Token::new(TokenKind::StringLit, span, text))
+        }
+    }
+
+    /// Scan a `\\` multiline segment from the current cursor (just past a `\\`
+    /// marker, or just past a `}` resuming an interpolation). Join the rest of the
+    /// current line and any following `\\` lines with `\n` (no trailing newline),
+    /// normalizing `\r\n` → `\n`. Return `(text, found_interp)`. On `${` the cursor
+    /// is left at the `$` (the caller consumes it); otherwise it is left at the
+    /// block's trailing newline. A multiline block has no closing delimiter, so it
+    /// never reports "unterminated".
+    fn scan_multiline_segment(&mut self) -> (String, bool) {
         let mut parts: Vec<String> = Vec::new();
 
         loop {
-            self.advance(); // first '\'
-            self.advance(); // second '\'
-
             let mut line = String::new();
-            while !self.is_eof() && self.peek() != '\n' {
+            loop {
+                if self.is_eof() || self.peek() == '\n' {
+                    break;
+                }
+                if self.peek() == '$' && self.peek_ahead(1) == '{' {
+                    parts.push(line);
+                    return (parts.join("\n"), true);
+                }
                 line.push(self.advance());
             }
             if line.ends_with('\r') {
@@ -524,8 +562,8 @@ impl Lexer {
             parts.push(line);
 
             // Look past the newline + horizontal whitespace for the next marker.
-            // Consume them only if a `\\` follows; otherwise the block ends and
-            // the trailing newline is left for the main loop.
+            // Consume it only if a `\\` follows; otherwise the block ends and the
+            // trailing newline is left for the main loop.
             if self.peek() != '\n' {
                 break;
             }
@@ -534,16 +572,15 @@ impl Lexer {
                 off += 1;
             }
             if self.peek_ahead(off) == '\\' && self.peek_ahead(off + 1) == '\\' {
-                for _ in 0..off {
-                    self.advance();
+                for _ in 0..off + 2 {
+                    self.advance(); // consume up to and including the marker
                 }
             } else {
                 break;
             }
         }
 
-        let span = Span::new(self.file_id, start as u32, self.byte_pos as u32);
-        Ok(Token::new(TokenKind::StringLit, span, parts.join("\n")))
+        (parts.join("\n"), false)
     }
 
     fn lex_string_continuation(&mut self) -> LexResult<Token> {
@@ -598,6 +635,10 @@ impl Lexer {
                         (value, !self.is_eof() && !found_interp, found_interp)
                     }
                     StringKind::Raw => self.scan_raw_segment(),
+                    StringKind::Multiline => {
+                        let (value, found_interp) = self.scan_multiline_segment();
+                        (value, !found_interp, found_interp)
+                    }
                 };
 
                 if has_more_interpolation {
@@ -613,7 +654,11 @@ impl Lexer {
                         return Err(LexError::new(LexErrorKind::UnterminatedString, span));
                     }
 
-                    self.advance(); // consume closing "
+                    // Cooked/raw end on `"`; a multiline block ends at a newline or
+                    // eof and has no closing delimiter to consume.
+                    if self.peek() == '"' {
+                        self.advance();
+                    }
 
                     let span = Span::new(self.file_id, start as u32, self.byte_pos as u32);
                     Ok(Token::new(TokenKind::StringEnd, span, value))
@@ -1005,6 +1050,53 @@ mod tests {
         assert_eq!(tokens[0].text, "a");
         assert_eq!(tokens[1].kind, TokenKind::Ident);
         assert_eq!(tokens[1].text, "foo");
+    }
+
+    #[test]
+    fn test_lex_multiline_single_interpolation() {
+        let tokens = lex_simple("\\\\a ${x} b");
+        assert_eq!(tokens[0].kind, TokenKind::StringStart);
+        assert_eq!(tokens[0].text, "a ");
+        assert_eq!(tokens[1].kind, TokenKind::Ident);
+        assert_eq!(tokens[1].text, "x");
+        assert_eq!(tokens[2].kind, TokenKind::StringEnd);
+        assert_eq!(tokens[2].text, " b");
+    }
+
+    #[test]
+    fn test_lex_multiline_interpolation_accumulates_earlier_lines() {
+        let tokens = lex_simple("\\\\a\n\\\\b ${x}");
+        assert_eq!(tokens[0].kind, TokenKind::StringStart);
+        assert_eq!(tokens[0].text, "a\nb ");
+        assert_eq!(tokens[1].kind, TokenKind::Ident);
+        assert_eq!(tokens[2].kind, TokenKind::StringEnd);
+        assert_eq!(tokens[2].text, "");
+    }
+
+    #[test]
+    fn test_lex_multiline_multiple_interpolations() {
+        let tokens = lex_simple("\\\\${a} and ${b}!");
+        assert_eq!(tokens[0].kind, TokenKind::StringStart);
+        assert_eq!(tokens[0].text, "");
+        assert_eq!(tokens[1].kind, TokenKind::Ident);
+        assert_eq!(tokens[2].kind, TokenKind::StringContinue);
+        assert_eq!(tokens[2].text, " and ");
+        assert_eq!(tokens[3].kind, TokenKind::Ident);
+        assert_eq!(tokens[4].kind, TokenKind::StringEnd);
+        assert_eq!(tokens[4].text, "!");
+    }
+
+    #[test]
+    fn test_lex_multiline_lone_dollar_is_literal() {
+        let tokens = lex_simple("\\\\price $5");
+        assert_eq!(tokens[0].kind, TokenKind::StringLit);
+        assert_eq!(tokens[0].text, "price $5");
+    }
+
+    #[test]
+    fn test_lex_multiline_interpolation_line_break_errors() {
+        let result = Lexer::lex("\\\\a ${x\n\\\\y}", FileId(0));
+        assert!(result.is_err());
     }
 
     #[test]

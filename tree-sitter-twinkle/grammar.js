@@ -663,13 +663,21 @@ module.exports = grammar({
 
     raw_string_content: $ => token.immediate(prec(1, /[^\n"$]+/)),
 
-    // Raw multiline string: one or more consecutive `\\`-prefixed lines. Each
-    // line is a single token (`\\` + the rest of the line); newlines between
-    // them are whitespace (in extras), so the lines group into one node. No
-    // escape processing; `\` is a literal character.
+    // Raw multiline string: one or more consecutive `\\`-prefixed lines. Newlines
+    // between lines are whitespace (in extras), so the lines group into one node.
+    // No escape processing; `\` is a literal character, but `${…}` interpolates.
     multiline_string: $ => prec.right(repeat1($.multiline_line)),
 
-    multiline_line: $ => token(seq('\\\\', /[^\n]*/)),
+    multiline_line: $ => seq(
+      '\\\\',
+      repeat(choice(
+        $.multiline_content,
+        $.interpolation,
+        token.immediate('$'),
+      )),
+    ),
+
+    multiline_content: $ => token.immediate(prec(1, /[^\n$]+/)),
 
     int_literal: $ => choice(
       /0x[0-9a-fA-F]+/,

@@ -1745,6 +1745,25 @@
     }
   },
   {
+    "type": "multiline_line",
+    "named": true,
+    "fields": {},
+    "children": {
+      "multiple": true,
+      "required": false,
+      "types": [
+        {
+          "type": "interpolation",
+          "named": true
+        },
+        {
+          "type": "multiline_content",
+          "named": true
+        }
+      ]
+    }
+  },
+  {
     "type": "multiline_string",
     "named": true,
     "fields": {},
@@ -2921,6 +2940,10 @@
     "named": false
   },
   {
+    "type": "\\\\",
+    "named": false
+  },
+  {
     "type": "]",
     "named": false
   },
@@ -3010,7 +3033,7 @@
     "named": false
   },
   {
-    "type": "multiline_line",
+    "type": "multiline_content",
     "named": true
   },
   {

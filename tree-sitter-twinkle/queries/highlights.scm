@@ -80,9 +80,10 @@
 (raw_string_literal) @string
 (raw_string_content) @string
 
-; Raw multiline strings — also no @string.escape.
+; Raw multiline strings — also no @string.escape. Interpolations inside are
+; highlighted by the shared interpolation rule below.
 (multiline_string) @string
-(multiline_line) @string
+(multiline_content) @string
 
 ; Comments
 (comment) @comment

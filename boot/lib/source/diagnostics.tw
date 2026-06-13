@@ -78,7 +78,10 @@ pub type ErrorDiag = {
   LowerError(GenericDiag),
 }
 
-pub type WarningDiag = { UnusedImport(.{ span: Span, binding: String }) }
+pub type WarningDiag = {
+  UnusedImport(.{ span: Span, binding: String }),
+  MultilineSingleLine(.{ span: Span, suggestion: String }),
+}
 
 pub type DiagKind = { Error(ErrorDiag), Warning(WarningDiag) }
 
@@ -170,6 +173,7 @@ pub fn span(kind: DiagKind) Span {
     },
     .Warning(w) => case w {
       .UnusedImport(d) => d.span,
+      .MultilineSingleLine(d) => d.span,
     },
   }
 }
@@ -238,6 +242,7 @@ pub fn message(kind: DiagKind) String {
     },
     .Warning(w) => case w {
       .UnusedImport(d) => "unused import: ${d.binding}",
+      .MultilineSingleLine(d) => "single-line multiline block; use ${d.suggestion} instead",
     },
   }
 }

@@ -1,6 +1,7 @@
 use compiler.lexer
 use compiler.parser
 use compiler.tokens.{Token}
+use lib.source.diagnostics as diag
 use tests.assert
 use tests.runner
 
@@ -14,6 +15,14 @@ fn lex_tokens(src: String) Vector<Token> {
 
 fn parse_diag_count(src: String) Int {
   parser.parse(src, 0).diagnostics.len()
+}
+
+// Concatenated messages of all lex diagnostics for `src`.
+fn lex_diag_messages(src: String) String {
+  msgs := collect d in lexer.lex(src, 0).diagnostics {
+    diag.message(d)
+  }
+  msgs.join(" | ")
 }
 
 pub fn suite() runner.Suite {
@@ -133,6 +142,93 @@ pub fn suite() runner.Suite {
       fn() {
         src := "query :=\n  \\\\SELECT *\n  \\\\FROM users\n"
         try assert.equal(parse_diag_count(src), 0)
+        .Ok({})
+      },
+    )
+    .test(
+      "multiline single interpolation",
+      fn() {
+        // \\a ${x} b
+        toks := lex_tokens("\\\\a \${x} b")
+        try assert.is_true(toks[0].kind == .StringStart)
+        try assert.equal(toks[0].text, "a ")
+        try assert.is_true(toks[1].kind == .Ident)
+        try assert.equal(toks[1].text, "x")
+        try assert.is_true(toks[2].kind == .StringEnd)
+        try assert.equal(toks[2].text, " b")
+        .Ok({})
+      },
+    )
+    .test(
+      "multiline interpolation accumulates earlier lines",
+      fn() {
+        // \\a / \\b ${x}
+        toks := lex_tokens("\\\\a\n\\\\b \${x}")
+        try assert.is_true(toks[0].kind == .StringStart)
+        try assert.equal(toks[0].text, "a\nb ")
+        try assert.is_true(toks[1].kind == .Ident)
+        try assert.is_true(toks[2].kind == .StringEnd)
+        try assert.equal(toks[2].text, "")
+        .Ok({})
+      },
+    )
+    .test(
+      "multiline multiple interpolations",
+      fn() {
+        // \\${a} and ${b}!
+        toks := lex_tokens("\\\\\${a} and \${b}!")
+        try assert.is_true(toks[0].kind == .StringStart)
+        try assert.equal(toks[0].text, "")
+        try assert.is_true(toks[1].kind == .Ident)
+        try assert.is_true(toks[2].kind == .StringContinue)
+        try assert.equal(toks[2].text, " and ")
+        try assert.is_true(toks[3].kind == .Ident)
+        try assert.is_true(toks[4].kind == .StringEnd)
+        try assert.equal(toks[4].text, "!")
+        .Ok({})
+      },
+    )
+    .test(
+      "lone dollar in multiline stays literal",
+      fn() {
+        // \\price $5 (no interpolation)
+        toks := lex_tokens("\\\\price $5")
+        try assert.is_true(toks[0].kind == .StringLit)
+        try assert.equal(toks[0].text, "price $5")
+        .Ok({})
+      },
+    )
+    .test(
+      "interpolation spanning a line break in a multiline block errors",
+      fn() {
+        // \\a ${x  (newline before closing }) -> diagnostic
+        result := lexer.lex("\\\\a \${x\n\\\\y}", 0)
+        try assert.is_true(result.diagnostics.len() > 0)
+        .Ok({})
+      },
+    )
+    .test(
+      "L1 lint suggests a single-line string for a one-line block",
+      fn() {
+        // plain content -> cooked string suggestion
+        try assert.str_contains(lex_diag_messages("\\\\hello"), "\"hello\"")
+
+        // backslash content -> raw string suggestion
+        try assert.str_contains(lex_diag_messages("\\\\\\d+"), "r\"\\d+\"")
+
+        // content with a quote -> escaped cooked suggestion
+        try assert.str_contains(lex_diag_messages("\\\\say \"hi\""), "say \\\"hi\\\"")
+        .Ok({})
+      },
+    )
+    .test(
+      "L1 lint does not fire for trailing-newline or multi-line blocks",
+      fn() {
+        // trailing empty marker => has a newline => not single-line
+        try assert.equal(lex_diag_messages("\\\\last\n\\\\"), "")
+
+        // genuinely multi-line
+        try assert.equal(lex_diag_messages("\\\\a\n\\\\b"), "")
         .Ok({})
       },
     )

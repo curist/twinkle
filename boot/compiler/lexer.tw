@@ -9,9 +9,8 @@ use .tokens.{Token, TokenKind, Trivia, TriviaKind}
 type ScanStringResult = .{ next_index: Int, text: String, terminated: Bool, found_interp: Bool }
 
 // Which surface string an open interpolation belongs to, so the scan resuming
-// after `}` picks the matching segment scanner. Two-way for now (cooked / raw);
-// Milestone 3 widens this with a Multiline arm.
-type StringKind = { Cooked, Raw }
+// after `}` picks the matching segment scanner.
+type StringKind = { Cooked, Raw, Multiline }
 
 // One entry per open `${…}`: `depth` tracks nested braces inside the
 // interpolation; `host` records which string the interpolation lives in.
@@ -21,6 +20,7 @@ fn scan_host_segment(source: String, from: Int, content_start: Int, host: String
   case host {
     .Cooked => scan_string_segment(source, from, content_start),
     .Raw => scan_raw_string_segment(source, from, content_start),
+    .Multiline => scan_multiline_segment(source, from),
   }
 }
 
@@ -302,54 +302,84 @@ fn scan_raw_string_segment(source: String, from: Int, content_start: Int) ScanSt
   }
 }
 
-type MultilineResult = .{ text: String, next_index: Int }
-
-// `\\`-prefixed multiline string: consume consecutive `\\` lines, join their
-// content with `\n` (no trailing newline), normalize `\r\n` → `\n`, and stop at
-// the first line that does not start with `\\`. `from` points at the first `\`.
-// Marker indentation is excluded for free: leading whitespace before each `\\`
-// is skipped here (and, for the first line, already consumed by the main loop).
-fn scan_multiline_string(source: String, from: Int) MultilineResult {
+// Scan a `\\` multiline segment starting at `from` (which points just past a
+// `\\` marker, or just past a `}` when resuming an interpolation). Consume the
+// rest of the current line and any following `\\` lines, joining contents with
+// `\n` (no trailing newline), normalizing `\r\n` → `\n`. Stop at the first `${`
+// (→ found_interp) or the first line that does not start with `\\` (→ terminated,
+// leaving the cursor at that trailing newline for the main loop). Marker
+// indentation is excluded for free. A multiline segment never reports
+// "unterminated": a block legitimately ends at any non-`\\` line or at eof.
+fn scan_multiline_segment(source: String, from: Int) ScanStringResult {
   i := from
   n := source.len()
   parts: Vector<String> = []
+  line_start := i
 
   for true {
-    i = i + 2 // consume the `\\` marker
-    line_start := i
-
-    for i < n and source[i] != '\n' {
-      i = i + 1
+    if i < n and source[i] == '$' and i + 1 < n and source[i + 1] == '{' {
+      whole := parts.append(source.slice(line_start, i))
+      return ScanStringResult.{
+        next_index: i + 2,
+        text: whole.join("\n"),
+        terminated: false,
+        found_interp: true,
+      }
     }
 
-    end := if i > line_start and source[i - 1] == '\r' {
-      i - 1 // CRLF → LF
-    } else {
-      i
+    if i >= n or source[i] == '\n' {
+      end := if i > line_start and source[i - 1] == '\r' {
+        i - 1 // CRLF → LF
+      } else {
+        i
+      }
+      parts = .append(source.slice(line_start, end))
+
+      // Peek the next line: newline, then horizontal whitespace, then `\\`?
+      j := if i < n and source[i] == '\n' {
+        i + 1
+      } else {
+        i
+      }
+      k := j
+
+      for k < n and (source[k] == ' ' or source[k] == '\t') {
+        k = k + 1
+      }
+
+      if k + 1 < n and source[k] == '\\' and source[k + 1] == '\\' {
+        i = k + 2 // consume the marker; content resumes after it
+        line_start = i
+        continue
+      }
+
+      return ScanStringResult.{
+        next_index: i, // leave the trailing newline (if any) for the main loop
+        text: parts.join("\n"),
+        terminated: true,
+        found_interp: false,
+      }
     }
 
-    parts = .append(source.slice(line_start, end))
-
-    // Peek the next line: newline, then horizontal whitespace, then `\\`?
-    j := if i < n and source[i] == '\n' {
-      i + 1
-    } else {
-      i
-    }
-    k := j
-
-    for k < n and (source[k] == ' ' or source[k] == '\t') {
-      k = k + 1
-    }
-
-    if k + 1 < n and source[k] == '\\' and source[k + 1] == '\\' {
-      i = k
-    } else {
-      break // leave i at the trailing newline (if any) for the main loop
-    }
+    i = i + 1
   }
 
-  MultilineResult.{ text: parts.join("\n"), next_index: i }
+  // Unreachable: the loop only exits via return.
+  ScanStringResult.{ next_index: i, text: parts.join("\n"), terminated: true, found_interp: false }
+}
+
+// Value-preserving single-line replacement suggested by lint L1 for a one-line
+// `\\` block: raw `r"…"` when the content has backslashes (and no `"`), a cooked
+// escaped string when it contains `"`, otherwise a plain cooked string.
+fn single_line_suggestion(content: String) String {
+  has_backslash := content.contains("\\")
+  has_quote := content.contains("\"")
+
+  cond {
+    has_quote => "\"".concat(content.replace("\\", "\\\\").replace("\"", "\\\"")).concat("\""),
+    has_backslash => "r\"".concat(content).concat("\""),
+    _ => "\"".concat(content).concat("\""),
+  }
 }
 
 pub fn lex(source: String, file_id: Int) StageResult<Vector<Token>> {
@@ -367,6 +397,17 @@ pub fn lex(source: String, file_id: Int) StageResult<Vector<Token>> {
 
     if c.is_space() {
       if c.is_newline() {
+        // An interpolation inside a `\\` block must open and close on one line.
+        if interp_depths.len() > 0 and interp_depths[interp_depths.len() - 1].host == .Multiline {
+          diagnostics_out = .append(
+            diag.error(
+              span.new(file_id, i, i + 1),
+              "interpolation in a multiline string must close on the same line",
+            ),
+          )
+          interp_depths = .drop_last()
+        }
+
         if saw_newline and !blank_pending {
           trivia_buf = .append(
             Trivia.{ kind: .BlankLine, text: "", span: span.new(file_id, i, i + 1) },
@@ -541,14 +582,48 @@ pub fn lex(source: String, file_id: Int) StageResult<Vector<Token>> {
     }
 
     // `\\`-prefixed multiline string. Marker indentation was already consumed as
-    // whitespace, so the value excludes it.
-    if c == '\\' and i + 1 < n and source[i + 1] == '\\' {
-      ml := scan_multiline_string(source, i)
-      i = ml.next_index
+    // whitespace, so the value excludes it. Only starts a block at the top level;
+    // a `\\` inside an open interpolation is handled by the interp branch above.
+    if c == '\\' and i + 1 < n and source[i + 1] == '\\' and interp_depths.len() == 0 {
+      scanned := scan_multiline_segment(source, i + 2) // skip the first marker
+      i = scanned.next_index
+
+      if scanned.found_interp {
+        out = .append(
+          make_token_text(
+            .StringStart,
+            scanned.text,
+            token_start,
+            i,
+            file_id,
+            preceded_by_newline,
+            leading_trivia,
+          ),
+        )
+        interp_depths = .append(InterpFrame.{ depth: 1, host: .Multiline })
+        continue
+      }
+
+      // Lint L1: a one-marker block (value has no newline) reads better as a
+      // single-line string. A trailing empty `\\` line adds a `\n`, so a block
+      // with a trailing newline does not fire.
+      if !scanned.text.contains("\n") {
+        diagnostics_out = .append(
+          .Warning(
+            .MultilineSingleLine(
+              .{
+                span: span.new(file_id, token_start, i),
+                suggestion: single_line_suggestion(scanned.text),
+              },
+            ),
+          ),
+        )
+      }
+
       out = .append(
         make_token_text(
           .StringLit,
-          ml.text,
+          scanned.text,
           token_start,
           i,
           file_id,

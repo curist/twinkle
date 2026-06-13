@@ -230,6 +230,7 @@ fn kind_to_message(kind: DiagKind) String {
     },
     .Warning(w) => case w {
       .UnusedImport(d) => "unused import: ${d.binding}",
+      .MultilineSingleLine(d) => "single-line multiline block; use ${d.suggestion} instead",
     },
   }
 }
