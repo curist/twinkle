@@ -4861,7 +4861,7 @@ fn check_top_level_stmt(stmt: Stmt, ctx: InferCtx, diags: Vector<DiagKind>) Chec
 
 fn check_let(ls: LetStmt, ctx: InferCtx, diags: Vector<DiagKind>) CheckOut {
   if ls.is_rebind {
-    if ctx.pub_names.has(ls.name) {
+    if ctx.locals.len() == 1 and ctx.pub_names.has(ls.name) {
       return .{ ctx, diags: diags.append(.Error(.PublicRebind(.{ span: ls.span, name: ls.name }))) }
     }
 

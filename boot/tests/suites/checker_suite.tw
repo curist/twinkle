@@ -1995,6 +1995,14 @@ pub fn suite() runner.Suite {
       },
     )
     .test(
+      "P1 function body can shadow pub top-level binding",
+      fn() {
+        src := "pub x := 1\nfn f() Int {\n  x := 2\n  x = x + 1\n  x\n}"
+        r := try check_ok(src)
+        .Ok({})
+      },
+    )
+    .test(
       "P1 field assignment happy path",
       fn() {
         src := "type Point = .{ x: Int }\nfn f(p: Point) Void { p.x = 1 }"

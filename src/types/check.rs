@@ -3666,7 +3666,7 @@ impl TypeChecker {
     fn synth_assign(&mut self, left: &Expr, right: &Expr, span: Span) -> Result<MonoType, ()> {
         match &left.kind {
             ExprKind::Ident(name) => {
-                if self.pub_bindings.contains(name) {
+                if !self.in_function && self.pub_bindings.contains(name) {
                     self.errors.push(TypeError::PubBindingRebinding {
                         name: name.clone(),
                         span: left.span,
@@ -4525,6 +4525,28 @@ mod tests {
                 .iter()
                 .any(|e| matches!(e, TypeError::TypeMismatch { .. })),
             "expected TypeMismatch error, got: {errors:?}"
+        );
+    }
+
+    #[test]
+    fn test_pub_top_level_rebind_is_rejected() {
+        let result = typecheck("pub x := 1\nx = 2");
+        assert!(result.is_err(), "expected public rebinding to fail");
+        let errors = result.unwrap_err();
+        assert!(
+            errors
+                .iter()
+                .any(|e| matches!(e, TypeError::PubBindingRebinding { name, .. } if name == "x")),
+            "expected PubBindingRebinding error, got: {errors:?}"
+        );
+    }
+
+    #[test]
+    fn test_function_can_shadow_pub_top_level_binding() {
+        let result = typecheck("pub x := 1\ny := fn() Int {\n  x := 2\n  x = x + 1\n  x\n}");
+        assert!(
+            result.is_ok(),
+            "expected function-local shadow/rebind to typecheck, got: {result:?}"
         );
     }
 }
