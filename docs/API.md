@@ -456,17 +456,20 @@ and leading `(?i)` ASCII-only case-insensitivity. Backreferences, lookaround,
 lazy quantifiers, multiline/dotall flags, and named groups are not in v1.
 Replacement templates expand `$0`..`$9`, with `$$` for a literal dollar.
 
+Raw string literals (`r"…"`) avoid doubling backslashes in patterns; both
+spellings compile identically (`r"\d+"` is the same pattern as `"\\d+"`).
+
 ```tw
 use @std.regexp
 
-re := regexp.must("(\\d+) (red|green|blue)")
+re := regexp.must(r"(\d+) (red|green|blue)")
 for m in re.find_all("Game 1: 3 blue, 4 red") {
   n := Int.from_string(m.group(1).unwrap()).unwrap()
   color := m.group(2).unwrap()
   println("${n} ${color}")
 }
 
-regexp.must("mul\\((\\d+),(\\d+)\\)").replace_all("mul(2,4)", "$1*$2")  // "2*4"
+regexp.must(r"mul\((\d+),(\d+)\)").replace_all("mul(2,4)", "$1*$2")  // "2*4"
 ```
 
 ### `@std.path`

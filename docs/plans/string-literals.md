@@ -499,22 +499,21 @@ lint rules are defined in "Formatter & lint rules" above.
 
 ### Wrap-up
 
-**Task 4.1 — adopt `r"…"` in regexp docs/examples**
+**Task 4.1 — adopt `r"…"` in regexp docs/examples** ✅ done
 
-- [ ] Update `docs/API.md`'s `@std.regexp` examples to use `r"\d+"` /
-      `r"mul\((\d+),(\d+)\)"` instead of doubled backslashes, noting both spellings
-      work.
+- [x] Updated `docs/API.md`'s `@std.regexp` examples to use `r"(\d+) …"` /
+      `r"mul\((\d+),(\d+)\)"`, noting both spellings compile identically.
 
-**Task 4.2 — retire the percent-escapes plan**
+**Task 4.2 — retire the percent-escapes plan** ✅ done
 
-- [ ] Confirm `docs/plans/archive/regexp-percent-escapes.md` is marked superseded by this
-      plan (done as part of this change).
+- [x] `docs/plans/archive/regexp-percent-escapes.md` is marked SUPERSEDED by this
+      plan.
 
-**Task 4.3 — full check**
+**Task 4.3 — full check** ✅ done
 
-- [ ] `make bundle-cli` (rebuild embedded stdlib + CLI), `target/twk run
-      boot/tests/main.tw`, and `make test` all green. Hand tree-sitter tests to the
-      human.
+- [x] Self-host fixed point (`make stage2`), `target/twk run boot/tests/main.tw`,
+      and the full `make test` all green. Tree-sitter `build --wasm` + tests run by
+      the human.
 
 ## Testing summary
 
