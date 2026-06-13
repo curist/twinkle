@@ -381,8 +381,8 @@ fn hover_for_pattern(ctx: HoverContext, fs: ForStmt) HoverResult? {
   }
 
   iter := try fs.iter
-  ty := try ctx.typed.type_map[iter.id]
-  .Some(.{ content: ty_to_string_env(ctx.typed.env, iter_element_type(ty)), span: ps })
+  ty := try ctx.hover_iter_element_type(iter)
+  .Some(.{ content: ty_to_string_env(ctx.typed.env, ty), span: ps })
 }
 
 fn hover_for_index(ctx: HoverContext, fs: ForStmt) HoverResult? {
@@ -437,6 +437,16 @@ fn hover_collect_expr(ctx: HoverContext, ce: CollectExpr) HoverResult? {
   ctx.hover_collect_pattern(ce).or_else(fn() { ctx.hover_collect_index(ce) })
 }
 
+fn hover_iter_element_type(ctx: HoverContext, iter: Expr) MonoType? {
+  case ctx.typed.iterable_lowering[iter.id] {
+    .Some(info) => .Some(info.elem_ty),
+    .None => case ctx.typed.type_map[iter.id] {
+      .Some(ty) => .Some(iter_element_type(ty)),
+      .None => .None,
+    },
+  }
+}
+
 fn hover_collect_pattern(ctx: HoverContext, ce: CollectExpr) HoverResult? {
   ps := try ce.pattern_span
 
@@ -445,8 +455,8 @@ fn hover_collect_pattern(ctx: HoverContext, ce: CollectExpr) HoverResult? {
   }
 
   iter := try ce.iter
-  ty := try ctx.typed.type_map[iter.id]
-  .Some(.{ content: ty_to_string_env(ctx.typed.env, iter_element_type(ty)), span: ps })
+  ty := try ctx.hover_iter_element_type(iter)
+  .Some(.{ content: ty_to_string_env(ctx.typed.env, ty), span: ps })
 }
 
 fn hover_collect_index(ctx: HoverContext, ce: CollectExpr) HoverResult? {
