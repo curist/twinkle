@@ -239,6 +239,152 @@ pub fn suite() runner.Suite {
       },
     )
     .test(
+      "take and drop clamp counts",
+      fn() {
+        v := view.from([10, 20, 30])
+        try assert.equal(v.take(-2).to_vector(), [])
+        try assert.equal(v.take(2).to_vector(), [10, 20])
+        try assert.equal(v.take(99).to_vector(), [10, 20, 30])
+        try assert.equal(v.drop(-2).to_vector(), [10, 20, 30])
+        try assert.equal(v.drop(2).to_vector(), [30])
+        try assert.equal(v.drop(99).to_vector(), [])
+        .Ok({})
+      },
+    )
+    .test(
+      "take_while and drop_while return zero-copy subviews",
+      fn() {
+        v := view.from([1, 2, 3, 2, 1])
+        try assert.equal(
+          v
+            .take_while(fn(x) { x < 3 })
+            .to_vector(),
+          [1, 2],
+        )
+        try assert.equal(
+          v
+            .drop_while(fn(x) { x < 3 })
+            .to_vector(),
+          [3, 2, 1],
+        )
+        try assert.equal(
+          v
+            .take_while(fn(x) { x < 0 })
+            .len(),
+          0,
+        )
+        try assert.equal(
+          v
+            .drop_while(fn(x) { x < 9 })
+            .len(),
+          0,
+        )
+        .Ok({})
+      },
+    )
+    .test(
+      "find_map count_where and zip_with scan views",
+      fn() {
+        calls := Cell.new(0)
+        got := view
+          .from([1, 2, 3, 4])
+          .find_map(fn(x) {
+            calls.update(fn(n) { n + 1 })
+            if x == 3 {
+              .Some(x * 10)
+            } else {
+              .None
+            }
+          })
+        value := case got {
+          .Some(v) => v,
+          .None => -1,
+        }
+        try assert.equal(value, 30)
+        try assert.equal(calls.get(), 3)
+        try assert.equal(
+          view
+            .from([1, 2, 3, 4])
+            .count_where(fn(x) { x % 2 == 0 }),
+          2,
+        )
+        try assert.equal(
+          view
+            .from([1, 2, 3])
+            .zip_with(view.from([10, 20]), fn(a, b) { a + b }),
+          [11, 22],
+        )
+        .Ok({})
+      },
+    )
+    .test(
+      "chunks and windows carve view windows",
+      fn() {
+        chunks := view
+          .from([1, 2, 3, 4, 5])
+          .chunks(2)
+        try assert.equal(chunks.len(), 3)
+        try assert.equal(chunks[0].to_vector(), [1, 2])
+        try assert.equal(chunks[2].to_vector(), [5])
+        try assert.equal(
+          view
+            .from([1, 2, 3])
+            .chunks(0)
+            .len(),
+          0,
+        )
+
+        windows := view
+          .from([1, 2, 3, 4])
+          .windows(3)
+        try assert.equal(windows.len(), 2)
+        try assert.equal(windows[0].to_vector(), [1, 2, 3])
+        try assert.equal(windows[1].to_vector(), [2, 3, 4])
+        try assert.equal(
+          view
+            .from([1, 2])
+            .windows(3)
+            .len(),
+          0,
+        )
+        try assert.equal(
+          view
+            .from([1, 2])
+            .windows(0)
+            .len(),
+          0,
+        )
+        .Ok({})
+      },
+    )
+    .test(
+      "materializing helpers match vector behavior",
+      fn() {
+        v := view.from([1, 2, 3, 4])
+        try assert.equal(v.map(fn(x) { x * 2 }), [2, 4, 6, 8])
+        try assert.equal(v.filter(fn(x) { x % 2 == 0 }), [2, 4])
+        try assert.equal(
+          v.flat_map(fn(x) {
+            [x, x + 10]
+          }),
+          [1, 11, 2, 12, 3, 13, 4, 14],
+        )
+        try assert.is_true(v.any(fn(x) { x == 3 }))
+        try assert.is_false(v.all(fn(x) { x < 4 }))
+        found := case v.find(fn(x) { x > 2 }) {
+          .Some(x) => x,
+          .None => -1,
+        }
+        pos := case v.position(fn(x) { x == 3 }) {
+          .Some(i) => i,
+          .None => -1,
+        }
+        try assert.equal(found, 3)
+        try assert.equal(pos, 2)
+        .Ok({})
+      },
+    )
+    .test(
       "View satisfies IndexRead through a generic bound",
       fn() {
         v := view.from([10, 20, 30])

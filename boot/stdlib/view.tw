@@ -120,3 +120,234 @@ pub fn fold<C: IndexRead<E>, E, B>(v: View<C>, init: B, f: fn(B, E) B) B {
 
   acc
 }
+
+/// Keep at most the first n elements (O(1), shares the backing). Negative counts
+/// clamp to zero and counts past the end clamp to the window length.
+pub fn take<C>(v: View<C>, n: Int) View<C> {
+  v.sub(0, n)
+}
+
+/// Skip the first n elements (O(1), shares the backing). Negative counts clamp
+/// to zero and counts past the end clamp to the window length.
+pub fn drop<C>(v: View<C>, n: Int) View<C> {
+  v.sub(n, v.count)
+}
+
+/// Keep the prefix whose elements satisfy pred (O(1) result, shares backing).
+pub fn take_while<C: IndexRead<E>, E>(v: View<C>, pred: fn(E) Bool) View<C> {
+  i := 0
+
+  for i < v.count and pred(v.at(i)) {
+    i = i + 1
+  }
+
+  v.sub(0, i)
+}
+
+/// Drop the prefix whose elements satisfy pred (O(1) result, shares backing).
+pub fn drop_while<C: IndexRead<E>, E>(v: View<C>, pred: fn(E) Bool) View<C> {
+  i := 0
+
+  for i < v.count and pred(v.at(i)) {
+    i = i + 1
+  }
+
+  v.sub(i, v.count)
+}
+
+/// Return the first Some value produced by f.
+pub fn find_map<C: IndexRead<E>, E, U>(v: View<C>, f: fn(E) Option<U>) Option<U> {
+  i := 0
+
+  for i < v.count {
+    case f(v.at(i)) {
+      .Some(value) => { return .Some(value) },
+      .None => {},
+    }
+
+    i = i + 1
+  }
+
+  .None
+}
+
+/// Count elements satisfying pred.
+pub fn count_where<C: IndexRead<E>, E>(v: View<C>, pred: fn(E) Bool) Int {
+  count := 0
+  i := 0
+
+  for i < v.count {
+    if pred(v.at(i)) {
+      count = count + 1
+    }
+
+    i = i + 1
+  }
+
+  count
+}
+
+/// Combine two views elementwise, stopping at the shorter input.
+pub fn zip_with<A: IndexRead<EA>, EA, B: IndexRead<EB>, EB, R>(
+  a: View<A>,
+  b: View<B>,
+  f: fn(EA, EB) R,
+) Vector<R> {
+  n := if a.len() < b.len() {
+    a.len()
+  } else {
+    b.len()
+  }
+  out: Vector<R> = []
+  i := 0
+
+  for i < n {
+    out = .append(f(a.at(i), b.at(i)))
+    i = i + 1
+  }
+
+  out
+}
+
+/// Non-overlapping contiguous windows. Invalid sizes return an empty vector.
+pub fn chunks<C>(v: View<C>, size: Int) Vector<View<C>> {
+  if size <= 0 {
+    return []
+  }
+
+  out: Vector<View<C>> = []
+  i := 0
+
+  for i < v.count {
+    out = .append(v.sub(i, i + size))
+    i = i + size
+  }
+
+  out
+}
+
+/// Sliding contiguous windows. Invalid or too-large sizes return an empty vector.
+pub fn windows<C>(v: View<C>, size: Int) Vector<View<C>> {
+  if size <= 0 or size > v.count {
+    return []
+  }
+
+  out: Vector<View<C>> = []
+  i := 0
+
+  for i + size <= v.count {
+    out = .append(v.sub(i, i + size))
+    i = i + 1
+  }
+
+  out
+}
+
+/// Transform each element, materializing the result.
+pub fn map<C: IndexRead<E>, E, U>(v: View<C>, f: fn(E) U) Vector<U> {
+  out: Vector<U> = []
+  i := 0
+
+  for i < v.count {
+    out = .append(f(v.at(i)))
+    i = i + 1
+  }
+
+  out
+}
+
+/// Keep elements where pred returns true, materializing the result.
+pub fn filter<C: IndexRead<E>, E>(v: View<C>, pred: fn(E) Bool) Vector<E> {
+  out: Vector<E> = []
+  i := 0
+
+  for i < v.count {
+    x := v.at(i)
+
+    if pred(x) {
+      out = .append(x)
+    }
+
+    i = i + 1
+  }
+
+  out
+}
+
+/// Return the first element matching pred.
+pub fn find<C: IndexRead<E>, E>(v: View<C>, pred: fn(E) Bool) Option<E> {
+  i := 0
+
+  for i < v.count {
+    x := v.at(i)
+
+    if pred(x) {
+      return .Some(x)
+    }
+
+    i = i + 1
+  }
+
+  .None
+}
+
+/// Return true if any element matches pred.
+pub fn any<C: IndexRead<E>, E>(v: View<C>, pred: fn(E) Bool) Bool {
+  i := 0
+
+  for i < v.count {
+    if pred(v.at(i)) {
+      return true
+    }
+
+    i = i + 1
+  }
+
+  false
+}
+
+/// Return true if all elements match pred.
+pub fn all<C: IndexRead<E>, E>(v: View<C>, pred: fn(E) Bool) Bool {
+  i := 0
+
+  for i < v.count {
+    if !pred(v.at(i)) {
+      return false
+    }
+
+    i = i + 1
+  }
+
+  true
+}
+
+/// Return the index of the first element matching pred, or .None.
+pub fn position<C: IndexRead<E>, E>(v: View<C>, pred: fn(E) Bool) Option<Int> {
+  i := 0
+
+  for i < v.count {
+    if pred(v.at(i)) {
+      return .Some(i)
+    }
+
+    i = i + 1
+  }
+
+  .None
+}
+
+/// Map each element to a vector and flatten the results.
+pub fn flat_map<C: IndexRead<E>, E, U>(v: View<C>, f: fn(E) Vector<U>) Vector<U> {
+  out: Vector<U> = []
+  i := 0
+
+  for i < v.count {
+    for y in f(v.at(i)) {
+      out = .append(y)
+    }
+
+    i = i + 1
+  }
+
+  out
+}

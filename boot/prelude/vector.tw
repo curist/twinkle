@@ -1,5 +1,4 @@
 /// Return true when the vector has no elements.
-
 pub fn is_empty<A>(xs: Vector<A>) Bool {
   xs.len() == 0
 }
@@ -73,6 +72,83 @@ pub fn drop_first<A>(xs: Vector<A>) Vector<A> {
   } else {
     xs.slice(1, xs.len())
   }
+}
+
+/// Keep at most the first n elements. Negative counts clamp to zero and counts
+/// past the end clamp to the vector length.
+pub fn take<A>(xs: Vector<A>, n: Int) Vector<A> {
+  xs.slice(0, n.clamp(0, xs.len()))
+}
+
+/// Skip the first n elements. Negative counts clamp to zero and counts past the
+/// end clamp to the vector length.
+pub fn drop<A>(xs: Vector<A>, n: Int) Vector<A> {
+  xs.slice(n.clamp(0, xs.len()), xs.len())
+}
+
+/// Keep the prefix whose elements satisfy pred.
+pub fn take_while<A>(xs: Vector<A>, pred: fn(A) Bool) Vector<A> {
+  i := 0
+
+  for i < xs.len() and pred(xs[i]) {
+    i = i + 1
+  }
+
+  xs.slice(0, i)
+}
+
+/// Drop the prefix whose elements satisfy pred.
+pub fn drop_while<A>(xs: Vector<A>, pred: fn(A) Bool) Vector<A> {
+  i := 0
+
+  for i < xs.len() and pred(xs[i]) {
+    i = i + 1
+  }
+
+  xs.slice(i, xs.len())
+}
+
+/// Return the first Some value produced by f.
+pub fn find_map<A, B>(xs: Vector<A>, f: fn(A) Option<B>) Option<B> {
+  for x in xs {
+    case f(x) {
+      .Some(value) => { return .Some(value) },
+      .None => {},
+    }
+  }
+
+  .None
+}
+
+/// Count elements satisfying pred.
+pub fn count_where<A>(xs: Vector<A>, pred: fn(A) Bool) Int {
+  count := 0
+
+  for x in xs {
+    if pred(x) {
+      count = count + 1
+    }
+  }
+
+  count
+}
+
+/// Combine two vectors elementwise, stopping at the shorter input.
+pub fn zip_with<A, B, C>(a: Vector<A>, b: Vector<B>, f: fn(A, B) C) Vector<C> {
+  n := if a.len() < b.len() {
+    a.len()
+  } else {
+    b.len()
+  }
+  out: Vector<C> = []
+  i := 0
+
+  for i < n {
+    out = .append(f(a[i], b[i]))
+    i = i + 1
+  }
+
+  out
 }
 
 /// Return the first element matching f.
@@ -312,6 +388,64 @@ pub fn flat_map<A, B>(xs: Vector<A>, f: fn(A) Vector<B>) Vector<B> {
     for y in f(x) {
       out = .append(y)
     }
+  }
+
+  out
+}
+
+/// Remove None entries and unwrap the remaining Some values.
+pub fn compact<A>(xs: Vector<Option<A>>) Vector<A> {
+  out: Vector<A> = []
+
+  for x in xs {
+    case x {
+      .Some(value) => {
+        out = .append(value)
+      },
+      .None => {},
+    }
+  }
+
+  out
+}
+
+/// Remove adjacent duplicate elements.
+pub fn dedup<A: Eq>(xs: Vector<A>) Vector<A> {
+  if xs.len() == 0 {
+    return xs
+  }
+
+  out: Vector<A> = [xs[0]]
+  prev := xs[0]
+  i := 1
+
+  for i < xs.len() {
+    cur := xs[i]
+
+    if cur != prev {
+      out = .append(cur)
+      prev = cur
+    }
+
+    i = i + 1
+  }
+
+  out
+}
+
+/// Insert sep between elements.
+pub fn intersperse<A>(xs: Vector<A>, sep: A) Vector<A> {
+  if xs.len() <= 1 {
+    return xs
+  }
+
+  out: Vector<A> = [xs[0]]
+  i := 1
+
+  for i < xs.len() {
+    out = .append(sep)
+    out = .append(xs[i])
+    i = i + 1
   }
 
   out

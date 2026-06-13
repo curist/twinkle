@@ -274,12 +274,22 @@ Persistent vector with structural sharing. Literal syntax: `[1, 2, 3]`.
 | `.last()` | `fn<A>(xs: Vector<A>) Option<A>` | Last element, or `.None` if empty |
 | `.drop_first()` | `fn<A>(xs: Vector<A>) Vector<A>` | Vector without its first element, or empty if already empty. O(log n) via structural slice |
 | `.drop_last()` | `fn<A>(xs: Vector<A>) Vector<A>` | Vector without its last element, or empty if already empty. O(log n) worst-case, O(1) when shrinking the tail |
+| `.take(n)` | `fn<A>(xs: Vector<A>, n: Int) Vector<A>` | First `n` elements; clamps negative counts to zero and too-large counts to length |
+| `.drop(n)` | `fn<A>(xs: Vector<A>, n: Int) Vector<A>` | Skip first `n` elements; clamps negative counts to zero and too-large counts to length |
+| `.take_while(f)` | `fn<A>(xs: Vector<A>, f: fn(A) Bool) Vector<A>` | Longest prefix whose elements satisfy `f` |
+| `.drop_while(f)` | `fn<A>(xs: Vector<A>, f: fn(A) Bool) Vector<A>` | Suffix after the prefix whose elements satisfy `f` |
+| `.find_map(f)` | `fn<A,B>(xs: Vector<A>, f: fn(A) Option<B>) Option<B>` | First `.Some` produced by `f`, short-circuiting |
+| `.count_where(f)` | `fn<A>(xs: Vector<A>, f: fn(A) Bool) Int` | Count elements satisfying `f` |
+| `.zip_with(other, f)` | `fn<A,B,C>(a: Vector<A>, b: Vector<B>, f: fn(A,B) C) Vector<C>` | Combine elementwise, stopping at the shorter input |
 | `.find(f)` | `fn<A>(xs: Vector<A>, f: fn(A) Bool) Option<A>` | First element matching predicate |
 | `.any(f)` | `fn<A>(xs: Vector<A>, f: fn(A) Bool) Bool` | True if any element matches |
 | `.all(f)` | `fn<A>(xs: Vector<A>, f: fn(A) Bool) Bool` | True if all elements match |
 | `.contains(elem)` | `fn<A>(xs: Vector<A>, elem: A) Bool` | True if `elem` is in the vector |
 | `.position(f)` | `fn<A>(xs: Vector<A>, f: fn(A) Bool) Option<Int>` | Index of first element matching predicate |
 | `.flat_map(f)` | `fn<A,B>(xs: Vector<A>, f: fn(A) Vector<B>) Vector<B>` | Map each element to a vector and flatten |
+| `.compact()` | `fn<A>(xs: Vector<Option<A>>) Vector<A>` | Drop `.None` entries and unwrap `.Some` values |
+| `.dedup()` | `fn<A: Eq>(xs: Vector<A>) Vector<A>` | Remove adjacent duplicate elements |
+| `.intersperse(sep)` | `fn<A>(xs: Vector<A>, sep: A) Vector<A>` | Insert `sep` between elements |
 | `.reverse()` | `fn<A>(xs: Vector<A>) Vector<A>` | Reverse order |
 | `.sort_by(cmp)` | `fn<T>(xs: Vector<T>, cmp: fn(T,T) Order) Vector<T>` | Return a new sorted vector using comparator (e.g. `xs.sort_by(Int.compare)`) |
 | `.join(sep)` | `fn(xs: Vector<String>, sep: String) String` | Join strings with separator |
@@ -580,6 +590,22 @@ share the one backing. A `View` itself satisfies `IndexRead<E>`. Requires
 | `.sub(a, b)` | `fn<C>(v: View<C>, a: Int, b: Int) View<C>` | Relative sub-window `[a, b)` (O(1), shares backing; total — endpoints clamp into `[0, len()]`, so out-of-range or reversed args yield a valid/empty window) |
 | `.to_vector()` | `fn<C: IndexRead<E>, E>(v: View<C>) Vector<E>` | Materialize the window into an owned `Vector` |
 | `.fold(init, f)` | `fn<C: IndexRead<E>, E, B>(v: View<C>, init: B, f: fn(B, E) B) B` | Left-fold over the window |
+| `.take(n)` | `fn<C>(v: View<C>, n: Int) View<C>` | First `n` elements (O(1), shares backing; clamps like `sub`) |
+| `.drop(n)` | `fn<C>(v: View<C>, n: Int) View<C>` | Skip first `n` elements (O(1), shares backing; clamps like `sub`) |
+| `.take_while(f)` | `fn<C: IndexRead<E>, E>(v: View<C>, f: fn(E) Bool) View<C>` | Prefix whose elements satisfy `f` (O(1) result, shares backing) |
+| `.drop_while(f)` | `fn<C: IndexRead<E>, E>(v: View<C>, f: fn(E) Bool) View<C>` | Suffix after the prefix whose elements satisfy `f` (O(1) result, shares backing) |
+| `.find_map(f)` | `fn<C: IndexRead<E>, E, U>(v: View<C>, f: fn(E) Option<U>) Option<U>` | First `.Some` produced by `f`, short-circuiting |
+| `.count_where(f)` | `fn<C: IndexRead<E>, E>(v: View<C>, f: fn(E) Bool) Int` | Count elements satisfying `f` |
+| `.zip_with(other, f)` | `fn<A: IndexRead<EA>, EA, B: IndexRead<EB>, EB, R>(a: View<A>, b: View<B>, f: fn(EA, EB) R) Vector<R>` | Combine elementwise, stopping at the shorter input |
+| `.chunks(size)` | `fn<C>(v: View<C>, size: Int) Vector<View<C>>` | Non-overlapping contiguous windows; invalid sizes return empty |
+| `.windows(size)` | `fn<C>(v: View<C>, size: Int) Vector<View<C>>` | Sliding contiguous windows; invalid or too-large sizes return empty |
+| `.map(f)` | `fn<C: IndexRead<E>, E, U>(v: View<C>, f: fn(E) U) Vector<U>` | Transform each element, materializing |
+| `.filter(f)` | `fn<C: IndexRead<E>, E>(v: View<C>, f: fn(E) Bool) Vector<E>` | Keep matching elements, materializing |
+| `.find(f)` | `fn<C: IndexRead<E>, E>(v: View<C>, f: fn(E) Bool) Option<E>` | First element matching predicate |
+| `.any(f)` | `fn<C: IndexRead<E>, E>(v: View<C>, f: fn(E) Bool) Bool` | True if any element matches |
+| `.all(f)` | `fn<C: IndexRead<E>, E>(v: View<C>, f: fn(E) Bool) Bool` | True if all elements match |
+| `.position(f)` | `fn<C: IndexRead<E>, E>(v: View<C>, f: fn(E) Bool) Option<Int>` | Index of first matching element |
+| `.flat_map(f)` | `fn<C: IndexRead<E>, E, U>(v: View<C>, f: fn(E) Vector<U>) Vector<U>` | Map each element to a vector and flatten |
 
 ### `@std.tuple`
 

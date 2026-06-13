@@ -1128,6 +1128,70 @@ pub fn suite() runner.Suite {
       },
     )
     .test(
+      "take and drop clamp counts",
+      fn() {
+        xs := [10, 20, 30]
+        try assert.equal(xs.take(-2), [])
+        try assert.equal(xs.take(2), [10, 20])
+        try assert.equal(xs.take(99), xs)
+        try assert.equal(xs.drop(-2), xs)
+        try assert.equal(xs.drop(2), [30])
+        try assert.equal(xs.drop(99), [])
+        .Ok({})
+      },
+    )
+    .test(
+      "take_while and drop_while split the prefix",
+      fn() {
+        xs := [1, 2, 3, 2, 1]
+        try assert.equal(xs.take_while(fn(x) { x < 3 }), [1, 2])
+        try assert.equal(xs.drop_while(fn(x) { x < 3 }), [3, 2, 1])
+        try assert.equal(xs.take_while(fn(x) { x < 0 }), [])
+        try assert.equal(xs.drop_while(fn(x) { x < 9 }), [])
+        .Ok({})
+      },
+    )
+    .test(
+      "find_map short-circuits at the first Some",
+      fn() {
+        calls := Cell.new(0)
+        got := [1, 2, 3, 4].find_map(fn(x) {
+          calls.update(fn(n) { n + 1 })
+          if x == 3 {
+            .Some(x * 10)
+          } else {
+            .None
+          }
+        })
+        value := case got {
+          .Some(v) => v,
+          .None => -1,
+        }
+        try assert.equal(value, 30)
+        try assert.equal(calls.get(), 3)
+        .Ok({})
+      },
+    )
+    .test(
+      "count_where and zip_with cover eager vector helpers",
+      fn() {
+        try assert.equal([1, 2, 3, 4].count_where(fn(x) { x % 2 == 0 }), 2)
+        try assert.equal([1, 2, 3].zip_with([10, 20], fn(a, b) { a + b }), [11, 22])
+        .Ok({})
+      },
+    )
+    .test(
+      "compact dedup and intersperse materialize owned vectors",
+      fn() {
+        xs: Vector<Option<Int>> = [.Some(1), .None, .Some(2), .Some(3), .None]
+        try assert.equal(xs.compact(), [1, 2, 3])
+        try assert.equal([1, 1, 2, 2, 2, 3, 1].dedup(), [1, 2, 3, 1])
+        try assert.equal([1, 2, 3].intersperse(0), [1, 0, 2, 0, 3])
+        try assert.equal(Vector.make(0, 1).intersperse(0).len(), 0)
+        .Ok({})
+      },
+    )
+    .test(
       "Vector.compare lexicographic",
       fn() {
         a: Vector<Int> = [1, 2, 3]
