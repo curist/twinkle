@@ -1,0 +1,124 @@
+use @std.crypto
+
+use tests.assert
+use tests.runner
+
+fn bytes(text: String) Vector<Byte> {
+  text.utf8_bytes()
+}
+
+pub fn suite() runner.Suite {
+  runner.suite("stdlib crypto")
+    .test(
+      "md5 hex vectors",
+      fn() {
+        try assert.equal(crypto.md5("").hex(), "d41d8cd98f00b204e9800998ecf8427e")
+        try assert.equal(crypto.md5("a").hex(), "0cc175b9c0f1b6a831c399e269772661")
+        try assert.equal(crypto.md5("abc").hex(), "900150983cd24fb0d6963f7d28e17f72")
+        try assert.equal(crypto.md5("message digest").hex(), "f96b697d7cb7938d525a2f31aaf161d0")
+        try assert.equal(
+          crypto.md5("abcdefghijklmnopqrstuvwxyz").hex(),
+          "c3fcd3d76192e4007dfb496cca67e13b",
+        )
+        .Ok({})
+      },
+    )
+    .test(
+      "sha1 hex vectors",
+      fn() {
+        try assert.equal(crypto.sha1("").hex(), "da39a3ee5e6b4b0d3255bfef95601890afd80709")
+        try assert.equal(crypto.sha1("abc").hex(), "a9993e364706816aba3e25717850c26c9cd0d89d")
+        try assert.equal(
+          crypto.sha1("abcdbcdecdefdefgefghfghighijhijkijkljklmklmnlmnomnopnopq").hex(),
+          "84983e441c3bd26ebaae4aa1f95129e5e54670f1",
+        )
+        .Ok({})
+      },
+    )
+    .test(
+      "sha256 hex vectors",
+      fn() {
+        try assert.equal(
+          crypto.sha256("").hex(),
+          "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        )
+        try assert.equal(
+          crypto.sha256("abc").hex(),
+          "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad",
+        )
+        try assert.equal(
+          crypto.sha256("abcdbcdecdefdefgefghfghighijhijkijkljklmklmnlmnomnopnopq").hex(),
+          "248d6a61d20638b8e5c026930c3e6039a33ce45964ff2167f6ecedd419db06c1",
+        )
+        .Ok({})
+      },
+    )
+    .test(
+      "hmac sha256 vectors",
+      fn() {
+        try assert.equal(
+          crypto.hmac_sha256("key", "The quick brown fox jumps over the lazy dog").hex(),
+          "f7bc83f430538424b13298e6aa6fb143ef4d59a14946175997479dbc2d1a3cd8",
+        )
+        try assert.equal(
+          crypto.hmac_sha256_bytes(
+            crypto.hex_decode("0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b").unwrap(),
+            bytes("Hi There"),
+          ).hex(),
+          "b0344c61d8db38535ca8afceaf0bf12b881dc200c9833da726e9376c2e32cff7",
+        )
+        .Ok({})
+      },
+    )
+    .test(
+      "encoding helpers",
+      fn() {
+        raw := bytes("hello")
+        try assert.equal(crypto.hex_encode(raw), "68656c6c6f")
+        try assert.equal(
+          String.from_utf8(crypto.hex_decode("68656C6C6F").unwrap()).unwrap(),
+          "hello",
+        )
+        try assert.equal(crypto.base64_encode(raw), "aGVsbG8=")
+        try assert.equal(
+          String.from_utf8(crypto.base64_decode("aGVsbG8=").unwrap()).unwrap(),
+          "hello",
+        )
+        try assert.equal(crypto.base64_encode(bytes("f")), "Zg==")
+        try assert.equal(crypto.base64_encode(bytes("fo")), "Zm8=")
+        try assert.equal(crypto.base64_encode(bytes("foo")), "Zm9v")
+        .Ok({})
+      },
+    )
+    .test(
+      "md5 bytes and digest helpers",
+      fn() {
+        digest := crypto.md5_bytes([
+          Byte.from_int(0x61).unwrap(),
+          Byte.from_int(0x62).unwrap(),
+          Byte.from_int(0x63).unwrap(),
+        ])
+        try assert.equal(digest.hex(), "900150983cd24fb0d6963f7d28e17f72")
+        try assert.equal(digest.base64(), "kAFQmDzST7DWlj99KOF/cg==")
+        try assert.equal(digest.to_bytes().len(), 16)
+        try assert.equal("${digest}", "900150983cd24fb0d6963f7d28e17f72")
+        .Ok({})
+      },
+    )
+    .test(
+      "leading hex zero helper",
+      fn() {
+        coin := crypto.md5("abcdef609043")
+        try assert.ok(coin.starts_with_hex_zeroes(5), "abcdef sample has five leading zeroes")
+        try assert.ok(
+          !coin.starts_with_hex_zeroes(6),
+          "abcdef sample does not have six leading zeroes",
+        )
+        try assert.ok(
+          crypto.md5("pqrstuv1048970").starts_with_hex_zeroes(5),
+          "pqrstuv sample has five leading zeroes",
+        )
+        .Ok({})
+      },
+    )
+}

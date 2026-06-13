@@ -404,7 +404,46 @@ fn single_number(nums: Vector<Int>) Int {
 
 Everything above (primitives, built-in types, I/O, type conversions, String/Vector/Dict methods, operators) is available as **prelude** — no import needed.
 
-Only non-prelude stdlib modules require explicit imports: `use @std.path`, `use @std.fs`, `use @std.proc`, `use @std.date`, `use @std.view`, `use @std.math`, `use @std.tuple`, `use @std.regexp`.
+Only non-prelude stdlib modules require explicit imports: `use @std.path`, `use @std.fs`, `use @std.proc`, `use @std.date`, `use @std.view`, `use @std.math`, `use @std.tuple`, `use @std.regexp`, `use @std.crypto`.
+
+### `@std.crypto`
+
+Digest, MAC, and binary encoding helpers. The module is an umbrella over pure
+Twinkle implementations. MD5 and SHA-1 are legacy digest algorithms, included
+for compatibility with old protocols, checksums, and programming puzzles; do not
+use them for passwords, signatures, or collision-resistant security decisions.
+Prefer SHA-256 or HMAC-SHA-256 for new digest/MAC use cases.
+
+```tw
+type Digest = .{ bytes: Vector<Byte> }
+```
+
+| Function | Signature | Description |
+|----------|-----------|-------------|
+| `crypto.md5` | `fn(input: String) Digest` | MD5 digest of a UTF-8 string |
+| `crypto.md5_bytes` | `fn(input: Vector<Byte>) Digest` | MD5 digest of raw bytes |
+| `crypto.sha1` | `fn(input: String) Digest` | SHA-1 digest of a UTF-8 string |
+| `crypto.sha1_bytes` | `fn(input: Vector<Byte>) Digest` | SHA-1 digest of raw bytes |
+| `crypto.sha256` | `fn(input: String) Digest` | SHA-256 digest of a UTF-8 string |
+| `crypto.sha256_bytes` | `fn(input: Vector<Byte>) Digest` | SHA-256 digest of raw bytes |
+| `crypto.hmac_sha256` | `fn(key: String, message: String) Digest` | HMAC-SHA-256 over UTF-8 key/message strings |
+| `crypto.hmac_sha256_bytes` | `fn(key: Vector<Byte>, message: Vector<Byte>) Digest` | HMAC-SHA-256 over raw key/message bytes |
+| `crypto.hex_encode` | `fn(bytes: Vector<Byte>) String` | Lowercase hexadecimal encoding |
+| `crypto.hex_decode` | `fn(text: String) Result<Vector<Byte>, String>` | Decode uppercase/lowercase hexadecimal text |
+| `crypto.base64_encode` | `fn(bytes: Vector<Byte>) String` | Standard Base64 with `=` padding |
+| `crypto.base64_decode` | `fn(text: String) Result<Vector<Byte>, String>` | Decode standard padded Base64 |
+| `.to_bytes()` | `fn(d: Digest) Vector<Byte>` | Raw digest bytes |
+| `.hex()` | `fn(d: Digest) String` | Lowercase hexadecimal representation |
+| `.base64()` | `fn(d: Digest) String` | Standard Base64 representation |
+| `.starts_with_hex_zeroes(zeroes)` | `fn(d: Digest, zeroes: Int) Bool` | Whether the digest starts with at least that many zero hex nybbles |
+| `.to_string()` | `fn(d: Digest) String` | Stringify witness; renders `.hex()` |
+
+```tw
+use @std.crypto
+
+digest := crypto.sha256("abc")
+println(digest.hex()) // ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad
+```
 
 ### `@std.math`
 

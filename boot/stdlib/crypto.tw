@@ -1,0 +1,306 @@
+/// Cryptographic and legacy digest helpers.
+///
+/// The module is organized as an umbrella over pure Twinkle implementations.
+/// MD5 and SHA-1 are provided for compatibility with old protocols, checksums,
+/// and programming puzzles; do not use them for passwords, signatures, or
+/// collision-resistant security decisions. Prefer SHA-256 or HMAC-SHA-256 for
+/// new digest/MAC use cases.
+
+use .crypto.md5 as md5_impl
+use .crypto.sha1 as sha1_impl
+use .crypto.sha256 as sha256_impl
+
+/// A fixed-size digest value.
+pub type Digest = .{ bytes: Vector<Byte> }
+
+fn byte(n: Int) Byte {
+  Byte.from_int(n & 0xff).unwrap()
+}
+
+fn append_all(a: Vector<Byte>, b: Vector<Byte>) Vector<Byte> {
+  out := a
+  for x in b {
+    out = .append(x)
+  }
+  out
+}
+
+fn nybble_hex(n: Int) String {
+  code := if n < 10 {
+    0x30 + n
+  } else {
+    0x61 + (n - 10)
+  }
+  String.from_byte(Byte.from_int(code).unwrap()).unwrap()
+}
+
+fn byte_hex(b: Byte) String {
+  n := b.to_int()
+  nybble_hex(n >> 4 & 0xf).concat(nybble_hex(n & 0xf))
+}
+
+fn hex_value(b: Byte) Int? {
+  n := b.to_int()
+  cond {
+    n >= 0x30 and n <= 0x39 => .Some(n - 0x30),
+    n >= 0x61 and n <= 0x66 => .Some(10 + n - 0x61),
+    n >= 0x41 and n <= 0x46 => .Some(10 + n - 0x41),
+    _ => .None,
+  }
+}
+
+fn b64_char(n: Int) String {
+  code := cond {
+    n < 26 => 0x41 + n,
+    n < 52 => 0x61 + (n - 26),
+    n < 62 => 0x30 + (n - 52),
+    n == 62 => 0x2b,
+    _ => 0x2f,
+  }
+  String.from_byte(Byte.from_int(code).unwrap()).unwrap()
+}
+
+fn b64_value(b: Byte) Int? {
+  n := b.to_int()
+  cond {
+    n >= 0x41 and n <= 0x5a => .Some(n - 0x41),
+    n >= 0x61 and n <= 0x7a => .Some(26 + n - 0x61),
+    n >= 0x30 and n <= 0x39 => .Some(52 + n - 0x30),
+    n == 0x2b => .Some(62),
+    n == 0x2f => .Some(63),
+    _ => .None,
+  }
+}
+
+/// Compute the MD5 digest of a UTF-8 string.
+pub fn md5(input: String) Digest {
+  md5_bytes(input.utf8_bytes())
+}
+
+/// Compute the MD5 digest of raw bytes.
+pub fn md5_bytes(input: Vector<Byte>) Digest {
+  .{ bytes: md5_impl.digest_bytes(input) }
+}
+
+/// Compute the SHA-1 digest of a UTF-8 string.
+pub fn sha1(input: String) Digest {
+  sha1_bytes(input.utf8_bytes())
+}
+
+/// Compute the SHA-1 digest of raw bytes.
+pub fn sha1_bytes(input: Vector<Byte>) Digest {
+  .{ bytes: sha1_impl.digest_bytes(input) }
+}
+
+/// Compute the SHA-256 digest of a UTF-8 string.
+pub fn sha256(input: String) Digest {
+  sha256_bytes(input.utf8_bytes())
+}
+
+/// Compute the SHA-256 digest of raw bytes.
+pub fn sha256_bytes(input: Vector<Byte>) Digest {
+  .{ bytes: sha256_impl.digest_bytes(input) }
+}
+
+/// Compute HMAC-SHA-256 over UTF-8 key/message strings.
+pub fn hmac_sha256(key: String, message: String) Digest {
+  hmac_sha256_bytes(key.utf8_bytes(), message.utf8_bytes())
+}
+
+/// Compute HMAC-SHA-256 over raw key/message bytes.
+pub fn hmac_sha256_bytes(key: Vector<Byte>, message: Vector<Byte>) Digest {
+  block_size := 64
+  k0 := if key.len() > block_size {
+    sha256_impl.digest_bytes(key)
+  } else {
+    key
+  }
+
+  padded: Vector<Byte> = []
+  i := 0
+  for i < block_size {
+    if i < k0.len() {
+      padded = .append(k0[i])
+    } else {
+      padded = .append(byte(0))
+    }
+    i = i + 1
+  }
+
+  ipad: Vector<Byte> = []
+  opad: Vector<Byte> = []
+  for b in padded {
+    ipad = .append(byte(b.to_int() ^ 0x36))
+    opad = .append(byte(b.to_int() ^ 0x5c))
+  }
+
+  inner := sha256_impl.digest_bytes(append_all(ipad, message))
+  .{ bytes: sha256_impl.digest_bytes(append_all(opad, inner)) }
+}
+
+/// Encode bytes as lowercase hexadecimal.
+pub fn hex_encode(bytes: Vector<Byte>) String {
+  out := ""
+  for b in bytes {
+    out = .concat(byte_hex(b))
+  }
+  out
+}
+
+/// Decode hexadecimal text into bytes. Accepts uppercase and lowercase digits.
+pub fn hex_decode(text: String) Result<Vector<Byte>, String> {
+  if text.len() % 2 != 0 {
+    return .Err("hex_decode: odd number of digits")
+  }
+
+  out: Vector<Byte> = []
+  i := 0
+  for i < text.len() {
+    hi := try hex_value(text[i]).ok_or("hex_decode: invalid hex digit")
+    lo := try hex_value(text[i + 1]).ok_or("hex_decode: invalid hex digit")
+    out = .append(byte(hi << 4 | lo))
+    i = i + 2
+  }
+  .Ok(out)
+}
+
+/// Encode bytes with standard Base64 and `=` padding.
+pub fn base64_encode(bytes: Vector<Byte>) String {
+  out := ""
+  i := 0
+  for i < bytes.len() {
+    b0 := bytes[i].to_int()
+    have1 := i + 1 < bytes.len()
+    have2 := i + 2 < bytes.len()
+    b1 := if have1 {
+      bytes[i + 1].to_int()
+    } else {
+      0
+    }
+    b2 := if have2 {
+      bytes[i + 2].to_int()
+    } else {
+      0
+    }
+    n := b0 << 16 | b1 << 8 | b2
+
+    out = .concat(b64_char(n >> 18 & 0x3f))
+    out = .concat(b64_char(n >> 12 & 0x3f))
+    out = .concat(
+      if have1 {
+        b64_char(n >> 6 & 0x3f)
+      } else {
+        "="
+      },
+    )
+    out = .concat(
+      if have2 {
+        b64_char(n & 0x3f)
+      } else {
+        "="
+      },
+    )
+    i = i + 3
+  }
+  out
+}
+
+/// Decode standard Base64 with `=` padding.
+pub fn base64_decode(text: String) Result<Vector<Byte>, String> {
+  if text.len() % 4 != 0 {
+    return .Err("base64_decode: length must be a multiple of 4")
+  }
+
+  out: Vector<Byte> = []
+  i := 0
+  for i < text.len() {
+    c0 := text[i]
+    c1 := text[i + 1]
+    c2 := text[i + 2]
+    c3 := text[i + 3]
+    pad2 := c2.to_int() == 0x3d
+    pad3 := c3.to_int() == 0x3d
+
+    if pad2 and !pad3 {
+      return .Err("base64_decode: invalid padding")
+    }
+    if (pad2 or pad3) and i + 4 != text.len() {
+      return .Err("base64_decode: padding before final group")
+    }
+
+    v0 := try b64_value(c0).ok_or("base64_decode: invalid character")
+    v1 := try b64_value(c1).ok_or("base64_decode: invalid character")
+    v2 := if pad2 {
+      0
+    } else {
+      try b64_value(c2).ok_or("base64_decode: invalid character")
+    }
+    v3 := if pad3 {
+      0
+    } else {
+      try b64_value(c3).ok_or("base64_decode: invalid character")
+    }
+    n := v0 << 18 | v1 << 12 | v2 << 6 | v3
+
+    out = .append(byte(n >> 16))
+    if !pad2 {
+      out = .append(byte(n >> 8))
+    }
+    if !pad3 {
+      out = .append(byte(n))
+    }
+    i = i + 4
+  }
+  .Ok(out)
+}
+
+/// Return a digest's raw bytes.
+pub fn to_bytes(d: Digest) Vector<Byte> {
+  d.bytes
+}
+
+/// Return the lowercase hexadecimal representation of a digest.
+pub fn hex(d: Digest) String {
+  hex_encode(d.bytes)
+}
+
+/// Return the standard Base64 representation of a digest.
+pub fn base64(d: Digest) String {
+  base64_encode(d.bytes)
+}
+
+/// Return true when the digest's hexadecimal representation begins with at
+/// least `zeroes` zero nybbles.
+pub fn starts_with_hex_zeroes(d: Digest, zeroes: Int) Bool {
+  if zeroes <= 0 {
+    return true
+  }
+
+  full_bytes := zeroes / 2
+  if full_bytes > d.bytes.len() {
+    return false
+  }
+
+  i := 0
+  for i < full_bytes {
+    if d.bytes[i] != Byte.from_int(0).unwrap() {
+      return false
+    }
+    i = i + 1
+  }
+
+  if zeroes % 2 == 1 {
+    if full_bytes >= d.bytes.len() {
+      false
+    } else {
+      (d.bytes[full_bytes].to_int() >> 4 & 0xf) == 0
+    }
+  } else {
+    true
+  }
+}
+
+/// Stringify witness for digest values; renders the lowercase hex digest.
+pub fn to_string(d: Digest) String {
+  hex(d)
+}
