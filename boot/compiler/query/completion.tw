@@ -679,6 +679,9 @@ fn list_modules_in_dir(dir: String, prefix: String) Vector<lsp_completion.Comple
     },
   }
   result: Vector<lsp_completion.CompletionItem> = []
+  // A module may exist as both `<name>.tw` and a `<name>/` directory holding
+  // submodules; both collapse to the same module name, so dedup on it.
+  seen: Dict<String, Bool> = Dict.new()
 
   for name in entries {
     module_name := if name.ends_with(".tw") {
@@ -687,7 +690,8 @@ fn list_modules_in_dir(dir: String, prefix: String) Vector<lsp_completion.Comple
       name
     }
 
-    if prefix == "" or module_name.starts_with(prefix) {
+    if !seen.has(module_name) and (prefix == "" or module_name.starts_with(prefix)) {
+      seen = .set(module_name, true)
       result = .append(
         lsp_completion.CompletionItem.{
           label: module_name,

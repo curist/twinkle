@@ -140,6 +140,17 @@ fn has_label(labels: Vector<String>, target: String) Bool {
   false
 }
 
+fn count_label(labels: Vector<String>, target: String) Int {
+  n := 0
+  for l in labels {
+    if l == target {
+      n = n + 1
+    }
+  }
+
+  n
+}
+
 pub fn suite() runner.Suite {
   runner.suite("lsp completion")
     .test(
@@ -390,6 +401,26 @@ pub fn suite() runner.Suite {
 
         if !has_label(labels, "path") or !has_label(labels, "fs") {
           return .Err("expected stdlib modules like 'path' and 'fs', got: ${labels}")
+        }
+
+        .Ok({})
+      },
+    )
+    .test(
+      "import completion does not duplicate modules backed by both file and dir",
+      fn() {
+        // `crypto`, `regexp`, and `tuple` each exist as both `<name>.tw` and a
+        // `<name>/` submodule directory; completion should list each once.
+        valid := "x := 1\n"
+        incomplete := "use @std.\nx := 1\n"
+        step := open_then_complete(valid, incomplete, 0, 9)
+        labels := try completion_labels(step)
+
+        for name in ["crypto", "regexp", "tuple"] {
+          count := count_label(labels, name)
+          if count != 1 {
+            return .Err("expected '${name}' exactly once, got ${count}: ${labels}")
+          }
         }
 
         .Ok({})
