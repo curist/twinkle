@@ -2,6 +2,7 @@
 
 use compiler.ast.{Block, CollectExpr, Expr, ForStmt}
 use compiler.builder_family.{BuilderConfig, vector_builder_config}
+use compiler.builtin_refs
 use compiler.checker.{IterableLoweringKind}
 use compiler.core_ir.{CoreExpr, CoreExprKind, CorePattern, FieldId, LocalId, MatchArm}
 use compiler.lower_core.collect_helpers.{collect_builder_push, global_func_call}
@@ -145,7 +146,7 @@ fn build_range_loop(setup: IterSetup, inner_action: CoreExpr, s: Span) ExprOut {
   bool_ty := MonoType.Bool
   void_ty := MonoType.Void
   ctx := setup.ctx
-  range_tid := case type_id_from_mono(setup.iter_core.ty) {
+  range_tid := case type_id_from_mono(setup.iter_core.ty, ctx.env) {
     .Some(tid) => tid,
     .None => {
       ctx = .emit_error(s, "internal error: expected Range type for range loop")
@@ -375,8 +376,10 @@ fn build_iterator_loop(setup: IterSetup, inner_action: CoreExpr, s: Span) ExprOu
   ctx = ao2.ctx
   some_body := CoreExpr.{ kind: .Let(ao2.local, assign_next, elem_bind), ty: void_ty, span: s }
   none_body := CoreExpr.{ kind: .Break(.None), ty: void_ty, span: s }
-  some_pattern := variant_pattern(TypeId.{ id: 0 }, 1, [CorePattern.Var(item_local)])
-  none_pattern := variant_pattern(TypeId.{ id: 0 }, 0, [])
+  some_ref := builtin_refs.option_some(ctx.env)
+  none_ref := builtin_refs.option_none(ctx.env)
+  some_pattern := variant_pattern(some_ref.tid, some_ref.vid, [CorePattern.Var(item_local)])
+  none_pattern := variant_pattern(none_ref.tid, none_ref.vid, [])
   some_arm := MatchArm.{ pattern: some_pattern, body: some_body }
   none_arm := MatchArm.{ pattern: none_pattern, body: none_body }
   loop_body := CoreExpr.{ kind: .Match(next_call, [some_arm, none_arm]), ty: void_ty, span: s }

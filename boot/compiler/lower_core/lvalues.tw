@@ -29,7 +29,7 @@ pub fn lower_lvalue_assign(
         .Ident(name) => case ctx.lookup_local_or_global(name) {
           .Some(root_local) => {
             base_ty := ctx.expr_type(base)
-            tid := case type_id_from_mono(base_ty) {
+            tid := case type_id_from_mono(base_ty, ctx.env) {
               .Some(id) => id,
               .None => { return .None },
             }
@@ -54,7 +54,7 @@ pub fn lower_lvalue_assign(
           // Nested: a.b.field = v → recursively build update
           // lower the inner lvalue with RecordUpdate as the rhs
           base_ty := ctx.expr_type(base)
-          tid := case type_id_from_mono(base_ty) {
+          tid := case type_id_from_mono(base_ty, ctx.env) {
             .Some(id) => id,
             .None => { return .None },
           }

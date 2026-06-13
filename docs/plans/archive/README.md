@@ -78,6 +78,7 @@ Related historical context outside this folder:
 | [string-case-dispatch.md](string-case-dispatch.md) | Emit length-plus-trie dispatch for eligible string case expressions in the boot compiler |
 | [unreachable-case-arms.md](unreachable-case-arms.md) | Diagnose case arms shadowed by earlier catch-all, duplicate literal, or covering variant patterns |
 | [dedup-failed-module-diagnostics.md](dedup-failed-module-diagnostics.md) | Memoize attempted-and-failed modules so a broken shared dependency reports its errors once, not once per importer |
+| [boot-typed-builtin-refs.md](boot-typed-builtin-refs.md) | Resolve builtin `Option`/`Result` variant ids by name into `builtin_refs.tw` instead of hardcoding layout in `try`/`for`-in lowering and `variant_index`/`type_id_from_mono`; site-local resolution keeps names at the bootstrap boundary. Follow-up for builtin *types* tracked in [../boot-typed-builtin-type-refs.md](../boot-typed-builtin-type-refs.md) |
 
 ---
 

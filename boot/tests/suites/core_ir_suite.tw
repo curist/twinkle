@@ -1,5 +1,6 @@
 use compiler.ast
 use compiler.base_env.{builtin_env}
+use compiler.builtin_refs
 use compiler.builtins.{make_builtin_registry}
 use compiler.checker
 use compiler.contracts.{BuiltinContract}
@@ -843,7 +844,7 @@ pub fn suite() runner.Suite {
       "lower try in result-returning fn",
       fn() Result<Void, String> {
         src := "fn parse(s: String) Result<Int, String> { .Ok(1) }\nfn f(s: String) Result<Int, String> { x := try parse(s); .Ok(x) }"
-        lr := try lower_src(src)
+        lr := try lower_src_with_builtin_env(src)
 
         // f's body should contain a Match (try desugaring)
         body := lr.module.functions[1].body
@@ -855,9 +856,27 @@ pub fn suite() runner.Suite {
       "lower try in option-returning fn",
       fn() Result<Void, String> {
         src := "fn find(x: Int) Int? { .Some(x) }\nfn f(x: Int) Int? { y := try find(x); .Some(y) }"
-        lr := try lower_src(src)
+        lr := try lower_src_with_builtin_env(src)
         body := lr.module.functions[1].body
         try assert.ok(has_match(body), "expected Match from try desugaring")
+        .Ok({})
+      },
+    )
+    .test(
+      "builtin variant refs resolve Option/Result by name",
+      fn() Result<Void, String> {
+        env := builtin_env()
+        none := builtin_refs.option_none(env)
+        some := builtin_refs.option_some(env)
+        ok := builtin_refs.result_ok(env)
+        err := builtin_refs.result_err(env)
+        try assert.ok(none.vid == 0, "Option.None is variant 0")
+        try assert.ok(some.vid == 1, "Option.Some is variant 1")
+        try assert.ok(ok.vid == 0, "Result.Ok is variant 0")
+        try assert.ok(err.vid == 1, "Result.Err is variant 1")
+        try assert.ok(none.tid.id == some.tid.id, "Option variants share a type id")
+        try assert.ok(ok.tid.id == err.tid.id, "Result variants share a type id")
+        try assert.ok(none.tid.id != ok.tid.id, "Option and Result are distinct types")
         .Ok({})
       },
     )

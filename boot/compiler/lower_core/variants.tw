@@ -18,7 +18,7 @@ pub fn lower_variant(
   s: Span,
   lower_expr_fn: fn(LowerCtx, Expr) ExprOut,
 ) ExprOut {
-  tid := case type_id_from_mono(ty) {
+  tid := case type_id_from_mono(ty, ctx.env) {
     .Some(id) => id,
     .None => {
       ctx = .emit_error(s, "cannot determine variant type")

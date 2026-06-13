@@ -39,7 +39,7 @@ pub fn lower_anon_record(
   s: Span,
   lower_expr_fn: fn(LowerCtx, Expr) ExprOut,
 ) ExprOut {
-  tid := case type_id_from_mono(ty) {
+  tid := case type_id_from_mono(ty, ctx.env) {
     .Some(id) => id,
     .None => {
       ctx = .emit_error(s, "cannot determine record type")
@@ -170,7 +170,7 @@ pub fn lower_field(
   br := lower_expr_fn(ctx, base_expr)
   base_ty := br.ctx.expr_type(base_expr)
 
-  case type_id_from_mono(base_ty) {
+  case type_id_from_mono(base_ty, ctx.env) {
     .Some(tid) => {
       fid_idx := find_field_index(br.ctx.env, tid, field_name)
 

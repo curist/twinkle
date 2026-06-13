@@ -1,10 +1,11 @@
 /// Control-flow Core lowering and rewriting helpers.
 
 use compiler.ast.{Block, Expr}
+use compiler.builtin_refs
 use compiler.core_ir.{CoreExpr, CorePattern, FieldInit, MatchArm}
 use compiler.lower_core.context.{ExprOut, LowerCtx}
 use compiler.lower_core.helpers.{local_expr, return_expr, variant_expr, variant_pattern, void_expr}
-use compiler.mono_type.{MonoType, TypeId}
+use compiler.mono_type.{MonoType}
 use lib.source.span.{Span}
 
 pub fn lower_if(
@@ -226,12 +227,13 @@ pub fn lower_try(
   r := lower_expr_fn(ctx, operand)
   operand_ty := r.ctx.expr_type(operand)
 
-  // TypeId(0) = Option, TypeId(1) = Result
-  option_tid := TypeId.{ id: 0 }
-  result_tid := TypeId.{ id: 1 }
-
+  // `try` lowers through the builtin Option.Some/None and Result.Ok/Err
+  // variants, resolved by name from the env rather than by hardcoded ids.
   case operand_ty {
     .Result(ok_ty, err_ty) => {
+      ok_ref := builtin_refs.result_ok(r.ctx.env)
+      err_ref := builtin_refs.result_err(r.ctx.env)
+
       // try on Result<T, E> → match { .Ok(val) => val, .Err(e) => return .Err(e) }
       ok_local_out := r.ctx.alloc_anon_local()
       ctx = ok_local_out.ctx
@@ -241,13 +243,17 @@ pub fn lower_try(
         .Some(t) => t,
         .None => operand_ty,
       }
-      ok_pattern := variant_pattern(result_tid, 0, [CorePattern.Var(ok_local_out.local)])
+      ok_pattern := variant_pattern(ok_ref.tid, ok_ref.vid, [CorePattern.Var(ok_local_out.local)])
       ok_body := local_expr(ok_local_out.local, ok_ty, s)
       ok_arm := MatchArm.{ pattern: ok_pattern, body: ok_body }
-      err_pattern := variant_pattern(result_tid, 1, [CorePattern.Var(err_local_out.local)])
+      err_pattern := variant_pattern(
+        err_ref.tid,
+        err_ref.vid,
+        [CorePattern.Var(err_local_out.local)],
+      )
       err_value := variant_expr(
-        result_tid,
-        1,
+        err_ref.tid,
+        err_ref.vid,
         [local_expr(err_local_out.local, err_ty, s)],
         ret_ty,
         s,
@@ -256,6 +262,9 @@ pub fn lower_try(
       .{ expr: .{ kind: .Match(r.expr, [ok_arm, err_arm]), ty: ok_ty, span: s }, ctx }
     },
     .Optional(inner_ty) => {
+      some_ref := builtin_refs.option_some(r.ctx.env)
+      none_ref := builtin_refs.option_none(r.ctx.env)
+
       // try on Option<T> → match { .Some(val) => val, .None => return .None }
       some_local_out := r.ctx.alloc_anon_local()
       ctx = some_local_out.ctx
@@ -263,11 +272,15 @@ pub fn lower_try(
         .Some(t) => t,
         .None => operand_ty,
       }
-      some_pattern := variant_pattern(option_tid, 1, [CorePattern.Var(some_local_out.local)])
+      some_pattern := variant_pattern(
+        some_ref.tid,
+        some_ref.vid,
+        [CorePattern.Var(some_local_out.local)],
+      )
       some_body := local_expr(some_local_out.local, inner_ty, s)
       some_arm := MatchArm.{ pattern: some_pattern, body: some_body }
-      none_pattern := variant_pattern(option_tid, 0, [])
-      none_value := variant_expr(option_tid, 0, [], ret_ty, s)
+      none_pattern := variant_pattern(none_ref.tid, none_ref.vid, [])
+      none_value := variant_expr(none_ref.tid, none_ref.vid, [], ret_ty, s)
       none_arm := MatchArm.{ pattern: none_pattern, body: return_expr(.Some(none_value), s) }
       .{ expr: .{ kind: .Match(r.expr, [some_arm, none_arm]), ty: inner_ty, span: s }, ctx }
     },

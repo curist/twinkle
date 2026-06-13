@@ -24,7 +24,7 @@ pub fn lower_pattern(ctx: LowerCtx, pat: ast.Pattern, scrut_ty: MonoType) Patter
       _ => .{ pattern: .Wildcard, ctx },
     },
     .Variant(name, sub_pats) => {
-      tid := case type_id_from_mono(scrut_ty) {
+      tid := case type_id_from_mono(scrut_ty, ctx.env) {
         .Some(id) => id,
         .None => { return .{ pattern: .Wildcard, ctx } },
       }
@@ -55,7 +55,7 @@ pub fn lower_pattern(ctx: LowerCtx, pat: ast.Pattern, scrut_ty: MonoType) Patter
       }
       tid := case resolve_type_id(ctx.env, qual_name) {
         .Some(id) => id,
-        .None => case type_id_from_mono(scrut_ty) {
+        .None => case type_id_from_mono(scrut_ty, ctx.env) {
           .Some(id) => id,
           .None => { return .{ pattern: .Wildcard, ctx } },
         },

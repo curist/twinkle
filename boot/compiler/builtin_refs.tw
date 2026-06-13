@@ -1,0 +1,96 @@
+/// Typed references to compiler-known builtin variants.
+///
+/// `try` lowering and `for`-loop iterator lowering go through the builtin
+/// `Option.Some` / `Option.None` and `Result.Ok` / `Result.Err` variants.
+/// Rather than hardcoding their layout ids — which depend on construction order
+/// in `base_env.tw` — resolve them by name from the resolved `ResolvedEnv` at
+/// the point of use. Source-level builtin names live only here, at the
+/// bootstrap boundary; a missing builtin is a compiler bug and traps loudly.
+
+use compiler.mono_type.{TypeId}
+use compiler.resolver.{ResolvedEnv, ResolvedVariant}
+
+pub type VariantRef = .{ tid: TypeId, vid: Int }
+
+fn find_variant_index(variants: Vector<ResolvedVariant>, name: String) Int? {
+  for v, i in variants {
+    if v.name == name {
+      return .Some(i)
+    }
+  }
+
+  .None
+}
+
+fn resolve_variant_ref(env: ResolvedEnv, type_name: String, variant_name: String) Result<
+  VariantRef,
+  String,
+> {
+  entry := try env.lookup_type(type_name).ok_or("builtin_refs: missing builtin type ${type_name}")
+  variants := case entry.def {
+    .Some(.Sum(_, _, vs)) => vs,
+    _ => { return .Err("builtin_refs: builtin type ${type_name} is not a sum type") },
+  }
+  vid := try find_variant_index(variants, variant_name).ok_or(
+    "builtin_refs: builtin type ${type_name} has no variant ${variant_name}",
+  )
+  .Ok(.{ tid: entry.id, vid })
+}
+
+// Two resolution flavors, intentionally distinct — don't collapse them:
+// `require_variant_ref` traps, because the codegen sites that go through it
+// (`try`, `for`-in) cannot proceed without the builtin; `variant_index_of`
+// below returns the `-1` sentinel that `types.variant_index`'s callers already
+// expect for an unresolved variant.
+fn require_variant_ref(env: ResolvedEnv, type_name: String, variant_name: String) VariantRef {
+  case resolve_variant_ref(env, type_name, variant_name) {
+    .Ok(r) => r,
+    .Err(msg) => error("internal error: ${msg}"),
+  }
+}
+
+pub fn option_none(env: ResolvedEnv) VariantRef {
+  require_variant_ref(env, "Option", "None")
+}
+
+pub fn option_some(env: ResolvedEnv) VariantRef {
+  require_variant_ref(env, "Option", "Some")
+}
+
+pub fn result_ok(env: ResolvedEnv) VariantRef {
+  require_variant_ref(env, "Result", "Ok")
+}
+
+pub fn result_err(env: ResolvedEnv) VariantRef {
+  require_variant_ref(env, "Result", "Err")
+}
+
+fn type_id_of(env: ResolvedEnv, type_name: String) TypeId? {
+  case env.lookup_type(type_name) {
+    .Some(entry) => .Some(entry.id),
+    .None => .None,
+  }
+}
+
+fn variant_index_of(env: ResolvedEnv, type_name: String, variant_name: String) Int {
+  case resolve_variant_ref(env, type_name, variant_name) {
+    .Ok(r) => r.vid,
+    .Err(_) => -1,
+  }
+}
+
+pub fn option_type_id(env: ResolvedEnv) TypeId? {
+  type_id_of(env, "Option")
+}
+
+pub fn result_type_id(env: ResolvedEnv) TypeId? {
+  type_id_of(env, "Result")
+}
+
+pub fn option_variant_index(env: ResolvedEnv, variant_name: String) Int {
+  variant_index_of(env, "Option", variant_name)
+}
+
+pub fn result_variant_index(env: ResolvedEnv, variant_name: String) Int {
+  variant_index_of(env, "Result", variant_name)
+}

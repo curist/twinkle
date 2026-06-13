@@ -203,7 +203,7 @@ pub fn lower_unit_variant_compare(
   }
 
   case unit_variant_tag(right) {
-    .Some(tag) => case type_id_from_mono(left.ty) {
+    .Some(tag) => case type_id_from_mono(left.ty, env) {
       .Some(lhs_tid) => if lhs_tid.id == tag.tid.id {
         return .Some(build_unit_variant_compare(ast_op, left, tag.tid, tag.vid, s))
       },
@@ -213,7 +213,7 @@ pub fn lower_unit_variant_compare(
   }
 
   case unit_variant_tag(left) {
-    .Some(tag) => case type_id_from_mono(right.ty) {
+    .Some(tag) => case type_id_from_mono(right.ty, env) {
       .Some(rhs_tid) => if rhs_tid.id == tag.tid.id {
         return .Some(build_unit_variant_compare(ast_op, right, tag.tid, tag.vid, s))
       },

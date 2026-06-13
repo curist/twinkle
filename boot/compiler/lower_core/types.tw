@@ -1,5 +1,6 @@
 /// Type-shape helpers shared by Core lowering routines.
 
+use compiler.builtin_refs
 use compiler.mono_type.{MonoType, TypeId}
 use compiler.resolver.{ResolvedEnv, ResolvedTypeParam}
 
@@ -89,28 +90,22 @@ pub fn resolve_type_id(env: ResolvedEnv, name: String) TypeId? {
 }
 
 // Resolve variant index for any MonoType (including builtin Optional/Result).
+// Builtin Option/Result variants resolve by name from the env rather than by
+// assuming their layout order.
 pub fn variant_index(ty: MonoType, name: String, env: ResolvedEnv) Int {
   case ty {
-    .Optional(_) => case name {
-      "None" => 0,
-      "Some" => 1,
-      _ => -1,
-    },
-    .Result(_, _) => case name {
-      "Ok" => 0,
-      "Err" => 1,
-      _ => -1,
-    },
+    .Optional(_) => builtin_refs.option_variant_index(env, name),
+    .Result(_, _) => builtin_refs.result_variant_index(env, name),
     .Named(tid, _) => find_variant_index(env, tid, name),
     _ => -1,
   }
 }
 
-pub fn type_id_from_mono(ty: MonoType) TypeId? {
+pub fn type_id_from_mono(ty: MonoType, env: ResolvedEnv) TypeId? {
   case ty {
     .Named(tid, _) => .Some(tid),
-    .Optional(_) => .Some(TypeId.{ id: 0 }),
-    .Result(_, _) => .Some(TypeId.{ id: 1 }),
+    .Optional(_) => builtin_refs.option_type_id(env),
+    .Result(_, _) => builtin_refs.result_type_id(env),
     _ => .None,
   }
 }
