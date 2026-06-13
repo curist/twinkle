@@ -123,6 +123,28 @@ pub fn suite() runner.Suite {
       },
     )
     .test(
+      "hover on for binder shows element type",
+      fn() {
+        source := "input := \"ab\"\nfor dir in input {\n  println(Byte.to_string(dir))\n}\n"
+        state := state_with_doc("file:///a.tw", source)
+        step := server_core.handle_message(state, hover_request(1, "file:///a.tw", 1, 4))
+        content := try hover_content(step)
+        try assert.equal(content, "```twinkle\nByte\n```")
+        .Ok({})
+      },
+    )
+    .test(
+      "hover on collect binder shows element type",
+      fn() {
+        source := "input := \"ab\"\nxs := collect dir in input { dir }\n"
+        state := state_with_doc("file:///a.tw", source)
+        step := server_core.handle_message(state, hover_request(1, "file:///a.tw", 1, 14))
+        content := try hover_content(step)
+        try assert.equal(content, "```twinkle\nByte\n```")
+        .Ok({})
+      },
+    )
+    .test(
       "hover on function name shows function type",
       fn() {
         state := state_with_doc(

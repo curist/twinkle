@@ -1,8 +1,8 @@
 /// Hover query: find the type of the expression at a given byte offset.
 
 use compiler.ast.{
-  Block, Expr, ForStmt, FunctionDecl, ImportItem, Item, LetStmt, Param, Pattern, RecordField, Stmt,
-  TypeDecl, TypeDef, TypeExpr, TypeParam, TypePath, UseDecl, VariantDecl,
+  Block, CollectExpr, Expr, ForStmt, FunctionDecl, ImportItem, Item, LetStmt, Param, Pattern,
+  RecordField, Stmt, TypeDecl, TypeDef, TypeExpr, TypeParam, TypePath, UseDecl, VariantDecl,
 }
 use compiler.checker.{CheckResult}
 use compiler.contracts.{BuiltinContract, resolve_builtin_contract_name, spec}
@@ -407,6 +407,7 @@ fn hover_for_node(ctx: HoverContext, node: NodeContext) HoverResult? {
     .ExprNode(expr) => case expr.kind {
       .Ident(name) => ctx.hover_ident_expr(expr, name),
       .Closure(params, _, _) => ctx.hover_closure_expr(expr, params),
+      .Collect(ce) => ctx.hover_collect_expr(ce).or_else(fn() { expr_type(expr, typed) }),
       .Variant(name, _) => ctx.hover_variant_expr(expr, name),
       _ => expr_type(expr, typed),
     },
@@ -432,6 +433,32 @@ fn hover_for_node(ctx: HoverContext, node: NodeContext) HoverResult? {
 }
 
 // ── Hover helpers ──────────────────────────────────────────────────
+fn hover_collect_expr(ctx: HoverContext, ce: CollectExpr) HoverResult? {
+  ctx.hover_collect_pattern(ce).or_else(fn() { ctx.hover_collect_index(ce) })
+}
+
+fn hover_collect_pattern(ctx: HoverContext, ce: CollectExpr) HoverResult? {
+  ps := try ce.pattern_span
+
+  if !ps.contains(ctx.offset) {
+    return .None
+  }
+
+  iter := try ce.iter
+  ty := try ctx.typed.type_map[iter.id]
+  .Some(.{ content: ty_to_string_env(ctx.typed.env, iter_element_type(ty)), span: ps })
+}
+
+fn hover_collect_index(ctx: HoverContext, ce: CollectExpr) HoverResult? {
+  is := try ce.index_span
+
+  if !is.contains(ctx.offset) {
+    return .None
+  }
+
+  .Some(.{ content: ty_to_string_env(ctx.typed.env, .Int), span: is })
+}
+
 fn hover_ident_expr(ctx: HoverContext, expr: Expr, name: String) HoverResult? {
   typed := ctx.typed
 
@@ -926,6 +953,7 @@ fn find_func_doc(name: String, items: Vector<Item>, source: String) String? {
 fn iter_element_type(ty: MonoType) MonoType {
   case ty {
     .Vector(inner) => inner,
+    .String => .Byte,
     .Dict(k, _) => k,
     .Named(_, args) => {
       // Range → Int, Iterator<T> → T
