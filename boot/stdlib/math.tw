@@ -1,21 +1,52 @@
 /// Math helpers.
 ///
 /// The integer helpers (`abs`, `sign`, `gcd`, `lcm`, `pow`, `isqrt`) are pure
-/// Twinkle. The floating-point helpers (`sqrt`, `floor`, `ceil`, `round`) bridge
-/// to the host's `Math` object via `extern`, so they require the JS/Deno runner
-/// (the same host that backs `target/twk run`); the import is tree-shaken away
-/// when only the integer helpers are used.
+/// Twinkle. The floating-point helpers bridge to the host's `Math` object via
+/// `extern`, so they require the JS/Deno runner (the same host that backs
+/// `target/twk run`); the imports are tree-shaken away when only the integer
+/// helpers and constants are used.
 ///
 /// `Int.min`, `Int.max`, and `Int.clamp` already live in the prelude, so they
-/// are not duplicated here.
+/// are not duplicated here. JS `Math` constants are exported as lowercase
+/// Twinkle values because value identifiers are snake_case.
 
 /// Host `Math` object (globalThis.Math under the JS/Deno runner).
 extern Math {
-  fn sqrt(x: Float) Float
-  fn floor(x: Float) Float
+  fn abs(x: Float) Float
+  fn acos(x: Float) Float
+  fn acosh(x: Float) Float
+  fn asin(x: Float) Float
+  fn asinh(x: Float) Float
+  fn atan(x: Float) Float
+  fn atan2(y: Float, x: Float) Float
+  fn atanh(x: Float) Float
+  fn cbrt(x: Float) Float
   fn ceil(x: Float) Float
+  fn cos(x: Float) Float
+  fn cosh(x: Float) Float
+  fn exp(x: Float) Float
+  fn expm1(x: Float) Float
+  fn floor(x: Float) Float
+  fn fround(x: Float) Float
+  fn hypot(x: Float, y: Float) Float
+  fn log(x: Float) Float
+  fn log10(x: Float) Float
+  fn log1p(x: Float) Float
+  fn log2(x: Float) Float
+  fn pow(base: Float, exp: Float) Float
+  fn random() Float
   fn round(x: Float) Float
+  fn sign(x: Float) Float
+  fn sin(x: Float) Float
+  fn sinh(x: Float) Float
+  fn sqrt(x: Float) Float
+  fn tan(x: Float) Float
+  fn tanh(x: Float) Float
+  fn trunc(x: Float) Float
 }
+
+pub e := 2.718281828459045
+pub pi := 3.141592653589793
 
 /// Absolute value of n. (abs(min_i64) overflows, matching two's-complement.)
 pub fn abs(n: Int) Int {
@@ -111,14 +142,49 @@ pub fn isqrt(n: Int) Int {
   ans
 }
 
-/// Square root of x (host `Math.sqrt`). Requires the JS/Deno runner.
-pub fn sqrt(x: Float) Float {
-  Math.sqrt(x)
+/// Floating-point absolute value (host `Math.abs`).
+pub fn abs_float(x: Float) Float {
+  Math.abs(x)
 }
 
-/// Largest integer value not greater than x (host `Math.floor`).
-pub fn floor(x: Float) Float {
-  Math.floor(x)
+/// Arc-cosine of x in radians (host `Math.acos`).
+pub fn acos(x: Float) Float {
+  Math.acos(x)
+}
+
+/// Hyperbolic arc-cosine of x (host `Math.acosh`).
+pub fn acosh(x: Float) Float {
+  Math.acosh(x)
+}
+
+/// Arc-sine of x in radians (host `Math.asin`).
+pub fn asin(x: Float) Float {
+  Math.asin(x)
+}
+
+/// Hyperbolic arc-sine of x (host `Math.asinh`).
+pub fn asinh(x: Float) Float {
+  Math.asinh(x)
+}
+
+/// Arc-tangent of x in radians (host `Math.atan`).
+pub fn atan(x: Float) Float {
+  Math.atan(x)
+}
+
+/// Arc-tangent of y/x using signs to choose the quadrant (host `Math.atan2`).
+pub fn atan2(y: Float, x: Float) Float {
+  Math.atan2(y, x)
+}
+
+/// Hyperbolic arc-tangent of x (host `Math.atanh`).
+pub fn atanh(x: Float) Float {
+  Math.atanh(x)
+}
+
+/// Cube root of x (host `Math.cbrt`).
+pub fn cbrt(x: Float) Float {
+  Math.cbrt(x)
 }
 
 /// Smallest integer value not less than x (host `Math.ceil`).
@@ -126,7 +192,107 @@ pub fn ceil(x: Float) Float {
   Math.ceil(x)
 }
 
+/// Cosine of x radians (host `Math.cos`).
+pub fn cos(x: Float) Float {
+  Math.cos(x)
+}
+
+/// Hyperbolic cosine of x (host `Math.cosh`).
+pub fn cosh(x: Float) Float {
+  Math.cosh(x)
+}
+
+/// e raised to x (host `Math.exp`).
+pub fn exp(x: Float) Float {
+  Math.exp(x)
+}
+
+/// e^x - 1 (host `Math.expm1`).
+pub fn expm1(x: Float) Float {
+  Math.expm1(x)
+}
+
+/// Largest integer value not greater than x (host `Math.floor`).
+pub fn floor(x: Float) Float {
+  Math.floor(x)
+}
+
+/// Round to nearest 32-bit float value, returned as a Float (host `Math.fround`).
+pub fn fround(x: Float) Float {
+  Math.fround(x)
+}
+
+/// Square root of x*x + y*y (host `Math.hypot`, two-argument wrapper).
+pub fn hypot(x: Float, y: Float) Float {
+  Math.hypot(x, y)
+}
+
+/// Natural logarithm of x (host `Math.log`).
+pub fn log(x: Float) Float {
+  Math.log(x)
+}
+
+/// Base-10 logarithm of x (host `Math.log10`).
+pub fn log10(x: Float) Float {
+  Math.log10(x)
+}
+
+/// Natural logarithm of 1 + x (host `Math.log1p`).
+pub fn log1p(x: Float) Float {
+  Math.log1p(x)
+}
+
+/// Base-2 logarithm of x (host `Math.log2`).
+pub fn log2(x: Float) Float {
+  Math.log2(x)
+}
+
+/// Floating-point exponentiation (host `Math.pow`).
+pub fn pow_float(base: Float, exp: Float) Float {
+  Math.pow(base, exp)
+}
+
+/// Pseudorandom number in [0, 1) (host `Math.random`).
+pub fn random() Float {
+  Math.random()
+}
+
 /// Nearest integer to x, ties rounding toward +∞ (host `Math.round`).
 pub fn round(x: Float) Float {
   Math.round(x)
+}
+
+/// Floating-point sign: -1.0, 0.0, -0.0, 1.0, or NaN (host `Math.sign`).
+pub fn sign_float(x: Float) Float {
+  Math.sign(x)
+}
+
+/// Sine of x radians (host `Math.sin`).
+pub fn sin(x: Float) Float {
+  Math.sin(x)
+}
+
+/// Hyperbolic sine of x (host `Math.sinh`).
+pub fn sinh(x: Float) Float {
+  Math.sinh(x)
+}
+
+/// Square root of x (host `Math.sqrt`). Requires the JS/Deno runner.
+pub fn sqrt(x: Float) Float {
+  Math.sqrt(x)
+}
+
+/// Tangent of x radians (host `Math.tan`).
+pub fn tan(x: Float) Float {
+  Math.tan(x)
+}
+
+/// Hyperbolic tangent of x (host `Math.tanh`).
+pub fn tanh(x: Float) Float {
+  Math.tanh(x)
+}
+
+/// Integer part of x, removing fractional digits (host `Math.trunc`).
+pub fn trunc(x: Float) Float {
+  Math.trunc(x)
 }

@@ -412,31 +412,54 @@ Math helpers. `Int.min`, `Int.max`, and `Int.clamp` already live in the prelude;
 this module adds number-theory, exponent, and floating-point helpers. Call
 qualified, e.g. `math.gcd(a, b)`.
 
-The integer helpers are pure Twinkle. The floating-point helpers bridge to the
-host's `Math` object via `extern`, so they require the JS/Deno runner that backs
-`target/twk run`; the host import is tree-shaken away when only the integer
-helpers are used.
+The integer helpers are pure Twinkle. The constants are Twinkle literals. The
+floating-point helpers bridge to the host's `Math` object via `extern`, so they
+require the JS/Deno runner that backs `target/twk run`; those host imports are
+tree-shaken away when only the integer helpers and constants are used. JS
+`Math` constants are exported with lowercase Twinkle value names.
+
+| Constant | Type | Description |
+|----------|------|-------------|
+| `e` | `Float` | Euler's number (`Math.E`) |
+| `pi` | `Float` | Pi (`Math.PI`) |
 
 | Function | Signature | Description |
 |----------|-----------|-------------|
-| `abs` | `fn(n: Int) Int` | Absolute value (`abs(min_i64)` overflows) |
-| `sign` | `fn(n: Int) Int` | `-1`, `0`, or `1` by sign |
+| `abs` | `fn(n: Int) Int` | Absolute integer value (`abs(min_i64)` overflows) |
+| `sign` | `fn(n: Int) Int` | `-1`, `0`, or `1` by integer sign |
 | `gcd` | `fn(a: Int, b: Int) Int` | Greatest common divisor (non-negative; `gcd(0,0)=0`) |
 | `lcm` | `fn(a: Int, b: Int) Int` | Least common multiple (`0` when either is `0`) |
 | `pow` | `fn(base: Int, exp: Int) Int` | Integer exponentiation; traps on negative `exp`; `pow(0,0)=1` |
-| `isqrt` | `fn(n: Int) Int` | Floor of the square root; traps when `n < 0` |
+| `isqrt` | `fn(n: Int) Int` | Floor of the integer square root; traps when `n < 0` |
+| `abs_float` | `fn(x: Float) Float` | Floating-point absolute value (host `Math.abs`) |
+| `sign_float` | `fn(x: Float) Float` | Floating-point sign (host `Math.sign`) |
+| `pow_float` | `fn(base: Float, exp: Float) Float` | Floating-point exponentiation (host `Math.pow`) |
 | `sqrt` | `fn(x: Float) Float` | Square root (host `Math.sqrt`) |
+| `cbrt` | `fn(x: Float) Float` | Cube root (host `Math.cbrt`) |
+| `hypot` | `fn(x: Float, y: Float) Float` | Hypotenuse for two values (host `Math.hypot`) |
 | `floor` | `fn(x: Float) Float` | Largest integer ≤ `x` (host `Math.floor`) |
 | `ceil` | `fn(x: Float) Float` | Smallest integer ≥ `x` (host `Math.ceil`) |
 | `round` | `fn(x: Float) Float` | Nearest integer, ties toward `+∞` (host `Math.round`) |
+| `trunc` | `fn(x: Float) Float` | Integer part, removing fractional digits (host `Math.trunc`) |
+| `fround` | `fn(x: Float) Float` | Round to nearest 32-bit float value (host `Math.fround`) |
+| `sin` / `cos` / `tan` | `fn(x: Float) Float` | Trigonometric functions, radians (host `Math.*`) |
+| `asin` / `acos` / `atan` | `fn(x: Float) Float` | Inverse trigonometric functions, radians (host `Math.*`) |
+| `atan2` | `fn(y: Float, x: Float) Float` | Quadrant-aware arc-tangent (host `Math.atan2`) |
+| `sinh` / `cosh` / `tanh` | `fn(x: Float) Float` | Hyperbolic functions (host `Math.*`) |
+| `asinh` / `acosh` / `atanh` | `fn(x: Float) Float` | Inverse hyperbolic functions (host `Math.*`) |
+| `exp` / `expm1` | `fn(x: Float) Float` | `e^x` and `e^x - 1` (host `Math.*`) |
+| `log` / `log1p` | `fn(x: Float) Float` | Natural log and `ln(1+x)` (host `Math.*`) |
+| `log2` / `log10` | `fn(x: Float) Float` | Base-2 and base-10 logarithms (host `Math.*`) |
+| `random` | `fn() Float` | Pseudorandom number in `[0, 1)` (host `Math.random`) |
 
 ```tw
 use @std.math
 
-math.gcd(12, 18)    // 6
-math.pow(2, 10)     // 1024
-math.isqrt(99)      // 9
-math.sqrt(16.0)     // 4.0
+math.gcd(12, 18)       // 6
+math.pow(2, 10)        // 1024
+math.isqrt(99)         // 9
+math.pi                // 3.141592653589793
+math.sin(math.pi / 2.0) // 1.0
 ```
 
 ### `@std.regexp`
