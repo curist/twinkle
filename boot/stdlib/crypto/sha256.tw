@@ -1,5 +1,7 @@
 /// Internal SHA-256 implementation for `@std.crypto`.
 
+use .schedule as sched
+
 fn u32(x: Int) Int {
   x & 0xffffffff
 }
@@ -24,11 +26,75 @@ fn append_byte(out: Vector<Byte>, n: Int) Vector<Byte> {
   out.append(byte(n))
 }
 
-fn read_be_word(block: Vector<Byte>, offset: Int, word: Int) Int {
+fn padded_len(total_len: Int) Int {
+  len := total_len + 1
+  for len % 64 != 56 {
+    len = len + 1
+  }
+  len + 8
+}
+
+fn segment_byte(a: Vector<Byte>, b: Vector<Byte>, c: Vector<Byte>, pos: Int) Byte {
+  if pos < a.len() {
+    a[pos]
+  } else {
+    pos = pos - a.len()
+    if pos < b.len() {
+      b[pos]
+    } else {
+      c[pos - b.len()]
+    }
+  }
+}
+
+fn padded_byte(
+  a: Vector<Byte>,
+  b: Vector<Byte>,
+  c: Vector<Byte>,
+  total_len: Int,
+  msg_len: Int,
+  pos: Int,
+) Byte {
+  if pos < total_len {
+    return segment_byte(a, b, c, pos)
+  }
+  if pos == total_len {
+    return byte(0x80)
+  }
+
+  len_start := msg_len - 8
+  if pos < len_start {
+    return byte(0)
+  }
+
+  bit_len := total_len * 8
+  case pos - len_start {
+    0 => byte(0),
+    1 => byte(0),
+    2 => byte(0),
+    3 => byte(0),
+    4 => byte(bit_len >> 24),
+    5 => byte(bit_len >> 16),
+    6 => byte(bit_len >> 8),
+    _ => byte(bit_len),
+  }
+}
+
+fn read_be_word(
+  a: Vector<Byte>,
+  b: Vector<Byte>,
+  c: Vector<Byte>,
+  total_len: Int,
+  msg_len: Int,
+  offset: Int,
+  word: Int,
+) Int {
   base := offset + word * 4
   u32(
-    block[base].to_int() << 24
-      | block[base + 1].to_int() << 16 | block[base + 2].to_int() << 8 | block[base + 3].to_int(),
+    padded_byte(a, b, c, total_len, msg_len, base).to_int() << 24
+      | padded_byte(a, b, c, total_len, msg_len, base + 1).to_int() << 16
+      | padded_byte(a, b, c, total_len, msg_len, base + 2).to_int() << 8
+      | padded_byte(a, b, c, total_len, msg_len, base + 3).to_int(),
   )
 }
 
@@ -39,24 +105,6 @@ fn write_be_word(out: Vector<Byte>, word: Int) Vector<Byte> {
   bytes = append_byte(bytes, word >> 8)
   bytes = append_byte(bytes, word)
   bytes
-}
-
-fn padded(input: Vector<Byte>) Vector<Byte> {
-  out := input
-  bit_len := input.len() * 8
-  out = .append(byte(0x80))
-  for out.len() % 64 != 56 {
-    out = .append(byte(0))
-  }
-  out = append_byte(out, 0)
-  out = append_byte(out, 0)
-  out = append_byte(out, 0)
-  out = append_byte(out, 0)
-  out = append_byte(out, bit_len >> 24)
-  out = append_byte(out, bit_len >> 16)
-  out = append_byte(out, bit_len >> 8)
-  out = append_byte(out, bit_len)
-  out
 }
 
 fn k(i: Int) Int {
@@ -154,7 +202,16 @@ fn small_sigma1(x: Int) Int {
 }
 
 pub fn digest_bytes(input: Vector<Byte>) Vector<Byte> {
-  msg := padded(input)
+  digest3(input, [], [])
+}
+
+pub fn digest2(a: Vector<Byte>, b: Vector<Byte>) Vector<Byte> {
+  digest3(a, b, [])
+}
+
+pub fn digest3(a_input: Vector<Byte>, b_input: Vector<Byte>, c_input: Vector<Byte>) Vector<Byte> {
+  total_len := a_input.len() + b_input.len() + c_input.len()
+  msg_len := padded_len(total_len)
   h0 := 0x6a09e667
   h1 := 0xbb67ae85
   h2 := 0x3c6ef372
@@ -165,15 +222,11 @@ pub fn digest_bytes(input: Vector<Byte>) Vector<Byte> {
   h7 := 0x5be0cd19
 
   offset := 0
-  for offset < msg.len() {
-    w: Vector<Int> = []
+  for offset < msg_len {
+    w := sched.empty()
     i := 0
     for i < 16 {
-      w = .append(read_be_word(msg, offset, i))
-      i = i + 1
-    }
-    for i < 64 {
-      w = .append(u32(small_sigma1(w[i - 2]) + w[i - 7] + small_sigma0(w[i - 15]) + w[i - 16]))
+      w = sched.set(w, i, read_be_word(a_input, b_input, c_input, total_len, msg_len, offset, i))
       i = i + 1
     }
 
@@ -188,7 +241,17 @@ pub fn digest_bytes(input: Vector<Byte>) Vector<Byte> {
 
     i = 0
     for i < 64 {
-      t1 := u32(h + big_sigma1(e) + ch(e, f, g) + k(i) + w[i])
+      wi := if i < 16 {
+        sched.get(w, i)
+      } else {
+        next := u32(
+          small_sigma1(sched.get(w, i - 2))
+            + sched.get(w, i - 7) + small_sigma0(sched.get(w, i - 15)) + sched.get(w, i - 16),
+        )
+        w = sched.set(w, i, next)
+        next
+      }
+      t1 := u32(h + big_sigma1(e) + ch(e, f, g) + k(i) + wi)
       t2 := u32(big_sigma0(a) + maj(a, b, c))
       h = g
       g = f

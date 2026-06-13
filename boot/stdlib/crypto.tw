@@ -17,14 +17,6 @@ fn byte(n: Int) Byte {
   Byte.from_int(n & 0xff).unwrap()
 }
 
-fn append_all(a: Vector<Byte>, b: Vector<Byte>) Vector<Byte> {
-  out := a
-  for x in b {
-    out = .append(x)
-  }
-  out
-}
-
 fn nybble_hex(n: Int) String {
   code := if n < 10 {
     0x30 + n
@@ -134,8 +126,8 @@ pub fn hmac_sha256_bytes(key: Vector<Byte>, message: Vector<Byte>) Digest {
     opad = .append(byte(b.to_int() ^ 0x5c))
   }
 
-  inner := sha256_impl.digest_bytes(append_all(ipad, message))
-  .{ bytes: sha256_impl.digest_bytes(append_all(opad, inner)) }
+  inner := sha256_impl.digest2(ipad, message)
+  .{ bytes: sha256_impl.digest2(opad, inner) }
 }
 
 /// Encode bytes as lowercase hexadecimal.

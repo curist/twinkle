@@ -1,0 +1,120 @@
+use @std.crypto
+use @std.date
+
+fn byte(n: Int) Byte {
+  Byte.from_int(n & 0xff).unwrap()
+}
+
+fn make_bytes(n: Int) Vector<Byte> {
+  out: Vector<Byte> = []
+  i := 0
+  for i < n {
+    out = .append(byte(i))
+    i = i + 1
+  }
+  out
+}
+
+fn first_byte(d: crypto.Digest) Int {
+  d.to_bytes()[0].to_int()
+}
+
+fn print_result(bench: String, iters: Int, ms: Float, sink: Int) {
+  println("twinkle\t${bench}\t${iters}\t${ms}\t${sink}")
+}
+
+small := "The quick brown fox jumps over the lazy dog"
+large := make_bytes(4096)
+key := "key"
+encoded_large := crypto.base64_encode(large)
+
+// Warm up the runtime and functions before timing.
+warm_md5 := crypto.md5(small)
+warm_sha1 := crypto.sha1(small)
+warm_sha256 := crypto.sha256(small)
+warm_hmac := crypto.hmac_sha256(key, small)
+warm_bytes := crypto.base64_decode(encoded_large).unwrap()
+warm_sink := first_byte(warm_md5)
+  ^ first_byte(warm_sha1) ^ first_byte(warm_sha256) ^ first_byte(warm_hmac) ^ warm_bytes[0].to_int()
+if warm_sink < 0 {
+  println("${warm_sink}")
+}
+
+iters_small := 5001
+iters_large := 501
+iters_hmac := 3001
+iters_b64 := 501
+
+sink := 0
+start := date.now()
+i := 0
+for i < iters_small {
+  sink = sink ^ first_byte(crypto.md5(small))
+  i = i + 1
+}
+print_result("md5_small", iters_small, date.now() - start, sink)
+
+sink = 0
+start = date.now()
+i = 0
+for i < iters_small {
+  sink = sink ^ first_byte(crypto.sha1(small))
+  i = i + 1
+}
+print_result("sha1_small", iters_small, date.now() - start, sink)
+
+sink = 0
+start = date.now()
+i = 0
+for i < iters_small {
+  sink = sink ^ first_byte(crypto.sha256(small))
+  i = i + 1
+}
+print_result("sha256_small", iters_small, date.now() - start, sink)
+
+sink = 0
+start = date.now()
+i = 0
+for i < iters_hmac {
+  sink = sink ^ first_byte(crypto.hmac_sha256(key, small))
+  i = i + 1
+}
+print_result("hmac_sha256_small", iters_hmac, date.now() - start, sink)
+
+sink = 0
+start = date.now()
+i = 0
+for i < iters_large {
+  sink = sink ^ first_byte(crypto.md5_bytes(large))
+  i = i + 1
+}
+print_result("md5_4k", iters_large, date.now() - start, sink)
+
+sink = 0
+start = date.now()
+i = 0
+for i < iters_large {
+  sink = sink ^ first_byte(crypto.sha1_bytes(large))
+  i = i + 1
+}
+print_result("sha1_4k", iters_large, date.now() - start, sink)
+
+sink = 0
+start = date.now()
+i = 0
+for i < iters_large {
+  sink = sink ^ first_byte(crypto.sha256_bytes(large))
+  i = i + 1
+}
+print_result("sha256_4k", iters_large, date.now() - start, sink)
+
+sink = 0
+start = date.now()
+i = 0
+for i < iters_b64 {
+  text := crypto.base64_encode(large)
+  bytes := crypto.base64_decode(text).unwrap()
+  sink = sink ^ bytes[0].to_int() ^ bytes[bytes.len() - 1].to_int()
+  i = i + 1
+}
+print_result("base64_roundtrip_4k", iters_b64, date.now() - start, sink)

@@ -4,6 +4,8 @@
 /// protocols, checksums, and programming puzzles; do not use it for passwords,
 /// signatures, or collision-resistant security decisions.
 
+use .schedule as sched
+
 fn u32(x: Int) Int {
   x & 0xffffffff
 }
@@ -24,12 +26,38 @@ fn append_byte(out: Vector<Byte>, n: Int) Vector<Byte> {
   out.append(byte(n & 0xff))
 }
 
-fn read_le_word(block: Vector<Byte>, offset: Int, word: Int) Int {
+fn padded_len(total_len: Int) Int {
+  len := total_len + 1
+  for len % 64 != 56 {
+    len = len + 1
+  }
+  len + 8
+}
+
+fn padded_byte(input: Vector<Byte>, msg_len: Int, pos: Int) Byte {
+  if pos < input.len() {
+    return input[pos]
+  }
+  if pos == input.len() {
+    return byte(0x80)
+  }
+
+  len_start := msg_len - 8
+  if pos < len_start {
+    return byte(0)
+  }
+
+  bit_len := input.len() * 8
+  shift := (pos - len_start) * 8
+  byte(bit_len >> shift & 0xff)
+}
+
+fn read_le_word(input: Vector<Byte>, msg_len: Int, offset: Int, word: Int) Int {
   base := offset + word * 4
-  b0 := block[base].to_int()
-  b1 := block[base + 1].to_int()
-  b2 := block[base + 2].to_int()
-  b3 := block[base + 3].to_int()
+  b0 := padded_byte(input, msg_len, base).to_int()
+  b1 := padded_byte(input, msg_len, base + 1).to_int()
+  b2 := padded_byte(input, msg_len, base + 2).to_int()
+  b3 := padded_byte(input, msg_len, base + 3).to_int()
   u32(b0 | b1 << 8 | b2 << 16 | b3 << 24)
 }
 
@@ -40,26 +68,6 @@ fn write_le_word(out: Vector<Byte>, word: Int) Vector<Byte> {
   bytes = append_byte(bytes, word >> 16)
   bytes = append_byte(bytes, word >> 24)
   bytes
-}
-
-fn padded(input: Vector<Byte>) Vector<Byte> {
-  out := input
-  bit_len := input.len() * 8
-
-  out = .append(byte(0x80))
-  for out.len() % 64 != 56 {
-    out = .append(byte(0))
-  }
-
-  len := bit_len
-  i := 0
-  for i < 8 {
-    out = append_byte(out, len)
-    len = len >> 8
-    i = i + 1
-  }
-
-  out
 }
 
 fn s(i: Int) Int {
@@ -222,7 +230,7 @@ fn word_index(i: Int) Int {
 
 /// Compute the raw 16-byte MD5 digest for `input`.
 pub fn digest_bytes(input: Vector<Byte>) Vector<Byte> {
-  msg := padded(input)
+  msg_len := padded_len(input.len())
 
   a0 := 0x67452301
   b0 := 0xefcdab89
@@ -230,7 +238,14 @@ pub fn digest_bytes(input: Vector<Byte>) Vector<Byte> {
   d0 := 0x10325476
 
   offset := 0
-  for offset < msg.len() {
+  for offset < msg_len {
+    w := sched.empty()
+    j := 0
+    for j < 16 {
+      w = sched.set(w, j, read_le_word(input, msg_len, offset, j))
+      j = j + 1
+    }
+
     a := a0
     b := b0
     c := c0
@@ -243,7 +258,7 @@ pub fn digest_bytes(input: Vector<Byte>) Vector<Byte> {
       next := d
       d = c
       c = b
-      b = u32(b + rotl32(u32(a + f + k(i) + read_le_word(msg, offset, g)), s(i)))
+      b = u32(b + rotl32(u32(a + f + k(i) + sched.get(w, g)), s(i)))
       a = next
       i = i + 1
     }

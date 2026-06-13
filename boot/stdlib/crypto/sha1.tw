@@ -3,6 +3,8 @@
 /// SHA-1 is a legacy digest algorithm. It is provided for compatibility; do not
 /// use it for collision-resistant security decisions.
 
+use .schedule as sched
+
 fn u32(x: Int) Int {
   x & 0xffffffff
 }
@@ -23,11 +25,47 @@ fn append_byte(out: Vector<Byte>, n: Int) Vector<Byte> {
   out.append(byte(n))
 }
 
-fn read_be_word(block: Vector<Byte>, offset: Int, word: Int) Int {
+fn padded_len(total_len: Int) Int {
+  len := total_len + 1
+  for len % 64 != 56 {
+    len = len + 1
+  }
+  len + 8
+}
+
+fn padded_byte(input: Vector<Byte>, msg_len: Int, pos: Int) Byte {
+  if pos < input.len() {
+    return input[pos]
+  }
+  if pos == input.len() {
+    return byte(0x80)
+  }
+
+  len_start := msg_len - 8
+  if pos < len_start {
+    return byte(0)
+  }
+
+  bit_len := input.len() * 8
+  case pos - len_start {
+    0 => byte(0),
+    1 => byte(0),
+    2 => byte(0),
+    3 => byte(0),
+    4 => byte(bit_len >> 24),
+    5 => byte(bit_len >> 16),
+    6 => byte(bit_len >> 8),
+    _ => byte(bit_len),
+  }
+}
+
+fn read_be_word(input: Vector<Byte>, msg_len: Int, offset: Int, word: Int) Int {
   base := offset + word * 4
   u32(
-    block[base].to_int() << 24
-      | block[base + 1].to_int() << 16 | block[base + 2].to_int() << 8 | block[base + 3].to_int(),
+    padded_byte(input, msg_len, base).to_int() << 24
+      | padded_byte(input, msg_len, base + 1).to_int() << 16
+      | padded_byte(input, msg_len, base + 2).to_int() << 8
+      | padded_byte(input, msg_len, base + 3).to_int(),
   )
 }
 
@@ -40,28 +78,8 @@ fn write_be_word(out: Vector<Byte>, word: Int) Vector<Byte> {
   bytes
 }
 
-fn padded(input: Vector<Byte>) Vector<Byte> {
-  out := input
-  bit_len := input.len() * 8
-  out = .append(byte(0x80))
-  for out.len() % 64 != 56 {
-    out = .append(byte(0))
-  }
-
-  // Twinkle Int inputs are practical-size here, so the high 32 length bits are zero.
-  out = append_byte(out, 0)
-  out = append_byte(out, 0)
-  out = append_byte(out, 0)
-  out = append_byte(out, 0)
-  out = append_byte(out, bit_len >> 24)
-  out = append_byte(out, bit_len >> 16)
-  out = append_byte(out, bit_len >> 8)
-  out = append_byte(out, bit_len)
-  out
-}
-
 pub fn digest_bytes(input: Vector<Byte>) Vector<Byte> {
-  msg := padded(input)
+  msg_len := padded_len(input.len())
   h0 := 0x67452301
   h1 := 0xefcdab89
   h2 := 0x98badcfe
@@ -69,15 +87,11 @@ pub fn digest_bytes(input: Vector<Byte>) Vector<Byte> {
   h4 := 0xc3d2e1f0
 
   offset := 0
-  for offset < msg.len() {
-    w: Vector<Int> = []
+  for offset < msg_len {
+    w := sched.empty()
     i := 0
     for i < 16 {
-      w = .append(read_be_word(msg, offset, i))
-      i = i + 1
-    }
-    for i < 80 {
-      w = .append(rotl32(w[i - 3] ^ w[i - 8] ^ w[i - 14] ^ w[i - 16], 1))
+      w = sched.set(w, i, read_be_word(input, msg_len, offset, i))
       i = i + 1
     }
 
@@ -101,7 +115,17 @@ pub fn digest_bytes(input: Vector<Byte>) Vector<Byte> {
         i < 60 => 0x8f1bbcdc,
         _ => 0xca62c1d6,
       }
-      temp := u32(rotl32(a, 5) + f + e + k + w[i])
+      wi := if i < 16 {
+        sched.get(w, i)
+      } else {
+        next := rotl32(
+          sched.get(w, i - 3) ^ sched.get(w, i - 8) ^ sched.get(w, i - 14) ^ sched.get(w, i - 16),
+          1,
+        )
+        w = sched.set(w, i, next)
+        next
+      }
+      temp := u32(rotl32(a, 5) + f + e + k + wi)
       e = d
       d = c
       c = rotl32(b, 30)

@@ -1,0 +1,85 @@
+/// Shared 16-word ring schedule for digest compression functions.
+
+pub type Schedule = .{
+  w0: Int,
+  w1: Int,
+  w2: Int,
+  w3: Int,
+  w4: Int,
+  w5: Int,
+  w6: Int,
+  w7: Int,
+  w8: Int,
+  w9: Int,
+  w10: Int,
+  w11: Int,
+  w12: Int,
+  w13: Int,
+  w14: Int,
+  w15: Int,
+}
+
+pub fn empty() Schedule {
+  .{
+    w0: 0,
+    w1: 0,
+    w2: 0,
+    w3: 0,
+    w4: 0,
+    w5: 0,
+    w6: 0,
+    w7: 0,
+    w8: 0,
+    w9: 0,
+    w10: 0,
+    w11: 0,
+    w12: 0,
+    w13: 0,
+    w14: 0,
+    w15: 0,
+  }
+}
+
+pub fn get(w: Schedule, i: Int) Int {
+  case i & 15 {
+    0 => w.w0,
+    1 => w.w1,
+    2 => w.w2,
+    3 => w.w3,
+    4 => w.w4,
+    5 => w.w5,
+    6 => w.w6,
+    7 => w.w7,
+    8 => w.w8,
+    9 => w.w9,
+    10 => w.w10,
+    11 => w.w11,
+    12 => w.w12,
+    13 => w.w13,
+    14 => w.w14,
+    _ => w.w15,
+  }
+}
+
+pub fn set(w: Schedule, i: Int, value: Int) Schedule {
+  out := w
+  case i & 15 {
+    0 => out.w0 = value,
+    1 => out.w1 = value,
+    2 => out.w2 = value,
+    3 => out.w3 = value,
+    4 => out.w4 = value,
+    5 => out.w5 = value,
+    6 => out.w6 = value,
+    7 => out.w7 = value,
+    8 => out.w8 = value,
+    9 => out.w9 = value,
+    10 => out.w10 = value,
+    11 => out.w11 = value,
+    12 => out.w12 = value,
+    13 => out.w13 = value,
+    14 => out.w14 = value,
+    _ => out.w15 = value,
+  }
+  out
+}
