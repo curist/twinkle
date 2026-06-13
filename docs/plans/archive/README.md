@@ -58,6 +58,7 @@ Related historical context outside this folder:
 | [extern-types.md](extern-types.md) | `externref`-backed opaque host handles for FFI — Phase 1 (non-null) and Phase 2 (nullable `Option<ExternType>`) |
 | [tuple.md](tuple.md) | Design rationale for a library-first `@std.tuple` (`Pair` + terse constructor); why nominal records over `(a, b)` syntax. Superseded by `tuple-and-alias-reexport.md` |
 | [tuple-and-alias-reexport.md](tuple-and-alias-reexport.md) | Shipped `@std.tuple` (`Pair`/`Triple`, `.first`/`.second`/`.third`, `tuple.pair`/`tuple.triple`) on top of three resolver fixes that make transparent type-alias re-export work (TypeId-keyed cycle detection, eager alias expansion, inherent-method re-export through aliases) |
+| [string-literals.md](string-literals.md) | Raw single-line (`r"…"`) and Zig-style `\\` multiline string literals, both with interpolation; lexer-only resolution emitting the existing string tokens, formatter form-preservation (incl. interpolated raw/multiline), lint L1 for single-line `\\` blocks, EBNF + tree-sitter grammar. Supersedes [regexp-percent-escapes.md](regexp-percent-escapes.md) |
 
 ---
 

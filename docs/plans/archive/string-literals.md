@@ -1,6 +1,9 @@
 # Raw and multiline string literals
 
-**Status:** design approved, ready to implement.
+**Status:** COMPLETE — shipped across both lexers, the formatter, the
+tree-sitter grammar, spec/API docs, and tests; self-host fixed point holds. All
+milestones (1–3), the formatter (M4a), and lint L1 are done. The optional L2
+lint and F1 layout for non-tail multiline contexts are intentionally deferred.
 
 ## Goal
 
