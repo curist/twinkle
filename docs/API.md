@@ -430,31 +430,55 @@ math.sqrt(16.0)     // 4.0
 ### `@std.regexp`
 
 Pure-Twinkle regular expressions for structured text parsing. Compile once with
-`regexp.compile` or `regexp.must`, then use the inherent methods on `Regexp`.
-Matches use Unicode scalar offsets; captures are 1-based (`group(0)` is the whole
-match).
+`regexp.compile`/`regexp.must` (or `compile_with`/`must_with` for options), then
+use the inherent methods on `Regexp`. Matches use Unicode scalar offsets;
+captures are 1-based (`group(0)` is the whole match). Matching is linear-time
+(Pike VM): there is no backtracking, so patterns never blow up on adversarial
+input.
 
 | Type / Function | Signature | Description |
 |-----------------|-----------|-------------|
 | `RegexError` | `.{ pos: Int, message: String }` | Compile error; `pos` is a scalar offset in the pattern |
-| `Match` | `.{ start: Int, end: Int, groups: Vector<String?> }` | Successful match with pre-materialized capture text |
-| `regexp.compile(pattern)` | `fn(pattern: String) Result<Regexp, RegexError>` | Compile a pattern |
+| `CompileOptions` | `.{ ignore_case: Bool, multiline: Bool, dotall: Bool }` | Global flags; also expressible inline (`(?i)`/`(?m)`/`(?s)`) |
+| `Match` | `.{ start: Int, end: Int, groups: Vector<String?>, group_names: ... }` | Successful match with pre-materialized capture text |
+| `regexp.compile(pattern)` | `fn(pattern: String) Result<Regexp, RegexError>` | Compile a pattern (all flags off) |
+| `regexp.compile_with(pattern, opts)` | `fn(pattern: String, opts: CompileOptions) Result<Regexp, RegexError>` | Compile with global flags |
 | `regexp.must(pattern)` | `fn(pattern: String) Regexp` | Compile or trap with `regexp:${pos}: ...` |
+| `regexp.must_with(pattern, opts)` | `fn(pattern: String, opts: CompileOptions) Regexp` | Compile with flags or trap |
 | `.test(s)` | `fn(re: Regexp, s: String) Bool` | True if the pattern matches anywhere |
 | `.find(s)` | `fn(re: Regexp, s: String) Match?` | Leftmost match, if any |
 | `.find_all(s)` | `fn(re: Regexp, s: String) Iterator<Match>` | Non-overlapping matches, including empty-match progress |
 | `.replace(s, repl)` | `fn(re: Regexp, s: String, repl: String) String` | Replace the first match |
 | `.replace_all(s, repl)` | `fn(re: Regexp, s: String, repl: String) String` | Replace every match |
-| `Match.group(i)` | `fn(m: Match, i: Int) String?` | Capture text, or `.None` if absent/unmatched |
+| `Match.group(i)` | `fn(m: Match, i: Int) String?` | Capture text by index, or `.None` if absent/unmatched |
+| `Match.group_named(name)` | `fn(m: Match, name: String) String?` | Capture text by group name, or `.None` |
 | `Match.text()` | `fn(m: Match) String` | Whole-match text |
 
-Supported v1 syntax: literals, `.`, character classes and ranges (`[abc]`,
-`[a-z]`, `[^...]`), predefined classes (`\d \w \s` and uppercase negations),
-greedy quantifiers (`* + ? {m} {m,} {m,n}`), capturing and non-capturing groups,
-alternation, `^`/`$`, escapes (`\n \t \r \f \v \\` and escaped metacharacters),
-and leading `(?i)` ASCII-only case-insensitivity. Backreferences, lookaround,
-lazy quantifiers, multiline/dotall flags, and named groups are not in v1.
-Replacement templates expand `$0`..`$9`, with `$$` for a literal dollar.
+Supported syntax: literals, `.`, character classes and ranges (`[abc]`, `[a-z]`,
+`[^...]`), predefined classes (`\d \w \s` and uppercase negations), greedy and
+lazy quantifiers (`* + ? {m} {m,} {m,n}`, each with a trailing `?` for the lazy
+form), capturing, non-capturing, and named groups, alternation, `^`/`$`, and
+escapes (`\n \t \r \f \v \\` and escaped metacharacters). Replacement templates
+expand `$0`..`$9`, with `$$` for a literal dollar.
+
+**Flags** are ASCII-only and can be set globally (via `CompileOptions`) or inline:
+
+- `ignore_case` / `(?i)` — case-insensitive matching.
+- `multiline` / `(?m)` — `^` also matches after `\n`, `$` also before `\n`.
+- `dotall` / `(?s)` — `.` also matches `\n`.
+
+Inline flags apply to the rest of the pattern when leading (`(?im)abc`), or to a
+scoped group: `(?i:abc)` enables, `(?-i:abc)` disables, `(?i-m:abc)` combines.
+Scoped flags override global options within their extent.
+
+**Named groups** use `(?<name>…)` or `(?P<name>…)`; names must be `snake_case`
+(lowercase first) and unique. A named group is also a numbered group in source
+order, so `group(1)` and `group_named("id")` can refer to the same capture.
+
+**Not supported** (by design, to keep matching linear-time): backreferences
+(`\1`, `\k<name>`), lookaround (`(?=…)`, `(?!…)`, `(?<=…)`, `(?<!…)`), and other
+backtracking-engine features (atomic groups, possessive quantifiers, conditional
+patterns).
 
 Raw string literals (`r"…"`) avoid doubling backslashes in patterns; both
 spellings compile identically (`r"\d+"` is the same pattern as `"\\d+"`).
@@ -462,12 +486,19 @@ spellings compile identically (`r"\d+"` is the same pattern as `"\\d+"`).
 ```tw
 use @std.regexp
 
-re := regexp.must(r"(\d+) (red|green|blue)")
+re := regexp.must(r"(?<n>\d+) (?<color>red|green|blue)")
 for m in re.find_all("Game 1: 3 blue, 4 red") {
-  n := Int.from_string(m.group(1).unwrap()).unwrap()
-  color := m.group(2).unwrap()
+  n := Int.from_string(m.group_named("n").unwrap()).unwrap()
+  color := m.group_named("color").unwrap()
   println("${n} ${color}")
 }
+
+// Case-insensitive via options, or inline (?i):
+regexp.must_with("error", .{ ignore_case: true, multiline: false, dotall: false }).test("ERROR")  // true
+regexp.must("(?i)error").test("ERROR")                                                            // true
+
+// Lazy quantifier stops at the first match:
+regexp.must("<.*?>").find("<a><b>").unwrap().text()  // "<a>"
 
 regexp.must(r"mul\((\d+),(\d+)\)").replace_all("mul(2,4)", "$1*$2")  // "2*4"
 ```

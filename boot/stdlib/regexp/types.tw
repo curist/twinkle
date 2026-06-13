@@ -4,37 +4,46 @@
 
 pub type ClassItem = .{ lo: Int, hi: Int }
 
-/// Compiled-program instruction for the Pike VM.
+/// Match-time flags. Baked into flag-sensitive AST nodes / instructions at parse
+/// time so each thread never carries a flag environment.
+pub type Flags = .{ ignore_case: Bool, multiline: Bool, dotall: Bool }
+
+/// A named capturing group: its source name and its 1-based group index.
+pub type NamedGroup = .{ name: String, index: Int }
+
+/// Compiled-program instruction for the Pike VM. Flag-sensitive instructions
+/// carry their resolved flag bit so matching needs no ambient flag state.
 pub type Inst = {
-  Char(Int),
-  AnyChar,
-  Class(Vector<ClassItem>, Bool),
+  Char(Int, Bool),
+  AnyChar(Bool),
+  Class(Vector<ClassItem>, Bool, Bool),
   Split(Int, Int),
   Jmp(Int),
   Save(Int),
-  AssertStart,
-  AssertEnd,
+  AssertStart(Bool),
+  AssertEnd(Bool),
   Match,
 }
 
-/// Parsed pattern tree.
+/// Parsed pattern tree. Flag-sensitive leaves carry their resolved flags, and
+/// quantifiers carry whether they are lazy (prefer the shorter match).
 pub type Ast = {
   Empty,
-  Lit(Int),
-  AnyChar,
-  Class(Vector<ClassItem>, Bool),
+  Lit(Int, Bool),
+  AnyChar(Bool),
+  Class(Vector<ClassItem>, Bool, Bool),
   Concat(Vector<Ast>),
   Alt(Vector<Ast>),
-  Star(Ast),
-  Plus(Ast),
-  Opt(Ast),
-  Repeat(Ast, Int, Int),
+  Star(Ast, Bool),
+  Plus(Ast, Bool),
+  Opt(Ast, Bool),
+  Repeat(Ast, Int, Int, Bool),
   Group(Ast, Int),
   NonCap(Ast),
-  AssertStart,
-  AssertEnd,
+  AssertStart(Bool),
+  AssertEnd(Bool),
 }
 
-pub type Parsed = .{ ast: Ast, group_count: Int, ignore_case: Bool }
+pub type Parsed = .{ ast: Ast, group_count: Int, group_names: Vector<NamedGroup> }
 
 pub type RegexError = .{ pos: Int, message: String }

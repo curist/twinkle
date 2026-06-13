@@ -3,20 +3,25 @@
 use @std.tuple
 use @std.tuple.{Pair}
 
-use .types.{Ast, ClassItem, Parsed, RegexError}
+use .types.{Ast, ClassItem, Flags, NamedGroup, Parsed, RegexError}
 
-type Cursor = .{ chars: Vector<Int>, pos: Int, groups: Int, ignore_case: Bool }
+type Cursor = .{
+  chars: Vector<Int>,
+  pos: Int,
+  groups: Int,
+  flags: Flags,
+  names: Vector<NamedGroup>,
+}
 
-/// Parse a pattern into an `Ast` plus its group count and flags.
-pub fn parse(pattern: String) Result<Parsed, RegexError> {
+/// Parse a pattern into an `Ast` plus its group count and named-group table.
+/// `flags` supplies the initial (global option) flag state.
+pub fn parse(pattern: String, flags: Flags) Result<Parsed, RegexError> {
   chars := decode(pattern)
-  cur := Cursor.{ chars, pos: 0, groups: 0, ignore_case: false }
+  cur := Cursor.{ chars, pos: 0, groups: 0, flags, names: [] }
 
-  // Leading `(?i)` sets a global ASCII case-fold; only legal at position 0.
-  if has_ignore_case_prefix(chars) {
-    cur.pos = 4
-    cur.ignore_case = true
-  }
+  // A leading `(?flags)` group sets global flags for the whole pattern. Only
+  // legal at position 0; mid-pattern `(?flags)` is a parse error.
+  cur = try take_leading_flags(cur)
 
   result := try parse_alt(cur)
   end := result.second
@@ -24,13 +29,39 @@ pub fn parse(pattern: String) Result<Parsed, RegexError> {
   if end.pos != end.chars.len() {
     .Err(err(end.pos, "unexpected '${scalar_str(end.chars[end.pos])}'"))
   } else {
-    .Ok(Parsed.{ ast: result.first, group_count: end.groups, ignore_case: end.ignore_case })
+    .Ok(Parsed.{ ast: result.first, group_count: end.groups, group_names: end.names })
   }
 }
 
-// Does the pattern start with the four scalars `( ? i )`?
-fn has_ignore_case_prefix(chars: Vector<Int>) Bool {
-  chars.len() >= 4 and chars[0] == '(' and chars[1] == '?' and chars[2] == 'i' and chars[3] == ')'
+// If the pattern opens with a bare `(?flags)` group, fold those flags into the
+// cursor's global flag state and advance past it. Otherwise return unchanged.
+fn take_leading_flags(cur: Cursor) Result<Cursor, RegexError> {
+  if !looks_like_flag_group(cur) {
+    return .Ok(cur)
+  }
+
+  open := cur.pos
+  spec := try read_flags(advance(cur, 2), open)
+  c := spec.second
+
+  if c.pos < c.chars.len() and c.chars[c.pos] == ')' {
+    c.flags = spec.first
+    .Ok(advance(c, 1))
+  } else {
+    // `(?flags:...)` is a scoped group, handled in `parse_group`, not here.
+    .Ok(cur)
+  }
+}
+
+// Does the cursor sit on `(?` followed by a flag-spec character?
+fn looks_like_flag_group(cur: Cursor) Bool {
+  cur.pos + 2 < cur.chars.len()
+    and cur.chars[cur.pos] == '(' and cur.chars[cur.pos + 1] == '?'
+    and is_flag_char(cur.chars[cur.pos + 2])
+}
+
+fn is_flag_char(ch: Int) Bool {
+  ch == 'i' or ch == 'm' or ch == 's' or ch == '-'
 }
 
 /// Decode a String into its sequence of Unicode scalar values.
@@ -90,7 +121,8 @@ fn is_quantifier(ch: Int) Bool {
   ch == '*' or ch == '+' or ch == '?' or ch == '{'
 }
 
-// Parse an atom followed by an optional postfix quantifier (`* + ? {m,n}`).
+// Parse an atom followed by an optional postfix quantifier (`* + ? {m,n}`), each
+// of which may carry a trailing `?` lazy marker.
 fn parse_repeat(cur: Cursor) Result<Pair<Ast, Cursor>, RegexError> {
   atomr := try parse_atom(cur)
   atom := atomr.first
@@ -103,22 +135,38 @@ fn parse_repeat(cur: Cursor) Result<Pair<Ast, Cursor>, RegexError> {
   q := c.chars[c.pos]
 
   if q == '*' {
-    .Ok(tuple.pair(Ast.Star(atom), advance(c, 1)))
+    lz := take_lazy(advance(c, 1))
+    .Ok(tuple.pair(Ast.Star(atom, lz.first), lz.second))
   } else if q == '+' {
-    .Ok(tuple.pair(Ast.Plus(atom), advance(c, 1)))
+    lz := take_lazy(advance(c, 1))
+    .Ok(tuple.pair(Ast.Plus(atom, lz.first), lz.second))
   } else if q == '?' {
-    .Ok(tuple.pair(Ast.Opt(atom), advance(c, 1)))
+    lz := take_lazy(advance(c, 1))
+    .Ok(tuple.pair(Ast.Opt(atom, lz.first), lz.second))
   } else if q == '{' {
-    parse_brace(atom, c)
+    spec := try parse_brace(c)
+    lz := take_lazy(spec.second)
+    .Ok(tuple.pair(Ast.Repeat(atom, spec.first.lo, spec.first.hi, lz.first), lz.second))
   } else {
     .Ok(tuple.pair(atom, c))
   }
 }
 
+// Consume a single trailing `?` lazy marker if present.
+fn take_lazy(c: Cursor) Pair<Bool, Cursor> {
+  if c.pos < c.chars.len() and c.chars[c.pos] == '?' {
+    tuple.pair(true, advance(c, 1))
+  } else {
+    tuple.pair(false, c)
+  }
+}
+
 type IntParse = .{ value: Int, cursor: Cursor }
 
-// Parse `{m}`, `{m,}`, or `{m,n}` (cursor `c` at the `{`). n == -1 if unbounded.
-fn parse_brace(atom: Ast, c: Cursor) Result<Pair<Ast, Cursor>, RegexError> {
+type RepeatSpec = .{ lo: Int, hi: Int }
+
+// Parse `{m}`, `{m,}`, or `{m,n}` (cursor `c` at the `{`). hi == -1 if unbounded.
+fn parse_brace(c: Cursor) Result<Pair<RepeatSpec, Cursor>, RegexError> {
   open := c.pos
   d := advance(c, 1)
 
@@ -127,14 +175,14 @@ fn parse_brace(atom: Ast, c: Cursor) Result<Pair<Ast, Cursor>, RegexError> {
   d = mp.cursor
 
   if d.pos < d.chars.len() and d.chars[d.pos] == '}' {
-    return .Ok(tuple.pair(Ast.Repeat(atom, m, m), advance(d, 1)))
+    return .Ok(tuple.pair(RepeatSpec.{ lo: m, hi: m }, advance(d, 1)))
   }
 
   if d.pos < d.chars.len() and d.chars[d.pos] == ',' {
     d = advance(d, 1)
 
     if d.pos < d.chars.len() and d.chars[d.pos] == '}' {
-      return .Ok(tuple.pair(Ast.Repeat(atom, m, -1), advance(d, 1)))
+      return .Ok(tuple.pair(RepeatSpec.{ lo: m, hi: -1 }, advance(d, 1)))
     }
 
     np := try try_int(d).ok_or(err(open, "bad repetition"))
@@ -142,7 +190,7 @@ fn parse_brace(atom: Ast, c: Cursor) Result<Pair<Ast, Cursor>, RegexError> {
     d = np.cursor
 
     if d.pos < d.chars.len() and d.chars[d.pos] == '}' {
-      return .Ok(tuple.pair(Ast.Repeat(atom, m, n), advance(d, 1)))
+      return .Ok(tuple.pair(RepeatSpec.{ lo: m, hi: n }, advance(d, 1)))
     }
 
     return .Err(err(open, "bad repetition"))
@@ -171,16 +219,17 @@ fn try_int(cur: Cursor) IntParse? {
 }
 
 // Parse a single atom: `.`, a `[...]` class, a `\d`-style class escape, an
-// escaped literal, or a plain literal scalar.
+// escaped literal, or a plain literal scalar. Flag-sensitive leaves bake the
+// cursor's current flags.
 fn parse_atom(cur: Cursor) Result<Pair<Ast, Cursor>, RegexError> {
   ch := cur.chars[cur.pos]
 
   if ch == '.' {
-    .Ok(tuple.pair(Ast.AnyChar, advance(cur, 1)))
+    .Ok(tuple.pair(Ast.AnyChar(cur.flags.dotall), advance(cur, 1)))
   } else if ch == '^' {
-    .Ok(tuple.pair(Ast.AssertStart, advance(cur, 1)))
+    .Ok(tuple.pair(Ast.AssertStart(cur.flags.multiline), advance(cur, 1)))
   } else if ch == '$' {
-    .Ok(tuple.pair(Ast.AssertEnd, advance(cur, 1)))
+    .Ok(tuple.pair(Ast.AssertEnd(cur.flags.multiline), advance(cur, 1)))
   } else if ch == '(' {
     parse_group(cur)
   } else if ch == '[' {
@@ -192,26 +241,45 @@ fn parse_atom(cur: Cursor) Result<Pair<Ast, Cursor>, RegexError> {
 
     esc := cur.chars[cur.pos + 1]
 
+    if is_unsupported_backref_escape(esc) {
+      return .Err(err(cur.pos, "unsupported backreference"))
+    }
+
     case class_escape(esc) {
-      .Some(ec) => .Ok(tuple.pair(Ast.Class(ec.ranges, ec.negated), advance(cur, 2))),
-      .None => .Ok(tuple.pair(Ast.Lit(decode_escape(esc)), advance(cur, 2))),
+      .Some(ec) => .Ok(
+        tuple.pair(Ast.Class(ec.ranges, ec.negated, cur.flags.ignore_case), advance(cur, 2)),
+      ),
+      .None => .Ok(tuple.pair(Ast.Lit(decode_escape(esc), cur.flags.ignore_case), advance(cur, 2))),
     }
   } else {
-    .Ok(tuple.pair(Ast.Lit(ch), advance(cur, 1)))
+    .Ok(tuple.pair(Ast.Lit(ch, cur.flags.ignore_case), advance(cur, 1)))
   }
 }
 
-// Parse a group starting at `(`: capturing `(...)`, non-capturing `(?:...)`.
-// `(?i)` is handled separately in `parse` (leading flag); other `(?` forms error.
+// Parse a group starting at `(`: capturing `(...)`, non-capturing `(?:...)`,
+// scoped flag groups `(?flags:...)`, and named captures `(?<name>...)` /
+// `(?P<name>...)`. A bare mid-pattern `(?flags)` is an error.
 fn parse_group(cur: Cursor) Result<Pair<Ast, Cursor>, RegexError> {
   open := cur.pos
   c := advance(cur, 1)
 
   if c.pos < c.chars.len() and c.chars[c.pos] == '?' {
-    if c.pos + 1 < c.chars.len() and c.chars[c.pos + 1] == ':' {
-      inner := try parse_alt(advance(c, 2))
+    d := advance(c, 1)
+
+    if d.pos >= d.chars.len() {
+      return .Err(err(c.pos, "unsupported group"))
+    }
+
+    nx := d.chars[d.pos]
+
+    if nx == ':' {
+      inner := try parse_alt(advance(d, 1))
       after := try expect_close(inner.second, open)
       .Ok(tuple.pair(Ast.NonCap(inner.first), after))
+    } else if nx == '<' or nx == 'P' and d.pos + 1 < d.chars.len() and d.chars[d.pos + 1] == '<' {
+      parse_named_group(cur, open)
+    } else if is_flag_char(nx) {
+      parse_flag_group(d, open)
     } else {
       .Err(err(c.pos, "unsupported group"))
     }
@@ -224,6 +292,167 @@ fn parse_group(cur: Cursor) Result<Pair<Ast, Cursor>, RegexError> {
   }
 }
 
+// Parse `(?flags:expr)` — flags apply only within `expr`. Cursor `d` sits just
+// past the `?`.
+fn parse_flag_group(d: Cursor, open: Int) Result<Pair<Ast, Cursor>, RegexError> {
+  spec := try read_flags(d, open)
+  c := spec.second
+
+  if c.pos >= c.chars.len() or c.chars[c.pos] != ':' {
+    return .Err(err(open, "bad flag group"))
+  }
+
+  saved := c.flags
+  c.flags = spec.first
+  inner := try parse_alt(advance(c, 1))
+  after := try expect_close(inner.second, open)
+
+  // Flags are scoped: restore the enclosing flag state past the group.
+  after.flags = saved
+  .Ok(tuple.pair(Ast.NonCap(inner.first), after))
+}
+
+// Read a `[ims-]` flag spec relative to the cursor's current flags, returning the
+// updated flag set. A single `-` flips subsequent letters from on to off.
+fn read_flags(d: Cursor, open: Int) Result<Pair<Flags, Cursor>, RegexError> {
+  flags := d.flags
+  c := d
+  negate := false
+  any := false
+
+  for c.pos < c.chars.len() and is_flag_char(c.chars[c.pos]) {
+    ch := c.chars[c.pos]
+
+    if ch == '-' {
+      if negate {
+        return .Err(err(open, "bad flag group"))
+      }
+      negate = true
+    } else {
+      flags = set_flag(flags, ch, !negate)
+      any = true
+    }
+
+    c = advance(c, 1)
+  }
+
+  // Require at least one letter, and no dangling `-` with nothing after it.
+  if !any or negate and c.pos > 0 and c.chars[c.pos - 1] == '-' {
+    return .Err(err(open, "bad flag group"))
+  }
+
+  .Ok(tuple.pair(flags, c))
+}
+
+fn set_flag(flags: Flags, ch: Int, on: Bool) Flags {
+  f := flags
+
+  if ch == 'i' {
+    f.ignore_case = on
+  } else if ch == 'm' {
+    f.multiline = on
+  } else if ch == 's' {
+    f.dotall = on
+  }
+
+  f
+}
+
+// Parse `(?<name>expr)` / `(?P<name>expr)` (cursor `cur` at the opening `(`).
+// The name must be a `snake_case` value identifier and unique in the pattern.
+fn parse_named_group(cur: Cursor, open: Int) Result<Pair<Ast, Cursor>, RegexError> {
+  // Skip `(?` and the optional `P`, landing on `<`.
+  c := advance(cur, 2)
+
+  if c.chars[c.pos] == 'P' {
+    c = advance(c, 1)
+  }
+
+  // c is at `<`.
+  name_start := c.pos + 1
+  c = advance(c, 1)
+  name_chars: Vector<Int> = []
+
+  for c.pos < c.chars.len() and c.chars[c.pos] != '>' {
+    name_chars = .append(c.chars[c.pos])
+    c = advance(c, 1)
+  }
+
+  if c.pos >= c.chars.len() {
+    return .Err(err(open, "unterminated group name"))
+  }
+
+  if !valid_group_name(name_chars) {
+    return .Err(err(name_start, "bad group name"))
+  }
+
+  name := scalars_to_string(name_chars)
+
+  if has_name(c.names, name) {
+    return .Err(err(name_start, "duplicate group name"))
+  }
+
+  c = advance(c, 1)
+  idx := c.groups + 1
+  c.groups = idx
+  c.names = .append(NamedGroup.{ name, index: idx })
+
+  inner := try parse_alt(c)
+  after := try expect_close(inner.second, open)
+  .Ok(tuple.pair(Ast.Group(inner.first, idx), after))
+}
+
+// A valid group name is non-empty `snake_case`: a lowercase letter, then
+// lowercase letters, digits, or underscores.
+fn valid_group_name(name: Vector<Int>) Bool {
+  if name.len() == 0 {
+    return false
+  }
+
+  first := name[0]
+
+  if first < 'a' or first > 'z' {
+    return false
+  }
+
+  for ch in name {
+    is_lower := ch >= 'a' and ch <= 'z'
+    is_digit := ch >= '0' and ch <= '9'
+    ok := is_lower or is_digit or ch == '_'
+
+    if !ok {
+      return false
+    }
+  }
+
+  true
+}
+
+fn has_name(names: Vector<NamedGroup>, name: String) Bool {
+  for ng in names {
+    if ng.name == name {
+      return true
+    }
+  }
+
+  false
+}
+
+fn scalars_to_string(scalars: Vector<Int>) String {
+  out := ""
+
+  for c in scalars {
+    case String.from_code_point(c) {
+      .Some(s) => {
+        out = .concat(s)
+      },
+      .None => {},
+    }
+  }
+
+  out
+}
+
 // Consume the closing `)`; error (anchored at the opening `(`) if absent.
 fn expect_close(c: Cursor, open: Int) Result<Cursor, RegexError> {
   if c.pos >= c.chars.len() or c.chars[c.pos] != ')' {
@@ -231,6 +460,10 @@ fn expect_close(c: Cursor, open: Int) Result<Cursor, RegexError> {
   } else {
     .Ok(advance(c, 1))
   }
+}
+
+fn is_unsupported_backref_escape(esc: Int) Bool {
+  esc >= '0' and esc <= '9' or esc == 'k'
 }
 
 type EscClass = .{ ranges: Vector<ClassItem>, negated: Bool }
@@ -265,7 +498,8 @@ fn space_ranges() Vector<ClassItem> {
   [ClassItem.{ lo: '\t', hi: '\r' }, ClassItem.{ lo: ' ', hi: ' ' }]
 }
 
-// Parse a `[...]` / `[^...]` class starting at the `[`.
+// Parse a `[...]` / `[^...]` class starting at the `[`. The cursor's current
+// `ignore_case` flag is baked into the produced class.
 fn parse_class(cur: Cursor) Result<Pair<Ast, Cursor>, RegexError> {
   open := cur.pos
   c := advance(cur, 1)
@@ -288,7 +522,7 @@ fn parse_class(cur: Cursor) Result<Pair<Ast, Cursor>, RegexError> {
     return .Err(err(open, "unterminated character class"))
   }
 
-  .Ok(tuple.pair(Ast.Class(items, negated), advance(c, 1)))
+  .Ok(tuple.pair(Ast.Class(items, negated, cur.flags.ignore_case), advance(c, 1)))
 }
 
 // One class element: a `\d`-style set, an escaped scalar, or a scalar — each of
@@ -309,7 +543,11 @@ fn parse_class_element(cur: Cursor) Result<Pair<Vector<ClassItem>, Cursor>, Rege
       } else {
         .Ok(tuple.pair(ec.ranges, advance(cur, 2)))
       },
-      .None => class_after_scalar(decode_escape(esc), advance(cur, 2)),
+      .None => if is_unsupported_backref_escape(esc) {
+        .Err(err(cur.pos, "unsupported backreference"))
+      } else {
+        class_after_scalar(decode_escape(esc), advance(cur, 2))
+      },
     }
   } else {
     class_after_scalar(ch, advance(cur, 1))
