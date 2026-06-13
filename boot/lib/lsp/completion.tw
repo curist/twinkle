@@ -6,7 +6,7 @@ use lib.json
 
 /// LSP CompletionItemKind numeric values.
 // 1=Text, 2=Method, 3=Function, 5=Field, 6=Variable,
-// 7=Class(type), 13=Enum, 14=Keyword, 20=EnumMember(variant)
+// 7=Class(type), 9=Module, 13=Enum, 14=Keyword, 20=EnumMember(variant), 21=Constant
 pub type CompletionItem = .{ label: String, kind: Int, detail: String?, documentation: String? }
 
 pub fn completion_response(items: Vector<CompletionItem>) json.Json {

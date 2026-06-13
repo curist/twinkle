@@ -542,6 +542,27 @@ pub fn suite() runner.Suite {
       },
     )
     .test(
+      "module member completion includes pub value bindings",
+      fn() {
+        // `math.pi`/`math.e` are module-level `pub` value bindings, not
+        // functions, so they must surface alongside the module's functions.
+        valid := "use @std.math\nresult := math.abs(3)\n"
+        incomplete := "use @std.math\nresult := math.\n"
+        step := open_then_complete(valid, incomplete, 1, 15)
+        labels := try completion_labels(step)
+
+        if !has_label(labels, "pi") or !has_label(labels, "e") {
+          return .Err("expected math value bindings 'pi' and 'e', got: ${labels}")
+        }
+
+        if !has_label(labels, "abs") {
+          return .Err("expected math functions alongside values, got: ${labels}")
+        }
+
+        .Ok({})
+      },
+    )
+    .test(
       "module member completion with aliased import",
       fn() {
         valid := "use @std.path as p\nresult := p.is_absolute(\"/foo\")\n"

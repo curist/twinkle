@@ -100,10 +100,36 @@ fn member_completions(snap: SemanticSnapshot, dot_offset: Int, source: String) V
   // expressions like `io.` at top level.
   name := cursor_context.extract_ident_before(source, dot_offset)
 
-  case typed.env.methods[name] {
+  fn_items := case typed.env.methods[name] {
     .Some(entries) => method_entries_to_items(typed.env, entries),
     .None => [],
   }
+
+  // Module-level `pub` value bindings (e.g. `math.pi`) live in value_bindings
+  // keyed by `module.name`, not in the methods dict; surface them too.
+  fn_items.concat(module_value_completions(typed.env, name))
+}
+
+fn module_value_completions(env: ResolvedEnv, module_name: String) Vector<
+  lsp_completion.CompletionItem,
+> {
+  prefix := "${module_name}."
+  result: Vector<lsp_completion.CompletionItem> = []
+
+  for qualified in env.value_bindings.keys() {
+    if qualified.starts_with(prefix) {
+      member := qualified.slice(prefix.len(), qualified.len())
+      detail: String? = case env.value_bindings[qualified] {
+        .Some(ty) => .Some(ty_to_string_env(env, ty)),
+        .None => .None,
+      }
+      result = .append(
+        lsp_completion.CompletionItem.{ label: member, kind: 21, detail, documentation: .None },
+      )
+    }
+  }
+
+  result
 }
 
 fn find_receiver_type(items: Vector<Item>, type_map: Dict<Int, MonoType>, offset: Int) MonoType? {
