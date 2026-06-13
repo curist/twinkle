@@ -1,6 +1,6 @@
 {
   "name": "@twinkle-lang/twinkle",
-  "version": "0.8.3",
+  "version": "0.8.4",
   "description": "Twinkle — a statically typed language targeting WebAssembly GC. CLI (twk) plus an embeddable compile/run library.",
   "type": "module",
   "bin": { "twk": "node.mjs" },
