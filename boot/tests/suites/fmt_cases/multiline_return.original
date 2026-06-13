@@ -1,0 +1,4 @@
+fn f() String {
+  return \\a
+    \\b
+}

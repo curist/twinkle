@@ -48,43 +48,12 @@ fn test_unicode_escape_formatting() Result<Void, String> {
   assert.equal(formatted, "fn f() String {\n  \"e\"\n}\n")
 }
 
-fn test_raw_string_preserved() Result<Void, String> {
-  formatted := try format_ok("fn f() String { r\"\\d+\" }")
-  assert.equal(formatted, "fn f() String {\n  r\"\\d+\"\n}\n")
-}
-
-fn test_multiline_block_preserved() Result<Void, String> {
-  // A canonical \\ binding round-trips: introducer on its own line, block
-  // indented one step, content verbatim.
-  src := "query :=\n  \\\\SELECT *\n  \\\\FROM users\n"
-  formatted := try format_ok(src)
-  try assert.equal(formatted, src)
-
-  // Idempotent.
-  again := try format_ok(formatted)
-  assert.equal(again, src)
-}
-
-fn test_multiline_block_reflows_to_own_line() Result<Void, String> {
-  // Block starting on the `:=` line moves to its own indented lines.
-  src := "query := \\\\a\n  \\\\b\n"
-  formatted := try format_ok(src)
-  assert.equal(formatted, "query :=\n  \\\\a\n  \\\\b\n")
-}
-
-fn test_multiline_block_rebinding() Result<Void, String> {
-  src := "x = 0\nx =\n  \\\\a\n  \\\\b\n"
-  formatted := try format_ok(src)
-  assert.equal(formatted, src)
-}
-
-fn test_multiline_block_trailing_newline_line() Result<Void, String> {
-  // A final empty `\\` line encodes a trailing newline; it must survive.
-  src := "x :=\n  \\\\last\n  \\\\\n"
-  formatted := try format_ok(src)
-  assert.equal(formatted, src)
-}
-
+// Raw/multiline formatting lives in `fmt_cases/` fixtures (raw_string,
+// multiline_block, multiline_rebinding, multiline_trailing_newline,
+// multiline_return, multiline_non_tail_cooked, raw_interpolation,
+// multiline_interpolation). This case stays inline because its point is a
+// trailing space inside content, which a fixture file would invite editors/git
+// to strip.
 fn test_multiline_block_preserves_content_trailing_space() Result<Void, String> {
   // Trailing whitespace after the marker is part of the value (F3): keep it.
   src := "x :=\n  \\\\a \n  \\\\b\n"
@@ -109,11 +78,23 @@ pub fn suite() runner.Suite {
     .test("formats declarations and top-level spacing", assert_fmt_case("declarations"))
     .test("formats unicode escapes as scalars", test_unicode_escape_formatting)
     .test("formats dollar strings without changing meaning", test_dollar_string_formatting)
-    .test("preserves raw single-line strings", test_raw_string_preserved)
-    .test("preserves multiline blocks", test_multiline_block_preserved)
-    .test("reflows multiline block to its own line", test_multiline_block_reflows_to_own_line)
-    .test("preserves multiline block in rebinding", test_multiline_block_rebinding)
-    .test("preserves multiline trailing-newline line", test_multiline_block_trailing_newline_line)
+    .test("preserves raw single-line strings", assert_fmt_case("raw_string"))
+    .test("reflows and preserves multiline blocks", assert_fmt_case("multiline_block"))
+    .test("preserves multiline block in rebinding", assert_fmt_case("multiline_rebinding"))
+    .test(
+      "preserves multiline trailing-newline line",
+      assert_fmt_case("multiline_trailing_newline"),
+    )
+    .test("reflows multiline block in return", assert_fmt_case("multiline_return"))
+    .test(
+      "falls back to cooked for non-tail multiline",
+      assert_fmt_case("multiline_non_tail_cooked"),
+    )
+    .test("preserves raw interpolation", assert_fmt_case("raw_interpolation"))
+    .test(
+      "reflows and preserves multiline interpolation",
+      assert_fmt_case("multiline_interpolation"),
+    )
     .test(
       "preserves multiline content trailing space",
       test_multiline_block_preserves_content_trailing_space,

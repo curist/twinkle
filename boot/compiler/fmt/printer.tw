@@ -1238,7 +1238,7 @@ fn format_expr(expr: Expr, tm: TriviaMap) Doc {
       .None => doc.text(format_float_literal(f)),
     },
     .StringLit(s) => format_string_lit(s, expr.span.start, tm),
-    .StringInterp(parts) => format_string_interp(parts, tm),
+    .StringInterp(parts) => format_string_interp(parts, expr.span.start, tm),
     .BoolLit(b) => doc.text(if b {
       "true"
     } else {
@@ -2176,12 +2176,24 @@ fn format_collect(coll: CollectExpr, tm: TriviaMap) Doc {
 // Used by the tail introducers (binding, rebinding, return) that can safely lay
 // it out as a block — a `\\` block runs to end-of-line, so it is only emitted in
 // statement-final position; elsewhere a multiline value falls back to cooked.
-fn multiline_value_string(value: Expr, tm: TriviaMap) String? {
+// If `value` is a `\\` multiline-form string (interpolated or not), return its
+// reconstructed `\\`-block Doc. Used by the tail introducers (binding, rebinding,
+// return) that can safely lay it out as a block — a `\\` block runs to
+// end-of-line, so it is only emitted in statement-final position; elsewhere a
+// multiline value falls back to cooked.
+fn multiline_block_doc_for(value: Expr, tm: TriviaMap) Doc? {
+  is_multi := case tm.string_form.get(value.span.start) {
+    .Some(.Multiline) => true,
+    _ => false,
+  }
+
+  if !is_multi {
+    return .None
+  }
+
   case value.kind {
-    .StringLit(text) => case tm.string_form.get(value.span.start) {
-      .Some(.Multiline) => .Some(text),
-      _ => .None,
-    },
+    .StringLit(text) => .Some(multiline_block_doc(text)),
+    .StringInterp(parts) => .Some(multiline_interp_block_doc(parts, tm)),
     _ => .None,
   }
 }
@@ -2199,6 +2211,37 @@ fn multiline_block_doc(value: String) Doc {
     }
 
     docs = .append(doc.text("\\\\".concat(line)))
+  }
+
+  doc.concat(docs)
+}
+
+// Reconstruct a `\\` block from an interpolated multiline value: literal segments
+// split on `\n` into `\\` lines (markers from the enclosing `indent`), with each
+// `${ expr }` emitted inline on its line.
+fn multiline_interp_block_doc(parts: Vector<StringPart>, tm: TriviaMap) Doc {
+  docs: Vector<Doc> = [doc.text("\\\\")]
+
+  for part in parts {
+    case part {
+      .Literal(s) => {
+        segs := s.split("\n")
+
+        for seg, i in segs {
+          if i > 0 {
+            docs = .append(doc.hard_line())
+            docs = .append(doc.text("\\\\"))
+          }
+
+          docs = .append(doc.text(seg))
+        }
+      },
+      .Interpolation(expr) => {
+        docs = .append(doc.text("\${"))
+        docs = .append(format_expr(expr, tm))
+        docs = .append(doc.text("}"))
+      },
+    }
   }
 
   doc.concat(docs)
@@ -2230,11 +2273,9 @@ fn drop_trailing_space(parts: Vector<Doc>) Vector<Doc> {
 // e.g. `" := "`). A `\\` multiline value reflows to its own indented lines (F1);
 // anything else follows the separator inline.
 fn format_assigned(intro: Vector<Doc>, value: Expr, value_doc: Doc, tm: TriviaMap) Doc {
-  case multiline_value_string(value, tm) {
-    .Some(text) => doc.concat(
-      drop_trailing_space(intro).append(
-        doc.indent(doc.concat([doc.hard_line(), multiline_block_doc(text)])),
-      ),
+  case multiline_block_doc_for(value, tm) {
+    .Some(block) => doc.concat(
+      drop_trailing_space(intro).append(doc.indent(doc.concat([doc.hard_line(), block]))),
     ),
     .None => doc.concat(intro.append(value_doc)),
   }
@@ -2250,13 +2291,34 @@ fn format_string_lit(s: String, start: Int, tm: TriviaMap) Doc {
   }
 }
 
-fn format_string_interp(parts: Vector<StringPart>, tm: TriviaMap) Doc {
-  docs: Vector<Doc> = [doc.text("\"")]
+// Emit an interpolated string in its surface form. Raw (`r"…"`) literal segments
+// are verbatim (no escapes, no `"`); cooked segments are escaped. A multiline
+// (`\\`) interpolation reaching here is in a non-tail position — it cannot be a
+// block there (a following delimiter would be swallowed) — so it falls back to
+// the cooked form; tail positions are handled earlier by `format_assigned`.
+fn format_string_interp(parts: Vector<StringPart>, start: Int, tm: TriviaMap) Doc {
+  raw := case tm.string_form.get(start) {
+    .Some(.Raw) => true,
+    _ => false,
+  }
+  docs: Vector<Doc> = [
+    doc.text(if raw {
+      "r\""
+    } else {
+      "\""
+    }),
+  ]
 
   for part in parts {
     case part {
       .Literal(s) => {
-        docs = .append(doc.text(escape_string(s)))
+        docs = .append(
+          doc.text(if raw {
+            s
+          } else {
+            escape_string(s)
+          }),
+        )
       },
       .Interpolation(expr) => {
         docs = .append(doc.text("\${"))
