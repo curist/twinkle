@@ -1,10 +1,13 @@
 # Recursive module groups — allow mutually-recursive modules
 
-Status: **partially landed** (boot compiler). Function/import cycles now compile
-and top-level value-initialization cycles are rejected, via a preliminary-interface
-break in `analyze.tw` (`break_import_cycle`) — see "Landed so far" below. Still
-open: mutual *type* cycles (cross-module TypeId pre-allocation) and the stage0
-mirror. Resolves open-question #3
+Status: **practical boot-compiler support landed**. Function/import cycles and
+simple mutual type cycles now compile, and top-level value-initialization cycles
+are rejected, via a preliminary-interface break in `analyze.tw`
+(`break_import_cycle`) — see "Landed so far" below. Prelude-into-prelude
+injection is now enabled in the boot compiler. Decision: keep this surgical
+DFS/back-edge implementation for now; full SCC-based group analysis is deferred
+as architectural hardening rather than required MVP work. The stage0 mirror also
+remains deferred. Resolves open-question #3
 ([../open-questions.md](../open-questions.md)). Motivated by the prelude/stdlib
 injection detour ([access-contracts.md](archive/access-contracts.md) family): lifting the
 acyclic-modules restriction is what would let prelude modules use each other's
@@ -21,23 +24,35 @@ the new code, so the self-host loop is unaffected):
   **signatures only** (not bodies) against its *non-cycle* dependencies, then
   publish a **preliminary interface** so the dependent can merge it. The module's
   own outer call later publishes the final interface (with checked bodies).
+- For type-only cycles, the back-edge path now also injects opaque nominal stubs
+  for sibling modules still on the import stack before resolving the preliminary
+  interface. This lets records/enums in different files refer to each other by
+  imported type name; final checked interfaces still come from each module's
+  outer analysis.
 - This works because `resolver.resolve` produces interfaces (types + function
   signatures) while bodies are checked separately by the checker — so a cycle
-  member's signature resolves without its sibling, and the sibling's body then
-  typechecks against the preliminary interface.
+  member's signature resolves with preliminary sibling type names, and the
+  sibling's body then typechecks against the preliminary interface.
 - **Value-init cycles are rejected** structurally: a module reached via a
   back-edge that has top-level `Stmt` items (value bindings / executable
   statements) gets a `"Top-level initialization cycle"` diagnostic, since its
   init order relative to the cycle is undefined (`resolver.has_top_level_statements`).
-- Tests in `multi_module_suite` (function cycle, import cycle, value-init
-  rejection) + updated `query_analyze`/`query_diagnostics` cycle tests. Self-host
-  fixed point holds; full boot suite green.
+- Preliminary resolve hashes now include the full dependency plan, including
+  in-cycle siblings, so cache keys see edits to cyclic peers instead of only
+  external dependencies.
+- Prelude injection now applies to prelude modules too, skipping only the module
+  itself. Safe recursive-module handling makes the prelude a function/type-only
+  cycle rather than a special-case exclusion.
+- Tests in `multi_module_suite` cover import cycles, mutually-recursive
+  functions, mutually-recursive types, and value-init rejection; query analysis
+  and diagnostics suites cover cycle diagnostics; import-planning tests cover
+  prelude-into-prelude injection without self-importing.
 
-Still open: mutual **type** cycles (need cross-module TypeId pre-allocation — the
-`break_import_cycle` resolve currently fails for them and falls back to a circular
-error; fixtures `cycle_type_a/b` are committed but untested), and the **stage0
-mirror** (stage0 still rejects all cycles; fine for bootstrap since `boot/main.tw`
-is acyclic).
+Still open: the **stage0 mirror** (stage0 still rejects all cycles; fine for
+bootstrap since `boot/main.tw` is acyclic). True SCC group analysis remains a
+possible future cleanup if the current implementation shows order-dependent edge
+cases, stale cache behavior, duplicate TypeId issues, or diagnostics that need a
+whole-cycle view; it is not on the critical path for the MVP.
 
 ## The restriction is architectural, not semantic
 
@@ -79,7 +94,14 @@ import cycles that participate in a **top-level value initialization** cycle, wi
 a clear diagnostic. (A later phase could define a deterministic init order or lazy
 initialization — see open questions.)
 
-## Design
+## Future SCC design (deferred)
+
+The implementation below is the cleaner long-term architecture if recursive
+modules become central enough to justify the refactor. Compared with the landed
+back-edge approach, it would make the recursive group explicit, use the group as
+the natural cache/invalidation unit, and produce diagnostics with complete cycle
+knowledge. For now, the smaller landed approach provides the needed semantics
+without a broad module-analysis rewrite.
 
 ### 1. Build the module dependency graph
 
@@ -145,18 +167,11 @@ Type/function-only cycles pass.
 
 ## Interaction with prelude/stdlib injection
 
-This is the unlock for the deferred half of the injection detour:
-
-- **Today (scope A):** stdlib can be injected with prelude because stdlib→prelude
-  is acyclic; prelude stays excluded because blanket prelude-into-prelude would
-  cycle.
-- **With recursive groups:** the prelude becomes one safe SCC (function/type-only,
-  no value-init hazard), so blanket prelude-into-prelude injection is sound — the
-  `is_prelude` guard in `imports.tw` can be dropped entirely and prelude modules
-  freely use each other's functions.
-
-So scope A (stdlib injection) is the cheap independent step; this plan is what
-makes the prelude side fall out for free.
+This is now landed in the boot compiler: stdlib and prelude modules both receive
+blanket prelude injection, and the planner skips only the current prelude module
+itself to avoid a trivial self-import edge. The prelude is therefore a safe
+function/type-only recursive dependency set, so prelude modules may freely use
+each other's exported functions without explicit one-off injection rules.
 
 ## Testing
 

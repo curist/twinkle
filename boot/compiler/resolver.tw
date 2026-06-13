@@ -1308,20 +1308,37 @@ fn next_available_type_id(env: ResolvedEnv) Int {
   max_id + 1
 }
 
+fn unresolved_type_binding(env: ResolvedEnv, name: String) Bool {
+  entry := case env.lookup_type(name) {
+    .Some(found) => found,
+    .None => { return false },
+  }
+
+  entry.def == .None
+}
+
 fn collect_declarations(env: ResolvedEnv, module: Module) ResolveResult {
   cur := env
   diags: Vector<diag.DiagKind> = []
+  seen_types: Dict<String, Bool> = Dict.new()
   seen_fns: Dict<String, Bool> = Dict.new()
 
   for item in module.items {
     case item {
       .Type(decl) => if is_reserved_type_name(decl.name) {
         diags = .append(.Error(.ReservedTypeName(.{ span: decl.span, name: decl.name })))
+      } else if seen_types.has(decl.name) {
+        diags = .append(
+          .Error(.DuplicateName(.{ span: decl.span, kind: "type definition", name: decl.name })),
+        )
+      } else if cur.unresolved_type_binding(decl.name) {
+        seen_types[decl.name] = true
       } else if cur.has_type(decl.name) {
         diags = .append(
           .Error(.DuplicateName(.{ span: decl.span, kind: "type definition", name: decl.name })),
         )
       } else {
+        seen_types[decl.name] = true
         tid := TypeId.{ id: next_available_type_id(cur) }
         cur = .add_type(
           .{ id: tid, arity: decl.type_params.len(), def: .None, span: decl.span, is_extern: false },
@@ -1379,11 +1396,18 @@ fn collect_declarations(env: ResolvedEnv, module: Module) ResolveResult {
       },
       .ExternType(decl) => if is_reserved_type_name(decl.name) {
         diags = .append(.Error(.ReservedTypeName(.{ span: decl.span, name: decl.name })))
+      } else if seen_types.has(decl.name) {
+        diags = .append(
+          .Error(.DuplicateName(.{ span: decl.span, kind: "type definition", name: decl.name })),
+        )
+      } else if cur.unresolved_type_binding(decl.name) {
+        seen_types[decl.name] = true
       } else if cur.has_type(decl.name) {
         diags = .append(
           .Error(.DuplicateName(.{ span: decl.span, kind: "type definition", name: decl.name })),
         )
       } else {
+        seen_types[decl.name] = true
         tid := TypeId.{ id: next_available_type_id(cur) }
         cur = .add_type(
           .{ id: tid, arity: 0, def: .None, span: decl.span, is_extern: true },

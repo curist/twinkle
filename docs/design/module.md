@@ -187,9 +187,11 @@ consistent with the rest of the language.
 
 ## Circular Imports
 
-Circular imports are a compile-time error. The compiler detects cycles in the
-import graph during module loading and reports them.
+Circular imports are allowed when the cycle is through type and function
+interfaces only. The compiler breaks these cycles with preliminary module
+interfaces, then checks each module body once its dependencies are available.
 
-Cycle resolution requires either lazy initialization or forward declarations,
-both adding complexity. For MVP, cycles are almost always a design mistake. This
-can be revisited if a real use case emerges.
+Cycles involving top-level value initialization remain compile-time errors:
+top-level statements execute, and Twinkle does not define an initialization order
+inside an import cycle. The diagnostic points at the import edge that would make
+that value-initialization cycle unavoidable.

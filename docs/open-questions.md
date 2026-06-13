@@ -68,8 +68,8 @@ need an explicit mechanism for mutually recursive type groups across files?
 — condense the module graph into SCCs and resolve each strongly-connected group
 with the two-phase (signatures-then-bodies) pass already used *within* a module,
 allowing type/function cycles while rejecting top-level value-initialization
-cycles. The restriction is architectural, not semantic; this also unblocks
-blanket prelude-into-prelude injection.
+cycles. The restriction is architectural, not semantic; boot compiler cycle
+support has also enabled blanket prelude-into-prelude injection.
 
 Possible directions considered:
 

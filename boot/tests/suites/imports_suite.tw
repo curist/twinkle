@@ -205,23 +205,30 @@ pub fn suite() runner.Suite {
       },
     )
     .test(
-      "prelude skipped for prelude files",
+      "prelude injected for prelude files except self",
       fn() {
         module := parse_module("fn helper() { }")
-        plan := try plan_deps(module, "${loader.resolve_prelude_root()}/vector.tw", root)
+        prelude_file := "${loader.resolve_prelude_root()}/vector.tw"
+        plan := try plan_deps(module, prelude_file, root)
         try assert.is_true(plan.is_internal)
         prelude_count := 0
+        saw_self := false
 
         for dep in plan.dependencies {
           case dep.kind {
             .Prelude => {
               prelude_count = prelude_count + 1
+
+              if dep.canonical_path == prelude_file {
+                saw_self = true
+              }
             },
             _ => {},
           }
         }
 
-        try assert.equal(prelude_count, 0)
+        try assert.is_true(prelude_count > 0)
+        try assert.is_false(saw_self)
         .Ok({})
       },
     )

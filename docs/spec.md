@@ -728,7 +728,10 @@ pub translate := vector.translate
 
 #### Circular imports
 
-Circular imports are a compile-time error.
+Circular imports are allowed when the cycle is through type and function
+signatures/bodies only. A cycle that requires top-level value initialization order
+is a compile-time error, because top-level statements execute and no intra-cycle
+initialization order is defined.
 
 #### Destructuring
 

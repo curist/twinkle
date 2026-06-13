@@ -11,13 +11,15 @@ use @std.proc
 use compiler.base_env.{add_internal_host_builtins}
 use compiler.checker
 use compiler.imports
-use compiler.imports.{DependencyPlan}
+use compiler.imports.{DependencyPlan, PlannedDep}
+use compiler.mono_type.{TypeId}
 use compiler.query.cache
 use compiler.query.fingerprint
 use compiler.query.stage_runner
 use compiler.query.type_registry
 use compiler.resolver.{
-  ModuleExports, ResolvedEnv, TypeEntry, extract_exports_for_module, has_top_level_statements,
+  ExportedType, ModuleExports, ResolvedEnv, TypeEntry, extract_exports_for_module,
+  has_top_level_statements,
 }
 use compiler.unused_imports
 use lib.json
@@ -144,6 +146,8 @@ type DependencyAnalysis = .{
 type DependencyHashes = .{ deps_hash: Int, context_hash: Int }
 
 type LocalCheck = .{ state: AnalysisState, checked: checker.CheckResult }
+
+type PreliminaryInterface = .{ state: AnalysisState, interface: ModuleInterface }
 
 // ── Public API ──────────────────────────────────────────────────────
 /// Create a fresh analysis state.
@@ -362,6 +366,18 @@ fn analyze_module_impl(
   }
 
   local_type_start := env.types.len()
+
+  // If a dependency reached this module through a cycle, it may have published
+  // an opaque preliminary interface for our own exported types/functions. Merge
+  // it back unqualified so the final resolve reuses those TypeIds and fills in
+  // the real definitions instead of allocating duplicate local types.
+  case cur.interfaces[canonical] {
+    .Some(prelim) => if !cur.exports.has(canonical) {
+      env = .merge_module_exports("", canonical, prelim.exports)
+    },
+    .None => {},
+  }
+
   local := case resolve_and_check_local(
     cur,
     canonical,
@@ -503,7 +519,128 @@ fn plan_dependencies(
 ///
 /// Two cases cannot be broken this way and error:
 /// - the module has top-level statements (undefined initialization order), or
-/// - resolving its signatures still fails (e.g. mutually-recursive types).
+/// - resolving its signatures still fails after cycle-sibling type stubs are visible.
+fn next_preliminary_type_id(env: ResolvedEnv) Int {
+  max_id := -1
+
+  for entry in env.types {
+    if entry.id.id > max_id {
+      max_id = entry.id.id
+    }
+  }
+
+  max_id + 1
+}
+
+fn preliminary_type_exports(parsed: cache.ParsedModule, canonical: String, start_id: Int) ModuleExports {
+  visible_types: Vector<ExportedType> = []
+  next_id := start_id
+
+  for item in parsed.module.items {
+    case item {
+      .Type(decl) => if decl.is_pub {
+        visible_types = .append(
+          ExportedType.{
+            name: decl.name,
+            entry: TypeEntry.{
+              id: TypeId.{ id: next_id },
+              arity: decl.type_params.len(),
+              def: .None,
+              span: decl.span,
+              is_extern: false,
+            },
+            origin: .Some("${canonical}::${decl.name}"),
+          },
+        )
+        next_id = next_id + 1
+      },
+      .ExternType(decl) => if decl.is_pub {
+        visible_types = .append(
+          ExportedType.{
+            name: decl.name,
+            entry: TypeEntry.{
+              id: TypeId.{ id: next_id },
+              arity: 0,
+              def: .None,
+              span: decl.span,
+              is_extern: true,
+            },
+            origin: .Some("${canonical}::${decl.name}"),
+          },
+        )
+        next_id = next_id + 1
+      },
+      _ => {},
+    }
+  }
+
+  ModuleExports.{
+    doc: parsed.module.doc,
+    visible_types,
+    support_types: [],
+    functions: [],
+    support_functions: [],
+    methods: Dict.new(),
+    values: [],
+  }
+}
+
+fn opaque_export_type(exported: ExportedType) ExportedType {
+  entry := exported.entry
+  entry.def = .None
+  ExportedType.{ name: exported.name, entry, origin: exported.origin }
+}
+
+fn opaque_type_exports(exports: ModuleExports) ModuleExports {
+  ModuleExports.{
+    doc: exports.doc,
+    visible_types: collect exported in exports.visible_types {
+      opaque_export_type(exported)
+    },
+    support_types: collect exported in exports.support_types {
+      opaque_export_type(exported)
+    },
+    functions: exports.functions,
+    support_functions: exports.support_functions,
+    methods: exports.methods,
+    values: exports.values,
+  }
+}
+
+fn preliminary_type_interface(
+  state: AnalysisState,
+  env: ResolvedEnv,
+  dep: PlannedDep,
+  caller_id: identity.SourceIdentity?,
+  use_span: Span?,
+) PreliminaryInterface!AnalysisError {
+  dep_id := identity.from_path(dep.canonical_path)
+  loaded := case load_source(state, dep.canonical_path, dep_id, caller_id, use_span) {
+    .Ok(value) => value,
+    .Err(err) => { return .Err(err) },
+  }
+  parsed_load := case parse_cached(
+    loaded.state,
+    dep.canonical_path,
+    loaded.source,
+    loaded.source_hash,
+  ) {
+    .Ok(value) => value,
+    .Err(err) => { return .Err(err) },
+  }
+  exports := preliminary_type_exports(
+    parsed_load.parsed,
+    dep.canonical_path,
+    next_preliminary_type_id(env),
+  )
+  interface := make_module_interface(
+    dep.canonical_path,
+    exports,
+    parsed_load.state.shared_type_origins,
+  )
+  .Ok(.{ state: parsed_load.state, interface })
+}
+
 fn break_import_cycle(
   id: identity.SourceIdentity,
   alias: String,
@@ -579,7 +716,7 @@ fn break_import_cycle(
   }
 
   cur = deps.state
-  hashes := dependency_hashes(cur.cache, ext_plan)
+  hashes := dependency_hashes(cur.cache, dep_plan)
   runner := stage_runner.new(
     canonical,
     loaded.source_hash,
@@ -593,13 +730,31 @@ fn break_import_cycle(
     env = add_internal_host_builtins(env)
   }
 
+  // For type-only cycles, resolving this module's signatures needs to see the
+  // type names of siblings still on the import stack. Publish those sibling
+  // names into this temporary env as opaque nominal stubs; the siblings' outer
+  // analyses will later publish their full checked interfaces.
+  for dep in dep_plan.dependencies {
+    if !stack.contains(dep.canonical_path) {
+      continue
+    }
+
+    prelim := case preliminary_type_interface(cur, env, dep, caller_id, use_span) {
+      .Ok(value) => value,
+      .Err(err) => {
+        return .{ env: base, state: err.state, diagnostics: err.diagnostics, ok: false }
+      },
+    }
+    cur = prelim.state
+    env = merge_import_interface(env, dep, prelim.interface)
+  }
+
   resolved_out := stage_runner.resolve(runner, cur.cache, parsed, env)
   cur.cache = resolved_out.store
   resolved := resolved_out.value
 
   if resolved.diagnostics.len() > 0 {
-    // Signatures alone cannot break the cycle (e.g. mutually-recursive types
-    // across modules — not yet supported).
+    // Signatures alone cannot break the cycle.
     d := synthetic_diag(
       err_id,
       .None,
@@ -613,7 +768,9 @@ fn break_import_cycle(
 
   // Publish a preliminary interface (signatures only). The module's own outer
   // analysis publishes the final interface (with checked bodies and exports).
-  exports := extract_exports_for_module(resolved.env, parsed.module, canonical, Dict.new())
+  exports := opaque_type_exports(
+    extract_exports_for_module(resolved.env, parsed.module, canonical, Dict.new()),
+  )
   interface := make_module_interface(canonical, exports, cur.shared_type_origins)
   cur.interfaces[canonical] = interface
 

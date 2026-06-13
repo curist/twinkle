@@ -102,35 +102,38 @@ pub fn plan_dependencies_with_exists(
   is_prelude := norm_file.starts_with(norm_prelude)
   is_internal := is_prelude or norm_file.starts_with(norm_stdlib)
 
-  // Auto-inject prelude modules for everything except prelude itself
-  // (prelude-into-prelude would cycle). Stdlib modules now get prelude injected.
-  if !is_prelude {
-    prelude_modules := loader.list_prelude_modules(prelude_root)
+  // Auto-inject prelude modules for every module, including prelude modules.
+  // Recursive-module analysis handles the safe prelude-into-prelude cycles; the
+  // current module itself is skipped to avoid a trivial self-import edge.
+  prelude_modules := loader.list_prelude_modules(prelude_root)
 
-    for prelude_path in prelude_modules {
-      canonical_prelude := canonical_module_path(prelude_path, roots)
+  for prelude_path in prelude_modules {
+    canonical_prelude := canonical_module_path(prelude_path, roots)
 
-      // Skip if already explicitly imported
-      if canonical_paths.contains(canonical_prelude) {
-        continue
-      }
-
-      if !exists(canonical_prelude) {
-        continue
-      }
-
-      stem := path.stem(canonical_prelude)
-      canonical_paths = .append(canonical_prelude)
-      deps = .append(
-        .{
-          canonical_path: canonical_prelude,
-          alias: "__prelude_${stem}",
-          kind: .Prelude,
-          items: .None,
-          span: span.new(0, 0, 0),
-        },
-      )
+    if canonical_prelude == norm_file {
+      continue
     }
+
+    // Skip if already explicitly imported
+    if canonical_paths.contains(canonical_prelude) {
+      continue
+    }
+
+    if !exists(canonical_prelude) {
+      continue
+    }
+
+    stem := path.stem(canonical_prelude)
+    canonical_paths = .append(canonical_prelude)
+    deps = .append(
+      .{
+        canonical_path: canonical_prelude,
+        alias: "__prelude_${stem}",
+        kind: .Prelude,
+        items: .None,
+        span: span.new(0, 0, 0),
+      },
+    )
   }
 
   .Ok(DependencyPlan.{ dependencies: deps, is_internal })

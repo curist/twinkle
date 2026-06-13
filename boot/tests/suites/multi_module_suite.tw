@@ -440,6 +440,19 @@ pub fn suite() runner.Suite {
       },
     )
     .test(
+      "mutually recursive types across modules compile",
+      fn() {
+        result := module_compiler.compile_entry("${dir}/cycle_type_a.tw")
+
+        case result {
+          .Ok(_) => .Ok({}),
+          .Err(err) => .Err(
+            "expected mutually recursive types to compile, got: ${format_compile_error(err)}",
+          ),
+        }
+      },
+    )
+    .test(
       "top-level value-init cycle across modules is rejected",
       fn() {
         result := module_compiler.compile_entry("${dir}/cycle_value_a.tw")
