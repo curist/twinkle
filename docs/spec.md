@@ -1077,6 +1077,42 @@ turned off:
 r"id=${user.id}"   // interpolates user.id; the rest is verbatim
 ```
 
+### Multiline String Literals
+
+A multiline string is written as one or more consecutive `\\`-prefixed lines,
+Zig-style. Each line's content is everything after its `\\` marker; lines join
+with `\n`:
+
+```tw
+query :=
+  \\SELECT *
+  \\FROM users
+  \\WHERE active = true
+```
+
+Value: `SELECT *\nFROM users\nWHERE active = true`.
+
+Rules:
+
+* **No trailing newline.** Lines join with `\n`; there is no newline after the
+  last line. To get one, add a final empty `\\` line:
+  ```tw
+  \\last
+  \\
+  ```
+  → `"last\n"`.
+* **Marker indentation is excluded.** The whitespace before each `\\` is ordinary
+  inter-token whitespace and never enters the value, so the block can be indented
+  to match surrounding code. Whitespace *after* the `\\` is content.
+* **The block ends** at the first line whose first non-whitespace characters are
+  not `\\`. There is no closing delimiter, so a typo can never swallow the rest of
+  the file. A bare blank line (no `\\`) ends the block; a blank line *inside* the
+  block is an empty `\\` line.
+* **No escape processing.** `\` is literal; there are no inline escapes (`\t`,
+  etc.) — use a literal tab.
+* **CRLF is normalized** to `\n`, so a repo checked out on Windows produces
+  byte-identical values.
+
 ### Character Literals
 
 A character literal `'c'` denotes the **integer code point** of a single

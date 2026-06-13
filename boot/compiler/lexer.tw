@@ -302,6 +302,56 @@ fn scan_raw_string_segment(source: String, from: Int, content_start: Int) ScanSt
   }
 }
 
+type MultilineResult = .{ text: String, next_index: Int }
+
+// `\\`-prefixed multiline string: consume consecutive `\\` lines, join their
+// content with `\n` (no trailing newline), normalize `\r\n` → `\n`, and stop at
+// the first line that does not start with `\\`. `from` points at the first `\`.
+// Marker indentation is excluded for free: leading whitespace before each `\\`
+// is skipped here (and, for the first line, already consumed by the main loop).
+fn scan_multiline_string(source: String, from: Int) MultilineResult {
+  i := from
+  n := source.len()
+  parts: Vector<String> = []
+
+  for true {
+    i = i + 2 // consume the `\\` marker
+    line_start := i
+
+    for i < n and source[i] != '\n' {
+      i = i + 1
+    }
+
+    end := if i > line_start and source[i - 1] == '\r' {
+      i - 1 // CRLF → LF
+    } else {
+      i
+    }
+
+    parts = .append(source.slice(line_start, end))
+
+    // Peek the next line: newline, then horizontal whitespace, then `\\`?
+    j := if i < n and source[i] == '\n' {
+      i + 1
+    } else {
+      i
+    }
+    k := j
+
+    for k < n and (source[k] == ' ' or source[k] == '\t') {
+      k = k + 1
+    }
+
+    if k + 1 < n and source[k] == '\\' and source[k + 1] == '\\' {
+      i = k
+    } else {
+      break // leave i at the trailing newline (if any) for the main loop
+    }
+  }
+
+  MultilineResult.{ text: parts.join("\n"), next_index: i }
+}
+
 pub fn lex(source: String, file_id: Int) StageResult<Vector<Token>> {
   out: Vector<Token> = []
   diagnostics_out: Vector<DiagKind> = []
@@ -480,6 +530,25 @@ pub fn lex(source: String, file_id: Int) StageResult<Vector<Token>> {
         make_token_text(
           .StringLit,
           scanned.text,
+          token_start,
+          i,
+          file_id,
+          preceded_by_newline,
+          leading_trivia,
+        ),
+      )
+      continue
+    }
+
+    // `\\`-prefixed multiline string. Marker indentation was already consumed as
+    // whitespace, so the value excludes it.
+    if c == '\\' and i + 1 < n and source[i + 1] == '\\' {
+      ml := scan_multiline_string(source, i)
+      i = ml.next_index
+      out = .append(
+        make_token_text(
+          .StringLit,
+          ml.text,
           token_start,
           i,
           file_id,

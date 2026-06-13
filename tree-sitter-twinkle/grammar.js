@@ -510,6 +510,7 @@ module.exports = grammar({
       $.bool_literal,
       $.string_literal,
       $.raw_string_literal,
+      $.multiline_string,
     ),
 
     identifier_pattern: $ => $.identifier,
@@ -558,6 +559,7 @@ module.exports = grammar({
     _literal: $ => choice(
       prec.dynamic(5, $.string_literal), // prefer strings so the lexer chooses them early
       prec.dynamic(5, $.raw_string_literal),
+      prec.dynamic(5, $.multiline_string),
       $.int_literal,
       $.char_literal,
       $.float_literal,
@@ -660,6 +662,14 @@ module.exports = grammar({
     ),
 
     raw_string_content: $ => token.immediate(prec(1, /[^\n"$]+/)),
+
+    // Raw multiline string: one or more consecutive `\\`-prefixed lines. Each
+    // line is a single token (`\\` + the rest of the line); newlines between
+    // them are whitespace (in extras), so the lines group into one node. No
+    // escape processing; `\` is a literal character.
+    multiline_string: $ => prec.right(repeat1($.multiline_line)),
+
+    multiline_line: $ => token(seq('\\\\', /[^\n]*/)),
 
     int_literal: $ => choice(
       /0x[0-9a-fA-F]+/,

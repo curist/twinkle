@@ -1098,8 +1098,7 @@ fn format_let(s: LetStmt, tm: TriviaMap) Doc {
   } else {
     format_expr(s.value, tm)
   }
-  parts = .append(value_doc)
-  doc.concat(parts)
+  format_assigned(parts, s.value, value_doc, tm)
 }
 
 // Structural equality over the "place path" expression forms that can appear as
@@ -1210,7 +1209,7 @@ fn format_for(s: ForStmt, tm: TriviaMap) Doc {
 
 fn format_return(s: ReturnStmt, tm: TriviaMap) Doc {
   case s.value {
-    .Some(val) => doc.concat([doc.text("return "), format_expr(val, tm)]),
+    .Some(val) => format_assigned([doc.text("return ")], val, format_expr(val, tm), tm),
     .None => doc.text("return"),
   }
 }
@@ -2171,6 +2170,74 @@ fn format_collect(coll: CollectExpr, tm: TriviaMap) Doc {
   parts = .append(doc.text(" "))
   parts = .append(format_block(coll.body, tm))
   doc.concat(parts)
+}
+
+// If `value` is a `\\` multiline-string literal, return its decoded text.
+// Used by the tail introducers (binding, rebinding, return) that can safely lay
+// it out as a block — a `\\` block runs to end-of-line, so it is only emitted in
+// statement-final position; elsewhere a multiline value falls back to cooked.
+fn multiline_value_string(value: Expr, tm: TriviaMap) String? {
+  case value.kind {
+    .StringLit(text) => case tm.string_form.get(value.span.start) {
+      .Some(.Multiline) => .Some(text),
+      _ => .None,
+    },
+    _ => .None,
+  }
+}
+
+// Render a decoded multiline value as a run of `\\`-prefixed lines joined by hard
+// line breaks. Marker indentation is supplied by the enclosing `indent`; content
+// after each `\\` is emitted verbatim (F3).
+fn multiline_block_doc(value: String) Doc {
+  lines := value.split("\n")
+  docs: Vector<Doc> = []
+
+  for line, i in lines {
+    if i > 0 {
+      docs = .append(doc.hard_line())
+    }
+
+    docs = .append(doc.text("\\\\".concat(line)))
+  }
+
+  doc.concat(docs)
+}
+
+fn rstrip_spaces(s: String) String {
+  end := s.len()
+
+  for end > 0 and s[end - 1] == ' ' {
+    end = end - 1
+  }
+
+  s.slice(0, end)
+}
+
+// Drop a single trailing-space separator so the introducer ends its own line.
+fn drop_trailing_space(parts: Vector<Doc>) Vector<Doc> {
+  if parts.len() == 0 {
+    return parts
+  }
+
+  case parts[parts.len() - 1] {
+    .Text(s) => parts.drop_last().append(doc.text(rstrip_spaces(s))),
+    _ => parts,
+  }
+}
+
+// Attach an assigned value to an introducer (`intro` ends with the separator,
+// e.g. `" := "`). A `\\` multiline value reflows to its own indented lines (F1);
+// anything else follows the separator inline.
+fn format_assigned(intro: Vector<Doc>, value: Expr, value_doc: Doc, tm: TriviaMap) Doc {
+  case multiline_value_string(value, tm) {
+    .Some(text) => doc.concat(
+      drop_trailing_space(intro).append(
+        doc.indent(doc.concat([doc.hard_line(), multiline_block_doc(text)])),
+      ),
+    ),
+    .None => doc.concat(intro.append(value_doc)),
+  }
 }
 
 // Emit a non-interpolated string literal in its original surface form. Raw

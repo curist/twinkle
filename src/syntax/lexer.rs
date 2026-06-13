@@ -102,6 +102,9 @@ impl Lexer {
             // `r` is an ordinary identifier (handled by the alphanumeric arm).
             'r' if self.peek_ahead(1) == '"' => self.lex_raw_string()?,
 
+            // `\\`-prefixed multiline string.
+            '\\' if self.peek_ahead(1) == '\\' => self.lex_multiline_string()?,
+
             // Character literals (lex to an integer code-point token)
             '\'' => self.lex_char()?,
 
@@ -498,6 +501,49 @@ impl Lexer {
         }
 
         (value, false, false)
+    }
+
+    /// `\\`-prefixed multiline string: join consecutive `\\` lines with `\n`
+    /// (no trailing newline), normalize `\r\n` → `\n`, and stop at the first line
+    /// that does not start with `\\`. Marker indentation is excluded.
+    fn lex_multiline_string(&mut self) -> LexResult<Token> {
+        let start = self.byte_pos;
+        let mut parts: Vec<String> = Vec::new();
+
+        loop {
+            self.advance(); // first '\'
+            self.advance(); // second '\'
+
+            let mut line = String::new();
+            while !self.is_eof() && self.peek() != '\n' {
+                line.push(self.advance());
+            }
+            if line.ends_with('\r') {
+                line.pop(); // CRLF → LF
+            }
+            parts.push(line);
+
+            // Look past the newline + horizontal whitespace for the next marker.
+            // Consume them only if a `\\` follows; otherwise the block ends and
+            // the trailing newline is left for the main loop.
+            if self.peek() != '\n' {
+                break;
+            }
+            let mut off = 1;
+            while matches!(self.peek_ahead(off), ' ' | '\t') {
+                off += 1;
+            }
+            if self.peek_ahead(off) == '\\' && self.peek_ahead(off + 1) == '\\' {
+                for _ in 0..off {
+                    self.advance();
+                }
+            } else {
+                break;
+            }
+        }
+
+        let span = Span::new(self.file_id, start as u32, self.byte_pos as u32);
+        Ok(Token::new(TokenKind::StringLit, span, parts.join("\n")))
     }
 
     fn lex_string_continuation(&mut self) -> LexResult<Token> {
@@ -925,6 +971,40 @@ mod tests {
         let tokens = lex_simple("red");
         assert_eq!(tokens[0].kind, TokenKind::Ident);
         assert_eq!(tokens[0].text, "red");
+    }
+
+    #[test]
+    fn test_lex_multiline_joins_lines_no_trailing_newline() {
+        let tokens = lex_simple("\\\\a\n\\\\b");
+        assert_eq!(tokens[0].kind, TokenKind::StringLit);
+        assert_eq!(tokens[0].text, "a\nb");
+    }
+
+    #[test]
+    fn test_lex_multiline_trailing_empty_marker_adds_newline() {
+        let tokens = lex_simple("\\\\last\n\\\\");
+        assert_eq!(tokens[0].text, "last\n");
+    }
+
+    #[test]
+    fn test_lex_multiline_excludes_marker_indentation() {
+        let tokens = lex_simple("  \\\\<div>\n  \\\\  <h1>x</h1>\n  \\\\</div>");
+        assert_eq!(tokens[0].text, "<div>\n  <h1>x</h1>\n</div>");
+    }
+
+    #[test]
+    fn test_lex_multiline_crlf_normalizes() {
+        let tokens = lex_simple("\\\\a\r\n\\\\b");
+        assert_eq!(tokens[0].text, "a\nb");
+    }
+
+    #[test]
+    fn test_lex_multiline_non_marker_line_ends_block() {
+        let tokens = lex_simple("\\\\a\nfoo");
+        assert_eq!(tokens[0].kind, TokenKind::StringLit);
+        assert_eq!(tokens[0].text, "a");
+        assert_eq!(tokens[1].kind, TokenKind::Ident);
+        assert_eq!(tokens[1].text, "foo");
     }
 
     #[test]

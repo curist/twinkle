@@ -2561,6 +2561,10 @@
         {
           "type": "SYMBOL",
           "name": "raw_string_literal"
+        },
+        {
+          "type": "SYMBOL",
+          "name": "multiline_string"
         }
       ]
     },
@@ -2795,6 +2799,14 @@
           "content": {
             "type": "SYMBOL",
             "name": "raw_string_literal"
+          }
+        },
+        {
+          "type": "PREC_DYNAMIC",
+          "value": 5,
+          "content": {
+            "type": "SYMBOL",
+            "name": "multiline_string"
           }
         },
         {
@@ -3215,6 +3227,33 @@
           "type": "PATTERN",
           "value": "[^\\n\"$]+"
         }
+      }
+    },
+    "multiline_string": {
+      "type": "PREC_RIGHT",
+      "value": 0,
+      "content": {
+        "type": "REPEAT1",
+        "content": {
+          "type": "SYMBOL",
+          "name": "multiline_line"
+        }
+      }
+    },
+    "multiline_line": {
+      "type": "TOKEN",
+      "content": {
+        "type": "SEQ",
+        "members": [
+          {
+            "type": "STRING",
+            "value": "\\\\"
+          },
+          {
+            "type": "PATTERN",
+            "value": "[^\\n]*"
+          }
+        ]
       }
     },
     "int_literal": {

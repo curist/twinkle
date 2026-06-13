@@ -1,5 +1,6 @@
 use compiler.lexer
-use compiler.tokens.{Token, TokenKind}
+use compiler.parser
+use compiler.tokens.{Token}
 use tests.assert
 use tests.runner
 
@@ -9,6 +10,10 @@ fn lex_tokens(src: String) Vector<Token> {
   collect t in result.value {
     t
   }
+}
+
+fn parse_diag_count(src: String) Int {
+  parser.parse(src, 0).diagnostics.len()
 }
 
 pub fn suite() runner.Suite {
@@ -63,6 +68,71 @@ pub fn suite() runner.Suite {
         bare := lex_tokens("r + 1")
         try assert.is_true(bare[0].kind == .Ident)
         try assert.equal(bare[0].text, "r")
+        .Ok({})
+      },
+    )
+    .test(
+      "multiline block joins lines with newline, no trailing newline",
+      fn() {
+        // \\a / \\b  ->  "a\nb"
+        toks := lex_tokens("\\\\a\n\\\\b")
+        try assert.is_true(toks[0].kind == .StringLit)
+        try assert.equal(toks[0].text, "a\nb")
+        .Ok({})
+      },
+    )
+    .test(
+      "trailing empty marker line adds a newline",
+      fn() {
+        // \\last / \\   ->  "last\n"
+        toks := lex_tokens("\\\\last\n\\\\")
+        try assert.equal(toks[0].text, "last\n")
+        .Ok({})
+      },
+    )
+    .test(
+      "single marker line is its content with no newline",
+      fn() {
+        toks := lex_tokens("\\\\foo")
+        try assert.is_true(toks[0].kind == .StringLit)
+        try assert.equal(toks[0].text, "foo")
+        .Ok({})
+      },
+    )
+    .test(
+      "marker indentation excluded, content indentation preserved",
+      fn() {
+        // Markers indented two spaces; the two spaces after a marker are content.
+        src := "  \\\\<div>\n  \\\\  <h1>x</h1>\n  \\\\</div>"
+        toks := lex_tokens(src)
+        try assert.equal(toks[0].text, "<div>\n  <h1>x</h1>\n</div>")
+        .Ok({})
+      },
+    )
+    .test(
+      "CRLF line endings normalize to LF",
+      fn() {
+        toks := lex_tokens("\\\\a\r\n\\\\b")
+        try assert.equal(toks[0].text, "a\nb")
+        .Ok({})
+      },
+    )
+    .test(
+      "a non-marker line ends the block",
+      fn() {
+        toks := lex_tokens("\\\\a\nfoo")
+        try assert.is_true(toks[0].kind == .StringLit)
+        try assert.equal(toks[0].text, "a")
+        try assert.is_true(toks[1].kind == .Ident)
+        try assert.equal(toks[1].text, "foo")
+        .Ok({})
+      },
+    )
+    .test(
+      "multiline block parses as a binding value on following lines",
+      fn() {
+        src := "query :=\n  \\\\SELECT *\n  \\\\FROM users\n"
+        try assert.equal(parse_diag_count(src), 0)
         .Ok({})
       },
     )

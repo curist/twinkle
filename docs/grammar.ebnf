@@ -509,6 +509,7 @@ Literal =
     | FloatLiteral
     | StringLiteral
     | RawStringLiteral
+    | MultilineStringLiteral
     | BoolLiteral ;
 
 IntLiteral =
@@ -556,6 +557,18 @@ RawStringLiteral =
 RawStringChar =
       ? any character except '"' and newline ?
     | "${" Expr "}" ;
+
+(* Raw multiline string: one or more `\\`-prefixed lines. The lexer joins line
+   contents with a newline (no trailing newline), excludes marker indentation,
+   normalizes CRLF to LF, and ends the block at the first line not starting with
+   `\\`. There is no escape processing. (Per-line `${ Expr }` interpolation is
+   added in a later milestone.) Marker indentation is ordinary whitespace
+   consumed between tokens, so it is not shown here. *)
+MultilineStringLiteral =
+    MultilineLine { MultilineLine } ;
+
+MultilineLine =
+    '\\' '\\' { ? any character except newline ? } ;
 
 SimpleEscape =
       "n"

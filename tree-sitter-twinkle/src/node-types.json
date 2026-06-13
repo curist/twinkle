@@ -439,6 +439,10 @@
             "named": true
           },
           {
+            "type": "multiline_string",
+            "named": true
+          },
+          {
             "type": "parenthesized_expression",
             "named": true
           },
@@ -1087,6 +1091,10 @@
             "named": true
           },
           {
+            "type": "multiline_string",
+            "named": true
+          },
+          {
             "type": "parenthesized_expression",
             "named": true
           },
@@ -1512,6 +1520,10 @@
             "named": true
           },
           {
+            "type": "multiline_string",
+            "named": true
+          },
+          {
             "type": "parenthesized_expression",
             "named": true
           },
@@ -1620,6 +1632,10 @@
           "named": true
         },
         {
+          "type": "multiline_string",
+          "named": true
+        },
+        {
           "type": "raw_string_literal",
           "named": true
         },
@@ -1723,6 +1739,21 @@
       "types": [
         {
           "type": "identifier",
+          "named": true
+        }
+      ]
+    }
+  },
+  {
+    "type": "multiline_string",
+    "named": true,
+    "fields": {},
+    "children": {
+      "multiple": true,
+      "required": true,
+      "types": [
+        {
+          "type": "multiline_line",
           "named": true
         }
       ]
@@ -2622,6 +2653,10 @@
           "named": true
         },
         {
+          "type": "multiline_string",
+          "named": true
+        },
+        {
           "type": "parenthesized_expression",
           "named": true
         },
@@ -2973,6 +3008,10 @@
   {
     "type": "in",
     "named": false
+  },
+  {
+    "type": "multiline_line",
+    "named": true
   },
   {
     "type": "or",

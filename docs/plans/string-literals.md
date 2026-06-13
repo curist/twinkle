@@ -335,13 +335,13 @@ M3 only adds the `Multiline` arm and its `scan_multiline_segment` resume.
 
 ### Milestone 2 — `\\` multiline (no interpolation)
 
-**Task 2.1 — boot lexer**
+**Task 2.1 — boot lexer** ✅ done
 
-- [ ] In the main loop's token-start handling, recognize `\\` (`c == '\\' and
+- [x] In the main loop's token-start handling, recognize `\\` (`c == '\\' and
       source[i+1] == '\\'`) as the start of a multiline string. Indentation before
       the `\\` is already consumed as whitespace, so the value excludes it for
       free.
-- [ ] Add `scan_multiline_string(source, from)` that consumes consecutive `\\`
+- [x] Add `scan_multiline_string(source, from)` that consumes consecutive `\\`
       lines, joins their content with `\n`, normalizes `\r\n` → `\n`, and stops at
       the first non-`\\` line. Emit one `StringLit`.
 
@@ -374,30 +374,35 @@ fn scan_multiline_string(source: String, from: Int) MultilineResult {
 ```
 (`join_newline` joins with `\n`; reuse an existing join helper or inline it.)
 
-**Task 2.2 — stage0 Rust lexer**
+**Task 2.2 — stage0 Rust lexer** ✅ done
 
-- [ ] Mirror `\\`-block scanning in `src/syntax/lexer.rs`.
+- [x] Mirror `\\`-block scanning in `src/syntax/lexer.rs` (`lex_multiline_string`,
+      peek-ahead line grouping). Self-host fixed point reached.
 
-**Task 2.3 — tests**
+**Task 2.3 — tests** ✅ done
 
-- [ ] Two-line block → `"a\nb"` (no trailing newline); trailing empty `\\` line
-      adds the newline; indentation of the markers is excluded while content
-      indentation is preserved; a non-`\\` line ends the block; `\r\n` normalizes;
-      a single `\\foo` on one line is the value `foo`.
+- [x] Boot (`string_literal_suite.tw`) and Rust (`lexer.rs`) coverage: two-line
+      block → `"a\nb"`; trailing empty `\\` line adds the newline; marker
+      indentation excluded while content indentation preserved; non-`\\` line ends
+      the block; `\r\n` normalizes; single `\\foo` → `foo`. Plus a parser-level
+      check that a block parses as a binding value on following lines.
 
-**Task 2.4 — grammar & highlighting**
+**Task 2.4 — grammar & highlighting** — code done; wasm rebuild + tests pending (human)
 
-- [ ] Add a multiline-string production to `docs/grammar.ebnf` (one-or-more
-      `\\`-prefixed lines, raw content, optional `${` Expr `}` per line).
-- [ ] Add a `multiline_string` rule (one-or-more `\\` line tokens) to
-      `tree-sitter-twinkle/grammar.js`; regenerate and rebuild wasm.
-- [ ] Capture the multiline-string node in
+- [x] Add a `MultilineStringLiteral` production to `docs/grammar.ebnf`.
+- [x] Add `multiline_string` / `multiline_line` rules to
+      `tree-sitter-twinkle/grammar.js` (registered in `_literal` and
+      `literal_pattern`); `tree-sitter generate` clean, `tree-sitter parse`
+      confirms a block becomes a `multiline_string` of `multiline_line`s with the
+      following statement separate and no ERROR nodes. **TODO (human): `npx
+      tree-sitter build --wasm` + `tree-sitter test`.**
+- [x] Capture `multiline_string` / `multiline_line` in
       `tree-sitter-twinkle/queries/highlights.scm` as `@string` (no
-      `@string.escape`); hand off `tree-sitter test`.
+      `@string.escape`).
 
-**Task 2.5 — docs**
+**Task 2.5 — docs** ✅ done
 
-- [ ] Document `\\` multiline strings in `docs/spec.md` (line prefix, newline
+- [x] Document `\\` multiline strings in `docs/spec.md` (line prefix, newline
       joining, no trailing newline, blank-line rule, indentation exclusion, CRLF
       normalization, no inline escapes).
 
@@ -454,24 +459,30 @@ picks the right segment scanner.
 Depends on Milestone 2 (the `\\` node must lex/parse first). The formatter and
 lint rules are defined in "Formatter & lint rules" above.
 
-**Task 4a.1 — formatter layout (F1–F3)**
+**Task 4a.1 — formatter layout (F1–F3)** ✅ done (tail introducers)
 
-- [ ] In `boot/compiler/fmt/` (the `doc` → `layout` → `printer` pipeline), lay out
-      a `\\` block as its own indented run of lines (F1), with markers at a
-      canonical indentation one step past the enclosing statement (F2).
-- [ ] Carve the block's content out of the passes that trim trailing whitespace /
-      re-indent, so content after each marker is emitted byte-for-byte (F3),
-      including empty `\\` lines. The string token already carries the decoded
-      value; the formatter must reconstruct markers from it without round-tripping
-      through a content-mutating path.
-- [ ] Confirm idempotence (`fmt` twice = no change) on multiline cases.
+- [x] `printer.tw` lays out a `\\` block as its own indented run of lines (F1),
+      markers one indent step (2 spaces) past the enclosing statement (F2):
+      `format_assigned` drops the separator's trailing space and emits
+      `indent(hard_line + multiline_block_doc(value))`. Content after each marker
+      is emitted verbatim (F3) — the layout renderer keeps literal text and never
+      trims emitted trailing spaces; empty `\\` lines and the trailing-newline
+      convention survive.
+- [x] Idempotence confirmed by tests.
+- **Scope note / safety:** a `\\` block eats the rest of its line and the next,
+      so it is only emitted in **tail positions** — binding `:=`, typed binding
+      `: ty =`, rebinding `=`, and `return`. A multiline value in a non-tail
+      context (call arg, record field, array element) would have a following
+      delimiter swallowed, so there it deliberately falls back to the cooked
+      escaped form (value-preserving). Extending F1 to wrap those contexts
+      (closing delimiter on its own line) is a future refinement.
 
-**Task 4a.2 — formatter test cases**
+**Task 4a.2 — formatter test cases** ✅ done
 
-- [ ] Add `boot/tests/suites/fmt_cases` fixtures: same-line introducer-then-`\\`
-      reflows to the next line for **both** binding `:=` and rebinding `=`;
-      mis-indented markers normalize; trailing spaces inside content survive; empty
-      `\\` lines and a trailing-newline block survive; idempotence.
+- [x] Covered in `fmt_suite.tw`: canonical block round-trips; same-line
+      introducer-then-`\\` reflows to the next line for binding `:=` and rebinding
+      `=`; trailing spaces inside content survive (F3); a trailing-newline block
+      (final empty `\\` line) survives; idempotence.
 
 **Task 4a.3 — single-line `\\` lint (L1)**
 

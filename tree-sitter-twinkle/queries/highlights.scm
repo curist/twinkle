@@ -80,6 +80,10 @@
 (raw_string_literal) @string
 (raw_string_content) @string
 
+; Raw multiline strings — also no @string.escape.
+(multiline_string) @string
+(multiline_line) @string
+
 ; Comments
 (comment) @comment
 
