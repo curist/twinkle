@@ -1,6 +1,6 @@
 # Deduplicate diagnostics from failed shared modules
 
-Status: **planned** (2026-05-29). Small, self-contained correctness fix in the
+Status: **completed and archived**. Small, self-contained correctness fix in the
 frontend analysis driver. No language-surface change.
 
 ## Problem

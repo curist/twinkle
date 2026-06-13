@@ -60,6 +60,7 @@ Related historical context outside this folder:
 | [tuple-and-alias-reexport.md](tuple-and-alias-reexport.md) | Shipped `@std.tuple` (`Pair`/`Triple`, `.first`/`.second`/`.third`, `tuple.pair`/`tuple.triple`) on top of three resolver fixes that make transparent type-alias re-export work (TypeId-keyed cycle detection, eager alias expansion, inherent-method re-export through aliases) |
 | [string-literals.md](string-literals.md) | Raw single-line (`r"…"`) and Zig-style `\\` multiline string literals, both with interpolation; lexer-only resolution emitting the existing string tokens, formatter form-preservation (incl. interpolated raw/multiline), lint L1 for single-line `\\` blocks, EBNF + tree-sitter grammar. Supersedes [regexp-percent-escapes.md](regexp-percent-escapes.md) |
 | [regexp-v2-linear.md](regexp-v2-linear.md) | Extended `@std.regexp` with option flags, scoped inline flags, lazy quantifiers, named groups, and explicit rejection of backreference syntax while preserving the Pike VM linear-time model |
+| [not-operator-transition.md](not-operator-transition.md) | Decision record rejecting a migration from prefix `!` to word-form `not`; keeps `!` as canonical boolean negation |
 
 ---
 
@@ -76,6 +77,7 @@ Related historical context outside this folder:
 | [br-table-case-dispatch.md](br-table-case-dispatch.md) | Emit `br_table` dispatch for eligible variant case expressions in the boot compiler |
 | [string-case-dispatch.md](string-case-dispatch.md) | Emit length-plus-trie dispatch for eligible string case expressions in the boot compiler |
 | [unreachable-case-arms.md](unreachable-case-arms.md) | Diagnose case arms shadowed by earlier catch-all, duplicate literal, or covering variant patterns |
+| [dedup-failed-module-diagnostics.md](dedup-failed-module-diagnostics.md) | Memoize attempted-and-failed modules so a broken shared dependency reports its errors once, not once per importer |
 
 ---
 

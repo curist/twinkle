@@ -247,13 +247,6 @@ fn analyze_module_impl(
     .None => {},
   }
 
-  // Already failed on an earlier path? Return the memoized failure without
-  // re-walking its subtree. Diagnostics were reported on the first failure;
-  // re-reporting here would duplicate them.
-  if state.failed.has(canonical) {
-    return .{ env: base, state, diagnostics: [], ok: false }
-  }
-
   // Import cycle reached via a back-edge. If a preliminary interface is already
   // published for this module, let the caller merge it. Otherwise try to break
   // the cycle by publishing one (signatures only); modules with top-level
@@ -263,6 +256,13 @@ fn analyze_module_impl(
       .Some(_) => { return .{ env: base, state, diagnostics: [], ok: true } },
       .None => { return break_import_cycle(id, alias, base, state, stack, caller_id, use_span) },
     }
+  }
+
+  // Already failed on an earlier path? Return the memoized failure without
+  // re-walking its subtree. Diagnostics were reported on the first failure;
+  // re-reporting here would duplicate them.
+  if state.failed.has(canonical) {
+    return .{ env: base, state, diagnostics: [], ok: false }
   }
 
   t_load0 := date.now()
