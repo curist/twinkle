@@ -15,34 +15,34 @@ pub fn compile(ast: Ast) Vector<Inst> {
 fn emit(ast: Ast, acc: Vector<Inst>) Vector<Inst> {
   case ast {
     .Empty => acc,
-    .Lit(c) => acc.append(Inst.Char(c)),
-    .AnyChar => acc.append(Inst.AnyChar),
-    .Class(items, negated) => acc.append(Inst.Class(items, negated)),
-    .Star(inner) => {
-      // L: Split(B, D) ; B ; Jmp(L) ; D:
+    .Lit(c, ic) => acc.append(Inst.Char(c, ic)),
+    .AnyChar(dotall) => acc.append(Inst.AnyChar(dotall)),
+    .Class(items, negated, ic) => acc.append(Inst.Class(items, negated, ic)),
+    .Star(inner, lazy) => {
+      // L: Split(B, D) ; B ; Jmp(L) ; D:  (lazy reverses the split priority)
       l := acc.len()
-      a := acc.append(Inst.Split(l + 1, 0))
+      a := acc.append(Inst.Split(0, 0))
       a = emit(inner, a)
       a = .append(Inst.Jmp(l))
       done := a.len()
-      a.set_at(l, Inst.Split(l + 1, done))
+      a.set_at(l, split(l + 1, done, lazy))
     },
-    .Plus(inner) => {
-      // B ; Split(B, D)
+    .Plus(inner, lazy) => {
+      // B ; Split(B, D)  (lazy reverses the split priority)
       bstart := acc.len()
       a := emit(inner, acc)
       l := a.len()
-      a.append(Inst.Split(bstart, l + 1))
+      a.append(split(bstart, l + 1, lazy))
     },
-    .Opt(inner) => {
-      // Split(B, D) ; B ; D:
+    .Opt(inner, lazy) => {
+      // Split(B, D) ; B ; D:  (lazy reverses the split priority)
       l := acc.len()
-      a := acc.append(Inst.Split(l + 1, 0))
+      a := acc.append(Inst.Split(0, 0))
       a = emit(inner, a)
       done := a.len()
-      a.set_at(l, Inst.Split(l + 1, done))
+      a.set_at(l, split(l + 1, done, lazy))
     },
-    .Repeat(inner, m, n) => emit(expand_repeat(inner, m, n), acc),
+    .Repeat(inner, m, n, lazy) => emit(expand_repeat(inner, m, n, lazy), acc),
     .Group(inner, idx) => {
       a := acc.append(Inst.Save(2 * idx))
       a = emit(inner, a)
@@ -50,8 +50,8 @@ fn emit(ast: Ast, acc: Vector<Inst>) Vector<Inst> {
     },
     .NonCap(inner) => emit(inner, acc),
     .Alt(branches) => emit_alt(branches, acc),
-    .AssertStart => acc.append(Inst.AssertStart),
-    .AssertEnd => acc.append(Inst.AssertEnd),
+    .AssertStart(ml) => acc.append(Inst.AssertStart(ml)),
+    .AssertEnd(ml) => acc.append(Inst.AssertEnd(ml)),
     .Concat(items) => {
       a := acc
 
@@ -61,6 +61,16 @@ fn emit(ast: Ast, acc: Vector<Inst>) Vector<Inst> {
 
       a
     },
+  }
+}
+
+// A quantifier split: greedy prefers `body`, lazy prefers `exit`. The Pike VM
+// follows the first arm at higher priority, so swapping them flips greediness.
+fn split(body: Int, exit: Int, lazy: Bool) Inst {
+  if lazy {
+    Inst.Split(exit, body)
+  } else {
+    Inst.Split(body, exit)
   }
 }
 
@@ -101,8 +111,9 @@ fn emit_alt(branches: Vector<Ast>, acc: Vector<Inst>) Vector<Inst> {
 }
 
 // Expand `x{m,n}` to `m` mandatory copies plus the tail: a `Star` when
-// unbounded (n == -1), otherwise `n - m` optional copies.
-fn expand_repeat(inner: Ast, m: Int, n: Int) Ast {
+// unbounded (n == -1), otherwise `n - m` optional copies. Laziness applies to
+// the optional tail; mandatory copies are unconditional and have no split.
+fn expand_repeat(inner: Ast, m: Int, n: Int, lazy: Bool) Ast {
   parts: Vector<Ast> = []
   k := 0
 
@@ -112,12 +123,12 @@ fn expand_repeat(inner: Ast, m: Int, n: Int) Ast {
   }
 
   if n == -1 {
-    parts = .append(Ast.Star(inner))
+    parts = .append(Ast.Star(inner, lazy))
   } else {
     j := m
 
     for j < n {
-      parts = .append(Ast.Opt(inner))
+      parts = .append(Ast.Opt(inner, lazy))
       j = j + 1
     }
   }

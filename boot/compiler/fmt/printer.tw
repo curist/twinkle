@@ -1330,10 +1330,22 @@ fn format_expr(expr: Expr, tm: TriviaMap) Doc {
 
 fn format_unary(op: UnOp, inner: Expr, tm: TriviaMap) Doc {
   case op {
-    .Neg => doc.concat([doc.text("-"), format_expr(inner, tm)]),
-    .Not => doc.concat([doc.text("!"), format_expr(inner, tm)]),
-    .BitNot => doc.concat([doc.text("~"), format_expr(inner, tm)]),
+    .Neg => prefix_unary("-", inner, tm),
+    .Not => prefix_unary("!", inner, tm),
+    .BitNot => prefix_unary("~", inner, tm),
     .Try => doc.concat([doc.text("try "), format_expr(inner, tm)]),
+  }
+}
+
+// A prefix unary (`-`/`!`/`~`) binds tighter than every binary operator, so a
+// binary operand must stay parenthesized — otherwise `!(a and b)` would reformat
+// to `!a and b`, which parses as `(!a) and b`.
+fn prefix_unary(sym: String, inner: Expr, tm: TriviaMap) Doc {
+  operand := format_expr(inner, tm)
+
+  case inner.kind {
+    .Binary(_, _, _) => doc.concat([doc.text(sym), doc.text("("), operand, doc.text(")")]),
+    _ => doc.concat([doc.text(sym), operand]),
   }
 }
 

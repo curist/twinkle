@@ -19,7 +19,16 @@ fn new_gen(prog_len: Int) Gen {
 }
 
 // Add a thread at `pc`, following all zero-width instructions (the ε-closure).
-fn add_thread(prog: Vector<Inst>, gen: Gen, pc: Int, slots: Vector<Int>, pos: Int, len: Int) Gen {
+// `chars`/`len` are needed so multiline anchors can inspect adjacent scalars.
+fn add_thread(
+  prog: Vector<Inst>,
+  gen: Gen,
+  pc: Int,
+  slots: Vector<Int>,
+  chars: Vector<Int>,
+  pos: Int,
+  len: Int,
+) Gen {
   if gen.seen[pc] {
     return gen
   }
@@ -28,19 +37,19 @@ fn add_thread(prog: Vector<Inst>, gen: Gen, pc: Int, slots: Vector<Int>, pos: In
   g.seen = .set_at(pc, true)
 
   case prog[pc] {
-    .Jmp(x) => add_thread(prog, g, x, slots, pos, len),
+    .Jmp(x) => add_thread(prog, g, x, slots, chars, pos, len),
     .Split(x, y) => {
-      g = add_thread(prog, g, x, slots, pos, len)
-      add_thread(prog, g, y, slots, pos, len)
+      g = add_thread(prog, g, x, slots, chars, pos, len)
+      add_thread(prog, g, y, slots, chars, pos, len)
     },
-    .Save(slot) => add_thread(prog, g, pc + 1, slots.set_at(slot, pos), pos, len),
-    .AssertStart => if pos == 0 {
-      add_thread(prog, g, pc + 1, slots, pos, len)
+    .Save(slot) => add_thread(prog, g, pc + 1, slots.set_at(slot, pos), chars, pos, len),
+    .AssertStart(ml) => if assert_start(ml, chars, pos) {
+      add_thread(prog, g, pc + 1, slots, chars, pos, len)
     } else {
       g
     },
-    .AssertEnd => if pos == len {
-      add_thread(prog, g, pc + 1, slots, pos, len)
+    .AssertEnd(ml) => if assert_end(ml, chars, pos, len) {
+      add_thread(prog, g, pc + 1, slots, chars, pos, len)
     } else {
       g
     },
@@ -52,12 +61,22 @@ fn add_thread(prog: Vector<Inst>, gen: Gen, pc: Int, slots: Vector<Int>, pos: In
   }
 }
 
+// `^`: input start always; after a `\n` too when multiline.
+fn assert_start(ml: Bool, chars: Vector<Int>, pos: Int) Bool {
+  pos == 0 or ml and pos > 0 and chars[pos - 1] == '\n'
+}
+
+// `$`: input end always; before a `\n` too when multiline.
+fn assert_end(ml: Bool, chars: Vector<Int>, pos: Int, len: Int) Bool {
+  pos == len or ml and pos < len and chars[pos] == '\n'
+}
+
 // Does the consuming instruction at `pc` accept scalar `ch`?
-fn inst_matches(prog: Vector<Inst>, pc: Int, ch: Int, ignore_case: Bool) Bool {
+fn inst_matches(prog: Vector<Inst>, pc: Int, ch: Int) Bool {
   case prog[pc] {
-    .Char(c) => scalar_eq(c, ch, ignore_case),
-    .AnyChar => ch != '\n',
-    .Class(items, negated) => class_match(items, ch, negated, ignore_case),
+    .Char(c, ic) => scalar_eq(c, ch, ic),
+    .AnyChar(dotall) => dotall or ch != '\n',
+    .Class(items, negated, ic) => class_match(items, ch, negated, ic),
     _ => false,
   }
 }
@@ -67,9 +86,7 @@ fn inst_matches(prog: Vector<Inst>, pc: Int, ch: Int, ignore_case: Bool) Bool {
 /// start thread per position at lowest priority (leftmost) while no match is
 /// recorded; on `Match`, record and cut lower-priority threads but keep stepping
 /// higher-priority ones (greedy).
-pub fn find_from(prog: Vector<Inst>, chars: Vector<Int>, start: Int, ignore_case: Bool, nslots: Int) Vector<
-  Int,
->? {
+pub fn find_from(prog: Vector<Inst>, chars: Vector<Int>, start: Int, nslots: Int) Vector<Int>? {
   len := chars.len()
   clist := new_gen(prog.len())
   matched: Vector<Int>? = .None
@@ -78,7 +95,7 @@ pub fn find_from(prog: Vector<Inst>, chars: Vector<Int>, start: Int, ignore_case
   for true {
     case matched {
       .None => {
-        clist = add_thread(prog, clist, 0, fresh_slots(nslots), pos, len)
+        clist = add_thread(prog, clist, 0, fresh_slots(nslots), chars, pos, len)
       },
       .Some(_) => {},
     }
@@ -101,8 +118,8 @@ pub fn find_from(prog: Vector<Inst>, chars: Vector<Int>, start: Int, ignore_case
           matched = .Some(t.slots)
           stop = true
         },
-        _ => if pos < len and inst_matches(prog, t.pc, ch, ignore_case) {
-          nlist = add_thread(prog, nlist, t.pc + 1, t.slots, pos + 1, len)
+        _ => if pos < len and inst_matches(prog, t.pc, ch) {
+          nlist = add_thread(prog, nlist, t.pc + 1, t.slots, chars, pos + 1, len)
         },
       }
 

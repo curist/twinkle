@@ -18,6 +18,17 @@ fn group_or(m: Match, i: Int, missing: String) String {
   }
 }
 
+fn named_or(m: Match, name: String, missing: String) String {
+  case m.group_named(name) {
+    .Some(s) => s,
+    .None => missing,
+  }
+}
+
+fn opts(ignore_case: Bool, multiline: Bool, dotall: Bool) regexp.CompileOptions {
+  .{ ignore_case, multiline, dotall }
+}
+
 fn err_at(p: String, want_pos: Int) Result<Void, String> {
   case regexp.compile(p) {
     .Err(e) => assert.equal(e.pos, want_pos),
@@ -177,6 +188,82 @@ pub fn suite() runner.Suite {
         try err_at("ab\\", 2)
         try err_at("*ab", 0)
         try err_at("a{2,x}", 1)
+        .Ok({})
+      },
+    )
+    .test(
+      "compile_with options",
+      fn() {
+        try assert.is_true(regexp.must_with("abc", opts(true, false, false)).test("ABC"))
+        try assert.is_true(regexp.must_with("^b", opts(false, true, false)).test("a\nb"))
+        try assert.is_false(regexp.must_with("^b", opts(false, false, false)).test("a\nb"))
+        try assert.is_true(regexp.must_with("b$", opts(false, true, false)).test("ab\nc"))
+        try assert.is_true(regexp.must_with("a.b", opts(false, false, true)).test("a\nb"))
+        try assert.is_false(regexp.must_with("a.b", opts(false, false, false)).test("a\nb"))
+        .Ok({})
+      },
+    )
+    .test(
+      "scoped flag groups",
+      fn() {
+        try assert.is_true(regexp.must("a(?i:b)c").test("aBc"))
+        try assert.is_false(regexp.must("a(?i:b)c").test("ABc"))
+        try assert.is_true(regexp.must("(?s:a.b)").test("a\nb"))
+        try assert.is_true(regexp.must("(?m:^b)").test("a\nb"))
+
+        // A nested `(?-i:...)` turns ignore_case back off within its scope.
+        try assert.is_false(regexp.must("(?i)a(?-i:b)").test("aB"))
+        try assert.is_true(regexp.must("(?im)^b").test("A\nB"))
+
+        // Bad flag groups are parse errors.
+        try assert.is_err(regexp.compile("(?q:a)"))
+        try assert.is_err(regexp.compile("(?i-:a)"))
+        .Ok({})
+      },
+    )
+    .test(
+      "lazy quantifiers",
+      fn() {
+        try assert.equal(text_or(regexp.must("a+?").find("aaa"), "?"), "a")
+        try assert.equal(text_or(regexp.must("a+?a").find("aaa"), "?"), "aa")
+        try assert.equal(text_or(regexp.must("<.*?>").find("<a><b>"), "?"), "<a>")
+        try assert.equal(text_or(regexp.must("a{2,4}?").find("aaaa"), "?"), "aa")
+
+        // A lazy star prefers the shorter (empty) match where one suffices.
+        try assert.equal(text_or(regexp.must("a*?b").find("aaab"), "?"), "aaab")
+        .Ok({})
+      },
+    )
+    .test(
+      "named groups",
+      fn() {
+        case regexp.must(r"(?<id>\d+)-(?<color>\w+)").find("12-red") {
+          .Some(m) => {
+            try assert.equal(group_or(m, 1, "?"), "12")
+            try assert.equal(group_or(m, 2, "?"), "red")
+            try assert.equal(named_or(m, "id", "?"), "12")
+            try assert.equal(named_or(m, "color", "?"), "red")
+            try assert.is_none(m.group_named("missing"))
+          },
+          .None => { return assert.fail("expected named-group match") },
+        }
+
+        case regexp.must(r"(?P<n>\d+)").find("x42") {
+          .Some(m) => try assert.equal(named_or(m, "n", "?"), "42"),
+          .None => { return assert.fail("expected (?P<name>) match") },
+        }
+        .Ok({})
+      },
+    )
+    .test(
+      "named group and lazy errors",
+      fn() {
+        try assert.is_err(regexp.compile(r"(?<a>\d)(?<a>\d)"))
+        try assert.is_err(regexp.compile(r"(?<Bad>\d)"))
+        try assert.is_err(regexp.compile(r"(?<id\d)"))
+        try assert.is_err(regexp.compile(r"\1"))
+        try assert.is_err(regexp.compile(r"\k<id>"))
+        try err_at("*?a", 0)
         .Ok({})
       },
     )

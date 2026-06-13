@@ -9,19 +9,46 @@ use .regexp.vm
 /// Parse/compile error: `pos` is the scalar offset into the pattern.
 pub type RegexError = types.RegexError
 
-/// A compiled pattern. Build with `compile` or `must`; reuse across matches.
-pub type Regexp = .{ program: Vector<types.Inst>, group_count: Int, ignore_case: Bool }
+/// Compile-time options. Each is also expressible inline: `ignore_case` as
+/// `(?i)`, `multiline` as `(?m)`, `dotall` as `(?s)`, with scoped `(?flags:...)`
+/// groups overriding within their extent.
+pub type CompileOptions = types.Flags
+
+/// A compiled pattern. Build with `compile`/`compile_with` or `must`/`must_with`;
+/// reuse across matches.
+pub type Regexp = .{
+  program: Vector<types.Inst>,
+  group_count: Int,
+  group_names: Vector<types.NamedGroup>,
+}
 
 /// A successful match. `start`/`end` are scalar offsets; `groups[0]` is the
 /// whole match, `groups[1..]` the capturing groups (`.None` if unmatched).
-pub type Match = .{ start: Int, end: Int, groups: Vector<String?> }
+/// `group_names` carries the pattern's named-group table for `group_named`.
+pub type Match = .{
+  start: Int,
+  end: Int,
+  groups: Vector<String?>,
+  group_names: Vector<types.NamedGroup>,
+}
+
+/// All flags off — the default (`compile`/`must`) behavior.
+fn default_options() CompileOptions {
+  .{ ignore_case: false, multiline: false, dotall: false }
+}
 
 /// Compile a pattern, returning a `RegexError` for a malformed pattern.
 pub fn compile(pattern: String) Result<Regexp, RegexError> {
-  case parse.parse(pattern) {
+  compile_with(pattern, default_options())
+}
+
+/// Compile a pattern with explicit options. Inline flags override options within
+/// their scope.
+pub fn compile_with(pattern: String, options: CompileOptions) Result<Regexp, RegexError> {
+  case parse.parse(pattern, options) {
     .Ok(p) => {
       prog := program.compile(p.ast)
-      .Ok(Regexp.{ program: prog, group_count: p.group_count, ignore_case: p.ignore_case })
+      .Ok(Regexp.{ program: prog, group_count: p.group_count, group_names: p.group_names })
     },
     .Err(e) => .Err(e),
   }
@@ -30,6 +57,14 @@ pub fn compile(pattern: String) Result<Regexp, RegexError> {
 /// Compile a pattern, trapping on error. For author-written literal patterns.
 pub fn must(pattern: String) Regexp {
   case compile(pattern) {
+    .Ok(re) => re,
+    .Err(e) => error("regexp:${e.pos}: ${e.message}"),
+  }
+}
+
+/// Compile a pattern with options, trapping on error.
+pub fn must_with(pattern: String, options: CompileOptions) Regexp {
+  case compile_with(pattern, options) {
     .Ok(re) => re,
     .Err(e) => error("regexp:${e.pos}: ${e.message}"),
   }
@@ -52,8 +87,8 @@ fn slot_count(group_count: Int) Int {
 pub fn find(re: Regexp, s: String) Match? {
   chars := parse.decode(s)
 
-  case vm.find_from(re.program, chars, 0, re.ignore_case, slot_count(re.group_count)) {
-    .Some(slots) => .Some(materialize(chars, slots, re.group_count)),
+  case vm.find_from(re.program, chars, 0, slot_count(re.group_count)) {
+    .Some(slots) => .Some(materialize(chars, slots, re.group_count, re.group_names)),
     .None => .None,
   }
 }
@@ -70,15 +105,9 @@ pub fn find_all(re: Regexp, s: String) Iterator<Match> {
       if st.pos > st.chars.len() {
         UnfoldStep.Done
       } else {
-        case vm.find_from(
-          st.re.program,
-          st.chars,
-          st.pos,
-          st.re.ignore_case,
-          slot_count(st.re.group_count),
-        ) {
+        case vm.find_from(st.re.program, st.chars, st.pos, slot_count(st.re.group_count)) {
           .Some(slots) => {
-            m := materialize(st.chars, slots, st.re.group_count)
+            m := materialize(st.chars, slots, st.re.group_count, st.re.group_names)
             next := if m.end > m.start {
               m.end
             } else {
@@ -120,9 +149,9 @@ fn replace_n(re: Regexp, s: String, repl: String, limit: Int) String {
       return finish(out, chars, last, len)
     }
 
-    case vm.find_from(re.program, chars, pos, re.ignore_case, nslots) {
+    case vm.find_from(re.program, chars, pos, nslots) {
       .Some(slots) => {
-        m := materialize(chars, slots, re.group_count)
+        m := materialize(chars, slots, re.group_count, re.group_names)
         out = .concat(slice_scalars(chars, last, m.start))
         out = .concat(expand(repl, m))
         count = count + 1
@@ -189,7 +218,12 @@ fn group_text(m: Match, g: Int) String {
   }
 }
 
-fn materialize(chars: Vector<Int>, slots: Vector<Int>, group_count: Int) Match {
+fn materialize(
+  chars: Vector<Int>,
+  slots: Vector<Int>,
+  group_count: Int,
+  group_names: Vector<types.NamedGroup>,
+) Match {
   groups: Vector<String?> = []
   k := 0
 
@@ -206,7 +240,7 @@ fn materialize(chars: Vector<Int>, slots: Vector<Int>, group_count: Int) Match {
     k = k + 1
   }
 
-  Match.{ start: slots[0], end: slots[1], groups }
+  Match.{ start: slots[0], end: slots[1], groups, group_names }
 }
 
 /// The i-th group: `group(0)` is the whole match. `.None` if `i` is out of
@@ -217,6 +251,18 @@ pub fn group(m: Match, i: Int) String? {
   } else {
     m.groups[i]
   }
+}
+
+/// The capture text of the named group `name`, or `.None` if there is no such
+/// group or it did not participate in the match.
+pub fn group_named(m: Match, name: String) String? {
+  for ng in m.group_names {
+    if ng.name == name {
+      return group(m, ng.index)
+    }
+  }
+
+  .None
 }
 
 /// The whole matched text (`group(0)`).
