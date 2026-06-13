@@ -31,14 +31,7 @@ fn collect_free_vars_inner(
 
       .{ bound, captured, result }
     },
-    .GlobalLocal(id) => {
-      if !bound.has(id.id) and !captured.has(id.id) {
-        captured[id.id] = true
-        result = .append(id)
-      }
-
-      .{ bound, captured, result }
-    },
+    .GlobalLocal(_) => .{ bound, captured, result },
     .Let(local, value, body) => {
       st := collect_free_vars_inner(value, bound, captured, result)
       st.bound[local.id] = true

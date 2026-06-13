@@ -999,15 +999,15 @@ pub fn suite() runner.Suite {
       },
     )
     .test(
-      "closure captures module global from top-level lambda",
+      "closure references module global without capturing it",
       fn() Result<Void, String> {
         src := "add5 := fn(x: Int) Int { x + 5 }\nfn f() fn(Int) Int { fn(x: Int) Int { add5(x) } }"
         lr := try lower_src_with_builtin_env(src)
         f_body := lr.module.functions[0].body
         try assert.ok(has_make_closure(f_body), "expected MakeClosure in outer function")
         try assert.ok(
-          has_make_closure_capture(f_body, 0),
-          "expected lambda closure to capture module global add5",
+          !has_make_closure_capture(f_body, 0),
+          "module global add5 should remain a GlobalLocal, not a closure capture",
         )
         .Ok({})
       },

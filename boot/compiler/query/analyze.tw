@@ -351,14 +351,6 @@ fn analyze_module_impl(
     cur.timings.dep_hashes = cur.timings.dep_hashes + (date.now() - t_hash0)
   }
 
-  runner := stage_runner.new(
-    canonical,
-    loaded.source_hash,
-    hashes.deps_hash,
-    hashes.context_hash,
-    dep_plan.is_internal,
-  )
-  cur.module_runners[canonical] = runner
   env := deps.env
 
   if dep_plan.is_internal {
@@ -366,6 +358,20 @@ fn analyze_module_impl(
   }
 
   local_type_start := env.types.len()
+
+  // The same module can be analyzed first as an entry and later as a dependency
+  // after more shared types have been installed in the base environment. Include
+  // the base type count so cached resolved/checked artifacts are only reused
+  // with a compatible TypeId layout.
+  context_hash := keys.mix_word(hashes.context_hash, local_type_start)
+  runner := stage_runner.new(
+    canonical,
+    loaded.source_hash,
+    hashes.deps_hash,
+    context_hash,
+    dep_plan.is_internal,
+  )
+  cur.module_runners[canonical] = runner
 
   // If a dependency reached this module through a cycle, it may have published
   // an opaque preliminary interface for our own exported types/functions. Merge
