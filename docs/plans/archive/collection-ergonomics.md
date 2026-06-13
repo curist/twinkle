@@ -1,6 +1,10 @@
 # Collection ergonomics — shared `Vector` and `View` helpers
 
-Status: proposal.
+Status: done. Archived after the initial `Vector`/`View` helper pass landed.
+
+Follow-up: `Vector.chunks` and `Vector.windows` remain deferred until prelude
+method signatures can mention stdlib-defined types such as `@std.view.View`; see
+[prelude-stdlib-type-interfaces.md](../prelude-stdlib-type-interfaces.md).
 
 ## Goal
 
@@ -108,18 +112,23 @@ Return types:
 View.chunks<C>(v: View<C>, size: Int) Vector<View<C>>
 View.windows<C>(v: View<C>, size: Int) Vector<View<C>>
 
+// Deferred follow-up; see ../prelude-stdlib-type-interfaces.md
 Vector.chunks<T>(xs: Vector<T>, size: Int) Vector<View<Vector<T>>>
 Vector.windows<T>(xs: Vector<T>, size: Int) Vector<View<Vector<T>>>
 ```
 
 Semantics:
 
-- `chunks(size)` traps when `size <= 0`; otherwise returns non-overlapping views.
-  The final chunk may be shorter.
-- `windows(size)` traps when `size <= 0`; returns every length-`size` contiguous
-  window. If `size > len`, returns an empty vector.
-- `Vector` implementations should forward through `view.from(xs)` so the chunks
-  and windows share the original vector rather than copying elements.
+- `chunks(size)` clamps nonsensical sizes to an empty result: when `size <= 0`,
+  return `[]`; otherwise return non-overlapping views. The final chunk may be
+  shorter.
+- `windows(size)` clamps nonsensical sizes to an empty result: when `size <= 0`,
+  return `[]`; otherwise return every length-`size` contiguous window. If
+  `size > len`, return an empty vector.
+- Deferred: `Vector` implementations should forward through `view.from(xs)` so
+  the chunks and windows share the original vector rather than copying elements.
+  This requires prelude method signatures to reference `@std.view.View`; see
+  [prelude-stdlib-type-interfaces.md](../prelude-stdlib-type-interfaces.md).
 
 ### Add to `View` for parity with `Vector`
 
@@ -183,17 +192,17 @@ awkward to express in the current type system, defer `unique`.
 1. Extend `boot/stdlib/view.tw` with the `View` helpers. Prefer simple loops over
    abstraction-heavy implementations so monomorphized code stays predictable.
 2. Extend `boot/prelude/vector.tw` with vector conveniences. Reuse existing
-   vector primitives (`slice`, `append`, `len`, indexing) and forward to
-   `@std.view` only where the result type is explicitly `View`-based
-   (`chunks`, `windows`).
+   vector primitives (`slice`, `append`, `len`, indexing). Deferred: the
+   `View`-returning conveniences (`chunks`, `windows`) need the follow-up in
+   [prelude-stdlib-type-interfaces.md](../prelude-stdlib-type-interfaces.md).
 3. Add API documentation to `docs/API.md` under `Vector<T>` and `@std.view`.
 4. Add boot tests covering edge behavior:
    - `take` / `drop` clamp behavior
    - `take_while` / `drop_while` prefix behavior
    - `find_map` short-circuit behavior
    - `zip_with` shorter-input behavior
-   - `chunks` final short chunk and invalid size trap
-   - `windows` normal, too-large, and invalid size behavior
+   - `chunks` final short chunk and invalid size returning empty
+   - `windows` normal, too-large, and invalid size returning empty
    - `compact`, `dedup`, and `intersperse` owned-vector behavior
 5. Run the formatter on changed `.tw` files.
 6. Run `make boot-test`; if prelude/bootstrap changes require it, rebuild the
@@ -201,14 +210,16 @@ awkward to express in the current type system, defer `unique`.
 
 ## Open questions
 
-- Should `count_where` instead be named `count` with a predicate? `count_where`
-  is explicit and avoids confusion with `String.count(needle)`, but `count` is
-  common in some collection libraries.
-- Should invalid `chunks(0)` / `windows(0)` trap, or return an empty vector?
-  Trapping catches bugs and avoids silently accepting nonsensical window sizes.
-- Should `take_while` / `drop_while` on `Vector` return `Vector` directly or a
-  `View<Vector<T>>`? The ergonomic answer is `Vector`; users who want zero-copy
-  can call `view.from(xs).take_while(...)`.
-- Can `unique` express the key constraint cleanly today? If not, defer it rather
-  than weakening type checking or broadening `Set` semantics as part of this
-  plan.
+- Resolved: keep the name `count_where`. It is explicit about predicate-based
+  counting and avoids confusion with collection length or string-counting APIs.
+- Resolved: invalid `chunks(0)` / `windows(0)` return an empty vector rather
+  than trapping. This keeps the window helpers total and consistent with the
+  forgiving/clamping behavior of `take`, `drop`, and `sub`.
+- Resolved: `take_while` / `drop_while` on `Vector` return `Vector` directly.
+  This keeps vector methods ergonomic and consistent with other materializing
+  vector helpers; users who want zero-copy prefix/suffix windows can call
+  `view.from(xs).take_while(...)` or `view.from(xs).drop_while(...)`.
+- Resolved: defer `unique` for now. It needs the same key constraints as
+  `Set`/`Dict`, but the current type system does not expose a clean
+  set-compatible-key constraint. Avoid weakening type checking or broadening
+  `Set` semantics as part of this ergonomics pass.

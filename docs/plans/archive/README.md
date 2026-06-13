@@ -125,6 +125,7 @@ Related historical context outside this folder:
 | [access-contracts.md](access-contracts.md) | Parameterized contracts `IndexRead<E>`/`IndexWrite<E>`/`IntoIterator<E>` with a `Self → E` functional dependency; write-once generic access monomorphized to direct reads; `v[i]` and `for x in` wired through the contracts |
 | [access-contract-hardening.md](access-contract-hardening.md) | Hardening follow-up for access contracts: bound arity diagnostics, element-aware proof caching, explicit iteration lowering, contract lookup cleanup, signature-driven bound-only monomorphization recovery, and total `View.sub` clamping |
 | [view.md](view.md) | `View<C>` zero-copy windows over any `IndexRead` backing (`@std.view`); O(1) `drop_first`/`drop_last`/`sub`, the first stdlib access-contract satisfier |
+| [collection-ergonomics.md](collection-ergonomics.md) | Common `Vector` and `View` helpers (`take`, `drop`, `zip_with`, materializing view operations, and owned-vector conveniences); `Vector.chunks`/`windows` deferred to [../prelude-stdlib-type-interfaces.md](../prelude-stdlib-type-interfaces.md) |
 | [wasm-tail-calls.md](wasm-tail-calls.md) | Wasm tail-call emission (`return_call` for direct calls, `return_call_ref` for closures) as a required target feature |
 | [dict-wyhash-i64.md](dict-wyhash-i64.md) | Migrate active FNV-derived hashing to deterministic wyhash v3 and carry 64-bit hashes through the Dict HAMT |
 | [string-unicode-semantics.md](string-unicode-semantics.md) | Byte-first string semantics with explicit Unicode APIs |
