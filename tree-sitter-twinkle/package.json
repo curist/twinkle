@@ -1,6 +1,6 @@
 {
   "name": "tree-sitter-twinkle",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Twinkle grammar for tree-sitter",
   "repository": {
     "type": "git",
