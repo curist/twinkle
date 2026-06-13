@@ -61,6 +61,19 @@ fn test_multiline_block_preserves_content_trailing_space() Result<Void, String> 
   assert.equal(formatted, src)
 }
 
+fn test_unary_not_preserves_binary_parens() Result<Void, String> {
+  // `!` binds tighter than comparison/`and`, so the parens are load-bearing:
+  // dropping them turns `!(x >= 0 and x <= 9)` into `(!x) >= 0 and x <= 9`.
+  formatted := try format_ok("fn f(x: Int) Bool { !(x >= 0 and x <= 9) }")
+  assert.equal(formatted, "fn f(x: Int) Bool {\n  !(x >= 0 and x <= 9)\n}\n")
+}
+
+fn test_unary_neg_preserves_binary_parens() Result<Void, String> {
+  // Same for negation: `-(a + b)` must not become `-a + b`.
+  formatted := try format_ok("fn g(a: Int, b: Int) Int { -(a + b) }")
+  assert.equal(formatted, "fn g(a: Int, b: Int) Int {\n  -(a + b)\n}\n")
+}
+
 fn test_dollar_string_formatting() Result<Void, String> {
   formatted := try format_ok("fn f() String { \"byte$to_int\" }")
   try assert.equal(formatted, "fn f() String {\n  \"byte$to_int\"\n}\n")
@@ -77,6 +90,8 @@ pub fn suite() runner.Suite {
     .test("breaks logical or chains by alternative", assert_fmt_case("logical_or_chain"))
     .test("formats declarations and top-level spacing", assert_fmt_case("declarations"))
     .test("formats unicode escapes as scalars", test_unicode_escape_formatting)
+    .test("keeps parens around a not'd binary expression", test_unary_not_preserves_binary_parens)
+    .test("keeps parens around a negated binary expression", test_unary_neg_preserves_binary_parens)
     .test("formats dollar strings without changing meaning", test_dollar_string_formatting)
     .test("preserves raw single-line strings", assert_fmt_case("raw_string"))
     .test("reflows and preserves multiline blocks", assert_fmt_case("multiline_block"))
