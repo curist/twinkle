@@ -261,37 +261,6 @@ pub fn base64(d: Digest) String {
   base64_encode(d.bytes)
 }
 
-/// Return true when the digest's hexadecimal representation begins with at
-/// least `zeroes` zero nybbles.
-pub fn starts_with_hex_zeroes(d: Digest, zeroes: Int) Bool {
-  if zeroes <= 0 {
-    return true
-  }
-
-  full_bytes := zeroes / 2
-  if full_bytes > d.bytes.len() {
-    return false
-  }
-
-  i := 0
-  for i < full_bytes {
-    if d.bytes[i] != Byte.from_int(0).unwrap() {
-      return false
-    }
-    i = i + 1
-  }
-
-  if zeroes % 2 == 1 {
-    if full_bytes >= d.bytes.len() {
-      false
-    } else {
-      (d.bytes[full_bytes].to_int() >> 4 & 0xf) == 0
-    }
-  } else {
-    true
-  }
-}
-
 /// Stringify witness for digest values; renders the lowercase hex digest.
 pub fn to_string(d: Digest) String {
   hex(d)

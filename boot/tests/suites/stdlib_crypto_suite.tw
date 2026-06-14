@@ -105,20 +105,4 @@ pub fn suite() runner.Suite {
         .Ok({})
       },
     )
-    .test(
-      "leading hex zero helper",
-      fn() {
-        coin := crypto.md5("abcdef609043")
-        try assert.ok(coin.starts_with_hex_zeroes(5), "abcdef sample has five leading zeroes")
-        try assert.ok(
-          !coin.starts_with_hex_zeroes(6),
-          "abcdef sample does not have six leading zeroes",
-        )
-        try assert.ok(
-          crypto.md5("pqrstuv1048970").starts_with_hex_zeroes(5),
-          "pqrstuv sample has five leading zeroes",
-        )
-        .Ok({})
-      },
-    )
 }

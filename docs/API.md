@@ -435,7 +435,6 @@ type Digest = .{ bytes: Vector<Byte> }
 | `.to_bytes()` | `fn(d: Digest) Vector<Byte>` | Raw digest bytes |
 | `.hex()` | `fn(d: Digest) String` | Lowercase hexadecimal representation |
 | `.base64()` | `fn(d: Digest) String` | Standard Base64 representation |
-| `.starts_with_hex_zeroes(zeroes)` | `fn(d: Digest, zeroes: Int) Bool` | Whether the digest starts with at least that many zero hex nybbles |
 | `.to_string()` | `fn(d: Digest) String` | Stringify witness; renders `.hex()` |
 
 ```tw
