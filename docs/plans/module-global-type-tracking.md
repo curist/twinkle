@@ -2,6 +2,32 @@
 
 ## Status
 
+**DONE** (branch `module-global-id`). The fix shipped and `kinds.tw` is back to
+`pub <name> := <n>` value bindings; self-host fixed point + full boot suite green.
+
+Two deviations from the design below, both arrived at during implementation:
+
+1. **Oracle sourced at `lower_anf`, not the linker.** `lower_anf` runs after
+   link+monomorphize on the whole program, so each Core `GlobalSet(gid, value)`
+   already carries the *linked* `GlobalId` and a *concrete* `value.ty`. Collecting
+   `AnfModule.global_monos: Dict<linked-gid, MonoType>` there is a complete,
+   authoritative oracle and avoids threading a new map through
+   monomorphize→lower_anf→prepare (it rides on `AnfModule`/`PreparedModule.anf`).
+   Both codegen (`wasm_plan_impl` registry) and the verifier
+   (`verify.build_module_globals`) read it.
+2. **A latent gap surfaced and was fixed:** calling a function/closure stored in
+   a module global. Once globals lost their shared local slot, such a callee
+   becomes `AGlobalLocal`, which `emit_call` couldn't call. Added
+   `emit_global_closure_call` (loads the closure via `global.get`); the tail path
+   falls back to it. `insert_boundaries` carries the oracle (`BCtx.global_monos`)
+   to materialize a bare function value into a closure for the global's type.
+
+The `slot_assign` missing-slot→`AGlobalLocal` inference is left in place as a
+harmless vestige (reads now arrive as `AGlobalLocal` from lowering, so it no
+longer fires); converting it to a hard error is optional future cleanup.
+
+## Status (original)
+
 Proposed. Motivated by an attempt to expose LSP `CompletionItemKind` values as
 module-level `pub` value bindings (`kinds.constant`). That refactor shipped as
 functions (`kinds.constant()`) instead, because adding a module of `pub` value
