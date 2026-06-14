@@ -222,7 +222,7 @@ pub fn link(modules: Vector<WasmModule>, entry: String?) Result<LinkedModule, Ve
 
   for m in modules {
     for exp in m.exports {
-      key := "${m.namespace} ${exp.wasm_name}"
+      key := "${m.namespace}::${exp.wasm_name}"
       export_map[key] = qualify(m.namespace, exp.func_sym)
     }
   }
@@ -253,7 +253,7 @@ pub fn link(modules: Vector<WasmModule>, entry: String?) Result<LinkedModule, Ve
     redirects: Dict<String, String> = Dict.new()
 
     for imp in m.imports {
-      key := "${imp.module} ${imp.name}"
+      key := "${imp.module}::${imp.name}"
 
       case export_map[key] {
         .Some(qualified_export) => {
