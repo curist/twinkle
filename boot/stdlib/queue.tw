@@ -1,0 +1,100 @@
+/// Persistent double-ended queue built from two vectors.
+///
+/// The public sequence is `front.reverse().concat(back)`: `front` stores the
+/// front side in reverse order and `back` stores the back side in normal order.
+/// This lets pushes and same-side pops use vector append/drop-last fast paths.
+/// When the active side is empty, the queue is rebalanced by materializing the
+/// remaining logical sequence and splitting it across both sides.
+
+pub type Queue<T> = .{ front: Vector<T>, back: Vector<T> }
+
+pub type Pop<T> = .{ value: T, rest: Queue<T> }
+
+pub fn new<T>() Queue<T> {
+  Queue.{ front: [], back: [] }
+}
+
+pub fn singleton<T>(value: T) Queue<T> {
+  Queue.{ front: [value], back: [] }
+}
+
+pub fn from_vector<T>(xs: Vector<T>) Queue<T> {
+  n := xs.len()
+  mid := (n + 1) / 2
+  Queue.{ front: xs.take(mid).reverse(), back: xs.drop(mid) }
+}
+
+pub fn to_vector<T>(q: Queue<T>) Vector<T> {
+  q.front.reverse().concat(q.back)
+}
+
+pub fn len<T>(q: Queue<T>) Int {
+  q.front.len() + q.back.len()
+}
+
+pub fn is_empty<T>(q: Queue<T>) Bool {
+  q.len() == 0
+}
+
+pub fn push_front<T>(q: Queue<T>, value: T) Queue<T> {
+  q.front = .append(value)
+  q
+}
+
+pub fn push_back<T>(q: Queue<T>, value: T) Queue<T> {
+  q.back = .append(value)
+  q
+}
+
+pub fn peek_front<T>(q: Queue<T>) T? {
+  if q.front.len() > 0 {
+    .Some(q.front[q.front.len() - 1])
+  } else if q.back.len() > 0 {
+    .Some(q.back[0])
+  } else {
+    .None
+  }
+}
+
+pub fn peek_back<T>(q: Queue<T>) T? {
+  if q.back.len() > 0 {
+    .Some(q.back[q.back.len() - 1])
+  } else if q.front.len() > 0 {
+    .Some(q.front[0])
+  } else {
+    .None
+  }
+}
+
+pub fn pop_front<T>(q: Queue<T>) Pop<T>? {
+  if q.front.len() > 0 {
+    value := q.front[q.front.len() - 1]
+    q.front = .drop_last()
+    return .Some(Pop.{ value, rest: q })
+  }
+
+  if q.back.len() == 0 {
+    return .None
+  }
+
+  value := q.back[0]
+  rest := from_vector(q.back.drop_first())
+  .Some(Pop.{ value, rest })
+}
+
+pub fn pop_back<T>(q: Queue<T>) Pop<T>? {
+  if q.back.len() > 0 {
+    value := q.back[q.back.len() - 1]
+    q.back = .drop_last()
+    return .Some(Pop.{ value, rest: q })
+  }
+
+  if q.front.len() == 0 {
+    return .None
+  }
+
+  xs := q.front.reverse()
+  value := xs[xs.len() - 1]
+  rest := from_vector(xs.drop_last())
+  .Some(Pop.{ value, rest })
+}

@@ -304,6 +304,37 @@ Persistent vector with structural sharing. Literal syntax: `[1, 2, 3]`.
 Vectors are iterable: `for x in v { ... }` and `for x, i in v { ... }`.
 Qualified forms (`Vector.map`, `Vector.filter`, etc.) also work.
 
+## `@std.queue`
+
+Persistent double-ended queue. Import with `use @std.queue` for constructors and
+qualified calls, and `use @std.queue.{Queue}` when naming the type directly.
+The queue is immutable: push and pop operations return a new queue while sharing
+structure where possible.
+
+`Queue<T>` is designed for efficient operations at both ends. It uses vectors
+internally and normally pushes/pops against vector tails; when one side empties,
+it rebalances by reversing/splitting the remaining elements. Prefer conservative
+amortized-performance assumptions until benchmark data is available. For tiny
+collections, raw `Vector<T>` may still be faster due to lower overhead.
+
+| Function / Method | Signature | Description |
+|-------------------|-----------|-------------|
+| `queue.new()` | `fn<T>() Queue<T>` | Create an empty queue |
+| `queue.singleton(value)` | `fn<T>(value: T) Queue<T>` | Create a queue with one value |
+| `queue.from_vector(xs)` | `fn<T>(xs: Vector<T>) Queue<T>` | Build a queue preserving vector order |
+| `.to_vector()` | `fn<T>(q: Queue<T>) Vector<T>` | Materialize values from front to back |
+| `.len()` | `fn<T>(q: Queue<T>) Int` | Number of values |
+| `.is_empty()` | `fn<T>(q: Queue<T>) Bool` | Whether the queue has no values |
+| `.push_front(value)` | `fn<T>(q: Queue<T>, value: T) Queue<T>` | Return a queue with `value` added at the front |
+| `.push_back(value)` | `fn<T>(q: Queue<T>, value: T) Queue<T>` | Return a queue with `value` added at the back |
+| `.peek_front()` | `fn<T>(q: Queue<T>) Option<T>` | Front value without removing it |
+| `.peek_back()` | `fn<T>(q: Queue<T>) Option<T>` | Back value without removing it |
+| `.pop_front()` | `fn<T>(q: Queue<T>) Option<Pop<T>>` | Remove the front value, returning `{ value, rest }` |
+| `.pop_back()` | `fn<T>(q: Queue<T>) Option<Pop<T>>` | Remove the back value, returning `{ value, rest }` |
+
+Qualified forms (`queue.push_back(q, x)`) and method-call forms
+(`q.push_back(x)`) both work.
+
 ## Dict\<K, V\>
 
 Persistent hash map. Keys must be `Int`, `String`, or `Byte`. `keys()`, dict iteration,

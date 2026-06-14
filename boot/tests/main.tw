@@ -102,6 +102,7 @@ use .suites.stdlib_crypto_suite
 use .suites.stdlib_host_suite
 use .suites.stdlib_math_suite
 use .suites.stdlib_path_suite
+use .suites.stdlib_queue_suite
 use .suites.stdlib_regexp_suite
 use .suites.stdlib_tuple_suite
 use .suites.string_edge_cases_suite
@@ -138,6 +139,7 @@ runner.run_all([
   dict_hash_suite.suite(),
   api_range_iterator_suite.suite(),
   stdlib_path_suite.suite(),
+  stdlib_queue_suite.suite(),
   stdlib_regexp_suite.suite(),
   stdlib_tuple_suite.suite(),
   stdlib_crypto_suite.suite(),

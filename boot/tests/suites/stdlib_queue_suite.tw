@@ -1,0 +1,167 @@
+use @std.queue
+use @std.queue.{Pop, Queue}
+
+use tests.assert
+use tests.runner
+
+fn some_int(opt: Int?, fallback: Int) Int {
+  case opt {
+    .Some(v) => v,
+    .None => fallback,
+  }
+}
+
+fn pop_value(opt: Pop<Int>?) Int {
+  case opt {
+    .Some(p) => p.value,
+    .None => -999,
+  }
+}
+
+fn pop_rest(opt: Pop<Int>?) Queue<Int> {
+  case opt {
+    .Some(p) => p.rest,
+    .None => queue.new(),
+  }
+}
+
+fn expect_vector(actual: Vector<Int>, expected: Vector<Int>) Result<Void, String> {
+  try assert.equal(actual.len(), expected.len())
+  i := 0
+
+  for i < expected.len() {
+    try assert.equal(actual[i], expected[i])
+    i = i + 1
+  }
+
+  .Ok({})
+}
+
+pub fn suite() runner.Suite {
+  runner.suite("stdlib queue")
+    .test(
+      "new queue is empty",
+      fn() {
+        q: Queue<Int> = queue.new()
+        try assert.equal(q.len(), 0)
+        try assert.is_true(q.is_empty())
+        try assert.is_none(q.peek_front())
+        try assert.is_none(q.peek_back())
+        try assert.is_none(q.pop_front())
+        try assert.is_none(q.pop_back())
+        .Ok({})
+      },
+    )
+    .test(
+      "singleton contains one value",
+      fn() {
+        q := queue.singleton(42)
+        try assert.equal(q.len(), 1)
+        try assert.is_false(q.is_empty())
+        try assert.equal(some_int(q.peek_front(), -1), 42)
+        try assert.equal(some_int(q.peek_back(), -1), 42)
+        try assert.equal(pop_value(q.pop_front()), 42)
+        try assert.equal(pop_value(q.pop_back()), 42)
+        .Ok({})
+      },
+    )
+    .test(
+      "pushes preserve front to back order",
+      fn() {
+        q: Queue<Int> = queue.new()
+        q = .push_back(2).push_back(3).push_front(1).push_front(0)
+        try expect_vector(q.to_vector(), [0, 1, 2, 3])
+        try assert.equal(q.len(), 4)
+        .Ok({})
+      },
+    )
+    .test(
+      "peeks do not remove values",
+      fn() {
+        q := queue.from_vector([1, 2, 3])
+        try assert.equal(some_int(q.peek_front(), -1), 1)
+        try assert.equal(some_int(q.peek_back(), -1), 3)
+        try expect_vector(q.to_vector(), [1, 2, 3])
+        .Ok({})
+      },
+    )
+    .test(
+      "pop_front consumes in fifo order",
+      fn() {
+        q := queue.from_vector([1, 2, 3, 4])
+        p := q.pop_front()
+        try assert.equal(pop_value(p), 1)
+        q = pop_rest(p)
+        p = q.pop_front()
+        try assert.equal(pop_value(p), 2)
+        q = pop_rest(p)
+        p = q.pop_front()
+        try assert.equal(pop_value(p), 3)
+        q = pop_rest(p)
+        p = q.pop_front()
+        try assert.equal(pop_value(p), 4)
+        q = pop_rest(p)
+        try assert.is_true(q.is_empty())
+        .Ok({})
+      },
+    )
+    .test(
+      "pop_back consumes from the back",
+      fn() {
+        q := queue.from_vector([1, 2, 3, 4])
+        p := q.pop_back()
+        try assert.equal(pop_value(p), 4)
+        q = pop_rest(p)
+        p = q.pop_back()
+        try assert.equal(pop_value(p), 3)
+        q = pop_rest(p)
+        p = q.pop_back()
+        try assert.equal(pop_value(p), 2)
+        q = pop_rest(p)
+        p = q.pop_back()
+        try assert.equal(pop_value(p), 1)
+        q = pop_rest(p)
+        try assert.is_true(q.is_empty())
+        .Ok({})
+      },
+    )
+    .test(
+      "from_vector and to_vector preserve order",
+      fn() {
+        q := queue.from_vector([5, 6, 7, 8, 9])
+        try expect_vector(q.to_vector(), [5, 6, 7, 8, 9])
+        .Ok({})
+      },
+    )
+    .test(
+      "rebalances when one side empties",
+      fn() {
+        q: Queue<Int> = queue.new()
+        q = .push_back(1).push_back(2).push_back(3).push_back(4)
+        p := q.pop_front()
+        try assert.equal(pop_value(p), 1)
+        q = pop_rest(p)
+        try expect_vector(q.to_vector(), [2, 3, 4])
+
+        q = queue.new()
+        q = .push_front(4).push_front(3).push_front(2).push_front(1)
+        p = q.pop_back()
+        try assert.equal(pop_value(p), 4)
+        q = pop_rest(p)
+        try expect_vector(q.to_vector(), [1, 2, 3])
+        .Ok({})
+      },
+    )
+    .test(
+      "old queue values remain usable after operations",
+      fn() {
+        q1 := queue.from_vector([1, 2, 3])
+        q2 := q1.push_back(4)
+        q3 := pop_rest(q2.pop_front())
+        try expect_vector(q1.to_vector(), [1, 2, 3])
+        try expect_vector(q2.to_vector(), [1, 2, 3, 4])
+        try expect_vector(q3.to_vector(), [2, 3, 4])
+        .Ok({})
+      },
+    )
+}
