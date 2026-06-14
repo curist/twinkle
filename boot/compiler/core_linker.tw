@@ -639,6 +639,7 @@ fn remap_expr_types(expr: CoreExpr, type_remap: Dict<Int, TypeId>) CoreExpr {
       remap_expr_types(body, type_remap),
     ),
     .Assign(local, value) => .Assign(local, remap_expr_types(value, type_remap)),
+    .GlobalSet(gid, value) => .GlobalSet(gid, remap_expr_types(value, type_remap)),
     .BinOp(op, lhs, rhs) => .BinOp(
       op,
       remap_expr_types(lhs, type_remap),
@@ -789,6 +790,10 @@ fn remap_expr(
       } else {
         local
       },
+      remap_expr(value, remap, global_remap, remap_assign_targets),
+    ),
+    .GlobalSet(gid, value) => .GlobalSet(
+      remap_global_id(gid, global_remap),
       remap_expr(value, remap, global_remap, remap_assign_targets),
     ),
     .BinOp(op, lhs, rhs) => .BinOp(

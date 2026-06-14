@@ -193,6 +193,10 @@ pub fn render_core_expr(lines: Vector<String>, env: ResolvedEnv, expr: CoreExpr,
       out := line(lines, indent, "Assign L${local.id} =")
       render_core_expr(out, env, value, indent + 2)
     },
+    .GlobalSet(gid, value) => {
+      out := line(lines, indent, "GlobalSet G${gid.id} =")
+      render_core_expr(out, env, value, indent + 2)
+    },
     .BinOp(op, left, right) => {
       out := line(lines, indent, "BinOp(${binop_name(op)}) : ${ty}")
       out = render_core_expr(out, env, left, indent + 2)

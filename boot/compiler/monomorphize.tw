@@ -226,6 +226,7 @@ fn collect_vars_in_expr_types(expr: CoreExpr, seen: Dict<String, Bool>, result: 
       collect_vars_in_expr_types(body, st.seen, st.result)
     },
     .Assign(_, value) => collect_vars_in_expr_types(value, st.seen, st.result),
+    .GlobalSet(_, value) => collect_vars_in_expr_types(value, st.seen, st.result),
     .BinOp(_, lhs, rhs) => {
       st = collect_vars_in_expr_types(lhs, st.seen, st.result)
       collect_vars_in_expr_types(rhs, st.seen, st.result)
@@ -511,6 +512,7 @@ fn augment_subst_from_contract_calls(
       ctx.augment_subst_from_contract_calls(body, subst, visited)
     },
     .Assign(_, value) => ctx.augment_subst_from_contract_calls(value, subst, visited),
+    .GlobalSet(_, value) => ctx.augment_subst_from_contract_calls(value, subst, visited),
     .BinOp(_, lhs, rhs) => {
       subst = ctx.augment_subst_from_contract_calls(lhs, subst, visited)
       ctx.augment_subst_from_contract_calls(rhs, subst, visited)
@@ -860,6 +862,13 @@ fn collect_local_types(expr: CoreExpr, out: Dict<Int, MonoType>) Dict<Int, MonoT
 
       collect_local_types(value, out)
     },
+    .GlobalSet(gid, value) => {
+      if !out.has(gid.id) {
+        out[gid.id] = value.ty
+      }
+
+      collect_local_types(value, out)
+    },
     .BinOp(_, lhs, rhs) => {
       out = collect_local_types(lhs, out)
       collect_local_types(rhs, out)
@@ -1114,6 +1123,7 @@ fn collect_instantiations(
       collect_instantiations(body, ctx, queue, next_local_types)
     },
     .Assign(_, value) => collect_instantiations(value, ctx, queue, local_types),
+    .GlobalSet(_, value) => collect_instantiations(value, ctx, queue, local_types),
     .BinOp(_, lhs, rhs) => {
       queue = collect_instantiations(lhs, ctx, queue, local_types)
       collect_instantiations(rhs, ctx, queue, local_types)
@@ -1180,6 +1190,7 @@ fn expr_has_free_var(expr: CoreExpr) Bool {
   case expr.kind {
     .Let(_, value, body) => expr_has_free_var(value) or expr_has_free_var(body),
     .Assign(_, value) => expr_has_free_var(value),
+    .GlobalSet(_, value) => expr_has_free_var(value),
     .BinOp(_, lhs, rhs) => expr_has_free_var(lhs) or expr_has_free_var(rhs),
     .UnOp(_, inner) => expr_has_free_var(inner),
     .Call(callee, args) => {
@@ -1296,6 +1307,7 @@ fn apply_subst_to_kind(kind: CoreExprKind, subst: Dict<String, MonoType>) CoreEx
       apply_subst_to_expr(body, subst),
     ),
     .Assign(local, value) => .Assign(local, apply_subst_to_expr(value, subst)),
+    .GlobalSet(gid, value) => .GlobalSet(gid, apply_subst_to_expr(value, subst)),
     .BinOp(op, lhs, rhs) => .BinOp(
       op,
       apply_subst_to_expr(lhs, subst),
@@ -1585,6 +1597,7 @@ fn rewrite_calls_kind(
       .Let(local, new_value, rewrite_calls(body, spec_map, ctx, next_local_types))
     },
     .Assign(local, value) => .Assign(local, rewrite_calls(value, spec_map, ctx, local_types)),
+    .GlobalSet(gid, value) => .GlobalSet(gid, rewrite_calls(value, spec_map, ctx, local_types)),
     .BinOp(op, lhs, rhs) => .BinOp(
       op,
       rewrite_calls(lhs, spec_map, ctx, local_types),

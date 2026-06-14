@@ -117,6 +117,14 @@ fn max_local_id_in_expr(expr: CoreExpr, max: Int) Int {
       }
       max_local_id_in_expr(value, m)
     },
+    .GlobalSet(gid, value) => {
+      m := if gid.id > max {
+        gid.id
+      } else {
+        max
+      }
+      max_local_id_in_expr(value, m)
+    },
     .MakeClosure(_, free_vars) => {
       m := max
 
@@ -450,6 +458,15 @@ fn lower_expr(expr: CoreExpr, state: LowerState, accum: Vector<LetBinding>) Expr
       pa := push_accum(va.accum, st, tmp, .AAssign(local, va.atom), .Void)
       .{ expr: .Atom(.ALitVoid), state: pa.state, accum: pa.accum }
     },
+    .GlobalSet(gid, value) => {
+      va := atomize(value, state, accum)
+      r := fresh(va.state)
+      tmp := r.local
+      st := r.state
+      st.op_result_mono[gid.id] = value.ty
+      pa := push_accum(va.accum, st, tmp, .AAssign(LocalId.{ id: gid.id }, va.atom), .Void)
+      .{ expr: .Atom(.ALitVoid), state: pa.state, accum: pa.accum }
+    },
     // ── Let ──
     .Let(orig_local, value, body) => {
       // Lower value in isolated accumulator
@@ -693,6 +710,15 @@ fn atomize(expr: CoreExpr, state: LowerState, accum: Vector<LetBinding>) AtomAcc
       st := r.state
       st.op_result_mono[local.id] = value.ty
       pa := push_accum(va.accum, st, tmp, .AAssign(local, va.atom), .Void)
+      .{ atom: .ALitVoid, state: pa.state, accum: pa.accum }
+    },
+    .GlobalSet(gid, value) => {
+      va := atomize(value, state, accum)
+      r := fresh(va.state)
+      tmp := r.local
+      st := r.state
+      st.op_result_mono[gid.id] = value.ty
+      pa := push_accum(va.accum, st, tmp, .AAssign(LocalId.{ id: gid.id }, va.atom), .Void)
       .{ atom: .ALitVoid, state: pa.state, accum: pa.accum }
     },
     .Defer(inner) => {

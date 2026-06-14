@@ -37,6 +37,7 @@ pub type CoreExprKind = {
   GlobalFunc(FuncId),
   Let(LocalId, CoreExpr, CoreExpr),
   Assign(LocalId, CoreExpr),
+  GlobalSet(GlobalId, CoreExpr),
   BinOp(BinOp, CoreExpr, CoreExpr),
   UnOp(UnOp, CoreExpr),
   Call(CoreExpr, Vector<CoreExpr>),

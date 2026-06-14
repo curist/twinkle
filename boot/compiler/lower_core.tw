@@ -393,7 +393,9 @@ pub fn lower_module(module: Module, check_result: CheckResult, builtins: Builtin
           module_let_index = module_let_index + 1
           r := lower_expr(ctx, ls.value)
           ctx = r.ctx
-          init_stmts = .append(.{ kind: .Assign(gid, r.expr), ty: .Void, span: ls.span })
+          init_stmts = .append(
+            .{ kind: .GlobalSet(GlobalId.{ id: gid.id }, r.expr), ty: .Void, span: ls.span },
+          )
           ctx.module_globals[ls.name] = gid
         },
         .Expr(es) => {

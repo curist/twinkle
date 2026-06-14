@@ -164,6 +164,7 @@ fn collect_func_refs_into(expr: CoreExpr, refs: Vector<Int>, index: Reachability
       collect_func_refs_into(body, r, index)
     },
     .Assign(_, value) => collect_func_refs_into(value, refs, index),
+    .GlobalSet(_, value) => collect_func_refs_into(value, refs, index),
     .BinOp(_, lhs, rhs) => {
       r := collect_func_refs_into(lhs, refs, index)
       collect_func_refs_into(rhs, r, index)

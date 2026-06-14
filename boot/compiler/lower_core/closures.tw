@@ -45,6 +45,8 @@ fn collect_free_vars_inner(
 
       collect_free_vars_inner(value, bound, captured, result)
     },
+    // A global store targets a module global, not a captured free local.
+    .GlobalSet(_, value) => collect_free_vars_inner(value, bound, captured, result),
     .BinOp(_, lhs, rhs) => {
       st := collect_free_vars_inner(lhs, bound, captured, result)
       collect_free_vars_inner(rhs, st.bound, st.captured, st.result)
