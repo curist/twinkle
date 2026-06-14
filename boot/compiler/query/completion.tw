@@ -127,7 +127,7 @@ fn module_value_completions(env: ResolvedEnv, module_name: String) Vector<
       result = .append(
         lsp_completion.CompletionItem.{
           label: member,
-          kind: kinds.constant(),
+          kind: kinds.constant,
           detail,
           documentation: .None,
         },
@@ -284,7 +284,7 @@ fn field_completions(
     field_ty := type_util.subst_type_params_lenient(f.ty, params, args)
     lsp_completion.CompletionItem.{
       label: f.name,
-      kind: kinds.field(),
+      kind: kinds.field,
       detail: .Some(ty_to_string_env(env, field_ty)),
       documentation: .None,
     }
@@ -349,7 +349,7 @@ fn method_entries_to_items(env: ResolvedEnv, entries: Vector<MethodEntry>) Vecto
     }
     lsp_completion.CompletionItem.{
       label: e.method_name,
-      kind: kinds.method(),
+      kind: kinds.method,
       detail,
       documentation: doc,
     }
@@ -417,7 +417,7 @@ fn general_completions(snap: SemanticSnapshot, prefix: String, offset: Int) Vect
       items = .append(
         lsp_completion.CompletionItem.{
           label: kw,
-          kind: kinds.keyword(),
+          kind: kinds.keyword,
           detail: .None,
           documentation: .None,
         },
@@ -445,7 +445,7 @@ fn general_completions(snap: SemanticSnapshot, prefix: String, offset: Int) Vect
           items = .append(
             lsp_completion.CompletionItem.{
               label: name,
-              kind: kinds.function(),
+              kind: kinds.function,
               detail,
               documentation: doc,
             },
@@ -459,7 +459,7 @@ fn general_completions(snap: SemanticSnapshot, prefix: String, offset: Int) Vect
           items = .append(
             lsp_completion.CompletionItem.{
               label: name,
-              kind: kinds.class(),
+              kind: kinds.class,
               detail: .None,
               documentation: .None,
             },
@@ -480,7 +480,7 @@ fn general_completions(snap: SemanticSnapshot, prefix: String, offset: Int) Vect
                 items = .append(
                   lsp_completion.CompletionItem.{
                     label: name,
-                    kind: kinds.variable(),
+                    kind: kinds.variable,
                     detail: .Some(ty_to_string_env(e, ty)),
                     documentation: .None,
                   },
@@ -538,7 +538,7 @@ fn local_completions(snap: SemanticSnapshot, offset: Int, prefix: String) Vector
                 result = .append(
                   lsp_completion.CompletionItem.{
                     label: pname,
-                    kind: kinds.variable(),
+                    kind: kinds.variable,
                     detail: .Some(ty_to_string_env(typed.env, sig.params[i])),
                     documentation: .None,
                   },
@@ -563,7 +563,7 @@ fn local_completions(snap: SemanticSnapshot, offset: Int, prefix: String) Vector
                 result = .append(
                   lsp_completion.CompletionItem.{
                     label: ls.name,
-                    kind: kinds.variable(),
+                    kind: kinds.variable,
                     detail: .Some(ty_to_string_env(typed.env, ty)),
                     documentation: .None,
                   },
@@ -599,7 +599,7 @@ fn collect_lets_in_block(
               result = .append(
                 lsp_completion.CompletionItem.{
                   label: ls.name,
-                  kind: kinds.variable(),
+                  kind: kinds.variable,
                   detail: .Some(ty_to_string_env(env, ty)),
                   documentation: .None,
                 },
@@ -671,7 +671,7 @@ fn import_completions(snap: SemanticSnapshot, ip: ImportPrefix) Vector<
       items = .append(
         lsp_completion.CompletionItem.{
           label: "@std",
-          kind: kinds.module(),
+          kind: kinds.module,
           detail: .Some("standard library"),
           documentation: .None,
         },
@@ -687,7 +687,7 @@ fn import_completions(snap: SemanticSnapshot, ip: ImportPrefix) Vector<
           items = .append(
             lsp_completion.CompletionItem.{
               label: ns,
-              kind: kinds.module(),
+              kind: kinds.module,
               detail: .Some("module"),
               documentation: .None,
             },
@@ -743,7 +743,7 @@ fn list_modules_in_dir(dir: String, prefix: String) Vector<lsp_completion.Comple
       result = .append(
         lsp_completion.CompletionItem.{
           label: module_name,
-          kind: kinds.module(),
+          kind: kinds.module,
           detail: .Some("module"),
           documentation: .None,
         },
@@ -805,13 +805,13 @@ fn variants_for_type(env: ResolvedEnv, ty: MonoType) Vector<lsp_completion.Compl
     .Optional(_) => [
       lsp_completion.CompletionItem.{
         label: "Some",
-        kind: kinds.enum_member(),
+        kind: kinds.enum_member,
         detail: .Some("Option"),
         documentation: .None,
       },
       lsp_completion.CompletionItem.{
         label: "None",
-        kind: kinds.enum_member(),
+        kind: kinds.enum_member,
         detail: .Some("Option"),
         documentation: .None,
       },
@@ -819,13 +819,13 @@ fn variants_for_type(env: ResolvedEnv, ty: MonoType) Vector<lsp_completion.Compl
     .Result(_, _) => [
       lsp_completion.CompletionItem.{
         label: "Ok",
-        kind: kinds.enum_member(),
+        kind: kinds.enum_member,
         detail: .Some("Result"),
         documentation: .None,
       },
       lsp_completion.CompletionItem.{
         label: "Err",
-        kind: kinds.enum_member(),
+        kind: kinds.enum_member,
         detail: .Some("Result"),
         documentation: .None,
       },
@@ -844,7 +844,7 @@ fn variant_items(type_name: String, variants: Vector<ResolvedVariant>) Vector<
   collect v in variants {
     lsp_completion.CompletionItem.{
       label: v.name,
-      kind: kinds.enum_member(),
+      kind: kinds.enum_member,
       detail: .Some(type_name),
       documentation: .None,
     }
@@ -867,7 +867,7 @@ fn all_variant_completions(snap: SemanticSnapshot) Vector<lsp_completion.Complet
           items = .append(
             lsp_completion.CompletionItem.{
               label: v.name,
-              kind: kinds.enum_member(),
+              kind: kinds.enum_member,
               detail: .Some(name),
               documentation: .None,
             },
@@ -881,7 +881,7 @@ fn all_variant_completions(snap: SemanticSnapshot) Vector<lsp_completion.Complet
   items = .append(
     lsp_completion.CompletionItem.{
       label: "None",
-      kind: kinds.enum_member(),
+      kind: kinds.enum_member,
       detail: .Some("Option"),
       documentation: .None,
     },
@@ -889,7 +889,7 @@ fn all_variant_completions(snap: SemanticSnapshot) Vector<lsp_completion.Complet
   items = .append(
     lsp_completion.CompletionItem.{
       label: "Some",
-      kind: kinds.enum_member(),
+      kind: kinds.enum_member,
       detail: .Some("Option"),
       documentation: .None,
     },
@@ -897,7 +897,7 @@ fn all_variant_completions(snap: SemanticSnapshot) Vector<lsp_completion.Complet
   items = .append(
     lsp_completion.CompletionItem.{
       label: "Ok",
-      kind: kinds.enum_member(),
+      kind: kinds.enum_member,
       detail: .Some("Result"),
       documentation: .None,
     },
@@ -905,7 +905,7 @@ fn all_variant_completions(snap: SemanticSnapshot) Vector<lsp_completion.Complet
   items = .append(
     lsp_completion.CompletionItem.{
       label: "Err",
-      kind: kinds.enum_member(),
+      kind: kinds.enum_member,
       detail: .Some("Result"),
       documentation: .None,
     },

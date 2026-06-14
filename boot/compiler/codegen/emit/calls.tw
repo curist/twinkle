@@ -32,14 +32,9 @@ pub type CallEmitFns = .{
     EmitCtx,
     Vector<Instr>,
   ) Vector<Instr>,
-  emit_global_closure_call: fn(
-    String,
-    Vector<PreparedAtom>,
-    Int,
-    MonoType,
-    EmitCtx,
-    Vector<Instr>,
-  ) Vector<Instr>,
+  emit_global_closure_call: fn(String, Vector<PreparedAtom>, Int, MonoType, EmitCtx, Vector<Instr>) Vector<
+    Instr,
+  >,
 }
 
 pub fn emit_call(
