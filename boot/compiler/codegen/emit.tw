@@ -820,6 +820,7 @@ fn try_emit_tail_op(
               emit_checked_i32_narrow,
               emit_intrinsic_call,
               emit_closure_call,
+              emit_global_closure_call,
             },
           ),
         ),
@@ -1419,6 +1420,7 @@ fn emit_call(
       emit_checked_i32_narrow,
       emit_intrinsic_call,
       emit_closure_call,
+      emit_global_closure_call,
     },
   )
 }
@@ -3209,6 +3211,25 @@ fn emit_closure_call(
   closure_emit.emit_closure_call(
     callee,
     lid,
+    args,
+    result_idx,
+    result_mono,
+    ctx,
+    buf,
+    closure_emit.ClosureEmitFns.{ emit_atom, atom_mono },
+  )
+}
+
+fn emit_global_closure_call(
+  sym: String,
+  args: Vector<PreparedAtom>,
+  result_idx: Int,
+  result_mono: MonoType,
+  ctx: EmitCtx,
+  buf: Vector<Instr>,
+) Vector<Instr> {
+  closure_emit.emit_global_closure_call(
+    sym,
     args,
     result_idx,
     result_mono,

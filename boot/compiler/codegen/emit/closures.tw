@@ -178,6 +178,56 @@ fn try_emit_typed_closure_call(
   }
 }
 
+// Call a closure held in a module global. Mirrors emit_universal_closure_call
+// but loads the closure via global.get instead of from a local slot. Used when
+// a call's callee is an AGlobalLocal (a function/closure stored in a global);
+// the typed-funcref fast path is skipped — global closures are rare.
+pub fn emit_global_closure_call(
+  sym: String,
+  args: Vector<PreparedAtom>,
+  result_idx: Int,
+  result_mono: MonoType,
+  ctx: EmitCtx,
+  buf: Vector<Instr>,
+  fns: ClosureEmitFns,
+) Vector<Instr> {
+  // env (field 1)
+  out := buf.append(.GlobalGet(sym))
+    .append(.RefCast(true, .Named("rt_types__Closure")))
+    .append(.StructGet("rt_types__Closure", 1))
+
+  out = if args.len() > 0 {
+    for a in args {
+      out = fns.emit_atom(a, ctx, out)
+      out = emit_box_to_anyref(fns.atom_mono(a, ctx), ctx.env, out)
+    }
+
+    out.append(.ArrayNewFixed("rt_types__Array", args.len()))
+  } else {
+    out.append(.RefNull(.None_))
+  }
+
+  // universal funcref (field 0)
+  out = .append(.GlobalGet(sym)).append(.RefCast(true, .Named("rt_types__Closure"))).append(
+    .StructGet("rt_types__Closure", 0),
+  )
+  out = .append(.CallRef("rt_types__ClosureFunc"))
+
+  case result_mono {
+    .Void => out.concat([.Drop, .I32Const(0), .RefI31, .LocalSet(result_idx)]),
+    .Never => out,
+    _ => {
+      out = if is_sum_mono(result_mono, ctx.env) {
+        out.append(.RefCast(true, .Named("rt_types__Variant")))
+          .append(.Call(variant_to_sum_helper_sym(result_mono)))
+      } else {
+        emit_unbox_from_anyref(result_mono, ctx.env, out)
+      }
+      out.append(.LocalSet(result_idx))
+    },
+  }
+}
+
 fn emit_universal_closure_call(
   entry: LocalEntry,
   args: Vector<PreparedAtom>,

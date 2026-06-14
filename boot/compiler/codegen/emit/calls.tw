@@ -32,6 +32,14 @@ pub type CallEmitFns = .{
     EmitCtx,
     Vector<Instr>,
   ) Vector<Instr>,
+  emit_global_closure_call: fn(
+    String,
+    Vector<PreparedAtom>,
+    Int,
+    MonoType,
+    EmitCtx,
+    Vector<Instr>,
+  ) Vector<Instr>,
 }
 
 pub fn emit_call(
@@ -69,6 +77,18 @@ pub fn emit_call(
     .ASlot(sid) => {
       // Closure call — indirect
       fns.emit_closure_call(callee, sid, args, result_idx, result_mono, ctx, buf)
+    },
+    .AGlobalLocal(gid) => case ctx.registry.module_globals[gid.id] {
+      // A closure/function stored in a module global, called directly.
+      .Some(gentry) => fns.emit_global_closure_call(
+        gentry.sym,
+        args,
+        result_idx,
+        result_mono,
+        ctx,
+        buf,
+      ),
+      .None => error("emit_call: unknown module-global callee G${gid.id}"),
     },
     _ => error("emit_call: unexpected callee atom"),
   }

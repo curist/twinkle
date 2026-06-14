@@ -29,6 +29,8 @@ type BCtx = .{
   current_return_mono: MonoType,
   func_param_types: Dict<Int, Vector<MonoType>>,
   func_monos: Dict<Int, MonoType>,
+  // Module-global types keyed by linked GlobalId (the authoritative oracle).
+  global_monos: Dict<Int, MonoType>,
 }
 
 type AllocResult = .{ local: LocalId, ctx: BCtx }
@@ -52,6 +54,7 @@ fn alloc_local(ctx: BCtx) AllocResult {
     current_return_mono: ctx.current_return_mono,
     func_param_types: ctx.func_param_types,
     func_monos: ctx.func_monos,
+    global_monos: ctx.global_monos,
   }
   AllocResult.{ local: id, ctx: new_ctx }
 }
@@ -60,9 +63,7 @@ fn alloc_local(ctx: BCtx) AllocResult {
 fn atom_mono(atom: Atom, ctx: BCtx) MonoType? {
   case atom {
     .ALocal(lid) => ctx.local_types[lid.id],
-    // Mirror the ALocal path for now; the authoritative module-global type
-    // arrives via the linked-global oracle in a later step.
-    .AGlobalLocal(gid) => ctx.local_types[gid.id],
+    .AGlobalLocal(gid) => ctx.global_monos[gid.id],
     .AGlobalFunc(fid) => case ctx.func_monos[fid.id] {
       .Some(mono) => .Some(mono),
       .None => case callable_targets.semantic_sig(fid, Dict.new(), ctx.builtins, ctx.env) {
@@ -153,7 +154,7 @@ pub fn insert_boundaries(
   }
 
   new_funcs := collect func in anf.functions {
-    rewrite_func(func, registry, builtins, env, func_param_types, func_monos)
+    rewrite_func(func, registry, builtins, env, func_param_types, func_monos, anf.global_monos)
   }
   AnfModule.{
     functions: new_funcs,
@@ -170,6 +171,7 @@ fn rewrite_func(
   env: ResolvedEnv,
   func_param_types: Dict<Int, Vector<MonoType>>,
   func_monos: Dict<Int, MonoType>,
+  global_monos: Dict<Int, MonoType>,
 ) AnfFunctionDef {
   // Build local type map from params + op_result_mono
   local_types: Dict<Int, MonoType> = Dict.new()
@@ -212,6 +214,7 @@ fn rewrite_func(
     current_return_mono: func.return_ty,
     func_param_types,
     func_monos,
+    global_monos,
   }
   result := rewrite_expr(func.body, ctx)
 
@@ -346,7 +349,7 @@ fn rewrite_assign(result_local: LocalId, target: LocalId, atom: Atom, body: AnfE
 }
 
 fn rewrite_global_set(result_local: LocalId, gid: GlobalId, atom: Atom, body: AnfExpr, ctx: BCtx) RewriteResult {
-  target_mono := case ctx.local_types[gid.id] {
+  target_mono := case ctx.global_monos[gid.id] {
     .Some(m) => m,
     .None => .Void,
   }
