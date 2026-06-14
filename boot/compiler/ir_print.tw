@@ -90,6 +90,7 @@ fn param_strings(ty_env: ResolvedEnv, params: Vector<Param>) Vector<String> {
 fn atom_string(atom: Atom) String {
   case atom {
     .ALocal(local) => "L${local.id}",
+    .AGlobalLocal(gid) => "G${gid.id}",
     .AGlobalFunc(func_id) => "Fn${func_id.id}",
     .ALitInt(n) => n.to_string(),
     .ALitFloat(f) => f.to_string(),
@@ -425,6 +426,7 @@ fn render_anf_op(
     ),
     .AInit(atom) => line(lines, indent, "init ${atom_string(atom)}"),
     .AAssign(local, atom) => line(lines, indent, "assign L${local.id} = ${atom_string(atom)}"),
+    .AGlobalSet(gid, atom) => line(lines, indent, "global_set G${gid.id} = ${atom_string(atom)}"),
     .ADefer(expr) => {
       out := line(lines, indent, "defer")
       render_anf_expr(out, env, func, expr, indent + 2)

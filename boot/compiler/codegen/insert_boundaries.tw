@@ -60,6 +60,9 @@ fn alloc_local(ctx: BCtx) AllocResult {
 fn atom_mono(atom: Atom, ctx: BCtx) MonoType? {
   case atom {
     .ALocal(lid) => ctx.local_types[lid.id],
+    // Mirror the ALocal path for now; the authoritative module-global type
+    // arrives via the linked-global oracle in a later step.
+    .AGlobalLocal(gid) => ctx.local_types[gid.id],
     .AGlobalFunc(fid) => case ctx.func_monos[fid.id] {
       .Some(mono) => .Some(mono),
       .None => case callable_targets.semantic_sig(fid, Dict.new(), ctx.builtins, ctx.env) {
@@ -1093,6 +1096,7 @@ fn find_max_local_op(op: AnfOp, m: Int) Int {
       }
       find_max_local_atom(value, r)
     },
+    .AGlobalSet(_, value) => find_max_local_atom(value, m),
     .AWrapAnyref(a, _) => find_max_local_atom(a, m),
     .AUnwrapAnyref(a, _) => find_max_local_atom(a, m),
   }

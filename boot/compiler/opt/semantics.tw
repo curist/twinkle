@@ -293,6 +293,7 @@ pub fn op_effect(op: AnfOp, semantics: OptimizerSemantics) EffectKind {
     },
     .ACall(_, _) => .Control,
     .AAssign(_, _) => .Control,
+    .AGlobalSet(_, _) => .Control,
     .ALoop(_) => .Control,
     .AIndex(_, _, _, _) => .Control,
     .ADefer(_) => .Control,

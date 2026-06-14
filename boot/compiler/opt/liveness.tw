@@ -184,6 +184,9 @@ pub fn live_in_op_with_live_out(op: AnfOp, live: Dict<Int, Bool>) Dict<Int, Bool
       result := set_remove(live, target.id)
       add_atom(value, result)
     },
+    // A global store reads its value atom (keeps it live) and writes a module
+    // global, which is not a tracked local — so no local is killed.
+    .AGlobalSet(_, value) => add_atom(value, live),
     .ADefer(inner) => {
       // Conservatively treat all locals read in deferred expr as live
       compute_live(inner, live)

@@ -211,6 +211,7 @@ fn rewrite_op(op: AnfOp, rename: Dict<Int, LocalId>) AnfOp {
     ),
     .AInit(atom) => .AInit(rewrite_atom(atom, rename)),
     .AAssign(target, atom) => .AAssign(rewrite_local(target, rename), rewrite_atom(atom, rename)),
+    .AGlobalSet(gid, atom) => .AGlobalSet(gid, rewrite_atom(atom, rename)),
     .ADefer(body) => .ADefer(rewrite_expr(body, rename)),
     .AWrapAnyref(atom, mono) => .AWrapAnyref(rewrite_atom(atom, rename), mono),
     .AUnwrapAnyref(atom, mono) => .AUnwrapAnyref(rewrite_atom(atom, rename), mono),
@@ -345,6 +346,7 @@ fn max_local_id_op(op: AnfOp) Int {
     .AIndex(base, index, _, _) => max_int(max_local_id_atom(base), max_local_id_atom(index)),
     .AInit(atom) => max_local_id_atom(atom),
     .AAssign(target, atom) => max_int(target.id, max_local_id_atom(atom)),
+    .AGlobalSet(_, atom) => max_local_id_atom(atom),
     .ADefer(body) => max_local_id_expr(body),
     .AWrapAnyref(atom, _) => max_local_id_atom(atom),
     .AUnwrapAnyref(atom, _) => max_local_id_atom(atom),
@@ -459,6 +461,7 @@ fn collect_binding_monos(
 fn atom_mono(func: AnfFunctionDef, atom: Atom, pattern_monos: Dict<Int, MonoType>) MonoType {
   case atom {
     .ALocal(lid) => resolve_capture_type_from_maps(func, lid, pattern_monos),
+    .AGlobalLocal(_) => .Anyref_,
     .AGlobalFunc(_) => .Anyref_,
     .ALitInt(_) => .Int,
     .ALitFloat(_) => .Float,

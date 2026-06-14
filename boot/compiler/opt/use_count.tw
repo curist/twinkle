@@ -123,6 +123,7 @@ fn count_op(op: AnfOp, uses: Dict<Int, Int>) Dict<Int, Int> {
     },
     .AInit(value) => count_atom(value, uses),
     .AAssign(_, value) => count_atom(value, uses),
+    .AGlobalSet(_, value) => count_atom(value, uses),
     .ADefer(inner) => count_expr(inner, uses),
     .AWrapAnyref(a, _) => count_atom(a, uses),
     .AUnwrapAnyref(a, _) => count_atom(a, uses),

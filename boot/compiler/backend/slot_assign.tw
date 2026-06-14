@@ -233,6 +233,9 @@ fn lower_op(op: AnfOp, local_to_slot: Dict<Int, SlotId>, func_name: String) Prep
       lookup_slot_for(local_to_slot, target.id, "assign target", func_name),
       lower_atom(atom, local_to_slot),
     ),
+    // Wired in the next step (prepared global-store op); lower_anf does not
+    // yet produce AGlobalSet, so this path is unreachable for now.
+    .AGlobalSet(_, _) => error("slot_assign: AGlobalSet lowering not wired yet"),
     .ADefer(body) => .ADefer(lower_expr(body, local_to_slot, func_name)),
     .AWrapAnyref(atom, mono) => .AWrapAnyref(lower_atom(atom, local_to_slot), mono),
     .AUnwrapAnyref(atom, mono) => .AUnwrapAnyref(lower_atom(atom, local_to_slot), mono),
@@ -245,6 +248,7 @@ fn lower_atom(atom: Atom, local_to_slot: Dict<Int, SlotId>) PreparedAtom {
       .Some(sid) => .ASlot(sid),
       .None => .AGlobalLocal(lid),
     },
+    .AGlobalLocal(gid) => .AGlobalLocal(LocalId.{ id: gid.id }),
     .AGlobalFunc(fid) => .AGlobalFunc(fid),
     .ALitInt(n) => .ALitInt(n),
     .ALitFloat(f) => .ALitFloat(f),
@@ -471,6 +475,7 @@ fn atom_mono(func: AnfFunctionDef, atom: Atom, pattern_monos: Dict<Int, MonoType
       .Some(mono) => mono,
       .None => resolve_local_mono(func, lid),
     },
+    .AGlobalLocal(_) => .Anyref_,
     .AGlobalFunc(_) => .Anyref_,
     .ALitInt(_) => .Int,
     .ALitFloat(_) => .Float,

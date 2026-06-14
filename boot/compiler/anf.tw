@@ -4,7 +4,9 @@
 /// is bound to a named local via Let, producing flat let-chains that
 /// map directly to Wasm instructions.
 
-use .core_ir.{BinOp, CorePattern, ExternImport, FieldId, FuncId, LocalId, Param, UnOp, VariantId}
+use .core_ir.{
+  BinOp, CorePattern, ExternImport, FieldId, FuncId, GlobalId, LocalId, Param, UnOp, VariantId,
+}
 use .mono_type.{MonoType, TypeId}
 
 // ── Auxiliary enums ─────────────────────────────────────────────────
@@ -15,6 +17,7 @@ pub type IndexKind = { Array, Dict, Str }
 // ── Atoms (trivial values) ──────────────────────────────────────────
 pub type Atom = {
   ALocal(LocalId),
+  AGlobalLocal(GlobalId),
   AGlobalFunc(FuncId),
   ALitInt(Int),
   ALitFloat(Float),
@@ -49,6 +52,7 @@ pub type AnfOp = {
   AIndex(Atom, Atom, IndexKind, MonoType),
   AInit(Atom),
   AAssign(LocalId, Atom),
+  AGlobalSet(GlobalId, Atom),
   ADefer(AnfExpr),
   AWrapAnyref(Atom, MonoType),
   AUnwrapAnyref(Atom, MonoType),

@@ -386,6 +386,7 @@ fn remap_op(op: AnfOp, remap: Dict<Int, Int>) AnfOp {
       LocalId.{ id: remap_local(local.id, remap) },
       remap_atom(value, remap),
     ),
+    .AGlobalSet(gid, value) => .AGlobalSet(gid, remap_atom(value, remap)),
     .ADefer(body) => .ADefer(remap_expr(body, remap)),
     .AWrapAnyref(a, mono) => .AWrapAnyref(remap_atom(a, remap), mono),
     .AUnwrapAnyref(a, mono) => .AUnwrapAnyref(remap_atom(a, remap), mono),

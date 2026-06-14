@@ -440,6 +440,7 @@ fn op_uses_local_non_recursive(op: AnfOp, local: LocalId) Bool {
     .AIndex(base, index, _, _) => atom_is_local(base, local) or atom_is_local(index, local),
     .AInit(value) => atom_is_local(value, local),
     .AAssign(target, value) => target.id == local.id or atom_is_local(value, local),
+    .AGlobalSet(_, value) => atom_is_local(value, local),
     .AIf(cond_e, _, _) => atom_is_local(cond_e, local),
     .AMatch(scrutinee, _) => atom_is_local(scrutinee, local),
     .ALoop(_) => false,
