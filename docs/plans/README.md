@@ -63,7 +63,6 @@ Self-hosting is complete. Historical design and status docs live in
 | [static-uniqueness-plan.md](static-uniqueness-plan.md) | Extend the static uniqueness optimizer to cover more realistic linear-update patterns without changing the runtime model |
 | [sliceable.md](sliceable.md) | `foo[a..b]` range-slice syntax via a Self-only `Sliceable` contract — the lone open piece of the (now-archived) collection-access cluster; adds a `Range`-index arm to `synth_index` plus `Vector`/`String`/`View` satisfiers. Background in [archive/collections-access.md](archive/collections-access.md) |
 | [queue.md](queue.md) | Library-first `@std.queue` persistent double-ended queue, so FIFO/deque-heavy code avoids repeated `Vector.drop_first()` front-slices; pure stdlib, no compiler/runtime primitive |
-| [module-global-type-tracking.md](module-global-type-tracking.md) | Track module-global types by linked global id instead of per-module `source_local.id`, which collide in the merged `$init` and make module-level `pub` value constants mis-resolve (and risk global aliasing). Unblocks `kinds.constant` value form |
 | [vector-perf/](vector-perf/README.md) | **Ongoing endeavor.** Make idiomatic `Vector`/`sort_by`/`order_by` code fast (vs ~7× behind Clojure). Measurement points at vector read cost + typed representation as the master lever; comparator and allocation micro-opts proven small. Gathers all sort/native-sort/typed-vector plans and the rejected approaches |
 
 ### Archived reference docs
