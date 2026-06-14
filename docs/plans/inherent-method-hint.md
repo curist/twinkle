@@ -44,23 +44,52 @@ candidate method name `M`:
   `instantiate` preserves.
 - `resolve_method_func_name(T, M) == Some(fn_name)`, where `fn_name` is the
   function the call actually resolved to.
+- **`args[0]` is postfix-atomic** — its `kind` is one of `Ident`, `Field`
+  (field access / method chain), `Call`, index, or a literal. See "Receiver
+  must be postfix-atomic" below.
 
 When all hold, the inherent form `args[0].M(args[1..])` provably resolves to the
 same function, so the rewrite is safe. The predicate fails closed: if the
 registry stores a different canonical name, no hint is emitted.
 
+### Receiver must be postfix-atomic
+
+`.` is a postfix operator and binds tighter than every binary and prefix
+operator, so naively reordering `Callee(arg0, …)` → `arg0.M(…)` changes meaning
+when `arg0` is not already a postfix-atomic expression:
+
+```
+Vector.map(a or b, f)            → a or b.map(f)         // = a or (b.map(f))   ✗
+Vector.contains(x == y, xs)      → x == y.contains(xs)   // precedence flip     ✗
+Vector.len(-x)                   → -x.len()              // = -(x.len())        ✗
+Vector.map(if c { a } else { b }, f) → if c {a} else {b}.map(f)               ✗
+```
+
+Byte-for-byte preservation of the `arg0` text (next section) keeps the *bytes*
+intact but not the *parse*. Rather than wrap `arg0` in parens (more edits, more
+ways to be wrong), the predicate simply does **not fire** unless `args[0].kind`
+is postfix-atomic. The dropped cases (binary/prefix/`if`/`case`/closure
+receivers) are rare in real call sites and arguably shouldn't be auto-rewritten
+anyway. This is the same precedence hazard that already bites the formatter when
+it strips `!(…)` parens — treat reorder-as-text as unsafe by default.
+
 ### Emission sites (`boot/compiler/checker.tw`)
 
 1. `try_synth_module_qualified_call` — covers builtin type-qualified and user
    module-qualified calls. `M = method_name`, `fn_name` already resolved here.
+   **Note:** this function only receives `callee_span` (which ends before the
+   `(` — e.g. `Vector.map`), not the full call span. The hint needs the call's
+   end byte (for the trailing-`)` edit and the stored anchor span), so thread
+   the full call span `s` in as a new parameter, or compute the hint back in
+   `synth_call` after this function returns (where `s` is in scope).
 2. The `.Ident(name)` → `lookup_function(name)` arm of `synth_call`
-   (the bare-call path). `M = name`, `fn_name = name`.
+   (the bare-call path). `M = name`, `fn_name = name`. `s` is already in scope.
 
-A shared helper computes the optional hint and appends it to `diags`:
+A shared helper computes the optional hint:
 
 ```
 fn inherent_method_hint(
-  span: Span,            // the full call span s
+  span: Span,            // the full call span s (callee start .. after ')')
   method: String,        // M
   fn_name: String,       // resolved callee
   params: Vector<MonoType>,  // inst.params
@@ -70,7 +99,11 @@ fn inherent_method_hint(
 ```
 
 It returns `.Some(.Info(.InherentMethodCall(...)))` when the predicate holds,
-`.None` otherwise.
+`.None` otherwise. Append the result to the diagnostics vector that the call
+site actually **returns** (e.g. `bounds_r.diags` in
+`try_synth_module_qualified_call`), not the `diags` parameter — that input
+vector is re-bound and threaded through `check_instantiated_call`, so appending
+to it would be lost.
 
 ## Representation
 
@@ -129,6 +162,15 @@ point.translate(p)  A: del "point.translate("  B: ")" → ".translate()"  ⇒ p.
 
 The two edits never overlap: A ends at `arg0_start`, B starts at `arg0_end`, and
 `arg0_start < arg0_end`, so the receiver text `args[0]` is preserved verbatim.
+Verbatim preservation is only *safe* because the trigger predicate restricts
+`args[0]` to postfix-atomic expressions (see "Receiver must be postfix-atomic");
+without that guard, reordering a low-precedence receiver would reparse with
+different meaning even though the bytes are unchanged.
+
+Trivia between the affected tokens is dropped: Edit A removes any comment between
+the callee and `args[0]`, and Edit B removes any comment between `args[0]` and
+the next token. This is acceptable for an opt-in rewrite — noted so it isn't
+mistaken for a bug later.
 
 ### Message and preview
 
@@ -154,11 +196,21 @@ existing `diag_suite` / `lsp_diagnostics_suite` style:
 
 - `Vector.map(xs, f)` produces an `Info` `InherentMethodCall` with method `map`
   and the two expected edits.
+- `String.len(s)` and `Dict.has(d, k)` each produce the hint — these exercise the
+  builtin method-registration path the Scope section promises, which only fires if
+  `lookup_method("String","len")` / `("Dict","has")` resolve. Without explicit
+  coverage a quietly-unregistered builtin would fail closed and silently break the
+  advertised scope.
 - `point.translate(p, 1, 2)` and bare `translate(p, 1, 2)` each produce the hint.
 - Applying the fix edits to the source yields the inherent form and re-typechecks
   cleanly.
+- A single-arg call (`Vector.len(xs)`) produces the trailing-`)` edit form and the
+  applied result is `xs.len()` — guards the span-threading fix (full call span,
+  not `callee.span`).
 - **No** hint for already-inherent `xs.map(f)`, for `println(x)`, and for a bare
   call whose first param isn't a receiver-typed inherent method.
+- **No** hint when `args[0]` is non-postfix-atomic — `Vector.map(a or b, f)`,
+  `Vector.len(-x)` — so the precedence-hazard guard stays in place.
 
 ## Non-goals
 
