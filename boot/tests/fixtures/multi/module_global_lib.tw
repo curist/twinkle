@@ -1,0 +1,15 @@
+/// Exercises module-level pub *record* value bindings (exported and private).
+
+pub type Config = .{ name: String, level: Int }
+
+pub config := Config.{ name: "lib", level: 7 }
+
+/// Private module-global record value, reached only through a public function
+/// (the private-global path: it has no pub name but is still a GlobalLocal).
+type Secret = .{ token: Int }
+
+default_secret := Secret.{ token: 42 }
+
+pub fn secret_token() Int {
+  default_secret.token
+}

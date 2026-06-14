@@ -822,4 +822,26 @@ pub fn suite() runner.Suite {
         .Ok({})
       },
     )
+    .test(
+      "cross-module pub record value + perturbing constants type-resolve through codegen",
+      fn() {
+        // Exercises the full backend (codegen + verifier), where module-global
+        // type mis-resolution surfaced. module_global_main reads an exported
+        // record value at its own top level, a function backed by a private
+        // module-global record, and a module of pub constants that perturbs the
+        // program-wide global-id layout — the shape that the source-LocalId
+        // collision broke.
+        artifacts := case pipeline.compile_entry_path("${dir}/module_global_main.tw") {
+          .Ok(a) => a,
+          .Err(err) => { return .Err("compile failed: ${format_compile_error(err)}") },
+        }
+        wat := pipeline.emit_wat(artifacts)
+
+        if wat.len() > 0 {
+          .Ok({})
+        } else {
+          .Err("expected non-empty WAT from codegen")
+        }
+      },
+    )
 }

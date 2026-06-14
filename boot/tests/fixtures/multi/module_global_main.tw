@@ -1,0 +1,14 @@
+/// Entry that reads a cross-module pub record value at its own top level,
+/// references a perturbing module of pub constants, calls a function backed by
+/// a private module-global record, and binds its own top-level record value.
+/// This is the end-to-end shape that the source-LocalId collision broke.
+
+use .module_global_consts
+use .module_global_lib
+
+own := module_global_lib.Config.{ name: "main", level: module_global_consts.c0 }
+
+fn describe() String {
+  "${module_global_lib.config.name}:${module_global_lib.config.level.to_string()}:${module_global_lib.secret_token()
+    .to_string()}:${own.name}:${own.level.to_string()}"
+}

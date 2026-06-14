@@ -242,11 +242,12 @@ fn lower_op(op: AnfOp, local_to_slot: Dict<Int, SlotId>, func_name: String) Prep
 
 fn lower_atom(atom: Atom, local_to_slot: Dict<Int, SlotId>) PreparedAtom {
   case atom {
+    // Module global reads lower directly to AGlobalLocal, so in real programs
+    // every ALocal has an assigned slot. The missing-slot fallback is a
+    // vestige that no longer fires in production (kept only because some
+    // backend unit tests pass bare unbound-ALocal placeholder bodies).
     .ALocal(lid) => case local_to_slot[lid.id] {
       .Some(sid) => .ASlot(sid),
-      // No slot for a local id → it is a module global read. Once lowering
-      // produces AGlobalLocal directly this inference is dead (deleted in a
-      // later step); kept for now so the representation flip stays faithful.
       .None => .AGlobalLocal(GlobalId.{ id: lid.id }),
     },
     .AGlobalLocal(gid) => .AGlobalLocal(gid),

@@ -8,7 +8,7 @@ use compiler.builtins.{BuiltinRegistry, make_builtin_registry}
 use compiler.codegen.wasm_layout.{mono_to_key}
 use compiler.codegen.wasm_plan.{plan_wasm_types}
 use compiler.codegen.wasm_plan_types.{CaptureEntry, FuncSigEntry, StringPoolEntry, WasmTypeRegistry}
-use compiler.core_ir.{FieldId, FuncId, LocalId, Param, VariantId}
+use compiler.core_ir.{FieldId, FuncId, GlobalId, LocalId, Param, VariantId}
 use compiler.mono_type.{MonoType, TypeId}
 use compiler.resolver
 use compiler.resolver.{ResolvedEnv, ResolvedField, ResolvedTypeDef, TypeEntry}
@@ -630,7 +630,7 @@ pub fn test_plan_builtin_higher_order_global_function_arg_registers_func_sig() R
   builtins := simple_builtins()
   env := base_env.builtin_env()
   map_mono: Dict<Int, MonoType> = Dict.new()
-  map_mono[10] = MonoType.Vector(.String)
+  map_mono[0] = MonoType.Vector(.Int)
   map := mk_func_def(
     200,
     "map",
@@ -639,7 +639,7 @@ pub fn test_plan_builtin_higher_order_global_function_arg_registers_func_sig() R
       Param.{ local: mk_local(1), ty: MonoType.Function([.Int], .String) },
     ],
     MonoType.Vector(.String),
-    .Atom(.ALocal(mk_local(10))),
+    .Atom(.ALocal(mk_local(0))),
     map_mono,
   )
   caller_mono: Dict<Int, MonoType> = Dict.new()
@@ -688,7 +688,7 @@ pub fn test_plan_callable_separation_tracks_closure_and_direct_calls() Result<Vo
   builtins := simple_builtins()
   env := base_env.builtin_env()
   map_mono: Dict<Int, MonoType> = Dict.new()
-  map_mono[10] = MonoType.Vector(.String)
+  map_mono[0] = MonoType.Vector(.Int)
   map := mk_func_def(
     200,
     "map",
@@ -697,7 +697,7 @@ pub fn test_plan_callable_separation_tracks_closure_and_direct_calls() Result<Vo
       Param.{ local: mk_local(1), ty: MonoType.Function([.Int], .String) },
     ],
     MonoType.Vector(.String),
-    .Atom(.ALocal(mk_local(10))),
+    .Atom(.ALocal(mk_local(0))),
     map_mono,
   )
   caller_mono: Dict<Int, MonoType> = Dict.new()
@@ -950,7 +950,7 @@ pub fn test_plan_module_globals() Result<Void, String> {
     "get_val",
     [],
     MonoType.Int,
-    .Let(mk_local(10), .AInit(.ALocal(mk_local(0))), .Atom(.ALocal(mk_local(10)))),
+    .Let(mk_local(10), .AInit(.AGlobalLocal(GlobalId.{ id: 0 })), .Atom(.ALocal(mk_local(10)))),
     user_mono,
   )
   global_monos: Dict<Int, MonoType> = Dict.new()
