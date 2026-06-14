@@ -102,6 +102,63 @@ Three principles, in priority order:
    read the same value codegen used to emit, or it can only confirm consistency,
    not correctness — which is exactly the failure that started this.
 
+## Implementation progress (branch `module-global-id`)
+
+Landed and verified (self-host fixed point + full boot suite, 2676 tests, at
+each commit):
+
+- **Step 1 — `GlobalId` read identity** (`a3fb102`). `core_ir` gains
+  `GlobalId`; `CoreExprKind.GlobalLocal` now carries it. Faithful: `GlobalId`
+  wraps the same id, converted at the lowering/linker boundaries.
+- **Cleanup** (`c71a11e`, `a5a5a20`). NUL-byte dedup-key delimiters in
+  `lower_core.tw` and `codegen/linker.tw` replaced with `::` (they made the
+  files register as binary and invisible to grep). Behavior-preserving.
+- **Step 2a — Core `GlobalSet`** (`afc916e`). `CoreExprKind.GlobalSet(GlobalId,
+  CoreExpr)` added and emitted for top-level value-binding stores instead of
+  `Assign`-to-a-global. Faithful relabel: `lower_anf` turns it back into the
+  identical `AAssign(LocalId)`; every Core walk got a `GlobalSet` arm. (Note:
+  module-level lvalue/in-function global stores still emit `Assign`; only the
+  top-level `let` store — the `kinds` case — became `GlobalSet`. Convert the
+  remaining store sites when deleting the `Assign`-target heuristic.)
+- **Step 2b Stage A — ANF scaffolding** (`5510b9c`). `Atom.AGlobalLocal(GlobalId)`
+  and `AnfOp.AGlobalSet(GlobalId, Atom)` added; *every* match over `Atom`/`AnfOp`
+  given a handling arm (opt passes, closure_convert, insert_boundaries,
+  anf_analysis, slot_assign, ir_print). A global read is opaque like
+  `AGlobalFunc`; a global store reads its value atom, defines no local, and is
+  `Control` effect. **Not yet produced** by `lower_anf`, so inert (output
+  unchanged).
+
+### Resume here — remaining stages
+
+- **Stage B (production flip, behavior-preserving):**
+  - `backend/prepared_ir.tw`: change `PreparedAtom.AGlobalLocal(LocalId)` →
+    `(GlobalId)`; add `PreparedOp.AGlobalSet(GlobalId, PreparedAtom)`.
+  - `backend/slot_assign.tw`: replace the `error()` stub — `lower_op` maps
+    `AnfOp.AGlobalSet` → `PreparedOp.AGlobalSet`; `lower_atom` maps
+    `Atom.AGlobalLocal(gid)` → `PreparedAtom.AGlobalLocal(gid)` directly, and the
+    missing-slot `ALocal` fallback now builds `AGlobalLocal(GlobalId.{id})`.
+  - Add `PreparedOp.AGlobalSet` arms to every exhaustive `PreparedOp` match
+    (build-error-driven, like Stage A): `emit*`, `verify_expr`, `repr_assign`,
+    `route_typed_vec`, `task_validate`, `task_resume`, `helper_collectors`,
+    `insert_boundaries` rewrite, etc. **emit's arm is the real codegen** — emit
+    the same `GlobalSet` wasm currently produced for the init-`$init` global
+    store (key off the `GlobalId`).
+  - **Audit catch-all matches** that handle `AAssign`/`ALocal`/`AGlobalFunc`
+    explicitly with a `_` arm — when the variants start being produced, those
+    `_` arms silently mis-handle `AGlobalSet`/`AGlobalLocal`. Highest-risk:
+    `insert_boundaries` (boundary rewrite for the store), `uniqueness` (deep COW
+    analysis, several `AAssign` matches), `repr_assign`.
+  - Flip `lower_anf`: `GlobalLocal` → `Atom.AGlobalLocal`, `GlobalSet` →
+    `AnfOp.AGlobalSet` (instead of `ALocal`/`AAssign`). Verify fixed point +
+    suite; aim for byte-identical output (faithful representation change).
+- **Stage C (the fix — Steps 3 & 4 below):** build `linked_global_types` oracle,
+  rebuild registry/emit/verify keyed by `GlobalId`, delete the structural
+  heuristics (`facts.module_global_assign_monos`, the `wasm_plan_impl` scan
+  fallback, the `slot_assign` missing-slot inference, the cross-init
+  `source_local.id` aggregation).
+- **Step 5:** flip `kinds.tw` to value bindings, bootstrap via Rust stage0,
+  regression gate.
+
 ## Proposed fix
 
 ### 1. Introduce `GlobalId`
