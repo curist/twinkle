@@ -254,8 +254,116 @@ fn max_local_id_in_pattern(pattern: CorePattern, max: Int) Int {
 }
 
 // ── Entry points ────────────────────────────────────────────────────
+// Collect module-global types keyed by their linked GlobalId, by walking every
+// function body for GlobalSet stores. After linking+monomorphization each
+// defined global has exactly one store whose value type is concrete, so this is
+// a complete, authoritative oracle for backend type resolution.
+fn collect_global_monos_expr(expr: CoreExpr, out: Dict<Int, MonoType>) Dict<Int, MonoType> {
+  case expr.kind {
+    .GlobalSet(gid, value) => {
+      out[gid.id] = value.ty
+      collect_global_monos_expr(value, out)
+    },
+    .Let(_, value, body) => {
+      cur := collect_global_monos_expr(value, out)
+      collect_global_monos_expr(body, cur)
+    },
+    .Assign(_, value) => collect_global_monos_expr(value, out),
+    .BinOp(_, lhs, rhs) => {
+      cur := collect_global_monos_expr(lhs, out)
+      collect_global_monos_expr(rhs, cur)
+    },
+    .UnOp(_, inner) => collect_global_monos_expr(inner, out),
+    .Call(callee, args) => {
+      cur := collect_global_monos_expr(callee, out)
+
+      for a in args {
+        cur = collect_global_monos_expr(a, cur)
+      }
+
+      cur
+    },
+    .ContractCall(_, _, recv, args) => {
+      cur := collect_global_monos_expr(recv, out)
+
+      for a in args {
+        cur = collect_global_monos_expr(a, cur)
+      }
+
+      cur
+    },
+    .If(c, t, e) => {
+      cur := collect_global_monos_expr(c, out)
+      cur = collect_global_monos_expr(t, cur)
+      collect_global_monos_expr(e, cur)
+    },
+    .Match(scrut, arms) => {
+      cur := collect_global_monos_expr(scrut, out)
+
+      for arm in arms {
+        cur = collect_global_monos_expr(arm.body, cur)
+      }
+
+      cur
+    },
+    .Loop(body) => collect_global_monos_expr(body, out),
+    .Break(opt) => case opt {
+      .Some(e) => collect_global_monos_expr(e, out),
+      .None => out,
+    },
+    .Return(opt) => case opt {
+      .Some(e) => collect_global_monos_expr(e, out),
+      .None => out,
+    },
+    .Defer(inner) => collect_global_monos_expr(inner, out),
+    .Record(_, fields) => {
+      cur := out
+
+      for f in fields {
+        cur = collect_global_monos_expr(f.value, cur)
+      }
+
+      cur
+    },
+    .RecordGet(target, _) => collect_global_monos_expr(target, out),
+    .RecordUpdate(base, _, value) => {
+      cur := collect_global_monos_expr(base, out)
+      collect_global_monos_expr(value, cur)
+    },
+    .Variant(_, _, args) => {
+      cur := out
+
+      for a in args {
+        cur = collect_global_monos_expr(a, cur)
+      }
+
+      cur
+    },
+    .ArrayLit(items) => {
+      cur := out
+
+      for a in items {
+        cur = collect_global_monos_expr(a, cur)
+      }
+
+      cur
+    },
+    .Index(base, index) => {
+      cur := collect_global_monos_expr(base, out)
+      collect_global_monos_expr(index, cur)
+    },
+    _ => out,
+  }
+}
+
 pub fn lower_module(module: CoreModule) AnfModule {
   functions: Vector<AnfFunctionDef> = []
+
+  global_monos: Dict<Int, MonoType> = Dict.new()
+
+  for func in module.functions {
+    global_monos = collect_global_monos_expr(func.body, global_monos)
+  }
 
   for func in module.functions {
     next_temp := max_local_id_in_func(func) + 1
@@ -273,7 +381,12 @@ pub fn lower_module(module: CoreModule) AnfModule {
     functions = .append(fdef)
   }
 
-  AnfModule.{ functions, init_func_id: module.init_func_id, extern_imports: module.extern_imports }
+  AnfModule.{
+    functions,
+    init_func_id: module.init_func_id,
+    extern_imports: module.extern_imports,
+    global_monos,
+  }
 }
 
 // ── lower_expr_top ──────────────────────────────────────────────────

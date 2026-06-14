@@ -13,7 +13,7 @@ use compiler.builtins.{BuiltinRegistry}
 use compiler.codegen.wasm_ir.{AbiContract, ValType}
 use compiler.codegen.wasm_layout.{val_type_of_mono}
 use compiler.codegen.wasm_plan_types.{WasmTypeRegistry}
-use compiler.core_ir.{FieldId, FuncId, LocalId, VariantId}
+use compiler.core_ir.{FieldId, FuncId, GlobalId, LocalId, VariantId}
 use compiler.mono_type.{MonoType, TypeId}
 use compiler.monomorphize.{contains_var}
 use compiler.resolver.{ResolvedEnv, lookup_type_def}
@@ -159,6 +159,7 @@ pub fn insert_boundaries(
     functions: new_funcs,
     init_func_id: anf.init_func_id,
     extern_imports: anf.extern_imports,
+    global_monos: anf.global_monos,
   }
 }
 
@@ -338,6 +339,35 @@ fn rewrite_assign(result_local: LocalId, target: LocalId, atom: Atom, body: AnfE
       body_r := rewrite_expr(body, ctx)
       RewriteResult.{
         expr: .Let(result_local, .AAssign(target, atom), body_r.expr),
+        ctx: body_r.ctx,
+      }
+    },
+  }
+}
+
+fn rewrite_global_set(result_local: LocalId, gid: GlobalId, atom: Atom, body: AnfExpr, ctx: BCtx) RewriteResult {
+  target_mono := case ctx.local_types[gid.id] {
+    .Some(m) => m,
+    .None => .Void,
+  }
+  mat := materialize_global_func_for_expected_mono(atom, target_mono, ctx)
+
+  case mat {
+    .Some(pair) => {
+      body_r := rewrite_expr(body, pair.ctx)
+      RewriteResult.{
+        expr: .Let(
+          pair.temp,
+          .AMakeClosure(pair.fid, []),
+          .Let(result_local, .AGlobalSet(gid, .ALocal(pair.temp)), body_r.expr),
+        ),
+        ctx: body_r.ctx,
+      }
+    },
+    .None => {
+      body_r := rewrite_expr(body, ctx)
+      RewriteResult.{
+        expr: .Let(result_local, .AGlobalSet(gid, atom), body_r.expr),
         ctx: body_r.ctx,
       }
     },
@@ -637,6 +667,7 @@ fn rewrite_op(local: LocalId, op: AnfOp, body: AnfExpr, ctx: BCtx) RewriteResult
     ),
     .AInit(atom) => rewrite_init(local, atom, body, ctx),
     .AAssign(target, atom) => rewrite_assign(local, target, atom, body, ctx),
+    .AGlobalSet(gid, atom) => rewrite_global_set(local, gid, atom, body, ctx),
     .AArrayLit(elems) => rewrite_array_lit(local, elems, body, ctx),
     .ARecord(tid, fields) => rewrite_record(local, tid, fields, body, ctx),
     .AVariant(tid, vid, args) => rewrite_variant(local, tid, vid, args, body, ctx),

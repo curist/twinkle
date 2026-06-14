@@ -153,41 +153,18 @@ pub fn plan_wasm_types_impl(
 
   t3 := date.now()
 
-  // Compute module globals from explicit prepared-body AGlobalLocal operands.
-  // The referenced LocalIds must resolve back to the top-level initializer
-  // assignment that stores the global's value.
+  // Register each referenced module global, resolving its type from the
+  // authoritative linked-GlobalId oracle (input.anf.global_monos) built from the
+  // global's GlobalSet store. Keying by the program-wide linked id avoids the
+  // per-module source-LocalId collisions that the old init-slot scan suffered.
+  // Module globals only exist when there is a top-level initializer ($init), so
+  // skip when absent (no stores ⇒ no defined globals to resolve).
   case input.anf.init_func_id {
     .Some(_) => {
-      // Build a map from module-global LocalId to the mono stored by that
-      // global's top-level initializer. Do not use every init slot here:
-      // function-local source LocalIds are only unique within a module, while
-      // linked GlobalLocal IDs are program-wide. A later init function's local
-      // slot can therefore have the same numeric id as an earlier module
-      // global and must not overwrite the global's type.
-      all_init_slots: Dict<Int, MonoType> = Dict.new()
-
-      for pf in input.funcs {
-        if pf.is_init {
-          all_init_slots = facts.module_global_assign_monos(pf, all_init_slots)
-
-          for sid_int in pf.slots.keys() {
-            case pf.slots[sid_int] {
-              .Some(info) => if scan.module_globals.has(info.source_local.id)
-                and !all_init_slots.has(info.source_local.id) {
-                all_init_slots[info.source_local.id] = info.mono
-              },
-              .None => {},
-            }
-          }
-        }
-      }
-
       for k in scan.module_globals.keys() {
-        mono := case all_init_slots[k] {
+        mono := case input.anf.global_monos[k] {
           .Some(m) => m,
-          .None => error(
-            "resolve_module_global_mono: no init function has slot for module global L${k}",
-          ),
+          .None => error("resolve_module_global_mono: no GlobalSet store for module global G${k}"),
         }
 
         if !reg.module_globals.has(k) {

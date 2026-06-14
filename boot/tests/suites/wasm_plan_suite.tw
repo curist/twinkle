@@ -68,7 +68,12 @@ fn mk_func_def(
 }
 
 fn mk_module(funcs: Vector<AnfFunctionDef>) AnfModule {
-  m: AnfModule = AnfModule.{ functions: funcs, init_func_id: .None, extern_imports: Dict.new() }
+  m: AnfModule = AnfModule.{
+    functions: funcs,
+    init_func_id: .None,
+    extern_imports: Dict.new(),
+    global_monos: Dict.new(),
+  }
   m
 }
 
@@ -178,7 +183,12 @@ pub fn test_string_pool_entry() Result<Void, String> {
 
 // ── plan_wasm_types: empty module ───────────────────────────────────
 pub fn test_plan_empty_module() Result<Void, String> {
-  anf := AnfModule.{ functions: [], init_func_id: .None, extern_imports: Dict.new() }
+  anf := AnfModule.{
+    functions: [],
+    init_func_id: .None,
+    extern_imports: Dict.new(),
+    global_monos: Dict.new(),
+  }
   env := resolver.empty_env()
   builtins := empty_builtins()
   reg := plan(anf, env, builtins)
@@ -943,10 +953,14 @@ pub fn test_plan_module_globals() Result<Void, String> {
     .Let(mk_local(10), .AInit(.ALocal(mk_local(0))), .Atom(.ALocal(mk_local(10)))),
     user_mono,
   )
+  global_monos: Dict<Int, MonoType> = Dict.new()
+  global_monos[0] = MonoType.Int
+  global_monos[1] = MonoType.String
   anf := AnfModule.{
     functions: [init_fn, user_fn],
     init_func_id: .Some(mk_func(1)),
     extern_imports: Dict.new(),
+    global_monos,
   }
   reg := plan(anf, resolver.empty_env(), empty_builtins())
 

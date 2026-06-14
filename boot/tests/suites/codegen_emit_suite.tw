@@ -69,7 +69,12 @@ fn test_param_local_id_can_overlap_module_global_id() Result<Void, String> {
     return_ty: MonoType.Int,
     is_init: false,
   }
-  anf := AnfModule.{ functions: [func], init_func_id: .None, extern_imports: Dict.new() }
+  anf := AnfModule.{
+    functions: [func],
+    init_func_id: .None,
+    extern_imports: Dict.new(),
+    global_monos: Dict.new(),
+  }
   slots: Dict<Int, SlotInfo> = Dict.new()
   slots[0] = SlotInfo.{
     slot: sid(0),
@@ -125,7 +130,12 @@ fn make_one_func_module(
     return_ty: return_mono,
     is_init: false,
   }
-  anf := AnfModule.{ functions: [func], init_func_id: .None, extern_imports: Dict.new() }
+  anf := AnfModule.{
+    functions: [func],
+    init_func_id: .None,
+    extern_imports: Dict.new(),
+    global_monos: Dict.new(),
+  }
   prepared_func := PreparedFunc.{
     func_id,
     name,
@@ -330,6 +340,7 @@ fn test_tail_call_in_if_branches() Result<Void, String> {
     functions: [dispatch_func, callee_func],
     init_func_id: .None,
     extern_imports: Dict.new(),
+    global_monos: Dict.new(),
   }
 
   callee_slots: Dict<Int, SlotInfo> = Dict.new()
@@ -426,6 +437,7 @@ fn test_tail_call_in_case_arms() Result<Void, String> {
     functions: [dispatch_func, callee_func],
     init_func_id: .None,
     extern_imports: Dict.new(),
+    global_monos: Dict.new(),
   }
 
   callee_slots: Dict<Int, SlotInfo> = Dict.new()
@@ -592,6 +604,7 @@ fn test_tail_call_in_br_table_match() Result<Void, String> {
     functions: [dispatch_func, callee_func],
     init_func_id: .None,
     extern_imports: Dict.new(),
+    global_monos: Dict.new(),
   }
 
   callee_slots: Dict<Int, SlotInfo> = Dict.new()

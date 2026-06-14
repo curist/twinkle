@@ -313,5 +313,6 @@ fn optimize_module_internal(
     functions: new_funcs,
     init_func_id: module.init_func_id,
     extern_imports: module.extern_imports,
+    global_monos: module.global_monos,
   }
 }

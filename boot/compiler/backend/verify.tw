@@ -14,7 +14,6 @@
 use @std.date
 use @std.proc
 
-use compiler.backend.facts as facts
 use compiler.backend.prepare.{PreparedModule}
 use compiler.backend.prepared_ir.{PreparedFunc}
 use compiler.backend.verify_expr.{verify_prepared_func_expr}
@@ -93,17 +92,10 @@ pub fn verify_prepared_module_with_level(
   .Ok({})
 }
 
-// Build a LocalId → MonoType map for module globals from init assignments.
-// See facts.module_global_assign_monos for why globals are inferred from
-// top-level AAssign targets rather than by merging every init slot.
+// Module-global types, keyed by linked GlobalId. This is the authoritative
+// oracle collected from each global's GlobalSet store (see AnfModule.global_monos),
+// independent of the slot monos codegen emits from — so a wrong slot mono is
+// caught here rather than rubber-stamped.
 fn build_module_globals(prepared: PreparedModule) Dict<Int, MonoType> {
-  out: Dict<Int, MonoType> = Dict.new()
-
-  for pf in prepared.funcs {
-    if pf.is_init {
-      out = facts.module_global_assign_monos(pf, out)
-    }
-  }
-
-  out
+  prepared.anf.global_monos
 }

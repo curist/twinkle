@@ -413,6 +413,7 @@ fn test_module() Result<Void, String> {
     functions: [fdef],
     init_func_id: .Some(FuncId.{ id: 41 }),
     extern_imports: Dict.new(),
+    global_monos: Dict.new(),
   }
   try assert.equal(module.functions.len(), 1)
 

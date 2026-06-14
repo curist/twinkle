@@ -78,4 +78,9 @@ pub type AnfModule = .{
   functions: Vector<AnfFunctionDef>,
   init_func_id: FuncId?,
   extern_imports: Dict<Int, ExternImport>,
+  // Authoritative module-global types, keyed by linked GlobalId. Collected from
+  // each Core GlobalSet store (which carries the linked id and a concrete value
+  // type), so the backend resolves a global's type by its program-wide identity
+  // rather than by a per-module, collision-prone source LocalId.
+  global_monos: Dict<Int, MonoType>,
 }
