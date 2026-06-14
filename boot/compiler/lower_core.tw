@@ -10,7 +10,7 @@ use lib.source.span.{Span}
 use .ast.{Block, CondArm, Expr, Module}
 use .builtins.{BuiltinRegistry}
 use .checker.{CheckResult}
-use .core_ir.{CoreExpr, CoreModule, ExternalValueRef, FuncId, FunctionDef, LocalId}
+use .core_ir.{CoreExpr, CoreModule, ExternalValueRef, FuncId, FunctionDef, GlobalId, LocalId}
 use .lower_core.calls.{lower_call}
 use .lower_core.closures.{lower_closure}
 use .lower_core.context.{ExprOut, LowerCtx, new_ctx}
@@ -51,7 +51,7 @@ fn lower_expr(ctx: LowerCtx, expr: Expr) ExprOut {
     .Ident(name) => case ctx.lookup_local(name) {
       .Some(local_id) => .{ expr: .{ kind: .Local(local_id), ty, span: s }, ctx },
       .None => case ctx.module_globals[name] {
-        .Some(gid) => .{ expr: .{ kind: .GlobalLocal(gid), ty, span: s }, ctx },
+        .Some(gid) => .{ expr: .{ kind: .GlobalLocal(GlobalId.{ id: gid.id }), ty, span: s }, ctx },
         .None => case ctx.lookup_func(name) {
           .Some(func_id) => .{ expr: .{ kind: .GlobalFunc(func_id), ty, span: s }, ctx },
           .None => {

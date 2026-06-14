@@ -2,7 +2,7 @@
 
 use compiler.ast as ast
 use compiler.ast.{Expr}
-use compiler.core_ir.{CoreExpr, FieldId, FieldInit, FuncId, FunctionDef, Param, VariantId}
+use compiler.core_ir.{CoreExpr, FieldId, FieldInit, FuncId, FunctionDef, GlobalId, Param, VariantId}
 use compiler.lower_core.calls.{builtin_type_name, resolve_user_method_target}
 use compiler.lower_core.context.{ExprOut, LowerCtx}
 use compiler.lower_core.helpers.{extract_type_name_expr, void_expr}
@@ -81,7 +81,11 @@ pub fn lower_record_fields(
           },
           .None => case ctx.module_globals[entry.name] {
             .Some(gid) => {
-              val := CoreExpr.{ kind: .GlobalLocal(gid), ty: val_ty, span: entry.span }
+              val := CoreExpr.{
+                kind: .GlobalLocal(GlobalId.{ id: gid.id }),
+                ty: val_ty,
+                span: entry.span,
+              }
               fields = .append(.{ field, value: val })
             },
             .None => case ctx.lookup_func(entry.name) {
@@ -158,7 +162,9 @@ pub fn lower_field(
           qualified := "${name}.${field_name}"
 
           case ctx.module_globals[qualified] {
-            .Some(gid) => { return .{ expr: .{ kind: .GlobalLocal(gid), ty, span: s }, ctx } },
+            .Some(gid) => {
+              return .{ expr: .{ kind: .GlobalLocal(GlobalId.{ id: gid.id }), ty, span: s }, ctx }
+            },
             .None => {},
           }
         },

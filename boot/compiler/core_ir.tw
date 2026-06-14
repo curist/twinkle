@@ -12,6 +12,11 @@ use .resolver.{ResolvedEnv, ResolvedTypeParam}
 // ── Identity types ──────────────────────────────────────────────────
 pub type LocalId = .{ id: Int }
 
+/// Program-wide unique identity for a module-level value (a "global"),
+/// assigned by core_linker. Distinct from LocalId so a local/global mix is a
+/// type error rather than a silent id collision.
+pub type GlobalId = .{ id: Int }
+
 pub type FuncId = .{ id: Int }
 
 pub type FieldId = .{ id: Int }
@@ -28,7 +33,7 @@ pub type CoreExprKind = {
   LitStr(String),
   LitVoid,
   Local(LocalId),
-  GlobalLocal(LocalId),
+  GlobalLocal(GlobalId),
   GlobalFunc(FuncId),
   Let(LocalId, CoreExpr, CoreExpr),
   Assign(LocalId, CoreExpr),

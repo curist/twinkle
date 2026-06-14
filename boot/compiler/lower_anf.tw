@@ -290,7 +290,7 @@ fn lower_expr(expr: CoreExpr, state: LowerState, accum: Vector<LetBinding>) Expr
     .LitStr(s) => .{ expr: .Atom(.ALitStr(s)), state, accum },
     .LitVoid => .{ expr: .Atom(.ALitVoid), state, accum },
     .Local(id) => .{ expr: .Atom(.ALocal(id)), state, accum },
-    .GlobalLocal(id) => .{ expr: .Atom(.ALocal(id)), state, accum },
+    .GlobalLocal(id) => .{ expr: .Atom(.ALocal(LocalId.{ id: id.id })), state, accum },
     .GlobalFunc(id) => .{ expr: .Atom(.AGlobalFunc(id)), state, accum },
     .ContractCall(_, _, _, _) => error("lower_anf: unresolved contract call"),
     // ── Non-atomic ops ──
@@ -539,7 +539,7 @@ fn atomize(expr: CoreExpr, state: LowerState, accum: Vector<LetBinding>) AtomAcc
     .LitStr(s) => .{ atom: .ALitStr(s), state, accum },
     .LitVoid => .{ atom: .ALitVoid, state, accum },
     .Local(id) => .{ atom: .ALocal(id), state, accum },
-    .GlobalLocal(id) => .{ atom: .ALocal(id), state, accum },
+    .GlobalLocal(id) => .{ atom: .ALocal(LocalId.{ id: id.id }), state, accum },
     .GlobalFunc(id) => .{ atom: .AGlobalFunc(id), state, accum },
     .ContractCall(_, _, _, _) => error("atomize: unresolved contract call"),
     // Structural forms: lower independently, flatten into accum

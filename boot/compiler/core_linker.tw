@@ -11,7 +11,7 @@
 
 use compiler.core_ir.{
   CompiledModule, CoreExpr, CoreExprKind, CoreModule, CorePattern, ExternImport, FieldInit, FuncId,
-  FunctionDef, LocalId, MatchArm, Param,
+  FunctionDef, GlobalId, LocalId, MatchArm, Param,
 }
 use compiler.mono_type.{MonoType, TypeId}
 use compiler.resolver.{ResolvedContractRef, ResolvedEnv, ResolvedTypeParam}
@@ -756,6 +756,13 @@ fn remap_local_id(id: LocalId, global_remap: Dict<Int, Int>) LocalId {
   }
 }
 
+fn remap_global_id(id: GlobalId, global_remap: Dict<Int, Int>) GlobalId {
+  case global_remap[id.id] {
+    .Some(new_id) => GlobalId.{ id: new_id },
+    .None => id,
+  }
+}
+
 fn remap_expr(
   expr: CoreExpr,
   remap: Dict<Int, Int>,
@@ -769,7 +776,7 @@ fn remap_expr(
     .LitStr(_) => expr.kind,
     .LitVoid => expr.kind,
     .Local(_) => expr.kind,
-    .GlobalLocal(id) => .GlobalLocal(remap_local_id(id, global_remap)),
+    .GlobalLocal(id) => .GlobalLocal(remap_global_id(id, global_remap)),
     .GlobalFunc(id) => .GlobalFunc(remap_func_id(id, remap)),
     .Let(local, value, body) => .Let(
       local,

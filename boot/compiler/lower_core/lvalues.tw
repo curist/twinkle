@@ -1,7 +1,7 @@
 /// Lvalue assignment lowering.
 
 use compiler.ast.{Expr}
-use compiler.core_ir.{CoreExpr, CoreExprKind, FieldId, LocalId}
+use compiler.core_ir.{CoreExpr, CoreExprKind, FieldId, GlobalId, LocalId}
 use compiler.lower_core.context.{ExprOut, LowerCtx}
 use compiler.lower_core.types.{find_field_index_in_type, type_id_from_mono}
 use lib.source.span.{Span}
@@ -38,7 +38,7 @@ pub fn lower_lvalue_assign(
 
             // Use GlobalLocal for module globals, Local for function locals
             base_kind: CoreExprKind = case ctx.module_globals[name] {
-              .Some(_) => .GlobalLocal(root_local),
+              .Some(_) => .GlobalLocal(GlobalId.{ id: root_local.id }),
               .None => .Local(root_local),
             }
             update := CoreExpr.{
@@ -91,7 +91,7 @@ pub fn lower_lvalue_assign(
               _ => ctx.builtins.id("vector$set_unsafe"),
             }
             base_kind: CoreExprKind = case ctx.module_globals[name] {
-              .Some(_) => .GlobalLocal(root_local),
+              .Some(_) => .GlobalLocal(GlobalId.{ id: root_local.id }),
               .None => .Local(root_local),
             }
             update := CoreExpr.{
