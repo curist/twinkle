@@ -966,6 +966,19 @@ fn emit_op(
       buf2 = .append(.RefI31)
       buf2.append(.LocalSet(result_idx))
     },
+    .AGlobalSet(gid, atom) => case ctx.registry.module_globals[gid.id] {
+      .Some(gentry) => {
+        vt := val_type_of_mono(gentry.mono, ctx.env)
+        buf2 := emit_init_atom(atom, gentry.mono, .Some(vt), ctx, buf)
+        buf2 = .append(.GlobalSet(gentry.sym))
+
+        // AGlobalSet produces void — set result to void
+        buf2 = .append(.I32Const(0))
+        buf2 = .append(.RefI31)
+        buf2.append(.LocalSet(result_idx))
+      },
+      .None => error("emit: unknown module global G${gid.id}"),
+    },
     .ABinOp(bop, left, right, kind) => {
       buf2 := emit_binop(bop, left, right, kind, ctx, buf)
       buf2.append(.LocalSet(result_idx))

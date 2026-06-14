@@ -476,6 +476,7 @@ fn op_group_escapes(op: PreparedOp, vs: Dict<Int, Bool>, len_id: Int, builtins: 
     .AArrayLit(items) => atoms_contain_any(items, vs),
     .AInit(a) => false,
     .AAssign(_, a) => slot_in(a, vs),
+    .AGlobalSet(_, a) => slot_in(a, vs),
     .AWrapAnyref(a, _) => slot_in(a, vs),
     .AUnwrapAnyref(a, _) => slot_in(a, vs),
   }
@@ -670,6 +671,7 @@ fn classify_op(
     .AArrayLit(items) => .{ escapes: atoms_contain_any(items, vs), field_keys: [] },
     .AInit(_) => .{ escapes: false, field_keys: [] },
     .AAssign(_, a) => .{ escapes: slot_in(a, vs), field_keys: [] },
+    .AGlobalSet(_, a) => .{ escapes: slot_in(a, vs), field_keys: [] },
     .AWrapAnyref(a, _) => .{ escapes: slot_in(a, vs), field_keys: [] },
     .AUnwrapAnyref(a, _) => .{ escapes: slot_in(a, vs), field_keys: [] },
   }

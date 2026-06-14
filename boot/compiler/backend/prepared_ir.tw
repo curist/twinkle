@@ -6,7 +6,7 @@
 
 use compiler.anf.{IndexKind, OpKind}
 use compiler.codegen.wasm_ir.{ValType}
-use compiler.core_ir.{BinOp, FieldId, FuncId, LocalId, UnOp, VariantId}
+use compiler.core_ir.{BinOp, FieldId, FuncId, GlobalId, LocalId, UnOp, VariantId}
 use compiler.mono_type.{MonoType, TypeId}
 
 // ── Capture parameters ──────────────────────────────────────────────
@@ -77,7 +77,7 @@ pub type SlotInfo = .{
 // semantic LocalId.
 pub type PreparedAtom = {
   ASlot(SlotId),
-  AGlobalLocal(LocalId),
+  AGlobalLocal(GlobalId),
   AGlobalFunc(FuncId),
   ALitInt(Int),
   ALitFloat(Float),
@@ -110,6 +110,7 @@ pub type PreparedOp = {
   AIndex(PreparedAtom, PreparedAtom, IndexKind, MonoType),
   AInit(PreparedAtom),
   AAssign(SlotId, PreparedAtom),
+  AGlobalSet(GlobalId, PreparedAtom),
   ADefer(PreparedExpr),
   AWrapAnyref(PreparedAtom, MonoType),
   AUnwrapAnyref(PreparedAtom, MonoType),

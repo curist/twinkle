@@ -24,7 +24,7 @@ use compiler.backend.prepared_ir.{
   CaptureParam, PreparedAtom, PreparedExpr, PreparedFieldAtom, PreparedFunc, PreparedMatchArm,
   PreparedOp, PreparedPattern, SlotId, SlotInfo, SlotRole,
 }
-use compiler.core_ir.{CorePattern, LocalId, VariantId}
+use compiler.core_ir.{CorePattern, GlobalId, LocalId, VariantId}
 use compiler.mono_type.{MonoType, TypeId}
 use compiler.resolver.{ResolvedEnv, lookup_type_def}
 use compiler.type_util.{subst_type_params}
@@ -233,9 +233,7 @@ fn lower_op(op: AnfOp, local_to_slot: Dict<Int, SlotId>, func_name: String) Prep
       lookup_slot_for(local_to_slot, target.id, "assign target", func_name),
       lower_atom(atom, local_to_slot),
     ),
-    // Wired in the next step (prepared global-store op); lower_anf does not
-    // yet produce AGlobalSet, so this path is unreachable for now.
-    .AGlobalSet(_, _) => error("slot_assign: AGlobalSet lowering not wired yet"),
+    .AGlobalSet(gid, atom) => .AGlobalSet(gid, lower_atom(atom, local_to_slot)),
     .ADefer(body) => .ADefer(lower_expr(body, local_to_slot, func_name)),
     .AWrapAnyref(atom, mono) => .AWrapAnyref(lower_atom(atom, local_to_slot), mono),
     .AUnwrapAnyref(atom, mono) => .AUnwrapAnyref(lower_atom(atom, local_to_slot), mono),
@@ -246,9 +244,12 @@ fn lower_atom(atom: Atom, local_to_slot: Dict<Int, SlotId>) PreparedAtom {
   case atom {
     .ALocal(lid) => case local_to_slot[lid.id] {
       .Some(sid) => .ASlot(sid),
-      .None => .AGlobalLocal(lid),
+      // No slot for a local id → it is a module global read. Once lowering
+      // produces AGlobalLocal directly this inference is dead (deleted in a
+      // later step); kept for now so the representation flip stays faithful.
+      .None => .AGlobalLocal(GlobalId.{ id: lid.id }),
     },
-    .AGlobalLocal(gid) => .AGlobalLocal(LocalId.{ id: gid.id }),
+    .AGlobalLocal(gid) => .AGlobalLocal(gid),
     .AGlobalFunc(fid) => .AGlobalFunc(fid),
     .ALitInt(n) => .ALitInt(n),
     .ALitFloat(f) => .ALitFloat(f),

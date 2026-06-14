@@ -307,6 +307,7 @@ fn track_uses_in_op(op: PreparedOp, seg: Int, uses: Dict<Int, Int>) Dict<Int, In
       uses = track_uses_in_slot(sid, seg, uses)
       track_uses_in_atom(a, seg, uses)
     },
+    .AGlobalSet(_, a) => track_uses_in_atom(a, seg, uses),
     .AWrapAnyref(a, _) => track_uses_in_atom(a, seg, uses),
     .AUnwrapAnyref(a, _) => track_uses_in_atom(a, seg, uses),
     .ADefer(_) => uses,

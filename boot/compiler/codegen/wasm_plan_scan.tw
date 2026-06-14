@@ -141,6 +141,13 @@ fn scan_op(op: PreparedOp, builtins: BuiltinRegistry, is_init: Bool, out: ScanRe
     },
     .AInit(atom) => scan_atom(atom, is_init, out),
     .AAssign(_, atom) => scan_atom(atom, is_init, out),
+    .AGlobalSet(gid, atom) => {
+      // Register the written global so it gets a registry entry and a wasm
+      // global declaration even if no read of it is scanned.
+      cur := scan_atom(atom, is_init, out)
+      cur.module_globals[gid.id] = true
+      cur
+    },
     .AWrapAnyref(atom, _) => scan_atom(atom, is_init, out),
     .AUnwrapAnyref(atom, _) => scan_atom(atom, is_init, out),
   }

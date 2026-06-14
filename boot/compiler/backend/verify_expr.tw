@@ -264,6 +264,9 @@ fn verify_op(ctx: VerifyCtx, result_info: SlotInfo, op: PreparedOp) Result<Void,
       try ctx.verify_atom_use(atom, "assign value")
       ctx.verify_value_for_slot(target_info, atom, "assign value")
     },
+    // The expected-type check against the linked-global oracle is wired in a
+    // later step; for now verify the stored value atom is well-formed.
+    .AGlobalSet(_, atom) => ctx.verify_atom_use(atom, "global set value"),
     .ADefer(body) => ctx.verify_expr(body),
     .AWrapAnyref(atom, _) => {
       try ctx.verify_atom_use(atom, "wrap operand")
