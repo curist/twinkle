@@ -224,7 +224,7 @@ pub fn lower_module(module: Module, check_result: CheckResult, builtins: Builtin
     // phantom FuncId for this origin, reuse it.
     case ctx.env.function_origins[sig.name] {
       .Some(origin) => {
-        origin_key := "${origin.module_path} ${origin.func_name}"
+        origin_key := "${origin.module_path}::${origin.func_name}"
 
         case ctx.origin_cache[origin_key] {
           .Some(existing_fid) => {
@@ -302,7 +302,7 @@ pub fn lower_module(module: Module, check_result: CheckResult, builtins: Builtin
   for name in ctx.env.value_origins.keys() {
     case ctx.env.value_origins[name] {
       .Some(origin) => {
-        origin_key := "${origin.module_path} ${origin.func_name}"
+        origin_key := "${origin.module_path}::${origin.func_name}"
 
         case value_origin_cache[origin_key] {
           .Some(existing_gid) => ctx.module_globals[name] = existing_gid,
