@@ -70,13 +70,21 @@ fn member_completions(snap: SemanticSnapshot, dot_offset: Int, source: String) V
   // direct type_map lookups can return wrong types.  Name resolution is
   // always correct for simple identifiers because the binding's value
   // expression (before the edit point) keeps its original ID.
-  case resolve_receiver_by_name(reparse_items, typed, search_offset) {
-    .Some(ty) => {
-      result := completions_for_type(typed.env, ty)
+  case simple_ident_before_dot(source, dot_offset) {
+    .Some(receiver_name) => case resolve_receiver_by_name(
+      reparse_items,
+      typed,
+      search_offset,
+      receiver_name,
+    ) {
+      .Some(ty) => {
+        result := completions_for_type(typed.env, ty)
 
-      if result.len() > 0 {
-        return result
-      }
+        if result.len() > 0 {
+          return result
+        }
+      },
+      .None => {},
     },
     .None => {},
   }
@@ -138,6 +146,21 @@ fn module_value_completions(env: ResolvedEnv, module_name: String) Vector<
   result
 }
 
+fn simple_ident_before_dot(source: String, dot_offset: Int) String? {
+  name := cursor_context.extract_ident_before(source, dot_offset)
+
+  if name == "" {
+    return .None
+  }
+
+  start := dot_offset - name.len()
+  if start > 0 and source.slice(start - 1, start) == "." {
+    return .None
+  }
+
+  .Some(name)
+}
+
 fn find_receiver_type(items: Vector<Item>, type_map: Dict<Int, MonoType>, offset: Int) MonoType? {
   find_map(
     items,
@@ -170,19 +193,17 @@ fn receiver_type_from_ctx(type_map: Dict<Int, MonoType>, ctx: NodeContext) MonoT
   }
 }
 
-/// Fallback receiver type resolution: extract the receiver's identifier name
-/// from the current AST, then look up its type from function params or
-/// let-bindings whose value expression IDs are stable in the stale type_map
-/// (because the code defining them is unchanged between edits).
-fn resolve_receiver_by_name(items: Vector<Item>, typed: CheckResult, offset: Int) MonoType? {
+/// Fallback receiver type resolution: for a simple identifier receiver, look
+/// up its type from function params or let-bindings whose value expression IDs
+/// are stable in the stale type_map (because the code defining them is
+/// unchanged between edits).
+fn resolve_receiver_by_name(items: Vector<Item>, typed: CheckResult, offset: Int, name: String) MonoType? {
   for item in items {
     case item {
       .Function(decl) => {
         if !decl.span.contains(offset) {
           continue
         }
-
-        name := try receiver_ident_name(decl.body, offset)
 
         // Check function parameters
         case typed.env.lookup_function(decl.name) {
@@ -225,18 +246,6 @@ fn resolve_receiver_by_name(items: Vector<Item>, typed: CheckResult, offset: Int
   }
 
   .None
-}
-
-fn receiver_ident_name(block: Block, offset: Int) String? {
-  ctx := try find_node_in_block(block, offset)
-
-  case ctx {
-    .ExprNode(e) => case e.kind {
-      .Ident(n) => .Some(n),
-      _ => .None,
-    },
-    _ => .None,
-  }
 }
 
 fn find_let_type_in_block(block: Block, name: String, type_map: Dict<Int, MonoType>, offset: Int) MonoType? {

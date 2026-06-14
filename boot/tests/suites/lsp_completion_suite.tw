@@ -377,6 +377,44 @@ pub fn suite() runner.Suite {
       },
     )
     .test(
+      "member completion after method call uses call result type",
+      fn() {
+        valid := "type Checksum = .{ bytes: String }\nfn to_string(c: Checksum) String { c.bytes }\nfn part() Void {\n  checksum := Checksum.{ bytes: \"abc\" }\n  checksum.to_string().len()\n}\n"
+        incomplete := "type Checksum = .{ bytes: String }\nfn to_string(c: Checksum) String { c.bytes }\nfn part() Void {\n  checksum := Checksum.{ bytes: \"abc\" }\n  checksum.to_string().\n}\n"
+        step := open_then_complete(valid, incomplete, 4, 23)
+        labels := try completion_labels(step)
+
+        if !has_label(labels, "len") {
+          return .Err("expected String completions after method call, got: ${labels}")
+        }
+
+        if has_label(labels, "bytes") {
+          return .Err("expected method-call receiver, not original checksum, got: ${labels}")
+        }
+
+        .Ok({})
+      },
+    )
+    .test(
+      "member completion after field access uses field type",
+      fn() {
+        valid := "type Wrapper = .{ inner: String, bytes: Int }\nfn part() Void {\n  wrapper := Wrapper.{ inner: \"abc\", bytes: 1 }\n  wrapper.inner.len()\n}\n"
+        incomplete := "type Wrapper = .{ inner: String, bytes: Int }\nfn part() Void {\n  wrapper := Wrapper.{ inner: \"abc\", bytes: 1 }\n  wrapper.inner.\n}\n"
+        step := open_then_complete(valid, incomplete, 3, 16)
+        labels := try completion_labels(step)
+
+        if !has_label(labels, "len") {
+          return .Err("expected String completions after field access, got: ${labels}")
+        }
+
+        if has_label(labels, "inner") or has_label(labels, "bytes") {
+          return .Err("expected field receiver, not original wrapper, got: ${labels}")
+        }
+
+        .Ok({})
+      },
+    )
+    .test(
       "member completion still works after diagnostics publish",
       fn() {
         valid := "xs := [1, 2, 3]\nxs\n"
