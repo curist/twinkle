@@ -162,6 +162,7 @@ Explicit satisfaction:
 | `==`, `!=` | `Eq` |
 | `<`, `<=`, `>`, `>=` | `Ord` |
 | `c[i]` (positional, `Int`-indexed) | `IndexRead<E>` |
+| `c[a..b]` (range slice) | `Sliceable` |
 
 For generic operands, the relevant contract must be present as a bound. For
 concrete operands, the type must satisfy the contract through the rules above.
@@ -169,6 +170,10 @@ concrete operands, the type must satisfy the contract through the rules above.
 `c` is a type variable bounded `IndexRead<E>`; concrete `Vector`/`String` keep
 their direct positional read, and keyed `Dict<K, V>[K] -> V?` stays a separate
 special case (a future `KeyedRead<K, V>`).
+
+`c[a..b]` desugars to `Sliceable.slice(c, a, b)` (returns `Self`, the half-open
+`[a, b)` sub-sequence). The index must be a literal range `a..b`; a stepped or
+stored `Range` value in index position is not accepted.
 
 ## Access contracts
 
@@ -181,7 +186,12 @@ type with matching `len`/`at` inherent methods conforms. It backs the `c[i]`
 syntax hook above and lets generic algorithms (`find`/`position`/`region_eq`/
 `starts_with`) be written once over the bound and monomorphized to direct reads.
 
-Still planned: `IntoIterator<E>` (`for x in`), `IndexWrite<E>`, and `Sliceable`
-(range-slice `v[a..b]`, tracked separately). Design:
+**`Sliceable`** is implemented: `slice(self, Int, Int) Self`. It is `Self`-only
+(no element type), so it needs none of the parameterized-contract machinery.
+`Vector<T>`, `String`, and `View<C>` satisfy it via their `slice` methods, so
+`v[a..b]`, `str[a..b]`, and `view[a..b]` all produce a sub-sequence of the same
+type. Design: [plans/sliceable.md](plans/sliceable.md).
+
+Design references for the access-contract family:
 [plans/access-contracts.md](plans/archive/access-contracts.md) (and the
 [contract-model rationale](design/contracts.md)).

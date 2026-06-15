@@ -1,6 +1,22 @@
 # `Sliceable` — `foo[a..b]` range-slice syntax
 
-Status: proposal. Splits off from [access-contracts.md](archive/access-contracts.md) (which
+Status: **implemented** (boot compiler). `foo[a..b]` desugars to a uniform
+`Sliceable.slice` contract call that monomorphization resolves to the satisfier's
+`slice` (`vector$slice` / `string$slice` / `view$slice`). `Vector`, `String`, and
+`View<C>` satisfy it. Resolved open questions:
+- **Lowering path** — desugars to the `slice` method call early (one code path),
+  emitted as a `ContractCall` in `lower_index` and resolved in monomorphize.
+- **Stepped / stored range in index position** — only the literal `a..b` form is
+  the slice path; anything else stays the element-read path and is rejected by the
+  `Int` unify (a stored/stepped `Range` cannot index).
+- **Assignment form `foo[a..b] = xs`** — still out of scope.
+
+Stage0 (Rust) was not mirrored: it bootstraps `boot/main.tw`, which does not use
+`[a..b]` in its own sources, so the self-host fixed point holds without it. (One
+incidental fix: monomorphize no longer early-returns when a program has no
+generics, since a fully concrete program can now carry a `ContractCall` to lower.)
+
+Splits off from [access-contracts.md](archive/access-contracts.md) (which
 defines the parameterized read/write/iterate contracts and wires *element*
 indexing `foo[i]`). This plan covers **range-slice indexing** `foo[a..b]` over the
 `Sliceable` contract. Tracked under [collections-access.md](archive/collections-access.md).

@@ -216,7 +216,7 @@ Strings are immutable, UTF-8 encoded, and GC-managed. String interpolation: `"he
 | `.is_empty()` | `fn(s: String) Bool` | Whether the string has no bytes |
 | `s[i]` | — | Byte at byte offset `i` (returns `Byte`, traps on OOB) |
 | `.get(i)` | `fn(s: String, i: Int) Option<Byte>` | Safe byte lookup at byte offset |
-| `.slice(start, end)` | `fn(s: String, start: Int, end: Int) String` | Substring by **byte offsets** `[start, end)`. Out-of-range indices are clamped to `[0, len]`. Traps if a clamped index falls mid-codepoint |
+| `.slice(start, end)` | `fn(s: String, start: Int, end: Int) String` | Substring by **byte offsets** `[start, end)`. Out-of-range indices are clamped to `[0, len]`. Traps if a clamped index falls mid-codepoint. Also written `s[start..end]` (the `Sliceable` contract) |
 | `.concat(other)` | `fn(s: String, other: String) String` | Concatenate two strings |
 | `.char_code_at(i)` | `fn(s: String, i: Int) Int` | Byte value at byte offset `i` (same as `Byte.to_int(s[i])`) |
 | `.utf8_bytes()` | `fn(s: String) Vector<Byte>` | Copy string bytes into a vector |
@@ -265,7 +265,7 @@ Persistent vector with structural sharing. Literal syntax: `[1, 2, 3]`.
 | `.get(i)` | `fn<T>(v: Vector<T>, i: Int) Option<T>` | Safe index lookup. O(log n) |
 | `.set(i, val)` | `fn<T>(v: Vector<T>, i: Int, val: T) Option<Vector<T>>` | Safe update at index. O(log n) |
 | `.concat(other)` | `fn<T>(v: Vector<T>, other: Vector<T>) Vector<T>` | Concatenate two vectors structurally. O(log n), sharing both operands' trees |
-| `.slice(start, end)` | `fn<T>(v: Vector<T>, start: Int, end: Int) Vector<T>` | Subvector `[start, end)`. O(log n), sharing the source tree except boundary spines |
+| `.slice(start, end)` | `fn<T>(v: Vector<T>, start: Int, end: Int) Vector<T>` | Subvector `[start, end)`. O(log n), sharing the source tree except boundary spines. Also written `v[start..end]` (the `Sliceable` contract) |
 | `.gather(idx)` | `fn<T>(xs: Vector<T>, idx: Vector<Int>) Vector<T>` | Bulk index: `result[k] = xs[idx[k]]`, length `idx.len()`. Traps on OOB index. Permute/select/duplicate in one op |
 | `.map(f)` | `fn<A,B>(xs: Vector<A>, f: fn(A) B) Vector<B>` | Transform each element |
 | `.filter(f)` | `fn<A>(xs: Vector<A>, f: fn(A) Bool) Vector<A>` | Keep elements where `f` returns true |
@@ -720,6 +720,7 @@ share the one backing. A `View` itself satisfies `IndexRead<E>`. Requires
 | `.drop_first()` | `fn<C>(v: View<C>) View<C>` | Drop the first element (O(1), shares backing; total) |
 | `.drop_last()` | `fn<C>(v: View<C>) View<C>` | Drop the last element (O(1), shares backing; total) |
 | `.sub(a, b)` | `fn<C>(v: View<C>, a: Int, b: Int) View<C>` | Relative sub-window `[a, b)` (O(1), shares backing; total — endpoints clamp into `[0, len()]`, so out-of-range or reversed args yield a valid/empty window) |
+| `.slice(a, b)` | `fn<C>(v: View<C>, a: Int, b: Int) View<C>` | Alias for `.sub`; the `Sliceable` satisfier backing `v[a..b]` |
 | `.to_vector()` | `fn<C: IndexRead<E>, E>(v: View<C>) Vector<E>` | Materialize the window into an owned `Vector` |
 | `.fold(init, f)` | `fn<C: IndexRead<E>, E, B>(v: View<C>, init: B, f: fn(B, E) B) B` | Left-fold over the window |
 | `.take(n)` | `fn<C>(v: View<C>, n: Int) View<C>` | First `n` elements (O(1), shares backing; clamps like `sub`) |

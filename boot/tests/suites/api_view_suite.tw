@@ -21,6 +21,11 @@ fn index_via_bracket<C: IndexRead<E>, E>(c: C, i: Int) E {
   c[i]
 }
 
+// A range index resolves the `Sliceable.slice` contract method, returning Self.
+fn middle_via_sliceable<C: Sliceable>(c: C) C {
+  c[1..3]
+}
+
 // Generic over the IndexRead bound with a sibling `E: Eq`, reading elements
 // directly through the contract (`c.at`). Driving this with a `View` backing
 // forces the checker to recover the element type of a satisfier that is itself
@@ -135,6 +140,30 @@ pub fn suite() runner.Suite {
         try assert.equal(w.len(), 3)
         try assert.equal(w.at(0), 20)
         try assert.equal(w.at(2), 40)
+        .Ok({})
+      },
+    )
+    .test(
+      "range-index carves a window like sub",
+      fn() {
+        v := view.from([10, 20, 30, 40, 50])
+        w := v[1..4]
+        try assert.equal(w.len(), 3)
+        try assert.equal(w.at(0), 20)
+        try assert.equal(w.at(2), 40)
+        .Ok({})
+      },
+    )
+    .test(
+      "range-index works through a Sliceable bound",
+      fn() {
+        // Vector and View both satisfy Sliceable via their `slice` method.
+        vw := middle_via_sliceable(view.from([10, 20, 30, 40, 50]))
+        try assert.equal(vw.len(), 2)
+        try assert.equal(vw.at(0), 20)
+        xs := middle_via_sliceable([10, 20, 30, 40, 50])
+        try assert.equal(xs.len(), 2)
+        try assert.equal(xs[0], 20)
         .Ok({})
       },
     )

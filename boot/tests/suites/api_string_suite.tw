@@ -164,6 +164,16 @@ pub fn suite() runner.Suite {
       },
     )
     .test(
+      "range-index slices a string",
+      fn() {
+        s := "hello"
+        try assert.equal(s[1..4], "ell")
+        try assert.equal(s[0..5], "hello")
+        try assert.equal(s[2..2], "")
+        .Ok({})
+      },
+    )
+    .test(
       "slice clamps out-of-range indices",
       fn() {
         try assert.equal("abc".slice(0, 100), "abc")

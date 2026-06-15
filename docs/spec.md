@@ -1462,6 +1462,11 @@ Vectors are **immutable** persistent sequences (`Vector<T>`) with structural sha
 
 `vec[i]` indexing, 0-based (traps on out-of-bounds).
 
+`vec[a..b]` range-slice indexing is sugar for `vec.slice(a, b)` — the half-open
+`[a, b)` subvector. The index must be a literal range; it is backed by the
+`Sliceable` contract, so the same `c[a..b]` form works on `String` and `View<C>`
+(see [contracts.md](contracts.md)).
+
 Vector operations via method or module syntax:
 
 * `vec.len() Int` / `Vector.len(vec) Int` — number of elements

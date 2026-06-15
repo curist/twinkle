@@ -1690,10 +1690,10 @@ pub fn monomorphize(module: CoreModule) CoreModule {
     }
   }
 
-  if generic_ids.keys().len() == 0 {
-    return module
-  }
-
+  // Note: we do not early-return when there are no generics. The rewrite pass
+  // below also lowers `ContractCall` nodes (e.g. a concrete `xs[a..b]` slice) to
+  // direct calls, and those can occur in a fully concrete program. With no
+  // generics the specialization BFS simply stays empty.
   ctx := MonoCtx.{
     generic_ids,
     func_map,

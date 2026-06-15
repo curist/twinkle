@@ -95,6 +95,12 @@ pub fn sub<C>(v: View<C>, a: Int, b: Int) View<C> {
   v
 }
 
+/// Sub-window covering `[a, b)`, the `Sliceable` satisfier backing `v[a..b]`
+/// (O(1), shares the backing). Alias for `sub`; clamps endpoints the same way.
+pub fn slice<C>(v: View<C>, a: Int, b: Int) View<C> {
+  v.sub(a, b)
+}
+
 /// Materialize the window into an owned `Vector`, dropping the backing.
 pub fn to_vector<C: IndexRead<E>, E>(v: View<C>) Vector<E> {
   out: Vector<E> = []

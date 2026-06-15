@@ -448,6 +448,19 @@ pub fn suite() runner.Suite {
       },
     )
     .test(
+      "range-index slices like slice",
+      fn() {
+        xs: Vector<Int> = [10, 20, 30, 40, 50]
+        s := xs[1..4]
+        try assert.equal(s.len(), 3)
+        try assert.equal(s[0], 20)
+        try assert.equal(s[2], 40)
+        try assert.equal(xs[0..0].len(), 0)
+        try assert.equal(xs[2..xs.len()].len(), 3)
+        .Ok({})
+      },
+    )
+    .test(
       "slice handles regular and relaxed vector boundaries",
       fn() {
         regular := build_seq(1100)

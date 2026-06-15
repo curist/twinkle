@@ -92,6 +92,28 @@ pub fn lower_index(
   s: Span,
   lower_expr_fn: fn(LowerCtx, Expr) ExprOut,
 ) ExprOut {
+  // `c[a..b]` — a range literal in index position is a `Sliceable` slice. Lower
+  // it to a `Sliceable.slice` contract call uniformly (concrete receivers and
+  // `Sliceable`-bounded type vars alike); monomorphization resolves it to the
+  // satisfier's `slice` (`vector$slice` / `string$slice` / `view$slice`) via the
+  // method table. The checker (`synth_slice`) has already validated the receiver.
+  case idx_expr.kind {
+    .Binary(.Range, lo_expr, hi_expr) => {
+      br := lower_expr_fn(ctx, base_expr)
+      lo := lower_expr_fn(br.ctx, lo_expr)
+      hi := lower_expr_fn(lo.ctx, hi_expr)
+      return .{
+        expr: .{
+          kind: .ContractCall(.Sliceable, "slice", br.expr, [lo.expr, hi.expr]),
+          ty,
+          span: s,
+        },
+        ctx: hi.ctx,
+      }
+    },
+    _ => {},
+  }
+
   br := lower_expr_fn(ctx, base_expr)
   ir := lower_expr_fn(br.ctx, idx_expr)
 

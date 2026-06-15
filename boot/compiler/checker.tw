@@ -581,6 +581,10 @@ fn same_builtin_contract(a: BuiltinContract, b: BuiltinContract) Bool {
       .IntoIterator => true,
       _ => false,
     },
+    .Sliceable => case b {
+      .Sliceable => true,
+      _ => false,
+    },
   }
 }
 
@@ -758,11 +762,12 @@ fn builtin_contract_satisfied_by_primitive(ty: MonoType, contract: BuiltinContra
       .String => true,
       _ => false,
     },
-    // IndexRead/IndexWrite/IntoIterator are satisfied via inherent methods, not a
-    // primitive shortcut.
+    // IndexRead/IndexWrite/IntoIterator/Sliceable are satisfied via inherent
+    // methods, not a primitive shortcut.
     .IndexRead => false,
     .IndexWrite => false,
     .IntoIterator => false,
+    .Sliceable => false,
   }
 }
 
@@ -890,6 +895,7 @@ fn contract_supports_auto_derive(contract: BuiltinContract) Bool {
     .IndexRead => false,
     .IndexWrite => false,
     .IntoIterator => false,
+    .Sliceable => false,
   }
 }
 
@@ -918,11 +924,12 @@ fn try_builtin_container_contract(
       .Vector(elem) => .Some(prove_contract(elem, .Ord, ctx, active, .None)),
       _ => .None,
     },
-    // IndexRead/IndexWrite/IntoIterator have no structural container rule; they
-    // prove via inherent methods.
+    // IndexRead/IndexWrite/IntoIterator/Sliceable have no structural container
+    // rule; they prove via inherent methods.
     .IndexRead => .None,
     .IndexWrite => .None,
     .IntoIterator => .None,
+    .Sliceable => .None,
   }
 }
 
@@ -4518,6 +4525,15 @@ fn synth_unary(op: UnOp, operand: Expr, s: Span, ctx: InferCtx, diags: Vector<Di
 }
 
 fn synth_index(base: Expr, idx: Expr, expr_id: Int, s: Span, ctx: InferCtx, diags: Vector<DiagKind>) SynthOut {
+  // `foo[a..b]` — a range literal in index position is a `Sliceable` slice, not
+  // an element read. Desugar to `foo.slice(a, b)`, which returns `Self`. Only the
+  // literal `a..b` form reaches here; a stepped or stored `Range` in index
+  // position keeps the element-read path and is rejected by the `Int` unify below.
+  case idx.kind {
+    .Binary(.Range, lo, hi) => { return synth_slice(base, lo, hi, expr_id, s, ctx, diags) },
+    _ => {},
+  }
+
   br := ctx.synth(base, diags)
   ir := br.ctx.synth(idx, br.diags)
   zonked_base := zonk(br.ty, ir.ctx.subst)
@@ -4572,6 +4588,51 @@ fn synth_index(base: Expr, idx: Expr, expr_id: Int, s: Span, ctx: InferCtx, diag
         diags: ir.diags.append(.Error(.NotIndexable(.{ span: s, ty: zonked_base }))),
       }
     },
+  }
+}
+
+// `foo[a..b]` over a `Sliceable` receiver. Both bounds are `Int`; the result is
+// the receiver type `Self` (a subvector / substring / sub-window). Lowering emits
+// a `Sliceable.slice` contract call uniformly (see `lower_index`), which
+// monomorphization resolves to the satisfier's `slice` via the method table — so
+// here we only validate the receiver actually exposes a `slice` satisfier: a
+// concrete type with an inherent `slice` method, or a `Sliceable`-bounded type var.
+fn synth_slice(
+  base: Expr,
+  lo: Expr,
+  hi: Expr,
+  expr_id: Int,
+  s: Span,
+  ctx: InferCtx,
+  diags: Vector<DiagKind>,
+) SynthOut {
+  br := ctx.synth(base, diags)
+  zonked_base := zonk(br.ty, br.ctx.subst)
+
+  lor := br.ctx.check_expr(lo, MonoType.Int, br.diags)
+  hir := lor.ctx.check_expr(hi, MonoType.Int, lor.diags)
+  cur_ctx := hir.ctx
+  cur_diags := hir.diags
+
+  sliceable := case zonked_base {
+    .Var(_) => case lookup_scoped_contract_bound(zonked_base, .Sliceable, cur_ctx.type_var_scope) {
+      .Some(_) => true,
+      .None => false,
+    },
+    _ => case resolve_method_func_name(zonked_base, "slice", cur_ctx.env) {
+      .Some(_) => true,
+      .None => false,
+    },
+  }
+
+  if sliceable {
+    .{ ty: zonked_base, ctx: cur_ctx, diags: cur_diags }
+  } else {
+    .{
+      ty: zonked_base,
+      ctx: cur_ctx,
+      diags: cur_diags.append(.Error(.NotIndexable(.{ span: s, ty: zonked_base }))),
+    }
   }
 }
 
