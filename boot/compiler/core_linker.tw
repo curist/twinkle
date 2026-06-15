@@ -114,13 +114,10 @@ pub fn link(
     defined_global_ids[m.path] = local_to_global
     name_to_id: Dict<String, Int> = Dict.new()
 
-    for name in m.value_exports.keys() {
-      case m.value_exports[name] {
-        .Some(local_id) => case local_to_global[local_id] {
-          .Some(gid) => name_to_id[name] = gid,
-          .None => error("link: value export points at missing local GlobalLocal"),
-        },
-        .None => {},
+    for name, local_id in m.value_exports {
+      case local_to_global[local_id] {
+        .Some(gid) => name_to_id[name] = gid,
+        .None => error("link: value export points at missing local GlobalLocal"),
       }
     }
 
@@ -151,34 +148,26 @@ pub fn link(
 
     // Preserve extern imports using the already-assigned global IDs.
     // Do not allocate IDs here; Step 1 is the only owner of FuncId allocation.
-    for local_id in m.extern_imports.keys() {
+    for local_id, ext in m.extern_imports {
       global_id := case remap[local_id] {
         .Some(gid) => gid,
         .None => error("link: missing global FuncId for extern import"),
       }
 
-      case m.extern_imports[local_id] {
-        .Some(ext) => linked_extern_imports[global_id] = ext,
-        .None => error("link: extern import key missing import payload"),
-      }
+      linked_extern_imports[global_id] = ext
     }
 
     // Map external refs: phantom FuncId → target's global FuncId.
-    for local_id in m.external_refs.keys() {
-      case m.external_refs[local_id] {
-        .Some(ext) => {
-          target_globals := case global_ids[ext.module_path] {
-            .Some(ids) => ids,
-            .None => error("link: external ref points at missing module"),
-          }
-          gid := case target_globals[ext.func_name] {
-            .Some(id) => id,
-            .None => error("link: external ref points at missing function"),
-          }
-          remap[local_id] = gid
-        },
-        .None => error("link: external ref key missing ref payload"),
+    for local_id, ext in m.external_refs {
+      target_globals := case global_ids[ext.module_path] {
+        .Some(ids) => ids,
+        .None => error("link: external ref points at missing module"),
       }
+      gid := case target_globals[ext.func_name] {
+        .Some(id) => id,
+        .None => error("link: external ref points at missing function"),
+      }
+      remap[local_id] = gid
     }
 
     // Build GlobalLocal remap: defined globals + imported value refs.
@@ -187,29 +176,21 @@ pub fn link(
       .None => Dict.new(),
     }
 
-    for phantom_id in m.value_refs.keys() {
-      case m.value_refs[phantom_id] {
-        .Some(vref) => {
-          target_values := case global_value_ids[vref.module_path] {
-            .Some(values) => values,
-            .None => error("link: value ref points at missing module"),
-          }
-          gid := case target_values[vref.value_name] {
-            .Some(id) => id,
-            .None => error("link: value ref points at missing value"),
-          }
-          global_remap[phantom_id] = gid
-        },
-        .None => error("link: value ref key missing ref payload"),
+    for phantom_id, vref in m.value_refs {
+      target_values := case global_value_ids[vref.module_path] {
+        .Some(values) => values,
+        .None => error("link: value ref points at missing module"),
       }
+      gid := case target_values[vref.value_name] {
+        .Some(id) => id,
+        .None => error("link: value ref points at missing value"),
+      }
+      global_remap[phantom_id] = gid
     }
 
     // Preserve the module's visible name table with remapped global FuncIds.
-    for name in m.func_table.keys() {
-      case m.func_table[name] {
-        .Some(fid) => linked_func_table[name] = remap_func_id(fid, remap),
-        .None => error("link: func_table key '${name}' missing during iteration"),
-      }
+    for name, fid in m.func_table {
+      linked_func_table[name] = remap_func_id(fid, remap)
     }
 
     type_remap := build_type_remap(m.path, m.core.type_env, entry_env, entry_origin_index)
@@ -217,80 +198,70 @@ pub fn link(
     // Collect method table entries from this module.
     // Uses the module's func_table + remap to resolve local method names to
     // global FuncIds, and type_remap to canonicalize receiver TypeIds.
-    for tid_id in m.core.type_env.methods_by_type.keys() {
-      case m.core.type_env.methods_by_type[tid_id] {
-        .Some(entries) => {
-          canonical_tid := case type_remap[tid_id] {
-            .Some(mapped) => mapped.id,
-            .None => tid_id,
-          }
+    for tid_id, entries in m.core.type_env.methods_by_type {
+      canonical_tid := case type_remap[tid_id] {
+        .Some(mapped) => mapped.id,
+        .None => tid_id,
+      }
 
-          for entry in entries {
-            allow_external_method := case entry_env.find_type_name(TypeId.{ id: canonical_tid }) {
-              .Some(type_name) => is_builtin_method_type(type_name),
-              .None => false,
-            }
+      for entry in entries {
+        allow_external_method := case entry_env.find_type_name(TypeId.{ id: canonical_tid }) {
+          .Some(type_name) => is_builtin_method_type(type_name),
+          .None => false,
+        }
 
-            case m.func_table[entry.function_name] {
-              .Some(local_fid) => if local_fid.id < builtin_count
-                or remap.has(local_fid.id)
-                and (!m.external_refs.has(local_fid.id) or allow_external_method) {
-                global_fid := remap_func_id(local_fid, remap)
-                key := "t${canonical_tid}::${entry.method_name}"
+        case m.func_table[entry.function_name] {
+          .Some(local_fid) => if local_fid.id < builtin_count
+            or remap.has(local_fid.id)
+            and (!m.external_refs.has(local_fid.id) or allow_external_method) {
+            global_fid := remap_func_id(local_fid, remap)
+            key := "t${canonical_tid}::${entry.method_name}"
 
-                case pre_dce_method_names[key] {
-                  .Some(existing_name) => if existing_name != entry.function_name {
-                    error(
-                      "linker: ambiguous method metadata for '${key}': '${existing_name}' and '${entry.function_name}' both implement method '${entry.method_name}' on type ${canonical_tid} (module ${m.path})",
-                    )
-                  },
-                  .None => {
-                    pre_dce_method_names[key] = entry.function_name
-                    pre_dce_method_table[key] = global_fid
-                  },
-                }
+            case pre_dce_method_names[key] {
+              .Some(existing_name) => if existing_name != entry.function_name {
+                error(
+                  "linker: ambiguous method metadata for '${key}': '${existing_name}' and '${entry.function_name}' both implement method '${entry.method_name}' on type ${canonical_tid} (module ${m.path})",
+                )
               },
-              .None => eprintln(
-                "[linker] method_table: func_table miss for '${entry.function_name}' (method '${entry.method_name}' on type ${tid_id}) in module ${m.path}",
-              ),
+              .None => {
+                pre_dce_method_names[key] = entry.function_name
+                pre_dce_method_table[key] = global_fid
+              },
             }
-          }
-        },
-        .None => {},
+          },
+          .None => eprintln(
+            "[linker] method_table: func_table miss for '${entry.function_name}' (method '${entry.method_name}' on type ${tid_id}) in module ${m.path}",
+          ),
+        }
       }
     }
 
     // Also collect builtin method entries from the module's methods dict.
-    for type_name in m.core.type_env.methods.keys() {
-      case m.core.type_env.methods[type_name] {
-        .Some(entries) => {
-          for entry in entries {
-            case m.func_table[entry.function_name] {
-              .Some(local_fid) => if local_fid.id < builtin_count
-                or remap.has(local_fid.id)
-                and (!m.external_refs.has(local_fid.id) or is_builtin_method_type(type_name)) {
-                global_fid := remap_func_id(local_fid, remap)
-                key := "${type_name}::${entry.method_name}"
+    for type_name, entries in m.core.type_env.methods {
+      for entry in entries {
+        case m.func_table[entry.function_name] {
+          .Some(local_fid) => if local_fid.id < builtin_count
+            or remap.has(local_fid.id)
+            and (!m.external_refs.has(local_fid.id) or is_builtin_method_type(type_name)) {
+            global_fid := remap_func_id(local_fid, remap)
+            key := "${type_name}::${entry.method_name}"
 
-                case pre_dce_method_names[key] {
-                  .Some(existing_name) => if existing_name != entry.function_name {
-                    error(
-                      "linker: ambiguous method metadata for '${key}': '${existing_name}' and '${entry.function_name}' both implement method '${type_name}.${entry.method_name}' (module ${m.path})",
-                    )
-                  },
-                  .None => {
-                    pre_dce_method_names[key] = entry.function_name
-                    pre_dce_method_table[key] = global_fid
-                  },
-                }
+            case pre_dce_method_names[key] {
+              .Some(existing_name) => if existing_name != entry.function_name {
+                error(
+                  "linker: ambiguous method metadata for '${key}': '${existing_name}' and '${entry.function_name}' both implement method '${type_name}.${entry.method_name}' (module ${m.path})",
+                )
               },
-              .None => eprintln(
-                "[linker] method_table: func_table miss for '${entry.function_name}' (method '${type_name}.${entry.method_name}') in module ${m.path}",
-              ),
+              .None => {
+                pre_dce_method_names[key] = entry.function_name
+                pre_dce_method_table[key] = global_fid
+              },
             }
-          }
-        },
-        .None => {},
+          },
+          .None => eprintln(
+            "[linker] method_table: func_table miss for '${entry.function_name}' (method '${type_name}.${entry.method_name}') in module ${m.path}",
+          ),
+        }
       }
     }
 
@@ -353,36 +324,27 @@ pub fn link(
 
   live_func_table: Dict<String, FuncId> = Dict.new()
 
-  for name in linked_func_table.keys() {
-    case linked_func_table[name] {
-      .Some(fid) => if fid.id < builtin_count or reachable.has(fid.id) {
-        live_func_table[name] = fid
-      },
-      .None => error("link: linked_func_table key '${name}' missing during DCE filtering"),
+  for name, fid in linked_func_table {
+    if fid.id < builtin_count or reachable.has(fid.id) {
+      live_func_table[name] = fid
     }
   }
 
   // Filter extern imports after DCE so dead modules do not leak dead imports.
   live_extern_imports: Dict<Int, ExternImport> = Dict.new()
 
-  for id in linked_extern_imports.keys() {
+  for id, ext in linked_extern_imports {
     if reachable.has(id) {
-      case linked_extern_imports[id] {
-        .Some(ext) => live_extern_imports[id] = ext,
-        .None => error("link: linked_extern_imports key ${id} missing during DCE filtering"),
-      }
+      live_extern_imports[id] = ext
     }
   }
 
   // Step 6: Filter method table after DCE.
   method_table: Dict<String, FuncId> = Dict.new()
 
-  for key in pre_dce_method_table.keys() {
-    case pre_dce_method_table[key] {
-      .Some(fid) => if fid.id < builtin_count or reachable.has(fid.id) {
-        method_table[key] = fid
-      },
-      .None => {},
+  for key, fid in pre_dce_method_table {
+    if fid.id < builtin_count or reachable.has(fid.id) {
+      method_table[key] = fid
     }
   }
 
@@ -441,21 +403,18 @@ pub fn validate_compiled_module_links(
   }
 
   // Every recorded external ref must resolve to a real target module/function.
-  for local_id in m.external_refs.keys() {
-    case m.external_refs[local_id] {
-      .Some(ext) => case global_ids[ext.module_path] {
-        .Some(target_globals) => if !target_globals.has(ext.func_name) {
-          return .Err(
-            "core_linker.link: imported FuncId=${local_id} in module '${m.path}' targets missing function '${ext.func_name}' in module '${ext.module_path}'",
-          )
-        },
-        .None => {
-          return .Err(
-            "core_linker.link: imported FuncId=${local_id} in module '${m.path}' targets unknown module '${ext.module_path}'",
-          )
-        },
+  for local_id, ext in m.external_refs {
+    case global_ids[ext.module_path] {
+      .Some(target_globals) => if !target_globals.has(ext.func_name) {
+        return .Err(
+          "core_linker.link: imported FuncId=${local_id} in module '${m.path}' targets missing function '${ext.func_name}' in module '${ext.module_path}'",
+        )
       },
-      .None => {},
+      .None => {
+        return .Err(
+          "core_linker.link: imported FuncId=${local_id} in module '${m.path}' targets unknown module '${ext.module_path}'",
+        )
+      },
     }
   }
 
@@ -517,11 +476,8 @@ fn make_call(func_id: FuncId, s: Span) CoreExpr {
 fn build_type_origin_index(env: ResolvedEnv) Dict<String, TypeId> {
   out: Dict<String, TypeId> = Dict.new()
 
-  for tid in env.type_origins.keys() {
-    case env.type_origins[tid] {
-      .Some(origin) => out[origin] = TypeId.{ id: tid },
-      .None => {},
-    }
+  for tid, origin in env.type_origins {
+    out[origin] = TypeId.{ id: tid }
   }
 
   out
@@ -888,12 +844,9 @@ fn remap_exprs(
 
 // ── Helpers ─────────────────────────────────────────────────────────
 fn func_name_for_id(func_table: Dict<String, FuncId>, ref_id: Int) String? {
-  for name in func_table.keys() {
-    case func_table[name] {
-      .Some(fid) => if fid.id == ref_id {
-        return .Some(name)
-      },
-      .None => {},
+  for name, fid in func_table {
+    if fid.id == ref_id {
+      return .Some(name)
     }
   }
 

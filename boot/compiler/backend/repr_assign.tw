@@ -80,31 +80,26 @@ fn assign_repr_for_func(
   new_slots: Dict<Int, SlotInfo> = Dict.new()
   cache2 := cache
 
-  for sid_int in pf.slots.keys() {
-    case pf.slots[sid_int] {
-      .None => {},
-      .Some(info) => {
-        sid := info.slot.id
-        result := case info.role {
-          .DeadPlaceholder => ReprWasmResult.{ repr: .DeadValue, wasm_type: .Anyref, cache: cache2 },
-          _ => case wrap_slots[sid] {
-            .Some(_) => ReprWasmResult.{ repr: .OpaqueAnyref, wasm_type: .Anyref, cache: cache2 },
-            .None => case unwrap_monos[sid] {
-              .Some(target_mono) => repr_and_wasm_type_of(target_mono, info.mono, env, cache2),
-              .None => repr_and_wasm_type_of(info.mono, info.mono, env, cache2),
-            },
-          },
-        }
-        cache2 = result.cache
-        new_slots[sid_int] = SlotInfo.{
-          slot: info.slot,
-          source_local: info.source_local,
-          role: info.role,
-          mono: info.mono,
-          repr: result.repr,
-          wasm_type: result.wasm_type,
-        }
+  for sid_int, info in pf.slots {
+    sid := info.slot.id
+    result := case info.role {
+      .DeadPlaceholder => ReprWasmResult.{ repr: .DeadValue, wasm_type: .Anyref, cache: cache2 },
+      _ => case wrap_slots[sid] {
+        .Some(_) => ReprWasmResult.{ repr: .OpaqueAnyref, wasm_type: .Anyref, cache: cache2 },
+        .None => case unwrap_monos[sid] {
+          .Some(target_mono) => repr_and_wasm_type_of(target_mono, info.mono, env, cache2),
+          .None => repr_and_wasm_type_of(info.mono, info.mono, env, cache2),
+        },
       },
+    }
+    cache2 = result.cache
+    new_slots[sid_int] = SlotInfo.{
+      slot: info.slot,
+      source_local: info.source_local,
+      role: info.role,
+      mono: info.mono,
+      repr: result.repr,
+      wasm_type: result.wasm_type,
     }
   }
 

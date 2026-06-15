@@ -27,12 +27,9 @@ pub fn slot_info_result(func: PreparedFunc, sid: SlotId, context: String) Result
 }
 
 pub fn find_slot_by_source_local(func: PreparedFunc, local_id: Int) SlotInfo? {
-  for sid_int in func.slots.keys() {
-    case func.slots[sid_int] {
-      .Some(info) => if info.source_local.id == local_id {
-        return .Some(info)
-      },
-      .None => {},
+  for sid_int, info in func.slots {
+    if info.source_local.id == local_id {
+      return .Some(info)
     }
   }
 

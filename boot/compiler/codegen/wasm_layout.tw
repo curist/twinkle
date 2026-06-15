@@ -557,12 +557,12 @@ pub fn collect_eq_type_layouts(layout_cache: Dict<String, WasmLayout>) EqTypeLay
   records: Vector<WasmRecordLayout> = []
   sums: Vector<WasmSumLayout> = []
 
-  for key in layout_cache.keys() {
-    case layout_cache[key] {
-      .Some(.Record(rec)) => {
+  for key, layout in layout_cache {
+    case layout {
+      .Record(rec) => {
         records = .append(rec)
       },
-      .Some(.Sum(sum)) => {
+      .Sum(sum) => {
         sums = .append(sum)
       },
       _ => {},

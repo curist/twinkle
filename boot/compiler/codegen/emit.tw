@@ -83,13 +83,10 @@ pub fn emit_module(
     func_sym_map[func.func_id.id] = sym
   }
 
-  for fid in anf.extern_imports.keys() {
-    case anf.extern_imports[fid] {
-      .Some(ext) => func_sym_map[fid] = "$extern_${fid}_${sanitize_name(ext.wasm_module)}_${sanitize_name(
-        ext.wasm_name,
-      )}",
-      .None => {},
-    }
+  for fid, ext in anf.extern_imports {
+    func_sym_map[fid] = "$extern_${fid}_${sanitize_name(ext.wasm_module)}_${sanitize_name(
+      ext.wasm_name,
+    )}"
   }
 
   for pf in prepared.funcs {
@@ -230,17 +227,14 @@ pub fn emit_module(
   // every use site via global.get).
   singleton_globals: Vector<GlobalDef> = []
 
-  for k in reg.variant_singletons.keys() {
-    case reg.variant_singletons[k] {
-      .Some(entry) => case layout_of(entry.mono, env) {
-        .Sum(sum) => {
-          singleton_globals = .append(
-            variant_emit.build_variant_singleton_global(sum, entry.vid, entry.global_sym),
-          )
-        },
-        _ => {},
+  for k, entry in reg.variant_singletons {
+    case layout_of(entry.mono, env) {
+      .Sum(sum) => {
+        singleton_globals = .append(
+          variant_emit.build_variant_singleton_global(sum, entry.vid, entry.global_sym),
+        )
       },
-      .None => {},
+      _ => {},
     }
   }
 
@@ -265,29 +259,24 @@ pub fn emit_module(
   type_defs: Vector<TypeDef> = reg.type_defs.concat(resume_type_defs)
   extern_imports: Vector<ImportDef> = []
 
-  for fid in anf.extern_imports.keys() {
-    case anf.extern_imports[fid] {
-      .Some(ext) => {
-        params := collect ty in ext.param_tys {
-          val_type_of_mono(ty, env)
-        }
-        results: Vector<ValType> = case ext.return_ty {
-          .Some(.Void) => [],
-          .Some(ty) => [val_type_of_mono(ty, env)],
-          .None => [],
-        }
-        extern_imports = .append(
-          .{
-            module: ext.wasm_module,
-            name: ext.wasm_name,
-            as_sym: lookup_func_sym(func_sym_map, .{ id: fid }),
-            params,
-            results,
-          },
-        )
-      },
-      .None => {},
+  for fid, ext in anf.extern_imports {
+    params := collect ty in ext.param_tys {
+      val_type_of_mono(ty, env)
     }
+    results: Vector<ValType> = case ext.return_ty {
+      .Some(.Void) => [],
+      .Some(ty) => [val_type_of_mono(ty, env)],
+      .None => [],
+    }
+    extern_imports = .append(
+      .{
+        module: ext.wasm_module,
+        name: ext.wasm_name,
+        as_sym: lookup_func_sym(func_sym_map, .{ id: fid }),
+        params,
+        results,
+      },
+    )
   }
 
   runtime_imports: Vector<ImportDef> = reg.runtime_imports

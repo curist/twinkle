@@ -36,11 +36,8 @@ pub fn eliminate_defers(func: AnfFunctionDef) AnfFunctionDef {
   new_mono := func.op_result_mono
   st := snap_types.get()
 
-  for k in st.keys() {
-    case st[k] {
-      .Some(ty) => new_mono[k] = ty,
-      .None => {},
-    }
+  for k, ty in st {
+    new_mono[k] = ty
   }
 
   AnfFunctionDef.{

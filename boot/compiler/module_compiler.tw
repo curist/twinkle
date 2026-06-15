@@ -114,34 +114,25 @@ pub fn compile_entry(entry_path: String) Result<PipelineArtifacts, CompileError>
     // Build external_refs from lowering's canonical imported origins.
     external_refs: Dict<Int, ExternalRef> = Dict.new()
 
-    for fid in lowered.imported_func_origins.keys() {
-      case lowered.imported_func_origins[fid] {
-        .Some(origin) => external_refs[fid] = ExternalRef.{
-          module_path: origin.module_path,
-          func_name: origin.func_name,
-        },
-        .None => {},
+    for fid, origin in lowered.imported_func_origins {
+      external_refs[fid] = ExternalRef.{
+        module_path: origin.module_path,
+        func_name: origin.func_name,
       }
     }
 
     // Build value_exports from pub_value_globals.
     value_exports: Dict<String, Int> = Dict.new()
 
-    for name in lowered.pub_value_globals.keys() {
-      case lowered.pub_value_globals[name] {
-        .Some(lid) => value_exports[name] = lid.id,
-        .None => {},
-      }
+    for name, lid in lowered.pub_value_globals {
+      value_exports[name] = lid.id
     }
 
     // Build value_refs from imported_value_origins.
     value_refs: Dict<Int, ExternalValueRef> = Dict.new()
 
-    for lid in lowered.imported_value_origins.keys() {
-      case lowered.imported_value_origins[lid] {
-        .Some(origin) => value_refs[lid] = origin,
-        .None => {},
-      }
+    for lid, origin in lowered.imported_value_origins {
+      value_refs[lid] = origin
     }
 
     compiled_modules = .append(

@@ -185,21 +185,16 @@ fn mono_type_kind(ty: MonoType) String {
 fn collect_extern_meta(anf: AnfModule) Vector<ExternMeta> {
   result: Vector<ExternMeta> = []
 
-  for fid in anf.extern_imports.keys() {
-    case anf.extern_imports[fid] {
-      .Some(ext) => {
-        args := collect ty in ext.param_tys {
-          mono_type_kind(ty)
-        }
-        ret := case ext.return_ty {
-          .Some(.Void) => "void",
-          .Some(ty) => mono_type_kind(ty),
-          .None => "void",
-        }
-        result = .append(.{ module: ext.wasm_module, name: ext.wasm_name, args, ret })
-      },
-      .None => {},
+  for fid, ext in anf.extern_imports {
+    args := collect ty in ext.param_tys {
+      mono_type_kind(ty)
     }
+    ret := case ext.return_ty {
+      .Some(.Void) => "void",
+      .Some(ty) => mono_type_kind(ty),
+      .None => "void",
+    }
+    result = .append(.{ module: ext.wasm_module, name: ext.wasm_name, args, ret })
   }
 
   result

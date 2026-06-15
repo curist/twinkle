@@ -153,22 +153,17 @@ fn route_func(
   new_body := rewrite(pf.body, eligible_v, eligible_b, ids)
   new_slots: Dict<Int, SlotInfo> = pf.slots
 
-  for sid_int in pf.slots.keys() {
-    case pf.slots[sid_int] {
-      .Some(info) => {
-        retyped: SlotInfo? = cond {
-          eligible_v.has(info.slot.id) => .Some(
-            with_repr_wasm(info, info.repr, .Ref(true, .Named("rt_types__PVecI64"))),
-          ),
-          eligible_b.has(info.slot.id) => .Some(with_repr_wasm(info, .OpaqueAnyref, .Anyref)),
-          _ => .None,
-        }
+  for sid_int, info in pf.slots {
+    retyped: SlotInfo? = cond {
+      eligible_v.has(info.slot.id) => .Some(
+        with_repr_wasm(info, info.repr, .Ref(true, .Named("rt_types__PVecI64"))),
+      ),
+      eligible_b.has(info.slot.id) => .Some(with_repr_wasm(info, .OpaqueAnyref, .Anyref)),
+      _ => .None,
+    }
 
-        case retyped {
-          .Some(ni) => new_slots[sid_int] = ni,
-          .None => {},
-        }
-      },
+    case retyped {
+      .Some(ni) => new_slots[sid_int] = ni,
       .None => {},
     }
   }
@@ -742,12 +737,9 @@ pub fn analyze_typed_fields(funcs: Vector<PreparedFunc>, builtins: BuiltinRegist
 
   out: Dict<String, Bool> = Dict.new()
 
-  for key in stats.keys() {
-    case stats[key] {
-      .Some(s) => if s.has_ok_producer and !s.bad_producer and !s.bad_consumer {
-        out[key] = true
-      },
-      .None => {},
+  for key, s in stats {
+    if s.has_ok_producer and !s.bad_producer and !s.bad_consumer {
+      out[key] = true
     }
   }
 

@@ -18,12 +18,9 @@ pub fn plan_wasm_types(input: PreparedModule, env: ResolvedEnv, builtins: Builti
 fn to_capture_entries(precomputed: Dict<Int, Vector<CaptureParam>>) Dict<Int, Vector<CaptureEntry>> {
   out: Dict<Int, Vector<CaptureEntry>> = Dict.new()
 
-  for fid in precomputed.keys() {
-    case precomputed[fid] {
-      .Some(caps) => out[fid] = collect cap in caps {
-        CaptureEntry.{ local_id: cap.local_id, ty: cap.ty }
-      },
-      .None => {},
+  for fid, caps in precomputed {
+    out[fid] = collect cap in caps {
+      CaptureEntry.{ local_id: cap.local_id, ty: cap.ty }
     }
   }
 

@@ -79,6 +79,11 @@ fn secondary(span: Span, label: String?) SpanLabel {
   SpanLabel.{ span, label, is_primary: false }
 }
 
+// Shorthand for the common error shape: one primary label, no help lines.
+fn simple_error(title: String, span: Span, label: String?) Report {
+  .{ severity: .Error, title, labels: [primary(span, label)], help_lines: [] }
+}
+
 // ── Public API ────────────────────────────────────────────────────────
 pub fn to_report(kind: DiagKind, ctx: RenderCtx) Report {
   case kind {
@@ -89,26 +94,17 @@ pub fn to_report(kind: DiagKind, ctx: RenderCtx) Report {
 
 fn error_to_report(e: ErrorDiag, ctx: RenderCtx) Report {
   case e {
-    .TypeMismatch(d) => .{
-      severity: .Error,
-      title: "type mismatch",
-      labels: [
-        primary(d.span, .Some("expected ${fmt_ty(d.expected, ctx)}, found ${fmt_ty(d.found, ctx)}")),
-      ],
-      help_lines: [],
-    },
-    .UndefinedVar(d) => .{
-      severity: .Error,
-      title: "undefined variable `${d.name}`",
-      labels: [primary(d.span, .None)],
-      help_lines: [],
-    },
-    .WrongArity(d) => .{
-      severity: .Error,
-      title: "wrong number of arguments: expected ${d.expected}, found ${d.found}",
-      labels: [primary(d.span, .None)],
-      help_lines: [],
-    },
+    .TypeMismatch(d) => simple_error(
+      "type mismatch",
+      d.span,
+      .Some("expected ${fmt_ty(d.expected, ctx)}, found ${fmt_ty(d.found, ctx)}"),
+    ),
+    .UndefinedVar(d) => simple_error("undefined variable `${d.name}`", d.span, .None),
+    .WrongArity(d) => simple_error(
+      "wrong number of arguments: expected ${d.expected}, found ${d.found}",
+      d.span,
+      .None,
+    ),
     .MissingVariants(d) => {
       help: Vector<String> = []
 
@@ -137,54 +133,42 @@ fn error_to_report(e: ErrorDiag, ctx: RenderCtx) Report {
       labels: [primary(d.span, .Some("recursive type has infinite size"))],
       help_lines: ["use indirection (e.g. wrap in a record or closure) to break the cycle"],
     },
-    .UndefinedType(d) => .{
-      severity: .Error,
-      title: "undefined type `${d.name}`",
-      labels: [primary(d.span, .None)],
-      help_lines: [],
-    },
-    .TypeArityMismatch(d) => .{
-      severity: .Error,
-      title: "`${d.name}` expects ${d.expected} type argument(s), got ${d.found}",
-      labels: [primary(d.span, .None)],
-      help_lines: [],
-    },
-    .NoField(d) => .{
-      severity: .Error,
-      title: "no field `${d.name}` on type `${fmt_ty(d.ty, ctx)}`",
-      labels: [primary(d.span, .Some("unknown field"))],
-      help_lines: [],
-    },
-    .NotIterable(d) => .{
-      severity: .Error,
-      title: "cannot iterate over `${fmt_ty(d.ty, ctx)}`",
-      labels: [primary(d.span, .Some("not iterable"))],
-      help_lines: [],
-    },
-    .NotIndexable(d) => .{
-      severity: .Error,
-      title: "cannot index into `${fmt_ty(d.ty, ctx)}`",
-      labels: [primary(d.span, .Some("not indexable"))],
-      help_lines: [],
-    },
-    .NoMethod(d) => .{
-      severity: .Error,
-      title: "type `${fmt_ty(d.ty, ctx)}` has no method `${d.name}`",
-      labels: [primary(d.span, .Some("unknown method"))],
-      help_lines: [],
-    },
-    .MissingField(d) => .{
-      severity: .Error,
-      title: "missing field `${d.name}` in record literal for `${fmt_ty(d.ty, ctx)}`",
-      labels: [primary(d.span, .Some("missing field `${d.name}`"))],
-      help_lines: [],
-    },
-    .ContractViolation(d) => .{
-      severity: .Error,
-      title: "type argument `${fmt_ty(d.ty, ctx)}` does not satisfy `${d.contract}` required by `${d.owner}`",
-      labels: [primary(d.span, .Some(d.reason))],
-      help_lines: [],
-    },
+    .UndefinedType(d) => simple_error("undefined type `${d.name}`", d.span, .None),
+    .TypeArityMismatch(d) => simple_error(
+      "`${d.name}` expects ${d.expected} type argument(s), got ${d.found}",
+      d.span,
+      .None,
+    ),
+    .NoField(d) => simple_error(
+      "no field `${d.name}` on type `${fmt_ty(d.ty, ctx)}`",
+      d.span,
+      .Some("unknown field"),
+    ),
+    .NotIterable(d) => simple_error(
+      "cannot iterate over `${fmt_ty(d.ty, ctx)}`",
+      d.span,
+      .Some("not iterable"),
+    ),
+    .NotIndexable(d) => simple_error(
+      "cannot index into `${fmt_ty(d.ty, ctx)}`",
+      d.span,
+      .Some("not indexable"),
+    ),
+    .NoMethod(d) => simple_error(
+      "type `${fmt_ty(d.ty, ctx)}` has no method `${d.name}`",
+      d.span,
+      .Some("unknown method"),
+    ),
+    .MissingField(d) => simple_error(
+      "missing field `${d.name}` in record literal for `${fmt_ty(d.ty, ctx)}`",
+      d.span,
+      .Some("missing field `${d.name}`"),
+    ),
+    .ContractViolation(d) => simple_error(
+      "type argument `${fmt_ty(d.ty, ctx)}` does not satisfy `${d.contract}` required by `${d.owner}`",
+      d.span,
+      .Some(d.reason),
+    ),
     .CannotSynthesize(d) => .{
       severity: .Error,
       title: "cannot synthesize type for this expression",
@@ -197,18 +181,16 @@ fn error_to_report(e: ErrorDiag, ctx: RenderCtx) Report {
       labels: [primary(d.span, .Some("ambiguous type"))],
       help_lines: ["add a type annotation to resolve the ambiguity"],
     },
-    .InvalidMethodSig(d) => .{
-      severity: .Error,
-      title: "invalid method signature for `${d.name}`",
-      labels: [primary(d.span, .Some("method must have at least one parameter"))],
-      help_lines: [],
-    },
-    .NotARecord(d) => .{
-      severity: .Error,
-      title: "expected a record type, got `${fmt_ty(d.ty, ctx)}`",
-      labels: [primary(d.span, .Some("not a record type"))],
-      help_lines: [],
-    },
+    .InvalidMethodSig(d) => simple_error(
+      "invalid method signature for `${d.name}`",
+      d.span,
+      .Some("method must have at least one parameter"),
+    ),
+    .NotARecord(d) => simple_error(
+      "expected a record type, got `${fmt_ty(d.ty, ctx)}`",
+      d.span,
+      .Some("not a record type"),
+    ),
     .VariantTypeMismatch(d) => case d.ty {
       // The expected type was never determined, so printing the internal
       // metavar (`?9`) is meaningless — tell the user how to fix it instead.
@@ -218,55 +200,49 @@ fn error_to_report(e: ErrorDiag, ctx: RenderCtx) Report {
         labels: [primary(d.span, .Some("cannot infer type"))],
         help_lines: ["add a type annotation so the variant's type is known"],
       },
-      _ => .{
-        severity: .Error,
-        title: "variant `.${d.name}` does not belong to `${fmt_ty(d.ty, ctx)}`",
-        labels: [primary(d.span, .Some("wrong type"))],
-        help_lines: [],
-      },
+      _ => simple_error(
+        "variant `.${d.name}` does not belong to `${fmt_ty(d.ty, ctx)}`",
+        d.span,
+        .Some("wrong type"),
+      ),
     },
-    .ByteOutOfRange(d) => .{
-      severity: .Error,
-      title: "integer literal ${d.value.to_string()} is out of range for Byte",
-      labels: [primary(d.span, .Some("must be in range 0..255"))],
-      help_lines: [],
-    },
+    .ByteOutOfRange(d) => simple_error(
+      "integer literal ${d.value.to_string()} is out of range for Byte",
+      d.span,
+      .Some("must be in range 0..255"),
+    ),
     .InvalidScrutinee(d) => .{
       severity: .Error,
       title: "cannot match on `${fmt_ty(d.ty, ctx)}`",
       labels: [primary(d.span, .Some("not a sum type or primitive"))],
       help_lines: ["case scrutinee must be a sum type (enum) or Int, Bool, String"],
     },
-    .QualifierMismatch(d) => .{
-      severity: .Error,
-      title: "qualifier `${d.qualifier}` does not match scrutinee type `${d.scrutinee_type}`",
-      labels: [primary(d.span, .None)],
-      help_lines: [],
-    },
-    .IteratorNoIndex(d) => .{
-      severity: .Error,
-      title: "Iterator<T> does not support indexed loop bindings",
-      labels: [primary(d.span, .Some("use `for x in iter` instead of `for x, i in iter`"))],
-      help_lines: [],
-    },
-    .PublicRebind(d) => .{
-      severity: .Error,
-      title: "cannot rebind public binding `${d.name}`",
-      labels: [primary(d.span, .Some("public bindings are immutable"))],
-      help_lines: [],
-    },
+    .QualifierMismatch(d) => simple_error(
+      "qualifier `${d.qualifier}` does not match scrutinee type `${d.scrutinee_type}`",
+      d.span,
+      .None,
+    ),
+    .IteratorNoIndex(d) => simple_error(
+      "Iterator<T> does not support indexed loop bindings",
+      d.span,
+      .Some("use `for x in iter` instead of `for x, i in iter`"),
+    ),
+    .PublicRebind(d) => simple_error(
+      "cannot rebind public binding `${d.name}`",
+      d.span,
+      .Some("public bindings are immutable"),
+    ),
     .InvalidAssignTarget(d) => .{
       severity: .Error,
       title: "invalid assignment target",
       labels: [primary(d.span, .None)],
       help_lines: ["only variables, record fields, and array/dict indices can be assigned"],
     },
-    .InvalidOperand(d) => .{
-      severity: .Error,
-      title: "${d.operation} not supported for `${fmt_ty(d.ty, ctx)}`",
-      labels: [primary(d.span, .Some("unsupported operand type"))],
-      help_lines: [],
-    },
+    .InvalidOperand(d) => simple_error(
+      "${d.operation} not supported for `${fmt_ty(d.ty, ctx)}`",
+      d.span,
+      .Some("unsupported operand type"),
+    ),
     .StringConcatOperator(d) => .{
       severity: .Error,
       title: "cannot concatenate strings with `+`",
@@ -275,48 +251,39 @@ fn error_to_report(e: ErrorDiag, ctx: RenderCtx) Report {
         "prefer string interpolation (`\"\${...}\"`); use `String.concat(a, b)` for explicit function calls",
       ],
     },
-    .TryOperandError(d) => .{
-      severity: .Error,
-      title: "try requires Option or Result, got `${fmt_ty(d.ty, ctx)}`",
-      labels: [primary(d.span, .Some("not Option or Result"))],
-      help_lines: [],
-    },
-    .TryReturnMismatch(d) => .{
-      severity: .Error,
-      title: "try on ${d.expected_kind} requires the enclosing function to return ${d.expected_kind}",
-      labels: [primary(d.span, .Some("function return type mismatch"))],
-      help_lines: [],
-    },
+    .TryOperandError(d) => simple_error(
+      "try requires Option or Result, got `${fmt_ty(d.ty, ctx)}`",
+      d.span,
+      .Some("not Option or Result"),
+    ),
+    .TryReturnMismatch(d) => simple_error(
+      "try on ${d.expected_kind} requires the enclosing function to return ${d.expected_kind}",
+      d.span,
+      .Some("function return type mismatch"),
+    ),
     .CannotInterpolate(d) => .{
       severity: .Error,
       title: "cannot interpolate `${fmt_ty(d.ty, ctx)}`",
       labels: [primary(d.span, .Some(d.reason))],
       help_lines: ["implement an inherent to_string() -> String method"],
     },
-    .DeferDiverge(d) => .{
-      severity: .Error,
-      title: "defer body cannot diverge",
-      labels: [primary(d.span, .Some("return, break, continue, or error() not allowed in defer"))],
-      help_lines: [],
-    },
+    .DeferDiverge(d) => simple_error(
+      "defer body cannot diverge",
+      d.span,
+      .Some("return, break, continue, or error() not allowed in defer"),
+    ),
     .CompilerBug(d) => .{
       severity: .Error,
       title: "compiler bug: ${d.message}",
       labels: [primary(d.span, .Some("internal error"))],
       help_lines: ["please report this at https://github.com/twinkle-lang/twinkle/issues"],
     },
-    .ReservedTypeName(d) => .{
-      severity: .Error,
-      title: "type name '${d.name}' is reserved",
-      labels: [primary(d.span, .None)],
-      help_lines: [],
-    },
-    .DuplicateName(d) => .{
-      severity: .Error,
-      title: "duplicate ${d.kind}: `${d.name}`",
-      labels: [primary(d.span, .Some("already defined"))],
-      help_lines: [],
-    },
+    .ReservedTypeName(d) => simple_error("type name '${d.name}' is reserved", d.span, .None),
+    .DuplicateName(d) => simple_error(
+      "duplicate ${d.kind}: `${d.name}`",
+      d.span,
+      .Some("already defined"),
+    ),
     .FieldMethodCollision(d) => .{
       severity: .Error,
       title: "inherent method `${d.name}` conflicts with field `${d.name}` on `${d.type_name}`",
@@ -329,18 +296,8 @@ fn error_to_report(e: ErrorDiag, ctx: RenderCtx) Report {
         "rename either the field or the method",
       ],
     },
-    .DuplicateTypeParam(d) => .{
-      severity: .Error,
-      title: "duplicate type parameter `${d.name}`",
-      labels: [primary(d.span, .None)],
-      help_lines: [],
-    },
-    .UnknownContract(d) => .{
-      severity: .Error,
-      title: "unknown contract `${d.name}`",
-      labels: [primary(d.span, .None)],
-      help_lines: [],
-    },
+    .DuplicateTypeParam(d) => simple_error("duplicate type parameter `${d.name}`", d.span, .None),
+    .UnknownContract(d) => simple_error("unknown contract `${d.name}`", d.span, .None),
     .ContractArityMismatch(d) => .{
       severity: .Error,
       title: if d.expected == 0 {
@@ -372,30 +329,22 @@ fn error_to_report(e: ErrorDiag, ctx: RenderCtx) Report {
       labels: [primary(d.span, .Some("unsupported type"))],
       help_lines: ["use Int, Float, Bool, or Void at extern boundaries"],
     },
-    .MissingTypeAnnotation(d) => .{
-      severity: .Error,
-      title: "missing type annotation",
-      labels: [primary(d.span, .Some("parameter must have a type annotation"))],
-      help_lines: [],
-    },
-    .AnonymousTypeNotAllowed(d) => .{
-      severity: .Error,
-      title: "anonymous record/sum types not supported in type expressions",
-      labels: [primary(d.span, .Some("declare a named type instead"))],
-      help_lines: [],
-    },
-    .CircularAlias(d) => .{
-      severity: .Error,
-      title: "circular type alias: `${d.name}`",
-      labels: [primary(d.span, .Some("alias cycle detected"))],
-      help_lines: [],
-    },
-    .EmptyTypePath(d) => .{
-      severity: .Error,
-      title: "empty type path",
-      labels: [primary(d.span, .None)],
-      help_lines: [],
-    },
+    .MissingTypeAnnotation(d) => simple_error(
+      "missing type annotation",
+      d.span,
+      .Some("parameter must have a type annotation"),
+    ),
+    .AnonymousTypeNotAllowed(d) => simple_error(
+      "anonymous record/sum types not supported in type expressions",
+      d.span,
+      .Some("declare a named type instead"),
+    ),
+    .CircularAlias(d) => simple_error(
+      "circular type alias: `${d.name}`",
+      d.span,
+      .Some("alias cycle detected"),
+    ),
+    .EmptyTypePath(d) => simple_error("empty type path", d.span, .None),
     .MissingCondDefault(d) => .{
       severity: .Error,
       title: "cond expression used as a value must have a default arm",
@@ -414,12 +363,11 @@ fn error_to_report(e: ErrorDiag, ctx: RenderCtx) Report {
       labels: [primary(d.span, .None), secondary(d.next_span, .Some("next arm starts here"))],
       help_lines: [],
     },
-    .CStyleLogicalOp(d) => .{
-      severity: .Error,
-      title: "use `${d.suggestion}` instead of `${d.operator}`",
-      labels: [primary(d.span, .Some("`${d.operator}` is not valid syntax"))],
-      help_lines: [],
-    },
+    .CStyleLogicalOp(d) => simple_error(
+      "use `${d.suggestion}` instead of `${d.operator}`",
+      d.span,
+      .Some("`${d.operator}` is not valid syntax"),
+    ),
     .UnreachableCaseArm(d) => .{
       severity: .Error,
       title: "unreachable case arm",

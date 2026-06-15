@@ -175,11 +175,8 @@ fn record_fields_all_deep(st: RwState, fields: Vector<FieldAtom>) Bool {
 fn merge_mono_maps(base: Dict<Int, MonoType>, updates: Dict<Int, MonoType>) Dict<Int, MonoType> {
   out := base
 
-  for k in updates.keys() {
-    case updates[k] {
-      .Some(ty) => out[k] = ty,
-      .None => {},
-    }
+  for k, ty in updates {
+    out[k] = ty
   }
 
   out

@@ -5116,31 +5116,24 @@ pub fn check(module: Module, env: ResolvedEnv) CheckResult {
   final_map: Dict<Int, MonoType> = Dict.new()
   reported_spans: Dict<Int, Bool> = Dict.new()
 
-  for key in ctx.type_map.keys() {
-    case ctx.type_map[key] {
-      .Some(ty) => {
-        zonked := zonk_with_meta(ty, ctx.subst)
-        final_map[key] = zonked.ty
+  for key, ty in ctx.type_map {
+    zonked := zonk_with_meta(ty, ctx.subst)
+    final_map[key] = zonked.ty
 
-        if zonked.has_meta {
-          // Only report for entries with a known source position.  Entries
-          // written via set_type_map (no span) are internal type-name nodes;
-          // they rarely stay ambiguous and must not share bucket 0 with real
-          // offset-0 expressions.
-          case ctx.expr_spans[key] {
-            .Some(span_start) => if !reported_spans.has(span_start) {
-              reported_spans[span_start] = true
-              cur_diags = .append(
-                .Error(
-                  .AmbiguousType(.{ span: .{ file_id: 0, start: span_start, end: span_start } }),
-                ),
-              )
-            },
-            .None => {},
-          }
-        }
-      },
-      .None => {},
+    if zonked.has_meta {
+      // Only report for entries with a known source position.  Entries
+      // written via set_type_map (no span) are internal type-name nodes;
+      // they rarely stay ambiguous and must not share bucket 0 with real
+      // offset-0 expressions.
+      case ctx.expr_spans[key] {
+        .Some(span_start) => if !reported_spans.has(span_start) {
+          reported_spans[span_start] = true
+          cur_diags = .append(
+            .Error(.AmbiguousType(.{ span: .{ file_id: 0, start: span_start, end: span_start } })),
+          )
+        },
+        .None => {},
+      }
     }
   }
 

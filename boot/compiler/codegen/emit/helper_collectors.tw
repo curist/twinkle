@@ -269,29 +269,19 @@ pub fn collect_sum_variant_helpers(
   for func in funcs {
     state = remember_sum_helper(func.return_mono, env, state)
 
-    for sid in func.slots.keys() {
-      case func.slots[sid] {
-        .Some(info) => {
-          state = remember_sum_helper(info.mono, env, state)
-        },
-        .None => {},
-      }
+    for sid, info in func.slots {
+      state = remember_sum_helper(info.mono, env, state)
     }
   }
 
   // Universal builtin trampolines are emitted from concrete closure signatures
   // rather than PreparedFunc slots. Their params/results can still cross erased
   // anyref boundaries and therefore need typed sum bridge helpers.
-  for fid in func_sigs.keys() {
-    case func_sigs[fid] {
-      .Some(sig) => {
-        state = remember_sum_helper(sig.return_type, env, state)
+  for fid, sig in func_sigs {
+    state = remember_sum_helper(sig.return_type, env, state)
 
-        for param in sig.param_types {
-          state = remember_sum_helper(param, env, state)
-        }
-      },
-      .None => {},
+    for param in sig.param_types {
+      state = remember_sum_helper(param, env, state)
     }
   }
 

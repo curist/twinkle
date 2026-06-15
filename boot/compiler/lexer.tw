@@ -382,12 +382,267 @@ fn single_line_suggestion(content: String) String {
   }
 }
 
+// Per-token scan result: the next byte index, the produced token, and an
+// optional diagnostic. Mirrors ScanStringResult so the main loop can append
+// uniformly. Invariants shared across the scan (source, length, file id) ride
+// in LexCtx; per-token trivia stays an explicit parameter.
+type LexCtx = .{ source: String, n: Int, file_id: Int }
+
+type TokenScan = .{ next_index: Int, token: Token, diagnostic: DiagKind? }
+
+fn op_scan(
+  ctx: LexCtx,
+  kind: TokenKind,
+  start: Int,
+  end: Int,
+  preceded_by_newline: Bool,
+  leading_trivia: Vector<Trivia>,
+) TokenScan {
+  .{
+    next_index: end,
+    token: make_token(
+      kind,
+      ctx.source,
+      start,
+      end,
+      ctx.file_id,
+      preceded_by_newline,
+      leading_trivia,
+    ),
+    diagnostic: .None,
+  }
+}
+
+// Numeric literal: decimal int, `0x` hex int, or float with a fractional part.
+fn scan_number(
+  ctx: LexCtx,
+  token_start: Int,
+  preceded_by_newline: Bool,
+  leading_trivia: Vector<Trivia>,
+) TokenScan {
+  source := ctx.source
+  n := ctx.n
+  c := source[token_start]
+
+  // Hex literal: 0x...
+  if c == '0' and token_start + 1 < n and source[token_start + 1] == 'x' {
+    i := token_start + 2
+
+    for i < n and source[i].is_hex_digit() {
+      i = i + 1
+    }
+
+    return op_scan(ctx, .IntLit, token_start, i, preceded_by_newline, leading_trivia)
+  }
+
+  i := token_start + 1
+
+  for i < n and source[i].is_digit() {
+    i = i + 1
+  }
+
+  kind := TokenKind.IntLit
+
+  if i + 1 < n and source[i] == '.' and source[i + 1].is_digit() {
+    kind = .FloatLit
+    i = i + 1
+
+    for i < n and source[i].is_digit() {
+      i = i + 1
+    }
+  }
+
+  op_scan(ctx, kind, token_start, i, preceded_by_newline, leading_trivia)
+}
+
+// Character literal: lexes as an Int token carrying the code point. The raw
+// `'...'` text is preserved so the formatter round-trips it.
+fn scan_char_literal(
+  ctx: LexCtx,
+  token_start: Int,
+  preceded_by_newline: Bool,
+  leading_trivia: Vector<Trivia>,
+) TokenScan {
+  source := ctx.source
+  n := ctx.n
+  j := token_start + 1
+  escaped := false
+  terminated := false
+
+  for j < n {
+    ch := source[j]
+
+    if escaped {
+      escaped = false
+      j = j + 1
+      continue
+    }
+
+    if ch == '\\' {
+      escaped = true
+      j = j + 1
+      continue
+    }
+
+    if ch == '\'' {
+      j = j + 1
+      terminated = true
+      break
+    }
+
+    if ch == '\n' {
+      break
+    }
+
+    j = j + 1
+  }
+
+  diagnostic: DiagKind? = .None
+
+  if !terminated {
+    diagnostic = .Some(
+      diag.error(span.new(ctx.file_id, token_start, j), "unterminated character literal"),
+    )
+  } else {
+    validation := validate_char_literal(source.slice(token_start, j))
+
+    if !validation.ok {
+      diagnostic = .Some(diag.error(span.new(ctx.file_id, token_start, j), validation.message))
+    }
+  }
+
+  .{
+    next_index: j,
+    token: make_token(
+      .IntLit,
+      source,
+      token_start,
+      j,
+      ctx.file_id,
+      preceded_by_newline,
+      leading_trivia,
+    ),
+    diagnostic,
+  }
+}
+
+// Operator or punctuation token. Handles multi-character operators first, then
+// falls back to single-character punctuation; an unrecognized byte yields an
+// Error token plus a diagnostic.
+fn scan_operator(
+  ctx: LexCtx,
+  token_start: Int,
+  preceded_by_newline: Bool,
+  leading_trivia: Vector<Trivia>,
+) TokenScan {
+  source := ctx.source
+  n := ctx.n
+  i := token_start
+  c := source[i]
+
+  if c == ':' and i + 1 < n and source[i + 1] == '=' {
+    return op_scan(ctx, .ColonEq, token_start, i + 2, preceded_by_newline, leading_trivia)
+  }
+
+  if c == '=' and i + 1 < n {
+    c1 := source[i + 1]
+
+    if c1 == '=' {
+      return op_scan(ctx, .EqEq, token_start, i + 2, preceded_by_newline, leading_trivia)
+    }
+
+    if c1 == '>' {
+      return op_scan(ctx, .FatArrow, token_start, i + 2, preceded_by_newline, leading_trivia)
+    }
+  }
+
+  if c == '!' and i + 1 < n and source[i + 1] == '=' {
+    return op_scan(ctx, .BangEq, token_start, i + 2, preceded_by_newline, leading_trivia)
+  }
+
+  if c == '<' and i + 1 < n and source[i + 1] == '=' {
+    return op_scan(ctx, .LtEq, token_start, i + 2, preceded_by_newline, leading_trivia)
+  }
+
+  if c == '<' and i + 1 < n and source[i + 1] == '<' {
+    return op_scan(ctx, .LtLt, token_start, i + 2, preceded_by_newline, leading_trivia)
+  }
+
+  if c == '>' and i + 1 < n and source[i + 1] == '=' {
+    return op_scan(ctx, .GtEq, token_start, i + 2, preceded_by_newline, leading_trivia)
+  }
+
+  if c == '&' and i + 1 < n and source[i + 1] == '&' {
+    return op_scan(ctx, .AmpAmp, token_start, i + 2, preceded_by_newline, leading_trivia)
+  }
+
+  if c == '|' and i + 1 < n and source[i + 1] == '|' {
+    return op_scan(ctx, .PipePipe, token_start, i + 2, preceded_by_newline, leading_trivia)
+  }
+
+  if c == '.' and i + 1 < n and source[i + 1] == '.' {
+    return op_scan(ctx, .DotDot, token_start, i + 2, preceded_by_newline, leading_trivia)
+  }
+
+  kind: TokenKind? = case String.from_byte(c) {
+    .Some(ch) => case ch {
+      "@" => .Some(.At),
+      "." => .Some(.Dot),
+      "," => .Some(.Comma),
+      ":" => .Some(.Colon),
+      ";" => .Some(.Semi),
+      "=" => .Some(.Eq),
+      "(" => .Some(.LParen),
+      ")" => .Some(.RParen),
+      "{" => .Some(.LBrace),
+      "}" => .Some(.RBrace),
+      "[" => .Some(.LBracket),
+      "]" => .Some(.RBracket),
+      "<" => .Some(.Lt),
+      ">" => .Some(.Gt),
+      "+" => .Some(.Plus),
+      "-" => .Some(.Minus),
+      "*" => .Some(.Star),
+      "/" => .Some(.Slash),
+      "%" => .Some(.Percent),
+      "!" => .Some(.Bang),
+      "?" => .Some(.Question),
+      "&" => .Some(.Amp),
+      "|" => .Some(.Pipe),
+      "^" => .Some(.Caret),
+      "~" => .Some(.Tilde),
+      _ => .None,
+    },
+    .None => .None,
+  }
+
+  case kind {
+    .Some(k) => op_scan(ctx, k, token_start, i + 1, preceded_by_newline, leading_trivia),
+    .None => .{
+      next_index: i + 1,
+      token: make_token(
+        .Error,
+        source,
+        token_start,
+        i + 1,
+        ctx.file_id,
+        preceded_by_newline,
+        leading_trivia,
+      ),
+      diagnostic: .Some(
+        diag.error(span.new(ctx.file_id, token_start, i + 1), "unexpected character in source"),
+      ),
+    },
+  }
+}
+
 pub fn lex(source: String, file_id: Int) StageResult<Vector<Token>> {
   out: Vector<Token> = []
   diagnostics_out: Vector<DiagKind> = []
   i := 0
   saw_newline := false
   n := source.len()
+  ctx := LexCtx.{ source, n, file_id }
   interp_depths: Vector<InterpFrame> = []
   trivia_buf: Vector<Trivia> = []
   blank_pending := false
@@ -655,96 +910,22 @@ pub fn lex(source: String, file_id: Int) StageResult<Vector<Token>> {
     }
 
     if c.is_digit() {
-      // Check for hex literal: 0x...
-      if c == '0' and i + 1 < n and source[i + 1] == 'x' {
-        i = i + 2
-
-        for i < n and source[i].is_hex_digit() {
-          i = i + 1
-        }
-
-        out = .append(
-          make_token(.IntLit, source, token_start, i, file_id, preceded_by_newline, leading_trivia),
-        )
-        continue
-      }
-
-      i = i + 1
-
-      for i < n and source[i].is_digit() {
-        i = i + 1
-      }
-
-      kind := TokenKind.IntLit
-
-      if i + 1 < n and source[i] == '.' and source[i + 1].is_digit() {
-        kind = .FloatLit
-        i = i + 1
-
-        for i < n and source[i].is_digit() {
-          i = i + 1
-        }
-      }
-
-      out = .append(
-        make_token(kind, source, token_start, i, file_id, preceded_by_newline, leading_trivia),
-      )
+      num := scan_number(ctx, token_start, preceded_by_newline, leading_trivia)
+      i = num.next_index
+      out = .append(num.token)
       continue
     }
 
     if c == '\'' {
-      // Character literal: lexes as an Int token carrying the code point.
-      // The raw `'...'` text is preserved so the formatter round-trips it.
-      j := i + 1
-      escaped := false
-      terminated := false
+      lit := scan_char_literal(ctx, token_start, preceded_by_newline, leading_trivia)
+      i = lit.next_index
 
-      for j < n {
-        ch := source[j]
-
-        if escaped {
-          escaped = false
-          j = j + 1
-          continue
-        }
-
-        if ch == '\\' {
-          escaped = true
-          j = j + 1
-          continue
-        }
-
-        if ch == '\'' {
-          j = j + 1
-          terminated = true
-          break
-        }
-
-        if ch == '\n' {
-          break
-        }
-
-        j = j + 1
+      case lit.diagnostic {
+        .Some(d) => diagnostics_out = .append(d),
+        .None => {},
       }
 
-      if !terminated {
-        diagnostics_out = .append(
-          diag.error(span.new(file_id, token_start, j), "unterminated character literal"),
-        )
-      } else {
-        validation := validate_char_literal(source.slice(token_start, j))
-
-        if !validation.ok {
-          diagnostics_out = .append(
-            diag.error(span.new(file_id, token_start, j), validation.message),
-          )
-        }
-      }
-
-      i = j
-      out = .append(
-        make_token(.IntLit, source, token_start, i, file_id, preceded_by_newline, leading_trivia),
-      )
+      out = .append(lit.token)
       continue
     }
 
@@ -789,147 +970,15 @@ pub fn lex(source: String, file_id: Int) StageResult<Vector<Token>> {
       continue
     }
 
-    if c == ':' and i + 1 < n and source[i + 1] == '=' {
-      i = i + 2
-      out = .append(
-        make_token(.ColonEq, source, token_start, i, file_id, preceded_by_newline, leading_trivia),
-      )
-      continue
+    op := scan_operator(ctx, token_start, preceded_by_newline, leading_trivia)
+    i = op.next_index
+
+    case op.diagnostic {
+      .Some(d) => diagnostics_out = .append(d),
+      .None => {},
     }
 
-    if c == '=' and i + 1 < n {
-      c1 := source[i + 1]
-
-      if c1 == '=' {
-        i = i + 2
-        out = .append(
-          make_token(.EqEq, source, token_start, i, file_id, preceded_by_newline, leading_trivia),
-        )
-        continue
-      }
-
-      if c1 == '>' {
-        i = i + 2
-        out = .append(
-          make_token(
-            .FatArrow,
-            source,
-            token_start,
-            i,
-            file_id,
-            preceded_by_newline,
-            leading_trivia,
-          ),
-        )
-        continue
-      }
-    }
-
-    if c == '!' and i + 1 < n and source[i + 1] == '=' {
-      i = i + 2
-      out = .append(
-        make_token(.BangEq, source, token_start, i, file_id, preceded_by_newline, leading_trivia),
-      )
-      continue
-    }
-
-    if c == '<' and i + 1 < n and source[i + 1] == '=' {
-      i = i + 2
-      out = .append(
-        make_token(.LtEq, source, token_start, i, file_id, preceded_by_newline, leading_trivia),
-      )
-      continue
-    }
-
-    if c == '<' and i + 1 < n and source[i + 1] == '<' {
-      i = i + 2
-      out = .append(
-        make_token(.LtLt, source, token_start, i, file_id, preceded_by_newline, leading_trivia),
-      )
-      continue
-    }
-
-    if c == '>' and i + 1 < n and source[i + 1] == '=' {
-      i = i + 2
-      out = .append(
-        make_token(.GtEq, source, token_start, i, file_id, preceded_by_newline, leading_trivia),
-      )
-      continue
-    }
-
-    if c == '&' and i + 1 < n and source[i + 1] == '&' {
-      i = i + 2
-      out = .append(
-        make_token(.AmpAmp, source, token_start, i, file_id, preceded_by_newline, leading_trivia),
-      )
-      continue
-    }
-
-    if c == '|' and i + 1 < n and source[i + 1] == '|' {
-      i = i + 2
-      out = .append(
-        make_token(.PipePipe, source, token_start, i, file_id, preceded_by_newline, leading_trivia),
-      )
-      continue
-    }
-
-    if c == '.' and i + 1 < n and source[i + 1] == '.' {
-      i = i + 2
-      out = .append(
-        make_token(.DotDot, source, token_start, i, file_id, preceded_by_newline, leading_trivia),
-      )
-      continue
-    }
-
-    kind: TokenKind? = case String.from_byte(c) {
-      .Some(ch) => case ch {
-        "@" => .Some(.At),
-        "." => .Some(.Dot),
-        "," => .Some(.Comma),
-        ":" => .Some(.Colon),
-        ";" => .Some(.Semi),
-        "=" => .Some(.Eq),
-        "(" => .Some(.LParen),
-        ")" => .Some(.RParen),
-        "{" => .Some(.LBrace),
-        "}" => .Some(.RBrace),
-        "[" => .Some(.LBracket),
-        "]" => .Some(.RBracket),
-        "<" => .Some(.Lt),
-        ">" => .Some(.Gt),
-        "+" => .Some(.Plus),
-        "-" => .Some(.Minus),
-        "*" => .Some(.Star),
-        "/" => .Some(.Slash),
-        "%" => .Some(.Percent),
-        "!" => .Some(.Bang),
-        "?" => .Some(.Question),
-        "&" => .Some(.Amp),
-        "|" => .Some(.Pipe),
-        "^" => .Some(.Caret),
-        "~" => .Some(.Tilde),
-        _ => .None,
-      },
-      .None => .None,
-    }
-
-    case kind {
-      .Some(k) => {
-        i = i + 1
-        out = .append(
-          make_token(k, source, token_start, i, file_id, preceded_by_newline, leading_trivia),
-        )
-      },
-      .None => {
-        i = i + 1
-        diagnostics_out = .append(
-          diag.error(span.new(file_id, token_start, i), "unexpected character in source"),
-        )
-        out = .append(
-          make_token(.Error, source, token_start, i, file_id, preceded_by_newline, leading_trivia),
-        )
-      },
-    }
+    out = .append(op.token)
   }
 
   out = .append(tokens.eof_with_trivia(file_id, n, saw_newline, trivia_buf))

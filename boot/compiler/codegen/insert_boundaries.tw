@@ -180,11 +180,8 @@ fn rewrite_func(
     local_types[p.local.id] = p.ty
   }
 
-  for k in func.op_result_mono.keys() {
-    case func.op_result_mono[k] {
-      .Some(ty) => local_types[k] = ty,
-      .None => {},
-    }
+  for k, ty in func.op_result_mono {
+    local_types[k] = ty
   }
 
   // Find next available LocalId — must be higher than every existing local
@@ -228,12 +225,9 @@ fn rewrite_func(
 
   new_mono := func.op_result_mono
 
-  for k in result.ctx.local_types.keys() {
+  for k, ty in result.ctx.local_types {
     if !new_mono.has(k) and !param_ids.has(k) {
-      case result.ctx.local_types[k] {
-        .Some(ty) => new_mono[k] = ty,
-        .None => {},
-      }
+      new_mono[k] = ty
     }
   }
 

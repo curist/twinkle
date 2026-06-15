@@ -42,11 +42,8 @@ fn merge_by_binding(a: Dict<Int, Dict<Int, Bool>>, b: Dict<Int, Dict<Int, Bool>>
   Int,
   Dict<Int, Bool>,
 > {
-  for k in b.keys() {
-    case b[k] {
-      .Some(v) => a[k] = v,
-      .None => {},
-    }
+  for k, v in b {
+    a[k] = v
   }
 
   a

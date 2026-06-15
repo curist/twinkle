@@ -30,32 +30,24 @@ pub fn verify_prepared_func_slots(
 
   seen_source_locals: Dict<Int, Int> = Dict.new()
 
-  for sid_int in pf.slots.keys() {
-    case pf.slots[sid_int] {
-      .None => {},
-      .Some(info) => {
-        if info.slot.id != sid_int {
-          return fail_func(
-            pf,
-            "slot table key S${sid_int} stores mismatched SlotId S${info.slot.id}",
-          )
-        }
-
-        src_id := info.source_local.id
-
-        case seen_source_locals[src_id] {
-          .Some(existing_sid) => {
-            return fail_func(
-              pf,
-              "slot S${existing_sid} and slot S${info.slot.id} both claim source local L${src_id}",
-            )
-          },
-          .None => seen_source_locals[src_id] = info.slot.id,
-        }
-
-        try verify_slot_metadata(pf, info, env)
-      },
+  for sid_int, info in pf.slots {
+    if info.slot.id != sid_int {
+      return fail_func(pf, "slot table key S${sid_int} stores mismatched SlotId S${info.slot.id}")
     }
+
+    src_id := info.source_local.id
+
+    case seen_source_locals[src_id] {
+      .Some(existing_sid) => {
+        return fail_func(
+          pf,
+          "slot S${existing_sid} and slot S${info.slot.id} both claim source local L${src_id}",
+        )
+      },
+      .None => seen_source_locals[src_id] = info.slot.id,
+    }
+
+    try verify_slot_metadata(pf, info, env)
   }
 
   verify_capture_alignment(pf, closure_captures)

@@ -299,12 +299,9 @@ pub fn with_types(env: ResolvedEnv, types: Vector<TypeEntry>, type_names: Vector
 
   bindings: Dict<String, TypeId> = Dict.new()
 
-  for name in env.type_bindings.keys() {
-    case env.type_bindings[name] {
-      .Some(tid) => if valid_type_ids.has(tid.id) {
-        bindings[name] = tid
-      },
-      .None => {},
+  for name, tid in env.type_bindings {
+    if valid_type_ids.has(tid.id) {
+      bindings[name] = tid
     }
   }
 
@@ -316,12 +313,9 @@ pub fn with_types(env: ResolvedEnv, types: Vector<TypeEntry>, type_names: Vector
 
   origins: Dict<Int, String> = Dict.new()
 
-  for tid in env.type_origins.keys() {
-    case env.type_origins[tid] {
-      .Some(origin) => if valid_type_ids.has(tid) {
-        origins[tid] = origin
-      },
-      .None => {},
+  for tid, origin in env.type_origins {
+    if valid_type_ids.has(tid) {
+      origins[tid] = origin
     }
   }
 
@@ -355,12 +349,9 @@ pub fn extend_types_from(
     }
   }
 
-  for tid in acc_type_origins.keys() {
+  for tid, origin in acc_type_origins {
     if !env.type_origins.has(tid) {
-      case acc_type_origins[tid] {
-        .Some(origin) => env.type_origins[tid] = origin,
-        .None => {},
-      }
+      env.type_origins[tid] = origin
     }
   }
 
@@ -377,12 +368,9 @@ fn with_functions_impl(env: ResolvedEnv, functions: Vector<FunctionSig>, bind_al
 
   bindings: Dict<String, String> = Dict.new()
 
-  for name in env.function_bindings.keys() {
-    case env.function_bindings[name] {
-      .Some(target) => if idx.has(target) {
-        bindings[name] = target
-      },
-      .None => {},
+  for name, target in env.function_bindings {
+    if idx.has(target) {
+      bindings[name] = target
     }
   }
 
@@ -394,12 +382,9 @@ fn with_functions_impl(env: ResolvedEnv, functions: Vector<FunctionSig>, bind_al
 
   origins: Dict<String, FunctionOrigin> = Dict.new()
 
-  for name in env.function_origins.keys() {
-    case env.function_origins[name] {
-      .Some(origin) => if idx.has(name) {
-        origins[name] = origin
-      },
-      .None => {},
+  for name, origin in env.function_origins {
+    if idx.has(name) {
+      origins[name] = origin
     }
   }
 
@@ -2139,11 +2124,8 @@ fn merged_export_type_name(alias: String, name: String, origin: String?) String 
 fn build_type_origin_index(env: ResolvedEnv) Dict<String, TypeId> {
   out: Dict<String, TypeId> = Dict.new()
 
-  for tid in env.type_origins.keys() {
-    case env.type_origins[tid] {
-      .Some(origin) => out[origin] = TypeId.{ id: tid },
-      .None => {},
-    }
+  for tid, origin in env.type_origins {
+    out[origin] = TypeId.{ id: tid }
   }
 
   out

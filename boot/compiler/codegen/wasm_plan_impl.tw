@@ -483,19 +483,16 @@ fn with_type_defs_and_index(
 // literal that some body actually constructs. Keyed by "${sum.sym}#${vid}" so
 // emission can look it up from the use-site's sum layout and variant id.
 fn resolve_variant_singletons(reg: WasmTypeRegistry, scan: ScanResult, env: ResolvedEnv) WasmTypeRegistry {
-  for key in scan.nullary_variants.keys() {
-    case scan.nullary_variants[key] {
-      .Some(req) => case layout_of(req.mono, env) {
-        .Sum(sum) => if variant_singleton_eligible(sum) {
-          reg.variant_singletons["${sum.sym}#${req.vid}"] = VariantSingletonEntry.{
-            global_sym: "variant_singleton_${mono_to_key(req.mono)}_v${req.vid}",
-            mono: req.mono,
-            vid: req.vid,
-          }
-        } else {},
-        _ => {},
-      },
-      .None => {},
+  for key, req in scan.nullary_variants {
+    case layout_of(req.mono, env) {
+      .Sum(sum) => if variant_singleton_eligible(sum) {
+        reg.variant_singletons["${sum.sym}#${req.vid}"] = VariantSingletonEntry.{
+          global_sym: "variant_singleton_${mono_to_key(req.mono)}_v${req.vid}",
+          mono: req.mono,
+          vid: req.vid,
+        }
+      } else {},
+      _ => {},
     }
   }
 
