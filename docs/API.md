@@ -335,6 +335,41 @@ collections, raw `Vector<T>` may still be faster due to lower overhead.
 Qualified forms (`queue.push_back(q, x)`) and method-call forms
 (`q.push_back(x)`) both work.
 
+## `@std.heap`
+
+Persistent priority queue, implemented as a pairing heap. Import with
+`use @std.heap` for constructors and qualified calls, and
+`use @std.heap.{Heap}` when naming the type directly. The heap is immutable:
+every operation returns a new heap while sharing structure where possible.
+
+Priority is defined by a comparator stored in the heap. The value for which the
+comparator returns `.Lt` against all others is dequeued first, so a comparator
+of `Int.compare` gives a **min-heap** and a reversed comparator
+(`fn(a, b) Order { b.compare(a) }`) gives a **max-heap**. `new_ord` is a
+shorthand for the `Ord`-contract min-heap. Because the comparator rides with the
+heap, `push` / `pop` / `merge` take no comparator argument; only mix heaps built
+with the same ordering.
+
+Performance is amortized: `push` and `merge` are O(1), `pop` is O(log n).
+Prefer conservative assumptions until benchmark data is available.
+
+| Function / Method | Signature | Description |
+|-------------------|-----------|-------------|
+| `heap.new(cmp)` | `fn<T>(cmp: fn(T, T) Order) Heap<T>` | Empty heap ordered by `cmp` |
+| `heap.new_ord()` | `fn<T: Ord>() Heap<T>` | Empty min-heap using the `Ord` contract |
+| `heap.singleton(value, cmp)` | `fn<T>(value: T, cmp: fn(T, T) Order) Heap<T>` | Heap of one value |
+| `heap.from_vector(xs, cmp)` | `fn<T>(xs: Vector<T>, cmp: fn(T, T) Order) Heap<T>` | Build a heap from a vector |
+| `.to_vector()` | `fn<T>(h: Heap<T>) Vector<T>` | Drain into a vector in priority order |
+| `.len()` | `fn<T>(h: Heap<T>) Int` | Number of values |
+| `.is_empty()` | `fn<T>(h: Heap<T>) Bool` | Whether the heap has no values |
+| `.push(value)` | `fn<T>(h: Heap<T>, value: T) Heap<T>` | Return a heap with `value` inserted |
+| `.peek()` | `fn<T>(h: Heap<T>) Option<T>` | Highest-priority value without removing it |
+| `.pop()` | `fn<T>(h: Heap<T>) Option<Pop<T>>` | Remove the highest-priority value, returning `{ value, rest }` |
+| `.merge(other)` | `fn<T>(a: Heap<T>, b: Heap<T>) Heap<T>` | Combine two heaps (uses the left comparator) |
+
+Qualified forms (`heap.push(h, x)`) and method-call forms (`h.push(x)`) both
+work.
+
 ## Dict\<K, V\>
 
 Persistent hash map. Keys must be `Int`, `String`, or `Byte`. `keys()`, dict iteration,
