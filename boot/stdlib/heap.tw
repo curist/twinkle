@@ -22,9 +22,42 @@ pub fn new<T>(cmp: fn(T, T) Order) Heap<T> {
   Heap.{ root: .Empty, cmp, size: 0 }
 }
 
+/// Empty min-heap ordered by the `Ord` contract (`a.compare(b)`). For a
+/// max-heap or a custom key, use `new` with an explicit comparator.
+pub fn new_ord<T: Ord>() Heap<T> {
+  new(fn(a: T, b: T) Order { a.compare(b) })
+}
+
 /// Heap of one value.
 pub fn singleton<T>(value: T, cmp: fn(T, T) Order) Heap<T> {
   Heap.{ root: .Node(value, []), cmp, size: 1 }
+}
+
+/// Build a heap from a vector by inserting each element (O(n), since each
+/// pairing-heap insert is amortized O(1)).
+pub fn from_vector<T>(xs: Vector<T>, cmp: fn(T, T) Order) Heap<T> {
+  h := new(cmp)
+  for x in xs {
+    h = .push(x)
+  }
+  h
+}
+
+/// Drain the heap into a vector in priority order (heapsort, O(n log n)).
+/// The input heap is not modified.
+pub fn to_vector<T>(h: Heap<T>) Vector<T> {
+  out: Vector<T> = []
+  cur := h
+  for cur.len() > 0 {
+    case cur.pop() {
+      .Some(p) => {
+        out = .append(p.value)
+        cur = p.rest
+      },
+      .None => {},
+    }
+  }
+  out
 }
 
 /// Number of values in the heap (O(1)).
@@ -108,4 +141,12 @@ pub fn pop<T>(h: Heap<T>) Pop<T>? {
       .Some(Pop.{ value, rest: h })
     },
   }
+}
+
+/// Combine two heaps into one (amortized O(1)). Uses the left heap's
+/// comparator; pass heaps built with the same ordering.
+pub fn merge<T>(a: Heap<T>, b: Heap<T>) Heap<T> {
+  a.root = meld(a.cmp, a.root, b.root)
+  a.size = a.size + b.size
+  a
 }
