@@ -3,7 +3,7 @@
 > **Status (2026-06-01):** archived. The cluster is complete — the audit,
 > `drop_last`, access-contracts, `View`, and the RRB-vector runtime work have all
 > landed (their docs are siblings in this directory). The one piece left open is
-> the `[a..b]` range-slice proposal ([sliceable.md](../sliceable.md)), which now
+> the `[a..b]` range-slice proposal ([sliceable.md](sliceable.md)), which now
 > stands on its own in [../](../) as the lone active doc of this cluster.
 
 ## Goal
@@ -60,7 +60,7 @@ was tried and removed (the capability lives on `Vector`).
 | Slice usage audit | Boot-compiler `slice`/`concat` audit + String-slice perf discussion — the evidence behind the rest | **Audit done** (Vector LIFO landed; String-slice → `View`) | [slice-performance.md](slice-performance.md) |
 | `drop_last` | O(1)-amortized `Vector.drop_last` runtime op; LIFO pop sites migrated (a thin `Stack<T>` wrapper was tried and removed) | **Implemented** | [stack.md](stack.md) |
 | Access contracts | Parameterized contracts `IndexRead<E>` / `IntoIterator<E>` / `IndexWrite<E>` with a `Self → E` functional dependency; write-once generic access monomorphized to direct reads; positional `v[i]` desugars to `IndexRead.at` (in scope for "done") | **Done** — all three contracts + `v[i]` + `for x in` landed; `View` is the stdlib satisfier; `Stack` deliberately excluded then removed | [access-contracts.md](access-contracts.md) |
-| `Sliceable` / `[a..b]` | Range-slice indexing `foo[a..b]` → `Sliceable.slice`; Self-only contract, needs none of the parameterized-contract machinery | **Proposal — split from access-contracts** | [sliceable.md](../sliceable.md) |
+| `Sliceable` / `[a..b]` | Range-slice indexing `foo[a..b]` → `Sliceable.slice`; Self-only contract, needs none of the parameterized-contract machinery | **Done** — contract + literal-range index arm + `Vector`/`String`/`View` satisfiers landed (boot) | [sliceable.md](sliceable.md) |
 | `View<C>` | Zero-copy windows (backing + `start`/`count`) over any `IndexRead` backing; O(1) `drop_first`/`drop_last`/`sub` | **Shipped** (`@std.view`) | [view.md](view.md) |
 | RRB-tree `Vector` | O(log n) `concat`/`slice` via relaxed radix-balanced nodes; kills O(n²) prepend-concat and left-drop loops; adds cheap `drop_first`/`prepend` (queue/deque) | **Archived** — boot runtime work landed; Phase 7 narrow slack tweak was a wash and reverted | [rrb-vector-concat.md](rrb-vector-concat.md) |
 
@@ -126,7 +126,7 @@ summarized here:
   `IndexRead.at` and is part of access-contracts "done"; keyed `Dict[K] -> V?`
   stays special-cased (future `KeyedRead<K,V>`).
 * **`[a..b]` scope** — range-slice syntax is a **separate plan**
-  ([sliceable.md](../sliceable.md)); `Sliceable` is Self-only, no machinery needed.
+  ([sliceable.md](sliceable.md)); `Sliceable` is Self-only, no machinery needed.
 * **Bound syntax** — `E` declared explicitly (`fn f<C: IndexRead<E>, E>`).
 * **Method naming** — match existing builtin names (`slice`); the new methods are the
   unchecked positional accessors `at` (read) / `set_at` (write), distinct from the

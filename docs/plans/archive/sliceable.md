@@ -16,10 +16,10 @@ Stage0 (Rust) was not mirrored: it bootstraps `boot/main.tw`, which does not use
 incidental fix: monomorphize no longer early-returns when a program has no
 generics, since a fully concrete program can now carry a `ContractCall` to lower.)
 
-Splits off from [access-contracts.md](archive/access-contracts.md) (which
+Splits off from [access-contracts.md](access-contracts.md) (which
 defines the parameterized read/write/iterate contracts and wires *element*
 indexing `foo[i]`). This plan covers **range-slice indexing** `foo[a..b]` over the
-`Sliceable` contract. Tracked under [collections-access.md](archive/collections-access.md).
+`Sliceable` contract. Tracked under [collections-access.md](collections-access.md).
 
 ## Why a separate plan
 
@@ -40,7 +40,7 @@ This makes `[]` overload on the **index expression's type**, the Rust model:
 
 | `foo[idx]` where idx: | Contract | Method | Returns |
 |---|---|---|---|
-| `Int` | `IndexRead<E>` ([access-contracts.md](archive/access-contracts.md)) | `at(self, Int) E` | element, traps OOB |
+| `Int` | `IndexRead<E>` ([access-contracts.md](access-contracts.md)) | `at(self, Int) E` | element, traps OOB |
 | `Range` | `Sliceable` (this plan) | `slice(self, Int, Int) Self` | sub-sequence |
 | `K` (Dict) | future `KeyedRead<K,V>` | keyed get | `V?` |
 
@@ -66,9 +66,9 @@ contract Sliceable { slice(self, Int, Int) Self }
 ## Satisfiers
 
 - `Vector<T>` — `slice` builtin already present (O(m) today; O(log n) post-RRB, see
-  [rrb-vector-concat.md](archive/rrb-vector-concat.md), parked).
+  [rrb-vector-concat.md](rrb-vector-concat.md), parked).
 - `String` — `slice` = substring (O(m)).
-- `View<C>` ([view.md](archive/view.md)) — `slice` = O(1) window adjust (`sub`).
+- `View<C>` ([view.md](view.md)) — `slice` = O(1) window adjust (`sub`).
 
 So once this lands, `view[1..n]`, `vec[1..n]`, `str[1..n]` all work uniformly.
 

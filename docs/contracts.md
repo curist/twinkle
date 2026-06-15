@@ -190,7 +190,7 @@ syntax hook above and lets generic algorithms (`find`/`position`/`region_eq`/
 (no element type), so it needs none of the parameterized-contract machinery.
 `Vector<T>`, `String`, and `View<C>` satisfy it via their `slice` methods, so
 `v[a..b]`, `str[a..b]`, and `view[a..b]` all produce a sub-sequence of the same
-type. Design: [plans/sliceable.md](plans/sliceable.md).
+type. Design: [plans/sliceable.md](plans/archive/sliceable.md).
 
 Design references for the access-contract family:
 [plans/access-contracts.md](plans/archive/access-contracts.md) (and the

@@ -195,7 +195,7 @@ part of "done", not optional polish:
   (the existing fast path is preserved; only generic *non-indexable* receivers go
   through `IntoIterator.iter`). See the iteration decision below.
 - `v[a..b]` (range-slice) → `Sliceable.slice` — **tracked in a separate plan**
-  ([sliceable.md](../sliceable.md)); `Sliceable` is Self-only and needs none of this
+  ([sliceable.md](sliceable.md)); `Sliceable` is Self-only and needs none of this
   doc's parameterized-contract machinery, so it lands on its own schedule.
 
 Add these rows to the syntax-hook table in
@@ -282,7 +282,7 @@ bind `Elem` rather than assuming Self-typed args and a fixed return.
   indexing through the contract (`View`/`Stack` then get `[i]` for free). Keyed
   `Dict[K] -> V?` stays special-cased — associative access is a future
   `KeyedRead<K, V>`, not unified.
-- **`[a..b]` range-slice syntax is a SEPARATE plan** ([sliceable.md](../sliceable.md)).
+- **`[a..b]` range-slice syntax is a SEPARATE plan** ([sliceable.md](sliceable.md)).
   `Sliceable` is Self-only and needs none of this doc's machinery; it tracks its
   own `synth_index` `Range`-index arm and satisfiers there.
 - **Bound syntax** — `E` is **declared explicitly** (`fn f<C: IndexRead<E>, E>`),
@@ -456,4 +456,4 @@ hardcodes Stringify/Eq/Ord (`src/types/check.rs`) and only needs work once the
 Deferred to follow-up commits (still part of "done" for *this* plan): **`[i]`
 element-index syntax wiring** through `IndexRead.at`, and **`View`
 registration** as satisfiers. (`[a..b]` slicing is out — see
-[sliceable.md](../sliceable.md).)
+[sliceable.md](sliceable.md).)
