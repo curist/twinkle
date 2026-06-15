@@ -66,3 +66,46 @@ pub fn push<T>(h: Heap<T>, value: T) Heap<T> {
   h.size = h.size + 1
   h
 }
+
+/// Two-pass pairing merge over a node's children: meld adjacent pairs left to
+/// right, then fold the results right to left into a single tree.
+fn merge_pairs<T>(cmp: fn(T, T) Order, cs: Vector<Tree<T>>) Tree<T> {
+  n := cs.len()
+  if n == 0 {
+    return .Empty
+  }
+  if n == 1 {
+    return cs[0]
+  }
+
+  paired: Vector<Tree<T>> = []
+  i := 0
+  for i + 1 < n {
+    paired = .append(meld(cmp, cs[i], cs[i + 1]))
+    i = i + 2
+  }
+  if i < n {
+    paired = .append(cs[i])
+  }
+
+  acc := paired[paired.len() - 1]
+  j := paired.len() - 2
+  for j >= 0 {
+    acc = meld(cmp, paired[j], acc)
+    j = j - 1
+  }
+  acc
+}
+
+/// Remove and return the highest-priority value, or `.None` if empty.
+/// Amortized O(log n).
+pub fn pop<T>(h: Heap<T>) Pop<T>? {
+  case h.root {
+    .Empty => .None,
+    .Node(value, children) => {
+      h.root = merge_pairs(h.cmp, children)
+      h.size = h.size - 1
+      .Some(Pop.{ value, rest: h })
+    },
+  }
+}

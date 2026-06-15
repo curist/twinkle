@@ -1,5 +1,5 @@
 use @std.heap
-use @std.heap.{Heap}
+use @std.heap.{Heap, Pop}
 
 use tests.assert
 use tests.runner
@@ -12,6 +12,13 @@ fn some_int(opt: Int?, fallback: Int) Int {
   case opt {
     .Some(v) => v,
     .None => fallback,
+  }
+}
+
+fn pop_value(opt: Pop<Int>?) Int {
+  case opt {
+    .Some(p) => p.value,
+    .None => -999,
   }
 }
 
@@ -43,6 +50,45 @@ pub fn suite() runner.Suite {
         h: Heap<Int> = heap.new(min_int)
         h = .push(5).push(3).push(8).push(1).push(4)
         try assert.equal(h.len(), 5)
+        try assert.equal(some_int(h.peek(), -1), 1)
+        .Ok({})
+      },
+    )
+    .test(
+      "pop returns values in priority order",
+      fn() {
+        h: Heap<Int> = heap.new(min_int)
+        h = .push(5).push(3).push(8).push(1).push(4).push(1)
+        out: Vector<Int> = []
+
+        for h.len() > 0 {
+          case h.pop() {
+            .Some(p) => {
+              out = .append(p.value)
+              h = p.rest
+            },
+            .None => {},
+          }
+        }
+
+        try assert.equal(out.len(), 6)
+        try assert.equal(out[0], 1)
+        try assert.equal(out[1], 1)
+        try assert.equal(out[2], 3)
+        try assert.equal(out[3], 4)
+        try assert.equal(out[4], 5)
+        try assert.equal(out[5], 8)
+        .Ok({})
+      },
+    )
+    .test(
+      "pop leaves the original heap unchanged",
+      fn() {
+        h: Heap<Int> = heap.new(min_int)
+        h = .push(2).push(1).push(3)
+        first := pop_value(h.pop())
+        try assert.equal(first, 1)
+        try assert.equal(h.len(), 3)
         try assert.equal(some_int(h.peek(), -1), 1)
         .Ok({})
       },
