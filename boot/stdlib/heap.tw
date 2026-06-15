@@ -44,3 +44,25 @@ pub fn peek<T>(h: Heap<T>) T? {
     .Node(value, _) => .Some(value),
   }
 }
+
+/// Combine two pairing-heap trees so the root orders before the other.
+/// The losing tree becomes a child of the winning root.
+fn meld<T>(cmp: fn(T, T) Order, a: Tree<T>, b: Tree<T>) Tree<T> {
+  case a {
+    .Empty => b,
+    .Node(av, ac) => case b {
+      .Empty => a,
+      .Node(bv, bc) => case cmp(av, bv) {
+        .Gt => .Node(bv, bc.append(a)),
+        _ => .Node(av, ac.append(b)),
+      },
+    },
+  }
+}
+
+/// Insert a value (amortized O(1)). Melds a single-node tree into the root.
+pub fn push<T>(h: Heap<T>, value: T) Heap<T> {
+  h.root = meld(h.cmp, h.root, .Node(value, []))
+  h.size = h.size + 1
+  h
+}

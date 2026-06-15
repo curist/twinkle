@@ -37,4 +37,14 @@ pub fn suite() runner.Suite {
         .Ok({})
       },
     )
+    .test(
+      "push keeps highest priority on top",
+      fn() {
+        h: Heap<Int> = heap.new(min_int)
+        h = .push(5).push(3).push(8).push(1).push(4)
+        try assert.equal(h.len(), 5)
+        try assert.equal(some_int(h.peek(), -1), 1)
+        .Ok({})
+      },
+    )
 }
