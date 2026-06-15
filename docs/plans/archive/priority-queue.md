@@ -1,5 +1,7 @@
 # Priority Queue (`@std.heap`) Implementation Plan
 
+Status: complete.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Add a persistent priority queue under `@std.heap`, implemented as a pairing heap, so workloads that repeatedly pop the highest-priority element (Dijkstra, scheduling, top-k, k-way merge) have an efficient immutable collection.
