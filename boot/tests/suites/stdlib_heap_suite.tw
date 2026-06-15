@@ -1,0 +1,40 @@
+use @std.heap
+use @std.heap.{Heap}
+
+use tests.assert
+use tests.runner
+
+fn min_int(a: Int, b: Int) Order {
+  a.compare(b)
+}
+
+fn some_int(opt: Int?, fallback: Int) Int {
+  case opt {
+    .Some(v) => v,
+    .None => fallback,
+  }
+}
+
+pub fn suite() runner.Suite {
+  runner.suite("stdlib heap")
+    .test(
+      "new heap is empty",
+      fn() {
+        h: Heap<Int> = heap.new(min_int)
+        try assert.equal(h.len(), 0)
+        try assert.is_true(h.is_empty())
+        try assert.is_none(h.peek())
+        .Ok({})
+      },
+    )
+    .test(
+      "singleton holds one value",
+      fn() {
+        h := heap.singleton(42, min_int)
+        try assert.equal(h.len(), 1)
+        try assert.is_false(h.is_empty())
+        try assert.equal(some_int(h.peek(), -1), 42)
+        .Ok({})
+      },
+    )
+}

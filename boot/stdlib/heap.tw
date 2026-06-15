@@ -1,0 +1,46 @@
+/// Persistent priority queue implemented as a pairing heap.
+///
+/// A `Heap<T>` is a comparator plus a pairing-heap tree: every node's value
+/// orders before (`.Lt`) all of its children. The element that orders before
+/// all others is at the root, so `peek` / `pop` are cheap. The comparator is
+/// stored in the heap, so `push` / `pop` / `merge` take no comparator argument
+/// and the same heap is a min-heap or max-heap purely by how it was built
+/// (`Int.compare` gives a min-heap; a reversed comparator gives a max-heap).
+///
+/// `Tree<T>` is a representation detail. Use the module API and treat `root`
+/// as opaque.
+
+pub type Heap<T> = .{ root: Tree<T>, cmp: fn(T, T) Order, size: Int }
+
+pub type Tree<T> = { Empty, Node(T, Vector<Tree<T>>) }
+
+pub type Pop<T> = .{ value: T, rest: Heap<T> }
+
+/// Empty heap ordered by `cmp`. The element for which `cmp` returns `.Lt`
+/// against all others is dequeued first.
+pub fn new<T>(cmp: fn(T, T) Order) Heap<T> {
+  Heap.{ root: .Empty, cmp, size: 0 }
+}
+
+/// Heap of one value.
+pub fn singleton<T>(value: T, cmp: fn(T, T) Order) Heap<T> {
+  Heap.{ root: .Node(value, []), cmp, size: 1 }
+}
+
+/// Number of values in the heap (O(1)).
+pub fn len<T>(h: Heap<T>) Int {
+  h.size
+}
+
+/// True when the heap has no values.
+pub fn is_empty<T>(h: Heap<T>) Bool {
+  h.size == 0
+}
+
+/// Highest-priority value (orders before all others), or `.None` if empty.
+pub fn peek<T>(h: Heap<T>) T? {
+  case h.root {
+    .Empty => .None,
+    .Node(value, _) => .Some(value),
+  }
+}
