@@ -1,0 +1,43 @@
+// Heapsort baseline — build a Heap<Int> from N pseudo-random ints, then drain
+// it in priority order. This exercises the full pairing-heap cost: N amortized
+// O(1) pushes (from_vector) followed by N O(log n) pops (to_vector). The same
+// data is sorted with Vector.sort_by as a reference point for the O(n log n)
+// claim. Inputs are pre-materialized outside the timed region.
+//
+//   target/twk run boot/bench/heap_build_drain.tw
+use @std.date
+use @std.heap
+
+fn min_int(a: Int, b: Int) Order {
+  a.compare(b)
+}
+
+// Cheap LCG so the input is unsorted (sorted input is the easy case for both
+// the heap and the sort).
+fn noise(n: Int) Vector<Int> {
+  state := 2463534242
+  collect i in range(n) {
+    state = (state * 1103515245 + 12345) % 2147483647
+    state
+  }
+}
+
+fn bench(n: Int) {
+  xs := noise(n)
+
+  t0 := date.now()
+  h := heap.from_vector(xs, min_int)
+  drained := h.to_vector()
+  heap_dt := date.now() - t0
+
+  t1 := date.now()
+  sorted := xs.sort_by(min_int)
+  sort_dt := date.now() - t1
+
+  println("${n}\t${heap_dt}\t${sort_dt}\t${drained.len()}\t${sorted.len()}")
+}
+
+println("N\theap_ms\tsort_ms\theap_sink\tsort_sink")
+for n in [1000, 2000, 4000, 8000, 16000, 32000] {
+  bench(n)
+}

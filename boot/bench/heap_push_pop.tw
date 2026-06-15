@@ -1,0 +1,44 @@
+// Mixed push/pop workload — a Dijkstra-style frontier where each pop is
+// followed by a couple of pushes, so the heap hovers near a steady size rather
+// than draining monotonically. This is the access pattern the amortized O(1)
+// push / O(log n) pop claims are meant to cover.
+//
+//   target/twk run boot/bench/heap_push_pop.tw
+use @std.date
+use @std.heap
+
+fn min_int(a: Int, b: Int) Order {
+  a.compare(b)
+}
+
+fn bench(n: Int) {
+  t0 := date.now()
+  h: heap.Heap<Int> = heap.new(min_int)
+  state := 88675123
+  popped := 0
+
+  // Prime the frontier so pops always have something to remove.
+  h = .push(1).push(2).push(3)
+
+  for i in range(n) {
+    case h.pop() {
+      .Some(p) => {
+        h = p.rest
+        popped = popped + 1
+
+        // Two pseudo-random reinsertions per pop -> net growth, mixed order.
+        state = (state * 1103515245 + 12345) % 2147483647
+        h = .push(state).push(state / 2)
+      },
+      .None => {},
+    }
+  }
+
+  dt := date.now() - t0
+  println("${n}\t${dt}\t${popped}\t${h.len()}")
+}
+
+println("N\tms\tpopped\tsize")
+for n in [1000, 2000, 4000, 8000, 16000, 32000] {
+  bench(n)
+}

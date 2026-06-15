@@ -166,3 +166,41 @@ build is alloc-bound and boxing is already cheap, so `Dict<Int,V>` specializatio
 is a weak first target. The measurable lever is **String-key reads** (~2× today).
 The dominant structural cost is node allocation + insertion-order maintenance,
 independent of key type.
+
+---
+
+# Heap benchmark suite (@std.heap pairing heap)
+
+Confirms the amortized-complexity claims in `docs/API.md` for the pairing-heap
+priority queue. These read from disk like the others — no rebuild needed.
+
+## What each one measures
+
+| File | Workload | Probe |
+|------|----------|-------|
+| `heap_build_drain` | `from_vector` N pseudo-random ints, then `to_vector` (heapsort), vs `Vector.sort_by` on the same data | N amortized-O(1) pushes + N O(log n) pops; sort is the O(n log n) reference |
+| `heap_push_pop` | Dijkstra-style mixed loop: each pop followed by two reinsertions, so the frontier hovers near size N | steady-state amortized push/pop, the access pattern the claims target |
+
+## Baseline results — current runtime (2026-06-15)
+
+`heap_build_drain` (ms):
+
+```
+N        heap   sort
+4000     4.1    2.0
+8000    11.1    2.6
+16000   24.1    5.2
+32000   55.8   11.7
+```
+
+`heap_push_pop` (ms): 4000 → 1.6, 8000 → 2.7, 16000 → 4.1, 32000 → 10.3.
+
+**Takeaways:**
+
+- **No quadratic blowup.** Both workloads scale as n·log n — each doubling past
+  the warm-up region costs ≈2.2–2.5×, confirming amortized O(1) push / O(log n)
+  pop rather than per-op linear cost.
+- **Heapsort is ~3–5× slower than `Vector.sort_by`** for one-shot sorting: the
+  drain pays an O(log n) PVec `get` per child meld, where the native merge sort
+  does not. For a pure sort, prefer `sort_by`; the heap earns its keep when
+  priorities arrive incrementally or you only need the top few elements.
