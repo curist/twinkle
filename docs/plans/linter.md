@@ -22,6 +22,15 @@ genuine compiler warnings that already exist — unused imports, single-line
 multiline blocks — are a separate, pre-existing channel and keep showing in
 `build`/`check`; this plan does not touch them.)
 
+**The linter only detects; it never rewrites your code.** Every lint here flags
+*suspected-buggy* or anti-pattern code, where the correct fix depends on intent
+the tool cannot infer — so auto-applying a fix would risk cementing the very bug
+the lint surfaced (delete unreachable code that was meant to run; "fix" a
+forgotten rebinding by deleting it). Lints therefore *explain*, at most showing
+an illustrative rewrite in their help text, but never carry a machine-applicable
+fix. Rewrites that *are* provably meaning-preserving — and so can be applied
+unattended — are a separate tool, **`twk fix`** (see [`fix.md`](fix.md)).
+
 **No per-rule configuration.** Every shipped lint is **always on** under
 `twk lint`; there is no `[lint]` table, no severity knobs, no allow-by-default
 tier. The discipline this enforces is the whole point: a lint earns its place
@@ -48,9 +57,13 @@ In scope (this plan):
   pattern CLAUDE.md forbids in favor of field rebinding.
 - **L4 — Unreachable statements**: code following a diverging statement
   (`return`, `break`, `continue`, `error(...)`/trap) in the same block.
-- **L7 — Inherent-method-call hint**: a free-function call whose receiver-method
-  (inherent) form provably resolves to the *same* function — a meaning-preserving
-  idiom rewrite carrying a machine-applicable fix. Full design:
+
+**Moved to `twk fix`:**
+
+- **Inherent-method-call rewrite** (`Vector.map(xs, f)` → `xs.map(f)`) started
+  life here, but it is the one item that is *correct code with a nicer spelling*,
+  not a suspected bug — so it has a provably meaning-preserving auto-fix and
+  belongs in the fixer, not the linter. See [`fix.md`](fix.md) and its design doc
   [`inherent-method-hint.md`](inherent-method-hint.md).
 
 **Rejected:**
@@ -73,10 +86,11 @@ In scope (this plan):
 
 Explicitly **out of scope**:
 
-- Formatting / *layout* (owned by `twk fmt`). Note: *idiom* rewrites that need
-  type information — e.g. L7's free-call → method-call — are distinct from layout
-  and belong here. `fmt` cannot perform them because it lacks type resolution;
-  only the checker knows the receiver type that makes the rewrite safe.
+- Formatting / *layout* (owned by `twk fmt`).
+- Meaning-preserving automatic rewrites (owned by `twk fix`, see
+  [`fix.md`](fix.md)) — e.g. the free-call → method-call rewrite. The linter may
+  *flag* an anti-pattern, but anything it can *safely auto-apply* belongs in the
+  fixer, not here.
 - Unused bindings / params / imports / private fns. Unused-import detection
   already ships (`compiler/unused_imports.tw`, `twk check --fix-unused-imports`);
   the rest of this family is deliberately deferred.
@@ -90,12 +104,11 @@ Explicitly **out of scope**:
 The diagnostic plumbing is done; lints are mostly new *producers* on existing
 rails:
 
-- `lib/source/diagnostics.tw` — `Report`, `SpanLabel`, `FixEdit`, `SuggestedFix`,
-  and the rendering helpers. **Lint findings reuse these rendering types**, so
-  `twk lint` output and machine-applicable fixes look like the rest of the
-  compiler's diagnostics — but they do *not* join the general `DiagKind`
-  diagnostics stream (see below), so the dozens of exhaustive `case DiagKind`
-  sites stay untouched.
+- `lib/source/diagnostics.tw` — `Report`, `SpanLabel`, and the rendering helpers.
+  **Lint findings reuse these for output** so `twk lint` looks like the rest of
+  the compiler's diagnostics — but they carry no `SuggestedFix` (lints don't
+  auto-fix) and do *not* join the general `DiagKind` stream (see below), so the
+  dozens of exhaustive `case DiagKind` sites stay untouched.
 - `compiler/query/analyze.tw` — `analyze_module_impl` already runs a
   post-typecheck analysis (`check_unused_imports`) on non-internal modules. The
   structural lints hook in alongside it, **but only in lint mode**.
@@ -108,14 +121,15 @@ only when the pipeline runs in **lint mode** — a flag set exclusively by the
 `twk lint` entry point. `build`/`check` leave lint mode off, so lints cost
 nothing and surface nowhere outside `twk lint`. No new `DiagKind` arm is needed:
 findings are their own small type, rendered through the shared `Report` path at
-`twk lint` time.
+`twk lint` time. (`twk fix` reuses this same lint-mode/sink machinery for its own
+rewrites — see [`fix.md`](fix.md) — but applies edits instead of printing.)
 
 ## Architecture
 
 There are two natural homes for a lint, chosen per-lint by whether it needs
 inferred types:
 
-### A. Type-dependent lints → emitted by the type checker (L1, L2, L7)
+### A. Type-dependent lints → emitted by the type checker (L1, L2)
 
 L1 and L2 need the inferred type of a statement-position expression (is it
 `Void`? is it `Result`/`Option`? is the callee effectful?). The type checker
@@ -133,19 +147,6 @@ This can start coarse (only the three builtins are effectful; everything calling
 them transitively is effectful; closures conservatively effectful) and be
 refined later. Until that analysis exists, L1 can ship in a conservative form
 (see Rollout).
-
-L7 also lives here, but emits at *call-resolution sites* rather than at
-statement boundaries: at each resolved call it asks whether the receiver-method
-form maps to the same function (`resolve_method_func_name` against the
-instantiated first parameter's head type). It needs no effect analysis — only
-the resolution machinery the checker already runs. It **must** run here because
-the rewrite needs both the *syntactic* free-call form and the resolved
-callee/receiver type, which only coexist at call resolution: after lowering,
-`xs.map(f)` and `Vector.map(xs, f)` are the identical `Call` node, so no
-post-lowering pass could tell them apart. Like the other home-A lints, it is
-`lint_mode`-gated and routed to the lint sink. See
-[`inherent-method-hint.md`](inherent-method-hint.md) for the exact predicate,
-emission sites, and the byte-offset fix.
 
 ### B. Structural lints → a dedicated AST visitor module (L3, L4)
 
@@ -219,28 +220,8 @@ Motivation).
   fills that gap if not.*
 
 *(L5 — wildcard over project-local enum — and L6 — suspicious shadowing — are
-both rejected; see Scope → Rejected.)*
-
-### L7 — Inherent-method-call hint  (`inherent-method-call`)
-
-- **Trigger**: a call written in **free-function form** whose receiver-method
-  (inherent) form provably resolves to the *same* function. Three syntaxes:
-  builtin type-qualified (`Vector.map(xs, f)`), user module-qualified
-  (`point.translate(p, …)`), and bare same-module (`translate(p, …)`). Fires
-  only when `resolve_method_func_name(head(inst.params[0]), M)` equals the
-  resolved callee **and** `args[0]` is postfix-atomic (so the reorder cannot
-  reparse with different precedence — the same hazard that bites `fmt` stripping
-  `!(…)`). Fails closed otherwise.
-- **Rationale**: receiver-method syntax is the house idiom and reads better; the
-  rewrite is provably meaning-preserving, so it ships a machine-applicable fix
-  (two non-overlapping byte-offset edits, no source slicing).
-- **Escape**: none per-site needed — and because the rewrite is always
-  meaning-preserving, none is wanted. Strong always-on candidate: the
-  postfix-atomic guard + fail-closed resolution check keep false positives at ~0.
-- **Home**: type checker (A), at call-resolution sites, gated behind
-  `InferCtx.lint_mode`.
-- **Full design**: [`inherent-method-hint.md`](inherent-method-hint.md) — the
-  trigger predicate, emission sites in `checker.tw`, fix edits, and tests.
+both rejected; see Scope → Rejected. The inherent-method-call rewrite moved to
+`twk fix`; see [`fix.md`](fix.md).)*
 
 ## Suppression model (no config, no attributes)
 
@@ -262,9 +243,9 @@ touch the linter motivates; it is intent expressed in the code, not lint
 metadata. **Open question** (below): adopt `_ :=` discard, or require binding to
 a named throwaway instead.
 
-Every other lint (L3, L4, L7) has a precise enough trigger that no escape is
-needed — the fix removes the flagged construct outright. If a rule ever seems to
-*need* a blanket escape, that is the signal to drop the rule, not to add one.
+Every other lint (L3, L4) has a precise enough trigger that no escape is needed —
+fixing the flagged construct removes it outright. If a rule ever seems to *need* a
+blanket escape, that is the signal to drop the rule, not to add one.
 
 ## Surfacing
 
@@ -272,8 +253,8 @@ Every lint surfaces through exactly one path: a **separate lint sink**
 (`PipelineArtifacts.lints`), populated only when the pipeline runs in **lint
 mode**, and reported only by `twk lint`. Lints never ride the compiler's
 `warnings`/diagnostics channel, never appear in `build`/`check`, and are not
-published as ambient LSP diagnostics. They reuse the `Report`/`FixEdit` rendering
-for output and fixes — that is sharing the formatting, not the diagnostic path.
+published as ambient LSP diagnostics. They reuse the `Report` rendering for
+output — that is sharing the formatting, not the diagnostic path.
 
 This keeps the everyday compile loop quiet and fast (lint mode off ⇒ home-A
 checks are skipped branches, the home-B pass never runs) and makes the lints a
@@ -289,11 +270,11 @@ deliberate, opt-in step exactly like `cargo clippy`.
   compiler warnings (unused imports, etc.); lints are invisible because lint mode
   is off and never computed.
 - **LSP** — lints are *not* published as ambient diagnostics. If surfaced at all
-  it would be an explicit, on-demand lint/code-action request (future work),
-  keeping editors quiet by default. A finding's suggested rewrite (L3, L7) can
-  become a code action, reusing the `unused_imports` edit pattern.
+  it would be an explicit, on-demand lint request (future work), keeping editors
+  quiet by default. Lints offer no code-action fixes (they don't auto-fix); that
+  is `twk fix`'s job.
 
-`twk fmt` is untouched.
+`twk fmt` and `twk fix` are separate tools.
 
 ## Rollout
 
@@ -311,13 +292,12 @@ Ship in stages, validating signal-to-noise on `boot/` itself at each step
 3. **L1 (unused pure result)** — needs the purity/effect flag on signatures.
    Until that lands, optionally ship a conservative L1 limited to calls of
    functions known-pure structurally (no transitive `print`/`error`).
-4. **L7** — the idiom hint. Independent of the effect analysis (it only needs
-   call resolution), so it can land as soon as the Stage 1 sink/`lint_mode`
-   plumbing exists. Validate on `boot/` that it stays quiet enough to be always
-   on before shipping.
 
 Each lint is gated on `boot/` before it ships: if it is noisy there, it is
 recalibrated or dropped — never demoted behind a config switch.
+
+(The lint-mode/sink plumbing built in Stage 1 is shared by `twk fix`; the
+inherent-method-call rewrite ships on the `twk fix` track — see [`fix.md`](fix.md).)
 
 ## Open questions
 
