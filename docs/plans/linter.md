@@ -206,8 +206,8 @@ named throwaway.
 
 ## Rollout
 
-The command, both rewrites, and L2/L3/L4 are **done**; L1 is deferred pending
-effect analysis.
+The command, both rewrites, and L2/L3/L4 are **done**. L1 is **dropped for now**
+(see §6 for the scoping reasoning); the linter is otherwise complete.
 
 1. **Done — rewrite engine + R2 (unused-imports)** — the collect→apply engine
    (`apply_edits` end-to-start splice), R2 migrated off the removed
@@ -226,13 +226,35 @@ effect analysis.
    `maybe_unused_value` flags a discarded statement-position expression of type
    `Result`/`Option`. Calibrated clean on `boot/` (0 findings — guards against
    future drops).
-6. **Deferred — L1 (unused pure result)** — a conservative version (flag any
-   discarded non-Void value) was tried and **rejected**: on `boot/` it
+6. **Dropped for now — L1 (unused pure result).** A conservative version (flag
+   any discarded non-Void value) was tried and rejected: on `boot/` it
    false-positived on effectful calls whose value is legitimately ignored (the
-   `Cell`-mutating `registry.add_file(...)` pattern — 4/5 findings). L1 needs a
-   real **purity/effect flag** on signatures first (effectful = transitively
-   prints/errors or mutates a `Cell`); then flag only discards of *pure*
-   non-Void results.
+   `Cell`-mutating `registry.add_file(...)` pattern — 4/5 findings). Doing L1
+   *correctly* is the biggest piece in this plan, for three reasons surfaced
+   while scoping it:
+   - **No `FunctionSig` purity flag.** `FunctionSig` has ~60 construction sites
+     plus cache serialization — too invasive/risky to carry `effectful`.
+   - **It must be cross-module.** The canonical bug `items.append(x)` calls a
+     *prelude* function; the `add_file` false positive lives in another module.
+     So purity must be known for imported functions, i.e. accumulated across the
+     import graph.
+   - **It must be type-aware, not a pure-AST pass.** `.set` is ambiguous —
+     `Cell.set` is effectful, `Vector.set` is pure — so purity has to key off the
+     checker's *resolved* call targets (`method_calls`), not the syntax.
+
+   So the real solution is a **whole-program purity map** (keyed by resolved
+   func-name; effectful = transitively prints/errors or mutates a `Cell`),
+   accumulated bottom-up through `analyze` and threaded into the checker — no
+   `FunctionSig` change, but a new `AnalysisState` field, a `check()` signature
+   change, an intra-module fixpoint, name-consistency work, and its own `boot/`
+   calibration. Deferred until that's worth building.
+
+   **Cheaper alternative if revived:** a *type-based* L1 — flag discarding a
+   freshly-built persistent collection (`Vector`/`Dict`/`Set`/`String`) returned
+   from a call. Keys off the discarded value's type (already known), no effect
+   analysis; safely catches `items.append(x)` / `dict.set(k,v)` / `s.concat(t)`
+   (the `add_file` result is a record, not a collection, so no false positive).
+   Misses pure non-collection discards (e.g. a discarded `point.translate(...)`).
 
 ## Open questions
 
@@ -244,8 +266,7 @@ effect analysis.
 - **Scope** (resolved): findings follow the **import chain** — the entry file
   plus everything it transitively imports (stdlib/internal excluded) — not a
   directory crawl. Applies uniformly to rewrites and lints.
-- **Effect analysis for L1** (the L1 blocker): compute a purity flag per
-  signature — effectful iff it transitively calls `print`/`println`/`error` *or*
-  mutates a `Cell` (e.g. `registry.add_file`). Open: granularity (host externs,
-  closures) and whether a coarse first cut suffices.
+- **L1 is dropped for now** — see Rollout §6 for the full reasoning (cross-module
+  + type-aware purity → a whole-program purity map; or a cheaper type-based
+  heuristic). Revisit if the dead-code value justifies the build.
 - **L3 threshold**: cutoff for "mostly verbatim copies" before flagging.
