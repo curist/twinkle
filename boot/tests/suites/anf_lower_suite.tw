@@ -23,7 +23,7 @@ fn anf_src(src: String) Result<AnfModule, String> {
     return .Err("resolve: ${resolved.diagnostics[0].message()}")
   }
 
-  check_result := checker.check(parsed.value, resolved.env)
+  check_result := checker.check(parsed.value, resolved.env, false)
 
   if check_result.diagnostics.len() > 0 {
     return .Err("check: ${check_result.diagnostics[0].message()}")

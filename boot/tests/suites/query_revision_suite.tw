@@ -140,7 +140,7 @@ pub fn suite() runner.Suite {
         parsed := make_parsed("x := 1")
         env := base_env.builtin_env()
         resolved := env.resolve(parsed.module)
-        typed := checker.check(parsed.module, resolved.env)
+        typed := checker.check(parsed.module, resolved.env, false)
         store = cache.put_typed(store, main, 42, typed)
 
         // Dep changes → invalidation

@@ -57,7 +57,7 @@ fn check_ok_with_builtins(src: String) Result<Bool, String> {
     return .Err("resolve error: ${resolved.diagnostics[0].message()}")
   }
 
-  result := checker.check(parsed.value, resolved.env)
+  result := checker.check(parsed.value, resolved.env, false)
 
   if result.diagnostics.len() > 0 {
     return .Err("type error: ${result.diagnostics[0].message()}")

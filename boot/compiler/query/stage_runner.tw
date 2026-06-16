@@ -71,6 +71,7 @@ pub fn typecheck(
   store: cache.Store,
   module: cache.ParsedModule,
   resolved: resolver.ResolveResult,
+  fix_mode: Bool,
 ) StageOut<checker.CheckResult> {
   base_key := keys.typecheck_key(
     runner.path,
@@ -84,7 +85,7 @@ pub fn typecheck(
   case lookup.value {
     .Some(typed) => .{ store: lookup.store, value: typed, cache_hit: true },
     .None => {
-      typed := checker.check(module.module, resolved.env)
+      typed := checker.check(module.module, resolved.env, fix_mode)
       next := cache.put_typed(lookup.store, runner.path, key, typed)
       .{ store: next, value: typed, cache_hit: false }
     },

@@ -72,7 +72,7 @@ pub fn analyze_document(store: cache.Store, input: DocumentInput) AnalysisResult
     }
   }
 
-  checked_out := stage_runner.typecheck(runner, cur_cache, parsed, resolved)
+  checked_out := stage_runner.typecheck(runner, cur_cache, parsed, resolved, false)
   cur_cache = checked_out.store
   checked := checked_out.value
 

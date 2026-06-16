@@ -10,7 +10,7 @@ fn exports_for(source: String) ModuleExports {
   parsed := parser.parse(source, 0)
   env := base_env.builtin_env()
   resolved := env.resolve(parsed.value)
-  checked := checker.check(parsed.value, resolved.env)
+  checked := checker.check(parsed.value, resolved.env, false)
   extract_exports_for_module(checked.env, parsed.value, "test", checked.pub_values)
 }
 

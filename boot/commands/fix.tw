@@ -117,7 +117,9 @@ fn collect_unused_import_edits(diagnostics: Vector<analyze.AnalysisDiag>) Dict<S
   edits_by_file
 }
 
-/// Run the frontend for `file` and gather every rewrite edit, grouped by path.
+/// Run the frontend (in fix mode) for `file` and gather every rewrite edit,
+/// grouped by path: R2 unused-import removals (diagnostic-attached) and R1
+/// inherent-method rewrites (from the fix-mode rewrite channel).
 fn gather_edits(file: String) Dict<String, Vector<FixEdit>> {
   dir := path.dirname(file)
   project_root := loader.find_project_root(dir)
@@ -126,8 +128,18 @@ fn gather_edits(file: String) Dict<String, Vector<FixEdit>> {
   base_env := builtin_env()
   entry_id := identity.from_path(canonical_entry)
   a_state := analyze.new_state(base_env, query_cache.empty(), overlay.empty(), project_root)
+  a_state.fix_mode = true
   a_result := analyze.analyze_module(entry_id, "__entry", base_env, a_state, [])
-  collect_unused_import_edits(a_result.diagnostics)
+  edits := collect_unused_import_edits(a_result.diagnostics)
+
+  for re in a_result.rewrites {
+    case edits[re.path] {
+      .Some(existing) => edits[re.path] = existing.concat(re.edits),
+      .None => edits[re.path] = re.edits,
+    }
+  }
+
+  edits
 }
 
 fn apply_to_files(edits_by_file: Dict<String, Vector<FixEdit>>) Vector<FileResult> {
@@ -180,11 +192,11 @@ pub fn run_fix_command(parsed: ParseResult) {
         .Some(es) => es.len(),
         .None => 0,
       }
-      println("${file_path}: ${n} rewrite(s) pending")
+      println("${file_path}: ${n} edit(s) pending")
       total = total + n
     }
 
-    eprintln("${total} rewrite(s) pending; run `twk fix` to apply")
+    eprintln("${total} edit(s) pending; run `twk fix` to apply")
     proc.exit(1)
   }
 

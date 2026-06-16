@@ -44,7 +44,7 @@ use .suites.imports_suite
 use .suites.insert_boundaries_suite
 use .suites.lib_json_suite
 use .suites.line_index_suite
-use .suites.lint_suite
+use .suites.rewrite_suite
 use .suites.linker_suite
 use .suites.lsp_completion_suite
 use .suites.lsp_definition_suite
@@ -199,7 +199,7 @@ runner.run_all([
   diag_render_suite.suite(),
   fix_suite.suite(),
   fix_command_suite.suite(),
-  lint_suite.suite(),
+  rewrite_suite.suite(),
   query_diagnostics_suite.suite(),
   imports_suite.suite(),
   lib_json_suite.suite(),

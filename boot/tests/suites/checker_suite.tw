@@ -13,13 +13,13 @@ use tests.suites.resolver_suite as rsuite
 fn check_src(src: String) checker.CheckResult {
   parsed := parser.parse(src, 0)
   resolved := resolver.empty_env().resolve(parsed.value)
-  checker.check(parsed.value, resolved.env)
+  checker.check(parsed.value, resolved.env, false)
 }
 
 fn check_src_with_env(src: String, env: resolver.ResolvedEnv) checker.CheckResult {
   parsed := parser.parse(src, 0)
   resolved := env.resolve(parsed.value)
-  checker.check(parsed.value, resolved.env)
+  checker.check(parsed.value, resolved.env, false)
 }
 
 fn builtin_sig(
@@ -117,7 +117,7 @@ fn test_env() resolver.ResolvedEnv {
 fn check_src_with_builtins(src: String) checker.CheckResult {
   parsed := parser.parse(src, 0)
   resolved := base_env.builtin_env().resolve(parsed.value)
-  checker.check(parsed.value, resolved.env)
+  checker.check(parsed.value, resolved.env, false)
 }
 
 fn check_ok_builtins(src: String) Result<checker.CheckResult, String> {

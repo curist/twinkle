@@ -33,7 +33,7 @@ fn parse_ok(src: String) Result<ast.Module, String> {
 fn check_src(src: String) checker.CheckResult {
   parsed := parser.parse(src, 0)
   resolved := resolver.empty_env().resolve(parsed.value)
-  checker.check(parsed.value, resolved.env)
+  checker.check(parsed.value, resolved.env, false)
 }
 
 fn lower_src(src: String) Result<lower_core.LowerResult, String> {
@@ -49,7 +49,7 @@ fn lower_src(src: String) Result<lower_core.LowerResult, String> {
     return .Err("resolve error: ${resolved.diagnostics[0].message()}")
   }
 
-  check_result := checker.check(parsed.value, resolved.env)
+  check_result := checker.check(parsed.value, resolved.env, false)
 
   if check_result.diagnostics.len() > 0 {
     return .Err("check error: ${check_result.diagnostics[0].message()}")
@@ -71,7 +71,7 @@ fn lower_src_with_env(src: String, env: resolver.ResolvedEnv) Result<lower_core.
     return .Err("resolve error: ${resolved.diagnostics[0].message()}")
   }
 
-  check_result := checker.check(parsed.value, resolved.env)
+  check_result := checker.check(parsed.value, resolved.env, false)
 
   if check_result.diagnostics.len() > 0 {
     return .Err("check error: ${check_result.diagnostics[0].message()}")
@@ -93,7 +93,7 @@ fn lower_src_with_builtin_env(src: String) Result<lower_core.LowerResult, String
     return .Err("resolve error: ${resolved.diagnostics[0].message()}")
   }
 
-  check_result := checker.check(parsed.value, resolved.env)
+  check_result := checker.check(parsed.value, resolved.env, false)
 
   if check_result.diagnostics.len() > 0 {
     return .Err("check error: ${check_result.diagnostics[0].message()}")
@@ -788,7 +788,7 @@ pub fn suite() runner.Suite {
         src := "fn foo(x: Int) Int { x }\nfn f() Int { foo(1) }"
         parsed := parser.parse(src, 0)
         resolved := resolver.empty_env().resolve(parsed.value)
-        result := checker.check(parsed.value, resolved.env)
+        result := checker.check(parsed.value, resolved.env, false)
 
         if result.diagnostics.len() > 0 {
           return .Err("unexpected diagnostic: ${result.diagnostics[0].message()}")

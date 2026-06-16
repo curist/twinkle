@@ -4,6 +4,8 @@
 /// InferCtx is threaded functionally through every call; updates use COW field mutation.
 
 use lib.source.diagnostics.{DiagKind, MissingVariant}
+use lib.source.rewrite
+use lib.source.rewrite.{Rewrite}
 use lib.source.span.{Span}
 
 use .ast.{
@@ -34,6 +36,9 @@ pub type InferCtx = .{
   method_calls: Dict<Int, MethodCallInfo>,
   contract_cache: Dict<String, Bool>,
   iterable_lowering: Dict<Int, IterableLoweringInfo>,
+  // Fixer (twk fix) — only populated when fix_mode is on (off for build/check).
+  fix_mode: Bool,
+  rewrites: Vector<Rewrite>,
 }
 
 pub type MethodCallInfo = .{
@@ -72,10 +77,11 @@ pub type CheckResult = .{
   method_calls: Dict<Int, MethodCallInfo>,
   pub_values: Dict<String, MonoType>,
   iterable_lowering: Dict<Int, IterableLoweringInfo>,
+  rewrites: Vector<Rewrite>,
 }
 
 // ── Context helpers ─────────────────────────────────────────────────
-fn empty_ctx(env: ResolvedEnv, module_aliases: Dict<String, Bool>) InferCtx {
+fn empty_ctx(env: ResolvedEnv, module_aliases: Dict<String, Bool>, fix_mode: Bool) InferCtx {
   .{
     env,
     module_aliases,
@@ -91,6 +97,8 @@ fn empty_ctx(env: ResolvedEnv, module_aliases: Dict<String, Bool>) InferCtx {
     method_calls: Dict.new(),
     contract_cache: Dict.new(),
     iterable_lowering: Dict.new(),
+    fix_mode,
+    rewrites: [],
   }
 }
 
@@ -1596,6 +1604,7 @@ fn synth_call(
             callee.id,
             callee.span.start,
             callee.span,
+            s,
             clean_ctx,
             diags,
             call_expected,
@@ -1718,7 +1727,8 @@ fn synth_call(
             .None,
           )
           bounds_r := check_instantiated_bounds(sig, inst.type_args, s, call_r.ctx, call_r.diags)
-          .{ ty: call_r.ty, ctx: bounds_r.ctx, diags: bounds_r.diags }
+          out_ctx := maybe_inherent_rewrite(bounds_r.ctx, s, name, name, inst.params, args)
+          .{ ty: call_r.ty, ctx: out_ctx, diags: bounds_r.diags }
         },
         .None => synth_call_general(
           callee,
@@ -1817,6 +1827,65 @@ fn method_owner_name(base_ty: MonoType, env: ResolvedEnv) String? {
     .ExternRef(tid) => env.find_type_name(tid),
     _ => .None,
   }
+}
+
+/// Fixer (R1): if `ctx.fix_mode` and the free-function call could be written in
+/// receiver-method form resolving to the *same* function, record a rewrite.
+/// `params`/`args` are the resolved call's parameters and argument expressions;
+/// `call_span` covers the whole call. Fails closed — no rewrite unless the
+/// inherent form provably maps to `fn_name` and the receiver is postfix-atomic.
+fn maybe_inherent_rewrite(
+  ctx: InferCtx,
+  call_span: Span,
+  method: String,
+  fn_name: String,
+  params: Vector<MonoType>,
+  args: Vector<Expr>,
+) InferCtx {
+  if !ctx.fix_mode or args.len() < 1 or params.len() < 1 {
+    return ctx
+  }
+
+  resolves := case resolve_method_func_name(params[0], method, ctx.env) {
+    .Some(n) => n == fn_name,
+    .None => false,
+  }
+
+  if !resolves {
+    return ctx
+  }
+
+  arg0 := args[0]
+
+  if !rewrite.is_postfix_atomic(arg0.kind) {
+    return ctx
+  }
+
+  // The checker re-checks some expressions across passes; dedup by call span so
+  // one call site yields at most one rewrite.
+  for existing in ctx.rewrites {
+    case existing {
+      .InherentMethodCall(e) => if e.span.start == call_span.start and e.span.end == call_span.end {
+        return ctx
+      },
+    }
+  }
+  second_start: Int? = if args.len() >= 2 {
+    .Some(args[1].span.start)
+  } else {
+    .None
+  }
+  rw := Rewrite.InherentMethodCall(
+    .{
+      span: call_span,
+      method,
+      arg0_start: arg0.span.start,
+      arg0_end: arg0.span.end,
+      second_start,
+    },
+  )
+  ctx.rewrites = .append(rw)
+  ctx
 }
 
 fn resolve_method_func_name(base_ty: MonoType, method_name: String, env: ResolvedEnv) String? {
@@ -2007,6 +2076,7 @@ fn try_synth_module_qualified_call(
   callee_id: Int,
   callee_span_start: Int,
   callee_span: Span,
+  call_span: Span,
   ctx: InferCtx,
   diags: Vector<DiagKind>,
   call_expected: MonoType?,
@@ -2045,7 +2115,8 @@ fn try_synth_module_qualified_call(
     .Some(meta),
   )
   bounds_r := check_instantiated_bounds(sig, inst.type_args, callee_span, call_r.ctx, call_r.diags)
-  .Some(.{ ty: call_r.ty, ctx: bounds_r.ctx, diags: bounds_r.diags })
+  out_ctx := maybe_inherent_rewrite(bounds_r.ctx, call_span, method_name, fn_name, inst.params, args)
+  .Some(.{ ty: call_r.ty, ctx: out_ctx, diags: bounds_r.diags })
 }
 
 fn try_synth_method_call(
@@ -5078,8 +5149,8 @@ fn collect_module_aliases(module: Module) Dict<String, Bool> {
   aliases
 }
 
-pub fn check(module: Module, env: ResolvedEnv) CheckResult {
-  ctx := empty_ctx(env, collect_module_aliases(module))
+pub fn check(module: Module, env: ResolvedEnv, fix_mode: Bool) CheckResult {
+  ctx := empty_ctx(env, collect_module_aliases(module), fix_mode)
   cur_diags: Vector<DiagKind> = []
 
   // Pass 1: top-level statements/lets.
@@ -5220,5 +5291,6 @@ pub fn check(module: Module, env: ResolvedEnv) CheckResult {
     method_calls: ctx.method_calls,
     pub_values,
     iterable_lowering: ctx.iterable_lowering,
+    rewrites: ctx.rewrites,
   }
 }

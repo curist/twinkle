@@ -13,7 +13,7 @@ use tests.runner
 fn build(src: String) occ.OccurrenceIndex {
   parsed := parser.parse(src, 0)
   resolved := resolver.empty_env().resolve(parsed.value)
-  typed := checker.check(parsed.value, resolved.env)
+  typed := checker.check(parsed.value, resolved.env, false)
   occurrence_build.build("m", "file:///m.tw", parsed.value, resolved.env, typed)
 }
 
