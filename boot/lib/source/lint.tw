@@ -1,0 +1,58 @@
+/// Lint findings for `twk lint` — the linter's own diagnostic channel.
+///
+/// Findings are deliberately separate from `DiagKind`: they never ride the
+/// compiler's error/warning stream, never appear in `build`/`check`, and are
+/// surfaced only by `twk lint` (see docs/plans/linter.md). They reuse the
+/// `Report`/`FixEdit` rendering types for output and machine-applicable fixes.
+
+use compiler.ast.{ExprKind}
+
+use .report.{FixEdit, SuggestedFix}
+use .span.{Span}
+
+/// A single lint finding. One variant per lint rule.
+pub type LintFinding = {
+  // L7 — a free-function call whose receiver-method form resolves to the same
+  // function. `span` covers the whole call (callee start .. after `)`).
+  InherentMethodCall(
+    .{ span: Span, method: String, arg0_start: Int, arg0_end: Int, second_start: Int? },
+  ),
+}
+
+/// Is `kind` a postfix-atomic expression? `.` binds tighter than every binary
+/// and prefix operator, so the receiver of an inherent-method rewrite must
+/// already be postfix-atomic — otherwise `arg0.method(...)` reparses with
+/// different precedence (e.g. `a or b` → `a or b.method()`). Fails closed.
+pub fn is_postfix_atomic(kind: ExprKind) Bool {
+  case kind {
+    .Ident(_) => true,
+    .Field(_, _) => true,
+    .Call(_, _) => true,
+    .Index(_, _) => true,
+    .IntLit(_) => true,
+    .FloatLit(_) => true,
+    .StringLit(_) => true,
+    .StringInterp(_) => true,
+    .BoolLit(_) => true,
+    _ => false,
+  }
+}
+
+/// Structured, machine-applicable fixes for a finding. Pure projection of the
+/// payload — consumed by `twk lint` rendering and the LSP data channel.
+pub fn fixes(finding: LintFinding) Vector<SuggestedFix> {
+  case finding {
+    .InherentMethodCall(d) => {
+      // Edit A: delete the `Callee(` prefix, preserving args[0] verbatim.
+      del_prefix := FixEdit.{ start: d.span.start, end: d.arg0_start, replacement: "" }
+      // Edit B: reinsert the method between args[0] and the rest.
+      reinsert := case d.second_start {
+        // Replace the `, ` separator with `.method(`.
+        .Some(s2) => FixEdit.{ start: d.arg0_end, end: s2, replacement: ".${d.method}(" },
+        // Single arg: replace the trailing `)` with `.method()`.
+        .None => FixEdit.{ start: d.arg0_end, end: d.span.end, replacement: ".${d.method}()" },
+      }
+      [SuggestedFix.{ title: "use inherent-method call syntax", edits: [del_prefix, reinsert] }]
+    },
+  }
+}

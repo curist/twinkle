@@ -1,0 +1,89 @@
+use compiler.ast.{Expr, ExprKind}
+use lib.source.lint
+use lib.source.lint.{LintFinding}
+use lib.source.span
+use tests.assert
+use tests.runner
+
+fn s(start: Int, end: Int) span.Span {
+  span.new(0, start, end)
+}
+
+fn expr(kind: ExprKind) Expr {
+  .{ id: 0, kind, span: s(0, 0) }
+}
+
+pub fn suite() runner.Suite {
+  runner.suite("lint")
+    .test(
+      "inherent-method fix: Vector.map(xs, f) -> xs.map(f)",
+      fn() {
+        // source: "Vector.map(xs, f)"  (len 17)
+        //          0          1         1
+        //          0          1         6
+        finding := LintFinding.InherentMethodCall(
+          .{ span: s(0, 17), method: "map", arg0_start: 11, arg0_end: 13, second_start: .Some(15) },
+        )
+        fixes := lint.fixes(finding)
+        try assert.equal(fixes.len(), 1)
+        fix := fixes[0]
+        try assert.equal(fix.edits.len(), 2)
+        a := fix.edits[0]
+        try assert.equal(a.start, 0)
+        try assert.equal(a.end, 11)
+        try assert.equal(a.replacement, "")
+        b := fix.edits[1]
+        try assert.equal(b.start, 13)
+        try assert.equal(b.end, 15)
+        try assert.equal(b.replacement, ".map(")
+        .Ok({})
+      },
+    )
+    .test(
+      "inherent-method fix: single-arg Vector.len(xs) -> xs.len()",
+      fn() {
+        // source: "Vector.len(xs)"  (len 14)
+        finding := LintFinding.InherentMethodCall(
+          .{ span: s(0, 14), method: "len", arg0_start: 11, arg0_end: 13, second_start: .None },
+        )
+        fixes := lint.fixes(finding)
+        try assert.equal(fixes.len(), 1)
+        fix := fixes[0]
+        try assert.equal(fix.edits.len(), 2)
+        a := fix.edits[0]
+        try assert.equal(a.start, 0)
+        try assert.equal(a.end, 11)
+        try assert.equal(a.replacement, "")
+        b := fix.edits[1]
+        try assert.equal(b.start, 13)
+        try assert.equal(b.end, 14)
+        try assert.equal(b.replacement, ".len()")
+        .Ok({})
+      },
+    )
+    .test(
+      "postfix-atomic: Ident / Field / Call / Index / literals are atomic",
+      fn() {
+        a := expr(.Ident("a"))
+        try assert.is_true(lint.is_postfix_atomic(.Ident("x")))
+        try assert.is_true(lint.is_postfix_atomic(.Field(a, "f")))
+        try assert.is_true(lint.is_postfix_atomic(.Call(a, [])))
+        try assert.is_true(lint.is_postfix_atomic(.Index(a, a)))
+        try assert.is_true(lint.is_postfix_atomic(.IntLit(3)))
+        try assert.is_true(lint.is_postfix_atomic(.StringLit("s")))
+        try assert.is_true(lint.is_postfix_atomic(.BoolLit(true)))
+        .Ok({})
+      },
+    )
+    .test(
+      "postfix-atomic: binary / unary / if are NOT atomic",
+      fn() {
+        a := expr(.Ident("a"))
+        b := expr(.Ident("b"))
+        try assert.is_false(lint.is_postfix_atomic(.Binary(.LogicalOr, a, b)))
+        try assert.is_false(lint.is_postfix_atomic(.Unary(.Neg, a)))
+        try assert.is_false(lint.is_postfix_atomic(.If(a, .{ stmts: [], tail: .None, span: s(0, 0) }, .None)))
+        .Ok({})
+      },
+    )
+}
