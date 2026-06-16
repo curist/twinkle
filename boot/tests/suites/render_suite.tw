@@ -119,7 +119,7 @@ pub fn suite() runner.Suite {
           severity: .Warning,
           title: "unused import `bar`",
           labels: [primary(sp(8, 11), .None)],
-          help_lines: ["use `twk check --fix-unused-imports` to remove automatically"],
+          help_lines: ["run `twk fix` to remove automatically"],
         }
         out := render.render(report, reg, no_color())
         expected := lines([
@@ -128,7 +128,7 @@ pub fn suite() runner.Suite {
           "  |",
           "1 | use lib.bar",
           "  |         ^^^",
-          "  = help: use `twk check --fix-unused-imports` to remove automatically",
+          "  = help: run `twk fix` to remove automatically",
         ])
         try assert.equal(out, expected)
         .Ok({})

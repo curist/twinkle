@@ -1,0 +1,36 @@
+use commands.fix
+use lib.source.report.{FixEdit}
+use tests.assert
+use tests.runner
+
+pub fn suite() runner.Suite {
+  runner.suite("fix_command")
+    .test(
+      "apply_edits: single range replacement",
+      fn() {
+        out := fix.apply_edits("abcdef", [FixEdit.{ start: 1, end: 3, replacement: "X" }])
+        try assert.equal(out, "aXdef")
+        .Ok({})
+      },
+    )
+    .test(
+      "apply_edits: multiple non-overlapping edits, given ascending, applied end-to-start",
+      fn() {
+        edits := [
+          FixEdit.{ start: 0, end: 1, replacement: "" },
+          FixEdit.{ start: 4, end: 6, replacement: "Z" },
+        ]
+        out := fix.apply_edits("abcdef", edits)
+        try assert.equal(out, "bcdZ")
+        .Ok({})
+      },
+    )
+    .test(
+      "apply_edits: insertion (start == end)",
+      fn() {
+        out := fix.apply_edits("ac", [FixEdit.{ start: 1, end: 1, replacement: "b" }])
+        try assert.equal(out, "abc")
+        .Ok({})
+      },
+    )
+}

@@ -3,6 +3,7 @@ use @std.proc
 use commands.build.{resolve_build_output, run_build_command}
 use commands.check.{run_check_command}
 use commands.common.{exit_usage_error, get_positional}
+use commands.fix.{run_fix_command}
 use commands.fmt.{run_fmt_command}
 use commands.ir.{run_ir_command}
 use commands.lsp.{run_lsp_command}
@@ -18,9 +19,10 @@ fn file_command(name: String, help: String) {
 }
 
 parse_cmd := file_command("parse", "Parse source and print diagnostics")
-check_cmd := file_command("check", "Type-check source").add_flag(
-  "fix-unused-imports",
-  "Automatically remove unused imports",
+check_cmd := file_command("check", "Type-check source")
+fix_cmd := file_command("fix", "Apply safe rewrites").add_flag(
+  "check",
+  "Report pending rewrites without writing",
 )
 ir_cmd := file_command("ir", "Compile and print compiler IR").add_flag(
   "core",
@@ -50,6 +52,7 @@ cli := app.make("twk", "Twinkle compiler")
   .add_commands([
     run_cmd,
     check_cmd,
+    fix_cmd,
     build_cmd,
     ir_cmd,
     parse_cmd,
@@ -151,6 +154,7 @@ fn run_command(parsed: ParseResult) {
   case parsed.command {
     .Some("parse") => run_parse_command(parsed),
     .Some("check") => run_check_command(parsed),
+    .Some("fix") => run_fix_command(parsed),
     .Some("ir") => run_ir_command(parsed),
     .Some("build") => run_build_command(parsed),
     .Some("lsp") => run_lsp_command(parsed),

@@ -1,11 +1,9 @@
-/// Check command: type-check source, optionally fix unused imports.
+/// Check command: type-check source.
 
 use @std.proc
 
 use commands.common.{exit_usage_error, format_compile_error, get_positional, print_warnings}
-use commands.fix_unused_imports.{fix_unused_imports}
 use compiler.pipeline
-use lib.argparse.app
 use lib.argparse.app.{ParseResult}
 
 pub fn run_check_command(parsed: ParseResult) {
@@ -14,18 +12,14 @@ pub fn run_check_command(parsed: ParseResult) {
     .Err(msg) => exit_usage_error(msg),
   }
 
-  if app.has_flag(parsed, "fix-unused-imports") {
-    fix_unused_imports(file)
-  } else {
-    case pipeline.compile_entry_path(file) {
-      .Ok(artifacts) => {
-        print_warnings(artifacts.warnings)
-        println("Type checking succeeded: ${file}")
-      },
-      .Err(err) => {
-        eprintln(format_compile_error(err))
-        proc.exit(1)
-      },
-    }
+  case pipeline.compile_entry_path(file) {
+    .Ok(artifacts) => {
+      print_warnings(artifacts.warnings)
+      println("Type checking succeeded: ${file}")
+    },
+    .Err(err) => {
+      eprintln(format_compile_error(err))
+      proc.exit(1)
+    },
   }
 }
