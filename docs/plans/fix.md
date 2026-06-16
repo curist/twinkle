@@ -47,22 +47,32 @@ Both are idempotent, so order only matters for fewest passes.
 
 ## Architecture
 
-`twk fix` reuses the linter's **analysis-mode + sink** machinery (see
-[`linter.md`](linter.md) → "What we add"): the frontend runs with a mode flag set
-only by `twk fix`, computes findings into a separate sink, and `build`/`check`
-never pay for it. The difference from `twk lint` is purely the consumer — `fix`
-**applies** the collected `FixEdit`s to the source bytes instead of printing.
+`twk fix` is a generic **collect-edits → apply-to-disk** engine fed by multiple
+rewrite producers. It runs the frontend once, harvests every safe `FixEdit`, and
+applies them per file. The apply step already exists — `commands/fix_unused_imports.tw`
+sorts edits end-to-start and splices them offset-stably — and generalizes into
+`commands/fix.tw` (see R2).
+
+Two producer kinds feed the engine:
+
+1. **Diagnostic-attached fixes** — some analyses already emit their edits as
+   `data.fixes` on a diagnostic (unused-imports does this today). `twk fix`
+   harvests those directly; no new plumbing.
+2. **Rewrite sink** — rewrites that need extra computation run behind a `fix_mode`
+   flag (reusing the linter's analysis-mode/sink machinery, see
+   [`linter.md`](linter.md) → "What we add") and drain into a dedicated sink.
+   Used by R1, whose detection needs *call-resolution time* in the checker
+   (pre-lowering — the free-call form and the resolved callee/receiver type only
+   coexist there). `build`/`check` leave `fix_mode` off, so they never pay for it.
+
+Shared pieces:
 
 - **Rewrite type** (`boot/lib/source/rewrite.tw`): `Rewrite`, one variant per
-  rewrite rule, each projecting to a `SuggestedFix` (one or more non-overlapping
-  `FixEdit`s) via `fixes(rewrite)`. Reuses `report.{FixEdit, SuggestedFix}`.
-- **Detection** lives wherever the rewrite's preconditions are available. For the
-  inherent-method-call rewrite that is *call-resolution time* in the checker
-  (pre-lowering), because the rewrite needs both the syntactic free-call form and
-  the resolved callee/receiver type, which only coexist there.
-- **Application** (`commands/fix.tw`): collect all `FixEdit`s for the file, assert
-  they are non-overlapping, apply them in a single offset-stable pass (apply
-  right-to-left or adjust offsets), write the file. `--check` skips the write.
+  sink-based rewrite rule, each projecting to a `SuggestedFix` via
+  `fixes(rewrite)`. Reuses `report.{FixEdit, SuggestedFix}`.
+- **Application** (`commands/fix.tw`): merge all `FixEdit`s for a file from both
+  producers, assert non-overlap, apply offset-stably (end-to-start), write the
+  file. `--check` skips the write and reports instead.
 
 ## Catalog
 
@@ -80,28 +90,40 @@ two byte-offset edits, and the tests. (The pure pieces — the `fixes()` edit
 projection and the `is_postfix_atomic` guard — are already implemented and tested;
 they re-home from `lib/source/lint.tw` into `lib/source/rewrite.tw`.)
 
-### Future candidate — fold in unused-import removal
+### R2 — Unused-import removal  (`unused-imports`)
 
-`twk check --fix-unused-imports` already exists (`compiler/unused_imports.tw`) and
-is a textbook safe rewrite. Migrating it under `twk fix` (so `fix` is the single
-home for "apply safe rewrites") is a natural follow-up, out of scope for the
-first cut.
+Remove imports a module never uses. Already implemented as a working
+apply-to-disk fixer (`commands/fix_unused_imports.tw` + `compiler/unused_imports.tw`),
+today reachable only via `twk check --fix-unused-imports`. The clean migration
+makes `twk fix` its **single** home:
+
+- The unused-import *warning* keeps showing in `build`/`check` (pre-existing
+  compiler warning, untouched — that is the *detection*).
+- The *removal* moves to `twk fix`: its edits are already emitted as `data.fixes`
+  on the `UnusedImport` warning, which the fix engine harvests (producer kind 1).
+- **`twk check --fix-unused-imports` is removed.** Its `collect_fixes` /
+  `apply_fixes` logic generalizes into `commands/fix.tw`; `commands/check.tw`
+  drops the flag.
+
+So `twk fix` launches owning both R1 and R2 — it is the one place that applies
+safe rewrites, with no leftover fix flag on `check`.
 
 ## Rollout
 
-1. **Plumbing + R1** — fix-mode flag + rewrite sink (shared with the linter's
-   Stage 1 plumbing), the `Rewrite` type + `fixes()` (re-homed), the
-   call-resolution detection for inherent-method-call, and the `twk fix` /
-   `twk fix --check` command. Validate idempotence and non-overlap on `boot/`.
-2. **Migrate unused-imports** into `twk fix` (optional, later).
+1. **Engine + R2 migration** — build `commands/fix.tw` (the collect→apply engine,
+   generalized from `fix_unused_imports.tw`) and `twk fix` / `twk fix --check`;
+   migrate unused-imports onto it and remove `twk check --fix-unused-imports`.
+   R2 needs no `fix_mode` (its edits ride existing warning `data.fixes`).
+2. **R1 inherent-method-call** — add the `fix_mode` flag + rewrite sink, the
+   `Rewrite` type + `fixes()` (re-homed from `lib/source/lint.tw`), and the
+   call-resolution detection; feed the sink into the engine. Validate idempotence
+   and non-overlap on `boot/`.
 
 ## Open questions
 
 - **Apply-by-default vs require confirmation**: `twk fix` writing in place by
   default (like `gofmt -w`) vs defaulting to `--check` and requiring an explicit
   `--write`. Leaning apply-by-default with `--check` for CI, matching `fmt`.
-- **Fold unused-imports now or later**: ship R1 alone first, or migrate the
-  existing fixer in the same cut so `fix` launches with two rewrites.
 - **Project-wide vs single-file**: first cut is per-file; whether `twk fix` walks
   the project (like `build`) is a later question.
 - **Is the inherent-method rewrite always *wanted*?** It is always *safe*

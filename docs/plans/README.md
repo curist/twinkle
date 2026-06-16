@@ -50,7 +50,7 @@ Self-hosting is complete. Historical design and status docs live in
 |------|-------------|--------|---------|
 | Tooling | Formatter (done), linter, LSP, package manager | In Progress | [tooling.md](tooling.md) |
 | Linter | `twk lint`: clippy-style detect-only lints (must-use, ignored Result/Option, record-copy helper, unreachable code); always-on, no config, never auto-fixes | Planned | [linter.md](linter.md) |
-| Fixer | `twk fix`: apply safe meaning-preserving rewrites (inherent-method-call now, design in [inherent-method-hint.md](inherent-method-hint.md); unused-imports later); `--check` for CI | Planned | [fix.md](fix.md) |
+| Fixer | `twk fix`: apply safe meaning-preserving rewrites — unused-imports (migrated from `twk check --fix-unused-imports`) + inherent-method-call (design in [inherent-method-hint.md](inherent-method-hint.md)); `--check` for CI | Planned | [fix.md](fix.md) |
 | LSP enhancements | Document symbols, references, rename, signature help, semantic tokens, workspace symbols, highlights, inlay hints, folding, and incremental sync | Planned | [lsp-enhancements.md](lsp-enhancements.md) |
 | LSP code actions | Quick-fix actions: missing case arms, auto-import, function type annotations | Planned | [lsp-code-actions.md](lsp-code-actions.md) |
 | LSP contract hover | Hover information for builtin contract bounds and contract-backed method calls | Done | [archive/lsp-contract-hover.md](archive/lsp-contract-hover.md) |

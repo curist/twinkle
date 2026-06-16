@@ -92,8 +92,9 @@ Explicitly **out of scope**:
   *flag* an anti-pattern, but anything it can *safely auto-apply* belongs in the
   fixer, not here.
 - Unused bindings / params / imports / private fns. Unused-import detection
-  already ships (`compiler/unused_imports.tw`, `twk check --fix-unused-imports`);
-  the rest of this family is deliberately deferred.
+  already ships as a `build`/`check` warning (`compiler/unused_imports.tw`); its
+  *removal* is owned by `twk fix` (see [`fix.md`](fix.md), R2). The rest of this
+  family is deliberately deferred.
 - Persistent-collection performance lints (`concat`/append-in-loop, etc.).
 - **Redundant / unreachable `case` arms** and **non-exhaustive matches** —
   already implemented as the hard errors `UnreachableCaseArm` and
