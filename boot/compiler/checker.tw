@@ -1893,7 +1893,12 @@ fn maybe_inherent_rewrite(
 /// Lint L2: flag a statement-position expression whose value is a `Result` or
 /// `Option` that is silently dropped (in `lint_mode`). `try`/`case`/binding all
 /// change the type away from Result/Option, so they never reach here.
-fn maybe_unused_result(ctx: InferCtx, span: Span, ty: MonoType) InferCtx {
+///
+/// (L1 "unused pure result" — discarding any non-Void value — is deliberately
+/// NOT done here: without effect analysis it can't tell a forgotten rebinding
+/// from an effectful call whose value is legitimately ignored, e.g. a
+/// `Cell`-mutating `registry.add_file(...)`. It needs a purity flag first.)
+fn maybe_unused_value(ctx: InferCtx, span: Span, ty: MonoType) InferCtx {
   if !ctx.lint_mode {
     return ctx
   }
@@ -4963,7 +4968,7 @@ fn check_stmt(stmt: Stmt, ctx: InferCtx, diags: Vector<DiagKind>) CheckOut {
     .Let(ls) => check_let(ls, ctx, diags),
     .Expr(es) => {
       r := ctx.synth(es.expr, diags)
-      .{ ctx: maybe_unused_result(r.ctx, es.expr.span, r.ty), diags: r.diags }
+      .{ ctx: maybe_unused_value(r.ctx, es.expr.span, r.ty), diags: r.diags }
     },
     .Return(rs) => check_return(rs, ctx, diags),
     .For(fs) => check_for(fs, ctx, diags),
@@ -4992,7 +4997,7 @@ fn check_top_level_stmt(stmt: Stmt, ctx: InferCtx, diags: Vector<DiagKind>) Chec
   case stmt {
     .Expr(es) => {
       r := ctx.synth(es.expr, diags)
-      .{ ctx: maybe_unused_result(r.ctx, es.expr.span, r.ty), diags: r.diags }
+      .{ ctx: maybe_unused_value(r.ctx, es.expr.span, r.ty), diags: r.diags }
     },
     .For(fs) => check_for(fs, ctx, diags),
     .Break(bs) => case bs.value {
