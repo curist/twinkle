@@ -206,8 +206,8 @@ named throwaway.
 
 ## Rollout
 
-The command, both rewrites, and the first two lints are **done**; the type-
-dependent lints (L1/L2) remain.
+The command, both rewrites, and L2/L3/L4 are **done**; L1 is deferred pending
+effect analysis.
 
 1. **Done — rewrite engine + R2 (unused-imports)** — the collect→apply engine
    (`apply_edits` end-to-start splice), R2 migrated off the removed
@@ -222,10 +222,17 @@ dependent lints (L1/L2) remain.
    *and* lints) now aggregate **up the import chain** — the entry module plus
    everything it imports, stdlib/internal excluded — so R1's entry-only limit is
    gone.
-5. **Next — L2 (ignored Result/Option), then L1 (unused pure result)** — these
-   need inferred statement types (and, for L1, a purity/effect flag on
-   signatures), so they emit from the checker (home A) rather than the AST
-   visitor. Gate each on `boot/`: if noisy there, recalibrate or drop.
+5. **Done — L2 (ignored Result/Option)** — emitted by the checker (home A):
+   `maybe_unused_value` flags a discarded statement-position expression of type
+   `Result`/`Option`. Calibrated clean on `boot/` (0 findings — guards against
+   future drops).
+6. **Deferred — L1 (unused pure result)** — a conservative version (flag any
+   discarded non-Void value) was tried and **rejected**: on `boot/` it
+   false-positived on effectful calls whose value is legitimately ignored (the
+   `Cell`-mutating `registry.add_file(...)` pattern — 4/5 findings). L1 needs a
+   real **purity/effect flag** on signatures first (effectful = transitively
+   prints/errors or mutates a `Cell`); then flag only discards of *pure*
+   non-Void results.
 
 ## Open questions
 
@@ -237,6 +244,8 @@ dependent lints (L1/L2) remain.
 - **Scope** (resolved): findings follow the **import chain** — the entry file
   plus everything it transitively imports (stdlib/internal excluded) — not a
   directory crawl. Applies uniformly to rewrites and lints.
-- **Effect-analysis granularity** for L1: is "transitively calls
-  `print`/`println`/`error`" a good enough purity approximation?
+- **Effect analysis for L1** (the L1 blocker): compute a purity flag per
+  signature — effectful iff it transitively calls `print`/`println`/`error` *or*
+  mutates a `Cell` (e.g. `registry.add_file`). Open: granularity (host externs,
+  closures) and whether a coarse first cut suffices.
 - **L3 threshold**: cutoff for "mostly verbatim copies" before flagging.

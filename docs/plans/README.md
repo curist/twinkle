@@ -49,7 +49,7 @@ Self-hosting is complete. Historical design and status docs live in
 | Area | Description | Status | Details |
 |------|-------------|--------|---------|
 | Tooling | Formatter (done), linter, LSP, package manager | In Progress | [tooling.md](tooling.md) |
-| Linter | `twk lint`: clippy-style review command — reports report-only lints and auto-fixable rewrites (with `--fix`/`--fix-<rule>`) across the import chain. Opt-in, no config. Built: command, rewrites R1 inherent-method-call (design in [inherent-method-hint.md](inherent-method-hint.md)) + R2 unused-imports, lints L4 unreachable-code + L3 record-copy-helper. Remaining: L1/L2 (must-use, ignored Result/Option) | In Progress | [linter.md](linter.md) |
+| Linter | `twk lint`: clippy-style review command — reports report-only lints and auto-fixable rewrites (with `--fix`/`--fix-<rule>`) across the import chain. Opt-in, no config. Built: command, rewrites R1 inherent-method-call (design in [inherent-method-hint.md](inherent-method-hint.md)) + R2 unused-imports, lints L2 ignored-Result/Option + L3 record-copy-helper + L4 unreachable-code. Deferred: L1 unused-pure-result (needs effect analysis) | In Progress | [linter.md](linter.md) |
 | LSP enhancements | Document symbols, references, rename, signature help, semantic tokens, workspace symbols, highlights, inlay hints, folding, and incremental sync | Planned | [lsp-enhancements.md](lsp-enhancements.md) |
 | LSP code actions | Quick-fix actions: missing case arms, auto-import, function type annotations | Planned | [lsp-code-actions.md](lsp-code-actions.md) |
 | LSP contract hover | Hover information for builtin contract bounds and contract-backed method calls | Done | [archive/lsp-contract-hover.md](archive/lsp-contract-hover.md) |
